@@ -51,8 +51,12 @@
           ref="editorRef"
           v-model="content"
           :dark="isDark"
+          :mode="app.editorMode"
+          :html-mode="app.htmlPreview"
           @save="save(true)"
           @open-wikilink="openWikilink"
+          @mode-change="(m: 'ir' | 'sv') => app.setEditorMode(m)"
+          @html-change="(on: boolean) => app.toggleHtmlPreview(on)"
         />
       </div>
 
@@ -254,10 +258,12 @@ async function createFirst() {
 
 watch(
   () => route.params.id,
-  (id) => {
-    page.value = null;
+  (id, oldId) => {
+    // 不置空 page（避免销毁 MarkdownEditor 丢失编辑模式/HTML 预览状态）；
+    // 只清关联数据，直接加载新页面。编辑器组件保持存活，内容由 watch(props.modelValue) 更新。
     related.value = null;
-    if (id) loadPage(id as string);
+    if (id && id !== oldId) loadPage(id as string);
+    else if (!id) page.value = null; // 无 id 才回欢迎页
   }
 );
 
@@ -595,8 +601,15 @@ onUnmounted(() => {
   font-weight: 500;
 }
 .editor-area :deep(.html-preview-overlay a:hover) { text-decoration: underline; }
-.editor-area :deep(.html-preview-overlay ul),
-.editor-area :deep(.html-preview-overlay ol) { margin: 0 0 1em; padding-left: 2em; }
+.editor-area :deep(.html-preview-overlay ul:not(.contains-task-list)),
+.editor-area :deep(.html-preview-overlay ol:not(.contains-task-list)) {
+  list-style: none;
+  margin: 0 0 1em;
+  padding-left: 2em;
+}
+.editor-area :deep(.html-preview-overlay li > p:first-child) { display: inline; }
+.editor-area :deep(.html-preview-overlay li > p:first-child + ul),
+.editor-area :deep(.html-preview-overlay li > p:first-child + ol) { margin-top: 0.35em; }
 .editor-area :deep(.html-preview-overlay li) { margin: 0.35em 0; }
 /* 引用块：电光蓝渐变竖线 */
 .editor-area :deep(.html-preview-overlay blockquote) {
@@ -674,38 +687,46 @@ onUnmounted(() => {
 .editor-area :deep(.html-preview-overlay .mdht-ul-marker),
 .editor-area :deep(.html-preview-overlay .mdht-ol-marker) {
   box-sizing: border-box;
-  margin-left: -2.3em;
-  margin-right: 1.2em;
 }
+/* 无序列表使用接近原生排版的小圆点：标记净占宽为 0，仅保留 0.55em 的正文间距 */
 .editor-area :deep(.html-preview-overlay .mdht-ul-marker) {
   display: inline-block;
-  vertical-align: calc(0.38em - 0.55em);
+  margin-left: -0.97em;
+  margin-right: 0.55em;
+  vertical-align: 0.08em;
 }
 .editor-area :deep(.html-preview-overlay .mdht-ul-l1) {
-  width: 1.1em; height: 1.1em; border-radius: 50%; background: var(--accent);
+  width: 0.42em; height: 0.42em; border-radius: 50%; background: var(--accent);
 }
 .editor-area :deep(.html-preview-overlay .mdht-ul-l2) {
-  width: 1.1em; height: 1.1em; border-radius: 50%; background: transparent; border: 0.12em solid var(--accent);
+  width: 0.42em; height: 0.42em; border-radius: 50%; background: transparent; border: 0.09em solid var(--accent);
 }
 .editor-area :deep(.html-preview-overlay .mdht-ul-l3) {
-  width: 0.45em; height: 0.45em; border-radius: 2px; background: var(--accent);
-  vertical-align: calc(0.38em - 0.225em);
+  width: 0.32em; height: 0.32em; border-radius: 1px; background: var(--accent);
+  margin-left: -0.87em;
+  vertical-align: 0.12em;
 }
 .editor-area :deep(.html-preview-overlay .mdht-ol-marker) {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   position: relative;
-  width: 1.1em; height: 1.1em; border-radius: 50%;
+  margin-left: -1.75em;
+  margin-right: 0.65em;
+  width: 1em;
+  height: 1em;
+  border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), #4d7cff);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
-  vertical-align: calc(0.38em - 0.55em);
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.28);
+  vertical-align: 0.1em;
   text-align: center;
 }
 .editor-area :deep(.html-preview-overlay .mdht-ol-num) {
   display: block;
-  font-size: 0.62em;
+  font-size: 0.66em;
   font-weight: 700;
-  line-height: 1.77;
+  line-height: 1;
 }
 @media (max-width: 768px) {
   .editor-area :deep(.html-preview-overlay) { padding: 24px 16px 40px; }

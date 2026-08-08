@@ -56,12 +56,14 @@ import {
   wikiTargetFromHref,
 } from '../lib/wikiLinks';
 
-const props = defineProps<{ modelValue: string; dark: boolean }>();
+const props = defineProps<{ modelValue: string; dark: boolean; mode?: 'ir' | 'sv'; htmlMode?: boolean }>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void;
   (e: 'save'): void;
   (e: 'ai-action', action: string, text: string): void;
   (e: 'open-wikilink', title: string): void;
+  (e: 'mode-change', mode: 'ir' | 'sv'): void;
+  (e: 'html-change', on: boolean): void;
 }>();
 
 const vditorEl = ref<HTMLElement>();
@@ -70,20 +72,63 @@ const linkInputEl = ref<HTMLInputElement>();
 const linkPopup = ref(false);
 const linkQuery = ref('');
 const suggestions = ref<any[]>([]);
-const htmlPreview = ref(false);
+const htmlPreview = ref(props.htmlMode ?? false);
 
 let vditor: Vditor | null = null;
 let ready = false;
 let composing = false; // IME 组字状态（wysiwyg 下 input 走防抖，组字期间不 emit 防丢字）
+let modeObserver: MutationObserver | null = null;
+let lastEmittedMode: 'ir' | 'sv' = 'ir';
+
+/** ingest 注释匹配（<!-- ingest:xxx --> 单行 HTML 注释） */
+const INGEST_RE = /<!--\s*ingest:[^>]*-->/g;
+
+/** 编辑时剥离 ingest 注释（不在编辑器里显示，保存时还原） */
+function stripIngestComments(md: string): string {
+  return md.replace(INGEST_RE, '');
+}
+
+/** 保存时还原 ingest 注释（把被剥离的注释加回末尾） */
+function restoreIngestComments(md: string): string {
+  if (!vditor) return md;
+  // 从原始 props.modelValue 提取所有 ingest 注释，追加到末尾
+  const raw = props.modelValue;
+  const comments = raw.match(INGEST_RE);
+  if (!comments || comments.length === 0) return md;
+  // 如果 md 里已经含 ingest 注释（用户没编辑那行），不重复加
+  if (INGEST_RE.test(md)) { INGEST_RE.lastIndex = 0; return md; }
+  INGEST_RE.lastIndex = 0;
+  return md.trimEnd() + '\n' + comments.join('\n');
+}
+
+/** 监听 Vditor edit-mode 切换（DOM class 变化），emit mode-change 让父组件持久化 */
+function observeEditMode() {
+  if (!vditorEl.value) return;
+  // Vditor 切模式会给 toolbar button 加 vditor-menu--current，并改 vditor 容器 class
+  // 更可靠的是直接轮询 vditor.getCurrentMode()
+  let last = vditor?.getCurrentMode() || 'ir';
+  lastEmittedMode = last as 'ir' | 'sv';
+  modeObserver = new MutationObserver(() => {
+    if (!vditor) return;
+    const cur = vditor.getCurrentMode();
+    if (cur !== last && (cur === 'ir' || cur === 'sv')) {
+      last = cur;
+      lastEmittedMode = cur;
+      emit('mode-change', cur);
+    }
+  });
+  modeObserver.observe(vditorEl.value, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'data-mode'] });
+}
 
 function init() {
   vditor = new Vditor(vditorEl.value!, {
-    mode: 'wysiwyg',
+    mode: props.mode ?? 'ir',
     height: '100%',
     cache: { enable: false },
     theme: props.dark ? 'dark' : 'classic',
-    value: wikiLinksToMarkdown(props.modelValue),
+    value: stripIngestComments(wikiLinksToMarkdown(props.modelValue)),
     placeholder: '开始书写… 输入 [[ 插入双链，Ctrl+S 保存',
+    preview: { mode: 'both' },
     link: {
       isOpen: false,
       click: openEditorLink,
@@ -97,14 +142,13 @@ function init() {
         icon: '🔗',
         click: () => openLinkPopup(),
       },
-      '|', 'undo', 'redo', '|', 'edit-mode',
+      '|', 'undo', 'redo', '|', 'edit-mode', 'fullscreen', 'outline', '|',
       {
         name: 'html',
         tip: 'HTML 预览（再点返回编辑）',
         icon: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 4l2 16M20 4l-2 16M4 9h12M4 15h12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>',
         click: () => toggleHtmlPreview(),
       },
-      'fullscreen', 'outline',
     ],
     toolbarConfig: { pin: true },
     upload: {
@@ -126,11 +170,13 @@ function init() {
     input: (v) => {
       // IME 组字期间不 emit，避免 wysiwyg 防抖重渲染打断输入
       if (composing) return;
-      emit('update:modelValue', markdownLinksToWiki(v));
+      emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
     },
     after: () => {
       ready = true;
       bindKeys();
+      // 初始化后同步 HTML 预览状态
+      if (htmlPreview.value) renderHtmlPreview();
     },
   });
 }
@@ -155,7 +201,7 @@ function bindKeys() {
     if (composing && !e.isComposing) {
       composing = false;
       const v = vditor?.getValue() || '';
-      emit('update:modelValue', markdownLinksToWiki(v));
+      emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
     }
     if (e.key === '[' && justTypedDoubleBracket()) openLinkPopup(true);
   });
@@ -164,8 +210,10 @@ function bindKeys() {
   el.addEventListener('compositionend', () => {
     composing = false;
     const v = vditor?.getValue() || '';
-    emit('update:modelValue', markdownLinksToWiki(v));
+    emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
   });
+  // 监听 edit-mode 切换（Vditor 内部 setEditMode 改 currentMode 但无事件，轮询 DOM class）
+  observeEditMode();
 }
 
 function openEditorLink(element: Element) {
@@ -236,10 +284,12 @@ function insertLink(title: string) {
 async function toggleHtmlPreview() {
   if (!htmlPreview.value) {
     htmlPreview.value = true;
+    emit('html-change', true);
     await nextTick();
     await renderHtmlPreview();
   } else {
     htmlPreview.value = false;
+    emit('html-change', false);
     nextTick(() => vditor?.focus());
   }
 }
@@ -253,10 +303,26 @@ async function renderHtmlPreview() {
   });
   applyHeadingNumbers(el);
   applyListMarkers(el);
+  // 双链点击跳转：Vditor.preview 静态渲染的 <a href="#wiki/xxx"> 默认无点击处理
+  el.onclick = (e: MouseEvent) => {
+    const a = (e.target as HTMLElement).closest('a[href^="#wiki/"]');
+    if (!a) return;
+    e.preventDefault();
+    const title = wikiTargetFromHref(a.getAttribute('href') || '');
+    if (title) emit('open-wikilink', title);
+  };
 }
 
-/** 为 h1-h3 计算章节号，写入 data-md-num（CSS 用 attr() 显示渐变色编号） */
+/**
+ * 为 h1-h3 计算章节号，写入 data-md-num（CSS 用 attr() 显示渐变色编号）。
+ * 若文档任一标题已带「一.」「1.」「1.1」「（一）」等序号，全文跳过自动编号，
+ * 避免显示成「1. 一.人员整改方向」「1.1. 1.销售」。
+ */
 function applyHeadingNumbers(root: HTMLElement) {
+  const headings = Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3'));
+  const numberedHeading = /^\s*(?:[（(][一二三四五六七八九十百零\d]+[）)]|[一二三四五六七八九十百零\d]+(?:\.\d+)*\s*[.、．)）])/;
+  if (headings.some((h) => numberedHeading.test(h.textContent || ''))) return;
+
   const counters = [0, 0, 0, 0, 0, 0];
   for (const child of Array.from(root.children)) {
     const el = child as HTMLElement;
@@ -314,8 +380,14 @@ function listDepth(list: Element, tag: 'UL' | 'OL'): number {
   return depth;
 }
 
+/** 标记插入正文行首；松散列表（li 以 <p> 开头）必须插入 p 内，避免徽章独占一行、与正文错位 */
 function prependMarker(li: HTMLElement, marker: HTMLElement) {
-  li.insertBefore(marker, li.firstChild);
+  const first = li.firstElementChild;
+  if (first && first.tagName === 'P') {
+    first.prepend(marker);
+  } else {
+    li.prepend(marker);
+  }
 }
 
 // ---------- 对外接口 ----------
@@ -328,18 +400,20 @@ function insertText(text: string) {
   vditor?.focus();
 }
 function getValue(): string {
-  return markdownLinksToWiki(vditor?.getValue() || '');
+  return restoreIngestComments(markdownLinksToWiki(vditor?.getValue() || ''));
 }
 function getCurrentMode(): 'sv' | 'wysiwyg' | 'ir' {
-  return vditor?.getCurrentMode() || 'wysiwyg';
+  return vditor?.getCurrentMode() || 'ir';
 }
 
 watch(
   () => props.modelValue,
   (v) => {
     if (!ready || !vditor) return;
-    const editorValue = wikiLinksToMarkdown(v);
+    const editorValue = stripIngestComments(wikiLinksToMarkdown(v));
     if (editorValue !== vditor.getValue()) vditor.setValue(editorValue);
+    // 内容变化后若处于 HTML 预览，重新渲染
+    if (htmlPreview.value) renderHtmlPreview();
   }
 );
 watch(
@@ -350,10 +424,40 @@ watch(
     if (htmlPreview.value) renderHtmlPreview();
   }
 );
+// 父组件传入模式变化（切换页面后恢复持久化模式）
+watch(
+  () => props.mode,
+  (m) => {
+    if (!ready || !vditor || !m) return;
+    const cur = vditor.getCurrentMode();
+    if (cur !== m) {
+      // 通过点击 edit-mode 下拉里对应按钮切换（Vditor 无公开 changeMode API）
+      const btn = vditorEl.value?.querySelector<HTMLElement>(`button[data-mode="${m}"]`);
+      btn?.click();
+    }
+  }
+);
+// 父组件传入 HTML 预览状态变化（切换页面后恢复持久化状态）
+watch(
+  () => props.htmlMode,
+  (on) => {
+    if (on === undefined) return;
+    if (on && !htmlPreview.value) {
+      htmlPreview.value = true;
+      nextTick(() => renderHtmlPreview());
+    } else if (!on && htmlPreview.value) {
+      htmlPreview.value = false;
+    }
+  }
+);
+
+onUnmounted(() => {
+  modeObserver?.disconnect();
+  vditor?.destroy();
+});
 
 defineExpose({ getSelectionText, insertText, getValue, getCurrentMode, toggleHtmlPreview });
 onMounted(init);
-onUnmounted(() => vditor?.destroy());
 </script>
 
 <style scoped>
@@ -364,7 +468,15 @@ onUnmounted(() => vditor?.destroy());
   flex-direction: column;
 }
 .vditor-host { flex: 1; min-height: 0; }
-:deep(.vditor-toolbar) { border-bottom: 1px solid var(--border); }
+:deep(.vditor-toolbar) {
+  border-bottom: 1px solid var(--border);
+  /* HTML 预览按钮右对齐到工具栏最右端 */
+  & .vditor-tooltipped[data-type="html"] {
+    margin-left: auto;
+  }
+}
+/* 隐藏 edit-mode 下拉里的 wysiwyg 选项（即时渲染已覆盖所见即所得场景，只保留源码+即时渲染两态） */
+:deep(.vditor-toolbar button[data-mode="wysiwyg"]) { display: none !important; }
 :deep(.vditor-ir), :deep(.vditor-wysiwyg), :deep(.vditor-sv) {
   background: var(--bg);
   color: var(--text);
