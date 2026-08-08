@@ -146,6 +146,7 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 | 数字角标 | `Wiki知识库-number-badge/` | `feat/number-badge` | `example-wiki-number-badge` | 8082 | `example-wiki-data-number-badge` | 开发中 |
 | Agent 指引分流 | ~~`Wiki知识库-agent-guidance-scope/`~~ | ~~`feat/agent-guidance-scope`~~ | ~~`example-wiki-agent-guidance-scope`~~ | ~~8086~~ | ~~`example-wiki-data-agent-guidance-scope`~~ | 已合并入 main |
 | 协作规则分流 | ~~`Wiki知识库-worktree-policy/`~~ | ~~`feat/worktree-policy`~~ | — | — | — | 已合并入 main |
+| 模糊实体消歧 | ~~`Wiki知识库-ambiguous-entity/`~~ | ~~`feat/ambiguous-entity`~~ | ~~`example-wiki-ambiguous-entity`~~ | ~~8084~~ | ~~`example-wiki-data-ambiguous-entity`~~ | 已合并入 main |
 | 回收站 | ~~`Wiki知识库-recycle-bin/`~~ | ~~`feat/recycle-bin`~~ | ~~`example-wiki-recycle-bin`~~ | ~~8089~~ | ~~`example-wiki-data-recycle-bin`~~ | 已合并入 main |
 | 模型目录卡片 | ~~`Wiki知识库-model-catalog/`~~ | ~~`feat/model-catalog`~~ | ~~`example-wiki-model-catalog`~~ | ~~8087~~ | ~~`example-wiki-data-model-catalog`~~ | 已合并入 main |
 | AI整理日志 | ~~`Wiki知识库-ai-organize-logs/`~~ | ~~`feat/ai-organize-logs`~~ | ~~`example-wiki-ai-logs`~~ | ~~8081~~ | ~~`example-wiki-data-ai-logs`~~ | 已合并入 main |

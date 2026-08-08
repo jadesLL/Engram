@@ -24,15 +24,15 @@ export interface ApplyResult {
 }
 
 const ACTION_META: Record<ReportActionKind, { title: string; description: string; button: string; defaultSelected: boolean }> = {
-  deadlink: { title: '批量创建死链页面', description: '为选中的缺失链接创建页面，可逐条调整页面类型。', button: '批量创建页面', defaultSelected: true },
-  duplicate: { title: '批量合并重复页面', description: '逐对确认保留页面；也可以选择保留两者。', button: '批量合并', defaultSelected: false },
-  contradiction: { title: '批量处理矛盾报告', description: '只将选中的矛盾标记为已处理，不修改页面正文。', button: '批量标记已处理', defaultSelected: false },
-  single_source: { title: '批量确认来源单一', description: '只将选中的提醒标记为已知悉，不修改页面正文。', button: '批量标记已知悉', defaultSelected: false },
-  missing_sections: { title: '批量补全章节骨架', description: '只补充缺失的空章节，不生成或猜测正文。', button: '批量补章节', defaultSelected: true },
-  pending_review: { title: '批量审核候选', description: '逐条选择入库类型或不入库，确认后统一执行。', button: '批量审核入库', defaultSelected: false },
-  ingest_questions: { title: '批量确认整理追问', description: '只将选中的追问标记为已知悉。', button: '批量标记已知悉', defaultSelected: false },
-  enrich: { title: '批量忽略待丰富提醒', description: '忽略选中的提醒，不自动生成页面内容。', button: '批量忽略', defaultSelected: false },
-  stale: { title: '批量复核过期页面', description: '写入独立的最后复核日期，不改变正文更新时间。', button: '批量复核', defaultSelected: false },
+  deadlink: { title: '批量创建死链页面', description: '默认全选并按推荐类型创建，可统一切换页面类型。', button: '批量创建页面', defaultSelected: true },
+  duplicate: { title: '批量合并重复页面', description: '默认全选并采用系统建议的保留页，执行前可统一改为留 A、留 B 或保留两者。', button: '批量合并', defaultSelected: true },
+  contradiction: { title: '批量处理矛盾报告', description: '默认全选并标记为已处理，只关闭报告，不修改页面正文。', button: '批量标记已处理', defaultSelected: true },
+  single_source: { title: '批量确认来源单一', description: '默认全选并标记为已知悉，不修改来源或页面正文。', button: '批量标记已知悉', defaultSelected: true },
+  missing_sections: { title: '批量补全章节骨架', description: '默认全选并补充缺失的空章节，不生成或猜测正文。', button: '批量补章节', defaultSelected: true },
+  pending_review: { title: '批量审核候选', description: '默认勾选可处理项并采用系统推荐；也可批量改为不入库。', button: '批量审核入库', defaultSelected: true },
+  ingest_questions: { title: '批量确认整理追问', description: '默认全选并标记为已知悉，不修改原始资料和问题内容。', button: '批量标记已知悉', defaultSelected: true },
+  enrich: { title: '批量忽略待丰富提醒', description: '默认全选并忽略提醒，不自动生成页面内容。', button: '批量忽略', defaultSelected: true },
+  stale: { title: '批量复核过期页面', description: '默认全选并记录复核日期，不改变正文更新时间。', button: '批量复核', defaultSelected: true },
 };
 
 function parsePayload(value: string): Record<string, any> {
@@ -76,12 +76,17 @@ export function previewReportActions(kind: ReportActionKind) {
           { value: 'keep_both', label: '保留两者' },
         ];
       } else if (kind === 'pending_review') {
-        suggestedAction = pendingSuggestion(payload);
-        options = [
-          { value: 'concept', label: '收为概念' }, { value: 'person', label: '收为人物' },
-          { value: 'project', label: '收为项目' }, { value: 'org', label: '收为组织' },
-          { value: 'dismiss', label: '不入库' },
-        ];
+        if (payload.ambiguity) {
+          suggestedAction = 'manual';
+          options = [];
+        } else {
+          suggestedAction = pendingSuggestion(payload);
+          options = [
+            { value: 'concept', label: '收为概念' }, { value: 'person', label: '收为人物' },
+            { value: 'project', label: '收为项目' }, { value: 'org', label: '收为组织' },
+            { value: 'dismiss', label: '不入库' },
+          ];
+        }
       } else if (kind === 'enrich') {
         suggestedAction = 'dismiss';
       } else if (kind === 'stale') {
@@ -89,7 +94,8 @@ export function previewReportActions(kind: ReportActionKind) {
       } else if (kind === 'missing_sections') {
         suggestedAction = 'repair';
       }
-      return { id: row.id, payload, selected: meta.defaultSelected, suggestedAction, options };
+      const disabled = Boolean(kind === 'pending_review' && payload.ambiguity);
+      return { id: row.id, payload, selected: disabled ? false : meta.defaultSelected, disabled, suggestedAction, options };
     }),
   };
 }

@@ -88,7 +88,34 @@
               <blockquote v-for="(source, i) in fact.sources" :key="i">{{ source.quote }} <span class="faint">{{ source.chunkId }}</span></blockquote>
             </div>
           </details>
-          <div class="actions">
+          <div v-if="r.payload.ambiguity" class="ambiguity-box">
+            <div class="ambiguity-head">
+              <span class="ambiguity-label">{{ r.payload.ambiguity.label }}</span>
+              <b>{{ r.payload.ambiguity.question }}</b>
+            </div>
+            <div v-if="r.payload.ambiguity.suggestions?.length" class="suggestion-list">
+              <button
+                v-for="suggestion in r.payload.ambiguity.suggestions"
+                :key="suggestion.id || suggestion.title"
+                class="btn small primary"
+                @click="mergePending(r, suggestion)"
+              >
+                并入 {{ suggestion.title }}
+              </button>
+            </div>
+            <div class="correction-row">
+              <input v-model="reviewNames[r.id]" type="text" :placeholder="r.payload.kind === 'person' ? '输入完整姓名' : '输入确认后的正确名称'" />
+              <select v-model="reviewKinds[r.id]">
+                <option value="person">人物</option>
+                <option value="org">组织</option>
+                <option value="project">项目</option>
+                <option value="concept">概念</option>
+              </select>
+              <button class="btn small" :disabled="!reviewNames[r.id]?.trim()" @click="approveCorrected(r)">按此名称入库</button>
+              <button class="btn small" @click="reviewPending(r, 'dismissed')">不入库</button>
+            </div>
+          </div>
+          <div v-else class="actions">
             <button class="btn small primary" @click="approvePending(r, 'concept')">收为概念</button>
             <button class="btn small primary" @click="approvePending(r, r.payload.kind === 'concept' ? 'person' : (r.payload.kind || 'person'))">收为实体</button>
             <button class="btn small" @click="reviewPending(r, 'dismissed')">不入库</button>
@@ -152,22 +179,35 @@
         </div>
 
         <div class="batch-toolbar">
-          <label><input type="checkbox" :checked="allSelected" @change="toggleAll(($event.target as HTMLInputElement).checked)" /> 全选</label>
-          <span class="muted small">已选 {{ selectedBatchCount }} / {{ batch.items.length }}</span>
+          <div class="batch-selection">
+            <label><input type="checkbox" :checked="allSelected" @change="toggleAll(($event.target as HTMLInputElement).checked)" /> 全选</label>
+            <span class="muted small">已选 {{ selectedBatchCount }} / {{ selectableBatchCount }}</span>
+          </div>
+          <div class="batch-presets">
+            <button
+              v-for="preset in batchPresets"
+              :key="preset.action"
+              class="btn small"
+              :class="{ danger: preset.action === 'dismiss' }"
+              @click="applyBatchPreset(preset.action)"
+            >
+              {{ preset.label }}
+            </button>
+          </div>
         </div>
 
         <div class="batch-list">
-          <label v-for="item in batch.items" :key="item.id" class="batch-item" :class="{ selected: item.selected }">
-            <input v-model="item.selected" type="checkbox" />
+          <label v-for="item in batch.items" :key="item.id" class="batch-item" :class="{ selected: item.selected, disabled: item.disabled }">
+            <input v-model="item.selected" type="checkbox" :disabled="item.disabled" />
             <div class="batch-copy">
               <b>{{ previewTitle(item) }}</b>
               <span class="muted small">{{ previewDetail(item) }}</span>
-              <span v-if="isSuggestedKind" class="suggestion small">系统建议：{{ optionLabel(item, item.suggestedAction) }}</span>
+              <span v-if="isSuggestedKind && !item.disabled" class="suggestion small">系统建议：{{ optionLabel(item, item.suggestedAction) }}</span>
             </div>
             <select v-if="item.options?.length" v-model="item.action" @click.stop>
               <option v-for="option in item.options" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
-            <span v-else class="action-chip">{{ activeAction.itemAction }}</span>
+            <span v-else class="action-chip">{{ item.disabled ? '需逐条确认' : activeAction.itemAction }}</span>
           </label>
         </div>
 
@@ -202,6 +242,8 @@ const enabled = ref(true);
 const running = ref(false);
 const resolving = ref(false);
 const tab = ref('deadlink');
+const reviewNames = reactive<Record<number, string>>({});
+const reviewKinds = reactive<Record<number, 'concept' | 'person' | 'project' | 'org'>>({});
 
 const tabs = [
   { key: 'deadlink', label: '死链' },
@@ -216,25 +258,57 @@ const tabs = [
 ];
 
 const actionConfig: Record<string, { button: string; description: string; itemAction: string; impact: string }> = {
-  deadlink: { button: '批量创建页面', description: '为缺失链接创建页面，执行前可逐条调整页面类型。', itemAction: '创建页面', impact: '创建新的 Wiki 页面并触发索引，不修改来源正文。' },
-  duplicate: { button: '批量合并', description: '逐对确认保留哪一页，或明确保留两者。', itemAction: '合并页面', impact: '被合并页面将进入归档，相关双链会改指向保留页。' },
-  contradiction: { button: '批量标记已处理', description: '确认已人工处理选中的矛盾提醒。', itemAction: '标记已处理', impact: '只关闭报告，不修改任何页面正文。' },
-  single_source: { button: '批量标记已知悉', description: '确认已知悉选中页面仅有单一来源。', itemAction: '标记已知悉', impact: '只关闭报告，不修改来源或页面正文。' },
-  missing_sections: { button: '批量补章节', description: '为实体页补充缺失的空章节骨架。', itemAction: '补空章节', impact: '只添加“当前理解”或“时间线”标题，不生成正文。' },
-  pending_review: { button: '批量审核入库', description: '逐条选择知识类型或不入库。', itemAction: '审核候选', impact: '选中入库的候选将创建或更新 Wiki 页面；不入库项只关闭报告。' },
-  ingest_questions: { button: '批量标记已知悉', description: '确认已查看选中的整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
-  enrich: { button: '批量忽略', description: '忽略当前不准备完善的页面提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
-  stale: { button: '批量复核', description: '确认选中页面内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
+  deadlink: { button: '批量创建页面', description: '默认全选并按推荐类型创建，也可统一切换页面类型。', itemAction: '创建页面', impact: '创建新的 Wiki 页面并触发索引，不修改来源正文。' },
+  duplicate: { button: '批量合并', description: '默认全选并采用系统建议，可统一切换保留策略。', itemAction: '合并页面', impact: '被合并页面将进入归档，相关双链会改指向保留页。' },
+  contradiction: { button: '批量标记已处理', description: '默认全选并关闭矛盾提醒，不修改正文。', itemAction: '标记已处理', impact: '只关闭报告，不修改任何页面正文。' },
+  single_source: { button: '批量标记已知悉', description: '默认全选并确认已知悉来源单一。', itemAction: '标记已知悉', impact: '只关闭报告，不修改来源或页面正文。' },
+  missing_sections: { button: '批量补章节', description: '默认全选并补充缺失的空章节骨架。', itemAction: '补空章节', impact: '只添加“当前理解”或“时间线”标题，不生成正文。' },
+  pending_review: { button: '批量审核入库', description: '默认勾选可处理项并采用系统推荐；模糊项仍需逐条确认。', itemAction: '审核候选', impact: '选中入库的候选将创建或更新 Wiki 页面；不入库项只关闭报告。' },
+  ingest_questions: { button: '批量标记已知悉', description: '默认全选并确认已查看整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
+  enrich: { button: '批量忽略', description: '默认全选并忽略当前待丰富提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
+  stale: { button: '批量复核', description: '默认全选并记录内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
 };
 
-type BatchItem = { id: number; payload: any; selected: boolean; suggestedAction: string; action: string; options: { value: string; label: string }[] };
+type BatchItem = { id: number; payload: any; selected: boolean; disabled?: boolean; suggestedAction: string; action: string; options: { value: string; label: string }[] };
 const batch = reactive({ show: false, title: '', description: '', items: [] as BatchItem[], submitting: false, error: '' });
 const activeAction = computed(() => actionConfig[tab.value]);
 const activeCount = computed(() => grouped.value[tab.value]?.length || 0);
 const selectedBatchCount = computed(() => batch.items.filter((item) => item.selected).length);
-const allSelected = computed(() => batch.items.length > 0 && batch.items.every((item) => item.selected));
-const isSuggestedKind = computed(() => ['duplicate', 'pending_review'].includes(tab.value));
+const selectableBatchCount = computed(() => batch.items.filter((item) => !item.disabled).length);
+const allSelected = computed(() => {
+  const selectable = batch.items.filter((item) => !item.disabled);
+  return selectable.length > 0 && selectable.every((item) => item.selected);
+});
+const isSuggestedKind = computed(() => ['deadlink', 'duplicate', 'pending_review'].includes(tab.value));
 const impactSummary = computed(() => `${selectedBatchCount.value} 项将执行。${activeAction.value.impact}`);
+const batchPresets = computed(() => {
+  const presets = [{ action: 'recommended', label: '按推荐' }];
+  if (tab.value === 'pending_review') presets.push({ action: 'dismiss', label: '全部不入库' });
+  if (tab.value === 'deadlink') {
+    presets.push(
+      { action: 'concept', label: '全部概念' },
+      { action: 'person', label: '全部人物' },
+      { action: 'project', label: '全部项目' },
+      { action: 'org', label: '全部组织' },
+      { action: 'doc', label: '全部文档' },
+      { action: 'note', label: '全部笔记' },
+    );
+  }
+  if (tab.value === 'duplicate') {
+    presets.push(
+      { action: 'keep_a', label: '全部留 A' },
+      { action: 'keep_b', label: '全部留 B' },
+      { action: 'keep_both', label: '全部保留两者' },
+    );
+  }
+  if (tab.value === 'contradiction') presets.push({ action: 'resolve', label: '全部标记已处理' });
+  if (tab.value === 'single_source') presets.push({ action: 'resolve', label: '全部已知悉' });
+  if (tab.value === 'missing_sections') presets.push({ action: 'repair', label: '全部补章节' });
+  if (tab.value === 'ingest_questions') presets.push({ action: 'resolve', label: '全部已知悉' });
+  if (tab.value === 'enrich') presets.push({ action: 'dismiss', label: '全部忽略' });
+  if (tab.value === 'stale') presets.push({ action: 'review', label: '全部复核' });
+  return presets;
+});
 
 const grouped = computed(() => {
   const g: Record<string, any[]> = {};
@@ -251,6 +325,10 @@ async function load() {
   ]);
   const evidence = new Map(candidates.data.candidates.map((candidate: any) => [candidate.id, candidate]));
   reports.value = data.reports.map((report: any) => evidence.get(report.id) || report);
+  for (const report of reports.value.filter((item: any) => item.kind === 'pending_review' && item.payload.ambiguity)) {
+    reviewNames[report.id] ||= '';
+    reviewKinds[report.id] ||= ['concept', 'person', 'project', 'org'].includes(report.payload.kind) ? report.payload.kind : 'person';
+  }
   lastRun.value = data.lastRun;
   cron.value = data.cron;
   enabled.value = data.enabled;
@@ -299,6 +377,28 @@ async function approvePending(r: any, kind: 'concept' | 'person' | 'project' | '
   if (data.target) router.push(`/page/${data.target}`);
 }
 
+async function mergePending(r: any, suggestion: { id?: string; title: string }) {
+  const { data } = await api.post(`/api/ingest/candidates/${r.id}/review`, {
+    decision: 'approved',
+    kind: r.payload.kind || 'person',
+    target: suggestion.id || suggestion.title,
+  });
+  await load();
+  if (data.target) router.push(`/page/${data.target}`);
+}
+
+async function approveCorrected(r: any) {
+  const name = reviewNames[r.id]?.trim();
+  if (!name) return;
+  const { data } = await api.post(`/api/ingest/candidates/${r.id}/review`, {
+    decision: 'approved',
+    kind: reviewKinds[r.id],
+    name,
+  });
+  await load();
+  if (data.target) router.push(`/page/${data.target}`);
+}
+
 async function openBatchPreview() {
   batch.error = '';
   try {
@@ -318,7 +418,15 @@ function closeBatch() {
 }
 
 function toggleAll(selected: boolean) {
-  batch.items.forEach((item) => { item.selected = selected; });
+  batch.items.forEach((item) => { if (!item.disabled) item.selected = selected; });
+}
+
+function applyBatchPreset(action: string) {
+  batch.items.forEach((item) => {
+    if (item.disabled) return;
+    item.selected = true;
+    item.action = action === 'recommended' ? item.suggestedAction : action;
+  });
 }
 
 function optionLabel(item: BatchItem, value: string) {
@@ -436,6 +544,12 @@ onMounted(load);
 .fact { margin: 8px 0; }
 .fact blockquote { margin: 4px 0 4px 10px; padding-left: 8px; border-left: 2px solid var(--border-strong); }
 .acceptance { margin: 4px 0 4px 10px; padding-left: 16px; color: var(--text-secondary); }
+.ambiguity-box { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px solid var(--warning, #d97706); border-radius: 6px; background: var(--bg-secondary); }
+.ambiguity-head { display: flex; align-items: flex-start; gap: 8px; }
+.ambiguity-label { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; color: #92400e; background: #fef3c7; font-size: 12px; }
+.suggestion-list, .correction-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.correction-row input { min-width: 220px; flex: 1 1 260px; }
+.correction-row select { min-width: 90px; }
 .empty-hint { text-align: center; padding: 40px 0; }
 .modal-mask { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 15, 15, .35); }
 .batch-modal { width: min(760px, 96vw); max-height: min(820px, 92vh); display: flex; flex-direction: column; box-shadow: var(--shadow); }
@@ -443,11 +557,14 @@ onMounted(load);
 .modal-head h3 { margin: 0; }
 .modal-head p { margin: 5px 0 0; }
 .icon-close { width: 32px; height: 32px; font-size: 24px; color: var(--text-secondary); }
-.batch-toolbar { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 8px; }
-.batch-toolbar label { display: flex; align-items: center; gap: 7px; }
+.batch-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 8px; }
+.batch-selection, .batch-presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.batch-selection label { display: flex; align-items: center; gap: 7px; }
+.batch-presets .danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
 .batch-list { min-height: 100px; overflow: auto; border-top: 1px solid var(--border); }
 .batch-item { min-height: 68px; display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(130px, 190px); align-items: center; gap: 10px; padding: 10px 8px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .batch-item.selected { background: var(--accent-soft); }
+.batch-item.disabled { cursor: default; opacity: .68; }
 .batch-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .batch-copy b, .batch-copy span { overflow-wrap: anywhere; }
 .suggestion { color: var(--accent); }
@@ -458,6 +575,7 @@ onMounted(load);
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 @media (max-width: 640px) {
   .category-action { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .batch-toolbar { align-items: flex-start; flex-direction: column; }
   .batch-item { grid-template-columns: 22px minmax(0, 1fr); }
   .batch-item select, .batch-item .action-chip { grid-column: 2; justify-self: stretch; }
 }
