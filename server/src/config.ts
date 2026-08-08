@@ -16,6 +16,27 @@ export const DB_FILE = path.join(DATA_DIR, 'wiki.db');
 
 export const PORT = Number(process.env.PORT || 8080);
 export const HOST = process.env.HOST || '0.0.0.0';
+export const OFFICE_EDITOR_ENABLED = process.env.OFFICE_EDITOR_ENABLED !== 'false';
+export const OFFICE_INTERNAL_URL = process.env.OFFICE_INTERNAL_URL || 'http://onlyoffice';
+export const OFFICE_INTERNAL_APP_URL = process.env.OFFICE_INTERNAL_APP_URL || 'http://example-wiki:8080';
+export const OFFICE_PUBLIC_PATH = normalizePublicPath(process.env.OFFICE_PUBLIC_PATH || '/onlyoffice/');
+export const OFFICE_INSTANCE_ID = process.env.OFFICE_INSTANCE_ID || 'main';
+export const OFFICE_JWT_SECRET = process.env.ONLYOFFICE_JWT_SECRET || '';
+export const OFFICE_HISTORY_LIMIT = positiveInt(process.env.OFFICE_HISTORY_LIMIT, 20);
+export const OFFICE_MAX_FILE_SIZE = positiveInt(
+  process.env.OFFICE_MAX_FILE_SIZE,
+  200 * 1024 * 1024
+);
+
+function normalizePublicPath(value: string): string {
+  const withLeading = value.startsWith('/') ? value : `/${value}`;
+  return withLeading.endsWith('/') ? withLeading : `${withLeading}/`;
+}
+
+function positiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
+}
 
 /** 固定目录结构（用户不可增删文件夹） */
 export const FIXED_DIRS = [

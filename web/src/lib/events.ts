@@ -4,7 +4,7 @@
  */
 
 export interface PageEvent {
-  type: string; // page-changed | page-deleted | page-moved
+  type: string; // page-changed | page-deleted | page-moved | file-changed
   path?: string;
   id?: string;
   oldPath?: string;
@@ -35,7 +35,7 @@ export function openPageStream(onEvent: (ev: PageEvent) => void): () => void {
       /* ignore malformed */
     }
   };
-  for (const type of ['page-changed', 'page-deleted', 'page-moved']) {
+  for (const type of ['page-changed', 'page-deleted', 'page-moved', 'file-changed']) {
     es.addEventListener(type, handle(type));
   }
   return closePageStream;

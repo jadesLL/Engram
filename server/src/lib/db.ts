@@ -158,6 +158,31 @@ export function migrate() {
     FOREIGN KEY(run_id) REFERENCES ingest_runs(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_ingest_audit_run ON ingest_audit(run_id, id);
+
+  CREATE TABLE IF NOT EXISTS office_edit_sessions (
+    document_key TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    base_hash TEXT NOT NULL,
+    version_id TEXT,
+    status TEXT NOT NULL DEFAULT 'editing',
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_office_sessions_path ON office_edit_sessions(path, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS office_versions (
+    id TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    stored_path TEXT UNIQUE NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    session_key TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_office_versions_path ON office_versions(path, created_at DESC);
   `);
 
   ensureColumn('ingest_log', 'content_hash', 'TEXT');
