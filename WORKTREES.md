@@ -136,6 +136,7 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 | 集成分支(主干) | `Wiki知识库/` | `main` | `example-wiki` | 8080 | `example-wiki-data` | 干净，禁止直接开发 |
 | 数字角标 | `Wiki知识库-number-badge/` | `feat/number-badge` | `example-wiki-number-badge` | 8082 | `example-wiki-data-number-badge` | 开发中 |
 | AI整理日志 | `Wiki知识库-ai-organize-logs/` | `feat/ai-organize-logs` | `example-wiki-ai-logs` | 8081 | `example-wiki-data-ai-logs` | 开发中 |
+| 知识图谱优化 | `Wiki知识库-graph-opt/` | `feat/graph-opt` | `example-wiki-graph-opt` | 8083 | `example-wiki-data-graph-opt` | 开发中 |
 
 > 端口顺延规则：main=8080，第 N 个功能用 808N。
 

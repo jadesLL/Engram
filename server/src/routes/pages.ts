@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db } from '../lib/db.js';
+import { invalidateGraphCache } from '../lib/graphCache.js';
 import {
   listTree, readPage, writePage, createPage, movePage, trashPage, mkdir, safeJoin,
 } from '../lib/vault.js';
@@ -177,6 +178,7 @@ export async function pageRoutes(app: FastifyInstance) {
     if (!page) return reply.code(404).send({ error: '页面不存在' });
     trashPage(page.path);
     db.prepare(`DELETE FROM edges WHERE src_page = ? OR dst_page = ?`).run(id, id);
+    invalidateGraphCache();
     appendWikiLog('删除', `[[${page.title}]]（${page.path}，已入回收站）`);
     return { ok: true };
   });

@@ -1,4 +1,5 @@
 import { db, getVecDim, ensureVecTable, newId, now } from '../lib/db.js';
+import { invalidateGraphCache } from '../lib/graphCache.js';
 import { embed, llmReady } from '../lib/llm.js';
 import { chunkMarkdown, chunkPlainText } from './chunker.js';
 import { wirePageEdges, resolveDeadLinks } from './extractor.js';
@@ -18,6 +19,8 @@ export async function indexPage(pageId: string): Promise<{ chunks: number; embed
 
   wirePageEdges(pageId, rd.content);
   resolveDeadLinks();
+  // 边已重建，图谱缓存必须失效，否则用户刚保存就看不到新链接
+  invalidateGraphCache();
 
   const chunks = chunkMarkdown(rd.content);
   const ids: number[] = [];
