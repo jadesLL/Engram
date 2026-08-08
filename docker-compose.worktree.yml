@@ -1,14 +1,14 @@
-# ambiguous-entity worktree 专属部署（与 main 容器并行隔离）
+# settings-ui-redesign worktree 专属部署（与 main 容器并行隔离）
 services:
   example-wiki:
-    image: example-wiki:ambiguous-entity
+    image: example-wiki:settings-ui-redesign
     build: .
-    container_name: example-wiki-ambiguous-entity
-    ports: ["8084:8080"]
-    volumes: ["example-wiki-data-ambiguous-entity:/data"]
+    container_name: example-wiki-settings-ui-redesign
+    ports: ["8081:8080"]
+    volumes: ["example-wiki-data-settings-ui-redesign:/data"]
     environment:
       - TZ=Asia/Shanghai
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
     restart: unless-stopped
 volumes:
-  example-wiki-data-ambiguous-entity: {external: true}
+  example-wiki-data-settings-ui-redesign: {external: true}
