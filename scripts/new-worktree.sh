@@ -22,8 +22,41 @@ IMG="example-wiki:$FEATURE"
 CONT="example-wiki-$FEATURE"
 VOL="example-wiki-data-$FEATURE"
 
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  echo "!! 端口必须是 1-65535 之间的整数，当前值: $PORT"
+  exit 1
+fi
+[ "$PORT" -eq 8080 ] && { echo "!! 8080 为 main 保留端口，功能 worktree 不得使用"; exit 1; }
+
+check_port_available() {
+  node - "$PORT" <<'NODE'
+const net = require('node:net');
+
+const port = Number(process.argv[2]);
+const server = net.createServer();
+
+server.unref();
+server.once('error', (error) => {
+  console.error(`!! 端口 ${port} 不可用: ${error.code ?? error.message}`);
+  process.exit(1);
+});
+server.listen({ port, exclusive: true }, () => {
+  server.close(() => process.exit(0));
+});
+NODE
+}
+
+echo ">> [0/5] 执行前复验端口 $PORT"
+if ! check_port_available; then
+  echo "   停止创建；重新选择端口、更新计划后再执行。"
+  exit 1
+fi
+echo "   端口 $PORT 未被占用，可以开始创建资源"
+
 [ -d "$WT" ] && { echo "!! worktree 已存在: $WT"; exit 1; }
-docker ps --format '{{.Names}}' | grep -qx "$CONT" && { echo "!! 容器 $CONT 已存在"; exit 1; }
+git -C "$REPO" show-ref --verify --quiet "refs/heads/$BRANCH" && { echo "!! 分支 $BRANCH 已存在"; exit 1; }
+docker ps -a --format '{{.Names}}' | grep -qx "$CONT" && { echo "!! 容器 $CONT 已存在"; exit 1; }
+docker volume inspect "$VOL" >/dev/null 2>&1 && { echo "!! 数据卷 $VOL 已存在"; exit 1; }
 
 echo ">> [1/5] git worktree add  ($BRANCH)"
 git -C "$REPO" worktree add "$WT" -b "$BRANCH"

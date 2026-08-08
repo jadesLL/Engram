@@ -22,17 +22,79 @@
 
 > 纯文档任务仍需提交分支、串行合并、更新活动表并清理 worktree；但不得为此无意义地创建 Docker 资源或重部署应用。
 
+## 开始前：先调研和计划（硬门禁）
+
+任何写文件、创建 worktree、启动服务或创建 Docker 资源之前，必须先完成只读调研并形成计划。
+
+**调研阶段只允许读取和检查：**
+
+1. 完整读取本文件，并执行 `git status`、`git worktree list`。
+2. 查看“当前活动 worktree”表、主机监听端口和 Docker 端口映射。
+3. 阅读任务涉及的源码、脚本、配置和测试，确认改动范围及验证方式。
+4. 此阶段不得修改文件、创建分支/worktree、启动服务或占用端口。
+
+**计划必须明确写出：**
+
+- 任务类型，以及是否需要功能 worktree、独立容器、端口和数据卷。
+- 功能名、worktree 文件夹、分支、预计修改范围。
+- **本任务使用的主机端口**及选择依据；纯文档/只读任务也要写端口字段，值为“`不适用（不启动服务）`”，不得为了填写端口而创建运行资源。
+- 从创建 worktree、开发、测试、提交、串行合并、主站验证到资源清理的完整流程。
+- 端口初检方法、执行前复验方法，以及端口冲突时重新选端口并更新计划的处理方式。
+
+建议计划格式：
+
+```text
+任务类型：
+feature / worktree / branch：
+计划端口：（纯文档写“不适用”）
+容器 / 数据卷：
+修改范围：
+执行流程：
+验证方式：
+合并与清理：
+```
+
+**端口必须检查两次：**
+
+1. 形成计划时初检：同时核对活动表、主机监听状态和 Docker 映射，选出候选端口。
+2. 开始执行计划时复验：在调用 `scripts/new-worktree.sh` 或启动任何服务的**紧前一步**再次检查。只有确认端口未被占用，才允许创建 worktree/容器或开始开发。
+
+如果复验时端口已占用，立即停止，不得抢占或停止其他 Agent 的服务；重新选择端口、更新计划和活动表，并再次复验。`scripts/new-worktree.sh` 也会在任何创建动作前执行端口复验，失败时不应留下 worktree、分支、容器或数据卷。
+
+Windows / PowerShell 初检和复验使用同一组命令，只有输出 `FREE` 才算通过：
+
+```powershell
+$port = 8081
+$listeners = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
+$dockerMappings = docker ps --format '{{.Names}} {{.Ports}}' |
+  Select-String -SimpleMatch ":$port->"
+if ($listeners -or $dockerMappings) {
+  throw "端口 $port 已被占用，停止执行并重新选择端口"
+}
+"FREE"
+```
+
 ## 起一个新 worktree（给第 N 个 Agent）
 
-在**本目录**（main）下执行：
+源码、运行时配置、依赖、测试或构建任务，在完成计划和端口复验后，从**本目录**（main）执行：
+
+```bash
+scripts/new-worktree.sh <feature> <已复验端口>
+```
+
+从 PowerShell 调用时应明确使用 Git for Windows 的 Bash，避免系统 `bash.exe` 指向未配置的 WSL：
+
+```powershell
+& 'C:\Program Files\Git\bin\bash.exe' scripts/new-worktree.sh <feature> <已复验端口>
+```
+
+纯文档任务不创建运行资源，在完成计划后手动创建文档 worktree：
 
 ```bash
 git worktree add "../Wiki知识库-<feature>" -b feat/<feature>
-# 例：
-git worktree add "../Wiki知识库-search-export" -b feat/search-export
 ```
 
-新 worktree 拿到的是基线快照的完整源码副本，Agent 在那个文件夹里独立干，互不干扰。
+新 worktree 拿到的是基线快照的完整源码副本，Agent 在那个文件夹里独立工作，互不干扰。
 
 > ⚠️ worktree 目录必须与 main 同级（`../Wiki知识库-xxx`），不要建在仓库内部。
 
@@ -43,7 +105,7 @@ git worktree add "../Wiki知识库-search-export" -b feat/search-export
 - **数据库**：各 worktree 用独立的 sqlite 文件，别共用 `data/wiki.db`。
   拷一份当本地库：`cp data/wiki.db ../Wiki知识库-<feature>/data/wiki.db`，
   启动时用环境变量指到自己的库（见 `server/src/config.ts` 的数据目录配置）。
-- **端口**：各 worktree 用不同端口（server 默认端口见 config），通过 env 覆盖，避免占用冲突。
+- **端口**：各 worktree 用不同端口（server 默认端口见 config），通过 env 覆盖。活动表只是协调记录，不能代替主机监听和 Docker 映射检查；计划时初检，执行前必须复验。
 - **构建产物**：`dist/` 已被 `.gitignore` 忽略，各 worktree 各自构建互不影响。
 
 ## 合回 main
@@ -98,7 +160,20 @@ main 是集成分支，不直接在上面开发。每个功能（含"数字角�
 
 ## 单功能完整生命周期（AI 跑脚本）
 
-**1. 开功能**（在 main 仓库根目录）：
+**0. 调研和计划**（只读，不创建任何资源）：
+
+```text
+任务类型：源码修改
+feature / worktree / branch：ai-organize-logs / Wiki知识库-ai-organize-logs / feat/ai-organize-logs
+计划端口：8081（活动表、主机监听、Docker 映射初检均空闲）
+容器 / 数据卷：example-wiki-ai-organize-logs / example-wiki-data-ai-organize-logs
+执行流程：复验端口 → 创建 worktree → 开发测试 → 提交 → 串行合并 → 验证 8080 → 清理
+```
+
+**1. 执行前复验 + 开功能**（在 main 仓库根目录）：
+
+紧接脚本执行前再次核对 `8081`；若已占用，停止并更新计划，不得继续。脚本自身还会做最后一道端口复验。
+
 ```bash
 scripts/new-worktree.sh ai-organize-logs 8081
 # 产出: worktree ../Wiki知识库-ai-organize-logs / 分支 feat/ai-organize-logs
@@ -154,16 +229,18 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 | 图谱拖动修复 | ~~`Wiki知识库-graph-drag/`~~ | ~~`feat/graph-drag`~~ | ~~`example-wiki-graph-drag`~~ | ~~8086~~ | ~~`example-wiki-data-graph-drag`~~ | 已合并入 main |
 | 实时页面刷新 | ~~`Wiki知识库-realtime-sync/`~~ | ~~`feat/realtime-sync`~~ | ~~`example-wiki-realtime-sync`~~ | ~~8083~~ | ~~`example-wiki-data-realtime-sync`~~ | 已合并入 main |
 
-> 端口顺延规则：main=8080，第 N 个功能用 808N。
+> `8080` 永久保留给 main。功能端口可从 `8081` 起顺延，但顺延值只代表候选端口；必须经过计划初检和执行前复验，不能仅凭编号或活动表判断空闲。
 
 ## Agent 入场须知（每个 Agent 必读）
 
-1. **先确认你在哪个文件夹**：你的功能对应上表某一行，只在该行文件夹里干活。
+1. **先调研并形成计划**：先只读检查仓库、活动 worktree 和端口；计划中写明 worktree、分支、端口、修改范围、验证、串行合并及清理流程。
+2. **开始执行前复验端口**：在创建 worktree/容器或启动服务的紧前一步复验。端口被占用就停止、改计划并换端口；不得处理其他 Agent 的资源。
+3. **确认你在哪个文件夹**：你的功能对应上表某一行，只在该行文件夹里工作。
    - 数字角标 → `Wiki知识库-number-badge/`
    - AI整理日志 → `Wiki知识库-ai-organize-logs/`
-2. **绝不碰 `Wiki知识库/`（main 主干）**：那是集成分支，只用来合并，不直接写代码。
+4. **绝不碰 `Wiki知识库/`（main 主干）**：那是集成分支，只用来合并，不直接写代码。
    在上面写代码会卡住后续合并（`merge-feature.sh` 会因 main 不干净而拒绝）。
-3. **开发循环**（在你的 worktree 文件夹里）：
+5. **开发循环**（在你的 worktree 文件夹里）：
    ```bash
    cd "<你的 worktree 文件夹>"
    # 改代码... 提交到你的 feat/ 分支
@@ -172,12 +249,12 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
    docker compose -f docker-compose.worktree.yml up -d   # 重部署到你的端口
    curl http://localhost:<你的端口>/...                    # 验证
    ```
-4. **完成合并**（回 main 仓库根目录，确认此刻没有别的 merge 在跑）：
+6. **完成合并**（回 main 仓库根目录，确认此刻没有别的 merge 在跑）：
    ```bash
    scripts/merge-feature.sh <你的功能名>     # 自动: merge→main → 重部署8080 → 清理你的资源
    ```
    - 冲突 → 脚本会停住：在 main 仓库解决冲突 → `git add -A && git commit` → `scripts/merge-feature.sh --finish <功能名>`。
-5. **合并完更新本表**：把你的行标成"已合并"，或删掉该行。
+7. **合并完更新本表**：把你的行标成"已合并"，或删掉该行。
 
 ## 串行合并排班
 
