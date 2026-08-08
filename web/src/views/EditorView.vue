@@ -358,7 +358,11 @@ onUnmounted(() => {
 .ai-action:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .ai-hint { margin-left: auto; }
 .editor-area { flex: 1; min-height: 0; }
-.editor-area :deep(.vditor) { max-width: var(--editor-max); margin: 0 auto; }
+.editor-area :deep(.vditor) {
+  max-width: var(--editor-max);
+  width: 100% !important;
+  margin: 0 !important;
+}
 .editor-area :deep(.vditor-toolbar) { max-width: 100%; }
 
 /* 排版精修（Typora/Obsidian 风可读宽行） */
