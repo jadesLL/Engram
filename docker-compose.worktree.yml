@@ -1,14 +1,14 @@
-# settings-ui-redesign worktree 专属部署（与 main 容器并行隔离）
+# model-config-discovery worktree 专属部署（与 main 容器并行隔离）
 services:
   example-wiki:
-    image: example-wiki:settings-ui-redesign
+    image: example-wiki:model-config-discovery
     build: .
-    container_name: example-wiki-settings-ui-redesign
+    container_name: example-wiki-model-config-discovery
     ports: ["8081:8080"]
-    volumes: ["example-wiki-data-settings-ui-redesign:/data"]
+    volumes: ["example-wiki-data-model-config-discovery:/data"]
     environment:
       - TZ=Asia/Shanghai
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
     restart: unless-stopped
 volumes:
-  example-wiki-data-settings-ui-redesign: {external: true}
+  example-wiki-data-model-config-discovery: {external: true}
