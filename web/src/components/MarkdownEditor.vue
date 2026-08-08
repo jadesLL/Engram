@@ -97,14 +97,13 @@ function init() {
         icon: '🔗',
         click: () => openLinkPopup(),
       },
-      '|', 'undo', 'redo', '|', 'edit-mode',
+      '|', 'undo', 'redo', '|', 'edit-mode', 'fullscreen', 'outline', '|',
       {
         name: 'html',
         tip: 'HTML 预览（再点返回编辑）',
         icon: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 4l2 16M20 4l-2 16M4 9h12M4 15h12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>',
         click: () => toggleHtmlPreview(),
       },
-      'fullscreen', 'outline',
     ],
     toolbarConfig: { pin: true },
     upload: {
