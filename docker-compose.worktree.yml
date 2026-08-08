@@ -1,11 +1,11 @@
-# office-online-editing worktree 专属部署（与 main 容器并行隔离）
+# model-test-toast-polish worktree 专属部署（与 main 容器并行隔离）
 services:
   example-wiki:
-    image: example-wiki:office-online-editing
+    image: example-wiki:model-test-toast-polish
     build: .
-    container_name: example-wiki-office-online-editing
-    ports: ["8086:8080"]
-    volumes: ["example-wiki-data-office-online-editing:/data"]
+    container_name: example-wiki-model-test-toast-polish
+    ports: ["8081:8080"]
+    volumes: ["example-wiki-data-model-test-toast-polish:/data"]
     env_file:
       - .env.onlyoffice
     environment:
@@ -15,14 +15,14 @@ services:
       - OFFICE_INTERNAL_URL=http://onlyoffice
       - OFFICE_INTERNAL_APP_URL=http://example-wiki:8080
       - OFFICE_PUBLIC_PATH=/onlyoffice/
-      - OFFICE_INSTANCE_ID=office-online-editing
+      - OFFICE_INSTANCE_ID=model-test-toast-polish
     restart: unless-stopped
     depends_on:
       - onlyoffice
 
   onlyoffice:
     image: onlyoffice/documentserver:9.4.0
-    container_name: example-wiki-office-online-editing-onlyoffice
+    container_name: example-wiki-model-test-toast-polish-onlyoffice
     expose:
       - "80"
     env_file:
@@ -47,10 +47,10 @@ services:
     restart: unless-stopped
 
 volumes:
-  example-wiki-data-office-online-editing: {external: true}
+  example-wiki-data-model-test-toast-polish: {external: true}
   onlyoffice-data:
-    name: example-wiki-office-online-editing-onlyoffice-data
+    name: example-wiki-model-test-toast-polish-onlyoffice-data
   onlyoffice-lib:
-    name: example-wiki-office-online-editing-onlyoffice-lib
+    name: example-wiki-model-test-toast-polish-onlyoffice-lib
   onlyoffice-logs:
-    name: example-wiki-office-online-editing-onlyoffice-logs
+    name: example-wiki-model-test-toast-polish-onlyoffice-logs

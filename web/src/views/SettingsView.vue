@@ -116,8 +116,6 @@
             </div>
           </div>
 
-          <p v-if="testResult" class="workspace-message" :class="testOk ? 'ok' : 'err'">{{ testResult }}</p>
-
           <div class="model-tabs" role="tablist" aria-label="模型类型">
             <button
               v-for="section in modelSections"
@@ -191,14 +189,12 @@
                         :title="entry.id === section.activeId ? '当前使用的模型' : '设为当前模型'"
                         @click="entry.id !== section.activeId && selectModel(section.kind, entry.id)"
                       >
-                        <span class="model-chip-dot"></span>
+                        <Icon v-if="entry.id === section.activeId" name="check" :size="12" class="model-chip-check" />
+                        <span v-else class="model-chip-dot"></span>
                         <span class="model-chip-copy">
                           <strong>{{ entry.model }}</strong>
-                          <small>
-                            {{ lineName(card.provider, entry.line, entry.baseUrl) }}
-                            <template v-if="section.kind === 'emb'"> · {{ entry.dim }} 维</template>
-                          </small>
                         </span>
+                        <span v-if="entry.id === section.activeId" class="model-chip-current">当前</span>
                       </button>
                       <div class="model-chip-actions">
                         <button
@@ -216,11 +212,6 @@
                           <Icon name="x" :size="13" />
                         </button>
                       </div>
-                      <p
-                        v-if="cardTest[entry.id]"
-                        class="model-chip-result"
-                        :class="cardTest[entry.id].ok ? 'ok' : 'err'"
-                      >{{ cardTest[entry.id].ok ? '连接成功' : cardTest[entry.id].error }}</p>
                     </div>
 
                     <button
@@ -234,9 +225,6 @@
                     </button>
                   </div>
 
-                  <p v-if="!card.entries.length && card.provider.hint" class="provider-row-hint">
-                    {{ card.provider.hint }}
-                  </p>
                 </section>
               </div>
 
@@ -255,8 +243,8 @@
                     <div class="provider-mark">
                       <span>{{ providerMark(providerName(model.provider)) }}</span>
                       <img
-                        v-if="providerLogo(model.provider)"
-                        :src="providerLogo(model.provider)"
+                        v-if="model.logo || providerLogo(model.provider)"
+                        :src="model.logo || providerLogo(model.provider)"
                         :alt="`${providerName(model.provider)} Logo`"
                         @error="hideProviderLogo"
                       />
@@ -462,6 +450,27 @@
       </div>
     </div>
 
+    <transition name="connection-toast">
+      <div
+        v-if="connectionNotice.show"
+        class="connection-toast"
+        :class="connectionNotice.ok ? 'success' : 'failure'"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="connection-toast-icon">
+          <Icon :name="connectionNotice.ok ? 'check' : 'x'" :size="16" />
+        </span>
+        <div class="connection-toast-copy">
+          <strong>{{ connectionNotice.title }}</strong>
+          <p>{{ connectionNotice.message }}</p>
+        </div>
+        <button type="button" title="关闭提示" @click="connectionNotice.show = false">
+          <Icon name="x" :size="14" />
+        </button>
+      </div>
+    </transition>
+
     <div v-if="form.show" class="modal-mask" @click.self="form.show = false">
       <div
         class="model-dialog"
@@ -493,6 +502,30 @@
                   {{ provider.name }}
                 </option>
               </select>
+            </div>
+            <div
+              v-if="form.provider === 'custom' || !providerById(form.provider)"
+              class="field field-wide"
+            >
+              <label>服务商 Logo</label>
+              <div class="custom-logo-control">
+                <span class="custom-logo-preview">
+                  <img v-if="form.logo" :src="form.logo" alt="自定义服务商 Logo 预览" />
+                  <Icon v-else name="image" :size="18" />
+                </span>
+                <button class="btn" type="button" @click="providerLogoInput?.click()">
+                  {{ form.logo ? '更换图片' : '上传图片' }}
+                </button>
+                <button v-if="form.logo" class="text-action danger" type="button" @click="form.logo = ''">移除</button>
+                <input
+                  ref="providerLogoInput"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                  hidden
+                  @change="onProviderLogoUpload"
+                />
+              </div>
+              <span class="field-help">支持 PNG、JPG、WebP 或 SVG，保存前会压缩为 96 × 96。</span>
             </div>
             <div class="field">
               <label for="model-line">线路</label>
@@ -553,14 +586,11 @@
           </div>
           <p v-if="formHint" class="dialog-hint">{{ formHint }}</p>
           <p
-            v-if="discoveryMessage"
             class="setting-message discovery-message"
             :class="discoveryOk ? 'ok' : 'err'"
-          >{{ discoveryMessage }}</p>
+            :title="discoveryMessage"
+          >{{ discoveryMessage || ' ' }}</p>
           <p v-if="formError" class="setting-message err">{{ formError }}</p>
-          <p v-if="formTest" class="setting-message" :class="formTest.ok ? 'ok' : 'err'">
-            {{ formTest.ok ? '连接成功' : formTest.error }}
-          </p>
         </div>
 
         <div class="dialog-actions">
@@ -580,7 +610,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useAuthStore } from '../stores/auth';
@@ -605,6 +635,7 @@ interface ModelEntry {
   line?: string;
   baseUrl: string;
   modelsUrl?: string;
+  logo?: string;
   model: string;
   apiKey: string;
   dim?: number;
@@ -615,6 +646,7 @@ interface ModelDraft {
   line: string;
   baseUrl: string;
   modelsUrl: string;
+  logo: string;
   model: string;
   modelChoice: string;
   apiKey: string;
@@ -678,11 +710,23 @@ function hideProviderLogo(event: Event) {
   (event.currentTarget as HTMLImageElement).style.display = 'none';
 }
 
-const cardTest = reactive<Record<string, { ok: boolean; error?: string }>>({});
 const testingId = ref('');
 const testingAll = ref(false);
-const testResult = ref('');
-const testOk = ref(false);
+const connectionNotice = reactive({
+  show: false,
+  ok: true,
+  title: '',
+  message: '',
+});
+let connectionNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+function showConnectionNotice(ok: boolean, title: string, message: string) {
+  if (connectionNoticeTimer) clearTimeout(connectionNoticeTimer);
+  Object.assign(connectionNotice, { show: true, ok, title, message });
+  connectionNoticeTimer = setTimeout(() => {
+    connectionNotice.show = false;
+  }, ok ? 3200 : 5200);
+}
 
 const quickDrafts = reactive<Record<string, ModelDraft>>({});
 const quickErrors = reactive<Record<string, string>>({});
@@ -729,12 +773,13 @@ const form = ref({
   line: 'custom',
   baseUrl: '',
   modelsUrl: '',
+  logo: '',
   model: '',
   modelChoice: '__custom__',
   apiKey: '',
   dim: 1024,
 });
-const formTest = ref<{ ok: boolean; error?: string } | null>(null);
+const providerLogoInput = ref<HTMLInputElement>();
 const formTesting = ref(false);
 const formSaving = ref(false);
 const formError = ref('');
@@ -762,7 +807,7 @@ function unknownModels(kind: ModelKind): ModelEntry[] {
     (kind === 'chat' ? fixedChatProviders.value : fixedEmbeddingProviders.value).map((provider) => provider.id)
   );
   const list = kind === 'chat' ? chatModels.value : embModels.value;
-  return list.filter((model) => !fixedIds.has(model.provider));
+  return list.filter((model) => model.provider !== 'stepfun' && !fixedIds.has(model.provider));
 }
 
 const modelSections = computed(() => [
@@ -816,7 +861,7 @@ const existingFormEntry = computed(() => {
 const effectiveFormApiKey = computed(() => form.value.apiKey.trim() || existingFormEntry.value?.apiKey || '');
 
 function blankDraft(): ModelDraft {
-  return { line: '', baseUrl: '', modelsUrl: '', model: '', modelChoice: '__custom__', apiKey: '', dim: 1024 };
+  return { line: '', baseUrl: '', modelsUrl: '', logo: '', model: '', modelChoice: '__custom__', apiKey: '', dim: 1024 };
 }
 
 function normalizeUrl(url: string): string {
@@ -887,6 +932,7 @@ function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: Model
     line,
     baseUrl: existing?.baseUrl || lineFor(provider, line, kind)?.baseUrl || '',
     modelsUrl: existing?.modelsUrl || lineFor(provider, line, kind)?.modelsUrl || '',
+    logo: existing?.logo || '',
     model: existing?.model || selected?.id || '',
     modelChoice: existingOption || (!existing && selected) ? (existingOption || selected)!.id : '__custom__',
     apiKey: '',
@@ -1054,6 +1100,7 @@ function entryFromDraft(
     line: draft.line,
     baseUrl: normalizeUrl(draft.baseUrl),
     modelsUrl: normalizeUrl(draft.modelsUrl),
+    ...(draft.logo ? { logo: draft.logo } : {}),
     model,
     apiKey: draft.apiKey.trim() || existing?.apiKey || '',
     ...(kind === 'emb' ? { dim: draft.dim || option?.dim || 1024, supportsDimensions } : {}),
@@ -1129,7 +1176,6 @@ async function saveInlineEdit(kind: ModelKind, provider: ProviderPreset, existin
 }
 
 function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
-  formTest.value = null;
   formError.value = '';
   discoveredModels.value = [];
   discoveryMessage.value = '';
@@ -1155,11 +1201,11 @@ function pickProvider(id: string) {
   form.value.line = draft.line;
   form.value.baseUrl = draft.baseUrl;
   form.value.modelsUrl = draft.modelsUrl;
+  form.value.logo = draft.logo;
   form.value.model = draft.model;
   form.value.modelChoice = draft.modelChoice;
   form.value.dim = draft.dim;
   if (!form.value.name) form.value.name = provider.name;
-  formTest.value = null;
   formError.value = '';
   discoveredModels.value = [];
   discoveryMessage.value = '';
@@ -1167,7 +1213,6 @@ function pickProvider(id: string) {
 
 function onFormLineChange() {
   applyLineToDraft(form.value.kind, currentFormProvider.value, form.value, form.value.line);
-  formTest.value = null;
   formError.value = '';
   discoveredModels.value = [];
   discoveryMessage.value = '';
@@ -1176,8 +1221,47 @@ function onFormLineChange() {
 
 function onFormModelChange() {
   applyModelToDraft(form.value.kind, currentFormProvider.value, form.value, form.value.modelChoice);
-  formTest.value = null;
   formError.value = '';
+}
+
+async function onProviderLogoUpload(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    formError.value = '请选择图片文件。';
+    return;
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    formError.value = 'Logo 图片不能超过 2 MB。';
+    return;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('图片无法读取'));
+      image.src = objectUrl;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = 96;
+    canvas.height = 96;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('浏览器不支持图片处理');
+    const scale = Math.min(88 / image.naturalWidth, 88 / image.naturalHeight);
+    const width = Math.max(1, image.naturalWidth * scale);
+    const height = Math.max(1, image.naturalHeight * scale);
+    context.drawImage(image, (96 - width) / 2, (96 - height) / 2, width, height);
+    form.value.logo = canvas.toDataURL('image/png');
+    formError.value = '';
+  } catch (error: any) {
+    formError.value = error?.message || 'Logo 处理失败。';
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function onFormBaseUrlChange() {
@@ -1276,7 +1360,7 @@ async function selectModel(kind: ModelKind, id: string) {
   } catch (error: any) {
     if (kind === 'chat') activeChat.value = previous;
     else activeEmb.value = previous;
-    cardTest[id] = { ok: false, error: errorMessage(error, '启用失败，请重试。') };
+    showConnectionNotice(false, '切换失败', errorMessage(error, '启用失败，请重试。'));
   }
 }
 
@@ -1285,7 +1369,6 @@ async function removeModel(kind: ModelKind, id: string) {
   const previousList = [...(kind === 'chat' ? chatModels.value : embModels.value)];
   const previousActive = kind === 'chat' ? activeChat.value : activeEmb.value;
   try {
-    delete cardTest[id];
     if (kind === 'chat') {
       chatModels.value = chatModels.value.filter((model) => model.id !== id);
       if (activeChat.value === id) activeChat.value = chatModels.value[0]?.id || '';
@@ -1303,22 +1386,25 @@ async function removeModel(kind: ModelKind, id: string) {
       embModels.value = previousList;
       activeEmb.value = previousActive;
     }
-    cardTest[id] = { ok: false, error: errorMessage(error, '删除失败，请重试。') };
+    showConnectionNotice(false, '删除失败', errorMessage(error, '删除失败，请重试。'));
   }
 }
 
 async function testOne(kind: ModelKind, model: ModelEntry) {
   if (!model.apiKey) return;
   testingId.value = model.id;
-  delete cardTest[model.id];
   try {
     const { data } = await api.post('/api/settings/test-llm', {
       entry: model,
       kind: kind === 'chat' ? 'chat' : 'embedding',
     });
-    cardTest[model.id] = { ok: data.ok, error: data.error };
+    showConnectionNotice(
+      Boolean(data.ok),
+      data.ok ? '连接成功' : '连接失败',
+      data.ok ? `${providerName(model.provider)} · ${model.model}` : (data.error || '模型连接测试失败。')
+    );
   } catch (error: any) {
-    cardTest[model.id] = { ok: false, error: errorMessage(error, '连接测试失败。') };
+    showConnectionNotice(false, '连接失败', errorMessage(error, '连接测试失败。'));
   } finally {
     testingId.value = '';
   }
@@ -1326,7 +1412,6 @@ async function testOne(kind: ModelKind, model: ModelEntry) {
 
 async function testForm() {
   formError.value = '';
-  formTest.value = null;
   const existing = existingFormEntry.value;
   const effectiveKey = form.value.apiKey.trim() || existing?.apiKey || '';
   const error = validateDraft(form.value, form.value.kind, effectiveKey);
@@ -1341,9 +1426,13 @@ async function testForm() {
       entry,
       kind: form.value.kind === 'chat' ? 'chat' : 'embedding',
     });
-    formTest.value = { ok: data.ok, error: data.error };
+    showConnectionNotice(
+      Boolean(data.ok),
+      data.ok ? '连接成功' : '连接失败',
+      data.ok ? `${currentFormProvider.value.name} · ${entry.model}` : (data.error || '模型连接测试失败。')
+    );
   } catch (error: any) {
-    formTest.value = { ok: false, error: errorMessage(error, '连接测试失败。') };
+    showConnectionNotice(false, '连接失败', errorMessage(error, '连接测试失败。'));
   } finally {
     formTesting.value = false;
   }
@@ -1351,16 +1440,18 @@ async function testForm() {
 
 async function testAll() {
   testingAll.value = true;
-  testResult.value = '';
   try {
     const { data } = await api.post('/api/settings/test-llm');
-    testOk.value = data.chat && data.embedding;
-    testResult.value = testOk.value
-      ? '对话模型与向量模型均连接成功'
-      : `连接异常：${data.error || (data.chat ? '向量模型失败' : '对话模型失败')}`;
+    const ok = Boolean(data.chat && data.embedding);
+    showConnectionNotice(
+      ok,
+      ok ? '全部连接正常' : '连接测试失败',
+      ok
+        ? '对话模型与向量模型均连接成功。'
+        : (data.error || (data.chat ? '向量模型连接失败。' : '对话模型连接失败。'))
+    );
   } catch (error: any) {
-    testOk.value = false;
-    testResult.value = errorMessage(error, '连接测试失败。');
+    showConnectionNotice(false, '连接测试失败', errorMessage(error, '连接测试失败。'));
   } finally {
     testingAll.value = false;
   }
@@ -1373,8 +1464,7 @@ function errorMessage(error: any, fallback: string): string {
 async function rebuild() {
   if (!confirm('将重新扫描并索引全部页面，可能需要几分钟。继续？')) return;
   await api.post('/api/settings/rebuild-index');
-  testResult.value = '索引重建已在后台开始';
-  testOk.value = true;
+  showConnectionNotice(true, '索引重建已开始', '任务正在后台运行。');
 }
 
 async function changePwd() {
@@ -1612,6 +1702,10 @@ async function load() {
 onMounted(() => {
   load();
   loadTrash();
+});
+
+onUnmounted(() => {
+  if (connectionNoticeTimer) clearTimeout(connectionNoticeTimer);
 });
 </script>
 
@@ -1941,6 +2035,220 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 @media (prefers-reduced-motion: reduce) {
   .provider-card,
   .model-card { transition: none; }
+}
+</style>
+
+<style scoped>
+.provider-row {
+  grid-template-columns: 190px minmax(0, 1fr);
+}
+
+.provider-row .provider-title strong {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.provider-row .provider-mark,
+.custom-model-row .provider-mark {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.provider-row .provider-mark img,
+.custom-model-row .provider-mark img {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.5),
+    0 2px 5px rgba(0, 0, 0, 0.14);
+}
+
+:global(html.dark) .provider-row .provider-mark img,
+:global(html.dark) .custom-model-row .provider-mark img {
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.34),
+    0 2px 6px rgba(0, 0, 0, 0.42);
+}
+
+.model-config-chip.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.model-config-chip.active .model-chip-copy strong,
+.model-config-chip.active .model-chip-check {
+  color: #fff;
+}
+
+.model-config-chip.active .model-chip-actions {
+  border-left-color: rgba(255, 255, 255, 0.28);
+}
+
+.model-config-chip.active .model-chip-actions button {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.model-config-chip.active .model-chip-actions button:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.model-chip-current {
+  margin-left: 3px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.connection-toast {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  z-index: 220;
+  width: min(360px, calc(100vw - 28px));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(14px);
+}
+
+.connection-toast.success {
+  border-left: 3px solid var(--success);
+}
+
+.connection-toast.failure {
+  border-left: 3px solid var(--danger);
+}
+
+.connection-toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+}
+
+.connection-toast.success .connection-toast-icon {
+  background: color-mix(in srgb, var(--success) 14%, var(--bg));
+  color: var(--success);
+}
+
+.connection-toast.failure .connection-toast-icon {
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg));
+  color: var(--danger);
+}
+
+.connection-toast-copy {
+  min-width: 0;
+}
+
+.connection-toast-copy strong {
+  display: block;
+  font-size: 13px;
+}
+
+.connection-toast-copy p {
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.connection-toast > button {
+  display: inline-flex;
+  padding: 3px;
+  color: var(--text-faint);
+}
+
+.connection-toast-enter-active,
+.connection-toast-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.connection-toast-enter-from,
+.connection-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+.custom-logo-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.custom-logo-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 8px;
+  color: var(--text-faint);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.42),
+    0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.custom-logo-preview img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: contain;
+}
+
+:global(html.dark) .custom-logo-preview {
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.32),
+    0 2px 6px rgba(0, 0, 0, 0.38);
+}
+
+@media (max-width: 760px) {
+  .provider-row {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-toast {
+    top: 12px;
+    right: 14px;
+    left: 14px;
+    width: auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .custom-logo-control {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connection-toast-enter-active,
+  .connection-toast-leave-active {
+    transition: none;
+  }
 }
 </style>
 
@@ -3762,6 +4070,85 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   .switch-control > span,
   .switch-control > span::after {
     transition: none;
+  }
+}
+</style>
+
+<style scoped>
+.provider-row {
+  grid-template-columns: 190px minmax(0, 1fr);
+}
+
+.provider-row .provider-title strong {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.provider-row .provider-mark,
+.custom-model-row .provider-mark {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.provider-row .provider-mark img,
+.custom-model-row .provider-mark img {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.5),
+    0 2px 5px rgba(0, 0, 0, 0.14);
+}
+
+:global(html.dark) .provider-row .provider-mark img,
+:global(html.dark) .custom-model-row .provider-mark img {
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.34),
+    0 2px 6px rgba(0, 0, 0, 0.42);
+}
+
+.model-config-chip.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.model-config-chip.active .model-chip-copy strong,
+.model-config-chip.active .model-chip-check {
+  color: #fff;
+}
+
+.model-config-chip.active .model-chip-actions {
+  border-left-color: rgba(255, 255, 255, 0.28);
+}
+
+.model-config-chip.active .model-chip-actions button {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.model-config-chip.active .model-chip-actions button:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.discovery-message {
+  min-height: 17px;
+  overflow: hidden;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .provider-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

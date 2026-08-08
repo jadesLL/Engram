@@ -5,7 +5,6 @@ import aliyunLogo from './assets/providers/aliyun.ico';
 import doubaoLogo from './assets/providers/doubao.png';
 import xiaomiLogo from './assets/providers/xiaomi.png';
 import minimaxLogo from './assets/providers/minimax.ico';
-import stepfunLogo from './assets/providers/stepfun.png';
 import hunyuanLogo from './assets/providers/hunyuan.svg';
 import siliconflowLogo from './assets/providers/siliconflow.svg';
 import openaiLogo from './assets/providers/openai.svg';
@@ -23,7 +22,7 @@ export interface ModelOption {
 export interface ApiLine {
   id: string;
   name: string;
-  type: 'payg' | 'token-plan' | 'coding-plan';
+  type: 'payg' | 'token-plan' | 'coding-plan' | 'agent-plan';
   baseUrl: string;
   /** 获取该线路可用模型的 API。国内厂商使用中国大陆官方域名。 */
   modelsUrl?: string;
@@ -234,7 +233,7 @@ export const PROVIDERS: ProviderPreset[] = [
   },
   {
     id: 'doubao',
-    name: '豆包火山方舟',
+    name: '火山方舟',
     logo: doubaoLogo,
     lines: [
       {
@@ -245,6 +244,34 @@ export const PROVIDERS: ProviderPreset[] = [
         modelsUrl: 'https://ark.cn-beijing.volces.com/api/v3/models',
         hint: '模型名称也可填写控制台中 ep- 开头的推理接入点。',
         apiKeyPlaceholder: 'API Key',
+      },
+      {
+        id: 'agent-plan',
+        name: 'Agent Plan',
+        type: 'agent-plan',
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3',
+        modelsUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3/models',
+        models: ['ark-code-latest', 'minimax-m2.7', 'kimi-k2.6', 'kimi-k2.7-code'],
+        hint: 'Agent Plan 使用套餐专用 API Key，支持 Responses API。',
+        apiKeyPlaceholder: 'Agent Plan API Key',
+      },
+      {
+        id: 'coding-plan',
+        name: 'Coding Plan',
+        type: 'coding-plan',
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+        modelsUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3/models',
+        models: [
+          'ark-code-latest',
+          'doubao-seed-2.0-code',
+          'doubao-seed-code-preview-251028',
+          'minimax-m2.5',
+          'glm-4.7',
+          'deepseek-v3.2',
+          'kimi-k2.5',
+        ],
+        hint: 'Coding Plan 使用套餐专用 API Key。',
+        apiKeyPlaceholder: 'Coding Plan API Key',
       },
     ],
     chatModels: options([
@@ -271,7 +298,7 @@ export const PROVIDERS: ProviderPreset[] = [
     ],
     defaultChat: 'doubao-seed-2-1-pro',
     defaultEmbedding: 'doubao-embedding-large-text-240915',
-    hint: '可直接填写控制台中 ep- 开头的接入点作为自定义模型名称。',
+    hint: '支持按量付费、Agent Plan 和 Coding Plan，可直接填写 ep- 开头的接入点。',
   },
   {
     id: 'xiaomi',
@@ -334,41 +361,6 @@ export const PROVIDERS: ProviderPreset[] = [
     defaultChat: 'MiniMax-M3',
   },
   {
-    id: 'stepfun',
-    name: '阶跃 StepFun',
-    logo: stepfunLogo,
-    lines: [
-      {
-        id: 'payg',
-        name: '按量付费',
-        type: 'payg',
-        baseUrl: 'https://api.stepfun.com/v1',
-        modelsUrl: 'https://api.stepfun.com/v1/models',
-        apiKeyPlaceholder: 'API Key',
-      },
-      {
-        id: 'step-plan',
-        name: 'Step Plan',
-        type: 'token-plan',
-        baseUrl: 'https://api.stepfun.com/step_plan/v1',
-        modelsUrl: 'https://api.stepfun.com/step_plan/v1/models',
-        models: ['step-3.7-flash', 'step-3.5-flash-2603', 'step-3.5-flash', 'step-router-v1'],
-        hint: 'Step Plan 只支持指定的 Flash 与 Router 模型。',
-        apiKeyPlaceholder: 'Step Plan API Key',
-      },
-    ],
-    chatModels: options([
-      'step-3.7-flash',
-      'step-3.5-flash',
-      'step-3.5-flash-2603',
-      'step-1o-turbo-vision',
-      'step-router-v1',
-      'step-2x-large',
-    ]),
-    embeddingModels: [],
-    defaultChat: 'step-3.7-flash',
-  },
-  {
     id: 'hunyuan',
     name: '腾讯混元',
     logo: hunyuanLogo,
@@ -424,7 +416,6 @@ export const PROVIDERS: ProviderPreset[] = [
       { id: 'moonshotai/Kimi-K2.7-Code', name: 'Kimi K2.7 Code' },
       { id: 'Pro/moonshotai/Kimi-K2.6', name: 'Kimi K2.6' },
       { id: 'MiniMaxAI/MiniMax-M2.5', name: 'MiniMax M2.5' },
-      { id: 'stepfun-ai/Step-3.5-Flash', name: 'Step 3.5 Flash' },
       { id: 'tencent/Hunyuan-A13B-Instruct', name: 'Hunyuan A13B Instruct' },
     ],
     embeddingModels: [

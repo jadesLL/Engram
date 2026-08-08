@@ -8,6 +8,7 @@ export interface ModelEntry {
   provider: string;  // 预设 id
   baseUrl: string;
   modelsUrl?: string;
+  logo?: string;
   model: string;
   apiKey: string;
   dim?: number;      // embedding 维度
