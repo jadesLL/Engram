@@ -7,11 +7,20 @@
 
 | 物理文件夹 | 分支 | 用途 |
 |---|---|---|
-| `Wiki知识库/` (本目录) | `main` | 主干；**正在改的功能**继续在这里干 |
+| `Wiki知识库/` (本目录) | `main` | 集成与部署主干；禁止直接开发 |
 | `Wiki知识库-<feature>/` (按需创建) | `feat/<feature>` | 各并行功能的工作树 |
 
-> 主目录 = `main` = 当前那个 in-progress 功能的工作区。基线提交 `2ada68d` 已把当前状态
-> （含该 WIP）快照进去。等该功能改完，在 main 上再提交一次即可，无需迁移。
+> `main` 只接收串行合并并用于主站部署。所有功能、修复和应用代码调整都必须进入独立 worktree。
+
+## 任务类型与资源范围
+
+| 任务类型 | Worktree | 独立容器 / 端口 / 数据卷 | 合并后重部署主站 |
+|---|---|---|---|
+| 只读检查、答疑、代码审查 | 不需要 | 不需要 | 不需要 |
+| 仅维护 `AGENTS.md`、`WORKTREES.md` 或纯说明文档 | 需要文档 worktree | 不需要 | 不需要 |
+| 修改源码、运行时配置、依赖、测试或构建产物 | 需要功能 worktree | 需要（按任务实际运行范围隔离） | 需要 |
+
+> 纯文档任务仍需提交分支、串行合并、更新活动表并清理 worktree；但不得为此无意义地创建 Docker 资源或重部署应用。
 
 ## 起一个新 worktree（给第 N 个 Agent）
 
@@ -135,6 +144,7 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 |---|---|---|---|---|---|---|
 | 集成分支(主干) | `Wiki知识库/` | `main` | `example-wiki` | 8080 | `example-wiki-data` | 干净，禁止直接开发 |
 | 数字角标 | `Wiki知识库-number-badge/` | `feat/number-badge` | `example-wiki-number-badge` | 8082 | `example-wiki-data-number-badge` | 开发中 |
+| Agent 指引分流 | ~~`Wiki知识库-agent-guidance-scope/`~~ | ~~`feat/agent-guidance-scope`~~ | ~~`example-wiki-agent-guidance-scope`~~ | ~~8086~~ | ~~`example-wiki-data-agent-guidance-scope`~~ | 已合并入 main |
 | 协作规则分流 | ~~`Wiki知识库-worktree-policy/`~~ | ~~`feat/worktree-policy`~~ | — | — | — | 已合并入 main |
 | 回收站 | ~~`Wiki知识库-recycle-bin/`~~ | ~~`feat/recycle-bin`~~ | ~~`example-wiki-recycle-bin`~~ | ~~8089~~ | ~~`example-wiki-data-recycle-bin`~~ | 已合并入 main |
 | AI整理日志 | ~~`Wiki知识库-ai-organize-logs/`~~ | ~~`feat/ai-organize-logs`~~ | ~~`example-wiki-ai-logs`~~ | ~~8081~~ | ~~`example-wiki-data-ai-logs`~~ | 已合并入 main |
