@@ -3,16 +3,22 @@
     <div ref="vditorEl" class="vditor-host" />
 
     <!-- HTML 预览叠加层（美化后的只读渲染） -->
+    <!-- 返回按钮是叠加层的兄弟元素，不能用子元素：Vditor.preview() 会 innerHTML= 清空容器 -->
+    <button
+      v-if="htmlPreview"
+      class="html-preview-exit"
+      title="返回编辑（Esc）"
+      @click="toggleHtmlPreview()"
+    >
+      ✕ 返回编辑
+    </button>
     <div
       v-if="htmlPreview"
       class="html-preview-overlay"
       ref="htmlPreviewEl"
+      tabindex="0"
       @keydown.esc="toggleHtmlPreview()"
-    >
-      <button class="html-preview-exit" title="返回编辑（Esc）" @click="toggleHtmlPreview()">
-        ✕ 返回编辑
-      </button>
-    </div>
+    />
 
     <!-- 双链插入弹窗 -->
     <div v-if="linkPopup" class="link-popup card" @keydown.stop>
@@ -396,12 +402,12 @@ onUnmounted(() => vditor?.destroy());
 }
 .link-item:hover { background: var(--bg-hover); }
 
-/* HTML 预览叠加层内的「返回编辑」按钮 */
+/* HTML 预览的「返回编辑」按钮（叠加层兄弟元素，绝对定位浮在右上角） */
 .html-preview-exit {
-  position: sticky;
-  top: 16px;
-  float: right;
-  z-index: 30;
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 40;
   display: inline-flex;
   align-items: center;
   gap: 4px;
