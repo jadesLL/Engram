@@ -108,6 +108,81 @@ git worktree add "../Wiki知识库-<feature>" -b feat/<feature>
 - **端口**：各 worktree 用不同端口（server 默认端口见 config），通过 env 覆盖。活动表只是协调记录，不能代替主机监听和 Docker 映射检查；计划时初检，执行前必须复验。
 - **构建产物**：`dist/` 已被 `.gitignore` 忽略，各 worktree 各自构建互不影响。
 
+## Docker 资源清理规则（合并完成的硬门禁）
+
+worktree 合并完成后，清理对象不只有容器、数据卷、目录和分支，还必须处理该功能的**带标签镜像**。功能资源的完整集合是：
+
+- 容器：`example-wiki-<feature>`
+- 数据卷：`example-wiki-data-<feature>`
+- 镜像：`example-wiki:<feature>`
+- Git worktree：`../Wiki知识库-<feature>`
+- Git 分支：`feat/<feature>`
+
+`docker image prune` 只会清理悬空镜像，**不会删除仍带 `example-wiki:<feature>` 标签的历史功能镜像**。因此合并并确认主站正常后，必须显式删除功能镜像：
+
+```bash
+docker image rm "example-wiki:<feature>"
+```
+
+删除前必须确认没有任何容器仍引用该镜像：
+
+```bash
+docker ps -a --filter "ancestor=example-wiki:<feature>" --format '{{.Names}}'
+```
+
+有输出时不得删除镜像；先判断该容器是否属于本功能且已经完成合并，再按正常清理流程停止并删除。不得处理其他 Agent、其他仓库或用户仍在使用的容器和镜像。
+
+**默认保留：**
+
+- 主站镜像 `example-wiki:0.1.0`
+- 构建基础镜像 `node:22-slim`（可能同时显示镜像源别名）
+- 主数据卷 `example-wiki-data`
+- 明确命名的备份卷，如 `example-wiki-data-backup-*`
+
+**禁止使用宽泛清理命令：**
+
+```text
+docker system prune -a --volumes
+```
+
+该命令可能删除其他项目、其他 Agent 或用户需要的镜像、网络和数据卷。必须按明确的功能名逐项清理，并在执行前校验目标名称。
+
+### 构建缓存与镜像分开处理
+
+BuildKit 构建缓存不是功能镜像。使用以下命令分别检查：
+
+```bash
+docker system df
+docker buildx du
+```
+
+- 默认保留构建缓存，以加速后续 Docker 构建。
+- 磁盘空间紧张时，先报告缓存总量和可回收量，再由用户确认是否清理。
+- 获得确认后使用 `docker builder prune` 或 `docker buildx prune` 清理可回收缓存；不要附带 `--volumes`。
+- 删除功能镜像后仍显示较大构建缓存是正常现象，不能把它误判成 worktree 镜像残留。
+
+### 合并后的最终核验
+
+每个功能合并后必须同时检查 Git、目录、容器、卷和镜像五层：
+
+```bash
+git worktree list
+git branch --list 'feat/*'
+docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}'
+docker volume ls --format '{{.Name}}'
+docker images --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}'
+```
+
+功能真正清理完成的标准：
+
+1. `git worktree list` 不再出现该功能目录。
+2. 不再存在 `feat/<feature>` 分支。
+3. 不再存在 `example-wiki-<feature>` 容器。
+4. 不再存在 `example-wiki-data-<feature>` 数据卷。
+5. 不再存在 `example-wiki:<feature>` 镜像。
+6. 主站 `http://localhost:8080/` 返回成功，`example-wiki:0.1.0` 仍被主容器使用。
+7. `WORKTREES.md` 活动表和操作日志已更新。
+
 ## 合回 main
 
 功能在 worktree 里完成并自测后，回 main 合并：
@@ -193,6 +268,7 @@ curl http://localhost:8081/...                          # 验证
 ```bash
 scripts/merge-feature.sh ai-organize-logs
 # 自动: merge feat -> main → 重建 example-wiki:0.1.0 → 重部署 main 容器(8080) → 清理功能容器/卷/worktree/分支
+# 随后必须确认并删除功能镜像 example-wiki:ai-organize-logs，再执行五层最终核验
 ```
 
 **4. 冲突时**（脚本会停住提示）：
@@ -220,6 +296,7 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 | 集成分支(主干) | `Wiki知识库/` | `main` | `example-wiki` | 8080 | `example-wiki-data` | 干净，禁止直接开发 |
 | 数字角标 | ~~`Wiki知识库-number-badge/`~~ | ~~`feat/number-badge`~~ | ~~`example-wiki-number-badge`~~ | ~~8082~~ | ~~`example-wiki-data-number-badge`~~ | 已合并入 main |
 | 首页按钮 | ~~`Wiki知识库-home-button/`~~ | ~~`feat/home-button`~~ | ~~`example-wiki-home-button`~~ | ~~8085~~ | ~~`example-wiki-data-home-button`~~ | 已合并入 main |
+| Docker 镜像清理规则 | ~~`Wiki知识库-worktree-image-cleanup-docs/`~~ | ~~`feat/worktree-image-cleanup-docs`~~ | — | — | — | 已合并入 main |
 | Agent 指引分流 | ~~`Wiki知识库-agent-guidance-scope/`~~ | ~~`feat/agent-guidance-scope`~~ | ~~`example-wiki-agent-guidance-scope`~~ | ~~8086~~ | ~~`example-wiki-data-agent-guidance-scope`~~ | 已合并入 main |
 | 协作规则分流 | ~~`Wiki知识库-worktree-policy/`~~ | ~~`feat/worktree-policy`~~ | — | — | — | 已合并入 main |
 | 模糊实体消歧 | ~~`Wiki知识库-ambiguous-entity/`~~ | ~~`feat/ambiguous-entity`~~ | ~~`example-wiki-ambiguous-entity`~~ | ~~8084~~ | ~~`example-wiki-data-ambiguous-entity`~~ | 已合并入 main |
@@ -253,7 +330,9 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
    scripts/merge-feature.sh <你的功能名>     # 自动: merge→main → 重部署8080 → 清理你的资源
    ```
    - 冲突 → 脚本会停住：在 main 仓库解决冲突 → `git add -A && git commit` → `scripts/merge-feature.sh --finish <功能名>`。
-7. **合并完更新本表**：把你的行标成"已合并"，或删掉该行。
+7. **删除功能镜像**：确认没有容器引用后，执行 `docker image rm "example-wiki:<功能名>"`。不要删除 `example-wiki:0.1.0`、`node:22-slim`、主数据卷或备份卷。
+8. **执行五层最终核验**：检查 worktree、分支、容器、数据卷和镜像均无该功能残留；构建缓存单独报告，默认保留。
+9. **合并完更新本表和操作日志**：把你的行标成"已合并"，或删掉该行，并记录完整清理结果。
 
 ## 串行合并排班
 
