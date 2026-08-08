@@ -179,8 +179,21 @@
         </div>
 
         <div class="batch-toolbar">
-          <label><input type="checkbox" :checked="allSelected" @change="toggleAll(($event.target as HTMLInputElement).checked)" /> 全选</label>
-          <span class="muted small">已选 {{ selectedBatchCount }} / {{ batch.items.length }}</span>
+          <div class="batch-selection">
+            <label><input type="checkbox" :checked="allSelected" @change="toggleAll(($event.target as HTMLInputElement).checked)" /> 全选</label>
+            <span class="muted small">已选 {{ selectedBatchCount }} / {{ selectableBatchCount }}</span>
+          </div>
+          <div class="batch-presets">
+            <button
+              v-for="preset in batchPresets"
+              :key="preset.action"
+              class="btn small"
+              :class="{ danger: preset.action === 'dismiss' }"
+              @click="applyBatchPreset(preset.action)"
+            >
+              {{ preset.label }}
+            </button>
+          </div>
         </div>
 
         <div class="batch-list">
@@ -250,7 +263,7 @@ const actionConfig: Record<string, { button: string; description: string; itemAc
   contradiction: { button: '批量标记已处理', description: '确认已人工处理选中的矛盾提醒。', itemAction: '标记已处理', impact: '只关闭报告，不修改任何页面正文。' },
   single_source: { button: '批量标记已知悉', description: '确认已知悉选中页面仅有单一来源。', itemAction: '标记已知悉', impact: '只关闭报告，不修改来源或页面正文。' },
   missing_sections: { button: '批量补章节', description: '为实体页补充缺失的空章节骨架。', itemAction: '补空章节', impact: '只添加“当前理解”或“时间线”标题，不生成正文。' },
-  pending_review: { button: '批量审核入库', description: '逐条选择知识类型或不入库。', itemAction: '审核候选', impact: '选中入库的候选将创建或更新 Wiki 页面；不入库项只关闭报告。' },
+  pending_review: { button: '批量审核入库', description: '默认勾选可处理项并采用系统推荐；模糊项仍需逐条确认。', itemAction: '审核候选', impact: '选中入库的候选将创建或更新 Wiki 页面；不入库项只关闭报告。' },
   ingest_questions: { button: '批量标记已知悉', description: '确认已查看选中的整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
   enrich: { button: '批量忽略', description: '忽略当前不准备完善的页面提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
   stale: { button: '批量复核', description: '确认选中页面内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
@@ -261,12 +274,27 @@ const batch = reactive({ show: false, title: '', description: '', items: [] as B
 const activeAction = computed(() => actionConfig[tab.value]);
 const activeCount = computed(() => grouped.value[tab.value]?.length || 0);
 const selectedBatchCount = computed(() => batch.items.filter((item) => item.selected).length);
+const selectableBatchCount = computed(() => batch.items.filter((item) => !item.disabled).length);
 const allSelected = computed(() => {
   const selectable = batch.items.filter((item) => !item.disabled);
   return selectable.length > 0 && selectable.every((item) => item.selected);
 });
 const isSuggestedKind = computed(() => ['duplicate', 'pending_review'].includes(tab.value));
 const impactSummary = computed(() => `${selectedBatchCount.value} 项将执行。${activeAction.value.impact}`);
+const batchPresets = computed(() => {
+  const presets = [{ action: 'recommended', label: '按推荐' }];
+  if (tab.value === 'pending_review') presets.push({ action: 'dismiss', label: '全部不入库' });
+  if (tab.value === 'deadlink') {
+    presets.push(
+      { action: 'concept', label: '全部概念' },
+      { action: 'person', label: '全部人物' },
+      { action: 'project', label: '全部项目' },
+      { action: 'org', label: '全部组织' },
+    );
+  }
+  if (tab.value === 'duplicate') presets.push({ action: 'keep_both', label: '全部保留两者' });
+  return presets;
+});
 
 const grouped = computed(() => {
   const g: Record<string, any[]> = {};
@@ -377,6 +405,14 @@ function closeBatch() {
 
 function toggleAll(selected: boolean) {
   batch.items.forEach((item) => { if (!item.disabled) item.selected = selected; });
+}
+
+function applyBatchPreset(action: string) {
+  batch.items.forEach((item) => {
+    if (item.disabled) return;
+    item.selected = true;
+    item.action = action === 'recommended' ? item.suggestedAction : action;
+  });
 }
 
 function optionLabel(item: BatchItem, value: string) {
@@ -507,8 +543,10 @@ onMounted(load);
 .modal-head h3 { margin: 0; }
 .modal-head p { margin: 5px 0 0; }
 .icon-close { width: 32px; height: 32px; font-size: 24px; color: var(--text-secondary); }
-.batch-toolbar { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 8px; }
-.batch-toolbar label { display: flex; align-items: center; gap: 7px; }
+.batch-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 8px; }
+.batch-selection, .batch-presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.batch-selection label { display: flex; align-items: center; gap: 7px; }
+.batch-presets .danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
 .batch-list { min-height: 100px; overflow: auto; border-top: 1px solid var(--border); }
 .batch-item { min-height: 68px; display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(130px, 190px); align-items: center; gap: 10px; padding: 10px 8px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .batch-item.selected { background: var(--accent-soft); }
@@ -523,6 +561,7 @@ onMounted(load);
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 @media (max-width: 640px) {
   .category-action { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .batch-toolbar { align-items: flex-start; flex-direction: column; }
   .batch-item { grid-template-columns: 22px minmax(0, 1fr); }
   .batch-item select, .batch-item .action-chip { grid-column: 2; justify-self: stretch; }
 }

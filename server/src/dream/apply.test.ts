@@ -49,7 +49,7 @@ test('all nine categories expose the expected default selection', () => {
   for (const kind of kinds) {
     const preview = previewReportActions(kind as any);
     assert.equal(preview.items.length, 1, kind);
-    assert.equal(preview.items[0].selected, ['deadlink', 'missing_sections'].includes(kind), kind);
+    assert.equal(preview.items[0].selected, ['deadlink', 'missing_sections', 'pending_review'].includes(kind), kind);
   }
 });
 
@@ -147,6 +147,7 @@ test('ambiguous reviews are excluded from batch apply and can merge into a selec
   addReports([{ kind: 'pending_review', payload }]);
   const preview = previewReportActions('pending_review').items[0];
   assert.equal(preview.disabled, true);
+  assert.equal(preview.selected, false);
   assert.equal(preview.suggestedAction, 'manual');
 
   const applied = applyReviewedCandidate(payload, 'org', { target: target.id });

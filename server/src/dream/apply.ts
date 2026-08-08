@@ -29,7 +29,7 @@ const ACTION_META: Record<ReportActionKind, { title: string; description: string
   contradiction: { title: '批量处理矛盾报告', description: '只将选中的矛盾标记为已处理，不修改页面正文。', button: '批量标记已处理', defaultSelected: false },
   single_source: { title: '批量确认来源单一', description: '只将选中的提醒标记为已知悉，不修改页面正文。', button: '批量标记已知悉', defaultSelected: false },
   missing_sections: { title: '批量补全章节骨架', description: '只补充缺失的空章节，不生成或猜测正文。', button: '批量补章节', defaultSelected: true },
-  pending_review: { title: '批量审核候选', description: '逐条选择入库类型或不入库，确认后统一执行。', button: '批量审核入库', defaultSelected: false },
+  pending_review: { title: '批量审核候选', description: '默认勾选可处理项并采用系统推荐；也可批量改为不入库。', button: '批量审核入库', defaultSelected: true },
   ingest_questions: { title: '批量确认整理追问', description: '只将选中的追问标记为已知悉。', button: '批量标记已知悉', defaultSelected: false },
   enrich: { title: '批量忽略待丰富提醒', description: '忽略选中的提醒，不自动生成页面内容。', button: '批量忽略', defaultSelected: false },
   stale: { title: '批量复核过期页面', description: '写入独立的最后复核日期，不改变正文更新时间。', button: '批量复核', defaultSelected: false },
@@ -94,7 +94,8 @@ export function previewReportActions(kind: ReportActionKind) {
       } else if (kind === 'missing_sections') {
         suggestedAction = 'repair';
       }
-      return { id: row.id, payload, selected: meta.defaultSelected, disabled: Boolean(kind === 'pending_review' && payload.ambiguity), suggestedAction, options };
+      const disabled = Boolean(kind === 'pending_review' && payload.ambiguity);
+      return { id: row.id, payload, selected: disabled ? false : meta.defaultSelected, disabled, suggestedAction, options };
     }),
   };
 }
