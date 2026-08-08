@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
+import { docxToText } from './docx.js';
 
 function decodeXml(value: string): string {
   return value
@@ -49,4 +50,12 @@ export async function pptxToText(buffer: Buffer): Promise<string> {
     if (texts.length) parts.push(`## 第 ${i} 页\n\n${texts.join('\n')}`);
   }
   return parts.join('\n\n').trim();
+}
+
+/** Office 文件统一文本提取，供上传和在线编辑回写后刷新索引。 */
+export async function officeToText(ext: string, buffer: Buffer): Promise<string | null> {
+  if (ext === 'docx') return docxToText(buffer);
+  if (ext === 'xlsx') return xlsxToText(buffer);
+  if (ext === 'pptx') return pptxToText(buffer);
+  return null;
 }

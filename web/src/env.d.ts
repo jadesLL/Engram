@@ -15,3 +15,11 @@ declare module 'pptx-preview' {
 
 declare module 'x-data-spreadsheet/dist/xspreadsheet.css';
 declare module 'x-data-spreadsheet/dist/locale/zh-cn';
+
+interface Window {
+  DocsAPI?: {
+    DocEditor: new (elementId: string, config: Record<string, unknown>) => {
+      destroyEditor(): void;
+    };
+  };
+}

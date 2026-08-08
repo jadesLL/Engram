@@ -308,6 +308,7 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 | 知识图谱优化 | ~~`Wiki知识库-graph-opt/`~~ | ~~`feat/graph-opt`~~ | ~~`example-wiki-graph-opt`~~ | ~~8083~~ | ~~`example-wiki-data-graph-opt`~~ | 已合并入 main |
 | 图谱拖动修复 | ~~`Wiki知识库-graph-drag/`~~ | ~~`feat/graph-drag`~~ | ~~`example-wiki-graph-drag`~~ | ~~8086~~ | ~~`example-wiki-data-graph-drag`~~ | 已合并入 main |
 | 实时页面刷新 | ~~`Wiki知识库-realtime-sync/`~~ | ~~`feat/realtime-sync`~~ | ~~`example-wiki-realtime-sync`~~ | ~~8083~~ | ~~`example-wiki-data-realtime-sync`~~ | 已合并入 main |
+| Office 在线编辑 | ~~`Wiki知识库-office-online-editing/`~~ | ~~`feat/office-online-editing`~~ | ~~`example-wiki-office-online-editing` + `example-wiki-office-online-editing-onlyoffice`~~ | ~~8086~~ | ~~`example-wiki-data-office-online-editing` + Office 专属卷~~ | 已合并入 main |
 
 > `8080` 永久保留给 main。功能端口可从 `8081` 起顺延，但顺延值只代表候选端口；必须经过计划初检和执行前复验，不能仅凭编号或活动表判断空闲。
 
