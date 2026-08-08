@@ -76,12 +76,17 @@ export function previewReportActions(kind: ReportActionKind) {
           { value: 'keep_both', label: '保留两者' },
         ];
       } else if (kind === 'pending_review') {
-        suggestedAction = pendingSuggestion(payload);
-        options = [
-          { value: 'concept', label: '收为概念' }, { value: 'person', label: '收为人物' },
-          { value: 'project', label: '收为项目' }, { value: 'org', label: '收为组织' },
-          { value: 'dismiss', label: '不入库' },
-        ];
+        if (payload.ambiguity) {
+          suggestedAction = 'manual';
+          options = [];
+        } else {
+          suggestedAction = pendingSuggestion(payload);
+          options = [
+            { value: 'concept', label: '收为概念' }, { value: 'person', label: '收为人物' },
+            { value: 'project', label: '收为项目' }, { value: 'org', label: '收为组织' },
+            { value: 'dismiss', label: '不入库' },
+          ];
+        }
       } else if (kind === 'enrich') {
         suggestedAction = 'dismiss';
       } else if (kind === 'stale') {
@@ -89,7 +94,7 @@ export function previewReportActions(kind: ReportActionKind) {
       } else if (kind === 'missing_sections') {
         suggestedAction = 'repair';
       }
-      return { id: row.id, payload, selected: meta.defaultSelected, suggestedAction, options };
+      return { id: row.id, payload, selected: meta.defaultSelected, disabled: Boolean(kind === 'pending_review' && payload.ambiguity), suggestedAction, options };
     }),
   };
 }

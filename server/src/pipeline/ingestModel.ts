@@ -89,6 +89,18 @@ export const planItemSchema = z.object({
   summary: z.string().optional().default(''),
   factIds: z.array(z.string()).default([]),
   reason: z.string().optional().default(''),
+  ambiguity: z.object({
+    category: z.enum(['role_title', 'possible_typo']),
+    label: z.string(),
+    question: z.string(),
+    suggestions: z.array(z.object({
+      id: z.string().optional(),
+      title: z.string(),
+      type: z.string(),
+      score: z.number(),
+      reason: z.string(),
+    })).default([]),
+  }).optional(),
 });
 export const planOutputSchema = z.object({ items: z.array(planItemSchema).max(12).default([]) });
 

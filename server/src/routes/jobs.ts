@@ -148,23 +148,24 @@ export async function jobRoutes(app: FastifyInstance) {
 
   app.post('/api/ingest/candidates/:id/review', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { decision, target, note, kind } = req.body as {
-      decision?: 'approved' | 'dismissed'; target?: string; note?: string;
+    const { decision, target, note, kind, name } = req.body as {
+      decision?: 'approved' | 'dismissed'; target?: string; note?: string; name?: string;
       kind?: 'concept' | 'person' | 'project' | 'org';
     };
     if (!['approved', 'dismissed'].includes(decision || '')) return reply.code(400).send({ error: '审核决定无效' });
     const report = db.prepare(`SELECT * FROM reports WHERE id=? AND kind='pending_review' AND status='open'`).get(id) as any;
     if (!report) return reply.code(404).send({ error: '待审候选不存在或已处理' });
     const original = safeJson(report.payload, {});
-    let appliedTarget = target || '';
-    if (decision === 'approved' && !appliedTarget) {
-      if (!kind || !['concept', 'person', 'project', 'org'].includes(kind)) {
-        return reply.code(400).send({ error: '批准候选时必须提供有效 kind 或已落地的 target' });
+    let appliedTarget = '';
+    if (decision === 'approved') {
+      const resolvedKind = kind || original.kind;
+      if (!resolvedKind || !['concept', 'person', 'project', 'org'].includes(resolvedKind)) {
+        return reply.code(400).send({ error: '批准候选时必须提供有效 kind' });
       }
       const claim = db.prepare(`UPDATE reports SET status='applying' WHERE id=? AND status='open'`).run(id);
       if (claim.changes !== 1) return reply.code(409).send({ error: '候选已被其他操作处理' });
       try {
-        const applied = applyReviewedCandidate(original, kind);
+        const applied = applyReviewedCandidate(original, resolvedKind, { target, name });
         appliedTarget = applied.id;
       } catch (error) {
         db.prepare(`UPDATE reports SET status='open' WHERE id=? AND status='applying'`).run(id);
@@ -172,7 +173,7 @@ export async function jobRoutes(app: FastifyInstance) {
       }
     }
     const payload = { ...original, review: { decision, target: appliedTarget, note: note || '', at: now() } };
-    const expectedStatus = decision === 'approved' && !target ? 'applying' : 'open';
+    const expectedStatus = decision === 'approved' ? 'applying' : 'open';
     const result = db.prepare(`UPDATE reports SET payload=?, status=? WHERE id=? AND status=?`).run(
       JSON.stringify(payload), decision === 'approved' ? 'resolved' : 'dismissed', id, expectedStatus
     );

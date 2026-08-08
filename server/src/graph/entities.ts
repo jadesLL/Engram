@@ -4,6 +4,7 @@ import { chatJson, llmReady } from '../lib/llm.js';
 import { readPage } from '../lib/vault.js';
 import { entitiesSystem, entitiesUser, type EntityItem } from '../prompts/entities.js';
 import { RELATION_WORDS } from '../pipeline/extractor.js';
+import { classifyEntityName, type EntityRosterEntry } from '../pipeline/entityAmbiguity.js';
 
 /**
  * LLM 实体抽取（GBrain 自布线图谱的 LLM 部分）：
@@ -19,8 +20,8 @@ export async function extractEntities(pageId: string): Promise<void> {
 
   // 实体名录：已有实体/概念标题（便于优先链接、减少孤立实体）
   const rows = db
-    .prepare(`SELECT title FROM pages WHERE deleted = 0 AND path LIKE 'Wiki/%' ORDER BY updated_at DESC LIMIT 60`)
-    .all() as { title: string }[];
+    .prepare(`SELECT id, title, type, summary FROM pages WHERE deleted = 0 AND path LIKE 'Wiki/%' ORDER BY updated_at DESC LIMIT 500`)
+    .all() as EntityRosterEntry[];
   const roster = rows.map((r) => `- ${r.title}`).join('\n');
 
   let items: EntityItem[];
@@ -53,16 +54,24 @@ export async function extractEntities(pageId: string): Promise<void> {
   const ts = now();
   for (const it of items.slice(0, 8)) {
     if (!it?.name) continue;
-    let entity = findEntity.get(it.name) as any;
+    const ambiguity = classifyEntityName(it.name, it.type === 'tech' ? 'concept' : it.type, rows, rd.content);
+    if (ambiguity?.category === 'role_title') continue;
+    const canonical = ambiguity?.suggestions.length === 1 && ambiguity.suggestions[0].score >= 0.9
+      ? ambiguity.suggestions[0]
+      : null;
+    if (ambiguity && !canonical) continue;
+    const entityName = canonical?.title || it.name;
+    const entityType = canonical?.type || it.type || 'concept';
+    let entity = findEntity.get(entityName) as any;
     if (!entity) {
-      const r = insEntity.run(it.name, it.type || 'concept');
+      const r = insEntity.run(entityName, entityType);
       entity = { id: Number(r.lastInsertRowid) };
     }
     // 六词表关系：写成类型化边（dst 指向已存在页，否则留 dst_title 死链态）
     const rel = (it.relation || '提及').slice(0, 50);
     if ((RELATION_WORDS as readonly string[]).includes(rel)) {
-      const dst = findByTitle.get(it.name) as any;
-      insEdge.run(pageId, dst?.id ?? null, dst ? null : it.name, entity.id, rel, ts);
+      const dst = findByTitle.get(entityName) as any;
+      insEdge.run(pageId, dst?.id ?? null, dst ? null : entityName, entity.id, rel, ts);
       // 同时建到目标页的实边（若存在）
       if (dst) {
         insEdge.run(pageId, dst.id, null, null, rel, ts);
@@ -71,6 +80,7 @@ export async function extractEntities(pageId: string): Promise<void> {
       insEdge.run(pageId, null, null, entity.id, rel, ts);
     }
   }
+  db.prepare(`DELETE FROM entities WHERE id NOT IN (SELECT DISTINCT entity_id FROM edges WHERE entity_id IS NOT NULL)`).run();
   // 实体边已重建，图谱缓存失效（实体仅在单页模式展示，但缓存 key 含 scope）
   invalidateGraphCache();
 }

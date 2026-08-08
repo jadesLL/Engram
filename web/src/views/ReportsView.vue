@@ -88,7 +88,34 @@
               <blockquote v-for="(source, i) in fact.sources" :key="i">{{ source.quote }} <span class="faint">{{ source.chunkId }}</span></blockquote>
             </div>
           </details>
-          <div class="actions">
+          <div v-if="r.payload.ambiguity" class="ambiguity-box">
+            <div class="ambiguity-head">
+              <span class="ambiguity-label">{{ r.payload.ambiguity.label }}</span>
+              <b>{{ r.payload.ambiguity.question }}</b>
+            </div>
+            <div v-if="r.payload.ambiguity.suggestions?.length" class="suggestion-list">
+              <button
+                v-for="suggestion in r.payload.ambiguity.suggestions"
+                :key="suggestion.id || suggestion.title"
+                class="btn small primary"
+                @click="mergePending(r, suggestion)"
+              >
+                并入 {{ suggestion.title }}
+              </button>
+            </div>
+            <div class="correction-row">
+              <input v-model="reviewNames[r.id]" type="text" :placeholder="r.payload.kind === 'person' ? '输入完整姓名' : '输入确认后的正确名称'" />
+              <select v-model="reviewKinds[r.id]">
+                <option value="person">人物</option>
+                <option value="org">组织</option>
+                <option value="project">项目</option>
+                <option value="concept">概念</option>
+              </select>
+              <button class="btn small" :disabled="!reviewNames[r.id]?.trim()" @click="approveCorrected(r)">按此名称入库</button>
+              <button class="btn small" @click="reviewPending(r, 'dismissed')">不入库</button>
+            </div>
+          </div>
+          <div v-else class="actions">
             <button class="btn small primary" @click="approvePending(r, 'concept')">收为概念</button>
             <button class="btn small primary" @click="approvePending(r, r.payload.kind === 'concept' ? 'person' : (r.payload.kind || 'person'))">收为实体</button>
             <button class="btn small" @click="reviewPending(r, 'dismissed')">不入库</button>
@@ -157,17 +184,17 @@
         </div>
 
         <div class="batch-list">
-          <label v-for="item in batch.items" :key="item.id" class="batch-item" :class="{ selected: item.selected }">
-            <input v-model="item.selected" type="checkbox" />
+          <label v-for="item in batch.items" :key="item.id" class="batch-item" :class="{ selected: item.selected, disabled: item.disabled }">
+            <input v-model="item.selected" type="checkbox" :disabled="item.disabled" />
             <div class="batch-copy">
               <b>{{ previewTitle(item) }}</b>
               <span class="muted small">{{ previewDetail(item) }}</span>
-              <span v-if="isSuggestedKind" class="suggestion small">系统建议：{{ optionLabel(item, item.suggestedAction) }}</span>
+              <span v-if="isSuggestedKind && !item.disabled" class="suggestion small">系统建议：{{ optionLabel(item, item.suggestedAction) }}</span>
             </div>
             <select v-if="item.options?.length" v-model="item.action" @click.stop>
               <option v-for="option in item.options" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
-            <span v-else class="action-chip">{{ activeAction.itemAction }}</span>
+            <span v-else class="action-chip">{{ item.disabled ? '需逐条确认' : activeAction.itemAction }}</span>
           </label>
         </div>
 
@@ -202,6 +229,8 @@ const enabled = ref(true);
 const running = ref(false);
 const resolving = ref(false);
 const tab = ref('deadlink');
+const reviewNames = reactive<Record<number, string>>({});
+const reviewKinds = reactive<Record<number, 'concept' | 'person' | 'project' | 'org'>>({});
 
 const tabs = [
   { key: 'deadlink', label: '死链' },
@@ -227,12 +256,15 @@ const actionConfig: Record<string, { button: string; description: string; itemAc
   stale: { button: '批量复核', description: '确认选中页面内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
 };
 
-type BatchItem = { id: number; payload: any; selected: boolean; suggestedAction: string; action: string; options: { value: string; label: string }[] };
+type BatchItem = { id: number; payload: any; selected: boolean; disabled?: boolean; suggestedAction: string; action: string; options: { value: string; label: string }[] };
 const batch = reactive({ show: false, title: '', description: '', items: [] as BatchItem[], submitting: false, error: '' });
 const activeAction = computed(() => actionConfig[tab.value]);
 const activeCount = computed(() => grouped.value[tab.value]?.length || 0);
 const selectedBatchCount = computed(() => batch.items.filter((item) => item.selected).length);
-const allSelected = computed(() => batch.items.length > 0 && batch.items.every((item) => item.selected));
+const allSelected = computed(() => {
+  const selectable = batch.items.filter((item) => !item.disabled);
+  return selectable.length > 0 && selectable.every((item) => item.selected);
+});
 const isSuggestedKind = computed(() => ['duplicate', 'pending_review'].includes(tab.value));
 const impactSummary = computed(() => `${selectedBatchCount.value} 项将执行。${activeAction.value.impact}`);
 
@@ -251,6 +283,10 @@ async function load() {
   ]);
   const evidence = new Map(candidates.data.candidates.map((candidate: any) => [candidate.id, candidate]));
   reports.value = data.reports.map((report: any) => evidence.get(report.id) || report);
+  for (const report of reports.value.filter((item: any) => item.kind === 'pending_review' && item.payload.ambiguity)) {
+    reviewNames[report.id] ||= '';
+    reviewKinds[report.id] ||= ['concept', 'person', 'project', 'org'].includes(report.payload.kind) ? report.payload.kind : 'person';
+  }
   lastRun.value = data.lastRun;
   cron.value = data.cron;
   enabled.value = data.enabled;
@@ -299,6 +335,28 @@ async function approvePending(r: any, kind: 'concept' | 'person' | 'project' | '
   if (data.target) router.push(`/page/${data.target}`);
 }
 
+async function mergePending(r: any, suggestion: { id?: string; title: string }) {
+  const { data } = await api.post(`/api/ingest/candidates/${r.id}/review`, {
+    decision: 'approved',
+    kind: r.payload.kind || 'person',
+    target: suggestion.id || suggestion.title,
+  });
+  await load();
+  if (data.target) router.push(`/page/${data.target}`);
+}
+
+async function approveCorrected(r: any) {
+  const name = reviewNames[r.id]?.trim();
+  if (!name) return;
+  const { data } = await api.post(`/api/ingest/candidates/${r.id}/review`, {
+    decision: 'approved',
+    kind: reviewKinds[r.id],
+    name,
+  });
+  await load();
+  if (data.target) router.push(`/page/${data.target}`);
+}
+
 async function openBatchPreview() {
   batch.error = '';
   try {
@@ -318,7 +376,7 @@ function closeBatch() {
 }
 
 function toggleAll(selected: boolean) {
-  batch.items.forEach((item) => { item.selected = selected; });
+  batch.items.forEach((item) => { if (!item.disabled) item.selected = selected; });
 }
 
 function optionLabel(item: BatchItem, value: string) {
@@ -436,6 +494,12 @@ onMounted(load);
 .fact { margin: 8px 0; }
 .fact blockquote { margin: 4px 0 4px 10px; padding-left: 8px; border-left: 2px solid var(--border-strong); }
 .acceptance { margin: 4px 0 4px 10px; padding-left: 16px; color: var(--text-secondary); }
+.ambiguity-box { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px solid var(--warning, #d97706); border-radius: 6px; background: var(--bg-secondary); }
+.ambiguity-head { display: flex; align-items: flex-start; gap: 8px; }
+.ambiguity-label { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; color: #92400e; background: #fef3c7; font-size: 12px; }
+.suggestion-list, .correction-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.correction-row input { min-width: 220px; flex: 1 1 260px; }
+.correction-row select { min-width: 90px; }
 .empty-hint { text-align: center; padding: 40px 0; }
 .modal-mask { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 15, 15, .35); }
 .batch-modal { width: min(760px, 96vw); max-height: min(820px, 92vh); display: flex; flex-direction: column; box-shadow: var(--shadow); }
@@ -448,6 +512,7 @@ onMounted(load);
 .batch-list { min-height: 100px; overflow: auto; border-top: 1px solid var(--border); }
 .batch-item { min-height: 68px; display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(130px, 190px); align-items: center; gap: 10px; padding: 10px 8px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .batch-item.selected { background: var(--accent-soft); }
+.batch-item.disabled { cursor: default; opacity: .68; }
 .batch-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .batch-copy b, .batch-copy span { overflow-wrap: anywhere; }
 .suggestion { color: var(--accent); }

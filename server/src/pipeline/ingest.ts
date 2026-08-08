@@ -20,6 +20,11 @@ import {
 } from './ingestModel.js';
 import { enforceWriteGate, whitelistFactIds } from './ingestGuards.js';
 import {
+  guardAmbiguousEntityNames,
+  isIncompleteRoleTitle,
+  type EntityRosterEntry,
+} from './entityAmbiguity.js';
+import {
   composePrompt, criticPrompt, mapPrompt, normalizePrompt, planPrompt,
   questionFinderPrompt, verifierPrompt,
 } from '../prompts/ingestPipeline.js';
@@ -62,8 +67,12 @@ function setStatus(pathName: string, contentHash: string, runId: string, status:
     .run(pathName, now(), contentHash, status, runId, error);
 }
 
-function roster(limit = 100): string {
-  return (db.prepare(`SELECT title, type, summary FROM pages WHERE deleted=0 AND path LIKE 'Wiki/%' ORDER BY updated_at DESC LIMIT ?`).all(limit) as any[])
+function loadRoster(limit = 2000): EntityRosterEntry[] {
+  return db.prepare(`SELECT id, title, type, summary FROM pages WHERE deleted=0 AND path LIKE 'Wiki/%' ORDER BY updated_at DESC LIMIT ?`).all(limit) as EntityRosterEntry[];
+}
+
+function roster(entries: EntityRosterEntry[], limit = 100): string {
+  return entries.slice(0, limit)
     .map((row) => `- ${row.title}（${row.type || '未分类'}）${row.summary ? `：${row.summary.slice(0, 80)}` : ''}`).join('\n');
 }
 
@@ -128,13 +137,24 @@ function mergeBody(old: string, item: ComposedItem, sourceRef: string, marker: s
   return `${old.replace(/\n*$/, '')}\n\n${section}\n`;
 }
 function pending(item: ComposedItem, source: string, reason: string, runId: string) {
-  const payload = { name: item.name, kind: item.kind, source, reason, runId, confidence: item.confidence, target: item.target, summary: item.summary, content: item.content, factIds: item.factIds };
+  const payload = {
+    name: item.name, kind: item.kind, source, reason, runId, confidence: item.confidence,
+    target: item.target, summary: item.summary, content: item.content, factIds: item.factIds,
+    ambiguity: item.ambiguity,
+  };
   addReports([{ kind: 'pending_review', payload }]);
 }
 
-export function applyReviewedCandidate(payload: Record<string, any>, kind: 'concept' | 'person' | 'project' | 'org'): { id: string; path: string } {
+export function applyReviewedCandidate(
+  payload: Record<string, any>,
+  kind: 'concept' | 'person' | 'project' | 'org',
+  resolution: { name?: string; target?: string } = {},
+): { id: string; path: string } {
+  const reviewedName = String(resolution.name || payload.name || '').trim();
+  if (!reviewedName) throw new Error('审核后的名称不能为空');
+  if (kind === 'person' && isIncompleteRoleTitle(reviewedName)) throw new Error('人物名称仍是职务称谓，请填写完整姓名');
   const item = composedItemSchema.parse({
-    name: payload.name,
+    name: reviewedName,
     kind,
     action: 'create',
     target: '',
@@ -146,7 +166,11 @@ export function applyReviewedCandidate(payload: Record<string, any>, kind: 'conc
     content: payload.content || payload.summary || '',
   });
   const markerRunId = payload.runId || `review-${hash(`${item.name}:${payload.source || ''}`).slice(0, 16)}`;
-  const existing = db.prepare(`SELECT id, path FROM pages WHERE deleted=0 AND lower(title)=lower(?) AND path LIKE 'Wiki/%'`).get(item.name) as any;
+  const target = String(resolution.target || '').trim();
+  const existing = target
+    ? db.prepare(`SELECT id, path FROM pages WHERE deleted=0 AND path LIKE 'Wiki/%' AND (id=? OR lower(title)=lower(?))`).get(target, target) as any
+    : db.prepare(`SELECT id, path FROM pages WHERE deleted=0 AND lower(title)=lower(?) AND path LIKE 'Wiki/%'`).get(item.name) as any;
+  if (target && !existing) throw new Error('要合并的目标实体不存在');
   if (existing) {
     const page = readPage(existing.path);
     if (!page) throw new Error('审核目标页面无法读取');
@@ -214,7 +238,8 @@ export async function ingestRawFile(relPath: string, onProgress: IngestProgressC
   db.prepare(`INSERT INTO ingest_runs(id,path,content_hash,status,started_at) VALUES(?,?,?,?,?)`).run(runId, relPath, document.contentHash, 'running', now());
   setStatus(relPath, document.contentHash, runId, 'running');
   try {
-    const titleRoster = roster();
+    const rosterEntries = loadRoster();
+    const titleRoster = roster(rosterEntries);
     const mapped: Candidate[] = [];
     for (let chunkIndex = 0; chunkIndex < document.chunks.length; chunkIndex++) {
       const chunk = document.chunks[chunkIndex];
@@ -259,6 +284,7 @@ export async function ingestRawFile(relPath: string, onProgress: IngestProgressC
       }
       return item;
     });
+    reviewedPlan = guardAmbiguousEntityNames(reviewedPlan, candidates, rosterEntries);
     audit(runId, 'critic_review', { ...secondCritique, items: reviewedPlan }, revised);
 
     onProgress({ stage: 'Compose', progress: 76 });
@@ -279,7 +305,22 @@ export async function ingestRawFile(relPath: string, onProgress: IngestProgressC
     const composed = { items: whitelistFactIds(composedItems, allowedFactIds).items };
     audit(runId, 'compose', composed, reviewedPlan);
 
-    const questions = await jsonStage<QuestionOutput>(questionOutputSchema, questionFinderPrompt, { candidates, plan: reviewedPlan }, 'ingest-questions'); audit(runId, 'questions', questions, candidates);
+    const questions = await jsonStage<QuestionOutput>(questionOutputSchema, questionFinderPrompt, { candidates, plan: reviewedPlan }, 'ingest-questions');
+    const ambiguityQuestions = reviewedPlan.flatMap((item) => item.ambiguity ? [{
+      question: item.ambiguity.question,
+      factIds: item.factIds,
+      acceptance: item.ambiguity.category === 'role_title'
+        ? ['给出完整姓名，或选择库中已有人物']
+        : ['确认并入已有实体，或给出经过核实的正确名称'],
+    }] : []);
+    const seenQuestions = new Set<string>();
+    questions.questions = [...ambiguityQuestions, ...questions.questions].filter((question) => {
+      const key = question.question.trim();
+      if (!key || seenQuestions.has(key)) return false;
+      seenQuestions.add(key);
+      return true;
+    }).slice(0, 12);
+    audit(runId, 'questions', questions, candidates);
     onProgress({ stage: 'Verify', progress: 86 });
     const verified = await jsonStage<VerifierOutput>(verifierOutputSchema, verifierPrompt, { items: composed.items, facts, questions: questions.questions }, 'ingest-verify'); audit(runId, 'verify', verified, { composed, questions });
     const safeItems = enforceWriteGate(composed.items, verified, allowedFactIds);
