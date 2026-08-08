@@ -135,7 +135,7 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 |---|---|---|---|---|---|---|
 | 集成分支(主干) | `Wiki知识库/` | `main` | `example-wiki` | 8080 | `example-wiki-data` | 干净，禁止直接开发 |
 | 数字角标 | `Wiki知识库-number-badge/` | `feat/number-badge` | `example-wiki-number-badge` | 8082 | `example-wiki-data-number-badge` | 开发中 |
-| 模糊实体消歧 | `Wiki知识库-ambiguous-entity/` | `feat/ambiguous-entity` | `example-wiki-ambiguous-entity` | 8084 | `example-wiki-data-ambiguous-entity` | 开发中 |
+| 模糊实体消歧 | ~~`Wiki知识库-ambiguous-entity/`~~ | ~~`feat/ambiguous-entity`~~ | ~~`example-wiki-ambiguous-entity`~~ | ~~8084~~ | ~~`example-wiki-data-ambiguous-entity`~~ | 已合并入 main |
 | 回收站 | ~~`Wiki知识库-recycle-bin/`~~ | ~~`feat/recycle-bin`~~ | ~~`example-wiki-recycle-bin`~~ | ~~8089~~ | ~~`example-wiki-data-recycle-bin`~~ | 已合并入 main |
 | AI整理日志 | ~~`Wiki知识库-ai-organize-logs/`~~ | ~~`feat/ai-organize-logs`~~ | ~~`example-wiki-ai-logs`~~ | ~~8081~~ | ~~`example-wiki-data-ai-logs`~~ | 已合并入 main |
 | 知识图谱优化 | ~~`Wiki知识库-graph-opt/`~~ | ~~`feat/graph-opt`~~ | ~~`example-wiki-graph-opt`~~ | ~~8083~~ | ~~`example-wiki-data-graph-opt`~~ | 已合并入 main |
