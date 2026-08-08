@@ -128,143 +128,116 @@
               :class="{ active: activeModelKind === section.kind }"
               @click="activeModelKind = section.kind"
             >
-              <span>{{ section.kind === 'chat' ? '对话模型' : 'Embedding' }}</span>
+              <span>{{ section.kind === 'chat' ? '对话模型' : '向量模型' }}</span>
               <span class="tab-count">{{ configuredProviderCount(section) }}/{{ section.cards.length }}</span>
             </button>
           </div>
 
           <template v-for="section in modelSections" :key="section.kind">
             <div v-show="activeModelKind === section.kind" class="model-section-body">
-              <div v-if="activeModelFor(section.kind)" class="active-model-strip">
-                <div class="provider-mark active-mark">
-                  {{ providerMark(providerName(activeModelFor(section.kind)!.provider)) }}
-                </div>
-                <div class="active-model-copy">
-                  <span>当前启用</span>
-                  <strong>{{ activeModelFor(section.kind)!.name }}</strong>
-                  <small>
-                    {{ activeModelFor(section.kind)!.model }}
-                    <template v-if="section.kind === 'emb'"> · {{ activeModelFor(section.kind)!.dim }} 维</template>
-                  </small>
-                </div>
-                <button
-                  class="btn"
-                  type="button"
-                  :disabled="testingId === activeModelFor(section.kind)!.id"
-                  @click="testOne(section.kind, activeModelFor(section.kind)!)"
-                >
-                  {{ testingId === activeModelFor(section.kind)!.id ? '测试中...' : '测试当前连接' }}
-                </button>
-              </div>
-
               <div class="model-section-intro">
-                <p>{{ section.copy }}</p>
+                <div>
+                  <p>{{ section.copy }}</p>
+                  <span v-if="activeModelFor(section.kind)" class="current-model-line">
+                    当前：{{ providerName(activeModelFor(section.kind)!.provider) }} · {{ activeModelFor(section.kind)!.model }}
+                  </span>
+                </div>
                 <span>{{ section.cards.length }} 家服务商</span>
               </div>
 
-              <div class="provider-catalog">
-                <article
+              <div class="provider-list">
+                <section
                   v-for="card in section.cards"
                   :key="`${section.kind}-${card.provider.id}`"
-                  class="provider-card"
-                  :class="{ active: card.primary?.id === section.activeId }"
+                  class="provider-row"
+                  :class="{ active: card.entries.some((entry) => entry.id === section.activeId) }"
                 >
-                  <div class="provider-card-head">
+                  <div class="provider-row-head">
                     <div class="provider-identity">
-                      <div class="provider-mark">{{ providerMark(card.provider.name) }}</div>
+                      <div class="provider-mark">
+                        <span>{{ providerMark(card.provider.name) }}</span>
+                        <img
+                          v-if="card.provider.logo"
+                          :src="card.provider.logo"
+                          :alt="`${card.provider.name} Logo`"
+                          @error="hideProviderLogo"
+                        />
+                      </div>
                       <div class="provider-title">
                         <strong>{{ card.provider.name }}</strong>
-                        <span>{{ card.primary ? lineName(card.provider, card.primary.line, card.primary.baseUrl) : '尚未配置' }}</span>
+                        <span>{{ card.entries.length ? `${card.entries.length} 个配置` : '尚未配置' }}</span>
                       </div>
                     </div>
-                    <span class="status-indicator" :class="{ active: card.primary?.id === section.activeId, configured: card.primary?.apiKey }">
-                      {{ card.primary?.id === section.activeId ? '使用中' : card.primary?.apiKey ? '已配置' : '未配置' }}
-                    </span>
-                  </div>
-
-                  <template v-if="card.primary">
-                    <dl class="config-details">
-                      <div>
-                        <dt>模型</dt>
-                        <dd :title="card.primary.model">{{ card.primary.model }}</dd>
-                      </div>
-                      <div v-if="section.kind === 'emb'">
-                        <dt>维度</dt>
-                        <dd>{{ card.primary.dim }}</dd>
-                      </div>
-                      <div>
-                        <dt>密钥</dt>
-                        <dd>{{ maskKey(card.primary.apiKey) }}</dd>
-                      </div>
-                    </dl>
-
-                    <p
-                      v-if="cardTest[card.primary.id]"
-                      class="inline-result"
-                      :class="cardTest[card.primary.id].ok ? 'ok' : 'err'"
+                    <button
+                      class="provider-add-btn"
+                      type="button"
+                      @click="openForm(section.kind, undefined, card.provider.id)"
                     >
-                      {{ cardTest[card.primary.id].ok ? '连接成功' : cardTest[card.primary.id].error }}
-                    </p>
-
-                    <div class="model-card-actions">
-                      <button
-                        class="btn small"
-                        type="button"
-                        :disabled="testingId === card.primary.id"
-                        @click="testOne(section.kind, card.primary)"
-                      >{{ testingId === card.primary.id ? '测试中...' : '测试' }}</button>
-                      <button
-                        v-if="card.primary.id !== section.activeId"
-                        class="btn small primary"
-                        type="button"
-                        @click="selectModel(section.kind, card.primary.id)"
-                      >启用</button>
-                      <button class="btn small" type="button" @click="openForm(section.kind, card.primary)">编辑</button>
-                      <button class="text-action danger" type="button" @click="removeModel(section.kind, card.primary.id)">清除</button>
-                    </div>
-                  </template>
-
-                  <div v-else class="provider-empty">
-                    <p>{{ card.provider.hint || '配置 API 地址、模型名称和访问密钥后即可使用。' }}</p>
-                    <button class="btn primary" type="button" @click="openForm(section.kind, undefined, card.provider.id)">
-                      配置
+                      <Icon name="plus" :size="13" />
+                      添加
                     </button>
                   </div>
 
-                  <div v-if="card.extras.length" class="extra-configs">
-                    <div class="extra-configs-title">其他配置</div>
-                    <div v-for="extra in card.extras" :key="extra.id" class="extra-config">
-                      <div class="extra-title">
-                        <strong>{{ extra.name }}</strong>
-                        <span>
-                          {{ extra.model }}<template v-if="section.kind === 'emb'"> · {{ extra.dim }} 维</template>
+                  <div class="model-chip-list">
+                    <div
+                      v-for="entry in card.entries"
+                      :key="entry.id"
+                      class="model-config-chip"
+                      :class="{ active: entry.id === section.activeId }"
+                    >
+                      <button
+                        class="model-chip-select"
+                        type="button"
+                        :title="entry.id === section.activeId ? '当前使用的模型' : '设为当前模型'"
+                        @click="entry.id !== section.activeId && selectModel(section.kind, entry.id)"
+                      >
+                        <span class="model-chip-dot"></span>
+                        <span class="model-chip-copy">
+                          <strong>{{ entry.model }}</strong>
+                          <small>
+                            {{ lineName(card.provider, entry.line, entry.baseUrl) }}
+                            <template v-if="section.kind === 'emb'"> · {{ entry.dim }} 维</template>
+                          </small>
                         </span>
-                      </div>
-                      <span v-if="extra.id === section.activeId" class="status-indicator active">使用中</span>
-                      <div class="extra-actions">
-                        <button class="text-action" type="button" :disabled="!extra.apiKey || testingId === extra.id" @click="testOne(section.kind, extra)">测试</button>
-                        <button v-if="extra.id !== section.activeId" class="text-action accent" type="button" :disabled="!extra.apiKey" @click="selectModel(section.kind, extra.id)">启用</button>
-                        <button class="text-action" type="button" @click="openForm(section.kind, extra)">编辑</button>
-                        <button class="text-action danger" type="button" @click="removeModel(section.kind, extra.id)">删除</button>
+                      </button>
+                      <div class="model-chip-actions">
+                        <button
+                          type="button"
+                          title="测试连接"
+                          :disabled="testingId === entry.id"
+                          @click="testOne(section.kind, entry)"
+                        >
+                          <Icon name="activity" :size="13" />
+                        </button>
+                        <button type="button" title="编辑配置" @click="openForm(section.kind, entry)">
+                          编辑
+                        </button>
+                        <button class="danger" type="button" title="删除配置" @click="removeModel(section.kind, entry.id)">
+                          <Icon name="x" :size="13" />
+                        </button>
                       </div>
                       <p
-                        v-if="cardTest[extra.id]"
-                        class="inline-result"
-                        :class="cardTest[extra.id].ok ? 'ok' : 'err'"
-                      >{{ cardTest[extra.id].ok ? '连接成功' : cardTest[extra.id].error }}</p>
+                        v-if="cardTest[entry.id]"
+                        class="model-chip-result"
+                        :class="cardTest[entry.id].ok ? 'ok' : 'err'"
+                      >{{ cardTest[entry.id].ok ? '连接成功' : cardTest[entry.id].error }}</p>
                     </div>
+
+                    <button
+                      v-if="!card.entries.length"
+                      class="empty-model-chip"
+                      type="button"
+                      @click="openForm(section.kind, undefined, card.provider.id)"
+                    >
+                      <Icon name="plus" :size="14" />
+                      配置第一个模型
+                    </button>
                   </div>
 
-                  <button
-                    v-if="card.primary"
-                    class="add-provider-config"
-                    type="button"
-                    @click="openForm(section.kind, undefined, card.provider.id)"
-                  >
-                    <Icon name="plus" :size="13" />
-                    添加同厂商配置
-                  </button>
-                </article>
+                  <p v-if="!card.entries.length && card.provider.hint" class="provider-row-hint">
+                    {{ card.provider.hint }}
+                  </p>
+                </section>
               </div>
 
               <div v-if="section.unknown.length" class="unknown-configs">
@@ -279,7 +252,15 @@
                     class="custom-model-row"
                     :class="{ active: model.id === section.activeId }"
                   >
-                    <div class="provider-mark">{{ providerMark(providerName(model.provider)) }}</div>
+                    <div class="provider-mark">
+                      <span>{{ providerMark(providerName(model.provider)) }}</span>
+                      <img
+                        v-if="providerLogo(model.provider)"
+                        :src="providerLogo(model.provider)"
+                        :alt="`${providerName(model.provider)} Logo`"
+                        @error="hideProviderLogo"
+                      />
+                    </div>
                     <div class="custom-model-copy">
                       <strong>{{ model.name }}</strong>
                       <span>
@@ -490,7 +471,7 @@
       >
         <div class="dialog-head">
           <div>
-            <span>{{ form.kind === 'chat' ? '对话模型' : 'Embedding 模型' }}</span>
+            <span>{{ form.kind === 'chat' ? '对话模型' : '向量模型' }}</span>
             <h3 id="model-dialog-title">{{ form.id ? '编辑模型配置' : '添加模型配置' }}</h3>
           </div>
           <button class="icon-btn" type="button" title="关闭" @click="form.show = false">
@@ -534,11 +515,32 @@
             </div>
             <div class="field field-wide">
               <label for="model-base-url">Base URL</label>
-              <input id="model-base-url" v-model="form.baseUrl" placeholder="https://.../v1" />
+              <input id="model-base-url" v-model="form.baseUrl" placeholder="https://.../v1" @change="onFormBaseUrlChange" />
+            </div>
+            <div class="field field-wide">
+              <label for="model-list-url">模型列表 API</label>
+              <div class="discovery-url-row">
+                <input
+                  id="model-list-url"
+                  v-model="form.modelsUrl"
+                  placeholder="https://.../v1/models"
+                  @change="form.apiKey.trim() && discoverFormModels()"
+                />
+                <button class="btn" type="button" :disabled="discoveryBusy || !effectiveFormApiKey" @click="discoverFormModels()">
+                  {{ discoveryBusy ? '拉取中...' : '拉取模型' }}
+                </button>
+              </div>
+              <span class="field-help">已预填厂商官方地址；国内厂商使用中国大陆 API 域名。</span>
             </div>
             <div class="field">
               <label for="model-api-key">API Key</label>
-              <input id="model-api-key" v-model="form.apiKey" type="password" :placeholder="formKeyPlaceholder" />
+              <input
+                id="model-api-key"
+                v-model="form.apiKey"
+                type="password"
+                :placeholder="formKeyPlaceholder"
+                @blur="discoverFormModels()"
+              />
               <span v-if="form.id" class="field-help">留空保持原 Key</span>
             </div>
             <div v-if="form.kind === 'emb'" class="field">
@@ -550,6 +552,11 @@
             </div>
           </div>
           <p v-if="formHint" class="dialog-hint">{{ formHint }}</p>
+          <p
+            v-if="discoveryMessage"
+            class="setting-message discovery-message"
+            :class="discoveryOk ? 'ok' : 'err'"
+          >{{ discoveryMessage }}</p>
           <p v-if="formError" class="setting-message err">{{ formError }}</p>
           <p v-if="formTest" class="setting-message" :class="formTest.ok ? 'ok' : 'err'">
             {{ formTest.ok ? '连接成功' : formTest.error }}
@@ -589,7 +596,7 @@ import {
 
 type ModelKind = 'chat' | 'emb';
 type SettingsSection = 'account' | 'models' | 'automation' | 'mcp' | 'storage' | 'data';
-type DraftField = 'model' | 'baseUrl' | 'apiKey' | 'dim';
+type DraftField = 'model' | 'baseUrl' | 'modelsUrl' | 'apiKey' | 'dim';
 
 interface ModelEntry {
   id: string;
@@ -597,6 +604,7 @@ interface ModelEntry {
   provider: string;
   line?: string;
   baseUrl: string;
+  modelsUrl?: string;
   model: string;
   apiKey: string;
   dim?: number;
@@ -606,6 +614,7 @@ interface ModelEntry {
 interface ModelDraft {
   line: string;
   baseUrl: string;
+  modelsUrl: string;
   model: string;
   modelChoice: string;
   apiKey: string;
@@ -614,8 +623,7 @@ interface ModelDraft {
 
 interface ProviderCard {
   provider: ProviderPreset;
-  primary?: ModelEntry;
-  extras: ModelEntry[];
+  entries: ModelEntry[];
 }
 
 interface TrashEntry {
@@ -654,12 +662,20 @@ function activeModelFor(kind: ModelKind): ModelEntry | undefined {
 }
 
 function configuredProviderCount(section: { cards: ProviderCard[] }): number {
-  return section.cards.filter((card) => Boolean(card.primary?.apiKey)).length;
+  return section.cards.filter((card) => card.entries.some((entry) => Boolean(entry.apiKey))).length;
 }
 
 function providerMark(name: string): string {
   const compact = name.trim().replace(/\s+/g, '');
   return compact.slice(0, 2).toUpperCase() || 'AI';
+}
+
+function providerLogo(id: string): string {
+  return providerById(id)?.logo || '';
+}
+
+function hideProviderLogo(event: Event) {
+  (event.currentTarget as HTMLImageElement).style.display = 'none';
 }
 
 const cardTest = reactive<Record<string, { ok: boolean; error?: string }>>({});
@@ -712,6 +728,7 @@ const form = ref({
   provider: 'custom',
   line: 'custom',
   baseUrl: '',
+  modelsUrl: '',
   model: '',
   modelChoice: '__custom__',
   apiKey: '',
@@ -721,6 +738,10 @@ const formTest = ref<{ ok: boolean; error?: string } | null>(null);
 const formTesting = ref(false);
 const formSaving = ref(false);
 const formError = ref('');
+const discoveredModels = ref<ModelOption[]>([]);
+const discoveryBusy = ref(false);
+const discoveryMessage = ref('');
+const discoveryOk = ref(false);
 
 const fixedChatProviders = computed(() => PROVIDERS.filter((provider) => provider.id !== 'custom'));
 const fixedEmbeddingProviders = computed(() =>
@@ -732,7 +753,7 @@ function cardsFor(kind: ModelKind): ProviderCard[] {
   const list = kind === 'chat' ? chatModels.value : embModels.value;
   return providers.map((provider) => {
     const matches = list.filter((model) => model.provider === provider.id);
-    return { provider, primary: matches[0], extras: matches.slice(1) };
+    return { provider, entries: matches };
   });
 }
 
@@ -748,14 +769,14 @@ const modelSections = computed(() => [
   {
     kind: 'chat' as const,
     title: '对话模型',
-    copy: '每个厂商固定一张主卡，可添加多个独立配置。',
+    copy: '同一厂商可以并列配置多个模型，点击其中一个即可切换使用。',
     cards: cardsFor('chat'),
     unknown: unknownModels('chat'),
     activeId: activeChat.value,
   },
   {
     kind: 'emb' as const,
-    title: 'Embedding 模型（语义检索）',
+    title: '向量模型（语义检索）',
     copy: '只显示提供文本向量模型的厂商。切换模型或维度后会自动重建索引。',
     cards: cardsFor('emb'),
     unknown: unknownModels('emb'),
@@ -775,7 +796,14 @@ const currentFormProvider = computed<ProviderPreset>(() => {
   if (preset) return preset;
   return { ...customPreset, id: form.value.provider, name: providerName(form.value.provider) };
 });
-const formModelOptions = computed(() => modelOptionsForDraft(form.value.kind, currentFormProvider.value, form.value));
+const formModelOptions = computed(() => {
+  const merged = new Map<string, ModelOption>();
+  for (const model of discoveredModels.value) merged.set(model.id, model);
+  for (const model of modelOptionsForDraft(form.value.kind, currentFormProvider.value, form.value)) {
+    if (!merged.has(model.id)) merged.set(model.id, model);
+  }
+  return [...merged.values()];
+});
 const formDimensionOptions = computed(() => dimensionOptionsForDraft(currentFormProvider.value, form.value));
 const formLine = computed(() => lineFor(currentFormProvider.value, form.value.line, form.value.kind));
 const formKeyPlaceholder = computed(() => formLine.value?.apiKeyPlaceholder || 'API Key');
@@ -788,11 +816,16 @@ const existingFormEntry = computed(() => {
 const effectiveFormApiKey = computed(() => form.value.apiKey.trim() || existingFormEntry.value?.apiKey || '');
 
 function blankDraft(): ModelDraft {
-  return { line: '', baseUrl: '', model: '', modelChoice: '__custom__', apiKey: '', dim: 1024 };
+  return { line: '', baseUrl: '', modelsUrl: '', model: '', modelChoice: '__custom__', apiKey: '', dim: 1024 };
 }
 
 function normalizeUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
+}
+
+function inferredModelsUrl(baseUrl: string): string {
+  const normalized = normalizeUrl(baseUrl);
+  return normalized ? `${normalized}/models` : '';
 }
 
 function linesFor(provider: ProviderPreset, kind: ModelKind): ApiLine[] {
@@ -853,6 +886,7 @@ function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: Model
   return {
     line,
     baseUrl: existing?.baseUrl || lineFor(provider, line, kind)?.baseUrl || '',
+    modelsUrl: existing?.modelsUrl || lineFor(provider, line, kind)?.modelsUrl || '',
     model: existing?.model || selected?.id || '',
     modelChoice: existingOption || (!existing && selected) ? (existingOption || selected)!.id : '__custom__',
     apiKey: '',
@@ -890,6 +924,7 @@ function applyLineToDraft(kind: ModelKind, provider: ProviderPreset, draft: Mode
   draft.line = lineId;
   const line = lineFor(provider, lineId, kind);
   if (line) draft.baseUrl = line.baseUrl;
+  if (line) draft.modelsUrl = line.modelsUrl || inferredModelsUrl(line.baseUrl);
   const available = modelOptionsForDraft(kind, provider, draft);
   if (line?.models?.length || (draft.modelChoice !== '__custom__' && !available.some((m) => m.id === draft.modelChoice))) {
     const next = defaultModel(provider, kind, lineId);
@@ -1018,6 +1053,7 @@ function entryFromDraft(
     provider: existing?.provider || provider.id,
     line: draft.line,
     baseUrl: normalizeUrl(draft.baseUrl),
+    modelsUrl: normalizeUrl(draft.modelsUrl),
     model,
     apiKey: draft.apiKey.trim() || existing?.apiKey || '',
     ...(kind === 'emb' ? { dim: draft.dim || option?.dim || 1024, supportsDimensions } : {}),
@@ -1095,6 +1131,8 @@ async function saveInlineEdit(kind: ModelKind, provider: ProviderPreset, existin
 function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
   formTest.value = null;
   formError.value = '';
+  discoveredModels.value = [];
+  discoveryMessage.value = '';
   const id = existing?.provider || providerId || 'custom';
   const provider = providerById(id) || { ...customPreset, id, name: providerName(id) };
   const draft = createDraft(kind, provider, existing);
@@ -1106,6 +1144,9 @@ function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
     provider: id,
     ...draft,
   };
+  if (existing?.apiKey && form.value.modelsUrl) {
+    queueMicrotask(() => void discoverFormModels(existing.apiKey));
+  }
 }
 
 function pickProvider(id: string) {
@@ -1113,24 +1154,75 @@ function pickProvider(id: string) {
   const draft = createDraft(form.value.kind, provider);
   form.value.line = draft.line;
   form.value.baseUrl = draft.baseUrl;
+  form.value.modelsUrl = draft.modelsUrl;
   form.value.model = draft.model;
   form.value.modelChoice = draft.modelChoice;
   form.value.dim = draft.dim;
   if (!form.value.name) form.value.name = provider.name;
   formTest.value = null;
   formError.value = '';
+  discoveredModels.value = [];
+  discoveryMessage.value = '';
 }
 
 function onFormLineChange() {
   applyLineToDraft(form.value.kind, currentFormProvider.value, form.value, form.value.line);
   formTest.value = null;
   formError.value = '';
+  discoveredModels.value = [];
+  discoveryMessage.value = '';
+  if (form.value.apiKey.trim()) void discoverFormModels();
 }
 
 function onFormModelChange() {
   applyModelToDraft(form.value.kind, currentFormProvider.value, form.value, form.value.modelChoice);
   formTest.value = null;
   formError.value = '';
+}
+
+function onFormBaseUrlChange() {
+  if (!form.value.modelsUrl.trim()) {
+    form.value.modelsUrl = inferredModelsUrl(form.value.baseUrl);
+  }
+  if (form.value.apiKey.trim()) void discoverFormModels();
+}
+
+async function discoverFormModels(apiKeyOverride?: string) {
+  const apiKey = apiKeyOverride || effectiveFormApiKey.value;
+  if (!apiKey) {
+    discoveryOk.value = false;
+    discoveryMessage.value = '输入 API Key 后会自动拉取可用模型。';
+    return;
+  }
+  const modelsUrl = form.value.modelsUrl.trim() || inferredModelsUrl(form.value.baseUrl);
+  if (!modelsUrl) {
+    discoveryOk.value = false;
+    discoveryMessage.value = '请先填写模型列表 API 地址。';
+    return;
+  }
+  form.value.modelsUrl = modelsUrl;
+  discoveryBusy.value = true;
+  discoveryMessage.value = '';
+  try {
+    const { data } = await api.post('/api/settings/discover-models', {
+      baseUrl: form.value.baseUrl,
+      modelsUrl,
+      apiKey,
+      kind: form.value.kind === 'chat' ? 'chat' : 'embedding',
+    });
+    discoveredModels.value = (data.models || []).map((id: string) => ({ id, name: id }));
+    discoveryOk.value = true;
+    discoveryMessage.value = `已自动拉取 ${discoveredModels.value.length} 个可用模型。`;
+    const current = form.value.modelChoice === '__custom__' ? form.value.model : form.value.modelChoice;
+    if (!current && discoveredModels.value[0]) {
+      applyModelToDraft(form.value.kind, currentFormProvider.value, form.value, discoveredModels.value[0].id);
+    }
+  } catch (error: any) {
+    discoveryOk.value = false;
+    discoveryMessage.value = errorMessage(error, '自动拉取失败，可继续使用内置目录或手动填写模型。');
+  } finally {
+    discoveryBusy.value = false;
+  }
 }
 
 async function persist() {
@@ -1264,8 +1356,8 @@ async function testAll() {
     const { data } = await api.post('/api/settings/test-llm');
     testOk.value = data.chat && data.embedding;
     testResult.value = testOk.value
-      ? '对话与 Embedding 均连接成功'
-      : `连接异常：${data.error || (data.chat ? 'Embedding 失败' : '对话模型失败')}`;
+      ? '对话模型与向量模型均连接成功'
+      : `连接异常：${data.error || (data.chat ? '向量模型失败' : '对话模型失败')}`;
   } catch (error: any) {
     testOk.value = false;
     testResult.value = errorMessage(error, '连接测试失败。');
@@ -1849,6 +1941,302 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 @media (prefers-reduced-motion: reduce) {
   .provider-card,
   .model-card { transition: none; }
+}
+</style>
+
+<style scoped>
+.current-model-line {
+  display: block;
+  margin-top: 4px;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.provider-list {
+  border-top: 1px solid var(--border);
+}
+
+.provider-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 14px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.provider-row.active {
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+}
+
+.provider-row-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.provider-row .provider-identity {
+  gap: 8px;
+}
+
+.provider-row .provider-mark,
+.custom-model-row .provider-mark {
+  position: relative;
+}
+
+.provider-row .provider-mark {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+  border-radius: 7px;
+  font-size: 9px;
+}
+
+.provider-row .provider-mark img,
+.custom-model-row .provider-mark img {
+  position: absolute;
+  inset: 2px;
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  border-radius: 5px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.provider-row .provider-title strong {
+  font-size: 12px;
+}
+
+.provider-row .provider-title span {
+  font-size: 9px;
+}
+
+.provider-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 4px 5px;
+  border-radius: 5px;
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.provider-add-btn:hover {
+  background: var(--accent-soft);
+}
+
+.model-chip-list {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.model-config-chip {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg);
+}
+
+.model-config-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-strong));
+}
+
+.model-config-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.model-chip-select {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 999px 0 0 999px;
+  text-align: left;
+}
+
+.model-chip-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.model-config-chip.active .model-chip-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.model-chip-copy {
+  min-width: 0;
+}
+
+.model-chip-copy strong,
+.model-chip-copy small {
+  display: block;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-chip-copy strong {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.model-chip-copy small {
+  margin-top: 1px;
+  color: var(--text-faint);
+  font-size: 8px;
+}
+
+.model-chip-actions {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  border-left: 1px solid var(--border);
+}
+
+.model-chip-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 27px;
+  height: 100%;
+  padding: 0 6px;
+  border-radius: 0;
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.model-chip-actions button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.model-chip-actions button.danger:hover {
+  color: var(--danger);
+}
+
+.model-chip-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.model-chip-result {
+  grid-column: 1 / -1;
+  margin: -1px 10px 5px;
+  font-size: 9px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.empty-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.empty-model-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.provider-row-hint {
+  grid-column: 2;
+  margin: -3px 0 0;
+  color: var(--text-faint);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.discovery-url-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.discovery-url-row .btn {
+  min-width: 88px;
+}
+
+.discovery-message {
+  margin-top: 10px;
+}
+
+@media (max-width: 760px) {
+  .provider-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 11px 0;
+  }
+
+  .provider-row-head {
+    padding: 0 2px;
+  }
+
+  .provider-row-hint {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 520px) {
+  .model-chip-list {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .model-config-chip,
+  .empty-model-chip {
+    width: 100%;
+  }
+
+  .model-config-chip {
+    grid-template-columns: minmax(0, 1fr) auto;
+    border-radius: 8px;
+  }
+
+  .model-chip-select {
+    border-radius: 8px 0 0 8px;
+  }
+
+  .model-chip-copy strong,
+  .model-chip-copy small {
+    max-width: none;
+  }
+
+  .empty-model-chip {
+    justify-content: center;
+    border-radius: 8px;
+  }
+
+  .discovery-url-row {
+    grid-template-columns: 1fr;
+  }
+
+  .discovery-url-row .btn {
+    width: 100%;
+  }
 }
 </style>
 
