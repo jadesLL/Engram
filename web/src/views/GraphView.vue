@@ -65,9 +65,12 @@ async function load() {
   });
   fitScale = 0;
   labelsHidden = false;
-  // 布局收敛后关闭物理引擎，避免节点持续漂移和无谓 tick（修"卡顿/混乱"主因之一）
+  // 布局收敛后停止模拟循环（止漂、止卡顿），但保持 physics.enabled=true：
+  // 这样拖动节点时 vis-network 内置 onDrag 会自动 emit('startSimulation')，
+  // 连接节点受力跟随，松手后跑到 minVelocity 自停再静止（Obsidian 同款手感）。
+  // 切忌用 setOptions({physics:{enabled:false}}) —— 那会彻底禁用物理，拖动时其他节点不动。
   network.once('stabilizationIterationsDone', () => {
-    network!.setOptions({ physics: { enabled: false } });
+    network!.stopSimulation();
     fitScale = network!.getScale();
   });
   // 缩小到全局视图以下时隐藏标签，放大后重现，减少标签重叠噪声
@@ -100,9 +103,10 @@ function fit() {
 }
 function relayout() {
   if (!network) return;
-  network.setOptions({ physics: { enabled: true } });
+  // 物理始终 enabled，只需重新跑稳定：stabilize 触发 startSimulation，
+  // 跑完 stabilizationIterationsDone 后 stopSimulation 止住，拖动响应仍在。
   network.once('stabilizationIterationsDone', () => {
-    network!.setOptions({ physics: { enabled: false } });
+    network!.stopSimulation();
     fitScale = network!.getScale();
     labelsHidden = false;
   });

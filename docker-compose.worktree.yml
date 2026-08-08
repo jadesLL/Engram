@@ -1,14 +1,14 @@
-# editor-beautify worktree 专属部署（与 main 容器并行隔离）
+# graph-drag worktree 专属部署（与 main 容器并行隔离）
 services:
   example-wiki:
-    image: example-wiki:editor-beautify
+    image: example-wiki:graph-drag
     build: .
-    container_name: example-wiki-editor-beautify
-    ports: ["8084:8080"]
-    volumes: ["example-wiki-data-editor-beautify:/data"]
+    container_name: example-wiki-graph-drag
+    ports: ["8086:8080"]
+    volumes: ["example-wiki-data-graph-drag:/data"]
     environment:
       - TZ=Asia/Shanghai
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
     restart: unless-stopped
 volumes:
-  example-wiki-data-editor-beautify: {external: true}
+  example-wiki-data-graph-drag: {external: true}
