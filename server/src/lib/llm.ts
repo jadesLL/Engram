@@ -10,6 +10,7 @@ export interface ModelEntry {
   model: string;
   apiKey: string;
   dim?: number;      // embedding 维度
+  supportsDimensions?: boolean; // 是否支持通过请求参数指定 embedding 维度
 }
 
 function parseList(key: string): ModelEntry[] {
@@ -282,14 +283,45 @@ export async function chatStream(
   }
 }
 
+type EmbeddingRequestBody = {
+  model: string;
+  input: string[];
+  dimensions?: number;
+};
+
+export function buildEmbeddingRequestBody(
+  entry: Pick<ModelEntry, 'model' | 'dim' | 'supportsDimensions'>,
+  input: string[]
+): EmbeddingRequestBody {
+  const body: EmbeddingRequestBody = { model: entry.model, input };
+  if (entry.supportsDimensions === true && entry.dim !== undefined) body.dimensions = entry.dim;
+  return body;
+}
+
+export function validateEmbedding(embedding: unknown, dim?: number): asserts embedding is number[] {
+  if (!Array.isArray(embedding)) throw new LlmError('Embedding 返回格式异常（embedding 不是数组）');
+  if (dim !== undefined && embedding.length !== dim) {
+    throw new LlmError(`Embedding 维度不匹配：配置维度 ${dim}，实际返回 ${embedding.length}`);
+  }
+}
+
 /** 批量向量化（可走独立的 embedding 服务商配置） */
 export async function embed(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   const cfg = getLlmConfig();
+  const entry = getActiveEmbedding();
   if (!cfg.embeddingApiKey) throw new LlmError('尚未配置 Embedding API Key（设置页 → Embedding）');
+  const body = buildEmbeddingRequestBody(
+    {
+      model: cfg.embeddingModel,
+      dim: entry?.dim,
+      supportsDimensions: entry?.supportsDimensions,
+    },
+    texts
+  );
   const res = await request(
     '/embeddings',
-    { model: cfg.embeddingModel, input: texts },
+    body,
     { baseUrl: cfg.embeddingBaseUrl, apiKey: cfg.embeddingApiKey }
   );
   const json = (await res.json()) as any;
@@ -297,7 +329,10 @@ export async function embed(texts: string[]): Promise<number[][]> {
   if (!Array.isArray(data)) throw new LlmError('Embedding 返回格式异常');
   return data
     .sort((a: any, b: any) => a.index - b.index)
-    .map((d: any) => d.embedding as number[]);
+    .map((d: any) => {
+      validateEmbedding(d?.embedding, entry?.dim);
+      return d.embedding;
+    });
 }
 
 /** 测试连接：依次尝试激活的 chat 与 embedding（复用 testModel，标准一致）。 */
@@ -351,11 +386,12 @@ export async function testModel(
     } else {
       const res = await request(
         '/embeddings',
-        { model: entry.model, input: ['ping'] },
+        buildEmbeddingRequestBody(entry, ['ping']),
         { baseUrl, apiKey: entry.apiKey, timeoutMs: 30_000 }
       );
       const json = (await res.json()) as any;
       if (!Array.isArray(json?.data)) return { ok: false, error: '返回格式异常（无 data 数组）' };
+      validateEmbedding(json.data[0]?.embedding, entry.dim);
       return { ok: true };
     }
   } catch (e: any) {
