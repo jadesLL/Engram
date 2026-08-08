@@ -3,7 +3,7 @@ import { createPage, readPage, writePage } from '../lib/vault.js';
 import { typeToDir } from '../config.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
-import { mergePages, appendLog, stamp } from '../lib/mergePages.js';
+import { mergePages } from '../lib/mergePages.js';
 import { applyReviewedCandidate } from '../pipeline/ingest.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
 
@@ -234,6 +234,7 @@ export function applyReportDecisions(kind: ReportActionKind, decisions: ReportDe
   });
   const detail = `成功 ${result.completed} 项，忽略 ${result.dismissed} 项${result.failed ? `，失败 ${result.failed} 项` : ''}`;
   update({ stage: '已完成', progress: 100, detail });
-  result.errors.forEach((line) => appendLog('apply-errors.md', '批量处理失败记录', `- ${stamp()} ${line}`));
+  // 批量处理失败记入操作日志（所有错误行全保留，不蒸馏；不再写 AIWorks/log/apply-errors.md）
+  if (result.errors.length) appendWikiLog('批量处理失败', result.errors.join('；'));
   return result;
 }

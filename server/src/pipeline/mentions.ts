@@ -5,6 +5,7 @@ import { chat, llmReady } from '../lib/llm.js';
 import { readPage, writePage, safeJoin } from '../lib/vault.js';
 import { isEntity } from '../lib/pageTypes.js';
 import { enrichedSystem, enrichedUser, completeSystem, completeUser } from '../prompts/upgrade.js';
+import { appendWikiLog } from './indexFile.js';
 
 /**
  * 实体升级阶梯（知识管理员工作流）：
@@ -157,19 +158,8 @@ export async function runUpgrades(): Promise<string[]> {
   }
 
   if (logs.length) {
-    appendUpgradeLog(logs);
+    // 升级批次记入操作日志（所有实体全列，不蒸馏；不再写 AIWorks/log/upgrades.md）
+    appendWikiLog('实体升级', logs.join('；'));
   }
   return logs;
-}
-
-/** 升级记录写入 AIWorks/log/upgrades.md（带年月日时分秒） */
-function appendUpgradeLog(logs: string[]) {
-  const rel = 'AIWorks/log/upgrades.md';
-  const rd = readPage(rel);
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  const lines = logs.map((l) => `- ${stamp} ${l}`).join('\n');
-  const content = rd ? `${rd.content}\n${lines}` : `# 实体升级日志\n\n${lines}`;
-  writePage(rel, content + '\n', { title: '实体升级日志', type: 'concept' });
 }

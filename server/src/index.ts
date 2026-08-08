@@ -21,6 +21,7 @@ import { jobRoutes } from './routes/jobs.js';
 import { rawRoutes } from './routes/raw.js';
 import { mcpRoutes } from './mcp/server.js';
 import { scanVault, readPage, writePage } from './lib/vault.js';
+import { migrateAiLogsToOperationLog } from './pipeline/indexFile.js';
 
 /** AIWorks 系统区页面不参与整理、不打标签 */
 function cleanupSystemPages() {
@@ -77,8 +78,9 @@ async function main() {
     });
   }
 
-  // 启动：扫描 vault 同步 DB、清理系统区页面标签、启动任务队列与 Dream Cycle
+  // 启动：扫描 vault 同步 DB、迁移历史 AI 日志进操作日志、清理系统区页面标签、启动任务队列与 Dream Cycle
   await scanVault();
+  migrateAiLogsToOperationLog();
   cleanupSystemPages();
   startJobRunner();
   scheduleDreamCycle();

@@ -1,6 +1,7 @@
 import { db, now } from '../lib/db.js';
 import { chatJson, llmReady } from '../lib/llm.js';
-import { readPage, readPageMeta, writePage } from '../lib/vault.js';
+import { readPage, readPageMeta } from '../lib/vault.js';
+import { appendWikiLog } from '../pipeline/indexFile.js';
 import { runUpgrades } from '../pipeline/mentions.js';
 import { contradictionSystem, contradictionUser } from '../prompts/contradiction.js';
 import { addReports } from './reports.js';
@@ -206,7 +207,7 @@ export function taskSectionAudit(): number {
   return addReports(items);
 }
 
-/** 运行完整 Dream Cycle，并把运行摘要写入 AIWorks/log/<日期>.md */
+/** 运行完整 Dream Cycle，并把运行摘要记入操作日志（Wiki/log.md） */
 export async function runDreamCycle(): Promise<Record<string, number>> {
   const result: Record<string, number> = {};
   result.deadlink = taskDeadlinks();
@@ -228,31 +229,11 @@ export async function runDreamCycle(): Promise<Record<string, number>> {
     `INSERT INTO settings(key, value) VALUES('dream_last_run', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ).run(ts);
 
-  // 运行日志落地为 markdown（固定目录 AIWorks/log，按运行时刻命名，标题/内容均含时分秒）
+  // 运行摘要记入操作日志（8 项计数全保留，不蒸馏；不再生成 AIWorks/log 独立文档）
   try {
-    const d = new Date(ts);
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    const fileStamp = stamp.replace(/[: ]/g, '-'); // 2026-08-06-14-32-05，每次运行独立成文
     const total = Object.values(result).reduce((a, b) => a + b, 0);
-    const lines = [
-      `# Dream Cycle ${stamp}`,
-      '',
-      `运行时间：${stamp}`,
-      '',
-      `- 死链：${result.deadlink}`,
-      `- 疑似重复：${result.duplicate}`,
-      `- 矛盾：${result.contradiction}`,
-      `- 待丰富：${result.enrich}`,
-      `- 过期：${result.stale}`,
-      `- 来源单一：${result.single_source}`,
-      `- 待补章节：${result.missing_sections}`,
-      `- 实体升级：${result.upgrades}`,
-      '',
-      total > 0 ? `本次共产生 ${total} 项整理建议，请到「整理报告」处理。` : '本次整理未发现需要处理的问题。',
-      '',
-    ].join('\n');
-    writePage(`AIWorks/log/${fileStamp}.md`, lines, { title: `Dream Cycle ${stamp}`, type: 'doc' });
+    const detail = `死链 ${result.deadlink}｜疑似重复 ${result.duplicate}｜矛盾 ${result.contradiction}｜待丰富 ${result.enrich}｜过期 ${result.stale}｜来源单一 ${result.single_source}｜待补章节 ${result.missing_sections}｜实体升级 ${result.upgrades}｜共 ${total} 项${total > 0 ? '，见整理报告' : '，无待处理'}`;
+    appendWikiLog('Dream Cycle', detail);
   } catch {
     /* 日志写入失败不影响主流程 */
   }

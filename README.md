@@ -85,7 +85,9 @@ claude mcp add --transport http example-wiki http://<NAS的IP>:8080/mcp \
   --header "Authorization: Bearer <你的token>"
 ```
 
-提供工具：`search`（混合检索）、`think`（综合问答）、`read_page`、`write_page`、`list_pages`。
+提供工具：`search`（混合检索）、`think`（综合问答）、`read_page`、`write_page`、`list_pages`、`save_chat`（沉积对话入原始资料）。
+
+> 接入方须遵守 [`AGENTS.md`](./AGENTS.md)：动手前先用 `read_page` 读 `Wiki/log.md`（操作日志）了解最近 AI 状态，动手后用 `write_page` 向其追加一条记录（时间倒序）。服务端会经 MCP `instructions` 下发同一条纪律。
 
 ## 本地开发
 

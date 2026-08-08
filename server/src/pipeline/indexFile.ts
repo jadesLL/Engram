@@ -1,5 +1,7 @@
+import fs from 'node:fs';
+import matter from 'gray-matter';
 import { db } from '../lib/db.js';
-import { readPage, writePage } from '../lib/vault.js';
+import { readPage, writePage, safeJoin } from '../lib/vault.js';
 import { RELATION_WORDS } from './extractor.js';
 
 /**
@@ -45,7 +47,7 @@ export function regenerateIndex() {
   });
 }
 
-/** 追加操作日志到 Wiki/log.md（带年月日时分秒） */
+/** 写操作日志到 Wiki/log.md（带年月日时分秒；时间倒序：新的在上） */
 export function appendWikiLog(action: string, detail: string) {
   const rel = 'Wiki/log.md';
   const rd = readPage(rel);
@@ -53,7 +55,10 @@ export function appendWikiLog(action: string, detail: string) {
   const pad = (n: number) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   const line = `- ${stamp} ${action}：${detail}`;
-  const content = rd ? `${rd.content}\n${line}` : `# 操作日志\n\n${line}`;
+  // 剥掉正文开头的标题行，把新条目插到标题正下方（倒序：新的在上），再接旧条目
+  const HEADER = '# 操作日志';
+  const body = rd ? String(rd.content).replace(/^#\s*操作日志\s*/, '').replace(/^[\s\r\n]+/, '') : '';
+  const content = body ? `${HEADER}\n\n${line}\n${body}` : `${HEADER}\n\n${line}`;
   writePage(rel, content + '\n', { title: '操作日志', type: 'doc' });
 }
 
@@ -92,4 +97,97 @@ export function regenerateRelationships() {
     type: 'doc',
     summary: rows.length ? `共 ${rows.length} 条六词表关系` : '暂无关系',
   });
+}
+
+/**
+ * 一次性迁移：把 AIWorks/log/ 下的历史独立日志（Dream Cycle 运行文件 / upgrades.md /
+ * merges.md / deleted.md / apply-errors.md）原始并入操作日志 Wiki/log.md（时间倒序，新的在上），
+ * 并删除源文件与 DB 索引。迁移后 AIWorks/log 永久为空，Dream Cycle 也不再写它。
+ * 幂等：无文件可迁移时直接返回。启动时调用一次。
+ */
+export function migrateAiLogsToOperationLog() {
+  const dir = safeJoin('AIWorks/log');
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+  if (!entries.length) return;
+
+  const tsRe = /^- (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (.+)$/;
+  const collected: { ts: string; line: string }[] = [];
+
+  // 1. 现有操作日志条目（fs 直读 + gray-matter 剥 frontmatter，不走 readPage，避免 DB 未索引时读空）
+  const logAbs = safeJoin('Wiki/log.md');
+  if (fs.existsSync(logAbs)) {
+    const body = String(matter(fs.readFileSync(logAbs, 'utf8')).content);
+    for (const line of body.split(/\r?\n/)) {
+      const m = line.match(tsRe);
+      if (m) collected.push({ ts: m[1], line });
+    }
+  }
+
+  // 2. 扫描 AIWorks/log/*.md，按类型原始转条目（不蒸馏）
+  for (const entry of entries) {
+    const abs = safeJoin(`AIWorks/log/${entry}`);
+    let body = '';
+    try {
+      body = String(matter(fs.readFileSync(abs, 'utf8')).content);
+    } catch {
+      continue;
+    }
+
+    // Dream Cycle 每次运行独立文件：YYYY-MM-DD-HH-MM-SS.md
+    const dc = entry.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})\.md$/);
+    if (dc) {
+      const ts = `${dc[1]}-${dc[2]}-${dc[3]} ${dc[4]}:${dc[5]}:${dc[6]}`;
+      const counts = parseDreamCounts(body);
+      const total = Object.values(counts).reduce((a, b) => a + b, 0);
+      const detail = Object.entries(counts).map(([k, v]) => `${k} ${v}`).join('｜');
+      collected.push({ ts, line: `- ${ts} Dream Cycle：${detail}｜共 ${total} 项${total > 0 ? '，见整理报告' : '，无待处理'}` });
+      continue;
+    }
+
+    // upgrades.md / merges.md / deleted.md / apply-errors.md：逐行原样并入
+    for (const line of body.split(/\r?\n/)) {
+      const m = line.match(tsRe);
+      if (!m) continue;
+      if (entry === 'upgrades.md') collected.push({ ts: m[1], line: `- ${m[1]} 实体升级：${m[2]}` });
+      else collected.push({ ts: m[1], line }); // merges/deleted/apply-errors 原样保留
+    }
+  }
+
+  // 3. 倒序去重，重建 Wiki/log.md
+  collected.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+  const seen = new Set<string>();
+  const lines = ['# 操作日志', ''];
+  for (const c of collected) {
+    if (seen.has(c.line)) continue;
+    seen.add(c.line);
+    lines.push(c.line);
+  }
+  lines.push('');
+  writePage('Wiki/log.md', lines.join('\n'), { title: '操作日志', type: 'doc' });
+
+  // 4. 删除已迁移源文件 + 清理其 DB 索引
+  for (const entry of entries) {
+    try { fs.unlinkSync(safeJoin(`AIWorks/log/${entry}`)); } catch { /* 单文件失败不阻塞 */ }
+  }
+  const logIds = db.prepare(`SELECT id FROM pages WHERE path LIKE 'AIWorks/log/%'`).all() as { id: string }[];
+  if (logIds.length) {
+    const ids = logIds.map((r) => r.id);
+    const ph = ids.map(() => '?').join(',');
+    db.prepare(`DELETE FROM pages WHERE id IN (${ph})`).run(...ids);
+    db.prepare(`DELETE FROM pages_fts WHERE page_id IN (${ph})`).run(...ids);
+    db.prepare(`DELETE FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})`).run(...ids);
+    const ph2 = ids.map(() => '?').join(',');
+    db.prepare(`DELETE FROM edges WHERE src_page IN (${ph}) OR dst_page IN (${ph2})`).run(...ids, ...ids);
+  }
+  try { regenerateIndex(); } catch { /* 索引重生成失败不阻塞 */ }
+}
+
+/** 解析 Dream Cycle 运行文件正文里的 8 项计数（死链/疑似重复/矛盾/…/实体升级） */
+function parseDreamCounts(body: string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  const re = /^- (.+?)[:：](\d+)\s*$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body))) counts[m[1]] = Number(m[2]);
+  return counts;
 }
