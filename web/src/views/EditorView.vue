@@ -684,26 +684,30 @@ onUnmounted(() => {
 .editor-area :deep(.html-preview-overlay .mdht-ul-marker),
 .editor-area :deep(.html-preview-overlay .mdht-ol-marker) {
   box-sizing: border-box;
-  margin-left: -2.3em;
-  margin-right: 1.2em;
 }
+/* 无序列表使用接近原生排版的小圆点：标记净占宽为 0，仅保留 0.55em 的正文间距 */
 .editor-area :deep(.html-preview-overlay .mdht-ul-marker) {
   display: inline-block;
-  vertical-align: calc(0.38em - 0.55em);
+  margin-left: -0.97em;
+  margin-right: 0.55em;
+  vertical-align: 0.08em;
 }
 .editor-area :deep(.html-preview-overlay .mdht-ul-l1) {
-  width: 1.1em; height: 1.1em; border-radius: 50%; background: var(--accent);
+  width: 0.42em; height: 0.42em; border-radius: 50%; background: var(--accent);
 }
 .editor-area :deep(.html-preview-overlay .mdht-ul-l2) {
-  width: 1.1em; height: 1.1em; border-radius: 50%; background: transparent; border: 0.12em solid var(--accent);
+  width: 0.42em; height: 0.42em; border-radius: 50%; background: transparent; border: 0.09em solid var(--accent);
 }
 .editor-area :deep(.html-preview-overlay .mdht-ul-l3) {
-  width: 0.45em; height: 0.45em; border-radius: 2px; background: var(--accent);
-  vertical-align: calc(0.38em - 0.225em);
+  width: 0.32em; height: 0.32em; border-radius: 1px; background: var(--accent);
+  margin-left: -0.87em;
+  vertical-align: 0.12em;
 }
 .editor-area :deep(.html-preview-overlay .mdht-ol-marker) {
   display: inline-block;
   position: relative;
+  margin-left: -2.3em;
+  margin-right: 1.2em;
   width: 1.1em; height: 1.1em; border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), #4d7cff);
   color: #fff;
