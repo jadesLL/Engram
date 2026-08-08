@@ -1,0 +1,14 @@
+# graph-opt worktree 专属部署（与 main 容器并行隔离）
+services:
+  example-wiki:
+    image: example-wiki:graph-opt
+    build: .
+    container_name: example-wiki-graph-opt
+    ports: ["8083:8080"]
+    volumes: ["example-wiki-data-graph-opt:/data"]
+    environment:
+      - TZ=Asia/Shanghai
+      - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
+    restart: unless-stopped
+volumes:
+  example-wiki-data-graph-opt: {external: true}

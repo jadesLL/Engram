@@ -5,10 +5,12 @@
       <div class="graph-controls">
         <button class="btn small" :class="{ primary: scope === 'global' }" @click="scope = 'global'; load()">全局</button>
         <button v-if="pageId" class="btn small" :class="{ primary: scope === 'page' }" @click="scope = 'page'; load()">本页关联</button>
+        <button class="btn small" @click="fit">铺满</button>
+        <button class="btn small" @click="relayout">重排</button>
         <span class="legend faint small">
           <i style="background:#64748b"></i>笔记 <i style="background:#16a34a"></i>概念
           <i style="background:#ea580c"></i>人物 <i style="background:#7c3aed"></i>项目
-          <i style="background:#2563eb"></i>文档 <i style="background:#f87171"></i>死链
+          <i style="background:#2563eb"></i>文档 <i style="background:#0891b2"></i>组织 <i style="background:#f87171"></i>死链
         </span>
       </div>
     </div>
@@ -31,6 +33,10 @@ const empty = ref(false);
 const pageId = ref((route.params.id as string) || '');
 
 let network: Network | null = null;
+const FONT_SIZE = 13;
+// 以稳定后的铺满缩放比为基线：缩小到基线 60% 以下才隐藏标签，避免一加载就没标签
+let fitScale = 0;
+let labelsHidden = false;
 
 async function load() {
   const params: any = { scope: scope.value };
@@ -46,16 +52,32 @@ async function load() {
   network = new Network(container.value!, { nodes: data.nodes, edges: data.edges }, {
     physics: {
       solver: 'forceAtlas2Based',
-      forceAtlas2Based: { gravitationalConstant: -60, springLength: 120 },
-      stabilization: { iterations: 120 },
+      forceAtlas2Based: { gravitationalConstant: -50, springLength: 120, damping: 0.4 },
+      stabilization: { iterations: 200, fit: true, updateInterval: 25 },
     },
     nodes: {
       shape: 'dot',
-      font: { color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#37352f', size: 13 },
+      font: { color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#37352f', size: FONT_SIZE },
       borderWidth: 1,
     },
-    edges: { width: 1, smooth: { enabled: true, type: 'continuous', roundness: 0.5 } },
+    edges: { width: 1, smooth: false },
     interaction: { hover: true, tooltipDelay: 100 },
+  });
+  fitScale = 0;
+  labelsHidden = false;
+  // 布局收敛后关闭物理引擎，避免节点持续漂移和无谓 tick（修"卡顿/混乱"主因之一）
+  network.once('stabilizationIterationsDone', () => {
+    network!.setOptions({ physics: { enabled: false } });
+    fitScale = network!.getScale();
+  });
+  // 缩小到全局视图以下时隐藏标签，放大后重现，减少标签重叠噪声
+  network.on('zoom', () => {
+    if (!network || !fitScale) return;
+    const hide = network.getScale() < fitScale * 0.6;
+    if (hide !== labelsHidden) {
+      labelsHidden = hide;
+      network.setOptions({ nodes: { font: { size: hide ? 0 : FONT_SIZE } } });
+    }
   });
   network.on('click', (params) => {
     const id = params.nodes[0];
@@ -71,6 +93,20 @@ async function load() {
       load();
     }
   });
+}
+
+function fit() {
+  network?.fit({ animation: { duration: 400 } });
+}
+function relayout() {
+  if (!network) return;
+  network.setOptions({ physics: { enabled: true } });
+  network.once('stabilizationIterationsDone', () => {
+    network!.setOptions({ physics: { enabled: false } });
+    fitScale = network!.getScale();
+    labelsHidden = false;
+  });
+  network.stabilize();
 }
 
 watch(() => route.params.id, (id) => {

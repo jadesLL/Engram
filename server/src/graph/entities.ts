@@ -1,4 +1,5 @@
 import { db, now } from '../lib/db.js';
+import { invalidateGraphCache } from '../lib/graphCache.js';
 import { chatJson, llmReady } from '../lib/llm.js';
 import { readPage } from '../lib/vault.js';
 import { entitiesSystem, entitiesUser, type EntityItem } from '../prompts/entities.js';
@@ -70,4 +71,6 @@ export async function extractEntities(pageId: string): Promise<void> {
       insEdge.run(pageId, null, null, entity.id, rel, ts);
     }
   }
+  // 实体边已重建，图谱缓存失效（实体仅在单页模式展示，但缓存 key 含 scope）
+  invalidateGraphCache();
 }
