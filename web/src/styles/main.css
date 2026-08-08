@@ -139,6 +139,78 @@ html.dark .vditor {
   --panel-background-color: var(--bg-secondary);
 }
 
+/* Vditor 内容区排版精修（Typora/Obsidian 风可读宽行，深浅色自动跟随） */
+.vditor-ir, .vditor-wysiwyg, .vditor-sv {
+  font-size: 16px;
+  line-height: 1.8;
+  color: var(--text);
+}
+.vditor-ir h1, .vditor-ir h2, .vditor-ir h3, .vditor-ir h4,
+.vditor-ir h5, .vditor-ir h6,
+.vditor-wysiwyg h1, .vditor-wysiwyg h2, .vditor-wysiwyg h3, .vditor-wysiwyg h4,
+.vditor-wysiwyg h5, .vditor-wysiwyg h6 {
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.6em 0 0.6em;
+}
+.vditor-ir h1, .vditor-wysiwyg h1 { font-size: 1.9em; margin-top: 0.2em; }
+.vditor-ir h2, .vditor-wysiwyg h2 { font-size: 1.5em; font-weight: 650; }
+.vditor-ir h3, .vditor-wysiwyg h3 { font-size: 1.25em; font-weight: 600; }
+.vditor-ir h4, .vditor-wysiwyg h4 { font-size: 1.05em; font-weight: 600; }
+.vditor-ir h5, .vditor-ir h6,
+.vditor-wysiwyg h5, .vditor-wysiwyg h6 { font-size: 0.95em; color: var(--text-secondary); }
+.vditor-ir p, .vditor-wysiwyg p { margin: 0.75em 0; }
+.vditor-ir a, .vditor-wysiwyg a { color: var(--accent); }
+.vditor-ir a:hover, .vditor-wysiwyg a:hover { text-decoration: underline; text-underline-offset: 2px; }
+.vditor-ir blockquote, .vditor-wysiwyg blockquote {
+  margin: 0.9em 0;
+  padding: 0.4em 1em;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-secondary);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-secondary);
+}
+.vditor-ir blockquote p, .vditor-wysiwyg blockquote p { margin: 0.3em 0; }
+.vditor-ir code, .vditor-wysiwyg code {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+}
+.vditor-ir pre, .vditor-wysiwyg pre {
+  margin: 0.9em 0;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+.vditor-ir pre code, .vditor-wysiwyg pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 0.86em;
+  line-height: 1.6;
+}
+.vditor-ir table, .vditor-wysiwyg table {
+  border-collapse: collapse;
+  margin: 0.9em 0;
+  width: 100%;
+  font-size: 0.92em;
+}
+.vditor-ir th, .vditor-ir td,
+.vditor-wysiwyg th, .vditor-wysiwyg td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.vditor-ir th, .vditor-wysiwyg th { background: var(--bg-tertiary); font-weight: 600; }
+.vditor-ir ul, .vditor-ir ol,
+.vditor-wysiwyg ul, .vditor-wysiwyg ol { margin: 0.6em 0; padding-left: 1.6em; }
+.vditor-ir li, .vditor-wysiwyg li { margin: 0.25em 0; }
+.vditor-ir hr, .vditor-wysiwyg hr { border: none; border-top: 1px solid var(--border); margin: 1.6em 0; }
+.vditor-ir img, .vditor-wysiwyg img { max-width: 100%; border-radius: var(--radius); }
+
 /* 移动端通用 */
 @media (max-width: 768px) {
   :root { font-size: 14px; }
