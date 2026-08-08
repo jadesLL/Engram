@@ -107,6 +107,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
 import { api } from '../api';
+import { openPageStream } from '../lib/events';
 import Sidebar from '../components/Sidebar.vue';
 import AiDrawer from '../components/AiDrawer.vue';
 import JobsPanel from '../components/JobsPanel.vue';
@@ -205,18 +206,23 @@ function onKey(e: KeyboardEvent) {
 }
 
 let reportTimer: ReturnType<typeof setInterval>;
+let closeStream: (() => void) | null = null;
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   loadReportCount();
   reportTimer = setInterval(loadReportCount, 60_000);
   jobPollStopped = false;
   pollJobs();
+  // 服务端 SSE 实时推送：页面增删改/移动时刷新正文与侧栏
+  closeStream = openPageStream((ev) => app.applyPageEvent(ev));
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
   clearInterval(reportTimer);
   jobPollStopped = true;
   if (jobTimer) clearTimeout(jobTimer);
+  closeStream?.();
+  closeStream = null;
 });
 </script>
 
