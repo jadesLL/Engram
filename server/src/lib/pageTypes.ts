@@ -1,0 +1,37 @@
+/**
+ * 统一的页面类型词表。
+ * 消除 ingest(KIND_TYPE) 与 organize(PAGE_TYPES) 两套不一致词表导致的 `org` 被静默丢弃问题。
+ * 全站唯一来源：ingest / organize / graph/entities / 前端类型选择器 都引用此处。
+ */
+
+/** 全部合法页面类型（机制字段 `type`） */
+export const PAGE_TYPES = ['concept', 'person', 'project', 'org', 'doc', 'note'] as const;
+export type PageType = (typeof PAGE_TYPES)[number];
+
+/** 类型 -> 物理目录（与 config.ts typeToDir 保持一致；实体类一律进 Wiki/实体） */
+export const TYPE_DIR: Record<string, string> = {
+  concept: 'Wiki/概念',
+  person: 'Wiki/实体',
+  project: 'Wiki/实体',
+  org: 'Wiki/实体',
+};
+
+/** 类型 -> 中文标签 */
+export const TYPE_LABEL: Record<string, string> = {
+  concept: '概念',
+  person: '人物',
+  project: '项目',
+  org: '组织',
+  doc: '文档',
+  note: '笔记',
+};
+
+/** 是否为实体类（进 Wiki/实体，采用双层结构：当前理解+时间线） */
+export function isEntity(type: string | undefined | null): boolean {
+  return type === 'person' || type === 'project' || type === 'org';
+}
+
+/** 类型是否合法 */
+export function isValidType(type: string | undefined | null): type is PageType {
+  return !!type && (PAGE_TYPES as readonly string[]).includes(type);
+}

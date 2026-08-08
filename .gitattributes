@@ -1,0 +1,13 @@
+# Normalize line endings: text files checked out with CRLF on Windows, LF in the repo.
+# This avoids noisy whole-file diffs from CRLF/LF mismatches across worktrees/agents.
+* text=auto eol=lf
+
+# Force CRLF for Windows-only shell / batch scripts (none yet, but ready)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Treat build artifacts / binaries as binary (no line-ending munging)
+*.png binary
+*.ico binary
+*.tar binary
+*.db binary

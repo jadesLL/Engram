@@ -1,0 +1,15 @@
+services:
+  example-wiki:
+    image: example-wiki:0.1.0
+    build: .
+    container_name: example-wiki
+    ports:
+      - "8080:8080"
+    volumes:
+      # 知识库全部数据（markdown 页面 + 附件 + SQLite 索引）都在这个目录
+      - ./data:/data
+    environment:
+      - TZ=Asia/Shanghai
+      # 初始登录密码（仅首次启动生效，之后可在设置页修改）
+      - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
+    restart: unless-stopped

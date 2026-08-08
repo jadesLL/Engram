@@ -1,0 +1,22 @@
+# 适用于 tsclient/UNC 远程目录环境的部署配置
+# 说明：本环境下 Docker Desktop 无法绑定挂载 \\tsclient\D\...（"not a valid Windows path"），
+# 因此改用命名卷 example-wiki-data 持久化数据。该卷已含最新权威数据（wiki.db + brain）。
+# 用法：docker compose -f docker-compose.unc.yml up -d --build
+services:
+  example-wiki:
+    image: example-wiki:0.1.0
+    build: .
+    container_name: example-wiki
+    ports:
+      - "8080:8080"
+    volumes:
+      - example-wiki-data:/data
+    environment:
+      - TZ=Asia/Shanghai
+      # 初次启动登录密码（仅首次生效；已存在的库保持原密码）
+      - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
+    restart: unless-stopped
+
+volumes:
+  example-wiki-data:
+    external: true

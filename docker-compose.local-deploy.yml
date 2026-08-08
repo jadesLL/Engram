@@ -1,0 +1,10 @@
+services:
+  example-wiki:
+    image: example-wiki:local-current
+    volumes:
+      - example-wiki-data:/data
+
+volumes:
+  example-wiki-data:
+    name: example-wiki-data
+    external: true

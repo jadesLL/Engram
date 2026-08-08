@@ -1,0 +1,239 @@
+import { db, now } from '../lib/db.js';
+import { createPage, readPage, writePage } from '../lib/vault.js';
+import { typeToDir } from '../config.js';
+import { enqueuePagePipeline } from '../jobs.js';
+import { appendWikiLog } from '../pipeline/indexFile.js';
+import { mergePages, appendLog, stamp } from '../lib/mergePages.js';
+import { applyReviewedCandidate } from '../pipeline/ingest.js';
+import { PAGE_TYPES } from '../lib/pageTypes.js';
+
+export const REPORT_ACTION_KINDS = [
+  'deadlink', 'duplicate', 'contradiction', 'single_source', 'missing_sections',
+  'pending_review', 'ingest_questions', 'enrich', 'stale',
+] as const;
+export type ReportActionKind = (typeof REPORT_ACTION_KINDS)[number];
+
+export interface ReportDecision { reportId: number; action: string }
+export type ApplyProgress = (p: { stage: string; progress: number; detail?: string }) => void;
+
+export interface ApplyResult {
+  completed: number;
+  dismissed: number;
+  failed: number;
+  errors: string[];
+}
+
+const ACTION_META: Record<ReportActionKind, { title: string; description: string; button: string; defaultSelected: boolean }> = {
+  deadlink: { title: '批量创建死链页面', description: '为选中的缺失链接创建页面，可逐条调整页面类型。', button: '批量创建页面', defaultSelected: true },
+  duplicate: { title: '批量合并重复页面', description: '逐对确认保留页面；也可以选择保留两者。', button: '批量合并', defaultSelected: false },
+  contradiction: { title: '批量处理矛盾报告', description: '只将选中的矛盾标记为已处理，不修改页面正文。', button: '批量标记已处理', defaultSelected: false },
+  single_source: { title: '批量确认来源单一', description: '只将选中的提醒标记为已知悉，不修改页面正文。', button: '批量标记已知悉', defaultSelected: false },
+  missing_sections: { title: '批量补全章节骨架', description: '只补充缺失的空章节，不生成或猜测正文。', button: '批量补章节', defaultSelected: true },
+  pending_review: { title: '批量审核候选', description: '逐条选择入库类型或不入库，确认后统一执行。', button: '批量审核入库', defaultSelected: false },
+  ingest_questions: { title: '批量确认整理追问', description: '只将选中的追问标记为已知悉。', button: '批量标记已知悉', defaultSelected: false },
+  enrich: { title: '批量忽略待丰富提醒', description: '忽略选中的提醒，不自动生成页面内容。', button: '批量忽略', defaultSelected: false },
+  stale: { title: '批量复核过期页面', description: '写入独立的最后复核日期，不改变正文更新时间。', button: '批量复核', defaultSelected: false },
+};
+
+function parsePayload(value: string): Record<string, any> {
+  try { return JSON.parse(value); } catch { return {}; }
+}
+
+function duplicateSuggestion(payload: Record<string, any>): 'keep_a' | 'keep_b' {
+  const a = payload.a ? readPage(payload.a.path) : null;
+  const b = payload.b ? readPage(payload.b.path) : null;
+  const aLength = a?.content.length || 0;
+  const bLength = b?.content.length || 0;
+  if (bLength > aLength) return 'keep_b';
+  if (aLength > bLength) return 'keep_a';
+  return String(payload.b?.id || '') < String(payload.a?.id || '') ? 'keep_b' : 'keep_a';
+}
+
+function pendingSuggestion(payload: Record<string, any>): string {
+  return ['concept', 'person', 'project', 'org'].includes(payload.kind) ? payload.kind : 'concept';
+}
+
+export function previewReportActions(kind: ReportActionKind) {
+  const rows = db.prepare(
+    `SELECT id, payload FROM reports WHERE kind = ? AND status = 'open' ORDER BY id DESC LIMIT 200`
+  ).all(kind) as { id: number; payload: string }[];
+  const meta = ACTION_META[kind];
+  return {
+    kind,
+    ...meta,
+    items: rows.map((row) => {
+      const payload = parsePayload(row.payload);
+      let suggestedAction = 'resolve';
+      let options: { value: string; label: string }[] = [];
+      if (kind === 'deadlink') {
+        suggestedAction = 'concept';
+        options = PAGE_TYPES.map((type) => ({ value: type, label: ({ concept: '概念', person: '人物', project: '项目', org: '组织', doc: '文档', note: '笔记' } as Record<string, string>)[type] }));
+      } else if (kind === 'duplicate') {
+        suggestedAction = duplicateSuggestion(payload);
+        options = [
+          { value: 'keep_a', label: `保留 ${payload.a?.title || 'A'}` },
+          { value: 'keep_b', label: `保留 ${payload.b?.title || 'B'}` },
+          { value: 'keep_both', label: '保留两者' },
+        ];
+      } else if (kind === 'pending_review') {
+        suggestedAction = pendingSuggestion(payload);
+        options = [
+          { value: 'concept', label: '收为概念' }, { value: 'person', label: '收为人物' },
+          { value: 'project', label: '收为项目' }, { value: 'org', label: '收为组织' },
+          { value: 'dismiss', label: '不入库' },
+        ];
+      } else if (kind === 'enrich') {
+        suggestedAction = 'dismiss';
+      } else if (kind === 'stale') {
+        suggestedAction = 'review';
+      } else if (kind === 'missing_sections') {
+        suggestedAction = 'repair';
+      }
+      return { id: row.id, payload, selected: meta.defaultSelected, suggestedAction, options };
+    }),
+  };
+}
+
+function validAction(kind: ReportActionKind, action: string): boolean {
+  const allowed: Record<ReportActionKind, string[]> = {
+    deadlink: [...PAGE_TYPES],
+    duplicate: ['keep_a', 'keep_b', 'keep_both'],
+    contradiction: ['resolve'],
+    single_source: ['resolve'],
+    missing_sections: ['repair'],
+    pending_review: ['concept', 'person', 'project', 'org', 'dismiss'],
+    ingest_questions: ['resolve'],
+    enrich: ['dismiss'],
+    stale: ['review'],
+  };
+  return allowed[kind].includes(action);
+}
+
+export function validateDecisions(kind: ReportActionKind, decisions: ReportDecision[]): ReportDecision[] {
+  if (!Array.isArray(decisions) || !decisions.length) throw new Error('请至少选择一项');
+  const seen = new Set<number>();
+  return decisions.map((decision) => {
+    const reportId = Number(decision.reportId);
+    const action = String(decision.action || '');
+    if (!Number.isInteger(reportId) || reportId <= 0 || seen.has(reportId)) throw new Error('报告选择无效或重复');
+    if (!validAction(kind, action)) throw new Error(`处理动作无效：${action}`);
+    seen.add(reportId);
+    return { reportId, action };
+  });
+}
+
+export function claimReports(kind: ReportActionKind, decisions: ReportDecision[]): void {
+  const claim = db.transaction(() => {
+    for (const decision of decisions) {
+      const result = db.prepare(
+        `UPDATE reports SET status = 'applying' WHERE id = ? AND kind = ? AND status = 'open'`
+      ).run(decision.reportId, kind);
+      if (result.changes !== 1) throw new Error(`报告 #${decision.reportId} 已处理、分类不匹配或不存在`);
+    }
+  });
+  claim();
+}
+
+export function releaseReports(decisions: ReportDecision[]): void {
+  if (!decisions.length) return;
+  const update = db.prepare(`UPDATE reports SET status = 'open' WHERE id = ? AND status = 'applying'`);
+  db.transaction(() => decisions.forEach((decision) => update.run(decision.reportId)))();
+}
+
+function completeReport(id: number, status: 'resolved' | 'dismissed') {
+  db.prepare(`UPDATE reports SET status = ? WHERE id = ? AND status = 'applying'`).run(status, id);
+}
+
+function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Record<string, any>): 'resolved' | 'dismissed' {
+  switch (kind) {
+    case 'deadlink': {
+      const title = String(payload.deadTitle || '').trim();
+      if (!title) throw new Error('死链报告缺少目标标题');
+      let page = db.prepare(`SELECT id, path FROM pages WHERE deleted = 0 AND lower(title) = lower(?)`).get(title) as any;
+      if (!page) {
+        page = createPage(typeToDir(decision.action), title);
+        const content = readPage(page.path)?.content || `# ${title}\n\n`;
+        writePage(page.path, content, { type: decision.action });
+        appendWikiLog('新建页面', `[[${title}]]（${page.path}）`);
+        enqueuePagePipeline(page.id);
+      }
+      return 'resolved';
+    }
+    case 'duplicate': {
+      if (decision.action === 'keep_both') return 'dismissed';
+      const keep = decision.action === 'keep_a' ? payload.a : payload.b;
+      const other = decision.action === 'keep_a' ? payload.b : payload.a;
+      if (!keep?.id || !other?.id) throw new Error('重复报告缺少页面信息');
+      mergePages(keep.id, other.id);
+      return 'resolved';
+    }
+    case 'missing_sections': {
+      const page = db.prepare(`SELECT id, path FROM pages WHERE id = ? AND deleted = 0`).get(payload.pageId) as any;
+      if (!page) throw new Error('页面不存在');
+      const current = readPage(page.path);
+      if (!current) throw new Error('页面无法读取');
+      let content = current.content.replace(/\s*$/, '');
+      if ((payload.missing || []).includes('当前理解') && !/##\s*当前理解/.test(content)) content += '\n\n## 当前理解\n';
+      if ((payload.missing || []).includes('时间线') && !/##\s*时间线/.test(content)) content += '\n\n## 时间线\n';
+      writePage(page.path, `${content}\n`, {});
+      enqueuePagePipeline(page.id);
+      return 'resolved';
+    }
+    case 'pending_review': {
+      if (decision.action === 'dismiss') {
+        db.prepare(`UPDATE reports SET payload = ? WHERE id = ?`).run(
+          JSON.stringify({ ...payload, review: { decision: 'dismissed', target: '', note: '', at: now() } }),
+          decision.reportId
+        );
+        return 'dismissed';
+      }
+      const applied = applyReviewedCandidate(payload, decision.action as 'concept' | 'person' | 'project' | 'org');
+      db.prepare(`UPDATE reports SET payload = ? WHERE id = ?`).run(
+        JSON.stringify({ ...payload, review: { decision: 'approved', target: applied.id, note: '', at: now() } }),
+        decision.reportId
+      );
+      return 'resolved';
+    }
+    case 'stale': {
+      const page = db.prepare(`SELECT id, path FROM pages WHERE id = ? AND deleted = 0`).get(payload.pageId) as any;
+      if (!page) throw new Error('页面不存在');
+      const current = readPage(page.path);
+      if (!current) throw new Error('页面无法读取');
+      const row = db.prepare(`SELECT updated_at FROM pages WHERE id = ?`).get(page.id) as { updated_at: string };
+      writePage(page.path, current.content, { reviewed_at: now(), updated: row.updated_at });
+      return 'resolved';
+    }
+    case 'enrich': return 'dismissed';
+    case 'contradiction':
+    case 'single_source':
+    case 'ingest_questions':
+      return 'resolved';
+  }
+}
+
+export function applyReportDecisions(kind: ReportActionKind, decisions: ReportDecision[], update: ApplyProgress = () => {}): ApplyResult {
+  const result: ApplyResult = { completed: 0, dismissed: 0, failed: 0, errors: [] };
+  decisions.forEach((decision, index) => {
+    update({ stage: ACTION_META[kind].button, progress: Math.round((index / decisions.length) * 100), detail: `${index + 1}/${decisions.length}` });
+    const report = db.prepare(`SELECT payload FROM reports WHERE id = ? AND kind = ? AND status = 'applying'`).get(decision.reportId, kind) as any;
+    if (!report) {
+      result.failed++;
+      result.errors.push(`报告 #${decision.reportId} 不再处于可处理状态`);
+      return;
+    }
+    try {
+      const status = applyOne(kind, decision, parsePayload(report.payload));
+      completeReport(decision.reportId, status);
+      if (status === 'dismissed') result.dismissed++;
+      else result.completed++;
+    } catch (error: any) {
+      db.prepare(`UPDATE reports SET status = 'open' WHERE id = ? AND status = 'applying'`).run(decision.reportId);
+      result.failed++;
+      result.errors.push(`报告 #${decision.reportId}：${error?.message || error}`);
+    }
+  });
+  const detail = `成功 ${result.completed} 项，忽略 ${result.dismissed} 项${result.failed ? `，失败 ${result.failed} 项` : ''}`;
+  update({ stage: '已完成', progress: 100, detail });
+  result.errors.forEach((line) => appendLog('apply-errors.md', '批量处理失败记录', `- ${stamp()} ${line}`));
+  return result;
+}

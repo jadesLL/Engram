@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM Wiki</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
+      font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      background: #f7f7f5; color: #37352f;
+    }
+    .card {
+      background: #fff; border: 1px solid #e9e9e7; border-radius: 12px;
+      padding: 36px 32px; width: 380px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .logo {
+      width: 44px; height: 44px; margin: 0 auto; border-radius: 11px;
+      background: #37352f; color: #fff; font-size: 22px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+    }
+    h1 { font-size: 20px; margin: 0; text-align: center; }
+    p { margin: 0; text-align: center; color: #787774; font-size: 14px; }
+    input { font: inherit; padding: 10px 12px; border: 1px solid #dcdcd9; border-radius: 8px; outline: none; }
+    input:focus { border-color: #2563eb; }
+    button { font: inherit; padding: 10px; border: none; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
+    button:hover { opacity: 0.9; }
+    .err { color: #dc2626; font-size: 13px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">W</div>
+    <h1>LLM Wiki</h1>
+    <p>输入 NAS 上的服务地址</p>
+    <input id="url" placeholder="http://192.168.1.101:8080" />
+    <button id="go">连接</button>
+    <div class="err" id="err"></div>
+  </div>
+  <script>
+    const input = document.getElementById('url');
+    const err = document.getElementById('err');
+    window.wikiDesktop?.getServer().then(u => { input.value = u || ''; });
+    input.focus();
+    async function go() {
+      let u = input.value.trim();
+      if (!u) { err.textContent = '请输入地址'; return; }
+      if (!/^https?:\/\//.test(u)) u = 'http://' + u;
+      u = u.replace(/\/+$/, '');
+      try {
+        const r = await fetch(u + '/api/auth/status');
+        if (!r.ok) throw new Error();
+        await window.wikiDesktop.setServer(u);
+      } catch {
+        err.textContent = '无法连接到 ' + u;
+      }
+    }
+    document.getElementById('go').onclick = go;
+    input.addEventListener('keydown', e => e.key === 'Enter' && go());
+  </script>
+</body>
+</html>

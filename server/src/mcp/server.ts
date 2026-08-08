@@ -1,0 +1,130 @@
+import { FastifyInstance } from 'fastify';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
+import { db } from '../lib/db.js';
+import { hybridSearch } from '../retrieval/hybrid.js';
+import { thinkText } from '../retrieval/synthesize.js';
+import { readPage, writePage, listTree } from '../lib/vault.js';
+import { saveChat } from '../lib/chat.js';
+import { enqueuePagePipeline } from '../jobs.js';
+
+function makeServer(): McpServer {
+  const server = new McpServer({ name: 'example-wiki', version: '0.1.0' });
+
+  server.tool(
+    'search',
+    '在知识库中做混合检索（向量+关键词），返回相关片段与出处',
+    { query: z.string(), limit: z.number().optional() },
+    async ({ query, limit }) => {
+      const hits = await hybridSearch(query, limit ?? 8);
+      const text = hits
+        .map(
+          (h, i) =>
+            `[${i + 1}] ${h.title} (${h.refType}:${h.path}) 匹配:${h.evidence.join('+')}\n${h.snippet}`
+        )
+        .join('\n\n');
+      return { content: [{ type: 'text', text: text || '（无结果）' }] };
+    }
+  );
+
+  server.tool(
+    'think',
+    '基于知识库综合回答问题：带引用与差距分析（指出知识库缺失/过期/矛盾）',
+    { query: z.string() },
+    async ({ query }) => {
+      const { answer, hits } = await thinkText(query);
+      const refs = hits.map((h, i) => `[${i + 1}] ${h.title} (${h.path})`).join('\n');
+      return { content: [{ type: 'text', text: `${answer}\n\n---\n引用来源：\n${refs}` }] };
+    }
+  );
+
+  server.tool(
+    'read_page',
+    '按标题或页面ID读取知识库页面全文（markdown）',
+    { titleOrId: z.string() },
+    async ({ titleOrId }) => {
+      const page = db
+        .prepare(`SELECT path FROM pages WHERE deleted = 0 AND (id = ? OR lower(title) = lower(?))`)
+        .get(titleOrId, titleOrId) as any;
+      if (!page) return { content: [{ type: 'text', text: `页面不存在: ${titleOrId}` }] };
+      const rd = readPage(page.path);
+      if (!rd) return { content: [{ type: 'text', text: '文件读取失败' }] };
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `# ${rd.meta.title}\n路径: ${rd.meta.path}\n类型: ${rd.meta.type}\n标签: ${(rd.meta.tags as any).join?.(', ') || ''}\n\n${rd.content}`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    'write_page',
+    '创建或覆盖知识库页面（markdown）。保存后自动建立索引与图谱关联。',
+    {
+      path: z.string().describe('相对路径，如 notes/xxx.md'),
+      title: z.string(),
+      content: z.string().describe('markdown 正文'),
+      type: z.enum(['note', 'concept', 'person', 'project', 'doc']).optional(),
+      tags: z.array(z.string()).optional(),
+    },
+    async ({ path: p, title, content, type, tags }) => {
+      const rel = p.endsWith('.md') ? p : `${p}.md`;
+      const meta = writePage(rel, content, { title, type, tags });
+      enqueuePagePipeline(meta.id);
+      return { content: [{ type: 'text', text: `已保存: ${meta.path}（id: ${meta.id}）` }] };
+    }
+  );
+
+  server.tool('list_pages', '列出知识库目录树', {}, async () => {
+    const tree = JSON.stringify(listTree(), null, 1);
+    return { content: [{ type: 'text', text: tree.slice(0, 20_000) }] };
+  });
+
+  server.tool(
+    'save_chat',
+    '把一段与外置 Agent 的对话沉积到 原始资料/对话/ 并立即入队提炼（仅可写入对话/；按时间+标识命名；project 归到 对话/<project>/ 子目录；append 合并到当日/当 project 最近一条对话文件）',
+    {
+      content: z.string().describe('对话正文 markdown'),
+      identifier: z.string().optional().describe('简单标识，用于文件名 slug 与标题'),
+      project: z.string().optional().describe('项目维度：归到 原始资料/chat/<project>/ 子目录'),
+      append: z.boolean().optional().describe('追加合并到当日/当 project 最近一条 chat 文件，否则新建'),
+    },
+    async ({ content, identifier, project, append }) => {
+      const r = await saveChat({ content, identifier, project, append });
+      return {
+        content: [
+          { type: 'text', text: `已沉积对话: ${r.path}（id: ${r.id}）${r.appended ? '（追加合并）' : '（新建）'}，已入队提炼` },
+        ],
+      };
+    }
+  );
+
+  return server;
+}
+
+export async function mcpRoutes(app: FastifyInstance) {
+  app.all('/mcp', async (req, reply) => {
+    // token 鉴权
+    const auth = req.headers.authorization || '';
+    const token = auth.replace(/^Bearer\s+/i, '');
+    const valid = token && db.prepare(`SELECT id FROM mcp_tokens WHERE token = ?`).get(token);
+    if (!valid) {
+      reply.code(401).send({ error: 'invalid MCP token' });
+      return;
+    }
+
+    reply.hijack();
+    const server = makeServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    reply.raw.on('close', () => {
+      transport.close();
+      server.close();
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req.raw, reply.raw, (req as any).body);
+  });
+}

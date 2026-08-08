@@ -1,0 +1,13 @@
+packages:
+  - server
+  - web
+  - desktop
+allowBuilds:
+  better-sqlite3: true
+  sqlite-vec: true
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  vue-demi: true
+  core-js: set this to true or false
+  x-data-spreadsheet: set this to true or false

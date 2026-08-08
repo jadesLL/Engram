@@ -1,0 +1,31 @@
+{
+  "name": "@example-wiki/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "docx-preview": "^0.4.0",
+    "pinia": "^2.3.0",
+    "pptx-preview": "^1.0.7",
+    "vditor": "^3.10.8",
+    "vis-data": "^7.1.9",
+    "vis-network": "^9.1.9",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0",
+    "x-data-spreadsheet": "^1.1.9",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "less": "^4.8.1",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7",
+    "vue-tsc": "^2.2.0"
+  }
+}

@@ -1,0 +1,51 @@
+import type { ComposedItem, PlanItem, VerifierOutput } from './ingestModel.js';
+
+export interface FactGateResult<T> {
+  items: T[];
+  rejected: Array<{ name: string; invalidFactIds: string[] }>;
+}
+
+export function whitelistFactIds<T extends PlanItem>(items: T[], allowedFactIds: ReadonlySet<string>): FactGateResult<T> {
+  const rejected: FactGateResult<T>['rejected'] = [];
+  const gated = items.map((item) => {
+    const validFactIds = [...new Set(item.factIds.filter((id: string) => allowedFactIds.has(id)))];
+    const invalidFactIds = [...new Set(item.factIds.filter((id: string) => !allowedFactIds.has(id)))];
+    const noEvidence = !validFactIds.length && !['skip', 'review'].includes(item.action);
+    if (invalidFactIds.length || noEvidence) rejected.push({ name: item.name, invalidFactIds });
+    if (!invalidFactIds.length && !noEvidence) return { ...item, factIds: validFactIds };
+    return {
+      ...item,
+      factIds: validFactIds,
+      action: 'review' as const,
+      reason: [item.reason, invalidFactIds.length ? `引用了无效事实：${invalidFactIds.join(', ')}` : '', noEvidence ? '没有有效事实依据' : ''].filter(Boolean).join('；'),
+    };
+  });
+  return { items: gated, rejected };
+}
+
+export function enforceWriteGate(items: ComposedItem[], verification: VerifierOutput, allowedFactIds: ReadonlySet<string>): ComposedItem[] {
+  const checked = whitelistFactIds(items, allowedFactIds).items;
+  const byName = new Map(verification.items.map((item) => [item.name.trim().toLowerCase(), item]));
+  return checked.map((item) => {
+    const result = byName.get(item.name.trim().toLowerCase());
+    const unsupported = result?.unsupported.length ?? 0;
+    const conflicts = result?.conflicts.length ?? 0;
+    const noFacts = item.factIds.length === 0;
+    const mustReview = item.action === 'review' || item.confidence === '低' || noFacts || !result || !result.pass || unsupported > 0 || conflicts > 0;
+    const reasons = [
+      item.reason,
+      item.confidence === '低' ? '低置信度' : '',
+      noFacts ? '没有有效事实依据' : '',
+      !result ? '缺少验证结果' : '',
+      result && !result.pass ? '验证未通过' : '',
+      unsupported ? `存在 ${unsupported} 项无依据内容` : '',
+      conflicts ? `存在 ${conflicts} 项冲突` : '',
+    ].filter(Boolean);
+    return {
+      ...item,
+      content: result?.content || item.content,
+      action: mustReview ? 'review' : item.action,
+      reason: [...new Set(reasons)].join('；'),
+    };
+  });
+}
