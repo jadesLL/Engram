@@ -125,3 +125,45 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 - 合并冲突时，集成 Agent 应理解两边意图再取舍；无法判断就**暂停问人**，不要瞎选。
 - 分支寿命要短：勤合并，越早合冲突越小。
 
+---
+
+# 当前活动 worktree（实时登记）
+
+每个 Agent 进来先看这里，确认自己在哪个文件夹、用哪个端口。改完合并后记得更新本表。
+
+| 功能 | 文件夹 | 分支 | 容器 | 端口 | 卷 | 状态 |
+|---|---|---|---|---|---|---|
+| 集成分支(主干) | `Wiki知识库/` | `main` | `example-wiki` | 8080 | `example-wiki-data` | 干净，禁止直接开发 |
+| 数字角标 | `Wiki知识库-number-badge/` | `feat/number-badge` | `example-wiki-number-badge` | 8082 | `example-wiki-data-number-badge` | 开发中 |
+| AI整理日志 | `Wiki知识库-ai-organize-logs/` | `feat/ai-organize-logs` | `example-wiki-ai-logs` | 8081 | `example-wiki-data-ai-logs` | 开发中 |
+
+> 端口顺延规则：main=8080，第 N 个功能用 808N。
+
+## Agent 入场须知（每个 Agent 必读）
+
+1. **先确认你在哪个文件夹**：你的功能对应上表某一行，只在该行文件夹里干活。
+   - 数字角标 → `Wiki知识库-number-badge/`
+   - AI整理日志 → `Wiki知识库-ai-organize-logs/`
+2. **绝不碰 `Wiki知识库/`（main 主干）**：那是集成分支，只用来合并，不直接写代码。
+   在上面写代码会卡住后续合并（`merge-feature.sh` 会因 main 不干净而拒绝）。
+3. **开发循环**（在你的 worktree 文件夹里）：
+   ```bash
+   cd "<你的 worktree 文件夹>"
+   # 改代码... 提交到你的 feat/ 分支
+   git add -A && git commit -m "..."
+   docker compose -f docker-compose.worktree.yml build   # 重建你的镜像
+   docker compose -f docker-compose.worktree.yml up -d   # 重部署到你的端口
+   curl http://localhost:<你的端口>/...                    # 验证
+   ```
+4. **完成合并**（回 main 仓库根目录，确认此刻没有别的 merge 在跑）：
+   ```bash
+   scripts/merge-feature.sh <你的功能名>     # 自动: merge→main → 重部署8080 → 清理你的资源
+   ```
+   - 冲突 → 脚本会停住：在 main 仓库解决冲突 → `git add -A && git commit` → `scripts/merge-feature.sh --finish <功能名>`。
+5. **合并完更新本表**：把你的行标成"已合并"，或删掉该行。
+
+## 串行合并排班
+
+多个功能同时完成时，**按顺序逐个**跑 `merge-feature.sh`，一个合完重部署 8080 验证后再合下一个。
+不要两个 Agent 同时跑 merge。建议顺序：越早完成的越先合（分支寿命短 = 冲突小）。
+
