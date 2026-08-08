@@ -10,6 +10,7 @@ import { rebuildAll } from '../pipeline/indexer.js';
 import { safeJoin, writePage } from '../lib/vault.js';
 import { ensureDirs } from '../config.js';
 import { appendWikiLog, regenerateIndex, regenerateRelationships } from '../pipeline/indexFile.js';
+import { discoverModels } from '../lib/modelDiscovery.js';
 
 const PUBLIC_SETTINGS = [
   'chat_models', 'active_chat_model',
@@ -65,6 +66,28 @@ export async function settingsRoutes(app: FastifyInstance) {
       return testModel(body.entry, body.kind);
     }
     return testConnection();
+  });
+
+  app.post('/api/settings/discover-models', async (req, reply) => {
+    const body = (req.body || {}) as {
+      baseUrl?: string;
+      modelsUrl?: string;
+      apiKey?: string;
+      kind?: 'chat' | 'embedding';
+    };
+    if (body.kind !== 'chat' && body.kind !== 'embedding') {
+      return reply.code(400).send({ error: '模型类型无效' });
+    }
+    try {
+      return await discoverModels({
+        baseUrl: body.baseUrl,
+        modelsUrl: body.modelsUrl,
+        apiKey: body.apiKey,
+        kind: body.kind,
+      });
+    } catch (error: any) {
+      return reply.code(502).send({ error: error?.message || '模型列表拉取失败' });
+    }
   });
 
   /** 全量重建索引（异步执行，立即返回） */
