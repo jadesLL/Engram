@@ -1,14 +1,14 @@
-# html-toolbar-right worktree 专属部署（与 main 容器并行隔离）
+# ambiguous-entity worktree 专属部署（与 main 容器并行隔离）
 services:
   example-wiki:
-    image: example-wiki:html-toolbar-right
+    image: example-wiki:ambiguous-entity
     build: .
-    container_name: example-wiki-html-toolbar-right
+    container_name: example-wiki-ambiguous-entity
     ports: ["8084:8080"]
-    volumes: ["example-wiki-data-html-toolbar-right:/data"]
+    volumes: ["example-wiki-data-ambiguous-entity:/data"]
     environment:
       - TZ=Asia/Shanghai
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
     restart: unless-stopped
 volumes:
-  example-wiki-data-html-toolbar-right: {external: true}
+  example-wiki-data-ambiguous-entity: {external: true}
