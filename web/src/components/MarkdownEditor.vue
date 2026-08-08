@@ -363,7 +363,13 @@ onUnmounted(() => vditor?.destroy());
   flex-direction: column;
 }
 .vditor-host { flex: 1; min-height: 0; }
-:deep(.vditor-toolbar) { border-bottom: 1px solid var(--border); }
+:deep(.vditor-toolbar) {
+  border-bottom: 1px solid var(--border);
+  /* HTML 预览按钮右对齐到工具栏最右端 */
+  & .vditor-tooltipped[data-type="html"] {
+    margin-left: auto;
+  }
+}
 :deep(.vditor-ir), :deep(.vditor-wysiwyg), :deep(.vditor-sv) {
   background: var(--bg);
   color: var(--text);
