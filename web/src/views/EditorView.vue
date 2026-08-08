@@ -601,8 +601,12 @@ onUnmounted(() => {
   font-weight: 500;
 }
 .editor-area :deep(.html-preview-overlay a:hover) { text-decoration: underline; }
-.editor-area :deep(.html-preview-overlay ul),
-.editor-area :deep(.html-preview-overlay ol) { margin: 0 0 1em; padding-left: 2em; }
+.editor-area :deep(.html-preview-overlay ul:not(.contains-task-list)),
+.editor-area :deep(.html-preview-overlay ol:not(.contains-task-list)) {
+  list-style: none;
+  margin: 0 0 1em;
+  padding-left: 2em;
+}
 .editor-area :deep(.html-preview-overlay li) { margin: 0.35em 0; }
 /* 引用块：电光蓝渐变竖线 */
 .editor-area :deep(.html-preview-overlay blockquote) {

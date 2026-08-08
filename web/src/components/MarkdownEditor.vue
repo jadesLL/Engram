@@ -313,8 +313,16 @@ async function renderHtmlPreview() {
   };
 }
 
-/** 为 h1-h3 计算章节号，写入 data-md-num（CSS 用 attr() 显示渐变色编号） */
+/**
+ * 为 h1-h3 计算章节号，写入 data-md-num（CSS 用 attr() 显示渐变色编号）。
+ * 若文档任一标题已带「一.」「1.」「1.1」「（一）」等序号，全文跳过自动编号，
+ * 避免显示成「1. 一.人员整改方向」「1.1. 1.销售」。
+ */
 function applyHeadingNumbers(root: HTMLElement) {
+  const headings = Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3'));
+  const numberedHeading = /^\s*(?:[（(][一二三四五六七八九十百零\d]+[）)]|[一二三四五六七八九十百零\d]+(?:\.\d+)*\s*[.、．)）])/;
+  if (headings.some((h) => numberedHeading.test(h.textContent || ''))) return;
+
   const counters = [0, 0, 0, 0, 0, 0];
   for (const child of Array.from(root.children)) {
     const el = child as HTMLElement;
