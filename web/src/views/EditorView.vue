@@ -365,8 +365,10 @@ onUnmounted(() => {
 }
 .editor-area :deep(.vditor-toolbar) { max-width: 100%; }
 
-/* 排版精修（Typora/Obsidian 风可读宽行） */
-.editor-area :deep(.vditor-ir) {
+/* 排版精修（Typora/Obsidian 风可读宽行，三种编辑模式统一） */
+.editor-area :deep(.vditor-ir),
+.editor-area :deep(.vditor-wysiwyg),
+.editor-area :deep(.vditor-sv) {
   font-size: 16px;
   line-height: 1.8;
   color: var(--text);
@@ -376,21 +378,53 @@ onUnmounted(() => {
 .editor-area :deep(.vditor-ir h3),
 .editor-area :deep(.vditor-ir h4),
 .editor-area :deep(.vditor-ir h5),
-.editor-area :deep(.vditor-ir h6) {
+.editor-area :deep(.vditor-ir h6),
+.editor-area :deep(.vditor-wysiwyg h1),
+.editor-area :deep(.vditor-wysiwyg h2),
+.editor-area :deep(.vditor-wysiwyg h3),
+.editor-area :deep(.vditor-wysiwyg h4),
+.editor-area :deep(.vditor-wysiwyg h5),
+.editor-area :deep(.vditor-wysiwyg h6),
+.editor-area :deep(.vditor-sv h1),
+.editor-area :deep(.vditor-sv h2),
+.editor-area :deep(.vditor-sv h3),
+.editor-area :deep(.vditor-sv h4),
+.editor-area :deep(.vditor-sv h5),
+.editor-area :deep(.vditor-sv h6) {
   font-weight: 700;
   line-height: 1.3;
   margin: 1.6em 0 0.6em;
 }
-.editor-area :deep(.vditor-ir h1) { font-size: 1.9em; margin-top: 0.2em; }
-.editor-area :deep(.vditor-ir h2) { font-size: 1.5em; font-weight: 650; }
-.editor-area :deep(.vditor-ir h3) { font-size: 1.25em; font-weight: 600; }
-.editor-area :deep(.vditor-ir h4) { font-size: 1.05em; font-weight: 600; }
+.editor-area :deep(.vditor-ir h1),
+.editor-area :deep(.vditor-wysiwyg h1),
+.editor-area :deep(.vditor-sv h1) { font-size: 1.9em; margin-top: 0.2em; }
+.editor-area :deep(.vditor-ir h2),
+.editor-area :deep(.vditor-wysiwyg h2),
+.editor-area :deep(.vditor-sv h2) { font-size: 1.5em; font-weight: 650; }
+.editor-area :deep(.vditor-ir h3),
+.editor-area :deep(.vditor-wysiwyg h3),
+.editor-area :deep(.vditor-sv h3) { font-size: 1.25em; font-weight: 600; }
+.editor-area :deep(.vditor-ir h4),
+.editor-area :deep(.vditor-wysiwyg h4),
+.editor-area :deep(.vditor-sv h4) { font-size: 1.05em; font-weight: 600; }
 .editor-area :deep(.vditor-ir h5),
-.editor-area :deep(.vditor-ir h6) { font-size: 0.95em; color: var(--text-secondary); }
-.editor-area :deep(.vditor-ir p) { margin: 0.75em 0; }
-.editor-area :deep(.vditor-ir a) { color: var(--accent); }
-.editor-area :deep(.vditor-ir a:hover) { text-decoration: underline; text-underline-offset: 2px; }
-.editor-area :deep(.vditor-ir blockquote) {
+.editor-area :deep(.vditor-ir h6),
+.editor-area :deep(.vditor-wysiwyg h5),
+.editor-area :deep(.vditor-wysiwyg h6),
+.editor-area :deep(.vditor-sv h5),
+.editor-area :deep(.vditor-sv h6) { font-size: 0.95em; color: var(--text-secondary); }
+.editor-area :deep(.vditor-ir p),
+.editor-area :deep(.vditor-wysiwyg p),
+.editor-area :deep(.vditor-sv p) { margin: 0.75em 0; }
+.editor-area :deep(.vditor-ir a),
+.editor-area :deep(.vditor-wysiwyg a),
+.editor-area :deep(.vditor-sv a) { color: var(--accent); }
+.editor-area :deep(.vditor-ir a:hover),
+.editor-area :deep(.vditor-wysiwyg a:hover),
+.editor-area :deep(.vditor-sv a:hover) { text-decoration: underline; text-underline-offset: 2px; }
+.editor-area :deep(.vditor-ir blockquote),
+.editor-area :deep(.vditor-wysiwyg blockquote),
+.editor-area :deep(.vditor-sv blockquote) {
   margin: 0.9em 0;
   padding: 0.4em 1em;
   border-left: 3px solid var(--accent);
@@ -398,15 +432,21 @@ onUnmounted(() => {
   border-radius: 0 6px 6px 0;
   color: var(--text-secondary);
 }
-.editor-area :deep(.vditor-ir blockquote p) { margin: 0.3em 0; }
-.editor-area :deep(.vditor-ir code) {
+.editor-area :deep(.vditor-ir blockquote p),
+.editor-area :deep(.vditor-wysiwyg blockquote p),
+.editor-area :deep(.vditor-sv blockquote p) { margin: 0.3em 0; }
+.editor-area :deep(.vditor-ir code),
+.editor-area :deep(.vditor-wysiwyg code),
+.editor-area :deep(.vditor-sv code) {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.88em;
   padding: 0.15em 0.4em;
   border-radius: 4px;
   background: var(--bg-tertiary);
 }
-.editor-area :deep(.vditor-ir pre) {
+.editor-area :deep(.vditor-ir pre),
+.editor-area :deep(.vditor-wysiwyg pre),
+.editor-area :deep(.vditor-sv pre) {
   margin: 0.9em 0;
   padding: 14px 16px;
   background: var(--bg-secondary);
@@ -414,30 +454,245 @@ onUnmounted(() => {
   border-radius: var(--radius);
   overflow-x: auto;
 }
-.editor-area :deep(.vditor-ir pre code) {
+.editor-area :deep(.vditor-ir pre code),
+.editor-area :deep(.vditor-wysiwyg pre code),
+.editor-area :deep(.vditor-sv pre code) {
   padding: 0;
   background: transparent;
   font-size: 0.86em;
   line-height: 1.6;
 }
-.editor-area :deep(.vditor-ir table) {
+.editor-area :deep(.vditor-ir table),
+.editor-area :deep(.vditor-wysiwyg table),
+.editor-area :deep(.vditor-sv table) {
   border-collapse: collapse;
   margin: 0.9em 0;
   width: 100%;
   font-size: 0.92em;
 }
 .editor-area :deep(.vditor-ir th),
-.editor-area :deep(.vditor-ir td) {
+.editor-area :deep(.vditor-ir td),
+.editor-area :deep(.vditor-wysiwyg th),
+.editor-area :deep(.vditor-wysiwyg td),
+.editor-area :deep(.vditor-sv th),
+.editor-area :deep(.vditor-sv td) {
   border: 1px solid var(--border);
   padding: 6px 10px;
   text-align: left;
 }
-.editor-area :deep(.vditor-ir th) { background: var(--bg-tertiary); font-weight: 600; }
+.editor-area :deep(.vditor-ir th),
+.editor-area :deep(.vditor-wysiwyg th),
+.editor-area :deep(.vditor-sv th) { background: var(--bg-tertiary); font-weight: 600; }
 .editor-area :deep(.vditor-ir ul),
-.editor-area :deep(.vditor-ir ol) { margin: 0.6em 0; padding-left: 1.6em; }
-.editor-area :deep(.vditor-ir li) { margin: 0.25em 0; }
-.editor-area :deep(.vditor-ir hr) { border: none; border-top: 1px solid var(--border); margin: 1.6em 0; }
-.editor-area :deep(.vditor-ir img) { max-width: 100%; border-radius: var(--radius); }
+.editor-area :deep(.vditor-ir ol),
+.editor-area :deep(.vditor-wysiwyg ul),
+.editor-area :deep(.vditor-wysiwyg ol),
+.editor-area :deep(.vditor-sv ul),
+.editor-area :deep(.vditor-sv ol) { margin: 0.6em 0; padding-left: 1.6em; }
+.editor-area :deep(.vditor-ir li),
+.editor-area :deep(.vditor-wysiwyg li),
+.editor-area :deep(.vditor-sv li) { margin: 0.25em 0; }
+.editor-area :deep(.vditor-ir hr),
+.editor-area :deep(.vditor-wysiwyg hr),
+.editor-area :deep(.vditor-sv hr) { border: none; border-top: 1px solid var(--border); margin: 1.6em 0; }
+.editor-area :deep(.vditor-ir img),
+.editor-area :deep(.vditor-wysiwyg img),
+.editor-area :deep(.vditor-sv img) { max-width: 100%; border-radius: var(--radius); }
+
+/* ===== HTML 预览美化（精选子集融合 Notion 风 + 电光蓝点缀） ===== */
+.editor-area :deep(.html-preview-overlay) {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow-y: auto;
+  background:
+    radial-gradient(600px 420px at 88% -60px, rgba(37, 99, 235, 0.05), transparent 70%),
+    radial-gradient(520px 400px at 4% 2%, rgba(59, 130, 246, 0.04), transparent 70%),
+    var(--bg);
+  padding: 48px 56px 72px;
+  font-size: 16px;
+  line-height: 1.8;
+  color: var(--text);
+}
+.editor-area :deep(.html-preview-overlay h1),
+.editor-area :deep(.html-preview-overlay h2),
+.editor-area :deep(.html-preview-overlay h3),
+.editor-area :deep(.html-preview-overlay h4) {
+  line-height: 1.3;
+  color: var(--text);
+  position: relative;
+}
+.editor-area :deep(.html-preview-overlay h1) {
+  font-size: 2.1em;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  margin: 0.6em 0 0.9em;
+  padding-bottom: 0.4em;
+}
+/* h1 电光蓝渐变 signature 下划线 */
+.editor-area :deep(.html-preview-overlay h1::after) {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, rgba(37, 99, 235, 0.55), rgba(59, 130, 246, 0.25));
+}
+.editor-area :deep(.html-preview-overlay h2) {
+  font-size: 1.55em;
+  font-weight: 700;
+  margin: 1.6em 0 0.7em;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--border);
+}
+.editor-area :deep(.html-preview-overlay h3) {
+  font-size: 1.2em;
+  font-weight: 700;
+  margin: 1.4em 0 0.6em;
+}
+.editor-area :deep(.html-preview-overlay h4) {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 1.3em 0 0.5em;
+}
+/* 章节编号：电光蓝渐变文字 */
+.editor-area :deep(.html-preview-overlay h1::before),
+.editor-area :deep(.html-preview-overlay h2::before),
+.editor-area :deep(.html-preview-overlay h3::before) {
+  content: attr(data-md-num);
+  margin-right: 0.45em;
+  background: linear-gradient(to right, var(--accent), #4d7cff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+}
+.editor-area :deep(.html-preview-overlay p) { margin: 0 0 1em; }
+.editor-area :deep(.html-preview-overlay a) {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+.editor-area :deep(.html-preview-overlay a:hover) { text-decoration: underline; }
+.editor-area :deep(.html-preview-overlay ul),
+.editor-area :deep(.html-preview-overlay ol) { margin: 0 0 1em; padding-left: 2em; }
+.editor-area :deep(.html-preview-overlay li) { margin: 0.35em 0; }
+/* 引用块：电光蓝渐变竖线 */
+.editor-area :deep(.html-preview-overlay blockquote) {
+  margin: 0 0 1em;
+  padding: 0.7em 1.3em;
+  border-left: 4px solid var(--accent);
+  border-image: linear-gradient(to bottom, var(--accent), #4d7cff) 1;
+  background: var(--bg-secondary);
+  border-radius: 0 8px 8px 0;
+  color: var(--text-secondary);
+}
+.editor-area :deep(.html-preview-overlay blockquote p:last-child) { margin-bottom: 0; }
+/* 代码 */
+.editor-area :deep(.html-preview-overlay pre) {
+  padding: 16px 20px;
+  border-radius: 12px;
+  margin: 0 0 1em;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  overflow-x: auto;
+}
+.editor-area :deep(.html-preview-overlay code) {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  border-radius: 6px;
+  padding: 0.15em 0.45em;
+  font-size: 0.85em;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.editor-area :deep(.html-preview-overlay pre code) {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+/* 表格：斑马纹 + 表头底色 */
+.editor-area :deep(.html-preview-overlay table) {
+  border-collapse: collapse;
+  margin: 0 0 1.2em;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+  font-variant-numeric: tabular-nums;
+}
+.editor-area :deep(.html-preview-overlay th) {
+  background: var(--bg-tertiary);
+  color: var(--text);
+  font-weight: 600;
+  text-align: left;
+  padding: 11px 12px;
+  border-bottom: 2px solid var(--accent);
+}
+.editor-area :deep(.html-preview-overlay td) {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.editor-area :deep(.html-preview-overlay tr:nth-child(even) td) { background: var(--bg-secondary); }
+.editor-area :deep(.html-preview-overlay tr:hover td) { background: var(--bg-hover); }
+/* 图片 */
+.editor-area :deep(.html-preview-overlay img) {
+  display: block;
+  max-width: 100%;
+  margin: 1em auto;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+/* 分割线 */
+.editor-area :deep(.html-preview-overlay hr) {
+  margin: 2.2em 0;
+  border: none;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(to right, transparent, var(--border) 20%, var(--border) 80%, transparent);
+}
+/* 列表徽章（JS 注入的 span 标记） */
+.editor-area :deep(.html-preview-overlay .mdht-ul-marker),
+.editor-area :deep(.html-preview-overlay .mdht-ol-marker) {
+  box-sizing: border-box;
+  margin-left: -2.3em;
+  margin-right: 1.2em;
+}
+.editor-area :deep(.html-preview-overlay .mdht-ul-marker) {
+  display: inline-block;
+  vertical-align: calc(0.38em - 0.55em);
+}
+.editor-area :deep(.html-preview-overlay .mdht-ul-l1) {
+  width: 1.1em; height: 1.1em; border-radius: 50%; background: var(--accent);
+}
+.editor-area :deep(.html-preview-overlay .mdht-ul-l2) {
+  width: 1.1em; height: 1.1em; border-radius: 50%; background: transparent; border: 0.12em solid var(--accent);
+}
+.editor-area :deep(.html-preview-overlay .mdht-ul-l3) {
+  width: 0.45em; height: 0.45em; border-radius: 2px; background: var(--accent);
+  vertical-align: calc(0.38em - 0.225em);
+}
+.editor-area :deep(.html-preview-overlay .mdht-ol-marker) {
+  display: inline-block;
+  position: relative;
+  width: 1.1em; height: 1.1em; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #4d7cff);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+  vertical-align: calc(0.38em - 0.55em);
+  text-align: center;
+}
+.editor-area :deep(.html-preview-overlay .mdht-ol-num) {
+  display: block;
+  font-size: 0.62em;
+  font-weight: 700;
+  line-height: 1.77;
+}
+@media (max-width: 768px) {
+  .editor-area :deep(.html-preview-overlay) { padding: 24px 16px 40px; }
+  .editor-area :deep(.html-preview-overlay h1) { font-size: 1.7em; }
+  .editor-area :deep(.html-preview-overlay h2) { font-size: 1.35em; }
+}
 
 .ai-panel {
   position: absolute;
