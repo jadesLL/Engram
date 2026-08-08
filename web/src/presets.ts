@@ -1,3 +1,15 @@
+import deepseekLogo from './assets/providers/deepseek.ico';
+import kimiLogo from './assets/providers/kimi.ico';
+import zhipuLogo from './assets/providers/zhipu.png';
+import aliyunLogo from './assets/providers/aliyun.ico';
+import doubaoLogo from './assets/providers/doubao.png';
+import xiaomiLogo from './assets/providers/xiaomi.png';
+import minimaxLogo from './assets/providers/minimax.ico';
+import stepfunLogo from './assets/providers/stepfun.png';
+import hunyuanLogo from './assets/providers/hunyuan.svg';
+import siliconflowLogo from './assets/providers/siliconflow.svg';
+import openaiLogo from './assets/providers/openai.svg';
+
 /** OpenAI 兼容的内置厂商、API 线路与模型目录。 */
 export interface ModelOption {
   id: string;
@@ -13,6 +25,8 @@ export interface ApiLine {
   name: string;
   type: 'payg' | 'token-plan' | 'coding-plan';
   baseUrl: string;
+  /** 获取该线路可用模型的 API。国内厂商使用中国大陆官方域名。 */
+  modelsUrl?: string;
   /** 线路模型白名单。省略时表示可使用厂商目录中的全部模型。 */
   models?: string[];
   hint?: string;
@@ -22,6 +36,7 @@ export interface ApiLine {
 export interface ProviderPreset {
   id: string;
   name: string;
+  logo?: string;
   lines: ApiLine[];
   chatModels: ModelOption[];
   embeddingModels: ModelOption[];
@@ -36,12 +51,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'deepseek',
     name: 'DeepSeek',
+    logo: deepseekLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://api.deepseek.com/v1',
+        modelsUrl: 'https://api.deepseek.com/models',
         apiKeyPlaceholder: 'sk-...',
       },
     ],
@@ -53,12 +70,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'moonshot',
     name: 'Kimi',
+    logo: kimiLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://api.moonshot.cn/v1',
+        modelsUrl: 'https://api.moonshot.cn/v1/models',
         apiKeyPlaceholder: 'sk-...',
       },
       {
@@ -66,6 +85,7 @@ export const PROVIDERS: ProviderPreset[] = [
         name: 'Kimi Code',
         type: 'coding-plan',
         baseUrl: 'https://api.kimi.com/coding/v1',
+        modelsUrl: 'https://api.kimi.com/coding/v1/models',
         models: ['kimi-for-coding'],
         hint: 'Kimi Code 线路只支持 kimi-for-coding。',
         apiKeyPlaceholder: 'sk-...',
@@ -85,12 +105,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'zhipu',
     name: '智谱 GLM',
+    logo: zhipuLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+        modelsUrl: 'https://open.bigmodel.cn/api/paas/v4/models',
         apiKeyPlaceholder: 'API Key',
       },
       {
@@ -98,6 +120,7 @@ export const PROVIDERS: ProviderPreset[] = [
         name: 'Coding Plan',
         type: 'coding-plan',
         baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+        modelsUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/models',
         models: ['glm-5.2', 'glm-5-turbo', 'glm-4.7'],
         hint: 'Coding Plan 只支持 glm-5.2、glm-5-turbo 和 glm-4.7。',
         apiKeyPlaceholder: 'Coding Plan API Key',
@@ -128,12 +151,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'aliyun',
     name: '通义百炼',
+    logo: aliyunLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        modelsUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/models',
         apiKeyPlaceholder: 'sk-...',
       },
       {
@@ -141,6 +166,7 @@ export const PROVIDERS: ProviderPreset[] = [
         name: 'Coding Plan',
         type: 'coding-plan',
         baseUrl: 'https://coding.dashscope.aliyuncs.com/v1',
+        modelsUrl: 'https://coding.dashscope.aliyuncs.com/v1/models',
         models: [
           'qwen3.7-plus',
           'qwen3.6-plus',
@@ -209,12 +235,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'doubao',
     name: '豆包火山方舟',
+    logo: doubaoLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+        modelsUrl: 'https://ark.cn-beijing.volces.com/api/v3/models',
         hint: '模型名称也可填写控制台中 ep- 开头的推理接入点。',
         apiKeyPlaceholder: 'API Key',
       },
@@ -248,12 +276,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'xiaomi',
     name: '小米 MiMo',
+    logo: xiaomiLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://api.xiaomimimo.com/v1',
+        modelsUrl: 'https://api.xiaomimimo.com/v1/models',
         apiKeyPlaceholder: 'sk-...',
       },
       {
@@ -261,6 +291,7 @@ export const PROVIDERS: ProviderPreset[] = [
         name: 'Token Plan',
         type: 'token-plan',
         baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
+        modelsUrl: 'https://token-plan-cn.xiaomimimo.com/v1/models',
         apiKeyPlaceholder: 'tp-...',
       },
     ],
@@ -271,12 +302,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'minimax',
     name: 'MiniMax',
+    logo: minimaxLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://api.minimaxi.com/v1',
+        modelsUrl: 'https://api.minimaxi.com/v1/models',
         apiKeyPlaceholder: 'sk-...',
       },
       {
@@ -284,6 +317,7 @@ export const PROVIDERS: ProviderPreset[] = [
         name: 'Token Plan',
         type: 'token-plan',
         baseUrl: 'https://api.minimaxi.com/v1',
+        modelsUrl: 'https://api.minimaxi.com/v1/models',
         hint: 'Token Plan 使用 sk-cp- 开头的专用 Key。',
         apiKeyPlaceholder: 'sk-cp-...',
       },
@@ -302,12 +336,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'stepfun',
     name: '阶跃 StepFun',
+    logo: stepfunLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://api.stepfun.com/v1',
+        modelsUrl: 'https://api.stepfun.com/v1/models',
         apiKeyPlaceholder: 'API Key',
       },
       {
@@ -315,6 +351,7 @@ export const PROVIDERS: ProviderPreset[] = [
         name: 'Step Plan',
         type: 'token-plan',
         baseUrl: 'https://api.stepfun.com/step_plan/v1',
+        modelsUrl: 'https://api.stepfun.com/step_plan/v1/models',
         models: ['step-3.7-flash', 'step-3.5-flash-2603', 'step-3.5-flash', 'step-router-v1'],
         hint: 'Step Plan 只支持指定的 Flash 与 Router 模型。',
         apiKeyPlaceholder: 'Step Plan API Key',
@@ -334,12 +371,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'hunyuan',
     name: '腾讯混元',
+    logo: hunyuanLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
+        modelsUrl: 'https://api.hunyuan.cloud.tencent.com/v1/models',
         apiKeyPlaceholder: 'API Key',
       },
     ],
@@ -359,12 +398,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'siliconflow',
     name: '硅基流动',
+    logo: siliconflowLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://api.siliconflow.cn/v1',
+        modelsUrl: 'https://api.siliconflow.cn/v1/models',
         apiKeyPlaceholder: 'sk-...',
       },
     ],
@@ -419,12 +460,14 @@ export const PROVIDERS: ProviderPreset[] = [
   {
     id: 'openai',
     name: 'OpenAI',
+    logo: openaiLogo,
     lines: [
       {
         id: 'payg',
         name: '按量付费',
         type: 'payg',
         baseUrl: 'https://api.openai.com/v1',
+        modelsUrl: 'https://api.openai.com/v1/models',
         apiKeyPlaceholder: 'sk-...',
       },
     ],

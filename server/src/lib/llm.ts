@@ -7,6 +7,7 @@ export interface ModelEntry {
   name: string;      // 备注名
   provider: string;  // 预设 id
   baseUrl: string;
+  modelsUrl?: string;
   model: string;
   apiKey: string;
   dim?: number;      // embedding 维度
@@ -310,7 +311,7 @@ export async function embed(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   const cfg = getLlmConfig();
   const entry = getActiveEmbedding();
-  if (!cfg.embeddingApiKey) throw new LlmError('尚未配置 Embedding API Key（设置页 → Embedding）');
+  if (!cfg.embeddingApiKey) throw new LlmError('尚未配置向量模型 API Key（设置页 → 向量模型）');
   const body = buildEmbeddingRequestBody(
     {
       model: cfg.embeddingModel,
@@ -344,7 +345,7 @@ export async function testConnection(): Promise<{ chat: boolean; embedding: bool
   if (!chatRes.ok) return { ...result, error: `chat: ${chatRes.error}` };
   result.chat = true;
   const embModel = getActiveEmbedding();
-  if (!embModel) return { ...result, error: '未配置 Embedding 模型' };
+  if (!embModel) return { ...result, error: '未配置向量模型' };
   const embRes = await testModel(embModel, 'embedding');
   if (!embRes.ok) return { ...result, error: `embedding: ${embRes.error}` };
   result.embedding = true;

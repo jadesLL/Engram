@@ -105,7 +105,7 @@ function assertDim(vectors: number[][]) {
   if (actual && actual !== expected) {
     throw new Error(
       `Embedding 维度不匹配：模型返回 ${actual} 维，当前配置为 ${expected} 维。` +
-      `请到「设置 → Embedding 模型」把该模型的维度改为 ${actual} 并保存（保存后会自动重建索引）。`
+      `请到「设置 → 向量模型」把该模型的维度改为 ${actual} 并保存（保存后会自动重建索引）。`
     );
   }
 }
