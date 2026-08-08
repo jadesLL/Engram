@@ -197,7 +197,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     const pad = (n: number) => String(n).padStart(2, '0');
     const d = new Date();
     const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    const resetLog = `# 操作日志\n\n- ${stamp} 清除：清空 AI 整理日志 ${fileCount} 个文件，并重置操作日志\n`;
+    const resetLog = `# 操作日志\n\n- ${stamp} 清除：重置操作日志${fileCount ? `（并清空 ${fileCount} 个残留 AI 日志文件）` : ''}\n`;
     writePage('Wiki/log.md', resetLog, { title: '操作日志', type: 'doc' });
     // 重生成索引（AIWorks/log 页面已消失，index.md 需同步）
     try {

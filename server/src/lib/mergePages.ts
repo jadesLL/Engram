@@ -12,16 +12,6 @@ export function stamp(d = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-/** 操作日志写入 AIWorks/log/<file> */
-export function appendLog(file: string, title: string, line: string) {
-  try {
-    const rel = `AIWorks/log/${file}`;
-    const rd = readPage(rel);
-    const content = rd ? `${rd.content}\n${line}` : `# ${title}\n\n${line}`;
-    writePage(rel, content + '\n', { title });
-  } catch { /* 日志失败不阻塞主流程 */ }
-}
-
 /** 合并参数/数据错误，携带 HTTP 状态码供路由映射 */
 export class MergeError extends Error {
   constructor(message: string, public status = 400) {
@@ -83,7 +73,6 @@ export function mergePages(keepId: string, otherId: string): void {
     if (replaced !== rd.content) writePage(rp.path, replaced, {});
   }
 
-  appendLog('merges.md', '合并日志', `- ${stamp()} 「${other.title}」合并入「${keep.title}」（原页已归档）`);
-  appendWikiLog('合并', `[[${other.title}]] 合并入 [[${keep.title}]]`);
+  appendWikiLog('合并', `[[${other.title}]] 合并入 [[${keep.title}]]（原页已归档）`);
   enqueuePagePipeline(keep.id);
 }
