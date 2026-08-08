@@ -719,7 +719,7 @@ onUnmounted(() => {
   background: linear-gradient(135deg, var(--accent), #4d7cff);
   color: #fff;
   box-shadow: 0 1px 4px rgba(37, 99, 235, 0.28);
-  vertical-align: -0.08em;
+  vertical-align: 0.1em;
   text-align: center;
 }
 .editor-area :deep(.html-preview-overlay .mdht-ol-num) {
