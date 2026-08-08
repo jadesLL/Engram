@@ -607,6 +607,9 @@ onUnmounted(() => {
   margin: 0 0 1em;
   padding-left: 2em;
 }
+.editor-area :deep(.html-preview-overlay li > p:first-child) { display: inline; }
+.editor-area :deep(.html-preview-overlay li > p:first-child + ul),
+.editor-area :deep(.html-preview-overlay li > p:first-child + ol) { margin-top: 0.35em; }
 .editor-area :deep(.html-preview-overlay li) { margin: 0.35em 0; }
 /* 引用块：电光蓝渐变竖线 */
 .editor-area :deep(.html-preview-overlay blockquote) {

@@ -380,8 +380,14 @@ function listDepth(list: Element, tag: 'UL' | 'OL'): number {
   return depth;
 }
 
+/** 标记插入正文行首；松散列表（li 以 <p> 开头）必须插入 p 内，避免徽章独占一行、与正文错位 */
 function prependMarker(li: HTMLElement, marker: HTMLElement) {
-  li.insertBefore(marker, li.firstChild);
+  const first = li.firstElementChild;
+  if (first && first.tagName === 'P') {
+    first.prepend(marker);
+  } else {
+    li.prepend(marker);
+  }
 }
 
 // ---------- 对外接口 ----------
