@@ -12,7 +12,9 @@ const secret = 'test-secret-that-is-long-enough-for-hmac';
 test('JWT round-trips and rejects tampering or expiration', () => {
   const token = signJwt({ purpose: 'content', path: '原始资料/a.docx' }, secret, 60);
   assert.equal(verifyJwt(token, secret).purpose, 'content');
-  assert.throws(() => verifyJwt(`${token.slice(0, -1)}x`, secret), /签名无效/);
+  const parts = token.split('.');
+  parts[2] = `${parts[2][0] === 'a' ? 'b' : 'a'}${parts[2].slice(1)}`;
+  assert.throws(() => verifyJwt(parts.join('.'), secret), /签名无效/);
   assert.throws(() => verifyJwt(signJwt({ purpose: 'content' }, secret, -1), secret), /已过期/);
 });
 
@@ -39,4 +41,3 @@ test('callback download URLs are always rewritten to the fixed internal upstream
     /无效|越界/
   );
 });
-
