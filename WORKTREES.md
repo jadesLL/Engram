@@ -294,7 +294,7 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 | 功能 | 文件夹 | 分支 | 容器 | 端口 | 卷 | 状态 |
 |---|---|---|---|---|---|---|
 | 集成分支(主干) | `Wiki知识库/` | `main` | `example-wiki` | 8080 | `example-wiki-data` | 干净，禁止直接开发 |
-| 模型配置自动发现 | `Wiki知识库-model-config-discovery/` | `feat/model-config-discovery` | `example-wiki-model-config-discovery` | 8081 | `example-wiki-data-model-config-discovery` | 开发中 |
+| 模型配置自动发现 | ~~`Wiki知识库-model-config-discovery/`~~ | ~~`feat/model-config-discovery`~~ | ~~`example-wiki-model-config-discovery`~~ | ~~8081~~ | ~~`example-wiki-data-model-config-discovery`~~ | 已合并入 main |
 | 设置界面重构 | ~~`Wiki知识库-settings-ui-redesign/`~~ | ~~`feat/settings-ui-redesign`~~ | ~~`example-wiki-settings-ui-redesign`~~ | ~~8081~~ | ~~`example-wiki-data-settings-ui-redesign`~~ | 已合并入 main |
 | 数字角标 | ~~`Wiki知识库-number-badge/`~~ | ~~`feat/number-badge`~~ | ~~`example-wiki-number-badge`~~ | ~~8082~~ | ~~`example-wiki-data-number-badge`~~ | 已合并入 main |
 | 首页按钮 | ~~`Wiki知识库-home-button/`~~ | ~~`feat/home-button`~~ | ~~`example-wiki-home-button`~~ | ~~8085~~ | ~~`example-wiki-data-home-button`~~ | 已合并入 main |
