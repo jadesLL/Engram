@@ -704,22 +704,26 @@ onUnmounted(() => {
   vertical-align: 0.12em;
 }
 .editor-area :deep(.html-preview-overlay .mdht-ol-marker) {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   position: relative;
-  margin-left: -2.3em;
-  margin-right: 1.2em;
-  width: 1.1em; height: 1.1em; border-radius: 50%;
+  margin-left: -1.75em;
+  margin-right: 0.65em;
+  width: 1em;
+  height: 1em;
+  border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), #4d7cff);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
-  vertical-align: calc(0.38em - 0.55em);
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.28);
+  vertical-align: -0.08em;
   text-align: center;
 }
 .editor-area :deep(.html-preview-overlay .mdht-ol-num) {
   display: block;
-  font-size: 0.62em;
+  font-size: 0.66em;
   font-weight: 700;
-  line-height: 1.77;
+  line-height: 1;
 }
 @media (max-width: 768px) {
   .editor-area :deep(.html-preview-overlay) { padding: 24px 16px 40px; }
