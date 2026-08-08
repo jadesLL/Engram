@@ -6,7 +6,7 @@ import { requireAuth } from './auth.js';
 /**
  * 实时事件流：GET /api/events（SSE）。
  * 前端用 EventSource 订阅，同源自动带 token cookie，复用 requireAuth 鉴权。
- * 服务端在 writePage/trashPage/movePage 处 emit page-changed/deleted/moved，
+ * 服务端在 writePage/moveToTrash/movePage 处 emit page-changed/deleted/moved，
  * 此连接长开，由客户端断开时 req close 触发反注册。
  */
 export async function eventRoutes(app: FastifyInstance) {

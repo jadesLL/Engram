@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
-import { BRAIN_DIR, TRASH_DIR, normalizeDir, isPageDir } from '../config.js';
+import { BRAIN_DIR, normalizeDir, isPageDir } from '../config.js';
 import { db, newId, now } from './db.js';
 import { ftsSegment } from './fts.js';
 import { emit } from './events.js';
@@ -329,27 +329,8 @@ export function movePage(oldRel: string, newRel: string): PageMeta | null {
   return meta;
 }
 
-/** 软删除：移入 .trash 并标记 deleted */
-export function trashPage(relPath: string) {
-  const abs = safeJoin(relPath);
-  if (!fs.existsSync(abs)) return;
-  const dest = path.join(TRASH_DIR, `${Date.now()}-${path.basename(relPath)}`);
-  fs.renameSync(abs, dest);
-  db.prepare(`UPDATE pages SET deleted = 1, updated_at = ? WHERE path = ?`).run(now(), relPath);
-  const row = db.prepare(`SELECT id FROM pages WHERE path = ?`).get(relPath) as any;
-  emit('page-deleted', { path: relPath, id: row?.id });
-}
-
 export function mkdir(rel: string) {
   fs.mkdirSync(safeJoin(rel), { recursive: true });
-}
-
-export function trashFile(relPath: string) {
-  const abs = safeJoin(relPath);
-  if (!fs.existsSync(abs)) return;
-  const dest = path.join(TRASH_DIR, `${Date.now()}-${path.basename(relPath)}`);
-  fs.renameSync(abs, dest);
-  db.prepare(`UPDATE files SET deleted = 1, updated_at = ? WHERE path = ?`).run(now(), relPath);
 }
 
 /** 全量扫描 brain 目录：同步 pages/files 表（用于启动时与索引重建） */

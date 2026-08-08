@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
 import { db } from '../lib/db.js';
-import { safeJoin, trashFile } from '../lib/vault.js';
+import { safeJoin } from '../lib/vault.js';
+import { moveToTrash } from '../lib/trash.js';
 import { requireAuth } from './auth.js';
 import { docxToText } from '../pipeline/docx.js';
 import { xlsxToText, pptxToText } from '../pipeline/office.js';
@@ -11,6 +12,7 @@ import { upsertFileRecord } from '../pipeline/indexer.js';
 import { enqueue } from '../jobs.js';
 import { normalizeDir, isUploadDir } from '../config.js';
 import { syncPageFile } from '../lib/vault.js';
+import { appendWikiLog } from '../pipeline/indexFile.js';
 
 /** 可提取文本入索引的 Office 格式 */
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
@@ -218,9 +220,16 @@ export async function fileRoutes(app: FastifyInstance) {
     return reply.send(fs.createReadStream(abs));
   });
 
-  app.delete('/api/files', async (req) => {
+  app.delete('/api/files', async (req, reply) => {
     const { path: p } = req.body as { path: string };
-    trashFile(p);
+    try {
+      const item = moveToTrash(p);
+      appendWikiLog('删除', `「${item.name}」（${item.originalPath}，已入回收站）`);
+    } catch (error: any) {
+      return reply.code(error?.message === '文件不存在' ? 404 : 400).send({
+        error: error?.message || '删除失败',
+      });
+    }
     return { ok: true };
   });
 }

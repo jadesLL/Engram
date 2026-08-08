@@ -214,6 +214,86 @@
       <button class="btn small" @click="newToken">＋ 生成 Token</button>
     </section>
 
+    <!-- 回收站 -->
+    <section class="card trash-section">
+      <div class="sec-head">
+        <div>
+          <h3>回收站</h3>
+          <p class="faint small trash-summary">
+            {{ trashLoading ? '正在读取…' : `${trashItems.length} 个项目 · ${formatBytes(trashTotalSize)}` }}
+          </p>
+        </div>
+        <button
+          class="btn small danger"
+          :disabled="trashLoading || !trashItems.length"
+          @click="emptyTrash"
+        >
+          <Icon name="trash" :size="14" />清空回收站
+        </button>
+      </div>
+
+      <div class="trash-tools">
+        <label class="trash-select-all">
+          <input
+            type="checkbox"
+            :checked="allVisibleTrashSelected"
+            :disabled="!filteredTrash.length"
+            @change="toggleAllTrash"
+          />
+          <span class="small">全选</span>
+        </label>
+        <input v-model="trashQuery" class="trash-filter" placeholder="筛选名称或原路径" />
+        <button
+          class="btn small"
+          :disabled="!selectedTrash.size || trashBusy"
+          @click="restoreSelectedTrash"
+        >
+          <Icon name="restore" :size="14" />恢复所选
+        </button>
+        <button
+          class="btn small danger"
+          :disabled="!selectedTrash.size || trashBusy"
+          @click="deleteSelectedTrash"
+        >
+          <Icon name="trash" :size="14" />永久删除
+        </button>
+      </div>
+
+      <div v-if="filteredTrash.length" class="trash-list">
+        <div v-for="item in filteredTrash" :key="item.id" class="trash-row">
+          <input
+            type="checkbox"
+            :checked="selectedTrash.has(item.id)"
+            :aria-label="`选择 ${item.name}`"
+            @change="toggleTrash(item.id)"
+          />
+          <Icon :name="item.kind === 'page' ? 'pages' : 'attach'" :size="16" class="trash-kind" />
+          <div class="trash-main">
+            <div class="trash-name-line">
+              <span class="trash-name" :title="item.name">{{ item.name }}</span>
+              <span v-if="item.legacy" class="legacy-tag">历史项目</span>
+            </div>
+            <div class="trash-meta" :title="item.originalPath">
+              <span>{{ item.originalPath }}</span>
+              <span>{{ formatTrashDate(item.deletedAt) }}</span>
+              <span>{{ formatBytes(item.size) }}</span>
+            </div>
+          </div>
+          <div class="trash-actions">
+            <button class="icon-btn" title="恢复" :disabled="trashBusy" @click="restoreTrash([item.id])">
+              <Icon name="restore" :size="15" />
+            </button>
+            <button class="icon-btn danger-icon" title="永久删除" :disabled="trashBusy" @click="deleteTrash([item.id])">
+              <Icon name="trash" :size="15" />
+            </button>
+          </div>
+        </div>
+      </div>
+      <p v-else-if="trashLoading" class="faint small trash-empty">正在读取回收站…</p>
+      <p v-else class="faint small trash-empty">{{ trashQuery ? '没有匹配的项目' : '回收站为空' }}</p>
+      <p v-if="trashMsg" class="small trash-message" :class="trashOk ? 'ok' : 'err'">{{ trashMsg }}</p>
+    </section>
+
     <!-- 数据 -->
     <section class="card">
       <h3>数据</h3>
@@ -258,6 +338,16 @@ interface ModelEntry {
   dim?: number;
 }
 
+interface TrashEntry {
+  id: string;
+  kind: 'page' | 'file';
+  name: string;
+  originalPath: string;
+  deletedAt: string;
+  size: number;
+  legacy: boolean;
+}
+
 const app = useAppStore();
 const auth = useAuthStore();
 
@@ -281,6 +371,24 @@ const dreamEnabled = ref(true);
 const dreamCron = ref('0 3 * * *');
 const mcpTokens = ref<any[]>([]);
 const mcpUrl = computed(() => `${location.origin}/mcp`);
+const trashItems = ref<TrashEntry[]>([]);
+const trashTotalSize = ref(0);
+const trashLoading = ref(false);
+const trashBusy = ref(false);
+const trashQuery = ref('');
+const selectedTrash = ref(new Set<string>());
+const trashMsg = ref('');
+const trashOk = ref(true);
+const filteredTrash = computed(() => {
+  const query = trashQuery.value.trim().toLowerCase();
+  if (!query) return trashItems.value;
+  return trashItems.value.filter((item) =>
+    item.name.toLowerCase().includes(query) || item.originalPath.toLowerCase().includes(query)
+  );
+});
+const allVisibleTrashSelected = computed(() =>
+  filteredTrash.value.length > 0 && filteredTrash.value.every((item) => selectedTrash.value.has(item.id))
+);
 
 const form = ref({
   show: false,
@@ -519,6 +627,129 @@ function logout() {
   auth.logout();
 }
 
+function formatBytes(value: number): string {
+  if (!value) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const amount = value / (1024 ** index);
+  return `${amount >= 10 || index === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
+}
+
+function formatTrashDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function toggleTrash(id: string) {
+  const next = new Set(selectedTrash.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  selectedTrash.value = next;
+}
+
+function toggleAllTrash() {
+  const next = new Set(selectedTrash.value);
+  if (allVisibleTrashSelected.value) {
+    filteredTrash.value.forEach((item) => next.delete(item.id));
+  } else {
+    filteredTrash.value.forEach((item) => next.add(item.id));
+  }
+  selectedTrash.value = next;
+}
+
+async function loadTrash() {
+  trashLoading.value = true;
+  try {
+    const { data } = await api.get('/api/trash');
+    trashItems.value = data.items;
+    trashTotalSize.value = data.totalSize;
+    const available = new Set(trashItems.value.map((item) => item.id));
+    selectedTrash.value = new Set([...selectedTrash.value].filter((id) => available.has(id)));
+  } catch (e: any) {
+    trashOk.value = false;
+    trashMsg.value = e.response?.data?.error || '回收站读取失败';
+  } finally {
+    trashLoading.value = false;
+  }
+}
+
+async function restoreTrash(ids: string[]) {
+  if (!ids.length || trashBusy.value) return;
+  trashBusy.value = true;
+  trashMsg.value = '';
+  try {
+    const { data } = await api.post('/api/trash/restore', { ids });
+    trashOk.value = data.errors.length === 0;
+    trashMsg.value = data.errors.length
+      ? `已恢复 ${data.restored.length} 个，${data.errors.length} 个失败：${data.errors[0].error}`
+      : `已恢复 ${data.restored.length} 个项目`;
+    app.bumpSidebar();
+    await loadTrash();
+  } catch (e: any) {
+    trashOk.value = false;
+    trashMsg.value = e.response?.data?.error || '恢复失败';
+  } finally {
+    trashBusy.value = false;
+  }
+}
+
+function restoreSelectedTrash() {
+  return restoreTrash([...selectedTrash.value]);
+}
+
+async function deleteTrash(ids: string[]) {
+  if (!ids.length || trashBusy.value) return;
+  if (!confirm(`将永久删除选中的 ${ids.length} 个项目，此操作不可撤销。继续？`)) return;
+  if (!confirm('最后一次确认：真的要永久删除吗？')) return;
+  trashBusy.value = true;
+  trashMsg.value = '';
+  try {
+    const { data } = await api.delete('/api/trash', { data: { ids } });
+    trashOk.value = data.errors.length === 0;
+    trashMsg.value = data.errors.length
+      ? `已删除 ${data.deleted.length} 个，${data.errors.length} 个失败：${data.errors[0].error}`
+      : `已永久删除 ${data.deleted.length} 个项目`;
+    await loadTrash();
+  } catch (e: any) {
+    trashOk.value = false;
+    trashMsg.value = e.response?.data?.error || '永久删除失败';
+  } finally {
+    trashBusy.value = false;
+  }
+}
+
+function deleteSelectedTrash() {
+  return deleteTrash([...selectedTrash.value]);
+}
+
+async function emptyTrash() {
+  if (trashBusy.value || !trashItems.value.length) return;
+  if (!confirm(`将永久删除回收站中的 ${trashItems.value.length} 个项目，此操作不可撤销。继续？`)) return;
+  if (!confirm('最后一次确认：真的要清空回收站吗？')) return;
+  trashBusy.value = true;
+  trashMsg.value = '';
+  try {
+    const { data } = await api.delete('/api/trash/all');
+    trashOk.value = data.errors.length === 0;
+    trashMsg.value = data.errors.length
+      ? `已删除 ${data.deleted.length} 个，${data.errors.length} 个失败：${data.errors[0].error}`
+      : `已清空 ${data.deleted.length} 个项目`;
+    await loadTrash();
+  } catch (e: any) {
+    trashOk.value = false;
+    trashMsg.value = e.response?.data?.error || '清空回收站失败';
+  } finally {
+    trashBusy.value = false;
+  }
+}
+
 const wipeMsg = ref('');
 const wipeOk = ref(false);
 
@@ -575,7 +806,10 @@ async function load() {
   dreamCron.value = dr.cron;
 }
 
-onMounted(load);
+onMounted(() => {
+  load();
+  loadTrash();
+});
 </script>
 
 <style scoped>
@@ -714,6 +948,69 @@ section h3 { margin: 0; font-size: 15px; }
 .token { font-size: 12px; background: var(--bg-tertiary); padding: 3px 8px; border-radius: 4px; flex: 1; overflow: hidden; text-overflow: ellipsis; }
 code { background: var(--bg-tertiary); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
 
+/* ---------- 回收站 ---------- */
+.trash-section .sec-head { align-items: flex-start; }
+.trash-summary { margin: 4px 0 0; }
+.trash-tools {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.trash-select-all { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.trash-filter { min-width: 0; width: 100%; }
+.trash-list {
+  max-height: 390px;
+  overflow-y: auto;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.trash-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 58px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.trash-kind { color: var(--text-faint); }
+.trash-main { min-width: 0; }
+.trash-name-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.trash-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legacy-tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.trash-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.trash-meta span:first-child { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-meta span:not(:first-child) { flex-shrink: 0; }
+.trash-actions { display: flex; align-items: center; gap: 2px; }
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+}
+.icon-btn:hover { background: var(--bg-hover); }
+.danger-icon { color: var(--danger); }
+.trash-empty { margin: 16px 0 4px; text-align: center; }
+.trash-message { margin: 10px 0 0; }
+
 .danger-zone {
   margin-top: 14px;
   padding: 12px;
@@ -726,6 +1023,20 @@ code { background: var(--bg-tertiary); padding: 1px 6px; border-radius: 4px; fon
 .danger-text p { margin: 4px 0 0; }
 
 @media (max-width: 520px) {
+  .settings-view { padding: 20px 12px 80px; }
   .model-grid { grid-template-columns: 1fr; }
+  .form { grid-template-columns: 1fr; }
+  .provider-grid { grid-column: 1; }
+  .trash-section .sec-head { flex-direction: column; gap: 8px; }
+  .trash-section .sec-head .btn { width: 100%; justify-content: center; }
+  .trash-tools { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .trash-select-all, .trash-filter { grid-column: 1 / -1; }
+  .trash-tools .btn { width: 100%; min-width: 0; justify-content: center; padding-left: 8px; padding-right: 8px; }
+  .trash-meta { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
+  .trash-meta span:first-child { grid-column: 1 / -1; }
+  .trash-row { grid-template-columns: auto auto minmax(0, 1fr); }
+  .trash-actions { grid-column: 2 / -1; justify-content: flex-end; margin-top: -4px; }
+  .danger-zone { align-items: stretch; }
+  .danger-zone > .btn { width: 100%; justify-content: center; }
 }
 </style>
