@@ -3,7 +3,16 @@
     <div ref="vditorEl" class="vditor-host" />
 
     <!-- HTML 预览叠加层（美化后的只读渲染） -->
-    <div v-if="htmlPreview" class="html-preview-overlay" ref="htmlPreviewEl" />
+    <div
+      v-if="htmlPreview"
+      class="html-preview-overlay"
+      ref="htmlPreviewEl"
+      @keydown.esc="toggleHtmlPreview()"
+    >
+      <button class="html-preview-exit" title="返回编辑（Esc）" @click="toggleHtmlPreview()">
+        ✕ 返回编辑
+      </button>
+    </div>
 
     <!-- 双链插入弹窗 -->
     <div v-if="linkPopup" class="link-popup card" @keydown.stop>
@@ -386,4 +395,30 @@ onUnmounted(() => vditor?.destroy());
   font-size: 14px;
 }
 .link-item:hover { background: var(--bg-hover); }
+
+/* HTML 预览叠加层内的「返回编辑」按钮 */
+.html-preview-exit {
+  position: sticky;
+  top: 16px;
+  float: right;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.html-preview-exit:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 </style>
