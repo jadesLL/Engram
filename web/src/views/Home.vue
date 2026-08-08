@@ -2,7 +2,7 @@
   <div class="layout">
     <!-- 窄图标导航栏 -->
     <nav class="rail">
-      <div class="rail-logo" title="LLM Wiki">W</div>
+      <button class="rail-logo" title="回到首页" @click="$router.push('/page')">W</button>
 
       <!-- 侧栏开关（动作按钮，永不高亮） -->
       <button
@@ -248,7 +248,9 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   user-select: none;
+  transition: background 0.12s;
 }
+.rail-logo:hover { background: var(--accent); }
 .rail-btn {
   position: relative;
   width: 34px;
