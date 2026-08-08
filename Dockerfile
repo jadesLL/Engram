@@ -36,6 +36,12 @@ RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 \
   && (npm run install || npx --yes node-gyp rebuild --release) \
   && ls build/Release/better_sqlite3.node
 
+# ---------- 测试环境（开发依赖 + 原生绑定） ----------
+FROM build AS test
+COPY --from=deps /app/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/better-sqlite3/build \
+  /app/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/better-sqlite3/build
+CMD ["pnpm", "--filter", "@example-wiki/server", "test"]
+
 # ---------- 运行时 ----------
 FROM node:22-slim
 ENV NODE_ENV=production \

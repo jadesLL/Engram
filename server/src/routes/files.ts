@@ -6,8 +6,7 @@ import { db } from '../lib/db.js';
 import { safeJoin } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { requireAuth } from './auth.js';
-import { docxToText } from '../pipeline/docx.js';
-import { xlsxToText, pptxToText } from '../pipeline/office.js';
+import { officeToText } from '../pipeline/office.js';
 import { upsertFileRecord } from '../pipeline/indexer.js';
 import { enqueue } from '../jobs.js';
 import { normalizeDir, isUploadDir } from '../config.js';
@@ -16,14 +15,6 @@ import { appendWikiLog } from '../pipeline/indexFile.js';
 
 /** 可提取文本入索引的 Office 格式 */
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
-
-/** 上传/预览共用的文本提取 */
-async function officeToText(ext: string, buffer: Buffer): Promise<string | null> {
-  if (ext === 'docx') return docxToText(buffer);
-  if (ext === 'xlsx') return xlsxToText(buffer);
-  if (ext === 'pptx') return pptxToText(buffer);
-  return null;
-}
 
 export async function fileRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);

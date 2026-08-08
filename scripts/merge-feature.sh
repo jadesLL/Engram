@@ -46,18 +46,36 @@ else
 fi
 
 echo ">> [3/5] 用合并后的代码重建 + 重部署 main 容器（8080, 卷 example-wiki-data）"
+bash scripts/ensure-office-env.sh "$REPO"
+if docker ps --format '{{.Names}}' | grep -qx 'example-wiki-onlyoffice'; then
+  echo "   请求 ONLYOFFICE 保存活动编辑会话"
+  docker exec example-wiki-onlyoffice documentserver-prepare4shutdown.sh || true
+  docker compose -f docker-compose.unc.yml stop onlyoffice
+fi
 docker compose -f docker-compose.unc.yml build
 docker compose -f docker-compose.unc.yml up -d
-sleep 6
-if ! curl -sf -o /dev/null http://localhost:8080/; then
+READY=0
+for _ in $(seq 1 90); do
+  if curl -sf -o /dev/null http://localhost:8080/ \
+    && curl -sf -o /dev/null http://localhost:8080/onlyoffice/healthcheck; then
+    READY=1
+    break
+  fi
+  sleep 2
+done
+if [ "$READY" != 1 ]; then
   echo "!! main 容器未在 8080 响应，查 docker logs example-wiki —— 不清理功能资源，便于回退"
   exit 1
 fi
-echo "   main 已在 8080 就绪"
+echo "   main 与 ONLYOFFICE 已在 8080 就绪"
 
 echo ">> [4/5] 清理该功能的临时容器 + 卷"
 if [ -f "$WT/docker-compose.worktree.yml" ]; then
-  docker compose -f "$WT/docker-compose.worktree.yml" down
+  FEATURE_OFFICE="example-wiki-$FEATURE-onlyoffice"
+  if docker ps --format '{{.Names}}' | grep -qx "$FEATURE_OFFICE"; then
+    docker exec "$FEATURE_OFFICE" documentserver-prepare4shutdown.sh || true
+  fi
+  docker compose -f "$WT/docker-compose.worktree.yml" down -v
 fi
 docker volume rm "$VOL" 2>/dev/null || true
 

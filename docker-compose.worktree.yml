@@ -6,9 +6,51 @@ services:
     container_name: example-wiki-model-test-toast-polish
     ports: ["8081:8080"]
     volumes: ["example-wiki-data-model-test-toast-polish:/data"]
+    env_file:
+      - .env.onlyoffice
     environment:
       - TZ=Asia/Shanghai
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
+      - OFFICE_EDITOR_ENABLED=true
+      - OFFICE_INTERNAL_URL=http://onlyoffice
+      - OFFICE_INTERNAL_APP_URL=http://example-wiki:8080
+      - OFFICE_PUBLIC_PATH=/onlyoffice/
+      - OFFICE_INSTANCE_ID=model-test-toast-polish
     restart: unless-stopped
+    depends_on:
+      - onlyoffice
+
+  onlyoffice:
+    image: onlyoffice/documentserver:9.4.0
+    container_name: example-wiki-model-test-toast-polish-onlyoffice
+    expose:
+      - "80"
+    env_file:
+      - .env.onlyoffice
+    environment:
+      - JWT_ENABLED=true
+      - JWT_HEADER=AuthorizationJwt
+      - JWT_IN_BODY=true
+      - ALLOW_PRIVATE_IP_ADDRESS=true
+      - ALLOW_META_IP_ADDRESS=false
+      - EXAMPLE_ENABLED=false
+    volumes:
+      - onlyoffice-data:/var/www/onlyoffice/Data
+      - onlyoffice-lib:/var/lib/onlyoffice
+      - onlyoffice-logs:/var/log/onlyoffice
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+    restart: unless-stopped
+
 volumes:
   example-wiki-data-model-test-toast-polish: {external: true}
+  onlyoffice-data:
+    name: example-wiki-model-test-toast-polish-onlyoffice-data
+  onlyoffice-lib:
+    name: example-wiki-model-test-toast-polish-onlyoffice-lib
+  onlyoffice-logs:
+    name: example-wiki-model-test-toast-polish-onlyoffice-logs
