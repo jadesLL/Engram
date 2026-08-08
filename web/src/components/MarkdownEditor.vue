@@ -78,12 +78,13 @@ let composing = false; // IME 组字状态（wysiwyg 下 input 走防抖，组�
 
 function init() {
   vditor = new Vditor(vditorEl.value!, {
-    mode: 'wysiwyg',
+    mode: 'ir',
     height: '100%',
     cache: { enable: false },
     theme: props.dark ? 'dark' : 'classic',
     value: wikiLinksToMarkdown(props.modelValue),
     placeholder: '开始书写… 输入 [[ 插入双链，Ctrl+S 保存',
+    preview: { mode: 'both' },
     link: {
       isOpen: false,
       click: openEditorLink,
@@ -370,6 +371,8 @@ onUnmounted(() => vditor?.destroy());
     margin-left: auto;
   }
 }
+/* 隐藏 edit-mode 下拉里的 wysiwyg 选项（即时渲染已覆盖所见即所得场景，只保留源码+即时渲染两态） */
+:deep(.vditor-toolbar button[data-mode="wysiwyg"]) { display: none !important; }
 :deep(.vditor-ir), :deep(.vditor-wysiwyg), :deep(.vditor-sv) {
   background: var(--bg);
   color: var(--text);
