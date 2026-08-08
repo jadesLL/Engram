@@ -135,6 +135,7 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 |---|---|---|---|---|---|---|
 | 集成分支(主干) | `Wiki知识库/` | `main` | `example-wiki` | 8080 | `example-wiki-data` | 干净，禁止直接开发 |
 | 数字角标 | `Wiki知识库-number-badge/` | `feat/number-badge` | `example-wiki-number-badge` | 8082 | `example-wiki-data-number-badge` | 开发中 |
+| 回收站 | ~~`Wiki知识库-recycle-bin/`~~ | ~~`feat/recycle-bin`~~ | ~~`example-wiki-recycle-bin`~~ | ~~8089~~ | ~~`example-wiki-data-recycle-bin`~~ | 已合并入 main |
 | AI整理日志 | ~~`Wiki知识库-ai-organize-logs/`~~ | ~~`feat/ai-organize-logs`~~ | ~~`example-wiki-ai-logs`~~ | ~~8081~~ | ~~`example-wiki-data-ai-logs`~~ | 已合并入 main |
 | 知识图谱优化 | ~~`Wiki知识库-graph-opt/`~~ | ~~`feat/graph-opt`~~ | ~~`example-wiki-graph-opt`~~ | ~~8083~~ | ~~`example-wiki-data-graph-opt`~~ | 已合并入 main |
 | 图谱拖动修复 | ~~`Wiki知识库-graph-drag/`~~ | ~~`feat/graph-drag`~~ | ~~`example-wiki-graph-drag`~~ | ~~8086~~ | ~~`example-wiki-data-graph-drag`~~ | 已合并入 main |
@@ -169,4 +170,3 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 
 多个功能同时完成时，**按顺序逐个**跑 `merge-feature.sh`，一个合完重部署 8080 验证后再合下一个。
 不要两个 Agent 同时跑 merge。建议顺序：越早完成的越先合（分支寿命短 = 冲突小）。
-
