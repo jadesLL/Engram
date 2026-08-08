@@ -49,7 +49,7 @@ test('all nine categories expose the expected default selection', () => {
   for (const kind of kinds) {
     const preview = previewReportActions(kind as any);
     assert.equal(preview.items.length, 1, kind);
-    assert.equal(preview.items[0].selected, ['deadlink', 'missing_sections', 'pending_review'].includes(kind), kind);
+    assert.equal(preview.items[0].selected, true, kind);
   }
 });
 

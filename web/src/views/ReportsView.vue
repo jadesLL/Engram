@@ -258,15 +258,15 @@ const tabs = [
 ];
 
 const actionConfig: Record<string, { button: string; description: string; itemAction: string; impact: string }> = {
-  deadlink: { button: '批量创建页面', description: '为缺失链接创建页面，执行前可逐条调整页面类型。', itemAction: '创建页面', impact: '创建新的 Wiki 页面并触发索引，不修改来源正文。' },
-  duplicate: { button: '批量合并', description: '逐对确认保留哪一页，或明确保留两者。', itemAction: '合并页面', impact: '被合并页面将进入归档，相关双链会改指向保留页。' },
-  contradiction: { button: '批量标记已处理', description: '确认已人工处理选中的矛盾提醒。', itemAction: '标记已处理', impact: '只关闭报告，不修改任何页面正文。' },
-  single_source: { button: '批量标记已知悉', description: '确认已知悉选中页面仅有单一来源。', itemAction: '标记已知悉', impact: '只关闭报告，不修改来源或页面正文。' },
-  missing_sections: { button: '批量补章节', description: '为实体页补充缺失的空章节骨架。', itemAction: '补空章节', impact: '只添加“当前理解”或“时间线”标题，不生成正文。' },
+  deadlink: { button: '批量创建页面', description: '默认全选并按推荐类型创建，也可统一切换页面类型。', itemAction: '创建页面', impact: '创建新的 Wiki 页面并触发索引，不修改来源正文。' },
+  duplicate: { button: '批量合并', description: '默认全选并采用系统建议，可统一切换保留策略。', itemAction: '合并页面', impact: '被合并页面将进入归档，相关双链会改指向保留页。' },
+  contradiction: { button: '批量标记已处理', description: '默认全选并关闭矛盾提醒，不修改正文。', itemAction: '标记已处理', impact: '只关闭报告，不修改任何页面正文。' },
+  single_source: { button: '批量标记已知悉', description: '默认全选并确认已知悉来源单一。', itemAction: '标记已知悉', impact: '只关闭报告，不修改来源或页面正文。' },
+  missing_sections: { button: '批量补章节', description: '默认全选并补充缺失的空章节骨架。', itemAction: '补空章节', impact: '只添加“当前理解”或“时间线”标题，不生成正文。' },
   pending_review: { button: '批量审核入库', description: '默认勾选可处理项并采用系统推荐；模糊项仍需逐条确认。', itemAction: '审核候选', impact: '选中入库的候选将创建或更新 Wiki 页面；不入库项只关闭报告。' },
-  ingest_questions: { button: '批量标记已知悉', description: '确认已查看选中的整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
-  enrich: { button: '批量忽略', description: '忽略当前不准备完善的页面提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
-  stale: { button: '批量复核', description: '确认选中页面内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
+  ingest_questions: { button: '批量标记已知悉', description: '默认全选并确认已查看整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
+  enrich: { button: '批量忽略', description: '默认全选并忽略当前待丰富提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
+  stale: { button: '批量复核', description: '默认全选并记录内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
 };
 
 type BatchItem = { id: number; payload: any; selected: boolean; disabled?: boolean; suggestedAction: string; action: string; options: { value: string; label: string }[] };
@@ -279,7 +279,7 @@ const allSelected = computed(() => {
   const selectable = batch.items.filter((item) => !item.disabled);
   return selectable.length > 0 && selectable.every((item) => item.selected);
 });
-const isSuggestedKind = computed(() => ['duplicate', 'pending_review'].includes(tab.value));
+const isSuggestedKind = computed(() => ['deadlink', 'duplicate', 'pending_review'].includes(tab.value));
 const impactSummary = computed(() => `${selectedBatchCount.value} 项将执行。${activeAction.value.impact}`);
 const batchPresets = computed(() => {
   const presets = [{ action: 'recommended', label: '按推荐' }];
@@ -290,9 +290,23 @@ const batchPresets = computed(() => {
       { action: 'person', label: '全部人物' },
       { action: 'project', label: '全部项目' },
       { action: 'org', label: '全部组织' },
+      { action: 'doc', label: '全部文档' },
+      { action: 'note', label: '全部笔记' },
     );
   }
-  if (tab.value === 'duplicate') presets.push({ action: 'keep_both', label: '全部保留两者' });
+  if (tab.value === 'duplicate') {
+    presets.push(
+      { action: 'keep_a', label: '全部留 A' },
+      { action: 'keep_b', label: '全部留 B' },
+      { action: 'keep_both', label: '全部保留两者' },
+    );
+  }
+  if (tab.value === 'contradiction') presets.push({ action: 'resolve', label: '全部标记已处理' });
+  if (tab.value === 'single_source') presets.push({ action: 'resolve', label: '全部已知悉' });
+  if (tab.value === 'missing_sections') presets.push({ action: 'repair', label: '全部补章节' });
+  if (tab.value === 'ingest_questions') presets.push({ action: 'resolve', label: '全部已知悉' });
+  if (tab.value === 'enrich') presets.push({ action: 'dismiss', label: '全部忽略' });
+  if (tab.value === 'stale') presets.push({ action: 'review', label: '全部复核' });
   return presets;
 });
 
