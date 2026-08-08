@@ -2,6 +2,15 @@
 
 任何在本知识库动手的 AI——应用内 Dream Cycle / 入库管线，或外部 Agent（Claude Code、Cursor、ZCode 等经 MCP 接入）——都遵守同一条纪律：**先读操作日志，动手后写操作日志**。保证 AI 在本库的全部情况可知。
 
+## 强制 Worktree 开发流程
+
+- **任何代码、配置或仓库文档开发开始前，必须先完整读取根目录 `WORKTREES.md`，并严格按其中当前规则执行。**
+- `main` 仅作为集成与部署分支，必须保持干净；禁止直接在 `main` 上开发功能或修复。
+- 每项开发都必须在仓库同级目录创建独立 worktree 和 `feat/<feature>` 分支；需要运行应用时，端口、容器、镜像与数据卷必须按 `WORKTREES.md` 隔离。
+- 合并必须串行进行。优先使用 `scripts/new-worktree.sh` 与 `scripts/merge-feature.sh`；若当前系统无法运行脚本，只能按脚本完全相同的顺序和检查项手工执行，不得省略步骤。
+- 完成开发后必须：提交功能分支 → 合并到 `main` → 重建并重新部署主分支 → 验证主服务健康 → 更新 `WORKTREES.md` 当前活动表 → 清理功能容器、卷、worktree 与已合并分支。
+- 开始和结束时都要用 `git status`、`git worktree list` 核对状态；发现其他 Agent 的改动时不得覆盖或回退，合并冲突无法确定意图时必须暂停并询问用户。
+
 ## 操作日志 = AI 的操作记录 + 索引
 
 - **位置**：`data/brain/Wiki/log.md`（frontmatter 标题「操作日志」）。
