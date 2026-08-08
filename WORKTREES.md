@@ -218,7 +218,8 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 | 功能 | 文件夹 | 分支 | 容器 | 端口 | 卷 | 状态 |
 |---|---|---|---|---|---|---|
 | 集成分支(主干) | `Wiki知识库/` | `main` | `example-wiki` | 8080 | `example-wiki-data` | 干净，禁止直接开发 |
-| 数字角标 | `Wiki知识库-number-badge/` | `feat/number-badge` | `example-wiki-number-badge` | 8082 | `example-wiki-data-number-badge` | 开发中 |
+| 数字角标 | ~~`Wiki知识库-number-badge/`~~ | ~~`feat/number-badge`~~ | ~~`example-wiki-number-badge`~~ | ~~8082~~ | ~~`example-wiki-data-number-badge`~~ | 已合并入 main |
+| 首页按钮 | ~~`Wiki知识库-home-button/`~~ | ~~`feat/home-button`~~ | ~~`example-wiki-home-button`~~ | ~~8085~~ | ~~`example-wiki-data-home-button`~~ | 已合并入 main |
 | Agent 指引分流 | ~~`Wiki知识库-agent-guidance-scope/`~~ | ~~`feat/agent-guidance-scope`~~ | ~~`example-wiki-agent-guidance-scope`~~ | ~~8086~~ | ~~`example-wiki-data-agent-guidance-scope`~~ | 已合并入 main |
 | 协作规则分流 | ~~`Wiki知识库-worktree-policy/`~~ | ~~`feat/worktree-policy`~~ | — | — | — | 已合并入 main |
 | 模糊实体消歧 | ~~`Wiki知识库-ambiguous-entity/`~~ | ~~`feat/ambiguous-entity`~~ | ~~`example-wiki-ambiguous-entity`~~ | ~~8084~~ | ~~`example-wiki-data-ambiguous-entity`~~ | 已合并入 main |
@@ -235,9 +236,7 @@ scripts/merge-feature.sh --finish ai-organize-logs   # 继续重部署+清理
 
 1. **先调研并形成计划**：先只读检查仓库、活动 worktree 和端口；计划中写明 worktree、分支、端口、修改范围、验证、串行合并及清理流程。
 2. **开始执行前复验端口**：在创建 worktree/容器或启动服务的紧前一步复验。端口被占用就停止、改计划并换端口；不得处理其他 Agent 的资源。
-3. **确认你在哪个文件夹**：你的功能对应上表某一行，只在该行文件夹里工作。
-   - 数字角标 → `Wiki知识库-number-badge/`
-   - AI整理日志 → `Wiki知识库-ai-organize-logs/`
+3. **确认你在哪个文件夹**：你的功能对应上表某一行，只在该行文件夹里工作。当前没有活动功能 worktree；新建后先登记再开发。
 4. **绝不碰 `Wiki知识库/`（main 主干）**：那是集成分支，只用来合并，不直接写代码。
    在上面写代码会卡住后续合并（`merge-feature.sh` 会因 main 不干净而拒绝）。
 5. **开发循环**（在你的 worktree 文件夹里）：
