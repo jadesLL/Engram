@@ -303,6 +303,14 @@ async function renderHtmlPreview() {
   });
   applyHeadingNumbers(el);
   applyListMarkers(el);
+  // 双链点击跳转：Vditor.preview 静态渲染的 <a href="#wiki/xxx"> 默认无点击处理
+  el.onclick = (e: MouseEvent) => {
+    const a = (e.target as HTMLElement).closest('a[href^="#wiki/"]');
+    if (!a) return;
+    e.preventDefault();
+    const title = wikiTargetFromHref(a.getAttribute('href') || '');
+    if (title) emit('open-wikilink', title);
+  };
 }
 
 /** 为 h1-h3 计算章节号，写入 data-md-num（CSS 用 attr() 显示渐变色编号） */
