@@ -4,6 +4,7 @@ import matter from 'gray-matter';
 import { BRAIN_DIR, TRASH_DIR, normalizeDir, isPageDir } from '../config.js';
 import { db, newId, now } from './db.js';
 import { ftsSegment } from './fts.js';
+import { emit } from './events.js';
 
 export interface PageMeta {
   id: string;
@@ -297,7 +298,9 @@ export function writePage(
   }
 
   fs.writeFileSync(abs, matter.stringify(content, data));
-  return syncPageFile(relPath)!;
+  const meta = syncPageFile(relPath)!;
+  emit('page-changed', { path: relPath, id: meta.id });
+  return meta;
 }
 
 export function createPage(dir: string, title: string): PageMeta {
@@ -321,7 +324,9 @@ export function movePage(oldRel: string, newRel: string): PageMeta | null {
   fs.mkdirSync(path.dirname(newAbs), { recursive: true });
   fs.renameSync(oldAbs, newAbs);
   db.prepare(`UPDATE pages SET path = ?, updated_at = ? WHERE path = ?`).run(newRel, now(), oldRel);
-  return syncPageFile(newRel);
+  const meta = syncPageFile(newRel);
+  if (meta) emit('page-moved', { oldPath: oldRel, newPath: newRel, id: meta.id });
+  return meta;
 }
 
 /** 软删除：移入 .trash 并标记 deleted */
@@ -331,6 +336,8 @@ export function trashPage(relPath: string) {
   const dest = path.join(TRASH_DIR, `${Date.now()}-${path.basename(relPath)}`);
   fs.renameSync(abs, dest);
   db.prepare(`UPDATE pages SET deleted = 1, updated_at = ? WHERE path = ?`).run(now(), relPath);
+  const row = db.prepare(`SELECT id FROM pages WHERE path = ?`).get(relPath) as any;
+  emit('page-deleted', { path: relPath, id: row?.id });
 }
 
 export function mkdir(rel: string) {

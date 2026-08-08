@@ -148,6 +148,7 @@ const aiPanel = ref({ show: false, title: '', text: '', streaming: false });
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
 let loading = false; // 加载页面时抑制 content watch
+let justSavedAt = 0; // 本地刚保存时间戳，抑制 SSE 回声导致的重复重载
 
 async function loadPage(id: string) {
   const { data } = await api.get(`/api/pages/${id}`);
@@ -182,6 +183,7 @@ async function save(manual = false) {
     tags,
   });
   dirty = false;
+  justSavedAt = Date.now(); // 抑制本次保存触发的 SSE 回声
   saveState.value = manual ? '已保存 ✓' : '已自动保存';
   app.bumpSidebar(); // 类型/标题变化后立刻刷新侧栏分区
   setTimeout(() => (saveState.value = ''), 2000);
@@ -256,6 +258,23 @@ watch(
     page.value = null;
     related.value = null;
     if (id) loadPage(id as string);
+  }
+);
+
+// 服务端 SSE 推送：当前页内容被任意来源（本会话/Dream/MCP/多标签）改动时即时重载
+watch(
+  () => app.pageVersion,
+  () => {
+    const ev = app.lastPageEvent;
+    if (!page.value || !ev) return;
+    const myPath = page.value.path;
+    // 只在当前页内容变化或被移动时重载；删除不重载（避免 404，侧栏已处理树）
+    const matchChanged = ev.type === 'page-changed' && ev.path === myPath;
+    const matchMoved = ev.type === 'page-moved' && (ev.oldPath === myPath || ev.newPath === myPath);
+    if (!matchChanged && !matchMoved) return;
+    if (dirty) return; // 用户正在编辑，不覆盖未保存内容
+    if (Date.now() - justSavedAt < 1500) return; // 自己刚保存的回声，忽略
+    loadPage(page.value.id).catch(() => {});
   }
 );
 

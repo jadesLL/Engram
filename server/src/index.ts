@@ -19,8 +19,10 @@ import { dreamRoutes } from './routes/dream.js';
 import { settingsRoutes } from './routes/settings.js';
 import { jobRoutes } from './routes/jobs.js';
 import { rawRoutes } from './routes/raw.js';
+import { eventRoutes } from './routes/events.js';
 import { mcpRoutes } from './mcp/server.js';
 import { scanVault, readPage, writePage } from './lib/vault.js';
+import { heartbeat } from './lib/events.js';
 import { migrateAiLogsToOperationLog } from './pipeline/indexFile.js';
 
 /** AIWorks 系统区页面不参与整理、不打标签 */
@@ -63,6 +65,7 @@ async function main() {
   await app.register(settingsRoutes);
   await app.register(jobRoutes);
   await app.register(rawRoutes);
+  await app.register(eventRoutes);
   await app.register(mcpRoutes);
 
   // 静态托管前端构建产物 + SPA fallback
@@ -84,6 +87,9 @@ async function main() {
   cleanupSystemPages();
   startJobRunner();
   scheduleDreamCycle();
+  // SSE 心跳：保活长连接、探活死连接（断线 EventSource 自动重连）
+  const hb = setInterval(heartbeat, 30_000);
+  hb.unref();
 
   await app.listen({ port: PORT, host: HOST });
   console.log(`LLM Wiki 已启动: http://localhost:${PORT}`);
