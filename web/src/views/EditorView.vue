@@ -1,5 +1,5 @@
 <template>
-  <div class="editor-view">
+  <div class="editor-view" :class="{ 'read-mode': app.editorRead }">
     <!-- 文件预览模式（docx 等） -->
     <FilePreview v-if="filePath" :path="filePath" />
 
@@ -28,6 +28,12 @@
           <button class="ghost-btn" title="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
             <Icon name="graph" :size="14" />
           </button>
+          <button
+            class="ghost-btn"
+            :class="{ active: app.editorRead }"
+            :title="app.editorRead ? '阅读窄栏 · 点击切宽幅画布' : '宽幅画布 · 点击切阅读窄栏'"
+            @click="app.toggleEditorRead()"
+          >{{ app.editorRead ? '窄栏' : '宽幅' }}</button>
         </div>
       </div>
 
@@ -268,12 +274,19 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.editor-view { height: 100%; display: flex; flex-direction: column; position: relative; }
+.editor-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  --editor-max: min(1200px, 94vw);
+}
+.editor-view.read-mode { --editor-max: min(760px, 92vw); }
 .page-head {
-  max-width: var(--content-max);
+  max-width: var(--editor-max);
   margin: 0 auto;
   width: 100%;
-  padding: 36px 40px 0;
+  padding: 36px 48px 0;
 }
 .title-input {
   width: 100%;
@@ -321,11 +334,12 @@ onUnmounted(() => {
   border-radius: 5px;
 }
 .ghost-btn:hover { background: var(--bg-hover); color: var(--text); }
+.ghost-btn.active { color: var(--accent); background: var(--accent-soft); }
 .ai-bar {
-  max-width: var(--content-max);
+  max-width: var(--editor-max);
   margin: 0 auto;
   width: 100%;
-  padding: 6px 40px;
+  padding: 6px 48px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -343,8 +357,82 @@ onUnmounted(() => {
 .ai-action:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .ai-hint { margin-left: auto; }
 .editor-area { flex: 1; min-height: 0; }
-.editor-area :deep(.vditor) { max-width: var(--content-max); margin: 0 auto; }
+.editor-area :deep(.vditor) { max-width: var(--editor-max); margin: 0 auto; }
 .editor-area :deep(.vditor-toolbar) { max-width: 100%; }
+
+/* 排版精修（Typora/Obsidian 风可读宽行） */
+.editor-area :deep(.vditor-ir) {
+  font-size: 16px;
+  line-height: 1.8;
+  color: var(--text);
+}
+.editor-area :deep(.vditor-ir h1),
+.editor-area :deep(.vditor-ir h2),
+.editor-area :deep(.vditor-ir h3),
+.editor-area :deep(.vditor-ir h4),
+.editor-area :deep(.vditor-ir h5),
+.editor-area :deep(.vditor-ir h6) {
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.6em 0 0.6em;
+}
+.editor-area :deep(.vditor-ir h1) { font-size: 1.9em; margin-top: 0.2em; }
+.editor-area :deep(.vditor-ir h2) { font-size: 1.5em; font-weight: 650; }
+.editor-area :deep(.vditor-ir h3) { font-size: 1.25em; font-weight: 600; }
+.editor-area :deep(.vditor-ir h4) { font-size: 1.05em; font-weight: 600; }
+.editor-area :deep(.vditor-ir h5),
+.editor-area :deep(.vditor-ir h6) { font-size: 0.95em; color: var(--text-secondary); }
+.editor-area :deep(.vditor-ir p) { margin: 0.75em 0; }
+.editor-area :deep(.vditor-ir a) { color: var(--accent); }
+.editor-area :deep(.vditor-ir a:hover) { text-decoration: underline; text-underline-offset: 2px; }
+.editor-area :deep(.vditor-ir blockquote) {
+  margin: 0.9em 0;
+  padding: 0.4em 1em;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-secondary);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-secondary);
+}
+.editor-area :deep(.vditor-ir blockquote p) { margin: 0.3em 0; }
+.editor-area :deep(.vditor-ir code) {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+}
+.editor-area :deep(.vditor-ir pre) {
+  margin: 0.9em 0;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+.editor-area :deep(.vditor-ir pre code) {
+  padding: 0;
+  background: transparent;
+  font-size: 0.86em;
+  line-height: 1.6;
+}
+.editor-area :deep(.vditor-ir table) {
+  border-collapse: collapse;
+  margin: 0.9em 0;
+  width: 100%;
+  font-size: 0.92em;
+}
+.editor-area :deep(.vditor-ir th),
+.editor-area :deep(.vditor-ir td) {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.editor-area :deep(.vditor-ir th) { background: var(--bg-tertiary); font-weight: 600; }
+.editor-area :deep(.vditor-ir ul),
+.editor-area :deep(.vditor-ir ol) { margin: 0.6em 0; padding-left: 1.6em; }
+.editor-area :deep(.vditor-ir li) { margin: 0.25em 0; }
+.editor-area :deep(.vditor-ir hr) { border: none; border-top: 1px solid var(--border); margin: 1.6em 0; }
+.editor-area :deep(.vditor-ir img) { max-width: 100%; border-radius: var(--radius); }
 
 .ai-panel {
   position: absolute;
@@ -377,10 +465,10 @@ onUnmounted(() => {
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 
 .related {
-  max-width: var(--content-max);
+  max-width: var(--editor-max);
   margin: 0 auto;
   width: 100%;
-  padding: 10px 40px 24px;
+  padding: 10px 48px 24px;
   border-top: 1px dashed var(--border);
 }
 .related-title { margin-bottom: 6px; }

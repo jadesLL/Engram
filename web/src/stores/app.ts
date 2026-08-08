@@ -10,6 +10,8 @@ export const useAppStore = defineStore('app', {
     aiDrawerOpen: false,
     theme: (localStorage.getItem('theme') as Theme) || 'light',
     sidebarStyle: (localStorage.getItem('sidebarStyle') as SidebarStyle) || 'c',
+    /** 编辑页阅读窄栏模式（true=阅读窄栏，false=宽幅画布）。默认宽幅。 */
+    editorRead: localStorage.getItem('editorRead') === '1',
     openReportCount: 0,
     /** 侧栏数据版本号：页面增删改/移动后自增，侧栏监听并刷新 */
     sidebarVersion: 0,
@@ -35,6 +37,10 @@ export const useAppStore = defineStore('app', {
     setSidebarStyle(s: SidebarStyle) {
       this.sidebarStyle = s;
       localStorage.setItem('sidebarStyle', s);
+    },
+    toggleEditorRead() {
+      this.editorRead = !this.editorRead;
+      localStorage.setItem('editorRead', this.editorRead ? '1' : '0');
     },
     toggleAi() {
       this.aiDrawerOpen = !this.aiDrawerOpen;
