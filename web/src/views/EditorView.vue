@@ -51,8 +51,12 @@
           ref="editorRef"
           v-model="content"
           :dark="isDark"
+          :mode="app.editorMode"
+          :html-mode="app.htmlPreview"
           @save="save(true)"
           @open-wikilink="openWikilink"
+          @mode-change="(m: 'ir' | 'sv') => app.setEditorMode(m)"
+          @html-change="(on: boolean) => app.toggleHtmlPreview(on)"
         />
       </div>
 
@@ -254,10 +258,12 @@ async function createFirst() {
 
 watch(
   () => route.params.id,
-  (id) => {
-    page.value = null;
+  (id, oldId) => {
+    // 不置空 page（避免销毁 MarkdownEditor 丢失编辑模式/HTML 预览状态）；
+    // 只清关联数据，直接加载新页面。编辑器组件保持存活，内容由 watch(props.modelValue) 更新。
     related.value = null;
-    if (id) loadPage(id as string);
+    if (id && id !== oldId) loadPage(id as string);
+    else if (!id) page.value = null; // 无 id 才回欢迎页
   }
 );
 

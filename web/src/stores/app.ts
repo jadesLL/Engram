@@ -12,6 +12,10 @@ export const useAppStore = defineStore('app', {
     sidebarStyle: (localStorage.getItem('sidebarStyle') as SidebarStyle) || 'c',
     /** 编辑页阅读窄栏模式（true=阅读窄栏，false=宽幅画布）。默认宽幅。 */
     editorRead: localStorage.getItem('editorRead') === '1',
+    /** 当前编辑模式（ir/sv），切换页面时保持不重置 */
+    editorMode: (localStorage.getItem('editorMode') as 'ir' | 'sv') || 'ir',
+    /** 是否处于 HTML 预览模式，切换页面时保持 */
+    htmlPreview: localStorage.getItem('htmlPreview') === '1',
     openReportCount: 0,
     /** 侧栏数据版本号：页面增删改/移动后自增，侧栏监听并刷新 */
     sidebarVersion: 0,
@@ -45,6 +49,14 @@ export const useAppStore = defineStore('app', {
     toggleEditorRead() {
       this.editorRead = !this.editorRead;
       localStorage.setItem('editorRead', this.editorRead ? '1' : '0');
+    },
+    setEditorMode(mode: 'ir' | 'sv') {
+      this.editorMode = mode;
+      localStorage.setItem('editorMode', mode);
+    },
+    toggleHtmlPreview(force?: boolean) {
+      this.htmlPreview = force !== undefined ? force : !this.htmlPreview;
+      localStorage.setItem('htmlPreview', this.htmlPreview ? '1' : '0');
     },
     toggleAi() {
       this.aiDrawerOpen = !this.aiDrawerOpen;

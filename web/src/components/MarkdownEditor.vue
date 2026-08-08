@@ -56,12 +56,14 @@ import {
   wikiTargetFromHref,
 } from '../lib/wikiLinks';
 
-const props = defineProps<{ modelValue: string; dark: boolean }>();
+const props = defineProps<{ modelValue: string; dark: boolean; mode?: 'ir' | 'sv'; htmlMode?: boolean }>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void;
   (e: 'save'): void;
   (e: 'ai-action', action: string, text: string): void;
   (e: 'open-wikilink', title: string): void;
+  (e: 'mode-change', mode: 'ir' | 'sv'): void;
+  (e: 'html-change', on: boolean): void;
 }>();
 
 const vditorEl = ref<HTMLElement>();
@@ -70,19 +72,61 @@ const linkInputEl = ref<HTMLInputElement>();
 const linkPopup = ref(false);
 const linkQuery = ref('');
 const suggestions = ref<any[]>([]);
-const htmlPreview = ref(false);
+const htmlPreview = ref(props.htmlMode ?? false);
 
 let vditor: Vditor | null = null;
 let ready = false;
 let composing = false; // IME 组字状态（wysiwyg 下 input 走防抖，组字期间不 emit 防丢字）
+let modeObserver: MutationObserver | null = null;
+let lastEmittedMode: 'ir' | 'sv' = 'ir';
+
+/** ingest 注释匹配（<!-- ingest:xxx --> 单行 HTML 注释） */
+const INGEST_RE = /<!--\s*ingest:[^>]*-->/g;
+
+/** 编辑时剥离 ingest 注释（不在编辑器里显示，保存时还原） */
+function stripIngestComments(md: string): string {
+  return md.replace(INGEST_RE, '');
+}
+
+/** 保存时还原 ingest 注释（把被剥离的注释加回末尾） */
+function restoreIngestComments(md: string): string {
+  if (!vditor) return md;
+  // 从原始 props.modelValue 提取所有 ingest 注释，追加到末尾
+  const raw = props.modelValue;
+  const comments = raw.match(INGEST_RE);
+  if (!comments || comments.length === 0) return md;
+  // 如果 md 里已经含 ingest 注释（用户没编辑那行），不重复加
+  if (INGEST_RE.test(md)) { INGEST_RE.lastIndex = 0; return md; }
+  INGEST_RE.lastIndex = 0;
+  return md.trimEnd() + '\n' + comments.join('\n');
+}
+
+/** 监听 Vditor edit-mode 切换（DOM class 变化），emit mode-change 让父组件持久化 */
+function observeEditMode() {
+  if (!vditorEl.value) return;
+  // Vditor 切模式会给 toolbar button 加 vditor-menu--current，并改 vditor 容器 class
+  // 更可靠的是直接轮询 vditor.getCurrentMode()
+  let last = vditor?.getCurrentMode() || 'ir';
+  lastEmittedMode = last as 'ir' | 'sv';
+  modeObserver = new MutationObserver(() => {
+    if (!vditor) return;
+    const cur = vditor.getCurrentMode();
+    if (cur !== last && (cur === 'ir' || cur === 'sv')) {
+      last = cur;
+      lastEmittedMode = cur;
+      emit('mode-change', cur);
+    }
+  });
+  modeObserver.observe(vditorEl.value, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'data-mode'] });
+}
 
 function init() {
   vditor = new Vditor(vditorEl.value!, {
-    mode: 'ir',
+    mode: props.mode ?? 'ir',
     height: '100%',
     cache: { enable: false },
     theme: props.dark ? 'dark' : 'classic',
-    value: wikiLinksToMarkdown(props.modelValue),
+    value: stripIngestComments(wikiLinksToMarkdown(props.modelValue)),
     placeholder: '开始书写… 输入 [[ 插入双链，Ctrl+S 保存',
     preview: { mode: 'both' },
     link: {
@@ -126,11 +170,13 @@ function init() {
     input: (v) => {
       // IME 组字期间不 emit，避免 wysiwyg 防抖重渲染打断输入
       if (composing) return;
-      emit('update:modelValue', markdownLinksToWiki(v));
+      emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
     },
     after: () => {
       ready = true;
       bindKeys();
+      // 初始化后同步 HTML 预览状态
+      if (htmlPreview.value) renderHtmlPreview();
     },
   });
 }
@@ -155,7 +201,7 @@ function bindKeys() {
     if (composing && !e.isComposing) {
       composing = false;
       const v = vditor?.getValue() || '';
-      emit('update:modelValue', markdownLinksToWiki(v));
+      emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
     }
     if (e.key === '[' && justTypedDoubleBracket()) openLinkPopup(true);
   });
@@ -164,8 +210,10 @@ function bindKeys() {
   el.addEventListener('compositionend', () => {
     composing = false;
     const v = vditor?.getValue() || '';
-    emit('update:modelValue', markdownLinksToWiki(v));
+    emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
   });
+  // 监听 edit-mode 切换（Vditor 内部 setEditMode 改 currentMode 但无事件，轮询 DOM class）
+  observeEditMode();
 }
 
 function openEditorLink(element: Element) {
@@ -236,10 +284,12 @@ function insertLink(title: string) {
 async function toggleHtmlPreview() {
   if (!htmlPreview.value) {
     htmlPreview.value = true;
+    emit('html-change', true);
     await nextTick();
     await renderHtmlPreview();
   } else {
     htmlPreview.value = false;
+    emit('html-change', false);
     nextTick(() => vditor?.focus());
   }
 }
@@ -328,18 +378,20 @@ function insertText(text: string) {
   vditor?.focus();
 }
 function getValue(): string {
-  return markdownLinksToWiki(vditor?.getValue() || '');
+  return restoreIngestComments(markdownLinksToWiki(vditor?.getValue() || ''));
 }
 function getCurrentMode(): 'sv' | 'wysiwyg' | 'ir' {
-  return vditor?.getCurrentMode() || 'wysiwyg';
+  return vditor?.getCurrentMode() || 'ir';
 }
 
 watch(
   () => props.modelValue,
   (v) => {
     if (!ready || !vditor) return;
-    const editorValue = wikiLinksToMarkdown(v);
+    const editorValue = stripIngestComments(wikiLinksToMarkdown(v));
     if (editorValue !== vditor.getValue()) vditor.setValue(editorValue);
+    // 内容变化后若处于 HTML 预览，重新渲染
+    if (htmlPreview.value) renderHtmlPreview();
   }
 );
 watch(
@@ -350,10 +402,40 @@ watch(
     if (htmlPreview.value) renderHtmlPreview();
   }
 );
+// 父组件传入模式变化（切换页面后恢复持久化模式）
+watch(
+  () => props.mode,
+  (m) => {
+    if (!ready || !vditor || !m) return;
+    const cur = vditor.getCurrentMode();
+    if (cur !== m) {
+      // 通过点击 edit-mode 下拉里对应按钮切换（Vditor 无公开 changeMode API）
+      const btn = vditorEl.value?.querySelector<HTMLElement>(`button[data-mode="${m}"]`);
+      btn?.click();
+    }
+  }
+);
+// 父组件传入 HTML 预览状态变化（切换页面后恢复持久化状态）
+watch(
+  () => props.htmlMode,
+  (on) => {
+    if (on === undefined) return;
+    if (on && !htmlPreview.value) {
+      htmlPreview.value = true;
+      nextTick(() => renderHtmlPreview());
+    } else if (!on && htmlPreview.value) {
+      htmlPreview.value = false;
+    }
+  }
+);
+
+onUnmounted(() => {
+  modeObserver?.disconnect();
+  vditor?.destroy();
+});
 
 defineExpose({ getSelectionText, insertText, getValue, getCurrentMode, toggleHtmlPreview });
 onMounted(init);
-onUnmounted(() => vditor?.destroy());
 </script>
 
 <style scoped>
