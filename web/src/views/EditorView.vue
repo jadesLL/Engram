@@ -1,5 +1,5 @@
 <template>
-  <div class="editor-view" :class="{ 'read-mode': app.editorRead }">
+  <div class="editor-view">
     <!-- 文件预览模式（docx 等） -->
     <FilePreview v-if="filePath" :path="filePath" />
 
@@ -28,12 +28,6 @@
           <button class="ghost-btn" title="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
             <Icon name="graph" :size="14" />
           </button>
-          <button
-            class="ghost-btn"
-            :class="{ active: app.editorRead }"
-            :title="app.editorRead ? '阅读窄栏 · 点击切宽幅画布' : '宽幅画布 · 点击切阅读窄栏'"
-            @click="app.toggleEditorRead()"
-          >{{ app.editorRead ? '窄栏' : '宽幅' }}</button>
         </div>
       </div>
 
@@ -307,7 +301,6 @@ onUnmounted(() => {
   /* 宽幅：占满主内容区，仅靠 padding 留呼吸空间（Typora/Obsidian 全屏式） */
   --editor-max: 100%;
 }
-.editor-view.read-mode { --editor-max: min(760px, 92vw); }
 .page-head {
   max-width: var(--editor-max);
   margin: 0 auto;
@@ -360,7 +353,6 @@ onUnmounted(() => {
   border-radius: 5px;
 }
 .ghost-btn:hover { background: var(--bg-hover); color: var(--text); }
-.ghost-btn.active { color: var(--accent); background: var(--accent-soft); }
 .ai-bar {
   max-width: var(--editor-max);
   margin: 0 auto;
