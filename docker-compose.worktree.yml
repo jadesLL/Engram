@@ -1,14 +1,14 @@
-# editor-beautify worktree 专属部署（与 main 容器并行隔离）
+# editor-fullwidth worktree 专属部署（与 main 容器并行隔离）
 services:
   example-wiki:
-    image: example-wiki:editor-beautify
+    image: example-wiki:editor-fullwidth
     build: .
-    container_name: example-wiki-editor-beautify
+    container_name: example-wiki-editor-fullwidth
     ports: ["8084:8080"]
-    volumes: ["example-wiki-data-editor-beautify:/data"]
+    volumes: ["example-wiki-data-editor-fullwidth:/data"]
     environment:
       - TZ=Asia/Shanghai
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
     restart: unless-stopped
 volumes:
-  example-wiki-data-editor-beautify: {external: true}
+  example-wiki-data-editor-fullwidth: {external: true}

@@ -279,7 +279,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   position: relative;
-  --editor-max: min(1200px, 94vw);
+  /* 宽幅：占满主内容区，仅靠 padding 留呼吸空间（Typora/Obsidian 全屏式） */
+  --editor-max: 100%;
 }
 .editor-view.read-mode { --editor-max: min(760px, 92vw); }
 .page-head {
