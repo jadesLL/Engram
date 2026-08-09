@@ -32,7 +32,6 @@ const ICONS: Record<string, string[]> = {
     'M10 9H8',
   ],
   search: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16', 'm21 21-4.3-4.3'],
-  'chevron-right': ['m9 18 6-6-6-6'],
   sort: ['M3 6h18', 'M6 12h12', 'M10 18h4'],
   graph: [
     'M12 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',

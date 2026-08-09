@@ -44,21 +44,18 @@
     <div class="side-scroll">
       <!-- 类型分区 -->
       <div class="sidebar-category">
-        <div class="category-label">知识库</div>
         <section v-for="g in typeGroups" :key="g.key" class="section">
-          <div class="sec-row" :class="{ current: activeSectionKey === g.key }">
+          <div
+            class="sec-row"
+            :class="{ current: activeSectionKey === g.key, expanded: !collapsed[g.key] }"
+          >
             <button
               class="sec-toggle"
               type="button"
               :aria-expanded="!collapsed[g.key]"
+              :title="collapsed[g.key] ? `展开${g.label}` : `收起${g.label}`"
               @click="toggle(g.key)"
             >
-              <Icon
-                name="chevron-right"
-                :size="13"
-                class="caret"
-                :class="{ expanded: !collapsed[g.key] }"
-              />
               <span class="sec-name">{{ g.label }}</span>
             </button>
             <span class="sec-count">{{ filteredPages(g.pages).length }}</span>
@@ -84,13 +81,21 @@
         </section>
       </div>
 
-      <div class="category-label">资料</div>
+      <div class="section-separator" />
 
       <!-- 原始资料：进料口。上传/新建；AI 整理提炼到 Wiki -->
       <section class="section">
-        <div class="sec-row" :class="{ current: activeSectionKey === 'files' }">
-          <button class="sec-toggle" type="button" :aria-expanded="!collapsed.files" @click="toggle('files')">
-            <Icon name="chevron-right" :size="13" class="caret" :class="{ expanded: !collapsed.files }" />
+        <div
+          class="sec-row"
+          :class="{ current: activeSectionKey === 'files', expanded: !collapsed.files }"
+        >
+          <button
+            class="sec-toggle"
+            type="button"
+            :aria-expanded="!collapsed.files"
+            :title="collapsed.files ? '展开原始资料' : '收起原始资料'"
+            @click="toggle('files')"
+          >
             <span class="sec-name">原始资料</span>
           </button>
           <div class="sec-actions">
@@ -199,9 +204,17 @@
 
       <!-- 对话：外置 Agent 沉积的对话文件 -->
       <section class="section">
-        <div class="sec-row" :class="{ current: activeSectionKey === 'chat' }">
-          <button class="sec-toggle" type="button" :aria-expanded="!collapsed.chat" @click="toggle('chat')">
-            <Icon name="chevron-right" :size="13" class="caret" :class="{ expanded: !collapsed.chat }" />
+        <div
+          class="sec-row"
+          :class="{ current: activeSectionKey === 'chat', expanded: !collapsed.chat }"
+        >
+          <button
+            class="sec-toggle"
+            type="button"
+            :aria-expanded="!collapsed.chat"
+            :title="collapsed.chat ? '展开对话' : '收起对话'"
+            @click="toggle('chat')"
+          >
             <span class="sec-name">对话</span>
           </button>
           <span class="sec-count">{{ visibleChatFiles.length }}</span>
@@ -267,13 +280,21 @@
         </div>
       </section>
 
-      <div class="category-label">系统</div>
+      <div class="section-separator" />
 
       <!-- AI 整理日志（只读） -->
       <section class="section">
-        <div class="sec-row" :class="{ current: activeSectionKey === 'ailog' }">
-          <button class="sec-toggle" type="button" :aria-expanded="!collapsed.ailog" @click="toggle('ailog')">
-            <Icon name="chevron-right" :size="13" class="caret" :class="{ expanded: !collapsed.ailog }" />
+        <div
+          class="sec-row"
+          :class="{ current: activeSectionKey === 'ailog', expanded: !collapsed.ailog }"
+        >
+          <button
+            class="sec-toggle"
+            type="button"
+            :aria-expanded="!collapsed.ailog"
+            :title="collapsed.ailog ? '展开 AI 整理日志' : '收起 AI 整理日志'"
+            @click="toggle('ailog')"
+          >
             <span class="sec-name">AI 整理日志</span>
           </button>
           <span class="sec-count">{{ visibleAiLogs.length }}</span>
@@ -882,20 +903,13 @@ onUnmounted(() => {
 }
 
 .sidebar-category {
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 
-.category-label {
-  margin-top: 12px;
-  padding: 0 8px 5px;
-  color: var(--text-faint);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0;
-}
-
-.side-scroll > .category-label:first-child {
-  margin-top: 0;
+.section-separator {
+  height: 1px;
+  margin: 10px 8px;
+  background: var(--sidebar-hairline);
 }
 
 .section {
@@ -903,6 +917,7 @@ onUnmounted(() => {
 }
 
 .sec-row {
+  position: relative;
   min-width: 0;
   height: 32px;
   display: flex;
@@ -912,6 +927,18 @@ onUnmounted(() => {
   border-radius: 8px;
   user-select: none;
   transition: background 150ms ease;
+}
+
+.sec-row.expanded::before {
+  content: '';
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--text-faint);
+  opacity: 0.55;
 }
 
 .sec-row:hover {
@@ -935,8 +962,7 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 0;
+  padding: 0 0 0 3px;
   border-radius: 6px;
   color: var(--text-secondary);
   text-align: left;
@@ -950,17 +976,6 @@ onUnmounted(() => {
 .batch-btn:focus-visible {
   outline: 2px solid var(--sidebar-accent);
   outline-offset: 1px;
-}
-
-.caret {
-  width: 13px;
-  flex-shrink: 0;
-  color: var(--text-faint);
-  transition: transform 150ms ease;
-}
-
-.caret.expanded {
-  transform: rotate(90deg);
 }
 
 .sec-name {
@@ -1308,7 +1323,6 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .search-field,
   .sec-row,
-  .caret,
   .add-btn,
   .page-row,
   .row-status,
