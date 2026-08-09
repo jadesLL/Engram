@@ -51,11 +51,11 @@ export function deriveReportIdentity(kind: string, payload: Record<string, any>)
       break;
     case 'enrich':
       issueKey ||= String(payload.pageId || '');
-      condition = [payload.pageId, payload.pageUpdated || '', payload.refs || 0, payload.wordCount || 0];
+      condition = [payload.pageId, payload.pageUpdated || '', payload.detail || ''];
       break;
     case 'stale':
       issueKey ||= String(payload.pageId || '');
-      condition = [payload.pageId, payload.pageUpdated || '', payload.reviewedAt || ''];
+      condition = [payload.pageId, payload.pageUpdated || '', payload.reviewedAt || '', payload.detail || ''];
       break;
     case 'pending_review':
       issueKey ||= `${payload.source || ''}:${String(payload.name || '').toLowerCase()}`;

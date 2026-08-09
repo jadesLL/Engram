@@ -279,6 +279,8 @@ const EXTRA_FM_KEYS = [
   '标题', '类型', '标签', 'summary',
   '领域', '置信度', '获取日期', '来源', '更新日期',
   'mention_count', 'status', 'next_upgrade_at', 'last_upgraded',
+  'upgrade_evidence_hash', 'upgrade_rationale',
+  'organized_content_hash', 'organize_rationale',
   '最后复核日期',
 ];
 

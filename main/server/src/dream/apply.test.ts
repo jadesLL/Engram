@@ -51,7 +51,19 @@ test('all nine categories expose the expected default selection', () => {
   }
 });
 
-test('deadlink creates the selected page type and missing sections are idempotent', () => {
+test('deadlinks without a model recommendation stay unselected for manual typing', () => {
+  clear();
+  addReports([{
+    kind: 'deadlink',
+    payload: { srcId: 'src', srcTitle: '来源', deadTitle: '缺失页', srcUpdated: '2026-01-01' },
+  }]);
+  const preview = previewReportActions('deadlink');
+  assert.equal(preview.items[0].selected, false);
+  assert.equal(preview.items[0].suggestedAction, 'note');
+  assert.equal(preview.items[0].disabled, false);
+});
+
+test('deadlink creates the selected page type and missing sections are idempotent', async () => {
   clear();
   const source = createPage('Wiki/概念', '来源页');
   const deadPayload = { srcId: source.id, srcTitle: source.title, deadTitle: '新组织', srcUpdated: source.updated_at };
@@ -59,7 +71,7 @@ test('deadlink creates the selected page type and missing sections are idempoten
   const dead = previewReportActions('deadlink').items[0];
   const decision = [{ reportId: dead.id, action: 'org' }];
   claimReports('deadlink', decision);
-  assert.deepEqual(applyReportDecisions('deadlink', decision), { completed: 1, dismissed: 0, failed: 0, errors: [] });
+  assert.deepEqual(await applyReportDecisions('deadlink', decision), { completed: 1, dismissed: 0, failed: 0, errors: [] });
   const created = db.prepare(`SELECT path, type FROM pages WHERE title='新组织' AND deleted=0`).get();
   assert.equal(created.type, 'org');
   assert.match(created.path, /^Wiki\/实体\//);
@@ -71,13 +83,13 @@ test('deadlink creates the selected page type and missing sections are idempoten
   const report = previewReportActions('missing_sections').items[0];
   const repair = [{ reportId: report.id, action: 'repair' }];
   claimReports('missing_sections', repair);
-  applyReportDecisions('missing_sections', repair);
+  await applyReportDecisions('missing_sections', repair);
   const content = readPage(entity.path).content;
   assert.equal((content.match(/## 当前理解/g) || []).length, 1);
   assert.equal((content.match(/## 时间线/g) || []).length, 1);
 });
 
-test('stale review preserves page updated time and writes reviewed_at', () => {
+test('stale review preserves page updated time and writes reviewed_at', async () => {
   clear();
   const page = createPage('Wiki/概念', '仍然有效');
   writePage(page.path, '# 仍然有效\n\n正文', { updated: '2020-01-01T00:00:00.000Z' });
@@ -86,12 +98,12 @@ test('stale review preserves page updated time and writes reviewed_at', () => {
   const item = previewReportActions('stale').items[0];
   const decision = [{ reportId: item.id, action: 'review' }];
   claimReports('stale', decision);
-  applyReportDecisions('stale', decision);
+  await applyReportDecisions('stale', decision);
   assert.equal(db.prepare(`SELECT updated_at FROM pages WHERE id=?`).get(page.id).updated_at, beforeUpdated);
   assert.match(String(readPageMeta(page.path).reviewed_at), /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test('partial failure restores failed reports and keeps successful results', () => {
+test('partial failure restores failed reports and keeps successful results', async () => {
   clear();
   addReports([
     { kind: 'deadlink', payload: { srcId: 'a', deadTitle: '可创建' } },
@@ -99,7 +111,7 @@ test('partial failure restores failed reports and keeps successful results', () 
   ]);
   const decisions = previewReportActions('deadlink').items.map((item: any) => ({ reportId: item.id, action: 'concept' }));
   claimReports('deadlink', decisions);
-  const result = applyReportDecisions('deadlink', decisions);
+  const result = await applyReportDecisions('deadlink', decisions);
   assert.equal(result.completed, 1);
   assert.equal(result.failed, 1);
   assert.deepEqual(db.prepare(`SELECT status, count(*) n FROM reports GROUP BY status ORDER BY status`).all(), [
@@ -107,15 +119,15 @@ test('partial failure restores failed reports and keeps successful results', () 
   ]);
 });
 
-test('fingerprint suppresses unchanged findings and refreshes changed open findings', () => {
+test('fingerprint suppresses unchanged semantic findings and refreshes changed conclusions', () => {
   clear();
-  const first = { kind: 'enrich', payload: { pageId: 'p1', pageUpdated: 'v1', refs: 2, wordCount: 10 } };
+  const first = { kind: 'enrich', payload: { pageId: 'p1', pageUpdated: 'v1', detail: '缺少客户状态' } };
   assert.equal(addReports([first]), 1);
   assert.equal(addReports([first]), 0);
-  assert.equal(addReports([{ kind: 'enrich', payload: { ...first.payload, refs: 3 } }]), 1);
+  assert.equal(addReports([{ kind: 'enrich', payload: { ...first.payload, detail: '缺少客户状态与策略' } }]), 1);
   assert.equal(db.prepare(`SELECT count(*) n FROM reports`).get().n, 1);
   db.prepare(`UPDATE reports SET status='dismissed'`).run();
-  assert.equal(addReports([{ kind: 'enrich', payload: { ...first.payload, refs: 4 } }]), 1);
+  assert.equal(addReports([{ kind: 'enrich', payload: { ...first.payload, detail: '出现新的证据缺口' } }]), 1);
   assert.equal(db.prepare(`SELECT count(*) n FROM reports`).get().n, 2);
 });
 
@@ -153,7 +165,13 @@ test('pending reviews expose recommended approval and ignore actions', () => {
 function fixture(kind: string): any {
   const basePage = { id: `${kind}-page`, title: `${kind} 页面`, path: `Wiki/概念/${kind}.md`, updated_at: '2026-01-01' };
   const fixtures: Record<string, any> = {
-    deadlink: { srcId: 'src', srcTitle: '来源', deadTitle: '缺失页', srcUpdated: '2026-01-01' },
+    deadlink: {
+      srcId: 'src',
+      srcTitle: '来源',
+      deadTitle: '缺失页',
+      srcUpdated: '2026-01-01',
+      suggestedType: 'concept',
+    },
     duplicate: { a: basePage, b: { ...basePage, id: 'other', title: '另一页' }, similarity: .95 },
     contradiction: { a: basePage, b: { ...basePage, id: 'other', title: '另一页' }, detail: '描述冲突' },
     single_source: { pageId: basePage.id, title: basePage.title, source: '资料 A', pageUpdated: '2026-01-01' },

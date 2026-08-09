@@ -1,10 +1,18 @@
+import { z } from 'zod';
 import { db, now } from '../lib/db.js';
 import { invalidateGraphCache } from '../lib/graphCache.js';
-import { chatJson, llmReady } from '../lib/llm.js';
+import { llmReady } from '../lib/llm.js';
+import { runSemanticStage } from '../lib/semanticStage.js';
 import { readPage } from '../lib/vault.js';
 import { entitiesSystem, entitiesUser, type EntityItem } from '../prompts/entities.js';
 import { RELATION_WORDS } from '../pipeline/extractor.js';
 import { classifyEntityName, type EntityRosterEntry } from '../pipeline/entityAmbiguity.js';
+
+const entityItemsSchema = z.array(z.object({
+  name: z.string().min(1),
+  type: z.enum(['person', 'concept', 'project', 'org', 'tech']),
+  relation: z.string(),
+})).max(8);
 
 /**
  * LLM 实体抽取（GBrain 自布线图谱的 LLM 部分）：
@@ -16,7 +24,7 @@ export async function extractEntities(pageId: string): Promise<void> {
   const page = db.prepare(`SELECT * FROM pages WHERE id = ? AND deleted = 0`).get(pageId) as any;
   if (!page) return;
   const rd = readPage(page.path);
-  if (!rd || rd.content.length < 30) return;
+  if (!rd || !rd.content.trim()) return;
 
   // 实体名录：已有实体/概念标题（便于优先链接、减少孤立实体）
   const rows = db
@@ -26,13 +34,18 @@ export async function extractEntities(pageId: string): Promise<void> {
 
   let items: EntityItem[];
   try {
-    items = await chatJson<EntityItem[]>(
-      [
-        { role: 'system', content: entitiesSystem(roster) },
-        { role: 'user', content: entitiesUser(page.title, rd.content.slice(0, 3000)) },
-      ],
-      { temperature: 0.1, maxTokens: 500, retries: 0, tag: 'entities' }
-    );
+    items = await runSemanticStage({
+      scope: 'page-graph',
+      refId: pageId,
+      stage: 'entity-and-relation-extraction',
+      tag: 'entities',
+      schema: entityItemsSchema,
+      system: entitiesSystem(roster),
+      input: entitiesUser(page.title, rd.content.slice(0, 6000)),
+      temperature: 0.1,
+      maxTokens: 1200,
+      retries: 1,
+    });
   } catch (e: any) {
     console.warn(`[entities] ${page.title} 抽取失败: ${e.message}`);
     return;
@@ -53,13 +66,23 @@ export async function extractEntities(pageId: string): Promise<void> {
   const ts = now();
   for (const it of items.slice(0, 8)) {
     if (!it?.name) continue;
-    const ambiguity = classifyEntityName(it.name, it.type === 'tech' ? 'concept' : it.type, rows, rd.content);
-    if (ambiguity?.category === 'role_title') continue;
-    const canonical = ambiguity?.suggestions.length === 1 && ambiguity.suggestions[0].score >= 0.9
-      ? ambiguity.suggestions[0]
+    let identity;
+    try {
+      identity = await classifyEntityName(
+        it.name,
+        it.type === 'tech' ? 'concept' : it.type,
+        rows,
+        rd.content,
+        `${pageId}:${it.name}`,
+      );
+    } catch {
+      continue;
+    }
+    if (identity.ambiguity && !identity.mergeTarget) continue;
+    const canonical = identity.mergeTarget
+      ? rows.find((row) => row.title === identity.mergeTarget)
       : null;
-    if (ambiguity && !canonical) continue;
-    const entityName = canonical?.title || it.name;
+    const entityName = canonical?.title || identity.canonicalName || it.name;
     const entityType = canonical?.type || it.type || 'concept';
     let entity = findEntity.get(entityName) as any;
     if (!entity) {

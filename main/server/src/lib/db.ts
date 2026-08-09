@@ -234,6 +234,7 @@ export function migrate() {
     relations TEXT NOT NULL DEFAULT '[]',
     content TEXT NOT NULL DEFAULT '',
     reason TEXT NOT NULL DEFAULT '',
+    evidence_eligible INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'open',
     target_page_id TEXT,
     preview_token TEXT,
@@ -248,6 +249,22 @@ export function migrate() {
     ON ingest_candidates(normalized_name, kind, status, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_ingest_candidates_source
     ON ingest_candidates(source_path, source_version_id, status);
+
+  CREATE TABLE IF NOT EXISTS semantic_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    ref_id TEXT NOT NULL DEFAULT '',
+    stage TEXT NOT NULL,
+    model_tag TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'succeeded',
+    output TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_semantic_events_ref
+    ON semantic_events(scope, ref_id, stage, created_at DESC);
 
   CREATE TABLE IF NOT EXISTS office_edit_sessions (
     document_key TEXT PRIMARY KEY,
@@ -349,6 +366,10 @@ export function migrate() {
   ensureColumn('ingest_runs', 'derived_status', `TEXT NOT NULL DEFAULT 'pending'`);
   ensureColumn('ingest_questions', 'job_id', 'INTEGER');
   ensureColumn('ingest_questions', 'error', 'TEXT');
+  ensureColumn('ingest_candidates', 'evidence_eligible', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn('semantic_events', 'status', `TEXT NOT NULL DEFAULT 'succeeded'`);
+  ensureColumn('semantic_events', 'error', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('semantic_events', 'duration_ms', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('jobs', 'stage', `TEXT NOT NULL DEFAULT '等待执行'`);
   ensureColumn('jobs', 'progress', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('jobs', 'detail', `TEXT NOT NULL DEFAULT ''`);

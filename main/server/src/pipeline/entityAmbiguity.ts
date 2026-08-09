@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { runSemanticStage } from '../lib/semanticStage.js';
 import type { Candidate, PlanItem } from './ingestModel.js';
 
 export interface EntityRosterEntry {
@@ -24,163 +26,186 @@ export interface EntityAmbiguity {
 
 export type AmbiguousPlanItem = PlanItem & { ambiguity?: EntityAmbiguity };
 
-const ROLE_SUFFIXES = [
-  '董事长', '总经理', '负责人', '副总裁', '总裁', '总监', '经理', '主管',
-  '主任', '部长', '局长', '处长', '院长', '校长', '老板', '老师', '总', '董', '工',
-];
-const ORG_SUFFIXES = ['有限责任公司', '股份有限公司', '有限公司', '集团公司', '集团', '公司'];
+const identitySchema = z.object({
+  status: z.enum(['clear', 'role_title', 'possible_alias', 'uncertain']),
+  canonicalName: z.string(),
+  mergeTarget: z.string(),
+  question: z.string(),
+  suggestions: z.array(z.object({
+    id: z.string().optional(),
+    title: z.string(),
+    type: z.string(),
+    confidence: z.enum(['high', 'medium', 'low']),
+    reason: z.string(),
+  })).max(5),
+});
+
+type IdentityDecision = z.infer<typeof identitySchema>;
 
 function cleanName(value: string): string {
   return String(value || '').trim().replace(/[\s·•・]+/g, '').toLowerCase();
-}
-
-function comparableName(value: string): string {
-  let name = cleanName(value);
-  for (const suffix of ORG_SUFFIXES) {
-    if (name.length > suffix.length + 1 && name.endsWith(suffix)) {
-      name = name.slice(0, -suffix.length);
-      break;
-    }
-  }
-  return name;
-}
-
-function roleTitleParts(value: string): { prefix: string; suffix: string } | null {
-  const name = cleanName(value);
-  for (const suffix of ROLE_SUFFIXES) {
-    if (!name.endsWith(suffix)) continue;
-    const prefix = name.slice(0, -suffix.length);
-    if (!prefix || (prefix.length <= 3 && /^[\u3400-\u9fff]+$/.test(prefix))) return { prefix, suffix };
-  }
-  return null;
-}
-
-function editDistance(a: string, b: string): number {
-  const left = [...a];
-  const right = [...b];
-  const previous = right.map((_, index) => index + 1);
-  previous.unshift(0);
-  for (let i = 1; i <= left.length; i++) {
-    let diagonal = previous[0];
-    previous[0] = i;
-    for (let j = 1; j <= right.length; j++) {
-      const above = previous[j];
-      previous[j] = Math.min(
-        previous[j] + 1,
-        previous[j - 1] + 1,
-        diagonal + (left[i - 1] === right[j - 1] ? 0 : 1),
-      );
-      diagonal = above;
-    }
-  }
-  return previous[right.length];
-}
-
-function compatibleType(kind: string, type: string): boolean {
-  if (kind === type) return true;
-  return kind === 'project' && type === 'org';
 }
 
 function contextFor(candidate: Candidate | undefined): string {
   if (!candidate) return '';
   return [
     candidate.summary,
-    ...candidate.facts.flatMap((fact) => [fact.statement, ...fact.sources.map((source) => source.quote)]),
+    ...candidate.facts.flatMap((fact) => [
+      fact.statement,
+      ...fact.sources.map((source) => source.quote),
+    ]),
   ].join('\n');
 }
 
-function roleSuggestions(prefix: string, roster: EntityRosterEntry[], context: string): AmbiguitySuggestion[] {
-  return roster
-    .filter((entry) => entry.type === 'person')
-    .filter((entry) => !prefix || cleanName(entry.title).startsWith(prefix))
-    .map((entry) => {
-      const mentioned = context.includes(entry.title);
-      return {
-        id: entry.id,
-        title: entry.title,
-        type: entry.type,
-        score: mentioned ? 0.99 : 0.72,
-        reason: mentioned ? '上下文出现完整姓名' : `与称谓共用姓氏“${prefix}”`,
-      };
-    })
-    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, 'zh-CN'))
-    .slice(0, 5);
+function identityPrompt(): string {
+  return `你是知识库实体身份消歧专家。根据候选名称、原文上下文和已有页面名录判断名称是否稳定、是否只是职务称谓、是否与已有实体是同一对象。
+
+所有语义判断由你完成，不要使用机械的单字差或后缀规则。
+
+status：
+- clear：名称稳定，未发现需要处理的歧义。
+- role_title：只是“某经理、李总、负责人”等语境中的称谓，缺少稳定全名。
+- possible_alias：别名、简称、转写/OCR 错误或同一实体的名称变体。
+- uncertain：上下文不足，无法确定身份。
+
+只有上下文足以确认与名录中的某一页面是同一对象时，才填写 mergeTarget，并把该建议 confidence 设为 high。
+没有可靠合并目标时 mergeTarget 留空，并提出一个可操作问题。
+
+只输出 JSON：
+{"status":"clear|role_title|possible_alias|uncertain","canonicalName":"","mergeTarget":"","question":"","suggestions":[{"id":"","title":"","type":"","confidence":"high|medium|low","reason":""}]}。`;
 }
 
-function typoSuggestions(name: string, kind: string, roster: EntityRosterEntry[], context: string): AmbiguitySuggestion[] {
-  const source = comparableName(name);
-  if (source.length < 2 || source.length > 20) return [];
-  return roster
-    .filter((entry) => compatibleType(kind, entry.type))
-    .flatMap((entry) => {
-      const target = comparableName(entry.title);
-      if (!target || source === target || Math.abs(source.length - target.length) > 1) return [];
-      if (kind === 'person' && (source.length !== target.length || source[0] !== target[0])) return [];
-      const distance = editDistance(source, target);
-      if (distance !== 1) return [];
-      const mentioned = context.includes(entry.title);
-      const score = mentioned ? 0.99 : Math.max(0.82, 1 - distance / Math.max(source.length, target.length));
-      return [{
-        id: entry.id,
-        title: entry.title,
-        type: entry.type,
-        score,
-        reason: mentioned ? '上下文出现已有正确名称' : '与已有实体仅一字之差',
-      }];
-    })
-    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, 'zh-CN'))
-    .slice(0, 5);
+function score(confidence: 'high' | 'medium' | 'low'): number {
+  return confidence === 'high' ? 0.95 : confidence === 'medium' ? 0.75 : 0.5;
 }
 
-export function classifyEntityName(
+function ambiguityFromDecision(decision: IdentityDecision, originalName: string): EntityAmbiguity | null {
+  if (decision.status === 'clear') return null;
+  const category = decision.status === 'role_title' ? 'role_title' : 'possible_typo';
+  return {
+    category,
+    label: decision.status === 'role_title'
+      ? '称谓不完整'
+      : decision.status === 'possible_alias'
+        ? '疑似别名或转写错误'
+        : '身份不确定',
+    question: decision.question || `请确认“${originalName}”的稳定名称和对应实体。`,
+    suggestions: decision.suggestions.map((suggestion) => ({
+      id: suggestion.id,
+      title: suggestion.title,
+      type: suggestion.type,
+      score: score(suggestion.confidence),
+      reason: suggestion.reason,
+    })),
+  };
+}
+
+export async function classifyEntityName(
   name: string,
   kind: string,
   roster: EntityRosterEntry[],
   context = '',
-): EntityAmbiguity | null {
-  if (!['person', 'project', 'org'].includes(kind)) return null;
-  const role = kind === 'person' ? roleTitleParts(name) : null;
-  if (role) {
-    const suggestions = roleSuggestions(role.prefix, roster, context);
-    return {
-      category: 'role_title',
-      label: '称谓不完整',
-      question: `“${name}”是职务或称谓，不是稳定的人物名称。请确认完整姓名${suggestions.length ? '，或选择库中已有的人物' : ''}。`,
-      suggestions,
-    };
+  refId = '',
+): Promise<{ ambiguity: EntityAmbiguity | null; mergeTarget: string; canonicalName: string }> {
+  if (!['person', 'project', 'org'].includes(kind)) {
+    return { ambiguity: null, mergeTarget: '', canonicalName: name };
   }
-
-  const suggestions = typoSuggestions(name, kind, roster, context);
-  if (!suggestions.length) return null;
+  const decision = await runSemanticStage({
+    scope: 'entity-identity',
+    refId,
+    stage: 'disambiguate',
+    tag: 'entity-identity',
+    schema: identitySchema,
+    system: identityPrompt(),
+    input: {
+      candidate: { name, kind },
+      context,
+      existingPages: roster.map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        type: entry.type,
+        summary: entry.summary || '',
+      })),
+    },
+    temperature: 0.1,
+    maxTokens: 1800,
+    retries: 1,
+  });
+  const exactTarget = decision.mergeTarget
+    ? roster.find((entry) => cleanName(entry.title) === cleanName(decision.mergeTarget))
+    : undefined;
+  const highSuggestion = decision.suggestions.find((suggestion) =>
+    suggestion.confidence === 'high' &&
+    roster.some((entry) => cleanName(entry.title) === cleanName(suggestion.title))
+  );
+  const mergeTarget = exactTarget?.title || highSuggestion?.title || '';
   return {
-    category: 'possible_typo',
-    label: '疑似错别字',
-    question: `“${name}”与已有实体“${suggestions[0].title}”高度相似。请确认是否为错别字并合并，或填写经过确认的正确名称。`,
-    suggestions,
+    ambiguity: ambiguityFromDecision(decision, name),
+    mergeTarget,
+    canonicalName: decision.canonicalName.trim() || mergeTarget || name,
   };
 }
 
-export function guardAmbiguousEntityNames(
+export async function guardAmbiguousEntityNames(
   items: PlanItem[],
   candidates: Candidate[],
   roster: EntityRosterEntry[],
-): AmbiguousPlanItem[] {
+): Promise<AmbiguousPlanItem[]> {
   const candidateByName = new Map(candidates.map((candidate) => [cleanName(candidate.name), candidate]));
   const rosterTitles = new Set(roster.map((entry) => cleanName(entry.title)));
-  return items.map((item) => {
+  const output: AmbiguousPlanItem[] = [];
+  for (const item of items) {
     const validMergeTarget = item.action === 'merge' && rosterTitles.has(cleanName(item.target));
-    if (validMergeTarget || !['create', 'review', 'merge'].includes(item.action) || rosterTitles.has(cleanName(item.name))) return item;
-    const ambiguity = classifyEntityName(item.name, item.kind, roster, contextFor(candidateByName.get(cleanName(item.name))));
-    if (!ambiguity) return item;
-    return {
-      ...item,
-      action: 'review',
-      reason: [...new Set([item.reason, ambiguity.label, ambiguity.question].filter(Boolean))].join('；'),
-      ambiguity,
-    };
-  });
-}
-
-export function isIncompleteRoleTitle(name: string): boolean {
-  return Boolean(roleTitleParts(name));
+    if (
+      validMergeTarget ||
+      !['create', 'review', 'merge'].includes(item.action) ||
+      rosterTitles.has(cleanName(item.name)) ||
+      !['person', 'project', 'org'].includes(item.kind)
+    ) {
+      output.push(item);
+      continue;
+    }
+    try {
+      const decision = await classifyEntityName(
+        item.name,
+        item.kind,
+        roster,
+        contextFor(candidateByName.get(cleanName(item.name))),
+        item.name,
+      );
+      if (decision.mergeTarget) {
+        output.push({
+          ...item,
+          name: decision.canonicalName,
+          action: 'merge',
+          target: decision.mergeTarget,
+          reason: [...new Set([item.reason, '模型确认与已有实体为同一对象'].filter(Boolean))].join('；'),
+        });
+      } else if (decision.ambiguity) {
+        output.push({
+          ...item,
+          name: decision.canonicalName,
+          action: 'review',
+          reason: [...new Set([
+            item.reason,
+            decision.ambiguity.label,
+            decision.ambiguity.question,
+          ].filter(Boolean))].join('；'),
+          ambiguity: decision.ambiguity,
+        });
+      } else {
+        output.push({ ...item, name: decision.canonicalName });
+      }
+    } catch (error: any) {
+      output.push({
+        ...item,
+        action: 'review',
+        reason: [...new Set([
+          item.reason,
+          `实体身份模型检查失败：${String(error?.message || error).slice(0, 180)}`,
+        ].filter(Boolean))].join('；'),
+      });
+    }
+  }
+  return output;
 }

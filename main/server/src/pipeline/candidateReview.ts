@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { buildLineDiff } from '../assistant/diff.js';
 import { db, newId, now } from '../lib/db.js';
-import { chatJsonSchema, llmReady } from '../lib/llm.js';
+import { llmReady } from '../lib/llm.js';
+import { runSemanticStage } from '../lib/semanticStage.js';
 import { TYPE_LABEL } from '../lib/pageTypes.js';
 import { readPage } from '../lib/vault.js';
 import { hybridSearch } from '../retrieval/hybrid.js';
@@ -21,6 +21,12 @@ import {
   type CandidateOccurrence,
 } from './candidateLedger.js';
 import type { SourceVersion } from './sourceLedger.js';
+import {
+  contentHash,
+  loadSourceDocument,
+  sourceExcerpts,
+  type SourceExcerpt,
+} from './sourceDocument.js';
 
 export type ReviewFinalizeAction = 'approve' | 'merge';
 export type ReviewKind = 'concept' | 'person' | 'project' | 'org';
@@ -53,9 +59,34 @@ const reviewVerifySchema = z.object({
   pass: z.boolean(),
   unsupported: z.array(z.string()),
   conflicts: z.array(z.string()),
+  usedEvidenceIds: z.array(z.string()).min(1),
   content: z.string().min(1).max(5000),
   relations: z.array(relationSchema),
 });
+
+const focusedFactSchema = z.object({
+  id: z.string().min(1).max(80),
+  statement: z.string().min(1).max(1000),
+  sources: z.array(z.object({
+    contextId: z.string().min(1),
+    quote: z.string().min(1).max(600),
+  })).min(1),
+});
+
+const focusedOutputSchema = z.object({
+  facts: z.array(focusedFactSchema).max(20),
+  relations: z.array(z.object({
+    src: z.string().min(1),
+    word: z.enum(RELATION_WORDS),
+    dst: z.string().min(1),
+    factIds: z.array(z.string()).min(1),
+  })),
+});
+
+interface FocusedEvidence extends CandidateFact {
+  candidateId: string;
+  contextIds: string[];
+}
 
 export interface ReviewPreview {
   token: string;
@@ -71,9 +102,9 @@ export interface ReviewPreview {
   relations: Array<{ src: string; word: string; dst: string; factId: string }>;
   supportingCandidateIds: string[];
   sourcePaths: string[];
+  contextCount: number;
   evidenceCount: number;
   evidenceIds: string[];
-  diff: ReturnType<typeof buildLineDiff>;
 }
 
 function reportRow(
@@ -98,15 +129,12 @@ function resolveTarget(target: string): { id: string; title: string; path: strin
   return page;
 }
 
-function evidenceForCandidate(candidate: CandidateOccurrence): {
+function candidateOccurrences(candidate: CandidateOccurrence): {
   occurrences: CandidateOccurrence[];
-  facts: CandidateFact[];
 } {
   const occurrences = relatedCandidateOccurrences(candidate, false);
   if (!occurrences.some((item) => item.id === candidate.id)) occurrences.unshift(candidate);
-  const facts = occurrences.flatMap(loadCandidateFacts);
-  if (!facts.length) throw new Error('候选没有可用于重新提炼的有效事实');
-  return { occurrences, facts };
+  return { occurrences };
 }
 
 async function retrievalContext(name: string, summary: string): Promise<string> {
@@ -132,13 +160,145 @@ function roster(): string {
     .join('\n');
 }
 
-function evidenceInput(facts: CandidateFact[]) {
+function evidenceInput(facts: FocusedEvidence[]) {
   return facts.map((fact) => ({
     evidenceId: fact.evidenceId,
     statement: fact.statement,
     sourcePath: fact.sourcePath,
+    contextIds: fact.contextIds,
     quotes: fact.sources.map((source) => source.quote),
   }));
+}
+
+function focusedMapPrompt(candidateName: string, kind: ReviewKind, sourcePath: string): string {
+  return `${PERSONA}
+${PRINCIPLES}
+${relationVocabHint()}
+
+执行候选聚焦 Map。你正在重新阅读原始资料「${sourcePath}」，只抽取与候选「${candidateName}」（${TYPE_LABEL[kind]}）直接相关的事实。
+
+要求：
+1. 每条事实必须来自给定 sourceContexts，不能沿用旧草稿或旧事实陈述。
+2. sources 中的 quote 必须逐字存在于对应 contextId 的原文。
+3. 尽量恢复候选的身份、职责、状态、事件、数据、约束和明确关系。
+4. 同义重复事实合并；不确定或只是推测的内容不要输出。
+5. 关系只能使用六词表，并引用本次输出的 factIds。
+
+只输出 JSON：
+{"facts":[{"id":"f1","statement":"","sources":[{"contextId":"","quote":""}]}],"relations":[{"src":"","word":"主责|目标|管理|政委|带教|攻坚","dst":"","factIds":["f1"]}]}。`;
+}
+
+async function focusedEvidenceForOccurrence(
+  occurrence: CandidateOccurrence,
+  requestedName: string,
+  kind: ReviewKind,
+): Promise<{ facts: FocusedEvidence[]; contexts: SourceExcerpt[] }> {
+  if (!occurrence.source_version_id) return { facts: [], contexts: [] };
+  const version = db.prepare(
+    `SELECT content_hash,status FROM source_versions WHERE id=?`
+  ).get(occurrence.source_version_id) as { content_hash: string; status: string } | undefined;
+  if (!version || version.status !== 'active') return { facts: [], contexts: [] };
+  const document = await loadSourceDocument(occurrence.source_path);
+  if (document.contentHash !== version.content_hash) {
+    throw new Error(`原始资料「${occurrence.source_path}」已变化，请先重新整理该资料`);
+  }
+  const oldFacts = loadCandidateFacts(occurrence);
+  const anchors = oldFacts.flatMap((fact) => fact.sources.map((source) => ({
+    chunkId: source.chunkId,
+    quote: source.quote,
+  })));
+  const contexts = sourceExcerpts(document, requestedName, anchors);
+  if (!contexts.length) return { facts: [], contexts: [] };
+  const byId = new Map(contexts.map((context) => [context.id, context]));
+  const focused = await runSemanticStage({
+    scope: 'candidate-review',
+    refId: occurrence.id,
+    stage: 'focused-map',
+    tag: 'candidate-focused-map',
+    schema: focusedOutputSchema,
+    system: focusedMapPrompt(requestedName, kind, occurrence.source_path),
+    input: {
+      candidate: { name: requestedName, kind },
+      sourceContexts: contexts,
+    },
+    temperature: 0.1,
+    maxTokens: 7000,
+    retries: 1,
+  });
+  const validFacts = focused.facts.filter((fact) =>
+    fact.sources.every((source) => byId.get(source.contextId)?.content.includes(source.quote))
+  );
+  const localIds = new Set(validFacts.map((fact) => fact.id));
+  const storedIds: string[] = [];
+  const storedIdByLocal = new Map<string, string>();
+  const facts: FocusedEvidence[] = [];
+  for (const fact of validFacts) {
+    const factId = `review-${contentHash(JSON.stringify({
+      sourcePath: occurrence.source_path,
+      statement: fact.statement,
+      sources: fact.sources,
+    })).slice(0, 16)}`;
+    storedIds.push(factId);
+    storedIdByLocal.set(fact.id, factId);
+    const sources = fact.sources.map((source) => ({
+      chunkId: byId.get(source.contextId)?.chunkId || source.contextId,
+      quote: source.quote,
+    }));
+    db.prepare(
+      `INSERT OR REPLACE INTO ingest_facts(run_id,fact_id,statement,sources)
+       VALUES(?,?,?,?)`
+    ).run(occurrence.run_id, factId, fact.statement, JSON.stringify(sources));
+    facts.push({
+      id: factId,
+      evidenceId: `${occurrence.run_id}:${factId}`,
+      statement: fact.statement,
+      sources,
+      runId: occurrence.run_id,
+      sourcePath: occurrence.source_path,
+      candidateId: occurrence.id,
+      contextIds: fact.sources.map((source) => source.contextId),
+    });
+  }
+  if (storedIds.length) {
+    db.prepare(
+      `UPDATE ingest_candidates SET fact_ids=?,relations=?,updated_at=? WHERE id=?`
+    ).run(
+      JSON.stringify(storedIds),
+      JSON.stringify(focused.relations
+        .filter((relation) => relation.factIds.every((factId) => localIds.has(factId)))
+        .map((relation) => ({
+          src: relation.src,
+          word: relation.word,
+          dst: relation.dst,
+          factId: storedIdByLocal.get(relation.factIds[0]) || '',
+        }))
+        .filter((relation) => relation.factId)),
+      now(),
+      occurrence.id,
+    );
+  }
+  return { facts, contexts };
+}
+
+async function originalEvidence(
+  candidate: CandidateOccurrence,
+  requestedName: string,
+  kind: ReviewKind,
+): Promise<{
+  occurrences: CandidateOccurrence[];
+  facts: FocusedEvidence[];
+  contexts: SourceExcerpt[];
+}> {
+  const { occurrences } = candidateOccurrences(candidate);
+  const facts: FocusedEvidence[] = [];
+  const contexts: SourceExcerpt[] = [];
+  for (const occurrence of occurrences) {
+    const focused = await focusedEvidenceForOccurrence(occurrence, requestedName, kind);
+    facts.push(...focused.facts);
+    contexts.push(...focused.contexts);
+  }
+  if (!facts.length) throw new Error('重新阅读原始资料后，没有抽取到与候选直接相关的有效事实');
+  return { occurrences, facts, contexts };
 }
 
 function refinePrompt(
@@ -155,11 +315,11 @@ function refinePrompt(
 ${PRINCIPLES}
 ${relationVocabHint()}
 
-执行待审候选的局部再提炼。${targetInstruction}
-人工只确认了入库方向，不代表旧草稿正确；必须根据 evidence 重新组织正文。
+执行待审候选的原文聚焦再提炼。${targetInstruction}
+人工只确认了入库方向，不代表旧草稿或旧事实正确；必须根据重新阅读原始资料得到的 sourceContexts 和 focusedEvidence 组织正文。
 
 要求：
-1. 只能使用 evidence 中的事实，不得把检索片段当成事实来源。
+1. 只能使用 focusedEvidence 中的事实，并以 sourceContexts 原文核对；不得把检索片段当成事实来源。
 2. 检索片段只用于发现已有页面、补充 [[双链]] 和避免重复。
 3. 根据 ${TYPE_LABEL[kind]} 类型组织 Markdown；实体角色章节使用 ##，相关页面统一放在末尾。
 4. 输出 usedEvidenceIds，正文中的每项实质信息都必须被这些 evidence 支持。
@@ -179,10 +339,10 @@ ${target ? `目标页当前正文：\n${target.content.slice(0, 4000)}` : ''}
 }
 
 const verifyPrompt = `${PERSONA}
-执行人工待审候选的最终验证。逐项检查草稿是否完全由 evidence 支持，是否与 evidence 冲突，关系是否有明确证据。
+执行人工待审候选的最终验证。逐项对照 sourceContexts 原文，检查草稿是否完全由 focusedEvidence 支持、是否与原文冲突、关系是否有明确原文证据。
 删除或改写无依据内容，不得新增事实。unsupported 或 conflicts 非空时 pass 必须为 false。
 只输出 JSON：
-{"pass":true,"unsupported":[],"conflicts":[],"content":"","relations":[{"src":"","word":"主责|目标|管理|政委|带教|攻坚","dst":"","evidenceIds":[]}]}。`;
+{"pass":true,"unsupported":[],"conflicts":[],"usedEvidenceIds":[],"content":"","relations":[{"src":"","word":"主责|目标|管理|政委|带教|攻坚","dst":"","evidenceIds":[]}]}。`;
 
 export async function previewCandidateReview(
   reportId: number,
@@ -212,56 +372,57 @@ export async function previewCandidateReview(
   ).get(candidate.source_version_id);
   if (!activeSource) throw new Error('候选对应的原始资料已更新，请重新整理最新资料后再审核');
   const targetContent = targetPage ? readPage(targetPage.path)?.content || '' : '';
-  const { occurrences, facts } = evidenceForCandidate(candidate);
+  const { occurrences, facts, contexts } = await originalEvidence(candidate, name, reviewKind);
   const evidence = evidenceInput(facts);
   const allowedEvidence = new Set(facts.map((fact) => fact.evidenceId));
   const related = await retrievalContext(name, candidate.summary);
-  const refined = await chatJsonSchema<z.infer<typeof refineSchema>>(
-    refineSchema,
-    [
-      {
-        role: 'system',
-        content: refinePrompt(
-          action,
-          reviewKind,
-          targetPage ? { title: targetPage.title, content: targetContent } : null,
-          roster(),
-          related,
-        ),
-      },
-      {
-        role: 'user',
-        content: JSON.stringify({
-          requestedName: name,
-          kind: reviewKind,
-          action,
-          targetTitle: targetPage?.title || '',
-          evidence,
-          previousDraft: candidate.content,
-        }),
-      },
-    ],
-    { temperature: 0.1, maxTokens: 9000, retries: 1, tag: 'candidate-refine' },
-  );
+  const refinedInput = {
+    requestedName: name,
+    kind: reviewKind,
+    action,
+    targetTitle: targetPage?.title || '',
+    sourceContexts: contexts,
+    focusedEvidence: evidence,
+  };
+  const refined = await runSemanticStage({
+    scope: 'candidate-review',
+    refId: candidate.id,
+    stage: 'recompose',
+    tag: 'candidate-refine',
+    schema: refineSchema,
+    system: refinePrompt(
+      action,
+      reviewKind,
+      targetPage ? { title: targetPage.title, content: targetContent } : null,
+      roster(),
+      related,
+    ),
+    input: refinedInput,
+    temperature: 0.1,
+    maxTokens: 9000,
+    retries: 1,
+  });
   const usedEvidenceIds = [...new Set(refined.usedEvidenceIds.filter((id) => allowedEvidence.has(id)))];
   if (!usedEvidenceIds.length) throw new Error('局部再提炼没有引用任何有效证据');
   const filteredRelations = refined.relations.filter((relation) =>
     relation.evidenceIds.length > 0 && relation.evidenceIds.every((id) => allowedEvidence.has(id))
   );
-  const verified = await chatJsonSchema<z.infer<typeof reviewVerifySchema>>(
-    reviewVerifySchema,
-    [
-      { role: 'system', content: verifyPrompt },
-      {
-        role: 'user',
-        content: JSON.stringify({
-          evidence,
-          draft: { ...refined, usedEvidenceIds, relations: filteredRelations },
-        }),
-      },
-    ],
-    { temperature: 0.1, maxTokens: 9000, retries: 1, tag: 'candidate-review-verify' },
-  );
+  const verified = await runSemanticStage({
+    scope: 'candidate-review',
+    refId: candidate.id,
+    stage: 'verify',
+    tag: 'candidate-review-verify',
+    schema: reviewVerifySchema,
+    system: verifyPrompt,
+    input: {
+      sourceContexts: contexts,
+      focusedEvidence: evidence,
+      draft: { ...refined, usedEvidenceIds, relations: filteredRelations },
+    },
+    temperature: 0.1,
+    maxTokens: 9000,
+    retries: 1,
+  });
   if (!verified.pass || verified.unsupported.length || verified.conflicts.length) {
     const details = [
       ...verified.unsupported.map((item) => `无依据：${item}`),
@@ -269,15 +430,22 @@ export async function previewCandidateReview(
     ];
     throw new Error(`重新验证未通过${details.length ? `：${details.join('；')}` : ''}`);
   }
+  const verifiedEvidenceIds = [...new Set(
+    verified.usedEvidenceIds.filter((id) => allowedEvidence.has(id)),
+  )];
+  if (!verifiedEvidenceIds.length) throw new Error('重新验证没有保留任何有效证据');
   const relations = verified.relations
-    .filter((relation) => relation.evidenceIds.every((id) => allowedEvidence.has(id)))
+    .filter((relation) =>
+      relation.evidenceIds.length > 0 &&
+      relation.evidenceIds.every((id) => verifiedEvidenceIds.includes(id))
+    )
     .map((relation) => ({
       src: relation.src,
       word: relation.word,
       dst: relation.dst,
       factId: relation.evidenceIds[0],
     }));
-  const usedFacts = facts.filter((fact) => usedEvidenceIds.includes(fact.evidenceId));
+  const usedFacts = facts.filter((fact) => verifiedEvidenceIds.includes(fact.evidenceId));
   const usedRunIds = new Set(usedFacts.map((fact) => fact.runId));
   const token = newId();
   const preview: ReviewPreview = {
@@ -296,14 +464,9 @@ export async function previewCandidateReview(
       .filter((occurrence) => occurrence.id !== candidate.id && usedRunIds.has(occurrence.run_id))
       .map((occurrence) => occurrence.id),
     sourcePaths: [...new Set(usedFacts.map((fact) => fact.sourcePath))],
-    evidenceCount: usedEvidenceIds.length,
-    evidenceIds: usedEvidenceIds,
-    diff: buildLineDiff(
-      targetPage ? targetContent : candidate.content || candidate.summary,
-      targetPage
-        ? `${targetContent.replace(/\n*$/, '')}\n\n## 待并入增量预览\n\n${verified.content}\n`
-        : verified.content,
-    ),
+    contextCount: contexts.length,
+    evidenceCount: verifiedEvidenceIds.length,
+    evidenceIds: verifiedEvidenceIds,
   };
   storeCandidatePreview(candidate.id, token, preview);
   return preview;
@@ -380,7 +543,10 @@ export function ignoreCandidateReview(
   const candidate = ensureCandidateFromReport(report);
   if (candidate) setCandidateStatus(candidate.id, 'ignored');
   const payload = JSON.parse(report.payload);
-  db.prepare(`UPDATE reports SET payload=?,status='dismissed' WHERE id=? AND status='open'`).run(
+  db.prepare(
+    `UPDATE reports SET payload=?,status='dismissed'
+     WHERE id=? AND status IN ('open','applying')`
+  ).run(
     JSON.stringify({
       ...payload,
       candidateId: candidate?.id,

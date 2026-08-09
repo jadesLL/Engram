@@ -1,241 +1,388 @@
+import { z } from 'zod';
 import { db, now } from '../lib/db.js';
-import { chatJson, llmReady } from '../lib/llm.js';
+import { llmReady } from '../lib/llm.js';
+import { runSemanticStage } from '../lib/semanticStage.js';
 import { readPage, readPageMeta } from '../lib/vault.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { runUpgrades } from '../pipeline/mentions.js';
-import { contradictionSystem, contradictionUser } from '../prompts/contradiction.js';
 import { addReports } from './reports.js';
 
 interface ReportItem { kind: string; payload: Record<string, any> }
 
-/** 死链：引用了不存在的页面 */
-export function taskDeadlinks(): number {
-  const rows = db
-    .prepare(
-      `SELECT e.id, e.dst_title, p.title AS src_title, p.id AS src_id, p.path AS src_path
-       FROM edges e JOIN pages p ON p.id = e.src_page
-       WHERE e.rel = 'link' AND e.dst_page IS NULL AND p.deleted = 0`
-    )
-    .all() as any[];
-  const items = rows
-    .map((r) => ({
+const pairAuditSchema = z.object({
+  duplicate: z.boolean(),
+  preserveBoth: z.boolean(),
+  duplicateReason: z.string(),
+  recommendedAction: z.enum(['keep_a', 'keep_b', 'keep_both']),
+  contradiction: z.boolean(),
+  contradictionDetail: z.string(),
+});
+
+const deadlinkSchema = z.object({
+  suggestedType: z.enum(['concept', 'person', 'project', 'org', 'doc', 'note']),
+  reason: z.string(),
+});
+
+const pageHealthSchema = z.object({
+  needsEnrichment: z.boolean(),
+  enrichmentReason: z.string(),
+  stale: z.boolean(),
+  staleReason: z.string(),
+});
+
+function knowledgePages(): Array<{
+  id: string;
+  title: string;
+  path: string;
+  type: string;
+  summary: string;
+  updated_at: string;
+  word_count: number;
+}> {
+  return db.prepare(
+    `SELECT id,title,path,type,summary,updated_at,word_count FROM pages
+     WHERE deleted=0
+       AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')
+     ORDER BY updated_at DESC`
+  ).all() as any[];
+}
+
+/** 死链存在性由代码检查；目标页面类型建议由模型判断。 */
+export async function taskDeadlinks(): Promise<number> {
+  const rows = db.prepare(
+    `SELECT e.id,e.dst_title,p.title src_title,p.id src_id,p.path src_path,p.updated_at src_updated
+     FROM edges e JOIN pages p ON p.id=e.src_page
+     WHERE e.rel='link' AND e.dst_page IS NULL AND p.deleted=0`
+  ).all() as any[];
+  const items: ReportItem[] = [];
+  for (const row of rows) {
+    const source = readPage(row.src_path);
+    let suggestedType = '';
+    let suggestionReason = '未配置模型，请人工选择页面类型';
+    if (llmReady() && source) {
+      try {
+        const decision = await runSemanticStage({
+          scope: 'dream',
+          refId: `${row.src_id}:${row.dst_title}`,
+          stage: 'deadlink-classification',
+          tag: 'dream-deadlink-type',
+          schema: deadlinkSchema,
+          system: `你是知识库页面类型判断模型。根据来源页面上下文，判断死链标题最适合创建为何种页面。
+concept=概念/方法/技术，person=人物，project=项目/产品，org=组织，doc=正式文档，note=普通笔记。
+只输出 JSON：{"suggestedType":"concept|person|project|org|doc|note","reason":""}。`,
+          input: {
+            deadTitle: row.dst_title,
+            sourceTitle: row.src_title,
+            sourceContent: source.content.slice(0, 5000),
+          },
+          maxTokens: 700,
+        });
+        suggestedType = decision.suggestedType;
+        suggestionReason = decision.reason;
+      } catch (error: any) {
+        suggestionReason = `模型类型判断失败，请人工选择：${String(error?.message || error).slice(0, 180)}`;
+      }
+    }
+    items.push({
       kind: 'deadlink',
       payload: {
-        key: `${r.src_id}:${r.dst_title}`,
-        srcId: r.src_id,
-        srcTitle: r.src_title,
-        srcPath: r.src_path,
-        deadTitle: r.dst_title,
-        srcUpdated: (db.prepare(`SELECT updated_at FROM pages WHERE id = ?`).get(r.src_id) as any)?.updated_at || '',
+        key: `${row.src_id}:${row.dst_title}`,
+        srcId: row.src_id,
+        srcTitle: row.src_title,
+        srcPath: row.src_path,
+        deadTitle: row.dst_title,
+        srcUpdated: row.src_updated || '',
+        suggestedType,
+        suggestionReason,
       },
-    }));
-  return addReports(items);
-}
-
-/** 时间序列页面（月度速报/周期性快照）：不参与合并建议（用户明确要求保留独立） */
-function isTimeSeries(title: string): boolean {
-  return /\d{4}[.\-/年]\d{1,2}|\d{1,2}\.\d{1,2}[-–—]\d{1,2}|月度|月报|速报|周报|季报|年报|快照/.test(title);
-}
-
-/** 疑似重复：页面向量两两相似度过高（排除时间序列页面） */
-export function taskDuplicates(): number {
-  // 取每页第一个 chunk 的向量做代表（GBrain 的 best-chunk 简化）
-  const reps = db
-    .prepare(
-      `SELECT c.ref_id AS page_id, c.id AS chunk_id FROM chunks c
-       WHERE c.ref_type = 'page' AND c.idx = 0
-         AND c.ref_id IN (SELECT id FROM pages WHERE deleted = 0)`
-    )
-    .all() as any[];
-  const items: ReportItem[] = [];
-  const seen = new Set<string>();
-  // 无向量数据时直接跳过（LLM 未配置或索引未建立）
-  const vecCount = db.prepare(`SELECT COUNT(*) AS n FROM vec_chunks`).get() as any;
-  if (vecCount.n === 0) return 0;
-  for (const rep of reps) {
-    const vecRow = db.prepare(`SELECT embedding FROM vec_chunks WHERE rowid = ?`).get(rep.chunk_id) as any;
-    if (!vecRow?.embedding) continue;
-    const neighbors = db
-      .prepare(
-        `SELECT v.rowid AS chunk_id, v.distance FROM vec_chunks v
-         JOIN chunks c ON c.id = v.rowid
-         WHERE v.embedding MATCH ?
-           AND k = 4 AND c.ref_type = 'page' AND c.ref_id != ?`
-      )
-      .all(vecRow.embedding, rep.page_id) as any[];
-    for (const n of neighbors) {
-      if (n.distance > 0.15) continue; // 余弦距离阈值：非常相似
-      const other = db
-        .prepare(`SELECT ref_id FROM chunks WHERE id = ?`).get(n.chunk_id) as any;
-      if (!other) continue;
-      const key = [rep.page_id, other.ref_id].sort().join(':');
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const a = db.prepare(`SELECT id, title, path, updated_at FROM pages WHERE id = ?`).get(rep.page_id) as any;
-      const b = db.prepare(`SELECT id, title, path, updated_at FROM pages WHERE id = ?`).get(other.ref_id) as any;
-      if (!a || !b) continue;
-      if (isTimeSeries(a.title) || isTimeSeries(b.title)) continue; // 时间序列不合并
-      items.push({
-        kind: 'duplicate',
-        payload: { key, a, b, similarity: Math.round((1 - n.distance) * 100) / 100 },
-      });
-    }
+    });
   }
   return addReports(items);
 }
 
-/** 待丰富：被大量引用但内容过少 */
-export function taskEnrich(): number {
-  const rows = db
-    .prepare(
-      `SELECT p.id, p.title, p.path, p.word_count, p.updated_at,
-              (SELECT COUNT(*) FROM edges e WHERE e.dst_page = p.id) AS refs
-       FROM pages p WHERE p.deleted = 0 AND p.word_count < 60`
-    )
-    .all() as any[];
-  const items = rows
-    .filter((r) => r.refs >= 2)
-    .map((r) => ({
-      kind: 'enrich',
-      payload: { pageId: r.id, title: r.title, path: r.path, refs: r.refs, wordCount: r.word_count, pageUpdated: r.updated_at },
-    }));
-  return addReports(items);
+function pairCandidates(): Array<{ a: any; b: any; retrievalDistance: number | null }> {
+  const pages = knowledgePages();
+  const byId = new Map(pages.map((page) => [page.id, page]));
+  const pairs = new Map<string, { a: any; b: any; retrievalDistance: number | null }>();
+  const vecCount = (db.prepare(`SELECT COUNT(*) n FROM vec_chunks`).get() as any).n;
+  if (vecCount > 0) {
+    const reps = db.prepare(
+      `SELECT c.ref_id page_id,c.id chunk_id FROM chunks c
+       WHERE c.ref_type='page' AND c.idx=0
+         AND c.ref_id IN (
+           SELECT id FROM pages WHERE deleted=0
+             AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')
+         )`
+    ).all() as any[];
+    for (const rep of reps) {
+      const vector = db.prepare(`SELECT embedding FROM vec_chunks WHERE rowid=?`).get(rep.chunk_id) as any;
+      if (!vector?.embedding) continue;
+      const neighbors = db.prepare(
+        `SELECT c.ref_id page_id,v.distance FROM vec_chunks v
+         JOIN chunks c ON c.id=v.rowid
+         WHERE v.embedding MATCH ? AND k=6
+           AND c.ref_type='page' AND c.ref_id<>?`
+      ).all(vector.embedding, rep.page_id) as any[];
+      for (const neighbor of neighbors) {
+        const a = byId.get(rep.page_id);
+        const b = byId.get(neighbor.page_id);
+        if (!a || !b) continue;
+        const key = [a.id, b.id].sort().join(':');
+        if (!pairs.has(key)) pairs.set(key, { a, b, retrievalDistance: neighbor.distance });
+      }
+    }
+  }
+  // 无向量时仍让模型审查同类型页面对，避免工程层静默放弃语义检查。
+  if (!pairs.size) {
+    for (let left = 0; left < pages.length; left++) {
+      for (let right = left + 1; right < pages.length; right++) {
+        if (pages[left].type !== pages[right].type) continue;
+        pairs.set(`${pages[left].id}:${pages[right].id}`, {
+          a: pages[left],
+          b: pages[right],
+          retrievalDistance: null,
+        });
+      }
+    }
+  }
+  return [...pairs.values()];
 }
 
-/** 过期页面：180 天未更新 */
-export function taskStale(): number {
-  const rows = db
-    .prepare(`SELECT id, title, path, updated_at FROM pages WHERE deleted = 0`)
-    .all() as any[];
-  const items = rows
-    .map((r) => ({ row: r, reviewedAt: String(readPageMeta(r.path).reviewed_at || '') }))
-    .filter(({ row, reviewedAt }) => {
-      const latest = Math.max(new Date(row.updated_at).getTime() || 0, new Date(reviewedAt).getTime() || 0);
-      return Date.now() - latest > 180 * 86400000;
-    })
-    .map(({ row: r, reviewedAt }) => ({
-      kind: 'stale',
-      payload: {
-        pageId: r.id,
-        title: r.title,
-        path: r.path,
-        staleDays: Math.floor((Date.now() - Math.max(new Date(r.updated_at).getTime() || 0, new Date(reviewedAt).getTime() || 0)) / 86400000),
-        pageUpdated: r.updated_at,
-        reviewedAt,
-      },
-    }));
-  return addReports(items);
+function pairPrompt(): string {
+  return `你是知识库质量审计模型。判断两个页面在知识语义上是否重复，以及是否存在事实性矛盾。
+
+向量距离只是召回线索，不能直接作为结论。你必须阅读两页正文和元数据后判断：
+- duplicate：是否描述同一知识对象且应合并。
+- preserveBoth：即使主题接近，是否因时间快照、不同角色、不同范围或独立语义而应保留两页。
+- contradiction：是否对同一事实给出互相不能同时成立的描述。
+
+不要因为表达相似、共同提到同一对象或信息详略不同就判重复/矛盾。
+只输出 JSON：
+{"duplicate":false,"preserveBoth":true,"duplicateReason":"","recommendedAction":"keep_a|keep_b|keep_both","contradiction":false,"contradictionDetail":""}。`;
 }
 
-/** 矛盾检测：对高相似页面抽样让 LLM 判断（每次最多 3 对，控制成本） */
-export async function taskContradiction(): Promise<number> {
-  if (!llmReady()) return 0;
-  const dups = db
-    .prepare(`SELECT payload FROM reports WHERE kind = 'duplicate' AND status = 'open' LIMIT 3`)
-    .all() as any[];
-  let count = 0;
-  for (const d of dups) {
-    const p = JSON.parse(d.payload);
-    const pa = readPage(p.a.path);
-    const pb = readPage(p.b.path);
-    if (!pa || !pb) continue;
+export async function taskPairAudit(): Promise<{ duplicate: number; contradiction: number }> {
+  if (!llmReady()) return { duplicate: 0, contradiction: 0 };
+  let duplicate = 0;
+  let contradiction = 0;
+  for (const pair of pairCandidates()) {
+    const left = readPage(pair.a.path);
+    const right = readPage(pair.b.path);
+    if (!left || !right) continue;
     try {
-      const parsed = await chatJson<{ contradiction: boolean; detail: string }>(
-        [
-          { role: 'system', content: contradictionSystem() },
-          { role: 'user', content: contradictionUser(p.a.title, pa.content.slice(0, 1200), p.b.title, pb.content.slice(0, 1200)) },
-        ],
-        { temperature: 0.1, maxTokens: 150, retries: 0, tag: 'contradiction' }
-      );
-      if (parsed.contradiction) {
-        count += addReports([
-          {
-            kind: 'contradiction',
-            payload: { a: p.a, b: p.b, detail: String(parsed.detail || '').slice(0, 200) },
+      const decision = await runSemanticStage({
+        scope: 'dream',
+        refId: [pair.a.id, pair.b.id].sort().join(':'),
+        stage: 'page-pair-audit',
+        tag: 'dream-pair-audit',
+        schema: pairAuditSchema,
+        system: pairPrompt(),
+        input: {
+          retrievalDistance: pair.retrievalDistance,
+          pageA: {
+            ...pair.a,
+            sources: readPageMeta(pair.a.path).sources || [],
+            content: left.content.slice(0, 8000),
           },
-        ]);
+          pageB: {
+            ...pair.b,
+            sources: readPageMeta(pair.b.path).sources || [],
+            content: right.content.slice(0, 8000),
+          },
+        },
+        maxTokens: 1800,
+      });
+      const key = [pair.a.id, pair.b.id].sort().join(':');
+      if (decision.duplicate && !decision.preserveBoth) {
+        duplicate += addReports([{
+          kind: 'duplicate',
+          payload: {
+            key,
+            a: pair.a,
+            b: pair.b,
+            detail: decision.duplicateReason,
+            recommendedAction: decision.recommendedAction,
+            retrievalDistance: pair.retrievalDistance,
+          },
+        }]);
+      }
+      if (decision.contradiction) {
+        contradiction += addReports([{
+          kind: 'contradiction',
+          payload: {
+            key,
+            a: pair.a,
+            b: pair.b,
+            detail: decision.contradictionDetail,
+          },
+        }]);
       }
     } catch {
-      /* 单对失败不影响整体 */
+      /* 单对失败不影响其他页面审计。 */
     }
   }
-  return count;
+  return { duplicate, contradiction };
 }
 
-/** 来源单一：sources 字段只有 1 个来源的条目标记待交叉验证 */
+function backlinks(pageId: string): Array<{ title: string; path: string; content: string }> {
+  const rows = db.prepare(
+    `SELECT DISTINCT p.title,p.path FROM edges e
+     JOIN pages p ON p.id=e.src_page
+     WHERE e.dst_page=? AND p.deleted=0
+     ORDER BY p.updated_at DESC LIMIT 12`
+  ).all(pageId) as Array<{ title: string; path: string }>;
+  return rows.flatMap((row) => {
+    const page = readPage(row.path);
+    return page ? [{ ...row, content: page.content.slice(0, 1500) }] : [];
+  });
+}
+
+function pageHealthPrompt(currentDate: string): string {
+  return `你是知识库页面健康审计模型。当前日期是 ${currentDate}。
+请阅读页面正文、来源、更新时间、最后复核时间和引用页上下文，判断：
+1. 页面当前是否缺少支撑其用途的关键信息，需要丰富。
+2. 页面中的事实是否具有时效性，并且现在是否可能已经过期，需要复核。
+
+字数、引用次数和天数只是元数据，不得直接作为结论。抽象概念可能长期有效；近期页面也可能因状态变化而过期。
+只输出 JSON：
+{"needsEnrichment":false,"enrichmentReason":"","stale":false,"staleReason":""}。`;
+}
+
+export async function taskPageHealth(): Promise<{ enrich: number; stale: number }> {
+  if (!llmReady()) return { enrich: 0, stale: 0 };
+  let enrich = 0;
+  let stale = 0;
+  const currentDate = new Date().toISOString().slice(0, 10);
+  for (const page of knowledgePages()) {
+    const body = readPage(page.path);
+    if (!body) continue;
+    const meta = readPageMeta(page.path);
+    try {
+      const decision = await runSemanticStage({
+        scope: 'dream',
+        refId: page.id,
+        stage: 'page-health',
+        tag: 'dream-page-health',
+        schema: pageHealthSchema,
+        system: pageHealthPrompt(currentDate),
+        input: {
+          page: {
+            ...page,
+            sources: meta.sources || [],
+            reviewedAt: meta.reviewed_at || '',
+            content: body.content.slice(0, 10_000),
+          },
+          backlinks: backlinks(page.id),
+        },
+        maxTokens: 1600,
+      });
+      if (decision.needsEnrichment) {
+        enrich += addReports([{
+          kind: 'enrich',
+          payload: {
+            pageId: page.id,
+            title: page.title,
+            path: page.path,
+            detail: decision.enrichmentReason,
+            pageUpdated: page.updated_at,
+          },
+        }]);
+      }
+      if (decision.stale) {
+        stale += addReports([{
+          kind: 'stale',
+          payload: {
+            pageId: page.id,
+            title: page.title,
+            path: page.path,
+            detail: decision.staleReason,
+            pageUpdated: page.updated_at,
+            reviewedAt: meta.reviewed_at || '',
+          },
+        }]);
+      }
+    } catch {
+      /* 单页失败不影响其他页面。 */
+    }
+  }
+  return { enrich, stale };
+}
+
+/** 来源数量是用户明确的业务规则，因此由代码精确计数。 */
 export function taskSingleSource(): number {
-  const rows = db
-    .prepare(`SELECT id, title, path FROM pages WHERE deleted = 0 AND path LIKE 'Wiki/%' AND path NOT LIKE 'Wiki/归档/%'`)
-    .all() as any[];
   const items: ReportItem[] = [];
-  for (const r of rows) {
-    const meta = readPageMeta(r.path);
-    const sources = Array.isArray(meta.sources) ? meta.sources : [];
-    // 只统计有 sources 但单一的；无 sources 的由 ingest 门禁负责
-    if (sources.length === 1) {
+  for (const page of knowledgePages()) {
+    const sources = readPageMeta(page.path).sources;
+    if (Array.isArray(sources) && sources.length === 1) {
       items.push({
         kind: 'single_source',
-        payload: { pageId: r.id, title: r.title, path: r.path, source: sources[0], pageUpdated: (db.prepare(`SELECT updated_at FROM pages WHERE id = ?`).get(r.id) as any)?.updated_at || '' },
+        payload: {
+          pageId: page.id,
+          title: page.title,
+          path: page.path,
+          source: sources[0],
+          pageUpdated: page.updated_at,
+        },
       });
     }
   }
   return addReports(items);
 }
 
-/** 实体章节审计：实体页缺「当前理解」或「时间线」→ 待补章节 */
+/** 固定页面骨架属于数据契约，由代码检查。 */
 export function taskSectionAudit(): number {
-  const rows = db
-    .prepare(
-      `SELECT id, title, path FROM pages
-       WHERE deleted = 0 AND path LIKE 'Wiki/实体/%'`
-    )
-    .all() as any[];
   const items: ReportItem[] = [];
-  for (const r of rows) {
-    const rd = readPage(r.path);
-    if (!rd) continue;
+  for (const page of knowledgePages().filter((item) => item.path.startsWith('Wiki/实体/'))) {
+    const body = readPage(page.path);
+    if (!body) continue;
     const missing: string[] = [];
-    if (!/##\s*当前理解/.test(rd.content)) missing.push('当前理解');
-    if (!/##\s*时间线/.test(rd.content)) missing.push('时间线');
+    if (!/##\s*当前理解/.test(body.content)) missing.push('当前理解');
+    if (!/##\s*时间线/.test(body.content)) missing.push('时间线');
     if (missing.length) {
       items.push({
         kind: 'missing_sections',
-        payload: { pageId: r.id, title: r.title, path: r.path, missing, pageUpdated: (db.prepare(`SELECT updated_at FROM pages WHERE id = ?`).get(r.id) as any)?.updated_at || '' },
+        payload: {
+          pageId: page.id,
+          title: page.title,
+          path: page.path,
+          missing,
+          pageUpdated: page.updated_at,
+        },
       });
     }
   }
   return addReports(items);
 }
 
-/** 运行完整 Dream Cycle，并把运行摘要记入操作日志（Wiki/log.md） */
 export async function runDreamCycle(): Promise<Record<string, number>> {
   const result: Record<string, number> = {};
-  result.deadlink = taskDeadlinks();
-  result.duplicate = taskDuplicates();
-  result.enrich = taskEnrich();
-  result.stale = taskStale();
+  result.deadlink = await taskDeadlinks();
   result.single_source = taskSingleSource();
   result.missing_sections = taskSectionAudit();
-  result.contradiction = await taskContradiction();
-  // mention 升级扫描兜底（正常由写入管线触发）
+  const pair = await taskPairAudit();
+  result.duplicate = pair.duplicate;
+  result.contradiction = pair.contradiction;
+  const health = await taskPageHealth();
+  result.enrich = health.enrich;
+  result.stale = health.stale;
   try {
-    const upgrades = await runUpgrades();
-    result.upgrades = upgrades.length;
+    result.upgrades = (await runUpgrades()).length;
   } catch {
     result.upgrades = 0;
   }
-  const ts = now();
+  const timestamp = now();
   db.prepare(
-    `INSERT INTO settings(key, value) VALUES('dream_last_run', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  ).run(ts);
-
-  // 运行摘要记入操作日志（8 项计数全保留，不蒸馏；不再生成 AIWorks/log 独立文档）
+    `INSERT INTO settings(key,value) VALUES('dream_last_run',?)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+  ).run(timestamp);
   try {
-    const total = Object.values(result).reduce((a, b) => a + b, 0);
-    const detail = `死链 ${result.deadlink}｜疑似重复 ${result.duplicate}｜矛盾 ${result.contradiction}｜待丰富 ${result.enrich}｜过期 ${result.stale}｜来源单一 ${result.single_source}｜待补章节 ${result.missing_sections}｜实体升级 ${result.upgrades}｜共 ${total} 项${total > 0 ? '，见整理报告' : '，无待处理'}`;
-    appendWikiLog('Dream Cycle', detail);
+    const total = Object.values(result).reduce((sum, value) => sum + value, 0);
+    appendWikiLog(
+      'Dream Cycle',
+      `死链 ${result.deadlink}｜疑似重复 ${result.duplicate}｜矛盾 ${result.contradiction}｜待丰富 ${result.enrich}｜过期 ${result.stale}｜来源单一 ${result.single_source}｜待补章节 ${result.missing_sections}｜实体升级 ${result.upgrades}｜共 ${total} 项${total ? '，见整理报告' : '，无待处理'}`,
+    );
   } catch {
-    /* 日志写入失败不影响主流程 */
+    /* 日志失败不影响审计结果。 */
   }
   return result;
 }

@@ -1,13 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
-import matter from 'gray-matter';
 import { db, newId, now } from '../lib/db.js';
-import { chatJsonSchema, llmReady } from '../lib/llm.js';
+import { llmReady } from '../lib/llm.js';
+import { runSemanticStage } from '../lib/semanticStage.js';
 import { safeJoin } from '../lib/vault.js';
-import { docxToText } from './docx.js';
-import { xlsxToText, pptxToText } from './office.js';
-import { chunkLosslessly, assertLosslessChunks } from './losslessChunker.js';
 import { hybridSearch } from '../retrieval/hybrid.js';
 import { extractWikiLinks, RELATION_WORDS } from './extractor.js';
 import { addReports } from '../dream/reports.js';
@@ -35,6 +31,7 @@ import {
   supplementalAnswers,
   type SupplementalAnswer,
 } from './sourceLedger.js';
+import { contentHash as hash, loadSourceDocument } from './sourceDocument.js';
 import { reconcileQuestionsAfterRun, syncIngestQuestionReport } from './ingestQuestions.js';
 
 export type { IngestStats } from './knowledgeCommit.js';
@@ -42,22 +39,6 @@ export type IngestStage = '解析' | 'Map' | 'Normalize' | 'Plan' | 'Critic' | '
 export type IngestProgress = { stage: IngestStage; progress: number; detail?: string };
 export type IngestProgressCallback = (update: IngestProgress) => void;
 const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
-
-function hash(value: string | Buffer): string { return crypto.createHash('sha256').update(value).digest('hex'); }
-
-async function loadDocument(relPath: string): Promise<StructuredDocument> {
-  const abs = safeJoin(relPath);
-  const bytes = fs.readFileSync(abs);
-  const ext = path.posix.extname(relPath).slice(1).toLowerCase();
-  let text: string;
-  if (ext === 'docx') text = await docxToText(bytes);
-  else if (ext === 'xlsx') text = xlsxToText(bytes);
-  else if (ext === 'pptx') text = await pptxToText(bytes);
-  else text = matter(bytes.toString('utf8')).content.replace(/\r\n/g, '\n').trim();
-  const chunks = chunkLosslessly(text);
-  assertLosslessChunks(text, chunks);
-  return { path: relPath, title: path.posix.basename(relPath), contentHash: hash(bytes), text, chunks };
-}
 
 function audit(runId: string, stage: string, payload: unknown, input?: unknown) {
   const serialized = JSON.stringify(payload);
@@ -102,11 +83,26 @@ async function dynamicContext(candidates: Candidate[], document: StructuredDocum
   return [...lines].slice(0, 30).join('\n');
 }
 
-async function jsonStage<T>(schema: any, system: string, input: unknown, tag: string, maxTokens = 8000): Promise<T> {
-  return chatJsonSchema<T>(schema, [
-    { role: 'system', content: system },
-    { role: 'user', content: typeof input === 'string' ? input : JSON.stringify(input) },
-  ], { temperature: 0.1, maxTokens, retries: 1, tag });
+async function jsonStage<T>(
+  runId: string,
+  schema: any,
+  system: string,
+  input: unknown,
+  tag: string,
+  maxTokens = 8000,
+): Promise<T> {
+  return runSemanticStage<T>({
+    scope: 'ingest',
+    refId: runId,
+    stage: tag,
+    tag,
+    schema,
+    system,
+    input,
+    temperature: 0.1,
+    maxTokens,
+    retries: 1,
+  });
 }
 
 function validateFacts(candidates: Candidate[], document: StructuredDocument): Candidate[] {
@@ -188,7 +184,7 @@ export async function ingestRawFile(
   onProgress({ stage: '解析', progress: 2, detail: relPath });
   let document: StructuredDocument;
   try {
-    document = await loadDocument(relPath);
+    document = await loadSourceDocument(relPath);
   } catch (error: any) {
     const message = String(error?.message || error).slice(0, 2000);
     let contentHash = hash(`${relPath}:${message}`);
@@ -222,7 +218,7 @@ export async function ingestRawFile(
     throw new Error(message);
   }
   try {
-    if (document.text.length < 30 && !resolvedQuestions.length) {
+    if (!document.text.trim() && !resolvedQuestions.length) {
       const { stats } = commitKnowledgeItems([], {
         runId,
         sourceVersion,
@@ -230,7 +226,7 @@ export async function ingestRawFile(
         sourceName: document.title,
         sourceRef: `原始资料/${document.title}`,
       });
-      audit(runId, 'commit', stats, { reason: '正文少于 30 字' });
+      audit(runId, 'commit', stats, { reason: '原始资料没有可读取正文' });
       db.prepare(`UPDATE ingest_runs SET stats=? WHERE id=?`).run(JSON.stringify(stats), runId);
       setStatus(relPath, document.contentHash, runId, 'completed');
       return stats;
@@ -242,7 +238,13 @@ export async function ingestRawFile(
       const chunk = document.chunks[chunkIndex];
       onProgress({ stage: 'Map', progress: 10 + Math.round(((chunkIndex + 1) / document.chunks.length) * 24), detail: `${chunkIndex + 1}/${document.chunks.length}` });
       try {
-        const out = await jsonStage<{ candidates: Candidate[] }>(mapOutputSchema, mapPrompt(chunk.id, titleRoster), `分段 ${chunk.id} [${chunk.start},${chunk.end})：\n${chunk.content}`, 'ingest-map');
+        const out = await jsonStage<{ candidates: Candidate[] }>(
+          runId,
+          mapOutputSchema,
+          mapPrompt(chunk.id, titleRoster),
+          `分段 ${chunk.id} [${chunk.start},${chunk.end})：\n${chunk.content}`,
+          'ingest-map',
+        );
         const valid = validateFacts(out.candidates, document);
         mapped.push(...valid);
         audit(runId, `map:${chunk.id}`, valid, { start: chunk.start, end: chunk.end });
@@ -252,7 +254,13 @@ export async function ingestRawFile(
       }
     }
     onProgress({ stage: 'Normalize', progress: 38 });
-    const normalizedOut = await jsonStage<{ candidates: Candidate[] }>(normalizeOutputSchema, normalizePrompt, { candidates: mapped }, 'ingest-normalize');
+    const normalizedOut = await jsonStage<{ candidates: Candidate[] }>(
+      runId,
+      normalizeOutputSchema,
+      normalizePrompt,
+      { candidates: mapped },
+      'ingest-normalize',
+    );
     const candidates = validateFacts(normalizedOut.candidates, document);
     persistFacts(runId, candidates); audit(runId, 'normalize', candidates, mapped);
     const allowedFactIds = new Set(candidates.flatMap((candidate) => candidate.facts.map((fact) => fact.id)));
@@ -262,19 +270,37 @@ export async function ingestRawFile(
     const related = await dynamicContext(candidates, document); audit(runId, 'retrieve', { related }, candidates.map((c) => c.name));
 
     onProgress({ stage: 'Plan', progress: 56 });
-    const rawPlan = await jsonStage<{ items: PlanItem[] }>(planOutputSchema, planPrompt(titleRoster, related), { candidates }, 'ingest-plan');
+    const rawPlan = await jsonStage<{ items: PlanItem[] }>(
+      runId,
+      planOutputSchema,
+      planPrompt(titleRoster, related),
+      { candidates },
+      'ingest-plan',
+    );
     const plan = whitelistFactIds(rawPlan.items, allowedFactIds).items;
     audit(runId, 'plan', plan, candidates);
 
     onProgress({ stage: 'Critic', progress: 64, detail: '首次审查' });
-    const firstCritique = await jsonStage<{ approved: boolean; issues: string[]; items: PlanItem[] }>(criticOutputSchema, criticPrompt, { plan, candidates, roster: titleRoster, related }, 'ingest-critic');
+    const firstCritique = await jsonStage<{ approved: boolean; issues: string[]; items: PlanItem[] }>(
+      runId,
+      criticOutputSchema,
+      criticPrompt,
+      { plan, candidates, roster: titleRoster, related },
+      'ingest-critic',
+    );
     const revised = whitelistFactIds(firstCritique.items, allowedFactIds).items;
     audit(runId, 'critic', { ...firstCritique, items: revised }, plan);
     onProgress({ stage: 'Critic', progress: 69, detail: '修订复核' });
-    const secondCritique = await jsonStage<{ approved: boolean; issues: string[]; items: PlanItem[] }>(criticOutputSchema, criticPrompt, { plan: revised, candidates, roster: titleRoster, related, previousCritique: firstCritique }, 'ingest-critic-review');
+    const secondCritique = await jsonStage<{ approved: boolean; issues: string[]; items: PlanItem[] }>(
+      runId,
+      criticOutputSchema,
+      criticPrompt,
+      { plan: revised, candidates, roster: titleRoster, related, previousCritique: firstCritique },
+      'ingest-critic-review',
+    );
     let reviewedPlan = whitelistFactIds(secondCritique.items, allowedFactIds).items;
     if (!secondCritique.approved) reviewedPlan = reviewedPlan.map((item) => item.action === 'skip' ? item : { ...item, action: 'review' as const, reason: [item.reason, ...secondCritique.issues].filter(Boolean).join('；') });
-    reviewedPlan = guardAmbiguousEntityNames(reviewedPlan, candidates, rosterEntries);
+    reviewedPlan = await guardAmbiguousEntityNames(reviewedPlan, candidates, rosterEntries);
     reviewedPlan = attachCandidateRelations(reviewedPlan, candidates, rosterEntries, allowedFactIds);
     audit(runId, 'critic_review', { ...secondCritique, items: reviewedPlan }, revised);
 
@@ -293,7 +319,12 @@ export async function ingestRawFile(
       facts,
     };
     const rawComposed = await jsonStage<{ items: { name: string; content: string }[] }>(
-      composeItemOutputListSchema, composePrompt(titleRoster, related), composeInput, 'ingest-compose', 12000
+      runId,
+      composeItemOutputListSchema,
+      composePrompt(titleRoster, related),
+      composeInput,
+      'ingest-compose',
+      12000,
     );
     // 按 name 匹配回 reviewedPlan，合并出完整 ComposedItem[]
     const contentByName = new Map(rawComposed.items.map((it) => [it.name.trim().toLowerCase(), it.content]));
@@ -305,6 +336,7 @@ export async function ingestRawFile(
     audit(runId, 'compose', composed, reviewedPlan);
 
     const questions = await jsonStage<QuestionOutput>(
+      runId,
       questionOutputSchema,
       questionFinderPrompt,
       { candidates, plan: reviewedPlan, resolvedQuestions },
@@ -326,7 +358,14 @@ export async function ingestRawFile(
     }).slice(0, 12);
     audit(runId, 'questions', questions, candidates);
     onProgress({ stage: 'Verify', progress: 86 });
-    const verified = await jsonStage<VerifierOutput>(verifierOutputSchema, verifierPrompt, { items: composed.items, facts, questions: questions.questions }, 'ingest-verify'); audit(runId, 'verify', verified, { composed, questions });
+    const verified = await jsonStage<VerifierOutput>(
+      runId,
+      verifierOutputSchema,
+      verifierPrompt,
+      { items: composed.items, facts, questions: questions.questions },
+      'ingest-verify',
+    );
+    audit(runId, 'verify', verified, { composed, questions });
     const safeItems = enforceWriteGate(composed.items, verified, allowedFactIds);
     const rawPage = db.prepare(`SELECT title FROM pages WHERE path=? AND deleted=0`).get(relPath) as any;
     const sourceRef = rawPage ? `[[${rawPage.title}]]` : `原始资料/${document.title}`;

@@ -20,6 +20,7 @@ export interface CandidateOccurrence {
   relations: string;
   content: string;
   reason: string;
+  evidence_eligible: number;
   status: CandidateStatus;
   target_page_id: string | null;
   preview_token: string | null;
@@ -71,14 +72,14 @@ export function upsertCandidateOccurrence(
   db.prepare(
     `INSERT INTO ingest_candidates(
        id,run_id,source_version_id,source_path,source_name,normalized_name,name,kind,
-       domain,confidence,summary,fact_ids,relations,content,reason,status,created_at,updated_at
-     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       domain,confidence,summary,fact_ids,relations,content,reason,evidence_eligible,status,created_at,updated_at
+     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(run_id,normalized_name,kind) DO UPDATE SET
        source_version_id=excluded.source_version_id, source_path=excluded.source_path,
        source_name=excluded.source_name, name=excluded.name, domain=excluded.domain,
        confidence=excluded.confidence, summary=excluded.summary, fact_ids=excluded.fact_ids,
        relations=excluded.relations, content=excluded.content, reason=excluded.reason,
-       status=excluded.status, updated_at=excluded.updated_at`
+       evidence_eligible=excluded.evidence_eligible, status=excluded.status, updated_at=excluded.updated_at`
   ).run(
     id,
     context.runId,
@@ -95,6 +96,7 @@ export function upsertCandidateOccurrence(
     JSON.stringify(item.relations || []),
     item.content || '',
     item.reason || '',
+    item.evidenceEligible ? 1 : 0,
     status,
     existing?.created_at || timestamp,
     timestamp,
@@ -116,15 +118,13 @@ export function findSupportingCandidates(
      JOIN source_versions sv ON sv.id=ic.source_version_id
      WHERE ic.normalized_name=? AND ic.kind=? AND ic.source_path<>?
        AND ic.status IN ('open','ignored')
+       AND ic.evidence_eligible=1
        AND sv.status='active'
      ORDER BY ic.updated_at DESC`
   ).all(normalizeCandidateName(name), kind, currentSourcePath) as CandidateOccurrence[];
   const paths = new Set<string>();
   return rows.filter((row) => {
-    const unsafeReason = /低置信度|没有有效事实|无效事实|验证未通过|无依据|冲突|类型不清|称谓不完整|疑似错别字/;
     if (
-      row.confidence === '低' ||
-      unsafeReason.test(row.reason || '') ||
       !parseArray<string>(row.fact_ids).length ||
       paths.has(row.source_path)
     ) return false;

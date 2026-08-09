@@ -34,7 +34,6 @@
         <div class="hit-meta faint small">
           <span v-for="e in h.evidence" :key="e" class="tag">{{ e }}</span>
           <span v-if="h.updated_at">更新于 {{ fromNow(h.updated_at) }}</span>
-          <span v-if="h.staleDays > 180" class="stale">⚠ {{ h.staleDays }} 天未更新</span>
         </div>
         <div class="hit-snippet muted">{{ h.heading ? `#${h.heading} — ` : '' }}{{ h.snippet }}</div>
       </div>

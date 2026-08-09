@@ -121,8 +121,21 @@ const finalResponse = {
   }],
 };
 
+const agentRouteResponse = {
+  choices: [{
+    finish_reason: 'stop',
+    message: {
+      content: JSON.stringify({
+        mode: 'agent',
+        retrievalQuery: '创建页面',
+        reason: '用户要求改变软件状态',
+      }),
+    },
+  }],
+};
+
 test('agent pauses for approval, executes exact tool call and completes', async () => {
-  mockCompletions([createToolResponse('Agent Approved'), finalResponse]);
+  mockCompletions([agentRouteResponse, createToolResponse('Agent Approved'), finalResponse]);
   const session = createSession();
   const run = startAssistantRun(session.id, '创建一个名为 Agent Approved 的概念页面');
   await waitForStatus(run.id, 'waiting_approval');
@@ -145,7 +158,7 @@ test('agent pauses for approval, executes exact tool call and completes', async 
 });
 
 test('agent respects rejection and does not mutate the vault', async () => {
-  mockCompletions([createToolResponse('Agent Rejected'), finalResponse]);
+  mockCompletions([agentRouteResponse, createToolResponse('Agent Rejected'), finalResponse]);
   const session = createSession();
   const run = startAssistantRun(session.id, '创建一个名为 Agent Rejected 的概念页面');
   await waitForStatus(run.id, 'waiting_approval');
@@ -161,7 +174,7 @@ test('agent respects rejection and does not mutate the vault', async () => {
 });
 
 test('waiting approval can be cancelled and running states recover as interrupted', async () => {
-  mockCompletions([createToolResponse('Agent Cancelled')]);
+  mockCompletions([agentRouteResponse, createToolResponse('Agent Cancelled')]);
   const session = createSession();
   const run = startAssistantRun(session.id, '创建一个名为 Agent Cancelled 的概念页面');
   await waitForStatus(run.id, 'waiting_approval');

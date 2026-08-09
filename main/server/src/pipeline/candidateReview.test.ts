@@ -22,6 +22,7 @@ let applyCandidateReviewBatch: any;
 let createPage: any;
 let writePage: any;
 let readPage: any;
+let sourceContentHash: (value: string | Buffer) => string;
 
 before(async () => {
   server = http.createServer(async (req, res) => {
@@ -42,11 +43,24 @@ before(async () => {
     const input = JSON.parse(
       [...(body.messages || [])].reverse().find((message: any) => message.role === 'user')?.content || '{}'
     );
-    const content = system.includes('最终验证')
+    const content = system.includes('候选聚焦 Map')
+      ? {
+          facts: [{
+            id: 'focused-f1',
+            statement: `${input.candidate.name}有一条重新从原文抽取的事实`,
+            sources: [{
+              contextId: input.sourceContexts[0].id,
+              quote: input.sourceContexts[0].content.slice(0, Math.min(20, input.sourceContexts[0].content.length)),
+            }],
+          }],
+          relations: [],
+        }
+      : system.includes('最终验证')
       ? {
           pass: true,
           unsupported: [],
           conflicts: [],
+          usedEvidenceIds: input.draft.usedEvidenceIds,
           content: input.draft.content,
           relations: input.draft.relations,
         }
@@ -54,7 +68,7 @@ before(async () => {
           name: input.requestedName,
           summary: '依据人工选择重新组织的摘要。',
           content: '## 核心事实\n\n- 人工选择后重新组织的正文。\n\n## 相关页面\n\n- [[已有页面]]：存在明确关联',
-          usedEvidenceIds: input.evidence.map((item: any) => item.evidenceId),
+          usedEvidenceIds: input.focusedEvidence.map((item: any) => item.evidenceId),
           relations: [],
         };
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -92,6 +106,7 @@ before(async () => {
     applyCandidateReviewBatch,
   } = await import('./candidateReview.js'));
   ({ createPage, writePage, readPage } = await import('../lib/vault.js'));
+  ({ contentHash: sourceContentHash } = await import('./sourceDocument.js'));
 });
 
 after(async () => {
@@ -101,7 +116,14 @@ after(async () => {
 });
 
 function createCandidate(name: string, runId: string, sourcePath: string, draft: string) {
+  const sourceAbsolute = path.join(temp, 'brain', ...sourcePath.split('/'));
+  fs.mkdirSync(path.dirname(sourceAbsolute), { recursive: true });
+  fs.writeFileSync(sourceAbsolute, `${name}有一条重新从原文抽取的事实。这里保留候选相关上下文。`);
   const version = beginSourceVersion(sourcePath, `${runId}-hash`);
+  db.prepare(`UPDATE source_versions SET content_hash=? WHERE id=?`).run(
+    sourceContentHash(fs.readFileSync(sourceAbsolute)),
+    version.id,
+  );
   db.prepare(
     `INSERT INTO ingest_runs(id,path,content_hash,source_version_id,status,commit_status,derived_status,started_at)
      VALUES(?,?,?,?, 'running','pending','pending',?)`
@@ -174,7 +196,8 @@ test('approval performs local refinement, preview and verified commit', async ()
   assert.equal(preview.action, 'approve');
   assert.equal(preview.evidenceCount, 2);
   assert.equal(preview.sourcePaths.length, 2);
-  assert.ok(preview.diff.some((line: any) => line.kind === 'add'));
+  assert.ok(preview.contextCount >= 2);
+  assert.match(preview.content, /人工选择后重新组织的正文/);
   const page = commitCandidateReview(reportId, preview.token);
   assert.match(readPage(page.path).content, /人工选择后重新组织的正文/);
   assert.doesNotMatch(readPage(page.path).content, /第二份资料中的旧草稿/);
@@ -205,7 +228,8 @@ test('merge preview writes verified incremental content into the selected page',
     target: target.id,
   });
   assert.equal(preview.targetPageId, target.id);
-  assert.ok(preview.diff.some((line: any) => line.kind === 'add'));
+  assert.ok(preview.contextCount >= 1);
+  assert.match(preview.content, /人工选择后重新组织的正文/);
   const page = commitCandidateReview(reportId, preview.token);
   assert.equal(page.id, target.id);
   assert.match(readPage(target.path).content, /人工选择后重新组织的正文/);
