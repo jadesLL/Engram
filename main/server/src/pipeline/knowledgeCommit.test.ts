@@ -18,13 +18,15 @@ let storeContribution: any;
 let commitKnowledgeItems: any;
 let recoverKnowledgeCommit: any;
 let setCandidateStatus: any;
+let upsertCandidateOccurrence: any;
+let reconcilePendingCandidates: any;
 
 before(async () => {
   ({ db, migrate, now } = await import('../lib/db.js'));
   ({ readPage } = await import('../lib/vault.js'));
   ({ beginSourceVersion, contributionKey, markCommitStarted, storeContribution } = await import('./sourceLedger.js'));
   ({ commitKnowledgeItems, recoverKnowledgeCommit } = await import('./knowledgeCommit.js'));
-  ({ setCandidateStatus } = await import('./candidateLedger.js'));
+  ({ setCandidateStatus, upsertCandidateOccurrence, reconcilePendingCandidates } = await import('./candidateLedger.js'));
   migrate();
 });
 
@@ -204,4 +206,51 @@ test('ignoring a candidate does not block reruns, but a new version of the same 
   assert.equal(secondResult.stats.pending, 1);
   assert.equal(db.prepare(`SELECT COUNT(*) n FROM pages WHERE title='同路径候选'`).get().n, 0);
   assert.equal(db.prepare(`SELECT COUNT(*) n FROM ingest_candidates WHERE normalized_name='同路径候选'`).get().n, 2);
+});
+
+test('dynamic reconciliation hides stale reviews once two active source paths exist', () => {
+  const name = '动态对账候选';
+  const createOccurrence = (runId: string, sourcePath: string, hash: string) => {
+    const version = beginSourceVersion(sourcePath, hash);
+    startRun(runId, version.id, hash, sourcePath);
+    db.prepare(
+      `INSERT INTO ingest_facts(run_id,fact_id,statement,sources) VALUES(?,?,?,?)`
+    ).run(runId, 'f1', `${sourcePath}的事实`, JSON.stringify([{ chunkId: 'c1', quote: `${sourcePath}的事实` }]));
+    db.prepare(`UPDATE source_versions SET status='active',activated_at=? WHERE id=?`).run(now(), version.id);
+    return upsertCandidateOccurrence({
+      ...item(`## 核心事实\n\n${sourcePath}的事实`),
+      name,
+      factIds: ['f1'],
+      action: 'review',
+    }, {
+      runId,
+      sourceVersionId: version.id,
+      sourcePath,
+      sourceName: path.posix.basename(sourcePath),
+    });
+  };
+  const first = createOccurrence('reconcile-run-1', '原始资料/动态一.md', 'reconcile-hash-1');
+  createOccurrence('reconcile-run-2', '原始资料/动态二.md', 'reconcile-hash-2');
+  const payload = JSON.stringify({
+    candidateId: first.id,
+    name,
+    kind: 'project',
+    source: '动态一.md',
+    sourcePath: '原始资料/动态一.md',
+    sourceVersionId: first.source_version_id,
+    runId: first.run_id,
+    factIds: ['f1'],
+    content: '旧待审草稿',
+  });
+  db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(?,'pending_review',?,'open',?,?)`
+  ).run(now(), payload, `dynamic:${name}`, 'dynamic-fingerprint');
+
+  assert.equal(reconcilePendingCandidates(), 1);
+  assert.equal(
+    db.prepare(`SELECT status FROM reports WHERE issue_key=?`).get(`dynamic:${name}`).status,
+    'applying',
+  );
+  assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='candidate_reconcile' AND status='pending'`).get());
 });

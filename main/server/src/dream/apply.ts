@@ -29,7 +29,7 @@ const ACTION_META: Record<ReportActionKind, { title: string; description: string
   contradiction: { title: '批量处理矛盾报告', description: '默认全选并标记为已处理，只关闭报告，不修改页面正文。', button: '批量标记已处理', defaultSelected: true },
   single_source: { title: '批量确认来源单一', description: '默认全选并标记为已知悉，不修改来源或页面正文。', button: '批量标记已知悉', defaultSelected: true },
   missing_sections: { title: '批量补全章节骨架', description: '默认全选并补充缺失的空章节，不生成或猜测正文。', button: '批量补章节', defaultSelected: true },
-  pending_review: { title: '逐条审核候选', description: '候选需要局部再提炼、预览并确认，不能批量直接入库。', button: '逐条审核', defaultSelected: false },
+  pending_review: { title: '批量审核候选', description: '默认按系统推荐类型进行局部再提炼，也可逐项调整类型或改为忽略。', button: '一键审批', defaultSelected: true },
   ingest_questions: { title: '批量确认整理追问', description: '默认全选并标记为已知悉，不修改原始资料和问题内容。', button: '批量标记已知悉', defaultSelected: true },
   enrich: { title: '批量忽略待丰富提醒', description: '默认全选并忽略提醒，不自动生成页面内容。', button: '批量忽略', defaultSelected: true },
   stale: { title: '批量复核过期页面', description: '默认全选并记录复核日期，不改变正文更新时间。', button: '批量复核', defaultSelected: true },
@@ -72,8 +72,15 @@ export function previewReportActions(kind: ReportActionKind) {
           { value: 'keep_both', label: '保留两者' },
         ];
       } else if (kind === 'pending_review') {
-        suggestedAction = 'manual';
-        options = [];
+        const suggestedKind = ['concept', 'person', 'project', 'org'].includes(payload.kind) ? payload.kind : 'concept';
+        suggestedAction = `approve:${suggestedKind}`;
+        options = [
+          { value: 'approve:concept', label: '批准为概念' },
+          { value: 'approve:person', label: '批准为人物' },
+          { value: 'approve:project', label: '批准为项目' },
+          { value: 'approve:org', label: '批准为组织' },
+          { value: 'ignore', label: '忽略' },
+        ];
       } else if (kind === 'enrich') {
         suggestedAction = 'dismiss';
       } else if (kind === 'stale') {
@@ -81,8 +88,8 @@ export function previewReportActions(kind: ReportActionKind) {
       } else if (kind === 'missing_sections') {
         suggestedAction = 'repair';
       }
-      const disabled = kind === 'pending_review';
-      return { id: row.id, payload, selected: disabled ? false : meta.defaultSelected, disabled, suggestedAction, options };
+      const disabled = false;
+      return { id: row.id, payload, selected: meta.defaultSelected, disabled, suggestedAction, options };
     }),
   };
 }
@@ -94,7 +101,7 @@ function validAction(kind: ReportActionKind, action: string): boolean {
     contradiction: ['resolve'],
     single_source: ['resolve'],
     missing_sections: ['repair'],
-    pending_review: [],
+    pending_review: ['approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore'],
     ingest_questions: ['resolve'],
     enrich: ['dismiss'],
     stale: ['review'],

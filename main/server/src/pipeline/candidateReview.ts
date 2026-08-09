@@ -24,6 +24,15 @@ import type { SourceVersion } from './sourceLedger.js';
 
 export type ReviewFinalizeAction = 'approve' | 'merge';
 export type ReviewKind = 'concept' | 'person' | 'project' | 'org';
+export interface CandidateReviewDecision {
+  reportId: number;
+  action: `approve:${ReviewKind}` | 'ignore';
+}
+export type CandidateReviewProgress = (progress: {
+  stage: string;
+  progress: number;
+  detail?: string;
+}) => void;
 
 const relationSchema = z.object({
   src: z.string().min(1),
@@ -67,10 +76,14 @@ export interface ReviewPreview {
   diff: ReturnType<typeof buildLineDiff>;
 }
 
-function reportRow(reportId: number): { id: number; status: string; payload: string } {
+function reportRow(
+  reportId: number,
+  allowApplying = false,
+): { id: number; status: string; payload: string } {
+  const statuses = allowApplying ? `('open','applying')` : `('open')`;
   const report = db.prepare(
     `SELECT id,status,payload FROM reports
-     WHERE id=? AND kind='pending_review' AND status='open'`
+     WHERE id=? AND kind='pending_review' AND status IN ${statuses}`
   ).get(reportId) as { id: number; status: string; payload: string } | undefined;
   if (!report) throw new Error('待审候选不存在或已处理');
   return report;
@@ -179,9 +192,10 @@ export async function previewCandidateReview(
     name?: string;
     target?: string;
   },
+  options: { allowApplying?: boolean } = {},
 ): Promise<ReviewPreview> {
   if (!llmReady()) throw new Error('未配置 LLM，无法执行局部再提炼');
-  const report = reportRow(reportId);
+  const report = reportRow(reportId, options.allowApplying);
   const candidate = ensureCandidateFromReport(report);
   if (!candidate) throw new Error('待审候选缺少可恢复的事实记录');
   const action = input.action;
@@ -295,8 +309,12 @@ export async function previewCandidateReview(
   return preview;
 }
 
-export function commitCandidateReview(reportId: number, token: string): { id: string; path: string } {
-  const report = reportRow(reportId);
+export function commitCandidateReview(
+  reportId: number,
+  token: string,
+  options: { allowApplying?: boolean } = {},
+): { id: string; path: string } {
+  const report = reportRow(reportId, options.allowApplying);
   const candidate = ensureCandidateFromReport(report);
   if (!candidate) throw new Error('待审候选不存在');
   const preview = candidatePreview(candidate.id, token) as ReviewPreview | null;
@@ -353,8 +371,12 @@ export function commitCandidateReview(reportId: number, token: string): { id: st
   return page;
 }
 
-export function ignoreCandidateReview(reportId: number, note = ''): void {
-  const report = reportRow(reportId);
+export function ignoreCandidateReview(
+  reportId: number,
+  note = '',
+  options: { allowApplying?: boolean } = {},
+): void {
+  const report = reportRow(reportId, options.allowApplying);
   const candidate = ensureCandidateFromReport(report);
   if (candidate) setCandidateStatus(candidate.id, 'ignored');
   const payload = JSON.parse(report.payload);
@@ -367,6 +389,85 @@ export function ignoreCandidateReview(reportId: number, note = ''): void {
     reportId,
   );
   if (candidate) resolveCandidateReports(candidate.id, 'dismissed');
+}
+
+export function validateCandidateReviewDecisions(raw: unknown): CandidateReviewDecision[] {
+  if (!Array.isArray(raw) || !raw.length) throw new Error('请至少选择一项');
+  const seen = new Set<number>();
+  return raw.map((entry: any) => {
+    const reportId = Number(entry?.reportId);
+    const action = String(entry?.action || '') as CandidateReviewDecision['action'];
+    if (!Number.isInteger(reportId) || reportId <= 0 || seen.has(reportId)) throw new Error('候选选择无效或重复');
+    if (!['approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore'].includes(action)) {
+      throw new Error(`候选处理动作无效：${action}`);
+    }
+    seen.add(reportId);
+    return { reportId, action };
+  });
+}
+
+export function claimCandidateReviewBatch(decisions: CandidateReviewDecision[]): void {
+  const claim = db.transaction(() => {
+    for (const decision of decisions) {
+      const result = db.prepare(
+        `UPDATE reports SET status='applying'
+         WHERE id=? AND kind='pending_review' AND status='open'`
+      ).run(decision.reportId);
+      if (result.changes !== 1) throw new Error(`候选 #${decision.reportId} 已处理或不存在`);
+    }
+  });
+  claim();
+}
+
+export function releaseCandidateReviewBatch(decisions: CandidateReviewDecision[]): void {
+  const release = db.prepare(
+    `UPDATE reports SET status='open'
+     WHERE id=? AND kind='pending_review' AND status='applying'`
+  );
+  db.transaction(() => decisions.forEach((decision) => release.run(decision.reportId)))();
+}
+
+export async function applyCandidateReviewBatch(
+  decisions: CandidateReviewDecision[],
+  update: CandidateReviewProgress = () => {},
+): Promise<{ completed: number; ignored: number; failed: number; errors: string[] }> {
+  const result = { completed: 0, ignored: 0, failed: 0, errors: [] as string[] };
+  for (let index = 0; index < decisions.length; index++) {
+    const decision = decisions[index];
+    update({
+      stage: '批量审核候选',
+      progress: Math.round((index / decisions.length) * 95),
+      detail: `${index + 1}/${decisions.length}`,
+    });
+    try {
+      if (decision.action === 'ignore') {
+        ignoreCandidateReview(decision.reportId, '批量忽略', { allowApplying: true });
+        result.ignored++;
+        continue;
+      }
+      const kind = decision.action.slice('approve:'.length) as ReviewKind;
+      const preview = await previewCandidateReview(
+        decision.reportId,
+        { action: 'approve', kind },
+        { allowApplying: true },
+      );
+      commitCandidateReview(decision.reportId, preview.token, { allowApplying: true });
+      result.completed++;
+    } catch (error: any) {
+      db.prepare(
+        `UPDATE reports SET status='open'
+         WHERE id=? AND kind='pending_review' AND status='applying'`
+      ).run(decision.reportId);
+      result.failed++;
+      result.errors.push(`候选 #${decision.reportId}：${error?.message || error}`);
+    }
+  }
+  update({
+    stage: '批量审核完成',
+    progress: 100,
+    detail: `批准 ${result.completed} 项，忽略 ${result.ignored} 项${result.failed ? `，失败 ${result.failed} 项` : ''}`,
+  });
+  return result;
 }
 
 export function candidateSourceSummary(candidateId: string): {

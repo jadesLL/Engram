@@ -18,7 +18,6 @@
         <p class="muted small">{{ activeAction.description }}</p>
       </div>
       <button
-        v-if="tab !== 'pending_review'"
         class="btn primary"
         :disabled="resolving || running || !activeCount"
         @click="openBatchPreview"
@@ -26,7 +25,6 @@
         {{ resolving ? '处理中…' : activeAction.button }}
         <span v-if="activeCount">{{ activeCount }}</span>
       </button>
-      <span v-else class="muted small">共 {{ activeCount }} 项，逐条确认后提交</span>
     </div>
 
     <div class="tabs">
@@ -273,16 +271,9 @@
         <div class="source-list small">
           <span v-for="source in candidatePreview.sourcePaths" :key="source">{{ source }}</span>
         </div>
-        <div class="diff-preview">
-          <div
-            v-for="(line, index) in candidatePreview.diff"
-            :key="index"
-            class="diff-line"
-            :class="`diff-${line.kind}`"
-          >
-            <span>{{ line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' ' }}</span>
-            <code>{{ line.text || ' ' }}</code>
-          </div>
+        <div class="content-preview">
+          <b>{{ candidatePreview.action === 'merge' ? '待并入增量' : '重写后正文' }}</b>
+          <div class="markdown-preview" v-html="renderAssistantMarkdown(candidatePreview.content)" />
         </div>
         <p v-if="candidatePreview.error" class="batch-error small">{{ candidatePreview.error }}</p>
         <div class="modal-actions">
@@ -301,6 +292,7 @@ import { reactive, ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
+import { renderAssistantMarkdown } from '../lib/markdown';
 
 const router = useRouter();
 const app = useAppStore();
@@ -336,7 +328,7 @@ const actionConfig: Record<string, { button: string; description: string; itemAc
   contradiction: { button: '批量标记已处理', description: '默认全选并关闭矛盾提醒，不修改正文。', itemAction: '标记已处理', impact: '只关闭报告，不修改任何页面正文。' },
   single_source: { button: '批量标记已知悉', description: '默认全选并确认已知悉来源单一。', itemAction: '标记已知悉', impact: '只关闭报告，不修改来源或页面正文。' },
   missing_sections: { button: '批量补章节', description: '默认全选并补充缺失的空章节骨架。', itemAction: '补空章节', impact: '只添加“当前理解”或“时间线”标题，不生成正文。' },
-  pending_review: { button: '逐条审核', description: '批准或并入前会重新检索、重写和验证，并展示差异预览。', itemAction: '逐条审核', impact: '待审候选不能批量直接入库。' },
+  pending_review: { button: '一键审批', description: '默认按推荐类型批准，可逐项调整类型或改为忽略。', itemAction: '审核候选', impact: '批准项会逐条重新检索、重写和验证；忽略项只关闭本次候选。' },
   ingest_questions: { button: '批量标记已知悉', description: '默认全选并确认已查看整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
   enrich: { button: '批量忽略', description: '默认全选并忽略当前待丰富提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
   stale: { button: '批量复核', description: '默认全选并记录内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
@@ -354,7 +346,7 @@ const candidatePreview = reactive({
   targetTitle: '',
   sourcePaths: [] as string[],
   evidenceCount: 0,
-  diff: [] as Array<{ kind: 'same' | 'add' | 'remove'; text: string }>,
+  content: '',
   submitting: false,
   error: '',
 });
@@ -370,10 +362,11 @@ const allSelected = computed(() => {
   const selectable = batch.items.filter((item) => !item.disabled);
   return selectable.length > 0 && selectable.every((item) => item.selected);
 });
-const isSuggestedKind = computed(() => ['deadlink', 'duplicate'].includes(tab.value));
+const isSuggestedKind = computed(() => ['deadlink', 'duplicate', 'pending_review'].includes(tab.value));
 const impactSummary = computed(() => `${selectedBatchCount.value} 项将执行。${activeAction.value.impact}`);
 const batchPresets = computed(() => {
   const presets = [{ action: 'recommended', label: '按推荐' }];
+  if (tab.value === 'pending_review') presets.push({ action: 'ignore', label: '全部忽略' });
   if (tab.value === 'deadlink') {
     presets.push(
       { action: 'concept', label: '全部概念' },
@@ -499,7 +492,7 @@ async function openCandidatePreview(r: any, action: 'approve' | 'merge') {
       targetTitle: data.preview.targetTitle || '',
       sourcePaths: data.preview.sourcePaths || [],
       evidenceCount: data.preview.evidenceCount || 0,
-      diff: data.preview.diff || [],
+      content: data.preview.content || '',
       submitting: false,
       error: '',
     });
@@ -721,11 +714,10 @@ onMounted(load);
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .candidate-preview-modal { width: min(820px, 96vw); max-height: min(860px, 92vh); display: flex; flex-direction: column; box-shadow: var(--shadow); }
 .source-list { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 12px 0; color: var(--text-secondary); }
-.diff-preview { min-height: 160px; overflow: auto; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.diff-line { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 6px; padding: 2px 8px; }
-.diff-line code { white-space: pre-wrap; overflow-wrap: anywhere; }
-.diff-add { background: color-mix(in srgb, var(--success) 12%, transparent); }
-.diff-remove { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.content-preview { min-height: 160px; overflow: auto; padding: 12px 4px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.content-preview > b { display: block; margin-bottom: 10px; }
+.markdown-preview :deep(h2), .markdown-preview :deep(h3), .markdown-preview :deep(h4) { margin: 12px 0 6px; }
+.markdown-preview :deep(.list-line) { display: block; margin: 3px 0; }
 @media (max-width: 640px) {
   .category-action { align-items: flex-start; flex-direction: column; gap: 10px; }
   .batch-toolbar { align-items: flex-start; flex-direction: column; }

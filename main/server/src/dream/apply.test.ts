@@ -47,7 +47,7 @@ test('all nine categories expose the expected default selection', () => {
   for (const kind of kinds) {
     const preview = previewReportActions(kind as any);
     assert.equal(preview.items.length, 1, kind);
-    assert.equal(preview.items[0].selected, kind !== 'pending_review', kind);
+    assert.equal(preview.items[0].selected, true, kind);
   }
 });
 
@@ -130,7 +130,7 @@ test('validation rejects cross-category actions and orphan applying reports reco
   assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(item.id).status, 'open');
 });
 
-test('pending reviews are excluded from batch apply', () => {
+test('pending reviews expose recommended approval and ignore actions', () => {
   clear();
   const payload = {
     name: '恒创', source: '资料 A', runId: 'run-merge', factIds: ['f1'], kind: 'org',
@@ -138,10 +138,16 @@ test('pending reviews are excluded from batch apply', () => {
   };
   addReports([{ kind: 'pending_review', payload }]);
   const preview = previewReportActions('pending_review').items[0];
-  assert.equal(preview.disabled, true);
-  assert.equal(preview.selected, false);
-  assert.equal(preview.suggestedAction, 'manual');
-  assert.throws(() => validateDecisions('pending_review', [{ reportId: preview.id, action: 'concept' }]), /处理动作无效/);
+  assert.equal(preview.disabled, false);
+  assert.equal(preview.selected, true);
+  assert.equal(preview.suggestedAction, 'approve:org');
+  assert.deepEqual(preview.options.map((option: any) => option.value), [
+    'approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore',
+  ]);
+  assert.deepEqual(
+    validateDecisions('pending_review', [{ reportId: preview.id, action: 'ignore' }]),
+    [{ reportId: preview.id, action: 'ignore' }],
+  );
 });
 
 function fixture(kind: string): any {

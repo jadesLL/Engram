@@ -20,6 +20,7 @@ import {
 import { renderKnowledgeProjection, type KnowledgeRelation } from './knowledgePage.js';
 import {
   findSupportingCandidates,
+  consumeCandidateIdentity,
   getCandidate,
   resolveCandidateReports,
   setCandidateStatus,
@@ -285,6 +286,7 @@ export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeC
       }, item.action === 'merge' || existed ? 'merged' : 'approved');
       setCandidateStatus(candidate.id, candidate.status, page.id);
     }
+    if (existed || item.action === 'merge') consumeCandidateIdentity(targetName, page.type, page.id);
   }
 
   const pageIds = affectedPagesForSource(context.sourcePath, context.sourceVersion.id);

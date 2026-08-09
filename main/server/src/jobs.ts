@@ -10,6 +10,15 @@ import { enqueue, enqueuePagePipeline } from './jobQueue.js';
 import { finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
 import { recoverKnowledgeCommit } from './pipeline/knowledgeCommit.js';
 import { runDreamCycle } from './dream/tasks.js';
+import {
+  finalizeCandidateReconciliation,
+  releaseCandidateReports,
+} from './pipeline/candidateLedger.js';
+import {
+  applyCandidateReviewBatch,
+  releaseCandidateReviewBatch,
+  type CandidateReviewDecision,
+} from './pipeline/candidateReview.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -71,6 +80,27 @@ const handlers: Record<string, JobHandler> = {
   ingest_recover: async ({ runId }) => {
     recoverKnowledgeCommit(runId);
   },
+  candidate_reconcile: async ({ path, candidateIds, reportIds }, update) => {
+    update({ stage: '重新核对候选', progress: 10, detail: path });
+    try {
+      await ingestRawFile(path, (progress) => update(progress), { force: true });
+      if (!finalizeCandidateReconciliation(candidateIds || [], reportIds || [])) {
+        throw new Error('重新整理后候选仍未满足自动入库条件');
+      }
+      update({ stage: '候选已动态更新', progress: 100, detail: path });
+    } catch (error) {
+      releaseCandidateReports(reportIds || []);
+      throw error;
+    }
+  },
+  candidate_review_batch: async ({ decisions }, update) => {
+    try {
+      await applyCandidateReviewBatch(decisions as CandidateReviewDecision[], (progress) => update(progress));
+    } catch (error) {
+      releaseCandidateReviewBatch(decisions as CandidateReviewDecision[]);
+      throw error;
+    }
+  },
   /** 分类批量处理：只执行请求中显式选择的报告和动作。 */
   dream_apply: async ({ kind, decisions }, update) => {
     try {
@@ -108,16 +138,19 @@ function recoverStaleJobs() {
   recoverIngestCommits();
 }
 
-/** 仅保留仍被 pending/running dream_apply 任务引用的 applying 报告。 */
+/** 仅保留仍被 pending/running 批量任务引用的 applying 报告。 */
 export function recoverApplyingReports() {
   const claimed = new Set<number>();
   const active = db.prepare(
-    `SELECT payload FROM jobs WHERE kind = 'dream_apply' AND status IN ('pending', 'running')`
+    `SELECT payload FROM jobs
+     WHERE kind IN ('dream_apply','candidate_review_batch','candidate_reconcile')
+       AND status IN ('pending', 'running')`
   ).all() as { payload: string }[];
   for (const row of active) {
     try {
       const payload = JSON.parse(row.payload);
       for (const decision of payload.decisions || []) claimed.add(Number(decision.reportId));
+      for (const reportId of payload.reportIds || []) claimed.add(Number(reportId));
     } catch { /* malformed jobs will fail in the runner */ }
   }
   const applying = db.prepare(`SELECT id FROM reports WHERE status = 'applying'`).all() as { id: number }[];

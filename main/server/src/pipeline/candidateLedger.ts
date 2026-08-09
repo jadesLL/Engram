@@ -1,5 +1,6 @@
 import { db, newId, now } from '../lib/db.js';
 import type { KnowledgeItem } from './knowledgeCommit.js';
+import { enqueue } from '../jobQueue.js';
 
 export type CandidateStatus = 'open' | 'ignored' | 'approved' | 'merged' | 'consumed';
 
@@ -205,6 +206,88 @@ export function resolveCandidateReports(candidateId: string, status: 'resolved' 
       }
     } catch { /* legacy malformed report */ }
   }
+}
+
+export function consumeCandidateIdentity(
+  name: string,
+  kind: string,
+  pageId: string,
+): void {
+  const candidates = db.prepare(
+    `SELECT id FROM ingest_candidates
+     WHERE normalized_name=? AND kind=? AND status IN ('open','ignored')`
+  ).all(normalizeCandidateName(name), kind) as Array<{ id: string }>;
+  for (const candidate of candidates) {
+    setCandidateStatus(candidate.id, 'consumed', pageId);
+    resolveCandidateReports(candidate.id, 'resolved');
+  }
+}
+
+function exactPage(candidate: CandidateOccurrence): { id: string } | undefined {
+  return db.prepare(
+    `SELECT id FROM pages WHERE deleted=0 AND lower(title)=lower(?)
+     AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`
+  ).get(candidate.name) as { id: string } | undefined;
+}
+
+export function releaseCandidateReports(reportIds: number[]): void {
+  if (!reportIds.length) return;
+  const release = db.prepare(
+    `UPDATE reports SET status='open' WHERE id=? AND kind='pending_review' AND status='applying'`
+  );
+  db.transaction(() => reportIds.forEach((id) => release.run(id)))();
+}
+
+export function finalizeCandidateReconciliation(
+  candidateIds: string[],
+  reportIds: number[],
+): boolean {
+  let resolved = false;
+  for (const candidateId of candidateIds) {
+    const candidate = getCandidate(candidateId);
+    if (!candidate) continue;
+    const page = candidate.target_page_id
+      ? { id: candidate.target_page_id }
+      : exactPage(candidate);
+    if (page || ['approved', 'merged', 'consumed'].includes(candidate.status)) {
+      if (page) consumeCandidateIdentity(candidate.name, candidate.kind, page.id);
+      resolved = true;
+    }
+  }
+  if (!resolved) releaseCandidateReports(reportIds);
+  return resolved;
+}
+
+export function reconcilePendingCandidates(): number {
+  const reports = db.prepare(
+    `SELECT id,status,payload FROM reports
+     WHERE kind='pending_review' AND status='open' ORDER BY id`
+  ).all() as Array<{ id: number; status: string; payload: string }>;
+  let queued = 0;
+  for (const report of reports) {
+    const candidate = ensureCandidateFromReport(report);
+    if (!candidate) continue;
+    const sourceCount = relatedCandidateOccurrences(candidate).length;
+    const page = exactPage(candidate);
+    if (!page && sourceCount < 2) continue;
+    const claimed = db.prepare(
+      `UPDATE reports SET status='applying'
+       WHERE id=? AND kind='pending_review' AND status='open'`
+    ).run(report.id);
+    if (claimed.changes !== 1) continue;
+    const jobId = enqueue('candidate_reconcile', {
+      path: candidate.source_path,
+      candidateIds: [candidate.id],
+      reportIds: [report.id],
+      nonce: Date.now(),
+    });
+    if (!jobId) {
+      releaseCandidateReports([report.id]);
+      continue;
+    }
+    queued++;
+  }
+  return queued;
 }
 
 export function ensureCandidateFromReport(report: {

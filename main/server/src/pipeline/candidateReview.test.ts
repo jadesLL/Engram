@@ -17,6 +17,8 @@ let upsertCandidateOccurrence: any;
 let addReports: any;
 let previewCandidateReview: any;
 let commitCandidateReview: any;
+let claimCandidateReviewBatch: any;
+let applyCandidateReviewBatch: any;
 let createPage: any;
 let writePage: any;
 let readPage: any;
@@ -83,7 +85,12 @@ before(async () => {
   ({ beginSourceVersion, activateSourceVersion } = await import('./sourceLedger.js'));
   ({ upsertCandidateOccurrence } = await import('./candidateLedger.js'));
   ({ addReports } = await import('../dream/reports.js'));
-  ({ previewCandidateReview, commitCandidateReview } = await import('./candidateReview.js'));
+  ({
+    previewCandidateReview,
+    commitCandidateReview,
+    claimCandidateReviewBatch,
+    applyCandidateReviewBatch,
+  } = await import('./candidateReview.js'));
   ({ createPage, writePage, readPage } = await import('../lib/vault.js'));
 });
 
@@ -204,4 +211,29 @@ test('merge preview writes verified incremental content into the selected page',
   assert.match(readPage(target.path).content, /人工选择后重新组织的正文/);
   assert.equal(db.prepare(`SELECT status FROM ingest_candidates WHERE id=?`).get(candidate.id).status, 'merged');
   assert.equal(db.prepare(`SELECT COUNT(*) n FROM pages WHERE title='待并入候选'`).get().n, 0);
+});
+
+test('batch review supports recommended approval and ignore', async () => {
+  const approved = createCandidate(
+    '批量批准候选',
+    'review-run-batch-approve',
+    '原始资料/批量批准.md',
+    '批量批准旧草稿。',
+  );
+  const ignored = createCandidate(
+    '批量忽略候选',
+    'review-run-batch-ignore',
+    '原始资料/批量忽略.md',
+    '批量忽略旧草稿。',
+  );
+  const decisions = [
+    { reportId: approved.reportId, action: 'approve:project' },
+    { reportId: ignored.reportId, action: 'ignore' },
+  ];
+  claimCandidateReviewBatch(decisions);
+  const result = await applyCandidateReviewBatch(decisions);
+  assert.deepEqual(result, { completed: 1, ignored: 1, failed: 0, errors: [] });
+  assert.ok(db.prepare(`SELECT id FROM pages WHERE title='批量批准候选'`).get());
+  assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(approved.reportId).status, 'resolved');
+  assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(ignored.reportId).status, 'dismissed');
 });

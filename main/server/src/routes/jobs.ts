@@ -9,6 +9,7 @@ import {
   previewCandidateReview,
 } from '../pipeline/candidateReview.js';
 import { ensureCandidateFromReport } from '../pipeline/candidateLedger.js';
+import { reconcilePendingCandidates } from '../pipeline/candidateLedger.js';
 
 const KIND_LABELS: Record<string, string> = {
   ingest: 'AI 整理',
@@ -21,6 +22,8 @@ const KIND_LABELS: Record<string, string> = {
   metagen: '索引生成',
   ingest_finalize: '整理派生校验',
   ingest_recover: '整理提交恢复',
+  candidate_reconcile: '候选动态对账',
+  candidate_review_batch: '批量审核候选',
   dream_apply: '分类批量处理',
   dream: 'Dream Cycle',
   rebuild: '重建全部索引',
@@ -218,6 +221,7 @@ export async function jobRoutes(app: FastifyInstance) {
   app.get('/api/ingest/candidates', async (req) => {
     const { status = 'open' } = req.query as { status?: string };
     if (!tableExists('reports')) return { candidates: [] };
+    if (status === 'open') reconcilePendingCandidates();
     const reports = db.prepare(`SELECT * FROM reports WHERE kind='pending_review' AND status=? ORDER BY id DESC LIMIT 200`).all(status) as any[];
     return { candidates: reports.map((report) => {
       const payload = safeJson(report.payload, {});
