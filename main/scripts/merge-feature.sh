@@ -119,7 +119,7 @@ cleanup_local_verification() {
   if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
     verify_dir_windows="$(cygpath -w "$verify_dir")"
     if ! WIKILLM_VERIFY_TEMP="$verify_dir_windows" powershell.exe -NoProfile -Command \
-      '$target=$env:WIKILLM_VERIFY_TEMP; $root=Join-Path $env:LOCALAPPDATA "pnpm\store\v11\projects"; if (Test-Path -LiteralPath $root) { Get-ChildItem -Force -LiteralPath $root | Where-Object { ($_.Target -join "") -eq $target } | Remove-Item -Force }' \
+      '$target=$env:WIKILLM_VERIFY_TEMP; $root=Join-Path $env:LOCALAPPDATA "pnpm\store\v11\projects"; if (Test-Path -LiteralPath $root) { $rootPrefix=[IO.Path]::GetFullPath($root).TrimEnd("\") + "\"; Get-ChildItem -Force -LiteralPath $root | Where-Object { ($_.Target -join "") -eq $target } | ForEach-Object { $full=[IO.Path]::GetFullPath($_.FullName); if (-not $full.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Refusing path outside pnpm projects: $full" }; [IO.Directory]::Delete($full,$false) } }' \
       >/dev/null
     then
       failed=1
