@@ -54,6 +54,7 @@ exampleproject_init_feature() {
   WIKILLM_BRANCH="feat/$feature"
   WIKILLM_PROJECT="exampleproject-$feature"
   WIKILLM_IMAGE="example-wiki:$feature"
+  WIKILLM_VERIFY_IMAGE="example-wiki:$feature-verify"
   WIKILLM_CONTAINER="example-wiki-$feature"
   WIKILLM_ONLYOFFICE_CONTAINER="example-wiki-$feature-onlyoffice"
   WIKILLM_VOLUME="example-wiki-data-$feature"
@@ -68,6 +69,36 @@ exampleproject_init_feature() {
 exampleproject_require_docker() {
   command -v docker >/dev/null 2>&1 || exampleproject_die "未找到 docker 命令"
   docker info >/dev/null 2>&1 || exampleproject_die "Docker 当前不可用"
+}
+
+exampleproject_require_feature_worktree() {
+  [ -d "$WIKILLM_WORKTREE/main" ] || \
+    exampleproject_die "功能 worktree 不存在: $WIKILLM_WORKTREE"
+  git -c "safe.directory=$WIKILLM_WORKTREE" \
+    -C "$WIKILLM_WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || \
+    exampleproject_die "目录不是有效 Git worktree: $WIKILLM_WORKTREE"
+}
+
+exampleproject_configure_build_network() {
+  local allow_downloads="${1:-0}"
+  if [ "$allow_downloads" -eq 1 ]; then
+    WIKILLM_BUILD_NETWORK="default"
+    return
+  fi
+
+  WIKILLM_BUILD_NETWORK="none"
+  docker image inspect node:22-slim >/dev/null 2>&1 || \
+    exampleproject_die "本机缺少 node:22-slim；未获得下载许可，拒绝拉取基础镜像"
+}
+
+exampleproject_explain_offline_build_failure() {
+  if [ "${WIKILLM_BUILD_NETWORK:-none}" = "none" ]; then
+    cat >&2 <<'EOF'
+!! Docker 离线构建失败。
+   如果日志显示依赖或基础工具缓存缺失，必须先获得用户明确下载许可，
+   再为对应命令增加 --allow-downloads；不得自行联网重试。
+EOF
+  fi
 }
 
 exampleproject_acquire_merge_lock() {
@@ -192,9 +223,12 @@ exampleproject_print_feature_status() {
   values="$(exampleproject_feature_network_names | xargs 2>/dev/null || true)"
   exampleproject_log "networks=${values:-none}"
   values="$(exampleproject_feature_image_ids | xargs 2>/dev/null || true)"
-  if docker image inspect "$WIKILLM_IMAGE" >/dev/null 2>&1; then
-    values="$WIKILLM_IMAGE ${values:-}"
-  fi
+  local image_tag
+  for image_tag in "$WIKILLM_IMAGE" "$WIKILLM_VERIFY_IMAGE"; do
+    if docker image inspect "$image_tag" >/dev/null 2>&1; then
+      values="$image_tag ${values:-}"
+    fi
+  done
   exampleproject_log "images=${values:-none}"
 }
 
@@ -267,12 +301,15 @@ exampleproject_cleanup_feature_docker() {
   done
 
   exampleproject_log ">> 清理 Docker 功能镜像"
-  if docker image inspect "$WIKILLM_IMAGE" >/dev/null 2>&1; then
-    if ! docker image rm "$WIKILLM_IMAGE"; then
-      printf '!! 删除镜像标签失败: %s\n' "$WIKILLM_IMAGE" >&2
-      failed=1
+  local image_tag
+  for image_tag in "$WIKILLM_IMAGE" "$WIKILLM_VERIFY_IMAGE"; do
+    if docker image inspect "$image_tag" >/dev/null 2>&1; then
+      if ! docker image rm "$image_tag"; then
+        printf '!! 删除镜像标签失败: %s\n' "$image_tag" >&2
+        failed=1
+      fi
     fi
-  fi
+  done
   for id in "${image_ids[@]}"; do
     [ -n "$id" ] || continue
     if docker image inspect "$id" >/dev/null 2>&1; then
@@ -312,10 +349,13 @@ exampleproject_verify_feature_docker_clean() {
     printf '!! 残留功能镜像: %s\n' "$values" >&2
     failed=1
   fi
-  if docker image inspect "$WIKILLM_IMAGE" >/dev/null 2>&1; then
-    printf '!! 残留功能镜像标签: %s\n' "$WIKILLM_IMAGE" >&2
-    failed=1
-  fi
+  local image_tag
+  for image_tag in "$WIKILLM_IMAGE" "$WIKILLM_VERIFY_IMAGE"; do
+    if docker image inspect "$image_tag" >/dev/null 2>&1; then
+      printf '!! 残留功能镜像标签: %s\n' "$image_tag" >&2
+      failed=1
+    fi
+  done
 
   if [ "$failed" -eq 0 ]; then
     exampleproject_log "   Docker 功能资源残留检查通过"

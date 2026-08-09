@@ -111,6 +111,8 @@ pnpm build        # 构建全部
 pnpm start        # 生产模式运行（server 托管 web/dist）
 ```
 
+> 上述命令用于人工维护单一检出目录。Agent 的并行 worktree 不执行 `pnpm install`，统一按 [`WORKTREES.md`](./WORKTREES.md) 在 Docker 中验证和预览。
+
 > **Windows 开发注意**：若 `pnpm install` 后 better-sqlite3 未编译（本机无 Python/VS Build Tools），
 > 可从 npmmirror 下载预编译二进制放到
 > `node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node`。

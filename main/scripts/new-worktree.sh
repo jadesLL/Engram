@@ -9,10 +9,13 @@ source "$SCRIPT_DIR/worktree-common.sh"
 usage() {
   cat <<'EOF'
 用法:
-  new-worktree.sh <feature> <host-port>
+  new-worktree.sh <feature>
 
 示例:
-  bash main/scripts/new-worktree.sh search-export 8082
+  bash main/scripts/new-worktree.sh search-export
+
+只创建功能分支和 worktree，不安装 pnpm 依赖，也不创建 Docker 资源。
+完成代码修改后使用 verify-feature.sh 验证，按需使用 preview-feature.sh 启动预览。
 EOF
 }
 
@@ -22,49 +25,17 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
 fi
 
 FEATURE="${1:-}"
-PORT="${2:-}"
-[ "$#" -eq 2 ] || {
+[ "$#" -eq 1 ] || {
   usage
   exit 2
 }
 
 exampleproject_init_feature "$FEATURE"
-exampleproject_require_docker
-MAIN_VOLUME="${WIKILLM_MAIN_VOLUME:-example-wiki-data}"
-
-if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-  exampleproject_die "端口必须是 1-65535 之间的整数，当前值: $PORT"
-fi
-[ "$PORT" -ne 8080 ] || exampleproject_die "8080 为 main 保留端口"
-
-check_port_available() {
-  node - "$PORT" <<'NODE'
-const net = require('node:net');
-
-const port = Number(process.argv[2]);
-const server = net.createServer();
-server.unref();
-server.once('error', (error) => {
-  console.error(`!! 端口 ${port} 不可用: ${error.code ?? error.message}`);
-  process.exit(1);
-});
-server.listen({ port, exclusive: true }, () => {
-  server.close(() => process.exit(0));
-});
-NODE
-}
 
 check_absent() {
   [ ! -e "$WIKILLM_WORKTREE" ] || exampleproject_die "worktree 已存在: $WIKILLM_WORKTREE"
   if git -C "$WIKILLM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$WIKILLM_BRANCH"; then
     exampleproject_die "分支已存在: $WIKILLM_BRANCH"
-  fi
-  [ -z "$(exampleproject_feature_container_ids)" ] || exampleproject_die "功能容器已存在"
-  [ -z "$(exampleproject_feature_volume_names)" ] || exampleproject_die "功能数据卷已存在"
-  [ -z "$(exampleproject_feature_network_names)" ] || exampleproject_die "功能网络已存在"
-  [ -z "$(exampleproject_feature_image_ids)" ] || exampleproject_die "带功能标签的镜像已存在"
-  if docker image inspect "$WIKILLM_IMAGE" >/dev/null 2>&1; then
-    exampleproject_die "功能镜像标签已存在: $WIKILLM_IMAGE"
   fi
 }
 
@@ -75,8 +46,7 @@ rollback_creation() {
     return
   fi
   set +e
-  exampleproject_log "!! 创建未完成，回滚本次功能资源"
-  WIKILLM_LOCK_HELD=0 bash "$SCRIPT_DIR/cleanup-feature.sh" --docker-only "$FEATURE"
+  exampleproject_log "!! 创建未完成，回滚本次 Git worktree"
   if [ -e "$WIKILLM_WORKTREE" ]; then
     git -C "$WIKILLM_REPO_ROOT" worktree remove "$WIKILLM_WORKTREE"
   fi
@@ -95,8 +65,7 @@ rollback_creation() {
 }
 trap rollback_creation EXIT
 
-exampleproject_log ">> 检查端口与资源名"
-check_port_available
+exampleproject_log ">> 检查 worktree 与分支名称"
 check_absent
 
 exampleproject_log ">> 创建 worktree $WIKILLM_WORKTREE"
@@ -106,50 +75,18 @@ if ! git config --global --get-all safe.directory | grep -Fx "$WIKILLM_SAFE_DIRE
   git config --global --add safe.directory "$WIKILLM_SAFE_DIRECTORY"
 fi
 
-exampleproject_log ">> 创建带功能归属标签的数据卷"
-docker volume create \
-  --label com.exampleproject.scope=feature \
-  --label "com.exampleproject.feature=$FEATURE" \
-  "$WIKILLM_VOLUME" >/dev/null
-
-exampleproject_log ">> 从主数据卷播种隔离数据"
-docker volume inspect "$MAIN_VOLUME" >/dev/null
-MSYS_NO_PATHCONV=1 docker run --rm \
-  --label com.exampleproject.scope=feature-helper \
-  --label "com.exampleproject.feature=$FEATURE" \
-  -v "$MAIN_VOLUME:/src:ro" \
-  -v "$WIKILLM_VOLUME:/dst" \
-  node:22-slim sh -c 'cp -a /src/. /dst/'
-
-exampleproject_log ">> 构建并启动功能预览"
-WIKILLM_FEATURE="$FEATURE" WIKILLM_PORT="$PORT" \
-  docker compose \
-    --project-name "$WIKILLM_PROJECT" \
-    -f "$WIKILLM_WORKTREE/main/docker-compose.worktree.yml" \
-    up -d --build
-
-ready=0
-for _ in $(seq 1 60); do
-  if curl -fsS -o /dev/null "http://localhost:$PORT/"; then
-    ready=1
-    break
-  fi
-  sleep 2
+for dependency_dir in \
+  "$WIKILLM_WORKTREE/main/node_modules" \
+  "$WIKILLM_WORKTREE/main/server/node_modules" \
+  "$WIKILLM_WORKTREE/main/web/node_modules" \
+  "$WIKILLM_WORKTREE/main/desktop/node_modules"
+do
+  [ ! -e "$dependency_dir" ] || \
+    exampleproject_die "新 worktree 不应包含宿主机依赖目录: $dependency_dir"
 done
-[ "$ready" -eq 1 ] || exampleproject_die "功能预览未在端口 $PORT 通过健康检查"
-
-container_feature="$(
-  docker inspect "$WIKILLM_CONTAINER" \
-    --format '{{index .Config.Labels "com.exampleproject.feature"}}'
-)"
-[ "$container_feature" = "$FEATURE" ] || exampleproject_die "功能容器缺少正确的归属标签"
-image_feature="$(
-  docker image inspect "$WIKILLM_IMAGE" \
-    --format '{{index .Config.Labels "com.exampleproject.feature"}}'
-)"
-[ "$image_feature" = "$FEATURE" ] || exampleproject_die "功能镜像缺少正确的归属标签"
 
 COMPLETE=1
 exampleproject_log "DONE: worktree=$WIKILLM_WORKTREE"
-exampleproject_log "DONE: branch=$WIKILLM_BRANCH container=$WIKILLM_CONTAINER image=$WIKILLM_IMAGE"
-exampleproject_log "DONE: port=$PORT volume=$WIKILLM_VOLUME project=$WIKILLM_PROJECT"
+exampleproject_log "DONE: branch=$WIKILLM_BRANCH"
+exampleproject_log "NEXT: bash main/scripts/verify-feature.sh $FEATURE"
+exampleproject_log "NEXT: bash main/scripts/preview-feature.sh $FEATURE <host-port>"

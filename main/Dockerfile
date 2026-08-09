@@ -42,6 +42,11 @@ COPY --from=deps /app/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/bet
   /app/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/better-sqlite3/build
 CMD ["pnpm", "--filter", "@example-wiki/server", "test"]
 
+# ---------- 一次完成构建、类型检查和测试 ----------
+FROM test AS verify
+RUN pnpm typecheck && pnpm test
+CMD ["node", "-e", "console.log('ExampleProject verification passed')"]
+
 # ---------- 运行时 ----------
 FROM node:22-slim
 ENV NODE_ENV=production \

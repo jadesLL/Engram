@@ -9,22 +9,24 @@ source "$SCRIPT_DIR/worktree-common.sh"
 usage() {
   cat <<'EOF'
 用法:
-  merge-feature.sh [--deploy] <feature>
-  merge-feature.sh --finish [--deploy] <feature>
+  merge-feature.sh [--allow-downloads] [--deploy] <feature>
+  merge-feature.sh --finish [--allow-downloads] [--deploy] <feature>
 
 默认流程：
   1. 串行合并 feat/<feature> 到 main
-  2. 在 main 运行 test、typecheck 和 build
+  2. 在 Docker 中运行 build、typecheck 和 test
   3. 精确清理该功能的 Docker 资源、worktree 和分支
   4. 复验所有功能资源均无残留
 
 --deploy  在检查通过后重建并部署主环境；必须获得独立的部署批准
 --finish  合并已完成或冲突已解决后，继续检查、可选部署和清理
+--allow-downloads  仅在用户已经明确批准下载依赖后使用
 EOF
 }
 
 DEPLOY=0
 FINISH=0
+ALLOW_DOWNLOADS=0
 FEATURE=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -33,6 +35,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --finish)
       FINISH=1
+      ;;
+    --allow-downloads)
+      ALLOW_DOWNLOADS=1
       ;;
     -h|--help)
       usage
@@ -59,10 +64,16 @@ done
 }
 
 exampleproject_init_feature "$FEATURE"
+exampleproject_require_docker
+exampleproject_configure_build_network "$ALLOW_DOWNLOADS"
 exampleproject_acquire_merge_lock
 DEPLOY_FLAG=""
 if [ "$DEPLOY" -eq 1 ]; then
   DEPLOY_FLAG=" --deploy"
+fi
+DOWNLOAD_FLAG=""
+if [ "$ALLOW_DOWNLOADS" -eq 1 ]; then
+  DOWNLOAD_FLAG=" --allow-downloads"
 fi
 
 if [ ! -d "$WIKILLM_MAIN_DIR" ]; then
@@ -97,7 +108,7 @@ else
   if ! git -C "$WIKILLM_REPO_ROOT" merge --no-ff --no-edit "$WIKILLM_BRANCH"; then
     cat >&2 <<EOF
 !! 合并发生冲突。解决并提交后运行：
-   bash main/scripts/merge-feature.sh --finish$DEPLOY_FLAG $FEATURE
+   bash main/scripts/merge-feature.sh --finish$DEPLOY_FLAG$DOWNLOAD_FLAG $FEATURE
 功能 worktree 和 Docker 预览资源已保留。
 EOF
     exit 1
@@ -111,107 +122,36 @@ if ! git -C "$WIKILLM_REPO_ROOT" merge-base --is-ancestor "$WIKILLM_BRANCH" main
   exampleproject_die "合并后分支仍不是 main 的祖先，拒绝继续"
 fi
 
-cleanup_local_verification() {
-  local verify_dir="$1"
-  local verify_dir_windows=""
-  local failed=0
+run_main_checks_in_docker() {
+  local revision verify_image
+  revision="$(git -C "$WIKILLM_REPO_ROOT" rev-parse --short=12 HEAD)"
+  verify_image="example-wiki:pre-$revision"
 
-  if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
-    verify_dir_windows="$(cygpath -w "$verify_dir")"
-    if ! WIKILLM_VERIFY_TEMP="$verify_dir_windows" powershell.exe -NoProfile -Command \
-      '$target=$env:WIKILLM_VERIFY_TEMP; $root=Join-Path $env:LOCALAPPDATA "pnpm\store\v11\projects"; if (Test-Path -LiteralPath $root) { $rootPrefix=[IO.Path]::GetFullPath($root).TrimEnd("\") + "\"; Get-ChildItem -Force -LiteralPath $root | Where-Object { ($_.Target -join "") -eq $target } | ForEach-Object { $full=[IO.Path]::GetFullPath($_.FullName); if (-not $full.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Refusing path outside pnpm projects: $full" }; [IO.Directory]::Delete($full,$false) } }' \
-      >/dev/null
-    then
-      failed=1
-    fi
+  if docker image inspect "$verify_image" >/dev/null 2>&1; then
+    docker image rm "$verify_image" >/dev/null
   fi
 
-  case "$verify_dir" in
-    /tmp/exampleproject-verify.*)
-      rm -rf -- "$verify_dir" || failed=1
-      ;;
-    *)
-      printf '!! 拒绝删除意外验证路径: %s\n' "$verify_dir" >&2
-      failed=1
-      ;;
-  esac
-  return "$failed"
-}
-
-run_main_checks_in_local_temp() {
-  command -v pnpm >/dev/null 2>&1 || exampleproject_die "未找到 pnpm，无法执行离线验证"
-  command -v cygpath >/dev/null 2>&1 || exampleproject_die "未找到 cygpath，无法建立本地验证环境"
-
-  local verify_dir local_app_data native_cache native_source=""
-  local check_status=0 cleanup_status=0
-  local -a native_candidates=()
-  local -a native_targets=()
-  verify_dir="$(mktemp -d -t exampleproject-verify.XXXXXX)"
-  local_app_data="$(cygpath -u "${LOCALAPPDATA:?LOCALAPPDATA 未设置}")"
-  native_cache="$local_app_data/ExampleProject/verification-native"
-
-  shopt -s nullglob
-  native_candidates=(
-    "$native_cache"/better-sqlite3@*/better_sqlite3.node
-    "$WIKILLM_MAIN_DIR"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
-    "$(cygpath -u "${TEMP:-${TMP:-/tmp}}")"/ExampleProject-*/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
-  )
-  if [ "${#native_candidates[@]}" -gt 0 ]; then
-    native_source="${native_candidates[0]}"
+  exampleproject_log ">> 在 Docker 中运行合并后 build/typecheck/test（network=$WIKILLM_BUILD_NETWORK）"
+  if ! docker build \
+    --pull=false \
+    --network "$WIKILLM_BUILD_NETWORK" \
+    --target verify \
+    --label com.exampleproject.scope=main-verification \
+    --label "org.opencontainers.image.revision=$revision" \
+    --tag "$verify_image" \
+    "$WIKILLM_MAIN_DIR"
+  then
+    exampleproject_explain_offline_build_failure
+    exampleproject_die "合并后的 Docker build/typecheck/test 未通过"
   fi
 
-  exampleproject_log ">> UNC 环境使用本机临时目录离线检查"
-  set +e
-  (
-    set -euo pipefail
-    [ -n "$native_source" ] || {
-      printf '!! 缺少本地 better_sqlite3.node，无法离线运行服务端测试\n' >&2
-      exit 1
-    }
-    git -C "$WIKILLM_REPO_ROOT" archive --format=tar HEAD \
-      main/package.json \
-      main/pnpm-workspace.yaml \
-      main/pnpm-lock.yaml \
-      main/server \
-      main/web \
-      main/desktop |
-      tar -xf - -C "$verify_dir" --strip-components=1
-    cd "$verify_dir"
-    pnpm install --offline --frozen-lockfile --ignore-scripts
-    native_targets=(
-      "$verify_dir"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3
-    )
-    [ "${#native_targets[@]}" -eq 1 ]
-    mkdir -p "${native_targets[0]}/build/Release"
-    cp "$native_source" "${native_targets[0]}/build/Release/better_sqlite3.node"
-    pnpm test
-    pnpm typecheck
-    pnpm build
-  )
-  check_status=$?
-  set -e
-
-  cleanup_local_verification "$verify_dir" || cleanup_status=$?
-  [ "$check_status" -eq 0 ] || exampleproject_die "本地离线 test/typecheck/build 未通过"
-  [ "$cleanup_status" -eq 0 ] || exampleproject_die "验证通过，但本地临时验证环境清理失败"
+  docker image rm "$verify_image" >/dev/null || \
+    exampleproject_die "检查通过，但临时验证镜像标签清理失败: $verify_image"
 }
 
-exampleproject_log ">> 在 main 运行合并后检查"
-case "$WIKILLM_MAIN_DIR" in
-  //*) run_main_checks_in_local_temp ;;
-  *)
-    (
-      cd "$WIKILLM_MAIN_DIR"
-      pnpm test
-      pnpm typecheck
-      pnpm build
-    )
-    ;;
-esac
+run_main_checks_in_docker
 
 deploy_main() {
-  exampleproject_require_docker
-
   local revision image compose_args
   revision="$(git -C "$WIKILLM_REPO_ROOT" rev-parse --short=12 HEAD)"
   image="example-wiki:main-$revision"
@@ -223,12 +163,18 @@ deploy_main() {
 
   exampleproject_log ">> 构建主镜像 $image"
   bash "$SCRIPT_DIR/ensure-office-env.sh" "$WIKILLM_MAIN_DIR"
-  docker build \
+  if ! docker build \
+    --pull=false \
+    --network "$WIKILLM_BUILD_NETWORK" \
     --label "org.opencontainers.image.revision=$revision" \
     --label "org.opencontainers.image.source=local-main" \
     --tag "$image" \
     --tag example-wiki:local-current \
     "$WIKILLM_MAIN_DIR"
+  then
+    exampleproject_explain_offline_build_failure
+    exampleproject_die "主镜像构建失败"
+  fi
 
   if docker ps --format '{{.Names}}' | grep -Fx example-wiki-onlyoffice >/dev/null; then
     docker exec example-wiki-onlyoffice documentserver-prepare4shutdown.sh >/dev/null 2>&1 || \

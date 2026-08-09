@@ -113,13 +113,15 @@ for script in \
   "$SCRIPT_DIR/worktree-common.sh" \
   "$SCRIPT_DIR/cleanup-feature.sh" \
   "$SCRIPT_DIR/new-worktree.sh" \
+  "$SCRIPT_DIR/verify-feature.sh" \
+  "$SCRIPT_DIR/preview-feature.sh" \
   "$SCRIPT_DIR/merge-feature.sh"
 do
   bash -n "$script"
 done
 
 printf '== compose interpolation ==\n'
-WIKILLM_FEATURE="$FEATURE" WIKILLM_PORT=18081 \
+WIKILLM_FEATURE="$FEATURE" WIKILLM_PORT=18081 WIKILLM_BUILD_NETWORK=none \
   docker compose \
     --project-name "exampleproject-$FEATURE" \
     -f "$SCRIPT_DIR/../docker-compose.worktree.yml" \
@@ -134,13 +136,38 @@ printf '/worktrees/*\n' > "$TEST_REPO/.gitignore"
 printf 'base\n' > "$TEST_REPO/main/base.txt"
 cp "$SCRIPT_DIR/../docker-compose.worktree.yml" "$TEST_REPO/main/docker-compose.worktree.yml"
 cat > "$TEST_REPO/main/Dockerfile" <<'EOF'
+FROM node:22-slim AS verify
+WORKDIR /app
+COPY . .
+RUN test -f base.txt
+CMD ["node", "-e", "console.log('verified')"]
+
 FROM node:22-slim
 CMD ["node", "-e", "require('node:http').createServer((_req,res)=>res.end('ok')).listen(8080,'0.0.0.0')"]
 EOF
 git -C "$TEST_REPO" add .gitignore main/base.txt main/docker-compose.worktree.yml main/Dockerfile
 git -C "$TEST_REPO" commit -m "test: base" >/dev/null
 
-printf '== create worktree with labeled preview resources ==\n'
+printf '== create code-only worktree ==\n'
+WIKILLM_REPO_ROOT="$TEST_REPO" \
+  bash "$SCRIPT_DIR/new-worktree.sh" "$CREATE_FEATURE"
+CREATE_WORKTREE="$TEST_REPO/worktrees/$CREATE_FEATURE"
+test -d "$CREATE_WORKTREE/main"
+test ! -e "$CREATE_WORKTREE/main/node_modules"
+assert_absent container "example-wiki-$CREATE_FEATURE"
+assert_absent volume "example-wiki-data-$CREATE_FEATURE"
+assert_absent image "example-wiki:$CREATE_FEATURE"
+
+printf '== Docker verification without host node_modules ==\n'
+WIKILLM_REPO_ROOT="$TEST_REPO" \
+  bash "$SCRIPT_DIR/verify-feature.sh" "$CREATE_FEATURE"
+test "$(
+  docker image inspect "example-wiki:$CREATE_FEATURE-verify" \
+    --format '{{index .Config.Labels "com.exampleproject.feature"}}'
+)" = "$CREATE_FEATURE"
+test ! -e "$CREATE_WORKTREE/main/node_modules"
+
+printf '== on-demand labeled preview resources ==\n'
 docker volume create "$TEST_MAIN_VOLUME" >/dev/null
 MSYS_NO_PATHCONV=1 docker run --rm \
   -v "$TEST_MAIN_VOLUME:/dst" \
@@ -150,7 +177,7 @@ CREATE_PORT="$(
 )"
 WIKILLM_REPO_ROOT="$TEST_REPO" \
 WIKILLM_MAIN_VOLUME="$TEST_MAIN_VOLUME" \
-  bash "$SCRIPT_DIR/new-worktree.sh" "$CREATE_FEATURE" "$CREATE_PORT"
+  bash "$SCRIPT_DIR/preview-feature.sh" "$CREATE_FEATURE" "$CREATE_PORT"
 MSYS_NO_PATHCONV=1 docker exec "example-wiki-$CREATE_FEATURE" test -f /data/seed.txt
 test "$(
   docker inspect "example-wiki-$CREATE_FEATURE" \
@@ -166,6 +193,7 @@ assert_absent container "example-wiki-$CREATE_FEATURE"
 assert_absent volume "example-wiki-data-$CREATE_FEATURE"
 assert_absent network "exampleproject-${CREATE_FEATURE}_default"
 assert_absent image "example-wiki:$CREATE_FEATURE"
+assert_absent image "example-wiki:$CREATE_FEATURE-verify"
 
 FEATURE_WORKTREE="$TEST_REPO/worktrees/$FEATURE"
 git -C "$TEST_REPO" worktree add "$FEATURE_WORKTREE" -b "feat/$FEATURE" main >/dev/null
@@ -174,39 +202,17 @@ git -C "$FEATURE_WORKTREE" add main/feature.txt
 git -C "$FEATURE_WORKTREE" commit -m "feat: lifecycle smoke" >/dev/null
 git config --global --add safe.directory "%(prefix)/$FEATURE_WORKTREE"
 git config --global --add safe.directory "$FEATURE_WORKTREE"
-mkdir -p "$TEST_REPO/.git/test-bin"
-cat > "$TEST_REPO/.git/test-bin/pnpm" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}" in
-  test|typecheck|build)
-    if [ -n "${WIKILLM_EXPECT_FILE:-}" ]; then
-      test -f "$WIKILLM_EXPECT_FILE"
-    fi
-    printf '%s\n' "$1" >> "$WIKILLM_TEST_PNPM_LOG"
-    ;;
-  *)
-    printf 'unexpected pnpm command: %s\n' "${1:-}" >&2
-    exit 1
-    ;;
-esac
-EOF
-chmod +x "$TEST_REPO/.git/test-bin/pnpm"
 
 printf '== labeled docker fixture ==\n'
 docker image inspect node:22-slim >/dev/null
 create_docker_fixture "$FEATURE"
 
 printf '== merge, verify, and zero-residue cleanup ==\n'
-PNPM_LOG="$TEST_REPO/.git/pnpm.log"
 WIKILLM_REPO_ROOT="$TEST_REPO" \
-WIKILLM_TEST_PNPM_LOG="$PNPM_LOG" \
-WIKILLM_EXPECT_FILE=feature.txt \
-PATH="$TEST_REPO/.git/test-bin:$PATH" \
   bash "$SCRIPT_DIR/merge-feature.sh" "$FEATURE"
 
 test -f "$TEST_REPO/main/feature.txt"
-test "$(tr '\n' ' ' < "$PNPM_LOG")" = "test typecheck build "
+test ! -e "$TEST_REPO/main/node_modules"
 test ! -e "$FEATURE_WORKTREE"
 ! git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/feat/$FEATURE"
 assert_absent container "example-wiki-$FEATURE"
@@ -251,7 +257,6 @@ git config --global --add safe.directory "%(prefix)/$DEPLOY_WORKTREE"
 
 DEPLOY_BIN="$TEST_REPO/.git/deploy-bin"
 DOCKER_LOG="$TEST_REPO/.git/docker.log"
-DEPLOY_PNPM_LOG="$TEST_REPO/.git/deploy-pnpm.log"
 mkdir -p "$DEPLOY_BIN"
 cat > "$DEPLOY_BIN/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -282,6 +287,7 @@ case "${1:-}" in
         ;;
       inspect)
         case "${3:-}" in
+          node:22-slim) printf 'sha256:node-test\n'; exit 0 ;;
           example-wiki:main-old-test) printf 'sha256:main-old\n'; exit 0 ;;
           example-wiki:pre-old-test) printf 'sha256:pre-old\n'; exit 0 ;;
           example-wiki:a1b2c3d) printf 'sha256:commit-old\n'; exit 0 ;;
@@ -308,14 +314,13 @@ chmod +x "$DEPLOY_BIN/docker" "$DEPLOY_BIN/curl"
 
 WIKILLM_REPO_ROOT="$TEST_REPO" \
 WIKILLM_TEST_DOCKER_LOG="$DOCKER_LOG" \
-WIKILLM_TEST_PNPM_LOG="$DEPLOY_PNPM_LOG" \
-WIKILLM_EXPECT_FILE=deploy.txt \
-PATH="$DEPLOY_BIN:$TEST_REPO/.git/test-bin:$PATH" \
+PATH="$DEPLOY_BIN:$PATH" \
   bash "$SCRIPT_DIR/merge-feature.sh" --deploy "$DEPLOY_FEATURE"
 
 test -f "$TEST_REPO/main/deploy.txt"
-test "$(tr '\n' ' ' < "$DEPLOY_PNPM_LOG")" = "test typecheck build "
-grep -F "build --label" "$DOCKER_LOG" >/dev/null
+test ! -e "$TEST_REPO/main/node_modules"
+grep -F "build --pull=false --network none --target verify" "$DOCKER_LOG" >/dev/null
+grep -F "build --pull=false --network none --label" "$DOCKER_LOG" >/dev/null
 grep -F "compose --project-name main" "$DOCKER_LOG" >/dev/null
 grep -F "up -d --no-build --remove-orphans" "$DOCKER_LOG" >/dev/null
 grep -F "image rm example-wiki:main-old-test" "$DOCKER_LOG" >/dev/null

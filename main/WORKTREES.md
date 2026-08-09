@@ -64,23 +64,40 @@ git worktree list --porcelain
 
 ```text
 main/scripts/new-worktree.sh
+main/scripts/verify-feature.sh
+main/scripts/preview-feature.sh
 main/scripts/merge-feature.sh
 main/scripts/cleanup-feature.sh
 ```
 
-功能名只使用小写字母、数字和中划线。从 `ExampleProject/` 根目录创建带隔离预览环境的 worktree：
+功能名只使用小写字母、数字和中划线。生命周期拆成三个独立阶段：
+
+1. 创建代码 worktree，不安装依赖、不分配端口、不创建 Docker 资源。
+2. 完成修改后，在 Docker 中运行 build、typecheck 和 test。
+3. 只有需要真实页面或接口验收时，才启动隔离预览。
+
+从 `ExampleProject/` 根目录执行：
 
 ```bash
-bash main/scripts/new-worktree.sh example-feature 8081
+bash main/scripts/new-worktree.sh example-feature
+# 修改 worktrees/example-feature/main/ 中的代码
+bash main/scripts/verify-feature.sh example-feature
+bash main/scripts/preview-feature.sh example-feature 8081
 ```
 
 Windows PowerShell 应明确调用 Git Bash，避免命中 WSL 的 `bash.exe`：
 
 ```powershell
-& "C:\Program Files\Git\bin\bash.exe" main/scripts/new-worktree.sh example-feature 8081
+& "C:\Program Files\Git\bin\bash.exe" main/scripts/new-worktree.sh example-feature
+& "C:\Program Files\Git\bin\bash.exe" main/scripts/verify-feature.sh example-feature
+& "C:\Program Files\Git\bin\bash.exe" main/scripts/preview-feature.sh example-feature 8081
 ```
 
-脚本会创建 `worktrees/<feature>/`、`feat/<feature>`、功能镜像、容器和数据卷，并在任一步骤失败时回滚已经创建的资源。创建后，Git 操作在对应的 `worktrees/<feature>/` 根目录完成，应用修改、安装、测试和构建在 `worktrees/<feature>/main/` 中完成。
+`new-worktree.sh` 只创建 `worktrees/<feature>/` 和 `feat/<feature>`，失败时只回滚本次 Git 资源。Git 操作在对应 worktree 根目录完成，应用代码位于 `worktrees/<feature>/main/`。
+
+`verify-feature.sh` 使用 worktree 代码构建 Docker `verify` 阶段，在镜像内依次完成 build、typecheck 和 test。它不会在宿主机 worktree 中创建 `node_modules`。
+
+`preview-feature.sh` 会先重新验证当前 worktree，再构建功能运行镜像，按需创建容器、数据卷、网络和端口，并从主数据卷播种隔离测试数据。同一功能可重复运行该脚本来更新预览。
 
 仅在脚本不可用且用户明确同意人工处理时，才手动执行：
 
@@ -91,9 +108,25 @@ git worktree add "worktrees/$feature" -b "feat/$feature" main
 
 手动创建 Docker 资源仍必须遵守下文的命名和标签规则。
 
+## 依赖缓存与下载许可
+
+普通 Web 和服务端任务禁止在 `main/` 或功能 worktree 中运行 `pnpm install`。每个 worktree 只保存代码，避免并行任务各自生成体积较大的 `node_modules`。
+
+Dockerfile 将依赖安装层放在源码复制之前。锁文件和依赖清单未变化时，Docker 直接复用已有依赖层，不重新安装；多个 worktree 可以共享这些不可变镜像层和构建缓存。
+
+`verify-feature.sh`、`preview-feature.sh` 和 `merge-feature.sh` 默认使用 `network=none`，并要求本机已有 `node:22-slim`。缓存缺失时应直接失败，不得自行下载。只有用户已经明确批准下载环境文件后，才可对当前命令增加：
+
+```bash
+--allow-downloads
+```
+
+该许可只对用户明确批准的当前动作生效，不得视为以后任务的长期联网许可。
+
+只有确实无法在 Linux Docker 中完成的宿主机原生任务，例如 Windows 桌面端打包，才可以在解释原因并取得用户同意后建立本地依赖环境；不得把这一例外扩展到普通 Web 或服务端任务。
+
 ## 运行资源隔离
 
-只有任务确实需要启动应用时，才分配容器、端口和数据卷。纯文档、只读检查和不需要运行服务的测试不创建 Docker 资源。
+只有任务确实需要启动应用时，才分配容器、端口和数据卷。`verify-feature.sh` 只生成带功能标签的验证镜像，不启动服务；纯文档和只读检查不创建 Docker 资源。
 
 强制命名：
 
@@ -101,6 +134,7 @@ git worktree add "worktrees/$feature" -b "feat/$feature" main
 分支：    feat/<feature>
 worktree: worktrees/<feature>
 镜像：    example-wiki:<feature>
+验证镜像：example-wiki:<feature>-verify
 容器：    example-wiki-<feature>
 数据卷：  example-wiki-data-<feature>
 Compose： exampleproject-<feature>
@@ -133,8 +167,8 @@ if ($listeners -or $dockerMappings) {
 
 在 worktree 中完成修改后：
 
-1. 运行与改动范围匹配的测试、类型检查和构建。
-2. 按真实用户路径自行检查功能是否正确；需要运行应用时使用当前任务的隔离预览环境，不占用或停止其他任务的资源。
+1. 运行 `verify-feature.sh <feature>`，在 Docker 中完成 build、typecheck 和 test；不得先在 worktree 中执行 `pnpm install`。
+2. 按真实用户路径自行检查功能是否正确；需要运行应用时再执行 `preview-feature.sh <feature> <port>`，不占用或停止其他任务的资源。
 3. 截取能够证明检查结果的界面或终端画面；界面功能优先截取实际页面，后端或命令行功能可截取对应输出。
 4. 检查 `git status`，只提交当前任务相关文件。
 5. 向用户报告 worktree 路径、分支、提交、测试和自检结果、截图及可检查入口。
@@ -163,7 +197,13 @@ bash main/scripts/merge-feature.sh example-feature
 bash main/scripts/merge-feature.sh --deploy example-feature
 ```
 
-Windows PowerShell 同样使用 `C:\Program Files\Git\bin\bash.exe`。脚本通过 Git 锁保证串行，合并后在 `main` 运行 `test`、`typecheck` 和 `build`；任一检查失败都会保留功能环境并以非零状态退出。UNC 工作区会把当前提交导出到本机临时目录，通过 pnpm `--offline` 使用已有本地 store 建立验证环境；验证完成后同时删除临时目录和 pnpm 项目索引。离线缓存或本地原生模块不完整时直接失败，不得自行下载依赖。
+Windows PowerShell 同样使用 `C:\Program Files\Git\bin\bash.exe`。脚本通过 Git 锁保证串行，合并后使用 Docker `verify` 阶段重新运行 build、typecheck 和 test；任一检查失败都会保留功能环境并以非零状态退出。整个流程不会在 `main/` 或 worktree 中创建宿主机 `node_modules`。
+
+合并和部署同样默认断网。只有用户已经明确批准本次下载时，才可增加 `--allow-downloads`，例如：
+
+```bash
+bash main/scripts/merge-feature.sh --allow-downloads example-feature
+```
 
 合并冲突时不要盲选一侧。理解双方改动并提交后运行：
 
@@ -182,7 +222,7 @@ bash main/scripts/merge-feature.sh --finish example-feature
 - `worktrees/<feature>/` 及其 Git worktree 注册；
 - 已合并的 `feat/<feature>` 分支；
 - `example-wiki-<feature>` 和所有带 `com.exampleproject.feature=<feature>` 的容器；
-- `example-wiki:<feature>` 和所有带该功能标签的镜像；
+- `example-wiki:<feature>`、`example-wiki:<feature>-verify` 和所有带该功能标签的镜像；
 - `example-wiki-data-<feature>` 和所有带该功能标签的数据卷；
 - `exampleproject-<feature>` Compose project 创建的网络；
 - 为该 worktree 加入的 Git `safe.directory` 记录。
@@ -202,6 +242,7 @@ bash main/scripts/cleanup-feature.sh example-feature
 - 当前主提交镜像；
 - 仍被其他容器引用的镜像；
 - `node`、ONLYOFFICE 等共享基础镜像和共享主环境数据。
+- Docker 的共享构建缓存和可复用依赖层；它们由多个 worktree 共用，不属于单个功能。
 
 禁止使用会影响其他项目、其他 worktree 或用户数据的宽泛命令，例如：
 

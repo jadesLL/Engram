@@ -1,10 +1,11 @@
 # 通用功能 worktree 预览配置。
-# 由 scripts/new-worktree.sh 注入 WIKILLM_FEATURE、WIKILLM_PORT 和 Compose project。
+# 由 scripts/preview-feature.sh 注入功能名、端口和构建网络策略。
 services:
   example-wiki:
     image: "example-wiki:${WIKILLM_FEATURE:?请设置 WIKILLM_FEATURE}"
     build:
       context: .
+      network: "${WIKILLM_BUILD_NETWORK:-none}"
       labels:
         com.exampleproject.scope: feature
         com.exampleproject.feature: "${WIKILLM_FEATURE}"

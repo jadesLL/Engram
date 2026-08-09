@@ -19,7 +19,11 @@
 
 - 优先使用 Codex 桌面端提供的 Worktree 模式。当前任务已经位于 worktree 时，沿用当前环境。
 - 创建、合并和清理以 [`WORKTREES.md`](./WORKTREES.md) 为唯一流程来源，手动管理时也必须满足其中的资源归属和零残留检查。
-- 手动生命周期优先使用 `scripts/new-worktree.sh`、`scripts/merge-feature.sh` 和 `scripts/cleanup-feature.sh`；不得复制旧脚本或跳过脚本末尾的残留复验。
+- 手动生命周期统一使用 `scripts/new-worktree.sh`、`scripts/verify-feature.sh`、`scripts/preview-feature.sh`、`scripts/merge-feature.sh` 和 `scripts/cleanup-feature.sh`；不得复制旧脚本或跳过脚本末尾的残留复验。
+- `new-worktree.sh` 只创建分支和代码目录。普通 Web/服务端任务不得在 `main/` 或功能 worktree 中运行 `pnpm install`，也不得为每个 worktree 生成宿主机 `node_modules`；build、typecheck 和 test 统一由 `verify-feature.sh` 在 Docker 中完成。
+- 只有确实无法在 Linux Docker 中完成的宿主机原生任务（例如 Windows 桌面端打包），才可在说明原因并取得用户同意后建立本地依赖环境。
+- 功能预览按需使用 `preview-feature.sh` 创建。不要仅为开始编码提前创建容器、端口、镜像或数据卷。
+- Docker 构建默认禁用网络并复用本机已有依赖层和构建缓存。只有用户已经明确批准下载环境文件时，才可为对应脚本传入 `--allow-downloads`；缓存缺失时不得自行联网重试。
 - 不覆盖、回退或删除其他 Agent 的分支、worktree、容器、数据卷和未提交改动。
 - 当前任务额外创建的所有 Docker 容器、镜像、数据卷和网络都必须带 `com.exampleproject.feature=<feature>` 标签；无归属标签的临时资源视为流程违规。
 - 功能完成后必须先自行按真实使用路径验收，并截取能够证明结果的界面或终端画面。
