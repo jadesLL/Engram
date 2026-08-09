@@ -40,10 +40,6 @@ export async function extractEntities(pageId: string): Promise<void> {
   if (!Array.isArray(items)) return;
 
   db.prepare(`DELETE FROM edges WHERE src_page = ? AND entity_id IS NOT NULL`).run(pageId);
-  // 六词表关系边也清掉重建（避免与 extractor 的正则关系边重复堆积）
-  db.prepare(
-    `DELETE FROM edges WHERE src_page = ? AND rel IN (${RELATION_WORDS.map(() => '?').join(',')})`
-  ).run(pageId, ...RELATION_WORDS);
 
   const findEntity = db.prepare(`SELECT id FROM entities WHERE name = ?`);
   const insEntity = db.prepare(`INSERT INTO entities(name, type) VALUES(?, ?)`);
@@ -51,6 +47,9 @@ export async function extractEntities(pageId: string): Promise<void> {
     `INSERT INTO edges(src_page, dst_page, dst_title, entity_id, rel, created_at) VALUES(?, ?, ?, ?, ?, ?)`
   );
   const findByTitle = db.prepare(`SELECT id FROM pages WHERE deleted = 0 AND lower(title) = lower(?)`);
+  const findTypedEdge = db.prepare(
+    `SELECT id FROM edges WHERE src_page=? AND dst_page=? AND rel=? AND entity_id IS NULL LIMIT 1`
+  );
   const ts = now();
   for (const it of items.slice(0, 8)) {
     if (!it?.name) continue;
@@ -72,8 +71,8 @@ export async function extractEntities(pageId: string): Promise<void> {
     if ((RELATION_WORDS as readonly string[]).includes(rel)) {
       const dst = findByTitle.get(entityName) as any;
       insEdge.run(pageId, dst?.id ?? null, dst ? null : entityName, entity.id, rel, ts);
-      // 同时建到目标页的实边（若存在）
-      if (dst) {
+      // 正文显式关系由 wirePageEdges 先行建立；仅补充尚不存在的 LLM 推断实边。
+      if (dst && !findTypedEdge.get(pageId, dst.id, rel)) {
         insEdge.run(pageId, dst.id, null, null, rel, ts);
       }
     } else {

@@ -80,13 +80,13 @@ let composing = false; // IME 组字状态（wysiwyg 下 input 走防抖，组�
 let modeObserver: MutationObserver | null = null;
 let lastEmittedMode: 'ir' | 'sv' = 'ir';
 
-/** ingest 注释匹配（<!-- ingest:xxx --> 单行 HTML 注释） */
-const INGEST_RE = /<!--\s*ingest:[^>]*-->/g;
+/** AI 管理注释：证据标记与贡献区段边界都不应出现在编辑界面。 */
+const MANAGED_COMMENT_RE = /<!--\s*(?:ingest:|contribution:)[^>]*-->/g;
 const INGEST_PLACEHOLDER_RE = /<!--\s*ingest-preserved:([A-Za-z0-9+/=]+)\s*-->/g;
 
 /** 用不可见占位注释隐藏证据标记，同时保留它在正文中的准确位置。 */
 function stripIngestComments(md: string): string {
-  return md.replace(INGEST_RE, (comment) => `<!-- ingest-preserved:${btoa(comment)} -->`);
+  return md.replace(MANAGED_COMMENT_RE, (comment) => `<!-- ingest-preserved:${btoa(comment)} -->`);
 }
 
 /** 保存时优先原位还原；编辑器若意外清除了占位符，再降级追加原标记。 */
@@ -104,10 +104,10 @@ function restoreIngestComments(md: string): string {
   if (restoredAny) return restored;
 
   const raw = props.modelValue;
-  const comments = raw.match(INGEST_RE);
+  const comments = raw.match(MANAGED_COMMENT_RE);
   if (!comments || comments.length === 0) return md;
-  if (INGEST_RE.test(md)) { INGEST_RE.lastIndex = 0; return md; }
-  INGEST_RE.lastIndex = 0;
+  if (MANAGED_COMMENT_RE.test(md)) { MANAGED_COMMENT_RE.lastIndex = 0; return md; }
+  MANAGED_COMMENT_RE.lastIndex = 0;
   return md.trimEnd() + '\n' + comments.join('\n');
 }
 
