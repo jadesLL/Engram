@@ -1,9 +1,12 @@
 # Provider icon sources
 
-The SVG marks in this directory are adapted for compact UI use from:
+Most SVG marks in this directory are adapted for compact UI use from:
 
 - Lobe Icons, Copyright (c) 2023 LobeHub, MIT License.
 - Simple Icons, CC0 1.0 Universal.
+
+The BigModel and Qianwen marks use official assets from their documentation
+and product websites.
 
 Brand names and marks remain the property of their respective owners.
 

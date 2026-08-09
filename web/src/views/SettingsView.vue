@@ -2268,20 +2268,36 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 }
 
 .provider-list {
-  border-top: 1px solid var(--border);
+  border-top: 0;
 }
 
 .provider-row {
+  position: relative;
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
   gap: 14px;
   padding: 10px 2px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.provider-row:not(:last-child)::after {
+  position: absolute;
+  right: 4px;
+  bottom: 0;
+  left: 42px;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 58%, transparent);
+  content: '';
+  pointer-events: none;
 }
 
 .provider-row.active {
   border-radius: 7px;
   background: color-mix(in srgb, var(--accent) 3%, transparent);
+}
+
+.provider-row.active::after {
+  opacity: 0;
 }
 
 .provider-row-head {
