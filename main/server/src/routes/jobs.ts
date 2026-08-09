@@ -1,7 +1,6 @@
 import { FastifyInstance } from 'fastify';
-import { db, now } from '../lib/db.js';
+import { db } from '../lib/db.js';
 import { requireAuth } from './auth.js';
-import { enqueue } from '../jobQueue.js';
 import {
   candidateSourceSummary,
   commitCandidateReview,
@@ -10,6 +9,11 @@ import {
 } from '../pipeline/candidateReview.js';
 import { ensureCandidateFromReport } from '../pipeline/candidateLedger.js';
 import { reconcilePendingCandidates } from '../pipeline/candidateLedger.js';
+import {
+  applyIngestQuestionAction,
+  IngestQuestionRequestError,
+  type IngestQuestionAction,
+} from '../pipeline/ingestQuestions.js';
 
 const KIND_LABELS: Record<string, string> = {
   ingest: 'AI 整理',
@@ -188,33 +192,15 @@ export async function jobRoutes(app: FastifyInstance) {
     if (!['reprocess', 'acknowledge', 'ignore'].includes(action)) {
       return reply.code(400).send({ error: '追问处理动作无效' });
     }
-    const question = db.prepare(`SELECT * FROM ingest_questions WHERE id=?`).get(id) as any;
-    if (!question) return reply.code(404).send({ error: '整理追问不存在' });
-    if (action === 'reprocess' && !answer.trim()) {
-      return reply.code(400).send({ error: '重新整理前请填写回答' });
+    try {
+      const result = applyIngestQuestionAction(id, answer, action as IngestQuestionAction);
+      return reply.code(result.status === 'answered' ? 202 : 200).send(result);
+    } catch (error) {
+      if (error instanceof IngestQuestionRequestError) {
+        return reply.code(error.statusCode).send({ error: error.message });
+      }
+      throw error;
     }
-    const status = action === 'ignore' ? 'ignored' : action === 'acknowledge' ? 'accepted' : 'answered';
-    db.prepare(`UPDATE ingest_questions SET answer=?, status=?, updated_at=? WHERE id=?`)
-      .run(answer.trim(), status, now(), id);
-
-    const reports = db.prepare(
-      `SELECT id,payload FROM reports WHERE kind='ingest_questions' AND status='open'`
-    ).all() as Array<{ id: number; payload: string }>;
-    for (const report of reports) {
-      const payload = safeJson(report.payload, {});
-      const ids = (payload.questions || []).map((item: any) => item.id).filter(Boolean);
-      if (!ids.includes(id)) continue;
-      const remaining = ids.filter((questionId: string) => {
-        const row = db.prepare(`SELECT status FROM ingest_questions WHERE id=?`).get(questionId) as { status: string } | undefined;
-        return row?.status === 'open';
-      });
-      if (!remaining.length) db.prepare(`UPDATE reports SET status='resolved' WHERE id=?`).run(report.id);
-    }
-
-    const jobId = action === 'reprocess'
-      ? enqueue('ingest', { path: question.path, force: true, questionId: id, nonce: Date.now() })
-      : undefined;
-    return { ok: true, status, jobId: jobId || null };
   });
 
   /** 待审候选沿用 reports，兼容当前 ingest 核心表且携带可追溯事实。 */

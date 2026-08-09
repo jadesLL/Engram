@@ -209,9 +209,12 @@ export function migrate() {
     acceptance TEXT NOT NULL DEFAULT '[]',
     answer TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'open',
+    job_id INTEGER,
+    error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    FOREIGN KEY(run_id) REFERENCES ingest_runs(id) ON DELETE CASCADE
+    FOREIGN KEY(run_id) REFERENCES ingest_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE SET NULL
   );
   CREATE INDEX IF NOT EXISTS idx_ingest_questions_path ON ingest_questions(path, status, created_at DESC);
 
@@ -344,6 +347,8 @@ export function migrate() {
   ensureColumn('ingest_runs', 'source_version_id', 'TEXT');
   ensureColumn('ingest_runs', 'commit_status', `TEXT NOT NULL DEFAULT 'pending'`);
   ensureColumn('ingest_runs', 'derived_status', `TEXT NOT NULL DEFAULT 'pending'`);
+  ensureColumn('ingest_questions', 'job_id', 'INTEGER');
+  ensureColumn('ingest_questions', 'error', 'TEXT');
   ensureColumn('jobs', 'stage', `TEXT NOT NULL DEFAULT '等待执行'`);
   ensureColumn('jobs', 'progress', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('jobs', 'detail', `TEXT NOT NULL DEFAULT ''`);
@@ -353,6 +358,7 @@ export function migrate() {
   dedupeReportIdentity();
   db.exec(`CREATE INDEX IF NOT EXISTS idx_reports_issue ON reports(kind, issue_key)`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_fingerprint ON reports(kind, issue_key, fingerprint)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_ingest_questions_job ON ingest_questions(job_id)`);
   db.prepare(
     `UPDATE assistant_runs
      SET status = 'interrupted',

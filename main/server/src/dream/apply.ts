@@ -6,6 +6,12 @@ import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages } from '../lib/mergePages.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
 import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
+import {
+  hydrateIngestQuestionPayload,
+  setActionableQuestionsForPath,
+  syncAllIngestQuestionReports,
+  syncIngestQuestionReport,
+} from '../pipeline/ingestQuestions.js';
 
 export const REPORT_ACTION_KINDS = [
   'deadlink', 'duplicate', 'contradiction', 'single_source', 'missing_sections',
@@ -50,6 +56,7 @@ function duplicateSuggestion(payload: Record<string, any>): 'keep_a' | 'keep_b' 
 }
 
 export function previewReportActions(kind: ReportActionKind) {
+  if (kind === 'ingest_questions') syncAllIngestQuestionReports();
   const rows = db.prepare(
     `SELECT id, payload FROM reports WHERE kind = ? AND status = 'open' ORDER BY id DESC LIMIT 200`
   ).all(kind) as { id: number; payload: string }[];
@@ -58,7 +65,10 @@ export function previewReportActions(kind: ReportActionKind) {
     kind,
     ...meta,
     items: rows.map((row) => {
-      const payload = parsePayload(row.payload);
+      const storedPayload = parsePayload(row.payload);
+      const payload = kind === 'ingest_questions'
+        ? hydrateIngestQuestionPayload(storedPayload)
+        : storedPayload;
       let suggestedAction = 'resolve';
       let options: { value: string; label: string }[] = [];
       if (kind === 'deadlink') {
@@ -88,8 +98,16 @@ export function previewReportActions(kind: ReportActionKind) {
       } else if (kind === 'missing_sections') {
         suggestedAction = 'repair';
       }
-      const disabled = false;
-      return { id: row.id, payload, selected: meta.defaultSelected, disabled, suggestedAction, options };
+      const disabled = kind === 'ingest_questions'
+        && !(payload.questions || []).some((question: any) => ['open', 'failed'].includes(question.status));
+      return {
+        id: row.id,
+        payload,
+        selected: meta.defaultSelected && !disabled,
+        disabled,
+        suggestedAction,
+        options,
+      };
     }),
   };
 }
@@ -193,13 +211,7 @@ function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Rec
     case 'single_source':
       return 'resolved';
     case 'ingest_questions':
-      for (const question of payload.questions || []) {
-        if (question.id) {
-          db.prepare(
-            `UPDATE ingest_questions SET status='accepted', updated_at=? WHERE id=? AND status='open'`
-          ).run(now(), question.id);
-        }
-      }
+      setActionableQuestionsForPath(String(payload.path || ''), 'accepted');
       return 'resolved';
   }
 }
@@ -215,8 +227,10 @@ export function applyReportDecisions(kind: ReportActionKind, decisions: ReportDe
       return;
     }
     try {
-      const status = applyOne(kind, decision, parsePayload(report.payload));
+      const payload = parsePayload(report.payload);
+      const status = applyOne(kind, decision, payload);
       completeReport(decision.reportId, status);
+      if (kind === 'ingest_questions') syncIngestQuestionReport(String(payload.path || ''));
       if (status === 'dismissed') result.dismissed++;
       else result.completed++;
     } catch (error: any) {

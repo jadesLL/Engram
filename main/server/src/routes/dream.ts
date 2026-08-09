@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { db, getSetting, now } from '../lib/db.js';
+import { db, getSetting } from '../lib/db.js';
 import { requireAuth } from './auth.js';
 import { runDreamCycle } from '../dream/tasks.js';
 import { scheduleDreamCycle } from '../dream/scheduler.js';
@@ -9,18 +9,36 @@ import {
   validateDecisions, type ReportActionKind, type ReportDecision,
 } from '../dream/apply.js';
 import { reconcilePendingCandidates } from '../pipeline/candidateLedger.js';
+import {
+  hydrateIngestQuestionPayload,
+  setActionableQuestionsForPath,
+  syncAllIngestQuestionReports,
+  syncIngestQuestionReport,
+} from '../pipeline/ingestQuestions.js';
 
 export async function dreamRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
   app.get('/api/dream/reports', async (req) => {
     const { status } = req.query as { status?: string };
-    if (!status || status === 'open') reconcilePendingCandidates();
+    const open = !status || status === 'open';
+    if (open) {
+      reconcilePendingCandidates();
+      syncAllIngestQuestionReports();
+    }
     const rows = db
       .prepare(`SELECT * FROM reports WHERE status = ? ORDER BY id DESC LIMIT 200`)
       .all(status || 'open') as any[];
     return {
-      reports: rows.map((r) => ({ ...r, payload: JSON.parse(r.payload) })),
+      reports: rows.map((r) => {
+        const payload = JSON.parse(r.payload);
+        return {
+          ...r,
+          payload: open && r.kind === 'ingest_questions'
+            ? hydrateIngestQuestionPayload(payload)
+            : payload,
+        };
+      }),
       lastRun: getSetting('dream_last_run') || null,
       cron: getSetting('dream_cron') || '0 3 * * *',
       enabled: (getSetting('dream_enabled') ?? '1') !== '0',
@@ -45,12 +63,9 @@ export async function dreamRoutes(app: FastifyInstance) {
       let payload: any = {};
       try { payload = JSON.parse(report.payload); } catch { /* legacy malformed report */ }
       const questionStatus = status === 'resolved' ? 'accepted' : 'ignored';
-      for (const question of payload.questions || []) {
-        if (question.id) {
-          db.prepare(`UPDATE ingest_questions SET status=?, updated_at=? WHERE id=? AND status='open'`)
-            .run(questionStatus, now(), question.id);
-        }
-      }
+      const path = String(payload.path || '');
+      setActionableQuestionsForPath(path, questionStatus);
+      syncIngestQuestionReport(path);
     }
     return { ok: true };
   });

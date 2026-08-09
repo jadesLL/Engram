@@ -19,6 +19,11 @@ import {
   releaseCandidateReviewBatch,
   type CandidateReviewDecision,
 } from './pipeline/candidateReview.js';
+import {
+  completeIngestQuestionJob,
+  failIngestQuestionJob,
+  recoverIngestQuestionJobs,
+} from './pipeline/ingestQuestions.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -28,7 +33,11 @@ export type JobProgress = {
   detail?: string;
 };
 
-type JobHandler = (payload: any, update: (progress: Partial<JobProgress>) => void) => Promise<void>;
+type JobHandler = (
+  payload: any,
+  update: (progress: Partial<JobProgress>) => void,
+  jobId: number,
+) => Promise<void>;
 
 function jobColumns(): Set<string> {
   return new Set((db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map((column) => column.name));
@@ -58,8 +67,9 @@ const handlers: Record<string, JobHandler> = {
   summarize: async ({ pageId }) => {
     await organizePage(pageId);
   },
-  ingest: async ({ path, force }, update) => {
+  ingest: async ({ path, force, questionId }, update, jobId) => {
     await ingestRawFile(path, (progress) => update(progress), { force: Boolean(force) });
+    if (questionId) completeIngestQuestionJob(String(questionId), jobId);
   },
   mentions: async () => {
     await runUpgrades();
@@ -136,6 +146,7 @@ function recoverStaleJobs() {
   ).run();
   recoverApplyingReports();
   recoverIngestCommits();
+  recoverIngestQuestionJobs();
 }
 
 /** 仅保留仍被 pending/running 批量任务引用的 applying 报告。 */
@@ -172,6 +183,7 @@ export function startJobRunner() {
       db.prepare(
         `UPDATE jobs SET status = 'failed', error = '执行超时（运行中超过5分钟）' WHERE status = 'running' AND julianday(run_at) <= julianday('now', '-5 minutes')`
       ).run();
+      recoverIngestQuestionJobs();
       const job = db
         .prepare(`SELECT * FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1`)
         .get() as any;
@@ -181,7 +193,7 @@ export function startJobRunner() {
         const handler = handlers[job.kind];
         updateJob(job.id, { stage: '执行中', progress: 5 });
         if (!handler) throw new Error(`未知任务类型：${job.kind}`);
-        await handler(JSON.parse(job.payload), (progress) => updateJob(job.id, progress));
+        await handler(JSON.parse(job.payload), (progress) => updateJob(job.id, progress), job.id);
         db.prepare(`UPDATE jobs SET status = 'done' WHERE id = ?`).run(job.id);
         updateJob(job.id, { stage: '已完成', progress: 100 });
       } catch (e: any) {
@@ -189,6 +201,10 @@ export function startJobRunner() {
           String(e?.message || e).slice(0, 500),
           job.id
         );
+        if (job.kind === 'ingest') {
+          const payload = JSON.parse(job.payload);
+          if (payload.questionId) failIngestQuestionJob(String(payload.questionId), job.id, e);
+        }
         updateJob(job.id, { stage: '失败', detail: String(e?.message || e).slice(0, 500) });
       }
     } finally {

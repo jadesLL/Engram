@@ -203,11 +203,34 @@ export function recordQuestions(
   });
 }
 
-export function supplementalAnswers(path: string): Array<{ id: string; answer: string }> {
-  return db.prepare(
-    `SELECT id, answer FROM ingest_questions
-     WHERE path=? AND status IN ('answered','accepted') AND answer<>'' ORDER BY updated_at`
-  ).all(path) as Array<{ id: string; answer: string }>;
+export interface SupplementalAnswer {
+  id: string;
+  question: string;
+  answer: string;
+  acceptance: string[];
+}
+
+export function supplementalAnswerContent(answer: SupplementalAnswer): string {
+  return [
+    `原问题：${answer.question}`,
+    `用户补充回答：${answer.answer}`,
+    answer.acceptance.length ? `验收条件：${answer.acceptance.join('；')}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+export function supplementalAnswers(path: string): SupplementalAnswer[] {
+  const rows = db.prepare(
+    `SELECT id, question, answer, acceptance FROM ingest_questions
+     WHERE path=? AND status IN ('answered','accepted','failed') AND answer<>'' ORDER BY updated_at`
+  ).all(path) as Array<{ id: string; question: string; answer: string; acceptance: string }>;
+  return rows.map((row) => {
+    let acceptance: string[] = [];
+    try {
+      const parsed = JSON.parse(row.acceptance);
+      if (Array.isArray(parsed)) acceptance = parsed.map(String);
+    } catch { /* retain empty acceptance */ }
+    return { id: row.id, question: row.question, answer: row.answer, acceptance };
+  });
 }
 
 export function recoverIngestCommits(): void {

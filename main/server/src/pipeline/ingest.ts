@@ -31,8 +31,11 @@ import {
   beginSourceVersion,
   failSourceVersion,
   recordQuestions,
+  supplementalAnswerContent,
   supplementalAnswers,
+  type SupplementalAnswer,
 } from './sourceLedger.js';
+import { reconcileQuestionsAfterRun, syncIngestQuestionReport } from './ingestQuestions.js';
 
 export type { IngestStats } from './knowledgeCommit.js';
 export type IngestStage = '解析' | 'Map' | 'Normalize' | 'Plan' | 'Critic' | 'Retrieve' | 'Compose' | 'Verify' | 'Commit';
@@ -122,13 +125,13 @@ function persistFacts(runId: string, candidates: Candidate[]) {
   tx();
 }
 
-function addSupplementalAnswers(document: StructuredDocument): void {
-  for (const answer of supplementalAnswers(document.path)) {
-    const content = `用户补充回答：${answer.answer}`;
+function addSupplementalAnswers(document: StructuredDocument, answers: SupplementalAnswer[]): void {
+  for (const answer of answers) {
+    const content = supplementalAnswerContent(answer);
     document.chunks.push({
       id: `q-${answer.id}`,
       index: document.chunks.length,
-      heading: '用户补充回答',
+      heading: '用户补充问答',
       content,
       start: document.text.length,
       end: document.text.length,
@@ -200,7 +203,8 @@ export async function ingestRawFile(
     setStatus(relPath, contentHash, runId, 'failed', message);
     throw error;
   }
-  addSupplementalAnswers(document);
+  const resolvedQuestions = supplementalAnswers(relPath);
+  addSupplementalAnswers(document, resolvedQuestions);
   onProgress({ stage: '解析', progress: 8, detail: `${document.chunks.length} 个分段` });
   const prior = db.prepare(`SELECT content_hash, status FROM ingest_log WHERE path=?`).get(relPath) as any;
   if (!options.force && prior?.content_hash === document.contentHash && prior.status === 'completed') return { ...EMPTY };
@@ -218,7 +222,7 @@ export async function ingestRawFile(
     throw new Error(message);
   }
   try {
-    if (document.text.length < 30 && !supplementalAnswers(relPath).length) {
+    if (document.text.length < 30 && !resolvedQuestions.length) {
       const { stats } = commitKnowledgeItems([], {
         runId,
         sourceVersion,
@@ -300,7 +304,12 @@ export async function ingestRawFile(
     const composed = { items: whitelistFactIds(composedItems, allowedFactIds).items };
     audit(runId, 'compose', composed, reviewedPlan);
 
-    const questions = await jsonStage<QuestionOutput>(questionOutputSchema, questionFinderPrompt, { candidates, plan: reviewedPlan }, 'ingest-questions');
+    const questions = await jsonStage<QuestionOutput>(
+      questionOutputSchema,
+      questionFinderPrompt,
+      { candidates, plan: reviewedPlan, resolvedQuestions },
+      'ingest-questions',
+    );
     const ambiguityQuestions = reviewedPlan.flatMap((item) => item.ambiguity ? [{
       question: item.ambiguity.question,
       factIds: item.factIds,
@@ -331,6 +340,7 @@ export async function ingestRawFile(
       sourceRef,
     });
     const finish = db.transaction(() => {
+      reconcileQuestionsAfterRun(relPath, runId);
       if (recordedQuestions.length) {
         addReports([{
           kind: 'ingest_questions',
@@ -345,8 +355,7 @@ export async function ingestRawFile(
       }
       audit(runId, 'commit', stats, safeItems.map((item) => ({ name: item.name, action: item.action })));
       db.prepare(`UPDATE ingest_runs SET stats=? WHERE id=?`).run(JSON.stringify(stats), runId);
-      db.prepare(`UPDATE ingest_questions SET status='accepted', updated_at=? WHERE path=? AND status='answered'`)
-        .run(now(), relPath);
+      syncIngestQuestionReport(relPath);
       setStatus(relPath, document.contentHash, runId, 'completed');
     });
     finish();

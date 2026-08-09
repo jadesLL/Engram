@@ -161,24 +161,38 @@
         </template>
         <!-- 整理追问（ingest 阶段产生的待补充问题） -->
         <template v-else-if="r.kind === 'ingest_questions'">
-          <p><b>{{ r.payload.path }}</b> 整理后仍有 {{ (r.payload.questions || []).length }} 个待澄清问题</p>
+          <p><b>{{ r.payload.path }}</b> 当前有 {{ (r.payload.questions || []).length }} 个追问事项</p>
           <details class="evidence small" open>
             <summary>问题清单（{{ (r.payload.questions || []).length }}）</summary>
-            <div v-for="(q, i) in r.payload.questions || []" :key="i" class="fact">
+            <div v-for="(q, i) in r.payload.questions || []" :key="q.id || i" class="fact">
               <b>{{ i + 1 }}. {{ q.question }}</b>
               <ul v-if="q.acceptance?.length" class="acceptance">
                 <li v-for="(a, j) in q.acceptance" :key="j">{{ a }}</li>
               </ul>
-              <div v-if="q.id" class="question-answer-row">
-                <input v-model="questionAnswers[q.id]" type="text" placeholder="填写补充答案" />
-                <button
-                  class="btn small primary"
-                  :disabled="!questionAnswers[q.id]?.trim()"
-                  @click="answerQuestion(q, 'reprocess')"
-                >
-                  回答并重新整理
-                </button>
-                <button class="btn small" @click="answerQuestion(q, 'ignore')">忽略</button>
+              <div v-if="q.id && (q.status === 'answered' || questionBusy[q.id])" class="question-state processing">
+                <span>正在重新整理</span>
+                <span v-if="q.answer" class="muted">已提交：{{ q.answer }}</span>
+              </div>
+              <div v-else-if="q.id" class="question-control">
+                <div class="question-answer-row">
+                  <input
+                    v-model="questionAnswers[q.id]"
+                    type="text"
+                    :disabled="questionBusy[q.id]"
+                    placeholder="填写补充答案"
+                  />
+                  <button
+                    class="btn small primary"
+                    :disabled="questionBusy[q.id] || !questionAnswers[q.id]?.trim()"
+                    @click="answerQuestion(q, 'reprocess')"
+                  >
+                    {{ q.status === 'failed' ? '重试重新整理' : '回答并重新整理' }}
+                  </button>
+                  <button class="btn small" :disabled="questionBusy[q.id]" @click="answerQuestion(q, 'ignore')">忽略</button>
+                </div>
+                <p v-if="q.status === 'failed' || questionErrors[q.id]" class="question-error small">
+                  {{ questionErrors[q.id] || q.error || '重新整理失败，请重试' }}
+                </p>
               </div>
             </div>
           </details>
@@ -308,6 +322,8 @@ const reviewKinds = reactive<Record<number, 'concept' | 'person' | 'project' | '
 const reviewTargets = reactive<Record<number, string>>({});
 const reviewBusy = reactive<Record<number, boolean>>({});
 const questionAnswers = reactive<Record<string, string>>({});
+const questionBusy = reactive<Record<string, boolean>>({});
+const questionErrors = reactive<Record<string, string>>({});
 const wikiPages = ref<any[]>([]);
 
 const tabs = [
@@ -355,7 +371,13 @@ const mergeTargets = computed(() => wikiPages.value.filter((page: any) =>
   (page.path.startsWith('Wiki/概念/') || page.path.startsWith('Wiki/实体/'))
 ));
 const activeAction = computed(() => actionConfig[tab.value]);
-const activeCount = computed(() => grouped.value[tab.value]?.length || 0);
+const activeCount = computed(() => {
+  const items = grouped.value[tab.value] || [];
+  if (tab.value !== 'ingest_questions') return items.length;
+  return items.filter((report: any) =>
+    (report.payload.questions || []).some((question: any) => ['open', 'failed'].includes(question.status))
+  ).length;
+});
 const selectedBatchCount = computed(() => batch.items.filter((item) => item.selected).length);
 const selectableBatchCount = computed(() => batch.items.filter((item) => !item.disabled).length);
 const allSelected = computed(() => {
@@ -418,6 +440,13 @@ async function load() {
     );
     reviewTargets[report.id] ||= suggestedTarget?.id || '';
   }
+  for (const report of reports.value.filter((item: any) => item.kind === 'ingest_questions')) {
+    for (const question of report.payload.questions || []) {
+      if (question.id && question.answer && questionAnswers[question.id] === undefined) {
+        questionAnswers[question.id] = question.answer;
+      }
+    }
+  }
   lastRun.value = data.lastRun;
   cron.value = data.cron;
   enabled.value = data.enabled;
@@ -459,13 +488,28 @@ function pageTypeLabel(type: string) {
 }
 
 async function answerQuestion(question: any, action: 'reprocess' | 'ignore') {
-  await api.post(`/api/ingest/questions/${question.id}/answer`, {
-    answer: questionAnswers[question.id] || '',
-    action,
-  });
-  delete questionAnswers[question.id];
-  await app.refreshJobs();
-  await load();
+  if (questionBusy[question.id]) return;
+  questionBusy[question.id] = true;
+  delete questionErrors[question.id];
+  try {
+    const { data } = await api.post(`/api/ingest/questions/${question.id}/answer`, {
+      answer: questionAnswers[question.id] || '',
+      action,
+    });
+    if (action === 'ignore') delete questionAnswers[question.id];
+    await app.refreshJobs();
+    await load();
+    if (data.jobId) {
+      await waitForJob(data.jobId);
+      await app.refreshJobs();
+      await load();
+    }
+  } catch (error: any) {
+    questionErrors[question.id] = error?.response?.data?.error || error?.message || '重新整理失败，请重试';
+    await load().catch(() => {});
+  } finally {
+    questionBusy[question.id] = false;
+  }
 }
 
 function selectMergeSuggestion(r: any, suggestion: { id?: string; title: string }) {
@@ -603,7 +647,7 @@ async function submitBatch() {
   try {
     const { data } = await api.post(`/api/dream/reports/actions/${tab.value}`, { decisions });
     batch.show = false;
-    await waitApplyJob(data.jobId);
+    await waitForJob(data.jobId, 'dream_apply');
     await load();
   } catch (error: any) {
     batch.error = error?.response?.data?.error || error?.message || '批量处理失败';
@@ -616,7 +660,7 @@ async function submitBatch() {
 }
 
 /** 每 2s 轮询任务队列，直到 dream_apply 任务完成/失败（参考 Sidebar 的轮询写法） */
-function waitApplyJob(jobId?: number): Promise<void> {
+function waitForJob(jobId?: number, fallbackKind?: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const timer = setInterval(async () => {
@@ -624,7 +668,7 @@ function waitApplyJob(jobId?: number): Promise<void> {
         const { data } = await api.get('/api/jobs');
         const jobs = [...(data.active || []), ...(data.recent || [])];
         const job = (jobId ? jobs.find((j: any) => j.id === jobId) : undefined)
-          || jobs.find((j: any) => j.kind === 'dream_apply');
+          || (fallbackKind ? jobs.find((j: any) => j.kind === fallbackKind) : undefined);
         if (job?.status === 'done') {
           clearInterval(timer);
           resolve();
@@ -682,8 +726,12 @@ onMounted(load);
 .fact { margin: 8px 0; }
 .fact blockquote { margin: 4px 0 4px 10px; padding-left: 8px; border-left: 2px solid var(--border-strong); }
 .acceptance { margin: 4px 0 4px 10px; padding-left: 16px; color: var(--text-secondary); }
+.question-control { margin-top: 8px; }
 .question-answer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .question-answer-row input { min-width: 220px; flex: 1 1 280px; }
+.question-state { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border-radius: 6px; }
+.question-state.processing { color: var(--accent); background: var(--accent-soft); }
+.question-error { margin: 6px 0 0; color: var(--danger); }
 .ambiguity-box { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px solid var(--warning, #d97706); border-radius: 6px; background: var(--bg-secondary); }
 .ambiguity-head { display: flex; align-items: flex-start; gap: 8px; }
 .ambiguity-label { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; color: #92400e; background: #fef3c7; font-size: 12px; }
