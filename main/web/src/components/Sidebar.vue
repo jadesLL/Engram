@@ -713,7 +713,11 @@ function searchTag(tag: string) {
   router.push({ path: '/search', query: { q: `#${tag}` } });
 }
 
-defineExpose({ load });
+function openUpload() {
+  uploadInput.value?.click();
+}
+
+defineExpose({ load, openUpload });
 watch(() => app.sidebarVersion, () => load());
 onMounted(() => {
   load();

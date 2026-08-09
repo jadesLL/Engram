@@ -54,21 +54,6 @@
         />
       </div>
 
-      <!-- AI 输出面板 -->
-      <transition name="fade">
-        <div v-if="aiPanel.show" class="ai-panel card">
-          <div class="ai-panel-head">
-            <b>{{ aiPanel.title }}</b>
-            <div>
-              <button class="btn small" @click="insertAi">插入光标处</button>
-              <button class="btn small" @click="copyAi">复制</button>
-              <button class="btn small" @click="aiPanel.show = false">✕</button>
-            </div>
-          </div>
-          <pre class="ai-output">{{ aiPanel.text }}<span v-if="aiPanel.streaming">▍</span></pre>
-        </div>
-      </transition>
-
       <!-- 本页关联 -->
       <div v-if="related" class="related">
         <div class="related-title faint small">🔗 本页关联（AI 自动生成）</div>
@@ -112,8 +97,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { api, ssePost } from '../api';
+import { api } from '../api';
 import { useAppStore } from '../stores/app';
+import { useAssistantStore } from '../stores/assistant';
 import MarkdownEditor from '../components/MarkdownEditor.vue';
 import FilePreview from '../components/FilePreview.vue';
 import Icon from '../components/Icon.vue';
@@ -121,6 +107,7 @@ import Icon from '../components/Icon.vue';
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
+const assistant = useAssistantStore();
 
 const page = ref<any>(null);
 const content = ref('');
@@ -134,15 +121,15 @@ const editorRef = ref<InstanceType<typeof MarkdownEditor>>();
 const filePath = computed(() => (route.query.file as string) || '');
 const isDark = computed(() => document.documentElement.classList.contains('dark'));
 
-const aiActions = [
+type WriterPreset = 'continue' | 'polish' | 'expand' | 'summarize' | 'translate';
+
+const aiActions: { key: WriterPreset; label: string }[] = [
   { key: 'continue', label: '续写' },
   { key: 'polish', label: '润色' },
   { key: 'expand', label: '扩写' },
   { key: 'summarize', label: '总结' },
   { key: 'translate', label: '翻译' },
 ];
-const aiPanel = ref({ show: false, title: '', text: '', streaming: false });
-
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
 let loading = false; // 加载页面时抑制 content watch
@@ -160,6 +147,7 @@ async function loadPage(id: string) {
   saveState.value = '';
   dirty = false;
   loading = false;
+  syncAssistantContext();
   loadRelated();
 }
 
@@ -174,18 +162,20 @@ async function loadRelated() {
 async function save(manual = false) {
   if (!page.value) return;
   const tags = tagsInput.value.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
-  await api.put(`/api/pages/${page.value.id}`, {
+  const { data } = await api.put(`/api/pages/${page.value.id}`, {
     content: editorRef.value?.getValue() ?? content.value,
     title: title.value,
     type: pageType.value,
     tags,
   });
+  page.value = data.meta;
   dirty = false;
   justSavedAt = Date.now(); // 抑制本次保存触发的 SSE 回声
   saveState.value = manual ? '已保存 ✓' : '已自动保存';
   app.bumpSidebar(); // 类型/标题变化后立刻刷新侧栏分区
   setTimeout(() => (saveState.value = ''), 2000);
   loadRelated();
+  syncAssistantContext();
 }
 
 watch(content, () => {
@@ -208,41 +198,56 @@ async function openWikilink(wikiTitle: string) {
   }
 }
 
-async function runAi(action: string) {
+async function runAi(action: WriterPreset) {
   const sel = editorRef.value?.getSelectionText() || '';
   const text = sel || editorRef.value?.getValue() || '';
   if (!text.trim()) return;
   const label = aiActions.find((a) => a.key === action)?.label || action;
-  aiPanel.value = { show: true, title: `AI ${label}中…`, text: '', streaming: true };
-  try {
-    await ssePost('/api/ai/write', { action, text }, {
-      onDelta: (d) => (aiPanel.value.text += d),
-      onEvent: (ev, data) => {
-        if (ev === 'error') aiPanel.value.text += `\n⚠ ${data.message}`;
-      },
-    });
-    aiPanel.value.title = `AI ${label}结果`;
-  } catch (e: any) {
-    aiPanel.value.text += `\n⚠ ${e.message}`;
-  } finally {
-    aiPanel.value.streaming = false;
-  }
-}
-
-function insertAi() {
-  editorRef.value?.insertText(aiPanel.value.text);
-  aiPanel.value.show = false;
-}
-
-function copyAi() {
-  navigator.clipboard.writeText(aiPanel.value.text);
+  if (dirty) await save(true);
+  const context = pageAssistantContext(sel, action, text);
+  await assistant.openWith(`请${label}以下${sel ? '选中内容' : '页面内容'}。`, context, true);
 }
 
 async function organize() {
   if (!page.value) return;
-  await api.post(`/api/ai/organize/${page.value.id}`);
-  saveState.value = 'AI 整理已加入队列…';
-  setTimeout(() => loadPage(page.value.id), 6000);
+  if (dirty) await save(true);
+  await assistant.openWith(
+    '请整理当前页面，生成摘要并抽取实体关系。先展示将执行的动作，等待我确认后加入后台队列。',
+    pageAssistantContext(),
+    true
+  );
+}
+
+function pageAssistantContext(
+  selection = '',
+  preset?: WriterPreset,
+  presetText?: string
+) {
+  return {
+    route: route.fullPath,
+    currentPage: page.value ? {
+      id: page.value.id,
+      title: title.value,
+      path: page.value.path,
+      updatedAt: page.value.updated_at,
+    } : undefined,
+    selection: selection || undefined,
+    preset,
+    presetText,
+  };
+}
+
+function syncAssistantContext() {
+  if (filePath.value) {
+    assistant.setContext({
+      route: route.fullPath,
+      currentFile: { path: filePath.value, name: filePath.value.split('/').pop() },
+    });
+  } else if (page.value) {
+    assistant.setContext(pageAssistantContext());
+  } else {
+    assistant.clearContext();
+  }
 }
 
 async function createFirst() {
@@ -257,9 +262,14 @@ watch(
     // 只清关联数据，直接加载新页面。编辑器组件保持存活，内容由 watch(props.modelValue) 更新。
     related.value = null;
     if (id && id !== oldId) loadPage(id as string);
-    else if (!id) page.value = null; // 无 id 才回欢迎页
+    else if (!id) {
+      page.value = null; // 无 id 才回欢迎页
+      syncAssistantContext();
+    }
   }
 );
+
+watch(filePath, syncAssistantContext);
 
 // 服务端 SSE 推送：当前页内容被任意来源（本会话/Dream/MCP/多标签）改动时即时重载
 watch(
@@ -289,6 +299,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload);
   if (saveTimer) clearTimeout(saveTimer);
+  assistant.clearContext();
 });
 </script>
 
@@ -725,36 +736,6 @@ onUnmounted(() => {
   .editor-area :deep(.html-preview-overlay h1) { font-size: 1.7em; }
   .editor-area :deep(.html-preview-overlay h2) { font-size: 1.35em; }
 }
-
-.ai-panel {
-  position: absolute;
-  right: 24px;
-  bottom: 80px;
-  width: min(480px, 90vw);
-  max-height: 50vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: var(--shadow);
-  z-index: 50;
-}
-.ai-panel-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-.ai-output {
-  flex: 1;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 1.7;
-  margin: 0;
-}
-.fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
 
 .related {
   max-width: var(--editor-max);

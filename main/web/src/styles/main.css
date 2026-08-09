@@ -178,13 +178,31 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* Vditor 主题变量适配 */
-.vditor {
+html .vditor {
   --textarea-background-color: var(--bg);
   --toolbar-background-color: var(--bg);
+  --panel-background-color: var(--bg-secondary);
+  --textarea-text-color: var(--text);
+  --border-color: var(--border);
+  --second-color: var(--text-faint);
   border: none !important;
 }
-html.dark .vditor {
-  --panel-background-color: var(--bg-secondary);
+
+/*
+ * Vditor 的 reset 样式使用固定的浅色主题文字和表格底色，且其样式随编辑器
+ * 组件延迟加载。增加一级选择器优先级，确保所有 Markdown 渲染面都跟随应用主题。
+ */
+html .vditor-reset {
+  color: var(--text);
+}
+html .vditor-reset blockquote {
+  color: var(--text-secondary);
+}
+html .vditor-reset table tr {
+  background: var(--bg);
+}
+html .vditor-reset table tbody tr:nth-child(2n) {
+  background: var(--bg-secondary);
 }
 
 /* Vditor 内容区排版精修（Typora/Obsidian 风可读宽行，深浅色自动跟随，三模式统一） */

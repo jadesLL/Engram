@@ -6,6 +6,8 @@ import { ingestRawFile } from './pipeline/ingest.js';
 import { runUpgrades } from './pipeline/mentions.js';
 import { regenerateIndex, regenerateRelationships } from './pipeline/indexFile.js';
 import { applyReportDecisions, releaseReports, type ReportActionKind, type ReportDecision } from './dream/apply.js';
+import { runDreamCycle } from './dream/tasks.js';
+import { rebuildAll } from './pipeline/indexer.js';
 
 export type JobProgress = {
   stage: string;
@@ -67,6 +69,18 @@ const handlers: Record<string, JobHandler> = {
       releaseReports(decisions as ReportDecision[]);
       throw error;
     }
+  },
+  dream: async (_payload, update) => {
+    update({ stage: '运行 Dream Cycle', progress: 10, detail: '扫描知识库问题' });
+    const result = await runDreamCycle();
+    update({ stage: 'Dream Cycle 已完成', progress: 100, detail: JSON.stringify(result) });
+  },
+  rebuild: async (_payload, update) => {
+    let progress = 10;
+    await rebuildAll((message) => {
+      progress = Math.min(95, progress + 5);
+      update({ stage: '重建索引', progress, detail: message });
+    });
   },
 };
 

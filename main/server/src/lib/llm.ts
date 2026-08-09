@@ -17,7 +17,8 @@ export interface ModelEntry {
 
 function parseList(key: string): ModelEntry[] {
   try {
-    return JSON.parse(getSetting(key) || '[]');
+    const parsed = JSON.parse(getSetting(key) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -63,18 +64,25 @@ export function llmReady(): boolean {
   return Boolean(getActiveChat()?.apiKey);
 }
 
-export class LlmError extends Error {}
+export class LlmError extends Error {
+  constructor(message: string, public status?: number) {
+    super(message);
+  }
+}
 
 async function request(
   path: string,
   body: unknown,
-  opts?: { baseUrl?: string; apiKey?: string; timeoutMs?: number }
+  opts?: { baseUrl?: string; apiKey?: string; timeoutMs?: number; signal?: AbortSignal }
 ): Promise<Response> {
   const cfg = getLlmConfig();
   const baseUrl = opts?.baseUrl || cfg.baseUrl;
   const apiKey = opts?.apiKey || cfg.apiKey;
   if (!apiKey) throw new LlmError('尚未配置 LLM API Key（设置页 → LLM）');
   const controller = new AbortController();
+  const signal = opts?.signal
+    ? AbortSignal.any([controller.signal, opts.signal])
+    : controller.signal;
   const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 120_000);
   try {
     const res = await fetch(`${baseUrl}${path}`, {
@@ -84,27 +92,61 @@ async function request(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new LlmError(`LLM 请求失败 ${res.status}: ${text.slice(0, 300)}`);
+      throw new LlmError(`LLM 请求失败 ${res.status}: ${text.slice(0, 300)}`, res.status);
     }
     return res;
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new LlmError(opts?.signal?.aborted ? 'AI 请求已取消' : 'LLM 请求超时');
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
   }
 }
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+export interface ChatToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
 }
+
+export type ChatMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: ChatToolCall[] }
+  | { role: 'tool'; content: string; tool_call_id: string };
+
+export interface ChatToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface ChatToolResult {
+  content: string;
+  toolCalls: ChatToolCall[];
+  finishReason?: string;
+}
+
+type ChatOptions = {
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  json?: boolean;
+  signal?: AbortSignal;
+};
 
 /** 非流式对话 */
 export async function chat(
   messages: ChatMessage[],
-  opts?: { temperature?: number; maxTokens?: number; topP?: number; json?: boolean }
+  opts?: ChatOptions
 ): Promise<string> {
   const cfg = getLlmConfig();
   const body: Record<string, unknown> = {
@@ -122,7 +164,7 @@ export async function chat(
     body.thinking = { type: 'disabled' };
     // 关闭思考后 temperature/top_p 才有效（思考模式下这些参数被忽略）
   }
-  const res = await request('/chat/completions', body);
+  const res = await request('/chat/completions', body, { signal: opts?.signal });
   const json = (await res.json()) as any;
   const choice = json?.choices?.[0];
   const msg = choice?.message;
@@ -143,11 +185,57 @@ export async function chat(
   return content;
 }
 
+/** OpenAI-compatible native tool calling. Unsupported providers are handled by the caller's JSON fallback. */
+export async function chatWithTools(
+  messages: ChatMessage[],
+  tools: ChatToolDefinition[],
+  opts?: Omit<ChatOptions, 'json'>
+): Promise<ChatToolResult> {
+  const cfg = getLlmConfig();
+  const body: Record<string, unknown> = {
+    model: cfg.chatModel,
+    messages,
+    tools,
+    tool_choice: 'auto',
+    temperature: opts?.temperature ?? 0.2,
+  };
+  if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
+  if (opts?.topP !== undefined) body.top_p = opts.topP;
+  const res = await request('/chat/completions', body, { signal: opts?.signal });
+  const payload = (await res.json()) as any;
+  const choice = payload?.choices?.[0];
+  const message = choice?.message;
+  const toolCalls = Array.isArray(message?.tool_calls)
+    ? message.tool_calls
+      .filter((call: any) =>
+        typeof call?.id === 'string' &&
+        call?.type === 'function' &&
+        typeof call?.function?.name === 'string' &&
+        typeof call?.function?.arguments === 'string'
+      )
+      .map((call: any) => ({
+        id: call.id,
+        type: 'function' as const,
+        function: {
+          name: call.function.name,
+          arguments: call.function.arguments,
+        },
+      }))
+    : [];
+  const content = typeof message?.content === 'string'
+    ? message.content
+    : (!toolCalls.length && typeof message?.reasoning_content === 'string' ? message.reasoning_content : '');
+  if (!content && !toolCalls.length) {
+    throw new LlmError('LLM 工具调用返回格式异常');
+  }
+  return { content, toolCalls, finishReason: choice?.finish_reason };
+}
+
 /** 容错的 JSON 对话：优先 json 模式；解析失败自动剥离围栏/重试，最终失败抛错（不静默返回空）。
  *  输出被 max_tokens 截断时，重试自动翻倍 max_tokens。 */
 export async function chatJson<T = any>(
   messages: ChatMessage[],
-  opts?: { temperature?: number; maxTokens?: number; topP?: number; retries?: number; tag?: string }
+  opts?: Omit<ChatOptions, 'json'> & { retries?: number; tag?: string }
 ): Promise<T> {
   const tag = opts?.tag || 'chatJson';
   const retries = opts?.retries ?? 1;
@@ -203,7 +291,7 @@ export async function chatJson<T = any>(
 export async function chatJsonSchema<T>(
   schema: ZodType<T>,
   messages: ChatMessage[],
-  opts?: { temperature?: number; maxTokens?: number; topP?: number; retries?: number; tag?: string }
+  opts?: Omit<ChatOptions, 'json'> & { retries?: number; tag?: string }
 ): Promise<T> {
   const tag = opts?.tag || 'chatJsonSchema';
   const attempts = opts?.retries ?? 1;
@@ -247,7 +335,7 @@ function tryParseJson<T>(raw: string): { ok: true; value: T } | { ok: false } {
 export async function chatStream(
   messages: ChatMessage[],
   onDelta: (text: string) => void,
-  opts?: { temperature?: number; maxTokens?: number; topP?: number }
+  opts?: Omit<ChatOptions, 'json'>
 ): Promise<void> {
   const cfg = getLlmConfig();
   const body: Record<string, unknown> = {
@@ -258,13 +346,23 @@ export async function chatStream(
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
-  const res = await request('/chat/completions', body);
+  const res = await request('/chat/completions', body, { signal: opts?.signal });
   if (!res.body) throw new LlmError('LLM 无流式响应体');
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   for (;;) {
-    const { done, value } = await reader.read();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const idleTimeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        void reader.cancel();
+        reject(new LlmError('LLM 流式响应超时'));
+      }, 45_000);
+    });
+    const { done, value } = await Promise.race([reader.read(), idleTimeout])
+      .finally(() => {
+        if (timer) clearTimeout(timer);
+      });
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
