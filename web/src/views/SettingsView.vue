@@ -152,7 +152,7 @@
                 >
                   <div class="provider-row-head">
                     <div class="provider-identity">
-                      <div class="provider-mark">
+                      <div class="provider-mark" :class="{ 'has-logo': Boolean(card.provider.logo) }">
                         <span>{{ providerMark(card.provider.name) }}</span>
                         <img
                           v-if="card.provider.logo"
@@ -240,7 +240,10 @@
                     class="custom-model-row"
                     :class="{ active: model.id === section.activeId }"
                   >
-                    <div class="provider-mark">
+                    <div
+                      class="provider-mark"
+                      :class="{ 'has-logo': Boolean(model.logo || providerLogo(model.provider)) }"
+                    >
                       <span>{{ providerMark(providerName(model.provider)) }}</span>
                       <img
                         v-if="model.logo || providerLogo(model.provider)"
@@ -293,9 +296,38 @@
             <div class="setting-row">
               <div class="setting-copy">
                 <strong>运行计划</strong>
-                <span>使用 cron 表达式，默认每天 03:00。</span>
+                <span>选择运行周期与时间，默认每天 03:00。</span>
               </div>
-              <input v-model="dreamCron" class="cron-input" aria-label="Dream Cycle cron 表达式" @change="saveDream" />
+              <div class="schedule-controls">
+                <select
+                  v-model="dreamScheduleFrequency"
+                  class="schedule-select"
+                  aria-label="Dream Cycle 运行周期"
+                  @change="applyDreamSchedule"
+                >
+                  <option v-for="option in dreamScheduleOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+                <select
+                  v-if="dreamScheduleFrequency !== 'custom'"
+                  v-model="dreamScheduleTime"
+                  class="schedule-select schedule-time-select"
+                  aria-label="Dream Cycle 运行时间"
+                  @change="applyDreamSchedule"
+                >
+                  <option v-for="option in dreamTimeOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
+                </select>
+                <input
+                  v-else
+                  v-model="dreamCron"
+                  class="cron-input"
+                  aria-label="Dream Cycle 自定义 cron 表达式"
+                  @change="saveDream"
+                />
+              </div>
             </div>
           </div>
         </section>
@@ -627,6 +659,7 @@ import {
 type ModelKind = 'chat' | 'emb';
 type SettingsSection = 'account' | 'models' | 'automation' | 'mcp' | 'storage' | 'data';
 type DraftField = 'model' | 'baseUrl' | 'modelsUrl' | 'apiKey' | 'dim';
+type DreamScheduleFrequency = 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'custom';
 
 interface ModelEntry {
   id: string;
@@ -707,7 +740,11 @@ function providerLogo(id: string): string {
 }
 
 function hideProviderLogo(event: Event) {
-  (event.currentTarget as HTMLImageElement).style.display = 'none';
+  const image = event.currentTarget as HTMLImageElement;
+  const fallback = image.previousElementSibling as HTMLElement | null;
+  image.style.display = 'none';
+  if (fallback) fallback.style.visibility = 'visible';
+  image.parentElement?.classList.remove('has-logo');
 }
 
 const testingId = ref('');
@@ -743,6 +780,28 @@ const pwdOk = ref(false);
 
 const dreamEnabled = ref(true);
 const dreamCron = ref('0 3 * * *');
+const dreamScheduleFrequency = ref<DreamScheduleFrequency>('daily');
+const dreamScheduleTime = ref('03:00');
+const dreamScheduleOptions: Array<{ value: DreamScheduleFrequency; label: string }> = [
+  { value: 'daily', label: '每天' },
+  { value: 'weekdays', label: '工作日' },
+  { value: 'weekly', label: '每周一' },
+  { value: 'monthly', label: '每月 1 日' },
+  { value: 'custom', label: '自定义' },
+];
+const defaultDreamTimeOptions = Array.from({ length: 48 }, (_, index) => {
+  const hour = Math.floor(index / 2);
+  const minute = index % 2 === 0 ? 0 : 30;
+  const value = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  return { value, label: value };
+});
+const dreamTimeOptions = computed(() => {
+  if (defaultDreamTimeOptions.some((option) => option.value === dreamScheduleTime.value)) {
+    return defaultDreamTimeOptions;
+  }
+  return [...defaultDreamTimeOptions, { value: dreamScheduleTime.value, label: dreamScheduleTime.value }]
+    .sort((a, b) => a.value.localeCompare(b.value));
+});
 const mcpTokens = ref<any[]>([]);
 const mcpUrl = computed(() => `${location.origin}/mcp`);
 const trashItems = ref<TrashEntry[]>([]);
@@ -1487,6 +1546,43 @@ async function saveDream() {
   await api.post('/api/dream/schedule', { cron: dreamCron.value, enabled: dreamEnabled.value });
 }
 
+function dreamCronFor(frequency: Exclude<DreamScheduleFrequency, 'custom'>, time: string): string {
+  const [hour = '3', minute = '0'] = time.split(':');
+  const clock = `${Number(minute)} ${Number(hour)}`;
+  if (frequency === 'weekdays') return `${clock} * * 1-5`;
+  if (frequency === 'weekly') return `${clock} * * 1`;
+  if (frequency === 'monthly') return `${clock} 1 * *`;
+  return `${clock} * * *`;
+}
+
+function parseDreamSchedule(cron: string): { frequency: DreamScheduleFrequency; time: string } {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return { frequency: 'custom', time: '03:00' };
+  const [minute, hour, day, month, weekday] = parts;
+  const minuteValue = Number(minute);
+  const hourValue = Number(hour);
+  const hasFixedTime = Number.isInteger(minuteValue)
+    && minuteValue >= 0
+    && minuteValue < 60
+    && Number.isInteger(hourValue)
+    && hourValue >= 0
+    && hourValue < 24;
+  if (!hasFixedTime || month !== '*') return { frequency: 'custom', time: '03:00' };
+
+  const time = `${String(hourValue).padStart(2, '0')}:${String(minuteValue).padStart(2, '0')}`;
+  if (day === '*' && weekday === '*') return { frequency: 'daily', time };
+  if (day === '*' && weekday === '1-5') return { frequency: 'weekdays', time };
+  if (day === '*' && weekday === '1') return { frequency: 'weekly', time };
+  if (day === '1' && weekday === '*') return { frequency: 'monthly', time };
+  return { frequency: 'custom', time };
+}
+
+async function applyDreamSchedule() {
+  if (dreamScheduleFrequency.value === 'custom') return;
+  dreamCron.value = dreamCronFor(dreamScheduleFrequency.value, dreamScheduleTime.value);
+  await saveDream();
+}
+
 async function newToken() {
   const name = prompt('Token 备注名：', 'claude-code') || 'default';
   await api.post('/api/settings/mcp-tokens', { name });
@@ -1696,7 +1792,10 @@ async function load() {
   activeEmb.value = settingsData.settings.active_embedding_model || embModels.value[0]?.id || '';
   mcpTokens.value = tokenData.tokens;
   dreamEnabled.value = dreamData.enabled;
-  dreamCron.value = dreamData.cron;
+  dreamCron.value = dreamData.cron || '0 3 * * *';
+  const schedule = parseDreamSchedule(dreamCron.value);
+  dreamScheduleFrequency.value = schedule.frequency;
+  dreamScheduleTime.value = schedule.time;
 }
 
 onMounted(() => {
@@ -2261,19 +2360,36 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 }
 
 .provider-list {
-  border-top: 1px solid var(--border);
+  border-top: 0;
 }
 
 .provider-row {
+  position: relative;
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
   gap: 14px;
   padding: 10px 2px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.provider-row:not(:last-child)::after {
+  position: absolute;
+  right: 4px;
+  bottom: 0;
+  left: 42px;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 58%, transparent);
+  content: '';
+  pointer-events: none;
 }
 
 .provider-row.active {
+  border-radius: 7px;
   background: color-mix(in srgb, var(--accent) 3%, transparent);
+}
+
+.provider-row.active::after {
+  opacity: 0;
 }
 
 .provider-row-head {
@@ -2822,6 +2938,10 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   overflow: hidden;
 }
 
+.provider-mark.has-logo > span {
+  visibility: hidden;
+}
+
 .active-mark {
   border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
   background: var(--bg);
@@ -3280,7 +3400,24 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   font-style: normal;
 }
 
-.cron-input {
+.schedule-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 270px;
+}
+
+.schedule-select {
+  width: 132px;
+}
+
+.schedule-time-select {
+  width: 104px;
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-controls .cron-input {
   width: 170px;
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
@@ -3799,8 +3936,18 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   }
 
   .setting-control,
-  .setting-control.wide,
-  .cron-input {
+  .setting-control.wide {
+    width: 100%;
+  }
+
+  .schedule-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .schedule-select,
+  .schedule-controls .cron-input {
     width: 100%;
   }
 
