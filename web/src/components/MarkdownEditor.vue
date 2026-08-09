@@ -67,7 +67,7 @@ const emit = defineEmits<{
 }>();
 
 const vditorEl = ref<HTMLElement>();
-const htmlPreviewEl = ref<HTMLElement>();
+const htmlPreviewEl = ref<HTMLDivElement>();
 const linkInputEl = ref<HTMLInputElement>();
 const linkPopup = ref(false);
 const linkQuery = ref('');
