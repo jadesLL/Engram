@@ -2,24 +2,25 @@
 
 ## 目录布局
 
-工作区根目录为 `ExampleProject/`：
+Git 工作目录和工作区根目录均为 `ExampleProject/`：
 
 | 路径 | 用途 |
 |---|---|
-| `main/` | `main` 分支的主检出目录；用于同步、串行集成和发布 |
-| `worktrees/<feature>/` | 功能、修复或文档任务的独立 Git worktree |
-| `releases/<version>/` | 用户明确要求保留的发布快照或构建产物 |
+| `.git/` | 仓库元数据；仓库根不再位于 `main/` 内 |
+| `main/` | 应用源码；主检出目录中的集成和发布入口 |
+| `worktrees/<feature>/` | 功能、修复或文档任务的独立 Git worktree，其源码位于内部 `main/` |
+| `releases/<version>/` | 用户明确要求保留的发布快照或构建产物，不纳入 Git |
 
-`worktrees/` 和 `releases/` 与 `main/` 同级。禁止把 worktree 建到 `main/` 内部，也不要在 `releases/` 中开发。
+`worktrees/` 和 `releases/` 与 `main/` 同级。根级 `.gitignore` 排除 linked worktree 的检出内容和整个 `releases/`。禁止把 worktree 建到 `main/` 内部，也不要在 `releases/` 中开发。
 
 ## 状态来源
 
 不再在本文维护容易过期的“活动 worktree”表。以下命令才是实时状态来源：
 
 ```powershell
-git -C main status --short --branch
-git -C main worktree list --porcelain
-git -C main branch --all
+git status --short --branch
+git worktree list --porcelain
+git branch --all
 ```
 
 需要运行服务时，再检查实际监听端口和 Docker 资源：
@@ -45,7 +46,7 @@ docker volume ls --format '{{.Name}}'
 
 ## Codex Worktree 模式
 
-优先使用 Codex 桌面端的 Worktree 模式。Codex 创建的 worktree 可能处于 detached HEAD，这是正常的隔离状态。
+优先使用 Codex 桌面端的 Worktree 模式。Codex 创建的 worktree 可能处于 detached HEAD，这是正常的隔离状态。每个 worktree 会检出完整仓库布局，应用源码仍在该 worktree 的 `main/` 子目录。
 
 开始修改前仍要确认：
 
@@ -66,18 +67,18 @@ $feature = "example-feature"
 $branch = "feat/$feature"
 $path = "worktrees/$feature"
 
-git -C main fetch gitea main
-git -C main worktree add "../$path" -b $branch main
-git -C main worktree list
+git fetch gitea main
+git worktree add $path -b $branch main
+git worktree list
 ```
 
 如果目标分支已经存在，先确认它确实属于当前任务，再去掉 `-b`：
 
 ```powershell
-git -C main worktree add "../worktrees/example-feature" "feat/example-feature"
+git worktree add "worktrees/example-feature" "feat/example-feature"
 ```
 
-创建后，所有修改、安装、测试、构建和提交都在对应的 `worktrees/<feature>/` 中完成。
+创建后，Git 操作在对应的 `worktrees/<feature>/` 根目录完成，应用修改、安装、测试和构建在 `worktrees/<feature>/main/` 中完成。
 
 ## 失效脚本
 
@@ -143,15 +144,15 @@ if ($listeners -or $dockerMappings) {
 - 没有其他 Agent 正在合并；
 - 功能分支已包含需要的最新 `main` 变更，或已评估冲突。
 
-从 `ExampleProject/` 根目录执行：
+从 `ExampleProject/` 仓库根目录执行：
 
 ```powershell
 $feature = "example-feature"
 $branch = "feat/$feature"
 
-git -C main switch main
-git -C main status --short
-git -C main merge --no-ff $branch
+git switch main
+git status --short
+git merge --no-ff $branch
 ```
 
 合并冲突时不要盲选一侧。理解双方改动后解决；无法判断时停止并询问用户。
@@ -165,10 +166,10 @@ git -C main merge --no-ff $branch
 ```powershell
 $feature = "example-feature"
 
-git -C main worktree remove "../worktrees/$feature"
-git -C main branch -d "feat/$feature"
-git -C main worktree prune
-git -C main worktree list
+git worktree remove "worktrees/$feature"
+git branch -d "feat/$feature"
+git worktree prune
+git worktree list
 ```
 
 仅清理当前功能明确拥有的 Docker 资源。删除镜像前先确认没有容器引用：

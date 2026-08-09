@@ -1,30 +1,14 @@
-# ExampleProject 开发 Agent 约定
+# ExampleProject 工作区入口
 
-本文件适用于 `main/` 仓库及由它创建的所有 Git worktree。
+Git 工作目录位于当前 `ExampleProject/` 目录，使用以下布局：
 
-## 开始前
+- `main/`：主分支中的应用源码和集成入口
+- `worktrees/`：独立任务 worktree；实际检出内容不纳入主工作目录版本控制
+- `releases/`：发布快照和产物；不纳入 Git
 
-1. 完整读取 [`WORKTREES.md`](./WORKTREES.md)。
-2. 执行 `git status --short --branch` 和 `git worktree list --porcelain`，确认当前目录、分支和已有 worktree。
-3. 先判断当前任务是否已经运行在 Codex 管理的 worktree 中；已经隔离时直接使用当前 worktree，不得再创建嵌套 worktree。
+处理 `main/` 或 `worktrees/` 下的任何仓库任务前，必须从仓库根目录完整读取：
 
-## 工作位置
+1. [`main/AGENTS.md`](./main/AGENTS.md)
+2. [`main/WORKTREES.md`](./main/WORKTREES.md)
 
-- `main/` 是主检出目录和集成入口。除用户明确要求修复协作规则本身外，不直接在这里开发功能。
-- 新 worktree 统一放在同级的 `worktrees/<feature>/`。
-- `releases/` 只存放明确要求保留的发布快照或产物，不用于日常开发，也不是 worktree 目录。
-- 只读检查、答疑和代码审查不需要创建 worktree。
-
-## 执行原则
-
-- 优先使用 Codex 桌面端提供的 Worktree 模式。当前任务已经位于 worktree 时，沿用当前环境。
-- 手动创建、合并和清理时，以 [`WORKTREES.md`](./WORKTREES.md) 为唯一流程来源。
-- `scripts/new-worktree.sh` 和 `scripts/merge-feature.sh` 仍包含旧目录硬编码，修复前不得执行。
-- 不覆盖、回退或删除其他 Agent 的分支、worktree、容器、数据卷和未提交改动。
-- 功能完成后先提交并向用户报告验证结果；没有用户明确批准，不合并到 `main`，也不清理供用户检查的环境。
-- 合并必须串行。发生冲突且无法确认双方意图时，停止并询问用户。
-
-## 作用边界
-
-- 本文件只约束仓库开发工作，不约束应用内 Dream Cycle、入库管线或通过 MCP 操作知识内容的 Agent。
-- 知识内容操作规范见 [`docs/AI-CONTENT-OPERATIONS.md`](./docs/AI-CONTENT-OPERATIONS.md)。
+Git 命令默认从当前 `ExampleProject/` 根目录执行。不要运行仍引用旧 `Wiki知识库` 路径的 worktree 脚本，也不要在 `releases/` 中开发。
