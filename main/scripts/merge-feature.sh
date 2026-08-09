@@ -142,6 +142,12 @@ run_main_checks_in_docker() {
     "$WIKILLM_MAIN_DIR"
   then
     exampleproject_explain_offline_build_failure
+    if [ "$WIKILLM_BUILD_NETWORK" = "none" ] &&
+      exampleproject_run_local_offline_verification "$WIKILLM_MAIN_DIR"
+    then
+      docker image rm "$verify_image" >/dev/null 2>&1 || true
+      return
+    fi
     exampleproject_die "合并后的 Docker build/typecheck/test 未通过"
   fi
 

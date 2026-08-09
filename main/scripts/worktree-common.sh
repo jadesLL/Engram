@@ -101,6 +101,111 @@ EOF
   fi
 }
 
+exampleproject_cleanup_local_verification() {
+  local verify_dir="$1"
+  local verify_dir_windows=""
+  local failed=0
+
+  if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
+    verify_dir_windows="$(cygpath -w "$verify_dir")"
+    if ! WIKILLM_VERIFY_TEMP="$verify_dir_windows" powershell.exe -NoProfile -Command \
+      '$target=$env:WIKILLM_VERIFY_TEMP; $root=Join-Path $env:LOCALAPPDATA "pnpm\store\v11\projects"; if (Test-Path -LiteralPath $root) { $rootPrefix=[IO.Path]::GetFullPath($root).TrimEnd("\") + "\"; Get-ChildItem -Force -LiteralPath $root | Where-Object { ($_.Target -join "") -eq $target } | ForEach-Object { $full=[IO.Path]::GetFullPath($_.FullName); if (-not $full.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Refusing path outside pnpm projects: $full" }; [IO.Directory]::Delete($full,$false) } }' \
+      >/dev/null
+    then
+      failed=1
+    fi
+  fi
+
+  case "$verify_dir" in
+    /tmp/exampleproject-verify.*)
+      rm -rf -- "$verify_dir" || failed=1
+      ;;
+    *)
+      printf '!! 拒绝删除意外验证路径: %s\n' "$verify_dir" >&2
+      failed=1
+      ;;
+  esac
+  return "$failed"
+}
+
+exampleproject_run_local_offline_verification() {
+  local source_dir="$1"
+  local resolved_source verify_dir local_app_data native_cache native_source=""
+  local check_status=0 cleanup_status=0
+  local -a native_candidates=()
+
+  command -v pnpm >/dev/null 2>&1 || return 1
+  command -v cygpath >/dev/null 2>&1 || return 1
+  resolved_source="$(
+    cd "$source_dir"
+    pwd -P
+  )"
+  case "$resolved_source" in
+    "$WIKILLM_MAIN_DIR"|"$WIKILLM_REPO_ROOT"/worktrees/*/main) ;;
+    *)
+      printf '!! 拒绝验证工作区之外的源码目录: %s\n' "$resolved_source" >&2
+      return 1
+      ;;
+  esac
+
+  verify_dir="$(mktemp -d -t exampleproject-verify.XXXXXX)"
+  local_app_data="$(cygpath -u "${LOCALAPPDATA:?LOCALAPPDATA 未设置}")"
+  native_cache="$local_app_data/ExampleProject/verification-native"
+
+  shopt -s nullglob
+  native_candidates=(
+    "$native_cache"/better-sqlite3@*/better_sqlite3.node
+    "$WIKILLM_MAIN_DIR"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+    "$(cygpath -u "${TEMP:-${TMP:-/tmp}}")"/ExampleProject-*/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+  )
+  if [ "${#native_candidates[@]}" -gt 0 ]; then
+    native_source="${native_candidates[0]}"
+  fi
+
+  exampleproject_log ">> Docker 离线缓存缺失，改用本机临时目录离线验证"
+  set +e
+  (
+    set -euo pipefail
+    local -a native_targets=()
+    [ -n "$native_source" ] || {
+      printf '!! 缺少本地 better_sqlite3.node，无法离线运行服务端测试\n' >&2
+      exit 1
+    }
+    (
+      cd "$resolved_source"
+      tar -cf - \
+        --exclude='./node_modules' \
+        --exclude='./server/node_modules' \
+        --exclude='./web/node_modules' \
+        --exclude='./desktop/node_modules' \
+        --exclude='./server/dist' \
+        --exclude='./web/dist' \
+        --exclude='./data' \
+        --exclude='./data-test' \
+        --exclude='./.env' \
+        --exclude='./.env.*' \
+        --exclude='./*.log' \
+        .
+    ) | tar -xf - -C "$verify_dir"
+    cd "$verify_dir"
+    pnpm install --offline --frozen-lockfile --ignore-scripts
+    native_targets=(
+      "$verify_dir"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3
+    )
+    [ "${#native_targets[@]}" -eq 1 ]
+    mkdir -p "${native_targets[0]}/build/Release"
+    cp "$native_source" "${native_targets[0]}/build/Release/better_sqlite3.node"
+    pnpm test
+    pnpm typecheck
+    pnpm build
+  )
+  check_status=$?
+  set -e
+
+  exampleproject_cleanup_local_verification "$verify_dir" || cleanup_status=$?
+  [ "$check_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]
+}
+
 exampleproject_acquire_merge_lock() {
   if [ "${WIKILLM_LOCK_HELD:-0}" = "1" ]; then
     return
