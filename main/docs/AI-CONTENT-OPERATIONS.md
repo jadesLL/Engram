@@ -43,4 +43,6 @@ Dream Cycle 默认由 `server/src/dream/scheduler.ts` 定时触发，也可通�
 - Dream Cycle 摘要：`server/src/dream/tasks.ts`
 - 页面、文件、回收站和设置路由中的用户操作由相应服务端路由调用 `appendWikiLog`
 
-`POST /api/settings/wipe-ai-logs` 会清理历史 `AIWorks/log/` 残留并重置 `Wiki/log.md`。正常使用下不再创建独立 AI 日志文件。
+`POST /api/settings/wipe-ai-logs` 会清理历史 `AIWorks/log/` 残留，重置 `Wiki/log.md`，并清空六词表关系边后重建空的 `Wiki/关系/relationships.md`。正常使用下不再创建独立 AI 日志文件。
+
+`POST /api/settings/wipe` 除删除知识正文和索引外，还会清空 `reports`、任务历史、入库运行/事实/审计记录、Office 编辑会话与隐藏版本，并重置 `dream_last_run`；模型配置、密码、MCP Token、系统日志和回收站保留。
