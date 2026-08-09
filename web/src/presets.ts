@@ -1,6 +1,6 @@
 import deepseekLogo from './assets/providers/deepseek.svg';
 import kimiLogo from './assets/providers/kimi.svg';
-import zhipuLogo from './assets/providers/bigmodel.png';
+import zhipuLogo from './assets/providers/bigmodel.svg';
 import aliyunLogo from './assets/providers/qianwen.png';
 import doubaoLogo from './assets/providers/doubao.png';
 import xiaomiLogo from './assets/providers/xiaomi.svg';
