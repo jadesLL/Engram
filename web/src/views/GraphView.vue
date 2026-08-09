@@ -99,7 +99,7 @@ async function load() {
 }
 
 function fit() {
-  network?.fit({ animation: { duration: 400 } });
+  network?.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
 }
 function relayout() {
   if (!network) return;
