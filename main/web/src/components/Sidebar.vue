@@ -47,7 +47,7 @@
         <section v-for="g in typeGroups" :key="g.key" class="section">
           <div
             class="sec-row"
-            :class="{ current: activeSectionKey === g.key, expanded: !collapsed[g.key] }"
+            :class="{ expanded: !collapsed[g.key] }"
           >
             <button
               class="sec-toggle"
@@ -87,7 +87,7 @@
       <section class="section">
         <div
           class="sec-row"
-          :class="{ current: activeSectionKey === 'files', expanded: !collapsed.files }"
+          :class="{ expanded: !collapsed.files }"
         >
           <button
             class="sec-toggle"
@@ -99,6 +99,15 @@
             <span class="sec-name">原始资料</span>
           </button>
           <div class="sec-actions">
+            <label class="sort-control section-sort" :title="`原始资料排序：${sortFilesLabel}`">
+              <Icon name="sort" :size="12" />
+              <select v-model="sortFiles" aria-label="原始资料排序">
+                <option value="name-asc">名称 A→Z</option>
+                <option value="name-desc">名称 Z→A</option>
+                <option value="updated-desc">更新时间</option>
+                <option value="created-desc">创建时间</option>
+              </select>
+            </label>
             <button
               class="add-btn"
               type="button"
@@ -130,22 +139,11 @@
           </div>
         </div>
         <div v-show="!collapsed.files" class="sec-body">
-          <div class="sub-toolbar">
-            <label class="sort-control compact" title="原始资料排序">
-              <Icon name="sort" :size="11" />
-              <select v-model="sortFiles" aria-label="原始资料排序">
-                <option value="name-asc">名称 A→Z</option>
-                <option value="name-desc">名称 Z→A</option>
-                <option value="updated-desc">更新时间</option>
-                <option value="created-desc">创建时间</option>
-              </select>
-            </label>
-          </div>
           <div
             v-for="f in sortList(visibleFiles, sortFiles)"
             :key="f.path"
             class="page-row file-row"
-            :class="{ active: fileQuery === f.path, selected: selected.has('f:' + f.path) }"
+            :class="{ active: isActiveFile(f), selected: selected.has('f:' + f.path) }"
             role="button"
             tabindex="0"
             @click="selectionMode ? toggleSelect({ id: 'f:' + f.path }) : openFile(f)"
@@ -211,7 +209,7 @@
       <section class="section">
         <div
           class="sec-row"
-          :class="{ current: activeSectionKey === 'chat', expanded: !collapsed.chat }"
+          :class="{ expanded: !collapsed.chat }"
         >
           <button
             class="sec-toggle"
@@ -229,7 +227,7 @@
             v-for="f in sortList(visibleChatFiles, sortFiles)"
             :key="f.path"
             class="page-row file-row"
-            :class="{ active: fileQuery === f.path, selected: selected.has('f:' + f.path) }"
+            :class="{ active: isActiveFile(f), selected: selected.has('f:' + f.path) }"
             role="button"
             tabindex="0"
             @click="selectionMode ? toggleSelect({ id: 'f:' + f.path }) : openFile(f)"
@@ -296,7 +294,7 @@
       <section class="section">
         <div
           class="sec-row"
-          :class="{ current: activeSectionKey === 'ailog', expanded: !collapsed.ailog }"
+          :class="{ expanded: !collapsed.ailog }"
         >
           <button
             class="sec-toggle"
@@ -380,6 +378,7 @@ const SORT_LABELS: Record<string, string> = {
   'created-desc': '创建时间',
 };
 const sortWikiLabel = computed(() => SORT_LABELS[sortWiki.value] || '名称 A→Z');
+const sortFilesLabel = computed(() => SORT_LABELS[sortFiles.value] || '名称 A→Z');
 const uploadInput = ref<HTMLInputElement>();
 const defaultCollapsed: Record<string, boolean> = {
   concept: true,
@@ -499,18 +498,6 @@ const aiLogs = computed(() =>
 
 /** 对话分区文件（原始资料/对话/，递归；与原始资料同构：带已整理/整理中/整理失败标志） */
 const chatFiles = ref<any[]>([]);
-const activeSectionKey = computed(() => {
-  if (fileQuery.value) {
-    return fileQuery.value.startsWith('原始资料/对话/') ? 'chat' : 'files';
-  }
-  const page = allPages.value.find((item) => String(item.id) === String(activeId.value));
-  if (!page) return '';
-  if (aiLogs.value.some((item) => String(item.id) === String(page.id))) return 'ailog';
-  const group = groupOf(page);
-  if (group === 'raw') return page.path.startsWith('原始资料/对话/') ? 'chat' : 'files';
-  if (group === 'system') return 'ailog';
-  return group;
-});
 
 const normalizedFilter = computed(() => filter.value.trim().toLocaleLowerCase('zh-CN'));
 
@@ -598,6 +585,11 @@ function openFile(f: any) {
   } else {
     router.push({ path: '/page', query: { file: f.path } });
   }
+}
+
+function isActiveFile(file: any) {
+  return fileQuery.value === file.path ||
+    (!!file.pageId && String(file.pageId) === String(activeId.value));
 }
 
 async function createFile() {
@@ -896,15 +888,32 @@ onUnmounted(() => {
   opacity: 0;
 }
 
-.sort-control.compact {
-  max-width: 108px;
+.sort-control.section-sort {
+  position: relative;
+  width: 23px;
+  height: 23px;
+  max-width: none;
+  flex: 0 0 23px;
+  justify-content: center;
   margin-left: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  opacity: 0.62;
 }
 
-.sub-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  padding: 1px 4px 4px;
+.sort-control.section-sort:hover,
+.sort-control.section-sort:focus-within {
+  opacity: 1;
+}
+
+.sort-control.section-sort select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
 }
 
 .side-scroll {
@@ -959,17 +968,6 @@ onUnmounted(() => {
 
 .sec-row:hover {
   background: var(--sidebar-hover);
-}
-
-.sec-row.current {
-  color: var(--text);
-  background: var(--sidebar-selection);
-  box-shadow: inset 0 0 0 1px var(--sidebar-selection-border);
-}
-
-.sec-row.current .sec-toggle,
-.sec-row.current .sec-count {
-  color: inherit;
 }
 
 .sec-toggle {
