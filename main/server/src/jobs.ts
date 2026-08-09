@@ -114,7 +114,7 @@ const handlers: Record<string, JobHandler> = {
   /** 分类批量处理：只执行请求中显式选择的报告和动作。 */
   dream_apply: async ({ kind, decisions }, update) => {
     try {
-      applyReportDecisions(kind as ReportActionKind, decisions as ReportDecision[], (p) => update(p));
+      await applyReportDecisions(kind as ReportActionKind, decisions as ReportDecision[], (p) => update(p));
     } catch (error) {
       releaseReports(decisions as ReportDecision[]);
       throw error;

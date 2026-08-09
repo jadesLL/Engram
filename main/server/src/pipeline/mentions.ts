@@ -1,165 +1,171 @@
-import fs from 'node:fs';
-import matter from 'gray-matter';
+import crypto from 'node:crypto';
+import { z } from 'zod';
 import { db, now } from '../lib/db.js';
-import { chat, llmReady } from '../lib/llm.js';
-import { readPage, writePage, safeJoin } from '../lib/vault.js';
+import { llmReady } from '../lib/llm.js';
+import { runSemanticStage } from '../lib/semanticStage.js';
+import { readPage, readPageMeta, writePage } from '../lib/vault.js';
 import { isEntity } from '../lib/pageTypes.js';
-import { enrichedSystem, enrichedUser, completeSystem, completeUser } from '../prompts/upgrade.js';
 import { appendWikiLog } from './indexFile.js';
 import { ensureEntityStructure } from './knowledgePage.js';
 
-/**
- * 实体升级阶梯（知识管理员工作流）：
- * 统计每个实体页被 [[实体名]] 引用的次数（mention_count），
- * ≥3 → enriched（用库内引用页内容自动补一段，不联网）
- * ≥8 → complete（LLM 重写完整档案）
- * 判定用升级前 count，避免重复触发。
- */
+const maturitySchema = z.object({
+  action: z.enum(['none', 'enrich', 'complete']),
+  rationale: z.string(),
+  content: z.string(),
+});
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+interface EntityEvidence {
+  id: string;
+  title: string;
+  path: string;
+  type: string;
+  content: string;
+  status: string;
+  mentionCount: number;
+  references: Array<{ title: string; path: string; content: string }>;
+  evidenceHash: string;
 }
 
-/** 统计所有实体页的 mention_count 并写回 frontmatter，返回需升级的实体 */
-export function scanMentions(): { id: string; title: string; path: string; count: number; status: string }[] {
-  const wikiPages = db
-    .prepare(
-      `SELECT id, title, path, type FROM pages WHERE deleted = 0 AND path LIKE 'Wiki/%' AND path NOT LIKE 'Wiki/归档/%'`
-    )
-    .all() as any[];
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
-  // 预读全部正文
-  const contents = new Map<string, string>();
-  for (const p of wikiPages) {
-    const rd = readPage(p.path);
-    if (rd) contents.set(p.id, rd.content);
+function hash(value: unknown): string {
+  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function referencedPages(title: string, selfId: string): Array<{ title: string; path: string; content: string }> {
+  const pages = db.prepare(
+    `SELECT id,title,path FROM pages WHERE deleted=0
+     AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`
+  ).all() as Array<{ id: string; title: string; path: string }>;
+  const pattern = new RegExp(`\\[\\[${escapeRegExp(title)}(?:\\|[^\\]]*)?\\]\\]`);
+  return pages.flatMap((page) => {
+    if (page.id === selfId) return [];
+    const body = readPage(page.path);
+    if (!body || !pattern.test(body.content)) return [];
+    return [{ title: page.title, path: page.path, content: body.content.slice(0, 2500) }];
+  });
+}
+
+/** 引用计数是确定性元数据；升级结论不在这里判断。 */
+export function scanMentions(): EntityEvidence[] {
+  const pages = db.prepare(
+    `SELECT id,title,path,type FROM pages WHERE deleted=0
+     AND path LIKE 'Wiki/实体/%' ORDER BY updated_at DESC`
+  ).all() as Array<{ id: string; title: string; path: string; type: string }>;
+  const output: EntityEvidence[] = [];
+  for (const page of pages) {
+    if (!isEntity(page.type)) continue;
+    const body = readPage(page.path);
+    if (!body) continue;
+    const references = referencedPages(page.title, page.id);
+    const meta = readPageMeta(page.path);
+    const mentionCount = references.length;
+    if (meta.mention_count !== mentionCount) {
+      writePage(page.path, body.content, { mention_count: mentionCount });
+    }
+    const evidenceHash = hash({
+      content: body.content,
+      references: references.map((reference) => [reference.path, reference.content]),
+    });
+    output.push({
+      ...page,
+      content: body.content,
+      status: String(meta.status || 'stub'),
+      mentionCount,
+      references,
+      evidenceHash,
+    });
   }
-
-  const upgrades: { id: string; title: string; path: string; count: number; status: string }[] = [];
-
-  for (const p of wikiPages) {
-    if (!isEntity(p.type)) continue;
-    const re = new RegExp(`\\[\\[${escapeRegExp(p.title)}(\\|[^\\]]*)?\\]\\]`, 'g');
-    let count = 0;
-    for (const [pid, content] of contents) {
-      if (pid === p.id) continue; // 不计自引用
-      const matches = content.match(re);
-      if (matches) count += matches.length;
-    }
-
-    // 读取现状（frontmatter 在文件中，读原始值）
-    const raw = readRawMeta(p.path);
-    const status = raw.status || 'stub';
-    if (raw.mention_count !== count) {
-      writePage(p.path, contents.get(p.id) || '', { mention_count: count });
-    }
-
-    const needEnriched = count >= 3 && status === 'stub';
-    const needComplete = count >= 8 && status === 'enriched';
-    if (needEnriched || needComplete) {
-      upgrades.push({ id: p.id, title: p.title, path: p.path, count, status });
-    }
-  }
-  return upgrades;
+  return output;
 }
 
-function readRawMeta(relPath: string): Record<string, any> {
-  const absPath = safeJoin(relPath);
-  if (!fs.existsSync(absPath)) return {};
-  return matter(fs.readFileSync(absPath, 'utf8')).data;
+function maturityPrompt(title: string): string {
+  return `你是知识库实体成熟度与内容维护模型。阅读实体「${title}」的当前页面和所有库内引用上下文，决定是否需要升级。
+
+action：
+- none：当前内容已经与现有证据匹配，或引用没有带来新的有效知识。
+- enrich：有新的可靠信息，应在“当前理解”中增量补充。
+- complete：现有“当前理解”结构或结论已经不适合，应根据全部证据重写完整“当前理解”。
+
+引用次数和页面长度只是元数据，不能直接决定 action。必须比较当前正文与引用证据的语义增量、覆盖度、冲突和成熟度。
+
+content：
+- none 时为空字符串。
+- enrich 时只输出新增 Markdown 内容，不重复原文。
+- complete 时输出完整的“当前理解”正文，不包含 H1、“## 当前理解”、“## 相关页面”或“## 时间线”标题。
+
+只能使用输入内容，禁止编造。只输出 JSON：
+{"action":"none|enrich|complete","rationale":"","content":""}。`;
 }
 
-/** 收集引用了某实体的页面内容摘录 */
-function collectRefs(title: string, selfId: string, limit = 5): string {
-  const pages = db
-    .prepare(`SELECT id, title, path FROM pages WHERE deleted = 0 AND path LIKE 'Wiki/%'`)
-    .all() as any[];
-  const re = new RegExp(`\\[\\[${escapeRegExp(title)}(\\|[^\\]]*)?\\]\\]`);
-  const chunks: string[] = [];
-  for (const p of pages) {
-    if (p.id === selfId) continue;
-    const rd = readPage(p.path);
-    if (rd && re.test(rd.content)) {
-      chunks.push(`《${p.title}》：${rd.content.slice(0, 600)}`);
-      if (chunks.length >= limit) break;
-    }
-  }
-  return chunks.join('\n\n');
+function replaceCurrentUnderstanding(body: string, content: string): string {
+  const structured = ensureEntityStructure(body);
+  return structured.replace(
+    /(##\s*当前理解\s*\n)[\s\S]*?(?=\n##\s*相关页面)/,
+    `$1\n${content.trim()}\n`,
+  );
 }
 
-/** 执行升级动作（LLM），返回执行记录 */
+function appendCurrentUnderstanding(body: string, content: string): string {
+  const structured = ensureEntityStructure(body);
+  return structured.replace(
+    /(##\s*当前理解[\s\S]*?)(\n##\s*相关页面)/,
+    `$1\n\n### 模型增量补充\n\n${content.trim()}\n$2`,
+  );
+}
+
 export async function runUpgrades(): Promise<string[]> {
-  const candidates = scanMentions();
+  if (!llmReady()) return [];
   const logs: string[] = [];
-  for (const c of candidates) {
-    if (!llmReady()) break;
-    const rd = readPage(c.path);
-    if (!rd) continue;
-    const refs = collectRefs(c.title, c.id);
-
-    if (c.status === 'stub' && c.count >= 3) {
-      // enriched：补一段，追加到「当前理解」末尾
-      const addition = await chat(
-        [
-          { role: 'system', content: enrichedSystem(c.title) },
-          { role: 'user', content: enrichedUser(rd.content.slice(0, 800), refs) },
-        ],
-        { temperature: 0.3, maxTokens: 500 }
-      );
-      // 修 bug：原正则要求页面有「## 时间线」才匹配，缺该章节时补充内容会丢失。
-      // 改为：先确保页面有「## 时间线」骨架，再注入；保证内容不丢、状态与内容一致。
-      const body = ensureEntityStructure(rd.content, c.title);
-      const newContent = body.replace(
-        /(##\s*当前理解[\s\S]*?)(\n##\s*相关页面)/,
-        `$1\n\n### enriched 补充\n\n${addition.trim()}\n$2`
-      );
-      writePage(c.path, newContent, {
-        status: 'enriched',
-        next_upgrade_at: 8,
-        last_upgraded: now().slice(0, 10),
+  for (const entity of scanMentions()) {
+    const meta = readPageMeta(entity.path);
+    if (meta.upgrade_evidence_hash === entity.evidenceHash) continue;
+    try {
+      const decision = await runSemanticStage({
+        scope: 'entity-upgrade',
+        refId: entity.id,
+        stage: 'maturity-decision',
+        tag: 'entity-maturity',
+        schema: maturitySchema,
+        system: maturityPrompt(entity.title),
+        input: {
+          entity: {
+            title: entity.title,
+            type: entity.type,
+            status: entity.status,
+            mentionCount: entity.mentionCount,
+            currentContent: entity.content,
+          },
+          references: entity.references,
+        },
+        temperature: 0.1,
+        maxTokens: 5000,
       });
-      logs.push(`${c.title} -> enriched（提及 ${c.count} 次）`);
-    } else if (c.status === 'enriched' && c.count >= 8) {
-      // complete：重写完整档案（保留时间线 + 归档旧当前理解，避免演进历史丢失）
-      const mCur = rd.content.match(/##\s*当前理解\s*\n([\s\S]*?)(?=##\s*时间线|$)/);
-      const mTl = rd.content.match(/(##\s*时间线[\s\S]*)$/);
-      const oldCurrent = mCur ? mCur[1].trim() : '';
-      let timeline = mTl ? mTl[1] : '## 时间线\n';
-      if (oldCurrent) {
-        // 归档旧理解进时间线（与 rewriteEntity 一致，不丢演进历史）
-        const archiveLine = `- ${now().slice(0, 10)}: [归档] ${oldCurrent.replace(/\n+/g, ' ').slice(0, 500)}`;
-        timeline = timeline.replace(/\n*$/, '') + '\n' + archiveLine + '\n';
+      let content = entity.content;
+      let status = entity.status;
+      if (decision.action === 'enrich' && decision.content.trim()) {
+        content = appendCurrentUnderstanding(content, decision.content);
+        status = 'enriched';
+      } else if (decision.action === 'complete' && decision.content.trim()) {
+        content = replaceCurrentUnderstanding(content, decision.content);
+        status = 'complete';
       }
-      const profile = await chat(
-        [
-          { role: 'system', content: completeSystem(c.title) },
-          { role: 'user', content: completeUser(rd.content.slice(0, 1500), refs) },
-        ],
-        { temperature: 0.3, maxTokens: 1500 }
-      );
-      const newContent = [
-        `# ${c.title}`,
-        '',
-        '## 当前理解',
-        '',
-        profile.trim(),
-        '',
-        '## 相关页面',
-        '',
-        timeline,
-        '',
-      ].join('\n');
-      writePage(c.path, newContent, {
-        status: 'complete',
-        last_upgraded: now().slice(0, 10),
+      writePage(entity.path, content, {
+        status,
+        mention_count: entity.mentionCount,
+        last_upgraded: decision.action === 'none' ? meta.last_upgraded : now().slice(0, 10),
+        upgrade_evidence_hash: entity.evidenceHash,
+        upgrade_rationale: decision.rationale,
       });
-      logs.push(`${c.title} -> complete（提及 ${c.count} 次）`);
+      if (decision.action !== 'none') {
+        logs.push(`${entity.title} -> ${decision.action}：${decision.rationale}`);
+      }
+    } catch {
+      /* 单实体失败不影响其他升级。 */
     }
   }
-
-  if (logs.length) {
-    // 升级批次记入操作日志（所有实体全列，不蒸馏；不再写 AIWorks/log/upgrades.md）
-    appendWikiLog('实体升级', logs.join('；'));
-  }
+  if (logs.length) appendWikiLog('实体升级', logs.join('；'));
   return logs;
 }

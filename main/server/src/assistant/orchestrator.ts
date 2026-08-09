@@ -10,6 +10,7 @@ import {
   type ChatToolCall,
 } from '../lib/llm.js';
 import { newId, now } from '../lib/db.js';
+import { runSemanticStage } from '../lib/semanticStage.js';
 import { hybridSearch } from '../retrieval/hybrid.js';
 import { writeAssist, type WriterAction } from '../ai/writer.js';
 import { saveChat } from '../lib/chat.js';
@@ -59,10 +60,6 @@ import type {
 
 const MAX_AGENT_STEPS = 8;
 const MAX_HISTORY_MESSAGES = 30;
-const ACTION_PATTERN =
-  /创建|新建|修改|更新|写入|应用|删除|归档|恢复|移动|重命名|合并|整理|运行|执行|清理|切换|设置|重建|重试|打开|上传|撤销|保存|标记/;
-const FOLLOW_UP_PATTERN = /^(它|这个|这些|那个|刚才|上面|继续|那|其中|前者|后者)|它呢|这个呢|继续说/;
-
 const fallbackDecisionSchema = z.object({
   type: z.enum(['tool', 'final']),
   tool: z.string().optional(),
@@ -74,6 +71,12 @@ const fallbackDecisionSchema = z.object({
     (value.type === 'final' && typeof value.content === 'string'),
   { message: 'tool 决策需要 tool，final 决策需要 content' }
 );
+
+const assistantRouteSchema = z.object({
+  mode: z.enum(['question', 'agent']),
+  retrievalQuery: z.string(),
+  reason: z.string(),
+});
 
 const activeControllers = new Map<string, AbortController>();
 const nativeToolUnsupported = new Set<string>();
@@ -114,14 +117,42 @@ function visibleHistory(sessionId: string, excludeMessageId?: string): Assistant
     .slice(-MAX_HISTORY_MESSAGES);
 }
 
-function retrievalQuery(run: AssistantRun, question: string): string {
-  if (!FOLLOW_UP_PATTERN.test(question.trim()) && question.trim().length > 24) return question;
-  const previous = visibleHistory(run.sessionId, run.assistantMessageId)
+async function routeRun(
+  run: AssistantRun,
+  question: string,
+  signal: AbortSignal,
+): Promise<z.infer<typeof assistantRouteSchema>> {
+  if (!llmReady()) return { mode: 'question', retrievalQuery: question, reason: '未配置模型时降级为关键词检索' };
+  const history = visibleHistory(run.sessionId, run.assistantMessageId)
     .filter((message) => message.id !== run.userMessageId)
-    .slice(-2)
-    .map((message) => message.content.slice(0, 500))
-    .join(' ');
-  return previous ? `${previous}\n${question}` : question;
+    .slice(-8)
+    .map((message) => ({
+      role: message.role,
+      content: message.content.slice(0, 1200),
+    }));
+  return runSemanticStage({
+    scope: 'assistant',
+    refId: run.id,
+    stage: 'route',
+    tag: 'assistant-route',
+    schema: assistantRouteSchema,
+    system: `你是应用内助手的路由模型。根据用户问题、当前界面上下文和最近对话决定：
+- question：只需检索知识库并回答，不需要改变软件状态。
+- agent：需要调用工具、读取特定页面/文件、修改软件状态，或必须先澄清再操作。
+
+同时生成 retrievalQuery：把代词、承接词和追问改写为可独立检索的完整查询；agent 模式也可返回用于后续检索的查询。
+不要用关键词或句长规则，必须理解真实意图。
+只输出 JSON：{"mode":"question|agent","retrievalQuery":"","reason":""}。`,
+    input: {
+      question,
+      context: run.context,
+      history,
+    },
+    temperature: 0.1,
+    maxTokens: 800,
+    retries: 1,
+    signal,
+  });
 }
 
 function sourceList(hits: Awaited<ReturnType<typeof hybridSearch>>): AssistantSource[] {
@@ -199,12 +230,6 @@ function failRun(runId: string, error: unknown): void {
   publishAssistantEvent(runId, 'error', { message, cancelled });
 }
 
-function isSimpleQuestion(message: string, context: AssistantContext): boolean {
-  if (context.preset || context.selection || context.currentFile) return false;
-  if (context.currentPage && /当前|本页|这页|页面/.test(message)) return false;
-  return !ACTION_PATTERN.test(message);
-}
-
 async function runWriterPreset(
   run: AssistantRun,
   question: string,
@@ -228,10 +253,11 @@ async function runWriterPreset(
 async function runFastQuestion(
   run: AssistantRun,
   question: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  retrievalQuery: string,
 ): Promise<void> {
   const messageId = assistantPlaceholder(run);
-  const hits = await hybridSearch(retrievalQuery(run, question), 8);
+  const hits = await hybridSearch(retrievalQuery || question, 8);
   const sources = sourceList(hits);
   if (!llmReady()) {
     completeRun(
@@ -563,11 +589,14 @@ async function executeRun(runId: string): Promise<void> {
   try {
     if (run.context.preset) {
       await runWriterPreset(run, question, controller.signal);
-    } else if (isSimpleQuestion(question, run.context)) {
-      await runFastQuestion(run, question, controller.signal);
     } else {
-      activeControllers.delete(runId);
-      await runAgentLoop(runId);
+      const route = await routeRun(run, question, controller.signal);
+      if (route.mode === 'question') {
+        await runFastQuestion(run, question, controller.signal, route.retrievalQuery);
+      } else {
+        activeControllers.delete(runId);
+        await runAgentLoop(runId);
+      }
     }
   } catch (error) {
     failRun(runId, error);

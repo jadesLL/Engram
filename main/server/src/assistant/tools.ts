@@ -33,6 +33,10 @@ import { PAGE_TYPES } from '../lib/pageTypes.js';
 import { mergePages } from '../lib/mergePages.js';
 import { ingestAllRaw } from '../pipeline/ingest.js';
 import {
+  claimCandidateReviewBatch,
+  validateCandidateReviewDecisions,
+} from '../pipeline/candidateReview.js';
+import {
   claimReports,
   previewReportActions,
   REPORT_ACTION_KINDS,
@@ -891,14 +895,14 @@ const tools: AgentTool[] = [
         },
       };
     },
-    execute(args, _ctx, preview) {
+    async execute(args, _ctx, preview) {
       const keep = pageRow(args.keepId);
       const other = pageRow(args.otherId);
       if (
         keep.updated_at !== preview.precondition?.keepUpdatedAt ||
         other.updated_at !== preview.precondition?.otherUpdatedAt
       ) throw new Error('页面已变化，请重新预览合并');
-      mergePages(args.keepId, args.otherId);
+      await mergePages(args.keepId, args.otherId);
       return { summary: `已将「${other.title}」合并入「${keep.title}」` };
     },
   },
@@ -984,7 +988,9 @@ const tools: AgentTool[] = [
       },
     }, ['kind', 'decisions']),
     preview(args) {
-      const decisions = validateDecisions(args.kind, args.decisions);
+      const decisions = args.kind === 'pending_review'
+        ? validateCandidateReviewDecisions(args.decisions)
+        : validateDecisions(args.kind, args.decisions);
       const ids = decisions.map((decision: ReportDecision) => decision.reportId);
       const rows = db.prepare(
         `SELECT id, kind, status, payload FROM reports WHERE id IN (${ids.map(() => '?').join(',')})`
@@ -1000,9 +1006,21 @@ const tools: AgentTool[] = [
       };
     },
     execute(args) {
-      const decisions = validateDecisions(args.kind, args.decisions);
-      claimReports(args.kind, decisions);
-      const jobId = enqueue('dream_apply', { kind: args.kind, decisions, nonce: Date.now() });
+      const decisions: Array<{ reportId: number; action: string }> = args.kind === 'pending_review'
+        ? (() => {
+          const candidateDecisions = validateCandidateReviewDecisions(args.decisions);
+          claimCandidateReviewBatch(candidateDecisions);
+          return candidateDecisions;
+        })()
+        : (() => {
+          const reportDecisions = validateDecisions(args.kind, args.decisions);
+          claimReports(args.kind, reportDecisions);
+          return reportDecisions;
+        })();
+      const jobId = enqueue(
+        args.kind === 'pending_review' ? 'candidate_review_batch' : 'dream_apply',
+        { kind: args.kind, decisions, nonce: Date.now() },
+      );
       if (!jobId) throw new Error('批量任务无法入队');
       return { summary: `已加入 ${decisions.length} 条报告处理任务`, data: { jobId } };
     },

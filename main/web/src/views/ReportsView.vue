@@ -44,15 +44,21 @@
         <!-- 死链 -->
         <template v-if="r.kind === 'deadlink'">
           <p><b>{{ r.payload.srcTitle }}</b> 引用了不存在的页面 <b>[[{{ r.payload.deadTitle }}]]</b></p>
+          <p v-if="r.payload.suggestionReason" class="muted small">
+            模型建议：{{ pageTypeLabel(r.payload.suggestedType) }}。{{ r.payload.suggestionReason }}
+          </p>
           <div class="actions">
-            <button class="btn small primary" @click="createDead(r)">创建该页面</button>
+            <button class="btn small primary" @click="hasPageTypeRecommendation(r.payload.suggestedType) ? createDead(r) : openBatchPreview()">
+              {{ hasPageTypeRecommendation(r.payload.suggestedType) ? `按建议创建为${pageTypeLabel(r.payload.suggestedType)}` : '选择页面类型' }}
+            </button>
             <button class="btn small" @click="openPage(r.payload.srcId)">查看来源</button>
             <button class="btn small" @click="setStatus(r, 'dismissed')">忽略</button>
           </div>
         </template>
         <!-- 重复 -->
         <template v-else-if="r.kind === 'duplicate'">
-          <p><b>{{ r.payload.a.title }}</b> 与 <b>{{ r.payload.b.title }}</b> 高度相似（{{ r.payload.similarity }}）</p>
+          <p><b>{{ r.payload.a.title }}</b> 与 <b>{{ r.payload.b.title }}</b> 被模型判断为可能重复</p>
+          <p v-if="r.payload.detail" class="muted small">{{ r.payload.detail }}</p>
           <div class="actions">
             <button class="btn small" @click="openPage(r.payload.a.id)">查看 A</button>
             <button class="btn small" @click="openPage(r.payload.b.id)">查看 B</button>
@@ -153,7 +159,8 @@
         </template>
         <!-- 待丰富 -->
         <template v-else-if="r.kind === 'enrich'">
-          <p><b>{{ r.payload.title }}</b> 被引用 {{ r.payload.refs }} 次，但内容仅 {{ r.payload.wordCount }} 字</p>
+          <p><b>{{ r.payload.title }}</b> 需要进一步丰富</p>
+          <p v-if="r.payload.detail" class="muted small">{{ r.payload.detail }}</p>
           <div class="actions">
             <button class="btn small primary" @click="openPage(r.payload.pageId)">去完善</button>
             <button class="btn small" @click="setStatus(r, 'dismissed')">忽略</button>
@@ -203,7 +210,8 @@
         </template>
         <!-- 过期 -->
         <template v-else-if="r.kind === 'stale'">
-          <p><b>{{ r.payload.title }}</b> 已 {{ r.payload.staleDays }} 天未更新，内容可能过期</p>
+          <p><b>{{ r.payload.title }}</b> 可能需要时效复核</p>
+          <p v-if="r.payload.detail" class="muted small">{{ r.payload.detail }}</p>
           <div class="actions">
             <button class="btn small" @click="openPage(r.payload.pageId)">查看</button>
             <button class="btn small" @click="setStatus(r, 'resolved')">仍然有效</button>
@@ -247,7 +255,7 @@
             <div class="batch-copy">
               <b>{{ previewTitle(item) }}</b>
               <span class="muted small">{{ previewDetail(item) }}</span>
-              <span v-if="isSuggestedKind && !item.disabled" class="suggestion small">系统建议：{{ optionLabel(item, item.suggestedAction) }}</span>
+              <span v-if="showSystemSuggestion(item)" class="suggestion small">模型建议：{{ optionLabel(item, item.suggestedAction) }}</span>
             </div>
             <select v-if="item.options?.length" v-model="item.action" @click.stop>
               <option v-for="option in item.options" :key="option.value" :value="option.value">{{ option.label }}</option>
@@ -276,7 +284,8 @@
           <div>
             <h3>{{ candidatePreview.action === 'merge' ? `并入 ${candidatePreview.targetTitle}` : `批准 ${candidatePreview.name}` }}</h3>
             <p class="muted small">
-              {{ candidatePreview.sourcePaths.length }} 个资料来源 · {{ candidatePreview.evidenceCount }} 条有效证据 ·
+              重新阅读 {{ candidatePreview.sourcePaths.length }} 个原始资料 / {{ candidatePreview.contextCount }} 段原文 ·
+              {{ candidatePreview.evidenceCount }} 条重抽取事实 ·
               {{ pageTypeLabel(candidatePreview.kind) }}
             </p>
           </div>
@@ -361,6 +370,7 @@ const candidatePreview = reactive({
   name: '',
   targetTitle: '',
   sourcePaths: [] as string[],
+  contextCount: 0,
   evidenceCount: 0,
   content: '',
   submitting: false,
@@ -384,7 +394,6 @@ const allSelected = computed(() => {
   const selectable = batch.items.filter((item) => !item.disabled);
   return selectable.length > 0 && selectable.every((item) => item.selected);
 });
-const isSuggestedKind = computed(() => ['deadlink', 'duplicate', 'pending_review'].includes(tab.value));
 const impactSummary = computed(() => `${selectedBatchCount.value} 项将执行。${activeAction.value.impact}`);
 const batchPresets = computed(() => {
   const presets = [{ action: 'recommended', label: '按推荐' }];
@@ -470,7 +479,10 @@ async function setStatus(r: any, status: string) {
 }
 
 async function createDead(r: any) {
-  const { data } = await api.post('/api/pages', { dir: '', title: r.payload.deadTitle });
+  const { data } = await api.post('/api/pages', {
+    title: r.payload.deadTitle,
+    type: r.payload.suggestedType,
+  });
   await setStatus(r, 'resolved');
   router.push(`/page/${data.meta.id}`);
 }
@@ -484,7 +496,23 @@ async function merge(r: any, keep: 'a' | 'b') {
 }
 
 function pageTypeLabel(type: string) {
-  return ({ concept: '概念', person: '人物', project: '项目', org: '组织' } as Record<string, string>)[type] || type;
+  return ({
+    concept: '概念',
+    person: '人物',
+    project: '项目',
+    org: '组织',
+    doc: '文档',
+    note: '笔记',
+  } as Record<string, string>)[type] || '未分类';
+}
+
+function hasPageTypeRecommendation(type: string) {
+  return ['concept', 'person', 'project', 'org', 'doc', 'note'].includes(type);
+}
+
+function showSystemSuggestion(item: BatchItem) {
+  if (item.disabled || !['deadlink', 'duplicate', 'pending_review'].includes(tab.value)) return false;
+  return tab.value !== 'deadlink' || hasPageTypeRecommendation(item.payload?.suggestedType);
 }
 
 async function answerQuestion(question: any, action: 'reprocess' | 'ignore') {
@@ -535,6 +563,7 @@ async function openCandidatePreview(r: any, action: 'approve' | 'merge') {
       name: data.preview.name,
       targetTitle: data.preview.targetTitle || '',
       sourcePaths: data.preview.sourcePaths || [],
+      contextCount: data.preview.contextCount || 0,
       evidenceCount: data.preview.evidenceCount || 0,
       content: data.preview.content || '',
       submitting: false,
@@ -626,15 +655,17 @@ function previewTitle(item: BatchItem) {
 
 function previewDetail(item: BatchItem) {
   const p = item.payload;
-  if (tab.value === 'deadlink') return `来源：${p.srcTitle}`;
-  if (tab.value === 'duplicate') return `相似度 ${p.similarity}`;
+  if (tab.value === 'deadlink') return p.suggestionReason
+    ? `来源：${p.srcTitle} · ${p.suggestionReason}`
+    : `来源：${p.srcTitle} · 尚无模型类型建议`;
+  if (tab.value === 'duplicate') return p.detail || '模型判断两页描述同一知识对象';
   if (tab.value === 'contradiction') return p.detail || '可能存在矛盾';
   if (tab.value === 'single_source') return `唯一来源：${p.source}`;
   if (tab.value === 'missing_sections') return `缺少：${(p.missing || []).join('、')}`;
   if (tab.value === 'pending_review') return `${p.source || '未知来源'} · ${p.reason || ''}`;
   if (tab.value === 'ingest_questions') return `${(p.questions || []).length} 个待澄清问题`;
-  if (tab.value === 'enrich') return `被引用 ${p.refs} 次，正文 ${p.wordCount} 字`;
-  if (tab.value === 'stale') return `${p.staleDays} 天未更新或复核`;
+  if (tab.value === 'enrich') return p.detail || '模型判断页面需要补充关键信息';
+  if (tab.value === 'stale') return p.detail || '模型判断页面中的时效性事实需要复核';
   return '';
 }
 

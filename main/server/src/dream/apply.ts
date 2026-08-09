@@ -45,14 +45,11 @@ function parsePayload(value: string): Record<string, any> {
   try { return JSON.parse(value); } catch { return {}; }
 }
 
-function duplicateSuggestion(payload: Record<string, any>): 'keep_a' | 'keep_b' {
-  const a = payload.a ? readPage(payload.a.path) : null;
-  const b = payload.b ? readPage(payload.b.path) : null;
-  const aLength = a?.content.length || 0;
-  const bLength = b?.content.length || 0;
-  if (bLength > aLength) return 'keep_b';
-  if (aLength > bLength) return 'keep_a';
-  return String(payload.b?.id || '') < String(payload.a?.id || '') ? 'keep_b' : 'keep_a';
+function duplicateSuggestion(payload: Record<string, any>): 'keep_a' | 'keep_b' | 'keep_both' {
+  if (['keep_a', 'keep_b', 'keep_both'].includes(payload.recommendedAction)) {
+    return payload.recommendedAction;
+  }
+  return 'keep_both';
 }
 
 export function previewReportActions(kind: ReportActionKind) {
@@ -71,8 +68,10 @@ export function previewReportActions(kind: ReportActionKind) {
         : storedPayload;
       let suggestedAction = 'resolve';
       let options: { value: string; label: string }[] = [];
+      let hasRecommendation = true;
       if (kind === 'deadlink') {
-        suggestedAction = 'concept';
+        hasRecommendation = PAGE_TYPES.includes(payload.suggestedType);
+        suggestedAction = hasRecommendation ? payload.suggestedType : 'note';
         options = PAGE_TYPES.map((type) => ({ value: type, label: ({ concept: '概念', person: '人物', project: '项目', org: '组织', doc: '文档', note: '笔记' } as Record<string, string>)[type] }));
       } else if (kind === 'duplicate') {
         suggestedAction = duplicateSuggestion(payload);
@@ -103,7 +102,7 @@ export function previewReportActions(kind: ReportActionKind) {
       return {
         id: row.id,
         payload,
-        selected: meta.defaultSelected && !disabled,
+        selected: meta.defaultSelected && !disabled && hasRecommendation,
         disabled,
         suggestedAction,
         options,
@@ -162,7 +161,11 @@ function completeReport(id: number, status: 'resolved' | 'dismissed') {
   db.prepare(`UPDATE reports SET status = ? WHERE id = ? AND status = 'applying'`).run(status, id);
 }
 
-function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Record<string, any>): 'resolved' | 'dismissed' {
+async function applyOne(
+  kind: ReportActionKind,
+  decision: ReportDecision,
+  payload: Record<string, any>,
+): Promise<'resolved' | 'dismissed'> {
   switch (kind) {
     case 'deadlink': {
       const title = String(payload.deadTitle || '').trim();
@@ -182,7 +185,7 @@ function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Rec
       const keep = decision.action === 'keep_a' ? payload.a : payload.b;
       const other = decision.action === 'keep_a' ? payload.b : payload.a;
       if (!keep?.id || !other?.id) throw new Error('重复报告缺少页面信息');
-      mergePages(keep.id, other.id);
+      await mergePages(keep.id, other.id);
       return 'resolved';
     }
     case 'missing_sections': {
@@ -216,19 +219,24 @@ function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Rec
   }
 }
 
-export function applyReportDecisions(kind: ReportActionKind, decisions: ReportDecision[], update: ApplyProgress = () => {}): ApplyResult {
+export async function applyReportDecisions(
+  kind: ReportActionKind,
+  decisions: ReportDecision[],
+  update: ApplyProgress = () => {},
+): Promise<ApplyResult> {
   const result: ApplyResult = { completed: 0, dismissed: 0, failed: 0, errors: [] };
-  decisions.forEach((decision, index) => {
+  for (let index = 0; index < decisions.length; index++) {
+    const decision = decisions[index];
     update({ stage: ACTION_META[kind].button, progress: Math.round((index / decisions.length) * 100), detail: `${index + 1}/${decisions.length}` });
     const report = db.prepare(`SELECT payload FROM reports WHERE id = ? AND kind = ? AND status = 'applying'`).get(decision.reportId, kind) as any;
     if (!report) {
       result.failed++;
       result.errors.push(`报告 #${decision.reportId} 不再处于可处理状态`);
-      return;
+      continue;
     }
     try {
       const payload = parsePayload(report.payload);
-      const status = applyOne(kind, decision, payload);
+      const status = await applyOne(kind, decision, payload);
       completeReport(decision.reportId, status);
       if (kind === 'ingest_questions') syncIngestQuestionReport(String(payload.path || ''));
       if (status === 'dismissed') result.dismissed++;
@@ -238,7 +246,7 @@ export function applyReportDecisions(kind: ReportActionKind, decisions: ReportDe
       result.failed++;
       result.errors.push(`报告 #${decision.reportId}：${error?.message || error}`);
     }
-  });
+  }
   const detail = `成功 ${result.completed} 项，忽略 ${result.dismissed} 项${result.failed ? `，失败 ${result.failed} 项` : ''}`;
   update({ stage: '已完成', progress: 100, detail });
   // 批量处理失败记入操作日志（所有错误行全保留，不蒸馏；不再写 AIWorks/log/apply-errors.md）

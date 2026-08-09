@@ -47,6 +47,7 @@ export type KnowledgeItem = ComposedItem & {
   relations?: KnowledgeRelation[];
   candidateId?: string;
   supportingCandidateIds?: string[];
+  evidenceEligible?: boolean;
 };
 
 const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
@@ -127,6 +128,7 @@ function enforceCrossSourceGate(
       return {
         ...item,
         action: 'review' as const,
+        evidenceEligible: true,
         reason: [...new Set([
           item.reason,
           '自动新建页面至少需要两个不同原始资料来源，且每个来源至少提供一条有效事实',

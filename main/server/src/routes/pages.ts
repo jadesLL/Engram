@@ -124,7 +124,7 @@ export async function pageRoutes(app: FastifyInstance) {
   app.post('/api/pages/merge', async (req, reply) => {
     const { keepId, otherId } = req.body as { keepId?: string; otherId?: string };
     try {
-      mergePages(keepId || '', otherId || '');
+      await mergePages(keepId || '', otherId || '');
     } catch (e) {
       const status = e instanceof MergeError ? e.status : 500;
       return reply.code(status).send({ error: e instanceof Error ? e.message : String(e) });

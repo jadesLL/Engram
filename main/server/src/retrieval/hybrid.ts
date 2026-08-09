@@ -14,7 +14,7 @@ export interface SearchHit {
   evidence: string[]; // ['语义', '关键词']
   updated_at?: string;
   type?: string;
-  staleDays?: number;
+  ageDays?: number;
 }
 
 const RRF_K = 60;
@@ -134,7 +134,7 @@ export async function hybridSearch(query: string, limit = 12): Promise<SearchHit
       const snippet = a.bestChunk
         ? evidenceSnippet(a.bestChunk.content, query)
         : evidenceSnippet(readPage(page.path)?.content || '', query);
-      const staleDays = Math.floor((Date.now() - new Date(page.updated_at).getTime()) / 86400000);
+      const ageDays = Math.floor((Date.now() - new Date(page.updated_at).getTime()) / 86400000);
       hits.push({
         refType: 'page',
         refId: page.id,
@@ -146,7 +146,7 @@ export async function hybridSearch(query: string, limit = 12): Promise<SearchHit
         evidence: [...a.evidence],
         updated_at: page.updated_at,
         type: page.type,
-        staleDays,
+        ageDays,
       });
     } else {
       const file = db

@@ -1,53 +1,62 @@
+import crypto from 'node:crypto';
+import { z } from 'zod';
 import { db, now } from '../lib/db.js';
-import { chatJson, llmReady } from '../lib/llm.js';
-import { readPage, writePage } from '../lib/vault.js';
-import { summarizeText } from './writer.js';
-import { PAGE_TYPES, isValidType } from '../lib/pageTypes.js';
+import { llmReady } from '../lib/llm.js';
+import { runSemanticStage } from '../lib/semanticStage.js';
+import { readPage, readPageMeta, writePage } from '../lib/vault.js';
+import { PAGE_TYPES } from '../lib/pageTypes.js';
+
+const organizeSchema = z.object({
+  summary: z.string().min(1).max(500),
+  type: z.enum(PAGE_TYPES),
+  rationale: z.string(),
+});
+
+function hash(content: string): string {
+  return crypto.createHash('sha256').update(content).digest('hex');
+}
 
 /**
- * AI 自动整理：生成摘要 + 建议类型，写回 frontmatter。
- * 不打标签（规范要求）。
- * 已有摘要且页面变化不大时跳过（简单策略：摘要非空则跳过）。
+ * 页面摘要和类型全部由模型阅读页面后决定。
+ * 代码仅用内容哈希避免对完全相同的输入重复调用。
  */
 export async function organizePage(pageId: string): Promise<void> {
   if (!llmReady()) return;
-  const page = db.prepare(`SELECT * FROM pages WHERE id = ? AND deleted = 0`).get(pageId) as any;
-  if (!page) return;
-  if (page.path.startsWith('原始资料/')) return; // 原始资料不做二次分类
-  if (page.path.startsWith('AIWorks/')) return; // 系统区不整理
-  if (page.summary) return; // 已有摘要，避免重复消耗
-
-  const rd = readPage(page.path);
-  if (!rd || rd.content.length < 50) return;
-
-  const summary = await summarizeText(rd.content);
-
-  let type = page.type;
-  try {
-    const parsed = await chatJson<{ type: string }>(
-      [
-        {
-          role: 'system',
-          content: `你是知识库整理助手。根据页面内容判断页面类型，输出 JSON：{"type": "类型"}。
-类型必须是：${PAGE_TYPES.join(' | ')} 之一。
-concept=概念解释 person=人物 project=项目 org=组织 doc=正式文档 note=普通笔记。
-只输出 JSON。`,
-        },
-        { role: 'user', content: `标题：${page.title}\n\n${rd.content.slice(0, 2500)}` },
-      ],
-      { temperature: 0.1, maxTokens: 100, retries: 0, tag: 'organize-type' }
-    );
-    if (isValidType(parsed.type)) type = parsed.type;
-  } catch (e: any) {
-    console.warn(`[organize] ${page.title} 类型判定失败: ${e.message}`);
-    /* 类型失败不阻塞摘要 */
-  }
-
-  writePage(page.path, rd.content, { summary, type });
-  db.prepare(`UPDATE pages SET summary = ?, type = ?, updated_at = ? WHERE id = ?`).run(
-    summary,
-    type,
+  const page = db.prepare(`SELECT * FROM pages WHERE id=? AND deleted=0`).get(pageId) as any;
+  if (!page || page.path.startsWith('原始资料/') || page.path.startsWith('AIWorks/')) return;
+  const body = readPage(page.path);
+  if (!body || !body.content.trim()) return;
+  const contentHash = hash(body.content);
+  const meta = readPageMeta(page.path);
+  if (meta.organized_content_hash === contentHash) return;
+  const decision = await runSemanticStage({
+    scope: 'page-organize',
+    refId: pageId,
+    stage: 'summary-and-type',
+    tag: 'page-organize',
+    schema: organizeSchema,
+    system: `你是知识库页面整理模型。阅读完整页面后：
+1. 生成 1-3 句中性、可检索、保留关键限定条件的摘要。
+2. 判断页面类型：${PAGE_TYPES.join(' | ')}。
+concept=概念/方法，person=人物，project=项目/产品，org=组织，doc=正式文档，note=普通笔记。
+只输出 JSON：{"summary":"","type":"concept|person|project|org|doc|note","rationale":""}。`,
+    input: {
+      title: page.title,
+      currentType: page.type,
+      content: body.content.slice(0, 15_000),
+    },
+    maxTokens: 1500,
+  });
+  writePage(page.path, body.content, {
+    summary: decision.summary,
+    type: decision.type,
+    organized_content_hash: contentHash,
+    organize_rationale: decision.rationale,
+  });
+  db.prepare(`UPDATE pages SET summary=?,type=?,updated_at=? WHERE id=?`).run(
+    decision.summary,
+    decision.type,
     now(),
-    pageId
+    pageId,
   );
 }
