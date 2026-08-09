@@ -28,15 +28,6 @@
             <Icon name="x" :size="12" />
           </button>
         </div>
-        <label class="sort-control header-sort" :title="`页面排序：${sortWikiLabel}`">
-          <Icon name="sort" :size="14" />
-          <select v-model="sortWiki" aria-label="Wiki 页面排序">
-            <option value="name-asc">名称 A→Z</option>
-            <option value="name-desc">名称 Z→A</option>
-            <option value="updated-desc">更新时间</option>
-            <option value="created-desc">创建时间</option>
-          </select>
-        </label>
       </div>
       <span v-if="ingestHint" class="ingest-hint" :title="ingestHint" aria-live="polite">✦ {{ ingestHint }}</span>
     </header>
@@ -58,11 +49,22 @@
             >
               <span class="sec-name">{{ g.label }}</span>
             </button>
-            <span class="sec-count">{{ filteredPages(g.pages).length }}</span>
+            <div class="sec-actions">
+              <label class="sort-control section-sort" :title="`${g.label}排序：${sortLabel(groupSort[g.key])}`">
+                <Icon name="sort" :size="12" />
+                <select v-model="groupSort[g.key]" :aria-label="`${g.label}排序`">
+                  <option value="name-asc">名称 A→Z</option>
+                  <option value="name-desc">名称 Z→A</option>
+                  <option value="updated-desc">更新时间</option>
+                  <option value="created-desc">创建时间</option>
+                </select>
+              </label>
+              <span class="sec-count">{{ filteredPages(g.pages).length }}</span>
+            </div>
           </div>
           <div v-show="!collapsed[g.key]" class="sec-body">
             <PageRow
-              v-for="p in sortList(filteredPages(g.pages), sortWiki)"
+              v-for="p in sortList(filteredPages(g.pages), groupSort[g.key])"
               :key="p.id"
               :page="p"
               :active="p.id === activeId"
@@ -220,11 +222,22 @@
           >
             <span class="sec-name">对话</span>
           </button>
-          <span class="sec-count">{{ visibleChatFiles.length }}</span>
+          <div class="sec-actions">
+            <label class="sort-control section-sort" :title="`对话排序：${sortChatLabel}`">
+              <Icon name="sort" :size="12" />
+              <select v-model="sortChat" aria-label="对话排序">
+                <option value="name-asc">名称 A→Z</option>
+                <option value="name-desc">名称 Z→A</option>
+                <option value="updated-desc">更新时间</option>
+                <option value="created-desc">创建时间</option>
+              </select>
+            </label>
+            <span class="sec-count">{{ visibleChatFiles.length }}</span>
+          </div>
         </div>
         <div v-show="!collapsed.chat" class="sec-body">
           <div
-            v-for="f in sortList(visibleChatFiles, sortFiles)"
+            v-for="f in sortList(visibleChatFiles, sortChat)"
             :key="f.path"
             class="page-row file-row"
             :class="{ active: isActiveFile(f), selected: selected.has('f:' + f.path) }"
@@ -368,17 +381,29 @@ const allPages = ref<any[]>([]);
 const files = ref<any[]>([]);
 const tags = ref<{ name: string; count: number }[]>([]);
 const filter = ref('');
-/** 两个可调排序（各自持久化）：Wiki 页面（概念/实体/归档）共用一种，原始资料独立一种；AI 整理日志固定时间降序 */
-const sortWiki = ref(localStorage.getItem('sortWiki') || 'name-asc');
+/** 每个分列独立排序并持久化；AI 整理日志固定按时间倒序。 */
+const legacySortWiki = localStorage.getItem('sortWiki') || 'name-asc';
+const groupSort = ref<Record<string, string>>({
+  concept: localStorage.getItem('sortConcept') || legacySortWiki,
+  entity: localStorage.getItem('sortEntity') || legacySortWiki,
+  archived: localStorage.getItem('sortArchived') || legacySortWiki,
+});
 const sortFiles = ref(localStorage.getItem('sortFiles') || 'name-asc');
+const sortChat = ref(localStorage.getItem('sortChat') || sortFiles.value);
 const SORT_LABELS: Record<string, string> = {
   'name-asc': '名称 A→Z',
   'name-desc': '名称 Z→A',
   'updated-desc': '更新时间',
   'created-desc': '创建时间',
 };
-const sortWikiLabel = computed(() => SORT_LABELS[sortWiki.value] || '名称 A→Z');
+localStorage.removeItem('sortWiki');
+
+function sortLabel(mode: string) {
+  return SORT_LABELS[mode] || '名称 A→Z';
+}
+
 const sortFilesLabel = computed(() => SORT_LABELS[sortFiles.value] || '名称 A→Z');
+const sortChatLabel = computed(() => SORT_LABELS[sortChat.value] || '名称 A→Z');
 const uploadInput = ref<HTMLInputElement>();
 const defaultCollapsed: Record<string, boolean> = {
   concept: true,
@@ -551,10 +576,19 @@ function sortList(list: any[], mode: string): any[] {
   }
 }
 
-watch([sortWiki, sortFiles], () => {
-  localStorage.setItem('sortWiki', sortWiki.value);
+watch([sortFiles, sortChat], () => {
   localStorage.setItem('sortFiles', sortFiles.value);
+  localStorage.setItem('sortChat', sortChat.value);
 });
+watch(
+  groupSort,
+  (value) => {
+    localStorage.setItem('sortConcept', value.concept);
+    localStorage.setItem('sortEntity', value.entity);
+    localStorage.setItem('sortArchived', value.archived);
+  },
+  { deep: true }
+);
 watch(
   collapsed,
   (value) => localStorage.setItem('sidebarCollapsed', JSON.stringify(value)),
@@ -869,25 +903,6 @@ onUnmounted(() => {
   outline: none;
 }
 
-.sort-control.header-sort {
-  position: relative;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  justify-content: center;
-  margin-left: 0;
-  padding: 0;
-  border-radius: 7px;
-}
-
-.sort-control.header-sort select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-}
-
 .sort-control.section-sort {
   position: relative;
   width: 23px;
@@ -900,12 +915,17 @@ onUnmounted(() => {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  opacity: 0.62;
+  opacity: 0;
+  pointer-events: none;
+  transition: color 150ms ease, background 150ms ease, opacity 150ms ease;
 }
 
+.sec-row:hover .sort-control.section-sort,
+.sec-row:focus-within .sort-control.section-sort,
 .sort-control.section-sort:hover,
 .sort-control.section-sort:focus-within {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .sort-control.section-sort select {
@@ -1345,6 +1365,11 @@ onUnmounted(() => {
 
   .add-btn {
     opacity: 0.82;
+  }
+
+  .sort-control.section-sort {
+    opacity: 0.72;
+    pointer-events: auto;
   }
 }
 
