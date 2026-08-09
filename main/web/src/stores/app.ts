@@ -2,14 +2,15 @@ import { defineStore } from 'pinia';
 import { api } from '../api';
 
 type Theme = 'light' | 'dark' | 'system';
-type SidebarStyle = 'a' | 'b' | 'c';
+
+// 旧版 A/B/C 侧栏方案已收敛为统一样式，清理遗留偏好。
+localStorage.removeItem('sidebarStyle');
 
 export const useAppStore = defineStore('app', {
   state: () => ({
     sidebarOpen: window.innerWidth > 768,
     aiDrawerOpen: false,
     theme: (localStorage.getItem('theme') as Theme) || 'light',
-    sidebarStyle: (localStorage.getItem('sidebarStyle') as SidebarStyle) || 'c',
     /** 当前编辑模式（ir/sv），切换页面时保持不重置 */
     editorMode: (localStorage.getItem('editorMode') as 'ir' | 'sv') || 'ir',
     /** 是否处于 HTML 预览模式，切换页面时保持 */
@@ -39,10 +40,6 @@ export const useAppStore = defineStore('app', {
     setTheme(t: Theme) {
       this.theme = t;
       this.applyTheme();
-    },
-    setSidebarStyle(s: SidebarStyle) {
-      this.sidebarStyle = s;
-      localStorage.setItem('sidebarStyle', s);
     },
     setEditorMode(mode: 'ir' | 'sv') {
       this.editorMode = mode;
