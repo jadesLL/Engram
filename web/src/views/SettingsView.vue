@@ -2273,6 +2273,7 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 }
 
 .provider-row.active {
+  border-radius: 7px;
   background: color-mix(in srgb, var(--accent) 3%, transparent);
 }
 
