@@ -8,25 +8,23 @@
         </button>
       </div>
 
-      <div class="search-field">
-        <Icon name="search" :size="14" class="search-icon" />
-        <input v-model="filter" aria-label="搜索侧边栏" placeholder="搜索页面与资料" />
-        <button
-          v-if="filter"
-          class="search-clear"
-          type="button"
-          title="清除搜索"
-          aria-label="清除搜索"
-          @click="filter = ''"
-        >
-          <Icon name="x" :size="12" />
-        </button>
-      </div>
-
-      <div class="side-toolbar">
-        <span v-if="ingestHint" class="ingest-hint" :title="ingestHint" aria-live="polite">✦ {{ ingestHint }}</span>
-        <label class="sort-control" title="Wiki 页面排序">
-          <Icon name="sort" :size="12" />
+      <div class="search-toolbar">
+        <div class="search-field">
+          <Icon name="search" :size="14" class="search-icon" />
+          <input v-model="filter" aria-label="搜索侧边栏" placeholder="搜索页面与资料" />
+          <button
+            v-if="filter"
+            class="search-clear"
+            type="button"
+            title="清除搜索"
+            aria-label="清除搜索"
+            @click="filter = ''"
+          >
+            <Icon name="x" :size="12" />
+          </button>
+        </div>
+        <label class="sort-control header-sort" :title="`页面排序：${sortWikiLabel}`">
+          <Icon name="sort" :size="14" />
           <select v-model="sortWiki" aria-label="Wiki 页面排序">
             <option value="name-asc">名称 A→Z</option>
             <option value="name-desc">名称 Z→A</option>
@@ -35,6 +33,7 @@
           </select>
         </label>
       </div>
+      <span v-if="ingestHint" class="ingest-hint" :title="ingestHint" aria-live="polite">✦ {{ ingestHint }}</span>
     </header>
 
     <div class="side-scroll">
@@ -53,7 +52,6 @@
               class="caret"
               :class="{ expanded: !collapsed[g.key] }"
             />
-            <Icon :name="g.icon" :size="14" class="section-icon" :style="{ color: g.color }" />
             <span class="sec-name">{{ g.label }}</span>
           </button>
           <span class="sec-count">{{ filteredPages(g.pages).length }}</span>
@@ -85,7 +83,6 @@
         <div class="sec-row">
           <button class="sec-toggle" type="button" :aria-expanded="!collapsed.files" @click="toggle('files')">
             <Icon name="chevron-right" :size="13" class="caret" :class="{ expanded: !collapsed.files }" />
-            <Icon name="folder" :size="14" class="section-icon files-icon" />
             <span class="sec-name">原始资料</span>
           </button>
           <div class="sec-actions">
@@ -197,7 +194,6 @@
         <div class="sec-row">
           <button class="sec-toggle" type="button" :aria-expanded="!collapsed.chat" @click="toggle('chat')">
             <Icon name="chevron-right" :size="13" class="caret" :class="{ expanded: !collapsed.chat }" />
-            <Icon name="message" :size="14" class="section-icon chat-icon" />
             <span class="sec-name">对话</span>
           </button>
           <span class="sec-count">{{ visibleChatFiles.length }}</span>
@@ -270,7 +266,6 @@
         <div class="sec-row">
           <button class="sec-toggle" type="button" :aria-expanded="!collapsed.ailog" @click="toggle('ailog')">
             <Icon name="chevron-right" :size="13" class="caret" :class="{ expanded: !collapsed.ailog }" />
-            <Icon name="activity" :size="14" class="section-icon log-icon" />
             <span class="sec-name">AI 整理日志</span>
           </button>
           <span class="sec-count">{{ visibleAiLogs.length }}</span>
@@ -339,6 +334,13 @@ const filter = ref('');
 /** 两个可调排序（各自持久化）：Wiki 页面（概念/实体/归档）共用一种，原始资料独立一种；AI 整理日志固定时间降序 */
 const sortWiki = ref(localStorage.getItem('sortWiki') || 'name-asc');
 const sortFiles = ref(localStorage.getItem('sortFiles') || 'name-asc');
+const SORT_LABELS: Record<string, string> = {
+  'name-asc': '名称 A→Z',
+  'name-desc': '名称 Z→A',
+  'updated-desc': '更新时间',
+  'created-desc': '创建时间',
+};
+const sortWikiLabel = computed(() => SORT_LABELS[sortWiki.value] || '名称 A→Z');
 const uploadInput = ref<HTMLInputElement>();
 const defaultCollapsed: Record<string, boolean> = {
   concept: true,
@@ -424,9 +426,9 @@ const activeId = computed(() => (route.params.id as string) || '');
 const fileQuery = computed(() => (route.query.file as string) || '');
 
 const GROUPS = [
-  { key: 'concept', label: '概念', icon: 'lightbulb', color: '#30a46c' },
-  { key: 'entity', label: '实体', icon: 'users', color: '#d97706' },
-  { key: 'archived', label: '归档', icon: 'archive', color: '#8e8e93' },
+  { key: 'concept', label: '概念' },
+  { key: 'entity', label: '实体' },
+  { key: 'archived', label: '归档' },
 ];
 
 function groupOf(p: any): string {
@@ -686,8 +688,16 @@ onUnmounted(() => {
   background: var(--sidebar-hover);
 }
 
+.search-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .search-field {
   position: relative;
+  flex: 1;
+  min-width: 0;
   height: 30px;
   display: flex;
   align-items: center;
@@ -748,18 +758,11 @@ onUnmounted(() => {
   background: var(--sidebar-hover);
 }
 
-.side-toolbar {
-  min-height: 25px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-
 .ingest-hint {
-  flex: 1;
-  min-width: 0;
+  display: block;
   overflow: hidden;
+  margin-top: 6px;
+  padding: 0 4px;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--sidebar-accent);
@@ -801,6 +804,25 @@ onUnmounted(() => {
   font-size: 11px;
   cursor: pointer;
   outline: none;
+}
+
+.sort-control.header-sort {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  justify-content: center;
+  margin-left: 0;
+  padding: 0;
+  border-radius: 7px;
+}
+
+.sort-control.header-sort select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
 }
 
 .sort-control.compact {
@@ -851,7 +873,7 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   padding: 0;
   border-radius: 6px;
   color: var(--text-secondary);
@@ -879,22 +901,13 @@ onUnmounted(() => {
   transform: rotate(90deg);
 }
 
-.section-icon {
-  width: 14px;
-  flex-shrink: 0;
-}
-
-.files-icon { color: var(--sidebar-accent); }
-.chat-icon { color: #3298c8; }
-.log-icon { color: #d14b68; }
-
 .sec-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 650;
   letter-spacing: 0;
 }
 
