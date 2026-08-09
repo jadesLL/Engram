@@ -111,13 +111,103 @@ if ! git -C "$WIKILLM_REPO_ROOT" merge-base --is-ancestor "$WIKILLM_BRANCH" main
   exampleproject_die "合并后分支仍不是 main 的祖先，拒绝继续"
 fi
 
+cleanup_local_verification() {
+  local verify_dir="$1"
+  local verify_dir_windows=""
+  local failed=0
+
+  if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
+    verify_dir_windows="$(cygpath -w "$verify_dir")"
+    if ! WIKILLM_VERIFY_TEMP="$verify_dir_windows" powershell.exe -NoProfile -Command \
+      '$target=$env:WIKILLM_VERIFY_TEMP; $root=Join-Path $env:LOCALAPPDATA "pnpm\store\v11\projects"; if (Test-Path -LiteralPath $root) { Get-ChildItem -Force -LiteralPath $root | Where-Object { ($_.Target -join "") -eq $target } | Remove-Item -Force }' \
+      >/dev/null
+    then
+      failed=1
+    fi
+  fi
+
+  case "$verify_dir" in
+    /tmp/exampleproject-verify.*)
+      rm -rf -- "$verify_dir" || failed=1
+      ;;
+    *)
+      printf '!! 拒绝删除意外验证路径: %s\n' "$verify_dir" >&2
+      failed=1
+      ;;
+  esac
+  return "$failed"
+}
+
+run_main_checks_in_local_temp() {
+  command -v pnpm >/dev/null 2>&1 || exampleproject_die "未找到 pnpm，无法执行离线验证"
+  command -v cygpath >/dev/null 2>&1 || exampleproject_die "未找到 cygpath，无法建立本地验证环境"
+
+  local verify_dir local_app_data native_cache native_source=""
+  local check_status=0 cleanup_status=0
+  local -a native_candidates=()
+  local -a native_targets=()
+  verify_dir="$(mktemp -d -t exampleproject-verify.XXXXXX)"
+  local_app_data="$(cygpath -u "${LOCALAPPDATA:?LOCALAPPDATA 未设置}")"
+  native_cache="$local_app_data/ExampleProject/verification-native"
+
+  shopt -s nullglob
+  native_candidates=(
+    "$native_cache"/better-sqlite3@*/better_sqlite3.node
+    "$WIKILLM_MAIN_DIR"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+    "$(cygpath -u "${TEMP:-${TMP:-/tmp}}")"/ExampleProject-*/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+  )
+  if [ "${#native_candidates[@]}" -gt 0 ]; then
+    native_source="${native_candidates[0]}"
+  fi
+
+  exampleproject_log ">> UNC 环境使用本机临时目录离线检查"
+  set +e
+  (
+    set -euo pipefail
+    [ -n "$native_source" ] || {
+      printf '!! 缺少本地 better_sqlite3.node，无法离线运行服务端测试\n' >&2
+      exit 1
+    }
+    git -C "$WIKILLM_REPO_ROOT" archive --format=tar HEAD \
+      main/package.json \
+      main/pnpm-workspace.yaml \
+      main/pnpm-lock.yaml \
+      main/server \
+      main/web \
+      main/desktop |
+      tar -xf - -C "$verify_dir" --strip-components=1
+    cd "$verify_dir"
+    pnpm install --offline --frozen-lockfile --ignore-scripts
+    native_targets=(
+      "$verify_dir"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3
+    )
+    [ "${#native_targets[@]}" -eq 1 ]
+    mkdir -p "${native_targets[0]}/build/Release"
+    cp "$native_source" "${native_targets[0]}/build/Release/better_sqlite3.node"
+    pnpm test
+    pnpm typecheck
+    pnpm build
+  )
+  check_status=$?
+  set -e
+
+  cleanup_local_verification "$verify_dir" || cleanup_status=$?
+  [ "$check_status" -eq 0 ] || exampleproject_die "本地离线 test/typecheck/build 未通过"
+  [ "$cleanup_status" -eq 0 ] || exampleproject_die "验证通过，但本地临时验证环境清理失败"
+}
+
 exampleproject_log ">> 在 main 运行合并后检查"
-(
-  cd "$WIKILLM_MAIN_DIR"
-  pnpm test
-  pnpm typecheck
-  pnpm build
-)
+case "$WIKILLM_MAIN_DIR" in
+  //*) run_main_checks_in_local_temp ;;
+  *)
+    (
+      cd "$WIKILLM_MAIN_DIR"
+      pnpm test
+      pnpm typecheck
+      pnpm build
+    )
+    ;;
+esac
 
 deploy_main() {
   exampleproject_require_docker

@@ -163,7 +163,7 @@ bash main/scripts/merge-feature.sh example-feature
 bash main/scripts/merge-feature.sh --deploy example-feature
 ```
 
-Windows PowerShell 同样使用 `C:\Program Files\Git\bin\bash.exe`。脚本通过 Git 锁保证串行，合并后在 `main` 运行 `test`、`typecheck` 和 `build`；任一检查失败都会保留功能环境并以非零状态退出。
+Windows PowerShell 同样使用 `C:\Program Files\Git\bin\bash.exe`。脚本通过 Git 锁保证串行，合并后在 `main` 运行 `test`、`typecheck` 和 `build`；任一检查失败都会保留功能环境并以非零状态退出。UNC 工作区会把当前提交导出到本机临时目录，通过 pnpm `--offline` 使用已有本地 store 建立验证环境；验证完成后同时删除临时目录和 pnpm 项目索引。离线缓存或本地原生模块不完整时直接失败，不得自行下载依赖。
 
 合并冲突时不要盲选一侧。理解双方改动并提交后运行：
 
