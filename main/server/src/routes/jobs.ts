@@ -16,6 +16,8 @@ const KIND_LABELS: Record<string, string> = {
   ingest_finalize: '整理派生校验',
   ingest_recover: '整理提交恢复',
   dream_apply: '分类批量处理',
+  dream: 'Dream Cycle',
+  rebuild: '重建全部索引',
 };
 
 function safeJson(value: unknown, fallback: any = null) {

@@ -14,12 +14,13 @@ let setSetting: (key: string, value: string) => void;
 let buildEmbeddingRequestBody: typeof import('./llm.js').buildEmbeddingRequestBody;
 let embed: typeof import('./llm.js').embed;
 let testModel: typeof import('./llm.js').testModel;
+let getActiveChat: typeof import('./llm.js').getActiveChat;
 
 type ModelEntry = import('./llm.js').ModelEntry;
 
 before(async () => {
   ({ db, migrate, setSetting } = await import('./db.js'));
-  ({ buildEmbeddingRequestBody, embed, testModel } = await import('./llm.js'));
+  ({ buildEmbeddingRequestBody, embed, testModel, getActiveChat } = await import('./llm.js'));
   migrate();
 });
 
@@ -80,6 +81,12 @@ test('embedding request body only adds dimensions when the entry explicitly supp
     buildEmbeddingRequestBody({ model: 'model-a', supportsDimensions: true }, ['a']),
     { model: 'model-a', input: ['a'] }
   );
+});
+
+test('invalid non-array chat model settings safely fall back to no active model', () => {
+  setSetting('chat_models', JSON.stringify({ id: 'not-a-list' }));
+  setSetting('active_chat_model', 'not-a-list');
+  assert.equal(getActiveChat(), null);
 });
 
 test('embed sends configured dimensions and accepts correctly sized vectors', async () => {

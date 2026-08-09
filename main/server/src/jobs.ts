@@ -1,5 +1,5 @@
 import { db, now } from './lib/db.js';
-import { indexPage, indexFileText } from './pipeline/indexer.js';
+import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { extractEntities } from './graph/entities.js';
 import { organizePage } from './ai/organize.js';
 import { ingestRawFile } from './pipeline/ingest.js';
@@ -9,6 +9,7 @@ import { applyReportDecisions, releaseReports, type ReportActionKind, type Repor
 import { enqueue, enqueuePagePipeline } from './jobQueue.js';
 import { finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
 import { recoverKnowledgeCommit } from './pipeline/knowledgeCommit.js';
+import { runDreamCycle } from './dream/tasks.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -78,6 +79,18 @@ const handlers: Record<string, JobHandler> = {
       releaseReports(decisions as ReportDecision[]);
       throw error;
     }
+  },
+  dream: async (_payload, update) => {
+    update({ stage: '运行 Dream Cycle', progress: 10, detail: '扫描知识库问题' });
+    const result = await runDreamCycle();
+    update({ stage: 'Dream Cycle 已完成', progress: 100, detail: JSON.stringify(result) });
+  },
+  rebuild: async (_payload, update) => {
+    let progress = 10;
+    await rebuildAll((message) => {
+      progress = Math.min(95, progress + 5);
+      update({ stage: '重建索引', progress, detail: message });
+    });
   },
 };
 

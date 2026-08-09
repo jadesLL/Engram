@@ -22,6 +22,7 @@ import { rawRoutes } from './routes/raw.js';
 import { eventRoutes } from './routes/events.js';
 import { trashRoutes } from './routes/trash.js';
 import { officeRoutes } from './routes/office.js';
+import { assistantRoutes } from './routes/assistant.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { mcpRoutes } from './mcp/server.js';
 import { scanVault, readPage, writePage } from './lib/vault.js';
@@ -66,6 +67,7 @@ async function main() {
   await app.register(officeRoutes);
   await app.register(searchRoutes);
   await app.register(aiRoutes);
+  await app.register(assistantRoutes);
   await app.register(graphRoutes);
   await app.register(dreamRoutes);
   await app.register(settingsRoutes);

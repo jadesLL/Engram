@@ -239,6 +239,71 @@ export function migrate() {
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_office_versions_path ON office_versions(path, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS assistant_sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_assistant_sessions_updated
+    ON assistant_sessions(archived, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS assistant_messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    run_id TEXT,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES assistant_sessions(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_assistant_messages_session
+    ON assistant_messages(session_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_assistant_messages_run
+    ON assistant_messages(run_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS assistant_runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    user_message_id TEXT NOT NULL,
+    assistant_message_id TEXT,
+    status TEXT NOT NULL,
+    context TEXT NOT NULL DEFAULT '{}',
+    step_count INTEGER NOT NULL DEFAULT 0,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    ingested_path TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY(session_id) REFERENCES assistant_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_message_id) REFERENCES assistant_messages(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_assistant_runs_session
+    ON assistant_runs(session_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_assistant_runs_status
+    ON assistant_runs(status, updated_at);
+
+  CREATE TABLE IF NOT EXISTS assistant_tool_calls (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    arguments TEXT NOT NULL DEFAULT '{}',
+    risk TEXT NOT NULL,
+    status TEXT NOT NULL,
+    preview TEXT NOT NULL DEFAULT '{}',
+    result TEXT NOT NULL DEFAULT '{}',
+    undo TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(run_id) REFERENCES assistant_runs(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_assistant_tool_calls_run
+    ON assistant_tool_calls(run_id, created_at);
   `);
 
   ensureColumn('ingest_log', 'content_hash', 'TEXT');
@@ -257,6 +322,13 @@ export function migrate() {
   dedupeReportIdentity();
   db.exec(`CREATE INDEX IF NOT EXISTS idx_reports_issue ON reports(kind, issue_key)`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_fingerprint ON reports(kind, issue_key, fingerprint)`);
+  db.prepare(
+    `UPDATE assistant_runs
+     SET status = 'interrupted',
+         error = COALESCE(error, '服务重启导致运行中断，可安全重试'),
+         updated_at = ?
+     WHERE status IN ('queued', 'running', 'executing')`
+  ).run(now());
   });
   migrateSchema();
 

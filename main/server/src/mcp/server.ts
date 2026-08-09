@@ -3,11 +3,17 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { db } from '../lib/db.js';
-import { hybridSearch } from '../retrieval/hybrid.js';
 import { thinkText } from '../retrieval/synthesize.js';
-import { readPage, writePage, listTree } from '../lib/vault.js';
+import { writePage } from '../lib/vault.js';
 import { saveChat } from '../lib/chat.js';
 import { enqueuePagePipeline } from '../jobs.js';
+import { executeAgentTool, getAgentTool, treeForMcp } from '../assistant/tools.js';
+
+const mcpToolContext = {
+  runId: 'mcp',
+  sessionId: 'mcp',
+  context: {},
+};
 
 /** 下发给知识内容操作 Agent 的纪律：先读操作日志、动手后追加，原始不提炼 */
 const MCP_INSTRUCTIONS = `这是 LLM Wiki 个人知识大脑。操作日志位于 Wiki/log.md（标题「操作日志」），是知识内容操作的唯一记录与索引：时间倒序（新的在上）、原始不提炼。
@@ -21,7 +27,20 @@ function makeServer(): McpServer {
     '在知识库中做混合检索（向量+关键词），返回相关片段与出处',
     { query: z.string(), limit: z.number().optional() },
     async ({ query, limit }) => {
-      const hits = await hybridSearch(query, limit ?? 8);
+      const tool = getAgentTool('search_knowledge')!;
+      const result = await executeAgentTool(
+        tool,
+        { query, limit: limit ?? 8 },
+        mcpToolContext,
+        {}
+      );
+      const hits = (result.data?.hits || []) as {
+        title: string;
+        refType: string;
+        path: string;
+        evidence: string[];
+        snippet: string;
+      }[];
       const text = hits
         .map(
           (h, i) =>
@@ -48,17 +67,19 @@ function makeServer(): McpServer {
     '按标题或页面ID读取知识库页面全文（markdown）',
     { titleOrId: z.string() },
     async ({ titleOrId }) => {
-      const page = db
-        .prepare(`SELECT path FROM pages WHERE deleted = 0 AND (id = ? OR lower(title) = lower(?))`)
-        .get(titleOrId, titleOrId) as any;
-      if (!page) return { content: [{ type: 'text', text: `页面不存在: ${titleOrId}` }] };
-      const rd = readPage(page.path);
-      if (!rd) return { content: [{ type: 'text', text: '文件读取失败' }] };
+      const tool = getAgentTool('read_page')!;
+      let result;
+      try {
+        result = await executeAgentTool(tool, { reference: titleOrId }, mcpToolContext, {});
+      } catch {
+        return { content: [{ type: 'text', text: `页面不存在: ${titleOrId}` }] };
+      }
+      const page = result.data?.page;
       return {
         content: [
           {
             type: 'text',
-            text: `# ${rd.meta.title}\n路径: ${rd.meta.path}\n类型: ${rd.meta.type}\n标签: ${(rd.meta.tags as any).join?.(', ') || ''}\n\n${rd.content}`,
+            text: `# ${page.title}\n路径: ${page.path}\n类型: ${page.type}\n标签: ${(page.tags || []).join(', ')}\n\n${result.data?.content || ''}`,
           },
         ],
       };
@@ -84,8 +105,7 @@ function makeServer(): McpServer {
   );
 
   server.tool('list_pages', '列出知识库目录树', {}, async () => {
-    const tree = JSON.stringify(listTree(), null, 1);
-    return { content: [{ type: 'text', text: tree.slice(0, 20_000) }] };
+    return { content: [{ type: 'text', text: treeForMcp() }] };
   });
 
   server.tool(
