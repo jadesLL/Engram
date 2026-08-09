@@ -1,56 +1,28 @@
-# model-test-toast-polish worktree 专属部署（与 main 容器并行隔离）
+# 通用功能 worktree 预览配置。
+# 由 scripts/new-worktree.sh 注入 WIKILLM_FEATURE、WIKILLM_PORT 和 Compose project。
 services:
   example-wiki:
-    image: example-wiki:model-test-toast-polish
-    build: .
-    container_name: example-wiki-model-test-toast-polish
-    ports: ["8081:8080"]
-    volumes: ["example-wiki-data-model-test-toast-polish:/data"]
-    env_file:
-      - .env.onlyoffice
-    environment:
-      - TZ=Asia/Shanghai
-      - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
-      - OFFICE_EDITOR_ENABLED=true
-      - OFFICE_INTERNAL_URL=http://onlyoffice
-      - OFFICE_INTERNAL_APP_URL=http://example-wiki:8080
-      - OFFICE_PUBLIC_PATH=/onlyoffice/
-      - OFFICE_INSTANCE_ID=model-test-toast-polish
-    restart: unless-stopped
-    depends_on:
-      - onlyoffice
-
-  onlyoffice:
-    image: onlyoffice/documentserver:9.4.0
-    container_name: example-wiki-model-test-toast-polish-onlyoffice
-    expose:
-      - "80"
-    env_file:
-      - .env.onlyoffice
-    environment:
-      - JWT_ENABLED=true
-      - JWT_HEADER=AuthorizationJwt
-      - JWT_IN_BODY=true
-      - ALLOW_PRIVATE_IP_ADDRESS=true
-      - ALLOW_META_IP_ADDRESS=false
-      - EXAMPLE_ENABLED=false
+    image: "example-wiki:${WIKILLM_FEATURE:?请设置 WIKILLM_FEATURE}"
+    build:
+      context: .
+      labels:
+        com.exampleproject.scope: feature
+        com.exampleproject.feature: "${WIKILLM_FEATURE}"
+    container_name: "example-wiki-${WIKILLM_FEATURE}"
+    labels:
+      com.exampleproject.scope: feature
+      com.exampleproject.feature: "${WIKILLM_FEATURE}"
+    ports:
+      - "${WIKILLM_PORT:?请设置 WIKILLM_PORT}:8080"
     volumes:
-      - onlyoffice-data:/var/www/onlyoffice/Data
-      - onlyoffice-lib:/var/lib/onlyoffice
-      - onlyoffice-logs:/var/log/onlyoffice
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost/healthcheck"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 90s
+      - worktree-data:/data
+    environment:
+      TZ: Asia/Shanghai
+      DEFAULT_PASSWORD: "${DEFAULT_PASSWORD:-CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER}"
+      OFFICE_EDITOR_ENABLED: "false"
     restart: unless-stopped
 
 volumes:
-  example-wiki-data-model-test-toast-polish: {external: true}
-  onlyoffice-data:
-    name: example-wiki-model-test-toast-polish-onlyoffice-data
-  onlyoffice-lib:
-    name: example-wiki-model-test-toast-polish-onlyoffice-lib
-  onlyoffice-logs:
-    name: example-wiki-model-test-toast-polish-onlyoffice-logs
+  worktree-data:
+    name: "example-wiki-data-${WIKILLM_FEATURE}"
+    external: true

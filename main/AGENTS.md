@@ -18,11 +18,13 @@
 ## 执行原则
 
 - 优先使用 Codex 桌面端提供的 Worktree 模式。当前任务已经位于 worktree 时，沿用当前环境。
-- 手动创建、合并和清理时，以 [`WORKTREES.md`](./WORKTREES.md) 为唯一流程来源。
-- `scripts/new-worktree.sh` 和 `scripts/merge-feature.sh` 仍包含旧目录硬编码，修复前不得执行。
+- 创建、合并和清理以 [`WORKTREES.md`](./WORKTREES.md) 为唯一流程来源，手动管理时也必须满足其中的资源归属和零残留检查。
+- 手动生命周期优先使用 `scripts/new-worktree.sh`、`scripts/merge-feature.sh` 和 `scripts/cleanup-feature.sh`；不得复制旧脚本或跳过脚本末尾的残留复验。
 - 不覆盖、回退或删除其他 Agent 的分支、worktree、容器、数据卷和未提交改动。
+- 当前任务额外创建的所有 Docker 容器、镜像、数据卷和网络都必须带 `com.exampleproject.feature=<feature>` 标签；无归属标签的临时资源视为流程违规。
 - 功能完成后必须先自行按真实使用路径验收，并截取能够证明结果的界面或终端画面。
 - 验收通过后再提交，向用户报告改动、检查结果、截图、worktree、分支和提交信息，并分别询问是否合并到 `main`、是否部署；没有用户对相应动作的明确批准，不得合并或部署，也不清理供用户检查的环境。
+- 用户批准合并后，合并只有在主分支检查通过且该功能的 worktree、分支、容器、镜像、数据卷和网络均通过零残留复验后才算完成；清理失败时不得报告“已完成”。
 - 合并必须串行。发生冲突且无法确认双方意图时，停止并询问用户。
 
 ## 作用边界

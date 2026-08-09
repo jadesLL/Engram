@@ -1,86 +1,179 @@
 #!/usr/bin/env bash
-# 把一个已完成的功能分支合并回 main、重部署 main 容器、清理该功能的临时资源。
-# 由 AI Agent 执行。
-#
-# ⚠️ 串行规则：同一时刻只能有一个 merge-feature.sh 在跑！
-#    worktree 只隔离"开发"阶段；合并阶段必须排队（多个 Agent 不能同时改 main 的 ref）。
-#    多功能并行开发 → 合并时按 A、B、C 依次串行执行本脚本。
-#
-# 前置：main 工作区必须干净（无未提交 WIP）。若 main 上有 live 开发，先提交/迁移到 feat 分支。
-# 用法：
-#   scripts/merge-feature.sh <feature>
-#   例: scripts/merge-feature.sh ai-organize-logs
+
 set -euo pipefail
 
-FEATURE="${1:?usage: merge-feature.sh <feature>   或冲突解决后: merge-feature.sh --finish <feature>}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=worktree-common.sh
+source "$SCRIPT_DIR/worktree-common.sh"
+
+usage() {
+  cat <<'EOF'
+用法:
+  merge-feature.sh [--deploy] <feature>
+  merge-feature.sh --finish [--deploy] <feature>
+
+默认流程：
+  1. 串行合并 feat/<feature> 到 main
+  2. 在 main 运行 test、typecheck 和 build
+  3. 精确清理该功能的 Docker 资源、worktree 和分支
+  4. 复验所有功能资源均无残留
+
+--deploy  在检查通过后重建并部署主环境；必须获得独立的部署批准
+--finish  合并已完成或冲突已解决后，继续检查、可选部署和清理
+EOF
+}
+
+DEPLOY=0
 FINISH=0
-if [ "$FEATURE" = "--finish" ]; then
-  FINISH=1; FEATURE="${2:?usage: merge-feature.sh --finish <feature>}"
+FEATURE=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --deploy)
+      DEPLOY=1
+      ;;
+    --finish)
+      FINISH=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      usage
+      exampleproject_die "未知参数: $1"
+      ;;
+    *)
+      [ -z "$FEATURE" ] || {
+        usage
+        exampleproject_die "只能指定一个功能名"
+      }
+      FEATURE="$1"
+      ;;
+  esac
+  shift
+done
+
+[ -n "$FEATURE" ] || {
+  usage
+  exit 2
+}
+
+exampleproject_init_feature "$FEATURE"
+exampleproject_acquire_merge_lock
+DEPLOY_FLAG=""
+if [ "$DEPLOY" -eq 1 ]; then
+  DEPLOY_FLAG=" --deploy"
 fi
-REPO="//tsclient/D/SoftwareWorkspace/Wiki知识库"
-WT="$REPO-$FEATURE"
-BRANCH="feat/$FEATURE"
-VOL="example-wiki-data-$FEATURE"
 
-cd "$REPO"
-
-echo ">> [1/5] 检查 main 工作区干净"
-if [ -n "$(git status --porcelain)" ]; then
-  echo "!! main 工作区有未提交改动，无法安全合并："
-  git status -s
-  echo "   先提交/暂存 main 的改动，再重跑本脚本。"
-  exit 1
+if [ ! -d "$WIKILLM_MAIN_DIR" ]; then
+  exampleproject_die "主应用目录不存在: $WIKILLM_MAIN_DIR"
+fi
+if [ -n "$(git -C "$WIKILLM_REPO_ROOT" status --porcelain)" ]; then
+  git -C "$WIKILLM_REPO_ROOT" status --short >&2
+  exampleproject_die "main 工作区有未提交改动，拒绝合并"
+fi
+if ! git -C "$WIKILLM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$WIKILLM_BRANCH"; then
+  exampleproject_die "功能分支不存在: $WIKILLM_BRANCH"
+fi
+if [ -e "$WIKILLM_WORKTREE" ]; then
+  FEATURE_STATUS="$(
+    git -c "safe.directory=$WIKILLM_WORKTREE" \
+      -C "$WIKILLM_WORKTREE" status --porcelain
+  )"
+  if [ -n "$FEATURE_STATUS" ]; then
+    printf '%s\n' "$FEATURE_STATUS" >&2
+    exampleproject_die "功能 worktree 有未提交改动，拒绝合并"
+  fi
 fi
 
-if [ "$FINISH" = 1 ]; then
-  echo ">> [2/5] --finish 模式：跳过合并（已在冲突解决后完成），继续重部署+清理"
+git -C "$WIKILLM_REPO_ROOT" switch main
+
+if git -C "$WIKILLM_REPO_ROOT" merge-base --is-ancestor "$WIKILLM_BRANCH" main; then
+  exampleproject_log ">> $WIKILLM_BRANCH 已在 main 中，继续检查和清理"
+elif [ "$FINISH" -eq 1 ]; then
+  exampleproject_die "--finish 要求 $WIKILLM_BRANCH 已完整并入 main"
 else
-  echo ">> [2/5] 合并 $BRANCH -> main （串行：确认没有别的 merge 在跑）"
-  git checkout main
-  if ! git merge --no-ff "$BRANCH"; then
-    echo "!! 合并冲突！请在 $REPO 解决后执行："
-    echo "     git add -A && git commit      # 完成合并"
-    echo "     scripts/merge-feature.sh --finish $FEATURE   # 继续清理"
+  exampleproject_log ">> 合并 $WIKILLM_BRANCH -> main"
+  if ! git -C "$WIKILLM_REPO_ROOT" merge --no-ff --no-edit "$WIKILLM_BRANCH"; then
+    cat >&2 <<EOF
+!! 合并发生冲突。解决并提交后运行：
+   bash main/scripts/merge-feature.sh --finish$DEPLOY_FLAG $FEATURE
+功能 worktree 和 Docker 预览资源已保留。
+EOF
     exit 1
   fi
 fi
 
-echo ">> [3/5] 用合并后的代码重建 + 重部署 main 容器（8080, 卷 example-wiki-data）"
-bash scripts/ensure-office-env.sh "$REPO"
-if docker ps --format '{{.Names}}' | grep -qx 'example-wiki-onlyoffice'; then
-  echo "   请求 ONLYOFFICE 保存活动编辑会话"
-  docker exec example-wiki-onlyoffice documentserver-prepare4shutdown.sh || true
-  docker compose -f docker-compose.unc.yml stop onlyoffice
+if git -C "$WIKILLM_REPO_ROOT" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  exampleproject_die "main 仍处于未完成的合并状态"
 fi
-docker compose -f docker-compose.unc.yml build
-docker compose -f docker-compose.unc.yml up -d
-READY=0
-for _ in $(seq 1 90); do
-  if curl -sf -o /dev/null http://localhost:8080/ \
-    && curl -sf -o /dev/null http://localhost:8080/onlyoffice/healthcheck; then
-    READY=1
-    break
+if ! git -C "$WIKILLM_REPO_ROOT" merge-base --is-ancestor "$WIKILLM_BRANCH" main; then
+  exampleproject_die "合并后分支仍不是 main 的祖先，拒绝继续"
+fi
+
+exampleproject_log ">> 在 main 运行合并后检查"
+(
+  cd "$WIKILLM_MAIN_DIR"
+  pnpm test
+  pnpm typecheck
+  pnpm build
+)
+
+deploy_main() {
+  exampleproject_require_docker
+
+  local revision image compose_args
+  revision="$(git -C "$WIKILLM_REPO_ROOT" rev-parse --short=12 HEAD)"
+  image="example-wiki:main-$revision"
+  compose_args=(
+    --project-name main
+    -f "$WIKILLM_MAIN_DIR/docker-compose.unc.yml"
+    -f "$WIKILLM_MAIN_DIR/docker-compose.local-deploy.yml"
+  )
+
+  exampleproject_log ">> 构建主镜像 $image"
+  bash "$SCRIPT_DIR/ensure-office-env.sh" "$WIKILLM_MAIN_DIR"
+  docker build \
+    --label "org.opencontainers.image.revision=$revision" \
+    --label "org.opencontainers.image.source=local-main" \
+    --tag "$image" \
+    --tag example-wiki:local-current \
+    "$WIKILLM_MAIN_DIR"
+
+  if docker ps --format '{{.Names}}' | grep -Fx example-wiki-onlyoffice >/dev/null; then
+    docker exec example-wiki-onlyoffice documentserver-prepare4shutdown.sh >/dev/null 2>&1 || \
+      exampleproject_log "   WARN: ONLYOFFICE 未响应优雅关闭请求，继续由 Compose 重启"
+    docker compose "${compose_args[@]}" stop onlyoffice
   fi
-  sleep 2
-done
-if [ "$READY" != 1 ]; then
-  echo "!! main 容器未在 8080 响应，查 docker logs example-wiki —— 不清理功能资源，便于回退"
-  exit 1
-fi
-echo "   main 与 ONLYOFFICE 已在 8080 就绪"
 
-echo ">> [4/5] 清理该功能的临时容器 + 卷"
-if [ -f "$WT/docker-compose.worktree.yml" ]; then
-  FEATURE_OFFICE="example-wiki-$FEATURE-onlyoffice"
-  if docker ps --format '{{.Names}}' | grep -qx "$FEATURE_OFFICE"; then
-    docker exec "$FEATURE_OFFICE" documentserver-prepare4shutdown.sh || true
+  exampleproject_log ">> 部署主环境"
+  docker compose "${compose_args[@]}" up -d --no-build --remove-orphans
+
+  local ready=0
+  for _ in $(seq 1 90); do
+    if curl -fsS -o /dev/null http://localhost:8080/ &&
+      curl -fsS -o /dev/null http://localhost:8080/onlyoffice/healthcheck
+    then
+      ready=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$ready" -ne 1 ]; then
+    exampleproject_die "主环境未通过健康检查；保留功能资源用于回退"
   fi
-  docker compose -f "$WT/docker-compose.worktree.yml" down -v
+  exampleproject_log "   主环境与 ONLYOFFICE 健康检查通过"
+  exampleproject_cleanup_old_main_images
+}
+
+if [ "$DEPLOY" -eq 1 ]; then
+  deploy_main
+else
+  exampleproject_log ">> 未传入 --deploy：不改动主环境部署"
 fi
-docker volume rm "$VOL" 2>/dev/null || true
 
-echo ">> [5/5] 移除 worktree + 删分支"
-git worktree remove "$WT" 2>/dev/null || { echo "   worktree 有未提交内容，未自动删；确认无误后: git worktree remove --force \"$WT\""; }
-git branch -d "$BRANCH" 2>/dev/null || git branch -D "$BRANCH" 2>/dev/null || true
-
-echo "DONE ✔  $FEATURE 已并入 main 并重部署，功能资源已清理。"
+WIKILLM_LOCK_HELD=1 bash "$SCRIPT_DIR/cleanup-feature.sh" "$FEATURE"
+exampleproject_log "DONE: $FEATURE 已合并、检查通过，功能资源已全部清理"
+if [ "$DEPLOY" -eq 1 ]; then
+  exampleproject_log "DONE: main 已部署并清理未被引用的旧主镜像"
+fi

@@ -58,49 +58,44 @@ git worktree list --porcelain
 
 需要把成果交给主检出目录集成时，先确保改动已提交，并通过 Codex 的 Handoff 流程或明确的功能分支传递提交。不要复制粘贴整个目录，也不要在两个 worktree 中同时编辑同一份未提交内容。
 
-## 手动创建 Worktree
+## 自动 Worktree 生命周期
 
-以下命令从 `ExampleProject/` 工作区根目录执行。功能名只使用小写字母、数字和中划线。
-
-```powershell
-$feature = "example-feature"
-$branch = "feat/$feature"
-$path = "worktrees/$feature"
-
-git fetch gitea main
-git worktree add $path -b $branch main
-git worktree list
-```
-
-如果目标分支已经存在，先确认它确实属于当前任务，再去掉 `-b`：
-
-```powershell
-git worktree add "worktrees/example-feature" "feat/example-feature"
-```
-
-创建后，Git 操作在对应的 `worktrees/<feature>/` 根目录完成，应用修改、安装、测试和构建在 `worktrees/<feature>/main/` 中完成。
-
-## 失效脚本
-
-以下脚本仍硬编码旧路径 `//tsclient/D/SoftwareWorkspace/Wiki知识库`，与当前目录布局不兼容：
+以下脚本会从 Git common directory 自动定位当前 `ExampleProject/` 根目录，不依赖固定盘符或旧目录名：
 
 ```text
 main/scripts/new-worktree.sh
 main/scripts/merge-feature.sh
+main/scripts/cleanup-feature.sh
 ```
 
-在脚本完成迁移并通过测试前：
+功能名只使用小写字母、数字和中划线。从 `ExampleProject/` 根目录创建带隔离预览环境的 worktree：
 
-- 不得运行这两个脚本；
-- 不得根据它们推断 worktree 路径；
-- 使用本文中的 Git 命令完成创建、合并和清理；
-- Docker 部署按任务实际需要单独执行，不再作为创建 worktree 的副作用。
+```bash
+bash main/scripts/new-worktree.sh example-feature 8081
+```
+
+Windows PowerShell 应明确调用 Git Bash，避免命中 WSL 的 `bash.exe`：
+
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" main/scripts/new-worktree.sh example-feature 8081
+```
+
+脚本会创建 `worktrees/<feature>/`、`feat/<feature>`、功能镜像、容器和数据卷，并在任一步骤失败时回滚已经创建的资源。创建后，Git 操作在对应的 `worktrees/<feature>/` 根目录完成，应用修改、安装、测试和构建在 `worktrees/<feature>/main/` 中完成。
+
+仅在脚本不可用且用户明确同意人工处理时，才手动执行：
+
+```powershell
+$feature = "example-feature"
+git worktree add "worktrees/$feature" -b "feat/$feature" main
+```
+
+手动创建 Docker 资源仍必须遵守下文的命名和标签规则。
 
 ## 运行资源隔离
 
 只有任务确实需要启动应用时，才分配容器、端口和数据卷。纯文档、只读检查和不需要运行服务的测试不创建 Docker 资源。
 
-建议命名：
+强制命名：
 
 ```text
 分支：    feat/<feature>
@@ -108,7 +103,17 @@ worktree: worktrees/<feature>
 镜像：    example-wiki:<feature>
 容器：    example-wiki-<feature>
 数据卷：  example-wiki-data-<feature>
+Compose： exampleproject-<feature>
 ```
+
+所有功能专属 Docker 容器、镜像、数据卷和网络都必须带以下标签：
+
+```text
+com.exampleproject.scope=feature
+com.exampleproject.feature=<feature>
+```
+
+功能测试临时创建的 mock、备份容器或额外数据卷也必须带同一个 `com.exampleproject.feature` 标签。自动清理会同时匹配精确标签、标准名称和 Compose project；未加标签且不使用标准名称的资源无法安全判断归属，禁止创建。
 
 `8080` 保留给主环境。功能端口必须在启动前实时检查：
 
@@ -146,44 +151,64 @@ if ($listeners -or $dockerMappings) {
 - 没有其他 Agent 正在合并；
 - 功能分支已包含需要的最新 `main` 变更，或已评估冲突。
 
-从 `ExampleProject/` 仓库根目录执行：
+从 `ExampleProject/` 仓库根目录执行。只批准合并、不批准部署时：
 
-```powershell
-$feature = "example-feature"
-$branch = "feat/$feature"
-
-git switch main
-git status --short
-git merge --no-ff $branch
+```bash
+bash main/scripts/merge-feature.sh example-feature
 ```
 
-合并冲突时不要盲选一侧。理解双方改动后解决；无法判断时停止并询问用户。
+同时批准合并和部署时：
 
-合并后运行主分支测试。只有任务本身涉及部署且用户批准部署时，才重建或重启主环境。
+```bash
+bash main/scripts/merge-feature.sh --deploy example-feature
+```
+
+Windows PowerShell 同样使用 `C:\Program Files\Git\bin\bash.exe`。脚本通过 Git 锁保证串行，合并后在 `main` 运行 `test`、`typecheck` 和 `build`；任一检查失败都会保留功能环境并以非零状态退出。
+
+合并冲突时不要盲选一侧。理解双方改动并提交后运行：
+
+```bash
+bash main/scripts/merge-feature.sh --finish example-feature
+```
+
+如果用户也批准了部署，则增加 `--deploy`。没有部署批准时不得传入该参数。
 
 ## 清理
 
-确认合并、测试和必要部署都成功后：
+用户批准合并后，清理是合并流程的必需收尾动作，不需要再次申请删除功能预览环境。只有合并、主分支检查和必要部署成功后才开始清理；前置步骤失败时保留环境用于修复或回退。
 
-```powershell
-$feature = "example-feature"
+自动清理必须删除当前功能明确拥有的全部资源：
 
-git worktree remove "worktrees/$feature"
-git branch -d "feat/$feature"
-git worktree prune
-git worktree list
+- `worktrees/<feature>/` 及其 Git worktree 注册；
+- 已合并的 `feat/<feature>` 分支；
+- `example-wiki-<feature>` 和所有带 `com.exampleproject.feature=<feature>` 的容器；
+- `example-wiki:<feature>` 和所有带该功能标签的镜像；
+- `example-wiki-data-<feature>` 和所有带该功能标签的数据卷；
+- `exampleproject-<feature>` Compose project 创建的网络；
+- 为该 worktree 加入的 Git `safe.directory` 记录。
+
+检查清理对象或单独收尾已经合并的旧任务：
+
+```bash
+bash main/scripts/cleanup-feature.sh --inspect example-feature
+bash main/scripts/cleanup-feature.sh example-feature
 ```
 
-仅清理当前功能明确拥有的 Docker 资源。删除镜像前先确认没有容器引用：
+脚本删除后会重新查询 Git 和 Docker。只要 worktree、分支、容器、镜像、数据卷或网络仍有一项残留，就必须非零退出，并将任务报告为“清理失败/尚未完成”，不得打印或汇报“已清理”。
 
-```powershell
-docker ps -a --filter "ancestor=example-wiki:<feature>" --format '{{.Names}}'
-```
+部署成功后，合并脚本还会删除未被任何容器引用的旧 `example-wiki:main-*`、`example-wiki:pre-*` 和历史提交号镜像标签，只保留当前主提交镜像。以下资源不属于功能清理范围：
 
-禁止使用会影响其他项目或用户数据的宽泛命令，例如：
+- 当前 `example-wiki` 主容器、`example-wiki-data` 主数据卷和主环境网络；
+- 当前主提交镜像；
+- 仍被其他容器引用的镜像；
+- `node`、ONLYOFFICE 等共享基础镜像和共享主环境数据。
+
+禁止使用会影响其他项目、其他 worktree 或用户数据的宽泛命令，例如：
 
 ```text
 docker system prune -a --volumes
+docker container prune
+docker volume prune
 ```
 
 ## Release 目录
