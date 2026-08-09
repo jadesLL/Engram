@@ -159,7 +159,7 @@
             >
               <Icon v-if="selected.has('f:' + f.path)" name="check" :size="11" />
             </span>
-            <Icon :name="fileIcon(f.ext)" :size="13" class="file-icon" />
+            <Icon :name="fileIcon(f.ext)" :size="14" :stroke-width="1.6" class="file-icon" />
             <span class="page-title" :title="f.name">{{ f.name }}</span>
             <span class="row-trailing file-trailing">
               <span
@@ -238,7 +238,7 @@
             >
               <Icon v-if="selected.has('f:' + f.path)" name="check" :size="11" />
             </span>
-            <Icon :name="fileIcon(f.ext)" :size="13" class="file-icon" />
+            <Icon :name="fileIcon(f.ext)" :size="14" :stroke-width="1.6" class="file-icon" />
             <span class="page-title" :title="f.name">{{ f.name }}</span>
             <span class="row-trailing file-trailing">
               <span
@@ -604,6 +604,7 @@ async function createFile() {
 }
 
 function fileIcon(ext: string): string {
+  if (['md', 'markdown'].includes(ext)) return 'markdown';
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return 'image';
   if (['docx', 'doc'].includes(ext)) return 'word';
   if (['xlsx', 'xls'].includes(ext)) return 'excel';
@@ -1076,8 +1077,11 @@ onUnmounted(() => {
 }
 
 .file-icon {
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
-  color: var(--text-faint);
+  color: var(--text-secondary);
+  opacity: 0.72;
 }
 
 .row-trailing {
