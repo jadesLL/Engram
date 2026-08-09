@@ -8,7 +8,7 @@ import type { ComposedItem } from './ingestModel.js';
 import {
   activateSourceVersion,
   affectedPagesForSource,
-  allManagedContributions,
+  allPageContributions,
   contributionKey,
   contributionsForProjection,
   enqueueDerivedFinalize,
@@ -18,6 +18,13 @@ import {
   type SourceVersion,
 } from './sourceLedger.js';
 import { renderKnowledgeProjection, type KnowledgeRelation } from './knowledgePage.js';
+import {
+  findSupportingCandidates,
+  getCandidate,
+  resolveCandidateReports,
+  setCandidateStatus,
+  upsertCandidateOccurrence,
+} from './candidateLedger.js';
 
 export interface IngestStats {
   created: number;
@@ -32,9 +39,14 @@ export interface KnowledgeCommitContext {
   sourcePath: string;
   sourceName: string;
   sourceRef: string;
+  manualApproval?: boolean;
 }
 
-export type KnowledgeItem = ComposedItem & { relations?: KnowledgeRelation[] };
+export type KnowledgeItem = ComposedItem & {
+  relations?: KnowledgeRelation[];
+  candidateId?: string;
+  supportingCandidateIds?: string[];
+};
 
 const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
 
@@ -59,9 +71,18 @@ function stripDeadLinks(content: string, known: Set<string>): string {
 }
 
 function pending(item: KnowledgeItem, context: KnowledgeCommitContext, reason: string) {
+  const candidate = item.candidateId
+    ? getCandidate(item.candidateId)
+    : upsertCandidateOccurrence({ ...item, reason }, {
+      runId: context.runId,
+      sourceVersionId: context.sourceVersion.id,
+      sourcePath: context.sourcePath,
+      sourceName: context.sourceName,
+    });
   addReports([{
     kind: 'pending_review',
     payload: {
+      candidateId: candidate?.id,
       name: item.name,
       kind: item.kind,
       source: context.sourceName,
@@ -80,9 +101,73 @@ function pending(item: KnowledgeItem, context: KnowledgeCommitContext, reason: s
   }]);
 }
 
+function parseArray<T>(value: string): T[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function enforceCrossSourceGate(
+  items: KnowledgeItem[],
+  context: KnowledgeCommitContext,
+): KnowledgeItem[] {
+  if (context.manualApproval) return items;
+  return items.map((item) => {
+    if (item.action !== 'create') return item;
+    const supporting = findSupportingCandidates(item.name, item.kind, context.sourcePath);
+    const totalFacts = item.factIds.length + supporting.reduce(
+      (sum, candidate) => sum + parseArray<string>(candidate.fact_ids).length,
+      0,
+    );
+    if (!supporting.length || totalFacts < 2) {
+      return {
+        ...item,
+        action: 'review' as const,
+        reason: [...new Set([
+          item.reason,
+          '自动新建页面至少需要两个不同原始资料来源，且每个来源至少提供一条有效事实',
+        ].filter(Boolean))].join('；'),
+      };
+    }
+    return { ...item, supportingCandidateIds: supporting.map((candidate) => candidate.id) };
+  });
+}
+
+function attachSupportingCandidates(
+  pageId: string,
+  item: KnowledgeItem,
+  known: Set<string>,
+  evidenceOnly = false,
+): void {
+  for (const candidateId of item.supportingCandidateIds || []) {
+    const candidate = getCandidate(candidateId);
+    if (!candidate?.source_version_id) continue;
+    storeContribution({
+      pageId,
+      sourceVersionId: candidate.source_version_id,
+      runId: candidate.run_id,
+      contributionKey: contributionKey(candidate.source_path, pageId),
+      factIds: parseArray(candidate.fact_ids),
+      relations: parseArray(candidate.relations),
+      content: stripDeadLinks(candidate.content, known),
+      summary: candidate.summary,
+      domain: candidate.domain,
+      confidence: candidate.confidence,
+      sourceRef: candidate.source_path,
+      managed: !evidenceOnly,
+      active: true,
+    });
+    setCandidateStatus(candidate.id, 'consumed', pageId);
+    resolveCandidateReports(candidate.id, 'resolved');
+  }
+}
+
 function pageSources(
   pagePath: string,
-  allManaged: ReturnType<typeof allManagedContributions>,
+  allManaged: ReturnType<typeof allPageContributions>,
   active: ReturnType<typeof contributionsForProjection>,
 ): string[] {
   const existing = readPageMeta(pagePath).sources;
@@ -98,7 +183,7 @@ function projectPage(pageId: string, pendingVersionId?: string): void {
   if (!page) return;
   const current = readPage(page.path);
   if (!current) return;
-  const allManaged = allManagedContributions(pageId);
+  const allManaged = allPageContributions(pageId);
   const active = contributionsForProjection(pageId, pendingVersionId);
   const projected = renderKnowledgeProjection(
     current.content,
@@ -134,11 +219,12 @@ export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeC
   pageIds: string[];
 } {
   const stats = { ...EMPTY };
-  const known = knownTitles(items);
+  const gatedItems = enforceCrossSourceGate(items, context);
+  const known = knownTitles(gatedItems);
   const find = db.prepare(`SELECT id,path,title,type FROM pages WHERE ${activeWikiTitleQuery()} AND lower(title)=lower(?)`);
   const createdPageIds: string[] = [];
 
-  for (const item of items) {
+  for (const item of gatedItems) {
     if (item.action === 'skip') {
       stats.skipped++;
       continue;
@@ -151,6 +237,7 @@ export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeC
 
     const targetName = item.action === 'merge' ? item.target : item.name;
     let page = find.get(targetName) as any;
+    const existed = Boolean(page);
     if (item.action === 'merge' && !page) {
       pending(item, context, `合并目标「${targetName}」不存在`);
       stats.pending++;
@@ -185,6 +272,19 @@ export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeC
       confidence: item.confidence,
       sourceRef: context.sourceRef,
     });
+    attachSupportingCandidates(page.id, item, known, Boolean(context.manualApproval));
+    if (item.candidateId) {
+      setCandidateStatus(item.candidateId, item.action === 'merge' || existed ? 'merged' : 'approved', page.id);
+      resolveCandidateReports(item.candidateId, 'resolved');
+    } else {
+      const candidate = upsertCandidateOccurrence(item, {
+        runId: context.runId,
+        sourceVersionId: context.sourceVersion.id,
+        sourcePath: context.sourcePath,
+        sourceName: context.sourceName,
+      }, item.action === 'merge' || existed ? 'merged' : 'approved');
+      setCandidateStatus(candidate.id, candidate.status, page.id);
+    }
   }
 
   const pageIds = affectedPagesForSource(context.sourcePath, context.sourceVersion.id);
@@ -198,7 +298,7 @@ export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeC
     }
     for (const pageId of createdPageIds) {
       const page = db.prepare(`SELECT path FROM pages WHERE id=?`).get(pageId) as { path: string } | undefined;
-      if (page && !allManagedContributions(pageId).length) {
+      if (page && !allPageContributions(pageId).length) {
         try { fs.unlinkSync(safeJoin(page.path)); } catch { /* page may not have reached disk */ }
         db.prepare(`DELETE FROM pages_fts WHERE page_id=?`).run(pageId);
         db.prepare(`DELETE FROM pages WHERE id=?`).run(pageId);

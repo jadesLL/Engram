@@ -19,7 +19,6 @@ let validateDecisions: (kind: any, decisions: any[]) => any[];
 let claimReports: (kind: any, decisions: any[]) => void;
 let applyReportDecisions: (kind: any, decisions: any[]) => any;
 let recoverApplyingReports: () => void;
-let applyReviewedCandidate: (payload: Record<string, any>, kind: any, resolution?: Record<string, string>) => any;
 
 before(async () => {
   ({ db, migrate } = await import('../lib/db.js'));
@@ -27,7 +26,6 @@ before(async () => {
   ({ addReports } = await import('./reports.js'));
   ({ previewReportActions, validateDecisions, claimReports, applyReportDecisions } = await import('./apply.js'));
   ({ recoverApplyingReports } = await import('../jobs.js'));
-  ({ applyReviewedCandidate } = await import('../pipeline/ingest.js'));
   migrate();
 });
 
@@ -49,7 +47,7 @@ test('all nine categories expose the expected default selection', () => {
   for (const kind of kinds) {
     const preview = previewReportActions(kind as any);
     assert.equal(preview.items.length, 1, kind);
-    assert.equal(preview.items[0].selected, true, kind);
+    assert.equal(preview.items[0].selected, kind !== 'pending_review', kind);
   }
 });
 
@@ -132,28 +130,18 @@ test('validation rejects cross-category actions and orphan applying reports reco
   assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(item.id).status, 'open');
 });
 
-test('ambiguous reviews are excluded from batch apply and can merge into a selected entity', () => {
+test('pending reviews are excluded from batch apply', () => {
   clear();
-  const target = createPage('Wiki/实体', '衡创');
-  writePage(target.path, '# 衡创\n\n原有内容\n\n## 时间线\n', { type: 'org' });
   const payload = {
     name: '恒创', source: '资料 A', runId: 'run-merge', factIds: ['f1'], kind: 'org',
     confidence: '高', summary: '代理商', content: '新增跟进记录。',
-    ambiguity: {
-      category: 'possible_typo', label: '疑似错别字', question: '是否为衡创？',
-      suggestions: [{ id: target.id, title: target.title, type: 'org', score: .82, reason: '仅一字之差' }],
-    },
   };
   addReports([{ kind: 'pending_review', payload }]);
   const preview = previewReportActions('pending_review').items[0];
   assert.equal(preview.disabled, true);
   assert.equal(preview.selected, false);
   assert.equal(preview.suggestedAction, 'manual');
-
-  const applied = applyReviewedCandidate(payload, 'org', { target: target.id });
-  assert.equal(applied.id, target.id);
-  assert.match(readPage(target.path).content, /新增跟进记录/);
-  assert.equal(db.prepare(`SELECT count(*) n FROM pages WHERE title='恒创' AND deleted=0`).get().n, 0);
+  assert.throws(() => validateDecisions('pending_review', [{ reportId: preview.id, action: 'concept' }]), /处理动作无效/);
 });
 
 function fixture(kind: string): any {

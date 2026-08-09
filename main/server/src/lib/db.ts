@@ -215,6 +215,37 @@ export function migrate() {
   );
   CREATE INDEX IF NOT EXISTS idx_ingest_questions_path ON ingest_questions(path, status, created_at DESC);
 
+  CREATE TABLE IF NOT EXISTS ingest_candidates (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    source_version_id TEXT,
+    source_path TEXT NOT NULL,
+    source_name TEXT NOT NULL DEFAULT '',
+    normalized_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT '',
+    confidence TEXT NOT NULL DEFAULT '中',
+    summary TEXT NOT NULL DEFAULT '',
+    fact_ids TEXT NOT NULL DEFAULT '[]',
+    relations TEXT NOT NULL DEFAULT '[]',
+    content TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    target_page_id TEXT,
+    preview_token TEXT,
+    preview_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(run_id, normalized_name, kind),
+    FOREIGN KEY(run_id) REFERENCES ingest_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY(source_version_id) REFERENCES source_versions(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ingest_candidates_identity
+    ON ingest_candidates(normalized_name, kind, status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ingest_candidates_source
+    ON ingest_candidates(source_path, source_version_id, status);
+
   CREATE TABLE IF NOT EXISTS office_edit_sessions (
     document_key TEXT PRIMARY KEY,
     path TEXT NOT NULL,

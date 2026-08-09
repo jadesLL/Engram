@@ -17,12 +17,14 @@ let markCommitStarted: any;
 let storeContribution: any;
 let commitKnowledgeItems: any;
 let recoverKnowledgeCommit: any;
+let setCandidateStatus: any;
 
 before(async () => {
   ({ db, migrate, now } = await import('../lib/db.js'));
   ({ readPage } = await import('../lib/vault.js'));
   ({ beginSourceVersion, contributionKey, markCommitStarted, storeContribution } = await import('./sourceLedger.js'));
   ({ commitKnowledgeItems, recoverKnowledgeCommit } = await import('./knowledgeCommit.js'));
+  ({ setCandidateStatus } = await import('./candidateLedger.js'));
   migrate();
 });
 
@@ -31,11 +33,11 @@ after(() => {
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
-function startRun(runId: string, sourceVersionId: string, hash: string) {
+function startRun(runId: string, sourceVersionId: string, hash: string, sourcePath = '原始资料/测试.md') {
   db.prepare(
     `INSERT INTO ingest_runs(id,path,content_hash,source_version_id,status,commit_status,derived_status,started_at)
      VALUES(?,?,?,?, 'running','pending','pending',?)`
-  ).run(runId, '原始资料/测试.md', hash, sourceVersionId, now());
+  ).run(runId, sourcePath, hash, sourceVersionId, now());
 }
 
 function item(content: string) {
@@ -63,6 +65,7 @@ test('new source version replaces the previous managed contribution and queues d
     sourcePath: '原始资料/测试.md',
     sourceName: '测试.md',
     sourceRef: '[[测试]]',
+    manualApproval: true,
   });
 
   const page = db.prepare(`SELECT id,path FROM pages WHERE title='测试项目'`).get();
@@ -79,6 +82,7 @@ test('new source version replaces the previous managed contribution and queues d
     sourcePath: '原始资料/测试.md',
     sourceName: '测试.md',
     sourceRef: '[[测试]]',
+    manualApproval: true,
   });
 
   const second = readPage(page.path).content;
@@ -111,4 +115,93 @@ test('new source version replaces the previous managed contribution and queues d
   assert.match(recovered, /中断后恢复的第三版/);
   assert.equal(db.prepare(`SELECT status FROM source_versions WHERE id=?`).get(v3.id).status, 'active');
   assert.equal(db.prepare(`SELECT commit_status FROM ingest_runs WHERE id='run-3'`).get().commit_status, 'committed');
+});
+
+test('automatic page creation requires facts from two different source paths and reuses ignored evidence', () => {
+  const firstPath = '原始资料/来源一.md';
+  const secondPath = '原始资料/来源二.md';
+  const firstVersion = beginSourceVersion(firstPath, 'cross-hash-1');
+  startRun('cross-run-1', firstVersion.id, 'cross-hash-1', firstPath);
+  const first = {
+    ...item('## 核心事实\n\n第一来源事实'),
+    name: '跨来源项目',
+    factIds: ['source-1-f1'],
+  };
+  const firstResult = commitKnowledgeItems([first], {
+    runId: 'cross-run-1',
+    sourceVersion: firstVersion,
+    sourcePath: firstPath,
+    sourceName: '来源一.md',
+    sourceRef: firstPath,
+  });
+  assert.deepEqual(firstResult.stats, { created: 0, merged: 0, skipped: 0, pending: 1 });
+  assert.equal(db.prepare(`SELECT COUNT(*) n FROM pages WHERE title='跨来源项目'`).get().n, 0);
+  const ignored = db.prepare(
+    `SELECT id FROM ingest_candidates WHERE run_id='cross-run-1' AND name='跨来源项目'`
+  ).get();
+  setCandidateStatus(ignored.id, 'ignored');
+
+  const secondVersion = beginSourceVersion(secondPath, 'cross-hash-2');
+  startRun('cross-run-2', secondVersion.id, 'cross-hash-2', secondPath);
+  const second = {
+    ...item('## 核心事实\n\n第二来源事实'),
+    name: '跨来源项目',
+    factIds: ['source-2-f1'],
+  };
+  const secondResult = commitKnowledgeItems([second], {
+    runId: 'cross-run-2',
+    sourceVersion: secondVersion,
+    sourcePath: secondPath,
+    sourceName: '来源二.md',
+    sourceRef: secondPath,
+  });
+  assert.deepEqual(secondResult.stats, { created: 1, merged: 0, skipped: 0, pending: 0 });
+  const page = db.prepare(`SELECT id,path FROM pages WHERE title='跨来源项目'`).get();
+  const content = readPage(page.path).content;
+  assert.match(content, /第一来源事实/);
+  assert.match(content, /第二来源事实/);
+  assert.equal(
+    db.prepare(`SELECT COUNT(DISTINCT sv.path) n FROM page_contributions pc JOIN source_versions sv ON sv.id=pc.source_version_id WHERE pc.page_id=? AND pc.active=1`).get(page.id).n,
+    2,
+  );
+  assert.equal(db.prepare(`SELECT status FROM ingest_candidates WHERE id=?`).get(ignored.id).status, 'consumed');
+});
+
+test('ignoring a candidate does not block reruns, but a new version of the same path is still one source', () => {
+  const sourcePath = '原始资料/重复来源.md';
+  const firstVersion = beginSourceVersion(sourcePath, 'same-path-hash-1');
+  startRun('same-path-run-1', firstVersion.id, 'same-path-hash-1', sourcePath);
+  const firstResult = commitKnowledgeItems([{
+    ...item('## 核心事实\n\n旧版本事实'),
+    name: '同路径候选',
+    factIds: ['same-f1'],
+  }], {
+    runId: 'same-path-run-1',
+    sourceVersion: firstVersion,
+    sourcePath,
+    sourceName: '重复来源.md',
+    sourceRef: sourcePath,
+  });
+  assert.equal(firstResult.stats.pending, 1);
+  const firstCandidate = db.prepare(
+    `SELECT id FROM ingest_candidates WHERE run_id='same-path-run-1'`
+  ).get();
+  setCandidateStatus(firstCandidate.id, 'ignored');
+
+  const secondVersion = beginSourceVersion(sourcePath, 'same-path-hash-2');
+  startRun('same-path-run-2', secondVersion.id, 'same-path-hash-2', sourcePath);
+  const secondResult = commitKnowledgeItems([{
+    ...item('## 核心事实\n\n同一路径的新版本事实'),
+    name: '同路径候选',
+    factIds: ['same-f2'],
+  }], {
+    runId: 'same-path-run-2',
+    sourceVersion: secondVersion,
+    sourcePath,
+    sourceName: '重复来源.md',
+    sourceRef: sourcePath,
+  });
+  assert.equal(secondResult.stats.pending, 1);
+  assert.equal(db.prepare(`SELECT COUNT(*) n FROM pages WHERE title='同路径候选'`).get().n, 0);
+  assert.equal(db.prepare(`SELECT COUNT(*) n FROM ingest_candidates WHERE normalized_name='同路径候选'`).get().n, 2);
 });

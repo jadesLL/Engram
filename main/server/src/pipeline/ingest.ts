@@ -12,7 +12,7 @@ import { hybridSearch } from '../retrieval/hybrid.js';
 import { extractWikiLinks, RELATION_WORDS } from './extractor.js';
 import { addReports } from '../dream/reports.js';
 import {
-  composedItemSchema, composeOutputSchema, composeItemOutputListSchema, criticOutputSchema, mapOutputSchema, normalizeOutputSchema,
+  composeItemOutputListSchema, criticOutputSchema, mapOutputSchema, normalizeOutputSchema,
   planOutputSchema, questionOutputSchema, verifierOutputSchema,
   type Candidate, type ComposedItem, type StructuredDocument, type PlanItem,
   type IngestRelation, type QuestionOutput, type VerifierOutput,
@@ -20,7 +20,6 @@ import {
 import { enforceWriteGate, whitelistFactIds } from './ingestGuards.js';
 import {
   guardAmbiguousEntityNames,
-  isIncompleteRoleTitle,
   type EntityRosterEntry,
 } from './entityAmbiguity.js';
 import {
@@ -33,7 +32,6 @@ import {
   failSourceVersion,
   recordQuestions,
   supplementalAnswers,
-  type SourceVersion,
 } from './sourceLedger.js';
 
 export type { IngestStats } from './knowledgeCommit.js';
@@ -179,68 +177,6 @@ function attachCandidateRelations(
   });
 }
 
-export function applyReviewedCandidate(
-  payload: Record<string, any>,
-  kind: 'concept' | 'person' | 'project' | 'org',
-  resolution: { name?: string; target?: string } = {},
-): { id: string; path: string } {
-  const reviewedName = String(resolution.name || payload.name || '').trim();
-  if (!reviewedName) throw new Error('审核后的名称不能为空');
-  if (kind === 'person' && isIncompleteRoleTitle(reviewedName)) throw new Error('人物名称仍是职务称谓，请填写完整姓名');
-  const targetInput = String(resolution.target || '').trim();
-  const targetPage = targetInput
-    ? db.prepare(
-      `SELECT title FROM pages WHERE deleted=0 AND (id=? OR lower(title)=lower(?))
-       AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`
-    ).get(targetInput, targetInput) as { title: string } | undefined
-    : undefined;
-  if (targetInput && !targetPage) throw new Error('要合并的目标实体不存在');
-  const item = composedItemSchema.parse({
-    name: reviewedName,
-    kind,
-    action: targetPage ? 'merge' : 'create',
-    target: targetPage?.title || '',
-    domain: payload.domain || '',
-    confidence: payload.confidence || '中',
-    summary: payload.summary || '',
-    factIds: Array.isArray(payload.factIds) ? payload.factIds : [],
-    relations: Array.isArray(payload.relations) ? payload.relations : [],
-    reason: payload.reason || '',
-    content: payload.content || payload.summary || '',
-  });
-  const markerRunId = payload.runId || `review-${hash(`${item.name}:${payload.source || ''}`).slice(0, 16)}`;
-  const sourcePath = String(payload.sourcePath || payload.source || '人工审核');
-  const contentHash = String(payload.contentHash || hash(`${sourcePath}:${markerRunId}`));
-  const storedVersion = payload.sourceVersionId
-    ? db.prepare(`SELECT id,path,content_hash,previous_id,status FROM source_versions WHERE id=?`)
-      .get(payload.sourceVersionId) as SourceVersion | undefined
-    : undefined;
-  const sourceVersion = storedVersion || beginSourceVersion(sourcePath, contentHash);
-  const run = db.prepare(`SELECT id FROM ingest_runs WHERE id=?`).get(markerRunId);
-  if (!run) {
-    db.prepare(
-      `INSERT INTO ingest_runs(id,path,content_hash,source_version_id,status,commit_status,derived_status,started_at)
-       VALUES(?,?,?,?, 'running','pending','pending',?)`
-    ).run(markerRunId, sourcePath, contentHash, sourceVersion.id, now());
-  } else {
-    db.prepare(`UPDATE ingest_runs SET source_version_id=? WHERE id=?`).run(sourceVersion.id, markerRunId);
-  }
-  commitKnowledgeItems([item], {
-    runId: markerRunId,
-    sourceVersion,
-    sourcePath,
-    sourceName: String(payload.source || sourcePath),
-    sourceRef: String(payload.source || sourcePath),
-  });
-  const targetName = item.action === 'merge' ? item.target : item.name;
-  const page = db.prepare(
-    `SELECT id,path FROM pages WHERE deleted=0 AND lower(title)=lower(?)
-     AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`
-  ).get(targetName) as { id: string; path: string } | undefined;
-  if (!page) throw new Error('审核后的知识页面未生成');
-  return page;
-}
-
 export async function ingestRawFile(
   relPath: string,
   onProgress: IngestProgressCallback = () => {},
@@ -334,13 +270,6 @@ export async function ingestRawFile(
     const secondCritique = await jsonStage<{ approved: boolean; issues: string[]; items: PlanItem[] }>(criticOutputSchema, criticPrompt, { plan: revised, candidates, roster: titleRoster, related, previousCritique: firstCritique }, 'ingest-critic-review');
     let reviewedPlan = whitelistFactIds(secondCritique.items, allowedFactIds).items;
     if (!secondCritique.approved) reviewedPlan = reviewedPlan.map((item) => item.action === 'skip' ? item : { ...item, action: 'review' as const, reason: [item.reason, ...secondCritique.issues].filter(Boolean).join('；') });
-    // 硬性守卫：单事实 create 项信息量不足以独立成页，降级为 review（不依赖 LLM 自觉）
-    reviewedPlan = reviewedPlan.map((item) => {
-      if (item.action === 'create' && item.factIds.length <= 1) {
-        return { ...item, action: 'review' as const, reason: [item.reason, '仅单条事实支撑，信息量不足以独立成页'].filter(Boolean).join('；') };
-      }
-      return item;
-    });
     reviewedPlan = guardAmbiguousEntityNames(reviewedPlan, candidates, rosterEntries);
     reviewedPlan = attachCandidateRelations(reviewedPlan, candidates, rosterEntries, allowedFactIds);
     audit(runId, 'critic_review', { ...secondCritique, items: reviewedPlan }, revised);

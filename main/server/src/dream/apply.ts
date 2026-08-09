@@ -4,7 +4,6 @@ import { typeToDir } from '../config.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages } from '../lib/mergePages.js';
-import { applyReviewedCandidate } from '../pipeline/ingest.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
 import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
 
@@ -30,7 +29,7 @@ const ACTION_META: Record<ReportActionKind, { title: string; description: string
   contradiction: { title: '批量处理矛盾报告', description: '默认全选并标记为已处理，只关闭报告，不修改页面正文。', button: '批量标记已处理', defaultSelected: true },
   single_source: { title: '批量确认来源单一', description: '默认全选并标记为已知悉，不修改来源或页面正文。', button: '批量标记已知悉', defaultSelected: true },
   missing_sections: { title: '批量补全章节骨架', description: '默认全选并补充缺失的空章节，不生成或猜测正文。', button: '批量补章节', defaultSelected: true },
-  pending_review: { title: '批量审核候选', description: '默认勾选可处理项并采用系统推荐；也可批量改为不入库。', button: '批量审核入库', defaultSelected: true },
+  pending_review: { title: '逐条审核候选', description: '候选需要局部再提炼、预览并确认，不能批量直接入库。', button: '逐条审核', defaultSelected: false },
   ingest_questions: { title: '批量确认整理追问', description: '默认全选并标记为已知悉，不修改原始资料和问题内容。', button: '批量标记已知悉', defaultSelected: true },
   enrich: { title: '批量忽略待丰富提醒', description: '默认全选并忽略提醒，不自动生成页面内容。', button: '批量忽略', defaultSelected: true },
   stale: { title: '批量复核过期页面', description: '默认全选并记录复核日期，不改变正文更新时间。', button: '批量复核', defaultSelected: true },
@@ -48,10 +47,6 @@ function duplicateSuggestion(payload: Record<string, any>): 'keep_a' | 'keep_b' 
   if (bLength > aLength) return 'keep_b';
   if (aLength > bLength) return 'keep_a';
   return String(payload.b?.id || '') < String(payload.a?.id || '') ? 'keep_b' : 'keep_a';
-}
-
-function pendingSuggestion(payload: Record<string, any>): string {
-  return ['concept', 'person', 'project', 'org'].includes(payload.kind) ? payload.kind : 'concept';
 }
 
 export function previewReportActions(kind: ReportActionKind) {
@@ -77,17 +72,8 @@ export function previewReportActions(kind: ReportActionKind) {
           { value: 'keep_both', label: '保留两者' },
         ];
       } else if (kind === 'pending_review') {
-        if (payload.ambiguity) {
-          suggestedAction = 'manual';
-          options = [];
-        } else {
-          suggestedAction = pendingSuggestion(payload);
-          options = [
-            { value: 'concept', label: '收为概念' }, { value: 'person', label: '收为人物' },
-            { value: 'project', label: '收为项目' }, { value: 'org', label: '收为组织' },
-            { value: 'dismiss', label: '不入库' },
-          ];
-        }
+        suggestedAction = 'manual';
+        options = [];
       } else if (kind === 'enrich') {
         suggestedAction = 'dismiss';
       } else if (kind === 'stale') {
@@ -95,7 +81,7 @@ export function previewReportActions(kind: ReportActionKind) {
       } else if (kind === 'missing_sections') {
         suggestedAction = 'repair';
       }
-      const disabled = Boolean(kind === 'pending_review' && payload.ambiguity);
+      const disabled = kind === 'pending_review';
       return { id: row.id, payload, selected: disabled ? false : meta.defaultSelected, disabled, suggestedAction, options };
     }),
   };
@@ -108,7 +94,7 @@ function validAction(kind: ReportActionKind, action: string): boolean {
     contradiction: ['resolve'],
     single_source: ['resolve'],
     missing_sections: ['repair'],
-    pending_review: ['concept', 'person', 'project', 'org', 'dismiss'],
+    pending_review: [],
     ingest_questions: ['resolve'],
     enrich: ['dismiss'],
     stale: ['review'],
@@ -184,19 +170,7 @@ function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Rec
       return 'resolved';
     }
     case 'pending_review': {
-      if (decision.action === 'dismiss') {
-        db.prepare(`UPDATE reports SET payload = ? WHERE id = ?`).run(
-          JSON.stringify({ ...payload, review: { decision: 'dismissed', target: '', note: '', at: now() } }),
-          decision.reportId
-        );
-        return 'dismissed';
-      }
-      const applied = applyReviewedCandidate(payload, decision.action as 'concept' | 'person' | 'project' | 'org');
-      db.prepare(`UPDATE reports SET payload = ? WHERE id = ?`).run(
-        JSON.stringify({ ...payload, review: { decision: 'approved', target: applied.id, note: '', at: now() } }),
-        decision.reportId
-      );
-      return 'resolved';
+      throw new Error('待审候选必须逐条生成预览后确认');
     }
     case 'stale': {
       const page = db.prepare(`SELECT id, path FROM pages WHERE id = ? AND deleted = 0`).get(payload.pageId) as any;

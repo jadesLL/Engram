@@ -4,6 +4,7 @@ import { enqueue, enqueuePagePipeline } from '../jobQueue.js';
 import { readPage, writePage } from '../lib/vault.js';
 import { isEntity } from '../lib/pageTypes.js';
 import { ensureEntityStructure } from './knowledgePage.js';
+import { backfillLegacyCandidates } from './candidateLedger.js';
 
 export interface SourceVersion {
   id: string;
@@ -26,6 +27,7 @@ export interface ContributionInput {
   confidence: string;
   sourceRef: string;
   managed?: boolean;
+  active?: boolean;
 }
 
 export interface StoredContribution {
@@ -83,7 +85,7 @@ export function storeContribution(input: ContributionInput): void {
     `INSERT INTO page_contributions(
        id,page_id,source_version_id,run_id,contribution_key,fact_ids,relations,content,
        summary,domain,confidence,source_ref,managed,active,created_at,updated_at
-     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)
+     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(page_id,source_version_id) DO UPDATE SET
        run_id=excluded.run_id, contribution_key=excluded.contribution_key,
        fact_ids=excluded.fact_ids, relations=excluded.relations, content=excluded.content,
@@ -93,7 +95,7 @@ export function storeContribution(input: ContributionInput): void {
     newId(), input.pageId, input.sourceVersionId, input.runId, input.contributionKey,
     JSON.stringify(input.factIds), JSON.stringify(input.relations || []), input.content,
     input.summary, input.domain, input.confidence, input.sourceRef,
-    input.managed === false ? 0 : 1, timestamp, timestamp
+    input.managed === false ? 0 : 1, input.active ? 1 : 0, timestamp, timestamp
   );
 }
 
@@ -117,11 +119,11 @@ export function contributionsForProjection(pageId: string, pendingVersionId?: st
   ).all(pageId, pendingVersionId, pending.path) as StoredContribution[];
 }
 
-export function allManagedContributions(pageId: string): StoredContribution[] {
+export function allPageContributions(pageId: string): StoredContribution[] {
   return db.prepare(
     `SELECT pc.*, sv.path source_path FROM page_contributions pc
      JOIN source_versions sv ON sv.id=pc.source_version_id
-     WHERE pc.page_id=? AND pc.managed=1 ORDER BY pc.created_at`
+     WHERE pc.page_id=? ORDER BY pc.created_at`
   ).all(pageId) as StoredContribution[];
 }
 
@@ -373,6 +375,10 @@ export function migrateIngestLedger(): void {
     backfillLegacyContributions();
     backfillLegacyQuestions();
     setSetting('ingest_ledger_v2_migrated', '1');
+  }
+  if (getSetting('ingest_candidate_ledger_migrated') !== '1') {
+    backfillLegacyCandidates();
+    setSetting('ingest_candidate_ledger_migrated', '1');
   }
   queueMissingDerivedPages();
 }

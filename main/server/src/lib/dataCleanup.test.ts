@@ -41,6 +41,7 @@ beforeEach(() => {
     DELETE FROM ingest_facts;
     DELETE FROM ingest_audit;
     DELETE FROM ingest_questions;
+    DELETE FROM ingest_candidates;
     DELETE FROM page_contributions;
     DELETE FROM ingest_runs;
     DELETE FROM source_versions;
@@ -140,6 +141,7 @@ test('one-click wipe removes reports, ingest history, queued jobs and nested sou
     'ingest_facts',
     'ingest_audit',
     'ingest_questions',
+    'ingest_candidates',
     'page_contributions',
     'ingest_runs',
     'source_versions',

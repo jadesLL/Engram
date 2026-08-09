@@ -17,10 +17,16 @@
         <b>{{ activeAction.button }}</b>
         <p class="muted small">{{ activeAction.description }}</p>
       </div>
-      <button class="btn primary" :disabled="resolving || running || !activeCount" @click="openBatchPreview">
+      <button
+        v-if="tab !== 'pending_review'"
+        class="btn primary"
+        :disabled="resolving || running || !activeCount"
+        @click="openBatchPreview"
+      >
         {{ resolving ? '处理中…' : activeAction.button }}
         <span v-if="activeCount">{{ activeCount }}</span>
       </button>
+      <span v-else class="muted small">共 {{ activeCount }} 项，逐条确认后提交</span>
     </div>
 
     <div class="tabs">
@@ -78,7 +84,7 @@
           <p><b>{{ r.payload.name }}</b>（来自 {{ r.payload.source }}）：{{ r.payload.reason }}</p>
           <div class="review-meta small">
             <span>置信度：<b>{{ r.payload.confidence || '中' }}</b></span>
-            <span>目标：{{ r.payload.target || r.payload.name }}</span>
+            <span>证据：{{ r.evidence?.sourceCount || 1 }} 个资料来源 / {{ r.evidence?.factCount || r.facts?.length || 0 }} 条事实</span>
           </div>
           <p v-if="r.payload.summary || r.payload.content" class="draft"><b>草稿：</b>{{ r.payload.summary || r.payload.content }}</p>
           <details v-if="r.facts?.length" class="evidence small">
@@ -97,28 +103,44 @@
               <button
                 v-for="suggestion in r.payload.ambiguity.suggestions"
                 :key="suggestion.id || suggestion.title"
-                class="btn small primary"
-                @click="mergePending(r, suggestion)"
+                class="btn small"
+                @click="selectMergeSuggestion(r, suggestion)"
               >
-                并入 {{ suggestion.title }}
+                选择 {{ suggestion.title }}
               </button>
             </div>
-            <div class="correction-row">
-              <input v-model="reviewNames[r.id]" type="text" :placeholder="r.payload.kind === 'person' ? '输入完整姓名' : '输入确认后的正确名称'" />
-              <select v-model="reviewKinds[r.id]">
-                <option value="person">人物</option>
-                <option value="org">组织</option>
-                <option value="project">项目</option>
-                <option value="concept">概念</option>
-              </select>
-              <button class="btn small" :disabled="!reviewNames[r.id]?.trim()" @click="approveCorrected(r)">按此名称入库</button>
-              <button class="btn small" @click="reviewPending(r, 'dismissed')">不入库</button>
-            </div>
           </div>
-          <div v-else class="actions">
-            <button class="btn small primary" @click="approvePending(r, 'concept')">收为概念</button>
-            <button class="btn small primary" @click="approvePending(r, r.payload.kind === 'concept' ? 'person' : (r.payload.kind || 'person'))">收为实体</button>
-            <button class="btn small" @click="reviewPending(r, 'dismissed')">不入库</button>
+          <div class="review-controls">
+            <input v-model="reviewNames[r.id]" type="text" :placeholder="r.payload.kind === 'person' ? '确认完整姓名' : '确认页面名称'" />
+            <select v-model="reviewKinds[r.id]">
+              <option value="concept">概念</option>
+              <option value="person">人物</option>
+              <option value="project">项目</option>
+              <option value="org">组织</option>
+            </select>
+            <select v-model="reviewTargets[r.id]">
+              <option value="">选择已有页面</option>
+              <option v-for="page in mergeTargets" :key="page.id" :value="page.id">
+                {{ page.title }}（{{ pageTypeLabel(page.type) }}）
+              </option>
+            </select>
+          </div>
+          <div class="actions">
+            <button
+              class="btn small primary"
+              :disabled="reviewBusy[r.id] || !reviewNames[r.id]?.trim()"
+              @click="openCandidatePreview(r, 'approve')"
+            >
+              批准
+            </button>
+            <button
+              class="btn small"
+              :disabled="reviewBusy[r.id] || !reviewTargets[r.id]"
+              @click="openCandidatePreview(r, 'merge')"
+            >
+              并入已有页面
+            </button>
+            <button class="btn small" :disabled="reviewBusy[r.id]" @click="ignoreCandidate(r)">忽略</button>
           </div>
         </template>
         <!-- 矛盾 -->
@@ -235,6 +257,42 @@
         </div>
       </div>
     </div>
+
+    <div v-if="candidatePreview.show" class="modal-mask" @click.self="closeCandidatePreview">
+      <div class="candidate-preview-modal card">
+        <div class="modal-head">
+          <div>
+            <h3>{{ candidatePreview.action === 'merge' ? `并入 ${candidatePreview.targetTitle}` : `批准 ${candidatePreview.name}` }}</h3>
+            <p class="muted small">
+              {{ candidatePreview.sourcePaths.length }} 个资料来源 · {{ candidatePreview.evidenceCount }} 条有效证据 ·
+              {{ pageTypeLabel(candidatePreview.kind) }}
+            </p>
+          </div>
+          <button class="icon-close" title="关闭" @click="closeCandidatePreview">×</button>
+        </div>
+        <div class="source-list small">
+          <span v-for="source in candidatePreview.sourcePaths" :key="source">{{ source }}</span>
+        </div>
+        <div class="diff-preview">
+          <div
+            v-for="(line, index) in candidatePreview.diff"
+            :key="index"
+            class="diff-line"
+            :class="`diff-${line.kind}`"
+          >
+            <span>{{ line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' ' }}</span>
+            <code>{{ line.text || ' ' }}</code>
+          </div>
+        </div>
+        <p v-if="candidatePreview.error" class="batch-error small">{{ candidatePreview.error }}</p>
+        <div class="modal-actions">
+          <button class="btn" :disabled="candidatePreview.submitting" @click="closeCandidatePreview">取消</button>
+          <button class="btn primary" :disabled="candidatePreview.submitting" @click="commitCandidatePreview">
+            {{ candidatePreview.submitting ? '正在提交…' : '确认写入' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -255,7 +313,10 @@ const resolving = ref(false);
 const tab = ref('deadlink');
 const reviewNames = reactive<Record<number, string>>({});
 const reviewKinds = reactive<Record<number, 'concept' | 'person' | 'project' | 'org'>>({});
+const reviewTargets = reactive<Record<number, string>>({});
+const reviewBusy = reactive<Record<number, boolean>>({});
 const questionAnswers = reactive<Record<string, string>>({});
+const wikiPages = ref<any[]>([]);
 
 const tabs = [
   { key: 'deadlink', label: '死链' },
@@ -275,7 +336,7 @@ const actionConfig: Record<string, { button: string; description: string; itemAc
   contradiction: { button: '批量标记已处理', description: '默认全选并关闭矛盾提醒，不修改正文。', itemAction: '标记已处理', impact: '只关闭报告，不修改任何页面正文。' },
   single_source: { button: '批量标记已知悉', description: '默认全选并确认已知悉来源单一。', itemAction: '标记已知悉', impact: '只关闭报告，不修改来源或页面正文。' },
   missing_sections: { button: '批量补章节', description: '默认全选并补充缺失的空章节骨架。', itemAction: '补空章节', impact: '只添加“当前理解”或“时间线”标题，不生成正文。' },
-  pending_review: { button: '批量审核入库', description: '默认勾选可处理项并采用系统推荐；模糊项仍需逐条确认。', itemAction: '审核候选', impact: '选中入库的候选将创建或更新 Wiki 页面；不入库项只关闭报告。' },
+  pending_review: { button: '逐条审核', description: '批准或并入前会重新检索、重写和验证，并展示差异预览。', itemAction: '逐条审核', impact: '待审候选不能批量直接入库。' },
   ingest_questions: { button: '批量标记已知悉', description: '默认全选并确认已查看整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
   enrich: { button: '批量忽略', description: '默认全选并忽略当前待丰富提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
   stale: { button: '批量复核', description: '默认全选并记录内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
@@ -283,6 +344,24 @@ const actionConfig: Record<string, { button: string; description: string; itemAc
 
 type BatchItem = { id: number; payload: any; selected: boolean; disabled?: boolean; suggestedAction: string; action: string; options: { value: string; label: string }[] };
 const batch = reactive({ show: false, title: '', description: '', items: [] as BatchItem[], submitting: false, error: '' });
+const candidatePreview = reactive({
+  show: false,
+  reportId: 0,
+  token: '',
+  action: 'approve' as 'approve' | 'merge',
+  kind: 'concept' as 'concept' | 'person' | 'project' | 'org',
+  name: '',
+  targetTitle: '',
+  sourcePaths: [] as string[],
+  evidenceCount: 0,
+  diff: [] as Array<{ kind: 'same' | 'add' | 'remove'; text: string }>,
+  submitting: false,
+  error: '',
+});
+const mergeTargets = computed(() => wikiPages.value.filter((page: any) =>
+  ['concept', 'person', 'project', 'org'].includes(page.type) &&
+  (page.path.startsWith('Wiki/概念/') || page.path.startsWith('Wiki/实体/'))
+));
 const activeAction = computed(() => actionConfig[tab.value]);
 const activeCount = computed(() => grouped.value[tab.value]?.length || 0);
 const selectedBatchCount = computed(() => batch.items.filter((item) => item.selected).length);
@@ -291,11 +370,10 @@ const allSelected = computed(() => {
   const selectable = batch.items.filter((item) => !item.disabled);
   return selectable.length > 0 && selectable.every((item) => item.selected);
 });
-const isSuggestedKind = computed(() => ['deadlink', 'duplicate', 'pending_review'].includes(tab.value));
+const isSuggestedKind = computed(() => ['deadlink', 'duplicate'].includes(tab.value));
 const impactSummary = computed(() => `${selectedBatchCount.value} 项将执行。${activeAction.value.impact}`);
 const batchPresets = computed(() => {
   const presets = [{ action: 'recommended', label: '按推荐' }];
-  if (tab.value === 'pending_review') presets.push({ action: 'dismiss', label: '全部不入库' });
   if (tab.value === 'deadlink') {
     presets.push(
       { action: 'concept', label: '全部概念' },
@@ -331,15 +409,21 @@ const grouped = computed(() => {
 });
 
 async function load() {
-  const [{ data }, candidates] = await Promise.all([
+  const [{ data }, candidates, pages] = await Promise.all([
     api.get('/api/dream/reports?status=open'),
     api.get('/api/ingest/candidates?status=open').catch(() => ({ data: { candidates: [] } })),
+    api.get('/api/pages/list').catch(() => ({ data: { pages: [] } })),
   ]);
+  wikiPages.value = pages.data.pages || [];
   const evidence = new Map(candidates.data.candidates.map((candidate: any) => [candidate.id, candidate]));
   reports.value = data.reports.map((report: any) => evidence.get(report.id) || report);
-  for (const report of reports.value.filter((item: any) => item.kind === 'pending_review' && item.payload.ambiguity)) {
-    reviewNames[report.id] ||= '';
+  for (const report of reports.value.filter((item: any) => item.kind === 'pending_review')) {
+    reviewNames[report.id] ||= report.payload.name || '';
     reviewKinds[report.id] ||= ['concept', 'person', 'project', 'org'].includes(report.payload.kind) ? report.payload.kind : 'person';
+    const suggestedTarget = mergeTargets.value.find((page: any) =>
+      page.id === report.payload.target || page.title === report.payload.target
+    );
+    reviewTargets[report.id] ||= suggestedTarget?.id || '';
   }
   lastRun.value = data.lastRun;
   cron.value = data.cron;
@@ -377,9 +461,8 @@ async function merge(r: any, keep: 'a' | 'b') {
   await setStatus(r, 'resolved');
 }
 
-async function reviewPending(r: any, decision: 'approved' | 'dismissed', target = '') {
-  await api.post(`/api/ingest/candidates/${r.id}/review`, { decision, target });
-  await load();
+function pageTypeLabel(type: string) {
+  return ({ concept: '概念', person: '人物', project: '项目', org: '组织' } as Record<string, string>)[type] || type;
 }
 
 async function answerQuestion(question: any, action: 'reprocess' | 'ignore') {
@@ -392,33 +475,73 @@ async function answerQuestion(question: any, action: 'reprocess' | 'ignore') {
   await load();
 }
 
-/** 待审条目：后端按人工指定类型原子落地并返回页面 id */
-async function approvePending(r: any, kind: 'concept' | 'person' | 'project' | 'org') {
-  const { data } = await api.post(`/api/ingest/candidates/${r.id}/review`, { decision: 'approved', kind });
-  await load();
-  if (data.target) router.push(`/page/${data.target}`);
+function selectMergeSuggestion(r: any, suggestion: { id?: string; title: string }) {
+  const page = mergeTargets.value.find((item: any) => item.id === suggestion.id || item.title === suggestion.title);
+  reviewTargets[r.id] = page?.id || suggestion.id || '';
 }
 
-async function mergePending(r: any, suggestion: { id?: string; title: string }) {
-  const { data } = await api.post(`/api/ingest/candidates/${r.id}/review`, {
-    decision: 'approved',
-    kind: r.payload.kind || 'person',
-    target: suggestion.id || suggestion.title,
-  });
-  await load();
-  if (data.target) router.push(`/page/${data.target}`);
+async function openCandidatePreview(r: any, action: 'approve' | 'merge') {
+  reviewBusy[r.id] = true;
+  try {
+    const { data } = await api.post(`/api/ingest/candidates/${r.id}/preview`, {
+      action,
+      kind: reviewKinds[r.id],
+      name: reviewNames[r.id]?.trim(),
+      target: action === 'merge' ? reviewTargets[r.id] : undefined,
+    });
+    Object.assign(candidatePreview, {
+      show: true,
+      reportId: r.id,
+      token: data.preview.token,
+      action: data.preview.action,
+      kind: data.preview.kind,
+      name: data.preview.name,
+      targetTitle: data.preview.targetTitle || '',
+      sourcePaths: data.preview.sourcePaths || [],
+      evidenceCount: data.preview.evidenceCount || 0,
+      diff: data.preview.diff || [],
+      submitting: false,
+      error: '',
+    });
+  } catch (error: any) {
+    alert(error?.response?.data?.error || error?.message || '无法生成审核预览');
+  } finally {
+    reviewBusy[r.id] = false;
+  }
 }
 
-async function approveCorrected(r: any) {
-  const name = reviewNames[r.id]?.trim();
-  if (!name) return;
-  const { data } = await api.post(`/api/ingest/candidates/${r.id}/review`, {
-    decision: 'approved',
-    kind: reviewKinds[r.id],
-    name,
-  });
-  await load();
-  if (data.target) router.push(`/page/${data.target}`);
+function closeCandidatePreview() {
+  if (candidatePreview.submitting) return;
+  candidatePreview.show = false;
+  candidatePreview.error = '';
+}
+
+async function commitCandidatePreview() {
+  candidatePreview.submitting = true;
+  candidatePreview.error = '';
+  try {
+    const { data } = await api.post(`/api/ingest/candidates/${candidatePreview.reportId}/commit`, {
+      token: candidatePreview.token,
+    });
+    candidatePreview.show = false;
+    await app.refreshJobs();
+    await load();
+    if (data.target) router.push(`/page/${data.target}`);
+  } catch (error: any) {
+    candidatePreview.error = error?.response?.data?.error || error?.message || '审核提交失败';
+  } finally {
+    candidatePreview.submitting = false;
+  }
+}
+
+async function ignoreCandidate(r: any) {
+  reviewBusy[r.id] = true;
+  try {
+    await api.post(`/api/ingest/candidates/${r.id}/ignore`, {});
+    await load();
+  } finally {
+    reviewBusy[r.id] = false;
+  }
 }
 
 async function openBatchPreview() {
@@ -571,9 +694,8 @@ onMounted(load);
 .ambiguity-box { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px solid var(--warning, #d97706); border-radius: 6px; background: var(--bg-secondary); }
 .ambiguity-head { display: flex; align-items: flex-start; gap: 8px; }
 .ambiguity-label { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; color: #92400e; background: #fef3c7; font-size: 12px; }
-.suggestion-list, .correction-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.correction-row input { min-width: 220px; flex: 1 1 260px; }
-.correction-row select { min-width: 90px; }
+.suggestion-list { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.review-controls { display: grid; grid-template-columns: minmax(180px, 1fr) 110px minmax(220px, 1.4fr); gap: 8px; margin: 10px 0; }
 .empty-hint { text-align: center; padding: 40px 0; }
 .modal-mask { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 15, 15, .35); }
 .batch-modal { width: min(760px, 96vw); max-height: min(820px, 92vh); display: flex; flex-direction: column; box-shadow: var(--shadow); }
@@ -597,10 +719,18 @@ onMounted(load);
 .impact-summary { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; padding: 10px 12px; background: var(--bg-secondary); border-radius: 6px; }
 .batch-error { color: var(--danger); margin: 10px 0 0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.candidate-preview-modal { width: min(820px, 96vw); max-height: min(860px, 92vh); display: flex; flex-direction: column; box-shadow: var(--shadow); }
+.source-list { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 12px 0; color: var(--text-secondary); }
+.diff-preview { min-height: 160px; overflow: auto; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.diff-line { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 6px; padding: 2px 8px; }
+.diff-line code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-add { background: color-mix(in srgb, var(--success) 12%, transparent); }
+.diff-remove { background: color-mix(in srgb, var(--danger) 10%, transparent); }
 @media (max-width: 640px) {
   .category-action { align-items: flex-start; flex-direction: column; gap: 10px; }
   .batch-toolbar { align-items: flex-start; flex-direction: column; }
   .batch-item { grid-template-columns: 22px minmax(0, 1fr); }
   .batch-item select, .batch-item .action-chip { grid-column: 2; justify-self: stretch; }
+  .review-controls { grid-template-columns: 1fr; }
 }
 </style>
