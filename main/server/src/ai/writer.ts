@@ -7,7 +7,8 @@ export type { WriterAction };
 export async function writeAssist(
   action: WriterAction,
   text: string,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   await chatStream(
     [
@@ -15,7 +16,7 @@ export async function writeAssist(
       { role: 'user', content: writerUser(action, text) },
     ],
     onDelta,
-    { temperature: writerTemp(action) }
+    { temperature: writerTemp(action), signal }
   );
 }
 

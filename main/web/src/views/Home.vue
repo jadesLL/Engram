@@ -83,7 +83,7 @@
 
     <!-- AI 抽屉 -->
     <transition name="slide">
-      <aside v-if="app.aiDrawerOpen" class="ai-drawer">
+      <aside v-show="app.aiDrawerOpen" class="ai-drawer">
         <AiDrawer />
       </aside>
     </transition>
@@ -103,9 +103,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
+import { useAssistantStore } from '../stores/assistant';
 import { api } from '../api';
 import { openPageStream } from '../lib/events';
 import Sidebar from '../components/Sidebar.vue';
@@ -116,6 +117,7 @@ import Icon from '../components/Icon.vue';
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
+const assistant = useAssistantStore();
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
 const isMobile = computed(() => window.innerWidth <= 768);
 const jobsPanelOpen = ref(false);
@@ -205,6 +207,11 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
+function onAssistantUpload() {
+  app.sidebarOpen = true;
+  nextTick(() => sidebarRef.value?.openUpload());
+}
+
 let reportTimer: ReturnType<typeof setInterval>;
 let closeStream: (() => void) | null = null;
 onMounted(() => {
@@ -213,6 +220,8 @@ onMounted(() => {
   reportTimer = setInterval(loadReportCount, 60_000);
   jobPollStopped = false;
   pollJobs();
+  assistant.init().catch(() => {});
+  window.addEventListener('assistant-open-upload', onAssistantUpload);
   // 服务端 SSE 实时推送：页面增删改/移动时刷新正文与侧栏
   closeStream = openPageStream((ev) => app.applyPageEvent(ev));
 });
@@ -221,6 +230,8 @@ onUnmounted(() => {
   clearInterval(reportTimer);
   jobPollStopped = true;
   if (jobTimer) clearTimeout(jobTimer);
+  window.removeEventListener('assistant-open-upload', onAssistantUpload);
+  assistant.closeEvents();
   closeStream?.();
   closeStream = null;
 });
@@ -303,7 +314,7 @@ onUnmounted(() => {
 .content { flex: 1; overflow-y: auto; min-width: 0; position: relative; background: var(--bg); }
 
 .ai-drawer {
-  width: 380px;
+  width: clamp(400px, 34vw, 520px);
   flex-shrink: 0;
   border-left: 1px solid var(--border);
   background: var(--bg);

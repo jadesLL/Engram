@@ -13,6 +13,8 @@ const KIND_LABELS: Record<string, string> = {
   mentions: '升级扫描',
   metagen: '索引生成',
   dream_apply: '分类批量处理',
+  dream: 'Dream Cycle',
+  rebuild: '重建全部索引',
 };
 
 function safeJson(value: unknown, fallback: any = null) {
