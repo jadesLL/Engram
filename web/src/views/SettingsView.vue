@@ -152,7 +152,7 @@
                 >
                   <div class="provider-row-head">
                     <div class="provider-identity">
-                      <div class="provider-mark">
+                      <div class="provider-mark" :class="{ 'has-logo': Boolean(card.provider.logo) }">
                         <span>{{ providerMark(card.provider.name) }}</span>
                         <img
                           v-if="card.provider.logo"
@@ -240,7 +240,10 @@
                     class="custom-model-row"
                     :class="{ active: model.id === section.activeId }"
                   >
-                    <div class="provider-mark">
+                    <div
+                      class="provider-mark"
+                      :class="{ 'has-logo': Boolean(model.logo || providerLogo(model.provider)) }"
+                    >
                       <span>{{ providerMark(providerName(model.provider)) }}</span>
                       <img
                         v-if="model.logo || providerLogo(model.provider)"
@@ -707,7 +710,11 @@ function providerLogo(id: string): string {
 }
 
 function hideProviderLogo(event: Event) {
-  (event.currentTarget as HTMLImageElement).style.display = 'none';
+  const image = event.currentTarget as HTMLImageElement;
+  const fallback = image.previousElementSibling as HTMLElement | null;
+  image.style.display = 'none';
+  if (fallback) fallback.style.visibility = 'visible';
+  image.parentElement?.classList.remove('has-logo');
 }
 
 const testingId = ref('');
@@ -2821,6 +2828,10 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   font-weight: 700;
   line-height: 1;
   overflow: hidden;
+}
+
+.provider-mark.has-logo > span {
+  visibility: hidden;
 }
 
 .active-mark {
