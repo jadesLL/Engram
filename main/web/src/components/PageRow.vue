@@ -81,7 +81,7 @@ const timeText = computed(() => {
   padding: 0 6px;
   border-radius: 7px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12.5px;
   outline: none;
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
 }

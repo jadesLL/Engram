@@ -1,5 +1,9 @@
 <template>
-  <div class="layout">
+  <div
+    class="layout"
+    :class="{ 'sidebar-open': app.sidebarOpen }"
+    :style="{ '--sidebar-width': sidebarWidth + 'px' }"
+  >
     <!-- 窄图标导航栏 -->
     <nav class="rail" aria-label="主导航">
       <button class="rail-logo" type="button" title="回到首页" aria-label="回到首页" @click="$router.push('/page')">W</button>
@@ -91,7 +95,7 @@
         :style="{ width: sidebarWidth + 'px' }"
         aria-label="知识库侧边栏"
       >
-        <Sidebar ref="sidebarRef" @close="app.sidebarOpen = false" />
+        <Sidebar ref="sidebarRef" @close="app.sidebarOpen = false" @new-page="quickNew" />
       </aside>
     </transition>
     <!-- 拖动分隔条：桌面端 232–420px，且不超过窗口宽度的 40% -->
@@ -301,6 +305,7 @@ onUnmounted(() => {
 
 <style scoped>
 .layout {
+  position: relative;
   display: flex;
   height: 100%;
   overflow: hidden;
@@ -308,18 +313,23 @@ onUnmounted(() => {
 }
 
 .rail {
-  width: 52px;
-  flex-shrink: 0;
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 8px;
+  width: 44px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 3px;
-  padding: 10px 8px;
-  border-right: 1px solid var(--sidebar-hairline);
+  padding: 8px 5px;
+  border: 1px solid var(--sidebar-glass-border);
+  border-radius: 12px;
   background: var(--sidebar-rail-material);
-  backdrop-filter: saturate(145%) blur(22px);
-  -webkit-backdrop-filter: saturate(145%) blur(22px);
-  z-index: 30;
+  box-shadow: var(--sidebar-glass-shadow);
+  backdrop-filter: saturate(150%) blur(28px);
+  -webkit-backdrop-filter: saturate(150%) blur(28px);
+  z-index: 40;
 }
 
 .rail-logo {
@@ -350,8 +360,8 @@ onUnmounted(() => {
 
 .rail-btn {
   position: relative;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -378,8 +388,8 @@ onUnmounted(() => {
 
 .rail-btn.active {
   color: var(--text);
-  background: var(--sidebar-active);
-  box-shadow: inset 0 0 0 1px var(--sidebar-hairline);
+  background: var(--sidebar-selection);
+  box-shadow: inset 0 0 0 1px var(--sidebar-selection-border);
 }
 
 .rail-btn.open {
@@ -388,7 +398,7 @@ onUnmounted(() => {
 }
 
 .rail-btn.open:hover {
-  background: var(--sidebar-selection);
+  background: var(--sidebar-hover);
 }
 
 .rail-btn .badge {
@@ -398,7 +408,7 @@ onUnmounted(() => {
   min-width: 17px;
   height: 17px;
   padding: 0 4px;
-  border: 2px solid var(--sidebar-rail-solid);
+  border: 2px solid var(--sidebar-glass-solid);
   border-radius: 8px;
   font-size: 9px;
   line-height: 13px;
@@ -415,23 +425,31 @@ onUnmounted(() => {
 }
 
 .sidebar {
-  flex-shrink: 0;
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 60px;
   min-width: 0;
   overflow: hidden;
+  border: 1px solid var(--sidebar-glass-border);
+  border-radius: 12px;
   background: var(--sidebar-material);
-  backdrop-filter: saturate(145%) blur(22px);
-  -webkit-backdrop-filter: saturate(145%) blur(22px);
-  z-index: 20;
+  box-shadow: var(--sidebar-glass-shadow);
+  backdrop-filter: saturate(150%) blur(28px);
+  -webkit-backdrop-filter: saturate(150%) blur(28px);
+  z-index: 35;
 }
 
 .resizer {
-  position: relative;
-  width: 6px;
-  flex-shrink: 0;
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  left: calc(60px + var(--sidebar-width) - 4px);
+  width: 8px;
   cursor: col-resize;
   background: transparent;
   outline: none;
-  z-index: 25;
+  z-index: 36;
 }
 
 .resizer::before {
@@ -439,15 +457,15 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 2px;
+  left: 3px;
   width: 1px;
-  background: var(--sidebar-hairline);
+  background: transparent;
   transition: width 150ms ease, left 150ms ease, background 150ms ease;
 }
 
 .resizer:hover::before,
 .resizer:focus-visible::before {
-  left: 1px;
+  left: 3px;
   width: 2px;
   background: var(--sidebar-accent);
 }
@@ -461,7 +479,13 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
+  padding-left: 64px;
   background: var(--bg);
+  transition: padding-left 180ms ease;
+}
+
+.layout.sidebar-open .content {
+  padding-left: calc(var(--sidebar-width) + 72px);
 }
 
 .ai-drawer {
@@ -490,7 +514,7 @@ onUnmounted(() => {
 
 .sidebar-slide-enter-from,
 .sidebar-slide-leave-to {
-  transform: translateX(-10px);
+  transform: translateX(-14px) scale(0.985);
   opacity: 0;
 }
 
@@ -517,12 +541,11 @@ onUnmounted(() => {
 
   .sidebar {
     position: fixed;
-    top: 0;
-    bottom: 52px;
-    left: 0;
-    width: 86vw !important;
+    top: 8px;
+    bottom: 64px;
+    left: 8px;
+    width: calc(100vw - 16px) !important;
     max-width: 320px;
-    border-right: 1px solid var(--sidebar-hairline);
     box-shadow: var(--sidebar-mobile-shadow);
     z-index: 35;
   }
@@ -533,29 +556,40 @@ onUnmounted(() => {
 
   .mask {
     position: fixed;
-    inset: 0 0 52px 0;
+    inset: 0;
     display: block;
     background: rgba(15, 15, 15, 0.26);
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
     z-index: 32;
   }
 
-  .content { padding-bottom: 52px; }
-  .ai-drawer { position: fixed; inset: 0 0 52px 0; width: 100%; border-left: none; }
+  .content {
+    padding-bottom: 64px;
+    padding-left: 0;
+  }
+
+  .layout.sidebar-open .content {
+    padding-left: 0;
+  }
+
+  .ai-drawer { position: fixed; inset: 0 0 60px 0; width: 100%; border-left: none; }
 
   .bottom-nav {
     position: fixed;
-    right: 0;
-    bottom: 0;
-    left: 0;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
     display: flex;
-    height: 52px;
+    height: 48px;
     padding-bottom: env(safe-area-inset-bottom);
-    border-top: 1px solid var(--sidebar-hairline);
+    overflow: hidden;
+    border: 1px solid var(--sidebar-glass-border);
+    border-radius: 12px;
     background: var(--sidebar-material);
-    backdrop-filter: saturate(145%) blur(18px);
-    -webkit-backdrop-filter: saturate(145%) blur(18px);
+    box-shadow: var(--sidebar-glass-shadow);
+    backdrop-filter: saturate(150%) blur(24px);
+    -webkit-backdrop-filter: saturate(150%) blur(24px);
     z-index: 40;
   }
 

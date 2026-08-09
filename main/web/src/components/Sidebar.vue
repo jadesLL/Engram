@@ -3,9 +3,14 @@
     <header class="sidebar-header">
       <div class="sidebar-titlebar">
         <h2>知识库</h2>
-        <button class="sidebar-close" type="button" title="关闭侧边栏" aria-label="关闭侧边栏" @click="emit('close')">
-          <Icon name="x" :size="16" />
-        </button>
+        <div class="sidebar-title-actions">
+          <button class="sidebar-new" type="button" title="新建页面" aria-label="新建页面" @click="emit('new-page')">
+            <Icon name="plus" :size="16" />
+          </button>
+          <button class="sidebar-close" type="button" title="关闭侧边栏" aria-label="关闭侧边栏" @click="emit('close')">
+            <Icon name="x" :size="16" />
+          </button>
+        </div>
       </div>
 
       <div class="search-toolbar">
@@ -38,49 +43,52 @@
 
     <div class="side-scroll">
       <!-- 类型分区 -->
-      <section v-for="g in typeGroups" :key="g.key" class="section">
-        <div class="sec-row">
-          <button
-            class="sec-toggle"
-            type="button"
-            :aria-expanded="!collapsed[g.key]"
-            @click="toggle(g.key)"
-          >
-            <Icon
-              name="chevron-right"
-              :size="13"
-              class="caret"
-              :class="{ expanded: !collapsed[g.key] }"
+      <div class="sidebar-category">
+        <div class="category-label">知识库</div>
+        <section v-for="g in typeGroups" :key="g.key" class="section">
+          <div class="sec-row" :class="{ current: activeSectionKey === g.key }">
+            <button
+              class="sec-toggle"
+              type="button"
+              :aria-expanded="!collapsed[g.key]"
+              @click="toggle(g.key)"
+            >
+              <Icon
+                name="chevron-right"
+                :size="13"
+                class="caret"
+                :class="{ expanded: !collapsed[g.key] }"
+              />
+              <span class="sec-name">{{ g.label }}</span>
+            </button>
+            <span class="sec-count">{{ filteredPages(g.pages).length }}</span>
+          </div>
+          <div v-show="!collapsed[g.key]" class="sec-body">
+            <PageRow
+              v-for="p in sortList(filteredPages(g.pages), sortWiki)"
+              :key="p.id"
+              :page="p"
+              :active="p.id === activeId"
+              :selected="selected.has('p:' + p.id)"
+              :selection-mode="selectionMode"
+              @open="openPage"
+              @archive="archivePage"
+              @unarchive="unarchivePage"
+              @remove="removePage"
+              @toggle-select="toggleSelect"
             />
-            <span class="sec-name">{{ g.label }}</span>
-          </button>
-          <span class="sec-count">{{ filteredPages(g.pages).length }}</span>
-        </div>
-        <div v-show="!collapsed[g.key]" class="sec-body">
-          <PageRow
-            v-for="p in sortList(filteredPages(g.pages), sortWiki)"
-            :key="p.id"
-            :page="p"
-            :active="p.id === activeId"
-            :selected="selected.has('p:' + p.id)"
-            :selection-mode="selectionMode"
-            @open="openPage"
-            @archive="archivePage"
-            @unarchive="unarchivePage"
-            @remove="removePage"
-            @toggle-select="toggleSelect"
-          />
-          <p v-if="!filteredPages(g.pages).length" class="none">
-            {{ filter ? '没有匹配页面' : '暂无页面' }}
-          </p>
-        </div>
-      </section>
+            <p v-if="!filteredPages(g.pages).length" class="none">
+              {{ filter ? '没有匹配页面' : '暂无页面' }}
+            </p>
+          </div>
+        </section>
+      </div>
 
-      <div class="divider" />
+      <div class="category-label">资料</div>
 
       <!-- 原始资料：进料口。上传/新建；AI 整理提炼到 Wiki -->
       <section class="section">
-        <div class="sec-row">
+        <div class="sec-row" :class="{ current: activeSectionKey === 'files' }">
           <button class="sec-toggle" type="button" :aria-expanded="!collapsed.files" @click="toggle('files')">
             <Icon name="chevron-right" :size="13" class="caret" :class="{ expanded: !collapsed.files }" />
             <span class="sec-name">原始资料</span>
@@ -191,7 +199,7 @@
 
       <!-- 对话：外置 Agent 沉积的对话文件 -->
       <section class="section">
-        <div class="sec-row">
+        <div class="sec-row" :class="{ current: activeSectionKey === 'chat' }">
           <button class="sec-toggle" type="button" :aria-expanded="!collapsed.chat" @click="toggle('chat')">
             <Icon name="chevron-right" :size="13" class="caret" :class="{ expanded: !collapsed.chat }" />
             <span class="sec-name">对话</span>
@@ -259,11 +267,11 @@
         </div>
       </section>
 
-      <div class="divider" />
+      <div class="category-label">系统</div>
 
       <!-- AI 整理日志（只读） -->
       <section class="section">
-        <div class="sec-row">
+        <div class="sec-row" :class="{ current: activeSectionKey === 'ailog' }">
           <button class="sec-toggle" type="button" :aria-expanded="!collapsed.ailog" @click="toggle('ailog')">
             <Icon name="chevron-right" :size="13" class="caret" :class="{ expanded: !collapsed.ailog }" />
             <span class="sec-name">AI 整理日志</span>
@@ -325,7 +333,7 @@ import PageRow from './PageRow.vue';
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
-const emit = defineEmits(['close']);
+const emit = defineEmits(['close', 'new-page']);
 
 const allPages = ref<any[]>([]);
 const files = ref<any[]>([]);
@@ -460,6 +468,18 @@ const aiLogs = computed(() =>
 
 /** 对话分区文件（原始资料/对话/，递归；与原始资料同构：带已整理/整理中/整理失败标志） */
 const chatFiles = ref<any[]>([]);
+const activeSectionKey = computed(() => {
+  if (fileQuery.value) {
+    return fileQuery.value.startsWith('原始资料/对话/') ? 'chat' : 'files';
+  }
+  const page = allPages.value.find((item) => String(item.id) === String(activeId.value));
+  if (!page) return '';
+  if (aiLogs.value.some((item) => String(item.id) === String(page.id))) return 'ailog';
+  const group = groupOf(page);
+  if (group === 'raw') return page.path.startsWith('原始资料/对话/') ? 'chat' : 'files';
+  if (group === 'system') return 'ailog';
+  return group;
+});
 
 const normalizedFilter = computed(() => filter.value.trim().toLocaleLowerCase('zh-CN'));
 
@@ -653,28 +673,33 @@ onUnmounted(() => {
 
 .sidebar-header {
   flex-shrink: 0;
-  padding: 11px 10px 8px;
-  border-bottom: 1px solid var(--sidebar-hairline);
+  padding: 12px 11px 7px;
 }
 
 .sidebar-titlebar {
-  min-height: 28px;
+  min-height: 32px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 4px 7px;
+  padding: 0 3px 8px 5px;
 }
 
 .sidebar-titlebar h2 {
   margin: 0;
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 650;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
   letter-spacing: 0;
 }
 
+.sidebar-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-new,
 .sidebar-close {
-  display: none;
   width: 26px;
   height: 26px;
   align-items: center;
@@ -683,6 +708,15 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
+.sidebar-new {
+  display: flex;
+}
+
+.sidebar-close {
+  display: none;
+}
+
+.sidebar-new:hover,
 .sidebar-close:hover {
   color: var(--text);
   background: var(--sidebar-hover);
@@ -840,31 +874,59 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 7px 8px 14px;
+  padding: 3px 10px 14px;
 }
 
 .side-scroll::-webkit-scrollbar {
   width: 6px;
 }
 
+.sidebar-category {
+  margin-bottom: 12px;
+}
+
+.category-label {
+  margin-top: 12px;
+  padding: 0 8px 5px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.side-scroll > .category-label:first-child {
+  margin-top: 0;
+}
+
 .section {
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 
 .sec-row {
   min-width: 0;
-  height: 30px;
+  height: 32px;
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 0 5px;
-  border-radius: 7px;
+  padding: 0 8px;
+  border-radius: 8px;
   user-select: none;
   transition: background 150ms ease;
 }
 
 .sec-row:hover {
   background: var(--sidebar-hover);
+}
+
+.sec-row.current {
+  color: var(--text);
+  background: var(--sidebar-selection);
+  box-shadow: inset 0 0 0 1px var(--sidebar-selection-border);
+}
+
+.sec-row.current .sec-toggle,
+.sec-row.current .sec-count {
+  color: inherit;
 }
 
 .sec-toggle {
@@ -907,7 +969,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13.5px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0;
 }
 
@@ -953,7 +1015,7 @@ onUnmounted(() => {
 }
 
 .sec-body {
-  padding: 1px 0 4px 14px;
+  padding: 2px 0 5px 14px;
 }
 
 .page-row {
@@ -966,7 +1028,7 @@ onUnmounted(() => {
   padding: 0 6px;
   border-radius: 7px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12.5px;
   outline: none;
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
 }
@@ -1134,12 +1196,6 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-.divider {
-  height: 1px;
-  margin: 8px 10px;
-  background: var(--sidebar-hairline);
-}
-
 .tags-block {
   padding: 9px 5px 4px;
 }
@@ -1184,7 +1240,7 @@ onUnmounted(() => {
   gap: 5px;
   padding: 8px 10px;
   border-top: 1px solid var(--sidebar-hairline);
-  background: var(--sidebar-material);
+  background: rgba(255, 255, 255, 0.08);
   backdrop-filter: saturate(140%) blur(18px);
   -webkit-backdrop-filter: saturate(140%) blur(18px);
 }
@@ -1237,7 +1293,7 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .sidebar-header {
-    padding-top: calc(11px + env(safe-area-inset-top));
+    padding-top: calc(12px + env(safe-area-inset-top));
   }
 
   .sidebar-close {
