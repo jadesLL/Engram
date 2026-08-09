@@ -72,23 +72,6 @@
 
             <div class="setting-row">
               <div class="setting-copy">
-                <strong>侧边栏风格</strong>
-                <span>控制知识目录的层级和密度。</span>
-              </div>
-              <select
-                class="setting-control wide"
-                :value="app.sidebarStyle"
-                aria-label="侧边栏风格"
-                @change="app.setSidebarStyle(($event.target as HTMLSelectElement).value as any)"
-              >
-                <option value="a">方案 A · macOS 分层列表</option>
-                <option value="b">方案 B · iOS 卡片</option>
-                <option value="c">方案 C · 极简文字</option>
-              </select>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-copy">
                 <strong>当前会话</strong>
                 <span>退出后需要重新输入密码。</span>
               </div>
