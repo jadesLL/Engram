@@ -1,21 +1,30 @@
-# 软件开发 Agent 约定
+# ExampleProject 开发 Agent 约定
 
-本文件仅适用于修改本仓库源码、配置、测试、构建或部署的软件开发 Agent。
+本文件适用于 `main/` 仓库及由它创建的所有 Git worktree。
 
-## 开始前必须执行
+## 开始前
 
-1. 完整读取根目录 [`WORKTREES.md`](./WORKTREES.md)。
-2. 用 `git status` 和 `git worktree list` 确认主分支及现有 worktree 状态。
-3. 按 `WORKTREES.md` 判断任务类型，并在对应的独立 worktree 中工作；不得直接在 `main` 开发。
+1. 完整读取 [`WORKTREES.md`](./WORKTREES.md)。
+2. 执行 `git status --short --branch` 和 `git worktree list --porcelain`，确认当前目录、分支和已有 worktree。
+3. 先判断当前任务是否已经运行在 Codex 管理的 worktree 中；已经隔离时直接使用当前 worktree，不得再创建嵌套 worktree。
 
-## 唯一流程来源
+## 工作位置
 
-- worktree 创建、资源隔离、端口分配、串行合并、部署验证、登记和清理均以 `WORKTREES.md` 为唯一来源。
-- 本文件不复制具体命令，避免两份规则漂移或相互矛盾。
-- 遇到其他 Agent 的改动不得覆盖或回退；合并冲突无法确定意图时，暂停并询问用户。
+- `main/` 是主检出目录和集成入口。除用户明确要求修复协作规则本身外，不直接在这里开发功能。
+- 新 worktree 统一放在同级的 `worktrees/<feature>/`。
+- `releases/` 只存放明确要求保留的发布快照或产物，不用于日常开发，也不是 worktree 目录。
+- 只读检查、答疑和代码审查不需要创建 worktree。
 
-## 与应用内 AI 的边界
+## 执行原则
 
-- 本文件不约束 Dream Cycle、入库管线或通过 MCP 读写知识内容的 Agent。
+- 优先使用 Codex 桌面端提供的 Worktree 模式。当前任务已经位于 worktree 时，沿用当前环境。
+- 手动创建、合并和清理时，以 [`WORKTREES.md`](./WORKTREES.md) 为唯一流程来源。
+- `scripts/new-worktree.sh` 和 `scripts/merge-feature.sh` 仍包含旧目录硬编码，修复前不得执行。
+- 不覆盖、回退或删除其他 Agent 的分支、worktree、容器、数据卷和未提交改动。
+- 功能完成后先提交并向用户报告验证结果；没有用户明确批准，不合并到 `main`，也不清理供用户检查的环境。
+- 合并必须串行。发生冲突且无法确认双方意图时，停止并询问用户。
+
+## 作用边界
+
+- 本文件只约束仓库开发工作，不约束应用内 Dream Cycle、入库管线或通过 MCP 操作知识内容的 Agent。
 - 知识内容操作规范见 [`docs/AI-CONTENT-OPERATIONS.md`](./docs/AI-CONTENT-OPERATIONS.md)。
-- 运行时纪律由服务端代码和 MCP instructions 强制执行，不能依赖开发 Agent 是否读取文档。
