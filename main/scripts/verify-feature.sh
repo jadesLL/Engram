@@ -76,6 +76,13 @@ if ! docker build \
   "$WIKILLM_WORKTREE/main"
 then
   exampleproject_explain_offline_build_failure
+  if [ "$WIKILLM_BUILD_NETWORK" = "none" ] &&
+    exampleproject_run_local_offline_verification "$WIKILLM_WORKTREE/main"
+  then
+    docker image rm "$WIKILLM_VERIFY_IMAGE" >/dev/null 2>&1 || true
+    exampleproject_log "DONE: $FEATURE 已通过本机临时目录离线 build、typecheck 和 test"
+    exit 0
+  fi
   exampleproject_die "Docker build/typecheck/test 未通过"
 fi
 

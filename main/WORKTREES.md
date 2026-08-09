@@ -114,7 +114,7 @@ git worktree add "worktrees/$feature" -b "feat/$feature" main
 
 Dockerfile 将依赖安装层放在源码复制之前。锁文件和依赖清单未变化时，Docker 直接复用已有依赖层，不重新安装；多个 worktree 可以共享这些不可变镜像层和构建缓存。
 
-`verify-feature.sh`、`preview-feature.sh` 和 `merge-feature.sh` 默认使用 `network=none`，并要求本机已有 `node:22-slim`。缓存缺失时应直接失败，不得自行下载。只有用户已经明确批准下载环境文件后，才可对当前命令增加：
+`verify-feature.sh`、`preview-feature.sh` 和 `merge-feature.sh` 默认使用 `network=none`，并要求本机已有 `node:22-slim`。Docker 依赖层缺失时，Windows UNC 环境会回退到代码库外的本机临时目录，通过 pnpm `--offline` 复用已有 store；验证后删除临时目录和对应 pnpm 项目索引。Docker 和本地离线缓存都不足时直接失败，不得自行下载。只有用户已经明确批准下载环境文件后，才可对当前命令增加：
 
 ```bash
 --allow-downloads
@@ -122,7 +122,7 @@ Dockerfile 将依赖安装层放在源码复制之前。锁文件和依赖清单
 
 该许可只对用户明确批准的当前动作生效，不得视为以后任务的长期联网许可。
 
-只有确实无法在 Linux Docker 中完成的宿主机原生任务，例如 Windows 桌面端打包，才可以在解释原因并取得用户同意后建立本地依赖环境；不得把这一例外扩展到普通 Web 或服务端任务。
+只有确实无法在 Linux Docker 中完成的宿主机原生任务，例如 Windows 桌面端打包，才可以在解释原因并取得用户同意后建立持久本地依赖环境。自动创建并立即清理的临时离线验证目录不写入代码库，不视为持久依赖环境。
 
 ## 运行资源隔离
 
@@ -197,7 +197,7 @@ bash main/scripts/merge-feature.sh example-feature
 bash main/scripts/merge-feature.sh --deploy example-feature
 ```
 
-Windows PowerShell 同样使用 `C:\Program Files\Git\bin\bash.exe`。脚本通过 Git 锁保证串行，合并后使用 Docker `verify` 阶段重新运行 build、typecheck 和 test；任一检查失败都会保留功能环境并以非零状态退出。整个流程不会在 `main/` 或 worktree 中创建宿主机 `node_modules`。
+Windows PowerShell 同样使用 `C:\Program Files\Git\bin\bash.exe`。脚本通过 Git 锁保证串行，合并后优先使用 Docker `verify` 阶段重新运行 build、typecheck 和 test；断网 Docker 缓存不足时使用上述本机临时离线环境。任一检查失败都会保留功能环境并以非零状态退出。整个流程不会在 `main/` 或 worktree 中创建宿主机 `node_modules`。
 
 合并和部署同样默认断网。只有用户已经明确批准本次下载时，才可增加 `--allow-downloads`，例如：
 
