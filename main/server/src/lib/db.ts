@@ -131,7 +131,10 @@ export function migrate() {
     id TEXT PRIMARY KEY,
     path TEXT NOT NULL,
     content_hash TEXT NOT NULL,
+    source_version_id TEXT,
     status TEXT NOT NULL,
+    commit_status TEXT NOT NULL DEFAULT 'pending',
+    derived_status TEXT NOT NULL DEFAULT 'pending',
     started_at TEXT NOT NULL,
     finished_at TEXT,
     stats TEXT NOT NULL DEFAULT '{}',
@@ -158,6 +161,93 @@ export function migrate() {
     FOREIGN KEY(run_id) REFERENCES ingest_runs(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_ingest_audit_run ON ingest_audit(run_id, id);
+
+  CREATE TABLE IF NOT EXISTS source_versions (
+    id TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    previous_id TEXT,
+    status TEXT NOT NULL DEFAULT 'processing',
+    created_at TEXT NOT NULL,
+    activated_at TEXT,
+    error TEXT,
+    UNIQUE(path, content_hash)
+  );
+  CREATE INDEX IF NOT EXISTS idx_source_versions_path ON source_versions(path, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS page_contributions (
+    id TEXT PRIMARY KEY,
+    page_id TEXT NOT NULL,
+    source_version_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    contribution_key TEXT NOT NULL,
+    fact_ids TEXT NOT NULL DEFAULT '[]',
+    relations TEXT NOT NULL DEFAULT '[]',
+    content TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    domain TEXT NOT NULL DEFAULT '',
+    confidence TEXT NOT NULL DEFAULT '中',
+    source_ref TEXT NOT NULL DEFAULT '',
+    managed INTEGER NOT NULL DEFAULT 1,
+    active INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(page_id, source_version_id),
+    FOREIGN KEY(page_id) REFERENCES pages(id) ON DELETE CASCADE,
+    FOREIGN KEY(source_version_id) REFERENCES source_versions(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_page_contributions_page ON page_contributions(page_id, active);
+  CREATE INDEX IF NOT EXISTS idx_page_contributions_source ON page_contributions(source_version_id, active);
+
+  CREATE TABLE IF NOT EXISTS ingest_questions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    source_version_id TEXT,
+    path TEXT NOT NULL,
+    question TEXT NOT NULL,
+    fact_ids TEXT NOT NULL DEFAULT '[]',
+    acceptance TEXT NOT NULL DEFAULT '[]',
+    answer TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    job_id INTEGER,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(run_id) REFERENCES ingest_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ingest_questions_path ON ingest_questions(path, status, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS ingest_candidates (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    source_version_id TEXT,
+    source_path TEXT NOT NULL,
+    source_name TEXT NOT NULL DEFAULT '',
+    normalized_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT '',
+    confidence TEXT NOT NULL DEFAULT '中',
+    summary TEXT NOT NULL DEFAULT '',
+    fact_ids TEXT NOT NULL DEFAULT '[]',
+    relations TEXT NOT NULL DEFAULT '[]',
+    content TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    target_page_id TEXT,
+    preview_token TEXT,
+    preview_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(run_id, normalized_name, kind),
+    FOREIGN KEY(run_id) REFERENCES ingest_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY(source_version_id) REFERENCES source_versions(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ingest_candidates_identity
+    ON ingest_candidates(normalized_name, kind, status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ingest_candidates_source
+    ON ingest_candidates(source_path, source_version_id, status);
 
   CREATE TABLE IF NOT EXISTS office_edit_sessions (
     document_key TEXT PRIMARY KEY,
@@ -254,6 +344,11 @@ export function migrate() {
   ensureColumn('ingest_log', 'status', `TEXT NOT NULL DEFAULT 'completed'`);
   ensureColumn('ingest_log', 'run_id', 'TEXT');
   ensureColumn('ingest_log', 'error', 'TEXT');
+  ensureColumn('ingest_runs', 'source_version_id', 'TEXT');
+  ensureColumn('ingest_runs', 'commit_status', `TEXT NOT NULL DEFAULT 'pending'`);
+  ensureColumn('ingest_runs', 'derived_status', `TEXT NOT NULL DEFAULT 'pending'`);
+  ensureColumn('ingest_questions', 'job_id', 'INTEGER');
+  ensureColumn('ingest_questions', 'error', 'TEXT');
   ensureColumn('jobs', 'stage', `TEXT NOT NULL DEFAULT '等待执行'`);
   ensureColumn('jobs', 'progress', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('jobs', 'detail', `TEXT NOT NULL DEFAULT ''`);
@@ -263,6 +358,7 @@ export function migrate() {
   dedupeReportIdentity();
   db.exec(`CREATE INDEX IF NOT EXISTS idx_reports_issue ON reports(kind, issue_key)`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_fingerprint ON reports(kind, issue_key, fingerprint)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_ingest_questions_job ON ingest_questions(job_id)`);
   db.prepare(
     `UPDATE assistant_runs
      SET status = 'interrupted',

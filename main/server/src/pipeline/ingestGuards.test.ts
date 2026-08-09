@@ -5,7 +5,7 @@ import { enforceWriteGate, whitelistFactIds } from './ingestGuards.js';
 
 const base = {
   name: '主题', kind: 'concept' as const, action: 'create' as const, target: '', domain: '',
-  confidence: '高' as const, summary: '', factIds: ['f1'], reason: '',
+  confidence: '高' as const, summary: '', factIds: ['f1'], relations: [], reason: '',
 };
 
 test('schemas accept question acceptance criteria and reject malformed compose output', () => {

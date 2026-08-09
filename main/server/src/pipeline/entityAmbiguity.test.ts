@@ -41,7 +41,7 @@ test('write guard forces ambiguous create items to review and preserves explicit
   };
   const create: PlanItem = {
     name: '恒创', kind: 'org', action: 'create', target: '', domain: '', confidence: '高',
-    summary: '', factIds: ['f1', 'f2'], reason: '',
+    summary: '', factIds: ['f1', 'f2'], relations: [], reason: '',
   };
   const merge: PlanItem = { ...create, action: 'merge', target: '衡创' };
   const invalidMerge: PlanItem = { ...create, action: 'merge', target: '衡創' };

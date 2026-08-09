@@ -1,7 +1,19 @@
 import { FastifyInstance } from 'fastify';
-import { db, now } from '../lib/db.js';
+import { db } from '../lib/db.js';
 import { requireAuth } from './auth.js';
-import { applyReviewedCandidate } from '../pipeline/ingest.js';
+import {
+  candidateSourceSummary,
+  commitCandidateReview,
+  ignoreCandidateReview,
+  previewCandidateReview,
+} from '../pipeline/candidateReview.js';
+import { ensureCandidateFromReport } from '../pipeline/candidateLedger.js';
+import { reconcilePendingCandidates } from '../pipeline/candidateLedger.js';
+import {
+  applyIngestQuestionAction,
+  IngestQuestionRequestError,
+  type IngestQuestionAction,
+} from '../pipeline/ingestQuestions.js';
 
 const KIND_LABELS: Record<string, string> = {
   ingest: 'AI 整理',
@@ -12,6 +24,10 @@ const KIND_LABELS: Record<string, string> = {
   index_file: '文件索引',
   mentions: '升级扫描',
   metagen: '索引生成',
+  ingest_finalize: '整理派生校验',
+  ingest_recover: '整理提交恢复',
+  candidate_reconcile: '候选动态对账',
+  candidate_review_batch: '批量审核候选',
   dream_apply: '分类批量处理',
   dream: 'Dream Cycle',
   rebuild: '重建全部索引',
@@ -128,62 +144,172 @@ export async function jobRoutes(app: FastifyInstance) {
     const audit = tableExists('ingest_audit')
       ? (db.prepare(`SELECT id, stage, at, payload FROM ingest_audit WHERE run_id=? ORDER BY id`).all(id) as any[]).map((item) => ({ ...item, payload: safeJson(item.payload, item.payload) }))
       : [];
-    return { run: { ...run, stats: safeJson(run.stats, {}) }, facts, audit };
+    const sourceVersion = run.source_version_id && tableExists('source_versions')
+      ? db.prepare(`SELECT * FROM source_versions WHERE id=?`).get(run.source_version_id)
+      : null;
+    const contributions = tableExists('page_contributions')
+      ? (db.prepare(
+        `SELECT pc.*, p.title, p.path FROM page_contributions pc
+         JOIN pages p ON p.id=pc.page_id WHERE pc.run_id=? ORDER BY pc.created_at`
+      ).all(id) as any[]).map((item) => ({
+        ...item,
+        fact_ids: safeJson(item.fact_ids, []),
+        relations: safeJson(item.relations, []),
+      }))
+      : [];
+    const questions = tableExists('ingest_questions')
+      ? (db.prepare(`SELECT * FROM ingest_questions WHERE run_id=? ORDER BY created_at`).all(id) as any[]).map((item) => ({
+        ...item,
+        fact_ids: safeJson(item.fact_ids, []),
+        acceptance: safeJson(item.acceptance, []),
+      }))
+      : [];
+    return { run: { ...run, stats: safeJson(run.stats, {}) }, sourceVersion, facts, contributions, questions, audit };
+  });
+
+  app.get('/api/ingest/questions', async (req) => {
+    if (!tableExists('ingest_questions')) return { questions: [] };
+    const { status = 'open', path } = req.query as { status?: string; path?: string };
+    const rows = path
+      ? db.prepare(`SELECT * FROM ingest_questions WHERE status=? AND path=? ORDER BY created_at DESC`).all(status, path)
+      : db.prepare(`SELECT * FROM ingest_questions WHERE status=? ORDER BY created_at DESC LIMIT 200`).all(status);
+    return {
+      questions: (rows as any[]).map((item) => ({
+        ...item,
+        fact_ids: safeJson(item.fact_ids, []),
+        acceptance: safeJson(item.acceptance, []),
+      })),
+    };
+  });
+
+  app.post('/api/ingest/questions/:id/answer', async (req, reply) => {
+    if (!tableExists('ingest_questions')) return reply.code(404).send({ error: '整理追问尚未初始化' });
+    const { id } = req.params as { id: string };
+    const { answer = '', action = 'reprocess' } = req.body as {
+      answer?: string;
+      action?: 'reprocess' | 'acknowledge' | 'ignore';
+    };
+    if (!['reprocess', 'acknowledge', 'ignore'].includes(action)) {
+      return reply.code(400).send({ error: '追问处理动作无效' });
+    }
+    try {
+      const result = applyIngestQuestionAction(id, answer, action as IngestQuestionAction);
+      return reply.code(result.status === 'answered' ? 202 : 200).send(result);
+    } catch (error) {
+      if (error instanceof IngestQuestionRequestError) {
+        return reply.code(error.statusCode).send({ error: error.message });
+      }
+      throw error;
+    }
   });
 
   /** 待审候选沿用 reports，兼容当前 ingest 核心表且携带可追溯事实。 */
   app.get('/api/ingest/candidates', async (req) => {
     const { status = 'open' } = req.query as { status?: string };
     if (!tableExists('reports')) return { candidates: [] };
+    if (status === 'open') reconcilePendingCandidates();
     const reports = db.prepare(`SELECT * FROM reports WHERE kind='pending_review' AND status=? ORDER BY id DESC LIMIT 200`).all(status) as any[];
     return { candidates: reports.map((report) => {
       const payload = safeJson(report.payload, {});
+      const candidate = ensureCandidateFromReport(report);
+      if (candidate && payload.candidateId !== candidate.id) payload.candidateId = candidate.id;
       const runId = payload.runId || null;
       const facts = runId && tableExists('ingest_facts')
         ? (db.prepare(`SELECT fact_id, statement, sources FROM ingest_facts WHERE run_id=?`).all(runId) as any[])
           .filter((fact) => !payload.factIds?.length || payload.factIds.includes(fact.fact_id))
           .map((fact) => ({ ...fact, sources: safeJson(fact.sources, []) }))
         : [];
-      return { ...report, payload, confidence: payload.confidence || '中', target: payload.target || payload.name || '', draft: payload.content || payload.summary || '', facts };
+      const evidence = candidate
+        ? candidateSourceSummary(candidate.id)
+        : { sourceCount: payload.sourcePath || payload.source ? 1 : 0, factCount: facts.length, sources: [payload.sourcePath || payload.source].filter(Boolean) };
+      return {
+        ...report,
+        payload,
+        confidence: payload.confidence || '中',
+        target: payload.target || payload.name || '',
+        draft: payload.content || payload.summary || '',
+        facts,
+        evidence,
+      };
     }) };
   });
 
+  app.post('/api/ingest/candidates/:id/preview', async (req, reply) => {
+    const reportId = Number((req.params as { id: string }).id);
+    const { action, kind, name, target } = req.body as {
+      action?: 'approve' | 'merge';
+      kind?: 'concept' | 'person' | 'project' | 'org';
+      name?: string;
+      target?: string;
+    };
+    if (!Number.isInteger(reportId) || reportId <= 0) return reply.code(400).send({ error: '待审候选 ID 无效' });
+    if (!action || !['approve', 'merge'].includes(action)) return reply.code(400).send({ error: '请选择批准或并入已有页面' });
+    if (!kind || !['concept', 'person', 'project', 'org'].includes(kind)) return reply.code(400).send({ error: '请选择有效页面类型' });
+    try {
+      return { preview: await previewCandidateReview(reportId, { action, kind, name, target }) };
+    } catch (error: any) {
+      return reply.code(400).send({ error: error?.message || '无法生成审核预览' });
+    }
+  });
+
+  app.post('/api/ingest/candidates/:id/commit', async (req, reply) => {
+    const reportId = Number((req.params as { id: string }).id);
+    const { token } = req.body as { token?: string };
+    if (!token) return reply.code(400).send({ error: '审核预览已失效，请重新生成' });
+    try {
+      const target = commitCandidateReview(reportId, token);
+      return { ok: true, target: target.id };
+    } catch (error: any) {
+      return reply.code(409).send({ error: error?.message || '审核提交失败' });
+    }
+  });
+
+  app.post('/api/ingest/candidates/:id/ignore', async (req, reply) => {
+    const reportId = Number((req.params as { id: string }).id);
+    const { note = '' } = (req.body || {}) as { note?: string };
+    try {
+      ignoreCandidateReview(reportId, note);
+      return { ok: true };
+    } catch (error: any) {
+      return reply.code(409).send({ error: error?.message || '忽略候选失败' });
+    }
+  });
+
+  /** 旧客户端兼容：批准仍执行局部再提炼，但不展示中间预览；新界面使用 preview + commit。 */
   app.post('/api/ingest/candidates/:id/review', async (req, reply) => {
-    const { id } = req.params as { id: string };
+    const reportId = Number((req.params as { id: string }).id);
     const { decision, target, note, kind, name } = req.body as {
       decision?: 'approved' | 'dismissed'; target?: string; note?: string; name?: string;
       kind?: 'concept' | 'person' | 'project' | 'org';
     };
     if (!['approved', 'dismissed'].includes(decision || '')) return reply.code(400).send({ error: '审核决定无效' });
-    const report = db.prepare(`SELECT * FROM reports WHERE id=? AND kind='pending_review' AND status='open'`).get(id) as any;
+    if (decision === 'dismissed') {
+      try {
+        ignoreCandidateReview(reportId, note);
+        return { ok: true, target: null };
+      } catch (error: any) {
+        return reply.code(409).send({ error: error?.message || '忽略候选失败' });
+      }
+    }
+    const report = db.prepare(`SELECT payload FROM reports WHERE id=? AND kind='pending_review' AND status='open'`).get(reportId) as { payload: string } | undefined;
     if (!report) return reply.code(404).send({ error: '待审候选不存在或已处理' });
     const original = safeJson(report.payload, {});
-    let appliedTarget = '';
-    if (decision === 'approved') {
-      const resolvedKind = kind || original.kind;
-      if (!resolvedKind || !['concept', 'person', 'project', 'org'].includes(resolvedKind)) {
-        return reply.code(400).send({ error: '批准候选时必须提供有效 kind' });
-      }
-      const claim = db.prepare(`UPDATE reports SET status='applying' WHERE id=? AND status='open'`).run(id);
-      if (claim.changes !== 1) return reply.code(409).send({ error: '候选已被其他操作处理' });
-      try {
-        const applied = applyReviewedCandidate(original, resolvedKind, { target, name });
-        appliedTarget = applied.id;
-      } catch (error) {
-        db.prepare(`UPDATE reports SET status='open' WHERE id=? AND status='applying'`).run(id);
-        throw error;
-      }
+    const resolvedKind = kind || original.kind;
+    if (!resolvedKind || !['concept', 'person', 'project', 'org'].includes(resolvedKind)) {
+      return reply.code(400).send({ error: '批准候选时必须提供有效 kind' });
     }
-    const payload = { ...original, review: { decision, target: appliedTarget, note: note || '', at: now() } };
-    const expectedStatus = decision === 'approved' ? 'applying' : 'open';
-    const result = db.prepare(`UPDATE reports SET payload=?, status=? WHERE id=? AND status=?`).run(
-      JSON.stringify(payload), decision === 'approved' ? 'resolved' : 'dismissed', id, expectedStatus
-    );
-    if (result.changes !== 1) {
-      if (expectedStatus === 'applying') db.prepare(`UPDATE reports SET status='open' WHERE id=? AND status='applying'`).run(id);
-      return reply.code(409).send({ error: '候选已被其他操作处理' });
+    try {
+      const preview = await previewCandidateReview(reportId, {
+        action: target ? 'merge' : 'approve',
+        kind: resolvedKind,
+        name,
+        target,
+      });
+      const applied = commitCandidateReview(reportId, preview.token);
+      return { ok: true, target: applied.id };
+    } catch (error: any) {
+      return reply.code(409).send({ error: error?.message || '审核失败' });
     }
-    return { ok: true, target: appliedTarget || null };
   });
 
   /** 清理已完成/失败历史 */

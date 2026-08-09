@@ -184,9 +184,14 @@
                 class="row-status ingested-flag failed"
                 :title="f.ingestError ? `整理失败：${f.ingestError.slice(0, 200)}` : '整理失败，可重试'"
               >失败</span>
+              <span
+                v-else-if="f.ingestSupported === false"
+                class="row-status ingested-flag unsupported"
+                title="文件已保存，当前格式暂不支持 AI 整理"
+              >仅保存</span>
               <span class="row-actions" @click.stop>
                 <button
-                  v-if="['md', 'markdown', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
+                  v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
                   type="button"
                   title="AI 整理"
                   aria-label="AI 整理"
@@ -279,9 +284,14 @@
                 class="row-status ingested-flag failed"
                 :title="f.ingestError ? `整理失败：${f.ingestError.slice(0, 200)}` : '整理失败，可重试'"
               >失败</span>
+              <span
+                v-else-if="f.ingestSupported === false"
+                class="row-status ingested-flag unsupported"
+                title="文件已保存，当前格式暂不支持 AI 整理"
+              >仅保存</span>
               <span class="row-actions" @click.stop>
                 <button
-                  v-if="['md', 'markdown', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
+                  v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
                   type="button"
                   title="AI 整理"
                   aria-label="AI 整理"
@@ -737,7 +747,6 @@ onUnmounted(() => {
   min-width: 0;
   color: var(--text);
 }
-
 .sidebar-header {
   flex-shrink: 0;
   padding: 12px 11px 7px;
@@ -1170,6 +1179,10 @@ onUnmounted(() => {
 
 .ingested-flag.failed {
   color: var(--danger);
+}
+
+.ingested-flag.unsupported {
+  color: var(--text-faint);
 }
 
 .ingest-progress {

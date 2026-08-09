@@ -56,17 +56,17 @@ export async function aiRoutes(app: FastifyInstance) {
     const ext = path.posix.extname(p).slice(1).toLowerCase();
     let abs: string;
     try { abs = safeJoin(p); } catch { return reply.code(400).send({ error: '文件路径无效' }); }
-    if (!['md', 'markdown', 'docx', 'xlsx', 'pptx'].includes(ext) || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
-      return reply.code(400).send({ error: '仅支持整理存在的 md / docx / xlsx / pptx 文件' });
+    if (!['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(ext) || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+      return reply.code(400).send({ error: '仅支持整理存在的 md / txt / docx / xlsx / pptx 文件' });
     }
-    enqueue('ingest', { path: p });
-    return { ok: true };
+    const jobId = enqueue('ingest', { path: p });
+    return { ok: true, jobId: jobId || null };
   });
 
   /** 整理全部原始资料 */
   app.post('/api/ai/ingest-all', async () => {
     const paths = await ingestAllRaw();
-    for (const p of paths) enqueue('ingest', { path: p });
-    return { ok: true, queued: paths.length };
+    const jobIds = paths.map((p) => enqueue('ingest', { path: p })).filter((id): id is number => Boolean(id));
+    return { ok: true, queued: jobIds.length, jobIds };
   });
 }

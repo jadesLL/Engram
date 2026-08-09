@@ -4,8 +4,14 @@ import { typeToDir } from '../config.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages } from '../lib/mergePages.js';
-import { applyReviewedCandidate } from '../pipeline/ingest.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
+import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
+import {
+  hydrateIngestQuestionPayload,
+  setActionableQuestionsForPath,
+  syncAllIngestQuestionReports,
+  syncIngestQuestionReport,
+} from '../pipeline/ingestQuestions.js';
 
 export const REPORT_ACTION_KINDS = [
   'deadlink', 'duplicate', 'contradiction', 'single_source', 'missing_sections',
@@ -29,7 +35,7 @@ const ACTION_META: Record<ReportActionKind, { title: string; description: string
   contradiction: { title: '批量处理矛盾报告', description: '默认全选并标记为已处理，只关闭报告，不修改页面正文。', button: '批量标记已处理', defaultSelected: true },
   single_source: { title: '批量确认来源单一', description: '默认全选并标记为已知悉，不修改来源或页面正文。', button: '批量标记已知悉', defaultSelected: true },
   missing_sections: { title: '批量补全章节骨架', description: '默认全选并补充缺失的空章节，不生成或猜测正文。', button: '批量补章节', defaultSelected: true },
-  pending_review: { title: '批量审核候选', description: '默认勾选可处理项并采用系统推荐；也可批量改为不入库。', button: '批量审核入库', defaultSelected: true },
+  pending_review: { title: '批量审核候选', description: '默认按系统推荐类型进行局部再提炼，也可逐项调整类型或改为忽略。', button: '一键审批', defaultSelected: true },
   ingest_questions: { title: '批量确认整理追问', description: '默认全选并标记为已知悉，不修改原始资料和问题内容。', button: '批量标记已知悉', defaultSelected: true },
   enrich: { title: '批量忽略待丰富提醒', description: '默认全选并忽略提醒，不自动生成页面内容。', button: '批量忽略', defaultSelected: true },
   stale: { title: '批量复核过期页面', description: '默认全选并记录复核日期，不改变正文更新时间。', button: '批量复核', defaultSelected: true },
@@ -49,11 +55,8 @@ function duplicateSuggestion(payload: Record<string, any>): 'keep_a' | 'keep_b' 
   return String(payload.b?.id || '') < String(payload.a?.id || '') ? 'keep_b' : 'keep_a';
 }
 
-function pendingSuggestion(payload: Record<string, any>): string {
-  return ['concept', 'person', 'project', 'org'].includes(payload.kind) ? payload.kind : 'concept';
-}
-
 export function previewReportActions(kind: ReportActionKind) {
+  if (kind === 'ingest_questions') syncAllIngestQuestionReports();
   const rows = db.prepare(
     `SELECT id, payload FROM reports WHERE kind = ? AND status = 'open' ORDER BY id DESC LIMIT 200`
   ).all(kind) as { id: number; payload: string }[];
@@ -62,7 +65,10 @@ export function previewReportActions(kind: ReportActionKind) {
     kind,
     ...meta,
     items: rows.map((row) => {
-      const payload = parsePayload(row.payload);
+      const storedPayload = parsePayload(row.payload);
+      const payload = kind === 'ingest_questions'
+        ? hydrateIngestQuestionPayload(storedPayload)
+        : storedPayload;
       let suggestedAction = 'resolve';
       let options: { value: string; label: string }[] = [];
       if (kind === 'deadlink') {
@@ -76,17 +82,15 @@ export function previewReportActions(kind: ReportActionKind) {
           { value: 'keep_both', label: '保留两者' },
         ];
       } else if (kind === 'pending_review') {
-        if (payload.ambiguity) {
-          suggestedAction = 'manual';
-          options = [];
-        } else {
-          suggestedAction = pendingSuggestion(payload);
-          options = [
-            { value: 'concept', label: '收为概念' }, { value: 'person', label: '收为人物' },
-            { value: 'project', label: '收为项目' }, { value: 'org', label: '收为组织' },
-            { value: 'dismiss', label: '不入库' },
-          ];
-        }
+        const suggestedKind = ['concept', 'person', 'project', 'org'].includes(payload.kind) ? payload.kind : 'concept';
+        suggestedAction = `approve:${suggestedKind}`;
+        options = [
+          { value: 'approve:concept', label: '批准为概念' },
+          { value: 'approve:person', label: '批准为人物' },
+          { value: 'approve:project', label: '批准为项目' },
+          { value: 'approve:org', label: '批准为组织' },
+          { value: 'ignore', label: '忽略' },
+        ];
       } else if (kind === 'enrich') {
         suggestedAction = 'dismiss';
       } else if (kind === 'stale') {
@@ -94,8 +98,16 @@ export function previewReportActions(kind: ReportActionKind) {
       } else if (kind === 'missing_sections') {
         suggestedAction = 'repair';
       }
-      const disabled = Boolean(kind === 'pending_review' && payload.ambiguity);
-      return { id: row.id, payload, selected: disabled ? false : meta.defaultSelected, disabled, suggestedAction, options };
+      const disabled = kind === 'ingest_questions'
+        && !(payload.questions || []).some((question: any) => ['open', 'failed'].includes(question.status));
+      return {
+        id: row.id,
+        payload,
+        selected: meta.defaultSelected && !disabled,
+        disabled,
+        suggestedAction,
+        options,
+      };
     }),
   };
 }
@@ -107,7 +119,7 @@ function validAction(kind: ReportActionKind, action: string): boolean {
     contradiction: ['resolve'],
     single_source: ['resolve'],
     missing_sections: ['repair'],
-    pending_review: ['concept', 'person', 'project', 'org', 'dismiss'],
+    pending_review: ['approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore'],
     ingest_questions: ['resolve'],
     enrich: ['dismiss'],
     stale: ['review'],
@@ -178,27 +190,12 @@ function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Rec
       if (!page) throw new Error('页面不存在');
       const current = readPage(page.path);
       if (!current) throw new Error('页面无法读取');
-      let content = current.content.replace(/\s*$/, '');
-      if ((payload.missing || []).includes('当前理解') && !/##\s*当前理解/.test(content)) content += '\n\n## 当前理解\n';
-      if ((payload.missing || []).includes('时间线') && !/##\s*时间线/.test(content)) content += '\n\n## 时间线\n';
-      writePage(page.path, `${content}\n`, {});
+      writePage(page.path, ensureEntityStructure(current.content), {});
       enqueuePagePipeline(page.id);
       return 'resolved';
     }
     case 'pending_review': {
-      if (decision.action === 'dismiss') {
-        db.prepare(`UPDATE reports SET payload = ? WHERE id = ?`).run(
-          JSON.stringify({ ...payload, review: { decision: 'dismissed', target: '', note: '', at: now() } }),
-          decision.reportId
-        );
-        return 'dismissed';
-      }
-      const applied = applyReviewedCandidate(payload, decision.action as 'concept' | 'person' | 'project' | 'org');
-      db.prepare(`UPDATE reports SET payload = ? WHERE id = ?`).run(
-        JSON.stringify({ ...payload, review: { decision: 'approved', target: applied.id, note: '', at: now() } }),
-        decision.reportId
-      );
-      return 'resolved';
+      throw new Error('待审候选必须逐条生成预览后确认');
     }
     case 'stale': {
       const page = db.prepare(`SELECT id, path FROM pages WHERE id = ? AND deleted = 0`).get(payload.pageId) as any;
@@ -212,7 +209,9 @@ function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Rec
     case 'enrich': return 'dismissed';
     case 'contradiction':
     case 'single_source':
+      return 'resolved';
     case 'ingest_questions':
+      setActionableQuestionsForPath(String(payload.path || ''), 'accepted');
       return 'resolved';
   }
 }
@@ -228,8 +227,10 @@ export function applyReportDecisions(kind: ReportActionKind, decisions: ReportDe
       return;
     }
     try {
-      const status = applyOne(kind, decision, parsePayload(report.payload));
+      const payload = parsePayload(report.payload);
+      const status = applyOne(kind, decision, payload);
       completeReport(decision.reportId, status);
+      if (kind === 'ingest_questions') syncIngestQuestionReport(String(payload.path || ''));
       if (status === 'dismissed') result.dismissed++;
       else result.completed++;
     } catch (error: any) {

@@ -8,17 +8,37 @@ import {
   REPORT_ACTION_KINDS, claimReports, previewReportActions, releaseReports,
   validateDecisions, type ReportActionKind, type ReportDecision,
 } from '../dream/apply.js';
+import { reconcilePendingCandidates } from '../pipeline/candidateLedger.js';
+import {
+  hydrateIngestQuestionPayload,
+  setActionableQuestionsForPath,
+  syncAllIngestQuestionReports,
+  syncIngestQuestionReport,
+} from '../pipeline/ingestQuestions.js';
 
 export async function dreamRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
   app.get('/api/dream/reports', async (req) => {
     const { status } = req.query as { status?: string };
+    const open = !status || status === 'open';
+    if (open) {
+      reconcilePendingCandidates();
+      syncAllIngestQuestionReports();
+    }
     const rows = db
       .prepare(`SELECT * FROM reports WHERE status = ? ORDER BY id DESC LIMIT 200`)
       .all(status || 'open') as any[];
     return {
-      reports: rows.map((r) => ({ ...r, payload: JSON.parse(r.payload) })),
+      reports: rows.map((r) => {
+        const payload = JSON.parse(r.payload);
+        return {
+          ...r,
+          payload: open && r.kind === 'ingest_questions'
+            ? hydrateIngestQuestionPayload(payload)
+            : payload,
+        };
+      }),
       lastRun: getSetting('dream_last_run') || null,
       cron: getSetting('dream_cron') || '0 3 * * *',
       enabled: (getSetting('dream_enabled') ?? '1') !== '0',
@@ -36,8 +56,17 @@ export async function dreamRoutes(app: FastifyInstance) {
     if (!status || !['resolved', 'dismissed', 'open'].includes(status)) {
       return reply.code(400).send({ error: '报告状态无效' });
     }
+    const report = db.prepare(`SELECT kind,payload FROM reports WHERE id=?`).get(id) as any;
     const result = db.prepare(`UPDATE reports SET status = ? WHERE id = ?`).run(status, id);
     if (result.changes !== 1) return reply.code(404).send({ error: '报告不存在' });
+    if (report?.kind === 'ingest_questions' && ['resolved', 'dismissed'].includes(status)) {
+      let payload: any = {};
+      try { payload = JSON.parse(report.payload); } catch { /* legacy malformed report */ }
+      const questionStatus = status === 'resolved' ? 'accepted' : 'ignored';
+      const path = String(payload.path || '');
+      setActionableQuestionsForPath(path, questionStatus);
+      syncIngestQuestionReport(path);
+    }
     return { ok: true };
   });
 
@@ -46,6 +75,7 @@ export async function dreamRoutes(app: FastifyInstance) {
     if (!REPORT_ACTION_KINDS.includes(kind as ReportActionKind)) {
       return reply.code(404).send({ error: '报告分类不存在' });
     }
+    if (kind === 'pending_review') reconcilePendingCandidates();
     return previewReportActions(kind as ReportActionKind);
   });
 
@@ -61,7 +91,8 @@ export async function dreamRoutes(app: FastifyInstance) {
     } catch (error: any) {
       return reply.code(409).send({ error: error?.message || '报告无法处理' });
     }
-    const jobId = enqueue('dream_apply', { kind, decisions, nonce: Date.now() });
+    const jobKind = kind === 'pending_review' ? 'candidate_review_batch' : 'dream_apply';
+    const jobId = enqueue(jobKind, { kind, decisions, nonce: Date.now() });
     if (!jobId) {
       releaseReports(decisions);
       return reply.code(409).send({ error: '批量任务无法入队，请稍后重试' });

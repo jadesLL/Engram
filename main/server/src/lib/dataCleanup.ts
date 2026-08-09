@@ -93,9 +93,13 @@ export async function wipeKnowledgeData(): Promise<KnowledgeWipeResult> {
     db.prepare(`DELETE FROM entities`).run();
     reportCount = db.prepare(`DELETE FROM reports`).run().changes;
     jobCount = db.prepare(`DELETE FROM jobs`).run().changes;
+    db.prepare(`DELETE FROM ingest_questions`).run();
+    db.prepare(`DELETE FROM ingest_candidates`).run();
+    db.prepare(`DELETE FROM page_contributions`).run();
     db.prepare(`DELETE FROM ingest_facts`).run();
     db.prepare(`DELETE FROM ingest_audit`).run();
     ingestRunCount = db.prepare(`DELETE FROM ingest_runs`).run().changes;
+    db.prepare(`DELETE FROM source_versions`).run();
     db.prepare(`DELETE FROM ingest_log`).run();
     db.prepare(`DELETE FROM office_edit_sessions`).run();
     db.prepare(`DELETE FROM office_versions`).run();
@@ -110,7 +114,11 @@ export async function wipeKnowledgeData(): Promise<KnowledgeWipeResult> {
           OR path LIKE 'Wiki/归档/%'
           OR path LIKE 'Wiki/查询/%'`
     ).run();
-    db.prepare(`DELETE FROM settings WHERE key = 'dream_last_run'`).run();
+    db.prepare(
+      `DELETE FROM settings WHERE key IN (
+         'dream_last_run','ingest_ledger_v2_migrated','ingest_candidate_ledger_migrated'
+       )`
+    ).run();
   });
   clearDb();
   invalidateGraphCache();
