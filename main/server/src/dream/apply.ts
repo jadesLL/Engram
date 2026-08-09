@@ -6,6 +6,7 @@ import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages } from '../lib/mergePages.js';
 import { applyReviewedCandidate } from '../pipeline/ingest.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
+import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
 
 export const REPORT_ACTION_KINDS = [
   'deadlink', 'duplicate', 'contradiction', 'single_source', 'missing_sections',
@@ -178,10 +179,7 @@ function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Rec
       if (!page) throw new Error('页面不存在');
       const current = readPage(page.path);
       if (!current) throw new Error('页面无法读取');
-      let content = current.content.replace(/\s*$/, '');
-      if ((payload.missing || []).includes('当前理解') && !/##\s*当前理解/.test(content)) content += '\n\n## 当前理解\n';
-      if ((payload.missing || []).includes('时间线') && !/##\s*时间线/.test(content)) content += '\n\n## 时间线\n';
-      writePage(page.path, `${content}\n`, {});
+      writePage(page.path, ensureEntityStructure(current.content), {});
       enqueuePagePipeline(page.id);
       return 'resolved';
     }
@@ -212,7 +210,15 @@ function applyOne(kind: ReportActionKind, decision: ReportDecision, payload: Rec
     case 'enrich': return 'dismissed';
     case 'contradiction':
     case 'single_source':
+      return 'resolved';
     case 'ingest_questions':
+      for (const question of payload.questions || []) {
+        if (question.id) {
+          db.prepare(
+            `UPDATE ingest_questions SET status='accepted', updated_at=? WHERE id=? AND status='open'`
+          ).run(now(), question.id);
+        }
+      }
       return 'resolved';
   }
 }

@@ -89,9 +89,10 @@
             </span>
             <span v-else-if="f.ingestedAt" class="ingested-flag" :title="`已于 ${f.ingestedAt.slice(0, 10)} 整理`">已整理</span>
             <span v-else-if="f.ingestStatus === 'failed'" class="ingested-flag failed" :title="f.ingestError ? `整理失败：${f.ingestError.slice(0, 200)}` : '整理失败，可重试'">整理失败</span>
+            <span v-else-if="f.ingestSupported === false" class="ingested-flag unsupported" title="文件已保存，当前格式暂不支持 AI 整理">仅保存</span>
             <span class="row-actions" @click.stop>
               <button
-                v-if="['md', 'markdown', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
+                v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
                 title="AI 整理（提炼概念/实体到 Wiki）"
                 @click="ingestFile(f)"
               >
@@ -135,9 +136,10 @@
             </span>
             <span v-else-if="f.ingestedAt" class="ingested-flag" :title="`已于 ${f.ingestedAt.slice(0, 10)} 整理`">已整理</span>
             <span v-else-if="f.ingestStatus === 'failed'" class="ingested-flag failed" :title="f.ingestError ? `整理失败：${f.ingestError.slice(0, 200)}` : '整理失败，可重试'">整理失败</span>
+            <span v-else-if="f.ingestSupported === false" class="ingested-flag unsupported" title="文件已保存，当前格式暂不支持 AI 整理">仅保存</span>
             <span class="row-actions" @click.stop>
               <button
-                v-if="['md', 'markdown', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
+                v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
                 title="AI 整理（提炼概念/实体到 Wiki）"
                 @click="ingestFile(f)"
               >
@@ -510,6 +512,7 @@ onUnmounted(() => {
 .file-icon { color: var(--text-faint); flex-shrink: 0; }
 .ingested-flag { font-size: 10px; color: var(--success); border: 1px solid var(--success); border-radius: 8px; padding: 0 5px; flex-shrink: 0; opacity: 0.85; }
 .ingested-flag.failed { color: var(--danger); border-color: var(--danger); }
+.ingested-flag.unsupported { color: var(--text-tertiary); border-color: var(--border-strong); }
 .ingest-progress { font-size: 10px; color: var(--accent); background: var(--accent-soft); border-radius: 8px; padding: 1px 5px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-actions { display: none; gap: 2px; flex-shrink: 0; }
 .page-row:hover .row-actions { display: flex; }

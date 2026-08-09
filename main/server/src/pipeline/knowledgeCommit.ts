@@ -1,0 +1,235 @@
+import fs from 'node:fs';
+import { db } from '../lib/db.js';
+import { createPage, readPage, readPageMeta, safeJoin, writePage } from '../lib/vault.js';
+import { TYPE_DIR, isEntity } from '../lib/pageTypes.js';
+import { enqueuePagePipeline } from '../jobQueue.js';
+import { addReports } from '../dream/reports.js';
+import type { ComposedItem } from './ingestModel.js';
+import {
+  activateSourceVersion,
+  affectedPagesForSource,
+  allManagedContributions,
+  contributionKey,
+  contributionsForProjection,
+  enqueueDerivedFinalize,
+  failSourceVersion,
+  markCommitStarted,
+  storeContribution,
+  type SourceVersion,
+} from './sourceLedger.js';
+import { renderKnowledgeProjection, type KnowledgeRelation } from './knowledgePage.js';
+
+export interface IngestStats {
+  created: number;
+  merged: number;
+  skipped: number;
+  pending: number;
+}
+
+export interface KnowledgeCommitContext {
+  runId: string;
+  sourceVersion: SourceVersion;
+  sourcePath: string;
+  sourceName: string;
+  sourceRef: string;
+}
+
+export type KnowledgeItem = ComposedItem & { relations?: KnowledgeRelation[] };
+
+const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
+
+function activeWikiTitleQuery(): string {
+  return `deleted=0 AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`;
+}
+
+function knownTitles(items: KnowledgeItem[]): Set<string> {
+  const rows = db.prepare(`SELECT lower(title) title FROM pages WHERE ${activeWikiTitleQuery()}`).all() as { title: string }[];
+  const result = new Set(rows.map((row) => row.title));
+  for (const item of items) {
+    if (item.action === 'create') result.add(item.name.toLowerCase());
+    if (item.action === 'merge' && item.target) result.add(item.target.toLowerCase());
+  }
+  return result;
+}
+
+function stripDeadLinks(content: string, known: Set<string>): string {
+  return content.replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (full, target: string, alias?: string) =>
+    known.has(target.trim().toLowerCase()) ? full : (alias || target).trim()
+  );
+}
+
+function pending(item: KnowledgeItem, context: KnowledgeCommitContext, reason: string) {
+  addReports([{
+    kind: 'pending_review',
+    payload: {
+      name: item.name,
+      kind: item.kind,
+      source: context.sourceName,
+      sourcePath: context.sourcePath,
+      sourceVersionId: context.sourceVersion.id,
+      reason,
+      runId: context.runId,
+      confidence: item.confidence,
+      target: item.target,
+      summary: item.summary,
+      content: item.content,
+      factIds: item.factIds,
+      relations: item.relations || [],
+      ambiguity: item.ambiguity,
+    },
+  }]);
+}
+
+function pageSources(
+  pagePath: string,
+  allManaged: ReturnType<typeof allManagedContributions>,
+  active: ReturnType<typeof contributionsForProjection>,
+): string[] {
+  const existing = readPageMeta(pagePath).sources;
+  const managedPaths = new Set(allManaged.map((contribution) => contribution.source_path));
+  return [...new Set([
+    ...(Array.isArray(existing) ? existing.map(String).filter((source) => !managedPaths.has(source)) : []),
+    ...active.map((contribution) => contribution.source_path),
+  ])];
+}
+
+function projectPage(pageId: string, pendingVersionId?: string): void {
+  const page = db.prepare(`SELECT id,path,title,type FROM pages WHERE id=? AND deleted=0`).get(pageId) as any;
+  if (!page) return;
+  const current = readPage(page.path);
+  if (!current) return;
+  const allManaged = allManagedContributions(pageId);
+  const active = contributionsForProjection(pageId, pendingVersionId);
+  const projected = renderKnowledgeProjection(
+    current.content,
+    page.title,
+    isEntity(page.type),
+    allManaged,
+    active,
+  );
+  const latest = active.at(-1);
+  writePage(page.path, projected, {
+    type: page.type,
+    summary: latest?.summary || current.meta.summary,
+    domain: latest?.domain,
+    confidence: latest?.confidence,
+    retrieved: new Date().toISOString().slice(0, 10),
+    sources: pageSources(page.path, allManaged, active),
+  });
+}
+
+function finishCommit(context: KnowledgeCommitContext, pageIds: string[]): void {
+  const revision = `${context.runId}:${Date.now()}`;
+  for (const pageId of pageIds) projectPage(pageId, context.sourceVersion.id);
+  activateSourceVersion(context.sourceVersion.id, context.runId);
+  for (const pageId of pageIds) {
+    projectPage(pageId);
+    enqueuePagePipeline(pageId, { ingestRunId: context.runId, revision });
+  }
+  enqueueDerivedFinalize(context.runId);
+}
+
+export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeCommitContext): {
+  stats: IngestStats;
+  pageIds: string[];
+} {
+  const stats = { ...EMPTY };
+  const known = knownTitles(items);
+  const find = db.prepare(`SELECT id,path,title,type FROM pages WHERE ${activeWikiTitleQuery()} AND lower(title)=lower(?)`);
+  const createdPageIds: string[] = [];
+
+  for (const item of items) {
+    if (item.action === 'skip') {
+      stats.skipped++;
+      continue;
+    }
+    if (item.action === 'review') {
+      pending(item, context, item.reason || '需要人工确认');
+      stats.pending++;
+      continue;
+    }
+
+    const targetName = item.action === 'merge' ? item.target : item.name;
+    let page = find.get(targetName) as any;
+    if (item.action === 'merge' && !page) {
+      pending(item, context, `合并目标「${targetName}」不存在`);
+      stats.pending++;
+      continue;
+    }
+    if (!page) {
+      const dir = TYPE_DIR[item.kind];
+      if (!dir) {
+        pending(item, context, '类型不清');
+        stats.pending++;
+        continue;
+      }
+      page = createPage(dir, item.name);
+      writePage(page.path, `# ${item.name}\n`, { type: item.kind });
+      page = db.prepare(`SELECT id,path,title,type FROM pages WHERE id=?`).get(page.id);
+      createdPageIds.push(page.id);
+      stats.created++;
+    } else {
+      stats.merged++;
+    }
+
+    storeContribution({
+      pageId: page.id,
+      sourceVersionId: context.sourceVersion.id,
+      runId: context.runId,
+      contributionKey: contributionKey(context.sourcePath, page.id),
+      factIds: item.factIds,
+      relations: item.relations || [],
+      content: stripDeadLinks(item.content, known),
+      summary: item.summary,
+      domain: item.domain,
+      confidence: item.confidence,
+      sourceRef: context.sourceRef,
+    });
+  }
+
+  const pageIds = affectedPagesForSource(context.sourcePath, context.sourceVersion.id);
+  markCommitStarted(context.runId);
+  try {
+    finishCommit(context, pageIds);
+  } catch (error: any) {
+    db.prepare(`DELETE FROM page_contributions WHERE source_version_id=?`).run(context.sourceVersion.id);
+    for (const pageId of pageIds) {
+      try { projectPage(pageId); } catch { /* best-effort rollback to active contributions */ }
+    }
+    for (const pageId of createdPageIds) {
+      const page = db.prepare(`SELECT path FROM pages WHERE id=?`).get(pageId) as { path: string } | undefined;
+      if (page && !allManagedContributions(pageId).length) {
+        try { fs.unlinkSync(safeJoin(page.path)); } catch { /* page may not have reached disk */ }
+        db.prepare(`DELETE FROM pages_fts WHERE page_id=?`).run(pageId);
+        db.prepare(`DELETE FROM pages WHERE id=?`).run(pageId);
+      }
+    }
+    failSourceVersion(context.sourceVersion.id, context.runId, String(error?.message || error));
+    throw error;
+  }
+  return { stats, pageIds };
+}
+
+export function recoverKnowledgeCommit(runId: string): void {
+  const run = db.prepare(
+    `SELECT id,path,source_version_id FROM ingest_runs WHERE id=? AND commit_status='committing'`
+  ).get(runId) as { id: string; path: string; source_version_id?: string } | undefined;
+  if (!run?.source_version_id) throw new Error('没有可恢复的整理提交');
+  const sourceVersion = db.prepare(
+    `SELECT id,path,content_hash,previous_id,status FROM source_versions WHERE id=?`
+  ).get(run.source_version_id) as SourceVersion | undefined;
+  if (!sourceVersion) throw new Error('恢复提交时来源版本不存在');
+  const pageIds = affectedPagesForSource(run.path, sourceVersion.id);
+  try {
+    finishCommit({
+      runId,
+      sourceVersion,
+      sourcePath: run.path,
+      sourceName: run.path.split('/').pop() || run.path,
+      sourceRef: run.path,
+    }, pageIds);
+  } catch (error: any) {
+    failSourceVersion(sourceVersion.id, runId, String(error?.message || error));
+    throw error;
+  }
+}

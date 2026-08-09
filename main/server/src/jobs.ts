@@ -6,6 +6,11 @@ import { ingestRawFile } from './pipeline/ingest.js';
 import { runUpgrades } from './pipeline/mentions.js';
 import { regenerateIndex, regenerateRelationships } from './pipeline/indexFile.js';
 import { applyReportDecisions, releaseReports, type ReportActionKind, type ReportDecision } from './dream/apply.js';
+import { enqueue, enqueuePagePipeline } from './jobQueue.js';
+import { finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
+import { recoverKnowledgeCommit } from './pipeline/knowledgeCommit.js';
+
+export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
 export type JobProgress = {
   stage: string;
@@ -43,8 +48,8 @@ const handlers: Record<string, JobHandler> = {
   summarize: async ({ pageId }) => {
     await organizePage(pageId);
   },
-  ingest: async ({ path }, update) => {
-    await ingestRawFile(path, (progress) => update(progress));
+  ingest: async ({ path, force }, update) => {
+    await ingestRawFile(path, (progress) => update(progress), { force: Boolean(force) });
   },
   mentions: async () => {
     await runUpgrades();
@@ -59,6 +64,12 @@ const handlers: Record<string, JobHandler> = {
     await extractEntities(pageId);
     await organizePage(pageId);
   },
+  ingest_finalize: async ({ runId }) => {
+    finalizeDerivedRun(runId);
+  },
+  ingest_recover: async ({ runId }) => {
+    recoverKnowledgeCommit(runId);
+  },
   /** 分类批量处理：只执行请求中显式选择的报告和动作。 */
   dream_apply: async ({ kind, decisions }, update) => {
     try {
@@ -69,27 +80,6 @@ const handlers: Record<string, JobHandler> = {
     }
   },
 };
-
-export function enqueue(kind: string, payload: unknown): number | undefined {
-  const payloadStr = JSON.stringify(payload);
-  // 去重1：同 kind+payload 的排队任务已存在则跳过
-  const dup = db
-    .prepare(`SELECT id FROM jobs WHERE kind = ? AND payload = ? AND status = 'pending'`)
-    .get(kind, payloadStr);
-  if (dup) return undefined;
-  // 去重2：同任务 60 秒内刚完成过则跳过（防自动保存反复触发完整管线）
-  const recent = db
-    .prepare(
-      `SELECT id FROM jobs WHERE kind = ? AND payload = ? AND status = 'done'
-       AND julianday(run_at) > julianday('now', '-60 seconds')`
-    )
-    .get(kind, payloadStr);
-  if (recent) return undefined;
-  const info = db
-    .prepare(`INSERT INTO jobs(kind, payload, status, created_at) VALUES(?, ?, 'pending', ?)`)
-    .run(kind, payloadStr, now());
-  return Number(info.lastInsertRowid);
-}
 
 let running = false;
 
@@ -102,6 +92,7 @@ function recoverStaleJobs() {
     `UPDATE jobs SET status = 'failed', error = '执行超时（运行中超过5分钟，疑似中断未恢复）' WHERE status = 'running'`
   ).run();
   recoverApplyingReports();
+  recoverIngestCommits();
 }
 
 /** 仅保留仍被 pending/running dream_apply 任务引用的 applying 报告。 */
@@ -158,18 +149,4 @@ export function startJobRunner() {
       polling = false;
     }
   }, 2000);
-}
-
-/** 页面保存后的标准管线：合并为单个 process 任务 + 全局扫描（减少队列噪音） */
-export function enqueuePagePipeline(pageId: string) {
-  const page = db.prepare(`SELECT path FROM pages WHERE id = ?`).get(pageId) as any;
-  const p = page?.path || '';
-  const isSystem = p.startsWith('原始资料/') || p.startsWith('AIWorks/');
-  if (!isSystem) {
-    enqueue('process', { pageId }); // 索引+抽取+整理一步到位
-  } else {
-    enqueue('embed', { pageId }); // 系统区只做索引
-  }
-  enqueue('mentions', {}); // 升级扫描（全局，dedup 去重）
-  enqueue('metagen', {});  // 重建 index.md / relationships.md（全局，dedup 去重）
 }

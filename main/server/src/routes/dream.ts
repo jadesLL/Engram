@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { db, getSetting } from '../lib/db.js';
+import { db, getSetting, now } from '../lib/db.js';
 import { requireAuth } from './auth.js';
 import { runDreamCycle } from '../dream/tasks.js';
 import { scheduleDreamCycle } from '../dream/scheduler.js';
@@ -36,8 +36,20 @@ export async function dreamRoutes(app: FastifyInstance) {
     if (!status || !['resolved', 'dismissed', 'open'].includes(status)) {
       return reply.code(400).send({ error: '报告状态无效' });
     }
+    const report = db.prepare(`SELECT kind,payload FROM reports WHERE id=?`).get(id) as any;
     const result = db.prepare(`UPDATE reports SET status = ? WHERE id = ?`).run(status, id);
     if (result.changes !== 1) return reply.code(404).send({ error: '报告不存在' });
+    if (report?.kind === 'ingest_questions' && ['resolved', 'dismissed'].includes(status)) {
+      let payload: any = {};
+      try { payload = JSON.parse(report.payload); } catch { /* legacy malformed report */ }
+      const questionStatus = status === 'resolved' ? 'accepted' : 'ignored';
+      for (const question of payload.questions || []) {
+        if (question.id) {
+          db.prepare(`UPDATE ingest_questions SET status=?, updated_at=? WHERE id=? AND status='open'`)
+            .run(questionStatus, now(), question.id);
+        }
+      }
+    }
     return { ok: true };
   });
 

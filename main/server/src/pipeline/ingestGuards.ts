@@ -10,12 +10,14 @@ export function whitelistFactIds<T extends PlanItem>(items: T[], allowedFactIds:
   const gated = items.map((item) => {
     const validFactIds = [...new Set(item.factIds.filter((id: string) => allowedFactIds.has(id)))];
     const invalidFactIds = [...new Set(item.factIds.filter((id: string) => !allowedFactIds.has(id)))];
+    const relations = item.relations.filter((relation) => relation.factId && allowedFactIds.has(relation.factId));
     const noEvidence = !validFactIds.length && !['skip', 'review'].includes(item.action);
     if (invalidFactIds.length || noEvidence) rejected.push({ name: item.name, invalidFactIds });
-    if (!invalidFactIds.length && !noEvidence) return { ...item, factIds: validFactIds };
+    if (!invalidFactIds.length && !noEvidence) return { ...item, factIds: validFactIds, relations };
     return {
       ...item,
       factIds: validFactIds,
+      relations,
       action: 'review' as const,
       reason: [item.reason, invalidFactIds.length ? `引用了无效事实：${invalidFactIds.join(', ')}` : '', noEvidence ? '没有有效事实依据' : ''].filter(Boolean).join('；'),
     };

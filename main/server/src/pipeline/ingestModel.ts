@@ -11,6 +11,13 @@ export const factSchema = z.object({
   sources: z.array(sourceSpanSchema).min(1),
 });
 
+export const ingestRelationSchema = z.object({
+  src: z.string().default(''),
+  word: z.string().default(''),
+  dst: z.string().default(''),
+  factId: z.string().optional().default(''),
+});
+
 export const candidateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   kind: z.enum(['concept', 'person', 'project', 'org']),
@@ -20,8 +27,7 @@ export const candidateSchema = z.object({
   // relations 字段宽容化：LLM 偶尔返回字段不全的 relation，缺失字段填空串而非整体校验失败；
   // 整个 relations 异常时回退为空数组，不拖垮该 candidate
   relations: z.array(
-    z.object({ src: z.string().default(''), word: z.string().default(''), dst: z.string().default(''), factId: z.string().optional() })
-      .catch({ src: '', word: '', dst: '' })
+    ingestRelationSchema.catch({ src: '', word: '', dst: '', factId: '' })
   ).catch([]).default([]),
 });
 
@@ -88,6 +94,7 @@ export const planItemSchema = z.object({
   confidence: z.enum(['高', '中', '低']).default('中'),
   summary: z.string().optional().default(''),
   factIds: z.array(z.string()).default([]),
+  relations: z.array(ingestRelationSchema).default([]),
   reason: z.string().optional().default(''),
   ambiguity: z.object({
     category: z.enum(['role_title', 'possible_typo']),
@@ -143,6 +150,7 @@ export const verifierOutputSchema = z.object({
 
 export type SourceSpan = z.infer<typeof sourceSpanSchema>;
 export type Fact = z.infer<typeof factSchema>;
+export type IngestRelation = z.infer<typeof ingestRelationSchema>;
 export type Candidate = z.infer<typeof candidateSchema>;
 export type PlanItem = z.infer<typeof planItemSchema>;
 export type ComposedItem = z.infer<typeof composedItemSchema>;

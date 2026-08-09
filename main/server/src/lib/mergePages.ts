@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { db } from './db.js';
-import { readPage, writePage, movePage, safeJoin } from './vault.js';
+import { readPage, readPageMeta, writePage, movePage, safeJoin } from './vault.js';
 import { ARCHIVE_DIR } from '../config.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
+import { mergeManualContent } from '../pipeline/knowledgePage.js';
 
 /** 年月日时分秒时间戳（日志标注用） */
 export function stamp(d = new Date()): string {
@@ -33,22 +34,15 @@ export function mergePages(keepId: string, otherId: string): void {
   if (!kc || !oc) throw new MergeError('文件读取失败', 404);
 
   const day = new Date().toISOString().slice(0, 10);
-  // keep 追加合并事件（实体页进时间线，其他页加补充小节）
-  let newContent: string;
-  if (/##\s*时间线/.test(kc.content)) {
-    newContent = kc.content.replace(
-      /(##\s*时间线[\s\S]*)$/,
-      (tl) => `${tl.trim()}\n- ${day}: 合并吸收了 [[${other.title}]] 的内容\n`
-    );
-    // 把 other 的核心内容并入"当前理解"
-    newContent = newContent.replace(
-      /(##\s*当前理解[\s\S]*?)(\n##\s*时间线)/,
-      `$1\n\n> 合并自 [[${other.title}]]（${day}）：\n${oc.content.replace(/^#\s+.+$/m, '').slice(0, 800)}\n$2`
-    );
-  } else {
-    newContent = `${kc.content}\n\n## 合并自 [[${other.title}]]（${day}）\n\n${oc.content.replace(/^#\s+.+$/m, '').slice(0, 800)}\n`;
-  }
-  writePage(keep.path, newContent, {});
+  const newContent = mergeManualContent(kc.content, oc.content.slice(0, 5000), other.title, day);
+  const keepSources = readPageMeta(keep.path).sources;
+  const otherSources = readPageMeta(other.path).sources;
+  writePage(keep.path, newContent, {
+    sources: [...new Set([
+      ...(Array.isArray(keepSources) ? keepSources.map(String) : []),
+      ...(Array.isArray(otherSources) ? otherSources.map(String) : []),
+    ])],
+  });
 
   // other 移入归档
   let archiveRel = path.posix.join(ARCHIVE_DIR, path.posix.basename(other.path));
@@ -70,7 +64,10 @@ export function mergePages(keepId: string, otherId: string): void {
     const replaced = rd.content
       .split(`[[${other.title}]]`).join(`[[${keep.title}]]`)
       .replace(new RegExp(`\\[\\[${other.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\|`, 'g'), `[[${keep.title}|`);
-    if (replaced !== rd.content) writePage(rp.path, replaced, {});
+    if (replaced !== rd.content) {
+      writePage(rp.path, replaced, {});
+      enqueuePagePipeline(rp.id);
+    }
   }
 
   appendWikiLog('合并', `[[${other.title}]] 合并入 [[${keep.title}]]（原页已归档）`);

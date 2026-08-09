@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { db, now } from '../lib/db.js';
 import { requireAuth } from './auth.js';
 import { applyReviewedCandidate } from '../pipeline/ingest.js';
+import { enqueue } from '../jobQueue.js';
 
 const KIND_LABELS: Record<string, string> = {
   ingest: 'AI 整理',
@@ -12,6 +13,8 @@ const KIND_LABELS: Record<string, string> = {
   index_file: '文件索引',
   mentions: '升级扫描',
   metagen: '索引生成',
+  ingest_finalize: '整理派生校验',
+  ingest_recover: '整理提交恢复',
   dream_apply: '分类批量处理',
 };
 
@@ -126,7 +129,81 @@ export async function jobRoutes(app: FastifyInstance) {
     const audit = tableExists('ingest_audit')
       ? (db.prepare(`SELECT id, stage, at, payload FROM ingest_audit WHERE run_id=? ORDER BY id`).all(id) as any[]).map((item) => ({ ...item, payload: safeJson(item.payload, item.payload) }))
       : [];
-    return { run: { ...run, stats: safeJson(run.stats, {}) }, facts, audit };
+    const sourceVersion = run.source_version_id && tableExists('source_versions')
+      ? db.prepare(`SELECT * FROM source_versions WHERE id=?`).get(run.source_version_id)
+      : null;
+    const contributions = tableExists('page_contributions')
+      ? (db.prepare(
+        `SELECT pc.*, p.title, p.path FROM page_contributions pc
+         JOIN pages p ON p.id=pc.page_id WHERE pc.run_id=? ORDER BY pc.created_at`
+      ).all(id) as any[]).map((item) => ({
+        ...item,
+        fact_ids: safeJson(item.fact_ids, []),
+        relations: safeJson(item.relations, []),
+      }))
+      : [];
+    const questions = tableExists('ingest_questions')
+      ? (db.prepare(`SELECT * FROM ingest_questions WHERE run_id=? ORDER BY created_at`).all(id) as any[]).map((item) => ({
+        ...item,
+        fact_ids: safeJson(item.fact_ids, []),
+        acceptance: safeJson(item.acceptance, []),
+      }))
+      : [];
+    return { run: { ...run, stats: safeJson(run.stats, {}) }, sourceVersion, facts, contributions, questions, audit };
+  });
+
+  app.get('/api/ingest/questions', async (req) => {
+    if (!tableExists('ingest_questions')) return { questions: [] };
+    const { status = 'open', path } = req.query as { status?: string; path?: string };
+    const rows = path
+      ? db.prepare(`SELECT * FROM ingest_questions WHERE status=? AND path=? ORDER BY created_at DESC`).all(status, path)
+      : db.prepare(`SELECT * FROM ingest_questions WHERE status=? ORDER BY created_at DESC LIMIT 200`).all(status);
+    return {
+      questions: (rows as any[]).map((item) => ({
+        ...item,
+        fact_ids: safeJson(item.fact_ids, []),
+        acceptance: safeJson(item.acceptance, []),
+      })),
+    };
+  });
+
+  app.post('/api/ingest/questions/:id/answer', async (req, reply) => {
+    if (!tableExists('ingest_questions')) return reply.code(404).send({ error: '整理追问尚未初始化' });
+    const { id } = req.params as { id: string };
+    const { answer = '', action = 'reprocess' } = req.body as {
+      answer?: string;
+      action?: 'reprocess' | 'acknowledge' | 'ignore';
+    };
+    if (!['reprocess', 'acknowledge', 'ignore'].includes(action)) {
+      return reply.code(400).send({ error: '追问处理动作无效' });
+    }
+    const question = db.prepare(`SELECT * FROM ingest_questions WHERE id=?`).get(id) as any;
+    if (!question) return reply.code(404).send({ error: '整理追问不存在' });
+    if (action === 'reprocess' && !answer.trim()) {
+      return reply.code(400).send({ error: '重新整理前请填写回答' });
+    }
+    const status = action === 'ignore' ? 'ignored' : action === 'acknowledge' ? 'accepted' : 'answered';
+    db.prepare(`UPDATE ingest_questions SET answer=?, status=?, updated_at=? WHERE id=?`)
+      .run(answer.trim(), status, now(), id);
+
+    const reports = db.prepare(
+      `SELECT id,payload FROM reports WHERE kind='ingest_questions' AND status='open'`
+    ).all() as Array<{ id: number; payload: string }>;
+    for (const report of reports) {
+      const payload = safeJson(report.payload, {});
+      const ids = (payload.questions || []).map((item: any) => item.id).filter(Boolean);
+      if (!ids.includes(id)) continue;
+      const remaining = ids.filter((questionId: string) => {
+        const row = db.prepare(`SELECT status FROM ingest_questions WHERE id=?`).get(questionId) as { status: string } | undefined;
+        return row?.status === 'open';
+      });
+      if (!remaining.length) db.prepare(`UPDATE reports SET status='resolved' WHERE id=?`).run(report.id);
+    }
+
+    const jobId = action === 'reprocess'
+      ? enqueue('ingest', { path: question.path, force: true, questionId: id, nonce: Date.now() })
+      : undefined;
+    return { ok: true, status, jobId: jobId || null };
   });
 
   /** 待审候选沿用 reports，兼容当前 ingest 核心表且携带可追溯事实。 */

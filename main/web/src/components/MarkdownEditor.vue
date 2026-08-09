@@ -82,20 +82,30 @@ let lastEmittedMode: 'ir' | 'sv' = 'ir';
 
 /** ingest 注释匹配（<!-- ingest:xxx --> 单行 HTML 注释） */
 const INGEST_RE = /<!--\s*ingest:[^>]*-->/g;
+const INGEST_PLACEHOLDER_RE = /<!--\s*ingest-preserved:([A-Za-z0-9+/=]+)\s*-->/g;
 
-/** 编辑时剥离 ingest 注释（不在编辑器里显示，保存时还原） */
+/** 用不可见占位注释隐藏证据标记，同时保留它在正文中的准确位置。 */
 function stripIngestComments(md: string): string {
-  return md.replace(INGEST_RE, '');
+  return md.replace(INGEST_RE, (comment) => `<!-- ingest-preserved:${btoa(comment)} -->`);
 }
 
-/** 保存时还原 ingest 注释（把被剥离的注释加回末尾） */
+/** 保存时优先原位还原；编辑器若意外清除了占位符，再降级追加原标记。 */
 function restoreIngestComments(md: string): string {
   if (!vditor) return md;
-  // 从原始 props.modelValue 提取所有 ingest 注释，追加到末尾
+  let restoredAny = false;
+  const restored = md.replace(INGEST_PLACEHOLDER_RE, (_full, encoded: string) => {
+    try {
+      restoredAny = true;
+      return atob(encoded);
+    } catch {
+      return '';
+    }
+  });
+  if (restoredAny) return restored;
+
   const raw = props.modelValue;
   const comments = raw.match(INGEST_RE);
   if (!comments || comments.length === 0) return md;
-  // 如果 md 里已经含 ingest 注释（用户没编辑那行），不重复加
   if (INGEST_RE.test(md)) { INGEST_RE.lastIndex = 0; return md; }
   INGEST_RE.lastIndex = 0;
   return md.trimEnd() + '\n' + comments.join('\n');

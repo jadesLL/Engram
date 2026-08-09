@@ -4,19 +4,18 @@ import crypto from 'node:crypto';
 import matter from 'gray-matter';
 import { db, newId, now } from '../lib/db.js';
 import { chatJsonSchema, llmReady } from '../lib/llm.js';
-import { createPage, readPage, safeJoin, writePage } from '../lib/vault.js';
+import { safeJoin } from '../lib/vault.js';
 import { docxToText } from './docx.js';
 import { xlsxToText, pptxToText } from './office.js';
 import { chunkLosslessly, assertLosslessChunks } from './losslessChunker.js';
 import { hybridSearch } from '../retrieval/hybrid.js';
-import { TYPE_DIR, isEntity } from '../lib/pageTypes.js';
-import { extractWikiLinks } from './extractor.js';
+import { extractWikiLinks, RELATION_WORDS } from './extractor.js';
 import { addReports } from '../dream/reports.js';
 import {
   composedItemSchema, composeOutputSchema, composeItemOutputListSchema, criticOutputSchema, mapOutputSchema, normalizeOutputSchema,
   planOutputSchema, questionOutputSchema, verifierOutputSchema,
   type Candidate, type ComposedItem, type StructuredDocument, type PlanItem,
-  type QuestionOutput, type VerifierOutput,
+  type IngestRelation, type QuestionOutput, type VerifierOutput,
 } from './ingestModel.js';
 import { enforceWriteGate, whitelistFactIds } from './ingestGuards.js';
 import {
@@ -28,17 +27,22 @@ import {
   composePrompt, criticPrompt, mapPrompt, normalizePrompt, planPrompt,
   questionFinderPrompt, verifierPrompt,
 } from '../prompts/ingestPipeline.js';
+import { commitKnowledgeItems, type IngestStats, type KnowledgeItem } from './knowledgeCommit.js';
+import {
+  beginSourceVersion,
+  failSourceVersion,
+  recordQuestions,
+  supplementalAnswers,
+  type SourceVersion,
+} from './sourceLedger.js';
 
-export interface IngestStats { created: number; merged: number; skipped: number; pending: number }
+export type { IngestStats } from './knowledgeCommit.js';
 export type IngestStage = '解析' | 'Map' | 'Normalize' | 'Plan' | 'Critic' | 'Retrieve' | 'Compose' | 'Verify' | 'Commit';
 export type IngestProgress = { stage: IngestStage; progress: number; detail?: string };
 export type IngestProgressCallback = (update: IngestProgress) => void;
 const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
-const KIND_TYPE: Record<string, string> = { concept: 'concept', person: 'person', project: 'project', org: 'org' };
 
 function hash(value: string | Buffer): string { return crypto.createHash('sha256').update(value).digest('hex'); }
-function today(): string { return new Date().toISOString().slice(0, 10); }
-function sourceMarker(runId: string, factIds: string[]): string { return `<!-- ingest:${runId};facts:${factIds.join(',')} -->`; }
 
 async function loadDocument(relPath: string): Promise<StructuredDocument> {
   const abs = safeJoin(relPath);
@@ -68,7 +72,11 @@ function setStatus(pathName: string, contentHash: string, runId: string, status:
 }
 
 function loadRoster(limit = 2000): EntityRosterEntry[] {
-  return db.prepare(`SELECT id, title, type, summary FROM pages WHERE deleted=0 AND path LIKE 'Wiki/%' ORDER BY updated_at DESC LIMIT ?`).all(limit) as EntityRosterEntry[];
+  return db.prepare(
+    `SELECT id, title, type, summary FROM pages
+     WHERE deleted=0 AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')
+     ORDER BY updated_at DESC LIMIT ?`
+  ).all(limit) as EntityRosterEntry[];
 }
 
 function roster(entries: EntityRosterEntry[], limit = 100): string {
@@ -83,7 +91,11 @@ async function dynamicContext(candidates: Candidate[], document: StructuredDocum
   for (const query of queries) {
     try {
       const hits = await hybridSearch(query, 5);
-      for (const hit of hits.filter((h) => h.refType === 'page')) lines.add(`- ${hit.title}（${hit.type || '未分类'}）：${hit.snippet.replace(/\n/g, ' ').slice(0, 180)}`);
+      for (const hit of hits.filter((h) =>
+        h.refType === 'page' && (h.path.startsWith('Wiki/概念/') || h.path.startsWith('Wiki/实体/'))
+      )) {
+        lines.add(`- ${hit.title}（${hit.type || '未分类'}）：${hit.snippet.replace(/\n/g, ' ').slice(0, 180)}`);
+      }
     } catch { /* retrieval degradation is audited by the empty result */ }
   }
   return [...lines].slice(0, 30).join('\n');
@@ -112,37 +124,59 @@ function persistFacts(runId: string, candidates: Candidate[]) {
   tx();
 }
 
-function knownTitles(extra: string[]): Set<string> {
-  const set = new Set((db.prepare(`SELECT lower(title) title FROM pages WHERE deleted=0 AND path LIKE 'Wiki/%'`).all() as any[]).map((r) => r.title));
-  extra.forEach((title) => set.add(title.toLowerCase()));
-  return set;
-}
-function stripDeadLinks(content: string, known: Set<string>): string {
-  return content.replace(/\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (full, target: string, alias?: string) => known.has(target.trim().toLowerCase()) ? full : (alias || target).trim());
+function addSupplementalAnswers(document: StructuredDocument): void {
+  for (const answer of supplementalAnswers(document.path)) {
+    const content = `用户补充回答：${answer.answer}`;
+    document.chunks.push({
+      id: `q-${answer.id}`,
+      index: document.chunks.length,
+      heading: '用户补充回答',
+      content,
+      start: document.text.length,
+      end: document.text.length,
+    });
+  }
 }
 
-function entityBody(item: ComposedItem, marker: string): string {
-  return `# ${item.name}\n\n${item.content.trim()}\n${marker}\n\n## 时间线\n`;
+function canonicalRelationName(name: string, plan: PlanItem[], rosterEntries: EntityRosterEntry[]): string | null {
+  const normalized = name.trim().toLowerCase();
+  const item = plan.find((candidate) => candidate.name.trim().toLowerCase() === normalized);
+  if (item) {
+    if (item.action === 'skip' || item.action === 'review') return null;
+    return item.action === 'merge' ? item.target : item.name;
+  }
+  return rosterEntries.find((entry) => entry.title.trim().toLowerCase() === normalized)?.title || null;
 }
-function conceptBody(item: ComposedItem, sourceRef: string, marker: string): string {
-  return `# ${item.name}\n\n${item.content.trim()}\n\n---\n> 来源：${sourceRef}\n${marker}\n`;
-}
-function generatedSection(runId: string, sourceRef: string, marker: string, content: string): string {
-  return `<!-- ingest-section:${runId}:start -->\n## AI 提炼（${today()}）\n\n> 来自 ${sourceRef}\n${marker}\n\n${content.trim()}\n<!-- ingest-section:${runId}:end -->`;
-}
-function mergeBody(old: string, item: ComposedItem, sourceRef: string, marker: string, runId: string): string {
-  const section = generatedSection(runId, sourceRef, marker, item.content);
-  const sectionPattern = new RegExp(`<!-- ingest-section:${runId}:start -->[\\s\\S]*?<!-- ingest-section:${runId}:end -->`);
-  if (sectionPattern.test(old)) return old.replace(sectionPattern, section);
-  return `${old.replace(/\n*$/, '')}\n\n${section}\n`;
-}
-function pending(item: ComposedItem, source: string, reason: string, runId: string) {
-  const payload = {
-    name: item.name, kind: item.kind, source, reason, runId, confidence: item.confidence,
-    target: item.target, summary: item.summary, content: item.content, factIds: item.factIds,
-    ambiguity: item.ambiguity,
-  };
-  addReports([{ kind: 'pending_review', payload }]);
+
+function attachCandidateRelations(
+  plan: PlanItem[],
+  candidates: Candidate[],
+  rosterEntries: EntityRosterEntry[],
+  allowedFactIds: ReadonlySet<string>,
+): PlanItem[] {
+  const extracted: IngestRelation[] = [];
+  for (const candidate of candidates) {
+    for (const relation of candidate.relations) {
+      if (!(RELATION_WORDS as readonly string[]).includes(relation.word)) continue;
+      if (!relation.factId || !allowedFactIds.has(relation.factId)) continue;
+      const src = canonicalRelationName(relation.src, plan, rosterEntries);
+      const dst = canonicalRelationName(relation.dst, plan, rosterEntries);
+      if (src && dst) extracted.push({ src, word: relation.word, dst, factId: relation.factId });
+    }
+  }
+  return plan.map((item) => {
+    const pageName = item.action === 'merge' ? item.target : item.name;
+    const inherited = item.relations.filter((relation) =>
+      relation.factId && allowedFactIds.has(relation.factId) &&
+      (RELATION_WORDS as readonly string[]).includes(relation.word)
+    );
+    const related = extracted.filter((relation) => relation.src.toLowerCase() === pageName.toLowerCase());
+    const unique = new Map([...inherited, ...related].map((relation) => [
+      `${relation.src}\0${relation.word}\0${relation.dst}\0${relation.factId}`,
+      relation,
+    ]));
+    return { ...item, relations: [...unique.values()] };
+  });
 }
 
 export function applyReviewedCandidate(
@@ -153,91 +187,114 @@ export function applyReviewedCandidate(
   const reviewedName = String(resolution.name || payload.name || '').trim();
   if (!reviewedName) throw new Error('审核后的名称不能为空');
   if (kind === 'person' && isIncompleteRoleTitle(reviewedName)) throw new Error('人物名称仍是职务称谓，请填写完整姓名');
+  const targetInput = String(resolution.target || '').trim();
+  const targetPage = targetInput
+    ? db.prepare(
+      `SELECT title FROM pages WHERE deleted=0 AND (id=? OR lower(title)=lower(?))
+       AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`
+    ).get(targetInput, targetInput) as { title: string } | undefined
+    : undefined;
+  if (targetInput && !targetPage) throw new Error('要合并的目标实体不存在');
   const item = composedItemSchema.parse({
     name: reviewedName,
     kind,
-    action: 'create',
-    target: '',
+    action: targetPage ? 'merge' : 'create',
+    target: targetPage?.title || '',
     domain: payload.domain || '',
     confidence: payload.confidence || '中',
     summary: payload.summary || '',
     factIds: Array.isArray(payload.factIds) ? payload.factIds : [],
+    relations: Array.isArray(payload.relations) ? payload.relations : [],
     reason: payload.reason || '',
     content: payload.content || payload.summary || '',
   });
   const markerRunId = payload.runId || `review-${hash(`${item.name}:${payload.source || ''}`).slice(0, 16)}`;
-  const target = String(resolution.target || '').trim();
-  const existing = target
-    ? db.prepare(`SELECT id, path FROM pages WHERE deleted=0 AND path LIKE 'Wiki/%' AND (id=? OR lower(title)=lower(?))`).get(target, target) as any
-    : db.prepare(`SELECT id, path FROM pages WHERE deleted=0 AND lower(title)=lower(?) AND path LIKE 'Wiki/%'`).get(item.name) as any;
-  if (target && !existing) throw new Error('要合并的目标实体不存在');
-  if (existing) {
-    const page = readPage(existing.path);
-    if (!page) throw new Error('审核目标页面无法读取');
-    const marker = sourceMarker(markerRunId, item.factIds);
-    if (!page.content.includes(marker)) {
-      writePage(existing.path, mergeBody(page.content, item, payload.source || '人工审核', marker, markerRunId), { summary: item.summary });
-    }
-    return existing;
+  const sourcePath = String(payload.sourcePath || payload.source || '人工审核');
+  const contentHash = String(payload.contentHash || hash(`${sourcePath}:${markerRunId}`));
+  const storedVersion = payload.sourceVersionId
+    ? db.prepare(`SELECT id,path,content_hash,previous_id,status FROM source_versions WHERE id=?`)
+      .get(payload.sourceVersionId) as SourceVersion | undefined
+    : undefined;
+  const sourceVersion = storedVersion || beginSourceVersion(sourcePath, contentHash);
+  const run = db.prepare(`SELECT id FROM ingest_runs WHERE id=?`).get(markerRunId);
+  if (!run) {
+    db.prepare(
+      `INSERT INTO ingest_runs(id,path,content_hash,source_version_id,status,commit_status,derived_status,started_at)
+       VALUES(?,?,?,?, 'running','pending','pending',?)`
+    ).run(markerRunId, sourcePath, contentHash, sourceVersion.id, now());
+  } else {
+    db.prepare(`UPDATE ingest_runs SET source_version_id=? WHERE id=?`).run(sourceVersion.id, markerRunId);
   }
-  const dir = TYPE_DIR[item.kind];
-  if (!dir) throw new Error('审核类型无效');
-  const page = createPage(dir, item.name);
-  const marker = sourceMarker(markerRunId, item.factIds);
-  const sourceRef = payload.source || '人工审核';
-  writePage(page.path, isEntity(item.kind) ? entityBody(item, marker) : conceptBody(item, sourceRef, marker), {
-    type: item.kind, domain: item.domain, confidence: item.confidence, retrieved: today(), summary: item.summary,
-    sources: payload.source ? [payload.source] : [],
+  commitKnowledgeItems([item], {
+    runId: markerRunId,
+    sourceVersion,
+    sourcePath,
+    sourceName: String(payload.source || sourcePath),
+    sourceRef: String(payload.source || sourcePath),
   });
-  return { id: page.id, path: page.path };
+  const targetName = item.action === 'merge' ? item.target : item.name;
+  const page = db.prepare(
+    `SELECT id,path FROM pages WHERE deleted=0 AND lower(title)=lower(?)
+     AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`
+  ).get(targetName) as { id: string; path: string } | undefined;
+  if (!page) throw new Error('审核后的知识页面未生成');
+  return page;
 }
 
-function commit(items: ComposedItem[], runId: string, sourceName: string, sourceRef: string): IngestStats {
-  const stats = { ...EMPTY };
-  const find = db.prepare(`SELECT id, path FROM pages WHERE deleted=0 AND lower(title)=lower(?)`);
-  const known = knownTitles(items.map((item) => item.name));
-  for (const item of items) {
-    if (item.action === 'skip') { stats.skipped++; continue; }
-    if (item.action === 'review') { pending(item, sourceName, item.reason || '需要人工确认', runId); stats.pending++; continue; }
-    const targetName = item.action === 'merge' ? item.target : item.name;
-    const existing = find.get(targetName) as any;
-    if (item.action === 'merge' && (!existing || !existing.path.startsWith('Wiki/'))) {
-      pending(item, sourceName, `合并目标「${targetName}」不存在`, runId); stats.pending++; continue;
-    }
-    const marker = sourceMarker(runId, item.factIds);
-    const content = stripDeadLinks(item.content, known);
-    const clean = { ...item, content };
-    if (existing?.path.startsWith('Wiki/')) {
-      const page = readPage(existing.path);
-      if (!page || page.content.includes(marker)) { stats.skipped++; continue; }
-      writePage(existing.path, mergeBody(page.content, clean, sourceRef, marker, runId), { summary: item.summary });
-      stats.merged++;
-    } else {
-      const dir = TYPE_DIR[item.kind];
-      if (!dir) { pending(item, sourceName, '类型不清', runId); stats.pending++; continue; }
-      const page = createPage(dir, item.name);
-      const type = KIND_TYPE[item.kind];
-      writePage(page.path, isEntity(type) ? entityBody(clean, marker) : conceptBody(clean, sourceRef, marker), {
-        type, domain: item.domain, confidence: item.confidence, retrieved: today(), summary: item.summary, sources: [sourceName],
-      });
-      stats.created++;
-    }
-  }
-  return stats;
-}
-
-export async function ingestRawFile(relPath: string, onProgress: IngestProgressCallback = () => {}): Promise<IngestStats> {
-  if (!llmReady()) throw new Error('未配置 LLM，无法整理');
+export async function ingestRawFile(
+  relPath: string,
+  onProgress: IngestProgressCallback = () => {},
+  options: { force?: boolean } = {},
+): Promise<IngestStats> {
   onProgress({ stage: '解析', progress: 2, detail: relPath });
-  const document = await loadDocument(relPath);
-  onProgress({ stage: '解析', progress: 8, detail: `${document.chunks.length} 个分段` });
-  if (document.text.length < 30) return { ...EMPTY };
-  const prior = db.prepare(`SELECT content_hash, status FROM ingest_log WHERE path=?`).get(relPath) as any;
-  if (prior?.content_hash === document.contentHash && prior.status === 'completed') return { ...EMPTY };
-  const runId = newId();
-  db.prepare(`INSERT INTO ingest_runs(id,path,content_hash,status,started_at) VALUES(?,?,?,?,?)`).run(runId, relPath, document.contentHash, 'running', now());
-  setStatus(relPath, document.contentHash, runId, 'running');
+  let document: StructuredDocument;
   try {
+    document = await loadDocument(relPath);
+  } catch (error: any) {
+    const message = String(error?.message || error).slice(0, 2000);
+    let contentHash = hash(`${relPath}:${message}`);
+    try { contentHash = hash(fs.readFileSync(safeJoin(relPath))); } catch { /* retain deterministic fallback */ }
+    const runId = newId();
+    const sourceVersion = beginSourceVersion(relPath, contentHash);
+    db.prepare(
+      `INSERT INTO ingest_runs(id,path,content_hash,source_version_id,status,commit_status,derived_status,started_at)
+       VALUES(?,?,?,?, 'running','pending','pending',?)`
+    ).run(runId, relPath, contentHash, sourceVersion.id, now());
+    failSourceVersion(sourceVersion.id, runId, message);
+    setStatus(relPath, contentHash, runId, 'failed', message);
+    throw error;
+  }
+  addSupplementalAnswers(document);
+  onProgress({ stage: '解析', progress: 8, detail: `${document.chunks.length} 个分段` });
+  const prior = db.prepare(`SELECT content_hash, status FROM ingest_log WHERE path=?`).get(relPath) as any;
+  if (!options.force && prior?.content_hash === document.contentHash && prior.status === 'completed') return { ...EMPTY };
+  const runId = newId();
+  const sourceVersion = beginSourceVersion(relPath, document.contentHash);
+  db.prepare(
+    `INSERT INTO ingest_runs(id,path,content_hash,source_version_id,status,commit_status,derived_status,started_at)
+     VALUES(?,?,?,?, 'running','pending','pending',?)`
+  ).run(runId, relPath, document.contentHash, sourceVersion.id, now());
+  setStatus(relPath, document.contentHash, runId, 'running');
+  if (!llmReady()) {
+    const message = '未配置 LLM，无法整理';
+    failSourceVersion(sourceVersion.id, runId, message);
+    setStatus(relPath, document.contentHash, runId, 'failed', message);
+    throw new Error(message);
+  }
+  try {
+    if (document.text.length < 30 && !supplementalAnswers(relPath).length) {
+      const { stats } = commitKnowledgeItems([], {
+        runId,
+        sourceVersion,
+        sourcePath: relPath,
+        sourceName: document.title,
+        sourceRef: `原始资料/${document.title}`,
+      });
+      audit(runId, 'commit', stats, { reason: '正文少于 30 字' });
+      db.prepare(`UPDATE ingest_runs SET stats=? WHERE id=?`).run(JSON.stringify(stats), runId);
+      setStatus(relPath, document.contentHash, runId, 'completed');
+      return stats;
+    }
     const rosterEntries = loadRoster();
     const titleRoster = roster(rosterEntries);
     const mapped: Candidate[] = [];
@@ -285,12 +342,21 @@ export async function ingestRawFile(relPath: string, onProgress: IngestProgressC
       return item;
     });
     reviewedPlan = guardAmbiguousEntityNames(reviewedPlan, candidates, rosterEntries);
+    reviewedPlan = attachCandidateRelations(reviewedPlan, candidates, rosterEntries, allowedFactIds);
     audit(runId, 'critic_review', { ...secondCritique, items: reviewedPlan }, revised);
 
     onProgress({ stage: 'Compose', progress: 76 });
     // Compose：LLM 只输出 {name, content}，其余字段从 plan 继承；传入 roster/related 让正文关联知识库
     const composeInput = {
-      items: reviewedPlan.map((it) => ({ name: it.name, kind: it.kind, action: it.action, target: it.target, summary: it.summary, factIds: it.factIds })),
+      items: reviewedPlan.map((it) => ({
+        name: it.name,
+        kind: it.kind,
+        action: it.action,
+        target: it.target,
+        summary: it.summary,
+        factIds: it.factIds,
+        relations: it.relations,
+      })),
       facts,
     };
     const rawComposed = await jsonStage<{ items: { name: string; content: string }[] }>(
@@ -298,7 +364,7 @@ export async function ingestRawFile(relPath: string, onProgress: IngestProgressC
     );
     // 按 name 匹配回 reviewedPlan，合并出完整 ComposedItem[]
     const contentByName = new Map(rawComposed.items.map((it) => [it.name.trim().toLowerCase(), it.content]));
-    const composedItems: ComposedItem[] = reviewedPlan.map((plan) => ({
+    const composedItems: KnowledgeItem[] = reviewedPlan.map((plan) => ({
       ...plan,
       content: contentByName.get(plan.name.trim().toLowerCase()) || '',
     }));
@@ -327,13 +393,31 @@ export async function ingestRawFile(relPath: string, onProgress: IngestProgressC
     const rawPage = db.prepare(`SELECT title FROM pages WHERE path=? AND deleted=0`).get(relPath) as any;
     const sourceRef = rawPage ? `[[${rawPage.title}]]` : `原始资料/${document.title}`;
     onProgress({ stage: 'Commit', progress: 94 });
-    const stats = commit(safeItems, runId, document.title, sourceRef);
+    const recordedQuestions = recordQuestions(runId, sourceVersion.id, relPath, questions.questions);
+    const { stats } = commitKnowledgeItems(safeItems, {
+      runId,
+      sourceVersion,
+      sourcePath: relPath,
+      sourceName: document.title,
+      sourceRef,
+    });
     const finish = db.transaction(() => {
-      if (questions.questions.length) {
-        addReports([{ kind: 'ingest_questions', payload: { path: relPath, runId, contentHash: document.contentHash, questions: questions.questions } }]);
+      if (recordedQuestions.length) {
+        addReports([{
+          kind: 'ingest_questions',
+          payload: {
+            path: relPath,
+            runId,
+            sourceVersionId: sourceVersion.id,
+            contentHash: document.contentHash,
+            questions: recordedQuestions,
+          },
+        }]);
       }
       audit(runId, 'commit', stats, safeItems.map((item) => ({ name: item.name, action: item.action })));
-      db.prepare(`UPDATE ingest_runs SET status='completed', finished_at=?, stats=? WHERE id=? AND status='running'`).run(now(), JSON.stringify(stats), runId);
+      db.prepare(`UPDATE ingest_runs SET stats=? WHERE id=?`).run(JSON.stringify(stats), runId);
+      db.prepare(`UPDATE ingest_questions SET status='accepted', updated_at=? WHERE path=? AND status='answered'`)
+        .run(now(), relPath);
       setStatus(relPath, document.contentHash, runId, 'completed');
     });
     finish();
@@ -341,16 +425,30 @@ export async function ingestRawFile(relPath: string, onProgress: IngestProgressC
     return stats;
   } catch (error: any) {
     const message = String(error?.message || error).slice(0, 2000);
-    db.prepare(`UPDATE ingest_runs SET status='failed', finished_at=?, error=? WHERE id=?`).run(now(), message, runId);
+    failSourceVersion(sourceVersion.id, runId, message);
     setStatus(relPath, document.contentHash, runId, 'failed', message);
     throw error;
   }
 }
 
 export async function ingestAllRaw(): Promise<string[]> {
-  let entries: fs.Dirent[] = [];
-  try { entries = fs.readdirSync(safeJoin('原始资料'), { withFileTypes: true }); } catch { return []; }
-  return entries.filter((e) => !e.isDirectory() && !e.name.startsWith('.') && ['md', 'markdown', 'docx', 'xlsx', 'pptx'].includes(path.extname(e.name).slice(1).toLowerCase())).map((e) => `原始资料/${e.name}`);
+  const output: string[] = [];
+  const walk = (relative: string) => {
+    let entries: fs.Dirent[] = [];
+    try { entries = fs.readdirSync(safeJoin(relative), { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const child = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(child);
+        continue;
+      }
+      const ext = path.extname(entry.name).slice(1).toLowerCase();
+      if (['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(ext)) output.push(child);
+    }
+  };
+  walk('原始资料');
+  return output;
 }
 
 export { extractWikiLinks };

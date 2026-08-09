@@ -6,6 +6,7 @@ import { readPage, writePage, safeJoin } from '../lib/vault.js';
 import { isEntity } from '../lib/pageTypes.js';
 import { enrichedSystem, enrichedUser, completeSystem, completeUser } from '../prompts/upgrade.js';
 import { appendWikiLog } from './indexFile.js';
+import { ensureEntityStructure } from './knowledgePage.js';
 
 /**
  * 实体升级阶梯（知识管理员工作流）：
@@ -107,12 +108,9 @@ export async function runUpgrades(): Promise<string[]> {
       );
       // 修 bug：原正则要求页面有「## 时间线」才匹配，缺该章节时补充内容会丢失。
       // 改为：先确保页面有「## 时间线」骨架，再注入；保证内容不丢、状态与内容一致。
-      let body = rd.content;
-      if (!/##\s*时间线/.test(body)) {
-        body = body.replace(/\n*$/, '') + '\n\n## 时间线\n';
-      }
+      const body = ensureEntityStructure(rd.content, c.title);
       const newContent = body.replace(
-        /(##\s*当前理解[\s\S]*?)(\n##\s*时间线)/,
+        /(##\s*当前理解[\s\S]*?)(\n##\s*相关页面)/,
         `$1\n\n### enriched 补充\n\n${addition.trim()}\n$2`
       );
       writePage(c.path, newContent, {
@@ -145,6 +143,8 @@ export async function runUpgrades(): Promise<string[]> {
         '## 当前理解',
         '',
         profile.trim(),
+        '',
+        '## 相关页面',
         '',
         timeline,
         '',

@@ -15,6 +15,8 @@ import { appendWikiLog } from '../pipeline/indexFile.js';
 
 /** 可提取文本入索引的 Office 格式 */
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
+const TEXT_EXTS = new Set(['txt']);
+const INGEST_EXTS = new Set(['docx', 'md', 'markdown', 'txt', 'xlsx', 'pptx']);
 
 export async function fileRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -40,6 +42,7 @@ export async function fileRoutes(app: FastifyInstance) {
         name, path: rel, ext, size: stat.size,
         updated_at: stat.mtime.toISOString(),
         pageId,
+        ingestSupported: INGEST_EXTS.has(ext),
         ingestedAt: ing?.status === 'completed' ? ing.at : null,
         ingestStatus: ing?.status || null,
         ingestError: ing?.error || null,
@@ -93,11 +96,15 @@ export async function fileRoutes(app: FastifyInstance) {
       const meta = syncPageFile(rel);
       pageId = meta?.id;
       if (pageId) enqueue('embed', { pageId });
+    } else if (TEXT_EXTS.has(ext)) {
+      const fileId = upsertFileRecord(rel, '', 0);
+      enqueue('index_file', { fileId });
     }
+    enqueue('ingest', { path: rel });
     return { ok: true, path: rel, pageId };
   });
 
-  /** 上传文件到指定目录；docx 自动提取文本入索引 */
+  /** 上传文件到指定目录；Office/TXT 自动提取文本入索引，可整理格式立即进入 ingest。 */
   app.post('/api/files/upload', async (req, reply) => {
     // 先收集全部 part（dir 字段可能排在文件之后）
     const fields: Record<string, string> = {};
@@ -140,6 +147,11 @@ export async function fileRoutes(app: FastifyInstance) {
         } catch (e: any) {
           app.log.warn(`Office 提取失败 ${rel}: ${e.message}`);
         }
+      } else if (TEXT_EXTS.has(ext)) {
+        const text = buffer.toString('utf8').replace(/\r\n/g, '\n');
+        const fileId = upsertFileRecord(rel, text, buffer.length);
+        enqueue('index_file', { fileId });
+        indexed = true;
       } else if (['md', 'markdown'].includes(ext)) {
         // 上传的 md 直接登记为可编辑页面并入库索引
         const meta = syncPageFile(rel);
@@ -150,10 +162,17 @@ export async function fileRoutes(app: FastifyInstance) {
         }
       }
       // 原始资料入料即消化（AI 提炼概念/实体页到 Wiki）
-      if (['docx', 'md', 'markdown', 'xlsx', 'pptx'].includes(ext)) {
+      if (INGEST_EXTS.has(ext)) {
         enqueue('ingest', { path: rel });
       }
-      saved.push({ path: rel, name: path.basename(rel), indexed, pageId });
+      saved.push({
+        path: rel,
+        name: path.basename(rel),
+        indexed,
+        pageId,
+        ingestSupported: INGEST_EXTS.has(ext),
+        ingestNote: INGEST_EXTS.has(ext) ? undefined : '文件已保存，当前格式暂不支持 AI 整理',
+      });
     }
     if (saved.length === 0 && duplicates.length > 0) {
       return reply.code(409).send({ error: `已存在同名文件，未重复导入：${duplicates.join('、')}` });

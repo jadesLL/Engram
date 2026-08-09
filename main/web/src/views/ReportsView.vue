@@ -149,6 +149,17 @@
               <ul v-if="q.acceptance?.length" class="acceptance">
                 <li v-for="(a, j) in q.acceptance" :key="j">{{ a }}</li>
               </ul>
+              <div v-if="q.id" class="question-answer-row">
+                <input v-model="questionAnswers[q.id]" type="text" placeholder="填写补充答案" />
+                <button
+                  class="btn small primary"
+                  :disabled="!questionAnswers[q.id]?.trim()"
+                  @click="answerQuestion(q, 'reprocess')"
+                >
+                  回答并重新整理
+                </button>
+                <button class="btn small" @click="answerQuestion(q, 'ignore')">忽略</button>
+              </div>
             </div>
           </details>
           <div class="actions">
@@ -244,6 +255,7 @@ const resolving = ref(false);
 const tab = ref('deadlink');
 const reviewNames = reactive<Record<number, string>>({});
 const reviewKinds = reactive<Record<number, 'concept' | 'person' | 'project' | 'org'>>({});
+const questionAnswers = reactive<Record<string, string>>({});
 
 const tabs = [
   { key: 'deadlink', label: '死链' },
@@ -367,6 +379,16 @@ async function merge(r: any, keep: 'a' | 'b') {
 
 async function reviewPending(r: any, decision: 'approved' | 'dismissed', target = '') {
   await api.post(`/api/ingest/candidates/${r.id}/review`, { decision, target });
+  await load();
+}
+
+async function answerQuestion(question: any, action: 'reprocess' | 'ignore') {
+  await api.post(`/api/ingest/questions/${question.id}/answer`, {
+    answer: questionAnswers[question.id] || '',
+    action,
+  });
+  delete questionAnswers[question.id];
+  await app.refreshJobs();
   await load();
 }
 
@@ -544,6 +566,8 @@ onMounted(load);
 .fact { margin: 8px 0; }
 .fact blockquote { margin: 4px 0 4px 10px; padding-left: 8px; border-left: 2px solid var(--border-strong); }
 .acceptance { margin: 4px 0 4px 10px; padding-left: 16px; color: var(--text-secondary); }
+.question-answer-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.question-answer-row input { min-width: 220px; flex: 1 1 280px; }
 .ambiguity-box { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px solid var(--warning, #d97706); border-radius: 6px; background: var(--bg-secondary); }
 .ambiguity-head { display: flex; align-items: flex-start; gap: 8px; }
 .ambiguity-label { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; color: #92400e; background: #fef3c7; font-size: 12px; }
