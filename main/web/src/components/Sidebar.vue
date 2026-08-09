@@ -159,7 +159,12 @@
             >
               <Icon v-if="selected.has('f:' + f.path)" name="check" :size="11" />
             </span>
-            <Icon :name="fileIcon(f.ext)" :size="14" :stroke-width="1.6" class="file-icon" />
+            <Icon
+              :name="fileIcon(f.ext)"
+              :size="16"
+              :stroke-width="1.7"
+              :class="['file-icon', fileIconClass(f.ext)]"
+            />
             <span class="page-title" :title="f.name">{{ f.name }}</span>
             <span class="row-trailing file-trailing">
               <span
@@ -238,7 +243,12 @@
             >
               <Icon v-if="selected.has('f:' + f.path)" name="check" :size="11" />
             </span>
-            <Icon :name="fileIcon(f.ext)" :size="14" :stroke-width="1.6" class="file-icon" />
+            <Icon
+              :name="fileIcon(f.ext)"
+              :size="16"
+              :stroke-width="1.7"
+              :class="['file-icon', fileIconClass(f.ext)]"
+            />
             <span class="page-title" :title="f.name">{{ f.name }}</span>
             <span class="row-trailing file-trailing">
               <span
@@ -311,7 +321,7 @@
             @keydown.enter.self="openPage(p)"
             @keydown.space.self.prevent="openPage(p)"
           >
-            <Icon name="report" :size="13" class="file-icon" />
+            <Icon name="report" :size="13" class="log-file-icon" />
             <span class="page-title" :title="p.title">{{ p.title }}</span>
           </div>
           <p v-if="!visibleAiLogs.length" class="none">
@@ -605,11 +615,16 @@ async function createFile() {
 
 function fileIcon(ext: string): string {
   if (['md', 'markdown'].includes(ext)) return 'markdown';
+  if (ext === 'pdf') return 'pdf';
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return 'image';
   if (['docx', 'doc'].includes(ext)) return 'word';
   if (['xlsx', 'xls'].includes(ext)) return 'excel';
   if (['pptx', 'ppt'].includes(ext)) return 'ppt';
   return 'attach';
+}
+
+function fileIconClass(ext: string): string {
+  return `file-icon-${fileIcon(ext)}`;
 }
 
 async function onUpload(e: Event) {
@@ -1077,11 +1092,22 @@ onUnmounted(() => {
 }
 
 .file-icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
   color: var(--text-secondary);
-  opacity: 0.72;
+  opacity: 0.76;
+}
+
+.file-icon-markdown { color: var(--file-markdown); opacity: 0.94; }
+.file-icon-word { color: var(--file-word); opacity: 0.94; }
+.file-icon-excel { color: var(--file-excel); opacity: 0.94; }
+.file-icon-ppt { color: var(--file-ppt); opacity: 0.94; }
+.file-icon-pdf { color: var(--file-pdf); opacity: 0.94; }
+
+.log-file-icon {
+  flex-shrink: 0;
+  color: var(--text-faint);
 }
 
 .row-trailing {
