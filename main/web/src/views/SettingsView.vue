@@ -465,14 +465,14 @@
             <div class="danger-row">
               <div>
                 <strong>清空 AI 整理日志</strong>
-                <p>删除 AIWorks/log 下的运行日志，概念、实体和原始资料不受影响。</p>
+                <p>清空 AIWorks/log、操作日志和关系库，概念、实体和原始资料不受影响。</p>
               </div>
               <button class="btn danger" type="button" @click="wipeAiLogs">清空日志</button>
             </div>
             <div class="danger-row">
               <div>
                 <strong>一键清除知识数据</strong>
-                <p>删除全部概念、实体、原始资料、归档和查询页面，并重置索引。</p>
+                <p>删除全部概念、实体、原始资料、归档和查询页面，并清空整理报告、入库记录与索引。</p>
               </div>
               <button class="btn danger solid" type="button" @click="wipe">一键清除</button>
             </div>
@@ -1745,12 +1745,15 @@ async function confirmWithPassword(actionLabel: string): Promise<string | null> 
 
 async function wipe() {
   wipeMsg.value = '';
-  const password = await confirmWithPassword('清除全部概念/实体/原始资料/归档/查询');
+  const password = await confirmWithPassword('清除全部知识数据、整理报告和入库记录');
   if (!password) return;
   try {
     const { data } = await api.post('/api/settings/wipe', { password });
     wipeOk.value = true;
-    wipeMsg.value = `已清除 ${data.fileCount} 个文件，索引已重置。`;
+    wipeMsg.value = `已清除 ${data.fileCount} 个文件、${data.reportCount} 条整理报告，索引已重置。`;
+    app.openReportCount = 0;
+    await app.refreshJobs();
+    app.bumpSidebar();
   } catch (error: any) {
     wipeOk.value = false;
     wipeMsg.value = error.response?.data?.error || '清除失败';
@@ -1759,12 +1762,13 @@ async function wipe() {
 
 async function wipeAiLogs() {
   wipeMsg.value = '';
-  const password = await confirmWithPassword('清空 AI 整理日志');
+  const password = await confirmWithPassword('清空 AI 整理日志、操作日志和关系库');
   if (!password) return;
   try {
     const { data } = await api.post('/api/settings/wipe-ai-logs', { password });
     wipeOk.value = true;
-    wipeMsg.value = `已清空 ${data.fileCount} 个 AI 整理日志文件。`;
+    wipeMsg.value = `已清空 ${data.fileCount} 个 AI 整理日志文件，并重置 ${data.relationCount} 条关系记录。`;
+    app.bumpSidebar();
   } catch (error: any) {
     wipeOk.value = false;
     wipeMsg.value = error.response?.data?.error || '清空失败';
