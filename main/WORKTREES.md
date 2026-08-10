@@ -112,6 +112,12 @@ git worktree add "worktrees/$feature" -b "feat/$feature" main
 
 普通 Web 和服务端任务禁止在 `main/` 或功能 worktree 中运行 `pnpm install`。每个 worktree 只保存代码，避免并行任务各自生成体积较大的 `node_modules`。
 
+宿主机共享的 pnpm 固定安装在主检出目录 `main/node_modules/pnpm`（该目录不纳入 Git）。所有生命周期脚本通过这个共享副本运行本机离线回退；不得在功能 worktree 内单独安装 pnpm。共享副本缺失时应先恢复该环境，不得静默改用其他全局 pnpm 版本。
+
+当功能分支没有修改任何依赖清单或锁文件，而 Docker 离线缓存不足时，`preview-feature.sh` 会用共享 pnpm 在仓库外临时目录完成构建，再将新的服务端和前端 `dist` 叠加到当前主运行镜像中。该回退仍创建标准命名、带功能标签的隔离容器和数据卷；依赖文件有变化或缺少主运行镜像时直接失败。
+
+部署阶段采用同一原则：完整 Docker 构建离线失败后，仅当依赖清单、锁文件和标准化后的 Docker 运行阶段与当前主镜像兼容，才允许通过共享 pnpm 构建 `dist` 并叠加生成新的主镜像。兼容性不足时停止部署，不得复用旧依赖。
+
 Dockerfile 将依赖安装层放在源码复制之前。锁文件和依赖清单未变化时，Docker 直接复用已有依赖层，不重新安装；多个 worktree 可以共享这些不可变镜像层和构建缓存。
 
 `verify-feature.sh`、`preview-feature.sh` 和 `merge-feature.sh` 默认使用 `network=none`，并要求本机已有 `node:22-slim`。Docker 依赖层缺失时，Windows UNC 环境会回退到代码库外的本机临时目录，通过 pnpm `--offline` 复用已有 store；验证后删除临时目录和对应 pnpm 项目索引。Docker 和本地离线缓存都不足时直接失败，不得自行下载。只有用户已经明确批准下载环境文件后，才可对当前命令增加：

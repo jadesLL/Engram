@@ -102,3 +102,29 @@ test('tool schemas reject malformed destructive requests', () => {
   const tool = getAgentTool('permanently_delete_trash')!;
   assert.throws(() => parseToolArguments(tool, { ids: [] }), /工具参数无效/);
 });
+
+test('assistant rejects manual no-op decisions but accepts explicit pending review actions', async () => {
+  const tool = getAgentTool('apply_report_actions')!;
+  const manualArgs = parseToolArguments(tool, {
+    kind: 'pending_review',
+    decisions: [{ reportId: 1, action: 'manual' }],
+  });
+  await assert.rejects(
+    previewAgentTool(tool, manualArgs, context),
+    /候选处理动作无效/,
+  );
+  const inserted = db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(datetime('now'),'pending_review',?,'open',?,?)`
+  ).run(
+    JSON.stringify({ name: '显式批量候选', kind: 'concept', source: '测试资料' }),
+    'assistant-pending-review',
+    'assistant-pending-review-fingerprint',
+  );
+  const explicitArgs = parseToolArguments(tool, {
+    kind: 'pending_review',
+    decisions: [{ reportId: Number(inserted.lastInsertRowid), action: 'approve:concept' }],
+  });
+  const preview = await previewAgentTool(tool, explicitArgs, context);
+  assert.equal(preview.title, '应用整理报告');
+});

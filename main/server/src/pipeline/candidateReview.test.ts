@@ -237,7 +237,7 @@ test('merge preview writes verified incremental content into the selected page',
   assert.equal(db.prepare(`SELECT COUNT(*) n FROM pages WHERE title='待并入候选'`).get().n, 0);
 });
 
-test('batch review supports recommended approval and ignore', async () => {
+test('batch review applies only explicit approval and ignore decisions', async () => {
   const approved = createCandidate(
     '批量批准候选',
     'review-run-batch-approve',

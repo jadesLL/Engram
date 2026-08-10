@@ -179,7 +179,17 @@ deploy_main() {
     "$WIKILLM_MAIN_DIR"
   then
     exampleproject_explain_offline_build_failure
-    exampleproject_die "主镜像构建失败"
+    if [ "$WIKILLM_BUILD_NETWORK" = "none" ] &&
+      exampleproject_build_local_offline_main_image \
+        "$WIKILLM_MAIN_DIR" \
+        "$image" \
+        "$revision" \
+        example-wiki:local-current
+    then
+      exampleproject_log ">> Docker 缓存不足，已改用共享 pnpm 生成离线主镜像"
+    else
+      exampleproject_die "主镜像构建失败"
+    fi
   fi
 
   if docker ps --format '{{.Names}}' | grep -Fx example-wiki-onlyoffice >/dev/null; then

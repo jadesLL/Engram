@@ -142,7 +142,7 @@ test('validation rejects cross-category actions and orphan applying reports reco
   assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(item.id).status, 'open');
 });
 
-test('pending reviews expose recommended approval and ignore actions', () => {
+test('single-source pending reviews recommend ignore instead of a page type', () => {
   clear();
   const payload = {
     name: '恒创', source: '资料 A', runId: 'run-merge', factIds: ['f1'], kind: 'org',
@@ -152,13 +152,18 @@ test('pending reviews expose recommended approval and ignore actions', () => {
   const preview = previewReportActions('pending_review').items[0];
   assert.equal(preview.disabled, false);
   assert.equal(preview.selected, true);
-  assert.equal(preview.suggestedAction, 'approve:org');
+  assert.equal(preview.suggestedAction, 'ignore');
+  assert.equal(preview.payload.evidenceSourceCount, 1);
   assert.deepEqual(preview.options.map((option: any) => option.value), [
-    'approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore',
+    'manual', 'approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore',
   ]);
+  assert.throws(
+    () => validateDecisions('pending_review', [{ reportId: preview.id, action: 'manual' }]),
+    /处理动作无效/,
+  );
   assert.deepEqual(
-    validateDecisions('pending_review', [{ reportId: preview.id, action: 'ignore' }]),
-    [{ reportId: preview.id, action: 'ignore' }],
+    validateDecisions('pending_review', [{ reportId: preview.id, action: 'approve:org' }]),
+    [{ reportId: preview.id, action: 'approve:org' }],
   );
 });
 
