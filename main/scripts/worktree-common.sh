@@ -50,6 +50,7 @@ exampleproject_init_feature() {
   WIKILLM_FEATURE="$feature"
   WIKILLM_REPO_ROOT="$(exampleproject_discover_repo_root)"
   WIKILLM_MAIN_DIR="$WIKILLM_REPO_ROOT/main"
+  WIKILLM_SHARED_PNPM="$WIKILLM_MAIN_DIR/node_modules/pnpm/bin/pnpm.cjs"
   WIKILLM_WORKTREE="$WIKILLM_REPO_ROOT/worktrees/$feature"
   WIKILLM_BRANCH="feat/$feature"
   WIKILLM_PROJECT="exampleproject-$feature"
@@ -64,6 +65,12 @@ exampleproject_init_feature() {
     "$WIKILLM_REPO_ROOT"/worktrees/*) ;;
     *) exampleproject_die "拒绝操作工作区之外的路径: $WIKILLM_WORKTREE" ;;
   esac
+}
+
+exampleproject_shared_pnpm() {
+  [ -f "$WIKILLM_SHARED_PNPM" ] || \
+    exampleproject_die "共享 pnpm 不存在: $WIKILLM_SHARED_PNPM"
+  node "$WIKILLM_SHARED_PNPM" "$@"
 }
 
 exampleproject_require_docker() {
@@ -117,7 +124,7 @@ exampleproject_cleanup_local_verification() {
   fi
 
   case "$verify_dir" in
-    /tmp/exampleproject-verify.*)
+    /tmp/exampleproject-verify.*|/tmp/exampleproject-preview.*)
       rm -rf -- "$verify_dir" || failed=1
       ;;
     *)
@@ -134,7 +141,11 @@ exampleproject_run_local_offline_verification() {
   local check_status=0 cleanup_status=0
   local -a native_candidates=()
 
-  command -v pnpm >/dev/null 2>&1 || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  [ -f "$WIKILLM_SHARED_PNPM" ] || {
+    printf '!! 缺少共享 pnpm: %s\n' "$WIKILLM_SHARED_PNPM" >&2
+    return 1
+  }
   command -v cygpath >/dev/null 2>&1 || return 1
   resolved_source="$(
     cd "$source_dir"
@@ -163,6 +174,7 @@ exampleproject_run_local_offline_verification() {
   fi
 
   exampleproject_log ">> Docker 离线缓存缺失，改用本机临时目录离线验证"
+  exampleproject_log "   shared_pnpm=$WIKILLM_SHARED_PNPM ($(exampleproject_shared_pnpm --version))"
   set +e
   (
     set -euo pipefail
@@ -188,22 +200,140 @@ exampleproject_run_local_offline_verification() {
         .
     ) | tar -xf - -C "$verify_dir"
     cd "$verify_dir"
-    pnpm install --offline --frozen-lockfile --ignore-scripts
+    exampleproject_shared_pnpm install --offline --frozen-lockfile --ignore-scripts
     native_targets=(
       "$verify_dir"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3
     )
-    [ "${#native_targets[@]}" -eq 1 ]
+    if [ "${#native_targets[@]}" -ne 1 ]; then
+      printf '!! 临时验证目录中的 better-sqlite3 位置异常\n' >&2
+      exit 1
+    fi
     mkdir -p "${native_targets[0]}/build/Release"
     cp "$native_source" "${native_targets[0]}/build/Release/better_sqlite3.node"
-    pnpm test
-    pnpm typecheck
-    pnpm build
+    exampleproject_shared_pnpm test
+    exampleproject_shared_pnpm typecheck
+    exampleproject_shared_pnpm build
   )
   check_status=$?
   set -e
 
   exampleproject_cleanup_local_verification "$verify_dir" || cleanup_status=$?
   [ "$check_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]
+}
+
+exampleproject_build_local_offline_preview_image() {
+  local source_dir="$1"
+  local resolved_source preview_dir base_image=""
+  local build_status=0 cleanup_status=0
+  local relative_path
+  local -a dependency_files=(
+    Dockerfile
+    package.json
+    pnpm-workspace.yaml
+    pnpm-lock.yaml
+    server/package.json
+    web/package.json
+    desktop/package.json
+  )
+
+  command -v node >/dev/null 2>&1 || return 1
+  command -v cygpath >/dev/null 2>&1 || return 1
+  [ -f "$WIKILLM_SHARED_PNPM" ] || {
+    printf '!! 缺少共享 pnpm: %s\n' "$WIKILLM_SHARED_PNPM" >&2
+    return 1
+  }
+  resolved_source="$(
+    cd "$source_dir"
+    pwd -P
+  )"
+  case "$resolved_source" in
+    "$WIKILLM_REPO_ROOT"/worktrees/*/main) ;;
+    *)
+      printf '!! 拒绝预览工作区之外的源码目录: %s\n' "$resolved_source" >&2
+      return 1
+      ;;
+  esac
+
+  for relative_path in "${dependency_files[@]}"; do
+    if ! cmp -s \
+      "$resolved_source/$relative_path" \
+      "$WIKILLM_MAIN_DIR/$relative_path"
+    then
+      printf '!! %s 已改变，不能复用主镜像依赖进行离线预览\n' "$relative_path" >&2
+      return 1
+    fi
+  done
+
+  if docker container inspect example-wiki >/dev/null 2>&1; then
+    base_image="$(
+      docker container inspect example-wiki --format '{{.Config.Image}}'
+    )"
+  fi
+  if [ -z "$base_image" ] || ! docker image inspect "$base_image" >/dev/null 2>&1; then
+    base_image="$(
+      docker image ls \
+        --filter 'reference=example-wiki:main-*' \
+        --format '{{.Repository}}:{{.Tag}}' |
+        head -n 1
+    )"
+  fi
+  [ -n "$base_image" ] && docker image inspect "$base_image" >/dev/null 2>&1 || {
+    printf '!! 缺少可复用的主运行镜像，无法创建离线预览\n' >&2
+    return 1
+  }
+  if ! [[ "$base_image" =~ ^[A-Za-z0-9._/:@-]+$ ]]; then
+    printf '!! 主运行镜像名称包含不安全字符: %s\n' "$base_image" >&2
+    return 1
+  fi
+
+  preview_dir="$(mktemp -d -t exampleproject-preview.XXXXXX)"
+  exampleproject_log ">> 使用共享 pnpm 构建离线预览叠加层"
+  exampleproject_log "   shared_pnpm=$WIKILLM_SHARED_PNPM ($(exampleproject_shared_pnpm --version))"
+  exampleproject_log "   base_image=$base_image"
+  set +e
+  (
+    set -euo pipefail
+    local image_context="$preview_dir/image"
+    (
+      cd "$resolved_source"
+      tar -cf - \
+        --exclude='./node_modules' \
+        --exclude='./server/node_modules' \
+        --exclude='./web/node_modules' \
+        --exclude='./desktop/node_modules' \
+        --exclude='./server/dist' \
+        --exclude='./web/dist' \
+        --exclude='./data' \
+        --exclude='./data-test' \
+        --exclude='./.env' \
+        --exclude='./.env.*' \
+        --exclude='./*.log' \
+        .
+    ) | tar -xf - -C "$preview_dir"
+    cd "$preview_dir"
+    exampleproject_shared_pnpm install --offline --frozen-lockfile --ignore-scripts
+    exampleproject_shared_pnpm build
+    mkdir -p "$image_context/server" "$image_context/web"
+    cp -a "$preview_dir/server/dist" "$image_context/server/dist"
+    cp -a "$preview_dir/web/dist" "$image_context/web/dist"
+    printf 'FROM %s\n%s\n%s\n' \
+      "$base_image" \
+      'COPY server/dist /app/server/dist' \
+      'COPY web/dist /app/web/dist' \
+      > "$image_context/Dockerfile"
+    docker build \
+      --pull=false \
+      --network none \
+      --label com.exampleproject.scope=feature \
+      --label "com.exampleproject.feature=$WIKILLM_FEATURE" \
+      --tag "$WIKILLM_IMAGE" \
+      "$image_context"
+  )
+  build_status=$?
+  set -e
+
+  exampleproject_cleanup_local_verification "$preview_dir" || cleanup_status=$?
+  [ "$build_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]
 }
 
 exampleproject_acquire_merge_lock() {

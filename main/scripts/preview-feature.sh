@@ -138,7 +138,13 @@ if ! WIKILLM_FEATURE="$FEATURE" \
     docker compose "${COMPOSE_ARGS[@]}" build
 then
   exampleproject_explain_offline_build_failure
-  exampleproject_die "功能预览镜像构建失败"
+  if [ "$WIKILLM_BUILD_NETWORK" = "none" ] &&
+    exampleproject_build_local_offline_preview_image "$WIKILLM_WORKTREE/main"
+  then
+    exampleproject_log ">> Docker 缓存不足，已改用共享 pnpm 生成离线预览镜像"
+  else
+    exampleproject_die "功能预览镜像构建失败"
+  fi
 fi
 
 image_feature="$(
