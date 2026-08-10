@@ -102,3 +102,15 @@ test('tool schemas reject malformed destructive requests', () => {
   const tool = getAgentTool('permanently_delete_trash')!;
   assert.throws(() => parseToolArguments(tool, { ids: [] }), /工具参数无效/);
 });
+
+test('assistant cannot batch approve pending review candidates', async () => {
+  const tool = getAgentTool('apply_report_actions')!;
+  const args = parseToolArguments(tool, {
+    kind: 'pending_review',
+    decisions: [{ reportId: 1, action: 'approve:concept' }],
+  });
+  await assert.rejects(
+    previewAgentTool(tool, args, context),
+    /必须逐条生成预览并确认/,
+  );
+});

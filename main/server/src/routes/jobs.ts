@@ -27,7 +27,7 @@ const KIND_LABELS: Record<string, string> = {
   ingest_finalize: '整理派生校验',
   ingest_recover: '整理提交恢复',
   candidate_reconcile: '候选动态对账',
-  candidate_review_batch: '批量审核候选',
+  candidate_review_batch: '已停用的批量审核候选',
   dream_apply: '分类批量处理',
   dream: 'Dream Cycle',
   rebuild: '重建全部索引',

@@ -18,6 +18,7 @@
         <p class="muted small">{{ activeAction.description }}</p>
       </div>
       <button
+        v-if="tab !== 'pending_review'"
         class="btn primary"
         :disabled="resolving || running || !activeCount"
         @click="openBatchPreview"
@@ -25,6 +26,7 @@
         {{ resolving ? '处理中…' : activeAction.button }}
         <span v-if="activeCount">{{ activeCount }}</span>
       </button>
+      <span v-else class="muted small">共 {{ activeCount }} 项，请逐条预览后决定</span>
     </div>
 
     <div class="tabs">
@@ -90,6 +92,9 @@
             <span>置信度：<b>{{ r.payload.confidence || '中' }}</b></span>
             <span>证据：{{ r.evidence?.sourceCount || 1 }} 个资料来源 / {{ r.evidence?.factCount || r.facts?.length || 0 }} 条事实</span>
           </div>
+          <p v-if="(r.evidence?.sourceCount || 1) < 2" class="review-guidance small">
+            当前只有一个资料来源。{{ pageTypeLabel(r.payload.kind) }}只是模型分类，不代表建议直接建页；默认继续待审，等待更多来源或逐项人工确认。
+          </p>
           <p v-if="r.payload.summary || r.payload.content" class="draft"><b>草稿：</b>{{ r.payload.summary || r.payload.content }}</p>
           <details v-if="r.facts?.length" class="evidence small">
             <summary>来源证据（{{ r.facts.length }}）</summary>
@@ -135,14 +140,14 @@
               :disabled="reviewBusy[r.id] || !reviewNames[r.id]?.trim()"
               @click="openCandidatePreview(r, 'approve')"
             >
-              批准
+              预览并批准
             </button>
             <button
               class="btn small"
               :disabled="reviewBusy[r.id] || !reviewTargets[r.id]"
               @click="openCandidatePreview(r, 'merge')"
             >
-              并入已有页面
+              预览并入已有页面
             </button>
             <button class="btn small" :disabled="reviewBusy[r.id]" @click="ignoreCandidate(r)">忽略</button>
           </div>
@@ -353,7 +358,7 @@ const actionConfig: Record<string, { button: string; description: string; itemAc
   contradiction: { button: '批量标记已处理', description: '默认全选并关闭矛盾提醒，不修改正文。', itemAction: '标记已处理', impact: '只关闭报告，不修改任何页面正文。' },
   single_source: { button: '批量标记已知悉', description: '默认全选并确认已知悉来源单一。', itemAction: '标记已知悉', impact: '只关闭报告，不修改来源或页面正文。' },
   missing_sections: { button: '批量补章节', description: '默认全选并补充缺失的空章节骨架。', itemAction: '补空章节', impact: '只添加“当前理解”或“时间线”标题，不生成正文。' },
-  pending_review: { button: '一键审批', description: '默认按推荐类型批准，可逐项调整类型或改为忽略。', itemAction: '审核候选', impact: '批准项会逐条重新检索、重写和验证；忽略项只关闭本次候选。' },
+  pending_review: { button: '逐条审核', description: '页面类型只是模型分类，不是批准建议。单来源候选默认保留待审。', itemAction: '逐条审核', impact: '批准或并入前必须重新检索、重写、验证并确认预览。' },
   ingest_questions: { button: '批量标记已知悉', description: '默认全选并确认已查看整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
   enrich: { button: '批量忽略', description: '默认全选并忽略当前待丰富提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
   stale: { button: '批量复核', description: '默认全选并记录内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
@@ -397,7 +402,6 @@ const allSelected = computed(() => {
 const impactSummary = computed(() => `${selectedBatchCount.value} 项将执行。${activeAction.value.impact}`);
 const batchPresets = computed(() => {
   const presets = [{ action: 'recommended', label: '按推荐' }];
-  if (tab.value === 'pending_review') presets.push({ action: 'ignore', label: '全部忽略' });
   if (tab.value === 'deadlink') {
     presets.push(
       { action: 'concept', label: '全部概念' },
@@ -443,7 +447,7 @@ async function load() {
   reports.value = data.reports.map((report: any) => evidence.get(report.id) || report);
   for (const report of reports.value.filter((item: any) => item.kind === 'pending_review')) {
     reviewNames[report.id] ||= report.payload.name || '';
-    reviewKinds[report.id] ||= ['concept', 'person', 'project', 'org'].includes(report.payload.kind) ? report.payload.kind : 'person';
+    reviewKinds[report.id] ||= ['concept', 'person', 'project', 'org'].includes(report.payload.kind) ? report.payload.kind : 'concept';
     const suggestedTarget = mergeTargets.value.find((page: any) =>
       page.id === report.payload.target || page.title === report.payload.target
     );
@@ -511,7 +515,7 @@ function hasPageTypeRecommendation(type: string) {
 }
 
 function showSystemSuggestion(item: BatchItem) {
-  if (item.disabled || !['deadlink', 'duplicate', 'pending_review'].includes(tab.value)) return false;
+  if (item.disabled || !['deadlink', 'duplicate'].includes(tab.value)) return false;
   return tab.value !== 'deadlink' || hasPageTypeRecommendation(item.payload?.suggestedType);
 }
 
@@ -739,7 +743,7 @@ onMounted(load);
 </script>
 
 <style scoped>
-.reports-view { max-width: 900px; margin: 0 auto; padding: 32px 24px; }
+.reports-view { width: 100%; max-width: 900px; box-sizing: border-box; margin: 0 auto; padding: 32px 24px; }
 .reports-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
 .reports-head h2 { margin: 0; }
 .head-info { flex: 1; display: flex; gap: 6px; flex-wrap: wrap; }
@@ -747,10 +751,13 @@ onMounted(load);
 .category-action { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 0; margin-bottom: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .category-action p { margin: 3px 0 0; }
 .category-action .btn span { min-width: 18px; padding: 0 5px; border-radius: 9px; background: rgba(255,255,255,.2); text-align: center; font-size: 11px; }
+.report-list, .report-item { min-width: 0; }
 .report-list { display: flex; flex-direction: column; gap: 10px; }
+.report-item { overflow-wrap: anywhere; }
 .report-item p { margin: 0 0 8px; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .review-meta { display: flex; gap: 16px; color: var(--text-secondary); margin-bottom: 8px; }
+.review-guidance { margin: 0 0 8px; padding: 8px 10px; border-left: 3px solid var(--warning, #d97706); color: var(--text-secondary); background: var(--bg-secondary); }
 .draft { padding: 8px; border-radius: 6px; background: var(--bg-tertiary); white-space: pre-wrap; max-height: 150px; overflow: auto; }
 .evidence { margin: 8px 0; color: var(--text-secondary); }
 .evidence summary { cursor: pointer; }
@@ -768,6 +775,7 @@ onMounted(load);
 .ambiguity-label { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; color: #92400e; background: #fef3c7; font-size: 12px; }
 .suggestion-list { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .review-controls { display: grid; grid-template-columns: minmax(180px, 1fr) 110px minmax(220px, 1.4fr); gap: 8px; margin: 10px 0; }
+.review-controls > * { width: 100%; min-width: 0; }
 .empty-hint { text-align: center; padding: 40px 0; }
 .modal-mask { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 15, 15, .35); }
 .batch-modal { width: min(760px, 96vw); max-height: min(820px, 92vh); display: flex; flex-direction: column; box-shadow: var(--shadow); }
