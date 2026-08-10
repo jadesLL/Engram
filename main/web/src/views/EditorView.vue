@@ -239,12 +239,22 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
 let loading = false; // 加载页面时抑制 content watch
 let justSavedAt = 0; // 本地刚保存时间戳，抑制 SSE 回声导致的重复重载
+let loadedContentKey = '';
+
+function visibleContentKey(value: string) {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/<!--\s*(?:ingest:|contribution:|synthesis:)[^>]*-->/g, '')
+    .replace(/\[(?:managed)?\]\(#ingest-preserved-[A-Za-z0-9_-]+\)/g, '')
+    .trim();
+}
 
 async function loadPage(id: string) {
   const { data } = await api.get(`/api/pages/${id}`);
   loading = true; // 抑制 watch
   page.value = data.meta;
   content.value = data.content;
+  loadedContentKey = visibleContentKey(data.content);
   // 标题为空时回退到文件名（去掉 .md 后缀）
   title.value = data.meta.title || data.meta.path.split('/').pop()?.replace(/\.md$/i, '') || '无标题';
   pageType.value = data.meta.type;
@@ -301,13 +311,15 @@ function openEvidenceSource(path: string) {
 async function save(manual = false) {
   if (!page.value) return;
   const tags = tagsInput.value.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
+  const contentToSave = editorRef.value?.getValue() ?? content.value;
   const { data } = await api.put(`/api/pages/${page.value.id}`, {
-    content: editorRef.value?.getValue() ?? content.value,
+    content: contentToSave,
     title: title.value,
     type: pageType.value,
     tags,
   });
   page.value = data.meta;
+  loadedContentKey = visibleContentKey(contentToSave);
   dirty = false;
   justSavedAt = Date.now(); // 抑制本次保存触发的 SSE 回声
   saveState.value = manual ? '已保存 ✓' : '已自动保存';
@@ -320,10 +332,19 @@ async function save(manual = false) {
 
 watch(content, () => {
   if (loading || !page.value) return; // 加载阶段不触发
+  if (visibleContentKey(content.value) === loadedContentKey) {
+    dirty = false;
+    saveState.value = '';
+    return;
+  }
   dirty = true;
   saveState.value = '编辑中…';
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => save(), 2000);
+  const scheduledPageId = page.value.id;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    if (page.value?.id === scheduledPageId) save();
+  }, 2000);
 });
 
 async function openWikilink(wikiTitle: string) {

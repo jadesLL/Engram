@@ -15,6 +15,14 @@ import { pageEvidenceResponse, queuePageRecompose } from '../pipeline/pageSynthe
 
 export { stamp } from '../lib/mergePages.js';
 
+function comparablePageContent(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/<!--\s*(?:ingest:|contribution:|synthesis:)[^>]*-->/g, '')
+    .replace(/\[(?:managed)?\]\(#ingest-preserved-[A-Za-z0-9_-]+\)/g, '')
+    .trim();
+}
+
 export async function pageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
@@ -103,8 +111,17 @@ export async function pageRoutes(app: FastifyInstance) {
   app.put('/api/pages/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     const { content, title, type, tags } = req.body as any;
-    const page = db.prepare(`SELECT path, type FROM pages WHERE id = ? AND deleted = 0`).get(id) as any;
+    const page = db.prepare(`SELECT path,title,type,tags FROM pages WHERE id = ? AND deleted = 0`).get(id) as any;
     if (!page) return reply.code(404).send({ error: '页面不存在' });
+    const current = readPage(page.path);
+    const currentTags = current?.meta.tags || JSON.parse(page.tags || '[]');
+    const nextTags = Array.isArray(tags) ? tags : currentTags;
+    const unchanged = current &&
+      comparablePageContent(String(content ?? '')) === comparablePageContent(current.content) &&
+      (title === undefined || title === page.title) &&
+      (type === undefined || type === page.type) &&
+      JSON.stringify(nextTags) === JSON.stringify(currentTags);
+    if (unchanged) return { meta: current.meta, unchanged: true };
     const meta = writePage(page.path, content ?? '', { title, type, tags });
     // 类型变化 → 物理移动到映射目录（归档区与 Wiki 树外的页面不自动移动）
     if (type && type !== page.type && page.path.startsWith('Wiki/') && !page.path.startsWith('Wiki/归档/')) {
