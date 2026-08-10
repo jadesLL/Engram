@@ -7,6 +7,10 @@ import { mergePages } from '../lib/mergePages.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
 import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
 import {
+  ensureCandidateFromReport,
+  relatedCandidateOccurrences,
+} from '../pipeline/candidateLedger.js';
+import {
   hydrateIngestQuestionPayload,
   setActionableQuestionsForPath,
   syncAllIngestQuestionReports,
@@ -35,7 +39,7 @@ const ACTION_META: Record<ReportActionKind, { title: string; description: string
   contradiction: { title: '批量处理矛盾报告', description: '默认全选并标记为已处理，只关闭报告，不修改页面正文。', button: '批量标记已处理', defaultSelected: true },
   single_source: { title: '批量确认来源单一', description: '默认全选并标记为已知悉，不修改来源或页面正文。', button: '批量标记已知悉', defaultSelected: true },
   missing_sections: { title: '批量补全章节骨架', description: '默认全选并补充缺失的空章节，不生成或猜测正文。', button: '批量补章节', defaultSelected: true },
-  pending_review: { title: '逐条审核候选', description: '页面类型只是模型分类，不是批准建议。候选必须逐条再提炼、预览并确认。', button: '逐条审核', defaultSelected: false },
+  pending_review: { title: '一键审核候选', description: '默认采用模型建议；单来源候选推荐忽略，页面类型仅作为分类信息。', button: '一键审核', defaultSelected: true },
   ingest_questions: { title: '批量确认整理追问', description: '默认全选并标记为已知悉，不修改原始资料和问题内容。', button: '批量标记已知悉', defaultSelected: true },
   enrich: { title: '批量忽略待丰富提醒', description: '默认全选并忽略提醒，不自动生成页面内容。', button: '批量忽略', defaultSelected: true },
   stale: { title: '批量复核过期页面', description: '默认全选并记录复核日期，不改变正文更新时间。', button: '批量复核', defaultSelected: true },
@@ -81,8 +85,31 @@ export function previewReportActions(kind: ReportActionKind) {
           { value: 'keep_both', label: '保留两者' },
         ];
       } else if (kind === 'pending_review') {
-        suggestedAction = 'manual';
-        options = [];
+        const candidate = ensureCandidateFromReport({
+          id: row.id,
+          status: 'open',
+          payload: row.payload,
+        });
+        const sourceCount = candidate
+          ? relatedCandidateOccurrences(candidate).length
+          : (payload.sourcePath || payload.source ? 1 : 0);
+        const suggestedKind = ['concept', 'person', 'project', 'org'].includes(payload.kind)
+          ? payload.kind
+          : 'concept';
+        payload.evidenceSourceCount = sourceCount;
+        suggestedAction = sourceCount <= 1
+          ? 'ignore'
+          : payload.ambiguity
+            ? 'manual'
+            : `approve:${suggestedKind}`;
+        options = [
+          { value: 'manual', label: '询问（保持待审）' },
+          { value: 'approve:concept', label: '批准为概念' },
+          { value: 'approve:person', label: '批准为人物' },
+          { value: 'approve:project', label: '批准为项目' },
+          { value: 'approve:org', label: '批准为组织' },
+          { value: 'ignore', label: '忽略' },
+        ];
       } else if (kind === 'enrich') {
         suggestedAction = 'dismiss';
       } else if (kind === 'stale') {
@@ -90,10 +117,8 @@ export function previewReportActions(kind: ReportActionKind) {
       } else if (kind === 'missing_sections') {
         suggestedAction = 'repair';
       }
-      const disabled = kind === 'pending_review' || (
-        kind === 'ingest_questions'
-        && !(payload.questions || []).some((question: any) => ['open', 'failed'].includes(question.status))
-      );
+      const disabled = kind === 'ingest_questions'
+        && !(payload.questions || []).some((question: any) => ['open', 'failed'].includes(question.status));
       return {
         id: row.id,
         payload,
@@ -113,7 +138,7 @@ function validAction(kind: ReportActionKind, action: string): boolean {
     contradiction: ['resolve'],
     single_source: ['resolve'],
     missing_sections: ['repair'],
-    pending_review: [],
+    pending_review: ['approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore'],
     ingest_questions: ['resolve'],
     enrich: ['dismiss'],
     stale: ['review'],

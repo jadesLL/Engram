@@ -84,9 +84,6 @@ export async function dreamRoutes(app: FastifyInstance) {
     if (!REPORT_ACTION_KINDS.includes(kind as ReportActionKind)) {
       return reply.code(404).send({ error: '报告分类不存在' });
     }
-    if (kind === 'pending_review') {
-      return reply.code(409).send({ error: '待审候选必须逐条生成预览并确认，不能批量审批' });
-    }
     let decisions: ReportDecision[];
     try {
       decisions = validateDecisions(kind as ReportActionKind, (req.body as any)?.decisions);
@@ -94,7 +91,8 @@ export async function dreamRoutes(app: FastifyInstance) {
     } catch (error: any) {
       return reply.code(409).send({ error: error?.message || '报告无法处理' });
     }
-    const jobId = enqueue('dream_apply', { kind, decisions, nonce: Date.now() });
+    const jobKind = kind === 'pending_review' ? 'candidate_review_batch' : 'dream_apply';
+    const jobId = enqueue(jobKind, { kind, decisions, nonce: Date.now() });
     if (!jobId) {
       releaseReports(decisions);
       return reply.code(409).send({ error: '批量任务无法入队，请稍后重试' });

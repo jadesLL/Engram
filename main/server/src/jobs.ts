@@ -15,6 +15,11 @@ import {
   releaseCandidateReports,
 } from './pipeline/candidateLedger.js';
 import {
+  applyCandidateReviewBatch,
+  releaseCandidateReviewBatch,
+  type CandidateReviewDecision,
+} from './pipeline/candidateReview.js';
+import {
   completeIngestQuestionJob,
   failIngestQuestionJob,
   recoverIngestQuestionJobs,
@@ -99,9 +104,12 @@ const handlers: Record<string, JobHandler> = {
     }
   },
   candidate_review_batch: async ({ decisions }, update) => {
-    releaseReports(decisions as ReportDecision[]);
-    update({ stage: '已停止', progress: 100, detail: '待审候选改为逐条预览确认' });
-    throw new Error('待审候选批量审批已停用，请逐条生成预览并确认');
+    try {
+      await applyCandidateReviewBatch(decisions as CandidateReviewDecision[], (progress) => update(progress));
+    } catch (error) {
+      releaseCandidateReviewBatch(decisions as CandidateReviewDecision[]);
+      throw error;
+    }
   },
   /** 分类批量处理：只执行请求中显式选择的报告和动作。 */
   dream_apply: async ({ kind, decisions }, update) => {
