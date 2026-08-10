@@ -14,6 +14,7 @@ import {
   IngestQuestionRequestError,
   type IngestQuestionAction,
 } from '../pipeline/ingestQuestions.js';
+import { resolveJobTarget } from '../lib/jobTarget.js';
 
 const KIND_LABELS: Record<string, string> = {
   ingest: 'AI 整理',
@@ -51,41 +52,29 @@ function jobSelect(): string {
   ].join(', ');
 }
 
-/** 把 payload 翻译成可读目标（页面标题/文件名） */
-function describe(kind: string, payloadStr: string): string {
-  try {
-    const p = JSON.parse(payloadStr);
-    if (p.path) return p.path.split('/').pop() || p.path;
-    if (p.pageId) {
-      const page = db.prepare(`SELECT title FROM pages WHERE id = ?`).get(p.pageId) as any;
-      return page?.title || p.pageId;
-    }
-    if (p.fileId) {
-      const file = db.prepare(`SELECT name FROM files WHERE id = ?`).get(p.fileId) as any;
-      return file?.name || p.fileId;
-    }
-  } catch { /* ignore */ }
-  return '';
-}
-
 export async function jobRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
   app.get('/api/jobs', async () => {
-    const fmt = (r: any) => ({
-      id: r.id,
-      kind: r.kind,
-      label: KIND_LABELS[r.kind] || r.kind,
-      target: describe(r.kind, r.payload),
-      payload: safeJson(r.payload, {}),
-      status: r.status,
-      stage: r.stage || (r.status === 'pending' ? '等待执行' : r.status === 'running' ? '执行中' : r.status === 'done' ? '已完成' : '失败'),
-      progress: r.progress ?? (r.status === 'done' ? 100 : r.status === 'running' ? 5 : 0),
-      detail: r.detail || '',
-      error: r.error,
-      created_at: r.created_at,
-      run_at: r.run_at,
-    });
+    const fmt = (r: any) => {
+      const target = resolveJobTarget(r.payload);
+      return {
+        id: r.id,
+        kind: r.kind,
+        label: KIND_LABELS[r.kind] || r.kind,
+        target: target.targetLabel,
+        targetKey: target.targetKey,
+        targetLabel: target.targetLabel,
+        payload: safeJson(r.payload, {}),
+        status: r.status,
+        stage: r.stage || (r.status === 'pending' ? '等待执行' : r.status === 'running' ? '执行中' : r.status === 'done' ? '已完成' : '失败'),
+        progress: r.progress ?? (r.status === 'done' ? 100 : r.status === 'running' ? 5 : 0),
+        detail: r.detail || '',
+        error: r.error,
+        created_at: r.created_at,
+        run_at: r.run_at,
+      };
+    };
     const active = db
       .prepare(`SELECT ${jobSelect()} FROM jobs WHERE status IN ('pending', 'running') ORDER BY id LIMIT 50`)
       .all()
