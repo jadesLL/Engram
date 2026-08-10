@@ -24,6 +24,10 @@ export async function organizePage(pageId: string): Promise<void> {
   if (!llmReady()) return;
   const page = db.prepare(`SELECT * FROM pages WHERE id=? AND deleted=0`).get(pageId) as any;
   if (!page || page.path.startsWith('原始资料/') || page.path.startsWith('AIWorks/')) return;
+  const synthesized = db.prepare(
+    `SELECT 1 FROM page_syntheses WHERE page_id=? AND status='active' LIMIT 1`
+  ).get(pageId);
+  if (synthesized) return;
   const body = readPage(page.path);
   if (!body || !body.content.trim()) return;
   const contentHash = hash(body.content);

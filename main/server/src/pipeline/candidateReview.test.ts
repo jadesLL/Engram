@@ -23,6 +23,7 @@ let createPage: any;
 let writePage: any;
 let readPage: any;
 let sourceContentHash: (value: string | Buffer) => string;
+let recomposePage: any;
 
 before(async () => {
   server = http.createServer(async (req, res) => {
@@ -43,7 +44,32 @@ before(async () => {
     const input = JSON.parse(
       [...(body.messages || [])].reverse().find((message: any) => message.role === 'user')?.content || '{}'
     );
-    const content = system.includes('候选聚焦 Map')
+    const content = system.includes('跨来源整页综合')
+      ? {
+          summary: '依据全部来源综合后的页面摘要。',
+          domain: '测试',
+          confidence: '高',
+          sections: [{
+            heading: '',
+            paragraphs: [{
+              text: '人工选择后重新组织的正文。',
+              evidenceIds: input.activeEvidence.map((item: any) => item.id),
+            }],
+            bullets: [],
+          }],
+          related: [],
+          timeline: [],
+          unresolvedConflicts: [],
+          manualChangesPreserved: true,
+        }
+      : system.includes('验证实体页面')
+      ? {
+          pass: true,
+          unsupported: [],
+          conflicts: [],
+          manualChangesPreserved: true,
+        }
+      : system.includes('候选聚焦 Map')
       ? {
           facts: [{
             id: 'focused-f1',
@@ -107,6 +133,7 @@ before(async () => {
   } = await import('./candidateReview.js'));
   ({ createPage, writePage, readPage } = await import('../lib/vault.js'));
   ({ contentHash: sourceContentHash } = await import('./sourceDocument.js'));
+  ({ recomposePage } = await import('./pageSynthesis.js'));
 });
 
 after(async () => {
@@ -199,6 +226,10 @@ test('approval performs local refinement, preview and verified commit', async ()
   assert.ok(preview.contextCount >= 2);
   assert.match(preview.content, /人工选择后重新组织的正文/);
   const page = commitCandidateReview(reportId, preview.token);
+  const synthesis = db.prepare(
+    `SELECT id,input_hash FROM page_syntheses WHERE page_id=? AND status='pending'`
+  ).get(page.id);
+  await recomposePage(page.id, synthesis.id, synthesis.input_hash);
   assert.match(readPage(page.path).content, /人工选择后重新组织的正文/);
   assert.doesNotMatch(readPage(page.path).content, /第二份资料中的旧草稿/);
   assert.equal(
@@ -231,6 +262,10 @@ test('merge preview writes verified incremental content into the selected page',
   assert.ok(preview.contextCount >= 1);
   assert.match(preview.content, /人工选择后重新组织的正文/);
   const page = commitCandidateReview(reportId, preview.token);
+  const synthesis = db.prepare(
+    `SELECT id,input_hash FROM page_syntheses WHERE page_id=? AND status='pending'`
+  ).get(page.id);
+  await recomposePage(page.id, synthesis.id, synthesis.input_hash);
   assert.equal(page.id, target.id);
   assert.match(readPage(target.path).content, /人工选择后重新组织的正文/);
   assert.equal(db.prepare(`SELECT status FROM ingest_candidates WHERE id=?`).get(candidate.id).status, 'merged');

@@ -7,6 +7,7 @@ import { readPage, readPageMeta, writePage } from '../lib/vault.js';
 import { isEntity } from '../lib/pageTypes.js';
 import { appendWikiLog } from './indexFile.js';
 import { ensureEntityStructure } from './knowledgePage.js';
+import { queuePageRecompose } from './pageSynthesis.js';
 
 const maturitySchema = z.object({
   action: z.enum(['none', 'enrich', 'complete']),
@@ -122,6 +123,18 @@ export async function runUpgrades(): Promise<string[]> {
   for (const entity of scanMentions()) {
     const meta = readPageMeta(entity.path);
     if (meta.upgrade_evidence_hash === entity.evidenceHash) continue;
+    const managedBySources = db.prepare(
+      `SELECT 1 FROM page_contributions WHERE page_id=? AND active=1 LIMIT 1`
+    ).get(entity.id);
+    if (managedBySources) {
+      queuePageRecompose(entity.id);
+      writePage(entity.path, entity.content, {
+        mention_count: entity.mentionCount,
+        upgrade_evidence_hash: entity.evidenceHash,
+        upgrade_rationale: '该页面由来源事实账本管理，实体升级已交由整页综合流程处理',
+      });
+      continue;
+    }
     try {
       const decision = await runSemanticStage({
         scope: 'entity-upgrade',

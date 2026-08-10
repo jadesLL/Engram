@@ -199,6 +199,33 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_page_contributions_page ON page_contributions(page_id, active);
   CREATE INDEX IF NOT EXISTS idx_page_contributions_source ON page_contributions(source_version_id, active);
 
+  CREATE TABLE IF NOT EXISTS page_syntheses (
+    id TEXT PRIMARY KEY,
+    page_id TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    evidence_hash TEXT NOT NULL,
+    trigger_run_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    summary TEXT NOT NULL DEFAULT '',
+    domain TEXT NOT NULL DEFAULT '',
+    confidence TEXT NOT NULL DEFAULT '中',
+    current_content TEXT NOT NULL DEFAULT '',
+    related_content TEXT NOT NULL DEFAULT '',
+    timeline_content TEXT NOT NULL DEFAULT '',
+    evidence_map TEXT NOT NULL DEFAULT '{}',
+    source_version_ids TEXT NOT NULL DEFAULT '[]',
+    manual_changed INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(page_id, input_hash),
+    FOREIGN KEY(page_id) REFERENCES pages(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_page_syntheses_page
+    ON page_syntheses(page_id, status, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_page_syntheses_run
+    ON page_syntheses(trigger_run_id, status);
+
   CREATE TABLE IF NOT EXISTS ingest_questions (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,

@@ -77,26 +77,53 @@ const htmlPreview = ref(props.htmlMode ?? false);
 let vditor: Vditor | null = null;
 let ready = false;
 let composing = false; // IME 组字状态（wysiwyg 下 input 走防抖，组字期间不 emit 防丢字）
+let syncingModelValue = true;
+let lastProgrammaticValue = '';
+let userInputPending = false;
+let modelSyncReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+let placeholderHideTimer: ReturnType<typeof setTimeout> | null = null;
 let modeObserver: MutationObserver | null = null;
 let lastEmittedMode: 'ir' | 'sv' = 'ir';
 
 /** AI 管理注释：证据标记与贡献区段边界都不应出现在编辑界面。 */
-const MANAGED_COMMENT_RE = /<!--\s*(?:ingest:|contribution:)[^>]*-->/g;
-const INGEST_PLACEHOLDER_RE = /<!--\s*ingest-preserved:([A-Za-z0-9+/=]+)\s*-->/g;
+const MANAGED_COMMENT_RE = /<!--\s*(?:ingest:|contribution:|synthesis:)[^>]*-->/g;
+const INGEST_PLACEHOLDER_RE = /\[(?:managed)?\]\(#ingest-preserved-([A-Za-z0-9_-]+)\)/g;
 
-/** 用不可见占位注释隐藏证据标记，同时保留它在正文中的准确位置。 */
+function encodeManagedComment(comment: string): string {
+  return btoa(comment)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function decodeManagedComment(encoded: string): string {
+  const base64 = encoded
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(encoded.length / 4) * 4, '=');
+  return atob(base64);
+}
+
+/** 用零宽占位链接隐藏证据标记，同时保留它在正文中的准确位置。 */
 function stripIngestComments(md: string): string {
-  return md.replace(MANAGED_COMMENT_RE, (comment) => `<!-- ingest-preserved:${btoa(comment)} -->`);
+  return md.replace(INGEST_PLACEHOLDER_RE, '').replace(
+    MANAGED_COMMENT_RE,
+    (comment) => `[managed](#ingest-preserved-${encodeManagedComment(comment)})`,
+  );
 }
 
 /** 保存时优先原位还原；编辑器若意外清除了占位符，再降级追加原标记。 */
 function restoreIngestComments(md: string): string {
   if (!vditor) return md;
   let restoredAny = false;
+  const restoredComments = new Set<string>();
   const restored = md.replace(INGEST_PLACEHOLDER_RE, (_full, encoded: string) => {
     try {
       restoredAny = true;
-      return atob(encoded);
+      const comment = decodeManagedComment(encoded);
+      if (restoredComments.has(comment)) return '';
+      restoredComments.add(comment);
+      return comment;
     } catch {
       return '';
     }
@@ -109,6 +136,58 @@ function restoreIngestComments(md: string): string {
   if (MANAGED_COMMENT_RE.test(md)) { MANAGED_COMMENT_RE.lastIndex = 0; return md; }
   MANAGED_COMMENT_RE.lastIndex = 0;
   return md.trimEnd() + '\n' + comments.join('\n');
+}
+
+function comparableMarkdown(md: string): string {
+  return md
+    .replace(/\r\n/g, '\n')
+    .replace(INGEST_PLACEHOLDER_RE, '')
+    .replace(MANAGED_COMMENT_RE, '')
+    .trim();
+}
+
+function hideManagedPlaceholders() {
+  if (!vditorEl.value) return;
+  const inlineLinks = vditorEl.value.querySelectorAll<HTMLElement>('span[data-type="a"]');
+  for (const link of inlineLinks) {
+    const target = link.querySelector<HTMLElement>('.vditor-ir__marker--link')?.textContent || '';
+    if (target.startsWith('#ingest-preserved-')) {
+      link.classList.add('managed-placeholder');
+    }
+  }
+  const paragraphs = vditorEl.value.querySelectorAll<HTMLElement>('p[data-block]');
+  for (const paragraph of paragraphs) {
+    const text = paragraph.textContent?.trim() || '';
+    if (
+      paragraph.querySelector('a[href^="#ingest-preserved-"]') ||
+      text.startsWith('[](#ingest-preserved-') ||
+      text.startsWith('[managed](#ingest-preserved-')
+    ) {
+      paragraph.classList.add('managed-placeholder');
+    }
+  }
+}
+
+function scheduleHideManagedPlaceholders() {
+  if (placeholderHideTimer) clearTimeout(placeholderHideTimer);
+  placeholderHideTimer = setTimeout(() => {
+    placeholderHideTimer = null;
+    hideManagedPlaceholders();
+  }, 0);
+}
+
+function releaseModelSyncSoon() {
+  if (modelSyncReleaseTimer) clearTimeout(modelSyncReleaseTimer);
+  modelSyncReleaseTimer = setTimeout(() => {
+    syncingModelValue = false;
+    modelSyncReleaseTimer = null;
+  }, 500);
+}
+
+function beginUserEditing() {
+  if (modelSyncReleaseTimer) clearTimeout(modelSyncReleaseTimer);
+  modelSyncReleaseTimer = null;
+  syncingModelValue = false;
 }
 
 /** 监听 Vditor edit-mode 切换（DOM class 变化），emit mode-change 让父组件持久化 */
@@ -127,16 +206,22 @@ function observeEditMode() {
       emit('mode-change', cur);
     }
   });
-  modeObserver.observe(vditorEl.value, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'data-mode'] });
+  modeObserver.observe(vditorEl.value, {
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'style', 'data-mode'],
+  });
 }
 
 function init() {
+  const initialValue = stripIngestComments(wikiLinksToMarkdown(props.modelValue));
+  lastProgrammaticValue = initialValue;
   vditor = new Vditor(vditorEl.value!, {
     mode: props.mode ?? 'ir',
     height: '100%',
     cache: { enable: false },
     theme: props.dark ? 'dark' : 'classic',
-    value: stripIngestComments(wikiLinksToMarkdown(props.modelValue)),
+    value: initialValue,
     placeholder: '开始书写… 输入 [[ 插入双链，Ctrl+S 保存',
     preview: { mode: 'both' },
     link: {
@@ -179,12 +264,20 @@ function init() {
     },
     input: (v) => {
       // IME 组字期间不 emit，避免 wysiwyg 防抖重渲染打断输入
-      if (composing) return;
-      emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
+      if (!ready || composing || syncingModelValue || !userInputPending) return;
+      userInputPending = false;
+      if (v === lastProgrammaticValue) return;
+      lastProgrammaticValue = v;
+      const nextValue = restoreIngestComments(markdownLinksToWiki(v));
+      if (comparableMarkdown(nextValue) === comparableMarkdown(props.modelValue)) return;
+      emit('update:modelValue', nextValue);
     },
     after: () => {
       ready = true;
+      lastProgrammaticValue = vditor?.getValue() || initialValue;
       bindKeys();
+      releaseModelSyncSoon();
+      scheduleHideManagedPlaceholders();
       // 初始化后同步 HTML 预览状态
       if (htmlPreview.value) renderHtmlPreview();
     },
@@ -193,7 +286,17 @@ function init() {
 
 function bindKeys() {
   const el = vditorEl.value!;
+  el.addEventListener('input', (e: Event) => {
+    if (e.isTrusted && !syncingModelValue) userInputPending = true;
+  }, true);
+  el.addEventListener('pointerdown', (e: PointerEvent) => {
+    beginUserEditing();
+    if ((e.target as HTMLElement).closest('.vditor-toolbar button')) {
+      userInputPending = true;
+    }
+  }, true);
   el.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.isTrusted) beginUserEditing();
     if (e.isComposing) { composing = true; return; }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
@@ -284,6 +387,7 @@ async function searchLinks() {
 
 function insertLink(title: string) {
   if (!title) return;
+  userInputPending = true;
   vditor?.insertValue(markdownWikiLink(title));
   vditor?.focus();
   linkPopup.value = false;
@@ -406,6 +510,7 @@ function getSelectionText(): string {
   return vditor?.getSelection() || '';
 }
 function insertText(text: string) {
+  userInputPending = true;
   vditor?.insertValue(wikiLinksToMarkdown(text));
   vditor?.focus();
 }
@@ -421,7 +526,15 @@ watch(
   (v) => {
     if (!ready || !vditor) return;
     const editorValue = stripIngestComments(wikiLinksToMarkdown(v));
-    if (editorValue !== vditor.getValue()) vditor.setValue(editorValue);
+    if (editorValue !== vditor.getValue()) {
+      syncingModelValue = true;
+      vditor.setValue(editorValue);
+      lastProgrammaticValue = vditor.getValue();
+      releaseModelSyncSoon();
+      scheduleHideManagedPlaceholders();
+    } else {
+      lastProgrammaticValue = editorValue;
+    }
     // 内容变化后若处于 HTML 预览，重新渲染
     if (htmlPreview.value) renderHtmlPreview();
   }
@@ -462,6 +575,8 @@ watch(
 );
 
 onUnmounted(() => {
+  if (modelSyncReleaseTimer) clearTimeout(modelSyncReleaseTimer);
+  if (placeholderHideTimer) clearTimeout(placeholderHideTimer);
   modeObserver?.disconnect();
   vditor?.destroy();
 });
@@ -478,6 +593,11 @@ onMounted(init);
   flex-direction: column;
 }
 .vditor-host { flex: 1; min-height: 0; }
+.vditor-host :deep(.managed-placeholder),
+.vditor-host :deep(a[href^="#ingest-preserved-"]),
+.vditor-host :deep(p:has(a[href^="#ingest-preserved-"])) {
+  display: none !important;
+}
 :deep(.vditor-toolbar) {
   border-bottom: 1px solid var(--border);
   /* HTML 预览按钮右对齐到工具栏最右端 */

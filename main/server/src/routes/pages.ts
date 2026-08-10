@@ -11,8 +11,17 @@ import { requireAuth } from './auth.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages, MergeError } from '../lib/mergePages.js';
+import { pageEvidenceResponse, queuePageRecompose } from '../pipeline/pageSynthesis.js';
 
 export { stamp } from '../lib/mergePages.js';
+
+function comparablePageContent(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/<!--\s*(?:ingest:|contribution:|synthesis:)[^>]*-->/g, '')
+    .replace(/\[(?:managed)?\]\(#ingest-preserved-[A-Za-z0-9_-]+\)/g, '')
+    .trim();
+}
 
 export async function pageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -45,6 +54,22 @@ export async function pageRoutes(app: FastifyInstance) {
     const rd = readPage(page.path);
     if (!rd) return reply.code(404).send({ error: '文件不存在' });
     return rd;
+  });
+
+  app.get('/api/pages/:id/evidence', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const evidence = pageEvidenceResponse(id);
+    if (!evidence) return reply.code(404).send({ error: '页面不存在或不是可综合的实体页' });
+    return evidence;
+  });
+
+  app.post('/api/pages/:id/recompose', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const page = db.prepare(`SELECT id FROM pages WHERE id=? AND deleted=0`).get(id);
+    if (!page) return reply.code(404).send({ error: '页面不存在' });
+    const synthesisId = queuePageRecompose(id);
+    if (!synthesisId) return reply.code(409).send({ error: '页面没有可综合的有效来源事实，或尚未配置模型' });
+    return { ok: true, synthesisId };
   });
 
   /** wikilink 跳转：按标题解析 */
@@ -86,8 +111,17 @@ export async function pageRoutes(app: FastifyInstance) {
   app.put('/api/pages/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     const { content, title, type, tags } = req.body as any;
-    const page = db.prepare(`SELECT path, type FROM pages WHERE id = ? AND deleted = 0`).get(id) as any;
+    const page = db.prepare(`SELECT path,title,type,tags FROM pages WHERE id = ? AND deleted = 0`).get(id) as any;
     if (!page) return reply.code(404).send({ error: '页面不存在' });
+    const current = readPage(page.path);
+    const currentTags = current?.meta.tags || JSON.parse(page.tags || '[]');
+    const nextTags = Array.isArray(tags) ? tags : currentTags;
+    const unchanged = current &&
+      comparablePageContent(String(content ?? '')) === comparablePageContent(current.content) &&
+      (title === undefined || title === page.title) &&
+      (type === undefined || type === page.type) &&
+      JSON.stringify(nextTags) === JSON.stringify(currentTags);
+    if (unchanged) return { meta: current.meta, unchanged: true };
     const meta = writePage(page.path, content ?? '', { title, type, tags });
     // 类型变化 → 物理移动到映射目录（归档区与 Wiki 树外的页面不自动移动）
     if (type && type !== page.type && page.path.startsWith('Wiki/') && !page.path.startsWith('Wiki/归档/')) {

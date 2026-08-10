@@ -175,11 +175,44 @@ export function finalizeDerivedRun(runId: string): void {
   const pages = db.prepare(
     `SELECT DISTINCT page_id FROM page_contributions WHERE run_id=? AND active=1`
   ).all(runId) as { page_id: string }[];
+  const pageIds = new Set(pages.map((page) => page.page_id));
+  const pendingSyntheses = (db.prepare(
+    `SELECT page_id FROM page_syntheses WHERE status='pending'`
+  ).all() as Array<{ page_id: string }>).filter((item) => pageIds.has(item.page_id));
+  if (pendingSyntheses.length) {
+    enqueue('ingest_finalize', { runId, retry: Date.now() });
+    return;
+  }
   const missing = pages.filter((page) => !db.prepare(
     `SELECT 1 FROM chunks WHERE ref_type='page' AND ref_id=? LIMIT 1`
   ).get(page.page_id));
-  db.prepare(`UPDATE ingest_runs SET derived_status=? WHERE id=?`).run(missing.length ? 'failed' : 'completed', runId);
+  if (missing.length) {
+    const pendingProcessPages = new Set<string>();
+    const pendingProcesses = db.prepare(
+      `SELECT payload FROM jobs WHERE kind='process' AND status IN ('pending','running')`
+    ).all() as Array<{ payload: string }>;
+    for (const job of pendingProcesses) {
+      try {
+        const payload = JSON.parse(job.payload);
+        if (payload.pageId) pendingProcessPages.add(String(payload.pageId));
+      } catch { /* malformed jobs will fail in the runner */ }
+    }
+    if (missing.some((page) => pendingProcessPages.has(page.page_id))) {
+      enqueue('ingest_finalize', { runId, retry: Date.now() });
+      return;
+    }
+  }
+  const synthesisIssues = db.prepare(
+    `SELECT page_id,status,error FROM page_syntheses
+     WHERE trigger_run_id=? AND status IN ('pending','failed','conflict')`
+  ).all(runId) as Array<{ page_id: string; status: string; error: string }>;
+  const failed = missing.length > 0 || synthesisIssues.length > 0;
+  db.prepare(`UPDATE ingest_runs SET derived_status=? WHERE id=?`).run(failed ? 'failed' : 'completed', runId);
   if (missing.length) throw new Error(`${missing.length} 个页面尚未生成检索分块`);
+  if (synthesisIssues.length) {
+    const detail = synthesisIssues.map((item) => `${item.page_id}:${item.status}${item.error ? `(${item.error})` : ''}`).join('；');
+    throw new Error(`${synthesisIssues.length} 个页面尚未完成整页综合：${detail}`);
+  }
 }
 
 export function recordQuestions(

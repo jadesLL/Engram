@@ -111,7 +111,7 @@ EOF
 exampleproject_cleanup_local_verification() {
   local verify_dir="$1"
   local verify_dir_windows=""
-  local failed=0
+  local failed=0 cleanup_attempt
 
   if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
     verify_dir_windows="$(cygpath -w "$verify_dir")"
@@ -125,7 +125,13 @@ exampleproject_cleanup_local_verification() {
 
   case "$verify_dir" in
     /tmp/exampleproject-verify.*|/tmp/exampleproject-preview.*|/tmp/exampleproject-main.*)
-      rm -rf -- "$verify_dir" || failed=1
+      for cleanup_attempt in 1 2 3 4 5; do
+        if rm -rf -- "$verify_dir" && [ ! -e "$verify_dir" ]; then
+          break
+        fi
+        sleep 1
+      done
+      [ ! -e "$verify_dir" ] || failed=1
       ;;
     *)
       printf '!! 拒绝删除意外验证路径: %s\n' "$verify_dir" >&2
