@@ -68,9 +68,11 @@ export const useAppStore = defineStore('app', {
         this.jobs = data;
       } catch { /* 保留上次状态 */ }
     },
-    /** 按文件路径找其 ingest 任务（侧栏文件行进度用） */
+    /** 按文件路径找其提取/整理任务（侧栏与文件预览进度共用） */
     fileJob(path: string) {
-      return this.jobs.active.find((j: any) => j.kind === 'ingest' && j.payload?.path === path);
+      return this.jobs.active.find((j: any) =>
+        ['extract_file', 'ingest'].includes(j.kind) && j.payload?.path === path
+      );
     },
   },
 });

@@ -7,6 +7,7 @@ import { docxToText } from './docx.js';
 import { xlsxToText, pptxToText } from './office.js';
 import { chunkLosslessly, assertLosslessChunks } from './losslessChunker.js';
 import type { StructuredDocument } from './ingestModel.js';
+import { extractedSource, supportsFileExtraction } from './fileExtraction.js';
 
 export interface SourceAnchor {
   chunkId?: string;
@@ -30,16 +31,22 @@ export async function loadSourceDocument(relPath: string): Promise<StructuredDoc
   const bytes = fs.readFileSync(abs);
   const ext = path.posix.extname(relPath).slice(1).toLowerCase();
   let text: string;
+  let documentHash = contentHash(bytes);
   if (ext === 'docx') text = await docxToText(bytes);
   else if (ext === 'xlsx') text = xlsxToText(bytes);
   else if (ext === 'pptx') text = await pptxToText(bytes);
+  else if (supportsFileExtraction(relPath)) {
+    const extracted = extractedSource(relPath, bytes);
+    text = extracted.text;
+    documentHash = extracted.contentHash;
+  }
   else text = matter(bytes.toString('utf8')).content.replace(/\r\n/g, '\n').trim();
   const chunks = chunkLosslessly(text);
   assertLosslessChunks(text, chunks);
   return {
     path: relPath,
     title: path.posix.basename(relPath),
-    contentHash: contentHash(bytes),
+    contentHash: documentHash,
     text,
     chunks,
   };

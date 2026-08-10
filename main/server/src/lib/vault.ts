@@ -380,24 +380,35 @@ export async function scanVault() {
   // 原始资料补齐消化：递归扫描直接拷入目录/历史遗留文件，自动入队。
   try {
     const { llmReady } = await import('./llm.js');
-    if (llmReady()) {
-      const { enqueue } = await import('../jobQueue.js');
-      const walkRaw = (relative: string) => {
-        const entries = fs.readdirSync(safeJoin(relative), { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.name.startsWith('.')) continue;
-          const child = `${relative}/${entry.name}`;
-          if (entry.isDirectory()) {
-            walkRaw(child);
-            continue;
-          }
-          const ext = path.extname(entry.name).slice(1).toLowerCase();
-          if (!['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(ext)) continue;
-          const done = db.prepare(`SELECT path FROM ingest_log WHERE path = ? AND status = 'completed'`).get(child);
-          if (!done) enqueue('ingest', { path: child });
+    const { enqueue } = await import('../jobQueue.js');
+    const {
+      extractionDetails,
+      extractionIsCurrent,
+      scheduleFileExtraction,
+      supportsFileExtraction,
+    } = await import('../pipeline/fileExtraction.js');
+    const walkRaw = (relative: string) => {
+      const entries = fs.readdirSync(safeJoin(relative), { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const child = `${relative}/${entry.name}`;
+        if (entry.isDirectory()) {
+          walkRaw(child);
+          continue;
         }
-      };
-      walkRaw('原始资料');
-    }
+        if (supportsFileExtraction(child)) {
+          const extraction = extractionDetails(child);
+          if (!extraction || extraction.status !== 'completed' || !extractionIsCurrent(child)) {
+            scheduleFileExtraction(child, { mode: 'auto', ingestAfter: true });
+          }
+          continue;
+        }
+        const ext = path.extname(entry.name).slice(1).toLowerCase();
+        if (!llmReady() || !['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(ext)) continue;
+        const done = db.prepare(`SELECT path FROM ingest_log WHERE path = ? AND status = 'completed'`).get(child);
+        if (!done) enqueue('ingest', { path: child });
+      }
+    };
+    walkRaw('原始资料');
   } catch { /* 原始资料目录为空或不存在时忽略 */ }
 }

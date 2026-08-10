@@ -12,15 +12,24 @@ let db: any;
 let migrate: () => void;
 let setSetting: (key: string, value: string) => void;
 let buildEmbeddingRequestBody: typeof import('./llm.js').buildEmbeddingRequestBody;
+let buildDocumentRequestBody: typeof import('./llm.js').buildDocumentRequestBody;
 let embed: typeof import('./llm.js').embed;
 let testModel: typeof import('./llm.js').testModel;
 let getActiveChat: typeof import('./llm.js').getActiveChat;
+let getActiveDocument: typeof import('./llm.js').getActiveDocument;
 
 type ModelEntry = import('./llm.js').ModelEntry;
 
 before(async () => {
   ({ db, migrate, setSetting } = await import('./db.js'));
-  ({ buildEmbeddingRequestBody, embed, testModel, getActiveChat } = await import('./llm.js'));
+  ({
+    buildEmbeddingRequestBody,
+    buildDocumentRequestBody,
+    embed,
+    testModel,
+    getActiveChat,
+    getActiveDocument,
+  } = await import('./llm.js'));
   migrate();
 });
 
@@ -87,6 +96,32 @@ test('invalid non-array chat model settings safely fall back to no active model'
   setSetting('chat_models', JSON.stringify({ id: 'not-a-list' }));
   setSetting('active_chat_model', 'not-a-list');
   assert.equal(getActiveChat(), null);
+});
+
+test('document model settings are independent from the active chat model', () => {
+  const documentEntry = entry({ id: 'document-1', model: 'vision-ocr' });
+  setSetting('document_models', JSON.stringify([documentEntry]));
+  setSetting('active_document_model', documentEntry.id);
+  assert.equal(getActiveDocument()?.model, 'vision-ocr');
+  assert.equal(getActiveChat(), null);
+});
+
+test('document request uses OpenAI-compatible image content', () => {
+  assert.deepEqual(
+    buildDocumentRequestBody({ model: 'vision-ocr' }, 'data:image/png;base64,abc', '读取文字', 123),
+    {
+      model: 'vision-ocr',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+          { type: 'text', text: '读取文字' },
+        ],
+      }],
+      temperature: 0,
+      max_tokens: 123,
+    },
+  );
 });
 
 test('embed sends configured dimensions and accepts correctly sized vectors', async () => {
@@ -164,4 +199,13 @@ test('testModel rejects a non-array embedding', async () => {
   const result = await testModel(entry(), 'embedding');
   assert.equal(result.ok, false);
   assert.match(result.error || '', /embedding 不是数组/);
+});
+
+test('testModel verifies that a document model can read the generated image', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    choices: [{ message: { content: 'READY' }, finish_reason: 'stop' }],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  const result = await testModel(entry({ model: 'vision-ocr' }), 'document');
+  assert.equal(result.ok, true);
 });

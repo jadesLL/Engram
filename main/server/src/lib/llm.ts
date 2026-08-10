@@ -36,6 +36,12 @@ export function getActiveEmbedding(): ModelEntry | null {
   return list.find((m) => m.id === activeId) || list[0] || null;
 }
 
+export function getActiveDocument(): ModelEntry | null {
+  const list = parseList('document_models');
+  const activeId = getSetting('active_document_model');
+  return list.find((m) => m.id === activeId) || list[0] || null;
+}
+
 export interface LlmConfig {
   baseUrl: string;
   apiKey: string;
@@ -62,6 +68,10 @@ export function getLlmConfig(): LlmConfig {
 
 export function llmReady(): boolean {
   return Boolean(getActiveChat()?.apiKey);
+}
+
+export function documentModelReady(): boolean {
+  return Boolean(getActiveDocument()?.apiKey);
 }
 
 export class LlmError extends Error {
@@ -133,6 +143,69 @@ export interface ChatToolResult {
   content: string;
   toolCalls: ChatToolCall[];
   finishReason?: string;
+}
+
+export interface DocumentImagePart {
+  type: 'image_url';
+  image_url: { url: string };
+}
+
+export interface DocumentTextPart {
+  type: 'text';
+  text: string;
+}
+
+export function buildDocumentRequestBody(
+  entry: Pick<ModelEntry, 'model'>,
+  imageDataUrl: string,
+  prompt: string,
+  maxTokens = 8192,
+): Record<string, unknown> {
+  return {
+    model: entry.model,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: imageDataUrl } } satisfies DocumentImagePart,
+        { type: 'text', text: prompt } satisfies DocumentTextPart,
+      ],
+    }],
+    temperature: 0,
+    max_tokens: maxTokens,
+  };
+}
+
+function messageText(message: any): string {
+  if (typeof message?.content === 'string') return message.content;
+  if (Array.isArray(message?.content)) {
+    return message.content
+      .map((part: any) => typeof part === 'string' ? part : String(part?.text || ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return '';
+}
+
+export async function recognizeDocumentImage(
+  imageDataUrl: string,
+  prompt: string,
+  options: { entry?: ModelEntry; maxTokens?: number; timeoutMs?: number } = {},
+): Promise<string> {
+  const entry = options.entry || getActiveDocument();
+  if (!entry?.apiKey) throw new LlmError('尚未配置文档识别模型（设置页 → 模型配置 → 文档识别）');
+  const response = await request(
+    '/chat/completions',
+    buildDocumentRequestBody(entry, imageDataUrl, prompt, options.maxTokens),
+    {
+      baseUrl: entry.baseUrl.replace(/\/+$/, ''),
+      apiKey: entry.apiKey,
+      timeoutMs: options.timeoutMs ?? 180_000,
+    },
+  );
+  const payload = await response.json() as any;
+  const content = messageText(payload?.choices?.[0]?.message).trim();
+  if (!content) throw new LlmError('文档识别模型返回了空内容');
+  return content;
 }
 
 type ChatOptions = {
@@ -436,8 +509,16 @@ export async function embed(texts: string[]): Promise<number[][]> {
 }
 
 /** 测试连接：依次尝试激活的 chat 与 embedding（复用 testModel，标准一致）。 */
-export async function testConnection(): Promise<{ chat: boolean; embedding: boolean; error?: string }> {
-  const result = { chat: false, embedding: false };
+export async function testConnection(): Promise<{
+  chat: boolean;
+  embedding: boolean;
+  document?: boolean;
+  error?: string;
+}> {
+  const result: { chat: boolean; embedding: boolean; document?: boolean } = {
+    chat: false,
+    embedding: false,
+  };
   const chatModel = getActiveChat();
   if (!chatModel) return { ...result, error: '未配置对话模型' };
   const chatRes = await testModel(chatModel, 'chat');
@@ -448,6 +529,12 @@ export async function testConnection(): Promise<{ chat: boolean; embedding: bool
   const embRes = await testModel(embModel, 'embedding');
   if (!embRes.ok) return { ...result, error: `embedding: ${embRes.error}` };
   result.embedding = true;
+  const documentModel = getActiveDocument();
+  if (documentModel?.apiKey) {
+    const documentResult = await testModel(documentModel, 'document');
+    if (!documentResult.ok) return { ...result, document: false, error: `document: ${documentResult.error}` };
+    result.document = true;
+  }
   return result;
 }
 
@@ -457,7 +544,7 @@ export async function testConnection(): Promise<{ chat: boolean; embedding: bool
  *  （带推理的模型在 token 紧张时可能只产出 reasoning_content 而 content 为空）。 */
 export async function testModel(
   entry: ModelEntry,
-  kind: 'chat' | 'embedding'
+  kind: 'chat' | 'embedding' | 'document'
 ): Promise<{ ok: boolean; error?: string }> {
   if (!entry.apiKey) return { ok: false, error: '未填写 API Key' };
   const baseUrl = entry.baseUrl.replace(/\/+$/, '');
@@ -483,7 +570,7 @@ export async function testModel(
         return { ok: false, error: `返回格式异常（无 choices/message）：${JSON.stringify(json).slice(0, 120)}` };
       }
       return { ok: true };
-    } else {
+    } else if (kind === 'embedding') {
       const res = await request(
         '/embeddings',
         buildEmbeddingRequestBody(entry, ['ping']),
@@ -493,6 +580,17 @@ export async function testModel(
       if (!Array.isArray(json?.data)) return { ok: false, error: '返回格式异常（无 data 数组）' };
       validateEmbedding(json.data[0]?.embedding, entry.dim);
       return { ok: true };
+    } else {
+      const dataUrl =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=';
+      const content = await recognizeDocumentImage(
+        dataUrl,
+        '确认已收到图片，只回复 READY。',
+        { entry, maxTokens: 64, timeoutMs: 45_000 },
+      );
+      return /READY/i.test(content)
+        ? { ok: true }
+        : { ok: false, error: `模型可连接，但图片请求返回异常：${content.slice(0, 80)}` };
     }
   } catch (e: any) {
     return { ok: false, error: e.message };

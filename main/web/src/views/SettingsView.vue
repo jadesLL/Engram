@@ -84,7 +84,7 @@
           <div class="panel-head model-panel-head">
             <div>
               <h3>模型配置</h3>
-              <p>管理对话生成与语义检索使用的服务商配置。</p>
+              <p>管理对话生成、语义检索与文档识别使用的服务商配置。</p>
             </div>
             <div class="panel-actions">
               <button class="btn" type="button" :disabled="testingAll" @click="testAll">
@@ -109,7 +109,7 @@
               :class="{ active: activeModelKind === section.kind }"
               @click="activeModelKind = section.kind"
             >
-              <span>{{ section.kind === 'chat' ? '对话模型' : '向量模型' }}</span>
+              <span>{{ modelKindLabel(section.kind) }}</span>
               <span class="tab-count">{{ configuredProviderCount(section) }}/{{ section.cards.length }}</span>
             </button>
           </div>
@@ -495,7 +495,7 @@
       >
         <div class="dialog-head">
           <div>
-            <span>{{ form.kind === 'chat' ? '对话模型' : '向量模型' }}</span>
+            <span>{{ modelKindLabel(form.kind) }}</span>
             <h3 id="model-dialog-title">{{ form.id ? '编辑模型配置' : '添加模型配置' }}</h3>
           </div>
           <button class="icon-btn" type="button" title="关闭" @click="form.show = false">
@@ -639,7 +639,7 @@ import {
   type ProviderPreset,
 } from '../presets';
 
-type ModelKind = 'chat' | 'emb';
+type ModelKind = 'chat' | 'emb' | 'document';
 type SettingsSection = 'account' | 'models' | 'automation' | 'mcp' | 'storage' | 'data';
 type DraftField = 'model' | 'baseUrl' | 'modelsUrl' | 'apiKey' | 'dim';
 type DreamScheduleFrequency = 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'custom';
@@ -700,13 +700,37 @@ const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: stri
 
 const chatModels = ref<ModelEntry[]>([]);
 const embModels = ref<ModelEntry[]>([]);
+const documentModels = ref<ModelEntry[]>([]);
 const activeChat = ref('');
 const activeEmb = ref('');
+const activeDocument = ref('');
+
+function modelsRef(kind: ModelKind) {
+  if (kind === 'chat') return chatModels;
+  if (kind === 'emb') return embModels;
+  return documentModels;
+}
+
+function activeIdFor(kind: ModelKind): string {
+  if (kind === 'chat') return activeChat.value;
+  if (kind === 'emb') return activeEmb.value;
+  return activeDocument.value;
+}
+
+function setActiveId(kind: ModelKind, value: string) {
+  if (kind === 'chat') activeChat.value = value;
+  else if (kind === 'emb') activeEmb.value = value;
+  else activeDocument.value = value;
+}
+
+function modelKindLabel(kind: ModelKind): string {
+  if (kind === 'chat') return '对话模型';
+  if (kind === 'emb') return '向量模型';
+  return '文档识别';
+}
 
 function activeModelFor(kind: ModelKind): ModelEntry | undefined {
-  const list = kind === 'chat' ? chatModels.value : embModels.value;
-  const activeId = kind === 'chat' ? activeChat.value : activeEmb.value;
-  return list.find((model) => model.id === activeId);
+  return modelsRef(kind).value.find((model) => model.id === activeIdFor(kind));
 }
 
 function configuredProviderCount(section: { cards: ProviderCard[] }): number {
@@ -834,10 +858,17 @@ const fixedChatProviders = computed(() => PROVIDERS.filter((provider) => provide
 const fixedEmbeddingProviders = computed(() =>
   PROVIDERS.filter((provider) => provider.id !== 'custom' && provider.embeddingModels.length > 0)
 );
+const fixedDocumentProviders = computed(() =>
+  PROVIDERS.filter((provider) => provider.id !== 'custom' && (provider.documentModels?.length || 0) > 0)
+);
 
 function cardsFor(kind: ModelKind): ProviderCard[] {
-  const providers = kind === 'chat' ? fixedChatProviders.value : fixedEmbeddingProviders.value;
-  const list = kind === 'chat' ? chatModels.value : embModels.value;
+  const providers = kind === 'chat'
+    ? fixedChatProviders.value
+    : kind === 'emb'
+      ? fixedEmbeddingProviders.value
+      : fixedDocumentProviders.value;
+  const list = modelsRef(kind).value;
   return providers.map((provider) => {
     const matches = list.filter((model) => model.provider === provider.id);
     return { provider, entries: matches };
@@ -846,9 +877,14 @@ function cardsFor(kind: ModelKind): ProviderCard[] {
 
 function unknownModels(kind: ModelKind): ModelEntry[] {
   const fixedIds = new Set(
-    (kind === 'chat' ? fixedChatProviders.value : fixedEmbeddingProviders.value).map((provider) => provider.id)
+    (kind === 'chat'
+      ? fixedChatProviders.value
+      : kind === 'emb'
+        ? fixedEmbeddingProviders.value
+        : fixedDocumentProviders.value
+    ).map((provider) => provider.id)
   );
-  const list = kind === 'chat' ? chatModels.value : embModels.value;
+  const list = modelsRef(kind).value;
   return list.filter((model) => model.provider !== 'stepfun' && !fixedIds.has(model.provider));
 }
 
@@ -869,12 +905,22 @@ const modelSections = computed(() => [
     unknown: unknownModels('emb'),
     activeId: activeEmb.value,
   },
+  {
+    kind: 'document' as const,
+    title: '文档识别',
+    copy: '仅图片和 PDF 中没有足够内嵌文字的页面会发送到该模型。',
+    cards: cardsFor('document'),
+    unknown: unknownModels('document'),
+    activeId: activeDocument.value,
+  },
 ]);
 
 const providerOptions = computed(() =>
   form.value.kind === 'emb'
     ? PROVIDERS.filter((provider) => provider.embeddingModels.length > 0 || provider.id === 'custom')
-    : PROVIDERS
+    : form.value.kind === 'document'
+      ? PROVIDERS.filter((provider) => (provider.documentModels?.length || 0) > 0 || provider.id === 'custom')
+      : PROVIDERS
 );
 
 const customPreset = providerById('custom')!;
@@ -897,7 +943,7 @@ const formKeyPlaceholder = computed(() => formLine.value?.apiKeyPlaceholder || '
 const formHint = computed(() => formLine.value?.hint || currentFormProvider.value.hint || '');
 const existingFormEntry = computed(() => {
   if (!form.value.id) return undefined;
-  const list = form.value.kind === 'chat' ? chatModels.value : embModels.value;
+  const list = modelsRef(form.value.kind).value;
   return list.find((model) => model.id === form.value.id);
 });
 const effectiveFormApiKey = computed(() => form.value.apiKey.trim() || existingFormEntry.value?.apiKey || '');
@@ -916,7 +962,7 @@ function inferredModelsUrl(baseUrl: string): string {
 }
 
 function linesFor(provider: ProviderPreset, kind: ModelKind): ApiLine[] {
-  if (kind === 'emb') {
+  if (kind !== 'chat') {
     const payg = provider.lines.filter((line) => line.type === 'payg');
     return payg.length ? payg : provider.lines;
   }
@@ -936,7 +982,9 @@ function inferLine(provider: ProviderPreset, entry: ModelEntry | undefined, kind
 }
 
 function providerModels(provider: ProviderPreset, kind: ModelKind): ModelOption[] {
-  return kind === 'chat' ? provider.chatModels : provider.embeddingModels;
+  if (kind === 'chat') return provider.chatModels;
+  if (kind === 'emb') return provider.embeddingModels;
+  return provider.documentModels || [];
 }
 
 function modelOptionsForDraft(kind: ModelKind, provider: ProviderPreset, draft: Pick<ModelDraft, 'line'>): ModelOption[] {
@@ -950,7 +998,11 @@ function modelOptionsForDraft(kind: ModelKind, provider: ProviderPreset, draft: 
 
 function modelOptionForDraft(kind: ModelKind, provider: ProviderPreset, draft: Pick<ModelDraft, 'model' | 'modelChoice'>) {
   if (draft.modelChoice === '__custom__') return undefined;
-  return modelById(provider.id, draft.modelChoice || draft.model, kind === 'chat' ? 'chat' : 'embedding');
+  return modelById(
+    provider.id,
+    draft.modelChoice || draft.model,
+    kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document'
+  );
 }
 
 function dimensionOptionsForDraft(provider: ProviderPreset, draft: Pick<ModelDraft, 'model' | 'modelChoice'>): number[] {
@@ -959,7 +1011,11 @@ function dimensionOptionsForDraft(provider: ProviderPreset, draft: Pick<ModelDra
 
 function defaultModel(provider: ProviderPreset, kind: ModelKind, lineId: string): ModelOption | undefined {
   const available = modelOptionsForDraft(kind, provider, { line: lineId });
-  const defaultId = kind === 'chat' ? provider.defaultChat : provider.defaultEmbedding;
+  const defaultId = kind === 'chat'
+    ? provider.defaultChat
+    : kind === 'emb'
+      ? provider.defaultEmbedding
+      : provider.defaultDocument;
   return available.find((model) => model.id === defaultId) || available[0];
 }
 
@@ -1164,27 +1220,18 @@ async function saveQuick(kind: ModelKind, provider: ProviderPreset) {
     return;
   }
   quickSavingKey.value = key;
-  const previousList = [...(kind === 'chat' ? chatModels.value : embModels.value)];
-  const previousActive = kind === 'chat' ? activeChat.value : activeEmb.value;
+  const listRef = modelsRef(kind);
+  const previousList = [...listRef.value];
+  const previousActive = activeIdFor(kind);
   try {
     const entry = entryFromDraft(kind, provider, draft);
-    if (kind === 'chat') {
-      chatModels.value.push(entry);
-      if (!activeChat.value) activeChat.value = entry.id;
-    } else {
-      embModels.value.push(entry);
-      if (!activeEmb.value) activeEmb.value = entry.id;
-    }
+    listRef.value.push(entry);
+    if (!activeIdFor(kind)) setActiveId(kind, entry.id);
     await persist();
     delete quickDrafts[key];
   } catch (error: any) {
-    if (kind === 'chat') {
-      chatModels.value = previousList;
-      activeChat.value = previousActive;
-    } else {
-      embModels.value = previousList;
-      activeEmb.value = previousActive;
-    }
+    listRef.value = previousList;
+    setActiveId(kind, previousActive);
     quickErrors[key] = errorMessage(error, '保存失败，请重试。');
   } finally {
     quickSavingKey.value = '';
@@ -1200,7 +1247,7 @@ async function saveInlineEdit(kind: ModelKind, provider: ProviderPreset, existin
     return;
   }
   inlineSaving.value = true;
-  const list = kind === 'chat' ? chatModels : embModels;
+  const list = modelsRef(kind);
   const index = list.value.findIndex((model) => model.id === existing.id);
   const previous = index >= 0 ? { ...list.value[index] } : undefined;
   try {
@@ -1334,7 +1381,11 @@ async function discoverFormModels(apiKeyOverride?: string) {
       baseUrl: form.value.baseUrl,
       modelsUrl,
       apiKey,
-      kind: form.value.kind === 'chat' ? 'chat' : 'embedding',
+      kind: form.value.kind === 'chat'
+        ? 'chat'
+        : form.value.kind === 'emb'
+          ? 'embedding'
+          : 'document',
     });
     discoveredModels.value = (data.models || []).map((id: string) => ({ id, name: id }));
     discoveryOk.value = true;
@@ -1357,6 +1408,8 @@ async function persist() {
     active_chat_model: activeChat.value,
     embedding_models: JSON.stringify(embModels.value),
     active_embedding_model: activeEmb.value,
+    document_models: JSON.stringify(documentModels.value),
+    active_document_model: activeDocument.value,
   });
 }
 
@@ -1371,22 +1424,20 @@ async function saveModel() {
   }
   formSaving.value = true;
   const kind = form.value.kind;
-  const list = kind === 'chat' ? chatModels : embModels;
+  const list = modelsRef(kind);
   const previousList = list.value.map((model) => ({ ...model }));
-  const previousActive = kind === 'chat' ? activeChat.value : activeEmb.value;
+  const previousActive = activeIdFor(kind);
   try {
     const entry = entryFromDraft(kind, currentFormProvider.value, form.value, existing, form.value.name);
     const index = list.value.findIndex((model) => model.id === entry.id);
     if (index >= 0) list.value[index] = entry;
     else list.value.push(entry);
-    if (kind === 'chat' && !activeChat.value) activeChat.value = entry.id;
-    if (kind === 'emb' && !activeEmb.value) activeEmb.value = entry.id;
+    if (!activeIdFor(kind)) setActiveId(kind, entry.id);
     await persist();
     form.value.show = false;
   } catch (error: any) {
     list.value = previousList;
-    if (kind === 'chat') activeChat.value = previousActive;
-    else activeEmb.value = previousActive;
+    setActiveId(kind, previousActive);
     formError.value = errorMessage(error, '保存失败，请重试。');
   } finally {
     formSaving.value = false;
@@ -1394,40 +1445,29 @@ async function saveModel() {
 }
 
 async function selectModel(kind: ModelKind, id: string) {
-  const previous = kind === 'chat' ? activeChat.value : activeEmb.value;
+  const previous = activeIdFor(kind);
   try {
-    if (kind === 'chat') activeChat.value = id;
-    else activeEmb.value = id;
+    setActiveId(kind, id);
     await persist();
   } catch (error: any) {
-    if (kind === 'chat') activeChat.value = previous;
-    else activeEmb.value = previous;
+    setActiveId(kind, previous);
     showConnectionNotice(false, '切换失败', errorMessage(error, '启用失败，请重试。'));
   }
 }
 
 async function removeModel(kind: ModelKind, id: string) {
   if (!confirm('删除该模型配置？')) return;
-  const previousList = [...(kind === 'chat' ? chatModels.value : embModels.value)];
-  const previousActive = kind === 'chat' ? activeChat.value : activeEmb.value;
+  const listRef = modelsRef(kind);
+  const previousList = [...listRef.value];
+  const previousActive = activeIdFor(kind);
   try {
-    if (kind === 'chat') {
-      chatModels.value = chatModels.value.filter((model) => model.id !== id);
-      if (activeChat.value === id) activeChat.value = chatModels.value[0]?.id || '';
-    } else {
-      embModels.value = embModels.value.filter((model) => model.id !== id);
-      if (activeEmb.value === id) activeEmb.value = embModels.value[0]?.id || '';
-    }
+    listRef.value = listRef.value.filter((model) => model.id !== id);
+    if (activeIdFor(kind) === id) setActiveId(kind, listRef.value[0]?.id || '');
     await persist();
     if (editingId.value === id) closeInlineEdit();
   } catch (error: any) {
-    if (kind === 'chat') {
-      chatModels.value = previousList;
-      activeChat.value = previousActive;
-    } else {
-      embModels.value = previousList;
-      activeEmb.value = previousActive;
-    }
+    listRef.value = previousList;
+    setActiveId(kind, previousActive);
     showConnectionNotice(false, '删除失败', errorMessage(error, '删除失败，请重试。'));
   }
 }
@@ -1438,7 +1478,7 @@ async function testOne(kind: ModelKind, model: ModelEntry) {
   try {
     const { data } = await api.post('/api/settings/test-llm', {
       entry: model,
-      kind: kind === 'chat' ? 'chat' : 'embedding',
+      kind: kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
     });
     showConnectionNotice(
       Boolean(data.ok),
@@ -1466,7 +1506,11 @@ async function testForm() {
     const entry = entryFromDraft(form.value.kind, currentFormProvider.value, form.value, existing, form.value.name);
     const { data } = await api.post('/api/settings/test-llm', {
       entry,
-      kind: form.value.kind === 'chat' ? 'chat' : 'embedding',
+      kind: form.value.kind === 'chat'
+        ? 'chat'
+        : form.value.kind === 'emb'
+          ? 'embedding'
+          : 'document',
     });
     showConnectionNotice(
       Boolean(data.ok),
@@ -1484,13 +1528,16 @@ async function testAll() {
   testingAll.value = true;
   try {
     const { data } = await api.post('/api/settings/test-llm');
-    const ok = Boolean(data.chat && data.embedding);
+    const documentRequired = Boolean(activeModelFor('document'));
+    const ok = Boolean(data.chat && data.embedding && (!documentRequired || data.document));
     showConnectionNotice(
       ok,
       ok ? '全部连接正常' : '连接测试失败',
       ok
-        ? '对话模型与向量模型均连接成功。'
-        : (data.error || (data.chat ? '向量模型连接失败。' : '对话模型连接失败。'))
+        ? documentRequired
+          ? '对话、向量与文档识别模型均连接成功。'
+          : '对话模型与向量模型均连接成功。'
+        : (data.error || (data.chat ? '向量或文档识别模型连接失败。' : '对话模型连接失败。'))
     );
   } catch (error: any) {
     showConnectionNotice(false, '连接测试失败', errorMessage(error, '连接测试失败。'));
@@ -1775,8 +1822,10 @@ async function load() {
   ]);
   chatModels.value = parseEntries(settingsData.settings.chat_models);
   embModels.value = parseEntries(settingsData.settings.embedding_models);
+  documentModels.value = parseEntries(settingsData.settings.document_models);
   activeChat.value = settingsData.settings.active_chat_model || chatModels.value[0]?.id || '';
   activeEmb.value = settingsData.settings.active_embedding_model || embModels.value[0]?.id || '';
+  activeDocument.value = settingsData.settings.active_document_model || documentModels.value[0]?.id || '';
   mcpTokens.value = tokenData.tokens;
   dreamEnabled.value = dreamData.enabled;
   dreamCron.value = dreamData.cron || '0 3 * * *';

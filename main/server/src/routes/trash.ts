@@ -8,6 +8,7 @@ import {
   restoreTrashItem,
 } from '../lib/trash.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
+import { scheduleFileExtraction, supportsFileExtraction } from '../pipeline/fileExtraction.js';
 import { requireAuth } from './auth.js';
 
 function requestedIds(body: unknown): string[] {
@@ -43,7 +44,13 @@ export async function trashRoutes(app: FastifyInstance) {
         const item = restoreTrashItem(id);
         restored.push(item);
         if (item.pageId) enqueuePagePipeline(item.pageId);
-        if (item.fileId) enqueue('index_file', { fileId: item.fileId });
+        if (item.fileId) {
+          if (supportsFileExtraction(item.path)) {
+            scheduleFileExtraction(item.path, { mode: 'auto', ingestAfter: true });
+          } else {
+            enqueue('index_file', { fileId: item.fileId });
+          }
+        }
       } catch (error: any) {
         errors.push({ id, error: error?.message || String(error) });
       }

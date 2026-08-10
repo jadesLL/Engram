@@ -39,8 +39,10 @@ export interface ProviderPreset {
   lines: ApiLine[];
   chatModels: ModelOption[];
   embeddingModels: ModelOption[];
+  documentModels?: ModelOption[];
   defaultChat?: string;
   defaultEmbedding?: string;
+  defaultDocument?: string;
   hint?: string;
 }
 
@@ -228,8 +230,16 @@ export const PROVIDERS: ProviderPreset[] = [
       },
       { id: 'text-embedding-v2', name: 'text-embedding-v2', dim: 1536 },
     ],
+    documentModels: [
+      {
+        id: 'qwen3.5-ocr',
+        name: 'Qwen3.5 OCR',
+        description: '扫描件、图片和复杂文档文字识别',
+      },
+    ],
     defaultChat: 'qwen3.7-plus',
     defaultEmbedding: 'qwen3.7-text-embedding',
+    defaultDocument: 'qwen3.5-ocr',
   },
   {
     id: 'doubao',
@@ -520,7 +530,7 @@ export function providerById(id: string): ProviderPreset | undefined {
 export function modelById(
   providerId: string,
   modelId?: string,
-  kind?: 'chat' | 'embedding'
+  kind?: 'chat' | 'embedding' | 'document'
 ): ModelOption | undefined {
   const id = modelId ?? providerId;
   const providers = modelId ? [providerById(providerId)].filter(Boolean) as ProviderPreset[] : PROVIDERS;
@@ -529,7 +539,9 @@ export function modelById(
       ? [provider.chatModels]
       : kind === 'embedding'
         ? [provider.embeddingModels]
-        : [provider.chatModels, provider.embeddingModels];
+        : kind === 'document'
+          ? [provider.documentModels || []]
+          : [provider.chatModels, provider.embeddingModels, provider.documentModels || []];
     for (const pool of pools) {
       const match = pool.find((model) => model.id === id);
       if (match) return match;
