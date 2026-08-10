@@ -17,7 +17,8 @@ import {
   storeContribution,
   type SourceVersion,
 } from './sourceLedger.js';
-import { renderKnowledgeProjection, type KnowledgeRelation } from './knowledgePage.js';
+import { ensureEntityStructure, renderKnowledgeProjection, type KnowledgeRelation } from './knowledgePage.js';
+import { queuePageRecompose } from './pageSynthesis.js';
 import {
   findSupportingCandidates,
   consumeCandidateIdentity,
@@ -188,6 +189,15 @@ function projectPage(pageId: string, pendingVersionId?: string): void {
   if (!current) return;
   const allManaged = allPageContributions(pageId);
   const active = contributionsForProjection(pageId, pendingVersionId);
+  if (isEntity(page.type)) {
+    writePage(page.path, ensureEntityStructure(current.content, page.title), {
+      type: page.type,
+      summary: current.meta.summary,
+      retrieved: new Date().toISOString().slice(0, 10),
+      sources: pageSources(page.path, allManaged, active),
+    });
+    return;
+  }
   const projected = renderKnowledgeProjection(
     current.content,
     page.title,
@@ -212,7 +222,11 @@ function finishCommit(context: KnowledgeCommitContext, pageIds: string[]): void 
   activateSourceVersion(context.sourceVersion.id, context.runId);
   for (const pageId of pageIds) {
     projectPage(pageId);
-    enqueuePagePipeline(pageId, { ingestRunId: context.runId, revision });
+    const page = db.prepare(`SELECT type FROM pages WHERE id=? AND deleted=0`).get(pageId) as { type: string } | undefined;
+    const synthesisId = page && isEntity(page.type)
+      ? queuePageRecompose(pageId, { triggerRunId: context.runId })
+      : undefined;
+    if (!synthesisId) enqueuePagePipeline(pageId, { ingestRunId: context.runId, revision });
   }
   enqueueDerivedFinalize(context.runId);
 }

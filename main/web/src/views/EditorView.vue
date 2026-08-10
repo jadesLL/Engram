@@ -25,6 +25,15 @@
           <button class="ghost-btn" title="AI 整理（摘要/标签/实体）" @click="organize">
             <Icon name="ai" :size="14" /> 整理
           </button>
+          <button
+            v-if="evidence?.sources?.length"
+            class="ghost-btn"
+            title="查看本页来源证据"
+            @click="evidenceOpen = !evidenceOpen"
+          >
+            <Icon name="book-open" :size="14" />
+            来源 {{ evidence.sources.length }}
+          </button>
           <button class="ghost-btn" title="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
             <Icon name="graph" :size="14" />
           </button>
@@ -53,6 +62,100 @@
           @html-change="(on: boolean) => app.toggleHtmlPreview(on)"
         />
       </div>
+
+      <aside v-if="evidenceOpen && evidence" class="evidence-drawer">
+        <div class="evidence-head">
+          <div>
+            <h3>来源证据</h3>
+            <p class="faint small">
+              {{ evidence.sources.length }} 个资料来源 · {{ evidence.facts.length }} 条事实
+            </p>
+          </div>
+          <button class="icon-btn" title="关闭来源证据" @click="evidenceOpen = false">
+            <Icon name="x" :size="18" />
+          </button>
+        </div>
+
+        <div
+          v-if="evidence.synthesis"
+          class="synthesis-state small"
+          :class="{ warning: evidence.synthesis.manualModified || evidence.synthesis.outdated }"
+        >
+          <Icon :name="evidence.synthesis.manualModified || evidence.synthesis.outdated ? 'activity' : 'check'" :size="15" />
+          <span v-if="evidence.synthesis.manualModified">检测到人工修改，下次资料更新将执行三方合并</span>
+          <span v-else-if="evidence.synthesis.outdated">新资料正在等待整页综合</span>
+          <span v-else>整页综合已通过证据验证</span>
+        </div>
+        <div v-else class="synthesis-state warning small">
+          <Icon name="activity" :size="15" />
+          <span>来源事实已入账，正在等待首次整页综合</span>
+        </div>
+
+        <div class="evidence-scroll">
+          <section
+            v-for="(section, sectionIndex) in evidence.evidenceMap?.sections || []"
+            :key="`${section.heading}-${sectionIndex}`"
+            class="evidence-section"
+          >
+            <h4>{{ section.heading || '概述' }}</h4>
+            <details
+              v-for="(claim, claimIndex) in section.claims"
+              :key="`${claim.text}-${claimIndex}`"
+              class="claim"
+            >
+              <summary>{{ claim.text }}</summary>
+              <div class="claim-facts">
+                <div v-for="fact in factsFor(claim.evidenceIds)" :key="fact.id" class="claim-fact">
+                  <button class="source-link" @click="openEvidenceSource(fact.sourcePath)">
+                    <Icon name="file" :size="13" />
+                    {{ sourceLabel(fact.sourcePath) }}
+                  </button>
+                  <p>{{ fact.statement }}</p>
+                  <blockquote v-for="quote in fact.quotes" :key="`${fact.id}-${quote.chunkId}`">
+                    {{ quote.quote }}
+                  </blockquote>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          <section v-if="evidence.evidenceMap?.timeline?.length" class="evidence-section">
+            <h4>时间线证据</h4>
+            <details
+              v-for="item in evidence.evidenceMap.timeline"
+              :key="`${item.date}-${item.event}`"
+              class="claim"
+            >
+              <summary>{{ item.date }}：{{ item.event }}</summary>
+              <div class="claim-facts">
+                <div v-for="fact in factsFor(item.evidenceIds)" :key="fact.id" class="claim-fact">
+                  <button class="source-link" @click="openEvidenceSource(fact.sourcePath)">
+                    <Icon name="file" :size="13" />
+                    {{ sourceLabel(fact.sourcePath) }}
+                  </button>
+                  <blockquote v-for="quote in fact.quotes" :key="`${fact.id}-${quote.chunkId}`">
+                    {{ quote.quote }}
+                  </blockquote>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          <section class="evidence-section source-index">
+            <h4>全部资料</h4>
+            <button
+              v-for="source in evidence.sources"
+              :key="source.path"
+              class="source-row"
+              @click="openEvidenceSource(source.path)"
+            >
+              <Icon name="file" :size="15" />
+              <span>{{ sourceLabel(source.path) }}</span>
+              <small>{{ source.factIds.length }} 条事实</small>
+            </button>
+          </section>
+        </div>
+      </aside>
 
       <!-- 本页关联 -->
       <div v-if="related" class="related">
@@ -116,6 +219,8 @@ const pageType = ref('note');
 const tagsInput = ref('');
 const saveState = ref('');
 const related = ref<any>(null);
+const evidence = ref<any>(null);
+const evidenceOpen = ref(false);
 const editorRef = ref<InstanceType<typeof MarkdownEditor>>();
 
 const filePath = computed(() => (route.query.file as string) || '');
@@ -149,6 +254,7 @@ async function loadPage(id: string) {
   loading = false;
   syncAssistantContext();
   loadRelated();
+  loadEvidence();
 }
 
 async function loadRelated() {
@@ -157,6 +263,39 @@ async function loadRelated() {
     const { data } = await api.get(`/api/pages/${page.value.id}/related`);
     related.value = data;
   } catch { /* ignore */ }
+}
+
+async function loadEvidence() {
+  if (!page.value || !['person', 'project', 'org'].includes(pageType.value)) {
+    evidence.value = null;
+    evidenceOpen.value = false;
+    return;
+  }
+  try {
+    const { data } = await api.get(`/api/pages/${page.value.id}/evidence`);
+    evidence.value = data;
+  } catch {
+    evidence.value = null;
+    evidenceOpen.value = false;
+  }
+}
+
+function factsFor(ids: string[]) {
+  const wanted = new Set(ids || []);
+  return (evidence.value?.facts || []).filter((fact: any) => wanted.has(fact.id));
+}
+
+function sourceLabel(path: string) {
+  return path.split('/').pop()?.replace(/\.(md|markdown|txt)$/i, '') || path;
+}
+
+function openEvidenceSource(path: string) {
+  const source = (evidence.value?.sources || []).find((item: any) => item.path === path);
+  if (source?.pageId) {
+    router.push(`/page/${source.pageId}`);
+    return;
+  }
+  router.push({ path: route.path, query: { ...route.query, file: path } });
 }
 
 async function save(manual = false) {
@@ -175,6 +314,7 @@ async function save(manual = false) {
   app.bumpSidebar(); // 类型/标题变化后立刻刷新侧栏分区
   setTimeout(() => (saveState.value = ''), 2000);
   loadRelated();
+  loadEvidence();
   syncAssistantContext();
 }
 
@@ -261,6 +401,8 @@ watch(
     // 不置空 page（避免销毁 MarkdownEditor 丢失编辑模式/HTML 预览状态）；
     // 只清关联数据，直接加载新页面。编辑器组件保持存活，内容由 watch(props.modelValue) 更新。
     related.value = null;
+    evidence.value = null;
+    evidenceOpen.value = false;
     if (id && id !== oldId) loadPage(id as string);
     else if (!id) {
       page.value = null; // 无 id 才回欢迎页
@@ -737,6 +879,105 @@ onUnmounted(() => {
   .editor-area :deep(.html-preview-overlay h2) { font-size: 1.35em; }
 }
 
+.evidence-drawer {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 30;
+  width: min(390px, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 28px rgba(0, 0, 0, 0.1);
+}
+.evidence-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.evidence-head h3 { margin: 0 0 3px; font-size: 17px; }
+.evidence-head p { margin: 0; }
+.synthesis-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.synthesis-state.warning { color: var(--warning, #b45309); }
+.evidence-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 20px 28px;
+}
+.evidence-section {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.evidence-section:last-child { border-bottom: 0; }
+.evidence-section h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+.claim { padding: 8px 0; }
+.claim + .claim { border-top: 1px dashed var(--border); }
+.claim summary {
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.claim-facts { padding: 8px 0 2px 14px; }
+.claim-fact + .claim-fact { margin-top: 12px; }
+.claim-fact p {
+  margin: 6px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.claim-fact blockquote {
+  margin: 6px 0;
+  padding: 6px 9px;
+  border-left: 2px solid var(--border);
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.source-link,
+.source-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  color: var(--accent);
+  font-size: 12px;
+  text-align: left;
+}
+.source-link:hover { text-decoration: underline; }
+.source-index { display: flex; flex-direction: column; gap: 2px; }
+.source-row {
+  padding: 7px 6px;
+  border-radius: 5px;
+  color: var(--text-secondary);
+}
+.source-row:hover { background: var(--bg-hover); color: var(--text); }
+.source-row span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-row small { color: var(--text-faint); }
+
 .related {
   max-width: var(--editor-max);
   margin: 0 auto;
@@ -778,5 +1019,6 @@ onUnmounted(() => {
   .page-head { padding-top: 20px; }
   .title-input { font-size: 26px; }
   .ai-hint { display: none; }
+  .evidence-drawer { width: 100%; border-left: 0; }
 }
 </style>

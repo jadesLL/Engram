@@ -81,7 +81,7 @@ let modeObserver: MutationObserver | null = null;
 let lastEmittedMode: 'ir' | 'sv' = 'ir';
 
 /** AI 管理注释：证据标记与贡献区段边界都不应出现在编辑界面。 */
-const MANAGED_COMMENT_RE = /<!--\s*(?:ingest:|contribution:)[^>]*-->/g;
+const MANAGED_COMMENT_RE = /<!--\s*(?:ingest:|contribution:|synthesis:)[^>]*-->/g;
 const INGEST_PLACEHOLDER_RE = /<!--\s*ingest-preserved:([A-Za-z0-9+/=]+)\s*-->/g;
 
 /** 用不可见占位注释隐藏证据标记，同时保留它在正文中的准确位置。 */
@@ -111,6 +111,16 @@ function restoreIngestComments(md: string): string {
   return md.trimEnd() + '\n' + comments.join('\n');
 }
 
+function hideManagedPlaceholders() {
+  if (!vditorEl.value) return;
+  const markers = vditorEl.value.querySelectorAll<HTMLElement>('code[data-type="html-block"]');
+  for (const marker of markers) {
+    if (!marker.textContent?.includes('ingest-preserved:')) continue;
+    marker.closest<HTMLElement>('.vditor-ir__node, .vditor-wysiwyg__block')
+      ?.classList.add('managed-placeholder');
+  }
+}
+
 /** 监听 Vditor edit-mode 切换（DOM class 变化），emit mode-change 让父组件持久化 */
 function observeEditMode() {
   if (!vditorEl.value) return;
@@ -126,8 +136,14 @@ function observeEditMode() {
       lastEmittedMode = cur;
       emit('mode-change', cur);
     }
+    hideManagedPlaceholders();
   });
-  modeObserver.observe(vditorEl.value, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'data-mode'] });
+  modeObserver.observe(vditorEl.value, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class', 'style', 'data-mode'],
+  });
 }
 
 function init() {
@@ -185,6 +201,7 @@ function init() {
     after: () => {
       ready = true;
       bindKeys();
+      hideManagedPlaceholders();
       // 初始化后同步 HTML 预览状态
       if (htmlPreview.value) renderHtmlPreview();
     },
@@ -478,6 +495,7 @@ onMounted(init);
   flex-direction: column;
 }
 .vditor-host { flex: 1; min-height: 0; }
+.vditor-host :deep(.managed-placeholder) { display: none !important; }
 :deep(.vditor-toolbar) {
   border-bottom: 1px solid var(--border);
   /* HTML 预览按钮右对齐到工具栏最右端 */

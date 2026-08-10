@@ -165,6 +165,9 @@
           <p><b>{{ r.payload.title }}</b> 需要进一步丰富</p>
           <p v-if="r.payload.detail" class="muted small">{{ r.payload.detail }}</p>
           <div class="actions">
+            <button v-if="r.payload.recompose" class="btn small primary" @click="retryPageRecompose(r)">
+              重新综合
+            </button>
             <button class="btn small primary" @click="openPage(r.payload.pageId)">去完善</button>
             <button class="btn small" @click="setStatus(r, 'dismissed')">忽略</button>
           </div>
@@ -489,6 +492,11 @@ async function runNow() {
 
 async function setStatus(r: any, status: string) {
   await api.post(`/api/dream/reports/${r.id}/status`, { status });
+  await load();
+}
+
+async function retryPageRecompose(r: any) {
+  await api.post(`/api/pages/${r.payload.pageId}/recompose`);
   await load();
 }
 

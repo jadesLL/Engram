@@ -28,6 +28,15 @@ before(async () => {
   ({ commitKnowledgeItems, recoverKnowledgeCommit } = await import('./knowledgeCommit.js'));
   ({ setCandidateStatus, upsertCandidateOccurrence, reconcilePendingCandidates } = await import('./candidateLedger.js'));
   migrate();
+  db.prepare(`INSERT INTO settings(key,value) VALUES('chat_models',?)`).run(JSON.stringify([{
+    id: 'mock',
+    name: 'mock',
+    provider: 'custom',
+    baseUrl: 'http://127.0.0.1:1/v1',
+    model: 'mock',
+    apiKey: 'mock',
+  }]));
+  db.prepare(`INSERT INTO settings(key,value) VALUES('active_chat_model','mock')`).run();
 });
 
 after(() => {
@@ -40,6 +49,16 @@ function startRun(runId: string, sourceVersionId: string, hash: string, sourcePa
     `INSERT INTO ingest_runs(id,path,content_hash,source_version_id,status,commit_status,derived_status,started_at)
      VALUES(?,?,?,?, 'running','pending','pending',?)`
   ).run(runId, sourcePath, hash, sourceVersionId, now());
+}
+
+function addFacts(runId: string, ids: string[], prefix = '测试事实') {
+  const insert = db.prepare(
+    `INSERT INTO ingest_facts(run_id,fact_id,statement,sources) VALUES(?,?,?,?)`
+  );
+  for (const id of ids) {
+    const statement = `${prefix}-${id}`;
+    insert.run(runId, id, statement, JSON.stringify([{ chunkId: 'c1', quote: statement }]));
+  }
 }
 
 function item(content: string) {
@@ -61,6 +80,7 @@ function item(content: string) {
 test('new source version replaces the previous managed contribution and queues derived work', () => {
   const v1 = beginSourceVersion('原始资料/测试.md', 'hash-1');
   startRun('run-1', v1.id, 'hash-1');
+  addFacts('run-1', ['f1', 'f2'], '第一版');
   commitKnowledgeItems([item('## 核心特性\n\n第一版')], {
     runId: 'run-1',
     sourceVersion: v1,
@@ -73,11 +93,13 @@ test('new source version replaces the previous managed contribution and queues d
   const page = db.prepare(`SELECT id,path FROM pages WHERE title='测试项目'`).get();
   const first = readPage(page.path).content;
   assert.match(first, /## 当前理解/);
-  assert.match(first, /第一版/);
+  assert.doesNotMatch(first, /第一版|来源提炼/);
   assert.ok(first.indexOf('## 相关页面') < first.indexOf('## 时间线'));
+  assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='page_recompose' AND status='pending'`).get());
 
   const v2 = beginSourceVersion('原始资料/测试.md', 'hash-2');
   startRun('run-2', v2.id, 'hash-2');
+  addFacts('run-2', ['f1', 'f2'], '第二版');
   commitKnowledgeItems([item('## 核心特性\n\n第二版')], {
     runId: 'run-2',
     sourceVersion: v2,
@@ -89,15 +111,16 @@ test('new source version replaces the previous managed contribution and queues d
 
   const second = readPage(page.path).content;
   assert.doesNotMatch(second, /第一版/);
-  assert.match(second, /第二版/);
+  assert.doesNotMatch(second, /第二版|来源提炼/);
   assert.equal(db.prepare(`SELECT COUNT(*) n FROM page_contributions WHERE page_id=? AND active=1`).get(page.id).n, 1);
   assert.equal(db.prepare(`SELECT status FROM source_versions WHERE id=?`).get(v1.id).status, 'superseded');
   assert.equal(db.prepare(`SELECT status FROM source_versions WHERE id=?`).get(v2.id).status, 'active');
-  assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='process' AND status='pending'`).get());
+  assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='page_recompose' AND status='pending'`).get());
   assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='ingest_finalize' AND status='pending'`).get());
 
   const v3 = beginSourceVersion('原始资料/测试.md', 'hash-3');
   startRun('run-3', v3.id, 'hash-3');
+  addFacts('run-3', ['f1', 'f2'], '恢复版本');
   storeContribution({
     pageId: page.id,
     sourceVersionId: v3.id,
@@ -114,7 +137,7 @@ test('new source version replaces the previous managed contribution and queues d
   recoverKnowledgeCommit('run-3');
   const recovered = readPage(page.path).content;
   assert.doesNotMatch(recovered, /第二版/);
-  assert.match(recovered, /中断后恢复的第三版/);
+  assert.doesNotMatch(recovered, /中断后恢复的第三版|来源提炼/);
   assert.equal(db.prepare(`SELECT status FROM source_versions WHERE id=?`).get(v3.id).status, 'active');
   assert.equal(db.prepare(`SELECT commit_status FROM ingest_runs WHERE id='run-3'`).get().commit_status, 'committed');
 });
@@ -124,6 +147,7 @@ test('automatic page creation requires facts from two different source paths and
   const secondPath = '原始资料/来源二.md';
   const firstVersion = beginSourceVersion(firstPath, 'cross-hash-1');
   startRun('cross-run-1', firstVersion.id, 'cross-hash-1', firstPath);
+  addFacts('cross-run-1', ['source-1-f1'], '第一来源');
   const first = {
     ...item('## 核心事实\n\n第一来源事实'),
     name: '跨来源项目',
@@ -145,6 +169,7 @@ test('automatic page creation requires facts from two different source paths and
 
   const secondVersion = beginSourceVersion(secondPath, 'cross-hash-2');
   startRun('cross-run-2', secondVersion.id, 'cross-hash-2', secondPath);
+  addFacts('cross-run-2', ['source-2-f1'], '第二来源');
   const second = {
     ...item('## 核心事实\n\n第二来源事实'),
     name: '跨来源项目',
@@ -160,8 +185,8 @@ test('automatic page creation requires facts from two different source paths and
   assert.deepEqual(secondResult.stats, { created: 1, merged: 0, skipped: 0, pending: 0 });
   const page = db.prepare(`SELECT id,path FROM pages WHERE title='跨来源项目'`).get();
   const content = readPage(page.path).content;
-  assert.match(content, /第一来源事实/);
-  assert.match(content, /第二来源事实/);
+  assert.doesNotMatch(content, /第一来源事实|第二来源事实|来源提炼/);
+  assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='page_recompose' AND status='pending' AND payload LIKE ?`).get(`%${page.id}%`));
   assert.equal(
     db.prepare(`SELECT COUNT(DISTINCT sv.path) n FROM page_contributions pc JOIN source_versions sv ON sv.id=pc.source_version_id WHERE pc.page_id=? AND pc.active=1`).get(page.id).n,
     2,

@@ -24,6 +24,7 @@ import {
   failIngestQuestionJob,
   recoverIngestQuestionJobs,
 } from './pipeline/ingestQuestions.js';
+import { recomposePage } from './pipeline/pageSynthesis.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -83,6 +84,15 @@ const handlers: Record<string, JobHandler> = {
     await indexPage(pageId);
     await extractEntities(pageId);
     await organizePage(pageId);
+  },
+  page_recompose: async ({ pageId, synthesisId, inputHash }, update) => {
+    update({ stage: '跨来源整页综合', progress: 15, detail: pageId });
+    const result = await recomposePage(String(pageId), String(synthesisId), String(inputHash));
+    if (result.changed) {
+      update({ stage: '整页综合已写入', progress: 90, detail: result.synthesisId });
+      enqueue('process', { pageId: String(pageId), synthesisId: result.synthesisId });
+      enqueue('metagen', {});
+    }
   },
   ingest_finalize: async ({ runId }) => {
     finalizeDerivedRun(runId);

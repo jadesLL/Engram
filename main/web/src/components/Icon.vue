@@ -110,6 +110,12 @@ const ICONS: Record<string, string[]> = {
   archive: ['M21 8v13H3V8', 'M1 3h22v5H1z', 'M10 12h4'],
   activity: ['M22 12h-4l-3 9L9 3l-3 9H2'],
   check: ['M20 6 9 17l-5-5'],
+  'book-open': [
+    'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z',
+    'M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z',
+  ],
+  'chevron-down': ['m6 9 6 6 6-6'],
+  'chevron-up': ['m18 15-6-6-6 6'],
   restore: ['M21 8v13H3V8', 'M1 3h22v5H1z', 'M12 17v-6', 'm8.5 13.5 3.5-3.5 3.5 3.5'],
   'file-plus': [
     'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z',

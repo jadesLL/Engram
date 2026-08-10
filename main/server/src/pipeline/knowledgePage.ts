@@ -7,8 +7,15 @@ export interface KnowledgeRelation {
   factId: string;
 }
 
-interface EntitySections {
+export interface EntitySections {
   title: string;
+  current: string;
+  related: string;
+  timeline: string;
+}
+
+export interface EntitySynthesisSections {
+  id: string;
   current: string;
   related: string;
   timeline: string;
@@ -22,7 +29,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function parseEntitySections(markdown: string, fallbackTitle: string): EntitySections {
+export function parseEntitySections(markdown: string, fallbackTitle: string): EntitySections {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   const titleLine = lines.find((line) => /^#\s+/.test(line));
   const title = titleLine?.replace(/^#\s+/, '').trim() || fallbackTitle;
@@ -51,7 +58,7 @@ function parseEntitySections(markdown: string, fallbackTitle: string): EntitySec
   };
 }
 
-function renderEntitySections(sections: EntitySections): string {
+export function renderEntitySections(sections: EntitySections): string {
   return [
     `# ${sections.title}`,
     '',
@@ -80,6 +87,88 @@ function contributionPattern(key: string, section?: 'current' | 'related'): RegE
     `<!-- contribution:${escapeRegExp(key)}${suffix}:start -->[\\s\\S]*?<!-- contribution:${escapeRegExp(key)}${suffix}:end -->\\n*`,
     'g'
   );
+}
+
+function synthesisPattern(section: 'current' | 'related' | 'timeline'): RegExp {
+  return new RegExp(
+    `<!--\\s*synthesis:([^:>]+):${section}:start\\s*-->([\\s\\S]*?)<!--\\s*synthesis:\\1:${section}:end\\s*-->`,
+    'g',
+  );
+}
+
+function anyContributionPattern(): RegExp {
+  return /<!--\s*contribution:[^>]+:start\s*-->[\s\S]*?<!--\s*contribution:[^>]+:end\s*-->\n*/g;
+}
+
+function stripSynthesisBlock(value: string, section: 'current' | 'related' | 'timeline'): string {
+  return clean(value.replace(synthesisPattern(section), ''));
+}
+
+function synthesisBlock(id: string, section: 'current' | 'related' | 'timeline', content: string): string {
+  return [
+    `<!-- synthesis:${id}:${section}:start -->`,
+    clean(content),
+    `<!-- synthesis:${id}:${section}:end -->`,
+  ].join('\n');
+}
+
+function extractSynthesisBlock(
+  value: string,
+  section: 'current' | 'related' | 'timeline',
+): { id: string; content: string } | null {
+  const match = [...value.matchAll(synthesisPattern(section))].at(-1);
+  return match ? { id: match[1], content: clean(match[2]) } : null;
+}
+
+export function extractEntitySynthesis(markdown: string, fallbackTitle = '未命名实体'): EntitySynthesisSections | null {
+  const sections = parseEntitySections(markdown, fallbackTitle);
+  const current = extractSynthesisBlock(sections.current, 'current');
+  const related = extractSynthesisBlock(sections.related, 'related');
+  const timeline = extractSynthesisBlock(sections.timeline, 'timeline');
+  if (!current) return null;
+  return {
+    id: current.id,
+    current: current.content,
+    related: related?.id === current.id ? related.content : '',
+    timeline: timeline?.id === current.id ? timeline.content : '',
+  };
+}
+
+export function extractEntityManualSections(
+  existing: string,
+  title: string,
+  allManaged: StoredContribution[],
+): EntitySections {
+  const stripped = removeManagedBlocks(existing || `# ${title}\n`, allManaged, true);
+  const sections = parseEntitySections(stripped, title);
+  return {
+    ...sections,
+    current: stripSynthesisBlock(sections.current.replace(anyContributionPattern(), ''), 'current'),
+    related: stripSynthesisBlock(sections.related.replace(anyContributionPattern(), ''), 'related'),
+    timeline: stripSynthesisBlock(sections.timeline.replace(anyContributionPattern(), ''), 'timeline'),
+  };
+}
+
+export function renderEntitySynthesisProjection(
+  existing: string,
+  title: string,
+  allManaged: StoredContribution[],
+  synthesis: EntitySynthesisSections,
+): string {
+  const sections = extractEntityManualSections(existing, title, allManaged);
+  sections.current = [
+    sections.current,
+    synthesisBlock(synthesis.id, 'current', synthesis.current),
+  ].filter(Boolean).join('\n\n');
+  sections.related = [
+    sections.related,
+    synthesisBlock(synthesis.id, 'related', synthesis.related),
+  ].filter(Boolean).join('\n\n');
+  sections.timeline = [
+    sections.timeline,
+    synthesisBlock(synthesis.id, 'timeline', synthesis.timeline),
+  ].filter(Boolean).join('\n\n');
+  return renderEntitySections(sections);
 }
 
 function sourceMarker(runId: string, factIds: string[]): string {
