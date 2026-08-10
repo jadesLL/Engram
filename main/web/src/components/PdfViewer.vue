@@ -50,11 +50,13 @@
     </div>
 
     <div class="pdf-workspace">
-      <aside class="pdf-thumbnails" aria-label="PDF 页面缩略图">
+      <aside ref="thumbnailEl" class="pdf-thumbnails" aria-label="PDF 页面缩略图">
         <button
           v-for="page in pageCount"
           :key="page"
+          ref="thumbnailButtons"
           type="button"
+          :data-page="page"
           :class="{ active: page === pageNumber }"
           :title="`第 ${page} 页`"
           @click="goToPage(page)"
@@ -68,8 +70,11 @@
       <div ref="scrollEl" class="pdf-scroll">
         <div v-if="loading" class="pdf-message">正在加载 PDF…</div>
         <div v-else-if="error" class="pdf-message error">{{ error }}</div>
-        <div v-else class="pdf-canvas-wrap">
+        <div v-else class="pdf-canvas-wrap" :class="{ rendering: pageRendering }">
           <canvas ref="canvasEl" />
+        </div>
+        <div v-if="!loading && !error && pageRendering" class="pdf-rendering-status">
+          正在渲染第 {{ pageNumber }} 页…
         </div>
       </div>
     </div>
@@ -77,7 +82,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onBeforeUpdate, onMounted, ref, watch } from 'vue';
 import {
   getDocument,
   GlobalWorkerOptions,
@@ -100,8 +105,11 @@ const props = withDefaults(defineProps<{
 const rootEl = ref<HTMLDivElement>();
 const scrollEl = ref<HTMLDivElement>();
 const canvasEl = ref<HTMLCanvasElement>();
+const thumbnailEl = ref<HTMLElement>();
+const thumbnailButtons = ref<HTMLButtonElement[]>([]);
 const loading = ref(true);
 const error = ref('');
+const pageRendering = ref(false);
 const pageCount = ref(0);
 const pageNumber = ref(1);
 const zoom = ref(1);
@@ -118,9 +126,14 @@ let pdfDocument: PDFDocumentProxy | null = null;
 let renderTask: RenderTask | null = null;
 let loadVersion = 0;
 let resizeObserver: ResizeObserver | null = null;
+let thumbnailObserver: IntersectionObserver | null = null;
 let searchTexts: string[] | null = null;
 let renderVersion = 0;
 let renderQueue: Promise<void> = Promise.resolve();
+let thumbnailQueue: Promise<void> = Promise.resolve();
+let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+let initializing = false;
+const pendingThumbnails = new Set<number>();
 
 async function loadPdf() {
   const version = ++loadVersion;
@@ -132,9 +145,14 @@ async function loadPdf() {
   searchTexts = null;
   searchMatches.value = [];
   searchIndex.value = -1;
+  pageRendering.value = false;
+  initializing = true;
   renderVersion++;
   renderTask?.cancel();
   renderTask = null;
+  thumbnailObserver?.disconnect();
+  pendingThumbnails.clear();
+  thumbnailQueue = Promise.resolve();
   await loadingTask?.destroy().catch(() => {});
   pdfDocument = null;
   loadingTask = getDocument({ url: props.url, withCredentials: true });
@@ -147,18 +165,21 @@ async function loadPdf() {
     loading.value = false;
     await nextTick();
     await renderCurrentPage();
-    void renderThumbnails(version);
+    initializing = false;
+    observeThumbnails(version);
   } catch (loadError: any) {
     if (version !== loadVersion) return;
     error.value = /password/i.test(String(loadError?.message || ''))
       ? '该 PDF 受密码保护，暂时无法在线查看。'
       : 'PDF 加载失败，请下载后检查文件。';
     loading.value = false;
+    initializing = false;
   }
 }
 
 function renderCurrentPage(): Promise<void> {
   const version = ++renderVersion;
+  pageRendering.value = true;
   renderTask?.cancel();
   renderQueue = renderQueue
     .catch(() => {})
@@ -168,69 +189,111 @@ function renderCurrentPage(): Promise<void> {
 
 async function renderPage(version: number) {
   if (version !== renderVersion) return;
-  if (!pdfDocument || !canvasEl.value || !scrollEl.value) return;
-  const page = await pdfDocument.getPage(pageNumber.value);
-  if (version !== renderVersion) {
-    page.cleanup();
+  if (!pdfDocument || !canvasEl.value || !scrollEl.value) {
+    if (version === renderVersion) pageRendering.value = false;
     return;
   }
-  const base = page.getViewport({ scale: 1 });
-  const availableWidth = Math.max(260, scrollEl.value.clientWidth - 48);
-  const scale = fitWidth.value ? availableWidth / base.width : zoom.value;
-  effectiveScale.value = scale;
-  const viewport = page.getViewport({ scale });
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-  const canvas = canvasEl.value;
-  canvas.width = Math.ceil(viewport.width * pixelRatio);
-  canvas.height = Math.ceil(viewport.height * pixelRatio);
-  canvas.style.width = `${Math.ceil(viewport.width)}px`;
-  canvas.style.height = `${Math.ceil(viewport.height)}px`;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    page.cleanup();
-    return;
-  }
-  const task = page.render({
-    canvas,
-    canvasContext: context,
-    viewport,
-    transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
-  });
-  renderTask = task;
+  let page: Awaited<ReturnType<PDFDocumentProxy['getPage']>> | null = null;
+  let task: RenderTask | null = null;
   try {
+    page = await pdfDocument.getPage(pageNumber.value);
+    if (version !== renderVersion) return;
+    const base = page.getViewport({ scale: 1 });
+    const availableWidth = Math.max(260, scrollEl.value.clientWidth - 48);
+    const scale = fitWidth.value ? availableWidth / base.width : zoom.value;
+    effectiveScale.value = scale;
+    const viewport = page.getViewport({ scale });
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const canvas = canvasEl.value;
+    canvas.width = Math.ceil(viewport.width * pixelRatio);
+    canvas.height = Math.ceil(viewport.height * pixelRatio);
+    canvas.style.width = `${Math.ceil(viewport.width)}px`;
+    canvas.style.height = `${Math.ceil(viewport.height)}px`;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    task = page.render({
+      canvas,
+      canvasContext: context,
+      viewport,
+      transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+    });
+    renderTask = task;
     await task.promise;
   } catch (renderError: any) {
-    if (renderError?.name !== 'RenderingCancelledException') throw renderError;
+    if (renderError?.name !== 'RenderingCancelledException') {
+      console.error('PDF 页面渲染失败', renderError);
+    }
   } finally {
     if (renderTask === task) renderTask = null;
-    page.cleanup();
+    if (version === renderVersion) pageRendering.value = false;
+    page?.cleanup();
   }
 }
 
-async function renderThumbnails(version: number) {
-  if (!pdfDocument) return;
-  for (let index = 1; index <= pdfDocument.numPages; index++) {
-    if (version !== loadVersion || !pdfDocument) return;
-    try {
-      const page = await pdfDocument.getPage(index);
-      const base = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: 104 / base.width });
-      const canvas = window.document.createElement('canvas');
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      const context = canvas.getContext('2d');
-      if (context) {
-        await page.render({ canvas, canvasContext: context, viewport }).promise;
+function observeThumbnails(version: number) {
+  thumbnailObserver?.disconnect();
+  const root = thumbnailEl.value;
+  if (!root) return;
+  thumbnailObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const page = Number((entry.target as HTMLElement).dataset.page);
+      if (Number.isInteger(page)) queueThumbnail(page, version);
+    }
+  }, {
+    root,
+    rootMargin: '320px 0px',
+  });
+  for (const button of thumbnailButtons.value) thumbnailObserver.observe(button);
+  queueThumbnail(pageNumber.value, version);
+}
+
+function queueThumbnail(pageNumber: number, version = loadVersion) {
+  if (
+    version !== loadVersion ||
+    thumbnailUrls.value[pageNumber - 1] ||
+    pendingThumbnails.has(pageNumber)
+  ) return;
+  pendingThumbnails.add(pageNumber);
+  thumbnailQueue = thumbnailQueue
+    .catch(() => {})
+    .then(() => renderThumbnail(pageNumber, version))
+    .finally(() => pendingThumbnails.delete(pageNumber));
+}
+
+async function renderThumbnail(pageNumber: number, version: number) {
+  if (version !== loadVersion || !pdfDocument) return;
+  let page: Awaited<ReturnType<PDFDocumentProxy['getPage']>> | null = null;
+  try {
+    page = await pdfDocument.getPage(pageNumber);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: 104 / base.width });
+    const canvas = window.document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext('2d');
+    if (context) {
+      await page.render({ canvas, canvasContext: context, viewport }).promise;
+      if (version === loadVersion) {
         const next = [...thumbnailUrls.value];
-        next[index - 1] = canvas.toDataURL('image/jpeg', 0.72);
+        next[pageNumber - 1] = canvas.toDataURL('image/jpeg', 0.72);
         thumbnailUrls.value = next;
       }
-      page.cleanup();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    } catch {
-      // A missing thumbnail must not block the main page viewer.
     }
+  } catch {
+    // A missing thumbnail must not block the main page viewer.
+  } finally {
+    page?.cleanup();
   }
+}
+
+function queueResizeRender() {
+  if (initializing || loading.value || !fitWidth.value || !pdfDocument) return;
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    resizeTimer = undefined;
+    if (!initializing && fitWidth.value) void renderCurrentPage();
+  }, 120);
 }
 
 async function buildSearchIndex() {
@@ -306,6 +369,9 @@ async function goToPage(page: number) {
   pageNumber.value = next;
   scrollEl.value?.scrollTo({ top: 0, behavior: 'smooth' });
   await renderCurrentPage();
+  const thumbnail = thumbnailButtons.value.find((button) => Number(button.dataset.page) === next);
+  thumbnail?.scrollIntoView({ block: 'nearest' });
+  queueThumbnail(next);
 }
 
 function changePageInput(event: Event) {
@@ -342,12 +408,14 @@ watch(searchQuery, () => {
   searchIndex.value = -1;
 });
 
+onBeforeUpdate(() => {
+  thumbnailButtons.value = [];
+});
+
 onMounted(() => {
   void loadPdf();
   if (scrollEl.value) {
-    resizeObserver = new ResizeObserver(() => {
-      if (fitWidth.value) void renderCurrentPage();
-    });
+    resizeObserver = new ResizeObserver(queueResizeRender);
     resizeObserver.observe(scrollEl.value);
   }
 });
@@ -356,6 +424,8 @@ onBeforeUnmount(() => {
   loadVersion++;
   renderVersion++;
   resizeObserver?.disconnect();
+  thumbnailObserver?.disconnect();
+  if (resizeTimer) clearTimeout(resizeTimer);
   renderTask?.cancel();
   void loadingTask?.destroy();
 });
@@ -419,9 +489,26 @@ onBeforeUnmount(() => {
 .pdf-thumbnails img { width: 104px; max-height: 118px; object-fit: contain; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.16); }
 .pdf-thumbnails small { font-size: 10px; color: var(--text-secondary); }
 .thumbnail-loading { width: 104px; height: 118px; display: grid; place-items: center; background: var(--bg); color: var(--text-tertiary); }
-.pdf-scroll { flex: 1; min-width: 0; overflow: auto; padding: 24px; }
-.pdf-canvas-wrap { min-width: max-content; display: flex; justify-content: center; }
+.pdf-scroll { flex: 1; min-width: 0; overflow: auto; padding: 24px; position: relative; }
+.pdf-canvas-wrap { min-width: max-content; display: flex; justify-content: center; transition: opacity 100ms ease; }
+.pdf-canvas-wrap.rendering { opacity: 0.72; }
 .pdf-canvas-wrap canvas { display: block; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+.pdf-rendering-status {
+  position: sticky;
+  left: 50%;
+  bottom: 18px;
+  z-index: 2;
+  width: max-content;
+  margin: -42px auto 0;
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  color: var(--text-secondary);
+  font-size: 12px;
+  pointer-events: none;
+}
 .pdf-message { height: 100%; display: grid; place-items: center; color: var(--text-secondary); }
 .pdf-message.error { color: var(--danger); }
 .pdf-viewer:fullscreen { background: var(--bg-soft); }
