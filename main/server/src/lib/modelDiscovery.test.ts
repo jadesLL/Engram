@@ -31,4 +31,8 @@ test('filterDiscoveredModels separates chat and embedding candidates with fallba
   assert.deepEqual(filterDiscoveredModels(ids, 'embedding'), ['text-embedding-3-small', 'BAAI/bge-m3']);
   assert.deepEqual(filterDiscoveredModels(ids, 'chat'), ['chat-model']);
   assert.deepEqual(filterDiscoveredModels(['unclassified'], 'embedding'), ['unclassified']);
+  assert.deepEqual(
+    filterDiscoveredModels(['qwen3.5-ocr', 'qwen-vl-max', 'deepseek-chat'], 'document'),
+    ['qwen3.5-ocr', 'qwen-vl-max'],
+  );
 });

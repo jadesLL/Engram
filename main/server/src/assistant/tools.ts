@@ -775,10 +775,18 @@ const tools: AgentTool[] = [
         undo: { kind: 'restore_trash', trashId: item.id },
       };
     },
-    undo(payload) {
+    async undo(payload) {
       const restored = restoreTrashItem(payload.trashId);
       if (restored.pageId) enqueuePagePipeline(restored.pageId);
-      if (restored.fileId) enqueue('index_file', { fileId: restored.fileId });
+      if (restored.fileId) {
+        const { scheduleFileExtraction, supportsFileExtraction } =
+          await import('../pipeline/fileExtraction.js');
+        if (supportsFileExtraction(restored.path)) {
+          scheduleFileExtraction(restored.path, { mode: 'auto', ingestAfter: true });
+        } else {
+          enqueue('index_file', { fileId: restored.fileId });
+        }
+      }
       appendWikiLog('Agent 撤销', `恢复「${restored.name}」→ ${restored.path}`);
       return { summary: `已恢复「${restored.name}」`, data: { restored } };
     },
@@ -798,10 +806,18 @@ const tools: AgentTool[] = [
         summary: `恢复「${item.name}」`,
       };
     },
-    execute(args) {
+    async execute(args) {
       const restored = restoreTrashItem(args.id);
       if (restored.pageId) enqueuePagePipeline(restored.pageId);
-      if (restored.fileId) enqueue('index_file', { fileId: restored.fileId });
+      if (restored.fileId) {
+        const { scheduleFileExtraction, supportsFileExtraction } =
+          await import('../pipeline/fileExtraction.js');
+        if (supportsFileExtraction(restored.path)) {
+          scheduleFileExtraction(restored.path, { mode: 'auto', ingestAfter: true });
+        } else {
+          enqueue('index_file', { fileId: restored.fileId });
+        }
+      }
       appendWikiLog('Agent 恢复', `「${restored.name}」→ ${restored.path}`);
       return {
         summary: `已恢复「${restored.name}」`,
@@ -942,11 +958,33 @@ const tools: AgentTool[] = [
         return { summary: '页面整理已加入队列', data: { queued: 2 } };
       }
       if (args.scope === 'file') {
+        const {
+          extractionDetails,
+          extractionIsCurrent,
+          scheduleFileExtraction,
+          supportsFileExtraction,
+        } = await import('../pipeline/fileExtraction.js');
+        if (supportsFileExtraction(args.path)) {
+          const extraction = extractionDetails(args.path);
+          const jobId = extraction?.status === 'completed' && extractionIsCurrent(args.path)
+            ? enqueue('ingest', { path: args.path, revision: extraction.updatedAt })
+            : scheduleFileExtraction(args.path, {
+              mode: extraction ? 'continue' : 'auto',
+              ingestAfter: true,
+            }).jobId;
+          return { summary: '资料识别与整理已加入队列', data: { jobId } };
+        }
         const jobId = enqueue('ingest', { path: args.path });
         return { summary: '资料整理已加入队列', data: { jobId } };
       }
       const paths = await ingestAllRaw();
-      const jobIds = paths.map((item) => enqueue('ingest', { path: item })).filter(Boolean);
+      const {
+        scheduleFileExtraction,
+        supportsFileExtraction,
+      } = await import('../pipeline/fileExtraction.js');
+      const jobIds = paths.map((item) => supportsFileExtraction(item)
+        ? scheduleFileExtraction(item, { mode: 'auto', ingestAfter: true }).jobId
+        : enqueue('ingest', { path: item })).filter(Boolean);
       return { summary: `已加入 ${jobIds.length} 个整理任务`, data: { queued: jobIds.length } };
     },
   },
@@ -1160,16 +1198,24 @@ const tools: AgentTool[] = [
     description: '在已配置的模型条目之间切换激活模型，不读取或修改 API Key。',
     risk: 'high',
     schema: z.object({
-      kind: z.enum(['chat', 'embedding']),
+      kind: z.enum(['chat', 'embedding', 'document']),
       modelId: z.string().min(1).max(200),
     }),
     parameters: objectSchema({
-      kind: { type: 'string', enum: ['chat', 'embedding'] },
+      kind: { type: 'string', enum: ['chat', 'embedding', 'document'] },
       modelId: { type: 'string' },
     }, ['kind', 'modelId']),
     preview(args) {
-      const key = args.kind === 'chat' ? 'chat_models' : 'embedding_models';
-      const activeKey = args.kind === 'chat' ? 'active_chat_model' : 'active_embedding_model';
+      const key = args.kind === 'chat'
+        ? 'chat_models'
+        : args.kind === 'embedding'
+          ? 'embedding_models'
+          : 'document_models';
+      const activeKey = args.kind === 'chat'
+        ? 'active_chat_model'
+        : args.kind === 'embedding'
+          ? 'active_embedding_model'
+          : 'active_document_model';
       const entries = (() => {
         try {
           const parsed = JSON.parse(getSetting(key) || '[]');
@@ -1196,7 +1242,11 @@ const tools: AgentTool[] = [
       };
     },
     execute(args, _ctx, preview) {
-      const activeKey = args.kind === 'chat' ? 'active_chat_model' : 'active_embedding_model';
+      const activeKey = args.kind === 'chat'
+        ? 'active_chat_model'
+        : args.kind === 'embedding'
+          ? 'active_embedding_model'
+          : 'active_document_model';
       setSetting(activeKey, args.modelId);
       let rebuildJobId: number | undefined;
       if (
@@ -1210,7 +1260,7 @@ const tools: AgentTool[] = [
         });
       }
       return {
-        summary: `已切换${args.kind === 'chat' ? '对话' : '向量'}模型`,
+        summary: `已切换${args.kind === 'chat' ? '对话' : args.kind === 'embedding' ? '向量' : '文档识别'}模型`,
         data: rebuildJobId ? { rebuildJobId } : undefined,
         undo: {
           kind: 'active_model',

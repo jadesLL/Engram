@@ -7,16 +7,53 @@ import { safeJoin } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { requireAuth } from './auth.js';
 import { officeToText } from '../pipeline/office.js';
-import { upsertFileRecord } from '../pipeline/indexer.js';
+import { ensureFileRecord, upsertFileRecord } from '../pipeline/indexer.js';
 import { enqueue } from '../jobs.js';
 import { normalizeDir, isUploadDir } from '../config.js';
 import { syncPageFile } from '../lib/vault.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
+import {
+  acceptPartialExtraction,
+  EXTRACTABLE_EXTENSIONS,
+  extractionDetails,
+  IMAGE_EXTENSIONS,
+  scheduleFileExtraction,
+  supportsFileExtraction,
+} from '../pipeline/fileExtraction.js';
 
 /** 可提取文本入索引的 Office 格式 */
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
 const TEXT_EXTS = new Set(['txt']);
-const INGEST_EXTS = new Set(['docx', 'md', 'markdown', 'txt', 'xlsx', 'pptx']);
+const INGEST_EXTS = new Set([
+  'docx', 'md', 'markdown', 'txt', 'xlsx', 'pptx',
+  ...EXTRACTABLE_EXTENSIONS,
+]);
+
+const CONTENT_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+};
+
+function contentRange(value: string | undefined, size: number): { start: number; end: number } | null {
+  const match = value?.match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) return null;
+  let start = match[1] ? Number(match[1]) : NaN;
+  let end = match[2] ? Number(match[2]) : NaN;
+  if (!Number.isFinite(start) && Number.isFinite(end)) {
+    start = Math.max(0, size - end);
+    end = size - 1;
+  } else {
+    if (!Number.isFinite(start)) return null;
+    if (!Number.isFinite(end)) end = size - 1;
+  }
+  if (start < 0 || end < start || start >= size) return null;
+  return { start, end: Math.min(end, size - 1) };
+}
 
 export async function fileRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
@@ -38,6 +75,11 @@ export async function fileRoutes(app: FastifyInstance) {
         pageId = page?.id;
       }
       const ing = db.prepare(`SELECT at, status, error FROM ingest_log WHERE path = ?`).get(rel) as any;
+      const extraction = db.prepare(
+        `SELECT fe.* FROM file_extractions fe
+         JOIN files f ON f.id=fe.file_id
+         WHERE f.path=? AND f.deleted=0`
+      ).get(rel) as any;
       out.push({
         name, path: rel, ext, size: stat.size,
         updated_at: stat.mtime.toISOString(),
@@ -46,6 +88,12 @@ export async function fileRoutes(app: FastifyInstance) {
         ingestedAt: ing?.status === 'completed' ? ing.at : null,
         ingestStatus: ing?.status || null,
         ingestError: ing?.error || null,
+        extractionStatus: extraction?.status || null,
+        extractionMethod: extraction?.method || null,
+        extractionPageCount: extraction?.page_count || 0,
+        extractionOcrPages: extraction?.ocr_pages || 0,
+        extractionSkippedPages: extraction?.skipped_pages || 0,
+        extractionError: extraction?.error || null,
       });
     };
     if (sub) {
@@ -160,9 +208,21 @@ export async function fileRoutes(app: FastifyInstance) {
           enqueue('embed', { pageId });
           indexed = true;
         }
+      } else if (dir === '原始资料' && EXTRACTABLE_EXTENSIONS.has(ext)) {
+        const fileId = ensureFileRecord(rel, buffer.length);
+        const scheduled = scheduleFileExtraction(rel, { mode: 'auto', ingestAfter: true });
+        saved.push({
+          path: rel,
+          name: path.basename(rel),
+          indexed: false,
+          fileId,
+          extractionJobId: scheduled.jobId || null,
+          ingestSupported: true,
+        });
+        continue;
       }
       // 原始资料入料即消化（AI 提炼概念/实体页到 Wiki）
-      if (INGEST_EXTS.has(ext)) {
+      if (dir === '原始资料' && INGEST_EXTS.has(ext)) {
         enqueue('ingest', { path: rel });
       }
       saved.push({
@@ -170,8 +230,10 @@ export async function fileRoutes(app: FastifyInstance) {
         name: path.basename(rel),
         indexed,
         pageId,
-        ingestSupported: INGEST_EXTS.has(ext),
-        ingestNote: INGEST_EXTS.has(ext) ? undefined : '文件已保存，当前格式暂不支持 AI 整理',
+        ingestSupported: dir === '原始资料' && INGEST_EXTS.has(ext),
+        ingestNote: dir === '原始资料' && INGEST_EXTS.has(ext)
+          ? undefined
+          : '文件已保存，当前格式暂不支持 AI 整理',
       });
     }
     if (saved.length === 0 && duplicates.length > 0) {
@@ -191,17 +253,111 @@ export async function fileRoutes(app: FastifyInstance) {
     if (['docx', 'xlsx', 'pptx'].includes(ext)) {
       return { kind: 'office', ext, url: `/api/files/raw?path=${encodeURIComponent(p)}` };
     }
+    if (ext === 'pdf') {
+      return {
+        kind: 'pdf',
+        ext,
+        url: `/api/files/content?path=${encodeURIComponent(p)}`,
+        extraction: extractionDetails(p),
+      };
+    }
     if (['md', 'markdown'].includes(ext)) {
       const parsed = matter(fs.readFileSync(abs, 'utf8'));
       return { kind: 'markdown', text: parsed.content.trim() };
     }
-    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
-      return { kind: 'image', url: `/api/files/raw?path=${encodeURIComponent(p)}` };
+    if (IMAGE_EXTENSIONS.has(ext)) {
+      return {
+        kind: 'image',
+        url: `/api/files/content?path=${encodeURIComponent(p)}`,
+        extraction: extractionDetails(p),
+      };
     }
     if (['txt', 'json', 'log', 'yaml', 'yml', 'csv'].includes(ext)) {
       return { kind: 'text', text: fs.readFileSync(abs, 'utf8').slice(0, 200_000) };
     }
     return { kind: 'unsupported', ext };
+  });
+
+  /** 浏览器内嵌查看：正确 MIME + 单区间 Range，供 PDF.js 和图片查看器使用。 */
+  app.get('/api/files/content', async (req, reply) => {
+    const { path: p } = req.query as { path?: string };
+    if (!p) return reply.code(400).send({ error: '缺少 path' });
+    const abs = safeJoin(p);
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+      return reply.code(404).send({ error: '文件不存在' });
+    }
+    const stat = fs.statSync(abs);
+    const ext = path.extname(abs).slice(1).toLowerCase();
+    const mime = CONTENT_TYPES[ext];
+    if (!mime) return reply.code(415).send({ error: '该格式不支持内嵌查看' });
+    const requestedRange = typeof req.headers.range === 'string' ? req.headers.range : undefined;
+    const range = contentRange(requestedRange, stat.size);
+    const etag = `W/"${stat.size}-${Math.floor(stat.mtimeMs)}"`;
+    reply.header('Content-Type', mime);
+    reply.header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(abs))}`);
+    reply.header('Accept-Ranges', 'bytes');
+    reply.header('Cache-Control', 'private, no-cache');
+    reply.header('ETag', etag);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    if (ext === 'svg') reply.header('Content-Security-Policy', 'sandbox');
+    if (requestedRange && !range) {
+      reply.code(416);
+      reply.header('Content-Range', `bytes */${stat.size}`);
+      return reply.send();
+    }
+    if (!range) {
+      reply.header('Content-Length', stat.size);
+      return reply.send(fs.createReadStream(abs));
+    }
+    reply.code(206);
+    reply.header('Content-Range', `bytes ${range.start}-${range.end}/${stat.size}`);
+    reply.header('Content-Length', range.end - range.start + 1);
+    return reply.send(fs.createReadStream(abs, range));
+  });
+
+  app.get('/api/files/extraction', async (req, reply) => {
+    const { path: p } = req.query as { path?: string };
+    if (!p) return reply.code(400).send({ error: '缺少 path' });
+    const details = extractionDetails(p);
+    if (!details) return reply.code(404).send({ error: '尚无文字提取记录' });
+    return { extraction: details };
+  });
+
+  app.post('/api/files/extract', async (req, reply) => {
+    const {
+      path: p,
+      mode = 'auto',
+      pages = [],
+    } = (req.body || {}) as {
+      path?: string;
+      mode?: 'auto' | 'continue' | 'pages' | 'accept_partial';
+      pages?: number[];
+    };
+    if (!p || !p.startsWith('原始资料/')) {
+      return reply.code(400).send({ error: '只能提取原始资料中的文件' });
+    }
+    if (!supportsFileExtraction(p)) {
+      return reply.code(400).send({ error: '该格式不支持文字提取' });
+    }
+    try {
+      if (mode === 'accept_partial') {
+        return { ok: true, extraction: acceptPartialExtraction(p) };
+      }
+      if (!['auto', 'continue', 'pages'].includes(mode)) {
+        return reply.code(400).send({ error: '提取模式无效' });
+      }
+      if (mode === 'pages' && (!Array.isArray(pages) || !pages.length)) {
+        return reply.code(400).send({ error: '请选择需要重试的页面' });
+      }
+      const scheduled = scheduleFileExtraction(p, {
+        mode,
+        pages: pages.map(Number).filter(Number.isInteger).slice(0, 100),
+        ingestAfter: true,
+      });
+      return reply.code(202).send({ ok: true, jobId: scheduled.jobId || null });
+    } catch (error: any) {
+      return reply.code(400).send({ error: error?.message || '无法加入提取队列' });
+    }
   });
 
   /** 原始文件下载（浏览器端"系统打开"=下载） */

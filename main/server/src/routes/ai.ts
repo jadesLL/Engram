@@ -8,6 +8,12 @@ import { ingestAllRaw } from '../pipeline/ingest.js';
 import { safeJoin } from '../lib/vault.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  extractionDetails,
+  extractionIsCurrent,
+  scheduleFileExtraction,
+  supportsFileExtraction,
+} from '../pipeline/fileExtraction.js';
 
 const ACTIONS: WriterAction[] = ['continue', 'polish', 'summarize', 'translate', 'expand'];
 
@@ -56,8 +62,21 @@ export async function aiRoutes(app: FastifyInstance) {
     const ext = path.posix.extname(p).slice(1).toLowerCase();
     let abs: string;
     try { abs = safeJoin(p); } catch { return reply.code(400).send({ error: '文件路径无效' }); }
-    if (!['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(ext) || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
-      return reply.code(400).send({ error: '仅支持整理存在的 md / txt / docx / xlsx / pptx 文件' });
+    const directlySupported = ['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(ext);
+    if ((!directlySupported && !supportsFileExtraction(p)) || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+      return reply.code(400).send({ error: '该文件格式暂不支持 AI 整理' });
+    }
+    if (supportsFileExtraction(p)) {
+      const extraction = extractionDetails(p);
+      if (extraction?.status === 'completed' && extractionIsCurrent(p)) {
+        const jobId = enqueue('ingest', { path: p, revision: extraction.updatedAt });
+        return { ok: true, jobId: jobId || null };
+      }
+      const scheduled = scheduleFileExtraction(p, {
+        mode: extraction ? 'continue' : 'auto',
+        ingestAfter: true,
+      });
+      return reply.code(202).send({ ok: true, jobId: scheduled.jobId || null, extractionQueued: true });
     }
     const jobId = enqueue('ingest', { path: p });
     return { ok: true, jobId: jobId || null };
@@ -66,7 +85,11 @@ export async function aiRoutes(app: FastifyInstance) {
   /** 整理全部原始资料 */
   app.post('/api/ai/ingest-all', async () => {
     const paths = await ingestAllRaw();
-    const jobIds = paths.map((p) => enqueue('ingest', { path: p })).filter((id): id is number => Boolean(id));
+    const jobIds = paths.map((p) =>
+      supportsFileExtraction(p)
+        ? scheduleFileExtraction(p, { mode: 'auto', ingestAfter: true }).jobId
+        : enqueue('ingest', { path: p })
+    ).filter((id): id is number => Boolean(id));
     return { ok: true, queued: jobIds.length, jobIds };
   });
 }

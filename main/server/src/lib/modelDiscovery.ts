@@ -1,4 +1,4 @@
-export type DiscoveredModelKind = 'chat' | 'embedding';
+export type DiscoveredModelKind = 'chat' | 'embedding' | 'document';
 
 export interface DiscoverModelsInput {
   baseUrl?: string;
@@ -9,6 +9,7 @@ export interface DiscoverModelsInput {
 
 const EMBEDDING_PATTERN = /(^|[\/_.-])(embed|embedding|bge|gte|e5)([\/_.-]|$)/i;
 const NON_CHAT_PATTERN = /(^|[\/_.-])(rerank|reranker|tts|speech|whisper|asr|image-generation|video)([\/_.-]|$)/i;
+const DOCUMENT_PATTERN = /(^|[\/_.-])(ocr|vision|vl|omni|multimodal)([\/_.-]|$)/i;
 
 export function deriveModelsUrl(baseUrl: string): string {
   const normalized = baseUrl.trim().replace(/\/+$/, '');
@@ -39,7 +40,9 @@ export function parseDiscoveredModelIds(payload: unknown): string[] {
 export function filterDiscoveredModels(ids: string[], kind: DiscoveredModelKind): string[] {
   const filtered = kind === 'embedding'
     ? ids.filter((id) => EMBEDDING_PATTERN.test(id))
-    : ids.filter((id) => !EMBEDDING_PATTERN.test(id) && !NON_CHAT_PATTERN.test(id));
+    : kind === 'document'
+      ? ids.filter((id) => DOCUMENT_PATTERN.test(id) && !NON_CHAT_PATTERN.test(id))
+      : ids.filter((id) => !EMBEDDING_PATTERN.test(id) && !NON_CHAT_PATTERN.test(id));
   return filtered.length ? filtered : ids;
 }
 

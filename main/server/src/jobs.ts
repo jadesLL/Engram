@@ -24,6 +24,7 @@ import {
   failIngestQuestionJob,
   recoverIngestQuestionJobs,
 } from './pipeline/ingestQuestions.js';
+import { extractFile } from './pipeline/fileExtraction.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -50,6 +51,7 @@ function updateJob(id: number, values: Partial<JobProgress>) {
   if (columns.has('stage') && values.stage !== undefined) { assignments.push('stage = ?'); params.push(values.stage); }
   if (columns.has('progress') && values.progress !== undefined) { assignments.push('progress = ?'); params.push(Math.max(0, Math.min(100, Math.round(values.progress)))); }
   if (columns.has('detail') && values.detail !== undefined) { assignments.push('detail = ?'); params.push(values.detail); }
+  if (columns.has('updated_at')) { assignments.push('updated_at = ?'); params.push(now()); }
   if (!assignments.length) return;
   db.prepare(`UPDATE jobs SET ${assignments.join(', ')} WHERE id = ?`).run(...params, id);
 }
@@ -60,6 +62,13 @@ const handlers: Record<string, JobHandler> = {
   },
   index_file: async ({ fileId }) => {
     await indexFileText(fileId);
+  },
+  extract_file: async ({ path, mode, pages, ingestAfter }, update) => {
+    await extractFile(path, (progress) => update(progress), {
+      mode,
+      pages,
+      ingestAfter: ingestAfter !== false,
+    });
   },
   extract: async ({ pageId }) => {
     await extractEntities(pageId);
@@ -135,15 +144,21 @@ const handlers: Record<string, JobHandler> = {
 };
 
 let running = false;
+let defaultPolling = false;
+let documentPolling = false;
 
 /** 启动时恢复：把上次被中断、卡在 running 的任务重置回 pending；超过 5 分钟的僵尸标记失败 */
 function recoverStaleJobs() {
   db.prepare(
-    `UPDATE jobs SET status = 'pending' WHERE status = 'running' AND julianday(run_at) > julianday('now', '-5 minutes')`
-  ).run();
+    `UPDATE jobs SET status = 'pending', updated_at = ?
+     WHERE status = 'running'
+       AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at)) > julianday('now', '-5 minutes')`
+  ).run(now());
   db.prepare(
-    `UPDATE jobs SET status = 'failed', error = '执行超时（运行中超过5分钟，疑似中断未恢复）' WHERE status = 'running'`
-  ).run();
+    `UPDATE jobs SET status = 'failed', error = '执行超时（超过5分钟无进度，疑似中断未恢复）',
+       updated_at = ?
+     WHERE status = 'running'`
+  ).run(now());
   recoverApplyingReports();
   recoverIngestCommits();
   recoverIngestQuestionJobs();
@@ -169,46 +184,62 @@ export function recoverApplyingReports() {
   releaseReports(release);
 }
 
-/** 简单串行队列：每 2s 取一个 pending 任务执行，避免打爆 LLM 速率 */
+/** 双通道串行队列：文档识别与普通任务各自单并发，互不长时间阻塞。 */
+async function pollLane(lane: 'default' | 'document') {
+  if (lane === 'default' ? defaultPolling : documentPolling) return;
+  if (lane === 'default') defaultPolling = true;
+  else documentPolling = true;
+  try {
+    const job = db
+      .prepare(
+        `SELECT * FROM jobs
+         WHERE status = 'pending'
+           AND ${lane === 'document' ? `kind = 'extract_file'` : `kind != 'extract_file'`}
+         ORDER BY id LIMIT 1`
+      )
+      .get() as any;
+    if (!job) return;
+    db.prepare(`UPDATE jobs SET status = 'running', run_at = ?, updated_at = ? WHERE id = ?`)
+      .run(now(), now(), job.id);
+    try {
+      const handler = handlers[job.kind];
+      updateJob(job.id, { stage: '执行中', progress: 5 });
+      if (!handler) throw new Error(`未知任务类型：${job.kind}`);
+      await handler(JSON.parse(job.payload), (progress) => updateJob(job.id, progress), job.id);
+      const completed = db.prepare(
+        `UPDATE jobs SET status = 'done', updated_at = ? WHERE id = ? AND status = 'running'`
+      ).run(now(), job.id);
+      if (completed.changes) updateJob(job.id, { stage: '已完成', progress: 100 });
+    } catch (e: any) {
+      db.prepare(`UPDATE jobs SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`).run(
+        String(e?.message || e).slice(0, 500),
+        now(),
+        job.id
+      );
+      if (job.kind === 'ingest') {
+        const payload = JSON.parse(job.payload);
+        if (payload.questionId) failIngestQuestionJob(String(payload.questionId), job.id, e);
+      }
+      updateJob(job.id, { stage: '失败', detail: String(e?.message || e).slice(0, 500) });
+    }
+  } finally {
+    if (lane === 'default') defaultPolling = false;
+    else documentPolling = false;
+  }
+}
+
 export function startJobRunner() {
   if (running) return;
   running = true;
   recoverStaleJobs();
-  let polling = false;
-  setInterval(async () => {
-    if (polling) return;
-    polling = true;
-    try {
-      // 看门狗：清理运行超过 5 分钟的僵尸任务
-      db.prepare(
-        `UPDATE jobs SET status = 'failed', error = '执行超时（运行中超过5分钟）' WHERE status = 'running' AND julianday(run_at) <= julianday('now', '-5 minutes')`
-      ).run();
-      recoverIngestQuestionJobs();
-      const job = db
-        .prepare(`SELECT * FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1`)
-        .get() as any;
-      if (!job) return;
-      db.prepare(`UPDATE jobs SET status = 'running', run_at = ? WHERE id = ?`).run(now(), job.id);
-      try {
-        const handler = handlers[job.kind];
-        updateJob(job.id, { stage: '执行中', progress: 5 });
-        if (!handler) throw new Error(`未知任务类型：${job.kind}`);
-        await handler(JSON.parse(job.payload), (progress) => updateJob(job.id, progress), job.id);
-        db.prepare(`UPDATE jobs SET status = 'done' WHERE id = ?`).run(job.id);
-        updateJob(job.id, { stage: '已完成', progress: 100 });
-      } catch (e: any) {
-        db.prepare(`UPDATE jobs SET status = 'failed', error = ? WHERE id = ?`).run(
-          String(e?.message || e).slice(0, 500),
-          job.id
-        );
-        if (job.kind === 'ingest') {
-          const payload = JSON.parse(job.payload);
-          if (payload.questionId) failIngestQuestionJob(String(payload.questionId), job.id, e);
-        }
-        updateJob(job.id, { stage: '失败', detail: String(e?.message || e).slice(0, 500) });
-      }
-    } finally {
-      polling = false;
-    }
+  setInterval(() => {
+    db.prepare(
+      `UPDATE jobs SET status = 'failed', error = '执行超时（超过5分钟无进度）', updated_at = ?
+       WHERE status = 'running'
+         AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at)) <= julianday('now', '-5 minutes')`
+    ).run(now());
+    recoverIngestQuestionJobs();
+    void pollLane('default');
+    void pollLane('document');
   }, 2000);
 }

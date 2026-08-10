@@ -51,6 +51,8 @@ beforeEach(() => {
     DELETE FROM office_versions;
     DELETE FROM pages_fts;
     DELETE FROM files_fts;
+    DELETE FROM file_extraction_pages;
+    DELETE FROM file_extractions;
     DELETE FROM pages;
     DELETE FROM files;
     DELETE FROM mcp_tokens;
@@ -82,6 +84,14 @@ test('one-click wipe removes reports, ingest history, queued jobs and nested sou
   db.prepare(
     `INSERT INTO files(id, path, name, ext, size, text, updated_at, deleted)
      VALUES('raw-file', '原始资料/对话/记录.md', '记录.md', 'md', 9, '记录', '2026-01-01', 0)`
+  ).run();
+  db.prepare(
+    `INSERT INTO file_extractions(file_id,source_hash,text_hash,status,page_count,updated_at)
+     VALUES('raw-file','source-hash','text-hash','completed',1,'2026-01-01')`
+  ).run();
+  db.prepare(
+    `INSERT INTO file_extraction_pages(file_id,page_number,method,status,text,updated_at)
+     VALUES('raw-file',1,'ocr','completed','记录','2026-01-01')`
   ).run();
   db.prepare(
     `INSERT INTO reports(run_at, kind, payload, status, issue_key, fingerprint)
@@ -149,6 +159,8 @@ test('one-click wipe removes reports, ingest history, queued jobs and nested sou
     'source_versions',
     'ingest_log',
     'office_versions',
+    'file_extractions',
+    'file_extraction_pages',
     'edges',
     'entities',
   ]) {

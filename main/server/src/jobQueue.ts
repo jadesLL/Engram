@@ -22,8 +22,8 @@ export function enqueue(kind: string, payload: unknown): number | undefined {
   if (recent) return undefined;
 
   const info = db
-    .prepare(`INSERT INTO jobs(kind, payload, status, created_at) VALUES(?, ?, 'pending', ?)`)
-    .run(kind, payloadStr, now());
+    .prepare(`INSERT INTO jobs(kind, payload, status, created_at, updated_at) VALUES(?, ?, 'pending', ?, ?)`)
+    .run(kind, payloadStr, now(), now());
   return Number(info.lastInsertRowid);
 }
 

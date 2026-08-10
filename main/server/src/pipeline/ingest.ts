@@ -33,6 +33,7 @@ import {
 } from './sourceLedger.js';
 import { contentHash as hash, loadSourceDocument } from './sourceDocument.js';
 import { reconcileQuestionsAfterRun, syncIngestQuestionReport } from './ingestQuestions.js';
+import { EXTRACTABLE_EXTENSIONS } from './fileExtraction.js';
 
 export type { IngestStats } from './knowledgeCommit.js';
 export type IngestStage = '解析' | 'Map' | 'Normalize' | 'Plan' | 'Critic' | 'Retrieve' | 'Compose' | 'Verify' | 'Commit';
@@ -421,7 +422,10 @@ export async function ingestAllRaw(): Promise<string[]> {
         continue;
       }
       const ext = path.extname(entry.name).slice(1).toLowerCase();
-      if (['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(ext)) output.push(child);
+      if ([
+        'md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx',
+        ...EXTRACTABLE_EXTENSIONS,
+      ].includes(ext)) output.push(child);
     }
   };
   walk('原始资料');

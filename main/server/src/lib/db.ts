@@ -64,6 +64,39 @@ export function migrate() {
     name, content, file_id UNINDEXED, tokenize = 'unicode61'
   );
 
+  CREATE TABLE IF NOT EXISTS file_extractions (
+    file_id TEXT PRIMARY KEY,
+    source_hash TEXT NOT NULL DEFAULT '',
+    text_hash TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    method TEXT NOT NULL DEFAULT '',
+    page_count INTEGER NOT NULL DEFAULT 0,
+    extracted_pages INTEGER NOT NULL DEFAULT 0,
+    ocr_pages INTEGER NOT NULL DEFAULT 0,
+    skipped_pages INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_file_extractions_status
+    ON file_extractions(status, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS file_extraction_pages (
+    file_id TEXT NOT NULL,
+    page_number INTEGER NOT NULL,
+    method TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    text TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(file_id, page_number),
+    FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_file_extraction_pages_status
+    ON file_extraction_pages(file_id, status, page_number);
+
   CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ref_type TEXT NOT NULL,          -- 'page' | 'file'
@@ -373,6 +406,7 @@ export function migrate() {
   ensureColumn('jobs', 'stage', `TEXT NOT NULL DEFAULT '等待执行'`);
   ensureColumn('jobs', 'progress', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('jobs', 'detail', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('jobs', 'updated_at', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('reports', 'issue_key', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('reports', 'fingerprint', `TEXT NOT NULL DEFAULT ''`);
   backfillReportIdentity();
@@ -380,6 +414,10 @@ export function migrate() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_reports_issue ON reports(kind, issue_key)`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_fingerprint ON reports(kind, issue_key, fingerprint)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_ingest_questions_job ON ingest_questions(job_id)`);
+  db.prepare(
+    `UPDATE jobs SET updated_at = COALESCE(NULLIF(updated_at, ''), run_at, created_at)
+     WHERE updated_at = ''`
+  ).run();
   db.prepare(
     `UPDATE assistant_runs
      SET status = 'interrupted',

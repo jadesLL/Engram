@@ -175,6 +175,21 @@
                 {{ fileJob(f.path).stage }} {{ fileJob(f.path).progress }}%
               </span>
               <span
+                v-else-if="f.extractionStatus === 'failed'"
+                class="row-status ingested-flag failed"
+                :title="f.extractionError ? `提取失败：${f.extractionError.slice(0, 200)}` : '提取失败，可重试'"
+              >提取失败</span>
+              <span
+                v-else-if="f.extractionStatus === 'blocked'"
+                class="row-status ingested-flag unsupported"
+                :title="f.extractionError || '需要配置文档识别模型'"
+              >待配置</span>
+              <span
+                v-else-if="f.extractionStatus === 'partial'"
+                class="row-status ingested-flag warning"
+                :title="f.extractionError || '部分页面尚未识别'"
+              >部分提取</span>
+              <span
                 v-else-if="f.ingestedAt"
                 class="row-status ingested-flag"
                 :title="`已于 ${f.ingestedAt.slice(0, 10)} 整理`"
@@ -185,13 +200,18 @@
                 :title="f.ingestError ? `整理失败：${f.ingestError.slice(0, 200)}` : '整理失败，可重试'"
               >失败</span>
               <span
+                v-else-if="f.extractionStatus === 'completed'"
+                class="row-status ingested-flag extracted"
+                title="文字已提取，等待或可重新执行 AI 整理"
+              >已提取</span>
+              <span
                 v-else-if="f.ingestSupported === false"
                 class="row-status ingested-flag unsupported"
                 title="文件已保存，当前格式暂不支持 AI 整理"
               >仅保存</span>
               <span class="row-actions" @click.stop>
                 <button
-                  v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
+                  v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(f.ext)"
                   type="button"
                   title="AI 整理"
                   aria-label="AI 整理"
@@ -275,6 +295,21 @@
                 {{ fileJob(f.path).stage }} {{ fileJob(f.path).progress }}%
               </span>
               <span
+                v-else-if="f.extractionStatus === 'failed'"
+                class="row-status ingested-flag failed"
+                :title="f.extractionError ? `提取失败：${f.extractionError.slice(0, 200)}` : '提取失败，可重试'"
+              >提取失败</span>
+              <span
+                v-else-if="f.extractionStatus === 'blocked'"
+                class="row-status ingested-flag unsupported"
+                :title="f.extractionError || '需要配置文档识别模型'"
+              >待配置</span>
+              <span
+                v-else-if="f.extractionStatus === 'partial'"
+                class="row-status ingested-flag warning"
+                :title="f.extractionError || '部分页面尚未识别'"
+              >部分提取</span>
+              <span
                 v-else-if="f.ingestedAt"
                 class="row-status ingested-flag"
                 :title="`已于 ${f.ingestedAt.slice(0, 10)} 整理`"
@@ -285,13 +320,18 @@
                 :title="f.ingestError ? `整理失败：${f.ingestError.slice(0, 200)}` : '整理失败，可重试'"
               >失败</span>
               <span
+                v-else-if="f.extractionStatus === 'completed'"
+                class="row-status ingested-flag extracted"
+                title="文字已提取，等待或可重新执行 AI 整理"
+              >已提取</span>
+              <span
                 v-else-if="f.ingestSupported === false"
                 class="row-status ingested-flag unsupported"
                 title="文件已保存，当前格式暂不支持 AI 整理"
               >仅保存</span>
               <span class="row-actions" @click.stop>
                 <button
-                  v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(f.ext)"
+                  v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(f.ext)"
                   type="button"
                   title="AI 整理"
                   aria-label="AI 整理"
@@ -1183,6 +1223,14 @@ onUnmounted(() => {
 
 .ingested-flag.unsupported {
   color: var(--text-faint);
+}
+
+.ingested-flag.warning {
+  color: #a36b00;
+}
+
+.ingested-flag.extracted {
+  color: var(--accent);
 }
 
 .ingest-progress {

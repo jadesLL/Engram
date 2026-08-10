@@ -166,16 +166,24 @@ export async function rebuildAll(onProgress?: (msg: string) => void): Promise<{ 
 }
 
 /** 注册/更新一个非 md 文件记录 */
-export function upsertFileRecord(relPath: string, text: string, size: number): string {
+export function ensureFileRecord(relPath: string, size: number): string {
   const name = relPath.split('/').pop() || relPath;
   const ext = (name.split('.').pop() || '').toLowerCase();
-  const existing = db.prepare(`SELECT id FROM files WHERE path = ?`).get(relPath) as any;
+  const existing = db.prepare(`SELECT id, text FROM files WHERE path = ?`).get(relPath) as any;
   const id = existing?.id || newId();
   db.prepare(
     `INSERT INTO files(id, path, name, ext, size, text, updated_at, deleted)
      VALUES(?, ?, ?, ?, ?, ?, ?, 0)
      ON CONFLICT(path) DO UPDATE SET name=excluded.name, ext=excluded.ext, size=excluded.size,
-       text=excluded.text, updated_at=excluded.updated_at, deleted=0`
-  ).run(id, relPath, name, ext, size, text, now());
+       updated_at=excluded.updated_at, deleted=0`
+  ).run(id, relPath, name, ext, size, existing?.text || '', now());
+  return id;
+}
+
+/** 注册/更新一个非 md 文件记录，并替换其当前提取文本。 */
+export function upsertFileRecord(relPath: string, text: string, size: number): string {
+  const id = ensureFileRecord(relPath, size);
+  db.prepare(`UPDATE files SET text = ?, updated_at = ?, deleted = 0 WHERE id = ?`)
+    .run(text, now(), id);
   return id;
 }

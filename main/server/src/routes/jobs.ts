@@ -23,6 +23,7 @@ const KIND_LABELS: Record<string, string> = {
   extract: '实体抽取',
   summarize: '自动整理',
   index_file: '文件索引',
+  extract_file: '文档识别',
   mentions: '升级扫描',
   metagen: '索引生成',
   ingest_finalize: '整理派生校验',
@@ -107,7 +108,11 @@ export async function jobRoutes(app: FastifyInstance) {
     const job = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(id) as any;
     if (!job) return reply.code(404).send({ error: '任务不存在' });
     if (job.status !== 'failed') return reply.code(400).send({ error: '仅失败任务可重试' });
-    db.prepare(`UPDATE jobs SET status = 'pending', error = NULL, run_at = NULL, stage = '等待执行', progress = 0, detail = '' WHERE id = ?`).run(id);
+    db.prepare(
+      `UPDATE jobs SET status = 'pending', error = NULL, run_at = NULL,
+         stage = '等待执行', progress = 0, detail = '', updated_at = datetime('now')
+       WHERE id = ?`
+    ).run(id);
     return { ok: true };
   });
 

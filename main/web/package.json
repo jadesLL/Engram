@@ -11,6 +11,7 @@
   "dependencies": {
     "axios": "^1.7.9",
     "docx-preview": "^0.4.0",
+    "pdfjs-dist": "6.2.108",
     "pinia": "^2.3.0",
     "pptx-preview": "^1.0.7",
     "vditor": "^3.10.8",
