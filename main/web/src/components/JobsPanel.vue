@@ -13,7 +13,7 @@
         <div class="jp-sub">进行中 / 等待中</div>
         <template v-for="g in groupedActive" :key="g.key">
           <div class="job-group">
-            <div class="group-head small faint" :title="g.key">{{ g.key }}</div>
+            <div class="group-head small faint" :title="g.key">{{ g.label }}</div>
             <div v-for="j in g.tasks" :key="j.id" class="job-row indented">
               <span class="spinner" v-if="j.status === 'running'" />
               <span class="dot pending" v-else />
@@ -29,7 +29,7 @@
         <div class="jp-sub">失败</div>
         <template v-for="g in groupedFailed" :key="g.key">
           <div class="job-group">
-            <div class="group-head small faint" :title="g.key">{{ g.key }}</div>
+            <div class="group-head small faint" :title="g.key">{{ g.label }}</div>
             <div v-for="j in g.tasks" :key="j.id" class="job-row failed indented">
               <span class="dot failed" />
               <span class="job-label">{{ j.label }}</span>
@@ -45,7 +45,7 @@
         <div class="jp-sub">最近完成</div>
         <template v-for="g in groupedDone" :key="g.key">
           <div class="job-group">
-            <div class="group-head small faint" :title="g.key">{{ g.key }}</div>
+            <div class="group-head small faint" :title="g.key">{{ g.label }}</div>
             <div v-for="j in g.tasks" :key="j.id" class="job-row done indented">
               <span class="dot done" />
               <span class="job-label">{{ j.label }}</span>
@@ -72,20 +72,23 @@ const jobs = computed(() => app.jobs);
 const failedJobs = computed(() => jobs.value.recent.filter((j: any) => j.status === 'failed'));
 const doneJobs = computed(() => jobs.value.recent.filter((j: any) => j.status === 'done').slice(0, 10));
 
-/** 按 target（文件名/页面名）分组，组内按 id 升序（执行先后）。
+type JobGroup = { key: string; label: string; tasks: any[] };
+
+/** 按稳定目标键分组，组内按 id 升序（执行先后）。
  *  无 target 的任务（mentions/metagen 等全局任务）合并到前一个有 target 的组，
  *  因为它们是紧跟该文件的处理任务入队的（id 相邻）。 */
-function groupByTarget(list: any[]): { key: string; tasks: any[] }[] {
+function groupByTarget(list: any[]): JobGroup[] {
   // 先按 id 排序，保证入队顺序
   const sorted = [...list].sort((a, b) => a.id - b.id);
-  const groups: { key: string; tasks: any[] }[] = [];
+  const groups: JobGroup[] = [];
   let lastKey = '';
   for (const j of sorted) {
-    const key = j.target || '';
+    const key = j.targetKey || j.target || '';
+    const label = j.targetLabel || j.target || key;
     if (key) {
-      // 有 target：开新组或并入同名组
+      // 有目标：按稳定身份开组，显示名称不参与归组。
       let g = groups.find((g) => g.key === key);
-      if (!g) { g = { key, tasks: [] }; groups.push(g); }
+      if (!g) { g = { key, label, tasks: [] }; groups.push(g); }
       g.tasks.push(j);
       lastKey = key;
     } else {
@@ -93,10 +96,10 @@ function groupByTarget(list: any[]): { key: string; tasks: any[] }[] {
       if (lastKey) {
         const g = groups.find((g) => g.key === lastKey);
         if (g) g.tasks.push(j);
-        else groups.push({ key: '全局任务', tasks: [j] });
+        else groups.push({ key: '全局任务', label: '全局任务', tasks: [j] });
       } else {
         let g = groups.find((g) => g.key === '全局任务');
-        if (!g) { g = { key: '全局任务', tasks: [] }; groups.push(g); }
+        if (!g) { g = { key: '全局任务', label: '全局任务', tasks: [] }; groups.push(g); }
         g.tasks.push(j);
       }
     }
