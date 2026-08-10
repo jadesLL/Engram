@@ -124,7 +124,7 @@ exampleproject_cleanup_local_verification() {
   fi
 
   case "$verify_dir" in
-    /tmp/exampleproject-verify.*|/tmp/exampleproject-preview.*)
+    /tmp/exampleproject-verify.*|/tmp/exampleproject-preview.*|/tmp/exampleproject-main.*)
       rm -rf -- "$verify_dir" || failed=1
       ;;
     *)
@@ -221,10 +221,108 @@ exampleproject_run_local_offline_verification() {
   [ "$check_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]
 }
 
+exampleproject_current_main_image() {
+  local base_image=""
+
+  if docker container inspect example-wiki >/dev/null 2>&1; then
+    base_image="$(
+      docker container inspect example-wiki --format '{{.Config.Image}}'
+    )"
+  fi
+  if [ -z "$base_image" ] || ! docker image inspect "$base_image" >/dev/null 2>&1; then
+    base_image="$(
+      docker image ls \
+        --filter 'reference=example-wiki:main-*' \
+        --format '{{.Repository}}:{{.Tag}}' |
+        head -n 1
+    )"
+  fi
+  [ -n "$base_image" ] && docker image inspect "$base_image" >/dev/null 2>&1 || return 1
+  [[ "$base_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || return 1
+  printf '%s\n' "$base_image"
+}
+
+exampleproject_build_local_offline_overlay_image() {
+  local source_dir="$1"
+  local temp_prefix="$2"
+  local base_image="$3"
+  local description="$4"
+  shift 4
+  local resolved_source build_dir
+  local build_status=0 cleanup_status=0
+
+  command -v node >/dev/null 2>&1 || return 1
+  command -v cygpath >/dev/null 2>&1 || return 1
+  [ -f "$WIKILLM_SHARED_PNPM" ] || {
+    printf '!! 缺少共享 pnpm: %s\n' "$WIKILLM_SHARED_PNPM" >&2
+    return 1
+  }
+  docker image inspect "$base_image" >/dev/null 2>&1 || return 1
+  [[ "$base_image" =~ ^[A-Za-z0-9._/:@-]+$ ]] || return 1
+
+  resolved_source="$(
+    cd "$source_dir"
+    pwd -P
+  )"
+  case "$resolved_source" in
+    "$WIKILLM_MAIN_DIR"|"$WIKILLM_REPO_ROOT"/worktrees/*/main) ;;
+    *)
+      printf '!! 拒绝构建工作区之外的源码目录: %s\n' "$resolved_source" >&2
+      return 1
+      ;;
+  esac
+
+  build_dir="$(mktemp -d -t "${temp_prefix}.XXXXXX")"
+  exampleproject_log ">> 使用共享 pnpm 构建$description"
+  exampleproject_log "   shared_pnpm=$WIKILLM_SHARED_PNPM ($(exampleproject_shared_pnpm --version))"
+  exampleproject_log "   base_image=$base_image"
+  set +e
+  (
+    set -euo pipefail
+    local image_context="$build_dir/image"
+    (
+      cd "$resolved_source"
+      tar -cf - \
+        --exclude='./node_modules' \
+        --exclude='./server/node_modules' \
+        --exclude='./web/node_modules' \
+        --exclude='./desktop/node_modules' \
+        --exclude='./server/dist' \
+        --exclude='./web/dist' \
+        --exclude='./data' \
+        --exclude='./data-test' \
+        --exclude='./.env' \
+        --exclude='./.env.*' \
+        --exclude='./*.log' \
+        .
+    ) | tar -xf - -C "$build_dir"
+    cd "$build_dir"
+    exampleproject_shared_pnpm install --offline --frozen-lockfile --ignore-scripts
+    exampleproject_shared_pnpm build
+    mkdir -p "$image_context/server" "$image_context/web"
+    cp -a "$build_dir/server/dist" "$image_context/server/dist"
+    cp -a "$build_dir/web/dist" "$image_context/web/dist"
+    printf 'FROM %s\n%s\n%s\n' \
+      "$base_image" \
+      'COPY server/dist /app/server/dist' \
+      'COPY web/dist /app/web/dist' \
+      > "$image_context/Dockerfile"
+    docker build \
+      --pull=false \
+      --network none \
+      "$@" \
+      "$image_context"
+  )
+  build_status=$?
+  set -e
+
+  exampleproject_cleanup_local_verification "$build_dir" || cleanup_status=$?
+  [ "$build_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]
+}
+
 exampleproject_build_local_offline_preview_image() {
   local source_dir="$1"
-  local resolved_source preview_dir base_image=""
-  local build_status=0 cleanup_status=0
+  local resolved_source base_image
   local relative_path
   local -a dependency_files=(
     Dockerfile
@@ -236,12 +334,6 @@ exampleproject_build_local_offline_preview_image() {
     desktop/package.json
   )
 
-  command -v node >/dev/null 2>&1 || return 1
-  command -v cygpath >/dev/null 2>&1 || return 1
-  [ -f "$WIKILLM_SHARED_PNPM" ] || {
-    printf '!! 缺少共享 pnpm: %s\n' "$WIKILLM_SHARED_PNPM" >&2
-    return 1
-  }
   resolved_source="$(
     cd "$source_dir"
     pwd -P
@@ -264,76 +356,106 @@ exampleproject_build_local_offline_preview_image() {
     fi
   done
 
-  if docker container inspect example-wiki >/dev/null 2>&1; then
-    base_image="$(
-      docker container inspect example-wiki --format '{{.Config.Image}}'
-    )"
-  fi
-  if [ -z "$base_image" ] || ! docker image inspect "$base_image" >/dev/null 2>&1; then
-    base_image="$(
-      docker image ls \
-        --filter 'reference=example-wiki:main-*' \
-        --format '{{.Repository}}:{{.Tag}}' |
-        head -n 1
-    )"
-  fi
-  [ -n "$base_image" ] && docker image inspect "$base_image" >/dev/null 2>&1 || {
+  if ! base_image="$(exampleproject_current_main_image)"; then
     printf '!! 缺少可复用的主运行镜像，无法创建离线预览\n' >&2
     return 1
-  }
-  if ! [[ "$base_image" =~ ^[A-Za-z0-9._/:@-]+$ ]]; then
-    printf '!! 主运行镜像名称包含不安全字符: %s\n' "$base_image" >&2
-    return 1
   fi
 
-  preview_dir="$(mktemp -d -t exampleproject-preview.XXXXXX)"
-  exampleproject_log ">> 使用共享 pnpm 构建离线预览叠加层"
-  exampleproject_log "   shared_pnpm=$WIKILLM_SHARED_PNPM ($(exampleproject_shared_pnpm --version))"
-  exampleproject_log "   base_image=$base_image"
-  set +e
-  (
-    set -euo pipefail
-    local image_context="$preview_dir/image"
-    (
-      cd "$resolved_source"
-      tar -cf - \
-        --exclude='./node_modules' \
-        --exclude='./server/node_modules' \
-        --exclude='./web/node_modules' \
-        --exclude='./desktop/node_modules' \
-        --exclude='./server/dist' \
-        --exclude='./web/dist' \
-        --exclude='./data' \
-        --exclude='./data-test' \
-        --exclude='./.env' \
-        --exclude='./.env.*' \
-        --exclude='./*.log' \
-        .
-    ) | tar -xf - -C "$preview_dir"
-    cd "$preview_dir"
-    exampleproject_shared_pnpm install --offline --frozen-lockfile --ignore-scripts
-    exampleproject_shared_pnpm build
-    mkdir -p "$image_context/server" "$image_context/web"
-    cp -a "$preview_dir/server/dist" "$image_context/server/dist"
-    cp -a "$preview_dir/web/dist" "$image_context/web/dist"
-    printf 'FROM %s\n%s\n%s\n' \
-      "$base_image" \
-      'COPY server/dist /app/server/dist' \
-      'COPY web/dist /app/web/dist' \
-      > "$image_context/Dockerfile"
-    docker build \
-      --pull=false \
-      --network none \
-      --label com.exampleproject.scope=feature \
-      --label "com.exampleproject.feature=$WIKILLM_FEATURE" \
-      --tag "$WIKILLM_IMAGE" \
-      "$image_context"
-  )
-  build_status=$?
-  set -e
+  exampleproject_build_local_offline_overlay_image \
+    "$resolved_source" \
+    exampleproject-preview \
+    "$base_image" \
+    "离线预览叠加层" \
+    --label com.exampleproject.scope=feature \
+    --label "com.exampleproject.feature=$WIKILLM_FEATURE" \
+    --tag "$WIKILLM_IMAGE"
+}
 
-  exampleproject_cleanup_local_verification "$preview_dir" || cleanup_status=$?
-  [ "$build_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]
+exampleproject_normalize_runtime_dockerfile() {
+  awk '
+    /^# ---------- 一次完成构建、类型检查和测试 ----------/ { skip = 1; next }
+    skip && /^# ---------- 运行时 ----------/ { skip = 0 }
+    !skip { print }
+  '
+}
+
+exampleproject_build_local_offline_main_image() {
+  local source_dir="$1"
+  local image="$2"
+  local revision="$3"
+  local extra_tag="${4:-}"
+  local resolved_source base_image base_revision source_revision
+  local base_dockerfile current_dockerfile relative_path
+  local -a dependency_files=(
+    package.json
+    pnpm-workspace.yaml
+    pnpm-lock.yaml
+    server/package.json
+    web/package.json
+    desktop/package.json
+  )
+  local -a image_args=(
+    --label "org.opencontainers.image.revision=$revision"
+    --label org.opencontainers.image.source=local-main
+    --tag "$image"
+  )
+
+  resolved_source="$(
+    cd "$source_dir"
+    pwd -P
+  )"
+  case "$resolved_source" in
+    "$WIKILLM_MAIN_DIR"|"$WIKILLM_REPO_ROOT"/worktrees/*/main) ;;
+    *)
+      printf '!! 拒绝部署工作区之外的源码目录: %s\n' "$resolved_source" >&2
+      return 1
+      ;;
+  esac
+  if ! base_image="$(exampleproject_current_main_image)"; then
+    printf '!! 缺少可复用的主运行镜像，无法创建离线主镜像\n' >&2
+    return 1
+  fi
+  base_revision="$(
+    docker image inspect "$base_image" \
+      --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+  )"
+  if [ -z "$base_revision" ] ||
+    ! git -C "$resolved_source" rev-parse --verify "${base_revision}^{commit}" >/dev/null 2>&1
+  then
+    printf '!! 主运行镜像缺少可核对的 Git revision: %s\n' "${base_revision:-<empty>}" >&2
+    return 1
+  fi
+  source_revision="$(git -C "$resolved_source" rev-parse HEAD)"
+  for relative_path in "${dependency_files[@]}"; do
+    if ! git -C "$resolved_source" diff --quiet \
+      "$base_revision" "$source_revision" -- "main/$relative_path"
+    then
+      printf '!! %s 相对主运行镜像已改变，不能复用旧依赖部署\n' "$relative_path" >&2
+      return 1
+    fi
+  done
+
+  base_dockerfile="$(
+    git -C "$resolved_source" show "$base_revision:main/Dockerfile" |
+      exampleproject_normalize_runtime_dockerfile
+  )"
+  current_dockerfile="$(
+    exampleproject_normalize_runtime_dockerfile < "$resolved_source/Dockerfile"
+  )"
+  if [ "$base_dockerfile" != "$current_dockerfile" ]; then
+    printf '!! Docker 运行阶段相对主镜像已改变，不能使用离线叠加部署\n' >&2
+    return 1
+  fi
+  if [ -n "$extra_tag" ]; then
+    image_args+=(--tag "$extra_tag")
+  fi
+
+  exampleproject_build_local_offline_overlay_image \
+    "$resolved_source" \
+    exampleproject-main \
+    "$base_image" \
+    "离线主镜像叠加层" \
+    "${image_args[@]}"
 }
 
 exampleproject_acquire_merge_lock() {

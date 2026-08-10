@@ -23,6 +23,7 @@
 - `new-worktree.sh` 只创建分支和代码目录。普通 Web/服务端任务不得在 `main/` 或功能 worktree 中运行 `pnpm install`，也不得为每个 worktree 生成宿主机 `node_modules`；build、typecheck 和 test 统一由 `verify-feature.sh` 在 Docker 中完成。
 - 宿主机共享的 pnpm 固定放在主检出目录 `main/node_modules/pnpm`，生命周期脚本通过该副本运行离线回退；功能 worktree 不得另装 pnpm。
 - 功能依赖清单未变化时，`preview-feature.sh` 可用共享 pnpm 在仓库外构建产物，并叠加到当前主运行镜像创建隔离预览；依赖变化时必须使用完整 Docker 构建。
+- 部署时若 Docker 离线缓存不足，且依赖清单与 Docker 运行阶段相对当前主镜像兼容，`merge-feature.sh --deploy` 可用同样方式生成主镜像；兼容检查不通过时必须停止。
 - 只有确实无法在 Linux Docker 中完成的宿主机原生任务（例如 Windows 桌面端打包），才可在说明原因并取得用户同意后建立持久本地依赖环境；自动清理的临时离线验证目录不属于持久环境。
 - 功能预览按需使用 `preview-feature.sh` 创建。不要仅为开始编码提前创建容器、端口、镜像或数据卷。
 - Docker 构建默认禁用网络并复用本机已有依赖层和构建缓存。只有用户已经明确批准下载环境文件时，才可为对应脚本传入 `--allow-downloads`；缓存缺失时不得自行联网重试。Windows UNC 环境可回退到代码库外的本机临时目录，通过 pnpm `--offline` 复用已有 store，并在验证后删除临时依赖和项目索引。
