@@ -17,6 +17,8 @@ let embed: typeof import('./llm.js').embed;
 let testModel: typeof import('./llm.js').testModel;
 let getActiveChat: typeof import('./llm.js').getActiveChat;
 let getActiveDocument: typeof import('./llm.js').getActiveDocument;
+let getEffectiveDocumentModel: typeof import('./llm.js').getEffectiveDocumentModel;
+let probeImageInput: typeof import('./llm.js').probeImageInput;
 
 type ModelEntry = import('./llm.js').ModelEntry;
 
@@ -29,6 +31,8 @@ before(async () => {
     testModel,
     getActiveChat,
     getActiveDocument,
+    getEffectiveDocumentModel,
+    probeImageInput,
   } = await import('./llm.js'));
   migrate();
 });
@@ -104,6 +108,22 @@ test('document model settings are independent from the active chat model', () =>
   setSetting('active_document_model', documentEntry.id);
   assert.equal(getActiveDocument()?.model, 'vision-ocr');
   assert.equal(getActiveChat(), null);
+});
+
+test('a confirmed multimodal chat model becomes the image fallback', () => {
+  const chatEntry = entry({
+    id: 'chat-vision',
+    model: 'custom-vision-chat',
+    imageInput: 'supported',
+  });
+  setSetting('chat_models', JSON.stringify([chatEntry]));
+  setSetting('active_chat_model', chatEntry.id);
+  assert.equal(getEffectiveDocumentModel()?.id, chatEntry.id);
+
+  const visualEntry = entry({ id: 'visual-override', model: 'vision-ocr' });
+  setSetting('document_models', JSON.stringify([visualEntry]));
+  setSetting('active_document_model', visualEntry.id);
+  assert.equal(getEffectiveDocumentModel()?.id, visualEntry.id);
 });
 
 test('document request uses OpenAI-compatible image content', () => {
@@ -203,9 +223,42 @@ test('testModel rejects a non-array embedding', async () => {
 
 test('testModel verifies that a document model can read the generated image', async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({
-    choices: [{ message: { content: 'READY' }, finish_reason: 'stop' }],
+    choices: [{ message: { content: '731942' }, finish_reason: 'stop' }],
   }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
-  const result = await testModel(entry({ model: 'vision-ocr' }), 'document');
+  const result = await testModel(entry({ model: 'vision-ocr' }), 'document', {
+    imageChallenge: {
+      code: '731942',
+      dataUrl: 'data:image/png;base64,abc',
+      prompt: '读取图片中的数字',
+    },
+  });
   assert.equal(result.ok, true);
+});
+
+test('image capability probe distinguishes explicit image rejection from transient errors', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: { message: 'This model does not support image_url input' },
+  }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+
+  const unsupported = await probeImageInput(entry({ model: 'custom-model' }), {
+    force: true,
+    challenge: {
+      code: '731942',
+      dataUrl: 'data:image/png;base64,abc',
+      prompt: '读取图片中的数字',
+    },
+  });
+  assert.equal(unsupported.status, 'unsupported');
+
+  globalThis.fetch = async () => new Response('busy', { status: 503 });
+  const unknown = await probeImageInput(entry({ model: 'custom-model' }), {
+    force: true,
+    challenge: {
+      code: '731942',
+      dataUrl: 'data:image/png;base64,abc',
+      prompt: '读取图片中的数字',
+    },
+  });
+  assert.equal(unknown.status, 'unknown');
 });

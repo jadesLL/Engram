@@ -1,5 +1,13 @@
+import crypto from 'node:crypto';
+import { createCanvas } from '@napi-rs/canvas';
 import type { ZodType } from 'zod';
 import { getSetting } from './db.js';
+import {
+  resolveImageInputCapability,
+  type ImageInputCapability,
+  type ImageInputSource,
+  type ImageInputStatus,
+} from './modelCapabilities.js';
 
 /** 模型库条目 */
 export interface ModelEntry {
@@ -13,6 +21,9 @@ export interface ModelEntry {
   apiKey: string;
   dim?: number;      // embedding 维度
   supportsDimensions?: boolean; // 是否支持通过请求参数指定 embedding 维度
+  imageInput?: ImageInputStatus;
+  imageInputSource?: ImageInputSource;
+  imageInputCheckedAt?: string;
 }
 
 function parseList(key: string): ModelEntry[] {
@@ -40,6 +51,14 @@ export function getActiveDocument(): ModelEntry | null {
   const list = parseList('document_models');
   const activeId = getSetting('active_document_model');
   return list.find((m) => m.id === activeId) || list[0] || null;
+}
+
+export function getEffectiveDocumentModel(): ModelEntry | null {
+  const dedicated = getActiveDocument();
+  if (dedicated?.apiKey) return dedicated;
+  const chat = getActiveChat();
+  if (!chat?.apiKey) return null;
+  return resolveImageInputCapability(chat).status === 'supported' ? chat : null;
 }
 
 export interface LlmConfig {
@@ -71,7 +90,7 @@ export function llmReady(): boolean {
 }
 
 export function documentModelReady(): boolean {
-  return Boolean(getActiveDocument()?.apiKey);
+  return Boolean(getEffectiveDocumentModel()?.apiKey);
 }
 
 export class LlmError extends Error {
@@ -175,6 +194,33 @@ export function buildDocumentRequestBody(
   };
 }
 
+export interface ImageCapabilityChallenge {
+  code: string;
+  dataUrl: string;
+  prompt: string;
+}
+
+export function createImageCapabilityChallenge(code?: string): ImageCapabilityChallenge {
+  const challengeCode = code || String(crypto.randomInt(100_000, 1_000_000));
+  const canvas = createCanvas(320, 120);
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = '#c7c7c7';
+  context.lineWidth = 2;
+  context.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
+  context.fillStyle = '#111111';
+  context.font = 'bold 52px sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(challengeCode, canvas.width / 2, canvas.height / 2);
+  return {
+    code: challengeCode,
+    dataUrl: `data:image/png;base64,${canvas.toBuffer('image/png').toString('base64')}`,
+    prompt: '读取图片中央的六位数字。只回复数字，不要解释。',
+  };
+}
+
 function messageText(message: any): string {
   if (typeof message?.content === 'string') return message.content;
   if (Array.isArray(message?.content)) {
@@ -191,8 +237,10 @@ export async function recognizeDocumentImage(
   prompt: string,
   options: { entry?: ModelEntry; maxTokens?: number; timeoutMs?: number } = {},
 ): Promise<string> {
-  const entry = options.entry || getActiveDocument();
-  if (!entry?.apiKey) throw new LlmError('尚未配置文档识别模型（设置页 → 模型配置 → 文档识别）');
+  const entry = options.entry || getEffectiveDocumentModel();
+  if (!entry?.apiKey) {
+    throw new LlmError('当前对话模型不支持图片输入，且尚未配置视觉模型（设置页 → 模型配置 → 视觉模型）');
+  }
   const response = await request(
     '/chat/completions',
     buildDocumentRequestBody(entry, imageDataUrl, prompt, options.maxTokens),
@@ -204,8 +252,71 @@ export async function recognizeDocumentImage(
   );
   const payload = await response.json() as any;
   const content = messageText(payload?.choices?.[0]?.message).trim();
-  if (!content) throw new LlmError('文档识别模型返回了空内容');
+  if (!content) throw new LlmError('视觉模型返回了空内容');
   return content;
+}
+
+function normalizedChallengeAnswer(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function explicitlyRejectsImageInput(error: unknown): boolean {
+  if (!(error instanceof LlmError) || ![400, 415, 422].includes(error.status || 0)) return false;
+  const message = error.message.toLowerCase();
+  const mentionsImage = /(image_url|image input|image content|vision|visual|multimodal)/.test(message);
+  const rejectsInput = /(not support|unsupported|does not support|invalid|must be|string content)/.test(message);
+  return mentionsImage && rejectsInput;
+}
+
+export async function probeImageInput(
+  entry: ModelEntry,
+  options: { force?: boolean; challenge?: ImageCapabilityChallenge; timeoutMs?: number } = {},
+): Promise<ImageInputCapability> {
+  if (!entry.apiKey) {
+    return { status: 'unknown', source: 'probe', detail: '未填写 API Key，无法检测图片能力。' };
+  }
+  if (!options.force) {
+    const known = resolveImageInputCapability(entry);
+    if (known.status !== 'unknown') return known;
+  }
+
+  const challenge = options.challenge || createImageCapabilityChallenge();
+  try {
+    const response = await request(
+      '/chat/completions',
+      buildDocumentRequestBody(entry, challenge.dataUrl, challenge.prompt, 32),
+      {
+        baseUrl: entry.baseUrl.replace(/\/+$/, ''),
+        apiKey: entry.apiKey,
+        timeoutMs: options.timeoutMs ?? 45_000,
+      },
+    );
+    const payload = await response.json() as any;
+    const content = messageText(payload?.choices?.[0]?.message).trim();
+    if (normalizedChallengeAnswer(content).includes(challenge.code)) {
+      return { status: 'supported', source: 'probe' };
+    }
+    return {
+      status: 'unknown',
+      source: 'probe',
+      detail: content
+        ? `模型已响应，但未能读出测试图片中的数字：${content.slice(0, 80)}`
+        : '模型已响应，但未返回可验证的图片内容。',
+    };
+  } catch (error: any) {
+    if (explicitlyRejectsImageInput(error)) {
+      return {
+        status: 'unsupported',
+        source: 'probe',
+        detail: '接口明确拒绝了图片输入。',
+      };
+    }
+    return {
+      status: 'unknown',
+      source: 'probe',
+      detail: error?.message || '图片能力检测失败。',
+    };
+  }
 }
 
 type ChatOptions = {
@@ -513,9 +624,15 @@ export async function testConnection(): Promise<{
   chat: boolean;
   embedding: boolean;
   document?: boolean;
+  imageInput?: ImageInputStatus;
   error?: string;
 }> {
-  const result: { chat: boolean; embedding: boolean; document?: boolean } = {
+  const result: {
+    chat: boolean;
+    embedding: boolean;
+    document?: boolean;
+    imageInput?: ImageInputStatus;
+  } = {
     chat: false,
     embedding: false,
   };
@@ -534,6 +651,9 @@ export async function testConnection(): Promise<{
     const documentResult = await testModel(documentModel, 'document');
     if (!documentResult.ok) return { ...result, document: false, error: `document: ${documentResult.error}` };
     result.document = true;
+  } else {
+    result.imageInput = resolveImageInputCapability(chatModel).status;
+    result.document = result.imageInput === 'supported';
   }
   return result;
 }
@@ -544,7 +664,8 @@ export async function testConnection(): Promise<{
  *  （带推理的模型在 token 紧张时可能只产出 reasoning_content 而 content 为空）。 */
 export async function testModel(
   entry: ModelEntry,
-  kind: 'chat' | 'embedding' | 'document'
+  kind: 'chat' | 'embedding' | 'document',
+  options: { imageChallenge?: ImageCapabilityChallenge } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   if (!entry.apiKey) return { ok: false, error: '未填写 API Key' };
   const baseUrl = entry.baseUrl.replace(/\/+$/, '');
@@ -581,16 +702,19 @@ export async function testModel(
       validateEmbedding(json.data[0]?.embedding, entry.dim);
       return { ok: true };
     } else {
-      const dataUrl =
-        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=';
-      const content = await recognizeDocumentImage(
-        dataUrl,
-        '确认已收到图片，只回复 READY。',
-        { entry, maxTokens: 64, timeoutMs: 45_000 },
-      );
-      return /READY/i.test(content)
+      const capability = await probeImageInput(entry, {
+        force: true,
+        challenge: options.imageChallenge,
+        timeoutMs: 45_000,
+      });
+      return capability.status === 'supported'
         ? { ok: true }
-        : { ok: false, error: `模型可连接，但图片请求返回异常：${content.slice(0, 80)}` };
+        : {
+            ok: false,
+            error: capability.status === 'unsupported'
+              ? '当前模型不支持图片输入。'
+              : capability.detail || '暂时无法确认模型是否支持图片输入。',
+          };
     }
   } catch (e: any) {
     return { ok: false, error: e.message };

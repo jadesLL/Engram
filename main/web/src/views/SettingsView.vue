@@ -84,7 +84,7 @@
           <div class="panel-head model-panel-head">
             <div>
               <h3>模型配置</h3>
-              <p>管理对话生成、语义检索与文档识别使用的服务商配置。</p>
+              <p>管理对话生成、语义检索与图片理解使用的服务商配置。</p>
             </div>
             <div class="panel-actions">
               <button class="btn" type="button" :disabled="testingAll" @click="testAll">
@@ -116,6 +116,28 @@
 
           <template v-for="section in modelSections" :key="section.kind">
             <div v-show="activeModelKind === section.kind" class="model-section-body">
+              <div
+                v-if="section.kind === 'document'"
+                class="vision-capability-note"
+                :class="visionCapabilityTone"
+                role="status"
+                aria-live="polite"
+              >
+                <Icon :name="imageCapabilityChecking ? 'activity' : visionCapabilityIcon" :size="16" />
+                <div>
+                  <strong>{{ visionCapabilityMessage }}</strong>
+                  <span v-if="imageCapabilityDetail">{{ imageCapabilityDetail }}</span>
+                </div>
+                <button
+                  v-if="!imageCapabilityChecking && activeModelFor('chat')?.apiKey"
+                  class="text-action"
+                  type="button"
+                  @click="refreshActiveChatImageCapability(true)"
+                >
+                  重新检测
+                </button>
+              </div>
+
               <div class="model-section-intro">
                 <div>
                   <p>{{ section.copy }}</p>
@@ -566,19 +588,13 @@
               <input id="model-base-url" v-model="form.baseUrl" placeholder="https://.../v1" @change="onFormBaseUrlChange" />
             </div>
             <div class="field field-wide">
-              <label for="model-list-url">模型列表 API</label>
+              <label>模型目录</label>
               <div class="discovery-url-row">
-                <input
-                  id="model-list-url"
-                  v-model="form.modelsUrl"
-                  placeholder="https://.../v1/models"
-                  @change="form.apiKey.trim() && discoverFormModels()"
-                />
+                <span class="field-help">使用当前线路的官方地址自动获取，无需填写 API 地址。</span>
                 <button class="btn" type="button" :disabled="discoveryBusy || !effectiveFormApiKey" @click="discoverFormModels()">
                   {{ discoveryBusy ? '拉取中...' : '拉取模型' }}
                 </button>
               </div>
-              <span class="field-help">已预填厂商官方地址；国内厂商使用中国大陆 API 域名。</span>
             </div>
             <div class="field">
               <label for="model-api-key">API Key</label>
@@ -625,7 +641,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useAuthStore } from '../stores/auth';
@@ -635,6 +651,7 @@ import {
   modelById,
   providerById,
   type ApiLine,
+  type ImageInputStatus,
   type ModelOption,
   type ProviderPreset,
 } from '../presets';
@@ -656,6 +673,9 @@ interface ModelEntry {
   apiKey: string;
   dim?: number;
   supportsDimensions?: boolean;
+  imageInput?: ImageInputStatus;
+  imageInputSource?: 'stored' | 'catalog' | 'metadata' | 'probe';
+  imageInputCheckedAt?: string;
 }
 
 interface ModelDraft {
@@ -704,6 +724,10 @@ const documentModels = ref<ModelEntry[]>([]);
 const activeChat = ref('');
 const activeEmb = ref('');
 const activeDocument = ref('');
+const imageCapabilityChecking = ref(false);
+const imageCapabilityDetail = ref('');
+const checkedImageCapabilityIds = new Set<string>();
+let imageCapabilityRequestId = 0;
 
 function modelsRef(kind: ModelKind) {
   if (kind === 'chat') return chatModels;
@@ -726,12 +750,38 @@ function setActiveId(kind: ModelKind, value: string) {
 function modelKindLabel(kind: ModelKind): string {
   if (kind === 'chat') return '对话模型';
   if (kind === 'emb') return '向量模型';
-  return '文档识别';
+  return '视觉模型';
 }
 
 function activeModelFor(kind: ModelKind): ModelEntry | undefined {
   return modelsRef(kind).value.find((model) => model.id === activeIdFor(kind));
 }
+
+const activeChatImageStatus = computed<ImageInputStatus>(() =>
+  activeModelFor('chat')?.imageInput || 'unknown'
+);
+const dedicatedVisionConfigured = computed(() => Boolean(activeModelFor('document')?.apiKey));
+const visionCapabilityTone = computed(() => {
+  if (imageCapabilityChecking.value) return 'checking';
+  if (!activeModelFor('chat')?.apiKey) return 'warning';
+  if (activeChatImageStatus.value === 'supported') return 'supported';
+  if (activeChatImageStatus.value === 'unsupported') return 'warning';
+  return 'neutral';
+});
+const visionCapabilityIcon = computed(() =>
+  activeChatImageStatus.value === 'supported' ? 'check' : 'activity'
+);
+const visionCapabilityMessage = computed(() => {
+  if (imageCapabilityChecking.value) return '正在检测当前对话模型的多模态能力...';
+  if (!activeModelFor('chat')?.apiKey) return '尚未配置可用的对话模型，需要单独配置视觉模型。';
+  if (activeChatImageStatus.value === 'supported') {
+    return '当前对话模型已支持多模态，无需额外配置。';
+  }
+  if (activeChatImageStatus.value === 'unsupported') {
+    return '当前对话模型不支持多模态，需要单独配置视觉模型。';
+  }
+  return '暂时无法确认当前对话模型是否支持多模态，可重新检测或单独配置视觉模型。';
+});
 
 function configuredProviderCount(section: { cards: ProviderCard[] }): number {
   return section.cards.filter((card) => card.entries.some((entry) => Boolean(entry.apiKey))).length;
@@ -907,8 +957,8 @@ const modelSections = computed(() => [
   },
   {
     kind: 'document' as const,
-    title: '文档识别',
-    copy: '仅图片和 PDF 中没有足够内嵌文字的页面会发送到该模型。',
+    title: '视觉模型',
+    copy: '专用视觉模型是可选覆盖项，仅处理图片和 PDF 中没有足够内嵌文字的页面。',
     cards: cardsFor('document'),
     unknown: unknownModels('document'),
     activeId: activeDocument.value,
@@ -1191,6 +1241,17 @@ function entryFromDraft(
     ? option?.supportsDimensions === true
       || (!option && existing?.model === model && existing.supportsDimensions === true)
     : undefined;
+  const sameEndpoint = existing?.model === model
+    && normalizeUrl(existing.baseUrl) === normalizeUrl(draft.baseUrl);
+  const imageInput = kind !== 'emb'
+    ? option?.imageInput
+      || (sameEndpoint ? existing?.imageInput : undefined)
+    : undefined;
+  const imageInputSource = option?.imageInput
+    ? 'catalog'
+    : sameEndpoint
+      ? existing?.imageInputSource
+      : undefined;
   return {
     id: existing?.id || newId(),
     name: name?.trim() || existing?.name || provider.name,
@@ -1202,6 +1263,10 @@ function entryFromDraft(
     model,
     apiKey: draft.apiKey.trim() || existing?.apiKey || '',
     ...(kind === 'emb' ? { dim: draft.dim || option?.dim || 1024, supportsDimensions } : {}),
+    ...(imageInput ? { imageInput, imageInputSource } : {}),
+    ...(sameEndpoint && existing?.imageInputCheckedAt
+      ? { imageInputCheckedAt: existing.imageInputCheckedAt }
+      : {}),
   };
 }
 
@@ -1229,6 +1294,10 @@ async function saveQuick(kind: ModelKind, provider: ProviderPreset) {
     if (!activeIdFor(kind)) setActiveId(kind, entry.id);
     await persist();
     delete quickDrafts[key];
+    if (kind === 'chat' && activeChat.value === entry.id) {
+      checkedImageCapabilityIds.delete(entry.id);
+      void refreshActiveChatImageCapability();
+    }
   } catch (error: any) {
     listRef.value = previousList;
     setActiveId(kind, previousActive);
@@ -1256,6 +1325,10 @@ async function saveInlineEdit(kind: ModelKind, provider: ProviderPreset, existin
     list.value[index] = entry;
     await persist();
     closeInlineEdit();
+    if (kind === 'chat' && entry.id === activeChat.value) {
+      checkedImageCapabilityIds.delete(entry.id);
+      void refreshActiveChatImageCapability();
+    }
   } catch (error: any) {
     if (index >= 0 && previous) list.value[index] = previous;
     inlineError.value = errorMessage(error, '保存失败，请重试。');
@@ -1279,7 +1352,7 @@ function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
     provider: id,
     ...draft,
   };
-  if (existing?.apiKey && form.value.modelsUrl) {
+  if (existing?.apiKey) {
     queueMicrotask(() => void discoverFormModels(existing.apiKey));
   }
 }
@@ -1367,19 +1440,16 @@ async function discoverFormModels(apiKeyOverride?: string) {
     discoveryMessage.value = '输入 API Key 后会自动拉取可用模型。';
     return;
   }
-  const modelsUrl = form.value.modelsUrl.trim() || inferredModelsUrl(form.value.baseUrl);
-  if (!modelsUrl) {
+  if (!normalizeUrl(form.value.baseUrl)) {
     discoveryOk.value = false;
-    discoveryMessage.value = '请先填写模型列表 API 地址。';
+    discoveryMessage.value = '请先填写 Base URL。';
     return;
   }
-  form.value.modelsUrl = modelsUrl;
   discoveryBusy.value = true;
   discoveryMessage.value = '';
   try {
     const { data } = await api.post('/api/settings/discover-models', {
       baseUrl: form.value.baseUrl,
-      modelsUrl,
       apiKey,
       kind: form.value.kind === 'chat'
         ? 'chat'
@@ -1387,7 +1457,12 @@ async function discoverFormModels(apiKeyOverride?: string) {
           ? 'embedding'
           : 'document',
     });
-    discoveredModels.value = (data.models || []).map((id: string) => ({ id, name: id }));
+    form.value.modelsUrl = data.url || inferredModelsUrl(form.value.baseUrl);
+    discoveredModels.value = (data.models || []).map((id: string) => ({
+      id,
+      name: id,
+      ...(data.capabilities?.[id] ? { imageInput: data.capabilities[id] as ImageInputStatus } : {}),
+    }));
     discoveryOk.value = true;
     discoveryMessage.value = `已自动拉取 ${discoveredModels.value.length} 个可用模型。`;
     const current = form.value.modelChoice === '__custom__' ? form.value.model : form.value.modelChoice;
@@ -1413,6 +1488,67 @@ async function persist() {
   });
 }
 
+function updateVisionCapabilityDetail(status: ImageInputStatus, detail = '') {
+  if (status === 'supported') {
+    imageCapabilityDetail.value = dedicatedVisionConfigured.value
+      ? '已配置的专用视觉模型仍会优先使用。'
+      : '需要处理图片时将自动复用当前对话模型。';
+    return;
+  }
+  if (status === 'unsupported' && dedicatedVisionConfigured.value) {
+    imageCapabilityDetail.value = '已配置专用视觉模型，图片解析会使用该配置。';
+    return;
+  }
+  imageCapabilityDetail.value = detail;
+}
+
+async function refreshActiveChatImageCapability(force = false) {
+  const requestId = ++imageCapabilityRequestId;
+  const chat = activeModelFor('chat');
+  if (!chat?.apiKey) {
+    imageCapabilityChecking.value = false;
+    imageCapabilityDetail.value = '';
+    return;
+  }
+  if (!force && (chat.imageInput === 'supported' || chat.imageInput === 'unsupported')) {
+    imageCapabilityChecking.value = false;
+    updateVisionCapabilityDetail(chat.imageInput);
+    return;
+  }
+  if (!force && checkedImageCapabilityIds.has(chat.id)) {
+    imageCapabilityChecking.value = false;
+    return;
+  }
+
+  imageCapabilityChecking.value = true;
+  imageCapabilityDetail.value = '';
+  checkedImageCapabilityIds.add(chat.id);
+  try {
+    const { data } = await api.post('/api/settings/probe-image-input', { entry: chat, force });
+    if (requestId !== imageCapabilityRequestId || activeChat.value !== chat.id) return;
+    const status = (data.status || 'unknown') as ImageInputStatus;
+    if (status === 'supported' || status === 'unsupported') {
+      const index = chatModels.value.findIndex((entry) => entry.id === chat.id);
+      if (index >= 0) {
+        chatModels.value[index] = {
+          ...chatModels.value[index],
+          imageInput: status,
+          imageInputSource: data.source || 'probe',
+          imageInputCheckedAt: new Date().toISOString(),
+        };
+        await persist();
+      }
+    }
+    updateVisionCapabilityDetail(status, data.detail || '');
+  } catch (error: any) {
+    if (requestId === imageCapabilityRequestId) {
+      imageCapabilityDetail.value = errorMessage(error, '多模态能力检测失败，请稍后重试。');
+    }
+  } finally {
+    if (requestId === imageCapabilityRequestId) imageCapabilityChecking.value = false;
+  }
+}
+
 async function saveModel() {
   formError.value = '';
   const existing = existingFormEntry.value;
@@ -1435,6 +1571,10 @@ async function saveModel() {
     if (!activeIdFor(kind)) setActiveId(kind, entry.id);
     await persist();
     form.value.show = false;
+    if (kind === 'chat' && activeChat.value === entry.id) {
+      checkedImageCapabilityIds.delete(entry.id);
+      void refreshActiveChatImageCapability();
+    }
   } catch (error: any) {
     list.value = previousList;
     setActiveId(kind, previousActive);
@@ -1449,6 +1589,10 @@ async function selectModel(kind: ModelKind, id: string) {
   try {
     setActiveId(kind, id);
     await persist();
+    if (kind === 'chat') {
+      checkedImageCapabilityIds.delete(id);
+      void refreshActiveChatImageCapability();
+    }
   } catch (error: any) {
     setActiveId(kind, previous);
     showConnectionNotice(false, '切换失败', errorMessage(error, '启用失败，请重试。'));
@@ -1465,6 +1609,9 @@ async function removeModel(kind: ModelKind, id: string) {
     if (activeIdFor(kind) === id) setActiveId(kind, listRef.value[0]?.id || '');
     await persist();
     if (editingId.value === id) closeInlineEdit();
+    if (kind === 'chat' && previousActive === id) {
+      void refreshActiveChatImageCapability();
+    }
   } catch (error: any) {
     listRef.value = previousList;
     setActiveId(kind, previousActive);
@@ -1535,9 +1682,9 @@ async function testAll() {
       ok ? '全部连接正常' : '连接测试失败',
       ok
         ? documentRequired
-          ? '对话、向量与文档识别模型均连接成功。'
+          ? '对话、向量与视觉模型均连接成功。'
           : '对话模型与向量模型均连接成功。'
-        : (data.error || (data.chat ? '向量或文档识别模型连接失败。' : '对话模型连接失败。'))
+        : (data.error || (data.chat ? '向量或视觉模型连接失败。' : '对话模型连接失败。'))
     );
   } catch (error: any) {
     showConnectionNotice(false, '连接测试失败', errorMessage(error, '连接测试失败。'));
@@ -1834,9 +1981,17 @@ async function load() {
   dreamScheduleTime.value = schedule.time;
 }
 
-onMounted(() => {
-  load();
-  loadTrash();
+watch(
+  () => [activeModelKind.value, activeChat.value] as const,
+  ([kind]) => {
+    if (kind === 'document') void refreshActiveChatImageCapability();
+  },
+);
+
+onMounted(async () => {
+  await load();
+  void loadTrash();
+  if (activeModelKind.value === 'document') void refreshActiveChatImageCapability();
 });
 
 onUnmounted(() => {
@@ -2640,6 +2795,10 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   min-width: 88px;
 }
 
+.discovery-url-row > .field-help {
+  align-self: center;
+}
+
 .discovery-message {
   margin-top: 10px;
 }
@@ -2945,6 +3104,56 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 
 .model-section-body {
   padding: 18px 24px 26px;
+}
+
+.vision-capability-note {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.vision-capability-note.supported {
+  border-color: color-mix(in srgb, var(--success) 24%, var(--border));
+  background: color-mix(in srgb, var(--success) 6%, var(--bg));
+  color: var(--success);
+}
+
+.vision-capability-note.warning {
+  border-color: color-mix(in srgb, var(--warn) 24%, var(--border));
+  background: color-mix(in srgb, var(--warn) 6%, var(--bg));
+  color: var(--warn);
+}
+
+.vision-capability-note.checking {
+  color: var(--accent);
+}
+
+.vision-capability-note > div {
+  min-width: 0;
+}
+
+.vision-capability-note strong,
+.vision-capability-note span {
+  display: block;
+}
+
+.vision-capability-note strong {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.vision-capability-note span {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .active-model-strip {
@@ -3999,6 +4208,15 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 
   .model-section-body {
     padding: 16px 18px 22px;
+  }
+
+  .vision-capability-note {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .vision-capability-note > .text-action {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .active-model-strip {
