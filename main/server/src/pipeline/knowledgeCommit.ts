@@ -18,7 +18,7 @@ import {
   type SourceVersion,
 } from './sourceLedger.js';
 import { ensureEntityStructure, renderKnowledgeProjection, type KnowledgeRelation } from './knowledgePage.js';
-import { queuePageRecompose } from './pageSynthesis.js';
+import { hasActivePageSynthesis, queuePageRecompose } from './pageSynthesis.js';
 import {
   findSupportingCandidates,
   consumeCandidateIdentity,
@@ -125,18 +125,25 @@ function enforceCrossSourceGate(
       (sum, candidate) => sum + parseArray<string>(candidate.fact_ids).length,
       0,
     );
-    if (!supporting.length || totalFacts < 2) {
-      return {
-        ...item,
-        action: 'review' as const,
-        evidenceEligible: true,
-        reason: [...new Set([
-          item.reason,
-          '自动新建页面至少需要两个不同原始资料来源，且每个来源至少提供一条有效事实',
-        ].filter(Boolean))].join('；'),
-      };
+    if (supporting.length && totalFacts >= 2) {
+      return { ...item, supportingCandidateIds: supporting.map((candidate) => candidate.id) };
     }
-    return { ...item, supportingCandidateIds: supporting.map((candidate) => candidate.id) };
+    const singleSourceEligible =
+      item.factIds.length >= 2 &&
+      item.confidence !== '低' &&
+      !item.ambiguity;
+    if (singleSourceEligible) return item;
+    return {
+      ...item,
+      action: 'review' as const,
+      evidenceEligible: true,
+      reason: [...new Set([
+        item.reason,
+        item.ambiguity
+          ? '候选身份仍有歧义，需要人工确认'
+          : '单一原始资料自动建页至少需要两条有效事实',
+      ].filter(Boolean))].join('；'),
+    };
   });
 }
 
@@ -189,7 +196,7 @@ function projectPage(pageId: string, pendingVersionId?: string): void {
   if (!current) return;
   const allManaged = allPageContributions(pageId);
   const active = contributionsForProjection(pageId, pendingVersionId);
-  if (isEntity(page.type)) {
+  if (isEntity(page.type) && hasActivePageSynthesis(pageId)) {
     writePage(page.path, ensureEntityStructure(current.content, page.title), {
       type: page.type,
       summary: current.meta.summary,

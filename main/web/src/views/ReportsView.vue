@@ -91,7 +91,7 @@
             <span>证据：{{ r.evidence?.sourceCount || 1 }} 个资料来源 / {{ r.evidence?.factCount || r.facts?.length || 0 }} 条事实</span>
           </div>
           <p v-if="(r.evidence?.sourceCount || 1) < 2" class="review-guidance small">
-            当前只有一个资料来源。{{ pageTypeLabel(r.payload.kind) }}只是模型分类；模型建议忽略本次候选，你仍可保持询问或显式批准。
+            当前候选仍缺少足够事实或存在身份歧义。{{ pageTypeLabel(r.payload.kind) }}只是模型分类，请核对证据后再批准。
           </p>
           <p v-if="r.payload.summary || r.payload.content" class="draft"><b>草稿：</b>{{ r.payload.summary || r.payload.content }}</p>
           <details v-if="r.facts?.length" class="evidence small">
@@ -360,7 +360,7 @@ const actionConfig: Record<string, { button: string; description: string; itemAc
   contradiction: { button: '批量标记已处理', description: '默认全选并关闭矛盾提醒，不修改正文。', itemAction: '标记已处理', impact: '只关闭报告，不修改任何页面正文。' },
   single_source: { button: '批量标记已知悉', description: '默认全选并确认已知悉来源单一。', itemAction: '标记已知悉', impact: '只关闭报告，不修改来源或页面正文。' },
   missing_sections: { button: '批量补章节', description: '默认全选并补充缺失的空章节骨架。', itemAction: '补空章节', impact: '只添加“当前理解”或“时间线”标题，不生成正文。' },
-  pending_review: { button: '一键审核', description: '默认采用模型建议；单来源候选推荐忽略，页面类型仅作为分类信息。', itemAction: '审核候选', impact: '询问项继续留在待审；忽略或批准项按明确选择执行。' },
+  pending_review: { button: '一键审核', description: '默认采用模型建议；证据不足或身份不清的候选保留询问，页面类型仅作为分类信息。', itemAction: '审核候选', impact: '询问项继续留在待审；忽略或批准项按明确选择执行。' },
   ingest_questions: { button: '批量标记已知悉', description: '默认全选并确认已查看整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
   enrich: { button: '批量忽略', description: '默认全选并忽略当前待丰富提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
   stale: { button: '批量复核', description: '默认全选并记录内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },

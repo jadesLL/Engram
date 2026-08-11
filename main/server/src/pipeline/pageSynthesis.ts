@@ -687,7 +687,7 @@ export async function recomposePage(
       db.transaction(() => {
         db.prepare(
           `UPDATE page_syntheses SET status='superseded',updated_at=?
-           WHERE page_id=? AND status='active' AND id<>?`
+           WHERE page_id=? AND status IN ('active','failed','conflict') AND id<>?`
         ).run(now(), pageId, synthesisId);
         db.prepare(
           `UPDATE page_syntheses SET

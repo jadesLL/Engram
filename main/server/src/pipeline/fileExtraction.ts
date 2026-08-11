@@ -37,6 +37,7 @@ export interface ExtractionOptions {
   mode?: ExtractionMode;
   pages?: number[];
   ingestAfter?: boolean;
+  forceIngest?: boolean;
 }
 
 export interface ExtractionProgress {
@@ -233,6 +234,7 @@ function finalizeExtraction(
   sourceHash: string,
   pageCount: number,
   ingestAfter: boolean,
+  forceIngest = false,
 ): FileExtractionDetails {
   const pages = pageRows(file.id);
   const text = aggregateText(file.ext, pages);
@@ -269,7 +271,11 @@ function finalizeExtraction(
 
   if (text) enqueue('index_file', { fileId: file.id, revision: textHash.slice(0, 16) });
   if (status === 'completed' && text && ingestAfter) {
-    enqueue('ingest', { path: file.path, revision: textHash.slice(0, 16) });
+    enqueue('ingest', {
+      path: file.path,
+      revision: textHash.slice(0, 16),
+      ...(forceIngest ? { force: true } : {}),
+    });
   }
   return extractionDetails(file.path)!;
 }
@@ -432,7 +438,13 @@ async function extractPdf(
         detail: `第 ${pageNumber}/${pageCount} 页`,
       });
     }
-    const result = finalizeExtraction(file, sourceHash, pageCount, options.ingestAfter !== false);
+    const result = finalizeExtraction(
+      file,
+      sourceHash,
+      pageCount,
+      options.ingestAfter !== false,
+      options.forceIngest === true,
+    );
     if (result.status === 'failed') throw new Error(result.error || 'PDF 文字提取失败');
     return result;
   } catch (error) {
@@ -472,7 +484,13 @@ async function extractImage(
       status: 'blocked',
       error: '尚未配置文档识别模型',
     });
-    return finalizeExtraction(file, sourceHash, 1, options.ingestAfter !== false);
+    return finalizeExtraction(
+      file,
+      sourceHash,
+      1,
+      options.ingestAfter !== false,
+      options.forceIngest === true,
+    );
   }
   try {
     update({ stage: '处理图片', progress: 25, detail: file.name });
@@ -482,7 +500,13 @@ async function extractImage(
       status: 'completed',
       text: recognized,
     });
-    const result = finalizeExtraction(file, sourceHash, 1, options.ingestAfter !== false);
+    const result = finalizeExtraction(
+      file,
+      sourceHash,
+      1,
+      options.ingestAfter !== false,
+      options.forceIngest === true,
+    );
     if (result.status === 'failed') throw new Error(result.error || '图片文字提取失败');
     return result;
   } catch (error) {
@@ -491,7 +515,13 @@ async function extractImage(
       status: 'failed',
       error: friendlyError(error),
     });
-    const result = finalizeExtraction(file, sourceHash, 1, options.ingestAfter !== false);
+    const result = finalizeExtraction(
+      file,
+      sourceHash,
+      1,
+      options.ingestAfter !== false,
+      options.forceIngest === true,
+    );
     throw new Error(result.error || '图片文字提取失败');
   } finally {
     clearAllCache();
@@ -521,7 +551,11 @@ export async function extractFile(
   ) {
     if (file.text) enqueue('index_file', { fileId: file.id, revision: existing.text_hash.slice(0, 16) });
     if (file.text && options.ingestAfter !== false) {
-      enqueue('ingest', { path: file.path, revision: existing.text_hash.slice(0, 16) });
+      enqueue('ingest', {
+        path: file.path,
+        revision: existing.text_hash.slice(0, 16),
+        ...(options.forceIngest ? { force: true } : {}),
+      });
     }
     return extractionDetails(relPath)!;
   }
@@ -558,6 +592,7 @@ export function scheduleFileExtraction(
       mode: options.mode || 'auto',
       ...(options.pages?.length ? { pages: options.pages.slice(0, OCR_PAGE_LIMIT) } : {}),
       ingestAfter: options.ingestAfter !== false,
+      forceIngest: options.forceIngest === true,
     }),
   };
 }

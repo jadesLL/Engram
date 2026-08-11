@@ -41,7 +41,7 @@ export async function loadSourceDocument(relPath: string): Promise<StructuredDoc
     documentHash = extracted.contentHash;
   }
   else text = matter(bytes.toString('utf8')).content.replace(/\r\n/g, '\n').trim();
-  const chunks = chunkLosslessly(text);
+  const chunks = chunkLosslessly(text, { maxChars: 3000, overlapChars: 200 });
   assertLosslessChunks(text, chunks);
   return {
     path: relPath,
