@@ -607,14 +607,23 @@
             <div class="field">
               <label for="model-api-key">API Key</label>
               <input
+                ref="apiKeyInput"
                 id="model-api-key"
-                v-model="form.apiKey"
-                type="password"
+                class="api-key-input"
+                type="text"
+                :value="formApiKeyDisplayValue"
                 :placeholder="formKeyPlaceholder"
-                @input="onFormCredentialsInput"
-                @blur="discoverFormModels()"
+                autocomplete="off"
+                spellcheck="false"
+                @focus="revealFormApiKey"
+                @click="revealFormApiKey"
+                @input="onFormApiKeyInput"
+                @blur="onFormApiKeyBlur"
               />
-              <span v-if="form.id" class="field-help">留空保持原 Key</span>
+              <span v-if="effectiveFormApiKey" class="field-help">
+                {{ apiKeyRevealed ? '点击其他位置后重新隐藏；可直接编辑替换 Key。' : '中间字符已隐藏，点击输入框查看完整 Key。' }}
+              </span>
+              <span v-else-if="form.id" class="field-help">请为当前服务商和线路输入 API Key。</span>
             </div>
             <div v-if="form.kind === 'emb'" class="field">
               <label for="model-dimension">向量维度</label>
@@ -650,7 +659,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useAuthStore } from '../stores/auth';
@@ -909,6 +918,8 @@ const form = ref({
   dim: 1024,
 });
 const providerLogoInput = ref<HTMLInputElement>();
+const apiKeyInput = ref<HTMLInputElement>();
+const apiKeyRevealed = ref(false);
 const formTesting = ref(false);
 const formSaving = ref(false);
 const formError = ref('');
@@ -1038,14 +1049,19 @@ const currentFormModelUnavailable = computed(() => {
     && !discoveredModels.value.some((model) => model.id === current),
   );
 });
-const effectiveFormApiKey = computed(() => {
-  const explicit = form.value.apiKey.trim();
-  if (explicit) return explicit;
+const reusableExistingApiKey = computed(() => {
   const existing = existingFormEntry.value;
   return existing?.provider === form.value.provider
     && normalizeUrl(existing.baseUrl) === normalizeUrl(form.value.baseUrl)
     ? existing.apiKey
     : '';
+});
+const effectiveFormApiKey = computed(() =>
+  form.value.apiKey.trim() || reusableExistingApiKey.value
+);
+const formApiKeyDisplayValue = computed(() => {
+  const key = effectiveFormApiKey.value;
+  return apiKeyRevealed.value ? key : maskKey(key);
 });
 
 function blankDraft(): ModelDraft {
@@ -1232,9 +1248,10 @@ function providerName(id: string): string {
 }
 
 function maskKey(key: string): string {
-  if (!key) return '未填 Key';
-  if (key.length <= 8) return '****';
-  return `${key.slice(0, 4)}...${key.slice(-4)}`;
+  if (!key) return '';
+  if (key.length <= 4) return '*'.repeat(key.length);
+  if (key.length <= 8) return `${key.slice(0, 2)}****${key.slice(-2)}`;
+  return `${key.slice(0, 4)}********${key.slice(-4)}`;
 }
 
 function newId(): string {
@@ -1388,6 +1405,7 @@ async function saveInlineEdit(kind: ModelKind, provider: ProviderPreset, existin
 
 function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
   modelDiscoveryRequestId++;
+  apiKeyRevealed.value = false;
   formError.value = '';
   discoveredModels.value = [];
   modelDiscoveryCompleted.value = false;
@@ -1412,6 +1430,7 @@ function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
 
 function pickProvider(id: string) {
   modelDiscoveryRequestId++;
+  apiKeyRevealed.value = false;
   const provider = providerById(id) || customPreset;
   const hasGeneratedName = !form.value.name || PROVIDERS.some((item) => item.name === form.value.name);
   const draft = createDraft(form.value.kind, provider);
@@ -1434,6 +1453,7 @@ function pickProvider(id: string) {
 
 function onFormLineChange() {
   modelDiscoveryRequestId++;
+  apiKeyRevealed.value = false;
   applyLineToDraft(form.value.kind, currentFormProvider.value, form.value, form.value.line);
   form.value.apiKey = '';
   formError.value = '';
@@ -1468,6 +1488,28 @@ function resetFormModelDiscovery(clearNewSelection = false) {
 
 function onFormCredentialsInput() {
   resetFormModelDiscovery(true);
+}
+
+function revealFormApiKey() {
+  if (!effectiveFormApiKey.value) return;
+  apiKeyRevealed.value = true;
+  void nextTick(() => {
+    const input = apiKeyInput.value;
+    if (!input) return;
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+}
+
+function onFormApiKeyInput(event: Event) {
+  const value = (event.currentTarget as HTMLInputElement).value;
+  form.value.apiKey = value === reusableExistingApiKey.value ? '' : value;
+  apiKeyRevealed.value = true;
+  onFormCredentialsInput();
+}
+
+function onFormApiKeyBlur() {
+  apiKeyRevealed.value = false;
+  void discoverFormModels();
 }
 
 function modelOptionLabel(model: FormModelOption): string {
@@ -1527,6 +1569,7 @@ async function onProviderLogoUpload(event: Event) {
 }
 
 function onFormBaseUrlChange() {
+  apiKeyRevealed.value = false;
   resetFormModelDiscovery(true);
   form.value.modelsUrl = inferredModelsUrl(form.value.baseUrl);
   if (form.value.apiKey.trim()) void discoverFormModels();
@@ -4194,6 +4237,10 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 .field select {
   width: 100%;
   min-width: 0;
+}
+
+.api-key-input {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
 .field-help {
