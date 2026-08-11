@@ -2906,13 +2906,14 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 }
 
 .model-tabs {
-  display: inline-grid;
-  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
+  width: calc(100% - 48px);
   margin: 18px 24px 0;
   padding: 3px;
   border-radius: 8px;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
 }
 
 .model-tabs button {
@@ -2931,7 +2932,7 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 .model-tabs button.active {
   background: var(--bg);
   color: var(--text);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: none;
   font-weight: 600;
 }
 
@@ -4091,12 +4092,17 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   }
 
   .model-tabs {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .model-tabs button {
-    padding-right: 8px;
-    padding-left: 8px;
+    gap: 3px;
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .model-tabs .tab-count {
+    min-width: 0;
   }
 
   .model-section-intro {
