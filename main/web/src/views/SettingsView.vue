@@ -508,7 +508,7 @@
       </div>
     </transition>
 
-    <div v-if="form.show" class="modal-mask" @click.self="form.show = false">
+    <div v-if="form.show" class="modal-mask">
       <div
         class="model-dialog"
         role="dialog"
