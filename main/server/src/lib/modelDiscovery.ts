@@ -72,15 +72,22 @@ export function parseDiscoveredModelIds(payload: unknown): string[] {
 }
 
 export function filterDiscoveredModels(ids: string[], kind: DiscoveredModelKind): string[] {
-  const filtered = kind === 'embedding'
-    ? ids.filter((id) => EMBEDDING_PATTERN.test(id))
-    : kind === 'document'
-      ? ids.filter((id) =>
-          (DOCUMENT_PATTERN.test(id) || inferImageInputStatus(id) === 'supported')
-          && !NON_CHAT_PATTERN.test(id)
-        )
-      : ids.filter((id) => !EMBEDDING_PATTERN.test(id) && !NON_CHAT_PATTERN.test(id));
-  return filtered.length ? filtered : ids;
+  if (kind === 'embedding') {
+    const filtered = ids.filter((id) => EMBEDDING_PATTERN.test(id));
+    return filtered.length ? filtered : ids;
+  }
+  if (kind === 'document') {
+    const supported = ids.filter((id) =>
+      (DOCUMENT_PATTERN.test(id) || inferImageInputStatus(id) === 'supported')
+      && !NON_CHAT_PATTERN.test(id)
+    );
+    if (supported.length) return supported;
+    return ids.filter((id) =>
+      inferImageInputStatus(id) === 'unknown'
+      && !NON_CHAT_PATTERN.test(id)
+    );
+  }
+  return ids.filter((id) => !EMBEDDING_PATTERN.test(id) && !NON_CHAT_PATTERN.test(id));
 }
 
 export async function discoverModels(input: DiscoverModelsInput): Promise<{

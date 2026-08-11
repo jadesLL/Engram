@@ -575,9 +575,17 @@
             <div class="field">
               <label for="model-choice">模型</label>
               <select id="model-choice" v-model="form.modelChoice" @change="onFormModelChange">
-                <option v-for="model in formModelOptions" :key="model.id" :value="model.id">{{ model.name }}</option>
+                <option value="" disabled>
+                  {{ discoveryBusy ? '正在拉取模型...' : modelDiscoveryCompleted ? '请选择模型' : '输入 API Key 后拉取模型' }}
+                </option>
+                <option v-for="model in formModelOptions" :key="model.id" :value="model.id">
+                  {{ modelOptionLabel(model) }}
+                </option>
                 <option value="__custom__">自定义模型名称</option>
               </select>
+              <span v-if="currentFormModelUnavailable" class="field-help model-unavailable-help">
+                当前账号的模型目录未返回此模型，配置已保留；请选择可用模型或继续手动使用。
+              </span>
             </div>
             <div v-if="form.modelChoice === '__custom__'" class="field field-wide">
               <label for="custom-model-name">自定义模型名称</label>
@@ -603,6 +611,7 @@
                 v-model="form.apiKey"
                 type="password"
                 :placeholder="formKeyPlaceholder"
+                @input="onFormCredentialsInput"
                 @blur="discoverFormModels()"
               />
               <span v-if="form.id" class="field-help">留空保持原 Key</span>
@@ -618,7 +627,7 @@
           <p v-if="formHint" class="dialog-hint">{{ formHint }}</p>
           <p
             class="setting-message discovery-message"
-            :class="discoveryOk ? 'ok' : 'err'"
+            :class="currentFormModelUnavailable ? 'warn' : discoveryOk ? 'ok' : 'err'"
             :title="discoveryMessage"
           >{{ discoveryMessage || ' ' }}</p>
           <p v-if="formError" class="setting-message err">{{ formError }}</p>
@@ -693,6 +702,10 @@ interface ProviderCard {
   provider: ProviderPreset;
   entries: ModelEntry[];
 }
+
+type FormModelOption = ModelOption & {
+  unavailable?: boolean;
+};
 
 interface TrashEntry {
   id: string;
@@ -900,9 +913,11 @@ const formTesting = ref(false);
 const formSaving = ref(false);
 const formError = ref('');
 const discoveredModels = ref<ModelOption[]>([]);
+const modelDiscoveryCompleted = ref(false);
 const discoveryBusy = ref(false);
 const discoveryMessage = ref('');
 const discoveryOk = ref(false);
+let modelDiscoveryRequestId = 0;
 
 const fixedChatProviders = computed(() => PROVIDERS.filter((provider) => provider.id !== 'custom'));
 const fixedEmbeddingProviders = computed(() =>
@@ -979,24 +994,59 @@ const currentFormProvider = computed<ProviderPreset>(() => {
   if (preset) return preset;
   return { ...customPreset, id: form.value.provider, name: providerName(form.value.provider) };
 });
-const formModelOptions = computed(() => {
-  const merged = new Map<string, ModelOption>();
-  for (const model of discoveredModels.value) merged.set(model.id, model);
-  for (const model of modelOptionsForDraft(form.value.kind, currentFormProvider.value, form.value)) {
-    if (!merged.has(model.id)) merged.set(model.id, model);
-  }
-  return [...merged.values()];
-});
-const formDimensionOptions = computed(() => dimensionOptionsForDraft(currentFormProvider.value, form.value));
-const formLine = computed(() => lineFor(currentFormProvider.value, form.value.line, form.value.kind));
-const formKeyPlaceholder = computed(() => formLine.value?.apiKeyPlaceholder || 'API Key');
-const formHint = computed(() => formLine.value?.hint || currentFormProvider.value.hint || '');
 const existingFormEntry = computed(() => {
   if (!form.value.id) return undefined;
   const list = modelsRef(form.value.kind).value;
   return list.find((model) => model.id === form.value.id);
 });
-const effectiveFormApiKey = computed(() => form.value.apiKey.trim() || existingFormEntry.value?.apiKey || '');
+const formModelOptions = computed<FormModelOption[]>(() => {
+  const options = new Map<string, FormModelOption>();
+  for (const model of discoveredModels.value) options.set(model.id, model);
+
+  const current = modelValue(form.value);
+  const existing = existingFormEntry.value;
+  if (existing && current === existing.model && !options.has(current)) {
+    const preset = modelById(
+      currentFormProvider.value.id,
+      current,
+      form.value.kind === 'chat' ? 'chat' : form.value.kind === 'emb' ? 'embedding' : 'document',
+    );
+    options.set(current, {
+      id: current,
+      name: preset?.name || current,
+      ...preset,
+      unavailable: modelDiscoveryCompleted.value,
+    });
+  }
+
+  return [...options.values()];
+});
+const formDimensionOptions = computed(() =>
+  dimensionOptionsForDraft(currentFormProvider.value, form.value, discoveredModels.value)
+);
+const formLine = computed(() => lineFor(currentFormProvider.value, form.value.line, form.value.kind));
+const formKeyPlaceholder = computed(() => formLine.value?.apiKeyPlaceholder || 'API Key');
+const formHint = computed(() => formLine.value?.hint || currentFormProvider.value.hint || '');
+const currentFormModelUnavailable = computed(() => {
+  if (!modelDiscoveryCompleted.value) return false;
+  const existing = existingFormEntry.value;
+  const current = modelValue(form.value);
+  return Boolean(
+    existing
+    && current
+    && current === existing.model
+    && !discoveredModels.value.some((model) => model.id === current),
+  );
+});
+const effectiveFormApiKey = computed(() => {
+  const explicit = form.value.apiKey.trim();
+  if (explicit) return explicit;
+  const existing = existingFormEntry.value;
+  return existing?.provider === form.value.provider
+    && normalizeUrl(existing.baseUrl) === normalizeUrl(form.value.baseUrl)
+    ? existing.apiKey
+    : '';
+});
 
 function blankDraft(): ModelDraft {
   return { line: '', baseUrl: '', modelsUrl: '', logo: '', model: '', modelChoice: '__custom__', apiKey: '', dim: 1024 };
@@ -1031,60 +1081,56 @@ function inferLine(provider: ProviderPreset, entry: ModelEntry | undefined, kind
   return lines.find((line) => normalizeUrl(line.baseUrl) === baseUrl)?.id || lines[0]?.id || '';
 }
 
-function providerModels(provider: ProviderPreset, kind: ModelKind): ModelOption[] {
-  if (kind === 'chat') return provider.chatModels;
-  if (kind === 'emb') return provider.embeddingModels;
-  return provider.documentModels || [];
-}
-
-function modelOptionsForDraft(kind: ModelKind, provider: ProviderPreset, draft: Pick<ModelDraft, 'line'>): ModelOption[] {
-  const models = providerModels(provider, kind);
-  const line = lineFor(provider, draft.line, kind);
-  if (kind === 'chat' && line?.models?.length) {
-    return line.models.map((id) => modelById(provider.id, id, 'chat') || { id, name: id });
-  }
-  return models;
-}
-
-function modelOptionForDraft(kind: ModelKind, provider: ProviderPreset, draft: Pick<ModelDraft, 'model' | 'modelChoice'>) {
+function modelOptionForDraft(
+  kind: ModelKind,
+  provider: ProviderPreset,
+  draft: Pick<ModelDraft, 'model' | 'modelChoice'>,
+  additionalModels: ModelOption[] = [],
+) {
   if (draft.modelChoice === '__custom__') return undefined;
-  return modelById(
+  const preset = modelById(
     provider.id,
     draft.modelChoice || draft.model,
     kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document'
   );
+  const discovered = additionalModels.find((model) => model.id === (draft.modelChoice || draft.model));
+  return discovered ? { ...preset, ...discovered } : preset;
 }
 
-function dimensionOptionsForDraft(provider: ProviderPreset, draft: Pick<ModelDraft, 'model' | 'modelChoice'>): number[] {
-  return modelOptionForDraft('emb', provider, draft)?.dimensions || [];
+function dimensionOptionsForDraft(
+  provider: ProviderPreset,
+  draft: Pick<ModelDraft, 'model' | 'modelChoice'>,
+  additionalModels: ModelOption[] = [],
+): number[] {
+  return modelOptionForDraft('emb', provider, draft, additionalModels)?.dimensions || [];
 }
 
-function defaultModel(provider: ProviderPreset, kind: ModelKind, lineId: string): ModelOption | undefined {
-  const available = modelOptionsForDraft(kind, provider, { line: lineId });
-  const defaultId = kind === 'chat'
+function recommendedModelId(provider: ProviderPreset, kind: ModelKind): string | undefined {
+  return kind === 'chat'
     ? provider.defaultChat
     : kind === 'emb'
       ? provider.defaultEmbedding
       : provider.defaultDocument;
-  return available.find((model) => model.id === defaultId) || available[0];
 }
 
 function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: ModelEntry): ModelDraft {
   const line = inferLine(provider, existing, kind);
-  const available = modelOptionsForDraft(kind, provider, { line });
   const existingOption = existing
-    ? available.find((model) => model.id === existing.model)
-    : defaultModel(provider, kind, line);
-  const selected = existingOption || (!existing ? defaultModel(provider, kind, line) : undefined);
+    ? modelById(
+        provider.id,
+        existing.model,
+        kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
+      )
+    : undefined;
   return {
     line,
     baseUrl: existing?.baseUrl || lineFor(provider, line, kind)?.baseUrl || '',
     modelsUrl: existing?.modelsUrl || lineFor(provider, line, kind)?.modelsUrl || '',
     logo: existing?.logo || '',
-    model: existing?.model || selected?.id || '',
-    modelChoice: existingOption || (!existing && selected) ? (existingOption || selected)!.id : '__custom__',
+    model: existing?.model || '',
+    modelChoice: existing?.model || '',
     apiKey: '',
-    dim: existing?.dim || selected?.dim || 1024,
+    dim: existing?.dim || existingOption?.dim || 1024,
   };
 }
 
@@ -1119,13 +1165,9 @@ function applyLineToDraft(kind: ModelKind, provider: ProviderPreset, draft: Mode
   const line = lineFor(provider, lineId, kind);
   if (line) draft.baseUrl = line.baseUrl;
   if (line) draft.modelsUrl = line.modelsUrl || inferredModelsUrl(line.baseUrl);
-  const available = modelOptionsForDraft(kind, provider, draft);
-  if (line?.models?.length || (draft.modelChoice !== '__custom__' && !available.some((m) => m.id === draft.modelChoice))) {
-    const next = defaultModel(provider, kind, lineId);
-    draft.modelChoice = next?.id || '__custom__';
-    draft.model = next?.id || '';
-    if (kind === 'emb') draft.dim = next?.dim || 1024;
-  }
+  draft.modelChoice = '';
+  draft.model = '';
+  if (kind === 'emb') draft.dim = 1024;
 }
 
 function applyModelToDraft(kind: ModelKind, provider: ProviderPreset, draft: ModelDraft, choice: string) {
@@ -1233,10 +1275,11 @@ function entryFromDraft(
   provider: ProviderPreset,
   draft: ModelDraft,
   existing?: ModelEntry,
-  name?: string
+  name?: string,
+  additionalModels: ModelOption[] = [],
 ): ModelEntry {
   const model = modelValue(draft);
-  const option = modelOptionForDraft(kind, provider, draft);
+  const option = modelOptionForDraft(kind, provider, draft, additionalModels);
   const supportsDimensions = kind === 'emb'
     ? option?.supportsDimensions === true
       || (!option && existing?.model === model && existing.supportsDimensions === true)
@@ -1255,13 +1298,19 @@ function entryFromDraft(
   return {
     id: existing?.id || newId(),
     name: name?.trim() || existing?.name || provider.name,
-    provider: existing?.provider || provider.id,
+    provider: provider.id,
     line: draft.line,
     baseUrl: normalizeUrl(draft.baseUrl),
     modelsUrl: normalizeUrl(draft.modelsUrl),
     ...(draft.logo ? { logo: draft.logo } : {}),
     model,
-    apiKey: draft.apiKey.trim() || existing?.apiKey || '',
+    apiKey: draft.apiKey.trim()
+      || (
+        existing?.provider === provider.id
+        && normalizeUrl(existing.baseUrl) === normalizeUrl(draft.baseUrl)
+          ? existing.apiKey
+          : ''
+      ),
     ...(kind === 'emb' ? { dim: draft.dim || option?.dim || 1024, supportsDimensions } : {}),
     ...(imageInput ? { imageInput, imageInputSource } : {}),
     ...(sameEndpoint && existing?.imageInputCheckedAt
@@ -1338,9 +1387,13 @@ async function saveInlineEdit(kind: ModelKind, provider: ProviderPreset, existin
 }
 
 function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
+  modelDiscoveryRequestId++;
   formError.value = '';
   discoveredModels.value = [];
+  modelDiscoveryCompleted.value = false;
+  discoveryBusy.value = false;
   discoveryMessage.value = '';
+  discoveryOk.value = false;
   const id = existing?.provider || providerId || 'custom';
   const provider = providerById(id) || { ...customPreset, id, name: providerName(id) };
   const draft = createDraft(kind, provider, existing);
@@ -1358,7 +1411,9 @@ function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
 }
 
 function pickProvider(id: string) {
+  modelDiscoveryRequestId++;
   const provider = providerById(id) || customPreset;
+  const hasGeneratedName = !form.value.name || PROVIDERS.some((item) => item.name === form.value.name);
   const draft = createDraft(form.value.kind, provider);
   form.value.line = draft.line;
   form.value.baseUrl = draft.baseUrl;
@@ -1366,24 +1421,69 @@ function pickProvider(id: string) {
   form.value.logo = draft.logo;
   form.value.model = draft.model;
   form.value.modelChoice = draft.modelChoice;
+  form.value.apiKey = '';
   form.value.dim = draft.dim;
-  if (!form.value.name) form.value.name = provider.name;
+  if (hasGeneratedName) form.value.name = provider.name;
   formError.value = '';
   discoveredModels.value = [];
+  modelDiscoveryCompleted.value = false;
+  discoveryBusy.value = false;
   discoveryMessage.value = '';
+  discoveryOk.value = false;
 }
 
 function onFormLineChange() {
+  modelDiscoveryRequestId++;
   applyLineToDraft(form.value.kind, currentFormProvider.value, form.value, form.value.line);
+  form.value.apiKey = '';
   formError.value = '';
   discoveredModels.value = [];
+  modelDiscoveryCompleted.value = false;
+  discoveryBusy.value = false;
   discoveryMessage.value = '';
-  if (form.value.apiKey.trim()) void discoverFormModels();
+  discoveryOk.value = false;
 }
 
 function onFormModelChange() {
   applyModelToDraft(form.value.kind, currentFormProvider.value, form.value, form.value.modelChoice);
   formError.value = '';
+}
+
+function resetFormModelDiscovery(clearNewSelection = false) {
+  modelDiscoveryRequestId++;
+  discoveredModels.value = [];
+  modelDiscoveryCompleted.value = false;
+  discoveryBusy.value = false;
+  discoveryMessage.value = '';
+  discoveryOk.value = false;
+  if (clearNewSelection) {
+    const existing = existingFormEntry.value;
+    if (!existing || modelValue(form.value) !== existing.model) {
+      form.value.modelChoice = '';
+      form.value.model = '';
+      if (form.value.kind === 'emb') form.value.dim = 1024;
+    }
+  }
+}
+
+function onFormCredentialsInput() {
+  resetFormModelDiscovery(true);
+}
+
+function modelOptionLabel(model: FormModelOption): string {
+  return model.unavailable ? `${model.name}（当前账号未返回）` : model.name;
+}
+
+function selectDiscoveredModelId(
+  modelIds: string[],
+  recommendedId?: string,
+  currentId?: string,
+  preserveUnavailable = false,
+): string {
+  if (currentId && modelIds.includes(currentId)) return currentId;
+  if (preserveUnavailable && currentId) return currentId;
+  if (recommendedId && modelIds.includes(recommendedId)) return recommendedId;
+  return modelIds[0] || '';
 }
 
 async function onProviderLogoUpload(event: Event) {
@@ -1427,20 +1527,24 @@ async function onProviderLogoUpload(event: Event) {
 }
 
 function onFormBaseUrlChange() {
-  if (!form.value.modelsUrl.trim()) {
-    form.value.modelsUrl = inferredModelsUrl(form.value.baseUrl);
-  }
+  resetFormModelDiscovery(true);
+  form.value.modelsUrl = inferredModelsUrl(form.value.baseUrl);
   if (form.value.apiKey.trim()) void discoverFormModels();
 }
 
 async function discoverFormModels(apiKeyOverride?: string) {
+  const requestId = ++modelDiscoveryRequestId;
   const apiKey = apiKeyOverride || effectiveFormApiKey.value;
   if (!apiKey) {
+    modelDiscoveryCompleted.value = false;
+    discoveryBusy.value = false;
     discoveryOk.value = false;
     discoveryMessage.value = '输入 API Key 后会自动拉取可用模型。';
     return;
   }
   if (!normalizeUrl(form.value.baseUrl)) {
+    modelDiscoveryCompleted.value = false;
+    discoveryBusy.value = false;
     discoveryOk.value = false;
     discoveryMessage.value = '请先填写 Base URL。';
     return;
@@ -1457,23 +1561,45 @@ async function discoverFormModels(apiKeyOverride?: string) {
           ? 'embedding'
           : 'document',
     });
+    if (requestId !== modelDiscoveryRequestId) return;
     form.value.modelsUrl = data.url || inferredModelsUrl(form.value.baseUrl);
-    discoveredModels.value = (data.models || []).map((id: string) => ({
-      id,
-      name: id,
-      ...(data.capabilities?.[id] ? { imageInput: data.capabilities[id] as ImageInputStatus } : {}),
-    }));
+    const kind = form.value.kind === 'chat' ? 'chat' : form.value.kind === 'emb' ? 'embedding' : 'document';
+    discoveredModels.value = (data.models || []).map((id: string) => {
+      const preset = modelById(currentFormProvider.value.id, id, kind);
+      return {
+        ...preset,
+        id,
+        name: preset?.name || id,
+        ...(data.capabilities?.[id]
+          ? { imageInput: data.capabilities[id] as ImageInputStatus }
+          : {}),
+      };
+    });
+    modelDiscoveryCompleted.value = true;
     discoveryOk.value = true;
-    discoveryMessage.value = `已自动拉取 ${discoveredModels.value.length} 个可用模型。`;
     const current = form.value.modelChoice === '__custom__' ? form.value.model : form.value.modelChoice;
-    if (!current && discoveredModels.value[0]) {
-      applyModelToDraft(form.value.kind, currentFormProvider.value, form.value, discoveredModels.value[0].id);
+    const nextModelId = selectDiscoveredModelId(
+      discoveredModels.value.map((model) => model.id),
+      recommendedModelId(currentFormProvider.value, form.value.kind),
+      current,
+      Boolean(
+        (existingFormEntry.value && current === existingFormEntry.value.model)
+        || (form.value.modelChoice === '__custom__' && form.value.model.trim())
+      ),
+    );
+    if (nextModelId && nextModelId !== current) {
+      applyModelToDraft(form.value.kind, currentFormProvider.value, form.value, nextModelId);
     }
+    discoveryMessage.value = currentFormModelUnavailable.value
+      ? `已拉取 ${discoveredModels.value.length} 个可用模型；原配置未在当前账号目录中返回，已保留。`
+      : `已自动拉取 ${discoveredModels.value.length} 个可用模型。`;
   } catch (error: any) {
+    if (requestId !== modelDiscoveryRequestId) return;
+    modelDiscoveryCompleted.value = false;
     discoveryOk.value = false;
-    discoveryMessage.value = errorMessage(error, '自动拉取失败，可继续使用内置目录或手动填写模型。');
+    discoveryMessage.value = errorMessage(error, '自动拉取失败，可手动填写模型 ID。');
   } finally {
-    discoveryBusy.value = false;
+    if (requestId === modelDiscoveryRequestId) discoveryBusy.value = false;
   }
 }
 
@@ -1552,7 +1678,7 @@ async function refreshActiveChatImageCapability(force = false) {
 async function saveModel() {
   formError.value = '';
   const existing = existingFormEntry.value;
-  const effectiveKey = form.value.apiKey.trim() || existing?.apiKey || '';
+  const effectiveKey = effectiveFormApiKey.value;
   const error = validateDraft(form.value, form.value.kind, effectiveKey);
   if (error) {
     formError.value = error;
@@ -1564,7 +1690,14 @@ async function saveModel() {
   const previousList = list.value.map((model) => ({ ...model }));
   const previousActive = activeIdFor(kind);
   try {
-    const entry = entryFromDraft(kind, currentFormProvider.value, form.value, existing, form.value.name);
+    const entry = entryFromDraft(
+      kind,
+      currentFormProvider.value,
+      form.value,
+      existing,
+      form.value.name,
+      discoveredModels.value,
+    );
     const index = list.value.findIndex((model) => model.id === entry.id);
     if (index >= 0) list.value[index] = entry;
     else list.value.push(entry);
@@ -1642,7 +1775,7 @@ async function testOne(kind: ModelKind, model: ModelEntry) {
 async function testForm() {
   formError.value = '';
   const existing = existingFormEntry.value;
-  const effectiveKey = form.value.apiKey.trim() || existing?.apiKey || '';
+  const effectiveKey = effectiveFormApiKey.value;
   const error = validateDraft(form.value, form.value.kind, effectiveKey);
   if (error) {
     formError.value = error;
@@ -1650,7 +1783,14 @@ async function testForm() {
   }
   formTesting.value = true;
   try {
-    const entry = entryFromDraft(form.value.kind, currentFormProvider.value, form.value, existing, form.value.name);
+    const entry = entryFromDraft(
+      form.value.kind,
+      currentFormProvider.value,
+      form.value,
+      existing,
+      form.value.name,
+      discoveredModels.value,
+    );
     const { data } = await api.post('/api/settings/test-llm', {
       entry,
       kind: form.value.kind === 'chat'
@@ -4061,6 +4201,11 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   font-size: 10px;
 }
 
+.model-unavailable-help {
+  color: var(--warn);
+  line-height: 1.45;
+}
+
 .dialog-hint {
   margin: 14px 0 0;
   padding: 10px 12px;
@@ -4096,6 +4241,10 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 
 .err {
   color: var(--danger);
+}
+
+.warn {
+  color: var(--warn);
 }
 
 @media (max-width: 1040px) {

@@ -50,6 +50,8 @@ test('filterDiscoveredModels separates chat and embedding candidates with fallba
     filterDiscoveredModels(['gpt-4.1-mini', 'qwen3.5-ocr', 'qwen-vl-max', 'deepseek-chat'], 'document'),
     ['gpt-4.1-mini', 'qwen3.5-ocr', 'qwen-vl-max'],
   );
+  assert.deepEqual(filterDiscoveredModels(['deepseek-chat'], 'document'), []);
+  assert.deepEqual(filterDiscoveredModels(['provider-unknown-model'], 'document'), ['provider-unknown-model']);
 });
 
 test('discoverModels derives the provider model endpoint without a client-supplied URL', async (t) => {
