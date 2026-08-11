@@ -20,13 +20,19 @@ let recoverKnowledgeCommit: any;
 let setCandidateStatus: any;
 let upsertCandidateOccurrence: any;
 let reconcilePendingCandidates: any;
+let finalizeSourceCandidateReingest: any;
 
 before(async () => {
   ({ db, migrate, now } = await import('../lib/db.js'));
   ({ readPage } = await import('../lib/vault.js'));
   ({ beginSourceVersion, contributionKey, markCommitStarted, storeContribution } = await import('./sourceLedger.js'));
   ({ commitKnowledgeItems, recoverKnowledgeCommit } = await import('./knowledgeCommit.js'));
-  ({ setCandidateStatus, upsertCandidateOccurrence, reconcilePendingCandidates } = await import('./candidateLedger.js'));
+  ({
+    setCandidateStatus,
+    upsertCandidateOccurrence,
+    reconcilePendingCandidates,
+    finalizeSourceCandidateReingest,
+  } = await import('./candidateLedger.js'));
   migrate();
   db.prepare(`INSERT INTO settings(key,value) VALUES('chat_models',?)`).run(JSON.stringify([{
     id: 'mock',
@@ -93,7 +99,8 @@ test('new source version replaces the previous managed contribution and queues d
   const page = db.prepare(`SELECT id,path FROM pages WHERE title='测试项目'`).get();
   const first = readPage(page.path).content;
   assert.match(first, /## 当前理解/);
-  assert.doesNotMatch(first, /第一版|来源提炼/);
+  assert.match(first, /第一版/);
+  assert.match(first, /来源提炼/);
   assert.ok(first.indexOf('## 相关页面') < first.indexOf('## 时间线'));
   assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='page_recompose' AND status='pending'`).get());
 
@@ -111,7 +118,8 @@ test('new source version replaces the previous managed contribution and queues d
 
   const second = readPage(page.path).content;
   assert.doesNotMatch(second, /第一版/);
-  assert.doesNotMatch(second, /第二版|来源提炼/);
+  assert.match(second, /第二版/);
+  assert.match(second, /来源提炼/);
   assert.equal(db.prepare(`SELECT COUNT(*) n FROM page_contributions WHERE page_id=? AND active=1`).get(page.id).n, 1);
   assert.equal(db.prepare(`SELECT status FROM source_versions WHERE id=?`).get(v1.id).status, 'superseded');
   assert.equal(db.prepare(`SELECT status FROM source_versions WHERE id=?`).get(v2.id).status, 'active');
@@ -137,7 +145,8 @@ test('new source version replaces the previous managed contribution and queues d
   recoverKnowledgeCommit('run-3');
   const recovered = readPage(page.path).content;
   assert.doesNotMatch(recovered, /第二版/);
-  assert.doesNotMatch(recovered, /中断后恢复的第三版|来源提炼/);
+  assert.match(recovered, /中断后恢复的第三版/);
+  assert.match(recovered, /来源提炼/);
   assert.equal(db.prepare(`SELECT status FROM source_versions WHERE id=?`).get(v3.id).status, 'active');
   assert.equal(db.prepare(`SELECT commit_status FROM ingest_runs WHERE id='run-3'`).get().commit_status, 'committed');
 });
@@ -185,13 +194,61 @@ test('automatic page creation requires facts from two different source paths and
   assert.deepEqual(secondResult.stats, { created: 1, merged: 0, skipped: 0, pending: 0 });
   const page = db.prepare(`SELECT id,path FROM pages WHERE title='跨来源项目'`).get();
   const content = readPage(page.path).content;
-  assert.doesNotMatch(content, /第一来源事实|第二来源事实|来源提炼/);
+  assert.match(content, /第一来源事实/);
+  assert.match(content, /第二来源事实/);
+  assert.match(content, /来源提炼/);
   assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='page_recompose' AND status='pending' AND payload LIKE ?`).get(`%${page.id}%`));
   assert.equal(
     db.prepare(`SELECT COUNT(DISTINCT sv.path) n FROM page_contributions pc JOIN source_versions sv ON sv.id=pc.source_version_id WHERE pc.page_id=? AND pc.active=1`).get(page.id).n,
     2,
   );
   assert.equal(db.prepare(`SELECT status FROM ingest_candidates WHERE id=?`).get(ignored.id).status, 'consumed');
+});
+
+test('a verified single source creates a page with two facts but keeps ambiguous candidates in review', () => {
+  const sourcePath = '原始资料/单来源充分证据.md';
+  const version = beginSourceVersion(sourcePath, 'single-rich-hash');
+  startRun('single-rich-run', version.id, 'single-rich-hash', sourcePath);
+  addFacts('single-rich-run', ['rich-f1', 'rich-f2'], '充分证据');
+  const result = commitKnowledgeItems([{
+    ...item('## 核心事实\n\n单来源包含两条独立事实'),
+    name: '单来源充分项目',
+    factIds: ['rich-f1', 'rich-f2'],
+  }], {
+    runId: 'single-rich-run',
+    sourceVersion: version,
+    sourcePath,
+    sourceName: '单来源充分证据.md',
+    sourceRef: sourcePath,
+  });
+  assert.deepEqual(result.stats, { created: 1, merged: 0, skipped: 0, pending: 0 });
+  const page = db.prepare(`SELECT path FROM pages WHERE title='单来源充分项目'`).get();
+  assert.match(readPage(page.path).content, /单来源包含两条独立事实/);
+
+  const ambiguousPath = '原始资料/单来源歧义.md';
+  const ambiguousVersion = beginSourceVersion(ambiguousPath, 'single-ambiguous-hash');
+  startRun('single-ambiguous-run', ambiguousVersion.id, 'single-ambiguous-hash', ambiguousPath);
+  addFacts('single-ambiguous-run', ['ambiguous-f1', 'ambiguous-f2'], '歧义证据');
+  const ambiguous = commitKnowledgeItems([{
+    ...item('## 核心事实\n\n名称仍然不完整'),
+    name: '刘经理',
+    kind: 'person',
+    factIds: ['ambiguous-f1', 'ambiguous-f2'],
+    ambiguity: {
+      category: 'role_title',
+      label: '刘经理',
+      question: '刘经理的完整姓名是什么？',
+      suggestions: [],
+    },
+  }], {
+    runId: 'single-ambiguous-run',
+    sourceVersion: ambiguousVersion,
+    sourcePath: ambiguousPath,
+    sourceName: '单来源歧义.md',
+    sourceRef: ambiguousPath,
+  });
+  assert.equal(ambiguous.stats.pending, 1);
+  assert.equal(db.prepare(`SELECT COUNT(*) n FROM pages WHERE title='刘经理'`).get().n, 0);
 });
 
 test('ignoring a candidate does not block reruns, but a new version of the same path is still one source', () => {
@@ -278,4 +335,47 @@ test('dynamic reconciliation hides stale reviews once two active source paths ex
     'applying',
   );
   assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='candidate_reconcile' AND status='pending'`).get());
+});
+
+test('forced reingest supersedes stale open candidates and resolves only obsolete open reports', () => {
+  const sourcePath = '原始资料/强制重整.md';
+  const oldVersion = beginSourceVersion(sourcePath, 'force-old-hash');
+  startRun('force-old-run', oldVersion.id, 'force-old-hash', sourcePath);
+  addFacts('force-old-run', ['force-f1'], '旧候选');
+  db.prepare(`UPDATE source_versions SET status='active',activated_at=? WHERE id=?`).run(now(), oldVersion.id);
+  const oldCandidate = upsertCandidateOccurrence({
+    ...item('旧候选正文'),
+    name: '过期候选',
+    action: 'review',
+    factIds: ['force-f1'],
+  }, {
+    runId: 'force-old-run',
+    sourceVersionId: oldVersion.id,
+    sourcePath,
+    sourceName: '强制重整.md',
+  });
+  const oldPayload = JSON.stringify({
+    candidateId: oldCandidate.id,
+    name: oldCandidate.name,
+    kind: oldCandidate.kind,
+    source: '强制重整.md',
+    sourcePath,
+    runId: 'force-old-run',
+  });
+  db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(?,'pending_review',?,'open','force:obsolete','force:obsolete')`
+  ).run(now(), oldPayload);
+  db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(?,'pending_review',?,'dismissed','force:closed','force:closed')`
+  ).run(now(), oldPayload);
+
+  const newVersion = beginSourceVersion(sourcePath, 'force-new-hash');
+  startRun('force-new-run', newVersion.id, 'force-new-hash', sourcePath);
+  const changed = finalizeSourceCandidateReingest(sourcePath, 'force-new-run');
+  assert.ok(changed >= 2);
+  assert.equal(db.prepare(`SELECT status FROM ingest_candidates WHERE id=?`).get(oldCandidate.id).status, 'superseded');
+  assert.equal(db.prepare(`SELECT status FROM reports WHERE issue_key='force:obsolete'`).get().status, 'resolved');
+  assert.equal(db.prepare(`SELECT status FROM reports WHERE issue_key='force:closed'`).get().status, 'dismissed');
 });

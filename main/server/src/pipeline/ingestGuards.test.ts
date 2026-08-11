@@ -4,6 +4,7 @@ import { composeOutputSchema, questionOutputSchema } from './ingestModel.js';
 import { enforceWriteGate, whitelistFactIds } from './ingestGuards.js';
 
 const base = {
+  candidateId: 'candidate-base',
   name: '主题', kind: 'concept' as const, action: 'create' as const, target: '', domain: '',
   confidence: '高' as const, summary: '', factIds: ['f1'], relations: [], reason: '',
 };
@@ -23,18 +24,18 @@ test('fact whitelist deterministically removes unknown ids and forces review', (
 
 test('write gate reviews low confidence, unsupported, conflicts and missing facts', () => {
   const items = [
-    { ...base, name: '低', confidence: '低' as const, content: 'x' },
-    { ...base, name: '无依据', content: 'x' },
-    { ...base, name: '冲突', content: 'x' },
-    { ...base, name: '无事实', factIds: [], content: 'x' },
-    { ...base, name: '通过', content: 'x' },
+    { ...base, candidateId: 'low', name: '低', confidence: '低' as const, content: 'x' },
+    { ...base, candidateId: 'unsupported', name: '无依据', content: 'x' },
+    { ...base, candidateId: 'conflict', name: '冲突', content: 'x' },
+    { ...base, candidateId: 'empty', name: '无事实', factIds: [], content: 'x' },
+    { ...base, candidateId: 'pass', name: '通过', content: 'x' },
   ];
   const verified = { items: [
-    { name: '低', pass: true, unsupported: [], conflicts: [], content: 'x' },
-    { name: '无依据', pass: false, unsupported: ['断言'], conflicts: [], content: 'fixed' },
-    { name: '冲突', pass: false, unsupported: [], conflicts: ['日期冲突'], content: 'fixed' },
-    { name: '无事实', pass: true, unsupported: [], conflicts: [], content: 'x' },
-    { name: '通过', pass: true, unsupported: [], conflicts: [], content: 'verified' },
+    { candidateId: 'low', name: '低', pass: true, unsupported: [], conflicts: [], content: 'x' },
+    { candidateId: 'unsupported', name: '无依据', pass: false, unsupported: ['断言'], conflicts: [], content: 'fixed' },
+    { candidateId: 'conflict', name: '冲突', pass: false, unsupported: [], conflicts: ['日期冲突'], content: 'fixed' },
+    { candidateId: 'empty', name: '无事实', pass: true, unsupported: [], conflicts: [], content: 'x' },
+    { candidateId: 'pass', name: '通过', pass: true, unsupported: [], conflicts: [], content: 'verified' },
   ] };
   const gated = enforceWriteGate(items, verified, new Set(['f1']));
   assert.deepEqual(gated.map((item) => item.action), ['review', 'review', 'review', 'review', 'create']);

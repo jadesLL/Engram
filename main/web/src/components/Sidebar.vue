@@ -748,13 +748,14 @@ async function removeFile(f: any) {
 
 /** AI 整理单个原始资料：提炼概念/实体页到 Wiki */
 async function ingestFile(f: any) {
-  await api.post('/api/ai/ingest', { path: f.path });
+  await api.post('/api/ai/ingest', { path: f.path, force: true });
   ingestHint.value = `「${f.name}」已加入整理队列`;
   await app.refreshJobs();
 }
 
 async function ingestAll() {
-  const { data } = await api.post('/api/ai/ingest-all');
+  if (!confirm('将按当前规则重新整理全部原始资料，并产生相应的 AI 调用。继续？')) return;
+  const { data } = await api.post('/api/ai/ingest-all', { force: true });
   ingestHint.value = data.queued > 0 ? `已加入 ${data.queued} 份资料的整理队列` : '原始资料为空';
   if (data.queued > 0) await app.refreshJobs();
 }

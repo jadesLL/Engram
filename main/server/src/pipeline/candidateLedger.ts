@@ -2,7 +2,7 @@ import { db, newId, now } from '../lib/db.js';
 import type { KnowledgeItem } from './knowledgeCommit.js';
 import { enqueue } from '../jobQueue.js';
 
-export type CandidateStatus = 'open' | 'ignored' | 'approved' | 'merged' | 'consumed';
+export type CandidateStatus = 'open' | 'ignored' | 'approved' | 'merged' | 'consumed' | 'superseded';
 
 export interface CandidateOccurrence {
   id: string;
@@ -221,6 +221,39 @@ export function consumeCandidateIdentity(
     setCandidateStatus(candidate.id, 'consumed', pageId);
     resolveCandidateReports(candidate.id, 'resolved');
   }
+}
+
+export function finalizeSourceCandidateReingest(sourcePath: string, runId: string): number {
+  const timestamp = now();
+  const superseded = db.prepare(
+    `UPDATE ingest_candidates
+     SET status='superseded',preview_token=NULL,preview_json=NULL,updated_at=?
+     WHERE source_path=? AND run_id<>? AND status='open'`
+  ).run(timestamp, sourcePath, runId).changes;
+  const reports = db.prepare(
+    `SELECT id,payload FROM reports
+     WHERE kind='pending_review' AND status IN ('open','applying')`
+  ).all() as Array<{ id: number; payload: string }>;
+  let resolved = 0;
+  const update = db.prepare(`UPDATE reports SET payload=?,status='resolved' WHERE id=?`);
+  const tx = db.transaction(() => {
+    for (const report of reports) {
+      let payload: Record<string, any>;
+      try { payload = JSON.parse(report.payload); } catch { continue; }
+      if (String(payload.sourcePath || '') !== sourcePath || String(payload.runId || '') === runId) continue;
+      update.run(JSON.stringify({
+        ...payload,
+        resolution: {
+          kind: 'superseded_by_reingest',
+          runId,
+          at: timestamp,
+        },
+      }), report.id);
+      resolved++;
+    }
+  });
+  tx();
+  return superseded + resolved;
 }
 
 function exactPage(candidate: CandidateOccurrence): { id: string } | undefined {

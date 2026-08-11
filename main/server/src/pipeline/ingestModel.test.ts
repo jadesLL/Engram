@@ -8,12 +8,17 @@ const goodCandidate = (name: string, facts = 1) => ({
   facts: Array.from({ length: facts }, (_, i) => goodFact(`${name}-f${i}`)),
 });
 
-test('map schema tolerates >12 candidates by truncating to 12', () => {
+test('map schema preserves candidates within the bounded map batch', () => {
   const candidates = Array.from({ length: 15 }, (_, i) => goodCandidate(`候选${i}`));
   const out = mapOutputSchema.parse({ candidates });
-  assert.equal(out.candidates.length, 12);
+  assert.equal(out.candidates.length, 15);
   assert.equal(out.candidates[0].name, '候选0');
-  assert.equal(out.candidates[11].name, '候选11');
+  assert.equal(out.candidates[14].name, '候选14');
+});
+
+test('map schema rejects an oversized batch instead of truncating it', () => {
+  const candidates = Array.from({ length: 17 }, (_, i) => goodCandidate(`候选${i}`));
+  assert.equal(mapOutputSchema.safeParse({ candidates }).success, false);
 });
 
 test('map schema drops malformed facts (missing id/statement/sources) instead of failing', () => {

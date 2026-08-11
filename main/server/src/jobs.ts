@@ -64,11 +64,12 @@ const handlers: Record<string, JobHandler> = {
   index_file: async ({ fileId }) => {
     await indexFileText(fileId);
   },
-  extract_file: async ({ path, mode, pages, ingestAfter }, update) => {
+  extract_file: async ({ path, mode, pages, ingestAfter, forceIngest }, update) => {
     await extractFile(path, (progress) => update(progress), {
       mode,
       pages,
       ingestAfter: ingestAfter !== false,
+      forceIngest: Boolean(forceIngest),
     });
   },
   extract: async ({ pageId }) => {

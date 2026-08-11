@@ -34,6 +34,14 @@
             <Icon name="book-open" :size="14" />
             来源 {{ evidence.sources.length }}
           </button>
+          <span
+            v-if="synthesisPending"
+            class="synthesis-inline small"
+            title="来源事实已入账，正在生成整页正文"
+          >
+            <Icon name="activity" :size="13" />
+            综合中
+          </span>
           <button class="ghost-btn" title="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
             <Icon name="graph" :size="14" />
           </button>
@@ -225,6 +233,10 @@ const editorRef = ref<InstanceType<typeof MarkdownEditor>>();
 
 const filePath = computed(() => (route.query.file as string) || '');
 const isDark = computed(() => document.documentElement.classList.contains('dark'));
+const synthesisPending = computed(() =>
+  Boolean(evidence.value?.sources?.length) &&
+  (!evidence.value?.synthesis || evidence.value.synthesis.outdated)
+);
 
 type WriterPreset = 'continue' | 'polish' | 'expand' | 'summarize' | 'translate';
 
@@ -527,6 +539,13 @@ onUnmounted(() => {
   border-radius: 5px;
 }
 .ghost-btn:hover { background: var(--bg-hover); color: var(--text); }
+.synthesis-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--warning, #b45309);
+  white-space: nowrap;
+}
 .ai-bar {
   max-width: var(--editor-max);
   margin: 0 auto;

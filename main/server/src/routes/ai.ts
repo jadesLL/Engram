@@ -55,7 +55,7 @@ export async function aiRoutes(app: FastifyInstance) {
 
   /** 整理单个原始资料文件（提炼概念/实体页到 Wiki） */
   app.post('/api/ai/ingest', async (req, reply) => {
-    const { path: p } = req.body as { path?: string };
+    const { path: p, force = false } = req.body as { path?: string; force?: boolean };
     if (!p || !p.startsWith('原始资料/')) {
       return reply.code(400).send({ error: '只能整理原始资料目录下的文件' });
     }
@@ -69,26 +69,32 @@ export async function aiRoutes(app: FastifyInstance) {
     if (supportsFileExtraction(p)) {
       const extraction = extractionDetails(p);
       if (extraction?.status === 'completed' && extractionIsCurrent(p)) {
-        const jobId = enqueue('ingest', { path: p, revision: extraction.updatedAt });
+        const jobId = enqueue('ingest', {
+          path: p,
+          revision: extraction.updatedAt,
+          ...(force ? { force: true } : {}),
+        });
         return { ok: true, jobId: jobId || null };
       }
       const scheduled = scheduleFileExtraction(p, {
         mode: extraction ? 'continue' : 'auto',
         ingestAfter: true,
+        forceIngest: force,
       });
       return reply.code(202).send({ ok: true, jobId: scheduled.jobId || null, extractionQueued: true });
     }
-    const jobId = enqueue('ingest', { path: p });
+    const jobId = enqueue('ingest', { path: p, ...(force ? { force: true } : {}) });
     return { ok: true, jobId: jobId || null };
   });
 
   /** 整理全部原始资料 */
-  app.post('/api/ai/ingest-all', async () => {
+  app.post('/api/ai/ingest-all', async (req) => {
+    const { force = false } = (req.body || {}) as { force?: boolean };
     const paths = await ingestAllRaw();
     const jobIds = paths.map((p) =>
       supportsFileExtraction(p)
-        ? scheduleFileExtraction(p, { mode: 'auto', ingestAfter: true }).jobId
-        : enqueue('ingest', { path: p })
+        ? scheduleFileExtraction(p, { mode: 'auto', ingestAfter: true, forceIngest: force }).jobId
+        : enqueue('ingest', { path: p, ...(force ? { force: true } : {}) })
     ).filter((id): id is number => Boolean(id));
     return { ok: true, queued: jobIds.length, jobIds };
   });

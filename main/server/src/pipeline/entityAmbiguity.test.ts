@@ -111,6 +111,7 @@ test('model leaves semantically clear names unchanged', async () => {
 
 test('write guard applies model-confirmed merge and retains uncertain item for review', async () => {
   const candidate: Candidate = {
+    candidateId: 'candidate-hengchuang',
     name: '恒创',
     kind: 'org',
     domain: '',
@@ -122,6 +123,7 @@ test('write guard applies model-confirmed merge and retains uncertain item for r
     relations: [],
   };
   const create: PlanItem = {
+    candidateId: 'candidate-hengchuang',
     name: '恒创',
     kind: 'org',
     action: 'create',
@@ -134,7 +136,7 @@ test('write guard applies model-confirmed merge and retains uncertain item for r
     reason: '',
   };
   const explicitMerge: PlanItem = { ...create, action: 'merge', target: '衡创' };
-  const uncertain: PlanItem = { ...create, name: '张依龙', kind: 'person' };
+  const uncertain: PlanItem = { ...create, candidateId: 'candidate-zhang', name: '张依龙', kind: 'person' };
   const guarded = await guardAmbiguousEntityNames(
     [create, explicitMerge, uncertain],
     [candidate],

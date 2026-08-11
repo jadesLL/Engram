@@ -235,4 +235,15 @@ test('manual edits remain in place when three-way verification reports a conflic
   assert.ok(db.prepare(
     `SELECT 1 FROM reports WHERE kind='enrich' AND issue_key=? AND status='open'`
   ).get(`page-recompose:${page.id}`));
+
+  addSource(page.id, '原始资料/来源三.md', 'synthesis-run-4', 'hash-4', [
+    { id: 'f4', statement: '综合人物新增负责伙伴生态建设。' },
+  ]);
+  const recoveredId = await runPendingSynthesis(page.id);
+  assert.notEqual(recoveredId, synthesisId);
+  assert.equal(db.prepare(`SELECT status FROM page_syntheses WHERE id=?`).get(synthesisId).status, 'superseded');
+  assert.equal(db.prepare(`SELECT status FROM page_syntheses WHERE id=?`).get(recoveredId).status, 'active');
+  assert.equal(db.prepare(
+    `SELECT status FROM reports WHERE kind='enrich' AND issue_key=? ORDER BY id DESC LIMIT 1`
+  ).get(`page-recompose:${page.id}`).status, 'resolved');
 });

@@ -27,9 +27,10 @@ export function whitelistFactIds<T extends PlanItem>(items: T[], allowedFactIds:
 
 export function enforceWriteGate(items: ComposedItem[], verification: VerifierOutput, allowedFactIds: ReadonlySet<string>): ComposedItem[] {
   const checked = whitelistFactIds(items, allowedFactIds).items;
-  const byName = new Map(verification.items.map((item) => [item.name.trim().toLowerCase(), item]));
+  const byId = new Map(verification.items.map((item) => [item.candidateId, item]));
   return checked.map((item) => {
-    const result = byName.get(item.name.trim().toLowerCase());
+    if (item.action === 'skip') return item;
+    const result = byId.get(item.candidateId);
     const unsupported = result?.unsupported.length ?? 0;
     const conflicts = result?.conflicts.length ?? 0;
     const noFacts = item.factIds.length === 0;
