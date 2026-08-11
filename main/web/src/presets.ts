@@ -10,6 +10,8 @@ import siliconflowLogo from './assets/providers/siliconflow.svg';
 import openaiLogo from './assets/providers/openai.svg';
 
 /** OpenAI 兼容的内置厂商、API 线路与模型目录。 */
+export type ImageInputStatus = 'supported' | 'unsupported' | 'unknown';
+
 export interface ModelOption {
   id: string;
   name: string;
@@ -17,6 +19,7 @@ export interface ModelOption {
   dim?: number;
   dimensions?: number[];
   supportsDimensions?: boolean;
+  imageInput?: ImageInputStatus;
 }
 
 export interface ApiLine {
@@ -146,8 +149,29 @@ export const PROVIDERS: ProviderPreset[] = [
       },
       { id: 'embedding-2', name: 'embedding-2', dim: 1024 },
     ],
+    documentModels: [
+      {
+        id: 'glm-4.6v',
+        name: 'GLM-4.6V',
+        description: '复杂图文理解与文档解析',
+        imageInput: 'supported',
+      },
+      {
+        id: 'glm-4.6v-flashx',
+        name: 'GLM-4.6V-FlashX',
+        description: '高速视觉理解',
+        imageInput: 'supported',
+      },
+      {
+        id: 'glm-4.6v-flash',
+        name: 'GLM-4.6V-Flash',
+        description: '轻量图片与文字识别',
+        imageInput: 'supported',
+      },
+    ],
     defaultChat: 'glm-5.2',
     defaultEmbedding: 'embedding-3',
+    defaultDocument: 'glm-4.6v-flash',
   },
   {
     id: 'aliyun',
@@ -232,9 +256,22 @@ export const PROVIDERS: ProviderPreset[] = [
     ],
     documentModels: [
       {
+        id: 'qwen3.5-plus',
+        name: 'Qwen3.5 Plus',
+        description: '通用视觉理解与复杂图文分析',
+        imageInput: 'supported',
+      },
+      {
+        id: 'qwen-vl-max',
+        name: 'Qwen VL Max',
+        description: '图片、表格与文档视觉理解',
+        imageInput: 'supported',
+      },
+      {
         id: 'qwen3.5-ocr',
         name: 'Qwen3.5 OCR',
         description: '扫描件、图片和复杂文档文字识别',
+        imageInput: 'supported',
       },
     ],
     defaultChat: 'qwen3.7-plus',
@@ -306,8 +343,29 @@ export const PROVIDERS: ProviderPreset[] = [
         supportsDimensions: true,
       },
     ],
+    documentModels: [
+      {
+        id: 'doubao-seed-2-1-pro',
+        name: 'Doubao Seed 2.1 Pro',
+        description: '通用多模态理解与复杂图文分析',
+        imageInput: 'supported',
+      },
+      {
+        id: 'doubao-seed-2-0-pro',
+        name: 'Doubao Seed 2.0 Pro',
+        description: '图片理解、文档解析与 OCR',
+        imageInput: 'supported',
+      },
+      {
+        id: 'doubao-seed-2-0-lite',
+        name: 'Doubao Seed 2.0 Lite',
+        description: '轻量视觉理解与文字提取',
+        imageInput: 'supported',
+      },
+    ],
     defaultChat: 'doubao-seed-2-1-pro',
     defaultEmbedding: 'doubao-embedding-large-text-240915',
+    defaultDocument: 'doubao-seed-2-1-pro',
     hint: '支持按量付费、Agent Plan 和 Coding Plan，可直接填写 ep- 开头的接入点。',
   },
   {
@@ -501,8 +559,29 @@ export const PROVIDERS: ProviderPreset[] = [
       },
       { id: 'text-embedding-ada-002', name: 'text-embedding-ada-002', dim: 1536 },
     ],
+    documentModels: [
+      {
+        id: 'gpt-5.4-mini',
+        name: 'GPT-5.4 mini',
+        description: '高性价比通用视觉理解',
+        imageInput: 'supported',
+      },
+      {
+        id: 'gpt-4.1-mini',
+        name: 'GPT-4.1 mini',
+        description: '图片理解、文档解析与文字提取',
+        imageInput: 'supported',
+      },
+      {
+        id: 'gpt-4o',
+        name: 'GPT-4o',
+        description: '通用多模态视觉理解',
+        imageInput: 'supported',
+      },
+    ],
     defaultChat: 'gpt-5.4-mini',
     defaultEmbedding: 'text-embedding-3-small',
+    defaultDocument: 'gpt-5.4-mini',
   },
   {
     id: 'custom',

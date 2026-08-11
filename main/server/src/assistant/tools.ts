@@ -1260,7 +1260,7 @@ const tools: AgentTool[] = [
         });
       }
       return {
-        summary: `已切换${args.kind === 'chat' ? '对话' : args.kind === 'embedding' ? '向量' : '文档识别'}模型`,
+        summary: `已切换${args.kind === 'chat' ? '对话' : args.kind === 'embedding' ? '向量' : '视觉'}模型`,
         data: rebuildJobId ? { rebuildJobId } : undefined,
         undo: {
           kind: 'active_model',

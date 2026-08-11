@@ -406,7 +406,7 @@ async function extractPdf(
             method: 'embedded',
             status: 'blocked',
             text: localText,
-            error: '尚未配置文档识别模型',
+            error: '当前对话模型不支持图片输入，且尚未配置视觉模型',
           });
         } else {
           ocrUsed++;
@@ -482,7 +482,7 @@ async function extractImage(
     upsertExtractionPage(file.id, 1, {
       method: 'ocr',
       status: 'blocked',
-      error: '尚未配置文档识别模型',
+      error: '当前对话模型不支持图片输入，且尚未配置视觉模型',
     });
     return finalizeExtraction(
       file,

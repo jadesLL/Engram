@@ -100,10 +100,27 @@ function configureDocumentModel() {
   setSetting('active_document_model', entry.id);
 }
 
-function mockOcr(result: (body: any) => string = () => '识别文字 SCAN42') {
+function configureMultimodalChat() {
+  const entry = {
+    id: 'chat-vision-1',
+    name: 'Vision Chat',
+    provider: 'custom',
+    baseUrl: 'https://chat.example/v1',
+    model: 'chat-with-images',
+    apiKey: 'test-key',
+    imageInput: 'supported',
+  };
+  setSetting('chat_models', JSON.stringify([entry]));
+  setSetting('active_chat_model', entry.id);
+}
+
+function mockOcr(
+  result: (body: any) => string = () => '识别文字 SCAN42',
+  expectedModel = 'vision-ocr',
+) {
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body));
-    assert.equal(body.model, 'vision-ocr');
+    assert.equal(body.model, expectedModel);
     assert.equal(body.messages[0].content[0].type, 'image_url');
     assert.match(body.messages[0].content[0].image_url.url, /^data:image\/jpeg;base64,/);
     return new Response(JSON.stringify({
@@ -204,6 +221,18 @@ test('image OCR uses the independent document model and changes source hash afte
   fs.appendFileSync(safeJoin(relPath), Buffer.from('changed-source'));
   assert.equal(extractionIsCurrent(relPath), false);
   assert.throws(() => extractedSource(relPath), /原文件已变化/);
+});
+
+test('image OCR reuses a confirmed multimodal chat model when no visual override exists', async () => {
+  configureMultimodalChat();
+  mockOcr(() => '对话模型识别 SCAN42', 'chat-with-images');
+  const relPath = '原始资料/对话视觉.png';
+  fs.writeFileSync(safeJoin(relPath), imageCanvas().toBuffer('image/png'));
+
+  const result = await extractFile(relPath);
+
+  assert.equal(result.status, 'completed');
+  assert.match(extractedSource(relPath).text, /对话模型识别/);
 });
 
 test('automatic OCR stops after 100 pages and exposes a resumable partial result', async () => {

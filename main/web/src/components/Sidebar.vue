@@ -182,7 +182,7 @@
               <span
                 v-else-if="f.extractionStatus === 'blocked'"
                 class="row-status ingested-flag unsupported"
-                :title="f.extractionError || '需要配置文档识别模型'"
+                :title="f.extractionError || '需要支持图片的对话模型或单独配置视觉模型'"
               >待配置</span>
               <span
                 v-else-if="f.extractionStatus === 'partial'"
@@ -302,7 +302,7 @@
               <span
                 v-else-if="f.extractionStatus === 'blocked'"
                 class="row-status ingested-flag unsupported"
-                :title="f.extractionError || '需要配置文档识别模型'"
+                :title="f.extractionError || '需要支持图片的对话模型或单独配置视觉模型'"
               >待配置</span>
               <span
                 v-else-if="f.extractionStatus === 'partial'"

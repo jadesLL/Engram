@@ -3,7 +3,13 @@ import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { db, getSetting, setSetting, now } from '../lib/db.js';
 import { requireAuth } from './auth.js';
-import { testConnection, testModel, type ModelEntry } from '../lib/llm.js';
+import {
+  getActiveChat,
+  probeImageInput,
+  testConnection,
+  testModel,
+  type ModelEntry,
+} from '../lib/llm.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { discoverModels } from '../lib/modelDiscovery.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
@@ -68,7 +74,6 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post('/api/settings/discover-models', async (req, reply) => {
     const body = (req.body || {}) as {
       baseUrl?: string;
-      modelsUrl?: string;
       apiKey?: string;
       kind?: 'chat' | 'embedding' | 'document';
     };
@@ -78,13 +83,19 @@ export async function settingsRoutes(app: FastifyInstance) {
     try {
       return await discoverModels({
         baseUrl: body.baseUrl,
-        modelsUrl: body.modelsUrl,
         apiKey: body.apiKey,
         kind: body.kind as 'chat' | 'embedding' | 'document',
       });
     } catch (error: any) {
       return reply.code(502).send({ error: error?.message || '模型列表拉取失败' });
     }
+  });
+
+  app.post('/api/settings/probe-image-input', async (req, reply) => {
+    const body = (req.body || {}) as { entry?: ModelEntry; force?: boolean };
+    const entry = body.entry || getActiveChat();
+    if (!entry) return reply.code(400).send({ error: '尚未配置对话模型' });
+    return probeImageInput(entry, { force: body.force === true });
   });
 
   /** 全量重建索引（异步执行，立即返回） */
