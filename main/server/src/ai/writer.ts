@@ -15,6 +15,6 @@ export async function writeAssist(
       { role: 'user', content: writerUser(action, text) },
     ],
     onDelta,
-    { temperature: writerTemp(action), signal }
+    { temperature: writerTemp(action), signal, tag: `writer-${action}` }
   );
 }

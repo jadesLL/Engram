@@ -13,6 +13,7 @@ import {
 import { rebuildAll } from '../pipeline/indexer.js';
 import { discoverModels } from '../lib/modelDiscovery.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
+import { summarizeLlmUsage } from '../lib/llmUsage.js';
 
 const PUBLIC_SETTINGS = [
   'chat_models', 'active_chat_model',
@@ -43,6 +44,11 @@ export async function settingsRoutes(app: FastifyInstance) {
     const out: Record<string, string> = {};
     for (const k of PUBLIC_SETTINGS) out[k] = getSetting(k) || '';
     return { settings: out };
+  });
+
+  app.get('/api/settings/llm-usage', async (req) => {
+    const { days } = (req.query || {}) as { days?: string };
+    return summarizeLlmUsage(Number(days) || 7);
   });
 
   app.put('/api/settings', async (req) => {

@@ -28,6 +28,13 @@ before(async () => {
         finish_reason: 'stop',
         message: { content: JSON.stringify({ answer: '模型结论' }) },
       }],
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 20,
+        total_tokens: 120,
+        prompt_cache_hit_tokens: 80,
+        prompt_cache_miss_tokens: 20,
+      },
     }));
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -94,4 +101,15 @@ test('semantic stages audit both successful and failed model decisions', async (
   assert.equal(rows[1].status, 'failed');
   assert.match(rows[1].error, /forced semantic failure|LLM 请求失败/);
   assert.ok(rows.every((row: any) => row.duration_ms >= 0));
+
+  const usage = db.prepare(
+    `SELECT tag,prompt_tokens,cache_read_tokens,cache_miss_tokens
+     FROM llm_usage ORDER BY id`
+  ).get();
+  assert.deepEqual(usage, {
+    tag: 'semantic-stage-test',
+    prompt_tokens: 100,
+    cache_read_tokens: 80,
+    cache_miss_tokens: 20,
+  });
 });

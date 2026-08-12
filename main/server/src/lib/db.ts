@@ -326,6 +326,28 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_semantic_events_ref
     ON semantic_events(scope, ref_id, stage, created_at DESC);
 
+  CREATE TABLE IF NOT EXISTS llm_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    operation TEXT NOT NULL DEFAULT 'chat',
+    tag TEXT NOT NULL DEFAULT '',
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_reported INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    raw_usage TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_llm_usage_created
+    ON llm_usage(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_llm_usage_tag
+    ON llm_usage(tag, created_at DESC);
+
   CREATE TABLE IF NOT EXISTS office_edit_sessions (
     document_key TEXT PRIMARY KEY,
     path TEXT NOT NULL,
@@ -454,6 +476,8 @@ export function migrate() {
   ).run(now());
   });
   migrateSchema();
+  const usageCutoff = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare(`DELETE FROM llm_usage WHERE created_at < ?`).run(usageCutoff);
 
   ensureVecTable(getVecDim());
 }

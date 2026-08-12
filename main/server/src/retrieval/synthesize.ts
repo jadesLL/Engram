@@ -59,7 +59,7 @@ export async function think(
       { role: 'user', content: user },
     ],
     onDelta,
-    { temperature: 0.2 }
+    { temperature: 0.2, tag: 'search-answer' }
   );
   return { hits };
 }
