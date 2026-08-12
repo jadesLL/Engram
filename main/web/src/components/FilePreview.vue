@@ -165,6 +165,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Vditor from 'vditor';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
+import { vditorPreviewOptions } from '../lib/vditorPreview';
 import Icon from './Icon.vue';
 import ImageViewer from './ImageViewer.vue';
 import PdfViewer from './PdfViewer.vue';
@@ -594,9 +595,11 @@ async function loadFile() {
     else if (data.kind === 'markdown') {
       loading.value = false;
       await nextTick();
-      await Vditor.preview(mdEl.value!, data.text, {
-        mode: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
-      });
+      await Vditor.preview(
+        mdEl.value!,
+        data.text,
+        vditorPreviewOptions(document.documentElement.classList.contains('dark')),
+      );
     } else ext.value = data.ext;
   } catch (error) {
     console.error('文件预览失败', error);
