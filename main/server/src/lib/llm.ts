@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { createCanvas } from '@napi-rs/canvas';
 import type { ZodType } from 'zod';
 import { getSetting } from './db.js';
+import { recordLlmUsage, type LlmOperation, type LlmUsageIdentity } from './llmUsage.js';
 import {
   resolveImageInputCapability,
   type ImageInputCapability,
@@ -99,15 +100,62 @@ export class LlmError extends Error {
   }
 }
 
+type LlmRequestOptions = {
+  baseUrl?: string;
+  apiKey?: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  provider?: string;
+  model?: string;
+  operation?: LlmOperation;
+  tag?: string;
+};
+
+type LlmHttpResponse = {
+  response: Response;
+  identity: LlmUsageIdentity;
+  startedAt: number;
+};
+
+function responseIdentity(
+  path: string,
+  body: unknown,
+  opts: LlmRequestOptions | undefined,
+): LlmUsageIdentity {
+  const active = path === '/embeddings' ? getActiveEmbedding() : getActiveChat();
+  const operation = opts?.operation || (path === '/embeddings' ? 'embedding' : 'chat');
+  return {
+    provider: opts?.provider || active?.provider || 'custom',
+    model: opts?.model || String((body as any)?.model || active?.model || 'unknown'),
+    operation,
+    tag: opts?.tag || operation,
+  };
+}
+
+function captureUsage(result: LlmHttpResponse, rawUsage: unknown): void {
+  try {
+    recordLlmUsage(result.identity, rawUsage, Date.now() - result.startedAt);
+  } catch (error: any) {
+    console.warn('[llm.usage] 用量记录失败', error?.message || error);
+  }
+}
+
+async function readJsonResponse<T = any>(result: LlmHttpResponse): Promise<T> {
+  const payload = await result.response.json() as T;
+  captureUsage(result, (payload as any)?.usage);
+  return payload;
+}
+
 async function request(
   path: string,
   body: unknown,
-  opts?: { baseUrl?: string; apiKey?: string; timeoutMs?: number; signal?: AbortSignal }
-): Promise<Response> {
+  opts?: LlmRequestOptions,
+): Promise<LlmHttpResponse> {
   const cfg = getLlmConfig();
   const baseUrl = opts?.baseUrl || cfg.baseUrl;
   const apiKey = opts?.apiKey || cfg.apiKey;
   if (!apiKey) throw new LlmError('尚未配置 LLM API Key（设置页 → LLM）');
+  const startedAt = Date.now();
   const controller = new AbortController();
   const signal = opts?.signal
     ? AbortSignal.any([controller.signal, opts.signal])
@@ -127,7 +175,11 @@ async function request(
       const text = await res.text().catch(() => '');
       throw new LlmError(`LLM 请求失败 ${res.status}: ${text.slice(0, 300)}`, res.status);
     }
-    return res;
+    return {
+      response: res,
+      identity: responseIdentity(path, body, opts),
+      startedAt,
+    };
   } catch (error: any) {
     if (error?.name === 'AbortError') {
       throw new LlmError(opts?.signal?.aborted ? 'AI 请求已取消' : 'LLM 请求超时');
@@ -248,9 +300,13 @@ export async function recognizeDocumentImage(
       baseUrl: entry.baseUrl.replace(/\/+$/, ''),
       apiKey: entry.apiKey,
       timeoutMs: options.timeoutMs ?? 180_000,
+      provider: entry.provider,
+      model: entry.model,
+      operation: 'document',
+      tag: 'document-ocr',
     },
   );
-  const payload = await response.json() as any;
+  const payload = await readJsonResponse(response);
   const content = messageText(payload?.choices?.[0]?.message).trim();
   if (!content) throw new LlmError('视觉模型返回了空内容');
   return content;
@@ -289,9 +345,13 @@ export async function probeImageInput(
         baseUrl: entry.baseUrl.replace(/\/+$/, ''),
         apiKey: entry.apiKey,
         timeoutMs: options.timeoutMs ?? 45_000,
+        provider: entry.provider,
+        model: entry.model,
+        operation: 'document',
+        tag: 'image-capability-probe',
       },
     );
-    const payload = await response.json() as any;
+    const payload = await readJsonResponse(response);
     const content = messageText(payload?.choices?.[0]?.message).trim();
     if (normalizedChallengeAnswer(content).includes(challenge.code)) {
       return { status: 'supported', source: 'probe' };
@@ -325,6 +385,7 @@ type ChatOptions = {
   topP?: number;
   json?: boolean;
   signal?: AbortSignal;
+  tag?: string;
 };
 
 /** 非流式对话 */
@@ -348,8 +409,11 @@ export async function chat(
     body.thinking = { type: 'disabled' };
     // 关闭思考后 temperature/top_p 才有效（思考模式下这些参数被忽略）
   }
-  const res = await request('/chat/completions', body, { signal: opts?.signal });
-  const json = (await res.json()) as any;
+  const res = await request('/chat/completions', body, {
+    signal: opts?.signal,
+    tag: opts?.tag || 'chat',
+  });
+  const json = await readJsonResponse(res);
   const choice = json?.choices?.[0];
   const msg = choice?.message;
   const finishReason = choice?.finish_reason;
@@ -385,8 +449,11 @@ export async function chatWithTools(
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
-  const res = await request('/chat/completions', body, { signal: opts?.signal });
-  const payload = (await res.json()) as any;
+  const res = await request('/chat/completions', body, {
+    signal: opts?.signal,
+    tag: opts?.tag || 'chat-tools',
+  });
+  const payload = await readJsonResponse(res);
   const choice = payload?.choices?.[0];
   const message = choice?.message;
   const toolCalls = Array.isArray(message?.tool_calls)
@@ -515,6 +582,8 @@ function tryParseJson<T>(raw: string): { ok: true; value: T } | { ok: false } {
   return { ok: false };
 }
 
+const streamUsageUnsupported = new Set<string>();
+
 /** 流式对话：逐段回调 */
 export async function chatStream(
   messages: ChatMessage[],
@@ -530,11 +599,33 @@ export async function chatStream(
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
-  const res = await request('/chat/completions', body, { signal: opts?.signal });
-  if (!res.body) throw new LlmError('LLM 无流式响应体');
-  const reader = res.body.getReader();
+  const capabilityKey = `${cfg.baseUrl}|${cfg.chatModel}`;
+  if (!streamUsageUnsupported.has(capabilityKey)) {
+    body.stream_options = { include_usage: true };
+  }
+  let res: LlmHttpResponse;
+  try {
+    res = await request('/chat/completions', body, {
+      signal: opts?.signal,
+      tag: opts?.tag || 'chat-stream',
+    });
+  } catch (error) {
+    const unsupported =
+      error instanceof LlmError &&
+      [400, 422].includes(error.status || 0);
+    if (!unsupported || !body.stream_options) throw error;
+    delete body.stream_options;
+    res = await request('/chat/completions', body, {
+      signal: opts?.signal,
+      tag: opts?.tag || 'chat-stream',
+    });
+    streamUsageUnsupported.add(capabilityKey);
+  }
+  if (!res.response.body) throw new LlmError('LLM 无流式响应体');
+  const reader = res.response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let usageCaptured = false;
   for (;;) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const idleTimeout = new Promise<never>((_resolve, reject) => {
@@ -560,6 +651,10 @@ export async function chatStream(
         const json = JSON.parse(data);
         const delta = json?.choices?.[0]?.delta?.content;
         if (typeof delta === 'string' && delta) onDelta(delta);
+        if (!usageCaptured && json?.usage) {
+          captureUsage(res, json.usage);
+          usageCaptured = true;
+        }
       } catch {
         /* 忽略不完整行 */
       }
@@ -606,9 +701,16 @@ export async function embed(texts: string[]): Promise<number[][]> {
   const res = await request(
     '/embeddings',
     body,
-    { baseUrl: cfg.embeddingBaseUrl, apiKey: cfg.embeddingApiKey }
+    {
+      baseUrl: cfg.embeddingBaseUrl,
+      apiKey: cfg.embeddingApiKey,
+      provider: entry?.provider,
+      model: cfg.embeddingModel,
+      operation: 'embedding',
+      tag: 'embedding',
+    }
   );
-  const json = (await res.json()) as any;
+  const json = await readJsonResponse(res);
   const data = json?.data;
   if (!Array.isArray(data)) throw new LlmError('Embedding 返回格式异常');
   return data
@@ -681,9 +783,16 @@ export async function testModel(
           temperature: 0.3,
           max_tokens: 64,
         },
-        { baseUrl, apiKey: entry.apiKey, timeoutMs: 30_000 }
+        {
+          baseUrl,
+          apiKey: entry.apiKey,
+          timeoutMs: 30_000,
+          provider: entry.provider,
+          model: entry.model,
+          tag: 'connection-test-chat',
+        }
       );
-      const json = (await res.json()) as any;
+      const json = await readJsonResponse(res);
       // 只校验响应结构合法：有 choices 数组且含 message。content 可为空字符串
       // （推理类模型 token 紧张时可能 content="" 而 reasoning_content 非空）。
       const choice = json?.choices?.[0];
@@ -695,9 +804,17 @@ export async function testModel(
       const res = await request(
         '/embeddings',
         buildEmbeddingRequestBody(entry, ['ping']),
-        { baseUrl, apiKey: entry.apiKey, timeoutMs: 30_000 }
+        {
+          baseUrl,
+          apiKey: entry.apiKey,
+          timeoutMs: 30_000,
+          provider: entry.provider,
+          model: entry.model,
+          operation: 'embedding',
+          tag: 'connection-test-embedding',
+        }
       );
-      const json = (await res.json()) as any;
+      const json = await readJsonResponse(res);
       if (!Array.isArray(json?.data)) return { ok: false, error: '返回格式异常（无 data 数组）' };
       validateEmbedding(json.data[0]?.embedding, entry.dim);
       return { ok: true };

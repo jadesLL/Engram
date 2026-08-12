@@ -13,6 +13,7 @@ let migrate: () => void;
 let setSetting: (key: string, value: string) => void;
 let buildEmbeddingRequestBody: typeof import('./llm.js').buildEmbeddingRequestBody;
 let buildDocumentRequestBody: typeof import('./llm.js').buildDocumentRequestBody;
+let chatStream: typeof import('./llm.js').chatStream;
 let embed: typeof import('./llm.js').embed;
 let testModel: typeof import('./llm.js').testModel;
 let getActiveChat: typeof import('./llm.js').getActiveChat;
@@ -27,6 +28,7 @@ before(async () => {
   ({
     buildEmbeddingRequestBody,
     buildDocumentRequestBody,
+    chatStream,
     embed,
     testModel,
     getActiveChat,
@@ -38,7 +40,7 @@ before(async () => {
 });
 
 beforeEach(() => {
-  db.exec('DELETE FROM settings');
+  db.exec('DELETE FROM settings; DELETE FROM llm_usage;');
 });
 
 afterEach(() => {
@@ -219,6 +221,98 @@ test('testModel rejects a non-array embedding', async () => {
   const result = await testModel(entry(), 'embedding');
   assert.equal(result.ok, false);
   assert.match(result.error || '', /embedding 不是数组/);
+});
+
+test('streaming chat requests and records provider cache usage', async () => {
+  const chatEntry = entry({
+    id: 'chat-1',
+    name: '测试 Chat',
+    provider: 'deepseek',
+    baseUrl: 'https://chat.example/v1',
+    model: 'chat-model',
+  });
+  setSetting('chat_models', JSON.stringify([chatEntry]));
+  setSetting('active_chat_model', chatEntry.id);
+  let requestBody: Record<string, any> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    const stream = [
+      'data: {"choices":[{"delta":{"content":"你好"}}]}',
+      '',
+      'data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}',
+      '',
+      'data: [DONE]',
+      '',
+      '',
+    ].join('\n');
+    return new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  let output = '';
+  await chatStream(
+    [{ role: 'user', content: '测试流式用量' }],
+    (delta) => { output += delta; },
+    { tag: 'stream-usage-test' },
+  );
+
+  assert.equal(output, '你好');
+  assert.deepEqual(requestBody?.stream_options, { include_usage: true });
+  assert.deepEqual(
+    db.prepare(
+      `SELECT provider,model,tag,prompt_tokens,cache_read_tokens,cache_miss_tokens
+       FROM llm_usage`
+    ).get(),
+    {
+      provider: 'deepseek',
+      model: 'chat-model',
+      tag: 'stream-usage-test',
+      prompt_tokens: 100,
+      cache_read_tokens: 80,
+      cache_miss_tokens: 20,
+    },
+  );
+});
+
+test('streaming chat retries once without usage options for legacy providers', async () => {
+  const chatEntry = entry({
+    id: 'legacy-chat',
+    name: '旧兼容接口',
+    provider: 'custom',
+    baseUrl: 'https://legacy-chat.example/v1',
+    model: 'legacy-model',
+  });
+  setSetting('chat_models', JSON.stringify([chatEntry]));
+  setSetting('active_chat_model', chatEntry.id);
+  const bodies: Record<string, any>[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    bodies.push(body);
+    if (body.stream_options) {
+      return new Response(JSON.stringify({ error: { message: 'extra fields are not permitted' } }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response('data: {"choices":[{"delta":{"content":"兼容"}}]}\n\ndata: [DONE]\n\n', {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+
+  let output = '';
+  await chatStream(
+    [{ role: 'user', content: '测试旧接口' }],
+    (delta) => { output += delta; },
+    { tag: 'legacy-stream-test' },
+  );
+
+  assert.equal(output, '兼容');
+  assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies[0].stream_options, { include_usage: true });
+  assert.equal(bodies[1].stream_options, undefined);
 });
 
 test('testModel verifies that a document model can read the generated image', async () => {

@@ -45,6 +45,7 @@ import {
   type AgentToolResult,
 } from './tools.js';
 import {
+  agentContextPrompt,
   agentSystemPrompt,
   fallbackToolPrompt,
   ragSystemPrompt,
@@ -288,14 +289,15 @@ async function runFastQuestion(
       output += delta;
       publishAssistantEvent(run.id, 'delta', { messageId, text: delta });
     },
-    { temperature: 0.2, signal }
+    { temperature: 0.2, signal, tag: 'assistant-answer' }
   );
   completeRun(run.id, validateCitations(output.trim(), sources.length), { sources });
 }
 
 function llmMessagesForRun(run: AssistantRun): ChatMessage[] {
   const messages: ChatMessage[] = [
-    { role: 'system', content: agentSystemPrompt(run.context) },
+    { role: 'system', content: agentSystemPrompt() },
+    { role: 'user', content: agentContextPrompt(run.context) },
   ];
   for (const message of listMessages(run.sessionId, 100).slice(-MAX_HISTORY_MESSAGES)) {
     if (message.id === run.assistantMessageId && !message.content.trim()) continue;
@@ -332,6 +334,7 @@ async function modelDecision(
       const result = await chatWithTools(messages, toolDefinitions(), {
         temperature: 0.2,
         signal,
+        tag: 'assistant-tools',
       });
       return { content: result.content, toolCalls: result.toolCalls };
     } catch (error) {

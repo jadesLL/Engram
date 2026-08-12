@@ -43,6 +43,7 @@ beforeEach(() => {
     DELETE FROM ingest_questions;
     DELETE FROM ingest_candidates;
     DELETE FROM semantic_events;
+    DELETE FROM llm_usage;
     DELETE FROM page_syntheses;
     DELETE FROM page_contributions;
     DELETE FROM ingest_runs;
@@ -155,6 +156,7 @@ test('one-click wipe removes reports, ingest history, queued jobs and nested sou
     'ingest_questions',
     'ingest_candidates',
     'semantic_events',
+    'llm_usage',
     'page_syntheses',
     'page_contributions',
     'ingest_runs',
@@ -196,6 +198,10 @@ test('AI log wipe removes typed relations while preserving knowledge pages and o
   assert.equal(db.prepare(`SELECT count(*) n FROM edges WHERE rel = '主责'`).get().n, 1);
   assert.ok(db.prepare(`SELECT count(*) n FROM edges WHERE rel = 'link' AND src_page = ?`).get(source.id).n > 0);
   assert.match(readPage('Wiki/关系/relationships.md').content, /\[\[负责人\]\]::主责::\[\[项目\]\]/);
+  db.prepare(
+    `INSERT INTO llm_usage(provider,model,operation,tag,prompt_tokens,created_at)
+     VALUES('test','test','chat','cleanup-test',10,'2026-01-01')`
+  ).run();
 
   const result = await wipeAiLogsAndRelations();
 
@@ -204,6 +210,7 @@ test('AI log wipe removes typed relations while preserving knowledge pages and o
   assert.equal(db.prepare(`SELECT count(*) n FROM edges WHERE rel = '主责'`).get().n, 0);
   assert.ok(db.prepare(`SELECT count(*) n FROM edges WHERE rel = 'link' AND src_page = ?`).get(source.id).n > 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM pages WHERE path LIKE 'AIWorks/log/%'`).get().n, 0);
+  assert.equal(db.prepare(`SELECT count(*) n FROM llm_usage`).get().n, 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM chunks WHERE ref_id = ?`).get(aiLog.id).n, 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM pages WHERE id IN (?, ?)`).get(source.id, target.id).n, 2);
   assert.doesNotMatch(readPage('Wiki/关系/relationships.md').content, /\[\[负责人\]\]::主责::\[\[项目\]\]/);

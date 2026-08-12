@@ -16,8 +16,8 @@ let coverageFailure: 'missing' | 'duplicate' | null = null;
 
 function responseFor(system: string, input: any) {
   if (system.includes('执行 Map')) {
-    const source = String(input || '');
-    const chunkId = system.match(/chunkId:"([^"]+)"/)?.[1] || 'c0001';
+    const source = typeof input?.content === 'string' ? input.content : String(input || '');
+    const chunkId = typeof input?.chunkId === 'string' ? input.chunkId : 'c0001';
     const names = [...new Set([...source.matchAll(/候选(\d{2})/g)].map((match) => `候选${match[1]}`))];
     return {
       candidates: names.map((name) => {

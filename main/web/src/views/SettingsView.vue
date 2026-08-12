@@ -99,6 +99,87 @@
             </div>
           </div>
 
+          <div class="llm-usage-band" aria-labelledby="llm-usage-title">
+            <div class="llm-usage-head">
+              <div>
+                <strong id="llm-usage-title">模型用量</strong>
+                <span>
+                  {{ llmUsage.requests
+                    ? `${llmUsage.requests} 次调用 · 最近更新 ${formatUsageTime(llmUsage.latestAt)}`
+                    : '等待新调用产生计量数据' }}
+                </span>
+              </div>
+              <div class="llm-usage-controls">
+                <select v-model.number="llmUsageDays" aria-label="模型用量统计范围" @change="loadLlmUsage">
+                  <option :value="7">近 7 天</option>
+                  <option :value="30">近 30 天</option>
+                  <option :value="90">近 90 天</option>
+                </select>
+                <button
+                  class="icon-btn"
+                  type="button"
+                  title="刷新模型用量"
+                  :disabled="llmUsageLoading"
+                  @click="loadLlmUsage"
+                >
+                  <Icon name="rotate-right" :size="15" />
+                </button>
+              </div>
+            </div>
+
+            <p v-if="llmUsageError" class="setting-message err">{{ llmUsageError }}</p>
+            <div v-else-if="llmUsageLoading && !llmUsage.requests" class="llm-usage-empty">正在读取用量...</div>
+            <template v-else-if="llmUsage.requests">
+              <div class="llm-usage-metrics">
+                <div>
+                  <span>缓存命中率</span>
+                  <strong>{{ formatUsageRate(llmUsage.cacheHitRate) }}</strong>
+                  <small>{{ llmUsage.cacheRequests }}/{{ llmUsage.requests }} 次返回缓存计量</small>
+                </div>
+                <div>
+                  <span>缓存读取</span>
+                  <strong>{{ formatTokenCount(llmUsage.cacheReadTokens) }}</strong>
+                  <small>未命中 {{ formatTokenCount(llmUsage.cacheMissTokens) }}</small>
+                </div>
+                <div>
+                  <span>输入 Token</span>
+                  <strong>{{ formatTokenCount(llmUsage.promptTokens) }}</strong>
+                  <small>含命中与未命中部分</small>
+                </div>
+                <div>
+                  <span>输出 Token</span>
+                  <strong>{{ formatTokenCount(llmUsage.completionTokens) }}</strong>
+                  <small>总计 {{ formatTokenCount(llmUsage.totalTokens) }}</small>
+                </div>
+              </div>
+
+              <div v-if="llmUsage.breakdown.length" class="llm-usage-breakdown">
+                <div class="llm-usage-row llm-usage-row-head" aria-hidden="true">
+                  <span>调用阶段</span>
+                  <span>模型</span>
+                  <span>输入</span>
+                  <span>缓存命中</span>
+                </div>
+                <div
+                  v-for="item in llmUsage.breakdown.slice(0, 6)"
+                  :key="`${item.provider}-${item.model}-${item.tag}`"
+                  class="llm-usage-row"
+                >
+                  <span>
+                    <strong>{{ usageTagLabel(item.tag) }}</strong>
+                    <small>{{ item.requests }} 次</small>
+                  </span>
+                  <span :title="`${item.provider} · ${item.model}`">{{ item.model }}</span>
+                  <span>{{ formatTokenCount(item.promptTokens) }}</span>
+                  <span>{{ formatUsageRate(item.cacheHitRate) }}</span>
+                </div>
+              </div>
+            </template>
+            <div v-else class="llm-usage-empty">
+              当前统计范围内没有可用数据；更新后的新请求会在这里显示供应商返回的 token 与缓存计量。
+            </div>
+          </div>
+
           <div class="model-tabs" role="tablist" aria-label="模型类型">
             <button
               v-for="section in modelSections"
@@ -726,6 +807,59 @@ interface TrashEntry {
   legacy: boolean;
 }
 
+interface LlmUsageBreakdown {
+  provider: string;
+  model: string;
+  operation: string;
+  tag: string;
+  requests: number;
+  cacheRequests: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cacheMissTokens: number;
+  cacheReported: boolean;
+  cacheHitRate: number | null;
+}
+
+interface LlmUsageSummary {
+  windowDays: number;
+  from: string;
+  requests: number;
+  cacheRequests: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cacheMissTokens: number;
+  cacheReported: boolean;
+  cacheHitRate: number | null;
+  latestAt: string | null;
+  breakdown: LlmUsageBreakdown[];
+}
+
+function emptyLlmUsage(windowDays = 7): LlmUsageSummary {
+  return {
+    windowDays,
+    from: '',
+    requests: 0,
+    cacheRequests: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    cacheMissTokens: 0,
+    cacheReported: false,
+    cacheHitRate: null,
+    latestAt: null,
+    breakdown: [],
+  };
+}
+
 const app = useAppStore();
 const auth = useAuthStore();
 
@@ -746,6 +880,10 @@ const documentModels = ref<ModelEntry[]>([]);
 const activeChat = ref('');
 const activeEmb = ref('');
 const activeDocument = ref('');
+const llmUsageDays = ref(7);
+const llmUsage = ref<LlmUsageSummary>(emptyLlmUsage());
+const llmUsageLoading = ref(false);
+const llmUsageError = ref('');
 const imageCapabilityChecking = ref(false);
 const imageCapabilityDetail = ref('');
 const checkedImageCapabilityIds = new Set<string>();
@@ -1964,6 +2102,54 @@ function logout() {
   auth.logout();
 }
 
+const LLM_USAGE_TAG_LABELS: Record<string, string> = {
+  'ingest-map': '入库 Map',
+  'ingest-normalize': '入库 Normalize',
+  'ingest-plan': '入库 Plan',
+  'ingest-critic': '入库 Critic',
+  'ingest-critic-review': '入库 Critic 复核',
+  'ingest-compose': '入库 Compose',
+  'ingest-questions': '入库追问',
+  'ingest-verify': '入库 Verify',
+  'assistant-route': '助手路由',
+  'assistant-tools': '助手工具决策',
+  'assistant-answer': '助手回答',
+  'search-answer': '知识问答',
+  embedding: '向量化',
+  'document-ocr': '图片识别',
+  'image-capability-probe': '图片能力检测',
+  'connection-test-chat': '对话连接测试',
+  'connection-test-embedding': '向量连接测试',
+};
+
+function usageTagLabel(tag: string): string {
+  if (LLM_USAGE_TAG_LABELS[tag]) return LLM_USAGE_TAG_LABELS[tag];
+  if (tag.startsWith('writer-')) return `写作助手 · ${tag.slice('writer-'.length)}`;
+  return tag;
+}
+
+function formatTokenCount(value: number): string {
+  if (value < 1000) return String(value);
+  if (value < 1_000_000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}K`;
+  return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+}
+
+function formatUsageRate(value: number | null): string {
+  return value === null ? '未报告' : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatUsageTime(value: string | null): string {
+  if (!value) return '暂无';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function formatBytes(value: number): string {
   if (!value) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -2144,6 +2330,21 @@ function parseEntries(raw: string): ModelEntry[] {
   }
 }
 
+async function loadLlmUsage() {
+  llmUsageLoading.value = true;
+  llmUsageError.value = '';
+  try {
+    const { data } = await api.get('/api/settings/llm-usage', {
+      params: { days: llmUsageDays.value },
+    });
+    llmUsage.value = data;
+  } catch (error: any) {
+    llmUsageError.value = errorMessage(error, '模型用量读取失败。');
+  } finally {
+    llmUsageLoading.value = false;
+  }
+}
+
 async function load() {
   const [{ data: settingsData }, { data: tokenData }, { data: dreamData }] = await Promise.all([
     api.get('/api/settings'),
@@ -2173,6 +2374,7 @@ watch(
 
 onMounted(async () => {
   await load();
+  void loadLlmUsage();
   void loadTrash();
   if (activeModelKind.value === 'document') void refreshActiveChatImageCapability();
 });
@@ -3239,6 +3441,162 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 
 .model-panel-head {
   align-items: center;
+}
+
+.llm-usage-band {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-secondary) 62%, var(--bg));
+}
+
+.llm-usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.llm-usage-head > div:first-child {
+  min-width: 0;
+}
+
+.llm-usage-head strong,
+.llm-usage-head span {
+  display: block;
+}
+
+.llm-usage-head strong {
+  font-size: 13px;
+}
+
+.llm-usage-head span {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.llm-usage-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.llm-usage-controls select {
+  width: 104px;
+  min-height: 32px;
+}
+
+.llm-usage-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.llm-usage-metrics > div {
+  min-width: 0;
+  padding: 13px 14px;
+  border-left: 1px solid var(--border);
+}
+
+.llm-usage-metrics > div:first-child {
+  border-left: 0;
+}
+
+.llm-usage-metrics span,
+.llm-usage-metrics strong,
+.llm-usage-metrics small {
+  display: block;
+}
+
+.llm-usage-metrics span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.llm-usage-metrics strong {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 21px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-usage-metrics > div:first-child strong {
+  color: var(--success);
+}
+
+.llm-usage-metrics small {
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-usage-breakdown {
+  margin-top: 13px;
+}
+
+.llm-usage-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) minmax(130px, 1fr) 80px 90px;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  padding: 6px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  font-size: 11px;
+}
+
+.llm-usage-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-usage-row > span:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.llm-usage-row strong {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.llm-usage-row small {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.llm-usage-row-head {
+  min-height: 28px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.llm-usage-empty {
+  padding: 24px 0 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.llm-usage-band > .setting-message {
+  margin-top: 12px;
 }
 
 .workspace-message {
@@ -4361,6 +4719,30 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
     flex-direction: column;
   }
 
+  .llm-usage-band {
+    padding: 16px 18px;
+  }
+
+  .llm-usage-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .llm-usage-metrics > div:nth-child(3) {
+    border-left: 0;
+  }
+
+  .llm-usage-metrics > div:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+
+  .llm-usage-row {
+    grid-template-columns: minmax(0, 1fr) 70px 82px;
+  }
+
+  .llm-usage-row > span:nth-child(2) {
+    display: none;
+  }
+
   .panel-actions {
     width: 100%;
     justify-content: flex-start;
@@ -4494,6 +4876,29 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 
   .panel-actions .btn.primary {
     grid-column: 1 / -1;
+  }
+
+  .llm-usage-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .llm-usage-controls {
+    width: 100%;
+  }
+
+  .llm-usage-controls select {
+    flex: 1;
+    width: auto;
+  }
+
+  .llm-usage-metrics strong {
+    font-size: 18px;
+  }
+
+  .llm-usage-row {
+    grid-template-columns: minmax(0, 1fr) 64px 76px;
+    gap: 8px;
   }
 
   .password-controls {

@@ -161,8 +161,14 @@ async function mapChunk(
     const out = await jsonStage<{ candidates: Candidate[] }>(
       runId,
       mapOutputSchema,
-      mapPrompt(chunk.id, titleRoster),
-      `分段 ${chunk.id} [${chunk.start},${chunk.end})：\n${chunk.content}`,
+      mapPrompt,
+      {
+        chunkId: chunk.id,
+        roster: titleRoster,
+        start: chunk.start,
+        end: chunk.end,
+        content: chunk.content,
+      },
       'ingest-map',
       8000,
       `ingest-map:${chunk.id}`,
@@ -515,8 +521,8 @@ export async function ingestRawFile(
       const rawPlan = await coveredItemsStage<{ items: PlanItem[] }>(
         runId,
         planOutputSchema,
-        planPrompt(titleRoster, related),
-        { candidates: candidateBatch },
+        planPrompt,
+        { roster: titleRoster, related, candidates: candidateBatch },
         candidateBatch,
         'ingest-plan',
         8000,
@@ -582,6 +588,8 @@ export async function ingestRawFile(
       const factIds = new Set(composeBatch.flatMap((item) => item.factIds));
       const batchFacts = facts.filter((fact) => factIds.has(fact.id));
       const composeInput = {
+        roster: titleRoster,
+        related,
         items: composeBatch.map((item) => ({
           candidateId: item.candidateId,
           name: item.name,
@@ -599,7 +607,7 @@ export async function ingestRawFile(
       }>(
         runId,
         composeItemOutputListSchema,
-        composePrompt(titleRoster, related),
+        composePrompt,
         composeInput,
         composeBatch,
         'ingest-compose',
