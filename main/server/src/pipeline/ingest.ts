@@ -96,6 +96,7 @@ async function jsonStage<T>(
   tag: string,
   maxTokens = 8000,
   stage = tag,
+  cacheContext?: unknown,
 ): Promise<T> {
   return runSemanticStage<T>({
     scope: 'ingest',
@@ -104,6 +105,7 @@ async function jsonStage<T>(
     tag,
     schema,
     system,
+    cacheContext,
     input,
     temperature: 0.1,
     maxTokens,
@@ -164,7 +166,6 @@ async function mapChunk(
       mapPrompt,
       {
         chunkId: chunk.id,
-        roster: titleRoster,
         start: chunk.start,
         end: chunk.end,
         content: chunk.content,
@@ -172,6 +173,7 @@ async function mapChunk(
       'ingest-map',
       8000,
       `ingest-map:${chunk.id}`,
+      { roster: titleRoster },
     );
     const valid = validateFacts(out.candidates, [chunk]);
     if (out.candidates.length >= MAP_BATCH_LIMIT) {
@@ -234,20 +236,27 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
   tag: string,
   maxTokens: number,
   stage: string,
+  cacheContext?: unknown,
 ): Promise<T> {
   let coverageError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const correction = attempt
-      ? '\n上一轮输出遗漏、重复或修改了 candidateId。请严格逐项覆盖输入中的全部 candidateId。'
-      : '';
+    const stageInput = attempt
+      ? {
+          ...(typeof input === 'object' && input !== null && !Array.isArray(input)
+            ? input as Record<string, unknown>
+            : { input }),
+          coverageCorrection: '上一轮输出遗漏、重复或修改了 candidateId。请严格逐项覆盖输入中的全部 candidateId。',
+        }
+      : input;
     const result = await jsonStage<T>(
       runId,
       schema,
-      `${system}${correction}`,
-      input,
+      system,
+      stageInput,
       tag,
       maxTokens,
       `${stage}${attempt ? ':coverage-retry' : ''}`,
+      cacheContext,
     );
     try {
       exactCandidateCoverage(expected, result.items, stage);
@@ -522,11 +531,12 @@ export async function ingestRawFile(
         runId,
         planOutputSchema,
         planPrompt,
-        { roster: titleRoster, related, candidates: candidateBatch },
+        { candidates: candidateBatch },
         candidateBatch,
         'ingest-plan',
         8000,
         `ingest-plan:${index + 1}`,
+        { roster: titleRoster, related },
       );
       const batchPlan = whitelistFactIds(rawPlan.items, allowedFactIds).items;
       plan.push(...batchPlan);
@@ -545,11 +555,12 @@ export async function ingestRawFile(
         runId,
         criticOutputSchema,
         criticPrompt,
-        { plan: planBatch, candidates: candidateBatch, roster: titleRoster, related },
+        { plan: planBatch, candidates: candidateBatch },
         planBatch,
         'ingest-critic',
         8000,
         `ingest-critic:${index + 1}`,
+        { roster: titleRoster, related },
       );
       const revised = whitelistFactIds(firstCritique.items, allowedFactIds).items;
       audit(runId, `critic:${index + 1}`, { ...firstCritique, items: revised }, planBatch);
@@ -558,11 +569,12 @@ export async function ingestRawFile(
         runId,
         criticOutputSchema,
         criticPrompt,
-        { plan: revised, candidates: candidateBatch, roster: titleRoster, related, previousCritique: firstCritique },
+        { plan: revised, candidates: candidateBatch, previousCritique: firstCritique },
         revised,
         'ingest-critic-review',
         8000,
         `ingest-critic-review:${index + 1}`,
+        { roster: titleRoster, related },
       );
       let reviewedBatch = whitelistFactIds(secondCritique.items, allowedFactIds).items;
       if (!secondCritique.approved) {
@@ -588,8 +600,6 @@ export async function ingestRawFile(
       const factIds = new Set(composeBatch.flatMap((item) => item.factIds));
       const batchFacts = facts.filter((fact) => factIds.has(fact.id));
       const composeInput = {
-        roster: titleRoster,
-        related,
         items: composeBatch.map((item) => ({
           candidateId: item.candidateId,
           name: item.name,
@@ -613,6 +623,7 @@ export async function ingestRawFile(
         'ingest-compose',
         9000,
         `ingest-compose:${index + 1}`,
+        { roster: titleRoster, related },
       );
       for (const item of rawComposed.items) contentById.set(item.candidateId, item.content);
       audit(runId, `compose:${index + 1}`, rawComposed, composeInput.items);

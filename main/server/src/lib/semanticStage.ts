@@ -10,6 +10,8 @@ export interface SemanticStageInput<T> {
   tag: string;
   schema: ZodType<T>;
   system: string;
+  /** Stable, untrusted reference data placed before the per-batch input for provider prefix caching. */
+  cacheContext?: unknown;
   input: unknown;
   temperature?: number;
   maxTokens?: number;
@@ -27,16 +29,21 @@ function hash(value: unknown): string {
  */
 export async function runSemanticStage<T>(options: SemanticStageInput<T>): Promise<T> {
   const startedAt = Date.now();
-  const inputHash = hash(options.input);
+  const inputHash = options.cacheContext === undefined
+    ? hash(options.input)
+    : hash({ cacheContext: options.cacheContext, input: options.input });
   const messages: ChatMessage[] = [
     { role: 'system', content: options.system },
-    {
-      role: 'user',
-      content: typeof options.input === 'string'
-        ? options.input
-        : JSON.stringify(options.input),
-    },
   ];
+  messages.push({
+    role: 'user',
+    content: options.cacheContext === undefined
+      ? (typeof options.input === 'string' ? options.input : JSON.stringify(options.input))
+      : JSON.stringify({
+          sharedContext: options.cacheContext,
+          input: options.input,
+        }),
+  });
   try {
     const output = await chatJsonSchema<T>(
       options.schema,
