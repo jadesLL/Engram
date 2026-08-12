@@ -13,9 +13,13 @@ let server: http.Server;
 let failNext = false;
 let db: any;
 let runSemanticStage: any;
+let capturedRequests: any[] = [];
 
 before(async () => {
-  server = http.createServer(async (_req, res) => {
+  server = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk);
+    capturedRequests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
     if (failNext) {
       failNext = false;
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -112,4 +116,40 @@ test('semantic stages audit both successful and failed model decisions', async (
     cache_read_tokens: 80,
     cache_miss_tokens: 20,
   });
+});
+
+test('cache context stays before changing stage input', async () => {
+  capturedRequests = [];
+  const schema = z.object({ answer: z.string() });
+  const sharedContext = {
+    roster: '- 共享实体（person）',
+    related: '- 共享证据',
+  };
+  for (const value of [1, 2]) {
+    await runSemanticStage({
+      scope: 'cache-prefix-test',
+      refId: `run-${value}`,
+      stage: 'decide',
+      tag: 'semantic-cache-prefix-test',
+      schema,
+      system: '返回结构化结论。',
+      cacheContext: sharedContext,
+      input: { value },
+      retries: 0,
+    });
+  }
+
+  assert.equal(capturedRequests.length, 2);
+  const firstMessages = capturedRequests[0].messages;
+  const secondMessages = capturedRequests[1].messages;
+  assert.equal(firstMessages.length, 2);
+  assert.equal(secondMessages.length, 2);
+  assert.equal(firstMessages[0].content, secondMessages[0].content);
+  const firstInput = JSON.parse(firstMessages[1].content);
+  const secondInput = JSON.parse(secondMessages[1].content);
+  assert.deepEqual(firstInput, { sharedContext, input: { value: 1 } });
+  assert.deepEqual(secondInput, { sharedContext, input: { value: 2 } });
+  const expectedPrefix = `${JSON.stringify({ sharedContext }).slice(0, -1)},"input":`;
+  assert.ok(firstMessages[1].content.startsWith(expectedPrefix));
+  assert.ok(secondMessages[1].content.startsWith(expectedPrefix));
 });

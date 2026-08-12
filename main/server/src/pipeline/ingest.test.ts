@@ -13,6 +13,7 @@ let db: any;
 let setSetting: (key: string, value: string) => void;
 let ingestRawFile: any;
 let coverageFailure: 'missing' | 'duplicate' | null = null;
+let capturedRequests: any[] = [];
 
 function responseFor(system: string, input: any) {
   if (system.includes('执行 Map')) {
@@ -115,11 +116,16 @@ before(async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    capturedRequests.push(body);
     const messages = body.messages || [];
     const system = messages.find((message: any) => message.role === 'system')?.content || '';
-    const rawInput = messages.find((message: any) => message.role === 'user')?.content || '';
+    const inputMessage = messages.find((message: any) => message.role === 'user');
+    const rawInput = inputMessage?.content || '';
     let input: any = rawInput;
-    try { input = JSON.parse(rawInput); } catch { /* Map input is plain text */ }
+    try {
+      const parsed = JSON.parse(rawInput);
+      input = Object.hasOwn(parsed, 'sharedContext') ? parsed.input : parsed;
+    } catch { /* retain plain text */ }
     let content: unknown;
     try {
       content = responseFor(system, input);
@@ -158,6 +164,7 @@ after(async () => {
 });
 
 test('dense input is split and all candidates pass through bounded stages without truncation', async () => {
+  capturedRequests = [];
   const rawDir = path.join(temp, 'brain', '原始资料');
   fs.mkdirSync(rawDir, { recursive: true });
   const lines = Array.from({ length: 18 }, (_, index) => {
@@ -186,6 +193,31 @@ test('dense input is split and all candidates pass through bounded stages withou
     return [row.stage, count];
   }));
   assert.deepEqual(counts, { normalize: 18, plan: 18, compose: 18, verify: 18 });
+
+  const requestsFor = (marker: string) => capturedRequests.filter((request) =>
+    request.messages?.[0]?.content?.includes(marker)
+  );
+  for (const marker of ['执行 Map', '执行 Plan', '执行 Critic', '执行 Compose']) {
+    const requests = requestsFor(marker);
+    assert.ok(requests.length >= 2, marker);
+    const prefixes = requests.map((request) => {
+      const parsed = JSON.parse(request.messages[1].content);
+      return `${JSON.stringify({ sharedContext: parsed.sharedContext }).slice(0, -1)},"input":`;
+    });
+    assert.equal(new Set(prefixes).size, 1, `${marker} shared prefix`);
+    const requestBody = JSON.parse(requests[0].messages[1].content);
+    const context = requestBody.sharedContext;
+    assert.equal(typeof context.roster, 'string', `${marker} roster`);
+    const dynamicInput = requestBody.input;
+    assert.equal(Object.hasOwn(dynamicInput, 'roster'), false, `${marker} dynamic roster`);
+    assert.equal(Object.hasOwn(dynamicInput, 'related'), false, `${marker} dynamic related`);
+  }
+  const verifyRequests = requestsFor('执行 Verifier');
+  assert.ok(verifyRequests.length >= 2);
+  assert.ok(verifyRequests.every((request) => request.messages.length === 2));
+  assert.ok(verifyRequests.every((request) =>
+    !Object.hasOwn(JSON.parse(request.messages[1].content), 'sharedContext')
+  ));
 });
 
 test('a map result exactly at the batch limit is split again to avoid a silent ceiling', async () => {
@@ -218,11 +250,18 @@ test('missing or duplicate candidate ids fail the run instead of silently droppi
   };
 
   coverageFailure = 'missing';
+  capturedRequests = [];
   write('覆盖遗漏.md', ['候选21']);
   await assert.rejects(
     () => ingestRawFile('原始资料/覆盖遗漏.md', () => {}, { force: true }),
     /候选覆盖不完整/,
   );
+  const planRetries = capturedRequests.filter((request) =>
+    request.messages?.[0]?.content?.includes('执行 Plan')
+  );
+  assert.equal(planRetries.length, 2);
+  assert.equal(planRetries[0].messages[0].content, planRetries[1].messages[0].content);
+  assert.match(JSON.parse(planRetries[1].messages[1].content).input.coverageCorrection, /candidateId/);
 
   coverageFailure = 'duplicate';
   write('覆盖重复.md', ['候选22', '候选23']);
