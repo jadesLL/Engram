@@ -5,7 +5,21 @@
 
     <!-- 页面编辑模式 -->
     <template v-else-if="page">
-      <div class="page-head">
+      <ReadingPreview
+        v-if="app.readingMode"
+        :markdown="content"
+        :title="title"
+        :page-type="pageType"
+        :tags="tags"
+        :updated-at="page.updated_at"
+        :dark="isDark"
+        :related="related"
+        @close="closeReading"
+        @open-wikilink="openWikilink"
+        @open-related="(id: string) => $router.push(`/page/${id}`)"
+      />
+
+      <div v-show="!app.readingMode" class="page-head">
         <input v-model="title" class="title-input" placeholder="无标题" @change="save(true)" />
         <div class="head-meta">
           <select v-model="pageType" @change="save(true)" class="ghost-select">
@@ -49,7 +63,7 @@
       </div>
 
       <!-- AI 写作操作条 -->
-      <div class="ai-bar">
+      <div v-show="!app.readingMode" class="ai-bar">
         <Icon name="ai" :size="13" class="ai-bar-icon" />
         <button v-for="a in aiActions" :key="a.key" class="ai-action" @click="runAi(a.key)">
           {{ a.label }}
@@ -57,21 +71,20 @@
         <span class="faint small ai-hint">选中文本后使用，未选中则作用于全文</span>
       </div>
 
-      <div class="editor-area">
+      <div v-show="!app.readingMode" class="editor-area">
         <MarkdownEditor
           ref="editorRef"
           v-model="content"
           :dark="isDark"
           :mode="app.editorMode"
-          :html-mode="app.htmlPreview"
           @save="save(true)"
           @open-wikilink="openWikilink"
           @mode-change="(m: 'ir' | 'sv') => app.setEditorMode(m)"
-          @html-change="(on: boolean) => app.toggleHtmlPreview(on)"
+          @enter-reading="enterReading"
         />
       </div>
 
-      <aside v-if="evidenceOpen && evidence" class="evidence-drawer">
+      <aside v-if="!app.readingMode && evidenceOpen && evidence" class="evidence-drawer">
         <div class="evidence-head">
           <div>
             <h3>来源证据</h3>
@@ -166,7 +179,7 @@
       </aside>
 
       <!-- 本页关联 -->
-      <div v-if="related" class="related">
+      <div v-if="!app.readingMode && related" class="related">
         <div class="related-title faint small">🔗 本页关联（AI 自动生成）</div>
         <div class="related-items">
           <span
@@ -206,12 +219,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useAssistantStore } from '../stores/assistant';
 import MarkdownEditor from '../components/MarkdownEditor.vue';
+import ReadingPreview from '../components/ReadingPreview.vue';
 import FilePreview from '../components/FilePreview.vue';
 import Icon from '../components/Icon.vue';
 
@@ -232,7 +246,10 @@ const evidenceOpen = ref(false);
 const editorRef = ref<InstanceType<typeof MarkdownEditor>>();
 
 const filePath = computed(() => (route.query.file as string) || '');
-const isDark = computed(() => document.documentElement.classList.contains('dark'));
+const isDark = computed(() => app.dark);
+const tags = computed(() =>
+  tagsInput.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)
+);
 const synthesisPending = computed(() =>
   Boolean(evidence.value?.sources?.length) &&
   (!evidence.value?.synthesis || evidence.value.synthesis.outdated)
@@ -318,6 +335,18 @@ function openEvidenceSource(path: string) {
     return;
   }
   router.push({ path: route.path, query: { ...route.query, file: path } });
+}
+
+function enterReading() {
+  const current = editorRef.value?.getValue();
+  if (current !== undefined && current !== content.value) content.value = current;
+  evidenceOpen.value = false;
+  app.setReadingMode(true);
+}
+
+function closeReading() {
+  app.setReadingMode(false);
+  nextTick(() => editorRef.value?.focus());
 }
 
 async function save(manual = false) {
@@ -431,7 +460,7 @@ async function createFirst() {
 watch(
   () => route.params.id,
   (id, oldId) => {
-    // 不置空 page（避免销毁 MarkdownEditor 丢失编辑模式/HTML 预览状态）；
+    // 不置空 page（避免销毁 MarkdownEditor 丢失编辑模式/阅读状态）；
     // 只清关联数据，直接加载新页面。编辑器组件保持存活，内容由 watch(props.modelValue) 更新。
     related.value = null;
     evidence.value = null;
@@ -708,216 +737,6 @@ onUnmounted(() => {
 .editor-area :deep(.vditor-ir img),
 .editor-area :deep(.vditor-wysiwyg img),
 .editor-area :deep(.vditor-sv img) { max-width: 100%; border-radius: var(--radius); }
-
-/* ===== HTML 预览美化（精选子集融合 Notion 风 + 电光蓝点缀） ===== */
-.editor-area :deep(.html-preview-overlay) {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  overflow-y: auto;
-  background:
-    radial-gradient(600px 420px at 88% -60px, rgba(37, 99, 235, 0.05), transparent 70%),
-    radial-gradient(520px 400px at 4% 2%, rgba(59, 130, 246, 0.04), transparent 70%),
-    var(--bg);
-  padding: 48px 56px 72px;
-  font-size: 16px;
-  line-height: 1.8;
-  color: var(--text);
-}
-.editor-area :deep(.html-preview-overlay h1),
-.editor-area :deep(.html-preview-overlay h2),
-.editor-area :deep(.html-preview-overlay h3),
-.editor-area :deep(.html-preview-overlay h4) {
-  line-height: 1.3;
-  color: var(--text);
-  position: relative;
-}
-.editor-area :deep(.html-preview-overlay h1) {
-  font-size: 2.1em;
-  font-weight: 900;
-  letter-spacing: -0.01em;
-  margin: 0.6em 0 0.9em;
-  padding-bottom: 0.4em;
-}
-/* h1 电光蓝渐变 signature 下划线 */
-.editor-area :deep(.html-preview-overlay h1::after) {
-  content: "";
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 120px;
-  height: 6px;
-  border-radius: 3px;
-  background: linear-gradient(to right, rgba(37, 99, 235, 0.55), rgba(59, 130, 246, 0.25));
-}
-.editor-area :deep(.html-preview-overlay h2) {
-  font-size: 1.55em;
-  font-weight: 700;
-  margin: 1.6em 0 0.7em;
-  padding-bottom: 0.35em;
-  border-bottom: 1px solid var(--border);
-}
-.editor-area :deep(.html-preview-overlay h3) {
-  font-size: 1.2em;
-  font-weight: 700;
-  margin: 1.4em 0 0.6em;
-}
-.editor-area :deep(.html-preview-overlay h4) {
-  font-size: 1em;
-  font-weight: 600;
-  margin: 1.3em 0 0.5em;
-}
-/* 章节编号：电光蓝渐变文字 */
-.editor-area :deep(.html-preview-overlay h1::before),
-.editor-area :deep(.html-preview-overlay h2::before),
-.editor-area :deep(.html-preview-overlay h3::before) {
-  content: attr(data-md-num);
-  margin-right: 0.45em;
-  background: linear-gradient(to right, var(--accent), #4d7cff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  font-weight: 700;
-}
-.editor-area :deep(.html-preview-overlay p) { margin: 0 0 1em; }
-.editor-area :deep(.html-preview-overlay a) {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 500;
-}
-.editor-area :deep(.html-preview-overlay a:hover) { text-decoration: underline; }
-.editor-area :deep(.html-preview-overlay ul:not(.contains-task-list)),
-.editor-area :deep(.html-preview-overlay ol:not(.contains-task-list)) {
-  list-style: none;
-  margin: 0 0 1em;
-  padding-left: 2em;
-}
-.editor-area :deep(.html-preview-overlay li > p:first-child) { display: inline; }
-.editor-area :deep(.html-preview-overlay li > p:first-child + ul),
-.editor-area :deep(.html-preview-overlay li > p:first-child + ol) { margin-top: 0.35em; }
-.editor-area :deep(.html-preview-overlay li) { margin: 0.35em 0; }
-/* 引用块：电光蓝渐变竖线 */
-.editor-area :deep(.html-preview-overlay blockquote) {
-  margin: 0 0 1em;
-  padding: 0.7em 1.3em;
-  border-left: 4px solid var(--accent);
-  border-image: linear-gradient(to bottom, var(--accent), #4d7cff) 1;
-  background: var(--bg-secondary);
-  border-radius: 0 8px 8px 0;
-  color: var(--text-secondary);
-}
-.editor-area :deep(.html-preview-overlay blockquote p:last-child) { margin-bottom: 0; }
-/* 代码 */
-.editor-area :deep(.html-preview-overlay pre) {
-  padding: 16px 20px;
-  border-radius: 12px;
-  margin: 0 0 1em;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  overflow-x: auto;
-}
-.editor-area :deep(.html-preview-overlay code) {
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  border-radius: 6px;
-  padding: 0.15em 0.45em;
-  font-size: 0.85em;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.editor-area :deep(.html-preview-overlay pre code) {
-  background: transparent;
-  color: inherit;
-  padding: 0;
-}
-/* 表格：斑马纹 + 表头底色 */
-.editor-area :deep(.html-preview-overlay table) {
-  border-collapse: collapse;
-  margin: 0 0 1.2em;
-  width: 100%;
-  display: block;
-  overflow-x: auto;
-  font-variant-numeric: tabular-nums;
-}
-.editor-area :deep(.html-preview-overlay th) {
-  background: var(--bg-tertiary);
-  color: var(--text);
-  font-weight: 600;
-  text-align: left;
-  padding: 11px 12px;
-  border-bottom: 2px solid var(--accent);
-}
-.editor-area :deep(.html-preview-overlay td) {
-  padding: 11px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.editor-area :deep(.html-preview-overlay tr:nth-child(even) td) { background: var(--bg-secondary); }
-.editor-area :deep(.html-preview-overlay tr:hover td) { background: var(--bg-hover); }
-/* 图片 */
-.editor-area :deep(.html-preview-overlay img) {
-  display: block;
-  max-width: 100%;
-  margin: 1em auto;
-  border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
-}
-/* 分割线 */
-.editor-area :deep(.html-preview-overlay hr) {
-  margin: 2.2em 0;
-  border: none;
-  height: 2px;
-  border-radius: 1px;
-  background: linear-gradient(to right, transparent, var(--border) 20%, var(--border) 80%, transparent);
-}
-/* 列表徽章（JS 注入的 span 标记） */
-.editor-area :deep(.html-preview-overlay .mdht-ul-marker),
-.editor-area :deep(.html-preview-overlay .mdht-ol-marker) {
-  box-sizing: border-box;
-}
-/* 无序列表使用接近原生排版的小圆点：标记净占宽为 0，仅保留 0.55em 的正文间距 */
-.editor-area :deep(.html-preview-overlay .mdht-ul-marker) {
-  display: inline-block;
-  margin-left: -0.97em;
-  margin-right: 0.55em;
-  vertical-align: 0.08em;
-}
-.editor-area :deep(.html-preview-overlay .mdht-ul-l1) {
-  width: 0.42em; height: 0.42em; border-radius: 50%; background: var(--accent);
-}
-.editor-area :deep(.html-preview-overlay .mdht-ul-l2) {
-  width: 0.42em; height: 0.42em; border-radius: 50%; background: transparent; border: 0.09em solid var(--accent);
-}
-.editor-area :deep(.html-preview-overlay .mdht-ul-l3) {
-  width: 0.32em; height: 0.32em; border-radius: 1px; background: var(--accent);
-  margin-left: -0.87em;
-  vertical-align: 0.12em;
-}
-.editor-area :deep(.html-preview-overlay .mdht-ol-marker) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  margin-left: -1.75em;
-  margin-right: 0.65em;
-  width: 1em;
-  height: 1em;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent), #4d7cff);
-  color: #fff;
-  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.28);
-  vertical-align: 0.1em;
-  text-align: center;
-}
-.editor-area :deep(.html-preview-overlay .mdht-ol-num) {
-  display: block;
-  font-size: 0.66em;
-  font-weight: 700;
-  line-height: 1;
-}
-@media (max-width: 768px) {
-  .editor-area :deep(.html-preview-overlay) { padding: 24px 16px 40px; }
-  .editor-area :deep(.html-preview-overlay h1) { font-size: 1.7em; }
-  .editor-area :deep(.html-preview-overlay h2) { font-size: 1.35em; }
-}
 
 .evidence-drawer {
   position: absolute;
