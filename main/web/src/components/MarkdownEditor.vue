@@ -2,24 +2,6 @@
   <div class="editor-wrap">
     <div ref="vditorEl" class="vditor-host" />
 
-    <!-- HTML 预览叠加层（美化后的只读渲染） -->
-    <!-- 返回按钮是叠加层的兄弟元素，不能用子元素：Vditor.preview() 会 innerHTML= 清空容器 -->
-    <button
-      v-if="htmlPreview"
-      class="html-preview-exit"
-      title="返回编辑（Esc）"
-      @click="toggleHtmlPreview()"
-    >
-      ✕ 返回编辑
-    </button>
-    <div
-      v-if="htmlPreview"
-      class="html-preview-overlay"
-      ref="htmlPreviewEl"
-      tabindex="0"
-      @keydown.esc="toggleHtmlPreview()"
-    />
-
     <!-- 双链插入弹窗 -->
     <div v-if="linkPopup" class="link-popup card" @keydown.stop>
       <input
@@ -45,10 +27,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import { api } from '../api';
+import { VDITOR_CDN } from '../lib/vditorPreview';
 import {
   markdownLinksToWiki,
   markdownWikiLink,
@@ -56,23 +39,21 @@ import {
   wikiTargetFromHref,
 } from '../lib/wikiLinks';
 
-const props = defineProps<{ modelValue: string; dark: boolean; mode?: 'ir' | 'sv'; htmlMode?: boolean }>();
+const props = defineProps<{ modelValue: string; dark: boolean; mode?: 'ir' | 'sv' }>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void;
   (e: 'save'): void;
   (e: 'ai-action', action: string, text: string): void;
   (e: 'open-wikilink', title: string): void;
   (e: 'mode-change', mode: 'ir' | 'sv'): void;
-  (e: 'html-change', on: boolean): void;
+  (e: 'enter-reading'): void;
 }>();
 
 const vditorEl = ref<HTMLElement>();
-const htmlPreviewEl = ref<HTMLDivElement>();
 const linkInputEl = ref<HTMLInputElement>();
 const linkPopup = ref(false);
 const linkQuery = ref('');
 const suggestions = ref<any[]>([]);
-const htmlPreview = ref(props.htmlMode ?? false);
 
 let vditor: Vditor | null = null;
 let ready = false;
@@ -217,6 +198,7 @@ function init() {
   const initialValue = stripIngestComments(wikiLinksToMarkdown(props.modelValue));
   lastProgrammaticValue = initialValue;
   vditor = new Vditor(vditorEl.value!, {
+    cdn: VDITOR_CDN,
     mode: props.mode ?? 'ir',
     height: '100%',
     cache: { enable: false },
@@ -239,10 +221,10 @@ function init() {
       },
       '|', 'undo', 'redo', '|', 'edit-mode', 'fullscreen', 'outline', '|',
       {
-        name: 'html',
-        tip: 'HTML 预览（再点返回编辑）',
-        icon: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 4l2 16M20 4l-2 16M4 9h12M4 15h12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>',
-        click: () => toggleHtmlPreview(),
+        name: 'reading',
+        tip: '沉浸阅读',
+        icon: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        click: () => emit('enter-reading'),
       },
     ],
     toolbarConfig: { pin: true },
@@ -278,8 +260,6 @@ function init() {
       bindKeys();
       releaseModelSyncSoon();
       scheduleHideManagedPlaceholders();
-      // 初始化后同步 HTML 预览状态
-      if (htmlPreview.value) renderHtmlPreview();
     },
   });
 }
@@ -393,117 +373,6 @@ function insertLink(title: string) {
   linkPopup.value = false;
 }
 
-// ---------- HTML 预览 ----------
-
-async function toggleHtmlPreview() {
-  if (!htmlPreview.value) {
-    htmlPreview.value = true;
-    emit('html-change', true);
-    await nextTick();
-    await renderHtmlPreview();
-  } else {
-    htmlPreview.value = false;
-    emit('html-change', false);
-    nextTick(() => vditor?.focus());
-  }
-}
-
-async function renderHtmlPreview() {
-  const el = htmlPreviewEl.value;
-  if (!el || !vditor) return;
-  const md = wikiLinksToMarkdown(getValue());
-  await Vditor.preview(el, md, {
-    mode: props.dark ? 'dark' : 'light',
-  });
-  applyHeadingNumbers(el);
-  applyListMarkers(el);
-  // 双链点击跳转：Vditor.preview 静态渲染的 <a href="#wiki/xxx"> 默认无点击处理
-  el.onclick = (e: MouseEvent) => {
-    const a = (e.target as HTMLElement).closest('a[href^="#wiki/"]');
-    if (!a) return;
-    e.preventDefault();
-    const title = wikiTargetFromHref(a.getAttribute('href') || '');
-    if (title) emit('open-wikilink', title);
-  };
-}
-
-/**
- * 为 h1-h3 计算章节号，写入 data-md-num（CSS 用 attr() 显示渐变色编号）。
- * 若文档任一标题已带「一.」「1.」「1.1」「（一）」等序号，全文跳过自动编号，
- * 避免显示成「1. 一.人员整改方向」「1.1. 1.销售」。
- */
-function applyHeadingNumbers(root: HTMLElement) {
-  const headings = Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3'));
-  const numberedHeading = /^\s*(?:[（(][一二三四五六七八九十百零\d]+[）)]|[一二三四五六七八九十百零\d]+(?:\.\d+)*\s*[.、．)）])/;
-  if (headings.some((h) => numberedHeading.test(h.textContent || ''))) return;
-
-  const counters = [0, 0, 0, 0, 0, 0];
-  for (const child of Array.from(root.children)) {
-    const el = child as HTMLElement;
-    const level = headingLevel(el);
-    if (level === 0 || level > 3) continue;
-    counters[level - 1]++;
-    for (let k = level; k < 6; k++) counters[k] = 0;
-    let start = 0;
-    while (start < level - 1 && counters[start] === 0) start++;
-    el.setAttribute('data-md-num', counters.slice(start, level).join('.') + '.');
-  }
-}
-
-function headingLevel(el: HTMLElement): number {
-  const m = /^H([1-6])$/.exec(el.tagName);
-  return m ? parseInt(m[1], 10) : 0;
-}
-
-/** 为无序列表注入圆点标记 span（实心/空心/方块按层级） */
-function applyListMarkers(container: HTMLElement) {
-  for (const ul of Array.from(container.querySelectorAll('ul:not(.contains-task-list)'))) {
-    const level = Math.min(listDepth(ul, 'UL'), 3);
-    for (const li of Array.from(ul.children)) {
-      if (!(li instanceof HTMLElement) || li.tagName !== 'LI') continue;
-      const marker = document.createElement('span');
-      marker.className = `mdht-ul-marker mdht-ul-l${level}`;
-      prependMarker(li, marker);
-    }
-  }
-  for (const ol of Array.from(container.querySelectorAll('ol:not(.contains-task-list)'))) {
-    const level = Math.min(listDepth(ol, 'OL'), 3);
-    const start = parseInt(ol.getAttribute('start') ?? '1', 10) || 1;
-    let index = start;
-    for (const li of Array.from(ol.children)) {
-      if (!(li instanceof HTMLElement) || li.tagName !== 'LI') continue;
-      const badge = document.createElement('span');
-      badge.className = `mdht-ol-marker mdht-ol-l${level}`;
-      const num = document.createElement('span');
-      num.className = 'mdht-ol-num';
-      num.textContent = String(index);
-      badge.appendChild(num);
-      prependMarker(li, badge);
-      index++;
-    }
-  }
-}
-
-function listDepth(list: Element, tag: 'UL' | 'OL'): number {
-  let depth = 1;
-  let node = list.parentElement;
-  while (node) {
-    if (node.tagName === tag) depth++;
-    node = node.parentElement;
-  }
-  return depth;
-}
-
-/** 标记插入正文行首；松散列表（li 以 <p> 开头）必须插入 p 内，避免徽章独占一行、与正文错位 */
-function prependMarker(li: HTMLElement, marker: HTMLElement) {
-  const first = li.firstElementChild;
-  if (first && first.tagName === 'P') {
-    first.prepend(marker);
-  } else {
-    li.prepend(marker);
-  }
-}
-
 // ---------- 对外接口 ----------
 
 function getSelectionText(): string {
@@ -520,6 +389,9 @@ function getValue(): string {
 function getCurrentMode(): 'sv' | 'wysiwyg' | 'ir' {
   return vditor?.getCurrentMode() || 'ir';
 }
+function focus() {
+  vditor?.focus();
+}
 
 watch(
   () => props.modelValue,
@@ -535,8 +407,6 @@ watch(
     } else {
       lastProgrammaticValue = editorValue;
     }
-    // 内容变化后若处于 HTML 预览，重新渲染
-    if (htmlPreview.value) renderHtmlPreview();
   }
 );
 watch(
@@ -544,7 +414,6 @@ watch(
   (d) => {
     if (!ready) return;
     vditor?.setTheme(d ? 'dark' : 'classic', d ? 'dark' : 'light');
-    if (htmlPreview.value) renderHtmlPreview();
   }
 );
 // 父组件传入模式变化（切换页面后恢复持久化模式）
@@ -560,20 +429,6 @@ watch(
     }
   }
 );
-// 父组件传入 HTML 预览状态变化（切换页面后恢复持久化状态）
-watch(
-  () => props.htmlMode,
-  (on) => {
-    if (on === undefined) return;
-    if (on && !htmlPreview.value) {
-      htmlPreview.value = true;
-      nextTick(() => renderHtmlPreview());
-    } else if (!on && htmlPreview.value) {
-      htmlPreview.value = false;
-    }
-  }
-);
-
 onUnmounted(() => {
   if (modelSyncReleaseTimer) clearTimeout(modelSyncReleaseTimer);
   if (placeholderHideTimer) clearTimeout(placeholderHideTimer);
@@ -581,7 +436,7 @@ onUnmounted(() => {
   vditor?.destroy();
 });
 
-defineExpose({ getSelectionText, insertText, getValue, getCurrentMode, toggleHtmlPreview });
+defineExpose({ getSelectionText, insertText, getValue, getCurrentMode, focus });
 onMounted(init);
 </script>
 
@@ -600,8 +455,8 @@ onMounted(init);
 }
 :deep(.vditor-toolbar) {
   border-bottom: 1px solid var(--border);
-  /* HTML 预览按钮右对齐到工具栏最右端 */
-  & .vditor-tooltipped[data-type="html"] {
+  /* 阅读按钮右对齐到工具栏最右端 */
+  & .vditor-tooltipped[data-type="reading"] {
     margin-left: auto;
   }
 }
@@ -643,30 +498,4 @@ onMounted(init);
   font-size: 14px;
 }
 .link-item:hover { background: var(--bg-hover); }
-
-/* HTML 预览的「返回编辑」按钮（叠加层兄弟元素，绝对定位浮在右上角） */
-.html-preview-exit {
-  position: absolute;
-  top: 12px;
-  right: 16px;
-  z-index: 40;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg);
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  box-shadow: var(--shadow);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.html-preview-exit:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
 </style>
