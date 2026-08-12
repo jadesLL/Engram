@@ -7,6 +7,11 @@ export interface LlmUsageIdentity {
   model: string;
   operation: LlmOperation;
   tag: string;
+  scope?: string;
+  refId?: string;
+  stage?: string;
+  prefixHash?: string;
+  historyMessages?: number;
 }
 
 export interface NormalizedLlmUsage {
@@ -25,6 +30,9 @@ export interface LlmUsageBreakdown extends NormalizedLlmUsage {
   operation: string;
   tag: string;
   requests: number;
+  runs: number;
+  continuedRequests: number;
+  maxHistoryMessages: number;
   cacheRequests: number;
   cacheHitRate: number | null;
 }
@@ -142,15 +150,21 @@ export function recordLlmUsage(
   if (!usage) return null;
   db.prepare(
     `INSERT INTO llm_usage(
-       provider,model,operation,tag,prompt_tokens,completion_tokens,total_tokens,
+       provider,model,operation,tag,scope,ref_id,stage,prefix_hash,history_messages,
+       prompt_tokens,completion_tokens,total_tokens,
        cache_read_tokens,cache_write_tokens,cache_miss_tokens,cache_reported,
        duration_ms,raw_usage,created_at
-     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     identity.provider || 'custom',
     identity.model || 'unknown',
     identity.operation,
     identity.tag || identity.operation,
+    identity.scope || '',
+    identity.refId || '',
+    identity.stage || '',
+    identity.prefixHash || '',
+    Math.max(0, Math.round(identity.historyMessages || 0)),
     usage.promptTokens,
     usage.completionTokens,
     usage.totalTokens,
@@ -167,6 +181,9 @@ export function recordLlmUsage(
 
 type AggregateRow = {
   requests: number;
+  runs: number;
+  continued_requests: number;
+  max_history_messages: number;
   cache_requests: number;
   prompt_tokens: number;
   completion_tokens: number;
@@ -188,6 +205,9 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
   const aggregate = db.prepare(
     `SELECT
        COUNT(*) requests,
+       COUNT(DISTINCT CASE WHEN ref_id != '' THEN ref_id END) runs,
+       COALESCE(SUM(CASE WHEN history_messages > 1 THEN 1 ELSE 0 END),0) continued_requests,
+       COALESCE(MAX(history_messages),0) max_history_messages,
        COALESCE(SUM(cache_reported),0) cache_requests,
        COALESCE(SUM(prompt_tokens),0) prompt_tokens,
        COALESCE(SUM(completion_tokens),0) completion_tokens,
@@ -202,6 +222,9 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
     `SELECT
        provider,model,operation,tag,
        COUNT(*) requests,
+       COUNT(DISTINCT CASE WHEN ref_id != '' THEN ref_id END) runs,
+       COALESCE(SUM(CASE WHEN history_messages > 1 THEN 1 ELSE 0 END),0) continued_requests,
+       COALESCE(MAX(history_messages),0) max_history_messages,
        COALESCE(SUM(cache_reported),0) cache_requests,
        COALESCE(SUM(prompt_tokens),0) prompt_tokens,
        COALESCE(SUM(completion_tokens),0) completion_tokens,
@@ -226,6 +249,9 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
     operation: row.operation,
     tag: row.tag,
     requests: row.requests,
+    runs: row.runs,
+    continuedRequests: row.continued_requests,
+    maxHistoryMessages: row.max_history_messages,
     cacheRequests: row.cache_requests,
     promptTokens: row.prompt_tokens,
     completionTokens: row.completion_tokens,

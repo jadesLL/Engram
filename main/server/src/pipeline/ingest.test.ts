@@ -119,7 +119,15 @@ before(async () => {
     capturedRequests.push(body);
     const messages = body.messages || [];
     const system = messages.find((message: any) => message.role === 'system')?.content || '';
-    const inputMessage = messages.find((message: any) => message.role === 'user');
+    const inputMessage = [...messages].reverse().find((message: any) => {
+      if (message.role !== 'user') return false;
+      try {
+        JSON.parse(message.content);
+        return true;
+      } catch {
+        return false;
+      }
+    });
     const rawInput = inputMessage?.content || '';
     let input: any = rawInput;
     try {
@@ -197,14 +205,26 @@ test('dense input is split and all candidates pass through bounded stages withou
   const requestsFor = (marker: string) => capturedRequests.filter((request) =>
     request.messages?.[0]?.content?.includes(marker)
   );
+  const assertCommittedExtensions = (requests: any[], label: string) => {
+    const continued = requests.filter((request) =>
+      request.messages?.some((message: any) => message.role === 'assistant')
+    );
+    assert.ok(continued.length >= 1, `${label} continued requests`);
+    for (const request of continued) {
+      const predecessor = requests.find((candidate) => {
+        const length = candidate.messages?.length || 0;
+        return length > 0 &&
+          request.messages.length > length &&
+          request.messages[length]?.role === 'assistant' &&
+          JSON.stringify(request.messages.slice(0, length)) === JSON.stringify(candidate.messages);
+      });
+      assert.ok(predecessor, `${label} committed prefix`);
+    }
+  };
   for (const marker of ['执行 Map', '执行 Plan', '执行 Critic', '执行 Compose']) {
     const requests = requestsFor(marker);
     assert.ok(requests.length >= 2, marker);
-    const prefixes = requests.map((request) => {
-      const parsed = JSON.parse(request.messages[1].content);
-      return `${JSON.stringify({ sharedContext: parsed.sharedContext }).slice(0, -1)},"input":`;
-    });
-    assert.equal(new Set(prefixes).size, 1, `${marker} shared prefix`);
+    assertCommittedExtensions(requests, marker);
     const requestBody = JSON.parse(requests[0].messages[1].content);
     const context = requestBody.sharedContext;
     assert.equal(typeof context.roster, 'string', `${marker} roster`);
@@ -214,10 +234,8 @@ test('dense input is split and all candidates pass through bounded stages withou
   }
   const verifyRequests = requestsFor('执行 Verifier');
   assert.ok(verifyRequests.length >= 2);
-  assert.ok(verifyRequests.every((request) => request.messages.length === 2));
-  assert.ok(verifyRequests.every((request) =>
-    !Object.hasOwn(JSON.parse(request.messages[1].content), 'sharedContext')
-  ));
+  assertCommittedExtensions(verifyRequests, 'Verify');
+  assert.ok(!Object.hasOwn(JSON.parse(verifyRequests[0].messages[1].content), 'sharedContext'));
 });
 
 test('a map result exactly at the batch limit is split again to avoid a silent ceiling', async () => {
@@ -261,7 +279,7 @@ test('missing or duplicate candidate ids fail the run instead of silently droppi
   );
   assert.equal(planRetries.length, 2);
   assert.equal(planRetries[0].messages[0].content, planRetries[1].messages[0].content);
-  assert.match(JSON.parse(planRetries[1].messages[1].content).input.coverageCorrection, /candidateId/);
+  assert.match(JSON.parse(planRetries[1].messages.at(-1).content).input.coverageCorrection, /candidateId/);
 
   coverageFailure = 'duplicate';
   write('覆盖重复.md', ['候选22', '候选23']);

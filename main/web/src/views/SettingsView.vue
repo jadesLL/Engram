@@ -167,7 +167,11 @@
                 >
                   <span>
                     <strong>{{ usageTagLabel(item.tag) }}</strong>
-                    <small>{{ item.requests }} 次</small>
+                    <small>
+                      {{ item.requests }} 次
+                      <template v-if="item.runs"> · {{ item.runs }} 个任务</template>
+                      <template v-if="item.continuedRequests"> · {{ item.continuedRequests }} 次延续</template>
+                    </small>
                   </span>
                   <span :title="`${item.provider} · ${item.model}`">{{ item.model }}</span>
                   <span>{{ formatTokenCount(item.promptTokens) }}</span>
@@ -813,6 +817,9 @@ interface LlmUsageBreakdown {
   operation: string;
   tag: string;
   requests: number;
+  runs: number;
+  continuedRequests: number;
+  maxHistoryMessages: number;
   cacheRequests: number;
   promptTokens: number;
   completionTokens: number;

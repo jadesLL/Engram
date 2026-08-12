@@ -153,3 +153,92 @@ test('cache context stays before changing stage input', async () => {
   assert.ok(firstMessages[1].content.startsWith(expectedPrefix));
   assert.ok(secondMessages[1].content.startsWith(expectedPrefix));
 });
+
+test('validated semantic turns append to provider history and failed turns do not', async () => {
+  capturedRequests = [];
+  const schema = z.object({ answer: z.string() });
+  const history = [{ role: 'system' as const, content: '返回结构化结论。' }];
+
+  await runSemanticStage({
+    scope: 'append-only-test',
+    refId: 'append-only-run',
+    stage: 'decide',
+    tag: 'semantic-append-only-test',
+    schema,
+    system: history[0].content,
+    history,
+    input: { value: 1 },
+    retries: 0,
+  });
+  assert.equal(history.length, 3);
+  assert.deepEqual(history.map((message) => message.role), ['system', 'user', 'assistant']);
+
+  await runSemanticStage({
+    scope: 'append-only-test',
+    refId: 'append-only-run',
+    stage: 'decide',
+    tag: 'semantic-append-only-test',
+    schema,
+    system: history[0].content,
+    history,
+    input: { value: 2 },
+    retries: 0,
+  });
+  assert.equal(history.length, 5);
+  assert.deepEqual(
+    capturedRequests[1].messages.slice(0, capturedRequests[0].messages.length),
+    capturedRequests[0].messages,
+  );
+  const usageRows = db.prepare(
+    `SELECT ref_id,history_messages,prefix_hash
+     FROM llm_usage WHERE tag='semantic-append-only-test' ORDER BY id`
+  ).all();
+  assert.equal(usageRows.length, 2);
+  assert.deepEqual(usageRows.map((row: any) => row.history_messages), [1, 3]);
+  assert.ok(usageRows.every((row: any) => row.ref_id === 'append-only-run'));
+  assert.ok(usageRows.every((row: any) => /^[a-f0-9]{64}$/.test(row.prefix_hash)));
+
+  const beforeFailure = structuredClone(history);
+  failNext = true;
+  await assert.rejects(
+    runSemanticStage({
+      scope: 'append-only-test',
+      refId: 'append-only-run',
+      stage: 'decide',
+      tag: 'semantic-append-only-test',
+      schema,
+      system: history[0].content,
+      history,
+      input: { value: 3 },
+      retries: 0,
+    }),
+    /forced semantic failure|LLM 请求失败/,
+  );
+  assert.deepEqual(history, beforeFailure);
+});
+
+test('oversized semantic history resets at a batch boundary', async () => {
+  capturedRequests = [];
+  const schema = z.object({ answer: z.string() });
+  const system = '返回结构化结论。';
+  const history = [
+    { role: 'system' as const, content: system },
+    { role: 'user' as const, content: 'x'.repeat(30_000) },
+    { role: 'assistant' as const, content: 'y'.repeat(20_000) },
+  ];
+
+  await runSemanticStage({
+    scope: 'history-reset-test',
+    stage: 'decide',
+    tag: 'semantic-history-reset-test',
+    schema,
+    system,
+    history,
+    input: { value: 1 },
+    retries: 0,
+  });
+
+  assert.equal(capturedRequests[0].messages.length, 2);
+  assert.equal(history.length, 3);
+  assert.deepEqual(history.map((message) => message.role), ['system', 'user', 'assistant']);
+});
