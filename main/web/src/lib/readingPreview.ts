@@ -107,3 +107,24 @@ export function readingMetrics(text: string): { units: number; minutes: number }
     minutes: Math.max(1, Math.ceil(cjk / 400 + latinWords / 200)),
   };
 }
+
+export function requiredReadingTailSpace(input: {
+  lastHeadingY: number;
+  anchorOffset: number;
+  scrollHeightWithoutTail: number;
+  viewportHeight: number;
+  breathingRoom?: number;
+}): number {
+  const {
+    lastHeadingY,
+    anchorOffset,
+    scrollHeightWithoutTail,
+    viewportHeight,
+    breathingRoom = 24,
+  } = input;
+  const maxScrollWithoutTail = Math.max(0, scrollHeightWithoutTail - viewportHeight);
+  return Math.max(
+    0,
+    Math.ceil(lastHeadingY - anchorOffset - maxScrollWithoutTail + breathingRoom),
+  );
+}

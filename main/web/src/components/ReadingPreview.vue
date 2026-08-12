@@ -11,7 +11,7 @@
     tabindex="-1"
     @keydown.esc="closeReading"
   >
-    <header class="reading-toolbar">
+    <header ref="toolbarEl" class="reading-toolbar">
       <button class="reading-tool back" type="button" title="返回编辑（Esc）" @click="closeReading">
         <Icon name="chevron-left" :size="17" />
         <span class="back-label">返回编辑</span>
@@ -112,11 +112,12 @@
             <span v-for="item in related?.entities || []" :key="`e-${item.name}`">{{ item.name }}</span>
           </div>
         </section>
+        <div class="reading-tail-space" :style="{ height: `${tailSpace}px` }" aria-hidden="true" />
       </div>
 
       <aside class="reading-outline" aria-label="本页目录">
         <h2><Icon name="list-tree" :size="15" /> 本页目录</h2>
-        <nav>
+        <nav ref="outlineNavEl">
           <a
             v-for="heading in outline"
             :key="heading.id"
@@ -139,6 +140,7 @@ import {
   headingNumbers,
   isDuplicateDocumentTitle,
   readingMetrics,
+  requiredReadingTailSpace,
   uniqueHeadingId,
   type ReadingFontSize,
   type ReadingLineHeight,
@@ -173,15 +175,22 @@ const emit = defineEmits<{
 
 const app = useAppStore();
 const readerEl = ref<HTMLElement>();
+const toolbarEl = ref<HTMLElement>();
 const contentEl = ref<HTMLDivElement>();
+const outlineNavEl = ref<HTMLElement>();
 const outline = ref<OutlineItem[]>([]);
 const currentHeading = ref('');
 const rendering = ref(false);
 const mobileOutlineOpen = ref(false);
 const metrics = ref({ units: 0, minutes: 1 });
+const toolbarHeight = ref(56);
+const viewportHeight = ref(0);
+const tailSpace = ref(0);
 const mobileMedia = window.matchMedia('(max-width: 900px)');
 let renderVersion = 0;
 let scrollFrame = 0;
+let tailFrame = 0;
+let layoutObserver: ResizeObserver | null = null;
 
 const fontOptions: ReadingFontSize[] = [15, 16, 18];
 const widthOptions: Array<{ value: ReadingWidth; label: string }> = [
@@ -199,6 +208,9 @@ const readingStyle = computed(() => ({
   '--reading-width': `${preferences.value.width}px`,
   '--reading-font-size': `${preferences.value.fontSize}px`,
   '--reading-line-height': String(preferences.value.lineHeight),
+  '--reading-toolbar-height': `${toolbarHeight.value}px`,
+  '--reading-anchor-offset': `${toolbarHeight.value + 28}px`,
+  '--reading-viewport-height': `${viewportHeight.value}px`,
 }));
 const typeLabel = computed(() => ({
   concept: '概念',
@@ -341,6 +353,8 @@ async function renderMarkdown() {
     host.replaceChildren(...Array.from(next.childNodes));
     await nextTick();
     readerEl.value?.scrollTo({ top: 0 });
+    measureLayout();
+    scheduleTailSpace();
   } catch (error) {
     if (version !== renderVersion) return;
     console.error('阅读预览渲染失败', error);
@@ -362,11 +376,29 @@ function handleContentClick(event: MouseEvent) {
 }
 
 function scrollToHeading(id: string) {
-  contentEl.value?.querySelector<HTMLElement>(`#${CSS.escape(id)}`)?.scrollIntoView({
+  const reader = readerEl.value;
+  const heading = contentEl.value?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
+  if (!reader || !heading) return;
+  const readerRect = reader.getBoundingClientRect();
+  const headingY = reader.scrollTop + heading.getBoundingClientRect().top - readerRect.top;
+  reader.scrollTo({
+    top: Math.max(0, headingY - toolbarHeight.value - 28),
     behavior: 'smooth',
-    block: 'start',
   });
   mobileOutlineOpen.value = false;
+}
+
+function keepCurrentOutlineVisible() {
+  const nav = outlineNavEl.value;
+  const link = nav?.querySelector<HTMLElement>(`a[href="#${CSS.escape(currentHeading.value)}"]`);
+  if (!nav || !link) return;
+  const navRect = nav.getBoundingClientRect();
+  const linkRect = link.getBoundingClientRect();
+  if (linkRect.top < navRect.top) {
+    nav.scrollBy({ top: linkRect.top - navRect.top, behavior: 'smooth' });
+  } else if (linkRect.bottom > navRect.bottom) {
+    nav.scrollBy({ top: linkRect.bottom - navRect.bottom, behavior: 'smooth' });
+  }
 }
 
 function updateCurrentHeading() {
@@ -374,16 +406,53 @@ function updateCurrentHeading() {
   scrollFrame = requestAnimationFrame(() => {
     const headings = Array.from(contentEl.value?.querySelectorAll<HTMLElement>('.reading-heading') || []);
     let current = headings[0]?.id || '';
+    const anchorOffset = toolbarHeight.value + 28;
     for (const heading of headings) {
-      if (heading.getBoundingClientRect().top <= 105) current = heading.id;
+      if (heading.getBoundingClientRect().top <= anchorOffset) current = heading.id;
       else break;
     }
-    currentHeading.value = current;
+    if (currentHeading.value !== current) {
+      currentHeading.value = current;
+      requestAnimationFrame(keepCurrentOutlineVisible);
+    }
   });
+}
+
+function measureLayout() {
+  toolbarHeight.value = Math.ceil(toolbarEl.value?.getBoundingClientRect().height || 56);
+  viewportHeight.value = readerEl.value?.clientHeight || window.innerHeight;
+}
+
+function scheduleTailSpace() {
+  cancelAnimationFrame(tailFrame);
+  tailFrame = requestAnimationFrame(() => {
+    const reader = readerEl.value;
+    const headings = Array.from(contentEl.value?.querySelectorAll<HTMLElement>('.reading-heading') || []);
+    const lastHeading = headings.at(-1);
+    if (!reader || !lastHeading) {
+      tailSpace.value = 0;
+      return;
+    }
+    const readerRect = reader.getBoundingClientRect();
+    const lastHeadingY =
+      reader.scrollTop + lastHeading.getBoundingClientRect().top - readerRect.top;
+    tailSpace.value = requiredReadingTailSpace({
+      lastHeadingY,
+      anchorOffset: toolbarHeight.value + 28,
+      scrollHeightWithoutTail: reader.scrollHeight - tailSpace.value,
+      viewportHeight: reader.clientHeight,
+    });
+  });
+}
+
+function handleLayoutChange() {
+  measureLayout();
+  scheduleTailSpace();
 }
 
 function handleMediaChange() {
   mobileOutlineOpen.value = false;
+  handleLayoutChange();
 }
 
 watch(
@@ -395,12 +464,18 @@ onMounted(() => {
   void renderMarkdown();
   readerEl.value?.focus();
   readerEl.value?.addEventListener('scroll', updateCurrentHeading, { passive: true });
+  layoutObserver = new ResizeObserver(handleLayoutChange);
+  if (readerEl.value) layoutObserver.observe(readerEl.value);
+  if (toolbarEl.value) layoutObserver.observe(toolbarEl.value);
+  measureLayout();
   mobileMedia.addEventListener('change', handleMediaChange);
 });
 
 onBeforeUnmount(() => {
   renderVersion++;
   cancelAnimationFrame(scrollFrame);
+  cancelAnimationFrame(tailFrame);
+  layoutObserver?.disconnect();
   readerEl.value?.removeEventListener('scroll', updateCurrentHeading);
   mobileMedia.removeEventListener('change', handleMediaChange);
 });
@@ -411,6 +486,9 @@ onBeforeUnmount(() => {
   --reading-width: 780px;
   --reading-font-size: 16px;
   --reading-line-height: 1.8;
+  --reading-toolbar-height: 56px;
+  --reading-anchor-offset: 84px;
+  --reading-viewport-height: 100dvh;
   position: absolute;
   inset: 0;
   z-index: 20;
@@ -522,6 +600,10 @@ onBeforeUnmount(() => {
   align-items: start;
   padding: 34px 38px 70px;
 }
+.reading-tail-space {
+  min-height: 0;
+  pointer-events: none;
+}
 .outline-hidden .reading-grid { grid-template-columns: minmax(0, 1fr); }
 .outline-hidden .reading-outline { display: none; }
 .reading-main { min-width: 0; }
@@ -578,9 +660,11 @@ onBeforeUnmount(() => {
 .reading-content :deep(h3),
 .reading-content :deep(h4) {
   position: relative;
-  scroll-margin-top: 84px;
   color: var(--text);
   letter-spacing: 0;
+}
+.reading-content :deep(.reading-heading) {
+  scroll-margin-top: var(--reading-anchor-offset);
 }
 .reading-content :deep(h2) {
   margin: 2.3em 0 0.8em;
@@ -707,7 +791,11 @@ onBeforeUnmount(() => {
 }
 .reading-outline {
   position: sticky;
-  top: 78px;
+  top: calc(var(--reading-toolbar-height) + 22px);
+  max-height: calc(var(--reading-viewport-height) - var(--reading-toolbar-height) - 44px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding: 6px 0 0 18px;
   border-left: 1px solid var(--border);
 }
@@ -720,9 +808,13 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 .reading-outline nav {
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .reading-outline a {
   padding: 5px 8px;
@@ -775,6 +867,7 @@ onBeforeUnmount(() => {
     position: static;
     order: -1;
     width: min(100%, var(--reading-width));
+    max-height: min(42dvh, calc(var(--reading-viewport-height) - var(--reading-toolbar-height) - 32px));
     margin-inline: auto;
     padding: 10px 0 14px;
     border: 0;

@@ -14,6 +14,7 @@ test('reading preview utilities cover preferences, headings and metrics', async 
     isDuplicateDocumentTitle,
     parseReadingPreferences,
     readingMetrics,
+    requiredReadingTailSpace,
     uniqueHeadingId,
   } = await import(moduleUrl);
 
@@ -60,4 +61,17 @@ test('reading preview utilities cover preferences, headings and metrics', async 
 
   assert.deepEqual(readingMetrics('知识库 reading mode 2026'), { units: 6, minutes: 1 });
   assert.deepEqual(readingMetrics('知'.repeat(801)), { units: 801, minutes: 3 });
+
+  assert.equal(requiredReadingTailSpace({
+    lastHeadingY: 3152,
+    anchorOffset: 105,
+    scrollHeightWithoutTail: 3681,
+    viewportHeight: 720,
+  }), 110);
+  assert.equal(requiredReadingTailSpace({
+    lastHeadingY: 1200,
+    anchorOffset: 105,
+    scrollHeightWithoutTail: 2200,
+    viewportHeight: 720,
+  }), 0);
 });
