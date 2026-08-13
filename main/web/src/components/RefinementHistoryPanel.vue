@@ -54,7 +54,7 @@
           <span class="run-path" :title="run.path">{{ run.path }}</span>
           <span class="run-meta">
             <time>{{ formatDate(run.started_at) }}</time>
-            <span>{{ run.currentStage.label }}</span>
+            <span>{{ stageDisplayName(run.currentStage) }}</span>
             <span>{{ run.progress }}%</span>
           </span>
           <span class="run-progress" aria-hidden="true">
@@ -124,7 +124,7 @@
                     <Icon v-else-if="stage.status === 'failed'" name="x" :size="12" :stroke-width="2.2" />
                     <span v-else>{{ index + 1 }}</span>
                   </span>
-                  <strong>{{ stage.label }}</strong>
+                  <strong>{{ stageDisplayName(stage) }}</strong>
                   <small>{{ stageStatusLabel(stage.status) }}</small>
                 </button>
               </li>
@@ -134,7 +134,7 @@
           <section v-if="selectedStage" class="stage-inspector" aria-labelledby="stage-inspector-title">
             <div class="stage-overview">
               <span class="stage-kicker">阶段 {{ selectedStageIndex + 1 }}</span>
-              <h4 id="stage-inspector-title">{{ selectedStage.label }}</h4>
+              <h4 id="stage-inspector-title">{{ stageDisplayName(selectedStage) }}</h4>
               <p>{{ selectedStage.description }}</p>
               <dl>
                 <div>
@@ -210,6 +210,7 @@ type StageStatus = 'completed' | 'current' | 'failed' | 'pending';
 interface TraceStage {
   id: string;
   label: string;
+  annotation?: string;
   description: string;
   status: StageStatus;
   eventCount: number;
@@ -335,6 +336,10 @@ function stageStatusLabel(status: StageStatus): string {
     failed: '失败位置',
     pending: '等待',
   }[status];
+}
+
+function stageDisplayName(stage: Pick<TraceStage, 'label' | 'annotation'>): string {
+  return stage.annotation ? `${stage.label}（${stage.annotation}）` : stage.label;
 }
 
 function formatDate(value?: string | null): string {
@@ -824,14 +829,14 @@ onUnmounted(() => {
 
 .flow-step {
   position: relative;
-  width: 92px;
+  width: 126px;
 }
 
 .flow-step:not(:last-child)::after {
   position: absolute;
   top: 15px;
   left: 58px;
-  width: 68px;
+  width: 102px;
   height: 2px;
   background: var(--border-strong);
   content: "";
@@ -844,7 +849,7 @@ onUnmounted(() => {
 .flow-step button {
   position: relative;
   z-index: 1;
-  width: 68px;
+  width: 102px;
   display: flex;
   align-items: center;
   flex-direction: column;

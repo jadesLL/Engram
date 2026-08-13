@@ -86,6 +86,10 @@ test('trace exposes the complete refinement pipeline and locates a failed stage'
     trace.map((stage) => stage.label),
     ['解析', 'Map', 'Normalize', 'Retrieve', 'Plan', 'Critic 1', 'Critic 2', 'Compose', 'Questions', 'Verify', 'Commit'],
   );
+  assert.deepEqual(
+    trace.map((stage) => stage.annotation || ''),
+    ['', '候选提取', '归一整理', '关联检索', '制定计划', '首次审查', '修订复核', '内容生成', '问题识别', '事实验证', '提交入库'],
+  );
   assert.equal(trace.find((stage) => stage.id === 'retrieve')?.status, 'completed');
   assert.equal(trace.find((stage) => stage.id === 'plan')?.status, 'failed');
   assert.equal(trace.find((stage) => stage.id === 'compose')?.status, 'pending');

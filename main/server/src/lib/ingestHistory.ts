@@ -39,6 +39,7 @@ export interface SemanticEventRecord {
 export interface IngestTraceStage {
   id: string;
   label: string;
+  annotation?: string;
   description: string;
   status: IngestTraceStatus;
   eventCount: number;
@@ -49,16 +50,16 @@ export interface IngestTraceStage {
 
 const TRACE_DEFINITIONS = [
   { id: 'parse', label: '解析', description: '读取原始笔记并建立来源版本。' },
-  { id: 'map', label: 'Map', description: '分段扫描笔记，提取候选实体、概念与事实。' },
-  { id: 'normalize', label: 'Normalize', description: '合并重复候选并校验来源引文。' },
-  { id: 'retrieve', label: 'Retrieve', description: '检索知识库中可用于判断的相关页面。' },
-  { id: 'plan', label: 'Plan', description: '决定新建、合并、跳过或转人工审核。' },
-  { id: 'critic', label: 'Critic 1', description: '首次审查计划覆盖度、证据和冲突。' },
-  { id: 'critic_review', label: 'Critic 2', description: '根据首次审查结果修订并复核计划。' },
-  { id: 'compose', label: 'Compose', description: '基于已核实事实生成页面贡献内容。' },
-  { id: 'questions', label: 'Questions', description: '识别仍需用户确认的歧义和缺口。' },
-  { id: 'verify', label: 'Verify', description: '逐项验证正文是否被事实和引文支持。' },
-  { id: 'commit', label: 'Commit', description: '提交事实、页面贡献、追问和最终统计。' },
+  { id: 'map', label: 'Map', annotation: '候选提取', description: '分段扫描笔记，提取候选实体、概念与事实。' },
+  { id: 'normalize', label: 'Normalize', annotation: '归一整理', description: '合并重复候选并校验来源引文。' },
+  { id: 'retrieve', label: 'Retrieve', annotation: '关联检索', description: '检索知识库中可用于判断的相关页面。' },
+  { id: 'plan', label: 'Plan', annotation: '制定计划', description: '决定新建、合并、跳过或转人工审核。' },
+  { id: 'critic', label: 'Critic 1', annotation: '首次审查', description: '首次审查计划覆盖度、证据和冲突。' },
+  { id: 'critic_review', label: 'Critic 2', annotation: '修订复核', description: '根据首次审查结果修订并复核计划。' },
+  { id: 'compose', label: 'Compose', annotation: '内容生成', description: '基于已核实事实生成页面贡献内容。' },
+  { id: 'questions', label: 'Questions', annotation: '问题识别', description: '识别仍需用户确认的歧义和缺口。' },
+  { id: 'verify', label: 'Verify', annotation: '事实验证', description: '逐项验证正文是否被事实和引文支持。' },
+  { id: 'commit', label: 'Commit', annotation: '提交入库', description: '提交事实、页面贡献、追问和最终统计。' },
 ] as const;
 
 function parseJson(value: unknown, fallback: any = null): any {
