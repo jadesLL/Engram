@@ -103,6 +103,7 @@ export async function wipeKnowledgeData(): Promise<KnowledgeWipeResult> {
     db.prepare(`DELETE FROM page_contributions`).run();
     db.prepare(`DELETE FROM ingest_facts`).run();
     db.prepare(`DELETE FROM ingest_audit`).run();
+    db.prepare(`DELETE FROM ingest_history_hidden`).run();
     ingestRunCount = db.prepare(`DELETE FROM ingest_runs`).run().changes;
     db.prepare(`DELETE FROM source_versions`).run();
     db.prepare(`DELETE FROM ingest_log`).run();
