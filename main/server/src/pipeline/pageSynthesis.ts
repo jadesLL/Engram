@@ -224,17 +224,31 @@ function loadPageEvidence(pageId: string): PageEvidenceBundle | null {
   }
   const factList = [...facts.values()].sort((a, b) => a.id.localeCompare(b.id));
   const sourceVersionIds = [...new Set(contributions.map((item) => item.source_version_id))].sort();
+  const semanticFactKeys = new Map(factList.map((fact) => [
+    fact.id,
+    sha({
+      statement: fact.statement,
+      sourcePath: fact.sourcePath,
+      quotes: fact.quotes.slice().sort((a, b) =>
+        `${a.chunkId}\0${a.quote}`.localeCompare(`${b.chunkId}\0${b.quote}`)
+      ),
+    }),
+  ]));
   const evidenceHash = sha({
-    sourceVersionIds,
     facts: factList.map((fact) => ({
-      id: fact.id,
+      key: semanticFactKeys.get(fact.id),
       statement: fact.statement,
       sourcePath: fact.sourcePath,
       quotes: fact.quotes,
     })),
-    relations: relations.slice().sort((a, b) =>
-      `${a.src}\0${a.word}\0${a.dst}\0${a.evidenceId}`.localeCompare(
-        `${b.src}\0${b.word}\0${b.dst}\0${b.evidenceId}`,
+    relations: relations.map((relation) => ({
+      src: relation.src,
+      word: relation.word,
+      dst: relation.dst,
+      evidenceKey: semanticFactKeys.get(relation.evidenceId) || '',
+    })).sort((a, b) =>
+      `${a.src}\0${a.word}\0${a.dst}\0${a.evidenceKey}`.localeCompare(
+        `${b.src}\0${b.word}\0${b.dst}\0${b.evidenceKey}`,
       )
     ),
   });
@@ -597,6 +611,10 @@ export async function recomposePage(
       tag: 'page-synthesis-compose',
       schema: synthesisOutputSchema,
       system: pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged),
+      promptVersion: 'page-synthesis-compose:3',
+      cacheScope: 'page-synthesis:compose',
+      dependencyHash: state.inputHash,
+      resultCache: true,
       input: {
         page: bundle.page,
         activeEvidence: bundle.facts,
@@ -633,6 +651,10 @@ export async function recomposePage(
       tag: 'page-synthesis-verify',
       schema: synthesisVerifySchema,
       system: pageSynthesisVerifyPrompt(state.manualChanged),
+      promptVersion: 'page-synthesis-verify:3',
+      cacheScope: 'page-synthesis:verify',
+      dependencyHash: state.inputHash,
+      resultCache: true,
       input: {
         page: bundle.page,
         activeEvidence: bundle.facts,

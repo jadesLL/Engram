@@ -1385,9 +1385,17 @@ export function parseToolArguments(tool: AgentTool, value: unknown): Record<stri
   return result.data as Record<string, any>;
 }
 
-export function toolDefinitions() {
+export const TOOL_CATALOG_VERSION = '2026-08-13.2';
+
+function enabledTools(): AgentTool[] {
   return tools
     .filter((tool) => tool.risk !== 'restricted')
+    .slice()
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export function toolDefinitions() {
+  return enabledTools()
     .map((tool) => ({
       type: 'function' as const,
       function: {
@@ -1429,8 +1437,7 @@ export async function undoAgentTool(
 }
 
 export function toolCatalogForPrompt(): string {
-  return tools
-    .filter((tool) => tool.risk !== 'restricted')
+  return enabledTools()
     .map((tool) => `- ${tool.name} [${tool.risk}]：${tool.description}`)
     .join('\n');
 }

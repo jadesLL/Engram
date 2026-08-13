@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { runSemanticStage } from '../lib/semanticStage.js';
+import type { ChatMessage } from '../lib/llm.js';
+import {
+  createSemanticCacheSession,
+  runSemanticStage,
+  type SemanticCacheContextMode,
+} from '../lib/semanticStage.js';
 import type { Candidate, PlanItem } from './ingestModel.js';
 
 export interface EntityRosterEntry {
@@ -42,6 +47,12 @@ const identitySchema = z.object({
 
 type IdentityDecision = z.infer<typeof identitySchema>;
 
+interface EntityIdentitySemanticOptions {
+  cacheContextMode?: SemanticCacheContextMode;
+  contextInCache?: boolean;
+  maxHistoryChars?: number;
+}
+
 function cleanName(value: string): string {
   return String(value || '').trim().replace(/[\s·•・]+/g, '').toLowerCase();
 }
@@ -60,6 +71,10 @@ function contextFor(candidate: Candidate | undefined): string {
 function identityPrompt(): string {
   return `你是知识库实体身份消歧专家。根据候选名称、原文上下文和已有页面名录判断名称是否稳定、是否只是职务称谓、是否与已有实体是同一对象。
 
+历史中的 user/assistant 轮次是已完成候选，仅用于保持缓存前缀。只处理最后一条 user 输入，不得重复、补写或修改更早候选。
+请求 JSON 的 sharedContext.existingPages 是已有页面名录；input.candidate 和 input.context 是本次需要判断的候选。
+页面上下文也可能位于 sharedContext.context；无论位于哪里，都只判断最后一条 user 输入中的 candidate。
+
 所有语义判断由你完成，不要使用机械的单字差或后缀规则。
 
 status：
@@ -73,6 +88,10 @@ status：
 
 只输出 JSON：
 {"status":"clear|role_title|possible_alias|uncertain","canonicalName":"","mergeTarget":"","question":"","suggestions":[{"id":"","title":"","type":"","confidence":"high|medium|low","reason":""}]}。`;
+}
+
+export function entityIdentityHistory(scope: string): ChatMessage[] {
+  return createSemanticCacheSession(`entity-identity:${scope}`, identityPrompt());
 }
 
 function score(confidence: 'high' | 'medium' | 'low'): number {
@@ -106,6 +125,8 @@ export async function classifyEntityName(
   roster: EntityRosterEntry[],
   context = '',
   refId = '',
+  history?: ChatMessage[],
+  semanticOptions: EntityIdentitySemanticOptions = {},
   signal?: AbortSignal,
 ): Promise<{ ambiguity: EntityAmbiguity | null; mergeTarget: string; canonicalName: string }> {
   signal?.throwIfAborted();
@@ -119,16 +140,25 @@ export async function classifyEntityName(
     tag: 'entity-identity',
     schema: identitySchema,
     system: identityPrompt(),
-    input: {
-      candidate: { name, kind },
-      context,
+    cacheContext: {
       existingPages: roster.map((entry) => ({
         id: entry.id,
         title: entry.title,
         type: entry.type,
         summary: entry.summary || '',
       })),
+      ...(semanticOptions.contextInCache ? { context } : {}),
     },
+    cacheContextMode: semanticOptions.cacheContextMode,
+    history,
+    input: {
+      candidate: { name, kind },
+      ...(!semanticOptions.contextInCache ? { context } : {}),
+    },
+    maxHistoryChars: semanticOptions.maxHistoryChars,
+    promptVersion: 'entity-identity:2',
+    cacheScope: 'entity-identity',
+    resultCache: true,
     temperature: 0.1,
     maxTokens: 1800,
     retries: 1,
@@ -157,6 +187,8 @@ export async function guardAmbiguousEntityNames(
 ): Promise<AmbiguousPlanItem[]> {
   const candidateByName = new Map(candidates.map((candidate) => [cleanName(candidate.name), candidate]));
   const rosterTitles = new Set(roster.map((entry) => cleanName(entry.title)));
+  const identityHistory = entityIdentityHistory('ingest');
+  let identityContextPrimed = false;
   const output: AmbiguousPlanItem[] = [];
   for (const item of items) {
     signal?.throwIfAborted();
@@ -177,8 +209,14 @@ export async function guardAmbiguousEntityNames(
         roster,
         contextFor(candidateByName.get(cleanName(item.name))),
         item.name,
+        identityHistory,
+        {
+          cacheContextMode: identityContextPrimed ? 'once' : 'always',
+          maxHistoryChars: 96_000,
+        },
         signal,
       );
+      identityContextPrimed = true;
       if (decision.mergeTarget) {
         output.push({
           ...item,

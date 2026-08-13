@@ -1,4 +1,4 @@
-import test, { after, before } from 'node:test';
+import test, { after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -25,6 +25,7 @@ let writePage: any;
 let readPage: any;
 let sourceContentHash: (value: string | Buffer) => string;
 let recomposePage: any;
+let clearSharedSemanticHistories: () => void;
 
 before(async () => {
   server = http.createServer(async (req, res) => {
@@ -42,9 +43,10 @@ before(async () => {
       return;
     }
     const system = body.messages?.find((message: any) => message.role === 'system')?.content || '';
-    const input = JSON.parse(
+    const payload = JSON.parse(
       [...(body.messages || [])].reverse().find((message: any) => message.role === 'user')?.content || '{}'
     );
+    const input = payload.input || payload;
     const content = system.includes('跨来源整页综合')
       ? {
           summary: '依据全部来源综合后的页面摘要。',
@@ -136,6 +138,11 @@ before(async () => {
   ({ createPage, writePage, readPage } = await import('../lib/vault.js'));
   ({ contentHash: sourceContentHash } = await import('./sourceDocument.js'));
   ({ recomposePage } = await import('./pageSynthesis.js'));
+  ({ clearSharedSemanticHistories } = await import('../lib/semanticStage.js'));
+});
+
+beforeEach(() => {
+  clearSharedSemanticHistories();
 });
 
 after(async () => {

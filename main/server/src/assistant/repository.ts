@@ -1,5 +1,7 @@
 import { db, newId, now } from '../lib/db.js';
+import crypto from 'node:crypto';
 import type {
+  AssistantArtifact,
   AssistantContext,
   AssistantMessage,
   AssistantMessageRole,
@@ -72,6 +74,18 @@ function toolCallRow(row: any): AssistantToolCall {
     undo: json(row.undo, {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function artifactRow(row: any): AssistantArtifact {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    toolCallId: row.tool_call_id || undefined,
+    kind: row.kind,
+    contentHash: row.content_hash,
+    content: row.content,
+    createdAt: row.created_at,
   };
 }
 
@@ -308,6 +322,36 @@ export function updateToolCall(
     id
   );
   return getToolCall(id);
+}
+
+export function createArtifact(input: {
+  runId: string;
+  toolCallId?: string;
+  kind: string;
+  content: string;
+}): AssistantArtifact {
+  const id = newId();
+  const at = now();
+  const contentHash = crypto.createHash('sha256').update(input.content).digest('hex');
+  db.prepare(
+    `INSERT INTO assistant_artifacts(
+       id,run_id,tool_call_id,kind,content_hash,content,created_at
+     ) VALUES(?,?,?,?,?,?,?)`
+  ).run(
+    id,
+    input.runId,
+    input.toolCallId || null,
+    input.kind,
+    contentHash,
+    input.content,
+    at,
+  );
+  return getArtifact(id)!;
+}
+
+export function getArtifact(id: string): AssistantArtifact | null {
+  const row = db.prepare(`SELECT * FROM assistant_artifacts WHERE id=?`).get(id) as any;
+  return row ? artifactRow(row) : null;
 }
 
 export function getSnapshotBySession(sessionId: string): AssistantSnapshot | null {

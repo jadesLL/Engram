@@ -15,24 +15,47 @@ let ensureDirs: typeof import('../config.js').ensureDirs;
 let readPage: typeof import('../lib/vault.js').readPage;
 let createSession: typeof import('./repository.js').createSession;
 let createRun: typeof import('./repository.js').createRun;
+let appendMessage: typeof import('./repository.js').appendMessage;
 let getRun: typeof import('./repository.js').getRun;
+let getSession: typeof import('./repository.js').getSession;
 let getSnapshotByRun: typeof import('./repository.js').getSnapshotByRun;
+let listMessages: typeof import('./repository.js').listMessages;
 let updateRun: typeof import('./repository.js').updateRun;
+let updateSession: typeof import('./repository.js').updateSession;
 let startAssistantRun: typeof import('./orchestrator.js').startAssistantRun;
 let decideAssistantRun: typeof import('./orchestrator.js').decideAssistantRun;
 let cancelAssistantRun: typeof import('./orchestrator.js').cancelAssistantRun;
+let assistantModelMessagesForRun: typeof import('./orchestrator.js').assistantModelMessagesForRun;
+let compactAssistantSessionForRun: typeof import('./orchestrator.js').compactAssistantSessionForRun;
 
 before(async () => {
   ({ db, migrate, setSetting } = await import('../lib/db.js'));
   ({ ensureDirs } = await import('../config.js'));
   ({ readPage } = await import('../lib/vault.js'));
-  ({ createSession, createRun, getRun, getSnapshotByRun, updateRun } = await import('./repository.js'));
-  ({ startAssistantRun, decideAssistantRun, cancelAssistantRun } = await import('./orchestrator.js'));
+  ({
+    appendMessage,
+    createSession,
+    createRun,
+    getRun,
+    getSession,
+    getSnapshotByRun,
+    listMessages,
+    updateRun,
+    updateSession,
+  } = await import('./repository.js'));
+  ({
+    assistantModelMessagesForRun,
+    cancelAssistantRun,
+    compactAssistantSessionForRun,
+    decideAssistantRun,
+    startAssistantRun,
+  } = await import('./orchestrator.js'));
   migrate();
 });
 
 beforeEach(() => {
   db.exec(`
+    DELETE FROM assistant_artifacts;
     DELETE FROM assistant_tool_calls;
     DELETE FROM assistant_runs;
     DELETE FROM assistant_messages;
@@ -45,6 +68,9 @@ beforeEach(() => {
     DELETE FROM pages;
     DELETE FROM files;
     DELETE FROM jobs;
+    DELETE FROM semantic_cache;
+    DELETE FROM semantic_events;
+    DELETE FROM llm_usage;
     DELETE FROM settings WHERE key IN ('chat_models', 'active_chat_model');
   `);
   fs.rmSync(path.join(temp, 'brain'), { recursive: true, force: true });
@@ -185,4 +211,75 @@ test('waiting approval can be cancelled and running states recover as interrupte
   updateRun(second.id, { status: 'running' });
   migrate();
   assert.equal(getRun(second.id)?.status, 'interrupted');
+});
+
+test('agent keeps committed history before volatile interface context', () => {
+  const session = createSession();
+  updateSession(session.id, { summary: '长期目标：维护客户项目知识。' });
+  const previous = createRun(session.id, '上一轮问题', {});
+  appendMessage({
+    sessionId: session.id,
+    runId: previous.id,
+    role: 'assistant',
+    content: '上一轮回答',
+  });
+  updateRun(previous.id, { status: 'completed' });
+  const current = createRun(session.id, '当前问题', {
+    route: '/page/current',
+    currentPage: {
+      id: 'page-current',
+      title: '当前页面',
+      path: 'Wiki/概念/当前页面.md',
+    },
+  });
+
+  const messages = assistantModelMessagesForRun(current.id);
+  const previousIndex = messages.findIndex((message) => message.content === '上一轮回答');
+  const contextIndex = messages.findIndex((message) =>
+    typeof message.content === 'string' &&
+    message.content.includes('UNTRUSTED_INTERFACE_CONTEXT')
+  );
+  const currentIndex = messages.findIndex((message) => message.content === '当前问题');
+
+  assert.match(String(messages[1].content), /长期目标/);
+  assert.ok(previousIndex > 1);
+  assert.ok(contextIndex > previousIndex);
+  assert.ok(currentIndex > contextIndex);
+});
+
+test('long sessions compact model context without deleting raw messages', async () => {
+  mockCompletions([{
+    choices: [{
+      finish_reason: 'stop',
+      message: {
+        content: JSON.stringify({
+          summary: '保留长期目标、关键决定和来源。',
+        }),
+      },
+    }],
+  }]);
+  const session = createSession();
+  for (let index = 0; index < 24; index++) {
+    const run = createRun(session.id, `历史问题 ${index} ${'问'.repeat(1800)}`, {});
+    appendMessage({
+      sessionId: session.id,
+      runId: run.id,
+      role: 'assistant',
+      content: `历史回答 ${index} ${'答'.repeat(1800)}`,
+    });
+    updateRun(run.id, { status: 'completed' });
+  }
+  const current = createRun(session.id, '当前问题', {});
+  const before = listMessages(session.id, 500).length;
+
+  await compactAssistantSessionForRun(current.id);
+
+  const after = listMessages(session.id, 500);
+  assert.equal(after.length, before);
+  assert.match(getSession(session.id)?.summary || '', /长期目标/);
+  assert.ok(after.some((message) => message.metadata.compacted));
+  assert.equal(
+    after.find((message) => message.id === current.userMessageId)?.metadata.compacted,
+    undefined,
+  );
 });

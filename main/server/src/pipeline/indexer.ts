@@ -1,10 +1,72 @@
+import crypto from 'node:crypto';
 import { db, getVecDim, ensureVecTable, newId, now } from '../lib/db.js';
 import { invalidateGraphCache } from '../lib/graphCache.js';
-import { embed, llmReady } from '../lib/llm.js';
+import { embed, getActiveEmbedding, getLlmConfig, llmReady } from '../lib/llm.js';
 import { chunkMarkdown, chunkPlainText } from './chunker.js';
 import { wirePageEdges, resolveDeadLinks } from './extractor.js';
 import { ftsSegment } from '../lib/fts.js';
 import { readPage, scanVault } from '../lib/vault.js';
+
+function indexSignature(label: string, content: string): {
+  contentHash: string;
+  modelKey: string;
+} {
+  const active = getActiveEmbedding();
+  const config = getLlmConfig();
+  return {
+    contentHash: crypto.createHash('sha256')
+      .update(`${label}\0${content}`)
+      .digest('hex'),
+    modelKey: llmReady()
+      ? `${active?.provider || 'custom'}|${config.embeddingBaseUrl}|${config.embeddingModel}|${config.embeddingDim}`
+      : 'keyword-only',
+  };
+}
+
+function currentIndexState(
+  refType: 'page' | 'file',
+  refId: string,
+  signature: { contentHash: string; modelKey: string },
+): { chunks: number; embedded: boolean } | null {
+  const state = db.prepare(
+    `SELECT content_hash,model_key FROM index_states WHERE ref_type=? AND ref_id=?`
+  ).get(refType, refId) as { content_hash: string; model_key: string } | undefined;
+  if (
+    !state ||
+    state.content_hash !== signature.contentHash ||
+    state.model_key !== signature.modelKey
+  ) return null;
+  const chunks = Number(
+    (db.prepare(`SELECT COUNT(*) count FROM chunks WHERE ref_type=? AND ref_id=?`)
+      .get(refType, refId) as { count: number }).count,
+  );
+  if (!chunks) return null;
+  if (llmReady()) {
+    const vectors = Number(
+      (db.prepare(
+        `SELECT COUNT(*) count FROM vec_chunks
+         WHERE rowid IN (SELECT id FROM chunks WHERE ref_type=? AND ref_id=?)`
+      ).get(refType, refId) as { count: number }).count,
+    );
+    if (vectors !== chunks) return null;
+  }
+  return { chunks, embedded: llmReady() };
+}
+
+function saveIndexState(
+  refType: 'page' | 'file',
+  refId: string,
+  signature: { contentHash: string; modelKey: string },
+): void {
+  db.prepare(
+    `INSERT INTO index_states(ref_type,ref_id,content_hash,model_key,updated_at)
+     VALUES(?,?,?,?,?)
+     ON CONFLICT(ref_type,ref_id) DO UPDATE SET
+       content_hash=excluded.content_hash,
+       model_key=excluded.model_key,
+       updated_at=excluded.updated_at`
+  ).run(refType, refId, signature.contentHash, signature.modelKey, now());
+}
 
 /**
  * 索引一个 md 页面：分块 → embedding → vec 表；同步重建 wikilink/tag 边。
@@ -25,6 +87,9 @@ export async function indexPage(
   resolveDeadLinks();
   // 边已重建，图谱缓存必须失效，否则用户刚保存就看不到新链接
   invalidateGraphCache();
+  const signature = indexSignature(page.title, rd.content);
+  const current = currentIndexState('page', pageId, signature);
+  if (current) return current;
 
   const chunks = chunkMarkdown(rd.content);
   const vectors = llmReady()
@@ -56,6 +121,7 @@ export async function indexPage(
     });
   });
   replaceChunks();
+  saveIndexState('page', pageId, signature);
   return { chunks: chunks.length, embedded: vectors.length > 0 };
 }
 
@@ -68,6 +134,9 @@ export async function indexFileText(
   ensureVecTable(getVecDim());
   const file = db.prepare(`SELECT * FROM files WHERE id = ? AND deleted = 0`).get(fileId) as any;
   if (!file || !file.text) return { chunks: 0, embedded: false };
+  const signature = indexSignature(file.name, file.text);
+  const current = currentIndexState('file', fileId, signature);
+  if (current) return current;
 
   const chunks = chunkPlainText(file.text);
   const vectors = llmReady()
@@ -105,6 +174,7 @@ export async function indexFileText(
     });
   });
   replaceChunks();
+  saveIndexState('file', fileId, signature);
   return { chunks: chunks.length, embedded: vectors.length > 0 };
 }
 

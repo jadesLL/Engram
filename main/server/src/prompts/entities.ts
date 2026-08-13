@@ -2,7 +2,7 @@
  * 实体/关系抽取提示词：从页面内容提取关键实体并建立关系。
  * 对齐六词表：优先用封闭词表，不在词表的归"其他"。
  */
-import { PERSONA, PRINCIPLES, relationVocabHint, entityRosterContext } from './common.js';
+import { PERSONA, PRINCIPLES, relationVocabHint } from './common.js';
 
 export interface EntityItem {
   name: string;
@@ -10,12 +10,14 @@ export interface EntityItem {
   relation: string;
 }
 
-export function entitiesSystem(roster: string): string {
+export function entitiesSystem(): string {
   return `${PERSONA}
 
 ${PRINCIPLES}
 
 ${relationVocabHint()}
+
+历史中的 user/assistant 轮次是已完成页面，仅用于保持缓存前缀。只处理最后一条 user 输入，不得重复、补写或修改更早页面。
 
 【任务】从给定页面内容中提取关键实体，并描述本页与每个实体的关系。
 
@@ -24,11 +26,11 @@ ${relationVocabHint()}
 
 【纪律】
 - 提取 3-8 个最重要的实体；无合适实体输出 []。
-- name 优先取"已存在实体名录"中的名称（便于建边），名录外的重要对象也可提取。
+- 请求 JSON 的 sharedContext.roster 是当前已存在实体名录；name 优先使用名录中的名称（便于建边），名录外的重要对象也可提取。
 - 只输出 JSON 数组，不要解释或围栏。
-${entityRosterContext(roster)}`;
+`;
 }
 
-export function entitiesUser(title: string, content: string): string {
-  return `标题：${title}\n\n${content}`;
+export function entitiesUser(title: string, content: string): Record<string, string> {
+  return { title, content };
 }

@@ -1,4 +1,4 @@
-import test, { after, before } from 'node:test';
+import test, { after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -19,13 +19,17 @@ let server: http.Server;
 let db: any;
 let classifyEntityName: any;
 let guardAmbiguousEntityNames: any;
+let clearSharedSemanticHistories: () => void;
+let capturedRequests: any[] = [];
 
 before(async () => {
   server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    const input = JSON.parse(body.messages.at(-1).content);
+    capturedRequests.push(body);
+    const payload = JSON.parse(body.messages.at(-1).content);
+    const input = payload.input || payload;
     const name = input.candidate.name;
     let decision: any = {
       status: 'clear',
@@ -79,6 +83,11 @@ before(async () => {
   }]));
   dbModule.setSetting('active_chat_model', 'mock');
   ({ classifyEntityName, guardAmbiguousEntityNames } = await import('./entityAmbiguity.js'));
+  ({ clearSharedSemanticHistories } = await import('../lib/semanticStage.js'));
+});
+
+beforeEach(() => {
+  clearSharedSemanticHistories();
 });
 
 after(async () => {
@@ -110,6 +119,7 @@ test('model leaves semantically clear names unchanged', async () => {
 });
 
 test('write guard applies model-confirmed merge and retains uncertain item for review', async () => {
+  capturedRequests = [];
   const candidate: Candidate = {
     candidateId: 'candidate-hengchuang',
     name: '恒创',
@@ -147,4 +157,19 @@ test('write guard applies model-confirmed merge and retains uncertain item for r
   assert.equal(guarded[1].action, 'merge');
   assert.equal(guarded[2].action, 'review');
   assert.equal(guarded[2].ambiguity?.category, 'possible_typo');
+  assert.equal(capturedRequests.length, 2);
+  assert.deepEqual(
+    Object.keys(JSON.parse(capturedRequests[0].messages[1].content)),
+    ['sharedContext', 'input'],
+  );
+  assert.deepEqual(
+    JSON.parse(capturedRequests[1].messages.at(-1).content),
+    {
+      input: {
+        candidate: { name: '张依龙', kind: 'person' },
+        context: '',
+      },
+    },
+  );
+  assert.equal(capturedRequests[1].messages.length, 4);
 });

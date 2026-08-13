@@ -13,7 +13,7 @@ import {
 import { rebuildAll } from '../pipeline/indexer.js';
 import { discoverModels } from '../lib/modelDiscovery.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
-import { summarizeLlmUsage } from '../lib/llmUsage.js';
+import { clearLlmUsage, summarizeLlmUsage } from '../lib/llmUsage.js';
 
 const PUBLIC_SETTINGS = [
   'chat_models', 'active_chat_model',
@@ -49,6 +49,16 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.get('/api/settings/llm-usage', async (req) => {
     const { days } = (req.query || {}) as { days?: string };
     return summarizeLlmUsage(Number(days) || 7);
+  });
+
+  app.delete('/api/settings/llm-usage', async (_req, reply) => {
+    const active = db
+      .prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status IN ('pending', 'running')`)
+      .get() as { count: number };
+    if (active.count > 0) {
+      return reply.code(409).send({ error: '仍有 AI 任务待执行或运行中，请等待任务完成后再清除模型用量' });
+    }
+    return { ok: true, deleted: clearLlmUsage() };
   });
 
   app.put('/api/settings', async (req) => {

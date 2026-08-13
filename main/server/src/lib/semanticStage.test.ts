@@ -13,6 +13,7 @@ let server: http.Server;
 let failNext = false;
 let db: any;
 let runSemanticStage: any;
+let createSemanticCacheSession: any;
 let capturedRequests: any[] = [];
 
 before(async () => {
@@ -55,7 +56,7 @@ before(async () => {
     apiKey: 'mock',
   }]));
   dbModule.setSetting('active_chat_model', 'mock');
-  ({ runSemanticStage } = await import('./semanticStage.js'));
+  ({ runSemanticStage, createSemanticCacheSession } = await import('./semanticStage.js'));
 });
 
 after(async () => {
@@ -217,13 +218,127 @@ test('validated semantic turns append to provider history and failed turns do no
   assert.deepEqual(history, beforeFailure);
 });
 
+test('cache context primes append-only history once and is not repeated on every turn', async () => {
+  capturedRequests = [];
+  const schema = z.object({ answer: z.string() });
+  const system = '返回结构化结论。';
+  const sharedContext = {
+    roster: '- 共享实体（person）',
+    related: '- 共享证据',
+  };
+  const history = [{ role: 'system' as const, content: system }];
+
+  for (const value of [1, 2]) {
+    await runSemanticStage({
+      scope: 'history-cache-context-test',
+      refId: 'history-cache-context-run',
+      stage: 'decide',
+      tag: 'semantic-history-cache-context-test',
+      schema,
+      system,
+      cacheContext: sharedContext,
+      history,
+      input: { value },
+      retries: 0,
+    });
+  }
+
+  assert.deepEqual(
+    JSON.parse(capturedRequests[0].messages[1].content),
+    { sharedContext, input: { value: 1 } },
+  );
+  assert.deepEqual(
+    JSON.parse(capturedRequests[1].messages.at(-1).content),
+    { input: { value: 2 } },
+  );
+  assert.deepEqual(
+    capturedRequests[1].messages.slice(0, 2),
+    capturedRequests[0].messages,
+  );
+});
+
+test('semantic cache sessions stay caller-owned and task-isolated', async () => {
+  capturedRequests = [];
+  const schema = z.object({ answer: z.string() });
+  const system = '只处理最后一个任务。';
+  for (const [run, context] of [['one', '旧名录'], ['two', '新名录']]) {
+    const history = createSemanticCacheSession(`shared-context-refresh-test:${run}`, system);
+    await runSemanticStage({
+      scope: 'shared-context-refresh-test',
+      refId: run,
+      stage: 'decide',
+      tag: 'shared-context-refresh-test',
+      schema,
+      system,
+      cacheContext: { roster: context },
+      cacheContextMode: 'always',
+      history,
+      input: { run },
+      retries: 0,
+    });
+  }
+
+  assert.deepEqual(
+    JSON.parse(capturedRequests[0].messages[1].content),
+    { sharedContext: { roster: '旧名录' }, input: { run: 'one' } },
+  );
+  assert.deepEqual(
+    JSON.parse(capturedRequests[1].messages.at(-1).content),
+    { sharedContext: { roster: '新名录' }, input: { run: 'two' } },
+  );
+  assert.equal(capturedRequests[0].messages.length, 2);
+  assert.equal(capturedRequests[1].messages.length, 2);
+});
+
+test('exact semantic results bypass the provider and record saved prompt tokens', async () => {
+  capturedRequests = [];
+  db.exec(`DELETE FROM semantic_cache; DELETE FROM llm_usage; DELETE FROM semantic_events;`);
+  const schema = z.object({ answer: z.string() });
+  const options = {
+    scope: 'result-cache-test',
+    refId: 'same-input',
+    stage: 'decide',
+    tag: 'semantic-result-cache-test',
+    schema,
+    system: '返回结构化结论。',
+    input: { value: 42 },
+    promptVersion: '1',
+    resultCache: true,
+    retries: 0,
+  };
+
+  assert.deepEqual(await runSemanticStage(options), { answer: '模型结论' });
+  assert.deepEqual(await runSemanticStage(options), { answer: '模型结论' });
+
+  assert.equal(capturedRequests.length, 1);
+  const usage = db.prepare(
+    `SELECT result_cache_hit,prompt_tokens,cache_read_tokens,cache_miss_tokens
+     FROM llm_usage ORDER BY id`
+  ).all();
+  assert.equal(usage.length, 2);
+  assert.deepEqual(usage[1], {
+    result_cache_hit: 1,
+    prompt_tokens: 100,
+    cache_read_tokens: 100,
+    cache_miss_tokens: 0,
+  });
+  assert.equal(
+    db.prepare(`SELECT status FROM semantic_events ORDER BY id DESC LIMIT 1`).get().status,
+    'cached',
+  );
+});
+
 test('oversized semantic history resets at a batch boundary', async () => {
   capturedRequests = [];
   const schema = z.object({ answer: z.string() });
   const system = '返回结构化结论。';
+  const sharedContext = { roster: '- 共享实体（person）' };
   const history = [
     { role: 'system' as const, content: system },
-    { role: 'user' as const, content: 'x'.repeat(30_000) },
+    {
+      role: 'user' as const,
+      content: JSON.stringify({ sharedContext, input: 'x'.repeat(30_000) }),
+    },
     { role: 'assistant' as const, content: 'y'.repeat(20_000) },
   ];
 
@@ -233,12 +348,17 @@ test('oversized semantic history resets at a batch boundary', async () => {
     tag: 'semantic-history-reset-test',
     schema,
     system,
+    cacheContext: sharedContext,
     history,
     input: { value: 1 },
     retries: 0,
   });
 
   assert.equal(capturedRequests[0].messages.length, 2);
+  assert.deepEqual(
+    JSON.parse(capturedRequests[0].messages[1].content),
+    { sharedContext, input: { value: 1 } },
+  );
   assert.equal(history.length, 3);
   assert.deepEqual(history.map((message) => message.role), ['system', 'user', 'assistant']);
 });

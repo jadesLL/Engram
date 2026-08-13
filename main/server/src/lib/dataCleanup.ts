@@ -89,6 +89,7 @@ export async function wipeKnowledgeData(): Promise<KnowledgeWipeResult> {
   const clearDb = db.transaction(() => {
     db.prepare(`DELETE FROM vec_chunks`).run();
     db.prepare(`DELETE FROM chunks`).run();
+    db.prepare(`DELETE FROM index_states`).run();
     db.prepare(`DELETE FROM edges`).run();
     db.prepare(`DELETE FROM entities`).run();
     reportCount = db.prepare(`DELETE FROM reports`).run().changes;
@@ -96,6 +97,7 @@ export async function wipeKnowledgeData(): Promise<KnowledgeWipeResult> {
     db.prepare(`DELETE FROM ingest_questions`).run();
     db.prepare(`DELETE FROM ingest_candidates`).run();
     db.prepare(`DELETE FROM semantic_events`).run();
+    db.prepare(`DELETE FROM semantic_cache`).run();
     db.prepare(`DELETE FROM llm_usage`).run();
     db.prepare(`DELETE FROM page_syntheses`).run();
     db.prepare(`DELETE FROM page_contributions`).run();
@@ -173,6 +175,7 @@ export async function wipeAiLogsAndRelations(): Promise<AiLogWipeResult> {
       .prepare(`DELETE FROM edges WHERE rel IN (${relationPh})`)
       .run(...RELATION_WORDS).changes;
     db.prepare(`DELETE FROM llm_usage`).run();
+    db.prepare(`DELETE FROM semantic_cache`).run();
     db.prepare(
       `DELETE FROM entities
        WHERE id NOT IN (SELECT DISTINCT entity_id FROM edges WHERE entity_id IS NOT NULL)`

@@ -1,4 +1,4 @@
-import test, { after, before } from 'node:test';
+import test, { after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -24,6 +24,7 @@ let renderKnowledgeProjection: any;
 let queuePageRecompose: any;
 let recomposePage: any;
 let pageEvidenceResponse: any;
+let clearSharedSemanticHistories: () => void;
 let preserveManualChanges = true;
 
 before(async () => {
@@ -32,9 +33,10 @@ before(async () => {
     for await (const chunk of req) chunks.push(chunk);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
     const system = body.messages?.find((message: any) => message.role === 'system')?.content || '';
-    const input = JSON.parse(
+    const payload = JSON.parse(
       [...(body.messages || [])].reverse().find((message: any) => message.role === 'user')?.content || '{}'
     );
+    const input = payload.input || payload;
     const content = system.includes('验证实体页面')
       ? {
           pass: preserveManualChanges,
@@ -110,6 +112,11 @@ before(async () => {
   } = await import('./sourceLedger.js'));
   ({ renderKnowledgeProjection } = await import('./knowledgePage.js'));
   ({ queuePageRecompose, recomposePage, pageEvidenceResponse } = await import('./pageSynthesis.js'));
+  ({ clearSharedSemanticHistories } = await import('../lib/semanticStage.js'));
+});
+
+beforeEach(() => {
+  clearSharedSemanticHistories();
 });
 
 after(async () => {

@@ -48,14 +48,18 @@ function evidenceSnippet(content: string, query: string, maxLength = 220): strin
 }
 
 /** 混合检索：向量 + FTS5 关键词，RRF 融合，chunk→page/file 取最佳代表 */
-export async function hybridSearch(query: string, limit = 12): Promise<SearchHit[]> {
+export async function hybridSearch(
+  query: string,
+  limit = 12,
+  prefetchedVector?: number[] | null,
+): Promise<SearchHit[]> {
   const vecRank = new Map<number, number>(); // chunkId -> rank
   const ftsRank = new Map<string, number>(); // 'page:id' | 'file:id' -> rank
 
   // ---- 向量召回（chunk 级） ----
-  if (llmReady()) {
+  if (llmReady() && prefetchedVector !== null) {
     try {
-      const [qv] = await embed([query]);
+      const qv = prefetchedVector || (await embed([query]))[0];
       const rows = db
         .prepare(
           `SELECT rowid AS id, distance FROM vec_chunks WHERE embedding MATCH ? AND k = ? ORDER BY distance`
@@ -168,4 +172,24 @@ export async function hybridSearch(query: string, limit = 12): Promise<SearchHit
   }
 
   return hits.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+export async function hybridSearchMany(
+  queries: string[],
+  limit = 12,
+): Promise<SearchHit[][]> {
+  if (!queries.length) return [];
+  let vectors: number[][] | null = null;
+  if (llmReady()) {
+    try {
+      vectors = await embed(queries);
+    } catch {
+      vectors = null;
+    }
+  }
+  return Promise.all(
+    queries.map((query, index) =>
+      hybridSearch(query, limit, vectors ? vectors[index] : null)
+    ),
+  );
 }

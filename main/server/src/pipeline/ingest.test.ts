@@ -1,4 +1,4 @@
-import test, { after, before } from 'node:test';
+import test, { after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -12,6 +12,7 @@ let server: http.Server;
 let db: any;
 let setSetting: (key: string, value: string) => void;
 let ingestRawFile: any;
+let clearSharedSemanticHistories: () => void;
 let coverageFailure: 'missing' | 'duplicate' | null = null;
 let capturedRequests: any[] = [];
 let delayNextMap = false;
@@ -134,7 +135,10 @@ before(async () => {
     let input: any = rawInput;
     try {
       const parsed = JSON.parse(rawInput);
-      input = Object.hasOwn(parsed, 'sharedContext') ? parsed.input : parsed;
+      input = Object.hasOwn(parsed, 'sharedContext') ||
+        (Object.keys(parsed).length === 1 && Object.hasOwn(parsed, 'input'))
+        ? parsed.input
+        : parsed;
     } catch { /* retain plain text */ }
     let content: unknown;
     try {
@@ -170,6 +174,11 @@ before(async () => {
   }]));
   setSetting('active_chat_model', 'mock');
   ({ ingestRawFile } = await import('./ingest.js'));
+  ({ clearSharedSemanticHistories } = await import('../lib/semanticStage.js'));
+});
+
+beforeEach(() => {
+  clearSharedSemanticHistories();
 });
 
 after(async () => {
@@ -239,10 +248,42 @@ test('dense input is split and all candidates pass through bounded stages withou
     assert.equal(Object.hasOwn(dynamicInput, 'roster'), false, `${marker} dynamic roster`);
     assert.equal(Object.hasOwn(dynamicInput, 'related'), false, `${marker} dynamic related`);
   }
+  assert.equal(requestsFor('执行 Critic').length, Math.ceil(18 / 8));
+  assert.equal(requestsFor('执行 Question Finder').length, 0);
   const verifyRequests = requestsFor('执行 Verifier');
   assert.ok(verifyRequests.length >= 2);
   assertCommittedExtensions(verifyRequests, 'Verify');
   assert.ok(!Object.hasOwn(JSON.parse(verifyRequests[0].messages[1].content), 'sharedContext'));
+});
+
+test('identical forced ingest reuses the validated pipeline result', async () => {
+  capturedRequests = [];
+  const rawDir = path.join(temp, 'brain', '原始资料');
+  fs.mkdirSync(rawDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(rawDir, '复用验证.md'),
+    '候选91事实A，候选91事实B。',
+    'utf8',
+  );
+
+  const first = await ingestRawFile('原始资料/复用验证.md', () => {}, { force: true });
+  const requestsAfterFirst = capturedRequests.length;
+  const second = await ingestRawFile('原始资料/复用验证.md', () => {}, { force: true });
+
+  assert.deepEqual(second, { created: 0, merged: 0, skipped: 0, pending: 0 });
+  assert.equal(first.created, 1);
+  assert.equal(capturedRequests.length, requestsAfterFirst);
+  assert.equal(
+    db.prepare(`SELECT COUNT(*) count FROM ingest_runs WHERE path='原始资料/复用验证.md'`).get().count,
+    1,
+  );
+  assert.equal(
+    db.prepare(
+      `SELECT COUNT(*) count FROM llm_usage
+       WHERE tag='ingest-pipeline-cache' AND result_cache_hit=1`
+    ).get().count,
+    1,
+  );
 });
 
 test('a map result exactly at the batch limit is split again to avoid a silent ceiling', async () => {
