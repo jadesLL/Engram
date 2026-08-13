@@ -1,7 +1,12 @@
 <template>
   <div class="editor-view">
     <!-- 文件预览模式（docx 等） -->
-    <FilePreview v-if="filePath" :path="filePath" />
+    <FilePreview
+      v-if="filePath"
+      ref="filePreviewRef"
+      :path="filePath"
+      @context-menu="(request) => showContextMenu(request, 'file')"
+    />
 
     <!-- 页面编辑模式 -->
     <template v-else-if="page">
@@ -17,6 +22,7 @@
         @close="closeReading"
         @open-wikilink="openWikilink"
         @open-related="(id: string) => $router.push(`/page/${id}`)"
+        @context-menu="(request) => showContextMenu(request, 'reading')"
       />
 
       <div v-show="!app.readingMode" class="page-head">
@@ -81,6 +87,7 @@
           @open-wikilink="openWikilink"
           @mode-change="(m: 'ir' | 'sv') => app.setEditorMode(m)"
           @enter-reading="enterReading"
+          @context-menu="(request) => showContextMenu(request, 'editor')"
         />
       </div>
 
@@ -224,6 +231,13 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useAssistantStore } from '../stores/assistant';
+import {
+  canReadClipboard,
+  copyText,
+  openContextMenu,
+  type ContextMenuItem,
+  type SelectionContextMenuRequest,
+} from '../lib/contextMenu';
 import MarkdownEditor from '../components/MarkdownEditor.vue';
 import ReadingPreview from '../components/ReadingPreview.vue';
 import FilePreview from '../components/FilePreview.vue';
@@ -244,6 +258,7 @@ const related = ref<any>(null);
 const evidence = ref<any>(null);
 const evidenceOpen = ref(false);
 const editorRef = ref<InstanceType<typeof MarkdownEditor>>();
+const filePreviewRef = ref<InstanceType<typeof FilePreview>>();
 
 const filePath = computed(() => (route.query.file as string) || '');
 const isDark = computed(() => app.dark);
@@ -263,6 +278,13 @@ const aiActions: { key: WriterPreset; label: string }[] = [
   { key: 'expand', label: '扩写' },
   { key: 'summarize', label: '总结' },
   { key: 'translate', label: '翻译' },
+];
+
+const contextAiActions: Array<{ key: WriterPreset; label: string; icon: string }> = [
+  { key: 'summarize', label: '总结', icon: 'sort' },
+  { key: 'polish', label: '润色', icon: 'ai' },
+  { key: 'expand', label: '扩写', icon: 'plus' },
+  { key: 'translate', label: '翻译', icon: 'languages' },
 ];
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
@@ -408,6 +430,248 @@ async function runAi(action: WriterPreset) {
   if (dirty) await save(true);
   const context = pageAssistantContext(sel, action, text);
   await assistant.openWith(`请${label}以下${sel ? '选中内容' : '页面内容'}。`, context, true);
+}
+
+function fileAssistantContext(
+  selection = '',
+  preset?: WriterPreset,
+  presetText?: string,
+) {
+  return {
+    route: route.fullPath,
+    currentFile: filePath.value ? {
+      path: filePath.value,
+      name: filePath.value.split('/').pop(),
+    } : undefined,
+    selection: selection || undefined,
+    preset,
+    presetText,
+  };
+}
+
+function activeAssistantContext(
+  selection = '',
+  preset?: WriterPreset,
+  presetText?: string,
+) {
+  return filePath.value
+    ? fileAssistantContext(selection, preset, presetText)
+    : pageAssistantContext(selection, preset, presetText);
+}
+
+async function runSelectionAi(action: WriterPreset, selection: string) {
+  const label = aiActions.find((item) => item.key === action)?.label || action;
+  if (!selection.trim()) return;
+  if (!filePath.value && dirty) await save(true);
+  await assistant.openWith(
+    `请${label}以下选中内容。`,
+    activeAssistantContext(selection, action, selection),
+    true,
+  );
+}
+
+async function askAboutSelection(selection: string) {
+  if (!selection.trim()) return;
+  if (!filePath.value && dirty) await save(true);
+  await assistant.openWith(
+    '关于这段选中内容，我想问：',
+    activeAssistantContext(selection),
+    false,
+  );
+}
+
+async function askAboutCurrentPage() {
+  if (!page.value) return;
+  if (dirty) await save(true);
+  await assistant.openWith(
+    '关于当前页面，我想问：',
+    pageAssistantContext(),
+    false,
+  );
+}
+
+async function askAboutCurrentFile() {
+  if (!filePath.value) return;
+  await assistant.openWith(
+    '关于当前文件，我想问：',
+    fileAssistantContext(),
+    false,
+  );
+}
+
+function searchSelection(selection: string) {
+  router.push({
+    path: '/search',
+    query: { q: selection.trim().slice(0, 1000) },
+  });
+}
+
+function selectionBusinessItems(selection: string): ContextMenuItem[] {
+  return [
+    {
+      id: 'search-selection',
+      label: '在知识库中搜索',
+      icon: 'search',
+      separatorBefore: true,
+      action: () => searchSelection(selection),
+    },
+    {
+      id: 'ask-selection',
+      label: '询问 AI',
+      icon: 'ai',
+      action: () => askAboutSelection(selection),
+    },
+    {
+      id: 'ai-selection',
+      label: 'AI 处理',
+      icon: 'ai',
+      children: contextAiActions.map((item) => ({
+        id: `ai-${item.key}`,
+        label: item.label,
+        icon: item.icon,
+        action: () => runSelectionAi(item.key, selection),
+      })),
+    },
+  ];
+}
+
+function pageContextItems(separatorBefore = false): ContextMenuItem[] {
+  return [
+    {
+      id: 'ask-page',
+      label: '询问当前页面',
+      icon: 'ai',
+      separatorBefore,
+      action: askAboutCurrentPage,
+    },
+    {
+      id: 'organize-page',
+      label: '整理当前页面',
+      icon: 'sort',
+      action: organize,
+    },
+    {
+      id: 'page-graph',
+      label: '查看页面图谱',
+      icon: 'graph',
+      action: () => page.value && router.push(`/graph/${page.value.id}`),
+    },
+    {
+      id: 'copy-page-link',
+      label: '复制页面链接',
+      icon: 'link',
+      action: () => copyText(window.location.href),
+    },
+  ];
+}
+
+function fileContextItems(): ContextMenuItem[] {
+  const items: ContextMenuItem[] = [
+    {
+      id: 'ask-file',
+      label: '询问当前文件',
+      icon: 'ai',
+      action: askAboutCurrentFile,
+    },
+    {
+      id: 'download-file',
+      label: '下载文件',
+      icon: 'download',
+      action: () => filePreviewRef.value?.downloadFile(),
+    },
+  ];
+  if ((window as any).wikiDesktop || (window as any).__TAURI__) {
+    items.push({
+      id: 'open-file-external',
+      label: '用系统程序打开',
+      icon: 'external',
+      action: () => filePreviewRef.value?.openExternal(),
+    });
+  }
+  return items;
+}
+
+function editorBaseItems(selection: string): ContextMenuItem[] {
+  const hasSelection = Boolean(selection);
+  const pasteAvailable = canReadClipboard();
+  return [
+    {
+      id: 'editor-undo',
+      label: '撤销',
+      icon: 'undo',
+      shortcut: 'Ctrl+Z',
+      action: () => editorRef.value?.undo(),
+    },
+    {
+      id: 'editor-redo',
+      label: '重做',
+      icon: 'redo',
+      shortcut: 'Ctrl+Y',
+      action: () => editorRef.value?.redo(),
+    },
+    {
+      id: 'editor-cut',
+      label: '剪切',
+      icon: 'scissors',
+      shortcut: 'Ctrl+X',
+      disabled: !hasSelection,
+      separatorBefore: true,
+      action: () => editorRef.value?.cutSelection(),
+    },
+    {
+      id: 'editor-copy',
+      label: '复制',
+      icon: 'copy',
+      shortcut: 'Ctrl+C',
+      disabled: !hasSelection,
+      action: () => editorRef.value?.copySelection(),
+    },
+    {
+      id: 'editor-paste',
+      label: '粘贴',
+      icon: 'clipboard',
+      shortcut: pasteAvailable ? 'Ctrl+V' : undefined,
+      hint: pasteAvailable ? undefined : '请使用 Ctrl+V',
+      disabled: !pasteAvailable,
+      action: async () => {
+        const pasted = await editorRef.value?.pasteClipboard();
+        if (!pasted) alert('浏览器未允许读取剪贴板，请使用 Ctrl+V 粘贴');
+      },
+    },
+    {
+      id: 'editor-select-all',
+      label: '全选',
+      icon: 'select-all',
+      shortcut: 'Ctrl+A',
+      action: () => editorRef.value?.selectAll(),
+    },
+  ];
+}
+
+function showContextMenu(
+  request: SelectionContextMenuRequest,
+  source: 'editor' | 'reading' | 'file',
+) {
+  const selection = request.selection.trim();
+  let items: ContextMenuItem[];
+  if (source === 'editor') {
+    items = editorBaseItems(selection);
+    items.push(...(selection ? selectionBusinessItems(selection) : pageContextItems(true)));
+  } else if (selection) {
+    items = [
+      {
+        id: `${source}-copy`,
+        label: '复制',
+        icon: 'copy',
+        shortcut: 'Ctrl+C',
+        action: () => copyText(selection),
+      },
+      ...selectionBusinessItems(selection),
+    ];
+  } else {
+    items = source === 'reading' ? pageContextItems() : fileContextItems();
+  }
+  openContextMenu({ x: request.x, y: request.y, items });
 }
 
 async function organize() {

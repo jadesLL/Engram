@@ -138,6 +138,8 @@
       <JobsPanel v-if="jobsPanelOpen" @close="jobsPanelOpen = false" />
     </transition>
 
+    <AppContextMenu />
+
     <!-- 移动端底部导航 -->
     <nav class="bottom-nav">
       <button v-for="item in bottomItems" :key="item.label" type="button" @click="item.action">
@@ -157,6 +159,7 @@ import { openPageStream } from '../lib/events';
 import Sidebar from '../components/Sidebar.vue';
 import AiDrawer from '../components/AiDrawer.vue';
 import JobsPanel from '../components/JobsPanel.vue';
+import AppContextMenu from '../components/AppContextMenu.vue';
 import Icon from '../components/Icon.vue';
 
 const route = useRoute();
