@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, newId, now } from '../lib/db.js';
-import { llmReady } from '../lib/llm.js';
+import { llmReady, type ChatMessage } from '../lib/llm.js';
 import { runSemanticStage } from '../lib/semanticStage.js';
 import { safeJoin } from '../lib/vault.js';
 import { hybridSearch } from '../retrieval/hybrid.js';
@@ -97,6 +97,7 @@ async function jsonStage<T>(
   maxTokens = 8000,
   stage = tag,
   cacheContext?: unknown,
+  history?: ChatMessage[],
 ): Promise<T> {
   return runSemanticStage<T>({
     scope: 'ingest',
@@ -106,6 +107,7 @@ async function jsonStage<T>(
     schema,
     system,
     cacheContext,
+    history,
     input,
     temperature: 0.1,
     maxTokens,
@@ -158,6 +160,7 @@ async function mapChunk(
   runId: string,
   chunk: DocumentChunk,
   titleRoster: string,
+  history: ChatMessage[],
 ): Promise<Candidate[]> {
   try {
     const out = await jsonStage<{ candidates: Candidate[] }>(
@@ -174,6 +177,7 @@ async function mapChunk(
       8000,
       `ingest-map:${chunk.id}`,
       { roster: titleRoster },
+      history,
     );
     const valid = validateFacts(out.candidates, [chunk]);
     if (out.candidates.length >= MAP_BATCH_LIMIT) {
@@ -184,7 +188,7 @@ async function mapChunk(
           chunks: parts.map((part) => ({ id: part.id, start: part.start, end: part.end })),
         });
         const mapped: Candidate[] = [];
-        for (const part of parts) mapped.push(...await mapChunk(runId, part, titleRoster));
+        for (const part of parts) mapped.push(...await mapChunk(runId, part, titleRoster, history));
         return mapped;
       }
     }
@@ -198,7 +202,7 @@ async function mapChunk(
         chunks: parts.map((part) => ({ id: part.id, start: part.start, end: part.end })),
       });
       const mapped: Candidate[] = [];
-      for (const part of parts) mapped.push(...await mapChunk(runId, part, titleRoster));
+      for (const part of parts) mapped.push(...await mapChunk(runId, part, titleRoster, history));
       return mapped;
     }
     audit(runId, `map_failed:${chunk.id}`, {
@@ -237,6 +241,7 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
   maxTokens: number,
   stage: string,
   cacheContext?: unknown,
+  history?: ChatMessage[],
 ): Promise<T> {
   let coverageError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -257,6 +262,7 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
       maxTokens,
       `${stage}${attempt ? ':coverage-retry' : ''}`,
       cacheContext,
+      history,
     );
     try {
       exactCandidateCoverage(expected, result.items, stage);
@@ -343,6 +349,7 @@ async function normalizeBatch(
   candidates: Candidate[],
   pass: number,
   batchIndex: number,
+  history: ChatMessage[],
 ): Promise<Candidate[]> {
   const result = await jsonStage<{ merges: NormalizeMerge[] }>(
     runId,
@@ -352,6 +359,8 @@ async function normalizeBatch(
     'ingest-normalize',
     6000,
     `ingest-normalize:${pass}:${batchIndex + 1}`,
+    undefined,
+    history,
   );
   const normalized = applyNormalizeMerges(candidates, result.merges);
   audit(runId, `normalize:${pass}:${batchIndex + 1}`, {
@@ -364,9 +373,10 @@ async function normalizeBatch(
 
 async function normalizeCandidates(runId: string, mapped: Candidate[]): Promise<Candidate[]> {
   let candidates: Candidate[] = [];
+  const history: ChatMessage[] = [{ role: 'system', content: normalizePrompt }];
   const firstPass = batches(mapped, NORMALIZE_BATCH_LIMIT);
   for (let index = 0; index < firstPass.length; index++) {
-    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index));
+    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history));
   }
   if (firstPass.length > 1) {
     const secondPass = candidates.length <= NORMALIZE_BATCH_LIMIT
@@ -374,7 +384,7 @@ async function normalizeCandidates(runId: string, mapped: Candidate[]): Promise<
       : spreadBatches(candidates, NORMALIZE_BATCH_LIMIT);
     const crossed: Candidate[] = [];
     for (let index = 0; index < secondPass.length; index++) {
-      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index));
+      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index, history));
     }
     candidates = crossed;
   }
@@ -502,10 +512,11 @@ export async function ingestRawFile(
     const rosterEntries = loadRoster();
     const titleRoster = roster(rosterEntries);
     const rawMapped: Candidate[] = [];
+    const mapHistory: ChatMessage[] = [{ role: 'system', content: mapPrompt }];
     for (let chunkIndex = 0; chunkIndex < document.chunks.length; chunkIndex++) {
       const chunk = document.chunks[chunkIndex];
       onProgress({ stage: 'Map', progress: 10 + Math.round(((chunkIndex + 1) / document.chunks.length) * 24), detail: `${chunkIndex + 1}/${document.chunks.length}` });
-      rawMapped.push(...await mapChunk(runId, chunk, titleRoster));
+      rawMapped.push(...await mapChunk(runId, chunk, titleRoster, mapHistory));
     }
     const mapped = rawMapped.map((candidate, index) => ({
       ...candidate,
@@ -525,6 +536,7 @@ export async function ingestRawFile(
     onProgress({ stage: 'Plan', progress: 56 });
     const plan: PlanItem[] = [];
     const candidateBatches = batches(candidates, PLAN_BATCH_LIMIT);
+    const planHistory: ChatMessage[] = [{ role: 'system', content: planPrompt }];
     for (let index = 0; index < candidateBatches.length; index++) {
       const candidateBatch = candidateBatches[index];
       const rawPlan = await coveredItemsStage<{ items: PlanItem[] }>(
@@ -537,6 +549,7 @@ export async function ingestRawFile(
         8000,
         `ingest-plan:${index + 1}`,
         { roster: titleRoster, related },
+        planHistory,
       );
       const batchPlan = whitelistFactIds(rawPlan.items, allowedFactIds).items;
       plan.push(...batchPlan);
@@ -546,6 +559,7 @@ export async function ingestRawFile(
 
     let reviewedPlan: PlanItem[] = [];
     const planBatches = batches(plan, PLAN_BATCH_LIMIT);
+    const criticHistory: ChatMessage[] = [{ role: 'system', content: criticPrompt }];
     for (let index = 0; index < planBatches.length; index++) {
       const planBatch = planBatches[index];
       const candidateIds = new Set(planBatch.map((item) => item.candidateId));
@@ -561,6 +575,7 @@ export async function ingestRawFile(
         8000,
         `ingest-critic:${index + 1}`,
         { roster: titleRoster, related },
+        criticHistory,
       );
       const revised = whitelistFactIds(firstCritique.items, allowedFactIds).items;
       audit(runId, `critic:${index + 1}`, { ...firstCritique, items: revised }, planBatch);
@@ -575,6 +590,7 @@ export async function ingestRawFile(
         8000,
         `ingest-critic-review:${index + 1}`,
         { roster: titleRoster, related },
+        criticHistory,
       );
       let reviewedBatch = whitelistFactIds(secondCritique.items, allowedFactIds).items;
       if (!secondCritique.approved) {
@@ -595,6 +611,7 @@ export async function ingestRawFile(
     const contentById = new Map<string, string>();
     const composeTargets = reviewedPlan.filter((item) => item.action !== 'skip');
     const composeBatches = batches(composeTargets, COMPOSE_BATCH_LIMIT);
+    const composeHistory: ChatMessage[] = [{ role: 'system', content: composePrompt }];
     for (let index = 0; index < composeBatches.length; index++) {
       const composeBatch = composeBatches[index];
       const factIds = new Set(composeBatch.flatMap((item) => item.factIds));
@@ -624,6 +641,7 @@ export async function ingestRawFile(
         9000,
         `ingest-compose:${index + 1}`,
         { roster: titleRoster, related },
+        composeHistory,
       );
       for (const item of rawComposed.items) contentById.set(item.candidateId, item.content);
       audit(runId, `compose:${index + 1}`, rawComposed, composeInput.items);
@@ -636,6 +654,7 @@ export async function ingestRawFile(
     audit(runId, 'compose', composed, reviewedPlan);
 
     const generatedQuestions: QuestionOutput['questions'] = [];
+    const questionHistory: ChatMessage[] = [{ role: 'system', content: questionFinderPrompt }];
     for (let index = 0; index < candidateBatches.length; index++) {
       const candidateBatch = candidateBatches[index];
       const candidateIds = new Set(candidateBatch.map((item) => item.candidateId));
@@ -648,6 +667,8 @@ export async function ingestRawFile(
         'ingest-questions',
         6000,
         `ingest-questions:${index + 1}`,
+        undefined,
+        questionHistory,
       );
       generatedQuestions.push(...result.questions);
       audit(runId, `questions:${index + 1}`, result, candidateBatch.map((item) => item.candidateId));
@@ -674,6 +695,7 @@ export async function ingestRawFile(
     const verifiedItems: VerifierOutput['items'] = [];
     const verifyTargets = composed.items.filter((item) => item.action !== 'skip');
     const verifyBatches = batches(verifyTargets, COMPOSE_BATCH_LIMIT);
+    const verifyHistory: ChatMessage[] = [{ role: 'system', content: verifierPrompt }];
     for (let index = 0; index < verifyBatches.length; index++) {
       const verifyBatch = verifyBatches[index];
       const factIds = new Set(verifyBatch.flatMap((item) => item.factIds));
@@ -690,6 +712,8 @@ export async function ingestRawFile(
         'ingest-verify',
         7000,
         `ingest-verify:${index + 1}`,
+        undefined,
+        verifyHistory,
       );
       verifiedItems.push(...result.items);
       audit(runId, `verify:${index + 1}`, result, verifyBatch);

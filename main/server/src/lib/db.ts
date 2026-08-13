@@ -332,6 +332,11 @@ export function migrate() {
     model TEXT NOT NULL DEFAULT '',
     operation TEXT NOT NULL DEFAULT 'chat',
     tag TEXT NOT NULL DEFAULT '',
+    scope TEXT NOT NULL DEFAULT '',
+    ref_id TEXT NOT NULL DEFAULT '',
+    stage TEXT NOT NULL DEFAULT '',
+    prefix_hash TEXT NOT NULL DEFAULT '',
+    history_messages INTEGER NOT NULL DEFAULT 0,
     prompt_tokens INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
@@ -452,6 +457,15 @@ export function migrate() {
   ensureColumn('semantic_events', 'status', `TEXT NOT NULL DEFAULT 'succeeded'`);
   ensureColumn('semantic_events', 'error', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('semantic_events', 'duration_ms', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn('llm_usage', 'scope', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('llm_usage', 'ref_id', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('llm_usage', 'stage', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('llm_usage', 'prefix_hash', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('llm_usage', 'history_messages', `INTEGER NOT NULL DEFAULT 0`);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_llm_usage_ref
+     ON llm_usage(scope, ref_id, stage, created_at DESC)`
+  );
   ensureColumn('jobs', 'stage', `TEXT NOT NULL DEFAULT '等待执行'`);
   ensureColumn('jobs', 'progress', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('jobs', 'detail', `TEXT NOT NULL DEFAULT ''`);

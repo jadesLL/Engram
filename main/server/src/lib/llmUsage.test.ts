@@ -8,6 +8,7 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-usage-'));
 process.env.DATA_DIR = temp;
 
 let db: any;
+let migrate: () => void;
 let normalizeLlmUsage: typeof import('./llmUsage.js').normalizeLlmUsage;
 let recordLlmUsage: typeof import('./llmUsage.js').recordLlmUsage;
 let summarizeLlmUsage: typeof import('./llmUsage.js').summarizeLlmUsage;
@@ -15,7 +16,8 @@ let summarizeLlmUsage: typeof import('./llmUsage.js').summarizeLlmUsage;
 before(async () => {
   const dbModule = await import('./db.js');
   db = dbModule.db;
-  dbModule.migrate();
+  migrate = dbModule.migrate;
+  migrate();
   ({ normalizeLlmUsage, recordLlmUsage, summarizeLlmUsage } = await import('./llmUsage.js'));
 });
 
@@ -77,7 +79,17 @@ test('normalizes DeepSeek, OpenAI and Anthropic cache usage fields', () => {
 
 test('summarizes only provider-reported cache accounting', () => {
   recordLlmUsage(
-    { provider: 'deepseek', model: 'deepseek-v4-flash', operation: 'chat', tag: 'ingest-map' },
+    {
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      operation: 'chat',
+      tag: 'ingest-map',
+      scope: 'ingest',
+      refId: 'run-1',
+      stage: 'ingest-map:c0001',
+      prefixHash: 'abc123',
+      historyMessages: 3,
+    },
     {
       prompt_tokens: 1000,
       completion_tokens: 100,
@@ -101,5 +113,43 @@ test('summarizes only provider-reported cache accounting', () => {
   assert.equal(summary.cacheMissTokens, 100);
   assert.equal(summary.cacheHitRate, 0.9);
   assert.equal(summary.breakdown[0].tag, 'ingest-map');
+  assert.equal(summary.breakdown[0].runs, 1);
+  assert.equal(summary.breakdown[0].continuedRequests, 1);
+  assert.equal(summary.breakdown[0].maxHistoryMessages, 3);
   assert.equal(summary.breakdown[1].cacheHitRate, null);
+});
+
+test('migration upgrades legacy llm usage tables with cache diagnostics columns', () => {
+  db.exec(`
+    DROP TABLE llm_usage;
+    CREATE TABLE llm_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      operation TEXT NOT NULL DEFAULT 'chat',
+      tag TEXT NOT NULL DEFAULT '',
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_reported INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      raw_usage TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  migrate();
+
+  const columns = new Set(
+    db.prepare(`PRAGMA table_info(llm_usage)`).all().map((column: any) => column.name),
+  );
+  for (const name of ['scope', 'ref_id', 'stage', 'prefix_hash', 'history_messages']) {
+    assert.ok(columns.has(name), name);
+  }
+  assert.ok(
+    db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_llm_usage_ref'`).get(),
+  );
 });

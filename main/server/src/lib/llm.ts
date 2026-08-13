@@ -109,6 +109,13 @@ type LlmRequestOptions = {
   model?: string;
   operation?: LlmOperation;
   tag?: string;
+  usageContext?: {
+    scope: string;
+    refId: string;
+    stage: string;
+    prefixHash: string;
+    historyMessages: number;
+  };
 };
 
 type LlmHttpResponse = {
@@ -129,6 +136,11 @@ function responseIdentity(
     model: opts?.model || String((body as any)?.model || active?.model || 'unknown'),
     operation,
     tag: opts?.tag || operation,
+    scope: opts?.usageContext?.scope,
+    refId: opts?.usageContext?.refId,
+    stage: opts?.usageContext?.stage,
+    prefixHash: opts?.usageContext?.prefixHash,
+    historyMessages: opts?.usageContext?.historyMessages,
   };
 }
 
@@ -386,6 +398,7 @@ type ChatOptions = {
   json?: boolean;
   signal?: AbortSignal;
   tag?: string;
+  usageContext?: LlmRequestOptions['usageContext'];
 };
 
 /** 非流式对话 */
@@ -412,6 +425,7 @@ export async function chat(
   const res = await request('/chat/completions', body, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat',
+    usageContext: opts?.usageContext,
   });
   const json = await readJsonResponse(res);
   const choice = json?.choices?.[0];
@@ -452,6 +466,7 @@ export async function chatWithTools(
   const res = await request('/chat/completions', body, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat-tools',
+    usageContext: opts?.usageContext,
   });
   const payload = await readJsonResponse(res);
   const choice = payload?.choices?.[0];
@@ -608,6 +623,7 @@ export async function chatStream(
     res = await request('/chat/completions', body, {
       signal: opts?.signal,
       tag: opts?.tag || 'chat-stream',
+      usageContext: opts?.usageContext,
     });
   } catch (error) {
     const unsupported =
@@ -618,6 +634,7 @@ export async function chatStream(
     res = await request('/chat/completions', body, {
       signal: opts?.signal,
       tag: opts?.tag || 'chat-stream',
+      usageContext: opts?.usageContext,
     });
     streamUsageUnsupported.add(capabilityKey);
   }
