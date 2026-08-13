@@ -10,7 +10,11 @@ import { readPage, scanVault } from '../lib/vault.js';
  * 索引一个 md 页面：分块 → embedding → vec 表；同步重建 wikilink/tag 边。
  * LLM 未配置时仅做文本索引（FTS 已在 vault 层完成）与建边。
  */
-export async function indexPage(pageId: string): Promise<{ chunks: number; embedded: boolean }> {
+export async function indexPage(
+  pageId: string,
+  signal?: AbortSignal,
+): Promise<{ chunks: number; embedded: boolean }> {
+  signal?.throwIfAborted();
   ensureVecTable(getVecDim()); // 维度变化时自动重建 vec 表（旧向量随之清空）
   const page = db.prepare(`SELECT * FROM pages WHERE id = ? AND deleted = 0`).get(pageId) as any;
   if (!page) return { chunks: 0, embedded: false };
@@ -23,47 +27,68 @@ export async function indexPage(pageId: string): Promise<{ chunks: number; embed
   invalidateGraphCache();
 
   const chunks = chunkMarkdown(rd.content);
-  const ids: number[] = [];
+  const vectors = llmReady()
+    ? await embedInBatches(
+        chunks.map((c) => `${page.title}\n${c.heading ? c.heading + '\n' : ''}${c.content}`),
+        16,
+        signal,
+      )
+    : [];
+  if (vectors.length && vectors.length !== chunks.length) {
+    throw new Error(`Embedding 返回数量不匹配：期望 ${chunks.length} 条，实际 ${vectors.length} 条`);
+  }
+  if (vectors.length) assertDim(vectors);
+  signal?.throwIfAborted();
   const replaceChunks = db.transaction(() => {
-    deleteRefChunks('page', pageId);
+    db.prepare(
+      `DELETE FROM vec_chunks WHERE rowid IN (
+         SELECT id FROM chunks WHERE ref_type='page' AND ref_id=?
+       )`
+    ).run(pageId);
+    db.prepare(`DELETE FROM chunks WHERE ref_type='page' AND ref_id=?`).run(pageId);
     const ins = db.prepare(
       `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('page', ?, ?, ?, ?)`
     );
+    const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
     chunks.forEach((c, i) => {
       const r = ins.run(pageId, i, c.heading, c.content);
-      ids.push(Number(r.lastInsertRowid));
+      if (vectors.length) insVec.run(BigInt(Number(r.lastInsertRowid)), JSON.stringify(vectors[i]));
     });
   });
   replaceChunks();
-
-  if (!llmReady()) return { chunks: chunks.length, embedded: false };
-
-  const texts = chunks.map((c) => `${page.title}\n${c.heading ? c.heading + '\n' : ''}${c.content}`);
-  const vectors = await embedInBatches(texts);
-  if (vectors.length !== ids.length) {
-    throw new Error(`Embedding 返回数量不匹配：期望 ${ids.length} 条，实际 ${vectors.length} 条`);
-  }
-  assertDim(vectors);
-  const insertVectors = db.transaction(() => {
-    const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
-    for (let i = 0; i < ids.length; i++) {
-      insVec.run(BigInt(ids[i]), JSON.stringify(vectors[i]));
-    }
-  });
-  insertVectors();
-  return { chunks: chunks.length, embedded: true };
+  return { chunks: chunks.length, embedded: vectors.length > 0 };
 }
 
 /** 索引非 md 文件的提取文本（docx 等） */
-export async function indexFileText(fileId: string): Promise<{ chunks: number; embedded: boolean }> {
+export async function indexFileText(
+  fileId: string,
+  signal?: AbortSignal,
+): Promise<{ chunks: number; embedded: boolean }> {
+  signal?.throwIfAborted();
   ensureVecTable(getVecDim());
   const file = db.prepare(`SELECT * FROM files WHERE id = ? AND deleted = 0`).get(fileId) as any;
   if (!file || !file.text) return { chunks: 0, embedded: false };
 
   const chunks = chunkPlainText(file.text);
-  const ids: number[] = [];
+  const vectors = llmReady()
+    ? await embedInBatches(
+        chunks.map((c) => `${file.name}\n${c.content}`),
+        16,
+        signal,
+      )
+    : [];
+  if (vectors.length && vectors.length !== chunks.length) {
+    throw new Error(`Embedding 返回数量不匹配：期望 ${chunks.length} 条，实际 ${vectors.length} 条`);
+  }
+  if (vectors.length) assertDim(vectors);
+  signal?.throwIfAborted();
   const replaceChunks = db.transaction(() => {
-    deleteRefChunks('file', fileId);
+    db.prepare(
+      `DELETE FROM vec_chunks WHERE rowid IN (
+         SELECT id FROM chunks WHERE ref_type='file' AND ref_id=?
+       )`
+    ).run(fileId);
+    db.prepare(`DELETE FROM chunks WHERE ref_type='file' AND ref_id=?`).run(fileId);
     db.prepare(`DELETE FROM files_fts WHERE file_id = ?`).run(fileId);
     db.prepare(`INSERT INTO files_fts(name, content, file_id) VALUES(?, ?, ?)`).run(
       ftsSegment(file.name),
@@ -73,29 +98,14 @@ export async function indexFileText(fileId: string): Promise<{ chunks: number; e
     const ins = db.prepare(
       `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('file', ?, ?, '', ?)`
     );
+    const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
     chunks.forEach((c, i) => {
       const r = ins.run(fileId, i, c.content);
-      ids.push(Number(r.lastInsertRowid));
+      if (vectors.length) insVec.run(BigInt(Number(r.lastInsertRowid)), JSON.stringify(vectors[i]));
     });
   });
   replaceChunks();
-
-  if (!llmReady()) return { chunks: chunks.length, embedded: false };
-
-  const texts = chunks.map((c) => `${file.name}\n${c.content}`);
-  const vectors = await embedInBatches(texts);
-  if (vectors.length !== ids.length) {
-    throw new Error(`Embedding 返回数量不匹配：期望 ${ids.length} 条，实际 ${vectors.length} 条`);
-  }
-  assertDim(vectors);
-  const insertVectors = db.transaction(() => {
-    const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
-    for (let i = 0; i < ids.length; i++) {
-      insVec.run(BigInt(ids[i]), JSON.stringify(vectors[i]));
-    }
-  });
-  insertVectors();
-  return { chunks: chunks.length, embedded: true };
+  return { chunks: chunks.length, embedded: vectors.length > 0 };
 }
 
 /** 维度校验：模型实际返回维度与配置不一致时给出可操作的中文提示 */
@@ -111,23 +121,18 @@ function assertDim(vectors: number[][]) {
 }
 
 /** 分批向量化：阿里百炼等厂商单批限制 20 条，保守取 16 */
-async function embedInBatches(texts: string[], batchSize = 16): Promise<number[][]> {
+async function embedInBatches(
+  texts: string[],
+  batchSize = 16,
+  signal?: AbortSignal,
+): Promise<number[][]> {
   const out: number[][] = [];
   for (let i = 0; i < texts.length; i += batchSize) {
+    signal?.throwIfAborted();
     const batch = texts.slice(i, i + batchSize);
-    out.push(...(await embed(batch)));
+    out.push(...(await embed(batch, signal)));
   }
   return out;
-}
-
-function deleteRefChunks(refType: 'page' | 'file', refId: string) {
-  const tx = db.transaction(() => {
-    db.prepare(
-      `DELETE FROM vec_chunks WHERE rowid IN (SELECT id FROM chunks WHERE ref_type = ? AND ref_id = ?)`
-    ).run(refType, refId);
-    db.prepare(`DELETE FROM chunks WHERE ref_type = ? AND ref_id = ?`).run(refType, refId);
-  });
-  tx();
 }
 
 /** 清理已无 chunk 行对应的向量，覆盖历史错误删除顺序留下的孤儿。 */
@@ -137,7 +142,10 @@ export function cleanupOrphanVectors(): number {
 }
 
 /** 全量重建：扫描 vault → 逐页重建索引。返回统计。 */
-export async function rebuildAll(onProgress?: (msg: string) => void): Promise<{ pages: number; files: number; errors: string[] }> {
+export async function rebuildAll(
+  onProgress?: (msg: string) => void,
+  signal?: AbortSignal,
+): Promise<{ pages: number; files: number; errors: string[] }> {
   ensureVecTable(getVecDim());
   cleanupOrphanVectors();
   await scanVault();
@@ -147,16 +155,18 @@ export async function rebuildAll(onProgress?: (msg: string) => void): Promise<{ 
     .all() as { id: string }[];
   const errors: string[] = [];
   for (const p of pages) {
+    signal?.throwIfAborted();
     try {
-      await indexPage(p.id);
+      await indexPage(p.id, signal);
       onProgress?.(`page ${p.id}`);
     } catch (e: any) {
       errors.push(`page ${p.id}: ${e.message}`);
     }
   }
   for (const f of files) {
+    signal?.throwIfAborted();
     try {
-      await indexFileText(f.id);
+      await indexFileText(f.id, signal);
       onProgress?.(`file ${f.id}`);
     } catch (e: any) {
       errors.push(`file ${f.id}: ${e.message}`);

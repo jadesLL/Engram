@@ -304,6 +304,7 @@ test('dynamic reconciliation hides stale reviews once two active source paths ex
       name,
       factIds: ['f1'],
       action: 'review',
+      evidenceEligible: true,
     }, {
       runId,
       sourceVersionId: version.id,
@@ -362,6 +363,7 @@ test('dynamic reconciliation batches eligible reviews from the same source path'
       name,
       factIds: [factId],
       action: 'review',
+      evidenceEligible: true,
     }, {
       runId: 'batch-primary-run',
       sourceVersionId: primaryVersion.id,
@@ -373,6 +375,7 @@ test('dynamic reconciliation batches eligible reviews from the same source path'
       name,
       factIds: [factId],
       action: 'review',
+      evidenceEligible: true,
     }, {
       runId: 'batch-support-run',
       sourceVersionId: supportVersion.id,
@@ -435,6 +438,69 @@ test('dynamic reconciliation batches eligible reviews from the same source path'
        WHERE kind='candidate_reconcile' AND payload LIKE ?`
     ).get(`%${sourcePath}%`).n,
     1,
+  );
+});
+
+test('dynamic reconciliation keeps ambiguous candidates in manual review', () => {
+  const name = '身份歧义候选';
+  const primaryPath = '原始资料/身份歧义一.md';
+  const supportPath = '原始资料/身份歧义二.md';
+  const createOccurrence = (
+    runId: string,
+    sourcePath: string,
+    hash: string,
+    reason: string,
+  ) => {
+    const version = beginSourceVersion(sourcePath, hash);
+    startRun(runId, version.id, hash, sourcePath);
+    db.prepare(
+      `INSERT INTO ingest_facts(run_id,fact_id,statement,sources) VALUES(?,?,?,?)`
+    ).run(runId, 'f1', `${name}的事实`, JSON.stringify([{ chunkId: 'c1', quote: `${name}的事实` }]));
+    db.prepare(`UPDATE source_versions SET status='active',activated_at=? WHERE id=?`).run(now(), version.id);
+    return upsertCandidateOccurrence({
+      ...item(`${name}正文`),
+      name,
+      factIds: ['f1'],
+      action: 'review',
+      evidenceEligible: true,
+      reason,
+    }, {
+      runId,
+      sourceVersionId: version.id,
+      sourcePath,
+      sourceName: path.posix.basename(sourcePath),
+    });
+  };
+  const primary = createOccurrence(
+    'ambiguous-run-1',
+    primaryPath,
+    'ambiguous-hash-1',
+    '候选身份仍有歧义，需要人工确认',
+  );
+  createOccurrence(
+    'ambiguous-run-2',
+    supportPath,
+    'ambiguous-hash-2',
+    '单一原始资料自动建页至少需要两条有效事实',
+  );
+  db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(?,'pending_review',?,'open','ambiguous:auto','ambiguous:auto')`
+  ).run(now(), JSON.stringify({
+    candidateId: primary.id,
+    name,
+    kind: 'project',
+    sourcePath: primaryPath,
+    sourceVersionId: primary.source_version_id,
+    runId: primary.run_id,
+    factIds: ['f1'],
+    reason: primary.reason,
+  }));
+
+  assert.equal(reconcilePendingCandidates(), 0);
+  assert.equal(
+    db.prepare(`SELECT status FROM reports WHERE issue_key='ambiguous:auto'`).get().status,
+    'open',
   );
 });
 

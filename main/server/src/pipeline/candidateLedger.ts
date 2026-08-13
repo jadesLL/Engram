@@ -58,6 +58,14 @@ export function normalizeCandidateName(value: string): string {
   return String(value || '').trim().replace(/[\s·•・]+/g, '').toLowerCase();
 }
 
+export function candidateAutoReconcileEligible(candidate: CandidateOccurrence): boolean {
+  if (!candidate.evidence_eligible || candidate.confidence === '低') return false;
+  if (!parseArray<string>(candidate.fact_ids).length) return false;
+  return !/(歧义|不确定|冲突|类型不清|低置信度|验证未通过|无依据|缺少验证)/.test(
+    candidate.reason || '',
+  );
+}
+
 export function upsertCandidateOccurrence(
   item: KnowledgeItem,
   context: CandidateContext,
@@ -319,7 +327,11 @@ export function reconcilePendingCandidates(): number {
   const groups = new Map<string, Array<{ candidateId: string; reportId: number }>>();
   for (const report of reports) {
     const candidate = ensureCandidateFromReport(report);
-    if (!candidate || activePaths.has(candidate.source_path)) continue;
+    if (
+      !candidate ||
+      !candidateAutoReconcileEligible(candidate) ||
+      activePaths.has(candidate.source_path)
+    ) continue;
     const sourceCount = relatedCandidateOccurrences(candidate).length;
     const page = exactPage(candidate);
     if (!page && sourceCount < 2) continue;

@@ -19,7 +19,8 @@ const entityItemsSchema = z.array(z.object({
  * 从页面提取实体（人物/概念/项目/组织）及与页面的类型化关系，写入 entities/edges。
  * 对齐：携带已有实体名录（优先链接）、关系向六词表靠拢。
  */
-export async function extractEntities(pageId: string): Promise<void> {
+export async function extractEntities(pageId: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   if (!llmReady()) return;
   const page = db.prepare(`SELECT * FROM pages WHERE id = ? AND deleted = 0`).get(pageId) as any;
   if (!page) return;
@@ -45,6 +46,7 @@ export async function extractEntities(pageId: string): Promise<void> {
       temperature: 0.1,
       maxTokens: 1200,
       retries: 1,
+      signal,
     });
   } catch (e: any) {
     console.warn(`[entities] ${page.title} 抽取失败: ${e.message}`);
@@ -65,6 +67,7 @@ export async function extractEntities(pageId: string): Promise<void> {
   );
   const ts = now();
   for (const it of items.slice(0, 8)) {
+    signal?.throwIfAborted();
     if (!it?.name) continue;
     let identity;
     try {
@@ -74,6 +77,7 @@ export async function extractEntities(pageId: string): Promise<void> {
         rows,
         rd.content,
         `${pageId}:${it.name}`,
+        signal,
       );
     } catch {
       continue;

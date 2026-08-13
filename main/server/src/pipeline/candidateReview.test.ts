@@ -19,6 +19,7 @@ let previewCandidateReview: any;
 let commitCandidateReview: any;
 let claimCandidateReviewBatch: any;
 let applyCandidateReviewBatch: any;
+let reconcileCandidateReports: any;
 let createPage: any;
 let writePage: any;
 let readPage: any;
@@ -130,6 +131,7 @@ before(async () => {
     commitCandidateReview,
     claimCandidateReviewBatch,
     applyCandidateReviewBatch,
+    reconcileCandidateReports,
   } = await import('./candidateReview.js'));
   ({ createPage, writePage, readPage } = await import('../lib/vault.js'));
   ({ contentHash: sourceContentHash } = await import('./sourceDocument.js'));
@@ -295,4 +297,41 @@ test('batch review applies only explicit approval and ignore decisions', async (
   assert.ok(db.prepare(`SELECT id FROM pages WHERE title='批量批准候选'`).get());
   assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(approved.reportId).status, 'resolved');
   assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(ignored.reportId).status, 'dismissed');
+});
+
+test('automatic reconciliation reuses stored evidence without rerunning source refinement', async () => {
+  const primary = createCandidate(
+    '自动对账项目',
+    'reconcile-local-primary',
+    '原始资料/自动对账主来源.md',
+    '主来源已经验证过的候选正文。',
+  );
+  const support = createCandidate(
+    '自动对账项目',
+    'reconcile-local-support',
+    '原始资料/自动对账支撑来源.md',
+    '支撑来源已经验证过的候选正文。',
+  );
+  db.prepare(`UPDATE ingest_candidates SET evidence_eligible=1 WHERE id IN (?,?)`)
+    .run(primary.candidate.id, support.candidate.id);
+  db.prepare(`UPDATE reports SET status='dismissed' WHERE id=?`).run(support.reportId);
+  db.prepare(`UPDATE reports SET status='applying' WHERE id=?`).run(primary.reportId);
+
+  const beforeEvents = db.prepare(
+    `SELECT COUNT(*) n FROM semantic_events WHERE scope='candidate-review'`
+  ).get().n;
+  const result = await reconcileCandidateReports([primary.reportId]);
+  const afterEvents = db.prepare(
+    `SELECT COUNT(*) n FROM semantic_events WHERE scope='candidate-review'`
+  ).get().n;
+
+  assert.deepEqual(result, { completed: 1, failed: 0, errors: [] });
+  assert.equal(afterEvents, beforeEvents);
+  const page = db.prepare(`SELECT id FROM pages WHERE title='自动对账项目'`).get();
+  assert.ok(page);
+  assert.equal(
+    db.prepare(`SELECT COUNT(*) n FROM page_contributions WHERE page_id=? AND active=1`).get(page.id).n,
+    2,
+  );
+  assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(primary.reportId).status, 'resolved');
 });

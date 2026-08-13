@@ -8,7 +8,6 @@ import {
   REPORT_ACTION_KINDS, claimReports, previewReportActions, releaseReports,
   validateDecisions, type ReportActionKind, type ReportDecision,
 } from '../dream/apply.js';
-import { reconcilePendingCandidates } from '../pipeline/candidateLedger.js';
 import {
   hydrateIngestQuestionPayload,
   setActionableQuestionsForPath,
@@ -23,7 +22,6 @@ export async function dreamRoutes(app: FastifyInstance) {
     const { status } = req.query as { status?: string };
     const open = !status || status === 'open';
     if (open) {
-      reconcilePendingCandidates();
       syncAllIngestQuestionReports();
     }
     const rows = db
@@ -75,7 +73,6 @@ export async function dreamRoutes(app: FastifyInstance) {
     if (!REPORT_ACTION_KINDS.includes(kind as ReportActionKind)) {
       return reply.code(404).send({ error: '报告分类不存在' });
     }
-    if (kind === 'pending_review') reconcilePendingCandidates();
     return previewReportActions(kind as ReportActionKind);
   });
 

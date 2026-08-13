@@ -1129,12 +1129,14 @@ const tools: AgentTool[] = [
     parameters: objectSchema({}),
     preview() {
       const count = (db.prepare(
-        `SELECT COUNT(*) AS count FROM jobs WHERE status IN ('done', 'failed')`
+        `SELECT COUNT(*) AS count FROM jobs WHERE status IN ('done', 'failed', 'cancelled')`
       ).get() as any).count as number;
       return { title: '清理任务历史', summary: `删除 ${count} 条已完成/失败记录`, secondConfirmation: true };
     },
     execute() {
-      const changes = db.prepare(`DELETE FROM jobs WHERE status IN ('done', 'failed')`).run().changes;
+      const changes = db.prepare(
+        `DELETE FROM jobs WHERE status IN ('done', 'failed', 'cancelled')`
+      ).run().changes;
       return { summary: `已清理 ${changes} 条任务历史` };
     },
   },

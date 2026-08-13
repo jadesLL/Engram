@@ -243,9 +243,11 @@ export async function applyReportDecisions(
   kind: ReportActionKind,
   decisions: ReportDecision[],
   update: ApplyProgress = () => {},
+  signal?: AbortSignal,
 ): Promise<ApplyResult> {
   const result: ApplyResult = { completed: 0, dismissed: 0, failed: 0, errors: [] };
   for (let index = 0; index < decisions.length; index++) {
+    signal?.throwIfAborted();
     const decision = decisions[index];
     update({ stage: ACTION_META[kind].button, progress: Math.round((index / decisions.length) * 100), detail: `${index + 1}/${decisions.length}` });
     const report = db.prepare(`SELECT payload FROM reports WHERE id = ? AND kind = ? AND status = 'applying'`).get(decision.reportId, kind) as any;
@@ -257,6 +259,7 @@ export async function applyReportDecisions(
     try {
       const payload = parsePayload(report.payload);
       const status = await applyOne(kind, decision, payload);
+      signal?.throwIfAborted();
       completeReport(decision.reportId, status);
       if (kind === 'ingest_questions') syncIngestQuestionReport(String(payload.path || ''));
       if (status === 'dismissed') result.dismissed++;

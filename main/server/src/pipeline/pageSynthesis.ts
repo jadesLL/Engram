@@ -558,7 +558,9 @@ export async function recomposePage(
   pageId: string,
   synthesisId: string,
   expectedInputHash: string,
+  signal?: AbortSignal,
 ): Promise<{ changed: boolean; synthesisId: string }> {
+  signal?.throwIfAborted();
   const pending = db.prepare(
     `SELECT * FROM page_syntheses WHERE id=? AND page_id=?`
   ).get(synthesisId, pageId) as StoredPageSynthesis | undefined;
@@ -610,6 +612,7 @@ export async function recomposePage(
       temperature: 0.1,
       maxTokens: 12000,
       retries: 1,
+      signal,
     });
     output = synthesisOutputSchema.parse(rawOutput);
     validateEvidenceIds(output, allowedEvidence);
@@ -649,6 +652,7 @@ export async function recomposePage(
       temperature: 0,
       maxTokens: 2500,
       retries: 1,
+      signal,
     });
     const verify: SynthesisVerifyOutput = synthesisVerifySchema.parse(rawVerify);
     if (!verify.pass || verify.unsupported.length || verify.conflicts.length) {
@@ -659,6 +663,7 @@ export async function recomposePage(
       throw new PageSynthesisConflict('最终验证无法确认人工修改已保留');
     }
 
+    signal?.throwIfAborted();
     const latestBody = readPage(bundle.page.path);
     if (!latestBody) throw new Error('写入前页面文件不存在');
     const latestState = inputState(bundle, latestBody.content);
@@ -726,6 +731,7 @@ export async function recomposePage(
     resolveSynthesisReport(pageId);
     return { changed: true, synthesisId };
   } catch (error) {
+    if (signal?.aborted) throw error;
     return failSynthesis(bundle, synthesisId, error, error instanceof PageSynthesisConflict);
   }
 }

@@ -470,6 +470,8 @@ export function migrate() {
   ensureColumn('jobs', 'progress', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('jobs', 'detail', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('jobs', 'updated_at', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('jobs', 'cancel_requested', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn('jobs', 'run_token', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('reports', 'issue_key', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('reports', 'fingerprint', `TEXT NOT NULL DEFAULT ''`);
   backfillReportIdentity();
