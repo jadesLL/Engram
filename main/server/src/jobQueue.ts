@@ -9,7 +9,7 @@ export interface PagePipelineOptions {
 export function enqueue(kind: string, payload: unknown): number | undefined {
   const payloadStr = JSON.stringify(payload);
   const duplicate = db
-    .prepare(`SELECT id FROM jobs WHERE kind = ? AND payload = ? AND status IN ('pending','running')`)
+    .prepare(`SELECT id FROM jobs WHERE kind = ? AND payload = ? AND status IN ('pending','running','paused')`)
     .get(kind, payloadStr);
   if (duplicate) return undefined;
 

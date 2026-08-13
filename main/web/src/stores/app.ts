@@ -40,12 +40,20 @@ export const useAppStore = defineStore('app', {
       /** 最近一次页面事件（page-changed/deleted/moved），EditorView 据此判断是否重载当前页 */
       lastPageEvent: null as any,
       /** AI 任务队列：单一数据源（Home 角标 / JobsPanel / Sidebar 进度共用） */
-      jobs: { active: [] as any[], recent: [] as any[], pending: 0, running: 0, failed: 0 },
+      jobs: {
+        active: [] as any[],
+        recent: [] as any[],
+        pending: 0,
+        running: 0,
+        paused: 0,
+        failed: 0,
+        queueRunning: true,
+      },
     };
   },
   getters: {
     /** 角标数 = 待执行 + 执行中 */
-    activeJobCount: (state) => state.jobs.pending + state.jobs.running,
+    activeJobCount: (state) => state.jobs.pending + state.jobs.running + state.jobs.paused,
   },
   actions: {
     applyTheme() {

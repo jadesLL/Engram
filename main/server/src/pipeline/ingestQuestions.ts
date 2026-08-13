@@ -224,7 +224,7 @@ export function recoverIngestQuestionJobs(): void {
   }>;
   const affected = new Set<string>();
   for (const row of rows) {
-    if (row.job_status === 'pending' || row.job_status === 'running') continue;
+    if (['pending', 'running', 'paused'].includes(row.job_status || '')) continue;
     const message = row.job_error || (row.job_id
       ? '重新整理任务已结束，但问题状态未能确认，请重试'
       : '重新整理任务缺失，请重试');
@@ -239,7 +239,7 @@ export function recoverIngestQuestionJobs(): void {
 function activeJobId(payload: Record<string, any>): number | undefined {
   const row = db.prepare(
     `SELECT id FROM jobs
-     WHERE kind='ingest' AND payload=? AND status IN ('pending','running')
+     WHERE kind='ingest' AND payload=? AND status IN ('pending','running','paused')
      ORDER BY id DESC LIMIT 1`
   ).get(JSON.stringify(payload)) as { id: number } | undefined;
   return row?.id;

@@ -109,6 +109,8 @@ const ICONS: Record<string, string[]> = {
   send: ['m22 2-7 20-4-9-9-4z', 'M22 2 11 13'],
   archive: ['M21 8v13H3V8', 'M1 3h22v5H1z', 'M10 12h4'],
   activity: ['M22 12h-4l-3 9L9 3l-3 9H2'],
+  play: ['m6 3 14 9-14 9z'],
+  square: ['M5 5h14v14H5z'],
   check: ['M20 6 9 17l-5-5'],
   'book-open': [
     'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z',
