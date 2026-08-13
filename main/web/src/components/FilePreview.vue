@@ -52,8 +52,18 @@
         <div ref="officeEl" class="fp-body office-fallback"></div>
       </div>
     </template>
-    <div v-else-if="kind === 'html'" class="fp-body docx" v-html="html"></div>
-    <div v-else-if="kind === 'markdown'" ref="mdEl" class="fp-body docx"></div>
+    <div
+      v-else-if="kind === 'html'"
+      class="fp-body docx"
+      v-html="html"
+      @contextmenu="handleTextContextMenu"
+    ></div>
+    <div
+      v-else-if="kind === 'markdown'"
+      ref="mdEl"
+      class="fp-body docx"
+      @contextmenu="handleTextContextMenu"
+    ></div>
     <PdfViewer
       v-else-if="kind === 'pdf' && activeTab === 'source'"
       ref="pdfViewer"
@@ -66,7 +76,11 @@
       :url="imageUrl"
       class="fp-rich-viewer"
     />
-    <div v-else-if="supportsExtraction && activeTab === 'text'" class="extraction-view">
+    <div
+      v-else-if="supportsExtraction && activeTab === 'text'"
+      class="extraction-view"
+      @contextmenu="handleTextContextMenu"
+    >
       <div class="extraction-summary">
         <div>
           <b>{{ extractionStatusLabel }}</b>
@@ -123,7 +137,11 @@
         <p v-else class="muted">{{ page.error || '本页没有可用文字' }}</p>
       </section>
     </div>
-    <pre v-else-if="kind === 'text'" class="fp-body pre">{{ text }}</pre>
+    <pre
+      v-else-if="kind === 'text'"
+      class="fp-body pre"
+      @contextmenu="handleTextContextMenu"
+    >{{ text }}</pre>
     <div v-else class="fp-body unsupported">
       <p>该格式（.{{ ext }}）暂不支持在线预览。</p>
       <p class="muted small">请下载后使用系统默认程序打开。</p>
@@ -166,11 +184,18 @@ import Vditor from 'vditor';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
+import {
+  selectionInside,
+  type SelectionContextMenuRequest,
+} from '../lib/contextMenu';
 import Icon from './Icon.vue';
 import ImageViewer from './ImageViewer.vue';
 import PdfViewer from './PdfViewer.vue';
 
 const props = defineProps<{ path: string }>();
+const emit = defineEmits<{
+  (event: 'context-menu', request: SelectionContextMenuRequest): void;
+}>();
 
 type OfficeMode = '' | 'online' | 'fallback';
 type OfficeVersion = {
@@ -277,6 +302,24 @@ async function openExternal() {
     console.error(error);
     alert('打开失败，请尝试下载后手动打开');
   }
+}
+
+function downloadFile() {
+  const link = document.createElement('a');
+  link.href = rawUrl.value;
+  link.download = fileName.value;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function handleTextContextMenu(event: MouseEvent) {
+  event.preventDefault();
+  emit('context-menu', {
+    x: event.clientX,
+    y: event.clientY,
+    selection: selectionInside(event.currentTarget as HTMLElement),
+  });
 }
 
 function destroyOffice() {
@@ -628,6 +671,7 @@ onBeforeUnmount(() => {
   if (extractionTimer) clearInterval(extractionTimer);
 });
 watch(() => props.path, loadFile);
+defineExpose({ downloadFile, openExternal });
 </script>
 
 <style scoped>

@@ -33,6 +33,10 @@ import 'vditor/dist/index.css';
 import { api } from '../api';
 import { VDITOR_CDN } from '../lib/vditorPreview';
 import {
+  copyText,
+  type SelectionContextMenuRequest,
+} from '../lib/contextMenu';
+import {
   markdownLinksToWiki,
   markdownWikiLink,
   wikiLinksToMarkdown,
@@ -47,6 +51,7 @@ const emit = defineEmits<{
   (e: 'open-wikilink', title: string): void;
   (e: 'mode-change', mode: 'ir' | 'sv'): void;
   (e: 'enter-reading'): void;
+  (e: 'context-menu', request: SelectionContextMenuRequest): void;
 }>();
 
 const vditorEl = ref<HTMLElement>();
@@ -65,6 +70,8 @@ let modelSyncReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 let placeholderHideTimer: ReturnType<typeof setTimeout> | null = null;
 let modeObserver: MutationObserver | null = null;
 let lastEmittedMode: 'ir' | 'sv' = 'ir';
+let savedSelectionRange: Range | null = null;
+let savedSelectionText = '';
 
 /** AI 管理注释：证据标记与贡献区段边界都不应出现在编辑界面。 */
 const MANAGED_COMMENT_RE = /<!--\s*(?:ingest:|contribution:|synthesis:)[^>]*-->/g;
@@ -305,8 +312,46 @@ function bindKeys() {
     const v = vditor?.getValue() || '';
     emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
   });
+  el.addEventListener('contextmenu', handleEditorContextMenu, true);
   // 监听 edit-mode 切换（Vditor 内部 setEditMode 改 currentMode 但无事件，轮询 DOM class）
   observeEditMode();
+}
+
+function captureEditorSelection() {
+  savedSelectionText = vditor?.getSelection() || '';
+  savedSelectionRange = null;
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !vditorEl.value) return;
+  const range = selection.getRangeAt(0);
+  if (!vditorEl.value.contains(range.commonAncestorContainer)) return;
+  savedSelectionRange = range.cloneRange();
+}
+
+function restoreEditorSelection() {
+  const range = savedSelectionRange;
+  if (!range) {
+    vditor?.focus();
+    return;
+  }
+  const start = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer as Element
+    : range.startContainer.parentElement;
+  start?.closest<HTMLElement>('[contenteditable="true"]')?.focus({ preventScroll: true });
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function handleEditorContextMenu(event: MouseEvent) {
+  const target = event.target as HTMLElement;
+  if (target.closest('.vditor-toolbar, .vditor-panel, .link-popup')) return;
+  event.preventDefault();
+  captureEditorSelection();
+  emit('context-menu', {
+    x: event.clientX,
+    y: event.clientY,
+    selection: savedSelectionText.trim(),
+  });
 }
 
 function openEditorLink(element: Element) {
@@ -393,6 +438,50 @@ function focus() {
   vditor?.focus();
 }
 
+function executeHistoryCommand(command: 'undo' | 'redo'): boolean {
+  restoreEditorSelection();
+  beginUserEditing();
+  const button = vditorEl.value?.querySelector<HTMLButtonElement>(
+    `.vditor-toolbar button[data-type="${command}"]`,
+  );
+  if (!button || button.disabled) return false;
+  button.click();
+  return true;
+}
+
+async function copySelection(): Promise<boolean> {
+  if (!savedSelectionText) return false;
+  return copyText(savedSelectionText);
+}
+
+async function cutSelection(): Promise<boolean> {
+  if (!savedSelectionText) return false;
+  const copied = await copyText(savedSelectionText);
+  restoreEditorSelection();
+  beginUserEditing();
+  userInputPending = true;
+  document.execCommand('delete');
+  return copied;
+}
+
+async function pasteClipboard(): Promise<boolean> {
+  if (!window.isSecureContext || !navigator.clipboard?.readText) return false;
+  const text = await navigator.clipboard.readText();
+  restoreEditorSelection();
+  beginUserEditing();
+  userInputPending = true;
+  vditor?.insertValue(wikiLinksToMarkdown(text));
+  return true;
+}
+
+function selectAll(): boolean {
+  const surface = vditorEl.value?.querySelector<HTMLElement>(
+    '.vditor-ir [contenteditable="true"], .vditor-sv [contenteditable="true"], .vditor-wysiwyg [contenteditable="true"]',
+  );
+  surface?.focus({ preventScroll: true });
+  return document.execCommand('selectAll');
+}
+
 watch(
   () => props.modelValue,
   (v) => {
@@ -436,7 +525,19 @@ onUnmounted(() => {
   vditor?.destroy();
 });
 
-defineExpose({ getSelectionText, insertText, getValue, getCurrentMode, focus });
+defineExpose({
+  getSelectionText,
+  insertText,
+  getValue,
+  getCurrentMode,
+  focus,
+  undo: () => executeHistoryCommand('undo'),
+  redo: () => executeHistoryCommand('redo'),
+  cutSelection,
+  copySelection,
+  pasteClipboard,
+  selectAll,
+});
 onMounted(init);
 </script>
 

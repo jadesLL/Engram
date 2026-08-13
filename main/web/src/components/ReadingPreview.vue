@@ -76,7 +76,7 @@
 
     <div class="reading-grid">
       <div class="reading-main">
-        <article class="reading-article">
+        <article class="reading-article" @contextmenu="handleContextMenu">
           <header class="reading-document-head">
             <p class="reading-kicker">{{ typeLabel }}</p>
             <h1>{{ title }}</h1>
@@ -149,6 +149,10 @@ import {
 } from '../lib/readingPreview';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
+import {
+  selectionInside,
+  type SelectionContextMenuRequest,
+} from '../lib/contextMenu';
 import Icon from './Icon.vue';
 
 type OutlineItem = {
@@ -171,6 +175,7 @@ const emit = defineEmits<{
   (event: 'close'): void;
   (event: 'open-wikilink', title: string): void;
   (event: 'open-related', id: string): void;
+  (event: 'context-menu', request: SelectionContextMenuRequest): void;
 }>();
 
 const app = useAppStore();
@@ -373,6 +378,15 @@ function handleContentClick(event: MouseEvent) {
   if (!target) return;
   event.preventDefault();
   emit('open-wikilink', target);
+}
+
+function handleContextMenu(event: MouseEvent) {
+  event.preventDefault();
+  emit('context-menu', {
+    x: event.clientX,
+    y: event.clientY,
+    selection: selectionInside(event.currentTarget as HTMLElement),
+  });
 }
 
 function scrollToHeading(id: string) {
