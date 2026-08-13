@@ -276,18 +276,25 @@ export function finalizeCandidateReconciliation(
   reportIds: number[],
 ): boolean {
   let resolved = false;
-  for (const candidateId of candidateIds) {
+  const unresolvedReportIds: number[] = [];
+  for (const [index, candidateId] of candidateIds.entries()) {
     const candidate = getCandidate(candidateId);
-    if (!candidate) continue;
+    if (!candidate) {
+      if (reportIds[index]) unresolvedReportIds.push(reportIds[index]);
+      continue;
+    }
     const page = candidate.target_page_id
       ? { id: candidate.target_page_id }
       : exactPage(candidate);
     if (page || ['approved', 'merged', 'consumed'].includes(candidate.status)) {
       if (page) consumeCandidateIdentity(candidate.name, candidate.kind, page.id);
       resolved = true;
+    } else if (reportIds[index]) {
+      unresolvedReportIds.push(reportIds[index]);
     }
   }
-  if (!resolved) releaseCandidateReports(reportIds);
+  unresolvedReportIds.push(...reportIds.slice(candidateIds.length));
+  releaseCandidateReports([...new Set(unresolvedReportIds)]);
   return resolved;
 }
 
@@ -296,26 +303,58 @@ export function reconcilePendingCandidates(): number {
     `SELECT id,status,payload FROM reports
      WHERE kind='pending_review' AND status='open' ORDER BY id`
   ).all() as Array<{ id: number; status: string; payload: string }>;
-  let queued = 0;
+  const activePaths = new Set(
+    (db.prepare(
+      `SELECT payload FROM jobs
+       WHERE kind='candidate_reconcile' AND status IN ('pending','running')`
+    ).all() as Array<{ payload: string }>).flatMap((row) => {
+      try {
+        const path = String(JSON.parse(row.payload)?.path || '');
+        return path ? [path] : [];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  const groups = new Map<string, Array<{ candidateId: string; reportId: number }>>();
   for (const report of reports) {
     const candidate = ensureCandidateFromReport(report);
-    if (!candidate) continue;
+    if (!candidate || activePaths.has(candidate.source_path)) continue;
     const sourceCount = relatedCandidateOccurrences(candidate).length;
     const page = exactPage(candidate);
     if (!page && sourceCount < 2) continue;
-    const claimed = db.prepare(
-      `UPDATE reports SET status='applying'
-       WHERE id=? AND kind='pending_review' AND status='open'`
-    ).run(report.id);
-    if (claimed.changes !== 1) continue;
+    const group = groups.get(candidate.source_path) || [];
+    group.push({ candidateId: candidate.id, reportId: report.id });
+    groups.set(candidate.source_path, group);
+  }
+
+  let queued = 0;
+  const claim = db.prepare(
+    `UPDATE reports SET status='applying'
+     WHERE id=? AND kind='pending_review' AND status='open'`
+  );
+  for (const [sourcePath, entries] of groups) {
+    const plannedPayload = {
+      path: sourcePath,
+      candidateIds: entries.map((entry) => entry.candidateId),
+      reportIds: entries.map((entry) => entry.reportId),
+    };
+    const previousFailure = db.prepare(
+      `SELECT 1 FROM jobs
+       WHERE kind='candidate_reconcile' AND payload=? AND status='failed'`
+    ).get(JSON.stringify(plannedPayload));
+    if (previousFailure) continue;
+    const claimed = db.transaction(() => entries.filter((entry) => claim.run(entry.reportId).changes === 1))();
+    if (!claimed.length) continue;
+    const candidateIds = claimed.map((entry) => entry.candidateId);
+    const reportIds = claimed.map((entry) => entry.reportId);
     const jobId = enqueue('candidate_reconcile', {
-      path: candidate.source_path,
-      candidateIds: [candidate.id],
-      reportIds: [report.id],
-      nonce: Date.now(),
+      path: sourcePath,
+      candidateIds,
+      reportIds,
     });
     if (!jobId) {
-      releaseCandidateReports([report.id]);
+      releaseCandidateReports(reportIds);
       continue;
     }
     queued++;

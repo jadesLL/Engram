@@ -131,6 +131,25 @@ test('fingerprint suppresses unchanged semantic findings and refreshes changed c
   assert.equal(db.prepare(`SELECT count(*) n FROM reports`).get().n, 2);
 });
 
+test('refreshing findings does not reopen or mutate an applying report', () => {
+  clear();
+  const issueKey = 'enrich:applying';
+  const original = { pageId: 'p1', pageUpdated: 'v1', detail: '原始缺口' };
+  assert.equal(addReports([{ kind: 'enrich', payload: original, issueKey }]), 1);
+  const report = db.prepare(`SELECT id,payload FROM reports WHERE issue_key=?`).get(issueKey);
+  db.prepare(`UPDATE reports SET status='applying' WHERE id=?`).run(report.id);
+
+  assert.equal(addReports([{
+    kind: 'enrich',
+    payload: { ...original, detail: '刷新后的缺口' },
+    issueKey,
+  }]), 0);
+  assert.deepEqual(
+    db.prepare(`SELECT status,payload FROM reports WHERE id=?`).get(report.id),
+    { status: 'applying', payload: report.payload },
+  );
+});
+
 test('validation rejects cross-category actions and orphan applying reports recover', () => {
   clear();
   assert.throws(() => validateDecisions('deadlink', [{ reportId: 1, action: 'keep_a' }]), /处理动作无效/);

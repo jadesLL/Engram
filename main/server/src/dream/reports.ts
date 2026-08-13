@@ -20,8 +20,10 @@ export function addReports(items: ReportInput[]): number {
       const issueKey = item.issueKey || identity.issueKey;
       const condition = item.fingerprint || identity.fingerprint;
       const active = db.prepare(
-        `SELECT id, fingerprint FROM reports WHERE kind = ? AND issue_key = ? AND status IN ('open', 'applying') ORDER BY id DESC LIMIT 1`
-      ).get(item.kind, issueKey) as { id: number; fingerprint: string } | undefined;
+        `SELECT id, fingerprint, status FROM reports
+         WHERE kind = ? AND issue_key = ? AND status IN ('open', 'applying')
+         ORDER BY id DESC LIMIT 1`
+      ).get(item.kind, issueKey) as { id: number; fingerprint: string; status: string } | undefined;
       const same = db.prepare(
         `SELECT id FROM reports WHERE kind = ? AND issue_key = ? AND fingerprint = ? LIMIT 1`
       ).get(item.kind, issueKey, condition) as { id: number } | undefined;
@@ -31,6 +33,7 @@ export function addReports(items: ReportInput[]): number {
         }
         continue;
       }
+      if (active?.status === 'applying') continue;
       const serialized = JSON.stringify(item.payload);
       if (active) {
         db.prepare(
