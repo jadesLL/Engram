@@ -106,7 +106,9 @@ export async function classifyEntityName(
   roster: EntityRosterEntry[],
   context = '',
   refId = '',
+  signal?: AbortSignal,
 ): Promise<{ ambiguity: EntityAmbiguity | null; mergeTarget: string; canonicalName: string }> {
+  signal?.throwIfAborted();
   if (!['person', 'project', 'org'].includes(kind)) {
     return { ambiguity: null, mergeTarget: '', canonicalName: name };
   }
@@ -130,6 +132,7 @@ export async function classifyEntityName(
     temperature: 0.1,
     maxTokens: 1800,
     retries: 1,
+    signal,
   });
   const exactTarget = decision.mergeTarget
     ? roster.find((entry) => cleanName(entry.title) === cleanName(decision.mergeTarget))
@@ -150,11 +153,13 @@ export async function guardAmbiguousEntityNames(
   items: PlanItem[],
   candidates: Candidate[],
   roster: EntityRosterEntry[],
+  signal?: AbortSignal,
 ): Promise<AmbiguousPlanItem[]> {
   const candidateByName = new Map(candidates.map((candidate) => [cleanName(candidate.name), candidate]));
   const rosterTitles = new Set(roster.map((entry) => cleanName(entry.title)));
   const output: AmbiguousPlanItem[] = [];
   for (const item of items) {
+    signal?.throwIfAborted();
     const validMergeTarget = item.action === 'merge' && rosterTitles.has(cleanName(item.target));
     if (
       validMergeTarget ||
@@ -172,6 +177,7 @@ export async function guardAmbiguousEntityNames(
         roster,
         contextFor(candidateByName.get(cleanName(item.name))),
         item.name,
+        signal,
       );
       if (decision.mergeTarget) {
         output.push({

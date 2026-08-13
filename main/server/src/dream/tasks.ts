@@ -48,7 +48,7 @@ function knowledgePages(): Array<{
 }
 
 /** 死链存在性由代码检查；目标页面类型建议由模型判断。 */
-export async function taskDeadlinks(): Promise<number> {
+export async function taskDeadlinks(signal?: AbortSignal): Promise<number> {
   const rows = db.prepare(
     `SELECT e.id,e.dst_title,p.title src_title,p.id src_id,p.path src_path,p.updated_at src_updated
      FROM edges e JOIN pages p ON p.id=e.src_page
@@ -56,6 +56,7 @@ export async function taskDeadlinks(): Promise<number> {
   ).all() as any[];
   const items: ReportItem[] = [];
   for (const row of rows) {
+    signal?.throwIfAborted();
     const source = readPage(row.src_path);
     let suggestedType = '';
     let suggestionReason = '未配置模型，请人工选择页面类型';
@@ -76,10 +77,12 @@ concept=概念/方法/技术，person=人物，project=项目/产品，org=组�
             sourceContent: source.content.slice(0, 5000),
           },
           maxTokens: 700,
+          signal,
         });
         suggestedType = decision.suggestedType;
         suggestionReason = decision.reason;
       } catch (error: any) {
+        if (signal?.aborted) throw error;
         suggestionReason = `模型类型判断失败，请人工选择：${String(error?.message || error).slice(0, 180)}`;
       }
     }
@@ -161,11 +164,12 @@ function pairPrompt(): string {
 {"duplicate":false,"preserveBoth":true,"duplicateReason":"","recommendedAction":"keep_a|keep_b|keep_both","contradiction":false,"contradictionDetail":""}。`;
 }
 
-export async function taskPairAudit(): Promise<{ duplicate: number; contradiction: number }> {
+export async function taskPairAudit(signal?: AbortSignal): Promise<{ duplicate: number; contradiction: number }> {
   if (!llmReady()) return { duplicate: 0, contradiction: 0 };
   let duplicate = 0;
   let contradiction = 0;
   for (const pair of pairCandidates()) {
+    signal?.throwIfAborted();
     const left = readPage(pair.a.path);
     const right = readPage(pair.b.path);
     if (!left || !right) continue;
@@ -191,6 +195,7 @@ export async function taskPairAudit(): Promise<{ duplicate: number; contradictio
           },
         },
         maxTokens: 1800,
+        signal,
       });
       const key = [pair.a.id, pair.b.id].sort().join(':');
       if (decision.duplicate && !decision.preserveBoth) {
@@ -217,7 +222,8 @@ export async function taskPairAudit(): Promise<{ duplicate: number; contradictio
           },
         }]);
       }
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
       /* 单对失败不影响其他页面审计。 */
     }
   }
@@ -248,12 +254,13 @@ function pageHealthPrompt(currentDate: string): string {
 {"needsEnrichment":false,"enrichmentReason":"","stale":false,"staleReason":""}。`;
 }
 
-export async function taskPageHealth(): Promise<{ enrich: number; stale: number }> {
+export async function taskPageHealth(signal?: AbortSignal): Promise<{ enrich: number; stale: number }> {
   if (!llmReady()) return { enrich: 0, stale: 0 };
   let enrich = 0;
   let stale = 0;
   const currentDate = new Date().toISOString().slice(0, 10);
   for (const page of knowledgePages()) {
+    signal?.throwIfAborted();
     const body = readPage(page.path);
     if (!body) continue;
     const meta = readPageMeta(page.path);
@@ -275,6 +282,7 @@ export async function taskPageHealth(): Promise<{ enrich: number; stale: number 
           backlinks: backlinks(page.id),
         },
         maxTokens: 1600,
+        signal,
       });
       if (decision.needsEnrichment) {
         enrich += addReports([{
@@ -301,7 +309,8 @@ export async function taskPageHealth(): Promise<{ enrich: number; stale: number 
           },
         }]);
       }
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
       /* 单页失败不影响其他页面。 */
     }
   }
@@ -354,18 +363,20 @@ export function taskSectionAudit(): number {
   return addReports(items);
 }
 
-export async function runDreamCycle(): Promise<Record<string, number>> {
+export async function runDreamCycle(signal?: AbortSignal): Promise<Record<string, number>> {
   const result: Record<string, number> = {};
-  result.deadlink = await taskDeadlinks();
+  result.deadlink = await taskDeadlinks(signal);
+  signal?.throwIfAborted();
   result.single_source = taskSingleSource();
   result.missing_sections = taskSectionAudit();
-  const pair = await taskPairAudit();
+  const pair = await taskPairAudit(signal);
   result.duplicate = pair.duplicate;
   result.contradiction = pair.contradiction;
-  const health = await taskPageHealth();
+  const health = await taskPageHealth(signal);
   result.enrich = health.enrich;
   result.stale = health.stale;
   try {
+    signal?.throwIfAborted();
     result.upgrades = (await runUpgrades()).length;
   } catch {
     result.upgrades = 0;

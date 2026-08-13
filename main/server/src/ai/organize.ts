@@ -20,7 +20,8 @@ function hash(content: string): string {
  * 页面摘要和类型全部由模型阅读页面后决定。
  * 代码仅用内容哈希避免对完全相同的输入重复调用。
  */
-export async function organizePage(pageId: string): Promise<void> {
+export async function organizePage(pageId: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   if (!llmReady()) return;
   const page = db.prepare(`SELECT * FROM pages WHERE id=? AND deleted=0`).get(pageId) as any;
   if (!page || page.path.startsWith('原始资料/') || page.path.startsWith('AIWorks/')) return;
@@ -50,7 +51,9 @@ concept=概念/方法，person=人物，project=项目/产品，org=组织，doc
       content: body.content.slice(0, 15_000),
     },
     maxTokens: 1500,
+    signal,
   });
+  signal?.throwIfAborted();
   writePage(page.path, body.content, {
     summary: decision.summary,
     type: decision.type,

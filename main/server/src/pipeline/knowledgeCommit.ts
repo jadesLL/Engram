@@ -23,6 +23,7 @@ import {
   findSupportingCandidates,
   consumeCandidateIdentity,
   getCandidate,
+  reconcilePendingCandidates,
   resolveCandidateReports,
   setCandidateStatus,
   upsertCandidateOccurrence,
@@ -332,6 +333,7 @@ export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeC
     failSourceVersion(context.sourceVersion.id, context.runId, String(error?.message || error));
     throw error;
   }
+  reconcilePendingCandidates();
   return { stats, pageIds };
 }
 

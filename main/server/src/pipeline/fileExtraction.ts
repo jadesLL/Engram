@@ -38,6 +38,7 @@ export interface ExtractionOptions {
   pages?: number[];
   ingestAfter?: boolean;
   forceIngest?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface ExtractionProgress {
@@ -300,16 +301,25 @@ function beginExtraction(file: FileRow, sourceHash: string): { row?: ExtractionR
   return { row, sourceChanged };
 }
 
-async function recognizeWithRetry(imageDataUrl: string): Promise<string> {
+async function recognizeWithRetry(
+  imageDataUrl: string,
+  signal?: AbortSignal,
+): Promise<string> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
+    signal?.throwIfAborted();
     try {
-      return normalizedModelText(await recognizeDocumentImage(imageDataUrl, OCR_PROMPT));
+      return normalizedModelText(await recognizeDocumentImage(
+        imageDataUrl,
+        OCR_PROMPT,
+        { signal },
+      ));
     } catch (error) {
       lastError = error;
       const status = error instanceof LlmError ? error.status : undefined;
       if (attempt === 2 || (status !== undefined && status !== 429 && status < 500)) break;
       await new Promise((resolve) => setTimeout(resolve, 750 * (2 ** attempt)));
+      signal?.throwIfAborted();
     }
   }
   throw lastError;
@@ -369,6 +379,7 @@ async function extractPdf(
     let ocrUsed = 0;
 
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+      options.signal?.throwIfAborted();
       const prior = db.prepare(
         `SELECT * FROM file_extraction_pages WHERE file_id=? AND page_number=?`
       ).get(file.id, pageNumber) as any;
@@ -415,7 +426,10 @@ async function extractPdf(
             progress: 10 + Math.round((pageNumber / Math.max(1, pageCount)) * 80),
             detail: `第 ${pageNumber}/${pageCount} 页`,
           });
-          const recognized = await recognizeWithRetry(await renderPdfPage(page));
+          const recognized = await recognizeWithRetry(
+            await renderPdfPage(page),
+            options.signal,
+          );
           upsertExtractionPage(file.id, pageNumber, {
             method: 'ocr',
             status: 'completed',
@@ -423,6 +437,7 @@ async function extractPdf(
           });
         }
       } catch (error) {
+        if (options.signal?.aborted) throw error;
         upsertExtractionPage(file.id, pageNumber, {
           method: prior?.method || 'ocr',
           status: 'failed',
@@ -493,8 +508,12 @@ async function extractImage(
     );
   }
   try {
+    options.signal?.throwIfAborted();
     update({ stage: '处理图片', progress: 25, detail: file.name });
-    const recognized = await recognizeWithRetry(await normalizedImageDataUrl(buffer));
+    const recognized = await recognizeWithRetry(
+      await normalizedImageDataUrl(buffer),
+      options.signal,
+    );
     upsertExtractionPage(file.id, 1, {
       method: 'ocr',
       status: 'completed',
@@ -533,6 +552,7 @@ export async function extractFile(
   update: ProgressCallback = () => {},
   options: ExtractionOptions = {},
 ): Promise<FileExtractionDetails> {
+  options.signal?.throwIfAborted();
   if (!supportsFileExtraction(relPath)) throw new Error('该格式不支持文字提取');
   const abs = safeJoin(relPath);
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error('文件不存在');

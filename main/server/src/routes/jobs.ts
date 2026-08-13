@@ -8,7 +8,7 @@ import {
   previewCandidateReview,
 } from '../pipeline/candidateReview.js';
 import { ensureCandidateFromReport } from '../pipeline/candidateLedger.js';
-import { reconcilePendingCandidates } from '../pipeline/candidateLedger.js';
+import { cancelJob, retryJob } from '../jobs.js';
 import {
   applyIngestQuestionAction,
   IngestQuestionRequestError,
@@ -47,10 +47,95 @@ function tableExists(name: string): boolean {
 function jobSelect(): string {
   const columns = new Set((db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map((column) => column.name));
   return ['id', 'kind', 'payload', 'status', 'error', 'created_at', 'run_at',
+    columns.has('updated_at') ? 'updated_at' : `NULL AS updated_at`,
     columns.has('stage') ? 'stage' : `NULL AS stage`,
     columns.has('progress') ? 'progress' : `NULL AS progress`,
     columns.has('detail') ? 'detail' : `NULL AS detail`,
   ].join(', ');
+}
+
+const FALLBACK_DURATION_SECONDS: Record<string, number> = {
+  ingest: 75,
+  candidate_reconcile: 5,
+  candidate_review_batch: 25,
+  extract_file: 90,
+  page_recompose: 15,
+  process: 8,
+  embed: 8,
+  index_file: 8,
+  extract: 5,
+  summarize: 5,
+  dream_apply: 15,
+  dream: 120,
+  rebuild: 180,
+  mentions: 5,
+  metagen: 2,
+  ingest_finalize: 2,
+  ingest_recover: 10,
+};
+
+function jobPriority(kind: string): number {
+  if (['ingest', 'candidate_review_batch', 'dream_apply'].includes(kind)) return 0;
+  if (kind === 'candidate_reconcile') return 1;
+  if (['page_recompose', 'process'].includes(kind)) return 2;
+  return 3;
+}
+
+function durationEstimates(): Map<string, number> {
+  const rows = db.prepare(
+    `SELECT kind,
+       AVG((julianday(updated_at)-julianday(run_at))*86400.0) seconds
+     FROM (
+       SELECT kind,run_at,updated_at FROM jobs
+       WHERE status='done' AND run_at IS NOT NULL AND updated_at<> ''
+       ORDER BY id DESC LIMIT 200
+     )
+     GROUP BY kind`
+  ).all() as Array<{ kind: string; seconds: number }>;
+  const estimates = new Map(rows.map((row) => [
+    row.kind,
+    Math.max(1, Math.round(row.seconds || FALLBACK_DURATION_SECONDS[row.kind] || 10)),
+  ]));
+  // 动态对账已改为本地事实复用，旧版完整重提炼的历史耗时不再具有参考价值。
+  estimates.set('candidate_reconcile', FALLBACK_DURATION_SECONDS.candidate_reconcile);
+  return estimates;
+}
+
+function enrichQueueEstimates(rows: any[]): any[] {
+  const estimates = durationEstimates();
+  const sorted = [...rows].sort((left, right) =>
+    jobPriority(left.kind) - jobPriority(right.kind) || left.id - right.id
+  );
+  const laneAvailability: Record<'default' | 'document', number[]> = {
+    default: [0, 0],
+    document: [0],
+  };
+  for (const row of sorted.filter((item) => item.status === 'running')) {
+    const lane = row.kind === 'extract_file' ? 'document' : 'default';
+    const duration = estimates.get(row.kind) || FALLBACK_DURATION_SECONDS[row.kind] || 10;
+    const remaining = Math.max(1, Math.round(duration * (1 - Math.min(95, row.progress || 5) / 100)));
+    const slot = laneAvailability[lane].indexOf(Math.min(...laneAvailability[lane]));
+    laneAvailability[lane][slot] = remaining;
+    row.estimatedDurationSeconds = duration;
+    row.estimatedRemainingSeconds = remaining;
+    row.estimatedWaitSeconds = 0;
+    row.queuePosition = 0;
+    row.lane = lane;
+  }
+  const positions = { default: 0, document: 0 };
+  for (const row of sorted.filter((item) => item.status === 'pending')) {
+    const lane = row.kind === 'extract_file' ? 'document' : 'default';
+    const duration = estimates.get(row.kind) || FALLBACK_DURATION_SECONDS[row.kind] || 10;
+    const available = laneAvailability[lane];
+    const slot = available.indexOf(Math.min(...available));
+    row.estimatedDurationSeconds = duration;
+    row.estimatedRemainingSeconds = duration;
+    row.estimatedWaitSeconds = Math.max(0, Math.round(available[slot]));
+    row.queuePosition = ++positions[lane];
+    row.lane = lane;
+    available[slot] += duration;
+  }
+  return rows;
 }
 
 export async function jobRoutes(app: FastifyInstance) {
@@ -77,11 +162,25 @@ export async function jobRoutes(app: FastifyInstance) {
       };
     };
     const active = db
-      .prepare(`SELECT ${jobSelect()} FROM jobs WHERE status IN ('pending', 'running') ORDER BY id LIMIT 50`)
+      .prepare(
+        `SELECT ${jobSelect()} FROM jobs WHERE status IN ('pending', 'running')
+         ORDER BY
+           CASE kind
+             WHEN 'ingest' THEN 0
+             WHEN 'candidate_review_batch' THEN 0
+             WHEN 'dream_apply' THEN 0
+             WHEN 'candidate_reconcile' THEN 1
+             WHEN 'page_recompose' THEN 2
+             WHEN 'process' THEN 2
+             ELSE 3
+           END,
+           id
+         LIMIT 100`
+      )
       .all()
       .map(fmt);
     const recent = db
-      .prepare(`SELECT ${jobSelect()} FROM jobs WHERE status IN ('done', 'failed') ORDER BY id DESC LIMIT 20`)
+      .prepare(`SELECT ${jobSelect()} FROM jobs WHERE status IN ('done', 'failed', 'cancelled') ORDER BY id DESC LIMIT 20`)
       .all()
       .map(fmt);
     const counts = db
@@ -94,7 +193,7 @@ export async function jobRoutes(app: FastifyInstance) {
       )
       .get() as any;
     return {
-      active,
+      active: enrichQueueEstimates(active),
       recent,
       pending: counts.pending || 0,
       running: counts.running || 0,
@@ -104,16 +203,24 @@ export async function jobRoutes(app: FastifyInstance) {
 
   /** 失败任务重试 */
   app.post('/api/jobs/:id/retry', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const job = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(id) as any;
-    if (!job) return reply.code(404).send({ error: '任务不存在' });
-    if (job.status !== 'failed') return reply.code(400).send({ error: '仅失败任务可重试' });
-    db.prepare(
-      `UPDATE jobs SET status = 'pending', error = NULL, run_at = NULL,
-         stage = '等待执行', progress = 0, detail = '', updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(id);
-    return { ok: true };
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ error: '任务 ID 无效' });
+    try {
+      return { ok: true, ...retryJob(id) };
+    } catch (error: any) {
+      const message = error?.message || '任务无法重试';
+      return reply.code(message === '任务不存在' ? 404 : 409).send({ error: message });
+    }
+  });
+
+  app.post('/api/jobs/:id/cancel', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ error: '任务 ID 无效' });
+    try {
+      return { ok: true, ...cancelJob(id) };
+    } catch (error: any) {
+      return reply.code(404).send({ error: error?.message || '任务不存在' });
+    }
   });
 
   /** 整理运行、阶段审计及候选证据；旧数据库缺表时返回空集合而非启动失败。 */
@@ -201,7 +308,6 @@ export async function jobRoutes(app: FastifyInstance) {
   app.get('/api/ingest/candidates', async (req) => {
     const { status = 'open' } = req.query as { status?: string };
     if (!tableExists('reports')) return { candidates: [] };
-    if (status === 'open') reconcilePendingCandidates();
     const reports = db.prepare(`SELECT * FROM reports WHERE kind='pending_review' AND status=? ORDER BY id DESC LIMIT 200`).all(status) as any[];
     return { candidates: reports.map((report) => {
       const payload = safeJson(report.payload, {});
@@ -308,7 +414,7 @@ export async function jobRoutes(app: FastifyInstance) {
 
   /** 清理已完成/失败历史 */
   app.post('/api/jobs/clear', async () => {
-    db.prepare(`DELETE FROM jobs WHERE status IN ('done', 'failed')`).run();
+    db.prepare(`DELETE FROM jobs WHERE status IN ('done', 'failed', 'cancelled')`).run();
     return { ok: true };
   });
 }

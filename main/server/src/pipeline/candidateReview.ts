@@ -10,6 +10,7 @@ import { RELATION_WORDS } from './extractor.js';
 import { commitKnowledgeItems, type KnowledgeItem } from './knowledgeCommit.js';
 import {
   candidatePreview,
+  candidateAutoReconcileEligible,
   ensureCandidateFromReport,
   getCandidate,
   loadCandidateFacts,
@@ -39,6 +40,12 @@ export type CandidateReviewProgress = (progress: {
   progress: number;
   detail?: string;
 }) => void;
+
+export interface CandidateReconcileResult {
+  completed: number;
+  failed: number;
+  errors: string[];
+}
 
 const relationSchema = z.object({
   src: z.string().min(1),
@@ -137,6 +144,25 @@ function candidateOccurrences(candidate: CandidateOccurrence): {
   return { occurrences };
 }
 
+function parseArray<T>(value: string | null | undefined): T[] {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function exactCandidatePage(candidate: CandidateOccurrence): {
+  id: string;
+  title: string;
+} | undefined {
+  return db.prepare(
+    `SELECT id,title FROM pages WHERE deleted=0 AND lower(title)=lower(?)
+     AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`
+  ).get(candidate.name) as { id: string; title: string } | undefined;
+}
+
 async function retrievalContext(name: string, summary: string): Promise<string> {
   try {
     const hits = await hybridSearch(`${name} ${summary}`, 8);
@@ -192,7 +218,9 @@ async function focusedEvidenceForOccurrence(
   occurrence: CandidateOccurrence,
   requestedName: string,
   kind: ReviewKind,
+  signal?: AbortSignal,
 ): Promise<{ facts: FocusedEvidence[]; contexts: SourceExcerpt[] }> {
+  signal?.throwIfAborted();
   if (!occurrence.source_version_id) return { facts: [], contexts: [] };
   const version = db.prepare(
     `SELECT content_hash,status FROM source_versions WHERE id=?`
@@ -224,6 +252,7 @@ async function focusedEvidenceForOccurrence(
     temperature: 0.1,
     maxTokens: 7000,
     retries: 1,
+    signal,
   });
   const validFacts = focused.facts.filter((fact) =>
     fact.sources.every((source) => byId.get(source.contextId)?.content.includes(source.quote))
@@ -284,6 +313,7 @@ async function originalEvidence(
   candidate: CandidateOccurrence,
   requestedName: string,
   kind: ReviewKind,
+  signal?: AbortSignal,
 ): Promise<{
   occurrences: CandidateOccurrence[];
   facts: FocusedEvidence[];
@@ -293,7 +323,8 @@ async function originalEvidence(
   const facts: FocusedEvidence[] = [];
   const contexts: SourceExcerpt[] = [];
   for (const occurrence of occurrences) {
-    const focused = await focusedEvidenceForOccurrence(occurrence, requestedName, kind);
+    signal?.throwIfAborted();
+    const focused = await focusedEvidenceForOccurrence(occurrence, requestedName, kind, signal);
     facts.push(...focused.facts);
     contexts.push(...focused.contexts);
   }
@@ -352,8 +383,9 @@ export async function previewCandidateReview(
     name?: string;
     target?: string;
   },
-  options: { allowApplying?: boolean } = {},
+  options: { allowApplying?: boolean; signal?: AbortSignal } = {},
 ): Promise<ReviewPreview> {
+  options.signal?.throwIfAborted();
   if (!llmReady()) throw new Error('未配置 LLM，无法执行局部再提炼');
   const report = reportRow(reportId, options.allowApplying);
   const candidate = ensureCandidateFromReport(report);
@@ -372,7 +404,12 @@ export async function previewCandidateReview(
   ).get(candidate.source_version_id);
   if (!activeSource) throw new Error('候选对应的原始资料已更新，请重新整理最新资料后再审核');
   const targetContent = targetPage ? readPage(targetPage.path)?.content || '' : '';
-  const { occurrences, facts, contexts } = await originalEvidence(candidate, name, reviewKind);
+  const { occurrences, facts, contexts } = await originalEvidence(
+    candidate,
+    name,
+    reviewKind,
+    options.signal,
+  );
   const evidence = evidenceInput(facts);
   const allowedEvidence = new Set(facts.map((fact) => fact.evidenceId));
   const related = await retrievalContext(name, candidate.summary);
@@ -401,6 +438,7 @@ export async function previewCandidateReview(
     temperature: 0.1,
     maxTokens: 9000,
     retries: 1,
+    signal: options.signal,
   });
   const usedEvidenceIds = [...new Set(refined.usedEvidenceIds.filter((id) => allowedEvidence.has(id)))];
   if (!usedEvidenceIds.length) throw new Error('局部再提炼没有引用任何有效证据');
@@ -422,6 +460,7 @@ export async function previewCandidateReview(
     temperature: 0.1,
     maxTokens: 9000,
     retries: 1,
+    signal: options.signal,
   });
   if (!verified.pass || verified.unsupported.length || verified.conflicts.length) {
     const details = [
@@ -596,9 +635,11 @@ export function releaseCandidateReviewBatch(decisions: CandidateReviewDecision[]
 export async function applyCandidateReviewBatch(
   decisions: CandidateReviewDecision[],
   update: CandidateReviewProgress = () => {},
+  signal?: AbortSignal,
 ): Promise<{ completed: number; ignored: number; failed: number; errors: string[] }> {
   const result = { completed: 0, ignored: 0, failed: 0, errors: [] as string[] };
   for (let index = 0; index < decisions.length; index++) {
+    signal?.throwIfAborted();
     const decision = decisions[index];
     update({
       stage: '批量审核候选',
@@ -615,8 +656,9 @@ export async function applyCandidateReviewBatch(
       const preview = await previewCandidateReview(
         decision.reportId,
         { action: 'approve', kind },
-        { allowApplying: true },
+        { allowApplying: true, signal },
       );
+      signal?.throwIfAborted();
       commitCandidateReview(decision.reportId, preview.token, { allowApplying: true });
       result.completed++;
     } catch (error: any) {
@@ -632,6 +674,95 @@ export async function applyCandidateReviewBatch(
     stage: '批量审核完成',
     progress: 100,
     detail: `批准 ${result.completed} 项，忽略 ${result.ignored} 项${result.failed ? `，失败 ${result.failed} 项` : ''}`,
+  });
+  return result;
+}
+
+/**
+ * 自动动态对账只处理已经通过模型验证、仅因来源数量不足而暂存的候选。
+ * 当第二个独立来源出现后，直接复用已有事实与正文提交，不重新跑整份资料。
+ */
+export async function reconcileCandidateReports(
+  reportIds: number[],
+  update: CandidateReviewProgress = () => {},
+  signal?: AbortSignal,
+): Promise<CandidateReconcileResult> {
+  const result: CandidateReconcileResult = { completed: 0, failed: 0, errors: [] };
+  for (let index = 0; index < reportIds.length; index++) {
+    if (signal?.aborted) throw new Error('AI 请求已取消');
+    const reportId = reportIds[index];
+    update({
+      stage: '复用已有事实对账',
+      progress: 10 + Math.round((index / Math.max(1, reportIds.length)) * 80),
+      detail: `${index + 1}/${reportIds.length}`,
+    });
+    try {
+      const report = reportRow(reportId, true);
+      const candidate = ensureCandidateFromReport(report);
+      if (!candidate) throw new Error('待审候选缺少可恢复记录');
+      if (!candidateAutoReconcileEligible(candidate)) {
+        throw new Error('候选并非仅因来源不足而暂存，仍需人工审核');
+      }
+      const sourceVersion = db.prepare(
+        `SELECT id,path,content_hash,previous_id,status FROM source_versions
+         WHERE id=? AND status='active'`
+      ).get(candidate.source_version_id) as SourceVersion | undefined;
+      if (!sourceVersion) throw new Error('候选来源版本已更新，请重新整理最新资料');
+      const occurrences = relatedCandidateOccurrences(candidate)
+        .filter((occurrence) =>
+          candidateAutoReconcileEligible(occurrence) &&
+          occurrence.source_version_id &&
+          parseArray<string>(occurrence.fact_ids).length > 0
+        );
+      if (new Set(occurrences.map((occurrence) => occurrence.source_path)).size < 2) {
+        throw new Error('候选尚未获得两个独立来源支持');
+      }
+      const target = exactCandidatePage(candidate);
+      const kind = ['concept', 'person', 'project', 'org'].includes(candidate.kind)
+        ? candidate.kind as ReviewKind
+        : null;
+      if (!kind) throw new Error('候选页面类型无效，仍需人工审核');
+      const confidence = ['高', '中', '低'].includes(candidate.confidence)
+        ? candidate.confidence as '高' | '中' | '低'
+        : '中';
+      commitKnowledgeItems([{
+        name: candidate.name,
+        kind,
+        action: target ? 'merge' : 'create',
+        target: target?.title || '',
+        domain: candidate.domain,
+        confidence,
+        summary: candidate.summary,
+        factIds: parseArray(candidate.fact_ids),
+        relations: parseArray(candidate.relations),
+        reason: candidate.reason,
+        content: candidate.content,
+        candidateId: candidate.id,
+        evidenceEligible: true,
+        supportingCandidateIds: occurrences
+          .filter((occurrence) => occurrence.id !== candidate.id)
+          .map((occurrence) => occurrence.id),
+      }], {
+        runId: candidate.run_id,
+        sourceVersion,
+        sourcePath: candidate.source_path,
+        sourceName: candidate.source_name,
+        sourceRef: candidate.source_path,
+      });
+      result.completed++;
+    } catch (error: any) {
+      db.prepare(
+        `UPDATE reports SET status='open'
+         WHERE id=? AND kind='pending_review' AND status='applying'`
+      ).run(reportId);
+      result.failed++;
+      result.errors.push(`候选 #${reportId}：${error?.message || error}`);
+    }
+  }
+  update({
+    stage: '候选对账完成',
+    progress: 100,
+    detail: `完成 ${result.completed} 项${result.failed ? `，保留人工审核 ${result.failed} 项` : ''}`,
   });
   return result;
 }

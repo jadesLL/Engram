@@ -1,21 +1,25 @@
-import { db, now } from './lib/db.js';
+import { db, newId, now } from './lib/db.js';
 import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { extractEntities } from './graph/entities.js';
 import { organizePage } from './ai/organize.js';
 import { ingestRawFile } from './pipeline/ingest.js';
 import { runUpgrades } from './pipeline/mentions.js';
 import { regenerateIndex, regenerateRelationships } from './pipeline/indexFile.js';
-import { applyReportDecisions, releaseReports, type ReportActionKind, type ReportDecision } from './dream/apply.js';
+import {
+  applyReportDecisions,
+  claimReports,
+  releaseReports,
+  type ReportActionKind,
+  type ReportDecision,
+} from './dream/apply.js';
 import { enqueue, enqueuePagePipeline } from './jobQueue.js';
 import { finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
 import { recoverKnowledgeCommit } from './pipeline/knowledgeCommit.js';
 import { runDreamCycle } from './dream/tasks.js';
 import {
-  finalizeCandidateReconciliation,
-  releaseCandidateReports,
-} from './pipeline/candidateLedger.js';
-import {
   applyCandidateReviewBatch,
+  claimCandidateReviewBatch,
+  reconcileCandidateReports,
   releaseCandidateReviewBatch,
   type CandidateReviewDecision,
 } from './pipeline/candidateReview.js';
@@ -26,6 +30,8 @@ import {
 } from './pipeline/ingestQuestions.js';
 import { recomposePage } from './pipeline/pageSynthesis.js';
 import { extractFile } from './pipeline/fileExtraction.js';
+import { releaseCandidateReports } from './pipeline/candidateLedger.js';
+import { resolveJobTarget } from './lib/jobTarget.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -38,14 +44,14 @@ export type JobProgress = {
 type JobHandler = (
   payload: any,
   update: (progress: Partial<JobProgress>) => void,
-  jobId: number,
+  context: { jobId: number; signal: AbortSignal },
 ) => Promise<void>;
 
 function jobColumns(): Set<string> {
   return new Set((db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map((column) => column.name));
 }
 
-function updateJob(id: number, values: Partial<JobProgress>) {
+function updateJob(id: number, values: Partial<JobProgress>, runToken?: string) {
   const columns = jobColumns();
   const assignments: string[] = [];
   const params: unknown[] = [];
@@ -54,33 +60,39 @@ function updateJob(id: number, values: Partial<JobProgress>) {
   if (columns.has('detail') && values.detail !== undefined) { assignments.push('detail = ?'); params.push(values.detail); }
   if (columns.has('updated_at')) { assignments.push('updated_at = ?'); params.push(now()); }
   if (!assignments.length) return;
-  db.prepare(`UPDATE jobs SET ${assignments.join(', ')} WHERE id = ?`).run(...params, id);
+  const tokenClause = runToken ? ` AND run_token = ? AND status = 'running'` : '';
+  db.prepare(`UPDATE jobs SET ${assignments.join(', ')} WHERE id = ?${tokenClause}`)
+    .run(...params, id, ...(runToken ? [runToken] : []));
 }
 
 const handlers: Record<string, JobHandler> = {
-  embed: async ({ pageId }) => {
-    await indexPage(pageId);
+  embed: async ({ pageId }, _update, context) => {
+    await indexPage(pageId, context.signal);
   },
-  index_file: async ({ fileId }) => {
-    await indexFileText(fileId);
+  index_file: async ({ fileId }, _update, context) => {
+    await indexFileText(fileId, context.signal);
   },
-  extract_file: async ({ path, mode, pages, ingestAfter, forceIngest }, update) => {
+  extract_file: async ({ path, mode, pages, ingestAfter, forceIngest }, update, context) => {
     await extractFile(path, (progress) => update(progress), {
       mode,
       pages,
       ingestAfter: ingestAfter !== false,
       forceIngest: Boolean(forceIngest),
+      signal: context.signal,
     });
   },
-  extract: async ({ pageId }) => {
-    await extractEntities(pageId);
+  extract: async ({ pageId }, _update, context) => {
+    await extractEntities(pageId, context.signal);
   },
-  summarize: async ({ pageId }) => {
-    await organizePage(pageId);
+  summarize: async ({ pageId }, _update, context) => {
+    await organizePage(pageId, context.signal);
   },
-  ingest: async ({ path, force, questionId }, update, jobId) => {
-    await ingestRawFile(path, (progress) => update(progress), { force: Boolean(force) });
-    if (questionId) completeIngestQuestionJob(String(questionId), jobId);
+  ingest: async ({ path, force, questionId }, update, context) => {
+    await ingestRawFile(path, (progress) => update(progress), {
+      force: Boolean(force),
+      signal: context.signal,
+    });
+    if (questionId) completeIngestQuestionJob(String(questionId), context.jobId);
   },
   mentions: async () => {
     await runUpgrades();
@@ -90,14 +102,19 @@ const handlers: Record<string, JobHandler> = {
     regenerateRelationships();
   },
   /** 单页全流程：索引+抽取+整理一步到位（减少队列任务数） */
-  process: async ({ pageId }) => {
-    await indexPage(pageId);
-    await extractEntities(pageId);
-    await organizePage(pageId);
+  process: async ({ pageId }, _update, context) => {
+    await indexPage(pageId, context.signal);
+    await extractEntities(pageId, context.signal);
+    await organizePage(pageId, context.signal);
   },
-  page_recompose: async ({ pageId, synthesisId, inputHash }, update) => {
+  page_recompose: async ({ pageId, synthesisId, inputHash }, update, context) => {
     update({ stage: '跨来源整页综合', progress: 15, detail: pageId });
-    const result = await recomposePage(String(pageId), String(synthesisId), String(inputHash));
+    const result = await recomposePage(
+      String(pageId),
+      String(synthesisId),
+      String(inputHash),
+      context.signal,
+    );
     if (result.changed) {
       update({ stage: '整页综合已写入', progress: 90, detail: result.synthesisId });
       enqueue('process', { pageId: String(pageId), synthesisId: result.synthesisId });
@@ -110,64 +127,89 @@ const handlers: Record<string, JobHandler> = {
   ingest_recover: async ({ runId }) => {
     recoverKnowledgeCommit(runId);
   },
-  candidate_reconcile: async ({ path, candidateIds, reportIds }, update) => {
-    update({ stage: '重新核对候选', progress: 10, detail: path });
+  candidate_reconcile: async ({ path, candidateIds, reportIds }, update, context) => {
+    update({
+      stage: '准备局部候选对账',
+      progress: 5,
+      detail: `${path} · ${(candidateIds || []).length} 个候选`,
+    });
     try {
-      await ingestRawFile(path, (progress) => update(progress), { force: true });
-      if (!finalizeCandidateReconciliation(candidateIds || [], reportIds || [])) {
-        throw new Error('重新整理后候选仍未满足自动入库条件');
+      const result = await reconcileCandidateReports(
+        reportIds || [],
+        (progress) => update(progress),
+        context.signal,
+      );
+      if (!result.completed) {
+        throw new Error(result.errors.join('；') || '候选仍未满足自动入库条件');
       }
-      update({ stage: '候选已动态更新', progress: 100, detail: path });
     } catch (error) {
       releaseCandidateReports(reportIds || []);
       throw error;
     }
   },
-  candidate_review_batch: async ({ decisions }, update) => {
+  candidate_review_batch: async ({ decisions }, update, context) => {
     try {
-      await applyCandidateReviewBatch(decisions as CandidateReviewDecision[], (progress) => update(progress));
+      await applyCandidateReviewBatch(
+        decisions as CandidateReviewDecision[],
+        (progress) => update(progress),
+        context.signal,
+      );
     } catch (error) {
       releaseCandidateReviewBatch(decisions as CandidateReviewDecision[]);
       throw error;
     }
   },
   /** 分类批量处理：只执行请求中显式选择的报告和动作。 */
-  dream_apply: async ({ kind, decisions }, update) => {
+  dream_apply: async ({ kind, decisions }, update, context) => {
     try {
-      await applyReportDecisions(kind as ReportActionKind, decisions as ReportDecision[], (p) => update(p));
+      await applyReportDecisions(
+        kind as ReportActionKind,
+        decisions as ReportDecision[],
+        (progress) => update(progress),
+        context.signal,
+      );
     } catch (error) {
       releaseReports(decisions as ReportDecision[]);
       throw error;
     }
   },
-  dream: async (_payload, update) => {
+  dream: async (_payload, update, context) => {
     update({ stage: '运行 Dream Cycle', progress: 10, detail: '扫描知识库问题' });
-    const result = await runDreamCycle();
+    const result = await runDreamCycle(context.signal);
     update({ stage: 'Dream Cycle 已完成', progress: 100, detail: JSON.stringify(result) });
   },
-  rebuild: async (_payload, update) => {
+  rebuild: async (_payload, update, context) => {
     let progress = 10;
     await rebuildAll((message) => {
       progress = Math.min(95, progress + 5);
       update({ stage: '重建索引', progress, detail: message });
-    });
+    }, context.signal);
   },
 };
 
 let running = false;
-let defaultPolling = false;
-let documentPolling = false;
+type JobLane = 'default' | 'document';
+type ActiveExecution = {
+  controller: AbortController;
+  lane: JobLane;
+  runToken: string;
+  targetKey: string;
+};
+
+const LANE_LIMITS: Record<JobLane, number> = { default: 2, document: 1 };
+const activeExecutions = new Map<number, ActiveExecution>();
+const polling = { default: false, document: false };
 
 /** 启动时恢复：把上次被中断、卡在 running 的任务重置回 pending；超过 5 分钟的僵尸标记失败 */
 function recoverStaleJobs() {
   db.prepare(
-    `UPDATE jobs SET status = 'pending', updated_at = ?
+    `UPDATE jobs SET status = 'pending', run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'
        AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at)) > julianday('now', '-5 minutes')`
   ).run(now());
   db.prepare(
     `UPDATE jobs SET status = 'failed', error = '执行超时（超过5分钟无进度，疑似中断未恢复）',
-       updated_at = ?
+       run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'`
   ).run(now());
   recoverApplyingReports();
@@ -195,47 +237,222 @@ export function recoverApplyingReports() {
   releaseReports(release);
 }
 
-/** 双通道串行队列：文档识别与普通任务各自单并发，互不长时间阻塞。 */
-async function pollLane(lane: 'default' | 'document') {
-  if (lane === 'default' ? defaultPolling : documentPolling) return;
-  if (lane === 'default') defaultPolling = true;
-  else documentPolling = true;
-  try {
-    const job = db
-      .prepare(
-        `SELECT * FROM jobs
-         WHERE status = 'pending'
-           AND ${lane === 'document' ? `kind = 'extract_file'` : `kind != 'extract_file'`}
-         ORDER BY id LIMIT 1`
-      )
-      .get() as any;
-    if (!job) return;
-    db.prepare(`UPDATE jobs SET status = 'running', run_at = ?, updated_at = ? WHERE id = ?`)
-      .run(now(), now(), job.id);
-    try {
-      const handler = handlers[job.kind];
-      updateJob(job.id, { stage: '执行中', progress: 5 });
-      if (!handler) throw new Error(`未知任务类型：${job.kind}`);
-      await handler(JSON.parse(job.payload), (progress) => updateJob(job.id, progress), job.id);
-      const completed = db.prepare(
-        `UPDATE jobs SET status = 'done', updated_at = ? WHERE id = ? AND status = 'running'`
-      ).run(now(), job.id);
-      if (completed.changes) updateJob(job.id, { stage: '已完成', progress: 100 });
-    } catch (e: any) {
-      db.prepare(`UPDATE jobs SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`).run(
-        String(e?.message || e).slice(0, 500),
-        now(),
-        job.id
-      );
-      if (job.kind === 'ingest') {
-        const payload = JSON.parse(job.payload);
-        if (payload.questionId) failIngestQuestionJob(String(payload.questionId), job.id, e);
+function releaseJobClaims(job: any): void {
+  let payload: any = {};
+  try { payload = JSON.parse(job.payload); } catch { return; }
+  if (job.kind === 'candidate_reconcile') {
+    releaseCandidateReports(payload.reportIds || []);
+  } else if (job.kind === 'candidate_review_batch') {
+    releaseCandidateReviewBatch(payload.decisions || []);
+  } else if (job.kind === 'dream_apply') {
+    releaseReports(payload.decisions || []);
+  }
+}
+
+function claimJobReports(job: any): void {
+  let payload: any = {};
+  try { payload = JSON.parse(job.payload); } catch { return; }
+  if (job.kind === 'candidate_reconcile') {
+    const reportIds = (payload.reportIds || []).map(Number).filter(Number.isInteger);
+    const claim = db.prepare(
+      `UPDATE reports SET status='applying'
+       WHERE id=? AND kind='pending_review' AND status='open'`
+    );
+    db.transaction(() => {
+      for (const reportId of reportIds) {
+        if (claim.run(reportId).changes !== 1) {
+          throw new Error(`候选 #${reportId} 已处理或不存在`);
+        }
       }
-      updateJob(job.id, { stage: '失败', detail: String(e?.message || e).slice(0, 500) });
+    })();
+  } else if (job.kind === 'candidate_review_batch') {
+    claimCandidateReviewBatch(payload.decisions || []);
+  } else if (job.kind === 'dream_apply') {
+    claimReports(payload.kind, payload.decisions || []);
+  }
+}
+
+function activeLaneCount(lane: JobLane): number {
+  return [...activeExecutions.values()].filter((execution) => execution.lane === lane).length;
+}
+
+function targetKey(job: any): string {
+  return resolveJobTarget(job.payload).targetKey || `global:${job.kind}`;
+}
+
+function nextJob(lane: JobLane): any | undefined {
+  const activeTargets = new Set([...activeExecutions.values()].map((execution) => execution.targetKey));
+  const rows = db.prepare(
+    `SELECT * FROM jobs
+     WHERE status='pending'
+       AND ${lane === 'document' ? `kind='extract_file'` : `kind<>'extract_file'`}
+     ORDER BY
+       CASE kind
+         WHEN 'ingest' THEN 0
+         WHEN 'candidate_review_batch' THEN 0
+         WHEN 'dream_apply' THEN 0
+         WHEN 'candidate_reconcile' THEN 1
+         WHEN 'page_recompose' THEN 2
+         WHEN 'process' THEN 2
+         ELSE 3
+       END,
+       id
+     LIMIT 50`
+  ).all() as any[];
+  return rows.find((job) => !activeTargets.has(targetKey(job)));
+}
+
+async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
+  const { controller, runToken } = execution;
+  const payload = JSON.parse(job.payload);
+  try {
+    const handler = handlers[job.kind];
+    updateJob(job.id, { stage: '执行中', progress: 5 }, runToken);
+    if (!handler) throw new Error(`未知任务类型：${job.kind}`);
+    await handler(
+      payload,
+      (progress) => updateJob(job.id, progress, runToken),
+      { jobId: job.id, signal: controller.signal },
+    );
+    const state = db.prepare(
+      `SELECT status,cancel_requested FROM jobs WHERE id=? AND run_token=?`
+    ).get(job.id, runToken) as { status: string; cancel_requested: number } | undefined;
+    if (state?.status !== 'running') return;
+    if (controller.signal.aborted || state.cancel_requested) {
+      db.prepare(
+        `UPDATE jobs SET status='cancelled',stage='已取消',detail='',
+           error=NULL,run_token='',updated_at=? WHERE id=? AND run_token=?`
+      ).run(now(), job.id, runToken);
+      releaseJobClaims(job);
+      return;
+    }
+    const completed = db.prepare(
+      `UPDATE jobs SET status='done',stage='已完成',progress=100,
+         run_token='',cancel_requested=0,updated_at=?
+       WHERE id=? AND run_token=? AND status='running'`
+    ).run(now(), job.id, runToken);
+    if (!completed.changes) return;
+  } catch (error: any) {
+    const state = db.prepare(
+      `SELECT status,cancel_requested FROM jobs WHERE id=? AND run_token=?`
+    ).get(job.id, runToken) as { status: string; cancel_requested: number } | undefined;
+    if (state?.status === 'running') {
+      const cancelled = controller.signal.aborted || Boolean(state.cancel_requested);
+      db.prepare(
+        `UPDATE jobs SET status=?,stage=?,detail=?,error=?,run_token='',
+           cancel_requested=0,updated_at=? WHERE id=? AND run_token=?`
+      ).run(
+        cancelled ? 'cancelled' : 'failed',
+        cancelled ? '已取消' : '失败',
+        cancelled ? '' : String(error?.message || error).slice(0, 500),
+        cancelled ? null : String(error?.message || error).slice(0, 500),
+        now(),
+        job.id,
+        runToken,
+      );
+    }
+    releaseJobClaims(job);
+    if (job.kind === 'ingest' && payload.questionId) {
+      failIngestQuestionJob(String(payload.questionId), job.id, error);
     }
   } finally {
-    if (lane === 'default') defaultPolling = false;
-    else documentPolling = false;
+    activeExecutions.delete(job.id);
+    pollLane(execution.lane);
+  }
+}
+
+function startJob(job: any, lane: JobLane): boolean {
+  const runToken = newId();
+  const claimed = db.prepare(
+    `UPDATE jobs SET status='running',run_at=?,run_token=?,cancel_requested=0,updated_at=?
+     WHERE id=? AND status='pending'`
+  ).run(now(), runToken, now(), job.id);
+  if (claimed.changes !== 1) return false;
+  const execution: ActiveExecution = {
+    controller: new AbortController(),
+    lane,
+    runToken,
+    targetKey: targetKey(job),
+  };
+  activeExecutions.set(job.id, execution);
+  void executeJob(job, execution);
+  return true;
+}
+
+/** 文档识别单并发；普通 AI 任务最多双并发，同一目标仍保持串行。 */
+function pollLane(lane: JobLane) {
+  if (polling[lane]) return;
+  polling[lane] = true;
+  try {
+    while (activeLaneCount(lane) < LANE_LIMITS[lane]) {
+      const job = nextJob(lane);
+      if (!job || !startJob(job, lane)) break;
+    }
+  } finally {
+    polling[lane] = false;
+  }
+}
+
+export function cancelJob(jobId: number): { status: string } {
+  const job = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(jobId) as any;
+  if (!job) throw new Error('任务不存在');
+  if (job.status === 'pending') {
+    db.prepare(
+      `UPDATE jobs SET status='cancelled',stage='已取消',error=NULL,
+       cancel_requested=0,run_token='',updated_at=? WHERE id=? AND status='pending'`
+    ).run(now(), jobId);
+    releaseJobClaims(job);
+    return { status: 'cancelled' };
+  }
+  if (job.status !== 'running') return { status: job.status };
+  const execution = activeExecutions.get(jobId);
+  if (!execution) {
+    db.prepare(
+      `UPDATE jobs SET status='cancelled',stage='已取消',error=NULL,
+       cancel_requested=0,run_token='',updated_at=? WHERE id=? AND status='running'`
+    ).run(now(), jobId);
+    releaseJobClaims(job);
+    return { status: 'cancelled' };
+  }
+  db.prepare(
+    `UPDATE jobs SET cancel_requested=1,stage='正在取消',updated_at=?
+     WHERE id=? AND status='running'`
+  ).run(now(), jobId);
+  execution.controller.abort();
+  return { status: 'cancelling' };
+}
+
+export function retryJob(jobId: number): { status: string } {
+  const job = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(jobId) as any;
+  if (!job) throw new Error('任务不存在');
+  if (!['failed', 'cancelled'].includes(job.status)) {
+    throw new Error('仅失败或已取消任务可重试');
+  }
+  claimJobReports(job);
+  db.prepare(
+    `UPDATE jobs SET status='pending',error=NULL,run_at=NULL,
+     stage='等待执行',progress=0,detail='',cancel_requested=0,
+     run_token='',updated_at=? WHERE id=? AND status IN ('failed','cancelled')`
+  ).run(now(), jobId);
+  return { status: 'pending' };
+}
+
+function abortStaleJobs(): void {
+  const stale = db.prepare(
+    `SELECT * FROM jobs WHERE status='running'
+     AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at))
+       <= julianday('now','-5 minutes')`
+  ).all() as any[];
+  for (const job of stale) {
+    activeExecutions.get(job.id)?.controller.abort();
+    db.prepare(
+      `UPDATE jobs SET status='failed',stage='失败',
+       error='执行超时（超过5分钟无进度）',
+       detail='执行超时（超过5分钟无进度）',
+       run_token='',cancel_requested=0,updated_at=?
+       WHERE id=? AND status='running'`
+    ).run(now(), job.id);
+    releaseJobClaims(job);
   }
 }
 
@@ -243,14 +460,12 @@ export function startJobRunner() {
   if (running) return;
   running = true;
   recoverStaleJobs();
-  setInterval(() => {
-    db.prepare(
-      `UPDATE jobs SET status = 'failed', error = '执行超时（超过5分钟无进度）', updated_at = ?
-       WHERE status = 'running'
-         AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at)) <= julianday('now', '-5 minutes')`
-    ).run(now());
+  const tick = () => {
+    abortStaleJobs();
     recoverIngestQuestionJobs();
-    void pollLane('default');
-    void pollLane('document');
-  }, 2000);
+    pollLane('default');
+    pollLane('document');
+  };
+  tick();
+  setInterval(tick, 1000);
 }

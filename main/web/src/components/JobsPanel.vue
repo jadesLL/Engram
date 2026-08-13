@@ -18,22 +18,28 @@
               <span class="spinner" v-if="j.status === 'running'" />
               <span class="dot pending" v-else />
               <span class="job-label">{{ j.label }}</span>
-              <span class="job-status faint small">{{ j.stage }}</span>
+              <span class="job-status faint small" :title="j.detail || j.stage">{{ statusText(j) }}</span>
+              <span class="job-eta faint small">{{ etaText(j) }}</span>
               <span class="job-progress small">{{ j.progress }}%</span>
+              <button class="icon-btn job-cancel" title="取消任务" @click="cancel(j)">
+                <Icon name="x" :size="12" />
+              </button>
             </div>
           </div>
         </template>
       </div>
 
-      <div v-if="failedJobs.length" class="jp-group">
-        <div class="jp-sub">失败</div>
-        <template v-for="g in groupedFailed" :key="g.key">
+      <div v-if="stoppedJobs.length" class="jp-group">
+        <div class="jp-sub">失败 / 已取消</div>
+        <template v-for="g in groupedStopped" :key="g.key">
           <div class="job-group">
             <div class="group-head small faint" :title="g.key">{{ g.label }}</div>
             <div v-for="j in g.tasks" :key="j.id" class="job-row failed indented">
-              <span class="dot failed" />
+              <span class="dot" :class="j.status === 'failed' ? 'failed' : 'cancelled'" />
               <span class="job-label">{{ j.label }}</span>
-              <span class="job-status faint small" :title="j.error">{{ j.stage }}</span>
+              <span class="job-status faint small" :title="j.error">
+                {{ j.status === 'cancelled' ? '已取消' : j.stage }}
+              </span>
               <button class="btn small" @click="retry(j)">重试</button>
             </div>
           </div>
@@ -70,6 +76,9 @@ const app = useAppStore();
 const jobs = computed(() => app.jobs);
 
 const failedJobs = computed(() => jobs.value.recent.filter((j: any) => j.status === 'failed'));
+const stoppedJobs = computed(() =>
+  jobs.value.recent.filter((j: any) => ['failed', 'cancelled'].includes(j.status))
+);
 const doneJobs = computed(() => jobs.value.recent.filter((j: any) => j.status === 'done').slice(0, 10));
 
 type JobGroup = { key: string; label: string; tasks: any[] };
@@ -107,11 +116,16 @@ function groupByTarget(list: any[]): JobGroup[] {
   return groups;
 }
 const groupedActive = computed(() => groupByTarget(jobs.value.active || []));
-const groupedFailed = computed(() => groupByTarget(failedJobs.value));
+const groupedStopped = computed(() => groupByTarget(stoppedJobs.value));
 const groupedDone = computed(() => groupByTarget(doneJobs.value));
 
 async function retry(j: any) {
   await api.post(`/api/jobs/${j.id}/retry`);
+  await app.refreshJobs();
+}
+
+async function cancel(j: any) {
+  await api.post(`/api/jobs/${j.id}/cancel`);
   await app.refreshJobs();
 }
 
@@ -124,6 +138,29 @@ function shortTime(iso?: string) {
   if (!iso) return '';
   const d = new Date(iso);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatDuration(seconds?: number) {
+  const value = Math.max(0, Math.round(Number(seconds) || 0));
+  if (value < 60) return `${Math.max(1, value)} 秒`;
+  const minutes = Math.ceil(value / 60);
+  return `${minutes} 分钟`;
+}
+
+function statusText(job: any) {
+  if (job.status === 'running') return job.stage || '执行中';
+  return job.queuePosition ? `队列第 ${job.queuePosition} 位` : '等待执行';
+}
+
+function etaText(job: any) {
+  const candidateCount = Array.isArray(job.payload?.candidateIds)
+    ? job.payload.candidateIds.length
+    : 0;
+  const batch = candidateCount > 1 ? `${candidateCount} 个候选` : '';
+  const eta = job.status === 'running'
+    ? `剩余约 ${formatDuration(job.estimatedRemainingSeconds)}`
+    : `约 ${formatDuration(job.estimatedWaitSeconds)}后开始`;
+  return [batch, eta].filter(Boolean).join(' · ');
 }
 </script>
 
@@ -178,8 +215,17 @@ function shortTime(iso?: string) {
   font-size: 13px;
 }
 .job-label { flex-shrink: 0; color: var(--text-secondary); }
-.job-status { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-status { max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-eta {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
 .job-progress { min-width: 32px; text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
+.job-cancel { flex-shrink: 0; padding: 2px; }
 .job-target {
   flex: 1;
   overflow: hidden;
@@ -189,6 +235,7 @@ function shortTime(iso?: string) {
 .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .dot.pending { background: var(--warn); }
 .dot.failed { background: var(--danger); }
+.dot.cancelled { background: var(--text-faint); }
 .dot.done { background: var(--success); }
 .spinner {
   width: 11px;

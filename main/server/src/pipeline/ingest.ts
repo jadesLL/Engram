@@ -58,6 +58,46 @@ function setStatus(pathName: string, contentHash: string, runId: string, status:
     .run(pathName, now(), contentHash, status, runId, error);
 }
 
+function restoreSourceAfterAttempt(
+  sourceVersionId: string,
+  previousActiveVersionId: string | undefined,
+  runId: string,
+  sourcePath: string,
+  runStatus: 'failed' | 'cancelled',
+  error: string,
+): void {
+  const timestamp = now();
+  db.transaction(() => {
+    db.prepare(`DELETE FROM page_contributions WHERE source_version_id=? AND active=0`)
+      .run(sourceVersionId);
+    if (previousActiveVersionId) {
+      if (sourceVersionId !== previousActiveVersionId) {
+        db.prepare(`UPDATE source_versions SET status='failed',error=? WHERE id=?`)
+          .run(error, sourceVersionId);
+      }
+      db.prepare(
+        `UPDATE source_versions SET status='superseded'
+         WHERE path=? AND id<>? AND status NOT IN ('failed','processing')`
+      ).run(sourcePath, previousActiveVersionId);
+      db.prepare(
+        `UPDATE source_versions SET status='active',error=NULL,
+         activated_at=COALESCE(activated_at,?) WHERE id=?`
+      ).run(timestamp, previousActiveVersionId);
+      db.prepare(
+        `UPDATE page_contributions SET active=CASE WHEN source_version_id=? THEN 1 ELSE 0 END
+         WHERE source_version_id IN (SELECT id FROM source_versions WHERE path=?)`
+      ).run(previousActiveVersionId, sourcePath);
+    } else {
+      db.prepare(`UPDATE source_versions SET status='failed',error=? WHERE id=?`)
+        .run(error, sourceVersionId);
+    }
+    db.prepare(
+      `UPDATE ingest_runs SET status=?,commit_status='failed',
+       derived_status='failed',finished_at=?,error=? WHERE id=?`
+    ).run(runStatus, timestamp, error, runId);
+  })();
+}
+
 function loadRoster(limit = 2000): EntityRosterEntry[] {
   return db.prepare(
     `SELECT id, title, type, summary FROM pages
@@ -98,6 +138,7 @@ async function jsonStage<T>(
   stage = tag,
   cacheContext?: unknown,
   history?: ChatMessage[],
+  signal?: AbortSignal,
 ): Promise<T> {
   return runSemanticStage<T>({
     scope: 'ingest',
@@ -112,6 +153,7 @@ async function jsonStage<T>(
     temperature: 0.1,
     maxTokens,
     retries: 1,
+    signal,
   });
 }
 
@@ -161,7 +203,9 @@ async function mapChunk(
   chunk: DocumentChunk,
   titleRoster: string,
   history: ChatMessage[],
+  signal?: AbortSignal,
 ): Promise<Candidate[]> {
+  signal?.throwIfAborted();
   try {
     const out = await jsonStage<{ candidates: Candidate[] }>(
       runId,
@@ -178,6 +222,7 @@ async function mapChunk(
       `ingest-map:${chunk.id}`,
       { roster: titleRoster },
       history,
+      signal,
     );
     const valid = validateFacts(out.candidates, [chunk]);
     if (out.candidates.length >= MAP_BATCH_LIMIT) {
@@ -188,7 +233,9 @@ async function mapChunk(
           chunks: parts.map((part) => ({ id: part.id, start: part.start, end: part.end })),
         });
         const mapped: Candidate[] = [];
-        for (const part of parts) mapped.push(...await mapChunk(runId, part, titleRoster, history));
+        for (const part of parts) {
+          mapped.push(...await mapChunk(runId, part, titleRoster, history, signal));
+        }
         return mapped;
       }
     }
@@ -202,7 +249,9 @@ async function mapChunk(
         chunks: parts.map((part) => ({ id: part.id, start: part.start, end: part.end })),
       });
       const mapped: Candidate[] = [];
-      for (const part of parts) mapped.push(...await mapChunk(runId, part, titleRoster, history));
+      for (const part of parts) {
+        mapped.push(...await mapChunk(runId, part, titleRoster, history, signal));
+      }
       return mapped;
     }
     audit(runId, `map_failed:${chunk.id}`, {
@@ -242,6 +291,7 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
   stage: string,
   cacheContext?: unknown,
   history?: ChatMessage[],
+  signal?: AbortSignal,
 ): Promise<T> {
   let coverageError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -263,6 +313,7 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
       `${stage}${attempt ? ':coverage-retry' : ''}`,
       cacheContext,
       history,
+      signal,
     );
     try {
       exactCandidateCoverage(expected, result.items, stage);
@@ -350,6 +401,7 @@ async function normalizeBatch(
   pass: number,
   batchIndex: number,
   history: ChatMessage[],
+  signal?: AbortSignal,
 ): Promise<Candidate[]> {
   const result = await jsonStage<{ merges: NormalizeMerge[] }>(
     runId,
@@ -361,6 +413,7 @@ async function normalizeBatch(
     `ingest-normalize:${pass}:${batchIndex + 1}`,
     undefined,
     history,
+    signal,
   );
   const normalized = applyNormalizeMerges(candidates, result.merges);
   audit(runId, `normalize:${pass}:${batchIndex + 1}`, {
@@ -371,12 +424,16 @@ async function normalizeBatch(
   return normalized;
 }
 
-async function normalizeCandidates(runId: string, mapped: Candidate[]): Promise<Candidate[]> {
+async function normalizeCandidates(
+  runId: string,
+  mapped: Candidate[],
+  signal?: AbortSignal,
+): Promise<Candidate[]> {
   let candidates: Candidate[] = [];
   const history: ChatMessage[] = [{ role: 'system', content: normalizePrompt }];
   const firstPass = batches(mapped, NORMALIZE_BATCH_LIMIT);
   for (let index = 0; index < firstPass.length; index++) {
-    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history));
+    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history, signal));
   }
   if (firstPass.length > 1) {
     const secondPass = candidates.length <= NORMALIZE_BATCH_LIMIT
@@ -384,7 +441,7 @@ async function normalizeCandidates(runId: string, mapped: Candidate[]): Promise<
       : spreadBatches(candidates, NORMALIZE_BATCH_LIMIT);
     const crossed: Candidate[] = [];
     for (let index = 0; index < secondPass.length; index++) {
-      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index, history));
+      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index, history, signal));
     }
     candidates = crossed;
   }
@@ -457,8 +514,9 @@ function attachCandidateRelations(
 export async function ingestRawFile(
   relPath: string,
   onProgress: IngestProgressCallback = () => {},
-  options: { force?: boolean } = {},
+  options: { force?: boolean; signal?: AbortSignal } = {},
 ): Promise<IngestStats> {
+  options.signal?.throwIfAborted();
   onProgress({ stage: '解析', progress: 2, detail: relPath });
   let document: StructuredDocument;
   try {
@@ -480,8 +538,14 @@ export async function ingestRawFile(
   const resolvedQuestions = supplementalAnswers(relPath);
   addSupplementalAnswers(document, resolvedQuestions);
   onProgress({ stage: '解析', progress: 8, detail: `${document.chunks.length} 个分段` });
-  const prior = db.prepare(`SELECT content_hash, status FROM ingest_log WHERE path=?`).get(relPath) as any;
+  const prior = db.prepare(
+    `SELECT content_hash,status,run_id,error FROM ingest_log WHERE path=?`
+  ).get(relPath) as any;
   if (!options.force && prior?.content_hash === document.contentHash && prior.status === 'completed') return { ...EMPTY };
+  const previousActiveVersion = db.prepare(
+    `SELECT id FROM source_versions WHERE path=? AND status='active'
+     ORDER BY activated_at DESC LIMIT 1`
+  ).get(relPath) as { id: string } | undefined;
   const runId = newId();
   const sourceVersion = beginSourceVersion(relPath, document.contentHash);
   db.prepare(
@@ -514,9 +578,10 @@ export async function ingestRawFile(
     const rawMapped: Candidate[] = [];
     const mapHistory: ChatMessage[] = [{ role: 'system', content: mapPrompt }];
     for (let chunkIndex = 0; chunkIndex < document.chunks.length; chunkIndex++) {
+      options.signal?.throwIfAborted();
       const chunk = document.chunks[chunkIndex];
       onProgress({ stage: 'Map', progress: 10 + Math.round(((chunkIndex + 1) / document.chunks.length) * 24), detail: `${chunkIndex + 1}/${document.chunks.length}` });
-      rawMapped.push(...await mapChunk(runId, chunk, titleRoster, mapHistory));
+      rawMapped.push(...await mapChunk(runId, chunk, titleRoster, mapHistory, options.signal));
     }
     const mapped = rawMapped.map((candidate, index) => ({
       ...candidate,
@@ -525,7 +590,7 @@ export async function ingestRawFile(
     audit(runId, 'map', mapped, { chunks: document.chunks.length });
 
     onProgress({ stage: 'Normalize', progress: 38 });
-    const candidates = await normalizeCandidates(runId, mapped);
+    const candidates = await normalizeCandidates(runId, mapped, options.signal);
     persistFacts(runId, candidates); audit(runId, 'normalize', candidates, mapped);
     const allowedFactIds = new Set(candidates.flatMap((candidate) => candidate.facts.map((fact) => fact.id)));
     const facts = candidates.flatMap((candidate) => candidate.facts);
@@ -538,6 +603,7 @@ export async function ingestRawFile(
     const candidateBatches = batches(candidates, PLAN_BATCH_LIMIT);
     const planHistory: ChatMessage[] = [{ role: 'system', content: planPrompt }];
     for (let index = 0; index < candidateBatches.length; index++) {
+      options.signal?.throwIfAborted();
       const candidateBatch = candidateBatches[index];
       const rawPlan = await coveredItemsStage<{ items: PlanItem[] }>(
         runId,
@@ -550,6 +616,7 @@ export async function ingestRawFile(
         `ingest-plan:${index + 1}`,
         { roster: titleRoster, related },
         planHistory,
+        options.signal,
       );
       const batchPlan = whitelistFactIds(rawPlan.items, allowedFactIds).items;
       plan.push(...batchPlan);
@@ -561,6 +628,7 @@ export async function ingestRawFile(
     const planBatches = batches(plan, PLAN_BATCH_LIMIT);
     const criticHistory: ChatMessage[] = [{ role: 'system', content: criticPrompt }];
     for (let index = 0; index < planBatches.length; index++) {
+      options.signal?.throwIfAborted();
       const planBatch = planBatches[index];
       const candidateIds = new Set(planBatch.map((item) => item.candidateId));
       const candidateBatch = candidates.filter((candidate) => candidateIds.has(candidate.candidateId));
@@ -576,6 +644,7 @@ export async function ingestRawFile(
         `ingest-critic:${index + 1}`,
         { roster: titleRoster, related },
         criticHistory,
+        options.signal,
       );
       const revised = whitelistFactIds(firstCritique.items, allowedFactIds).items;
       audit(runId, `critic:${index + 1}`, { ...firstCritique, items: revised }, planBatch);
@@ -591,6 +660,7 @@ export async function ingestRawFile(
         `ingest-critic-review:${index + 1}`,
         { roster: titleRoster, related },
         criticHistory,
+        options.signal,
       );
       let reviewedBatch = whitelistFactIds(secondCritique.items, allowedFactIds).items;
       if (!secondCritique.approved) {
@@ -603,7 +673,12 @@ export async function ingestRawFile(
       reviewedPlan.push(...reviewedBatch);
       audit(runId, `critic_review:${index + 1}`, { ...secondCritique, items: reviewedBatch }, revised);
     }
-    reviewedPlan = await guardAmbiguousEntityNames(reviewedPlan, candidates, rosterEntries);
+    reviewedPlan = await guardAmbiguousEntityNames(
+      reviewedPlan,
+      candidates,
+      rosterEntries,
+      options.signal,
+    );
     reviewedPlan = attachCandidateRelations(reviewedPlan, candidates, rosterEntries, allowedFactIds);
     audit(runId, 'critic_review', { items: reviewedPlan }, plan);
 
@@ -613,6 +688,7 @@ export async function ingestRawFile(
     const composeBatches = batches(composeTargets, COMPOSE_BATCH_LIMIT);
     const composeHistory: ChatMessage[] = [{ role: 'system', content: composePrompt }];
     for (let index = 0; index < composeBatches.length; index++) {
+      options.signal?.throwIfAborted();
       const composeBatch = composeBatches[index];
       const factIds = new Set(composeBatch.flatMap((item) => item.factIds));
       const batchFacts = facts.filter((fact) => factIds.has(fact.id));
@@ -642,6 +718,7 @@ export async function ingestRawFile(
         `ingest-compose:${index + 1}`,
         { roster: titleRoster, related },
         composeHistory,
+        options.signal,
       );
       for (const item of rawComposed.items) contentById.set(item.candidateId, item.content);
       audit(runId, `compose:${index + 1}`, rawComposed, composeInput.items);
@@ -656,6 +733,7 @@ export async function ingestRawFile(
     const generatedQuestions: QuestionOutput['questions'] = [];
     const questionHistory: ChatMessage[] = [{ role: 'system', content: questionFinderPrompt }];
     for (let index = 0; index < candidateBatches.length; index++) {
+      options.signal?.throwIfAborted();
       const candidateBatch = candidateBatches[index];
       const candidateIds = new Set(candidateBatch.map((item) => item.candidateId));
       const planBatch = reviewedPlan.filter((item) => candidateIds.has(item.candidateId));
@@ -669,6 +747,7 @@ export async function ingestRawFile(
         `ingest-questions:${index + 1}`,
         undefined,
         questionHistory,
+        options.signal,
       );
       generatedQuestions.push(...result.questions);
       audit(runId, `questions:${index + 1}`, result, candidateBatch.map((item) => item.candidateId));
@@ -697,6 +776,7 @@ export async function ingestRawFile(
     const verifyBatches = batches(verifyTargets, COMPOSE_BATCH_LIMIT);
     const verifyHistory: ChatMessage[] = [{ role: 'system', content: verifierPrompt }];
     for (let index = 0; index < verifyBatches.length; index++) {
+      options.signal?.throwIfAborted();
       const verifyBatch = verifyBatches[index];
       const factIds = new Set(verifyBatch.flatMap((item) => item.factIds));
       const batchFacts = facts.filter((fact) => factIds.has(fact.id));
@@ -714,6 +794,7 @@ export async function ingestRawFile(
         `ingest-verify:${index + 1}`,
         undefined,
         verifyHistory,
+        options.signal,
       );
       verifiedItems.push(...result.items);
       audit(runId, `verify:${index + 1}`, result, verifyBatch);
@@ -721,6 +802,7 @@ export async function ingestRawFile(
     const verified: VerifierOutput = { items: verifiedItems };
     audit(runId, 'verify', verified, { composed, questions });
     const safeItems = enforceWriteGate(composed.items, verified, allowedFactIds);
+    options.signal?.throwIfAborted();
     const rawPage = db.prepare(`SELECT title FROM pages WHERE path=? AND deleted=0`).get(relPath) as any;
     const sourceRef = rawPage ? `[[${rawPage.title}]]` : `原始资料/${document.title}`;
     onProgress({ stage: 'Commit', progress: 94 });
@@ -757,8 +839,27 @@ export async function ingestRawFile(
     return stats;
   } catch (error: any) {
     const message = String(error?.message || error).slice(0, 2000);
-    failSourceVersion(sourceVersion.id, runId, message);
-    setStatus(relPath, document.contentHash, runId, 'failed', message);
+    const cancelled = Boolean(options.signal?.aborted);
+    const attemptError = cancelled ? '用户取消整理' : message;
+    restoreSourceAfterAttempt(
+      sourceVersion.id,
+      previousActiveVersion?.id,
+      runId,
+      relPath,
+      cancelled ? 'cancelled' : 'failed',
+      attemptError,
+    );
+    if (prior?.status === 'completed' && prior.content_hash && prior.run_id) {
+      setStatus(relPath, prior.content_hash, prior.run_id, 'completed', prior.error || null);
+    } else {
+      setStatus(
+        relPath,
+        document.contentHash,
+        runId,
+        cancelled ? 'cancelled' : 'failed',
+        attemptError,
+      );
+    }
     throw error;
   }
 }

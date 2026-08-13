@@ -30,6 +30,7 @@ import { heartbeat } from './lib/events.js';
 import { migrateAiLogsToOperationLog } from './pipeline/indexFile.js';
 import { migrateIngestLedger } from './pipeline/sourceLedger.js';
 import { queueMissingPageSyntheses } from './pipeline/pageSynthesis.js';
+import { reconcilePendingCandidates } from './pipeline/candidateLedger.js';
 
 /** AIWorks 系统区页面不参与整理、不打标签 */
 function cleanupSystemPages() {
@@ -95,6 +96,7 @@ async function main() {
   await scanVault();
   migrateIngestLedger();
   queueMissingPageSyntheses();
+  reconcilePendingCandidates();
   migrateAiLogsToOperationLog();
   cleanupSystemPages();
   startJobRunner();

@@ -299,7 +299,12 @@ function messageText(message: any): string {
 export async function recognizeDocumentImage(
   imageDataUrl: string,
   prompt: string,
-  options: { entry?: ModelEntry; maxTokens?: number; timeoutMs?: number } = {},
+  options: {
+    entry?: ModelEntry;
+    maxTokens?: number;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<string> {
   const entry = options.entry || getEffectiveDocumentModel();
   if (!entry?.apiKey) {
@@ -316,6 +321,7 @@ export async function recognizeDocumentImage(
       model: entry.model,
       operation: 'document',
       tag: 'document-ocr',
+      signal: options.signal,
     },
   );
   const payload = await readJsonResponse(response);
@@ -514,6 +520,7 @@ export async function chatJson<T = any>(
     } catch (e: any) {
       lastErr = `请求失败: ${e.message}`;
       console.warn(`[llm.chatJson:${tag}] 请求失败`, e.message);
+      if (opts?.signal?.aborted) throw e;
       if (attempt < retries) {
         // 截断错误：翻倍 max_tokens 重试，不追加多余消息（问题在长度而非内容）
         if (e.message.includes('截断')) {
@@ -564,6 +571,7 @@ export async function chatJsonSchema<T>(
   let current = messages;
   let lastError = 'schema validation failed';
   for (let attempt = 0; attempt <= attempts; attempt++) {
+    opts?.signal?.throwIfAborted();
     // 保留 retries 给 chatJson 处理截断重试（翻倍 max_tokens）；
     // schema 校验失败的重试由本函数外层循环负责
     const value = await chatJson<unknown>(current, { ...opts, retries: opts?.retries ?? 1, tag });
@@ -702,7 +710,7 @@ export function validateEmbedding(embedding: unknown, dim?: number): asserts emb
 }
 
 /** 批量向量化（可走独立的 embedding 服务商配置） */
-export async function embed(texts: string[]): Promise<number[][]> {
+export async function embed(texts: string[], signal?: AbortSignal): Promise<number[][]> {
   if (texts.length === 0) return [];
   const cfg = getLlmConfig();
   const entry = getActiveEmbedding();
@@ -725,6 +733,7 @@ export async function embed(texts: string[]): Promise<number[][]> {
       model: cfg.embeddingModel,
       operation: 'embedding',
       tag: 'embedding',
+      signal,
     }
   );
   const json = await readJsonResponse(res);

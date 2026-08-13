@@ -304,6 +304,7 @@ test('dynamic reconciliation hides stale reviews once two active source paths ex
       name,
       factIds: ['f1'],
       action: 'review',
+      evidenceEligible: true,
     }, {
       runId,
       sourceVersionId: version.id,
@@ -335,6 +336,172 @@ test('dynamic reconciliation hides stale reviews once two active source paths ex
     'applying',
   );
   assert.ok(db.prepare(`SELECT 1 FROM jobs WHERE kind='candidate_reconcile' AND status='pending'`).get());
+});
+
+test('dynamic reconciliation batches eligible reviews from the same source path', () => {
+  const sourcePath = '原始资料/批量动态.md';
+  const supportPath = '原始资料/批量支撑.md';
+  const primaryVersion = beginSourceVersion(sourcePath, 'batch-primary-hash');
+  const supportVersion = beginSourceVersion(supportPath, 'batch-support-hash');
+  startRun('batch-primary-run', primaryVersion.id, 'batch-primary-hash', sourcePath);
+  startRun('batch-support-run', supportVersion.id, 'batch-support-hash', supportPath);
+  db.prepare(`UPDATE source_versions SET status='active',activated_at=? WHERE id IN (?,?)`)
+    .run(now(), primaryVersion.id, supportVersion.id);
+
+  const candidateIds: string[] = [];
+  const reportIds: number[] = [];
+  for (const [index, name] of ['批量候选甲', '批量候选乙'].entries()) {
+    const factId = `batch-f${index + 1}`;
+    for (const runId of ['batch-primary-run', 'batch-support-run']) {
+      const statement = `${name}的事实`;
+      db.prepare(
+        `INSERT INTO ingest_facts(run_id,fact_id,statement,sources) VALUES(?,?,?,?)`
+      ).run(runId, factId, statement, JSON.stringify([{ chunkId: 'c1', quote: statement }]));
+    }
+    const primary = upsertCandidateOccurrence({
+      ...item(`${name}正文`),
+      name,
+      factIds: [factId],
+      action: 'review',
+      evidenceEligible: true,
+    }, {
+      runId: 'batch-primary-run',
+      sourceVersionId: primaryVersion.id,
+      sourcePath,
+      sourceName: '批量动态.md',
+    });
+    upsertCandidateOccurrence({
+      ...item(`${name}支撑正文`),
+      name,
+      factIds: [factId],
+      action: 'review',
+      evidenceEligible: true,
+    }, {
+      runId: 'batch-support-run',
+      sourceVersionId: supportVersion.id,
+      sourcePath: supportPath,
+      sourceName: '批量支撑.md',
+    });
+    candidateIds.push(primary.id);
+    const payload = JSON.stringify({
+      candidateId: primary.id,
+      name,
+      kind: 'project',
+      source: '批量动态.md',
+      sourcePath,
+      sourceVersionId: primary.source_version_id,
+      runId: primary.run_id,
+      factIds: [factId],
+      content: `${name}旧待审草稿`,
+    });
+    const inserted = db.prepare(
+      `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+       VALUES(?,'pending_review',?,'open',?,?)`
+    ).run(now(), payload, `batch:${name}`, `batch:${name}`);
+    reportIds.push(Number(inserted.lastInsertRowid));
+  }
+
+  assert.equal(reconcilePendingCandidates(), 1);
+  const jobs = db.prepare(
+    `SELECT payload FROM jobs
+     WHERE kind='candidate_reconcile' AND status='pending' AND payload LIKE ?`
+  ).all(`%${sourcePath}%`) as Array<{ payload: string }>;
+  assert.equal(jobs.length, 1);
+  const payload = JSON.parse(jobs[0].payload);
+  assert.equal(payload.path, sourcePath);
+  assert.deepEqual(payload.candidateIds, candidateIds);
+  assert.deepEqual(payload.reportIds, reportIds);
+  assert.deepEqual(
+    db.prepare(`SELECT status FROM reports WHERE id IN (?,?) ORDER BY id`).all(...reportIds),
+    [{ status: 'applying' }, { status: 'applying' }],
+  );
+
+  db.prepare(`UPDATE reports SET status='open' WHERE id=?`).run(reportIds[0]);
+  assert.equal(reconcilePendingCandidates(), 0);
+  assert.equal(
+    db.prepare(
+      `SELECT COUNT(*) n FROM jobs
+       WHERE kind='candidate_reconcile' AND status='pending' AND payload LIKE ?`
+    ).get(`%${sourcePath}%`).n,
+    1,
+  );
+
+  db.prepare(
+    `UPDATE jobs SET status='failed',error='验收失败'
+     WHERE kind='candidate_reconcile' AND payload LIKE ?`
+  ).run(`%${sourcePath}%`);
+  db.prepare(`UPDATE reports SET status='open' WHERE id IN (?,?)`).run(...reportIds);
+  assert.equal(reconcilePendingCandidates(), 0);
+  assert.equal(
+    db.prepare(
+      `SELECT COUNT(*) n FROM jobs
+       WHERE kind='candidate_reconcile' AND payload LIKE ?`
+    ).get(`%${sourcePath}%`).n,
+    1,
+  );
+});
+
+test('dynamic reconciliation keeps ambiguous candidates in manual review', () => {
+  const name = '身份歧义候选';
+  const primaryPath = '原始资料/身份歧义一.md';
+  const supportPath = '原始资料/身份歧义二.md';
+  const createOccurrence = (
+    runId: string,
+    sourcePath: string,
+    hash: string,
+    reason: string,
+  ) => {
+    const version = beginSourceVersion(sourcePath, hash);
+    startRun(runId, version.id, hash, sourcePath);
+    db.prepare(
+      `INSERT INTO ingest_facts(run_id,fact_id,statement,sources) VALUES(?,?,?,?)`
+    ).run(runId, 'f1', `${name}的事实`, JSON.stringify([{ chunkId: 'c1', quote: `${name}的事实` }]));
+    db.prepare(`UPDATE source_versions SET status='active',activated_at=? WHERE id=?`).run(now(), version.id);
+    return upsertCandidateOccurrence({
+      ...item(`${name}正文`),
+      name,
+      factIds: ['f1'],
+      action: 'review',
+      evidenceEligible: true,
+      reason,
+    }, {
+      runId,
+      sourceVersionId: version.id,
+      sourcePath,
+      sourceName: path.posix.basename(sourcePath),
+    });
+  };
+  const primary = createOccurrence(
+    'ambiguous-run-1',
+    primaryPath,
+    'ambiguous-hash-1',
+    '候选身份仍有歧义，需要人工确认',
+  );
+  createOccurrence(
+    'ambiguous-run-2',
+    supportPath,
+    'ambiguous-hash-2',
+    '单一原始资料自动建页至少需要两条有效事实',
+  );
+  db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(?,'pending_review',?,'open','ambiguous:auto','ambiguous:auto')`
+  ).run(now(), JSON.stringify({
+    candidateId: primary.id,
+    name,
+    kind: 'project',
+    sourcePath: primaryPath,
+    sourceVersionId: primary.source_version_id,
+    runId: primary.run_id,
+    factIds: ['f1'],
+    reason: primary.reason,
+  }));
+
+  assert.equal(reconcilePendingCandidates(), 0);
+  assert.equal(
+    db.prepare(`SELECT status FROM reports WHERE issue_key='ambiguous:auto'`).get().status,
+    'open',
+  );
 });
 
 test('forced reingest supersedes stale open candidates and resolves only obsolete open reports', () => {

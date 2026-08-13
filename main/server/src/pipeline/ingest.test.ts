@@ -14,6 +14,8 @@ let setSetting: (key: string, value: string) => void;
 let ingestRawFile: any;
 let coverageFailure: 'missing' | 'duplicate' | null = null;
 let capturedRequests: any[] = [];
+let delayNextMap = false;
+let mapStarted: (() => void) | null = null;
 
 function responseFor(system: string, input: any) {
   if (system.includes('执行 Map')) {
@@ -136,6 +138,11 @@ before(async () => {
     } catch { /* retain plain text */ }
     let content: unknown;
     try {
+      if (delayNextMap && system.includes('执行 Map')) {
+        delayNextMap = false;
+        mapStarted?.();
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
       content = responseFor(system, input);
     } catch (error: any) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -288,4 +295,102 @@ test('missing or duplicate candidate ids fail the run instead of silently droppi
     /候选覆盖不完整/,
   );
   coverageFailure = null;
+});
+
+test('cancelling a rerun restores the previously active source version', async () => {
+  const rawDir = path.join(temp, 'brain', '原始资料');
+  const sourcePath = path.join(rawDir, '取消恢复.md');
+  fs.writeFileSync(sourcePath, '候选71事实A；候选71事实B。', 'utf8');
+  await ingestRawFile('原始资料/取消恢复.md', () => {}, { force: true });
+  const previous = db.prepare(
+    `SELECT sv.id,il.content_hash,il.run_id FROM source_versions sv
+     JOIN ingest_log il ON il.path=sv.path
+     WHERE sv.path='原始资料/取消恢复.md' AND sv.status='active'`
+  ).get();
+
+  fs.writeFileSync(sourcePath, '候选71事实A；候选71事实B；新增内容。', 'utf8');
+  const controller = new AbortController();
+  const started = new Promise<void>((resolve) => { mapStarted = resolve; });
+  delayNextMap = true;
+  const rerun = ingestRawFile(
+    '原始资料/取消恢复.md',
+    () => {},
+    { force: true, signal: controller.signal },
+  );
+  await started;
+  controller.abort();
+  await assert.rejects(rerun);
+  mapStarted = null;
+
+  assert.equal(
+    db.prepare(
+      `SELECT id FROM source_versions
+       WHERE path='原始资料/取消恢复.md' AND status='active'`
+    ).get().id,
+    previous.id,
+  );
+  assert.deepEqual(
+    db.prepare(
+      `SELECT content_hash,run_id,status FROM ingest_log
+       WHERE path='原始资料/取消恢复.md'`
+    ).get(),
+    {
+      content_hash: previous.content_hash,
+      run_id: previous.run_id,
+      status: 'completed',
+    },
+  );
+  assert.equal(
+    db.prepare(
+      `SELECT status FROM ingest_runs
+       WHERE path='原始资料/取消恢复.md' ORDER BY started_at DESC LIMIT 1`
+    ).get().status,
+    'cancelled',
+  );
+});
+
+test('a failed rerun preserves the previously completed ingest state', async () => {
+  const rawDir = path.join(temp, 'brain', '原始资料');
+  const sourcePath = path.join(rawDir, '失败恢复.md');
+  fs.writeFileSync(sourcePath, '候选81事实A；候选81事实B。', 'utf8');
+  await ingestRawFile('原始资料/失败恢复.md', () => {}, { force: true });
+  const previous = db.prepare(
+    `SELECT sv.id,il.content_hash,il.run_id FROM source_versions sv
+     JOIN ingest_log il ON il.path=sv.path
+     WHERE sv.path='原始资料/失败恢复.md' AND sv.status='active'`
+  ).get();
+
+  fs.writeFileSync(sourcePath, '候选81事实A；候选81事实B；失败重整。', 'utf8');
+  coverageFailure = 'missing';
+  await assert.rejects(
+    () => ingestRawFile('原始资料/失败恢复.md', () => {}, { force: true }),
+    /候选覆盖不完整/,
+  );
+  coverageFailure = null;
+
+  assert.equal(
+    db.prepare(
+      `SELECT id FROM source_versions
+       WHERE path='原始资料/失败恢复.md' AND status='active'`
+    ).get().id,
+    previous.id,
+  );
+  assert.deepEqual(
+    db.prepare(
+      `SELECT content_hash,run_id,status FROM ingest_log
+       WHERE path='原始资料/失败恢复.md'`
+    ).get(),
+    {
+      content_hash: previous.content_hash,
+      run_id: previous.run_id,
+      status: 'completed',
+    },
+  );
+  assert.equal(
+    db.prepare(
+      `SELECT status FROM ingest_runs
+       WHERE path='原始资料/失败恢复.md' ORDER BY started_at DESC LIMIT 1`
+    ).get().status,
+    'failed',
+  );
 });
