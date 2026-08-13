@@ -19,6 +19,8 @@ export interface IngestRunRecord {
 
 export interface IngestAuditRecord {
   id: number;
+  run_id?: string;
+  attemptNumber?: number;
   stage: string;
   at: string;
   input_hash?: string | null;
@@ -27,6 +29,8 @@ export interface IngestAuditRecord {
 
 export interface SemanticEventRecord {
   id: number;
+  run_id?: string;
+  attemptNumber?: number;
   stage: string;
   model_tag: string;
   status: string;
@@ -43,6 +47,8 @@ export interface IngestTraceStage {
   description: string;
   status: IngestTraceStatus;
   eventCount: number;
+  attemptCount: number;
+  failureCount: number;
   durationMs: number;
   startedAt: string | null;
   finishedAt: string | null;
@@ -152,6 +158,8 @@ export function buildIngestTrace(
       ...definition,
       status,
       eventCount: auditEvents.length + modelEvents.length,
+      attemptCount: status === 'pending' ? 0 : 1,
+      failureCount: status === 'failed' ? 1 : 0,
       durationMs: modelEvents.reduce((sum, event) => sum + Number(event.duration_ms || 0), 0),
       startedAt: definition.id === 'parse' ? run.started_at : times.startedAt,
       finishedAt: definition.id === 'parse' ? (audit[0]?.at || run.finished_at || null) : times.finishedAt,
@@ -159,18 +167,18 @@ export function buildIngestTrace(
   });
 }
 
-function runWhere(query: { q?: string; status?: string }, params: unknown[]): string {
+function runWhere(query: { q?: string }, params: unknown[]): string {
   const clauses = [
     `NOT EXISTS (SELECT 1 FROM ingest_history_hidden h WHERE h.run_id = r.id)`,
   ];
   const q = query.q?.trim();
   if (q) {
-    clauses.push(`(r.path LIKE ? OR r.id LIKE ?)`);
+    clauses.push(
+      `(r.path LIKE ? OR r.path IN (
+        SELECT matched.path FROM ingest_runs matched WHERE matched.id LIKE ?
+      ))`
+    );
     params.push(`%${q}%`, `%${q}%`);
-  }
-  if (query.status && ['running', 'completed', 'failed', 'cancelled'].includes(query.status)) {
-    clauses.push(`r.status = ?`);
-    params.push(query.status);
   }
   return clauses.join(' AND ');
 }
@@ -205,6 +213,101 @@ function loadTraceInputs(runIds: string[]): {
   return { audit, semantic };
 }
 
+function sortedRuns(runs: IngestRunRecord[]): IngestRunRecord[] {
+  return [...runs].sort((left, right) => right.started_at.localeCompare(left.started_at));
+}
+
+function representativeRun(runs: IngestRunRecord[]): IngestRunRecord {
+  const sorted = sortedRuns(runs);
+  return sorted.find((run) => run.status === 'running')
+    || sorted.find((run) => run.status === 'completed')
+    || sorted[0];
+}
+
+function buildSourceTrace(
+  runs: IngestRunRecord[],
+  auditByRun: Map<string, IngestAuditRecord[]>,
+  semanticByRun: Map<string, SemanticEventRecord[]>,
+): IngestTraceStage[] {
+  const representative = representativeRun(runs);
+  const base = buildIngestTrace(
+    representative,
+    auditByRun.get(representative.id) || [],
+    semanticByRun.get(representative.id) || [],
+  );
+  const traces = new Map(runs.map((run) => [
+    run.id,
+    buildIngestTrace(run, auditByRun.get(run.id) || [], semanticByRun.get(run.id) || []),
+  ]));
+
+  return base.map((stage) => {
+    const auditEvents = runs.flatMap((run) =>
+      (auditByRun.get(run.id) || []).filter((event) => traceStageId(event.stage) === stage.id)
+    );
+    const semanticEvents = runs.flatMap((run) =>
+      (semanticByRun.get(run.id) || []).filter((event) => traceStageId(event.stage) === stage.id)
+    );
+    const reachedRuns = runs.filter((run) =>
+      traces.get(run.id)?.some((item) => item.id === stage.id && item.status !== 'pending')
+    );
+    const failureCount = runs.filter((run) =>
+      traces.get(run.id)?.some((item) => item.id === stage.id && item.status === 'failed')
+    ).length;
+    const times = eventTimes([...auditEvents, ...semanticEvents]);
+    return {
+      ...stage,
+      eventCount: auditEvents.length + semanticEvents.length,
+      attemptCount: reachedRuns.length,
+      failureCount,
+      durationMs: semanticEvents.reduce((sum, event) => sum + Number(event.duration_ms || 0), 0),
+      startedAt: stage.id === 'parse'
+        ? [...runs].sort((left, right) => left.started_at.localeCompare(right.started_at))[0]?.started_at || null
+        : times.startedAt,
+      finishedAt: stage.id === 'parse'
+        ? sortedRuns(runs)[0]?.finished_at || times.finishedAt
+        : times.finishedAt,
+    };
+  });
+}
+
+function sourceSummary(
+  runs: IngestRunRecord[],
+  traces: { audit: Map<string, IngestAuditRecord[]>; semantic: Map<string, SemanticEventRecord[]> },
+) {
+  const sorted = sortedRuns(runs);
+  const latest = sorted[0];
+  const representative = representativeRun(runs);
+  const trace = buildSourceTrace(runs, traces.audit, traces.semantic);
+  const failureCount = runs.filter((run) => ['failed', 'cancelled'].includes(run.status)).length;
+  const completedCount = runs.filter((run) => run.status === 'completed').length;
+  const status = runs.some((run) => run.status === 'running')
+    ? 'running'
+    : completedCount
+      ? 'completed'
+      : latest.status;
+  const currentStage = trace.find((stage) => ['current', 'failed'].includes(stage.status))
+    || [...trace].reverse().find((stage) => stage.status === 'completed')
+    || trace[0];
+  return {
+    ...representative,
+    id: latest.id,
+    status,
+    started_at: latest.started_at,
+    finished_at: latest.finished_at,
+    stats: parseJson(representative.stats, {}),
+    error: status === 'completed' ? null : latest.error,
+    runCount: runs.length,
+    failureCount,
+    completedCount,
+    currentStage,
+    progress: Math.round(
+      (trace.filter((stage) => stage.status === 'completed').length / trace.length) * 100
+    ),
+    representative,
+    trace,
+  };
+}
+
 export function listIngestHistory(query: {
   limit?: number;
   offset?: number;
@@ -213,69 +316,79 @@ export function listIngestHistory(query: {
 } = {}) {
   const limit = Math.max(1, Math.min(100, Number(query.limit) || 40));
   const offset = Math.max(0, Number(query.offset) || 0);
-  const countParams: unknown[] = [];
-  const where = runWhere(query, countParams);
-  const total = (db.prepare(
-    `SELECT COUNT(*) total FROM ingest_runs r WHERE ${where}`
-  ).get(...countParams) as { total: number }).total;
   const rowParams: unknown[] = [];
   const rowWhere = runWhere(query, rowParams);
   const rows = db.prepare(
-    `SELECT r.*,
-       (SELECT COUNT(*) FROM ingest_facts f WHERE f.run_id=r.id) fact_count,
-       (SELECT COUNT(*) FROM page_contributions pc WHERE pc.run_id=r.id) contribution_count,
-       (SELECT COUNT(*) FROM ingest_questions iq WHERE iq.run_id=r.id) question_count
-     FROM ingest_runs r
+    `SELECT r.* FROM ingest_runs r
      WHERE ${rowWhere}
-     ORDER BY CASE WHEN r.status='running' THEN 0 ELSE 1 END, r.started_at DESC
-     LIMIT ? OFFSET ?`
-  ).all(...rowParams, limit, offset) as Array<IngestRunRecord & Record<string, unknown>>;
+     ORDER BY r.started_at DESC`
+  ).all(...rowParams) as IngestRunRecord[];
   const traces = loadTraceInputs(rows.map((row) => row.id));
+  const grouped = new Map<string, IngestRunRecord[]>();
+  for (const row of rows) {
+    const group = grouped.get(row.path) || [];
+    group.push(row);
+    grouped.set(row.path, group);
+  }
+  const summaries = [...grouped.values()]
+    .map((runs) => sourceSummary(runs, traces))
+    .filter((summary) =>
+      !query.status
+      || !['running', 'completed', 'failed', 'cancelled'].includes(query.status)
+      || summary.status === query.status
+    )
+    .sort((left, right) =>
+      (left.status === 'running' ? -1 : 0) - (right.status === 'running' ? -1 : 0)
+      || right.started_at.localeCompare(left.started_at)
+    );
   return {
-    total,
+    total: summaries.length,
     limit,
     offset,
-    runs: rows.map((row) => {
-      const trace = buildIngestTrace(
-        row,
-        traces.audit.get(row.id) || [],
-        traces.semantic.get(row.id) || [],
-      );
-      return {
-        ...row,
-        stats: parseJson(row.stats, {}),
-        currentStage: trace.find((stage) => ['current', 'failed'].includes(stage.status))
-          || [...trace].reverse().find((stage) => stage.status === 'completed')
-          || trace[0],
-        progress: Math.round(
-          (trace.filter((stage) => stage.status === 'completed').length / trace.length) * 100
-        ),
-      };
-    }),
+    runs: summaries.slice(offset, offset + limit).map(({ representative: _representative, trace: _trace, ...summary }) => summary),
   };
 }
 
 export function getIngestHistory(runId: string) {
-  const run = db.prepare(
+  const anchor = db.prepare(
     `SELECT r.* FROM ingest_runs r
      WHERE r.id=? AND NOT EXISTS (
        SELECT 1 FROM ingest_history_hidden h WHERE h.run_id=r.id
      )`
   ).get(runId) as IngestRunRecord | undefined;
-  if (!run) return null;
+  if (!anchor) return null;
+  const runs = db.prepare(
+    `SELECT r.* FROM ingest_runs r
+     WHERE r.path=? AND NOT EXISTS (
+       SELECT 1 FROM ingest_history_hidden h WHERE h.run_id=r.id
+     )
+     ORDER BY r.started_at`
+  ).all(anchor.path) as IngestRunRecord[];
+  const runIds = runs.map((run) => run.id);
+  const placeholders = runIds.map(() => '?').join(',');
+  const attemptNumber = new Map(runs.map((run, index) => [run.id, index + 1]));
   const audit = (db.prepare(
-    `SELECT id,stage,at,input_hash,payload FROM ingest_audit WHERE run_id=? ORDER BY id`
-  ).all(runId) as IngestAuditRecord[]).map((event) => ({
+    `SELECT run_id,id,stage,at,input_hash,payload FROM ingest_audit
+     WHERE run_id IN (${placeholders}) ORDER BY at,id`
+  ).all(...runIds) as IngestAuditRecord[]).map((event) => ({
     ...event,
+    attemptNumber: attemptNumber.get(event.run_id || '') || 1,
     payload: parseJson(event.payload, event.payload),
   }));
-  const semanticEvents = db.prepare(
-    `SELECT id,stage,model_tag,status,output,error,duration_ms,created_at
-     FROM semantic_events WHERE scope='ingest' AND ref_id=? ORDER BY id`
-  ).all(runId) as SemanticEventRecord[];
+  const semanticEvents = (db.prepare(
+    `SELECT ref_id run_id,id,stage,model_tag,status,output,error,duration_ms,created_at
+     FROM semantic_events WHERE scope='ingest' AND ref_id IN (${placeholders})
+     ORDER BY created_at,id`
+  ).all(...runIds) as SemanticEventRecord[]).map((event) => ({
+    ...event,
+    attemptNumber: attemptNumber.get(event.run_id || '') || 1,
+  }));
+  const traceInputs = loadTraceInputs(runIds);
+  const summary = sourceSummary(runs, traceInputs);
+  const representative = summary.representative;
   const facts = (db.prepare(
     `SELECT fact_id,statement,sources FROM ingest_facts WHERE run_id=? ORDER BY fact_id`
-  ).all(runId) as Array<{ fact_id: string; statement: string; sources: string }>).map((fact) => ({
+  ).all(representative.id) as Array<{ fact_id: string; statement: string; sources: string }>).map((fact) => ({
     ...fact,
     sources: parseJson(fact.sources, []),
   }));
@@ -283,25 +396,45 @@ export function getIngestHistory(runId: string) {
     `SELECT pc.page_id,pc.summary,pc.confidence,pc.active,pc.created_at,p.title,p.path
      FROM page_contributions pc LEFT JOIN pages p ON p.id=pc.page_id
      WHERE pc.run_id=? ORDER BY pc.created_at`
-  ).all(runId);
+  ).all(representative.id);
   const questions = db.prepare(
     `SELECT id,question,status,created_at,updated_at FROM ingest_questions
      WHERE run_id=? ORDER BY created_at`
-  ).all(runId);
-  const sourceVersion = run.source_version_id
+  ).all(representative.id);
+  const sourceVersion = representative.source_version_id
     ? db.prepare(
       `SELECT id,path,status,created_at,activated_at,error FROM source_versions WHERE id=?`
-    ).get(run.source_version_id)
+    ).get(representative.source_version_id)
     : null;
+  const attempts = runs.map((run, index) => {
+    const trace = buildIngestTrace(
+      run,
+      traceInputs.audit.get(run.id) || [],
+      traceInputs.semantic.get(run.id) || [],
+    );
+    return {
+      ...run,
+      attemptNumber: index + 1,
+      stats: parseJson(run.stats, {}),
+      currentStage: trace.find((stage) => ['current', 'failed'].includes(stage.status))
+        || [...trace].reverse().find((stage) => stage.status === 'completed')
+        || trace[0],
+      progress: Math.round(
+        (trace.filter((stage) => stage.status === 'completed').length / trace.length) * 100
+      ),
+    };
+  });
+  const { representative: _representative, trace, ...runSummary } = summary;
   return {
-    run: { ...run, stats: parseJson(run.stats, {}) },
+    run: runSummary,
+    attempts,
     sourceVersion,
     facts,
     contributions,
     questions,
     audit,
     semanticEvents,
-    trace: buildIngestTrace(run, audit, semanticEvents),
+    trace,
   };
 }
 

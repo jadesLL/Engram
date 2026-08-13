@@ -44,13 +44,18 @@ after(() => {
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
-function insertRun(id: string, status: string, pathName = `原始资料/${id}.md`) {
+function insertRun(
+  id: string,
+  status: string,
+  pathName = `原始资料/${id}.md`,
+  startedAt = '2026-08-13T01:00:00.000Z',
+) {
   db.prepare(
     `INSERT INTO ingest_runs(
        id,path,content_hash,status,commit_status,derived_status,started_at,finished_at,stats
-     ) VALUES(?,?,?,?,'committed','completed','2026-08-13T01:00:00.000Z',
+     ) VALUES(?,?,?,?,'committed','completed',?,
        '2026-08-13T01:01:00.000Z','{"created":1,"merged":2}')`
-  ).run(id, pathName, `hash-${id}`, status);
+  ).run(id, pathName, `hash-${id}`, status, startedAt);
 }
 
 test('trace exposes the complete refinement pipeline and locates a failed stage', () => {
@@ -147,4 +152,50 @@ test('completed legacy runs infer missing stage audits as completed', () => {
 
   assert.equal(result.runs[0].progress, 100);
   assert.equal(result.runs[0].currentStage.label, 'Commit');
+});
+
+test('multiple runs for one source merge into one trajectory with failed attempts on the stage', () => {
+  const sourcePath = '原始资料/同一资料.md';
+  insertRun('attempt-1', 'failed', sourcePath, '2026-08-13T01:00:00.000Z');
+  insertRun('attempt-2', 'completed', sourcePath, '2026-08-13T02:00:00.000Z');
+  db.prepare(
+    `INSERT INTO ingest_audit(run_id,stage,at,payload)
+     VALUES('attempt-1','map_failed:c0001','2026-08-13T01:00:10.000Z','{"error":"模型失败"}')`
+  ).run();
+  db.prepare(
+    `INSERT INTO semantic_events(
+       scope,ref_id,stage,model_tag,input_hash,status,error,duration_ms,created_at
+     ) VALUES(
+       'ingest','attempt-1','ingest-map:c0001','ingest-map','hash','failed','模型失败',200,
+       '2026-08-13T01:00:09.000Z'
+     )`
+  ).run();
+  db.prepare(
+    `INSERT INTO ingest_audit(run_id,stage,at,payload)
+     VALUES('attempt-2','commit','2026-08-13T02:01:00.000Z','{"created":1}')`
+  ).run();
+
+  const list = listIngestHistory();
+
+  assert.equal(list.total, 1);
+  assert.equal(list.runs[0].id, 'attempt-2');
+  assert.equal(list.runs[0].status, 'completed');
+  assert.equal(list.runs[0].runCount, 2);
+  assert.equal(list.runs[0].failureCount, 1);
+  assert.equal(list.runs[0].progress, 100);
+  assert.equal(listIngestHistory({ q: 'attempt-1' }).runs[0].runCount, 2);
+
+  const detail = getIngestHistory('attempt-2');
+  if (!detail) throw new Error('expected grouped source detail');
+  assert.equal(detail.attempts.length, 2);
+  const mapStage = detail.trace.find((stage: any) => stage.id === 'map');
+  if (!mapStage) throw new Error('expected map stage');
+  const failedAudit = detail.audit.find((event: any) => event.stage.startsWith('map_failed'));
+  const commitAudit = detail.audit.find((event: any) => event.stage === 'commit');
+  if (!failedAudit || !commitAudit) throw new Error('expected merged attempt audit events');
+  assert.equal(mapStage.status, 'completed');
+  assert.equal(mapStage.attemptCount, 2);
+  assert.equal(mapStage.failureCount, 1);
+  assert.equal(failedAudit.attemptNumber, 1);
+  assert.equal(commitAudit.attemptNumber, 2);
 });

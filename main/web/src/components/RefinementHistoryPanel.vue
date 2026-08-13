@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <h3>提炼轨迹</h3>
-        <p>按笔记回看每次提炼的完整流程、阶段输出和失败位置。</p>
+        <p>每份原始资料保留一条完整轨迹，多次提炼与失败尝试合并到对应阶段。</p>
       </div>
       <div class="panel-actions">
         <button class="btn" type="button" :disabled="loading" @click="refresh">
@@ -49,11 +49,14 @@
           :class="{ active: selectedRunId === run.id }"
           @click="selectRun(run.id)"
         >
-          <span class="run-state" :class="run.status">{{ statusLabel(run.status) }}</span>
+          <span class="run-badges">
+            <span class="run-state" :class="run.status">{{ statusLabel(run.status) }}</span>
+            <span v-if="run.failureCount" class="run-failure-count">{{ run.failureCount }} 次失败</span>
+          </span>
           <strong :title="run.path">{{ noteName(run.path) }}</strong>
           <span class="run-path" :title="run.path">{{ run.path }}</span>
           <span class="run-meta">
-            <time>{{ formatDate(run.started_at) }}</time>
+            <time>{{ formatDate(run.started_at) }} · {{ run.runCount }} 次提炼</time>
             <span>{{ stageDisplayName(run.currentStage) }}</span>
             <span>{{ run.progress }}%</span>
           </span>
@@ -80,17 +83,24 @@
               <div class="trajectory-title-line">
                 <h4>{{ noteName(detail.run.path) }}</h4>
                 <span class="run-state" :class="detail.run.status">{{ statusLabel(detail.run.status) }}</span>
+                <span v-if="detail.run.failureCount" class="run-failure-count">
+                  {{ detail.run.failureCount }} 次失败
+                </span>
               </div>
               <p :title="detail.run.path">{{ detail.run.path }}</p>
             </div>
             <dl class="trajectory-summary">
               <div>
-                <dt>开始</dt>
+                <dt>最近提炼</dt>
                 <dd>{{ formatDate(detail.run.started_at) }}</dd>
               </div>
               <div>
-                <dt>耗时</dt>
-                <dd>{{ runDuration(detail.run) }}</dd>
+                <dt>提炼次数</dt>
+                <dd>{{ detail.run.runCount }}</dd>
+              </div>
+              <div>
+                <dt>失败次数</dt>
+                <dd>{{ detail.run.failureCount }}</dd>
               </div>
               <div>
                 <dt>事实</dt>
@@ -125,7 +135,10 @@
                     <span v-else>{{ index + 1 }}</span>
                   </span>
                   <strong>{{ stageDisplayName(stage) }}</strong>
-                  <small>{{ stageStatusLabel(stage.status) }}</small>
+                  <small>
+                    {{ stageStatusLabel(stage.status) }}
+                    <template v-if="stage.failureCount"> · {{ stage.failureCount }} 次失败</template>
+                  </small>
                 </button>
               </li>
             </ol>
@@ -146,6 +159,14 @@
                   <dd>{{ selectedStageEvents.length }}</dd>
                 </div>
                 <div>
+                  <dt>到达次数</dt>
+                  <dd>{{ selectedStage.attemptCount }}</dd>
+                </div>
+                <div>
+                  <dt>失败次数</dt>
+                  <dd>{{ selectedStage.failureCount }}</dd>
+                </div>
+                <div>
                   <dt>模型耗时</dt>
                   <dd>{{ formatDuration(selectedStage.durationMs) }}</dd>
                 </div>
@@ -154,8 +175,8 @@
                   <dd>{{ selectedStage.startedAt ? formatDate(selectedStage.startedAt) : '无记录' }}</dd>
                 </div>
               </dl>
-              <p v-if="selectedStage.status === 'failed' && detail.run.error" class="stage-failure">
-                {{ detail.run.error }}
+              <p v-if="selectedStage.failureCount" class="stage-failure">
+                该阶段共有 {{ selectedStage.failureCount }} 次失败尝试，失败详情已合并到右侧事件列表。
               </p>
             </div>
 
@@ -163,12 +184,14 @@
               <div class="event-list" role="list" aria-label="阶段事件">
                 <button
                   v-for="event in selectedStageEvents"
-                  :key="`${event.kind}-${event.id}`"
+                  :key="eventKey(event)"
                   type="button"
-                  :class="{ active: selectedEventKey === `${event.kind}-${event.id}` }"
-                  @click="selectedEventKey = `${event.kind}-${event.id}`"
+                  :class="{ active: selectedEventKey === eventKey(event) }"
+                  @click="selectEvent(event)"
                 >
-                  <span class="event-kind">{{ event.kind === 'audit' ? '审计' : '模型' }}</span>
+                  <span class="event-kind">
+                    第 {{ event.attemptNumber || 1 }} 次 · {{ event.kind === 'audit' ? '审计' : '模型' }}
+                  </span>
                   <strong>{{ event.stage }}</strong>
                   <small>
                     {{ formatDate(event.at || event.created_at) }}
@@ -185,15 +208,65 @@
                     <span>{{ selectedEvent.kind === 'audit' ? '阶段输出' : '模型调用' }}</span>
                     <strong>{{ selectedEvent.stage }}</strong>
                   </div>
-                  <span v-if="selectedEvent.model_tag">{{ selectedEvent.model_tag }}</span>
+                  <div class="output-head-actions">
+                    <span v-if="selectedEvent.model_tag">{{ selectedEvent.model_tag }}</span>
+                    <div class="output-mode" role="tablist" aria-label="输出查看方式">
+                      <button
+                        type="button"
+                        role="tab"
+                        :aria-selected="outputMode === 'summary'"
+                        :class="{ active: outputMode === 'summary' }"
+                        @click="outputMode = 'summary'"
+                      >
+                        摘要
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        :aria-selected="outputMode === 'raw'"
+                        :class="{ active: outputMode === 'raw' }"
+                        @click="outputMode = 'raw'"
+                      >
+                        原始数据
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <pre v-if="selectedEvent">{{ eventContent(selectedEvent) }}</pre>
+                <div
+                  v-if="selectedEvent && outputMode === 'summary' && selectedEventSummary"
+                  class="human-output"
+                  :class="selectedEventSummary.tone"
+                >
+                  <div class="human-output-title">
+                    <span class="summary-mark" aria-hidden="true">
+                      <Icon
+                        :name="selectedEventSummary.tone === 'danger' ? 'x' : 'check'"
+                        :size="13"
+                        :stroke-width="2.2"
+                      />
+                    </span>
+                    <div>
+                      <strong>{{ selectedEventSummary.title }}</strong>
+                      <p>{{ selectedEventSummary.description }}</p>
+                    </div>
+                  </div>
+                  <dl v-if="selectedEventSummary.metrics.length" class="summary-metrics">
+                    <div v-for="metric in selectedEventSummary.metrics" :key="metric.label">
+                      <dt>{{ metric.label }}</dt>
+                      <dd>{{ metric.value }}</dd>
+                    </div>
+                  </dl>
+                  <ul v-if="selectedEventSummary.bullets.length" class="summary-bullets">
+                    <li v-for="item in selectedEventSummary.bullets" :key="item">{{ item }}</li>
+                  </ul>
+                </div>
+                <pre v-else-if="selectedEvent && outputMode === 'raw'">{{ eventContent(selectedEvent) }}</pre>
                 <div v-else class="event-empty">选择一条阶段事件查看输出。</div>
               </div>
             </div>
           </section>
         </template>
-        <div v-else class="detail-empty">选择一条提炼记录查看完整轨迹。</div>
+        <div v-else class="detail-empty">选择一份原始资料查看完整轨迹。</div>
       </main>
     </div>
   </div>
@@ -214,6 +287,8 @@ interface TraceStage {
   description: string;
   status: StageStatus;
   eventCount: number;
+  attemptCount: number;
+  failureCount: number;
   durationMs: number;
   startedAt: string | null;
   finishedAt: string | null;
@@ -229,10 +304,15 @@ interface HistoryRun {
   error: string | null;
   currentStage: TraceStage;
   progress: number;
+  runCount: number;
+  failureCount: number;
+  completedCount: number;
 }
 
 interface TraceEvent {
   id: number;
+  run_id?: string;
+  attemptNumber?: number;
   kind: 'audit' | 'semantic';
   stage: string;
   at?: string;
@@ -246,6 +326,14 @@ interface TraceEvent {
   duration_ms?: number;
 }
 
+interface HumanSummary {
+  title: string;
+  description: string;
+  tone: 'success' | 'neutral' | 'danger';
+  metrics: Array<{ label: string; value: string }>;
+  bullets: string[];
+}
+
 interface HistoryDetail {
   run: HistoryRun & {
     content_hash: string;
@@ -254,6 +342,7 @@ interface HistoryDetail {
     llm_prompt_tokens?: number;
   };
   sourceVersion: Record<string, unknown> | null;
+  attempts: Array<HistoryRun & { attemptNumber: number }>;
   facts: Array<Record<string, unknown>>;
   contributions: Array<Record<string, unknown>>;
   questions: Array<Record<string, unknown>>;
@@ -271,6 +360,7 @@ const selectedRunId = ref('');
 const detail = ref<HistoryDetail | null>(null);
 const selectedStageId = ref('');
 const selectedEventKey = ref('');
+const outputMode = ref<'summary' | 'raw'>('summary');
 const loading = ref(false);
 const loadingMore = ref(false);
 const detailLoading = ref(false);
@@ -306,13 +396,20 @@ const selectedStageEvents = computed<TraceEvent[]>(() => {
   );
 });
 const selectedEvent = computed(() =>
-  selectedStageEvents.value.find((event) => `${event.kind}-${event.id}` === selectedEventKey.value) || null
+  selectedStageEvents.value.find((event) => eventKey(event) === selectedEventKey.value) || null
+);
+const selectedEventSummary = computed(() =>
+  selectedEvent.value ? summarizeEvent(selectedEvent.value, selectedStage.value) : null
 );
 
 function eventStageId(stage: string): string {
   const base = stage.replace(/^ingest-/, '').split(':')[0];
   if (['map', 'map_split', 'map_failed'].includes(base)) return 'map';
   return base;
+}
+
+function eventKey(event: TraceEvent): string {
+  return `${event.kind}-${event.run_id || 'run'}-${event.id}`;
 }
 
 function noteName(path: string): string {
@@ -372,6 +469,8 @@ function runDuration(run: HistoryRun): string {
 
 function eventContent(event: TraceEvent): string {
   const content: Record<string, unknown> = {};
+  if (event.run_id) content.runId = event.run_id;
+  if (event.attemptNumber) content.attemptNumber = event.attemptNumber;
   if (event.status) content.status = event.status;
   if (event.input_hash) content.inputHash = event.input_hash;
   if (event.error) content.error = event.error;
@@ -386,19 +485,267 @@ function eventContent(event: TraceEvent): string {
   return JSON.stringify(content, null, 2);
 }
 
+function objectValue(value: unknown): Record<string, any> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, any>
+    : null;
+}
+
+function parsedOutput(event: TraceEvent): unknown {
+  if (event.payload !== undefined) return event.payload;
+  if (!event.output) return null;
+  try {
+    return JSON.parse(event.output);
+  } catch {
+    return event.output;
+  }
+}
+
+function itemList(value: unknown): Array<Record<string, any>> {
+  if (Array.isArray(value)) return value.filter((item) => item && typeof item === 'object');
+  const record = objectValue(value);
+  if (Array.isArray(record?.items)) return record.items.filter((item: unknown) => item && typeof item === 'object');
+  if (Array.isArray(record?.candidates)) return record.candidates.filter((item: unknown) => item && typeof item === 'object');
+  return [];
+}
+
+function shortText(value: unknown, limit = 130): string {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+function uniqueNames(items: Array<Record<string, any>>): string[] {
+  return [...new Set(items.map((item) => item.name || item.title || item.target).filter(Boolean))]
+    .slice(0, 6);
+}
+
+function itemBullets(items: Array<Record<string, any>>): string[] {
+  return items.slice(0, 3).map((item) => {
+    const name = item.name || item.title || item.target || '未命名项目';
+    const copy = item.summary || item.reason || item.statement || item.content;
+    return copy ? `${name}：${shortText(copy)}` : String(name);
+  });
+}
+
+function actionCounts(items: Array<Record<string, any>>): Record<string, number> {
+  return items.reduce<Record<string, number>>((counts, item) => {
+    const action = String(item.action || 'unknown');
+    counts[action] = (counts[action] || 0) + 1;
+    return counts;
+  }, {});
+}
+
+function humanError(error: string): string {
+  if (/401|authentication|api key|密钥/i.test(error)) {
+    return '模型服务拒绝了请求，通常表示 API 密钥无效、已过期或没有访问权限。';
+  }
+  if (/parse|解析|json|截断|max_tokens/i.test(error)) {
+    return '模型返回的内容不完整或格式无法解析，本阶段未能形成有效结果。';
+  }
+  if (/cancel|取消|aborted/i.test(error)) return '本次提炼在该阶段被取消。';
+  if (/timeout|network|connect|连接|网络/i.test(error)) {
+    return '模型服务暂时无法连接或响应超时，本阶段没有完成。';
+  }
+  return `该阶段执行失败：${shortText(error, 180)}`;
+}
+
+function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSummary {
+  const data = parsedOutput(event);
+  const record = objectValue(data);
+  const items = itemList(data);
+  const stageName = stage ? stageDisplayName(stage) : event.stage;
+  const metrics: HumanSummary['metrics'] = [];
+  const bullets: string[] = [];
+  const error = event.error || String(record?.error || '');
+
+  if ((detail.value?.run.runCount || 0) > 1) {
+    metrics.push({ label: '提炼尝试', value: `第 ${event.attemptNumber || 1} 次` });
+  }
+
+  if (error || event.status === 'failed' || event.stage.startsWith('map_failed')) {
+    if (event.duration_ms) metrics.push({ label: '执行耗时', value: formatDuration(event.duration_ms) });
+    metrics.push({ label: '记录类型', value: event.kind === 'audit' ? '阶段审计' : '模型调用' });
+    return {
+      title: `${stageName}未完成`,
+      description: humanError(error || '未知错误'),
+      tone: 'danger',
+      metrics,
+      bullets: ['后续阶段未继续执行，原始错误信息已保留。'],
+    };
+  }
+
+  if (event.kind === 'semantic') {
+    metrics.push({ label: '调用状态', value: event.status === 'succeeded' ? '成功' : event.status || '已完成' });
+    if (event.duration_ms) metrics.push({ label: '执行耗时', value: formatDuration(event.duration_ms) });
+  }
+
+  if (selectedStageId.value === 'map') {
+    const factCount = items.reduce((sum, item) => sum + (Array.isArray(item.facts) ? item.facts.length : 0), 0);
+    metrics.push({ label: '候选对象', value: String(items.length) });
+    metrics.push({ label: '来源事实', value: String(factCount) });
+    const names = uniqueNames(items);
+    if (names.length) bullets.push(`识别对象：${names.join('、')}`);
+    bullets.push(...itemBullets(items));
+    return {
+      title: `识别出 ${items.length} 个候选对象`,
+      description: factCount ? `这些候选共关联 ${factCount} 条来源事实。` : '本次输出没有形成可用事实。',
+      tone: 'success',
+      metrics,
+      bullets,
+    };
+  }
+
+  if (selectedStageId.value === 'normalize') {
+    const inputCount = Number(record?.inputCount ?? items.length);
+    const outputCount = Number(record?.outputCount ?? items.length);
+    const mergeCount = Array.isArray(record?.merges) ? record.merges.length : Math.max(0, inputCount - outputCount);
+    metrics.push({ label: '整理前', value: String(inputCount) });
+    metrics.push({ label: '整理后', value: String(outputCount) });
+    metrics.push({ label: '合并重复项', value: String(mergeCount) });
+    return {
+      title: `候选对象整理为 ${outputCount} 项`,
+      description: mergeCount ? `发现并合并了 ${mergeCount} 组重复或近似对象。` : '未发现需要合并的重复对象。',
+      tone: 'success',
+      metrics,
+      bullets,
+    };
+  }
+
+  if (selectedStageId.value === 'retrieve') {
+    const related = String(record?.related || '');
+    const lines = related.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('- '));
+    const names = lines.map((line) => line.slice(2).split('（')[0]).filter(Boolean);
+    metrics.push({ label: '关联结果', value: String(lines.length) });
+    if (names.length) bullets.push(`关联页面：${[...new Set(names)].slice(0, 8).join('、')}`);
+    return {
+      title: `检索到 ${lines.length} 条相关知识`,
+      description: lines.length ? '这些内容将用于判断新建、合并与冲突关系。' : '知识库中没有找到可用于辅助判断的相关内容。',
+      tone: lines.length ? 'success' : 'neutral',
+      metrics,
+      bullets,
+    };
+  }
+
+  if (selectedStageId.value === 'plan') {
+    const counts = actionCounts(items);
+    const labels: Record<string, string> = {
+      create: '新建',
+      merge: '合并',
+      review: '人工审核',
+      skip: '跳过',
+      unknown: '未分类',
+    };
+    for (const [action, count] of Object.entries(counts)) {
+      metrics.push({ label: labels[action] || action, value: String(count) });
+    }
+    bullets.push(...itemBullets(items));
+    return {
+      title: `已为 ${items.length} 个对象制定处理计划`,
+      description: '计划明确了每个对象应新建、合并、审核还是跳过。',
+      tone: 'success',
+      metrics,
+      bullets,
+    };
+  }
+
+  if (selectedStageId.value === 'critic' || selectedStageId.value === 'critic_review') {
+    const issues = Array.isArray(record?.issues) ? record.issues : [];
+    metrics.push({ label: '审查对象', value: String(items.length) });
+    metrics.push({ label: '发现问题', value: String(issues.length) });
+    if (record?.skippedSecondPass) metrics.push({ label: '二次审查', value: '无需执行' });
+    bullets.push(...issues.slice(0, 4).map((issue: unknown) => shortText(issue)));
+    return {
+      title: record?.approved === false ? '审查发现仍需修订的问题' : '审查通过',
+      description: issues.length ? `共发现 ${issues.length} 个需要处理的问题。` : '计划覆盖度、证据和冲突检查均通过。',
+      tone: record?.approved === false ? 'neutral' : 'success',
+      metrics,
+      bullets,
+    };
+  }
+
+  if (selectedStageId.value === 'compose') {
+    const charCount = items.reduce((sum, item) => sum + String(item.content || '').length, 0);
+    metrics.push({ label: '生成对象', value: String(items.length) });
+    metrics.push({ label: '正文字符', value: String(charCount) });
+    bullets.push(...itemBullets(items));
+    return {
+      title: `已生成 ${items.length} 份页面内容`,
+      description: '正文由已核实事实组织生成，等待后续事实验证。',
+      tone: 'success',
+      metrics,
+      bullets,
+    };
+  }
+
+  if (selectedStageId.value === 'questions') {
+    const questions = Array.isArray(record?.questions) ? record.questions : [];
+    metrics.push({ label: '待确认问题', value: String(questions.length) });
+    bullets.push(...questions.slice(0, 4).map((question: any) => shortText(question.question || question)));
+    return {
+      title: questions.length ? `发现 ${questions.length} 个需要确认的问题` : '没有需要用户补充的问题',
+      description: questions.length ? '这些问题需要补充信息后再继续处理。' : '当前事实足以继续验证和提交。',
+      tone: questions.length ? 'neutral' : 'success',
+      metrics,
+      bullets,
+    };
+  }
+
+  if (selectedStageId.value === 'verify') {
+    const passed = items.filter((item) => item.pass === true).length;
+    const unsupported = items.reduce((sum, item) => sum + (Array.isArray(item.unsupported) ? item.unsupported.length : 0), 0);
+    const conflicts = items.reduce((sum, item) => sum + (Array.isArray(item.conflicts) ? item.conflicts.length : 0), 0);
+    metrics.push({ label: '验证对象', value: String(items.length) });
+    metrics.push({ label: '通过', value: String(passed) });
+    metrics.push({ label: '无依据内容', value: String(unsupported) });
+    metrics.push({ label: '冲突', value: String(conflicts) });
+    return {
+      title: passed === items.length ? '全部内容通过事实验证' : `${passed}/${items.length} 个对象通过验证`,
+      description: unsupported || conflicts ? '存在无依据内容或事实冲突，提交时将进入保护处理。' : '生成内容均能由来源事实支持。',
+      tone: unsupported || conflicts ? 'neutral' : 'success',
+      metrics,
+      bullets,
+    };
+  }
+
+  if (selectedStageId.value === 'commit') {
+    const created = Number(record?.created || 0);
+    const merged = Number(record?.merged || 0);
+    const skipped = Number(record?.skipped || 0);
+    const pending = Number(record?.pending || 0);
+    metrics.push({ label: '新建页面', value: String(created) });
+    metrics.push({ label: '合并页面', value: String(merged) });
+    metrics.push({ label: '跳过', value: String(skipped) });
+    metrics.push({ label: '待审核', value: String(pending) });
+    return {
+      title: `已落地 ${created + merged} 项知识更新`,
+      description: pending ? `另有 ${pending} 项因证据或歧义问题进入待审核。` : '本次提炼结果已全部完成提交。',
+      tone: 'success',
+      metrics,
+      bullets,
+    };
+  }
+
+  const keys = record ? Object.keys(record) : [];
+  if (keys.length) metrics.push({ label: '输出字段', value: String(keys.length) });
+  return {
+    title: `${stageName}已生成阶段结果`,
+    description: '该阶段已完成并保留结构化输出。',
+    tone: 'success',
+    metrics,
+    bullets,
+  };
+}
+
+function selectEvent(event: TraceEvent) {
+  selectedEventKey.value = eventKey(event);
+  outputMode.value = 'summary';
+}
+
 function selectStage(stageId: string) {
   selectedStageId.value = stageId;
-  const first = [
-    ...(detail.value?.audit || []).filter((event) => eventStageId(event.stage) === stageId).map((event) => ({
-      ...event,
-      kind: 'audit' as const,
-    })),
-    ...(detail.value?.semanticEvents || []).filter((event) => eventStageId(event.stage) === stageId).map((event) => ({
-      ...event,
-      kind: 'semantic' as const,
-    })),
-  ][0];
-  selectedEventKey.value = first ? `${first.kind}-${first.id}` : '';
+  const latest = selectedStageEvents.value[selectedStageEvents.value.length - 1];
+  selectedEventKey.value = latest ? eventKey(latest) : '';
+  outputMode.value = 'summary';
 }
 
 async function loadDetail(runId: string) {
@@ -672,6 +1019,25 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.run-badges {
+  grid-row: 1;
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.run-failure-count {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg));
+  color: var(--warn);
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .run-state.running {
   background: color-mix(in srgb, var(--accent) 12%, var(--bg));
   color: var(--accent);
@@ -768,7 +1134,7 @@ onUnmounted(() => {
 
 .trajectory-summary {
   display: grid;
-  grid-template-columns: repeat(4, auto);
+  grid-template-columns: repeat(5, auto);
   gap: 18px;
   margin: 0;
 }
@@ -880,7 +1246,8 @@ onUnmounted(() => {
 .flow-step button small {
   color: var(--text-faint);
   font-size: 9px;
-  white-space: nowrap;
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .flow-step.completed .step-index {
@@ -1019,6 +1386,37 @@ onUnmounted(() => {
   border-bottom: 1px solid var(--border);
 }
 
+.output-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.output-mode {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.output-mode button {
+  min-width: 58px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.output-mode button.active {
+  background: var(--bg-tertiary);
+  color: var(--text);
+  font-weight: 600;
+}
+
 .event-output-head div {
   min-width: 0;
 }
@@ -1051,6 +1449,110 @@ onUnmounted(() => {
   overflow-wrap: anywhere;
 }
 
+.human-output {
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.human-output-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.summary-mark {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--success) 12%, var(--bg));
+  color: var(--success);
+}
+
+.human-output.danger .summary-mark {
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg));
+  color: var(--danger);
+}
+
+.human-output.neutral .summary-mark {
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg));
+  color: var(--warn);
+}
+
+.human-output-title strong {
+  font-size: 13px;
+}
+
+.human-output-title p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 0;
+  margin: 16px 0 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.summary-metrics div {
+  min-width: 0;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border);
+}
+
+.summary-metrics div:last-child {
+  border-right: 0;
+}
+
+.summary-metrics dt {
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.summary-metrics dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.summary-bullets {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0 0;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.55;
+  list-style: none;
+}
+
+.summary-bullets li {
+  position: relative;
+  padding-left: 12px;
+}
+
+.summary-bullets li::before {
+  position: absolute;
+  top: 0.65em;
+  left: 1px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  content: "";
+}
+
 .event-empty {
   padding: 28px 14px;
   color: var(--text-faint);
@@ -1068,7 +1570,8 @@ onUnmounted(() => {
   }
 
   .trajectory-summary {
-    justify-content: start;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    justify-content: stretch;
   }
 
   .stage-inspector {
@@ -1137,6 +1640,16 @@ onUnmounted(() => {
 
   .event-list {
     max-height: 210px;
+  }
+
+  .event-output-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .output-head-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 
