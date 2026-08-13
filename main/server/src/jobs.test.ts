@@ -11,13 +11,16 @@ let db: any;
 let now: () => string;
 let cancelJob: (jobId: number) => { status: string };
 let retryJob: (jobId: number) => { status: string };
+let withJobsStopped: <T>(
+  action: () => Promise<T>,
+) => Promise<{ result: T; cancelledJobs: number }>;
 
 before(async () => {
   const dbModule = await import('./lib/db.js');
   db = dbModule.db;
   now = dbModule.now;
   dbModule.migrate();
-  ({ cancelJob, retryJob } = await import('./jobs.js'));
+  ({ cancelJob, retryJob, withJobsStopped } = await import('./jobs.js'));
 });
 
 after(() => {
@@ -62,5 +65,39 @@ test('cancelling a pending candidate reconciliation releases claimed reports', (
   assert.equal(
     db.prepare(`SELECT status FROM reports WHERE id=?`).get(reportId).status,
     'applying',
+  );
+});
+
+test('maintenance stops active jobs and jobs queued during cleanup', async () => {
+  db.prepare(`DELETE FROM jobs`).run();
+  const pending = db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at)
+     VALUES('metagen','{}','pending',?,?)`
+  ).run(now(), now());
+  const running = db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at,run_token)
+     VALUES('mentions','{}','running',?,?,'detached-run')`
+  ).run(now(), now());
+
+  const maintenance = await withJobsStopped(async () => {
+    const queued = db.prepare(
+      `INSERT INTO jobs(kind,payload,status,created_at,updated_at)
+       VALUES('rebuild','{}','pending',?,?)`
+    ).run(now(), now());
+    return Number(queued.lastInsertRowid);
+  });
+
+  assert.equal(maintenance.cancelledJobs, 3);
+  assert.equal(
+    db.prepare(`SELECT status FROM jobs WHERE id=?`).get(pending.lastInsertRowid).status,
+    'cancelled',
+  );
+  assert.equal(
+    db.prepare(`SELECT status FROM jobs WHERE id=?`).get(running.lastInsertRowid).status,
+    'cancelled',
+  );
+  assert.equal(
+    db.prepare(`SELECT status FROM jobs WHERE id=?`).get(maintenance.result).status,
+    'cancelled',
   );
 });

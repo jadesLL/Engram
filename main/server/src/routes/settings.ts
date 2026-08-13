@@ -14,6 +14,7 @@ import { rebuildAll } from '../pipeline/indexer.js';
 import { discoverModels } from '../lib/modelDiscovery.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
 import { clearLlmUsage, summarizeLlmUsage } from '../lib/llmUsage.js';
+import { withJobsStopped } from '../jobs.js';
 
 const PUBLIC_SETTINGS = [
   'chat_models', 'active_chat_model',
@@ -51,13 +52,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     return summarizeLlmUsage(Number(days) || 7);
   });
 
-  app.delete('/api/settings/llm-usage', async (_req, reply) => {
-    const active = db
-      .prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status IN ('pending', 'running')`)
-      .get() as { count: number };
-    if (active.count > 0) {
-      return reply.code(409).send({ error: '仍有 AI 任务待执行或运行中，请等待任务完成后再清除模型用量' });
-    }
+  app.delete('/api/settings/llm-usage', async () => {
     return { ok: true, deleted: clearLlmUsage() };
   });
 
@@ -150,13 +145,8 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (!hash || !password || !bcrypt.compareSync(password, hash)) {
       return reply.code(401).send({ error: '密码错误' });
     }
-    const running = db
-      .prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status = 'running'`)
-      .get() as { count: number };
-    if (running.count > 0) {
-      return reply.code(409).send({ error: '仍有 AI 任务正在运行，请等待任务完成后再清除' });
-    }
-    return { ok: true, ...(await wipeKnowledgeData()) };
+    const { result, cancelledJobs } = await withJobsStopped(wipeKnowledgeData);
+    return { ok: true, ...result, cancelledJobs };
   });
 
   /** 清空 AI 整理日志、操作日志与关系库，保留知识正文。需密码校验。 */
@@ -166,12 +156,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (!hash || !password || !bcrypt.compareSync(password, hash)) {
       return reply.code(401).send({ error: '密码错误' });
     }
-    const active = db
-      .prepare(`SELECT COUNT(*) AS count FROM jobs WHERE status IN ('pending', 'running')`)
-      .get() as { count: number };
-    if (active.count > 0) {
-      return reply.code(409).send({ error: '仍有 AI 任务待执行或运行中，请等待任务完成后再清空日志与关系库' });
-    }
-    return { ok: true, ...(await wipeAiLogsAndRelations()) };
+    const { result, cancelledJobs } = await withJobsStopped(wipeAiLogsAndRelations);
+    return { ok: true, ...result, cancelledJobs };
   });
 }

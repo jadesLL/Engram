@@ -584,16 +584,30 @@
             <div class="danger-row">
               <div>
                 <strong>清空 AI 整理日志</strong>
-                <p>清空 AIWorks/log、操作日志和关系库，概念、实体和原始资料不受影响。</p>
+                <p>清空 AIWorks/log、操作日志和关系库；待执行和运行中的 AI 任务会先停止，概念、实体和原始资料不受影响。</p>
               </div>
-              <button class="btn danger" type="button" @click="wipeAiLogs">清空日志</button>
+              <button
+                class="btn danger"
+                type="button"
+                :disabled="Boolean(wipeBusy)"
+                @click="wipeAiLogs"
+              >
+                {{ wipeBusy === 'ai-logs' ? '清空中...' : '清空日志' }}
+              </button>
             </div>
             <div class="danger-row">
               <div>
                 <strong>一键清除知识数据</strong>
-                <p>删除全部概念、实体、原始资料、归档和查询页面，并清空整理报告、入库记录与索引。</p>
+                <p>先停止待执行和运行中的 AI 任务，再删除全部概念、实体、原始资料、归档和查询页面，并清空整理报告、入库记录与索引。</p>
               </div>
-              <button class="btn danger solid" type="button" @click="wipe">一键清除</button>
+              <button
+                class="btn danger solid"
+                type="button"
+                :disabled="Boolean(wipeBusy)"
+                @click="wipe"
+              >
+                {{ wipeBusy === 'knowledge' ? '清除中...' : '一键清除' }}
+              </button>
             </div>
           </div>
           <p v-if="wipeMsg" class="setting-message" :class="wipeOk ? 'ok' : 'err'">{{ wipeMsg }}</p>
@@ -2332,6 +2346,7 @@ async function emptyTrash() {
 
 const wipeMsg = ref('');
 const wipeOk = ref(false);
+const wipeBusy = ref<'' | 'knowledge' | 'ai-logs'>('');
 
 async function confirmWithPassword(actionLabel: string): Promise<string | null> {
   if (!confirm(`即将${actionLabel}，此操作不可撤销。确认继续？`)) return null;
@@ -2350,16 +2365,20 @@ async function wipe() {
   wipeMsg.value = '';
   const password = await confirmWithPassword('清除全部知识数据、整理报告和入库记录');
   if (!password) return;
+  wipeBusy.value = 'knowledge';
   try {
     const { data } = await api.post('/api/settings/wipe', { password });
     wipeOk.value = true;
-    wipeMsg.value = `已清除 ${data.fileCount} 个文件、${data.reportCount} 条整理报告，索引已重置。`;
+    const stopped = data.cancelledJobs ? `，并停止 ${data.cancelledJobs} 个 AI 任务` : '';
+    wipeMsg.value = `已清除 ${data.fileCount} 个文件、${data.reportCount} 条整理报告${stopped}，索引已重置。`;
     app.openReportCount = 0;
     await app.refreshJobs();
     app.bumpSidebar();
   } catch (error: any) {
     wipeOk.value = false;
     wipeMsg.value = error.response?.data?.error || '清除失败';
+  } finally {
+    wipeBusy.value = '';
   }
 }
 
@@ -2367,14 +2386,18 @@ async function wipeAiLogs() {
   wipeMsg.value = '';
   const password = await confirmWithPassword('清空 AI 整理日志、操作日志和关系库');
   if (!password) return;
+  wipeBusy.value = 'ai-logs';
   try {
     const { data } = await api.post('/api/settings/wipe-ai-logs', { password });
     wipeOk.value = true;
-    wipeMsg.value = `已清空 ${data.fileCount} 个 AI 整理日志文件，并重置 ${data.relationCount} 条关系记录。`;
+    const stopped = data.cancelledJobs ? `，并停止 ${data.cancelledJobs} 个 AI 任务` : '';
+    wipeMsg.value = `已清空 ${data.fileCount} 个 AI 整理日志文件，重置 ${data.relationCount} 条关系记录${stopped}。`;
     app.bumpSidebar();
   } catch (error: any) {
     wipeOk.value = false;
     wipeMsg.value = error.response?.data?.error || '清空失败';
+  } finally {
+    wipeBusy.value = '';
   }
 }
 

@@ -199,6 +199,9 @@ type ActiveExecution = {
 const LANE_LIMITS: Record<JobLane, number> = { default: 2, document: 1 };
 const activeExecutions = new Map<number, ActiveExecution>();
 const polling = { default: false, document: false };
+const idleWaiters = new Set<() => void>();
+let maintenanceDepth = 0;
+let maintenanceTail: Promise<void> = Promise.resolve();
 
 /** 启动时恢复：把上次被中断、卡在 running 的任务重置回 pending；超过 5 分钟的僵尸标记失败 */
 function recoverStaleJobs() {
@@ -274,6 +277,17 @@ function claimJobReports(job: any): void {
 
 function activeLaneCount(lane: JobLane): number {
   return [...activeExecutions.values()].filter((execution) => execution.lane === lane).length;
+}
+
+function notifyIdleWaiters(): void {
+  if (activeExecutions.size) return;
+  for (const resolve of idleWaiters) resolve();
+  idleWaiters.clear();
+}
+
+function waitForActiveExecutions(): Promise<void> {
+  if (!activeExecutions.size) return Promise.resolve();
+  return new Promise((resolve) => idleWaiters.add(resolve));
 }
 
 function targetKey(job: any): string {
@@ -357,6 +371,7 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
     }
   } finally {
     activeExecutions.delete(job.id);
+    notifyIdleWaiters();
     pollLane(execution.lane);
   }
 }
@@ -381,7 +396,7 @@ function startJob(job: any, lane: JobLane): boolean {
 
 /** 文档识别单并发；普通 AI 任务最多双并发，同一目标仍保持串行。 */
 function pollLane(lane: JobLane) {
-  if (polling[lane]) return;
+  if (maintenanceDepth || polling[lane]) return;
   polling[lane] = true;
   try {
     while (activeLaneCount(lane) < LANE_LIMITS[lane]) {
@@ -420,6 +435,55 @@ export function cancelJob(jobId: number): { status: string } {
   ).run(now(), jobId);
   execution.controller.abort();
   return { status: 'cancelling' };
+}
+
+function cancelActiveJobs(): number[] {
+  const jobs = db.prepare(
+    `SELECT id FROM jobs WHERE status IN ('pending', 'running') ORDER BY id`
+  ).all() as { id: number }[];
+  for (const job of jobs) cancelJob(job.id);
+  return jobs.map((job) => job.id);
+}
+
+/**
+ * 数据维护期间暂停调度并停止现有任务，避免清理完成后被旧任务重新写入。
+ * 同期新加入的任务也会在恢复调度前取消。
+ */
+export async function withJobsStopped<T>(
+  action: () => Promise<T>,
+): Promise<{ result: T; cancelledJobs: number }> {
+  const previous = maintenanceTail;
+  let releaseMaintenance!: () => void;
+  maintenanceTail = new Promise<void>((resolve) => {
+    releaseMaintenance = resolve;
+  });
+  await previous;
+
+  maintenanceDepth++;
+  const cancelled = new Set<number>();
+  const cancelCurrent = () => {
+    for (const id of cancelActiveJobs()) cancelled.add(id);
+  };
+
+  try {
+    cancelCurrent();
+    await waitForActiveExecutions();
+    cancelCurrent();
+    const result = await action();
+    cancelCurrent();
+    return { result, cancelledJobs: cancelled.size };
+  } finally {
+    try {
+      cancelCurrent();
+    } finally {
+      maintenanceDepth--;
+      releaseMaintenance();
+      if (!maintenanceDepth) {
+        pollLane('default');
+        pollLane('document');
+      }
+    }
+  }
 }
 
 export function retryJob(jobId: number): { status: string } {
