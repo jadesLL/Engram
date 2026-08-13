@@ -1,4 +1,4 @@
-import test, { after, before } from 'node:test';
+import test, { after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -10,14 +10,31 @@ process.env.DATA_DIR = temp;
 let db: any;
 let now: () => string;
 let cancelJob: (jobId: number) => { status: string };
+let getJobQueueState: () => { running: boolean };
+let retryFailedJobs: () => { retried: number; failed: number; errors: string[] };
 let retryJob: (jobId: number) => { status: string };
+let startJobQueue: () => { status: string; started: number; failed: number; errors: string[] };
+let stopJobQueue: () => { status: string; stopped: number };
 
 before(async () => {
   const dbModule = await import('./lib/db.js');
   db = dbModule.db;
   now = dbModule.now;
   dbModule.migrate();
-  ({ cancelJob, retryJob } = await import('./jobs.js'));
+  ({
+    cancelJob,
+    getJobQueueState,
+    retryFailedJobs,
+    retryJob,
+    startJobQueue,
+    stopJobQueue,
+  } = await import('./jobs.js'));
+});
+
+beforeEach(() => {
+  db.prepare(`DELETE FROM reports`).run();
+  db.prepare(`DELETE FROM jobs`).run();
+  db.prepare(`DELETE FROM settings WHERE key='job_queue_enabled'`).run();
 });
 
 after(() => {
@@ -62,5 +79,55 @@ test('cancelling a pending candidate reconciliation releases claimed reports', (
   assert.equal(
     db.prepare(`SELECT status FROM reports WHERE id=?`).get(reportId).status,
     'applying',
+  );
+});
+
+test('stopping and starting the queue freezes and restores active jobs', () => {
+  const pending = db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at)
+     VALUES('embed','{"pageId":"pending"}','pending',?,?)`
+  ).run(now(), now());
+  const running = db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at,run_at,run_token)
+     VALUES('embed','{"pageId":"running"}','running',?,?,?,'test-run')`
+  ).run(now(), now(), now());
+
+  assert.deepEqual(stopJobQueue(), { status: 'stopped', stopped: 2 });
+  assert.equal(getJobQueueState().running, false);
+  assert.deepEqual(
+    db.prepare(`SELECT id,status,stage FROM jobs ORDER BY id`).all(),
+    [
+      { id: Number(pending.lastInsertRowid), status: 'paused', stage: '已停止' },
+      { id: Number(running.lastInsertRowid), status: 'paused', stage: '已停止' },
+    ],
+  );
+
+  assert.deepEqual(startJobQueue(), {
+    status: 'running',
+    started: 2,
+    failed: 0,
+    errors: [],
+  });
+  assert.equal(getJobQueueState().running, true);
+  assert.deepEqual(
+    db.prepare(`SELECT status FROM jobs ORDER BY id`).all(),
+    [{ status: 'pending' }, { status: 'pending' }],
+  );
+});
+
+test('retrying failed jobs does not restart cancelled history', () => {
+  db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at)
+     VALUES('embed','{"pageId":"failed"}','failed',?,?)`
+  ).run(now(), now());
+  db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at)
+     VALUES('embed','{"pageId":"cancelled"}','cancelled',?,?)`
+  ).run(now(), now());
+
+  assert.deepEqual(retryFailedJobs(), { retried: 1, failed: 0, errors: [] });
+  assert.deepEqual(
+    db.prepare(`SELECT status FROM jobs ORDER BY id`).all(),
+    [{ status: 'pending' }, { status: 'cancelled' }],
   );
 });

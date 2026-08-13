@@ -1,4 +1,4 @@
-import { db, newId, now } from './lib/db.js';
+import { db, getSetting, newId, now, setSetting } from './lib/db.js';
 import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { extractEntities } from './graph/entities.js';
 import { organizePage } from './ai/organize.js';
@@ -197,8 +197,13 @@ type ActiveExecution = {
 };
 
 const LANE_LIMITS: Record<JobLane, number> = { default: 2, document: 1 };
+const JOB_QUEUE_ENABLED_SETTING = 'job_queue_enabled';
 const activeExecutions = new Map<number, ActiveExecution>();
 const polling = { default: false, document: false };
+
+export function getJobQueueState(): { running: boolean } {
+  return { running: (getSetting(JOB_QUEUE_ENABLED_SETTING) ?? '1') !== '0' };
+}
 
 /** 启动时恢复：把上次被中断、卡在 running 的任务重置回 pending；超过 5 分钟的僵尸标记失败 */
 function recoverStaleJobs() {
@@ -352,11 +357,12 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
       );
     }
     releaseJobClaims(job);
-    if (job.kind === 'ingest' && payload.questionId) {
+    if (job.kind === 'ingest' && payload.questionId && state?.status !== 'paused') {
       failIngestQuestionJob(String(payload.questionId), job.id, error);
     }
   } finally {
     activeExecutions.delete(job.id);
+    if (getJobQueueState().running) resumePausedJobs();
     pollLane(execution.lane);
   }
 }
@@ -381,6 +387,7 @@ function startJob(job: any, lane: JobLane): boolean {
 
 /** 文档识别单并发；普通 AI 任务最多双并发，同一目标仍保持串行。 */
 function pollLane(lane: JobLane) {
+  if (!getJobQueueState().running) return;
   if (polling[lane]) return;
   polling[lane] = true;
   try {
@@ -396,10 +403,11 @@ function pollLane(lane: JobLane) {
 export function cancelJob(jobId: number): { status: string } {
   const job = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(jobId) as any;
   if (!job) throw new Error('任务不存在');
-  if (job.status === 'pending') {
+  if (['pending', 'paused'].includes(job.status)) {
     db.prepare(
       `UPDATE jobs SET status='cancelled',stage='已取消',error=NULL,
-       cancel_requested=0,run_token='',updated_at=? WHERE id=? AND status='pending'`
+       cancel_requested=0,run_token='',updated_at=?
+       WHERE id=? AND status IN ('pending','paused')`
     ).run(now(), jobId);
     releaseJobClaims(job);
     return { status: 'cancelled' };
@@ -435,6 +443,91 @@ export function retryJob(jobId: number): { status: string } {
      run_token='',updated_at=? WHERE id=? AND status IN ('failed','cancelled')`
   ).run(now(), jobId);
   return { status: 'pending' };
+}
+
+function resumePausedJobs(): { started: number; failed: number; errors: string[] } {
+  const paused = db.prepare(`SELECT * FROM jobs WHERE status='paused' ORDER BY id`).all() as any[];
+  let started = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  for (const job of paused) {
+    if (activeExecutions.has(job.id)) continue;
+    try {
+      claimJobReports(job);
+      const resumed = db.prepare(
+        `UPDATE jobs SET status='pending',stage='等待执行',progress=0,detail='',
+         error=NULL,cancel_requested=0,run_token='',run_at=NULL,updated_at=?
+         WHERE id=? AND status='paused'`
+      ).run(now(), job.id);
+      started += resumed.changes;
+    } catch (error: any) {
+      const message = String(error?.message || error || '任务恢复失败').slice(0, 500);
+      db.prepare(
+        `UPDATE jobs SET status='failed',stage='失败',detail=?,error=?,
+         cancel_requested=0,run_token='',updated_at=?
+         WHERE id=? AND status='paused'`
+      ).run(message, message, now(), job.id);
+      failed++;
+      errors.push(`#${job.id} ${message}`);
+    }
+  }
+  return { started, failed, errors };
+}
+
+export function stopJobQueue(): { status: 'stopped'; stopped: number } {
+  setSetting(JOB_QUEUE_ENABLED_SETTING, '0');
+  const jobs = db.prepare(
+    `SELECT * FROM jobs WHERE status IN ('pending','running') ORDER BY id`
+  ).all() as any[];
+  let stopped = 0;
+  for (const job of jobs) {
+    const updated = db.prepare(
+      `UPDATE jobs SET status='paused',stage='已停止',detail='',
+       cancel_requested=?,updated_at=?
+       WHERE id=? AND status=?`
+    ).run(job.status === 'running' ? 1 : 0, now(), job.id, job.status);
+    if (!updated.changes) continue;
+    stopped++;
+    releaseJobClaims(job);
+    if (job.status === 'running') activeExecutions.get(job.id)?.controller.abort();
+  }
+  return { status: 'stopped', stopped };
+}
+
+export function startJobQueue(): {
+  status: 'running';
+  started: number;
+  failed: number;
+  errors: string[];
+} {
+  setSetting(JOB_QUEUE_ENABLED_SETTING, '1');
+  const result = resumePausedJobs();
+  if (running) {
+    pollLane('default');
+    pollLane('document');
+  }
+  return { status: 'running', ...result };
+}
+
+export function retryFailedJobs(): { retried: number; failed: number; errors: string[] } {
+  const jobs = db.prepare(`SELECT id FROM jobs WHERE status='failed' ORDER BY id`).all() as Array<{ id: number }>;
+  let retried = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  for (const job of jobs) {
+    try {
+      retryJob(job.id);
+      retried++;
+    } catch (error: any) {
+      failed++;
+      errors.push(`#${job.id} ${String(error?.message || error || '重试失败')}`);
+    }
+  }
+  if (running && getJobQueueState().running) {
+    pollLane('default');
+    pollLane('document');
+  }
+  return { retried, failed, errors };
 }
 
 function abortStaleJobs(): void {

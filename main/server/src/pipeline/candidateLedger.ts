@@ -314,7 +314,7 @@ export function reconcilePendingCandidates(): number {
   const activePaths = new Set(
     (db.prepare(
       `SELECT payload FROM jobs
-       WHERE kind='candidate_reconcile' AND status IN ('pending','running')`
+       WHERE kind='candidate_reconcile' AND status IN ('pending','running','paused')`
     ).all() as Array<{ payload: string }>).flatMap((row) => {
       try {
         const path = String(JSON.parse(row.payload)?.path || '');

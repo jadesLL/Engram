@@ -884,11 +884,11 @@ export function queueMissingPageSyntheses(): number {
   let queued = 0;
   for (const page of pages) {
     const before = db.prepare(
-      `SELECT COUNT(*) count FROM jobs WHERE kind='page_recompose' AND status IN ('pending','running')`
+      `SELECT COUNT(*) count FROM jobs WHERE kind='page_recompose' AND status IN ('pending','running','paused')`
     ).get() as { count: number };
     queuePageRecompose(page.id);
     const after = db.prepare(
-      `SELECT COUNT(*) count FROM jobs WHERE kind='page_recompose' AND status IN ('pending','running')`
+      `SELECT COUNT(*) count FROM jobs WHERE kind='page_recompose' AND status IN ('pending','running','paused')`
     ).get() as { count: number };
     if (after.count > before.count) queued++;
   }

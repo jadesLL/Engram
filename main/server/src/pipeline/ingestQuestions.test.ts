@@ -15,6 +15,7 @@ let completeIngestQuestionJob: any;
 let failIngestQuestionJob: any;
 let hydrateIngestQuestionPayload: any;
 let reconcileQuestionsAfterRun: any;
+let recoverIngestQuestionJobs: any;
 let syncIngestQuestionReport: any;
 let supplementalAnswerContent: any;
 let supplementalAnswers: any;
@@ -28,6 +29,7 @@ before(async () => {
     failIngestQuestionJob,
     hydrateIngestQuestionPayload,
     reconcileQuestionsAfterRun,
+    recoverIngestQuestionJobs,
     syncIngestQuestionReport,
   } = await import('./ingestQuestions.js'));
   ({ supplementalAnswerContent, supplementalAnswers } = await import('./sourceLedger.js'));
@@ -138,6 +140,19 @@ test('failed reprocess keeps the answer and exposes a retryable error', () => {
   assert.equal(
     supplementalAnswerContent(supplementalAnswers(sourcePath)[0]),
     '原问题：负责人完整姓名是什么？\n用户补充回答：刘子谕\n验收条件：给出完整姓名',
+  );
+});
+
+test('paused reprocess remains answered until the queue resumes', () => {
+  seedQuestions();
+  const submitted = applyIngestQuestionAction('q1', '刘子谕', 'reprocess');
+  db.prepare(`UPDATE jobs SET status='paused',stage='已停止' WHERE id=?`).run(submitted.jobId);
+
+  recoverIngestQuestionJobs();
+
+  assert.deepEqual(
+    db.prepare(`SELECT status,answer,error FROM ingest_questions WHERE id='q1'`).get(),
+    { status: 'answered', answer: '刘子谕', error: null },
   );
 });
 

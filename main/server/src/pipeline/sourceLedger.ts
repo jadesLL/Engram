@@ -189,7 +189,7 @@ export function finalizeDerivedRun(runId: string): void {
   if (missing.length) {
     const pendingProcessPages = new Set<string>();
     const pendingProcesses = db.prepare(
-      `SELECT payload FROM jobs WHERE kind='process' AND status IN ('pending','running')`
+      `SELECT payload FROM jobs WHERE kind='process' AND status IN ('pending','running','paused')`
     ).all() as Array<{ payload: string }>;
     for (const job of pendingProcesses) {
       try {

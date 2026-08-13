@@ -8,7 +8,14 @@ import {
   previewCandidateReview,
 } from '../pipeline/candidateReview.js';
 import { ensureCandidateFromReport } from '../pipeline/candidateLedger.js';
-import { cancelJob, retryJob } from '../jobs.js';
+import {
+  cancelJob,
+  getJobQueueState,
+  retryFailedJobs,
+  retryJob,
+  startJobQueue,
+  stopJobQueue,
+} from '../jobs.js';
 import {
   applyIngestQuestionAction,
   IngestQuestionRequestError,
@@ -163,7 +170,7 @@ export async function jobRoutes(app: FastifyInstance) {
     };
     const active = db
       .prepare(
-        `SELECT ${jobSelect()} FROM jobs WHERE status IN ('pending', 'running')
+        `SELECT ${jobSelect()} FROM jobs WHERE status IN ('pending', 'running', 'paused')
          ORDER BY
            CASE kind
              WHEN 'ingest' THEN 0
@@ -188,6 +195,7 @@ export async function jobRoutes(app: FastifyInstance) {
         `SELECT
            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
            SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
+           SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END) AS paused,
            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
          FROM jobs`
       )
@@ -197,9 +205,17 @@ export async function jobRoutes(app: FastifyInstance) {
       recent,
       pending: counts.pending || 0,
       running: counts.running || 0,
+      paused: counts.paused || 0,
       failed: counts.failed || 0,
+      queueRunning: getJobQueueState().running,
     };
   });
+
+  app.post('/api/jobs/queue/start', async () => ({ ok: true, ...startJobQueue() }));
+
+  app.post('/api/jobs/queue/stop', async () => ({ ok: true, ...stopJobQueue() }));
+
+  app.post('/api/jobs/retry-failed', async () => ({ ok: true, ...retryFailedJobs() }));
 
   /** 失败任务重试 */
   app.post('/api/jobs/:id/retry', async (req, reply) => {
