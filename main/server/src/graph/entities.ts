@@ -2,11 +2,16 @@ import { z } from 'zod';
 import { db, now } from '../lib/db.js';
 import { invalidateGraphCache } from '../lib/graphCache.js';
 import { llmReady } from '../lib/llm.js';
-import { runSemanticStage } from '../lib/semanticStage.js';
+import { createSemanticCacheSession, runSemanticStage } from '../lib/semanticStage.js';
 import { readPage } from '../lib/vault.js';
 import { entitiesSystem, entitiesUser, type EntityItem } from '../prompts/entities.js';
 import { RELATION_WORDS } from '../pipeline/extractor.js';
-import { classifyEntityName, type EntityRosterEntry } from '../pipeline/entityAmbiguity.js';
+import {
+  classifyEntityName,
+  entityIdentityHistory,
+  type EntityAmbiguity,
+  type EntityRosterEntry,
+} from '../pipeline/entityAmbiguity.js';
 
 const entityItemsSchema = z.array(z.object({
   name: z.string().min(1),
@@ -31,6 +36,8 @@ export async function extractEntities(pageId: string): Promise<void> {
     .prepare(`SELECT id, title, type, summary FROM pages WHERE deleted = 0 AND path LIKE 'Wiki/%' ORDER BY updated_at DESC LIMIT 500`)
     .all() as EntityRosterEntry[];
   const roster = rows.map((r) => `- ${r.title}`).join('\n');
+  const exactPages = new Map(rows.map((row) => [row.title.trim().toLowerCase(), row]));
+  const system = entitiesSystem();
 
   let items: EntityItem[];
   try {
@@ -40,7 +47,14 @@ export async function extractEntities(pageId: string): Promise<void> {
       stage: 'entity-and-relation-extraction',
       tag: 'entities',
       schema: entityItemsSchema,
-      system: entitiesSystem(roster),
+      system,
+      cacheContext: { roster },
+      cacheContextMode: 'always',
+      history: createSemanticCacheSession(`page-graph-entities:${pageId}`, system),
+      maxHistoryChars: 96_000,
+      promptVersion: 'page-graph-entities:2',
+      cacheScope: 'page-graph:entities',
+      resultCache: true,
       input: entitiesUser(page.title, rd.content.slice(0, 6000)),
       temperature: 0.1,
       maxTokens: 1200,
@@ -64,19 +78,38 @@ export async function extractEntities(pageId: string): Promise<void> {
     `SELECT id FROM edges WHERE src_page=? AND dst_page=? AND rel=? AND entity_id IS NULL LIMIT 1`
   );
   const ts = now();
-  for (const it of items.slice(0, 8)) {
+  const identityHistory = entityIdentityHistory('page-graph');
+  for (let index = 0; index < items.slice(0, 8).length; index++) {
+    const it = items[index];
     if (!it?.name) continue;
-    let identity;
-    try {
-      identity = await classifyEntityName(
-        it.name,
-        it.type === 'tech' ? 'concept' : it.type,
-        rows,
-        rd.content,
-        `${pageId}:${it.name}`,
-      );
-    } catch {
-      continue;
+    const exact = exactPages.get(it.name.trim().toLowerCase());
+    let identity: {
+      ambiguity: EntityAmbiguity | null;
+      mergeTarget: string;
+      canonicalName: string;
+    } | null = exact ? {
+      ambiguity: null,
+      mergeTarget: exact.title,
+      canonicalName: exact.title,
+    } : null;
+    if (!identity) {
+      try {
+        identity = await classifyEntityName(
+          it.name,
+          it.type === 'tech' ? 'concept' : it.type,
+          rows,
+          rd.content,
+          `${pageId}:${it.name}`,
+          identityHistory,
+          {
+            cacheContextMode: index === 0 ? 'always' : 'once',
+            contextInCache: true,
+            maxHistoryChars: 96_000,
+          },
+        );
+      } catch {
+        continue;
+      }
     }
     if (identity.ambiguity && !identity.mergeTarget) continue;
     const canonical = identity.mergeTarget

@@ -12,6 +12,11 @@ export interface LlmUsageIdentity {
   stage?: string;
   prefixHash?: string;
   historyMessages?: number;
+  promptVersion?: string;
+  cacheScope?: string;
+  dependencyHash?: string;
+  resultCacheHit?: boolean;
+  retryReason?: string;
 }
 
 export interface NormalizedLlmUsage {
@@ -35,6 +40,9 @@ export interface LlmUsageBreakdown extends NormalizedLlmUsage {
   maxHistoryMessages: number;
   cacheRequests: number;
   cacheHitRate: number | null;
+  resultCacheHits: number;
+  retryRequests: number;
+  promptAmplification: number | null;
 }
 
 export interface LlmUsageSummary extends NormalizedLlmUsage {
@@ -43,6 +51,9 @@ export interface LlmUsageSummary extends NormalizedLlmUsage {
   requests: number;
   cacheRequests: number;
   cacheHitRate: number | null;
+  resultCacheHits: number;
+  retryRequests: number;
+  promptAmplification: number | null;
   latestAt: string | null;
   breakdown: LlmUsageBreakdown[];
 }
@@ -151,10 +162,11 @@ export function recordLlmUsage(
   db.prepare(
     `INSERT INTO llm_usage(
        provider,model,operation,tag,scope,ref_id,stage,prefix_hash,history_messages,
+       prompt_version,cache_scope,dependency_hash,result_cache_hit,retry_reason,
        prompt_tokens,completion_tokens,total_tokens,
        cache_read_tokens,cache_write_tokens,cache_miss_tokens,cache_reported,
        duration_ms,raw_usage,created_at
-     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     identity.provider || 'custom',
     identity.model || 'unknown',
@@ -165,6 +177,11 @@ export function recordLlmUsage(
     identity.stage || '',
     identity.prefixHash || '',
     Math.max(0, Math.round(identity.historyMessages || 0)),
+    identity.promptVersion || '',
+    identity.cacheScope || '',
+    identity.dependencyHash || '',
+    identity.resultCacheHit ? 1 : 0,
+    identity.retryReason || '',
     usage.promptTokens,
     usage.completionTokens,
     usage.totalTokens,
@@ -179,12 +196,63 @@ export function recordLlmUsage(
   return usage;
 }
 
+export function recordLlmResultCacheHit(
+  identity: LlmUsageIdentity,
+  durationMs: number,
+  promptTokens = 0,
+): void {
+  if (promptTokens > 0) {
+    recordLlmUsage(
+      { ...identity, resultCacheHit: true },
+      {
+        prompt_tokens: promptTokens,
+        completion_tokens: 0,
+        total_tokens: promptTokens,
+        prompt_cache_hit_tokens: promptTokens,
+        prompt_cache_miss_tokens: 0,
+      },
+      durationMs,
+    );
+    return;
+  }
+  db.prepare(
+    `INSERT INTO llm_usage(
+       provider,model,operation,tag,scope,ref_id,stage,prefix_hash,history_messages,
+       prompt_version,cache_scope,dependency_hash,result_cache_hit,retry_reason,
+       prompt_tokens,completion_tokens,total_tokens,
+       cache_read_tokens,cache_write_tokens,cache_miss_tokens,cache_reported,
+       duration_ms,raw_usage,created_at
+     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,'',0,0,0,0,0,0,0,?,'{}',?)`
+  ).run(
+    identity.provider || 'custom',
+    identity.model || 'unknown',
+    identity.operation,
+    identity.tag || identity.operation,
+    identity.scope || '',
+    identity.refId || '',
+    identity.stage || '',
+    identity.prefixHash || '',
+    Math.max(0, Math.round(identity.historyMessages || 0)),
+    identity.promptVersion || '',
+    identity.cacheScope || '',
+    identity.dependencyHash || '',
+    Math.max(0, Math.round(durationMs)),
+    now(),
+  );
+}
+
+export function clearLlmUsage(): number {
+  return db.prepare(`DELETE FROM llm_usage`).run().changes;
+}
+
 type AggregateRow = {
   requests: number;
   runs: number;
   continued_requests: number;
   max_history_messages: number;
   cache_requests: number;
+  result_cache_hits: number;
+  retry_requests: number;
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
@@ -209,6 +277,8 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
        COALESCE(SUM(CASE WHEN history_messages > 1 THEN 1 ELSE 0 END),0) continued_requests,
        COALESCE(MAX(history_messages),0) max_history_messages,
        COALESCE(SUM(cache_reported),0) cache_requests,
+       COALESCE(SUM(result_cache_hit),0) result_cache_hits,
+       COALESCE(SUM(CASE WHEN retry_reason != '' THEN 1 ELSE 0 END),0) retry_requests,
        COALESCE(SUM(prompt_tokens),0) prompt_tokens,
        COALESCE(SUM(completion_tokens),0) completion_tokens,
        COALESCE(SUM(total_tokens),0) total_tokens,
@@ -226,6 +296,8 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
        COALESCE(SUM(CASE WHEN history_messages > 1 THEN 1 ELSE 0 END),0) continued_requests,
        COALESCE(MAX(history_messages),0) max_history_messages,
        COALESCE(SUM(cache_reported),0) cache_requests,
+       COALESCE(SUM(result_cache_hit),0) result_cache_hits,
+       COALESCE(SUM(CASE WHEN retry_reason != '' THEN 1 ELSE 0 END),0) retry_requests,
        COALESCE(SUM(prompt_tokens),0) prompt_tokens,
        COALESCE(SUM(completion_tokens),0) completion_tokens,
        COALESCE(SUM(total_tokens),0) total_tokens,
@@ -261,6 +333,11 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
     cacheMissTokens: row.cache_miss_tokens,
     cacheReported: row.cache_requests > 0,
     cacheHitRate: hitRate(row.cache_read_tokens, row.cache_miss_tokens),
+    resultCacheHits: row.result_cache_hits,
+    retryRequests: row.retry_requests,
+    promptAmplification: row.cache_miss_tokens > 0
+      ? row.prompt_tokens / row.cache_miss_tokens
+      : null,
   }));
 
   return {
@@ -276,6 +353,11 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
     cacheMissTokens: aggregate.cache_miss_tokens,
     cacheReported: aggregate.cache_requests > 0,
     cacheHitRate: hitRate(aggregate.cache_read_tokens, aggregate.cache_miss_tokens),
+    resultCacheHits: aggregate.result_cache_hits,
+    retryRequests: aggregate.retry_requests,
+    promptAmplification: aggregate.cache_miss_tokens > 0
+      ? aggregate.prompt_tokens / aggregate.cache_miss_tokens
+      : null,
     latestAt: aggregate.latest_at,
     breakdown,
   };

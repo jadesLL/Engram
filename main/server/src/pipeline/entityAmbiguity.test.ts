@@ -1,4 +1,4 @@
-import test, { after, before } from 'node:test';
+import test, { after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -19,6 +19,7 @@ let server: http.Server;
 let db: any;
 let classifyEntityName: any;
 let guardAmbiguousEntityNames: any;
+let clearSharedSemanticHistories: () => void;
 let capturedRequests: any[] = [];
 
 before(async () => {
@@ -82,6 +83,11 @@ before(async () => {
   }]));
   dbModule.setSetting('active_chat_model', 'mock');
   ({ classifyEntityName, guardAmbiguousEntityNames } = await import('./entityAmbiguity.js'));
+  ({ clearSharedSemanticHistories } = await import('../lib/semanticStage.js'));
+});
+
+beforeEach(() => {
+  clearSharedSemanticHistories();
 });
 
 after(async () => {

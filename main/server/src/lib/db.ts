@@ -107,6 +107,15 @@ export function migrate() {
   );
   CREATE INDEX IF NOT EXISTS idx_chunks_ref ON chunks(ref_type, ref_id);
 
+  CREATE TABLE IF NOT EXISTS index_states (
+    ref_type TEXT NOT NULL,
+    ref_id TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    model_key TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(ref_type, ref_id)
+  );
+
   CREATE TABLE IF NOT EXISTS entities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL,
@@ -337,6 +346,11 @@ export function migrate() {
     stage TEXT NOT NULL DEFAULT '',
     prefix_hash TEXT NOT NULL DEFAULT '',
     history_messages INTEGER NOT NULL DEFAULT 0,
+    prompt_version TEXT NOT NULL DEFAULT '',
+    cache_scope TEXT NOT NULL DEFAULT '',
+    dependency_hash TEXT NOT NULL DEFAULT '',
+    result_cache_hit INTEGER NOT NULL DEFAULT 0,
+    retry_reason TEXT NOT NULL DEFAULT '',
     prompt_tokens INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens INTEGER NOT NULL DEFAULT 0,
@@ -352,6 +366,22 @@ export function migrate() {
     ON llm_usage(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_llm_usage_tag
     ON llm_usage(tag, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS semantic_cache (
+    cache_key TEXT PRIMARY KEY,
+    scope TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    model_key TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    dependency_hash TEXT NOT NULL DEFAULT '',
+    output TEXT NOT NULL,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    hits INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_semantic_cache_used
+    ON semantic_cache(last_used_at DESC);
 
   CREATE TABLE IF NOT EXISTS office_edit_sessions (
     document_key TEXT PRIMARY KEY,
@@ -442,6 +472,20 @@ export function migrate() {
   );
   CREATE INDEX IF NOT EXISTS idx_assistant_tool_calls_run
     ON assistant_tool_calls(run_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS assistant_artifacts (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT,
+    kind TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(run_id) REFERENCES assistant_runs(id) ON DELETE CASCADE,
+    FOREIGN KEY(tool_call_id) REFERENCES assistant_tool_calls(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_assistant_artifacts_run
+    ON assistant_artifacts(run_id, created_at);
   `);
 
   ensureColumn('ingest_log', 'content_hash', 'TEXT');
@@ -451,6 +495,8 @@ export function migrate() {
   ensureColumn('ingest_runs', 'source_version_id', 'TEXT');
   ensureColumn('ingest_runs', 'commit_status', `TEXT NOT NULL DEFAULT 'pending'`);
   ensureColumn('ingest_runs', 'derived_status', `TEXT NOT NULL DEFAULT 'pending'`);
+  ensureColumn('ingest_runs', 'input_signature', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('ingest_runs', 'llm_prompt_tokens', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('ingest_questions', 'job_id', 'INTEGER');
   ensureColumn('ingest_questions', 'error', 'TEXT');
   ensureColumn('ingest_candidates', 'evidence_eligible', `INTEGER NOT NULL DEFAULT 0`);
@@ -462,6 +508,12 @@ export function migrate() {
   ensureColumn('llm_usage', 'stage', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('llm_usage', 'prefix_hash', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('llm_usage', 'history_messages', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn('llm_usage', 'prompt_version', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('llm_usage', 'cache_scope', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('llm_usage', 'dependency_hash', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('llm_usage', 'result_cache_hit', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn('llm_usage', 'retry_reason', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('semantic_cache', 'prompt_tokens', `INTEGER NOT NULL DEFAULT 0`);
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_llm_usage_ref
      ON llm_usage(scope, ref_id, stage, created_at DESC)`
@@ -492,6 +544,13 @@ export function migrate() {
   migrateSchema();
   const usageCutoff = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
   db.prepare(`DELETE FROM llm_usage WHERE created_at < ?`).run(usageCutoff);
+  const semanticCacheCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare(`DELETE FROM semantic_cache WHERE last_used_at < ?`).run(semanticCacheCutoff);
+  db.prepare(
+    `DELETE FROM semantic_cache WHERE cache_key IN (
+       SELECT cache_key FROM semantic_cache ORDER BY last_used_at DESC LIMIT -1 OFFSET 5000
+     )`
+  ).run();
 
   ensureVecTable(getVecDim());
 }

@@ -12,13 +12,14 @@ let migrate: () => void;
 let normalizeLlmUsage: typeof import('./llmUsage.js').normalizeLlmUsage;
 let recordLlmUsage: typeof import('./llmUsage.js').recordLlmUsage;
 let summarizeLlmUsage: typeof import('./llmUsage.js').summarizeLlmUsage;
+let clearLlmUsage: typeof import('./llmUsage.js').clearLlmUsage;
 
 before(async () => {
   const dbModule = await import('./db.js');
   db = dbModule.db;
   migrate = dbModule.migrate;
   migrate();
-  ({ normalizeLlmUsage, recordLlmUsage, summarizeLlmUsage } = await import('./llmUsage.js'));
+  ({ normalizeLlmUsage, recordLlmUsage, summarizeLlmUsage, clearLlmUsage } = await import('./llmUsage.js'));
 });
 
 beforeEach(() => {
@@ -117,6 +118,24 @@ test('summarizes only provider-reported cache accounting', () => {
   assert.equal(summary.breakdown[0].continuedRequests, 1);
   assert.equal(summary.breakdown[0].maxHistoryMessages, 3);
   assert.equal(summary.breakdown[1].cacheHitRate, null);
+});
+
+test('clears only model usage rows', () => {
+  recordLlmUsage(
+    { provider: 'deepseek', model: 'test', operation: 'chat', tag: 'clear-test' },
+    {
+      prompt_tokens: 100,
+      completion_tokens: 10,
+      prompt_cache_hit_tokens: 80,
+      prompt_cache_miss_tokens: 20,
+    },
+    100,
+  );
+  db.prepare(`INSERT INTO settings(key,value) VALUES('usage-clear-sentinel','keep')`).run();
+
+  assert.equal(clearLlmUsage(), 1);
+  assert.equal(db.prepare(`SELECT COUNT(*) count FROM llm_usage`).get().count, 0);
+  assert.equal(db.prepare(`SELECT value FROM settings WHERE key='usage-clear-sentinel'`).get().value, 'keep');
 });
 
 test('migration upgrades legacy llm usage tables with cache diagnostics columns', () => {

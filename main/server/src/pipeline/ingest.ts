@@ -1,10 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, newId, now } from '../lib/db.js';
-import { llmReady, type ChatMessage } from '../lib/llm.js';
-import { runSemanticStage } from '../lib/semanticStage.js';
+import { getActiveChat, llmReady, type ChatMessage } from '../lib/llm.js';
+import { recordLlmResultCacheHit } from '../lib/llmUsage.js';
+import {
+  createSemanticCacheSession,
+  runSemanticStage,
+  type SemanticCacheContextMode,
+} from '../lib/semanticStage.js';
 import { safeJoin } from '../lib/vault.js';
-import { hybridSearch } from '../retrieval/hybrid.js';
+import { hybridSearchMany } from '../retrieval/hybrid.js';
 import { extractWikiLinks, RELATION_WORDS } from './extractor.js';
 import { addReports } from '../dream/reports.js';
 import {
@@ -44,6 +49,7 @@ export type IngestStage = '解析' | 'Map' | 'Normalize' | 'Plan' | 'Critic' | '
 export type IngestProgress = { stage: IngestStage; progress: number; detail?: string };
 export type IngestProgressCallback = (update: IngestProgress) => void;
 const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
+export const INGEST_PIPELINE_VERSION = '2026-08-13.2';
 
 function audit(runId: string, stage: string, payload: unknown, input?: unknown) {
   const serialized = JSON.stringify(payload);
@@ -75,16 +81,16 @@ async function dynamicContext(candidates: Candidate[], document: StructuredDocum
   const queries = [...new Set(candidates.map((c) => `${c.name} ${c.summary}`))].slice(0, 12);
   if (!queries.length) queries.push(`${document.title} ${document.text.slice(0, 300)}`);
   const lines = new Set<string>();
-  for (const query of queries) {
-    try {
-      const hits = await hybridSearch(query, 5);
+  try {
+    const resultSets = await hybridSearchMany(queries, 5);
+    for (const hits of resultSets) {
       for (const hit of hits.filter((h) =>
         h.refType === 'page' && (h.path.startsWith('Wiki/概念/') || h.path.startsWith('Wiki/实体/'))
       )) {
         lines.add(`- ${hit.title}（${hit.type || '未分类'}）：${hit.snippet.replace(/\n/g, ' ').slice(0, 180)}`);
       }
-    } catch { /* retrieval degradation is audited by the empty result */ }
-  }
+    }
+  } catch { /* retrieval degradation is audited by the empty result */ }
   return [...lines].slice(0, 30).join('\n');
 }
 
@@ -98,6 +104,7 @@ async function jsonStage<T>(
   stage = tag,
   cacheContext?: unknown,
   history?: ChatMessage[],
+  cacheContextMode: SemanticCacheContextMode = 'once',
 ): Promise<T> {
   return runSemanticStage<T>({
     scope: 'ingest',
@@ -107,12 +114,51 @@ async function jsonStage<T>(
     schema,
     system,
     cacheContext,
+    cacheContextMode,
     history,
+    maxHistoryChars: 96_000,
+    promptVersion: INGEST_PIPELINE_VERSION,
+    cacheScope: `${tag}:${stage.split(':')[0]}`,
+    resultCache: true,
     input,
     temperature: 0.1,
     maxTokens,
     retries: 1,
   });
+}
+
+function ingestInputSignature(
+  sourcePath: string,
+  document: StructuredDocument,
+  answers: SupplementalAnswer[],
+): string {
+  const active = getActiveChat();
+  const knowledge = db.prepare(
+    `SELECT id,title,type,summary FROM pages
+     WHERE deleted=0
+       AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')
+       AND id NOT IN (
+         SELECT pc.page_id FROM page_contributions pc
+         JOIN source_versions sv ON sv.id=pc.source_version_id
+         WHERE sv.path=?
+       )
+     ORDER BY id`
+  ).all(sourcePath);
+  return hash(JSON.stringify({
+    pipelineVersion: INGEST_PIPELINE_VERSION,
+    contentHash: document.contentHash,
+    model: active ? {
+      provider: active.provider,
+      baseUrl: active.baseUrl.replace(/\/+$/, ''),
+      model: active.model,
+    } : null,
+    answers: answers.map((answer) => ({
+      id: answer.id,
+      question: answer.question,
+      answer: answer.answer,
+    })),
+    knowledge,
+  }));
 }
 
 function validateFacts(candidates: Candidate[], chunks: Iterable<Pick<DocumentChunk, 'id' | 'content'>>): Candidate[] {
@@ -161,6 +207,7 @@ async function mapChunk(
   chunk: DocumentChunk,
   titleRoster: string,
   history: ChatMessage[],
+  cacheContextMode: SemanticCacheContextMode = 'once',
 ): Promise<Candidate[]> {
   try {
     const out = await jsonStage<{ candidates: Candidate[] }>(
@@ -178,6 +225,7 @@ async function mapChunk(
       `ingest-map:${chunk.id}`,
       { roster: titleRoster },
       history,
+      cacheContextMode,
     );
     const valid = validateFacts(out.candidates, [chunk]);
     if (out.candidates.length >= MAP_BATCH_LIMIT) {
@@ -242,6 +290,7 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
   stage: string,
   cacheContext?: unknown,
   history?: ChatMessage[],
+  cacheContextMode: SemanticCacheContextMode = 'once',
 ): Promise<T> {
   let coverageError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -263,6 +312,7 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
       `${stage}${attempt ? ':coverage-retry' : ''}`,
       cacheContext,
       history,
+      attempt ? 'once' : cacheContextMode,
     );
     try {
       exactCandidateCoverage(expected, result.items, stage);
@@ -373,7 +423,7 @@ async function normalizeBatch(
 
 async function normalizeCandidates(runId: string, mapped: Candidate[]): Promise<Candidate[]> {
   let candidates: Candidate[] = [];
-  const history: ChatMessage[] = [{ role: 'system', content: normalizePrompt }];
+  const history = createSemanticCacheSession(`ingest-normalize:${runId}`, normalizePrompt);
   const firstPass = batches(mapped, NORMALIZE_BATCH_LIMIT);
   for (let index = 0; index < firstPass.length; index++) {
     candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history));
@@ -482,12 +532,41 @@ export async function ingestRawFile(
   onProgress({ stage: '解析', progress: 8, detail: `${document.chunks.length} 个分段` });
   const prior = db.prepare(`SELECT content_hash, status FROM ingest_log WHERE path=?`).get(relPath) as any;
   if (!options.force && prior?.content_hash === document.contentHash && prior.status === 'completed') return { ...EMPTY };
+  const inputSignature = ingestInputSignature(relPath, document, resolvedQuestions);
+  const reusable = db.prepare(
+    `SELECT id,stats,llm_prompt_tokens FROM ingest_runs
+     WHERE path=? AND content_hash=? AND input_signature=?
+       AND status='completed' AND commit_status='committed'
+     ORDER BY finished_at DESC LIMIT 1`
+  ).get(relPath, document.contentHash, inputSignature) as {
+    id: string;
+    stats: string;
+    llm_prompt_tokens: number;
+  } | undefined;
+  if (reusable) {
+    const active = getActiveChat();
+    recordLlmResultCacheHit({
+      provider: active?.provider || 'custom',
+      model: active?.model || 'unknown',
+      operation: 'chat',
+      tag: 'ingest-pipeline-cache',
+      scope: 'ingest',
+      refId: reusable.id,
+      stage: 'pipeline',
+      promptVersion: INGEST_PIPELINE_VERSION,
+      cacheScope: 'ingest:pipeline',
+      dependencyHash: inputSignature,
+      resultCacheHit: true,
+    }, 0, reusable.llm_prompt_tokens);
+    return { ...EMPTY };
+  }
   const runId = newId();
   const sourceVersion = beginSourceVersion(relPath, document.contentHash);
   db.prepare(
-    `INSERT INTO ingest_runs(id,path,content_hash,source_version_id,status,commit_status,derived_status,started_at)
-     VALUES(?,?,?,?, 'running','pending','pending',?)`
-  ).run(runId, relPath, document.contentHash, sourceVersion.id, now());
+    `INSERT INTO ingest_runs(
+       id,path,content_hash,source_version_id,status,commit_status,derived_status,input_signature,started_at
+     ) VALUES(?,?,?,?, 'running','pending','pending',?,?)`
+  ).run(runId, relPath, document.contentHash, sourceVersion.id, inputSignature, now());
   setStatus(relPath, document.contentHash, runId, 'running');
   if (!llmReady()) {
     const message = '未配置 LLM，无法整理';
@@ -512,11 +591,17 @@ export async function ingestRawFile(
     const rosterEntries = loadRoster();
     const titleRoster = roster(rosterEntries);
     const rawMapped: Candidate[] = [];
-    const mapHistory: ChatMessage[] = [{ role: 'system', content: mapPrompt }];
+    const mapHistory = createSemanticCacheSession(`ingest-map:${runId}`, mapPrompt);
     for (let chunkIndex = 0; chunkIndex < document.chunks.length; chunkIndex++) {
       const chunk = document.chunks[chunkIndex];
       onProgress({ stage: 'Map', progress: 10 + Math.round(((chunkIndex + 1) / document.chunks.length) * 24), detail: `${chunkIndex + 1}/${document.chunks.length}` });
-      rawMapped.push(...await mapChunk(runId, chunk, titleRoster, mapHistory));
+      rawMapped.push(...await mapChunk(
+        runId,
+        chunk,
+        titleRoster,
+        mapHistory,
+        chunkIndex === 0 ? 'always' : 'once',
+      ));
     }
     const mapped = rawMapped.map((candidate, index) => ({
       ...candidate,
@@ -536,7 +621,7 @@ export async function ingestRawFile(
     onProgress({ stage: 'Plan', progress: 56 });
     const plan: PlanItem[] = [];
     const candidateBatches = batches(candidates, PLAN_BATCH_LIMIT);
-    const planHistory: ChatMessage[] = [{ role: 'system', content: planPrompt }];
+    const planHistory = createSemanticCacheSession(`ingest-plan:${runId}`, planPrompt);
     for (let index = 0; index < candidateBatches.length; index++) {
       const candidateBatch = candidateBatches[index];
       const rawPlan = await coveredItemsStage<{ items: PlanItem[] }>(
@@ -550,6 +635,7 @@ export async function ingestRawFile(
         `ingest-plan:${index + 1}`,
         { roster: titleRoster, related },
         planHistory,
+        index === 0 ? 'always' : 'once',
       );
       const batchPlan = whitelistFactIds(rawPlan.items, allowedFactIds).items;
       plan.push(...batchPlan);
@@ -559,7 +645,7 @@ export async function ingestRawFile(
 
     let reviewedPlan: PlanItem[] = [];
     const planBatches = batches(plan, PLAN_BATCH_LIMIT);
-    const criticHistory: ChatMessage[] = [{ role: 'system', content: criticPrompt }];
+    const criticHistory = createSemanticCacheSession(`ingest-critic:${runId}`, criticPrompt);
     for (let index = 0; index < planBatches.length; index++) {
       const planBatch = planBatches[index];
       const candidateIds = new Set(planBatch.map((item) => item.candidateId));
@@ -576,9 +662,20 @@ export async function ingestRawFile(
         `ingest-critic:${index + 1}`,
         { roster: titleRoster, related },
         criticHistory,
+        index === 0 ? 'always' : 'once',
       );
       const revised = whitelistFactIds(firstCritique.items, allowedFactIds).items;
       audit(runId, `critic:${index + 1}`, { ...firstCritique, items: revised }, planBatch);
+      if (firstCritique.approved && !firstCritique.issues.length) {
+        reviewedPlan.push(...revised);
+        audit(runId, `critic_review:${index + 1}`, {
+          approved: true,
+          issues: [],
+          skippedSecondPass: true,
+          items: revised,
+        }, revised);
+        continue;
+      }
       onProgress({ stage: 'Critic', progress: 69, detail: `修订复核 ${index + 1}/${planBatches.length}` });
       const secondCritique = await coveredItemsStage<{ approved: boolean; issues: string[]; items: PlanItem[] }>(
         runId,
@@ -611,7 +708,7 @@ export async function ingestRawFile(
     const contentById = new Map<string, string>();
     const composeTargets = reviewedPlan.filter((item) => item.action !== 'skip');
     const composeBatches = batches(composeTargets, COMPOSE_BATCH_LIMIT);
-    const composeHistory: ChatMessage[] = [{ role: 'system', content: composePrompt }];
+    const composeHistory = createSemanticCacheSession(`ingest-compose:${runId}`, composePrompt);
     for (let index = 0; index < composeBatches.length; index++) {
       const composeBatch = composeBatches[index];
       const factIds = new Set(composeBatch.flatMap((item) => item.factIds));
@@ -642,6 +739,7 @@ export async function ingestRawFile(
         `ingest-compose:${index + 1}`,
         { roster: titleRoster, related },
         composeHistory,
+        index === 0 ? 'always' : 'once',
       );
       for (const item of rawComposed.items) contentById.set(item.candidateId, item.content);
       audit(runId, `compose:${index + 1}`, rawComposed, composeInput.items);
@@ -654,24 +752,32 @@ export async function ingestRawFile(
     audit(runId, 'compose', composed, reviewedPlan);
 
     const generatedQuestions: QuestionOutput['questions'] = [];
-    const questionHistory: ChatMessage[] = [{ role: 'system', content: questionFinderPrompt }];
-    for (let index = 0; index < candidateBatches.length; index++) {
-      const candidateBatch = candidateBatches[index];
-      const candidateIds = new Set(candidateBatch.map((item) => item.candidateId));
-      const planBatch = reviewedPlan.filter((item) => candidateIds.has(item.candidateId));
-      const result = await jsonStage<QuestionOutput>(
-        runId,
-        questionOutputSchema,
-        questionFinderPrompt,
-        { candidates: candidateBatch, plan: planBatch, resolvedQuestions },
-        'ingest-questions',
-        6000,
-        `ingest-questions:${index + 1}`,
-        undefined,
-        questionHistory,
-      );
-      generatedQuestions.push(...result.questions);
-      audit(runId, `questions:${index + 1}`, result, candidateBatch.map((item) => item.candidateId));
+    const needsQuestionFinder = reviewedPlan.some((item) =>
+      item.action === 'review' ||
+      Boolean(item.ambiguity) ||
+      item.confidence === '低' ||
+      /冲突|未知|不确定/.test(item.reason)
+    );
+    if (needsQuestionFinder) {
+      const questionHistory = createSemanticCacheSession(`ingest-questions:${runId}`, questionFinderPrompt);
+      for (let index = 0; index < candidateBatches.length; index++) {
+        const candidateBatch = candidateBatches[index];
+        const candidateIds = new Set(candidateBatch.map((item) => item.candidateId));
+        const planBatch = reviewedPlan.filter((item) => candidateIds.has(item.candidateId));
+        const result = await jsonStage<QuestionOutput>(
+          runId,
+          questionOutputSchema,
+          questionFinderPrompt,
+          { candidates: candidateBatch, plan: planBatch, resolvedQuestions },
+          'ingest-questions',
+          6000,
+          `ingest-questions:${index + 1}`,
+          undefined,
+          questionHistory,
+        );
+        generatedQuestions.push(...result.questions);
+        audit(runId, `questions:${index + 1}`, result, candidateBatch.map((item) => item.candidateId));
+      }
     }
     const ambiguityQuestions = reviewedPlan.flatMap((item) => item.ambiguity ? [{
       question: item.ambiguity.question,
@@ -695,7 +801,7 @@ export async function ingestRawFile(
     const verifiedItems: VerifierOutput['items'] = [];
     const verifyTargets = composed.items.filter((item) => item.action !== 'skip');
     const verifyBatches = batches(verifyTargets, COMPOSE_BATCH_LIMIT);
-    const verifyHistory: ChatMessage[] = [{ role: 'system', content: verifierPrompt }];
+    const verifyHistory = createSemanticCacheSession(`ingest-verify:${runId}`, verifierPrompt);
     for (let index = 0; index < verifyBatches.length; index++) {
       const verifyBatch = verifyBatches[index];
       const factIds = new Set(verifyBatch.flatMap((item) => item.factIds));
@@ -747,7 +853,11 @@ export async function ingestRawFile(
         }]);
       }
       audit(runId, 'commit', stats, safeItems.map((item) => ({ name: item.name, action: item.action })));
-      db.prepare(`UPDATE ingest_runs SET stats=? WHERE id=?`).run(JSON.stringify(stats), runId);
+      const promptTokens = (db.prepare(
+        `SELECT COALESCE(SUM(prompt_tokens),0) prompt_tokens FROM llm_usage WHERE ref_id=?`
+      ).get(runId) as { prompt_tokens: number }).prompt_tokens;
+      db.prepare(`UPDATE ingest_runs SET stats=?,llm_prompt_tokens=? WHERE id=?`)
+        .run(JSON.stringify(stats), promptTokens, runId);
       if (options.force) finalizeSourceCandidateReingest(relPath, runId);
       syncIngestQuestionReport(relPath);
       setStatus(relPath, document.contentHash, runId, 'completed');

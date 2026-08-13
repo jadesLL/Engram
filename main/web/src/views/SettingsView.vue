@@ -110,6 +110,14 @@
                 </span>
               </div>
               <div class="llm-usage-controls">
+                <button
+                  class="btn small danger"
+                  type="button"
+                  :disabled="llmUsageLoading || llmUsageClearing || !llmUsage.requests"
+                  @click="clearLlmUsage"
+                >
+                  {{ llmUsageClearing ? '清除中...' : '清除用量' }}
+                </button>
                 <select v-model.number="llmUsageDays" aria-label="模型用量统计范围" @change="loadLlmUsage">
                   <option :value="7">近 7 天</option>
                   <option :value="30">近 30 天</option>
@@ -128,18 +136,27 @@
             </div>
 
             <p v-if="llmUsageError" class="setting-message err">{{ llmUsageError }}</p>
+            <p v-else-if="llmUsageNotice" class="setting-message ok">{{ llmUsageNotice }}</p>
             <div v-else-if="llmUsageLoading && !llmUsage.requests" class="llm-usage-empty">正在读取用量...</div>
             <template v-else-if="llmUsage.requests">
               <div class="llm-usage-metrics">
                 <div>
                   <span>缓存命中率</span>
                   <strong>{{ formatUsageRate(llmUsage.cacheHitRate) }}</strong>
-                  <small>{{ llmUsage.cacheRequests }}/{{ llmUsage.requests }} 次返回缓存计量</small>
+                  <small>
+                    {{ llmUsage.cacheRequests }}/{{ llmUsage.requests }} 次返回缓存计量
+                    <template v-if="llmUsage.resultCacheHits"> · {{ llmUsage.resultCacheHits }} 次结果复用</template>
+                  </small>
                 </div>
                 <div>
                   <span>缓存读取</span>
                   <strong>{{ formatTokenCount(llmUsage.cacheReadTokens) }}</strong>
-                  <small>未命中 {{ formatTokenCount(llmUsage.cacheMissTokens) }}</small>
+                  <small>
+                    未命中 {{ formatTokenCount(llmUsage.cacheMissTokens) }}
+                    <template v-if="llmUsage.promptAmplification !== null">
+                      · 放大 {{ formatUsageMultiplier(llmUsage.promptAmplification) }}
+                    </template>
+                  </small>
                 </div>
                 <div>
                   <span>输入 Token</span>
@@ -149,7 +166,10 @@
                 <div>
                   <span>输出 Token</span>
                   <strong>{{ formatTokenCount(llmUsage.completionTokens) }}</strong>
-                  <small>总计 {{ formatTokenCount(llmUsage.totalTokens) }}</small>
+                  <small>
+                    总计 {{ formatTokenCount(llmUsage.totalTokens) }}
+                    <template v-if="llmUsage.retryRequests"> · 重试 {{ llmUsage.retryRequests }}</template>
+                  </small>
                 </div>
               </div>
 
@@ -171,6 +191,7 @@
                       {{ item.requests }} 次
                       <template v-if="item.runs"> · {{ item.runs }} 个任务</template>
                       <template v-if="item.continuedRequests"> · {{ item.continuedRequests }} 次延续</template>
+                      <template v-if="item.resultCacheHits"> · {{ item.resultCacheHits }} 次结果复用</template>
                     </small>
                   </span>
                   <span :title="`${item.provider} · ${item.model}`">{{ item.model }}</span>
@@ -829,6 +850,9 @@ interface LlmUsageBreakdown {
   cacheMissTokens: number;
   cacheReported: boolean;
   cacheHitRate: number | null;
+  resultCacheHits: number;
+  retryRequests: number;
+  promptAmplification: number | null;
 }
 
 interface LlmUsageSummary {
@@ -844,6 +868,9 @@ interface LlmUsageSummary {
   cacheMissTokens: number;
   cacheReported: boolean;
   cacheHitRate: number | null;
+  resultCacheHits: number;
+  retryRequests: number;
+  promptAmplification: number | null;
   latestAt: string | null;
   breakdown: LlmUsageBreakdown[];
 }
@@ -862,6 +889,9 @@ function emptyLlmUsage(windowDays = 7): LlmUsageSummary {
     cacheMissTokens: 0,
     cacheReported: false,
     cacheHitRate: null,
+    resultCacheHits: 0,
+    retryRequests: 0,
+    promptAmplification: null,
     latestAt: null,
     breakdown: [],
   };
@@ -890,7 +920,9 @@ const activeDocument = ref('');
 const llmUsageDays = ref(7);
 const llmUsage = ref<LlmUsageSummary>(emptyLlmUsage());
 const llmUsageLoading = ref(false);
+const llmUsageClearing = ref(false);
 const llmUsageError = ref('');
+const llmUsageNotice = ref('');
 const imageCapabilityChecking = ref(false);
 const imageCapabilityDetail = ref('');
 const checkedImageCapabilityIds = new Set<string>();
@@ -2118,6 +2150,11 @@ const LLM_USAGE_TAG_LABELS: Record<string, string> = {
   'ingest-compose': '入库 Compose',
   'ingest-questions': '入库追问',
   'ingest-verify': '入库 Verify',
+  'ingest-pipeline-cache': '入库结果复用',
+  'entity-identity': '实体身份判断',
+  entities: '页面实体抽取',
+  'page-synthesis-compose': '页面综合 Compose',
+  'page-synthesis-verify': '页面综合 Verify',
   'assistant-route': '助手路由',
   'assistant-tools': '助手工具决策',
   'assistant-answer': '助手回答',
@@ -2143,6 +2180,10 @@ function formatTokenCount(value: number): string {
 
 function formatUsageRate(value: number | null): string {
   return value === null ? '未报告' : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatUsageMultiplier(value: number): string {
+  return `${value.toFixed(value >= 10 ? 1 : 2)}×`;
 }
 
 function formatUsageTime(value: string | null): string {
@@ -2349,6 +2390,22 @@ async function loadLlmUsage() {
     llmUsageError.value = errorMessage(error, '模型用量读取失败。');
   } finally {
     llmUsageLoading.value = false;
+  }
+}
+
+async function clearLlmUsage() {
+  if (!confirm('确定清除全部模型用量统计吗？此操作不会删除模型配置、知识内容或供应商侧缓存。')) return;
+  llmUsageClearing.value = true;
+  llmUsageError.value = '';
+  llmUsageNotice.value = '';
+  try {
+    const { data } = await api.delete('/api/settings/llm-usage');
+    llmUsage.value = emptyLlmUsage(llmUsageDays.value);
+    llmUsageNotice.value = `已清除 ${data.deleted || 0} 条模型用量记录。`;
+  } catch (error: any) {
+    llmUsageError.value = errorMessage(error, '模型用量清除失败。');
+  } finally {
+    llmUsageClearing.value = false;
   }
 }
 

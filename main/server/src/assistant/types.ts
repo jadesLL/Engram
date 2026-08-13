@@ -89,6 +89,16 @@ export interface AssistantToolCall {
   updatedAt: string;
 }
 
+export interface AssistantArtifact {
+  id: string;
+  runId: string;
+  toolCallId?: string;
+  kind: string;
+  contentHash: string;
+  content: string;
+  createdAt: string;
+}
+
 export interface DiffLine {
   kind: 'same' | 'add' | 'remove';
   text: string;

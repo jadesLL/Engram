@@ -115,6 +115,11 @@ type LlmRequestOptions = {
     stage: string;
     prefixHash: string;
     historyMessages: number;
+    promptVersion?: string;
+    cacheScope?: string;
+    dependencyHash?: string;
+    resultCacheHit?: boolean;
+    retryReason?: string;
   };
 };
 
@@ -141,6 +146,11 @@ function responseIdentity(
     stage: opts?.usageContext?.stage,
     prefixHash: opts?.usageContext?.prefixHash,
     historyMessages: opts?.usageContext?.historyMessages,
+    promptVersion: opts?.usageContext?.promptVersion,
+    cacheScope: opts?.usageContext?.cacheScope,
+    dependencyHash: opts?.usageContext?.dependencyHash,
+    resultCacheHit: opts?.usageContext?.resultCacheHit,
+    retryReason: opts?.usageContext?.retryReason,
   };
 }
 
@@ -507,19 +517,29 @@ export async function chatJson<T = any>(
   const retries = opts?.retries ?? 1;
   let lastErr = '';
   let curMaxTokens = opts?.maxTokens;
+  let retryReason = opts?.usageContext?.retryReason || '';
   for (let attempt = 0; attempt <= retries; attempt++) {
     let raw: string;
     try {
-      raw = await chat(messages, { ...opts, json: true, maxTokens: curMaxTokens });
+      raw = await chat(messages, {
+        ...opts,
+        json: true,
+        maxTokens: curMaxTokens,
+        usageContext: opts?.usageContext
+          ? { ...opts.usageContext, retryReason }
+          : undefined,
+      });
     } catch (e: any) {
       lastErr = `请求失败: ${e.message}`;
       console.warn(`[llm.chatJson:${tag}] 请求失败`, e.message);
       if (attempt < retries) {
         // 截断错误：翻倍 max_tokens 重试，不追加多余消息（问题在长度而非内容）
         if (e.message.includes('截断')) {
+          retryReason = 'output_truncated';
           curMaxTokens = (curMaxTokens || 4000) * 2;
           continue;
         }
+        retryReason = 'request_failed';
         messages = [...messages, { role: 'user' as const, content: '上一轮请求失败，请重新输出合法 JSON。' }];
         continue;
       }
@@ -537,9 +557,11 @@ export async function chatJson<T = any>(
     if (attempt < retries) {
       if (looksTruncated) {
         // 截断：翻倍 max_tokens 重试，不追加消息
+        retryReason = 'json_truncated';
         curMaxTokens = (curMaxTokens || 4000) * 2;
         continue;
       }
+      retryReason = 'json_parse_failed';
       messages = [
         ...messages,
         { role: 'assistant' as const, content: raw },
@@ -566,7 +588,17 @@ export async function chatJsonSchema<T>(
   for (let attempt = 0; attempt <= attempts; attempt++) {
     // 保留 retries 给 chatJson 处理截断重试（翻倍 max_tokens）；
     // schema 校验失败的重试由本函数外层循环负责
-    const value = await chatJson<unknown>(current, { ...opts, retries: opts?.retries ?? 1, tag });
+    const value = await chatJson<unknown>(current, {
+      ...opts,
+      retries: opts?.retries ?? 1,
+      tag,
+      usageContext: opts?.usageContext
+        ? {
+            ...opts.usageContext,
+            retryReason: attempt ? 'schema_validation_failed' : opts.usageContext.retryReason,
+          }
+        : undefined,
+    });
     const result = schema.safeParse(value);
     if (result.success) return result.data;
     lastError = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');

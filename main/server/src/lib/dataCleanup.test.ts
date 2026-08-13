@@ -34,6 +34,7 @@ beforeEach(() => {
   db.exec(`
     DELETE FROM vec_chunks;
     DELETE FROM chunks;
+    DELETE FROM index_states;
     DELETE FROM edges;
     DELETE FROM entities;
     DELETE FROM reports;
@@ -43,6 +44,7 @@ beforeEach(() => {
     DELETE FROM ingest_questions;
     DELETE FROM ingest_candidates;
     DELETE FROM semantic_events;
+    DELETE FROM semantic_cache;
     DELETE FROM llm_usage;
     DELETE FROM page_syntheses;
     DELETE FROM page_contributions;
@@ -156,6 +158,7 @@ test('one-click wipe removes reports, ingest history, queued jobs and nested sou
     'ingest_questions',
     'ingest_candidates',
     'semantic_events',
+    'semantic_cache',
     'llm_usage',
     'page_syntheses',
     'page_contributions',
@@ -170,6 +173,11 @@ test('one-click wipe removes reports, ingest history, queued jobs and nested sou
   ]) {
     assert.equal(db.prepare(`SELECT count(*) n FROM ${table}`).get().n, 0, table);
   }
+  assert.equal(
+    db.prepare(`SELECT count(*) n FROM index_states WHERE ref_id IN (?, ?)`)
+      .get(source.id, target.id).n,
+    0,
+  );
   assert.equal(
     db.prepare(`SELECT count(*) n FROM settings WHERE key = 'dream_last_run'`).get().n,
     0
