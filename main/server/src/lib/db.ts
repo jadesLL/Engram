@@ -204,6 +204,12 @@ export function migrate() {
   );
   CREATE INDEX IF NOT EXISTS idx_ingest_audit_run ON ingest_audit(run_id, id);
 
+  CREATE TABLE IF NOT EXISTS ingest_history_hidden (
+    run_id TEXT PRIMARY KEY,
+    hidden_at TEXT NOT NULL,
+    FOREIGN KEY(run_id) REFERENCES ingest_runs(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS source_versions (
     id TEXT PRIMARY KEY,
     path TEXT NOT NULL,

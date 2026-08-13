@@ -392,6 +392,10 @@
           </template>
         </section>
 
+        <section v-if="activeSettingsSection === 'history'" class="settings-panel refinement-history-panel">
+          <RefinementHistoryPanel />
+        </section>
+
         <section v-show="activeSettingsSection === 'automation'" class="settings-panel">
           <div class="panel-head">
             <div>
@@ -792,6 +796,7 @@ import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useAuthStore } from '../stores/auth';
 import Icon from '../components/Icon.vue';
+import RefinementHistoryPanel from '../components/RefinementHistoryPanel.vue';
 import {
   PROVIDERS,
   modelById,
@@ -804,7 +809,7 @@ import {
 import { APP_VERSION } from '../version';
 
 type ModelKind = 'chat' | 'emb' | 'document';
-type SettingsSection = 'account' | 'models' | 'automation' | 'mcp' | 'storage' | 'data';
+type SettingsSection = 'account' | 'models' | 'history' | 'automation' | 'mcp' | 'storage' | 'data';
 type DraftField = 'model' | 'baseUrl' | 'modelsUrl' | 'apiKey' | 'dim';
 type DreamScheduleFrequency = 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'custom';
 
@@ -928,6 +933,7 @@ const activeModelKind = ref<ModelKind>('chat');
 const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: string }> = [
   { id: 'account', label: '账户与外观', icon: 'settings' },
   { id: 'models', label: '模型配置', icon: 'ai' },
+  { id: 'history', label: '提炼轨迹', icon: 'list-tree' },
   { id: 'automation', label: '自动化', icon: 'activity' },
   { id: 'mcp', label: 'MCP 集成', icon: 'link' },
   { id: 'storage', label: '存储空间', icon: 'archive' },

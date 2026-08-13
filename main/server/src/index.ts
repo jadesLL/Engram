@@ -18,6 +18,7 @@ import { graphRoutes } from './routes/graph.js';
 import { dreamRoutes } from './routes/dream.js';
 import { settingsRoutes } from './routes/settings.js';
 import { jobRoutes } from './routes/jobs.js';
+import { ingestHistoryRoutes } from './routes/ingestHistory.js';
 import { rawRoutes } from './routes/raw.js';
 import { eventRoutes } from './routes/events.js';
 import { trashRoutes } from './routes/trash.js';
@@ -74,6 +75,7 @@ async function main() {
   await app.register(dreamRoutes);
   await app.register(settingsRoutes);
   await app.register(jobRoutes);
+  await app.register(ingestHistoryRoutes);
   await app.register(rawRoutes);
   await app.register(eventRoutes);
   await app.register(trashRoutes);
