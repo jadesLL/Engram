@@ -77,6 +77,14 @@
               </div>
               <button class="btn danger" type="button" @click="logout">退出登录</button>
             </div>
+
+            <div class="setting-row">
+              <div class="setting-copy">
+                <strong>应用版本</strong>
+                <span>当前安装的 ExampleProject 版本。</span>
+              </div>
+              <code class="app-version">{{ APP_VERSION }}</code>
+            </div>
           </div>
         </section>
 
@@ -779,6 +787,7 @@ import {
   type ModelOption,
   type ProviderPreset,
 } from '../presets';
+import { APP_VERSION } from '../version';
 
 type ModelKind = 'chat' | 'emb' | 'document';
 type SettingsSection = 'account' | 'models' | 'automation' | 'mcp' | 'storage' | 'data';
@@ -3482,6 +3491,16 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 
 .setting-control.wide {
   width: 250px;
+}
+
+.app-version {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .password-controls {
