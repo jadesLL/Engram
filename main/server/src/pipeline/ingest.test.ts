@@ -132,7 +132,10 @@ before(async () => {
     let input: any = rawInput;
     try {
       const parsed = JSON.parse(rawInput);
-      input = Object.hasOwn(parsed, 'sharedContext') ? parsed.input : parsed;
+      input = Object.hasOwn(parsed, 'sharedContext') ||
+        (Object.keys(parsed).length === 1 && Object.hasOwn(parsed, 'input'))
+        ? parsed.input
+        : parsed;
     } catch { /* retain plain text */ }
     let content: unknown;
     try {

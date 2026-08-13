@@ -52,11 +52,17 @@ export async function runSemanticStage<T>(options: SemanticStageInput<T>): Promi
   const inputHash = options.cacheContext === undefined
     ? hash(options.input)
     : hash({ cacheContext: options.cacheContext, input: options.input });
-  const inputContent = serializeStageInput(options.input, options.cacheContext);
+  const historyHasTurns = Boolean(options.history && options.history.length > 1);
+  let inputContent = historyHasTurns && options.cacheContext !== undefined
+    ? JSON.stringify({ input: options.input })
+    : serializeStageInput(options.input, options.cacheContext);
   const resetHistory = Boolean(
     options.history?.length &&
     historyChars(options.history) + inputContent.length > MAX_SEMANTIC_HISTORY_CHARS,
   );
+  if (resetHistory && historyHasTurns) {
+    inputContent = serializeStageInput(options.input, options.cacheContext);
+  }
   const sourceHistory = resetHistory ? options.history?.slice(0, 1) : options.history;
   const messages: ChatMessage[] = sourceHistory?.length
     ? sourceHistory.map((message) => ({ ...message }))

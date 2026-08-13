@@ -217,13 +217,56 @@ test('validated semantic turns append to provider history and failed turns do no
   assert.deepEqual(history, beforeFailure);
 });
 
+test('cache context primes append-only history once and is not repeated on every turn', async () => {
+  capturedRequests = [];
+  const schema = z.object({ answer: z.string() });
+  const system = '返回结构化结论。';
+  const sharedContext = {
+    roster: '- 共享实体（person）',
+    related: '- 共享证据',
+  };
+  const history = [{ role: 'system' as const, content: system }];
+
+  for (const value of [1, 2]) {
+    await runSemanticStage({
+      scope: 'history-cache-context-test',
+      refId: 'history-cache-context-run',
+      stage: 'decide',
+      tag: 'semantic-history-cache-context-test',
+      schema,
+      system,
+      cacheContext: sharedContext,
+      history,
+      input: { value },
+      retries: 0,
+    });
+  }
+
+  assert.deepEqual(
+    JSON.parse(capturedRequests[0].messages[1].content),
+    { sharedContext, input: { value: 1 } },
+  );
+  assert.deepEqual(
+    JSON.parse(capturedRequests[1].messages.at(-1).content),
+    { input: { value: 2 } },
+  );
+  assert.deepEqual(
+    capturedRequests[1].messages.slice(0, 2),
+    capturedRequests[0].messages,
+  );
+});
+
 test('oversized semantic history resets at a batch boundary', async () => {
   capturedRequests = [];
   const schema = z.object({ answer: z.string() });
   const system = '返回结构化结论。';
+  const sharedContext = { roster: '- 共享实体（person）' };
   const history = [
     { role: 'system' as const, content: system },
-    { role: 'user' as const, content: 'x'.repeat(30_000) },
+    {
+      role: 'user' as const,
+      content: JSON.stringify({ sharedContext, input: 'x'.repeat(30_000) }),
+    },
     { role: 'assistant' as const, content: 'y'.repeat(20_000) },
   ];
 
@@ -233,12 +276,17 @@ test('oversized semantic history resets at a batch boundary', async () => {
     tag: 'semantic-history-reset-test',
     schema,
     system,
+    cacheContext: sharedContext,
     history,
     input: { value: 1 },
     retries: 0,
   });
 
   assert.equal(capturedRequests[0].messages.length, 2);
+  assert.deepEqual(
+    JSON.parse(capturedRequests[0].messages[1].content),
+    { sharedContext, input: { value: 1 } },
+  );
   assert.equal(history.length, 3);
   assert.deepEqual(history.map((message) => message.role), ['system', 'user', 'assistant']);
 });

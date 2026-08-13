@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ChatMessage } from '../lib/llm.js';
 import { runSemanticStage } from '../lib/semanticStage.js';
 import type { Candidate, PlanItem } from './ingestModel.js';
 
@@ -60,6 +61,9 @@ function contextFor(candidate: Candidate | undefined): string {
 function identityPrompt(): string {
   return `你是知识库实体身份消歧专家。根据候选名称、原文上下文和已有页面名录判断名称是否稳定、是否只是职务称谓、是否与已有实体是同一对象。
 
+历史中的 user/assistant 轮次是已完成候选，仅用于保持缓存前缀。只处理最后一条 user 输入，不得重复、补写或修改更早候选。
+请求 JSON 的 sharedContext.existingPages 是已有页面名录；input.candidate 和 input.context 是本次需要判断的候选。
+
 所有语义判断由你完成，不要使用机械的单字差或后缀规则。
 
 status：
@@ -106,6 +110,7 @@ export async function classifyEntityName(
   roster: EntityRosterEntry[],
   context = '',
   refId = '',
+  history?: ChatMessage[],
 ): Promise<{ ambiguity: EntityAmbiguity | null; mergeTarget: string; canonicalName: string }> {
   if (!['person', 'project', 'org'].includes(kind)) {
     return { ambiguity: null, mergeTarget: '', canonicalName: name };
@@ -117,15 +122,18 @@ export async function classifyEntityName(
     tag: 'entity-identity',
     schema: identitySchema,
     system: identityPrompt(),
-    input: {
-      candidate: { name, kind },
-      context,
+    cacheContext: {
       existingPages: roster.map((entry) => ({
         id: entry.id,
         title: entry.title,
         type: entry.type,
         summary: entry.summary || '',
       })),
+    },
+    history,
+    input: {
+      candidate: { name, kind },
+      context,
     },
     temperature: 0.1,
     maxTokens: 1800,
@@ -153,6 +161,7 @@ export async function guardAmbiguousEntityNames(
 ): Promise<AmbiguousPlanItem[]> {
   const candidateByName = new Map(candidates.map((candidate) => [cleanName(candidate.name), candidate]));
   const rosterTitles = new Set(roster.map((entry) => cleanName(entry.title)));
+  const identityHistory: ChatMessage[] = [{ role: 'system', content: identityPrompt() }];
   const output: AmbiguousPlanItem[] = [];
   for (const item of items) {
     const validMergeTarget = item.action === 'merge' && rosterTitles.has(cleanName(item.target));
@@ -172,6 +181,7 @@ export async function guardAmbiguousEntityNames(
         roster,
         contextFor(candidateByName.get(cleanName(item.name))),
         item.name,
+        identityHistory,
       );
       if (decision.mergeTarget) {
         output.push({
