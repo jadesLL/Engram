@@ -3,20 +3,13 @@
     <div class="panel-head">
       <div>
         <h3>IM / 飞书</h3>
-        <p>配置飞书自建应用，把聊天消息直接接入助手 agent。</p>
+        <p>配置飞书自建应用，通过长连接接收消息并直接接入助手 agent（无需公网回调地址）。</p>
       </div>
-    </div>
-
-    <div class="endpoint-block">
-      <div>
-        <span>飞书事件回调地址</span>
-        <code>{{ webhookUrl }}</code>
-      </div>
-      <button class="btn" type="button" @click="copy(webhookUrl)">复制地址</button>
     </div>
 
     <div class="integration-note">
-      在飞书开放平台「事件与回调」中订阅 <code>im.message.receive_v1</code>，回调地址填上方链接。
+      在飞书开放平台创建自建应用，在「事件与回调」中选择<strong>长连接</strong>模式并订阅
+      <code>im.message.receive_v1</code>。填写下方凭证后保存，服务重启即自动建立长连接。
     </div>
 
     <div class="im-form">
@@ -39,32 +32,6 @@
       </label>
 
       <label class="im-field">
-        <span>Encrypt Key</span>
-        <input
-          :type="revealed.encryptKey ? 'text' : 'password'"
-          :value="displayValue('encryptKey')"
-          @input="onSecretInput($event, 'encryptKey')"
-          @focus="reveal('encryptKey')"
-          @blur="hide('encryptKey')"
-          placeholder="事件订阅加密密钥（可留空=不加密）"
-          autocomplete="off"
-        />
-      </label>
-
-      <label class="im-field">
-        <span>Verification Token</span>
-        <input
-          :type="revealed.verifyToken ? 'text' : 'password'"
-          :value="displayValue('verifyToken')"
-          @input="onSecretInput($event, 'verifyToken')"
-          @focus="reveal('verifyToken')"
-          @blur="hide('verifyToken')"
-          placeholder="事件订阅校验 token（可留空）"
-          autocomplete="off"
-        />
-      </label>
-
-      <label class="im-field">
         <span>API Base</span>
         <input type="text" v-model="form.apiBase" placeholder="https://open.feishu.cn" autocomplete="off" />
       </label>
@@ -82,32 +49,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 
 interface FeishuForm {
   appId: string;
   appSecret: string;
-  encryptKey: string;
-  verifyToken: string;
   apiBase: string;
 }
 
 const form = reactive<FeishuForm>({
   appId: '',
   appSecret: '',
-  encryptKey: '',
-  verifyToken: '',
   apiBase: 'https://open.feishu.cn',
 });
 
-// 用户编辑过的字段：新值；未编辑的保留空，保存时回退到已存值
 const edited = reactive<Record<keyof FeishuForm, string>>({
   appId: '',
   appSecret: '',
-  encryptKey: '',
-  verifyToken: '',
   apiBase: '',
 });
 
@@ -115,9 +75,6 @@ const revealed = reactive<Record<string, boolean>>({});
 const saving = ref(false);
 const testing = ref(false);
 
-const webhookUrl = computed(() => `${location.origin}/api/im/feishu/webhook`);
-
-// 已存值（onMounted 后填充），用于显示掩码和未编辑时的回退
 const stored = reactive<FeishuForm>({ ...form });
 
 function maskKey(key: string): string {
@@ -126,7 +83,6 @@ function maskKey(key: string): string {
   return `${key.slice(0, 4)}********${key.slice(-4)}`;
 }
 
-/** 输入框显示值：已编辑显示新值，未编辑显示掩码。 */
 function displayValue(field: keyof FeishuForm): string {
   if (edited[field]) return edited[field]!;
   if (revealed[field]) return stored[field];
@@ -141,20 +97,16 @@ function hide(field: string): void {
   revealed[field] = false;
 }
 
-/** 用户输入时，若值等于已存原文则视为未改（存空），否则存新值。 */
 function onSecretInput(event: Event, field: keyof FeishuForm): void {
   const value = (event.currentTarget as HTMLInputElement).value;
   edited[field] = value === stored[field] ? '' : value;
   revealed[field] = true;
 }
 
-/** 收集表单：已编辑字段用新值，未编辑用已存值。 */
 function collectForm(): FeishuForm {
   return {
     appId: edited.appId || form.appId,
     appSecret: edited.appSecret || stored.appSecret,
-    encryptKey: edited.encryptKey || stored.encryptKey,
-    verifyToken: edited.verifyToken || stored.verifyToken,
     apiBase: form.apiBase || stored.apiBase || 'https://open.feishu.cn',
   };
 }
@@ -166,7 +118,7 @@ async function save(): Promise<void> {
     await api.put('/api/settings', { feishu_config: JSON.stringify(collected) });
     Object.assign(stored, collected);
     Object.assign(form, collected);
-    (['appSecret', 'encryptKey', 'verifyToken'] as const).forEach((f) => (edited[f] = ''));
+    edited.appSecret = '';
     notify.success('飞书配置已保存');
   } catch (e) {
     notify.error('保存失败');
@@ -194,15 +146,6 @@ async function test(): Promise<void> {
   }
 }
 
-async function copy(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-    notify.success('已复制');
-  } catch {
-    notify.error('复制失败');
-  }
-}
-
 onMounted(async () => {
   try {
     const { data } = await api.get('/api/settings');
@@ -219,37 +162,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.endpoint-block {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 14px;
-  margin: 22px 24px 12px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-}
-.endpoint-block > div { min-width: 0; }
-.endpoint-block span {
-  display: block;
-  margin-bottom: 5px;
-  color: var(--text-faint);
-  font-size: 11px;
-}
-.endpoint-block code {
-  display: block;
-  overflow: hidden;
-  padding: 0;
-  background: transparent;
-  color: var(--text);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .integration-note {
-  margin: 0 24px 18px;
+  margin: 22px 24px 18px;
   color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1.6;
 }
 .im-form {
   display: flex;
@@ -285,8 +202,7 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
-  .endpoint-block { margin: 18px 18px 10px; }
-  .integration-note { margin: 0 18px 16px; }
+  .integration-note { margin: 18px 18px 16px; }
   .im-form, .im-actions { margin-left: 18px; margin-right: 18px; }
 }
 </style>

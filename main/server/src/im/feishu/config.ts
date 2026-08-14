@@ -5,19 +5,11 @@
  */
 
 import { getSetting } from '../../lib/db.js';
-import {
-  FEISHU_API_BASE,
-  FEISHU_APP_ID,
-  FEISHU_APP_SECRET,
-  FEISHU_ENCRYPT_KEY,
-  FEISHU_VERIFY_TOKEN,
-} from '../../config.js';
+import { FEISHU_API_BASE, FEISHU_APP_ID, FEISHU_APP_SECRET } from '../../config.js';
 
 export interface FeishuConfig {
   appId: string;
   appSecret: string;
-  encryptKey: string;
-  verifyToken: string;
   apiBase: string;
 }
 
@@ -32,8 +24,6 @@ export function getFeishuConfig(): FeishuConfig {
   return {
     appId: raw.appId || FEISHU_APP_ID,
     appSecret: raw.appSecret || FEISHU_APP_SECRET,
-    encryptKey: raw.encryptKey || FEISHU_ENCRYPT_KEY,
-    verifyToken: raw.verifyToken || FEISHU_VERIFY_TOKEN,
     apiBase: raw.apiBase || FEISHU_API_BASE,
   };
 }
