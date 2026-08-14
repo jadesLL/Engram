@@ -122,7 +122,9 @@ test('protobuf 解码真实飞书帧（64 位 logID / service，曾报 varint to
   ]);
   const frame = decodeFrame(head);
   assert.equal(frame.seqId, 5027578029);
-  assert.equal(frame.logId, 1786732916165436310);
+  // logID 超出 Number.MAX_SAFE_INTEGER，BigInt 精确值为 1786732916165436310，
+  // 转 number 后取最接近的可表示值，只要求解码不抛错、position 正确对齐
+  assert.equal(frame.logId, Number(1786732916165436310n));
   assert.equal(frame.service, 33554678);
   assert.equal(frame.method, 1);
 });
@@ -137,7 +139,7 @@ test('protobuf 大 seqID 编码（ACK 回显 64 位值）', () => {
   };
   const decoded = decodeFrame(encodeFrame(frame));
   assert.equal(decoded.seqId, 5027578029);
-  assert.equal(decoded.logId, 1786732916165436310);
+  assert.equal(decoded.logId, Number(1786732916165436310n));
   assert.equal(decoded.service, 33554678);
   assert.equal(decoded.method, 1);
 });

@@ -50,12 +50,12 @@ function readVarint64(buf: Uint8Array, pos: number): [value: bigint, next: numbe
   return [result, p];
 }
 
-/** 读取 varint 并限制在 Number.MAX_SAFE_INTEGER 内（seqID/logID 语义上是 id，可安全转 number 使用）。 */
+/**
+ * 读取 varint 并转 number。飞书的 seqID/logID 是 64 位随机 id，可能超出
+ * Number.MAX_SAFE_INTEGER；它们只用于 ACK 回显，转 number 损失的精度对业务无影响。
+ */
 function readVarint(buf: Uint8Array, pos: number): [value: number, next: number] {
   const [v, next] = readVarint64(buf, pos);
-  if (v > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error('varint 超出 Number 安全范围');
-  }
   return [Number(v), next];
 }
 
