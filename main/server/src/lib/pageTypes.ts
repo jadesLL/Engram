@@ -31,6 +31,11 @@ export function isEntity(type: string | undefined | null): boolean {
   return type === 'person' || type === 'project' || type === 'org';
 }
 
+/** 是否可整页综合（实体类 + 概念）。概念页保持自由 Markdown 结构，不套用实体双层结构。 */
+export function isSynthesizable(type: string | undefined | null): boolean {
+  return isEntity(type) || type === 'concept';
+}
+
 /** 类型是否合法 */
 export function isValidType(type: string | undefined | null): type is PageType {
   return !!type && (PAGE_TYPES as readonly string[]).includes(type);

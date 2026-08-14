@@ -13,7 +13,7 @@ import {
   type ReportDecision,
 } from './dream/apply.js';
 import { enqueue, enqueuePagePipeline } from './jobQueue.js';
-import { finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
+import { allPageContributions, finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
 import { recoverKnowledgeCommit } from './pipeline/knowledgeCommit.js';
 import { runDreamCycle } from './dream/tasks.js';
 import {
@@ -87,9 +87,10 @@ const handlers: Record<string, JobHandler> = {
   summarize: async ({ pageId }, _update, context) => {
     await organizePage(pageId, context.signal);
   },
-  ingest: async ({ path, force, questionId }, update, context) => {
+  ingest: async ({ path, force, reextract, questionId }, update, context) => {
     await ingestRawFile(path, (progress) => update(progress), {
       force: Boolean(force),
+      reextract: Boolean(reextract),
       signal: context.signal,
     });
     if (questionId) completeIngestQuestionJob(String(questionId), context.jobId);
@@ -123,6 +124,18 @@ const handlers: Record<string, JobHandler> = {
   },
   ingest_finalize: async ({ runId }) => {
     finalizeDerivedRun(runId);
+  },
+  /** 按页面重新提炼：反查该页依赖的来源，逐个强制重跑 ingest 管线 */
+  page_reextract: async ({ pageId }, update) => {
+    update({ stage: '按页面重新提炼', progress: 5, detail: String(pageId) });
+    const contribs = allPageContributions(String(pageId));
+    const paths = [...new Set(contribs.map((item) => item.source_path))];
+    if (!paths.length) {
+      update({ stage: '按页面重新提炼', progress: 100, detail: '无可重新提炼的来源' });
+      return;
+    }
+    for (const p of paths) enqueue('ingest', { path: p, force: true, reextract: true });
+    update({ stage: '按页面重新提炼', progress: 50, detail: `已入队 ${paths.length} 份来源` });
   },
   ingest_recover: async ({ runId }) => {
     recoverKnowledgeCommit(runId);

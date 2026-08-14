@@ -8,10 +8,12 @@ import {
 import { moveToTrash } from '../lib/trash.js';
 import { FIXED_DIRS, normalizeDir, isPageDir, typeToDir, ARCHIVE_DIR } from '../config.js';
 import { requireAuth } from './auth.js';
-import { enqueuePagePipeline } from '../jobs.js';
+import { enqueue, enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages, MergeError } from '../lib/mergePages.js';
 import { pageEvidenceResponse, queuePageRecompose } from '../pipeline/pageSynthesis.js';
+import { isSynthesizable } from '../lib/pageTypes.js';
+import { allPageContributions } from '../pipeline/sourceLedger.js';
 
 export { stamp } from '../lib/mergePages.js';
 
@@ -59,17 +61,31 @@ export async function pageRoutes(app: FastifyInstance) {
   app.get('/api/pages/:id/evidence', async (req, reply) => {
     const { id } = req.params as { id: string };
     const evidence = pageEvidenceResponse(id);
-    if (!evidence) return reply.code(404).send({ error: '页面不存在或不是可综合的实体页' });
+    if (!evidence) return reply.code(404).send({ error: '页面不存在或不是可综合的概念/实体页' });
     return evidence;
   });
 
   app.post('/api/pages/:id/recompose', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const page = db.prepare(`SELECT id FROM pages WHERE id=? AND deleted=0`).get(id);
+    const force = (req.query as { force?: string } | undefined)?.force === 'true';
+    const page = db.prepare(`SELECT id,type FROM pages WHERE id=? AND deleted=0`).get(id) as { type: string } | undefined;
     if (!page) return reply.code(404).send({ error: '页面不存在' });
-    const synthesisId = queuePageRecompose(id);
+    if (!isSynthesizable(page.type)) return reply.code(409).send({ error: '该页面类型不支持整页综合' });
+    const synthesisId = queuePageRecompose(id, { force });
     if (!synthesisId) return reply.code(409).send({ error: '页面没有可综合的有效来源事实，或尚未配置模型' });
     return { ok: true, synthesisId };
+  });
+
+  /** 按页面重新提炼：反查依赖来源，强制重跑完整提炼管线（连带刷新共享来源的其他页面） */
+  app.post('/api/pages/:id/reextract', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const page = db.prepare(`SELECT id,type FROM pages WHERE id=? AND deleted=0`).get(id) as { id: string; type: string } | undefined;
+    if (!page) return reply.code(404).send({ error: '页面不存在' });
+    if (!isSynthesizable(page.type)) return reply.code(409).send({ error: '该页面类型不支持重新提炼' });
+    const sources = [...new Set(allPageContributions(id).map((item) => item.source_path))];
+    if (!sources.length) return reply.code(409).send({ error: '该页面没有可重新提炼的来源' });
+    enqueue('page_reextract', { pageId: id });
+    return { ok: true, sources: sources.length };
   });
 
   /** wikilink 跳转：按标题解析 */

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { db } from '../lib/db.js';
 import { createPage, readPage, readPageMeta, safeJoin, writePage } from '../lib/vault.js';
-import { TYPE_DIR, isEntity } from '../lib/pageTypes.js';
+import { TYPE_DIR, isEntity, isSynthesizable } from '../lib/pageTypes.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
 import { addReports } from '../dream/reports.js';
 import type { ComposedItem } from './ingestModel.js';
@@ -231,7 +231,7 @@ function finishCommit(context: KnowledgeCommitContext, pageIds: string[]): void 
   for (const pageId of pageIds) {
     projectPage(pageId);
     const page = db.prepare(`SELECT type FROM pages WHERE id=? AND deleted=0`).get(pageId) as { type: string } | undefined;
-    const synthesisId = page && isEntity(page.type)
+    const synthesisId = page && isSynthesizable(page.type)
       ? queuePageRecompose(pageId, { triggerRunId: context.runId })
       : undefined;
     if (!synthesisId) enqueuePagePipeline(pageId, { ingestRunId: context.runId, revision });

@@ -171,6 +171,58 @@ export function renderEntitySynthesisProjection(
   return renderEntitySections(sections);
 }
 
+/** 概念页综合块标记（单块，不分 current/related/timeline，与实体的三段式标记互不匹配） */
+function conceptSynthesisPattern(): RegExp {
+  return /<!--\s*synthesis:([^:>]+):start\s*-->([\s\S]*?)<!--\s*synthesis:\1:end\s*-->/g;
+}
+
+function stripConceptSynthesisBlock(value: string): string {
+  return clean(value.replace(conceptSynthesisPattern(), ''));
+}
+
+function conceptSynthesisBlock(id: string, content: string): string {
+  return [
+    `<!-- synthesis:${id}:start -->`,
+    clean(content),
+    `<!-- synthesis:${id}:end -->`,
+  ].join('\n');
+}
+
+export function extractConceptSynthesis(markdown: string): { id: string; content: string } | null {
+  const match = [...markdown.matchAll(conceptSynthesisPattern())].at(-1);
+  return match ? { id: match[1], content: clean(match[2]) } : null;
+}
+
+export function extractConceptManualSections(
+  existing: string,
+  title: string,
+  allManaged: StoredContribution[],
+): string {
+  const stripped = removeManagedBlocks(existing || `# ${title}\n`, allManaged, false);
+  return stripConceptSynthesisBlock(stripped.replace(anyContributionPattern(), '')).trim();
+}
+
+export interface ConceptSynthesisSections {
+  id: string;
+  current: string;
+  related: string;
+}
+
+export function renderConceptSynthesisProjection(
+  existing: string,
+  title: string,
+  allManaged: StoredContribution[],
+  synthesis: EntitySynthesisSections,
+): string {
+  const manual = extractConceptManualSections(existing, title, allManaged);
+  const body = synthesis.related.trim()
+    ? `${clean(synthesis.current)}\n\n## 相关页面\n\n${clean(synthesis.related)}`
+    : clean(synthesis.current);
+  const block = conceptSynthesisBlock(synthesis.id, body);
+  const result = manual ? `${manual}\n\n${block}` : `# ${title}\n\n${block}`;
+  return `${result.replace(/\n{3,}/g, '\n\n')}\n`;
+}
+
 function sourceMarker(runId: string, factIds: string[]): string {
   return `<!-- ingest:${runId};facts:${factIds.join(',')} -->`;
 }

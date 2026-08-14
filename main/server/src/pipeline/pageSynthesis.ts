@@ -4,16 +4,24 @@ import { db, newId, now } from '../lib/db.js';
 import { llmReady } from '../lib/llm.js';
 import { runSemanticStage } from '../lib/semanticStage.js';
 import { readPage, readPageMeta, writePage } from '../lib/vault.js';
-import { isEntity } from '../lib/pageTypes.js';
+import { isEntity, isSynthesizable } from '../lib/pageTypes.js';
 import { enqueue } from '../jobQueue.js';
 import { addReports } from '../dream/reports.js';
-import { pageSynthesisPrompt, pageSynthesisVerifyPrompt } from '../prompts/pageSynthesis.js';
+import {
+  conceptSynthesisPrompt,
+  conceptSynthesisVerifyPrompt,
+  pageSynthesisPrompt,
+  pageSynthesisVerifyPrompt,
+} from '../prompts/pageSynthesis.js';
 import { acsPageSynthesisPrompt, acsPageSynthesisVerifyPrompt } from '../prompts/acs.js';
 import { isAcsMode, pageIsCustomerOrg } from '../lib/acs.js';
 import { allPageContributions, contributionsForProjection, type StoredContribution } from './sourceLedger.js';
 import {
+  extractConceptManualSections,
+  extractConceptSynthesis,
   extractEntityManualSections,
   extractEntitySynthesis,
+  renderConceptSynthesisProjection,
   renderEntitySynthesisProjection,
   renderEntitySections,
   type EntitySections,
@@ -198,7 +206,7 @@ function loadPageEvidence(pageId: string): PageEvidenceBundle | null {
   const row = db.prepare(
     `SELECT id,path,title,type,tags FROM pages WHERE id=? AND deleted=0`
   ).get(pageId) as { id: string; path: string; title: string; type: string; tags: string | null } | undefined;
-  if (!row || !isEntity(row.type)) return null;
+  if (!row || !isSynthesizable(row.type)) return null;
   const page: PageEvidenceBundle['page'] = {
     id: row.id,
     path: row.path,
@@ -283,8 +291,53 @@ export function hasActivePageSynthesis(pageId: string): boolean {
   return Boolean(activePageSynthesis(pageId));
 }
 
+/** 重建概念页综合块内容：current 与 related（若有）按 ## 相关页面 拼接，与投影写入时一致 */
+function conceptBlockContent(current: string, related: string): string {
+  const c = clean(current);
+  const r = clean(related);
+  return r ? clean(`${c}\n\n## 相关页面\n\n${r}`) : c;
+}
+
+/** 概念页综合状态：单块标记，不分 current/related/timeline；manualChanged 比较整块内容 */
+function conceptInputState(bundle: PageEvidenceBundle, body: string, active: StoredPageSynthesis | null): SynthesisInputState {
+  const extracted = extractConceptSynthesis(body);
+  const manualText = extractConceptManualSections(
+    body,
+    bundle.page.title,
+    allPageContributions(bundle.page.id),
+  );
+  const markerMissing = Boolean(active && (!extracted || extracted.id !== active.id));
+  const activeBlock = active ? conceptBlockContent(active.current_content, active.related_content) : '';
+  const manualChanged = Boolean(
+    active && extracted && extracted.id === active.id && !sameContent(extracted.content, activeBlock),
+  );
+  const edited = manualChanged && extracted ? {
+    current: extracted.content,
+    related: '',
+    timeline: '',
+  } : null;
+  return {
+    active,
+    extracted: extracted ? { id: extracted.id, current: extracted.content, related: '', timeline: '' } : null,
+    manualSections: { title: bundle.page.title, current: manualText, related: '', timeline: '' },
+    manualChanged,
+    markerMissing,
+    inputHash: sha({
+      synthesisVersion: PAGE_SYNTHESIS_VERSION,
+      concept: true,
+      evidenceHash: bundle.evidenceHash,
+      manual: { current: manualText },
+      edited,
+      markerMissing,
+    }),
+  };
+}
+
 function inputState(bundle: PageEvidenceBundle, body: string): SynthesisInputState {
   const active = activePageSynthesis(bundle.page.id);
+  if (!isEntity(bundle.page.type)) {
+    return conceptInputState(bundle, body, active);
+  }
   const extracted = extractEntitySynthesis(body, bundle.page.title);
   const manualSections = extractEntityManualSections(
     body,
@@ -534,7 +587,7 @@ function resolveSynthesisReport(pageId: string): void {
 
 export function queuePageRecompose(
   pageId: string,
-  options: { triggerRunId?: string } = {},
+  options: { triggerRunId?: string; force?: boolean } = {},
 ): string | undefined {
   const bundle = loadPageEvidence(pageId);
   if (!bundle) return undefined;
@@ -546,19 +599,26 @@ export function queuePageRecompose(
     const manualSources = Array.isArray(meta.sources)
       ? meta.sources.map(String).filter((source: string) => !managedPaths.has(source))
       : [];
-    const manual = extractEntityManualSections(
-      body.content,
-      bundle.page.title,
-      allPageContributions(pageId),
-    );
-    writePage(bundle.page.path, renderEntitySections(manual), {
-      summary: '',
-      sources: [...new Set([
-        ...manualSources,
-        ...bundle.contributions.map((item) => item.source_path),
-      ])],
-      retrieved: now().slice(0, 10),
-    });
+    const allManaged = allPageContributions(pageId);
+    const sources = [...new Set([
+      ...manualSources,
+      ...bundle.contributions.map((item) => item.source_path),
+    ])];
+    if (isEntity(bundle.page.type)) {
+      const manual = extractEntityManualSections(body.content, bundle.page.title, allManaged);
+      writePage(bundle.page.path, renderEntitySections(manual), {
+        summary: '',
+        sources,
+        retrieved: now().slice(0, 10),
+      });
+    } else {
+      const manualText = extractConceptManualSections(body.content, bundle.page.title, allManaged);
+      writePage(bundle.page.path, manualText || `# ${bundle.page.title}\n`, {
+        summary: '',
+        sources,
+        retrieved: now().slice(0, 10),
+      });
+    }
     db.prepare(
       `UPDATE page_syntheses SET status='superseded',updated_at=?
        WHERE page_id=? AND status='active'`
@@ -567,12 +627,21 @@ export function queuePageRecompose(
     return undefined;
   }
   if (!llmReady()) return undefined;
+  // force：强制重新综合，先把旧 active 置 superseded，使后续 state 与 recompose 看到一致的 active=null
+  if (options.force) {
+    db.prepare(
+      `UPDATE page_syntheses SET status='superseded',updated_at=?
+       WHERE page_id=? AND status='active'`
+    ).run(now(), pageId);
+  }
   const state = inputState(bundle, body.content);
   const existing = db.prepare(
     `SELECT * FROM page_syntheses WHERE page_id=? AND input_hash=?`
   ).get(pageId, state.inputHash) as StoredPageSynthesis | undefined;
-  if (existing?.status === 'active') return existing.id;
-  if (existing?.status === 'pending') return existing.id;
+  if (!options.force) {
+    if (existing?.status === 'active') return existing.id;
+    if (existing?.status === 'pending') return existing.id;
+  }
   const timestamp = now();
   const synthesisId = existing?.id || newId();
   if (existing) {
@@ -651,6 +720,7 @@ export async function recomposePage(
   const manualEdited = state.manualChanged ? state.extracted : null;
   // 信捷（ACS）模式仅对被标记为「客户」的 org 实体页生效；非客户页保持标准综合。
   const acs = isAcsMode() && pageIsCustomerOrg(bundle.page);
+  const isConceptPage = !isEntity(bundle.page.type);
   let output: SynthesisOutput;
   try {
     // 自纠错回路：compose 生成草稿 → verify 校验；校验失败时把证据校验反馈注入 compose 重新生成，
@@ -668,8 +738,12 @@ export async function recomposePage(
         schema: synthesisOutputSchema,
         system: acs
           ? acsPageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged, correctionFeedback)
-          : pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged, correctionFeedback),
-        promptVersion: acs ? 'page-synthesis-compose:acs-1' : 'page-synthesis-compose:4',
+          : isConceptPage
+            ? conceptSynthesisPrompt(bundle.page.title, roster.text, state.manualChanged, correctionFeedback)
+            : pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged, correctionFeedback),
+        promptVersion: acs
+          ? 'page-synthesis-compose:acs-1'
+          : isConceptPage ? 'page-synthesis-compose:concept-1' : 'page-synthesis-compose:4',
         cacheScope: 'page-synthesis:compose',
         dependencyHash: state.inputHash,
         resultCache: true,
@@ -710,8 +784,12 @@ export async function recomposePage(
         schema: synthesisVerifySchema,
       system: acs
         ? acsPageSynthesisVerifyPrompt(state.manualChanged)
-        : pageSynthesisVerifyPrompt(state.manualChanged),
-      promptVersion: acs ? 'page-synthesis-verify:acs-1' : 'page-synthesis-verify:3',
+        : isConceptPage
+          ? conceptSynthesisVerifyPrompt(state.manualChanged)
+          : pageSynthesisVerifyPrompt(state.manualChanged),
+      promptVersion: acs
+        ? 'page-synthesis-verify:acs-1'
+        : isConceptPage ? 'page-synthesis-verify:concept-1' : 'page-synthesis-verify:3',
       cacheScope: 'page-synthesis:verify',
       dependencyHash: state.inputHash,
       // verify 是证据校验关卡，不缓存结果：自纠错回路每轮都要对当前草稿重新校验，
@@ -768,12 +846,10 @@ export async function recomposePage(
       return { changed: false, synthesisId };
     }
 
-    const projected = renderEntitySynthesisProjection(
-      latestBody.content,
-      bundle.page.title,
-      allPageContributions(pageId),
-      rendered.sections,
-    );
+    const allManaged = allPageContributions(pageId);
+    const projected = isEntity(bundle.page.type)
+      ? renderEntitySynthesisProjection(latestBody.content, bundle.page.title, allManaged, rendered.sections)
+      : renderConceptSynthesisProjection(latestBody.content, bundle.page.title, allManaged, rendered.sections);
     const priorMeta = readPageMeta(bundle.page.path);
     try {
       writePage(bundle.page.path, projected, {
@@ -951,7 +1027,7 @@ export function queueMissingPageSyntheses(): number {
   const pages = db.prepare(
     `SELECT DISTINCT p.id FROM pages p
      JOIN page_contributions pc ON pc.page_id=p.id AND pc.active=1
-     WHERE p.deleted=0 AND p.type IN ('person','project','org')`
+     WHERE p.deleted=0 AND p.type IN ('person','project','org','concept')`
   ).all() as Array<{ id: string }>;
   let queued = 0;
   for (const page of pages) {
