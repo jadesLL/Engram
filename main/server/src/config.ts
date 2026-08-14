@@ -83,8 +83,12 @@ export function isUploadDir(dir: string): boolean {
 const TYPE_DIR: Record<string, string> = {
   concept: 'Wiki/概念',
   person: 'Wiki/实体',
-  project: 'Wiki/实体',
+  customer: 'Wiki/实体',
   org: 'Wiki/实体',
+  place: 'Wiki/实体',
+  work: 'Wiki/实体',
+  project: 'Wiki/实体',
+  other: 'Wiki/实体',
 };
 
 export function typeToDir(type: string): string {

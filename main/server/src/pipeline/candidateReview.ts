@@ -30,7 +30,7 @@ import {
 } from './sourceDocument.js';
 
 export type ReviewFinalizeAction = 'approve' | 'merge';
-export type ReviewKind = 'concept' | 'person' | 'project' | 'org';
+export type ReviewKind = 'concept' | 'person' | 'customer' | 'org' | 'place' | 'work' | 'project' | 'other';
 export interface CandidateReviewDecision {
   reportId: number;
   action: `approve:${ReviewKind}` | 'ignore';
@@ -392,11 +392,11 @@ export async function previewCandidateReview(
   if (!candidate) throw new Error('待审候选缺少可恢复的事实记录');
   const action = input.action;
   if (!['approve', 'merge'].includes(action)) throw new Error('待审操作无效');
-  if (!['concept', 'person', 'project', 'org'].includes(input.kind)) throw new Error('页面类型无效');
+  if (!['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(input.kind)) throw new Error('页面类型无效');
   const name = String(input.name || candidate.name).trim();
   if (!name) throw new Error('候选名称不能为空');
   const targetPage = action === 'merge' ? resolveTarget(String(input.target || '')) : null;
-  const reviewKind = targetPage?.type && ['concept', 'person', 'project', 'org'].includes(targetPage.type)
+  const reviewKind = targetPage?.type && ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(targetPage.type)
     ? targetPage.type as ReviewKind
     : input.kind;
   const activeSource = db.prepare(
@@ -603,7 +603,7 @@ export function validateCandidateReviewDecisions(raw: unknown): CandidateReviewD
     const reportId = Number(entry?.reportId);
     const action = String(entry?.action || '') as CandidateReviewDecision['action'];
     if (!Number.isInteger(reportId) || reportId <= 0 || seen.has(reportId)) throw new Error('候选选择无效或重复');
-    if (!['approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore'].includes(action)) {
+    if (!['approve:concept', 'approve:person', 'approve:customer', 'approve:org', 'approve:place', 'approve:work', 'approve:project', 'approve:other', 'ignore'].includes(action)) {
       throw new Error(`候选处理动作无效：${action}`);
     }
     seen.add(reportId);
@@ -718,7 +718,7 @@ export async function reconcileCandidateReports(
         throw new Error('候选尚未获得两个独立来源支持');
       }
       const target = exactCandidatePage(candidate);
-      const kind = ['concept', 'person', 'project', 'org'].includes(candidate.kind)
+      const kind = ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(candidate.kind)
         ? candidate.kind as ReviewKind
         : null;
       if (!kind) throw new Error('候选页面类型无效，仍需人工审核');

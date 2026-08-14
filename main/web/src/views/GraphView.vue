@@ -9,8 +9,9 @@
         <button class="btn small" @click="relayout">重排</button>
         <span class="legend faint small">
           <i class="lg-note"></i>笔记 <i class="lg-concept"></i>概念
-          <i class="lg-person"></i>人物 <i class="lg-project"></i>项目
-          <i class="lg-doc"></i>文档 <i class="lg-org"></i>客户 <i class="lg-deadlink"></i>死链
+          <i class="lg-person"></i>人物 <i class="lg-customer"></i>客户 <i class="lg-org"></i>组织
+          <i class="lg-place"></i>地点 <i class="lg-work"></i>作品 <i class="lg-project"></i>产品
+          <i class="lg-other"></i>其他 <i class="lg-doc"></i>文档 <i class="lg-deadlink"></i>死链
         </span>
       </div>
     </div>
@@ -172,9 +173,13 @@ onUnmounted(() => network?.destroy());
 .lg-note { background: var(--graph-note); }
 .lg-concept { background: var(--graph-concept); }
 .lg-person { background: var(--graph-person); }
-.lg-project { background: var(--graph-project); }
-.lg-doc { background: var(--graph-doc); }
+.lg-customer { background: var(--graph-customer); }
 .lg-org { background: var(--graph-org); }
+.lg-place { background: var(--graph-place); }
+.lg-work { background: var(--graph-work); }
+.lg-project { background: var(--graph-project); }
+.lg-other { background: var(--graph-other); }
+.lg-doc { background: var(--graph-doc); }
 .lg-deadlink { background: var(--graph-deadlink); }
 .graph-container { flex: 1; min-height: 0; }
 .graph-state {

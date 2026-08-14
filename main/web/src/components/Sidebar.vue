@@ -455,7 +455,11 @@ const GROUPS = [
     subs: [
       { key: 'person', label: '人物' },
       { key: 'customer', label: '客户' },
-      { key: 'project', label: '项目' },
+      { key: 'org', label: '组织' },
+      { key: 'place', label: '地点' },
+      { key: 'work', label: '作品' },
+      { key: 'project', label: '产品' },
+      { key: 'other', label: '其他' },
     ],
   },
   { key: 'archived', label: '归档' },
@@ -468,15 +472,19 @@ function topGroupOf(p: any): string {
   if (p.path.startsWith('Wiki/归档/')) return 'archived';
   if (p.path.startsWith('Wiki/查询/')) return 'qa';
   if (p.type === 'concept') return 'concept';
-  if (['person', 'project', 'org'].includes(p.type)) return 'entity';
+  if (['person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(p.type)) return 'entity';
   return 'unclassified'; // 未分类页面只在「全部页面」出现
 }
 
-/** 实体下的子类：人物 / 客户（org）/ 项目 */
+/** 实体下的子类：人物 / 客户 / 组织 / 地点 / 作品 / 产品 / 其他 */
 function subGroupOf(p: any): string | null {
   if (p.type === 'person') return 'person';
-  if (p.type === 'org') return 'customer';
+  if (p.type === 'customer') return 'customer';
+  if (p.type === 'org') return 'org';
+  if (p.type === 'place') return 'place';
+  if (p.type === 'work') return 'work';
   if (p.type === 'project') return 'project';
+  if (p.type === 'other') return 'other';
   return null;
 }
 

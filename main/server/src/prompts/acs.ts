@@ -5,8 +5,8 @@
  * ACS-04（管理客户关系·三层关系/决策链）方法论文档与 output-template.md，蒸馏为紧凑、
  * 指令化的提示词。运行时不加载原文，仅用本文件。
  *
- * 仅在信捷模式（settings: acs_mode === 'acs'）下、对被标记为「客户」的 org 实体页生效
- * （见 lib/acs.ts pageIsCustomerOrg）。非客户页（供应商/渠道商/内部组织等）不受影响，
+ * 仅在信捷模式（settings: acs_mode === 'acs'）下、对类型为 customer 的客户实体页生效
+ * （见 lib/acs.ts pageIsCustomer）。非客户实体（组织/人物/地点/作品/产品/其他）不受影响，
  * 因此无需在提示词内做客户判定——能进入本提示词的页面已是客户。
  */
 import { PERSONA, PRINCIPLES } from './common.js';
@@ -46,7 +46,7 @@ export function acsPageSynthesisPrompt(
   return `${PERSONA}
 ${PRINCIPLES}
 
-你正在以信捷模式（ACS 助力客户成功）执行客户实体页面「${title}」的跨来源整页综合，页面类型为 ${type}。该页面已被标记为客户，按 ACS 框架组织。
+你正在以信捷模式（ACS 助力客户成功）执行客户实体页面「${title}」的跨来源整页综合，页面类型为 ${type}。该页面为客户类型实体，按 ACS 框架组织。
 
 这不是按来源写摘要，也不是把新来源追加到旧正文。你必须读取全部 activeEvidence，把它们重组为一篇独立、连贯、可长期维护的客户档案：
 1. 跨来源去重，相同事实只表达一次；互补事实合并到同一语义章节。

@@ -122,8 +122,12 @@
             <select v-model="reviewKinds[r.id]">
               <option value="concept">概念</option>
               <option value="person">人物</option>
-              <option value="project">项目</option>
-              <option value="org">客户</option>
+              <option value="customer">客户</option>
+              <option value="org">组织</option>
+              <option value="place">地点</option>
+              <option value="work">作品</option>
+              <option value="project">产品</option>
+              <option value="other">其他</option>
             </select>
             <select v-model="reviewTargets[r.id]">
               <option value="">选择已有页面</option>
@@ -330,7 +334,7 @@ const running = ref(false);
 const resolving = ref(false);
 const tab = ref('deadlink');
 const reviewNames = reactive<Record<number, string>>({});
-const reviewKinds = reactive<Record<number, 'concept' | 'person' | 'project' | 'org'>>({});
+const reviewKinds = reactive<Record<number, 'concept' | 'person' | 'customer' | 'org' | 'place' | 'work' | 'project' | 'other'>>({});
 const reviewTargets = reactive<Record<number, string>>({});
 const reviewBusy = reactive<Record<number, boolean>>({});
 const questionAnswers = reactive<Record<string, string>>({});
@@ -369,7 +373,7 @@ const candidatePreview = reactive({
   reportId: 0,
   token: '',
   action: 'approve' as 'approve' | 'merge',
-  kind: 'concept' as 'concept' | 'person' | 'project' | 'org',
+  kind: 'concept' as 'concept' | 'person' | 'customer' | 'org' | 'place' | 'work' | 'project' | 'other',
   name: '',
   targetTitle: '',
   sourcePaths: [] as string[],
@@ -380,7 +384,7 @@ const candidatePreview = reactive({
   error: '',
 });
 const mergeTargets = computed(() => wikiPages.value.filter((page: any) =>
-  ['concept', 'person', 'project', 'org'].includes(page.type) &&
+  ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(page.type) &&
   (page.path.startsWith('Wiki/概念/') || page.path.startsWith('Wiki/实体/'))
 ));
 const activeAction = computed(() => actionConfig[tab.value]);
@@ -415,8 +419,12 @@ const batchPresets = computed(() => {
     presets.push(
       { action: 'concept', label: '全部概念' },
       { action: 'person', label: '全部人物' },
-      { action: 'project', label: '全部项目' },
-      { action: 'org', label: '全部客户' },
+      { action: 'customer', label: '全部客户' },
+      { action: 'org', label: '全部组织' },
+      { action: 'place', label: '全部地点' },
+      { action: 'work', label: '全部作品' },
+      { action: 'project', label: '全部产品' },
+      { action: 'other', label: '全部其他' },
       { action: 'doc', label: '全部文档' },
       { action: 'note', label: '全部笔记' },
     );
@@ -456,7 +464,7 @@ async function load() {
   reports.value = data.reports.map((report: any) => evidence.get(report.id) || report);
   for (const report of reports.value.filter((item: any) => item.kind === 'pending_review')) {
     reviewNames[report.id] ||= report.payload.name || '';
-    reviewKinds[report.id] ||= ['concept', 'person', 'project', 'org'].includes(report.payload.kind) ? report.payload.kind : 'concept';
+    reviewKinds[report.id] ||= ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(report.payload.kind) ? report.payload.kind : 'concept';
     const suggestedTarget = mergeTargets.value.find((page: any) =>
       page.id === report.payload.target || page.title === report.payload.target
     );
@@ -526,15 +534,19 @@ function pageTypeLabel(type: string) {
   return ({
     concept: '概念',
     person: '人物',
-    project: '项目',
-    org: '客户',
+    customer: '客户',
+    org: '组织',
+    place: '地点',
+    work: '作品',
+    project: '产品',
+    other: '其他',
     doc: '文档',
     note: '笔记',
   } as Record<string, string>)[type] || '未分类';
 }
 
 function hasPageTypeRecommendation(type: string) {
-  return ['concept', 'person', 'project', 'org', 'doc', 'note'].includes(type);
+  return ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other', 'doc', 'note'].includes(type);
 }
 
 function showSystemSuggestion(item: BatchItem) {

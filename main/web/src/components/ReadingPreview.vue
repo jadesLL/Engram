@@ -220,8 +220,12 @@ const readingStyle = computed(() => ({
 const typeLabel = computed(() => ({
   concept: '概念',
   person: '人物',
-  project: '项目',
-  org: '客户',
+  customer: '客户',
+  org: '组织',
+  place: '地点',
+  work: '作品',
+  project: '产品',
+  other: '其他',
   note: '知识页面',
 }[props.pageType] || '知识页面'));
 const hasRelated = computed(() =>

@@ -43,8 +43,8 @@ export async function organizePage(pageId: string, signal?: AbortSignal): Promis
     system: `你是知识库页面整理模型。阅读完整页面后：
 1. 生成 1-3 句中性、可检索、保留关键限定条件的摘要。
 2. 判断页面类型：${PAGE_TYPES.join(' | ')}。
-concept=概念/方法，person=人物，project=项目/产品，org=客户，doc=正式文档，note=普通笔记。
-只输出 JSON：{"summary":"","type":"concept|person|project|org|doc|note","rationale":""}。`,
+concept=概念/方法/技术，person=人物（真实姓名），customer=客户（购买产品/服务的客户企业），org=组织（非客户的机构/团体/公司），place=地点（地名/区域/地址），work=作品（书/文章/文档/艺术作品），project=产品（产品/项目名），other=其他（不属于以上类型的实体），doc=正式文档，note=普通笔记。
+只输出 JSON：{"summary":"","type":"${PAGE_TYPES.join('|')}","rationale":""}。`,
     input: {
       title: page.title,
       currentType: page.type,

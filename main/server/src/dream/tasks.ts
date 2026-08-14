@@ -19,7 +19,7 @@ const pairAuditSchema = z.object({
 });
 
 const deadlinkSchema = z.object({
-  suggestedType: z.enum(['concept', 'person', 'project', 'org', 'doc', 'note']),
+  suggestedType: z.enum(['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other', 'doc', 'note']),
   reason: z.string(),
 });
 
@@ -69,8 +69,8 @@ export async function taskDeadlinks(signal?: AbortSignal): Promise<number> {
           tag: 'dream-deadlink-type',
           schema: deadlinkSchema,
           system: `你是知识库页面类型判断模型。根据来源页面上下文，判断死链标题最适合创建为何种页面。
-concept=概念/方法/技术，person=人物，project=项目/产品，org=客户，doc=正式文档，note=普通笔记。
-只输出 JSON：{"suggestedType":"concept|person|project|org|doc|note","reason":""}。`,
+concept=概念/方法/技术，person=人物（真实姓名），customer=客户（购买产品/服务的客户企业），org=组织（非客户的机构/团体/公司），place=地点（地名/区域/地址），work=作品（书/文章/文档/艺术作品），project=产品（产品/项目名），other=其他（不属于以上类型的实体），doc=正式文档，note=普通笔记。
+只输出 JSON：{"suggestedType":"concept|person|customer|org|place|work|project|other|doc|note","reason":""}。`,
           input: {
             deadTitle: row.dst_title,
             sourceTitle: row.src_title,
