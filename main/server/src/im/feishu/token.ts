@@ -1,8 +1,11 @@
 /**
  * 飞书 tenant_access_token 缓存与刷新。token 默认 7200 秒有效，提前 60 秒刷新。
+ * 凭证从 getFeishuConfig() 实时读取（DB settings 或环境变量）。
  */
 
-import { FEISHU_API_BASE, FEISHU_APP_ID, FEISHU_APP_SECRET } from '../../config.js';
+import { getFeishuConfig, isFeishuConfigured } from './config.js';
+
+export { isFeishuConfigured };
 
 interface TokenCache {
   token: string;
@@ -18,8 +21,22 @@ interface TokenResponse {
 
 let cache: TokenCache | null = null;
 
-export function isFeishuConfigured(): boolean {
-  return Boolean(FEISHU_APP_ID && FEISHU_APP_SECRET);
+/** 用传入凭证换取 tenant_access_token（供测试连接端点复用）。 */
+export async function fetchTenantAccessToken(cfg: {
+  appId: string;
+  appSecret: string;
+  apiBase: string;
+}): Promise<string> {
+  const res = await fetch(`${cfg.apiBase}/open-apis/auth/v3/tenant_access_token/internal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app_id: cfg.appId, app_secret: cfg.appSecret }),
+  });
+  const data = (await res.json()) as TokenResponse;
+  if (data.code !== 0 || !data.tenant_access_token) {
+    throw new Error(`获取 tenant_access_token 失败: code=${data.code} ${data.msg ?? ''}`);
+  }
+  return data.tenant_access_token;
 }
 
 export async function getTenantAccessToken(): Promise<string> {
@@ -27,21 +44,16 @@ export async function getTenantAccessToken(): Promise<string> {
   if (cache && cache.expiresAt > now + 60_000) {
     return cache.token;
   }
-  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) {
-    throw new Error('飞书应用凭证未配置（FEISHU_APP_ID / FEISHU_APP_SECRET）');
+  const cfg = getFeishuConfig();
+  if (!cfg.appId || !cfg.appSecret) {
+    throw new Error('飞书应用凭证未配置（在设置页 IM / 飞书 填写，或设 FEISHU_APP_ID / FEISHU_APP_SECRET 环境变量）');
   }
-  const res = await fetch(`${FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET }),
-  });
-  const data = (await res.json()) as TokenResponse;
-  if (data.code !== 0 || !data.tenant_access_token) {
-    throw new Error(`获取 tenant_access_token 失败: code=${data.code} ${data.msg ?? ''}`);
-  }
-  cache = {
-    token: data.tenant_access_token,
-    expiresAt: now + (data.expire ?? 7200) * 1000,
-  };
-  return cache.token;
+  const token = await fetchTenantAccessToken(cfg);
+  cache = { token, expiresAt: now + 7200 * 1000 };
+  return token;
+}
+
+/** 清除 token 缓存（凭证变更后调用，使下次强制刷新）。 */
+export function clearTokenCache(): void {
+  cache = null;
 }
