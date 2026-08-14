@@ -9,9 +9,13 @@
         @keydown.enter="run"
       />
       <div class="mode-switch">
-        <button class="btn" :class="{ primary: mode === 'search' }" @click="mode = 'search'; run()">搜索</button>
-        <button class="btn" :class="{ primary: mode === 'think' }" @click="mode = 'think'; run()">问 AI</button>
+        <button class="btn" :class="{ primary: mode === 'search' }" :disabled="searching" @click="mode = 'search'; run()">搜索</button>
+        <button class="btn" :class="{ primary: mode === 'think' }" :disabled="searching" @click="mode = 'think'; run()">问 AI</button>
       </div>
+    </div>
+
+    <div v-if="searching" class="search-loading muted">
+      <AppSpinner :size="14" /> {{ mode === 'search' ? '正在搜索…' : '正在提交问题…' }}
     </div>
 
     <div v-if="mode === 'think' && searched" class="think-result">
@@ -48,6 +52,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useAssistantStore } from '../stores/assistant';
+import AppSpinner from '../components/ui/AppSpinner.vue';
+import { notify } from '../lib/notify';
 
 const route = useRoute();
 const router = useRouter();
@@ -58,18 +64,26 @@ const q = ref('');
 const mode = ref<'search' | 'think'>('search');
 const hits = ref<any[]>([]);
 const searched = ref(false);
+const searching = ref(false);
 
 async function run() {
-  if (!q.value.trim()) return;
+  if (!q.value.trim() || searching.value) return;
   hits.value = [];
   searched.value = false;
-  if (mode.value === 'search') {
-    const { data } = await api.get('/api/search', { params: { q: q.value } });
-    hits.value = data.hits;
-    searched.value = true;
-  } else {
-    await assistant.openWith(q.value, { route: route.fullPath }, true);
-    searched.value = true;
+  searching.value = true;
+  try {
+    if (mode.value === 'search') {
+      const { data } = await api.get('/api/search', { params: { q: q.value } });
+      hits.value = data.hits;
+      searched.value = true;
+    } else {
+      await assistant.openWith(q.value, { route: route.fullPath }, true);
+      searched.value = true;
+    }
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || (mode.value === 'search' ? '搜索失败，请稍后重试' : '提问失败，请稍后重试'));
+  } finally {
+    searching.value = false;
   }
 }
 
@@ -106,6 +120,7 @@ onMounted(() => {
 .search-box { display: flex; gap: 10px; flex-wrap: wrap; }
 .search-input { flex: 1; min-width: 240px; padding: 12px 16px; font-size: 16px; border-radius: 10px; }
 .mode-switch { display: flex; gap: 6px; }
+.search-loading { display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: var(--font-md); }
 .think-result { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; color: var(--text-secondary); }
 .hits { display: flex; flex-direction: column; gap: 10px; }
 .hit { cursor: pointer; transition: border-color 0.15s; }

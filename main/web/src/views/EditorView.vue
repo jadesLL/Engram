@@ -42,12 +42,12 @@
             @change="save(true)"
           />
           <span class="save-state faint small">{{ saveState }}</span>
-          <button class="ghost-btn" title="AI 整理（摘要/标签/实体）" @click="organize">
+          <button class="btn ghost small" title="AI 整理（摘要/标签/实体）" @click="organize">
             <Icon name="ai" :size="14" /> 整理
           </button>
           <button
             v-if="evidence?.sources?.length"
-            class="ghost-btn"
+            class="btn ghost small"
             title="查看本页来源证据"
             @click="evidenceOpen = !evidenceOpen"
           >
@@ -62,7 +62,7 @@
             <Icon name="activity" :size="13" />
             综合中
           </span>
-          <button class="ghost-btn" title="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
+          <button class="btn icon" title="查看本页图谱" aria-label="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
             <Icon name="graph" :size="14" />
           </button>
         </div>
@@ -74,7 +74,7 @@
         <button v-for="a in aiActions" :key="a.key" class="ai-action" @click="runAi(a.key)">
           {{ a.label }}
         </button>
-        <span class="faint small ai-hint">选中文本后使用，未选中则作用于全文</span>
+        <span class="muted small ai-hint">选中文本后使用，未选中则作用于全文</span>
       </div>
 
       <div v-show="!app.readingMode" class="editor-area">
@@ -99,7 +99,7 @@
               {{ evidence.sources.length }} 个资料来源 · {{ evidence.facts.length }} 条事实
             </p>
           </div>
-          <button class="icon-btn" title="关闭来源证据" @click="evidenceOpen = false">
+          <button class="btn icon" title="关闭来源证据" aria-label="关闭来源证据" @click="evidenceOpen = false">
             <Icon name="x" :size="18" />
           </button>
         </div>
@@ -208,6 +208,18 @@
       </div>
     </template>
 
+    <!-- 页面加载 / 错误状态 -->
+    <div v-else-if="pageLoading || pageError" class="page-state">
+      <template v-if="pageLoading">
+        <AppSpinner :size="18" />
+        <span class="muted">正在加载页面…</span>
+      </template>
+      <template v-else>
+        <p class="page-error-text">{{ pageError }}</p>
+        <button class="btn" @click="retryLoad">重试</button>
+      </template>
+    </div>
+
     <!-- 欢迎页 -->
     <div v-else class="welcome">
       <div class="welcome-inner">
@@ -242,6 +254,7 @@ import MarkdownEditor from '../components/MarkdownEditor.vue';
 import ReadingPreview from '../components/ReadingPreview.vue';
 import FilePreview from '../components/FilePreview.vue';
 import Icon from '../components/Icon.vue';
+import AppSpinner from '../components/ui/AppSpinner.vue';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 
@@ -259,6 +272,8 @@ const saveState = ref('');
 const related = ref<any>(null);
 const evidence = ref<any>(null);
 const evidenceOpen = ref(false);
+const pageLoading = ref(false);
+const pageError = ref('');
 const editorRef = ref<InstanceType<typeof MarkdownEditor>>();
 const filePreviewRef = ref<InstanceType<typeof FilePreview>>();
 
@@ -303,21 +318,35 @@ function visibleContentKey(value: string) {
 }
 
 async function loadPage(id: string) {
-  const { data } = await api.get(`/api/pages/${id}`);
+  pageLoading.value = true;
+  pageError.value = '';
   loading = true; // 抑制 watch
-  page.value = data.meta;
-  content.value = data.content;
-  loadedContentKey = visibleContentKey(data.content);
-  // 标题为空时回退到文件名（去掉 .md 后缀）
-  title.value = data.meta.title || data.meta.path.split('/').pop()?.replace(/\.md$/i, '') || '无标题';
-  pageType.value = data.meta.type;
-  tagsInput.value = (data.meta.tags || []).join(', ');
-  saveState.value = '';
-  dirty = false;
-  loading = false;
-  syncAssistantContext();
-  loadRelated();
-  loadEvidence();
+  try {
+    const { data } = await api.get(`/api/pages/${id}`);
+    page.value = data.meta;
+    content.value = data.content;
+    loadedContentKey = visibleContentKey(data.content);
+    // 标题为空时回退到文件名（去掉 .md 后缀）
+    title.value = data.meta.title || data.meta.path.split('/').pop()?.replace(/\.md$/i, '') || '无标题';
+    pageType.value = data.meta.type;
+    tagsInput.value = (data.meta.tags || []).join(', ');
+    saveState.value = '';
+    dirty = false;
+    syncAssistantContext();
+    loadRelated();
+    loadEvidence();
+  } catch (error: any) {
+    pageError.value = error?.response?.data?.error || '页面加载失败';
+    notify.error(pageError.value);
+  } finally {
+    loading = false;
+    pageLoading.value = false;
+  }
+}
+
+function retryLoad() {
+  const id = route.params.id as string;
+  if (id) loadPage(id);
 }
 
 async function loadRelated() {
@@ -377,22 +406,28 @@ async function save(manual = false) {
   if (!page.value) return;
   const tags = tagsInput.value.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
   const contentToSave = editorRef.value?.getValue() ?? content.value;
-  const { data } = await api.put(`/api/pages/${page.value.id}`, {
-    content: contentToSave,
-    title: title.value,
-    type: pageType.value,
-    tags,
-  });
-  page.value = data.meta;
-  loadedContentKey = visibleContentKey(contentToSave);
-  dirty = false;
-  justSavedAt = Date.now(); // 抑制本次保存触发的 SSE 回声
-  saveState.value = manual ? '已保存 ✓' : '已自动保存';
-  app.bumpSidebar(); // 类型/标题变化后立刻刷新侧栏分区
-  setTimeout(() => (saveState.value = ''), 2000);
-  loadRelated();
-  loadEvidence();
-  syncAssistantContext();
+  try {
+    const { data } = await api.put(`/api/pages/${page.value.id}`, {
+      content: contentToSave,
+      title: title.value,
+      type: pageType.value,
+      tags,
+    });
+    page.value = data.meta;
+    loadedContentKey = visibleContentKey(contentToSave);
+    dirty = false;
+    justSavedAt = Date.now(); // 抑制本次保存触发的 SSE 回声
+    saveState.value = manual ? '已保存 ✓' : '已自动保存';
+    app.bumpSidebar(); // 类型/标题变化后立刻刷新侧栏分区
+    setTimeout(() => (saveState.value = ''), 2000);
+    loadRelated();
+    loadEvidence();
+    syncAssistantContext();
+  } catch (error: any) {
+    // dirty 保持 true：beforeunload 会继续提醒，下次编辑/手动保存可重试
+    saveState.value = '保存失败';
+    notify.error(error?.response?.data?.error || '保存失败，请稍后重试');
+  }
 }
 
 watch(content, () => {
@@ -739,6 +774,7 @@ watch(
     if (id && id !== oldId) loadPage(id as string);
     else if (!id) {
       page.value = null; // 无 id 才回欢迎页
+      pageError.value = '';
       syncAssistantContext();
     }
   }
@@ -759,7 +795,7 @@ watch(
     if (!matchChanged && !matchMoved) return;
     if (dirty) return; // 用户正在编辑，不覆盖未保存内容
     if (Date.now() - justSavedAt < 1500) return; // 自己刚保存的回声，忽略
-    loadPage(page.value.id).catch(() => {});
+    loadPage(page.value.id);
   }
 );
 
@@ -829,16 +865,6 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 .tags-input:hover { background: var(--bg-hover); }
-.ghost-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  padding: 3px 8px;
-  border-radius: 5px;
-}
-.ghost-btn:hover { background: var(--bg-hover); color: var(--text); }
 .synthesis-inline {
   display: inline-flex;
   align-items: center;
@@ -859,15 +885,25 @@ onUnmounted(() => {
 .ai-bar-icon { color: var(--text-faint); margin-right: 2px; }
 .ai-action {
   font-size: 12px;
-  color: var(--text-faint);
+  color: var(--text-secondary);
   padding: 2px 8px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  transition: all 0.12s;
+  transition: color 0.12s, border-color 0.12s, background 0.12s, transform 0.1s;
 }
 .ai-action:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.ai-action:active { transform: scale(0.96); }
 .ai-hint { margin-left: auto; }
 .editor-area { flex: 1; min-height: 0; }
+.page-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.page-error-text { margin: 0; color: var(--danger); }
 .editor-area :deep(.vditor) {
   max-width: var(--editor-max);
   width: 100% !important;

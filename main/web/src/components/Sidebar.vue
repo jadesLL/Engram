@@ -141,90 +141,19 @@
           </div>
         </div>
         <div v-show="!collapsed.files" class="sec-body">
-          <div
+          <FileRow
             v-for="f in sortList(visibleFiles, sortFiles)"
             :key="f.path"
-            class="page-row file-row"
-            :class="{ active: isActiveFile(f), selected: selected.has('f:' + f.path) }"
-            role="button"
-            tabindex="0"
-            @click="selectionMode ? toggleSelect({ id: 'f:' + f.path }) : openFile(f)"
-            @keydown.enter.self="selectionMode ? toggleSelect({ id: 'f:' + f.path }) : openFile(f)"
-            @keydown.space.self.prevent="selectionMode ? toggleSelect({ id: 'f:' + f.path }) : openFile(f)"
-          >
-            <span
-              class="check"
-              :class="{ visible: selectionMode || selected.has('f:' + f.path), on: selected.has('f:' + f.path) }"
-              @click.stop="toggleSelect({ id: 'f:' + f.path })"
-            >
-              <Icon v-if="selected.has('f:' + f.path)" name="check" :size="11" />
-            </span>
-            <Icon
-              :name="fileIcon(f.ext)"
-              :size="16"
-              :stroke-width="1.7"
-              :class="['file-icon', fileIconClass(f.ext)]"
-            />
-            <span class="page-title" :title="f.name">{{ f.name }}</span>
-            <span class="row-trailing file-trailing">
-              <span
-                v-if="fileJob(f.path)"
-                class="row-status ingest-progress"
-                :title="fileJob(f.path).detail || fileJob(f.path).stage"
-              >
-                {{ fileJob(f.path).stage }} {{ fileJob(f.path).progress }}%
-              </span>
-              <span
-                v-else-if="f.extractionStatus === 'failed'"
-                class="row-status ingested-flag failed"
-                :title="f.extractionError ? `提取失败：${humanError(f.extractionError)}` : '提取失败，可重试'"
-              >提取失败</span>
-              <span
-                v-else-if="f.extractionStatus === 'blocked'"
-                class="row-status ingested-flag unsupported"
-                :title="f.extractionError || '需要支持图片的对话模型或单独配置视觉模型'"
-              >待配置</span>
-              <span
-                v-else-if="f.extractionStatus === 'partial'"
-                class="row-status ingested-flag warning"
-                :title="f.extractionError || '部分页面尚未识别'"
-              >部分提取</span>
-              <span
-                v-else-if="f.ingestedAt"
-                class="row-status ingested-flag"
-                :title="`已于 ${f.ingestedAt.slice(0, 10)} 整理`"
-              >已整理</span>
-              <span
-                v-else-if="f.ingestStatus === 'failed'"
-                class="row-status ingested-flag failed"
-                :title="f.ingestError ? `整理失败：${humanError(f.ingestError)}` : '整理失败，可重试'"
-              >失败</span>
-              <span
-                v-else-if="f.extractionStatus === 'completed'"
-                class="row-status ingested-flag extracted"
-                title="文字已提取，等待或可重新执行 AI 整理"
-              >已提取</span>
-              <span
-                v-else-if="f.ingestSupported === false"
-                class="row-status ingested-flag unsupported"
-                title="文件已保存，当前格式暂不支持 AI 整理"
-              >仅保存</span>
-              <span class="row-actions" @click.stop>
-                <button
-                  v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(f.ext)"
-                  type="button"
-                  title="AI 整理"
-                  aria-label="AI 整理"
-                  @click="ingestFile(f)"
-                >
-                  <Icon name="ai" :size="13" />
-                </button>
-                <button type="button" title="删除" aria-label="删除" @click="removeFile(f)">
-                  <Icon name="trash" :size="13" />
-                </button>
-              </span>
-            </span>
-          </div>
+            :file="f"
+            :active="isActiveFile(f)"
+            :selected="selected.has('f:' + f.path)"
+            :selection-mode="selectionMode"
+            :job="fileJob(f.path)"
+            @open="openFile"
+            @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
+            @ingest="ingestFile"
+            @remove="removeFile"
+          />
           <p v-if="!visibleFiles.length" class="none">
             {{ filter ? '没有匹配资料' : '暂无资料' }}
           </p>
@@ -261,90 +190,19 @@
           </div>
         </div>
         <div v-show="!collapsed.chat" class="sec-body">
-          <div
+          <FileRow
             v-for="f in sortList(visibleChatFiles, sortChat)"
             :key="f.path"
-            class="page-row file-row"
-            :class="{ active: isActiveFile(f), selected: selected.has('f:' + f.path) }"
-            role="button"
-            tabindex="0"
-            @click="selectionMode ? toggleSelect({ id: 'f:' + f.path }) : openFile(f)"
-            @keydown.enter.self="selectionMode ? toggleSelect({ id: 'f:' + f.path }) : openFile(f)"
-            @keydown.space.self.prevent="selectionMode ? toggleSelect({ id: 'f:' + f.path }) : openFile(f)"
-          >
-            <span
-              class="check"
-              :class="{ visible: selectionMode || selected.has('f:' + f.path), on: selected.has('f:' + f.path) }"
-              @click.stop="toggleSelect({ id: 'f:' + f.path })"
-            >
-              <Icon v-if="selected.has('f:' + f.path)" name="check" :size="11" />
-            </span>
-            <Icon
-              :name="fileIcon(f.ext)"
-              :size="16"
-              :stroke-width="1.7"
-              :class="['file-icon', fileIconClass(f.ext)]"
-            />
-            <span class="page-title" :title="f.name">{{ f.name }}</span>
-            <span class="row-trailing file-trailing">
-              <span
-                v-if="fileJob(f.path)"
-                class="row-status ingest-progress"
-                :title="fileJob(f.path).detail || fileJob(f.path).stage"
-              >
-                {{ fileJob(f.path).stage }} {{ fileJob(f.path).progress }}%
-              </span>
-              <span
-                v-else-if="f.extractionStatus === 'failed'"
-                class="row-status ingested-flag failed"
-                :title="f.extractionError ? `提取失败：${humanError(f.extractionError)}` : '提取失败，可重试'"
-              >提取失败</span>
-              <span
-                v-else-if="f.extractionStatus === 'blocked'"
-                class="row-status ingested-flag unsupported"
-                :title="f.extractionError || '需要支持图片的对话模型或单独配置视觉模型'"
-              >待配置</span>
-              <span
-                v-else-if="f.extractionStatus === 'partial'"
-                class="row-status ingested-flag warning"
-                :title="f.extractionError || '部分页面尚未识别'"
-              >部分提取</span>
-              <span
-                v-else-if="f.ingestedAt"
-                class="row-status ingested-flag"
-                :title="`已于 ${f.ingestedAt.slice(0, 10)} 整理`"
-              >已整理</span>
-              <span
-                v-else-if="f.ingestStatus === 'failed'"
-                class="row-status ingested-flag failed"
-                :title="f.ingestError ? `整理失败：${humanError(f.ingestError)}` : '整理失败，可重试'"
-              >失败</span>
-              <span
-                v-else-if="f.extractionStatus === 'completed'"
-                class="row-status ingested-flag extracted"
-                title="文字已提取，等待或可重新执行 AI 整理"
-              >已提取</span>
-              <span
-                v-else-if="f.ingestSupported === false"
-                class="row-status ingested-flag unsupported"
-                title="文件已保存，当前格式暂不支持 AI 整理"
-              >仅保存</span>
-              <span class="row-actions" @click.stop>
-                <button
-                  v-if="['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(f.ext)"
-                  type="button"
-                  title="AI 整理"
-                  aria-label="AI 整理"
-                  @click="ingestFile(f)"
-                >
-                  <Icon name="ai" :size="13" />
-                </button>
-                <button type="button" title="删除" aria-label="删除" @click="removeFile(f)">
-                  <Icon name="trash" :size="13" />
-                </button>
-              </span>
-            </span>
-          </div>
+            :file="f"
+            :active="isActiveFile(f)"
+            :selected="selected.has('f:' + f.path)"
+            :selection-mode="selectionMode"
+            :job="fileJob(f.path)"
+            @open="openFile"
+            @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
+            @ingest="ingestFile"
+            @remove="removeFile"
+          />
           <p v-if="!visibleChatFiles.length" class="none">
             {{ filter ? '没有匹配对话' : '暂无对话' }}
           </p>
@@ -424,6 +282,7 @@ import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
+import FileRow from './FileRow.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -696,20 +555,6 @@ async function createFile() {
   } catch (e: any) {
     notify.error(e.response?.data?.error || '创建失败');
   }
-}
-
-function fileIcon(ext: string): string {
-  if (['md', 'markdown'].includes(ext)) return 'markdown';
-  if (ext === 'pdf') return 'pdf';
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return 'image';
-  if (['docx', 'doc'].includes(ext)) return 'word';
-  if (['xlsx', 'xls'].includes(ext)) return 'excel';
-  if (['pptx', 'ppt'].includes(ext)) return 'ppt';
-  return 'attach';
-}
-
-function fileIconClass(ext: string): string {
-  return `file-icon-${fileIcon(ext)}`;
 }
 
 async function onUpload(e: Event) {
@@ -1197,155 +1042,9 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.file-icon {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  color: var(--text-secondary);
-  opacity: 0.76;
-}
-
-.file-icon-markdown { color: var(--file-markdown); opacity: 0.94; }
-.file-icon-word { color: var(--file-word); opacity: 0.94; }
-.file-icon-excel { color: var(--file-excel); opacity: 0.94; }
-.file-icon-ppt { color: var(--file-ppt); opacity: 0.94; }
-.file-icon-pdf { color: var(--file-pdf); opacity: 0.94; }
-
 .log-file-icon {
   flex-shrink: 0;
   color: var(--text-faint);
-}
-
-.row-trailing {
-  position: relative;
-  width: 76px;
-  height: 100%;
-  flex-shrink: 0;
-}
-
-.row-status {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  max-width: 76px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transform: translateY(-50%);
-  transition: opacity 150ms ease;
-}
-
-.ingested-flag {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--success);
-  font-size: 10px;
-}
-
-.ingested-flag::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.ingested-flag.failed {
-  color: var(--danger);
-}
-
-.ingested-flag.unsupported {
-  color: var(--text-faint);
-}
-
-.ingested-flag.warning {
-  color: #a36b00;
-}
-
-.ingested-flag.extracted {
-  color: var(--accent);
-}
-
-.ingest-progress {
-  padding: 1px 5px;
-  border-radius: 6px;
-  color: var(--sidebar-accent);
-  background: var(--sidebar-selection);
-  font-size: 10px;
-  line-height: 17px;
-  font-variant-numeric: tabular-nums;
-}
-
-.row-actions {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  padding-left: 3px;
-  transform: translateY(-50%);
-  opacity: 0;
-  pointer-events: none;
-  background: transparent;
-  transition: opacity 150ms ease;
-}
-
-.page-row:hover .row-actions,
-.page-row:focus-within .row-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.page-row:hover .row-status,
-.page-row:focus-within .row-status {
-  opacity: 0;
-}
-
-.row-actions button {
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border-radius: 5px;
-  color: var(--text-faint);
-}
-
-.row-actions button:hover,
-.row-actions button:focus-visible {
-  color: var(--text);
-  background: var(--sidebar-active);
-  outline: none;
-}
-
-.page-row .check {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  color: #fff;
-  opacity: 0;
-  transition: opacity 150ms ease, background 150ms ease, border-color 150ms ease;
-}
-
-.page-row:hover .check,
-.page-row:focus-within .check,
-.page-row .check.visible {
-  opacity: 1;
-}
-
-.page-row .check.on {
-  border-color: var(--sidebar-accent);
-  background: var(--sidebar-accent);
-  opacity: 1;
 }
 
 .log-row {
@@ -1478,9 +1177,6 @@ onUnmounted(() => {
   .sec-row,
   .add-btn,
   .page-row,
-  .row-status,
-  .row-actions,
-  .page-row .check,
   .rise-enter-active,
   .rise-leave-active {
     transition-duration: 0.01ms;
