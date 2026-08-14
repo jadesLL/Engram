@@ -177,7 +177,7 @@
               <span
                 v-else-if="f.extractionStatus === 'failed'"
                 class="row-status ingested-flag failed"
-                :title="f.extractionError ? `提取失败：${f.extractionError.slice(0, 200)}` : '提取失败，可重试'"
+                :title="f.extractionError ? `提取失败：${humanError(f.extractionError)}` : '提取失败，可重试'"
               >提取失败</span>
               <span
                 v-else-if="f.extractionStatus === 'blocked'"
@@ -197,7 +197,7 @@
               <span
                 v-else-if="f.ingestStatus === 'failed'"
                 class="row-status ingested-flag failed"
-                :title="f.ingestError ? `整理失败：${f.ingestError.slice(0, 200)}` : '整理失败，可重试'"
+                :title="f.ingestError ? `整理失败：${humanError(f.ingestError)}` : '整理失败，可重试'"
               >失败</span>
               <span
                 v-else-if="f.extractionStatus === 'completed'"
@@ -297,7 +297,7 @@
               <span
                 v-else-if="f.extractionStatus === 'failed'"
                 class="row-status ingested-flag failed"
-                :title="f.extractionError ? `提取失败：${f.extractionError.slice(0, 200)}` : '提取失败，可重试'"
+                :title="f.extractionError ? `提取失败：${humanError(f.extractionError)}` : '提取失败，可重试'"
               >提取失败</span>
               <span
                 v-else-if="f.extractionStatus === 'blocked'"
@@ -317,7 +317,7 @@
               <span
                 v-else-if="f.ingestStatus === 'failed'"
                 class="row-status ingested-flag failed"
-                :title="f.ingestError ? `整理失败：${f.ingestError.slice(0, 200)}` : '整理失败，可重试'"
+                :title="f.ingestError ? `整理失败：${humanError(f.ingestError)}` : '整理失败，可重试'"
               >失败</span>
               <span
                 v-else-if="f.extractionStatus === 'completed'"
@@ -418,6 +418,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
+import { humanError } from '../lib/ingestError';
 import { useAppStore } from '../stores/app';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
@@ -748,16 +749,24 @@ async function removeFile(f: any) {
 
 /** AI 整理单个原始资料：提炼概念/实体页到 Wiki */
 async function ingestFile(f: any) {
-  await api.post('/api/ai/ingest', { path: f.path, force: true });
-  ingestHint.value = `「${f.name}」已加入整理队列`;
-  await app.refreshJobs();
+  try {
+    await api.post('/api/ai/ingest', { path: f.path, force: true });
+    ingestHint.value = `「${f.name}」已加入整理队列`;
+    await app.refreshJobs();
+  } catch (e: any) {
+    ingestHint.value = humanError(e?.response?.data?.error || e?.message || '请求失败');
+  }
 }
 
 async function ingestAll() {
   if (!confirm('将按当前规则重新整理全部原始资料，并产生相应的 AI 调用。继续？')) return;
-  const { data } = await api.post('/api/ai/ingest-all', { force: true });
-  ingestHint.value = data.queued > 0 ? `已加入 ${data.queued} 份资料的整理队列` : '原始资料为空';
-  if (data.queued > 0) await app.refreshJobs();
+  try {
+    const { data } = await api.post('/api/ai/ingest-all', { force: true });
+    ingestHint.value = data.queued > 0 ? `已加入 ${data.queued} 份资料的整理队列` : '原始资料为空';
+    if (data.queued > 0) await app.refreshJobs();
+  } catch (e: any) {
+    ingestHint.value = humanError(e?.response?.data?.error || e?.message || '请求失败');
+  }
 }
 
 function searchTag(tag: string) {

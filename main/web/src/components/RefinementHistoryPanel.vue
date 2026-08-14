@@ -275,6 +275,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
+import { humanError, shortText } from '../lib/ingestError';
 import Icon from './Icon.vue';
 
 type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
@@ -515,11 +516,6 @@ function itemList(value: unknown): Array<Record<string, any>> {
   return [];
 }
 
-function shortText(value: unknown, limit = 130): string {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
-}
-
 function uniqueNames(items: Array<Record<string, any>>): string[] {
   return [...new Set(items.map((item) => item.name || item.title || item.target).filter(Boolean))]
     .slice(0, 6);
@@ -539,20 +535,6 @@ function actionCounts(items: Array<Record<string, any>>): Record<string, number>
     counts[action] = (counts[action] || 0) + 1;
     return counts;
   }, {});
-}
-
-function humanError(error: string): string {
-  if (/401|authentication|api key|密钥/i.test(error)) {
-    return '模型服务拒绝了请求，通常表示 API 密钥无效、已过期或没有访问权限。';
-  }
-  if (/parse|解析|json|截断|max_tokens/i.test(error)) {
-    return '模型返回的内容不完整或格式无法解析，本阶段未能形成有效结果。';
-  }
-  if (/cancel|取消|aborted/i.test(error)) return '本次提炼在该阶段被取消。';
-  if (/timeout|network|connect|连接|网络/i.test(error)) {
-    return '模型服务暂时无法连接或响应超时，本阶段没有完成。';
-  }
-  return `该阶段执行失败：${shortText(error, 180)}`;
 }
 
 function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSummary {

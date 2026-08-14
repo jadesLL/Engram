@@ -97,14 +97,14 @@
             <div v-for="j in g.tasks" :key="j.id" class="job-row failed indented">
               <span class="dot" :class="j.status === 'failed' ? 'failed' : 'cancelled'" />
               <span class="job-label">{{ j.label }}</span>
-              <span class="job-status faint small" :title="j.error">
+              <span class="job-status faint small" :title="humanError(j.error || '')">
                 {{ j.status === 'cancelled' ? '已取消' : j.stage }}
               </span>
               <button class="btn small" @click="retry(j)">重试</button>
             </div>
           </div>
         </template>
-        <p class="err-text small" v-if="failedJobs[0]?.error">{{ failedJobs[0].error }}</p>
+        <p class="err-text small" v-if="failedJobs[0]?.error">{{ humanError(failedJobs[0].error) }}</p>
       </div>
 
       <div class="jp-group">
@@ -128,6 +128,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
+import { humanError } from '../lib/ingestError';
 import { useAppStore } from '../stores/app';
 import Icon from './Icon.vue';
 
