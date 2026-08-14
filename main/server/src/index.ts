@@ -26,6 +26,7 @@ import { officeRoutes } from './routes/office.js';
 import { assistantRoutes } from './routes/assistant.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { mcpRoutes } from './mcp/server.js';
+import { imRoutes } from './im/routes.js';
 import { scanVault, readPage, writePage } from './lib/vault.js';
 import { heartbeat } from './lib/events.js';
 import { migrateAiLogsToOperationLog } from './pipeline/indexFile.js';
@@ -80,6 +81,7 @@ async function main() {
   await app.register(eventRoutes);
   await app.register(trashRoutes);
   await app.register(mcpRoutes);
+  await app.register(imRoutes);
 
   // 静态托管前端构建产物 + SPA fallback
   const webDist = path.resolve(__dirname, '../../web/dist');

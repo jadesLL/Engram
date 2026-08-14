@@ -492,6 +492,19 @@ export function migrate() {
   );
   CREATE INDEX IF NOT EXISTS idx_assistant_artifacts_run
     ON assistant_artifacts(run_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS im_sessions (
+    id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(platform, chat_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_im_sessions_lookup
+    ON im_sessions(platform, chat_id, user_id);
   `);
 
   ensureColumn('ingest_log', 'content_hash', 'TEXT');
