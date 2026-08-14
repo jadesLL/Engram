@@ -410,7 +410,7 @@ function etaText(job: any) {
   max-height: 60vh;
   display: flex;
   flex-direction: column;
-  z-index: 80;
+  z-index: var(--z-panel);
   box-shadow: var(--shadow);
   padding: 12px 14px;
 }

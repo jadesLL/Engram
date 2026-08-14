@@ -754,7 +754,7 @@ defineExpose({ downloadFile, openExternal });
 .version-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-overlay);
   background: rgba(0, 0, 0, 0.28);
   display: flex;
   justify-content: flex-end;

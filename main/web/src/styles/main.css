@@ -1,3 +1,9 @@
+/*
+ * 响应式断点规范：@media 无法引用 CSS 变量，全库统一为三档，新增断点必须选用——
+ *   640px  紧凑布局（窄窗口/平板竖屏）
+ *   768px  移动端切换（隐藏 rail、抽屉式侧栏、底部导航）
+ *   1024px 宽屏容器上限
+ */
 :root {
   /* Notion 风格浅色主题（默认） */
   --bg: #ffffff;
@@ -15,6 +21,11 @@
   --danger: #dc2626;
   --warn: #d97706;
   --success: #16a34a;
+  /* 琥珀色文字/描边场景（Editor/Reports 引用）；浅色下比 --warn 深一档以保证对比度 */
+  --warning: #b45309;
+  --danger-soft: rgba(220, 38, 38, 0.08);
+  --warn-soft: rgba(217, 119, 6, 0.1);
+  --success-soft: rgba(22, 163, 74, 0.1);
   --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
   --radius: 8px;
   --content-max: 860px;
@@ -42,6 +53,37 @@
   --file-excel: #2f8255;
   --file-ppt: #b9653e;
   --file-pdf: #bf4b4b;
+  /* 知识图谱图例配色（与 server/src/routes/graph.ts 的节点配色保持一致，节点本体颜色由服务端下发） */
+  --graph-note: #64748b;
+  --graph-concept: #16a34a;
+  --graph-person: #ea580c;
+  --graph-project: #7c3aed;
+  --graph-doc: #2563eb;
+  --graph-org: #0891b2;
+  --graph-deadlink: #f87171;
+  /* rail logo 阴影（深色主题下覆盖） */
+  --rail-logo-shadow: 0 1px 3px rgba(0, 82, 172, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+  --rail-logo-shadow-hover: 0 2px 6px rgba(0, 82, 172, 0.32), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  /*
+   * 全局浮层层级令牌：浮层统一引用，禁止手写魔法数。
+   * 组件内部局部层叠上下文里的 1/2/5/20 等小值不受此约束。
+   */
+  --z-drawer: 25;
+  --z-subpanel: 30;
+  --z-mask: 32;
+  --z-sidebar: 35;
+  --z-resizer: 36;
+  --z-chrome: 40;
+  --z-popup: 60;
+  --z-panel: 80;
+  --z-overlay: 100;
+  --z-toast: 220;
+  --z-menu: 1200;
+  /* 字号层级 */
+  --font-xs: 11px;
+  --font-sm: 12.5px;
+  --font-md: 13px;
+  --font-base: 15px;
   font-size: 15px;
 }
 
@@ -83,6 +125,12 @@ html.dark {
   --file-excel: #66b889;
   --file-ppt: #dc956c;
   --file-pdf: #e77b78;
+  --warning: #d97706;
+  --danger-soft: rgba(220, 38, 38, 0.18);
+  --warn-soft: rgba(217, 119, 6, 0.2);
+  --success-soft: rgba(22, 163, 74, 0.18);
+  --rail-logo-shadow: 0 1px 3px rgba(10, 132, 255, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  --rail-logo-shadow-hover: 0 2px 6px rgba(10, 132, 255, 0.46), inset 0 0 0 1px rgba(255, 255, 255, 0.22);
 }
 
 * { box-sizing: border-box; }
@@ -121,6 +169,7 @@ input, textarea, select {
   border-radius: 6px;
   padding: 7px 10px;
   outline: none;
+  transition: border-color 150ms ease;
 }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 

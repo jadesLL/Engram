@@ -836,7 +836,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--warning, #b45309);
+  color: var(--warning);
   white-space: nowrap;
 }
 .ai-bar {
@@ -1005,7 +1005,7 @@ onUnmounted(() => {
 .evidence-drawer {
   position: absolute;
   inset: 0 0 0 auto;
-  z-index: 30;
+  z-index: var(--z-subpanel);
   width: min(390px, 100%);
   display: flex;
   flex-direction: column;
@@ -1032,7 +1032,7 @@ onUnmounted(() => {
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
 }
-.synthesis-state.warning { color: var(--warning, #b45309); }
+.synthesis-state.warning { color: var(--warning); }
 .evidence-scroll {
   flex: 1;
   min-height: 0;
