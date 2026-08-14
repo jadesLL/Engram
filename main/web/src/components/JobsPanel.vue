@@ -1,5 +1,27 @@
 <template>
-  <div class="jobs-panel card">
+  <div
+    ref="panelRef"
+    class="jobs-panel card"
+    :class="{ resized: Boolean(panelHeight) }"
+    :style="panelStyle"
+  >
+    <button
+      type="button"
+      class="jp-resize-handle"
+      title="拖动调整面板大小，双击还原"
+      aria-label="调整 AI 任务队列面板大小"
+      :aria-valuetext="`${panelWidth} × ${displayPanelHeight} 像素`"
+      @pointerdown="startResize"
+      @dblclick="resetPanelSize"
+      @keydown.left.prevent="nudgePanel(-RESIZE_STEP, 0)"
+      @keydown.right.prevent="nudgePanel(RESIZE_STEP, 0)"
+      @keydown.up.prevent="nudgePanel(0, RESIZE_STEP)"
+      @keydown.down.prevent="nudgePanel(0, -RESIZE_STEP)"
+      @keydown.home.prevent="resetPanelSize"
+    >
+      <Icon name="move-diagonal" :size="13" :stroke-width="1.9" />
+    </button>
+
     <div class="jp-head">
       <div class="jp-title">
         <b>AI 任务队列</b>
@@ -104,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import Icon from './Icon.vue';
@@ -114,6 +136,159 @@ const app = useAppStore();
 const jobs = computed(() => app.jobs);
 const actionPending = ref('');
 const actionError = ref('');
+const panelRef = ref<HTMLElement>();
+
+const STORAGE_KEY = 'jobsPanelSize';
+const DEFAULT_PANEL_WIDTH = 340;
+const MIN_PANEL_WIDTH = 320;
+const MAX_PANEL_WIDTH = 720;
+const MIN_PANEL_HEIGHT = 260;
+const PANEL_LEFT = 56;
+const PANEL_BOTTOM = 16;
+const PANEL_VIEWPORT_GAP = 16;
+const RESIZE_STEP = 24;
+
+type StoredPanelSize = {
+  width?: number;
+  height?: number;
+};
+
+function readStoredPanelSize(): StoredPanelSize {
+  try {
+    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    return value && typeof value === 'object' ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+const storedPanelSize = readStoredPanelSize();
+const viewportWidth = ref(window.innerWidth);
+const viewportHeight = ref(window.innerHeight);
+const panelWidth = ref(Number(storedPanelSize.width) || DEFAULT_PANEL_WIDTH);
+const panelHeight = ref(Number(storedPanelSize.height) || 0);
+
+const maxPanelWidth = computed(() =>
+  Math.max(MIN_PANEL_WIDTH, Math.min(
+    MAX_PANEL_WIDTH,
+    viewportWidth.value - PANEL_LEFT - PANEL_VIEWPORT_GAP
+  ))
+);
+const maxPanelHeight = computed(() =>
+  Math.max(
+    MIN_PANEL_HEIGHT,
+    viewportHeight.value - PANEL_BOTTOM - PANEL_VIEWPORT_GAP
+  )
+);
+const panelStyle = computed(() => ({
+  width: `${panelWidth.value}px`,
+  height: panelHeight.value ? `${panelHeight.value}px` : undefined,
+}));
+const displayPanelHeight = computed(() =>
+  panelHeight.value || Math.round(panelRef.value?.getBoundingClientRect().height || MIN_PANEL_HEIGHT)
+);
+
+function clampPanelWidth(width: number) {
+  return Math.min(maxPanelWidth.value, Math.max(MIN_PANEL_WIDTH, width));
+}
+
+function clampPanelHeight(height: number) {
+  return Math.min(maxPanelHeight.value, Math.max(MIN_PANEL_HEIGHT, height));
+}
+
+function savePanelSize() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    width: panelWidth.value,
+    ...(panelHeight.value ? { height: panelHeight.value } : {}),
+  }));
+}
+
+function setPanelSize(width: number, height: number, persist = true) {
+  panelWidth.value = clampPanelWidth(width);
+  panelHeight.value = clampPanelHeight(height);
+  if (persist) savePanelSize();
+}
+
+function currentPanelHeight() {
+  return panelHeight.value
+    || panelRef.value?.getBoundingClientRect().height
+    || MIN_PANEL_HEIGHT;
+}
+
+function nudgePanel(widthDelta: number, heightDelta: number) {
+  setPanelSize(
+    panelWidth.value + widthDelta,
+    currentPanelHeight() + heightDelta
+  );
+}
+
+function resetPanelSize() {
+  panelWidth.value = clampPanelWidth(DEFAULT_PANEL_WIDTH);
+  panelHeight.value = 0;
+  savePanelSize();
+}
+
+let stopActiveResize: (() => void) | null = null;
+
+function startResize(event: PointerEvent) {
+  if (window.innerWidth <= 768 || !panelRef.value) return;
+  event.preventDefault();
+
+  const handle = event.currentTarget as HTMLElement;
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const bounds = panelRef.value.getBoundingClientRect();
+
+  handle.setPointerCapture?.(event.pointerId);
+  document.body.style.cursor = 'nesw-resize';
+  document.body.style.userSelect = 'none';
+
+  const move = (moveEvent: PointerEvent) => {
+    setPanelSize(
+      bounds.width + moveEvent.clientX - startX,
+      bounds.height + startY - moveEvent.clientY,
+      false
+    );
+  };
+  const stop = () => {
+    savePanelSize();
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    stopActiveResize = null;
+  };
+
+  stopActiveResize?.();
+  stopActiveResize = stop;
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', stop);
+  window.addEventListener('pointercancel', stop);
+}
+
+function syncPanelToViewport() {
+  viewportWidth.value = window.innerWidth;
+  viewportHeight.value = window.innerHeight;
+
+  const nextWidth = clampPanelWidth(panelWidth.value);
+  const nextHeight = panelHeight.value ? clampPanelHeight(panelHeight.value) : 0;
+  if (nextWidth !== panelWidth.value || nextHeight !== panelHeight.value) {
+    panelWidth.value = nextWidth;
+    panelHeight.value = nextHeight;
+    savePanelSize();
+  }
+}
+
+onMounted(() => {
+  syncPanelToViewport();
+  window.addEventListener('resize', syncPanelToViewport);
+});
+
+onUnmounted(() => {
+  stopActiveResize?.();
+  window.removeEventListener('resize', syncPanelToViewport);
+});
 
 const failedJobs = computed(() => jobs.value.recent.filter((j: any) => j.status === 'failed'));
 const stoppedJobs = computed(() =>
@@ -228,13 +403,44 @@ function etaText(job: any) {
   position: fixed;
   left: 56px;
   bottom: 16px;
-  width: 340px;
+  min-width: 320px;
+  min-height: 0;
+  max-width: calc(100vw - 72px);
   max-height: 60vh;
   display: flex;
   flex-direction: column;
   z-index: 80;
   box-shadow: var(--shadow);
   padding: 12px 14px;
+}
+.jobs-panel.resized { max-height: calc(100vh - 32px); }
+.jp-resize-handle {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  cursor: nesw-resize;
+  color: var(--text-faint);
+  outline: none;
+  touch-action: none;
+  z-index: 1;
+}
+.jp-resize-handle:hover,
+.jp-resize-handle:focus-visible {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+.jp-resize-handle:focus-visible {
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px var(--sidebar-focus-ring);
 }
 .jp-head {
   display: flex;
@@ -273,7 +479,7 @@ function etaText(job: any) {
   white-space: nowrap;
 }
 .action-error { margin: 0 0 8px; color: var(--danger); }
-.jp-body { overflow-y: auto; }
+.jp-body { min-height: 0; overflow-y: auto; }
 .jp-group { margin-bottom: 10px; }
 .jp-sub {
   font-size: 11px;
@@ -338,6 +544,17 @@ function etaText(job: any) {
 .none { padding: 4px 2px; }
 
 @media (max-width: 768px) {
-  .jobs-panel { left: 8px; right: 8px; width: auto; bottom: 60px; }
+  .jobs-panel {
+    left: 8px;
+    right: 8px;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0;
+    min-height: 0;
+    max-width: none;
+    max-height: calc(100vh - 76px);
+    bottom: 60px;
+  }
+  .jp-resize-handle { display: none; }
 }
 </style>
