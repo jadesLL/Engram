@@ -251,8 +251,19 @@
 
       <!-- 标签 -->
       <div v-if="tags.length" class="tags-block">
-        <div class="side-sub">标签</div>
-        <div class="tags">
+        <div class="sec-row" :class="{ expanded: !collapsed.tags }">
+          <button
+            class="sec-toggle"
+            type="button"
+            :aria-expanded="!collapsed.tags"
+            :title="collapsed.tags ? '展开标签' : '收起标签'"
+            @click="toggle('tags')"
+          >
+            <span class="sec-name">标签</span>
+          </button>
+          <span class="sec-count">{{ tags.length }}</span>
+        </div>
+        <div v-show="!collapsed.tags" class="tags">
           <button v-for="t in tags" :key="t.name" class="tag" type="button" @click="searchTag(t.name)">
             #{{ t.name }} {{ t.count }}
           </button>
@@ -324,6 +335,7 @@ const defaultCollapsed: Record<string, boolean> = {
   files: true,
   chat: true,
   ailog: true,
+  tags: true,
 };
 
 function loadCollapsedState() {
