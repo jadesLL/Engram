@@ -1,0 +1,21 @@
+{
+  "name": "@example-wiki/bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "IM bridge: connects Feishu/WeChat open platforms to ExampleProject via the MCP endpoint",
+  "scripts": {
+    "dev": "node --experimental-strip-types --watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "fastify": "5.11.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "5.7.3"
+  }
+}
