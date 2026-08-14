@@ -126,9 +126,10 @@
           <span class="page-method">{{ extractionMethodLabel(page.method) }}</span>
           <span class="page-state" :class="page.status">{{ extractionPageStatus(page.status) }}</span>
           <button
-            class="icon-btn"
+            class="btn icon"
             type="button"
             title="重新识别本页"
+            aria-label="重新识别本页"
             :disabled="extractionBusy || Boolean(activeFileJob)"
             @click="retryPage(page.pageNumber)"
           ><Icon name="restore" :size="14" /></button>
@@ -150,31 +151,25 @@
       </a>
     </div>
 
-    <div v-if="versionsOpen" class="version-backdrop" @click.self="versionsOpen = false">
-      <section class="version-panel">
-        <header>
+    <AppModal :open="versionsOpen" title="历史版本" placement="right" @close="versionsOpen = false">
+      <template #subtitle>
+        <p class="muted small">{{ fileName }}</p>
+      </template>
+      <div v-if="versionsLoading" class="version-empty muted">加载中…</div>
+      <div v-else-if="!versions.length" class="version-empty muted">尚无历史版本</div>
+      <div v-else class="version-list">
+        <div v-for="version in versions" :key="version.id" class="version-row">
           <div>
-            <b>历史版本</b>
-            <p class="muted small">{{ fileName }}</p>
+            <b>{{ formatDate(version.created_at) }}</b>
+            <span class="muted small">{{ reasonLabel(version.reason) }} · {{ formatSize(version.size) }}</span>
           </div>
-          <button class="icon-btn" title="关闭" @click="versionsOpen = false"><Icon name="x" :size="17" /></button>
-        </header>
-        <div v-if="versionsLoading" class="version-empty muted">加载中…</div>
-        <div v-else-if="!versions.length" class="version-empty muted">尚无历史版本</div>
-        <div v-else class="version-list">
-          <div v-for="version in versions" :key="version.id" class="version-row">
-            <div>
-              <b>{{ formatDate(version.created_at) }}</b>
-              <span class="muted small">{{ reasonLabel(version.reason) }} · {{ formatSize(version.size) }}</span>
-            </div>
-            <button class="btn small" :disabled="restoringId === version.id" @click="restoreVersion(version)">
-              <Icon name="restore" :size="14" />
-              {{ restoringId === version.id ? '恢复中…' : '恢复' }}
-            </button>
-          </div>
+          <button class="btn small" :disabled="restoringId === version.id" @click="restoreVersion(version)">
+            <Icon name="restore" :size="14" />
+            {{ restoringId === version.id ? '恢复中…' : '恢复' }}
+          </button>
         </div>
-      </section>
-    </div>
+      </div>
+    </AppModal>
   </div>
 </template>
 
@@ -191,6 +186,9 @@ import {
 import Icon from './Icon.vue';
 import ImageViewer from './ImageViewer.vue';
 import PdfViewer from './PdfViewer.vue';
+import AppModal from './ui/AppModal.vue';
+import { confirmDialog } from '../lib/confirm';
+import { notify } from '../lib/notify';
 
 const props = defineProps<{ path: string }>();
 const emit = defineEmits<{
@@ -300,7 +298,7 @@ async function openExternal() {
     }
   } catch (error) {
     console.error(error);
-    alert('打开失败，请尝试下载后手动打开');
+    notify.error('打开失败，请尝试下载后手动打开');
   }
 }
 
@@ -500,7 +498,12 @@ async function openVersions() {
 }
 
 async function restoreVersion(version: OfficeVersion) {
-  if (!confirm(`确定恢复到 ${formatDate(version.created_at)} 的版本吗？当前文件会先自动备份。`)) return;
+  const ok = await confirmDialog({
+    title: '恢复历史版本',
+    message: `确定恢复到 ${formatDate(version.created_at)} 的版本吗？当前文件会先自动备份。`,
+    confirmText: '恢复',
+  });
+  if (!ok) return;
   restoringId.value = version.id;
   destroyOffice();
   try {
@@ -508,7 +511,7 @@ async function restoreVersion(version: OfficeVersion) {
     versionsOpen.value = false;
     await loadFile();
   } catch (error: any) {
-    alert(error?.response?.data?.error || '恢复失败');
+    notify.error(error?.response?.data?.error || '恢复失败');
     await loadFile();
   } finally {
     restoringId.value = '';
@@ -566,7 +569,7 @@ async function queueExtraction(mode: 'auto' | 'continue' | 'pages', pages?: numb
     await app.refreshJobs();
     await loadExtraction();
   } catch (error: any) {
-    alert(error?.response?.data?.error || '无法加入文字提取队列');
+    notify.error(error?.response?.data?.error || '无法加入文字提取队列');
   } finally {
     extractionBusy.value = false;
   }
@@ -581,7 +584,12 @@ async function retryPage(pageNumber: number) {
 }
 
 async function acceptPartial() {
-  if (!confirm('将跳过尚未识别的页面，并只按当前已有文字进行索引和 AI 提炼。继续？')) return;
+  const ok = await confirmDialog({
+    title: '确认部分提取',
+    message: '将跳过尚未识别的页面，并只按当前已有文字进行索引和 AI 提炼。继续？',
+    confirmText: '继续',
+  });
+  if (!ok) return;
   extractionBusy.value = true;
   try {
     const { data } = await api.post('/api/files/extract', {
@@ -592,7 +600,7 @@ async function acceptPartial() {
     await app.refreshJobs();
     app.bumpSidebar();
   } catch (error: any) {
-    alert(error?.response?.data?.error || '无法确认部分提取结果');
+    notify.error(error?.response?.data?.error || '无法确认部分提取结果');
   } finally {
     extractionBusy.value = false;
   }
@@ -751,35 +759,7 @@ defineExpose({ downloadFile, openExternal });
 .office-fallback :deep(section.docx) { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12); margin-bottom: 16px; }
 .office-fallback :deep(.pptx-preview-wrapper) { max-width: 100%; margin: 0 auto; }
 .unsupported { text-align: center; padding-top: 80px; }
-.version-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-overlay);
-  background: rgba(0, 0, 0, 0.28);
-  display: flex;
-  justify-content: flex-end;
-}
-.version-panel {
-  width: min(420px, 92vw);
-  height: 100%;
-  background: var(--bg);
-  border-left: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  display: flex;
-  flex-direction: column;
-}
-.version-panel header {
-  min-height: 68px;
-  padding: 14px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--border);
-}
-.version-panel header p { margin: 3px 0 0; }
-.icon-btn { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 6px; }
-.icon-btn:hover { background: var(--bg-hover); }
-.version-list { overflow-y: auto; padding: 8px 16px 20px; }
+.version-list { overflow-y: auto; padding: 4px 0 12px; }
 .version-row {
   min-height: 66px;
   display: flex;
@@ -818,7 +798,7 @@ defineExpose({ downloadFile, openExternal });
 .extraction-page header { min-height: 30px; display: flex; align-items: center; gap: 8px; }
 .extraction-page header > button:first-child { padding: 0; color: var(--accent); font-weight: 600; }
 .extraction-page header > button:first-child:disabled { color: var(--text); }
-.extraction-page header .icon-btn { margin-left: auto; }
+.extraction-page header .btn.icon { margin-left: auto; }
 .page-method, .page-state {
   padding: 2px 6px;
   border-radius: 4px;

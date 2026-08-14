@@ -74,7 +74,7 @@
           <div class="job-group">
             <div class="group-head small faint" :title="g.key">{{ g.label }}</div>
             <div v-for="j in g.tasks" :key="j.id" class="job-row indented">
-              <span class="spinner" v-if="j.status === 'running'" />
+              <AppSpinner v-if="j.status === 'running'" :size="11" />
               <span class="dot paused" v-else-if="j.status === 'paused'" />
               <span class="dot pending" v-else />
               <span class="job-label">{{ j.label }}</span>
@@ -131,6 +131,8 @@ import { api } from '../api';
 import { humanError } from '../lib/ingestError';
 import { useAppStore } from '../stores/app';
 import Icon from './Icon.vue';
+import AppSpinner from './ui/AppSpinner.vue';
+import { notify } from '../lib/notify';
 
 const emit = defineEmits(['close']);
 const app = useAppStore();
@@ -336,18 +338,30 @@ const groupedStopped = computed(() => groupByTarget(stoppedJobs.value));
 const groupedDone = computed(() => groupByTarget(doneJobs.value));
 
 async function retry(j: any) {
-  await api.post(`/api/jobs/${j.id}/retry`);
-  await app.refreshJobs();
+  try {
+    await api.post(`/api/jobs/${j.id}/retry`);
+    await app.refreshJobs();
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '重试失败');
+  }
 }
 
 async function cancel(j: any) {
-  await api.post(`/api/jobs/${j.id}/cancel`);
-  await app.refreshJobs();
+  try {
+    await api.post(`/api/jobs/${j.id}/cancel`);
+    await app.refreshJobs();
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '取消失败');
+  }
 }
 
 async function clear() {
-  await api.post('/api/jobs/clear');
-  await app.refreshJobs();
+  try {
+    await api.post('/api/jobs/clear');
+    await app.refreshJobs();
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '清理失败');
+  }
 }
 
 async function runQueueAction(action: 'start' | 'stop' | 'retry-failed') {
@@ -533,16 +547,6 @@ function etaText(job: any) {
 .dot.failed { background: var(--danger); }
 .dot.cancelled { background: var(--text-faint); }
 .dot.done { background: var(--success); }
-.spinner {
-  width: 11px;
-  height: 11px;
-  border: 2px solid var(--border-strong);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  flex-shrink: 0;
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
 .err-text { color: var(--danger); margin: 2px 0 0 17px; word-break: break-all; }
 .none { padding: 4px 2px; }
 

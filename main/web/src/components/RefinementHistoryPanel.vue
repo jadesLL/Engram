@@ -35,10 +35,13 @@
     <p v-if="notice" class="history-notice">{{ notice }}</p>
     <p v-if="error" class="history-error">{{ error }}</p>
 
-    <div v-if="loading && !runs.length" class="history-empty">正在读取提炼轨迹...</div>
-    <div v-else-if="!runs.length" class="history-empty">
-      {{ query || statusFilter ? '没有匹配的提炼记录。' : '尚无提炼记录。' }}
+    <div v-if="loading && !runs.length" class="history-empty">
+      <AppSpinner :size="14" /> 正在读取提炼轨迹...
     </div>
+    <AppEmptyState
+      v-else-if="!runs.length"
+      :title="query || statusFilter ? '没有匹配的提炼记录。' : '尚无提炼记录。'"
+    />
     <div v-else class="history-workspace">
       <aside class="history-list" aria-label="提炼历史记录">
         <button
@@ -76,7 +79,9 @@
       </aside>
 
       <main class="trajectory-detail">
-        <div v-if="detailLoading && !detail" class="detail-empty">正在读取阶段明细...</div>
+        <div v-if="detailLoading && !detail" class="detail-empty">
+          <AppSpinner :size="14" /> 正在读取阶段明细...
+        </div>
         <template v-else-if="detail">
           <header class="trajectory-head">
             <div>
@@ -266,7 +271,7 @@
             </div>
           </section>
         </template>
-        <div v-else class="detail-empty">选择一份原始资料查看完整轨迹。</div>
+        <AppEmptyState v-else title="选择一份原始资料查看完整轨迹。" />
       </main>
     </div>
   </div>
@@ -277,6 +282,9 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import { humanError, shortText } from '../lib/ingestError';
 import Icon from './Icon.vue';
+import AppSpinner from './ui/AppSpinner.vue';
+import AppEmptyState from './ui/AppEmptyState.vue';
+import { confirmDialog } from '../lib/confirm';
 
 type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 type StageStatus = 'completed' | 'current' | 'failed' | 'pending';
@@ -843,7 +851,13 @@ async function pollRuns() {
 }
 
 async function clearHistory() {
-  if (!confirm('确定清空已完成、失败和已取消的提炼历史吗？知识正文、事实来源和页面贡献不会被删除。')) return;
+  const ok = await confirmDialog({
+    title: '清空提炼历史',
+    message: '确定清空已完成、失败和已取消的提炼历史吗？知识正文、事实来源和页面贡献不会被删除。',
+    confirmText: '清空',
+    danger: true,
+  });
+  if (!ok) return;
   clearing.value = true;
   notice.value = '';
   error.value = '';
@@ -988,6 +1002,10 @@ onUnmounted(() => {
   color: var(--text-faint);
   font-size: 12px;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
 }
 
 .history-workspace {

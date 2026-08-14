@@ -420,6 +420,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { humanError } from '../lib/ingestError';
 import { useAppStore } from '../stores/app';
+import { confirmDialog } from '../lib/confirm';
+import { notify } from '../lib/notify';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
 
@@ -527,7 +529,13 @@ async function batchArchive() {
 
 async function batchDelete() {
   const n = selected.value.size;
-  if (!confirm(`删除选中的 ${n} 项？（移入回收站）`)) return;
+  const ok = await confirmDialog({
+    title: '批量删除',
+    message: `删除选中的 ${n} 项？（移入回收站）`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
   for (const key of selected.value) {
     if (key.startsWith('p:')) await api.delete(`/api/pages/${key.slice(2)}`);
     else await api.delete('/api/files', { data: { path: key.slice(2) } });
@@ -686,7 +694,7 @@ async function createFile() {
     if (data.pageId) router.push(`/page/${data.pageId}`);
     else router.push({ path: '/page', query: { file: data.path } });
   } catch (e: any) {
-    alert(e.response?.data?.error || '创建失败');
+    notify.error(e.response?.data?.error || '创建失败');
   }
 }
 
@@ -714,10 +722,10 @@ async function onUpload(e: Event) {
     const { data } = await api.post('/api/files/upload', fd);
     // 部分文件重复时提示，但已成功的照常导入
     if (data.duplicates?.length) {
-      alert(`以下文件已存在，未重复导入：\n${data.duplicates.join('\n')}`);
+      ingestHint.value = `以下文件已存在，未重复导入：${data.duplicates.join('、')}`;
     }
   } catch (err: any) {
-    alert(err.response?.data?.error || '上传失败');
+    notify.error(err.response?.data?.error || '上传失败');
   }
   input.value = '';
   await load();
@@ -735,14 +743,26 @@ async function unarchivePage(p: any) {
 }
 
 async function removePage(p: any) {
-  if (!confirm(`确定删除「${p.title}」？（移入回收站）`)) return;
+  const ok = await confirmDialog({
+    title: '删除页面',
+    message: `确定删除「${p.title}」？（移入回收站）`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
   await api.delete(`/api/pages/${p.id}`);
   await load();
   if (p.id === activeId.value) router.push('/page');
 }
 
 async function removeFile(f: any) {
-  if (!confirm(`确定删除「${f.name}」？（移入回收站）`)) return;
+  const ok = await confirmDialog({
+    title: '删除文件',
+    message: `确定删除「${f.name}」？（移入回收站）`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
   await api.delete('/api/files', { data: { path: f.path } });
   await load();
 }
@@ -759,7 +779,12 @@ async function ingestFile(f: any) {
 }
 
 async function ingestAll() {
-  if (!confirm('将按当前规则重新整理全部原始资料，并产生相应的 AI 调用。继续？')) return;
+  const ok = await confirmDialog({
+    title: '整理全部原始资料',
+    message: '将按当前规则重新整理全部原始资料，并产生相应的 AI 调用。继续？',
+    confirmText: '继续',
+  });
+  if (!ok) return;
   try {
     const { data } = await api.post('/api/ai/ingest-all', { force: true });
     ingestHint.value = data.queued > 0 ? `已加入 ${data.queued} 份资料的整理队列` : '原始资料为空';

@@ -242,6 +242,8 @@ import MarkdownEditor from '../components/MarkdownEditor.vue';
 import ReadingPreview from '../components/ReadingPreview.vue';
 import FilePreview from '../components/FilePreview.vue';
 import Icon from '../components/Icon.vue';
+import { confirmDialog } from '../lib/confirm';
+import { notify } from '../lib/notify';
 
 const route = useRoute();
 const router = useRouter();
@@ -415,7 +417,12 @@ async function openWikilink(wikiTitle: string) {
     const { data } = await api.get(`/api/pages/by-title/${encodeURIComponent(wikiTitle)}`);
     router.push(`/page/${data.id}`);
   } catch {
-    if (confirm(`页面「${wikiTitle}」不存在，是否创建？`)) {
+    const ok = await confirmDialog({
+      title: '创建页面',
+      message: `页面「${wikiTitle}」不存在，是否创建？`,
+      confirmText: '创建',
+    });
+    if (ok) {
       const { data } = await api.post('/api/pages', { dir: '', title: wikiTitle });
       router.push(`/page/${data.meta.id}`);
     }
@@ -635,7 +642,7 @@ function editorBaseItems(selection: string): ContextMenuItem[] {
       disabled: !pasteAvailable,
       action: async () => {
         const pasted = await editorRef.value?.pasteClipboard();
-        if (!pasted) alert('浏览器未允许读取剪贴板，请使用 Ctrl+V 粘贴');
+        if (!pasted) notify.info('浏览器未允许读取剪贴板，请使用 Ctrl+V 粘贴');
       },
     },
     {

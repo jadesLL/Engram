@@ -181,13 +181,27 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   border-radius: 6px;
   background: var(--bg-tertiary);
   color: var(--text);
-  transition: background 0.15s;
+  transition: background 0.15s, transform 0.1s;
   white-space: nowrap;
 }
 .btn:hover { background: var(--bg-active); }
+.btn:active { transform: scale(0.97); }
 .btn.primary { background: var(--accent); color: #fff; }
 .btn.primary:hover { opacity: 0.9; }
 .btn.danger { color: var(--danger); }
+.btn.danger-solid { background: var(--danger); color: #fff; }
+.btn.danger-solid:hover { opacity: 0.9; }
+.btn.ghost { background: transparent; color: var(--text-secondary); }
+.btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
+.btn.icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.btn.icon:hover { background: var(--bg-hover); color: var(--text); }
 .btn.small { padding: 4px 10px; font-size: 13px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
