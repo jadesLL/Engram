@@ -7,7 +7,6 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import { Readable } from 'node:stream';
 import { getFeishuConfig } from './feishu/config.js';
 import { readHeaders, unwrapBody, verifySignature } from './feishu/crypto.js';
 import { isFeishuEvent, isUrlVerification, parseEvent } from './feishu/events.js';
@@ -15,25 +14,19 @@ import { parseCardActions } from './feishu/message.js';
 import { handleImMessage, handleApprovalDecision } from './bridge.js';
 import type { ApprovalDecision } from '../assistant/types.js';
 
-const RAW_BODY_KEY = '__feishuRawBody';
-
 export async function imRoutes(app: FastifyInstance): Promise<void> {
-  // 飞书签名基于原始字节，但全局注册 addContentTypeParser 会覆盖所有路由的 JSON 解析。
-  // 用 preParsing 仅对 webhook 路径捕获原始 buffer 并放回新流，不干扰其他路由。
-  app.addHook('preParsing', async (req, payload) => {
-    if (req.url !== '/api/im/feishu/webhook') return payload;
-    const stream = payload as unknown as Readable;
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const raw = Buffer.concat(chunks).toString('utf8');
-    (req as unknown as Record<string, unknown>)[RAW_BODY_KEY] = raw;
-    return Readable.from([raw]);
-  });
+  // 飞书签名基于原始字节。在封装上下文中注册 content-type-parser，只影响
+  // 本插件内注册的路由，不干扰其他 /api/* 路由的 JSON 解析。
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      done(null, body);
+    },
+  );
 
   app.post('/api/im/feishu/webhook', async (req, reply) => {
-    const raw = ((req as unknown as Record<string, unknown>)[RAW_BODY_KEY] as string) ?? '';
+    const raw = (req.body as string) ?? '';
     const headers = readHeaders(req.headers);
     const cfg = getFeishuConfig();
 
