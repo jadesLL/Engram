@@ -334,6 +334,11 @@ interface HumanSummary {
   bullets: string[];
 }
 
+interface LoadOptions {
+  preserveSelection?: boolean;
+  silent?: boolean;
+}
+
 interface HistoryDetail {
   run: HistoryRun & {
     content_hash: string;
@@ -369,6 +374,7 @@ const error = ref('');
 const notice = ref('');
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
+let pollInFlight = false;
 
 const selectedStage = computed(() =>
   detail.value?.trace.find((stage) => stage.id === selectedStageId.value) || null
@@ -748,21 +754,41 @@ function selectStage(stageId: string) {
   outputMode.value = 'summary';
 }
 
-async function loadDetail(runId: string) {
-  detailLoading.value = true;
+async function loadDetail(runId: string, options: LoadOptions = {}) {
+  if (!options.silent) detailLoading.value = true;
   error.value = '';
   try {
     const { data } = await api.get(`/api/ingest/history/${encodeURIComponent(runId)}`);
+    if (selectedRunId.value !== runId) return;
+
+    const preservedStageId = options.preserveSelection ? selectedStageId.value : '';
+    const preservedEventKey = options.preserveSelection ? selectedEventKey.value : '';
+    const preservedOutputMode = outputMode.value;
     detail.value = data;
-    const preferred = data.trace.find((stage: TraceStage) =>
-      ['current', 'failed'].includes(stage.status)
-    ) || [...data.trace].reverse().find((stage: TraceStage) => stage.status === 'completed') || data.trace[0];
-    selectStage(preferred.id);
+
+    if (preservedStageId && data.trace.some((stage: TraceStage) => stage.id === preservedStageId)) {
+      selectedStageId.value = preservedStageId;
+      const preservedEvent = selectedStageEvents.value.find((event) => eventKey(event) === preservedEventKey);
+      const latestEvent = selectedStageEvents.value[selectedStageEvents.value.length - 1];
+      selectedEventKey.value = preservedEvent
+        ? preservedEventKey
+        : latestEvent
+          ? eventKey(latestEvent)
+          : '';
+      outputMode.value = preservedOutputMode;
+    } else {
+      const preferred = data.trace.find((stage: TraceStage) =>
+        ['current', 'failed'].includes(stage.status)
+      ) || [...data.trace].reverse().find((stage: TraceStage) => stage.status === 'completed') || data.trace[0];
+      if (preferred) selectStage(preferred.id);
+    }
   } catch (requestError: any) {
-    detail.value = null;
-    error.value = requestError.response?.data?.error || '提炼轨迹读取失败。';
+    if (selectedRunId.value === runId) {
+      if (!options.silent) detail.value = null;
+      error.value = requestError.response?.data?.error || '提炼轨迹读取失败。';
+    }
   } finally {
-    detailLoading.value = false;
+    if (!options.silent) detailLoading.value = false;
   }
 }
 
@@ -772,9 +798,11 @@ async function selectRun(runId: string) {
   await loadDetail(runId);
 }
 
-async function loadRuns(reset: boolean) {
-  if (reset) loading.value = true;
-  else loadingMore.value = true;
+async function loadRuns(reset: boolean, options: LoadOptions = {}) {
+  if (!options.silent) {
+    if (reset) loading.value = true;
+    else loadingMore.value = true;
+  }
   error.value = '';
   try {
     const offset = reset ? 0 : runs.value.length;
@@ -789,18 +817,26 @@ async function loadRuns(reset: boolean) {
     runs.value = reset ? data.runs : [...runs.value, ...data.runs];
     total.value = data.total;
     if (reset) {
+      const previousRunId = selectedRunId.value;
       const nextId = runs.value.some((run) => run.id === selectedRunId.value)
         ? selectedRunId.value
         : runs.value[0]?.id || '';
       selectedRunId.value = nextId;
-      if (nextId) await loadDetail(nextId);
+      if (nextId) {
+        await loadDetail(nextId, {
+          preserveSelection: options.preserveSelection && nextId === previousRunId,
+          silent: options.silent,
+        });
+      }
       else detail.value = null;
     }
   } catch (requestError: any) {
     error.value = requestError.response?.data?.error || '提炼历史读取失败。';
   } finally {
-    loading.value = false;
-    loadingMore.value = false;
+    if (!options.silent) {
+      loading.value = false;
+      loadingMore.value = false;
+    }
   }
 }
 
@@ -811,7 +847,17 @@ function scheduleSearch() {
 
 async function refresh() {
   notice.value = '';
-  await loadRuns(true);
+  await loadRuns(true, { preserveSelection: true });
+}
+
+async function pollRuns() {
+  if (pollInFlight || loading.value || loadingMore.value || detailLoading.value) return;
+  pollInFlight = true;
+  try {
+    await loadRuns(true, { preserveSelection: true, silent: true });
+  } finally {
+    pollInFlight = false;
+  }
 }
 
 async function clearHistory() {
@@ -835,7 +881,7 @@ async function clearHistory() {
 onMounted(async () => {
   await loadRuns(true);
   pollTimer = setInterval(() => {
-    if (runs.value.some((run) => run.status === 'running')) void loadRuns(true);
+    if (runs.value.some((run) => run.status === 'running')) void pollRuns();
   }, 5000);
 });
 
