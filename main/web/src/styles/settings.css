@@ -1,0 +1,393 @@
+/*
+ * 设置页共享框架样式（全局，按根类作用域隔离）。
+ * .settings-view  — 壳层自有元素（页头/导航/布局）
+ * .settings-native — 各设置面板根节点携带，框架类（panel-head/setting-row 等）
+ *                    只作用于原生面板后代，避免影响挂载进来的独立组件
+ *                    （如 RefinementHistoryPanel）。
+ */
+
+.settings-view {
+  width: min(1220px, 100%);
+  margin: 0 auto;
+  padding: 30px 28px 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+.settings-page-head h2 {
+  margin: 0;
+  font-size: 25px;
+  line-height: 1.2;
+}
+.settings-page-head p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.settings-shell {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+}
+.settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.settings-nav button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.settings-nav button.active {
+  background: var(--bg-tertiary);
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-nav button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-mobile-nav {
+  display: none;
+}
+
+.settings-content {
+  min-width: 0;
+}
+
+/* ---------- 原生设置面板共享框架 ---------- */
+.settings-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.settings-native .panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 24px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-native .panel-head h3 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.35;
+}
+.settings-native .panel-head p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.settings-native .panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-native .btn {
+  min-height: 34px;
+  justify-content: center;
+}
+.settings-native .btn:active {
+  transform: translateY(1px);
+}
+
+.settings-native .settings-group {
+  display: flex;
+  flex-direction: column;
+}
+.settings-native .setting-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, auto);
+  align-items: center;
+  gap: 18px;
+  min-height: 76px;
+  padding: 17px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-native .setting-row:last-child {
+  border-bottom: 0;
+}
+.settings-native .setting-row-form {
+  align-items: start;
+}
+.settings-native .setting-copy {
+  min-width: 0;
+}
+.settings-native .setting-copy strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+.settings-native .setting-copy span {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.settings-native .setting-control {
+  width: 170px;
+}
+.settings-native .setting-control.wide {
+  width: 250px;
+}
+
+.settings-native .setting-message {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.settings-native .setting-row .setting-message {
+  grid-column: 2;
+}
+.settings-native .settings-panel > .setting-message,
+.settings-panel.settings-native > .setting-message {
+  margin: 0 24px 22px;
+}
+.settings-native .ok { color: var(--success); }
+.settings-native .err { color: var(--danger); }
+.settings-native .warn { color: var(--warn); }
+
+.settings-native .app-version {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-native code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  font-size: 12px;
+}
+
+.settings-native .empty-panel {
+  margin: 0 24px 24px;
+  padding: 28px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-align: center;
+}
+
+.settings-native .text-action {
+  padding: 3px 2px;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.settings-native .text-action:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.settings-native .text-action.accent { color: var(--accent); }
+.settings-native .text-action.danger { color: var(--danger); }
+.settings-native .text-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+.settings-native .text-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-native .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+}
+.settings-native .icon-btn:hover { background: var(--bg-hover); }
+.settings-native .icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.settings-native .danger-icon { color: var(--danger); }
+
+/* 开关控件（自动化面板） */
+.settings-native .switch-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+.settings-native .switch-control input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.settings-native .switch-control > span {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--border-strong);
+  transition: background 0.15s ease;
+}
+.settings-native .switch-control > span::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  content: "";
+  transition: transform 0.15s ease;
+}
+.settings-native .switch-control input:checked + span {
+  background: var(--accent);
+}
+.settings-native .switch-control input:checked + span::after {
+  transform: translateX(16px);
+}
+.settings-native .switch-control input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.settings-native .switch-control em {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-style: normal;
+}
+
+/* ---------- 响应式（壳层与共享框架） ---------- */
+@media (max-width: 1024px) {
+  .settings-shell {
+    grid-template-columns: 170px minmax(0, 1fr);
+    gap: 18px;
+  }
+}
+
+@media (max-width: 768px) {
+  .settings-view {
+    padding: 20px 14px 72px;
+  }
+  .settings-page-head {
+    margin-bottom: 14px;
+  }
+  .settings-page-head h2 {
+    font-size: 22px;
+  }
+  .settings-mobile-nav {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .settings-mobile-nav label {
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .settings-mobile-nav select {
+    width: 100%;
+  }
+  .settings-shell {
+    display: block;
+  }
+  .settings-nav {
+    display: none;
+  }
+  .settings-native .panel-head {
+    padding: 18px;
+  }
+  .settings-native .panel-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .settings-native .setting-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    min-height: 0;
+    padding: 16px 18px;
+  }
+  .settings-native .setting-row .setting-message {
+    grid-column: auto;
+  }
+  .settings-native .setting-control,
+  .settings-native .setting-control.wide {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-view {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+  .settings-page-head p {
+    max-width: 32ch;
+  }
+  .settings-native.settings-panel,
+  .settings-native .settings-panel {
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+  .settings-native .panel-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .settings-native .panel-actions .btn {
+    width: 100%;
+  }
+  .settings-native .panel-actions .btn.primary {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav button,
+  .settings-native .switch-control > span,
+  .settings-native .switch-control > span::after {
+    transition: none;
+  }
+}
