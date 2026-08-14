@@ -349,3 +349,12 @@ html .vditor-reset table tbody tr:nth-child(2n) {
 @media (max-width: 768px) {
   :root { font-size: 14px; }
 }
+
+/* 全局减弱动效偏好：所有过渡/动画瞬时完成（各组件无需再单独处理） */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

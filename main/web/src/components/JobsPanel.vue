@@ -31,8 +31,8 @@
         </span>
       </div>
       <div class="jp-head-actions">
-        <button class="icon-btn" title="清理历史" @click="clear"><Icon name="trash" :size="14" /></button>
-        <button class="icon-btn" title="关闭" @click="$emit('close')"><Icon name="x" :size="14" /></button>
+        <button class="btn icon" title="清理历史" aria-label="清理历史" @click="clear"><Icon name="trash" :size="14" /></button>
+        <button class="btn icon" title="关闭" aria-label="关闭任务队列" @click="$emit('close')"><Icon name="x" :size="14" /></button>
       </div>
     </div>
 
@@ -81,7 +81,7 @@
               <span class="job-status faint small" :title="j.detail || j.stage">{{ statusText(j) }}</span>
               <span class="job-eta faint small">{{ etaText(j) }}</span>
               <span class="job-progress small">{{ j.progress }}%</span>
-              <button class="icon-btn job-cancel" title="取消任务" @click="cancel(j)">
+              <button class="btn icon job-cancel" title="取消任务" aria-label="取消任务" @click="cancel(j)">
                 <Icon name="x" :size="12" />
               </button>
             </div>
@@ -286,12 +286,18 @@ function syncPanelToViewport() {
 onMounted(() => {
   syncPanelToViewport();
   window.addEventListener('resize', syncPanelToViewport);
+  window.addEventListener('keydown', onGlobalKeydown);
 });
 
 onUnmounted(() => {
   stopActiveResize?.();
   window.removeEventListener('resize', syncPanelToViewport);
+  window.removeEventListener('keydown', onGlobalKeydown);
 });
+
+function onGlobalKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') emit('close');
+}
 
 const failedJobs = computed(() => jobs.value.recent.filter((j: any) => j.status === 'failed'));
 const stoppedJobs = computed(() =>
@@ -478,8 +484,6 @@ function etaText(job: any) {
 .queue-state.stopped { color: var(--text-faint); }
 .queue-state.stopped .dot { background: var(--text-faint); }
 .jp-head-actions { display: flex; gap: 2px; }
-.icon-btn { display: flex; padding: 4px; border-radius: 5px; color: var(--text-secondary); }
-.icon-btn:hover { background: var(--bg-hover); color: var(--text); }
 .jp-controls {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

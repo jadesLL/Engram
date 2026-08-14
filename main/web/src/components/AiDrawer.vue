@@ -6,19 +6,20 @@
         class="session-select"
         :value="assistant.activeSessionId"
         title="切换会话"
+        aria-label="切换会话"
         @change="selectSession"
       >
         <option v-for="session in assistant.sessions" :key="session.id" :value="session.id">
           {{ session.title }}
         </option>
       </select>
-      <button class="icon-btn" title="新建会话" @click="newSession">
+      <button class="btn icon" title="新建会话" aria-label="新建会话" @click="newSession">
         <Icon name="plus" :size="15" />
       </button>
-      <button class="icon-btn" title="删除当前会话" @click="deleteSession">
+      <button class="btn icon" title="删除当前会话" aria-label="删除当前会话" @click="deleteSession">
         <Icon name="trash" :size="15" />
       </button>
-      <button class="icon-btn" title="关闭" @click="app.toggleAi()">
+      <button class="btn icon" title="关闭" aria-label="关闭" @click="app.toggleAi()">
         <Icon name="x" :size="15" />
       </button>
     </header>
@@ -161,15 +162,18 @@
 
     <footer class="agent-input">
       <textarea
+        ref="inputEl"
         v-model="input"
         rows="3"
         :disabled="Boolean(currentRun)"
         placeholder="向 Agent 说明目标…"
+        aria-label="向 Agent 说明目标"
         @keydown.enter.exact.prevent="ask(input)"
       />
       <button
         class="send-btn"
         title="发送"
+        aria-label="发送"
         :disabled="Boolean(currentRun) || !input.trim()"
         @click="ask(input)"
       >
@@ -199,8 +203,10 @@ const router = useRouter();
 const app = useAppStore();
 const assistant = useAssistantStore();
 const input = ref('');
+const inputEl = ref<HTMLTextAreaElement>();
 const scrollEl = ref<HTMLElement>();
 const confirmHighImpact = ref(false);
+let previousActive: HTMLElement | null = null;
 
 const suggestions = [
   '这个知识库最近有哪些重要变化？',
@@ -400,11 +406,34 @@ watch(
 );
 watch(pendingCalls, () => { confirmHighImpact.value = false; });
 
+// 抽屉打开时聚焦输入框，关闭时把焦点还给触发处；Esc 关闭
+watch(
+  () => app.aiDrawerOpen,
+  async (open) => {
+    if (open) {
+      previousActive = document.activeElement as HTMLElement | null;
+      await nextTick();
+      inputEl.value?.focus();
+    } else if (previousActive?.isConnected) {
+      previousActive.focus();
+      previousActive = null;
+    }
+  }
+);
+
+function onGlobalKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && app.aiDrawerOpen) app.aiDrawerOpen = false;
+}
+
 onMounted(() => {
   assistant.init().then(scroll);
   window.addEventListener('assistant-prefill', onPrefill);
+  window.addEventListener('keydown', onGlobalKeydown);
 });
-onUnmounted(() => window.removeEventListener('assistant-prefill', onPrefill));
+onUnmounted(() => {
+  window.removeEventListener('assistant-prefill', onPrefill);
+  window.removeEventListener('keydown', onGlobalKeydown);
+});
 </script>
 
 <style scoped>
@@ -426,7 +455,7 @@ onUnmounted(() => window.removeEventListener('assistant-prefill', onPrefill));
   padding: 6px 8px;
   font-size: 12px;
 }
-.icon-btn, .send-btn {
+.send-btn {
   width: 30px;
   height: 30px;
   flex: 0 0 30px;
@@ -435,7 +464,7 @@ onUnmounted(() => window.removeEventListener('assistant-prefill', onPrefill));
   border-radius: 6px;
   color: var(--text-secondary);
 }
-.icon-btn:hover, .send-btn:hover { background: var(--bg-hover); color: var(--text); }
+.send-btn:hover { background: var(--bg-hover); color: var(--text); }
 .context-strip {
   display: flex;
   gap: 5px;

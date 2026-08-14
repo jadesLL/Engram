@@ -15,7 +15,14 @@
       </div>
     </div>
     <div ref="container" class="graph-container" />
-    <p v-if="empty" class="faint empty-hint">还没有图谱数据。写几篇带 [[双链]] 的页面后，图谱会自动生长。</p>
+    <div v-if="loading" class="graph-state muted">
+      <AppSpinner :size="16" /> 正在加载图谱…
+    </div>
+    <div v-else-if="loadError" class="graph-state">
+      <p class="graph-error-text">{{ loadError }}</p>
+      <button class="btn small" @click="load">重试</button>
+    </div>
+    <p v-else-if="empty" class="faint empty-hint">还没有图谱数据。写几篇带 [[双链]] 的页面后，图谱会自动生长。</p>
   </div>
 </template>
 
@@ -24,12 +31,16 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Network } from 'vis-network';
 import { api } from '../api';
+import AppSpinner from '../components/ui/AppSpinner.vue';
+import { notify } from '../lib/notify';
 
 const route = useRoute();
 const router = useRouter();
 const container = ref<HTMLElement>();
 const scope = ref('global');
 const empty = ref(false);
+const loading = ref(false);
+const loadError = ref('');
 const pageId = ref((route.params.id as string) || '');
 
 let network: Network | null = null;
@@ -44,7 +55,18 @@ async function load() {
     if (!pageId.value) { scope.value = 'global'; }
     else { params.id = pageId.value; params.depth = 2; }
   }
-  const { data } = await api.get('/api/graph', { params });
+  loading.value = true;
+  loadError.value = '';
+  let data: any;
+  try {
+    ({ data } = await api.get('/api/graph', { params }));
+  } catch (error: any) {
+    loadError.value = error?.response?.data?.error || error?.message || '图谱加载失败';
+    notify.error(loadError.value);
+    loading.value = false;
+    return;
+  }
+  loading.value = false;
   empty.value = data.nodes.length === 0;
   if (empty.value) return;
 
@@ -129,7 +151,7 @@ onUnmounted(() => network?.destroy());
 </script>
 
 <style scoped>
-.graph-view { height: 100%; display: flex; flex-direction: column; }
+.graph-view { height: 100%; display: flex; flex-direction: column; position: relative; }
 .graph-toolbar {
   display: flex;
   align-items: center;
@@ -155,6 +177,18 @@ onUnmounted(() => network?.destroy());
 .lg-org { background: var(--graph-org); }
 .lg-deadlink { background: var(--graph-deadlink); }
 .graph-container { flex: 1; min-height: 0; }
+.graph-state {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.graph-state:has(.app-spinner) { flex-direction: row; }
+.graph-error-text { margin: 0; color: var(--danger); }
 .empty-hint { text-align: center; padding: 60px 20px; }
 
 @media (max-width: 768px) {

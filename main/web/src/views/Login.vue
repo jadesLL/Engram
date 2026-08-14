@@ -8,6 +8,7 @@
         v-model="password"
         type="password"
         :placeholder="isSetup ? '设置密码（至少6位）' : '密码'"
+        :aria-label="isSetup ? '设置密码（至少6位）' : '密码'"
         autofocus
         @keyup.enter="submit"
       />
@@ -16,6 +17,7 @@
         v-model="confirm"
         type="password"
         placeholder="确认密码"
+        aria-label="确认密码"
         @keyup.enter="submit"
       />
       <button class="btn primary" :disabled="loading" @click="submit">
