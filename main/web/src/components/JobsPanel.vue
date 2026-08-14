@@ -97,14 +97,14 @@
             <div v-for="j in g.tasks" :key="j.id" class="job-row failed indented">
               <span class="dot" :class="j.status === 'failed' ? 'failed' : 'cancelled'" />
               <span class="job-label">{{ j.label }}</span>
-              <span class="job-status faint small" :title="j.error">
+              <span class="job-status faint small" :title="humanError(j.error || '')">
                 {{ j.status === 'cancelled' ? '已取消' : j.stage }}
               </span>
               <button class="btn small" @click="retry(j)">重试</button>
             </div>
           </div>
         </template>
-        <p class="err-text small" v-if="failedJobs[0]?.error">{{ failedJobs[0].error }}</p>
+        <p class="err-text small" v-if="failedJobs[0]?.error">{{ humanError(failedJobs[0].error) }}</p>
       </div>
 
       <div class="jp-group">
@@ -128,6 +128,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
+import { humanError } from '../lib/ingestError';
 import { useAppStore } from '../stores/app';
 import Icon from './Icon.vue';
 
@@ -416,30 +417,32 @@ function etaText(job: any) {
 .jobs-panel.resized { max-height: calc(100vh - 32px); }
 .jp-resize-handle {
   position: absolute;
-  top: -7px;
-  right: -7px;
-  width: 20px;
-  height: 20px;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg);
+  border: none;
+  border-radius: 4px;
+  background: transparent;
   cursor: nesw-resize;
-  color: var(--text-faint);
+  color: var(--border);
+  opacity: 0.6;
   outline: none;
   touch-action: none;
   z-index: 1;
+  transition: opacity 0.15s, color 0.15s;
 }
 .jp-resize-handle:hover,
 .jp-resize-handle:focus-visible {
-  color: var(--accent);
+  color: var(--text-faint);
   background: var(--bg-hover);
+  opacity: 1;
 }
 .jp-resize-handle:focus-visible {
-  border-radius: 4px;
   box-shadow: 0 0 0 2px var(--sidebar-focus-ring);
 }
 .jp-head {
