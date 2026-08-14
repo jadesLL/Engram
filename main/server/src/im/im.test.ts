@@ -1,17 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
-import {
-  decryptPayload,
-  encryptPayload,
-  unwrapBody,
-  verifySignature,
-  type FeishuHeaders,
-} from './feishu/crypto.js';
 import { isFeishuEvent, isUrlVerification, parseEvent } from './feishu/events.js';
 import { parseCardActions } from './feishu/message.js';
-
-const KEY = 'test-encrypt-key-123';
+import { decodeFrame, encodeFrame, headersToRecord, type Frame } from './feishu/proto.js';
 
 const sampleEvent = {
   schema: '2.0',
@@ -33,40 +24,13 @@ const sampleEvent = {
   },
 };
 
-test('AES-256-CBC 加解密往返', () => {
-  const plaintext = JSON.stringify(sampleEvent);
-  const encrypted = encryptPayload(plaintext, KEY);
-  const decrypted = decryptPayload(encrypted, KEY);
-  assert.equal(decrypted, plaintext);
-});
-
-test('unwrapBody 解密 encrypt 信封并解析消息事件', () => {
-  const plaintext = JSON.stringify(sampleEvent);
-  const envelope = JSON.stringify({ encrypt: encryptPayload(plaintext, KEY) });
-  const unwrapped = unwrapBody(envelope, KEY);
-  const parsed = parseEvent(unwrapped);
+test('parseEvent 解析消息事件并剥离 @机器人 前缀', () => {
+  const parsed = parseEvent(JSON.stringify(sampleEvent));
   assert.ok(isFeishuEvent(parsed));
   assert.equal(parsed.openId, 'ou_demo_user');
   assert.equal(parsed.messageId, 'om_demo');
   assert.equal(parsed.text, '什么是 OpenClaw');
-  assert.equal(parsed.token, 'verify-token-xyz');
   assert.equal(parsed.chatType, 'p2p');
-});
-
-test('unwrapBody 对明文请求体原样返回', () => {
-  const plain = JSON.stringify(sampleEvent);
-  assert.equal(unwrapBody(plain, KEY), plain);
-});
-
-test('verifySignature 接受正确签名、拒绝错误签名', () => {
-  const raw = JSON.stringify({ encrypt: encryptPayload(JSON.stringify(sampleEvent), KEY) });
-  const ts = '1700000000';
-  const nonce = 'n1';
-  const sig = sign(raw, ts, nonce, KEY);
-  const headers: FeishuHeaders = { timestamp: ts, nonce, signature: sig };
-  assert.equal(verifySignature(raw, headers, KEY), true);
-  assert.equal(verifySignature(raw, { ...headers, signature: 'deadbeef' }, KEY), false);
-  assert.equal(verifySignature(raw, { timestamp: '', nonce: '', signature: '' }, KEY), false);
 });
 
 test('parseEvent 解析 url_verification 校验挑战', () => {
@@ -96,7 +60,55 @@ test('parseCardActions 解析审批/拒绝按钮 value', () => {
   assert.equal(actions[0]!.toolCallId, 'tc1');
 });
 
-/** 与 verifySignature 相同的签名算法（sha256(timestamp+nonce+key+rawBody)）。 */
-function sign(rawBody: string, ts: string, nonce: string, key: string): string {
-  return crypto.createHash('sha256').update(ts + nonce + key + rawBody).digest('hex');
-}
+test('protobuf Frame 编解码往返', () => {
+  const original: Frame = {
+    seqId: 42,
+    logId: 100,
+    service: 7,
+    method: 1,
+    headers: [
+      { key: 'type', value: 'event' },
+      { key: 'message_id', value: 'msg-001' },
+    ],
+    payload: new TextEncoder().encode('{"hello":"world"}'),
+    payloadEncoding: 'json',
+  };
+  const encoded = encodeFrame(original);
+  const decoded = decodeFrame(encoded);
+  assert.equal(decoded.seqId, 42);
+  assert.equal(decoded.logId, 100);
+  assert.equal(decoded.service, 7);
+  assert.equal(decoded.method, 1);
+  assert.equal(decoded.headers.length, 2);
+  assert.equal(decoded.headers[0]!.key, 'type');
+  assert.equal(decoded.headers[0]!.value, 'event');
+  assert.equal(decoded.headers[1]!.key, 'message_id');
+  assert.equal(decoded.headers[1]!.value, 'msg-001');
+  assert.equal(decoded.payloadEncoding, 'json');
+  assert.deepEqual(Array.from(decoded.payload!), Array.from(original.payload!));
+});
+
+test('protobuf 控制帧（ping）编解码', () => {
+  const ping: Frame = {
+    seqId: 0,
+    logId: 0,
+    service: 0,
+    method: 0,
+    headers: [{ key: 'type', value: 'ping' }],
+  };
+  const decoded = decodeFrame(encodeFrame(ping));
+  assert.equal(decoded.method, 0);
+  const hdr = headersToRecord(decoded.headers);
+  assert.equal(hdr.type, 'ping');
+});
+
+test('headersToRecord 把 header 数组转为 key→value', () => {
+  const hdr = headersToRecord([
+    { key: 'type', value: 'event' },
+    { key: 'sum', value: '3' },
+    { key: 'seq', value: '0' },
+  ]);
+  assert.equal(hdr.type, 'event');
+  assert.equal(hdr.sum, '3');
+  assert.equal(hdr.seq, '0');
+});

@@ -39,14 +39,6 @@ export async function sendText(openId: string, text: string): Promise<void> {
   });
 }
 
-/** 回复指定消息（用于在原消息下给反馈）。 */
-export async function replyText(messageId: string, text: string): Promise<void> {
-  await apiPost(`/open-apis/im/v1/messages/${messageId}/reply`, {
-    msg_type: 'text',
-    content: JSON.stringify({ text }),
-  });
-}
-
 /** 把审批预览渲染为可读的纯文本摘要。 */
 function previewToText(preview: ToolPreview): string {
   const parts: string[] = [];

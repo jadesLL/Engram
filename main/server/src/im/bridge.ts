@@ -15,7 +15,7 @@ import { startAssistantRun, decideAssistantRun, cancelAssistantRun } from '../as
 import { subscribeAssistantEvents } from '../assistant/events.js';
 import { getSnapshotByRun } from '../assistant/repository.js';
 import type { AssistantContext, AssistantMessage, AssistantToolCall, ApprovalDecision } from '../assistant/types.js';
-import { replyText, sendText, sendApprovalCard } from './feishu/message.js';
+import { sendText, sendApprovalCard } from './feishu/message.js';
 import { getOrCreateImSession } from './session.js';
 
 /** 运行时的 per-run 状态：哪个 IM 通道、哪个 openId、攒的流式文本。 */
@@ -60,7 +60,7 @@ export function handleImMessage(
     run = startAssistantRun(sessionId, text, {} as AssistantContext);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    void replyText(messageId, `⚠️ ${msg}`).catch(() => {});
+    void sendText(openId, `⚠️ ${msg}`).catch(() => {});
     return;
   }
 
@@ -78,7 +78,7 @@ export function handleImMessage(
     });
   });
 
-  void replyText(messageId, '🤔 正在思考…').catch(() => {});
+  void sendText(openId, '🤔 正在思考…').catch(() => {});
 
   // 完成后自动清理 binding 与订阅
   const cleanup = () => {

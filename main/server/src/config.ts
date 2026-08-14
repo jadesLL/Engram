@@ -28,11 +28,9 @@ export const OFFICE_MAX_FILE_SIZE = positiveInt(
   200 * 1024 * 1024
 );
 
-/** 飞书开放平台自建应用凭证（未配置则 IM 路由不启用） */
+/** 飞书开放平台自建应用凭证（未配置则长连接不启动；长连接模式由 SDK 封装鉴权，无需签名/加密密钥） */
 export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
-export const FEISHU_ENCRYPT_KEY = process.env.FEISHU_ENCRYPT_KEY || '';
-export const FEISHU_VERIFY_TOKEN = process.env.FEISHU_VERIFY_TOKEN || '';
 export const FEISHU_API_BASE = process.env.FEISHU_API_BASE || 'https://open.feishu.cn';
 
 function normalizePublicPath(value: string): string {
