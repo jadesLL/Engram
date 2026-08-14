@@ -15,6 +15,7 @@ import { discoverModels } from '../lib/modelDiscovery.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
 import { clearLlmUsage, summarizeLlmUsage } from '../lib/llmUsage.js';
 import { withJobsStopped } from '../jobs.js';
+import { fetchTenantAccessToken, clearTokenCache } from '../im/feishu/token.js';
 
 const PUBLIC_SETTINGS = [
   'chat_models', 'active_chat_model',
@@ -22,6 +23,7 @@ const PUBLIC_SETTINGS = [
   'document_models', 'active_document_model',
   'dream_cron', 'dream_enabled',
   'acs_mode',
+  'feishu_config',
 ];
 
 /** 从活跃 embedding 条目同步 embedding_dim（驱动 vec 表维度） */
@@ -63,6 +65,8 @@ export async function settingsRoutes(app: FastifyInstance) {
     for (const k of PUBLIC_SETTINGS) {
       if (body[k] !== undefined) setSetting(k, String(body[k]));
     }
+    // 飞书凭证变更后清除 token 缓存，下次强制用新凭证刷新
+    if (body['feishu_config'] !== undefined) clearTokenCache();
     const { changed } = syncEmbeddingDim();
     // 维度变化 → 自动后台重建全部索引（vec 表换维度后旧向量已失效）
     if (changed) {
@@ -84,6 +88,24 @@ export async function settingsRoutes(app: FastifyInstance) {
       return testModel(body.entry, body.kind);
     }
     return testConnection();
+  });
+
+  /** 测试飞书连接：用传入凭证换取 tenant_access_token，验证 appId/appSecret 是否有效。 */
+  app.post('/api/settings/test-feishu', async (req, reply) => {
+    const body = (req.body || {}) as { appId?: string; appSecret?: string; apiBase?: string };
+    if (!body.appId || !body.appSecret) {
+      return reply.code(400).send({ ok: false, error: 'App ID 和 App Secret 不能为空' });
+    }
+    try {
+      const token = await fetchTenantAccessToken({
+        appId: body.appId,
+        appSecret: body.appSecret,
+        apiBase: body.apiBase || 'https://open.feishu.cn',
+      });
+      return { ok: true, token: token.slice(0, 8) + '…' };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
   });
 
   app.post('/api/settings/discover-models', async (req, reply) => {

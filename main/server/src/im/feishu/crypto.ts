@@ -1,10 +1,9 @@
 /**
  * 飞书事件订阅安全层：签名校验 + 可选 AES-256-CBC 解密。
- * 从 bridge 包迁移进 server，适配 Node 内置 crypto。
+ * encryptKey 由调用方显式传入（从 getFeishuConfig().encryptKey），保持纯函数可测试。
  */
 
 import crypto from 'node:crypto';
-import { FEISHU_ENCRYPT_KEY } from '../../config.js';
 
 export interface FeishuHeaders {
   timestamp: string;
@@ -25,12 +24,8 @@ export function readHeaders(headers: Record<string, string | string[] | undefine
   };
 }
 
-/** 校验签名。未配置 Encrypt Key 时飞书不签名，直接放行。 */
-export function verifySignature(
-  rawBody: string,
-  h: FeishuHeaders,
-  key: string = FEISHU_ENCRYPT_KEY,
-): boolean {
+/** 校验签名。key 为空时飞书不签名，直接放行。 */
+export function verifySignature(rawBody: string, h: FeishuHeaders, key: string): boolean {
   if (!key) return true;
   if (!h.signature || !h.timestamp || !h.nonce) return false;
   const expected = crypto
@@ -49,8 +44,8 @@ export function encryptPayload(plaintext: string, key: string): string {
   return Buffer.concat([iv, out]).toString('base64');
 }
 
-/** 解密 encrypt 字段，返回明文事件 JSON。 */
-export function decryptPayload(encrypt: string, key: string = FEISHU_ENCRYPT_KEY): string {
+/** 解密 encrypt 字段，返回明文事件 JSON。key 为空时原样返回。 */
+export function decryptPayload(encrypt: string, key: string): string {
   if (!key) return encrypt;
   const keyBuf = crypto.createHash('sha256').update(key).digest();
   const buf = Buffer.from(encrypt, 'base64');
@@ -61,8 +56,8 @@ export function decryptPayload(encrypt: string, key: string = FEISHU_ENCRYPT_KEY
   return out.toString('utf8');
 }
 
-/** 拆开请求体：有 encrypt 字段则解密，否则原样返回明文。 */
-export function unwrapBody(rawBody: string, key: string = FEISHU_ENCRYPT_KEY): string {
+/** 拆开请求体：有 encrypt 字段则解密，否则原样返回明文。key 为空时原样返回。 */
+export function unwrapBody(rawBody: string, key: string): string {
   let parsed: { encrypt?: string };
   try {
     parsed = JSON.parse(rawBody) as { encrypt?: string };

@@ -2,7 +2,7 @@
  * 飞书 IM 消息发送：文本回复、交互卡片（审批）。
  */
 
-import { FEISHU_API_BASE } from '../../config.js';
+import { getFeishuConfig } from './config.js';
 import { getTenantAccessToken } from './token.js';
 import type { AssistantToolCall, ToolPreview } from '../../assistant/types.js';
 
@@ -14,7 +14,8 @@ interface FeishuApiResponse {
 
 async function apiPost(path: string, body: unknown): Promise<FeishuApiResponse> {
   const token = await getTenantAccessToken();
-  const res = await fetch(`${FEISHU_API_BASE}${path}`, {
+  const { apiBase } = getFeishuConfig();
+  const res = await fetch(`${apiBase}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

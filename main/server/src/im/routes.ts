@@ -8,7 +8,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { Readable } from 'node:stream';
-import { FEISHU_VERIFY_TOKEN } from '../config.js';
+import { getFeishuConfig } from './feishu/config.js';
 import { readHeaders, unwrapBody, verifySignature } from './feishu/crypto.js';
 import { isFeishuEvent, isUrlVerification, parseEvent } from './feishu/events.js';
 import { parseCardActions } from './feishu/message.js';
@@ -35,15 +35,16 @@ export async function imRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/im/feishu/webhook', async (req, reply) => {
     const raw = ((req as unknown as Record<string, unknown>)[RAW_BODY_KEY] as string) ?? '';
     const headers = readHeaders(req.headers);
+    const cfg = getFeishuConfig();
 
-    if (!verifySignature(raw, headers)) {
+    if (!verifySignature(raw, headers, cfg.encryptKey)) {
       reply.code(403).send({ error: 'invalid signature' });
       return;
     }
 
     let eventJson: string;
     try {
-      eventJson = unwrapBody(raw);
+      eventJson = unwrapBody(raw, cfg.encryptKey);
     } catch {
       reply.code(400).send({ error: 'invalid payload' });
       return;
@@ -65,7 +66,7 @@ export async function imRoutes(app: FastifyInstance): Promise<void> {
 
     // 消息事件
     if (isFeishuEvent(parsed)) {
-      if (FEISHU_VERIFY_TOKEN && parsed.token !== FEISHU_VERIFY_TOKEN) {
+      if (cfg.verifyToken && parsed.token !== cfg.verifyToken) {
         reply.code(403).send({ error: 'invalid verify token' });
         return;
       }
