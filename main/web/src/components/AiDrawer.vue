@@ -31,17 +31,22 @@
     </div>
 
     <div ref="scrollEl" class="agent-body">
-      <div v-if="assistant.loading" class="empty-state faint">正在加载会话…</div>
+      <div v-if="assistant.loading" class="empty-state faint">
+        <AppSpinner :size="16" />
+        <span>正在加载会话…</span>
+      </div>
 
-      <div v-else-if="!messages.length && !toolCalls.length" class="empty-state">
-        <Icon name="ai" :size="28" />
-        <p>可以查询知识、处理页面，也可以调用应用工具完成任务。</p>
+      <AppEmptyState
+        v-else-if="!messages.length && !toolCalls.length"
+        icon="ai"
+        title="可以查询知识、处理页面，也可以调用应用工具完成任务。"
+      >
         <div class="suggestions">
           <button v-for="suggestion in suggestions" :key="suggestion" @click="ask(suggestion)">
             {{ suggestion }}
           </button>
         </div>
-      </div>
+      </AppEmptyState>
 
       <template v-for="message in messages" :key="message.id">
         <article class="message" :class="message.role">
@@ -133,7 +138,7 @@
       </section>
 
       <div v-if="currentRun && currentRun.status !== 'waiting_approval'" class="run-status">
-        <span class="spinner" />
+        <AppSpinner />
         <span>{{ runStatus(currentRun.status) }} · 第 {{ currentRun.stepCount || 1 }} 步</span>
         <button class="text-action" @click="assistant.cancel()">停止</button>
       </div>
@@ -185,6 +190,10 @@ import {
 } from '../stores/assistant';
 import { renderAssistantMarkdown } from '../lib/markdown';
 import Icon from './Icon.vue';
+import AppSpinner from './ui/AppSpinner.vue';
+import AppEmptyState from './ui/AppEmptyState.vue';
+import { confirmDialog } from '../lib/confirm';
+import { notify } from '../lib/notify';
 
 const router = useRouter();
 const app = useAppStore();
@@ -261,7 +270,13 @@ async function newSession() {
 }
 
 async function deleteSession() {
-  if (!confirm('删除当前 Agent 会话？知识库内容不会受到影响。')) return;
+  const ok = await confirmDialog({
+    title: '删除会话',
+    message: '删除当前 Agent 会话？知识库内容不会受到影响。',
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
   await assistant.deleteActiveSession();
 }
 
@@ -286,8 +301,13 @@ async function ingest() {
   }
 }
 
-function copy(value: string) {
-  navigator.clipboard.writeText(value);
+async function copy(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    notify.success('已复制');
+  } catch {
+    notify.error('复制失败，请手动选择文本复制');
+  }
 }
 
 function isLatestAssistant(message: AssistantMessage): boolean {
@@ -444,11 +464,11 @@ onUnmounted(() => window.removeEventListener('assistant-prefill', onPrefill));
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   text-align: center;
   color: var(--text-secondary);
   font-size: 13px;
 }
-.empty-state p { max-width: 300px; }
 .suggestions { display: flex; flex-direction: column; gap: 6px; width: min(320px, 100%); }
 .suggestions button {
   padding: 8px 10px;
@@ -563,15 +583,6 @@ onUnmounted(() => window.removeEventListener('assistant-prefill', onPrefill));
 }
 .completion-action { justify-content: space-between; border-top: 1px solid var(--border); }
 .completion-action.success { color: var(--success); }
-.spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--border-strong);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin .8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
 .agent-error { padding: 8px; border-radius: 5px; background: rgba(220, 38, 38, 0.08); color: var(--danger); font-size: 11px; }
 .agent-input {
   display: flex;

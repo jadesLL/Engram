@@ -227,93 +227,86 @@
       <p v-if="!(grouped[tab] || []).length" class="faint empty-hint">该类目下暂无待处理项 🎉</p>
     </div>
 
-    <div v-if="batch.show" class="modal-mask" @click.self="closeBatch">
-      <div class="batch-modal card">
-        <div class="modal-head">
-          <div>
-            <h3>{{ batch.title }}</h3>
-            <p class="muted small">{{ batch.description }}</p>
-          </div>
-          <button class="icon-close" title="关闭" @click="closeBatch">×</button>
-        </div>
+    <AppModal :open="batch.show" :title="batch.title" width="min(760px, 96vw)" @close="closeBatch">
+      <template #subtitle>
+        <p class="muted small">{{ batch.description }}</p>
+      </template>
 
-        <div class="batch-toolbar">
-          <div class="batch-selection">
-            <label><input type="checkbox" :checked="allSelected" @change="toggleAll(($event.target as HTMLInputElement).checked)" /> 全选</label>
-            <span class="muted small">已选 {{ selectedBatchCount }} / {{ selectableBatchCount }}</span>
-          </div>
-          <div class="batch-presets">
-            <button
-              v-for="preset in batchPresets"
-              :key="preset.action"
-              class="btn small"
-              :class="{ danger: preset.action === 'dismiss' }"
-              @click="applyBatchPreset(preset.action)"
-            >
-              {{ preset.label }}
-            </button>
-          </div>
+      <div class="batch-toolbar">
+        <div class="batch-selection">
+          <label><input type="checkbox" :checked="allSelected" @change="toggleAll(($event.target as HTMLInputElement).checked)" /> 全选</label>
+          <span class="muted small">已选 {{ selectedBatchCount }} / {{ selectableBatchCount }}</span>
         </div>
-
-        <div class="batch-list">
-          <label v-for="item in batch.items" :key="item.id" class="batch-item" :class="{ selected: item.selected, disabled: item.disabled }">
-            <input v-model="item.selected" type="checkbox" :disabled="item.disabled" />
-            <div class="batch-copy">
-              <b>{{ previewTitle(item) }}</b>
-              <span class="muted small">{{ previewDetail(item) }}</span>
-              <span v-if="showSystemSuggestion(item)" class="suggestion small">模型建议：{{ optionLabel(item, item.suggestedAction) }}</span>
-              <span v-if="tab === 'pending_review'" class="muted small">模型分类：{{ pageTypeLabel(item.payload.kind) }}</span>
-            </div>
-            <select v-if="item.options?.length" v-model="item.action" @click.stop>
-              <option v-for="option in item.options" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <span v-else class="action-chip">{{ item.disabled ? '需逐条确认' : activeAction.itemAction }}</span>
-          </label>
-        </div>
-
-        <div class="impact-summary">
-          <b>执行影响</b>
-          <span class="small">{{ impactSummary }}</span>
-        </div>
-        <p v-if="batch.error" class="batch-error small">{{ batch.error }}</p>
-        <div class="modal-actions">
-          <button class="btn" :disabled="batch.submitting" @click="closeBatch">取消</button>
-          <button class="btn primary" :disabled="batch.submitting || !executableBatchCount" @click="submitBatch">
-            {{ batch.submitting ? '正在提交…' : `确认${activeAction.button}（${executableBatchCount}）` }}
+        <div class="batch-presets">
+          <button
+            v-for="preset in batchPresets"
+            :key="preset.action"
+            class="btn small"
+            :class="{ danger: preset.action === 'dismiss' }"
+            @click="applyBatchPreset(preset.action)"
+          >
+            {{ preset.label }}
           </button>
         </div>
       </div>
-    </div>
 
-    <div v-if="candidatePreview.show" class="modal-mask" @click.self="closeCandidatePreview">
-      <div class="candidate-preview-modal card">
-        <div class="modal-head">
-          <div>
-            <h3>{{ candidatePreview.action === 'merge' ? `并入 ${candidatePreview.targetTitle}` : `批准 ${candidatePreview.name}` }}</h3>
-            <p class="muted small">
-              重新阅读 {{ candidatePreview.sourcePaths.length }} 个原始资料 / {{ candidatePreview.contextCount }} 段原文 ·
-              {{ candidatePreview.evidenceCount }} 条重抽取事实 ·
-              {{ pageTypeLabel(candidatePreview.kind) }}
-            </p>
+      <div class="batch-list">
+        <label v-for="item in batch.items" :key="item.id" class="batch-item" :class="{ selected: item.selected, disabled: item.disabled }">
+          <input v-model="item.selected" type="checkbox" :disabled="item.disabled" />
+          <div class="batch-copy">
+            <b>{{ previewTitle(item) }}</b>
+            <span class="muted small">{{ previewDetail(item) }}</span>
+            <span v-if="showSystemSuggestion(item)" class="suggestion small">模型建议：{{ optionLabel(item, item.suggestedAction) }}</span>
+            <span v-if="tab === 'pending_review'" class="muted small">模型分类：{{ pageTypeLabel(item.payload.kind) }}</span>
           </div>
-          <button class="icon-close" title="关闭" @click="closeCandidatePreview">×</button>
-        </div>
-        <div class="source-list small">
-          <span v-for="source in candidatePreview.sourcePaths" :key="source">{{ source }}</span>
-        </div>
-        <div class="content-preview">
-          <b>{{ candidatePreview.action === 'merge' ? '待并入增量' : '重写后正文' }}</b>
-          <div class="markdown-preview" v-html="renderAssistantMarkdown(candidatePreview.content)" />
-        </div>
-        <p v-if="candidatePreview.error" class="batch-error small">{{ candidatePreview.error }}</p>
-        <div class="modal-actions">
-          <button class="btn" :disabled="candidatePreview.submitting" @click="closeCandidatePreview">取消</button>
-          <button class="btn primary" :disabled="candidatePreview.submitting" @click="commitCandidatePreview">
-            {{ candidatePreview.submitting ? '正在提交…' : '确认写入' }}
-          </button>
-        </div>
+          <select v-if="item.options?.length" v-model="item.action" @click.stop>
+            <option v-for="option in item.options" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+          <span v-else class="action-chip">{{ item.disabled ? '需逐条确认' : activeAction.itemAction }}</span>
+        </label>
       </div>
-    </div>
+
+      <div class="impact-summary">
+        <b>执行影响</b>
+        <span class="small">{{ impactSummary }}</span>
+      </div>
+      <p v-if="batch.error" class="batch-error small">{{ batch.error }}</p>
+      <template #footer>
+        <button class="btn" :disabled="batch.submitting" @click="closeBatch">取消</button>
+        <button class="btn primary" :disabled="batch.submitting || !executableBatchCount" @click="submitBatch">
+          {{ batch.submitting ? '正在提交…' : `确认${activeAction.button}（${executableBatchCount}）` }}
+        </button>
+      </template>
+    </AppModal>
+
+    <AppModal
+      :open="candidatePreview.show"
+      :title="candidatePreview.action === 'merge' ? `并入 ${candidatePreview.targetTitle}` : `批准 ${candidatePreview.name}`"
+      width="min(820px, 96vw)"
+      @close="closeCandidatePreview"
+    >
+      <template #subtitle>
+        <p class="muted small">
+          重新阅读 {{ candidatePreview.sourcePaths.length }} 个原始资料 / {{ candidatePreview.contextCount }} 段原文 ·
+          {{ candidatePreview.evidenceCount }} 条重抽取事实 ·
+          {{ pageTypeLabel(candidatePreview.kind) }}
+        </p>
+      </template>
+      <div class="source-list small">
+        <span v-for="source in candidatePreview.sourcePaths" :key="source">{{ source }}</span>
+      </div>
+      <div class="content-preview">
+        <b>{{ candidatePreview.action === 'merge' ? '待并入增量' : '重写后正文' }}</b>
+        <div class="markdown-preview" v-html="renderAssistantMarkdown(candidatePreview.content)" />
+      </div>
+      <p v-if="candidatePreview.error" class="batch-error small">{{ candidatePreview.error }}</p>
+      <template #footer>
+        <button class="btn" :disabled="candidatePreview.submitting" @click="closeCandidatePreview">取消</button>
+        <button class="btn primary" :disabled="candidatePreview.submitting" @click="commitCandidatePreview">
+          {{ candidatePreview.submitting ? '正在提交…' : '确认写入' }}
+        </button>
+      </template>
+    </AppModal>
   </div>
 </template>
 
@@ -323,6 +316,9 @@ import { useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { renderAssistantMarkdown } from '../lib/markdown';
+import AppModal from '../components/ui/AppModal.vue';
+import { confirmDialog } from '../lib/confirm';
+import { notify } from '../lib/notify';
 
 const router = useRouter();
 const app = useAppStore();
@@ -512,9 +508,18 @@ async function createDead(r: any) {
 async function merge(r: any, keep: 'a' | 'b') {
   const keepPage = r.payload[keep];
   const otherPage = r.payload[keep === 'a' ? 'b' : 'a'];
-  if (!confirm(`将「${otherPage.title}」合并入「${keepPage.title}」？（前者移入归档，引用自动改指向）`)) return;
-  await api.post('/api/pages/merge', { keepId: keepPage.id, otherId: otherPage.id });
-  await setStatus(r, 'resolved');
+  const ok = await confirmDialog({
+    title: '合并页面',
+    message: `将「${otherPage.title}」合并入「${keepPage.title}」？（前者移入归档，引用自动改指向）`,
+    confirmText: '合并',
+  });
+  if (!ok) return;
+  try {
+    await api.post('/api/pages/merge', { keepId: keepPage.id, otherId: otherPage.id });
+    await setStatus(r, 'resolved');
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || '合并失败');
+  }
 }
 
 function pageTypeLabel(type: string) {
@@ -592,7 +597,7 @@ async function openCandidatePreview(r: any, action: 'approve' | 'merge') {
       error: '',
     });
   } catch (error: any) {
-    alert(error?.response?.data?.error || error?.message || '无法生成审核预览');
+    notify.error(error?.response?.data?.error || error?.message || '无法生成审核预览');
   } finally {
     reviewBusy[r.id] = false;
   }
@@ -641,7 +646,7 @@ async function openBatchPreview() {
     batch.items = data.items.map((item: any) => ({ ...item, action: item.suggestedAction }));
     batch.show = true;
   } catch (error: any) {
-    alert(error?.response?.data?.error || error?.message || '无法加载处理预览');
+    notify.error(error?.response?.data?.error || error?.message || '无法加载处理预览');
   }
 }
 
@@ -706,7 +711,7 @@ async function submitBatch() {
     await load();
   } catch (error: any) {
     batch.error = error?.response?.data?.error || error?.message || '批量处理失败';
-    if (!batch.show) alert(batch.error);
+    if (!batch.show) notify.error(batch.error);
     await load();
   } finally {
     batch.submitting = false;
@@ -797,13 +802,7 @@ onMounted(load);
 .review-controls { display: grid; grid-template-columns: minmax(180px, 1fr) 110px minmax(220px, 1.4fr); gap: 8px; margin: 10px 0; }
 .review-controls > * { width: 100%; min-width: 0; }
 .empty-hint { text-align: center; padding: 40px 0; }
-.modal-mask { position: fixed; inset: 0; z-index: var(--z-overlay); display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 15, 15, .35); }
-.batch-modal { width: min(760px, 96vw); max-height: min(820px, 92vh); display: flex; flex-direction: column; box-shadow: var(--shadow); }
-.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.modal-head h3 { margin: 0; }
-.modal-head p { margin: 5px 0 0; }
-.icon-close { width: 32px; height: 32px; font-size: 24px; color: var(--text-secondary); }
-.batch-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 8px; }
+.batch-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 8px; }
 .batch-selection, .batch-presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .batch-selection label { display: flex; align-items: center; gap: 7px; }
 .batch-presets .danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
@@ -818,8 +817,6 @@ onMounted(load);
 .action-chip { justify-self: end; color: var(--text-secondary); font-size: 13px; }
 .impact-summary { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; padding: 10px 12px; background: var(--bg-secondary); border-radius: 6px; }
 .batch-error { color: var(--danger); margin: 10px 0 0; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-.candidate-preview-modal { width: min(820px, 96vw); max-height: min(860px, 92vh); display: flex; flex-direction: column; box-shadow: var(--shadow); }
 .source-list { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 12px 0; color: var(--text-secondary); }
 .content-preview { min-height: 160px; overflow: auto; padding: 12px 4px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .content-preview > b { display: block; margin-bottom: 10px; }
