@@ -417,30 +417,32 @@ function etaText(job: any) {
 .jobs-panel.resized { max-height: calc(100vh - 32px); }
 .jp-resize-handle {
   position: absolute;
-  top: -7px;
-  right: -7px;
-  width: 20px;
-  height: 20px;
+  top: -5px;
+  right: -5px;
+  width: 16px;
+  height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg);
+  border: none;
+  border-radius: 4px;
+  background: transparent;
   cursor: nesw-resize;
-  color: var(--text-faint);
+  color: var(--border);
+  opacity: 0.6;
   outline: none;
   touch-action: none;
   z-index: 1;
+  transition: opacity 0.15s, color 0.15s;
 }
 .jp-resize-handle:hover,
 .jp-resize-handle:focus-visible {
-  color: var(--accent);
+  color: var(--text-faint);
   background: var(--bg-hover);
+  opacity: 1;
 }
 .jp-resize-handle:focus-visible {
-  border-radius: 4px;
   box-shadow: 0 0 0 2px var(--sidebar-focus-ring);
 }
 .jp-head {
