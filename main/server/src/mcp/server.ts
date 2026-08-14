@@ -93,7 +93,7 @@ function makeServer(): McpServer {
       path: z.string().describe('相对路径，如 notes/xxx.md'),
       title: z.string(),
       content: z.string().describe('markdown 正文'),
-      type: z.enum(['note', 'concept', 'person', 'project', 'doc']).optional(),
+      type: z.enum(['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other', 'doc', 'note']).optional(),
       tags: z.array(z.string()).optional(),
     },
     async ({ path: p, title, content, type, tags }) => {

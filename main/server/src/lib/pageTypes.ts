@@ -5,30 +5,46 @@
  */
 
 /** 全部合法页面类型（机制字段 `type`） */
-export const PAGE_TYPES = ['concept', 'person', 'project', 'org', 'doc', 'note'] as const;
+export const PAGE_TYPES = ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other', 'doc', 'note'] as const;
 export type PageType = (typeof PAGE_TYPES)[number];
 
 /** 类型 -> 物理目录（与 config.ts typeToDir 保持一致；实体类一律进 Wiki/实体） */
 export const TYPE_DIR: Record<string, string> = {
   concept: 'Wiki/概念',
   person: 'Wiki/实体',
-  project: 'Wiki/实体',
+  customer: 'Wiki/实体',
   org: 'Wiki/实体',
+  place: 'Wiki/实体',
+  work: 'Wiki/实体',
+  project: 'Wiki/实体',
+  other: 'Wiki/实体',
 };
 
 /** 类型 -> 中文标签 */
 export const TYPE_LABEL: Record<string, string> = {
   concept: '概念',
   person: '人物',
-  project: '项目',
+  customer: '客户',
   org: '组织',
+  place: '地点',
+  work: '作品',
+  project: '产品',
+  other: '其他',
   doc: '文档',
   note: '笔记',
 };
 
-/** 是否为实体类（进 Wiki/实体，采用双层结构：当前理解+时间线） */
+/** 是否为实体类（进 Wiki/实体，采用双层结构：当前理解+时间线）。客户为特殊实体，走专属信捷模式综合。 */
 export function isEntity(type: string | undefined | null): boolean {
-  return type === 'person' || type === 'project' || type === 'org';
+  return (
+    type === 'person' ||
+    type === 'customer' ||
+    type === 'org' ||
+    type === 'place' ||
+    type === 'work' ||
+    type === 'project' ||
+    type === 'other'
+  );
 }
 
 /** 是否可整页综合（实体类 + 概念）。概念页保持自由 Markdown 结构，不套用实体双层结构。 */

@@ -76,7 +76,7 @@ export function previewReportActions(kind: ReportActionKind) {
       if (kind === 'deadlink') {
         hasRecommendation = PAGE_TYPES.includes(payload.suggestedType);
         suggestedAction = hasRecommendation ? payload.suggestedType : 'note';
-        options = PAGE_TYPES.map((type) => ({ value: type, label: ({ concept: '概念', person: '人物', project: '项目', org: '组织', doc: '文档', note: '笔记' } as Record<string, string>)[type] }));
+        options = PAGE_TYPES.map((type) => ({ value: type, label: ({ concept: '概念', person: '人物', customer: '客户', org: '组织', place: '地点', work: '作品', project: '产品', other: '其他', doc: '文档', note: '笔记' } as Record<string, string>)[type] }));
       } else if (kind === 'duplicate') {
         suggestedAction = duplicateSuggestion(payload);
         options = [
@@ -93,7 +93,7 @@ export function previewReportActions(kind: ReportActionKind) {
         const sourceCount = candidate
           ? relatedCandidateOccurrences(candidate).length
           : (payload.sourcePath || payload.source ? 1 : 0);
-        const suggestedKind = ['concept', 'person', 'project', 'org'].includes(payload.kind)
+        const suggestedKind = ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(payload.kind)
           ? payload.kind
           : 'concept';
         payload.evidenceSourceCount = sourceCount;
@@ -106,8 +106,12 @@ export function previewReportActions(kind: ReportActionKind) {
           { value: 'manual', label: '询问（保持待审）' },
           { value: 'approve:concept', label: '批准为概念' },
           { value: 'approve:person', label: '批准为人物' },
-          { value: 'approve:project', label: '批准为项目' },
+          { value: 'approve:customer', label: '批准为客户' },
           { value: 'approve:org', label: '批准为组织' },
+          { value: 'approve:place', label: '批准为地点' },
+          { value: 'approve:work', label: '批准为作品' },
+          { value: 'approve:project', label: '批准为产品' },
+          { value: 'approve:other', label: '批准为其他' },
           { value: 'ignore', label: '忽略' },
         ];
       } else if (kind === 'enrich') {
@@ -138,7 +142,7 @@ function validAction(kind: ReportActionKind, action: string): boolean {
     contradiction: ['resolve'],
     single_source: ['resolve'],
     missing_sections: ['repair'],
-    pending_review: ['approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore'],
+    pending_review: ['approve:concept', 'approve:person', 'approve:customer', 'approve:org', 'approve:place', 'approve:work', 'approve:project', 'approve:other', 'ignore'],
     ingest_questions: ['resolve'],
     enrich: ['dismiss'],
     stale: ['review'],

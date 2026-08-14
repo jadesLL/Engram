@@ -174,7 +174,7 @@ test('single-source pending reviews recommend ignore instead of a page type', ()
   assert.equal(preview.suggestedAction, 'ignore');
   assert.equal(preview.payload.evidenceSourceCount, 1);
   assert.deepEqual(preview.options.map((option: any) => option.value), [
-    'manual', 'approve:concept', 'approve:person', 'approve:project', 'approve:org', 'ignore',
+    'manual', 'approve:concept', 'approve:person', 'approve:customer', 'approve:org', 'approve:place', 'approve:work', 'approve:project', 'approve:other', 'ignore',
   ]);
   assert.throws(
     () => validateDecisions('pending_review', [{ reportId: preview.id, action: 'manual' }]),

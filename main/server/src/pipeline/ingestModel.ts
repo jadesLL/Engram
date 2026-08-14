@@ -21,7 +21,7 @@ export const ingestRelationSchema = z.object({
 export const candidateSchema = z.object({
   candidateId: z.string().optional().default(''),
   name: z.string().trim().min(1).max(120),
-  kind: z.enum(['concept', 'person', 'project', 'org']),
+  kind: z.enum(['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other']),
   domain: z.string().optional().default(''),
   summary: z.string().optional().default(''),
   facts: z.array(factSchema).default([]),
@@ -77,7 +77,7 @@ export const normalizeMergeSchema = z.object({
   canonicalId: z.string().min(1),
   memberIds: z.array(z.string().min(1)).min(2),
   name: z.string().trim().min(1).max(120),
-  kind: z.enum(['concept', 'person', 'project', 'org']),
+  kind: z.enum(['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other']),
   domain: z.string().optional().default(''),
   summary: z.string().optional().default(''),
 });
@@ -88,10 +88,14 @@ export const normalizeOutputSchema = z.object({
 
 /** kind 中文->英文映射（LLM 偶尔返回中文枚举值） */
 const KIND_MAP: Record<string, string> = {
-  concept: 'concept', '概念': 'concept',
+  concept: 'concept', '概念': 'concept', '技术': 'concept', '框架': 'concept',
   person: 'person', '人物': 'person', '人': 'person',
-  project: 'project', '项目': 'project',
-  org: 'org', '组织': 'org', '机构': 'org', '产品': 'concept', '框架': 'concept', '技术': 'concept',
+  customer: 'customer', '客户': 'customer',
+  org: 'org', '组织': 'org', '机构': 'org',
+  place: 'place', '地点': 'place', '位置': 'place',
+  work: 'work', '作品': 'work',
+  project: 'project', '项目': 'project', '产品': 'project',
+  other: 'other', '其他': 'other',
 };
 /** action 中文->英文映射 */
 const ACTION_MAP: Record<string, string> = {
@@ -109,7 +113,7 @@ function mapEnum(value: unknown, map: Record<string, string>, fallback: string):
 export const planItemSchema = z.object({
   candidateId: z.string().optional().default(''),
   name: z.string().trim().min(1).max(120),
-  kind: z.preprocess((v) => mapEnum(v, KIND_MAP, 'concept'), z.enum(['concept', 'person', 'project', 'org'])),
+  kind: z.preprocess((v) => mapEnum(v, KIND_MAP, 'concept'), z.enum(['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'])),
   action: z.preprocess((v) => mapEnum(v, ACTION_MAP, 'review'), z.enum(['create', 'merge', 'skip', 'review'])),
   target: z.string().optional().default(''),
   domain: z.string().optional().default(''),

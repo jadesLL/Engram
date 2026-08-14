@@ -31,9 +31,13 @@
           <select v-model="pageType" @change="save(true)" class="ghost-select">
             <option value="concept">概念</option>
             <option value="person">人物</option>
-            <option value="project">项目</option>
+            <option value="customer">客户</option>
             <option value="org">组织</option>
-            <option v-if="!['concept','person','project','org'].includes(pageType)" :value="pageType">未分类</option>
+            <option value="place">地点</option>
+            <option value="work">作品</option>
+            <option value="project">产品</option>
+            <option value="other">其他</option>
+            <option v-if="!['concept','person','customer','org','place','work','project','other'].includes(pageType)" :value="pageType">未分类</option>
           </select>
           <input
             v-model="tagsInput"
@@ -303,9 +307,9 @@ const synthesisPending = computed(() =>
   (!evidence.value?.synthesis || evidence.value.synthesis.outdated)
 );
 
-/** 概念/人物/项目/组织页可整页综合（重新组织/重新提炼） */
+/** 概念页与实体页（人物/客户/组织/地点/作品/产品/其他）可整页综合（重新组织/重新提炼） */
 const canSynthesize = computed(() =>
-  ['concept', 'person', 'project', 'org'].includes(pageType.value)
+  ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(pageType.value)
 );
 
 type WriterPreset = 'continue' | 'polish' | 'expand' | 'summarize' | 'translate';
@@ -379,7 +383,7 @@ async function loadRelated() {
 }
 
 async function loadEvidence() {
-  if (!page.value || !['concept', 'person', 'project', 'org'].includes(pageType.value)) {
+  if (!page.value || !['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(pageType.value)) {
     evidence.value = null;
     evidenceOpen.value = false;
     return;

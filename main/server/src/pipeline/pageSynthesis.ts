@@ -14,7 +14,7 @@ import {
   pageSynthesisVerifyPrompt,
 } from '../prompts/pageSynthesis.js';
 import { acsPageSynthesisPrompt, acsPageSynthesisVerifyPrompt } from '../prompts/acs.js';
-import { isAcsMode, pageIsCustomerOrg } from '../lib/acs.js';
+import { isAcsMode, pageIsCustomer } from '../lib/acs.js';
 import { allPageContributions, contributionsForProjection, type StoredContribution } from './sourceLedger.js';
 import {
   extractConceptManualSections,
@@ -718,8 +718,8 @@ export async function recomposePage(
   const allowedEvidence = new Set(bundle.facts.map((fact) => fact.id));
   const roster = knownRoster();
   const manualEdited = state.manualChanged ? state.extracted : null;
-  // 信捷（ACS）模式仅对被标记为「客户」的 org 实体页生效；非客户页保持标准综合。
-  const acs = isAcsMode() && pageIsCustomerOrg(bundle.page);
+  // 信捷（ACS）模式仅对 customer 客户实体页生效；非客户页保持标准综合。
+  const acs = isAcsMode() && pageIsCustomer(bundle.page);
   const isConceptPage = !isEntity(bundle.page.type);
   let output: SynthesisOutput;
   try {
