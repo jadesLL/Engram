@@ -8,6 +8,8 @@ import { isEntity } from '../lib/pageTypes.js';
 import { enqueue } from '../jobQueue.js';
 import { addReports } from '../dream/reports.js';
 import { pageSynthesisPrompt, pageSynthesisVerifyPrompt } from '../prompts/pageSynthesis.js';
+import { acsPageSynthesisPrompt, acsPageSynthesisVerifyPrompt } from '../prompts/acs.js';
+import { isAcsMode, pageIsCustomerOrg } from '../lib/acs.js';
 import { allPageContributions, contributionsForProjection, type StoredContribution } from './sourceLedger.js';
 import {
   extractEntityManualSections,
@@ -21,6 +23,13 @@ import {
 const evidenceClaimSchema = z.object({
   text: z.string().trim().min(1).max(2000),
   evidenceIds: z.array(z.string().min(1)).min(1).max(30),
+});
+
+/** ACS 模式下的「缺失资料」条目：证据缺口本身无 evidenceIds，因此独立成字段，不进入证据门禁。 */
+const gapItemSchema = z.object({
+  item: z.string().trim().min(1).max(300),
+  priority: z.string().trim().max(20).default(''),
+  use: z.string().trim().max(300).default(''),
 });
 
 const synthesisOutputSchema = z.object({
@@ -65,6 +74,7 @@ const synthesisOutputSchema = z.object({
     })).max(40),
   ),
   unresolvedConflicts: z.array(z.string().trim().min(1).max(1000)).max(20).default([]),
+  gaps: z.array(gapItemSchema).max(40).default([]),
   manualChangesPreserved: z.boolean().default(true),
 });
 
@@ -90,7 +100,7 @@ export interface PageEvidenceFact {
 }
 
 interface PageEvidenceBundle {
-  page: { id: string; path: string; title: string; type: string };
+  page: { id: string; path: string; title: string; type: string; tags: string[] };
   contributions: StoredContribution[];
   facts: PageEvidenceFact[];
   relations: Array<{ src: string; word: string; dst: string; evidenceId: string }>;
@@ -185,10 +195,17 @@ function evidenceId(runId: string, factId: string): string {
 }
 
 function loadPageEvidence(pageId: string): PageEvidenceBundle | null {
-  const page = db.prepare(
-    `SELECT id,path,title,type FROM pages WHERE id=? AND deleted=0`
-  ).get(pageId) as PageEvidenceBundle['page'] | undefined;
-  if (!page || !isEntity(page.type)) return null;
+  const row = db.prepare(
+    `SELECT id,path,title,type,tags FROM pages WHERE id=? AND deleted=0`
+  ).get(pageId) as { id: string; path: string; title: string; type: string; tags: string | null } | undefined;
+  if (!row || !isEntity(row.type)) return null;
+  const page: PageEvidenceBundle['page'] = {
+    id: row.id,
+    path: row.path,
+    title: row.title,
+    type: row.type,
+    tags: parseArray<string>(row.tags || '[]'),
+  };
   const contributions = contributionsForProjection(pageId);
   const facts = new Map<string, PageEvidenceFact>();
   const relations: PageEvidenceBundle['relations'] = [];
@@ -441,6 +458,36 @@ function renderOutput(
   };
 }
 
+/**
+ * 把 ACS 综合产出的 gaps 追加到已渲染结果上。
+ *
+ * 刻意在证据校验通过之后调用：gaps 是「框架预期但证据未覆盖」的缺口，本身无 evidenceIds，
+ * 不应进入 verify 草稿（否则可能被判 unsupported 触发自纠错回路、最终判失败）。
+ * 因此 renderOutput 不渲染 gaps，校验通过后再用本函数补到正文与 evidenceMap。
+ */
+function appendGaps(
+  rendered: ReturnType<typeof renderOutput>,
+  output: SynthesisOutput,
+): void {
+  if (!output.gaps?.length) return;
+  const gapClaims: EvidenceMap['sections'][number]['claims'] = [];
+  const lines = rendered.sections.current.split('\n');
+  lines.push('', '### 缺失资料与待验证', '');
+  for (const gap of output.gaps) {
+    const item = normalizeText(gap.item);
+    if (!item) continue;
+    const meta = [gap.priority, gap.use].filter(Boolean).join(' · ');
+    const line = meta ? `${item}（${meta}）` : item;
+    lines.push(`- ${line}`);
+    gapClaims.push({ kind: 'bullet', text: line, evidenceIds: [] });
+  }
+  if (gapClaims.length) {
+    lines.push('');
+    rendered.evidenceMap.sections.push({ heading: '缺失资料与待验证', claims: gapClaims });
+  }
+  rendered.sections.current = clean(lines.join('\n'));
+}
+
 function synthesisReport(
   bundle: PageEvidenceBundle,
   synthesisId: string,
@@ -602,6 +649,8 @@ export async function recomposePage(
   const allowedEvidence = new Set(bundle.facts.map((fact) => fact.id));
   const roster = knownRoster();
   const manualEdited = state.manualChanged ? state.extracted : null;
+  // 信捷（ACS）模式仅对被标记为「客户」的 org 实体页生效；非客户页保持标准综合。
+  const acs = isAcsMode() && pageIsCustomerOrg(bundle.page);
   let output: SynthesisOutput;
   try {
     // 自纠错回路：compose 生成草稿 → verify 校验；校验失败时把证据校验反馈注入 compose 重新生成，
@@ -617,8 +666,10 @@ export async function recomposePage(
         stage: 'compose',
         tag: 'page-synthesis-compose',
         schema: synthesisOutputSchema,
-        system: pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged, correctionFeedback),
-        promptVersion: 'page-synthesis-compose:4',
+        system: acs
+          ? acsPageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged, correctionFeedback)
+          : pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged, correctionFeedback),
+        promptVersion: acs ? 'page-synthesis-compose:acs-1' : 'page-synthesis-compose:4',
         cacheScope: 'page-synthesis:compose',
         dependencyHash: state.inputHash,
         resultCache: true,
@@ -657,8 +708,10 @@ export async function recomposePage(
         stage: 'verify',
         tag: 'page-synthesis-verify',
         schema: synthesisVerifySchema,
-      system: pageSynthesisVerifyPrompt(state.manualChanged),
-      promptVersion: 'page-synthesis-verify:3',
+      system: acs
+        ? acsPageSynthesisVerifyPrompt(state.manualChanged)
+        : pageSynthesisVerifyPrompt(state.manualChanged),
+      promptVersion: acs ? 'page-synthesis-verify:acs-1' : 'page-synthesis-verify:3',
       cacheScope: 'page-synthesis:verify',
       dependencyHash: state.inputHash,
       // verify 是证据校验关卡，不缓存结果：自纠错回路每轮都要对当前草稿重新校验，
@@ -700,6 +753,9 @@ export async function recomposePage(
       }
       break;
     }
+
+    // 校验通过后再补 ACS 的「缺失资料」章节——gaps 无证据，不能进入 verify 草稿。
+    appendGaps(rendered, output);
 
     signal?.throwIfAborted();
     const latestBody = readPage(bundle.page.path);

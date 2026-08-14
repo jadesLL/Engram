@@ -21,6 +21,7 @@ const PUBLIC_SETTINGS = [
   'embedding_models', 'active_embedding_model',
   'document_models', 'active_document_model',
   'dream_cron', 'dream_enabled',
+  'acs_mode',
 ];
 
 /** 从活跃 embedding 条目同步 embedding_dim（驱动 vec 表维度） */
@@ -58,6 +59,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.put('/api/settings', async (req) => {
     const body = req.body as Record<string, string>;
+    const prevAcsMode = getSetting('acs_mode') || 'standard';
     for (const k of PUBLIC_SETTINGS) {
       if (body[k] !== undefined) setSetting(k, String(body[k]));
     }
@@ -68,7 +70,9 @@ export async function settingsRoutes(app: FastifyInstance) {
         .then((r) => app.log.info(`[auto-rebuild] done: ${JSON.stringify(r)}`))
         .catch((e) => app.log.error(`[auto-rebuild] failed: ${e.message}`));
     }
-    return { ok: true, dimChanged: changed };
+    // 信捷模式切换不触发批量重综合：模式在下次整页综合时自然生效，避免切换即全量 LLM 开销。
+    const nextAcsMode = (body.acs_mode !== undefined ? String(body.acs_mode) : prevAcsMode) || 'standard';
+    return { ok: true, dimChanged: changed, acsModeChanged: nextAcsMode !== prevAcsMode };
   });
 
   /** 测试连接。
