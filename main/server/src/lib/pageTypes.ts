@@ -21,7 +21,7 @@ export const TYPE_LABEL: Record<string, string> = {
   concept: '概念',
   person: '人物',
   project: '项目',
-  org: '组织',
+  org: '客户',
   doc: '文档',
   note: '笔记',
 };

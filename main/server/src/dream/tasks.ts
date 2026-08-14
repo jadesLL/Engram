@@ -69,7 +69,7 @@ export async function taskDeadlinks(signal?: AbortSignal): Promise<number> {
           tag: 'dream-deadlink-type',
           schema: deadlinkSchema,
           system: `你是知识库页面类型判断模型。根据来源页面上下文，判断死链标题最适合创建为何种页面。
-concept=概念/方法/技术，person=人物，project=项目/产品，org=组织，doc=正式文档，note=普通笔记。
+concept=概念/方法/技术，person=人物，project=项目/产品，org=客户，doc=正式文档，note=普通笔记。
 只输出 JSON：{"suggestedType":"concept|person|project|org|doc|note","reason":""}。`,
           input: {
             deadTitle: row.dst_title,

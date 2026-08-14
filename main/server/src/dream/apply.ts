@@ -76,7 +76,7 @@ export function previewReportActions(kind: ReportActionKind) {
       if (kind === 'deadlink') {
         hasRecommendation = PAGE_TYPES.includes(payload.suggestedType);
         suggestedAction = hasRecommendation ? payload.suggestedType : 'note';
-        options = PAGE_TYPES.map((type) => ({ value: type, label: ({ concept: '概念', person: '人物', project: '项目', org: '组织', doc: '文档', note: '笔记' } as Record<string, string>)[type] }));
+        options = PAGE_TYPES.map((type) => ({ value: type, label: ({ concept: '概念', person: '人物', project: '项目', org: '客户', doc: '文档', note: '笔记' } as Record<string, string>)[type] }));
       } else if (kind === 'duplicate') {
         suggestedAction = duplicateSuggestion(payload);
         options = [
@@ -107,7 +107,7 @@ export function previewReportActions(kind: ReportActionKind) {
           { value: 'approve:concept', label: '批准为概念' },
           { value: 'approve:person', label: '批准为人物' },
           { value: 'approve:project', label: '批准为项目' },
-          { value: 'approve:org', label: '批准为组织' },
+          { value: 'approve:org', label: '批准为客户' },
           { value: 'ignore', label: '忽略' },
         ];
       } else if (kind === 'enrich') {

@@ -10,7 +10,7 @@
         <span class="legend faint small">
           <i class="lg-note"></i>笔记 <i class="lg-concept"></i>概念
           <i class="lg-person"></i>人物 <i class="lg-project"></i>项目
-          <i class="lg-doc"></i>文档 <i class="lg-org"></i>组织 <i class="lg-deadlink"></i>死链
+          <i class="lg-doc"></i>文档 <i class="lg-org"></i>客户 <i class="lg-deadlink"></i>死链
         </span>
       </div>
     </div>

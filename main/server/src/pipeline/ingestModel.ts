@@ -91,7 +91,7 @@ const KIND_MAP: Record<string, string> = {
   concept: 'concept', '概念': 'concept',
   person: 'person', '人物': 'person', '人': 'person',
   project: 'project', '项目': 'project',
-  org: 'org', '组织': 'org', '机构': 'org', '产品': 'concept', '框架': 'concept', '技术': 'concept',
+  org: 'org', '组织': 'org', '客户': 'org', '机构': 'org', '产品': 'concept', '框架': 'concept', '技术': 'concept',
 };
 /** action 中文->英文映射 */
 const ACTION_MAP: Record<string, string> = {

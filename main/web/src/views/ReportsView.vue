@@ -123,7 +123,7 @@
               <option value="concept">概念</option>
               <option value="person">人物</option>
               <option value="project">项目</option>
-              <option value="org">组织</option>
+              <option value="org">客户</option>
             </select>
             <select v-model="reviewTargets[r.id]">
               <option value="">选择已有页面</option>
@@ -416,7 +416,7 @@ const batchPresets = computed(() => {
       { action: 'concept', label: '全部概念' },
       { action: 'person', label: '全部人物' },
       { action: 'project', label: '全部项目' },
-      { action: 'org', label: '全部组织' },
+      { action: 'org', label: '全部客户' },
       { action: 'doc', label: '全部文档' },
       { action: 'note', label: '全部笔记' },
     );
@@ -527,7 +527,7 @@ function pageTypeLabel(type: string) {
     concept: '概念',
     person: '人物',
     project: '项目',
-    org: '组织',
+    org: '客户',
     doc: '文档',
     note: '笔记',
   } as Record<string, string>)[type] || '未分类';

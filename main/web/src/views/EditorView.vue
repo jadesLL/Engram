@@ -32,7 +32,7 @@
             <option value="concept">概念</option>
             <option value="person">人物</option>
             <option value="project">项目</option>
-            <option value="org">组织</option>
+            <option value="org">客户</option>
             <option v-if="!['concept','person','project','org'].includes(pageType)" :value="pageType">未分类</option>
           </select>
           <input

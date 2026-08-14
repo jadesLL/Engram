@@ -221,7 +221,7 @@ const typeLabel = computed(() => ({
   concept: '概念',
   person: '人物',
   project: '项目',
-  org: '组织',
+  org: '客户',
   note: '知识页面',
 }[props.pageType] || '知识页面'));
 const hasRelated = computed(() =>

@@ -63,30 +63,39 @@
             </div>
           </div>
           <div v-show="!collapsed[g.key]" class="sec-body">
-            <!-- 实体：按子类（人物/客户/项目/组织）分组 -->
+            <!-- 实体：按子类（人物/客户/项目）分组，子类可折叠 -->
             <template v-if="g.subGroups">
               <div
                 v-for="sub in visibleSubGroups(g)"
                 :key="sub.key"
                 class="sub-group"
+                :class="{ expanded: !collapsed[`${g.key}:${sub.key}`] }"
               >
-                <div class="sub-head">
+                <button
+                  class="sub-head"
+                  type="button"
+                  :aria-expanded="!collapsed[`${g.key}:${sub.key}`]"
+                  :title="collapsed[`${g.key}:${sub.key}`] ? `展开${sub.label}` : `收起${sub.label}`"
+                  @click="toggle(`${g.key}:${sub.key}`)"
+                >
                   <span class="sub-name">{{ sub.label }}</span>
                   <span class="sub-count">{{ filteredPages(sub.pages).length }}</span>
+                </button>
+                <div v-show="!collapsed[`${g.key}:${sub.key}`]" class="sub-body">
+                  <PageRow
+                    v-for="p in sortList(filteredPages(sub.pages), groupSort[g.key])"
+                    :key="p.id"
+                    :page="p"
+                    :active="p.id === activeId"
+                    :selected="selected.has('p:' + p.id)"
+                    :selection-mode="selectionMode"
+                    @open="openPage"
+                    @archive="archivePage"
+                    @unarchive="unarchivePage"
+                    @remove="removePage"
+                    @toggle-select="toggleSelect"
+                  />
                 </div>
-                <PageRow
-                  v-for="p in sortList(filteredPages(sub.pages), groupSort[g.key])"
-                  :key="p.id"
-                  :page="p"
-                  :active="p.id === activeId"
-                  :selected="selected.has('p:' + p.id)"
-                  :selection-mode="selectionMode"
-                  @open="openPage"
-                  @archive="archivePage"
-                  @unarchive="unarchivePage"
-                  @remove="removePage"
-                  @toggle-select="toggleSelect"
-                />
               </div>
               <p v-if="!groupPageCount(g)" class="none">
                 {{ filter ? '没有匹配页面' : '暂无页面' }}
@@ -447,7 +456,6 @@ const GROUPS = [
       { key: 'person', label: '人物' },
       { key: 'customer', label: '客户' },
       { key: 'project', label: '项目' },
-      { key: 'org', label: '组织' },
     ],
   },
   { key: 'archived', label: '归档' },
@@ -464,14 +472,12 @@ function topGroupOf(p: any): string {
   return 'unclassified'; // 未分类页面只在「全部页面」出现
 }
 
-/** 实体下的子类：人物 / 客户（带「客户」标签的 org）/ 项目 / 组织（非客户 org） */
+/** 实体下的子类：人物 / 客户（org）/ 项目 */
 function subGroupOf(p: any): string | null {
-  if (!['person', 'project', 'org'].includes(p.type)) return null;
-  // 带有「客户」标签的 org 实体归入「客户」分类（信捷模式下按 ACS 框架综合）
-  if (p.type === 'org' && (p.tags || []).includes('客户')) return 'customer';
   if (p.type === 'person') return 'person';
+  if (p.type === 'org') return 'customer';
   if (p.type === 'project') return 'project';
-  return 'org';
+  return null;
 }
 
 const typeGroups = computed(() =>
@@ -1084,21 +1090,58 @@ onUnmounted(() => {
   padding: 2px 0 5px 14px;
 }
 
+.sub-group {
+  position: relative;
+}
+
 .sub-group + .sub-group {
   margin-top: 2px;
 }
 
 .sub-head {
+  position: relative;
   display: flex;
+  width: 100%;
   align-items: center;
   justify-content: space-between;
   gap: 4px;
   padding: 4px 8px 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-faint);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0;
+  text-align: left;
+  cursor: pointer;
   user-select: none;
+}
+
+.sub-head:hover {
+  color: var(--text-secondary);
+  background: var(--sidebar-hover);
+}
+
+.sub-head:focus-visible {
+  outline: 2px solid var(--sidebar-accent);
+  outline-offset: 1px;
+}
+
+.sub-group.expanded > .sub-head::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 4px;
+  left: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--text-faint);
+  opacity: 0.5;
+}
+
+.sub-body {
+  padding: 1px 0 2px;
 }
 
 .sub-name {
