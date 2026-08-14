@@ -112,3 +112,32 @@ test('headersToRecord 把 header 数组转为 key→value', () => {
   assert.equal(hdr.sum, '3');
   assert.equal(hdr.seq, '0');
 });
+
+test('protobuf 解码真实飞书帧（64 位 logID / service，曾报 varint too long）', () => {
+  // 部署后从真实长连接抓到的数据帧头部（len=1273），logID 是 9 字节 varint，
+  // 旧实现用 32 位移位在 shift=35 处抛 'varint too long'
+  const head = Uint8Array.from([
+    0x08, 0xad, 0x81, 0xab, 0xdd, 0x12, 0x10, 0x96, 0xc7, 0xa7, 0xc4, 0xee,
+    0x83, 0xf0, 0xe5, 0x18, 0x18, 0xf6, 0x81, 0x80, 0x10, 0x20, 0x01,
+  ]);
+  const frame = decodeFrame(head);
+  assert.equal(frame.seqId, 5027578029);
+  assert.equal(frame.logId, 1786732916165436310);
+  assert.equal(frame.service, 33554678);
+  assert.equal(frame.method, 1);
+});
+
+test('protobuf 大 seqID 编码（ACK 回显 64 位值）', () => {
+  const frame: Frame = {
+    seqId: 5027578029,
+    logId: 1786732916165436310,
+    service: 33554678,
+    method: 1,
+    headers: [],
+  };
+  const decoded = decodeFrame(encodeFrame(frame));
+  assert.equal(decoded.seqId, 5027578029);
+  assert.equal(decoded.logId, 1786732916165436310);
+  assert.equal(decoded.service, 33554678);
+  assert.equal(decoded.method, 1);
+});
