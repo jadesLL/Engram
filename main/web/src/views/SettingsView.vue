@@ -453,6 +453,20 @@
               </div>
             </div>
           </div>
+
+          <div class="settings-group">
+            <div class="setting-row">
+              <div class="setting-copy">
+                <strong>客户梳理模式</strong>
+                <span>开启信捷模式后，标记为「客户」的实体页面在整页综合时按 ACS「助力客户成功」框架组织（五看洞察 / 决策链 / 三层关系 / 行动计划 / 缺失资料）。在侧边栏给实体页加上「客户」标签即视为客户。切换不触发批量重综合，模式在下次整理客户页面时生效。</span>
+              </div>
+              <div class="segmented-control" role="group" aria-label="客户梳理模式">
+                <button type="button" class="segmented-btn" :class="{ active: acsMode === 'standard' }" @click="setAcsMode('standard')">标准模式</button>
+                <button type="button" class="segmented-btn" :class="{ active: acsMode === 'acs' }" @click="setAcsMode('acs')">信捷模式</button>
+              </div>
+            </div>
+            <p v-if="acsModeMsg" class="setting-message">{{ acsModeMsg }}</p>
+          </div>
         </section>
 
         <section v-show="activeSettingsSection === 'mcp'" class="settings-panel">
@@ -1067,6 +1081,8 @@ const dreamEnabled = ref(true);
 const dreamCron = ref('0 3 * * *');
 const dreamScheduleFrequency = ref<DreamScheduleFrequency>('daily');
 const dreamScheduleTime = ref('03:00');
+const acsMode = ref<'standard' | 'acs'>('standard');
+const acsModeMsg = ref('');
 const dreamScheduleOptions: Array<{ value: DreamScheduleFrequency; label: string }> = [
   { value: 'daily', label: '每天' },
   { value: 'weekdays', label: '工作日' },
@@ -2112,6 +2128,22 @@ async function saveDream() {
   await api.post('/api/dream/schedule', { cron: dreamCron.value, enabled: dreamEnabled.value });
 }
 
+async function setAcsMode(mode: 'standard' | 'acs') {
+  if (acsMode.value === mode) return;
+  const prev = acsMode.value;
+  acsMode.value = mode;
+  acsModeMsg.value = '';
+  try {
+    const { data } = await api.put('/api/settings', { acs_mode: mode });
+    if (data?.acsModeChanged) {
+      acsModeMsg.value = `已切换为${mode === 'acs' ? '信捷' : '标准'}模式，下次整理客户页面时生效`;
+    }
+  } catch {
+    acsMode.value = prev;
+    acsModeMsg.value = '保存失败，已还原';
+  }
+}
+
 function dreamCronFor(frequency: Exclude<DreamScheduleFrequency, 'custom'>, time: string): string {
   const [hour = '3', minute = '0'] = time.split(':');
   const clock = `${Number(minute)} ${Number(hour)}`;
@@ -2465,6 +2497,7 @@ async function load() {
   const schedule = parseDreamSchedule(dreamCron.value);
   dreamScheduleFrequency.value = schedule.frequency;
   dreamScheduleTime.value = schedule.time;
+  acsMode.value = settingsData.settings.acs_mode === 'acs' ? 'acs' : 'standard';
 }
 
 watch(
@@ -4297,6 +4330,44 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   color: var(--text-secondary);
   font-size: 12px;
   font-style: normal;
+}
+
+.segmented-control {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segmented-btn {
+  appearance: none;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.segmented-btn + .segmented-btn {
+  border-left: 1px solid var(--border-strong);
+}
+
+.segmented-btn:hover {
+  color: var(--text-primary);
+}
+
+.segmented-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.segmented-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .schedule-controls {

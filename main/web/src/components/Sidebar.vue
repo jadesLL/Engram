@@ -541,6 +541,7 @@ const fileQuery = computed(() => (route.query.file as string) || '');
 
 const GROUPS = [
   { key: 'concept', label: '概念' },
+  { key: 'customer', label: '客户' },
   { key: 'entity', label: '实体' },
   { key: 'archived', label: '归档' },
 ];
@@ -551,7 +552,11 @@ function groupOf(p: any): string {
   if (p.path.startsWith('Wiki/归档/')) return 'archived';
   if (p.path.startsWith('Wiki/查询/')) return 'qa';
   if (p.type === 'concept') return 'concept';
-  if (['person', 'project', 'org'].includes(p.type)) return 'entity';
+  if (['person', 'project', 'org'].includes(p.type)) {
+    // 带有「客户」标签的 org 实体归入「客户」分类（信捷模式下按 ACS 框架综合）
+    if (p.type === 'org' && (p.tags || []).includes('客户')) return 'customer';
+    return 'entity';
+  }
   return 'unclassified'; // 未分类页面只在「全部页面」出现
 }
 
