@@ -417,8 +417,8 @@ function etaText(job: any) {
 .jobs-panel.resized { max-height: calc(100vh - 32px); }
 .jp-resize-handle {
   position: absolute;
-  top: -5px;
-  right: -5px;
+  top: 2px;
+  right: 2px;
   width: 16px;
   height: 16px;
   display: flex;
