@@ -26,6 +26,8 @@ let recomposePage: any;
 let pageEvidenceResponse: any;
 let clearSharedSemanticHistories: () => void;
 let preserveManualChanges = true;
+// 可选的 verify 覆盖：测试自纠错回路时按 verify 调用次数返回不同结果。返回 undefined 走默认分支。
+let verifyOverride: (() => { pass: boolean; unsupported: string[]; conflicts: string[]; manualChangesPreserved: boolean } | undefined) | null = null;
 
 before(async () => {
   server = http.createServer(async (req, res) => {
@@ -37,50 +39,55 @@ before(async () => {
       [...(body.messages || [])].reverse().find((message: any) => message.role === 'user')?.content || '{}'
     );
     const input = payload.input || payload;
-    const content = system.includes('验证实体页面')
-      ? {
+    const isVerify = system.includes('验证实体页面');
+    let content: any;
+    if (isVerify) {
+      content = verifyOverride?.()
+        ?? {
           pass: preserveManualChanges,
           unsupported: [],
           conflicts: preserveManualChanges ? [] : ['人工修改无法可靠保留'],
           manualChangesPreserved: preserveManualChanges,
-        }
-      : {
-          summary: '跨来源综合后的完整人物摘要。',
-          domain: '销售管理',
-          confidence: '高',
-          sections: [
-            {
-              heading: '',
-              paragraphs: [{
-                text: `综合概述：${input.activeEvidence.map((fact: any) => fact.statement).join('；')}`,
-                evidenceIds: input.activeEvidence.map((fact: any) => fact.id),
-              }],
-              bullets: [],
-            },
-            {
-              heading: '角色与职责',
-              paragraphs: [],
-              bullets: input.activeEvidence.map((fact: any) => ({
-                text: fact.statement,
-                evidenceIds: [fact.id],
-              })),
-            },
-          ],
-          related: input.page.title === '综合人物' ? [{
-            title: '关联实体',
-            note: '模型写出的错误关系说明',
-            evidenceIds: [input.activeEvidence[0].id],
-          }] : [],
-          timeline: input.activeEvidence
-            .filter((fact: any) => fact.statement.includes('2026年'))
-            .map((fact: any) => ({
-              date: '2026年',
-              event: fact.statement,
+        };
+    } else {
+      content = {
+        summary: '跨来源综合后的完整人物摘要。',
+        domain: '销售管理',
+        confidence: '高',
+        sections: [
+          {
+            heading: '',
+            paragraphs: [{
+              text: `综合概述：${input.activeEvidence.map((fact: any) => fact.statement).join('；')}`,
+              evidenceIds: input.activeEvidence.map((fact: any) => fact.id),
+            }],
+            bullets: [],
+          },
+          {
+            heading: '角色与职责',
+            paragraphs: [],
+            bullets: input.activeEvidence.map((fact: any) => ({
+              text: fact.statement,
               evidenceIds: [fact.id],
             })),
-          unresolvedConflicts: [],
-          manualChangesPreserved: preserveManualChanges,
-        };
+          },
+        ],
+        related: input.page.title === '综合人物' ? [{
+          title: '关联实体',
+          note: '模型写出的错误关系说明',
+          evidenceIds: [input.activeEvidence[0].id],
+        }] : [],
+        timeline: input.activeEvidence
+          .filter((fact: any) => fact.statement.includes('2026年'))
+          .map((fact: any) => ({
+            date: '2026年',
+            event: fact.statement,
+            evidenceIds: [fact.id],
+          })),
+        unresolvedConflicts: [],
+        manualChangesPreserved: preserveManualChanges,
+      };
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(content) } }],
@@ -117,6 +124,8 @@ before(async () => {
 
 beforeEach(() => {
   clearSharedSemanticHistories();
+  verifyOverride = null;
+  preserveManualChanges = true;
 });
 
 after(async () => {
@@ -253,4 +262,50 @@ test('manual edits remain in place when three-way verification reports a conflic
   assert.equal(db.prepare(
     `SELECT status FROM reports WHERE kind='enrich' AND issue_key=? ORDER BY id DESC LIMIT 1`
   ).get(`page-recompose:${page.id}`).status, 'resolved');
+});
+
+test('self-correction loop rewrites the draft when verify reports unsupported evidence', async () => {
+  const page = createPage('Wiki/实体', '自纠错实体');
+  writePage(page.path, '# 自纠错实体\n', { type: 'person' });
+  addSource(page.id, '原始资料/自纠错来源.md', 'correction-run-1', 'hash-c1', [
+    { id: 'cf1', statement: '自纠错实体有业绩数据。' },
+  ]);
+  // 第一次 verify 判定“销售团队”无证据支持，第二次 verify 通过。
+  let verifyCalls = 0;
+  verifyOverride = () => {
+    verifyCalls += 1;
+    return verifyCalls === 1
+      ? { pass: false, unsupported: ['第一段中“自纠错实体是销售团队”中的“销售团队”无证据支持'], conflicts: [], manualChangesPreserved: true }
+      : { pass: true, unsupported: [], conflicts: [], manualChangesPreserved: true };
+  };
+  await runPendingSynthesis(page.id);
+  // verify 被调用 2 次：初稿失败 + 修正轮通过
+  assert.equal(verifyCalls, 2);
+  // 修正成功后写入 active，而非 conflict
+  const row = db.prepare(`SELECT status FROM page_syntheses WHERE page_id=? ORDER BY id DESC LIMIT 1`).get(page.id);
+  assert.equal(row.status, 'active');
+  assert.match(readPage(page.path).content, /自纠错实体有业绩数据/);
+});
+
+test('self-correction loop exhausts correction rounds and falls back to conflict', async () => {
+  const page = createPage('Wiki/实体', '持续冲突实体');
+  writePage(page.path, '# 持续冲突实体\n', { type: 'person' });
+  addSource(page.id, '原始资料/持续冲突来源.md', 'correction-run-2', 'hash-c2', [
+    { id: 'ccf1', statement: '持续冲突实体负责渠道建设。' },
+  ]);
+  // verify 每次都判 unsupported，模拟模型始终无法修正
+  let verifyCalls = 0;
+  verifyOverride = () => {
+    verifyCalls += 1;
+    return { pass: false, unsupported: [`第${verifyCalls}轮校验仍判定无证据支持`], conflicts: [], manualChangesPreserved: true };
+  };
+  const synthesisId = queuePageRecompose(page.id);
+  const pending = db.prepare(`SELECT id,input_hash FROM page_syntheses WHERE id=?`).get(synthesisId);
+  await assert.rejects(
+    () => recomposePage(page.id, pending.id, pending.input_hash),
+    /无证据支持/,
+  );
+  // 初稿 + 2 次修正 = 3 次 verify，耗尽后落 conflict
+  assert.equal(verifyCalls, 3);
+  assert.equal(db.prepare(`SELECT status FROM page_syntheses WHERE id=?`).get(synthesisId).status, 'conflict');
 });

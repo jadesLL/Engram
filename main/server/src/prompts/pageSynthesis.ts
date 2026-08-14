@@ -1,12 +1,15 @@
 import { PERSONA, PRINCIPLES } from './common.js';
 
-export function pageSynthesisPrompt(title: string, type: string, roster: string, manualChanged: boolean): string {
+export function pageSynthesisPrompt(title: string, type: string, roster: string, manualChanged: boolean, correctionFeedback?: string[]): string {
   const manual = manualChanged
     ? `用户编辑过上一版综合正文。必须把 previousSynthesis 与 currentEditedSynthesis 的差异视为用户意图：
 - 尽量保留用户新增的事实限定、结构和措辞；
 - 用户文字与证据冲突时不要擅自覆盖，在 unresolvedConflicts 中说明；
 - 只有确实保留了用户修改时 manualChangesPreserved 才能为 true。`
     : '当前综合区没有检测到人工修改，manualChangesPreserved 输出 true。';
+  const correction = correctionFeedback?.length
+    ? `\n\n上一版草稿未通过证据校验，以下内容被判定为无证据支持，本次重写必须删除或改写为证据能直接支持的说法，不要原样保留：\n${correctionFeedback.map((item) => `- ${item}`).join('\n')}`
+    : '';
   return `${PERSONA}
 ${PRINCIPLES}
 
@@ -22,6 +25,7 @@ ${PRINCIPLES}
 7. 每个 paragraph、bullet、related 和 timeline 条目都必须列出直接支持它的 evidenceIds，不得使用不存在的证据。
 8. 可以依据时间限定解释表面冲突；无法可靠解释的冲突不要写成确定结论，放入 unresolvedConflicts。
 9. 不要在正文中出现“来源提炼”“根据资料”“资料显示”等元描述。
+10. 正文每个事实性陈述都必须能被其 evidenceIds 对应的事实陈述与原文引文直接支持；不得做超出证据的推断、泛化或补充证据未提及的限定（例如把“有业绩数据”写成“销售团队”，或给“代理商”补充证据未指明的地区）。证据不足时宁可不写。
 
 ${manual}
 
@@ -44,7 +48,7 @@ evidenceIds 必须逐字使用 activeEvidence 中的 id。只输出以下结构�
   "timeline": [{"date": "证据中的明确日期", "event": "状态变化", "evidenceIds": ["runId:factId"]}],
   "unresolvedConflicts": [],
   "manualChangesPreserved": true
-}`;
+}${correction}`;
 }
 
 export function pageSynthesisVerifyPrompt(manualChanged: boolean): string {
