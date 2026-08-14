@@ -23,7 +23,7 @@ export const useAppStore = defineStore('app', {
   state: () => {
     const theme = (localStorage.getItem('theme') as Theme) || 'light';
     return {
-      sidebarOpen: window.innerWidth > 768,
+      sidebarOpen: false,
       aiDrawerOpen: false,
       theme,
       dark: resolveDarkTheme(theme),
