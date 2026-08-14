@@ -19,7 +19,7 @@
       @keydown.down.prevent="nudgePanel(0, -RESIZE_STEP)"
       @keydown.home.prevent="resetPanelSize"
     >
-      <span aria-hidden="true" />
+      <Icon name="move-diagonal" :size="13" :stroke-width="1.9" />
     </button>
 
     <div class="jp-head">
@@ -416,33 +416,27 @@ function etaText(job: any) {
 .jobs-panel.resized { max-height: calc(100vh - 32px); }
 .jp-resize-handle {
   position: absolute;
-  top: -5px;
-  right: -5px;
-  width: 18px;
-  height: 18px;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
   cursor: nesw-resize;
   color: var(--text-faint);
   outline: none;
+  touch-action: none;
   z-index: 1;
 }
-.jp-resize-handle span,
-.jp-resize-handle::before,
-.jp-resize-handle::after {
-  content: '';
-  position: absolute;
-  right: 4px;
-  height: 1px;
-  background: currentColor;
-  transform: rotate(-45deg);
-  transform-origin: right center;
-}
-.jp-resize-handle::before { top: 5px; width: 7px; }
-.jp-resize-handle span { top: 8px; width: 10px; }
-.jp-resize-handle::after { top: 11px; width: 13px; }
 .jp-resize-handle:hover,
 .jp-resize-handle:focus-visible {
   color: var(--accent);
+  background: var(--bg-hover);
 }
 .jp-resize-handle:focus-visible {
   border-radius: 4px;
