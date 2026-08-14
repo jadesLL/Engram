@@ -1,9 +1,8 @@
 /**
- * 飞书 tenant_access_token 缓存与刷新。
- * token 默认 7200 秒有效，提前 60 秒刷新，避免临界过期。
+ * 飞书 tenant_access_token 缓存与刷新。token 默认 7200 秒有效，提前 60 秒刷新。
  */
 
-import { config } from '../config.js';
+import { FEISHU_API_BASE, FEISHU_APP_ID, FEISHU_APP_SECRET } from '../../config.js';
 
 interface TokenCache {
   token: string;
@@ -19,19 +18,22 @@ interface TokenResponse {
 
 let cache: TokenCache | null = null;
 
+export function isFeishuConfigured(): boolean {
+  return Boolean(FEISHU_APP_ID && FEISHU_APP_SECRET);
+}
+
 export async function getTenantAccessToken(): Promise<string> {
   const now = Date.now();
   if (cache && cache.expiresAt > now + 60_000) {
     return cache.token;
   }
-  const { appId, appSecret, apiBase } = config.feishu;
-  if (!appId || !appSecret) {
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) {
     throw new Error('飞书应用凭证未配置（FEISHU_APP_ID / FEISHU_APP_SECRET）');
   }
-  const res = await fetch(`${apiBase}/open-apis/auth/v3/tenant_access_token/internal`, {
+  const res = await fetch(`${FEISHU_API_BASE}/open-apis/auth/v3/tenant_access_token/internal`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+    body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET }),
   });
   const data = (await res.json()) as TokenResponse;
   if (data.code !== 0 || !data.tenant_access_token) {

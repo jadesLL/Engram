@@ -1,15 +1,10 @@
 /**
  * 飞书事件订阅安全层：签名校验 + 可选 AES-256-CBC 解密。
- *
- * 配置 Encrypt Key 时：
- *   - 请求体形如 {"encrypt":"<base64>"}，飞书不附明文事件；
- *   - X-Lark-Signature = sha256(timestamp + nonce + encryptKey + rawBody)；
- *   - 解密：key=sha256(encryptKey)，密文 base64 解码后前 16 字节为 IV，余为 AES-256-CBC 密文。
- * 未配置 Encrypt Key 时：无加密、无签名，直接解析明文请求体。
+ * 从 bridge 包迁移进 server，适配 Node 内置 crypto。
  */
 
 import crypto from 'node:crypto';
-import { config } from '../config.js';
+import { FEISHU_ENCRYPT_KEY } from '../../config.js';
 
 export interface FeishuHeaders {
   timestamp: string;
@@ -34,7 +29,7 @@ export function readHeaders(headers: Record<string, string | string[] | undefine
 export function verifySignature(
   rawBody: string,
   h: FeishuHeaders,
-  key: string = config.feishu.encryptKey,
+  key: string = FEISHU_ENCRYPT_KEY,
 ): boolean {
   if (!key) return true;
   if (!h.signature || !h.timestamp || !h.nonce) return false;
@@ -45,7 +40,7 @@ export function verifySignature(
   return safeEqual(expected, h.signature);
 }
 
-/** 用 Encrypt Key 加密明文事件 JSON（解密的逆运算，供测试与文档化）。 */
+/** 用 Encrypt Key 加密明文事件 JSON（解密的逆运算，供测试）。 */
 export function encryptPayload(plaintext: string, key: string): string {
   const keyBuf = crypto.createHash('sha256').update(key).digest();
   const iv = crypto.randomBytes(16);
@@ -55,7 +50,7 @@ export function encryptPayload(plaintext: string, key: string): string {
 }
 
 /** 解密 encrypt 字段，返回明文事件 JSON。 */
-export function decryptPayload(encrypt: string, key: string = config.feishu.encryptKey): string {
+export function decryptPayload(encrypt: string, key: string = FEISHU_ENCRYPT_KEY): string {
   if (!key) return encrypt;
   const keyBuf = crypto.createHash('sha256').update(key).digest();
   const buf = Buffer.from(encrypt, 'base64');
@@ -67,7 +62,7 @@ export function decryptPayload(encrypt: string, key: string = config.feishu.encr
 }
 
 /** 拆开请求体：有 encrypt 字段则解密，否则原样返回明文。 */
-export function unwrapBody(rawBody: string, key: string = config.feishu.encryptKey): string {
+export function unwrapBody(rawBody: string, key: string = FEISHU_ENCRYPT_KEY): string {
   let parsed: { encrypt?: string };
   try {
     parsed = JSON.parse(rawBody) as { encrypt?: string };

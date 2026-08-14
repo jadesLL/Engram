@@ -1,9 +1,5 @@
 /**
  * 飞书事件解析：处理 url_verification 校验挑战与 im.message.receive_v1 消息事件。
- *
- * 事件订阅 v2 schema 结构：
- *   { schema, header:{ event_id, event_type, token, ... }, event:{ sender, message } }
- * text 消息的 content 为 JSON 字符串 {"text":"..."}，群聊 @机器人 时含 @_user_N 前缀。
  */
 
 export interface FeishuEvent {
@@ -13,6 +9,7 @@ export interface FeishuEvent {
   openId: string;
   messageId: string;
   chatId: string;
+  chatType: string;
   messageType: string;
   text: string;
 }
@@ -51,6 +48,7 @@ export function parseEvent(rawJson: string): ParsedEvent {
   const openId = String(senderId?.['open_id'] ?? '');
   const messageId = String(message['message_id'] ?? '');
   const chatId = String(message['chat_id'] ?? '');
+  const chatType = String(message['chat_type'] ?? '');
   const messageType = String(message['message_type'] ?? '');
 
   let text = '';
@@ -72,6 +70,7 @@ export function parseEvent(rawJson: string): ParsedEvent {
     openId,
     messageId,
     chatId,
+    chatType,
     messageType,
     text,
   };

@@ -7,8 +7,9 @@ import {
   unwrapBody,
   verifySignature,
   type FeishuHeaders,
-} from './crypto.js';
-import { isFeishuEvent, isUrlVerification, parseEvent } from './events.js';
+} from './feishu/crypto.js';
+import { isFeishuEvent, isUrlVerification, parseEvent } from './feishu/events.js';
+import { parseCardActions } from './feishu/message.js';
 
 const KEY = 'test-encrypt-key-123';
 
@@ -25,6 +26,7 @@ const sampleEvent = {
     message: {
       message_id: 'om_demo',
       chat_id: 'oc_demo',
+      chat_type: 'p2p',
       message_type: 'text',
       content: '{"text":"@_user_1 什么是 OpenClaw"}',
     },
@@ -46,9 +48,9 @@ test('unwrapBody 解密 encrypt 信封并解析消息事件', () => {
   assert.ok(isFeishuEvent(parsed));
   assert.equal(parsed.openId, 'ou_demo_user');
   assert.equal(parsed.messageId, 'om_demo');
-  // @机器人 前缀应被移除
   assert.equal(parsed.text, '什么是 OpenClaw');
   assert.equal(parsed.token, 'verify-token-xyz');
+  assert.equal(parsed.chatType, 'p2p');
 });
 
 test('unwrapBody 对明文请求体原样返回', () => {
@@ -64,7 +66,6 @@ test('verifySignature 接受正确签名、拒绝错误签名', () => {
   const headers: FeishuHeaders = { timestamp: ts, nonce, signature: sig };
   assert.equal(verifySignature(raw, headers, KEY), true);
   assert.equal(verifySignature(raw, { ...headers, signature: 'deadbeef' }, KEY), false);
-  // 缺少头部时拒绝
   assert.equal(verifySignature(raw, { timestamp: '', nonce: '', signature: '' }, KEY), false);
 });
 
@@ -79,6 +80,20 @@ test('parseEvent 对非消息事件返回 null', () => {
     JSON.stringify({ schema: '2.0', header: { event_type: 'contact.user.updated_v3' }, event: {} }),
   );
   assert.equal(parsed, null);
+});
+
+test('parseCardActions 解析审批/拒绝按钮 value', () => {
+  const values = [
+    JSON.stringify({ t: 'approve', runId: 'r1', toolCallId: 'tc1' }),
+    JSON.stringify({ t: 'reject', runId: 'r1', toolCallId: 'tc2' }),
+    'not-json',
+    { invalid: true },
+  ];
+  const actions = parseCardActions(values);
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0]!.t, 'approve');
+  assert.equal(actions[1]!.t, 'reject');
+  assert.equal(actions[0]!.toolCallId, 'tc1');
 });
 
 /** 与 verifySignature 相同的签名算法（sha256(timestamp+nonce+key+rawBody)）。 */
