@@ -456,9 +456,21 @@ export async function chat(
     content = msg.reasoning_content;
   }
   if (!content) {
-    const truncated = finishReason === 'length';
-    console.warn('[llm.chat] 返回内容为空', { model: cfg.chatModel, finishReason, raw: JSON.stringify(json).slice(0, 300) });
-    throw new LlmError(truncated ? '输出被截断（max_tokens 不足）' : 'LLM 返回格式异常');
+    // content 为空的三类诱因，分别给出可被上层重试逻辑识别的错误：
+    // 1) finish_reason='length'：max_tokens 真截断 → 翻倍重试
+    // 2) 推理模型 reasoning_content 吃光预算但 content 为空（finish_reason 常为 stop）
+    //    → 同样视为截断，翻倍 max_tokens 给推理+正文留预算，而非误判为格式异常
+    // 3) 真·空内容（无 reasoning，疑似服务商内容过滤）→ 格式异常，按提示重试
+    const hasReasoning = typeof msg?.reasoning_content === 'string' && msg.reasoning_content.length > 0;
+    const truncated = finishReason === 'length' || hasReasoning;
+    console.warn('[llm.chat] 返回内容为空', { model: cfg.chatModel, finishReason, hasReasoning, raw: JSON.stringify(json).slice(0, 300) });
+    throw new LlmError(
+      finishReason === 'length'
+        ? '输出被截断（max_tokens 不足）'
+        : hasReasoning
+          ? '输出被截断（推理占用 max_tokens，content 为空）'
+          : 'LLM 返回格式异常',
+    );
   }
   return content;
 }
@@ -547,7 +559,7 @@ export async function chatJson<T = any>(
           continue;
         }
         retryReason = 'request_failed';
-        messages = [...messages, { role: 'user' as const, content: '上一轮请求失败，请重新输出合法 JSON。' }];
+        messages = [...messages, { role: 'user' as const, content: '上一轮请求失败或返回空内容。请直接输出完整的 JSON 对象，不要省略或返回空响应。' }];
         continue;
       }
       throw new LlmError(`[${tag}] ${lastErr}`);

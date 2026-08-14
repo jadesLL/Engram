@@ -356,3 +356,87 @@ test('image capability probe distinguishes explicit image rejection from transie
   });
   assert.equal(unknown.status, 'unknown');
 });
+
+// --- chatJson 空内容重试（失败一修复） ---
+
+function activateChat(baseUrl = 'https://chat.example/v1'): void {
+  const chatEntry = entry({
+    id: 'chat-json',
+    name: '测试 ChatJson',
+    provider: 'custom',
+    baseUrl,
+    model: 'chat-model',
+    apiKey: 'test-key',
+  });
+  setSetting('chat_models', JSON.stringify([chatEntry]));
+  setSetting('active_chat_model', chatEntry.id);
+}
+
+test('chatJson treats empty content with reasoning_content as truncation and doubles max_tokens', async () => {
+  activateChat('https://chat.example/v1');
+  let chatModule: any;
+  const bodies: Record<string, any>[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    bodies.push(body);
+    // 第一次：content 为空但有 reasoning_content，finish_reason 非 length
+    // 应被识别为推理占用预算导致的截断，chatJson 翻倍 max_tokens 重试
+    if (bodies.length === 1) {
+      return new Response(JSON.stringify({
+        choices: [{
+          finish_reason: 'stop',
+          message: { content: '', reasoning_content: '模型推理过程占满了预算……' },
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    // 第二次（翻倍 max_tokens 后）：正常返回 JSON
+    return new Response(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  chatModule = await import('./llm.js');
+
+  const result = await chatModule.chatJson(
+    [{ role: 'user', content: '生成 JSON' }],
+    { maxTokens: 2000, retries: 1, tag: 'empty-reasoning' },
+  );
+  assert.deepEqual(result, { ok: true });
+  // 两次请求，第二次 max_tokens 翻倍（2000 → 4000）
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[0].max_tokens, 2000);
+  assert.equal(bodies[1].max_tokens, 4000);
+});
+
+test('chatJson retries with a targeted prompt when content is truly empty (no reasoning)', async () => {
+  activateChat('https://chat.example/v1');
+  let chatModule: any;
+  const requestBodies: Record<string, any>[] = [];
+  const messageBundles: any[][] = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    requestBodies.push(body);
+    messageBundles.push(body.messages);
+    // 始终返回真·空内容（无 reasoning，疑似内容过滤）
+    return new Response(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: '' } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  chatModule = await import('./llm.js');
+
+  await assert.rejects(
+    chatModule.chatJson(
+      [{ role: 'user', content: '生成 JSON' }],
+      { maxTokens: 1000, retries: 1, tag: 'empty-no-reasoning' },
+    ),
+    (err: any) => {
+      assert.match(err.message, /\[empty-no-reasoning\] 请求失败: LLM 返回格式异常/);
+      return true;
+    },
+  );
+  // 两次请求：初稿 + 重试一次
+  assert.equal(requestBodies.length, 2);
+  // 重试时应追加了针对空内容的提示，而非默认的“重新输出合法 JSON”
+  const retryMessages = messageBundles[1];
+  assert.ok(retryMessages.some((m: any) => m.role === 'user' && /空内容/.test(m.content)),
+    '重试消息应包含针对空内容的提示');
+});

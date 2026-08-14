@@ -604,85 +604,101 @@ export async function recomposePage(
   const manualEdited = state.manualChanged ? state.extracted : null;
   let output: SynthesisOutput;
   try {
-    const rawOutput = await runSemanticStage({
-      scope: 'page-synthesis',
-      refId: pageId,
-      stage: 'compose',
-      tag: 'page-synthesis-compose',
-      schema: synthesisOutputSchema,
-      system: pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged),
-      promptVersion: 'page-synthesis-compose:3',
-      cacheScope: 'page-synthesis:compose',
-      dependencyHash: state.inputHash,
-      resultCache: true,
-      input: {
-        page: bundle.page,
-        activeEvidence: bundle.facts,
-        relations: bundle.relations,
-        manualSections: state.manualSections,
-        previousSynthesis: state.active ? {
-          current: state.active.current_content,
-          related: state.active.related_content,
-          timeline: state.active.timeline_content,
-        } : null,
-        currentEditedSynthesis: manualEdited,
-      },
-      temperature: 0.1,
-      maxTokens: 12000,
-      retries: 1,
-      signal,
-    });
-    output = synthesisOutputSchema.parse(rawOutput);
-    validateEvidenceIds(output, allowedEvidence);
-    output = filterTimelineEvidence(output, bundle.facts);
-    if (output.unresolvedConflicts.length) {
-      throw new PageSynthesisConflict(output.unresolvedConflicts.join('；'));
-    }
-    if (state.manualChanged && !output.manualChangesPreserved) {
-      throw new PageSynthesisConflict('模型无法确认人工修改已被完整保留');
-    }
-    const rendered = renderOutput(output, roster.titles, bundle.facts);
-    rendered.sections.id = synthesisId;
-    if (!rendered.sections.current.trim()) throw new Error('整页综合没有生成有效正文');
-    const rawVerify = await runSemanticStage({
-      scope: 'page-synthesis',
-      refId: pageId,
-      stage: 'verify',
-      tag: 'page-synthesis-verify',
-      schema: synthesisVerifySchema,
+    // 自纠错回路：compose 生成草稿 → verify 校验；校验失败时把证据校验反馈注入 compose 重新生成，
+    // 最多重试 maxCorrectionRounds 次。反馈注入系统提示（而非 input）使 runSemanticStage 的
+    // 缓存键随 system 变化而 miss，避免 job 重试时 compose 命中缓存返回同一份失败草稿。
+    const maxCorrectionRounds = 2;
+    let correctionFeedback: string[] | undefined;
+    let rendered!: ReturnType<typeof renderOutput>;
+    for (let round = 0; ; round++) {
+      const rawOutput = await runSemanticStage({
+        scope: 'page-synthesis',
+        refId: pageId,
+        stage: 'compose',
+        tag: 'page-synthesis-compose',
+        schema: synthesisOutputSchema,
+        system: pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged, correctionFeedback),
+        promptVersion: 'page-synthesis-compose:4',
+        cacheScope: 'page-synthesis:compose',
+        dependencyHash: state.inputHash,
+        resultCache: true,
+        input: {
+          page: bundle.page,
+          activeEvidence: bundle.facts,
+          relations: bundle.relations,
+          manualSections: state.manualSections,
+          previousSynthesis: state.active ? {
+            current: state.active.current_content,
+            related: state.active.related_content,
+            timeline: state.active.timeline_content,
+          } : null,
+          currentEditedSynthesis: manualEdited,
+        },
+        temperature: 0.1,
+        maxTokens: 12000,
+        retries: 1,
+        signal,
+      });
+      output = synthesisOutputSchema.parse(rawOutput);
+      validateEvidenceIds(output, allowedEvidence);
+      output = filterTimelineEvidence(output, bundle.facts);
+      if (output.unresolvedConflicts.length) {
+        throw new PageSynthesisConflict(output.unresolvedConflicts.join('；'));
+      }
+      if (state.manualChanged && !output.manualChangesPreserved) {
+        throw new PageSynthesisConflict('模型无法确认人工修改已被完整保留');
+      }
+      rendered = renderOutput(output, roster.titles, bundle.facts);
+      rendered.sections.id = synthesisId;
+      if (!rendered.sections.current.trim()) throw new Error('整页综合没有生成有效正文');
+      const rawVerify = await runSemanticStage({
+        scope: 'page-synthesis',
+        refId: pageId,
+        stage: 'verify',
+        tag: 'page-synthesis-verify',
+        schema: synthesisVerifySchema,
       system: pageSynthesisVerifyPrompt(state.manualChanged),
       promptVersion: 'page-synthesis-verify:3',
       cacheScope: 'page-synthesis:verify',
       dependencyHash: state.inputHash,
-      resultCache: true,
+      // verify 是证据校验关卡，不缓存结果：自纠错回路每轮都要对当前草稿重新校验，
+      // 缓存校验结论会在草稿不变时命中旧结论、跳过本轮校验，导致回路短路。
+      resultCache: false,
       input: {
         page: bundle.page,
         activeEvidence: bundle.facts,
         draft: {
-          current: rendered.sections.current,
-          related: rendered.sections.related,
-          timeline: rendered.sections.timeline,
-          evidenceMap: rendered.evidenceMap,
+            current: rendered.sections.current,
+            related: rendered.sections.related,
+            timeline: rendered.sections.timeline,
+            evidenceMap: rendered.evidenceMap,
+          },
+          previousSynthesis: state.active ? {
+            current: state.active.current_content,
+            related: state.active.related_content,
+            timeline: state.active.timeline_content,
+          } : null,
+          currentEditedSynthesis: manualEdited,
         },
-        previousSynthesis: state.active ? {
-          current: state.active.current_content,
-          related: state.active.related_content,
-          timeline: state.active.timeline_content,
-        } : null,
-        currentEditedSynthesis: manualEdited,
-      },
-      temperature: 0,
-      maxTokens: 2500,
-      retries: 1,
-      signal,
-    });
-    const verify: SynthesisVerifyOutput = synthesisVerifySchema.parse(rawVerify);
-    if (!verify.pass || verify.unsupported.length || verify.conflicts.length) {
-      const details = [...verify.unsupported, ...verify.conflicts];
-      throw new PageSynthesisConflict(details.join('；') || '最终证据验证未通过');
-    }
-    if (state.manualChanged && !verify.manualChangesPreserved) {
-      throw new PageSynthesisConflict('最终验证无法确认人工修改已保留');
+        temperature: 0,
+        maxTokens: 2500,
+        retries: 1,
+        signal,
+      });
+      const verify: SynthesisVerifyOutput = synthesisVerifySchema.parse(rawVerify);
+      if (!verify.pass || verify.unsupported.length || verify.conflicts.length) {
+        const details = [...verify.unsupported, ...verify.conflicts];
+        if (round >= maxCorrectionRounds) {
+          throw new PageSynthesisConflict(details.join('；') || '最终证据验证未通过');
+        }
+        // 收集反馈进入下一轮 compose 重写，而非立即判 conflict
+        correctionFeedback = details;
+        continue;
+      }
+      if (state.manualChanged && !verify.manualChangesPreserved) {
+        throw new PageSynthesisConflict('最终验证无法确认人工修改已保留');
+      }
+      break;
     }
 
     signal?.throwIfAborted();
