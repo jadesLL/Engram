@@ -9,7 +9,22 @@
 
     <div class="integration-note">
       在飞书开放平台创建自建应用，在「事件与回调」中选择<strong>长连接</strong>模式并订阅
-      <code>im.message.receive_v1</code>。填写下方凭证后保存，服务重启即自动建立长连接。
+      <code>im.message.receive_v1</code>。填写下方凭证后保存即自动建立长连接，无需重启服务。
+    </div>
+
+    <div v-if="statusLoaded" class="conn-status" :class="{ ok: status?.longConn.connected, bad: !status?.longConn.connected }">
+      <div class="conn-row">
+        <span class="conn-dot" aria-hidden="true"></span>
+        <span class="conn-label">
+          {{ status?.longConn.connected ? '长连接已建立' : status?.configured ? '长连接未建立' : '飞书未配置' }}
+        </span>
+        <button class="btn mini" type="button" @click="loadStatus">刷新</button>
+      </div>
+      <div v-if="status?.longConn.lastConnectedAt" class="conn-meta">最近建连：{{ status.longConn.lastConnectedAt }}</div>
+      <div v-if="status?.longConn.lastEventAt" class="conn-meta">最近事件：{{ status.longConn.lastEventAt }}</div>
+      <div v-if="status?.longConn.lastError" class="conn-error">
+        最近错误：{{ status.longConn.lastError }}<span v-if="status.longConn.lastErrorAt">（{{ status.longConn.lastErrorAt }}）</span>
+      </div>
     </div>
 
     <div class="im-form">
@@ -75,6 +90,34 @@ const revealed = reactive<Record<string, boolean>>({});
 const saving = ref(false);
 const testing = ref(false);
 
+interface FeishuStatus {
+  configured: boolean;
+  appId: string;
+  apiBase: string;
+  longConn: {
+    started: boolean;
+    connected: boolean;
+    lastConnectedAt: string | null;
+    lastEventAt: string | null;
+    lastError: string | null;
+    lastErrorAt: string | null;
+  };
+}
+
+const status = ref<FeishuStatus | null>(null);
+const statusLoaded = ref(false);
+
+async function loadStatus(): Promise<void> {
+  try {
+    const { data } = await api.get('/api/settings/feishu-status');
+    status.value = data;
+  } catch (e) {
+    console.error('加载飞书状态失败', e);
+  } finally {
+    statusLoaded.value = true;
+  }
+}
+
 const stored = reactive<FeishuForm>({ ...form });
 
 function maskKey(key: string): string {
@@ -119,7 +162,9 @@ async function save(): Promise<void> {
     Object.assign(stored, collected);
     Object.assign(form, collected);
     edited.appSecret = '';
-    notify.success('飞书配置已保存');
+    notify.success('飞书配置已保存，长连接重连中…');
+    // 保存后后端会自动重连长连接，稍等片刻刷新状态
+    setTimeout(() => void loadStatus(), 3000);
   } catch (e) {
     notify.error('保存失败');
     console.error(e);
@@ -158,6 +203,7 @@ onMounted(async () => {
   } catch (e) {
     console.error('加载飞书配置失败', e);
   }
+  void loadStatus();
 });
 </script>
 
@@ -167,6 +213,37 @@ onMounted(async () => {
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;
+}
+.conn-status {
+  margin: 0 24px 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.conn-status.ok { border-color: var(--success, #3fb27f); }
+.conn-status.bad { border-color: var(--danger, #d95757); }
+.conn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger, #d95757);
+  flex: none;
+}
+.conn-status.ok .conn-dot { background: var(--success, #3fb27f); }
+.conn-label { font-weight: 600; }
+.conn-meta { color: var(--text-faint); }
+.conn-error { color: var(--danger, #d95757); word-break: break-all; }
+.btn.mini {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 12px;
 }
 .im-form {
   display: flex;

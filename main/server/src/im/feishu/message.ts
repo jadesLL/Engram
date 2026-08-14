@@ -25,6 +25,7 @@ async function apiPost(path: string, body: unknown): Promise<FeishuApiResponse> 
   });
   const data = (await res.json()) as FeishuApiResponse;
   if (data.code !== 0) {
+    console.error(`[feishu-api] ${path} 失败: code=${data.code} msg=${data.msg ?? ''}`);
     throw new Error(`飞书 API ${path} 失败: code=${data.code} ${data.msg ?? ''}`);
   }
   return data;

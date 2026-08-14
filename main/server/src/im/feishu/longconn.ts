@@ -24,6 +24,35 @@ const RECONNECT_INTERVAL = 120_000;
 const RECONNECT_NONCE = 30_000;
 const LIVENESS_TIMEOUT = 180_000;
 
+/** 长连接运行时状态快照，供状态查询接口使用。 */
+export interface FeishuLongConnStatus {
+  started: boolean;
+  connected: boolean;
+  lastConnectedAt: string | null;
+  lastEventAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+}
+
+const status: FeishuLongConnStatus = {
+  started: false,
+  connected: false,
+  lastConnectedAt: null,
+  lastEventAt: null,
+  lastError: null,
+  lastErrorAt: null,
+};
+
+function recordError(message: string): void {
+  status.lastError = message;
+  status.lastErrorAt = new Date().toISOString();
+}
+
+/** 读取当前长连接状态（每次返回副本）。 */
+export function getFeishuLongConnStatus(): FeishuLongConnStatus {
+  return { ...status };
+}
+
 interface ClientConfig {
   pingInterval: number;
   reconnectCount: number;
@@ -105,7 +134,9 @@ export class FeishuLongConnClient {
       this.config = result.config;
       url = result.url;
     } catch (e) {
-      console.error('[feishu-lc] 拉取配置失败，重试', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[feishu-lc] 拉取配置失败，将重试:', msg);
+      recordError(`拉取配置失败: ${msg}`);
       this.scheduleReconnect(gen);
       return;
     }
@@ -128,6 +159,10 @@ export class FeishuLongConnClient {
     ws.addEventListener('open', () => {
       if (gen !== this.generation) return;
       console.log('[feishu-lc] 长连接已建立');
+      status.connected = true;
+      status.lastConnectedAt = new Date().toISOString();
+      status.lastError = null;
+      status.lastErrorAt = null;
       this.startPingLoop(gen);
     });
 
@@ -141,12 +176,15 @@ export class FeishuLongConnClient {
 
     ws.addEventListener('close', () => {
       console.log('[feishu-lc] 连接关闭，准备重连');
+      status.connected = false;
       this.clearTimers();
       if (this.running && gen === this.generation) this.scheduleReconnect(gen);
     });
 
     ws.addEventListener('error', (e) => {
       console.error('[feishu-lc] WebSocket 错误', e);
+      status.connected = false;
+      recordError('WebSocket 错误');
     });
 
     // 建连 watchdog：open 超时则重连
@@ -198,9 +236,12 @@ export class FeishuLongConnClient {
 
     // 只处理 event 类型（card 类型暂略）
     if (hdr.type !== 'event') {
+      console.log(`[feishu-lc] 收到非 event 帧，已跳过: type=${hdr.type ?? '(无)'}`);
       this.sendAck(frame, startTime, 200);
       return;
     }
+
+    status.lastEventAt = new Date().toISOString();
 
     const messageId = hdr.message_id ?? '';
     const sum = Number(hdr.sum ?? '1');
@@ -229,11 +270,23 @@ export class FeishuLongConnClient {
     if (payload) {
       try {
         const parsed = parseEvent(payload);
-        if (isFeishuEvent(parsed) && parsed.text) {
-          handleImMessage('feishu', parsed.chatId, parsed.openId, parsed.messageId, parsed.text);
+        if (isFeishuEvent(parsed)) {
+          console.log(
+            `[feishu-lc] 收到消息事件: messageId=${parsed.messageId} chatType=${parsed.chatType} ` +
+            `messageType=${parsed.messageType} textLen=${parsed.text.length}`,
+          );
+          if (parsed.text) {
+            handleImMessage('feishu', parsed.chatId, parsed.openId, parsed.messageId, parsed.text);
+          } else {
+            console.warn(`[feishu-lc] 消息正文为空，跳过: messageId=${parsed.messageId}`);
+          }
+        } else {
+          console.log('[feishu-lc] 事件非 im.message.receive_v1 或解析为 null，已忽略');
         }
       } catch (e) {
-        console.error('[feishu-lc] 事件处理失败', e);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error('[feishu-lc] 事件处理失败:', msg);
+        recordError(`事件处理失败: ${msg}`);
       }
     }
 
@@ -318,15 +371,31 @@ export function startFeishuLongConn(): void {
   const cfg = getFeishuConfig();
   if (!cfg.appId || !cfg.appSecret) {
     console.log('[feishu-lc] 飞书未配置，跳过长连接');
+    status.started = false;
+    status.connected = false;
+    recordError('飞书未配置（appId/appSecret 为空）');
     return;
   }
   if (client) return;
   client = new FeishuLongConnClient();
-  void client.start().catch((e) => console.error('[feishu-lc] 启动失败', e));
+  status.started = true;
+  void client.start().catch((e) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[feishu-lc] 启动失败:', msg);
+    recordError(`启动失败: ${msg}`);
+  });
   console.log('[feishu-lc] 长连接客户端已启动');
 }
 
 export function stopFeishuLongConn(): void {
   client?.stop();
   client = null;
+  status.started = false;
+  status.connected = false;
+}
+
+/** 重启长连接（配置变更后调用，使新凭证立即生效）。 */
+export function restartFeishuLongConn(): void {
+  stopFeishuLongConn();
+  startFeishuLongConn();
 }
