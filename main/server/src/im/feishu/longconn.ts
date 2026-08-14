@@ -209,7 +209,17 @@ export class FeishuLongConnClient {
       return;
     }
 
-    const frame = decodeFrame(buf);
+    let frame: Frame;
+    try {
+      frame = decodeFrame(buf);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 打出原始帧首尾字节，定位飞书帧格式与本地解码器的差异
+      const hex = (b: Uint8Array) => Array.from(b.subarray(0, 64)).map((x) => x.toString(16).padStart(2, '0')).join(' ');
+      console.error(`[feishu-lc] 帧解码失败: ${msg} len=${buf.length} head=${hex(buf)}`);
+      recordError(`帧解码失败: ${msg}`);
+      return;
+    }
     if (frame.method === FRAME_CONTROL) {
       this.handleControlData(frame);
     } else if (frame.method === FRAME_DATA) {
