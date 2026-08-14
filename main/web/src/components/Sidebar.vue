@@ -59,26 +59,58 @@
                   <option value="created-desc">创建时间</option>
                 </select>
               </label>
-              <span class="sec-count">{{ filteredPages(g.pages).length }}</span>
+              <span class="sec-count">{{ groupPageCount(g) }}</span>
             </div>
           </div>
           <div v-show="!collapsed[g.key]" class="sec-body">
-            <PageRow
-              v-for="p in sortList(filteredPages(g.pages), groupSort[g.key])"
-              :key="p.id"
-              :page="p"
-              :active="p.id === activeId"
-              :selected="selected.has('p:' + p.id)"
-              :selection-mode="selectionMode"
-              @open="openPage"
-              @archive="archivePage"
-              @unarchive="unarchivePage"
-              @remove="removePage"
-              @toggle-select="toggleSelect"
-            />
-            <p v-if="!filteredPages(g.pages).length" class="none">
-              {{ filter ? '没有匹配页面' : '暂无页面' }}
-            </p>
+            <!-- 实体：按子类（人物/客户/项目/组织）分组 -->
+            <template v-if="g.subGroups">
+              <div
+                v-for="sub in visibleSubGroups(g)"
+                :key="sub.key"
+                class="sub-group"
+              >
+                <div class="sub-head">
+                  <span class="sub-name">{{ sub.label }}</span>
+                  <span class="sub-count">{{ filteredPages(sub.pages).length }}</span>
+                </div>
+                <PageRow
+                  v-for="p in sortList(filteredPages(sub.pages), groupSort[g.key])"
+                  :key="p.id"
+                  :page="p"
+                  :active="p.id === activeId"
+                  :selected="selected.has('p:' + p.id)"
+                  :selection-mode="selectionMode"
+                  @open="openPage"
+                  @archive="archivePage"
+                  @unarchive="unarchivePage"
+                  @remove="removePage"
+                  @toggle-select="toggleSelect"
+                />
+              </div>
+              <p v-if="!groupPageCount(g)" class="none">
+                {{ filter ? '没有匹配页面' : '暂无页面' }}
+              </p>
+            </template>
+            <!-- 概念 / 归档：直接平铺 -->
+            <template v-else>
+              <PageRow
+                v-for="p in sortList(filteredPages(g.pages), groupSort[g.key])"
+                :key="p.id"
+                :page="p"
+                :active="p.id === activeId"
+                :selected="selected.has('p:' + p.id)"
+                :selection-mode="selectionMode"
+                @open="openPage"
+                @archive="archivePage"
+                @unarchive="unarchivePage"
+                @remove="removePage"
+                @toggle-select="toggleSelect"
+              />
+              <p v-if="!filteredPages(g.pages).length" class="none">
+                {{ filter ? '没有匹配页面' : '暂无页面' }}
+              </p>
+            </template>
           </div>
         </section>
       </div>
@@ -408,31 +440,78 @@ const fileQuery = computed(() => (route.query.file as string) || '');
 
 const GROUPS = [
   { key: 'concept', label: '概念' },
-  { key: 'customer', label: '客户' },
-  { key: 'entity', label: '实体' },
+  {
+    key: 'entity',
+    label: '实体',
+    subs: [
+      { key: 'person', label: '人物' },
+      { key: 'customer', label: '客户' },
+      { key: 'project', label: '项目' },
+      { key: 'org', label: '组织' },
+    ],
+  },
   { key: 'archived', label: '归档' },
 ];
 
-function groupOf(p: any): string {
+/** 顶层分组：概念 / 实体 / 归档（状态分类），其余走原始资料、AI 日志等专属分区 */
+function topGroupOf(p: any): string {
   if (p.path.startsWith('原始资料/')) return 'raw'; // 原始资料只在文件区展示
   if (p.path.startsWith('AIWorks/')) return 'system'; // AI 工作区只在日志区展示
   if (p.path.startsWith('Wiki/归档/')) return 'archived';
   if (p.path.startsWith('Wiki/查询/')) return 'qa';
   if (p.type === 'concept') return 'concept';
-  if (['person', 'project', 'org'].includes(p.type)) {
-    // 带有「客户」标签的 org 实体归入「客户」分类（信捷模式下按 ACS 框架综合）
-    if (p.type === 'org' && (p.tags || []).includes('客户')) return 'customer';
-    return 'entity';
-  }
+  if (['person', 'project', 'org'].includes(p.type)) return 'entity';
   return 'unclassified'; // 未分类页面只在「全部页面」出现
 }
 
+/** 实体下的子类：人物 / 客户（带「客户」标签的 org）/ 项目 / 组织（非客户 org） */
+function subGroupOf(p: any): string | null {
+  if (!['person', 'project', 'org'].includes(p.type)) return null;
+  // 带有「客户」标签的 org 实体归入「客户」分类（信捷模式下按 ACS 框架综合）
+  if (p.type === 'org' && (p.tags || []).includes('客户')) return 'customer';
+  if (p.type === 'person') return 'person';
+  if (p.type === 'project') return 'project';
+  return 'org';
+}
+
 const typeGroups = computed(() =>
-  GROUPS.map((g) => ({
-    ...g,
-    pages: allPages.value.filter((p) => groupOf(p) === g.key),
-  }))
+  GROUPS.map((g) => {
+    if (g.subs) {
+      const subGroups = g.subs
+        .map((s) => ({
+          ...s,
+          pages: allPages.value.filter(
+            (p) => topGroupOf(p) === g.key && subGroupOf(p) === s.key
+          ),
+        }))
+        .filter((s) => s.pages.length > 0); // 空子类不展示
+      return { ...g, pages: [] as any[], subGroups };
+    }
+    return {
+      ...g,
+      pages: allPages.value.filter((p) => topGroupOf(p) === g.key),
+      subGroups: undefined,
+    };
+  })
 );
+
+/** 实体顶层计数为各子类合计；概念/归档为该组过滤后页数 */
+function groupPageCount(g: any): number {
+  if (g.subGroups) {
+    return g.subGroups.reduce(
+      (sum: number, sub: any) => sum + filteredPages(sub.pages).length,
+      0
+    );
+  }
+  return filteredPages(g.pages).length;
+}
+
+/** 实体下过滤后仍有页面的子类（搜索时空子类标题随之隐藏） */
+function visibleSubGroups(g: any) {
+  return (g.subGroups || []).filter(
+    (sub: any) => filteredPages(sub.pages).length > 0
+  );
+}
 
 const aiLogs = computed(() =>
   allPages.value.filter(
@@ -1003,6 +1082,41 @@ onUnmounted(() => {
 
 .sec-body {
   padding: 2px 0 5px 14px;
+}
+
+.sub-group + .sub-group {
+  margin-top: 2px;
+}
+
+.sub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 4px 8px 2px 4px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  user-select: none;
+}
+
+.sub-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub-count {
+  min-width: 19px;
+  flex-shrink: 0;
+  padding: 0 3px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .page-row {
