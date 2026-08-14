@@ -72,7 +72,7 @@ async function submit() {
   background: var(--bg-secondary);
 }
 .login-card {
-  width: 340px;
+  width: min(340px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -95,5 +95,5 @@ async function submit() {
 h1 { margin: 0; font-size: 20px; text-align: center; font-weight: 600; }
 p { margin: 0; text-align: center; }
 .btn { justify-content: center; }
-.error { color: var(--danger); font-size: 13px; }
+.error { color: var(--danger); font-size: var(--font-md); }
 </style>

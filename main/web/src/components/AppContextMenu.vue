@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .app-context-menu {
   position: fixed;
-  z-index: 1200;
+  z-index: var(--z-menu);
   width: 226px;
   max-width: calc(100vw - 16px);
   padding: 5px;

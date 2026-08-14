@@ -343,7 +343,7 @@ onUnmounted(() => {
   box-shadow: var(--sidebar-glass-shadow);
   backdrop-filter: saturate(150%) blur(28px);
   -webkit-backdrop-filter: saturate(150%) blur(28px);
-  z-index: 40;
+  z-index: var(--z-chrome);
 }
 
 .rail-logo {
@@ -356,7 +356,7 @@ onUnmounted(() => {
   border-radius: 8px;
   color: #fff;
   background: var(--sidebar-accent);
-  box-shadow: 0 1px 3px rgba(0, 82, 172, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+  box-shadow: var(--rail-logo-shadow);
   font-size: 14px;
   font-weight: 700;
   user-select: none;
@@ -365,7 +365,7 @@ onUnmounted(() => {
 
 .rail-logo:hover {
   filter: brightness(1.06);
-  box-shadow: 0 2px 6px rgba(0, 82, 172, 0.32), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  box-shadow: var(--rail-logo-shadow-hover);
 }
 
 .rail-logo:active {
@@ -451,7 +451,7 @@ onUnmounted(() => {
   box-shadow: var(--sidebar-glass-shadow);
   backdrop-filter: saturate(150%) blur(28px);
   -webkit-backdrop-filter: saturate(150%) blur(28px);
-  z-index: 35;
+  z-index: var(--z-sidebar);
 }
 
 .resizer {
@@ -463,7 +463,7 @@ onUnmounted(() => {
   cursor: col-resize;
   background: transparent;
   outline: none;
-  z-index: 36;
+  z-index: var(--z-resizer);
 }
 
 .resizer::before {
@@ -507,7 +507,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   border-left: 1px solid var(--border);
   background: var(--bg);
-  z-index: 25;
+  z-index: var(--z-drawer);
 }
 
 .slide-enter-active,
@@ -561,7 +561,7 @@ onUnmounted(() => {
     width: calc(100vw - 16px) !important;
     max-width: 320px;
     box-shadow: var(--sidebar-mobile-shadow);
-    z-index: 35;
+    z-index: var(--z-sidebar);
   }
 
   .resizer {
@@ -575,7 +575,7 @@ onUnmounted(() => {
     background: rgba(15, 15, 15, 0.26);
     backdrop-filter: blur(3px);
     -webkit-backdrop-filter: blur(3px);
-    z-index: 32;
+    z-index: var(--z-mask);
   }
 
   .content {
@@ -604,7 +604,7 @@ onUnmounted(() => {
     box-shadow: var(--sidebar-glass-shadow);
     backdrop-filter: saturate(150%) blur(24px);
     -webkit-backdrop-filter: saturate(150%) blur(24px);
-    z-index: 40;
+    z-index: var(--z-chrome);
   }
 
   .bottom-nav button {

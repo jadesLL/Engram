@@ -777,7 +777,7 @@ onMounted(load);
 .report-item p { margin: 0 0 8px; }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .review-meta { display: flex; gap: 16px; color: var(--text-secondary); margin-bottom: 8px; }
-.review-guidance { margin: 0 0 8px; padding: 8px 10px; border-left: 3px solid var(--warning, #d97706); color: var(--text-secondary); background: var(--bg-secondary); }
+.review-guidance { margin: 0 0 8px; padding: 8px 10px; border-left: 3px solid var(--warning); color: var(--text-secondary); background: var(--bg-secondary); }
 .draft { padding: 8px; border-radius: 6px; background: var(--bg-tertiary); white-space: pre-wrap; max-height: 150px; overflow: auto; }
 .evidence { margin: 8px 0; color: var(--text-secondary); }
 .evidence summary { cursor: pointer; }
@@ -790,14 +790,14 @@ onMounted(load);
 .question-state { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border-radius: 6px; }
 .question-state.processing { color: var(--accent); background: var(--accent-soft); }
 .question-error { margin: 6px 0 0; color: var(--danger); }
-.ambiguity-box { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px solid var(--warning, #d97706); border-radius: 6px; background: var(--bg-secondary); }
+.ambiguity-box { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px solid var(--warning); border-radius: 6px; background: var(--bg-secondary); }
 .ambiguity-head { display: flex; align-items: flex-start; gap: 8px; }
-.ambiguity-label { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; color: #92400e; background: #fef3c7; font-size: 12px; }
+.ambiguity-label { flex: 0 0 auto; padding: 2px 6px; border-radius: 4px; color: var(--warning); background: var(--warn-soft); font-size: 12px; }
 .suggestion-list { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .review-controls { display: grid; grid-template-columns: minmax(180px, 1fr) 110px minmax(220px, 1.4fr); gap: 8px; margin: 10px 0; }
 .review-controls > * { width: 100%; min-width: 0; }
 .empty-hint { text-align: center; padding: 40px 0; }
-.modal-mask { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 15, 15, .35); }
+.modal-mask { position: fixed; inset: 0; z-index: var(--z-overlay); display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(15, 15, 15, .35); }
 .batch-modal { width: min(760px, 96vw); max-height: min(820px, 92vh); display: flex; flex-direction: column; box-shadow: var(--shadow); }
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .modal-head h3 { margin: 0; }

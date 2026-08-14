@@ -2650,7 +2650,7 @@ section h3 { margin: 0; font-size: 15px; }
 .modal-mask {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2893,7 +2893,7 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
   position: fixed;
   top: 18px;
   right: 22px;
-  z-index: 220;
+  z-index: var(--z-toast);
   width: min(360px, calc(100vw - 28px));
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -4633,7 +4633,7 @@ code { padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); fon
 .modal-mask {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: center;
   justify-content: center;

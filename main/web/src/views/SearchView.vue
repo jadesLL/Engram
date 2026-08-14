@@ -113,7 +113,14 @@ onMounted(() => {
 .hit-title { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
 .hit-index { color: var(--accent); }
 .hit-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
-.hit-snippet { font-size: 13px; line-height: 1.6; }
+.hit-snippet { font-size: var(--font-md); line-height: 1.6; }
 .stale { color: var(--warn); }
 .empty-hint { text-align: center; padding: 40px 0; }
+
+@media (max-width: 768px) {
+  .search-view { padding: 20px 14px; }
+  .search-box { flex-direction: column; }
+  .search-input { min-width: 0; }
+  .mode-switch .btn { flex: 1; justify-content: center; }
+}
 </style>

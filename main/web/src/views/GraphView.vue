@@ -8,9 +8,9 @@
         <button class="btn small" @click="fit">铺满</button>
         <button class="btn small" @click="relayout">重排</button>
         <span class="legend faint small">
-          <i style="background:#64748b"></i>笔记 <i style="background:#16a34a"></i>概念
-          <i style="background:#ea580c"></i>人物 <i style="background:#7c3aed"></i>项目
-          <i style="background:#2563eb"></i>文档 <i style="background:#0891b2"></i>组织 <i style="background:#f87171"></i>死链
+          <i class="lg-note"></i>笔记 <i class="lg-concept"></i>概念
+          <i class="lg-person"></i>人物 <i class="lg-project"></i>项目
+          <i class="lg-doc"></i>文档 <i class="lg-org"></i>组织 <i class="lg-deadlink"></i>死链
         </span>
       </div>
     </div>
@@ -140,13 +140,24 @@ onUnmounted(() => network?.destroy());
   gap: 8px;
 }
 .graph-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.legend { display: inline-flex; align-items: center; gap: 4px; }
+.legend { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .legend i {
   display: inline-block;
   width: 10px; height: 10px;
   border-radius: 50%;
   margin-left: 8px;
 }
+.lg-note { background: var(--graph-note); }
+.lg-concept { background: var(--graph-concept); }
+.lg-person { background: var(--graph-person); }
+.lg-project { background: var(--graph-project); }
+.lg-doc { background: var(--graph-doc); }
+.lg-org { background: var(--graph-org); }
+.lg-deadlink { background: var(--graph-deadlink); }
 .graph-container { flex: 1; min-height: 0; }
 .empty-hint { text-align: center; padding: 60px 20px; }
+
+@media (max-width: 768px) {
+  .graph-toolbar { flex-direction: column; align-items: flex-start; }
+}
 </style>
