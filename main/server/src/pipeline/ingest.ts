@@ -565,7 +565,7 @@ function attachCandidateRelations(
 export async function ingestRawFile(
   relPath: string,
   onProgress: IngestProgressCallback = () => {},
-  options: { force?: boolean; signal?: AbortSignal } = {},
+  options: { force?: boolean; reextract?: boolean; signal?: AbortSignal } = {},
 ): Promise<IngestStats> {
   options.signal?.throwIfAborted();
   onProgress({ stage: '解析', progress: 2, detail: relPath });
@@ -604,7 +604,8 @@ export async function ingestRawFile(
     stats: string;
     llm_prompt_tokens: number;
   } | undefined;
-  if (reusable) {
+  // reextract：按页面触发的深度重新提炼，需绕过签名复用闸强制重跑相同内容；force 仅绕过第一道内容未变闸。
+  if (!options.reextract && reusable) {
     const active = getActiveChat();
     recordLlmResultCacheHit({
       provider: active?.provider || 'custom',

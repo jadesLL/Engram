@@ -46,6 +46,22 @@
             <Icon name="ai" :size="14" /> 整理
           </button>
           <button
+            v-if="canSynthesize"
+            class="btn ghost small"
+            title="基于已入库事实重新生成本页正文（不重读原始资料）"
+            @click="recompose"
+          >
+            <Icon name="restore" :size="14" /> 重新组织
+          </button>
+          <button
+            v-if="canSynthesize"
+            class="btn ghost small"
+            title="重跑本页依赖的原始资料，重新提炼（连带刷新共享来源的其他页面）"
+            @click="reextract"
+          >
+            <Icon name="rotate-right" :size="14" /> 重新提炼
+          </button>
+          <button
             v-if="evidence?.sources?.length"
             class="btn ghost small"
             title="查看本页来源证据"
@@ -287,6 +303,11 @@ const synthesisPending = computed(() =>
   (!evidence.value?.synthesis || evidence.value.synthesis.outdated)
 );
 
+/** 概念/人物/项目/组织页可整页综合（重新组织/重新提炼） */
+const canSynthesize = computed(() =>
+  ['concept', 'person', 'project', 'org'].includes(pageType.value)
+);
+
 type WriterPreset = 'continue' | 'polish' | 'expand' | 'summarize' | 'translate';
 
 const aiActions: { key: WriterPreset; label: string }[] = [
@@ -358,7 +379,7 @@ async function loadRelated() {
 }
 
 async function loadEvidence() {
-  if (!page.value || !['person', 'project', 'org'].includes(pageType.value)) {
+  if (!page.value || !['concept', 'person', 'project', 'org'].includes(pageType.value)) {
     evidence.value = null;
     evidenceOpen.value = false;
     return;
@@ -592,6 +613,10 @@ function pageContextItems(separatorBefore = false): ContextMenuItem[] {
       icon: 'sort',
       action: organize,
     },
+    ...(canSynthesize.value ? [
+      { id: 'recompose-page', label: '重新组织正文', icon: 'restore', action: recompose },
+      { id: 'reextract-page', label: '重新提炼', icon: 'rotate-right', action: reextract },
+    ] : []),
     {
       id: 'page-graph',
       label: '查看页面图谱',
@@ -724,6 +749,50 @@ async function organize() {
     pageAssistantContext(),
     true
   );
+}
+
+/** 重新组织：基于已入库事实重新生成本页正文（浅层，不重读原始资料，无连带影响） */
+async function recompose() {
+  if (!page.value) return;
+  if (dirty) await save(true);
+  try {
+    const { data } = await api.post(`/api/pages/${page.value.id}/recompose?force=true`);
+    if (data?.ok) {
+      notify.success('已加入后台队列，将基于已有事实重新生成本页正文');
+      await loadEvidence();
+    } else {
+      notify.error('重新组织未能入队');
+    }
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '重新组织失败，请稍后重试');
+  }
+}
+
+/** 重新提炼：重跑本页依赖的原始资料（深层，连带刷新共享来源的其他页面） */
+async function reextract() {
+  if (!page.value) return;
+  if (dirty) await save(true);
+  let sources = 0;
+  try {
+    const { data } = await api.get(`/api/pages/${page.value.id}/evidence`);
+    sources = data?.sources?.length || 0;
+  } catch { /* ignore */ }
+  const confirmed = window.confirm(
+    `将重跑本页依赖的${sources || ''}份原始资料，重新抽取事实并生成正文。` +
+    '共享这些来源的其他页面也会被连带刷新，可能需要一些时间。是否继续？'
+  );
+  if (!confirmed) return;
+  try {
+    const { data } = await api.post(`/api/pages/${page.value.id}/reextract`);
+    if (data?.ok) {
+      notify.success(`已入队，正在重新提炼 ${data.sources} 份来源，完成后本页及共享页面将自动刷新`);
+      await loadEvidence();
+    } else {
+      notify.error('重新提炼未能入队');
+    }
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '重新提炼失败，请稍后重试');
+  }
 }
 
 function pageAssistantContext(
