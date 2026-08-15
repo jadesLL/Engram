@@ -82,6 +82,9 @@ async function main() {
   await app.register(trashRoutes);
   await app.register(mcpRoutes);
 
+  // 轻量健康探针：恒 200、不触碰数据层，供容器 healthcheck 与负载探活使用。
+  app.get('/health', async () => 'ok');
+
   // 静态托管前端构建产物 + SPA fallback
   const webDist = path.resolve(__dirname, '../../web/dist');
   if (fs.existsSync(webDist)) {
