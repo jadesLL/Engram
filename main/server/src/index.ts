@@ -8,7 +8,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 
 import { ensureDirs, PORT, HOST } from './config.js';
-import { migrate, db } from './lib/db.js';
+import { migrate, db, now } from './lib/db.js';
 import { ensureJwtSecret, ensureDefaultPassword, authRoutes } from './routes/auth.js';
 import { pageRoutes } from './routes/pages.js';
 import { fileRoutes } from './routes/files.js';
@@ -104,6 +104,12 @@ async function main() {
   reconcilePendingCandidates();
   migrateAiLogsToOperationLog();
   cleanupSystemPages();
+  // 把启动时残留的 pending 合成任务标为 failed，让冷却机制接管，避免 job runner
+  // 立即拾取执行、调 LLM 阻塞事件循环致 502。需要的新合成由延迟补齐重新入队。
+  db.prepare(
+    `UPDATE jobs SET status='failed',stage='启动清理',error='启动时清理的残留合成任务',updated_at=?
+     WHERE kind='page_recompose' AND status='pending'`
+  ).run(now());
   startJobRunner();
   scheduleDreamCycle();
   // 飞书长连接客户端（凭证未配置则跳过）
@@ -114,11 +120,16 @@ async function main() {
 
   await app.listen({ port: PORT, host: HOST });
   console.log(`LLM Wiki 已启动: http://localhost:${PORT}`);
-  // 合成补齐延迟到 listen 之后异步执行，每入队一个让出事件循环，
-  // 避免启动阶段同步全量入队冻结主线程致健康探针超时 502。
-  queueMissingPageSynthesesAsync().catch((e) =>
-    console.error('[synthesis] 补齐缺失合成失败:', e?.message || e),
+  // 合成补齐延迟 60 秒后再异步执行，确保容器先稳定对外提供服务（静态资源、
+  // 健康探针），避免启动初期 loadPageEvidence 同步 DB 读冻结主线程致页面空白。
+  const synthTimer = setTimeout(
+    () =>
+      queueMissingPageSynthesesAsync().catch((e) =>
+        console.error('[synthesis] 补齐缺失合成失败:', e?.message || e),
+      ),
+    60_000,
   );
+  synthTimer.unref();
 }
 
 main().catch((e) => {
