@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { FastifyInstance } from 'fastify';
 import { db } from '../lib/db.js';
 import { requireAuth } from './auth.js';
@@ -34,6 +35,7 @@ const KIND_LABELS: Record<string, string> = {
   mentions: '升级扫描',
   metagen: '索引生成',
   ingest_finalize: '整理派生校验',
+  page_recompose: '整页综合',
   ingest_recover: '整理提交恢复',
   candidate_reconcile: '候选动态对账',
   candidate_review_batch: '批量审核候选',
@@ -145,30 +147,78 @@ function enrichQueueEstimates(rows: any[]): any[] {
   return rows;
 }
 
+function sourceBaseName(raw: string): string {
+  if (!raw) return '';
+  const normalized = path.posix.normalize(raw.split('\\').join('/'));
+  return path.posix.basename(normalized) || normalized;
+}
+
+function formatSourceLabel(sources: string[]): string {
+  const unique = [...new Set(sources)].filter(Boolean);
+  if (!unique.length) return '';
+  if (unique.length === 1) return `派生自 ${unique[0]}`;
+  return `派生自 ${unique.length} 份资料`;
+}
+
+/** 追溯派生任务的源文件：page_recompose/process 经 page_contributions→source_versions，
+ *  ingest_finalize 经 ingest_runs。批量查询后按 jobId 返回展示文案。 */
+function buildSourceLabelMap(rows: any[]): Map<number, string> {
+  const pageIds = new Set<string>();
+  const runIds = new Set<string>();
+  for (const r of rows) {
+    const payload = safeJson(r.payload, null);
+    if (!payload || typeof payload !== 'object') continue;
+    if (typeof payload.pageId === 'string' && payload.pageId) pageIds.add(payload.pageId);
+    if (typeof payload.runId === 'string' && payload.runId) runIds.add(payload.runId);
+  }
+  const pageToSources = new Map<string, string[]>();
+  if (pageIds.size && tableExists('page_contributions') && tableExists('source_versions')) {
+    const placeholders = [...pageIds].map(() => '?').join(',');
+    const contributionRows = db
+      .prepare(
+        `SELECT pc.page_id, sv.path
+         FROM page_contributions pc
+         JOIN source_versions sv ON sv.id = pc.source_version_id
+         WHERE pc.page_id IN (${placeholders})`
+      )
+      .all(...pageIds) as Array<{ page_id: string; path: string }>;
+    for (const row of contributionRows) {
+      const base = sourceBaseName(row.path);
+      if (!base) continue;
+      const arr = pageToSources.get(row.page_id) || [];
+      if (!arr.includes(base)) arr.push(base);
+      pageToSources.set(row.page_id, arr);
+    }
+  }
+  const runToPath = new Map<string, string>();
+  if (runIds.size && tableExists('ingest_runs')) {
+    const placeholders = [...runIds].map(() => '?').join(',');
+    const runRows = db
+      .prepare(`SELECT id, path FROM ingest_runs WHERE id IN (${placeholders})`)
+      .all(...runIds) as Array<{ id: string; path: string }>;
+    for (const row of runRows) runToPath.set(row.id, sourceBaseName(row.path));
+  }
+  const result = new Map<number, string>();
+  for (const r of rows) {
+    const payload = safeJson(r.payload, null);
+    if (!payload || typeof payload !== 'object') { result.set(r.id, ''); continue; }
+    let label = '';
+    if (typeof payload.pageId === 'string' && payload.pageId) {
+      label = formatSourceLabel(pageToSources.get(payload.pageId) || []);
+    } else if (typeof payload.runId === 'string' && payload.runId) {
+      const base = runToPath.get(payload.runId);
+      label = base ? `派生自 ${base}` : '';
+    }
+    result.set(r.id, label);
+  }
+  return result;
+}
+
 export async function jobRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
   app.get('/api/jobs', async () => {
-    const fmt = (r: any) => {
-      const target = resolveJobTarget(r.payload);
-      return {
-        id: r.id,
-        kind: r.kind,
-        label: KIND_LABELS[r.kind] || r.kind,
-        target: target.targetLabel,
-        targetKey: target.targetKey,
-        targetLabel: target.targetLabel,
-        payload: safeJson(r.payload, {}),
-        status: r.status,
-        stage: r.stage || (r.status === 'pending' ? '等待执行' : r.status === 'running' ? '执行中' : r.status === 'done' ? '已完成' : '失败'),
-        progress: r.progress ?? (r.status === 'done' ? 100 : r.status === 'running' ? 5 : 0),
-        detail: r.detail || '',
-        error: r.error,
-        created_at: r.created_at,
-        run_at: r.run_at,
-      };
-    };
-    const active = db
+    const activeRows = db
       .prepare(
         `SELECT ${jobSelect()} FROM jobs WHERE status IN ('pending', 'running', 'paused')
          ORDER BY
@@ -184,12 +234,33 @@ export async function jobRoutes(app: FastifyInstance) {
            id
          LIMIT 100`
       )
-      .all()
-      .map(fmt);
-    const recent = db
+      .all();
+    const recentRows = db
       .prepare(`SELECT ${jobSelect()} FROM jobs WHERE status IN ('done', 'failed', 'cancelled') ORDER BY id DESC LIMIT 20`)
-      .all()
-      .map(fmt);
+      .all();
+    const sourceLabelMap = buildSourceLabelMap([...activeRows, ...recentRows]);
+    const fmt = (r: any) => {
+      const target = resolveJobTarget(r.payload);
+      return {
+        id: r.id,
+        kind: r.kind,
+        label: KIND_LABELS[r.kind] || r.kind,
+        target: target.targetLabel,
+        targetKey: target.targetKey,
+        targetLabel: target.targetLabel,
+        payload: safeJson(r.payload, {}),
+        status: r.status,
+        stage: r.stage || (r.status === 'pending' ? '等待执行' : r.status === 'running' ? '执行中' : r.status === 'done' ? '已完成' : '失败'),
+        progress: r.progress ?? (r.status === 'done' ? 100 : r.status === 'running' ? 5 : 0),
+        detail: r.detail || '',
+        error: r.error,
+        sourceLabel: sourceLabelMap.get(r.id) || '',
+        created_at: r.created_at,
+        run_at: r.run_at,
+      };
+    };
+    const active = enrichQueueEstimates(activeRows.map(fmt));
+    const recent = recentRows.map(fmt);
     const counts = db
       .prepare(
         `SELECT
