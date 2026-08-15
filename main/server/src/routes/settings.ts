@@ -180,14 +180,18 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  /** 一键清除：删除知识正文、整理报告、入库记录与派生索引，保留配置/认证/系统日志。 */
+  /** 一键清除：删除知识正文、整理报告、入库记录与派生索引，保留配置/认证/系统日志。清除后后台全量重建索引，接口快速返回，避免长耗时操作阻塞容器健康探针。 */
   app.post('/api/settings/wipe', async (req, reply) => {
     const { password } = (req.body || {}) as { password?: string };
     const hash = getSetting('password_hash');
     if (!hash || !password || !bcrypt.compareSync(password, hash)) {
       return reply.code(401).send({ error: '密码错误' });
     }
-    const { result, cancelledJobs } = await withJobsStopped(wipeKnowledgeData);
+    const { result, cancelledJobs } = await withJobsStopped(() => wipeKnowledgeData({ rebuild: false }));
+    // 全量重建在后台进行，与 /api/settings/rebuild-index 同为 fire-and-forget。
+    void rebuildAll()
+      .then((r) => app.log.info(`[wipe-rebuild] done: ${JSON.stringify(r)}`))
+      .catch((e) => app.log.error(`[wipe-rebuild] failed: ${e?.message}`));
     return { ok: true, ...result, cancelledJobs };
   });
 
