@@ -45,7 +45,7 @@ function readVarint64(buf: Uint8Array, pos: number): [value: bigint, next: numbe
     result |= BigInt(byte & 0x7f) << shift;
     if ((byte & 0x80) === 0) break;
     shift += 7n;
-    if (shift > 63n) throw new Error('varint too long');
+    if (shift > 63n) throw new Error('varint 过长');
   }
   return [result, p];
 }

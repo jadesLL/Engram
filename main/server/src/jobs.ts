@@ -187,9 +187,9 @@ const handlers: Record<string, JobHandler> = {
     }
   },
   dream: async (_payload, update, context) => {
-    update({ stage: '运行 Dream Cycle', progress: 10, detail: '扫描知识库问题' });
+    update({ stage: '运行 梦境整理', progress: 10, detail: '扫描知识库问题' });
     const result = await runDreamCycle(context.signal);
-    update({ stage: 'Dream Cycle 已完成', progress: 100, detail: JSON.stringify(result) });
+    update({ stage: '梦境整理 已完成', progress: 100, detail: JSON.stringify(result) });
   },
   rebuild: async (_payload, update, context) => {
     let progress = 10;

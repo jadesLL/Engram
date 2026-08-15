@@ -24,7 +24,7 @@ export function safeJoin(rel: string): string {
   const clean = rel.replace(/^[/\\]+/, '');
   const abs = path.resolve(BRAIN_DIR, clean);
   if (abs !== BRAIN_DIR && !abs.startsWith(BRAIN_DIR + path.sep)) {
-    throw new Error('invalid path');
+    throw new Error('路径无效');
   }
   return abs;
 }

@@ -8,7 +8,7 @@
         <span>· 计划：{{ cron }}{{ enabled ? '' : '（已停用）' }}</span>
       </div>
       <button class="btn primary" :disabled="running" @click="runNow">
-        {{ running ? '整理中…' : '立即运行 Dream Cycle' }}
+        {{ running ? '整理中…' : '立即运行梦境整理' }}
       </button>
     </div>
 

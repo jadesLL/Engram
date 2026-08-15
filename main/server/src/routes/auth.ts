@@ -29,7 +29,7 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
   try {
     await req.jwtVerify();
   } catch {
-    reply.code(401).send({ error: 'unauthorized' });
+    reply.code(401).send({ error: '未授权' });
   }
 }
 

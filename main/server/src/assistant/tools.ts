@@ -327,7 +327,7 @@ const tools: AgentTool[] = [
   },
   {
     name: 'list_reports',
-    description: '列出 Dream Cycle 整理报告，供分析或后续审批处理。',
+    description: '列出 梦境整理 整理报告，供分析或后续审批处理。',
     risk: 'read',
     schema: z.object({
       status: z.enum(['open', 'resolved', 'dismissed', 'applying']).optional(),
@@ -990,16 +990,16 @@ const tools: AgentTool[] = [
   },
   {
     name: 'run_dream_cycle',
-    description: '运行完整 Dream Cycle，产生整理报告。作为后台任务执行。',
+    description: '运行完整 梦境整理，产生整理报告。作为后台任务执行。',
     risk: 'high',
     schema: z.object({}),
     parameters: objectSchema({}),
     preview() {
-      return { title: '运行 Dream Cycle', summary: '扫描死链、重复、矛盾、过期、来源与章节问题', secondConfirmation: true };
+      return { title: '运行 梦境整理', summary: '扫描死链、重复、矛盾、过期、来源与章节问题', secondConfirmation: true };
     },
     execute() {
       const jobId = enqueue('dream', { requestedBy: 'assistant', nonce: Date.now() });
-      return { summary: 'Dream Cycle 已加入后台队列', data: { jobId } };
+      return { summary: '梦境整理 已加入后台队列', data: { jobId } };
     },
   },
   {
@@ -1156,7 +1156,7 @@ const tools: AgentTool[] = [
   },
   {
     name: 'set_dream_schedule',
-    description: '修改 Dream Cycle 的启用状态或 cron 时间，不涉及密钥。',
+    description: '修改 梦境整理 的启用状态或 cron 时间，不涉及密钥。',
     risk: 'high',
     schema: z.object({
       cron: z.string().max(100).optional(),
@@ -1171,7 +1171,7 @@ const tools: AgentTool[] = [
     preview(args) {
       if (args.cron !== undefined && !cron.validate(args.cron)) throw new Error('cron 表达式无效');
       return {
-        title: '修改 Dream Cycle 调度',
+        title: '修改 梦境整理 调度',
         summary: `cron: ${getSetting('dream_cron') || '0 3 * * *'} → ${args.cron ?? '不变'}；启用: ${(getSetting('dream_enabled') ?? '1') !== '0'} → ${args.enabled ?? '不变'}`,
         details: {
           previousCron: getSetting('dream_cron') || '0 3 * * *',
@@ -1184,7 +1184,7 @@ const tools: AgentTool[] = [
       if (args.enabled !== undefined) setSetting('dream_enabled', args.enabled ? '1' : '0');
       scheduleDreamCycle();
       return {
-        summary: 'Dream Cycle 调度已更新',
+        summary: '梦境整理 调度已更新',
         undo: { kind: 'dream_schedule', ...preview.details },
       };
     },
@@ -1192,7 +1192,7 @@ const tools: AgentTool[] = [
       setSetting('dream_cron', payload.previousCron);
       setSetting('dream_enabled', payload.previousEnabled ? '1' : '0');
       scheduleDreamCycle();
-      return { summary: '已恢复 Dream Cycle 调度' };
+      return { summary: '已恢复 梦境整理 调度' };
     },
   },
   {

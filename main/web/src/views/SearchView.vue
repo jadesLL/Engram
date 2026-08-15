@@ -19,7 +19,7 @@
     </div>
 
     <div v-if="mode === 'think' && searched" class="think-result">
-      <span>问题已交给 Agent。</span>
+      <span>问题已交给 AI 助手。</span>
       <button class="btn small" @click="app.aiDrawerOpen = true">打开助手</button>
     </div>
 
