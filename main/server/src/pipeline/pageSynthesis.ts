@@ -157,6 +157,10 @@ interface EvidenceMap {
 
 class PageSynthesisConflict extends Error {}
 const PAGE_SYNTHESIS_VERSION = 2;
+/** 失败/冲突的合成在此冷却期内不重新排队，避免启动时狂调 LLM 拖垮事件循环。 */
+const SYNTHESIS_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
+/** 单次补齐合成的入队上限，避免一次性全量入队压垮队列与事件循环。 */
+const SYNTHESIS_BATCH_LIMIT = 50;
 
 function sha(value: unknown): string {
   return crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -641,6 +645,13 @@ export function queuePageRecompose(
   if (!options.force) {
     if (existing?.status === 'active') return existing.id;
     if (existing?.status === 'pending') return existing.id;
+    // 失败/冲突的合成在冷却期内不重新排队，避免每次启动都重排注定失败的合成、
+    // 狂调 LLM 并密集同步写 DB 拖垮事件循环。force 可绕过冷却。
+    if ((existing?.status === 'failed' || existing?.status === 'conflict') && existing.updated_at) {
+      const cooldownMs = SYNTHESIS_FAILURE_COOLDOWN_MS;
+      const elapsed = Date.now() - new Date(existing.updated_at.replace(' ', 'T') + 'Z').getTime();
+      if (elapsed < cooldownMs) return existing.id;
+    }
   }
   const timestamp = now();
   const synthesisId = existing?.id || newId();
@@ -1031,6 +1042,7 @@ export function queueMissingPageSyntheses(): number {
   ).all() as Array<{ id: string }>;
   let queued = 0;
   for (const page of pages) {
+    if (queued >= SYNTHESIS_BATCH_LIMIT) break;
     const before = db.prepare(
       `SELECT COUNT(*) count FROM jobs WHERE kind='page_recompose' AND status IN ('pending','running','paused')`
     ).get() as { count: number };
@@ -1039,6 +1051,34 @@ export function queueMissingPageSyntheses(): number {
       `SELECT COUNT(*) count FROM jobs WHERE kind='page_recompose' AND status IN ('pending','running','paused')`
     ).get() as { count: number };
     if (after.count > before.count) queued++;
+  }
+  return queued;
+}
+
+/**
+ * 异步、不阻塞启动地补齐缺失合成。在 app.listen 之后延迟执行，
+ * 每入队一个就让出事件循环，避免启动阶段同步 DB 写冻结主线程致 502。
+ * 单批上限 SYNTHESIS_BATCH_LIMIT，剩余页由后续启动或手动触发补齐。
+ */
+export async function queueMissingPageSynthesesAsync(): Promise<number> {
+  if (!llmReady()) return 0;
+  const pages = db.prepare(
+    `SELECT DISTINCT p.id FROM pages p
+     JOIN page_contributions pc ON pc.page_id=p.id AND pc.active=1
+     WHERE p.deleted=0 AND p.type IN ('person','project','org','concept')`
+  ).all() as Array<{ id: string }>;
+  let queued = 0;
+  for (const page of pages) {
+    if (queued >= SYNTHESIS_BATCH_LIMIT) break;
+    const before = db.prepare(
+      `SELECT COUNT(*) count FROM jobs WHERE kind='page_recompose' AND status IN ('pending','running','paused')`
+    ).get() as { count: number };
+    queuePageRecompose(page.id);
+    const after = db.prepare(
+      `SELECT COUNT(*) count FROM jobs WHERE kind='page_recompose' AND status IN ('pending','running','paused')`
+    ).get() as { count: number };
+    if (after.count > before.count) queued++;
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
   return queued;
 }

@@ -31,7 +31,7 @@ import { scanVault, readPage, writePage } from './lib/vault.js';
 import { heartbeat } from './lib/events.js';
 import { migrateAiLogsToOperationLog } from './pipeline/indexFile.js';
 import { migrateIngestLedger } from './pipeline/sourceLedger.js';
-import { queueMissingPageSyntheses } from './pipeline/pageSynthesis.js';
+import { queueMissingPageSynthesesAsync } from './pipeline/pageSynthesis.js';
 import { reconcilePendingCandidates } from './pipeline/candidateLedger.js';
 
 /** AIWorks 系统区页面不参与整理、不打标签 */
@@ -101,7 +101,6 @@ async function main() {
   // 启动：扫描 vault 同步 DB、迁移历史 AI 日志进操作日志、清理系统区页面标签、启动任务队列与 Dream Cycle
   await scanVault();
   migrateIngestLedger();
-  queueMissingPageSyntheses();
   reconcilePendingCandidates();
   migrateAiLogsToOperationLog();
   cleanupSystemPages();
@@ -115,6 +114,11 @@ async function main() {
 
   await app.listen({ port: PORT, host: HOST });
   console.log(`LLM Wiki 已启动: http://localhost:${PORT}`);
+  // 合成补齐延迟到 listen 之后异步执行，每入队一个让出事件循环，
+  // 避免启动阶段同步全量入队冻结主线程致健康探针超时 502。
+  queueMissingPageSynthesesAsync().catch((e) =>
+    console.error('[synthesis] 补齐缺失合成失败:', e?.message || e),
+  );
 }
 
 main().catch((e) => {

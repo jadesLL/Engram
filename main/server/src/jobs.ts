@@ -391,7 +391,8 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
     activeExecutions.delete(job.id);
     notifyIdleWaiters();
     if (!maintenanceDepth && getJobQueueState().running) resumePausedJobs();
-    pollLane(execution.lane);
+    // 任务完成后的下一轮调度延迟到下一个事件循环 tick，避免同步 DB 写密集冻结主线程。
+    setImmediate(() => pollLane(execution.lane));
   }
 }
 
