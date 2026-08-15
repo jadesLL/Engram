@@ -32,23 +32,15 @@ ${manual}
 已有页面名录：
 ${roster || '（暂无）'}
 
-evidenceIds 必须逐字使用 activeEvidence 中的 id。只输出以下结构的 JSON，不要输出 Markdown 围栏或额外文字：
-{
-  "summary": "整页摘要",
-  "domain": "领域",
-  "confidence": "高|中|低",
-  "sections": [
-    {
-      "heading": "首段留空，后续为章节名",
-      "paragraphs": [{"text": "完整段落", "evidenceIds": ["runId:factId"]}],
-      "bullets": [{"text": "列表事项", "evidenceIds": ["runId:factId"]}]
-    }
-  ],
-  "related": [{"title": "已有页面名", "note": "关联原因", "evidenceIds": ["runId:factId"]}],
-  "timeline": [{"date": "证据中的明确日期", "event": "状态变化", "evidenceIds": ["runId:factId"]}],
-  "unresolvedConflicts": [],
-  "manualChangesPreserved": true
-}${correction}`;
+evidenceIds 必须逐字使用 activeEvidence 中的 id。调用 compose_page 工具提交结果，按以下结构填写各参数（不要直接输出文本或 JSON）：
+- summary：整页摘要
+- domain：领域
+- confidence：高|中|低
+- sections[]：heading（首段留空，后续为章节名）、paragraphs[{text,evidenceIds}]、bullets[{text,evidenceIds}]
+- related[]：{title（已有页面名）,note（关联原因）,evidenceIds}
+- timeline[]：{date（证据中的明确日期）,event（状态变化）,evidenceIds}
+- unresolvedConflicts：[]
+- manualChangesPreserved：true${correction}`;
 }
 
 export function pageSynthesisVerifyPrompt(manualChanged: boolean): string {
@@ -98,23 +90,15 @@ ${manual}
 已有页面名录：
 ${roster || '（暂无）'}
 
-evidenceIds 必须逐字使用 activeEvidence 中的 id。只输出以下结构的 JSON，不要输出 Markdown 围栏或额外文字：
-{
-  "summary": "整页摘要",
-  "domain": "领域",
-  "confidence": "高|中|低",
-  "sections": [
-    {
-      "heading": "首段留空，后续为章节名",
-      "paragraphs": [{"text": "完整段落", "evidenceIds": ["runId:factId"]}],
-      "bullets": [{"text": "列表事项", "evidenceIds": ["runId:factId"]}]
-    }
-  ],
-  "related": [{"title": "已有页面名", "note": "关联原因", "evidenceIds": ["runId:factId"]}],
-  "timeline": [],
-  "unresolvedConflicts": [],
-  "manualChangesPreserved": true
-}${correction}`;
+evidenceIds 必须逐字使用 activeEvidence 中的 id。调用 compose_page 工具提交结果，按以下结构填写各参数（不要直接输出文本或 JSON）：
+- summary：整页摘要
+- domain：领域
+- confidence：高|中|低
+- sections[]：heading（首段留空，后续为章节名）、paragraphs[{text,evidenceIds}]、bullets[{text,evidenceIds}]
+- related[]：{title（已有页面名）,note（关联原因）,evidenceIds}
+- timeline[]：概念页一律留空
+- unresolvedConflicts：[]
+- manualChangesPreserved：true${correction}`;
 }
 
 export function conceptSynthesisVerifyPrompt(manualChanged: boolean): string {
