@@ -432,9 +432,10 @@ export async function chat(
   if (opts?.topP !== undefined) body.top_p = opts.topP;
   // 部分服务商（DeepSeek/通义/Kimi/OpenAI）支持 json_object 模式；不支持的会忽略该字段
   if (opts?.json) body.response_format = { type: 'json_object' };
-  // DeepSeek 推理模型默认开启思考，json 模式下 reasoning_content 会吃光 max_tokens
-  // 导致 content 为空。结构化输出场景关闭思考，让模型直接产出 content。
-  if (opts?.json && /deepseek/i.test(cfg.baseUrl)) {
+  // 推理模型（DeepSeek-R1/通义千问思考版等）默认开启思考，json 模式下 reasoning_content
+  // 会吃光 max_tokens 导致 content 为空、合成任务必然失败。结构化输出场景一律关闭思考，
+  // 让模型直接产出 content。原先只对 baseUrl 含 deepseek 的配置生效，自定义中转网关会漏过。
+  if (opts?.json) {
     body.thinking = { type: 'disabled' };
     // 关闭思考后 temperature/top_p 才有效（思考模式下这些参数被忽略）
   }
