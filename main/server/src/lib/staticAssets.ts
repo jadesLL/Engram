@@ -125,17 +125,17 @@ export async function registerStaticAssetCache(
 
   app.setNotFoundHandler((request, reply) => {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return reply.code(404).send({ error: 'not found' });
+      return reply.code(404).send({ error: '资源不存在' });
     }
     const urlPath = requestPath(request.url);
-    if (!urlPath) return reply.code(400).send({ error: 'invalid path' });
+    if (!urlPath) return reply.code(400).send({ error: '路径无效' });
 
     const asset = cache.assets.get(urlPath === '/' ? '/index.html' : urlPath);
     if (asset) return sendAsset(request, reply, asset);
     if (!urlPath.startsWith('/api') && !urlPath.startsWith('/mcp') && indexAsset) {
       return sendAsset(request, reply, indexAsset);
     }
-    return reply.code(404).send({ error: 'not found' });
+    return reply.code(404).send({ error: '资源不存在' });
   });
 
   return cache;

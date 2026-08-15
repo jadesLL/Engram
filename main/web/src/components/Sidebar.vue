@@ -285,7 +285,7 @@
             <span class="page-title" :title="p.title">{{ p.title }}</span>
           </div>
           <p v-if="!visibleAiLogs.length" class="none">
-            {{ filter ? '没有匹配日志' : 'Dream Cycle 运行后自动生成' }}
+            {{ filter ? '没有匹配日志' : '梦境整理运行后自动生成' }}
           </p>
         </div>
       </section>

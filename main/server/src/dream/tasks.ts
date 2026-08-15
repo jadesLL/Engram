@@ -389,7 +389,7 @@ export async function runDreamCycle(signal?: AbortSignal): Promise<Record<string
   try {
     const total = Object.values(result).reduce((sum, value) => sum + value, 0);
     appendWikiLog(
-      'Dream Cycle',
+      '梦境整理',
       `死链 ${result.deadlink}｜疑似重复 ${result.duplicate}｜矛盾 ${result.contradiction}｜待丰富 ${result.enrich}｜过期 ${result.stale}｜来源单一 ${result.single_source}｜待补章节 ${result.missing_sections}｜实体升级 ${result.upgrades}｜共 ${total} 项${total ? '，见整理报告' : '，无待处理'}`,
     );
   } catch {

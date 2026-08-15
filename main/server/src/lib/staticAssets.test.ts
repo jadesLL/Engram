@@ -46,7 +46,7 @@ test('static files and SPA fallback remain available after the build directory d
 
   const apiMissing = await app.inject({ method: 'GET', url: '/api/missing' });
   assert.equal(apiMissing.statusCode, 404);
-  assert.deepEqual(apiMissing.json(), { error: 'not found' });
+  assert.deepEqual(apiMissing.json(), { error: '资源不存在' });
 
   await app.close();
 });

@@ -1,7 +1,7 @@
 <template>
   <div class="agent">
     <header class="agent-head">
-      <div class="agent-brand"><Icon name="ai" :size="16" /> Agent</div>
+      <div class="agent-brand"><Icon name="ai" :size="16" /> AI 助手</div>
       <select
         class="session-select"
         :value="assistant.activeSessionId"
@@ -52,7 +52,7 @@
       <template v-for="message in messages" :key="message.id">
         <article class="message" :class="message.role">
           <div class="message-meta">
-            <span>{{ message.role === 'user' ? '你' : 'Agent' }}</span>
+            <span>{{ message.role === 'user' ? '你' : 'AI 助手' }}</span>
             <button
               v-if="message.role === 'assistant' && message.content"
               class="text-action"
@@ -166,8 +166,8 @@
         v-model="input"
         rows="3"
         :disabled="Boolean(currentRun)"
-        placeholder="向 Agent 说明目标…"
-        aria-label="向 Agent 说明目标"
+        placeholder="向 AI 助手说明目标…"
+        aria-label="向 AI 助手说明目标"
         @keydown.enter.exact.prevent="ask(input)"
       />
       <button
@@ -278,7 +278,7 @@ async function newSession() {
 async function deleteSession() {
   const ok = await confirmDialog({
     title: '删除会话',
-    message: '删除当前 Agent 会话？知识库内容不会受到影响。',
+    message: '删除当前 AI 助手会话？知识库内容不会受到影响。',
     confirmText: '删除',
     danger: true,
   });
@@ -351,7 +351,7 @@ function toolLabel(name: string): string {
     create_raw_text: '创建原始资料',
     merge_pages: '合并页面',
     organize_content: 'AI 整理',
-    run_dream_cycle: 'Dream Cycle',
+    run_dream_cycle: '梦境整理',
     apply_report_actions: '应用报告动作',
     set_report_status: '更新报告状态',
     retry_job: '重试任务',
