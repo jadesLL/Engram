@@ -78,6 +78,7 @@
               <span class="dot paused" v-else-if="j.status === 'paused'" />
               <span class="dot pending" v-else />
               <span class="job-label">{{ j.label }}</span>
+              <span v-if="j.sourceLabel" class="job-source faint small" :title="j.sourceLabel">{{ j.sourceLabel }}</span>
               <span class="job-status faint small" :title="j.detail || j.stage">{{ statusText(j) }}</span>
               <span class="job-eta faint small">{{ etaText(j) }}</span>
               <span class="job-progress small">{{ j.progress }}%</span>
@@ -97,6 +98,7 @@
             <div v-for="j in g.tasks" :key="j.id" class="job-row failed indented">
               <span class="dot" :class="j.status === 'failed' ? 'failed' : 'cancelled'" />
               <span class="job-label">{{ j.label }}</span>
+              <span v-if="j.sourceLabel" class="job-source faint small" :title="j.sourceLabel">{{ j.sourceLabel }}</span>
               <span class="job-status faint small" :title="humanError(j.error || '')">
                 {{ j.status === 'cancelled' ? '已取消' : j.stage }}
               </span>
@@ -528,6 +530,13 @@ function etaText(job: any) {
   font-size: 13px;
 }
 .job-label { flex-shrink: 0; color: var(--text-secondary); }
+.job-source {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .job-status { max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-eta {
   min-width: 0;
