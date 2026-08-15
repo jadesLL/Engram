@@ -86,11 +86,17 @@ async function main() {
 
   // 静态托管前端构建产物 + SPA fallback
   const webDist = path.resolve(__dirname, '../../web/dist');
+  // 启动时把 index.html 读到内存，避免每次 SPA fallback 都 fs.readFileSync 同步读磁盘
+  // ——磁盘 I/O 慢时同步读会阻塞事件循环十几秒，致 healthcheck 探针超时、容器变 unhealthy。
+  const indexHtmlPath = path.join(webDist, 'index.html');
+  const indexHtml = fs.existsSync(indexHtmlPath)
+    ? fs.readFileSync(indexHtmlPath)
+    : null;
   if (fs.existsSync(webDist)) {
     await app.register(fastifyStatic, { root: webDist, index: ['index.html'] });
     app.setNotFoundHandler((req, reply) => {
       if (req.method === 'GET' && !req.url.startsWith('/api') && !req.url.startsWith('/mcp')) {
-        reply.type('text/html').send(fs.readFileSync(path.join(webDist, 'index.html')));
+        reply.type('text/html').send(indexHtml);
       } else {
         reply.code(404).send({ error: 'not found' });
       }
@@ -109,6 +115,10 @@ async function main() {
     `UPDATE jobs SET status='failed',stage='启动清理',error='启动时清理的残留AI任务',updated_at=?
      WHERE status='pending' AND kind IN ('page_recompose','process','metagen','dream_apply','candidate_review_batch','candidate_reconcile')`
   ).run(now());
+  // 清理 30 天前的终态 jobs 行，避免表无限膨胀拖慢 job runner tick 的全表扫描。
+  db.prepare(
+    `DELETE FROM jobs WHERE status IN ('failed','done','cancelled') AND updated_at < ?`
+  ).run(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' '));
   startJobRunner();
   scheduleDreamCycle();
   // 飞书长连接客户端（凭证未配置则跳过）
