@@ -254,7 +254,7 @@ exampleproject_build_local_offline_overlay_image() {
   local base_image="$3"
   local description="$4"
   shift 4
-  local resolved_source build_dir
+  local resolved_source build_dir runtime_id
   local build_status=0 cleanup_status=0
 
   command -v node >/dev/null 2>&1 || return 1
@@ -305,14 +305,44 @@ exampleproject_build_local_offline_overlay_image() {
     cd "$build_dir"
     exampleproject_shared_pnpm install --offline --frozen-lockfile --ignore-scripts
     exampleproject_shared_pnpm build
+    runtime_id="$(
+      node - "$build_dir/server/dist" "$build_dir/web/dist" <<'NODE'
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const hash = crypto.createHash('sha256');
+for (const root of process.argv.slice(2)) {
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) visit(fullPath);
+      else if (entry.isFile()) {
+        hash.update(path.relative(root, fullPath).split(path.sep).join('/'));
+        hash.update('\0');
+        hash.update(fs.readFileSync(fullPath));
+      }
+    }
+  };
+  visit(root);
+}
+process.stdout.write(hash.digest('hex').slice(0, 16));
+NODE
+    )"
     mkdir -p "$image_context/server" "$image_context/web"
     cp -a "$build_dir/server/dist" "$image_context/server/dist"
     cp -a "$build_dir/web/dist" "$image_context/web/dist"
-    printf 'FROM %s\n%s\n%s\n' \
-      "$base_image" \
-      'COPY server/dist /app/server/dist' \
-      'COPY web/dist /app/web/dist' \
-      > "$image_context/Dockerfile"
+    cat > "$image_context/Dockerfile" <<EOF
+FROM $base_image
+RUN --mount=type=bind,source=server/dist,target=/mnt/server-dist,ro \\
+    --mount=type=bind,source=web/dist,target=/mnt/web-dist,ro \\
+    mkdir -p /app/server/dist /app/.exampleproject-runtime/$runtime_id/web \\
+    && cp -a /mnt/server-dist/. /app/server/dist/ \\
+    && cp -a /mnt/web-dist/. /app/.exampleproject-runtime/$runtime_id/web/
+ENV WIKILLM_WEB_DIST=/app/.exampleproject-runtime/$runtime_id/web
+LABEL com.exampleproject.runtime=$runtime_id
+EOF
     docker build \
       --pull=false \
       --network none \
