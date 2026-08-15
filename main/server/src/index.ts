@@ -31,7 +31,6 @@ import { scanVault, readPage, writePage } from './lib/vault.js';
 import { heartbeat } from './lib/events.js';
 import { migrateAiLogsToOperationLog } from './pipeline/indexFile.js';
 import { migrateIngestLedger } from './pipeline/sourceLedger.js';
-import { queueMissingPageSynthesesAsync } from './pipeline/pageSynthesis.js';
 import { reconcilePendingCandidates } from './pipeline/candidateLedger.js';
 
 /** AIWorks 系统区页面不参与整理、不打标签 */
@@ -104,11 +103,11 @@ async function main() {
   reconcilePendingCandidates();
   migrateAiLogsToOperationLog();
   cleanupSystemPages();
-  // 把启动时残留的 pending 合成任务标为 failed，让冷却机制接管，避免 job runner
-  // 立即拾取执行、调 LLM 阻塞事件循环致 502。需要的新合成由延迟补齐重新入队。
+  // 启动时把残留的 pending AI 派生任务标为 failed，避免 job runner 立即拾取执行、
+  // 调 LLM 或密集同步 DB 写阻塞事件循环致 502。合成等任务改为按需触发，不在启动时批量跑。
   db.prepare(
-    `UPDATE jobs SET status='failed',stage='启动清理',error='启动时清理的残留合成任务',updated_at=?
-     WHERE kind='page_recompose' AND status='pending'`
+    `UPDATE jobs SET status='failed',stage='启动清理',error='启动时清理的残留AI任务',updated_at=?
+     WHERE status='pending' AND kind IN ('page_recompose','process','metagen','dream_apply','candidate_review_batch','candidate_reconcile')`
   ).run(now());
   startJobRunner();
   scheduleDreamCycle();
@@ -120,16 +119,8 @@ async function main() {
 
   await app.listen({ port: PORT, host: HOST });
   console.log(`LLM Wiki 已启动: http://localhost:${PORT}`);
-  // 合成补齐延迟 60 秒后再异步执行，确保容器先稳定对外提供服务（静态资源、
-  // 健康探针），避免启动初期 loadPageEvidence 同步 DB 读冻结主线程致页面空白。
-  const synthTimer = setTimeout(
-    () =>
-      queueMissingPageSynthesesAsync().catch((e) =>
-        console.error('[synthesis] 补齐缺失合成失败:', e?.message || e),
-      ),
-    60_000,
-  );
-  synthTimer.unref();
+  // 不在启动时自动批量补齐合成。loadPageEvidence 的同步 DB 读会冻结事件循环，
+  // 延迟/降批只是推迟阻塞，仍会拖垮容器。合成改为只在入库或手动触发时按单页跑。
 }
 
 main().catch((e) => {
