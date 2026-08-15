@@ -543,6 +543,11 @@ export function migrate() {
   ensureColumn('jobs', 'updated_at', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('jobs', 'cancel_requested', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('jobs', 'run_token', `TEXT NOT NULL DEFAULT ''`);
+  // jobs 表 status 索引：job runner 每秒 tick 查 WHERE status='pending'/'running'，
+  // 无索引时全表扫描；大量 failed/done 行积累后拖慢 DB、争用磁盘 I/O 致事件循环间歇阻塞。
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_kind_status ON jobs(kind, status)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_run_token ON jobs(run_token)`);
   ensureColumn('reports', 'issue_key', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('reports', 'fingerprint', `TEXT NOT NULL DEFAULT ''`);
   backfillReportIdentity();
