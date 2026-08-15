@@ -21,9 +21,17 @@ services:
       TZ: Asia/Shanghai
       DEFAULT_PASSWORD: "${DEFAULT_PASSWORD:-CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER}"
       OFFICE_EDITOR_ENABLED: "false"
+    sysctls:
+      net.ipv4.tcp_mtu_probing: "1"
     restart: unless-stopped
 
 volumes:
   worktree-data:
     name: "example-wiki-data-${WIKILLM_FEATURE}"
     external: true
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "${WIKILLM_NETWORK_MTU:-1400}"
