@@ -3,9 +3,11 @@ import type { ZodType } from 'zod';
 import { db, now } from './db.js';
 import {
   chatJsonSchema,
+  chatToolSchema,
   getActiveChat,
   getLlmConfig,
   type ChatMessage,
+  type ToolSchemaOptions,
 } from './llm.js';
 import { recordLlmResultCacheHit } from './llmUsage.js';
 
@@ -36,6 +38,9 @@ export interface SemanticStageInput<T> {
   maxTokens?: number;
   retries?: number;
   signal?: AbortSignal;
+  /** 启用后用 function calling 取结构化输出，绕开 JSON mode；仅需要规避推理模型在
+   *  JSON mode 下返回纯文本的场景（如 page-synthesis-compose）开启。 */
+  toolMode?: ToolSchemaOptions;
 }
 
 function hash(value: unknown): string {
@@ -190,27 +195,26 @@ export async function runSemanticStage<T>(options: SemanticStageInput<T>): Promi
     }
   }
   try {
-    const output = await chatJsonSchema<T>(
-      options.schema,
-      messages,
-      {
-        temperature: options.temperature ?? 0.1,
-        maxTokens: options.maxTokens ?? 8000,
-        retries: options.retries ?? 1,
-        tag: options.tag,
-        signal: options.signal,
-        usageContext: {
-          scope: options.scope,
-          refId: options.refId || '',
-          stage: options.stage,
-          prefixHash,
-          historyMessages: prefixMessages.length,
-          promptVersion,
-          cacheScope,
-          dependencyHash,
-        },
+    const stageOpts = {
+      temperature: options.temperature ?? 0.1,
+      maxTokens: options.maxTokens ?? 8000,
+      retries: options.retries ?? 1,
+      tag: options.tag,
+      signal: options.signal,
+      usageContext: {
+        scope: options.scope,
+        refId: options.refId || '',
+        stage: options.stage,
+        prefixHash,
+        historyMessages: prefixMessages.length,
+        promptVersion,
+        cacheScope,
+        dependencyHash,
       },
-    );
+    };
+    const output = options.toolMode
+      ? await chatToolSchema<T>(options.schema, options.toolMode, messages, stageOpts)
+      : await chatJsonSchema<T>(options.schema, messages, stageOpts);
     appendHistory(options.history, resetHistory, inputContent, output);
     if (options.resultCache) {
       const serialized = JSON.stringify(output);

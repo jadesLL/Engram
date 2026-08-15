@@ -415,6 +415,7 @@ type ChatOptions = {
   signal?: AbortSignal;
   tag?: string;
   usageContext?: LlmRequestOptions['usageContext'];
+  disableThinking?: boolean;
 };
 
 /** 非流式对话 */
@@ -492,6 +493,8 @@ export async function chatWithTools(
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
+  // 结构化输出场景关闭推理，避免 reasoning_content 占满 max_tokens 导致 content 为空
+  if (opts?.disableThinking) body.thinking = { type: 'disabled' };
   const res = await request('/chat/completions', body, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat-tools',
@@ -624,6 +627,89 @@ export async function chatJsonSchema<T>(
     if (result.success) return result.data;
     lastError = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
     current = [...current, { role: 'user', content: `输出未通过结构校验：${lastError}。请按原格式完整重输 JSON。` }];
+  }
+  throw new LlmError(`[${tag}] ${lastError}`);
+}
+
+/** 工具调用式结构化输出：用 function calling 取代 JSON mode，规避推理模型在 JSON mode 下
+ *  返回纯文本正文（非 JSON）导致解析失败。对称 chatJsonSchema：tool arguments → JSON.parse →
+ *  Zod 校验，失败带详情重试。结构化输出场景一律关闭 thinking。 */
+export interface ToolSchemaOptions {
+  toolName: string;
+  toolDescription: string;
+  parameters: Record<string, unknown>;
+}
+
+export async function chatToolSchema<T>(
+  schema: ZodType<T>,
+  tool: ToolSchemaOptions,
+  messages: ChatMessage[],
+  opts?: Omit<ChatOptions, 'json'> & { retries?: number; tag?: string }
+): Promise<T> {
+  const tag = opts?.tag || 'chatToolSchema';
+  const attempts = opts?.retries ?? 1;
+  let current = messages;
+  let lastError = 'tool schema validation failed';
+  for (let attempt = 0; attempt <= attempts; attempt++) {
+    opts?.signal?.throwIfAborted();
+    const def: ChatToolDefinition = {
+      type: 'function',
+      function: {
+        name: tool.toolName,
+        description: tool.toolDescription,
+        parameters: tool.parameters,
+      },
+    };
+    const result = await chatWithTools(current, [def], {
+      ...opts,
+      disableThinking: true,
+      tag,
+    });
+    const call = result.toolCalls[0];
+    if (!call) {
+      lastError = result.content
+        ? `模型未调用工具，返回了纯文本（前80字: ${result.content.slice(0, 80).replace(/\n/g, ' ')}）`
+        : '模型未返回工具调用或文本';
+      console.warn(`[llm.chatToolSchema:${tag}] 未调用工具`, lastError);
+      if (attempt < attempts) {
+        current = [
+          ...current,
+          { role: 'assistant', content: result.content || '' },
+          { role: 'user', content: '请调用工具提交结构化结果，不要直接输出文本。' },
+        ];
+        continue;
+      }
+      throw new LlmError(`[${tag}] ${lastError}`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(call.function.arguments);
+    } catch {
+      lastError = `工具参数无法解析为 JSON（前80字: ${call.function.arguments.slice(0, 80).replace(/\n/g, ' ')}）`;
+      console.warn(`[llm.chatToolSchema:${tag}] 参数解析失败`, lastError);
+      if (attempt < attempts) {
+        current = [
+          ...current,
+          { role: 'assistant', content: '', tool_calls: [{ id: call.id, type: 'function', function: { name: call.function.name, arguments: call.function.arguments } }] },
+          { role: 'tool', tool_call_id: call.id, content: '参数无法解析为合法 JSON。请重新调用工具，提供完整的 JSON 参数。' },
+        ];
+        continue;
+      }
+      throw new LlmError(`[${tag}] ${lastError}`);
+    }
+    const validated = schema.safeParse(parsed);
+    if (validated.success) return validated.data;
+    lastError = validated.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ');
+    console.warn(`[llm.chatToolSchema:${tag}] 结构校验失败`, lastError);
+    if (attempt < attempts) {
+      current = [
+        ...current,
+        { role: 'assistant', content: '', tool_calls: [{ id: call.id, type: 'function', function: { name: call.function.name, arguments: call.function.arguments } }] },
+        { role: 'tool', tool_call_id: call.id, content: `输出未通过结构校验：${lastError}。请按工具参数结构重新调用，提供完整且合法的参数。` },
+      ];
+      continue;
+    }
+    throw new LlmError(`[${tag}] ${lastError}`);
   }
   throw new LlmError(`[${tag}] ${lastError}`);
 }

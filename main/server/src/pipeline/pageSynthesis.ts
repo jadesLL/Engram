@@ -96,6 +96,101 @@ const synthesisVerifySchema = z.object({
 type SynthesisOutput = z.infer<typeof synthesisOutputSchema>;
 type SynthesisVerifyOutput = z.infer<typeof synthesisVerifySchema>;
 
+/** synthesisOutputSchema 对应的工具参数 JSON schema（手写，运行时由 Zod 兜底校验）。
+ *  用于 function calling 式结构化输出，规避 JSON mode 下推理模型返回纯文本。 */
+const synthesisToolParameters: Record<string, unknown> = {
+  type: 'object',
+  required: ['summary', 'sections', 'manualChangesPreserved'],
+  additionalProperties: false,
+  properties: {
+    summary: { type: 'string', description: '整页摘要' },
+    domain: { type: 'string', description: '领域' },
+    confidence: { type: 'string', enum: ['高', '中', '低'], description: '置信度' },
+    sections: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 12,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          heading: { type: 'string', description: '首段留空，后续为章节名' },
+          paragraphs: {
+            type: 'array',
+            maxItems: 12,
+            items: {
+              type: 'object',
+              required: ['text', 'evidenceIds'],
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string' },
+                evidenceIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 30 },
+              },
+            },
+          },
+          bullets: {
+            type: 'array',
+            maxItems: 30,
+            items: {
+              type: 'object',
+              required: ['text', 'evidenceIds'],
+              additionalProperties: false,
+              properties: {
+                text: { type: 'string' },
+                evidenceIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 30 },
+              },
+            },
+          },
+        },
+      },
+    },
+    related: {
+      type: 'array',
+      maxItems: 30,
+      items: {
+        type: 'object',
+        required: ['title', 'note', 'evidenceIds'],
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          note: { type: 'string' },
+          evidenceIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 30 },
+        },
+      },
+    },
+    timeline: {
+      type: 'array',
+      maxItems: 40,
+      items: {
+        type: 'object',
+        required: ['date', 'event', 'evidenceIds'],
+        additionalProperties: false,
+        properties: {
+          date: { type: 'string' },
+          event: { type: 'string' },
+          evidenceIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 30 },
+        },
+      },
+    },
+    unresolvedConflicts: { type: 'array', items: { type: 'string' } },
+    gaps: {
+      type: 'array',
+      maxItems: 40,
+      items: {
+        type: 'object',
+        required: ['item'],
+        additionalProperties: false,
+        properties: {
+          item: { type: 'string' },
+          priority: { type: 'string' },
+          use: { type: 'string' },
+        },
+      },
+    },
+    manualChangesPreserved: { type: 'boolean' },
+  },
+};
+
 export interface PageEvidenceFact {
   id: string;
   runId: string;
@@ -774,6 +869,11 @@ export async function recomposePage(
         maxTokens: 12000,
         retries: 1,
         signal,
+        toolMode: {
+          toolName: 'compose_page',
+          toolDescription: '生成本页的整页综合结果。按各字段结构填写，evidenceIds 必须逐字使用 activeEvidence 中的 id。',
+          parameters: synthesisToolParameters,
+        },
       });
       output = synthesisOutputSchema.parse(rawOutput);
       validateEvidenceIds(output, allowedEvidence);
