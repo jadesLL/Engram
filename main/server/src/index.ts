@@ -8,7 +8,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 
 import { ensureDirs, PORT, HOST } from './config.js';
-import { migrate, db, now } from './lib/db.js';
+import { migrate, db } from './lib/db.js';
 import { ensureJwtSecret, ensureDefaultPassword, authRoutes } from './routes/auth.js';
 import { pageRoutes } from './routes/pages.js';
 import { fileRoutes } from './routes/files.js';
@@ -109,12 +109,6 @@ async function main() {
   reconcilePendingCandidates();
   migrateAiLogsToOperationLog();
   cleanupSystemPages();
-  // 启动时把残留的 pending AI 派生任务标为 failed，避免 job runner 立即拾取执行、
-  // 调 LLM 或密集同步 DB 写阻塞事件循环致 502。合成等任务改为按需触发，不在启动时批量跑。
-  db.prepare(
-    `UPDATE jobs SET status='failed',stage='启动清理',error='启动时清理的残留AI任务',updated_at=?
-     WHERE status='pending' AND kind IN ('page_recompose','process','metagen','dream_apply','candidate_review_batch','candidate_reconcile')`
-  ).run(now());
   // 清理 30 天前的终态 jobs 行，避免表无限膨胀拖慢 job runner tick 的全表扫描。
   db.prepare(
     `DELETE FROM jobs WHERE status IN ('failed','done','cancelled') AND updated_at < ?`

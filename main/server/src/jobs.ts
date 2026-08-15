@@ -211,6 +211,14 @@ type ActiveExecution = {
 
 const LANE_LIMITS: Record<JobLane, number> = { default: 2, document: 1 };
 const JOB_QUEUE_ENABLED_SETTING = 'job_queue_enabled';
+const STARTUP_DISCARDED_JOB_KINDS = [
+  'page_recompose',
+  'process',
+  'metagen',
+  'dream_apply',
+  'candidate_review_batch',
+  'candidate_reconcile',
+] as const;
 const activeExecutions = new Map<number, ActiveExecution>();
 const polling = { default: false, document: false };
 const idleWaiters = new Set<() => void>();
@@ -221,8 +229,14 @@ export function getJobQueueState(): { running: boolean } {
   return { running: (getSetting(JOB_QUEUE_ENABLED_SETTING) ?? '1') !== '0' };
 }
 
-/** 启动时恢复：把上次被中断、卡在 running 的任务重置回 pending；超过 5 分钟的僵尸标记失败 */
-function recoverStaleJobs() {
+/** 启动时恢复：先丢弃高负载派生任务，再恢复可安全续跑的近期任务。 */
+export function recoverStaleJobs() {
+  const discardedKinds = STARTUP_DISCARDED_JOB_KINDS.map(() => '?').join(',');
+  db.prepare(
+    `UPDATE jobs SET status='failed',stage='启动清理',detail='',
+       error='启动时清理的残留AI任务',run_token='',cancel_requested=0,updated_at=?
+     WHERE status IN ('pending','running') AND kind IN (${discardedKinds})`
+  ).run(now(), ...STARTUP_DISCARDED_JOB_KINDS);
   db.prepare(
     `UPDATE jobs SET status = 'pending', run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'
