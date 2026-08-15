@@ -160,7 +160,7 @@ const PAGE_SYNTHESIS_VERSION = 2;
 /** 失败/冲突的合成在此冷却期内不重新排队，避免启动时狂调 LLM 拖垮事件循环。 */
 const SYNTHESIS_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
 /** 单次补齐合成的入队上限，避免一次性全量入队压垮队列与事件循环。 */
-const SYNTHESIS_BATCH_LIMIT = 50;
+const SYNTHESIS_BATCH_LIMIT = 10;
 
 function sha(value: unknown): string {
   return crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
