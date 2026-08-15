@@ -239,6 +239,7 @@ export async function wipeAiLogsAndRelations(): Promise<AiLogWipeResult> {
       .run(...RELATION_WORDS).changes;
     db.prepare(`DELETE FROM llm_usage`).run();
     db.prepare(`DELETE FROM semantic_cache`).run();
+    try { db.prepare(`DELETE FROM embedding_cache`).run(); } catch { /* 表可能尚未创建 */ }
     db.prepare(
       `DELETE FROM entities
        WHERE id NOT IN (SELECT DISTINCT entity_id FROM edges WHERE entity_id IS NOT NULL)`

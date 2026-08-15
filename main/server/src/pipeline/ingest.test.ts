@@ -191,17 +191,17 @@ test('dense input is split and all candidates pass through bounded stages withou
   capturedRequests = [];
   const rawDir = path.join(temp, 'brain', '原始资料');
   fs.mkdirSync(rawDir, { recursive: true });
-  const lines = Array.from({ length: 18 }, (_, index) => {
+  const lines = Array.from({ length: 21 }, (_, index) => {
     const name = `候选${String(index + 1).padStart(2, '0')}`;
     return `${name}事实A；${'背景信息'.repeat(12)}；${name}事实B；${'补充说明'.repeat(12)}。`;
   });
   fs.writeFileSync(path.join(rawDir, '密集资料.md'), `# 密集资料\n\n${lines.join('\n')}`, 'utf8');
 
   const stats = await ingestRawFile('原始资料/密集资料.md', () => {}, { force: true });
-  assert.deepEqual(stats, { created: 18, merged: 0, skipped: 0, pending: 0 });
+  assert.deepEqual(stats, { created: 21, merged: 0, skipped: 0, pending: 0 });
   assert.equal(
     db.prepare(`SELECT COUNT(*) count FROM pages WHERE deleted=0 AND path LIKE 'Wiki/概念/候选%.md'`).get().count,
-    18,
+    21,
   );
   const run = db.prepare(
     `SELECT id FROM ingest_runs WHERE path='原始资料/密集资料.md' ORDER BY started_at DESC LIMIT 1`
@@ -216,7 +216,7 @@ test('dense input is split and all candidates pass through bounded stages withou
     const count = Array.isArray(payload) ? payload.length : payload.items?.length || 0;
     return [row.stage, count];
   }));
-  assert.deepEqual(counts, { normalize: 18, plan: 18, compose: 18, verify: 18 });
+  assert.deepEqual(counts, { normalize: 21, plan: 21, compose: 21, verify: 21 });
 
   const requestsFor = (marker: string) => capturedRequests.filter((request) =>
     request.messages?.[0]?.content?.includes(marker)
@@ -248,7 +248,7 @@ test('dense input is split and all candidates pass through bounded stages withou
     assert.equal(Object.hasOwn(dynamicInput, 'roster'), false, `${marker} dynamic roster`);
     assert.equal(Object.hasOwn(dynamicInput, 'related'), false, `${marker} dynamic related`);
   }
-  assert.equal(requestsFor('执行 Critic').length, Math.ceil(18 / 8));
+  assert.equal(requestsFor('执行 Critic').length, Math.ceil(21 / 8));
   assert.equal(requestsFor('执行 Question Finder').length, 0);
   const verifyRequests = requestsFor('执行 Verifier');
   assert.ok(verifyRequests.length >= 2);
@@ -288,21 +288,21 @@ test('identical forced ingest reuses the validated pipeline result', async () =>
 
 test('a map result exactly at the batch limit is split again to avoid a silent ceiling', async () => {
   const rawDir = path.join(temp, 'brain', '原始资料');
-  const lines = Array.from({ length: 16 }, (_, index) => {
+  const lines = Array.from({ length: 20 }, (_, index) => {
     const name = `候选${String(index + 31).padStart(2, '0')}`;
     return `${name}事实A；${'边界背景'.repeat(12)}；${name}事实B；${'边界补充'.repeat(12)}。`;
   });
   fs.writeFileSync(path.join(rawDir, '边界资料.md'), lines.join('\n'), 'utf8');
 
   const stats = await ingestRawFile('原始资料/边界资料.md', () => {}, { force: true });
-  assert.equal(stats.created, 16);
+  assert.equal(stats.created, 20);
   const run = db.prepare(
     `SELECT id FROM ingest_runs WHERE path='原始资料/边界资料.md' ORDER BY started_at DESC LIMIT 1`
   ).get();
   const split = db.prepare(
     `SELECT payload FROM ingest_audit WHERE run_id=? AND stage LIKE 'map_split:%' ORDER BY id LIMIT 1`
   ).get(run.id);
-  assert.match(JSON.parse(split.payload).reason, /单段上限 16/);
+  assert.match(JSON.parse(split.payload).reason, /单段上限 20/);
 });
 
 test('missing or duplicate candidate ids fail the run instead of silently dropping content', async () => {

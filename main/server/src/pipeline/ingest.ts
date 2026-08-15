@@ -43,6 +43,7 @@ import { reconcileQuestionsAfterRun, syncIngestQuestionReport } from './ingestQu
 import { EXTRACTABLE_EXTENSIONS } from './fileExtraction.js';
 import { chunkLosslessly } from './losslessChunker.js';
 import { finalizeSourceCandidateReingest } from './candidateLedger.js';
+import { appendWikiLog } from './indexFile.js';
 
 export type { IngestStats } from './knowledgeCommit.js';
 export type IngestStage = '解析' | 'Map' | 'Normalize' | 'Plan' | 'Critic' | 'Retrieve' | 'Compose' | 'Verify' | 'Commit';
@@ -203,12 +204,53 @@ function ingestInputSignature(
   }));
 }
 
+/** 规范化引文文本用于模糊匹配：LLM 返回的 quote 经常有标点全半角差异、
+ *  多余空格或换行，纯 includes 会静默丢弃整条 fact。
+ *  归一化后做子串匹配，容忍这些表层差异。 */
+function normalizeForMatch(text: string): string {
+  return text
+    .replace(/\s+/g, '')
+    .replace(/[''＇｀"＂]/g, '"')
+    .replace(/['']/g, "'")
+    .replace(/[，､]/g, ',')
+    .replace(/[。｡]/g, '.')
+    .replace(/[：：]/g, ':')
+    .replace(/[；；]/g, ';')
+    .replace(/[（(]/g, '(')
+    .replace(/[）)]/g, ')')
+    .replace(/[—–－]/g, '-')
+    .replace(/……/g, '...')
+    .toLowerCase();
+}
+
+function quoteInContent(quote: string, content: string): boolean {
+  if (content.includes(quote)) return true;
+  return normalizeForMatch(content).includes(normalizeForMatch(quote));
+}
+
 function validateFacts(candidates: Candidate[], chunks: Iterable<Pick<DocumentChunk, 'id' | 'content'>>): Candidate[] {
   const byId = new Map([...chunks].map((chunk) => [chunk.id, chunk.content]));
   return candidates.map((candidate) => ({
     ...candidate,
-    facts: candidate.facts.filter((fact) => fact.sources.length > 0 && fact.sources.every((source) => byId.get(source.chunkId)?.includes(source.quote))),
+    facts: candidate.facts.filter((fact) => fact.sources.length > 0 && fact.sources.every((source) => {
+      const chunkContent = byId.get(source.chunkId);
+      return chunkContent && quoteInContent(source.quote, chunkContent);
+    })),
   })).filter((candidate) => candidate.facts.length > 0);
+}
+
+/** 并发执行异步任务，限制最大并发数。 */
+async function concurrentMap<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await fn(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  return results;
 }
 
 function batches<T>(items: T[], size: number): T[][] {
@@ -656,21 +698,14 @@ export async function ingestRawFile(
     }
     const rosterEntries = loadRoster();
     const titleRoster = roster(rosterEntries);
-    const rawMapped: Candidate[] = [];
-    const mapHistory = createSemanticCacheSession(`ingest-map:${runId}`, mapPrompt);
-    for (let chunkIndex = 0; chunkIndex < document.chunks.length; chunkIndex++) {
+    const MAP_CONCURRENCY = 3;
+    const mapResults = await concurrentMap(document.chunks, MAP_CONCURRENCY, async (chunk, chunkIndex) => {
       options.signal?.throwIfAborted();
-      const chunk = document.chunks[chunkIndex];
       onProgress({ stage: 'Map', progress: 10 + Math.round(((chunkIndex + 1) / document.chunks.length) * 24), detail: `${chunkIndex + 1}/${document.chunks.length}` });
-      rawMapped.push(...await mapChunk(
-        runId,
-        chunk,
-        titleRoster,
-        mapHistory,
-        chunkIndex === 0 ? 'always' : 'once',
-        options.signal,
-      ));
-    }
+      const history = createSemanticCacheSession(`ingest-map:${runId}:${chunkIndex}`, mapPrompt);
+      return mapChunk(runId, chunk, titleRoster, history, 'always', options.signal);
+    });
+    const rawMapped: Candidate[] = mapResults.flat();
     const mapped = rawMapped.map((candidate, index) => ({
       ...candidate,
       candidateId: `m${String(index + 1).padStart(5, '0')}`,
@@ -951,6 +986,14 @@ export async function ingestRawFile(
       setStatus(relPath, document.contentHash, runId, 'completed');
     });
     finish();
+    try {
+      const parts: string[] = [];
+      if (stats.created) parts.push(`新建 ${stats.created} 页`);
+      if (stats.merged) parts.push(`合并 ${stats.merged} 页`);
+      if (stats.pending) parts.push(`待审 ${stats.pending} 项`);
+      if (stats.skipped) parts.push(`跳过 ${stats.skipped} 项`);
+      appendWikiLog('整理资料', `[[${document.title}]] → ${parts.join(' / ') || '无变更'}`);
+    } catch { /* 日志失败不阻塞整理结果 */ }
     onProgress({ stage: 'Commit', progress: 100, detail: '提交完成' });
     return stats;
   } catch (error: any) {

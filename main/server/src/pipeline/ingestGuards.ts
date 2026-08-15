@@ -34,10 +34,13 @@ export function enforceWriteGate(items: ComposedItem[], verification: VerifierOu
     const unsupported = result?.unsupported.length ?? 0;
     const conflicts = result?.conflicts.length ?? 0;
     const noFacts = item.factIds.length === 0;
-    const mustReview = item.action === 'review' || item.confidence === '低' || noFacts || !result || !result.pass || unsupported > 0 || conflicts > 0;
+    // 已通过验证（pass=true、无无依据内容、无冲突）的候选不再因低置信度强制待审，
+    // 减少不合理的待审堆积。
+    const verified = Boolean(result?.pass) && unsupported === 0 && conflicts === 0;
+    const mustReview = item.action === 'review' || noFacts || !result || !result.pass || unsupported > 0 || conflicts > 0 || (!verified && item.confidence === '低');
     const reasons = [
       item.reason,
-      item.confidence === '低' ? '低置信度' : '',
+      !verified && item.confidence === '低' ? '低置信度' : '',
       noFacts ? '没有有效事实依据' : '',
       !result ? '缺少验证结果' : '',
       result && !result.pass ? '验证未通过' : '',

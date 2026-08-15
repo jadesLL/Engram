@@ -40,6 +40,7 @@ before(async () => {
     );
     const input = payload.input || payload;
     const isVerify = system.includes('验证实体页面');
+    const hasTools = Boolean(body.tools?.length);
     let content: any;
     if (isVerify) {
       content = verifyOverride?.()
@@ -89,9 +90,27 @@ before(async () => {
       };
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(content) } }],
-    }));
+    // compose 阶段使用 tool_calls（pageSynthesis 改用 function calling）；
+    // verify 阶段仍用 JSON content。
+    if (hasTools && !isVerify) {
+      res.end(JSON.stringify({
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: {
+            content: null,
+            tool_calls: [{
+              id: 'call_mock',
+              type: 'function',
+              function: { name: 'compose_page', arguments: JSON.stringify(content) },
+            }],
+          },
+        }],
+      }));
+    } else {
+      res.end(JSON.stringify({
+        choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(content) } }],
+      }));
+    }
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };

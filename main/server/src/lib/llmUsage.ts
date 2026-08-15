@@ -43,6 +43,7 @@ export interface LlmUsageBreakdown extends NormalizedLlmUsage {
   resultCacheHits: number;
   retryRequests: number;
   promptAmplification: number | null;
+  combinedCacheHitRate: number | null;
 }
 
 export interface LlmUsageSummary extends NormalizedLlmUsage {
@@ -55,6 +56,7 @@ export interface LlmUsageSummary extends NormalizedLlmUsage {
   retryRequests: number;
   promptAmplification: number | null;
   latestAt: string | null;
+  combinedCacheHitRate: number | null;
   breakdown: LlmUsageBreakdown[];
 }
 
@@ -252,6 +254,7 @@ type AggregateRow = {
   max_history_messages: number;
   cache_requests: number;
   result_cache_hits: number;
+  provider_cache_hit_calls: number;
   retry_requests: number;
   prompt_tokens: number;
   completion_tokens: number;
@@ -278,6 +281,7 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
        COALESCE(MAX(history_messages),0) max_history_messages,
        COALESCE(SUM(cache_reported),0) cache_requests,
        COALESCE(SUM(result_cache_hit),0) result_cache_hits,
+       COALESCE(SUM(CASE WHEN cache_reported=1 AND cache_read_tokens > 0 THEN 1 ELSE 0 END),0) provider_cache_hit_calls,
        COALESCE(SUM(CASE WHEN retry_reason != '' THEN 1 ELSE 0 END),0) retry_requests,
        COALESCE(SUM(prompt_tokens),0) prompt_tokens,
        COALESCE(SUM(completion_tokens),0) completion_tokens,
@@ -297,6 +301,7 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
        COALESCE(MAX(history_messages),0) max_history_messages,
        COALESCE(SUM(cache_reported),0) cache_requests,
        COALESCE(SUM(result_cache_hit),0) result_cache_hits,
+       COALESCE(SUM(CASE WHEN cache_reported=1 AND cache_read_tokens > 0 THEN 1 ELSE 0 END),0) provider_cache_hit_calls,
        COALESCE(SUM(CASE WHEN retry_reason != '' THEN 1 ELSE 0 END),0) retry_requests,
        COALESCE(SUM(prompt_tokens),0) prompt_tokens,
        COALESCE(SUM(completion_tokens),0) completion_tokens,
@@ -338,6 +343,9 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
     promptAmplification: row.cache_miss_tokens > 0
       ? row.prompt_tokens / row.cache_miss_tokens
       : null,
+    combinedCacheHitRate: row.requests > 0
+      ? (row.result_cache_hits + row.provider_cache_hit_calls) / row.requests
+      : null,
   }));
 
   return {
@@ -357,6 +365,9 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
     retryRequests: aggregate.retry_requests,
     promptAmplification: aggregate.cache_miss_tokens > 0
       ? aggregate.prompt_tokens / aggregate.cache_miss_tokens
+      : null,
+    combinedCacheHitRate: aggregate.requests > 0
+      ? (aggregate.result_cache_hits + aggregate.provider_cache_hit_calls) / aggregate.requests
       : null,
     latestAt: aggregate.latest_at,
     breakdown,

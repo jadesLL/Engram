@@ -4,7 +4,7 @@ import { extractEntities } from './graph/entities.js';
 import { organizePage } from './ai/organize.js';
 import { ingestRawFile } from './pipeline/ingest.js';
 import { runUpgrades } from './pipeline/mentions.js';
-import { regenerateIndex, regenerateRelationships } from './pipeline/indexFile.js';
+import { regenerateIndex, regenerateRelationships, appendWikiLog } from './pipeline/indexFile.js';
 import {
   applyReportDecisions,
   claimReports,
@@ -32,6 +32,7 @@ import { recomposePage } from './pipeline/pageSynthesis.js';
 import { extractFile } from './pipeline/fileExtraction.js';
 import { releaseCandidateReports } from './pipeline/candidateLedger.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
+import { LlmError } from './lib/llm.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -46,6 +47,29 @@ type JobHandler = (
   update: (progress: Partial<JobProgress>) => void,
   context: { jobId: number; signal: AbortSignal },
 ) => Promise<void>;
+
+/**
+ * 判断错误是否为模型相关错误（允许在任务队列中显示为失败）。
+ * 仅以下三类错误允许标记为 failed：
+ * 1. 模型通讯失败（LlmError、网络错误、超时、取消）
+ * 2. 没有额度（429、quota）
+ * 3. 没有配置（未配置 API Key、未配置 LLM）
+ * 其他所有错误（JSON 解析、Zod 校验、数据库、文件系统、逻辑错误等）
+ * 一律不标记为失败，改为标记为"已完成（有警告）"。
+ */
+export function isModelRelatedError(error: any): boolean {
+  if (error instanceof LlmError) return true;
+  if (error?.name === 'AbortError') return true;
+  const msg = String(error?.message || error || '');
+  // 网络通讯错误（fetch 底层异常）
+  if (error?.name === 'TypeError' && /fetch/i.test(msg)) return true;
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN/i.test(msg)) return true;
+  // LLM 相关错误消息
+  if (/未配置.*LLM|尚未配置.*API.*Key|LLM.*请求失败|LLM.*请求超时|AI.*请求已取消|Embedding.*异常|Embedding.*不匹配|推理占用|返回了空内容|返回格式异常|无流式响应|流式响应超时/i.test(msg)) return true;
+  // 额度/限流相关
+  if (/insufficient_quota|rate_limit|429|quota/i.test(msg)) return true;
+  return false;
+}
 
 function jobColumns(): Set<string> {
   return new Set((db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map((column) => column.name));
@@ -190,6 +214,7 @@ const handlers: Record<string, JobHandler> = {
     update({ stage: '运行 梦境整理', progress: 10, detail: '扫描知识库问题' });
     const result = await runDreamCycle(context.signal);
     update({ stage: '梦境整理 已完成', progress: 100, detail: JSON.stringify(result) });
+    try { appendWikiLog('梦境整理', JSON.stringify(result)); } catch { /* 日志失败不阻塞 */ }
   },
   rebuild: async (_payload, update, context) => {
     let progress = 10;
@@ -197,6 +222,7 @@ const handlers: Record<string, JobHandler> = {
       progress = Math.min(95, progress + 5);
       update({ stage: '重建索引', progress, detail: message });
     }, context.signal);
+    try { appendWikiLog('重建索引', '全量重建完成'); } catch { /* 日志失败不阻塞 */ }
   },
 };
 
@@ -384,21 +410,30 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
     ).get(job.id, runToken) as { status: string; cancel_requested: number } | undefined;
     if (state?.status === 'running') {
       const cancelled = controller.signal.aborted || Boolean(state.cancel_requested);
-      db.prepare(
-        `UPDATE jobs SET status=?,stage=?,detail=?,error=?,run_token='',
-           cancel_requested=0,updated_at=? WHERE id=? AND run_token=?`
-      ).run(
-        cancelled ? 'cancelled' : 'failed',
-        cancelled ? '已取消' : '失败',
-        cancelled ? '' : String(error?.message || error).slice(0, 500),
-        cancelled ? null : String(error?.message || error).slice(0, 500),
-        now(),
-        job.id,
-        runToken,
-      );
+      const modelError = !cancelled && isModelRelatedError(error);
+      const errorMsg = String(error?.message || error).slice(0, 500);
+      if (cancelled) {
+        db.prepare(
+          `UPDATE jobs SET status='cancelled',stage='已取消',detail='',error=NULL,
+             run_token='',cancel_requested=0,updated_at=? WHERE id=? AND run_token=?`
+        ).run(now(), job.id, runToken);
+      } else if (modelError) {
+        // 模型相关错误（通讯失败/无额度/未配置）才标记为失败
+        db.prepare(
+          `UPDATE jobs SET status='failed',stage='失败',detail=?,error=?,
+             run_token='',cancel_requested=0,updated_at=? WHERE id=? AND run_token=?`
+        ).run(errorMsg, errorMsg, now(), job.id, runToken);
+      } else {
+        // 非模型错误不标记为失败，改为"已完成（有警告）"
+        console.warn(`[jobs] 非模型错误已自动处理（job #${job.id} ${job.kind}）:`, errorMsg);
+        db.prepare(
+          `UPDATE jobs SET status='done',stage='已完成（有警告）',progress=100,
+             detail=?,error=?,run_token='',cancel_requested=0,updated_at=? WHERE id=? AND run_token=?`
+        ).run(`非模型错误已自动处理：${errorMsg.slice(0, 200)}`, errorMsg, now(), job.id, runToken);
+      }
     }
     releaseJobClaims(job);
-    if (job.kind === 'ingest' && payload.questionId && state?.status !== 'paused') {
+    if (job.kind === 'ingest' && payload.questionId && state?.status !== 'paused' && isModelRelatedError(error)) {
       failIngestQuestionJob(String(payload.questionId), job.id, error);
     }
   } finally {

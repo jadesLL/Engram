@@ -389,6 +389,16 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_semantic_cache_used
     ON semantic_cache(last_used_at DESC);
 
+  CREATE TABLE IF NOT EXISTS embedding_cache (
+    text_hash TEXT NOT NULL,
+    model_key TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    created_at TEXT NOT NULL,
+    last_used_at TEXT NOT NULL,
+    PRIMARY KEY (text_hash, model_key)
+  );
+  CREATE INDEX IF NOT EXISTS idx_embedding_cache_used ON embedding_cache(last_used_at DESC);
+
   CREATE TABLE IF NOT EXISTS office_edit_sessions (
     document_key TEXT PRIMARY KEY,
     path TEXT NOT NULL,
@@ -575,6 +585,13 @@ export function migrate() {
   db.prepare(
     `DELETE FROM semantic_cache WHERE cache_key IN (
        SELECT cache_key FROM semantic_cache ORDER BY last_used_at DESC LIMIT -1 OFFSET 5000
+     )`
+  ).run();
+  const embeddingCacheCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare(`DELETE FROM embedding_cache WHERE last_used_at < ?`).run(embeddingCacheCutoff);
+  db.prepare(
+    `DELETE FROM embedding_cache WHERE rowid IN (
+       SELECT rowid FROM embedding_cache ORDER BY last_used_at DESC LIMIT -1 OFFSET 10000
      )`
   ).run();
 

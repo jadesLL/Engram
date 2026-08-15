@@ -17,7 +17,7 @@ test('map schema preserves candidates within the bounded map batch', () => {
 });
 
 test('map schema rejects an oversized batch instead of truncating it', () => {
-  const candidates = Array.from({ length: 17 }, (_, i) => goodCandidate(`候选${i}`));
+  const candidates = Array.from({ length: 21 }, (_, i) => goodCandidate(`候选${i}`));
   assert.equal(mapOutputSchema.safeParse({ candidates }).success, false);
 });
 

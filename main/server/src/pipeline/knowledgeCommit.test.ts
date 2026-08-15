@@ -160,6 +160,7 @@ test('automatic page creation requires facts from two different source paths and
   const first = {
     ...item('## 核心事实\n\n第一来源事实'),
     name: '跨来源项目',
+    confidence: '中' as const,
     factIds: ['source-1-f1'],
   };
   const firstResult = commitKnowledgeItems([first], {
@@ -258,6 +259,7 @@ test('ignoring a candidate does not block reruns, but a new version of the same 
   const firstResult = commitKnowledgeItems([{
     ...item('## 核心事实\n\n旧版本事实'),
     name: '同路径候选',
+    confidence: '中' as const,
     factIds: ['same-f1'],
   }], {
     runId: 'same-path-run-1',
@@ -277,6 +279,7 @@ test('ignoring a candidate does not block reruns, but a new version of the same 
   const secondResult = commitKnowledgeItems([{
     ...item('## 核心事实\n\n同一路径的新版本事实'),
     name: '同路径候选',
+    confidence: '中' as const,
     factIds: ['same-f2'],
   }], {
     runId: 'same-path-run-2',

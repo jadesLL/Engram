@@ -101,9 +101,26 @@ before(async () => {
           relations: [],
         };
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(content) } }],
-    }));
+    // compose 阶段（跨来源整页综合）使用 tool_calls；其余阶段仍用 JSON content
+    if (body.tools?.length && system.includes('跨来源整页综合')) {
+      res.end(JSON.stringify({
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: {
+            content: null,
+            tool_calls: [{
+              id: 'call_mock',
+              type: 'function',
+              function: { name: 'compose_page', arguments: JSON.stringify(content) },
+            }],
+          },
+        }],
+      }));
+    } else {
+      res.end(JSON.stringify({
+        choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(content) } }],
+      }));
+    }
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
