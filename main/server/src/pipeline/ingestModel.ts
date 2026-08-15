@@ -21,7 +21,7 @@ export const ingestRelationSchema = z.object({
 export const candidateSchema = z.object({
   candidateId: z.string().optional().default(''),
   name: z.string().trim().min(1).max(120),
-  kind: z.enum(['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other']),
+  kind: z.preprocess((v) => mapEnum(v, KIND_MAP, 'other'), z.enum(['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'])),
   domain: z.string().optional().default(''),
   summary: z.string().optional().default(''),
   facts: z.array(factSchema).default([]),
@@ -77,7 +77,7 @@ export const normalizeMergeSchema = z.object({
   canonicalId: z.string().min(1),
   memberIds: z.array(z.string().min(1)).min(2),
   name: z.string().trim().min(1).max(120),
-  kind: z.enum(['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other']),
+  kind: z.preprocess((v) => mapEnum(v, KIND_MAP, 'other'), z.enum(['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'])),
   domain: z.string().optional().default(''),
   summary: z.string().optional().default(''),
 });
@@ -86,7 +86,7 @@ export const normalizeOutputSchema = z.object({
   merges: z.array(normalizeMergeSchema).default([]),
 });
 
-/** kind 中文->英文映射（LLM 偶尔返回中文枚举值） */
+/** kind 中文/role->英文映射（LLM 偶尔返回中文或 role 等非枚举值；role 类一律落到 other，由 Plan/Critic 按事实重定类） */
 const KIND_MAP: Record<string, string> = {
   concept: 'concept', '概念': 'concept', '技术': 'concept', '框架': 'concept',
   person: 'person', '人物': 'person', '人': 'person',
@@ -96,6 +96,7 @@ const KIND_MAP: Record<string, string> = {
   work: 'work', '作品': 'work',
   project: 'project', '项目': 'project', '产品': 'project',
   other: 'other', '其他': 'other',
+  role: 'other', '角色': 'other', '职务': 'other', '职位': 'other', '头衔': 'other',
 };
 /** action 中文->英文映射 */
 const ACTION_MAP: Record<string, string> = {

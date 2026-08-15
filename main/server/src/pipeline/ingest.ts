@@ -49,7 +49,7 @@ export type IngestStage = '解析' | 'Map' | 'Normalize' | 'Plan' | 'Critic' | '
 export type IngestProgress = { stage: IngestStage; progress: number; detail?: string };
 export type IngestProgressCallback = (update: IngestProgress) => void;
 const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
-export const INGEST_PIPELINE_VERSION = '2026-08-13.2';
+export const INGEST_PIPELINE_VERSION = '2026-08-16.1';
 
 function audit(runId: string, stage: string, payload: unknown, input?: unknown) {
   const serialized = JSON.stringify(payload);
@@ -226,7 +226,7 @@ function spreadBatches<T>(items: T[], size: number): T[][] {
 }
 
 function structuredOutputFailure(error: unknown): boolean {
-  return /解析|截断|json|schema|validation|at most|too_big|最多|结构校验/i
+  return /解析|截断|json|schema|validation|enum|at most|too_big|最多|结构校验/i
     .test(String((error as any)?.message || error));
 }
 
