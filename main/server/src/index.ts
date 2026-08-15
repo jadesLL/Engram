@@ -1,14 +1,13 @@
 import path from 'node:path';
-import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
-import fastifyStatic from '@fastify/static';
 
 import { ensureDirs, PORT, HOST } from './config.js';
 import { migrate, db } from './lib/db.js';
+import { registerStaticAssetCache } from './lib/staticAssets.js';
 import { ensureJwtSecret, ensureDefaultPassword, authRoutes } from './routes/auth.js';
 import { pageRoutes } from './routes/pages.js';
 import { fileRoutes } from './routes/files.js';
@@ -85,22 +84,15 @@ async function main() {
   app.get('/health', async () => 'ok');
 
   // 静态托管前端构建产物 + SPA fallback
-  const webDist = path.resolve(__dirname, '../../web/dist');
-  // 启动时把 index.html 读到内存，避免每次 SPA fallback 都 fs.readFileSync 同步读磁盘
-  // ——磁盘 I/O 慢时同步读会阻塞事件循环十几秒，致 healthcheck 探针超时、容器变 unhealthy。
-  const indexHtmlPath = path.join(webDist, 'index.html');
-  const indexHtml = fs.existsSync(indexHtmlPath)
-    ? fs.readFileSync(indexHtmlPath)
-    : null;
-  if (fs.existsSync(webDist)) {
-    await app.register(fastifyStatic, { root: webDist, index: ['index.html'] });
-    app.setNotFoundHandler((req, reply) => {
-      if (req.method === 'GET' && !req.url.startsWith('/api') && !req.url.startsWith('/mcp')) {
-        reply.type('text/html').send(indexHtml);
-      } else {
-        reply.code(404).send({ error: 'not found' });
-      }
-    });
+  const webDist = process.env.WIKILLM_WEB_DIST
+    ? path.resolve(process.env.WIKILLM_WEB_DIST)
+    : path.resolve(__dirname, '../../web/dist');
+  const cache = await registerStaticAssetCache(app, webDist);
+  if (cache.files) {
+    app.log.info(
+      { files: cache.files, bytes: cache.totalBytes },
+      'Frontend static assets cached in memory',
+    );
   }
 
   // 启动：扫描 vault 同步 DB、迁移历史 AI 日志进操作日志、清理系统区页面标签、启动任务队列与 Dream Cycle
