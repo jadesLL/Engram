@@ -48,3 +48,43 @@ test('map schema accepts non-array candidates by falling back to empty', () => {
   const out = mapOutputSchema.parse({ candidates: 'oops' });
   assert.deepEqual(out.candidates, []);
 });
+
+test('map schema normalizes out-of-enum kind "role" to "other" instead of failing', () => {
+  const candidates = [goodCandidate('角色候选')];
+  (candidates[0] as any).kind = 'role';
+  const out = mapOutputSchema.parse({ candidates });
+  assert.equal(out.candidates.length, 1);
+  assert.equal(out.candidates[0].kind, 'other');
+});
+
+test('map schema normalizes Chinese role-like kinds (角色/职务/职位/头衔) to "other"', () => {
+  for (const kind of ['角色', '职务', '职位', '头衔']) {
+    const candidates = [goodCandidate('候选')];
+    (candidates[0] as any).kind = kind;
+    const out = mapOutputSchema.parse({ candidates });
+    assert.equal(out.candidates[0].kind, 'other', `kind=${kind} 应规范化为 other`);
+  }
+});
+
+test('map schema normalizes Chinese kind 人物 to person', () => {
+  const candidates = [goodCandidate('某人')];
+  (candidates[0] as any).kind = '人物';
+  const out = mapOutputSchema.parse({ candidates });
+  assert.equal(out.candidates[0].kind, 'person');
+});
+
+test('map schema still rejects genuinely unknown kind values', () => {
+  const candidates = [goodCandidate('未知候选')];
+  (candidates[0] as any).kind = 'foobar';
+  assert.equal(mapOutputSchema.safeParse({ candidates }).success, false);
+});
+
+test('map schema falls back to other when kind is missing or empty', () => {
+  for (const kind of [undefined, ''] as (string | undefined)[]) {
+    const candidate = { ...goodCandidate('无类型候选') };
+    if (kind === undefined) delete (candidate as any).kind;
+    else (candidate as any).kind = kind;
+    const out = mapOutputSchema.parse({ candidates: [candidate] });
+    assert.equal(out.candidates[0].kind, 'other', `kind=${String(kind)} 应兜底为 other`);
+  }
+});
