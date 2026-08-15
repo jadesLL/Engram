@@ -16,6 +16,8 @@ import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js
 import { clearLlmUsage, summarizeLlmUsage } from '../lib/llmUsage.js';
 import { withJobsStopped } from '../jobs.js';
 import { fetchTenantAccessToken, clearTokenCache } from '../im/feishu/token.js';
+import { getFeishuConfig, isFeishuConfigured } from '../im/feishu/config.js';
+import { getFeishuLongConnStatus, restartFeishuLongConn } from '../im/feishu/longconn.js';
 
 const PUBLIC_SETTINGS = [
   'chat_models', 'active_chat_model',
@@ -65,8 +67,11 @@ export async function settingsRoutes(app: FastifyInstance) {
     for (const k of PUBLIC_SETTINGS) {
       if (body[k] !== undefined) setSetting(k, String(body[k]));
     }
-    // 飞书凭证变更后清除 token 缓存，下次强制用新凭证刷新
-    if (body['feishu_config'] !== undefined) clearTokenCache();
+    // 飞书凭证变更后清除 token 缓存并用新凭证重连长连接，无需重启服务
+    if (body['feishu_config'] !== undefined) {
+      clearTokenCache();
+      restartFeishuLongConn();
+    }
     const { changed } = syncEmbeddingDim();
     // 维度变化 → 自动后台重建全部索引（vec 表换维度后旧向量已失效）
     if (changed) {
@@ -88,6 +93,17 @@ export async function settingsRoutes(app: FastifyInstance) {
       return testModel(body.entry, body.kind);
     }
     return testConnection();
+  });
+
+  /** 飞书长连接状态查询：配置是否完整、连接是否建立、最近事件/错误时间。 */
+  app.get('/api/settings/feishu-status', async () => {
+    const cfg = getFeishuConfig();
+    return {
+      configured: isFeishuConfigured(),
+      appId: cfg.appId ? `${cfg.appId.slice(0, 6)}…` : '',
+      apiBase: cfg.apiBase,
+      longConn: getFeishuLongConnStatus(),
+    };
   });
 
   /** 测试飞书连接：用传入凭证换取 tenant_access_token，验证 appId/appSecret 是否有效。 */

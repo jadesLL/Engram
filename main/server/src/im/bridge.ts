@@ -51,8 +51,15 @@ export function handleImMessage(
   messageId: string,
   text: string,
 ): void {
-  if (!text.trim()) return;
-  if (isDuplicate(`${platform}:${messageId}`)) return;
+  console.log(`[im] 收到消息: platform=${platform} messageId=${messageId} chatId=${chatId} textLen=${text.length}`);
+  if (!text.trim()) {
+    console.warn(`[im] 消息正文为空，忽略: messageId=${messageId}`);
+    return;
+  }
+  if (isDuplicate(`${platform}:${messageId}`)) {
+    console.warn(`[im] 重复消息，忽略: messageId=${messageId}`);
+    return;
+  }
 
   const { sessionId } = getOrCreateImSession(platform, chatId, openId);
   let run;
@@ -60,9 +67,13 @@ export function handleImMessage(
     run = startAssistantRun(sessionId, text, {} as AssistantContext);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    void sendText(openId, `⚠️ ${msg}`).catch(() => {});
+    console.error(`[im] 启动 agent 失败: sessionId=${sessionId} 原因=${msg}`);
+    void sendText(openId, `⚠️ ${msg}`).catch((err) => {
+      console.error('[im] 回发错误提示失败:', err instanceof Error ? err.message : String(err));
+    });
     return;
   }
+  console.log(`[im] agent run 已启动: runId=${run.id} sessionId=${sessionId}`);
 
   const binding: RunBinding = {
     openId,
@@ -74,11 +85,15 @@ export function handleImMessage(
 
   const unsubscribe = subscribeAssistantEvents(run.id, (event, data) => {
     void handleRunEvent(run.id, event, data, binding).catch((err) => {
-      console.error('[im] 事件处理失败', run.id, err);
+      console.error('[im] 事件处理失败', run.id, err instanceof Error ? err.message : String(err));
     });
   });
 
-  void sendText(openId, '🤔 正在思考…').catch(() => {});
+  void sendText(openId, '🤔 正在思考…')
+    .then(() => console.log(`[im] 已回执「正在思考」: runId=${run.id}`))
+    .catch((err) => {
+      console.error('[im] 回执「正在思考」失败:', err instanceof Error ? err.message : String(err));
+    });
 
   // 完成后自动清理 binding 与订阅
   const cleanup = () => {
@@ -107,7 +122,12 @@ async function handleRunEvent(
       const proposed = snap.toolCalls.filter((c: AssistantToolCall) => c.status === 'proposed');
       if (proposed.length === 0) return;
       binding.approvalOpenId = binding.openId;
-      await sendApprovalCard(binding.openId, runId, proposed);
+      try {
+        await sendApprovalCard(binding.openId, runId, proposed);
+        console.log(`[im] 已发送审批卡片: runId=${runId} 待审批=${proposed.length} 项（注意：卡片按钮回调尚未接线，请在 GUI 中审批）`);
+      } catch (err) {
+        console.error(`[im] 发送审批卡片失败: runId=${runId}`, err instanceof Error ? err.message : String(err));
+      }
       break;
     }
     case 'completed': {
@@ -116,14 +136,23 @@ async function handleRunEvent(
         .filter((m: AssistantMessage) => m.role === 'assistant' && !m.metadata?.hidden)
         .pop();
       const reply = assistantMsg?.content?.trim() || binding.deltaText.trim() || '（无回复）';
-      await sendText(binding.openId, reply);
+      try {
+        await sendText(binding.openId, reply);
+        console.log(`[im] 已回发最终回复: runId=${runId} 长度=${reply.length}`);
+      } catch (err) {
+        console.error(`[im] 回发最终回复失败: runId=${runId}`, err instanceof Error ? err.message : String(err));
+      }
       binding._cleanup?.();
       break;
     }
     case 'error': {
       const d = data as { message: string; cancelled: boolean };
       if (!d.cancelled) {
-        await sendText(binding.openId, `⚠️ ${d.message}`);
+        try {
+          await sendText(binding.openId, `⚠️ ${d.message}`);
+        } catch (err) {
+          console.error(`[im] 回发错误消息失败: runId=${runId}`, err instanceof Error ? err.message : String(err));
+        }
       }
       binding._cleanup?.();
       break;

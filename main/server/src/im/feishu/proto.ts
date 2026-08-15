@@ -30,29 +30,44 @@ export interface Frame {
 
 // ---- varint ----
 
-function readVarint(buf: Uint8Array, pos: number): [value: number, next: number] {
-  let result = 0;
-  let shift = 0;
+/**
+ * 读取 varint，内部用 BigInt 支持完整 64 位（飞书的 seqID/logID 是 64 位整数，
+ * 例如 6 字节 varint 表示的 8.1e13，远超 32 位安全范围）。
+ */
+function readVarint64(buf: Uint8Array, pos: number): [value: bigint, next: number] {
+  let result = 0n;
+  let shift = 0n;
   let p = pos;
   for (;;) {
+    if (p >= buf.length) throw new Error('varint 越界');
     const byte = buf[p]!;
     p++;
-    result |= (byte & 0x7f) << shift;
+    result |= BigInt(byte & 0x7f) << shift;
     if ((byte & 0x80) === 0) break;
-    shift += 7;
-    if (shift > 35) throw new Error('varint too long');
+    shift += 7n;
+    if (shift > 63n) throw new Error('varint too long');
   }
-  return [result >>> 0, p];
+  return [result, p];
+}
+
+/**
+ * 读取 varint 并转 number。飞书的 seqID/logID 是 64 位随机 id，可能超出
+ * Number.MAX_SAFE_INTEGER；它们只用于 ACK 回显，转 number 损失的精度对业务无影响。
+ */
+function readVarint(buf: Uint8Array, pos: number): [value: number, next: number] {
+  const [v, next] = readVarint64(buf, pos);
+  return [Number(v), next];
 }
 
 function writeVarint(value: number): number[] {
   const out: number[] = [];
-  let v = value >>> 0;
-  while (v > 0x7f) {
-    out.push((v & 0x7f) | 0x80);
-    v >>>= 7;
+  // 支持写入 >32 位的值（ACK 回显 64 位 seqID/logID）
+  let v = BigInt(value);
+  while (v > 0x7fn) {
+    out.push(Number(v & 0x7fn) | 0x80);
+    v >>= 7n;
   }
-  out.push(v & 0x7f);
+  out.push(Number(v & 0x7fn));
   return out;
 }
 
