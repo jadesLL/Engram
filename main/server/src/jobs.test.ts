@@ -11,6 +11,7 @@ let db: any;
 let now: () => string;
 let cancelJob: (jobId: number) => { status: string };
 let getJobQueueState: () => { running: boolean };
+let recoverStaleJobs: () => void;
 let retryFailedJobs: () => { retried: number; failed: number; errors: string[] };
 let retryJob: (jobId: number) => { status: string };
 let startJobQueue: () => { status: string; started: number; failed: number; errors: string[] };
@@ -27,6 +28,7 @@ before(async () => {
   ({
     cancelJob,
     getJobQueueState,
+    recoverStaleJobs,
     retryFailedJobs,
     retryJob,
     startJobQueue,
@@ -52,6 +54,53 @@ test('job migration adds persistent cancellation and execution token columns', (
   );
   assert.ok(columns.has('cancel_requested'));
   assert.ok(columns.has('run_token'));
+});
+
+test('startup recovery discards interrupted derived jobs before restoring safe work', () => {
+  const report = db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(?,'pending_review',?,'applying','startup-report','startup-report')`
+  ).run(now(), JSON.stringify({ name: '启动残留候选' }));
+  const reportId = Number(report.lastInsertRowid);
+
+  db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at,run_at,run_token,cancel_requested)
+     VALUES('page_recompose','{}','pending',?,?,NULL,'',0)`
+  ).run(now(), now());
+  db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at,run_at,run_token,cancel_requested)
+     VALUES('metagen','{}','running',?,?,?,'derived-run',1)`
+  ).run(now(), now(), now());
+  db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at,run_at,run_token,cancel_requested)
+     VALUES('candidate_reconcile',?,'running',?,?,?,'candidate-run',0)`
+  ).run(JSON.stringify({ reportIds: [reportId] }), now(), now(), now());
+  db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at,run_at,run_token,cancel_requested)
+     VALUES('embed','{"pageId":"safe"}','running',?,?,?,'safe-run',0)`
+  ).run(now(), now(), now());
+  db.prepare(
+    `INSERT INTO jobs(kind,payload,status,created_at,updated_at,run_at,run_token,cancel_requested)
+     VALUES('rebuild','{}','running',datetime('now','-10 minutes'),datetime('now','-10 minutes'),
+            datetime('now','-10 minutes'),'stale-run',0)`
+  ).run();
+
+  recoverStaleJobs();
+
+  assert.deepEqual(
+    db.prepare(`SELECT kind,status,stage,run_token,cancel_requested FROM jobs ORDER BY id`).all(),
+    [
+      { kind: 'page_recompose', status: 'failed', stage: '启动清理', run_token: '', cancel_requested: 0 },
+      { kind: 'metagen', status: 'failed', stage: '启动清理', run_token: '', cancel_requested: 0 },
+      { kind: 'candidate_reconcile', status: 'failed', stage: '启动清理', run_token: '', cancel_requested: 0 },
+      { kind: 'embed', status: 'pending', stage: '等待执行', run_token: '', cancel_requested: 0 },
+      { kind: 'rebuild', status: 'failed', stage: '等待执行', run_token: '', cancel_requested: 0 },
+    ],
+  );
+  assert.equal(
+    db.prepare(`SELECT status FROM reports WHERE id=?`).get(reportId).status,
+    'open',
+  );
 });
 
 test('cancelling a pending candidate reconciliation releases claimed reports', () => {
