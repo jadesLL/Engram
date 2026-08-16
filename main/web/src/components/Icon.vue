@@ -161,6 +161,13 @@ const ICONS: Record<string, string[]> = {
     'M12 18v-6',
     'M9 15h6',
   ],
+  merge: [
+    'M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
+    'M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
+    'M6 9v6',
+    'M6 12h7',
+    'M18 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
+  ],
 };
 
 const paths = computed(() => ICONS[props.name] || ICONS.file);
