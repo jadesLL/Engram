@@ -27,7 +27,11 @@
 pnpm build:desktop
 ```
 
-该命令依次：构建 server → 构建 web → 复制产物到 desktop/ → 装 server 生产依赖 → `@electron/rebuild` 重编 better-sqlite3 对 Electron ABI → `electron-builder` 产出 NSIS 安装包与便携版到 `desktop/dist/`。
+该命令依次：构建 server → 构建 web → `prepare-desktop.js` 复制产物并生成 server 运行时依赖清单（zod 固定 3.25.76）→ 装 server 生产依赖（`--ignore-workspace --no-frozen-lockfile`）→ `electron-builder` 产出 NSIS 安装包与便携版到 `desktop/dist/`（内置 `@electron/rebuild` 自动重编 better-sqlite3 对 Electron ABI）。
+
+**Windows Defender 注意**：打包时 electron-builder 解压 electron 二进制，Defender 实时扫描可能锁定 `electron.exe` 致 `EPERM rename` 失败。构建前请关闭 Defender 实时扫描，或把构建目录加入 Defender 排除项。
+
+**asar 配置**：`desktop/package.json` 设 `asar: false`，资源散放（避免非管理员环境无法创建 symlink）。若以管理员/开发者模式构建可改回 `asar: true`（配合 `asarUnpack` 解包原生模块）。
 
 ## 技术说明
 
