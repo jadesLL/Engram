@@ -104,6 +104,7 @@ function pending(item: KnowledgeItem, context: KnowledgeCommitContext, reason: s
       factIds: item.factIds,
       relations: item.relations || [],
       ambiguity: item.ambiguity,
+      reviewOnly: true,
     },
   }]);
 }
@@ -129,18 +130,11 @@ function enforceCrossSourceGate(
       (sum, candidate) => sum + parseArray<string>(candidate.fact_ids).length,
       0,
     );
-    if (supporting.length && totalFacts >= 2) {
+    // 必须满足：≥2 个不同原始资料来源且总事实≥2 且无歧义，才允许自动建页。
+    // 单来源候选一律降级为 review（挂账等待第二个独立来源出现后自动对账），人工不再审批首次入库。
+    if (supporting.length && totalFacts >= 2 && !item.ambiguity) {
       return { ...item, supportingCandidateIds: supporting.map((candidate) => candidate.id) };
     }
-    // 放宽单来源自动建页门禁：
-    // - 原规则：单来源 ≥2 事实且非低置信度且无歧义
-    // - 新增：单来源 ≥1 事实且高置信度且无歧义
-    // - 新增：单来源 ≥1 事实且中置信度且已通过验证（pass=true、无冲突）且无歧义
-    const singleSourceEligible =
-      (item.factIds.length >= 2 && item.confidence !== '低') ||
-      (item.factIds.length >= 1 && item.confidence === '高') ||
-      (item.factIds.length >= 1 && item.confidence === '中' && item.verified);
-    if (singleSourceEligible && !item.ambiguity) return item;
     return {
       ...item,
       action: 'review' as const,
@@ -149,7 +143,7 @@ function enforceCrossSourceGate(
         item.reason,
         item.ambiguity
           ? '候选身份仍有歧义，需要人工确认'
-          : '单一原始资料自动建页至少需要高置信度或两条有效事实',
+          : '需要至少两个不同原始资料来源支持才能自动建页',
       ].filter(Boolean))].join('；'),
     };
   });
