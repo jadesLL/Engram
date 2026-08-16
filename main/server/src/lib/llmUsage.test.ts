@@ -118,6 +118,54 @@ test('summarizes only provider-reported cache accounting', () => {
   assert.equal(summary.breakdown[0].continuedRequests, 1);
   assert.equal(summary.breakdown[0].maxHistoryMessages, 3);
   assert.equal(summary.breakdown[1].cacheHitRate, null);
+  assert.equal(summary.byOperation.length, 1);
+  assert.equal(summary.byOperation[0].operation, 'chat');
+  assert.equal(summary.byOperation[0].requests, 2);
+  assert.equal(summary.byOperation[0].promptTokens, 1200);
+  assert.equal(summary.byOperation[0].completionTokens, 140);
+});
+
+test('splits usage by model operation type (chat vs embedding)', () => {
+  recordLlmUsage(
+    {
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      operation: 'chat',
+      tag: 'search-answer',
+    },
+    {
+      prompt_tokens: 500,
+      completion_tokens: 200,
+      total_tokens: 700,
+      prompt_cache_hit_tokens: 400,
+      prompt_cache_miss_tokens: 100,
+    },
+    800,
+  );
+  recordLlmUsage(
+    {
+      provider: 'zhipu',
+      model: 'embedding-3',
+      operation: 'embedding',
+      tag: 'embedding',
+    },
+    { prompt_tokens: 300, completion_tokens: 0, total_tokens: 300 },
+    50,
+  );
+
+  const summary = summarizeLlmUsage(7);
+  assert.equal(summary.byOperation.length, 2);
+  const chat = summary.byOperation.find((op) => op.operation === 'chat')!;
+  assert.equal(chat.requests, 1);
+  assert.equal(chat.promptTokens, 500);
+  assert.equal(chat.completionTokens, 200);
+  assert.equal(chat.cacheReadTokens, 400);
+  assert.equal(chat.cacheHitRate, 0.8);
+  const embedding = summary.byOperation.find((op) => op.operation === 'embedding')!;
+  assert.equal(embedding.requests, 1);
+  assert.equal(embedding.promptTokens, 300);
+  assert.equal(embedding.completionTokens, 0);
+  assert.equal(embedding.cacheHitRate, null);
 });
 
 test('clears only model usage rows', () => {
