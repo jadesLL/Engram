@@ -11,6 +11,7 @@ import { requireAuth } from './auth.js';
 import { enqueue, enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages, MergeError } from '../lib/mergePages.js';
+import { renamePageSafely, RenameError } from '../lib/renamePage.js';
 import { pageEvidenceResponse, queuePageRecompose } from '../pipeline/pageSynthesis.js';
 import { isSynthesizable } from '../lib/pageTypes.js';
 import { allPageContributions } from '../pipeline/sourceLedger.js';
@@ -180,6 +181,19 @@ export async function pageRoutes(app: FastifyInstance) {
       await mergePages(keepId || '', otherId || '');
     } catch (e) {
       const status = e instanceof MergeError ? e.status : 500;
+      return reply.code(status).send({ error: e instanceof Error ? e.message : String(e) });
+    }
+    return { ok: true };
+  });
+
+  /** 安全重命名：移动文件 + 改标题 + 重定向所有引用双链（用于实体歧义澄清） */
+  app.post('/api/pages/:id/rename', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { newTitle } = req.body as { newTitle?: string };
+    try {
+      renamePageSafely(id, newTitle || '');
+    } catch (e) {
+      const status = e instanceof RenameError ? e.status : 500;
       return reply.code(status).send({ error: e instanceof Error ? e.message : String(e) });
     }
     return { ok: true };

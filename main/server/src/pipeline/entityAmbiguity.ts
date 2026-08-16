@@ -6,6 +6,7 @@ import {
   type SemanticCacheContextMode,
 } from '../lib/semanticStage.js';
 import type { Candidate, PlanItem } from './ingestModel.js';
+import { isSynthesizable } from '../lib/pageTypes.js';
 
 export interface EntityRosterEntry {
   id?: string;
@@ -130,7 +131,7 @@ export async function classifyEntityName(
   signal?: AbortSignal,
 ): Promise<{ ambiguity: EntityAmbiguity | null; mergeTarget: string; canonicalName: string }> {
   signal?.throwIfAborted();
-  if (!['person', 'project', 'org'].includes(kind)) {
+  if (!isSynthesizable(kind)) {
     return { ambiguity: null, mergeTarget: '', canonicalName: name };
   }
   const decision = await runSemanticStage({
@@ -197,7 +198,7 @@ export async function guardAmbiguousEntityNames(
       validMergeTarget ||
       !['create', 'review', 'merge'].includes(item.action) ||
       rosterTitles.has(cleanName(item.name)) ||
-      !['person', 'project', 'org'].includes(item.kind)
+      !isSynthesizable(item.kind)
     ) {
       output.push(item);
       continue;

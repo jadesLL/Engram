@@ -6,6 +6,7 @@ import { readPage, readPageMeta } from '../lib/vault.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { runUpgrades } from '../pipeline/mentions.js';
 import { addReports } from './reports.js';
+import { classifyEntityName, type EntityRosterEntry } from '../pipeline/entityAmbiguity.js';
 
 interface ReportItem { kind: string; payload: Record<string, any> }
 
@@ -363,6 +364,120 @@ export function taskSectionAudit(): number {
   return addReports(items);
 }
 
+/**
+ * 已入库实体/概念身份歧义全量扫描。
+ * 对每个已入库实体或概念页，用 classifyEntityName 判断其名称是否与名录中其他页面身份混淆
+ * （同名异实、异名同实、别名/转写、称谓不完整）。发现歧义即产出 identity_ambiguity 报告，
+ * 交人工选择合并、重命名澄清或标记误报。
+ */
+export async function taskEntityIdentityAudit(signal?: AbortSignal): Promise<number> {
+  if (!llmReady()) return 0;
+  const pages = knowledgePages();
+  const rosterAll: EntityRosterEntry[] = pages.map((page) => ({
+    id: page.id,
+    title: page.title,
+    type: page.type,
+    summary: page.summary || '',
+  }));
+  const items: ReportItem[] = [];
+  for (const page of pages) {
+    signal?.throwIfAborted();
+    const roster = rosterAll.filter((entry) => entry.id !== page.id);
+    const body = readPage(page.path);
+    const meta = readPageMeta(page.path);
+    try {
+      const decision = await classifyEntityName(
+        page.title,
+        page.type,
+        roster,
+        [page.summary || '', body?.content.slice(0, 2000) || ''].join('\n'),
+        page.id,
+        undefined,
+        {},
+        signal,
+      );
+      if (!decision.ambiguity) continue;
+      const target = decision.mergeTarget
+        ? roster.find((entry) => entry.title === decision.mergeTarget)
+        : undefined;
+      items.push({
+        kind: 'identity_ambiguity',
+        payload: {
+          key: page.id,
+          pageId: page.id,
+          title: page.title,
+          path: page.path,
+          type: page.type,
+          pageUpdated: page.updated_at,
+          ambiguity: decision.ambiguity,
+          suggestedTargetId: target?.id || '',
+          suggestedTargetTitle: decision.mergeTarget || '',
+          canonicalName: decision.canonicalName,
+        },
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      /* 单页身份检查失败不影响其他页面。 */
+    }
+  }
+  return addReports(items);
+}
+
+/** 仅扫描指定新建页面 vs 全量名录，用于入库后增量检测。 */
+export async function scanIdentityAmbiguityForPages(pageIds: string[], signal?: AbortSignal): Promise<number> {
+  if (!llmReady() || !pageIds.length) return 0;
+  const pages = knowledgePages();
+  const byId = new Map(pages.map((page) => [page.id, page]));
+  const rosterAll: EntityRosterEntry[] = pages.map((page) => ({
+    id: page.id,
+    title: page.title,
+    type: page.type,
+    summary: page.summary || '',
+  }));
+  const items: ReportItem[] = [];
+  for (const pageId of pageIds) {
+    signal?.throwIfAborted();
+    const page = byId.get(pageId);
+    if (!page) continue;
+    const roster = rosterAll.filter((entry) => entry.id !== page.id);
+    const body = readPage(page.path);
+    try {
+      const decision = await classifyEntityName(
+        page.title,
+        page.type,
+        roster,
+        [page.summary || '', body?.content.slice(0, 2000) || ''].join('\n'),
+        page.id,
+        undefined,
+        {},
+        signal,
+      );
+      if (!decision.ambiguity) continue;
+      const target = decision.mergeTarget
+        ? roster.find((entry) => entry.title === decision.mergeTarget)
+        : undefined;
+      items.push({
+        kind: 'identity_ambiguity',
+        payload: {
+          key: page.id,
+          pageId: page.id,
+          title: page.title,
+          path: page.path,
+          type: page.type,
+          pageUpdated: page.updated_at,
+          ambiguity: decision.ambiguity,
+          suggestedTargetId: target?.id || '',
+          suggestedTargetTitle: decision.mergeTarget || '',
+          canonicalName: decision.canonicalName,
+        },
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+    }
+  }
+  return addReports(items);
+}
+
 export async function runDreamCycle(signal?: AbortSignal): Promise<Record<string, number>> {
   const result: Record<string, number> = {};
   result.deadlink = await taskDeadlinks(signal);
@@ -375,6 +490,7 @@ export async function runDreamCycle(signal?: AbortSignal): Promise<Record<string
   const health = await taskPageHealth(signal);
   result.enrich = health.enrich;
   result.stale = health.stale;
+  result.identity_ambiguity = await taskEntityIdentityAudit(signal);
   try {
     signal?.throwIfAborted();
     result.upgrades = (await runUpgrades()).length;
@@ -390,7 +506,7 @@ export async function runDreamCycle(signal?: AbortSignal): Promise<Record<string
     const total = Object.values(result).reduce((sum, value) => sum + value, 0);
     appendWikiLog(
       '梦境整理',
-      `死链 ${result.deadlink}｜疑似重复 ${result.duplicate}｜矛盾 ${result.contradiction}｜待丰富 ${result.enrich}｜过期 ${result.stale}｜来源单一 ${result.single_source}｜待补章节 ${result.missing_sections}｜实体升级 ${result.upgrades}｜共 ${total} 项${total ? '，见整理报告' : '，无待处理'}`,
+      `死链 ${result.deadlink}｜疑似重复 ${result.duplicate}｜矛盾 ${result.contradiction}｜待丰富 ${result.enrich}｜过期 ${result.stale}｜来源单一 ${result.single_source}｜待补章节 ${result.missing_sections}｜实体歧义 ${result.identity_ambiguity}｜实体升级 ${result.upgrades}｜共 ${total} 项${total ? '，见整理报告' : '，无待处理'}`,
     );
   } catch {
     /* 日志失败不影响审计结果。 */

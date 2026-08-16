@@ -83,6 +83,41 @@
             <button class="btn small" @click="setStatus(r, 'dismissed')">忽略</button>
           </div>
         </template>
+        <!-- 实体身份歧义：已入库实体/概念名称疑似与另一页面混淆，人工选择合并/重命名/误报 -->
+        <template v-else-if="r.kind === 'identity_ambiguity'">
+          <p><b>{{ r.payload.title }}</b>（{{ pageTypeLabel(r.payload.type) }}）身份可能存在歧义</p>
+          <div v-if="r.payload.ambiguity" class="ambiguity-box">
+            <div class="ambiguity-head">
+              <span class="ambiguity-label">{{ r.payload.ambiguity.label }}</span>
+              <b>{{ r.payload.ambiguity.question }}</b>
+            </div>
+          </div>
+          <p v-if="r.payload.suggestedTargetTitle" class="muted small">
+            模型建议与已有页面「{{ r.payload.suggestedTargetTitle }}」合并为同一对象
+          </p>
+          <div class="review-controls">
+            <input v-model="renameInputs[r.id]" type="text" placeholder="输入新标题以澄清为不同实体" />
+          </div>
+          <div class="actions">
+            <button class="btn small" @click="openPage(r.payload.pageId)">查看</button>
+            <button
+              v-if="r.payload.suggestedTargetId"
+              class="btn small primary"
+              :disabled="renameBusy[r.id]"
+              @click="mergeAmbiguous(r)"
+            >
+              合并到「{{ r.payload.suggestedTargetTitle }}」
+            </button>
+            <button
+              class="btn small"
+              :disabled="renameBusy[r.id] || !renameInputs[r.id]?.trim()"
+              @click="renameEntity(r)"
+            >
+              重命名澄清
+            </button>
+            <button class="btn small" @click="setStatus(r, 'dismissed')">标记误报</button>
+          </div>
+        </template>
         <!-- 待审 -->
         <template v-else-if="r.kind === 'pending_review'">
           <p><b>{{ r.payload.name }}</b>（来自 {{ r.payload.source }}）：{{ r.payload.reason }}</p>
@@ -337,6 +372,8 @@ const reviewNames = reactive<Record<number, string>>({});
 const reviewKinds = reactive<Record<number, 'concept' | 'person' | 'customer' | 'org' | 'place' | 'work' | 'project' | 'other'>>({});
 const reviewTargets = reactive<Record<number, string>>({});
 const reviewBusy = reactive<Record<number, boolean>>({});
+const renameInputs = reactive<Record<number, string>>({});
+const renameBusy = reactive<Record<number, boolean>>({});
 const questionAnswers = reactive<Record<string, string>>({});
 const questionBusy = reactive<Record<string, boolean>>({});
 const questionErrors = reactive<Record<string, string>>({});
@@ -348,6 +385,7 @@ const tabs = [
   { key: 'contradiction', label: '矛盾' },
   { key: 'single_source', label: '来源单一' },
   { key: 'missing_sections', label: '待补章节' },
+  { key: 'identity_ambiguity', label: '实体歧义' },
   { key: 'pending_review', label: '待审' },
   { key: 'ingest_questions', label: '追问' },
   { key: 'enrich', label: '待丰富' },
@@ -527,6 +565,44 @@ async function merge(r: any, keep: 'a' | 'b') {
     await setStatus(r, 'resolved');
   } catch (error: any) {
     notify.error(error?.response?.data?.error || error?.message || '合并失败');
+  }
+}
+
+/** 实体歧义：合并到建议目标页（被检测页归档） */
+async function mergeAmbiguous(r: any) {
+  const keepId = r.payload.suggestedTargetId;
+  const otherId = r.payload.pageId;
+  if (!keepId) return;
+  const ok = await confirmDialog({
+    title: '合并歧义实体',
+    message: `确认「${r.payload.title}」与「${r.payload.suggestedTargetTitle}」是同一对象？前者将合并并入后者并归档。`,
+    confirmText: '合并',
+  });
+  if (!ok) return;
+  renameBusy[r.id] = true;
+  try {
+    await api.post('/api/pages/merge', { keepId, otherId });
+    await setStatus(r, 'resolved');
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || '合并失败');
+  } finally {
+    renameBusy[r.id] = false;
+  }
+}
+
+/** 实体歧义：重命名本页以澄清为不同实体（自动重定向双链） */
+async function renameEntity(r: any) {
+  const newTitle = renameInputs[r.id]?.trim();
+  if (!newTitle) return;
+  renameBusy[r.id] = true;
+  try {
+    await api.post(`/api/pages/${r.payload.pageId}/rename`, { newTitle });
+    await setStatus(r, 'resolved');
+    delete renameInputs[r.id];
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || '重命名失败');
+  } finally {
+    renameBusy[r.id] = false;
   }
 }
 
