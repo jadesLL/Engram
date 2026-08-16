@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { db } from '../lib/db.js';
+import { db, now } from '../lib/db.js';
 import { createPage, readPage, readPageMeta, safeJoin, writePage } from '../lib/vault.js';
 import { TYPE_DIR, isEntity, isSynthesizable } from '../lib/pageTypes.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
@@ -50,6 +50,8 @@ export type KnowledgeItem = ComposedItem & {
   candidateId?: string;
   supportingCandidateIds?: string[];
   evidenceEligible?: boolean;
+  unsupportedSections?: string[];
+  verified?: boolean;
 };
 
 const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
@@ -131,10 +133,12 @@ function enforceCrossSourceGate(
     }
     // 放宽单来源自动建页门禁：
     // - 原规则：单来源 ≥2 事实且非低置信度且无歧义
-    // - 新增：单来源 ≥1 事实且高置信度且无歧义（已通过写入门禁验证的候选可直接建页）
+    // - 新增：单来源 ≥1 事实且高置信度且无歧义
+    // - 新增：单来源 ≥1 事实且中置信度且已通过验证（pass=true、无冲突）且无歧义
     const singleSourceEligible =
       (item.factIds.length >= 2 && item.confidence !== '低') ||
-      (item.factIds.length >= 1 && item.confidence === '高');
+      (item.factIds.length >= 1 && item.confidence === '高') ||
+      (item.factIds.length >= 1 && item.confidence === '中' && item.verified);
     if (singleSourceEligible && !item.ambiguity) return item;
     return {
       ...item,
@@ -300,6 +304,23 @@ export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeC
       sourceRef: context.sourceRef,
     });
     attachSupportingCandidates(page.id, item, known, Boolean(context.manualApproval));
+    // 无依据内容已被 Verifier 清理，但记录为 enrich 报告提示后续补充依据，不阻塞入库。
+    if (item.unsupportedSections?.length) {
+      addReports([{
+        kind: 'enrich',
+        issueKey: `ingest-unsupported:${page.id}`,
+        fingerprint: `${context.runId}:${item.name}`,
+        payload: {
+          pageId: page.id,
+          title: targetName,
+          pageUpdated: now(),
+          unsupportedSections: item.unsupportedSections,
+          source: context.sourceName,
+          runId: context.runId,
+          detail: `整理时清理了 ${item.unsupportedSections.length} 项无依据内容，可补充来源后完善`,
+        },
+      }]);
+    }
     if (item.candidateId) {
       setCandidateStatus(item.candidateId, item.action === 'merge' || existed ? 'merged' : 'approved', page.id);
       resolveCandidateReports(item.candidateId, 'resolved');

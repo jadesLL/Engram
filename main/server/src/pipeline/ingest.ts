@@ -946,6 +946,36 @@ export async function ingestRawFile(
       verifiedItems.push(...result.items);
       audit(runId, `verify:${index + 1}`, result, verifyBatch);
     }
+    // 防御性补跑：coveredItemsStage 已做批次内覆盖校验，此处补齐跨批次遗漏的验证结果，
+    // 避免因单次 LLM 抖动让本可验证的候选落入待审；补跑仍失败则保留缺失，由写入门禁转 review。
+    const verifiedIds = new Set(verifiedItems.map((v) => v.candidateId));
+    const missingVerify = verifyTargets.filter((t) => !verifiedIds.has(t.candidateId));
+    for (const target of missingVerify) {
+      options.signal?.throwIfAborted();
+      const missingFactIds = new Set(target.factIds);
+      const missingFacts = facts.filter((fact) => missingFactIds.has(fact.id));
+      const missingQuestions = questions.questions.filter((question) =>
+        !question.factIds.length || question.factIds.some((factId) => missingFactIds.has(factId))
+      );
+      try {
+        const retried = await coveredItemsStage<VerifierOutput>(
+          runId,
+          verifierOutputSchema,
+          verifierPrompt,
+          { items: [target], facts: missingFacts, questions: missingQuestions },
+          [target],
+          'ingest-verify',
+          7000,
+          `ingest-verify:retry:${target.candidateId}`,
+          undefined,
+          verifyHistory,
+          'once',
+          options.signal,
+        );
+        verifiedItems.push(...retried.items);
+        audit(runId, `verify:retry:${target.candidateId}`, retried, [target]);
+      } catch { /* 补跑仍失败则保留缺失，由写入门禁转 review */ }
+    }
     const verified: VerifierOutput = { items: verifiedItems };
     audit(runId, 'verify', verified, { composed, questions });
     const safeItems = enforceWriteGate(composed.items, verified, allowedFactIds);
