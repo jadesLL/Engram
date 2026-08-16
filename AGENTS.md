@@ -21,8 +21,9 @@ Git 命令默认从当前 `ExampleProject/` 根目录执行。不要运行仍引
 项目规则：
 
 1.优先使用中文。
-2.在功能和代码优化时，要兼顾desaktop和docker两个版本。
+2.在功能和代码优化时，要兼顾desaktop和docker两个版本。同时软件内的版本号显示也要更改成最新版。
 3.构建最新的安装包时要同步构建最新的同版本tar和win安装包，放入releases中相同版本号文件夹内
+
 
 
 ## Windows 桌面端打包
@@ -39,17 +40,17 @@ Git 命令默认从当前 `ExampleProject/` 根目录执行。不要运行仍引
 2. **打 NSIS 安装包**（跳过 extract，直接打包已有 win-unpacked）：
 
 ```bash
-   cd desktop \&\& pnpm exec electron-builder --prepackaged dist/win-unpacked --win nsis
+   cd desktop \\\&\\\& pnpm exec electron-builder --prepackaged dist/win-unpacked --win nsis
    ```
 
-   * `--prepackaged` 跳过 electron 解压/rename，不触发 Defender 锁定；输出文件被扫描锁定时 electron-builder 自动 `waiting for unlock` 重试。
-   * 产出 `desktop/dist/LLM Wiki Setup <version>.exe`，复制到 `releases/<version>/` 并记录提交 ID、构建时间、sha256。
+* `--prepackaged` 跳过 electron 解压/rename，不触发 Defender 锁定；输出文件被扫描锁定时 electron-builder 自动 `waiting for unlock` 重试。
+* 产出 `desktop/dist/LLM Wiki Setup <version>.exe`，复制到 `releases/<version>/` 并记录提交 ID、构建时间、sha256。
 
 **关键坑**：
 
 * `zod` 必须 3.25.76（`@modelcontextprotocol/sdk@1.30` 的 zod-compat `import 'zod/v3'`，3.24.1 无 `./v3` exports 致 ESM 崩；`prepare-desktop.js` 已固定）。
 * `pnpm -C desktop/server install` 需 `--node-linker=hoisted --ignore-workspace --no-frozen-lockfile`（hoisted 让原生模块为真实目录非 symlink，否则 asar 打包时 `@electron/asar` 对 unpack 的 symlink 在 `app.asar.unpacked` 重建会因非管理员无 symlink 权限失败；脱离 workspace + 避锁文件冲突），ignored builds 的 exit 1 用 `|| true` 容忍（better-sqlite3 由 electron-builder 内置 @electron/rebuild 重编）。
-* `desktop/package.json` 设 `asar: true` + `asarUnpack` 解包三个原生模块；把上万 node_modules 散文件合并进单个 `app.asar`，安装从逐文件写出变单归档解压，实测 243 秒→6 秒。asar 打包靠 `pack-asar.js`（EB 因 Defender EPERM 走不到 asar 阶段）；`node-linker=hoisted` 是前提（见上条）。
+* `desktop/package.json` 设 `asar: true` + `asarUnpack` 解包三个原生模块；把上万 node\_modules 散文件合并进单个 `app.asar`，安装从逐文件写出变单归档解压，实测 243 秒→6 秒。asar 打包靠 `pack-asar.js`（EB 因 Defender EPERM 走不到 asar 阶段）；`node-linker=hoisted` 是前提（见上条）。
 * sqlite-vec 在 asar 模式下 `load` 内部 `require.resolve` 返回 `app.asar` 虚拟路径，`better-sqlite3` 的 `loadExtension` 走 native dlopen 不经 asar fs 转换会失败；`server/src/lib/db.ts` 已把路径转成 `app.asar.unpacked` 真实路径（非 asar 环境 Docker/dev 原样工作）。
-* 本地模式默认端口 18080，若被 Docker backend 占用需改 `LOCAL\_PORT` 或加端口回退。
+* 本地模式默认端口 18180（避开 Docker 版的 18080，两者可共存）。若 18180 也被占需改 `LOCAL\\\_PORT` 或加端口回退。
 

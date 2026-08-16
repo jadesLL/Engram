@@ -8,7 +8,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
 
-const LOCAL_PORT = 18080;
+// 默认 18180 避开 Docker 版的 18080；用户本机若同时跑 Docker example-wiki(18080) 与 desktop，
+// 两者互不抢占端口、可共存。
+const LOCAL_PORT = 18180;
 const HEALTH_TIMEOUT_MS = 30000;
 
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
