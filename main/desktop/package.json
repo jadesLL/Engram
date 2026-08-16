@@ -39,7 +39,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "LLM Wiki"
+      "shortcutName": "LLM Wiki",
+      "include": "build/installer.nsh"
     }
   }
 }

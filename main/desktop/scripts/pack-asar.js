@@ -12,14 +12,34 @@ const path = require('node:path');
 
 // @electron/asar 是 electron-builder 的传递依赖，pnpm isolated 模式不暴露到 desktop/node_modules 顶层，
 // 需从 .pnpm 虚拟 store 动态查找。
+const pnpmRoot = path.join(__dirname, '..', '..', 'node_modules', '.pnpm');
 let asar;
 try {
   asar = require('@electron/asar');
 } catch {
-  const pnpmRoot = path.join(__dirname, '..', '..', 'node_modules', '.pnpm');
   const asarPkg = fs.readdirSync(pnpmRoot).find((d) => d.startsWith('@electron+asar@'));
   if (!asarPkg) throw new Error('找不到 @electron/asar，请先在仓库根 pnpm install');
   asar = require(path.join(pnpmRoot, asarPkg, 'node_modules', '@electron', 'asar'));
+}
+
+// patch app-builder-lib 的 NSIS 模板 installSection.nsh：SetDetailsPrint none→both。
+// electron-builder 默认 ShowInstDetails nevershow + SetDetailsPrint none，安装时只有进度条看不到日志；
+// customHeader（installer.nsh）已把详情框改 show，但 File 解压 detail 仍被 none 抑制，故 patch 成 both。
+// 改的是 node_modules 模板，每次 pnpm install 会覆盖，故每次打包前由本脚本重 patch。
+try {
+  const abPkg = fs.readdirSync(pnpmRoot).find((d) => d.startsWith('app-builder-lib@'));
+  if (abPkg) {
+    const nsh = path.join(pnpmRoot, abPkg, 'node_modules', 'app-builder-lib', 'templates', 'nsis', 'installSection.nsh');
+    if (fs.existsSync(nsh)) {
+      const s = fs.readFileSync(nsh, 'utf8');
+      if (s.includes('SetDetailsPrint none')) {
+        fs.writeFileSync(nsh, s.replace(/SetDetailsPrint none/g, 'SetDetailsPrint both'));
+        console.log('[pack-asar] patch installSection.nsh: SetDetailsPrint none→both（安装时显示文件解压日志）');
+      }
+    }
+  }
+} catch (e) {
+  console.log('[pack-asar] 跳过 installSection.nsh patch: ' + e.message);
 }
 
 const desktopRoot = path.resolve(__dirname, '..');
@@ -49,6 +69,16 @@ fs.writeFileSync(
   path.join(staging, 'package.json'),
   JSON.stringify({ name: pkg.name, version: pkg.version, main: 'main.js' }, null, 2)
 );
+
+// 2.5 把 electron.exe 重命名为 productName.exe（--prepackaged 模式不会自动重命名，
+//     NSIS 快捷方式指向 productName.exe，不重命名则安装后快捷方式失效）
+const productName = pkg.build && pkg.build.productName ? pkg.build.productName : pkg.name;
+const exeSrc = path.join(winUnpacked, 'electron.exe');
+const exeDst = path.join(winUnpacked, productName + '.exe');
+if (fs.existsSync(exeSrc) && !fs.existsSync(exeDst)) {
+  fs.renameSync(exeSrc, exeDst);
+  console.log('[pack-asar] ' + path.basename(exeSrc) + ' → ' + productName + '.exe（快捷方式目标）');
+}
 
 // 3. asar 打包，对齐 package.json 的 asarUnpack（三个原生模块解包到 app.asar.unpacked）
 // 用 unpackDir（基于 relativePath 的 isUnpackedDir 能正确匹配）而非 unpack（其内部 minimatch 用绝对 filename 有 bug）；
