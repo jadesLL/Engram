@@ -22,6 +22,10 @@ copyDir(path.join(mainRoot, 'server', 'dist'), path.join(desktopRoot, 'server', 
 copyDir(path.join(mainRoot, 'web', 'dist'), path.join(desktopRoot, 'web', 'dist'));
 // 3. 生成 desktop/server/package.json：仅运行时依赖，--prod 安装可得到精简 node_modules
 const serverPkg = JSON.parse(fs.readFileSync(path.join(mainRoot, 'server', 'package.json'), 'utf8'));
+const deps = { ...serverPkg.dependencies };
+// 固定 zod 版本：server/package.json 约束 ^3.24.1，但 @modelcontextprotocol/sdk@1.30 的 zod-compat
+// import 'zod/v3'，zod 3.24.1 无 ./v3 exports 致 ESM 崩溃；锁文件解析到 3.25.76，这里对齐。
+if (deps.zod) deps.zod = '^3.25.76';
 fs.writeFileSync(
   path.join(desktopRoot, 'server', 'package.json'),
   JSON.stringify(
@@ -30,7 +34,7 @@ fs.writeFileSync(
       version: serverPkg.version,
       private: true,
       type: serverPkg.type || 'commonjs',
-      dependencies: serverPkg.dependencies || {},
+      dependencies: deps,
     },
     null,
     2
