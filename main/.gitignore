@@ -33,3 +33,6 @@ data
 # tauri / electron native build
 desktop/src-tauri/target
 desktop/src-tauri/gen
+desktop/server/
+desktop/staging/
+desktop/dist/
