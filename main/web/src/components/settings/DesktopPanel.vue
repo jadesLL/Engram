@@ -11,6 +11,14 @@
       </button>
     </div>
 
+    <div v-if="isDesktop" class="desktop-mode-block">
+      <div>
+        <span>桌面端模式</span>
+        <small>当前运行在桌面端壳内，可返回启动页切换本地 / 远端模式</small>
+      </div>
+      <button class="btn" type="button" @click="backToLauncher">返回启动页 / 切换模式</button>
+    </div>
+
     <div class="endpoint-block">
       <div>
         <span>服务器地址</span>
@@ -68,6 +76,17 @@ interface DesktopToken {
 
 const tokens = ref<DesktopToken[]>([]);
 const serverUrl = computed(() => location.origin);
+// 桌面端壳内 window.wikiDesktop 存在；本地模式下启动页被内嵌 Web 应用替换，
+// 设置面板的此按钮成为切换回启动页 / 远端的入口（与菜单互补）。
+const isDesktop = computed(() => typeof window !== 'undefined' && Boolean((window as any).wikiDesktop));
+
+async function backToLauncher() {
+  try {
+    await (window as any).wikiDesktop.openConnectionSettings();
+  } catch {
+    notify.error('无法返回启动页');
+  }
+}
 
 function statusOf(t: DesktopToken): { label: string; cls: string } {
   if (t.revoked) return { label: '已撤销', cls: 'revoked' };
@@ -116,6 +135,33 @@ onMounted(load);
 </script>
 
 <style scoped>
+.desktop-mode-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin: 0 24px 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent, #3b82f6) 30%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 6%, var(--bg-secondary));
+}
+.desktop-mode-block > div {
+  min-width: 0;
+}
+.desktop-mode-block span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.desktop-mode-block small {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 .endpoint-block {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

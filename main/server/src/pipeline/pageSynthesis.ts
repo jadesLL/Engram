@@ -301,6 +301,48 @@ function evidenceId(runId: string, factId: string): string {
   return `${runId}:${factId}`;
 }
 
+/**
+ * 批量预取本页证据事实，避免对每条 contribution 逐个 factLookup 的 N+1 查询。
+ * 同步 DB 读会独占主线程，contribution 多时冻结事件循环、拖垮 /health 探针；
+ * 改为按 run_id 分组的少量查询，兼容 factLookup 的 runId:factId 冒号回退格式。
+ */
+function preloadEvidenceFacts(
+  contributions: ReadonlyArray<{ run_id: string; fact_ids: string; relations: string }>,
+): Map<string, { runId: string; factId: string; statement: string; sources: string }> {
+  const byRun = new Map<string, Set<string>>();
+  const add = (runId: string, factId: string) => {
+    if (!runId || !factId) return;
+    let set = byRun.get(runId);
+    if (!set) { set = new Set(); byRun.set(runId, set); }
+    set.add(factId);
+  };
+  for (const c of contributions) {
+    for (const fid of parseArray<string>(c.fact_ids)) {
+      add(c.run_id, fid);
+      const sep = fid.indexOf(':');
+      if (sep > 0) add(fid.slice(0, sep), fid.slice(sep + 1));
+    }
+    for (const rel of parseArray<{ src: string; word: string; dst: string; factId: string }>(c.relations)) {
+      if (!rel.factId) continue;
+      add(c.run_id, rel.factId);
+      const sep = rel.factId.indexOf(':');
+      if (sep > 0) add(rel.factId.slice(0, sep), rel.factId.slice(sep + 1));
+    }
+  }
+  const map = new Map<string, { runId: string; factId: string; statement: string; sources: string }>();
+  for (const [runId, fids] of byRun) {
+    const idList = [...fids];
+    if (!idList.length) continue;
+    const ph = idList.map(() => '?').join(',');
+    const rows = db.prepare(
+      `SELECT run_id runId,fact_id factId,statement,sources
+       FROM ingest_facts WHERE run_id=? AND fact_id IN (${ph})`
+    ).all(runId, ...idList) as Array<{ runId: string; factId: string; statement: string; sources: string }>;
+    for (const r of rows) map.set(`${r.runId}\0${r.factId}`, r);
+  }
+  return map;
+}
+
 function loadPageEvidence(pageId: string): PageEvidenceBundle | null {
   const row = db.prepare(
     `SELECT id,path,title,type,tags FROM pages WHERE id=? AND deleted=0`
@@ -314,11 +356,19 @@ function loadPageEvidence(pageId: string): PageEvidenceBundle | null {
     tags: parseArray<string>(row.tags || '[]'),
   };
   const contributions = contributionsForProjection(pageId);
+  const factMap = preloadEvidenceFacts(contributions);
+  const factRow = (runId: string, rawFactId: string) => {
+    const direct = factMap.get(`${runId}\0${rawFactId}`);
+    if (direct) return direct;
+    const sep = rawFactId.indexOf(':');
+    if (sep <= 0) return null;
+    return factMap.get(`${rawFactId.slice(0, sep)}\0${rawFactId.slice(sep + 1)}`) || null;
+  };
   const facts = new Map<string, PageEvidenceFact>();
   const relations: PageEvidenceBundle['relations'] = [];
   for (const contribution of contributions) {
     for (const rawFactId of parseArray<string>(contribution.fact_ids)) {
-      const row = factLookup(contribution.run_id, rawFactId);
+      const row = factRow(contribution.run_id, rawFactId);
       if (!row) continue;
       const id = evidenceId(row.runId, row.factId);
       if (!facts.has(id)) {
@@ -336,7 +386,7 @@ function loadPageEvidence(pageId: string): PageEvidenceBundle | null {
       }
     }
     for (const relation of parseArray<{ src: string; word: string; dst: string; factId: string }>(contribution.relations)) {
-      const fact = factLookup(contribution.run_id, relation.factId);
+      const fact = factRow(contribution.run_id, relation.factId);
       if (!fact || !relation.src || !relation.word || !relation.dst) continue;
       relations.push({
         src: relation.src,
@@ -795,8 +845,10 @@ export async function recomposePage(
   synthesisId: string,
   expectedInputHash: string,
   signal?: AbortSignal,
+  onProgress?: (stage: string, round: number) => void,
 ): Promise<{ changed: boolean; synthesisId: string }> {
   signal?.throwIfAborted();
+  onProgress?.('load-evidence', 0);
   const pending = db.prepare(
     `SELECT * FROM page_syntheses WHERE id=? AND page_id=?`
   ).get(synthesisId, pageId) as StoredPageSynthesis | undefined;
@@ -836,20 +888,23 @@ export async function recomposePage(
     let correctionFeedback: string[] | undefined;
     let rendered!: ReturnType<typeof renderOutput>;
     for (let round = 0; ; round++) {
+      onProgress?.('compose', round);
       const rawOutput = await runSemanticStage({
         scope: 'page-synthesis',
         refId: pageId,
         stage: 'compose',
         tag: 'page-synthesis-compose',
         schema: synthesisOutputSchema,
+        // correctionFeedback 移入 input 而非 system：system 稳定后 provider 前缀缓存可命中，
+        // 不同轮次 input 含不同 feedback → cacheKey 仍不同，不会误命中上一轮失败草稿。
         system: acs
-          ? acsPageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged, correctionFeedback)
+          ? acsPageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged)
           : isConceptPage
-            ? conceptSynthesisPrompt(bundle.page.title, roster.text, state.manualChanged, correctionFeedback)
-            : pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged, correctionFeedback),
+            ? conceptSynthesisPrompt(bundle.page.title, roster.text, state.manualChanged)
+            : pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged),
         promptVersion: acs
-          ? 'page-synthesis-compose:acs-1'
-          : isConceptPage ? 'page-synthesis-compose:concept-1' : 'page-synthesis-compose:4',
+          ? 'page-synthesis-compose:acs-2'
+          : isConceptPage ? 'page-synthesis-compose:concept-2' : 'page-synthesis-compose:5',
         cacheScope: 'page-synthesis:compose',
         dependencyHash: state.inputHash,
         resultCache: true,
@@ -864,6 +919,7 @@ export async function recomposePage(
             timeline: state.active.timeline_content,
           } : null,
           currentEditedSynthesis: manualEdited,
+          correctionFeedback,
         },
         temperature: 0.1,
         maxTokens: 12000,
@@ -887,6 +943,7 @@ export async function recomposePage(
       rendered = renderOutput(output, roster.titles, bundle.facts);
       rendered.sections.id = synthesisId;
       if (!rendered.sections.current.trim()) throw new Error('整页综合没有生成有效正文');
+      onProgress?.('verify', round);
       const rawVerify = await runSemanticStage({
         scope: 'page-synthesis',
         refId: pageId,

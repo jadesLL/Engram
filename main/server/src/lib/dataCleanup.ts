@@ -85,7 +85,7 @@ function clearStaleSystemPageIndexes() {
  * Better-sqlite3 的同步调用会独占 Node 主线程，大库清除期间无法响应 HTTP 健康探针。
  * 在每步删除之间让出一次事件循环，使探针等服务有机会被处理。
  */
-const yieldEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+export const yieldEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 /**
  * vec0 虚表（vec_chunks）与 FTS5 虚表（pages_fts/files_fts）不支持 `DELETE ... LIMIT`，
@@ -215,37 +215,45 @@ export async function wipeAiLogsAndRelations(): Promise<AiLogWipeResult> {
   }[];
   let relationCount = 0;
 
-  const clearDb = db.transaction(() => {
-    if (logIds.length) {
-      const ids = logIds.map((row) => row.id);
-      const ph = placeholders(ids);
-      db.prepare(
-        `DELETE FROM vec_chunks WHERE rowid IN (
-           SELECT id FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})
-         )`
-      ).run(...ids);
-      db.prepare(`DELETE FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})`).run(...ids);
-      db.prepare(`DELETE FROM pages_fts WHERE page_id IN (${ph})`).run(...ids);
-      db.prepare(`DELETE FROM edges WHERE src_page IN (${ph}) OR dst_page IN (${ph})`).run(
-        ...ids,
-        ...ids
-      );
-      db.prepare(`DELETE FROM pages WHERE id IN (${ph})`).run(...ids);
-    }
-
-    const relationPh = placeholders(RELATION_WORDS);
-    relationCount = db
-      .prepare(`DELETE FROM edges WHERE rel IN (${relationPh})`)
-      .run(...RELATION_WORDS).changes;
-    db.prepare(`DELETE FROM llm_usage`).run();
-    db.prepare(`DELETE FROM semantic_cache`).run();
-    try { db.prepare(`DELETE FROM embedding_cache`).run(); } catch { /* 表可能尚未创建 */ }
+  if (logIds.length) {
+    const ids = logIds.map((row) => row.id);
+    const ph = placeholders(ids);
+    // 逐步删除日志页相关索引，每步让出事件循环，避免大库同步删除冻结 /health 探针。
     db.prepare(
-      `DELETE FROM entities
-       WHERE id NOT IN (SELECT DISTINCT entity_id FROM edges WHERE entity_id IS NOT NULL)`
-    ).run();
-  });
-  clearDb();
+      `DELETE FROM vec_chunks WHERE rowid IN (
+         SELECT id FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})
+       )`
+    ).run(...ids);
+    await yieldEventLoop();
+    db.prepare(`DELETE FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})`).run(...ids);
+    await yieldEventLoop();
+    db.prepare(`DELETE FROM pages_fts WHERE page_id IN (${ph})`).run(...ids);
+    await yieldEventLoop();
+    db.prepare(`DELETE FROM edges WHERE src_page IN (${ph}) OR dst_page IN (${ph})`).run(
+      ...ids,
+      ...ids,
+    );
+    await yieldEventLoop();
+    db.prepare(`DELETE FROM pages WHERE id IN (${ph})`).run(...ids);
+    await yieldEventLoop();
+  }
+
+  const relationPh = placeholders(RELATION_WORDS);
+  relationCount = db
+    .prepare(`DELETE FROM edges WHERE rel IN (${relationPh})`)
+    .run(...RELATION_WORDS).changes;
+  await yieldEventLoop();
+  db.prepare(`DELETE FROM llm_usage`).run();
+  await yieldEventLoop();
+  db.prepare(`DELETE FROM semantic_cache`).run();
+  await yieldEventLoop();
+  try { db.prepare(`DELETE FROM embedding_cache`).run(); } catch { /* 表可能尚未创建 */ }
+  await yieldEventLoop();
+  db.prepare(
+    `DELETE FROM entities
+     WHERE id NOT IN (SELECT DISTINCT entity_id FROM edges WHERE entity_id IS NOT NULL)`
+  ).run();
+  await yieldEventLoop();
   invalidateGraphCache();
 
   const details = [

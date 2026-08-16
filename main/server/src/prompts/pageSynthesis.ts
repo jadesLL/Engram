@@ -1,15 +1,12 @@
 import { PERSONA, PRINCIPLES } from './common.js';
 
-export function pageSynthesisPrompt(title: string, type: string, roster: string, manualChanged: boolean, correctionFeedback?: string[]): string {
+export function pageSynthesisPrompt(title: string, type: string, roster: string, manualChanged: boolean): string {
   const manual = manualChanged
     ? `用户编辑过上一版综合正文。必须把 previousSynthesis 与 currentEditedSynthesis 的差异视为用户意图：
 - 尽量保留用户新增的事实限定、结构和措辞；
 - 用户文字与证据冲突时不要擅自覆盖，在 unresolvedConflicts 中说明；
 - 只有确实保留了用户修改时 manualChangesPreserved 才能为 true。`
     : '当前综合区没有检测到人工修改，manualChangesPreserved 输出 true。';
-  const correction = correctionFeedback?.length
-    ? `\n\n上一版草稿未通过证据校验，以下内容被判定为无证据支持，本次重写必须删除或改写为证据能直接支持的说法，不要原样保留：\n${correctionFeedback.map((item) => `- ${item}`).join('\n')}`
-    : '';
   return `${PERSONA}
 ${PRINCIPLES}
 
@@ -40,7 +37,9 @@ evidenceIds 必须逐字使用 activeEvidence 中的 id。调用 compose_page �
 - related[]：{title（已有页面名）,note（关联原因）,evidenceIds}
 - timeline[]：{date（证据中的明确日期）,event（状态变化）,evidenceIds}
 - unresolvedConflicts：[]
-- manualChangesPreserved：true${correction}`;
+- manualChangesPreserved：true
+
+若 input 提供 correctionFeedback（上一版草稿未通过证据校验的无证据条目），本次重写必须删除或改写为证据能直接支持的说法，不要原样保留这些条目。`;
 }
 
 export function pageSynthesisVerifyPrompt(manualChanged: boolean): string {
@@ -59,16 +58,13 @@ ${manualChanged ? '6. previousSynthesis 与 currentEditedSynthesis 的人工差�
 {"pass":true,"unsupported":[],"conflicts":[],"manualChangesPreserved":true}`;
 }
 
-export function conceptSynthesisPrompt(title: string, roster: string, manualChanged: boolean, correctionFeedback?: string[]): string {
+export function conceptSynthesisPrompt(title: string, roster: string, manualChanged: boolean): string {
   const manual = manualChanged
     ? `用户编辑过上一版综合正文。必须把 previousSynthesis 与 currentEditedSynthesis 的差异视为用户意图：
 - 尽量保留用户新增的事实限定、结构和措辞；
 - 用户文字与证据冲突时不要擅自覆盖，在 unresolvedConflicts 中说明；
 - 只有确实保留了用户修改时 manualChangesPreserved 才能为 true。`
     : '当前综合区没有检测到人工修改，manualChangesPreserved 输出 true。';
-  const correction = correctionFeedback?.length
-    ? `\n\n上一版草稿未通过证据校验，以下内容被判定为无证据支持，本次重写必须删除或改写为证据能直接支持的说法，不要原样保留：\n${correctionFeedback.map((item) => `- ${item}`).join('\n')}`
-    : '';
   return `${PERSONA}
 ${PRINCIPLES}
 
@@ -98,7 +94,9 @@ evidenceIds 必须逐字使用 activeEvidence 中的 id。调用 compose_page �
 - related[]：{title（已有页面名）,note（关联原因）,evidenceIds}
 - timeline[]：概念页一律留空
 - unresolvedConflicts：[]
-- manualChangesPreserved：true${correction}`;
+- manualChangesPreserved：true
+
+若 input 提供 correctionFeedback（上一版草稿未通过证据校验的无证据条目），本次重写必须删除或改写为证据能直接支持的说法，不要原样保留这些条目。`;
 }
 
 export function conceptSynthesisVerifyPrompt(manualChanged: boolean): string {

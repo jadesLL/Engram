@@ -32,7 +32,6 @@ export function acsPageSynthesisPrompt(
   type: string,
   roster: string,
   manualChanged: boolean,
-  correctionFeedback?: string[],
 ): string {
   const manual = manualChanged
     ? `用户编辑过上一版综合正文。必须把 previousSynthesis 与 currentEditedSynthesis 的差异视为用户意图：
@@ -40,9 +39,6 @@ export function acsPageSynthesisPrompt(
 - 用户文字与证据冲突时不要擅自覆盖，在 unresolvedConflicts 中说明；
 - 只有确实保留了用户修改时 manualChangesPreserved 才能为 true。`
     : '当前综合区没有检测到人工修改，manualChangesPreserved 输出 true。';
-  const correction = correctionFeedback?.length
-    ? `\n\n上一版草稿未通过证据校验，以下内容被判定为无证据支持，本次重写必须删除或改写为证据能直接支持的说法，不要原样保留：\n${correctionFeedback.map((item) => `- ${item}`).join('\n')}`
-    : '';
   return `${PERSONA}
 ${PRINCIPLES}
 
@@ -74,7 +70,9 @@ evidenceIds 必须逐字使用 activeEvidence 中的 id。调用 compose_page �
 - timeline[]：{date（证据中的明确日期）,event（状态变化）,evidenceIds}
 - unresolvedConflicts：[]
 - gaps[]：{item（缺失的关键资料/待验证信息）,priority（高|中|低）,use（支撑什么分析或动作）}
-- manualChangesPreserved：true${correction}`;
+- manualChangesPreserved：true
+
+若 input 提供 correctionFeedback（上一版草稿未通过证据校验的无证据条目），本次重写必须删除或改写为证据能直接支持的说法，不要原样保留这些条目。`;
 }
 
 /** 整页综合校验的信捷模式变体。与 pageSynthesisVerifyPrompt 同构，额外告知校验器「缺失资料」章节为证据缺口清单。 */

@@ -134,12 +134,19 @@ const handlers: Record<string, JobHandler> = {
     await organizePage(pageId, context.signal);
   },
   page_recompose: async ({ pageId, synthesisId, inputHash }, update, context) => {
-    update({ stage: '跨来源整页综合', progress: 15, detail: pageId });
+    update({ stage: '跨来源整页综合', progress: 15, detail: String(pageId) });
     const result = await recomposePage(
       String(pageId),
       String(synthesisId),
       String(inputHash),
       context.signal,
+      // 每轮 LLM 调用前上报进度刷新 updated_at，避免 abortStaleJobs 的 5 分钟无进度探针
+      // 误杀正在多轮自纠错的合成任务（单次 LLM 最长 120s，多轮累计易超 5 分钟）。
+      (stage, round) => update({
+        stage: `整页综合·${stage}`,
+        progress: Math.min(85, 15 + round * 20 + (stage === 'verify' ? 10 : 0)),
+        detail: `${pageId} · 第 ${round + 1} 轮 ${stage}`,
+      }),
     );
     if (result.changed) {
       update({ stage: '整页综合已写入', progress: 90, detail: result.synthesisId });
