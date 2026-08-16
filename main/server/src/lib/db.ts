@@ -8,7 +8,16 @@ ensureDirs();
 export const db: Database.Database = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
-sqliteVec.load(db);
+// sqlite-vec：Electron asar 打包下 load 内部 require.resolve 返回 app.asar 虚拟路径，
+// better-sqlite3 的 loadExtension 直接走 native dlopen 不经 asar fs 转换会失败；
+// 转成 app.asar.unpacked 真实路径。非 asar 环境（Docker/dev）路径不含 app.asar，原样工作。
+{
+  let vecPath = (sqliteVec as any).getLoadablePath() as string;
+  if (vecPath.includes('app.asar') && !vecPath.includes('app.asar.unpacked')) {
+    vecPath = vecPath.replace(/app\.asar([\\/])/g, 'app.asar.unpacked$1');
+  }
+  db.loadExtension(vecPath);
+}
 
 /** 当前向量维度（随 embedding 模型配置变化；变化时需重建 vec 表与索引） */
 export function getVecDim(): number {

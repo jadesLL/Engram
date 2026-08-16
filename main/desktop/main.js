@@ -85,6 +85,8 @@ function startLocalMode() {
     OFFICE_EDITOR_ENABLED: 'false',
     WIKILLM_WEB_DIST: webDistPath(),
   };
+  // 命门：必须 fork（默认 execPath=electron.exe）+ ELECTRON_RUN_AS_NODE，子进程才以 Electron 纯
+  // Node 模式运行、能读 app.asar 内的 node_modules；改 spawn('node') 会让 server 读不了 asar。
   serverChild = fork(entry, [], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   serverChild.stdout.on('data', (d) => log('[server] ' + d.toString().trim()));
   serverChild.stderr.on('data', (d) => log('[server!] ' + d.toString().trim()));

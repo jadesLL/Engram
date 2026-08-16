@@ -41,11 +41,13 @@ fs.writeFileSync(
   )
 );
 // pnpm 11 不再读 package.json 的 pnpm 字段；onlyBuiltDependencies 需在 pnpm-workspace.yaml。
+// nodeLinker: hoisted 让原生模块（better-sqlite3/sqlite-vec/@napi-rs/canvas）为真实目录而非 pnpm symlink，
+//   否则 asar:true 打包时 @electron/asar 对 unpack 的 symlink 在 app.asar.unpacked 重建会因非管理员无 symlink 权限失败。
 // 允许 better-sqlite3 跑 prebuild-install 下 Node 预编译；Electron ABI 由 electron-builder 内置 @electron/rebuild 重编。
 fs.writeFileSync(
   path.join(desktopRoot, 'server', 'pnpm-workspace.yaml'),
-  'onlyBuiltDependencies:\n  - better-sqlite3\n'
+  'nodeLinker: hoisted\nonlyBuiltDependencies:\n  - better-sqlite3\n'
 );
 
 console.log('[prepare-desktop] 已复制 server/dist、web/dist，并生成 desktop/server/package.json');
-console.log('[prepare-desktop] 下一步：pnpm -C desktop/server install --prod --shamefully-hoist（需联网，届时申请 --allow-downloads）');
+console.log('[prepare-desktop] 下一步：pnpm -C desktop/server install --prod --ignore-workspace --no-frozen-lockfile（nodeLinker 已在 workspace.yaml 设 hoisted；需联网下载时申请 --allow-downloads）');
