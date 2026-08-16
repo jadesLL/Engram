@@ -50,6 +50,8 @@ concept=概念/方法/技术，person=人物（真实姓名），customer=客户
       currentType: page.type,
       content: body.content.slice(0, 15_000),
     },
+    resultCache: true,
+    promptVersion: '2026-08-16',
     maxTokens: 1500,
     signal,
   });

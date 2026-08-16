@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { createCanvas } from '@napi-rs/canvas';
 import type { ZodType } from 'zod';
-import { getSetting } from './db.js';
+import { db, getSetting } from './db.js';
 import { recordLlmUsage, type LlmOperation, type LlmUsageIdentity } from './llmUsage.js';
 import {
   resolveImageInputCapability,
@@ -840,42 +840,112 @@ export function validateEmbedding(embedding: unknown, dim?: number): asserts emb
   }
 }
 
-/** 批量向量化（可走独立的 embedding 服务商配置） */
+/** 计算文本的 SHA-256 哈希（用于 embedding 缓存键） */
+function embedTextHash(text: string): string {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+/** 批量向量化（可走独立的 embedding 服务商配置）。相同文本命中缓存后不调用 API。 */
 export async function embed(texts: string[], signal?: AbortSignal): Promise<number[][]> {
   if (texts.length === 0) return [];
   const cfg = getLlmConfig();
   const entry = getActiveEmbedding();
   if (!cfg.embeddingApiKey) throw new LlmError('尚未配置向量模型 API Key（设置页 → 向量模型）');
-  const body = buildEmbeddingRequestBody(
-    {
-      model: cfg.embeddingModel,
-      dim: entry?.dim,
-      supportsDimensions: entry?.supportsDimensions,
-    },
-    texts
-  );
-  const res = await request(
-    '/embeddings',
-    body,
-    {
-      baseUrl: cfg.embeddingBaseUrl,
-      apiKey: cfg.embeddingApiKey,
-      provider: entry?.provider,
-      model: cfg.embeddingModel,
-      operation: 'embedding',
-      tag: 'embedding',
-      signal,
+  const modelKey = `${cfg.embeddingBaseUrl}|${cfg.embeddingModel}|${entry?.dim || 0}`;
+
+  // 查缓存：相同文本 + 相同模型 → 直接返回已缓存的嵌入向量
+  const textHashes = texts.map(embedTextHash);
+  const placeholders = textHashes.map(() => '?').join(',');
+  const cacheMap = new Map<string, number[]>();
+  const cachedIndices: number[] = [];
+  try {
+    const cached = db.prepare(
+      `SELECT text_hash, embedding FROM embedding_cache WHERE model_key=? AND text_hash IN (${placeholders})`
+    ).all(modelKey, ...textHashes) as { text_hash: string; embedding: Buffer }[];
+    for (const c of cached) {
+      const arr = new Float32Array(c.embedding.buffer, c.embedding.byteOffset, c.embedding.byteLength / 4);
+      cacheMap.set(c.text_hash, Array.from(arr));
     }
-  );
-  const json = await readJsonResponse(res);
-  const data = json?.data;
-  if (!Array.isArray(data)) throw new LlmError('Embedding 返回格式异常');
-  return data
-    .sort((a: any, b: any) => a.index - b.index)
-    .map((d: any) => {
-      validateEmbedding(d?.embedding, entry?.dim);
-      return d.embedding;
-    });
+    for (let i = 0; i < textHashes.length; i++) {
+      if (cacheMap.has(textHashes[i])) cachedIndices.push(i);
+    }
+    if (cachedIndices.length > 0) {
+      const ts = new Date().toISOString();
+      const update = db.prepare(
+        `UPDATE embedding_cache SET last_used_at=? WHERE text_hash=? AND model_key=?`
+      );
+      db.transaction(() => {
+        for (const i of cachedIndices) update.run(ts, textHashes[i], modelKey);
+      })();
+    }
+  } catch { /* embedding_cache 表可能尚未创建 */ }
+
+  // 找出未缓存的文本
+  const uncachedIndices: number[] = [];
+  const uncachedTexts: string[] = [];
+  for (let i = 0; i < texts.length; i++) {
+    if (!cacheMap.has(textHashes[i])) {
+      uncachedIndices.push(i);
+      uncachedTexts.push(texts[i]);
+    }
+  }
+
+  // 调用 API 获取未缓存的嵌入
+  let newEmbeddings: number[][] = [];
+  if (uncachedTexts.length > 0) {
+    const body = buildEmbeddingRequestBody(
+      {
+        model: cfg.embeddingModel,
+        dim: entry?.dim,
+        supportsDimensions: entry?.supportsDimensions,
+      },
+      uncachedTexts
+    );
+    const res = await request(
+      '/embeddings',
+      body,
+      {
+        baseUrl: cfg.embeddingBaseUrl,
+        apiKey: cfg.embeddingApiKey,
+        provider: entry?.provider,
+        model: cfg.embeddingModel,
+        operation: 'embedding',
+        tag: 'embedding',
+        signal,
+      }
+    );
+    const json = await readJsonResponse(res);
+    const data = json?.data;
+    if (!Array.isArray(data)) throw new LlmError('Embedding 返回格式异常');
+    newEmbeddings = data
+      .sort((a: any, b: any) => a.index - b.index)
+      .map((d: any) => {
+        validateEmbedding(d?.embedding, entry?.dim);
+        return d.embedding;
+      });
+
+    // 写入缓存
+    try {
+      const ts = new Date().toISOString();
+      const insert = db.prepare(
+        `INSERT OR REPLACE INTO embedding_cache(text_hash, model_key, embedding, created_at, last_used_at) VALUES(?, ?, ?, ?, ?)`
+      );
+      db.transaction(() => {
+        for (let i = 0; i < uncachedTexts.length; i++) {
+          const buf = Buffer.from(new Float32Array(newEmbeddings[i]).buffer);
+          insert.run(textHashes[uncachedIndices[i]], modelKey, buf, ts, ts);
+        }
+      })();
+    } catch { /* 缓存写入失败不影响结果 */ }
+  }
+
+  // 按原始顺序组装结果
+  const result: number[][] = new Array(texts.length);
+  let uncachedIdx = 0;
+  for (let i = 0; i < texts.length; i++) {
+    result[i] = cacheMap.get(textHashes[i]) ?? newEmbeddings[uncachedIdx++];
+  }
+  return result;
 }
 
 /** 测试连接：依次尝试激活的 chat 与 embedding（复用 testModel，标准一致）。 */

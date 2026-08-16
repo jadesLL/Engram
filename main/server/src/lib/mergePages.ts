@@ -73,12 +73,12 @@ export async function mergePages(keepId: string, otherId: string): Promise<void>
 要求：
 1. 去除与保留页重复的内容。
 2. 保留被合并页中独有、可靠、有长期价值的事实和关系。
-3. 不输出 H1，不输出“当前理解/相关页面/时间线”等外层固定标题。
+3. 不输出 H1，不输出”当前理解/相关页面/时间线”等外层固定标题。
 4. 不描述合并过程，不编造新事实。
 5. 可使用 [[双链]]，但只能引用输入中已经出现的页面名称。
 
 如果被合并页没有任何独有知识，addition 必须输出空字符串。
-只输出 JSON：{"addition":"Markdown 增量正文或空字符串","rationale":"合并取舍说明"}。`,
+只输出 JSON：{“addition”:”Markdown 增量正文或空字符串”,”rationale”:”合并取舍说明”}。`,
     input: {
       keepPage: {
         title: keep.title,
@@ -93,6 +93,8 @@ export async function mergePages(keepId: string, otherId: string): Promise<void>
         content: oc.content.slice(0, 15_000),
       },
     },
+    resultCache: true,
+    promptVersion: '2026-08-16',
     maxTokens: 7000,
   });
   const newContent = insertSemanticAddition(kc.content, decision.addition, other.title, day);

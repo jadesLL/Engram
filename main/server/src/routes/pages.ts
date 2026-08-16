@@ -68,23 +68,25 @@ export async function pageRoutes(app: FastifyInstance) {
   app.post('/api/pages/:id/recompose', async (req, reply) => {
     const { id } = req.params as { id: string };
     const force = (req.query as { force?: string } | undefined)?.force === 'true';
-    const page = db.prepare(`SELECT id,type FROM pages WHERE id=? AND deleted=0`).get(id) as { type: string } | undefined;
+    const page = db.prepare(`SELECT id,title,type FROM pages WHERE id=? AND deleted=0`).get(id) as { title: string; type: string } | undefined;
     if (!page) return reply.code(404).send({ error: '页面不存在' });
     if (!isSynthesizable(page.type)) return reply.code(409).send({ error: '该页面类型不支持整页综合' });
     const synthesisId = queuePageRecompose(id, { force });
     if (!synthesisId) return reply.code(409).send({ error: '页面没有可综合的有效来源事实，或尚未配置模型' });
+    try { appendWikiLog('整页综合', `[[${page.title}]]（${id}）`); } catch { /* 日志失败不阻塞 */ }
     return { ok: true, synthesisId };
   });
 
   /** 按页面重新提炼：反查依赖来源，强制重跑完整提炼管线（连带刷新共享来源的其他页面） */
   app.post('/api/pages/:id/reextract', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const page = db.prepare(`SELECT id,type FROM pages WHERE id=? AND deleted=0`).get(id) as { id: string; type: string } | undefined;
+    const page = db.prepare(`SELECT id,title,type FROM pages WHERE id=? AND deleted=0`).get(id) as { id: string; title: string; type: string } | undefined;
     if (!page) return reply.code(404).send({ error: '页面不存在' });
     if (!isSynthesizable(page.type)) return reply.code(409).send({ error: '该页面类型不支持重新提炼' });
     const sources = [...new Set(allPageContributions(id).map((item) => item.source_path))];
     if (!sources.length) return reply.code(409).send({ error: '该页面没有可重新提炼的来源' });
     enqueue('page_reextract', { pageId: id });
+    try { appendWikiLog('重新提炼', `[[${page.title}]]（${sources.length} 份来源）`); } catch { /* 日志失败不阻塞 */ }
     return { ok: true, sources: sources.length };
   });
 
@@ -149,6 +151,7 @@ export async function pageRoutes(app: FastifyInstance) {
       }
     }
     enqueuePagePipeline(meta.id);
+    try { appendWikiLog('编辑页面', `[[${page.title}]]（${page.path}）`); } catch { /* 日志失败不阻塞 */ }
     const fresh = db.prepare(`SELECT * FROM pages WHERE id = ?`).get(meta.id) as any;
     return { meta: { ...fresh, tags: JSON.parse(fresh.tags) } };
   });
@@ -219,6 +222,7 @@ export async function pageRoutes(app: FastifyInstance) {
       const rd = readPage(newRel);
       if (rd) writePage(newRel, rd.content, { title: newTitle });
     }
+    try { appendWikiLog('移动', `[[${page.title}]] → ${newRel}`); } catch { /* 日志失败不阻塞 */ }
     return { ok: true, meta };
   });
 

@@ -22,7 +22,7 @@ test('fact whitelist deterministically removes unknown ids and forces review', (
   assert.deepEqual(result.rejected[0].invalidFactIds, ['invented']);
 });
 
-test('write gate reviews low confidence, unsupported, conflicts and missing facts', () => {
+test('write gate reviews unsupported, conflicts and missing facts, but verified low confidence passes', () => {
   const items = [
     { ...base, candidateId: 'low', name: '低', confidence: '低' as const, content: 'x' },
     { ...base, candidateId: 'unsupported', name: '无依据', content: 'x' },
@@ -38,6 +38,7 @@ test('write gate reviews low confidence, unsupported, conflicts and missing fact
     { candidateId: 'pass', name: '通过', pass: true, unsupported: [], conflicts: [], content: 'verified' },
   ] };
   const gated = enforceWriteGate(items, verified, new Set(['f1']));
-  assert.deepEqual(gated.map((item) => item.action), ['review', 'review', 'review', 'review', 'create']);
+  // 已通过验证的低置信度候选不再强制 review；未通过验证/无依据/冲突/无事实仍 review
+  assert.deepEqual(gated.map((item) => item.action), ['create', 'review', 'review', 'review', 'create']);
   assert.equal(gated.at(-1)?.content, 'verified');
 });

@@ -61,7 +61,10 @@ export function normalizeCandidateName(value: string): string {
 export function candidateAutoReconcileEligible(candidate: CandidateOccurrence): boolean {
   if (!candidate.evidence_eligible || candidate.confidence === '低') return false;
   if (!parseArray<string>(candidate.fact_ids).length) return false;
-  return !/(歧义|不确定|冲突|类型不清|低置信度|验证未通过|无依据|缺少验证)/.test(
+  // 只阻断真正需要人工判断的质量问题：身份歧义和事实冲突。
+  // 低置信度已由 confidence 字段覆盖，验证未通过已由 evidence_eligible 覆盖，
+  // 之前的关键词检查过宽导致大量可自动对账的候选被锁死在人工通道。
+  return !/(身份仍有歧义|事实冲突|缺少验证结果|类型不清)/.test(
     candidate.reason || '',
   );
 }
@@ -334,7 +337,10 @@ export function reconcilePendingCandidates(): number {
     ) continue;
     const sourceCount = relatedCandidateOccurrences(candidate).length;
     const page = exactPage(candidate);
-    if (!page && sourceCount < 2) continue;
+    // 放宽：单来源高置信度候选也可自动对账，与放宽后的跨来源门禁一致
+    const factCount = parseArray<string>(candidate.fact_ids).length;
+    const highConfidenceSingle = candidate.confidence === '高' && factCount >= 1;
+    if (!page && sourceCount < 2 && !highConfidenceSingle) continue;
     const group = groups.get(candidate.source_path) || [];
     group.push({ candidateId: candidate.id, reportId: report.id });
     groups.set(candidate.source_path, group);

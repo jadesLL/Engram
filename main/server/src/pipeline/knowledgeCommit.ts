@@ -129,11 +129,13 @@ function enforceCrossSourceGate(
     if (supporting.length && totalFacts >= 2) {
       return { ...item, supportingCandidateIds: supporting.map((candidate) => candidate.id) };
     }
+    // 放宽单来源自动建页门禁：
+    // - 原规则：单来源 ≥2 事实且非低置信度且无歧义
+    // - 新增：单来源 ≥1 事实且高置信度且无歧义（已通过写入门禁验证的候选可直接建页）
     const singleSourceEligible =
-      item.factIds.length >= 2 &&
-      item.confidence !== '低' &&
-      !item.ambiguity;
-    if (singleSourceEligible) return item;
+      (item.factIds.length >= 2 && item.confidence !== '低') ||
+      (item.factIds.length >= 1 && item.confidence === '高');
+    if (singleSourceEligible && !item.ambiguity) return item;
     return {
       ...item,
       action: 'review' as const,
@@ -142,7 +144,7 @@ function enforceCrossSourceGate(
         item.reason,
         item.ambiguity
           ? '候选身份仍有歧义，需要人工确认'
-          : '单一原始资料自动建页至少需要两条有效事实',
+          : '单一原始资料自动建页至少需要高置信度或两条有效事实',
       ].filter(Boolean))].join('；'),
     };
   });

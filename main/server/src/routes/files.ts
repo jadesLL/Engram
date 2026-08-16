@@ -148,6 +148,7 @@ export async function fileRoutes(app: FastifyInstance) {
       const fileId = upsertFileRecord(rel, '', 0);
       enqueue('index_file', { fileId });
     }
+    try { appendWikiLog('新建文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
     enqueue('ingest', { path: rel });
     return { ok: true, path: rel, pageId };
   });
@@ -225,6 +226,7 @@ export async function fileRoutes(app: FastifyInstance) {
       if (dir === '原始资料' && INGEST_EXTS.has(ext)) {
         enqueue('ingest', { path: rel });
       }
+      try { appendWikiLog('上传文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
       saved.push({
         path: rel,
         name: path.basename(rel),

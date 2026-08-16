@@ -61,7 +61,7 @@ function sanitizeCandidates(raw: unknown): unknown[] {
     .filter((candidate: any): candidate is object => candidate !== null);
 }
 
-export const MAP_BATCH_LIMIT = 16;
+export const MAP_BATCH_LIMIT = 20;
 export const PLAN_BATCH_LIMIT = 8;
 export const COMPOSE_BATCH_LIMIT = 4;
 export const NORMALIZE_BATCH_LIMIT = 40;
@@ -156,7 +156,7 @@ export const composeOutputSchema = z.object({
 export const composeItemOutputSchema = z.object({
   candidateId: z.string().min(1),
   name: z.string().trim().min(1),
-  content: z.string().min(1).max(3000), // 非空，上限防失控
+  content: z.string().min(1).max(6000), // 非空，上限防失控
 });
 export const composeItemOutputListSchema = z.object({
   items: z.array(composeItemOutputSchema).max(COMPOSE_BATCH_LIMIT).default([]),
