@@ -35,6 +35,8 @@ fs.writeFileSync(
       private: true,
       type: serverPkg.type || 'commonjs',
       dependencies: deps,
+      // 允许 better-sqlite3 跑 prebuild-install 下 Node 预编译；Electron ABI 由 electron-builder 内置 @electron/rebuild 重编
+      pnpm: { onlyBuiltDependencies: ['better-sqlite3'] },
     },
     null,
     2
