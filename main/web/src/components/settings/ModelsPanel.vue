@@ -83,7 +83,8 @@
         </div>
 
         <div class="llm-usage-summary">
-          <span>总缓存命中率 {{ formatUsageRate(llmUsage.cacheHitRate) }}</span>
+          <span>总缓存命中率 {{ formatUsageRate(llmUsage.combinedCacheHitRate) }}</span>
+          <span>供应商前缀 {{ formatUsageRate(llmUsage.cacheHitRate) }}</span>
           <span>缓存读取 {{ formatTokenCount(llmUsage.cacheReadTokens) }}</span>
           <span>未命中 {{ formatTokenCount(llmUsage.cacheMissTokens) }}</span>
           <template v-if="llmUsage.promptAmplification !== null">
@@ -128,7 +129,10 @@
             </span>
             <span>{{ formatTokenCount(item.promptTokens) }}</span>
             <span>{{ formatTokenCount(item.completionTokens) }}</span>
-            <span>{{ formatUsageRate(item.cacheHitRate) }}</span>
+            <span class="llm-usage-hit-cell">
+              <strong>{{ formatUsageRate(item.combinedCacheHitRate) }}</strong>
+              <small>前缀 {{ formatUsageRate(item.cacheHitRate) }}</small>
+            </span>
           </div>
         </div>
       </template>
@@ -531,6 +535,7 @@ interface LlmUsageBreakdown {
   resultCacheHits: number;
   retryRequests: number;
   promptAmplification: number | null;
+  combinedCacheHitRate: number | null;
 }
 
 interface OperationUsage {
@@ -563,6 +568,7 @@ interface LlmUsageSummary {
   resultCacheHits: number;
   retryRequests: number;
   promptAmplification: number | null;
+  combinedCacheHitRate: number | null;
   latestAt: string | null;
   breakdown: LlmUsageBreakdown[];
   byOperation: OperationUsage[];
@@ -585,6 +591,7 @@ function emptyLlmUsage(windowDays = 7): LlmUsageSummary {
     resultCacheHits: 0,
     retryRequests: 0,
     promptAmplification: null,
+    combinedCacheHitRate: null,
     latestAt: null,
     breakdown: [],
     byOperation: [],
@@ -1819,6 +1826,20 @@ onMounted(async () => {
 }
 .llm-usage-row small {
   flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.llm-usage-hit-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.3;
+}
+.llm-usage-hit-cell strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.llm-usage-hit-cell small {
   color: var(--text-faint);
   font-size: 10px;
 }

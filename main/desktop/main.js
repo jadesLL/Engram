@@ -3,7 +3,7 @@
 //  - 本地：fork 内嵌 server 子进程（ELECTRON_RUN_AS_NODE 纯 Node 模式）+ 探活后加载
 //  - 远端：凭 desktop token 调 /api/auth/desktop-exchange 兑换 JWT，预置 cookie 后加载远端页面
 // 启动页 index.html 供用户选择模式或切换连接。
-const { app, BrowserWindow, ipcMain, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, session, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
@@ -181,7 +181,44 @@ function launchByConfig() {
   }
 }
 
-app.whenReady().then(launchByConfig);
+/**
+ * 应用菜单：进入本地模式后启动页被内嵌 Web 应用替换，且下次启动会直接跳过启动页，
+ * 用户无处切换回远端。菜单「返回启动页 / 切换模式」是该场景下唯一稳定的切换入口
+ * （快捷键 CmdOrCtrl+Shift+L），复用 open-connection-settings IPC 的逻辑。
+ */
+function buildAppMenu() {
+  return Menu.buildFromTemplate([
+    {
+      label: 'LLM Wiki',
+      submenu: [
+        {
+          label: '返回启动页 / 切换模式',
+          accelerator: 'CmdOrCtrl+Shift+L',
+          click: () => {
+            stopLocalChild();
+            writeConfig({});
+            if (win) win.loadFile('index.html');
+          },
+        },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: '编辑',
+      submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }],
+    },
+    {
+      label: '视图',
+      submenu: [{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }],
+    },
+  ]);
+}
+
+app.whenReady().then(() => {
+  Menu.setApplicationMenu(buildAppMenu());
+  launchByConfig();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

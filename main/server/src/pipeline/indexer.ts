@@ -104,23 +104,31 @@ export async function indexPage(
   }
   if (vectors.length) assertDim(vectors);
   signal?.throwIfAborted();
-  const replaceChunks = db.transaction(() => {
+  // 先清除旧索引（原子小事务），再分批写入 chunks + 向量，每批之间让出事件循环，
+  // 避免大页（chunk 多）独占主线程冻结 /health 探针。
+  db.transaction(() => {
     db.prepare(
       `DELETE FROM vec_chunks WHERE rowid IN (
          SELECT id FROM chunks WHERE ref_type='page' AND ref_id=?
        )`
     ).run(pageId);
     db.prepare(`DELETE FROM chunks WHERE ref_type='page' AND ref_id=?`).run(pageId);
-    const ins = db.prepare(
-      `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('page', ?, ?, ?, ?)`
-    );
-    const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
-    chunks.forEach((c, i) => {
-      const r = ins.run(pageId, i, c.heading, c.content);
-      if (vectors.length) insVec.run(BigInt(Number(r.lastInsertRowid)), JSON.stringify(vectors[i]));
-    });
-  });
-  replaceChunks();
+  })();
+  const ins = db.prepare(
+    `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('page', ?, ?, ?, ?)`
+  );
+  const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
+  const VEC_BATCH = 64;
+  for (let i = 0; i < chunks.length; i += VEC_BATCH) {
+    const end = Math.min(i + VEC_BATCH, chunks.length);
+    db.transaction(() => {
+      for (let j = i; j < end; j++) {
+        const r = ins.run(pageId, j, chunks[j].heading, chunks[j].content);
+        if (vectors.length) insVec.run(BigInt(Number(r.lastInsertRowid)), JSON.stringify(vectors[j]));
+      }
+    })();
+    if (end < chunks.length) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
   saveIndexState('page', pageId, signature);
   return { chunks: chunks.length, embedded: vectors.length > 0 };
 }
@@ -151,7 +159,7 @@ export async function indexFileText(
   }
   if (vectors.length) assertDim(vectors);
   signal?.throwIfAborted();
-  const replaceChunks = db.transaction(() => {
+  db.transaction(() => {
     db.prepare(
       `DELETE FROM vec_chunks WHERE rowid IN (
          SELECT id FROM chunks WHERE ref_type='file' AND ref_id=?
@@ -164,16 +172,22 @@ export async function indexFileText(
       ftsSegment(file.text),
       fileId
     );
-    const ins = db.prepare(
-      `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('file', ?, ?, '', ?)`
-    );
-    const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
-    chunks.forEach((c, i) => {
-      const r = ins.run(fileId, i, c.content);
-      if (vectors.length) insVec.run(BigInt(Number(r.lastInsertRowid)), JSON.stringify(vectors[i]));
-    });
-  });
-  replaceChunks();
+  })();
+  const ins = db.prepare(
+    `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('file', ?, ?, '', ?)`
+  );
+  const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
+  const FILE_VEC_BATCH = 64;
+  for (let i = 0; i < chunks.length; i += FILE_VEC_BATCH) {
+    const end = Math.min(i + FILE_VEC_BATCH, chunks.length);
+    db.transaction(() => {
+      for (let j = i; j < end; j++) {
+        const r = ins.run(fileId, j, chunks[j].content);
+        if (vectors.length) insVec.run(BigInt(Number(r.lastInsertRowid)), JSON.stringify(vectors[j]));
+      }
+    })();
+    if (end < chunks.length) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
   saveIndexState('file', fileId, signature);
   return { chunks: chunks.length, embedded: vectors.length > 0 };
 }
