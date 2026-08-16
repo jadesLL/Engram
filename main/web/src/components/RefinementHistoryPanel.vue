@@ -118,32 +118,140 @@
             </dl>
           </header>
 
+          <!-- 提炼概览：总页面，汇总本次提炼的关键产出 -->
+          <section v-if="overviewStats" class="overview-section" aria-labelledby="overview-title">
+            <div class="section-title">
+              <div>
+                <h4 id="overview-title">提炼概览</h4>
+                <p>本次提炼的关键产出汇总，事实、贡献与问题一览。</p>
+              </div>
+              <span>{{ overviewStats.progress }}% 完成</span>
+            </div>
+            <div class="overview-stats">
+              <div class="stat-card">
+                <span>来源事实</span>
+                <strong>{{ overviewStats.facts }}</strong>
+              </div>
+              <div class="stat-card">
+                <span>页面贡献</span>
+                <strong>{{ overviewStats.contributions }}</strong>
+                <small>{{ overviewStats.activeContributions }} 活跃</small>
+              </div>
+              <div class="stat-card">
+                <span>待确认问题</span>
+                <strong>{{ overviewStats.openQuestions }}</strong>
+              </div>
+              <div class="stat-card">
+                <span>提炼次数</span>
+                <strong>{{ overviewStats.runCount }}</strong>
+              </div>
+              <div class="stat-card">
+                <span>失败次数</span>
+                <strong>{{ overviewStats.failureCount }}</strong>
+              </div>
+              <div class="stat-card">
+                <span>模型总耗时</span>
+                <strong>{{ formatDuration(overviewStats.totalDuration) }}</strong>
+              </div>
+            </div>
+            <div
+              v-if="overviewFacts.length || overviewContributions.length || overviewQuestions.length"
+              class="overview-body"
+            >
+              <div v-if="overviewFacts.length" class="overview-block">
+                <h5>关键事实<span class="block-count">{{ overviewStats.facts }}</span></h5>
+                <ul>
+                  <li v-for="fact in overviewFacts" :key="String(fact.fact_id)">
+                    <span class="ov-fact-text">{{ shortText(fact.statement, 160) }}</span>
+                    <span
+                      v-if="Array.isArray(fact.sources) && fact.sources.length"
+                      class="ov-fact-sources"
+                    >{{ fact.sources.length }} 来源</span>
+                  </li>
+                </ul>
+              </div>
+              <div v-if="overviewContributions.length" class="overview-block">
+                <h5>页面贡献<span class="block-count">{{ overviewStats.contributions }}</span></h5>
+                <ul>
+                  <li v-for="c in overviewContributions" :key="String(c.page_id)">
+                    <span class="ov-contrib-title">{{ c.title || noteName(String(c.path || '')) }}</span>
+                    <span class="ov-contrib-summary">{{ shortText(c.summary, 120) }}</span>
+                    <span class="ov-contrib-meta">
+                      <span v-if="c.active" class="ov-contrib-active">活跃</span>
+                      <span class="ov-contrib-confidence">{{ Math.round((Number(c.confidence) || 0) * 100) }}%</span>
+                    </span>
+                  </li>
+                </ul>
+              </div>
+              <div v-if="overviewQuestions.length" class="overview-block">
+                <h5>待确认问题<span class="block-count">{{ overviewStats.openQuestions }}</span></h5>
+                <ul>
+                  <li v-for="q in overviewQuestions" :key="String(q.id)">
+                    <span class="ov-question-text">{{ shortText(q.question, 140) }}</span>
+                    <span class="ov-question-status" :class="String(q.status || 'open')">
+                      {{ questionStatusLabel(String(q.status || 'open')) }}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <!-- 完整提炼流程：纵向流程图，每个节点标注关键产出 -->
           <section class="flow-section" aria-labelledby="refinement-flow-title">
             <div class="section-title">
               <div>
                 <h4 id="refinement-flow-title">完整提炼流程</h4>
-                <p>点击节点查看该阶段的审计记录与模型调用。</p>
+                <p>每个节点展示该阶段的关键产出，点击查看完整审计记录与模型调用。</p>
               </div>
               <span>{{ completedCount }}/{{ detail.trace.length }} 阶段完成</span>
             </div>
-            <ol class="flow-track">
+            <ol class="flow-vertical">
               <li
                 v-for="(stage, index) in detail.trace"
                 :key="stage.id"
-                class="flow-step"
+                class="flow-card"
                 :class="[stage.status, { selected: selectedStageId === stage.id }]"
               >
-                <button type="button" @click="selectStage(stage.id)">
-                  <span class="step-index">
-                    <Icon v-if="stage.status === 'completed'" name="check" :size="12" :stroke-width="2.2" />
-                    <Icon v-else-if="stage.status === 'failed'" name="x" :size="12" :stroke-width="2.2" />
+                <div class="flow-rail" aria-hidden="true">
+                  <span class="flow-node">
+                    <Icon v-if="stage.status === 'completed'" name="check" :size="13" :stroke-width="2.4" />
+                    <Icon v-else-if="stage.status === 'failed'" name="x" :size="13" :stroke-width="2.4" />
                     <span v-else>{{ index + 1 }}</span>
                   </span>
-                  <strong>{{ stageDisplayName(stage) }}</strong>
-                  <small>
-                    {{ stageStatusLabel(stage.status) }}
-                    <template v-if="stage.failureCount"> · {{ stage.failureCount }} 次失败</template>
-                  </small>
+                </div>
+                <button type="button" class="flow-card-body" @click="selectStage(stage.id)">
+                  <div class="flow-card-head">
+                    <span class="flow-card-index">阶段 {{ index + 1 }}</span>
+                    <strong>{{ stageDisplayName(stage) }}</strong>
+                    <span class="flow-stage-status" :class="stage.status">{{ stageStatusLabel(stage.status) }}</span>
+                    <span v-if="stage.durationMs" class="flow-stage-duration">
+                      {{ formatDuration(stage.durationMs) }}
+                    </span>
+                    <span v-if="stage.failureCount" class="flow-stage-fail">{{ stage.failureCount }} 次失败</span>
+                  </div>
+                  <p class="flow-card-desc">{{ stage.description }}</p>
+                  <template v-if="stageSummaries[stage.id]">
+                    <dl
+                      v-if="stageSummaries[stage.id]?.metrics.length"
+                      class="flow-card-metrics"
+                    >
+                      <div v-for="metric in stageSummaries[stage.id]?.metrics" :key="metric.label">
+                        <dt>{{ metric.label }}</dt>
+                        <dd>{{ metric.value }}</dd>
+                      </div>
+                    </dl>
+                    <ul
+                      v-if="stageSummaries[stage.id]?.bullets.length"
+                      class="flow-card-bullets"
+                    >
+                      <li
+                        v-for="item in stageSummaries[stage.id]?.bullets.slice(0, 3)"
+                        :key="item"
+                      >{{ item }}</li>
+                    </ul>
+                  </template>
+                  <span v-else-if="stage.status === 'pending'" class="flow-card-pending">尚未执行</span>
                 </button>
               </li>
             </ol>
@@ -394,9 +502,10 @@ const selectedStageIndex = computed(() =>
 const completedCount = computed(() =>
   detail.value?.trace.filter((stage) => stage.status === 'completed').length || 0
 );
-const selectedStageEvents = computed<TraceEvent[]>(() => {
-  if (!detail.value || !selectedStageId.value) return [];
-  const matches = (stage: string) => eventStageId(stage) === selectedStageId.value;
+/** 收集某阶段的全部审计与模型事件，按时间排序 */
+function eventsForStage(stageId: string): TraceEvent[] {
+  if (!detail.value || !stageId) return [];
+  const matches = (stage: string) => eventStageId(stage) === stageId;
   return [
     ...detail.value.audit.filter((event) => matches(event.stage)).map((event) => ({
       ...event,
@@ -409,12 +518,37 @@ const selectedStageEvents = computed<TraceEvent[]>(() => {
   ].sort((left, right) =>
     String(left.at || left.created_at).localeCompare(String(right.at || right.created_at))
   );
-});
+}
+const selectedStageEvents = computed<TraceEvent[]>(() => eventsForStage(selectedStageId.value));
 const selectedEvent = computed(() =>
   selectedStageEvents.value.find((event) => eventKey(event) === selectedEventKey.value) || null
 );
 const selectedEventSummary = computed(() =>
-  selectedEvent.value ? summarizeEvent(selectedEvent.value, selectedStage.value) : null
+  selectedEvent.value ? summarizeEvent(selectedEvent.value, selectedStage.value, selectedStageId.value) : null
+);
+
+/** 概览总页面：聚合本次提炼的关键统计与产出 */
+const overviewStats = computed(() => {
+  const d = detail.value;
+  if (!d) return null;
+  const totalDuration = d.trace.reduce((sum, stage) => sum + stage.durationMs, 0);
+  const activeContributions = d.contributions.filter((c: any) => c.active).length;
+  const openQuestions = d.questions.filter((q: any) => q.status !== 'resolved').length;
+  return {
+    facts: d.facts.length,
+    contributions: d.contributions.length,
+    activeContributions,
+    openQuestions,
+    runCount: d.run.runCount,
+    failureCount: d.run.failureCount,
+    totalDuration,
+    progress: d.run.progress,
+  };
+});
+const overviewFacts = computed(() => (detail.value?.facts || []).slice(0, 6));
+const overviewContributions = computed(() => (detail.value?.contributions || []).slice(0, 6));
+const overviewQuestions = computed(() =>
+  (detail.value?.questions || []).filter((q: any) => q.status !== 'resolved').slice(0, 4)
 );
 
 function eventStageId(stage: string): string {
@@ -452,6 +586,10 @@ function stageStatusLabel(status: StageStatus): string {
 
 function stageDisplayName(stage: Pick<TraceStage, 'label' | 'annotation'>): string {
   return stage.annotation ? `${stage.label}（${stage.annotation}）` : stage.label;
+}
+
+function questionStatusLabel(status: string): string {
+  return { open: '待处理', resolved: '已解决', pending: '待确认', answered: '已回答' }[status] || status;
 }
 
 function formatDate(value?: string | null): string {
@@ -545,7 +683,7 @@ function actionCounts(items: Array<Record<string, any>>): Record<string, number>
   }, {});
 }
 
-function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSummary {
+function summarizeEvent(event: TraceEvent, stage: TraceStage | null, stageId: string = selectedStageId.value): HumanSummary {
   const data = parsedOutput(event);
   const record = objectValue(data);
   const items = itemList(data);
@@ -575,7 +713,7 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     if (event.duration_ms) metrics.push({ label: '执行耗时', value: formatDuration(event.duration_ms) });
   }
 
-  if (selectedStageId.value === 'map') {
+  if (stageId ==='map') {
     const factCount = items.reduce((sum, item) => sum + (Array.isArray(item.facts) ? item.facts.length : 0), 0);
     metrics.push({ label: '候选对象', value: String(items.length) });
     metrics.push({ label: '来源事实', value: String(factCount) });
@@ -591,7 +729,7 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     };
   }
 
-  if (selectedStageId.value === 'normalize') {
+  if (stageId ==='normalize') {
     const inputCount = Number(record?.inputCount ?? items.length);
     const outputCount = Number(record?.outputCount ?? items.length);
     const mergeCount = Array.isArray(record?.merges) ? record.merges.length : Math.max(0, inputCount - outputCount);
@@ -607,7 +745,7 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     };
   }
 
-  if (selectedStageId.value === 'retrieve') {
+  if (stageId ==='retrieve') {
     const related = String(record?.related || '');
     const lines = related.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('- '));
     const names = lines.map((line) => line.slice(2).split('（')[0]).filter(Boolean);
@@ -622,7 +760,7 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     };
   }
 
-  if (selectedStageId.value === 'plan') {
+  if (stageId ==='plan') {
     const counts = actionCounts(items);
     const labels: Record<string, string> = {
       create: '新建',
@@ -644,7 +782,7 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     };
   }
 
-  if (selectedStageId.value === 'critic' || selectedStageId.value === 'critic_review') {
+  if (stageId ==='critic' || stageId ==='critic_review') {
     const issues = Array.isArray(record?.issues) ? record.issues : [];
     metrics.push({ label: '审查对象', value: String(items.length) });
     metrics.push({ label: '发现问题', value: String(issues.length) });
@@ -659,7 +797,7 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     };
   }
 
-  if (selectedStageId.value === 'compose') {
+  if (stageId ==='compose') {
     const charCount = items.reduce((sum, item) => sum + String(item.content || '').length, 0);
     metrics.push({ label: '生成对象', value: String(items.length) });
     metrics.push({ label: '正文字符', value: String(charCount) });
@@ -673,7 +811,7 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     };
   }
 
-  if (selectedStageId.value === 'questions') {
+  if (stageId ==='questions') {
     const questions = Array.isArray(record?.questions) ? record.questions : [];
     metrics.push({ label: '待确认问题', value: String(questions.length) });
     bullets.push(...questions.slice(0, 4).map((question: any) => shortText(question.question || question)));
@@ -686,7 +824,7 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     };
   }
 
-  if (selectedStageId.value === 'verify') {
+  if (stageId ==='verify') {
     const passed = items.filter((item) => item.pass === true).length;
     const unsupported = items.reduce((sum, item) => sum + (Array.isArray(item.unsupported) ? item.unsupported.length : 0), 0);
     const conflicts = items.reduce((sum, item) => sum + (Array.isArray(item.conflicts) ? item.conflicts.length : 0), 0);
@@ -703,7 +841,7 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     };
   }
 
-  if (selectedStageId.value === 'commit') {
+  if (stageId ==='commit') {
     const created = Number(record?.created || 0);
     const merged = Number(record?.merged || 0);
     const skipped = Number(record?.skipped || 0);
@@ -731,6 +869,32 @@ function summarizeEvent(event: TraceEvent, stage: TraceStage | null): HumanSumma
     bullets,
   };
 }
+
+/** 聚合某阶段全部事件，基于最新事件生成流程图节点摘要 */
+function summarizeStage(stage: TraceStage): HumanSummary | null {
+  const events = eventsForStage(stage.id);
+  if (!events.length) {
+    if (stage.status === 'pending') return null;
+    return {
+      title: stageDisplayName(stage),
+      description: stage.description,
+      tone: 'neutral',
+      metrics: [],
+      bullets: [],
+    };
+  }
+  const latest = events[events.length - 1];
+  return summarizeEvent(latest, stage, stage.id);
+}
+
+/** 流程图各节点摘要，按阶段 ID 索引，避免模板中重复调用 */
+const stageSummaries = computed<Record<string, HumanSummary | null>>(() => {
+  const map: Record<string, HumanSummary | null> = {};
+  for (const stage of detail.value?.trace || []) {
+    map[stage.id] = summarizeStage(stage);
+  }
+  return map;
+});
 
 function selectEvent(event: TraceEvent) {
   selectedEventKey.value = eventKey(event);
@@ -1011,11 +1175,11 @@ onUnmounted(() => {
 .history-workspace {
   display: grid;
   grid-template-columns: 286px minmax(0, 1fr);
-  min-height: 680px;
+  min-height: 820px;
 }
 
 .history-list {
-  max-height: 780px;
+  max-height: 920px;
   overflow-y: auto;
   border-right: 1px solid var(--border);
   background: var(--bg-secondary);
@@ -1227,50 +1391,188 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.flow-track {
+/* ---------- 提炼概览（总页面） ---------- */
+.overview-section {
+  padding: 20px 22px 22px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.overview-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.stat-card {
   display: flex;
-  min-width: max-content;
-  margin: 20px 0 0;
-  padding: 0 4px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.stat-card span {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.stat-card strong {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-card small {
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.overview-body {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.overview-block h5 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.block-count {
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.overview-block ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
-.flow-section {
-  overflow-x: auto;
+.overview-block li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
 }
 
-.flow-step {
+.ov-fact-text,
+.ov-contrib-summary,
+.ov-question-text {
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.ov-fact-sources {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.ov-contrib-title {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ov-contrib-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ov-contrib-active {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--success) 12%, var(--bg));
+  color: var(--success);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ov-contrib-confidence {
+  color: var(--text-faint);
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-question-status {
+  align-self: flex-start;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.ov-question-status.open,
+.ov-question-status.pending {
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg));
+  color: var(--warn);
+}
+
+/* ---------- 纵向流程图 ---------- */
+.flow-vertical {
+  display: flex;
+  flex-direction: column;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-card {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.flow-rail {
   position: relative;
-  width: 126px;
+  display: flex;
+  justify-content: center;
 }
 
-.flow-step:not(:last-child)::after {
+.flow-card:not(:last-child) .flow-rail::after {
   position: absolute;
-  top: 15px;
-  left: 58px;
-  width: 102px;
-  height: 2px;
+  top: 30px;
+  bottom: -4px;
+  left: 50%;
+  width: 2px;
   background: var(--border-strong);
   content: "";
+  transform: translateX(-50%);
 }
 
-.flow-step.completed:not(:last-child)::after {
+.flow-card.completed:not(:last-child) .flow-rail::after {
   background: var(--success);
 }
 
-.flow-step button {
+.flow-node {
   position: relative;
   z-index: 1;
-  width: 102px;
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--text-secondary);
-  text-align: center;
-}
-
-.step-index {
   width: 30px;
   height: 30px;
   display: inline-flex;
@@ -1280,47 +1582,180 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--bg);
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
 
-.flow-step button strong {
-  font-size: 10px;
-  white-space: nowrap;
-}
-
-.flow-step button small {
-  color: var(--text-faint);
-  font-size: 9px;
-  line-height: 1.25;
-  white-space: normal;
-}
-
-.flow-step.completed .step-index {
+.flow-card.completed .flow-node {
   border-color: var(--success);
   background: var(--success);
   color: #fff;
 }
 
-.flow-step.current .step-index {
+.flow-card.current .flow-node {
   border-color: var(--accent);
   color: var(--accent);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 13%, transparent);
 }
 
-.flow-step.failed .step-index {
+.flow-card.failed .flow-node {
   border-color: var(--danger);
   background: var(--danger);
   color: #fff;
 }
 
-.flow-step.selected button strong {
-  color: var(--text);
+.flow-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.flow-step.selected .step-index {
-  outline: 2px solid var(--text);
-  outline-offset: 3px;
+.flow-card-body:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.flow-card.selected .flow-card-body {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.flow-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.flow-card-index {
+  color: var(--text-faint);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.flow-card-head strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.flow-stage-status {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.flow-stage-status.completed {
+  background: color-mix(in srgb, var(--success) 12%, var(--bg));
+  color: var(--success);
+}
+
+.flow-stage-status.current {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  color: var(--accent);
+}
+
+.flow-stage-status.failed {
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg));
+  color: var(--danger);
+}
+
+.flow-stage-duration {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.flow-stage-fail {
+  color: var(--danger);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.flow-card-desc {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.flow-card-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 6px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.flow-card-metrics div {
+  min-width: 0;
+  padding: 8px 14px;
+  border-right: 1px solid var(--border);
+}
+
+.flow-card-metrics div:last-child {
+  border-right: 0;
+}
+
+.flow-card-metrics dt {
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.flow-card-metrics dd {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.flow-card-bullets {
+  display: grid;
+  gap: 5px;
+  margin: 6px 0 0;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+  list-style: none;
+}
+
+.flow-card-bullets li {
+  position: relative;
+  padding-left: 11px;
+}
+
+.flow-card-bullets li::before {
+  position: absolute;
+  top: 0.6em;
+  left: 1px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  content: "";
+}
+
+.flow-card-pending {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-style: italic;
 }
 
 .stage-inspector {
@@ -1620,6 +2055,14 @@ onUnmounted(() => {
     justify-content: stretch;
   }
 
+  .overview-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .overview-body {
+    grid-template-columns: 1fr;
+  }
+
   .stage-inspector {
     grid-template-columns: 180px minmax(0, 1fr);
   }
@@ -1660,9 +2103,14 @@ onUnmounted(() => {
   }
 
   .trajectory-head,
+  .overview-section,
   .flow-section {
     padding-right: 16px;
     padding-left: 16px;
+  }
+
+  .overview-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .trajectory-summary {
@@ -1719,6 +2167,15 @@ onUnmounted(() => {
   .section-title {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .overview-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-card {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 10px;
   }
 }
 </style>

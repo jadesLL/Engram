@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-view">
+  <div class="settings-view" :class="{ 'is-wide': activeSettingsSection === 'history' }">
     <header class="settings-page-head">
       <div>
         <h2>设置</h2>
@@ -78,5 +78,21 @@ const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: stri
 .refinement-history-panel {
   border: none;
   background: transparent;
+}
+
+/* 提炼轨迹需要展示完整流程图与概览，放宽页面宽度上限 */
+.settings-view.is-wide {
+  width: min(1640px, 100%);
+}
+
+.settings-view.is-wide .settings-shell {
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 24px;
+}
+
+@media (max-width: 1280px) {
+  .settings-view.is-wide {
+    width: 100%;
+  }
 }
 </style>
