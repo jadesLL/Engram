@@ -46,6 +46,20 @@ export interface LlmUsageBreakdown extends NormalizedLlmUsage {
   combinedCacheHitRate: number | null;
 }
 
+export interface OperationUsage {
+  operation: LlmOperation;
+  requests: number;
+  cacheRequests: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cacheMissTokens: number;
+  cacheHitRate: number | null;
+  promptAmplification: number | null;
+}
+
 export interface LlmUsageSummary extends NormalizedLlmUsage {
   windowDays: number;
   from: string;
@@ -58,6 +72,7 @@ export interface LlmUsageSummary extends NormalizedLlmUsage {
   latestAt: string | null;
   combinedCacheHitRate: number | null;
   breakdown: LlmUsageBreakdown[];
+  byOperation: OperationUsage[];
 }
 
 function numberValue(...values: unknown[]): number {
@@ -348,6 +363,55 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
       : null,
   }));
 
+  const operationRows = db.prepare(
+    `SELECT
+       operation,
+       COUNT(*) requests,
+       COALESCE(SUM(cache_reported),0) cache_requests,
+       COALESCE(SUM(prompt_tokens),0) prompt_tokens,
+       COALESCE(SUM(completion_tokens),0) completion_tokens,
+       COALESCE(SUM(total_tokens),0) total_tokens,
+       COALESCE(SUM(CASE WHEN cache_reported=1 THEN cache_read_tokens ELSE 0 END),0) cache_read_tokens,
+       COALESCE(SUM(CASE WHEN cache_reported=1 THEN cache_write_tokens ELSE 0 END),0) cache_write_tokens,
+       COALESCE(SUM(CASE WHEN cache_reported=1 THEN cache_miss_tokens ELSE 0 END),0) cache_miss_tokens
+     FROM llm_usage
+     WHERE created_at >= ?
+     GROUP BY operation`
+  ).all(from) as Array<{
+    operation: string;
+    requests: number;
+    cache_requests: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    cache_miss_tokens: number;
+  }>;
+  const operationOrder: LlmOperation[] = ['chat', 'embedding', 'document'];
+  const byOperation = operationRows
+    .map((row) => ({
+      operation: row.operation as LlmOperation,
+      requests: row.requests,
+      cacheRequests: row.cache_requests,
+      promptTokens: row.prompt_tokens,
+      completionTokens: row.completion_tokens,
+      totalTokens: row.total_tokens,
+      cacheReadTokens: row.cache_read_tokens,
+      cacheWriteTokens: row.cache_write_tokens,
+      cacheMissTokens: row.cache_miss_tokens,
+      cacheHitRate: hitRate(row.cache_read_tokens, row.cache_miss_tokens),
+      promptAmplification:
+        row.cache_miss_tokens > 0
+          ? row.prompt_tokens / row.cache_miss_tokens
+          : null,
+    }))
+    .sort(
+      (a, b) =>
+        operationOrder.indexOf(a.operation) -
+        operationOrder.indexOf(b.operation),
+    );
+
   return {
     windowDays: days,
     from,
@@ -371,5 +435,6 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
       : null,
     latestAt: aggregate.latest_at,
     breakdown,
+    byOperation,
   };
 }

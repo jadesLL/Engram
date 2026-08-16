@@ -60,52 +60,63 @@
       <p v-else-if="llmUsageNotice" class="setting-message ok">{{ llmUsageNotice }}</p>
       <div v-else-if="llmUsageLoading && !llmUsage.requests" class="llm-usage-empty">正在读取用量...</div>
       <template v-else-if="llmUsage.requests">
-        <div class="llm-usage-metrics">
-          <div>
-            <span>缓存命中率</span>
-            <strong>{{ formatUsageRate(llmUsage.cacheHitRate) }}</strong>
-            <small>
-              {{ llmUsage.cacheRequests }}/{{ llmUsage.requests }} 次返回缓存计量
-              <template v-if="llmUsage.resultCacheHits"> · {{ llmUsage.resultCacheHits }} 次结果复用</template>
-            </small>
+        <div v-if="llmUsage.byOperation.length" class="llm-usage-ops">
+          <div v-for="op in llmUsage.byOperation" :key="op.operation" class="llm-usage-op">
+            <div class="llm-usage-op-head">
+              <strong>{{ usageOperationLabel(op.operation) }}</strong>
+              <small>{{ op.requests }} 次调用</small>
+            </div>
+            <div>
+              <span>缓存命中</span>
+              <strong>{{ formatUsageRate(op.cacheHitRate) }}</strong>
+              <small v-if="op.cacheReadTokens > 0">读取 {{ formatTokenCount(op.cacheReadTokens) }}</small>
+            </div>
+            <div>
+              <span>输入 Token</span>
+              <strong>{{ formatTokenCount(op.promptTokens) }}</strong>
+            </div>
+            <div>
+              <span>输出 Token</span>
+              <strong>{{ formatTokenCount(op.completionTokens) }}</strong>
+            </div>
           </div>
-          <div>
-            <span>缓存读取</span>
-            <strong>{{ formatTokenCount(llmUsage.cacheReadTokens) }}</strong>
-            <small>
-              未命中 {{ formatTokenCount(llmUsage.cacheMissTokens) }}
-              <template v-if="llmUsage.promptAmplification !== null">
-                · 放大 {{ formatUsageMultiplier(llmUsage.promptAmplification) }}
-              </template>
-            </small>
-          </div>
-          <div>
-            <span>输入 Token</span>
-            <strong>{{ formatTokenCount(llmUsage.promptTokens) }}</strong>
-            <small>含命中与未命中部分</small>
-          </div>
-          <div>
-            <span>输出 Token</span>
-            <strong>{{ formatTokenCount(llmUsage.completionTokens) }}</strong>
-            <small>
-              总计 {{ formatTokenCount(llmUsage.totalTokens) }}
-              <template v-if="llmUsage.retryRequests"> · 重试 {{ llmUsage.retryRequests }}</template>
-            </small>
-          </div>
+        </div>
+
+        <div class="llm-usage-summary">
+          <span>总缓存命中率 {{ formatUsageRate(llmUsage.cacheHitRate) }}</span>
+          <span>缓存读取 {{ formatTokenCount(llmUsage.cacheReadTokens) }}</span>
+          <span>未命中 {{ formatTokenCount(llmUsage.cacheMissTokens) }}</span>
+          <template v-if="llmUsage.promptAmplification !== null">
+            <span>放大 {{ formatUsageMultiplier(llmUsage.promptAmplification) }}</span>
+          </template>
+          <span>总计 {{ formatTokenCount(llmUsage.totalTokens) }}</span>
+          <template v-if="llmUsage.retryRequests">
+            <span>重试 {{ llmUsage.retryRequests }}</span>
+          </template>
+          <template v-if="llmUsage.resultCacheHits">
+            <span>结果复用 {{ llmUsage.resultCacheHits }}</span>
+          </template>
         </div>
 
         <div v-if="llmUsage.breakdown.length" class="llm-usage-breakdown">
           <div class="llm-usage-row llm-usage-row-head" aria-hidden="true">
+            <span>厂家 · 模型</span>
+            <span>类型</span>
             <span>调用阶段</span>
-            <span>模型</span>
             <span>输入</span>
+            <span>输出</span>
             <span>缓存命中</span>
           </div>
           <div
-            v-for="item in llmUsage.breakdown.slice(0, 6)"
+            v-for="item in llmUsage.breakdown.slice(0, 8)"
             :key="`${item.provider}-${item.model}-${item.tag}`"
             class="llm-usage-row"
           >
+            <span class="llm-usage-model-cell">
+              <strong>{{ providerName(item.provider) }}</strong>
+              <small>{{ item.model }}</small>
+            </span>
+            <span class="llm-usage-kind-tag">{{ usageOperationLabel(item.operation) }}</span>
             <span>
               <strong>{{ usageTagLabel(item.tag) }}</strong>
               <small>
@@ -115,8 +126,8 @@
                 <template v-if="item.resultCacheHits"> · {{ item.resultCacheHits }} 次结果复用</template>
               </small>
             </span>
-            <span :title="`${item.provider} · ${item.model}`">{{ item.model }}</span>
             <span>{{ formatTokenCount(item.promptTokens) }}</span>
+            <span>{{ formatTokenCount(item.completionTokens) }}</span>
             <span>{{ formatUsageRate(item.cacheHitRate) }}</span>
           </div>
         </div>
@@ -503,6 +514,7 @@ type FormModelOption = ModelOption & {
 interface LlmUsageBreakdown {
   provider: string;
   model: string;
+  operation: string;
   tag: string;
   requests: number;
   runs: number;
@@ -518,6 +530,20 @@ interface LlmUsageBreakdown {
   cacheHitRate: number | null;
   resultCacheHits: number;
   retryRequests: number;
+  promptAmplification: number | null;
+}
+
+interface OperationUsage {
+  operation: string;
+  requests: number;
+  cacheRequests: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cacheMissTokens: number;
+  cacheHitRate: number | null;
   promptAmplification: number | null;
 }
 
@@ -539,6 +565,7 @@ interface LlmUsageSummary {
   promptAmplification: number | null;
   latestAt: string | null;
   breakdown: LlmUsageBreakdown[];
+  byOperation: OperationUsage[];
 }
 
 function emptyLlmUsage(windowDays = 7): LlmUsageSummary {
@@ -560,6 +587,7 @@ function emptyLlmUsage(windowDays = 7): LlmUsageSummary {
     promptAmplification: null,
     latestAt: null,
     breakdown: [],
+    byOperation: [],
   };
 }
 
@@ -1521,6 +1549,16 @@ function usageTagLabel(tag: string): string {
   return tag;
 }
 
+const LLM_OPERATION_LABELS: Record<string, string> = {
+  chat: '语言模型',
+  embedding: '向量模型',
+  document: '视觉模型',
+};
+
+function usageOperationLabel(operation: string): string {
+  return LLM_OPERATION_LABELS[operation] || operation;
+}
+
 function formatTokenCount(value: number): string {
   if (value < 1000) return String(value);
   if (value < 1_000_000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}K`;
@@ -1654,43 +1692,51 @@ onMounted(async () => {
   width: 104px;
   min-height: 32px;
 }
-.llm-usage-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.llm-usage-ops {
   margin-top: 16px;
   border-top: 1px solid var(--border);
+}
+.llm-usage-op {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
   border-bottom: 1px solid var(--border);
 }
-.llm-usage-metrics > div {
+.llm-usage-op-head {
   min-width: 0;
-  padding: 13px 14px;
-  border-left: 1px solid var(--border);
 }
-.llm-usage-metrics > div:first-child {
-  border-left: 0;
-}
-.llm-usage-metrics span,
-.llm-usage-metrics strong,
-.llm-usage-metrics small {
+.llm-usage-op-head strong {
   display: block;
+  font-size: 13px;
 }
-.llm-usage-metrics span {
+.llm-usage-op-head small {
+  display: block;
+  margin-top: 3px;
   color: var(--text-secondary);
   font-size: 11px;
 }
-.llm-usage-metrics strong {
+.llm-usage-op > div:not(.llm-usage-op-head) {
+  min-width: 0;
+}
+.llm-usage-op > div:not(.llm-usage-op-head) span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.llm-usage-op > div:not(.llm-usage-op-head) strong {
+  display: block;
   margin-top: 4px;
   overflow: hidden;
   color: var(--text);
-  font-size: 21px;
+  font-size: 19px;
   line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.llm-usage-metrics > div:first-child strong {
-  color: var(--success);
-}
-.llm-usage-metrics small {
+.llm-usage-op > div:not(.llm-usage-op-head) small {
+  display: block;
   margin-top: 5px;
   overflow: hidden;
   color: var(--text-faint);
@@ -1699,15 +1745,28 @@ onMounted(async () => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.llm-usage-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  margin-top: 12px;
+  padding: 8px 2px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.llm-usage-summary span {
+  white-space: nowrap;
+}
 .llm-usage-breakdown {
   margin-top: 13px;
 }
 .llm-usage-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1.4fr) minmax(130px, 1fr) 80px 90px;
+  grid-template-columns: minmax(150px, 1.3fr) 56px minmax(110px, 1fr) 58px 58px 72px;
   align-items: center;
-  gap: 12px;
-  min-height: 36px;
+  gap: 10px;
+  min-height: 38px;
   padding: 6px 4px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   font-size: 11px;
@@ -1718,10 +1777,39 @@ onMounted(async () => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.llm-usage-row > span:first-child {
+.llm-usage-model-cell {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.3;
+}
+.llm-usage-model-cell strong {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.llm-usage-model-cell small {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+.llm-usage-kind-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.llm-usage-row > span:nth-child(3) {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 .llm-usage-row strong {
   overflow: hidden;
@@ -2305,19 +2393,18 @@ onMounted(async () => {
   .llm-usage-band {
     padding: 16px 18px;
   }
-  .llm-usage-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .llm-usage-op {
+    grid-template-columns: minmax(100px, 0.8fr) repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 11px 10px;
   }
-  .llm-usage-metrics > div:nth-child(3) {
-    border-left: 0;
-  }
-  .llm-usage-metrics > div:nth-child(n + 3) {
-    border-top: 1px solid var(--border);
+  .llm-usage-op > div:not(.llm-usage-op-head) strong {
+    font-size: 17px;
   }
   .llm-usage-row {
-    grid-template-columns: minmax(0, 1fr) 70px 82px;
+    grid-template-columns: minmax(120px, 1.2fr) minmax(80px, 1fr) 50px 50px 64px;
   }
-  .llm-usage-row > span:nth-child(2) {
+  .llm-usage-kind-tag {
     display: none;
   }
   .model-tabs {
@@ -2363,12 +2450,19 @@ onMounted(async () => {
     flex: 1;
     width: auto;
   }
-  .llm-usage-metrics strong {
-    font-size: 18px;
+  .llm-usage-op > div:not(.llm-usage-op-head) strong {
+    font-size: 15px;
+  }
+  .llm-usage-op {
+    grid-template-columns: 1fr 1fr;
   }
   .llm-usage-row {
-    grid-template-columns: minmax(0, 1fr) 64px 76px;
+    grid-template-columns: minmax(0, 1fr) 52px 64px;
     gap: 8px;
+  }
+  .llm-usage-row > span:nth-child(3),
+  .llm-usage-row > span:nth-child(5) {
+    display: none;
   }
   .model-section-intro {
     align-items: flex-start;
