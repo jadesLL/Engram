@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
+import JSZip from 'jszip';
 import { db } from '../lib/db.js';
 import { safeJoin } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
@@ -386,6 +387,56 @@ export async function fileRoutes(app: FastifyInstance) {
     reply.header('X-File-Name', encodeURIComponent(path.basename(abs)));
     reply.header('Content-Type', 'application/octet-stream');
     return reply.send(fs.createReadStream(abs));
+  });
+
+  /** 批量导出原始资料为 zip：接收 path 列表，打包后流式下载。
+   *  - 单文件时直接走 /api/files/raw；这里仍支持传入 1 项。
+   *  - 路径都经 safeJoin 校验，越界或不存在则跳过并计入 skipped。
+   *  - 同名文件（不同子目录）在 zip 内保留相对路径，不会冲突。 */
+  app.post('/api/files/export', async (req, reply) => {
+    const { paths } = (req.body || {}) as { paths?: string[] };
+    if (!Array.isArray(paths) || !paths.length) {
+      return reply.code(400).send({ error: '未选择要导出的文件' });
+    }
+    const zip = new JSZip();
+    let added = 0;
+    const skipped: string[] = [];
+    for (const p of paths) {
+      if (typeof p !== 'string' || !p.trim()) continue;
+      let abs: string;
+      try {
+        abs = safeJoin(p);
+      } catch {
+        skipped.push(p);
+        continue;
+      }
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+        skipped.push(p);
+        continue;
+      }
+      // zip 内路径用相对 brain 的正斜杠形式，保留子目录结构
+      const rel = p.replace(/^[/\\]+/, '').replace(/\\/g, '/');
+      zip.file(rel, fs.readFileSync(abs));
+      added++;
+    }
+    if (added === 0) {
+      return reply.code(404).send({ error: '没有可导出的文件', skipped });
+    }
+    const stamp = new Date().toISOString().slice(0, 10);
+    const zipName = `原始资料-${stamp}.zip`;
+    const buf = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+    try { appendWikiLog('导出', `共 ${added} 个文件${skipped.length ? `，跳过 ${skipped.length} 个` : ''}`); } catch { /* 日志失败不阻塞 */ }
+    reply.header('Content-Type', 'application/zip');
+    reply.header(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`
+    );
+    reply.header('Content-Length', buf.length);
+    return reply.send(buf);
   });
 
   app.delete('/api/files', async (req, reply) => {

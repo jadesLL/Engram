@@ -168,6 +168,16 @@
             <button
               class="add-btn"
               type="button"
+              title="导出全部资料"
+              aria-label="导出全部资料"
+              :disabled="!visibleFiles.length || exporting"
+              @click="exportAllFiles"
+            >
+              <Icon name="download" :size="13" />
+            </button>
+            <button
+              class="add-btn"
+              type="button"
               title="AI 整理全部"
               aria-label="AI 整理全部"
               @click="ingestAll"
@@ -331,6 +341,9 @@
       <div v-if="selected.size" class="batch-bar">
         <span class="batch-count">已选 {{ selected.size }} 项</span>
         <button class="batch-btn" type="button" :disabled="!selectedPageCount" @click="batchArchive">归档</button>
+        <button class="batch-btn" type="button" :disabled="!selectedFileCount || exporting" @click="exportSelected">
+          {{ exporting ? '导出中…' : '导出' }}
+        </button>
         <button class="batch-btn danger" type="button" @click="batchDelete">删除</button>
         <button class="batch-btn faint-btn" type="button" @click="clearSelection">取消</button>
       </div>
@@ -430,6 +443,54 @@ const selectionMode = computed(() => selected.value.size > 0);
 const selectedPageCount = computed(() =>
   [...selected.value].filter((key) => key.startsWith('p:')).length
 );
+const selectedFileCount = computed(() =>
+  [...selected.value].filter((key) => key.startsWith('f:')).length
+);
+const exporting = ref(false);
+
+/** 把给定路径列表打包成 zip 下载。单文件直接走 /api/files/raw。 */
+async function exportFiles(paths: string[]) {
+  if (!paths.length) return;
+  if (paths.length === 1) {
+    const link = document.createElement('a');
+    link.href = `/api/files/raw?path=${encodeURIComponent(paths[0])}`;
+    link.download = paths[0].split('/').pop() || 'download';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
+  exporting.value = true;
+  try {
+    const res = await api.post('/api/files/export', { paths }, { responseType: 'blob' });
+    const blob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: 'application/zip' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `原始资料-${new Date().toISOString().slice(0, 10)}.zip`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    notify.success(`已导出 ${paths.length} 个文件`);
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '导出失败');
+  } finally {
+    exporting.value = false;
+  }
+}
+
+async function exportSelected() {
+  const paths = [...selected.value].filter((k) => k.startsWith('f:')).map((k) => k.slice(2));
+  if (!paths.length) return;
+  await exportFiles(paths);
+}
+
+async function exportAllFiles() {
+  const paths = files.value.map((f: any) => f.path).filter(Boolean);
+  if (!paths.length) return;
+  await exportFiles(paths);
+}
 
 function toggleSelect(item: any) {
   const key = String(item.id).startsWith('f:') || String(item.id).startsWith('p:')
