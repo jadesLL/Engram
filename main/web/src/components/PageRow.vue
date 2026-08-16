@@ -23,6 +23,15 @@
     <span class="row-trailing">
       <span class="page-time">{{ timeText }}</span>
       <span class="row-actions" @click.stop>
+        <a
+          class="row-action-link"
+          :href="rawUrl"
+          :download="page.title + '.md'"
+          :title="`下载 ${page.title}`"
+          :aria-label="`下载 ${page.title}`"
+        >
+          <Icon name="download" :size="13" />
+        </a>
         <button
           v-if="page.path.startsWith('Wiki/归档/')"
           type="button"
@@ -54,6 +63,8 @@ const props = defineProps<{
   selectionMode?: boolean;
 }>();
 const emit = defineEmits(['open', 'archive', 'unarchive', 'remove', 'toggle-select', 'drag-start', 'drag-end', 'context-menu']);
+
+const rawUrl = computed(() => `/api/files/raw?path=${encodeURIComponent(props.page.path)}`);
 
 function onClick() {
   if (props.selectionMode) emit('toggle-select', props.page);
@@ -181,6 +192,21 @@ const timeText = computed(() => {
 .row-actions button:hover, .row-actions button:focus-visible {
   background: var(--sidebar-active);
   color: var(--text);
+  outline: none;
+}
+.row-action-link {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: var(--text-faint);
+  text-decoration: none;
+}
+.row-action-link:hover, .row-action-link:focus-visible {
+  color: var(--text);
+  background: var(--sidebar-active);
   outline: none;
 }
 

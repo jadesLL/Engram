@@ -75,6 +75,15 @@
         >
           <Icon name="ai" :size="13" />
         </button>
+        <a
+          class="row-action-link"
+          :href="rawUrl"
+          :download="file.name"
+          :title="`下载 ${file.name}`"
+          :aria-label="`下载 ${file.name}`"
+        >
+          <Icon name="download" :size="13" />
+        </a>
         <button type="button" title="删除" aria-label="删除" @click="$emit('remove', file)">
           <Icon name="trash" :size="13" />
         </button>
@@ -84,6 +93,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import Icon from './Icon.vue';
 import { humanError } from '../lib/ingestError';
 
@@ -98,6 +108,8 @@ const props = defineProps<{
   job?: any;
 }>();
 const emit = defineEmits(['open', 'toggle-select', 'ingest', 'remove']);
+
+const rawUrl = computed(() => `/api/files/raw?path=${encodeURIComponent(props.file.path)}`);
 
 function onClick() {
   if (props.selectionMode) emit('toggle-select', props.file);
@@ -268,6 +280,22 @@ function fileIconClass(ext: string): string {
 }
 .row-actions button:hover,
 .row-actions button:focus-visible {
+  color: var(--text);
+  background: var(--sidebar-active);
+  outline: none;
+}
+.row-action-link {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: var(--text-faint);
+  text-decoration: none;
+}
+.row-action-link:hover,
+.row-action-link:focus-visible {
   color: var(--text);
   background: var(--sidebar-active);
   outline: none;
