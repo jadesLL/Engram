@@ -394,7 +394,7 @@ export async function fileRoutes(app: FastifyInstance) {
    *  - 路径都经 safeJoin 校验，越界或不存在则跳过并计入 skipped。
    *  - 同名文件（不同子目录）在 zip 内保留相对路径，不会冲突。 */
   app.post('/api/files/export', async (req, reply) => {
-    const { paths } = (req.body || {}) as { paths?: string[] };
+    const { paths, name } = (req.body || {}) as { paths?: string[]; name?: string };
     if (!Array.isArray(paths) || !paths.length) {
       return reply.code(400).send({ error: '未选择要导出的文件' });
     }
@@ -423,7 +423,9 @@ export async function fileRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: '没有可导出的文件', skipped });
     }
     const stamp = new Date().toISOString().slice(0, 10);
-    const zipName = `原始资料-${stamp}.zip`;
+    // zip 名前缀可由调用方指定（如"Wiki导出"/"AI整理日志"），默认"导出"
+    const label = name && name.trim() ? name.trim().replace(/[\\/:*?"<>|]/g, '-') : '导出';
+    const zipName = `${label}-${stamp}.zip`;
     const buf = await zip.generateAsync({
       type: 'nodebuffer',
       compression: 'DEFLATE',

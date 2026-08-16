@@ -63,6 +63,16 @@
                   <option value="created-desc">创建时间</option>
                 </select>
               </label>
+              <button
+                class="add-btn"
+                type="button"
+                :title="`导出全部${g.label}`"
+                :aria-label="`导出全部${g.label}`"
+                :disabled="!groupPageCount(g) || exporting"
+                @click="exportAllPages(g)"
+              >
+                <Icon name="download" :size="13" />
+              </button>
               <span class="sec-count">{{ groupPageCount(g) }}</span>
             </div>
           </div>
@@ -291,7 +301,19 @@
           >
             <span class="sec-name">AI 整理日志</span>
           </button>
-          <span class="sec-count">{{ visibleAiLogs.length }}</span>
+          <div class="sec-actions">
+            <button
+              class="add-btn"
+              type="button"
+              title="导出全部 AI 整理日志"
+              aria-label="导出全部 AI 整理日志"
+              :disabled="!visibleAiLogs.length || exporting"
+              @click="exportAllAiLogs"
+            >
+              <Icon name="download" :size="13" />
+            </button>
+            <span class="sec-count">{{ visibleAiLogs.length }}</span>
+          </div>
         </div>
         <div v-show="!collapsed.ailog" class="sec-body">
           <div
@@ -307,6 +329,19 @@
           >
             <Icon name="report" :size="13" class="log-file-icon" />
             <span class="page-title" :title="p.title">{{ p.title }}</span>
+            <span class="row-trailing">
+              <span class="row-actions" @click.stop>
+                <a
+                  class="row-action-link"
+                  :href="`/api/files/raw?path=${encodeURIComponent(p.path)}`"
+                  :download="p.title + '.md'"
+                  :title="`下载 ${p.title}`"
+                  :aria-label="`下载 ${p.title}`"
+                >
+                  <Icon name="download" :size="13" />
+                </a>
+              </span>
+            </span>
           </div>
           <p v-if="!visibleAiLogs.length" class="none">
             {{ filter ? '没有匹配日志' : '梦境整理运行后自动生成' }}
@@ -341,7 +376,7 @@
       <div v-if="selected.size" class="batch-bar">
         <span class="batch-count">已选 {{ selected.size }} 项</span>
         <button class="batch-btn" type="button" :disabled="!selectedPageCount" @click="batchArchive">归档</button>
-        <button class="batch-btn" type="button" :disabled="!selectedFileCount || exporting" @click="exportSelected">
+        <button class="batch-btn" type="button" :disabled="(!selectedPageCount && !selectedFileCount) || exporting" @click="exportSelected">
           {{ exporting ? '导出中…' : '导出' }}
         </button>
         <button class="batch-btn danger" type="button" @click="batchDelete">删除</button>
@@ -448,8 +483,9 @@ const selectedFileCount = computed(() =>
 );
 const exporting = ref(false);
 
-/** 把给定路径列表打包成 zip 下载。单文件直接走 /api/files/raw。 */
-async function exportFiles(paths: string[]) {
+/** 把给定路径列表打包成 zip 下载。单文件直接走 /api/files/raw。
+ *  name 为 zip 文件名前缀（如"原始资料"/"Wiki导出"），默认"导出"。 */
+async function exportFiles(paths: string[], name?: string) {
   if (!paths.length) return;
   if (paths.length === 1) {
     const link = document.createElement('a');
@@ -462,12 +498,13 @@ async function exportFiles(paths: string[]) {
   }
   exporting.value = true;
   try {
-    const res = await api.post('/api/files/export', { paths }, { responseType: 'blob' });
+    const res = await api.post('/api/files/export', { paths, name }, { responseType: 'blob' });
     const blob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: 'application/zip' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `原始资料-${new Date().toISOString().slice(0, 10)}.zip`;
+    const label = name || '导出';
+    link.download = `${label}-${new Date().toISOString().slice(0, 10)}.zip`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -480,8 +517,15 @@ async function exportFiles(paths: string[]) {
   }
 }
 
+/** 批量导出选中项：同时支持文件(f:)与页面(p:)。
+ *  页面选中存的是 pageId，需从 allPages 反查 path。 */
 async function exportSelected() {
-  const paths = [...selected.value].filter((k) => k.startsWith('f:')).map((k) => k.slice(2));
+  const filePaths = [...selected.value].filter((k) => k.startsWith('f:')).map((k) => k.slice(2));
+  const pageIds = [...selected.value].filter((k) => k.startsWith('p:')).map((k) => k.slice(2));
+  const pagePaths = pageIds
+    .map((id) => allPages.value.find((p) => p.id === id)?.path)
+    .filter(Boolean) as string[];
+  const paths = [...filePaths, ...pagePaths];
   if (!paths.length) return;
   await exportFiles(paths);
 }
@@ -489,7 +533,24 @@ async function exportSelected() {
 async function exportAllFiles() {
   const paths = files.value.map((f: any) => f.path).filter(Boolean);
   if (!paths.length) return;
-  await exportFiles(paths);
+  await exportFiles(paths, '原始资料');
+}
+
+/** 导出某类型分区（概念/实体/归档）的全部页面 */
+async function exportAllPages(g: any) {
+  const pages = g.subGroups
+    ? g.subGroups.flatMap((sub: any) => filteredPages(sub.pages))
+    : filteredPages(g.pages);
+  const paths = pages.map((p: any) => p.path).filter(Boolean);
+  if (!paths.length) return;
+  await exportFiles(paths, g.label + '导出');
+}
+
+/** 导出 AI 整理日志分区的全部页面 */
+async function exportAllAiLogs() {
+  const paths = aiLogs.value.map((p: any) => p.path).filter(Boolean);
+  if (!paths.length) return;
+  await exportFiles(paths, 'AI整理日志');
 }
 
 function toggleSelect(item: any) {
@@ -1390,6 +1451,47 @@ onUnmounted(() => {
 
 .log-row {
   padding-left: 8px;
+}
+
+/* AI 日志行内下载按钮（log-row 是手写结构，非 PageRow 组件） */
+.log-row .row-trailing {
+  position: relative;
+  width: 22px;
+  height: 100%;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.log-row .row-actions {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  display: flex;
+  align-items: center;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+.log-row:hover .row-actions,
+.log-row:focus-within .row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.log-row .row-action-link {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: var(--text-faint);
+  text-decoration: none;
+}
+.log-row .row-action-link:hover,
+.log-row .row-action-link:focus-visible {
+  color: var(--text);
+  background: var(--sidebar-active);
+  outline: none;
 }
 
 .none {
