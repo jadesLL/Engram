@@ -97,22 +97,12 @@ export function previewReportActions(kind: ReportActionKind) {
           ? payload.kind
           : 'concept';
         payload.evidenceSourceCount = sourceCount;
-        suggestedAction = sourceCount <= 1
-          ? 'ignore'
-          : payload.ambiguity
-            ? 'manual'
-            : `approve:${suggestedKind}`;
+        payload.suggestedKind = suggestedKind;
+        // 人工审核不再审理首次入库：所有 pending_review 候选只读挂账，等待自动对账，
+        // 不提供批量批准/忽略入库动作。
+        suggestedAction = 'manual';
         options = [
-          { value: 'manual', label: '询问（保持待审）' },
-          { value: 'approve:concept', label: '批准为概念' },
-          { value: 'approve:person', label: '批准为人物' },
-          { value: 'approve:customer', label: '批准为客户' },
-          { value: 'approve:org', label: '批准为组织' },
-          { value: 'approve:place', label: '批准为地点' },
-          { value: 'approve:work', label: '批准为作品' },
-          { value: 'approve:project', label: '批准为产品' },
-          { value: 'approve:other', label: '批准为其他' },
-          { value: 'ignore', label: '忽略' },
+          { value: 'manual', label: '保持待审（等待自动对账）' },
         ];
       } else if (kind === 'enrich') {
         suggestedAction = 'dismiss';
@@ -142,7 +132,7 @@ function validAction(kind: ReportActionKind, action: string): boolean {
     contradiction: ['resolve'],
     single_source: ['resolve'],
     missing_sections: ['repair'],
-    pending_review: ['approve:concept', 'approve:person', 'approve:customer', 'approve:org', 'approve:place', 'approve:work', 'approve:project', 'approve:other', 'ignore'],
+    pending_review: ['manual'],
     ingest_questions: ['resolve'],
     enrich: ['dismiss'],
     stale: ['review'],

@@ -198,10 +198,11 @@ test('dense input is split and all candidates pass through bounded stages withou
   fs.writeFileSync(path.join(rawDir, '密集资料.md'), `# 密集资料\n\n${lines.join('\n')}`, 'utf8');
 
   const stats = await ingestRawFile('原始资料/密集资料.md', () => {}, { force: true });
-  assert.deepEqual(stats, { created: 21, merged: 0, skipped: 0, pending: 0 });
+  // 门禁收紧后单来源候选全挂账等待自动对账，管线阶段仍全跑（测批处理不截断）。
+  assert.deepEqual(stats, { created: 0, merged: 0, skipped: 0, pending: 21 });
   assert.equal(
     db.prepare(`SELECT COUNT(*) count FROM pages WHERE deleted=0 AND path LIKE 'Wiki/概念/候选%.md'`).get().count,
-    21,
+    0,
   );
   const run = db.prepare(
     `SELECT id FROM ingest_runs WHERE path='原始资料/密集资料.md' ORDER BY started_at DESC LIMIT 1`
@@ -270,8 +271,10 @@ test('identical forced ingest reuses the validated pipeline result', async () =>
   const requestsAfterFirst = capturedRequests.length;
   const second = await ingestRawFile('原始资料/复用验证.md', () => {}, { force: true });
 
+  // 单来源候选挂账不建页；第二次同文件复用走缓存，仍无新建。
   assert.deepEqual(second, { created: 0, merged: 0, skipped: 0, pending: 0 });
-  assert.equal(first.created, 1);
+  assert.equal(first.created, 0);
+  assert.equal(first.pending, 1);
   assert.equal(capturedRequests.length, requestsAfterFirst);
   assert.equal(
     db.prepare(`SELECT COUNT(*) count FROM ingest_runs WHERE path='原始资料/复用验证.md'`).get().count,
@@ -295,7 +298,9 @@ test('a map result exactly at the batch limit is split again to avoid a silent c
   fs.writeFileSync(path.join(rawDir, '边界资料.md'), lines.join('\n'), 'utf8');
 
   const stats = await ingestRawFile('原始资料/边界资料.md', () => {}, { force: true });
-  assert.equal(stats.created, 20);
+  // 单来源候选挂账不建页，管线仍跑（测批处理边界拆分）。
+  assert.equal(stats.created, 0);
+  assert.equal(stats.pending, 20);
   const run = db.prepare(
     `SELECT id FROM ingest_runs WHERE path='原始资料/边界资料.md' ORDER BY started_at DESC LIMIT 1`
   ).get();
@@ -401,10 +406,11 @@ test('a failed rerun preserves the previously completed ingest state', async () 
      WHERE sv.path='原始资料/失败恢复.md' AND sv.status='active'`
   ).get();
 
-  fs.writeFileSync(sourcePath, '候选81事实A；候选81事实B；失败重整。', 'utf8');
+  // 第二次用全新候选名，确保走 create 路径触发覆盖率检查（已有页时不走覆盖率 reject）。
+  fs.writeFileSync(sourcePath, '候选82事实A；候选82事实B；失败重整。', 'utf8');
   coverageFailure = 'missing';
   await assert.rejects(
-    () => ingestRawFile('原始资料/失败恢复.md', () => {}, { force: true }),
+    () => ingestRawFile('原始资料/失败恢复.md', () => {}, { force: true, reextract: true }),
     /候选覆盖不完整/,
   );
   coverageFailure = null;

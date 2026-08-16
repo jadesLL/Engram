@@ -91,7 +91,10 @@
             <span>证据：{{ r.evidence?.sourceCount || 1 }} 个资料来源 / {{ r.evidence?.factCount || r.facts?.length || 0 }} 条事实</span>
           </div>
           <p v-if="(r.evidence?.sourceCount || 1) < 2" class="review-guidance small">
-            当前候选仍缺少足够事实或存在身份歧义。{{ pageTypeLabel(r.payload.kind) }}只是模型分类，请核对证据后再批准。
+            该候选来源不足，正在等待第二个独立来源出现后自动对账入库。{{ pageTypeLabel(r.payload.kind) }}仅为模型分类，无需人工批准。
+          </p>
+          <p v-else-if="r.payload.ambiguity" class="review-guidance small">
+            该候选存在身份歧义，需等待歧义消解后自动对账入库，无需人工批准。
           </p>
           <p v-if="r.payload.summary || r.payload.content" class="draft"><b>草稿：</b>{{ r.payload.summary || r.payload.content }}</p>
           <details v-if="r.facts?.length" class="evidence small">
@@ -106,18 +109,8 @@
               <span class="ambiguity-label">{{ r.payload.ambiguity.label }}</span>
               <b>{{ r.payload.ambiguity.question }}</b>
             </div>
-            <div v-if="r.payload.ambiguity.suggestions?.length" class="suggestion-list">
-              <button
-                v-for="suggestion in r.payload.ambiguity.suggestions"
-                :key="suggestion.id || suggestion.title"
-                class="btn small"
-                @click="selectMergeSuggestion(r, suggestion)"
-              >
-                选择 {{ suggestion.title }}
-              </button>
-            </div>
           </div>
-          <div class="review-controls">
+          <div v-if="!r.payload.reviewOnly" class="review-controls">
             <input v-model="reviewNames[r.id]" type="text" :placeholder="r.payload.kind === 'person' ? '确认完整姓名' : '确认页面名称'" />
             <select v-model="reviewKinds[r.id]">
               <option value="concept">概念</option>
@@ -138,6 +131,7 @@
           </div>
           <div class="actions">
             <button
+              v-if="!r.payload.reviewOnly"
               class="btn small primary"
               :disabled="reviewBusy[r.id] || !reviewNames[r.id]?.trim()"
               @click="openCandidatePreview(r, 'approve')"
@@ -145,6 +139,7 @@
               预览并批准
             </button>
             <button
+              v-if="!r.payload.reviewOnly"
               class="btn small"
               :disabled="reviewBusy[r.id] || !reviewTargets[r.id]"
               @click="openCandidatePreview(r, 'merge')"

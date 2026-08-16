@@ -161,7 +161,7 @@ test('validation rejects cross-category actions and orphan applying reports reco
   assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(item.id).status, 'open');
 });
 
-test('single-source pending reviews recommend ignore instead of a page type', () => {
+test('single-source pending reviews are read-only manual pending auto-reconciliation', () => {
   clear();
   const payload = {
     name: '恒创', source: '资料 A', runId: 'run-merge', factIds: ['f1'], kind: 'org',
@@ -171,18 +171,17 @@ test('single-source pending reviews recommend ignore instead of a page type', ()
   const preview = previewReportActions('pending_review').items[0];
   assert.equal(preview.disabled, false);
   assert.equal(preview.selected, true);
-  assert.equal(preview.suggestedAction, 'ignore');
+  assert.equal(preview.suggestedAction, 'manual');
   assert.equal(preview.payload.evidenceSourceCount, 1);
-  assert.deepEqual(preview.options.map((option: any) => option.value), [
-    'manual', 'approve:concept', 'approve:person', 'approve:customer', 'approve:org', 'approve:place', 'approve:work', 'approve:project', 'approve:other', 'ignore',
-  ]);
-  assert.throws(
-    () => validateDecisions('pending_review', [{ reportId: preview.id, action: 'manual' }]),
-    /处理动作无效/,
-  );
+  assert.deepEqual(preview.options.map((option: any) => option.value), ['manual']);
+  // 人工审核不再审批首次入库：唯一合法批量动作是保持待审（manual）。
   assert.deepEqual(
-    validateDecisions('pending_review', [{ reportId: preview.id, action: 'approve:org' }]),
-    [{ reportId: preview.id, action: 'approve:org' }],
+    validateDecisions('pending_review', [{ reportId: preview.id, action: 'manual' }]),
+    [{ reportId: preview.id, action: 'manual' }],
+  );
+  assert.throws(
+    () => validateDecisions('pending_review', [{ reportId: preview.id, action: 'approve:org' }]),
+    /处理动作无效/,
   );
 });
 
