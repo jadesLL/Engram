@@ -21,3 +21,27 @@ Git 命令默认从当前 `ExampleProject/` 根目录执行。不要运行仍引
 项目规则：
 
 1.优先使用中文。
+
+## Windows 桌面端打包
+
+桌面端安装包版本号与发布版本对齐（`desktop/package.json` 的 `version` 与 `releases/` 下最新版本号衔接，如当前 `1.0.17`）。产物写入 `releases/<version>/`，不纳入 Git。
+
+打包在代码库外的本地目录进行（属第 17 行允许的宿主机原生任务），分两步走，绕过 Windows Defender 实时扫描锁定 `electron.exe` 导致的 `EPERM rename`：
+
+1. **组装 win-unpacked**（不经 electron-builder 的 extract/rename）：
+   - `pnpm build:desktop` 跑到 `electron-builder` 那步会因 Defender EPERM 失败，但此前 server/web 已 build、`prepare-desktop.js` 已复制产物、server 生产依赖已装、better-sqlite3 已重编（electron-builder 内置 `@electron/rebuild`，日志 `completed installing native dependencies` 即成功）。
+   - 手动解压 electron zip 到 `dist/win-unpacked`（`Expand-Archive` 直接解压，无 rename，不触发 Defender）：`powershell -Command "Expand-Archive electron-v35.7.5-win32-x64.zip dist/win-unpacked"`。
+   - 组装 `dist/win-unpacked/resources/app/`：复制 `main.js`/`preload.js`/`index.html` + 生成 `package.json`（`main: main.js`）+ 复制 `server`（含 dist + node_modules）+ 复制 `web/dist`。
+
+2. **打 NSIS 安装包**（跳过 extract，直接打包已有 win-unpacked）：
+   ```bash
+   cd desktop && pnpm exec electron-builder --prepackaged dist/win-unpacked --win nsis
+   ```
+   - `--prepackaged` 跳过 electron 解压/rename，不触发 Defender 锁定；输出文件被扫描锁定时 electron-builder 自动 `waiting for unlock` 重试。
+   - 产出 `desktop/dist/LLM Wiki Setup <version>.exe`，复制到 `releases/<version>/` 并记录提交 ID、构建时间、sha256。
+
+**关键坑**：
+- `zod` 必须 3.25.76（`@modelcontextprotocol/sdk@1.30` 的 zod-compat `import 'zod/v3'`，3.24.1 无 `./v3` exports 致 ESM 崩；`prepare-desktop.js` 已固定）。
+- `pnpm -C desktop/server install` 需 `--ignore-workspace --no-frozen-lockfile`（脱离 workspace + 避锁文件冲突），ignored builds 的 exit 1 用 `|| true` 容忍（better-sqlite3 由 electron-builder 重编）。
+- `desktop/package.json` 设 `asar: false`（非管理员环境无法创建 symlink）。
+- 本地模式默认端口 18080，若被 Docker backend 占用需改 `LOCAL_PORT` 或加端口回退。
