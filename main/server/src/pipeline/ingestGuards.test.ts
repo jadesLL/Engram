@@ -15,14 +15,20 @@ test('schemas accept question acceptance criteria and reject malformed compose o
   assert.equal(composeOutputSchema.safeParse({ items: [{ ...base, kind: 'unknown', content: '正文' }] }).success, false);
 });
 
-test('fact whitelist deterministically removes unknown ids and forces review', () => {
+test('fact whitelist drops invalid ids but keeps items that still have valid facts', () => {
   const result = whitelistFactIds([{ ...base, factIds: ['f1', 'invented'] }], new Set(['f1']));
   assert.deepEqual(result.items[0].factIds, ['f1']);
-  assert.equal(result.items[0].action, 'review');
+  assert.equal(result.items[0].action, 'create');
   assert.deepEqual(result.rejected[0].invalidFactIds, ['invented']);
+  assert.match(result.items[0].reason, /已忽略/);
+
+  // 裁剪后无任何有效事实才转 review
+  const empty = whitelistFactIds([{ ...base, factIds: ['invented'] }], new Set(['f1']));
+  assert.equal(empty.items[0].action, 'review');
+  assert.deepEqual(empty.items[0].factIds, []);
 });
 
-test('write gate reviews unsupported, conflicts and missing facts, but verified low confidence passes', () => {
+test('write gate reviews conflicts and missing facts, unsupported content is cleaned and kept', () => {
   const items = [
     { ...base, candidateId: 'low', name: '低', confidence: '低' as const, content: 'x' },
     { ...base, candidateId: 'unsupported', name: '无依据', content: 'x' },
@@ -38,7 +44,9 @@ test('write gate reviews unsupported, conflicts and missing facts, but verified 
     { candidateId: 'pass', name: '通过', pass: true, unsupported: [], conflicts: [], content: 'verified' },
   ] };
   const gated = enforceWriteGate(items, verified, new Set(['f1']));
-  // 已通过验证的低置信度候选不再强制 review；未通过验证/无依据/冲突/无事实仍 review
-  assert.deepEqual(gated.map((item) => item.action), ['create', 'review', 'review', 'review', 'create']);
+  // 已验证低置信度通过；unsupported 用清理后正文入库不再 review；仅冲突/无事实转 review
+  assert.deepEqual(gated.map((item) => item.action), ['create', 'create', 'review', 'review', 'create']);
+  assert.equal(gated[1].content, 'fixed');
+  assert.deepEqual(gated[1].unsupportedSections, ['断言']);
   assert.equal(gated.at(-1)?.content, 'verified');
 });

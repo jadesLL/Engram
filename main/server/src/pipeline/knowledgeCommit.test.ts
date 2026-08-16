@@ -252,6 +252,56 @@ test('a verified single source creates a page with two facts but keeps ambiguous
   assert.equal(db.prepare(`SELECT COUNT(*) n FROM pages WHERE title='刘经理'`).get().n, 0);
 });
 
+test('a verified single-source mid-confidence item with one fact creates a page', () => {
+  const sourcePath = '原始资料/单来源中置信度.md';
+  const version = beginSourceVersion(sourcePath, 'mid-conf-hash');
+  startRun('mid-conf-run', version.id, 'mid-conf-hash', sourcePath);
+  addFacts('mid-conf-run', ['mid-f1'], '中置信度事实');
+  const result = commitKnowledgeItems([{
+    ...item('## 核心事实\n\n单来源中置信度单事实'),
+    name: '中置信度项目',
+    confidence: '中' as const,
+    factIds: ['mid-f1'],
+    verified: true,
+  }], {
+    runId: 'mid-conf-run',
+    sourceVersion: version,
+    sourcePath,
+    sourceName: '单来源中置信度.md',
+    sourceRef: sourcePath,
+  });
+  assert.deepEqual(result.stats, { created: 1, merged: 0, skipped: 0, pending: 0 });
+  const page = db.prepare(`SELECT path FROM pages WHERE title='中置信度项目'`).get();
+  assert.match(readPage(page.path).content, /单来源中置信度单事实/);
+});
+
+test('unsupported sections are recorded as enrich reports instead of blocking the page', () => {
+  const sourcePath = '原始资料/无依据清理.md';
+  const version = beginSourceVersion(sourcePath, 'unsupported-hash');
+  startRun('unsupported-run', version.id, 'unsupported-hash', sourcePath);
+  addFacts('unsupported-run', ['unsup-f1', 'unsup-f2'], '清理测试');
+  commitKnowledgeItems([{
+    ...item('## 核心事实\n\n有据内容'),
+    name: '无依据清理项目',
+    factIds: ['unsup-f1', 'unsup-f2'],
+    unsupportedSections: ['未经核实的业绩数据'],
+  }], {
+    runId: 'unsupported-run',
+    sourceVersion: version,
+    sourcePath,
+    sourceName: '无依据清理.md',
+    sourceRef: sourcePath,
+  });
+  const page = db.prepare(`SELECT id,path FROM pages WHERE title='无依据清理项目'`).get();
+  assert.match(readPage(page.path).content, /有据内容/);
+  const enrich = db.prepare(
+    `SELECT payload FROM reports WHERE kind='enrich' AND issue_key=?`
+  ).get(`ingest-unsupported:${page.id}`) as { payload: string };
+  assert.ok(enrich, '应产生 enrich 报告');
+  const payload = JSON.parse(enrich.payload);
+  assert.deepEqual(payload.unsupportedSections, ['未经核实的业绩数据']);
+});
+
 test('ignoring a candidate does not block reruns, but a new version of the same path is still one source', () => {
   const sourcePath = '原始资料/重复来源.md';
   const firstVersion = beginSourceVersion(sourcePath, 'same-path-hash-1');
