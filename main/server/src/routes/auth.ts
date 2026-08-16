@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import bcrypt from 'bcryptjs';
-import { getSetting, setSetting } from '../lib/db.js';
+import { db, getSetting, setSetting, now } from '../lib/db.js';
 import crypto from 'node:crypto';
 
 export function ensureJwtSecret(): string {
@@ -78,6 +78,23 @@ export async function authRoutes(app: FastifyInstance) {
     }
     setSetting('password_hash', bcrypt.hashSync(newPassword, 10));
     return { ok: true };
+  });
+
+  /** 桌面端远端连接：凭 desktop_token 免密兑换 JWT（返回 body，供桌面端预置 cookie） */
+  app.post('/api/auth/desktop-exchange', async (req, reply) => {
+    const { token } = (req.body || {}) as { token?: string };
+    if (!token) return reply.code(400).send({ error: '缺少 token' });
+    const row = db
+      .prepare(`SELECT id, revoked, expires_at FROM desktop_tokens WHERE token = ?`)
+      .get(token) as { id: number; revoked: number; expires_at: string | null } | undefined;
+    if (!row) return reply.code(401).send({ error: '令牌无效' });
+    if (row.revoked) return reply.code(401).send({ error: '令牌已撤销' });
+    if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) {
+      return reply.code(401).send({ error: '令牌已过期' });
+    }
+    db.prepare(`UPDATE desktop_tokens SET last_used_at = ? WHERE id = ?`).run(now(), row.id);
+    const jwt = app.jwt.sign({ sub: 'owner' }, { expiresIn: '30d' });
+    return { jwt, expiresIn: 30 * 24 * 60 * 60 };
   });
 }
 

@@ -7,15 +7,15 @@
   <style>
     * { box-sizing: border-box; }
     body {
-      margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
       font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
       background: #f7f7f5; color: #37352f;
     }
     .card {
       background: #fff; border: 1px solid #e9e9e7; border-radius: 12px;
-      padding: 36px 32px; width: 380px;
+      padding: 32px; width: 420px;
       box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-      display: flex; flex-direction: column; gap: 14px;
+      display: flex; flex-direction: column; gap: 18px;
     }
     .logo {
       width: 44px; height: 44px; margin: 0 auto; border-radius: 11px;
@@ -23,43 +23,81 @@
       display: flex; align-items: center; justify-content: center;
     }
     h1 { font-size: 20px; margin: 0; text-align: center; }
-    p { margin: 0; text-align: center; color: #787774; font-size: 14px; }
-    input { font: inherit; padding: 10px 12px; border: 1px solid #dcdcd9; border-radius: 8px; outline: none; }
+    .sub { margin: 0; text-align: center; color: #787774; font-size: 13px; }
+    .mode { border: 1px solid #ececea; border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .mode h2 { margin: 0; font-size: 14px; }
+    .mode p { margin: 0; color: #9c9b97; font-size: 12px; }
+    input { font: inherit; padding: 9px 11px; border: 1px solid #dcdcd9; border-radius: 8px; outline: none; width: 100%; }
     input:focus { border-color: #2563eb; }
-    button { font: inherit; padding: 10px; border: none; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; }
-    button:hover { opacity: 0.9; }
-    .err { color: #dc2626; font-size: 13px; text-align: center; }
+    button { font: inherit; padding: 10px; border: none; border-radius: 8px; cursor: pointer; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-block { width: 100%; }
+    .btn-secondary { background: #37352f; color: #fff; }
+    .row { display: flex; gap: 8px; }
+    .row input { flex: 1; }
+    .err { color: #dc2626; font-size: 12px; text-align: center; min-height: 14px; }
+    .current { font-size: 12px; color: #787774; text-align: center; }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="logo">W</div>
     <h1>LLM Wiki</h1>
-    <p>输入 NAS 上的服务地址</p>
-    <input id="url" placeholder="http://192.168.1.101:8080" />
-    <button id="go">连接</button>
+    <p class="sub">选择使用方式</p>
+
+    <div class="mode">
+      <h2>本地模式</h2>
+      <p>所有数据保存在本机，无需服务器，开箱即用。</p>
+      <button class="btn-secondary btn-block" id="local">使用本地</button>
+    </div>
+
+    <div class="mode">
+      <h2>连接远端服务器</h2>
+      <p>在远端「设置 → 桌面端连接」生成令牌，填入地址与令牌即可免密码登录。</p>
+      <input id="url" placeholder="http://192.168.1.101:8080" />
+      <input id="token" placeholder="lwid_..." />
+      <button class="btn-primary btn-block" id="go">连接</button>
+    </div>
+
+    <div class="current" id="current"></div>
     <div class="err" id="err"></div>
   </div>
   <script>
-    const input = document.getElementById('url');
+    const urlInput = document.getElementById('url');
+    const tokenInput = document.getElementById('token');
     const err = document.getElementById('err');
-    window.wikiDesktop?.getServer().then(u => { input.value = u || ''; });
-    input.focus();
+    const current = document.getElementById('current');
+
+    window.wikiDesktop?.getConnection().then((c) => {
+      if (c.remoteUrl) urlInput.value = c.remoteUrl;
+      if (c.mode === 'local') current.textContent = '当前：本地模式';
+      else if (c.mode === 'remote') current.textContent = '当前：远端 ' + c.remoteUrl;
+      else current.textContent = '当前：未配置';
+    });
+
+    document.getElementById('local').onclick = async () => {
+      err.textContent = '';
+      await window.wikiDesktop.setLocalMode();
+    };
+
     async function go() {
-      let u = input.value.trim();
-      if (!u) { err.textContent = '请输入地址'; return; }
+      err.textContent = '';
+      let u = urlInput.value.trim();
+      const t = tokenInput.value.trim();
+      if (!u) { err.textContent = '请输入服务器地址'; return; }
+      if (!t) { err.textContent = '请输入连接令牌'; return; }
       if (!/^https?:\/\//.test(u)) u = 'http://' + u;
       u = u.replace(/\/+$/, '');
       try {
-        const r = await fetch(u + '/api/auth/status');
-        if (!r.ok) throw new Error();
-        await window.wikiDesktop.setServer(u);
-      } catch {
-        err.textContent = '无法连接到 ' + u;
+        await window.wikiDesktop.setRemoteMode(u, t);
+      } catch (e) {
+        err.textContent = '连接失败：' + (e.message || e);
       }
     }
     document.getElementById('go').onclick = go;
-    input.addEventListener('keydown', e => e.key === 'Enter' && go());
+    tokenInput.addEventListener('keydown', (e) => e.key === 'Enter' && go());
+    urlInput.focus();
   </script>
 </body>
 </html>
