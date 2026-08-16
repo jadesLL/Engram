@@ -4,9 +4,13 @@
     :class="{ active, selected }"
     role="button"
     tabindex="0"
+    draggable="true"
     @click="onClick"
     @keydown.enter.self="onClick"
     @keydown.space.self.prevent="onClick"
+    @dragstart="onDragStart"
+    @dragend="$emit('drag-end')"
+    @contextmenu.prevent="onContextMenu"
   >
     <span
       class="check"
@@ -49,11 +53,22 @@ const props = defineProps<{
   selected?: boolean;
   selectionMode?: boolean;
 }>();
-const emit = defineEmits(['open', 'archive', 'unarchive', 'remove', 'toggle-select']);
+const emit = defineEmits(['open', 'archive', 'unarchive', 'remove', 'toggle-select', 'drag-start', 'drag-end', 'context-menu']);
 
 function onClick() {
   if (props.selectionMode) emit('toggle-select', props.page);
   else emit('open', props.page);
+}
+
+function onDragStart(e: DragEvent) {
+  if (!e.dataTransfer) return;
+  e.dataTransfer.setData('text/plain', props.page.id);
+  e.dataTransfer.effectAllowed = 'move';
+  emit('drag-start', props.page);
+}
+
+function onContextMenu(e: MouseEvent) {
+  emit('context-menu', { x: e.clientX, y: e.clientY, page: props.page });
 }
 
 const timeText = computed(() => {

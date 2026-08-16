@@ -42,10 +42,14 @@
           >
             <button
               class="sec-toggle"
+              :class="{ 'drop-target': g.key === 'concept' && dragOverKey === 'concept' && canDropTo('concept') }"
               type="button"
               :aria-expanded="!collapsed[g.key]"
               :title="collapsed[g.key] ? `展开${g.label}` : `收起${g.label}`"
               @click="toggle(g.key)"
+              @dragover="g.key === 'concept' && onDragOverSub($event, 'concept')"
+              @dragleave="g.key === 'concept' && onDragLeave('concept')"
+              @drop.prevent="g.key === 'concept' && onDropToType('concept')"
             >
               <span class="sec-name">{{ g.label }}</span>
             </button>
@@ -73,10 +77,14 @@
               >
                 <button
                   class="sub-head"
+                  :class="{ 'drop-target': dragOverKey === sub.key && canDropTo(sub.key) }"
                   type="button"
                   :aria-expanded="!collapsed[`${g.key}:${sub.key}`]"
                   :title="collapsed[`${g.key}:${sub.key}`] ? `展开${sub.label}` : `收起${sub.label}`"
                   @click="toggle(`${g.key}:${sub.key}`)"
+                  @dragover="onDragOverSub($event, sub.key)"
+                  @dragleave="onDragLeave(sub.key)"
+                  @drop.prevent="onDropToType(sub.key)"
                 >
                   <span class="sub-name">{{ sub.label }}</span>
                   <span class="sub-count">{{ filteredPages(sub.pages).length }}</span>
@@ -94,6 +102,9 @@
                     @unarchive="unarchivePage"
                     @remove="removePage"
                     @toggle-select="toggleSelect"
+                    @context-menu="onPageContextMenu"
+                    @drag-start="onDragStart"
+                    @drag-end="onDragEnd"
                   />
                 </div>
               </div>
@@ -115,6 +126,9 @@
                 @unarchive="unarchivePage"
                 @remove="removePage"
                 @toggle-select="toggleSelect"
+                @context-menu="onPageContextMenu"
+                @drag-start="onDragStart"
+                @drag-end="onDragEnd"
               />
               <p v-if="!filteredPages(g.pages).length" class="none">
                 {{ filter ? '没有匹配页面' : '暂无页面' }}
@@ -332,6 +346,8 @@ import { humanError } from '../lib/ingestError';
 import { useAppStore } from '../stores/app';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
+import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
+import { openMergeDialog } from '../lib/mergeDialog';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
 import FileRow from './FileRow.vue';
@@ -454,6 +470,81 @@ async function batchDelete() {
   }
   clearSelection();
   await load();
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  concept: '概念', person: '人物', customer: '客户', org: '组织',
+  place: '地点', work: '作品', project: '产品', other: '其他',
+};
+
+/** 拖拽改归属：拖动页面行到实体子类/概念标题上，改变页面 type */
+const draggedPage = ref<any | null>(null);
+const dragOverKey = ref('');
+
+function canDropTo(typeKey: string): boolean {
+  return !!draggedPage.value
+    && !draggedPage.value.path.startsWith('Wiki/归档/')
+    && draggedPage.value.type !== typeKey;
+}
+
+function onDragStart(page: any) {
+  draggedPage.value = page;
+}
+
+function onDragEnd() {
+  draggedPage.value = null;
+  dragOverKey.value = '';
+}
+
+function onDragOverSub(e: DragEvent, typeKey: string) {
+  if (!canDropTo(typeKey)) return;
+  e.preventDefault();
+  e.dataTransfer!.dropEffect = 'move';
+  if (dragOverKey.value !== typeKey) dragOverKey.value = typeKey;
+}
+
+function onDragLeave(typeKey: string) {
+  if (dragOverKey.value === typeKey) dragOverKey.value = '';
+}
+
+async function onDropToType(typeKey: string) {
+  const page = draggedPage.value;
+  dragOverKey.value = '';
+  draggedPage.value = null;
+  if (!page || page.type === typeKey) return;
+  await changePageType(page, typeKey);
+}
+
+async function changePageType(page: any, newType: string) {
+  try {
+    await api.put(`/api/pages/${page.id}`, { type: newType });
+    await load();
+    notify.success(`已将「${page.title}」移动到${TYPE_LABELS[newType] || newType}`);
+  } catch (e: any) {
+    notify.error(e.response?.data?.error || '移动失败');
+  }
+}
+
+/** 右键页面行：合并 / 归档 / 删除 */
+function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) {
+  const isArchived = page.path.startsWith('Wiki/归档/');
+  const items: ContextMenuItem[] = [
+    {
+      id: 'merge',
+      label: '合并到…',
+      icon: 'merge',
+      action: () => openMergeDialog(page),
+    },
+    {
+      id: 'archive',
+      label: isArchived ? '取消归档' : '归档',
+      icon: isArchived ? 'restore' : 'archive',
+      separatorBefore: true,
+      action: () => (isArchived ? unarchivePage(page) : archivePage(page)),
+    },
+    { id: 'delete', label: '删除', icon: 'trash', action: () => removePage(page) },
+  ];
+  openContextMenu({ x, y, items });
 }
 
 const activeId = computed(() => (route.params.id as string) || '');
@@ -1141,6 +1232,13 @@ onUnmounted(() => {
 .sub-head:hover {
   color: var(--text-secondary);
   background: var(--sidebar-hover);
+}
+
+.sub-head.drop-target,
+.sec-toggle.drop-target {
+  background: color-mix(in srgb, var(--sidebar-accent) 15%, transparent);
+  box-shadow: inset 0 0 0 2px var(--sidebar-accent);
+  color: var(--sidebar-accent);
 }
 
 .sub-head:focus-visible {
