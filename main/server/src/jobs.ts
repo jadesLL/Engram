@@ -16,6 +16,7 @@ import { enqueue, enqueuePagePipeline } from './jobQueue.js';
 import { allPageContributions, finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
 import { recoverKnowledgeCommit } from './pipeline/knowledgeCommit.js';
 import { runDreamCycle } from './dream/tasks.js';
+import { scanIdentityAmbiguityForPages } from './dream/tasks.js';
 import {
   applyCandidateReviewBatch,
   claimCandidateReviewBatch,
@@ -215,6 +216,12 @@ const handlers: Record<string, JobHandler> = {
     const result = await runDreamCycle(context.signal);
     update({ stage: '梦境整理 已完成', progress: 100, detail: JSON.stringify(result) });
     try { appendWikiLog('梦境整理', JSON.stringify(result)); } catch { /* 日志失败不阻塞 */ }
+  },
+  /** 入库后增量扫描：检测新建页面与已有页面之间的身份歧义。 */
+  identity_audit: async ({ pageIds }, update, context) => {
+    update({ stage: '身份歧义增量扫描', progress: 5, detail: `${(pageIds || []).length} 个新建页面` });
+    const count = await scanIdentityAmbiguityForPages(pageIds || [], context.signal);
+    update({ stage: '身份歧义增量扫描 已完成', progress: 100, detail: `发现 ${count} 项歧义` });
   },
   rebuild: async (_payload, update, context) => {
     let progress = 10;

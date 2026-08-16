@@ -99,6 +99,15 @@ function responseFor(system: string, input: any) {
     };
   }
   if (system.includes('执行 Question Finder')) return { questions: [] };
+  if (system.includes('你是知识库实体身份消歧专家')) {
+    return {
+      status: 'clear',
+      canonicalName: input?.candidate?.name || '',
+      mergeTarget: '',
+      question: '',
+      suggestions: [],
+    };
+  }
   if (system.includes('执行 Verifier')) {
     return {
       items: (input.items || []).map((item: any) => ({

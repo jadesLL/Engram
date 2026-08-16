@@ -3,6 +3,7 @@ import { db, now } from '../lib/db.js';
 import { createPage, readPage, readPageMeta, safeJoin, writePage } from '../lib/vault.js';
 import { TYPE_DIR, isEntity, isSynthesizable } from '../lib/pageTypes.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
+import { enqueue } from '../jobQueue.js';
 import { addReports } from '../dream/reports.js';
 import type { ComposedItem } from './ingestModel.js';
 import {
@@ -357,6 +358,7 @@ export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeC
     throw error;
   }
   reconcilePendingCandidates();
+  if (createdPageIds.length) enqueue('identity_audit', { pageIds: createdPageIds });
   return { stats, pageIds };
 }
 

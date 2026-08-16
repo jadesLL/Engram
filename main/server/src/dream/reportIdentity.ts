@@ -65,6 +65,10 @@ export function deriveReportIdentity(kind: string, payload: Record<string, any>)
       issueKey ||= String(payload.path || '');
       condition = [payload.contentHash || payload.runId || '', payload.questions || []];
       break;
+    case 'identity_ambiguity':
+      issueKey ||= String(payload.pageId || '');
+      condition = [payload.pageId, payload.pageUpdated || '', payload.ambiguity?.category || '', payload.suggestedTargetId || ''];
+      break;
     default:
       issueKey ||= fingerprint(payload).slice(0, 24);
   }
