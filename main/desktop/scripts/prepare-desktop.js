@@ -35,12 +35,16 @@ fs.writeFileSync(
       private: true,
       type: serverPkg.type || 'commonjs',
       dependencies: deps,
-      // 允许 better-sqlite3 跑 prebuild-install 下 Node 预编译；Electron ABI 由 electron-builder 内置 @electron/rebuild 重编
-      pnpm: { onlyBuiltDependencies: ['better-sqlite3'] },
     },
     null,
     2
   )
+);
+// pnpm 11 不再读 package.json 的 pnpm 字段；onlyBuiltDependencies 需在 pnpm-workspace.yaml。
+// 允许 better-sqlite3 跑 prebuild-install 下 Node 预编译；Electron ABI 由 electron-builder 内置 @electron/rebuild 重编。
+fs.writeFileSync(
+  path.join(desktopRoot, 'server', 'pnpm-workspace.yaml'),
+  'onlyBuiltDependencies:\n  - better-sqlite3\n'
 );
 
 console.log('[prepare-desktop] 已复制 server/dist、web/dist，并生成 desktop/server/package.json');
