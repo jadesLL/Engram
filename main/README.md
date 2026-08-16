@@ -24,13 +24,13 @@
 - 🖼 **PDF / 图片**：PDF.js 在线查看、缩放、缩略图与搜索；图片支持缩放、拖动和旋转，文字型 PDF 本地提取，扫描页和图片按需调用支持图片输入的模型
 - ✅ **证据门禁**：自动新建知识页要求两个不同原始资料来源；待审批准会重新组织、验证并展示差异
 - 🔌 **MCP 接口**：把知识库变成外部 AI Agent 的"外脑"
-- 📱 **多端**：NAS Docker 部署，Windows 桌面端（Tauri）+ 安卓/任意浏览器访问
+- 📱 **多端**：NAS Docker 部署，Windows 桌面端（Electron，本地内嵌或连接远端）+ 安卓/任意浏览器访问
 
 ## 快速开始（NAS Docker 部署）
 
 ```bash
 git clone <本仓库>  # 或下载源码解压
-cd Wiki知识库
+cd ExampleProject
 docker compose up -d --build
 ```
 
@@ -91,7 +91,7 @@ data/
 ## 多端访问
 
 - **Windows / 安卓浏览器**：直接访问 `http://<NAS的IP>:8080`，安卓可"添加到主屏幕"（PWA）
-- **Windows 桌面端**：见 `desktop/README.md`（Tauri 壳，支持"用系统程序打开"远程文件）
+- **Windows 桌面端**：见 `desktop/README.md`（Electron 壳；本地模式内嵌后端无需服务器，远端模式凭令牌免密连接 NAS；支持“用系统程序打开”远程文件）
 - **外网访问**：建议配合 NAS 的反向代理（NPM/Traefik）+ HTTPS；或 Tailscale/组网工具
 
 ## MCP 接入（Claude Code / Cursor）
@@ -129,4 +129,4 @@ pnpm start        # 生产模式运行（server 托管 web/dist）
 
 ## 技术栈
 
-Fastify + better-sqlite3（FTS5 + sqlite-vec）· Vue 3 + Vditor + vis-network · Tauri v2 · Docker 单容器
+Fastify + better-sqlite3（FTS5 + sqlite-vec）· Vue 3 + Vditor + vis-network · Electron（桌面端）· Docker 单容器

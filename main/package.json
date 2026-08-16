@@ -10,7 +10,8 @@
     "build": "pnpm -r run build",
     "start": "pnpm --filter @example-wiki/server run start",
     "test": "pnpm --filter @example-wiki/server run test",
-    "typecheck": "pnpm -r run typecheck"
+    "typecheck": "pnpm -r run typecheck",
+    "build:desktop": "pnpm --filter @example-wiki/server build && pnpm --filter @example-wiki/web build && node desktop/scripts/prepare-desktop.js && pnpm -C desktop/server install --prod --shamefully-hoist && pnpm --filter @example-wiki/desktop rebuild && pnpm --filter @example-wiki/desktop dist"
   },
   "engines": {
     "node": ">=20"

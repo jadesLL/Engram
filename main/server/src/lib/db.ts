@@ -159,6 +159,17 @@ export function migrate() {
     created_at TEXT NOT NULL
   );
 
+  -- 桌面端远端连接令牌：远端服务器签发，桌面端凭 token 免密兑换 JWT cookie
+  CREATE TABLE IF NOT EXISTS desktop_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL DEFAULT 'default',
+    created_at TEXT NOT NULL,
+    expires_at TEXT,
+    revoked INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT
+  );
+
   -- 原始资料消化记录（保留旧 API 的 at 字段，并增加内容幂等状态）
   CREATE TABLE IF NOT EXISTS ingest_log (
     path TEXT PRIMARY KEY,

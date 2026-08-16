@@ -1,11 +1,12 @@
 {
   "name": "@example-wiki/desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "LLM Wiki Windows 桌面端",
+  "description": "LLM Wiki Windows 桌面端（本地内嵌 / 远端连接双模式）",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "rebuild": "npx -y @electron/rebuild -f -m ./server",
     "dist": "electron-builder --win nsis",
     "dist:portable": "electron-builder --win portable"
   },
@@ -16,7 +17,20 @@
   "build": {
     "appId": "com.llmwiki.app",
     "productName": "LLM Wiki",
-    "files": ["main.js", "preload.js", "index.html"],
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "server/dist/**",
+      "server/node_modules/**",
+      "server/package.json",
+      "web/dist/**"
+    ],
+    "asarUnpack": [
+      "server/node_modules/**/better-sqlite3/**",
+      "server/node_modules/**/sqlite-vec*/**",
+      "server/node_modules/@napi-rs/canvas*/**"
+    ],
     "win": {
       "target": ["nsis", "portable"],
       "icon": "build/icon.png"

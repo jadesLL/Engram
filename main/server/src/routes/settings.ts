@@ -180,6 +180,36 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // ---------- desktop tokens（桌面端远端连接令牌）----------
+  app.get('/api/settings/desktop-tokens', async () => {
+    const rows = db
+      .prepare(
+        `SELECT id, token, name, created_at, expires_at, revoked, last_used_at
+         FROM desktop_tokens ORDER BY id`
+      )
+      .all();
+    return { tokens: rows };
+  });
+
+  app.post('/api/settings/desktop-tokens', async (req) => {
+    const { name } = (req.body || {}) as { name?: string };
+    const token = `lwid_${crypto.randomBytes(24).toString('hex')}`;
+    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+    const r = db
+      .prepare(
+        `INSERT INTO desktop_tokens(token, name, created_at, expires_at) VALUES(?, ?, ?, ?)`
+      )
+      .run(token, name || 'default', now(), expiresAt);
+    return { id: Number(r.lastInsertRowid), token, expires_at: expiresAt };
+  });
+
+  app.delete('/api/settings/desktop-tokens/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    // 撤销而非物理删除，保留审计记录；已撤销令牌不可再兑换
+    db.prepare(`UPDATE desktop_tokens SET revoked = 1 WHERE id = ?`).run(id);
+    return { ok: true };
+  });
+
   /** 一键清除：删除知识正文、整理报告、入库记录与派生索引，保留配置/认证/系统日志。清除后后台全量重建索引，接口快速返回，避免长耗时操作阻塞容器健康探针。 */
   app.post('/api/settings/wipe', async (req, reply) => {
     const { password } = (req.body || {}) as { password?: string };
