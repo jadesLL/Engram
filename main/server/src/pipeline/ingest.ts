@@ -698,11 +698,11 @@ export async function ingestRawFile(
     }
     const rosterEntries = loadRoster();
     const titleRoster = roster(rosterEntries);
-    const MAP_CONCURRENCY = 3;
+    const MAP_CONCURRENCY = 1;
     const mapResults = await concurrentMap(document.chunks, MAP_CONCURRENCY, async (chunk, chunkIndex) => {
       options.signal?.throwIfAborted();
       onProgress({ stage: 'Map', progress: 10 + Math.round(((chunkIndex + 1) / document.chunks.length) * 24), detail: `${chunkIndex + 1}/${document.chunks.length}` });
-      const history = createSemanticCacheSession(`ingest-map:${runId}:${chunkIndex}`, mapPrompt);
+      const history = createSemanticCacheSession(`ingest-map:${runId}`, mapPrompt);
       return mapChunk(runId, chunk, titleRoster, history, 'always', options.signal);
     });
     const rawMapped: Candidate[] = mapResults.flat();

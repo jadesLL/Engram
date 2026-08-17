@@ -11,7 +11,7 @@ import {
 } from './llm.js';
 import { recordLlmResultCacheHit } from './llmUsage.js';
 
-const MAX_SEMANTIC_HISTORY_CHARS = 48_000;
+const MAX_SEMANTIC_HISTORY_CHARS = 200_000;
 
 export type SemanticCacheContextMode = 'once' | 'always';
 
