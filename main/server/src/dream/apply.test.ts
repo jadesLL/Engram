@@ -40,9 +40,9 @@ function clear() {
   fs.mkdirSync(path.join(temp, 'brain'), { recursive: true });
 }
 
-test('all nine categories expose the expected default selection', () => {
+test('all ten categories expose the expected default selection', () => {
   clear();
-  const kinds = ['deadlink', 'duplicate', 'contradiction', 'single_source', 'missing_sections', 'pending_review', 'ingest_questions', 'enrich', 'stale'];
+  const kinds = ['deadlink', 'duplicate', 'contradiction', 'single_source', 'missing_sections', 'pending_review', 'ingest_questions', 'enrich', 'stale', 'identity_ambiguity'];
   for (const kind of kinds) addReports([{ kind, payload: fixture(kind) }]);
   for (const kind of kinds) {
     const preview = previewReportActions(kind as any);
@@ -185,6 +185,45 @@ test('single-source pending reviews are read-only manual pending auto-reconcilia
   );
 });
 
+test('identity ambiguity preview distinguishes merge vs dismiss and dismiss applies', async () => {
+  clear();
+  const source = createPage('Wiki/概念', '歧义实体');
+  writePage(source.path, '# 歧义实体\n\n正文', { type: 'concept' });
+
+  // 有建议合并目标 → suggestedAction = merge，validateDecisions 接受 merge
+  addReports([{
+    kind: 'identity_ambiguity',
+    payload: { pageId: source.id, title: source.title, type: 'concept', suggestedTargetId: 'target', suggestedTargetTitle: '目标页面' },
+  }]);
+  const mergeItem = previewReportActions('identity_ambiguity').items[0];
+  assert.equal(mergeItem.suggestedAction, 'merge');
+  assert.equal(mergeItem.selected, true);
+  assert.deepEqual(mergeItem.options.map((o: any) => o.value), ['merge', 'dismiss']);
+  assert.deepEqual(
+    validateDecisions('identity_ambiguity', [{ reportId: mergeItem.id, action: 'merge' }]),
+    [{ reportId: mergeItem.id, action: 'merge' }],
+  );
+
+  // 无建议合并目标 → suggestedAction = dismiss
+  addReports([{
+    kind: 'identity_ambiguity',
+    payload: { pageId: source.id, title: source.title, type: 'concept' },
+  }]);
+  const dismissItem = previewReportActions('identity_ambiguity').items[0];
+  assert.equal(dismissItem.suggestedAction, 'dismiss');
+  assert.deepEqual(dismissItem.options.map((o: any) => o.value), ['dismiss']);
+  const dismissDecision = [{ reportId: dismissItem.id, action: 'dismiss' }];
+  claimReports('identity_ambiguity', dismissDecision);
+  const dismissResult = await applyReportDecisions('identity_ambiguity', dismissDecision);
+  assert.equal(dismissResult.dismissed, 1);
+
+  // 非法动作被拒绝
+  assert.throws(
+    () => validateDecisions('identity_ambiguity', [{ reportId: dismissItem.id, action: 'resolve' }]),
+    /处理动作无效/,
+  );
+});
+
 function fixture(kind: string): any {
   const basePage = { id: `${kind}-page`, title: `${kind} 页面`, path: `Wiki/概念/${kind}.md`, updated_at: '2026-01-01' };
   const fixtures: Record<string, any> = {
@@ -203,6 +242,7 @@ function fixture(kind: string): any {
     ingest_questions: { path: '原始资料/a.md', contentHash: 'hash', questions: [{ question: '问题' }] },
     enrich: { pageId: basePage.id, title: basePage.title, refs: 2, wordCount: 20, pageUpdated: '2026-01-01' },
     stale: { pageId: basePage.id, title: basePage.title, staleDays: 200, pageUpdated: '2026-01-01', reviewedAt: '' },
+    identity_ambiguity: { pageId: basePage.id, title: basePage.title, type: 'concept', ambiguity: { label: '名称相似', question: '是否指同一实体？' }, suggestedTargetId: 'target', suggestedTargetTitle: '目标页面' },
   };
   return fixtures[kind];
 }
