@@ -86,16 +86,24 @@
       </details>
     </section>
 
-    <!-- 已处理:忽略/知悉/处理完的记录保留在此,不计角标 -->
+    <!-- 已处理:忽略/知悉/处理完的记录保留在此,不计角标;已阅的可重新处理 -->
     <section v-if="doneItems.length" class="report-section">
       <details class="done-section">
         <summary>
           <h3>已处理<span class="count dim">{{ doneItems.length }}</span></h3>
         </summary>
-        <div v-for="item in doneItems" :key="item.id" class="done-item">
+        <div v-for="item in doneItems" :key="item.id" class="done-item" :class="{ busy: doneBusy[item.id] }">
           <span class="done-badge" :data-status="item.status">{{ item.status === 'resolved' ? '已处理' : '已阅' }}</span>
           <span class="done-title">{{ item.title }}</span>
           <span class="muted small">{{ formatDoneTime(item.createdAt) }}</span>
+          <button
+            v-if="item.status === 'dismissed'"
+            class="btn small"
+            :disabled="Boolean(doneBusy[item.id])"
+            @click="reopenItem(item)"
+          >
+            重新处理
+          </button>
         </div>
       </details>
     </section>
@@ -495,9 +503,10 @@ async function commitCandidatePreview() {
 }
 
 /* ---------- 提醒区 ---------- */
-/** 「已知悉」使用的非破坏性关闭动作(不改动页面正文) */
+/** 「已知悉」使用的非破坏性关闭动作(不改动页面正文)。
+ *  纯知悉类用 dismiss(已阅,可重新处理);stale 的「仍然有效」会写入复核日期,属实际动作用 review。 */
 const REMINDER_ACK: Record<string, string> = {
-  single_source: 'resolve',
+  single_source: 'dismiss',
   missing_sections: 'dismiss',
   enrich: 'dismiss',
   stale: 'review',
@@ -564,6 +573,23 @@ function formatDoneTime(value: string) {
   if (!value) return '';
   const date = new Date(value.replace(' ', 'T'));
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/** 已阅(忽略)只是不再提醒,客户保留再次处理的权利 */
+const doneBusy = reactive<Record<number, boolean>>({});
+async function reopenItem(item: any) {
+  if (doneBusy[item.id]) return;
+  doneBusy[item.id] = true;
+  try {
+    await api.post(`/api/reports/${item.id}/reopen`, {});
+    notify.success('已重新打开,回到待处理');
+    await load();
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || '重新打开失败');
+    await load().catch(() => {});
+  } finally {
+    delete doneBusy[item.id];
+  }
 }
 
 /* ---------- 追问 ---------- */
@@ -820,6 +846,7 @@ onMounted(load);
 .done-section summary::-webkit-details-marker { display: none; }
 .done-section summary h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 16px; color: var(--text-secondary); }
 .done-item { display: flex; align-items: center; gap: 10px; padding: 7px 12px; margin-top: 6px; border: 1px solid var(--border); border-radius: 8px; opacity: .72; }
+.done-item.busy { opacity: .5; pointer-events: none; }
 .done-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: 9px; font-size: 12px; }
 .done-badge[data-status='resolved'] { color: var(--success, #2e7d32); background: color-mix(in srgb, var(--success, #2e7d32) 12%, transparent); }
 .done-badge[data-status='dismissed'] { color: var(--text-secondary); background: var(--bg-secondary); border: 1px solid var(--border); }

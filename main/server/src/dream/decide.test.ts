@@ -18,6 +18,7 @@ let writePage: (path: string, content: string, extra?: Record<string, any>) => a
 let addReports: (items: any[]) => number;
 let decideReport: (id: number, option: string, input?: any) => Promise<{ status: string }>;
 let decideReportGroup: (ids: number[], option: string, input?: any) => Promise<{ status: string; async?: boolean; jobId?: number }>;
+let reopenReport: (id: number) => void;
 
 before(async () => {
   // mergePages 需要 LLM 做语义去重;mock 只响应合并 prompt,返回空增量。
@@ -57,7 +58,7 @@ before(async () => {
   dbModule.setSetting('active_embedding_model', 'mock');
   ({ createPage, readPage, readPageMeta, writePage } = await import('../lib/vault.js'));
   ({ addReports } = await import('./reports.js'));
-  ({ decideReport, decideReportGroup } = await import('./decide.js'));
+  ({ decideReport, decideReportGroup, reopenReport } = await import('./decide.js'));
 });
 
 after(async () => {
@@ -285,4 +286,56 @@ test('聚合组:keep_a 异步入队合并,矛盾报告同步关闭,任务完成�
   await applyReportDecisions('duplicate', [{ reportId: dupId, action: 'keep_a' }]);
   assert.equal(reportStatus(dupId), 'resolved');
   assert.match((db.prepare(`SELECT path FROM pages WHERE id=?`).get(b.id) as any).path, /^Wiki\/归档\//);
+});
+
+test('重新打开:已阅报告恢复待处理,已处理报告拒绝重开', async () => {
+  clear();
+  const page = createPage('Wiki/概念', '重开页');
+  addReports([{ kind: 'single_source', payload: { pageId: page.id, title: '重开页', source: 'A.md' } }]);
+  const id = reportIdOf('single_source');
+  await decideReport(id, 'dismiss');
+  assert.equal(reportStatus(id), 'dismissed');
+  reopenReport(id);
+  assert.equal(reportStatus(id), 'open', '已阅报告应恢复为待处理');
+  // 幂等:open 状态重复调不报错
+  reopenReport(id);
+  assert.equal(reportStatus(id), 'open');
+
+  // resolved(已执行实际动作)不可重开
+  addReports([{ kind: 'single_source', payload: { pageId: page.id, title: '重开页', source: 'C.md' } }]);
+  const resolvedId = reportIdOf('single_source');
+  await decideReport(resolvedId, 'resolve');
+  assert.equal(reportStatus(resolvedId), 'resolved');
+  assert.throws(() => reopenReport(resolvedId), /不能重新打开/);
+});
+
+test('重新打开待入库候选:候选恢复 open 重新进入对账通道', async () => {
+  clear();
+  const abs = path.join(temp, 'brain', '原始资料', '重开候选.md');
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, '重开候选的资料内容。');
+  const { beginSourceVersion, activateSourceVersion } = await import('../pipeline/sourceLedger.js');
+  const { upsertCandidateOccurrence, getCandidate } = await import('../pipeline/candidateLedger.js');
+  const version = beginSourceVersion('原始资料/重开候选.md', 'reopen-run-hash');
+  db.prepare(
+    `INSERT INTO ingest_runs(id,path,content_hash,source_version_id,status,commit_status,derived_status,started_at)
+     VALUES(?,?,?,?, 'running','pending','pending',?)`
+  ).run('reopen-run', '原始资料/重开候选.md', 'reopen-run-hash', version.id, now());
+  activateSourceVersion(version.id, 'reopen-run');
+  const candidate = upsertCandidateOccurrence({
+    candidateId: '', name: '重开候选', kind: 'concept', action: 'review', target: '', domain: '',
+    confidence: '中', summary: '摘要', factIds: [], relations: [],
+    reason: '需要至少两个不同原始资料来源支持才能自动建页', content: '正文', evidenceEligible: true,
+  }, { runId: 'reopen-run', sourceVersionId: version.id, sourcePath: '原始资料/重开候选.md', sourceName: '重开候选.md' });
+  addReports([{ kind: 'pending_review', payload: { candidateId: candidate.id, name: '重开候选', kind: 'concept', sourcePath: '原始资料/重开候选.md', sourceVersionId: version.id, runId: 'reopen-run' } }]);
+  const reportId = reportIdOf('pending_review');
+  // 忽略 → 候选 ignored
+  const { ignoreCandidateReview } = await import('../pipeline/candidateReview.js');
+  ignoreCandidateReview(reportId, '测试忽略');
+  assert.equal(reportStatus(reportId), 'dismissed');
+  assert.equal(getCandidate(candidate.id)!.status, 'ignored');
+  // 重开 → 候选回 open
+  reopenReport(reportId);
+  assert.equal(reportStatus(reportId), 'open');
+  assert.equal(getCandidate(candidate.id)!.status, 'open');
 });

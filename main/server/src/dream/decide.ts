@@ -12,7 +12,8 @@ import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages } from '../lib/mergePages.js';
 import { renamePageSafely } from '../lib/renamePage.js';
 import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
-import { setActionableQuestionsForPath } from '../pipeline/ingestQuestions.js';
+import { setActionableQuestionsForPath, syncIngestQuestionReport } from '../pipeline/ingestQuestions.js';
+import { ensureCandidateFromReport, setCandidateStatus } from '../pipeline/candidateLedger.js';
 
 export class DecideError extends Error {
   constructor(message: string, public readonly statusCode = 400) {
@@ -53,6 +54,43 @@ function claimReport(id: number): void {
 function releaseClaimed(ids: number[]): void {
   const release = db.prepare(`UPDATE reports SET status = 'open' WHERE id = ? AND status = 'applying'`);
   db.transaction(() => ids.forEach((id) => release.run(id)))();
+}
+
+/**
+ * 重新打开已阅(dismissed)的报告:忽略/已知悉只是"不再提醒",客户保留再次处理的权利。
+ * 已 resolved 的(已建页/已合并等实际动作)不可恢复,只读展示。
+ * 重开时联动恢复关联状态:待入库候选 ignored→open(重新进入自动对账通道)、
+ * 追问问题 ignored→open(否则 sync 会立刻又关掉报告)。
+ */
+export function reopenReport(reportId: number): void {
+  const report = db.prepare(`SELECT id, kind, payload, status FROM reports WHERE id = ?`).get(reportId) as
+    { id: number; kind: string; payload: string; status: string } | undefined;
+  if (!report) throw new DecideError('报告不存在', 404);
+  if (report.status === 'open' || report.status === 'applying') return; // 幂等:已在待处理
+  if (report.status !== 'dismissed') {
+    throw new DecideError('已处理的报告执行过实际动作,不能重新打开', 409);
+  }
+  const payload = parsePayload(report.payload);
+  if (report.kind === 'pending_review') {
+    const candidate = ensureCandidateFromReport({ id: report.id, status: report.status, payload: report.payload });
+    if (candidate) {
+      if (['consumed', 'approved', 'merged'].includes(candidate.status)) {
+        throw new DecideError('该候选已入库,无需重新处理', 409);
+      }
+      setCandidateStatus(candidate.id, 'open');
+    }
+  }
+  if (report.kind === 'ingest_questions') {
+    const path = String(payload.path || '');
+    db.prepare(
+      `UPDATE ingest_questions SET status='open', error=NULL, updated_at=? WHERE path=? AND status='ignored'`
+    ).run(now(), path);
+  }
+  const result = db.prepare(
+    `UPDATE reports SET status='open' WHERE id=? AND status='dismissed'`
+  ).run(reportId);
+  if (result.changes !== 1) throw new DecideError('报告状态已变化,请刷新后重试', 409);
+  if (report.kind === 'ingest_questions') syncIngestQuestionReport(String(payload.path || ''));
 }
 
 /**
