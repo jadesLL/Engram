@@ -5,7 +5,6 @@ import { requireAuth } from './auth.js';
 import {
   candidateSourceSummary,
   commitCandidateReview,
-  forceCommitCandidate,
   ignoreCandidateReview,
   previewCandidateReview,
 } from '../pipeline/candidateReview.js';
@@ -427,18 +426,6 @@ export async function jobRoutes(app: FastifyInstance) {
   app.get('/api/ingest/candidates/pending-list', async () => {
     if (!tableExists('reports')) return { candidates: [] };
     return { candidates: pendingCandidateList() };
-  });
-
-  /** 快速强制建立:跳过 LLM 再提炼,直接用候选已有正文建页(manualApproval 绕过双来源门禁)。 */
-  app.post('/api/ingest/candidates/:id/force-commit', async (req, reply) => {
-    const reportId = Number((req.params as { id: string }).id);
-    if (!Number.isInteger(reportId) || reportId <= 0) return reply.code(400).send({ error: '待审候选 ID 无效' });
-    try {
-      const result = forceCommitCandidate(reportId);
-      return { ok: true, target: result.id, path: result.path, name: result.name, kind: result.kind };
-    } catch (error: any) {
-      return reply.code(409).send({ error: error?.message || '强制建立失败' });
-    }
   });
 
   app.post('/api/ingest/candidates/:id/preview', async (req, reply) => {
