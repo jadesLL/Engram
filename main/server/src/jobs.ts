@@ -257,7 +257,9 @@ const STARTUP_DISCARDED_JOB_KINDS = [
   'metagen',
   'dream_apply',
   'candidate_review_batch',
-  'candidate_reconcile',
+  // 注意：candidate_reconcile 不在此列。它幂等（复用已抽取事实、可安全重入），
+  // 且重启后正是要靠它完成对账救济；若清理成 failed 会触发 previousFailure 窗口跳过，
+  // 导致重启后自动对账完全失效（生产 193 待审无法救济的根因之一）。
 ] as const;
 const activeExecutions = new Map<number, ActiveExecution>();
 const polling = { default: false, document: false };
