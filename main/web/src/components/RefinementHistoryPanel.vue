@@ -1410,10 +1410,9 @@ onUnmounted(() => {
 }
 
 .trajectory-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 20px;
-  align-items: end;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   padding: 22px 24px 18px;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(to bottom, var(--bg), var(--bg-secondary));
@@ -1436,13 +1435,27 @@ onUnmounted(() => {
 
 .trajectory-title-line h4 {
   flex: 1;
-  min-width: 120px;
+  min-width: 200px;
   overflow: hidden;
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 顶部统计条独占一行，避免与标题挤压 */
+.stat-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
 }
 
 .trajectory-title-block > p {
@@ -1453,20 +1466,6 @@ onUnmounted(() => {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 顶部统计条：大数字 + 小标签 */
-.stat-strip {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(72px, auto);
-  gap: 0;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  overflow: hidden;
 }
 
 .stat-cell {
@@ -1587,10 +1586,10 @@ onUnmounted(() => {
   font-size: 19px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   letter-spacing: -0.01em;
+  line-height: 1.25;
+  /* 长文本（如「2 分 57 秒」）允许换行，保持完整可读 */
+  overflow-wrap: anywhere;
 }
 
 .stat-card small {
