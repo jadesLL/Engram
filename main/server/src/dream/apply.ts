@@ -19,7 +19,7 @@ import {
 
 export const REPORT_ACTION_KINDS = [
   'deadlink', 'duplicate', 'contradiction', 'single_source', 'missing_sections',
-  'pending_review', 'ingest_questions', 'enrich', 'stale',
+  'pending_review', 'ingest_questions', 'enrich', 'stale', 'identity_ambiguity',
 ] as const;
 export type ReportActionKind = (typeof REPORT_ACTION_KINDS)[number];
 
@@ -43,6 +43,7 @@ const ACTION_META: Record<ReportActionKind, { title: string; description: string
   ingest_questions: { title: '批量确认整理追问', description: '默认全选并标记为已知悉，不修改原始资料和问题内容。', button: '批量标记已知悉', defaultSelected: true },
   enrich: { title: '批量忽略待丰富提醒', description: '默认全选并忽略提醒，不自动生成页面内容。', button: '批量忽略', defaultSelected: true },
   stale: { title: '批量复核过期页面', description: '默认全选并记录复核日期，不改变正文更新时间。', button: '批量复核', defaultSelected: true },
+  identity_ambiguity: { title: '批量处理实体歧义', description: '默认全选并按模型建议合并到目标页面，也可统一标记为误报。', button: '批量处理歧义', defaultSelected: true },
 };
 
 function parsePayload(value: string): Record<string, any> {
@@ -110,6 +111,17 @@ export function previewReportActions(kind: ReportActionKind) {
         suggestedAction = 'review';
       } else if (kind === 'missing_sections') {
         suggestedAction = 'repair';
+      } else if (kind === 'identity_ambiguity') {
+        if (payload.suggestedTargetId) {
+          suggestedAction = 'merge';
+          options = [
+            { value: 'merge', label: `合并到「${payload.suggestedTargetTitle || '建议目标'}」` },
+            { value: 'dismiss', label: '标记误报' },
+          ];
+        } else {
+          suggestedAction = 'dismiss';
+          options = [{ value: 'dismiss', label: '标记误报' }];
+        }
       }
       const disabled = kind === 'ingest_questions'
         && !(payload.questions || []).some((question: any) => ['open', 'failed'].includes(question.status));
@@ -136,6 +148,7 @@ function validAction(kind: ReportActionKind, action: string): boolean {
     ingest_questions: ['resolve'],
     enrich: ['dismiss'],
     stale: ['review'],
+    identity_ambiguity: ['merge', 'dismiss'],
   };
   return allowed[kind].includes(action);
 }
@@ -222,6 +235,15 @@ async function applyOne(
       const row = db.prepare(`SELECT updated_at FROM pages WHERE id = ?`).get(page.id) as { updated_at: string };
       writePage(page.path, current.content, { reviewed_at: now(), updated: row.updated_at });
       return 'resolved';
+    }
+    case 'identity_ambiguity': {
+      if (decision.action === 'dismiss') return 'dismissed';
+      if (decision.action === 'merge') {
+        if (!payload.suggestedTargetId || !payload.pageId) throw new Error('歧义报告缺少页面信息');
+        await mergePages(payload.suggestedTargetId, payload.pageId);
+        return 'resolved';
+      }
+      return 'dismissed';
     }
     case 'enrich': return 'dismissed';
     case 'contradiction':

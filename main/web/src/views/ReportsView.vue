@@ -397,6 +397,7 @@ const actionConfig: Record<string, { button: string; description: string; itemAc
   ingest_questions: { button: '批量标记已知悉', description: '默认全选并确认已查看整理追问。', itemAction: '标记已知悉', impact: '只关闭报告，原始资料和问题内容保持不变。' },
   enrich: { button: '批量忽略', description: '默认全选并忽略当前待丰富提醒。', itemAction: '忽略提醒', impact: '只忽略报告，不自动补写页面。' },
   stale: { button: '批量复核', description: '默认全选并记录内容仍然有效。', itemAction: '记录复核', impact: '写入独立的最后复核日期，不改变正文更新时间。' },
+  identity_ambiguity: { button: '批量处理歧义', description: '默认全选并按模型建议合并，也可统一标记为误报。', itemAction: '处理歧义', impact: '合并的页面进入归档，双链改指向保留页；误报仅关闭报告。' },
 };
 
 type BatchItem = { id: number; payload: any; selected: boolean; disabled?: boolean; suggestedAction: string; action: string; options: { value: string; label: string }[] };
@@ -475,6 +476,12 @@ const batchPresets = computed(() => {
   if (tab.value === 'ingest_questions') presets.push({ action: 'resolve', label: '全部已知悉' });
   if (tab.value === 'enrich') presets.push({ action: 'dismiss', label: '全部忽略' });
   if (tab.value === 'stale') presets.push({ action: 'review', label: '全部复核' });
+  if (tab.value === 'identity_ambiguity') {
+    presets.push(
+      { action: 'merge', label: '全部合并' },
+      { action: 'dismiss', label: '全部误报' },
+    );
+  }
   return presets;
 });
 
@@ -776,6 +783,7 @@ function previewDetail(item: BatchItem) {
   if (tab.value === 'ingest_questions') return `${(p.questions || []).length} 个待澄清问题`;
   if (tab.value === 'enrich') return p.detail || '模型判断页面需要补充关键信息';
   if (tab.value === 'stale') return p.detail || '模型判断页面中的时效性事实需要复核';
+  if (tab.value === 'identity_ambiguity') return p.suggestedTargetTitle ? `建议合并到「${p.suggestedTargetTitle}」` : (p.ambiguity?.question || '身份可能存在歧义');
   return '';
 }
 
