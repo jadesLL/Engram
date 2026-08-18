@@ -261,7 +261,7 @@
       <p v-if="!(grouped[tab] || []).length" class="faint empty-hint">该类目下暂无待处理项 🎉</p>
     </div>
 
-    <AppModal :open="batch.show" :title="batch.title" width="min(760px, 96vw)" @close="closeBatch">
+    <AppModal :open="batch.show" v-tooltip="batch.title" width="min(760px, 96vw)" @close="closeBatch">
       <template #subtitle>
         <p class="muted small">{{ batch.description }}</p>
       </template>
@@ -315,7 +315,7 @@
 
     <AppModal
       :open="candidatePreview.show"
-      :title="candidatePreview.action === 'merge' ? `并入 ${candidatePreview.targetTitle}` : `批准 ${candidatePreview.name}`"
+      v-tooltip="'candidatePreview.action === \'merge\' ? `并入 ${candidatePreview.targetTitle}` : `批准 ${candidatePreview.name}`'"
       width="min(820px, 96vw)"
       @close="closeCandidatePreview"
     >
@@ -856,8 +856,9 @@ onMounted(load);
 .reports-head h2 { margin: 0; }
 .head-info { flex: 1; display: flex; gap: 6px; flex-wrap: wrap; }
 .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
-.category-action { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 0; margin-bottom: 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.category-action p { margin: 3px 0 0; }
+.category-action { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
+.category-action b { font-size: 14px; }
+.category-action p { margin: 4px 0 0; font-size: 12px; line-height: 1.55; }
 .category-action .btn span { min-width: 18px; padding: 0 5px; border-radius: 9px; background: rgba(255,255,255,.2); text-align: center; font-size: 11px; }
 .report-list, .report-item { min-width: 0; }
 .report-list { display: flex; flex-direction: column; gap: 10px; }

@@ -40,7 +40,7 @@
     </div>
     <AppEmptyState
       v-else-if="!runs.length"
-      :title="query || statusFilter ? '没有匹配的提炼记录。' : '尚无提炼记录。'"
+      v-tooltip="query || statusFilter ? '没有匹配的提炼记录。' : '尚无提炼记录。'"
     />
     <div v-else class="history-workspace">
       <aside class="history-list" aria-label="提炼历史记录">
@@ -49,22 +49,31 @@
           :key="run.id"
           type="button"
           class="history-run"
-          :class="{ active: selectedRunId === run.id }"
+          :class="[run.status, { active: selectedRunId === run.id }]"
           @click="selectRun(run.id)"
         >
-          <span class="run-badges">
-            <span class="run-state" :class="run.status">{{ statusLabel(run.status) }}</span>
-            <span v-if="run.failureCount" class="run-failure-count">{{ run.failureCount }} 次失败</span>
+          <span class="run-color-bar" aria-hidden="true"></span>
+          <span class="run-head">
+            <strong v-tooltip.auto="run.path">{{ noteName(run.path) }}</strong>
+            <span class="run-badges">
+              <span class="run-state" :class="run.status">
+                <span class="run-state-dot" aria-hidden="true"></span>
+                {{ statusLabel(run.status) }}
+              </span>
+              <span v-if="run.failureCount" class="run-failure-count">{{ run.failureCount }} 次失败</span>
+            </span>
           </span>
-          <strong :title="run.path">{{ noteName(run.path) }}</strong>
-          <span class="run-path" :title="run.path">{{ run.path }}</span>
+          <span class="run-path" v-tooltip.auto="run.path">{{ run.path }}</span>
           <span class="run-meta">
-            <time>{{ formatDate(run.started_at) }} · {{ run.runCount }} 次提炼</time>
+            <time>{{ formatDate(run.started_at) }}</time>
+            <span class="meta-sep" aria-hidden="true">·</span>
+            <span>{{ run.runCount }} 次提炼</span>
+            <span class="meta-sep" aria-hidden="true">·</span>
             <span>{{ stageDisplayName(run.currentStage) }}</span>
-            <span>{{ run.progress }}%</span>
           </span>
-          <span class="run-progress" aria-hidden="true">
+          <span class="run-progress" role="progressbar" :aria-valuenow="run.progress" aria-valuemin="0" aria-valuemax="100">
             <span :style="{ width: `${run.progress}%` }"></span>
+            <span class="run-progress-label">{{ run.progress }}%</span>
           </span>
         </button>
         <button
@@ -74,7 +83,7 @@
           :disabled="loadingMore"
           @click="loadRuns(false)"
         >
-          {{ loadingMore ? '加载中...' : '加载更多' }}
+          {{ loadingMore ? '加载中...' : `加载更多（剩余 ${total - runs.length} 条）` }}
         </button>
       </aside>
 
@@ -84,36 +93,39 @@
         </div>
         <template v-else-if="detail">
           <header class="trajectory-head">
-            <div>
+            <div class="trajectory-title-block">
               <div class="trajectory-title-line">
                 <h4>{{ noteName(detail.run.path) }}</h4>
-                <span class="run-state" :class="detail.run.status">{{ statusLabel(detail.run.status) }}</span>
+                <span class="run-state" :class="detail.run.status">
+                  <span class="run-state-dot" aria-hidden="true"></span>
+                  {{ statusLabel(detail.run.status) }}
+                </span>
                 <span v-if="detail.run.failureCount" class="run-failure-count">
                   {{ detail.run.failureCount }} 次失败
                 </span>
               </div>
-              <p :title="detail.run.path">{{ detail.run.path }}</p>
+              <p v-tooltip.auto="detail.run.path">{{ detail.run.path }}</p>
             </div>
-            <dl class="trajectory-summary">
-              <div>
+            <dl class="stat-strip" role="list">
+              <div class="stat-cell" role="listitem">
                 <dt>最近提炼</dt>
                 <dd>{{ formatDate(detail.run.started_at) }}</dd>
               </div>
-              <div>
+              <div class="stat-cell" role="listitem">
                 <dt>提炼次数</dt>
-                <dd>{{ detail.run.runCount }}</dd>
+                <dd class="stat-num">{{ detail.run.runCount }}</dd>
               </div>
-              <div>
+              <div class="stat-cell" :class="{ 'stat-bad': detail.run.failureCount }" role="listitem">
                 <dt>失败次数</dt>
-                <dd>{{ detail.run.failureCount }}</dd>
+                <dd class="stat-num">{{ detail.run.failureCount }}</dd>
               </div>
-              <div>
+              <div class="stat-cell" role="listitem">
                 <dt>事实</dt>
-                <dd>{{ detail.facts.length }}</dd>
+                <dd class="stat-num">{{ detail.facts.length }}</dd>
               </div>
-              <div>
+              <div class="stat-cell" role="listitem">
                 <dt>页面贡献</dt>
-                <dd>{{ detail.contributions.length }}</dd>
+                <dd class="stat-num">{{ detail.contributions.length }}</dd>
               </div>
             </dl>
           </header>
@@ -215,20 +227,26 @@
               >
                 <div class="flow-rail" aria-hidden="true">
                   <span class="flow-node">
-                    <Icon v-if="stage.status === 'completed'" name="check" :size="13" :stroke-width="2.4" />
-                    <Icon v-else-if="stage.status === 'failed'" name="x" :size="13" :stroke-width="2.4" />
-                    <span v-else>{{ index + 1 }}</span>
+                    <Icon v-if="stage.status === 'completed'" name="check" :size="14" :stroke-width="2.6" />
+                    <Icon v-else-if="stage.status === 'failed'" name="x" :size="14" :stroke-width="2.6" />
+                    <span v-else-if="stage.status === 'current'" class="pulse-dot"></span>
+                    <span v-else class="node-index">{{ index + 1 }}</span>
                   </span>
                 </div>
                 <button type="button" class="flow-card-body" @click="selectStage(stage.id)">
                   <div class="flow-card-head">
-                    <span class="flow-card-index">阶段 {{ index + 1 }}</span>
+                    <span class="flow-card-index">{{ String(index + 1).padStart(2, '0') }}</span>
                     <strong>{{ stageDisplayName(stage) }}</strong>
                     <span class="flow-stage-status" :class="stage.status">{{ stageStatusLabel(stage.status) }}</span>
-                    <span v-if="stage.durationMs" class="flow-stage-duration">
-                      {{ formatDuration(stage.durationMs) }}
+                    <span class="flow-card-meta">
+                      <span v-if="stage.durationMs" class="flow-stage-duration">
+                        {{ formatDuration(stage.durationMs) }}
+                      </span>
+                      <span v-if="stage.failureCount" class="flow-stage-fail">
+                        <Icon name="activity" :size="11" />
+                        {{ stage.failureCount }}
+                      </span>
                     </span>
-                    <span v-if="stage.failureCount" class="flow-stage-fail">{{ stage.failureCount }} 次失败</span>
                   </div>
                   <p class="flow-card-desc">{{ stage.description }}</p>
                   <template v-if="stageSummaries[stage.id]">
@@ -259,36 +277,41 @@
 
           <section v-if="selectedStage" class="stage-inspector" aria-labelledby="stage-inspector-title">
             <div class="stage-overview">
-              <span class="stage-kicker">阶段 {{ selectedStageIndex + 1 }}</span>
+              <span class="stage-kicker">阶段 {{ String(selectedStageIndex + 1).padStart(2, '0') }}</span>
               <h4 id="stage-inspector-title">{{ stageDisplayName(selectedStage) }}</h4>
-              <p>{{ selectedStage.description }}</p>
-              <dl>
-                <div>
+              <p class="stage-desc">{{ selectedStage.description }}</p>
+              <dl class="stage-meta">
+                <div class="meta-row">
                   <dt>状态</dt>
-                  <dd>{{ stageStatusLabel(selectedStage.status) }}</dd>
+                  <dd>
+                    <span class="stage-state-pill" :class="selectedStage.status">
+                      {{ stageStatusLabel(selectedStage.status) }}
+                    </span>
+                  </dd>
                 </div>
-                <div>
+                <div class="meta-row">
                   <dt>事件</dt>
-                  <dd>{{ selectedStageEvents.length }}</dd>
+                  <dd class="meta-num">{{ selectedStageEvents.length }}</dd>
                 </div>
-                <div>
+                <div class="meta-row">
                   <dt>到达次数</dt>
-                  <dd>{{ selectedStage.attemptCount }}</dd>
+                  <dd class="meta-num">{{ selectedStage.attemptCount }}</dd>
                 </div>
-                <div>
+                <div class="meta-row" :class="{ 'meta-bad': selectedStage.failureCount }">
                   <dt>失败次数</dt>
-                  <dd>{{ selectedStage.failureCount }}</dd>
+                  <dd class="meta-num">{{ selectedStage.failureCount }}</dd>
                 </div>
-                <div>
+                <div class="meta-row">
                   <dt>模型耗时</dt>
                   <dd>{{ formatDuration(selectedStage.durationMs) }}</dd>
                 </div>
-                <div>
+                <div class="meta-row">
                   <dt>开始时间</dt>
                   <dd>{{ selectedStage.startedAt ? formatDate(selectedStage.startedAt) : '无记录' }}</dd>
                 </div>
               </dl>
               <p v-if="selectedStage.failureCount" class="stage-failure">
+                <Icon name="activity" :size="13" />
                 该阶段共有 {{ selectedStage.failureCount }} 次失败尝试，失败详情已合并到右侧事件列表。
               </p>
             </div>
@@ -379,7 +402,7 @@
             </div>
           </section>
         </template>
-        <AppEmptyState v-else title="选择一份原始资料查看完整轨迹。" />
+        <AppEmptyState v-else v-tooltip="'选择一份原始资料查看完整轨迹。'" />
       </main>
     </div>
   </div>
@@ -1183,17 +1206,25 @@ onUnmounted(() => {
   overflow-y: auto;
   border-right: 1px solid var(--border);
   background: var(--bg-secondary);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .history-run {
+  position: relative;
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 3px 8px;
-  padding: 13px 14px;
-  border-bottom: 1px solid var(--border);
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
   color: var(--text);
   text-align: left;
+  transition: background 120ms ease, border-color 120ms ease;
 }
 
 .history-run:hover {
@@ -1201,48 +1232,90 @@ onUnmounted(() => {
 }
 
 .history-run.active {
-  background: var(--bg-tertiary);
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--bg);
+  border-color: var(--border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
-.history-run strong,
-.run-path {
+/* 状态色左边条 */
+.run-color-bar {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 6px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--text-faint);
+  opacity: 0.4;
+  transition: opacity 120ms ease;
+}
+.history-run.active .run-color-bar,
+.history-run:hover .run-color-bar { opacity: 1; }
+.history-run.completed .run-color-bar { background: var(--success); }
+.history-run.failed .run-color-bar { background: var(--danger); opacity: 1; }
+.history-run.cancelled .run-color-bar { background: var(--text-faint); }
+.history-run.running .run-color-bar { background: var(--accent); opacity: 1; }
+
+/* 失败 run 整卡淡红底提示 */
+.history-run.failed:not(.active) {
+  background: color-mix(in srgb, var(--danger) 4%, transparent);
+}
+.history-run.failed:not(.active):hover {
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.run-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.history-run strong {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.history-run strong {
-  grid-row: 1;
-  font-size: 12px;
-}
-
-.run-state {
-  justify-self: start;
-  padding: 2px 6px;
-  border-radius: 5px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 9px;
-  font-weight: 700;
-  white-space: nowrap;
+  flex: 1;
 }
 
 .run-badges {
-  grid-row: 1;
-  grid-column: 2;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 5px;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.run-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.run-state-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
 }
 
 .run-failure-count {
   padding: 2px 6px;
   border-radius: 5px;
-  background: color-mix(in srgb, var(--warn) 10%, var(--bg));
-  color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warning);
   font-size: 9px;
   font-weight: 700;
   white-space: nowrap;
@@ -1265,33 +1338,59 @@ onUnmounted(() => {
 }
 
 .run-path {
-  grid-column: 1 / -1;
   color: var(--text-faint);
   font-size: 10px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-meta {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
-  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text-secondary);
   font-size: 10px;
+  flex-wrap: wrap;
+}
+
+.meta-sep {
+  color: var(--text-faint);
+  user-select: none;
 }
 
 .run-progress {
-  grid-column: 1 / -1;
-  height: 2px;
-  margin-top: 5px;
+  position: relative;
+  display: block;
+  height: 14px;
+  margin-top: 2px;
   overflow: hidden;
-  background: var(--border);
+  background: var(--bg-tertiary);
+  border-radius: 7px;
 }
 
-.run-progress > span {
+.run-progress > span:first-child {
   display: block;
   height: 100%;
   background: var(--accent);
+  border-radius: 7px;
+  transition: width 240ms ease;
+}
+
+.history-run.completed .run-progress > span:first-child { background: var(--success); }
+.history-run.failed .run-progress > span:first-child { background: var(--danger); }
+
+.run-progress-label {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
 .load-more {
@@ -1313,28 +1412,40 @@ onUnmounted(() => {
 .trajectory-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 20px;
-  padding: 20px 22px;
+  gap: 24px;
+  align-items: end;
+  padding: 22px 24px 18px;
   border-bottom: 1px solid var(--border);
+  background: linear-gradient(to bottom, var(--bg), var(--bg-secondary));
+}
+
+.trajectory-title-block {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .trajectory-title-line {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .trajectory-title-line h4 {
   min-width: 0;
   overflow: hidden;
-  font-size: 16px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.trajectory-head > div > p {
+.trajectory-title-block > p {
+  margin: 0;
   max-width: 68ch;
-  margin: 5px 0 0;
   overflow: hidden;
   color: var(--text-faint);
   font-size: 11px;
@@ -1342,6 +1453,59 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+/* 顶部统计条：大数字 + 小标签 */
+.stat-strip {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(72px, auto);
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.stat-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+
+.stat-cell:last-child { border-right: 0; }
+
+.stat-cell dt {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.stat-cell dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stat-cell dd.stat-num {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.stat-cell.stat-bad dd.stat-num {
+  color: var(--danger);
+}
+
+/* 兼容旧选择器（防止其他 dl div 仍引用） */
 .trajectory-summary {
   display: grid;
   grid-template-columns: repeat(5, auto);
@@ -1349,19 +1513,16 @@ onUnmounted(() => {
   margin: 0;
 }
 
-.trajectory-summary div,
-.stage-overview dl div {
+.trajectory-summary div {
   min-width: 0;
 }
 
-.trajectory-summary dt,
-.stage-overview dt {
+.trajectory-summary dt {
   color: var(--text-faint);
   font-size: 9px;
 }
 
-.trajectory-summary dd,
-.stage-overview dd {
+.trajectory-summary dd {
   margin: 3px 0 0;
   color: var(--text);
   font-size: 11px;
@@ -1557,24 +1718,24 @@ onUnmounted(() => {
 
 .flow-card:not(:last-child) .flow-rail::after {
   position: absolute;
-  top: 30px;
-  bottom: -4px;
+  top: 34px;
+  bottom: -6px;
   left: 50%;
   width: 2px;
-  background: var(--border-strong);
+  background: var(--border);
   content: "";
   transform: translateX(-50%);
 }
 
 .flow-card.completed:not(:last-child) .flow-rail::after {
-  background: var(--success);
+  background: color-mix(in srgb, var(--success) 45%, var(--border));
 }
 
 .flow-node {
   position: relative;
   z-index: 1;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1584,6 +1745,7 @@ onUnmounted(() => {
   color: var(--text-faint);
   font-size: 11px;
   font-weight: 700;
+  transition: transform 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
 .flow-card.completed .flow-node {
@@ -1594,8 +1756,22 @@ onUnmounted(() => {
 
 .flow-card.current .flow-node {
   border-color: var(--accent);
+  background: var(--bg);
   color: var(--accent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 13%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.flow-card.current .flow-node .pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: flow-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes flow-pulse {
+  0%, 100% { transform: scale(0.85); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.72; }
 }
 
 .flow-card.failed .flow-node {
@@ -1604,28 +1780,39 @@ onUnmounted(() => {
   color: #fff;
 }
 
+.flow-node .node-index {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .flow-card-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin-bottom: 12px;
   padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .flow-card-body:hover {
   border-color: var(--border-strong);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  background: var(--bg-secondary);
 }
 
 .flow-card.selected .flow-card-body {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.flow-card.failed .flow-card-body {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
 }
 
 .flow-card-head {
@@ -1636,25 +1823,36 @@ onUnmounted(() => {
 }
 
 .flow-card-index {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
   color: var(--text-faint);
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
 }
 
 .flow-card-head strong {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.flow-card-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
 }
 
 .flow-stage-status {
   padding: 2px 7px;
-  border-radius: 5px;
+  border-radius: 10px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 9px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -1675,21 +1873,27 @@ onUnmounted(() => {
 
 .flow-stage-duration {
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
 .flow-stage-fail {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--danger-soft);
   color: var(--danger);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
 }
 
 .flow-card-desc {
-  margin: 2px 0 0;
+  margin: 0;
   color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .flow-card-metrics {
@@ -1765,39 +1969,128 @@ onUnmounted(() => {
 }
 
 .stage-overview {
-  padding: 20px;
+  padding: 22px;
   border-right: 1px solid var(--border);
   background: var(--bg-secondary);
 }
 
 .stage-kicker {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--accent-soft);
   color: var(--accent);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
 }
 
 .stage-overview h4 {
-  margin-top: 5px;
-  font-size: 15px;
+  margin-top: 8px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-.stage-overview > p {
+.stage-overview .stage-desc {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.stage-overview > p:not(.stage-desc):not(.stage-failure) {
   margin: 8px 0 0;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
 }
 
-.stage-overview dl {
+.stage-meta {
   display: grid;
+  gap: 0;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  margin: 20px 0 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.meta-row:last-child { border-bottom: 0; }
+
+.meta-row dt {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.meta-row dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.meta-row dd.meta-num {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.meta-row.meta-bad dd {
+  color: var(--danger);
+}
+
+.stage-state-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.stage-state-pill.completed {
+  background: color-mix(in srgb, var(--success) 12%, var(--bg));
+  color: var(--success);
+}
+
+.stage-state-pill.current {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  color: var(--accent);
+}
+
+.stage-state-pill.failed {
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg));
+  color: var(--danger);
 }
 
 .stage-failure {
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--danger);
+  border-radius: 0 6px 6px 0;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
@@ -2041,7 +2334,7 @@ onUnmounted(() => {
   text-align: center;
 }
 
-@media (max-width: 1080px) {
+@media (max-width: 1024px) {
   .history-workspace {
     grid-template-columns: 244px minmax(0, 1fr);
   }
@@ -2068,7 +2361,7 @@ onUnmounted(() => {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 768px) {
   .panel-head {
     align-items: stretch;
     flex-direction: column;
@@ -2147,7 +2440,7 @@ onUnmounted(() => {
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 640px) {
   .history-toolbar {
     grid-template-columns: 1fr;
   }

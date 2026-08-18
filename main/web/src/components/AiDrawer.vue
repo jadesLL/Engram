@@ -5,7 +5,7 @@
       <select
         class="session-select"
         :value="assistant.activeSessionId"
-        title="切换会话"
+        v-tooltip="'切换会话'"
         aria-label="切换会话"
         @change="selectSession"
       >
@@ -13,20 +13,20 @@
           {{ session.title }}
         </option>
       </select>
-      <button class="btn icon" title="新建会话" aria-label="新建会话" @click="newSession">
+      <button class="btn icon" v-tooltip="'新建会话'" aria-label="新建会话" @click="newSession">
         <Icon name="plus" :size="15" />
       </button>
-      <button class="btn icon" title="删除当前会话" aria-label="删除当前会话" @click="deleteSession">
+      <button class="btn icon" v-tooltip="'删除当前会话'" aria-label="删除当前会话" @click="deleteSession">
         <Icon name="trash" :size="15" />
       </button>
-      <button class="btn icon" title="关闭" aria-label="关闭" @click="app.toggleAi()">
+      <button class="btn icon" v-tooltip="'关闭'" aria-label="关闭" @click="app.toggleAi()">
         <Icon name="x" :size="15" />
       </button>
     </header>
 
     <div v-if="contextChips.length" class="context-strip">
       <span v-for="chip in contextChips" :key="chip" class="context-chip">{{ chip }}</span>
-      <button class="context-clear" title="清除上下文" @click="assistant.clearContext()">
+      <button class="context-clear" v-tooltip="'清除上下文'" @click="assistant.clearContext()">
         <Icon name="x" :size="12" />
       </button>
     </div>
@@ -40,7 +40,7 @@
       <AppEmptyState
         v-else-if="!messages.length && !toolCalls.length"
         icon="ai"
-        title="可以查询知识、处理页面，也可以调用应用工具完成任务。"
+        v-tooltip="'可以查询知识、处理页面，也可以调用应用工具完成任务。'"
       >
         <div class="suggestions">
           <button v-for="suggestion in suggestions" :key="suggestion" @click="ask(suggestion)">
@@ -144,10 +144,19 @@
         <button class="text-action" @click="assistant.cancel()">停止</button>
       </div>
 
+      <div v-if="currentRun?.status === 'waiting_approval' && hasHighImpact && pendingCalls.length" class="high-impact-tip small">
+        <Icon name="activity" :size="13" />
+        检测到高风险操作，勾选下方复选框后才可批准
+      </div>
+
       <div v-if="assistant.error" class="agent-error">{{ assistant.error }}</div>
 
       <div v-if="canRetry" class="completion-action">
-        <span>{{ latestRun?.error || '任务未完成' }}</span>
+        <span v-if="latestRun?.status === 'interrupted'" class="interrupted-hint">
+          <Icon name="activity" :size="13" />
+          服务重启导致运行中断，可安全重试
+        </span>
+        <span v-else>{{ latestRun?.error || '任务未完成' }}</span>
         <button class="btn small" @click="assistant.retry()">重试</button>
       </div>
 
@@ -172,7 +181,7 @@
       />
       <button
         class="send-btn"
-        title="发送"
+        v-tooltip="'发送'"
         aria-label="发送"
         :disabled="Boolean(currentRun) || !input.trim()"
         @click="ask(input)"
@@ -612,6 +621,23 @@ onUnmounted(() => {
 }
 .completion-action { justify-content: space-between; border-top: 1px solid var(--border); }
 .completion-action.success { color: var(--success); }
+.interrupted-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--warning);
+}
+.high-impact-tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  padding: 7px 10px;
+  border-left: 3px solid var(--warning);
+  border-radius: 0 6px 6px 0;
+  background: var(--warn-soft);
+  color: var(--warning);
+}
 .agent-error { padding: 8px; border-radius: 5px; background: rgba(220, 38, 38, 0.08); color: var(--danger); font-size: 11px; }
 .agent-input {
   display: flex;

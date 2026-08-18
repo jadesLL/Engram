@@ -1,15 +1,15 @@
 <template>
   <div ref="rootEl" class="image-viewer">
     <div class="image-toolbar">
-      <button class="icon-btn" title="缩小" @click="zoomBy(0.85)"><Icon name="zoom-out" :size="16" /></button>
+      <button class="icon-btn" v-tooltip="'缩小'" @click="zoomBy(0.85)"><Icon name="zoom-out" :size="16" /></button>
       <span class="zoom-label">{{ Math.round(scale * 100) }}%</span>
-      <button class="icon-btn" title="放大" @click="zoomBy(1.18)"><Icon name="zoom-in" :size="16" /></button>
-      <button class="icon-btn" title="向左旋转" @click="rotateBy(-90)"><Icon name="rotate-left" :size="16" /></button>
-      <button class="icon-btn" title="向右旋转" @click="rotateBy(90)"><Icon name="rotate-right" :size="16" /></button>
-      <button class="icon-btn" title="适应窗口" @click="fitImage"><Icon name="fit-width" :size="16" /></button>
-      <button class="icon-btn" title="重置" @click="resetImage"><Icon name="restore" :size="16" /></button>
+      <button class="icon-btn" v-tooltip="'放大'" @click="zoomBy(1.18)"><Icon name="zoom-in" :size="16" /></button>
+      <button class="icon-btn" v-tooltip="'向左旋转'" @click="rotateBy(-90)"><Icon name="rotate-left" :size="16" /></button>
+      <button class="icon-btn" v-tooltip="'向右旋转'" @click="rotateBy(90)"><Icon name="rotate-right" :size="16" /></button>
+      <button class="icon-btn" v-tooltip="'适应窗口'" @click="fitImage"><Icon name="fit-width" :size="16" /></button>
+      <button class="icon-btn" v-tooltip="'重置'" @click="resetImage"><Icon name="restore" :size="16" /></button>
       <span class="toolbar-spacer" />
-      <button class="icon-btn" title="全屏" @click="toggleFullscreen"><Icon name="maximize" :size="16" /></button>
+      <button class="icon-btn" v-tooltip="'全屏'" @click="toggleFullscreen"><Icon name="maximize" :size="16" /></button>
     </div>
     <div
       ref="viewportEl"

@@ -6,14 +6,14 @@
   >
     <!-- 窄图标导航栏 -->
     <nav class="rail" aria-label="主导航">
-      <button class="rail-logo" type="button" title="回到首页" aria-label="回到首页" @click="$router.push('/page')">W</button>
+      <button class="rail-logo" type="button" v-tooltip="'回到首页'" aria-label="回到首页" @click="$router.push('/page')">W</button>
 
       <!-- 侧栏开关 -->
       <button
         class="rail-btn action"
         type="button"
         :class="{ open: app.sidebarOpen }"
-        :title="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
+        v-tooltip="'app.sidebarOpen ? \'收起侧栏\' : \'展开侧栏\''"
         :aria-label="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
         :aria-pressed="app.sidebarOpen"
         @click="app.sidebarOpen = !app.sidebarOpen"
@@ -30,7 +30,7 @@
         class="rail-btn"
         type="button"
         :class="{ active: item.active }"
-        :title="item.title"
+        v-tooltip="item.title"
         :aria-label="item.title"
         :aria-current="item.active ? 'page' : undefined"
         @click="item.action"
@@ -44,14 +44,14 @@
       <div class="rail-spacer" />
 
       <!-- 动作/面板组 -->
-      <button class="rail-btn action" type="button" title="新建页面 (Ctrl+N)" aria-label="新建页面" @click="quickNew">
+      <button class="rail-btn action" type="button" v-tooltip="'新建页面 (Ctrl+N)'" aria-label="新建页面" @click="quickNew">
         <Icon name="plus" :size="19" />
       </button>
       <button
         class="rail-btn action"
         type="button"
         :class="{ open: jobsPanelOpen }"
-        title="AI 任务队列"
+        v-tooltip="'AI 任务队列'"
         aria-label="AI 任务队列"
         :aria-pressed="jobsPanelOpen"
         @click="jobsPanelOpen = !jobsPanelOpen"
@@ -63,7 +63,7 @@
         class="rail-btn action"
         type="button"
         :class="{ open: app.aiDrawerOpen }"
-        title="AI 助手 (Ctrl+J)"
+        v-tooltip="'AI 助手 (Ctrl+J)'"
         aria-label="AI 助手"
         :aria-pressed="app.aiDrawerOpen"
         @click="app.toggleAi()"
@@ -78,7 +78,7 @@
         class="rail-btn"
         type="button"
         :class="{ active: isActive('/settings') }"
-        title="设置"
+        v-tooltip="'设置'"
         aria-label="设置"
         :aria-current="isActive('/settings') ? 'page' : undefined"
         @click="$router.push('/settings')"
@@ -102,7 +102,7 @@
     <div
       v-if="app.sidebarOpen && !isMobile"
       class="resizer"
-      title="拖动调整宽度，双击还原"
+      v-tooltip="'拖动调整宽度，双击还原'"
       role="separator"
       aria-label="调整侧边栏宽度"
       aria-orientation="vertical"

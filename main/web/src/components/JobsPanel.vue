@@ -8,7 +8,7 @@
     <button
       type="button"
       class="jp-resize-handle"
-      title="拖动调整面板大小，双击还原"
+      v-tooltip="'拖动调整面板大小，双击还原'"
       aria-label="调整 AI 任务队列面板大小"
       :aria-valuetext="`${panelWidth} × ${displayPanelHeight} 像素`"
       @pointerdown="startResize"
@@ -29,10 +29,11 @@
           <span class="dot" />
           {{ jobs.queueRunning ? '运行中' : '已停止' }}
         </span>
+        <span v-if="jobs.paused" class="queue-paused small" v-tooltip="'已暂停任务数'">⏸ {{ jobs.paused }}</span>
       </div>
       <div class="jp-head-actions">
-        <button class="btn icon" title="清理历史" aria-label="清理历史" @click="clear"><Icon name="trash" :size="14" /></button>
-        <button class="btn icon" title="关闭" aria-label="关闭任务队列" @click="$emit('close')"><Icon name="x" :size="14" /></button>
+        <button class="btn icon" v-tooltip="'清理历史'" aria-label="清理历史" @click="clear"><Icon name="trash" :size="14" /></button>
+        <button class="btn icon" v-tooltip="'关闭'" aria-label="关闭任务队列" @click="$emit('close')"><Icon name="x" :size="14" /></button>
       </div>
     </div>
 
@@ -72,17 +73,17 @@
         <div class="jp-sub">进行中 / 等待中</div>
         <template v-for="g in groupedActive" :key="g.key">
           <div class="job-group">
-            <div class="group-head small faint" :title="g.key">{{ g.label }}</div>
+            <div class="group-head small faint" v-tooltip.auto="g.key">{{ g.label }}</div>
             <div v-for="j in g.tasks" :key="j.id" class="job-row indented">
               <AppSpinner v-if="j.status === 'running'" :size="11" />
               <span class="dot paused" v-else-if="j.status === 'paused'" />
               <span class="dot pending" v-else />
               <span class="job-label">{{ j.label }}</span>
-              <span v-if="j.sourceLabel" class="job-source faint small" :title="j.sourceLabel">{{ j.sourceLabel }}</span>
-              <span class="job-status faint small" :title="j.detail || j.stage">{{ statusText(j) }}</span>
+              <span v-if="j.sourceLabel" class="job-source faint small" v-tooltip.auto="j.sourceLabel">{{ j.sourceLabel }}</span>
+              <span class="job-status faint small" v-tooltip="'j.detail || j.stage'">{{ statusText(j) }}</span>
               <span class="job-eta faint small">{{ etaText(j) }}</span>
               <span class="job-progress small">{{ j.progress }}%</span>
-              <button class="btn icon job-cancel" title="取消任务" aria-label="取消任务" @click="cancel(j)">
+              <button class="btn icon job-cancel" v-tooltip="'取消任务'" aria-label="取消任务" @click="cancel(j)">
                 <Icon name="x" :size="12" />
               </button>
             </div>
@@ -94,12 +95,12 @@
         <div class="jp-sub">失败 / 已取消</div>
         <template v-for="g in groupedStopped" :key="g.key">
           <div class="job-group">
-            <div class="group-head small faint" :title="g.key">{{ g.label }}</div>
+            <div class="group-head small faint" v-tooltip.auto="g.key">{{ g.label }}</div>
             <div v-for="j in g.tasks" :key="j.id" class="job-row failed indented">
               <span class="dot" :class="j.status === 'failed' ? 'failed' : 'cancelled'" />
               <span class="job-label">{{ j.label }}</span>
-              <span v-if="j.sourceLabel" class="job-source faint small" :title="j.sourceLabel">{{ j.sourceLabel }}</span>
-              <span class="job-status faint small" :title="humanError(j.error || '')">
+              <span v-if="j.sourceLabel" class="job-source faint small" v-tooltip.auto="j.sourceLabel">{{ j.sourceLabel }}</span>
+              <span class="job-status faint small" v-tooltip="humanError(j.error || '')">
                 {{ j.status === 'cancelled' ? '已取消' : j.stage }}
               </span>
               <button class="btn small" @click="retry(j)">重试</button>
@@ -113,10 +114,14 @@
         <div class="jp-sub">最近完成</div>
         <template v-for="g in groupedDone" :key="g.key">
           <div class="job-group">
-            <div class="group-head small faint" :title="g.key">{{ g.label }}</div>
-            <div v-for="j in g.tasks" :key="j.id" class="job-row done indented">
-              <span class="dot done" />
+            <div class="group-head small faint" v-tooltip.auto="g.key">{{ g.label }}</div>
+            <div v-for="j in g.tasks" :key="j.id" class="job-row done indented" :class="{ warning: hasWarning(j) }">
+              <span class="dot" :class="hasWarning(j) ? 'warning' : 'done'" />
               <span class="job-label">{{ j.label }}</span>
+              <span v-if="hasWarning(j)" class="job-warning-tag" v-tooltip="humanError(j.detail || j.error || '')">
+                <Icon name="activity" :size="11" />
+                有警告
+              </span>
               <span class="faint small">{{ shortTime(j.run_at) }}</span>
             </div>
           </div>
@@ -419,6 +424,15 @@ function etaText(job: any) {
     : `约 ${formatDuration(job.estimatedWaitSeconds)}后开始`;
   return [batch, eta].filter(Boolean).join(' · ');
 }
+
+/** 已完成但有警告：后端非模型错误自动吞掉，stage 标记为「已完成（有警告）」 */
+function hasWarning(job: any): boolean {
+  return job.status === 'done' && (
+    (typeof job.stage === 'string' && job.stage.includes('警告')) ||
+    Boolean(job.error) ||
+    (typeof job.detail === 'string' && /错误|失败|警告/.test(job.detail))
+  );
+}
 </script>
 
 <style scoped>
@@ -560,6 +574,32 @@ function etaText(job: any) {
 .dot.failed { background: var(--danger); }
 .dot.cancelled { background: var(--text-faint); }
 .dot.done { background: var(--success); }
+.dot.warning { background: var(--warning); }
+.queue-paused {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--warning);
+  font-weight: 500;
+}
+.job-warning-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: help;
+}
+.job-row.done.warning {
+  background: color-mix(in srgb, var(--warning) 5%, transparent);
+}
 .err-text { color: var(--danger); margin: 2px 0 0 17px; word-break: break-all; }
 .none { padding: 4px 2px; }
 

@@ -11,6 +11,7 @@
         :aria-label="isSetup ? '设置密码（至少6位）' : '密码'"
         autofocus
         @keyup.enter="submit"
+        @keyup="checkCaps"
       />
       <input
         v-if="isSetup"
@@ -19,7 +20,18 @@
         placeholder="确认密码"
         aria-label="确认密码"
         @keyup.enter="submit"
+        @keyup="checkCaps"
       />
+      <p v-if="capsOn" class="caps-hint">
+        <Icon name="activity" :size="12" />
+        大写锁定（Caps Lock）已开启
+      </p>
+      <div v-if="isSetup && password" class="pwd-strength">
+        <span class="strength-bar">
+          <span class="strength-fill" :class="strength.level" :style="{ width: strength.percent + '%' }"></span>
+        </span>
+        <span class="strength-label" :class="strength.level">{{ strength.label }}</span>
+      </div>
       <button class="btn primary" :disabled="loading" @click="submit">
         {{ loading ? '请稍候…' : isSetup ? '初始化并进入' : '进入' }}
       </button>
@@ -29,10 +41,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { api } from '../api';
+import Icon from '../components/Icon.vue';
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -41,6 +54,25 @@ const confirm = ref('');
 const error = ref('');
 const loading = ref(false);
 const isSetup = ref(false);
+const capsOn = ref(false);
+
+const strength = computed(() => {
+  const pwd = password.value;
+  if (!pwd) return { level: 'weak', percent: 0, label: '' };
+  let score = 0;
+  if (pwd.length >= 6) score += 25;
+  if (pwd.length >= 10) score += 20;
+  if (/[a-z]/.test(pwd) && /[A-Z]/.test(pwd)) score += 20;
+  if (/\d/.test(pwd)) score += 15;
+  if (/[^a-zA-Z0-9]/.test(pwd)) score += 20;
+  if (score < 40) return { level: 'weak', percent: Math.max(20, score), label: '弱' };
+  if (score < 70) return { level: 'medium', percent: score, label: '中' };
+  return { level: 'strong', percent: score, label: '强' };
+});
+
+function checkCaps(e: KeyboardEvent) {
+  capsOn.value = e.getModifierState?.('CapsLock') || false;
+}
 
 onMounted(async () => {
   const { data } = await api.get('/api/auth/status');
@@ -51,6 +83,10 @@ async function submit() {
   error.value = '';
   if (isSetup.value && password.value !== confirm.value) {
     error.value = '两次输入的密码不一致';
+    return;
+  }
+  if (isSetup.value && password.value.length < 6) {
+    error.value = '密码至少需要 6 位';
     return;
   }
   loading.value = true;
@@ -98,4 +134,40 @@ h1 { margin: 0; font-size: 20px; text-align: center; font-weight: 600; }
 p { margin: 0; text-align: center; }
 .btn { justify-content: center; }
 .error { color: var(--danger); font-size: var(--font-md); }
+
+.caps-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--warning);
+  font-size: 11px;
+}
+
+.pwd-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.strength-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+.strength-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 200ms ease, background 200ms ease;
+}
+.strength-fill.weak { background: var(--danger); }
+.strength-fill.medium { background: var(--warning); }
+.strength-fill.strong { background: var(--success); }
+.strength-label { font-size: 11px; font-weight: 600; min-width: 16px; text-align: center; }
+.strength-label.weak { color: var(--danger); }
+.strength-label.medium { color: var(--warning); }
+.strength-label.strong { color: var(--success); }
 </style>
+

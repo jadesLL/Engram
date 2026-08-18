@@ -4,10 +4,10 @@
       <div class="sidebar-titlebar">
         <h2>知识库</h2>
         <div class="sidebar-title-actions">
-          <button class="sidebar-new" type="button" title="新建页面" aria-label="新建页面" @click="emit('new-page')">
+          <button class="sidebar-new" type="button" v-tooltip="'新建页面'" aria-label="新建页面" @click="emit('new-page')">
             <Icon name="plus" :size="16" />
           </button>
-          <button class="sidebar-close" type="button" title="关闭侧边栏" aria-label="关闭侧边栏" @click="emit('close')">
+          <button class="sidebar-close" type="button" v-tooltip="'关闭侧边栏'" aria-label="关闭侧边栏" @click="emit('close')">
             <Icon name="x" :size="16" />
           </button>
         </div>
@@ -21,7 +21,7 @@
             v-if="filter"
             class="search-clear"
             type="button"
-            title="清除搜索"
+            v-tooltip="'清除搜索'"
             aria-label="清除搜索"
             @click="filter = ''"
           >
@@ -29,7 +29,7 @@
           </button>
         </div>
       </div>
-      <span v-if="ingestHint" class="ingest-hint" :title="ingestHint" aria-live="polite">✦ {{ ingestHint }}</span>
+      <span v-if="ingestHint" class="ingest-hint" v-tooltip="ingestHint" aria-live="polite">✦ {{ ingestHint }}</span>
     </header>
 
     <div class="side-scroll">
@@ -45,7 +45,7 @@
               :class="{ 'drop-target': g.key === 'concept' && dragOverKey === 'concept' && canDropTo('concept') }"
               type="button"
               :aria-expanded="!collapsed[g.key]"
-              :title="collapsed[g.key] ? `展开${g.label}` : `收起${g.label}`"
+              v-tooltip="'collapsed[g.key] ? `展开${g.label}` : `收起${g.label}`'"
               @click="toggle(g.key)"
               @dragover="g.key === 'concept' && onDragOverSub($event, 'concept')"
               @dragleave="g.key === 'concept' && onDragLeave('concept')"
@@ -54,7 +54,7 @@
               <span class="sec-name">{{ g.label }}</span>
             </button>
             <div class="sec-actions">
-              <label class="sort-control section-sort" :title="`${g.label}排序：${sortLabel(groupSort[g.key])}`">
+              <label class="sort-control section-sort" v-tooltip="`${g.label}排序：${sortLabel(groupSort[g.key])}`">
                 <Icon name="sort" :size="12" />
                 <select v-model="groupSort[g.key]" :aria-label="`${g.label}排序`">
                   <option value="name-asc">名称 A→Z</option>
@@ -66,7 +66,7 @@
               <button
                 class="add-btn"
                 type="button"
-                :title="`导出全部${g.label}`"
+                v-tooltip="`导出全部${g.label}`"
                 :aria-label="`导出全部${g.label}`"
                 :disabled="!groupPageCount(g) || exporting"
                 @click="exportAllPages(g)"
@@ -90,7 +90,7 @@
                   :class="{ 'drop-target': dragOverKey === sub.key && canDropTo(sub.key) }"
                   type="button"
                   :aria-expanded="!collapsed[`${g.key}:${sub.key}`]"
-                  :title="collapsed[`${g.key}:${sub.key}`] ? `展开${sub.label}` : `收起${sub.label}`"
+                  v-tooltip="'collapsed[`${g.key}:${sub.key}`] ? `展开${sub.label}` : `收起${sub.label}`'"
                   @click="toggle(`${g.key}:${sub.key}`)"
                   @dragover="onDragOverSub($event, sub.key)"
                   @dragleave="onDragLeave(sub.key)"
@@ -160,13 +160,13 @@
             class="sec-toggle"
             type="button"
             :aria-expanded="!collapsed.files"
-            :title="collapsed.files ? '展开原始资料' : '收起原始资料'"
+            v-tooltip="'collapsed.files ? \'展开原始资料\' : \'收起原始资料\''"
             @click="toggle('files')"
           >
             <span class="sec-name">原始资料</span>
           </button>
           <div class="sec-actions">
-            <label class="sort-control section-sort" :title="`原始资料排序：${sortFilesLabel}`">
+            <label class="sort-control section-sort" v-tooltip="`原始资料排序：${sortFilesLabel}`">
               <Icon name="sort" :size="12" />
               <select v-model="sortFiles" aria-label="原始资料排序">
                 <option value="name-asc">名称 A→Z</option>
@@ -178,7 +178,7 @@
             <button
               class="add-btn"
               type="button"
-              title="导出全部资料"
+              v-tooltip="'导出全部资料'"
               aria-label="导出全部资料"
               :disabled="!visibleFiles.length || exporting"
               @click="exportAllFiles"
@@ -188,7 +188,7 @@
             <button
               class="add-btn"
               type="button"
-              title="AI 整理全部"
+              v-tooltip="'AI 整理全部'"
               aria-label="AI 整理全部"
               @click="ingestAll"
             >
@@ -197,7 +197,7 @@
             <button
               class="add-btn"
               type="button"
-              title="新建 Markdown 文件"
+              v-tooltip="'新建 Markdown 文件'"
               aria-label="新建 Markdown 文件"
               @click="createFile"
             >
@@ -206,7 +206,7 @@
             <button
               class="add-btn"
               type="button"
-              title="上传文件"
+              v-tooltip="'上传文件'"
               aria-label="上传文件"
               @click="uploadInput?.click()"
             >
@@ -246,13 +246,13 @@
             class="sec-toggle"
             type="button"
             :aria-expanded="!collapsed.chat"
-            :title="collapsed.chat ? '展开对话' : '收起对话'"
+            v-tooltip="'collapsed.chat ? \'展开对话\' : \'收起对话\''"
             @click="toggle('chat')"
           >
             <span class="sec-name">对话</span>
           </button>
           <div class="sec-actions">
-            <label class="sort-control section-sort" :title="`对话排序：${sortChatLabel}`">
+            <label class="sort-control section-sort" v-tooltip="`对话排序：${sortChatLabel}`">
               <Icon name="sort" :size="12" />
               <select v-model="sortChat" aria-label="对话排序">
                 <option value="name-asc">名称 A→Z</option>
@@ -296,7 +296,7 @@
             class="sec-toggle"
             type="button"
             :aria-expanded="!collapsed.ailog"
-            :title="collapsed.ailog ? '展开 AI 整理日志' : '收起 AI 整理日志'"
+            v-tooltip="'collapsed.ailog ? \'展开 AI 整理日志\' : \'收起 AI 整理日志\''"
             @click="toggle('ailog')"
           >
             <span class="sec-name">AI 整理日志</span>
@@ -305,7 +305,7 @@
             <button
               class="add-btn"
               type="button"
-              title="导出全部 AI 整理日志"
+              v-tooltip="'导出全部 AI 整理日志'"
               aria-label="导出全部 AI 整理日志"
               :disabled="!visibleAiLogs.length || exporting"
               @click="exportAllAiLogs"
@@ -328,14 +328,14 @@
             @keydown.space.self.prevent="openPage(p)"
           >
             <Icon name="report" :size="13" class="log-file-icon" />
-            <span class="page-title" :title="p.title">{{ p.title }}</span>
+            <span class="page-title" v-tooltip="p.title">{{ p.title }}</span>
             <span class="row-trailing">
               <span class="row-actions" @click.stop>
                 <a
                   class="row-action-link"
                   :href="`/api/files/raw?path=${encodeURIComponent(p.path)}`"
                   :download="p.title + '.md'"
-                  :title="`下载 ${p.title}`"
+                  v-tooltip="`下载 ${p.title}`"
                   :aria-label="`下载 ${p.title}`"
                 >
                   <Icon name="download" :size="13" />
@@ -356,7 +356,7 @@
             class="sec-toggle"
             type="button"
             :aria-expanded="!collapsed.tags"
-            :title="collapsed.tags ? '展开标签' : '收起标签'"
+            v-tooltip="'collapsed.tags ? \'展开标签\' : \'收起标签\''"
             @click="toggle('tags')"
           >
             <span class="sec-name">标签</span>

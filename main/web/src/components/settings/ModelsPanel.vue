@@ -46,7 +46,7 @@
           <button
             class="icon-btn"
             type="button"
-            title="刷新模型用量"
+            v-tooltip="'刷新模型用量'"
             aria-label="刷新模型用量"
             :disabled="llmUsageLoading"
             @click="loadLlmUsage"
@@ -233,7 +233,7 @@
                 <button
                   class="model-chip-select"
                   type="button"
-                  :title="entry.id === section.activeId ? '当前使用的模型' : '设为当前模型'"
+                  v-tooltip="'entry.id === section.activeId ? \'当前使用的模型\' : \'设为当前模型\''"
                   @click="entry.id !== section.activeId && selectModel(section.kind, entry.id)"
                 >
                   <Icon v-if="entry.id === section.activeId" name="check" :size="12" class="model-chip-check" />
@@ -246,16 +246,16 @@
                 <div class="model-chip-actions">
                   <button
                     type="button"
-                    title="测试连接"
+                    v-tooltip="'测试连接'"
                     :disabled="testingId === entry.id"
                     @click="testOne(section.kind, entry)"
                   >
                     <Icon name="activity" :size="13" />
                   </button>
-                  <button type="button" title="编辑配置" @click="openForm(section.kind, entry)">
+                  <button type="button" v-tooltip="'编辑配置'" @click="openForm(section.kind, entry)">
                     编辑
                   </button>
-                  <button class="danger" type="button" title="删除配置" @click="removeModel(section.kind, entry.id)">
+                  <button class="danger" type="button" v-tooltip="'删除配置'" @click="removeModel(section.kind, entry.id)">
                     <Icon name="x" :size="13" />
                   </button>
                 </div>
@@ -321,7 +321,7 @@
     <!-- 模型配置对话框（AppModal：Esc 关闭 + 焦点陷阱） -->
     <AppModal
       :open="form.show"
-      :title="form.id ? '编辑模型配置' : '添加模型配置'"
+      v-tooltip="'form.id ? \'编辑模型配置\' : \'添加模型配置\''"
       width="min(680px, 100%)"
       @close="form.show = false"
     >
@@ -440,7 +440,7 @@
       <p
         class="setting-message discovery-message"
         :class="currentFormModelUnavailable ? 'warn' : discoveryOk ? 'ok' : 'err'"
-        :title="discoveryMessage"
+        v-tooltip="discoveryMessage"
       >{{ discoveryMessage || ' ' }}</p>
       <p v-if="formError" class="setting-message err">{{ formError }}</p>
 
