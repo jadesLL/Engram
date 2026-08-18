@@ -1412,7 +1412,7 @@ onUnmounted(() => {
 .trajectory-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 24px;
+  gap: 20px;
   align-items: end;
   padding: 22px 24px 18px;
   border-bottom: 1px solid var(--border);
@@ -1431,12 +1431,14 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .trajectory-title-line h4 {
-  min-width: 0;
+  flex: 1;
+  min-width: 120px;
   overflow: hidden;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.01em;
   text-overflow: ellipsis;
@@ -1582,9 +1584,13 @@ onUnmounted(() => {
 }
 
 .stat-card strong {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.01em;
 }
 
 .stat-card small {
