@@ -1,7 +1,7 @@
 <template>
   <AppModal
     :open="mergeState.open"
-    title="合并页面"
+    v-tooltip="'合并页面'"
     :close-on-mask="!merging"
     @close="onClose"
   >
@@ -32,7 +32,7 @@
             :class="{ 'same-type': p.type === source.type }"
             @click="target = p"
           >
-            <span class="merge-page-title" :title="p.title">{{ p.title }}</span>
+            <span class="merge-page-title" v-tooltip="p.title">{{ p.title }}</span>
             <span class="merge-type-tag">{{ typeLabel(p.type) }}</span>
           </button>
           <p v-if="!filteredPages.length" class="merge-empty">
@@ -50,7 +50,7 @@
           <button
             type="button"
             class="merge-swap-btn"
-            title="交换保留/合并方向"
+            v-tooltip="'交换保留/合并方向'"
             :disabled="merging"
             @click="swapped = !swapped"
           >

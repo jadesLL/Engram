@@ -45,20 +45,20 @@
         <Icon :name="item.kind === 'page' ? 'pages' : 'attach'" :size="16" class="trash-kind" />
         <div class="trash-main">
           <div class="trash-name-line">
-            <span class="trash-name" :title="item.name">{{ item.name }}</span>
+            <span class="trash-name" v-tooltip.auto="item.name">{{ item.name }}</span>
             <span v-if="item.legacy" class="legacy-tag">历史项目</span>
           </div>
-          <div class="trash-meta" :title="item.originalPath">
+          <div class="trash-meta" v-tooltip="item.originalPath">
             <span>{{ item.originalPath }}</span>
             <span>{{ formatTrashDate(item.deletedAt) }}</span>
             <span>{{ formatBytes(item.size) }}</span>
           </div>
         </div>
         <div class="trash-actions">
-          <button class="icon-btn" type="button" title="恢复" aria-label="恢复" :disabled="trashBusy" @click="restoreTrash([item.id])">
+          <button class="icon-btn" type="button" v-tooltip="'恢复'" aria-label="恢复" :disabled="trashBusy" @click="restoreTrash([item.id])">
             <Icon name="restore" :size="15" />
           </button>
-          <button class="icon-btn danger-icon" type="button" title="永久删除" aria-label="永久删除" :disabled="trashBusy" @click="deleteTrash([item.id])">
+          <button class="icon-btn danger-icon" type="button" v-tooltip="'永久删除'" aria-label="永久删除" :disabled="trashBusy" @click="deleteTrash([item.id])">
             <Icon name="trash" :size="15" />
           </button>
         </div>

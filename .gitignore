@@ -1,3 +1,5 @@
 /releases/
 /worktrees/*
 !/worktrees/.gitkeep
+.shots/
+.tmp-*

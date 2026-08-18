@@ -25,7 +25,7 @@
             :aria-haspopup="item.children?.length ? 'menu' : undefined"
             :aria-expanded="item.children?.length ? activeSubmenu === item.id : undefined"
             :disabled="item.disabled"
-            :title="item.disabled && item.hint ? item.hint : undefined"
+            v-tooltip="'item.disabled && item.hint ? item.hint : undefined'"
             @focus="item.children?.length ? openSubmenu(item.id) : closeSubmenu()"
             @pointerdown.prevent
             @click="activate(item)"
@@ -58,7 +58,7 @@
                 :data-menu-id="child.id"
                 :data-parent-id="item.id"
                 :disabled="child.disabled"
-                :title="child.disabled && child.hint ? child.hint : undefined"
+                v-tooltip="'child.disabled && child.hint ? child.hint : undefined'"
                 @pointerdown.prevent
                 @click="activate(child)"
               >
@@ -329,7 +329,7 @@ onBeforeUnmount(() => {
   left: auto;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 640px) {
   .app-context-menu {
     width: min(226px, calc(100vw - 16px));
   }

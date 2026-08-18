@@ -19,7 +19,7 @@
     >
       <Icon v-if="selected" name="check" :size="11" />
     </span>
-    <span class="page-title" :title="page.title">{{ page.title }}</span>
+    <span class="page-title" v-tooltip.auto="page.title">{{ page.title }}</span>
     <span class="row-trailing">
       <span class="page-time">{{ timeText }}</span>
       <span class="row-actions" @click.stop>
@@ -27,7 +27,7 @@
           class="row-action-link"
           :href="rawUrl"
           :download="page.title + '.md'"
-          :title="`下载 ${page.title}`"
+          v-tooltip="`下载 ${page.title}`"
           :aria-label="`下载 ${page.title}`"
         >
           <Icon name="download" :size="13" />
@@ -35,16 +35,16 @@
         <button
           v-if="page.path.startsWith('Wiki/归档/')"
           type="button"
-          title="取消归档"
+          v-tooltip="'取消归档'"
           aria-label="取消归档"
           @click="$emit('unarchive', page)"
         >
           <Icon name="restore" :size="13" />
         </button>
-        <button v-else type="button" title="归档" aria-label="归档" @click="$emit('archive', page)">
+        <button v-else type="button" v-tooltip="'归档'" aria-label="归档" @click="$emit('archive', page)">
           <Icon name="archive" :size="13" />
         </button>
-        <button type="button" title="删除" aria-label="删除" @click="$emit('remove', page)">
+        <button type="button" v-tooltip="'删除'" aria-label="删除" @click="$emit('remove', page)">
           <Icon name="trash" :size="13" />
         </button>
       </span>

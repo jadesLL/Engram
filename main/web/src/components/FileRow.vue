@@ -21,55 +21,55 @@
       :stroke-width="1.7"
       :class="['file-icon', fileIconClass(file.ext)]"
     />
-    <span class="page-title" :title="file.name">{{ file.name }}</span>
+    <span class="page-title" v-tooltip.auto="file.name">{{ file.name }}</span>
     <span class="row-trailing">
       <span
         v-if="job"
         class="row-status ingest-progress"
-        :title="job.detail || job.stage"
+        v-tooltip="'job.detail || job.stage'"
       >
         {{ job.stage }} {{ job.progress }}%
       </span>
       <span
         v-else-if="file.extractionStatus === 'failed'"
         class="row-status ingested-flag failed"
-        :title="file.extractionError ? `提取失败：${humanError(file.extractionError)}` : '提取失败，可重试'"
+        v-tooltip="'file.extractionError ? `提取失败：${humanError(file.extractionError)}` : \'提取失败，可重试\''"
       >提取失败</span>
       <span
         v-else-if="file.extractionStatus === 'blocked'"
         class="row-status ingested-flag unsupported"
-        :title="file.extractionError || '需要支持图片的对话模型或单独配置视觉模型'"
+        v-tooltip="'file.extractionError || \'需要支持图片的对话模型或单独配置视觉模型\''"
       >待配置</span>
       <span
         v-else-if="file.extractionStatus === 'partial'"
         class="row-status ingested-flag warning"
-        :title="file.extractionError || '部分页面尚未识别'"
+        v-tooltip="'file.extractionError || \'部分页面尚未识别\''"
       >部分提取</span>
       <span
         v-else-if="file.ingestedAt"
         class="row-status ingested-flag"
-        :title="`已于 ${file.ingestedAt.slice(0, 10)} 整理`"
+        v-tooltip="`已于 ${file.ingestedAt.slice(0, 10)} 整理`"
       >已整理</span>
       <span
         v-else-if="file.ingestStatus === 'failed'"
         class="row-status ingested-flag failed"
-        :title="file.ingestError ? `整理失败：${humanError(file.ingestError)}` : '整理失败，可重试'"
+        v-tooltip="'file.ingestError ? `整理失败：${humanError(file.ingestError)}` : \'整理失败，可重试\''"
       >失败</span>
       <span
         v-else-if="file.extractionStatus === 'completed'"
         class="row-status ingested-flag extracted"
-        title="文字已提取，等待或可重新执行 AI 整理"
+        v-tooltip="'文字已提取，等待或可重新执行 AI 整理'"
       >已提取</span>
       <span
         v-else-if="file.ingestSupported === false"
         class="row-status ingested-flag unsupported"
-        title="文件已保存，当前格式暂不支持 AI 整理"
+        v-tooltip="'文件已保存，当前格式暂不支持 AI 整理'"
       >仅保存</span>
       <span class="row-actions" @click.stop>
         <button
           v-if="INGESTABLE_EXTS.includes(file.ext)"
           type="button"
-          title="AI 整理"
+          v-tooltip="'AI 整理'"
           aria-label="AI 整理"
           @click="$emit('ingest', file)"
         >
@@ -79,12 +79,12 @@
           class="row-action-link"
           :href="rawUrl"
           :download="file.name"
-          :title="`下载 ${file.name}`"
+          v-tooltip="`下载 ${file.name}`"
           :aria-label="`下载 ${file.name}`"
         >
           <Icon name="download" :size="13" />
         </a>
-        <button type="button" title="删除" aria-label="删除" @click="$emit('remove', file)">
+        <button type="button" v-tooltip="'删除'" aria-label="删除" @click="$emit('remove', file)">
           <Icon name="trash" :size="13" />
         </button>
       </span>

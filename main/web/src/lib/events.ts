@@ -1,7 +1,10 @@
 /**
  * 全局 SSE 订阅：服务端页面变更实时推送。
  * EventSource 同源自动带 cookie 鉴权，断线原生自动重连。
+ * 断线/重连通过回调通知外部（用于全局提示）。
  */
+
+import { notify } from './notify';
 
 export interface PageEvent {
   type: string; // page-changed | page-deleted | page-moved | file-changed
@@ -12,6 +15,7 @@ export interface PageEvent {
 }
 
 let es: EventSource | null = null;
+let disconnectToastShown = false;
 
 /** 关闭事件流（幂等） */
 export function closePageStream() {
@@ -19,6 +23,7 @@ export function closePageStream() {
     es.close();
     es = null;
   }
+  disconnectToastShown = false;
 }
 
 /**
@@ -38,5 +43,17 @@ export function openPageStream(onEvent: (ev: PageEvent) => void): () => void {
   for (const type of ['page-changed', 'page-deleted', 'page-moved', 'file-changed']) {
     es.addEventListener(type, handle(type));
   }
+  es.onerror = () => {
+    if (!disconnectToastShown && es && es.readyState === EventSource.CONNECTING) {
+      disconnectToastShown = true;
+      notify.info('实时同步连接断开，正在自动重连…');
+    }
+  };
+  es.onopen = () => {
+    if (disconnectToastShown) {
+      disconnectToastShown = false;
+      notify.success('实时同步已恢复');
+    }
+  };
   return closePageStream;
 }

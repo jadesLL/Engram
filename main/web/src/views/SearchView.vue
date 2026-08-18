@@ -42,7 +42,20 @@
         <div class="hit-snippet muted">{{ h.heading ? `#${h.heading} — ` : '' }}{{ h.snippet }}</div>
       </div>
     </div>
-    <p v-else-if="mode === 'search' && searched" class="faint empty-hint">没有找到相关内容</p>
+    <AppEmptyState
+      v-else-if="mode === 'search' && searched"
+      icon="search"
+      title="没有找到相关内容"
+      hint="换个关键词试试，或切换到「问 AI」让助手跨页推理"
+    >
+      <button class="btn small primary" @click="mode = 'think'; run()">改用 AI 提问</button>
+    </AppEmptyState>
+    <AppEmptyState
+      v-else-if="!searched && !searching"
+      icon="search"
+      title="搜索或提问"
+      hint="输入关键词搜索页面，或切换到「问 AI」让助手跨页综合回答"
+    />
   </div>
 </template>
 
@@ -53,6 +66,7 @@ import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useAssistantStore } from '../stores/assistant';
 import AppSpinner from '../components/ui/AppSpinner.vue';
+import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import { notify } from '../lib/notify';
 
 const route = useRoute();

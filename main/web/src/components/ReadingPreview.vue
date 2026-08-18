@@ -12,14 +12,14 @@
     @keydown.esc="closeReading"
   >
     <header ref="toolbarEl" class="reading-toolbar">
-      <button class="reading-tool back" type="button" title="返回编辑（Esc）" @click="closeReading">
+      <button class="reading-tool back" type="button" v-tooltip="'返回编辑（Esc）'" @click="closeReading">
         <Icon name="chevron-left" :size="17" />
         <span class="back-label">返回编辑</span>
       </button>
 
       <span class="reading-stats">{{ metrics.units.toLocaleString('zh-CN') }} 字 · 约 {{ metrics.minutes }} 分钟</span>
 
-      <button class="reading-tool theme-tool" type="button" :title="dark ? '切换到浅色' : '切换到深色'" @click="app.toggleResolvedTheme()">
+      <button class="reading-tool theme-tool" type="button" v-tooltip="dark ? '切换到浅色' : '切换到深色'" @click="app.toggleResolvedTheme()">
         <Icon :name="dark ? 'sun' : 'moon'" :size="17" />
       </button>
 
@@ -65,7 +65,7 @@
           type="button"
           :aria-pressed="outlinePressed"
           :disabled="outline.length === 0"
-          title="显示或隐藏目录"
+          v-tooltip="'显示或隐藏目录'"
           @click="toggleOutline"
         >
           <Icon name="list-tree" :size="17" />
@@ -191,7 +191,7 @@ const metrics = ref({ units: 0, minutes: 1 });
 const toolbarHeight = ref(56);
 const viewportHeight = ref(0);
 const tailSpace = ref(0);
-const mobileMedia = window.matchMedia('(max-width: 900px)');
+const mobileMedia = window.matchMedia('(max-width: 768px)');
 let renderVersion = 0;
 let scrollFrame = 0;
 let tailFrame = 0;
@@ -877,7 +877,7 @@ onBeforeUnmount(() => {
   background: var(--accent-soft);
   color: var(--accent);
 }
-@media (max-width: 1180px) {
+@media (max-width: 1024px) {
   .reading-toolbar { flex-wrap: wrap; }
   .reading-stats { order: 10; width: 100%; }
   .reading-grid { grid-template-columns: minmax(0, 1fr); }
@@ -899,12 +899,12 @@ onBeforeUnmount(() => {
   .reading-outline a[data-level="3"],
   .reading-outline a[data-level="4"] { padding-left: 8px; }
 }
-@media (max-width: 900px) {
+@media (max-width: 768px) {
   .reading-grid { padding: 24px 20px 54px; }
   .reading-outline { display: none; }
   .mobile-outline-open:not(.outline-hidden) .reading-outline { display: block; }
 }
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .reading-toolbar {
     display: grid;
     grid-template-columns: 36px minmax(0, 1fr) 36px;

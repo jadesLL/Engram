@@ -1,7 +1,7 @@
 <template>
   <div ref="rootEl" class="pdf-viewer">
     <div class="pdf-toolbar">
-      <button class="icon-btn" title="上一页" :disabled="pageNumber <= 1" @click="goToPage(pageNumber - 1)">
+      <button class="icon-btn" v-tooltip="'上一页'" :disabled="pageNumber <= 1" @click="goToPage(pageNumber - 1)">
         <Icon name="chevron-left" :size="16" />
       </button>
       <label class="page-control">
@@ -13,15 +13,15 @@
         />
         <span>/ {{ pageCount || 0 }}</span>
       </label>
-      <button class="icon-btn" title="下一页" :disabled="pageNumber >= pageCount" @click="goToPage(pageNumber + 1)">
+      <button class="icon-btn" v-tooltip="'下一页'" :disabled="pageNumber >= pageCount" @click="goToPage(pageNumber + 1)">
         <Icon name="chevron-right" :size="16" />
       </button>
 
       <span class="toolbar-separator" />
-      <button class="icon-btn" title="缩小" @click="zoomBy(-0.15)"><Icon name="zoom-out" :size="16" /></button>
+      <button class="icon-btn" v-tooltip="'缩小'" @click="zoomBy(-0.15)"><Icon name="zoom-out" :size="16" /></button>
       <span class="zoom-label">{{ Math.round(effectiveScale * 100) }}%</span>
-      <button class="icon-btn" title="放大" @click="zoomBy(0.15)"><Icon name="zoom-in" :size="16" /></button>
-      <button class="icon-btn" title="适合宽度" :class="{ active: fitWidth }" @click="fitToWidth">
+      <button class="icon-btn" v-tooltip="'放大'" @click="zoomBy(0.15)"><Icon name="zoom-in" :size="16" /></button>
+      <button class="icon-btn" v-tooltip="'适合宽度'" :class="{ active: fitWidth }" @click="fitToWidth">
         <Icon name="fit-width" :size="16" />
       </button>
 
@@ -37,14 +37,14 @@
         <span v-if="searchQuery" class="search-count">
           {{ searchMatches.length ? `${searchIndex + 1}/${searchMatches.length}` : '0/0' }}
         </span>
-        <button class="icon-btn" title="上一个匹配" :disabled="!searchMatches.length" @click="findPrevious">
+        <button class="icon-btn" v-tooltip="'上一个匹配'" :disabled="!searchMatches.length" @click="findPrevious">
           <Icon name="chevron-up" :size="14" />
         </button>
-        <button class="icon-btn" title="下一个匹配" :disabled="searching" @click="findNext">
+        <button class="icon-btn" v-tooltip="'下一个匹配'" :disabled="searching" @click="findNext">
           <Icon name="chevron-down" :size="14" />
         </button>
       </div>
-      <button class="icon-btn" title="全屏" @click="toggleFullscreen">
+      <button class="icon-btn" v-tooltip="'全屏'" @click="toggleFullscreen">
         <Icon name="maximize" :size="16" />
       </button>
     </div>
@@ -58,7 +58,7 @@
           type="button"
           :data-page="page"
           :class="{ active: page === pageNumber }"
-          :title="`第 ${page} 页`"
+          v-tooltip="`第 ${page} 页`"
           @click="goToPage(page)"
         >
           <img v-if="thumbnailUrls[page - 1]" :src="thumbnailUrls[page - 1]" alt="" />

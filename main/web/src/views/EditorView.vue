@@ -13,7 +13,7 @@
       <ReadingPreview
         v-if="app.readingMode"
         :markdown="content"
-        :title="title"
+        v-tooltip="title"
         :page-type="pageType"
         :tags="tags"
         :updated-at="page.updated_at"
@@ -45,14 +45,17 @@
             placeholder="添加标签，逗号分隔"
             @change="save(true)"
           />
-          <span class="save-state faint small">{{ saveState }}</span>
-          <button class="btn ghost small" title="AI 整理（摘要/标签/实体）" @click="organize">
+          <span class="save-state faint small" :class="{ 'save-failed': saveState === '保存失败' }">
+            <Icon v-if="saveState === '保存失败'" name="activity" :size="12" />
+            {{ saveState }}
+          </span>
+          <button class="btn ghost small" v-tooltip="'AI 整理（摘要/标签/实体）'" @click="organize">
             <Icon name="ai" :size="14" /> 整理
           </button>
           <button
             v-if="canSynthesize"
             class="btn ghost small"
-            title="基于已入库事实重新生成本页正文（不重读原始资料）"
+            v-tooltip="'基于已入库事实重新生成本页正文（不重读原始资料）'"
             @click="recompose"
           >
             <Icon name="restore" :size="14" /> 重新组织
@@ -60,7 +63,7 @@
           <button
             v-if="canSynthesize"
             class="btn ghost small"
-            title="重跑本页依赖的原始资料，重新提炼（连带刷新共享来源的其他页面）"
+            v-tooltip="'重跑本页依赖的原始资料，重新提炼（连带刷新共享来源的其他页面）'"
             @click="reextract"
           >
             <Icon name="rotate-right" :size="14" /> 重新提炼
@@ -68,7 +71,7 @@
           <button
             v-if="evidence?.sources?.length"
             class="btn ghost small"
-            title="查看本页来源证据"
+            v-tooltip="'查看本页来源证据'"
             @click="evidenceOpen = !evidenceOpen"
           >
             <Icon name="book-open" :size="14" />
@@ -77,12 +80,12 @@
           <span
             v-if="synthesisPending"
             class="synthesis-inline small"
-            title="来源事实已入账，正在生成整页正文"
+            v-tooltip="'来源事实已入账，正在生成整页正文'"
           >
             <Icon name="activity" :size="13" />
             综合中
           </span>
-          <button class="btn icon" title="查看本页图谱" aria-label="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
+          <button class="btn icon" v-tooltip="'查看本页图谱'" aria-label="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
             <Icon name="graph" :size="14" />
           </button>
         </div>
@@ -119,7 +122,7 @@
               {{ evidence.sources.length }} 个资料来源 · {{ evidence.facts.length }} 条事实
             </p>
           </div>
-          <button class="btn icon" title="关闭来源证据" aria-label="关闭来源证据" @click="evidenceOpen = false">
+          <button class="btn icon" v-tooltip="'关闭来源证据'" aria-label="关闭来源证据" @click="evidenceOpen = false">
             <Icon name="x" :size="18" />
           </button>
         </div>
@@ -213,14 +216,14 @@
             v-for="n in related.neighbors"
             :key="'n' + n.id"
             class="tag rel-item"
-            :title="n.direction === 'out' ? '本页引用了它' : '它引用了本页'"
+            v-tooltip="'n.direction === \'out\' ? \'本页引用了它\' : \'它引用了本页\''"
             @click="$router.push(`/page/${n.id}`)"
           >{{ n.direction === 'out' ? '→' : '←' }} {{ n.title }}</span>
           <span
             v-for="s in related.similar"
             :key="'s' + s.id"
             class="tag rel-item"
-            :title="`语义相似 ${(1 - s.distance).toFixed(2)}`"
+            v-tooltip="`语义相似 ${(1 - s.distance).toFixed(2)}`"
             @click="$router.push(`/page/${s.id}`)"
           >≈ {{ s.title }}</span>
           <span v-for="e in related.entities" :key="'e' + e.name" class="tag entity">{{ e.name }}</span>
@@ -251,7 +254,11 @@
           <button class="btn" @click="$router.push('/search')">向知识库提问</button>
           <button class="btn" @click="$router.push('/graph')">知识图谱</button>
         </div>
-        <p class="faint small">快捷键：Ctrl+K 搜索 · Ctrl+J AI助手 · Ctrl+N 新建</p>
+        <div class="welcome-shortcuts">
+          <span class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>K</kbd> 搜索</span>
+          <span class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>J</kbd> AI 助手</span>
+          <span class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>N</kbd> 新建页面</span>
+        </div>
       </div>
     </div>
   </div>
@@ -781,10 +788,12 @@ async function reextract() {
     const { data } = await api.get(`/api/pages/${page.value.id}/evidence`);
     sources = data?.sources?.length || 0;
   } catch { /* ignore */ }
-  const confirmed = window.confirm(
-    `将重跑本页依赖的${sources || ''}份原始资料，重新抽取事实并生成正文。` +
-    '共享这些来源的其他页面也会被连带刷新，可能需要一些时间。是否继续？'
-  );
+  const confirmed = await confirmDialog({
+    title: '重新提炼',
+    message: `将重跑本页依赖的${sources || ''}份原始资料，重新抽取事实并生成正文。` +
+      '共享这些来源的其他页面也会被连带刷新，可能需要一些时间。是否继续？',
+    confirmText: '重新提炼',
+  });
   if (!confirmed) return;
   try {
     const { data } = await api.post(`/api/pages/${page.value.id}/reextract`);
@@ -944,6 +953,15 @@ onUnmounted(() => {
   gap: 4px;
   color: var(--warning);
   white-space: nowrap;
+}
+.save-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.save-state.save-failed {
+  color: var(--danger);
+  font-weight: 500;
 }
 .ai-bar {
   max-width: var(--editor-max);
@@ -1252,6 +1270,31 @@ onUnmounted(() => {
 }
 .welcome-inner h2 { font-weight: 600; }
 .welcome-actions { display: flex; gap: 10px; justify-content: center; margin: 20px 0; flex-wrap: wrap; }
+.welcome-shortcuts {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+.shortcut-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.shortcut-item kbd {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+}
 
 @media (max-width: 768px) {
   .page-head, .ai-bar, .related { padding-left: 20px; padding-right: 20px; }

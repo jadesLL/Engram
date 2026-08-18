@@ -128,7 +128,7 @@
           <button
             class="btn icon"
             type="button"
-            title="重新识别本页"
+            v-tooltip="'重新识别本页'"
             aria-label="重新识别本页"
             :disabled="extractionBusy || Boolean(activeFileJob)"
             @click="retryPage(page.pageNumber)"
@@ -151,7 +151,7 @@
       </a>
     </div>
 
-    <AppModal :open="versionsOpen" title="历史版本" placement="right" @close="versionsOpen = false">
+    <AppModal :open="versionsOpen" v-tooltip="'历史版本'" placement="right" @close="versionsOpen = false">
       <template #subtitle>
         <p class="muted small">{{ fileName }}</p>
       </template>
@@ -707,9 +707,9 @@ defineExpose({ downloadFile, openExternal });
   border-radius: 4px;
   padding: 2px 7px;
 }
-.office-status.success { color: #18794e; background: #e9f7ef; border-color: #b8dfc8; }
-.office-status.warning { color: #9a6700; background: #fff8c5; border-color: #eac54f; }
-.office-status.error { color: #b42318; background: #fff0ee; border-color: #f4b4ac; }
+.office-status.success { color: var(--success); background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 32%, var(--border)); }
+.office-status.warning { color: var(--warning); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warning) 32%, var(--border)); }
+.office-status.error { color: var(--danger); background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); }
 .fp-tabs {
   min-height: 38px;
   display: flex;
@@ -740,7 +740,7 @@ defineExpose({ downloadFile, openExternal });
 .fp-body.docx :deep(table) { border-collapse: collapse; }
 .fp-body.docx :deep(td), .fp-body.docx :deep(th) { border: 1px solid var(--border-strong); padding: 4px 10px; }
 .pre { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px; }
-.office-online { flex: 1; min-height: 0; width: 100%; background: #fff; overflow: hidden; }
+.office-online { flex: 1; min-height: 0; width: 100%; background: var(--bg); overflow: hidden; }
 .office-fallback-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .fallback-banner {
   min-height: 42px;
@@ -748,13 +748,13 @@ defineExpose({ downloadFile, openExternal });
   align-items: center;
   gap: 10px;
   padding: 7px 16px;
-  border-bottom: 1px solid #eac54f;
-  background: #fff8c5;
-  color: #6e5500;
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+  background: var(--warn-soft);
+  color: var(--warning);
   flex-shrink: 0;
 }
 .fallback-banner span { flex: 1; font-size: 13px; }
-.office-fallback { background: var(--bg-soft, #f6f6f6); }
+.office-fallback { background: var(--bg-secondary); }
 .office-fallback :deep(.docx-wrapper) { background: transparent; padding: 8px 0; }
 .office-fallback :deep(section.docx) { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12); margin-bottom: 16px; }
 .office-fallback :deep(.pptx-preview-wrapper) { max-width: 100%; margin: 0 auto; }
@@ -788,9 +788,9 @@ defineExpose({ downloadFile, openExternal });
   max-width: var(--content-max);
   margin: 0 auto 12px;
   padding: 9px 12px;
-  border-left: 3px solid #d79b00;
-  background: #fff8d8;
-  color: #735c00;
+  border-left: 3px solid var(--warning);
+  background: var(--warn-soft);
+  color: var(--warning);
   font-size: 12px;
 }
 .extraction-empty { max-width: var(--content-max); margin: 0 auto; padding: 50px 0; text-align: center; }
@@ -806,9 +806,9 @@ defineExpose({ downloadFile, openExternal });
   color: var(--text-secondary);
   font-size: 10px;
 }
-.page-state.completed { color: #18794e; background: #e9f7ef; }
-.page-state.failed, .page-state.blocked { color: #b42318; background: #fff0ee; }
-.page-state.skipped { color: #9a6700; background: #fff8c5; }
+.page-state.completed { color: var(--success); background: var(--success-soft); }
+.page-state.failed, .page-state.blocked { color: var(--danger); background: var(--danger-soft); }
+.page-state.skipped { color: var(--warning); background: var(--warn-soft); }
 .extraction-page pre { margin: 12px 0 0; white-space: pre-wrap; font: inherit; line-height: 1.75; }
 .extraction-page p { margin: 12px 0 0; }
 
