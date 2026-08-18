@@ -1,8 +1,11 @@
 /**
- * 整理报告展示层聚合:把 reports 表 10 类报告翻译为「待决策卡片 / 待入库清单 / 提醒」三区结构。
- * 旧界面 10 个 tab 平铺,把梦境审计与 ingest 产物混在一起,且候选证据要前端调两套接口合并;
- * 这里一次性聚合,前端只请求 /api/reports/overview。旧接口(/api/dream/reports、/api/ingest/candidates)
- * 保留给 AI 助手与 IM 使用,不受影响。
+ * 整理报告展示层聚合:把 reports 表 10 类报告翻译为「待决策卡片 / 待入库清单 / 提醒 / 已处理」四区结构。
+ * 聚合原则:同一对象只出现一次——
+ * - 同一对页面的「重复」与「矛盾」合并为一张决策卡,一次选择全部关闭;
+ * - 同一死链目标被多个页面引用合并为一张卡;
+ * - 同一页面的多个提醒合并为一条;
+ * - 已处理/已阅的报告保留在「已处理」区,不计入角标。
+ * 旧接口(/api/dream/reports、/api/ingest/candidates)保留给 AI 助手与 IM 使用,不受影响。
  */
 import { db, getSetting } from '../lib/db.js';
 import { PAGE_TYPES, TYPE_LABEL } from '../lib/pageTypes.js';
@@ -33,7 +36,10 @@ export interface CardLink {
 }
 
 export interface DecisionCard {
+  /** 主报告 id(组内第一张) */
   id: number;
+  /** 聚合卡包含的全部报告 id,决策时一并提交 */
+  reportIds: number[];
   kind: string;
   /** 决策主体:实体/概念名;追问卡片为资料路径 */
   subject: string;
@@ -71,13 +77,27 @@ export interface PendingCandidateItem {
 }
 
 export interface ReminderItem {
+  /** 组内第一条报告 id */
   id: number;
-  kind: 'single_source' | 'missing_sections' | 'enrich' | 'stale';
+  /** 与 kinds 顺序一一对应的报告 id */
+  reportIds: number[];
+  /** 组内包含的提醒类型,与 reportIds 一一对应 */
+  kinds: string[];
+  kind: string;
   title: string;
   detail: string;
   pageId?: string;
   recompose?: boolean;
   actions: CardOption[];
+  createdAt: string;
+}
+
+export interface DoneItem {
+  id: number;
+  kind: string;
+  title: string;
+  /** resolved=已处理(有实际动作) / dismissed=已阅(忽略) */
+  status: 'resolved' | 'dismissed';
   createdAt: string;
 }
 
@@ -88,16 +108,19 @@ export interface ReportsOverview {
   decisions: DecisionCard[];
   pendingCandidates: PendingCandidateItem[];
   reminders: ReminderItem[];
+  done: DoneItem[];
   counts: { decisions: number; pending: number; reminders: number; actionable: number };
 }
 
 const REVIEW_KINDS = ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'];
+const REMINDER_KINDS = ['single_source', 'missing_sections', 'enrich', 'stale'];
 
 interface ReportRow {
   id: number;
   run_at: string;
   kind: string;
   payload: string;
+  status?: string;
 }
 
 function parsePayload(raw: string): Record<string, any> {
@@ -183,8 +206,72 @@ export function pendingCandidateList(): PendingCandidateItem[] {
   );
 }
 
-function deadlinkCard(row: ReportRow, payload: Record<string, any>): DecisionCard {
-  const suggested = PAGE_TYPES.includes(payload.suggestedType) ? String(payload.suggestedType) : '';
+/* ---------- 待决策:按对象聚合 ---------- */
+
+function pairKeyOf(payload: Record<string, any>): string {
+  return [payload.a?.id, payload.b?.id].filter(Boolean).map(String).sort().join(':');
+}
+
+/** 同一对页面的 duplicate + contradiction 聚合为一张卡 */
+function pairDecisionCard(group: { duplicate?: ReportRow; contradiction?: ReportRow }): DecisionCard {
+  const dupRow = group.duplicate;
+  const conRow = group.contradiction;
+  const main = (dupRow || conRow) as ReportRow;
+  const payload = parsePayload(main.payload);
+  const conPayload = conRow ? parsePayload(conRow.payload) : null;
+  const a = payload.a?.title || 'A';
+  const b = payload.b?.title || 'B';
+  const links: CardLink[] = [];
+  if (payload.a?.id) links.push({ label: `查看「${a}」`, pageId: String(payload.a.id) });
+  if (payload.b?.id) links.push({ label: `查看「${b}」`, pageId: String(payload.b.id) });
+  const reportIds = [dupRow?.id, conRow?.id].filter((id): id is number => typeof id === 'number');
+  if (dupRow) {
+    const problems = ['疑似重复'];
+    if (conRow) problems.push('内容矛盾');
+    return {
+      id: dupRow.id,
+      reportIds,
+      kind: 'duplicate',
+      subject: `${a} / ${b}`,
+      question: conRow
+        ? `「${a}」与「${b}」存在 ${problems.length} 个问题:${problems.join('、')},怎么处理?`
+        : `「${a}」与「${b}」疑似重复,保留哪个?`,
+      context: [payload.detail, conPayload?.detail].filter(Boolean).join('；') || undefined,
+      links,
+      options: [
+        { value: 'keep_a', label: `保留「${a}」`, primary: payload.recommendedAction === 'keep_a' },
+        { value: 'keep_b', label: `保留「${b}」`, primary: payload.recommendedAction === 'keep_b' },
+        { value: 'keep_both', label: '都保留,不处理', primary: payload.recommendedAction === 'keep_both' },
+      ],
+      createdAt: main.run_at,
+    };
+  }
+  return {
+    id: (conRow as ReportRow).id,
+    reportIds,
+    kind: 'contradiction',
+    subject: `${a} / ${b}`,
+    question: `「${a}」与「${b}」的内容可能存在矛盾`,
+    context: payload.detail || undefined,
+    links,
+    options: [
+      { value: 'resolve', label: '已人工处理', primary: true },
+      { value: 'dismiss', label: '暂不处理' },
+    ],
+    createdAt: main.run_at,
+  };
+}
+
+/** 同一死链目标被多个页面引用时聚合为一张卡 */
+function deadlinkGroupCard(group: Array<{ row: ReportRow; payload: Record<string, any> }>): DecisionCard {
+  const first = group[0];
+  const deadTitle = String(first.payload.deadTitle || '');
+  const suggested = group.map((item) => item.payload.suggestedType)
+    .find((type) => PAGE_TYPES.includes(type)) || '';
+  const reason = group.map((item) => item.payload.suggestionReason).find(Boolean) || '';
+  const links: CardLink[] = group
+    .filter((item) => item.payload.srcId)
+    .map((item) => ({ label: `查看「${item.payload.srcTitle}」`, pageId: String(item.payload.srcId) }));
   const options: CardOption[] = [];
   if (suggested) {
     options.push({ value: 'create', label: `创建为${TYPE_LABEL[suggested]}`, primary: true });
@@ -196,55 +283,19 @@ function deadlinkCard(row: ReportRow, payload: Record<string, any>): DecisionCar
   });
   options.push({ value: 'dismiss', label: '不创建' });
   return {
-    id: row.id,
+    id: first.row.id,
+    reportIds: group.map((item) => item.row.id),
     kind: 'deadlink',
-    subject: String(payload.deadTitle || ''),
-    question: `「${payload.srcTitle}」引用了不存在的页面 [[${payload.deadTitle}]],要创建吗?`,
-    context: payload.suggestionReason
-      ? (suggested ? `模型建议:${TYPE_LABEL[suggested]}。${payload.suggestionReason}` : String(payload.suggestionReason))
+    subject: deadTitle,
+    question: group.length > 1
+      ? `[[${deadTitle}]] 被 ${group.length} 个页面引用且不存在,要创建吗?`
+      : `「${first.payload.srcTitle}」引用了不存在的页面 [[${deadTitle}]],要创建吗?`,
+    context: reason
+      ? (suggested ? `模型建议:${TYPE_LABEL[suggested]}。${reason}` : String(reason))
       : undefined,
-    links: payload.srcId ? [{ label: '查看来源页', pageId: String(payload.srcId) }] : [],
+    links,
     options,
-    createdAt: row.run_at,
-  };
-}
-
-function duplicateCard(row: ReportRow, payload: Record<string, any>): DecisionCard {
-  const links: CardLink[] = [];
-  if (payload.a?.id) links.push({ label: `查看「${payload.a.title}」`, pageId: String(payload.a.id) });
-  if (payload.b?.id) links.push({ label: `查看「${payload.b.title}」`, pageId: String(payload.b.id) });
-  return {
-    id: row.id,
-    kind: 'duplicate',
-    subject: `${payload.a?.title || 'A'} / ${payload.b?.title || 'B'}`,
-    question: `「${payload.a?.title}」与「${payload.b?.title}」疑似重复,保留哪个?`,
-    context: payload.detail || undefined,
-    links,
-    options: [
-      { value: 'keep_a', label: `保留「${payload.a?.title || 'A'}」`, primary: payload.recommendedAction === 'keep_a' },
-      { value: 'keep_b', label: `保留「${payload.b?.title || 'B'}」`, primary: payload.recommendedAction === 'keep_b' },
-      { value: 'keep_both', label: '都保留,不是重复', primary: payload.recommendedAction === 'keep_both' },
-    ],
-    createdAt: row.run_at,
-  };
-}
-
-function contradictionCard(row: ReportRow, payload: Record<string, any>): DecisionCard {
-  const links: CardLink[] = [];
-  if (payload.a?.id) links.push({ label: `查看「${payload.a.title}」`, pageId: String(payload.a.id) });
-  if (payload.b?.id) links.push({ label: `查看「${payload.b.title}」`, pageId: String(payload.b.id) });
-  return {
-    id: row.id,
-    kind: 'contradiction',
-    subject: `${payload.a?.title || 'A'} / ${payload.b?.title || 'B'}`,
-    question: `「${payload.a?.title}」与「${payload.b?.title}」的内容可能存在矛盾`,
-    context: payload.detail || undefined,
-    links,
-    options: [
-      { value: 'resolve', label: '已人工处理', primary: true },
-      { value: 'dismiss', label: '暂不处理' },
-    ],
-    createdAt: row.run_at,
+    createdAt: first.row.run_at,
   };
 }
 
@@ -267,6 +318,7 @@ function identityCard(row: ReportRow, payload: Record<string, any>): DecisionCar
   options.push({ value: 'dismiss', label: '误报 — 身份无歧义' });
   return {
     id: row.id,
+    reportIds: [row.id],
     kind: 'identity_ambiguity',
     subject: String(payload.title || ''),
     question: hasTarget
@@ -286,6 +338,7 @@ function questionCard(row: ReportRow, payload: Record<string, any>): DecisionCar
   const openCount = questions.filter((question) => ['open', 'failed'].includes(question.status)).length;
   return {
     id: row.id,
+    reportIds: [row.id],
     kind: 'ingest_questions',
     subject: String(payload.path || ''),
     question: openCount
@@ -298,79 +351,97 @@ function questionCard(row: ReportRow, payload: Record<string, any>): DecisionCar
   };
 }
 
-const REMINDER_BUILDERS: Record<string, (row: ReportRow, p: Record<string, any>) => ReminderItem> = {
-  single_source: (row, p) => ({
-    id: row.id,
-    kind: 'single_source',
-    title: `「${p.title}」只有一个来源`,
-    detail: `唯一来源:${p.source || '未知'}。重要结论建议交叉验证。`,
-    pageId: p.pageId,
-    actions: [
-      { value: 'open', label: '查看页面' },
-      { value: 'resolve', label: '已知悉', primary: true },
-    ],
-    createdAt: row.run_at,
-  }),
-  missing_sections: (row, p) => ({
-    id: row.id,
-    kind: 'missing_sections',
-    title: `「${p.title}」缺少章节`,
-    detail: `缺少:${(p.missing || []).join('、')}`,
-    pageId: p.pageId,
-    actions: [
-      { value: 'open', label: '去补全', primary: true },
-      { value: 'repair', label: '自动补空章节' },
-      { value: 'dismiss', label: '忽略' },
-    ],
-    createdAt: row.run_at,
-  }),
-  enrich: (row, p) => ({
-    id: row.id,
-    kind: 'enrich',
-    title: `「${p.title}」可进一步丰富`,
-    detail: String(p.detail || ''),
-    pageId: p.pageId,
-    recompose: Boolean(p.recompose),
-    actions: [
-      { value: 'open', label: '去完善', primary: true },
-      ...(p.recompose ? [{ value: 'recompose', label: '重新综合' } as CardOption] : []),
-      { value: 'dismiss', label: '忽略' },
-    ],
-    createdAt: row.run_at,
-  }),
-  stale: (row, p) => ({
-    id: row.id,
-    kind: 'stale',
-    title: `「${p.title}」可能需要时效复核`,
-    detail: String(p.detail || ''),
-    pageId: p.pageId,
-    actions: [
-      { value: 'open', label: '查看' },
-      { value: 'review', label: '仍然有效', primary: true },
-    ],
-    createdAt: row.run_at,
-  }),
+/* ---------- 提醒:按页面聚合 ---------- */
+
+const REMINDER_DETAIL: Record<string, (p: Record<string, any>) => string> = {
+  single_source: (p) => `唯一来源:${p.source || '未知'},重要结论建议交叉验证`,
+  missing_sections: (p) => `缺少章节:${(p.missing || []).join('、')}`,
+  enrich: (p) => String(p.detail || '可进一步丰富'),
+  stale: (p) => String(p.detail || '可能需要时效复核'),
 };
+
+const REMINDER_SINGLE_TITLE: Record<string, (p: Record<string, any>) => string> = {
+  single_source: (p) => `「${p.title}」只有一个来源`,
+  missing_sections: (p) => `「${p.title}」缺少章节`,
+  enrich: (p) => `「${p.title}」可进一步丰富`,
+  stale: (p) => `「${p.title}」可能需要时效复核`,
+};
+
+/** 同一页面的多个提醒聚合为一条 */
+function reminderGroupCard(group: Array<{ row: ReportRow; payload: Record<string, any> }>): ReminderItem {
+  const first = group[0];
+  const kinds = group.map((item) => item.row.kind);
+  const title = String(first.payload.title || '');
+  const actions: CardOption[] = [{ value: 'open', label: '查看页面' }];
+  if (kinds.includes('missing_sections')) actions.push({ value: 'repair', label: '自动补空章节' });
+  if (kinds.includes('enrich') && group.some((item) => item.payload.recompose)) {
+    actions.push({ value: 'recompose', label: '重新综合' });
+  }
+  if (kinds.includes('stale')) actions.push({ value: 'review', label: '仍然有效' });
+  actions.push({ value: 'acknowledge', label: group.length > 1 ? '全部知悉' : '已知悉', primary: true });
+  return {
+    id: first.row.id,
+    reportIds: group.map((item) => item.row.id),
+    kinds,
+    kind: kinds[0],
+    title: group.length > 1
+      ? `「${title}」有 ${group.length} 个提醒`
+      : REMINDER_SINGLE_TITLE[kinds[0]]?.(first.payload) || `「${title}」`,
+    detail: group.map((item) => REMINDER_DETAIL[item.row.kind]?.(item.payload)).filter(Boolean).join('；'),
+    pageId: first.payload.pageId,
+    recompose: kinds.includes('enrich') && group.some((item) => item.payload.recompose),
+    actions,
+    createdAt: first.row.run_at,
+  };
+}
+
+/* ---------- 已处理区 ---------- */
+
+function doneTitle(kind: string, p: Record<string, any>): string {
+  switch (kind) {
+    case 'deadlink': return `死链 [[${p.deadTitle || ''}]]`;
+    case 'duplicate': return `重复:「${p.a?.title || 'A'}」与「${p.b?.title || 'B'}」`;
+    case 'contradiction': return `矛盾:「${p.a?.title || 'A'}」与「${p.b?.title || 'B'}」`;
+    case 'identity_ambiguity': return `实体歧义:「${p.title || ''}」`;
+    case 'ingest_questions': return `整理追问:「${p.path || ''}」`;
+    case 'pending_review': return `待入库:「${p.name || ''}」`;
+    case 'single_source': return `来源单一:「${p.title || ''}」`;
+    case 'missing_sections': return `待补章节:「${p.title || ''}」`;
+    case 'enrich': return `待丰富:「${p.title || ''}」`;
+    case 'stale': return `过期复核:「${p.title || ''}」`;
+    default: return `${kind} #${p.title || p.name || ''}`;
+  }
+}
 
 export function buildReportsOverview(): ReportsOverview {
   syncAllIngestQuestionReports();
   const rows = db.prepare(
     `SELECT * FROM reports WHERE status='open' ORDER BY id DESC LIMIT 400`
   ).all() as ReportRow[];
+
+  const pairGroups = new Map<string, { duplicate?: ReportRow; contradiction?: ReportRow }>();
+  const deadlinkGroups = new Map<string, Array<{ row: ReportRow; payload: Record<string, any> }>>();
+  const reminderGroups = new Map<string, Array<{ row: ReportRow; payload: Record<string, any> }>>();
   const decisions: DecisionCard[] = [];
-  const reminders: ReminderItem[] = [];
+
   for (const row of rows) {
     const payload = parsePayload(row.payload);
     switch (row.kind) {
-      case 'deadlink':
-        decisions.push(deadlinkCard(row, payload));
-        break;
       case 'duplicate':
-        decisions.push(duplicateCard(row, payload));
+      case 'contradiction': {
+        const key = pairKeyOf(payload) || `row:${row.id}`;
+        const group = pairGroups.get(key) || {};
+        group[row.kind as 'duplicate' | 'contradiction'] = row;
+        pairGroups.set(key, group);
         break;
-      case 'contradiction':
-        decisions.push(contradictionCard(row, payload));
+      }
+      case 'deadlink': {
+        const key = String(payload.deadTitle || '').trim().toLowerCase() || `row:${row.id}`;
+        const list = deadlinkGroups.get(key) || [];
+        list.push({ row, payload });
+        deadlinkGroups.set(key, list);
         break;
+      }
       case 'identity_ambiguity':
         decisions.push(identityCard(row, payload));
         break;
@@ -382,11 +453,29 @@ export function buildReportsOverview(): ReportsOverview {
       case 'pending_review':
         break; // 待入库清单由 pendingCandidateList 独立聚合
       default: {
-        const build = REMINDER_BUILDERS[row.kind];
-        if (build) reminders.push(build(row, payload));
+        if (REMINDER_KINDS.includes(row.kind)) {
+          const key = String(payload.pageId || `row:${row.id}`);
+          const list = reminderGroups.get(key) || [];
+          list.push({ row, payload });
+          reminderGroups.set(key, list);
+        }
       }
     }
   }
+  for (const group of pairGroups.values()) decisions.push(pairDecisionCard(group));
+  for (const group of deadlinkGroups.values()) decisions.push(deadlinkGroupCard(group));
+  const reminders = [...reminderGroups.values()].map(reminderGroupCard);
+
+  const done = (db.prepare(
+    `SELECT * FROM reports WHERE status IN ('resolved','dismissed') ORDER BY id DESC LIMIT 50`
+  ).all() as ReportRow[]).map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    title: doneTitle(row.kind, parsePayload(row.payload)),
+    status: row.status as 'resolved' | 'dismissed',
+    createdAt: row.run_at,
+  }));
+
   const pendingCandidates = pendingCandidateList();
   return {
     lastRun: getSetting('dream_last_run') || null,
@@ -395,6 +484,7 @@ export function buildReportsOverview(): ReportsOverview {
     decisions,
     pendingCandidates,
     reminders,
+    done,
     counts: {
       decisions: decisions.length,
       pending: pendingCandidates.length,

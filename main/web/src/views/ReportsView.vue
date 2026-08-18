@@ -28,6 +28,7 @@
         :key="`${card.kind}-${card.id}`"
         :card="card"
         :busy="Boolean(decideBusy[card.id])"
+        :progress="decideProgress[card.id] || null"
         :question-busy="questionBusy"
         :question-errors="questionErrors"
         @decide="onDecide"
@@ -57,7 +58,7 @@
       />
     </section>
 
-    <!-- 提醒:知悉即可,默认折叠 -->
+    <!-- 提醒:知悉即可,默认折叠;同一页面的多个提醒已聚合为一条 -->
     <section v-if="reminders.length" class="report-section">
       <details class="reminder-section" open>
         <summary>
@@ -81,6 +82,20 @@
               {{ action.label }}
             </button>
           </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 已处理:忽略/知悉/处理完的记录保留在此,不计角标 -->
+    <section v-if="doneItems.length" class="report-section">
+      <details class="done-section">
+        <summary>
+          <h3>已处理<span class="count dim">{{ doneItems.length }}</span></h3>
+        </summary>
+        <div v-for="item in doneItems" :key="item.id" class="done-item">
+          <span class="done-badge" :data-status="item.status">{{ item.status === 'resolved' ? '已处理' : '已阅' }}</span>
+          <span class="done-title">{{ item.title }}</span>
+          <span class="muted small">{{ formatDoneTime(item.createdAt) }}</span>
         </div>
       </details>
     </section>
@@ -194,6 +209,7 @@ const app = useAppStore();
 const decisions = ref<DecisionCardData[]>([]);
 const pendingCandidates = ref<PendingCandidateData[]>([]);
 const reminders = ref<any[]>([]);
+const doneItems = ref<any[]>([]);
 const lastRun = ref('');
 const cron = ref('');
 const enabled = ref(true);
@@ -234,6 +250,7 @@ async function load() {
   decisions.value = data.decisions || [];
   pendingCandidates.value = data.pendingCandidates || [];
   reminders.value = data.reminders || [];
+  doneItems.value = data.done || [];
   lastRun.value = data.lastRun || '';
   cron.value = data.cron || '';
   enabled.value = data.enabled !== false;
@@ -262,8 +279,11 @@ const CONFIRM_DECIDES: Record<string, (card: DecisionCardData) => { title: strin
     : null,
 };
 
+/** 异步任务的卡片进度:key 为主报告 id */
+const decideProgress = reactive<Record<number, { stage: string; progress: number }>>({});
+
 async function onDecide(card: DecisionCardData, option: string, input: { newTitle?: string; pageType?: string }) {
-  if (decideBusy[card.id]) return;
+  if (decideBusy[card.id] || decideProgress[card.id]) return;
   const confirmPlan = (option === 'merge' || option === 'keep_a' || option === 'keep_b')
     ? CONFIRM_DECIDES[card.kind]?.(card)
     : null;
@@ -273,7 +293,28 @@ async function onDecide(card: DecisionCardData, option: string, input: { newTitl
   }
   decideBusy[card.id] = true;
   try {
-    await api.post(`/api/reports/${card.id}/decide`, { option, input });
+    const { data } = await api.post(`/api/reports/${card.id}/decide`, {
+      option,
+      input,
+      reportIds: card.reportIds,
+    });
+    if (data.async && data.jobId) {
+      // 慢操作(合并等):卡片上显示实时进度条,完成后刷新
+      decideBusy[card.id] = false;
+      decideProgress[card.id] = { stage: '排队中', progress: 0 };
+      try {
+        await waitForJobProgress(data.jobId, (stage, progress) => {
+          decideProgress[card.id] = { stage, progress };
+        });
+        notify.success('处理完成');
+      } catch (error: any) {
+        notify.error(error?.message || '处理失败,已还原为待处理');
+      } finally {
+        delete decideProgress[card.id];
+      }
+      await load();
+      return;
+    }
     await load();
   } catch (error: any) {
     notify.error(error?.response?.data?.error || error?.message || '处理失败');
@@ -281,6 +322,31 @@ async function onDecide(card: DecisionCardData, option: string, input: { newTitl
   } finally {
     delete decideBusy[card.id];
   }
+}
+
+/** 轮询任务进度,回调更新卡片进度条 */
+function waitForJobProgress(jobId: number, onProgress: (stage: string, progress: number) => void): Promise<void> {
+  return new Promise((resolveJob, rejectJob) => {
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      try {
+        const { data } = await api.get('/api/jobs');
+        const jobs = [...(data.active || []), ...(data.recent || [])];
+        const job = jobs.find((j: any) => j.id === jobId);
+        if (job) onProgress(job.stage || '处理中', job.progress ?? 0);
+        if (job?.status === 'done') {
+          clearInterval(timer);
+          resolveJob();
+        } else if (job?.status === 'failed') {
+          clearInterval(timer);
+          rejectJob(new Error(job.error || '处理任务失败'));
+        } else if (Date.now() - started > 10 * 60 * 1000) {
+          clearInterval(timer);
+          rejectJob(new Error('等待超时,请到任务队列查看结果'));
+        }
+      } catch { /* 网络抖动,下一轮重试 */ }
+    }, 1500);
+  });
 }
 
 async function forceCreate(item: PendingCandidateData) {
@@ -429,7 +495,7 @@ async function commitCandidatePreview() {
 }
 
 /* ---------- 提醒区 ---------- */
-/** 「全部知悉」使用的非破坏性关闭动作(不改动页面正文) */
+/** 「已知悉」使用的非破坏性关闭动作(不改动页面正文) */
 const REMINDER_ACK: Record<string, string> = {
   single_source: 'resolve',
   missing_sections: 'dismiss',
@@ -437,6 +503,7 @@ const REMINDER_ACK: Record<string, string> = {
   stale: 'review',
 };
 
+/** 提醒条目按页面聚合:kinds[i] 对应 reportIds[i];动作只作用于对应类型的报告 */
 async function onReminderAction(item: any, action: string) {
   if (action === 'open') {
     if (item.pageId) openPage(item.pageId);
@@ -457,7 +524,20 @@ async function onReminderAction(item: any, action: string) {
   }
   reminderBusy[item.id] = true;
   try {
-    await api.post(`/api/reports/${item.id}/decide`, { option: action });
+    if (action === 'acknowledge') {
+      // 关闭组内全部提醒
+      for (let i = 0; i < item.reportIds.length; i++) {
+        const option = REMINDER_ACK[item.kinds[i]] || 'dismiss';
+        await api.post(`/api/reports/${item.reportIds[i]}/decide`, { option }).catch(() => {});
+      }
+    } else {
+      // repair/review 只作用于对应类型的报告
+      const index = item.kinds.findIndex((k: string) =>
+        (action === 'repair' && k === 'missing_sections') || (action === 'review' && k === 'stale'));
+      if (index >= 0) {
+        await api.post(`/api/reports/${item.reportIds[index]}/decide`, { option: action });
+      }
+    }
     await load();
   } catch (error: any) {
     notify.error(error?.response?.data?.error || error?.message || '处理失败');
@@ -470,14 +550,20 @@ async function onReminderAction(item: any, action: string) {
 async function acknowledgeAll() {
   const items = [...reminders.value];
   for (const item of items) {
-    const option = REMINDER_ACK[item.kind] || 'dismiss';
     reminderBusy[item.id] = true;
-    try {
-      await api.post(`/api/reports/${item.id}/decide`, { option });
-    } catch { /* 单项失败继续处理其余 */ }
+    for (let i = 0; i < item.reportIds.length; i++) {
+      const option = REMINDER_ACK[item.kinds[i]] || 'dismiss';
+      await api.post(`/api/reports/${item.reportIds[i]}/decide`, { option }).catch(() => {});
+    }
     delete reminderBusy[item.id];
   }
   await load();
+}
+
+function formatDoneTime(value: string) {
+  if (!value) return '';
+  const date = new Date(value.replace(' ', 'T'));
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 /* ---------- 追问 ---------- */
@@ -730,6 +816,14 @@ onMounted(load);
 .reminder-section summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
 .reminder-section summary::-webkit-details-marker { display: none; }
 .reminder-section summary h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 16px; }
+.done-section summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
+.done-section summary::-webkit-details-marker { display: none; }
+.done-section summary h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 16px; color: var(--text-secondary); }
+.done-item { display: flex; align-items: center; gap: 10px; padding: 7px 12px; margin-top: 6px; border: 1px solid var(--border); border-radius: 8px; opacity: .72; }
+.done-badge { flex: 0 0 auto; padding: 1px 8px; border-radius: 9px; font-size: 12px; }
+.done-badge[data-status='resolved'] { color: var(--success, #2e7d32); background: color-mix(in srgb, var(--success, #2e7d32) 12%, transparent); }
+.done-badge[data-status='dismissed'] { color: var(--text-secondary); background: var(--bg-secondary); border: 1px solid var(--border); }
+.done-title { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
 .reminder-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; }
 .reminder-item.busy { opacity: .6; pointer-events: none; }
 .reminder-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

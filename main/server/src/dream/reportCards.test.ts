@@ -85,7 +85,7 @@ function seedCandidate(name: string, runId: string, sourcePath: string, opts: { 
   return candidate;
 }
 
-test('overview 把 10 类报告聚合为三区,候选不混入决策区', () => {
+test('overview 三区聚合:同页面对重复+矛盾合一,同页面提醒合一,候选不混入决策区', () => {
   clear();
   const src = createPage('Wiki/概念', '来源页');
   addReports([
@@ -101,14 +101,44 @@ test('overview 把 10 类报告聚合为三区,候选不混入决策区', () => 
   seedCandidate('单来源候选', 'cards-run-1', '原始资料/候选.md');
   const overview = buildReportsOverview();
   const decisionKinds = overview.decisions.map((card: any) => card.kind);
-  assert.deepEqual(decisionKinds.sort(), ['contradiction', 'deadlink', 'duplicate', 'identity_ambiguity']);
-  assert.deepEqual(overview.reminders.map((item: any) => item.kind).sort(), ['enrich', 'missing_sections', 'single_source', 'stale']);
+  // duplicate+contradiction 同对页面聚合为一张卡
+  assert.deepEqual(decisionKinds.sort(), ['deadlink', 'duplicate', 'identity_ambiguity']);
+  const pairCard = overview.decisions.find((card: any) => card.kind === 'duplicate');
+  assert.equal(pairCard.reportIds.length, 2, '聚合卡包含重复与矛盾两张报告');
+  assert.match(pairCard.question, /2 个问题/);
+  assert.match(pairCard.question, /疑似重复、内容矛盾/);
+  // 同一页面的 4 条提醒聚合为一条
+  assert.equal(overview.reminders.length, 1);
+  assert.equal(overview.reminders[0].reportIds.length, 4);
+  assert.match(overview.reminders[0].title, /4 个提醒/);
   assert.equal(overview.pendingCandidates.length, 1);
-  assert.equal(overview.pendingCandidates[0].name, '单来源候选');
-  assert.equal(overview.counts.decisions, 4);
+  assert.equal(overview.counts.decisions, 3);
   assert.equal(overview.counts.pending, 1);
-  assert.equal(overview.counts.reminders, 4);
-  assert.equal(overview.counts.actionable, 5);
+  assert.equal(overview.counts.reminders, 1);
+  assert.equal(overview.counts.actionable, 4);
+  assert.equal(overview.done.length, 0);
+});
+
+test('已处理区:关闭的报告保留记录并带已处理/已阅标志,不计角标', async () => {
+  clear();
+  const src = createPage('Wiki/概念', '来源页');
+  addReports([
+    { kind: 'single_source', payload: { pageId: src.id, title: '来源页', source: '资料A.md' } },
+    { kind: 'enrich', payload: { pageId: src.id, title: '来源页', detail: '可补充' } },
+  ]);
+  const { decideReport } = await import('./decide.js');
+  const rows = db.prepare(`SELECT id, kind FROM reports WHERE status='open'`).all() as any[];
+  await decideReport(rows.find((r) => r.kind === 'single_source').id, 'resolve');
+  await decideReport(rows.find((r) => r.kind === 'enrich').id, 'dismiss');
+  const overview = buildReportsOverview();
+  assert.equal(overview.reminders.length, 0);
+  assert.equal(overview.done.length, 2);
+  const resolved = overview.done.find((item: any) => item.kind === 'single_source');
+  const dismissed = overview.done.find((item: any) => item.kind === 'enrich');
+  assert.equal(resolved.status, 'resolved');
+  assert.equal(dismissed.status, 'dismissed');
+  assert.match(resolved.title, /来源单一/);
+  assert.equal(overview.counts.actionable, 0, '已处理不计入角标');
 });
 
 test('deadlink 卡片:有建议类型时推荐一键创建,无建议时只能手选类型', () => {
@@ -133,6 +163,23 @@ test('deadlink 卡片:有建议类型时推荐一键创建,无建议时只能手
   assert.equal(withoutSuggestion.options[0].value, 'create-custom');
   assert.equal(withoutSuggestion.options[0].needsInput, 'pageType');
   assert.equal(withoutSuggestion.options.length, 2);
+});
+
+test('deadlink 聚合:同一死链目标被多个页面引用时合并为一张卡', () => {
+  clear();
+  addReports([
+    { kind: 'deadlink', payload: { srcId: 's1', srcTitle: '页面甲', deadTitle: '共同目标', suggestedType: 'concept' } },
+    { kind: 'deadlink', payload: { srcId: 's2', srcTitle: '页面乙', deadTitle: '共同目标' } },
+    { kind: 'deadlink', payload: { srcId: 's3', srcTitle: '页面丙', deadTitle: '另一目标' } },
+  ]);
+  const overview = buildReportsOverview();
+  const deadlinks = overview.decisions.filter((card: any) => card.kind === 'deadlink');
+  assert.equal(deadlinks.length, 2, '同目标死链聚合,不同目标分开');
+  const grouped = deadlinks.find((card: any) => card.subject === '共同目标');
+  assert.equal(grouped.reportIds.length, 2);
+  assert.match(grouped.question, /被 2 个页面引用/);
+  assert.equal(grouped.links.length, 2, '聚合卡列出全部来源页');
+  assert.equal(grouped.options[0].value, 'create', '组内有建议类型时仍推荐一键创建');
 });
 
 test('duplicate/identity 卡片:推荐动作与选项随 payload 变化', () => {

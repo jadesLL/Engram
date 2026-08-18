@@ -7,7 +7,7 @@ import { db, now } from '../lib/db.js';
 import { createPage, readPage, writePage } from '../lib/vault.js';
 import { typeToDir } from '../config.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
-import { enqueuePagePipeline } from '../jobs.js';
+import { enqueue, enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages } from '../lib/mergePages.js';
 import { renamePageSafely } from '../lib/renamePage.js';
@@ -27,6 +27,101 @@ export interface DecideInput {
 
 export interface DecideResult {
   status: 'resolved' | 'dismissed';
+  /** true 时实际动作在任务队列中执行,前端应轮询 jobId 进度 */
+  async?: boolean;
+  jobId?: number;
+}
+
+/** 聚合卡语义 → 组内各 kind 报告的本地动作(合并动作只由主报告承担) */
+const GROUP_OPTION_MAP: Record<string, Record<string, string>> = {
+  contradiction: { keep_a: 'resolve', keep_b: 'resolve', keep_both: 'dismiss' },
+};
+
+/** 需要 LLM 语义合并的慢动作:入队 dream_apply,前端轮询进度 */
+function isMergeAction(kind: string, option: string): boolean {
+  return (kind === 'duplicate' && (option === 'keep_a' || option === 'keep_b'))
+    || (kind === 'identity_ambiguity' && option === 'merge');
+}
+
+function claimReport(id: number): void {
+  const claim = db.prepare(
+    `UPDATE reports SET status = 'applying' WHERE id = ? AND status = 'open'`
+  ).run(id);
+  if (claim.changes !== 1) throw new DecideError('报告已处理或正在处理中,请刷新后重试', 409);
+}
+
+function releaseClaimed(ids: number[]): void {
+  const release = db.prepare(`UPDATE reports SET status = 'open' WHERE id = ? AND status = 'applying'`);
+  db.transaction(() => ids.forEach((id) => release.run(id)))();
+}
+
+/**
+ * 执行聚合卡决策:组内全部报告一并处理。
+ * 含合并动作时,合并入队异步执行(返回 jobId),组内其余报告同步关闭;
+ * 其余情况全部同步执行。任一失败时未执行的报告回滚为 open。
+ */
+export async function decideReportGroup(
+  reportIds: number[],
+  option: string,
+  input: DecideInput = {},
+): Promise<DecideResult> {
+  const ids = [...new Set(reportIds)].filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) throw new DecideError('报告不存在', 404);
+  const reports = ids.map((id) => {
+    const row = db.prepare(`SELECT id, kind, payload FROM reports WHERE id = ?`).get(id) as
+      { id: number; kind: string; payload: string } | undefined;
+    if (!row) throw new DecideError(`报告 #${id} 不存在`, 404);
+    return row;
+  });
+
+  const mergeReport = reports.find((row) => isMergeAction(row.kind, option));
+  if (mergeReport) {
+    // 先 claim 全部,再入队合并任务,最后同步关闭组内其余报告
+    const claimed: number[] = [];
+    try {
+      for (const row of reports) {
+        claimReport(row.id);
+        claimed.push(row.id);
+      }
+    } catch (error) {
+      releaseClaimed(claimed);
+      throw error;
+    }
+    const action = mergeReport.kind === 'duplicate' ? option : 'merge';
+    const jobId = enqueue('dream_apply', {
+      kind: mergeReport.kind,
+      decisions: [{ reportId: mergeReport.id, action }],
+      nonce: Date.now(),
+    });
+    if (!jobId) {
+      releaseClaimed(claimed);
+      throw new DecideError('处理任务无法入队,请稍后重试', 409);
+    }
+    for (const row of reports) {
+      if (row.id === mergeReport.id) continue;
+      const mapped = GROUP_OPTION_MAP[row.kind]?.[option] || option;
+      try {
+        const payload = parsePayload(row.payload);
+        const status = await applyDecision(row.kind, mapped, payload, input);
+        db.prepare(`UPDATE reports SET status = ? WHERE id = ? AND status = 'applying'`).run(status, row.id);
+      } catch (error) {
+        db.prepare(`UPDATE reports SET status = 'open' WHERE id = ? AND status = 'applying'`).run(row.id);
+        throw error;
+      }
+    }
+    return { status: 'resolved', async: true, jobId };
+  }
+
+  // 全同步路径:先执行改页面的动作(duplicate/deadlink),再关闭其余
+  const rank = (kind: string) => (kind === 'duplicate' || kind === 'deadlink' ? 0 : 1);
+  const ordered = [...reports].sort((a, b) => rank(a.kind) - rank(b.kind));
+  let mainStatus: 'resolved' | 'dismissed' = 'resolved';
+  for (const row of ordered) {
+    const mapped = GROUP_OPTION_MAP[row.kind]?.[option] || option;
+    const result = await decideReport(row.id, mapped, input);
+    if (row.id === ids[0]) mainStatus = result.status;
+  }
+  return { status: mainStatus };
 }
 
 function parsePayload(raw: string): Record<string, any> {

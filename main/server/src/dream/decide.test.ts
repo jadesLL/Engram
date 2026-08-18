@@ -17,6 +17,7 @@ let readPageMeta: (path: string) => any;
 let writePage: (path: string, content: string, extra?: Record<string, any>) => any;
 let addReports: (items: any[]) => number;
 let decideReport: (id: number, option: string, input?: any) => Promise<{ status: string }>;
+let decideReportGroup: (ids: number[], option: string, input?: any) => Promise<{ status: string; async?: boolean; jobId?: number }>;
 
 before(async () => {
   // mergePages 需要 LLM 做语义去重;mock 只响应合并 prompt,返回空增量。
@@ -56,7 +57,7 @@ before(async () => {
   dbModule.setSetting('active_embedding_model', 'mock');
   ({ createPage, readPage, readPageMeta, writePage } = await import('../lib/vault.js'));
   ({ addReports } = await import('./reports.js'));
-  ({ decideReport } = await import('./decide.js'));
+  ({ decideReport, decideReportGroup } = await import('./decide.js'));
 });
 
 after(async () => {
@@ -240,4 +241,48 @@ test('并发与非法输入:已处理报告返回 409 语义,pending_review 拒�
   // 同 issueKey+指纹的已关闭报告不会复活(addReports 既有幂等语义),换不同来源新建
   addReports([{ kind: 'single_source', payload: { pageId: page.id, title: '并发页', source: 'B.md' } }]);
   await assert.rejects(decideReport(reportIdOf('single_source'), 'bogus'), /处理动作无效/);
+});
+
+test('聚合组:keep_both 同步关闭重复与矛盾,两页都保留', async () => {
+  clear();
+  const a = createPage('Wiki/概念', '甲页');
+  const b = createPage('Wiki/概念', '乙页');
+  writePage(a.path, '# 甲页\n\nA 内容', { type: 'concept' });
+  writePage(b.path, '# 乙页\n\nB 内容', { type: 'concept' });
+  const payload = { a: { id: a.id, title: '甲页' }, b: { id: b.id, title: '乙页' } };
+  addReports([{ kind: 'duplicate', payload }]);
+  addReports([{ kind: 'contradiction', payload }]);
+  const dupId = reportIdOf('duplicate');
+  const conId = reportIdOf('contradiction');
+  const result = await decideReportGroup([dupId, conId], 'keep_both');
+  assert.equal(result.status, 'dismissed');
+  assert.equal(reportStatus(dupId), 'dismissed');
+  assert.equal(reportStatus(conId), 'dismissed');
+  assert.ok(db.prepare(`SELECT id FROM pages WHERE id=? AND deleted=0`).get(a.id));
+  assert.ok(db.prepare(`SELECT id FROM pages WHERE id=? AND deleted=0`).get(b.id));
+});
+
+test('聚合组:keep_a 异步入队合并,矛盾报告同步关闭,任务完成后归档', async () => {
+  clear();
+  const a = createPage('Wiki/概念', '甲页');
+  const b = createPage('Wiki/概念', '乙页');
+  writePage(a.path, '# 甲页\n\nA 内容', { type: 'concept' });
+  writePage(b.path, '# 乙页\n\nB 内容', { type: 'concept' });
+  const payload = { a: { id: a.id, title: '甲页' }, b: { id: b.id, title: '乙页' } };
+  addReports([{ kind: 'duplicate', payload }]);
+  addReports([{ kind: 'contradiction', payload }]);
+  const dupId = reportIdOf('duplicate');
+  const conId = reportIdOf('contradiction');
+  const result = await decideReportGroup([dupId, conId], 'keep_a');
+  assert.equal(result.async, true, '合并动作应异步入队');
+  assert.ok(result.jobId, '应返回 jobId 供前端轮询进度');
+  assert.equal(reportStatus(dupId), 'applying', '合并报告在任务执行前保持 applying');
+  assert.equal(reportStatus(conId), 'resolved', '矛盾报告同步关闭');
+  const job = db.prepare(`SELECT kind, status FROM jobs WHERE id=?`).get(result.jobId) as any;
+  assert.equal(job.kind, 'dream_apply');
+  // 手动执行队列任务完成合并(测试环境队列不自动运行)
+  const { applyReportDecisions } = await import('./apply.js');
+  await applyReportDecisions('duplicate', [{ reportId: dupId, action: 'keep_a' }]);
+  assert.equal(reportStatus(dupId), 'resolved');
+  assert.match((db.prepare(`SELECT path FROM pages WHERE id=?`).get(b.id) as any).path, /^Wiki\/归档\//);
 });

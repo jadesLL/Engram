@@ -1,11 +1,19 @@
 <template>
-  <div class="decision-card card" :class="{ busy }">
+  <div class="decision-card card" :class="{ busy: busy || !!progress }">
     <div class="decision-head">
       <span class="kind-chip" :data-kind="card.kind">{{ kindLabel }}</span>
       <span class="muted small">{{ formatTime(card.createdAt) }}</span>
     </div>
     <p class="decision-question">{{ card.question }}</p>
     <p v-if="card.context" class="decision-context muted small">{{ card.context }}</p>
+
+    <!-- 异步处理进度条(合并等慢操作) -->
+    <div v-if="progress" class="decision-progress">
+      <div class="progress-track">
+        <div class="progress-fill" :style="{ width: `${progress.progress}%` }" />
+      </div>
+      <span class="muted small">{{ progress.stage }} {{ progress.progress }}%</span>
+    </div>
     <div v-if="card.links?.length" class="decision-links">
       <button
         v-for="link in card.links"
@@ -63,7 +71,7 @@
     </div>
 
     <!-- 选择题选项 -->
-    <div class="option-list">
+    <div v-if="!progress" class="option-list">
       <template v-for="(option, i) in card.options" :key="i">
         <button
           class="option"
@@ -110,6 +118,7 @@ import { nextTick, reactive, ref, computed } from 'vue';
 
 export interface DecisionCardData {
   id: number;
+  reportIds: number[];
   kind: string;
   subject: string;
   question: string;
@@ -124,6 +133,8 @@ export interface DecisionCardData {
 const props = defineProps<{
   card: DecisionCardData;
   busy?: boolean;
+  /** 异步任务进度(合并等慢操作),非空时卡片进入处理中状态 */
+  progress?: { stage: string; progress: number } | null;
   questionBusy: Record<string, boolean>;
   questionErrors: Record<string, string>;
 }>();
@@ -197,6 +208,9 @@ function formatTime(value: string) {
 <style scoped>
 .decision-card { display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; }
 .decision-card.busy { opacity: .65; pointer-events: none; }
+.decision-progress { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); }
+.progress-track { flex: 1; height: 6px; border-radius: 3px; background: var(--bg-tertiary); overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width .4s ease; }
 .decision-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .kind-chip { padding: 2px 8px; border-radius: 10px; font-size: 12px; color: var(--accent); background: var(--accent-soft); }
 .kind-chip[data-kind='identity_ambiguity'] { color: var(--warning); background: var(--warn-soft); }
