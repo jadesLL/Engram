@@ -26,7 +26,7 @@
       <b>{{ item.ambiguity.question }}</b>
     </div>
     <p v-if="!item.evidenceEligible" class="risk-note small">
-      该候选未通过自动验证,强制建立可能写入未核实内容,建议优先「AI 完善后建立」。
+      该候选未通过自动验证,「AI 完善后建立」会重新核对原文证据,证据不足时会生成失败。
     </p>
     <!-- 并入目标选择(展开式) -->
     <div v-if="merging" class="merge-panel">
@@ -40,14 +40,6 @@
       <button class="btn small" @click="merging = false">取消</button>
     </div>
     <div class="actions">
-      <button
-        class="btn small"
-        :class="item.evidenceEligible ? 'primary' : 'danger'"
-        :disabled="busy"
-        @click="$emit('force-create', item)"
-      >
-        强制建立
-      </button>
       <button class="btn small primary" :disabled="busy" @click="$emit('refine', item)">
         AI 完善后建立
       </button>
@@ -86,7 +78,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'force-create', item: PendingCandidateData): void;
   (e: 'refine', item: PendingCandidateData): void;
   (e: 'merge-into', item: PendingCandidateData, targetPageId: string): void;
   (e: 'ignore', item: PendingCandidateData): void;

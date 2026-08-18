@@ -51,7 +51,6 @@
         :item="item"
         :busy="Boolean(candidateBusy[item.reportId])"
         :merge-targets="mergeTargets"
-        @force-create="forceCreate"
         @refine="(target) => openCandidatePreview(target, 'approve')"
         @merge-into="openMergePreview"
         @ignore="ignoreCandidate"
