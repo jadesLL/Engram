@@ -92,14 +92,18 @@ test('startup recovery discards interrupted derived jobs before restoring safe w
     [
       { kind: 'page_recompose', status: 'failed', stage: '启动清理', run_token: '', cancel_requested: 0 },
       { kind: 'metagen', status: 'failed', stage: '启动清理', run_token: '', cancel_requested: 0 },
-      { kind: 'candidate_reconcile', status: 'failed', stage: '启动清理', run_token: '', cancel_requested: 0 },
+      // candidate_reconcile 幂等且承担重启后的对账救济，不再作为残留任务清理，
+      // 运行中的被恢复为 pending 继续执行，而不是标 failed 触发 previousFailure 锁死。
+      { kind: 'candidate_reconcile', status: 'pending', stage: '等待执行', run_token: '', cancel_requested: 0 },
       { kind: 'embed', status: 'pending', stage: '等待执行', run_token: '', cancel_requested: 0 },
       { kind: 'rebuild', status: 'failed', stage: '等待执行', run_token: '', cancel_requested: 0 },
     ],
   );
+  // candidate_reconcile 保留为 pending 且仍 claim 该 report，故 report 保持 applying
+  // 等待对账任务继续执行，而不是被释放回 open 后重复入队。
   assert.equal(
     db.prepare(`SELECT status FROM reports WHERE id=?`).get(reportId).status,
-    'open',
+    'applying',
   );
 });
 

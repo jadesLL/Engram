@@ -78,9 +78,10 @@ function stripDeadLinks(content: string, known: Set<string>): string {
 }
 
 function pending(item: KnowledgeItem, context: KnowledgeCommitContext, reason: string) {
-  const candidate = item.candidateId
-    ? getCandidate(item.candidateId)
-    : upsertCandidateOccurrence({ ...item, reason }, {
+  // ingest 路径的 item.candidateId 是 Map 阶段的临时 id（如 m00001），并非数据库候选 id；
+  // 查不到时必须回退到 upsert，否则候选永远不会写入候选表，跨来源门禁将永远查空表。
+  const candidate = (item.candidateId ? getCandidate(item.candidateId) : undefined)
+    ?? upsertCandidateOccurrence({ ...item, reason }, {
       runId: context.runId,
       sourceVersionId: context.sourceVersion.id,
       sourcePath: context.sourcePath,
@@ -316,9 +317,12 @@ export function commitKnowledgeItems(items: KnowledgeItem[], context: KnowledgeC
         },
       }]);
     }
-    if (item.candidateId) {
-      setCandidateStatus(item.candidateId, item.action === 'merge' || existed ? 'merged' : 'approved', page.id);
-      resolveCandidateReports(item.candidateId, 'resolved');
+    // 与 pending() 同理：ingest 路径的 candidateId 是临时 id，查不到时需回退 upsert，
+    // 否则已建页实体在候选表中没有记录，后续同名候选的跨来源查询仍然查空表。
+    const existingCandidate = item.candidateId ? getCandidate(item.candidateId) : undefined;
+    if (existingCandidate) {
+      setCandidateStatus(existingCandidate.id, item.action === 'merge' || existed ? 'merged' : 'approved', page.id);
+      resolveCandidateReports(existingCandidate.id, 'resolved');
     } else {
       const candidate = upsertCandidateOccurrence(item, {
         runId: context.runId,

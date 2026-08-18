@@ -21,6 +21,7 @@ let setCandidateStatus: any;
 let upsertCandidateOccurrence: any;
 let reconcilePendingCandidates: any;
 let finalizeSourceCandidateReingest: any;
+let ensureCandidateFromReport: any;
 
 before(async () => {
   ({ db, migrate, now } = await import('../lib/db.js'));
@@ -32,6 +33,7 @@ before(async () => {
     upsertCandidateOccurrence,
     reconcilePendingCandidates,
     finalizeSourceCandidateReingest,
+    ensureCandidateFromReport,
   } = await import('./candidateLedger.js'));
   migrate();
   db.prepare(`INSERT INTO settings(key,value) VALUES('chat_models',?)`).run(JSON.stringify([{
@@ -593,4 +595,189 @@ test('forced reingest supersedes stale open candidates and resolves only obsolet
   assert.equal(db.prepare(`SELECT status FROM ingest_candidates WHERE id=?`).get(oldCandidate.id).status, 'superseded');
   assert.equal(db.prepare(`SELECT status FROM reports WHERE issue_key='force:obsolete'`).get().status, 'resolved');
   assert.equal(db.prepare(`SELECT status FROM reports WHERE issue_key='force:closed'`).get().status, 'dismissed');
+});
+
+test('ingest items carrying a transient Map candidateId still persist candidates for the cross-source gate', () => {
+  // 回归（生产 0 页面根因）：ingest 路径的 item.candidateId 是 Map 阶段临时 id（如 m00001），
+  // 不是数据库候选 id。修复前 pending() 把它当数据库 id、查不到就跳过 upsert，
+  // 候选从不写入候选表，findSupportingCandidates 永远查空表，第二来源出现也无法建页。
+  const firstPath = '原始资料/临时ID来源一.md';
+  const secondPath = '原始资料/临时ID来源二.md';
+  const firstVersion = beginSourceVersion(firstPath, 'tmpid-hash-1');
+  startRun('tmpid-run-1', firstVersion.id, 'tmpid-hash-1', firstPath);
+  addFacts('tmpid-run-1', ['tmpid-f1'], '第一来源');
+  const first = commitKnowledgeItems([{
+    ...item('## 核心事实\n\n第一来源事实'),
+    name: '临时ID项目',
+    candidateId: 'm00001', // Map 临时 id，数据库里不存在
+    factIds: ['tmpid-f1'],
+  }], {
+    runId: 'tmpid-run-1',
+    sourceVersion: firstVersion,
+    sourcePath: firstPath,
+    sourceName: '临时ID来源一.md',
+    sourceRef: firstPath,
+  });
+  assert.deepEqual(first.stats, { created: 0, merged: 0, skipped: 0, pending: 1 });
+  // 关键断言：候选必须真实写入候选表（修复前这里查不到记录）
+  const persisted = db.prepare(
+    `SELECT * FROM ingest_candidates WHERE run_id='tmpid-run-1' AND name='临时ID项目'`
+  ).get();
+  assert.ok(persisted, '带临时 candidateId 的候选必须写入候选表');
+  assert.equal(persisted.status, 'open');
+  assert.equal(persisted.evidence_eligible, 1);
+
+  // 第二来源出现（同样带临时 candidateId）→ 跨来源门禁应查到第一来源候选并建页
+  const secondVersion = beginSourceVersion(secondPath, 'tmpid-hash-2');
+  startRun('tmpid-run-2', secondVersion.id, 'tmpid-hash-2', secondPath);
+  addFacts('tmpid-run-2', ['tmpid-f2'], '第二来源');
+  const second = commitKnowledgeItems([{
+    ...item('## 核心事实\n\n第二来源事实'),
+    name: '临时ID项目',
+    candidateId: 'm00002',
+    factIds: ['tmpid-f2'],
+  }], {
+    runId: 'tmpid-run-2',
+    sourceVersion: secondVersion,
+    sourcePath: secondPath,
+    sourceName: '临时ID来源二.md',
+    sourceRef: secondPath,
+  });
+  assert.deepEqual(second.stats, { created: 1, merged: 0, skipped: 0, pending: 0 });
+  assert.ok(db.prepare(`SELECT 1 FROM pages WHERE title='临时ID项目'`).get(), '第二来源出现必须建页');
+});
+
+test('customer candidates from two sources are eligible for automatic reconciliation', () => {
+  // 回归：ensureCandidateFromReport 旧白名单只有 concept/person/project/org，
+  // customer/place/work/other 候选永远无法重建对账。
+  const name = '客户甲公司';
+  const firstPath = '原始资料/客户来源一.md';
+  const secondPath = '原始资料/客户来源二.md';
+  for (const [runId, sourcePath, hash, factId] of [
+    ['cust-run-1', firstPath, 'cust-hash-1', 'cust-f1'],
+    ['cust-run-2', secondPath, 'cust-hash-2', 'cust-f2'],
+  ] as const) {
+    const version = beginSourceVersion(sourcePath, hash);
+    startRun(runId, version.id, hash, sourcePath);
+    addFacts(runId, [factId], name);
+    db.prepare(`UPDATE source_versions SET status='active',activated_at=? WHERE id=?`).run(now(), version.id);
+    upsertCandidateOccurrence({
+      ...item(`${name}正文`),
+      name,
+      kind: 'customer',
+      factIds: [factId],
+      action: 'review',
+      evidenceEligible: true,
+      reason: '需要至少两个不同原始资料来源支持才能自动建页',
+    }, {
+      runId,
+      sourceVersionId: version.id,
+      sourcePath,
+      sourceName: path.posix.basename(sourcePath),
+    });
+  }
+  // report 不带 candidateId，强制走 ensureCandidateFromReport 重建路径
+  const firstRun = db.prepare(`SELECT * FROM ingest_runs WHERE id='cust-run-1'`).get();
+  db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(?,'pending_review',?,'open','cust:auto','cust:auto')`
+  ).run(now(), JSON.stringify({
+    name,
+    kind: 'customer',
+    sourcePath: firstPath,
+    sourceVersionId: firstRun.source_version_id,
+    runId: 'cust-run-1',
+    factIds: ['cust-f1'],
+    reason: '需要至少两个不同原始资料来源支持才能自动建页',
+  }));
+
+  assert.equal(reconcilePendingCandidates(), 1, 'customer 候选必须能入队对账');
+  assert.ok(
+    db.prepare(`SELECT 1 FROM jobs WHERE kind='candidate_reconcile' AND status='pending' AND payload LIKE ?`).get(`%${firstPath}%`),
+  );
+});
+
+test('candidates rebuilt from source-gated reports regain evidence eligibility', () => {
+  // 回归：ensureCandidateFromReport 重建的 item 之前没有 evidenceEligible 字段，
+  // 导致重建候选 evidence_eligible=0、candidateAutoReconcileEligible 永远失败、对账死锁。
+  const sourcePath = '原始资料/资格重建.md';
+  const version = beginSourceVersion(sourcePath, 'eligible-hash');
+  startRun('eligible-run', version.id, 'eligible-hash', sourcePath);
+  addFacts('eligible-run', ['eligible-f1'], '资格重建');
+  db.prepare(`UPDATE source_versions SET status='active',activated_at=? WHERE id=?`).run(now(), version.id);
+  db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(?,'pending_review',?,'open','eligible:rebuild','eligible:rebuild')`
+  ).run(now(), JSON.stringify({
+    name: '资格重建项目',
+    kind: 'project',
+    sourcePath,
+    sourceVersionId: version.id,
+    runId: 'eligible-run',
+    factIds: ['eligible-f1'],
+    reason: '需要至少两个不同原始资料来源支持才能自动建页',
+  }));
+  const report = db.prepare(`SELECT * FROM reports WHERE issue_key='eligible:rebuild'`).get();
+  const candidate = ensureCandidateFromReport(report);
+  assert.ok(candidate, 'report 必须能重建候选');
+  assert.equal(candidate.evidence_eligible, 1, '仅因来源不足降级的候选重建后必须恢复证据资格');
+});
+
+test('a reconcile batch that failed over an hour ago is retried instead of being locked forever', () => {
+  // 回归：previousFailure 之前无时间窗口，同 payload 失败一次后永久跳过，批次锁死。
+  const name = '失败重试项目';
+  const firstPath = '原始资料/失败重试一.md';
+  const secondPath = '原始资料/失败重试二.md';
+  let primary: any;
+  for (const [runId, sourcePath, hash, factId] of [
+    ['retry-run-1', firstPath, 'retry-hash-1', 'retry-f1'],
+    ['retry-run-2', secondPath, 'retry-hash-2', 'retry-f2'],
+  ] as const) {
+    const version = beginSourceVersion(sourcePath, hash);
+    startRun(runId, version.id, hash, sourcePath);
+    addFacts(runId, [factId], name);
+    db.prepare(`UPDATE source_versions SET status='active',activated_at=? WHERE id=?`).run(now(), version.id);
+    const candidate = upsertCandidateOccurrence({
+      ...item(`${name}正文`),
+      name,
+      factIds: [factId],
+      action: 'review',
+      evidenceEligible: true,
+      reason: '需要至少两个不同原始资料来源支持才能自动建页',
+    }, {
+      runId,
+      sourceVersionId: version.id,
+      sourcePath,
+      sourceName: path.posix.basename(sourcePath),
+    });
+    if (runId === 'retry-run-1') primary = candidate;
+  }
+  db.prepare(
+    `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
+     VALUES(?,'pending_review',?,'open','retry:auto','retry:auto')`
+  ).run(now(), JSON.stringify({
+    candidateId: primary.id,
+    name,
+    kind: 'project',
+    sourcePath: firstPath,
+    sourceVersionId: primary.source_version_id,
+    runId: primary.run_id,
+    factIds: ['retry-f1'],
+    reason: '需要至少两个不同原始资料来源支持才能自动建页',
+  }));
+
+  // 先入队一次，拿到计划的 payload，再把对应 job 标成 2 小时前失败
+  assert.equal(reconcilePendingCandidates(), 1);
+  const job = db.prepare(
+    `SELECT id,payload FROM jobs WHERE kind='candidate_reconcile' AND status='pending' AND payload LIKE ?`
+  ).get(`%${firstPath}%`);
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  db.prepare(`UPDATE jobs SET status='failed',error='历史失败',updated_at=? WHERE id=?`).run(twoHoursAgo, job.id);
+  db.prepare(`UPDATE reports SET status='open' WHERE issue_key='retry:auto'`).run();
+
+  // 超过时间窗口的历史失败不再阻断，应重新入队
+  assert.equal(reconcilePendingCandidates(), 1, '超过窗口的失败批次必须允许重试');
+  assert.ok(
+    db.prepare(`SELECT 1 FROM jobs WHERE kind='candidate_reconcile' AND status='pending' AND payload LIKE ?`).get(`%${firstPath}%`),
+  );
 });

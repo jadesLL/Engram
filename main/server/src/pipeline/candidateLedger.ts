@@ -1,4 +1,5 @@
 import { db, newId, now } from '../lib/db.js';
+import { isEntity } from '../lib/pageTypes.js';
 import type { KnowledgeItem } from './knowledgeCommit.js';
 import { enqueue } from '../jobQueue.js';
 
@@ -337,10 +338,9 @@ export function reconcilePendingCandidates(): number {
     ) continue;
     const sourceCount = relatedCandidateOccurrences(candidate).length;
     const page = exactPage(candidate);
-    // 放宽：单来源高置信度候选也可自动对账，与放宽后的跨来源门禁一致
-    const factCount = parseArray<string>(candidate.fact_ids).length;
-    const highConfidenceSingle = candidate.confidence === '高' && factCount >= 1;
-    if (!page && sourceCount < 2 && !highConfidenceSingle) continue;
+    // 严格双来源：只有 ≥2 个不同来源才自动对账建页，单来源一律等待第二来源。
+    // 不采信 LLM 自报置信度作为建页依据（主观自报、无法校准）。
+    if (!page && sourceCount < 2) continue;
     const group = groups.get(candidate.source_path) || [];
     group.push({ candidateId: candidate.id, reportId: report.id });
     groups.set(candidate.source_path, group);
@@ -357,10 +357,13 @@ export function reconcilePendingCandidates(): number {
       candidateIds: entries.map((entry) => entry.candidateId),
       reportIds: entries.map((entry) => entry.reportId),
     };
+    // 失败防热循环：同 payload 的对账任务最近 1 小时内失败过才跳过；
+    // 超过窗口允许重试，避免一次 transient 失败导致该批次永久锁死。
+    const failureWindow = new Date(Date.now() - 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
     const previousFailure = db.prepare(
       `SELECT 1 FROM jobs
-       WHERE kind='candidate_reconcile' AND payload=? AND status='failed'`
-    ).get(JSON.stringify(plannedPayload));
+       WHERE kind='candidate_reconcile' AND payload=? AND status='failed' AND updated_at >= ?`
+    ).get(JSON.stringify(plannedPayload), failureWindow);
     if (previousFailure) continue;
     const claimed = db.transaction(() => entries.filter((entry) => claim.run(entry.reportId).changes === 1))();
     if (!claimed.length) continue;
@@ -394,11 +397,14 @@ export function ensureCandidateFromReport(report: {
   const runId = String(payload.runId || '');
   const name = String(payload.name || '').trim();
   const kind = String(payload.kind || 'concept');
-  if (!runId || !name || !['concept', 'person', 'project', 'org'].includes(kind)) return undefined;
+  // 候选类型覆盖全部实体类+概念（与 PAGE_TYPES 词表一致），
+  // 旧白名单只有 concept/person/project/org，导致 customer/place/work/other 永远无法对账。
+  if (!runId || !name || !(kind === 'concept' || isEntity(kind))) return undefined;
   const run = db.prepare(
     `SELECT source_version_id,path FROM ingest_runs WHERE id=?`
   ).get(runId) as { source_version_id?: string; path: string } | undefined;
   if (!run?.source_version_id) return undefined;
+  const reason = String(payload.reason || '');
   const item = {
     name,
     kind,
@@ -409,8 +415,11 @@ export function ensureCandidateFromReport(report: {
     summary: String(payload.summary || ''),
     factIds: Array.isArray(payload.factIds) ? payload.factIds : [],
     relations: Array.isArray(payload.relations) ? payload.relations : [],
-    reason: String(payload.reason || ''),
+    reason,
     content: String(payload.content || payload.summary || ''),
+    // 仅因来源不足被跨来源门禁降级的候选，本质已通过验证，重建时恢复证据资格；
+    // 其他原因（验证未过/冲突/无事实）降级的候选保持不合格，不进入自动对账。
+    evidenceEligible: /需要至少两个不同原始资料来源支持/.test(reason),
   } as KnowledgeItem;
   const status: CandidateStatus =
     report.status === 'dismissed' ? 'ignored' :
