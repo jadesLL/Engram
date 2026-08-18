@@ -15,6 +15,7 @@ import { searchRoutes } from './routes/search.js';
 import { aiRoutes } from './routes/ai.js';
 import { graphRoutes } from './routes/graph.js';
 import { dreamRoutes } from './routes/dream.js';
+import { reportRoutes } from './routes/reports.js';
 import { settingsRoutes } from './routes/settings.js';
 import { jobRoutes } from './routes/jobs.js';
 import { ingestHistoryRoutes } from './routes/ingestHistory.js';
@@ -72,6 +73,7 @@ async function main() {
   await app.register(assistantRoutes);
   await app.register(graphRoutes);
   await app.register(dreamRoutes);
+  await app.register(reportRoutes);
   await app.register(settingsRoutes);
   await app.register(jobRoutes);
   await app.register(ingestHistoryRoutes);

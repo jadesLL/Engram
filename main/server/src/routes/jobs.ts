@@ -5,10 +5,12 @@ import { requireAuth } from './auth.js';
 import {
   candidateSourceSummary,
   commitCandidateReview,
+  forceCommitCandidate,
   ignoreCandidateReview,
   previewCandidateReview,
 } from '../pipeline/candidateReview.js';
 import { ensureCandidateFromReport } from '../pipeline/candidateLedger.js';
+import { pendingCandidateList } from '../dream/reportCards.js';
 import {
   cancelJob,
   getJobQueueState,
@@ -421,17 +423,35 @@ export async function jobRoutes(app: FastifyInstance) {
     }) };
   });
 
+  /** 待入库清单:聚合候选证据/来源数/自动对账就绪标记,供新界面的独立分区展示。 */
+  app.get('/api/ingest/candidates/pending-list', async () => {
+    if (!tableExists('reports')) return { candidates: [] };
+    return { candidates: pendingCandidateList() };
+  });
+
+  /** 快速强制建立:跳过 LLM 再提炼,直接用候选已有正文建页(manualApproval 绕过双来源门禁)。 */
+  app.post('/api/ingest/candidates/:id/force-commit', async (req, reply) => {
+    const reportId = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(reportId) || reportId <= 0) return reply.code(400).send({ error: '待审候选 ID 无效' });
+    try {
+      const result = forceCommitCandidate(reportId);
+      return { ok: true, target: result.id, path: result.path, name: result.name, kind: result.kind };
+    } catch (error: any) {
+      return reply.code(409).send({ error: error?.message || '强制建立失败' });
+    }
+  });
+
   app.post('/api/ingest/candidates/:id/preview', async (req, reply) => {
     const reportId = Number((req.params as { id: string }).id);
     const { action, kind, name, target } = req.body as {
       action?: 'approve' | 'merge';
-      kind?: 'concept' | 'person' | 'project' | 'org';
+      kind?: 'concept' | 'person' | 'customer' | 'org' | 'place' | 'work' | 'project' | 'other';
       name?: string;
       target?: string;
     };
     if (!Number.isInteger(reportId) || reportId <= 0) return reply.code(400).send({ error: '待审候选 ID 无效' });
     if (!action || !['approve', 'merge'].includes(action)) return reply.code(400).send({ error: '请选择批准或并入已有页面' });
-    if (!kind || !['concept', 'person', 'project', 'org'].includes(kind)) return reply.code(400).send({ error: '请选择有效页面类型' });
+    if (!kind || !['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(kind)) return reply.code(400).send({ error: '请选择有效页面类型' });
     try {
       return { preview: await previewCandidateReview(reportId, { action, kind, name, target }) };
     } catch (error: any) {
@@ -482,7 +502,7 @@ export async function jobRoutes(app: FastifyInstance) {
     if (!report) return reply.code(404).send({ error: '待审候选不存在或已处理' });
     const original = safeJson(report.payload, {});
     const resolvedKind = kind || original.kind;
-    if (!resolvedKind || !['concept', 'person', 'project', 'org'].includes(resolvedKind)) {
+    if (!resolvedKind || !['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(resolvedKind)) {
       return reply.code(400).send({ error: '批准候选时必须提供有效 kind' });
     }
     try {

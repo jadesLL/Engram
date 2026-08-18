@@ -266,9 +266,9 @@ async function quickNew() {
 
 async function loadReportCount() {
   try {
-    const { data } = await api.get('/api/dream/reports?status=open');
-    // 追问类仅作提示，不计入角标
-    app.openReportCount = data.reports.filter((r: any) => r.kind !== 'ingest_questions').length;
+    const { data } = await api.get('/api/reports/overview');
+    // 角标只统计需要行动的:待决策 + 待入库清单;提醒类不计入
+    app.openReportCount = data.counts?.actionable ?? 0;
   } catch { /* ignore */ }
 }
 
