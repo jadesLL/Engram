@@ -19,42 +19,60 @@
       </div>
     </div>
 
-    <!-- 待决策:选择题卡片 -->
+    <!-- 待决策:选择题卡片,按报告类型分组,每组可折叠 -->
     <section class="report-section">
       <h3>待决策<span v-if="decisions.length" class="count">{{ decisions.length }}</span></h3>
       <p v-if="!decisions.length" class="faint empty-hint">没有需要你决定的事项 🎉</p>
-      <DecisionCard
-        v-for="card in decisions"
-        :key="`${card.kind}-${card.id}`"
-        :card="card"
-        :busy="Boolean(decideBusy[card.id])"
-        :progress="decideProgress[card.id] || null"
-        :question-busy="questionBusy"
-        :question-errors="questionErrors"
-        @decide="onDecide"
-        @open-page="openPage"
-        @open-source="openSource"
-        @answer-question="answerQuestion"
-      />
+      <details v-for="group in decisionGroups" :key="group.kind" class="kind-group" open>
+        <summary>
+          <Icon name="chevron-right" class="chev" :size="14" />
+          <span class="kind-group-title">{{ group.label }}</span>
+          <span class="count dim">{{ group.items.length }}</span>
+        </summary>
+        <div class="group-body">
+          <DecisionCard
+            v-for="card in group.items"
+            :key="`${card.kind}-${card.id}`"
+            :card="card"
+            :busy="Boolean(decideBusy[card.id])"
+            :progress="decideProgress[card.id] || null"
+            :question-busy="questionBusy"
+            :question-errors="questionErrors"
+            @decide="onDecide"
+            @open-page="openPage"
+            @open-source="openSource"
+            @answer-question="answerQuestion"
+          />
+        </div>
+      </details>
     </section>
 
-    <!-- 待入库清单:来源不足未入库的实体/概念候选 -->
+    <!-- 待入库清单:来源不足未入库的实体/概念候选,按页面类型分组,每组可折叠 -->
     <section class="report-section">
       <h3>待入库清单<span v-if="pendingCandidates.length" class="count">{{ pendingCandidates.length }}</span></h3>
       <p class="muted small section-desc">
         提炼出的实体/概念因来源不足等原因暂未入库。等待第二个独立来源出现后会自动入库,也可以人工强制建立。
       </p>
       <p v-if="!pendingCandidates.length" class="faint empty-hint">暂无待入库候选 🎉</p>
-      <PendingCandidateCard
-        v-for="item in pendingCandidates"
-        :key="item.reportId"
-        :item="item"
-        :busy="Boolean(candidateBusy[item.reportId])"
-        :merge-targets="mergeTargets"
-        @refine="(target) => openCandidatePreview(target, 'approve')"
-        @merge-into="openMergePreview"
-        @ignore="ignoreCandidate"
-      />
+      <details v-for="group in candidateGroups" :key="group.kind" class="kind-group" open>
+        <summary>
+          <Icon name="chevron-right" class="chev" :size="14" />
+          <span class="kind-group-title">{{ group.label }}</span>
+          <span class="count dim">{{ group.items.length }}</span>
+        </summary>
+        <div class="group-body">
+          <PendingCandidateCard
+            v-for="item in group.items"
+            :key="item.reportId"
+            :item="item"
+            :busy="Boolean(candidateBusy[item.reportId])"
+            :merge-targets="mergeTargets"
+            @refine="(target) => openCandidatePreview(target, 'approve')"
+            @merge-into="openMergePreview"
+            @ignore="ignoreCandidate"
+          />
+        </div>
+      </details>
     </section>
 
     <!-- 提醒:知悉即可,默认折叠;同一页面的多个提醒已聚合为一条 -->
@@ -205,6 +223,7 @@ import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { renderAssistantMarkdown } from '../lib/markdown';
 import AppModal from '../components/ui/AppModal.vue';
+import Icon from '../components/Icon.vue';
 import DecisionCard, { type DecisionCardData } from '../components/reports/DecisionCard.vue';
 import PendingCandidateCard, { type PendingCandidateData } from '../components/reports/PendingCandidateCard.vue';
 import { confirmDialog } from '../lib/confirm';
@@ -247,6 +266,39 @@ const mergeTargets = computed(() => wikiPages.value.filter((page: any) =>
   Object.keys(REVIEW_KIND_LABELS).includes(page.type) &&
   (page.path.startsWith('Wiki/概念/') || page.path.startsWith('Wiki/实体/'))
 ));
+
+/* ---------- 分区内按类型分组(每组可折叠) ---------- */
+/** 待决策分组的类型顺序与标签,与批量处理下拉一致 */
+const DECISION_KIND_LABELS: Record<string, string> = {
+  deadlink: '死链',
+  duplicate: '重复',
+  contradiction: '矛盾',
+  identity_ambiguity: '实体歧义',
+  ingest_questions: '整理追问',
+};
+
+/** 待入库清单分组的页面类型顺序与标签 */
+const CANDIDATE_TYPE_LABELS: Record<string, string> = {
+  concept: '概念', person: '人物', customer: '客户', org: '组织',
+  place: '地点', work: '作品', project: '产品', other: '其他',
+};
+
+/** 按 kind 归组:已知类型按给定顺序排列,未知类型兜底排末尾(不丢条目),空组不出现 */
+function groupByKind<T>(items: T[], labels: Record<string, string>, getKey: (item: T) => string) {
+  const buckets = new Map<string, T[]>();
+  for (const item of items) {
+    const key = getKey(item);
+    const list = buckets.get(key);
+    if (list) list.push(item);
+    else buckets.set(key, [item]);
+  }
+  const known = Object.keys(labels).filter((key) => buckets.has(key));
+  const unknown = [...buckets.keys()].filter((key) => !labels[key]);
+  return [...known, ...unknown].map((kind) => ({ kind, label: labels[kind] || kind, items: buckets.get(kind)! }));
+}
+
+const decisionGroups = computed(() => groupByKind(decisions.value, DECISION_KIND_LABELS, (card) => card.kind));
+const candidateGroups = computed(() => groupByKind(pendingCandidates.value, CANDIDATE_TYPE_LABELS, (item) => item.kind));
 
 async function load() {
   const [{ data }, pages] = await Promise.all([
@@ -838,6 +890,13 @@ onMounted(load);
 .count.dim { color: var(--text-secondary); background: var(--bg-secondary); border: 1px solid var(--border); }
 .section-desc { margin: 0; }
 .empty-hint { text-align: center; padding: 18px 0; }
+.kind-group summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; user-select: none; }
+.kind-group summary::-webkit-details-marker { display: none; }
+.kind-group .chev { flex: 0 0 auto; color: var(--text-secondary); transition: transform .15s ease; }
+.kind-group[open] .chev { transform: rotate(90deg); }
+.kind-group-title { font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+.kind-group .count.dim { font-size: 11px; }
+.group-body { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 .reminder-section summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
 .reminder-section summary::-webkit-details-marker { display: none; }
 .reminder-section summary h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 16px; }
