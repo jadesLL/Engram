@@ -10,7 +10,7 @@
     <div class="settings-group">
       <div class="setting-row">
         <div class="setting-copy">
-          <strong>梦境整理</strong>
+          <strong>智能整理</strong>
           <span>按计划自动整理资料、关系和索引。</span>
         </div>
         <label class="switch-control">
@@ -28,7 +28,7 @@
           <select
             v-model="dreamScheduleFrequency"
             class="schedule-select"
-            aria-label="梦境整理 运行周期"
+            aria-label="智能整理 运行周期"
             @change="applyDreamSchedule"
           >
             <option v-for="option in dreamScheduleOptions" :key="option.value" :value="option.value">
@@ -39,7 +39,7 @@
             v-if="dreamScheduleFrequency !== 'custom'"
             v-model="dreamScheduleTime"
             class="schedule-select schedule-time-select"
-            aria-label="梦境整理 运行时间"
+            aria-label="智能整理 运行时间"
             @change="applyDreamSchedule"
           >
             <option v-for="option in dreamTimeOptions" :key="option.value" :value="option.value">
@@ -50,7 +50,7 @@
             v-else
             v-model="dreamCron"
             class="cron-input"
-            aria-label="梦境整理 自定义 cron 表达式"
+            aria-label="智能整理 自定义 cron 表达式"
             @change="saveDream"
           />
         </div>

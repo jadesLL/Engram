@@ -8,21 +8,26 @@
         <span>· 计划:{{ cron }}{{ enabled ? '' : '(已停用)' }}</span>
       </div>
       <div class="head-actions">
-        <select v-model="batchKind">
-          <option value="">批量处理…</option>
+        <select v-model="batchKind" aria-label="按分类筛选报告">
+          <option value="">全部分类</option>
           <option v-for="kind in BATCH_KINDS" :key="kind.key" :value="kind.key">{{ kind.label }}</option>
         </select>
-        <button class="btn" :disabled="!batchKind || resolving || running" @click="openBatchPreview">批量</button>
+        <button
+          class="btn"
+          :disabled="!batchKind || batchKind === 'pending_review' || resolving || running"
+          v-tooltip.auto="batchKind === 'pending_review' ? '待入库候选逐条处理,不支持批量' : '打开该分类的批量处理预览'"
+          @click="openBatchPreview"
+        >批量</button>
         <button class="btn primary" :disabled="running" @click="runNow">
-          {{ running ? '整理中…' : '立即运行梦境整理' }}
+          {{ running ? '整理中…' : '立即运行智能整理' }}
         </button>
       </div>
     </div>
 
     <!-- 待决策:选择题卡片,按报告类型分组,每组可折叠 -->
     <section class="report-section">
-      <h3>待决策<span v-if="decisions.length" class="count">{{ decisions.length }}</span></h3>
-      <p v-if="!decisions.length" class="faint empty-hint">没有需要你决定的事项 🎉</p>
+      <h3>待决策<span v-if="filteredDecisions.length" class="count">{{ filteredDecisions.length }}</span></h3>
+      <p v-if="!filteredDecisions.length" class="faint empty-hint">{{ batchKind ? '该分类暂无待决策项' : '没有需要你决定的事项 🎉' }}</p>
       <details v-for="group in decisionGroups" :key="group.kind" class="kind-group" open>
         <summary>
           <Icon name="chevron-right" class="chev" :size="14" />
@@ -47,8 +52,8 @@
       </details>
     </section>
 
-    <!-- 待入库清单:来源不足未入库的实体/概念候选,按页面类型分组,每组可折叠 -->
-    <section class="report-section">
+    <!-- 待入库清单:来源不足未入库的实体/概念候选(pending_review 分类,不走批量通道),按页面类型分组,每组可折叠 -->
+    <section v-if="showPendingSection" class="report-section">
       <h3>待入库清单<span v-if="pendingCandidates.length" class="count">{{ pendingCandidates.length }}</span></h3>
       <p class="muted small section-desc">
         提炼出的实体/概念因来源不足等原因暂未入库。等待第二个独立来源出现后会自动入库,也可以人工强制建立。
@@ -76,13 +81,13 @@
     </section>
 
     <!-- 提醒:知悉即可,默认折叠;同一页面的多个提醒已聚合为一条 -->
-    <section v-if="reminders.length" class="report-section">
+    <section v-if="filteredReminders.length" class="report-section">
       <details class="reminder-section" open>
         <summary>
-          <h3>提醒<span class="count dim">{{ reminders.length }}</span></h3>
+          <h3>提醒<span class="count dim">{{ filteredReminders.length }}</span></h3>
           <button class="btn small" @click.prevent="acknowledgeAll">全部知悉</button>
         </summary>
-        <div v-for="item in reminders" :key="item.id" class="reminder-item" :class="{ busy: reminderBusy[item.id] }">
+        <div v-for="item in filteredReminders" :key="item.id" class="reminder-item" :class="{ busy: reminderBusy[item.id] }">
           <div class="reminder-copy">
             <b>{{ item.title }}</b>
             <span v-if="item.detail" class="muted small">{{ item.detail }}</span>
@@ -104,12 +109,12 @@
     </section>
 
     <!-- 已处理:忽略/知悉/处理完的记录保留在此,不计角标;已阅的可重新处理 -->
-    <section v-if="doneItems.length" class="report-section">
+    <section v-if="filteredDoneItems.length" class="report-section">
       <details class="done-section">
         <summary>
-          <h3>已处理<span class="count dim">{{ doneItems.length }}</span></h3>
+          <h3>已处理<span class="count dim">{{ filteredDoneItems.length }}</span></h3>
         </summary>
-        <div v-for="item in doneItems" :key="item.id" class="done-item" :class="{ busy: doneBusy[item.id] }">
+        <div v-for="item in filteredDoneItems" :key="item.id" class="done-item" :class="{ busy: doneBusy[item.id] }">
           <span class="done-badge" :data-status="item.status">{{ item.status === 'resolved' ? '已处理' : '已阅' }}</span>
           <span class="done-title">{{ item.title }}</span>
           <span class="muted small">{{ formatDoneTime(item.createdAt) }}</span>
@@ -296,9 +301,6 @@ function groupByKind<T>(items: T[], labels: Record<string, string>, getKey: (ite
   const unknown = [...buckets.keys()].filter((key) => !labels[key]);
   return [...known, ...unknown].map((kind) => ({ kind, label: labels[kind] || kind, items: buckets.get(kind)! }));
 }
-
-const decisionGroups = computed(() => groupByKind(decisions.value, DECISION_KIND_LABELS, (card) => card.kind));
-const candidateGroups = computed(() => groupByKind(pendingCandidates.value, CANDIDATE_TYPE_LABELS, (item) => item.kind));
 
 async function load() {
   const [{ data }, pages] = await Promise.all([
@@ -608,7 +610,8 @@ async function onReminderAction(item: any, action: string) {
 }
 
 async function acknowledgeAll() {
-  const items = [...reminders.value];
+  // 筛选激活时只知悉当前显示的分类,避免误关被筛选隐藏的提醒
+  const items = [...filteredReminders.value];
   for (const item of items) {
     reminderBusy[item.id] = true;
     for (let i = 0; i < item.reportIds.length; i++) {
@@ -665,19 +668,33 @@ async function answerQuestion(question: any, action: 'reprocess' | 'ignore', ans
   }
 }
 
-/* ---------- 批量处理(沿用批量通道,pending_review 除外) ---------- */
+/* ---------- 分类筛选 + 批量处理(沿用批量通道,pending_review 除外) ---------- */
 const BATCH_KINDS = [
   { key: 'deadlink', label: '死链' },
   { key: 'duplicate', label: '重复' },
   { key: 'contradiction', label: '矛盾' },
   { key: 'identity_ambiguity', label: '实体歧义' },
+  { key: 'pending_review', label: '待入库' },
   { key: 'missing_sections', label: '待补章节' },
   { key: 'single_source', label: '来源单一' },
   { key: 'enrich', label: '待丰富' },
   { key: 'stale', label: '过期' },
-  { key: 'ingest_questions', label: '追问已知悉' },
+  { key: 'ingest_questions', label: '整理追问' },
 ];
 const batchKind = ref('');
+
+/** 下拉选中分类后,下方各区域只显示该分类;提醒聚合卡按组内 kinds 匹配 */
+const filteredDecisions = computed(() =>
+  batchKind.value ? decisions.value.filter((card) => card.kind === batchKind.value) : decisions.value);
+const showPendingSection = computed(() => !batchKind.value || batchKind.value === 'pending_review');
+const filteredReminders = computed(() =>
+  batchKind.value ? reminders.value.filter((item: any) => (item.kinds || []).includes(batchKind.value)) : reminders.value);
+const filteredDoneItems = computed(() =>
+  batchKind.value ? doneItems.value.filter((item: any) => item.kind === batchKind.value) : doneItems.value);
+
+/* 待决策区在筛选结果之上再按类型分组,每组可独立折叠 */
+const decisionGroups = computed(() => groupByKind(filteredDecisions.value, DECISION_KIND_LABELS, (card) => card.kind));
+const candidateGroups = computed(() => groupByKind(pendingCandidates.value, CANDIDATE_TYPE_LABELS, (item) => item.kind));
 
 type BatchItem = { id: number; payload: any; selected: boolean; disabled?: boolean; suggestedAction: string; action: string; options: { value: string; label: string }[] };
 const batch = reactive({
@@ -738,7 +755,7 @@ const BATCH_IMPACTS: Record<string, string> = {
 };
 
 async function openBatchPreview() {
-  if (!batchKind.value) return;
+  if (!batchKind.value || batchKind.value === 'pending_review') return;
   batch.error = '';
   try {
     const { data } = await api.get(`/api/dream/reports/actions/${batchKind.value}/preview`);

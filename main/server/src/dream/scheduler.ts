@@ -4,7 +4,7 @@ import { runDreamCycle } from './tasks.js';
 
 let task: cron.ScheduledTask | null = null;
 
-/** 按设置启动/重启梦境整理调度（cron 表达式，默认每天 03:00） */
+/** 按设置启动/重启智能整理调度（cron 表达式，默认每天 03:00） */
 export function scheduleDreamCycle() {
   task?.stop();
   const expr = getSetting('dream_cron') || '0 3 * * *';
