@@ -77,7 +77,7 @@ jobs:
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          docker build -t "$IMAGE:$VER" -t "$IMAGE:latest" main
+          docker build --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" -t "$IMAGE:latest" main
           echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
           docker push "$IMAGE:$VER"
           docker push "$IMAGE:latest"
