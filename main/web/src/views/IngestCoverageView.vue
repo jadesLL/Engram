@@ -7,12 +7,17 @@
         <span v-if="attentionCount" class="warn-text">· {{ attentionCount }} 份需要处理</span>
       </div>
       <div class="head-actions">
-        <button class="btn primary" :disabled="retrying || !attentionCount" @click="retryAll">
+        <div class="tabs">
+          <button class="btn small" :class="{ primary: tab === 'coverage' }" @click="switchTab('coverage')">覆盖</button>
+          <button class="btn small" :class="{ primary: tab === 'history' }" @click="switchTab('history')">提炼轨迹</button>
+        </div>
+        <button v-if="tab === 'coverage'" class="btn primary" :disabled="retrying || !attentionCount" @click="retryAll">
           {{ retrying ? '入队中…' : attentionCount ? `一键补齐 ${attentionCount} 份` : '全部已整理' }}
         </button>
       </div>
     </div>
 
+    <template v-if="tab === 'coverage'">
     <!-- 覆盖率总览条 -->
     <div v-if="report.total" class="coverage-bar-wrap">
       <div class="coverage-bar">
@@ -60,7 +65,7 @@
       </div>
     </section>
 
-    <!-- 已整理 -->
+    <!-- 已整理:点击查看跳转到该资料的提炼轨迹 -->
     <section v-if="grouped.ingested.length" class="coverage-section">
       <details open>
         <summary><h3>已整理<span class="count ok">{{ grouped.ingested.length }}</span></h3></summary>
@@ -71,7 +76,7 @@
             <span class="muted small">{{ item.path }}<template v-if="item.ingestedAt"> · {{ item.ingestedAt.slice(0, 10) }}</template></span>
           </div>
           <div class="item-actions">
-            <button class="btn small" @click="openSource(item.path)">查看</button>
+            <button class="btn small" v-tooltip="'查看该资料的提炼轨迹'" @click="openHistory(item.path)">查看</button>
           </div>
         </div>
       </details>
@@ -95,20 +100,46 @@
     </section>
 
     <p v-if="!report.total" class="faint empty-hint">原始资料目录为空,上传文件后即可整理</p>
+    </template>
+
+    <!-- 提炼轨迹 tab -->
+    <div v-show="tab === 'history'" class="history-embed">
+      <RefinementHistoryPanel :key="historyKey" :initial-path="historyPath" />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { notify } from '../lib/notify';
+import RefinementHistoryPanel from '../components/RefinementHistoryPanel.vue';
 
 const router = useRouter();
+const route = useRoute();
 const app = useAppStore();
 const report = ref<any>({ total: 0, counts: {}, attention: [], items: [] });
 const retrying = ref(false);
+
+/** tab:覆盖 / 提炼轨迹(整合设置里的提炼轨迹,同一入口) */
+const tab = ref<'coverage' | 'history'>((route.query.tab === 'history' ? 'history' : 'coverage'));
+const historyPath = ref(String(route.query.path || ''));
+const historyKey = ref(0);
+
+function switchTab(next: 'coverage' | 'history') {
+  tab.value = next;
+  router.replace({ query: next === 'history' ? { ...route.query, tab: 'history' } : {} });
+}
+
+/** 已整理条目「查看」→ 切到提炼轨迹 tab 并预选该资料的轨迹 */
+function openHistory(path: string) {
+  historyPath.value = path;
+  historyKey.value++; // 强制重建面板以应用 initialPath
+  tab.value = 'history';
+  router.replace({ query: { tab: 'history', path } });
+}
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   ingested: { label: '已整理', color: 'var(--success, #2e7d32)' },
@@ -198,6 +229,10 @@ onMounted(load);
 .coverage-head h2 { margin: 0; }
 .head-info { flex: 1; display: flex; gap: 6px; flex-wrap: wrap; }
 .warn-text { color: var(--warning); }
+.head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.head-actions .tabs { display: flex; gap: 4px; }
+.history-embed { margin-top: 4px; }
+.history-embed :deep(.refinement-history) { padding: 0; }
 .coverage-bar-wrap { margin-bottom: 22px; }
 .coverage-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--bg-tertiary); }
 .bar-seg { height: 100%; transition: width .4s ease; }

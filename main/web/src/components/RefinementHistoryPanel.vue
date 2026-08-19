@@ -497,6 +497,10 @@ interface HistoryDetail {
 }
 
 const PAGE_SIZE = 40;
+
+/** initialPath:从整理覆盖视图跳入时,按原始资料路径预选对应轨迹 */
+const props = withDefaults(defineProps<{ initialPath?: string }>(), { initialPath: '' });
+
 const runs = ref<HistoryRun[]>([]);
 const total = ref(0);
 const query = ref('');
@@ -1062,7 +1066,13 @@ async function clearHistory() {
 }
 
 onMounted(async () => {
+  // 从整理覆盖视图跳入:按路径预选对应轨迹(在搜索框预填路径,加载后选中第一条)
+  if (props.initialPath) query.value = props.initialPath;
   await loadRuns(true);
+  if (props.initialPath) {
+    const matched = runs.value.find((run) => run.path === props.initialPath) || runs.value[0];
+    if (matched) await selectRun(matched.id);
+  }
   pollTimer = setInterval(() => {
     if (runs.value.some((run) => run.status === 'running')) void pollRuns();
   }, 5000);
@@ -1406,7 +1416,44 @@ onUnmounted(() => {
 
 .trajectory-detail {
   min-width: 0;
-  overflow: hidden;
+  /* 阶段详情选中时:左列(概览+流程)与右列(阶段详情)并排,不再纵向拉穿;
+     用两列 grid,详情列独立滚动,主列内容多高都不会被详情顶长 */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+.trajectory-detail:has(.stage-inspector) {
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 400px);
+}
+.trajectory-detail > .trajectory-head,
+.trajectory-detail > .overview-section,
+.trajectory-detail > .flow-section {
+  grid-column: 1;
+}
+.trajectory-detail > .stage-inspector {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+}
+
+/* 窄容器/窄屏回退单列,阶段详情回到底部(避免两列过窄) */
+@media (max-width: 1400px) {
+  .trajectory-detail:has(.stage-inspector) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trajectory-detail > .stage-inspector {
+    grid-column: 1;
+    grid-row: auto;
+    position: static;
+    max-height: none;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
 }
 
 .trajectory-head {
@@ -1532,7 +1579,7 @@ onUnmounted(() => {
 }
 
 .flow-section {
-  padding: 20px 22px 22px;
+  padding: 14px 18px 16px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1555,7 +1602,7 @@ onUnmounted(() => {
 
 /* ---------- 提炼概览（总页面） ---------- */
 .overview-section {
-  padding: 20px 22px 22px;
+  padding: 14px 18px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
 }
@@ -1563,15 +1610,15 @@ onUnmounted(() => {
 .overview-stats {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 18px;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .stat-card {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 12px 14px;
+  gap: 2px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
@@ -1583,7 +1630,7 @@ onUnmounted(() => {
 }
 
 .stat-card strong {
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
@@ -1794,9 +1841,9 @@ onUnmounted(() => {
 .flow-card-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 14px 16px;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg);
@@ -2363,6 +2410,19 @@ onUnmounted(() => {
 
   .stage-inspector {
     grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  /* 窄容器(如整理覆盖 900px 页)回退单列,阶段详情回到底部 */
+  .trajectory-detail:has(.stage-inspector) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trajectory-detail > .stage-inspector {
+    grid-column: 1;
+    grid-row: auto;
+    position: static;
+    max-height: none;
+    border-left: 0;
+    border-top: 1px solid var(--border);
   }
 }
 
