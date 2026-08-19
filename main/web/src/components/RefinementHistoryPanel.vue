@@ -106,6 +106,63 @@
               </div>
               <p v-tooltip.auto="detail.run.path">{{ detail.run.path }}</p>
             </div>
+          </header>
+
+          <!-- 概览按钮(不在蛇形线上,独立于流程图) -->
+          <div class="snake-toolbar">
+            <button
+              type="button"
+              class="snake-overview-btn"
+              :class="{ active: !selectedStageId }"
+              @click="selectedStageId = ''"
+            >
+              <strong>概览</strong>
+              <span>{{ completedCount }}/{{ detail.trace.length }} 阶段完成</span>
+            </button>
+          </div>
+
+          <!-- 蛇形流程:两行节点+行内引导条+行间向下箭头(纯 CSS flex,不穿过节点) -->
+          <div class="snake-wrap" aria-label="提炼阶段">
+            <div class="snake-flow">
+              <template v-for="(row, ri) in snakeRows" :key="ri">
+                <div class="snake-row" :class="{ reversed: row.reversed }">
+                  <template v-for="(node, ci) in row.nodes" :key="node.id">
+                    <div v-if="ci > 0" class="snake-node-gap" aria-hidden="true">
+                      <span class="guide-bar"></span>
+                    </div>
+                    <button
+                      type="button"
+                      class="snake-node"
+                      :class="[node.status, { active: selectedStageId === node.id }]"
+                      v-tooltip="stageDisplayName(node.stage)"
+                      @click="selectStage(node.id)"
+                    >
+                      <!-- 第一行序号在上;折返行(7~11)序号在下,pill 顶边紧贴转折竖条 -->
+                      <template v-if="!row.reversed">
+                        <span class="snake-node-num">{{ node.index + 1 }}</span>
+                        <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
+                      </template>
+                      <template v-else>
+                        <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
+                        <span class="snake-node-num">{{ node.index + 1 }}</span>
+                      </template>
+                    </button>
+                  </template>
+                </div>
+                <!-- 转折行:复刻节点行的占位结构(节点宽+间隙),竖条落在行尾节点槽位中心 -->
+                <div v-if="ri < snakeRows.length - 1" class="snake-turn" aria-hidden="true">
+                  <template v-for="(n, ci) in row.nodes" :key="n.id">
+                    <span v-if="ci > 0" class="turn-gap"></span>
+                    <span v-if="ci < row.nodes.length - 1" class="turn-spacer"></span>
+                  </template>
+                  <span class="guide-bar vertical"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- 概览 tab:关键产出汇总 + 流程进度 -->
+          <section v-if="!selectedStageId" class="overview-section" aria-labelledby="overview-title">
             <dl class="stat-strip" role="list">
               <div class="stat-cell" role="listitem">
                 <dt>最近提炼</dt>
@@ -127,51 +184,17 @@
                 <dt>页面贡献</dt>
                 <dd class="stat-num">{{ detail.contributions.length }}</dd>
               </div>
+              <div class="stat-cell" role="listitem">
+                <dt>阶段进度</dt>
+                <dd class="stat-num">{{ completedCount }}/{{ detail.trace.length }}</dd>
+              </div>
             </dl>
-          </header>
-
-          <!-- 提炼概览：总页面，汇总本次提炼的关键产出 -->
-          <section v-if="overviewStats" class="overview-section" aria-labelledby="overview-title">
-            <div class="section-title">
-              <div>
-                <h4 id="overview-title">提炼概览</h4>
-                <p>本次提炼的关键产出汇总，事实、贡献与问题一览。</p>
-              </div>
-              <span>{{ overviewStats.progress }}% 完成</span>
-            </div>
-            <div class="overview-stats">
-              <div class="stat-card">
-                <span>来源事实</span>
-                <strong>{{ overviewStats.facts }}</strong>
-              </div>
-              <div class="stat-card">
-                <span>页面贡献</span>
-                <strong>{{ overviewStats.contributions }}</strong>
-                <small>{{ overviewStats.activeContributions }} 活跃</small>
-              </div>
-              <div class="stat-card">
-                <span>待确认问题</span>
-                <strong>{{ overviewStats.openQuestions }}</strong>
-              </div>
-              <div class="stat-card">
-                <span>提炼次数</span>
-                <strong>{{ overviewStats.runCount }}</strong>
-              </div>
-              <div class="stat-card">
-                <span>失败次数</span>
-                <strong>{{ overviewStats.failureCount }}</strong>
-              </div>
-              <div class="stat-card">
-                <span>模型总耗时</span>
-                <strong>{{ formatDuration(overviewStats.totalDuration) }}</strong>
-              </div>
-            </div>
             <div
               v-if="overviewFacts.length || overviewContributions.length || overviewQuestions.length"
               class="overview-body"
             >
               <div v-if="overviewFacts.length" class="overview-block">
-                <h5>关键事实<span class="block-count">{{ overviewStats.facts }}</span></h5>
+                <h5>关键事实<span class="block-count">{{ overviewFacts.length }}</span></h5>
                 <ul>
                   <li v-for="fact in overviewFacts" :key="String(fact.fact_id)">
                     <span class="ov-fact-text">{{ shortText(fact.statement, 160) }}</span>
@@ -183,7 +206,7 @@
                 </ul>
               </div>
               <div v-if="overviewContributions.length" class="overview-block">
-                <h5>页面贡献<span class="block-count">{{ overviewStats.contributions }}</span></h5>
+                <h5>页面贡献<span class="block-count">{{ overviewContributions.length }}</span></h5>
                 <ul>
                   <li v-for="c in overviewContributions" :key="String(c.page_id)">
                     <span class="ov-contrib-title">{{ c.title || noteName(String(c.path || '')) }}</span>
@@ -196,7 +219,7 @@
                 </ul>
               </div>
               <div v-if="overviewQuestions.length" class="overview-block">
-                <h5>待确认问题<span class="block-count">{{ overviewStats.openQuestions }}</span></h5>
+                <h5>待确认问题<span class="block-count">{{ overviewQuestions.length }}</span></h5>
                 <ul>
                   <li v-for="q in overviewQuestions" :key="String(q.id)">
                     <span class="ov-question-text">{{ shortText(q.question, 140) }}</span>
@@ -207,112 +230,30 @@
                 </ul>
               </div>
             </div>
+            <p v-else class="overview-empty muted small">本次提炼没有产出事实、页面贡献或待确认问题。</p>
           </section>
 
-          <!-- 完整提炼流程：纵向流程图，每个节点标注关键产出 -->
-          <section class="flow-section" aria-labelledby="refinement-flow-title">
-            <div class="section-title">
-              <div>
-                <h4 id="refinement-flow-title">完整提炼流程</h4>
-                <p>每个节点展示该阶段的关键产出，点击查看完整审计记录与模型调用。</p>
-              </div>
-              <span>{{ completedCount }}/{{ detail.trace.length }} 阶段完成</span>
-            </div>
-            <ol class="flow-vertical">
-              <li
-                v-for="(stage, index) in detail.trace"
-                :key="stage.id"
-                class="flow-card"
-                :class="[stage.status, { selected: selectedStageId === stage.id }]"
-              >
-                <div class="flow-rail" aria-hidden="true">
-                  <span class="flow-node">
-                    <Icon v-if="stage.status === 'completed'" name="check" :size="14" :stroke-width="2.6" />
-                    <Icon v-else-if="stage.status === 'failed'" name="x" :size="14" :stroke-width="2.6" />
-                    <span v-else-if="stage.status === 'current'" class="pulse-dot"></span>
-                    <span v-else class="node-index">{{ index + 1 }}</span>
-                  </span>
-                </div>
-                <button type="button" class="flow-card-body" @click="selectStage(stage.id)">
-                  <div class="flow-card-head">
-                    <span class="flow-card-index">{{ String(index + 1).padStart(2, '0') }}</span>
-                    <strong>{{ stageDisplayName(stage) }}</strong>
-                    <span class="flow-stage-status" :class="stage.status">{{ stageStatusLabel(stage.status) }}</span>
-                    <span class="flow-card-meta">
-                      <span v-if="stage.durationMs" class="flow-stage-duration">
-                        {{ formatDuration(stage.durationMs) }}
-                      </span>
-                      <span v-if="stage.failureCount" class="flow-stage-fail">
-                        <Icon name="activity" :size="11" />
-                        {{ stage.failureCount }}
-                      </span>
-                    </span>
-                  </div>
-                  <p class="flow-card-desc">{{ stage.description }}</p>
-                  <template v-if="stageSummaries[stage.id]">
-                    <dl
-                      v-if="stageSummaries[stage.id]?.metrics.length"
-                      class="flow-card-metrics"
-                    >
-                      <div v-for="metric in stageSummaries[stage.id]?.metrics" :key="metric.label">
-                        <dt>{{ metric.label }}</dt>
-                        <dd>{{ metric.value }}</dd>
-                      </div>
-                    </dl>
-                    <ul
-                      v-if="stageSummaries[stage.id]?.bullets.length"
-                      class="flow-card-bullets"
-                    >
-                      <li
-                        v-for="item in stageSummaries[stage.id]?.bullets.slice(0, 3)"
-                        :key="item"
-                      >{{ item }}</li>
-                    </ul>
-                  </template>
-                  <span v-else-if="stage.status === 'pending'" class="flow-card-pending">尚未执行</span>
-                </button>
-              </li>
-            </ol>
-          </section>
-
+          <!-- 阶段 tab:选中阶段的详情 + 事件明细 -->
           <section v-if="selectedStage" class="stage-inspector" aria-labelledby="stage-inspector-title">
             <div class="stage-overview">
-              <span class="stage-kicker">阶段 {{ String(selectedStageIndex + 1).padStart(2, '0') }}</span>
-              <h4 id="stage-inspector-title">{{ stageDisplayName(selectedStage) }}</h4>
+              <div class="stage-head-line">
+                <span class="stage-kicker">阶段 {{ String(selectedStageIndex + 1).padStart(2, '0') }}</span>
+                <h4 id="stage-inspector-title">{{ stageDisplayName(selectedStage) }}</h4>
+                <span class="stage-state-pill" :class="selectedStage.status">
+                  {{ stageStatusLabel(selectedStage.status) }}
+                </span>
+              </div>
               <p class="stage-desc">{{ selectedStage.description }}</p>
-              <dl class="stage-meta">
-                <div class="meta-row">
-                  <dt>状态</dt>
-                  <dd>
-                    <span class="stage-state-pill" :class="selectedStage.status">
-                      {{ stageStatusLabel(selectedStage.status) }}
-                    </span>
-                  </dd>
-                </div>
-                <div class="meta-row">
-                  <dt>事件</dt>
-                  <dd class="meta-num">{{ selectedStageEvents.length }}</dd>
-                </div>
-                <div class="meta-row">
-                  <dt>到达次数</dt>
-                  <dd class="meta-num">{{ selectedStage.attemptCount }}</dd>
-                </div>
-                <div class="meta-row" :class="{ 'meta-bad': selectedStage.failureCount }">
-                  <dt>失败次数</dt>
-                  <dd class="meta-num">{{ selectedStage.failureCount }}</dd>
-                </div>
-                <div class="meta-row">
-                  <dt>模型耗时</dt>
-                  <dd>{{ formatDuration(selectedStage.durationMs) }}</dd>
-                </div>
-                <div class="meta-row">
-                  <dt>开始时间</dt>
-                  <dd>{{ selectedStage.startedAt ? formatDate(selectedStage.startedAt) : '无记录' }}</dd>
-                </div>
-              </dl>
+              <div class="stage-chips">
+                <span class="stage-chip"><i>事件</i>{{ selectedStageEvents.length }}</span>
+                <span class="stage-chip"><i>到达</i>{{ selectedStage.attemptCount }}</span>
+                <span class="stage-chip" :class="{ bad: selectedStage.failureCount }"><i>失败</i>{{ selectedStage.failureCount }}</span>
+                <span class="stage-chip"><i>耗时</i>{{ formatDuration(selectedStage.durationMs) }}</span>
+                <span class="stage-chip"><i>开始</i>{{ selectedStage.startedAt ? formatDate(selectedStage.startedAt) : '无记录' }}</span>
+              </div>
               <p v-if="selectedStage.failureCount" class="stage-failure">
                 <Icon name="activity" :size="13" />
-                该阶段共有 {{ selectedStage.failureCount }} 次失败尝试，失败详情已合并到右侧事件列表。
+                该阶段共有 {{ selectedStage.failureCount }} 次失败尝试,失败详情已合并到右侧事件列表。
               </p>
             </div>
 
@@ -497,6 +438,10 @@ interface HistoryDetail {
 }
 
 const PAGE_SIZE = 40;
+
+/** initialPath:从整理覆盖视图跳入时,按原始资料路径预选对应轨迹 */
+const props = withDefaults(defineProps<{ initialPath?: string }>(), { initialPath: '' });
+
 const runs = ref<HistoryRun[]>([]);
 const total = ref(0);
 const query = ref('');
@@ -610,6 +555,54 @@ function stageStatusLabel(status: StageStatus): string {
 function stageDisplayName(stage: Pick<TraceStage, 'label' | 'annotation'>): string {
   return stage.annotation ? `${stage.label}（${stage.annotation}）` : stage.label;
 }
+
+/** 环形图节点用中文短名:优先 annotation(候选提取/归一整理…),退回 label */
+function stageShortName(stage: Pick<TraceStage, 'label' | 'annotation'>): string {
+  return stage.annotation || stage.label;
+}
+
+/**
+ * 水平蛇形流程:第一行从左到右,行尾垂直折返到下一行,第二行从右到左(boustrophedon)。
+ * 6 在上行最右,折返后 7 在其正下方,8/9/10/11 一路向左,折线连续不回头。
+ * 概览在第一行最左端(序号 0)。坐标为百分比。
+ */
+const SNAKE_COLS = 6;
+const snakeNodes = computed(() => {
+  const trace = detail.value?.trace || [];
+  const count = trace.length;
+  if (!count) return [];
+  const cols = Math.min(SNAKE_COLS, count);
+  return trace.map((stage, index) => {
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    const forward = row % 2 === 0;
+    const effectiveCol = forward ? col : cols - 1 - col;
+    return {
+      id: stage.id,
+      stage,
+      index,
+      status: stage.status,
+      row,
+      col: effectiveCol,
+      forward,
+    };
+  });
+});
+/** 按行分组:每行节点数组+是否反向标记(供 flex row-reverse) */
+const snakeRows = computed(() => {
+  const nodes = snakeNodes.value;
+  if (!nodes.length) return [];
+  const rows: Array<{ nodes: typeof nodes; reversed: boolean }> = [];
+  for (const node of nodes) {
+    if (!rows[node.row]) rows[node.row] = { nodes: [], reversed: !node.forward };
+    rows[node.row].nodes.push(node);
+  }
+  return rows.filter(Boolean).map((row) => ({
+    ...row,
+    // DOM 顺序就是实际流程顺序(1→6,7→11),CSS 再决定第二行视觉方向。
+    nodes: [...row.nodes],
+  }));
+});
 
 function questionStatusLabel(status: string): string {
   return { open: '待处理', resolved: '已解决', pending: '待确认', answered: '已回答' }[status] || status;
@@ -954,10 +947,10 @@ async function loadDetail(runId: string, options: LoadOptions = {}) {
           : '';
       outputMode.value = preservedOutputMode;
     } else {
-      const preferred = data.trace.find((stage: TraceStage) =>
-        ['current', 'failed'].includes(stage.status)
-      ) || [...data.trace].reverse().find((stage: TraceStage) => stage.status === 'completed') || data.trace[0];
+      // 默认选中概览;仅在运行中/失败时直接定位到该阶段(用户关心的现场)
+      const preferred = data.trace.find((stage: TraceStage) => ['current', 'failed'].includes(stage.status));
       if (preferred) selectStage(preferred.id);
+      else selectedStageId.value = '';
     }
   } catch (requestError: any) {
     if (selectedRunId.value === runId) {
@@ -1062,7 +1055,13 @@ async function clearHistory() {
 }
 
 onMounted(async () => {
+  // 从整理覆盖视图跳入:按路径预选对应轨迹(在搜索框预填路径,加载后选中第一条)
+  if (props.initialPath) query.value = props.initialPath;
   await loadRuns(true);
+  if (props.initialPath) {
+    const matched = runs.value.find((run) => run.path === props.initialPath) || runs.value[0];
+    if (matched) await selectRun(matched.id);
+  }
   pollTimer = setInterval(() => {
     if (runs.value.some((run) => run.status === 'running')) void pollRuns();
   }, 5000);
@@ -1406,7 +1405,168 @@ onUnmounted(() => {
 
 .trajectory-detail {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- 概览:细长条 ---------- */
+.snake-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 18px 4px;
+  background: var(--bg-secondary);
+}
+.snake-overview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 22px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.snake-overview-btn:hover { border-color: var(--accent); }
+.snake-overview-btn.active { border-color: var(--accent); background: var(--accent-soft); }
+.snake-overview-btn strong { font-size: 13px; color: var(--text); }
+.snake-overview-btn span { font-size: 11px; color: var(--text-faint); }
+
+/* ---------- 蛇形流程(纯 flex,节点间引导条,不穿过节点) ---------- */
+.snake-wrap {
+  padding: 10px 18px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.snake-flow {
+  --node-width: 116px;
+  --pill-height: 32px;
+  --num-height: 14px;
+  /* pill 中心相对节点顶部的偏移:序号高 + gap(4px) + pill 高一半 */
+  --pill-center: calc(var(--num-height) + 4px + var(--pill-height) / 2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+}
+.snake-row {
+  display: flex;
+  align-items: flex-start;
+  /* 第一行居中;折返行右对齐,行首节点(7)正好在上一行行尾节点(6)正下方 */
+  justify-content: center;
+  width: 100%;
+  gap: 10px;
+}
+.snake-row:not(.reversed) { min-height: calc(var(--num-height) + 4px + var(--pill-height)); }
+.snake-row.reversed { min-height: var(--pill-height); }
+.snake-row.reversed { flex-direction: row-reverse; justify-content: flex-start; }
+/* 引导条:第一行(序号在上)跳过序号区;折返行(序号在下)直接对齐 pill */
+.snake-node-gap {
+  flex: 0 0 auto;
+  width: 26px;
+  margin-top: calc(var(--num-height) + 4px);
+  height: var(--pill-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.snake-row.reversed .snake-node-gap {
+  margin-top: 0;
+}
+.guide-bar {
+  display: block;
+  width: 26px;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.guide-bar.vertical {
+  width: 4px;
+  height: 100%;
+  max-height: 18px;
+}
+/* 行间转折:占位复刻节点行(节点宽+间隙);竖条紧贴 6 pill 底边与 7 pill 顶边 */
+.snake-turn {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  height: 18px;
+  width: 100%;
+}
+.turn-spacer {
+  flex: 0 0 var(--node-width);
+  width: var(--node-width);
+}
+.turn-gap {
+  flex: 0 0 auto;
+  width: 26px;
+}
+.snake-node {
+  flex: 0 0 var(--node-width);
+  width: var(--node-width);
+  min-width: var(--node-width);
+  max-width: var(--node-width);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+/* 椭圆 pill 包含阶段中文名(浅底柔和配色);禁止撑破节点宽,超长省略 */
+.snake-node-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--pill-height);
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1.5px solid var(--border);
+  border-radius: calc(var(--pill-height) / 2);
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color .15s, background .15s, color .15s, transform .15s, box-shadow .15s;
+}
+.snake-node:hover .snake-node-pill { transform: scale(1.06); border-color: var(--accent); }
+.snake-node.completed .snake-node-pill { border-color: color-mix(in srgb, var(--success, #2e7d32) 55%, var(--border)); background: color-mix(in srgb, var(--success, #2e7d32) 8%, var(--bg)); color: color-mix(in srgb, var(--success, #2e7d32) 80%, var(--text)); }
+.snake-node.failed .snake-node-pill { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); background: color-mix(in srgb, var(--danger) 8%, var(--bg)); color: color-mix(in srgb, var(--danger) 80%, var(--text)); }
+.snake-node.current .snake-node-pill { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.snake-node.pending .snake-node-pill { opacity: .55; }
+.snake-node.active .snake-node-pill { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* 序号在 pill 上方,小字,固定行高保证 pill 中心可计算 */
+.snake-node-num {
+  height: var(--num-height);
+  line-height: var(--num-height);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+.snake-node.active .snake-node-num { color: var(--accent); }
+.snake-node.completed .snake-node-num { color: var(--success, #2e7d32); }
+.snake-node.failed .snake-node-num { color: var(--danger); }
+
+/* 概览区改为 tab 内容,去掉底部边框(与流程图衔接) */
+.overview-section {
+  border-bottom: 0;
+  flex: 1;
+}
+.stage-inspector {
+  flex: 1;
+  border-top: 0;
 }
 
 .trajectory-head {
@@ -1532,7 +1692,7 @@ onUnmounted(() => {
 }
 
 .flow-section {
-  padding: 20px 22px 22px;
+  padding: 14px 18px 16px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1555,7 +1715,7 @@ onUnmounted(() => {
 
 /* ---------- 提炼概览（总页面） ---------- */
 .overview-section {
-  padding: 20px 22px 22px;
+  padding: 14px 18px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
 }
@@ -1563,15 +1723,15 @@ onUnmounted(() => {
 .overview-stats {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 18px;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .stat-card {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 12px 14px;
+  gap: 2px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
@@ -1583,7 +1743,7 @@ onUnmounted(() => {
 }
 
 .stat-card strong {
-  font-size: 19px;
+  font-size: 16px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
@@ -1794,9 +1954,9 @@ onUnmounted(() => {
 .flow-card-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding: 14px 16px;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg);
@@ -1974,10 +2134,37 @@ onUnmounted(() => {
 }
 
 .stage-overview {
-  padding: 22px;
+  padding: 18px 22px;
   border-right: 1px solid var(--border);
   background: var(--bg-secondary);
 }
+
+.stage-head-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.stage-head-line h4 { margin: 0; font-size: 15px; }
+.stage-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.stage-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--bg);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.stage-chip i { font-style: normal; color: var(--text-faint); font-size: 11px; }
+.stage-chip.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
 
 .stage-kicker {
   display: inline-block;
@@ -2363,6 +2550,19 @@ onUnmounted(() => {
 
   .stage-inspector {
     grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  /* 窄容器(如整理覆盖 900px 页)回退单列,阶段详情回到底部 */
+  .trajectory-detail:has(.stage-inspector) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trajectory-detail > .stage-inspector {
+    grid-column: 1;
+    grid-row: auto;
+    position: static;
+    max-height: none;
+    border-left: 0;
+    border-top: 1px solid var(--border);
   }
 }
 

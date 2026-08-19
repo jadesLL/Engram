@@ -5,6 +5,7 @@ import { organizePage } from '../ai/organize.js';
 import { sse } from '../lib/sse.js';
 import { enqueue } from '../jobs.js';
 import { ingestAllRaw } from '../pipeline/ingest.js';
+import { buildIngestCoverage, pathsNeedingIngest } from '../pipeline/ingestCoverage.js';
 import { safeJoin } from '../lib/vault.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -97,5 +98,19 @@ export async function aiRoutes(app: FastifyInstance) {
         : enqueue('ingest', { path: p, ...(force ? { force: true } : {}) })
     ).filter((id): id is number => Boolean(id));
     return { ok: true, queued: jobIds.length, jobIds };
+  });
+
+  /** 提炼覆盖率:全部原始资料按状态分组,回答「哪些文件真的被提炼了」 */
+  app.get('/api/ingest/coverage', async () => buildIngestCoverage());
+
+  /** 一键补齐:只入队需要处理的(失败/未整理/提取未完成/已过期),已整理且未变更的跳过 */
+  app.post('/api/ingest/coverage/retry', async () => {
+    const paths = pathsNeedingIngest();
+    const jobIds = paths.map((p) =>
+      supportsFileExtraction(p)
+        ? scheduleFileExtraction(p, { mode: 'auto', ingestAfter: true }).jobId
+        : enqueue('ingest', { path: p })
+    ).filter((id): id is number => Boolean(id));
+    return { ok: true, queued: jobIds.length, total: paths.length, jobIds };
   });
 }
