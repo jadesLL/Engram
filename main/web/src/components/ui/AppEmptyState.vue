@@ -12,8 +12,9 @@
 <script setup lang="ts">
 import Icon from '../Icon.vue';
 
-withDefaults(defineProps<{ icon?: string; title: string; hint?: string }>(), {
+withDefaults(defineProps<{ icon?: string; title?: string; hint?: string }>(), {
   icon: '',
+  title: '',
   hint: '',
 });
 </script>

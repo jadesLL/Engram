@@ -256,7 +256,9 @@ test('dense input is split and all candidates pass through bounded stages withou
     assert.equal(typeof context.roster, 'string', `${marker} roster`);
     const dynamicInput = requestBody.input;
     assert.equal(Object.hasOwn(dynamicInput, 'roster'), false, `${marker} dynamic roster`);
-    assert.equal(Object.hasOwn(dynamicInput, 'related'), false, `${marker} dynamic related`);
+    // 缓存优化（b3e3c6d）后动态检索的 related 移入 input 提升 prefix 命中；Map 输入是原文分块不含 related
+    const relatedInInput = marker !== '执行 Map';
+    assert.equal(Object.hasOwn(dynamicInput, 'related'), relatedInInput, `${marker} dynamic related`);
   }
   assert.equal(requestsFor('执行 Critic').length, Math.ceil(21 / 8));
   assert.equal(requestsFor('执行 Question Finder').length, 0);

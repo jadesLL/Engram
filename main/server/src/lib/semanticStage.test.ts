@@ -351,6 +351,8 @@ test('oversized semantic history resets at a batch boundary', async () => {
     cacheContext: sharedContext,
     history,
     input: { value: 1 },
+    // 默认上限已提高到 200k（b3e3c6d），这里用小上限触发同样的批量边界重置
+    maxHistoryChars: 40_000,
     retries: 0,
   });
 

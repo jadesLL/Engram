@@ -46,7 +46,8 @@ import Icon from '../Icon.vue';
 const props = withDefaults(
   defineProps<{
     open: boolean;
-    title: string;
+    /** 部分调用方（抽屉、预览类弹窗）无标题 */
+    title?: string;
     /** center 居中对话框；right 右侧滑出面板 */
     placement?: 'center' | 'right';
     width?: string;
@@ -54,7 +55,7 @@ const props = withDefaults(
     /** 内容由调用方自行管理焦点时关闭（如 ConfirmHost） */
     autoFocus?: boolean;
   }>(),
-  { placement: 'center', width: '', closeOnMask: true, autoFocus: true }
+  { placement: 'center', width: '', closeOnMask: true, autoFocus: true, title: '' }
 );
 
 const emit = defineEmits<{ close: [] }>();
