@@ -124,9 +124,9 @@ onMounted(() => {
 
 <style scoped>
 .search-view {
-  max-width: 780px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 32px 24px;
+  padding: 32px 28px;
   display: flex;
   flex-direction: column;
   gap: 16px;

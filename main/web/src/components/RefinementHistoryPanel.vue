@@ -108,33 +108,50 @@
             </div>
           </header>
 
-          <!-- 阶段 tab 条:概览 + 各阶段,点击就地切换,不再纵向叠加 -->
-          <nav class="stage-tabs" aria-label="提炼阶段">
-            <button
-              type="button"
-              class="stage-tab"
-              :class="{ active: !selectedStageId }"
-              @click="selectedStageId = ''"
-            >
-              概览
-            </button>
-            <button
-              v-for="(stage, index) in detail.trace"
-              :key="stage.id"
-              type="button"
-              class="stage-tab"
-              :class="[stage.status, { active: selectedStageId === stage.id }]"
-              @click="selectStage(stage.id)"
-            >
-              <span class="stage-tab-dot" aria-hidden="true">
-                <Icon v-if="stage.status === 'completed'" name="check" :size="11" :stroke-width="2.6" />
-                <Icon v-else-if="stage.status === 'failed'" name="x" :size="11" :stroke-width="2.6" />
-                <span v-else-if="stage.status === 'current'" class="pulse-dot"></span>
-                <span v-else class="node-index">{{ index + 1 }}</span>
-              </span>
-              <span class="stage-tab-name">{{ stageShortName(stage) }}</span>
-            </button>
-          </nav>
+          <!-- 环形流程图:概览居中,各阶段环绕,点击就地切换 -->
+          <div class="ring-wrap" aria-label="提炼阶段">
+            <div class="ring-inner">
+              <svg class="ring-svg" viewBox="0 0 100 100" aria-hidden="true">
+                <circle class="ring-track" cx="50" cy="50" r="44" />
+                <circle
+                  v-for="seg in ringSegments"
+                  :key="seg.id"
+                  class="ring-seg"
+                  :class="seg.status"
+                  cx="50" cy="50" r="44"
+                  :stroke-dasharray="`${seg.len} ${ringGap}`"
+                  :stroke-dashoffset="seg.offset"
+                />
+              </svg>
+              <button
+                type="button"
+                class="ring-center"
+                :class="{ active: !selectedStageId }"
+                @click="selectedStageId = ''"
+              >
+                <strong>概览</strong>
+                <span>{{ completedCount }}/{{ detail.trace.length }} 阶段</span>
+              </button>
+              <button
+                v-for="node in ringNodes"
+                :key="node.id"
+                type="button"
+                class="ring-node"
+                :class="[node.status, { active: selectedStageId === node.id }]"
+                :style="{ left: node.x + '%', top: node.y + '%' }"
+                v-tooltip="stageDisplayName(node.stage)"
+                @click="selectStage(node.id)"
+              >
+                <span class="ring-node-dot" aria-hidden="true">
+                  <Icon v-if="node.status === 'completed'" name="check" :size="11" :stroke-width="2.6" />
+                  <Icon v-else-if="node.status === 'failed'" name="x" :size="11" :stroke-width="2.6" />
+                  <span v-else-if="node.status === 'current'" class="pulse-dot"></span>
+                  <span v-else class="node-index">{{ node.index + 1 }}</span>
+                </span>
+                <span class="ring-node-name">{{ stageShortName(node.stage) }}</span>
+              </button>
+            </div>
+          </div>
 
           <!-- 概览 tab:关键产出汇总 + 流程进度 -->
           <section v-if="!selectedStageId" class="overview-section" aria-labelledby="overview-title">
@@ -549,10 +566,48 @@ function stageDisplayName(stage: Pick<TraceStage, 'label' | 'annotation'>): stri
   return stage.annotation ? `${stage.label}（${stage.annotation}）` : stage.label;
 }
 
-/** tab 条用短名:label 已含阶段名,不带括号注释避免 tab 过长 */
+/** 环形图节点用中文短名:优先 annotation(候选提取/归一整理…),退回 label */
 function stageShortName(stage: Pick<TraceStage, 'label' | 'annotation'>): string {
-  return stage.label;
+  return stage.annotation || stage.label;
 }
+
+/** 环形流程图:节点均匀分布在圆周上(顶部起顺时针) */
+const ringNodes = computed(() => {
+  const trace = detail.value?.trace || [];
+  const count = trace.length;
+  if (!count) return [];
+  return trace.map((stage, index) => {
+    const angle = (index / count) * 2 * Math.PI - Math.PI / 2;
+    return {
+      id: stage.id,
+      stage,
+      index,
+      status: stage.status,
+      x: 50 + 44 * Math.cos(angle),
+      y: 50 + 44 * Math.sin(angle),
+    };
+  });
+});
+
+/** 环形流程图:每阶段一段圆弧,按状态着色 */
+const ringSegments = computed(() => {
+  const trace = detail.value?.trace || [];
+  const count = trace.length;
+  if (!count) return [];
+  const circumference = 2 * Math.PI * 44;
+  const gapAngle = 0.06; // 弧段间留缝
+  const segLen = (circumference / count) * (1 - gapAngle);
+  return trace.map((stage, index) => ({
+    id: stage.id,
+    status: stage.status,
+    len: segLen,
+    offset: -(index / count) * circumference,
+  }));
+});
+const ringGap = computed(() => {
+  const count = detail.value?.trace.length || 1;
+  return 2 * Math.PI * 44 - (2 * Math.PI * 44 / count) * (1 - 0.06) + 0.01;
+});
 
 function questionStatusLabel(status: string): string {
   return { open: '待处理', resolved: '已解决', pending: '待确认', answered: '已回答' }[status] || status;
@@ -1359,47 +1414,84 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-/* ---------- 阶段 tab 条(替代纵向流程图) ---------- */
-.stage-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 10px 18px;
+/* ---------- 环形流程图(替代纵向流程图) ---------- */
+.ring-wrap {
+  padding: 16px 18px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  display: flex;
+  justify-content: center;
 }
-.stage-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+.ring-inner {
+  position: relative;
+  width: min(420px, 78vw);
+  aspect-ratio: 1;
+}
+.ring-svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(0deg); }
+.ring-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+  opacity: .5;
+}
+.ring-seg {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke .2s;
+}
+.ring-seg.completed { stroke: var(--success, #2e7d32); }
+.ring-seg.failed { stroke: var(--danger); }
+.ring-seg.current { stroke: var(--accent); }
+.ring-seg.pending { stroke: var(--border-strong); opacity: .4; }
+.ring-center {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  width: 30%; aspect-ratio: 1;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 50%;
   background: var(--bg);
-  color: var(--text-secondary);
-  font-size: 12px;
   cursor: pointer;
-  transition: border-color .15s, background .15s, color .15s;
+  transition: border-color .15s, background .15s;
+}
+.ring-center:hover { border-color: var(--accent); background: var(--accent-soft); }
+.ring-center.active { border-color: var(--accent); background: var(--accent-soft); }
+.ring-center strong { font-size: 15px; color: var(--text); }
+.ring-center span { font-size: 11px; color: var(--text-faint); }
+.ring-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: none; border: 0; cursor: pointer;
+  padding: 2px;
+}
+.ring-node-dot {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text-faint);
+  transition: border-color .15s, background .15s, transform .15s;
+}
+.ring-node:hover .ring-node-dot { transform: scale(1.12); }
+.ring-node.completed .ring-node-dot { border-color: var(--success, #2e7d32); color: var(--success, #2e7d32); background: color-mix(in srgb, var(--success, #2e7d32) 10%, var(--bg)); }
+.ring-node.failed .ring-node-dot { border-color: var(--danger); color: var(--danger); }
+.ring-node.current .ring-node-dot { border-color: var(--accent); color: var(--accent); }
+.ring-node.active .ring-node-dot { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.ring-node-name {
+  font-size: 10.5px;
+  color: var(--text-secondary);
   white-space: nowrap;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.stage-tab:hover { border-color: var(--accent); color: var(--text); }
-.stage-tab.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-.stage-tab-dot { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; }
-.stage-tab.completed .stage-tab-dot { color: var(--success, #2e7d32); }
-.stage-tab.failed .stage-tab-dot { color: var(--danger); }
-.stage-tab.current .stage-tab-dot { color: var(--accent); }
-.stage-tab .node-index { font-size: 10px; color: var(--text-faint); }
-.stage-tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+.ring-node.active .ring-node-name { color: var(--accent); font-weight: 600; }
 
-/* 概览区改为 tab 内容,去掉底部边框(与 tab 条衔接) */
+/* 概览区改为 tab 内容,去掉底部边框(与环形图衔接) */
 .overview-section {
   border-bottom: 0;
   flex: 1;

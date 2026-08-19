@@ -224,7 +224,7 @@ onMounted(load);
 </script>
 
 <style scoped>
-.coverage-view { width: 100%; max-width: 900px; box-sizing: border-box; margin: 0 auto; padding: 32px 24px; }
+.coverage-view { width: 100%; max-width: 1400px; box-sizing: border-box; margin: 0 auto; padding: 32px 28px; }
 .coverage-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
 .coverage-head h2 { margin: 0; }
 .head-info { flex: 1; display: flex; gap: 6px; flex-wrap: wrap; }
