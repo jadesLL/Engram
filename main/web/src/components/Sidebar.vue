@@ -171,8 +171,8 @@
             :class="{ warn: filesCoverage.attention > 0 }"
             type="button"
             v-tooltip="filesCoverage.attention > 0
-              ? `${filesCoverage.ingested}/${filesCoverage.supported} 已整理,${filesCoverage.attention} 份需要处理 — 点击查看整理覆盖`
-              : `${filesCoverage.supported} 份资料全部已整理 — 点击查看整理覆盖`"
+              ? `${filesCoverage.ingested}/${filesCoverage.supported} 已整理,${filesCoverage.attention} 份需要处理 — 点击查看提炼看板`
+              : `${filesCoverage.supported} 份资料全部已整理 — 点击查看提炼看板`"
             @click="router.push('/ingest-coverage')"
           >
             {{ filesCoverage.ingested }}/{{ filesCoverage.supported }}

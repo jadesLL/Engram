@@ -1,7 +1,7 @@
 <template>
   <div class="coverage-view">
     <div class="coverage-head">
-      <h2>整理覆盖</h2>
+      <h2>提炼看板</h2>
       <div class="head-info muted small">
         <span>共 {{ report.total }} 份原始资料</span>
         <span v-if="attentionCount" class="warn-text">· {{ attentionCount }} 份需要处理</span>

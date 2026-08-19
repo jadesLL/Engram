@@ -65,7 +65,7 @@ const activeSettingsSection = ref<SettingsSection>('account');
 const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: string }> = [
   { id: 'account', label: '账户与外观', icon: 'settings' },
   { id: 'models', label: '模型配置', icon: 'ai' },
-  { id: 'history', label: '整理覆盖', icon: 'list-tree' },
+  { id: 'history', label: '提炼看板', icon: 'list-tree' },
   { id: 'automation', label: '自动化', icon: 'activity' },
   { id: 'mcp', label: 'MCP 集成', icon: 'link' },
   { id: 'desktop', label: '桌面端连接', icon: 'external' },
@@ -74,7 +74,7 @@ const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: stri
   { id: 'data', label: '数据管理', icon: 'trash' },
 ];
 
-/** 「整理覆盖」不再是内嵌面板,点击直接跳转整理覆盖页(与侧边栏角标同源) */
+/** 「提炼看板」不再是内嵌面板,点击直接跳转提炼看板页(与侧边栏角标同源) */
 function onSelectSection(id: SettingsSection) {
   if (id === 'history') {
     router.push('/ingest-coverage');
