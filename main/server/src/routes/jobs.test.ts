@@ -129,6 +129,26 @@ test('auto-commit falls back to the report payload kind and validates it', async
   assert.equal(bad.statusCode, 409, '无效 kind 无法通过候选决策校验');
 });
 
+test('auto-commit with target enqueues a merge decision and validates the target page', async () => {
+  const { createPage } = await import('../lib/vault.js');
+  const target = createPage('Wiki/实体', '并入目标页');
+  const reportId = seedPendingReview('并入候选项目', 'auto-run-merge', '原始资料/并入候选.md');
+  const response = await post(`/api/ingest/candidates/${reportId}/auto-commit`, { kind: 'project', target: target.id });
+  assert.equal(response.statusCode, 200);
+  const job = db.prepare(`SELECT payload FROM jobs WHERE id=?`).get(response.json().jobId);
+  const decisions = JSON.parse(job.payload).decisions;
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0].action, 'merge:project');
+  assert.equal(decisions[0].target, target.id);
+
+  // 无效目标:提前报错,不入队
+  const other = seedPendingReview('无效目标项目', 'auto-run-merge-bad', '原始资料/无效目标.md');
+  const bad = await post(`/api/ingest/candidates/${other}/auto-commit`, { kind: 'project', target: 'not-a-page' });
+  assert.equal(bad.statusCode, 409, '无效并入目标应直接报错');
+  const claimed = db.prepare(`SELECT status FROM reports WHERE id=?`).get(other);
+  assert.equal(claimed.status, 'open', '校验失败不得 claim 报告');
+});
+
 test('auto-commit rejects unknown or already-resolved reports', async () => {
   const missing = await post('/api/ingest/candidates/999999/auto-commit', {});
   assert.equal(missing.statusCode, 409);

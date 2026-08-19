@@ -28,7 +28,7 @@
     <p v-if="!item.evidenceEligible && !progress" class="risk-note small">
       该候选未通过自动验证,「AI 提炼入库」会重新核对原文证据,证据不足时会生成失败。
     </p>
-    <!-- 并入目标选择(展开式) -->
+    <!-- 并入目标选择(展开式):选好直接后台执行,不再弹预览 -->
     <div v-if="merging" class="merge-panel">
       <select v-model="mergeTarget">
         <option value="">选择已有页面</option>
@@ -36,7 +36,7 @@
           {{ page.title }}({{ typeLabel(page.type) }})
         </option>
       </select>
-      <button class="btn small primary" :disabled="!mergeTarget" @click="confirmMerge">生成并入预览</button>
+      <button class="btn small primary" :disabled="!mergeTarget" @click="confirmMerge">并入该页面</button>
       <button class="btn small" @click="merging = false">取消</button>
     </div>
     <!-- AI 提炼入库后台进度:处理中整卡禁点,进度条取代操作按钮 -->

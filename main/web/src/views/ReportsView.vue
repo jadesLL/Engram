@@ -53,7 +53,7 @@
         :progress="candidateProgress[item.reportId] || null"
         :merge-targets="mergeTargets"
         @refine="autoCommitCandidate"
-        @merge-into="openMergePreview"
+        @merge-into="(item, target) => autoCommitCandidate(item, target)"
         @ignore="ignoreCandidate"
       />
     </section>
@@ -156,46 +156,6 @@
         </button>
       </template>
     </AppModal>
-
-    <!-- 候选 AI 完善预览弹窗 -->
-    <AppModal
-      :open="candidatePreview.show"
-      v-tooltip="candidatePreview.action === 'merge' ? `并入 ${candidatePreview.targetTitle}` : `建立 ${candidatePreview.name}`"
-      width="min(820px, 96vw)"
-      @close="closeCandidatePreview"
-    >
-      <template #subtitle>
-        <p v-if="candidatePreview.token" class="muted small">
-          重新阅读 {{ candidatePreview.sourcePaths.length }} 个原始资料 / {{ candidatePreview.contextCount }} 段原文 ·
-          {{ candidatePreview.evidenceCount }} 条重抽取事实 ·
-          {{ pageTypeLabel(candidatePreview.kind) }}
-        </p>
-        <p v-else class="muted small">重读原文并局部再提炼,通常需要十几秒。</p>
-      </template>
-      <div class="preview-controls">
-        <input v-model="candidatePreview.editName" type="text" placeholder="页面名称" />
-        <select v-model="candidatePreview.editKind">
-          <option v-for="(label, value) in PAGE_TYPE_LABELS" :key="value" :value="value">{{ label }}</option>
-        </select>
-        <button class="btn small" :disabled="candidatePreview.loading" @click="regenerateCandidatePreview">
-          {{ candidatePreview.loading ? '生成中…' : '重新生成' }}
-        </button>
-      </div>
-      <div v-if="candidatePreview.sourcePaths.length" class="source-list small">
-        <span v-for="source in candidatePreview.sourcePaths" :key="source">{{ source }}</span>
-      </div>
-      <div class="content-preview">
-        <b>{{ candidatePreview.action === 'merge' ? '待并入增量' : '页面正文' }}</b>
-        <div class="markdown-preview" v-html="renderAssistantMarkdown(candidatePreview.content)" />
-      </div>
-      <p v-if="candidatePreview.error" class="batch-error small">{{ candidatePreview.error }}</p>
-      <template #footer>
-        <button class="btn" :disabled="candidatePreview.submitting" @click="closeCandidatePreview">取消</button>
-        <button class="btn primary" :disabled="candidatePreview.submitting || candidatePreview.loading || !candidatePreview.token" @click="commitCandidatePreview">
-          {{ candidatePreview.submitting ? '正在提交…' : '确认写入' }}
-        </button>
-      </template>
-    </AppModal>
   </div>
 </template>
 
@@ -204,7 +164,6 @@ import { reactive, ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
-import { renderAssistantMarkdown } from '../lib/markdown';
 import AppModal from '../components/ui/AppModal.vue';
 import DecisionCard, { type DecisionCardData } from '../components/reports/DecisionCard.vue';
 import PendingCandidateCard, { type PendingCandidateData } from '../components/reports/PendingCandidateCard.vue';
@@ -244,12 +203,7 @@ const REVIEW_KIND_LABELS: Record<string, string> = Object.fromEntries(
   Object.entries(PAGE_TYPE_LABELS).filter(([key]) => key !== 'doc' && key !== 'note')
 );
 
-function pageTypeLabel(type: string) {
-  return PAGE_TYPE_LABELS[type] || '未分类';
-}
-
-const mergeTargets = computed(() => wikiPages.value.filter((page: any) =>
-  Object.keys(REVIEW_KIND_LABELS).includes(page.type) &&
+const mergeTargets = computed(() => wikiPages.value.filter((page: any) =>  Object.keys(REVIEW_KIND_LABELS).includes(page.type) &&
   (page.path.startsWith('Wiki/概念/') || page.path.startsWith('Wiki/实体/'))
 ));
 
@@ -367,13 +321,14 @@ function waitForJobProgress(
 
 /* ---------- AI 提炼入库(一步式后台执行) ---------- */
 
-/** 点击「AI 提炼入库」:入队后台任务,卡片立即进入遮罩+进度状态,不再弹预览 */
-async function autoCommitCandidate(item: PendingCandidateData) {
+/** 点击「AI 提炼入库」/「并入该页面」:入队后台任务,卡片立即进入遮罩+进度状态,不再弹预览 */
+async function autoCommitCandidate(item: PendingCandidateData, target = '') {
   if (candidateBusy[item.reportId] || candidateProgress[item.reportId]) return;
   candidateBusy[item.reportId] = true;
   try {
     const { data } = await api.post(`/api/ingest/candidates/${item.reportId}/auto-commit`, {
       kind: item.kind,
+      ...(target ? { target } : {}),
     });
     candidateBusy[item.reportId] = false;
     candidateProgress[item.reportId] = { stage: '排队中', progress: 0 };
@@ -447,31 +402,6 @@ function restoreCandidateProgress() {
   }
 }
 
-async function forceCreate(item: PendingCandidateData) {
-  if (candidateBusy[item.reportId]) return;
-  const risk = item.evidenceEligible
-    ? '将跳过 AI 再提炼,直接用候选现有内容建页,页面会标注「人工强制建立,来源单一未经交叉验证」。'
-    : '该候选未通过自动验证,强制建立可能写入未核实内容!';
-  const ok = await confirmDialog({
-    title: `强制建立「${item.name}」`,
-    message: `${risk}确定继续?`,
-    confirmText: '强制建立',
-  });
-  if (!ok) return;
-  candidateBusy[item.reportId] = true;
-  try {
-    const { data } = await api.post(`/api/ingest/candidates/${item.reportId}/force-commit`, {});
-    notify.success(`已建立「${data.name}」`);
-    await load();
-    if (data.target) router.push(`/page/${data.target}`);
-  } catch (error: any) {
-    notify.error(error?.response?.data?.error || error?.message || '强制建立失败');
-    await load().catch(() => {});
-  } finally {
-    delete candidateBusy[item.reportId];
-  }
-}
-
 async function ignoreCandidate(item: PendingCandidateData) {
   if (candidateBusy[item.reportId]) return;
   candidateBusy[item.reportId] = true;
@@ -485,110 +415,6 @@ async function ignoreCandidate(item: PendingCandidateData) {
     await load().catch(() => {});
   } finally {
     delete candidateBusy[item.reportId];
-  }
-}
-
-/* ---------- AI 完善/并入预览 ---------- */
-const candidatePreview = reactive({
-  show: false,
-  reportId: 0,
-  token: '',
-  action: 'approve' as 'approve' | 'merge',
-  kind: 'concept',
-  name: '',
-  targetTitle: '',
-  target: '',
-  sourcePaths: [] as string[],
-  contextCount: 0,
-  evidenceCount: 0,
-  content: '',
-  loading: false,
-  submitting: false,
-  error: '',
-  editName: '',
-  editKind: 'concept',
-});
-
-async function requestCandidatePreview() {
-  candidatePreview.loading = true;
-  candidatePreview.error = '';
-  try {
-    const { data } = await api.post(`/api/ingest/candidates/${candidatePreview.reportId}/preview`, {
-      action: candidatePreview.action,
-      kind: candidatePreview.editKind,
-      name: candidatePreview.editName.trim(),
-      target: candidatePreview.action === 'merge' ? candidatePreview.target : undefined,
-    });
-    Object.assign(candidatePreview, {
-      token: data.preview.token,
-      kind: data.preview.kind,
-      name: data.preview.name,
-      targetTitle: data.preview.targetTitle || '',
-      sourcePaths: data.preview.sourcePaths || [],
-      contextCount: data.preview.contextCount || 0,
-      evidenceCount: data.preview.evidenceCount || 0,
-      content: data.preview.content || '',
-      error: '',
-    });
-  } catch (error: any) {
-    candidatePreview.token = '';
-    candidatePreview.error = error?.response?.data?.error || error?.message || '无法生成审核预览';
-  } finally {
-    candidatePreview.loading = false;
-  }
-}
-
-function openCandidatePreview(item: PendingCandidateData, action: 'approve' | 'merge', target = '') {
-  Object.assign(candidatePreview, {
-    show: true,
-    reportId: item.reportId,
-    token: '',
-    action,
-    kind: item.kind,
-    name: item.name,
-    targetTitle: '',
-    target,
-    sourcePaths: [],
-    contextCount: 0,
-    evidenceCount: 0,
-    content: '',
-    submitting: false,
-    error: '',
-    editName: item.name,
-    editKind: item.kind,
-  });
-  void requestCandidatePreview();
-}
-
-function openMergePreview(item: PendingCandidateData, targetPageId: string) {
-  openCandidatePreview(item, 'merge', targetPageId);
-}
-
-function regenerateCandidatePreview() {
-  void requestCandidatePreview();
-}
-
-function closeCandidatePreview() {
-  if (candidatePreview.submitting) return;
-  candidatePreview.show = false;
-  candidatePreview.error = '';
-}
-
-async function commitCandidatePreview() {
-  candidatePreview.submitting = true;
-  candidatePreview.error = '';
-  try {
-    const { data } = await api.post(`/api/ingest/candidates/${candidatePreview.reportId}/commit`, {
-      token: candidatePreview.token,
-    });
-    candidatePreview.show = false;
-    await app.refreshJobs();
-    await load();
-    if (data.target) router.push(`/page/${data.target}`);
-  } catch (error: any) {
-    candidatePreview.error = error?.response?.data?.error || error?.message || '审核提交失败';
-  } finally {
-    candidatePreview.submitting = false;
   }
 }
 
@@ -950,8 +776,6 @@ onMounted(async () => {
 .reminder-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .reminder-copy b, .reminder-copy span { overflow-wrap: anywhere; }
 .reminder-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.preview-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-.preview-controls input { flex: 1 1 220px; min-width: 0; }
 .batch-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 8px; }
 .batch-selection, .batch-presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .batch-selection label { display: flex; align-items: center; gap: 7px; }
@@ -967,11 +791,6 @@ onMounted(async () => {
 .action-chip { justify-self: end; color: var(--text-secondary); font-size: 13px; }
 .impact-summary { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; padding: 10px 12px; background: var(--bg-secondary); border-radius: 6px; }
 .batch-error { color: var(--danger); margin: 10px 0 0; }
-.source-list { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 12px 0; color: var(--text-secondary); }
-.content-preview { min-height: 160px; overflow: auto; padding: 12px 4px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.content-preview > b { display: block; margin-bottom: 10px; }
-.markdown-preview :deep(h2), .markdown-preview :deep(h3), .markdown-preview :deep(h4) { margin: 12px 0 6px; }
-.markdown-preview :deep(.list-line) { display: block; margin: 3px 0; }
 @media (max-width: 640px) {
   .reports-head { align-items: flex-start; flex-direction: column; }
   .head-actions { width: 100%; }
