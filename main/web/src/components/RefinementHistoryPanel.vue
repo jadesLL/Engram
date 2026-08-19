@@ -106,6 +106,38 @@
               </div>
               <p v-tooltip.auto="detail.run.path">{{ detail.run.path }}</p>
             </div>
+          </header>
+
+          <!-- 阶段 tab 条:概览 + 各阶段,点击就地切换,不再纵向叠加 -->
+          <nav class="stage-tabs" aria-label="提炼阶段">
+            <button
+              type="button"
+              class="stage-tab"
+              :class="{ active: !selectedStageId }"
+              @click="selectedStageId = ''"
+            >
+              概览
+            </button>
+            <button
+              v-for="(stage, index) in detail.trace"
+              :key="stage.id"
+              type="button"
+              class="stage-tab"
+              :class="[stage.status, { active: selectedStageId === stage.id }]"
+              @click="selectStage(stage.id)"
+            >
+              <span class="stage-tab-dot" aria-hidden="true">
+                <Icon v-if="stage.status === 'completed'" name="check" :size="11" :stroke-width="2.6" />
+                <Icon v-else-if="stage.status === 'failed'" name="x" :size="11" :stroke-width="2.6" />
+                <span v-else-if="stage.status === 'current'" class="pulse-dot"></span>
+                <span v-else class="node-index">{{ index + 1 }}</span>
+              </span>
+              <span class="stage-tab-name">{{ stageShortName(stage) }}</span>
+            </button>
+          </nav>
+
+          <!-- 概览 tab:关键产出汇总 + 流程进度 -->
+          <section v-if="!selectedStageId" class="overview-section" aria-labelledby="overview-title">
             <dl class="stat-strip" role="list">
               <div class="stat-cell" role="listitem">
                 <dt>最近提炼</dt>
@@ -127,51 +159,17 @@
                 <dt>页面贡献</dt>
                 <dd class="stat-num">{{ detail.contributions.length }}</dd>
               </div>
+              <div class="stat-cell" role="listitem">
+                <dt>阶段进度</dt>
+                <dd class="stat-num">{{ completedCount }}/{{ detail.trace.length }}</dd>
+              </div>
             </dl>
-          </header>
-
-          <!-- 提炼概览：总页面，汇总本次提炼的关键产出 -->
-          <section v-if="overviewStats" class="overview-section" aria-labelledby="overview-title">
-            <div class="section-title">
-              <div>
-                <h4 id="overview-title">提炼概览</h4>
-                <p>本次提炼的关键产出汇总，事实、贡献与问题一览。</p>
-              </div>
-              <span>{{ overviewStats.progress }}% 完成</span>
-            </div>
-            <div class="overview-stats">
-              <div class="stat-card">
-                <span>来源事实</span>
-                <strong>{{ overviewStats.facts }}</strong>
-              </div>
-              <div class="stat-card">
-                <span>页面贡献</span>
-                <strong>{{ overviewStats.contributions }}</strong>
-                <small>{{ overviewStats.activeContributions }} 活跃</small>
-              </div>
-              <div class="stat-card">
-                <span>待确认问题</span>
-                <strong>{{ overviewStats.openQuestions }}</strong>
-              </div>
-              <div class="stat-card">
-                <span>提炼次数</span>
-                <strong>{{ overviewStats.runCount }}</strong>
-              </div>
-              <div class="stat-card">
-                <span>失败次数</span>
-                <strong>{{ overviewStats.failureCount }}</strong>
-              </div>
-              <div class="stat-card">
-                <span>模型总耗时</span>
-                <strong>{{ formatDuration(overviewStats.totalDuration) }}</strong>
-              </div>
-            </div>
             <div
               v-if="overviewFacts.length || overviewContributions.length || overviewQuestions.length"
               class="overview-body"
             >
               <div v-if="overviewFacts.length" class="overview-block">
-                <h5>关键事实<span class="block-count">{{ overviewStats.facts }}</span></h5>
+                <h5>关键事实<span class="block-count">{{ overviewFacts.length }}</span></h5>
                 <ul>
                   <li v-for="fact in overviewFacts" :key="String(fact.fact_id)">
                     <span class="ov-fact-text">{{ shortText(fact.statement, 160) }}</span>
@@ -183,7 +181,7 @@
                 </ul>
               </div>
               <div v-if="overviewContributions.length" class="overview-block">
-                <h5>页面贡献<span class="block-count">{{ overviewStats.contributions }}</span></h5>
+                <h5>页面贡献<span class="block-count">{{ overviewContributions.length }}</span></h5>
                 <ul>
                   <li v-for="c in overviewContributions" :key="String(c.page_id)">
                     <span class="ov-contrib-title">{{ c.title || noteName(String(c.path || '')) }}</span>
@@ -196,7 +194,7 @@
                 </ul>
               </div>
               <div v-if="overviewQuestions.length" class="overview-block">
-                <h5>待确认问题<span class="block-count">{{ overviewStats.openQuestions }}</span></h5>
+                <h5>待确认问题<span class="block-count">{{ overviewQuestions.length }}</span></h5>
                 <ul>
                   <li v-for="q in overviewQuestions" :key="String(q.id)">
                     <span class="ov-question-text">{{ shortText(q.question, 140) }}</span>
@@ -207,74 +205,10 @@
                 </ul>
               </div>
             </div>
+            <p v-else class="overview-empty muted small">本次提炼没有产出事实、页面贡献或待确认问题。</p>
           </section>
 
-          <!-- 完整提炼流程：纵向流程图，每个节点标注关键产出 -->
-          <section class="flow-section" aria-labelledby="refinement-flow-title">
-            <div class="section-title">
-              <div>
-                <h4 id="refinement-flow-title">完整提炼流程</h4>
-                <p>每个节点展示该阶段的关键产出，点击查看完整审计记录与模型调用。</p>
-              </div>
-              <span>{{ completedCount }}/{{ detail.trace.length }} 阶段完成</span>
-            </div>
-            <ol class="flow-vertical">
-              <li
-                v-for="(stage, index) in detail.trace"
-                :key="stage.id"
-                class="flow-card"
-                :class="[stage.status, { selected: selectedStageId === stage.id }]"
-              >
-                <div class="flow-rail" aria-hidden="true">
-                  <span class="flow-node">
-                    <Icon v-if="stage.status === 'completed'" name="check" :size="14" :stroke-width="2.6" />
-                    <Icon v-else-if="stage.status === 'failed'" name="x" :size="14" :stroke-width="2.6" />
-                    <span v-else-if="stage.status === 'current'" class="pulse-dot"></span>
-                    <span v-else class="node-index">{{ index + 1 }}</span>
-                  </span>
-                </div>
-                <button type="button" class="flow-card-body" @click="selectStage(stage.id)">
-                  <div class="flow-card-head">
-                    <span class="flow-card-index">{{ String(index + 1).padStart(2, '0') }}</span>
-                    <strong>{{ stageDisplayName(stage) }}</strong>
-                    <span class="flow-stage-status" :class="stage.status">{{ stageStatusLabel(stage.status) }}</span>
-                    <span class="flow-card-meta">
-                      <span v-if="stage.durationMs" class="flow-stage-duration">
-                        {{ formatDuration(stage.durationMs) }}
-                      </span>
-                      <span v-if="stage.failureCount" class="flow-stage-fail">
-                        <Icon name="activity" :size="11" />
-                        {{ stage.failureCount }}
-                      </span>
-                    </span>
-                  </div>
-                  <p class="flow-card-desc">{{ stage.description }}</p>
-                  <template v-if="stageSummaries[stage.id]">
-                    <dl
-                      v-if="stageSummaries[stage.id]?.metrics.length"
-                      class="flow-card-metrics"
-                    >
-                      <div v-for="metric in stageSummaries[stage.id]?.metrics" :key="metric.label">
-                        <dt>{{ metric.label }}</dt>
-                        <dd>{{ metric.value }}</dd>
-                      </div>
-                    </dl>
-                    <ul
-                      v-if="stageSummaries[stage.id]?.bullets.length"
-                      class="flow-card-bullets"
-                    >
-                      <li
-                        v-for="item in stageSummaries[stage.id]?.bullets.slice(0, 3)"
-                        :key="item"
-                      >{{ item }}</li>
-                    </ul>
-                  </template>
-                  <span v-else-if="stage.status === 'pending'" class="flow-card-pending">尚未执行</span>
-                </button>
-              </li>
-            </ol>
-          </section>
-
+          <!-- 阶段 tab:选中阶段的详情 + 事件明细 -->
           <section v-if="selectedStage" class="stage-inspector" aria-labelledby="stage-inspector-title">
             <div class="stage-overview">
               <span class="stage-kicker">阶段 {{ String(selectedStageIndex + 1).padStart(2, '0') }}</span>
@@ -312,7 +246,7 @@
               </dl>
               <p v-if="selectedStage.failureCount" class="stage-failure">
                 <Icon name="activity" :size="13" />
-                该阶段共有 {{ selectedStage.failureCount }} 次失败尝试，失败详情已合并到右侧事件列表。
+                该阶段共有 {{ selectedStage.failureCount }} 次失败尝试,失败详情已合并到右侧事件列表。
               </p>
             </div>
 
@@ -613,6 +547,11 @@ function stageStatusLabel(status: StageStatus): string {
 
 function stageDisplayName(stage: Pick<TraceStage, 'label' | 'annotation'>): string {
   return stage.annotation ? `${stage.label}（${stage.annotation}）` : stage.label;
+}
+
+/** tab 条用短名:label 已含阶段名,不带括号注释避免 tab 过长 */
+function stageShortName(stage: Pick<TraceStage, 'label' | 'annotation'>): string {
+  return stage.label;
 }
 
 function questionStatusLabel(status: string): string {
@@ -1416,44 +1355,58 @@ onUnmounted(() => {
 
 .trajectory-detail {
   min-width: 0;
-  /* 阶段详情选中时:左列(概览+流程)与右列(阶段详情)并排,不再纵向拉穿;
-     用两列 grid,详情列独立滚动,主列内容多高都不会被详情顶长 */
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-}
-.trajectory-detail:has(.stage-inspector) {
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 400px);
-}
-.trajectory-detail > .trajectory-head,
-.trajectory-detail > .overview-section,
-.trajectory-detail > .flow-section {
-  grid-column: 1;
-}
-.trajectory-detail > .stage-inspector {
-  grid-column: 2;
-  grid-row: 1 / span 3;
-  position: sticky;
-  top: 0;
-  align-self: start;
-  max-height: calc(100vh - 140px);
-  overflow-y: auto;
-  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
 }
 
-/* 窄容器/窄屏回退单列,阶段详情回到底部(避免两列过窄) */
-@media (max-width: 1400px) {
-  .trajectory-detail:has(.stage-inspector) {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .trajectory-detail > .stage-inspector {
-    grid-column: 1;
-    grid-row: auto;
-    position: static;
-    max-height: none;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-  }
+/* ---------- 阶段 tab 条(替代纵向流程图) ---------- */
+.stage-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.stage-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+  white-space: nowrap;
+}
+.stage-tab:hover { border-color: var(--accent); color: var(--text); }
+.stage-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.stage-tab-dot { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; }
+.stage-tab.completed .stage-tab-dot { color: var(--success, #2e7d32); }
+.stage-tab.failed .stage-tab-dot { color: var(--danger); }
+.stage-tab.current .stage-tab-dot { color: var(--accent); }
+.stage-tab .node-index { font-size: 10px; color: var(--text-faint); }
+.stage-tab-name { overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+
+/* 概览区改为 tab 内容,去掉底部边框(与 tab 条衔接) */
+.overview-section {
+  border-bottom: 0;
+  flex: 1;
+}
+.stage-inspector {
+  flex: 1;
+  border-top: 0;
 }
 
 .trajectory-head {

@@ -8,7 +8,7 @@
       </div>
       <div class="head-actions">
         <div class="tabs">
-          <button class="btn small" :class="{ primary: tab === 'coverage' }" @click="switchTab('coverage')">覆盖</button>
+          <button class="btn small" :class="{ primary: tab === 'coverage' }" @click="switchTab('coverage')">总览</button>
           <button class="btn small" :class="{ primary: tab === 'history' }" @click="switchTab('history')">提炼轨迹</button>
         </div>
         <button v-if="tab === 'coverage'" class="btn primary" :disabled="retrying || !attentionCount" @click="retryAll">
