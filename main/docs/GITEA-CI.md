@@ -6,9 +6,10 @@
 
 ```text
 开发（worktree）→ verify → 用户三选一：仅合并 / 合并并推送远端 / 合并推送+发版
+→（合并时）新功能同步整合进根 README.md
 →（推送）git push gitea main：CI 只做 verify（build+typecheck+test），不构建镜像
-→（发版）bump 三处版本号 → 提交并立即推送 → git tag v<版本> && git push gitea v<版本>
-→ release.yml 自动：构建并推送镜像（版本 tag + latest）+ Windows exe + Gitea Release（exe / docker tar.gz / sha256）
+→（发版）bump 三处版本号 + CHANGELOG.md 写 v<版本> 段落 → 提交并立即推送 → git tag v<版本> && git push gitea v<版本>
+→ release.yml 自动：校验并提取 CHANGELOG 段落（缺失即失败）→ 构建并推送镜像（版本 tag + latest）+ Windows exe + Gitea Release（正文=CHANGELOG 版本段落，附件= exe / docker tar.gz / sha256）
 → 下载 Release 附件归档到 releases/<版本>/（AGENTS.md 项目规则 3）
 → 部署机 docker login + docker pull 新版本镜像
 ```
@@ -17,17 +18,19 @@
 - 功能验收后必须问用户三选一（仅合并 / 合并并推送 / 合并推送+发版），合并后必须推送 gitea，不得留本地远端分叉。
 - **只要更新版本号，提交后必须立即推送 gitea**（版本号 = 镜像 tag = Release 标签，留在本地会造成远端镜像与版本号脱节），并确认 Actions 运行成功。
 - **镜像只在发版时构建**（2026-08-20 起生效）：main 日常推送不构建不推送任何镜像，Registry 里的版本 tag 永远只对应发版产物，不会被日常推送覆盖。
+- **功能合并 main 时同步整合进根 `README.md`**；**发版时必须写 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落**（距上次发布以来的全部新功能），release.yml 校验缺失即失败，段落会自动发布为 Release 正文。
 
 | 环节 | 命令/动作 | 自动发生什么 |
 |---|---|---|
 | 日常推送 | `git push gitea main` | ci.yml：仅 verify（build+typecheck+test），不碰镜像 |
-| 发版 | bump 版本号 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：构建推送镜像（`:<版本>` + `:latest`）+ wine 交叉打 exe + 创建 Release 上传附件 |
+| 发版 | bump 版本号 + CHANGELOG 段落 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：校验提取 CHANGELOG 段落（缺失失败）→ 构建推送镜像（`:<版本>` + `:latest`）+ wine 交叉打 exe + 创建 Release（正文=CHANGELOG 段落，附件 exe/docker tar.gz/sha256） |
 | Release 测试 | Gitea 网页手动触发 release.yml（workflow_dispatch） | 完整构建（含镜像推送）但**不发布 Release**，产物传 Artifact（保留 7 天） |
 | 部署 | `docker login` → `docker compose -f docker-compose.pull.yml up -d` | — |
 
 **版本号一致性（发版门禁，release.yml 有校验）**：
-- tag 必须等于 `v<desktop/package.json 的 version>`（如 v1.1.5），不一致直接失败。
+- tag 必须等于 `v<desktop/package.json 的 version>`（如 v1.1.6），不一致直接失败。
 - bump 时三处同步：`main/desktop/package.json` 的 `version`、`main/web/src/version.ts`（软件内版本显示）、`main/docker-compose.yml` 镜像 tag。
+- 仓库根 `CHANGELOG.md` 必须有 `## v<版本>（YYYY-MM-DD）` 段落（距上次发布以来的全部新功能），release.yml 用 awk 提取该段落（段落标题行到下一个 `## ` 标题前），缺失直接失败；段落内容自动作为 Gitea Release 正文发布。
 
 ## 镜像地址（重要）
 

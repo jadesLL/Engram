@@ -45,6 +45,31 @@ jobs:
             exit 1
           fi
 
+      - name: 提取 CHANGELOG 版本段落
+        id: changelog
+        shell: bash
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          # 提取 "## v<版本>（日期）" 到下一个 "## " 之间的段落
+          BODY=$(awk -v ver="## v${VER}" '
+            $0 ~ "^## " {
+              if (found) exit
+              if (index($0, ver) == 1) { found = 1 }
+            }
+            found { print }
+          ' CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            echo "CHANGELOG.md 中缺少 v${VER} 版本段落（格式：## v${VER}（YYYY-MM-DD））"
+            echo "发版前必须把距上次发布以来的所有新功能写入 CHANGELOG.md 对应版本段落"
+            exit 1
+          fi
+          # 写入多行输出（%0A 转义换行）
+          echo "body<<CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
+          echo ">> 已提取 v${VER} 段落："
+          echo "$BODY" | head -5
+
       - name: 构建并推送 Docker 镜像
         shell: bash
         env:
@@ -113,8 +138,11 @@ jobs:
           draft: false
           name: v${{ steps.ver.outputs.version }}
           body: |
-            ExampleProject v${{ steps.ver.outputs.version }}
+            ${{ steps.changelog.outputs.body }}
+
+            ---
 
             - Docker 镜像: ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}（私有，需先 docker login）
             - Windows 安装包: LLM Wiki Setup ${{ steps.ver.outputs.version }}.exe
             - 校验值见 sha256-${{ steps.ver.outputs.version }}.txt
+            - 完整历史版本: 仓库 CHANGELOG.md

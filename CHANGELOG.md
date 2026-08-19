@@ -1,0 +1,190 @@
+# 更新日志（Changelog）
+
+所有版本的新功能与变更记录（最新在前）。
+
+**发版规则**（见 [`AGENTS.md`](./AGENTS.md) 项目规则 6/7）：
+
+- 每次功能合并进 main 后，同步把新功能整合进 [`README.md`](./README.md)。
+- 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
+- v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
+
+## v1.1.6（2026-08-20）
+
+- 「梦境整理」统一改名为「智能整理」（纯文案，API `dream_*` 不动）
+- 整理报告分类下拉改为选中即筛选 + 设置页窄屏下拉修复
+- 整理报告待决策/待入库清单按类型分组，每组可折叠
+- 实体歧义合并（「是」）支持选择保留方向（目标/歧义页）与自定义最终名称
+- 待入库清单：AI 提炼入库改为后台自动执行+遮罩进度条；并入已有页面改为后台一步式，移除预览弹窗
+- 页面合并改 AI 综合模式：重写全文 + H1 统一 + 曾用名行
+- 任务队列警告详情改为点击折叠展开，移除 hover 弹窗
+- CI 调整：main 推送只 verify 不构建镜像，镜像仅在发版时构建推送
+
+## v1.1.5（2026-08-19）
+
+- Gitea CI/CD 落地：推送远端自动 verify（build+typecheck+test），打 `v*` 标签自动发版（版本号镜像 + wine 容器交叉打 Windows NSIS 安装包 + Release 三附件）
+- Docker 镜像改走仓库三层路径 `example/exampleproject/example-wiki`（两层用户命名空间路径 NAS 拉取异常，废弃）
+- 修复 web typecheck 12 处错误（AppModal/AppEmptyState/ReadingPreview 的 title prop 改可选）
+- 修复 2 个过期测试断言（缓存优化后未同步）
+- wine 交叉打包修复：EB `npmRebuild=false` 防 Linux ELF 覆盖、prebuild-install 显式 win32 + PE32 断言、`.bin` 悬空 symlink 清理
+
+## v1.1.4（2026-08-19）
+
+- 提炼看板（`/ingest-coverage`）：原始资料按状态分组（已整理/内容已变更/整理失败/提取失败/待配置识别/未整理/仅保存），回答「哪些文件真的被提炼了」
+- 侧边栏原始资料分组覆盖率角标（如 6/7，有待处理时橙色），点击直达提炼看板
+- 一键补齐：只入队失败/未整理/已变更/提取未完成的资料，已整理未变更自动跳过
+- 提炼轨迹重做为蛇形阶段流程图（中文阶段名），整合进看板总览/轨迹双 tab
+- 启动索引救济：重启清理残留任务后，缺索引页面自动重新入队，不再丢搜索（recoverMissingIndexes）
+- 整理覆盖/整理报告/搜索页面自适应放宽（900→1400px）
+- 新接口：`GET /api/ingest/coverage`、`POST /api/ingest/coverage/retry`
+
+## v1.1.3（2026-08-19）
+
+- 整理报告重构为三区：待决策（选择题卡片）+ 待入库清单 + 提醒（弱化折叠），替代原 10 个平铺 tab
+- 按对象聚合：同一对页面的重复+矛盾合并为一张卡；同一死链目标多来源合一；同一页面多个提醒合一
+- 待入库清单独立成区：来源不足未入库的实体/概念，支持 AI 完善后建立 / 并入已有页面 / 忽略
+- 新增已处理区：忽略/知悉/处理完的报告保留记录，不计角标，已阅的可「重新处理」
+- 合并类慢操作异步入队，卡片显示实时进度条；结果可在已处理区/任务队列查看
+- 新接口：`GET /api/reports/overview`、`POST /api/reports/:id/decide`、`POST /api/reports/:id/reopen`、`GET /api/ingest/candidates/pending-list`
+- 候选 preview/review 的 kind 白名单 4 类→8 类（修复 customer/place/work/other 候选无法 AI 完善）
+
+## v1.1.2（2026-08-18）
+
+- 修复实体歧义批量通道缺失：前端 actionConfig + 后端五处补全 identity_ambiguity 分类，切「实体歧义」tab 不再异常
+- 实体歧义批量支持「合并到建议目标页」和「标记误报」，重命名保持单条操作
+
+## v1.1.1（2026-08-18）
+
+- 修复跨来源建页死锁：ingest 临时 candidateId 导致候选从不写入候选表，0 实体/概念
+- 对账断链修复：kind 白名单扩全集、重建候选恢复 evidence_eligible、previousFailure 加 1 小时窗口
+- 严格双来源建页：删除高置信度单来源放宽（不采信 LLM 自报置信度）
+- candidate_reconcile 移出启动清理清单，修复重启自动对账救济失效
+
+## v1.1.0（2026-08-17）
+
+- 三个 BUG 修复：提炼后变异常 / 桌面端模式切换 / 缓存命中率显示
+- 缓存优化：related 从 cacheContext 移到 input（combined 命中率 93.7%）、map history 共享、maxHistoryChars 增大
+- AGENTS.md 补充桌面端打包踩坑经验；.gitignore 忽略 desktop 打包产物
+
+## v1.0.19（2026-08-17）
+
+- 修复提炼后变异常：page_recompose 周期上报进度防 5 分钟误杀；loadPageEvidence 批量预取消除 N+1；vec 事务拆批让出事件循环防冻结 /health 探针
+- 桌面端模式切换：Electron 菜单「返回启动页/切换模式」（CmdOrCtrl+Shift+L）+ 桌面端壳内切换按钮
+- 缓存命中率：correctionFeedback 从 system 移到 input 提升前缀缓存命中；UI 改显 combinedCacheHitRate 双指标
+
+## v1.0.18（2026-08-17）
+
+- desktop `asar:false→true`：上万 node_modules 散文件合并进 app.asar，安装 243 秒→6 秒
+- `node-linker=hoisted` 解 @electron/asar 对 symlink 的非管理员 EPERM
+- 新增 `pack-asar.js` 手动生成 app.asar（绕过 Defender EPERM）；db.ts sqlite-vec 路径转 app.asar.unpacked 真实路径
+- 修复 1.0.18 镜像前端版本号未烘焙问题（从 831f72d 重 build）
+
+## v1.0.17（2026-08-16）
+
+- Windows 桌面端本地/远端双模式 + 桌面端连接令牌（desktop_tokens 表 + desktop-exchange 免密兑换 + DesktopPanel 面板）
+- `build:desktop` 一键可跑（zod 3.25.76 固定 + --ignore-workspace + onlyBuiltDependencies）
+
+## v1.0.16（2026-08-16）
+
+- 右键合并重复页面（LLM 语义合并对话框）+ 拖拽页面到子类/概念标题改 type 并移动文件
+- 提炼轨迹优化：概览总页面 + 纵向流程图 + 节点关键内容展示
+- 模型用量统计区分向量/语言模型类型并标注厂家
+- 放宽待审触发条件：无效 factId 不连坐 / unsupported 转 enrich / 中置信度 verified 建页 / Verify 补跑 / Plan 引导
+- 深度优化：LLM 缓存 / 提炼流程 / 操作日志 / 任务队列 / 待审内容 6 项
+
+## v1.0.15（2026-08-16）
+
+- page-synthesis-compose 改用 tool_calls（function calling）取结构化输出，规避 JSON mode 返回纯文本正文
+- llm.ts 新增 chatToolSchema（tool arguments→JSON.parse→Zod 校验→失败带详情重试），结构化输出自动关思考
+- 仅 page-synthesis-compose 启用 toolMode，不影响 ingest 等其他 stage
+
+## v1.0.14（2026-08-16）
+
+- 启动时并行读取全部前端构建产物到内存，运行期静态资源不再访问 Docker 镜像层
+- 内存静态服务支持 ETag/304、HEAD、SPA fallback 和哈希资源长期缓存
+- 离线叠加镜像使用内容哈希唯一前端目录
+- Compose bridge 默认 MTU 设为 1400 并启用 TCP MTU 探测，修复 NAS 公网链路分片/PMTU 异常
+
+## v1.0.13（2026-08-15）
+
+- 启动恢复先清理 pending/running 高负载派生任务，避免中断任务重新排队后阻塞 Node 事件循环
+- 启动清理同步清空 run_token 与 cancel_requested，并释放批量任务占用的报告状态
+- 新增启动恢复回归测试
+
+## v1.0.12（2026-08-15）
+
+- index.html 启动读到内存，SPA fallback 不再 fs.readFileSync 同步读磁盘，消除磁盘 I/O 慢时阻塞 10-14 秒致 healthcheck 超时
+- jobs 表加 status/kind_status/run_token 索引，job runner 每秒 tick 不再全表扫描
+- 启动清理 30 天前终态 jobs 行，减少表膨胀
+
+## v1.0.11（2026-08-15）
+
+- 彻底去掉启动时自动合成补齐，合成改为只在入库或手动触发时按单页跑
+- 启动清理扩大到所有 AI 派生 pending 任务，确保 job runner 启动后无 pending 可拾取
+
+## v1.0.10（2026-08-15）
+
+- 合成补齐改为启动后延迟 60 秒异步执行，修复 1.0.9 部署后页面空白
+- 启动时把残留 pending page_recompose 任务标为 failed 让冷却接管
+- 单批合成入队上限 50→10
+
+## v1.0.9（2026-08-15）
+
+- 合成任务失败后加 1 小时冷却，不再每次启动重排注定失败的合成
+- queueMissingPageSyntheses 改为 listen 后异步延迟执行，启动不再冻结主线程
+- job runner 任务完成后 setImmediate 让出事件循环，避免同步 DB 写连环冻结
+- json 模式统一关闭 thinking，防止 reasoning 烧光 max_tokens 致合成必然失败
+
+## v1.0.8（2026-08-15）
+
+- 一键清除知识数据不再长时间阻塞事件循环，清除期间容器健康探针保持 200
+- vec0/FTS5 虚表改 DROP+重建空表，chunks 分批删除并逐表让出事件循环
+- /api/settings/wipe 清除后立即返回，全量索引重建转后台执行
+- 新增 GET /health 轻量健康端点（恒 200、不触碰数据层）
+- docker-compose 为 example-wiki 增加 node /health 容器级 healthcheck
+
+## v1.0.7（2026-08-15）
+
+- 飞书长连接诊断能力：全链路日志、状态查询接口、配置热重载
+- 修复 protobuf varint 64 位 seqID/logID 解码失败（改 BigInt 解码）
+
+## v1.0.6（2026-08-15）
+
+- 侧边栏分组改为顶层「概念/实体/归档」，实体分类扩展为 7 类
+- 客户独立 type 走专属信捷模式；实体二级子类支持折叠
+- 飞书改用长连接（WebSocket）模式，删除 webhook
+
+## v1.0.5（2026-08-14）
+
+- 飞书 IM 直连应用内 Agent（进程内调用 orchestrator，绕过 MCP）
+- 飞书凭证改为设置页 GUI 配置，不再依赖环境变量
+- 概念和实体页可单独重新提炼（浅层重组+深层重跑）
+- 信捷模式（ACS 客户梳理）：客户实体页按 ACS 框架综合
+- 设置页拆分为面板组件；左侧标签栏默认折叠
+
+## v1.0.4（2026-08-14）
+
+- 右键上下文菜单
+- 提炼轨迹按来源分组 + 中文阶段名标注 + 轨迹历史
+- AI 队列批量控制；AI 运行中允许数据清理
+
+## v1.0.3（2026-08-14）
+
+- 设置页显示应用版本号
+- 优化 ingest 缓存与 Agent 上下文
+- AI 任务队列加速与可控
+- 语义轮次间复用稳定缓存上下文；候选对账按来源分批
+
+## v1.0.2（2026-08-13）
+
+- 复用 append-only ingest 缓存前缀，提升 LLM 前缀缓存命中
+
+## v1.0.1（2026-08-13）
+
+- 稳定 ingest 提示词缓存前缀
+
+## v1.0.0（2026-08-12）
+
+- 首个版本化发布
+- PDF 与图片进入 AI 整理管线（PDF 本地提取文字，扫描页/图片走视觉模型 OCR）
+- 实体页重组、任务队列按目标分组、阅读预览、模型设置单列布局
+- LLM 用量统计与缓存命中率

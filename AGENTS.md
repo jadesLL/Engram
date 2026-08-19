@@ -19,7 +19,7 @@ Git 以本地管理为主，官方远端为 `gitea`（`https://gitea.example.com
 ### Gitea 发版工作流（摘要，细则见 main/docs/GITEA-CI.md）
 
 1. 功能合并 main 后推送：`git push gitea main` → ci.yml 只做 verify（build+typecheck+test），不构建不推送镜像。
-2. 发版：同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像（`:<版本>` + `:latest`）并发 Release（exe + docker tar.gz + sha256）。
+2. 发版：同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 把距上次发布以来的**全部新功能**写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落（缺失该段落 release.yml 会直接失败）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像（`:<版本>` + `:latest`），校验并提取 CHANGELOG 段落发布为 Gitea Release 正文（exe + docker tar.gz + sha256 附件）。
 3. 从 Release 附件下载产物归档到 `releases/<版本>/`（含 release.json）。
 4. **镜像地址固定三层路径** `gitea.example.com/example/exampleproject/example-wiki:<版本>`（owner/repo/imagename 归属仓库；两层 `example/example-wiki` 形式 NAS 拉取异常，勿改回）。
 5. 部署 compose 不得写 `pull_policy: never`（禁止拉取，本地无镜像必报找不到）。
@@ -36,12 +36,14 @@ Git 以本地管理为主，官方远端为 `gitea`（`https://gitea.example.com
 3.构建最新的安装包时要同步构建最新的同版本tar和win安装包，放入releases中相同版本号文件夹内
 4.每次功能验收完成后，向用户询问「仅合并 / 合并并推送远端 / 合并推送+发版」三选一；合并后必须推送 gitea。
 5.只要更新了版本号，提交后必须推送 gitea 远端（触发 CI 更新镜像 tag 与 latest），并确认 Actions 运行成功。
+6.**每次功能合并进 main 时，同步把新功能整合进仓库根 `README.md`**（功能总览、使用说明、数据目录等对应章节；纯内部重构/CI 调整可只更新 CHANGELOG）。README 是 Gitea 仓库主页的展示位，不允许与实际功能漂移。
+7.**每次发布新版本，必须把距上次发布以来的全部新功能写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落**，与版本号 bump 同一提交推送。release.yml 会校验该段落（缺失即发版失败），并自动把它发布为 Gitea Release 正文。
 
 
 
 ## Windows 桌面端打包
 
-桌面端安装包版本号与发布版本对齐（`desktop/package.json` 的 `version` 与 `releases/` 下最新版本号衔接，如当前 `1.0.17`）。产物写入 `releases/<version>/`，不纳入 Git。
+桌面端安装包版本号与发布版本对齐（`desktop/package.json` 的 `version` 与 `releases/` 下最新版本号衔接，如当前 `1.1.6`）。产物写入 `releases/<version>/`，不纳入 Git。
 
 打包在代码库外的本地目录进行（属第 17 行允许的宿主机原生任务），分两步走，绕过 Windows Defender 实时扫描锁定 `electron.exe` 导致的 `EPERM rename`：
 
