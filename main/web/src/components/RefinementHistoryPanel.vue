@@ -1445,12 +1445,13 @@ onUnmounted(() => {
 .snake-row {
   display: flex;
   align-items: flex-start;
+  /* 第一行居中;折返行右对齐,行首节点(7)正好在上一行行尾节点(6)正下方 */
   justify-content: center;
   width: 100%;
   min-height: 58px;
   gap: 10px;
 }
-.snake-row.reversed { flex-direction: row-reverse; }
+.snake-row.reversed { flex-direction: row-reverse; justify-content: flex-start; }
 /* 引导条:固定短条,与 pill 垂直居中 */
 .snake-node-gap {
   flex: 0 0 auto;
