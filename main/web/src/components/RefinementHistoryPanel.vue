@@ -130,7 +130,7 @@
                     <path d="M0,0 L6,3 L0,6 Z" class="snake-arrow" />
                   </marker>
                 </defs>
-                <path class="snake-track" :d="snakePath" vector-effect="non-scaling-stroke" :marker-end="`url(#arrow-${markerId})`" />
+                <path class="snake-track snake-dashed" :d="snakePath" vector-effect="non-scaling-stroke" :marker-end="`url(#arrow-${markerId})`" />
               </svg>
               <button
                 v-for="node in snakeNodes"
@@ -142,8 +142,8 @@
                 v-tooltip="stageDisplayName(node.stage)"
                 @click="selectStage(node.id)"
               >
-                <span class="snake-node-num" aria-hidden="true">{{ node.index + 1 }}</span>
-                <span class="snake-node-name">{{ stageShortName(node.stage) }}</span>
+                <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
+                <span class="snake-node-num">{{ node.index + 1 }}</span>
               </button>
             </div>
           </div>
@@ -1447,47 +1447,53 @@ onUnmounted(() => {
 .snake-track {
   fill: none;
   stroke: var(--border-strong);
-  stroke-width: 1.5;
+  stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
-  opacity: .6;
+  opacity: .5;
 }
-.snake-arrow { fill: var(--border-strong); opacity: .7; }
+/* 引导条:虚线段替代实线 */
+.snake-dashed {
+  stroke-dasharray: 3 4;
+}
+.snake-arrow { fill: var(--border-strong); opacity: .6; }
 .snake-node {
   position: absolute;
   transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
   background: none; border: 0; cursor: pointer;
   padding: 2px;
 }
-/* 序号圆圈:始终显示数字,状态用边框色/背景色区分,不遮序号 */
-.snake-node-num {
-  display: flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px;
-  border-radius: 50%;
-  border: 2px solid var(--border-strong);
+/* 椭圆 pill 包含阶段中文名 */
+.snake-node-pill {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 4px 12px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 20px;
   background: var(--bg);
-  color: var(--text-faint);
-  font-size: 13px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
   transition: border-color .15s, background .15s, color .15s, transform .15s, box-shadow .15s;
 }
-.snake-node:hover .snake-node-num { transform: scale(1.12); }
-.snake-node.completed .snake-node-num { border-color: var(--success, #2e7d32); background: color-mix(in srgb, var(--success, #2e7d32) 12%, var(--bg)); color: var(--success, #2e7d32); }
-.snake-node.failed .snake-node-num { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--bg)); color: var(--danger); }
-.snake-node.current .snake-node-num { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.snake-node.pending .snake-node-num { opacity: .5; }
-.snake-node.active .snake-node-num { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
-.snake-node-name {
-  font-size: 11px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  max-width: 84px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.snake-node:hover .snake-node-pill { transform: scale(1.06); }
+.snake-node.completed .snake-node-pill { border-color: var(--success, #2e7d32); background: color-mix(in srgb, var(--success, #2e7d32) 10%, var(--bg)); color: var(--success, #2e7d32); }
+.snake-node.failed .snake-node-pill { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--bg)); color: var(--danger); }
+.snake-node.current .snake-node-pill { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.snake-node.pending .snake-node-pill { opacity: .5; }
+.snake-node.active .snake-node-pill { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* 序号移到下方,小字 */
+.snake-node-num {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  line-height: 1;
 }
-.snake-node.active .snake-node-name { color: var(--accent); font-weight: 600; }
+.snake-node.active .snake-node-num { color: var(--accent); }
+.snake-node.completed .snake-node-num { color: var(--success, #2e7d32); }
+.snake-node.failed .snake-node-num { color: var(--danger); }
 
 /* 概览区改为 tab 内容,去掉底部边框(与流程图衔接) */
 .overview-section {
