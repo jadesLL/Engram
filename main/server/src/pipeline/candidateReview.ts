@@ -33,7 +33,9 @@ export type ReviewFinalizeAction = 'approve' | 'merge';
 export type ReviewKind = 'concept' | 'person' | 'customer' | 'org' | 'place' | 'work' | 'project' | 'other';
 export interface CandidateReviewDecision {
   reportId: number;
-  action: `approve:${ReviewKind}` | 'ignore';
+  action: `approve:${ReviewKind}` | `merge:${ReviewKind}` | 'ignore';
+  /** merge 动作的目标页面 id */
+  target?: string;
 }
 export type CandidateReviewProgress = (progress: {
   stage: string;
@@ -127,7 +129,7 @@ function reportRow(
   return report;
 }
 
-function resolveTarget(target: string): { id: string; title: string; path: string; type: string } {
+export function resolveTarget(target: string): { id: string; title: string; path: string; type: string } {
   const page = db.prepare(
     `SELECT id,title,path,type FROM pages WHERE deleted=0 AND (id=? OR lower(title)=lower(?))
      AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`
@@ -383,10 +385,11 @@ export async function previewCandidateReview(
     name?: string;
     target?: string;
   },
-  options: { allowApplying?: boolean; signal?: AbortSignal } = {},
+  options: { allowApplying?: boolean; signal?: AbortSignal; onProgress?: CandidateReviewProgress } = {},
 ): Promise<ReviewPreview> {
   options.signal?.throwIfAborted();
   if (!llmReady()) throw new Error('未配置 LLM，无法执行局部再提炼');
+  options.onProgress?.({ stage: '核对原文证据', progress: 10 });
   const report = reportRow(reportId, options.allowApplying);
   const candidate = ensureCandidateFromReport(report);
   if (!candidate) throw new Error('待审候选缺少可恢复的事实记录');
@@ -404,6 +407,7 @@ export async function previewCandidateReview(
   ).get(candidate.source_version_id);
   if (!activeSource) throw new Error('候选对应的原始资料已更新，请重新整理最新资料后再审核');
   const targetContent = targetPage ? readPage(targetPage.path)?.content || '' : '';
+  options.onProgress?.({ stage: '检索原文证据', progress: 20 });
   const { occurrences, facts, contexts } = await originalEvidence(
     candidate,
     name,
@@ -413,6 +417,7 @@ export async function previewCandidateReview(
   const evidence = evidenceInput(facts);
   const allowedEvidence = new Set(facts.map((fact) => fact.evidenceId));
   const related = await retrievalContext(name, candidate.summary);
+  options.onProgress?.({ stage: '局部再提炼', progress: 40 });
   const refinedInput = {
     requestedName: name,
     kind: reviewKind,
@@ -445,6 +450,7 @@ export async function previewCandidateReview(
   const filteredRelations = refined.relations.filter((relation) =>
     relation.evidenceIds.length > 0 && relation.evidenceIds.every((id) => allowedEvidence.has(id))
   );
+  options.onProgress?.({ stage: '重新验证', progress: 70 });
   const verified = await runSemanticStage({
     scope: 'candidate-review',
     refId: candidate.id,
@@ -601,13 +607,18 @@ export function validateCandidateReviewDecisions(raw: unknown): CandidateReviewD
   const seen = new Set<number>();
   return raw.map((entry: any) => {
     const reportId = Number(entry?.reportId);
-    const action = String(entry?.action || '') as CandidateReviewDecision['action'];
     if (!Number.isInteger(reportId) || reportId <= 0 || seen.has(reportId)) throw new Error('候选选择无效或重复');
-    if (!['approve:concept', 'approve:person', 'approve:customer', 'approve:org', 'approve:place', 'approve:work', 'approve:project', 'approve:other', 'ignore'].includes(action)) {
+    const action = String(entry?.action || '');
+    const [op, kindPart] = action.split(':');
+    const validKinds = ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'];
+    if (op !== 'ignore' && !((op === 'approve' || op === 'merge') && validKinds.includes(kindPart))) {
       throw new Error(`候选处理动作无效：${action}`);
     }
+    if (op === 'merge' && !String(entry?.target || '')) {
+      throw new Error('并入操作必须选择目标页面');
+    }
     seen.add(reportId);
-    return { reportId, action };
+    return { reportId, action: action as CandidateReviewDecision['action'], target: entry?.target ? String(entry.target) : undefined };
   });
 }
 
@@ -652,13 +663,32 @@ export async function applyCandidateReviewBatch(
         result.ignored++;
         continue;
       }
-      const kind = decision.action.slice('approve:'.length) as ReviewKind;
+      const kind = decision.action.slice(decision.action.indexOf(':') + 1) as ReviewKind;
+      // 单候选时 index/total 折算为 0,进度直接由 preview 内部各阶段驱动;
+      // 多候选时以条目为单位折算,叠加 preview 阶段进度作为条目内细分。
+      const itemBase = (index / decisions.length) * 95;
+      const itemSpan = 95 / decisions.length;
       const preview = await previewCandidateReview(
         decision.reportId,
-        { action: 'approve', kind },
-        { allowApplying: true, signal },
+        decision.action.startsWith('merge:')
+          ? { action: 'merge', kind, target: decision.target }
+          : { action: 'approve', kind },
+        {
+          allowApplying: true,
+          signal,
+          onProgress: (p) => update({
+            stage: p.stage,
+            progress: Math.round(itemBase + (p.progress / 100) * itemSpan),
+            detail: `${index + 1}/${decisions.length} · ${decision.reportId}`,
+          }),
+        },
       );
       signal?.throwIfAborted();
+      update({
+        stage: '提交入库',
+        progress: Math.round(itemBase + itemSpan * 0.95),
+        detail: `${index + 1}/${decisions.length} · ${decision.reportId}`,
+      });
       commitCandidateReview(decision.reportId, preview.token, { allowApplying: true });
       result.completed++;
     } catch (error: any) {
@@ -673,7 +703,8 @@ export async function applyCandidateReviewBatch(
   update({
     stage: '批量审核完成',
     progress: 100,
-    detail: `批准 ${result.completed} 项，忽略 ${result.ignored} 项${result.failed ? `，失败 ${result.failed} 项` : ''}`,
+    detail: `批准 ${result.completed} 项，忽略 ${result.ignored} 项${result.failed ? `，失败 ${result.failed} 项` : ''}`
+      + (result.errors.length ? `：${result.errors[0].slice(0, 120)}` : ''),
   });
   return result;
 }

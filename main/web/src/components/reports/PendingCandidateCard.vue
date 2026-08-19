@@ -1,5 +1,5 @@
 <template>
-  <div class="candidate-card card" :class="{ busy }">
+  <div class="candidate-card card" :class="{ busy: busy || !!progress || item.applying }">
     <div class="candidate-head">
       <b class="candidate-name">{{ item.name }}</b>
       <span class="chip type">{{ kindLabel }}</span>
@@ -25,10 +25,10 @@
       <span v-if="item.ambiguity.label" class="ambiguity-label">{{ item.ambiguity.label }}</span>
       <b>{{ item.ambiguity.question }}</b>
     </div>
-    <p v-if="!item.evidenceEligible" class="risk-note small">
-      该候选未通过自动验证,「AI 完善后建立」会重新核对原文证据,证据不足时会生成失败。
+    <p v-if="!item.evidenceEligible && !progress" class="risk-note small">
+      该候选未通过自动验证,「AI 提炼入库」会重新核对原文证据,证据不足时会生成失败。
     </p>
-    <!-- 并入目标选择(展开式) -->
+    <!-- 并入目标选择(展开式):选好直接后台执行,不再弹预览 -->
     <div v-if="merging" class="merge-panel">
       <select v-model="mergeTarget">
         <option value="">选择已有页面</option>
@@ -36,12 +36,19 @@
           {{ page.title }}({{ typeLabel(page.type) }})
         </option>
       </select>
-      <button class="btn small primary" :disabled="!mergeTarget" @click="confirmMerge">生成并入预览</button>
+      <button class="btn small primary" :disabled="!mergeTarget" @click="confirmMerge">并入该页面</button>
       <button class="btn small" @click="merging = false">取消</button>
     </div>
-    <div class="actions">
+    <!-- AI 提炼入库后台进度:处理中整卡禁点,进度条取代操作按钮 -->
+    <div v-if="progress" class="candidate-progress">
+      <div class="progress-track">
+        <div class="progress-fill" :style="{ width: `${progress.progress}%` }" />
+      </div>
+      <span class="muted small">{{ progress.stage }} {{ progress.progress }}%</span>
+    </div>
+    <div v-else class="actions">
       <button class="btn small primary" :disabled="busy" @click="$emit('refine', item)">
-        AI 完善后建立
+        AI 提炼入库
       </button>
       <button class="btn small" :disabled="busy" @click="merging = true">并入已有页面…</button>
       <button class="btn small" :disabled="busy" @click="$emit('ignore', item)">忽略</button>
@@ -67,6 +74,7 @@ export interface PendingCandidateData {
   facts: { statement: string; sources: { chunkId: string; quote: string }[] }[];
   evidenceEligible: boolean;
   autoReconcileReady: boolean;
+  applying?: boolean;
   ambiguity: { label?: string; question?: string } | null;
   createdAt: string;
 }
@@ -74,6 +82,8 @@ export interface PendingCandidateData {
 const props = defineProps<{
   item: PendingCandidateData;
   busy?: boolean;
+  /** 后台入库任务进度:存在时整卡遮罩+进度条,操作按钮隐藏 */
+  progress?: { stage: string; progress: number } | null;
   mergeTargets: { id: string; title: string; type: string }[];
 }>();
 
@@ -102,8 +112,11 @@ function confirmMerge() {
 </script>
 
 <style scoped>
-.candidate-card { display: flex; flex-direction: column; gap: 8px; padding: 16px 18px; }
-.candidate-card.busy { opacity: .65; pointer-events: none; }
+.candidate-card { display: flex; flex-direction: column; gap: 8px; padding: 16px 18px; position: relative; }
+.candidate-card.busy { opacity: .75; pointer-events: none; }
+.candidate-progress { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.progress-track { flex: 1; height: 6px; border-radius: 3px; background: var(--bg-tertiary, var(--bg-secondary)); overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s ease; }
 .candidate-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .candidate-name { font-size: 16px; overflow-wrap: anywhere; }
 .chip { padding: 2px 8px; border-radius: 10px; font-size: 12px; }

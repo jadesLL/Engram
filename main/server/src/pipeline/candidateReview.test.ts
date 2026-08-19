@@ -323,6 +323,30 @@ test('batch review applies only explicit approval and ignore decisions', async (
   assert.equal(db.prepare(`SELECT status FROM reports WHERE id=?`).get(ignored.reportId).status, 'dismissed');
 });
 
+test('batch review reports fine-grained progress per candidate stage', async () => {
+  const { reportId } = createCandidate(
+    '进度候选',
+    'review-run-progress',
+    '原始资料/进度候选.md',
+    '进度候选旧草稿。',
+  );
+  const events: Array<{ stage: string; progress: number }> = [];
+  const decisions = [{ reportId, action: 'approve:project' }];
+  claimCandidateReviewBatch(decisions);
+  const result = await applyCandidateReviewBatch(decisions, (p: { stage: string; progress: number }) =>
+    events.push({ stage: p.stage, progress: p.progress }),
+  );
+  assert.deepEqual(result, { completed: 1, ignored: 0, failed: 0, errors: [] });
+  const stages = events.map((event) => event.stage);
+  for (const expected of ['核对原文证据', '检索原文证据', '局部再提炼', '重新验证', '提交入库']) {
+    assert.ok(stages.includes(expected), `进度回调应包含「${expected}」阶段,实际:${stages.join('、')}`);
+  }
+  const progresses = events.map((event) => event.progress);
+  assert.ok(progresses.length >= 2, '进度回调应被多次触发');
+  assert.ok(progresses.every((value) => value >= 0 && value <= 100), '进度必须在 0-100 之间');
+  assert.equal(Math.max(...progresses), 100, '最终进度应到 100');
+});
+
 test('automatic reconciliation reuses stored evidence without rerunning source refinement', async () => {
   const primary = createCandidate(
     '自动对账项目',
