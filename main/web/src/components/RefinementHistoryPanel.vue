@@ -1433,7 +1433,7 @@ onUnmounted(() => {
   background: var(--bg-secondary);
 }
 .snake-flow {
-  --node-width: 108px;
+  --node-width: 116px;
   --pill-height: 32px;
   display: flex;
   flex-direction: column;
@@ -1495,6 +1495,8 @@ onUnmounted(() => {
   flex: 0 0 var(--node-width);
   width: var(--node-width);
   min-width: var(--node-width);
+  max-width: var(--node-width);
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1504,7 +1506,7 @@ onUnmounted(() => {
   cursor: pointer;
   padding: 0;
 }
-/* 椭圆 pill 包含阶段中文名(浅底柔和配色) */
+/* 椭圆 pill 包含阶段中文名(浅底柔和配色);禁止撑破节点宽,超长省略 */
 .snake-node-pill {
   display: inline-flex;
   align-items: center;
@@ -1520,6 +1522,8 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: border-color .15s, background .15s, color .15s, transform .15s, box-shadow .15s;
 }
 .snake-node:hover .snake-node-pill { transform: scale(1.06); border-color: var(--accent); }
