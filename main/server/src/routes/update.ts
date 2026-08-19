@@ -277,23 +277,25 @@ export async function updateRoutes(app: FastifyInstance) {
           /* 无残留 */
         }
 
-        // 3) 旧容器重命名腾出名字，按原配置 + 新镜像创建新容器
+        // 3) 旧容器重命名腾出名字，按原配置 + 新镜像创建新容器（保留原容器名）
+        const originalName = inspect.Name.replace(/^\//, '');
         const newBody = buildCreateBody(inspect, targetRef);
         await docker.renameContainer(oldId, OLD_CONTAINER_NAME);
         progressLine(`已重命名旧容器为 ${OLD_CONTAINER_NAME}`);
         let created;
         try {
-          created = await docker.createContainer(newBody);
+          created = await docker.createContainer(newBody, originalName);
         } catch (e) {
           // 创建失败立即回滚重命名，保持现状
-          await docker.renameContainer(oldId, inspect.Name.replace(/^\//, '')).catch(() => {});
+          await docker.renameContainer(oldId, originalName).catch(() => {});
           throw e;
         }
         progressLine(`已创建新容器 (${created.Id.slice(0, 12)})`);
 
-        // 4) 启动 switcher 临时容器接管切换（本进程即将被停止）
-        const oldImageId = inspect.Image; // 完整 sha256 ImageID，旧镜像一定在本地
-        const switcherBody = buildSwitcherCreateBody(oldImageId, oldId, created.Id);
+        // 4) 启动 switcher 临时容器接管切换（本进程即将被停止）。
+        //    Image 用 targetRef：新容器刚用它 create 成功，存在性已验证；
+        //    若用旧镜像 ImageID，旧镜像在本流程中途被清理（如同名 tag 被 rebuild 顶掉变 dangling 后回收）会导致 switcher 起不来。
+        const switcherBody = buildSwitcherCreateBody(targetRef, oldId, created.Id, originalName);
         await docker.createContainer(switcherBody).then((s) => docker.startContainer(s.Id));
         progressLine('切换容器已启动，服务即将重启…');
 

@@ -25,10 +25,12 @@ test('switcher 内联脚本语法正确（node --check）', () => {
 test('switcher 脚本引用注入的环境变量且不含镜像内路径依赖', () => {
   assert.ok(SWITCHER_SCRIPT.includes('WIKILLM_UPDATE_OLD_ID'));
   assert.ok(SWITCHER_SCRIPT.includes('WIKILLM_UPDATE_NEW_ID'));
+  assert.ok(SWITCHER_SCRIPT.includes('WIKILLM_UPDATE_NAME'), '回滚还原容器名所需的原名变量');
   assert.ok(SWITCHER_SCRIPT.includes('/var/run/docker.sock'));
-  // 回滚路径存在
+  // 回滚路径存在且会 rename 回原名
   assert.ok(SWITCHER_SCRIPT.includes('rolling back'));
   assert.ok(SWITCHER_SCRIPT.includes("OLD_ID + '/start'"));
+  assert.ok(SWITCHER_SCRIPT.includes('rename?name='));
 });
 
 test('buildCreateBody 复制容器配置并替换镜像', () => {
@@ -64,13 +66,15 @@ test('buildCreateBody 复制容器配置并替换镜像', () => {
   assert.equal((body as any).HostConfig.RestartPolicy.Name, 'unless-stopped');
   // 网络别名保留（去掉容器短 ID 别名）
   assert.deepEqual((body as any).NetworkingConfig.EndpointsConfig['exampleproject_default'].Aliases, ['example-wiki']);
-  // Hostname 不复制（由 Docker 重新分配）
+  // Hostname 不复制（由 Docker 重新分配）；Cmd/Healthcheck 不复制（新镜像自己的生效）
   assert.equal((body as any).Hostname, undefined);
+  assert.equal((body as any).Cmd, undefined);
+  assert.equal((body as any).Healthcheck, undefined);
 });
 
-test('buildSwitcherCreateBody 用旧镜像 ID + sock + AutoRemove', () => {
-  const body = buildSwitcherCreateBody('sha256:oldimage', 'oldid123', 'newid456') as any;
-  assert.equal(body.Image, 'sha256:oldimage');
+test('buildSwitcherCreateBody 用目标镜像 + sock + AutoRemove', () => {
+  const body = buildSwitcherCreateBody('registry.example.com/example-wiki:latest', 'oldid123', 'newid456', 'example-wiki') as any;
+  assert.equal(body.Image, 'registry.example.com/example-wiki:latest');
   assert.equal(body.HostConfig.NetworkMode, 'none');
   assert.equal(body.HostConfig.AutoRemove, true);
   assert.deepEqual(body.HostConfig.Binds, ['/var/run/docker.sock:/var/run/docker.sock']);

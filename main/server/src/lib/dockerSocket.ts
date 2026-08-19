@@ -197,11 +197,12 @@ export const docker = {
     });
   },
 
-  /** 创建容器 */
-  async createContainer(body: unknown): Promise<{ Id: string }> {
+  /** 创建容器（容器名走 query 参数 ?name=，Docker API 不认 body 里的 name 字段） */
+  async createContainer(body: unknown, name?: string): Promise<{ Id: string }> {
+    const query = name ? `?name=${encodeURIComponent(name)}` : '';
     const { statusCode, data } = await json<{ Id: string; message?: string }>({
       method: 'POST',
-      path: '/containers/create',
+      path: `/containers/create${query}`,
       body,
     });
     if (statusCode >= 400) throw new Error(`创建容器失败: ${data.message || statusCode}`);

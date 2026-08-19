@@ -12,6 +12,7 @@ const http = require('http');
 const SOCK = '/var/run/docker.sock';
 const OLD_ID = process.env.WIKILLM_UPDATE_OLD_ID;
 const NEW_ID = process.env.WIKILLM_UPDATE_NEW_ID;
+const NAME = process.env.WIKILLM_UPDATE_NAME;
 
 function api(method, path) {
   return new Promise((resolve, reject) => {
@@ -48,6 +49,14 @@ async function waitHealthy(id, timeoutMs) {
   return false;
 }
 
+async function rollback() {
+  await api('POST', '/containers/' + OLD_ID + '/start');
+  // 回滚后把容器名还原（此刻它叫 example-wiki-old），保持下次更新的连续性
+  if (NAME && NAME !== 'example-wiki-old') {
+    await api('POST', '/containers/' + OLD_ID + '/rename?name=' + encodeURIComponent(NAME));
+  }
+}
+
 async function main() {
   const stop = await api('POST', '/containers/' + OLD_ID + '/stop?t=20');
   if (stop.code >= 400 && stop.code !== 304) throw new Error('stop old failed: ' + stop.code);
@@ -61,13 +70,13 @@ async function main() {
   }
   console.log('new container not healthy in time, rolling back');
   await api('DELETE', '/containers/' + NEW_ID + '?force=1&v=1');
-  await api('POST', '/containers/' + OLD_ID + '/start');
+  await rollback();
   process.exit(1);
 }
 
 main().catch(async (e) => {
   console.error('switcher error:', e && e.message);
-  try { await api('POST', '/containers/' + OLD_ID + '/start'); } catch (e2) {}
+  try { await rollback(); } catch (e2) {}
   process.exit(1);
 });
 `.trim();
@@ -79,9 +88,13 @@ export const OLD_CONTAINER_NAME = 'example-wiki-old';
  * 由旧容器 inspect 结果构造新容器的 create 请求体：
  * 原样复制 Env/Cmd/Labels/Healthcheck 与全部 HostConfig（端口/卷/restart/sysctls/网络），
  * 镜像换成目标 ref；保留网络别名（OnlyOffice 经 http://example-wiki:8080 访问依赖别名）。
+ * 容器名经 createContainer 的 query 参数传递（保持原名，避免随机名断掉内网互访）。
  * Hostname 不复制——Docker 会按新容器 ID 分配，恰好是服务端下次自定位所需的默认行为。
  */
-export function buildCreateBody(inspect: DockerInspectContainer, imageRef: string): Record<string, unknown> {
+export function buildCreateBody(
+  inspect: DockerInspectContainer,
+  imageRef: string,
+): Record<string, unknown> {
   const c = inspect.Config;
   const h = inspect.HostConfig;
 
@@ -96,12 +109,10 @@ export function buildCreateBody(inspect: DockerInspectContainer, imageRef: strin
     Env: c.Env || [],
     Labels: c.Labels || {},
   };
-  if (c.Cmd) config.Cmd = c.Cmd;
-  if (c.Entrypoint) config.Entrypoint = c.Entrypoint;
-  if (c.WorkingDir) config.WorkingDir = c.WorkingDir;
+  // Cmd/Entrypoint/WorkingDir/Healthcheck 不复制：让新镜像自己的定义生效，
+  // 否则旧容器的 Cmd 会永远掩盖新版镜像对入口的修改
   if (c.User) config.User = c.User;
   if (c.ExposedPorts && Object.keys(c.ExposedPorts).length) config.ExposedPorts = c.ExposedPorts;
-  if (c.Healthcheck && (c.Healthcheck as { Test?: string[] }).Test) config.Healthcheck = c.Healthcheck;
 
   const hostConfig: Record<string, unknown> = {};
   if (h.Binds) hostConfig.Binds = h.Binds;
@@ -119,16 +130,21 @@ export function buildCreateBody(inspect: DockerInspectContainer, imageRef: strin
   return body;
 }
 
-/** switcher 容器的 create 请求体：旧镜像 + 内联脚本 + sock 挂载，用完自删除 */
+/** switcher 容器的 create 请求体：目标镜像 + 内联脚本 + sock 挂载，用完自删除 */
 export function buildSwitcherCreateBody(
-  oldImageId: string,
+  imageRef: string,
   oldContainerId: string,
   newContainerId: string,
+  containerName: string,
 ): Record<string, unknown> {
   return {
-    Image: oldImageId,
+    Image: imageRef,
     Cmd: ['node', '-e', SWITCHER_SCRIPT],
-    Env: [`WIKILLM_UPDATE_OLD_ID=${oldContainerId}`, `WIKILLM_UPDATE_NEW_ID=${newContainerId}`],
+    Env: [
+      `WIKILLM_UPDATE_OLD_ID=${oldContainerId}`,
+      `WIKILLM_UPDATE_NEW_ID=${newContainerId}`,
+      `WIKILLM_UPDATE_NAME=${containerName}`,
+    ],
     Labels: { 'com.exampleproject.update-switcher': 'true' },
     HostConfig: {
       Binds: ['/var/run/docker.sock:/var/run/docker.sock'],
