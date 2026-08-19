@@ -551,8 +551,9 @@ function stageShortName(stage: Pick<TraceStage, 'label' | 'annotation'>): string
 }
 
 /**
- * 水平蛇形流程:每行从左到右排,行尾垂直折返到下一行左端(Z 字形,直角折线)。
- * 概览在第一行最左端。坐标为百分比。
+ * 水平蛇形流程:第一行从左到右,行尾垂直折返到下一行,第二行从右到左(boustrophedon)。
+ * 6 在上行最右,折返后 7 在其正下方,8/9/10/11 一路向左,折线连续不回头。
+ * 概览在第一行最左端(序号 0)。坐标为百分比。
  */
 const SNAKE_COLS = 6;
 const SNAKE_ROW_Y = [30, 78];
@@ -564,12 +565,15 @@ const snakeNodes = computed(() => {
   return trace.map((stage, index) => {
     const row = Math.floor(index / cols);
     const col = index % cols;
+    const forward = row % 2 === 0;
+    // 奇数行反向:col 0 对应最右
+    const effectiveCol = forward ? col : cols - 1 - col;
     return {
       id: stage.id,
       stage,
       index,
       status: stage.status,
-      x: 8 + (col * 84) / (cols - 1 || 1),
+      x: 8 + (effectiveCol * 84) / (cols - 1 || 1),
       y: SNAKE_ROW_Y[Math.min(row, SNAKE_ROW_Y.length - 1)],
     };
   });

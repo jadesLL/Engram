@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-view" :class="{ 'is-wide': activeSettingsSection === 'history' }">
+  <div class="settings-view">
     <header class="settings-page-head">
       <div>
         <h2>设置</h2>
@@ -24,7 +24,7 @@
           type="button"
           :class="{ active: activeSettingsSection === item.id }"
           :aria-current="activeSettingsSection === item.id ? 'page' : undefined"
-          @click="activeSettingsSection = item.id"
+          @click="onSelectSection(item.id)"
         >
           <Icon :name="item.icon" :size="17" />
           <span>{{ item.label }}</span>
@@ -34,9 +34,6 @@
       <div class="settings-content">
         <AccountPanel v-show="activeSettingsSection === 'account'" />
         <ModelsPanel v-show="activeSettingsSection === 'models'" />
-        <section v-if="activeSettingsSection === 'history'" class="settings-panel refinement-history-panel">
-          <RefinementHistoryPanel />
-        </section>
         <AutomationPanel v-show="activeSettingsSection === 'automation'" />
         <McpPanel v-show="activeSettingsSection === 'mcp'" />
         <DesktopPanel v-show="activeSettingsSection === 'desktop'" />
@@ -50,8 +47,8 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useRouter } from 'vue-router';
 import Icon from '../components/Icon.vue';
-import RefinementHistoryPanel from '../components/RefinementHistoryPanel.vue';
 import AccountPanel from '../components/settings/AccountPanel.vue';
 import ModelsPanel from '../components/settings/ModelsPanel.vue';
 import AutomationPanel from '../components/settings/AutomationPanel.vue';
@@ -63,11 +60,12 @@ import DataPanel from '../components/settings/DataPanel.vue';
 
 type SettingsSection = 'account' | 'models' | 'history' | 'automation' | 'mcp' | 'desktop' | 'im' | 'storage' | 'data';
 
+const router = useRouter();
 const activeSettingsSection = ref<SettingsSection>('account');
 const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: string }> = [
   { id: 'account', label: '账户与外观', icon: 'settings' },
   { id: 'models', label: '模型配置', icon: 'ai' },
-  { id: 'history', label: '提炼轨迹', icon: 'list-tree' },
+  { id: 'history', label: '整理覆盖', icon: 'list-tree' },
   { id: 'automation', label: '自动化', icon: 'activity' },
   { id: 'mcp', label: 'MCP 集成', icon: 'link' },
   { id: 'desktop', label: '桌面端连接', icon: 'external' },
@@ -75,27 +73,16 @@ const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: stri
   { id: 'storage', label: '存储空间', icon: 'archive' },
   { id: 'data', label: '数据管理', icon: 'trash' },
 ];
+
+/** 「整理覆盖」不再是内嵌面板,点击直接跳转整理覆盖页(与侧边栏角标同源) */
+function onSelectSection(id: SettingsSection) {
+  if (id === 'history') {
+    router.push('/ingest-coverage');
+    return;
+  }
+  activeSettingsSection.value = id;
+}
 </script>
 
 <style scoped>
-.refinement-history-panel {
-  border: none;
-  background: transparent;
-}
-
-/* 提炼轨迹需要展示完整流程图与概览，放宽页面宽度上限 */
-.settings-view.is-wide {
-  width: min(1640px, 100%);
-}
-
-.settings-view.is-wide .settings-shell {
-  grid-template-columns: 190px minmax(0, 1fr);
-  gap: 24px;
-}
-
-@media (max-width: 1280px) {
-  .settings-view.is-wide {
-    width: 100%;
-  }
-}
 </style>
