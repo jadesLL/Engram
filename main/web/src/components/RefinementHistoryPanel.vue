@@ -108,7 +108,20 @@
             </div>
           </header>
 
-          <!-- 回形流程:阶段沿矩形边蛇形排布(上行→右列折返→下行),概览在左上角,点击就地切换 -->
+          <!-- 概览按钮(不在蛇形线上,独立于流程图) -->
+          <div class="snake-toolbar">
+            <button
+              type="button"
+              class="snake-overview-btn"
+              :class="{ active: !selectedStageId }"
+              @click="selectedStageId = ''"
+            >
+              <strong>概览</strong>
+              <span>{{ completedCount }}/{{ detail.trace.length }} 阶段完成</span>
+            </button>
+          </div>
+
+          <!-- 蛇形流程:阶段沿矩形边排布(上行左→右→折返→下行右→左),点击就地切换 -->
           <div class="snake-wrap" aria-label="提炼阶段">
             <div class="snake-inner">
               <svg class="snake-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
@@ -120,16 +133,6 @@
                 <path class="snake-track" :d="snakePath" vector-effect="non-scaling-stroke" :marker-end="`url(#arrow-${markerId})`" />
               </svg>
               <button
-                type="button"
-                class="snake-node snake-overview"
-                :class="{ active: !selectedStageId }"
-                :style="{ left: snakeOverview.x + '%', top: snakeOverview.y + '%' }"
-                @click="selectedStageId = ''"
-              >
-                <strong>概览</strong>
-                <span>{{ completedCount }}/{{ detail.trace.length }}</span>
-              </button>
-              <button
                 v-for="node in snakeNodes"
                 :key="node.id"
                 type="button"
@@ -139,12 +142,7 @@
                 v-tooltip="stageDisplayName(node.stage)"
                 @click="selectStage(node.id)"
               >
-                <span class="snake-node-dot" aria-hidden="true">
-                  <Icon v-if="node.status === 'completed'" name="check" :size="11" :stroke-width="2.6" />
-                  <Icon v-else-if="node.status === 'failed'" name="x" :size="11" :stroke-width="2.6" />
-                  <span v-else-if="node.status === 'current'" class="pulse-dot"></span>
-                  <span v-else class="node-index">{{ node.index + 1 }}</span>
-                </span>
+                <span class="snake-node-num" aria-hidden="true">{{ node.index + 1 }}</span>
                 <span class="snake-node-name">{{ stageShortName(node.stage) }}</span>
               </button>
             </div>
@@ -581,13 +579,14 @@ const snakeNodes = computed(() => {
 const snakeOverview = computed(() => ({ x: 8, y: SNAKE_ROW_Y[0] }));
 /** 每个实例唯一 marker id,避免多面板共存时 SVG marker 冲突 */
 const markerId = Math.random().toString(36).slice(2, 8);
-/** 直角折线:行间用水平-垂直-水平三段,保持直线不斜 */
+/** 直角折线:从第一个节点出发,行间用水平-垂直-水平三段,保持直线不斜 */
 const snakePath = computed(() => {
   const nodes = snakeNodes.value;
-  if (nodes.length < 1) return '';
+  if (nodes.length < 2) return '';
   const parts: string[] = [];
-  let prev = { x: 8, y: SNAKE_ROW_Y[0] };
-  for (const node of nodes) {
+  let prev = { x: nodes[0].x, y: nodes[0].y };
+  for (let i = 1; i < nodes.length; i++) {
+    const node = nodes[i];
     if (node.y === prev.y) {
       parts.push(`L ${node.x} ${node.y}`);
     } else {
@@ -597,7 +596,7 @@ const snakePath = computed(() => {
     }
     prev = { x: node.x, y: node.y };
   }
-  return `M ${8} ${SNAKE_ROW_Y[0]} ` + parts.join(' ');
+  return `M ${nodes[0].x} ${nodes[0].y} ` + parts.join(' ');
 });
 
 function questionStatusLabel(status: string): string {
@@ -1405,9 +1404,34 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-/* ---------- 回形蛇形流程(替代纵向流程图) ---------- */
+/* ---------- 概览按钮(独立于蛇形流程) ---------- */
+.snake-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px 4px;
+  background: var(--bg-secondary);
+}
+.snake-overview-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.snake-overview-btn:hover { border-color: var(--accent); }
+.snake-overview-btn.active { border-color: var(--accent); background: var(--accent-soft); }
+.snake-overview-btn strong { font-size: 14px; color: var(--text); }
+.snake-overview-btn span { font-size: 11px; color: var(--text-faint); }
+
+/* ---------- 回形蛇形流程 ---------- */
 .snake-wrap {
-  padding: 18px 18px 6px;
+  padding: 6px 18px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   display: flex;
@@ -1417,7 +1441,7 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   max-width: 960px;
-  height: 210px;
+  height: 200px;
 }
 .snake-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .snake-track {
@@ -1426,30 +1450,35 @@ onUnmounted(() => {
   stroke-width: 1.5;
   stroke-linejoin: round;
   stroke-linecap: round;
-  opacity: .7;
+  opacity: .6;
 }
-.snake-arrow { fill: var(--border-strong); opacity: .8; }
+.snake-arrow { fill: var(--border-strong); opacity: .7; }
 .snake-node {
   position: absolute;
   transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
   background: none; border: 0; cursor: pointer;
   padding: 2px;
 }
-.snake-node-dot {
+/* 序号圆圈:始终显示数字,状态用边框色/背景色区分,不遮序号 */
+.snake-node-num {
   display: flex; align-items: center; justify-content: center;
   width: 30px; height: 30px;
   border-radius: 50%;
   border: 2px solid var(--border-strong);
   background: var(--bg);
   color: var(--text-faint);
-  transition: border-color .15s, background .15s, transform .15s, box-shadow .15s;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transition: border-color .15s, background .15s, color .15s, transform .15s, box-shadow .15s;
 }
-.snake-node:hover .snake-node-dot { transform: scale(1.12); }
-.snake-node.completed .snake-node-dot { border-color: var(--success, #2e7d32); color: var(--success, #2e7d32); background: color-mix(in srgb, var(--success, #2e7d32) 10%, var(--bg)); }
-.snake-node.failed .snake-node-dot { border-color: var(--danger); color: var(--danger); }
-.snake-node.current .snake-node-dot { border-color: var(--accent); color: var(--accent); }
-.snake-node.active .snake-node-dot { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.snake-node:hover .snake-node-num { transform: scale(1.12); }
+.snake-node.completed .snake-node-num { border-color: var(--success, #2e7d32); background: color-mix(in srgb, var(--success, #2e7d32) 12%, var(--bg)); color: var(--success, #2e7d32); }
+.snake-node.failed .snake-node-num { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--bg)); color: var(--danger); }
+.snake-node.current .snake-node-num { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.snake-node.pending .snake-node-num { opacity: .5; }
+.snake-node.active .snake-node-num { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
 .snake-node-name {
   font-size: 11px;
   color: var(--text-secondary);
@@ -1459,9 +1488,6 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 .snake-node.active .snake-node-name { color: var(--accent); font-weight: 600; }
-.snake-overview .snake-node-dot { border-color: var(--accent); }
-.snake-overview strong { font-size: 13px; color: var(--text); }
-.snake-overview span { font-size: 10.5px; color: var(--text-faint); }
 
 /* 概览区改为 tab 内容,去掉底部边框(与流程图衔接) */
 .overview-section {
