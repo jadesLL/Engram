@@ -57,6 +57,9 @@ jobs:
 
       - name: 构建 Windows 安装包（wine 容器内交叉打包，docker cp 拷出产物）
         shell: bash
+        env:
+          # Windows runner 的 Git Bash 会对参数做 MSYS 路径转换（main → C:/Program Files/Git/main），必须禁用
+          MSYS_NO_PATHCONV: '1'
         run: |
           docker build -f desktop/Dockerfile.ci -t exampleproject-desktop-builder main
           CID=$(docker create exampleproject-desktop-builder)

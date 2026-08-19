@@ -14,6 +14,8 @@ on:
 env:
   REGISTRY: gitea.example.com
   IMAGE: gitea.example.com/example/example-wiki
+  # Windows runner 的 Git Bash 会对参数做 MSYS 路径转换（main → C:/Program Files/Git/main），必须禁用
+  MSYS_NO_PATHCONV: '1'
 
 jobs:
   build:
