@@ -139,6 +139,8 @@ docker compose -f docker-compose.pull.yml up -d
 
 Windows 桌面端安装包从 [Releases](https://gitea.example.com/example/ExampleProject/releases) 下载（`LLM Wiki Setup <版本>.exe`），详见 [`main/desktop/README.md`](./main/desktop/README.md)。
 
+> 想从源码自行构建 Docker 镜像或 Windows 安装包（含不依赖 CI 的本地 Docker 构建路径与部署方式），见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)。
+
 ## 数据目录
 
 数据都在 `./data`（映射到容器 `/data`），备份 = 复制整个 `data/` 目录；DB 丢失后可从 brain/ 重建。
@@ -220,7 +222,8 @@ Fastify + better-sqlite3（FTS5 + sqlite-vec）· Vue 3 + Vditor + vis-network �
 - **更新日志**：[`CHANGELOG.md`](./CHANGELOG.md)——每个版本的全部新功能与变更；发版时由 CI 自动发布到 GitHub Release 正文
 - **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Docker 镜像包（tar.gz）与 sha256 校验
 - **镜像**：`gitea.example.com/example/exampleproject/example-wiki:<版本>`（未公开发布；需要请自行构建）
-- **发版流程**：详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)
+- **发版流程**：详见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)（构建与部署完整指南）
+- **CI/CD 维护**：Runner 环境、Secrets、镜像分发细则见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)
 
 ## 文档索引
 
@@ -228,6 +231,7 @@ Fastify + better-sqlite3（FTS5 + sqlite-vec）· Vue 3 + Vditor + vis-network �
 |---|---|
 | [`main/AGENTS.md`](./main/AGENTS.md) | 开发 Agent 约定（worktree、验证、合并） |
 | [`main/WORKTREES.md`](./main/WORKTREES.md) | Worktree 工作流与资源隔离规则 |
+| [`main/docs/BUILDING.md`](./main/docs/BUILDING.md) | 构建与部署指南（安装包生成、发版、部署） |
 | [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md) | Gitea CI/CD、发版流程、镜像分发 |
 | [`main/docs/AI-CONTENT-OPERATIONS.md`](./main/docs/AI-CONTENT-OPERATIONS.md) | AI 操作知识内容的纪律 |
 | [`main/docs/LLM-FIRST-ARCHITECTURE.md`](./main/docs/LLM-FIRST-ARCHITECTURE.md) | LLM 优先架构设计 |
