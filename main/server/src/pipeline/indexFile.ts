@@ -141,7 +141,7 @@ export function migrateAiLogsToOperationLog() {
       const counts = parseDreamCounts(body);
       const total = Object.values(counts).reduce((a, b) => a + b, 0);
       const detail = Object.entries(counts).map(([k, v]) => `${k} ${v}`).join('｜');
-      collected.push({ ts, line: `- ${ts} 梦境整理：${detail}｜共 ${total} 项${total > 0 ? '，见整理报告' : '，无待处理'}` });
+      collected.push({ ts, line: `- ${ts} 智能整理：${detail}｜共 ${total} 项${total > 0 ? '，见整理报告' : '，无待处理'}` });
       continue;
     }
 

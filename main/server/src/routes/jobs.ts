@@ -41,7 +41,7 @@ const KIND_LABELS: Record<string, string> = {
   candidate_reconcile: '候选动态对账',
   candidate_review_batch: '批量审核候选',
   dream_apply: '分类批量处理',
-  dream: '梦境整理',
+  dream: '智能整理',
   rebuild: '重建全部索引',
 };
 
