@@ -80,7 +80,7 @@
               <span class="dot pending" v-else />
               <span class="job-label">{{ j.label }}</span>
               <span v-if="j.sourceLabel" class="job-source faint small" v-tooltip.auto="j.sourceLabel">{{ j.sourceLabel }}</span>
-              <span class="job-status faint small" v-tooltip="'j.detail || j.stage'">{{ statusText(j) }}</span>
+              <span class="job-status faint small" v-tooltip.auto="j.detail || j.stage">{{ statusText(j) }}</span>
               <span class="job-eta faint small">{{ etaText(j) }}</span>
               <span class="job-progress small">{{ j.progress }}%</span>
               <button class="btn icon job-cancel" v-tooltip="'取消任务'" aria-label="取消任务" @click="cancel(j)">
@@ -115,15 +115,36 @@
         <template v-for="g in groupedDone" :key="g.key">
           <div class="job-group">
             <div class="group-head small faint" v-tooltip.auto="g.key">{{ g.label }}</div>
-            <div v-for="j in g.tasks" :key="j.id" class="job-row done indented" :class="{ warning: hasWarning(j) }">
-              <span class="dot" :class="hasWarning(j) ? 'warning' : 'done'" />
-              <span class="job-label">{{ j.label }}</span>
-              <span v-if="hasWarning(j)" class="job-warning-tag" v-tooltip="humanError(j.detail || j.error || '')">
-                <Icon name="activity" :size="11" />
-                有警告
-              </span>
-              <span class="faint small">{{ shortTime(j.run_at) }}</span>
-            </div>
+            <template v-for="j in g.tasks" :key="j.id">
+              <div
+                class="job-row done indented"
+                :class="{ warning: hasWarning(j), expandable: hasWarning(j), expanded: expandedWarningIds.has(j.id) }"
+                :role="hasWarning(j) ? 'button' : undefined"
+                :tabindex="hasWarning(j) ? 0 : undefined"
+                :aria-expanded="hasWarning(j) ? expandedWarningIds.has(j.id) : undefined"
+                @click="hasWarning(j) && toggleWarning(j.id)"
+                @keydown.enter.prevent="hasWarning(j) && toggleWarning(j.id)"
+                @keydown.space.prevent="hasWarning(j) && toggleWarning(j.id)"
+              >
+                <span class="dot" :class="hasWarning(j) ? 'warning' : 'done'" />
+                <span class="job-label">{{ j.label }}</span>
+                <span v-if="hasWarning(j)" class="job-warning-tag">
+                  <Icon name="activity" :size="11" />
+                  有警告
+                </span>
+                <Icon
+                  v-if="hasWarning(j)"
+                  name="chevron-down"
+                  :size="12"
+                  class="job-warning-chevron"
+                  :class="{ open: expandedWarningIds.has(j.id) }"
+                />
+                <span class="faint small">{{ shortTime(j.run_at) }}</span>
+              </div>
+              <div v-if="hasWarning(j) && expandedWarningIds.has(j.id)" class="job-warning-detail">
+                {{ j.error || j.detail }}
+              </div>
+            </template>
           </div>
         </template>
         <p v-if="!doneJobs.length" class="faint small none">暂无记录</p>
@@ -433,6 +454,16 @@ function hasWarning(job: any): boolean {
     (typeof job.detail === 'string' && /错误|失败|警告/.test(job.detail))
   );
 }
+
+/** 展开的警告详情行（按 job.id，轮询刷新数据后保持展开状态） */
+const expandedWarningIds = ref(new Set<number>());
+
+function toggleWarning(id: number) {
+  const next = new Set(expandedWarningIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedWarningIds.value = next;
+}
 </script>
 
 <style scoped>
@@ -595,10 +626,41 @@ function hasWarning(job: any): boolean {
   color: var(--warning);
   font-size: 11px;
   font-weight: 500;
-  cursor: help;
 }
 .job-row.done.warning {
   background: color-mix(in srgb, var(--warning) 5%, transparent);
+}
+.job-row.expandable {
+  cursor: pointer;
+  border-radius: 4px;
+}
+.job-row.expandable:hover,
+.job-row.expandable:focus-visible {
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  outline: none;
+}
+.job-warning-chevron {
+  flex-shrink: 0;
+  color: var(--warning);
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+.job-warning-chevron.open {
+  transform: rotate(180deg);
+  opacity: 1;
+}
+.job-warning-detail {
+  margin: 1px 0 3px 14px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow-y: auto;
 }
 .err-text { color: var(--danger); margin: 2px 0 0 17px; word-break: break-all; }
 .none { padding: 4px 2px; }
