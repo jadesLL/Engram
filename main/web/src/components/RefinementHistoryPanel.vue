@@ -112,7 +112,12 @@
           <div class="snake-wrap" aria-label="提炼阶段">
             <div class="snake-inner">
               <svg class="snake-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                <path class="snake-track" :d="snakePath" />
+                <defs>
+                  <marker :id="`arrow-${markerId}`" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                    <path d="M0,0 L6,3 L0,6 Z" class="snake-arrow" />
+                  </marker>
+                </defs>
+                <path class="snake-track" :d="snakePath" vector-effect="non-scaling-stroke" :marker-end="`url(#arrow-${markerId})`" />
               </svg>
               <button
                 type="button"
@@ -546,12 +551,11 @@ function stageShortName(stage: Pick<TraceStage, 'label' | 'annotation'>): string
 }
 
 /**
- * 回形蛇形流程:阶段沿矩形边排布——上行左→右、下行左→右(第二行折返到下一行),
- * 长度不够自然换行,不闭环。概览固定左上角。
- * 坐标为 viewBox 0-100 百分比。
+ * 水平蛇形流程:每行从左到右排,行尾垂直折返到下一行左端(Z 字形,直角折线)。
+ * 概览在第一行最左端。坐标为百分比。
  */
 const SNAKE_COLS = 6;
-const SNAKE_ROWS = [26, 74]; // 两行 y 坐标
+const SNAKE_ROW_Y = [30, 78];
 const snakeNodes = computed(() => {
   const trace = detail.value?.trace || [];
   const count = trace.length;
@@ -565,17 +569,31 @@ const snakeNodes = computed(() => {
       stage,
       index,
       status: stage.status,
-      x: ((col + 1) / (cols + 1)) * 100,
-      y: SNAKE_ROWS[Math.min(row, SNAKE_ROWS.length - 1)],
+      x: 8 + (col * 84) / (cols - 1 || 1),
+      y: SNAKE_ROW_Y[Math.min(row, SNAKE_ROW_Y.length - 1)],
     };
   });
 });
-const snakeOverview = computed(() => ({ x: 8, y: SNAKE_ROWS[0] }));
-/** 蛇形连接 path:依次串联各节点(概览起点),行间折返 */
+const snakeOverview = computed(() => ({ x: 8, y: SNAKE_ROW_Y[0] }));
+/** 每个实例唯一 marker id,避免多面板共存时 SVG marker 冲突 */
+const markerId = Math.random().toString(36).slice(2, 8);
+/** 直角折线:行间用水平-垂直-水平三段,保持直线不斜 */
 const snakePath = computed(() => {
-  const points = [{ x: 8, y: SNAKE_ROWS[0] }, ...snakeNodes.value.map((n) => ({ x: n.x, y: n.y }))];
-  if (points.length < 2) return '';
-  return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+  const nodes = snakeNodes.value;
+  if (nodes.length < 1) return '';
+  const parts: string[] = [];
+  let prev = { x: 8, y: SNAKE_ROW_Y[0] };
+  for (const node of nodes) {
+    if (node.y === prev.y) {
+      parts.push(`L ${node.x} ${node.y}`);
+    } else {
+      // 换行:先垂直到目标行,再水平到目标列(直角)
+      parts.push(`L ${prev.x} ${node.y}`);
+      parts.push(`L ${node.x} ${node.y}`);
+    }
+    prev = { x: node.x, y: node.y };
+  }
+  return `M ${8} ${SNAKE_ROW_Y[0]} ` + parts.join(' ');
 });
 
 function questionStatusLabel(status: string): string {
@@ -1400,11 +1418,13 @@ onUnmounted(() => {
 .snake-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .snake-track {
   fill: none;
-  stroke: var(--border);
-  stroke-width: 2;
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
   stroke-linejoin: round;
-  opacity: .6;
+  stroke-linecap: round;
+  opacity: .7;
 }
+.snake-arrow { fill: var(--border-strong); opacity: .8; }
 .snake-node {
   position: absolute;
   transform: translate(-50%, -50%);
