@@ -37,7 +37,13 @@ before(async () => {
     res.end(JSON.stringify({
       choices: [{
         finish_reason: 'stop',
-        message: { content: JSON.stringify({ addition: '', rationale: '测试合并' }) },
+        message: {
+          content: JSON.stringify({
+            content: '# 合并结果\n\n## 当前理解\n\n综合后的内容。\n\n## 相关页面\n\n\n## 时间线\n\n',
+            aliases: [],
+            rationale: '测试合并',
+          }),
+        },
       }],
     }));
   });
