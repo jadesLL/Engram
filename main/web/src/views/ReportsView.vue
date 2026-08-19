@@ -50,8 +50,9 @@
         :key="item.reportId"
         :item="item"
         :busy="Boolean(candidateBusy[item.reportId])"
+        :progress="candidateProgress[item.reportId] || null"
         :merge-targets="mergeTargets"
-        @refine="(target) => openCandidatePreview(target, 'approve')"
+        @refine="autoCommitCandidate"
         @merge-into="openMergePreview"
         @ignore="ignoreCandidate"
       />
@@ -226,6 +227,10 @@ const wikiPages = ref<any[]>([]);
 
 const decideBusy = reactive<Record<number, boolean>>({});
 const candidateBusy = reactive<Record<number, boolean>>({});
+/** AI 提炼入库后台进度:key 为主报告 id;存在即遮罩+进度条,不可再点 */
+const candidateProgress = reactive<Record<number, { stage: string; progress: number }>>({});
+/** 已在轮询跟踪的 jobId,避免 load() 刷新后重复挂轮询 */
+const trackedCandidateJobs = new Set<number>();
 const reminderBusy = reactive<Record<number, boolean>>({});
 const questionBusy = reactive<Record<string, boolean>>({});
 const questionErrors = reactive<Record<string, string>>({});
@@ -262,6 +267,7 @@ async function load() {
   cron.value = data.cron || '';
   enabled.value = data.enabled !== false;
   app.openReportCount = data.counts?.actionable ?? (decisions.value.length + pendingCandidates.value.length);
+  restoreCandidateProgress();
 }
 
 async function runNow() {
@@ -331,8 +337,11 @@ async function onDecide(card: DecisionCardData, option: string, input: { newTitl
   }
 }
 
-/** 轮询任务进度,回调更新卡片进度条 */
-function waitForJobProgress(jobId: number, onProgress: (stage: string, progress: number) => void): Promise<void> {
+/** 轮询任务进度,回调更新卡片进度条;detail 携带批量任务的逐条结果说明 */
+function waitForJobProgress(
+  jobId: number,
+  onProgress: (stage: string, progress: number, detail?: string) => void,
+): Promise<void> {
   return new Promise((resolveJob, rejectJob) => {
     const started = Date.now();
     const timer = setInterval(async () => {
@@ -340,7 +349,7 @@ function waitForJobProgress(jobId: number, onProgress: (stage: string, progress:
         const { data } = await api.get('/api/jobs');
         const jobs = [...(data.active || []), ...(data.recent || [])];
         const job = jobs.find((j: any) => j.id === jobId);
-        if (job) onProgress(job.stage || '处理中', job.progress ?? 0);
+        if (job) onProgress(job.stage || '处理中', job.progress ?? 0, job.detail);
         if (job?.status === 'done') {
           clearInterval(timer);
           resolveJob();
@@ -354,6 +363,88 @@ function waitForJobProgress(jobId: number, onProgress: (stage: string, progress:
       } catch { /* 网络抖动,下一轮重试 */ }
     }, 1500);
   });
+}
+
+/* ---------- AI 提炼入库(一步式后台执行) ---------- */
+
+/** 点击「AI 提炼入库」:入队后台任务,卡片立即进入遮罩+进度状态,不再弹预览 */
+async function autoCommitCandidate(item: PendingCandidateData) {
+  if (candidateBusy[item.reportId] || candidateProgress[item.reportId]) return;
+  candidateBusy[item.reportId] = true;
+  try {
+    const { data } = await api.post(`/api/ingest/candidates/${item.reportId}/auto-commit`, {
+      kind: item.kind,
+    });
+    candidateBusy[item.reportId] = false;
+    candidateProgress[item.reportId] = { stage: '排队中', progress: 0 };
+    trackCandidateJob(data.jobId, item.reportId);
+  } catch (error: any) {
+    candidateBusy[item.reportId] = false;
+    notify.error(error?.response?.data?.error || error?.message || '入库任务提交失败');
+  }
+}
+
+/** 挂轮询直到任务收敛;job 结束≠成功(批量任务按条计失败时 job 仍是 done),以条目是否仍在清单判定 */
+async function trackCandidateJob(jobId: number, reportId: number) {
+  if (!jobId || trackedCandidateJobs.has(jobId)) return;
+  trackedCandidateJobs.add(jobId);
+  const name = nameOfReport(reportId);
+  let finalDetail = '';
+  try {
+    await waitForJobProgress(jobId, (stage, progress, detail) => {
+      if (detail) finalDetail = detail;
+      candidateProgress[reportId] = { stage, progress };
+    });
+    await load().catch(() => {});
+    const stillPending = pendingCandidates.value.some((item) =>
+      item.reportIds.includes(reportId) || item.reportId === reportId,
+    );
+    if (stillPending) {
+      notify.error(`「${name}」入库失败:${failureReason(finalDetail)}`);
+    } else {
+      notify.success(`「${name}」已入库`);
+    }
+  } catch (error: any) {
+    notify.error(`「${name}」入库失败:${error?.message || '请稍后重试'}`);
+  } finally {
+    trackedCandidateJobs.delete(jobId);
+    delete candidateProgress[reportId];
+    if (!pendingCandidates.value.some((item) => item.reportId === reportId)) {
+      await load().catch(() => {});
+    }
+  }
+}
+
+function failureReason(detail: string): string {
+  const match = detail.match(/失败 1 项[:：]?(.*)$/);
+  return (match?.[1] || detail || '候选审核未通过').slice(0, 120);
+}
+
+function nameOfReport(reportId: number): string {
+  return pendingCandidates.value.find((item) => item.reportId === reportId)?.name || '候选';
+}
+
+/** 刷新/重进页面后,从全局任务列表恢复仍在跑的入库进度 */
+function restoreCandidateProgress() {
+  const activeJobs: any[] = app.jobs?.active || [];
+  for (const job of activeJobs) {
+    if (job.kind !== 'candidate_review_batch' || trackedCandidateJobs.has(job.id)) continue;
+    const decidedIds: number[] = (job.payload?.decisions || []).map((d: any) => Number(d.reportId));
+    const matched = pendingCandidates.value.find((item) =>
+      item.reportIds.some((id) => decidedIds.includes(id)),
+    );
+    if (!matched) continue;
+    candidateProgress[matched.reportId] = {
+      stage: job.stage || '排队中',
+      progress: job.progress ?? 0,
+    };
+    trackCandidateJob(job.id, matched.reportId);
+  }
+  // 任务已结束(成功条目已消失/失败已释放),清掉残留的进度遮罩
+  for (const reportId of Object.keys(candidateProgress).map(Number)) {
+    const item = pendingCandidates.value.find((candidate) => candidate.reportId === reportId);
+    if (!item) delete candidateProgress[reportId];
+  }
 }
 
 async function forceCreate(item: PendingCandidateData) {
@@ -823,7 +914,11 @@ async function openSource(card: DecisionCardData) {
   router.push({ path: '/page', query: { file: path } });
 }
 
-onMounted(load);
+onMounted(async () => {
+  // 刷新后 store 可能还是空,先拉一次任务列表才能恢复入库进度遮罩
+  await app.refreshJobs().catch(() => {});
+  await load();
+});
 </script>
 
 <style scoped>
