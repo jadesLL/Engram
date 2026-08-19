@@ -1397,83 +1397,87 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-/* ---------- 概览按钮(独立于蛇形流程) ---------- */
+/* ---------- 概览:细长条 ---------- */
 .snake-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
   padding: 14px 18px 4px;
   background: var(--bg-secondary);
 }
 .snake-overview-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  padding: 8px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 22px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 16px;
   background: var(--bg);
   cursor: pointer;
   transition: border-color .15s, background .15s;
 }
 .snake-overview-btn:hover { border-color: var(--accent); }
 .snake-overview-btn.active { border-color: var(--accent); background: var(--accent-soft); }
-.snake-overview-btn strong { font-size: 14px; color: var(--text); }
+.snake-overview-btn strong { font-size: 13px; color: var(--text); }
 .snake-overview-btn span { font-size: 11px; color: var(--text-faint); }
 
 /* ---------- 蛇形流程(纯 flex,节点间引导条,不穿过节点) ---------- */
 .snake-wrap {
-  padding: 6px 18px 16px;
+  padding: 10px 18px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
 }
 .snake-flow {
-  --node-width: 104px;
-  --pill-height: 30px;
+  --node-width: 108px;
+  --pill-height: 32px;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  width: min(100%, 980px);
+  align-items: center;
+  width: 100%;
+  max-width: 920px;
   margin: 0 auto;
 }
 .snake-row {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: center;
   width: 100%;
-  min-height: 56px;
-  gap: 0;
+  min-height: 58px;
+  gap: 10px;
 }
 .snake-row.reversed { flex-direction: row-reverse; }
-/* 引导条占满两个固定宽节点之间的剩余空间；中心线=pill 高度/2 */
+/* 引导条:固定短条,与 pill 垂直居中 */
 .snake-node-gap {
-  flex: 1 1 24px;
-  min-width: 12px;
+  flex: 0 0 auto;
+  width: 26px;
   height: var(--pill-height);
   display: flex;
   align-items: center;
-  padding: 0 6px;
+  justify-content: center;
 }
 .guide-bar {
   display: block;
-  width: 100%;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--border-strong);
-  opacity: .3;
+  width: 26px;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .guide-bar.vertical {
-  width: 6px;
-  height: 30px;
+  width: 4px;
+  height: 26px;
 }
-/* 行间转折固定对齐末端节点的几何中心：node-width / 2 */
+/* 行间转折:对齐行尾节点中心 */
 .snake-turn {
   display: flex;
-  justify-content: flex-end;
-  height: 30px;
-  padding-right: calc(var(--node-width) / 2 - 3px);
+  justify-content: center;
+  height: 26px;
+  width: 100%;
+  position: relative;
+}
+.snake-turn .guide-bar.vertical {
+  position: absolute;
+  /* 对齐最右节点中心:行宽/2 - 节点宽/2 (近似,配合 max-width 容器) */
+  right: calc(50% - var(--node-width) / 2 - 4px);
 }
 .snake-node {
   flex: 0 0 var(--node-width);
@@ -1482,13 +1486,13 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   background: none;
   border: 0;
   cursor: pointer;
   padding: 0;
 }
-/* 椭圆 pill 包含阶段中文名 */
+/* 椭圆 pill 包含阶段中文名(浅底柔和配色) */
 .snake-node-pill {
   display: inline-flex;
   align-items: center;
@@ -1497,7 +1501,7 @@ onUnmounted(() => {
   height: var(--pill-height);
   box-sizing: border-box;
   padding: 0 10px;
-  border: 1.5px solid var(--border-strong);
+  border: 1.5px solid var(--border);
   border-radius: calc(var(--pill-height) / 2);
   background: var(--bg);
   color: var(--text-secondary);
@@ -1506,11 +1510,11 @@ onUnmounted(() => {
   white-space: nowrap;
   transition: border-color .15s, background .15s, color .15s, transform .15s, box-shadow .15s;
 }
-.snake-node:hover .snake-node-pill { transform: scale(1.06); }
-.snake-node.completed .snake-node-pill { border-color: var(--success, #2e7d32); background: color-mix(in srgb, var(--success, #2e7d32) 10%, var(--bg)); color: var(--success, #2e7d32); }
-.snake-node.failed .snake-node-pill { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--bg)); color: var(--danger); }
+.snake-node:hover .snake-node-pill { transform: scale(1.06); border-color: var(--accent); }
+.snake-node.completed .snake-node-pill { border-color: color-mix(in srgb, var(--success, #2e7d32) 55%, var(--border)); background: color-mix(in srgb, var(--success, #2e7d32) 8%, var(--bg)); color: color-mix(in srgb, var(--success, #2e7d32) 80%, var(--text)); }
+.snake-node.failed .snake-node-pill { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); background: color-mix(in srgb, var(--danger) 8%, var(--bg)); color: color-mix(in srgb, var(--danger) 80%, var(--text)); }
 .snake-node.current .snake-node-pill { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.snake-node.pending .snake-node-pill { opacity: .5; }
+.snake-node.pending .snake-node-pill { opacity: .55; }
 .snake-node.active .snake-node-pill { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 /* 序号移到下方,小字 */
 .snake-node-num {
