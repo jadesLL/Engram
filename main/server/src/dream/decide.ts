@@ -14,6 +14,7 @@ import { renamePageSafely } from '../lib/renamePage.js';
 import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
 import { setActionableQuestionsForPath, syncIngestQuestionReport } from '../pipeline/ingestQuestions.js';
 import { ensureCandidateFromReport, setCandidateStatus } from '../pipeline/candidateLedger.js';
+import { applyIdentityAmbiguityMerge, type IdentityMergeInput } from './apply.js';
 
 export class DecideError extends Error {
   constructor(message: string, public readonly statusCode = 400) {
@@ -24,6 +25,10 @@ export class DecideError extends Error {
 export interface DecideInput {
   newTitle?: string;
   pageType?: string;
+  /** 实体歧义合并:保留建议目标页(默认)还是歧义页本身 */
+  mergeKeep?: 'target' | 'page';
+  /** 实体歧义合并:合并后的最终页面标题 */
+  finalTitle?: string;
 }
 
 export interface DecideResult {
@@ -126,9 +131,15 @@ export async function decideReportGroup(
       throw error;
     }
     const action = mergeReport.kind === 'duplicate' ? option : 'merge';
+    // identity_ambiguity 的 merge 携带用户选择的保留方向/最终名称,随任务 payload 传给 apply 通道
+    const decisionInput: IdentityMergeInput | undefined = mergeReport.kind === 'identity_ambiguity'
+      ? (input.mergeKeep || input.finalTitle
+        ? { mergeKeep: input.mergeKeep, finalTitle: input.finalTitle }
+        : undefined)
+      : undefined;
     const jobId = enqueue('dream_apply', {
       kind: mergeReport.kind,
-      decisions: [{ reportId: mergeReport.id, action }],
+      decisions: [{ reportId: mergeReport.id, action, ...(decisionInput ? { input: decisionInput } : {}) }],
       nonce: Date.now(),
     });
     if (!jobId) {
@@ -243,8 +254,7 @@ async function applyDecision(
     case 'identity_ambiguity': {
       if (option === 'dismiss') return 'dismissed';
       if (option === 'merge') {
-        if (!payload.suggestedTargetId || !payload.pageId) throw new DecideError('歧义报告缺少页面信息');
-        await mergePages(String(payload.suggestedTargetId), String(payload.pageId));
+        await applyIdentityAmbiguityMerge(payload, input);
         return 'resolved';
       }
       if (option === 'rename') {

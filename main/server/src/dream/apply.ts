@@ -4,6 +4,7 @@ import { typeToDir } from '../config.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages } from '../lib/mergePages.js';
+import { renamePageSafely } from '../lib/renamePage.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
 import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
 import {
@@ -23,7 +24,15 @@ export const REPORT_ACTION_KINDS = [
 ] as const;
 export type ReportActionKind = (typeof REPORT_ACTION_KINDS)[number];
 
-export interface ReportDecision { reportId: number; action: string }
+/** 实体歧义合并的用户选择:保留哪一侧、合并后的最终名称 */
+export interface IdentityMergeInput {
+  /** 默认 target(保留建议目标页);page 反转方向,保留歧义页本身 */
+  mergeKeep?: 'target' | 'page';
+  /** 合并后把保留页改名为该标题;缺省保留保留页现名 */
+  finalTitle?: string;
+}
+
+export interface ReportDecision { reportId: number; action: string; input?: IdentityMergeInput }
 export type ApplyProgress = (p: { stage: string; progress: number; detail?: string }) => void;
 
 export interface ApplyResult {
@@ -162,7 +171,10 @@ export function validateDecisions(kind: ReportActionKind, decisions: ReportDecis
     if (!Number.isInteger(reportId) || reportId <= 0 || seen.has(reportId)) throw new Error('报告选择无效或重复');
     if (!validAction(kind, action)) throw new Error(`处理动作无效：${action}`);
     seen.add(reportId);
-    return { reportId, action };
+    // identity_ambiguity 合并可能携带用户选择的保留方向/最终名称;其余动作不带该字段
+    return decision.input
+      ? { reportId, action, input: decision.input }
+      : { reportId, action };
   });
 }
 
@@ -186,6 +198,28 @@ export function releaseReports(decisions: ReportDecision[]): void {
 
 function completeReport(id: number, status: 'resolved' | 'dismissed') {
   db.prepare(`UPDATE reports SET status = ? WHERE id = ? AND status = 'applying'`).run(status, id);
+}
+
+/**
+ * 实体歧义「是同一对象」合并:单卡决策(decide.ts)与批量通道共用。
+ * 按用户选择决定保留方向;finalTitle 在合并完成后改名(含双链重定向),与保留页现名相同则跳过。
+ */
+export async function applyIdentityAmbiguityMerge(
+  payload: Record<string, any>,
+  input: IdentityMergeInput = {},
+): Promise<void> {
+  if (!payload.suggestedTargetId || !payload.pageId) throw new Error('歧义报告缺少页面信息');
+  const targetId = String(payload.suggestedTargetId);
+  const pageId = String(payload.pageId);
+  const keepId = input.mergeKeep === 'page' ? pageId : targetId;
+  const otherId = input.mergeKeep === 'page' ? targetId : pageId;
+  await mergePages(keepId, otherId);
+  const finalTitle = String(input.finalTitle || '').trim();
+  if (finalTitle) {
+    const keep = db.prepare(`SELECT title FROM pages WHERE id = ? AND deleted = 0`).get(keepId) as
+      { title: string } | undefined;
+    if (keep && keep.title !== finalTitle) renamePageSafely(keepId, finalTitle);
+  }
 }
 
 async function applyOne(
@@ -239,8 +273,7 @@ async function applyOne(
     case 'identity_ambiguity': {
       if (decision.action === 'dismiss') return 'dismissed';
       if (decision.action === 'merge') {
-        if (!payload.suggestedTargetId || !payload.pageId) throw new Error('歧义报告缺少页面信息');
-        await mergePages(payload.suggestedTargetId, payload.pageId);
+        await applyIdentityAmbiguityMerge(payload, decision.input || {});
         return 'resolved';
       }
       return 'dismissed';

@@ -125,6 +125,8 @@ export interface DecisionCardData {
   context?: string;
   links?: { label: string; pageId: string }[];
   options: { value: string; label: string; primary?: boolean; hint?: string; needsInput?: 'rename' | 'pageType' }[];
+  /** 实体歧义卡:建议目标页标题,合并弹窗用作候选名称 */
+  mergeTargetTitle?: string;
   questions?: any[];
   sourcePath?: string;
   createdAt: string;
