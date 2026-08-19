@@ -5,12 +5,17 @@
 ## 日常工作流（总纲）
 
 ```text
-开发（worktree）→ verify → 用户批准合并 → git push gitea main（CI 自动 verify + 推镜像）
-→ 用户批准发版 → bump 版本号 → 提交推送 → git tag v<版本> && git push gitea v<版本>
+开发（worktree）→ verify → 用户三选一：仅合并 / 合并并推送远端 / 合并推送+发版
+→（推送）git push gitea main：CI 自动 verify + 推镜像 <版本> + latest
+→（发版）bump 三处版本号 → 提交并立即推送 → git tag v<版本> && git push gitea v<版本>
 → CI 自动：版本号镜像 + Windows exe + Gitea Release（exe / docker tar.gz / sha256）
 → 下载 Release 附件归档到 releases/<版本>/（AGENTS.md 项目规则 3）
 → 部署机 docker login + docker pull 新版本镜像
 ```
+
+**铁律**：
+- 功能验收后必须问用户三选一（仅合并 / 合并并推送 / 合并推送+发版），合并后必须推送 gitea，不得留本地远端分叉。
+- **只要更新版本号，提交后必须立即推送 gitea**（版本号 = 镜像 tag = Release 标签，留在本地会造成远端镜像与版本号脱节），并确认 Actions 运行成功。
 
 | 环节 | 命令/动作 | 自动发生什么 |
 |---|---|---|
