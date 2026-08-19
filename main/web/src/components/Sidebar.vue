@@ -356,7 +356,7 @@
             </span>
           </div>
           <p v-if="!visibleAiLogs.length" class="none">
-            {{ filter ? '没有匹配日志' : '梦境整理运行后自动生成' }}
+            {{ filter ? '没有匹配日志' : '智能整理运行后自动生成' }}
           </p>
         </div>
       </section>

@@ -14,7 +14,7 @@
         </select>
         <button class="btn" :disabled="!batchKind || resolving || running" @click="openBatchPreview">批量</button>
         <button class="btn primary" :disabled="running" @click="runNow">
-          {{ running ? '整理中…' : '立即运行梦境整理' }}
+          {{ running ? '整理中…' : '立即运行智能整理' }}
         </button>
       </div>
     </div>

@@ -219,10 +219,10 @@ const handlers: Record<string, JobHandler> = {
     }
   },
   dream: async (_payload, update, context) => {
-    update({ stage: '运行 梦境整理', progress: 10, detail: '扫描知识库问题' });
+    update({ stage: '运行 智能整理', progress: 10, detail: '扫描知识库问题' });
     const result = await runDreamCycle(context.signal);
-    update({ stage: '梦境整理 已完成', progress: 100, detail: JSON.stringify(result) });
-    try { appendWikiLog('梦境整理', JSON.stringify(result)); } catch { /* 日志失败不阻塞 */ }
+    update({ stage: '智能整理 已完成', progress: 100, detail: JSON.stringify(result) });
+    try { appendWikiLog('智能整理', JSON.stringify(result)); } catch { /* 日志失败不阻塞 */ }
   },
   /** 入库后增量扫描：检测新建页面与已有页面之间的身份歧义。 */
   identity_audit: async ({ pageIds }, update, context) => {
