@@ -1,13 +1,12 @@
-#!/usr/bin/env bash
 # CI 环境下构建 Windows NSIS 安装包（在 electronuserland/builder:wine 容器内执行）
-# 容器内工作目录为 /work/main（仓库 main/ 目录）
-# 前置 env（由 workflow 注入或容器默认）：
+# 由 desktop/Dockerfile.ci 调用：构建上下文为 main/ 目录，WORKDIR /work，源码已 COPY 到 /work
+# 前置 env（Dockerfile.ci 已写入）：
 #   ELECTRON_MIRROR / ELECTRON_BUILDER_BINARIES_MIRROR —— npmmirror 镜像加速
 # 与本地 AGENTS.md 手动两步法的差异：CI 无 Windows Defender，electron-builder 完整流程
 # 可直接走到 asar 阶段，无需 pack-asar.js 手动绕行。
 set -euo pipefail
 
-cd "$(dirname "$0")/.."   # main/
+cd "$(dirname "$0")/.."   # /work（main/ 源码根）
 
 echo ">> 环境信息"
 node --version
@@ -50,7 +49,7 @@ npx --yes @electron/rebuild -f -m . --arch x64 || {
 ls build/Release/better_sqlite3.node
 cd -
 
-echo ">> 组装 win-unpacked 并打包 NSIS（electron-builder 完整流程，wine）"
+echo ">> 打包 NSIS（electron-builder 完整流程，wine）"
 cd desktop
 # EB 需要 desktop 的 devDependencies（electron、electron-builder）
 pnpm install --frozen-lockfile --ignore-scripts

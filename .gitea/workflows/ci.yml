@@ -1,6 +1,7 @@
 # ExampleProject 持续集成：verify（build + typecheck + test）+ Docker 镜像构建推送
 # 触发：任意分支推送（v* 标签除外，标签走 release.yml）、PR、手动触发
 # 仅 main 分支推送会构建并推送运行时镜像到 Gitea 内置 Registry
+# Runner：Windows 宿主机模式（label: windows），Docker 命令经 Docker Desktop 跑 Linux 容器
 name: CI
 
 on:
@@ -16,13 +17,14 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@v4
 
       - name: 提取版本号（main/desktop/package.json）
         id: ver
+        shell: bash
         run: |
           VERSION=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' main/desktop/package.json | head -n1)
           if [ -z "$VERSION" ]; then
@@ -33,10 +35,12 @@ jobs:
           echo "版本号: $VERSION"
 
       - name: verify 阶段（build + typecheck + test）
+        shell: bash
         run: docker build --target verify -t example-wiki:ci-verify main
 
       - name: 构建运行时镜像
         if: github.ref == 'refs/heads/main'
+        shell: bash
         run: |
           docker build \
             -t "$IMAGE:${{ steps.ver.outputs.version }}" \
@@ -45,6 +49,7 @@ jobs:
 
       - name: 登录 Registry 并推送镜像
         if: github.ref == 'refs/heads/main'
+        shell: bash
         run: |
           echo "${{ secrets.REGISTRY_TOKEN }}" | docker login "$REGISTRY" \
             -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin

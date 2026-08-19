@@ -3,6 +3,7 @@
 #   - 推送 v* 标签（如 v1.1.5）：完整发布（镜像推送 + exe 构建 + 创建 Release 上传附件）
 #   - 手动 workflow_dispatch：测试模式（镜像推送 + exe 构建 + 产物上传为 Artifact，不创建 Release）
 # 注意：标签名必须与 main/desktop/package.json 的 version 一致（v<version>），否则校验失败
+# Runner：Windows 宿主机模式（label: windows），Docker 命令经 Docker Desktop 跑 Linux 容器
 name: Release
 
 on:
@@ -13,17 +14,17 @@ on:
 env:
   REGISTRY: gitea.example.com
   IMAGE: gitea.example.com/example/example-wiki
-  OWNER_REPO: example/ExampleProject
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@v4
 
       - name: 提取版本号（main/desktop/package.json）
         id: ver
+        shell: bash
         run: |
           VERSION=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' main/desktop/package.json | head -n1)
           if [ -z "$VERSION" ]; then
@@ -35,6 +36,7 @@ jobs:
 
       - name: 校验标签与版本号一致
         if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         run: |
           if [ "v${{ steps.ver.outputs.version }}" != "${GITHUB_REF_NAME}" ]; then
             echo "标签 ${GITHUB_REF_NAME} 与 desktop/package.json 版本号 ${{ steps.ver.outputs.version }} 不一致"
@@ -42,6 +44,7 @@ jobs:
           fi
 
       - name: 构建并推送 Docker 镜像
+        shell: bash
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
@@ -52,23 +55,24 @@ jobs:
           docker push "$IMAGE:$VER"
           docker push "$IMAGE:latest"
 
-      - name: 构建 Windows 安装包（wine 容器内交叉打包）
+      - name: 构建 Windows 安装包（wine 容器内交叉打包，docker cp 拷出产物）
+        shell: bash
         run: |
-          docker run --rm \
-            -e ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
-            -e ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
-            -v "$PWD":/work \
-            -w /work/main \
-            electronuserland/builder:wine \
-            bash scripts/build-desktop-ci.sh
+          docker build -f desktop/Dockerfile.ci -t exampleproject-desktop-builder main
+          CID=$(docker create exampleproject-desktop-builder)
+          docker cp "$CID:/work/desktop/dist/." desktop-dist
+          docker rm "$CID" > /dev/null
+          echo ">> 构建产物："
+          ls -la desktop-dist
 
       - name: 整理发布产物并计算校验值
+        shell: bash
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          EXE="main/desktop/dist/LLM Wiki Setup ${VER}.exe"
+          EXE="desktop-dist/LLM Wiki Setup ${VER}.exe"
           if [ ! -f "$EXE" ]; then
             echo "未找到安装包: $EXE"
-            ls -la main/desktop/dist || true
+            ls -la desktop-dist || true
             exit 1
           fi
           mkdir -p release-out
@@ -80,7 +84,7 @@ jobs:
 
       - name: 上传构建产物（手动触发测试模式）
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: https://gitea.com/actions/upload-artifact@v4
         with:
           name: exampleproject-release-test-${{ steps.ver.outputs.version }}
           path: release-out/
@@ -88,39 +92,20 @@ jobs:
 
       - name: 创建 Release 并上传附件
         if: startsWith(github.ref, 'refs/tags/')
+        uses: https://gitea.com/actions/gitea-release-action@v1
         env:
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          GITHUB_SERVER_URL: ${{ gitea.server_url }}
-        run: |
-          set -eu
-          VER="${{ steps.ver.outputs.version }}"
-          TAG="${GITHUB_REF_NAME}"
-          API="${GITHUB_SERVER_URL}/api/v1"
-          SHA="${GITHUB_SHA}"
+          NODE_OPTIONS: --experimental-fetch
+        with:
+          files: |
+            release-out/LLM Wiki Setup *.exe
+            release-out/example-wiki-*.tar.gz
+            release-out/sha256-*.txt
+          token: ${{ secrets.RELEASE_TOKEN }}
+          draft: false
+          name: v${{ steps.ver.outputs.version }}
+          body: |
+            ExampleProject v${{ steps.ver.outputs.version }}
 
-          # 创建 Release（标签已存在 Release 时复用）
-          REL_ID=$(curl -sf -X POST "$API/repos/$OWNER_REPO/releases" \
-            -H "Authorization: token $RELEASE_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"target_commitish\":\"$SHA\",\"body\":\"ExampleProject $TAG\\n\\n- Docker 镜像: $IMAGE:$VER（私有，需先 docker login）\\n- Windows 安装包: LLM Wiki Setup $VER.exe\\n- 校验值见 sha256-$VER.txt\"}" \
-            | sed -n 's/.*"id":\([0-9]\{1,\}\).*/\1/p' | head -n1)
-          if [ -z "$REL_ID" ]; then
-            echo "创建 Release 失败，尝试获取已有 Release..."
-            REL_ID=$(curl -sf "$API/repos/$OWNER_REPO/releases/tags/$TAG" \
-              -H "Authorization: token $RELEASE_TOKEN" \
-              | sed -n 's/.*"id":\([0-9]\{1,\}\).*/\1/p' | head -n1)
-          fi
-          if [ -z "$REL_ID" ]; then
-            echo "无法创建或获取 Release"
-            exit 1
-          fi
-          echo "Release ID: $REL_ID"
-
-          for f in release-out/*; do
-            NAME=$(basename "$f" | sed 's/ /%20/g')
-            echo "上传附件: $(basename "$f")"
-            curl -sf -X POST "$API/repos/$OWNER_REPO/releases/$REL_ID/assets?name=$NAME" \
-              -H "Authorization: token $RELEASE_TOKEN" \
-              -F "attachment=@$f" > /dev/null
-          done
-          echo "Release $TAG 发布完成"
+            - Docker 镜像: ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}（私有，需先 docker login）
+            - Windows 安装包: LLM Wiki Setup ${{ steps.ver.outputs.version }}.exe
+            - 校验值见 sha256-${{ steps.ver.outputs.version }}.txt

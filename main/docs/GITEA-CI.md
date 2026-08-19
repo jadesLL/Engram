@@ -20,8 +20,10 @@
 | Secret | 用途 | 权限要求 |
 |---|---|---|
 | `REGISTRY_USERNAME` | runner 上 `docker login` 推镜像 | Gitea 用户名（如 `example`） |
-| `REGISTRY_TOKEN` | 同上 | 具备 **package write** 的 PAT |
-| `RELEASE_TOKEN` | 调 Gitea API 创建 Release / 上传附件 | 具备 **repository write** 的 PAT |
+| `REGISTRY_TOKEN` | 同上 | 具备 **package 写** 的 PAT |
+| `RELEASE_TOKEN` | 创建 Release / 上传附件 | 具备 **repository 写** 的 PAT |
+
+当前配置：`REGISTRY_TOKEN` 与 `RELEASE_TOKEN` 复用同一个 token（同 XINJE_Selection_Tool 的做法）。
 
 PAT 创建：Gitea 右上角头像 → Settings → Applications → Generate New Token（fine-grained，勾选 package 写 + repository 写权限）。
 
@@ -55,11 +57,13 @@ docker compose -f docker-compose.pull.yml up -d
 
 ## Runner 前置要求
 
-act_runner 以宿主机（shell）模式运行，宿主机需具备：
+act_runner 以 Windows 宿主机模式运行（label `windows`，runner 即本机 DESKTOP-JQR7MEU），依赖 Docker Desktop 跑 Linux 容器：
 
-- `docker`（构建镜像、运行 wine 打包容器；需可访问 Docker Hub / npmmirror / GitHub releases）
-- `git`（actions/checkout 动作依赖）
-- `curl`（创建 Release）
+- `docker`（构建镜像、运行 wine 打包容器；需可访问 Docker Hub / npmmirror）
+- `git`（checkout 动作依赖）
+- wine 容器内已含 Node；桌面端打包脚本在容器内自装 pnpm
+
+**Z 盘不支持 bind mount**：CI 中所有容器构建均采用「源码 COPY 进镜像 + `docker create`/`docker cp` 拷出产物」方式，不使用 volume 挂载。
 
 ## 已知注意事项
 
