@@ -1,6 +1,6 @@
-# ExampleProject 持续集成：verify（build + typecheck + test）+ Docker 镜像构建推送
+# ExampleProject 持续集成：仅 verify（build + typecheck + test）
 # 触发：任意分支推送（v* 标签除外，标签走 release.yml）、PR、手动触发
-# 仅 main 分支推送会构建并推送运行时镜像到 Gitea 内置 Registry
+# 不构建不推送任何镜像——镜像（版本 tag + latest）只在发版时由 release.yml 构建推送
 # Runner：Windows 宿主机模式（label: windows），Docker 命令经 Docker Desktop 跑 Linux 容器
 name: CI
 
@@ -12,10 +12,6 @@ on:
   workflow_dispatch:
 
 env:
-  REGISTRY: gitea.example.com
-  # 镜像走「owner/repo/imagename」三层路径，归属仓库（与 XINJE 一致）；
-  # 两层路径归属用户命名空间，NAS 实测拉取异常，不要改回
-  IMAGE: gitea.example.com/example/exampleproject/example-wiki
   # Windows runner 的 Git Bash 会对参数做 MSYS 路径转换（main → C:/Program Files/Git/main），必须禁用
   MSYS_NO_PATHCONV: '1'
 
@@ -26,36 +22,6 @@ jobs:
       - name: 检出代码
         uses: https://gitea.com/actions/checkout@v4
 
-      - name: 提取版本号（main/desktop/package.json）
-        id: ver
-        shell: bash
-        run: |
-          VERSION=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' main/desktop/package.json | head -n1)
-          if [ -z "$VERSION" ]; then
-            echo "无法从 main/desktop/package.json 提取版本号"
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "版本号: $VERSION"
-
       - name: verify 阶段（build + typecheck + test）
         shell: bash
         run: docker build --target verify -t example-wiki:ci-verify main
-
-      - name: 构建运行时镜像
-        if: github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          docker build \
-            -t "$IMAGE:${{ steps.ver.outputs.version }}" \
-            -t "$IMAGE:latest" \
-            main
-
-      - name: 登录 Registry 并推送镜像
-        if: github.ref == 'refs/heads/main'
-        shell: bash
-        run: |
-          echo "${{ secrets.REGISTRY_TOKEN }}" | docker login "$REGISTRY" \
-            -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
-          docker push "$IMAGE:${{ steps.ver.outputs.version }}"
-          docker push "$IMAGE:latest"

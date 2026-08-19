@@ -6,9 +6,9 @@
 
 ```text
 开发（worktree）→ verify → 用户三选一：仅合并 / 合并并推送远端 / 合并推送+发版
-→（推送）git push gitea main：CI 自动 verify + 推镜像 <版本> + latest
+→（推送）git push gitea main：CI 只做 verify（build+typecheck+test），不构建镜像
 →（发版）bump 三处版本号 → 提交并立即推送 → git tag v<版本> && git push gitea v<版本>
-→ CI 自动：版本号镜像 + Windows exe + Gitea Release（exe / docker tar.gz / sha256）
+→ release.yml 自动：构建并推送镜像（版本 tag + latest）+ Windows exe + Gitea Release（exe / docker tar.gz / sha256）
 → 下载 Release 附件归档到 releases/<版本>/（AGENTS.md 项目规则 3）
 → 部署机 docker login + docker pull 新版本镜像
 ```
@@ -16,12 +16,13 @@
 **铁律**：
 - 功能验收后必须问用户三选一（仅合并 / 合并并推送 / 合并推送+发版），合并后必须推送 gitea，不得留本地远端分叉。
 - **只要更新版本号，提交后必须立即推送 gitea**（版本号 = 镜像 tag = Release 标签，留在本地会造成远端镜像与版本号脱节），并确认 Actions 运行成功。
+- **镜像只在发版时构建**（2026-08-20 起生效）：main 日常推送不构建不推送任何镜像，Registry 里的版本 tag 永远只对应发版产物，不会被日常推送覆盖。
 
 | 环节 | 命令/动作 | 自动发生什么 |
 |---|---|---|
-| 日常推送 | `git push gitea main` | ci.yml：verify（build+typecheck+test）+ 推镜像 `:<版本>` `:latest` |
-| 发版 | bump 版本号 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：版本镜像 + wine 交叉打 exe + 创建 Release 上传附件 |
-| Release 测试 | Gitea 网页手动触发 release.yml（workflow_dispatch） | 完整构建但**不发布**，产物传 Artifact（保留 7 天） |
+| 日常推送 | `git push gitea main` | ci.yml：仅 verify（build+typecheck+test），不碰镜像 |
+| 发版 | bump 版本号 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：构建推送镜像（`:<版本>` + `:latest`）+ wine 交叉打 exe + 创建 Release 上传附件 |
+| Release 测试 | Gitea 网页手动触发 release.yml（workflow_dispatch） | 完整构建（含镜像推送）但**不发布 Release**，产物传 Artifact（保留 7 天） |
 | 部署 | `docker login` → `docker compose -f docker-compose.pull.yml up -d` | — |
 
 **版本号一致性（发版门禁，release.yml 有校验）**：
@@ -89,7 +90,7 @@ grep -c '<版本号>' app.asar 二进制内容（或查 staging package.json 的
 ## 已知注意事项
 
 - **Release 附件大小**：exe 约 110MB、docker tar.gz 约 160MB。上传返回 413 时需调大 Gitea `app.ini` 的 `[attachment] MAX_SIZE` 后重启 Gitea。
-- **重复推送同版本号**：main 未 bump 版本号重复推送会覆盖 Registry 同名 tag，属预期。
+- **镜像只随发版更新**：main 日常推送不构建镜像（2026-08-20 起）；Registry 版本 tag 只对应发版产物。发版前想提前验证 main 最新代码需本地构建，或手动 dispatch release.yml（测试模式，会推 `:<版本>` `:latest`——注意它仍会覆盖同版本 tag）。
 - **本地开发 compose**（`docker-compose.yml`）仍用本地构建镜像；生产 pull 部署用 `docker-compose.pull.yml`。
 - **Gitea secrets API** 字段名是 `data` 不是 `value`（PUT `/api/v1/repos/{owner}/{repo}/actions/secrets/{name}`，`{"data":"..."}`），用错报 422 "[Data]: Required"。
 - **Release 测试模式**（手动 dispatch）产物在 Artifact 页，保留 7 天，正式产物必须走 `v*` 标签。
