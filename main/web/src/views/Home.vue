@@ -84,6 +84,7 @@
         @click="$router.push('/settings')"
       >
         <Icon name="settings" :size="19" />
+        <span v-if="updateStore.hasNewVersion" class="dot" />
       </button>
     </nav>
 
@@ -154,8 +155,10 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
 import { useAssistantStore } from '../stores/assistant';
+import { useUpdateStore } from '../stores/update';
 import { api } from '../api';
 import { openPageStream } from '../lib/events';
+import { notify } from '../lib/notify';
 import Sidebar from '../components/Sidebar.vue';
 import AiDrawer from '../components/AiDrawer.vue';
 import JobsPanel from '../components/JobsPanel.vue';
@@ -166,6 +169,7 @@ const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
 const assistant = useAssistantStore();
+const updateStore = useUpdateStore();
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
 const jobsPanelOpen = ref(false);
 
@@ -290,6 +294,14 @@ function onAssistantUpload() {
   nextTick(() => sidebarRef.value?.openUpload());
 }
 
+/* ===== 软件更新自动检测：进入应用查一次（8 小时节流），有新版本时 toast 提醒 ===== */
+async function autoCheckUpdate() {
+  await updateStore.check();
+  if (updateStore.hasNewVersion && updateStore.lastResult) {
+    notify.info(`发现新版本 v${updateStore.lastResult.latestVersion}，可在 设置 → 软件更新 中升级`);
+  }
+}
+
 let reportTimer: ReturnType<typeof setInterval>;
 let closeStream: (() => void) | null = null;
 onMounted(() => {
@@ -300,6 +312,7 @@ onMounted(() => {
   jobPollStopped = false;
   pollJobs();
   assistant.init().catch(() => {});
+  autoCheckUpdate().catch(() => {});
   window.addEventListener('assistant-open-upload', onAssistantUpload);
   // 服务端 SSE 实时推送：页面增删改/移动时刷新正文与侧栏
   closeStream = openPageStream((ev) => app.applyPageEvent(ev));
@@ -427,6 +440,18 @@ onUnmounted(() => {
   font-size: 9px;
   line-height: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+.rail-btn .dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--sidebar-glass-solid);
+  border-radius: 50%;
+  background: var(--sidebar-accent);
+  pointer-events: none;
 }
 
 .rail-spacer { flex: 1; }

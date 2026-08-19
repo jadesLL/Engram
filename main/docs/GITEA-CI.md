@@ -53,6 +53,50 @@ docker compose -f docker-compose.pull.yml up -d
 - **不要写 `pull_policy: never`**——它禁止从 Registry 拉取，本地无镜像时必报"找不到镜像"（NAS 首次部署曾因此误判为拉取失败）。
 - onlyoffice 若第三方镜像源拉不动，换官方 `onlyoffice/documentserver:9.4.0`。
 
+## 应用内自更新（设置 → 软件更新）
+
+1.1.6 起支持网页内一键更新，服务器与桌面端共用「Gitea Releases」作为版本信号源。
+
+### 一次性引导（Docker 部署机）
+
+在 `docker-compose.pull.yml` 的 example-wiki 服务 volumes 中确认有 docker.sock 挂载（模板已内置）：
+
+```yaml
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock   # 应用内更新所需
+```
+
+然后 `docker compose -f docker-compose.pull.yml up -d` 重建容器一次。之后所有更新都可以在网页 设置 → 软件更新 中完成，无需再登录部署机。
+
+### 更新源与令牌配置（设置 → 软件更新 → 更新源配置）
+
+所有配置保存在**服务器数据目录的 `.env` 文件**（Docker 内 `/data/.env`，随数据卷持久化，不进数据库不进代码库）：
+
+| 配置项 | 键 | 说明 |
+|---|---|---|
+| Gitea 服务地址 | `UPDATE_GITEA_URL` | 版本检测来源，如 `https://gitea.example.com` |
+| Gitea 仓库 | `UPDATE_GITEA_REPO` | `owner/name` 形式 |
+| Gitea 访问令牌 | `UPDATE_GITEA_TOKEN` | **公开仓库无需填写**；私有仓库需能读 Release |
+| 镜像更新源 | `UPDATE_IMAGE_REF` | 不含 tag 的镜像地址，自动拉 `latest`；未配置时从当前容器镜像推导 |
+| 镜像仓库用户名/令牌 | `UPDATE_REGISTRY_USERNAME` / `UPDATE_REGISTRY_TOKEN` | 私有 Registry 必填；公开仓库无需填写 |
+
+私有化部署用户把 Gitea 地址/仓库换成自己的即可，镜像源同样可换。
+
+### 更新流程与安全机制
+
+- **检查更新**：比对 Gitea 最新 Release 版本号 + Registry `latest` digest（两者取或）。进入应用时自动检测一次（8 小时节流），有新版本时侧栏设置按钮出现红点并 toast 提醒。
+- **一键更新（Docker）**：拉取 `latest` 镜像 → 用旧镜像临时起 switcher 容器接管 → 旧容器改名 `example-wiki-old` → 按原容器配置（端口/卷/网络/环境变量全保留）创建新容器 → 停旧起新 → 等新容器健康（最长 180s）→ 健康则删旧容器；**新容器起不来则自动回滚**重启旧容器。
+- **桌面端更新**：设置页下载 Release 的 exe 安装包（带进度条）→ 运行安装包覆盖安装，应用自动退出。
+- 手动恢复（极端情况 switcher 也失败）：`docker start example-wiki-old`，然后浏览器刷新。
+
+### 安全说明
+
+- 更新接口全部要求登录（JWT）。
+- 挂载 docker.sock 意味着容器内进程可完全控制宿主 Docker（等同宿主 root），仅在自用/可信环境使用；不需要网页内更新就删掉该挂载行。
+- 镜像目标 ref 只能来自当前容器自身推导或 `.env` 配置，不接受请求任意指定；桌面端安装包只允许从配置的 Gitea 源下载。
+- compose 手动重建的容器 config 与 compose 记录存在漂移：下次手动 `compose up -d` 会重建容器（同镜像，短暂重启一次，版本不回退）。
+
 ## Repository Secrets（已配置）
 
 | Secret | 用途 | 当前值 |

@@ -13,6 +13,9 @@ services:
     volumes:
       # 知识库全部数据（markdown 页面 + 附件 + SQLite 索引）都在这个目录
       - ./data:/data
+      # 应用内自更新（设置 → 软件更新）需要 Docker API：拉镜像 + 重建本容器。
+      # 不需要网页内更新可以删掉这一行。
+      - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - .env.onlyoffice
     environment:

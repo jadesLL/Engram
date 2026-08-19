@@ -37,6 +37,7 @@
         <AutomationPanel v-show="activeSettingsSection === 'automation'" />
         <McpPanel v-show="activeSettingsSection === 'mcp'" />
         <DesktopPanel v-show="activeSettingsSection === 'desktop'" />
+        <UpdatePanel v-show="activeSettingsSection === 'update'" />
         <ImPanel v-show="activeSettingsSection === 'im'" />
         <StoragePanel v-show="activeSettingsSection === 'storage'" />
         <DataPanel v-show="activeSettingsSection === 'data'" />
@@ -54,11 +55,12 @@ import ModelsPanel from '../components/settings/ModelsPanel.vue';
 import AutomationPanel from '../components/settings/AutomationPanel.vue';
 import McpPanel from '../components/settings/McpPanel.vue';
 import DesktopPanel from '../components/settings/DesktopPanel.vue';
+import UpdatePanel from '../components/settings/UpdatePanel.vue';
 import ImPanel from '../components/settings/ImPanel.vue';
 import StoragePanel from '../components/settings/StoragePanel.vue';
 import DataPanel from '../components/settings/DataPanel.vue';
 
-type SettingsSection = 'account' | 'models' | 'history' | 'automation' | 'mcp' | 'desktop' | 'im' | 'storage' | 'data';
+type SettingsSection = 'account' | 'models' | 'history' | 'automation' | 'mcp' | 'desktop' | 'update' | 'im' | 'storage' | 'data';
 
 const router = useRouter();
 const activeSettingsSection = ref<SettingsSection>('account');
@@ -69,6 +71,7 @@ const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: stri
   { id: 'automation', label: '自动化', icon: 'activity' },
   { id: 'mcp', label: 'MCP 集成', icon: 'link' },
   { id: 'desktop', label: '桌面端连接', icon: 'external' },
+  { id: 'update', label: '软件更新', icon: 'download' },
   { id: 'im', label: 'IM / 飞书', icon: 'send' },
   { id: 'storage', label: '存储空间', icon: 'archive' },
   { id: 'data', label: '数据管理', icon: 'trash' },

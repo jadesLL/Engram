@@ -11,7 +11,9 @@ COPY desktop/package.json desktop/
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY server server
 COPY web web
-RUN pnpm --filter @example-wiki/web build && pnpm --filter @example-wiki/server build
+# /app/VERSION：应用内自更新的版本比对依据（server /api/update 读取）
+RUN pnpm --filter @example-wiki/web build && pnpm --filter @example-wiki/server build \
+  && node -p "require('./desktop/package.json').version" > /app/VERSION
 
 # ---------- 生产依赖（编译 better-sqlite3 原生模块） ----------
 FROM node:22-slim AS deps
@@ -57,6 +59,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/server/node_modules ./server/node_modules
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/web/dist ./web/dist
+COPY --from=build /app/VERSION /app/VERSION
 COPY package.json pnpm-workspace.yaml ./
 COPY server/package.json ./server/
 VOLUME /data
