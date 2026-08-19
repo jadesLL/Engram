@@ -137,8 +137,8 @@
                       v-tooltip="stageDisplayName(node.stage)"
                       @click="selectStage(node.id)"
                     >
-                      <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
                       <span class="snake-node-num">{{ node.index + 1 }}</span>
+                      <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
                     </button>
                   </template>
                 </div>
@@ -1435,6 +1435,9 @@ onUnmounted(() => {
 .snake-flow {
   --node-width: 116px;
   --pill-height: 32px;
+  --num-height: 14px;
+  /* pill 中心相对节点顶部的偏移:序号高 + gap(4px) + pill 高一半 */
+  --pill-center: calc(var(--num-height) + 4px + var(--pill-height) / 2);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1448,14 +1451,15 @@ onUnmounted(() => {
   /* 第一行居中;折返行右对齐,行首节点(7)正好在上一行行尾节点(6)正下方 */
   justify-content: center;
   width: 100%;
-  min-height: 58px;
+  min-height: calc(var(--pill-center) * 2);
   gap: 10px;
 }
 .snake-row.reversed { flex-direction: row-reverse; justify-content: flex-start; }
-/* 引导条:固定短条,与 pill 垂直居中 */
+/* 引导条:容器跳过上方序号区,只对齐 pill 高度带并垂直居中 */
 .snake-node-gap {
   flex: 0 0 auto;
   width: 26px;
+  margin-top: calc(var(--num-height) + 4px);
   height: var(--pill-height);
   display: flex;
   align-items: center;
@@ -1470,15 +1474,16 @@ onUnmounted(() => {
 }
 .guide-bar.vertical {
   width: 4px;
-  height: 26px;
+  height: 100%;
+  max-height: 30px;
 }
-/* 行间转折:与节点行同构(同 flex/gap/居中),占位复刻节点槽位,竖条落在行尾节点中心 */
+/* 行间转折:占位复刻节点行(节点宽+间隙),竖条跨在两行 pill 之间的中心 */
 .snake-turn {
   display: flex;
   justify-content: center;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  height: 26px;
+  height: calc(var(--num-height) + 14px);
   width: 100%;
 }
 .turn-spacer {
@@ -1488,9 +1493,6 @@ onUnmounted(() => {
 .turn-gap {
   flex: 0 0 auto;
   width: 26px;
-}
-.snake-turn .guide-bar.vertical {
-  margin-top: -4px;
 }
 .snake-node {
   flex: 0 0 var(--node-width);
@@ -1533,13 +1535,14 @@ onUnmounted(() => {
 .snake-node.current .snake-node-pill { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .snake-node.pending .snake-node-pill { opacity: .55; }
 .snake-node.active .snake-node-pill { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-/* 序号移到下方,小字 */
+/* 序号在 pill 上方,小字,固定行高保证 pill 中心可计算 */
 .snake-node-num {
+  height: var(--num-height);
+  line-height: var(--num-height);
   font-size: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--text-faint);
-  line-height: 1;
 }
 .snake-node.active .snake-node-num { color: var(--accent); }
 .snake-node.completed .snake-node-num { color: var(--success, #2e7d32); }
