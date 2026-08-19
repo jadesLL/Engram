@@ -1447,16 +1447,16 @@ onUnmounted(() => {
 .snake-track {
   fill: none;
   stroke: var(--border-strong);
-  stroke-width: 2;
+  stroke-width: 6;
   stroke-linejoin: round;
   stroke-linecap: round;
-  opacity: .5;
+  opacity: .35;
 }
-/* 引导条:虚线段替代实线 */
+/* 引导条:粗矩形段(圆角端),一段段排列 */
 .snake-dashed {
-  stroke-dasharray: 3 4;
+  stroke-dasharray: 10 7;
 }
-.snake-arrow { fill: var(--border-strong); opacity: .6; }
+.snake-arrow { fill: var(--border-strong); opacity: .4; }
 .snake-node {
   position: absolute;
   transform: translate(-50%, -50%);
