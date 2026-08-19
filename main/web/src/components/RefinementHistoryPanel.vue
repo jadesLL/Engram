@@ -121,30 +121,29 @@
             </button>
           </div>
 
-          <!-- 蛇形流程:阶段沿矩形边排布(上行左→右→折返→下行右→左),点击就地切换 -->
+          <!-- 蛇形流程:两行节点+行内引导条+行间向下箭头(纯 CSS flex,不穿过节点) -->
           <div class="snake-wrap" aria-label="提炼阶段">
-            <div class="snake-inner">
-              <svg class="snake-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                <defs>
-                  <marker :id="`arrow-${markerId}`" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                    <path d="M0,0 L6,3 L0,6 Z" class="snake-arrow" />
-                  </marker>
-                </defs>
-                <path class="snake-track snake-dashed" :d="snakePath" vector-effect="non-scaling-stroke" :marker-end="`url(#arrow-${markerId})`" />
-              </svg>
-              <button
-                v-for="node in snakeNodes"
-                :key="node.id"
-                type="button"
-                class="snake-node"
-                :class="[node.status, { active: selectedStageId === node.id }]"
-                :style="{ left: node.x + '%', top: node.y + '%' }"
-                v-tooltip="stageDisplayName(node.stage)"
-                @click="selectStage(node.id)"
-              >
-                <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
-                <span class="snake-node-num">{{ node.index + 1 }}</span>
-              </button>
+            <div class="snake-flow">
+              <div class="snake-row" v-for="(row, ri) in snakeRows" :key="ri" :class="{ reversed: row.reversed }">
+                <template v-for="(node, ci) in row.nodes" :key="node.id">
+                  <div class="snake-node-gap" v-if="ci > 0">
+                    <span class="guide-bar"></span>
+                  </div>
+                  <button
+                    type="button"
+                    class="snake-node"
+                    :class="[node.status, { active: selectedStageId === node.id }]"
+                    v-tooltip="stageDisplayName(node.stage)"
+                    @click="selectStage(node.id)"
+                  >
+                    <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
+                    <span class="snake-node-num">{{ node.index + 1 }}</span>
+                  </button>
+                </template>
+              </div>
+              <div class="snake-turn" v-if="snakeRows.length > 1">
+                <span class="guide-bar vertical"></span>
+              </div>
             </div>
           </div>
 
@@ -554,7 +553,6 @@ function stageShortName(stage: Pick<TraceStage, 'label' | 'annotation'>): string
  * 概览在第一行最左端(序号 0)。坐标为百分比。
  */
 const SNAKE_COLS = 6;
-const SNAKE_ROW_Y = [30, 78];
 const snakeNodes = computed(() => {
   const trace = detail.value?.trace || [];
   const count = trace.length;
@@ -564,39 +562,28 @@ const snakeNodes = computed(() => {
     const row = Math.floor(index / cols);
     const col = index % cols;
     const forward = row % 2 === 0;
-    // 奇数行反向:col 0 对应最右
     const effectiveCol = forward ? col : cols - 1 - col;
     return {
       id: stage.id,
       stage,
       index,
       status: stage.status,
-      x: 8 + (effectiveCol * 84) / (cols - 1 || 1),
-      y: SNAKE_ROW_Y[Math.min(row, SNAKE_ROW_Y.length - 1)],
+      row,
+      col: effectiveCol,
+      forward,
     };
   });
 });
-const snakeOverview = computed(() => ({ x: 8, y: SNAKE_ROW_Y[0] }));
-/** 每个实例唯一 marker id,避免多面板共存时 SVG marker 冲突 */
-const markerId = Math.random().toString(36).slice(2, 8);
-/** 直角折线:从第一个节点出发,行间用水平-垂直-水平三段,保持直线不斜 */
-const snakePath = computed(() => {
+/** 按行分组:每行节点数组+是否反向标记(供 flex row-reverse) */
+const snakeRows = computed(() => {
   const nodes = snakeNodes.value;
-  if (nodes.length < 2) return '';
-  const parts: string[] = [];
-  let prev = { x: nodes[0].x, y: nodes[0].y };
-  for (let i = 1; i < nodes.length; i++) {
-    const node = nodes[i];
-    if (node.y === prev.y) {
-      parts.push(`L ${node.x} ${node.y}`);
-    } else {
-      // 换行:先垂直到目标行,再水平到目标列(直角)
-      parts.push(`L ${prev.x} ${node.y}`);
-      parts.push(`L ${node.x} ${node.y}`);
-    }
-    prev = { x: node.x, y: node.y };
+  if (!nodes.length) return [];
+  const rows: Array<{ nodes: typeof nodes; reversed: boolean }> = [];
+  for (const node of nodes) {
+    if (!rows[node.row]) rows[node.row] = { nodes: [], reversed: !node.forward };
+    rows[node.row].nodes.push(node);
   }
-  return `M ${nodes[0].x} ${nodes[0].y} ` + parts.join(' ');
+  return rows.filter(Boolean);
 });
 
 function questionStatusLabel(status: string): string {
@@ -1429,37 +1416,58 @@ onUnmounted(() => {
 .snake-overview-btn strong { font-size: 14px; color: var(--text); }
 .snake-overview-btn span { font-size: 11px; color: var(--text-faint); }
 
-/* ---------- 回形蛇形流程 ---------- */
+/* ---------- 蛇形流程(纯 flex,节点间引导条,不穿过节点) ---------- */
 .snake-wrap {
-  padding: 6px 18px 14px;
+  padding: 6px 18px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
+}
+.snake-flow {
   display: flex;
-  justify-content: center;
-}
-.snake-inner {
-  position: relative;
-  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   max-width: 960px;
-  height: 200px;
+  margin: 0 auto;
 }
-.snake-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.snake-track {
-  fill: none;
-  stroke: var(--border-strong);
-  stroke-width: 6;
-  stroke-linejoin: round;
-  stroke-linecap: round;
+.snake-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+.snake-row.reversed { flex-direction: row-reverse; }
+/* 节点间距+引导条 */
+.snake-node-gap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+}
+/* 宽矩形引导条(水平) */
+.guide-bar {
+  display: block;
+  width: 100%;
+  max-width: 60px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border-strong);
   opacity: .35;
 }
-/* 引导条:粗矩形段(圆角端),一段段排列 */
-.snake-dashed {
-  stroke-dasharray: 10 7;
+.guide-bar.vertical {
+  width: 5px;
+  height: 28px;
+  max-width: none;
 }
-.snake-arrow { fill: var(--border-strong); opacity: .4; }
+/* 行间向下转折 */
+.snake-turn {
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 4%;
+}
 .snake-node {
-  position: absolute;
-  transform: translate(-50%, -50%);
+  flex: 0 0 auto;
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   background: none; border: 0; cursor: pointer;
   padding: 2px;
