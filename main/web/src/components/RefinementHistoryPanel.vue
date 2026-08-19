@@ -137,8 +137,15 @@
                       v-tooltip="stageDisplayName(node.stage)"
                       @click="selectStage(node.id)"
                     >
-                      <span class="snake-node-num">{{ node.index + 1 }}</span>
-                      <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
+                      <!-- 第一行序号在上;折返行(7~11)序号在下,pill 顶边紧贴转折竖条 -->
+                      <template v-if="!row.reversed">
+                        <span class="snake-node-num">{{ node.index + 1 }}</span>
+                        <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
+                      </template>
+                      <template v-else>
+                        <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
+                        <span class="snake-node-num">{{ node.index + 1 }}</span>
+                      </template>
                     </button>
                   </template>
                 </div>
@@ -1451,11 +1458,12 @@ onUnmounted(() => {
   /* 第一行居中;折返行右对齐,行首节点(7)正好在上一行行尾节点(6)正下方 */
   justify-content: center;
   width: 100%;
-  min-height: calc(var(--pill-center) * 2);
   gap: 10px;
 }
+.snake-row:not(.reversed) { min-height: calc(var(--num-height) + 4px + var(--pill-height)); }
+.snake-row.reversed { min-height: var(--pill-height); }
 .snake-row.reversed { flex-direction: row-reverse; justify-content: flex-start; }
-/* 引导条:容器跳过上方序号区,只对齐 pill 高度带并垂直居中 */
+/* 引导条:第一行(序号在上)跳过序号区;折返行(序号在下)直接对齐 pill */
 .snake-node-gap {
   flex: 0 0 auto;
   width: 26px;
@@ -1464,6 +1472,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.snake-row.reversed .snake-node-gap {
+  margin-top: 0;
 }
 .guide-bar {
   display: block;
@@ -1475,15 +1486,15 @@ onUnmounted(() => {
 .guide-bar.vertical {
   width: 4px;
   height: 100%;
-  max-height: 30px;
+  max-height: 18px;
 }
-/* 行间转折:占位复刻节点行(节点宽+间隙),竖条跨在两行 pill 之间的中心 */
+/* 行间转折:占位复刻节点行(节点宽+间隙);竖条紧贴 6 pill 底边与 7 pill 顶边 */
 .snake-turn {
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 10px;
-  height: calc(var(--num-height) + 14px);
+  height: 18px;
   width: 100%;
 }
 .turn-spacer {
