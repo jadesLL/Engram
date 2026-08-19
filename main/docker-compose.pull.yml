@@ -1,7 +1,10 @@
+# docker pull 拉取镜像部署（Gitea Registry 私有镜像）
+# 用法：
+#   docker login gitea.example.com -u example -p <token>
+#   docker compose -f docker-compose.pull.yml up -d
 services:
   example-wiki:
-    image: example-wiki:1.1.4
-    build: .
+    image: gitea.example.com/example/example-wiki:latest
     container_name: example-wiki
     ports:
       - "8080:8080"

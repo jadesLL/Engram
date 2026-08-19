@@ -1,0 +1,126 @@
+# ExampleProject 发布流程：版本号 Docker 镜像 + Windows NSIS 安装包 + Gitea Release
+# 触发：
+#   - 推送 v* 标签（如 v1.1.5）：完整发布（镜像推送 + exe 构建 + 创建 Release 上传附件）
+#   - 手动 workflow_dispatch：测试模式（镜像推送 + exe 构建 + 产物上传为 Artifact，不创建 Release）
+# 注意：标签名必须与 main/desktop/package.json 的 version 一致（v<version>），否则校验失败
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  REGISTRY: gitea.example.com
+  IMAGE: gitea.example.com/example/example-wiki
+  OWNER_REPO: example/ExampleProject
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 提取版本号（main/desktop/package.json）
+        id: ver
+        run: |
+          VERSION=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' main/desktop/package.json | head -n1)
+          if [ -z "$VERSION" ]; then
+            echo "无法从 main/desktop/package.json 提取版本号"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "版本号: $VERSION"
+
+      - name: 校验标签与版本号一致
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ "v${{ steps.ver.outputs.version }}" != "${GITHUB_REF_NAME}" ]; then
+            echo "标签 ${GITHUB_REF_NAME} 与 desktop/package.json 版本号 ${{ steps.ver.outputs.version }} 不一致"
+            exit 1
+          fi
+
+      - name: 构建并推送 Docker 镜像
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          docker build -t "$IMAGE:$VER" -t "$IMAGE:latest" main
+          echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
+          docker push "$IMAGE:$VER"
+          docker push "$IMAGE:latest"
+
+      - name: 构建 Windows 安装包（wine 容器内交叉打包）
+        run: |
+          docker run --rm \
+            -e ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+            -e ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
+            -v "$PWD":/work \
+            -w /work/main \
+            electronuserland/builder:wine \
+            bash scripts/build-desktop-ci.sh
+
+      - name: 整理发布产物并计算校验值
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          EXE="main/desktop/dist/LLM Wiki Setup ${VER}.exe"
+          if [ ! -f "$EXE" ]; then
+            echo "未找到安装包: $EXE"
+            ls -la main/desktop/dist || true
+            exit 1
+          fi
+          mkdir -p release-out
+          cp "$EXE" "release-out/LLM Wiki Setup ${VER}.exe"
+          docker save "$IMAGE:$VER" | gzip > "release-out/example-wiki-${VER}.tar.gz"
+          cd release-out
+          sha256sum "LLM Wiki Setup ${VER}.exe" "example-wiki-${VER}.tar.gz" > "sha256-${VER}.txt"
+          cat "sha256-${VER}.txt"
+
+      - name: 上传构建产物（手动触发测试模式）
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: exampleproject-release-test-${{ steps.ver.outputs.version }}
+          path: release-out/
+          retention-days: 7
+
+      - name: 创建 Release 并上传附件
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITHUB_SERVER_URL: ${{ gitea.server_url }}
+        run: |
+          set -eu
+          VER="${{ steps.ver.outputs.version }}"
+          TAG="${GITHUB_REF_NAME}"
+          API="${GITHUB_SERVER_URL}/api/v1"
+          SHA="${GITHUB_SHA}"
+
+          # 创建 Release（标签已存在 Release 时复用）
+          REL_ID=$(curl -sf -X POST "$API/repos/$OWNER_REPO/releases" \
+            -H "Authorization: token $RELEASE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"target_commitish\":\"$SHA\",\"body\":\"ExampleProject $TAG\\n\\n- Docker 镜像: $IMAGE:$VER（私有，需先 docker login）\\n- Windows 安装包: LLM Wiki Setup $VER.exe\\n- 校验值见 sha256-$VER.txt\"}" \
+            | sed -n 's/.*"id":\([0-9]\{1,\}\).*/\1/p' | head -n1)
+          if [ -z "$REL_ID" ]; then
+            echo "创建 Release 失败，尝试获取已有 Release..."
+            REL_ID=$(curl -sf "$API/repos/$OWNER_REPO/releases/tags/$TAG" \
+              -H "Authorization: token $RELEASE_TOKEN" \
+              | sed -n 's/.*"id":\([0-9]\{1,\}\).*/\1/p' | head -n1)
+          fi
+          if [ -z "$REL_ID" ]; then
+            echo "无法创建或获取 Release"
+            exit 1
+          fi
+          echo "Release ID: $REL_ID"
+
+          for f in release-out/*; do
+            NAME=$(basename "$f" | sed 's/ /%20/g')
+            echo "上传附件: $(basename "$f")"
+            curl -sf -X POST "$API/repos/$OWNER_REPO/releases/$REL_ID/assets?name=$NAME" \
+              -H "Authorization: token $RELEASE_TOKEN" \
+              -F "attachment=@$f" > /dev/null
+          done
+          echo "Release $TAG 发布完成"
