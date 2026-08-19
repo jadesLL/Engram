@@ -41,6 +41,11 @@ beforeEach(() => {
   db.prepare(`DELETE FROM reports`).run();
   db.prepare(`DELETE FROM jobs`).run();
   db.prepare(`DELETE FROM settings WHERE key='job_queue_enabled'`).run();
+  // 索引救济读 pages/index_states;清干净避免测试间互相影响
+  db.prepare(`DELETE FROM pages_fts`).run();
+  db.prepare(`DELETE FROM pages`).run();
+  db.prepare(`DELETE FROM index_states`).run();
+  db.prepare(`DELETE FROM chunks`).run();
 });
 
 after(() => {
@@ -228,4 +233,42 @@ test('retrying failed jobs does not restart cancelled history', () => {
     db.prepare(`SELECT status FROM jobs ORDER BY id`).all(),
     [{ status: 'pending' }, { status: 'cancelled' }],
   );
+});
+
+test('startup recovery re-enqueues pages that never completed indexing', async () => {
+  const { createPage, writePage } = await import('./lib/vault.js');
+  // A:从未索引(无 index_states)→ 应被救济入队 process
+  const missing = createPage('Wiki/概念', '缺索引页面');
+  writePage(missing.path, '# 缺索引页面\n\n内容', { type: 'concept' });
+  // B:已完成索引(有 index_states)→ 不重复入队
+  const indexed = createPage('Wiki/概念', '已索引页面');
+  writePage(indexed.path, '# 已索引页面\n\n内容', { type: 'concept' });
+  db.prepare(
+    `INSERT INTO index_states(ref_type,ref_id,content_hash,model_key,updated_at)
+     VALUES('page',?,'hash','model',?)`
+  ).run(indexed.id, now());
+  // C:已删除 → 不入队
+  const deleted = createPage('Wiki/概念', '已删除页面');
+  db.prepare(`UPDATE pages SET deleted=1 WHERE id=?`).run(deleted.id);
+
+  recoverStaleJobs();
+
+  const processJobs = db.prepare(
+    `SELECT payload FROM jobs WHERE kind='process' AND status='pending'`
+  ).all() as { payload: string }[];
+  const processPageIds = processJobs.map((job) => JSON.parse(job.payload).pageId);
+  assert.ok(processPageIds.includes(missing.id), '缺索引页面应重新入队 process');
+  assert.ok(!processPageIds.includes(indexed.id), '已索引页面不应重复入队');
+  assert.ok(!processPageIds.includes(deleted.id), '已删除页面不应入队');
+
+  // 幂等:连续两次恢复,同一页面在 pending 队列中始终只有一个 process 任务。
+  // (第二次恢复会把上次救济入队的 pending 任务按启动清理语义标 failed 再重新入队,
+  //  这是清理与救济的正常交互:failed 记录有界,pending 不重复。)
+  recoverStaleJobs();
+  const pendingAfter = db.prepare(
+    `SELECT payload FROM jobs WHERE kind='process' AND status='pending'`
+  ).all() as { payload: string }[];
+  const pendingIds = pendingAfter.map((job) => JSON.parse(job.payload).pageId)
+    .filter((id) => id === missing.id);
+  assert.equal(pendingIds.length, 1, '同一缺索引页面在 pending 中不应重复');
 });

@@ -292,6 +292,29 @@ export function recoverStaleJobs() {
   recoverApplyingReports();
   recoverIngestCommits();
   recoverIngestQuestionJobs();
+  recoverMissingIndexes();
+}
+
+/**
+ * 启动索引救济：启动清理丢弃的 process/embed 任务不会自动重跑，
+ * 对应页面会缺 chunks/向量索引而搜索不到（重启后部分页面搜索缺失的根因）。
+ * 以 index_states 为判据（indexPage 完成后必写，含空页面），
+ * 从未完成索引的页面重新入队；indexPage 有内容签名幂等，重复入队安全。
+ */
+export function recoverMissingIndexes(): number {
+  const rows = db.prepare(
+    `SELECT p.id FROM pages p
+     WHERE p.deleted = 0
+       AND NOT EXISTS (
+         SELECT 1 FROM index_states s WHERE s.ref_type = 'page' AND s.ref_id = p.id
+       )
+     LIMIT 500`
+  ).all() as { id: string }[];
+  for (const row of rows) enqueuePagePipeline(row.id);
+  if (rows.length) {
+    console.log(`[jobs] 启动索引救济:重新入队 ${rows.length} 个缺索引页面`);
+  }
+  return rows.length;
 }
 
 /** 仅保留仍被 pending/running 批量任务引用的 applying 报告。 */
