@@ -9,7 +9,7 @@
 
     <div class="settings-mobile-nav">
       <label for="settings-section">设置分类</label>
-      <select id="settings-section" v-model="activeSettingsSection">
+      <select id="settings-section" :value="activeSettingsSection" @change="onSectionChange">
         <option v-for="item in settingsNavigation" :key="item.id" :value="item.id">
           {{ item.label }}
         </option>
@@ -81,6 +81,11 @@ function onSelectSection(id: SettingsSection) {
     return;
   }
   activeSettingsSection.value = id;
+}
+
+/** 窄屏下拉走同一逻辑;「提炼看板」跳转后 activeSettingsSection 不变,下拉回显原分类 */
+function onSectionChange(event: Event) {
+  onSelectSection((event.target as HTMLSelectElement).value as SettingsSection);
 }
 </script>
 
