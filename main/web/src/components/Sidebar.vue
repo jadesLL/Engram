@@ -165,6 +165,18 @@
           >
             <span class="sec-name">原始资料</span>
           </button>
+          <button
+            v-if="filesCoverage.supported"
+            class="coverage-badge"
+            :class="{ warn: filesCoverage.attention > 0 }"
+            type="button"
+            v-tooltip="filesCoverage.attention > 0
+              ? `${filesCoverage.ingested}/${filesCoverage.supported} 已整理,${filesCoverage.attention} 份需要处理 — 点击查看整理覆盖`
+              : `${filesCoverage.supported} 份资料全部已整理 — 点击查看整理覆盖`"
+            @click="router.push('/ingest-coverage')"
+          >
+            {{ filesCoverage.ingested }}/{{ filesCoverage.supported }}
+          </button>
           <div class="sec-actions">
             <label class="sort-control section-sort" v-tooltip="`原始资料排序：${sortFilesLabel}`">
               <Icon name="sort" :size="12" />
@@ -188,7 +200,7 @@
             <button
               class="add-btn"
               type="button"
-              v-tooltip="'AI 整理全部'"
+              v-tooltip="'AI 整理全部(已整理且未变更的自动跳过,只处理新增/变更/失败的)'"
               aria-label="AI 整理全部"
               @click="ingestAll"
             >
@@ -786,6 +798,27 @@ const visibleFiles = computed(() =>
     ? files.value.filter((file) => textMatches(file.name) || textMatches(file.path))
     : files.value
 );
+
+/** 原始资料提炼覆盖率:已整理/支持提炼/需处理 三计数,供分组角标展示 */
+const filesCoverage = computed(() => {
+  let supported = 0;
+  let ingested = 0;
+  let attention = 0;
+  for (const file of files.value) {
+    if (file.ingestSupported === false) continue;
+    supported++;
+    if (file.ingestedAt) {
+      ingested++;
+      continue;
+    }
+    if (file.ingestStatus === 'failed' || ['failed', 'blocked', 'partial'].includes(file.extractionStatus || '')) {
+      attention++;
+    } else if (!file.extractionStatus) {
+      attention++;
+    }
+  }
+  return { supported, ingested, attention };
+});
 const visibleChatFiles = computed(() =>
   normalizedFilter.value
     ? chatFiles.value.filter((file) => textMatches(file.name) || textMatches(file.path))
@@ -949,7 +982,7 @@ async function ingestFile(f: any) {
 async function ingestAll() {
   const ok = await confirmDialog({
     title: '整理全部原始资料',
-    message: '将按当前规则重新整理全部原始资料，并产生相应的 AI 调用。继续？',
+    message: '将全部原始资料加入整理队列。已整理且内容未变更的会自动跳过,实际只处理新增、变更或之前失败的资料。继续?',
     confirmText: '继续',
   });
   if (!ok) return;
@@ -1293,6 +1326,27 @@ onUnmounted(() => {
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+.coverage-badge {
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--success, #2e7d32);
+  font-size: 10.5px;
+  line-height: 17px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.coverage-badge:hover { border-color: var(--accent); background: var(--accent-soft); }
+.coverage-badge.warn {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+  background: var(--warn-soft);
 }
 
 .add-btn {
