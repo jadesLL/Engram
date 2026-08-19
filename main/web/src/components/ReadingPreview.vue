@@ -163,7 +163,7 @@ type OutlineItem = {
 
 const props = defineProps<{
   markdown: string;
-  title: string;
+  title?: string;
   pageType: string;
   tags: string[];
   updatedAt?: string;
@@ -306,7 +306,7 @@ function addImageCaptions(root: HTMLElement) {
 
 function prepareHeadings(root: HTMLElement) {
   const firstH1 = root.querySelector<HTMLElement>('h1');
-  if (firstH1 && isDuplicateDocumentTitle(firstH1.textContent || '', props.title)) {
+  if (firstH1 && isDuplicateDocumentTitle(firstH1.textContent || '', props.title ?? '')) {
     firstH1.remove();
   }
 

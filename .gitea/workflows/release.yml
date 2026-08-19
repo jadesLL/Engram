@@ -1,0 +1,118 @@
+# ExampleProject 发布流程：版本号 Docker 镜像 + Windows NSIS 安装包 + Gitea Release
+# 触发：
+#   - 推送 v* 标签（如 v1.1.5）：完整发布（镜像推送 + exe 构建 + 创建 Release 上传附件）
+#   - 手动 workflow_dispatch：测试模式（镜像推送 + exe 构建 + 产物上传为 Artifact，不创建 Release）
+# 注意：标签名必须与 main/desktop/package.json 的 version 一致（v<version>），否则校验失败
+# Runner：Windows 宿主机模式（label: windows），Docker 命令经 Docker Desktop 跑 Linux 容器
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  REGISTRY: gitea.example.com
+  IMAGE: gitea.example.com/example/example-wiki
+
+jobs:
+  release:
+    runs-on: windows
+    steps:
+      - name: 检出代码
+        uses: https://gitea.com/actions/checkout@v4
+
+      - name: 提取版本号（main/desktop/package.json）
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' main/desktop/package.json | head -n1)
+          if [ -z "$VERSION" ]; then
+            echo "无法从 main/desktop/package.json 提取版本号"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "版本号: $VERSION"
+
+      - name: 校验标签与版本号一致
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          if [ "v${{ steps.ver.outputs.version }}" != "${GITHUB_REF_NAME}" ]; then
+            echo "标签 ${GITHUB_REF_NAME} 与 desktop/package.json 版本号 ${{ steps.ver.outputs.version }} 不一致"
+            exit 1
+          fi
+
+      - name: 构建并推送 Docker 镜像
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          docker build -t "$IMAGE:$VER" -t "$IMAGE:latest" main
+          echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
+          docker push "$IMAGE:$VER"
+          docker push "$IMAGE:latest"
+
+      - name: 构建 Windows 安装包（wine 容器内交叉打包，docker cp 拷出产物）
+        shell: bash
+        env:
+          # Windows runner 的 Git Bash 会对参数做 MSYS 路径转换（main → C:/Program Files/Git/main），必须禁用
+          MSYS_NO_PATHCONV: '1'
+        run: |
+          # 上下文用 . 而非 main：Windows runner 上 docker CLI 解析相对路径上下文时
+          # 对 Git Bash 的 UNC cwd 处理有问题，cd 进 main 后用 . 稳定可靠
+          cd main
+          docker build -f desktop/Dockerfile.ci -t exampleproject-desktop-builder .
+          CID=$(docker create exampleproject-desktop-builder)
+          docker cp "$CID:/work/desktop/dist/." ../desktop-dist
+          docker rm "$CID" > /dev/null
+          cd ..
+          echo ">> 构建产物："
+          ls -la desktop-dist
+
+      - name: 整理发布产物并计算校验值
+        shell: bash
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          EXE="desktop-dist/LLM Wiki Setup ${VER}.exe"
+          if [ ! -f "$EXE" ]; then
+            echo "未找到安装包: $EXE"
+            ls -la desktop-dist || true
+            exit 1
+          fi
+          mkdir -p release-out
+          cp "$EXE" "release-out/LLM Wiki Setup ${VER}.exe"
+          docker save "$IMAGE:$VER" | gzip > "release-out/example-wiki-${VER}.tar.gz"
+          cd release-out
+          sha256sum "LLM Wiki Setup ${VER}.exe" "example-wiki-${VER}.tar.gz" > "sha256-${VER}.txt"
+          cat "sha256-${VER}.txt"
+
+      - name: 上传构建产物（手动触发测试模式）
+        if: github.event_name == 'workflow_dispatch'
+        uses: https://gitea.com/actions/upload-artifact@v4
+        with:
+          name: exampleproject-release-test-${{ steps.ver.outputs.version }}
+          path: release-out/
+          retention-days: 7
+
+      - name: 创建 Release 并上传附件
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: https://gitea.com/actions/gitea-release-action@v1
+        env:
+          NODE_OPTIONS: --experimental-fetch
+        with:
+          files: |
+            release-out/LLM Wiki Setup *.exe
+            release-out/example-wiki-*.tar.gz
+            release-out/sha256-*.txt
+          token: ${{ secrets.RELEASE_TOKEN }}
+          draft: false
+          name: v${{ steps.ver.outputs.version }}
+          body: |
+            ExampleProject v${{ steps.ver.outputs.version }}
+
+            - Docker 镜像: ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}（私有，需先 docker login）
+            - Windows 安装包: LLM Wiki Setup ${{ steps.ver.outputs.version }}.exe
+            - 校验值见 sha256-${{ steps.ver.outputs.version }}.txt
