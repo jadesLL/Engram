@@ -360,7 +360,7 @@ function toolLabel(name: string): string {
     create_raw_text: '创建原始资料',
     merge_pages: '合并页面',
     organize_content: 'AI 整理',
-    run_dream_cycle: '梦境整理',
+    run_dream_cycle: '智能整理',
     apply_report_actions: '应用报告动作',
     set_report_status: '更新报告状态',
     retry_job: '重试任务',
