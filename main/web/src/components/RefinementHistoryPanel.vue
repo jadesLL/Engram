@@ -142,7 +142,12 @@
                     </button>
                   </template>
                 </div>
+                <!-- 转折行:复刻节点行的占位结构(节点宽+间隙),竖条落在行尾节点槽位中心 -->
                 <div v-if="ri < snakeRows.length - 1" class="snake-turn" aria-hidden="true">
+                  <template v-for="(n, ci) in row.nodes" :key="n.id">
+                    <span v-if="ci > 0" class="turn-gap"></span>
+                    <span v-if="ci < row.nodes.length - 1" class="turn-spacer"></span>
+                  </template>
                   <span class="guide-bar vertical"></span>
                 </div>
               </template>
@@ -935,10 +940,10 @@ async function loadDetail(runId: string, options: LoadOptions = {}) {
           : '';
       outputMode.value = preservedOutputMode;
     } else {
-      const preferred = data.trace.find((stage: TraceStage) =>
-        ['current', 'failed'].includes(stage.status)
-      ) || [...data.trace].reverse().find((stage: TraceStage) => stage.status === 'completed') || data.trace[0];
+      // 默认选中概览;仅在运行中/失败时直接定位到该阶段(用户关心的现场)
+      const preferred = data.trace.find((stage: TraceStage) => ['current', 'failed'].includes(stage.status));
       if (preferred) selectStage(preferred.id);
+      else selectedStageId.value = '';
     }
   } catch (requestError: any) {
     if (selectedRunId.value === runId) {
@@ -1466,18 +1471,25 @@ onUnmounted(() => {
   width: 4px;
   height: 26px;
 }
-/* 行间转折:对齐行尾节点中心 */
+/* 行间转折:与节点行同构(同 flex/gap/居中),占位复刻节点槽位,竖条落在行尾节点中心 */
 .snake-turn {
   display: flex;
   justify-content: center;
+  align-items: flex-start;
+  gap: 10px;
   height: 26px;
   width: 100%;
-  position: relative;
+}
+.turn-spacer {
+  flex: 0 0 var(--node-width);
+  width: var(--node-width);
+}
+.turn-gap {
+  flex: 0 0 auto;
+  width: 26px;
 }
 .snake-turn .guide-bar.vertical {
-  position: absolute;
-  /* 对齐最右节点中心:行宽/2 - 节点宽/2 (近似,配合 max-width 容器) */
-  right: calc(50% - var(--node-width) / 2 - 4px);
+  margin-top: -4px;
 }
 .snake-node {
   flex: 0 0 var(--node-width);
