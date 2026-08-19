@@ -253,3 +253,19 @@ test('同名页面已存在的单来源候选同样视为对账就绪', () => {
   assert.equal(list.length, 1);
   assert.equal(list[0].autoReconcileReady, true);
 });
+
+test('待入库清单:applying 候选保留在清单并标记处理中,排最前', () => {
+  clear();
+  seedCandidate('处理中项目', 'pc-run-applying', '原始资料/处理中.md');
+  seedCandidate('空闲项目', 'pc-run-idle', '原始资料/空闲.md');
+  const applyingReport = db.prepare(
+    `SELECT id FROM reports WHERE kind='pending_review' AND status='open' AND payload LIKE '%处理中项目%'`
+  ).get();
+  db.prepare(`UPDATE reports SET status='applying' WHERE id=?`).run(applyingReport.id);
+  const list = pendingCandidateList();
+  assert.equal(list.length, 2, 'applying 候选不能从待入库清单消失,否则前端进度遮罩无处显示');
+  assert.equal(list[0].name, '处理中项目');
+  assert.equal(list[0].applying, true);
+  assert.equal(list[1].name, '空闲项目');
+  assert.equal(list[1].applying, false);
+});

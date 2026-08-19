@@ -72,6 +72,8 @@ export interface PendingCandidateItem {
   evidenceEligible: boolean;
   /** 已满足自动对账条件(双来源或同名页已存在),即将自动入库 */
   autoReconcileReady: boolean;
+  /** 组内任一报告已被后台入库任务 claim(applying),前端据此显示处理中遮罩 */
+  applying: boolean;
   ambiguity: { label?: string; question?: string } | null;
   createdAt: string;
 }
@@ -140,31 +142,41 @@ function pageExistsByTitle(title: string): boolean {
  * 展示层按实体(normalized_name+kind)聚合为一行,避免同一实体在清单里重复出现。
  */
 export function pendingCandidateList(): PendingCandidateItem[] {
+  // applying(后台入库任务已 claim)的条目保留在清单里,前端才能持续显示进度遮罩;
+  // 任务完成置 resolved/dismissed 后自然从清单消失,失败则被释放回 open 恢复可点。
   const rows = db.prepare(
-    `SELECT * FROM reports WHERE kind='pending_review' AND status='open' ORDER BY id DESC LIMIT 200`
+    `SELECT * FROM reports WHERE kind='pending_review' AND status IN ('open','applying') ORDER BY id DESC LIMIT 200`
   ).all() as ReportRow[];
   const groups = new Map<string, {
     row: ReportRow;
     payload: Record<string, any>;
     candidate: CandidateOccurrence | undefined;
     reportIds: number[];
+    applyingIds: number[];
   }>();
   for (const row of rows) {
     const payload = parsePayload(row.payload);
-    const candidate = ensureCandidateFromReport({ id: row.id, status: 'open', payload: row.payload });
+    const candidate = ensureCandidateFromReport({ id: row.id, status: row.status || 'open', payload: row.payload });
     const groupKey = candidate
       ? `${candidate.normalized_name}|${candidate.kind}`
       : `${String(payload.name || '').trim().toLowerCase()}|${payload.kind || 'concept'}`;
     const existing = groups.get(groupKey);
     if (existing) {
       existing.reportIds.push(row.id);
+      if (row.status === 'applying') existing.applyingIds.push(row.id);
       continue;
     }
-    groups.set(groupKey, { row, payload, candidate, reportIds: [row.id] });
+    groups.set(groupKey, {
+      row,
+      payload,
+      candidate,
+      reportIds: [row.id],
+      applyingIds: row.status === 'applying' ? [row.id] : [],
+    });
   }
   const items: PendingCandidateItem[] = [];
   for (const group of groups.values()) {
-    const { row, payload, candidate } = group;
+    const { row, payload, candidate, applyingIds } = group;
     const occurrences = candidate ? relatedCandidateOccurrences(candidate) : [];
     const factSources = occurrences.length ? occurrences : (candidate ? [candidate] : []);
     const facts = factSources.flatMap((occurrence) => loadCandidateFacts(occurrence));
@@ -196,13 +208,16 @@ export function pendingCandidateList(): PendingCandidateItem[] {
         ? candidateAutoReconcileEligible(candidate) &&
           (pageExistsByTitle(candidate.name) || evidence.sourceCount >= 2)
         : false,
+      applying: applyingIds.length > 0,
       ambiguity: payload.ambiguity || null,
       createdAt: row.run_at,
     });
   }
-  // 即将自动入库的排最前,其余按报告新旧倒序
+  // 处理中的排最前(进度遮罩在视口顶部可见),其次即将自动入库,其余按报告新旧倒序
   return items.sort((a, b) =>
-    Number(b.autoReconcileReady) - Number(a.autoReconcileReady) || b.reportId - a.reportId
+    Number(b.applying) - Number(a.applying) ||
+    Number(b.autoReconcileReady) - Number(a.autoReconcileReady) ||
+    b.reportId - a.reportId
   );
 }
 

@@ -4,14 +4,20 @@ import { db } from '../lib/db.js';
 import { requireAuth } from './auth.js';
 import {
   candidateSourceSummary,
+  claimCandidateReviewBatch,
   commitCandidateReview,
   ignoreCandidateReview,
   previewCandidateReview,
+  releaseCandidateReviewBatch,
+  resolveTarget,
+  validateCandidateReviewDecisions,
+  type CandidateReviewDecision,
 } from '../pipeline/candidateReview.js';
 import { ensureCandidateFromReport } from '../pipeline/candidateLedger.js';
 import { pendingCandidateList } from '../dream/reportCards.js';
 import {
   cancelJob,
+  enqueue,
   getJobQueueState,
   retryFailedJobs,
   retryJob,
@@ -467,6 +473,36 @@ export async function jobRoutes(app: FastifyInstance) {
     } catch (error: any) {
       return reply.code(409).send({ error: error?.message || '忽略候选失败' });
     }
+  });
+
+  /** AI 提炼入库:一步式后台执行局部再提炼+提交,不弹预览;claim 原子置 applying 防重复触发。
+   *  body 带 target 时为并入已有页面模式(同样后台一步式)。 */
+  app.post('/api/ingest/candidates/:id/auto-commit', async (req, reply) => {
+    const reportId = Number((req.params as { id: string }).id);
+    const { kind, target } = (req.body || {}) as { kind?: string; target?: string };
+    if (!Number.isInteger(reportId) || reportId <= 0) return reply.code(400).send({ error: '待审候选 ID 无效' });
+    const report = db.prepare(
+      `SELECT payload FROM reports WHERE id=? AND kind='pending_review' AND status='open'`
+    ).get(reportId) as { payload: string } | undefined;
+    if (!report) return reply.code(409).send({ error: '候选不存在或已在处理中' });
+    const payload = safeJson(report.payload, {});
+    const resolvedKind = kind || payload.kind || 'concept';
+    const action = target ? `merge:${resolvedKind}` : `approve:${resolvedKind}`;
+    let decisions: CandidateReviewDecision[];
+    try {
+      decisions = validateCandidateReviewDecisions([{ reportId, action, target }]);
+      // 并入目标提前校验,无效目标直接报错而非任务后台失败
+      if (target) resolveTarget(target);
+      claimCandidateReviewBatch(decisions);
+    } catch (error: any) {
+      return reply.code(409).send({ error: error?.message || '候选无法处理' });
+    }
+    const jobId = enqueue('candidate_review_batch', { kind: 'pending_review', decisions, nonce: Date.now() });
+    if (!jobId) {
+      releaseCandidateReviewBatch(decisions);
+      return reply.code(409).send({ error: '入库任务无法入队，请稍后重试' });
+    }
+    return { ok: true, jobId };
   });
 
   /** 旧客户端兼容：批准仍执行局部再提炼，但不展示中间预览；新界面使用 preview + commit。 */
