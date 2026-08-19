@@ -48,6 +48,8 @@ export interface DecisionCard {
   context?: string;
   links?: CardLink[];
   options: CardOption[];
+  /** 仅实体歧义卡:建议目标页标题,前端合并弹窗用作候选名称 */
+  mergeTargetTitle?: string;
   /** 仅追问卡片:hydrate 后的活跃问题列表 */
   questions?: any[];
   sourcePath?: string;
@@ -341,6 +343,7 @@ function identityCard(row: ReportRow, payload: Record<string, any>): DecisionCar
       : String(payload.ambiguity?.question || `「${payload.title}」的身份可能存在歧义`),
     context: hasTarget ? payload.ambiguity?.question : undefined,
     links: payload.pageId ? [{ label: '查看页面', pageId: String(payload.pageId) }] : [],
+    mergeTargetTitle: hasTarget ? String(payload.suggestedTargetTitle || '') : undefined,
     options,
     createdAt: row.run_at,
   };

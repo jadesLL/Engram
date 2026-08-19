@@ -13,7 +13,7 @@ export async function reportRoutes(app: FastifyInstance) {
     const reportId = Number((req.params as { id: string }).id);
     const { option, input, reportIds } = (req.body || {}) as {
       option?: string;
-      input?: { newTitle?: string; pageType?: string };
+      input?: { newTitle?: string; pageType?: string; mergeKeep?: 'target' | 'page'; finalTitle?: string };
       reportIds?: number[];
     };
     if (!Number.isInteger(reportId) || reportId <= 0) {

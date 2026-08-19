@@ -37,8 +37,13 @@ export function renamePageSafely(pageId: string, newTitle: string): void {
   const body = readPage(page.path);
   if (!body) throw new RenameError('文件读取失败', 404);
 
+  // 正文 H1 同步为新标题（无 H1 时在开头补一行）
+  const h1Synced = /^#\s+[^\n]*/m.test(body.content)
+    ? body.content.replace(/^#\s+[^\n]*/m, () => `# ${title}`)
+    : `# ${title}\n\n${body.content}`;
+
   movePage(page.path, newRel);
-  writePage(newRel, body.content, { title });
+  writePage(newRel, h1Synced, { title });
 
   // 重定向引用：其他页面里的 [[oldTitle]] 改成 [[newTitle]]
   const referrers = db

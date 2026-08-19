@@ -201,6 +201,15 @@ test('duplicate/identity 卡片:推荐动作与选项随 payload 变化', () => 
   assert.ok(!identity.options.some((o: any) => o.value === 'merge'), '无建议目标时不提供合并选项');
   assert.ok(identity.options.some((o: any) => o.needsInput === 'rename'));
   assert.equal(identity.options.at(-1).value, 'dismiss');
+  assert.equal(identity.mergeTargetTitle, undefined, '无建议目标时 mergeTargetTitle 缺省');
+
+  addReports([{
+    kind: 'identity_ambiguity',
+    payload: { pageId: 'p2', title: '王五', type: 'person', suggestedTargetId: 't2', suggestedTargetTitle: '王五(产品)' },
+  }]);
+  const withTarget = buildReportsOverview().decisions
+    .find((card: any) => card.kind === 'identity_ambiguity' && card.subject === '王五');
+  assert.equal(withTarget.mergeTargetTitle, '王五(产品)', '有建议目标时输出 mergeTargetTitle 供合并弹窗使用');
 });
 
 test('追问卡片按资料聚合并 hydrate 活跃问题,全部处理中时文案切换', () => {

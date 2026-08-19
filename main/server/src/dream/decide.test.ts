@@ -37,7 +37,13 @@ before(async () => {
     res.end(JSON.stringify({
       choices: [{
         finish_reason: 'stop',
-        message: { content: JSON.stringify({ addition: '', rationale: '测试合并' }) },
+        message: {
+          content: JSON.stringify({
+            content: '# 合并结果\n\n## 当前理解\n\n综合后的内容。\n\n## 相关页面\n\n\n## 时间线\n\n',
+            aliases: [],
+            rationale: '测试合并',
+          }),
+        },
       }],
     }));
   });
@@ -169,6 +175,98 @@ test('identity_ambiguity:merge 合并到建议目标,rename 重命名澄清,dism
   }]);
   assert.equal((await decideReport(reportIdOf('identity_ambiguity'), 'dismiss')).status, 'dismissed');
   assert.ok(db.prepare(`SELECT id FROM pages WHERE id=? AND deleted=0`).get(kept.id));
+});
+
+test('identity_ambiguity:mergeKeep=page 反转方向,保留歧义页归档目标页', async () => {
+  clear();
+  const target = createPage('Wiki/实体', '赵六(研发)');
+  writePage(target.path, '# 赵六(研发)\n\n## 当前理解\n\n目标内容', { type: 'person' });
+  const ambiguous = createPage('Wiki/实体', '赵六');
+  writePage(ambiguous.path, '# 赵六\n\n## 当前理解\n\n歧义内容', { type: 'person' });
+  addReports([{
+    kind: 'identity_ambiguity',
+    payload: { pageId: ambiguous.id, title: '赵六', type: 'person', suggestedTargetId: target.id, suggestedTargetTitle: '赵六(研发)' },
+  }]);
+  assert.equal((await decideReport(reportIdOf('identity_ambiguity'), 'merge', { mergeKeep: 'page' })).status, 'resolved');
+  assert.match(
+    (db.prepare(`SELECT path FROM pages WHERE id=?`).get(ambiguous.id) as any).path,
+    /^Wiki\/实体\//,
+    '歧义页应保留在实体目录',
+  );
+  assert.match(
+    (db.prepare(`SELECT path FROM pages WHERE id=?`).get(target.id) as any).path,
+    /^Wiki\/归档\//,
+    '建议目标页应移入归档目录',
+  );
+});
+
+test('identity_ambiguity:finalTitle 合并后保留页改名,同名跳过改名', async () => {
+  clear();
+  const target = createPage('Wiki/实体', '孙七(产品)');
+  writePage(target.path, '# 孙七(产品)\n\n## 当前理解\n\n目标内容', { type: 'person' });
+  const ambiguous = createPage('Wiki/实体', '孙七');
+  writePage(ambiguous.path, '# 孙七\n\n## 当前理解\n\n歧义内容', { type: 'person' });
+  addReports([{
+    kind: 'identity_ambiguity',
+    payload: { pageId: ambiguous.id, title: '孙七', type: 'person', suggestedTargetId: target.id, suggestedTargetTitle: '孙七(产品)' },
+  }]);
+  assert.equal((await decideReport(reportIdOf('identity_ambiguity'), 'merge', { finalTitle: '孙七(综合)' })).status, 'resolved');
+  assert.ok(
+    db.prepare(`SELECT id FROM pages WHERE title='孙七(综合)' AND deleted=0`).get(),
+    '保留页应改名为自定义标题',
+  );
+  assert.match(
+    (db.prepare(`SELECT path FROM pages WHERE id=?`).get(ambiguous.id) as any).path,
+    /^Wiki\/归档\//,
+    '歧义页仍被归档',
+  );
+
+  // finalTitle 与保留页现名相同:跳过改名不报错
+  const target2 = createPage('Wiki/实体', '周八(运营)');
+  writePage(target2.path, '# 周八(运营)\n\n## 当前理解\n\n内容', { type: 'person' });
+  const ambiguous2 = createPage('Wiki/实体', '周八');
+  writePage(ambiguous2.path, '# 周八\n\n## 当前理解\n\n内容', { type: 'person' });
+  addReports([{
+    kind: 'identity_ambiguity',
+    payload: { pageId: ambiguous2.id, title: '周八', type: 'person', suggestedTargetId: target2.id, suggestedTargetTitle: '周八(运营)' },
+  }]);
+  assert.equal((await decideReport(reportIdOf('identity_ambiguity'), 'merge', { finalTitle: '周八(运营)' })).status, 'resolved');
+  assert.ok(db.prepare(`SELECT id FROM pages WHERE title='周八(运营)' AND deleted=0`).get());
+});
+
+test('identity_ambiguity:异步合并任务携带 input,执行时按用户选择反转方向', async () => {
+  clear();
+  const target = createPage('Wiki/实体', '吴九(市场)');
+  writePage(target.path, '# 吴九(市场)\n\n## 当前理解\n\n目标内容', { type: 'person' });
+  const ambiguous = createPage('Wiki/实体', '吴九');
+  writePage(ambiguous.path, '# 吴九\n\n## 当前理解\n\n歧义内容', { type: 'person' });
+  addReports([{
+    kind: 'identity_ambiguity',
+    payload: { pageId: ambiguous.id, title: '吴九', type: 'person', suggestedTargetId: target.id, suggestedTargetTitle: '吴九(市场)' },
+  }]);
+  const reportId = reportIdOf('identity_ambiguity');
+  const result = await decideReportGroup([reportId], 'merge', { mergeKeep: 'page', finalTitle: '吴九(负责人)' });
+  assert.equal(result.async, true, 'identity 合并应异步入队');
+  assert.ok(result.jobId);
+  assert.equal(reportStatus(reportId), 'applying', '合并报告在任务执行前保持 applying');
+  // 任务 payload 中的 decision 应携带 input
+  const job = db.prepare(`SELECT payload FROM jobs WHERE id=?`).get(result.jobId) as any;
+  const decisions = JSON.parse(job.payload).decisions;
+  assert.equal(decisions[0].input.mergeKeep, 'page');
+  assert.equal(decisions[0].input.finalTitle, '吴九(负责人)');
+  // 手动执行队列任务(测试环境队列不自动运行)
+  const { applyReportDecisions } = await import('./apply.js');
+  await applyReportDecisions('identity_ambiguity', decisions);
+  assert.equal(reportStatus(reportId), 'resolved');
+  assert.match(
+    (db.prepare(`SELECT path FROM pages WHERE id=?`).get(target.id) as any).path,
+    /^Wiki\/归档\//,
+    '目标页应按 mergeKeep=page 被归档',
+  );
+  assert.ok(
+    db.prepare(`SELECT id FROM pages WHERE title='吴九(负责人)' AND deleted=0`).get(),
+    '保留页应按 finalTitle 改名',
+  );
 });
 
 test('missing_sections/stale:补章节与复核写回页面元信息', async () => {
