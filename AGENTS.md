@@ -15,6 +15,14 @@ Git 命令默认从当前 `ExampleProject/` 根目录执行。不要运行仍引
 
 Git 以本地管理为主，官方远端为 `gitea`（`https://gitea.example.com/example/ExampleProject.git`，私有）。日常开发、合并、发版均在本地完成后按用户明确指示推送 gitea；不经用户批准不得推送到其他远端，也不得强制推送或改写远端历史。
 推送 main 或 `v*` 标签到 gitea 会触发 Gitea Actions（`.gitea/workflows/`，详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送自动构建 Docker 镜像并推到 Gitea 内置 Registry；`v*` 标签额外构建 Windows 安装包并发布 Release。CI 在 runner 上的联网下载属既定流程；本地开发机的下载申请限制不因此放宽。
+
+### Gitea 发版工作流（摘要，细则见 main/docs/GITEA-CI.md）
+
+1. 功能合并 main 后推送：`git push gitea main` → ci.yml 自动 verify（build+typecheck+test）+ 推镜像。
+2. 发版：同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动发 Release（exe + docker tar.gz + sha256）。
+3. 从 Release 附件下载产物归档到 `releases/<版本>/`（含 release.json）。
+4. **镜像地址固定三层路径** `gitea.example.com/example/exampleproject/example-wiki:<版本>`（owner/repo/imagename 归属仓库；两层 `example/example-wiki` 形式 NAS 拉取异常，勿改回）。
+5. 部署 compose 不得写 `pull_policy: never`（禁止拉取，本地无镜像必报找不到）。
 下载任何环境需要的文件，需要先向用户申请，不允许私自下载。使用环境若不是必须，不要在代码库中安装环境，安装到本地环境不放在代码库。
 
 完成任何功能后，必须先自行验证功能是否正确，并截取能够证明结果的界面或终端画面。验收完成后，向用户汇报改动、检查结果、截图、分支和提交信息，并分别询问是否合并到 `main`、是否部署；没有用户对相应动作的明确批准，不得合并或部署。
