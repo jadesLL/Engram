@@ -65,6 +65,8 @@ act_runner 以 Windows 宿主机模式运行（label `windows`，runner 即本�
 
 **Z 盘不支持 bind mount**：CI 中所有容器构建均采用「源码 COPY 进镜像 + `docker create`/`docker cp` 拷出产物」方式，不使用 volume 挂载。
 
+**Docker Hub 直连不通**：runner 网络环境无法直连 `registry-1.docker.io`，`desktop/Dockerfile.ci` 的基础镜像固定走 DaoCloud 镜像源（`docker.m.daocloud.io/electronuserland/builder:wine`）。其他基础镜像（node:22-slim 等）本机已缓存，正常复用。
+
 ## 已知注意事项
 
 - **Release 附件大小**：exe 约 100MB+、docker tar.gz 数百 MB。若上传返回 413，需在 Gitea `app.ini` 调大 `[attachment] MAX_SIZE`（默认较保守）后重启 Gitea。

@@ -7,7 +7,8 @@
 #   CID=$(docker create exampleproject-desktop-builder)
 #   docker cp "$CID:/work/desktop/dist/." <输出目录>
 #   docker rm "$CID"
-FROM electronuserland/builder:wine
+# 基础镜像走 DaoCloud 镜像源（runner 网络无法直连 Docker Hub）
+FROM docker.m.daocloud.io/electronuserland/builder:wine
 
 ENV ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
     ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
