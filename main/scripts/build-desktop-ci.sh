@@ -37,24 +37,34 @@ pnpm -C desktop/server install --prod \
   --node-linker=hoisted --ignore-workspace --no-frozen-lockfile \
   --config.os=win32 --config.cpu=x64 --config.arch=x64
 
-echo ">> 重编 better-sqlite3 到 Electron win32-x64 ABI"
+echo ">> 拉取 better-sqlite3 的 Electron win32-x64 预编译"
 cd desktop/server/node_modules/better-sqlite3
-npx --yes @electron/rebuild -f -m . --arch x64 || {
-  echo ">> @electron/rebuild 失败，回退 prebuild-install 直接拉 Electron win32-x64 预编译"
-  npx --yes prebuild-install -r electron -t 35.7.5 --arch x64 || {
-    echo ">> prebuild-install 也失败，尝试源码编译（wine）"
-    npx --yes node-gyp rebuild --release --target=35.7.5 --runtime=electron --arch=x64 --dist-url=https://npmmirror.com/mirrors/electron/
-  }
+npx --yes prebuild-install -r electron -t 35.7.5 --arch x64 --platform win32 || {
+  echo ">> prebuild-install 失败，尝试源码编译（wine 交叉编译 win32-x64）"
+  npx --yes node-gyp rebuild --release --target=35.7.5 --runtime=electron --arch=x64 --dist-url=https://npmmirror.com/mirrors/electron/
 }
 ls build/Release/better_sqlite3.node
+# 断言是 Windows PE 二进制（MZ 头），防止被装成 Linux ELF 装进 exe 本地模式必崩
+if ! head -c 2 build/Release/better_sqlite3.node | grep -q MZ; then
+  echo "错误：better_sqlite3.node 不是 Windows PE 二进制（win32-x64 prebuild 拉取失败）"
+  exit 1
+fi
 cd -
 
 echo ">> 打包 NSIS（electron-builder 完整流程，wine）"
 cd desktop
 # EB 需要 desktop 的 devDependencies（electron、electron-builder）
 pnpm install --frozen-lockfile --ignore-scripts
+
+echo ">> 清理 .bin 与悬空符号链接（staging 只带生产依赖，npx/prebuild-install 产生的嵌套"
+echo "   node_modules/.bin 悬空链接会让 NSIS 的 7za 扫描报错 exit 1；运行时 node dist/index.js 不需要 CLI 入口）"
+find server/node_modules -type d -name .bin -prune -exec rm -rf {} + 2>/dev/null || true
+find server/node_modules -xtype l -delete 2>/dev/null || true
+
 # electron zip 由 EB 下载；wine 下无 Defender，走完整流程（下载+解压+asar+NSIS）
-npx electron-builder --win nsis
+# npmRebuild=false：EB 内置 @electron/rebuild 会按当前平台（Linux）重编原生模块，
+# 覆盖掉上面预放的 Electron win32-x64 prebuild 二进制；CI 里二进制已就绪，必须跳过重编。
+npx electron-builder --win nsis --config.npmRebuild=false
 
 echo ">> 产物清单"
 ls -la dist/*.exe
