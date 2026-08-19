@@ -124,26 +124,28 @@
           <!-- 蛇形流程:两行节点+行内引导条+行间向下箭头(纯 CSS flex,不穿过节点) -->
           <div class="snake-wrap" aria-label="提炼阶段">
             <div class="snake-flow">
-              <div class="snake-row" v-for="(row, ri) in snakeRows" :key="ri" :class="{ reversed: row.reversed }">
-                <template v-for="(node, ci) in row.nodes" :key="node.id">
-                  <div class="snake-node-gap" v-if="ci > 0">
-                    <span class="guide-bar"></span>
-                  </div>
-                  <button
-                    type="button"
-                    class="snake-node"
-                    :class="[node.status, { active: selectedStageId === node.id }]"
-                    v-tooltip="stageDisplayName(node.stage)"
-                    @click="selectStage(node.id)"
-                  >
-                    <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
-                    <span class="snake-node-num">{{ node.index + 1 }}</span>
-                  </button>
-                </template>
-              </div>
-              <div class="snake-turn" v-if="snakeRows.length > 1">
-                <span class="guide-bar vertical"></span>
-              </div>
+              <template v-for="(row, ri) in snakeRows" :key="ri">
+                <div class="snake-row" :class="{ reversed: row.reversed }">
+                  <template v-for="(node, ci) in row.nodes" :key="node.id">
+                    <div v-if="ci > 0" class="snake-node-gap" aria-hidden="true">
+                      <span class="guide-bar"></span>
+                    </div>
+                    <button
+                      type="button"
+                      class="snake-node"
+                      :class="[node.status, { active: selectedStageId === node.id }]"
+                      v-tooltip="stageDisplayName(node.stage)"
+                      @click="selectStage(node.id)"
+                    >
+                      <span class="snake-node-pill">{{ stageShortName(node.stage) }}</span>
+                      <span class="snake-node-num">{{ node.index + 1 }}</span>
+                    </button>
+                  </template>
+                </div>
+                <div v-if="ri < snakeRows.length - 1" class="snake-turn" aria-hidden="true">
+                  <span class="guide-bar vertical"></span>
+                </div>
+              </template>
             </div>
           </div>
 
@@ -583,7 +585,11 @@ const snakeRows = computed(() => {
     if (!rows[node.row]) rows[node.row] = { nodes: [], reversed: !node.forward };
     rows[node.row].nodes.push(node);
   }
-  return rows.filter(Boolean);
+  return rows.filter(Boolean).map((row) => ({
+    ...row,
+    // DOM 顺序就是实际流程顺序(1→6,7→11),CSS 再决定第二行视觉方向。
+    nodes: [...row.nodes],
+  }));
 });
 
 function questionStatusLabel(status: string): string {
@@ -1423,61 +1429,76 @@ onUnmounted(() => {
   background: var(--bg-secondary);
 }
 .snake-flow {
+  --node-width: 104px;
+  --pill-height: 30px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
-  max-width: 960px;
+  gap: 0;
+  width: min(100%, 980px);
   margin: 0 auto;
 }
 .snake-row {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 56px;
   gap: 0;
 }
 .snake-row.reversed { flex-direction: row-reverse; }
-/* 节点间距+引导条 */
+/* 引导条占满两个固定宽节点之间的剩余空间；中心线=pill 高度/2 */
 .snake-node-gap {
-  flex: 1;
+  flex: 1 1 24px;
+  min-width: 12px;
+  height: var(--pill-height);
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-width: 20px;
+  padding: 0 6px;
 }
-/* 宽矩形引导条(水平) */
 .guide-bar {
   display: block;
   width: 100%;
-  max-width: 60px;
-  height: 5px;
+  height: 6px;
   border-radius: 3px;
   background: var(--border-strong);
-  opacity: .35;
+  opacity: .3;
 }
 .guide-bar.vertical {
-  width: 5px;
-  height: 28px;
-  max-width: none;
+  width: 6px;
+  height: 30px;
 }
-/* 行间向下转折 */
+/* 行间转折固定对齐末端节点的几何中心：node-width / 2 */
 .snake-turn {
   display: flex;
   justify-content: flex-end;
-  padding-right: 4%;
+  height: 30px;
+  padding-right: calc(var(--node-width) / 2 - 3px);
 }
 .snake-node {
-  flex: 0 0 auto;
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  background: none; border: 0; cursor: pointer;
-  padding: 2px;
+  flex: 0 0 var(--node-width);
+  width: var(--node-width);
+  min-width: var(--node-width);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
 }
 /* 椭圆 pill 包含阶段中文名 */
 .snake-node-pill {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 4px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--pill-height);
+  box-sizing: border-box;
+  padding: 0 10px;
   border: 1.5px solid var(--border-strong);
-  border-radius: 20px;
+  border-radius: calc(var(--pill-height) / 2);
   background: var(--bg);
   color: var(--text-secondary);
   font-size: 12px;
