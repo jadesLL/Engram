@@ -12,10 +12,12 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-update-routes-'
 process.env.DATA_DIR = temp;
 
 let app: ReturnType<typeof Fastify>;
+let db: any;
 let token = '';
 
 before(async () => {
   const dbModule = await import('../lib/db.js');
+  db = dbModule.db;
   dbModule.migrate();
   dbModule.setSetting('password_hash', bcrypt.hashSync('test-password', 4));
 
@@ -29,7 +31,8 @@ before(async () => {
 
 after(async () => {
   await app.close();
-  fs.rmSync(temp, { recursive: true, force: true });
+  try { db.close(); } catch { /* already closed */ }
+  fs.rmSync(temp, { recursive: true, force: true, maxRetries: 3 });
 });
 
 test('GET /api/update/state 无 sock 时 unsupported 且不泄漏明文', async () => {

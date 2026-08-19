@@ -90,10 +90,11 @@ export function writeUpdateEnv(patch: Partial<UpdateEnv>): UpdateEnv {
   const keyToValue: Record<string, string> = {};
   for (const [field, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    keyToValue[UPDATE_ENV_KEYS[field as keyof typeof UPDATE_ENV_KEYS]] = value;
+    const envKey = UPDATE_ENV_KEYS[field as keyof UpdateEnv];
+    if (envKey) keyToValue[envKey] = value;
   }
 
-  const managed = new Set(Object.values(UPDATE_ENV_KEYS));
+  const managed = new Set<string>(Object.values(UPDATE_ENV_KEYS));
   const seen = new Set<string>();
   const kept: string[] = [];
   for (const line of lines) {
@@ -134,11 +135,13 @@ export function deriveDefaultImageRef(currentImage: string): string | null {
   const ref = currentImage.split('@')[0];
   const lastSlash = ref.lastIndexOf('/');
   const lastColon = ref.lastIndexOf(':');
+  // 无斜杠 = 本地镜像名（如 example-wiki:1.1.5），没有 registry 主机可推导
+  if (lastSlash <= 0) return null;
   // 冒号在最后一个斜杠之后才是 tag；否则（如 registry:5000/repo）无 tag
   if (lastColon > lastSlash) {
     return ref.slice(0, lastColon) || null;
   }
-  return ref.includes('/') ? ref : null;
+  return ref;
 }
 
 /**
