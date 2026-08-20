@@ -465,11 +465,17 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.integration-note {
+  margin: 0 24px 18px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .update-section-title {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 18px 0 4px;
+  margin: 18px 24px 4px;
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
@@ -490,8 +496,13 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+/* 组内错误/警告消息：全局规则只覆盖面板直接子级，组内的须自行补边距 */
+.settings-group > .setting-message {
+  margin: 0 24px 14px;
+}
+
 .update-log {
-  margin: 12px 0;
+  margin: 12px 24px;
   padding: 10px 12px;
   max-height: 220px;
   overflow-y: auto;
@@ -516,7 +527,7 @@ onUnmounted(() => {
 
 .update-progress {
   height: 6px;
-  margin: -4px 0 12px;
+  margin: -4px 24px 12px;
   overflow: hidden;
   border-radius: 3px;
   background: var(--bg-secondary);
@@ -537,6 +548,24 @@ onUnmounted(() => {
 .token-input-row input {
   flex: 1;
   min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .integration-note {
+    margin: 0 18px 16px;
+  }
+  .update-section-title {
+    margin: 18px 18px 4px;
+  }
+  .settings-group > .setting-message {
+    margin: 0 18px 14px;
+  }
+  .update-log {
+    margin: 12px 18px;
+  }
+  .update-progress {
+    margin: -4px 18px 12px;
+  }
 }
 
 @media (max-width: 640px) {
