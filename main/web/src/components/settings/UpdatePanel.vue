@@ -140,7 +140,7 @@
         <p v-if="repoUrlError" class="setting-message err">{{ repoUrlError }}</p>
       </div>
 
-      <div class="setting-row setting-row-form">
+      <div class="setting-row setting-row-form credential-row">
         <div class="setting-copy">
           <strong>访问凭据</strong>
           <span>私有仓库才需要。可任选一种方式，公开仓库留空即可。</span>
@@ -149,14 +149,16 @@
             <button type="button" :class="['seg-btn', form.authType === 'password' ? 'active' : '']" @click="form.authType = 'password'">用户名密码</button>
           </div>
         </div>
-        <template v-if="form.authType === 'token'">
-          <input v-model="form.token" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴访问令牌" aria-label="远端仓库访问令牌" />
-          <p class="setting-message hint">在仓库站点右上角头像 → 设置 → 应用 → 「生成新令牌」（勾选只读权限）。清空保存即删除。</p>
-        </template>
-        <template v-else>
-          <input v-model="form.username" type="text" autocomplete="off" spellcheck="false" placeholder="用户名" aria-label="远端仓库用户名" />
-          <input v-model="form.password" type="text" autocomplete="off" spellcheck="false" placeholder="密码" aria-label="远端仓库密码" />
-        </template>
+        <div class="credential-inputs">
+          <template v-if="form.authType === 'token'">
+            <input v-model="form.token" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴访问令牌" aria-label="远端仓库访问令牌" />
+            <p class="setting-message hint">在仓库站点右上角头像 → 设置 → 应用 → 「生成新令牌」（勾选只读权限）。清空保存即删除。</p>
+          </template>
+          <template v-else>
+            <input v-model="form.username" type="text" autocomplete="off" spellcheck="false" placeholder="用户名" aria-label="远端仓库用户名" />
+            <input v-model="form.password" type="text" autocomplete="off" spellcheck="false" placeholder="密码" aria-label="远端仓库密码" />
+          </template>
+        </div>
       </div>
 
       <template v-if="!state.desktop && state.supported">
@@ -534,6 +536,24 @@ onUnmounted(() => {
 .setting-message.hint {
   margin: 6px 0 0;
   color: var(--text-faint);
+}
+
+/* 凭据行：标签+切换按钮在上，输入框统一排在切换按钮下方 */
+.setting-row.credential-row {
+  grid-template-columns: 1fr;
+}
+.credential-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.credential-inputs input {
+  flex: 1 1 220px;
+  max-width: 420px;
+}
+.credential-inputs .hint {
+  flex-basis: 100%;
 }
 
 .update-log {
