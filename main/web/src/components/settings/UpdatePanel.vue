@@ -98,6 +98,9 @@
             </button>
           </div>
         </div>
+        <p v-if="desktopUnsupported" class="setting-message warn">
+          当前桌面端版本过旧，不支持应用内更新。请到仓库 Release 页手动下载最新安装包覆盖安装一次，之后即可在应用内更新。
+        </p>
         <p v-if="desktopCheck && !desktopCheck.ok && desktopCheck.error === 'not-configured'" class="setting-message warn">
           尚未配置远端仓库更新源（见下方「更新源配置」）。
         </p>
@@ -272,6 +275,8 @@ const updateLog = ref<string[]>([]);
 
 const desktopChecking = ref(false);
 const desktopCheck = ref<any>(null);
+/** 旧版桌面端 exe 的 preload 缺 desktopUpdateCheck API：无法应用内更新，引导手动下载 */
+const desktopUnsupported = ref(false);
 const downloading = ref(false);
 const installing = ref(false);
 const downloadPercent = ref<number | null>(null);
@@ -396,10 +401,23 @@ async function confirmApply() {
 
 async function doDesktopCheck() {
   const wd = wikiDesktop();
-  if (!wd?.desktopUpdateCheck) return;
+  if (!wd?.desktopUpdateCheck) {
+    desktopUnsupported.value = true;
+    return;
+  }
+  desktopUnsupported.value = false;
   desktopChecking.value = true;
   try {
-    desktopCheck.value = await wd.desktopUpdateCheck();
+    // 把设置页当前的更新源配置传给主进程：本地/远端模式均所见即所得，
+    // 也兼容主进程尚未从远端服务器拉到配置的窗口期
+    desktopCheck.value = await wd.desktopUpdateCheck({
+      giteaUrl: config.value.giteaUrl,
+      giteaRepo: config.value.giteaRepo,
+      giteaAuthType: config.value.giteaAuthType,
+      giteaToken: config.value.giteaToken,
+      giteaUsername: config.value.giteaUsername,
+      giteaPassword: config.value.giteaPassword,
+    });
   } finally {
     desktopChecking.value = false;
   }
@@ -418,7 +436,14 @@ async function downloadAndInstall() {
   downloading.value = true;
   downloadError.value = '';
   try {
-    const { path: filePath } = await wd.desktopUpdateDownload(exe.url);
+    const { path: filePath } = await wd.desktopUpdateDownload(exe.url, {
+      giteaUrl: config.value.giteaUrl,
+      giteaRepo: config.value.giteaRepo,
+      giteaAuthType: config.value.giteaAuthType,
+      giteaToken: config.value.giteaToken,
+      giteaUsername: config.value.giteaUsername,
+      giteaPassword: config.value.giteaPassword,
+    });
     downloading.value = false;
     installing.value = true;
     await wd.desktopUpdateRunInstaller(filePath);
