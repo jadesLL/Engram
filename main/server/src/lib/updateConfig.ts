@@ -11,9 +11,12 @@ import { DATA_DIR } from '../config.js';
  *  - UPDATE_IMAGE_REF          镜像更新源（不含 tag 的镜像地址），缺省从当前容器镜像推导
  *  - UPDATE_REGISTRY_USERNAME  私有 Registry 用户名
  *  - UPDATE_REGISTRY_TOKEN     私有 Registry 令牌
- *  - UPDATE_GITEA_URL          Gitea 服务地址（版本检测用，可空）
- *  - UPDATE_GITEA_REPO         Gitea 仓库 owner/name（版本检测用，可空）
- *  - UPDATE_GITEA_TOKEN        Gitea API 令牌（公开仓库可留空）
+ *  - UPDATE_GITEA_URL          远端仓库服务地址（版本检测用，可空）
+ *  - UPDATE_GITEA_REPO         远端仓库 owner/name（版本检测用，可空）
+ *  - UPDATE_GITEA_AUTH_TYPE    凭据方式：token（访问令牌）/ password（用户名密码）
+ *  - UPDATE_GITEA_TOKEN        访问令牌（token 方式）
+ *  - UPDATE_GITEA_USERNAME     用户名（password 方式）
+ *  - UPDATE_GITEA_PASSWORD     密码（password 方式）
  */
 export const UPDATE_ENV_FILE = path.join(DATA_DIR, '.env');
 
@@ -23,7 +26,10 @@ export const UPDATE_ENV_KEYS = {
   registryToken: 'UPDATE_REGISTRY_TOKEN',
   giteaUrl: 'UPDATE_GITEA_URL',
   giteaRepo: 'UPDATE_GITEA_REPO',
+  giteaAuthType: 'UPDATE_GITEA_AUTH_TYPE',
   giteaToken: 'UPDATE_GITEA_TOKEN',
+  giteaUsername: 'UPDATE_GITEA_USERNAME',
+  giteaPassword: 'UPDATE_GITEA_PASSWORD',
 } as const;
 
 export interface UpdateEnv {
@@ -32,7 +38,10 @@ export interface UpdateEnv {
   registryToken: string;
   giteaUrl: string;
   giteaRepo: string;
+  giteaAuthType: string;
   giteaToken: string;
+  giteaUsername: string;
+  giteaPassword: string;
 }
 
 /** 解析 .env 文本（KEY=VALUE，容忍引号与注释行） */
@@ -70,7 +79,10 @@ export function readUpdateEnv(): UpdateEnv {
     registryToken: parsed[UPDATE_ENV_KEYS.registryToken] || '',
     giteaUrl: parsed[UPDATE_ENV_KEYS.giteaUrl] || '',
     giteaRepo: parsed[UPDATE_ENV_KEYS.giteaRepo] || '',
+    giteaAuthType: parsed[UPDATE_ENV_KEYS.giteaAuthType] || 'token',
     giteaToken: parsed[UPDATE_ENV_KEYS.giteaToken] || '',
+    giteaUsername: parsed[UPDATE_ENV_KEYS.giteaUsername] || '',
+    giteaPassword: parsed[UPDATE_ENV_KEYS.giteaPassword] || '',
   };
 }
 

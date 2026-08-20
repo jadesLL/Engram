@@ -10,7 +10,13 @@ export async function fetchRemoteDigest(
   repository: string,
   auth: { username: string; token: string },
 ): Promise<string | null> {
-  const base = registry.replace(/\/+$/, '');
+  // 镜像 ref 拆出的 registry 是裸主机名（如 host:11111），fetch 需要显式协议；
+  // 缺省按 Docker 惯例走 https（localhost/内网 IP 裸名按 http）
+  let base = registry.replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(base)) {
+    const isLocal = /^(localhost|127\.0\.0\.1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(base);
+    base = isLocal ? `http://${base}` : `https://${base}`;
+  }
   // Accept 列表按 registry 惯例从具体到通用；返回头 Docker-Content-Digest 即远端 digest
   const accept = [
     'application/vnd.docker.distribution.manifest.v2+json',

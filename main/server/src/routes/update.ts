@@ -14,7 +14,7 @@ import {
   deriveDefaultImageRef,
   buildRegistryAuthHeader,
 } from '../lib/updateConfig.js';
-import { fetchLatestRelease } from '../lib/giteaRelease.js';
+import { fetchLatestRelease, type RepoAuth } from '../lib/giteaRelease.js';
 import { fetchRemoteDigest } from '../lib/registryApi.js';
 import {
   buildCreateBody,
@@ -38,9 +38,9 @@ let updating = false;
 
 /**
  * 应用内更新路由：
- *  - GET  /api/update/state          环境能力 + 当前版本 + 配置概览（不含明文令牌）
- *  - GET  /api/update/config         更新源配置（脱敏）
- *  - PUT  /api/update/config         保存更新源配置（写入 DATA_DIR/.env）
+ *  - GET  /api/update/state          环境能力 + 当前版本 + 配置概览（不含令牌）
+ *  - GET  /api/update/config         更新源配置（含令牌明文，设置页所见即所得）
+ *  - PUT  /api/update/config         保存更新源配置（写入 DATA_DIR/.env，空串即清除）
  *  - POST /api/update/check          检查新版本（Gitea latest + Registry digest 对比）
  *  - POST /api/update/apply          拉镜像并切换容器（SSE 进度流）
  */
@@ -84,13 +84,17 @@ export async function updateRoutes(app: FastifyInstance) {
 
   app.get('/api/update/config', async () => {
     const cfg = readUpdateEnv();
+    // 凭据明文回显：设置页所见即所得（接口在 owner 登录态之后才可访问）
     return {
       imageRef: cfg.imageRef,
       registryUsername: cfg.registryUsername,
-      registryTokenConfigured: Boolean(cfg.registryToken),
+      registryToken: cfg.registryToken,
       giteaUrl: cfg.giteaUrl,
       giteaRepo: cfg.giteaRepo,
-      giteaTokenConfigured: Boolean(cfg.giteaToken),
+      giteaAuthType: cfg.giteaAuthType,
+      giteaToken: cfg.giteaToken,
+      giteaUsername: cfg.giteaUsername,
+      giteaPassword: cfg.giteaPassword,
     };
   });
 
@@ -101,30 +105,25 @@ export async function updateRoutes(app: FastifyInstance) {
       registryToken?: string;
       giteaUrl?: string;
       giteaRepo?: string;
+      giteaAuthType?: string;
       giteaToken?: string;
+      giteaUsername?: string;
+      giteaPassword?: string;
     };
     const patch: Parameters<typeof writeUpdateEnv>[0] = {};
     if (body.imageRef !== undefined) patch.imageRef = String(body.imageRef).trim();
     if (body.registryUsername !== undefined) patch.registryUsername = String(body.registryUsername).trim();
-    // 令牌传空串表示清除；不传（undefined）表示保持不变
-    if (body.registryToken !== undefined && body.registryToken !== '') {
-      patch.registryToken = String(body.registryToken).trim();
-    }
+    // 凭据空串即清除（设置页明文回显后无需专门的清除接口）；不传（undefined）表示保持不变
+    if (body.registryToken !== undefined) patch.registryToken = String(body.registryToken).trim();
     if (body.giteaUrl !== undefined) patch.giteaUrl = String(body.giteaUrl).trim().replace(/\/+$/, '');
-    if (body.giteaRepo !== undefined) patch.giteaRepo = String(body.giteaRepo).trim();
-    if (body.giteaToken !== undefined && body.giteaToken !== '') {
-      patch.giteaToken = String(body.giteaToken).trim();
+    if (body.giteaRepo !== undefined) patch.giteaRepo = String(body.giteaRepo).trim().replace(/^\/+|\/+$/g, '');
+    if (body.giteaAuthType === 'token' || body.giteaAuthType === 'password') {
+      patch.giteaAuthType = body.giteaAuthType;
     }
+    if (body.giteaToken !== undefined) patch.giteaToken = String(body.giteaToken).trim();
+    if (body.giteaUsername !== undefined) patch.giteaUsername = String(body.giteaUsername).trim();
+    if (body.giteaPassword !== undefined) patch.giteaPassword = String(body.giteaPassword).trim();
     writeUpdateEnv(patch);
-    return reply.send({ ok: true });
-  });
-
-  /** 清除某个令牌（body: { clear: 'registryToken' | 'giteaToken' }） */
-  app.post('/api/update/config/clear-token', async (req, reply) => {
-    const body = (req.body || {}) as { clear?: string };
-    if (body.clear === 'registryToken') writeUpdateEnv({ registryToken: '' });
-    else if (body.clear === 'giteaToken') writeUpdateEnv({ giteaToken: '' });
-    else return reply.code(400).send({ error: 'clear 只能是 registryToken 或 giteaToken' });
     return reply.send({ ok: true });
   });
 
@@ -152,11 +151,14 @@ export async function updateRoutes(app: FastifyInstance) {
       exeAsset: null,
     };
 
-    // 1) Gitea Releases：最新版本号（Docker 版与桌面版共用信号源）
+    // 1) 远端仓库 Releases：最新版本号（Docker 版与桌面版共用信号源）
     let giteaError = '';
     if (cfg.giteaUrl && cfg.giteaRepo) {
+      const auth: RepoAuth = cfg.giteaAuthType === 'password'
+        ? { type: 'password', username: cfg.giteaUsername, password: cfg.giteaPassword }
+        : { type: 'token', token: cfg.giteaToken };
       try {
-        const release = await fetchLatestRelease(cfg.giteaUrl, cfg.giteaRepo, cfg.giteaToken);
+        const release = await fetchLatestRelease(cfg.giteaUrl, cfg.giteaRepo, auth);
         if (release) {
           result.releaseTag = release.tag;
           result.latestVersion = release.version;
@@ -165,7 +167,7 @@ export async function updateRoutes(app: FastifyInstance) {
             result.hasUpdate = compareVersions(ver, release.version) < 0;
           }
         } else {
-          giteaError = 'Gitea 上尚无 Release';
+          giteaError = '远端仓库上尚无 Release';
         }
       } catch (e) {
         giteaError = e instanceof Error ? e.message : String(e);
@@ -201,7 +203,7 @@ export async function updateRoutes(app: FastifyInstance) {
     }
 
     const errors: string[] = [];
-    if (giteaError) errors.push(`Gitea: ${giteaError}`);
+    if (giteaError) errors.push(`远端仓库: ${giteaError}`);
     if (registryError) errors.push(`Registry: ${registryError}`);
     if (errors.length && !result.latestVersion && result.digestMatch === null) {
       return reply.code(502).send({ ...result, error: errors.join('；') });

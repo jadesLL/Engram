@@ -31,7 +31,7 @@
         <div class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>从 Gitea Release 与镜像仓库比对当前版本。</span>
+            <span>从远端仓库 Release 与镜像仓库比对当前版本。</span>
           </div>
           <div class="check-controls">
             <span v-if="checkResult" class="check-status" :class="checkResult.hasUpdate ? 'has' : 'none'">
@@ -86,7 +86,7 @@
         <div class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>从 Gitea Release 比对桌面端版本。</span>
+            <span>从远端仓库 Release 比对桌面端版本。</span>
           </div>
           <div class="check-controls">
             <span v-if="desktopCheck && desktopCheck.ok" class="check-status" :class="desktopCheck.hasUpdate ? 'has' : 'none'">
@@ -99,7 +99,7 @@
           </div>
         </div>
         <p v-if="desktopCheck && !desktopCheck.ok && desktopCheck.error === 'not-configured'" class="setting-message warn">
-          尚未配置 Gitea 更新源（见下方「更新源配置」）。
+          尚未配置远端仓库更新源（见下方「更新源配置」）。
         </p>
         <p v-else-if="desktopCheck && !desktopCheck.ok" class="setting-message err">{{ desktopCheck.error }}</p>
 
@@ -128,53 +128,56 @@
       </div>
 
       <div class="integration-note">
-        所有令牌仅保存在服务器数据目录的 .env 文件中（不进数据库、不进代码库）。拉取公开源无需填写令牌。
+        只需粘贴仓库地址，服务器和仓库会自动识别；配置保存在服务器数据目录 .env 文件中（随数据卷持久化，不进代码库）。公开仓库无需填凭据。
       </div>
 
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
-          <strong>Gitea 服务地址</strong>
-          <span>版本检测与桌面端安装包的来源，如 https://gitea.example.com。</span>
+          <strong>远端仓库地址</strong>
+          <span>浏览器打开仓库首页，把地址栏整条复制粘贴过来即可（Release 页地址也行），如 https://gitea.example.com/example/ExampleProject。</span>
         </div>
-        <input v-model="form.giteaUrl" type="text" placeholder="https://gitea.example.com" aria-label="Gitea 服务地址" />
-        <p v-if="formMsg && formMsgField === 'gitea'" class="setting-message" :class="formOk ? 'ok' : 'err'">{{ formMsg }}</p>
+        <input v-model="form.repoUrl" type="text" placeholder="https://gitea.example.com/example/ExampleProject" aria-label="远端仓库地址" @input="repoUrlError = ''" />
+        <p v-if="repoUrlError" class="setting-message err">{{ repoUrlError }}</p>
       </div>
 
-      <div class="setting-row setting-row-form">
+      <div class="setting-row setting-row-form credential-row">
         <div class="setting-copy">
-          <strong>Gitea 仓库</strong>
-          <span>owner/name 形式，如 example/ExampleProject。</span>
+          <strong>访问凭据</strong>
+          <span>私有仓库才需要。可任选一种方式，公开仓库留空即可。</span>
+          <div class="auth-type-toggle">
+            <button type="button" :class="['seg-btn', form.authType === 'token' ? 'active' : '']" @click="form.authType = 'token'">访问令牌</button>
+            <button type="button" :class="['seg-btn', form.authType === 'password' ? 'active' : '']" @click="form.authType = 'password'">用户名密码</button>
+          </div>
         </div>
-        <input v-model="form.giteaRepo" type="text" placeholder="owner/name" aria-label="Gitea 仓库" />
-      </div>
-
-      <div class="setting-row setting-row-form">
-        <div class="setting-copy">
-          <strong>Gitea 访问令牌</strong>
-          <span>公开仓库无需填写；私有仓库需有 Release 读取权限。</span>
-        </div>
-        <div class="token-input-row">
-          <input
-            v-model="form.giteaToken"
-            type="password"
-            autocomplete="new-password"
-            :placeholder="config.giteaTokenConfigured ? '已配置（留空保持不变）' : '公开源无需填写'"
-            aria-label="Gitea 访问令牌"
-          />
-          <button v-if="config.giteaTokenConfigured" class="text-action danger" type="button" @click="clearToken('giteaToken')">清除</button>
+        <div class="credential-inputs">
+          <template v-if="form.authType === 'token'">
+            <input v-model="form.token" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴访问令牌" aria-label="远端仓库访问令牌" />
+            <p class="setting-message hint">在仓库站点右上角头像 → 设置 → 应用 → 「生成新令牌」（勾选只读权限）。清空保存即删除。</p>
+          </template>
+          <template v-else>
+            <input v-model="form.username" type="text" autocomplete="off" spellcheck="false" placeholder="用户名" aria-label="远端仓库用户名" />
+            <input v-model="form.password" type="text" autocomplete="off" spellcheck="false" placeholder="密码" aria-label="远端仓库密码" />
+          </template>
         </div>
       </div>
 
-      <template v-if="!state.desktop && state.supported">
+      <!-- 高级选项：绝大多数部署用不到（镜像源自动从当前容器推导，公开仓库免认证），默认收起 -->
+      <div v-if="!state.desktop && state.supported" class="advanced-toggle">
+        <button type="button" class="text-action" @click="showAdvanced = !showAdvanced">
+          {{ showAdvanced ? '收起高级选项' : '高级选项（自定义镜像源）' }}
+        </button>
+      </div>
+
+      <template v-if="!state.desktop && state.supported && showAdvanced">
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像更新源</strong>
-            <span>镜像仓库地址（不含 tag，自动拉 latest），如 registry.example.com/example-wiki。</span>
+            <span>留空即自动使用当前容器的镜像仓库（推荐）。仅私有仓库或需切换镜像源时填写，如 registry.example.com/example-wiki（不含 tag）。</span>
           </div>
           <input
             v-model="form.imageRef"
             type="text"
-            :placeholder="state.imageRef || '未配置（将无法拉取新镜像）'"
+            :placeholder="state.imageRef || '留空自动从当前镜像推导'"
             aria-label="镜像更新源"
           />
         </div>
@@ -182,7 +185,7 @@
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像仓库用户名</strong>
-            <span>私有镜像仓库的账号。</span>
+            <span>私有镜像仓库的账号；公开仓库无需填写。</span>
           </div>
           <input v-model="form.registryUsername" type="text" placeholder="registry 用户名" aria-label="镜像仓库用户名" />
         </div>
@@ -190,18 +193,9 @@
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像仓库令牌</strong>
-            <span>私有镜像仓库的密码/令牌；公开仓库无需填写。</span>
+            <span>私有镜像仓库的密码或令牌；公开仓库无需填写。清空保存即删除。</span>
           </div>
-          <div class="token-input-row">
-            <input
-              v-model="form.registryToken"
-              type="password"
-              autocomplete="new-password"
-              :placeholder="config.registryTokenConfigured ? '已配置（留空保持不变）' : '公开源无需填写'"
-              aria-label="镜像仓库令牌"
-            />
-            <button v-if="config.registryTokenConfigured" class="text-action danger" type="button" @click="clearToken('registryToken')">清除</button>
-          </div>
+          <input v-model="form.registryToken" type="text" autocomplete="off" spellcheck="false" placeholder="公开仓库无需填写" aria-label="镜像仓库令牌" />
         </div>
       </template>
 
@@ -243,10 +237,13 @@ interface UpdateStateInfo {
 interface ConfigInfo {
   imageRef: string;
   registryUsername: string;
-  registryTokenConfigured: boolean;
+  registryToken: string;
   giteaUrl: string;
   giteaRepo: string;
-  giteaTokenConfigured: boolean;
+  giteaAuthType: string;
+  giteaToken: string;
+  giteaUsername: string;
+  giteaPassword: string;
 }
 
 const isDesktop = computed(() => typeof window !== 'undefined' && Boolean((window as any).wikiDesktop));
@@ -257,10 +254,12 @@ const state = ref<UpdateStateInfo>({
   giteaConfigured: false, busy: false, containerName: '', currentImage: '',
 });
 const config = ref<ConfigInfo>({
-  imageRef: '', registryUsername: '', registryTokenConfigured: false,
-  giteaUrl: '', giteaRepo: '', giteaTokenConfigured: false,
+  imageRef: '', registryUsername: '', registryToken: '',
+  giteaUrl: '', giteaRepo: '', giteaAuthType: 'token', giteaToken: '', giteaUsername: '', giteaPassword: '',
 });
-const form = reactive({ giteaUrl: '', giteaRepo: '', giteaToken: '', imageRef: '', registryUsername: '', registryToken: '' });
+const form = reactive({ repoUrl: '', authType: 'token', token: '', username: '', password: '', imageRef: '', registryUsername: '', registryToken: '' });
+const repoUrlError = ref('');
+const showAdvanced = ref(false);
 
 const checking = ref(false);
 const checkResult = ref<any>(null);
@@ -280,11 +279,33 @@ const downloadError = ref('');
 let offProgress: (() => void) | null = null;
 
 const savingConfig = ref(false);
-const formMsg = ref('');
-const formMsgField = ref('');
-const formOk = ref(false);
 
 const wikiDesktop = () => (window as any).wikiDesktop;
+
+/**
+ * 解析用户粘贴的远端仓库地址 → { url: 服务地址, repo: owner/name }。
+ * 容忍 Release/分支页后缀、缺协议、.git 后缀、末尾斜杠；只给服务首页地址时返回 error 提示。
+ */
+function parseRepoUrl(input: string): { url: string; repo: string } | { error: string } {
+  const raw = input.trim();
+  if (!raw) return { url: '', repo: '' };
+  let u: URL;
+  try {
+    u = new URL(raw.includes('://') ? raw : `https://${raw}`);
+  } catch {
+    return { error: '地址格式无法识别，请粘贴浏览器地址栏的完整仓库地址' };
+  }
+  const segs = u.pathname.split('/').filter(Boolean);
+  if (segs.length < 2) {
+    return { error: '这是站点首页地址，缺少仓库路径；请先打开仓库页面再复制，例如 https://gitea.example.com/example/ExampleProject' };
+  }
+  const owner = decodeURIComponent(segs[0]);
+  const name = decodeURIComponent(segs[1]).replace(/\.git$/, '');
+  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(name)) {
+    return { error: '仓库路径包含无法识别的字符，请确认复制的是仓库首页地址' };
+  }
+  return { url: u.origin, repo: `${owner}/${name}` };
+}
 
 async function load() {
   try {
@@ -294,10 +315,14 @@ async function load() {
     ]);
     state.value = s.data;
     config.value = c.data;
-    form.giteaUrl = c.data.giteaUrl;
-    form.giteaRepo = c.data.giteaRepo;
+    form.repoUrl = c.data.giteaUrl && c.data.giteaRepo ? `${c.data.giteaUrl}/${c.data.giteaRepo}` : (c.data.giteaUrl || '');
+    form.authType = c.data.giteaAuthType === 'password' ? 'password' : 'token';
+    form.token = c.data.giteaToken || '';
+    form.username = c.data.giteaUsername || '';
+    form.password = c.data.giteaPassword || '';
     form.imageRef = c.data.imageRef;
     form.registryUsername = c.data.registryUsername;
+    form.registryToken = c.data.registryToken || '';
   } catch {
     /* 面板加载失败由 message 区提示 */
   }
@@ -311,7 +336,7 @@ async function doCheck() {
     checkResult.value = data;
   } catch (e: any) {
     checkResult.value = null;
-    checkError.value = e.response?.data?.error || e.response?.data?.warning || '检查失败，请确认 Gitea 配置';
+    checkError.value = e.response?.data?.error || e.response?.data?.warning || '检查失败，请确认远端仓库配置';
   } finally {
     checking.value = false;
   }
@@ -404,42 +429,31 @@ async function downloadAndInstall() {
 }
 
 async function saveConfig() {
+  const parsed = parseRepoUrl(form.repoUrl);
+  if ('error' in parsed) {
+    repoUrlError.value = parsed.error;
+    return;
+  }
+  repoUrlError.value = '';
   savingConfig.value = true;
-  formMsg.value = '';
   try {
     await api.put('/api/update/config', {
-      giteaUrl: form.giteaUrl,
-      giteaRepo: form.giteaRepo,
-      giteaToken: form.giteaToken,
+      giteaUrl: parsed.url,
+      giteaRepo: parsed.repo,
+      giteaAuthType: form.authType,
+      giteaToken: form.authType === 'token' ? form.token : '',
+      giteaUsername: form.authType === 'password' ? form.username : '',
+      giteaPassword: form.authType === 'password' ? form.password : '',
       imageRef: form.imageRef,
       registryUsername: form.registryUsername,
       registryToken: form.registryToken,
     });
-    form.giteaToken = '';
-    form.registryToken = '';
     await load();
     notify.success('更新源配置已保存');
   } catch (e: any) {
     notify.error(e.response?.data?.error || '保存失败');
   } finally {
     savingConfig.value = false;
-  }
-}
-
-async function clearToken(field: 'registryToken' | 'giteaToken') {
-  const ok = await confirmDialog({
-    title: '清除令牌',
-    message: '清除后拉取私有源将无法认证，确定清除？',
-    confirmText: '清除',
-    danger: true,
-  });
-  if (!ok) return;
-  try {
-    await api.post('/api/update/config/clear-token', { clear: field });
-    await load();
-    notify.success('已清除');
-  } catch (e: any) {
-    notify.error(e.response?.data?.error || '清除失败');
   }
 }
 
@@ -465,11 +479,17 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.integration-note {
+  margin: 0 24px 18px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .update-section-title {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 18px 0 4px;
+  margin: 18px 24px 4px;
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
@@ -490,8 +510,68 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+/* 组内错误/警告消息：全局规则只覆盖面板直接子级，组内的须自行补边距 */
+.settings-group > .setting-message {
+  margin: 0 24px 14px;
+}
+
+/* 凭据方式二选一分段按钮 */
+.auth-type-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.seg-btn {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg-btn.active {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+}
+.setting-message.hint {
+  margin: 6px 0 0;
+  color: var(--text-faint);
+}
+
+/* 凭据行：标签+切换按钮在上，输入框统一排在切换按钮下方 */
+.setting-row.credential-row {
+  grid-template-columns: 1fr;
+}
+.credential-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.credential-inputs input {
+  flex: 1 1 220px;
+  max-width: 420px;
+}
+.credential-inputs .hint {
+  flex-basis: 100%;
+}
+
+/* 高级选项折叠入口 */
+.advanced-toggle {
+  padding: 10px 24px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
 .update-log {
-  margin: 12px 0;
+  margin: 12px 24px;
   padding: 10px 12px;
   max-height: 220px;
   overflow-y: auto;
@@ -516,7 +596,7 @@ onUnmounted(() => {
 
 .update-progress {
   height: 6px;
-  margin: -4px 0 12px;
+  margin: -4px 24px 12px;
   overflow: hidden;
   border-radius: 3px;
   background: var(--bg-secondary);
@@ -528,15 +608,25 @@ onUnmounted(() => {
   transition: width 200ms ease;
 }
 
-.token-input-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: min(530px, 100%);
-}
-.token-input-row input {
-  flex: 1;
-  min-width: 0;
+@media (max-width: 768px) {
+  .integration-note {
+    margin: 0 18px 16px;
+  }
+  .update-section-title {
+    margin: 18px 18px 4px;
+  }
+  .settings-group > .setting-message {
+    margin: 0 18px 14px;
+  }
+  .advanced-toggle {
+    padding: 10px 18px 8px;
+  }
+  .update-log {
+    margin: 12px 18px;
+  }
+  .update-progress {
+    margin: -4px 18px 12px;
+  }
 }
 
 @media (max-width: 640px) {
