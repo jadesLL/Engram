@@ -582,6 +582,7 @@ export function migrate() {
   ensureColumn('reports', 'fingerprint', `TEXT NOT NULL DEFAULT ''`);
   backfillReportIdentity();
   normalizeIdentityAmbiguityPairs();
+  closeStaleIdentityAmbiguityReports();
   dedupeReportIdentity();
   db.exec(`CREATE INDEX IF NOT EXISTS idx_reports_issue ON reports(kind, issue_key)`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_fingerprint ON reports(kind, issue_key, fingerprint)`);
@@ -675,6 +676,39 @@ function normalizeIdentityAmbiguityPairs() {
     entries.slice(1).forEach((entry) => remove.run(entry.id));
     update.run(key, entries[0].fingerprint, entries[0].id);
   }
+}
+
+/**
+ * 清扫陈旧歧义报告:open 的 identity_ambiguity 若涉页(歧义页或建议目标页)
+ * 已不是活跃知识页(被合并归档/删除),继续挂着只会与死链等报告互相矛盾,
+ * 统一标 dismissed(dismissed 可重开,误关有救济)。启动迁移与身份扫描前调用。
+ */
+export function closeStaleIdentityAmbiguityReports(): number {
+  const rows = db.prepare(
+    `SELECT id, payload FROM reports WHERE kind = 'identity_ambiguity' AND status = 'open'`
+  ).all() as { id: number; payload: string }[];
+  if (!rows.length) return 0;
+  const activePage = db.prepare(
+    `SELECT 1 FROM pages WHERE id = ? AND deleted = 0
+       AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%') LIMIT 1`
+  );
+  const close = db.prepare(
+    `UPDATE reports SET status = 'dismissed' WHERE id = ? AND status = 'open'`
+  );
+  let closed = 0;
+  for (const row of rows) {
+    let payload: Record<string, any> = {};
+    try { payload = JSON.parse(row.payload); } catch { continue; }
+    const pageId = String(payload.pageId || '');
+    const targetId = String(payload.suggestedTargetId || '');
+    const pageActive = pageId && activePage.get(pageId);
+    const targetActive = !targetId || activePage.get(targetId);
+    if (!pageActive || !targetActive) {
+      close.run(row.id);
+      closed++;
+    }
+  }
+  return closed;
 }
 
 function ensureColumn(table: string, column: string, definition: string) {

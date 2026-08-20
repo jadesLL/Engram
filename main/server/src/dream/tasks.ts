@@ -50,6 +50,55 @@ function knowledgePages(): Array<{
 
 /** 死链存在性由代码检查；目标页面类型建议由模型判断。 */
 export async function taskDeadlinks(signal?: AbortSignal): Promise<number> {
+  // 先重解析存量死链边:精确标题命中或 .md 后缀剥离命中即回填实边,
+  // 并关闭对应 open 死链报告,避免"页面明明存在却持续被报死链"
+  const backfill = db.prepare(`
+    UPDATE edges SET
+      dst_page = (SELECT id FROM pages WHERE deleted = 0 AND lower(title) = lower(trim(edges.dst_title, ' \t\r\n'))),
+      dst_title = NULL
+    WHERE rel = 'link' AND dst_page IS NULL AND dst_title IS NOT NULL
+      AND EXISTS (SELECT 1 FROM pages WHERE deleted = 0 AND lower(title) = lower(trim(edges.dst_title, ' \t\r\n')))
+  `);
+  const backfillMd = db.prepare(`
+    UPDATE edges SET
+      dst_page = (SELECT id FROM pages WHERE deleted = 0 AND lower(title) = lower(substr(trim(edges.dst_title, ' \t\r\n'), 1, length(trim(edges.dst_title, ' \t\r\n')) - 3))),
+      dst_title = NULL
+    WHERE rel = 'link' AND dst_page IS NULL AND dst_title IS NOT NULL
+      AND lower(trim(dst_title, ' \t\r\n')) LIKE '%.md'
+      AND EXISTS (
+        SELECT 1 FROM pages WHERE deleted = 0
+          AND lower(title) = lower(substr(trim(edges.dst_title, ' \t\r\n'), 1, length(trim(edges.dst_title, ' \t\r\n')) - 3))
+      )
+  `);
+  backfill.run();
+  backfillMd.run();
+  {
+    // 关闭已恢复的 open 死链报告:边可能在早前(索引时/上次运行)已被回填,
+    // 因此每次都全量核对 open 报告的边是否已解析,不依赖本次回填数
+    const openDeadlinks = db.prepare(
+      `SELECT id, payload FROM reports WHERE kind = 'deadlink' AND status = 'open'`
+    ).all() as { id: number; payload: string }[];
+    const close = db.prepare(`UPDATE reports SET status = 'dismissed' WHERE id = ? AND status = 'open'`);
+    const edgeResolved = db.prepare(
+      `SELECT 1 FROM edges WHERE src_page = ? AND rel = 'link' AND dst_page IS NOT NULL AND dst_page = ? LIMIT 1`
+    );
+    const targetByTitle = db.prepare(
+      `SELECT id FROM pages WHERE deleted = 0 AND (lower(title) = lower(?) OR lower(title) = lower(?)) LIMIT 1`
+    );
+    for (const report of openDeadlinks) {
+      let payload: Record<string, any> = {};
+      try { payload = JSON.parse(report.payload); } catch { continue; }
+      if (!payload.srcId || !payload.deadTitle) continue;
+      // 报告记录的原始死链标题(或去 .md 后)与当前已解析边的目标页匹配即视为已恢复
+      const rawTitle = String(payload.deadTitle);
+      const stripped = rawTitle.toLowerCase().endsWith('.md') ? rawTitle.slice(0, -3) : rawTitle;
+      const targetHit = targetByTitle.get(rawTitle, stripped) as { id: string } | undefined;
+      if (targetHit && edgeResolved.get(payload.srcId, targetHit.id)) {
+        close.run(report.id);
+      }
+    }
+  }
+
   const rows = db.prepare(
     `SELECT e.id,e.dst_title,p.title src_title,p.id src_id,p.path src_path,p.updated_at src_updated
      FROM edges e JOIN pages p ON p.id=e.src_page
@@ -370,8 +419,35 @@ export function taskSectionAudit(): number {
  * （同名异实、异名同实、别名/转写、称谓不完整）。发现歧义即产出 identity_ambiguity 报告，
  * 交人工选择合并、重命名澄清或标记误报。
  */
+/** classifyEntityName 判定 → identity_ambiguity 报告 payload(目标 id 直接取解析结果,不二次查名录) */
+function identityPayload(page: any, decision: {
+  ambiguity: any;
+  mergeTarget: string;
+  mergeTargetId: string;
+  canonicalName: string;
+}): ReportItem {
+  return {
+    kind: 'identity_ambiguity',
+    payload: {
+      key: page.id,
+      pageId: page.id,
+      title: page.title,
+      path: page.path,
+      type: page.type,
+      pageUpdated: page.updated_at,
+      ambiguity: decision.ambiguity,
+      suggestedTargetId: decision.mergeTargetId || '',
+      suggestedTargetTitle: decision.mergeTarget || '',
+      canonicalName: decision.canonicalName,
+    },
+  };
+}
+
 export async function taskEntityIdentityAudit(signal?: AbortSignal): Promise<number> {
   if (!llmReady()) return 0;
+  // 先清扫陈旧报告:涉页已被合并/删除的 open 歧义报告不再有意义,关闭后再扫描
+  const { closeStaleIdentityAmbiguityReports } = await import('../lib/db.js');
+  closeStaleIdentityAmbiguityReports();
   const pages = knowledgePages();
   const rosterAll: EntityRosterEntry[] = pages.map((page) => ({
     id: page.id,
@@ -393,28 +469,12 @@ export async function taskEntityIdentityAudit(signal?: AbortSignal): Promise<num
         [page.summary || '', body?.content.slice(0, 2000) || ''].join('\n'),
         page.id,
         undefined,
-        {},
+        // 报告卡由人工点「是」确认,允许 medium 建议解析出目标
+        { allowMediumTarget: true },
         signal,
       );
       if (!decision.ambiguity) continue;
-      const target = decision.mergeTarget
-        ? roster.find((entry) => entry.title === decision.mergeTarget)
-        : undefined;
-      items.push({
-        kind: 'identity_ambiguity',
-        payload: {
-          key: page.id,
-          pageId: page.id,
-          title: page.title,
-          path: page.path,
-          type: page.type,
-          pageUpdated: page.updated_at,
-          ambiguity: decision.ambiguity,
-          suggestedTargetId: target?.id || '',
-          suggestedTargetTitle: decision.mergeTarget || '',
-          canonicalName: decision.canonicalName,
-        },
-      });
+      items.push(identityPayload(page, decision));
     } catch (error) {
       if (signal?.aborted) throw error;
       /* 单页身份检查失败不影响其他页面。 */
@@ -449,28 +509,12 @@ export async function scanIdentityAmbiguityForPages(pageIds: string[], signal?: 
         [page.summary || '', body?.content.slice(0, 2000) || ''].join('\n'),
         page.id,
         undefined,
-        {},
+        // 报告卡由人工点「是」确认,允许 medium 建议解析出目标
+        { allowMediumTarget: true },
         signal,
       );
       if (!decision.ambiguity) continue;
-      const target = decision.mergeTarget
-        ? roster.find((entry) => entry.title === decision.mergeTarget)
-        : undefined;
-      items.push({
-        kind: 'identity_ambiguity',
-        payload: {
-          key: page.id,
-          pageId: page.id,
-          title: page.title,
-          path: page.path,
-          type: page.type,
-          pageUpdated: page.updated_at,
-          ambiguity: decision.ambiguity,
-          suggestedTargetId: target?.id || '',
-          suggestedTargetTitle: decision.mergeTarget || '',
-          canonicalName: decision.canonicalName,
-        },
-      });
+      items.push(identityPayload(page, decision));
     } catch (error) {
       if (signal?.aborted) throw error;
     }

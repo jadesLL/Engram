@@ -53,6 +53,9 @@ interface EntityIdentitySemanticOptions {
   cacheContextMode?: SemanticCacheContextMode;
   contextInCache?: boolean;
   maxHistoryChars?: number;
+  /** 允许 medium 置信度建议解析为合并目标。报告卡(人工点「是」确认)场景开启;
+   *  入库守卫会自动执行合并,仅信 high,保持 false。 */
+  allowMediumTarget?: boolean;
 }
 
 function cleanName(value: string): string {
@@ -129,10 +132,16 @@ export async function classifyEntityName(
   history?: ChatMessage[],
   semanticOptions: EntityIdentitySemanticOptions = {},
   signal?: AbortSignal,
-): Promise<{ ambiguity: EntityAmbiguity | null; mergeTarget: string; canonicalName: string }> {
+): Promise<{
+  ambiguity: EntityAmbiguity | null;
+  mergeTarget: string;
+  /** 建议目标在 roster 中的条目 id,由调用方写入报告 payload 供「是」选项使用 */
+  mergeTargetId: string;
+  canonicalName: string;
+}> {
   signal?.throwIfAborted();
   if (!isSynthesizable(kind)) {
-    return { ambiguity: null, mergeTarget: '', canonicalName: name };
+    return { ambiguity: null, mergeTarget: '', mergeTargetId: '', canonicalName: name };
   }
   const decision = await runSemanticStage({
     scope: 'entity-identity',
@@ -165,18 +174,23 @@ export async function classifyEntityName(
     retries: 1,
     signal,
   });
+  // 目标解析:mergeTarget(cleanName 匹配)→ 高置信建议 → (可选)中置信建议兜底。
+  // 命中即返回名录条目本身(id+title),消除调用方严格等值二次查找导致的静默丢失
   const exactTarget = decision.mergeTarget
     ? roster.find((entry) => cleanName(entry.title) === cleanName(decision.mergeTarget))
     : undefined;
-  const highSuggestion = decision.suggestions.find((suggestion) =>
-    suggestion.confidence === 'high' &&
-    roster.some((entry) => cleanName(entry.title) === cleanName(suggestion.title))
-  );
-  const mergeTarget = exactTarget?.title || highSuggestion?.title || '';
+  const findSuggestion = (confidence: 'high' | 'medium') =>
+    decision.suggestions
+      .filter((suggestion) => suggestion.confidence === confidence)
+      .map((suggestion) => roster.find((entry) => cleanName(entry.title) === cleanName(suggestion.title)))
+      .find((entry): entry is EntityRosterEntry => Boolean(entry));
+  const target = exactTarget || findSuggestion('high')
+    || (semanticOptions.allowMediumTarget ? findSuggestion('medium') : undefined);
   return {
     ambiguity: ambiguityFromDecision(decision, name),
-    mergeTarget,
-    canonicalName: decision.canonicalName.trim() || mergeTarget || name,
+    mergeTarget: target?.title || '',
+    mergeTargetId: target?.id || '',
+    canonicalName: decision.canonicalName.trim() || target?.title || name,
   };
 }
 

@@ -5,7 +5,6 @@ import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages } from '../lib/mergePages.js';
 import { renamePageSafely } from '../lib/renamePage.js';
-import { deriveReportIdentity } from './reportIdentity.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
 import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
 import {
@@ -212,6 +211,19 @@ export async function applyIdentityAmbiguityMerge(
   if (!payload.suggestedTargetId || !payload.pageId) throw new Error('歧义报告缺少页面信息');
   const targetId = String(payload.suggestedTargetId);
   const pageId = String(payload.pageId);
+  // 活跃性防护:涉页已被合并归档/删除时(报告未及清扫),跳过合并避免 404,
+  // 写日志说明并直接视为已处理——两侧本就只剩一页,无物可合
+  const activePage = db.prepare(
+    `SELECT id, title FROM pages WHERE id = ? AND deleted = 0
+       AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%') LIMIT 1`
+  );
+  const pageRow = activePage.get(pageId) as { id: string; title: string } | undefined;
+  const targetRow = activePage.get(targetId) as { id: string; title: string } | undefined;
+  if (!pageRow || !targetRow) {
+    appendWikiLog('合并跳过', `实体歧义报告涉页已不存在（${pageRow ? '' : `[[${String(payload.title || pageId)}]] `}${targetRow ? '' : `目标 [[${String(payload.suggestedTargetTitle || targetId)}]]`}），报告关闭`);
+    closeIdentityReportsForPages([pageId, targetId]);
+    return;
+  }
   const keepId = input.mergeKeep === 'page' ? pageId : targetId;
   const otherId = input.mergeKeep === 'page' ? targetId : pageId;
   await mergePages(keepId, otherId);
@@ -221,12 +233,27 @@ export async function applyIdentityAmbiguityMerge(
       { title: string } | undefined;
     if (keep && keep.title !== finalTitle) renamePageSafely(keepId, finalTitle);
   }
-  // 同一对页面的其他 open 报告(含镜像方向的旧记录)一并关闭,避免合并后再被反向提问
-  const identity = deriveReportIdentity('identity_ambiguity', payload);
-  if (identity.issueKey) {
-    db.prepare(
-      `UPDATE reports SET status = 'resolved' WHERE kind = 'identity_ambiguity' AND issue_key = ? AND status = 'open'`
-    ).run(identity.issueKey);
+  // 合并涉页的其他 open 歧义报告(同对镜像 + A/B 各自与第三方的报告)一并关闭:
+  // 涉页已归档,这些卡继续挂着只会与其他报告互相矛盾
+  closeIdentityReportsForPages([pageId, targetId]);
+}
+
+/** 关闭 payload 涉及指定页面之一的 open 实体歧义报告 */
+function closeIdentityReportsForPages(pageIds: string[]): void {
+  const rows = db.prepare(
+    `SELECT id, payload FROM reports WHERE kind = 'identity_ambiguity' AND status = 'open'`
+  ).all() as { id: number; payload: string }[];
+  if (!rows.length) return;
+  const wanted = new Set(pageIds);
+  const close = db.prepare(
+    `UPDATE reports SET status = 'resolved' WHERE id = ? AND status = 'open'`
+  );
+  for (const row of rows) {
+    let payload: Record<string, any> = {};
+    try { payload = JSON.parse(row.payload); } catch { continue; }
+    if (wanted.has(String(payload.pageId || '')) || wanted.has(String(payload.suggestedTargetId || ''))) {
+      close.run(row.id);
+    }
   }
 }
 

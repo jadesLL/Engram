@@ -77,7 +77,11 @@ export function wirePageEdges(pageId: string, markdown: string) {
   );
   const ts = now();
   for (const target of links) {
-    const hit = findByTitle.get(target) as { id: string } | undefined;
+    let hit = findByTitle.get(target) as { id: string } | undefined;
+    // 链接文本带 .md 后缀(指向文件名)时剥离后缀重试,避免"页面明明存在却成死链"
+    if (!hit && target.toLowerCase().endsWith('.md')) {
+      hit = findByTitle.get(target.slice(0, -3)) as { id: string } | undefined;
+    }
     ins.run(pageId, hit?.id ?? null, hit ? null : target, 'link', ts);
   }
 
