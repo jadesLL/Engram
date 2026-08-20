@@ -128,53 +128,36 @@
       </div>
 
       <div class="integration-note">
-        所有令牌仅保存在服务器数据目录的 .env 文件中（不进数据库、不进代码库）。拉取公开源无需填写令牌。
+        只需粘贴仓库地址，服务器和仓库会自动识别；配置保存在服务器数据目录 .env 文件中（随数据卷持久化，不进代码库）。公开仓库无需任何令牌。
       </div>
 
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
-          <strong>Gitea 服务地址</strong>
-          <span>版本检测与桌面端安装包的来源，如 https://gitea.example.com。</span>
+          <strong>Gitea 仓库地址</strong>
+          <span>浏览器打开仓库首页，把地址栏整条复制粘贴过来即可（Release 页地址也行），如 https://gitea.example.com/example/ExampleProject。</span>
         </div>
-        <input v-model="form.giteaUrl" type="text" placeholder="https://gitea.example.com" aria-label="Gitea 服务地址" />
-        <p v-if="formMsg && formMsgField === 'gitea'" class="setting-message" :class="formOk ? 'ok' : 'err'">{{ formMsg }}</p>
-      </div>
-
-      <div class="setting-row setting-row-form">
-        <div class="setting-copy">
-          <strong>Gitea 仓库</strong>
-          <span>owner/name 形式，如 example/ExampleProject。</span>
-        </div>
-        <input v-model="form.giteaRepo" type="text" placeholder="owner/name" aria-label="Gitea 仓库" />
+        <input v-model="form.giteaRepoUrl" type="text" placeholder="https://gitea.example.com/example/ExampleProject" aria-label="Gitea 仓库地址" @input="giteaUrlError = ''" />
+        <p v-if="giteaUrlError" class="setting-message err">{{ giteaUrlError }}</p>
       </div>
 
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>Gitea 访问令牌</strong>
-          <span>公开仓库无需填写；私有仓库需有 Release 读取权限。</span>
+          <span>仅私有仓库需要：Gitea 右上角头像 → 设置 → 应用 → 「生成新令牌」（勾选只读权限），把生成的令牌粘贴到这里。清空保存即删除。</span>
         </div>
-        <div class="token-input-row">
-          <input
-            v-model="form.giteaToken"
-            type="password"
-            autocomplete="new-password"
-            :placeholder="config.giteaTokenConfigured ? '已配置（留空保持不变）' : '公开源无需填写'"
-            aria-label="Gitea 访问令牌"
-          />
-          <button v-if="config.giteaTokenConfigured" class="text-action danger" type="button" @click="clearToken('giteaToken')">清除</button>
-        </div>
+        <input v-model="form.giteaToken" type="text" autocomplete="off" spellcheck="false" placeholder="公开仓库无需填写" aria-label="Gitea 访问令牌" />
       </div>
 
       <template v-if="!state.desktop && state.supported">
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像更新源</strong>
-            <span>镜像仓库地址（不含 tag，自动拉 latest），如 registry.example.com/example-wiki。</span>
+            <span>留空即自动使用当前容器的镜像仓库（推荐）。仅私有仓库或需切换镜像源时填写，如 registry.example.com/example-wiki（不含 tag）。</span>
           </div>
           <input
             v-model="form.imageRef"
             type="text"
-            :placeholder="state.imageRef || '未配置（将无法拉取新镜像）'"
+            :placeholder="state.imageRef || '留空自动从当前镜像推导'"
             aria-label="镜像更新源"
           />
         </div>
@@ -182,7 +165,7 @@
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像仓库用户名</strong>
-            <span>私有镜像仓库的账号。</span>
+            <span>私有镜像仓库的账号；公开仓库无需填写。</span>
           </div>
           <input v-model="form.registryUsername" type="text" placeholder="registry 用户名" aria-label="镜像仓库用户名" />
         </div>
@@ -190,18 +173,9 @@
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像仓库令牌</strong>
-            <span>私有镜像仓库的密码/令牌；公开仓库无需填写。</span>
+            <span>私有镜像仓库的密码或令牌；公开仓库无需填写。清空保存即删除。</span>
           </div>
-          <div class="token-input-row">
-            <input
-              v-model="form.registryToken"
-              type="password"
-              autocomplete="new-password"
-              :placeholder="config.registryTokenConfigured ? '已配置（留空保持不变）' : '公开源无需填写'"
-              aria-label="镜像仓库令牌"
-            />
-            <button v-if="config.registryTokenConfigured" class="text-action danger" type="button" @click="clearToken('registryToken')">清除</button>
-          </div>
+          <input v-model="form.registryToken" type="text" autocomplete="off" spellcheck="false" placeholder="公开仓库无需填写" aria-label="镜像仓库令牌" />
         </div>
       </template>
 
@@ -243,10 +217,10 @@ interface UpdateStateInfo {
 interface ConfigInfo {
   imageRef: string;
   registryUsername: string;
-  registryTokenConfigured: boolean;
+  registryToken: string;
   giteaUrl: string;
   giteaRepo: string;
-  giteaTokenConfigured: boolean;
+  giteaToken: string;
 }
 
 const isDesktop = computed(() => typeof window !== 'undefined' && Boolean((window as any).wikiDesktop));
@@ -257,10 +231,11 @@ const state = ref<UpdateStateInfo>({
   giteaConfigured: false, busy: false, containerName: '', currentImage: '',
 });
 const config = ref<ConfigInfo>({
-  imageRef: '', registryUsername: '', registryTokenConfigured: false,
-  giteaUrl: '', giteaRepo: '', giteaTokenConfigured: false,
+  imageRef: '', registryUsername: '', registryToken: '',
+  giteaUrl: '', giteaRepo: '', giteaToken: '',
 });
-const form = reactive({ giteaUrl: '', giteaRepo: '', giteaToken: '', imageRef: '', registryUsername: '', registryToken: '' });
+const form = reactive({ giteaRepoUrl: '', giteaToken: '', imageRef: '', registryUsername: '', registryToken: '' });
+const giteaUrlError = ref('');
 
 const checking = ref(false);
 const checkResult = ref<any>(null);
@@ -280,11 +255,33 @@ const downloadError = ref('');
 let offProgress: (() => void) | null = null;
 
 const savingConfig = ref(false);
-const formMsg = ref('');
-const formMsgField = ref('');
-const formOk = ref(false);
 
 const wikiDesktop = () => (window as any).wikiDesktop;
+
+/**
+ * 解析用户粘贴的 Gitea 仓库地址 → { url: 服务地址, repo: owner/name }。
+ * 容忍 Release/分支页后缀、缺协议、.git 后缀、末尾斜杠；只给服务首页地址时返回 error 提示。
+ */
+function parseGiteaRepoUrl(input: string): { url: string; repo: string } | { error: string } {
+  const raw = input.trim();
+  if (!raw) return { url: '', repo: '' };
+  let u: URL;
+  try {
+    u = new URL(raw.includes('://') ? raw : `https://${raw}`);
+  } catch {
+    return { error: '地址格式无法识别，请粘贴浏览器地址栏的完整仓库地址' };
+  }
+  const segs = u.pathname.split('/').filter(Boolean);
+  if (segs.length < 2) {
+    return { error: '这是 Gitea 首页地址，缺少仓库路径；请先打开仓库页面再复制，例如 https://gitea.example.com/example/ExampleProject' };
+  }
+  const owner = decodeURIComponent(segs[0]);
+  const name = decodeURIComponent(segs[1]).replace(/\.git$/, '');
+  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(name)) {
+    return { error: '仓库路径包含无法识别的字符，请确认复制的是仓库首页地址' };
+  }
+  return { url: u.origin, repo: `${owner}/${name}` };
+}
 
 async function load() {
   try {
@@ -294,10 +291,11 @@ async function load() {
     ]);
     state.value = s.data;
     config.value = c.data;
-    form.giteaUrl = c.data.giteaUrl;
-    form.giteaRepo = c.data.giteaRepo;
+    form.giteaRepoUrl = c.data.giteaUrl && c.data.giteaRepo ? `${c.data.giteaUrl}/${c.data.giteaRepo}` : (c.data.giteaUrl || '');
+    form.giteaToken = c.data.giteaToken || '';
     form.imageRef = c.data.imageRef;
     form.registryUsername = c.data.registryUsername;
+    form.registryToken = c.data.registryToken || '';
   } catch {
     /* 面板加载失败由 message 区提示 */
   }
@@ -404,42 +402,28 @@ async function downloadAndInstall() {
 }
 
 async function saveConfig() {
+  const parsed = parseGiteaRepoUrl(form.giteaRepoUrl);
+  if ('error' in parsed) {
+    giteaUrlError.value = parsed.error;
+    return;
+  }
+  giteaUrlError.value = '';
   savingConfig.value = true;
-  formMsg.value = '';
   try {
     await api.put('/api/update/config', {
-      giteaUrl: form.giteaUrl,
-      giteaRepo: form.giteaRepo,
+      giteaUrl: parsed.url,
+      giteaRepo: parsed.repo,
       giteaToken: form.giteaToken,
       imageRef: form.imageRef,
       registryUsername: form.registryUsername,
       registryToken: form.registryToken,
     });
-    form.giteaToken = '';
-    form.registryToken = '';
     await load();
     notify.success('更新源配置已保存');
   } catch (e: any) {
     notify.error(e.response?.data?.error || '保存失败');
   } finally {
     savingConfig.value = false;
-  }
-}
-
-async function clearToken(field: 'registryToken' | 'giteaToken') {
-  const ok = await confirmDialog({
-    title: '清除令牌',
-    message: '清除后拉取私有源将无法认证，确定清除？',
-    confirmText: '清除',
-    danger: true,
-  });
-  if (!ok) return;
-  try {
-    await api.post('/api/update/config/clear-token', { clear: field });
-    await load();
-    notify.success('已清除');
-  } catch (e: any) {
-    notify.error(e.response?.data?.error || '清除失败');
   }
 }
 
@@ -537,17 +521,6 @@ onUnmounted(() => {
   border-radius: 3px;
   background: var(--accent, #3b82f6);
   transition: width 200ms ease;
-}
-
-.token-input-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: min(530px, 100%);
-}
-.token-input-row input {
-  flex: 1;
-  min-width: 0;
 }
 
 @media (max-width: 768px) {

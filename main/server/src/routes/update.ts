@@ -38,9 +38,9 @@ let updating = false;
 
 /**
  * 应用内更新路由：
- *  - GET  /api/update/state          环境能力 + 当前版本 + 配置概览（不含明文令牌）
- *  - GET  /api/update/config         更新源配置（脱敏）
- *  - PUT  /api/update/config         保存更新源配置（写入 DATA_DIR/.env）
+ *  - GET  /api/update/state          环境能力 + 当前版本 + 配置概览（不含令牌）
+ *  - GET  /api/update/config         更新源配置（含令牌明文，设置页所见即所得）
+ *  - PUT  /api/update/config         保存更新源配置（写入 DATA_DIR/.env，空串即清除）
  *  - POST /api/update/check          检查新版本（Gitea latest + Registry digest 对比）
  *  - POST /api/update/apply          拉镜像并切换容器（SSE 进度流）
  */
@@ -84,13 +84,14 @@ export async function updateRoutes(app: FastifyInstance) {
 
   app.get('/api/update/config', async () => {
     const cfg = readUpdateEnv();
+    // 令牌明文回显：设置页所见即所得（接口在 owner 登录态之后才可访问）
     return {
       imageRef: cfg.imageRef,
       registryUsername: cfg.registryUsername,
-      registryTokenConfigured: Boolean(cfg.registryToken),
+      registryToken: cfg.registryToken,
       giteaUrl: cfg.giteaUrl,
       giteaRepo: cfg.giteaRepo,
-      giteaTokenConfigured: Boolean(cfg.giteaToken),
+      giteaToken: cfg.giteaToken,
     };
   });
 
@@ -106,25 +107,12 @@ export async function updateRoutes(app: FastifyInstance) {
     const patch: Parameters<typeof writeUpdateEnv>[0] = {};
     if (body.imageRef !== undefined) patch.imageRef = String(body.imageRef).trim();
     if (body.registryUsername !== undefined) patch.registryUsername = String(body.registryUsername).trim();
-    // 令牌传空串表示清除；不传（undefined）表示保持不变
-    if (body.registryToken !== undefined && body.registryToken !== '') {
-      patch.registryToken = String(body.registryToken).trim();
-    }
+    // 令牌空串即清除（设置页明文回显后无需专门的清除接口）；不传（undefined）表示保持不变
+    if (body.registryToken !== undefined) patch.registryToken = String(body.registryToken).trim();
     if (body.giteaUrl !== undefined) patch.giteaUrl = String(body.giteaUrl).trim().replace(/\/+$/, '');
-    if (body.giteaRepo !== undefined) patch.giteaRepo = String(body.giteaRepo).trim();
-    if (body.giteaToken !== undefined && body.giteaToken !== '') {
-      patch.giteaToken = String(body.giteaToken).trim();
-    }
+    if (body.giteaRepo !== undefined) patch.giteaRepo = String(body.giteaRepo).trim().replace(/^\/+|\/+$/g, '');
+    if (body.giteaToken !== undefined) patch.giteaToken = String(body.giteaToken).trim();
     writeUpdateEnv(patch);
-    return reply.send({ ok: true });
-  });
-
-  /** 清除某个令牌（body: { clear: 'registryToken' | 'giteaToken' }） */
-  app.post('/api/update/config/clear-token', async (req, reply) => {
-    const body = (req.body || {}) as { clear?: string };
-    if (body.clear === 'registryToken') writeUpdateEnv({ registryToken: '' });
-    else if (body.clear === 'giteaToken') writeUpdateEnv({ giteaToken: '' });
-    else return reply.code(400).send({ error: 'clear 只能是 registryToken 或 giteaToken' });
     return reply.send({ ok: true });
   });
 
