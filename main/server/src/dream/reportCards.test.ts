@@ -209,7 +209,11 @@ test('duplicate/identity 卡片:推荐动作与选项随 payload 变化', () => 
   }]);
   const withTarget = buildReportsOverview().decisions
     .find((card: any) => card.kind === 'identity_ambiguity' && card.subject === '王五');
-  assert.equal(withTarget.mergeTargetTitle, '王五(产品)', '有建议目标时输出 mergeTargetTitle 供合并弹窗使用');
+  assert.equal(withTarget.mergeTargetTitle, '王五(产品)', '有建议目标时输出 mergeTargetTitle 供选项展开区使用');
+  const mergeOption = withTarget.options.find((o: any) => o.value === 'merge');
+  assert.equal(mergeOption.needsInput, 'mergeChoice', '「是」在选项下方内联选择保留方向,不弹窗');
+  assert.match(mergeOption.label, /同一对象/);
+  assert.ok(!mergeOption.label.includes('王五(产品)'), 'label 不再预设合并方向');
 });
 
 test('追问卡片按资料聚合并 hydrate 活跃问题,全部处理中时文案切换', () => {

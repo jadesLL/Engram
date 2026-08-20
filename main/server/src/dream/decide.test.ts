@@ -200,8 +200,38 @@ test('identity_ambiguity:mergeKeep=page 反转方向,保留歧义页归档目标
   );
 });
 
-test('identity_ambiguity:finalTitle 合并后保留页改名,同名跳过改名', async () => {
+test('identity_ambiguity:同一对页面的镜像报告去重,合并后其余 open 报告一并关闭', async () => {
   clear();
+  const pageA = createPage('Wiki/实体', '镜像甲');
+  writePage(pageA.path, '# 镜像甲\n\n## 当前理解\n\n甲内容', { type: 'person' });
+  const pageB = createPage('Wiki/实体', '镜像乙');
+  writePage(pageB.path, '# 镜像乙\n\n## 当前理解\n\n乙内容', { type: 'person' });
+
+  // A→B 与 B→A 两个方向各产出一条(带 key=单页 id 的真实扫描形态):归一后是同一 issueKey,幂等只留一条
+  addReports([
+    { kind: 'identity_ambiguity', payload: { key: pageA.id, pageId: pageA.id, title: pageA.title, type: 'person', suggestedTargetId: pageB.id, suggestedTargetTitle: pageB.title } },
+  ]);
+  addReports([
+    { kind: 'identity_ambiguity', payload: { key: pageB.id, pageId: pageB.id, title: pageB.title, type: 'person', suggestedTargetId: pageA.id, suggestedTargetTitle: pageA.title } },
+  ]);
+  const openReports = db.prepare(`SELECT id FROM reports WHERE kind='identity_ambiguity' AND status='open'`).all() as any[];
+  assert.equal(openReports.length, 1, '镜像方向的第二条不得再建,同一对只问一次');
+
+  // 模拟存量库里已存在的镜像旧记录:手动插入第二条 open,合并后也必须联动关闭
+  db.prepare(
+    `INSERT INTO reports(run_at, kind, payload, status, issue_key, fingerprint) VALUES(?, 'identity_ambiguity', ?, 'open', 'legacy-mirror', 'legacy-mirror')`
+  ).run(now(), JSON.stringify({
+    pageId: pageB.id, title: pageB.title, type: 'person',
+    suggestedTargetId: pageA.id, suggestedTargetTitle: pageA.title,
+  }));
+  assert.equal((await decideReport(reportIdOf('identity_ambiguity'), 'merge')).status, 'resolved');
+  const remaining = db.prepare(
+    `SELECT count(*) n FROM reports WHERE kind='identity_ambiguity' AND status='open'`
+  ).get() as any;
+  assert.equal(remaining.n, 0, '合并后同对的 open 镜像报告一并关闭');
+});
+
+test('identity_ambiguity:finalTitle 合并后保留页改名,同名跳过改名', async () => {  clear();
   const target = createPage('Wiki/实体', '孙七(产品)');
   writePage(target.path, '# 孙七(产品)\n\n## 当前理解\n\n目标内容', { type: 'person' });
   const ambiguous = createPage('Wiki/实体', '孙七');

@@ -581,6 +581,7 @@ export function migrate() {
   ensureColumn('reports', 'issue_key', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('reports', 'fingerprint', `TEXT NOT NULL DEFAULT ''`);
   backfillReportIdentity();
+  normalizeIdentityAmbiguityPairs();
   dedupeReportIdentity();
   db.exec(`CREATE INDEX IF NOT EXISTS idx_reports_issue ON reports(kind, issue_key)`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_fingerprint ON reports(kind, issue_key, fingerprint)`);
@@ -642,6 +643,37 @@ function backfillReportIdentity() {
     try { payload = JSON.parse(row.payload); } catch { /* retain fallback identity */ }
     const identity = deriveReportIdentity(row.kind, payload);
     update.run(identity.issueKey || `${row.kind}:${row.id}`, identity.fingerprint, row.id);
+  }
+}
+
+/**
+ * 存量 identity_ambiguity 报告按页面对归一:旧 issueKey 只含歧义页自身 id,
+ * A→B 与 B→A 会各留一条。按新算法重算后,同一对只保留最早一条,其余删除
+ * (归档页上的旧镜像不再有意义);迁移后 dedupeReportIdentity 兜底去重。
+ */
+function normalizeIdentityAmbiguityPairs() {
+  const rows = db.prepare(
+    `SELECT id, payload FROM reports WHERE kind = 'identity_ambiguity'`
+  ).all() as { id: number; payload: string }[];
+  if (!rows.length) return;
+  const update = db.prepare(`UPDATE reports SET issue_key = ?, fingerprint = ? WHERE id = ?`);
+  const remove = db.prepare(`DELETE FROM reports WHERE id = ?`);
+  const byIssue = new Map<string, { id: number; fingerprint: string }[]>();
+  for (const row of rows) {
+    let payload: Record<string, any> = {};
+    try { payload = JSON.parse(row.payload); } catch { /* keep row as-is */ }
+    const identity = deriveReportIdentity('identity_ambiguity', payload);
+    const key = identity.issueKey || `identity_ambiguity:${row.id}`;
+    const entry = { id: row.id, fingerprint: identity.fingerprint };
+    const list = byIssue.get(key);
+    if (list) list.push(entry);
+    else byIssue.set(key, [entry]);
+  }
+  for (const [key, entries] of byIssue) {
+    // 保留最早一条(时间序最自然),镜像删除;先删后更避开唯一索引冲突
+    entries.sort((a, b) => a.id - b.id);
+    entries.slice(1).forEach((entry) => remove.run(entry.id));
+    update.run(key, entries[0].fingerprint, entries[0].id);
   }
 }
 

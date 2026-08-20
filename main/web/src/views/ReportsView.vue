@@ -179,47 +179,6 @@
         </button>
       </template>
     </AppModal>
-
-    <!-- 实体歧义合并:确认同一对象后,选择保留哪一侧与最终名称 -->
-    <AppModal :open="mergeDialog.show" title="合并歧义实体" width="min(560px, 96vw)" @close="mergeDialog.show = false">
-      <template #subtitle>
-        <p class="muted small">
-          「{{ mergeDialog.card?.subject }}」与「{{ mergeDialog.card?.mergeTargetTitle }}」是同一对象。被合并页将移入归档,双链自动改指向。
-        </p>
-      </template>
-      <div class="merge-choice-list">
-        <label class="merge-choice" :class="{ active: mergeChoice === 'target' }">
-          <input v-model="mergeChoice" type="radio" value="target" />
-          <div class="merge-choice-copy">
-            <b>{{ mergeDialog.card?.mergeTargetTitle }}</b>
-            <span class="muted small">建议目标页(保持现状)</span>
-          </div>
-        </label>
-        <label class="merge-choice" :class="{ active: mergeChoice === 'page' }">
-          <input v-model="mergeChoice" type="radio" value="page" />
-          <div class="merge-choice-copy">
-            <b>{{ mergeDialog.card?.subject }}</b>
-            <span class="muted small">歧义页(反转合并方向)</span>
-          </div>
-        </label>
-        <label class="merge-choice" :class="{ active: mergeChoice === 'custom' }">
-          <input v-model="mergeChoice" type="radio" value="custom" />
-          <div class="merge-choice-copy">
-            <b>自定义名称</b>
-            <input
-              v-model="mergeDialog.customTitle"
-              type="text"
-              placeholder="输入合并后的页面名称"
-              @focus="mergeChoice = 'custom'"
-            />
-          </div>
-        </label>
-      </div>
-      <template #footer>
-        <button class="btn" @click="mergeDialog.show = false">取消</button>
-        <button class="btn primary" :disabled="!canConfirmMerge" @click="confirmMergeDialog">确认合并</button>
-      </template>
-    </AppModal>
   </div>
 </template>
 
@@ -343,55 +302,9 @@ const decideProgress = reactive<Record<number, { stage: string; progress: number
 
 type DecideInputPayload = { newTitle?: string; pageType?: string; mergeKeep?: 'target' | 'page'; finalTitle?: string };
 
-/** 实体歧义合并弹窗:三选一(建议目标名/歧义页名/自定义),确认后才提交 */
-const mergeDialog = reactive({
-  show: false,
-  card: null as DecisionCardData | null,
-  keep: 'target' as 'target' | 'page',
-  custom: false,
-  customTitle: '',
-});
-
-const mergeChoice = computed<string>({
-  get: () => (mergeDialog.custom ? 'custom' : mergeDialog.keep),
-  set: (value) => {
-    if (value === 'custom') mergeDialog.custom = true;
-    else {
-      mergeDialog.custom = false;
-      mergeDialog.keep = value as 'target' | 'page';
-    }
-  },
-});
-
-const canConfirmMerge = computed(() =>
-  mergeChoice.value !== 'custom' || Boolean(mergeDialog.customTitle.trim())
-);
-
-function openMergeDialog(card: DecisionCardData) {
-  mergeDialog.card = card;
-  mergeDialog.keep = 'target';
-  mergeDialog.custom = false;
-  mergeDialog.customTitle = '';
-  mergeDialog.show = true;
-}
-
-async function confirmMergeDialog() {
-  const card = mergeDialog.card;
-  if (!card || !canConfirmMerge.value) return;
-  const input: DecideInputPayload = {};
-  if (mergeChoice.value === 'custom') input.finalTitle = mergeDialog.customTitle.trim();
-  else input.mergeKeep = mergeChoice.value as 'target' | 'page';
-  mergeDialog.show = false;
-  await submitDecide(card, 'merge', input);
-}
-
 async function onDecide(card: DecisionCardData, option: string, input: DecideInputPayload) {
   if (decideBusy[card.id] || decideProgress[card.id]) return;
-  // 实体歧义「是」→ 先弹窗选保留方向/最终名称,弹窗确认本身就是合并前的确认
-  if (card.kind === 'identity_ambiguity' && option === 'merge') {
-    openMergeDialog(card);
-    return;
-  }
+  // 实体歧义「是」的保留方向/最终名称由 DecisionCard 选项下方内联选择后随 input 一起提交
   const confirmPlan = (option === 'merge' || option === 'keep_a' || option === 'keep_b')
     ? CONFIRM_DECIDES[card.kind]?.(card)
     : null;
@@ -959,18 +872,6 @@ onMounted(async () => {
 .action-chip { justify-self: end; color: var(--text-secondary); font-size: 13px; }
 .impact-summary { display: flex; align-items: baseline; gap: 10px; margin-top: 12px; padding: 10px 12px; background: var(--bg-secondary); border-radius: 6px; }
 .batch-error { color: var(--danger); margin: 10px 0 0; }
-.merge-choice-list { display: flex; flex-direction: column; gap: 8px; }
-.merge-choice {
-  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
-  border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
-  transition: border-color .15s, background .15s;
-}
-.merge-choice:hover { border-color: var(--accent); }
-.merge-choice.active { border-color: var(--accent); background: var(--accent-soft); }
-.merge-choice input[type='radio'] { margin-top: 3px; }
-.merge-choice-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
-.merge-choice-copy b { overflow-wrap: anywhere; }
-.merge-choice-copy input { margin-top: 2px; }
 @media (max-width: 640px) {
   .reports-head { align-items: flex-start; flex-direction: column; }
   .head-actions { width: 100%; }
