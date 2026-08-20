@@ -5,6 +5,7 @@ import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { mergePages } from '../lib/mergePages.js';
 import { renamePageSafely } from '../lib/renamePage.js';
+import { deriveReportIdentity } from './reportIdentity.js';
 import { PAGE_TYPES } from '../lib/pageTypes.js';
 import { ensureEntityStructure } from '../pipeline/knowledgePage.js';
 import {
@@ -219,6 +220,13 @@ export async function applyIdentityAmbiguityMerge(
     const keep = db.prepare(`SELECT title FROM pages WHERE id = ? AND deleted = 0`).get(keepId) as
       { title: string } | undefined;
     if (keep && keep.title !== finalTitle) renamePageSafely(keepId, finalTitle);
+  }
+  // 同一对页面的其他 open 报告(含镜像方向的旧记录)一并关闭,避免合并后再被反向提问
+  const identity = deriveReportIdentity('identity_ambiguity', payload);
+  if (identity.issueKey) {
+    db.prepare(
+      `UPDATE reports SET status = 'resolved' WHERE kind = 'identity_ambiguity' AND issue_key = ? AND status = 'open'`
+    ).run(identity.issueKey);
   }
 }
 

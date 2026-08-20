@@ -27,7 +27,7 @@ export interface CardOption {
   label: string;
   primary?: boolean;
   hint?: string;
-  needsInput?: 'rename' | 'pageType';
+  needsInput?: 'rename' | 'pageType' | 'mergeChoice';
 }
 
 export interface CardLink {
@@ -48,7 +48,7 @@ export interface DecisionCard {
   context?: string;
   links?: CardLink[];
   options: CardOption[];
-  /** 仅实体歧义卡:建议目标页标题,前端合并弹窗用作候选名称 */
+  /** 仅实体歧义卡:建议目标页标题,前端「是」选项展开区用作保留候选名 */
   mergeTargetTitle?: string;
   /** 仅追问卡片:hydrate 后的活跃问题列表 */
   questions?: any[];
@@ -322,8 +322,10 @@ function identityCard(row: ReportRow, payload: Record<string, any>): DecisionCar
   if (hasTarget) {
     options.push({
       value: 'merge',
-      label: `是 — 合并到「${payload.suggestedTargetTitle}」`,
+      label: '是 — 同一对象，合并为一页',
       primary: true,
+      // 保留哪一侧/自定义最终名称由前端在选项下方内联选择,不再二次弹窗
+      needsInput: 'mergeChoice',
     });
   }
   options.push({

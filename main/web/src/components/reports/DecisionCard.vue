@@ -86,7 +86,33 @@
         </button>
         <div v-if="option.needsInput && expandedIndex === i" class="option-input">
           <p v-if="option.hint" class="muted small">{{ option.hint }}</p>
-          <div class="option-input-row">
+          <!-- 实体歧义「是」:选保留哪一侧(点击即合并)或自定义最终名称,内联选择不弹窗 -->
+          <template v-if="option.needsInput === 'mergeChoice'">
+            <div class="merge-pick-row">
+              <button class="btn small" type="button" :disabled="busy" @click="pickMergeKeep('page')">
+                保留「{{ card.subject }}」
+              </button>
+              <button class="btn small" type="button" :disabled="busy" @click="pickMergeKeep('target')">
+                保留「{{ card.mergeTargetTitle }}」
+              </button>
+            </div>
+            <div class="option-input-row">
+              <input
+                v-model="mergeCustomTitle"
+                type="text"
+                placeholder="或输入合并后的页面名称"
+                @keyup.enter="confirmMergeCustom"
+              />
+              <button
+                class="btn small primary"
+                :disabled="!mergeCustomTitle.trim()"
+                @click="confirmMergeCustom"
+              >
+                确认
+              </button>
+            </div>
+          </template>
+          <div v-else class="option-input-row">
             <input
               v-if="option.needsInput === 'rename'"
               ref="renameInput"
@@ -124,8 +150,8 @@ export interface DecisionCardData {
   question: string;
   context?: string;
   links?: { label: string; pageId: string }[];
-  options: { value: string; label: string; primary?: boolean; hint?: string; needsInput?: 'rename' | 'pageType' }[];
-  /** 实体歧义卡:建议目标页标题,合并弹窗用作候选名称 */
+  options: { value: string; label: string; primary?: boolean; hint?: string; needsInput?: 'rename' | 'pageType' | 'mergeChoice' }[];
+  /** 实体歧义卡:建议目标页标题,「是」展开区用作保留候选名 */
   mergeTargetTitle?: string;
   questions?: any[];
   sourcePath?: string;
@@ -142,7 +168,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'decide', card: DecisionCardData, option: string, input: { newTitle?: string; pageType?: string }): void;
+  (e: 'decide', card: DecisionCardData, option: string, input: { newTitle?: string; pageType?: string; mergeKeep?: 'target' | 'page'; finalTitle?: string }): void;
   (e: 'open-page', pageId: string): void;
   (e: 'open-source', card: DecisionCardData): void;
   (e: 'answer-question', question: any, action: 'reprocess' | 'ignore', answer: string): void;
@@ -150,6 +176,8 @@ const emit = defineEmits<{
 
 const expandedIndex = ref(-1);
 const inputValue = ref('');
+/** 实体歧义「是」展开区的自定义名称输入 */
+const mergeCustomTitle = ref('');
 // v-for 内的模板 ref 会收集为数组;类型上宽都接受,运行时取第一个
 const renameInput = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
 const questionAnswers = reactive<Record<string, string>>({});
@@ -182,11 +210,25 @@ function onOption(index: number) {
   if (option.needsInput) {
     expandedIndex.value = expandedIndex.value === index ? -1 : index;
     inputValue.value = '';
+    mergeCustomTitle.value = '';
     if (option.needsInput === 'pageType') inputValue.value = 'concept';
     if (option.needsInput === 'rename') focusRenameInput();
     return;
   }
   emit('decide', props.card, option.value, {});
+}
+
+/** 实体歧义「是」展开区:点击保留某侧即提交合并 */
+function pickMergeKeep(keep: 'page' | 'target') {
+  if (props.busy) return;
+  emit('decide', props.card, 'merge', { mergeKeep: keep });
+}
+
+/** 实体歧义「是」展开区:自定义合并后的页面名称 */
+function confirmMergeCustom() {
+  const title = mergeCustomTitle.value.trim();
+  if (!title || props.busy) return;
+  emit('decide', props.card, 'merge', { finalTitle: title });
 }
 
 function confirmInput(option: { value: string; needsInput?: string }) {
@@ -237,6 +279,7 @@ function formatTime(value: string) {
 .option-input p { margin: 0 0 6px; }
 .option-input-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .option-input-row input { flex: 1 1 220px; min-width: 0; }
+.merge-pick-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .question-list { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
 .question-item b { overflow-wrap: anywhere; }
 .acceptance { margin: 4px 0 4px 10px; padding-left: 16px; color: var(--text-secondary); }
