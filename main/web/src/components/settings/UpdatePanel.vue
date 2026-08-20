@@ -161,7 +161,14 @@
         </div>
       </div>
 
-      <template v-if="!state.desktop && state.supported">
+      <!-- 高级选项：绝大多数部署用不到（镜像源自动从当前容器推导，公开仓库免认证），默认收起 -->
+      <div v-if="!state.desktop && state.supported" class="advanced-toggle">
+        <button type="button" class="text-action" @click="showAdvanced = !showAdvanced">
+          {{ showAdvanced ? '收起高级选项' : '高级选项（自定义镜像源）' }}
+        </button>
+      </div>
+
+      <template v-if="!state.desktop && state.supported && showAdvanced">
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像更新源</strong>
@@ -252,6 +259,7 @@ const config = ref<ConfigInfo>({
 });
 const form = reactive({ repoUrl: '', authType: 'token', token: '', username: '', password: '', imageRef: '', registryUsername: '', registryToken: '' });
 const repoUrlError = ref('');
+const showAdvanced = ref(false);
 
 const checking = ref(false);
 const checkResult = ref<any>(null);
@@ -556,6 +564,12 @@ onUnmounted(() => {
   flex-basis: 100%;
 }
 
+/* 高级选项折叠入口 */
+.advanced-toggle {
+  padding: 10px 24px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
 .update-log {
   margin: 12px 24px;
   padding: 10px 12px;
@@ -603,6 +617,9 @@ onUnmounted(() => {
   }
   .settings-group > .setting-message {
     margin: 0 18px 14px;
+  }
+  .advanced-toggle {
+    padding: 10px 18px 8px;
   }
   .update-log {
     margin: 12px 18px;
