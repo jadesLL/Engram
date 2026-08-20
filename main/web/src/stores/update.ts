@@ -38,14 +38,12 @@ export const useUpdateStore = defineStore('update', {
     dismissedVersion: localStorage.getItem(DISMISS_KEY) || '',
   }),
   getters: {
-    /** 有新版本且未被用户忽略 → 侧栏设置按钮显示红点 */
+    /** 有新版本且未被用户忽略 → 侧栏设置按钮显示红点（digest-only 更新无版本号时也提示） */
     hasNewVersion(state): boolean {
-      return Boolean(
-        state.lastResult &&
-        state.lastResult.hasUpdate &&
-        state.lastResult.latestVersion &&
-        state.lastResult.latestVersion !== state.dismissedVersion,
-      );
+      const r = state.lastResult;
+      if (!r || !r.hasUpdate) return false;
+      if (!r.latestVersion) return true;
+      return r.latestVersion !== state.dismissedVersion;
     },
     /** 当前版本（检测过用服务端返回的，否则用编译期常量） */
     displayVersion(state): string {

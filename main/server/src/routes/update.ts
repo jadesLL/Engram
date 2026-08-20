@@ -16,6 +16,7 @@ import {
 } from '../lib/updateConfig.js';
 import { fetchLatestRelease, type RepoAuth } from '../lib/giteaRelease.js';
 import { fetchRemoteDigest } from '../lib/registryApi.js';
+import { describeError } from '../lib/describeError.js';
 import {
   buildCreateBody,
   buildSwitcherCreateBody,
@@ -170,11 +171,13 @@ export async function updateRoutes(app: FastifyInstance) {
           giteaError = '远端仓库上尚无 Release';
         }
       } catch (e) {
-        giteaError = e instanceof Error ? e.message : String(e);
+        giteaError = describeError(e);
       }
     }
 
     // 2) Registry digest 对比（仅 Docker 且已配镜像源时；Gitea 缺失/失败时的兜底信号）
+    //    优先由宿主机 daemon 代查（/distribution API）：与镜像 pull 同一条网络路径，
+    //    容器自身无 IPv6/出站受限时依然可用；daemon 不可用时回退容器内直连。
     let registryError = '';
     if (!desktop && sock) {
       const inspect = await docker.inspectContainer(selfContainerId());
@@ -182,11 +185,24 @@ export async function updateRoutes(app: FastifyInstance) {
       if (imageRef) {
         try {
           const local = await docker.inspectImage(`${imageRef}:latest`);
-          const remote = await fetchRemoteDigest(
-            imageRef.split('/')[0],
-            imageRef.split('/').slice(1).join('/'),
-            { username: cfg.registryUsername, token: cfg.registryToken },
-          );
+          let remote: string | null = null;
+          try {
+            remote = await docker.inspectRemoteImage(
+              `${imageRef}:latest`,
+              buildRegistryAuthHeader(imageRef, cfg.registryUsername, cfg.registryToken),
+            );
+          } catch (e) {
+            // daemon 代查失败（端点不存在/daemon 联网受限）：回退容器内直连 registry API
+            try {
+              remote = await fetchRemoteDigest(
+                imageRef.split('/')[0],
+                imageRef.split('/').slice(1).join('/'),
+                { username: cfg.registryUsername, token: cfg.registryToken },
+              );
+            } catch (e2) {
+              throw new Error(`${describeError(e)}；容器直连回退也失败: ${describeError(e2)}`);
+            }
+          }
           if (remote) {
             result.registryChecked = true;
             const localDigests = local?.RepoDigests || [];
@@ -197,7 +213,7 @@ export async function updateRoutes(app: FastifyInstance) {
             // 远端 404：latest 尚未推送过（或无权限），不能判定
           }
         } catch (e) {
-          registryError = e instanceof Error ? e.message : String(e);
+          registryError = describeError(e);
         }
       }
     }
@@ -256,7 +272,7 @@ export async function updateRoutes(app: FastifyInstance) {
           progressLine('镜像拉取完成');
         } catch (e) {
           pulled = false;
-          const msg = e instanceof Error ? e.message : String(e);
+          const msg = describeError(e);
           const local = await docker.inspectImage(targetRef);
           if (local) {
             progressLine(`拉取失败（${msg}），检测到本地已有 ${targetRef}，继续用它更新`);
@@ -304,7 +320,7 @@ export async function updateRoutes(app: FastifyInstance) {
         send('done', { message: '更新已交由切换容器执行，服务即将重启', pulled });
         stream.close();
       } catch (e) {
-        send('error', { error: e instanceof Error ? e.message : String(e) });
+        send('error', { error: describeError(e) });
         stream.close();
       } finally {
         updating = false;

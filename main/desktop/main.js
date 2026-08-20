@@ -338,6 +338,28 @@ function cmpVersions(a, b) {
   return 0;
 }
 
+// 逐层展开 cause 链：Electron/Node 的 fetch 失败时 message 只剩 "fetch failed"，根因在 cause
+function describeError(e) {
+  const parts = [];
+  const seen = new Set();
+  const walk = (cur) => {
+    if (cur === null || cur === undefined || seen.has(cur)) return;
+    seen.add(cur);
+    if (typeof cur === 'string') {
+      if (cur.trim() && !parts.includes(cur.trim())) parts.push(cur.trim());
+      return;
+    }
+    if (typeof cur !== 'object') return;
+    if (typeof cur.message === 'string' && cur.message && !parts.includes(cur.message)) parts.push(cur.message);
+    if (Array.isArray(cur.errors)) cur.errors.forEach(walk);
+    if ('cause' in cur) walk(cur.cause);
+  };
+  walk(e);
+  if (!parts.length) return String(e);
+  const joined = parts.join(' ← ');
+  return joined.length > 400 ? joined.slice(0, 400) + '…' : joined;
+}
+
 async function giteaLatestRelease(cfg) {
   const res = await fetch(`${cfg.giteaUrl}/api/v1/repos/${cfg.giteaRepo}/releases/latest`, {
     headers: repoAuthHeaders(cfg),
@@ -374,7 +396,7 @@ ipcMain.handle('desktop-update-check', async () => {
       releaseUrl: `${cfg.giteaUrl}/${cfg.giteaRepo}/releases/tag/${release.tag}`,
     };
   } catch (e) {
-    return { ok: false, error: e && e.message ? e.message : String(e) };
+    return { ok: false, error: describeError(e) };
   }
 });
 
@@ -390,7 +412,12 @@ ipcMain.handle('desktop-update-download', async (e, url) => {
   fs.mkdirSync(dir, { recursive: true });
   const name = target.split('/').pop().split('?')[0] || 'LLM Wiki Setup.exe';
   const file = path.join(dir, name);
-  const res = await fetch(target, { headers: repoAuthHeaders(cfg), redirect: 'follow' });
+  let res;
+  try {
+    res = await fetch(target, { headers: repoAuthHeaders(cfg), redirect: 'follow' });
+  } catch (e) {
+    throw new Error(describeError(e));
+  }
   if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
   const total = Number(res.headers.get('content-length')) || 0;
   const out = fs.createWriteStream(file);

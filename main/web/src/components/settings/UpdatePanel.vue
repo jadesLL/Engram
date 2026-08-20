@@ -35,7 +35,7 @@
           </div>
           <div class="check-controls">
             <span v-if="checkResult" class="check-status" :class="checkResult.hasUpdate ? 'has' : 'none'">
-              {{ checkResult.hasUpdate ? `有新版本 v${checkResult.latestVersion}` : '已是最新' }}
+              {{ checkResult.hasUpdate ? (checkResult.latestVersion ? `有新版本 v${checkResult.latestVersion}` : '远端镜像有更新') : '已是最新' }}
             </span>
             <button class="btn" type="button" :disabled="checking" @click="doCheck">
               <AppSpinner v-if="checking" :size="11" />
