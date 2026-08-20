@@ -54,6 +54,20 @@ export interface DockerPullEvent {
   errorDetail?: { message?: string };
 }
 
+/** host 网络探针容器固定名（启动前清理同名残留） */
+export const NET_PROBE_CONTAINER_NAME = 'example-wiki-net-probe';
+
+/** 探针内执行的 node 单行脚本：fetch 目标 URL，单行 JSON 输出到 stdout。
+ *  错误取 cause 链（undici 把网络故障包成 fetch failed，根因在 cause）。 */
+export const NET_PROBE_SCRIPT = [
+  'const u=process.env.WIKILLM_PROBE_URL||"";',
+  'const a=process.env.WIKILLM_PROBE_AUTH||"";',
+  'const chain=e=>{const p=[];for(let c=e;c;c=c.cause){if(c.message&&!p.includes(c.message))p.push(c.message)}return p.join(" <- ")};',
+  'fetch(u,{headers:a?{Authorization:a}:{},redirect:"follow",signal:AbortSignal.timeout(15000)})',
+  '.then(async r=>{process.stdout.write(JSON.stringify({status:r.status,body:await r.text()}))})',
+  '.catch(e=>{process.stdout.write(JSON.stringify({error:chain(e)}))});',
+].join('');
+
 interface RequestOptions {
   method: 'GET' | 'POST' | 'DELETE';
   path: string;
@@ -249,6 +263,67 @@ export const docker = {
       throw new Error(`daemon 查询远端镜像失败: ${data.message || statusCode}`);
     }
     return data.Descriptor?.digest || null;
+  },
+
+  /**
+   * 借宿主机网络代发一次 HTTP GET（探针容器方案）。
+   * 起一个 host 网络的一次性容器（复用自身镜像，node 基座），在容器内 fetch 目标 URL
+   * 后输出单行 JSON 到 stdout，随即读取日志并删除容器。
+   * 用途：容器自身网络无法直达目标（如 IPv6-only 域名 + IPv4 容器网络）时，
+   * 与镜像 pull 同理改走宿主机网络栈——host 模式共享宿主机 DNS 与路由。
+   */
+  async fetchViaHostNetwork(opts: {
+    /** 探针容器使用的镜像（须为本机已有镜像，通常传当前容器自身镜像） */
+    image: string;
+    url: string;
+    /** Authorization 头完整值（如 "token xxx"）；匿名访问可省略 */
+    authorization?: string;
+    /** 整体超时（含容器创建/启动/等待），默认 45 秒 */
+    timeoutMs?: number;
+  }): Promise<{ status: number; body: string }> {
+    // 固定容器名：启动前清理上次崩溃残留的同名探针
+    await this.removeContainer(NET_PROBE_CONTAINER_NAME, true).catch(() => undefined);
+    const created = await this.createContainer(
+      {
+        Image: opts.image,
+        Cmd: ['node', '-e', NET_PROBE_SCRIPT],
+        Env: [
+          `WIKILLM_PROBE_URL=${opts.url}`,
+          `WIKILLM_PROBE_AUTH=${opts.authorization || ''}`,
+        ],
+        Tty: true,
+        Labels: { 'com.exampleproject.net-probe': 'true' },
+        HostConfig: { NetworkMode: 'host' },
+      },
+      NET_PROBE_CONTAINER_NAME,
+    );
+    try {
+      await this.startContainer(created.Id);
+      // 阻塞等探针退出（node 脚本内部 15s fetch 超时兜底）
+      await json<{ StatusCode?: number }>({
+        method: 'POST',
+        path: `/containers/${encodeURIComponent(created.Id)}/wait`,
+        timeoutMs: opts.timeoutMs ?? 45_000,
+      });
+      const logs = await request({
+        method: 'GET',
+        path: `/containers/${encodeURIComponent(created.Id)}/logs?stdout=1&stderr=1`,
+        timeoutMs: 10_000,
+      });
+      const text = logs.body.trim();
+      if (!text) throw new Error('探针容器无输出');
+      let parsed: { status?: number; body?: string; error?: string };
+      try {
+        parsed = JSON.parse(text) as typeof parsed;
+      } catch {
+        throw new Error(`探针输出无法解析: ${text.slice(0, 200)}`);
+      }
+      if (parsed.error) throw new Error(`探针网络错误: ${parsed.error}`);
+      if (typeof parsed.status !== 'number') throw new Error('探针输出缺少 status');
+      return { status: parsed.status, body: parsed.body || '' };
+    } finally {
+      await this.removeContainer(created.Id, true).catch(() => undefined);
+    }
   },
 
   /** 启动容器 */

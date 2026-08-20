@@ -14,7 +14,14 @@ import {
   deriveDefaultImageRef,
   buildRegistryAuthHeader,
 } from '../lib/updateConfig.js';
-import { fetchLatestRelease, type RepoAuth } from '../lib/giteaRelease.js';
+import {
+  fetchLatestRelease,
+  latestReleaseUrl,
+  parseLatestReleaseResponse,
+  repoAuthHeaders,
+  type LatestRelease,
+  type RepoAuth,
+} from '../lib/giteaRelease.js';
 import { fetchRemoteDigest } from '../lib/registryApi.js';
 import { describeError } from '../lib/describeError.js';
 import {
@@ -153,25 +160,46 @@ export async function updateRoutes(app: FastifyInstance) {
     };
 
     // 1) 远端仓库 Releases：最新版本号（Docker 版与桌面版共用信号源）
+    //    直连失败（容器网络受限，如 IPv6-only 域名）时，Docker 环境改借宿主机网络
+    //    的探针容器代查（与镜像 pull 同理），普通环境保持直连不变。
     let giteaError = '';
     if (cfg.giteaUrl && cfg.giteaRepo) {
       const auth: RepoAuth = cfg.giteaAuthType === 'password'
         ? { type: 'password', username: cfg.giteaUsername, password: cfg.giteaPassword }
         : { type: 'token', token: cfg.giteaToken };
+      let release: LatestRelease | null;
       try {
-        const release = await fetchLatestRelease(cfg.giteaUrl, cfg.giteaRepo, auth);
-        if (release) {
-          result.releaseTag = release.tag;
-          result.latestVersion = release.version;
-          result.exeAsset = release.assets.find((a) => a.name.endsWith('.exe')) || null;
-          if (release.version) {
-            result.hasUpdate = compareVersions(ver, release.version) < 0;
-          }
+        release = await fetchLatestRelease(cfg.giteaUrl, cfg.giteaRepo, auth);
+      } catch (directError) {
+        release = null;
+        if (desktop || !sock) {
+          giteaError = describeError(directError);
         } else {
-          giteaError = '远端仓库上尚无 Release';
+          try {
+            const inspect = await docker.inspectContainer(selfContainerId());
+            const probeImage = inspect?.Config.Image || '';
+            if (!probeImage) throw directError;
+            const headers = repoAuthHeaders(auth);
+            const probed = await docker.fetchViaHostNetwork({
+              image: probeImage,
+              url: latestReleaseUrl(cfg.giteaUrl, cfg.giteaRepo),
+              authorization: headers.Authorization,
+            });
+            release = parseLatestReleaseResponse(probed.status, probed.body);
+          } catch (probeError) {
+            giteaError = `${describeError(directError)}；宿主机网络代查也失败: ${describeError(probeError)}`;
+          }
         }
-      } catch (e) {
-        giteaError = describeError(e);
+      }
+      if (release && !giteaError) {
+        result.releaseTag = release.tag;
+        result.latestVersion = release.version;
+        result.exeAsset = release.assets.find((a) => a.name.endsWith('.exe')) || null;
+        if (release.version) {
+          result.hasUpdate = compareVersions(ver, release.version) < 0;
+        }
+      } else if (!release && !giteaError) {
+        giteaError = '远端仓库上尚无 Release';
       }
     }
 
