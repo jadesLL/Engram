@@ -50,7 +50,7 @@ export type IngestStage = '解析' | 'Map' | 'Normalize' | 'Plan' | 'Critic' | '
 export type IngestProgress = { stage: IngestStage; progress: number; detail?: string };
 export type IngestProgressCallback = (update: IngestProgress) => void;
 const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
-export const INGEST_PIPELINE_VERSION = '2026-08-16.1';
+export const INGEST_PIPELINE_VERSION = '2026-08-20.1';
 
 function audit(runId: string, stage: string, payload: unknown, input?: unknown) {
   const serialized = JSON.stringify(payload);
@@ -634,7 +634,28 @@ export async function ingestRawFile(
   const prior = db.prepare(
     `SELECT content_hash,status,run_id,error FROM ingest_log WHERE path=?`
   ).get(relPath) as any;
-  if (!options.force && prior?.content_hash === document.contentHash && prior.status === 'completed') return { ...EMPTY };
+  if (!options.force && prior?.content_hash === document.contentHash && prior.status === 'completed') {
+    // 内容未变直接跳过时同样按一次管线级结果缓存命中记账：
+    // 之前的运行结果被完整复用，不记账会让用量页低估整理的缓存收益。
+    const reusedTokens = (db.prepare(
+      `SELECT llm_prompt_tokens FROM ingest_runs WHERE id=?`
+    ).get(prior.run_id) as { llm_prompt_tokens: number } | undefined)?.llm_prompt_tokens || 0;
+    const active = getActiveChat();
+    recordLlmResultCacheHit({
+      provider: active?.provider || 'custom',
+      model: active?.model || 'unknown',
+      operation: 'chat',
+      tag: 'ingest-pipeline-cache',
+      scope: 'ingest',
+      refId: prior.run_id,
+      stage: 'pipeline',
+      promptVersion: INGEST_PIPELINE_VERSION,
+      cacheScope: 'ingest:pipeline',
+      dependencyHash: prior.content_hash,
+      resultCacheHit: true,
+    }, 0, reusedTokens);
+    return { ...EMPTY };
+  }
   const inputSignature = ingestInputSignature(relPath, document, resolvedQuestions);
   const reusable = db.prepare(
     `SELECT id,stats,llm_prompt_tokens FROM ingest_runs

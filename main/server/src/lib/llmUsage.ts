@@ -219,14 +219,15 @@ export function recordLlmResultCacheHit(
   promptTokens = 0,
 ): void {
   if (promptTokens > 0) {
+    // 结果缓存命中没有真实 provider 往返，token 数只进 prompt_tokens 统计；
+    // 不伪造 prompt_cache_hit_tokens，否则同一行会被 provider_cache_hit_calls
+    // 重复计入综合命中率的分子（combined 可超过 100%）。
     recordLlmUsage(
       { ...identity, resultCacheHit: true },
       {
         prompt_tokens: promptTokens,
         completion_tokens: 0,
         total_tokens: promptTokens,
-        prompt_cache_hit_tokens: promptTokens,
-        prompt_cache_miss_tokens: 0,
       },
       durationMs,
     );
@@ -359,7 +360,7 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
       ? row.prompt_tokens / row.cache_miss_tokens
       : null,
     combinedCacheHitRate: row.requests > 0
-      ? (row.result_cache_hits + row.provider_cache_hit_calls) / row.requests
+      ? Math.min(1, (row.result_cache_hits + row.provider_cache_hit_calls) / row.requests)
       : null,
   }));
 
@@ -431,7 +432,7 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
       ? aggregate.prompt_tokens / aggregate.cache_miss_tokens
       : null,
     combinedCacheHitRate: aggregate.requests > 0
-      ? (aggregate.result_cache_hits + aggregate.provider_cache_hit_calls) / aggregate.requests
+      ? Math.min(1, (aggregate.result_cache_hits + aggregate.provider_cache_hit_calls) / aggregate.requests)
       : null,
     latestAt: aggregate.latest_at,
     breakdown,

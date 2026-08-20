@@ -7,6 +7,7 @@ import {
 } from '../lib/semanticStage.js';
 import type { Candidate, PlanItem } from './ingestModel.js';
 import { isSynthesizable } from '../lib/pageTypes.js';
+import { SHARED_HEADER } from '../prompts/ingestPipeline.js';
 
 export interface EntityRosterEntry {
   id?: string;
@@ -70,9 +71,8 @@ function contextFor(candidate: Candidate | undefined): string {
 }
 
 function identityPrompt(): string {
-  return `你是知识库实体身份消歧专家。根据候选名称、原文上下文和已有页面名录判断名称是否稳定、是否只是职务称谓、是否与已有实体是同一对象。
+  return `${SHARED_HEADER}你是知识库实体身份消歧专家。根据候选名称、原文上下文和已有页面名录判断名称是否稳定、是否只是职务称谓、是否与已有实体是同一对象。
 
-历史中的 user/assistant 轮次是已完成候选，仅用于保持缓存前缀。只处理最后一条 user 输入，不得重复、补写或修改更早候选。
 请求 JSON 的 sharedContext.existingPages 是已有页面名录；input.candidate 和 input.context 是本次需要判断的候选。
 页面上下文也可能位于 sharedContext.context；无论位于哪里，都只判断最后一条 user 输入中的 candidate。
 
@@ -157,7 +157,7 @@ export async function classifyEntityName(
       ...(!semanticOptions.contextInCache ? { context } : {}),
     },
     maxHistoryChars: semanticOptions.maxHistoryChars,
-    promptVersion: 'entity-identity:2',
+    promptVersion: 'entity-identity:3',
     cacheScope: 'entity-identity',
     resultCache: true,
     temperature: 0.1,

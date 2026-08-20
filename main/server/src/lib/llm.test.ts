@@ -197,6 +197,37 @@ test('embed does not impose the fallback dimension on legacy entries without dim
   assert.deepEqual(await embed(['text']), [[1, 2, 3, 4]]);
 });
 
+test('embedding cache hits skip the API but still record a result-cache usage row', async () => {
+  db.exec('DELETE FROM embedding_cache');
+  activateEmbedding(entry());
+  // 第一次：走 API 并写缓存（mock 响应带 usage，与真实服务商一致）
+  mockEmbeddingResponse({
+    data: [{ index: 0, embedding: [1, 2, 3, 4] }],
+    usage: { prompt_tokens: 12, total_tokens: 12 },
+  });
+  assert.deepEqual(await embed(['cached-text']), [[1, 2, 3, 4]]);
+
+  // 第二次：命中本地缓存，fetch 不应被调用
+  let fetched = false;
+  globalThis.fetch = async () => {
+    fetched = true;
+    return new Response('{}', { status: 200 });
+  };
+  assert.deepEqual(await embed(['cached-text']), [[1, 2, 3, 4]]);
+  assert.equal(fetched, false);
+
+  const rows = db.prepare(
+    `SELECT tag,stage,result_cache_hit,prompt_tokens,cache_reported FROM llm_usage ORDER BY id`
+  ).all();
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].result_cache_hit, 0);
+  assert.equal(rows[1].tag, 'embedding');
+  assert.equal(rows[1].stage, 'local-embedding-cache');
+  assert.equal(rows[1].result_cache_hit, 1);
+  assert.ok(rows[1].prompt_tokens > 0);
+  assert.equal(rows[1].cache_reported, 0);
+});
+
 test('testModel sends dimensions and checks the returned embedding length', async () => {
   const modelEntry = entry({ dim: 3, supportsDimensions: true });
   let requestBody: Record<string, unknown> | undefined;

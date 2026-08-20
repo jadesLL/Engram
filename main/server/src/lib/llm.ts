@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { createCanvas } from '@napi-rs/canvas';
 import type { ZodType } from 'zod';
 import { db, getSetting } from './db.js';
-import { recordLlmUsage, type LlmOperation, type LlmUsageIdentity } from './llmUsage.js';
+import { recordLlmResultCacheHit, recordLlmUsage, type LlmOperation, type LlmUsageIdentity } from './llmUsage.js';
 import {
   resolveImageInputCapability,
   type ImageInputCapability,
@@ -877,6 +877,21 @@ export async function embed(texts: string[], signal?: AbortSignal): Promise<numb
       db.transaction(() => {
         for (const i of cachedIndices) update.run(ts, textHashes[i], modelKey);
       })();
+      // 命中本地向量缓存的请求不再调用 API，但仍按一次「结果缓存命中」记账：
+      // 不记账会让用量页把这些请求静默吞掉，同时拉低综合缓存命中率。
+      try {
+        const estTokens = Math.ceil(cachedIndices.reduce((total, i) => total + texts[i].length / 3, 0));
+        recordLlmResultCacheHit({
+          provider: entry?.provider || 'custom',
+          model: cfg.embeddingModel,
+          operation: 'embedding',
+          tag: 'embedding',
+          scope: 'embedding',
+          stage: 'local-embedding-cache',
+          dependencyHash: modelKey,
+          resultCacheHit: true,
+        }, 0, estTokens);
+      } catch { /* 记账失败不影响向量化结果 */ }
     }
   } catch { /* embedding_cache 表可能尚未创建 */ }
 
