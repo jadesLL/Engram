@@ -279,8 +279,10 @@ ipcMain.handle('open-file-bytes', (_e, name, bytes) => {
 });
 
 // ---------- 桌面端自更新（远端仓库 Releases 拉安装包） ----------
-// 更新配置与服务器端共用 userData/data/.env（本地模式 server 的 DATA_DIR），
-// 由内嵌 server 的 /api/update/config 端点读写，桌面端主进程只读同一文件。
+// 更新源配置按优先级解析：
+//  1) 渲染进程传入——设置页「更新源配置」所见即所得（本地模式=本地 .env，远端模式=所连服务器配置）
+//  2) 远端模式下主进程向所连服务器拉取（渲染进程为旧版前端、不传参时的兜底）
+//  3) 本地 userData/data/.env（本地模式主路径，与内嵌 server 的 /api/update/config 读写同一文件）
 const UPDATE_KEYS = {
   giteaUrl: 'UPDATE_GITEA_URL',
   giteaRepo: 'UPDATE_GITEA_REPO',
@@ -327,6 +329,48 @@ function repoAuthHeaders(cfg) {
   if (cfg.giteaToken) return { Authorization: `token ${cfg.giteaToken}` };
   return {};
 }
+
+/** 远端模式下从所连服务器读取更新源配置；非远端模式或读取失败返回 null */
+async function fetchRemoteUpdateEnv() {
+  const c = readConfig();
+  if (c.mode !== 'remote' || !c.remoteUrl) return null;
+  const origin = String(c.remoteUrl).replace(/\/+$/, '');
+  try {
+    // 主进程 fetch 不带渲染进程会话的 cookie，须从会话取出 JWT 手动附上
+    const cookies = await session.defaultSession.cookies.get({ url: origin });
+    const token = cookies.find((ck) => ck.name === 'token');
+    const res = await fetch(origin + '/api/update/config', {
+      headers: token ? { Cookie: `token=${token.value}` } : {},
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || !data.giteaUrl || !data.giteaRepo) return null;
+    return {
+      giteaUrl: String(data.giteaUrl).replace(/\/+$/, ''),
+      giteaRepo: String(data.giteaRepo),
+      giteaAuthType: data.giteaAuthType === 'password' ? 'password' : 'token',
+      giteaToken: String(data.giteaToken || ''),
+      giteaUsername: String(data.giteaUsername || ''),
+      giteaPassword: String(data.giteaPassword || ''),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 解析本次更新检查/下载使用的配置（优先级见文件顶部注释） */
+async function resolveUpdateCfg(passed) {
+  if (passed && typeof passed === 'object' && passed.giteaUrl && passed.giteaRepo) {
+    return passed;
+  }
+  const remote = await fetchRemoteUpdateEnv();
+  if (remote) return remote;
+  return readDesktopUpdateEnv();
+}
+
+/** 最近一次检查成功解析的更新源配置：下载校验复用，确保与资产 URL 同源 */
+let lastCheckCfg = null;
 
 function cmpVersions(a, b) {
   const pa = String(a || '0').replace(/^v/i, '').split('.').map((s) => Number(s.match(/\d+/)?.[0] || 0));
@@ -377,11 +421,12 @@ async function giteaLatestRelease(cfg) {
   return { tag, version, assets };
 }
 
-ipcMain.handle('desktop-update-check', async () => {
-  const cfg = readDesktopUpdateEnv();
+ipcMain.handle('desktop-update-check', async (_e, passedCfg) => {
+  const cfg = await resolveUpdateCfg(passedCfg);
   if (!cfg.giteaUrl || !cfg.giteaRepo) {
     return { ok: false, error: 'not-configured' };
   }
+  lastCheckCfg = cfg;
   try {
     const release = await giteaLatestRelease(cfg);
     if (!release) return { ok: true, latestVersion: null, hasUpdate: false, exe: null };
@@ -401,10 +446,12 @@ ipcMain.handle('desktop-update-check', async () => {
 });
 
 // 下载安装包到 userData/downloads/，进度经 webContents.send 推给渲染进程
-ipcMain.handle('desktop-update-download', async (e, url) => {
+ipcMain.handle('desktop-update-download', async (e, url, passedCfg) => {
   const target = String(url);
-  // 只允许从配置的远端仓库下载（防注入任意 URL）
-  const cfg = readDesktopUpdateEnv();
+  // 只允许从配置的远端仓库下载（防注入任意 URL）；优先渲染进程传入与最近检查所用的配置
+  const cfg = (passedCfg && typeof passedCfg === 'object' && passedCfg.giteaUrl && passedCfg.giteaRepo)
+    ? passedCfg
+    : (lastCheckCfg || (await resolveUpdateCfg(null)));
   if (!cfg.giteaUrl || !target.startsWith(cfg.giteaUrl + '/')) {
     throw new Error('下载地址不在配置的远端仓库源内');
   }

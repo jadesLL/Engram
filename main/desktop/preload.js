@@ -12,11 +12,12 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   openConnectionSettings: () => ipcRenderer.invoke('open-connection-settings'),
   // 远程文件「用系统程序打开」
   openFileBytes: (name, bytes) => ipcRenderer.invoke('open-file-bytes', name, bytes),
-  // ---------- 桌面端自更新（仅本地模式；配置共用服务器 /api/update/config） ----------
-  // 检查 Gitea 最新 Release（返回 { ok, currentVersion, latestVersion, hasUpdate, exe, releaseUrl }）
-  desktopUpdateCheck: () => ipcRenderer.invoke('desktop-update-check'),
-  // 下载安装包（进度经 desktop-update-progress 事件推送）
-  desktopUpdateDownload: (url) => ipcRenderer.invoke('desktop-update-download', url),
+  // ---------- 桌面端自更新（本地/远端模式均可用；配置取自当前连接服务器的 /api/update/config） ----------
+  // 检查 Gitea 最新 Release（cfg 传设置页已保存的更新源配置，旧版主进程会忽略该参数自行解析；
+  // 返回 { ok, currentVersion, latestVersion, hasUpdate, exe, releaseUrl }）
+  desktopUpdateCheck: (cfg) => ipcRenderer.invoke('desktop-update-check', cfg),
+  // 下载安装包（cfg 同上，用于下载鉴权与来源校验；进度经 desktop-update-progress 事件推送）
+  desktopUpdateDownload: (url, cfg) => ipcRenderer.invoke('desktop-update-download', url, cfg),
   // 运行安装包并退出应用
   desktopUpdateRunInstaller: (filePath) => ipcRenderer.invoke('desktop-update-run-installer', filePath),
   // 下载进度订阅（返回取消函数）
