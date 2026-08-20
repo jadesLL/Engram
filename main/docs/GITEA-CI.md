@@ -2,6 +2,8 @@
 
 本项目通过 Gitea Actions（`https://gitea.example.com/example/ExampleProject`）实现持续集成、Docker 镜像分发和 Windows 安装包发布。
 
+> 从源码构建安装包的完整指南（含不依赖 CI 的本地 Docker 构建路径、部署方式与 AI 操作清单）见 [`BUILDING.md`](./BUILDING.md)；本文聚焦 CI/CD 流水线本身的维护与历史踩坑。
+
 ## 日常工作流（总纲）
 
 ```text
