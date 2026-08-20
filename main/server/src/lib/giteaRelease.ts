@@ -38,29 +38,24 @@ function normalizeVersion(tag: string): string | null {
   return m ? m[1] : null;
 }
 
-/** 拉最新 Release；404（尚无 Release 或无权限）返回 null */
-export async function fetchLatestRelease(
-  giteaUrl: string,
-  repo: string,
-  auth?: RepoAuth,
-): Promise<LatestRelease | null> {
-  const base = giteaUrl.replace(/\/+$/, '');
-  const res = await fetch(`${base}/api/v1/repos/${repo}/releases/latest`, {
-    headers: repoAuthHeaders(auth),
-    signal: AbortSignal.timeout(20_000),
-    redirect: 'follow',
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) {
+/** 最新 Release 的 API 地址（直连与宿主机网络探针共用） */
+export function latestReleaseUrl(giteaUrl: string, repo: string): string {
+  return `${giteaUrl.replace(/\/+$/, '')}/api/v1/repos/${repo}/releases/latest`;
+}
+
+/** 解析 Releases API 响应；404（尚无 Release 或无权限）返回 null */
+export function parseLatestReleaseResponse(status: number, body: string): LatestRelease | null {
+  if (status === 404) return null;
+  if (status < 200 || status >= 300) {
     let detail = '';
     try {
-      detail = ((await res.json()) as { message?: string }).message || '';
+      detail = (JSON.parse(body) as { message?: string }).message || '';
     } catch {
       /* body 非 JSON */
     }
-    throw new Error(`仓库 API ${res.status}${detail ? `: ${detail}` : ''}`);
+    throw new Error(`仓库 API ${status}${detail ? `: ${detail}` : ''}`);
   }
-  const data = (await res.json()) as {
+  const data = JSON.parse(body) as {
     tag_name?: string;
     assets?: Array<{ name?: string; browser_download_url?: string; size?: number }>;
   };
@@ -72,4 +67,18 @@ export async function fetchLatestRelease(
       .filter((a) => a.browser_download_url)
       .map((a) => ({ name: a.name || '', url: a.browser_download_url!, size: a.size || 0 })),
   };
+}
+
+/** 拉最新 Release（容器内直连）；404（尚无 Release 或无权限）返回 null */
+export async function fetchLatestRelease(
+  giteaUrl: string,
+  repo: string,
+  auth?: RepoAuth,
+): Promise<LatestRelease | null> {
+  const res = await fetch(latestReleaseUrl(giteaUrl, repo), {
+    headers: repoAuthHeaders(auth),
+    signal: AbortSignal.timeout(20_000),
+    redirect: 'follow',
+  });
+  return parseLatestReleaseResponse(res.status, await res.text());
 }
