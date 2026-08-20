@@ -31,7 +31,7 @@
         <div class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>从 Gitea Release 与镜像仓库比对当前版本。</span>
+            <span>从远端仓库 Release 与镜像仓库比对当前版本。</span>
           </div>
           <div class="check-controls">
             <span v-if="checkResult" class="check-status" :class="checkResult.hasUpdate ? 'has' : 'none'">
@@ -86,7 +86,7 @@
         <div class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>从 Gitea Release 比对桌面端版本。</span>
+            <span>从远端仓库 Release 比对桌面端版本。</span>
           </div>
           <div class="check-controls">
             <span v-if="desktopCheck && desktopCheck.ok" class="check-status" :class="desktopCheck.hasUpdate ? 'has' : 'none'">
@@ -99,7 +99,7 @@
           </div>
         </div>
         <p v-if="desktopCheck && !desktopCheck.ok && desktopCheck.error === 'not-configured'" class="setting-message warn">
-          尚未配置 Gitea 更新源（见下方「更新源配置」）。
+          尚未配置远端仓库更新源（见下方「更新源配置」）。
         </p>
         <p v-else-if="desktopCheck && !desktopCheck.ok" class="setting-message err">{{ desktopCheck.error }}</p>
 
@@ -128,24 +128,35 @@
       </div>
 
       <div class="integration-note">
-        只需粘贴仓库地址，服务器和仓库会自动识别；配置保存在服务器数据目录 .env 文件中（随数据卷持久化，不进代码库）。公开仓库无需任何令牌。
+        只需粘贴仓库地址，服务器和仓库会自动识别；配置保存在服务器数据目录 .env 文件中（随数据卷持久化，不进代码库）。公开仓库无需填凭据。
       </div>
 
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
-          <strong>Gitea 仓库地址</strong>
+          <strong>远端仓库地址</strong>
           <span>浏览器打开仓库首页，把地址栏整条复制粘贴过来即可（Release 页地址也行），如 https://gitea.example.com/example/ExampleProject。</span>
         </div>
-        <input v-model="form.giteaRepoUrl" type="text" placeholder="https://gitea.example.com/example/ExampleProject" aria-label="Gitea 仓库地址" @input="giteaUrlError = ''" />
-        <p v-if="giteaUrlError" class="setting-message err">{{ giteaUrlError }}</p>
+        <input v-model="form.repoUrl" type="text" placeholder="https://gitea.example.com/example/ExampleProject" aria-label="远端仓库地址" @input="repoUrlError = ''" />
+        <p v-if="repoUrlError" class="setting-message err">{{ repoUrlError }}</p>
       </div>
 
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
-          <strong>Gitea 访问令牌</strong>
-          <span>仅私有仓库需要：Gitea 右上角头像 → 设置 → 应用 → 「生成新令牌」（勾选只读权限），把生成的令牌粘贴到这里。清空保存即删除。</span>
+          <strong>访问凭据</strong>
+          <span>私有仓库才需要。可任选一种方式，公开仓库留空即可。</span>
+          <div class="auth-type-toggle">
+            <button type="button" :class="['seg-btn', form.authType === 'token' ? 'active' : '']" @click="form.authType = 'token'">访问令牌</button>
+            <button type="button" :class="['seg-btn', form.authType === 'password' ? 'active' : '']" @click="form.authType = 'password'">用户名密码</button>
+          </div>
         </div>
-        <input v-model="form.giteaToken" type="text" autocomplete="off" spellcheck="false" placeholder="公开仓库无需填写" aria-label="Gitea 访问令牌" />
+        <template v-if="form.authType === 'token'">
+          <input v-model="form.token" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴访问令牌" aria-label="远端仓库访问令牌" />
+          <p class="setting-message hint">在仓库站点右上角头像 → 设置 → 应用 → 「生成新令牌」（勾选只读权限）。清空保存即删除。</p>
+        </template>
+        <template v-else>
+          <input v-model="form.username" type="text" autocomplete="off" spellcheck="false" placeholder="用户名" aria-label="远端仓库用户名" />
+          <input v-model="form.password" type="text" autocomplete="off" spellcheck="false" placeholder="密码" aria-label="远端仓库密码" />
+        </template>
       </div>
 
       <template v-if="!state.desktop && state.supported">
@@ -220,7 +231,10 @@ interface ConfigInfo {
   registryToken: string;
   giteaUrl: string;
   giteaRepo: string;
+  giteaAuthType: string;
   giteaToken: string;
+  giteaUsername: string;
+  giteaPassword: string;
 }
 
 const isDesktop = computed(() => typeof window !== 'undefined' && Boolean((window as any).wikiDesktop));
@@ -232,10 +246,10 @@ const state = ref<UpdateStateInfo>({
 });
 const config = ref<ConfigInfo>({
   imageRef: '', registryUsername: '', registryToken: '',
-  giteaUrl: '', giteaRepo: '', giteaToken: '',
+  giteaUrl: '', giteaRepo: '', giteaAuthType: 'token', giteaToken: '', giteaUsername: '', giteaPassword: '',
 });
-const form = reactive({ giteaRepoUrl: '', giteaToken: '', imageRef: '', registryUsername: '', registryToken: '' });
-const giteaUrlError = ref('');
+const form = reactive({ repoUrl: '', authType: 'token', token: '', username: '', password: '', imageRef: '', registryUsername: '', registryToken: '' });
+const repoUrlError = ref('');
 
 const checking = ref(false);
 const checkResult = ref<any>(null);
@@ -259,10 +273,10 @@ const savingConfig = ref(false);
 const wikiDesktop = () => (window as any).wikiDesktop;
 
 /**
- * 解析用户粘贴的 Gitea 仓库地址 → { url: 服务地址, repo: owner/name }。
+ * 解析用户粘贴的远端仓库地址 → { url: 服务地址, repo: owner/name }。
  * 容忍 Release/分支页后缀、缺协议、.git 后缀、末尾斜杠；只给服务首页地址时返回 error 提示。
  */
-function parseGiteaRepoUrl(input: string): { url: string; repo: string } | { error: string } {
+function parseRepoUrl(input: string): { url: string; repo: string } | { error: string } {
   const raw = input.trim();
   if (!raw) return { url: '', repo: '' };
   let u: URL;
@@ -273,7 +287,7 @@ function parseGiteaRepoUrl(input: string): { url: string; repo: string } | { err
   }
   const segs = u.pathname.split('/').filter(Boolean);
   if (segs.length < 2) {
-    return { error: '这是 Gitea 首页地址，缺少仓库路径；请先打开仓库页面再复制，例如 https://gitea.example.com/example/ExampleProject' };
+    return { error: '这是站点首页地址，缺少仓库路径；请先打开仓库页面再复制，例如 https://gitea.example.com/example/ExampleProject' };
   }
   const owner = decodeURIComponent(segs[0]);
   const name = decodeURIComponent(segs[1]).replace(/\.git$/, '');
@@ -291,8 +305,11 @@ async function load() {
     ]);
     state.value = s.data;
     config.value = c.data;
-    form.giteaRepoUrl = c.data.giteaUrl && c.data.giteaRepo ? `${c.data.giteaUrl}/${c.data.giteaRepo}` : (c.data.giteaUrl || '');
-    form.giteaToken = c.data.giteaToken || '';
+    form.repoUrl = c.data.giteaUrl && c.data.giteaRepo ? `${c.data.giteaUrl}/${c.data.giteaRepo}` : (c.data.giteaUrl || '');
+    form.authType = c.data.giteaAuthType === 'password' ? 'password' : 'token';
+    form.token = c.data.giteaToken || '';
+    form.username = c.data.giteaUsername || '';
+    form.password = c.data.giteaPassword || '';
     form.imageRef = c.data.imageRef;
     form.registryUsername = c.data.registryUsername;
     form.registryToken = c.data.registryToken || '';
@@ -309,7 +326,7 @@ async function doCheck() {
     checkResult.value = data;
   } catch (e: any) {
     checkResult.value = null;
-    checkError.value = e.response?.data?.error || e.response?.data?.warning || '检查失败，请确认 Gitea 配置';
+    checkError.value = e.response?.data?.error || e.response?.data?.warning || '检查失败，请确认远端仓库配置';
   } finally {
     checking.value = false;
   }
@@ -402,18 +419,21 @@ async function downloadAndInstall() {
 }
 
 async function saveConfig() {
-  const parsed = parseGiteaRepoUrl(form.giteaRepoUrl);
+  const parsed = parseRepoUrl(form.repoUrl);
   if ('error' in parsed) {
-    giteaUrlError.value = parsed.error;
+    repoUrlError.value = parsed.error;
     return;
   }
-  giteaUrlError.value = '';
+  repoUrlError.value = '';
   savingConfig.value = true;
   try {
     await api.put('/api/update/config', {
       giteaUrl: parsed.url,
       giteaRepo: parsed.repo,
-      giteaToken: form.giteaToken,
+      giteaAuthType: form.authType,
+      giteaToken: form.authType === 'token' ? form.token : '',
+      giteaUsername: form.authType === 'password' ? form.username : '',
+      giteaPassword: form.authType === 'password' ? form.password : '',
       imageRef: form.imageRef,
       registryUsername: form.registryUsername,
       registryToken: form.registryToken,
@@ -483,6 +503,37 @@ onUnmounted(() => {
 /* 组内错误/警告消息：全局规则只覆盖面板直接子级，组内的须自行补边距 */
 .settings-group > .setting-message {
   margin: 0 24px 14px;
+}
+
+/* 凭据方式二选一分段按钮 */
+.auth-type-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.seg-btn {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg-btn.active {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+}
+.setting-message.hint {
+  margin: 6px 0 0;
+  color: var(--text-faint);
 }
 
 .update-log {

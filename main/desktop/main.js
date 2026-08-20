@@ -278,13 +278,16 @@ ipcMain.handle('open-file-bytes', (_e, name, bytes) => {
   return shell.openPath(file); // 空串=成功
 });
 
-// ---------- 桌面端自更新（Gitea Releases 拉安装包） ----------
+// ---------- 桌面端自更新（远端仓库 Releases 拉安装包） ----------
 // 更新配置与服务器端共用 userData/data/.env（本地模式 server 的 DATA_DIR），
 // 由内嵌 server 的 /api/update/config 端点读写，桌面端主进程只读同一文件。
 const UPDATE_KEYS = {
   giteaUrl: 'UPDATE_GITEA_URL',
   giteaRepo: 'UPDATE_GITEA_REPO',
+  giteaAuthType: 'UPDATE_GITEA_AUTH_TYPE',
   giteaToken: 'UPDATE_GITEA_TOKEN',
+  giteaUsername: 'UPDATE_GITEA_USERNAME',
+  giteaPassword: 'UPDATE_GITEA_PASSWORD',
 };
 
 function desktopUpdateEnvFile() {
@@ -292,9 +295,10 @@ function desktopUpdateEnvFile() {
 }
 
 function readDesktopUpdateEnv() {
+  const empty = { giteaUrl: '', giteaRepo: '', giteaAuthType: 'token', giteaToken: '', giteaUsername: '', giteaPassword: '' };
   try {
     const text = fs.readFileSync(desktopUpdateEnvFile(), 'utf8');
-    const out = { giteaUrl: '', giteaRepo: '', giteaToken: '' };
+    const out = { ...empty };
     for (const raw of text.split(/\r?\n/)) {
       const line = raw.trim();
       if (!line || line.startsWith('#')) continue;
@@ -304,12 +308,24 @@ function readDesktopUpdateEnv() {
       const value = line.slice(eq + 1).trim();
       if (key === UPDATE_KEYS.giteaUrl) out.giteaUrl = value.replace(/\/+$/, '');
       else if (key === UPDATE_KEYS.giteaRepo) out.giteaRepo = value;
+      else if (key === UPDATE_KEYS.giteaAuthType) out.giteaAuthType = value;
       else if (key === UPDATE_KEYS.giteaToken) out.giteaToken = value;
+      else if (key === UPDATE_KEYS.giteaUsername) out.giteaUsername = value;
+      else if (key === UPDATE_KEYS.giteaPassword) out.giteaPassword = value;
     }
     return out;
   } catch {
-    return { giteaUrl: '', giteaRepo: '', giteaToken: '' };
+    return empty;
   }
+}
+
+/** 按凭据方式生成 Authorization 头（token / Basic 二选一），与 server 端 repoAuthHeaders 一致 */
+function repoAuthHeaders(cfg) {
+  if (cfg.giteaAuthType === 'password' && cfg.giteaUsername && cfg.giteaPassword) {
+    return { Authorization: `Basic ${Buffer.from(`${cfg.giteaUsername}:${cfg.giteaPassword}`).toString('base64')}` };
+  }
+  if (cfg.giteaToken) return { Authorization: `token ${cfg.giteaToken}` };
+  return {};
 }
 
 function cmpVersions(a, b) {
@@ -324,12 +340,12 @@ function cmpVersions(a, b) {
 
 async function giteaLatestRelease(cfg) {
   const res = await fetch(`${cfg.giteaUrl}/api/v1/repos/${cfg.giteaRepo}/releases/latest`, {
-    headers: cfg.giteaToken ? { Authorization: `token ${cfg.giteaToken}` } : {},
+    headers: repoAuthHeaders(cfg),
     signal: AbortSignal.timeout(20000),
     redirect: 'follow',
   });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Gitea API ${res.status}`);
+  if (!res.ok) throw new Error(`仓库 API ${res.status}`);
   const data = await res.json();
   const tag = data.tag_name || '';
   const version = (tag.match(/v?(\d+(\.\d+)*)/i) || [])[1] || null;
@@ -365,17 +381,16 @@ ipcMain.handle('desktop-update-check', async () => {
 // 下载安装包到 userData/downloads/，进度经 webContents.send 推给渲染进程
 ipcMain.handle('desktop-update-download', async (e, url) => {
   const target = String(url);
-  // 只允许从配置的 Gitea 下载（防注入任意 URL）
+  // 只允许从配置的远端仓库下载（防注入任意 URL）
   const cfg = readDesktopUpdateEnv();
   if (!cfg.giteaUrl || !target.startsWith(cfg.giteaUrl + '/')) {
-    throw new Error('下载地址不在配置的 Gitea 源内');
+    throw new Error('下载地址不在配置的远端仓库源内');
   }
   const dir = path.join(app.getPath('userData'), 'downloads');
   fs.mkdirSync(dir, { recursive: true });
   const name = target.split('/').pop().split('?')[0] || 'LLM Wiki Setup.exe';
   const file = path.join(dir, name);
-  const headers = cfg.giteaToken ? { Authorization: `token ${cfg.giteaToken}` } : {};
-  const res = await fetch(target, { headers, redirect: 'follow' });
+  const res = await fetch(target, { headers: repoAuthHeaders(cfg), redirect: 'follow' });
   if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
   const total = Number(res.headers.get('content-length')) || 0;
   const out = fs.createWriteStream(file);

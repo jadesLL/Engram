@@ -57,7 +57,9 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
     payload: {
       giteaUrl: 'https://gitea.example.com/',
       giteaRepo: 'example/ExampleProject',
-      giteaToken: 'secret-token-1',
+      giteaAuthType: 'password',
+      giteaUsername: 'example',
+      giteaPassword: 'repo-pass-1',
       imageRef: 'registry.example.com/example-wiki',
       registryUsername: 'example',
       registryToken: 'secret-token-2',
@@ -67,7 +69,8 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
 
   const envText = fs.readFileSync(path.join(temp, '.env'), 'utf8');
   assert.ok(envText.includes('UPDATE_GITEA_URL=https://gitea.example.com'));
-  assert.ok(envText.includes('UPDATE_GITEA_TOKEN=secret-token-1'));
+  assert.ok(envText.includes('UPDATE_GITEA_AUTH_TYPE=password'));
+  assert.ok(envText.includes('UPDATE_GITEA_PASSWORD=repo-pass-1'));
   assert.ok(envText.includes('UPDATE_REGISTRY_TOKEN=secret-token-2'));
 
   const get = await app.inject({
@@ -77,24 +80,27 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
   });
   const data = get.json();
   assert.equal(data.giteaUrl, 'https://gitea.example.com');
-  assert.equal(data.giteaToken, 'secret-token-1');
+  assert.equal(data.giteaAuthType, 'password');
+  assert.equal(data.giteaUsername, 'example');
+  assert.equal(data.giteaPassword, 'repo-pass-1');
   assert.equal(data.registryToken, 'secret-token-2');
 });
 
-test('PUT config 令牌空串即清除，未传字段保持不变', async () => {
+test('PUT config 凭据空串即清除，未传字段保持不变', async () => {
   await app.inject({
     method: 'PUT',
     url: '/api/update/config',
     headers: { authorization: `Bearer ${token}` },
-    payload: { giteaToken: '', registryToken: 'secret-token-2' },
+    payload: { giteaPassword: '', registryToken: 'secret-token-2' },
   });
   let envText = fs.readFileSync(path.join(temp, '.env'), 'utf8');
-  assert.ok(!envText.includes('UPDATE_GITEA_TOKEN='), '空串应清除令牌');
+  assert.ok(!envText.includes('UPDATE_GITEA_PASSWORD='), '空串应清除凭据');
+  assert.ok(envText.includes('UPDATE_GITEA_AUTH_TYPE=password'), '未传字段保留');
   assert.ok(envText.includes('UPDATE_REGISTRY_TOKEN=secret-token-2'), '其他键保留');
 });
 
-test('POST /api/update/check 未配置 Gitea 时返回可判定结果（无崩溃）', async () => {
-  // 清掉 Gitea 配置再查：应正常返回而非 500
+test('POST /api/update/check 未配置远端仓库时返回可判定结果（无崩溃）', async () => {
+  // 清掉远端仓库配置再查：应正常返回而非 500
   fs.rmSync(path.join(temp, '.env'), { force: true });
   const res = await app.inject({
     method: 'POST',
