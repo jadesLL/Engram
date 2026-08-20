@@ -103,11 +103,26 @@ test('model classifies role titles and context-dependent aliases', async () => {
 
   const org = await classifyEntityName('恒创', 'org', roster, '上下文确认该客户即衡创');
   assert.equal(org.mergeTarget, '衡创');
+  assert.equal(org.mergeTargetId, 'o1');
   assert.equal(org.canonicalName, '衡创');
 
   const person = await classifyEntityName('张依龙', 'person', roster, '上下文不足');
   assert.equal(person.mergeTarget, '');
   assert.equal(person.ambiguity?.category, 'possible_typo');
+});
+
+test('mergeTargetId resolves from medium suggestions and tolerates title drift', async () => {
+  // medium 建议兜底(opt-in):报告卡场景开启后,称谓类 medium 建议也能解析出目标
+  const strict = await classifyEntityName('刘经理', 'person', roster, '刘经理负责跟进客户');
+  assert.equal(strict.mergeTargetId, '', '默认(入库守卫)不信 medium 建议');
+  const relaxed = await classifyEntityName('刘经理', 'person', roster, '刘经理负责跟进客户', '', undefined, { allowMediumTarget: true });
+  assert.equal(relaxed.mergeTargetId, 'p1');
+  assert.equal(relaxed.mergeTarget, '刘子谕');
+
+  // mergeTarget 与名录 title 有差异时 cleanName 归一仍可解析,并返回名录条目 id
+  const exact = await classifyEntityName('恒创', 'org', roster, '上下文');
+  assert.equal(exact.mergeTargetId, 'o1');
+  assert.equal(exact.mergeTarget, '衡创');
 });
 
 test('model leaves semantically clear names unchanged', async () => {

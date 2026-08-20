@@ -343,12 +343,25 @@ function identityCard(row: ReportRow, payload: Record<string, any>): DecisionCar
     question: hasTarget
       ? `「${payload.title}」与「${payload.suggestedTargetTitle}」是同一对象吗?`
       : String(payload.ambiguity?.question || `「${payload.title}」的身份可能存在歧义`),
-    context: hasTarget ? payload.ambiguity?.question : undefined,
+    // 有目标:补充歧义问句;无目标:列出模型建议(名称+理由),辅助判断重命名方向
+    context: hasTarget
+      ? payload.ambiguity?.question
+      : suggestionContext(payload.ambiguity),
     links: payload.pageId ? [{ label: '查看页面', pageId: String(payload.pageId) }] : [],
     mergeTargetTitle: hasTarget ? String(payload.suggestedTargetTitle || '') : undefined,
     options,
     createdAt: row.run_at,
   };
+}
+
+/** 无建议目标的歧义卡:把模型建议拼成上下文文本 */
+function suggestionContext(ambiguity: Record<string, any> | undefined): string | undefined {
+  const suggestions = Array.isArray(ambiguity?.suggestions) ? ambiguity.suggestions : [];
+  if (!suggestions.length) return undefined;
+  return suggestions
+    .slice(0, 3)
+    .map((s: any) => `可能是「${s.title}」：${s.reason || '名称相近'}`)
+    .join('；');
 }
 
 function questionCard(row: ReportRow, payload: Record<string, any>): DecisionCard | null {

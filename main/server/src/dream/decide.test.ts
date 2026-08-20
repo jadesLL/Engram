@@ -467,3 +467,40 @@ test('重新打开待入库候选:候选恢复 open 重新进入对账通道', a
   assert.equal(reportStatus(reportId), 'open');
   assert.equal(getCandidate(candidate.id)!.status, 'open');
 });
+
+test('identity_ambiguity:陈旧报告(目标页已删)答「是」优雅关闭不报错', async () => {
+  clear();
+  const page = createPage('Wiki/实体', '陈旧歧义页');
+  writePage(page.path, '# 陈旧歧义页\n\n## 当前理解\n\n内容', { type: 'person' });
+  // 目标页不存在(已被合并删除),报告未及清扫
+  addReports([{
+    kind: 'identity_ambiguity',
+    payload: { key: page.id, pageId: page.id, title: '陈旧歧义页', type: 'person', suggestedTargetId: 'ghost-target', suggestedTargetTitle: '已删目标' },
+  }]);
+  const reportId = reportIdOf('identity_ambiguity');
+  assert.equal((await decideReport(reportId, 'merge')).status, 'resolved');
+  // 歧义页原样保留,不再 404
+  assert.ok(db.prepare(`SELECT id FROM pages WHERE id=? AND deleted=0`).get(page.id));
+});
+
+test('identity_ambiguity:合并后涉页的第三方 open 报告一并关闭', async () => {
+  clear();
+  const a = createPage('Wiki/实体', '联动甲');
+  writePage(a.path, '# 联动甲\n\n## 当前理解\n\n甲内容', { type: 'person' });
+  const b = createPage('Wiki/实体', '联动乙');
+  writePage(b.path, '# 联动乙\n\n## 当前理解\n\n乙内容', { type: 'person' });
+  const c = createPage('Wiki/实体', '联动丙');
+  writePage(c.path, '# 联动丙\n\n## 当前理解\n\n丙内容', { type: 'person' });
+  // 甲乙一对(待合并);甲丙一对(乙归档后涉甲的报告应联动关闭)
+  addReports([
+    { kind: 'identity_ambiguity', payload: { key: a.id, pageId: a.id, title: '联动甲', type: 'person', suggestedTargetId: b.id, suggestedTargetTitle: '联动乙' } },
+  ]);
+  db.prepare(
+    `INSERT INTO reports(run_at, kind, payload, status, issue_key, fingerprint) VALUES(?, 'identity_ambiguity', ?, 'open', 'ab-pair-test', 'ab-pair-test')`
+  ).run(now(), JSON.stringify({ key: a.id, pageId: a.id, title: '联动甲', type: 'person', suggestedTargetId: c.id, suggestedTargetTitle: '联动丙' }));
+  assert.equal((await decideReport(reportIdOf('identity_ambiguity'), 'merge')).status, 'resolved');
+  const remaining = db.prepare(
+    `SELECT COUNT(*) n FROM reports WHERE kind='identity_ambiguity' AND status='open'`
+  ).get().n;
+  assert.equal(remaining, 0, '甲丙报告随甲乙合并联动关闭');
+});
