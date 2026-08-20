@@ -229,6 +229,28 @@ export const docker = {
     if (statusCode >= 400 && statusCode !== 304) throw new Error(`停止容器失败: ${data.message || statusCode}`);
   },
 
+  /**
+   * 查询远端 registry 的 manifest digest（GET /distribution/<image>/json）。
+   * 由宿主机 daemon 代查：走 daemon 自己的网络栈，容器无 IPv6/防火墙受限时仍可用
+   * （与镜像 pull 同一路径——pull 能成功，这里就能成功）。
+   * 远端仓库不存在时返回 null；daemon 无法访问远端时抛错。
+   */
+  async inspectRemoteImage(imageRef: string, authHeader?: string): Promise<string | null> {
+    const { statusCode, data } = await json<{
+      Descriptor?: { digest?: string };
+      message?: string;
+    }>({
+      method: 'GET',
+      path: `/distribution/${encodeURIComponent(imageRef)}/json`,
+      headers: authHeader ? { 'X-Registry-Auth': authHeader } : {},
+    });
+    if (statusCode === 404) return null;
+    if (statusCode >= 400) {
+      throw new Error(`daemon 查询远端镜像失败: ${data.message || statusCode}`);
+    }
+    return data.Descriptor?.digest || null;
+  },
+
   /** 启动容器 */
   async startContainer(id: string): Promise<void> {
     const { statusCode, data } = await json<{ message?: string }>({

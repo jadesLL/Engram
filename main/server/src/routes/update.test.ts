@@ -114,6 +114,25 @@ test('POST /api/update/check 未配置远端仓库时返回可判定结果（无
   assert.equal(data.latestVersion, null);
 });
 
+test('POST /api/update/check 远端不可达时错误带 cause 链展开（不再是光秃秃 fetch failed）', async () => {
+  fs.writeFileSync(path.join(temp, '.env'), [
+    'UPDATE_GITEA_URL=https://invalid.invalid',
+    'UPDATE_GITEA_REPO=example/ExampleProject',
+  ].join('\n'));
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/update/check',
+    headers: { authorization: `Bearer ${token}` },
+    payload: {},
+  });
+  assert.equal(res.statusCode, 502);
+  const data = res.json();
+  assert.ok(data.error, '应返回 error 字段');
+  assert.ok(String(data.error).includes('fetch failed'), `错误应含外层 fetch failed: ${data.error}`);
+  assert.ok(String(data.error).includes('←'), `错误应含 cause 链箭头: ${data.error}`);
+  fs.rmSync(path.join(temp, '.env'), { force: true });
+});
+
 test('POST /api/update/apply 无 sock 时 400 拒绝', async () => {
   const res = await app.inject({
     method: 'POST',
