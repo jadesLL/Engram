@@ -316,10 +316,12 @@ test('exact semantic results bypass the provider and record saved prompt tokens'
      FROM llm_usage ORDER BY id`
   ).all();
   assert.equal(usage.length, 2);
+  // 结果缓存命中没有真实 provider 往返：prompt_tokens 保留原请求量用于成本统计，
+  // 但不再伪造 cache_read_tokens（否则会被 provider_cache_hit_calls 重复计入综合命中率）。
   assert.deepEqual(usage[1], {
     result_cache_hit: 1,
     prompt_tokens: 100,
-    cache_read_tokens: 100,
+    cache_read_tokens: 0,
     cache_miss_tokens: 0,
   });
   assert.equal(

@@ -298,6 +298,18 @@ test('identical forced ingest reuses the validated pipeline result', async () =>
     ).get().count,
     1,
   );
+
+  // 第三次不传 force：内容未变的早退路径同样要按管线级缓存命中记账
+  const third = await ingestRawFile('原始资料/复用验证.md', () => {}, {});
+  assert.deepEqual(third, { created: 0, merged: 0, skipped: 0, pending: 0 });
+  assert.equal(capturedRequests.length, requestsAfterFirst);
+  assert.equal(
+    db.prepare(
+      `SELECT COUNT(*) count FROM llm_usage
+       WHERE tag='ingest-pipeline-cache' AND result_cache_hit=1`
+    ).get().count,
+    2,
+  );
 });
 
 test('a map result exactly at the batch limit is split again to avoid a silent ceiling', async () => {
