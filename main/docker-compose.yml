@@ -1,6 +1,6 @@
 services:
   example-wiki:
-    image: example-wiki:1.1.13
+    image: example-wiki:1.1.14
     build: .
     container_name: example-wiki
     ports:
