@@ -407,6 +407,39 @@ export async function probeImageInput(
   }
 }
 
+/** 已确认不支持 thinking 参数的模型（key 为 baseUrl|model）。部分供应商（如火山方舟上的
+ *  GLM/Kimi 等非思考模型）对 thinking 参数直接返回 400，与 stream_options 同构：删除该
+ *  参数重试一次并记忆，进程内后续请求不再携带；重启后首个请求多一次 400 往返。 */
+const thinkingUnsupported = new Set<string>();
+
+function rejectsThinkingParam(error: unknown): boolean {
+  return (
+    error instanceof LlmError &&
+    [400, 422].includes(error.status || 0) &&
+    /thinking/i.test(error.message || '')
+  );
+}
+
+/** 发送 /chat/completions 请求；供应商拒绝 thinking 参数时自动降级重试。 */
+async function requestChatWithThinkingFallback(
+  body: Record<string, unknown>,
+  capabilityKey: string,
+  opts: LlmRequestOptions,
+): Promise<LlmHttpResponse> {
+  if (body.thinking && thinkingUnsupported.has(capabilityKey)) {
+    delete body.thinking;
+  }
+  try {
+    return await request('/chat/completions', body, opts);
+  } catch (error) {
+    if (!body.thinking || !rejectsThinkingParam(error)) throw error;
+    delete body.thinking;
+    const res = await request('/chat/completions', body, opts);
+    thinkingUnsupported.add(capabilityKey);
+    return res;
+  }
+}
+
 type ChatOptions = {
   temperature?: number;
   maxTokens?: number;
@@ -440,7 +473,7 @@ export async function chat(
     body.thinking = { type: 'disabled' };
     // 关闭思考后 temperature/top_p 才有效（思考模式下这些参数被忽略）
   }
-  const res = await request('/chat/completions', body, {
+  const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat',
     usageContext: opts?.usageContext,
@@ -495,7 +528,7 @@ export async function chatWithTools(
   if (opts?.topP !== undefined) body.top_p = opts.topP;
   // 结构化输出场景关闭推理，避免 reasoning_content 占满 max_tokens 导致 content 为空
   if (opts?.disableThinking) body.thinking = { type: 'disabled' };
-  const res = await request('/chat/completions', body, {
+  const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat-tools',
     usageContext: opts?.usageContext,
@@ -1017,23 +1050,23 @@ export async function testModel(
   if (!entry.model) return { ok: false, error: '未填写模型名' };
   try {
     if (kind === 'chat') {
-      const res = await request(
-        '/chat/completions',
-        {
-          model: entry.model,
-          messages: [{ role: 'user', content: 'ping' }],
-          temperature: 0.3,
-          max_tokens: 64,
-        },
-        {
-          baseUrl,
-          apiKey: entry.apiKey,
-          timeoutMs: 30_000,
-          provider: entry.provider,
-          model: entry.model,
-          tag: 'connection-test-chat',
-        }
-      );
+      // 带 thinking 与提炼管线的结构化请求参数面对齐（json 请求一律关闭思考）；
+      // 不支持该参数的供应商自动降级，避免「测试通过但提炼报 400」的盲区。
+      const body: Record<string, unknown> = {
+        model: entry.model,
+        messages: [{ role: 'user', content: 'ping' }],
+        temperature: 0.3,
+        max_tokens: 64,
+        thinking: { type: 'disabled' },
+      };
+      const res = await requestChatWithThinkingFallback(body, `${baseUrl}|${entry.model}`, {
+        baseUrl,
+        apiKey: entry.apiKey,
+        timeoutMs: 30_000,
+        provider: entry.provider,
+        model: entry.model,
+        tag: 'connection-test-chat',
+      });
       const json = await readJsonResponse(res);
       // 只校验响应结构合法：有 choices 数组且含 message。content 可为空字符串
       // （推理类模型 token 紧张时可能 content="" 而 reasoning_content 非空）。

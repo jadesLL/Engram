@@ -471,3 +471,112 @@ test('chatJson retries with a targeted prompt when content is truly empty (no re
   assert.ok(retryMessages.some((m: any) => m.role === 'user' && /空内容/.test(m.content)),
     '重试消息应包含针对空内容的提示');
 });
+
+// --- thinking 参数降级（火山方舟 GLM 等不支持 thinking 的模型） ---
+
+function mockChatEndpoint(
+  bodies: Record<string, any>[],
+  handler: (index: number, body: Record<string, any>) => Response,
+): void {
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, any>;
+    bodies.push(body);
+    return handler(bodies.length - 1, body);
+  };
+}
+
+function chatOkResponse(content: string): Response {
+  return new Response(JSON.stringify({
+    choices: [{ finish_reason: 'stop', message: { content } }],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
+function thinkingRejectedResponse(): Response {
+  // 火山方舟对非思考模型带 thinking 参数的实际报错
+  return new Response(JSON.stringify({
+    error: {
+      code: 'InvalidParameter',
+      message: 'thinking.type `disabled` is not supported by this model',
+      type: 'BadRequest',
+    },
+  }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+}
+
+test('chatJson drops the thinking param after a 400 and remembers it per model', async () => {
+  activateChat('https://ark-fallback.example/api/v3');
+  const bodies: Record<string, any>[] = [];
+  mockChatEndpoint(bodies, (index) =>
+    index === 0 ? thinkingRejectedResponse() : chatOkResponse('{"ok":true}'));
+  const chatModule = await import('./llm.js');
+
+  const result = await chatModule.chatJson(
+    [{ role: 'user', content: '生成 JSON' }],
+    { tag: 'thinking-fallback' },
+  );
+  assert.deepEqual(result, { ok: true });
+  // 首次请求带 thinking（结构化输出一律关闭思考），被 400 拒绝后删除该参数重试
+  assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
+  assert.equal(bodies[1].thinking, undefined);
+  // 记忆生效：同模型后续请求直接不带 thinking，不再触发 400
+  await chatModule.chatJson([{ role: 'user', content: '再来一次' }], { tag: 'thinking-fallback-2' });
+  assert.equal(bodies.length, 3);
+  assert.equal(bodies[2].thinking, undefined);
+});
+
+test('chatJson keeps the error when a 400 is unrelated to thinking', async () => {
+  activateChat('https://other-400.example/v1');
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(JSON.stringify({ error: { message: 'Model Not Exist' } }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const chatModule = await import('./llm.js');
+
+  await assert.rejects(
+    chatModule.chatJson([{ role: 'user', content: '生成 JSON' }], { retries: 0, tag: 'no-thinking-fallback' }),
+    (err: any) => /LLM 请求失败 400/.test(err.message),
+  );
+  // 与 thinking 无关的 400 不降级、不重试
+  assert.equal(calls, 1);
+});
+
+test('chatWithTools drops the thinking param when the provider rejects it', async () => {
+  activateChat('https://ark-tools.example/api/v3');
+  const bodies: Record<string, any>[] = [];
+  mockChatEndpoint(bodies, (index) =>
+    index === 0 ? thinkingRejectedResponse() : chatOkResponse('ok'));
+  const chatModule = await import('./llm.js');
+
+  const result = await chatModule.chatWithTools(
+    [{ role: 'user', content: 'hi' }],
+    [{ type: 'function', function: { name: 'noop', description: '无操作', parameters: { type: 'object', properties: {} } } }],
+    { disableThinking: true, tag: 'tools-thinking-fallback' },
+  );
+  assert.equal(result.content, 'ok');
+  assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
+  assert.equal(bodies[1].thinking, undefined);
+});
+
+test('testModel chat aligns with pipeline thinking params and degrades when rejected', async () => {
+  const bodies: Record<string, any>[] = [];
+  mockChatEndpoint(bodies, (index) =>
+    index === 0 ? thinkingRejectedResponse() : chatOkResponse('pong'));
+
+  const result = await testModel(
+    entry({
+      id: 'ark-chat',
+      provider: 'doubao',
+      baseUrl: 'https://ark-test.example/api/v3',
+      model: 'glm-5.3',
+    }),
+    'chat',
+  );
+  // 测试请求与提炼管线参数面对齐（带 thinking）；不支持时自动降级仍判成功，
+  // 消除「测试通过但提炼报 400」的盲区
+  assert.equal(result.ok, true);
+  assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
+  assert.equal(bodies[1].thinking, undefined);
+});
