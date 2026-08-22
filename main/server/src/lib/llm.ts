@@ -95,6 +95,8 @@ type LlmRequestOptions = {
   entryId?: string;
   /** 条目已持久化的降级声明（发送前预检，避免重启后重复 400 往返） */
   dialect?: ModelDialect;
+  /** 重试/长调用期间刷新任务心跳，防止无进度探针在网关挂起重试链中被误触发 */
+  onRetry?: () => void;
   usageContext?: {
     scope: string;
     refId: string;
@@ -185,6 +187,9 @@ async function request(
       if (!retriable || nth >= 3) throw error;
       const delay = 3_000 * nth;
       console.warn(`[llm.request] ${error.message.slice(0, 120)}，${delay / 1000} 秒后自动重试（第 ${nth + 1}/3 次）`);
+      // 网关挂起 + 多级重试的累计时长可能很长（150s × 4 次），重试前刷新
+      // 调用方心跳，防止无进度探针误杀仍在重试链中的任务
+      try { opts?.onRetry?.(); } catch { /* 心跳失败不阻塞重试 */ }
       await new Promise((resolve) => setTimeout(resolve, delay));
       return attempt(nth + 1);
     }
@@ -204,6 +209,7 @@ async function requestOnce(
   const signal = opts?.signal
     ? AbortSignal.any([controller.signal, opts.signal])
     : controller.signal;
+<<<<<<< HEAD
   // 超时按输出预算动态估算：实测网关吞吐 ~11s/1000 completion tokens（8k 输出
   // 约 90-140s）。固定值会把「正常的长输出请求」误判为超时，陷入重试死循环。
   // 按 max_tokens 0.03s/token 估算并留足余量，下限 150s。
@@ -530,6 +536,8 @@ type ChatOptions = {
   tag?: string;
   usageContext?: LlmRequestOptions['usageContext'];
   disableThinking?: boolean;
+  /** 网络层重试期间刷新（任务心跳） */
+  onRetry?: () => void;
 };
 
 /** 非流式对话 */
@@ -562,6 +570,7 @@ export async function chat(
     protocol: active?.protocol,
     entryId: active?.id,
     dialect: active?.dialect,
+    onRetry: opts?.onRetry,
   });
   const json = await readJsonResponse(res);
   const choice = json?.choices?.[0];
@@ -621,6 +630,7 @@ export async function chatWithTools(
     protocol: active?.protocol,
     entryId: active?.id,
     dialect: active?.dialect,
+    onRetry: opts?.onRetry,
   });
   const payload = await readJsonResponse(res);
   const choice = payload?.choices?.[0];

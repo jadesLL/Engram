@@ -38,6 +38,8 @@ export interface SemanticStageInput<T> {
   maxTokens?: number;
   retries?: number;
   signal?: AbortSignal;
+  /** 网络层重试期间刷新（任务心跳），防止无进度探针误杀长重试链 */
+  onRetry?: () => void;
   /** 启用后用 function calling 取结构化输出，绕开 JSON mode；仅需要规避推理模型在
    *  JSON mode 下返回纯文本的场景（如 page-synthesis-compose）开启。 */
   toolMode?: ToolSchemaOptions;
@@ -201,6 +203,7 @@ export async function runSemanticStage<T>(options: SemanticStageInput<T>): Promi
       retries: options.retries ?? 1,
       tag: options.tag,
       signal: options.signal,
+      onRetry: options.onRetry,
       usageContext: {
         scope: options.scope,
         refId: options.refId || '',
