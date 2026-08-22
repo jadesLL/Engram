@@ -217,6 +217,10 @@ export const useAssistantStore = defineStore('assistant', {
         this.snapshot = snapshot;
         const run = snapshot.runs.find((item: AssistantRun) => item.id === runId);
         if (run && ['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status)) {
+          // 抽屉折叠时收到回复：左侧栏 AI 图标显示未读提示，打开抽屉时清除
+          if (run.status === 'completed' && !useAppStore().aiDrawerOpen) {
+            useAppStore().aiUnread = true;
+          }
           this.closeEvents();
         }
       });

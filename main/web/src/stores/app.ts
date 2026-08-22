@@ -19,12 +19,23 @@ const initialReadingMode = localStorage.getItem('readingMode') === '1' || legacy
 if (legacyHtmlPreview) localStorage.setItem('readingMode', '1');
 localStorage.removeItem('htmlPreview');
 
+/** AI 抽屉宽度：默认 0 表示未自定义（用 CSS 默认 clamp），拖拽后记住像素宽度；超过视口 70% 时覆盖正文区 */
+const AI_DRAWER_MAX_RATIO = 0.7;
+const storedAiDrawerWidth = Number(localStorage.getItem('aiDrawerWidth'));
+const initialAiDrawerWidth = Number.isFinite(storedAiDrawerWidth) && storedAiDrawerWidth > 0
+  ? storedAiDrawerWidth
+  : 0;
+
 export const useAppStore = defineStore('app', {
   state: () => {
     const theme = (localStorage.getItem('theme') as Theme) || 'light';
     return {
       sidebarOpen: window.innerWidth > 768,
       aiDrawerOpen: false,
+      /** AI 抽屉宽度（px），0 = 未自定义 */
+      aiDrawerWidth: initialAiDrawerWidth,
+      /** AI 抽屉处于折叠状态期间收到新回复，左侧栏 AI 图标显示未读提示 */
+      aiUnread: false,
       theme,
       dark: resolveDarkTheme(theme),
       /** 当前编辑模式（ir/sv），切换页面时保持不重置 */
@@ -82,6 +93,17 @@ export const useAppStore = defineStore('app', {
     },
     toggleAi() {
       this.aiDrawerOpen = !this.aiDrawerOpen;
+      if (this.aiDrawerOpen) this.aiUnread = false;
+    },
+    setAiDrawerWidth(width: number) {
+      this.aiDrawerWidth = width;
+      if (width > 0) localStorage.setItem('aiDrawerWidth', String(width));
+      else localStorage.removeItem('aiDrawerWidth');
+    },
+    /** 抽屉宽度是否覆盖正文区（超过视口 70% 时全屏覆盖，只留左侧栏） */
+    aiDrawerOverlay(): boolean {
+      if (this.aiDrawerWidth <= 0) return false;
+      return this.aiDrawerWidth > window.innerWidth * AI_DRAWER_MAX_RATIO;
     },
     bumpSidebar() {
       this.sidebarVersion++;

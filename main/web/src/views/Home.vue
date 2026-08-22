@@ -69,6 +69,7 @@
         @click="app.toggleAi()"
       >
         <Icon name="ai" :size="19" />
+        <span v-if="!app.aiDrawerOpen && app.aiUnread" class="dot" />
       </button>
 
       <div class="rail-divider" />
@@ -129,10 +130,29 @@
 
     <!-- AI 抽屉 -->
     <transition name="slide">
-      <aside v-show="app.aiDrawerOpen" class="ai-drawer">
+      <aside
+        v-show="app.aiDrawerOpen"
+        class="ai-drawer"
+        :class="{ overlay: aiDrawerOverlay }"
+        :style="aiDrawerStyle"
+      >
         <AiDrawer />
       </aside>
     </transition>
+    <!-- AI 抽屉拖动条：拖到超过视口 70% 时覆盖正文区只留左侧栏，双击还原默认宽度 -->
+    <div
+      v-if="app.aiDrawerOpen && !isMobile"
+      class="ai-resizer"
+      :style="aiResizerStyle"
+      v-tooltip="'拖动调整 AI 助手宽度，超过 70% 覆盖正文，双击还原'"
+      role="separator"
+      aria-label="调整 AI 助手宽度"
+      aria-orientation="vertical"
+      :aria-valuenow="aiDrawerWidth"
+      tabindex="0"
+      @mousedown="startAiResize"
+      @dblclick="resetAiDrawerWidth"
+    />
 
     <!-- AI 任务队列面板 -->
     <transition name="slide">
@@ -235,6 +255,45 @@ function setSidebarWidth(width: number) {
 
 function nudgeSidebar(delta: number) {
   setSidebarWidth(sidebarWidth.value + delta);
+}
+
+/* ===== AI 抽屉宽度拖拽 ===== */
+const MIN_AI_DRAWER = 360;
+const aiDrawerWidth = computed(() => app.aiDrawerWidth);
+const aiDrawerOverlay = computed(() =>
+  app.aiDrawerWidth > 0 && app.aiDrawerWidth > viewportWidth.value * 0.7
+);
+const aiDrawerStyle = computed(() =>
+  app.aiDrawerWidth > 0 ? { width: `${app.aiDrawerWidth}px` } : {}
+);
+const aiResizerStyle = computed(() => {
+  const width = app.aiDrawerWidth > 0
+    ? app.aiDrawerWidth
+    : Math.min(520, Math.max(400, Math.floor(viewportWidth.value * 0.34)));
+  return { left: `calc(100% - ${width + 4}px)` };
+});
+
+function startAiResize(e: MouseEvent) {
+  e.preventDefault();
+  const move = (ev: MouseEvent) => {
+    // 抽屉贴右侧，宽度 = 视口右缘到鼠标位置
+    const width = Math.max(MIN_AI_DRAWER, Math.floor(window.innerWidth - ev.clientX));
+    app.setAiDrawerWidth(width);
+  };
+  const up = () => {
+    window.removeEventListener('mousemove', move);
+    window.removeEventListener('mouseup', up);
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  };
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up);
+  document.body.style.userSelect = 'none';
+  document.body.style.cursor = 'col-resize';
+}
+
+function resetAiDrawerWidth() {
+  app.setAiDrawerWidth(0);
 }
 
 function onWindowResize() {
@@ -533,6 +592,36 @@ onUnmounted(() => {
   border-left: 1px solid var(--border);
   background: var(--bg);
   z-index: var(--z-drawer);
+}
+
+/* 超过视口 70% 时脱离文档流，覆盖正文区，只留左侧栏可见 */
+.ai-drawer.overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 60px;
+  right: 0;
+  width: auto;
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+  z-index: var(--z-sidebar);
+}
+
+.ai-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  background: transparent;
+  outline: none;
+  z-index: calc(var(--z-sidebar) + 1);
+}
+
+.ai-resizer:hover,
+.ai-resizer:focus-visible {
+  background: var(--sidebar-accent);
+  opacity: 0.35;
 }
 
 .slide-enter-active,
