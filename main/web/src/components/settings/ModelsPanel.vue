@@ -3,7 +3,7 @@
     <div class="panel-head model-panel-head">
       <div>
         <h3>模型配置</h3>
-        <p>管理对话生成、语义检索与图片理解使用的服务商配置。</p>
+        <p>管理对话生成、语义检索、图片理解与检索精排使用的服务商配置。</p>
       </div>
       <div class="panel-actions">
         <button class="btn" type="button" :disabled="testingAll" @click="testAll">
@@ -476,7 +476,7 @@ import {
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 
-type ModelKind = 'chat' | 'emb' | 'document';
+type ModelKind = 'chat' | 'emb' | 'document' | 'rerank';
 
 interface ModelEntry {
   id: string;
@@ -602,31 +602,37 @@ const activeModelKind = ref<ModelKind>('chat');
 const chatModels = ref<ModelEntry[]>([]);
 const embModels = ref<ModelEntry[]>([]);
 const documentModels = ref<ModelEntry[]>([]);
+const rerankModels = ref<ModelEntry[]>([]);
 const activeChat = ref('');
 const activeEmb = ref('');
 const activeDocument = ref('');
+const activeRerank = ref('');
 
 function modelsRef(kind: ModelKind) {
   if (kind === 'chat') return chatModels;
   if (kind === 'emb') return embModels;
+  if (kind === 'rerank') return rerankModels;
   return documentModels;
 }
 
 function activeIdFor(kind: ModelKind): string {
   if (kind === 'chat') return activeChat.value;
   if (kind === 'emb') return activeEmb.value;
+  if (kind === 'rerank') return activeRerank.value;
   return activeDocument.value;
 }
 
 function setActiveId(kind: ModelKind, value: string) {
   if (kind === 'chat') activeChat.value = value;
   else if (kind === 'emb') activeEmb.value = value;
+  else if (kind === 'rerank') activeRerank.value = value;
   else activeDocument.value = value;
 }
 
 function modelKindLabel(kind: ModelKind): string {
   if (kind === 'chat') return '对话模型';
   if (kind === 'emb') return '向量模型';
+  if (kind === 'rerank') return '重排模型';
   return '视觉模型';
 }
 
@@ -695,13 +701,18 @@ function errorMessage(error: any, fallback: string): string {
   return error?.response?.data?.error || error?.message || fallback;
 }
 
+/** 面板 kind → 后端 API kind（'emb' 内部名 → 'embedding'） */
+function apiKindFor(kind: ModelKind): 'chat' | 'embedding' | 'document' | 'rerank' {
+  return kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : kind;
+}
+
 async function testOne(kind: ModelKind, model: ModelEntry) {
   if (!model.apiKey) return;
   testingId.value = model.id;
   try {
     const { data } = await api.post('/api/settings/test-llm', {
       entry: model,
-      kind: kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
+      kind: apiKindFor(kind),
     });
     if (data.ok) notify.success(`连接成功 · ${providerName(model.provider)} · ${model.model}`);
     else notify.error(data.error || '模型连接测试失败。');
@@ -742,13 +753,18 @@ const fixedEmbeddingProviders = computed(() =>
 const fixedDocumentProviders = computed(() =>
   PROVIDERS.filter((provider) => provider.id !== 'custom' && (provider.documentModels?.length || 0) > 0)
 );
+const fixedRerankProviders = computed(() =>
+  PROVIDERS.filter((provider) => provider.id !== 'custom' && (provider.rerankModels?.length || 0) > 0)
+);
 
 function cardsFor(kind: ModelKind): ProviderCard[] {
   const providers = kind === 'chat'
     ? fixedChatProviders.value
     : kind === 'emb'
       ? fixedEmbeddingProviders.value
-      : fixedDocumentProviders.value;
+      : kind === 'rerank'
+        ? fixedRerankProviders.value
+        : fixedDocumentProviders.value;
   const list = modelsRef(kind).value;
   return providers.map((provider) => {
     const matches = list.filter((model) => model.provider === provider.id);
@@ -762,7 +778,9 @@ function unknownModels(kind: ModelKind): ModelEntry[] {
       ? fixedChatProviders.value
       : kind === 'emb'
         ? fixedEmbeddingProviders.value
-        : fixedDocumentProviders.value
+        : kind === 'rerank'
+          ? fixedRerankProviders.value
+          : fixedDocumentProviders.value
     ).map((provider) => provider.id)
   );
   const list = modelsRef(kind).value;
@@ -790,6 +808,13 @@ const modelSections = computed(() => [
     cards: cardsFor('document'),
     unknown: unknownModels('document'),
     activeId: activeDocument.value,
+  },
+  {
+    kind: 'rerank' as const,
+    copy: '重排模型是可选增强项，用于对「问 AI」的检索结果做语义精排。未配置时使用融合排名。',
+    cards: cardsFor('rerank'),
+    unknown: unknownModels('rerank'),
+    activeId: activeRerank.value,
   },
 ]);
 
@@ -827,7 +852,9 @@ const providerOptions = computed(() =>
     ? PROVIDERS.filter((provider) => provider.embeddingModels.length > 0 || provider.id === 'custom')
     : form.value.kind === 'document'
       ? PROVIDERS.filter((provider) => (provider.documentModels?.length || 0) > 0 || provider.id === 'custom')
-      : PROVIDERS
+      : form.value.kind === 'rerank'
+        ? PROVIDERS.filter((provider) => (provider.rerankModels?.length || 0) > 0 || provider.id === 'custom')
+        : PROVIDERS
 );
 
 const customPreset = providerById('custom')!;
@@ -851,7 +878,7 @@ const formModelOptions = computed<FormModelOption[]>(() => {
     const preset = modelById(
       currentFormProvider.value.id,
       current,
-      form.value.kind === 'chat' ? 'chat' : form.value.kind === 'emb' ? 'embedding' : 'document',
+      apiKindFor(form.value.kind),
     );
     options.set(current, {
       id: current,
@@ -931,11 +958,7 @@ function modelOptionForDraft(
   additionalModels: ModelOption[] = [],
 ) {
   if (draft.modelChoice === '__custom__') return undefined;
-  const preset = modelById(
-    provider.id,
-    draft.modelChoice || draft.model,
-    kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document'
-  );
+  const preset = modelById(provider.id, draft.modelChoice || draft.model, apiKindFor(kind));
   const discovered = additionalModels.find((model) => model.id === (draft.modelChoice || draft.model));
   return discovered ? { ...preset, ...discovered } : preset;
 }
@@ -953,17 +976,15 @@ function recommendedModelId(provider: ProviderPreset, kind: ModelKind): string |
     ? provider.defaultChat
     : kind === 'emb'
       ? provider.defaultEmbedding
-      : provider.defaultDocument;
+      : kind === 'rerank'
+        ? provider.defaultRerank
+        : provider.defaultDocument;
 }
 
 function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: ModelEntry): ModelDraft {
   const line = inferLine(provider, existing, kind);
   const existingOption = existing
-    ? modelById(
-        provider.id,
-        existing.model,
-        kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
-      )
+    ? modelById(provider.id, existing.model, apiKindFor(kind))
     : undefined;
   return {
     line,
@@ -1267,15 +1288,11 @@ async function discoverFormModels(apiKeyOverride?: string) {
     const { data } = await api.post('/api/settings/discover-models', {
       baseUrl: form.value.baseUrl,
       apiKey,
-      kind: form.value.kind === 'chat'
-        ? 'chat'
-        : form.value.kind === 'emb'
-          ? 'embedding'
-          : 'document',
+      kind: apiKindFor(form.value.kind),
     });
     if (requestId !== modelDiscoveryRequestId) return;
     form.value.modelsUrl = data.url || inferredModelsUrl(form.value.baseUrl);
-    const kind = form.value.kind === 'chat' ? 'chat' : form.value.kind === 'emb' ? 'embedding' : 'document';
+    const kind = apiKindFor(form.value.kind);
     discoveredModels.value = (data.models || []).map((id: string) => {
       const preset = modelById(currentFormProvider.value.id, id, kind);
       return {
@@ -1323,6 +1340,8 @@ async function persist() {
     active_embedding_model: activeEmb.value,
     document_models: JSON.stringify(documentModels.value),
     active_document_model: activeDocument.value,
+    rerank_models: JSON.stringify(rerankModels.value),
+    active_rerank_model: activeRerank.value,
   });
 }
 
@@ -1491,11 +1510,7 @@ async function testForm() {
     );
     const { data } = await api.post('/api/settings/test-llm', {
       entry,
-      kind: form.value.kind === 'chat'
-        ? 'chat'
-        : form.value.kind === 'emb'
-          ? 'embedding'
-          : 'document',
+      kind: apiKindFor(form.value.kind),
     });
     if (data.ok) notify.success(`连接成功 · ${currentFormProvider.value.name} · ${entry.model}`);
     else notify.error(data.error || '模型连接测试失败。');
@@ -1543,6 +1558,8 @@ const LLM_USAGE_TAG_LABELS: Record<string, string> = {
   'assistant-tools': '助手工具决策',
   'assistant-answer': '助手回答',
   'search-answer': '知识问答',
+  'query-rewrite': '查询改写',
+  rerank: '检索重排',
   embedding: '向量化',
   'document-ocr': '图片识别',
   'image-capability-probe': '图片能力检测',
@@ -1560,6 +1577,7 @@ const LLM_OPERATION_LABELS: Record<string, string> = {
   chat: '语言模型',
   embedding: '向量模型',
   document: '视觉模型',
+  rerank: '重排模型',
 };
 
 function usageOperationLabel(operation: string): string {
@@ -1650,9 +1668,11 @@ onMounted(async () => {
   chatModels.value = parseEntries(settingsData.settings.chat_models);
   embModels.value = parseEntries(settingsData.settings.embedding_models);
   documentModels.value = parseEntries(settingsData.settings.document_models);
+  rerankModels.value = parseEntries(settingsData.settings.rerank_models);
   activeChat.value = settingsData.settings.active_chat_model || chatModels.value[0]?.id || '';
   activeEmb.value = settingsData.settings.active_embedding_model || embModels.value[0]?.id || '';
   activeDocument.value = settingsData.settings.active_document_model || documentModels.value[0]?.id || '';
+  activeRerank.value = settingsData.settings.active_rerank_model || rerankModels.value[0]?.id || '';
   void loadLlmUsage();
   if (activeModelKind.value === 'document') void refreshActiveChatImageCapability();
 });

@@ -43,9 +43,11 @@ export interface ProviderPreset {
   chatModels: ModelOption[];
   embeddingModels: ModelOption[];
   documentModels?: ModelOption[];
+  rerankModels?: ModelOption[];
   defaultChat?: string;
   defaultEmbedding?: string;
   defaultDocument?: string;
+  defaultRerank?: string;
   hint?: string;
 }
 
@@ -169,9 +171,13 @@ export const PROVIDERS: ProviderPreset[] = [
         imageInput: 'supported',
       },
     ],
+    rerankModels: [
+      { id: 'rerank-3', name: 'rerank-3', description: '智谱重排模型' },
+    ],
     defaultChat: 'glm-5.2',
     defaultEmbedding: 'embedding-3',
     defaultDocument: 'glm-4.6v-flash',
+    defaultRerank: 'rerank-3',
   },
   {
     id: 'aliyun',
@@ -274,9 +280,14 @@ export const PROVIDERS: ProviderPreset[] = [
         imageInput: 'supported',
       },
     ],
+    rerankModels: [
+      { id: 'gte-rerank', name: 'gte-rerank', description: '通义重排模型' },
+      { id: 'gte-rerank-v2', name: 'gte-rerank-v2', description: '通义重排模型 v2' },
+    ],
     defaultChat: 'qwen3.7-plus',
     defaultEmbedding: 'qwen3.7-text-embedding',
     defaultDocument: 'qwen3.5-ocr',
+    defaultRerank: 'gte-rerank',
   },
   {
     id: 'doubao',
@@ -512,8 +523,15 @@ export const PROVIDERS: ProviderPreset[] = [
         supportsDimensions: true,
       },
     ],
+    rerankModels: [
+      { id: 'BAAI/bge-reranker-v2-m3', name: 'BAAI bge-reranker-v2-m3', description: '多语言重排，性价比首选' },
+      { id: 'Qwen/Qwen3-Reranker-8B', name: 'Qwen3 Reranker 8B', description: '高精度重排' },
+      { id: 'Qwen/Qwen3-Reranker-0.6B', name: 'Qwen3 Reranker 0.6B', description: '轻量快速重排' },
+      { id: 'netease-youdao/bce-reranker-base_v1', name: '网易有道 bce-reranker-base', description: '中文重排' },
+    ],
     defaultChat: 'deepseek-ai/DeepSeek-V4-Flash',
     defaultEmbedding: 'BAAI/bge-m3',
+    defaultRerank: 'BAAI/bge-reranker-v2-m3',
     hint: '模型名称使用硅基流动模型广场中的完整 org/model ID。',
   },
   {
@@ -609,7 +627,7 @@ export function providerById(id: string): ProviderPreset | undefined {
 export function modelById(
   providerId: string,
   modelId?: string,
-  kind?: 'chat' | 'embedding' | 'document'
+  kind?: 'chat' | 'embedding' | 'document' | 'rerank'
 ): ModelOption | undefined {
   const id = modelId ?? providerId;
   const providers = modelId ? [providerById(providerId)].filter(Boolean) as ProviderPreset[] : PROVIDERS;
@@ -620,7 +638,9 @@ export function modelById(
         ? [provider.embeddingModels]
         : kind === 'document'
           ? [provider.documentModels || []]
-          : [provider.chatModels, provider.embeddingModels, provider.documentModels || []];
+          : kind === 'rerank'
+            ? [provider.rerankModels || []]
+            : [provider.chatModels, provider.embeddingModels, provider.documentModels || [], provider.rerankModels || []];
     for (const pool of pools) {
       const match = pool.find((model) => model.id === id);
       if (match) return match;

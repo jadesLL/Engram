@@ -580,3 +580,122 @@ test('testModel chat aligns with pipeline thinking params and degrades when reje
   assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
   assert.equal(bodies[1].thinking, undefined);
 });
+
+// ---------- rerank ----------
+
+function activateRerank(overrides: Partial<ModelEntry> = {}): void {
+  const rerankEntry = entry({
+    id: 'rerank-1',
+    name: '测试 Rerank',
+    provider: 'siliconflow',
+    baseUrl: 'https://rerank.example/v1',
+    model: 'BAAI/bge-reranker-v2-m3',
+    ...overrides,
+  });
+  setSetting('rerank_models', JSON.stringify([rerankEntry]));
+  setSetting('active_rerank_model', rerankEntry.id);
+}
+
+function mockRerankResponse(
+  response: unknown,
+  inspect?: (url: string, body: Record<string, unknown>) => void,
+): void {
+  globalThis.fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    inspect?.(String(input), body);
+    return new Response(JSON.stringify(response), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+}
+
+test('rerank request body uses the standard /rerank contract', async () => {
+  activateRerank();
+  let requestUrl = '';
+  let requestBody: Record<string, unknown> | undefined;
+  mockRerankResponse(
+    { results: [{ index: 1, relevance_score: 0.9 }, { index: 0, relevance_score: 0.4 }] },
+    (url, body) => {
+      requestUrl = url;
+      requestBody = body;
+    },
+  );
+  const rerankFn = (await import('./llm.js')).rerank;
+
+  const results = await rerankFn('查询', ['文档一', '文档二'], 2);
+  assert.equal(requestUrl, 'https://rerank.example/v1/rerank');
+  assert.deepEqual(requestBody, {
+    model: 'BAAI/bge-reranker-v2-m3',
+    query: '查询',
+    documents: ['文档一', '文档二'],
+    top_n: 2,
+  });
+  assert.deepEqual(results, [
+    { index: 1, score: 0.9 },
+    { index: 0, score: 0.4 },
+  ]);
+});
+
+test('rerank returns null when no rerank model is configured', async () => {
+  const rerankFn = (await import('./llm.js')).rerank;
+  assert.equal(await rerankFn('查询', ['文档'], 1), null);
+});
+
+test('rerank rejects malformed results payloads', async () => {
+  activateRerank();
+  mockRerankResponse({ unexpected: true });
+  const rerankFn = (await import('./llm.js')).rerank;
+
+  await assert.rejects(rerankFn('查询', ['文档'], 1), /返回格式异常/);
+});
+
+test('rerank tolerates score alias and skips invalid entries', async () => {
+  activateRerank();
+  mockRerankResponse({
+    results: [
+      { index: 0, score: 0.75 },
+      { index: 'bad', relevance_score: 0.9 },
+      { index: 2, relevance_score: 'not-a-number' },
+    ],
+  });
+  const { rerank: rerankFn, parseRerankResponse } = await import('./llm.js');
+
+  const results = await rerankFn('查询', ['a', 'b', 'c'], 3);
+  assert.deepEqual(results, [{ index: 0, score: 0.75 }]);
+  // 直接解析层也过滤非法条目
+  assert.deepEqual(parseRerankResponse({ results: [{ index: -1, relevance_score: 1 }] }), []);
+});
+
+test('testModel rerank sends one document and validates the results shape', async () => {
+  activateRerank();
+  let requestBody: Record<string, unknown> | undefined;
+  mockRerankResponse({ results: [{ index: 0, relevance_score: 0.88 }] }, (_url, body) => {
+    requestBody = body;
+  });
+
+  const modelEntry = entry({
+    id: 'rerank-1',
+    provider: 'siliconflow',
+    baseUrl: 'https://rerank.example/v1',
+    model: 'BAAI/bge-reranker-v2-m3',
+  });
+  const result = await testModel(modelEntry, 'rerank');
+  assert.equal(result.ok, true);
+  assert.equal(requestBody?.top_n, 1);
+});
+
+test('testModel rerank fails when the provider returns an empty results array', async () => {
+  activateRerank();
+  mockRerankResponse({ results: [] });
+
+  const modelEntry = entry({
+    id: 'rerank-1',
+    provider: 'siliconflow',
+    baseUrl: 'https://rerank.example/v1',
+    model: 'BAAI/bge-reranker-v2-m3',
+  });
+  const result = await testModel(modelEntry, 'rerank');
+  assert.equal(result.ok, false);
+  assert.match(result.error || '', /返回格式异常/);
+});

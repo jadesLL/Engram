@@ -4,7 +4,7 @@ import {
   type ImageInputStatus,
 } from './modelCapabilities.js';
 
-export type DiscoveredModelKind = 'chat' | 'embedding' | 'document';
+export type DiscoveredModelKind = 'chat' | 'embedding' | 'document' | 'rerank';
 
 export interface DiscoverModelsInput {
   baseUrl?: string;
@@ -15,6 +15,7 @@ export interface DiscoverModelsInput {
 
 const EMBEDDING_PATTERN = /(^|[\/_.-])(embed|embedding|bge|gte|e5)([\/_.-]|$)/i;
 const NON_CHAT_PATTERN = /(^|[\/_.-])(rerank|reranker|tts|speech|whisper|asr|image-generation|video)([\/_.-]|$)/i;
+const RERANK_PATTERN = /(^|[\/_.-])(rerank|reranker)([\/_.-]|$)/i;
 const DOCUMENT_PATTERN = /(^|[\/_.-])(ocr|vision|vl|omni|multimodal)([\/_.-]|$)/i;
 const KNOWN_MODELS_URLS = new Map([
   ['https://api.deepseek.com/v1', 'https://api.deepseek.com/models'],
@@ -74,6 +75,10 @@ export function parseDiscoveredModelIds(payload: unknown): string[] {
 export function filterDiscoveredModels(ids: string[], kind: DiscoveredModelKind): string[] {
   if (kind === 'embedding') {
     const filtered = ids.filter((id) => EMBEDDING_PATTERN.test(id));
+    return filtered.length ? filtered : ids;
+  }
+  if (kind === 'rerank') {
+    const filtered = ids.filter((id) => RERANK_PATTERN.test(id) && !EMBEDDING_PATTERN.test(id));
     return filtered.length ? filtered : ids;
   }
   if (kind === 'document') {

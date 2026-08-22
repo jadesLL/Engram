@@ -54,6 +54,12 @@ export function getActiveDocument(): ModelEntry | null {
   return list.find((m) => m.id === activeId) || list[0] || null;
 }
 
+export function getActiveRerank(): ModelEntry | null {
+  const list = parseList('rerank_models');
+  const activeId = getSetting('active_rerank_model');
+  return list.find((m) => m.id === activeId) || list[0] || null;
+}
+
 export function getEffectiveDocumentModel(): ModelEntry | null {
   const dedicated = getActiveDocument();
   if (dedicated?.apiKey) return dedicated;
@@ -135,7 +141,8 @@ function responseIdentity(
   opts: LlmRequestOptions | undefined,
 ): LlmUsageIdentity {
   const active = path === '/embeddings' ? getActiveEmbedding() : getActiveChat();
-  const operation = opts?.operation || (path === '/embeddings' ? 'embedding' : 'chat');
+  const defaultOperation = path === '/embeddings' ? 'embedding' : path === '/rerank' ? 'rerank' : 'chat';
+  const operation = opts?.operation || defaultOperation;
   return {
     provider: opts?.provider || active?.provider || 'custom',
     model: opts?.model || String((body as any)?.model || active?.model || 'unknown'),
@@ -890,6 +897,62 @@ type EmbeddingRequestBody = {
   dimensions?: number;
 };
 
+export interface RerankResult {
+  index: number;
+  score: number;
+}
+
+export function buildRerankRequestBody(
+  entry: Pick<ModelEntry, 'model'>,
+  query: string,
+  documents: string[],
+  topN: number,
+): Record<string, unknown> {
+  return { model: entry.model, query, documents, top_n: topN };
+}
+
+/** 解析 rerank 响应：兼容硅基流动/Jina/Cohere 的 results[].{index, relevance_score}。 */
+export function parseRerankResponse(payload: unknown): RerankResult[] {
+  const results = (payload as any)?.results;
+  if (!Array.isArray(results)) return [];
+  return results
+    .map((item: any): RerankResult | null => {
+      const index = Number(item?.index);
+      const score = Number(item?.relevance_score ?? item?.score);
+      if (!Number.isInteger(index) || index < 0 || !Number.isFinite(score)) return null;
+      return { index, score };
+    })
+    .filter((item): item is RerankResult => item !== null);
+}
+
+export function rerankReady(): boolean {
+  return Boolean(getActiveRerank()?.apiKey);
+}
+
+/** 调用重排接口精排候选文档。未配置返回 null；调用失败抛 LlmError（由调用方降级）。 */
+export async function rerank(
+  query: string,
+  documents: string[],
+  topN: number,
+  options: { entry?: ModelEntry; timeoutMs?: number } = {},
+): Promise<RerankResult[] | null> {
+  const entry = options.entry || getActiveRerank();
+  if (!entry?.apiKey) return null;
+  const res = await request('/rerank', buildRerankRequestBody(entry, query, documents, topN), {
+    baseUrl: entry.baseUrl.replace(/\/+$/, ''),
+    apiKey: entry.apiKey,
+    timeoutMs: options.timeoutMs ?? 30_000,
+    provider: entry.provider,
+    model: entry.model,
+    operation: 'rerank',
+    tag: 'rerank',
+  });
+  const payload = await readJsonResponse(res);
+  const results = parseRerankResponse(payload);
+  if (!results.length) throw new LlmError('重排接口返回格式异常（无 results）');
+  return results;
+}
+
 export function buildEmbeddingRequestBody(
   entry: Pick<ModelEntry, 'model' | 'dim' | 'supportsDimensions'>,
   input: string[]
@@ -1074,7 +1137,7 @@ export async function testConnection(): Promise<{
  *  （带推理的模型在 token 紧张时可能只产出 reasoning_content 而 content 为空）。 */
 export async function testModel(
   entry: ModelEntry,
-  kind: 'chat' | 'embedding' | 'document',
+  kind: 'chat' | 'embedding' | 'document' | 'rerank',
   options: { imageChallenge?: ImageCapabilityChallenge } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   if (!entry.apiKey) return { ok: false, error: '未填写 API Key' };
@@ -1125,6 +1188,13 @@ export async function testModel(
       const json = await readJsonResponse(res);
       if (!Array.isArray(json?.data)) return { ok: false, error: '返回格式异常（无 data 数组）' };
       validateEmbedding(json.data[0]?.embedding, entry.dim);
+      return { ok: true };
+    } else if (kind === 'rerank') {
+      const results = await rerank('ping', ['知识库检索测试文档'], 1, {
+        entry,
+        timeoutMs: 30_000,
+      });
+      if (!results || !results.length) return { ok: false, error: '返回格式异常（无 results）' };
       return { ok: true };
     } else {
       const capability = await probeImageInput(entry, {

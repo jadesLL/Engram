@@ -1,6 +1,6 @@
 import { db, now } from './db.js';
 
-export type LlmOperation = 'chat' | 'embedding' | 'document';
+export type LlmOperation = 'chat' | 'embedding' | 'document' | 'rerank';
 
 export interface LlmUsageIdentity {
   provider: string;
@@ -389,7 +389,7 @@ export function summarizeLlmUsage(windowDays = 7): LlmUsageSummary {
     cache_write_tokens: number;
     cache_miss_tokens: number;
   }>;
-  const operationOrder: LlmOperation[] = ['chat', 'embedding', 'document'];
+  const operationOrder: LlmOperation[] = ['chat', 'embedding', 'document', 'rerank'];
   const byOperation = operationRows
     .map((row) => ({
       operation: row.operation as LlmOperation,

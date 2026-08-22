@@ -23,6 +23,7 @@ const PUBLIC_SETTINGS = [
   'chat_models', 'active_chat_model',
   'embedding_models', 'active_embedding_model',
   'document_models', 'active_document_model',
+  'rerank_models', 'active_rerank_model',
   'dream_cron', 'dream_enabled',
   'acs_mode',
   'feishu_config',
@@ -88,7 +89,7 @@ export async function settingsRoutes(app: FastifyInstance) {
    *  - 无入参：测试当前激活的 chat + embedding（兼容旧的全局测试按钮）。
    *  - 带 { entry, kind }：测试单个模型配置（不依赖激活状态，用于逐个验证）。 */
   app.post('/api/settings/test-llm', async (req) => {
-    const body = req.body as { entry?: ModelEntry; kind?: 'chat' | 'embedding' | 'document' } | null;
+    const body = req.body as { entry?: ModelEntry; kind?: 'chat' | 'embedding' | 'document' | 'rerank' } | null;
     if (body?.entry && body?.kind) {
       return testModel(body.entry, body.kind);
     }
@@ -128,16 +129,16 @@ export async function settingsRoutes(app: FastifyInstance) {
     const body = (req.body || {}) as {
       baseUrl?: string;
       apiKey?: string;
-      kind?: 'chat' | 'embedding' | 'document';
+      kind?: 'chat' | 'embedding' | 'document' | 'rerank';
     };
-    if (!['chat', 'embedding', 'document'].includes(body.kind || '')) {
+    if (!['chat', 'embedding', 'document', 'rerank'].includes(body.kind || '')) {
       return reply.code(400).send({ error: '模型类型无效' });
     }
     try {
       return await discoverModels({
         baseUrl: body.baseUrl,
         apiKey: body.apiKey,
-        kind: body.kind as 'chat' | 'embedding' | 'document',
+        kind: body.kind as 'chat' | 'embedding' | 'document' | 'rerank',
       });
     } catch (error: any) {
       return reply.code(502).send({ error: error?.message || '模型列表拉取失败' });
