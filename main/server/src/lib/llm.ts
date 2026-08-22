@@ -168,19 +168,28 @@ async function request(
   const baseUrl = opts?.baseUrl || cfg.baseUrl;
   const apiKey = opts?.apiKey || cfg.apiKey;
   if (!apiKey) throw new LlmError('尚未配置 LLM API Key（设置页 → LLM）');
-  try {
-    return await requestOnce(path, body, opts, baseUrl, apiKey);
-  } catch (error: any) {
-    // 网络抖动/超时不属于内容问题，同参数静默重试一次再上抛，
-    // 避免上层把瞬时网络故障固化成整条任务的失败。
-    const retriable = error instanceof LlmError
-      && !opts?.signal?.aborted
-      && (error.message === 'LLM 请求超时' || error.message.startsWith('LLM 请求失败 5'));
-    if (!retriable) throw error;
-    console.warn(`[llm.request] ${error.message}，3 秒后自动重试一次`);
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-    return await requestOnce(path, body, opts, baseUrl, apiKey);
-  }
+  const attempt = async (nth: number): Promise<LlmHttpResponse> => {
+    try {
+      return await requestOnce(path, body, opts, baseUrl, apiKey);
+    } catch (error: any) {
+      // 瞬时故障不属于内容问题，同参数静默重试再上抛，避免上层把网络抖动固化成
+      // 整条任务的失败。覆盖：超时、408/429/5xx、以及网关间歇性 401/403
+      //（实测自建网关在并发压力下会误报 Invalid API key，随后同 key 请求恢复）。
+      const retriable = error instanceof LlmError
+        && !opts?.signal?.aborted
+        && (error.message === 'LLM 请求超时'
+          || error.message.startsWith('LLM 请求失败 5')
+          || /^LLM 请求失败 408/.test(error.message)
+          || /^LLM 请求失败 429/.test(error.message)
+          || /^LLM 请求失败 40[13]/.test(error.message));
+      if (!retriable || nth >= 3) throw error;
+      const delay = 3_000 * nth;
+      console.warn(`[llm.request] ${error.message.slice(0, 120)}，${delay / 1000} 秒后自动重试（第 ${nth + 1}/3 次）`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return attempt(nth + 1);
+    }
+  };
+  return attempt(0);
 }
 
 async function requestOnce(
@@ -195,7 +204,12 @@ async function requestOnce(
   const signal = opts?.signal
     ? AbortSignal.any([controller.signal, opts.signal])
     : controller.signal;
-  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 120_000);
+  // 超时按输出预算动态估算：实测网关吞吐 ~11s/1000 completion tokens（8k 输出
+  // 约 90-140s）。固定值会把「正常的长输出请求」误判为超时，陷入重试死循环。
+  // 按 max_tokens 0.03s/token 估算并留足余量，下限 150s。
+  const budgetTokens = typeof (body as any)?.max_tokens === 'number' ? (body as any).max_tokens : 4000;
+  const estimatedMs = Math.max(150_000, Math.ceil(budgetTokens * 30));
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? estimatedMs);
   const adapter = protocolAdapter(opts?.protocol);
   try {
     const res = await fetch(adapter.url(baseUrl, path), {
@@ -468,8 +482,10 @@ async function requestChatWithThinkingFallback(
     if (thinkingUnsupported.has(capabilityKey) || opts.dialect?.thinkingRejected) {
       delete body.thinking;
     } else if (thinkingLevelOnly.has(capabilityKey) || opts.dialect?.thinkingLevelOnly) {
-      // 必须思考的模型：以思考模式（low 档）调用
+      // 必须思考的模型：以思考模式（low 档）调用；思考内容计入 completion
+      // tokens，会挤占正文预算——amplify 放大 max_tokens 避免截断
       body.thinking = { type: 'low' };
+      amplifyMaxTokensForThinking(body);
     }
   }
   try {
@@ -481,6 +497,7 @@ async function requestChatWithThinkingFallback(
     if (requiresLevel) {
       // 始终思考模型：disabled → low（实测 GLM-5.3 接受 low 且正常输出 content）
       body.thinking = { type: 'low' };
+      amplifyMaxTokensForThinking(body);
       const res = await request('/chat/completions', body, opts);
       thinkingLevelOnly.add(capabilityKey);
       if (opts.entryId) markEntryDialect(opts.entryId, { thinkingLevelOnly: true });
@@ -491,6 +508,16 @@ async function requestChatWithThinkingFallback(
     thinkingUnsupported.add(capabilityKey);
     if (opts.entryId) markEntryDialect(opts.entryId, { thinkingRejected: true });
     return res;
+  }
+}
+
+/** 思考模型的 max_tokens 放大：思考内容与正文共享 completion 预算，
+ *  非思考模型 8000 的预算在思考模式下正文只剩零头（实测 low 档思考动辄
+ *  9k-12k tokens）。按 4 倍放大、上限 32k，网关实测接受 128k 也不报错。 */
+function amplifyMaxTokensForThinking(body: Record<string, unknown>): void {
+  const cur = body.max_tokens;
+  if (typeof cur === 'number' && cur < 32_000) {
+    body.max_tokens = Math.min(32_000, Math.ceil(cur * 4));
   }
 }
 
@@ -651,10 +678,11 @@ export async function chatJson<T = any>(
       console.warn(`[llm.chatJson:${tag}] 请求失败`, e.message);
       if (opts?.signal?.aborted) throw e;
       if (attempt < retries) {
-        // 截断错误：翻倍 max_tokens 重试，不追加多余消息（问题在长度而非内容）
+        // 截断错误：翻倍 max_tokens 重试，不追加多余消息（问题在长度而非内容）；
+        // 思考模型经 amplify 已放大到 20k，重试再翻倍需突破该上限
         if (e.message.includes('截断')) {
           retryReason = 'output_truncated';
-          curMaxTokens = (curMaxTokens || 4000) * 2;
+          curMaxTokens = Math.min(48_000, (curMaxTokens || 4000) * 2);
           continue;
         }
         retryReason = 'request_failed';
@@ -676,7 +704,7 @@ export async function chatJson<T = any>(
       if (looksTruncated) {
         // 截断：翻倍 max_tokens 重试，不追加消息
         retryReason = 'json_truncated';
-        curMaxTokens = (curMaxTokens || 4000) * 2;
+        curMaxTokens = Math.min(48_000, (curMaxTokens || 4000) * 2);
         continue;
       }
       retryReason = 'json_parse_failed';
@@ -792,7 +820,7 @@ export async function chatToolSchema<T>(
           (trimmed.startsWith('{') && !trimmed.endsWith('}')) ||
           (trimmed.startsWith('[') && !trimmed.endsWith(']'));
         if (looksTruncated) {
-          curMaxTokens = (curMaxTokens || 4000) * 2;
+          curMaxTokens = Math.min(48_000, (curMaxTokens || 4000) * 2);
         }
         current = [
           ...current,

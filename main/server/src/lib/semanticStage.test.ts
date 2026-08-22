@@ -79,7 +79,7 @@ test('semantic stages audit both successful and failed model decisions', async (
   });
   assert.deepEqual(result, { answer: '模型结论' });
 
-  failNext = 2; // 网络重试一次后再失败，确保 reject 路径被测到
+  failNext = 4; // 初始 1 次 + 自动重试 3 次全失败，确保 reject 路径被测到且不泄漏到后续测试
   await assert.rejects(
     runSemanticStage({
       scope: 'test',
@@ -200,7 +200,7 @@ test('validated semantic turns append to provider history and failed turns do no
   assert.ok(usageRows.every((row: any) => /^[a-f0-9]{64}$/.test(row.prefix_hash)));
 
   const beforeFailure = structuredClone(history);
-  failNext = 2; // 网络重试一次后再失败，确保 reject 路径被测到
+  failNext = 4; // 初始 1 次 + 自动重试 3 次全失败，确保 reject 路径被测到且不泄漏到后续测试
   await assert.rejects(
     runSemanticStage({
       scope: 'append-only-test',
