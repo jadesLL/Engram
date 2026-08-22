@@ -160,6 +160,56 @@ const agentRouteResponse = {
   }],
 };
 
+const chatRouteResponse = {
+  choices: [{
+    finish_reason: 'stop',
+    message: {
+      content: JSON.stringify({
+        mode: 'chat',
+        retrievalQuery: '',
+        reason: '通用闲聊，与知识库和软件功能无关',
+      }),
+    },
+  }],
+};
+
+test('chat mode answers general questions without retrieval or tools', async () => {
+  const requests: any[] = [];
+  globalThis.fetch = async (_input: any, init?: any) => {
+    requests.push(JSON.parse(String(init?.body || '{}')));
+    if (requests.length === 1) {
+      return new Response(JSON.stringify(chatRouteResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const sse = [
+      `data: ${JSON.stringify({ choices: [{ delta: { content: '当然，坚持写笔记' } }] })}`,
+      '',
+      `data: ${JSON.stringify({ choices: [{ delta: { content: '的诀窍是降低门槛。' } }] })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n');
+    return new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  const session = createSession();
+  const run = startAssistantRun(session.id, '聊聊：怎么坚持写笔记？');
+  await waitForStatus(run.id, 'completed');
+
+  assert.equal(requests.length, 2);
+  assert.match(requests[0].messages[0].content, /路由模型/);
+  const chatSystem = requests[1].messages.find((message: any) => message.role === 'system');
+  assert.match(chatSystem.content, /AI 助手/);
+  assert.doesNotMatch(chatSystem.content, /只依据提供的知识库证据/);
+  const snapshot = getSnapshotByRun(run.id)!;
+  assert.equal(snapshot.toolCalls.length, 0);
+  const visible = snapshot.messages
+    .filter((message: any) => !message.metadata.hidden && message.role === 'assistant');
+  assert.match(visible.at(-1)?.content || '', /坚持写笔记/);
+  assert.equal(visible.at(-1)?.metadata.sources, undefined);
+});
+
 test('agent pauses for approval, executes exact tool call and completes', async () => {
   mockCompletions([agentRouteResponse, createToolResponse('Agent Approved'), finalResponse]);
   const session = createSession();

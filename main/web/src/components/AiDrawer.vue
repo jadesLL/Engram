@@ -40,7 +40,8 @@
       <AppEmptyState
         v-else-if="!messages.length && !toolCalls.length"
         icon="ai"
-        v-tooltip="'可以查询知识、处理页面，也可以调用应用工具完成任务。'"
+        title="AI 助手"
+        hint="我可以直接回答通用问题，也可以检索知识库、整理页面或调用应用内工具完成任务。"
       >
         <div class="suggestions">
           <button v-for="suggestion in suggestions" :key="suggestion" @click="ask(suggestion)">
@@ -217,11 +218,17 @@ const scrollEl = ref<HTMLElement>();
 const confirmHighImpact = ref(false);
 let previousActive: HTMLElement | null = null;
 
-const suggestions = [
-  '这个知识库最近有哪些重要变化？',
-  '检查当前页面还缺少哪些内容',
-  '列出待处理的整理报告',
-];
+const suggestions = computed(() => {
+  const context = assistant.currentContext;
+  const items: string[] = ['这个知识库最近有哪些重要变化？'];
+  if (context.currentPage) {
+    const title = context.currentPage.title.slice(0, 20);
+    items.push(`检查「${title}」还缺少哪些内容`);
+  }
+  items.push('列出待处理的整理报告');
+  items.push('聊聊：怎么坚持写笔记？');
+  return items;
+});
 
 const messages = computed(() => assistant.visibleMessages);
 const currentRun = computed(() => assistant.currentRun);
