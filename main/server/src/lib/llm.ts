@@ -438,10 +438,16 @@ function thinkingErrorDetail(error: unknown): { rejectsParam: boolean; requiresL
     return { rejectsParam: false, requiresLevel: false };
   }
   const msg = error.message || '';
-  if (!/thinking/i.test(msg)) return { rejectsParam: false, requiresLevel: false };
+  // 供应商报错文案两类：带英文参数名 "thinking"，或纯中文「该模型始终思考，不支持关闭思考」
+  //（实测 GLM-5.3 网关的 400 文案完全不含 "thinking"，只认中文关键词）。
+  const mentionsThinking = /thinking/i.test(msg) || /思考/i.test(msg);
+  if (!mentionsThinking) return { rejectsParam: false, requiresLevel: false };
   // 「始终思考，不支持关闭思考；请使用 low、high 或 max」一类错误：参数本身被接受，
-  // 但 disabled 值非法，必须降级到最低档而非删除参数
-  const requiresLevel = /(low|high|max)/i.test(msg) || /始终思考|不支持关闭|cannot be disabled|always think/i.test(msg);
+  // 但 disabled 值非法，必须降级到最低档而非删除参数。
+  // level 词用 \b 词边界匹配，排除 max_tokens 报错形态（"max" 后跟 "_" 不构成边界）。
+  const requiresLevel =
+    /\b(low|high|max)\b/i.test(msg) ||
+    /始终思考|不支持关闭|cannot be disabled|always think/i.test(msg);
   return { rejectsParam: true, requiresLevel };
 }
 
