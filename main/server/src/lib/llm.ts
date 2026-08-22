@@ -425,16 +425,20 @@ export async function probeImageInput(
   }
 }
 
-/** 模型 thinking 降级状态（key 为 baseUrl|model）。两类供应商：
+/** 模型 thinking 适配状态（key 为 baseUrl|model）。两类供应商：
  *  1) 非思考模型：带 thinking 参数直接 400 → 完全删除该参数重试；
  *  2) 「始终思考」模型（如 GLM-5.3）：拒绝 {type:'disabled'}，提示只支持 low/high/max
- *     → 降级为 {type:'low'}。这类模型 reasoning_content 无法关闭，靠 max_tokens
- *     截断识别（chat() 的 hasReasoning 分支翻倍重试）兜底。 */
+ *     → 必须以思考模式使用，固定 {type:'low'}。降级记忆走条目 dialect 字段
+ *     （markEntryDialect，重启后仍生效，不重复撞 400）。
+ *     这类模型 reasoning_content 无法关闭，靠 max_tokens 截断识别
+ *     （chat() 的 hasReasoning 分支翻倍重试）兜底。 */
 const thinkingUnsupported = new Set<string>();
 const thinkingLevelOnly = new Set<string>();
 
 function thinkingErrorDetail(error: unknown): { rejectsParam: boolean; requiresLevel: boolean } {
-  if (!(error instanceof LlmError) || ![400, 422].includes(error.status || 0)) {
+  if (!(error instanceof LlmError)) return { rejectsParam: false, requiresLevel: false };
+  // 部分网关把上游 400 包装成 502 upstream_error（实测 GLM-5.3 网关两种都有），一并接受
+  if (![400, 422, 502].includes(error.status || 0)) {
     return { rejectsParam: false, requiresLevel: false };
   }
   const msg = error.message || '';
@@ -443,7 +447,7 @@ function thinkingErrorDetail(error: unknown): { rejectsParam: boolean; requiresL
   const mentionsThinking = /thinking/i.test(msg) || /思考/i.test(msg);
   if (!mentionsThinking) return { rejectsParam: false, requiresLevel: false };
   // 「始终思考，不支持关闭思考；请使用 low、high 或 max」一类错误：参数本身被接受，
-  // 但 disabled 值非法，必须降级到最低档而非删除参数。
+  // 但 disabled 值非法，必须以思考模式（low 档）使用而非删除参数。
   // level 词用 \b 词边界匹配，排除 max_tokens 报错形态（"max" 后跟 "_" 不构成边界）。
   const requiresLevel =
     /\b(low|high|max)\b/i.test(msg) ||
