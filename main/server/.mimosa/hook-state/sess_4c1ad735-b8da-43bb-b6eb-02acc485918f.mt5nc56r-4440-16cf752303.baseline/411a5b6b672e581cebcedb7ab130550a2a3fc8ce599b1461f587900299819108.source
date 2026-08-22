@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { createCanvas } from '@napi-rs/canvas';
 import type { ZodType } from 'zod';
-import { db } from './db.js';
+import { db, getSetting, setSetting } from './db.js';
 import { recordLlmResultCacheHit, recordLlmUsage, type LlmOperation, type LlmUsageIdentity } from './llmUsage.js';
 import {
   resolveImageInputCapability,
@@ -9,27 +9,49 @@ import {
   type ImageInputSource,
   type ImageInputStatus,
 } from './modelCapabilities.js';
-import {
-  getActiveModelEntry,
-  markEntryDialect,
-  resolveEntrySecretKey,
-  type ModelDialect,
-  type ModelEntry,
-} from './modelConfig.js';
-import { protocolAdapter, type ProtocolAdapter, type ProtocolKind } from './llmProtocols.js';
 
-export type { ModelEntry, ModelDialect };
+/** 模型库条目 */
+export interface ModelEntry {
+  id: string;
+  name: string;      // 备注名
+  provider: string;  // 预设 id
+  baseUrl: string;
+  modelsUrl?: string;
+  logo?: string;
+  model: string;
+  apiKey: string;
+  dim?: number;      // embedding 维度
+  supportsDimensions?: boolean; // 是否支持通过请求参数指定 embedding 维度
+  imageInput?: ImageInputStatus;
+  imageInputSource?: ImageInputSource;
+  imageInputCheckedAt?: string;
+}
+
+function parseList(key: string): ModelEntry[] {
+  try {
+    const parsed = JSON.parse(getSetting(key) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 export function getActiveChat(): ModelEntry | null {
-  return getActiveModelEntry('chat');
+  const list = parseList('chat_models');
+  const activeId = getSetting('active_chat_model');
+  return list.find((m) => m.id === activeId) || list[0] || null;
 }
 
 export function getActiveEmbedding(): ModelEntry | null {
-  return getActiveModelEntry('embedding');
+  const list = parseList('embedding_models');
+  const activeId = getSetting('active_embedding_model');
+  return list.find((m) => m.id === activeId) || list[0] || null;
 }
 
 export function getActiveDocument(): ModelEntry | null {
-  return getActiveModelEntry('document');
+  const list = parseList('document_models');
+  const activeId = getSetting('active_document_model');
+  return list.find((m) => m.id === activeId) || list[0] || null;
 }
 
 export function getEffectiveDocumentModel(): ModelEntry | null {
@@ -44,7 +66,6 @@ export interface LlmConfig {
   baseUrl: string;
   apiKey: string;
   chatModel: string;
-  chatProtocol: ProtocolKind;
   embeddingBaseUrl: string;
   embeddingApiKey: string;
   embeddingModel: string;
@@ -58,7 +79,6 @@ export function getLlmConfig(): LlmConfig {
     baseUrl: (chat?.baseUrl || 'https://api.deepseek.com/v1').replace(/\/+$/, ''),
     apiKey: chat?.apiKey || '',
     chatModel: chat?.model || 'deepseek-v4-flash',
-    chatProtocol: chat?.protocol === 'anthropic' ? 'anthropic' : 'openai',
     embeddingBaseUrl: (emb?.baseUrl || chat?.baseUrl || '').replace(/\/+$/, ''),
     embeddingApiKey: emb?.apiKey || chat?.apiKey || '',
     embeddingModel: emb?.model || 'text-embedding-3-small',
@@ -89,12 +109,8 @@ type LlmRequestOptions = {
   model?: string;
   operation?: LlmOperation;
   tag?: string;
-  /** 请求协议（缺省 OpenAI 兼容）；决定 URL/headers/body 与响应转换 */
-  protocol?: ProtocolKind;
-  /** 关联配置条目 id：供应商参数降级记忆的持久化锚点 */
-  entryId?: string;
-  /** 条目已持久化的降级声明（发送前预检，避免重启后重复 400 往返） */
-  dialect?: ModelDialect;
+  /** 重试/长调用期间刷新任务心跳，防止无进度探针在网关挂起重试链中被误触发 */
+  onRetry?: () => void;
   usageContext?: {
     scope: string;
     refId: string;
@@ -113,7 +129,6 @@ type LlmHttpResponse = {
   response: Response;
   identity: LlmUsageIdentity;
   startedAt: number;
-  adapter: ProtocolAdapter;
 };
 
 function responseIdentity(
@@ -150,11 +165,7 @@ function captureUsage(result: LlmHttpResponse, rawUsage: unknown): void {
 }
 
 async function readJsonResponse<T = any>(result: LlmHttpResponse): Promise<T> {
-  const raw = await result.response.json() as T;
-  // anthropic 协议在边界转成 OpenAI 风格 payload，抽取与用量记账逻辑零改动复用
-  const payload = result.adapter.kind === 'anthropic'
-    ? (result.adapter.parseResponse(raw) as T)
-    : raw;
+  const payload = await result.response.json() as T;
   captureUsage(result, (payload as any)?.usage);
   return payload;
 }
@@ -168,19 +179,34 @@ async function request(
   const baseUrl = opts?.baseUrl || cfg.baseUrl;
   const apiKey = opts?.apiKey || cfg.apiKey;
   if (!apiKey) throw new LlmError('尚未配置 LLM API Key（设置页 → LLM）');
-  try {
-    return await requestOnce(path, body, opts, baseUrl, apiKey);
-  } catch (error: any) {
-    // 网络抖动/超时不属于内容问题，同参数静默重试一次再上抛，
-    // 避免上层把瞬时网络故障固化成整条任务的失败。
-    const retriable = error instanceof LlmError
-      && !opts?.signal?.aborted
-      && (error.message === 'LLM 请求超时' || error.message.startsWith('LLM 请求失败 5'));
-    if (!retriable) throw error;
-    console.warn(`[llm.request] ${error.message}，3 秒后自动重试一次`);
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-    return await requestOnce(path, body, opts, baseUrl, apiKey);
-  }
+  const attempt = async (nth: number): Promise<LlmHttpResponse> => {
+    try {
+      return await requestOnce(path, body, opts, baseUrl, apiKey);
+    } catch (error: any) {
+      // 瞬时故障不属于内容问题，同参数静默重试再上抛，避免上层把网络抖动固化成
+      // 整条任务的失败。覆盖：超时、网络层异常（fetch failed）、408/429/5xx、
+      // 以及网关间歇性 401/403（实测自建网关在并发压力下会误报 Invalid API key，
+      // 随后同 key 请求恢复）。
+      const msg = error.message || '';
+      const retriable = error instanceof LlmError
+        && !opts?.signal?.aborted
+        && (msg === 'LLM 请求超时'
+          || msg.startsWith('LLM 网络异常')
+          || msg.startsWith('LLM 请求失败 5')
+          || /^LLM 请求失败 408/.test(msg)
+          || /^LLM 请求失败 429/.test(msg)
+          || /^LLM 请求失败 40[13]/.test(msg));
+      if (!retriable || nth >= 5) throw error;
+      const delay = Math.min(15_000, 3_000 * nth);
+      console.warn(`[llm.request] ${error.message.slice(0, 120)}，${delay / 1000} 秒后自动重试（第 ${nth + 1}/5 次）`);
+      // 网关挂起 + 多级重试的累计时长可能很长（150s × 4 次），重试前刷新
+      // 调用方心跳，防止无进度探针误杀仍在重试链中的任务
+      try { opts?.onRetry?.(); } catch { /* 心跳失败不阻塞重试 */ }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return attempt(nth + 1);
+    }
+  };
+  return attempt(0);
 }
 
 async function requestOnce(
@@ -195,13 +221,21 @@ async function requestOnce(
   const signal = opts?.signal
     ? AbortSignal.any([controller.signal, opts.signal])
     : controller.signal;
-  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 120_000);
-  const adapter = protocolAdapter(opts?.protocol);
+  // 超时按输出预算动态估算：实测网关吞吐 ~11s/1000 completion tokens（8k 输出
+  // 约 90-140s）。固定 150s 会把「正常的长输出请求」误判为超时，陷入重试死循环
+  //（重发同样的请求又是同样的长输出）。按 max_tokens 0.03s/token 估算并留足
+  // 余量，下限 150s。
+  const budgetTokens = typeof (body as any)?.max_tokens === 'number' ? (body as any).max_tokens : 4000;
+  const estimatedMs = Math.max(150_000, Math.ceil(budgetTokens * 30));
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? estimatedMs);
   try {
-    const res = await fetch(adapter.url(baseUrl, path), {
+    const res = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
-      headers: adapter.headers(apiKey),
-      body: JSON.stringify(adapter.buildBody(body as Record<string, unknown> & { model: string; messages: unknown[] })),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
       signal,
     });
     if (!res.ok) {
@@ -212,11 +246,16 @@ async function requestOnce(
       response: res,
       identity: responseIdentity(path, body, opts),
       startedAt,
-      adapter,
     };
   } catch (error: any) {
     if (error?.name === 'AbortError') {
       throw new LlmError(opts?.signal?.aborted ? 'AI 请求已取消' : 'LLM 请求超时');
+    }
+    // 网络层异常（连接重置/DNS/TLS）：undici 包成 TypeError 'fetch failed'，
+    // 统一转 LlmError 交给网络层重试（不重试的话瞬时断连会固化成任务失败）
+    if (error instanceof TypeError && /fetch failed/i.test(error?.message || '')) {
+      const cause = (error as any)?.cause ? `（${String((error as any).cause.message || (error as any).cause).slice(0, 80)}）` : '';
+      throw new LlmError(`LLM 网络异常 fetch failed${cause}`);
     }
     throw error;
   } finally {
@@ -344,9 +383,6 @@ export async function recognizeDocumentImage(
       operation: 'document',
       tag: 'document-ocr',
       signal: options.signal,
-      protocol: entry.protocol,
-      entryId: entry.id,
-      dialect: entry.dialect,
     },
   );
   const payload = await readJsonResponse(response);
@@ -392,9 +428,6 @@ export async function probeImageInput(
         model: entry.model,
         operation: 'document',
         tag: 'image-capability-probe',
-        protocol: entry.protocol,
-        entryId: entry.id,
-        dialect: entry.dialect,
       },
     );
     const payload = await readJsonResponse(response);
@@ -425,41 +458,73 @@ export async function probeImageInput(
   }
 }
 
-/** 模型 thinking 降级状态（key 为 baseUrl|model）。两类供应商：
+/** 模型 thinking 适配状态（key 为 baseUrl|model）。两类供应商：
  *  1) 非思考模型：带 thinking 参数直接 400 → 完全删除该参数重试；
  *  2) 「始终思考」模型（如 GLM-5.3）：拒绝 {type:'disabled'}，提示只支持 low/high/max
- *     → 降级为 {type:'low'}。这类模型 reasoning_content 无法关闭，靠 max_tokens
- *     截断识别（chat() 的 hasReasoning 分支翻倍重试）兜底。 */
+ *     → 必须以思考模式使用，固定 {type:'low'}。状态持久化到 settings 表
+ *     （thinking_level_models），重启后仍生效，不重复撞 400。
+ *     这类模型 reasoning_content 无法关闭，靠 max_tokens 截断识别
+ *     （chat() 的 hasReasoning 分支翻倍重试）兜底。 */
 const thinkingUnsupported = new Set<string>();
 const thinkingLevelOnly = new Set<string>();
+const THINKING_LEVEL_SETTING = 'thinking_level_models';
+
+/** 从 settings 恢复「始终思考」模型清单（启动后首个请求即可命中，无需再撞 400） */
+function restoreThinkingLevelModels(): void {
+  if (thinkingLevelOnly.size > 0) return;
+  try {
+    const saved = JSON.parse(getSetting(THINKING_LEVEL_SETTING) || '[]');
+    if (Array.isArray(saved)) saved.forEach((k) => thinkingLevelOnly.add(String(k)));
+  } catch { /* 损坏则忽略，按未记忆处理 */ }
+}
+
+function persistThinkingLevelModel(capabilityKey: string): void {
+  thinkingLevelOnly.add(capabilityKey);
+  try {
+    const saved = new Set(JSON.parse(getSetting(THINKING_LEVEL_SETTING) || '[]'));
+    saved.add(capabilityKey);
+    // 上限保护：只留最近 50 条，避免无限增长
+    const list = [...saved].slice(-50);
+    setSetting(THINKING_LEVEL_SETTING, JSON.stringify(list));
+  } catch { /* 持久化失败不影响本次降级 */ }
+}
 
 function thinkingErrorDetail(error: unknown): { rejectsParam: boolean; requiresLevel: boolean } {
-  if (!(error instanceof LlmError) || ![400, 422].includes(error.status || 0)) {
+  if (!(error instanceof LlmError)) return { rejectsParam: false, requiresLevel: false };
+  // 部分网关把上游 400 包装成 502 upstream_error（实测 GLM-5.3 网关两种都有），一并接受
+  if (![400, 422, 502].includes(error.status || 0)) {
     return { rejectsParam: false, requiresLevel: false };
   }
   const msg = error.message || '';
-  if (!/thinking/i.test(msg)) return { rejectsParam: false, requiresLevel: false };
+  // 供应商报错文案两类：带英文参数名 "thinking"，或纯中文「该模型始终思考，不支持关闭思考」
+  //（实测 GLM-5.3 网关的 400 文案完全不含 "thinking"，只认中文关键词）。
+  const mentionsThinking = /thinking/i.test(msg) || /思考/i.test(msg);
+  if (!mentionsThinking) return { rejectsParam: false, requiresLevel: false };
   // 「始终思考，不支持关闭思考；请使用 low、high 或 max」一类错误：参数本身被接受，
-  // 但 disabled 值非法，必须降级到最低档而非删除参数
-  const requiresLevel = /(low|high|max)/i.test(msg) || /始终思考|不支持关闭|cannot be disabled|always think/i.test(msg);
+  // 但 disabled 值非法，必须以思考模式（low 档）使用而非删除参数。
+  // level 词用 \b 词边界匹配，排除 max_tokens 报错形态（"max" 后跟 "_" 不构成边界）。
+  const requiresLevel =
+    /\b(low|high|max)\b/i.test(msg) ||
+    /始终思考|不支持关闭|cannot be disabled|always think/i.test(msg);
   return { rejectsParam: true, requiresLevel };
 }
 
-/** 发送 /chat/completions 请求；供应商拒绝 thinking 参数时自动降级重试。
- *  降级记忆双写：进程内 Set（热路径零开销）+ 条目 dialect 字段（重启后免重复 400）。
- *  两类拒绝：完全不支持 thinking 参数（删除重试）与「始终思考」只接受
- *  low/high/max（GLM-5.3 一类，降级 {type:'low'} 以思考模式使用）。 */
+/** 发送 /chat/completions 请求；供应商拒绝 thinking 参数时自动降级重试。 */
 async function requestChatWithThinkingFallback(
   body: Record<string, unknown>,
   capabilityKey: string,
   opts: LlmRequestOptions,
 ): Promise<LlmHttpResponse> {
+  restoreThinkingLevelModels();
   if (body.thinking) {
-    if (thinkingUnsupported.has(capabilityKey) || opts.dialect?.thinkingRejected) {
+    if (thinkingUnsupported.has(capabilityKey)) {
       delete body.thinking;
-    } else if (thinkingLevelOnly.has(capabilityKey) || opts.dialect?.thinkingLevelOnly) {
-      // 必须思考的模型：以思考模式（low 档）调用
+    } else if (thinkingLevelOnly.has(capabilityKey)) {
+      // 必须思考的模型：直接以思考模式（low 档）调用；思考内容计入 completion
+      // tokens，会挤占正文预算——按基础预算的 2.5 倍放大 max_tokens，避免
+      // 「finish_reason=length 且 content 为空」的截断。
       body.thinking = { type: 'low' };
+      amplifyMaxTokensForThinking(body);
     }
   }
   try {
@@ -469,18 +534,27 @@ async function requestChatWithThinkingFallback(
     const { rejectsParam, requiresLevel } = thinkingErrorDetail(error);
     if (!rejectsParam) throw error;
     if (requiresLevel) {
-      // 始终思考模型：disabled → low（实测 GLM-5.3 接受 low 且正常输出 content）
+      // 始终思考模型：以思考模式（low 档）重试并持久化记忆
       body.thinking = { type: 'low' };
+      amplifyMaxTokensForThinking(body);
       const res = await request('/chat/completions', body, opts);
-      thinkingLevelOnly.add(capabilityKey);
-      if (opts.entryId) markEntryDialect(opts.entryId, { thinkingLevelOnly: true });
+      persistThinkingLevelModel(capabilityKey);
       return res;
     }
     delete body.thinking;
     const res = await request('/chat/completions', body, opts);
     thinkingUnsupported.add(capabilityKey);
-    if (opts.entryId) markEntryDialect(opts.entryId, { thinkingRejected: true });
     return res;
+  }
+}
+
+/** 思考模型的 max_tokens 放大：思考内容与正文共享 completion 预算，
+ *  非思考模型 8000 的预算在思考模式下正文只剩零头（实测 low 档思考动辄
+ *  9k-12k tokens）。按 4 倍放大、上限 32k，网关实测接受 128k 也不报错。 */
+function amplifyMaxTokensForThinking(body: Record<string, unknown>): void {
+  const cur = body.max_tokens;
+  if (typeof cur === 'number' && cur < 32_000) {
+    body.max_tokens = Math.min(32_000, Math.ceil(cur * 4));
   }
 }
 
@@ -493,6 +567,8 @@ type ChatOptions = {
   tag?: string;
   usageContext?: LlmRequestOptions['usageContext'];
   disableThinking?: boolean;
+  /** 网络层重试期间刷新（任务心跳） */
+  onRetry?: () => void;
 };
 
 /** 非流式对话 */
@@ -517,14 +593,11 @@ export async function chat(
     body.thinking = { type: 'disabled' };
     // 关闭思考后 temperature/top_p 才有效（思考模式下这些参数被忽略）
   }
-  const active = getActiveChat();
   const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat',
     usageContext: opts?.usageContext,
-    protocol: active?.protocol,
-    entryId: active?.id,
-    dialect: active?.dialect,
+    onRetry: opts?.onRetry,
   });
   const json = await readJsonResponse(res);
   const choice = json?.choices?.[0];
@@ -576,14 +649,11 @@ export async function chatWithTools(
   if (opts?.topP !== undefined) body.top_p = opts.topP;
   // 结构化输出场景关闭推理，避免 reasoning_content 占满 max_tokens 导致 content 为空
   if (opts?.disableThinking) body.thinking = { type: 'disabled' };
-  const active = getActiveChat();
   const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat-tools',
     usageContext: opts?.usageContext,
-    protocol: active?.protocol,
-    entryId: active?.id,
-    dialect: active?.dialect,
+    onRetry: opts?.onRetry,
   });
   const payload = await readJsonResponse(res);
   const choice = payload?.choices?.[0];
@@ -641,10 +711,11 @@ export async function chatJson<T = any>(
       console.warn(`[llm.chatJson:${tag}] 请求失败`, e.message);
       if (opts?.signal?.aborted) throw e;
       if (attempt < retries) {
-        // 截断错误：翻倍 max_tokens 重试，不追加多余消息（问题在长度而非内容）
+        // 截断错误：翻倍 max_tokens 重试，不追加多余消息（问题在长度而非内容）；
+        // 思考模型经 amplify 已放大到 20k，重试再翻倍需突破该上限
         if (e.message.includes('截断')) {
           retryReason = 'output_truncated';
-          curMaxTokens = (curMaxTokens || 4000) * 2;
+          curMaxTokens = Math.min(48_000, (curMaxTokens || 4000) * 2);
           continue;
         }
         retryReason = 'request_failed';
@@ -666,7 +737,7 @@ export async function chatJson<T = any>(
       if (looksTruncated) {
         // 截断：翻倍 max_tokens 重试，不追加消息
         retryReason = 'json_truncated';
-        curMaxTokens = (curMaxTokens || 4000) * 2;
+        curMaxTokens = Math.min(48_000, (curMaxTokens || 4000) * 2);
         continue;
       }
       retryReason = 'json_parse_failed';
@@ -782,7 +853,7 @@ export async function chatToolSchema<T>(
           (trimmed.startsWith('{') && !trimmed.endsWith('}')) ||
           (trimmed.startsWith('[') && !trimmed.endsWith(']'));
         if (looksTruncated) {
-          curMaxTokens = (curMaxTokens || 4000) * 2;
+          curMaxTokens = Math.min(48_000, (curMaxTokens || 4000) * 2);
         }
         current = [
           ...current,
@@ -834,7 +905,7 @@ function tryParseJson<T>(raw: string): { ok: true; value: T } | { ok: false } {
 
 const streamUsageUnsupported = new Set<string>();
 
-/** 流式对话：逐段回调。anthropic 协议走事件型 SSE，由 adapter 的流解析器统一差异。 */
+/** 流式对话：逐段回调 */
 export async function chatStream(
   messages: ChatMessage[],
   onDelta: (text: string) => void,
@@ -849,35 +920,31 @@ export async function chatStream(
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
-  const active = getActiveChat();
   const capabilityKey = `${cfg.baseUrl}|${cfg.chatModel}`;
-  const streamOpts = {
-    signal: opts?.signal,
-    tag: opts?.tag || 'chat-stream',
-    usageContext: opts?.usageContext,
-    protocol: active?.protocol,
-    entryId: active?.id,
-  } satisfies LlmRequestOptions;
-  const useStreamOptions =
-    !streamUsageUnsupported.has(capabilityKey) && !(active?.dialect?.streamUsageRejected);
-  if (useStreamOptions && active?.protocol !== 'anthropic') {
+  if (!streamUsageUnsupported.has(capabilityKey)) {
     body.stream_options = { include_usage: true };
   }
   let res: LlmHttpResponse;
   try {
-    res = await request('/chat/completions', body, streamOpts);
+    res = await request('/chat/completions', body, {
+      signal: opts?.signal,
+      tag: opts?.tag || 'chat-stream',
+      usageContext: opts?.usageContext,
+    });
   } catch (error) {
     const unsupported =
       error instanceof LlmError &&
       [400, 422].includes(error.status || 0);
     if (!unsupported || !body.stream_options) throw error;
     delete body.stream_options;
-    res = await request('/chat/completions', body, streamOpts);
+    res = await request('/chat/completions', body, {
+      signal: opts?.signal,
+      tag: opts?.tag || 'chat-stream',
+      usageContext: opts?.usageContext,
+    });
     streamUsageUnsupported.add(capabilityKey);
-    if (active?.id) markEntryDialect(active.id, { streamUsageRejected: true });
   }
   if (!res.response.body) throw new LlmError('LLM 无流式响应体');
-  const parser = res.adapter.createStreamParser();
   const reader = res.response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -901,12 +968,18 @@ export async function chatStream(
     for (const line of lines) {
       const t = line.trim();
       if (!t.startsWith('data:')) continue;
-      const parsed = parser.feed(t.slice(5).trim());
-      if (parsed.done) return;
-      if (parsed.text) onDelta(parsed.text);
-      if (!usageCaptured && parsed.usage) {
-        captureUsage(res, parsed.usage);
-        usageCaptured = true;
+      const data = t.slice(5).trim();
+      if (data === '[DONE]') return;
+      try {
+        const json = JSON.parse(data);
+        const delta = json?.choices?.[0]?.delta?.content;
+        if (typeof delta === 'string' && delta) onDelta(delta);
+        if (!usageCaptured && json?.usage) {
+          captureUsage(res, json.usage);
+          usageCaptured = true;
+        }
+      } catch {
+        /* 忽略不完整行 */
       }
     }
   }
@@ -1105,33 +1178,28 @@ export async function testModel(
   kind: 'chat' | 'embedding' | 'document',
   options: { imageChallenge?: ImageCapabilityChallenge } = {},
 ): Promise<{ ok: boolean; error?: string }> {
-  // 前端带回的 entry.apiKey 可能是掩码（列表回显不再下发明文），测试前按 id 补全库中原值
-  const resolved: ModelEntry = { ...entry, apiKey: resolveEntrySecretKey(entry) };
-  if (!resolved.apiKey) return { ok: false, error: '未填写 API Key' };
-  const baseUrl = resolved.baseUrl.replace(/\/+$/, '');
+  if (!entry.apiKey) return { ok: false, error: '未填写 API Key' };
+  const baseUrl = entry.baseUrl.replace(/\/+$/, '');
   if (!baseUrl) return { ok: false, error: '未填写 Base URL' };
-  if (!resolved.model) return { ok: false, error: '未填写模型名' };
+  if (!entry.model) return { ok: false, error: '未填写模型名' };
   try {
     if (kind === 'chat') {
       // 带 thinking 与提炼管线的结构化请求参数面对齐（json 请求一律关闭思考）；
       // 不支持该参数的供应商自动降级，避免「测试通过但提炼报 400」的盲区。
       const body: Record<string, unknown> = {
-        model: resolved.model,
+        model: entry.model,
         messages: [{ role: 'user', content: 'ping' }],
         temperature: 0.3,
         max_tokens: 64,
         thinking: { type: 'disabled' },
       };
-      const res = await requestChatWithThinkingFallback(body, `${baseUrl}|${resolved.model}`, {
+      const res = await requestChatWithThinkingFallback(body, `${baseUrl}|${entry.model}`, {
         baseUrl,
-        apiKey: resolved.apiKey,
+        apiKey: entry.apiKey,
         timeoutMs: 30_000,
-        provider: resolved.provider,
-        model: resolved.model,
+        provider: entry.provider,
+        model: entry.model,
         tag: 'connection-test-chat',
-        protocol: resolved.protocol,
-        entryId: resolved.id,
-        dialect: resolved.dialect,
       });
       const json = await readJsonResponse(res);
       // 只校验响应结构合法：有 choices 数组且含 message。content 可为空字符串
@@ -1144,24 +1212,23 @@ export async function testModel(
     } else if (kind === 'embedding') {
       const res = await request(
         '/embeddings',
-        buildEmbeddingRequestBody(resolved, ['ping']),
+        buildEmbeddingRequestBody(entry, ['ping']),
         {
           baseUrl,
-          apiKey: resolved.apiKey,
+          apiKey: entry.apiKey,
           timeoutMs: 30_000,
-          provider: resolved.provider,
-          model: resolved.model,
+          provider: entry.provider,
+          model: entry.model,
           operation: 'embedding',
           tag: 'connection-test-embedding',
-          entryId: resolved.id,
         }
       );
       const json = await readJsonResponse(res);
       if (!Array.isArray(json?.data)) return { ok: false, error: '返回格式异常（无 data 数组）' };
-      validateEmbedding(json.data[0]?.embedding, resolved.dim);
+      validateEmbedding(json.data[0]?.embedding, entry.dim);
       return { ok: true };
     } else {
-      const capability = await probeImageInput(resolved, {
+      const capability = await probeImageInput(entry, {
         force: true,
         challenge: options.imageChallenge,
         timeoutMs: 45_000,

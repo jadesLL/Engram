@@ -112,10 +112,14 @@ export async function settingsRoutes(app: FastifyInstance) {
   });
 
   app.put('/api/settings', async (req) => {
-    const body = req.body as Record<string, string>;
+    const body = req.body as Record<string, unknown>;
     const prevAcsMode = getSetting('acs_mode') || 'standard';
     for (const k of PUBLIC_SETTINGS) {
-      if (body[k] !== undefined) setSetting(k, String(body[k]));
+      const v = body[k];
+      if (v === undefined) continue;
+      // JSON 类配置（*_models / feishu_config）客户端可能直接传数组/对象而非 JSON 字符串；
+      // String(v) 会把条目变成 "[object Object]" 损坏配置，统一在这里序列化兜底。
+      setSetting(k, typeof v === 'string' ? v : JSON.stringify(v));
     }
     // 飞书凭证变更后清除 token 缓存并用新凭证重连长连接，无需重启服务
     if (body['feishu_config'] !== undefined) {

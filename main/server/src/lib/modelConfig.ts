@@ -13,6 +13,8 @@ export type ImageInputSource = 'stored' | 'catalog' | 'metadata' | 'probe';
 export interface ModelDialect {
   /** 供应商对 thinking 参数返回 400，请求不再携带 */
   thinkingRejected?: boolean;
+  /** 「始终思考」模型（GLM-5.3 一类）：拒绝 disabled 只接受 low/high/max，固定 low 档 */
+  thinkingLevelOnly?: boolean;
   /** 供应商对 stream_options 返回 400，流式请求不再携带 */
   streamUsageRejected?: boolean;
 }
