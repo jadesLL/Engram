@@ -177,6 +177,28 @@ async function request(
   const baseUrl = opts?.baseUrl || cfg.baseUrl;
   const apiKey = opts?.apiKey || cfg.apiKey;
   if (!apiKey) throw new LlmError('尚未配置 LLM API Key（设置页 → LLM）');
+  try {
+    return await requestOnce(path, body, opts, baseUrl, apiKey);
+  } catch (error: any) {
+    // 网络抖动/超时不属于内容问题，同参数静默重试一次再上抛，
+    // 避免上层把瞬时网络故障固化成整条任务的失败。
+    const retriable = error instanceof LlmError
+      && !opts?.signal?.aborted
+      && (error.message === 'LLM 请求超时' || error.message.startsWith('LLM 请求失败 5'));
+    if (!retriable) throw error;
+    console.warn(`[llm.request] ${error.message}，3 秒后自动重试一次`);
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    return await requestOnce(path, body, opts, baseUrl, apiKey);
+  }
+}
+
+async function requestOnce(
+  path: string,
+  body: unknown,
+  opts: LlmRequestOptions | undefined,
+  baseUrl: string,
+  apiKey: string,
+): Promise<LlmHttpResponse> {
   const startedAt = Date.now();
   const controller = new AbortController();
   const signal = opts?.signal
@@ -683,6 +705,7 @@ export async function chatToolSchema<T>(
   const attempts = opts?.retries ?? 1;
   let current = messages;
   let lastError = 'tool schema validation failed';
+  let curMaxTokens = opts?.maxTokens;
   for (let attempt = 0; attempt <= attempts; attempt++) {
     opts?.signal?.throwIfAborted();
     const def: ChatToolDefinition = {
@@ -695,6 +718,7 @@ export async function chatToolSchema<T>(
     };
     const result = await chatWithTools(current, [def], {
       ...opts,
+      maxTokens: curMaxTokens,
       disableThinking: true,
       tag,
     });
@@ -721,6 +745,15 @@ export async function chatToolSchema<T>(
       lastError = `工具参数无法解析为 JSON（前80字: ${call.function.arguments.slice(0, 80).replace(/\n/g, ' ')}）`;
       console.warn(`[llm.chatToolSchema:${tag}] 参数解析失败`, lastError);
       if (attempt < attempts) {
+        // 参数以 { 或 [ 开头但无法解析时大概率是 max_tokens 截断：翻倍重试，
+        // 与 chatJson 的截断策略对齐；追加上一轮失败参数反而会把截断样本再灌进上下文。
+        const trimmed = call.function.arguments.trim();
+        const looksTruncated =
+          (trimmed.startsWith('{') && !trimmed.endsWith('}')) ||
+          (trimmed.startsWith('[') && !trimmed.endsWith(']'));
+        if (looksTruncated) {
+          curMaxTokens = (curMaxTokens || 4000) * 2;
+        }
         current = [
           ...current,
           { role: 'assistant', content: '', tool_calls: [{ id: call.id, type: 'function', function: { name: call.function.name, arguments: call.function.arguments } }] },

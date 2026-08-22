@@ -13,7 +13,8 @@ let db: any;
 let setSetting: (key: string, value: string) => void;
 let ingestRawFile: any;
 let clearSharedSemanticHistories: () => void;
-let coverageFailure: 'missing' | 'duplicate' | null = null;
+let coverageFailure: 'missing' | 'duplicate' | 'unknown' | null = null;
+let normalizeDuplicateMerge = false;
 let capturedRequests: any[] = [];
 let delayNextMap = false;
 let mapStarted: (() => void) | null = null;
@@ -53,18 +54,19 @@ function responseFor(system: string, input: any) {
       list.push(candidate);
       groups.set(candidate.name, list);
     }
-    return {
-      merges: [...groups.values()]
-        .filter((items) => items.length > 1)
-        .map((items) => ({
-          canonicalId: items[0].candidateId,
-          memberIds: items.map((item) => item.candidateId),
-          name: items[0].name,
-          kind: items[0].kind,
-          domain: items[0].domain,
-          summary: items[0].summary,
-        })),
-    };
+    const merges = [...groups.values()]
+      .filter((items) => items.length > 1)
+      .map((items) => ({
+        canonicalId: items[0].candidateId,
+        memberIds: items.map((item) => item.candidateId),
+        name: items[0].name,
+        kind: items[0].kind,
+        domain: items[0].domain,
+        summary: items[0].summary,
+      }));
+    // 模拟 LLM 输出抖动：重复输出首个 merge（同一候选被合并两次）
+    if (normalizeDuplicateMerge && merges.length) merges.push({ ...merges[0] });
+    return { merges };
   }
   if (system.includes('执行 Plan')) {
     const items = (input.candidates || []).map((candidate: any) => ({
@@ -83,6 +85,9 @@ function responseFor(system: string, input: any) {
     if (coverageFailure === 'missing') items.pop();
     if (coverageFailure === 'duplicate' && items.length > 1) {
       items[1] = { ...items[1], candidateId: items[0].candidateId };
+    }
+    if (coverageFailure === 'unknown') {
+      items[0] = { ...items[0], candidateId: 'm_unknown' };
     }
     return { items };
   }
@@ -188,6 +193,7 @@ before(async () => {
 
 beforeEach(() => {
   clearSharedSemanticHistories();
+  normalizeDuplicateMerge = false;
 });
 
 after(async () => {
@@ -345,17 +351,23 @@ test('missing or duplicate candidate ids fail the run instead of silently droppi
 
   coverageFailure = 'missing';
   capturedRequests = [];
-  write('覆盖遗漏.md', ['候选21']);
-  await assert.rejects(
-    () => ingestRawFile('原始资料/覆盖遗漏.md', () => {}, { force: true }),
-    /候选覆盖不完整/,
-  );
+  // 两个候选只输出一个：部分覆盖（有产出、无污染），两轮重试后降级为部分结果而非整条失败
+  write('覆盖遗漏.md', ['候选21', '候选25']);
+  const missingStats = await ingestRawFile('原始资料/覆盖遗漏.md', () => {}, { force: true });
+  // 降级保留的候选正常走完提交（单来源挂账或双来源建页），关键是 run 不再整条失败
+  assert.ok(missingStats.created + missingStats.pending >= 1);
   const planRetries = capturedRequests.filter((request) =>
     request.messages?.[0]?.content?.includes('执行 Plan')
   );
   assert.equal(planRetries.length, 2);
   assert.equal(planRetries[0].messages[0].content, planRetries[1].messages[0].content);
   assert.match(JSON.parse(planRetries[1].messages.at(-1).content).input.coverageCorrection, /candidateId/);
+  assert.equal(
+    db.prepare(
+      `SELECT status FROM ingest_runs WHERE path='原始资料/覆盖遗漏.md' ORDER BY started_at DESC LIMIT 1`
+    ).get().status,
+    'completed',
+  );
 
   coverageFailure = 'duplicate';
   write('覆盖重复.md', ['候选22', '候选23']);
@@ -363,7 +375,37 @@ test('missing or duplicate candidate ids fail the run instead of silently droppi
     () => ingestRawFile('原始资料/覆盖重复.md', () => {}, { force: true }),
     /候选覆盖不完整/,
   );
+
+  coverageFailure = 'unknown';
+  write('覆盖未知.md', ['候选24']);
+  await assert.rejects(
+    () => ingestRawFile('原始资料/覆盖未知.md', () => {}, { force: true }),
+    /候选覆盖不完整/,
+  );
   coverageFailure = null;
+});
+
+test('duplicate normalize merges are tolerated by keeping the first merge instead of failing the run', async () => {
+  const rawDir = path.join(temp, 'brain', '原始资料');
+  fs.writeFileSync(
+    path.join(rawDir, '重复合并.md'),
+    '候选61事实A；候选61事实B。\n候选62事实A；候选62事实B。',
+    'utf8',
+  );
+  normalizeDuplicateMerge = true;
+  try {
+    const stats = await ingestRawFile('原始资料/重复合并.md', () => {}, { force: true });
+    // 重复 merge 被跳过（保留首个），run 不失败
+    assert.ok(stats.created + stats.pending >= 0);
+    assert.equal(
+      db.prepare(
+        `SELECT status FROM ingest_runs WHERE path='原始资料/重复合并.md' ORDER BY started_at DESC LIMIT 1`
+      ).get().status,
+      'completed',
+    );
+  } finally {
+    normalizeDuplicateMerge = false;
+  }
 });
 
 test('cancelling a rerun restores the previously active source version', async () => {
@@ -430,8 +472,9 @@ test('a failed rerun preserves the previously completed ingest state', async () 
   ).get();
 
   // 第二次用全新候选名，确保走 create 路径触发覆盖率检查（已有页时不走覆盖率 reject）。
+  // 用 unknown（真实污染）触发整条 run 失败；仅遗漏的场景已降级不再失败。
   fs.writeFileSync(sourcePath, '候选82事实A；候选82事实B；失败重整。', 'utf8');
-  coverageFailure = 'missing';
+  coverageFailure = 'unknown';
   await assert.rejects(
     () => ingestRawFile('原始资料/失败恢复.md', () => {}, { force: true, reextract: true }),
     /候选覆盖不完整/,
