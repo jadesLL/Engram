@@ -169,7 +169,7 @@ async function jsonStage<T>(
     input,
     temperature: 0.1,
     maxTokens,
-    retries: 1,
+    retries: 2,
     signal,
     // 网关挂起 + 网络层重试的累计时长可能超探针窗口，重试期间也刷新心跳
     onRetry: heartbeat,

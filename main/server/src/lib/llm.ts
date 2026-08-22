@@ -184,9 +184,9 @@ async function request(
           || /^LLM 请求失败 408/.test(error.message)
           || /^LLM 请求失败 429/.test(error.message)
           || /^LLM 请求失败 40[13]/.test(error.message));
-      if (!retriable || nth >= 3) throw error;
-      const delay = 3_000 * nth;
-      console.warn(`[llm.request] ${error.message.slice(0, 120)}，${delay / 1000} 秒后自动重试（第 ${nth + 1}/3 次）`);
+      if (!retriable || nth >= 5) throw error;
+      const delay = Math.min(15_000, 3_000 * nth);
+      console.warn(`[llm.request] ${error.message.slice(0, 120)}，${delay / 1000} 秒后自动重试（第 ${nth + 1}/5 次）`);
       // 网关挂起 + 多级重试的累计时长可能很长（150s × 4 次），重试前刷新
       // 调用方心跳，防止无进度探针误杀仍在重试链中的任务
       try { opts?.onRetry?.(); } catch { /* 心跳失败不阻塞重试 */ }

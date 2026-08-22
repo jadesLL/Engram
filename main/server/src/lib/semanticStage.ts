@@ -200,7 +200,7 @@ export async function runSemanticStage<T>(options: SemanticStageInput<T>): Promi
     const stageOpts = {
       temperature: options.temperature ?? 0.1,
       maxTokens: options.maxTokens ?? 8000,
-      retries: options.retries ?? 1,
+      retries: options.retries ?? 2,
       tag: options.tag,
       signal: options.signal,
       onRetry: options.onRetry,
