@@ -150,7 +150,7 @@ async function jsonStage<T>(
   heartbeat?: () => void,
 ): Promise<T> {
   // 阶段内每次 LLM 调用前刷新任务 updated_at，防止 abortStaleJobs 的
-  // 「5 分钟无进度」探针误杀长阶段（Map 多分段/Critic 多轮时单阶段可超 5 分钟）。
+  // 「20 分钟无进度」探针误杀长阶段（Map 多分段/Critic 多轮时单阶段可超 5 分钟）。
   heartbeat?.();
   return runSemanticStage<T>({
     scope: 'ingest',
@@ -654,7 +654,7 @@ export async function ingestRawFile(
   options.signal?.throwIfAborted();
   onProgress({ stage: '解析', progress: 2, detail: relPath });
   // 心跳：仅刷新任务 updated_at（undefined 字段被 updateJob 跳过），
-  // 让 5 分钟无进度探针在阶段内多次 LLM 调用期间保持存活。
+  // 让无进度探针在阶段内多次 LLM 调用期间保持存活。
   const heartbeat = () => onProgress({ stage: '解析', progress: 2, detail: relPath });
   let document: StructuredDocument;
   try {

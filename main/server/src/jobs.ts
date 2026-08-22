@@ -140,7 +140,7 @@ const handlers: Record<string, JobHandler> = {
       String(synthesisId),
       String(inputHash),
       context.signal,
-      // 每轮 LLM 调用前上报进度刷新 updated_at，避免 abortStaleJobs 的 5 分钟无进度探针
+      // 每轮 LLM 调用前上报进度刷新 updated_at，避免 abortStaleJobs 的 20 分钟无进度探针
       // 误杀正在多轮自纠错的合成任务（单次 LLM 最长 120s，多轮累计易超 5 分钟）。
       (stage, round) => update({
         stage: `整页综合·${stage}`,
@@ -282,10 +282,10 @@ export function recoverStaleJobs() {
   db.prepare(
     `UPDATE jobs SET status = 'pending', run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'
-       AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at)) > julianday('now', '-5 minutes')`
+       AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at)) > julianday('now', '-20 minutes')`
   ).run(now());
   db.prepare(
-    `UPDATE jobs SET status = 'failed', error = '执行超时（超过5分钟无进度，疑似中断未恢复）',
+    `UPDATE jobs SET status = 'failed', error = '执行超时（超过20分钟无进度，疑似中断未恢复）',
        run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'`
   ).run(now());
@@ -696,17 +696,20 @@ export function retryFailedJobs(): { retried: number; failed: number; errors: st
 }
 
 function abortStaleJobs(): void {
+  // 思考模型（thinking low）单次 LLM 调用 2-4 分钟，单阶段多轮调用累计可达 10 分钟；
+  // 心跳只在「LLM 调用前」上报，单次长调用期间无法刷新，5 分钟探针会误杀正常
+  // 推进的任务。放宽到 20 分钟，真正的死任务仍会被兜底清理。
   const stale = db.prepare(
     `SELECT * FROM jobs WHERE status='running'
      AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at))
-       <= julianday('now','-5 minutes')`
+       <= julianday('now','-20 minutes')`
   ).all() as any[];
   for (const job of stale) {
     activeExecutions.get(job.id)?.controller.abort();
     db.prepare(
       `UPDATE jobs SET status='failed',stage='失败',
-       error='执行超时（超过5分钟无进度）',
-       detail='执行超时（超过5分钟无进度）',
+       error='执行超时（超过20分钟无进度）',
+       detail='执行超时（超过20分钟无进度）',
        run_token='',cancel_requested=0,updated_at=?
        WHERE id=? AND status='running'`
     ).run(now(), job.id);
