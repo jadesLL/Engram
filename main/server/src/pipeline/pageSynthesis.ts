@@ -86,10 +86,26 @@ const synthesisOutputSchema = z.object({
   manualChangesPreserved: z.boolean().default(true),
 });
 
+/** 模型有时会把 unsupported/conflicts 输出成对象数组（含 candidateId/reason 等结构）而非
+ *  提示词要求的字符串数组；逐元素序列化为可读文本，避免整轮校验被 schema 拒绝后重试仍失败。 */
+function stringifyIssueItems(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((item) => {
+    if (typeof item === 'string') return item;
+    if (item && typeof item === 'object') {
+      const parts = Object.entries(item as Record<string, unknown>)
+        .filter(([, v]) => v !== undefined && v !== null && v !== '')
+        .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`);
+      return parts.join('；') || JSON.stringify(item);
+    }
+    return String(item);
+  });
+}
+
 const synthesisVerifySchema = z.object({
   pass: z.boolean(),
-  unsupported: z.array(z.string()).default([]),
-  conflicts: z.array(z.string()).default([]),
+  unsupported: z.preprocess(stringifyIssueItems, z.array(z.string()).max(50).default([])),
+  conflicts: z.preprocess(stringifyIssueItems, z.array(z.string()).max(50).default([])),
   manualChangesPreserved: z.boolean().default(true),
 });
 

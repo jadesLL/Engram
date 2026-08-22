@@ -147,7 +147,11 @@ async function jsonStage<T>(
   history?: ChatMessage[],
   cacheContextMode: SemanticCacheContextMode = 'once',
   signal?: AbortSignal,
+  heartbeat?: () => void,
 ): Promise<T> {
+  // 阶段内每次 LLM 调用前刷新任务 updated_at，防止 abortStaleJobs 的
+  // 「5 分钟无进度」探针误杀长阶段（Map 多分段/Critic 多轮时单阶段可超 5 分钟）。
+  heartbeat?.();
   return runSemanticStage<T>({
     scope: 'ingest',
     refId: runId,
@@ -293,6 +297,7 @@ async function mapChunk(
   history: ChatMessage[],
   cacheContextMode: SemanticCacheContextMode = 'once',
   signal?: AbortSignal,
+  heartbeat?: () => void,
 ): Promise<Candidate[]> {
   signal?.throwIfAborted();
   try {
@@ -313,6 +318,7 @@ async function mapChunk(
       history,
       cacheContextMode,
       signal,
+      heartbeat,
     );
     const valid = validateFacts(out.candidates, [chunk]);
     if (out.candidates.length >= MAP_BATCH_LIMIT) {
@@ -383,6 +389,7 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
   history?: ChatMessage[],
   cacheContextMode: SemanticCacheContextMode = 'once',
   signal?: AbortSignal,
+  heartbeat?: () => void,
 ): Promise<T> {
   let coverageError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -406,15 +413,40 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
       history,
       attempt ? 'once' : cacheContextMode,
       signal,
+      heartbeat,
     );
     try {
       exactCandidateCoverage(expected, result.items, stage);
       return result;
     } catch (error) {
       coverageError = error;
+      // 部分覆盖（仅遗漏、无未知/重复）可降级：记录后继续下一轮重试，两轮仍失败时兜底返回
+      const message = String((error as Error)?.message || error);
+      const unknownIds = /未知 ([^；]*)/.exec(message)?.[1] || '';
+      const duplicateIds = /重复 ([^；]*)/.exec(message)?.[1] || '';
+      const hasUnknown = Boolean(unknownIds.replace(/无|,/g, '').trim());
+      const hasDuplicate = Boolean(duplicateIds.replace(/无|,/g, '').trim());
+      if (!hasUnknown && !hasDuplicate && result.items?.length) {
+        console.warn(`[ingest] ${stage} 覆盖不全已降级：${message}`);
+        coverageError = new CandidateCoverageError<T>(message, result);
+      }
     }
   }
+  // 两轮都覆盖不全时降级：只要没出现"未知/重复"污染，就丢弃遗漏项保留已产出部分，
+  // 让管线继续。漏写个别条目远好于整条 ingest run 失败（用户侧表现为文件提炼报错）。
+  if (isCoverageResult<T>(coverageError)) return coverageError.result;
   throw coverageError;
+}
+
+/** coveredItemsStage 的覆盖校验失败对象：携带可降级的部分结果 */
+class CandidateCoverageError<T> extends Error {
+  constructor(message: string, readonly result: T) {
+    super(message);
+  }
+}
+
+function isCoverageResult<T>(error: unknown): error is CandidateCoverageError<T> {
+  return error instanceof CandidateCoverageError;
 }
 
 function compactCandidate(candidate: Candidate): Record<string, unknown> {
@@ -454,6 +486,7 @@ function applyNormalizeMerges(candidates: Candidate[], merges: NormalizeMerge[])
   const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate]));
   const used = new Set<string>();
   const replacements = new Map<string, Candidate>();
+  let skippedDuplicates = 0;
   for (const merge of merges) {
     const memberIds = [...new Set(merge.memberIds)];
     if (!memberIds.includes(merge.canonicalId)) {
@@ -462,8 +495,11 @@ function applyNormalizeMerges(candidates: Candidate[], merges: NormalizeMerge[])
     if (memberIds.some((id) => !byId.has(id))) {
       throw new Error(`Normalize 引用了未知候选：${memberIds.filter((id) => !byId.has(id)).join(',')}`);
     }
+    // 同一候选被多次合并（LLM 输出抖动）时保留首个合并、跳过后续冲突项，
+    // 不再让整条 ingest run 失败——首个 merge 已把成员并成完整候选。
     if (memberIds.some((id) => used.has(id))) {
-      throw new Error(`Normalize 候选被重复合并：${memberIds.filter((id) => used.has(id)).join(',')}`);
+      skippedDuplicates++;
+      continue;
     }
     const members = memberIds.map((id) => byId.get(id)!);
     memberIds.forEach((id) => used.add(id));
@@ -477,6 +513,9 @@ function applyNormalizeMerges(candidates: Candidate[], merges: NormalizeMerge[])
       facts: dedupeFacts(members),
       relations: dedupeCandidateRelations(members),
     });
+  }
+  if (skippedDuplicates > 0) {
+    console.warn(`[ingest] Normalize 跳过 ${skippedDuplicates} 个重复合并项（保留首个合并结果）`);
   }
   const output: Candidate[] = [];
   for (const candidate of candidates) {
@@ -494,6 +533,7 @@ async function normalizeBatch(
   batchIndex: number,
   history: ChatMessage[],
   signal?: AbortSignal,
+  heartbeat?: () => void,
 ): Promise<Candidate[]> {
   const result = await jsonStage<{ merges: NormalizeMerge[] }>(
     runId,
@@ -507,6 +547,7 @@ async function normalizeBatch(
     history,
     'once',
     signal,
+    heartbeat,
   );
   const normalized = applyNormalizeMerges(candidates, result.merges);
   audit(runId, `normalize:${pass}:${batchIndex + 1}`, {
@@ -521,12 +562,13 @@ async function normalizeCandidates(
   runId: string,
   mapped: Candidate[],
   signal?: AbortSignal,
+  heartbeat?: () => void,
 ): Promise<Candidate[]> {
   let candidates: Candidate[] = [];
   const history = createSemanticCacheSession(`ingest-normalize:${runId}`, normalizePrompt);
   const firstPass = batches(mapped, NORMALIZE_BATCH_LIMIT);
   for (let index = 0; index < firstPass.length; index++) {
-    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history, signal));
+    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history, signal, heartbeat));
   }
   if (firstPass.length > 1) {
     const secondPass = candidates.length <= NORMALIZE_BATCH_LIMIT
@@ -534,7 +576,7 @@ async function normalizeCandidates(
       : spreadBatches(candidates, NORMALIZE_BATCH_LIMIT);
     const crossed: Candidate[] = [];
     for (let index = 0; index < secondPass.length; index++) {
-      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index, history, signal));
+      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index, history, signal, heartbeat));
     }
     candidates = crossed;
   }
@@ -611,6 +653,9 @@ export async function ingestRawFile(
 ): Promise<IngestStats> {
   options.signal?.throwIfAborted();
   onProgress({ stage: '解析', progress: 2, detail: relPath });
+  // 心跳：仅刷新任务 updated_at（undefined 字段被 updateJob 跳过），
+  // 让 5 分钟无进度探针在阶段内多次 LLM 调用期间保持存活。
+  const heartbeat = () => onProgress({ stage: '解析', progress: 2, detail: relPath });
   let document: StructuredDocument;
   try {
     document = await loadSourceDocument(relPath);
@@ -724,7 +769,7 @@ export async function ingestRawFile(
       options.signal?.throwIfAborted();
       onProgress({ stage: 'Map', progress: 10 + Math.round(((chunkIndex + 1) / document.chunks.length) * 24), detail: `${chunkIndex + 1}/${document.chunks.length}` });
       const history = createSemanticCacheSession(`ingest-map:${runId}`, mapPrompt);
-      return mapChunk(runId, chunk, titleRoster, history, 'always', options.signal);
+      return mapChunk(runId, chunk, titleRoster, history, 'always', options.signal, heartbeat);
     });
     const rawMapped: Candidate[] = mapResults.flat();
     const mapped = rawMapped.map((candidate, index) => ({
@@ -734,7 +779,7 @@ export async function ingestRawFile(
     audit(runId, 'map', mapped, { chunks: document.chunks.length });
 
     onProgress({ stage: 'Normalize', progress: 38 });
-    const candidates = await normalizeCandidates(runId, mapped, options.signal);
+    const candidates = await normalizeCandidates(runId, mapped, options.signal, heartbeat);
     persistFacts(runId, candidates); audit(runId, 'normalize', candidates, mapped);
     const allowedFactIds = new Set(candidates.flatMap((candidate) => candidate.facts.map((fact) => fact.id)));
     const facts = candidates.flatMap((candidate) => candidate.facts);
@@ -762,6 +807,7 @@ export async function ingestRawFile(
         planHistory,
         index === 0 ? 'always' : 'once',
         options.signal,
+        heartbeat,
       );
       const batchPlan = whitelistFactIds(rawPlan.items, allowedFactIds).items;
       plan.push(...batchPlan);
@@ -791,6 +837,7 @@ export async function ingestRawFile(
         criticHistory,
         index === 0 ? 'always' : 'once',
         options.signal,
+        heartbeat,
       );
       const revised = whitelistFactIds(firstCritique.items, allowedFactIds).items;
       audit(runId, `critic:${index + 1}`, { ...firstCritique, items: revised }, planBatch);
@@ -818,6 +865,7 @@ export async function ingestRawFile(
         criticHistory,
         'once',
         options.signal,
+        heartbeat,
       );
       let reviewedBatch = whitelistFactIds(secondCritique.items, allowedFactIds).items;
       if (!secondCritique.approved) {
@@ -878,6 +926,7 @@ export async function ingestRawFile(
         composeHistory,
         index === 0 ? 'always' : 'once',
         options.signal,
+        heartbeat,
       );
       for (const item of rawComposed.items) contentById.set(item.candidateId, item.content);
       audit(runId, `compose:${index + 1}`, rawComposed, composeInput.items);
@@ -915,6 +964,7 @@ export async function ingestRawFile(
           questionHistory,
           'once',
           options.signal,
+          heartbeat,
         );
         generatedQuestions.push(...result.questions);
         audit(runId, `questions:${index + 1}`, result, candidateBatch.map((item) => item.candidateId));
@@ -964,6 +1014,7 @@ export async function ingestRawFile(
         verifyHistory,
         'once',
         options.signal,
+        heartbeat,
       );
       verifiedItems.push(...result.items);
       audit(runId, `verify:${index + 1}`, result, verifyBatch);
@@ -993,6 +1044,7 @@ export async function ingestRawFile(
           verifyHistory,
           'once',
           options.signal,
+          heartbeat,
         );
         verifiedItems.push(...retried.items);
         audit(runId, `verify:retry:${target.candidateId}`, retried, [target]);

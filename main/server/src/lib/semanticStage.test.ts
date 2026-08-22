@@ -10,7 +10,7 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-semantic-stage-
 process.env.DATA_DIR = temp;
 
 let server: http.Server;
-let failNext = false;
+let failNext = 0;
 let db: any;
 let runSemanticStage: any;
 let createSemanticCacheSession: any;
@@ -21,8 +21,8 @@ before(async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
     capturedRequests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-    if (failNext) {
-      failNext = false;
+    if (failNext > 0) {
+      failNext--;
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'forced semantic failure' } }));
       return;
@@ -79,7 +79,7 @@ test('semantic stages audit both successful and failed model decisions', async (
   });
   assert.deepEqual(result, { answer: '模型结论' });
 
-  failNext = true;
+  failNext = 2; // 网络重试一次后再失败，确保 reject 路径被测到
   await assert.rejects(
     runSemanticStage({
       scope: 'test',
@@ -200,7 +200,7 @@ test('validated semantic turns append to provider history and failed turns do no
   assert.ok(usageRows.every((row: any) => /^[a-f0-9]{64}$/.test(row.prefix_hash)));
 
   const beforeFailure = structuredClone(history);
-  failNext = true;
+  failNext = 2; // 网络重试一次后再失败，确保 reject 路径被测到
   await assert.rejects(
     runSemanticStage({
       scope: 'append-only-test',

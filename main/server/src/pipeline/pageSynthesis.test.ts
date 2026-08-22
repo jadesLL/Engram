@@ -306,6 +306,32 @@ test('self-correction loop rewrites the draft when verify reports unsupported ev
   assert.match(readPage(page.path).content, /自纠错实体有业绩数据/);
 });
 
+test('verify output with object-shaped unsupported entries is stringified instead of failing schema', async () => {
+  const page = createPage('Wiki/实体', '对象式校验实体');
+  writePage(page.path, '# 对象式校验实体\n', { type: 'person' });
+  addSource(page.id, '原始资料/对象式校验来源.md', 'obj-verify-run-1', 'hash-ov1', [
+    { id: 'ovf1', statement: '对象式校验实体负责结构化输出验证。' },
+  ]);
+  // 模型把 unsupported 输出成对象数组（线上 1.1.14 的真实失败形态），第一轮报对象、第二轮通过
+  let verifyCalls = 0;
+  verifyOverride = () => {
+    verifyCalls += 1;
+    return verifyCalls === 1
+      ? {
+          pass: false,
+          unsupported: [{ section: '第一段', reason: '“销售团队”无证据支持' }] as any,
+          conflicts: [],
+          manualChangesPreserved: true,
+        } as any
+      : { pass: true, unsupported: [], conflicts: [], manualChangesPreserved: true };
+  };
+  await runPendingSynthesis(page.id);
+  assert.equal(verifyCalls, 2);
+  const row = db.prepare(`SELECT status FROM page_syntheses WHERE page_id=? ORDER BY id DESC LIMIT 1`).get(page.id);
+  assert.equal(row.status, 'active');
+  assert.match(readPage(page.path).content, /对象式校验实体负责结构化输出验证/);
+});
+
 test('self-correction loop exhausts correction rounds and falls back to conflict', async () => {
   const page = createPage('Wiki/实体', '持续冲突实体');
   writePage(page.path, '# 持续冲突实体\n', { type: 'person' });
