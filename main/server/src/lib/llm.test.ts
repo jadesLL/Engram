@@ -502,6 +502,16 @@ function thinkingRejectedResponse(): Response {
   }), { status: 400, headers: { 'Content-Type': 'application/json' } });
 }
 
+function thinkingRejectedUpstreamResponse(): Response {
+  // 中转网关把 thinking 拒绝包装成 502 upstream_error 上抛的实际报错
+  return new Response(JSON.stringify({
+    error: {
+      message: '该模型始终思考，不支持关闭思考；请使用 low、high 或 max。 (type: upstream_error)',
+      type: 'upstream_error',
+    },
+  }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+}
+
 test('chatJson drops the thinking param after a 400 and remembers it per model', async () => {
   activateChat('https://ark-fallback.example/api/v3');
   const bodies: Record<string, any>[] = [];
@@ -521,6 +531,22 @@ test('chatJson drops the thinking param after a 400 and remembers it per model',
   await chatModule.chatJson([{ role: 'user', content: '再来一次' }], { tag: 'thinking-fallback-2' });
   assert.equal(bodies.length, 3);
   assert.equal(bodies[2].thinking, undefined);
+});
+
+test('chatJson drops the thinking param when a gateway wraps the rejection as 502 upstream_error', async () => {
+  activateChat('https://gateway-502.example/v1');
+  const bodies: Record<string, any>[] = [];
+  mockChatEndpoint(bodies, (index) =>
+    index === 0 ? thinkingRejectedUpstreamResponse() : chatOkResponse('{"ok":true}'));
+  const chatModule = await import('./llm.js');
+
+  const result = await chatModule.chatJson(
+    [{ role: 'user', content: '生成 JSON' }],
+    { tag: 'thinking-fallback-502' },
+  );
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
+  assert.equal(bodies[1].thinking, undefined);
 });
 
 test('chatJson keeps the error when a 400 is unrelated to thinking', async () => {

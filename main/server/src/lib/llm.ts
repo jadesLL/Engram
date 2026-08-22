@@ -189,7 +189,11 @@ async function request(
   } catch (error: any) {
     // 网络抖动/超时不属于内容问题，同参数静默重试一次再上抛，
     // 避免上层把瞬时网络故障固化成整条任务的失败。
-    const retriable = error instanceof LlmError
+    // 例外：thinking 参数被中转网关以 502 upstream_error 拒绝时，同参重试必然复现，
+    // 直接上抛给 requestChatWithThinkingFallback 删参重试，省一次 3 秒无效等待。
+    const isThinkingUpstreamRejection = rejectsThinkingParam(error) && (body as any)?.thinking;
+    const retriable = !isThinkingUpstreamRejection
+      && error instanceof LlmError
       && !opts?.signal?.aborted
       && (error.message === 'LLM 请求超时' || error.message.startsWith('LLM 请求失败 5'));
     if (!retriable) throw error;
@@ -438,15 +442,19 @@ export async function probeImageInput(
 
 /** 已确认不支持 thinking 参数的模型（key 为 baseUrl|model）。部分供应商（如火山方舟上的
  *  GLM/Kimi 等非思考模型）对 thinking 参数直接返回 400，与 stream_options 同构：删除该
- *  参数重试一次并记忆，进程内后续请求不再携带；重启后首个请求多一次 400 往返。 */
+ *  参数重试一次并记忆，进程内后续请求不再携带；重启后首个请求多一次 400 往返。部分中转
+ *  网关把同样的错误包装成 502 upstream_error 上抛，判定时一并覆盖（见 rejectsThinkingParam）。 */
 const thinkingUnsupported = new Set<string>();
 
+/** 供应商明确拒绝 thinking 参数的判定：400/422 直接拒绝，或 502 upstream_error
+ *  的消息里点名 thinking（如火山方舟系中转「该模型始终思考，不支持关闭思考」）。 */
 function rejectsThinkingParam(error: unknown): boolean {
-  return (
-    error instanceof LlmError &&
-    [400, 422].includes(error.status || 0) &&
-    /thinking/i.test(error.message || '')
-  );
+  if (!(error instanceof LlmError)) return false;
+  const status = error.status || 0;
+  // 中转网关的中文报错只说「不支持关闭思考」，未必含英文 thinking 字样
+  const message = error.message || '';
+  const mentionsThinking = /thinking|思考/i.test(message);
+  return ([400, 422].includes(status) || (status === 502 && /upstream_error/i.test(message))) && mentionsThinking;
 }
 
 /** 发送 /chat/completions 请求；供应商拒绝 thinking 参数时自动降级重试。 */
