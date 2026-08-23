@@ -214,7 +214,9 @@ function saveKindEntries(kind: ModelKind, entries: ModelEntry[] | undefined): vo
   entries.forEach((entry, index) => {
     const row = entryToRow(entry, kind, index);
     const prev = existing.get(row.id);
-    if (prev && !row.api_key) row.api_key = prev.api_key;
+    // 空 key 或掩码回传（列表通道脱敏下发后原样保存）都视为沿用库中原值，
+    // 防止掩码字面量覆盖明文
+    if (prev && (!row.api_key || row.api_key.includes('*'))) row.api_key = prev.api_key;
     if (prev && !entry.dialect) row.dialect = prev.dialect;
     insert.run(row as unknown as Record<string, unknown>);
   });

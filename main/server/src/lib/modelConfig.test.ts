@@ -211,6 +211,19 @@ test('saveModelConfig 空 Key 沿用库中原值（前端不持有明文 key 场
   assert.equal(activeModelId('chat'), 'keep-key');
 });
 
+test('saveModelConfig 掩码 Key 回传不覆盖明文（列表脱敏下发后原样保存场景）', () => {
+  saveModelConfig({
+    chat: [{ id: 'mask-key', name: 'n', provider: 'custom', baseUrl: 'https://y.example/v1', model: 'm', apiKey: 'sk-plain-value' }],
+    activeChat: 'mask-key',
+  });
+  // 前端拿到掩码 sk-p*******alue 后未重输即保存：服务端必须沿用明文原值
+  saveModelConfig({
+    chat: [{ id: 'mask-key', name: 'n', provider: 'custom', baseUrl: 'https://y.example/v1', model: 'm', apiKey: 'sk-p*******alue' }],
+    activeChat: 'mask-key',
+  });
+  assert.equal(listModelEntries('chat')[0].apiKey, 'sk-plain-value');
+});
+
 test('maskApiKey 掩码规则', () => {
   assert.equal(maskApiKey('sk-1234567890abcdef'), 'sk-1********cdef');
   assert.equal(maskApiKey('abcd'), '****');
