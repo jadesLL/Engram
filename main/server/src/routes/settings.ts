@@ -10,6 +10,17 @@ import {
   testModel,
   type ModelEntry,
 } from '../lib/llm.js';
+import {
+  activeModelId,
+  listModelEntries,
+  maskEntryKey,
+  resolveEntrySecretKey,
+  revealModelKey,
+  saveModelConfig,
+  setActiveModelId,
+  type ModelKind,
+} from '../lib/modelConfig.js';
+import { MODEL_CATALOG } from '../lib/modelCatalog.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { discoverModels } from '../lib/modelDiscovery.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
@@ -20,9 +31,6 @@ import { getFeishuConfig, isFeishuConfigured } from '../im/feishu/config.js';
 import { getFeishuLongConnStatus, restartFeishuLongConn } from '../im/feishu/longconn.js';
 
 const PUBLIC_SETTINGS = [
-  'chat_models', 'active_chat_model',
-  'embedding_models', 'active_embedding_model',
-  'document_models', 'active_document_model',
   'dream_cron', 'dream_enabled',
   'acs_mode',
   'feishu_config',
@@ -30,17 +38,13 @@ const PUBLIC_SETTINGS = [
 
 /** 从活跃 embedding 条目同步 embedding_dim（驱动 vec 表维度） */
 function syncEmbeddingDim(): { dim: number; changed: boolean } {
-  try {
-    const list = JSON.parse(getSetting('embedding_models') || '[]');
-    const activeId = getSetting('active_embedding_model');
-    const active = list.find((m: any) => m.id === activeId) || list[0];
-    const dim = active?.dim || 1536;
-    const prev = getSetting('embedding_dim') || '1536';
-    setSetting('embedding_dim', String(dim));
-    return { dim, changed: prev !== String(dim) };
-  } catch {
-    return { dim: 1536, changed: false };
-  }
+  const active = listModelEntries('embedding')
+    .find((entry) => entry.id === activeModelId('embedding'))
+    || listModelEntries('embedding')[0];
+  const dim = active?.dim || 1536;
+  const prev = getSetting('embedding_dim') || '1536';
+  setSetting('embedding_dim', String(dim));
+  return { dim, changed: prev !== String(dim) };
 }
 
 export async function settingsRoutes(app: FastifyInstance) {
@@ -50,6 +54,52 @@ export async function settingsRoutes(app: FastifyInstance) {
     const out: Record<string, string> = {};
     for (const k of PUBLIC_SETTINGS) out[k] = getSetting(k) || '';
     return { settings: out };
+  });
+
+  // ---------- 模型配置（model_entries 表；key 脱敏下发，保存时空 key 沿用库中原值） ----------
+
+  app.get('/api/settings/models', async () => {
+    return {
+      chat: listModelEntries('chat').map(maskEntryKey),
+      embedding: listModelEntries('embedding').map(maskEntryKey),
+      document: listModelEntries('document').map(maskEntryKey),
+      activeChat: activeModelId('chat'),
+      activeEmbedding: activeModelId('embedding'),
+      activeDocument: activeModelId('document'),
+    };
+  });
+
+  app.put('/api/settings/models', async (req) => {
+    const body = (req.body || {}) as {
+      chat?: ModelEntry[];
+      embedding?: ModelEntry[];
+      document?: ModelEntry[];
+      activeChat?: string;
+      activeEmbedding?: string;
+      activeDocument?: string;
+    };
+    saveModelConfig(body);
+    const { changed } = syncEmbeddingDim();
+    // 维度变化 → 自动后台重建全部索引（vec 表换维度后旧向量已失效）
+    if (changed) {
+      void rebuildAll((msg) => app.log.info(`[auto-rebuild] ${msg}`))
+        .then((r) => app.log.info(`[auto-rebuild] done: ${JSON.stringify(r)}`))
+        .catch((e) => app.log.error(`[auto-rebuild] failed: ${e.message}`));
+    }
+    return { ok: true, dimChanged: changed };
+  });
+
+  /** 查看条目完整 API Key（列表通道只下发掩码） */
+  app.get('/api/settings/models/:id/key', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const key = revealModelKey(id);
+    if (key === undefined) return reply.code(404).send({ error: '模型条目不存在' });
+    return { apiKey: key };
+  });
+
+  /** 服务端厂商目录（预设服务商、线路与模型；前端仅做展示） */
+  app.get('/api/settings/model-catalog', async () => {
+    return { providers: MODEL_CATALOG };
   });
 
   app.get('/api/settings/llm-usage', async (req) => {
@@ -128,15 +178,21 @@ export async function settingsRoutes(app: FastifyInstance) {
     const body = (req.body || {}) as {
       baseUrl?: string;
       apiKey?: string;
+      /** 已存条目 id：apiKey 为掩码/留空时按 id 补全库中原值 */
+      entryId?: string;
       kind?: 'chat' | 'embedding' | 'document';
     };
     if (!['chat', 'embedding', 'document'].includes(body.kind || '')) {
       return reply.code(400).send({ error: '模型类型无效' });
     }
+    let apiKey = body.apiKey;
+    if ((!apiKey || apiKey.includes('*')) && body.entryId) {
+      apiKey = revealModelKey(body.entryId);
+    }
     try {
       return await discoverModels({
         baseUrl: body.baseUrl,
-        apiKey: body.apiKey,
+        apiKey,
         kind: body.kind as 'chat' | 'embedding' | 'document',
       });
     } catch (error: any) {
@@ -148,7 +204,8 @@ export async function settingsRoutes(app: FastifyInstance) {
     const body = (req.body || {}) as { entry?: ModelEntry; force?: boolean };
     const entry = body.entry || getActiveChat();
     if (!entry) return reply.code(400).send({ error: '尚未配置对话模型' });
-    return probeImageInput(entry, { force: body.force === true });
+    // 前端带回的 apiKey 可能是掩码：按 id 补全原值后再探测
+    return probeImageInput({ ...entry, apiKey: resolveEntrySecretKey(entry) }, { force: body.force === true });
   });
 
   /** 全量重建索引（异步执行，立即返回） */

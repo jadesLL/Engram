@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { createCanvas } from '@napi-rs/canvas';
 import type { ZodType } from 'zod';
-import { db, getSetting } from './db.js';
+import { db } from './db.js';
 import { recordLlmResultCacheHit, recordLlmUsage, type LlmOperation, type LlmUsageIdentity } from './llmUsage.js';
 import {
   resolveImageInputCapability,
@@ -9,49 +9,27 @@ import {
   type ImageInputSource,
   type ImageInputStatus,
 } from './modelCapabilities.js';
+import {
+  getActiveModelEntry,
+  markEntryDialect,
+  resolveEntrySecretKey,
+  type ModelDialect,
+  type ModelEntry,
+} from './modelConfig.js';
+import { protocolAdapter, type ProtocolAdapter, type ProtocolKind } from './llmProtocols.js';
 
-/** 模型库条目 */
-export interface ModelEntry {
-  id: string;
-  name: string;      // 备注名
-  provider: string;  // 预设 id
-  baseUrl: string;
-  modelsUrl?: string;
-  logo?: string;
-  model: string;
-  apiKey: string;
-  dim?: number;      // embedding 维度
-  supportsDimensions?: boolean; // 是否支持通过请求参数指定 embedding 维度
-  imageInput?: ImageInputStatus;
-  imageInputSource?: ImageInputSource;
-  imageInputCheckedAt?: string;
-}
-
-function parseList(key: string): ModelEntry[] {
-  try {
-    const parsed = JSON.parse(getSetting(key) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+export type { ModelEntry, ModelDialect };
 
 export function getActiveChat(): ModelEntry | null {
-  const list = parseList('chat_models');
-  const activeId = getSetting('active_chat_model');
-  return list.find((m) => m.id === activeId) || list[0] || null;
+  return getActiveModelEntry('chat');
 }
 
 export function getActiveEmbedding(): ModelEntry | null {
-  const list = parseList('embedding_models');
-  const activeId = getSetting('active_embedding_model');
-  return list.find((m) => m.id === activeId) || list[0] || null;
+  return getActiveModelEntry('embedding');
 }
 
 export function getActiveDocument(): ModelEntry | null {
-  const list = parseList('document_models');
-  const activeId = getSetting('active_document_model');
-  return list.find((m) => m.id === activeId) || list[0] || null;
+  return getActiveModelEntry('document');
 }
 
 export function getEffectiveDocumentModel(): ModelEntry | null {
@@ -66,6 +44,7 @@ export interface LlmConfig {
   baseUrl: string;
   apiKey: string;
   chatModel: string;
+  chatProtocol: ProtocolKind;
   embeddingBaseUrl: string;
   embeddingApiKey: string;
   embeddingModel: string;
@@ -79,6 +58,7 @@ export function getLlmConfig(): LlmConfig {
     baseUrl: (chat?.baseUrl || 'https://api.deepseek.com/v1').replace(/\/+$/, ''),
     apiKey: chat?.apiKey || '',
     chatModel: chat?.model || 'deepseek-v4-flash',
+    chatProtocol: chat?.protocol === 'anthropic' ? 'anthropic' : 'openai',
     embeddingBaseUrl: (emb?.baseUrl || chat?.baseUrl || '').replace(/\/+$/, ''),
     embeddingApiKey: emb?.apiKey || chat?.apiKey || '',
     embeddingModel: emb?.model || 'text-embedding-3-small',
@@ -109,6 +89,12 @@ type LlmRequestOptions = {
   model?: string;
   operation?: LlmOperation;
   tag?: string;
+  /** 请求协议（缺省 OpenAI 兼容）；决定 URL/headers/body 与响应转换 */
+  protocol?: ProtocolKind;
+  /** 关联配置条目 id：供应商参数降级记忆的持久化锚点 */
+  entryId?: string;
+  /** 条目已持久化的降级声明（发送前预检，避免重启后重复 400 往返） */
+  dialect?: ModelDialect;
   usageContext?: {
     scope: string;
     refId: string;
@@ -127,6 +113,7 @@ type LlmHttpResponse = {
   response: Response;
   identity: LlmUsageIdentity;
   startedAt: number;
+  adapter: ProtocolAdapter;
 };
 
 function responseIdentity(
@@ -163,7 +150,11 @@ function captureUsage(result: LlmHttpResponse, rawUsage: unknown): void {
 }
 
 async function readJsonResponse<T = any>(result: LlmHttpResponse): Promise<T> {
-  const payload = await result.response.json() as T;
+  const raw = await result.response.json() as T;
+  // anthropic 协议在边界转成 OpenAI 风格 payload，抽取与用量记账逻辑零改动复用
+  const payload = result.adapter.kind === 'anthropic'
+    ? (result.adapter.parseResponse(raw) as T)
+    : raw;
   captureUsage(result, (payload as any)?.usage);
   return payload;
 }
@@ -205,14 +196,12 @@ async function requestOnce(
     ? AbortSignal.any([controller.signal, opts.signal])
     : controller.signal;
   const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 120_000);
+  const adapter = protocolAdapter(opts?.protocol);
   try {
-    const res = await fetch(`${baseUrl}${path}`, {
+    const res = await fetch(adapter.url(baseUrl, path), {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
+      headers: adapter.headers(apiKey),
+      body: JSON.stringify(adapter.buildBody(body as Record<string, unknown> & { model: string; messages: unknown[] })),
       signal,
     });
     if (!res.ok) {
@@ -223,6 +212,7 @@ async function requestOnce(
       response: res,
       identity: responseIdentity(path, body, opts),
       startedAt,
+      adapter,
     };
   } catch (error: any) {
     if (error?.name === 'AbortError') {
@@ -354,6 +344,9 @@ export async function recognizeDocumentImage(
       operation: 'document',
       tag: 'document-ocr',
       signal: options.signal,
+      protocol: entry.protocol,
+      entryId: entry.id,
+      dialect: entry.dialect,
     },
   );
   const payload = await readJsonResponse(response);
@@ -399,6 +392,9 @@ export async function probeImageInput(
         model: entry.model,
         operation: 'document',
         tag: 'image-capability-probe',
+        protocol: entry.protocol,
+        entryId: entry.id,
+        dialect: entry.dialect,
       },
     );
     const payload = await readJsonResponse(response);
@@ -442,13 +438,14 @@ function rejectsThinkingParam(error: unknown): boolean {
   );
 }
 
-/** 发送 /chat/completions 请求；供应商拒绝 thinking 参数时自动降级重试。 */
+/** 发送 /chat/completions 请求；供应商拒绝 thinking 参数时自动降级重试。
+ *  降级记忆双写：进程内 Set（热路径零开销）+ 条目 dialect 字段（重启后免重复 400）。 */
 async function requestChatWithThinkingFallback(
   body: Record<string, unknown>,
   capabilityKey: string,
   opts: LlmRequestOptions,
 ): Promise<LlmHttpResponse> {
-  if (body.thinking && thinkingUnsupported.has(capabilityKey)) {
+  if (body.thinking && (thinkingUnsupported.has(capabilityKey) || opts.dialect?.thinkingRejected)) {
     delete body.thinking;
   }
   try {
@@ -458,6 +455,7 @@ async function requestChatWithThinkingFallback(
     delete body.thinking;
     const res = await request('/chat/completions', body, opts);
     thinkingUnsupported.add(capabilityKey);
+    if (opts.entryId) markEntryDialect(opts.entryId, { thinkingRejected: true });
     return res;
   }
 }
@@ -495,10 +493,14 @@ export async function chat(
     body.thinking = { type: 'disabled' };
     // 关闭思考后 temperature/top_p 才有效（思考模式下这些参数被忽略）
   }
+  const active = getActiveChat();
   const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat',
     usageContext: opts?.usageContext,
+    protocol: active?.protocol,
+    entryId: active?.id,
+    dialect: active?.dialect,
   });
   const json = await readJsonResponse(res);
   const choice = json?.choices?.[0];
@@ -550,10 +552,14 @@ export async function chatWithTools(
   if (opts?.topP !== undefined) body.top_p = opts.topP;
   // 结构化输出场景关闭推理，避免 reasoning_content 占满 max_tokens 导致 content 为空
   if (opts?.disableThinking) body.thinking = { type: 'disabled' };
+  const active = getActiveChat();
   const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat-tools',
     usageContext: opts?.usageContext,
+    protocol: active?.protocol,
+    entryId: active?.id,
+    dialect: active?.dialect,
   });
   const payload = await readJsonResponse(res);
   const choice = payload?.choices?.[0];
@@ -804,7 +810,7 @@ function tryParseJson<T>(raw: string): { ok: true; value: T } | { ok: false } {
 
 const streamUsageUnsupported = new Set<string>();
 
-/** 流式对话：逐段回调 */
+/** 流式对话：逐段回调。anthropic 协议走事件型 SSE，由 adapter 的流解析器统一差异。 */
 export async function chatStream(
   messages: ChatMessage[],
   onDelta: (text: string) => void,
@@ -819,31 +825,35 @@ export async function chatStream(
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
+  const active = getActiveChat();
   const capabilityKey = `${cfg.baseUrl}|${cfg.chatModel}`;
-  if (!streamUsageUnsupported.has(capabilityKey)) {
+  const streamOpts = {
+    signal: opts?.signal,
+    tag: opts?.tag || 'chat-stream',
+    usageContext: opts?.usageContext,
+    protocol: active?.protocol,
+    entryId: active?.id,
+  } satisfies LlmRequestOptions;
+  const useStreamOptions =
+    !streamUsageUnsupported.has(capabilityKey) && !(active?.dialect?.streamUsageRejected);
+  if (useStreamOptions && active?.protocol !== 'anthropic') {
     body.stream_options = { include_usage: true };
   }
   let res: LlmHttpResponse;
   try {
-    res = await request('/chat/completions', body, {
-      signal: opts?.signal,
-      tag: opts?.tag || 'chat-stream',
-      usageContext: opts?.usageContext,
-    });
+    res = await request('/chat/completions', body, streamOpts);
   } catch (error) {
     const unsupported =
       error instanceof LlmError &&
       [400, 422].includes(error.status || 0);
     if (!unsupported || !body.stream_options) throw error;
     delete body.stream_options;
-    res = await request('/chat/completions', body, {
-      signal: opts?.signal,
-      tag: opts?.tag || 'chat-stream',
-      usageContext: opts?.usageContext,
-    });
+    res = await request('/chat/completions', body, streamOpts);
     streamUsageUnsupported.add(capabilityKey);
+    if (active?.id) markEntryDialect(active.id, { streamUsageRejected: true });
   }
   if (!res.response.body) throw new LlmError('LLM 无流式响应体');
+  const parser = res.adapter.createStreamParser();
   const reader = res.response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -867,18 +877,12 @@ export async function chatStream(
     for (const line of lines) {
       const t = line.trim();
       if (!t.startsWith('data:')) continue;
-      const data = t.slice(5).trim();
-      if (data === '[DONE]') return;
-      try {
-        const json = JSON.parse(data);
-        const delta = json?.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta) onDelta(delta);
-        if (!usageCaptured && json?.usage) {
-          captureUsage(res, json.usage);
-          usageCaptured = true;
-        }
-      } catch {
-        /* 忽略不完整行 */
+      const parsed = parser.feed(t.slice(5).trim());
+      if (parsed.done) return;
+      if (parsed.text) onDelta(parsed.text);
+      if (!usageCaptured && parsed.usage) {
+        captureUsage(res, parsed.usage);
+        usageCaptured = true;
       }
     }
   }
@@ -1077,28 +1081,33 @@ export async function testModel(
   kind: 'chat' | 'embedding' | 'document',
   options: { imageChallenge?: ImageCapabilityChallenge } = {},
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!entry.apiKey) return { ok: false, error: '未填写 API Key' };
-  const baseUrl = entry.baseUrl.replace(/\/+$/, '');
+  // 前端带回的 entry.apiKey 可能是掩码（列表回显不再下发明文），测试前按 id 补全库中原值
+  const resolved: ModelEntry = { ...entry, apiKey: resolveEntrySecretKey(entry) };
+  if (!resolved.apiKey) return { ok: false, error: '未填写 API Key' };
+  const baseUrl = resolved.baseUrl.replace(/\/+$/, '');
   if (!baseUrl) return { ok: false, error: '未填写 Base URL' };
-  if (!entry.model) return { ok: false, error: '未填写模型名' };
+  if (!resolved.model) return { ok: false, error: '未填写模型名' };
   try {
     if (kind === 'chat') {
       // 带 thinking 与提炼管线的结构化请求参数面对齐（json 请求一律关闭思考）；
       // 不支持该参数的供应商自动降级，避免「测试通过但提炼报 400」的盲区。
       const body: Record<string, unknown> = {
-        model: entry.model,
+        model: resolved.model,
         messages: [{ role: 'user', content: 'ping' }],
         temperature: 0.3,
         max_tokens: 64,
         thinking: { type: 'disabled' },
       };
-      const res = await requestChatWithThinkingFallback(body, `${baseUrl}|${entry.model}`, {
+      const res = await requestChatWithThinkingFallback(body, `${baseUrl}|${resolved.model}`, {
         baseUrl,
-        apiKey: entry.apiKey,
+        apiKey: resolved.apiKey,
         timeoutMs: 30_000,
-        provider: entry.provider,
-        model: entry.model,
+        provider: resolved.provider,
+        model: resolved.model,
         tag: 'connection-test-chat',
+        protocol: resolved.protocol,
+        entryId: resolved.id,
+        dialect: resolved.dialect,
       });
       const json = await readJsonResponse(res);
       // 只校验响应结构合法：有 choices 数组且含 message。content 可为空字符串
@@ -1111,23 +1120,24 @@ export async function testModel(
     } else if (kind === 'embedding') {
       const res = await request(
         '/embeddings',
-        buildEmbeddingRequestBody(entry, ['ping']),
+        buildEmbeddingRequestBody(resolved, ['ping']),
         {
           baseUrl,
-          apiKey: entry.apiKey,
+          apiKey: resolved.apiKey,
           timeoutMs: 30_000,
-          provider: entry.provider,
-          model: entry.model,
+          provider: resolved.provider,
+          model: resolved.model,
           operation: 'embedding',
           tag: 'connection-test-embedding',
+          entryId: resolved.id,
         }
       );
       const json = await readJsonResponse(res);
       if (!Array.isArray(json?.data)) return { ok: false, error: '返回格式异常（无 data 数组）' };
-      validateEmbedding(json.data[0]?.embedding, entry.dim);
+      validateEmbedding(json.data[0]?.embedding, resolved.dim);
       return { ok: true };
     } else {
-      const capability = await probeImageInput(entry, {
+      const capability = await probeImageInput(resolved, {
         force: true,
         challenge: options.imageChallenge,
         timeoutMs: 45_000,

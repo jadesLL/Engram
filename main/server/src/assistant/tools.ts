@@ -45,6 +45,7 @@ import {
 } from '../dream/apply.js';
 import { scheduleDreamCycle } from '../dream/scheduler.js';
 import { getActiveChat, getActiveEmbedding, testConnection } from '../lib/llm.js';
+import { activeModelId, listModelEntries, setActiveModelId, type ModelKind } from '../lib/modelConfig.js';
 import { listOfficeVersions, restoreOfficeVersion } from '../office/service.js';
 import { buildLineDiff } from './diff.js';
 import type {
@@ -1208,48 +1209,29 @@ const tools: AgentTool[] = [
       modelId: { type: 'string' },
     }, ['kind', 'modelId']),
     preview(args) {
-      const key = args.kind === 'chat'
-        ? 'chat_models'
-        : args.kind === 'embedding'
-          ? 'embedding_models'
-          : 'document_models';
-      const activeKey = args.kind === 'chat'
-        ? 'active_chat_model'
-        : args.kind === 'embedding'
-          ? 'active_embedding_model'
-          : 'active_document_model';
-      const entries = (() => {
-        try {
-          const parsed = JSON.parse(getSetting(key) || '[]');
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      })();
-      const target = entries.find((entry: any) => entry.id === args.modelId);
+      const kind = args.kind as ModelKind;
+      const entries = listModelEntries(kind);
+      const target = entries.find((entry) => entry.id === args.modelId);
       if (!target) throw new Error('模型条目不存在');
       const previousDim = Number(getSetting('embedding_dim') || 1536);
       const nextDim = Number(target.dim || 1536);
+      const current = activeModelId(kind) || '未设置';
       return {
         title: '切换激活模型',
         target: target.name || target.model,
-        summary: `${getSetting(activeKey) || '未设置'} → ${target.id}${
+        summary: `${current} → ${target.id}${
           args.kind === 'embedding' && previousDim !== nextDim ? '；向量维度变化后将重建索引' : ''
         }`,
         details: {
-          previous: getSetting(activeKey) || '',
+          previous: activeModelId(kind) || '',
           previousDim,
           nextDim,
         },
       };
     },
     execute(args, _ctx, preview) {
-      const activeKey = args.kind === 'chat'
-        ? 'active_chat_model'
-        : args.kind === 'embedding'
-          ? 'active_embedding_model'
-          : 'active_document_model';
-      setSetting(activeKey, args.modelId);
+      const kind = args.kind as ModelKind;
+      setActiveModelId(kind, args.modelId);
       let rebuildJobId: number | undefined;
       if (
         args.kind === 'embedding' &&
@@ -1266,7 +1248,7 @@ const tools: AgentTool[] = [
         data: rebuildJobId ? { rebuildJobId } : undefined,
         undo: {
           kind: 'active_model',
-          activeKey,
+          kindName: args.kind,
           previous: preview.details?.previous || '',
           previousDim: preview.details?.previousDim,
           changedDimension: args.kind === 'embedding' &&
@@ -1275,7 +1257,7 @@ const tools: AgentTool[] = [
       };
     },
     undo(payload) {
-      setSetting(payload.activeKey, payload.previous);
+      setActiveModelId(payload.kindName as ModelKind, payload.previous);
       if (payload.changedDimension) {
         setSetting('embedding_dim', String(payload.previousDim || 1536));
         enqueue('rebuild', { requestedBy: 'assistant-model-undo', nonce: Date.now() });
