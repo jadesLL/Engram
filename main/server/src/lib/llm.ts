@@ -684,10 +684,13 @@ export async function chatWithTools(
  *  输出被 max_tokens 截断时，重试自动翻倍 max_tokens。 */
 export async function chatJson<T = any>(
   messages: ChatMessage[],
-  opts?: Omit<ChatOptions, 'json'> & { retries?: number; tag?: string }
+  opts?: Omit<ChatOptions, 'json'> & { retries?: number; truncationRetries?: number; tag?: string }
 ): Promise<T> {
   const tag = opts?.tag || 'chatJson';
   const retries = opts?.retries ?? 1;
+  // 截断翻倍独立预算：思考模型的思考量随机波动导致的长度截断，与内容质量无关，
+  // 允许调用方（chatJsonSchema 内层 retries=0 时）保留一次翻倍自愈
+  let truncationRetriesLeft = opts?.truncationRetries ?? retries;
   let lastErr = '';
   let curMaxTokens = opts?.maxTokens;
   let retryReason = opts?.usageContext?.retryReason || '';
@@ -754,7 +757,7 @@ export async function chatJson<T = any>(
 export async function chatJsonSchema<T>(
   schema: ZodType<T>,
   messages: ChatMessage[],
-  opts?: Omit<ChatOptions, 'json'> & { retries?: number; tag?: string }
+  opts?: Omit<ChatOptions, 'json'> & { retries?: number; truncationRetries?: number; tag?: string }
 ): Promise<T> {
   const tag = opts?.tag || 'chatJsonSchema';
   const attempts = opts?.retries ?? 1;
@@ -762,11 +765,13 @@ export async function chatJsonSchema<T>(
   let lastError = 'schema validation failed';
   for (let attempt = 0; attempt <= attempts; attempt++) {
     opts?.signal?.throwIfAborted();
-    // 拆除嵌套乘法：schema 层独占重试预算，内层 chatJson 单次调用
-    //（原先 3 层 × 3 层 = 最多 9 次模型请求放大成数十次 HTTP）
+    // 拆除嵌套乘法：schema 层独占内容重试预算；但「截断翻倍」是长度修复
+    // 而非内容重试（思考模型思考量随机波动，8k 预算 1/3 概率被思考吃光），
+    // 内层保留一次截断翻倍能力，与 schema 层不叠加
     const value = await chatJson<unknown>(current, {
       ...opts,
       retries: 0,
+      truncationRetries: 1,
       tag,
       usageContext: opts?.usageContext
         ? {
