@@ -8,6 +8,21 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.1.17（2026-08-23）
+
+- **预设供应商目录从 11 家扩充到 46 家**（学习 Cherry Studio，三池分类不变）：
+  - 国内直连 28 家：新增百度千帆、讯飞星火、腾讯 TokenHub、阶跃星辰、百川、书生 InternLM、Gitee AI、无问芯穹、蚂蚁百灵、紫东太初、360 智脑、魔搭 ModelScope、PPIO 派欧、七牛、蓝耘、美团龙猫、智谱国际 Z.ai、商汤日日新、天翼云息壤
+  - 聚合中转 3 家：302.AI、AiHubMix、DMXAPI；国际 12 家：Anthropic 官方、Google Gemini（官方 OpenAI 兼容端点）、xAI、Groq、Mistral、OpenRouter、Together、Fireworks、NVIDIA、Perplexity、Cerebras
+  - 本地推理 2 家（免 API Key）：Ollama、LM Studio
+  - 16 条 Anthropic 兼容线路（Kimi/智谱/MiniMax/小米/阶跃/百灵/龙猫/TokenHub/七牛/302.AI 等官方端点逐一核对）
+  - 厂商 Logo 图标配置：24 枚新图标本地化（thesvg MIT + simple-icons CC0 均可商用），无公共图标厂商回退首字母徽章
+- **模型列表拉取修复**（解决"有的厂商拉取不出来"）：
+  - 修复 modelsUrl 链路断裂 bug：路由此前不转发该字段导致 Anthropic 线路拼错地址，现显式 modelsUrl 优先
+  - 协议感知：anthropic 协议模型列表改用 x-api-key + anthropic-version 头并带 limit=1000（原一律 Bearer）
+  - 匿名目录：Gitee AI/魔搭/PPIO/七牛/蓝耘/OpenRouter 等目录接口无需 Key 即可拉取浏览
+  - 目录兜底：拉取失败或厂商无列表接口（如讯飞）时，模型下拉自动合并内置目录并标注「目录」来源，不再只能手填
+- 实测验证（真实路径）：6 家匿名厂商拉取全通过（Gitee AI 213 / OpenRouter 422 / PPIO 109 / 七牛 77 / 魔搭 46 / 蓝耘 32 个模型）；主环境真实 Key 拉取 19 个；UI 三池 46 家展示与目录兜底验收通过；266 项单元测试全绿
+
 ## v1.1.16（2026-08-23）
 
 - **模型配置架构重构**（借鉴 Cherry Studio V2 的配置架构，落地裁剪版骨架）：
