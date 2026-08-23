@@ -91,6 +91,8 @@ type LlmRequestOptions = {
   tag?: string;
   /** 请求协议（缺省 OpenAI 兼容）；决定 URL/headers/body 与响应转换 */
   protocol?: ProtocolKind;
+  /** 免鉴权线路（本地推理）：无 Key 放行且不带鉴权头 */
+  authOptional?: boolean;
   /** 关联配置条目 id：供应商参数降级记忆的持久化锚点 */
   entryId?: string;
   /** 条目已持久化的降级声明（发送前预检，避免重启后重复 400 往返） */
@@ -167,7 +169,10 @@ async function request(
   const cfg = getLlmConfig();
   const baseUrl = opts?.baseUrl || cfg.baseUrl;
   const apiKey = opts?.apiKey || cfg.apiKey;
-  if (!apiKey) throw new LlmError('尚未配置 LLM API Key（设置页 → LLM）');
+  // 免鉴权线路（本地推理 Ollama/LM Studio）：无 Key 也放行，请求不带鉴权头
+  if (!apiKey && !opts?.authOptional) {
+    throw new LlmError('尚未配置 LLM API Key（设置页 → LLM）');
+  }
   try {
     return await requestOnce(path, body, opts, baseUrl, apiKey);
   } catch (error: any) {
@@ -200,7 +205,7 @@ async function requestOnce(
   try {
     const res = await fetch(adapter.url(baseUrl, path), {
       method: 'POST',
-      headers: adapter.headers(apiKey),
+      headers: apiKey ? adapter.headers(apiKey) : { 'Content-Type': 'application/json' },
       body: JSON.stringify(adapter.buildBody(body as Record<string, unknown> & { model: string; messages: unknown[] })),
       signal,
     });
@@ -345,6 +350,7 @@ export async function recognizeDocumentImage(
       tag: 'document-ocr',
       signal: options.signal,
       protocol: entry.protocol,
+      authOptional: entry.authOptional,
       entryId: entry.id,
       dialect: entry.dialect,
     },
@@ -371,7 +377,7 @@ export async function probeImageInput(
   entry: ModelEntry,
   options: { force?: boolean; challenge?: ImageCapabilityChallenge; timeoutMs?: number } = {},
 ): Promise<ImageInputCapability> {
-  if (!entry.apiKey) {
+  if (!entry.apiKey && !entry.authOptional) {
     return { status: 'unknown', source: 'probe', detail: '未填写 API Key，无法检测图片能力。' };
   }
   if (!options.force) {
@@ -393,6 +399,7 @@ export async function probeImageInput(
         operation: 'document',
         tag: 'image-capability-probe',
         protocol: entry.protocol,
+        authOptional: entry.authOptional,
         entryId: entry.id,
         dialect: entry.dialect,
       },
@@ -499,6 +506,7 @@ export async function chat(
     tag: opts?.tag || 'chat',
     usageContext: opts?.usageContext,
     protocol: active?.protocol,
+    authOptional: active?.authOptional,
     entryId: active?.id,
     dialect: active?.dialect,
   });
@@ -558,6 +566,7 @@ export async function chatWithTools(
     tag: opts?.tag || 'chat-tools',
     usageContext: opts?.usageContext,
     protocol: active?.protocol,
+    authOptional: active?.authOptional,
     entryId: active?.id,
     dialect: active?.dialect,
   });
@@ -832,6 +841,7 @@ export async function chatStream(
     tag: opts?.tag || 'chat-stream',
     usageContext: opts?.usageContext,
     protocol: active?.protocol,
+    authOptional: active?.authOptional,
     entryId: active?.id,
   } satisfies LlmRequestOptions;
   const useStreamOptions =
@@ -920,7 +930,9 @@ export async function embed(texts: string[], signal?: AbortSignal): Promise<numb
   if (texts.length === 0) return [];
   const cfg = getLlmConfig();
   const entry = getActiveEmbedding();
-  if (!cfg.embeddingApiKey) throw new LlmError('尚未配置向量模型 API Key（设置页 → 向量模型）');
+  if (!cfg.embeddingApiKey && !entry?.authOptional) {
+    throw new LlmError('尚未配置向量模型 API Key（设置页 → 向量模型）');
+  }
   const modelKey = `${cfg.embeddingBaseUrl}|${cfg.embeddingModel}|${entry?.dim || 0}`;
 
   // 查缓存：相同文本 + 相同模型 → 直接返回已缓存的嵌入向量
@@ -996,6 +1008,7 @@ export async function embed(texts: string[], signal?: AbortSignal): Promise<numb
         model: cfg.embeddingModel,
         operation: 'embedding',
         tag: 'embedding',
+        authOptional: entry?.authOptional,
         signal,
       }
     );
@@ -1083,7 +1096,7 @@ export async function testModel(
 ): Promise<{ ok: boolean; error?: string }> {
   // 前端带回的 entry.apiKey 可能是掩码（列表回显不再下发明文），测试前按 id 补全库中原值
   const resolved: ModelEntry = { ...entry, apiKey: resolveEntrySecretKey(entry) };
-  if (!resolved.apiKey) return { ok: false, error: '未填写 API Key' };
+  if (!resolved.apiKey && !resolved.authOptional) return { ok: false, error: '未填写 API Key' };
   const baseUrl = resolved.baseUrl.replace(/\/+$/, '');
   if (!baseUrl) return { ok: false, error: '未填写 Base URL' };
   if (!resolved.model) return { ok: false, error: '未填写模型名' };
@@ -1106,6 +1119,7 @@ export async function testModel(
         model: resolved.model,
         tag: 'connection-test-chat',
         protocol: resolved.protocol,
+        authOptional: resolved.authOptional,
         entryId: resolved.id,
         dialect: resolved.dialect,
       });

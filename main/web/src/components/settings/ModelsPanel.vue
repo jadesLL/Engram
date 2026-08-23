@@ -410,7 +410,7 @@
           <label>模型目录</label>
           <div class="discovery-url-row">
             <span class="field-help">使用当前线路的官方地址自动获取，无需填写 API 地址。</span>
-            <button class="btn" type="button" :disabled="discoveryBusy || !effectiveFormApiKey" @click="discoverFormModels()">
+            <button class="btn" type="button" :disabled="discoveryBusy || (!effectiveFormApiKey && !form.authOptional && !form.modelsAnonymous)" @click="discoverFormModels()">
               {{ discoveryBusy ? '拉取中...' : '拉取模型' }}
             </button>
           </div>
@@ -436,6 +436,7 @@
               ? (apiKeyRevealed ? '点击其他位置后重新隐藏；可直接编辑替换 Key。' : '中间字符已隐藏，点击输入框查看完整 Key。')
               : '已保存的 Key 由服务端保留（此处显示掩码）；留空保存即沿用，输入新值则替换。' }}
           </span>
+          <span v-else-if="form.authOptional" class="field-help">本地免鉴权线路，无需 API Key。</span>
           <span v-else-if="form.id" class="field-help">请为当前服务商和线路输入 API Key。</span>
         </div>
         <div v-if="form.kind === 'emb'" class="field">
@@ -502,6 +503,9 @@ interface ModelEntry {
   model: string;
   apiKey: string;
   protocol?: ProviderProtocol;
+  modelsProtocol?: ProviderProtocol;
+  authOptional?: boolean;
+  modelsAnonymous?: boolean;
   dim?: number;
   supportsDimensions?: boolean;
   imageInput?: ImageInputStatus;
@@ -518,6 +522,9 @@ interface ModelDraft {
   modelChoice: string;
   apiKey: string;
   protocol: ProviderProtocol;
+  modelsProtocol: ProviderProtocol;
+  authOptional: boolean;
+  modelsAnonymous: boolean;
   dim: number;
 }
 
@@ -528,6 +535,8 @@ interface ProviderCard {
 
 type FormModelOption = ModelOption & {
   unavailable?: boolean;
+  /** 来自内置目录（非在线拉取） */
+  fromCatalog?: boolean;
 };
 
 interface LlmUsageBreakdown {
@@ -782,7 +791,7 @@ function unknownModels(kind: ModelKind): ModelEntry[] {
     ).map((provider) => provider.id)
   );
   const list = modelsRef(kind).value;
-  return list.filter((model) => model.provider !== 'stepfun' && !fixedIds.has(model.provider));
+  return list.filter((model) => !fixedIds.has(model.provider));
 }
 
 const modelSections = computed(() => [
@@ -824,6 +833,9 @@ const form = ref({
   modelChoice: '__custom__',
   apiKey: '',
   protocol: 'openai' as ProviderProtocol,
+  modelsProtocol: 'openai' as ProviderProtocol,
+  authOptional: false,
+  modelsAnonymous: false,
   dim: 1024,
 });
 const providerLogoInput = ref<HTMLInputElement>();
@@ -866,14 +878,29 @@ const formModelOptions = computed<FormModelOption[]>(() => {
   const options = new Map<string, FormModelOption>();
   for (const model of discoveredModels.value) options.set(model.id, model);
 
+  // 目录兜底：该厂商该池的内置目录始终可见（Cherry Studio pull-reconcile 模式）——
+  // 拉取失败或厂商无列表接口（如讯飞）时下拉不再只剩手填
+  const kindKey = form.value.kind === 'chat'
+    ? 'chat'
+    : form.value.kind === 'emb'
+      ? 'embedding'
+      : 'document';
+  const line = formLine.value;
+  const catalogList = (kindKey === 'chat'
+    ? currentFormProvider.value.chatModels
+    : kindKey === 'embedding'
+      ? currentFormProvider.value.embeddingModels
+      : currentFormProvider.value.documentModels || []) as ModelOption[];
+  const whitelist = line?.models?.length ? new Set(line.models) : null;
+  for (const model of catalogList) {
+    if (whitelist && !whitelist.has(model.id)) continue;
+    if (!options.has(model.id)) options.set(model.id, { ...model, fromCatalog: true });
+  }
+
   const current = modelValue(form.value);
   const existing = existingFormEntry.value;
   if (existing && current === existing.model && !options.has(current)) {
-    const preset = modelById(
-      currentFormProvider.value.id,
-      current,
-      form.value.kind === 'chat' ? 'chat' : form.value.kind === 'emb' ? 'embedding' : 'document',
-    );
+    const preset = modelById(currentFormProvider.value.id, current, kindKey);
     options.set(current, {
       id: current,
       name: preset?.name || current,
@@ -992,6 +1019,12 @@ function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: Model
     modelChoice: existing?.model || '',
     apiKey: '',
     protocol: existing?.protocol || lineFor(provider, line, kind)?.protocol || 'openai',
+    modelsProtocol: existing?.modelsProtocol
+      || lineFor(provider, line, kind)?.modelsProtocol
+      || lineFor(provider, line, kind)?.protocol
+      || 'openai',
+    authOptional: existing?.authOptional || lineFor(provider, line, kind)?.authOptional || false,
+    modelsAnonymous: existing?.modelsAnonymous || lineFor(provider, line, kind)?.modelsAnonymous || false,
     dim: existing?.dim || existingOption?.dim || 1024,
   };
 }
@@ -1018,7 +1051,7 @@ function modelValue(draft: ModelDraft): string {
 function validateDraft(draft: ModelDraft, kind: ModelKind, apiKey: string): string {
   if (!normalizeUrl(draft.baseUrl)) return '请填写 Base URL。';
   if (!modelValue(draft)) return '请填写模型名称。';
-  if (!apiKey.trim()) return '请填写 API Key。';
+  if (!apiKey.trim() && !draft.authOptional) return '请填写 API Key。';
   if (kind === 'emb' && (!Number.isFinite(draft.dim) || draft.dim <= 0)) return '请填写有效的向量维度。';
   return '';
 }
@@ -1060,6 +1093,9 @@ function entryFromDraft(
     // 留空保存 = 服务端沿用库中原 Key；新输入的明文原样提交
     apiKey: draft.apiKey.trim(),
     ...(draft.protocol === 'anthropic' ? { protocol: 'anthropic' as const } : {}),
+    ...(draft.modelsProtocol === 'anthropic' ? { modelsProtocol: 'anthropic' as const } : {}),
+    ...(draft.authOptional ? { authOptional: true } : {}),
+    ...(draft.modelsAnonymous ? { modelsAnonymous: true } : {}),
     ...(kind === 'emb' ? { dim: draft.dim || option?.dim || 1024, supportsDimensions } : {}),
     ...(imageInput ? { imageInput, imageInputSource } : {}),
     ...(sameEndpoint && existing?.imageInputCheckedAt
@@ -1109,6 +1145,9 @@ function pickProvider(id: string) {
   form.value.modelChoice = draft.modelChoice;
   form.value.apiKey = '';
   form.value.protocol = draft.protocol;
+  form.value.modelsProtocol = draft.modelsProtocol;
+  form.value.authOptional = draft.authOptional;
+  form.value.modelsAnonymous = draft.modelsAnonymous;
   form.value.dim = draft.dim;
   if (hasGeneratedName) form.value.name = provider.name;
   formError.value = '';
@@ -1125,6 +1164,9 @@ function applyLineToDraft(kind: ModelKind, provider: ProviderPreset, draft: Mode
   if (line) draft.baseUrl = line.baseUrl;
   if (line) draft.modelsUrl = line.modelsUrl || inferredModelsUrl(line.baseUrl);
   draft.protocol = line?.protocol || 'openai';
+  draft.modelsProtocol = line?.modelsProtocol || line?.protocol || 'openai';
+  draft.authOptional = line?.authOptional || false;
+  draft.modelsAnonymous = line?.modelsAnonymous || false;
   draft.modelChoice = '';
   draft.model = '';
   if (kind === 'emb') draft.dim = 1024;
@@ -1149,6 +1191,9 @@ function onFormLineChange() {
   revealedStoredKey.value = '';
   applyLineToDraft(form.value.kind, currentFormProvider.value, form.value, form.value.line);
   form.value.protocol = form.value.protocol || 'openai';
+  form.value.modelsProtocol = form.value.modelsProtocol || form.value.protocol;
+  form.value.authOptional = form.value.authOptional || false;
+  form.value.modelsAnonymous = form.value.modelsAnonymous || false;
   form.value.apiKey = '';
   formError.value = '';
   discoveredModels.value = [];
@@ -1212,7 +1257,9 @@ function onFormApiKeyBlur() {
 }
 
 function modelOptionLabel(model: FormModelOption): string {
-  return model.unavailable ? `${model.name}（当前账号未返回）` : model.name;
+  if (model.unavailable) return `${model.name}（当前账号未返回）`;
+  if (model.fromCatalog && !discoveredModels.value.length) return `${model.name}（目录）`;
+  return model.name;
 }
 
 function selectDiscoveredModelId(
@@ -1280,7 +1327,9 @@ async function discoverFormModels(apiKeyOverride?: string) {
   const apiKey = apiKeyOverride && !apiKeyOverride.includes('*')
     ? apiKeyOverride
     : form.value.apiKey.trim();
-  if (!apiKey) {
+  // 免鉴权线路（本地推理）或匿名模型目录：无 Key 也发起拉取
+  const keylessAllowed = form.value.authOptional || form.value.modelsAnonymous;
+  if (!apiKey && !keylessAllowed) {
     modelDiscoveryCompleted.value = false;
     discoveryBusy.value = false;
     discoveryOk.value = false;
@@ -1294,11 +1343,16 @@ async function discoverFormModels(apiKeyOverride?: string) {
     discoveryMessage.value = '请先填写 Base URL。';
     return;
   }
+  // 目录线路没有显式 modelsUrl 且厂商无列表接口（如讯飞）时，直接展示内置目录
+  const lineHasModelsApi = Boolean(form.value.modelsUrl) || form.value.modelsAnonymous;
   discoveryBusy.value = true;
   discoveryMessage.value = '';
   try {
     const { data } = await api.post('/api/settings/discover-models', {
       baseUrl: form.value.baseUrl,
+      modelsUrl: form.value.modelsUrl || undefined,
+      modelsProtocol: form.value.modelsProtocol === 'anthropic' ? 'anthropic' : 'openai',
+      anonymous: keylessAllowed,
       apiKey,
       entryId: existingFormEntry.value?.id || form.value.id || undefined,
       kind: form.value.kind === 'chat'
@@ -1511,8 +1565,9 @@ async function removeModel(kind: ModelKind, id: string) {
 async function testForm() {
   formError.value = '';
   const existing = existingFormEntry.value;
-  // 掩码 Key（已存条目未重输）也放行校验：服务端测试入口会按 id 补全原值
-  const effectiveKey = form.value.apiKey.trim() || existing?.apiKey || '';
+  // 掩码 Key（已存条目未重输）也放行校验：服务端测试入口会按 id 补全原值；
+  // 免鉴权线路（本地推理）无 Key 直接放行
+  const effectiveKey = form.value.apiKey.trim() || existing?.apiKey || (form.value.authOptional ? 'local' : '');
   const error = validateDraft(form.value, form.value.kind, effectiveKey);
   if (error) {
     formError.value = error;

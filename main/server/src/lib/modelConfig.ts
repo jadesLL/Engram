@@ -29,6 +29,12 @@ export interface ModelEntry {
   apiKey: string;
   /** 请求协议：缺省按 OpenAI 兼容处理 */
   protocol?: ProviderProtocol;
+  /** 模型列表拉取协议（anthropic 线路复用厂商 OpenAI /models 时为 openai） */
+  modelsProtocol?: ProviderProtocol;
+  /** 免鉴权线路（本地推理）：无 Key 也可调用 */
+  authOptional?: boolean;
+  /** 模型列表接口匿名可访问（拉取不需要 Key） */
+  modelsAnonymous?: boolean;
   dim?: number;      // embedding 维度
   supportsDimensions?: boolean;
   imageInput?: ImageInputStatus;
@@ -49,6 +55,9 @@ interface ModelEntryRow {
   model: string;
   api_key: string;
   protocol: string | null;
+  models_protocol: string | null;
+  auth_optional: number | null;
+  models_anonymous: number | null;
   dim: number | null;
   supports_dimensions: number | null;
   image_input: string | null;
@@ -95,6 +104,9 @@ export function parseLegacyEntries(kind: ModelKind): ModelEntry[] {
 function rowToEntry(row: ModelEntryRow): ModelEntry {
   const dialect = safeParseJson(row.dialect) as ModelDialect | null;
   const protocol = row.protocol === 'anthropic' ? 'anthropic' : 'openai';
+  const modelsProtocol = row.models_protocol === 'anthropic'
+    ? 'anthropic'
+    : row.models_protocol === 'openai' ? 'openai' : undefined;
   return {
     id: row.id,
     name: row.name,
@@ -106,6 +118,9 @@ function rowToEntry(row: ModelEntryRow): ModelEntry {
     model: row.model,
     apiKey: row.api_key,
     ...(protocol !== 'openai' ? { protocol } : {}),
+    ...(modelsProtocol ? { modelsProtocol } : {}),
+    ...(row.auth_optional ? { authOptional: true } : {}),
+    ...(row.models_anonymous ? { modelsAnonymous: true } : {}),
     ...(row.dim !== null && row.dim !== undefined ? { dim: row.dim } : {}),
     ...(row.supports_dimensions ? { supportsDimensions: true } : {}),
     ...(row.image_input ? { imageInput: row.image_input as ImageInputStatus } : {}),
@@ -129,6 +144,9 @@ function entryToRow(entry: ModelEntry, kind: ModelKind, sortOrder: number): Mode
     model: entry.model || '',
     api_key: entry.apiKey || '',
     protocol: entry.protocol === 'anthropic' ? 'anthropic' : 'openai',
+    models_protocol: entry.modelsProtocol || null,
+    auth_optional: entry.authOptional ? 1 : 0,
+    models_anonymous: entry.modelsAnonymous ? 1 : 0,
     dim: entry.dim ?? null,
     supports_dimensions: entry.supportsDimensions ? 1 : 0,
     image_input: entry.imageInput || null,
@@ -209,7 +227,7 @@ function saveKindEntries(kind: ModelKind, entries: ModelEntry[] | undefined): vo
   );
   db.prepare('DELETE FROM model_entries WHERE kind = ?').run(kind);
   const insert = db.prepare(
-    'INSERT INTO model_entries (id, kind, name, provider, line, base_url, models_url, logo, model, api_key, protocol, dim, supports_dimensions, image_input, image_input_source, image_input_checked_at, dialect, sort_order, created_at, updated_at) VALUES (@id, @kind, @name, @provider, @line, @base_url, @models_url, @logo, @model, @api_key, @protocol, @dim, @supports_dimensions, @image_input, @image_input_source, @image_input_checked_at, @dialect, @sort_order, @created_at, @updated_at)'
+    'INSERT INTO model_entries (id, kind, name, provider, line, base_url, models_url, logo, model, api_key, protocol, models_protocol, auth_optional, models_anonymous, dim, supports_dimensions, image_input, image_input_source, image_input_checked_at, dialect, sort_order, created_at, updated_at) VALUES (@id, @kind, @name, @provider, @line, @base_url, @models_url, @logo, @model, @api_key, @protocol, @models_protocol, @auth_optional, @models_anonymous, @dim, @supports_dimensions, @image_input, @image_input_source, @image_input_checked_at, @dialect, @sort_order, @created_at, @updated_at)'
   );
   entries.forEach((entry, index) => {
     const row = entryToRow(entry, kind, index);

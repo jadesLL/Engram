@@ -4,9 +4,20 @@ Most SVG marks in this directory are adapted for compact UI use from:
 
 - Lobe Icons, Copyright (c) 2023 LobeHub, MIT License.
 - Simple Icons, CC0 1.0 Universal.
+- thesvg / thesvg-color (iconify collection), MIT License — added 2026-08-23:
+  zhipu / zai / baidu(ernie) / iflytek(spark) / stepfun / baichuan / internlm /
+  modelscope / hunyuan / sensenova / longcat / qiniu / ppio / infiniai /
+  fireworks / cerebras.
+- simple-icons additions (2026-08-23): kimi(moonshotai) / minimax / xiaomi /
+  aliyun(alibabacloud) / doubao(bytedance) / tokenhub(tencentqq) / giteeai(gitee) /
+  anthropic / gemini(googlegemini) / xai(x) / mistral(mistralai) / openrouter /
+  nvidia / perplexity / baidu.
 
 The BigModel and Qianwen marks use official assets from their documentation
 and product websites.
+
+Providers without a public mark (groq / together / lanyun / 302ai / aihubmix /
+dmxapi / antling / taichu / ai360 / xirang …) fall back to a letter badge.
 
 Brand names and marks remain the property of their respective owners.
 
