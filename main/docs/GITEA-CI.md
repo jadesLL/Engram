@@ -109,12 +109,27 @@ docker compose -f docker-compose.pull.yml up -d
 
 ## Runner 环境约束（Windows 宿主机模式）
 
-act_runner 以 Windows 宿主机模式运行（label `windows`，runner 即开发机 DESKTOP-JQR7MEU），Docker 命令经 Docker Desktop 跑 Linux 容器。由此产生的四条硬约束（都踩过，详见下文踩坑记录）：
+act_runner 以 Windows 宿主机模式运行（label `windows`），Docker 命令经 Docker Desktop 跑 Linux 容器。由此产生的四条硬约束（都踩过，详见下文踩坑记录）：
 
 1. **所有 run 步骤显式 `shell: bash`**——Windows runner 默认是 pwsh/cmd。
 2. **`MSYS_NO_PATHCONV: '1'` 必须设**——Git Bash 会把 docker 参数里的 `main` 转成 `C:/Program Files/Git/main`。它只管参数转换；**docker build 的上下文路径仍必须 `cd main && docker build .`**（相对 cwd），传 `main` 参数会被 docker CLI 按错误路径解析。
 3. **Docker Hub 直连不通**——`desktop/Dockerfile.ci` 基础镜像固定走 DaoCloud 镜像源 `docker.m.daocloud.io/electronuserland/builder:wine`；其他基础镜像靠本机缓存。
 4. **Z 盘不支持 bind mount**——CI 里容器构建一律「源码 COPY 进镜像 + `docker create`/`docker cp` 拷出产物」，不用 volume 挂载。
+
+### 当前 Runner 部署（2026-08-23 迁移：DESKTOP-JQR7MEU → DESKTOP-BBO2MIL）
+
+| 项 | 值 |
+|---|---|
+| 机器 | 开发机 DESKTOP-BBO2MIL（Windows，Docker Desktop Linux 引擎） |
+| 安装目录 | `C:\Users\example\gitea-runner\`（gitea-runner.exe v3.3.0 + config.yaml + .runner） |
+| 注册方式 | **全局（instance 级）**，runner id=3，name `dev-pc-bbo2mil`，labels `windows:host, ubuntu-latest:docker://node:22-bookworm`——ExampleProject 与 XINJE_Selection_Tool 的 CI 都由它执行 |
+| 启动 | `gitea-runner.exe daemon --config config.yaml`；开机自启走计划任务 `GiteaRunnerDaemon`（登录触发、崩溃自动重启，`Get-ScheduledTask GiteaRunnerDaemon` 查状态） |
+| config.yaml 关键项 | `container.docker_host: npipe:////./pipe/dockerDesktopLinuxEngine`（Windows 下 runner 默认探测 /var/run/docker.sock 失败，必须显式指向 Docker Desktop 的 Linux 引擎命名管道）；日志级别 debug（排查认领问题用，平时可调回 info） |
+
+**迁移踩坑（旧机下线后 CI 全部排队无人认领）**：
+- 旧 runner（id=1 dev-pc / id=2 仓库级 dev-pc-bbo2mil）已于 2026-08-23 删除；注意 **runner 注册有作用域**——用仓库页 token 注册的 runner 只服务该仓库（曾导致 ExampleProject CI 排队 6 小时无人认领而 XINJE 正常），必须用全局管理页（`/-/admin/actions/runners`，注意 `/-/` 前缀）的 Registration Token 注册。
+- 管理页「创建新运行器」是**下拉菜单**，Registration Token 直接嵌在菜单的只读输入框里（页面 HTML 即含，无需点击交互）。
+- 派发卡死恢复：任务派给已下线 runner 的会永久排队，推送一个空提交（`git commit --allow-empty`）触发新 run 即可被在线 runner 认领。
 
 ## wine 交叉打包关键坑（desktop/Dockerfile.ci + scripts/build-desktop-ci.sh）
 
