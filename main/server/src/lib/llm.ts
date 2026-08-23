@@ -690,7 +690,7 @@ export async function chatJson<T = any>(
   const retries = opts?.retries ?? 1;
   // 截断翻倍独立预算：思考模型的思考量随机波动导致的长度截断，与内容质量无关，
   // 允许调用方（chatJsonSchema 内层 retries=0 时）保留一次翻倍自愈
-  let truncationRetriesLeft = opts?.truncationRetries ?? retries;
+  let truncationRetriesLeft = opts?.truncationRetries ?? 2;
   let lastErr = '';
   let curMaxTokens = opts?.maxTokens;
   let retryReason = opts?.usageContext?.retryReason || '';
@@ -718,7 +718,7 @@ export async function chatJson<T = any>(
           if (!canTruncationRetry) throw e;
           truncationRetriesLeft--;
           retryReason = 'output_truncated';
-          curMaxTokens = Math.min(24_000, (curMaxTokens || 4000) * 2);
+          curMaxTokens = Math.min(32_000, (curMaxTokens || 4000) * 2);
           continue;
         }
         retryReason = 'request_failed';
@@ -742,7 +742,7 @@ export async function chatJson<T = any>(
         if (truncationRetriesLeft <= 0 && attempt >= retries) break;
         truncationRetriesLeft--;
         retryReason = 'json_truncated';
-        curMaxTokens = Math.min(24_000, (curMaxTokens || 4000) * 2);
+        curMaxTokens = Math.min(32_000, (curMaxTokens || 4000) * 2);
         continue;
       }
       retryReason = 'json_parse_failed';
@@ -860,7 +860,7 @@ export async function chatToolSchema<T>(
           (trimmed.startsWith('{') && !trimmed.endsWith('}')) ||
           (trimmed.startsWith('[') && !trimmed.endsWith(']'));
         if (looksTruncated) {
-          curMaxTokens = Math.min(24_000, (curMaxTokens || 4000) * 2);
+          curMaxTokens = Math.min(32_000, (curMaxTokens || 4000) * 2);
         }
         current = [
           ...current,
