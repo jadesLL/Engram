@@ -709,12 +709,16 @@ export async function chatJson<T = any>(
       lastErr = `请求失败: ${e.message}`;
       console.warn(`[llm.chatJson:${tag}] 请求失败`, e.message);
       if (opts?.signal?.aborted) throw e;
-      if (attempt < retries) {
-        // 截断错误：翻倍 max_tokens 重试，不追加多余消息（问题在长度而非内容）；
-        // 思考模型经 amplify 已放大到 20k，重试再翻倍需突破该上限
-        if (e.message.includes('截断')) {
+      const isTruncation = e.message.includes('截断');
+      // 截断走独立预算（truncationRetries）：思考模型的思考量随机波动导致的
+      // 长度问题与内容质量无关，retries=0 的调用方（chatJsonSchema 内层）仍保留一次翻倍自愈
+      const canTruncationRetry = isTruncation && truncationRetriesLeft > 0;
+      if (attempt < retries || canTruncationRetry) {
+        if (isTruncation) {
+          if (!canTruncationRetry) throw e;
+          truncationRetriesLeft--;
           retryReason = 'output_truncated';
-          curMaxTokens = Math.min(48_000, (curMaxTokens || 4000) * 2);
+          curMaxTokens = Math.min(24_000, (curMaxTokens || 4000) * 2);
           continue;
         }
         retryReason = 'request_failed';
@@ -735,8 +739,10 @@ export async function chatJson<T = any>(
     if (attempt < retries) {
       if (looksTruncated) {
         // 截断：翻倍 max_tokens 重试，不追加消息
+        if (truncationRetriesLeft <= 0 && attempt >= retries) break;
+        truncationRetriesLeft--;
         retryReason = 'json_truncated';
-        curMaxTokens = Math.min(48_000, (curMaxTokens || 4000) * 2);
+        curMaxTokens = Math.min(24_000, (curMaxTokens || 4000) * 2);
         continue;
       }
       retryReason = 'json_parse_failed';
@@ -854,7 +860,7 @@ export async function chatToolSchema<T>(
           (trimmed.startsWith('{') && !trimmed.endsWith('}')) ||
           (trimmed.startsWith('[') && !trimmed.endsWith(']'));
         if (looksTruncated) {
-          curMaxTokens = Math.min(48_000, (curMaxTokens || 4000) * 2);
+          curMaxTokens = Math.min(24_000, (curMaxTokens || 4000) * 2);
         }
         current = [
           ...current,
