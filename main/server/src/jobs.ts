@@ -249,7 +249,13 @@ type ActiveExecution = {
   targetKey: string;
 };
 
-const LANE_LIMITS: Record<JobLane, number> = { default: 2, document: 1 };
+// 默认车道并发降为 1：自建网关（GLM-5.3）在双路持续压力下会进入限流挂起
+//（实测每轮前 ~20 分钟双并发正常，之后持续超时；单路手工压测 12/12 成功）。
+// 单路串行 + 每任务完成后短暂间隔，换取全量提炼的稳定性。
+const LANE_LIMITS: Record<JobLane, number> = { default: 1, document: 1 };
+/** 任务完成后的冷却间隔（毫秒）：给网关喘息窗口，避免连续高频请求触发限流 */
+const JOB_COOLDOWN_MS = 5_000;
+let laneCooldownUntil = 0;
 const JOB_QUEUE_ENABLED_SETTING = 'job_queue_enabled';
 const STARTUP_DISCARDED_JOB_KINDS = [
   'page_recompose',
@@ -479,6 +485,13 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
     activeExecutions.delete(job.id);
     notifyIdleWaiters();
     if (!maintenanceDepth && getJobQueueState().running) resumePausedJobs();
+    // 任务结束（含失败）后进入冷却期：给网关喘息窗口，降低连续高频请求
+    // 触发限流挂起的概率（实测双路持续压 ~20 分钟后网关进入长时间挂起）
+    if (execution.lane === 'default') {
+      laneCooldownUntil = Math.max(laneCooldownUntil, Date.now() + JOB_COOLDOWN_MS);
+      setTimeout(() => pollLane('default'), JOB_COOLDOWN_MS + 50);
+      return;
+    }
     // 任务完成后的下一轮调度延迟到下一个事件循环 tick，避免同步 DB 写密集冻结主线程。
     setImmediate(() => pollLane(execution.lane));
   }
@@ -502,11 +515,13 @@ function startJob(job: any, lane: JobLane): boolean {
   return true;
 }
 
-/** 文档识别单并发；普通 AI 任务最多双并发，同一目标仍保持串行。 */
+/** 文档识别单并发；普通 AI 任务默认车道单并发（网关限流保护），同一目标保持串行。 */
 function pollLane(lane: JobLane) {
   if (maintenanceDepth || !getJobQueueState().running || polling[lane]) return;
   polling[lane] = true;
   try {
+    // 冷却期内不取新任务（仅 default 车道；document/embed 等低频车道不受限）
+    if (lane === 'default' && Date.now() < laneCooldownUntil) return;
     while (activeLaneCount(lane) < LANE_LIMITS[lane]) {
       const job = nextJob(lane);
       if (!job || !startJob(job, lane)) break;
