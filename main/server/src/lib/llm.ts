@@ -762,11 +762,11 @@ export async function chatJsonSchema<T>(
   let lastError = 'schema validation failed';
   for (let attempt = 0; attempt <= attempts; attempt++) {
     opts?.signal?.throwIfAborted();
-    // 保留 retries 给 chatJson 处理截断重试（翻倍 max_tokens）；
-    // schema 校验失败的重试由本函数外层循环负责
+    // 拆除嵌套乘法：schema 层独占重试预算，内层 chatJson 单次调用
+    //（原先 3 层 × 3 层 = 最多 9 次模型请求放大成数十次 HTTP）
     const value = await chatJson<unknown>(current, {
       ...opts,
-      retries: opts?.retries ?? 1,
+      retries: 0,
       tag,
       usageContext: opts?.usageContext
         ? {
