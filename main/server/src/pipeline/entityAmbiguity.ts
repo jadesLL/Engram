@@ -194,6 +194,115 @@ export async function classifyEntityName(
   };
 }
 
+
+const batchIdentitySchema = z.object({
+  items: z.array(z.object({
+    candidateId: z.string(),
+    status: z.enum(['clear', 'role_title', 'possible_alias', 'uncertain']),
+    canonicalName: z.string(),
+    mergeTarget: z.string(),
+    question: z.string(),
+    suggestions: z.array(z.object({
+      id: z.string().optional(),
+      title: z.string(),
+      type: z.string(),
+      confidence: z.enum(['high', 'medium', 'low']),
+      reason: z.string(),
+    })).max(5),
+  })).min(1),
+});
+
+function batchIdentityPrompt(): string {
+  return SHARED_HEADER + '你是知识库实体身份消歧专家。一次输入包含多个候选（items 数组，每项含 candidateId、name、kind、context）。对每个候选独立判断：名称是否稳定、是否只是职务称谓、是否与已有实体是同一对象。\n\n请求 JSON 的 sharedContext.existingPages 是已有页面名录。\n\nstatus 判定规则：clear 名称稳定；role_title 只是称谓；possible_alias 别名/简称/转写变体；uncertain 上下文不足。\n只有上下文足以确认与名录中的某一页面是同一对象时，才填写该候选的 mergeTarget，并把该建议 confidence 设为 high。\n\n【完整覆盖】输入 items 中的每个 candidateId 必须且只能输出一次，不得遗漏、重复或修改 candidateId。\n\n只输出 JSON：\n{"items":[{"candidateId":"","status":"clear","canonicalName":"","mergeTarget":"","question":"","suggestions":[{"id":"","title":"","type":"","confidence":"high|medium|low","reason":""}]}]}。';
+}
+
+const IDENTITY_BATCH_LIMIT = 8;
+
+/** 批量身份消歧：一次请求判断多个候选，消除候选级 N+1。 */
+export async function classifyEntityNames(
+  inputs: Array<{ candidateId: string; name: string; kind: string; context: string }>,
+  roster: EntityRosterEntry[],
+  refId = '',
+  signal?: AbortSignal,
+): Promise<Map<string, IdentityDecision & { candidateId: string }>> {
+  const out = new Map<string, IdentityDecision & { candidateId: string }>();
+  const batchesList: Array<typeof inputs> = [];
+  for (let i = 0; i < inputs.length; i += IDENTITY_BATCH_LIMIT) {
+    batchesList.push(inputs.slice(i, i + IDENTITY_BATCH_LIMIT));
+  }
+  for (const batchItems of batchesList) {
+    signal?.throwIfAborted();
+    const result = await runSemanticStage({
+      scope: 'entity-identity',
+      refId,
+      stage: 'disambiguate-batch',
+      tag: 'entity-identity-batch',
+      schema: batchIdentitySchema,
+      system: batchIdentityPrompt(),
+      cacheContext: {
+        existingPages: roster.map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          type: entry.type,
+          summary: entry.summary || '',
+        })),
+      },
+      cacheContextMode: 'always',
+      input: {
+        items: batchItems.map((item) => ({
+          candidateId: item.candidateId,
+          name: item.name,
+          kind: item.kind,
+          context: item.context,
+        })),
+      },
+      promptVersion: 'entity-identity-batch:1',
+      cacheScope: 'entity-identity-batch',
+      resultCache: true,
+      temperature: 0.1,
+      maxTokens: 6000,
+      retries: 1,
+      signal,
+    });
+    const expected = new Set(batchItems.map((item) => item.candidateId));
+    for (const item of result.items) {
+      if (!expected.has(item.candidateId)) continue;
+      if (out.has(item.candidateId)) continue;
+      const { candidateId, ...decision } = item;
+      out.set(candidateId, { candidateId, ...decision });
+    }
+    const missing = [...expected].filter((id) => !out.has(id));
+    if (missing.length) {
+      throw new Error('批量身份消歧覆盖不全（缺失 ' + missing.length + '/' + batchItems.length + '），批失败降级');
+    }
+  }
+  return out;
+}
+
+function decisionFromBatch(
+  decision: IdentityDecision,
+  name: string,
+  roster: EntityRosterEntry[],
+  allowMediumTarget: boolean,
+): { ambiguity: EntityAmbiguity | null; mergeTarget: string; mergeTargetId: string; canonicalName: string } {
+  const exactTarget = decision.mergeTarget
+    ? roster.find((entry) => cleanName(entry.title) === cleanName(decision.mergeTarget))
+    : undefined;
+  const findSuggestion = (confidence: 'high' | 'medium') =>
+    decision.suggestions
+      .filter((suggestion) => suggestion.confidence === confidence)
+      .map((suggestion) => roster.find((entry) => cleanName(entry.title) === cleanName(suggestion.title)))
+      .find((entry): entry is EntityRosterEntry => Boolean(entry));
+  const target = exactTarget || findSuggestion('high')
+    || (allowMediumTarget ? findSuggestion('medium') : undefined);
+  return {
+    ambiguity: ambiguityFromDecision(decision, name),
+    mergeTarget: target?.title || '',
+    mergeTargetId: target?.id || '',
+    canonicalName: decision.canonicalName.trim() || target?.title || name,
+  };
+}
+
 export async function guardAmbiguousEntityNames(
   items: PlanItem[],
   candidates: Candidate[],
@@ -202,11 +311,9 @@ export async function guardAmbiguousEntityNames(
 ): Promise<AmbiguousPlanItem[]> {
   const candidateByName = new Map(candidates.map((candidate) => [cleanName(candidate.name), candidate]));
   const rosterTitles = new Set(roster.map((entry) => cleanName(entry.title)));
-  const identityHistory = entityIdentityHistory('ingest');
-  let identityContextPrimed = false;
-  const output: AmbiguousPlanItem[] = [];
+  const needsCheck: Array<{ item: PlanItem; candidateId: string; name: string; kind: string; context: string }> = [];
+  const passthrough: AmbiguousPlanItem[] = [];
   for (const item of items) {
-    signal?.throwIfAborted();
     const validMergeTarget = item.action === 'merge' && rosterTitles.has(cleanName(item.target));
     if (
       validMergeTarget ||
@@ -214,53 +321,92 @@ export async function guardAmbiguousEntityNames(
       rosterTitles.has(cleanName(item.name)) ||
       !isSynthesizable(item.kind)
     ) {
-      output.push(item);
+      passthrough.push(item);
+      continue;
+    }
+    needsCheck.push({
+      item,
+      candidateId: item.candidateId,
+      name: item.name,
+      kind: item.kind,
+      context: contextFor(candidateByName.get(cleanName(item.name))),
+    });
+  }
+  if (!needsCheck.length) return passthrough;
+  // 批量消歧（8/批）；批失败或覆盖不全时该批降级为原单项路径
+  let batchDecisions = new Map<string, IdentityDecision>();
+  try {
+    batchDecisions = await classifyEntityNames(
+      needsCheck.map((entry) => ({
+        candidateId: entry.candidateId,
+        name: entry.name,
+        kind: entry.kind,
+        context: entry.context,
+      })),
+      roster,
+      needsCheck[0].name,
+      signal,
+    ) as unknown as Map<string, IdentityDecision>;
+  } catch {
+    batchDecisions = new Map();
+  }
+  const singleHistory = entityIdentityHistory('ingest');
+  let singlePrimed = false;
+  const applyDecision = (
+    item: PlanItem,
+    decision: { ambiguity: EntityAmbiguity | null; mergeTarget: string; mergeTargetId: string; canonicalName: string },
+  ): AmbiguousPlanItem => {
+    if (decision.mergeTarget) {
+      return {
+        ...item,
+        name: decision.canonicalName,
+        action: 'merge',
+        target: decision.mergeTarget,
+        reason: [...new Set([item.reason, '模型确认与已有实体为同一对象'].filter(Boolean))].join('；'),
+      };
+    }
+    if (decision.ambiguity) {
+      return {
+        ...item,
+        name: decision.canonicalName,
+        action: 'review',
+        reason: [...new Set([
+          item.reason,
+          decision.ambiguity.label,
+          decision.ambiguity.question,
+        ].filter(Boolean))].join('；'),
+        ambiguity: decision.ambiguity,
+      };
+    }
+    return { ...item, name: decision.canonicalName };
+  };
+  const output: AmbiguousPlanItem[] = [...passthrough];
+  for (const entry of needsCheck) {
+    signal?.throwIfAborted();
+    const batchDecision = batchDecisions.get(entry.candidateId);
+    if (batchDecision) {
+      output.push(applyDecision(entry.item, decisionFromBatch(batchDecision, entry.name, roster, false)));
       continue;
     }
     try {
       const decision = await classifyEntityName(
-        item.name,
-        item.kind,
+        entry.name,
+        entry.kind,
         roster,
-        contextFor(candidateByName.get(cleanName(item.name))),
-        item.name,
-        identityHistory,
-        {
-          cacheContextMode: identityContextPrimed ? 'once' : 'always',
-          maxHistoryChars: 96_000,
-        },
+        entry.context,
+        entry.name,
+        singleHistory,
+        { cacheContextMode: singlePrimed ? 'once' : 'always', maxHistoryChars: 96_000 },
         signal,
       );
-      identityContextPrimed = true;
-      if (decision.mergeTarget) {
-        output.push({
-          ...item,
-          name: decision.canonicalName,
-          action: 'merge',
-          target: decision.mergeTarget,
-          reason: [...new Set([item.reason, '模型确认与已有实体为同一对象'].filter(Boolean))].join('；'),
-        });
-      } else if (decision.ambiguity) {
-        output.push({
-          ...item,
-          name: decision.canonicalName,
-          action: 'review',
-          reason: [...new Set([
-            item.reason,
-            decision.ambiguity.label,
-            decision.ambiguity.question,
-          ].filter(Boolean))].join('；'),
-          ambiguity: decision.ambiguity,
-        });
-      } else {
-        output.push({ ...item, name: decision.canonicalName });
-      }
+      singlePrimed = true;
+      output.push(applyDecision(entry.item, decision));
     } catch (error: any) {
       output.push({
-        ...item,
+        ...entry.item,
         action: 'review',
         reason: [...new Set([
-          item.reason,
+          entry.item.reason,
           `实体身份模型检查失败：${String(error?.message || error).slice(0, 180)}`,
         ].filter(Boolean))].join('；'),
       });

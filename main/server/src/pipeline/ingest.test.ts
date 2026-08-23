@@ -105,6 +105,19 @@ function responseFor(system: string, input: any) {
   }
   if (system.includes('执行 Question Finder')) return { questions: [] };
   if (system.includes('你是知识库实体身份消歧专家')) {
+    // 批量身份消歧：items 数组逐个返回（candidateId 完整覆盖）
+    if (Array.isArray(input?.items)) {
+      return {
+        items: input.items.map((item: any) => ({
+          candidateId: item.candidateId,
+          status: 'clear',
+          canonicalName: item.name,
+          mergeTarget: '',
+          question: '',
+          suggestions: [],
+        })),
+      };
+    }
     return {
       status: 'clear',
       canonicalName: input?.candidate?.name || '',

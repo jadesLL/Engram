@@ -30,39 +30,46 @@ before(async () => {
     capturedRequests.push(body);
     const payload = JSON.parse(body.messages.at(-1).content);
     const input = payload.input || payload;
-    const name = input.candidate.name;
-    let decision: any = {
-      status: 'clear',
-      canonicalName: name,
-      mergeTarget: '',
-      question: '',
-      suggestions: [],
-    };
-    if (name === '刘经理') {
-      decision = {
-        status: 'role_title',
+    const decide = (name: string): any => {
+      if (name === '刘经理') {
+        return {
+          status: 'role_title',
+          canonicalName: name,
+          mergeTarget: '',
+          question: '请确认完整姓名',
+          suggestions: [{ id: 'p1', title: '刘子谕', type: 'person', confidence: 'medium', reason: '原文姓氏和职责上下文相关' }],
+        };
+      }
+      if (name === '恒创') {
+        return {
+          status: 'possible_alias',
+          canonicalName: '衡创',
+          mergeTarget: '衡创',
+          question: '',
+          suggestions: [{ id: 'o1', title: '衡创', type: 'org', confidence: 'high', reason: '上下文确认是同一客户' }],
+        };
+      }
+      if (name === '张依龙') {
+        return {
+          status: 'possible_alias',
+          canonicalName: '张一龙',
+          mergeTarget: '',
+          question: '请确认是否为张一龙',
+          suggestions: [{ id: 'p2', title: '张一龙', type: 'person', confidence: 'medium', reason: '上下文不足以自动合并' }],
+        };
+      }
+      return {
+        status: 'clear',
         canonicalName: name,
         mergeTarget: '',
-        question: '请确认完整姓名',
-        suggestions: [{ id: 'p1', title: '刘子谕', type: 'person', confidence: 'medium', reason: '原文姓氏和职责上下文相关' }],
-      };
-    } else if (name === '恒创') {
-      decision = {
-        status: 'possible_alias',
-        canonicalName: '衡创',
-        mergeTarget: '衡创',
         question: '',
-        suggestions: [{ id: 'o1', title: '衡创', type: 'org', confidence: 'high', reason: '上下文确认是同一客户' }],
+        suggestions: [],
       };
-    } else if (name === '张依龙') {
-      decision = {
-        status: 'possible_alias',
-        canonicalName: '张一龙',
-        mergeTarget: '',
-        question: '请确认是否为张一龙',
-        suggestions: [{ id: 'p2', title: '张一龙', type: 'person', confidence: 'medium', reason: '上下文不足以自动合并' }],
-      };
-    }
+    };
+    // 批量身份消歧：items 数组逐项返回（candidateId 覆盖）
+    const decision = Array.isArray(input?.items)
+      ? { items: input.items.map((item: any) => ({ candidateId: item.candidateId, ...decide(item.name) })) }
+      : decide(input.candidate.name);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(decision) } }],
@@ -172,19 +179,10 @@ test('write guard applies model-confirmed merge and retains uncertain item for r
   assert.equal(guarded[1].action, 'merge');
   assert.equal(guarded[2].action, 'review');
   assert.equal(guarded[2].ambiguity?.category, 'possible_typo');
-  assert.equal(capturedRequests.length, 2);
-  assert.deepEqual(
-    Object.keys(JSON.parse(capturedRequests[0].messages[1].content)),
-    ['sharedContext', 'input'],
-  );
-  assert.deepEqual(
-    JSON.parse(capturedRequests[1].messages.at(-1).content),
-    {
-      input: {
-        candidate: { name: '张依龙', kind: 'person' },
-        context: '',
-      },
-    },
-  );
-  assert.equal(capturedRequests[1].messages.length, 4);
+  // 批量化后：恒创+张依龙两个待查候选合并为一次批量请求（8/批）
+  assert.equal(capturedRequests.length, 1);
+  const batchBody = JSON.parse(capturedRequests[0].messages[1].content);
+  assert.deepEqual(Object.keys(batchBody), ['sharedContext', 'input']);
+  const batchIds = batchBody.input.items.map((item: any) => item.name).sort();
+  assert.deepEqual(batchIds, ['张依龙', '恒创']);
 });
