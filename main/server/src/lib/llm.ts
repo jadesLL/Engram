@@ -510,26 +510,26 @@ async function requestChatWithThinkingFallback(
   capabilityKey: string,
   opts: LlmRequestOptions,
 ): Promise<LlmHttpResponse> {
-  if (body.thinking) {
+  const configuredLevel = body.thinking && (body.thinking as any).type !== 'disabled';
+  // 用户显式配置 low/high/max 时，能力记忆不得删除/覆盖用户选择
+  if (!configuredLevel && body.thinking) {
     if (thinkingUnsupported.has(capabilityKey) || opts.dialect?.thinkingRejected) {
       delete body.thinking;
     } else if (thinkingLevelOnly.has(capabilityKey) || opts.dialect?.thinkingLevelOnly) {
-      // 必须思考的模型：以思考模式（low 档）调用；思考内容计入 completion
-      // tokens，会挤占正文预算——amplify 放大 max_tokens 避免截断
       body.thinking = { type: 'low' };
-      amplifyMaxTokensForThinking(body);
     }
   }
   try {
     return await request('/chat/completions', body, opts);
   } catch (error) {
     if (!body.thinking) throw error;
-    const { rejectsParam, requiresLevel } = thinkingErrorDetail(error);
-    if (!rejectsParam) throw error;
-    if (requiresLevel) {
-      // 始终思考模型：disabled → low（实测 GLM-5.3 接受 low 且正常输出 content）
+    const detail = thinkingErrorDetail(error);
+    if (!detail.rejectsParam) throw error;
+    if (configuredLevel) {
+      throw new LlmError(`模型拒绝用户选择的思考等级 ${(body.thinking as any).type}：${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (detail.requiresLevel) {
       body.thinking = { type: 'low' };
-      amplifyMaxTokensForThinking(body);
       const res = await request('/chat/completions', body, opts);
       thinkingLevelOnly.add(capabilityKey);
       if (opts.entryId) markEntryDialect(opts.entryId, { thinkingLevelOnly: true });
@@ -543,14 +543,13 @@ async function requestChatWithThinkingFallback(
   }
 }
 
-/** 思考模型的 max_tokens 放大：思考内容与正文共享 completion 预算，
- *  非思考模型 8000 的预算在思考模式下正文只剩零头（实测 low 档思考动辄
- *  9k-12k tokens）。按 4 倍放大、上限 32k，网关实测接受 128k 也不报错。 */
-function amplifyMaxTokensForThinking(body: Record<string, unknown>): void {
-  const cur = body.max_tokens;
-  if (typeof cur === 'number' && cur < 32_000) {
-    body.max_tokens = Math.min(32_000, Math.ceil(cur * 4));
+
+function applyConfiguredThinking(body: Record<string, unknown>, entry: ModelEntry | null): void {
+  if (!entry?.thinkingLevel) return;
+  if (entry.protocol === 'anthropic') {
+    throw new LlmError('当前 Anthropic 协议不支持 low/high/max thinking 参数，请改用 OpenAI 兼容线路');
   }
+  body.thinking = { type: entry.thinkingLevel };
 }
 
 type ChatOptions = {
@@ -581,14 +580,8 @@ export async function chat(
   if (opts?.topP !== undefined) body.top_p = opts.topP;
   // 部分服务商（DeepSeek/通义/Kimi/OpenAI）支持 json_object 模式；不支持的会忽略该字段
   if (opts?.json) body.response_format = { type: 'json_object' };
-  // 推理模型（DeepSeek-R1/通义千问思考版等）默认开启思考，json 模式下 reasoning_content
-  // 会吃光 max_tokens 导致 content 为空、合成任务必然失败。结构化输出场景一律关闭思考，
-  // 让模型直接产出 content。原先只对 baseUrl 含 deepseek 的配置生效，自定义中转网关会漏过。
-  if (opts?.json) {
-    body.thinking = { type: 'disabled' };
-    // 关闭思考后 temperature/top_p 才有效（思考模式下这些参数被忽略）
-  }
   const active = getActiveChat();
+  applyConfiguredThinking(body, active);
   const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat',
@@ -646,9 +639,9 @@ export async function chatWithTools(
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
-  // 结构化输出场景关闭推理，避免 reasoning_content 占满 max_tokens 导致 content 为空
-  if (opts?.disableThinking) body.thinking = { type: 'disabled' };
   const active = getActiveChat();
+  if (active?.thinkingLevel) applyConfiguredThinking(body, active);
+  else if (opts?.disableThinking) body.thinking = { type: 'disabled' };
   const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat-tools',
@@ -924,6 +917,7 @@ export async function chatStream(
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
   const active = getActiveChat();
+  applyConfiguredThinking(body, active);
   const capabilityKey = `${cfg.baseUrl}|${cfg.chatModel}`;
   const streamOpts = {
     signal: opts?.signal,
@@ -931,6 +925,8 @@ export async function chatStream(
     usageContext: opts?.usageContext,
     protocol: active?.protocol,
     entryId: active?.id,
+    dialect: active?.dialect,
+    onRetry: opts?.onRetry,
   } satisfies LlmRequestOptions;
   const useStreamOptions =
     !streamUsageUnsupported.has(capabilityKey) && !(active?.dialect?.streamUsageRejected);
@@ -939,14 +935,14 @@ export async function chatStream(
   }
   let res: LlmHttpResponse;
   try {
-    res = await request('/chat/completions', body, streamOpts);
+    res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
   } catch (error) {
     const unsupported =
       error instanceof LlmError &&
       [400, 422].includes(error.status || 0);
     if (!unsupported || !body.stream_options) throw error;
     delete body.stream_options;
-    res = await request('/chat/completions', body, streamOpts);
+    res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
     streamUsageUnsupported.add(capabilityKey);
     if (active?.id) markEntryDialect(active.id, { streamUsageRejected: true });
   }
@@ -1187,15 +1183,14 @@ export async function testModel(
   if (!resolved.model) return { ok: false, error: '未填写模型名' };
   try {
     if (kind === 'chat') {
-      // 带 thinking 与提炼管线的结构化请求参数面对齐（json 请求一律关闭思考）；
-      // 不支持该参数的供应商自动降级，避免「测试通过但提炼报 400」的盲区。
+      // 连接测试使用该条目真实的思考等级，保证测试参数与生产调用一致。
       const body: Record<string, unknown> = {
         model: resolved.model,
         messages: [{ role: 'user', content: 'ping' }],
         temperature: 0.3,
         max_tokens: 64,
-        thinking: { type: 'disabled' },
       };
+      applyConfiguredThinking(body, resolved);
       const res = await requestChatWithThinkingFallback(body, `${baseUrl}|${resolved.model}`, {
         baseUrl,
         apiKey: resolved.apiKey,

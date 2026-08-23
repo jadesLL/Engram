@@ -406,6 +406,16 @@
           </select>
           <span class="field-help">决定请求地址拼接、鉴权头与消息格式；预设服务商按线路自动确定。</span>
         </div>
+        <div v-if="form.kind === 'chat'" class="field">
+          <label for="model-thinking-level">思考等级</label>
+          <select id="model-thinking-level" v-model="form.thinkingLevel">
+            <option value="">自动（不显式指定）</option>
+            <option value="low">低（low）</option>
+            <option value="high">高（high）</option>
+            <option value="max">最大（max）</option>
+          </select>
+          <span class="field-help">由模型条目控制；GLM-5.3 可选择 low / high / max，所有对话调用统一生效。</span>
+        </div>
         <div class="field field-wide">
           <label>模型目录</label>
           <div class="discovery-url-row">
@@ -490,6 +500,7 @@ import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 
 type ModelKind = 'chat' | 'emb' | 'document';
+type ThinkingLevel = 'low' | 'high' | 'max';
 
 interface ModelEntry {
   id: string;
@@ -502,6 +513,7 @@ interface ModelEntry {
   model: string;
   apiKey: string;
   protocol?: ProviderProtocol;
+  thinkingLevel?: ThinkingLevel;
   dim?: number;
   supportsDimensions?: boolean;
   imageInput?: ImageInputStatus;
@@ -518,6 +530,7 @@ interface ModelDraft {
   modelChoice: string;
   apiKey: string;
   protocol: ProviderProtocol;
+  thinkingLevel: '' | ThinkingLevel;
   dim: number;
 }
 
@@ -824,6 +837,7 @@ const form = ref({
   modelChoice: '__custom__',
   apiKey: '',
   protocol: 'openai' as ProviderProtocol,
+  thinkingLevel: '' as '' | ThinkingLevel,
   dim: 1024,
 });
 const providerLogoInput = ref<HTMLInputElement>();
@@ -992,6 +1006,7 @@ function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: Model
     modelChoice: existing?.model || '',
     apiKey: '',
     protocol: existing?.protocol || lineFor(provider, line, kind)?.protocol || 'openai',
+    thinkingLevel: existing?.thinkingLevel || '',
     dim: existing?.dim || existingOption?.dim || 1024,
   };
 }
@@ -1060,6 +1075,7 @@ function entryFromDraft(
     // 留空保存 = 服务端沿用库中原 Key；新输入的明文原样提交
     apiKey: draft.apiKey.trim(),
     ...(draft.protocol === 'anthropic' ? { protocol: 'anthropic' as const } : {}),
+    ...(kind === 'chat' && draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
     ...(kind === 'emb' ? { dim: draft.dim || option?.dim || 1024, supportsDimensions } : {}),
     ...(imageInput ? { imageInput, imageInputSource } : {}),
     ...(sameEndpoint && existing?.imageInputCheckedAt

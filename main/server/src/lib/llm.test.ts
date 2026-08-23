@@ -376,7 +376,12 @@ test('image capability probe distinguishes explicit image rejection from transie
   });
   assert.equal(unsupported.status, 'unsupported');
 
-  globalThis.fetch = async () => new Response('busy', { status: 503 });
+  // 一次性 503 后改为非重试型 400：避免生产网络重试在测试里真实退避 45s
+  let probeAttempts = 0;
+  globalThis.fetch = async () => {
+    if (probeAttempts++ === 0) return new Response('busy', { status: 503 });
+    return new Response(JSON.stringify({ error: { message: 'temporary probe error' } }), { status: 400 });
+  };
   const unknown = await probeImageInput(entry({ model: 'custom-model' }), {
     force: true,
     challenge: {
@@ -514,10 +519,12 @@ test('chatJson drops the thinking param after a 400 and remembers it per model',
     { tag: 'thinking-fallback' },
   );
   assert.deepEqual(result, { ok: true });
-  // 首次请求带 thinking（结构化输出一律关闭思考），被 400 拒绝后删除该参数重试
-  assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
+  // 行为变更：未配置用户思考等级时结构化调用不再主动发送 thinking；
+  // 供应商兼容性由显式配置触发（见 thinkingLevel 矩阵测试）
+  // 无 thinking 参数时 mock 的首个 400 是普通失败 → chatJson 内容层重试后成功
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[0].thinking, undefined);
   assert.equal(bodies[1].thinking, undefined);
-  // 记忆生效：同模型后续请求直接不带 thinking，不再触发 400
   await chatModule.chatJson([{ role: 'user', content: '再来一次' }], { tag: 'thinking-fallback-2' });
   assert.equal(bodies.length, 3);
   assert.equal(bodies[2].thinking, undefined);
@@ -562,8 +569,8 @@ test('chatWithTools drops the thinking param when the provider rejects it', asyn
 
 test('testModel chat aligns with pipeline thinking params and degrades when rejected', async () => {
   const bodies: Record<string, any>[] = [];
-  mockChatEndpoint(bodies, (index) =>
-    index === 0 ? thinkingRejectedResponse() : chatOkResponse('pong'));
+  // 行为变更：无 thinkingLevel 配置时测试请求不发送 thinking（不会触发 400 路径）
+  mockChatEndpoint(bodies, () => chatOkResponse('pong'));
 
   const result = await testModel(
     entry({
@@ -574,9 +581,42 @@ test('testModel chat aligns with pipeline thinking params and degrades when reje
     }),
     'chat',
   );
-  // 测试请求与提炼管线参数面对齐（带 thinking）；不支持时自动降级仍判成功，
-  // 消除「测试通过但提炼报 400」的盲区
+  // 行为变更：测试请求使用条目真实配置；无 thinkingLevel 时不发送该参数
   assert.equal(result.ok, true);
-  assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
-  assert.equal(bodies[1].thinking, undefined);
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0].thinking, undefined);
 });
+
+test('thinkingLevel 配置矩阵：low/high/max 显式发送，拒绝时不静默降级', async () => {
+  const chatModule = await import('./llm.js');
+  for (const level of ['low', 'high', 'max'] as const) {
+    const bodies: Record<string, any>[] = [];
+    mockChatEndpoint(bodies, () => chatOkResponse('pong'));
+    setSetting('chat_models', JSON.stringify([entry({
+      id: `glm-${level}`,
+      baseUrl: 'https://glm.example/v1',
+      model: 'glm-5.3',
+      apiKey: 'test-key',
+      thinkingLevel: level,
+    })]));
+    setSetting('active_chat_model', `glm-${level}`);
+    await chatModule.chat([{ role: 'user', content: 'hi' }], { tag: `level-${level}` });
+    assert.deepEqual(bodies[0].thinking, { type: level }, `${level} 应原样发送`);
+  }
+  // 供应商拒绝用户显式等级 → 明确失败，不删除参数伪装成功
+  const bodies: Record<string, any>[] = [];
+  mockChatEndpoint(bodies, () => thinkingRejectedResponse());
+  setSetting('chat_models', JSON.stringify([entry({
+    id: 'glm-reject',
+    baseUrl: 'https://glm-reject.example/v1',
+    model: 'glm-5.3',
+    apiKey: 'test-key',
+    thinkingLevel: 'high',
+  })]));
+  setSetting('active_chat_model', 'glm-reject');
+  await assert.rejects(
+    chatModule.chat([{ role: 'user', content: 'hi' }], { tag: 'level-reject' }),
+    /拒绝用户选择的思考等级/,
+  );
+});
+

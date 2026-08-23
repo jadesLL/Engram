@@ -551,6 +551,7 @@ export function migrate() {
     model TEXT NOT NULL DEFAULT '',
     api_key TEXT NOT NULL DEFAULT '',
     protocol TEXT NOT NULL DEFAULT 'openai',  -- 'openai' | 'anthropic'
+    thinking_level TEXT,             -- 用户选择：'low' | 'high' | 'max'
     dim INTEGER,
     supports_dimensions INTEGER NOT NULL DEFAULT 0,
     image_input TEXT,
@@ -565,6 +566,7 @@ export function migrate() {
     ON model_entries(kind, sort_order);
   `);
 
+  ensureColumn('model_entries', 'thinking_level', 'TEXT');
   ensureColumn('ingest_log', 'content_hash', 'TEXT');
   ensureColumn('ingest_log', 'status', `TEXT NOT NULL DEFAULT 'completed'`);
   ensureColumn('ingest_log', 'run_id', 'TEXT');
