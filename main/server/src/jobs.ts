@@ -249,10 +249,10 @@ type ActiveExecution = {
   targetKey: string;
 };
 
-// 默认车道并发降为 1：自建网关（GLM-5.3）在双路持续压力下会进入限流挂起
-//（实测每轮前 ~20 分钟双并发正常，之后持续超时；单路手工压测 12/12 成功）。
-// 单路串行 + 每任务完成后短暂间隔，换取全量提炼的稳定性。
-const LANE_LIMITS: Record<JobLane, number> = { default: 1, document: 1 };
+// default 车道双并发（之前临时降到 1 是为规避「固定 150s 超时误判 → 重试风暴 →
+// 网关连接堆积」；根因已修：动态超时 + 独立 dispatcher 不复用坏连接 + 网络异常
+// 纳入重试，恢复双并发提速）。document 车道单并发。
+const LANE_LIMITS: Record<JobLane, number> = { default: 2, document: 1 };
 /** 任务完成后的冷却间隔（毫秒）：给网关喘息窗口，避免连续高频请求触发限流 */
 const JOB_COOLDOWN_MS = 5_000;
 let laneCooldownUntil = 0;

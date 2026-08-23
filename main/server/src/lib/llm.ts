@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { createCanvas } from '@napi-rs/canvas';
 import type { ZodType } from 'zod';
+import { Agent } from 'undici';
 import { db } from './db.js';
 import { recordLlmResultCacheHit, recordLlmUsage, type LlmOperation, type LlmUsageIdentity } from './llmUsage.js';
 import {
@@ -200,6 +201,20 @@ async function request(
   return attempt(0);
 }
 
+/** LLM 专用 dispatcher：不复用连接、headersTimeout 放宽到 20 分钟。
+ *  全局 fetch（undici 默认 dispatcher）的两个坑：
+ *  1) headersTimeout 默认 300s，慢响应（大 max_tokens 长输出）先于我们的动态
+ *     超时被 undici 掐断（Headers Timeout Error），随后重试又复用同一个
+ *     keep-alive 坏连接 → 连续失败的重试风暴；
+ *  2) keep-alive 连接池里挂起过的连接会污染后续请求。 */
+const llmDispatcher = new Agent({
+  keepAliveTimeout: 1,          // 实质上禁用连接复用
+  keepAliveMaxTimeout: 1,
+  headersTimeout: 20 * 60_000,  // 与动态超时上限对齐
+  bodyTimeout: 20 * 60_000,
+  connections: 16,
+});
+
 async function requestOnce(
   path: string,
   body: unknown,
@@ -226,7 +241,9 @@ async function requestOnce(
       headers: adapter.headers(apiKey),
       body: JSON.stringify(adapter.buildBody(body as Record<string, unknown> & { model: string; messages: unknown[] })),
       signal,
-    });
+      // Node fetch 支持 dispatcher 选项（undici）；类型定义未包含，断言绕过
+      dispatcher: llmDispatcher,
+    } as unknown as RequestInit);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new LlmError(`LLM 请求失败 ${res.status}: ${text.slice(0, 300)}`, res.status);
