@@ -3,3 +3,10 @@
 !/worktrees/.gitkeep
 .shots/
 .tmp-*
+# 本地开发与工具产物，不入库（docker-compose.dev.yml 含本地默认密码）
+main/docker-compose.dev.yml
+/.edge-profile/
+/.mimosa/
+/.preview-rte/
+/.zcode/
+/test-results/
