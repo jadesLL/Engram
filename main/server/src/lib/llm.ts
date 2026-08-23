@@ -175,15 +175,18 @@ async function request(
       return await requestOnce(path, body, opts, baseUrl, apiKey);
     } catch (error: any) {
       // 瞬时故障不属于内容问题，同参数静默重试再上抛，避免上层把网络抖动固化成
-      // 整条任务的失败。覆盖：超时、408/429/5xx、以及网关间歇性 401/403
-      //（实测自建网关在并发压力下会误报 Invalid API key，随后同 key 请求恢复）。
+      // 整条任务的失败。覆盖：超时、网络层异常（fetch failed）、408/429/5xx、
+      // 以及网关间歇性 401/403（实测自建网关在并发压力下会误报 Invalid API key，
+      // 随后同 key 请求恢复）。
+      const msg = error.message || '';
       const retriable = error instanceof LlmError
         && !opts?.signal?.aborted
-        && (error.message === 'LLM 请求超时'
-          || error.message.startsWith('LLM 请求失败 5')
-          || /^LLM 请求失败 408/.test(error.message)
-          || /^LLM 请求失败 429/.test(error.message)
-          || /^LLM 请求失败 40[13]/.test(error.message));
+        && (msg === 'LLM 请求超时'
+          || msg.startsWith('LLM 网络异常')
+          || msg.startsWith('LLM 请求失败 5')
+          || /^LLM 请求失败 408/.test(msg)
+          || /^LLM 请求失败 429/.test(msg)
+          || /^LLM 请求失败 40[13]/.test(msg));
       if (!retriable || nth >= 5) throw error;
       const delay = Math.min(15_000, 3_000 * nth);
       console.warn(`[llm.request] ${error.message.slice(0, 120)}，${delay / 1000} 秒后自动重试（第 ${nth + 1}/5 次）`);
@@ -237,6 +240,12 @@ async function requestOnce(
   } catch (error: any) {
     if (error?.name === 'AbortError') {
       throw new LlmError(opts?.signal?.aborted ? 'AI 请求已取消' : 'LLM 请求超时');
+    }
+    // 网络层异常（连接重置/DNS/TLS）：undici 包成 TypeError 'fetch failed'，
+    // 统一转 LlmError 交给网络层重试（不重试的话瞬时断连会固化成任务失败）
+    if (error instanceof TypeError && /fetch failed/i.test(error?.message || '')) {
+      const cause = (error as any)?.cause ? `（${String((error as any).cause.message || (error as any).cause).slice(0, 80)}）` : '';
+      throw new LlmError(`LLM 网络异常 fetch failed${cause}`);
     }
     throw error;
   } finally {
