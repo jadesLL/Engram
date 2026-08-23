@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { DB_FILE, ensureDirs } from '../config.js';
 import { deriveReportIdentity } from '../dream/reportIdentity.js';
+import { migrateLegacyModelConfig } from './modelConfig.js';
 
 ensureDirs();
 
@@ -535,6 +536,33 @@ export function migrate() {
   );
   CREATE INDEX IF NOT EXISTS idx_im_sessions_lookup
     ON im_sessions(platform, chat_id, user_id);
+
+  -- 模型配置条目（chat/embedding/document 三池），取代 settings 表里的 JSON 大字段；
+  -- 读取与迁移逻辑见 modelConfig.ts
+  CREATE TABLE IF NOT EXISTS model_entries (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,               -- 'chat' | 'embedding' | 'document'
+    name TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT 'custom',
+    line TEXT,
+    base_url TEXT NOT NULL DEFAULT '',
+    models_url TEXT,
+    logo TEXT,
+    model TEXT NOT NULL DEFAULT '',
+    api_key TEXT NOT NULL DEFAULT '',
+    protocol TEXT NOT NULL DEFAULT 'openai',  -- 'openai' | 'anthropic'
+    dim INTEGER,
+    supports_dimensions INTEGER NOT NULL DEFAULT 0,
+    image_input TEXT,
+    image_input_source TEXT,
+    image_input_checked_at TEXT,
+    dialect TEXT NOT NULL DEFAULT '{}',       -- 供应商参数降级记忆 JSON
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_model_entries_kind
+    ON model_entries(kind, sort_order);
   `);
 
   ensureColumn('ingest_log', 'content_hash', 'TEXT');
@@ -600,6 +628,8 @@ export function migrate() {
   ).run(now());
   });
   migrateSchema();
+  // 旧 settings JSON 模型配置 → model_entries 一次性迁移（幂等；已迁移或无旧数据时为空操作）
+  migrateLegacyModelConfig();
   const usageCutoff = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
   db.prepare(`DELETE FROM llm_usage WHERE created_at < ?`).run(usageCutoff);
   const semanticCacheCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();

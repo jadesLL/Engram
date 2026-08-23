@@ -398,6 +398,14 @@
           <label for="model-base-url">Base URL</label>
           <input id="model-base-url" v-model="form.baseUrl" placeholder="https://.../v1" @change="onFormBaseUrlChange" />
         </div>
+        <div v-if="showProtocolSelect" class="field">
+          <label for="model-protocol">请求协议</label>
+          <select id="model-protocol" v-model="form.protocol">
+            <option value="openai">OpenAI 兼容（/chat/completions + Bearer）</option>
+            <option value="anthropic">Anthropic 兼容（/v1/messages + x-api-key）</option>
+          </select>
+          <span class="field-help">决定请求地址拼接、鉴权头与消息格式；预设服务商按线路自动确定。</span>
+        </div>
         <div class="field field-wide">
           <label>模型目录</label>
           <div class="discovery-url-row">
@@ -424,7 +432,9 @@
             @blur="onFormApiKeyBlur"
           />
           <span v-if="effectiveFormApiKey" class="field-help">
-            {{ apiKeyRevealed ? '点击其他位置后重新隐藏；可直接编辑替换 Key。' : '中间字符已隐藏，点击输入框查看完整 Key。' }}
+            {{ form.apiKey.trim()
+              ? (apiKeyRevealed ? '点击其他位置后重新隐藏；可直接编辑替换 Key。' : '中间字符已隐藏，点击输入框查看完整 Key。')
+              : '已保存的 Key 由服务端保留（此处显示掩码）；留空保存即沿用，输入新值则替换。' }}
           </span>
           <span v-else-if="form.id" class="field-help">请为当前服务商和线路输入 API Key。</span>
         </div>
@@ -465,13 +475,16 @@ import { api } from '../../api';
 import Icon from '../Icon.vue';
 import AppModal from '../ui/AppModal.vue';
 import {
-  PROVIDERS,
+  catalogProviders,
+  customPreset,
   modelById,
   providerById,
+  setModelCatalog,
   type ApiLine,
   type ImageInputStatus,
   type ModelOption,
   type ProviderPreset,
+  type ProviderProtocol,
 } from '../../presets';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
@@ -488,6 +501,7 @@ interface ModelEntry {
   logo?: string;
   model: string;
   apiKey: string;
+  protocol?: ProviderProtocol;
   dim?: number;
   supportsDimensions?: boolean;
   imageInput?: ImageInputStatus;
@@ -503,6 +517,7 @@ interface ModelDraft {
   model: string;
   modelChoice: string;
   apiKey: string;
+  protocol: ProviderProtocol;
   dim: number;
 }
 
@@ -734,13 +749,14 @@ async function testAll() {
   }
 }
 
-// ---------- 服务商列表 ----------
-const fixedChatProviders = computed(() => PROVIDERS.filter((provider) => provider.id !== 'custom'));
+// ---------- 服务商列表（目录来自服务端，Logo 已在注入时补齐） ----------
+const catalogList = computed(() => catalogProviders());
+const fixedChatProviders = computed(() => catalogList.value.filter((provider) => provider.id !== 'custom'));
 const fixedEmbeddingProviders = computed(() =>
-  PROVIDERS.filter((provider) => provider.id !== 'custom' && provider.embeddingModels.length > 0)
+  catalogList.value.filter((provider) => provider.id !== 'custom' && provider.embeddingModels.length > 0)
 );
 const fixedDocumentProviders = computed(() =>
-  PROVIDERS.filter((provider) => provider.id !== 'custom' && (provider.documentModels?.length || 0) > 0)
+  catalogList.value.filter((provider) => provider.id !== 'custom' && (provider.documentModels?.length || 0) > 0)
 );
 
 function cardsFor(kind: ModelKind): ProviderCard[] {
@@ -807,11 +823,13 @@ const form = ref({
   model: '',
   modelChoice: '__custom__',
   apiKey: '',
+  protocol: 'openai' as ProviderProtocol,
   dim: 1024,
 });
 const providerLogoInput = ref<HTMLInputElement>();
 const apiKeyInput = ref<HTMLInputElement>();
 const apiKeyRevealed = ref(false);
+const revealedStoredKey = ref('');
 const formTesting = ref(false);
 const formSaving = ref(false);
 const formError = ref('');
@@ -824,18 +842,21 @@ let modelDiscoveryRequestId = 0;
 
 const providerOptions = computed(() =>
   form.value.kind === 'emb'
-    ? PROVIDERS.filter((provider) => provider.embeddingModels.length > 0 || provider.id === 'custom')
+    ? catalogList.value.filter((provider) => provider.embeddingModels.length > 0 || provider.id === 'custom')
     : form.value.kind === 'document'
-      ? PROVIDERS.filter((provider) => (provider.documentModels?.length || 0) > 0 || provider.id === 'custom')
-      : PROVIDERS
+      ? catalogList.value.filter((provider) => (provider.documentModels?.length || 0) > 0 || provider.id === 'custom')
+      : catalogList.value
 );
 
-const customPreset = providerById('custom')!;
 const currentFormProvider = computed<ProviderPreset>(() => {
   const preset = providerById(form.value.provider);
   if (preset) return preset;
   return { ...customPreset, id: form.value.provider, name: providerName(form.value.provider) };
 });
+/** 自定义/未知服务商需要显式选择协议；预设服务商由线路隐式决定 */
+const showProtocolSelect = computed(() =>
+  form.value.provider === 'custom' || !providerById(form.value.provider)
+);
 const existingFormEntry = computed(() => {
   if (!form.value.id) return undefined;
   const list = modelsRef(form.value.kind).value;
@@ -880,19 +901,16 @@ const currentFormModelUnavailable = computed(() => {
     && !discoveredModels.value.some((model) => model.id === current),
   );
 });
-const reusableExistingApiKey = computed(() => {
-  const existing = existingFormEntry.value;
-  return existing?.provider === form.value.provider
-    && normalizeUrl(existing.baseUrl) === normalizeUrl(form.value.baseUrl)
-    ? existing.apiKey
-    : '';
-});
+/** 已存条目的 Key（服务端下发掩码）。保存时留空即沿用库中原值，前端不再持有明文。 */
+const existingKeyMasked = computed(() => existingFormEntry.value?.apiKey || '');
 const effectiveFormApiKey = computed(() =>
-  form.value.apiKey.trim() || reusableExistingApiKey.value
+  form.value.apiKey.trim() || existingKeyMasked.value
 );
 const formApiKeyDisplayValue = computed(() => {
-  const key = effectiveFormApiKey.value;
-  return apiKeyRevealed.value ? key : maskKey(key);
+  if (revealedStoredKey.value) return revealedStoredKey.value;
+  const typed = form.value.apiKey.trim();
+  if (typed) return apiKeyRevealed.value ? typed : maskKey(typed);
+  return existingKeyMasked.value;
 });
 
 function normalizeUrl(url: string): string {
@@ -973,6 +991,7 @@ function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: Model
     model: existing?.model || '',
     modelChoice: existing?.model || '',
     apiKey: '',
+    protocol: existing?.protocol || lineFor(provider, line, kind)?.protocol || 'openai',
     dim: existing?.dim || existingOption?.dim || 1024,
   };
 }
@@ -1038,13 +1057,9 @@ function entryFromDraft(
     modelsUrl: normalizeUrl(draft.modelsUrl),
     ...(draft.logo ? { logo: draft.logo } : {}),
     model,
-    apiKey: draft.apiKey.trim()
-      || (
-        existing?.provider === provider.id
-        && normalizeUrl(existing.baseUrl) === normalizeUrl(draft.baseUrl)
-          ? existing.apiKey
-          : ''
-      ),
+    // 留空保存 = 服务端沿用库中原 Key；新输入的明文原样提交
+    apiKey: draft.apiKey.trim(),
+    ...(draft.protocol === 'anthropic' ? { protocol: 'anthropic' as const } : {}),
     ...(kind === 'emb' ? { dim: draft.dim || option?.dim || 1024, supportsDimensions } : {}),
     ...(imageInput ? { imageInput, imageInputSource } : {}),
     ...(sameEndpoint && existing?.imageInputCheckedAt
@@ -1056,6 +1071,7 @@ function entryFromDraft(
 function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
   modelDiscoveryRequestId++;
   apiKeyRevealed.value = false;
+  revealedStoredKey.value = '';
   formError.value = '';
   discoveredModels.value = [];
   modelDiscoveryCompleted.value = false;
@@ -1074,15 +1090,16 @@ function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
     ...draft,
   };
   if (existing?.apiKey) {
-    queueMicrotask(() => void discoverFormModels(existing.apiKey));
+    queueMicrotask(() => void discoverFormModels());
   }
 }
 
 function pickProvider(id: string) {
   modelDiscoveryRequestId++;
   apiKeyRevealed.value = false;
+  revealedStoredKey.value = '';
   const provider = providerById(id) || customPreset;
-  const hasGeneratedName = !form.value.name || PROVIDERS.some((item) => item.name === form.value.name);
+  const hasGeneratedName = !form.value.name || catalogList.value.some((item) => item.name === form.value.name);
   const draft = createDraft(form.value.kind, provider);
   form.value.line = draft.line;
   form.value.baseUrl = draft.baseUrl;
@@ -1091,6 +1108,7 @@ function pickProvider(id: string) {
   form.value.model = draft.model;
   form.value.modelChoice = draft.modelChoice;
   form.value.apiKey = '';
+  form.value.protocol = draft.protocol;
   form.value.dim = draft.dim;
   if (hasGeneratedName) form.value.name = provider.name;
   formError.value = '';
@@ -1106,6 +1124,7 @@ function applyLineToDraft(kind: ModelKind, provider: ProviderPreset, draft: Mode
   const line = lineFor(provider, lineId, kind);
   if (line) draft.baseUrl = line.baseUrl;
   if (line) draft.modelsUrl = line.modelsUrl || inferredModelsUrl(line.baseUrl);
+  draft.protocol = line?.protocol || 'openai';
   draft.modelChoice = '';
   draft.model = '';
   if (kind === 'emb') draft.dim = 1024;
@@ -1127,7 +1146,9 @@ function applyModelToDraft(kind: ModelKind, provider: ProviderPreset, draft: Mod
 function onFormLineChange() {
   modelDiscoveryRequestId++;
   apiKeyRevealed.value = false;
+  revealedStoredKey.value = '';
   applyLineToDraft(form.value.kind, currentFormProvider.value, form.value, form.value.line);
+  form.value.protocol = form.value.protocol || 'openai';
   form.value.apiKey = '';
   formError.value = '';
   discoveredModels.value = [];
@@ -1162,6 +1183,13 @@ function resetFormModelDiscovery(clearNewSelection = false) {
 function revealFormApiKey() {
   if (!effectiveFormApiKey.value) return;
   apiKeyRevealed.value = true;
+  // 已存条目：从服务端拉取完整 Key 展示（列表通道只下发掩码）
+  const existing = existingFormEntry.value;
+  if (existing?.apiKey && !revealedStoredKey.value) {
+    api.get(`/api/settings/models/${existing.id}/key`)
+      .then(({ data }) => { revealedStoredKey.value = data.apiKey || ''; })
+      .catch(() => { revealedStoredKey.value = ''; });
+  }
   void nextTick(() => {
     const input = apiKeyInput.value;
     if (!input) return;
@@ -1171,13 +1199,15 @@ function revealFormApiKey() {
 
 function onFormApiKeyInput(event: Event) {
   const value = (event.currentTarget as HTMLInputElement).value;
-  form.value.apiKey = value === reusableExistingApiKey.value ? '' : value;
+  revealedStoredKey.value = '';
+  form.value.apiKey = value;
   apiKeyRevealed.value = true;
   resetFormModelDiscovery(true);
 }
 
 function onFormApiKeyBlur() {
   apiKeyRevealed.value = false;
+  revealedStoredKey.value = '';
   void discoverFormModels();
 }
 
@@ -1246,7 +1276,10 @@ function onFormBaseUrlChange() {
 
 async function discoverFormModels(apiKeyOverride?: string) {
   const requestId = ++modelDiscoveryRequestId;
-  const apiKey = apiKeyOverride || effectiveFormApiKey.value;
+  // 已存条目未重输 Key 时传空：服务端按条目 id 补全库中原值，前端不经手明文
+  const apiKey = apiKeyOverride && !apiKeyOverride.includes('*')
+    ? apiKeyOverride
+    : form.value.apiKey.trim();
   if (!apiKey) {
     modelDiscoveryCompleted.value = false;
     discoveryBusy.value = false;
@@ -1267,6 +1300,7 @@ async function discoverFormModels(apiKeyOverride?: string) {
     const { data } = await api.post('/api/settings/discover-models', {
       baseUrl: form.value.baseUrl,
       apiKey,
+      entryId: existingFormEntry.value?.id || form.value.id || undefined,
       kind: form.value.kind === 'chat'
         ? 'chat'
         : form.value.kind === 'emb'
@@ -1316,13 +1350,13 @@ async function discoverFormModels(apiKeyOverride?: string) {
 }
 
 async function persist() {
-  await api.put('/api/settings', {
-    chat_models: JSON.stringify(chatModels.value),
-    active_chat_model: activeChat.value,
-    embedding_models: JSON.stringify(embModels.value),
-    active_embedding_model: activeEmb.value,
-    document_models: JSON.stringify(documentModels.value),
-    active_document_model: activeDocument.value,
+  await api.put('/api/settings/models', {
+    chat: chatModels.value,
+    embedding: embModels.value,
+    document: documentModels.value,
+    activeChat: activeChat.value,
+    activeEmbedding: activeEmb.value,
+    activeDocument: activeDocument.value,
   });
 }
 
@@ -1362,6 +1396,7 @@ async function refreshActiveChatImageCapability(force = false) {
   imageCapabilityDetail.value = '';
   checkedImageCapabilityIds.add(chat.id);
   try {
+    // chat.apiKey 可能是掩码（列表通道脱敏）：服务端 probe 入口按条目 id 补全原值
     const { data } = await api.post('/api/settings/probe-image-input', { entry: chat, force });
     if (requestId !== imageCapabilityRequestId || activeChat.value !== chat.id) return;
     const status = (data.status || 'unknown') as ImageInputStatus;
@@ -1411,7 +1446,10 @@ async function saveModel() {
       discoveredModels.value,
     );
     const index = list.value.findIndex((model) => model.id === entry.id);
-    if (index >= 0) list.value[index] = entry;
+    if (index >= 0) {
+      // 服务端返回的条目带掩码 Key；未重输 Key 时保留掩码占位，保存时服务端沿用原值
+      list.value[index] = { ...entry, apiKey: form.value.apiKey.trim() || existing?.apiKey || entry.apiKey };
+    }
     else list.value.push(entry);
     if (!activeIdFor(kind)) setActiveId(kind, entry.id);
     await persist();
@@ -1473,7 +1511,8 @@ async function removeModel(kind: ModelKind, id: string) {
 async function testForm() {
   formError.value = '';
   const existing = existingFormEntry.value;
-  const effectiveKey = effectiveFormApiKey.value;
+  // 掩码 Key（已存条目未重输）也放行校验：服务端测试入口会按 id 补全原值
+  const effectiveKey = form.value.apiKey.trim() || existing?.apiKey || '';
   const error = validateDraft(form.value, form.value.kind, effectiveKey);
   if (error) {
     formError.value = error;
@@ -1629,15 +1668,6 @@ async function clearLlmUsage() {
   }
 }
 
-function parseEntries(raw: string): ModelEntry[] {
-  try {
-    const value = JSON.parse(raw || '[]');
-    return Array.isArray(value) ? value : [];
-  } catch {
-    return [];
-  }
-}
-
 watch(
   () => [activeModelKind.value, activeChat.value] as const,
   ([kind]) => {
@@ -1646,13 +1676,17 @@ watch(
 );
 
 onMounted(async () => {
-  const { data: settingsData } = await api.get('/api/settings');
-  chatModels.value = parseEntries(settingsData.settings.chat_models);
-  embModels.value = parseEntries(settingsData.settings.embedding_models);
-  documentModels.value = parseEntries(settingsData.settings.document_models);
-  activeChat.value = settingsData.settings.active_chat_model || chatModels.value[0]?.id || '';
-  activeEmb.value = settingsData.settings.active_embedding_model || embModels.value[0]?.id || '';
-  activeDocument.value = settingsData.settings.active_document_model || documentModels.value[0]?.id || '';
+  const [{ data: catalogData }, { data: modelsData }] = await Promise.all([
+    api.get('/api/settings/model-catalog'),
+    api.get('/api/settings/models'),
+  ]);
+  setModelCatalog(catalogData.providers || []);
+  chatModels.value = modelsData.chat || [];
+  embModels.value = modelsData.embedding || [];
+  documentModels.value = modelsData.document || [];
+  activeChat.value = modelsData.activeChat || chatModels.value[0]?.id || '';
+  activeEmb.value = modelsData.activeEmbedding || embModels.value[0]?.id || '';
+  activeDocument.value = modelsData.activeDocument || documentModels.value[0]?.id || '';
   void loadLlmUsage();
   if (activeModelKind.value === 'document') void refreshActiveChatImageCapability();
 });
