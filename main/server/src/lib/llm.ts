@@ -209,10 +209,10 @@ async function requestOnce(
   const signal = opts?.signal
     ? AbortSignal.any([controller.signal, opts.signal])
     : controller.signal;
-<<<<<<< HEAD
   // 超时按输出预算动态估算：实测网关吞吐 ~11s/1000 completion tokens（8k 输出
-  // 约 90-140s）。固定值会把「正常的长输出请求」误判为超时，陷入重试死循环。
-  // 按 max_tokens 0.03s/token 估算并留足余量，下限 150s。
+  // 约 90-140s）。固定值会把「正常的长输出请求」误判为超时，陷入重试死循环
+  //（重发同样的请求又是同样的长输出）。按 max_tokens 0.03s/token 估算并留足
+  // 余量，下限 150s。
   const budgetTokens = typeof (body as any)?.max_tokens === 'number' ? (body as any).max_tokens : 4000;
   const estimatedMs = Math.max(150_000, Math.ceil(budgetTokens * 30));
   const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? estimatedMs);
