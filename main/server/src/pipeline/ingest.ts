@@ -1039,6 +1039,8 @@ export async function ingestRawFile(
     }
     const riskVerifyTargets = verifyTargets.filter((item) => !safeVerifyTargets.includes(item));
     const verifyBatches = batches(riskVerifyTargets, COMPOSE_BATCH_LIMIT);
+    // 风险项 Verify 失败不致命：verify 是证据校验关卡而非内容生产，模型思考
+    // 波动导致的批失败让该批缺失 → 写入门禁自动转 review，不该让整 run 报错
     const verifyResults = await concurrentMap(verifyBatches, 2, async (verifyBatch) => {
       options.signal?.throwIfAborted();
       const factIds = new Set(verifyBatch.flatMap((item) => item.factIds));
@@ -1047,21 +1049,30 @@ export async function ingestRawFile(
         !question.factIds.length || question.factIds.some((factId) => factIds.has(factId))
       );
       const history = createSemanticCacheSession(`ingest-verify:${runId}`, verifierPrompt);
-      return coveredItemsStage<VerifierOutput>(
-        runId,
-        verifierOutputSchema,
-        verifierPrompt,
-        { items: verifyBatch, facts: batchFacts, questions: batchQuestions },
-        verifyBatch,
-        'ingest-verify',
-        14000,
-        `ingest-verify:${verifyBatches.indexOf(verifyBatch) + 1}`,
-        undefined,
-        history,
-        'always',
-        options.signal,
-        heartbeat,
-      );
+      try {
+        return await coveredItemsStage<VerifierOutput>(
+          runId,
+          verifierOutputSchema,
+          verifierPrompt,
+          { items: verifyBatch, facts: batchFacts, questions: batchQuestions },
+          verifyBatch,
+          'ingest-verify',
+          16000,
+          `ingest-verify:${verifyBatches.indexOf(verifyBatch) + 1}`,
+          undefined,
+          history,
+          'always',
+          options.signal,
+          heartbeat,
+        );
+      } catch (error: any) {
+        if (options.signal?.aborted) throw error;
+        audit(runId, `verify:${verifyBatches.indexOf(verifyBatch) + 1}:degraded`, {
+          error: String(error?.message || error).slice(0, 200),
+          fallback: 'review',
+        }, verifyBatch);
+        return { items: [] as VerifierOutput['items'] };
+      }
     });
     verifyResults.forEach((result, index) => {
       verifiedItems.push(...result.items);
@@ -1086,7 +1097,7 @@ export async function ingestRawFile(
           { items: [target], facts: missingFacts, questions: missingQuestions },
           [target],
           'ingest-verify',
-          14000,
+          16000,
           `ingest-verify:retry:${target.candidateId}`,
           undefined,
           createSemanticCacheSession(`ingest-verify:${runId}`, verifierPrompt),
