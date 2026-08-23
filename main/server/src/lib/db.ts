@@ -565,6 +565,11 @@ export function migrate() {
     ON model_entries(kind, sort_order);
   `);
 
+  // model_entries 增量列（1.1.17：跨协议模型列表/免鉴权线路标志；存量库补列，新库由上方 DDL 含 models_protocol 等列时也不会重复）
+  ensureColumn('model_entries', 'models_protocol', 'TEXT');
+  ensureColumn('model_entries', 'auth_optional', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('model_entries', 'models_anonymous', 'INTEGER NOT NULL DEFAULT 0');
+
   ensureColumn('ingest_log', 'content_hash', 'TEXT');
   ensureColumn('ingest_log', 'status', `TEXT NOT NULL DEFAULT 'completed'`);
   ensureColumn('ingest_log', 'run_id', 'TEXT');

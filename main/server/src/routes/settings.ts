@@ -177,10 +177,14 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post('/api/settings/discover-models', async (req, reply) => {
     const body = (req.body || {}) as {
       baseUrl?: string;
+      modelsUrl?: string;
       apiKey?: string;
       /** 已存条目 id：apiKey 为掩码/留空时按 id 补全库中原值 */
       entryId?: string;
       kind?: 'chat' | 'embedding' | 'document';
+      /** 模型列表接口协议（anthropic 用 x-api-key 头）与匿名访问标志：由前端按当前线路提供 */
+      modelsProtocol?: 'openai' | 'anthropic';
+      anonymous?: boolean;
     };
     if (!['chat', 'embedding', 'document'].includes(body.kind || '')) {
       return reply.code(400).send({ error: '模型类型无效' });
@@ -192,8 +196,11 @@ export async function settingsRoutes(app: FastifyInstance) {
     try {
       return await discoverModels({
         baseUrl: body.baseUrl,
+        modelsUrl: body.modelsUrl,
         apiKey,
         kind: body.kind as 'chat' | 'embedding' | 'document',
+        ...(body.modelsProtocol ? { modelsProtocol: body.modelsProtocol } : {}),
+        ...(body.anonymous !== undefined ? { anonymous: body.anonymous } : {}),
       });
     } catch (error: any) {
       return reply.code(502).send({ error: error?.message || '模型列表拉取失败' });

@@ -1,6 +1,7 @@
 /** 服务端厂商目录：内置服务商、API 线路与模型列表的唯一事实源。
- *  前端经 GET /api/settings/model-catalog 拉取展示；logo 资源仍由前端静态映射持有，
- *  服务端目录不携带二进制资源。新模型上线只改本文件，前端无需发版。 */
+ *  前端经 GET /api/settings/model-catalog 拉取展示；logo 资源由前端静态映射持有，
+ *  服务端目录不携带二进制资源。新模型上线只改本文件，前端无需发版。
+ *  线路参数参考 Cherry Studio provider-registry 与各厂商官方文档（2026-08 核对）。 */
 
 export type ProviderProtocol = 'openai' | 'anthropic';
 
@@ -17,14 +18,20 @@ export interface CatalogModelOption {
 export interface CatalogApiLine {
   id: string;
   name: string;
-  type: 'payg' | 'token-plan' | 'coding-plan' | 'agent-plan';
+  type: 'payg' | 'token-plan' | 'coding-plan' | 'agent-plan' | 'local';
   baseUrl: string;
   /** 请求协议：缺省按 OpenAI 兼容处理（/chat/completions + Bearer）。 */
   protocol?: ProviderProtocol;
   /** 获取该线路可用模型的 API（anthropic 线路通常复用厂商 OpenAI 兼容的 /models）。 */
   modelsUrl?: string;
+  /** 模型列表拉取使用的协议（缺省同 line.protocol；跨协议复用时显式声明）。 */
+  modelsProtocol?: ProviderProtocol;
   /** 线路模型白名单。省略时表示可使用厂商目录中的全部模型。 */
   models?: string[];
+  /** 免鉴权线路（本地推理）：无 API Key 也可调用。 */
+  authOptional?: boolean;
+  /** 模型列表接口支持匿名访问（拉取不需要 Key，调用仍需要）。 */
+  modelsAnonymous?: boolean;
   hint?: string;
   apiKeyPlaceholder?: string;
 }
@@ -64,6 +71,7 @@ export const MODEL_CATALOG: CatalogProvider[] = [
         protocol: 'anthropic',
         baseUrl: 'https://api.deepseek.com/anthropic',
         modelsUrl: 'https://api.deepseek.com/models',
+        modelsProtocol: 'openai',
         hint: '走 Anthropic Messages 协议（/v1/messages + x-api-key），适合 Claude 生态客户端复用。',
         apiKeyPlaceholder: 'sk-...',
       },
@@ -83,6 +91,17 @@ export const MODEL_CATALOG: CatalogProvider[] = [
         type: 'payg',
         baseUrl: 'https://api.moonshot.cn/v1',
         modelsUrl: 'https://api.moonshot.cn/v1/models',
+        apiKeyPlaceholder: 'sk-...',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.moonshot.cn/anthropic',
+        modelsUrl: 'https://api.moonshot.cn/v1/models',
+        modelsProtocol: 'openai',
+        hint: '走 Anthropic Messages 协议（/v1/messages + x-api-key）。',
         apiKeyPlaceholder: 'sk-...',
       },
       {
@@ -117,6 +136,17 @@ export const MODEL_CATALOG: CatalogProvider[] = [
         type: 'payg',
         baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
         modelsUrl: 'https://open.bigmodel.cn/api/paas/v4/models',
+        apiKeyPlaceholder: 'API Key',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+        modelsUrl: 'https://open.bigmodel.cn/api/paas/v4/models',
+        modelsProtocol: 'openai',
+        hint: '走 Anthropic Messages 协议（/v1/messages + x-api-key）。',
         apiKeyPlaceholder: 'API Key',
       },
       {
@@ -157,6 +187,32 @@ export const MODEL_CATALOG: CatalogProvider[] = [
     defaultChat: 'glm-5.2',
     defaultEmbedding: 'embedding-3',
     defaultDocument: 'glm-4.6v-flash',
+  },
+  {
+    id: 'zai',
+    name: '智谱国际 Z.ai',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.z.ai/api/paas/v4',
+        apiKeyPlaceholder: 'API Key',
+        hint: '智谱海外版，GLM 系列模型的国际线路。',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.z.ai/api/anthropic',
+        hint: '走 Anthropic Messages 协议（/v1/messages + x-api-key）。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options(['glm-5.2', 'glm-5', 'glm-4.7']),
+    embeddingModels: [],
+    defaultChat: 'glm-5.2',
   },
   {
     id: 'aliyun',
@@ -334,6 +390,17 @@ export const MODEL_CATALOG: CatalogProvider[] = [
         apiKeyPlaceholder: 'sk-...',
       },
       {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.xiaomimimo.com/anthropic',
+        modelsUrl: 'https://api.xiaomimimo.com/v1/models',
+        modelsProtocol: 'openai',
+        hint: '走 Anthropic Messages 协议（/v1/messages + x-api-key）。',
+        apiKeyPlaceholder: 'sk-...',
+      },
+      {
         id: 'token-plan',
         name: 'Token Plan',
         type: 'token-plan',
@@ -356,6 +423,17 @@ export const MODEL_CATALOG: CatalogProvider[] = [
         type: 'payg',
         baseUrl: 'https://api.minimaxi.com/v1',
         modelsUrl: 'https://api.minimaxi.com/v1/models',
+        apiKeyPlaceholder: 'sk-...',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.minimaxi.com/anthropic',
+        modelsUrl: 'https://api.minimaxi.com/v1/models',
+        modelsProtocol: 'openai',
+        hint: '走 Anthropic Messages 协议（/v1/messages + x-api-key）。',
         apiKeyPlaceholder: 'sk-...',
       },
       {
@@ -402,8 +480,47 @@ export const MODEL_CATALOG: CatalogProvider[] = [
       'hunyuan-translation',
     ]),
     embeddingModels: [{ id: 'hunyuan-embedding', name: 'hunyuan-embedding', dim: 1024 }],
+    documentModels: [
+      { id: 'hunyuan-vision', name: 'hunyuan-vision', description: '图片与文档视觉理解', imageInput: 'supported' },
+    ],
     defaultChat: 'hunyuan-turbos-latest',
     defaultEmbedding: 'hunyuan-embedding',
+  },
+  {
+    id: 'tokenhub',
+    name: '腾讯 TokenHub',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://tokenhub.tencentmaas.com/v1',
+        modelsUrl: 'https://tokenhub.tencentmaas.com/v1/models',
+        hint: '腾讯云大模型知识引擎平台，聚合 DeepSeek/GLM/Kimi 等主流模型。',
+        apiKeyPlaceholder: 'API Key',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://tokenhub.tencentmaas.com',
+        modelsUrl: 'https://tokenhub.tencentmaas.com/v1/models',
+        modelsProtocol: 'openai',
+        hint: '走 Anthropic Messages 协议（/v1/messages + x-api-key）。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'deepseek-v4-pro',
+      'deepseek-v4-flash',
+      'glm-5.2',
+      'kimi-k3',
+      'hunyuan-turbos-latest',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'deepseek-v4-pro',
+    hint: '腾讯云官方聚合平台，一个 Key 调用多家模型。',
   },
   {
     id: 'siliconflow',
@@ -415,6 +532,7 @@ export const MODEL_CATALOG: CatalogProvider[] = [
         type: 'payg',
         baseUrl: 'https://api.siliconflow.cn/v1',
         modelsUrl: 'https://api.siliconflow.cn/v1/models',
+        modelsAnonymous: true,
         apiKeyPlaceholder: 'sk-...',
       },
       {
@@ -422,8 +540,10 @@ export const MODEL_CATALOG: CatalogProvider[] = [
         name: '按量付费（Anthropic 兼容）',
         type: 'payg',
         protocol: 'anthropic',
-        baseUrl: 'https://api.siliconflow.cn/api/anthropic',
+        baseUrl: 'https://api.siliconflow.cn',
         modelsUrl: 'https://api.siliconflow.cn/v1/models',
+        modelsProtocol: 'openai',
+        modelsAnonymous: true,
         hint: '走 Anthropic Messages 协议（/v1/messages + x-api-key），可直连 Claude 系模型。',
         apiKeyPlaceholder: 'sk-...',
       },
@@ -476,6 +596,568 @@ export const MODEL_CATALOG: CatalogProvider[] = [
     hint: '模型名称使用硅基流动模型广场中的完整 org/model ID。',
   },
   {
+    id: 'baidu',
+    name: '百度千帆',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://qianfan.baidubce.com/v2',
+        modelsUrl: 'https://qianfan.baidubce.com/v2/models',
+        hint: '千帆 ModelBuilder v2 为 OpenAI 兼容接口，ERNIE 系列模型。',
+        apiKeyPlaceholder: 'Bearer Key',
+      },
+    ],
+    chatModels: options([
+      'ernie-5.0-thinking',
+      'ernie-4.5-turbo',
+      'ernie-x1-turbo',
+      'deepseek-v4-flash',
+    ]),
+    embeddingModels: [
+      { id: 'bge-large-zh', name: 'bge-large-zh', dim: 1024 },
+      { id: 'embedding-v1', name: 'embedding-v1', dim: 384 },
+    ],
+    documentModels: [
+      { id: 'ernie-4.5-turbo-vl', name: 'ERNIE 4.5 Turbo VL', description: '图文理解与文档解析', imageInput: 'supported' },
+    ],
+    defaultChat: 'ernie-4.5-turbo',
+    defaultEmbedding: 'bge-large-zh',
+    hint: 'v2 接口直连 ERNIE；新用户有代金券。',
+  },
+  {
+    id: 'iflytek',
+    name: '讯飞星火',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://spark-api-open.xf-yun.com/v1',
+        hint: '星火 OpenAI 兼容接口；官方无模型列表接口，请从下方内置目录选择。Max 版将于 2026-03 并入 Ultra。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      '4.0Ultra',
+      'x1-turbo',
+      'max-32k',
+      'generalv3.5',
+      'lite',
+    ]),
+    embeddingModels: [
+      { id: 'embedding', name: 'embedding', description: '星火文本向量（独立 /v1/embeddings 接口）', dim: 2560 },
+    ],
+    defaultChat: '4.0Ultra',
+    defaultEmbedding: 'embedding',
+    hint: '模型名即讯飞 domain 值（如 4.0Ultra / generalv3.5 / lite）。',
+  },
+  {
+    id: 'stepfun',
+    name: '阶跃星辰',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.stepfun.com',
+        modelsUrl: 'https://api.stepfun.com/v1/models',
+        apiKeyPlaceholder: 'API Key',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.stepfun.com',
+        modelsUrl: 'https://api.stepfun.com/v1/models',
+        modelsProtocol: 'openai',
+        hint: '阶跃官方提供 Anthropic Messages API。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'step-3.7-flash',
+      'step-3.5-flash',
+      'step-2-16k',
+      'step-1v-8k',
+    ]),
+    embeddingModels: [
+      { id: 'step-embedding', name: 'step-embedding', dim: 2560 },
+    ],
+    documentModels: [
+      { id: 'step-1o-turbo-vision', name: 'Step 1o Turbo Vision', description: '高速视觉理解与 OCR', imageInput: 'supported' },
+      { id: 'step-3.7-flash', name: 'Step 3.7 Flash', description: '原生多模态对话模型', imageInput: 'supported' },
+    ],
+    defaultChat: 'step-3.7-flash',
+    hint: 'step-3.7-flash 原生支持视觉输入。',
+  },
+  {
+    id: 'baichuan',
+    name: '百川智能',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.baichuan-ai.com',
+        modelsUrl: 'https://api.baichuan-ai.com/v1/models',
+        hint: '「海纳百川计划」可免费申请 M3Plus API。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'Baichuan-M3-Plus',
+      'Baichuan-M2-32B',
+      'Baichuan4-Turbo',
+    ]),
+    embeddingModels: [
+      { id: 'Baichuan-Embedding', name: 'Baichuan-Embedding', dim: 1024 },
+    ],
+    defaultChat: 'Baichuan-M3-Plus',
+  },
+  {
+    id: 'internlm',
+    name: '书生 InternLM',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.intern-ai.org.cn/paas/v4',
+        hint: '上海 AI 实验室书生大模型平台，注册有免费额度。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'intern-s2-preview',
+      'Intern-S1',
+      'internlm3-8b-instruct',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'intern-s2-preview',
+  },
+  {
+    id: 'giteeai',
+    name: 'Gitee AI',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://ai.gitee.com/v1',
+        modelsUrl: 'https://ai.gitee.com/v1/models',
+        modelsAnonymous: true,
+        hint: '开源中国模力方舟，聚合 240+ 开源模型，模型列表可匿名浏览。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'DeepSeek-V4-Pro',
+      'GLM-5',
+      'Kimi-K2.7',
+      'Qwen3.8-Max',
+    ]),
+    embeddingModels: [
+      { id: 'Qwen3-Embedding-8B', name: 'Qwen3-Embedding-8B', dim: 4096 },
+      { id: 'bge-m3', name: 'bge-m3', dim: 1024 },
+    ],
+    documentModels: [
+      { id: 'Qwen3-VL-235B', name: 'Qwen3-VL-235B', description: '开源多模态视觉理解', imageInput: 'supported' },
+      { id: 'ERNIE-4.5-Turbo-VL', name: 'ERNIE-4.5-Turbo-VL', description: '图文理解', imageInput: 'supported' },
+    ],
+    defaultChat: 'DeepSeek-V4-Pro',
+    defaultEmbedding: 'bge-m3',
+    defaultDocument: 'Qwen3-VL-235B',
+  },
+  {
+    id: 'infiniai',
+    name: '无问芯穹',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://cloud.infini-ai.com/maas/v1',
+        modelsUrl: 'https://cloud.infini-ai.com/maas/v1/models',
+        hint: '异构算力聚合平台，托管 DeepSeek/GLM/Qwen 等，注册有免费体验额度。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'deepseek-v4-pro',
+      'deepseek-v3-1',
+      'glm-4.6',
+      'qwen3-max',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'deepseek-v4-pro',
+  },
+  {
+    id: 'antling',
+    name: '蚂蚁百灵',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.ant-ling.com/v1',
+        hint: '蚂蚁集团百灵大模型，Ling/Ring/Ming 系列。',
+        apiKeyPlaceholder: 'API Key',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.ant-ling.com/anthropic',
+        hint: '百灵官方 Anthropic Messages 兼容端点。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'Ling-3.0-flash',
+      'Ling-2.6-1T',
+      'Ring-2.6-1T',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'Ling-3.0-flash',
+    hint: 'Ring 系列为推理模型，Ming 系列为全模态。',
+  },
+  {
+    id: 'taichu',
+    name: '紫东太初',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://cloud.zidongtaichu.com/maas/v1',
+        hint: '中科院自动化所多模态大模型平台。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options(['taichu-2.6', 'taichu-geography', 'taichu-medical']),
+    embeddingModels: [],
+    defaultChat: 'taichu-2.6',
+    hint: '太初系列原生多模态，含行业定制模型。',
+  },
+  {
+    id: 'ai360',
+    name: '360 智脑',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.360.cn/v1',
+        modelsUrl: 'https://api.360.cn/v1/models',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options(['360gpt-turbo', '360gpt2-pro']),
+    embeddingModels: [
+      { id: 'embedding_bear', name: 'embedding_bear', dim: 1024 },
+    ],
+    defaultChat: '360gpt-turbo',
+  },
+  {
+    id: 'modelscope',
+    name: '魔搭 ModelScope',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api-inference.modelscope.cn/v1',
+        modelsUrl: 'https://api-inference.modelscope.cn/v1/models',
+        modelsAnonymous: true,
+        hint: '阿里魔搭社区 API-Inference，每日有免费调用额度，模型列表可匿名浏览。',
+        apiKeyPlaceholder: 'ms-...',
+      },
+    ],
+    chatModels: options([
+      'deepseek-ai/DeepSeek-V4-Pro',
+      'ZhipuAI/GLM-5.2',
+      'Qwen/Qwen3.8-27B',
+      'Tencent-Hunyuan/Hy3',
+    ]),
+    embeddingModels: [
+      { id: 'iic/gte-large-zh', name: 'iic/gte-large-zh', dim: 1024 },
+      { id: 'iic/gte_text-embedding', name: 'iic/gte_text-embedding', dim: 768 },
+    ],
+    documentModels: [
+      { id: 'Qwen/Qwen3-VL-235B', name: 'Qwen3-VL-235B', description: '多模态视觉理解', imageInput: 'supported' },
+    ],
+    defaultChat: 'deepseek-ai/DeepSeek-V4-Pro',
+    defaultEmbedding: 'iic/gte-large-zh',
+    hint: '模型名带 org 前缀（org/model），SDK token 在魔搭个人中心生成。',
+  },
+  {
+    id: 'ppio',
+    name: 'PPIO 派欧云',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.ppinfra.com/v3/openai',
+        modelsUrl: 'https://api.ppinfra.com/v3/openai/models',
+        modelsAnonymous: true,
+        hint: '分布式算力平台，聚合托管多家开源模型，模型列表可匿名浏览。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'deepseek/deepseek-v4-pro',
+      'moonshotai/kimi-k3',
+      'zai-org/glm-5.3',
+    ]),
+    embeddingModels: [],
+    documentModels: [
+      { id: 'qwen/qwen3-vl-235b', name: 'Qwen3-VL-235B', description: '多模态视觉理解', imageInput: 'supported' },
+    ],
+    defaultChat: 'deepseek/deepseek-v4-pro',
+    defaultDocument: 'qwen/qwen3-vl-235b',
+    hint: '模型名带 org 前缀。',
+  },
+  {
+    id: 'qiniu',
+    name: '七牛 AI',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.qnaigc.com',
+        modelsUrl: 'https://api.qnaigc.com/v1/models',
+        modelsAnonymous: true,
+        hint: '七牛云 AI Token API，聚合国产主流模型。',
+        apiKeyPlaceholder: 'API Key',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.qnaigc.com',
+        modelsUrl: 'https://api.qnaigc.com/v1/models',
+        modelsProtocol: 'openai',
+        hint: '七牛官方 Anthropic Messages 兼容端点。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'deepseek-v4-flash',
+      'doubao-seed-1.6',
+      'z-ai/glm-5.1',
+    ]),
+    embeddingModels: [],
+    documentModels: [
+      { id: 'qwen3-vl', name: 'qwen3-vl', description: '视觉理解', imageInput: 'supported' },
+    ],
+    defaultChat: 'deepseek-v4-flash',
+  },
+  {
+    id: 'lanyun',
+    name: '蓝耘科技',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://maas-api.lanyun.net',
+        modelsUrl: 'https://maas-api.lanyun.net/v1/models',
+        modelsAnonymous: true,
+        hint: '蓝耘 MaaS 平台，聚合国产模型，模型列表可匿名浏览。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'kimi-k3',
+      'deepseek-v4-pro',
+      'glm-5.2',
+      'MiniMax-H3',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'kimi-k3',
+  },
+  {
+    id: 'longcat',
+    name: '美团龙猫',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.longcat.chat/openai',
+        hint: '美团龙猫大模型 LongCat。',
+        apiKeyPlaceholder: 'API Key',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.longcat.chat/anthropic',
+        hint: '龙猫官方 Anthropic Messages 兼容端点。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'LongCat-Flash-Thinking',
+      'LongCat-Flash-Chat',
+      'LongCat-Flash-Omni',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'LongCat-Flash-Chat',
+  },
+  {
+    id: 'sensenova',
+    name: '商汤日日新',
+    lines: [
+      {
+        id: 'token-plan',
+        name: 'Token 套餐',
+        type: 'token-plan',
+        baseUrl: 'https://token.sensenova.cn/v1',
+        hint: '商汤 Token Plan 公测（OpenAI 兼容），含 deepseek 等模型。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'SenseChat-5',
+      'SenseNova-V6-Pro',
+      'deepseek-v4-flash',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'SenseChat-5',
+  },
+  {
+    id: 'xirang',
+    name: '天翼云息壤',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://wishub-x1.ctyun.cn',
+        hint: '中国电信天翼云息壤大模型平台。',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options(['ctyun-x1', 'ctyun-x2']),
+    embeddingModels: [],
+    defaultChat: 'ctyun-x1',
+  },
+  {
+    id: '302ai',
+    name: '302.AI',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.302.ai',
+        modelsUrl: 'https://api.302.ai/v1/models',
+        hint: '国内聚合中转（Claude/GPT/国产全都有），按量付费。',
+        apiKeyPlaceholder: 'sk-...',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.302.ai',
+        modelsUrl: 'https://api.302.ai/v1/models',
+        modelsProtocol: 'openai',
+        hint: '302.AI 的 Anthropic 协议端点。',
+        apiKeyPlaceholder: 'sk-...',
+      },
+    ],
+    chatModels: options([
+      'deepseek-chat',
+      'claude-sonnet-4-5',
+      'gpt-5.4',
+    ]),
+    embeddingModels: [
+      { id: 'text-embedding-3-small', name: 'text-embedding-3-small', dim: 1536 },
+    ],
+    defaultChat: 'deepseek-chat',
+    hint: '聚合中转，模型以在线拉取为准。',
+  },
+  {
+    id: 'aihubmix',
+    name: 'AiHubMix',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://aihubmix.com/v1',
+        modelsUrl: 'https://aihubmix.com/v1/models',
+        hint: '聚合平台，支持 OpenAI/Anthropic/Gemini 三协议。',
+        apiKeyPlaceholder: 'sk-...',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://aihubmix.com',
+        modelsUrl: 'https://aihubmix.com/v1/models',
+        modelsProtocol: 'openai',
+        hint: 'AiHubMix 的 Anthropic 协议端点。',
+        apiKeyPlaceholder: 'sk-...',
+      },
+    ],
+    chatModels: options([
+      'gpt-5.4',
+      'claude-sonnet-4-5',
+      'deepseek-chat',
+    ]),
+    embeddingModels: [
+      { id: 'text-embedding-3-small', name: 'text-embedding-3-small', dim: 1536 },
+    ],
+    defaultChat: 'claude-sonnet-4-5',
+    hint: '聚合中转，模型以在线拉取为准。',
+  },
+  {
+    id: 'dmxapi',
+    name: 'DMXAPI',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://www.dmxapi.cn',
+        modelsUrl: 'https://www.dmxapi.cn/v1/models',
+        hint: '国内聚合中转。',
+        apiKeyPlaceholder: 'sk-...',
+      },
+      {
+        id: 'payg-anthropic',
+        name: '按量付费（Anthropic 兼容）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://www.dmxapi.cn',
+        modelsUrl: 'https://www.dmxapi.cn/v1/models',
+        modelsProtocol: 'openai',
+        hint: 'DMXAPI 的 Anthropic 协议端点。',
+        apiKeyPlaceholder: 'sk-...',
+      },
+    ],
+    chatModels: options([
+      'gpt-5.4',
+      'claude-sonnet-4-5',
+      'deepseek-v4',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'deepseek-v4',
+    hint: '聚合中转，模型以在线拉取为准。',
+  },
+  {
     id: 'openai',
     name: 'OpenAI',
     lines: [
@@ -525,6 +1207,337 @@ export const MODEL_CATALOG: CatalogProvider[] = [
     defaultChat: 'gpt-5.4-mini',
     defaultEmbedding: 'text-embedding-3-small',
     defaultDocument: 'gpt-5.4-mini',
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费（Anthropic 协议）',
+        type: 'payg',
+        protocol: 'anthropic',
+        baseUrl: 'https://api.anthropic.com',
+        modelsUrl: 'https://api.anthropic.com/v1/models',
+        modelsProtocol: 'anthropic',
+        hint: 'Claude 官方 API（/v1/messages + x-api-key），模型列表走官方 /v1/models。',
+        apiKeyPlaceholder: 'sk-ant-...',
+      },
+    ],
+    chatModels: options([
+      'claude-opus-4-5',
+      'claude-sonnet-4-5',
+      'claude-haiku-4-5',
+      'claude-3-7-sonnet-latest',
+    ]),
+    embeddingModels: [],
+    documentModels: [
+      { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', description: '图文理解与文档解析', imageInput: 'supported' },
+    ],
+    defaultChat: 'claude-sonnet-4-5',
+    defaultDocument: 'claude-sonnet-4-5',
+  },
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费（OpenAI 兼容端点）',
+        type: 'payg',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+        modelsUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/models',
+        hint: 'Gemini 官方 OpenAI 兼容端点，Google AI Studio 的 API Key 可直接使用。',
+        apiKeyPlaceholder: 'AIza...',
+      },
+    ],
+    chatModels: options([
+      'gemini-3.5-pro',
+      'gemini-3.5-flash',
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+    ]),
+    embeddingModels: [
+      { id: 'text-embedding-004', name: 'text-embedding-004', dim: 768 },
+      { id: 'gemini-embedding-001', name: 'gemini-embedding-001', dim: 3072 },
+    ],
+    documentModels: [
+      { id: 'gemini-3.5-flash', name: 'Gemini 3.5 Flash', description: '原生多模态图文理解', imageInput: 'supported' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: '多模态文档解析', imageInput: 'supported' },
+    ],
+    defaultChat: 'gemini-3.5-flash',
+    defaultEmbedding: 'text-embedding-004',
+    defaultDocument: 'gemini-3.5-flash',
+  },
+  {
+    id: 'xai',
+    name: 'xAI Grok',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.x.ai/v1',
+        modelsUrl: 'https://api.x.ai/v1/models',
+        apiKeyPlaceholder: 'xai-...',
+      },
+    ],
+    chatModels: options([
+      'grok-5',
+      'grok-4',
+      'grok-4-fast',
+      'grok-3-mini',
+    ]),
+    embeddingModels: [],
+    documentModels: [
+      { id: 'grok-4', name: 'Grok 4', description: '多模态视觉理解', imageInput: 'supported' },
+    ],
+    defaultChat: 'grok-4-fast',
+  },
+  {
+    id: 'groq',
+    name: 'Groq',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.groq.com/openai/v1',
+        modelsUrl: 'https://api.groq.com/openai/v1/models',
+        hint: '超低延迟推理（LPU），开源模型为主，有免费额度。',
+        apiKeyPlaceholder: 'gsk_...',
+      },
+    ],
+    chatModels: options([
+      'llama-3.3-70b-versatile',
+      'deepseek-r1-distill-llama-70b',
+      'qwen-2.5-32b',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'llama-3.3-70b-versatile',
+  },
+  {
+    id: 'mistral',
+    name: 'Mistral',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.mistral.ai/v1',
+        modelsUrl: 'https://api.mistral.ai/v1/models',
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'mistral-large-latest',
+      'mistral-small-latest',
+      'open-mistral-nemo',
+    ]),
+    embeddingModels: [
+      { id: 'mistral-embed', name: 'mistral-embed', dim: 1024 },
+    ],
+    defaultChat: 'mistral-large-latest',
+    defaultEmbedding: 'mistral-embed',
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        modelsUrl: 'https://openrouter.ai/api/v1/models',
+        modelsAnonymous: true,
+        hint: '全球最大模型聚合，一个 Key 访问数百模型，模型列表可匿名浏览。',
+        apiKeyPlaceholder: 'sk-or-...',
+      },
+    ],
+    chatModels: options([
+      'deepseek/deepseek-v4',
+      'anthropic/claude-sonnet-4.5',
+      'openai/gpt-5.4',
+      'google/gemini-3.5-flash',
+      'qwen/qwen-3.8-max',
+    ]),
+    embeddingModels: [],
+    documentModels: [
+      { id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5', description: '多模态理解', imageInput: 'supported' },
+    ],
+    defaultChat: 'deepseek/deepseek-v4',
+    hint: '模型名带 org 前缀，价格与限额以 openrouter.ai 为准。',
+  },
+  {
+    id: 'together',
+    name: 'Together AI',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.together.xyz/v1',
+        modelsUrl: 'https://api.together.xyz/v1/models',
+        modelsAnonymous: true,
+        apiKeyPlaceholder: 'API Key',
+      },
+    ],
+    chatModels: options([
+      'deepseek-ai/DeepSeek-V4',
+      'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+      'Qwen/Qwen3-235B-A22B-fp8-tput',
+    ]),
+    embeddingModels: [
+      { id: 'BAAI/bge-large-en-v1.5', name: 'BAAI/bge-large-en-v1.5', dim: 1024 },
+      { id: 'WhereIsAI/UAE-Large-V1', name: 'UAE-Large-V1', dim: 1024 },
+    ],
+    defaultChat: 'deepseek-ai/DeepSeek-V4',
+    defaultEmbedding: 'BAAI/bge-large-en-v1.5',
+  },
+  {
+    id: 'fireworks',
+    name: 'Fireworks AI',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.fireworks.ai/inference/v1',
+        modelsUrl: 'https://api.fireworks.ai/inference/v1/models',
+        modelsAnonymous: true,
+        apiKeyPlaceholder: 'fw_...',
+      },
+    ],
+    chatModels: options([
+      'accounts/fireworks/models/deepseek-v4',
+      'accounts/fireworks/models/kimi-k3-instruct',
+      'accounts/fireworks/models/qwen3-235b-a22b',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'accounts/fireworks/models/deepseek-v4',
+  },
+  {
+    id: 'nvidia',
+    name: 'NVIDIA NIM',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://integrate.api.nvidia.com/v1',
+        modelsUrl: 'https://integrate.api.nvidia.com/v1/models',
+        hint: 'NVIDIA 托管的开源模型推理，注册送额度。',
+        apiKeyPlaceholder: 'nvapi-...',
+      },
+    ],
+    chatModels: options([
+      'deepseek-ai/deepseek-v4',
+      'qwen/qwen3.8-max',
+      'meta/llama-4-maverick-17b-128e-instruct',
+    ]),
+    embeddingModels: [
+      { id: 'nvidia/nv-embedqa-e5-v5', name: 'nv-embedqa-e5-v5', dim: 1024 },
+    ],
+    defaultChat: 'deepseek-ai/deepseek-v4',
+  },
+  {
+    id: 'perplexity',
+    name: 'Perplexity',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.perplexity.ai',
+        modelsUrl: 'https://api.perplexity.ai/models',
+        hint: '在线搜索增强模型（Sonar 系列）。',
+        apiKeyPlaceholder: 'pplx-...',
+      },
+    ],
+    chatModels: options([
+      'sonar-pro',
+      'sonar',
+      'sonar-reasoning-pro',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'sonar-pro',
+  },
+  {
+    id: 'cerebras',
+    name: 'Cerebras',
+    lines: [
+      {
+        id: 'payg',
+        name: '按量付费',
+        type: 'payg',
+        baseUrl: 'https://api.cerebras.ai/v1',
+        modelsUrl: 'https://api.cerebras.ai/v1/models',
+        hint: '晶圆级引擎超高速推理，有免费额度。',
+        apiKeyPlaceholder: 'csk-...',
+      },
+    ],
+    chatModels: options([
+      'llama-3.3-70b',
+      'qwen-3-235b-a22b-instruct-2507',
+      'gpt-oss-120b',
+    ]),
+    embeddingModels: [],
+    defaultChat: 'llama-3.3-70b',
+  },
+  {
+    id: 'ollama',
+    name: 'Ollama（本地）',
+    lines: [
+      {
+        id: 'local',
+        name: '本地服务',
+        type: 'local',
+        baseUrl: 'http://localhost:11434/v1',
+        modelsUrl: 'http://localhost:11434/v1/models',
+        authOptional: true,
+        modelsAnonymous: true,
+        hint: '本地 Ollama 的 OpenAI 兼容端点，无需 API Key；先 ollama pull 模型。',
+      },
+    ],
+    chatModels: options([
+      'qwen3:8b',
+      'deepseek-r1:14b',
+      'llama3.1:8b',
+    ]),
+    embeddingModels: [
+      { id: 'nomic-embed-text', name: 'nomic-embed-text', dim: 768 },
+      { id: 'bge-m3', name: 'bge-m3', dim: 1024 },
+    ],
+    defaultChat: 'qwen3:8b',
+    defaultEmbedding: 'nomic-embed-text',
+    hint: '模型需先在本机 ollama pull；127.0.0.1 与 localhost 等价。',
+  },
+  {
+    id: 'lmstudio',
+    name: 'LM Studio（本地）',
+    lines: [
+      {
+        id: 'local',
+        name: '本地服务',
+        type: 'local',
+        baseUrl: 'http://localhost:1234/v1',
+        modelsUrl: 'http://localhost:1234/v1/models',
+        authOptional: true,
+        modelsAnonymous: true,
+        hint: 'LM Studio 本地服务器的 OpenAI 兼容端点，无需 API Key；在 LM Studio 中加载模型。',
+      },
+    ],
+    chatModels: options([
+      'qwen3-8b',
+      'deepseek-r1-distill-qwen-14b',
+    ]),
+    embeddingModels: [
+      { id: 'text-embedding-nomic-embed-text-v1.5', name: 'nomic-embed-text-v1.5', dim: 768 },
+    ],
+    defaultChat: 'qwen3-8b',
+    defaultEmbedding: 'text-embedding-nomic-embed-text-v1.5',
+    hint: '需在 LM Studio 里开启本地服务器（默认 1234 端口）。',
   },
   {
     id: 'custom',

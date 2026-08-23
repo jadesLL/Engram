@@ -11,6 +11,10 @@ export interface DiscoverModelsInput {
   modelsUrl?: string;
   apiKey?: string;
   kind: DiscoveredModelKind;
+  /** 模型列表接口的协议：anthropic 用 x-api-key + anthropic-version 头；缺省 OpenAI 兼容 Bearer。 */
+  modelsProtocol?: 'openai' | 'anthropic';
+  /** 接口支持匿名访问（本地推理/公开目录）：无 Key 也发起请求（不带鉴权头）。 */
+  anonymous?: boolean;
 }
 
 const EMBEDDING_PATTERN = /(^|[\/_.-])(embed|embedding|bge|gte|e5)([\/_.-]|$)/i;
@@ -107,12 +111,27 @@ export async function discoverModels(input: DiscoverModelsInput): Promise<{
   if (!['http:', 'https:'].includes(parsed.protocol)) {
     throw new Error('模型目录只支持 HTTP 或 HTTPS');
   }
+  // anthropic 协议的官方 /v1/models 需要 limit 参数才返回完整列表（默认 20 条）
+  if (input.modelsProtocol === 'anthropic' && !parsed.searchParams.has('limit')) {
+    parsed.searchParams.set('limit', '1000');
+  }
+
+  if (!input.apiKey && !input.anonymous) {
+    throw new Error('该线路的模型列表接口需要 API Key');
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15_000);
   try {
     const headers: Record<string, string> = { Accept: 'application/json' };
-    if (input.apiKey) headers.Authorization = `Bearer ${input.apiKey}`;
+    if (input.apiKey) {
+      if (input.modelsProtocol === 'anthropic') {
+        headers['x-api-key'] = input.apiKey;
+        headers['anthropic-version'] = '2023-06-01';
+      } else {
+        headers.Authorization = `Bearer ${input.apiKey}`;
+      }
+    }
     const response = await fetch(parsed, { method: 'GET', headers, signal: controller.signal });
     if (!response.ok) {
       const detail = await response.text().catch(() => '');

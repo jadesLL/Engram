@@ -2,11 +2,34 @@ import { ref } from 'vue';
 import deepseekLogo from './assets/providers/deepseek.svg';
 import kimiLogo from './assets/providers/kimi.svg';
 import zhipuLogo from './assets/providers/bigmodel.svg';
+import zaiLogo from './assets/providers/zai.svg';
 import aliyunLogo from './assets/providers/qianwen.png';
 import doubaoLogo from './assets/providers/doubao.png';
 import xiaomiLogo from './assets/providers/xiaomi.svg';
 import minimaxLogo from './assets/providers/minimax.svg';
 import hunyuanLogo from './assets/providers/hunyuan.svg';
+import tokenhubLogo from './assets/providers/tokenhub.svg';
+import baiduLogo from './assets/providers/baidu.svg';
+import iflytekLogo from './assets/providers/iflytek.svg';
+import stepfunLogo from './assets/providers/stepfun.svg';
+import baichuanLogo from './assets/providers/baichuan.svg';
+import internlmLogo from './assets/providers/internlm.svg';
+import giteeaiLogo from './assets/providers/giteeai.svg';
+import infiniaiLogo from './assets/providers/infiniai.svg';
+import modelscopeLogo from './assets/providers/modelscope.svg';
+import ppioLogo from './assets/providers/ppio.svg';
+import qiniuLogo from './assets/providers/qiniu.svg';
+import longcatLogo from './assets/providers/longcat.svg';
+import sensenovaLogo from './assets/providers/sensenova.svg';
+import anthropicLogo from './assets/providers/anthropic.svg';
+import geminiLogo from './assets/providers/gemini.svg';
+import xaiLogo from './assets/providers/xai.svg';
+import mistralLogo from './assets/providers/mistral.svg';
+import openrouterLogo from './assets/providers/openrouter.svg';
+import fireworksLogo from './assets/providers/fireworks.svg';
+import nvidiaLogo from './assets/providers/nvidia.svg';
+import perplexityLogo from './assets/providers/perplexity.svg';
+import cerebrasLogo from './assets/providers/cerebras.svg';
 import siliconflowLogo from './assets/providers/siliconflow.svg';
 import openaiLogo from './assets/providers/openai.svg';
 
@@ -29,12 +52,18 @@ export interface ModelOption {
 export interface ApiLine {
   id: string;
   name: string;
-  type: 'payg' | 'token-plan' | 'coding-plan' | 'agent-plan';
+  type: 'payg' | 'token-plan' | 'coding-plan' | 'agent-plan' | 'local';
   baseUrl: string;
   /** 请求协议：缺省按 OpenAI 兼容处理。 */
   protocol?: ProviderProtocol;
   modelsUrl?: string;
+  /** 模型列表拉取协议（anthropic 线路复用厂商 OpenAI /models 时为 openai）。 */
+  modelsProtocol?: ProviderProtocol;
   models?: string[];
+  /** 免鉴权线路（本地推理）：无 Key 也可调用与拉取。 */
+  authOptional?: boolean;
+  /** 模型列表接口匿名可访问（拉取不需要 Key）。 */
+  modelsAnonymous?: boolean;
   hint?: string;
   apiKeyPlaceholder?: string;
 }
@@ -57,13 +86,37 @@ const PROVIDER_LOGOS: Record<string, string> = {
   deepseek: deepseekLogo,
   moonshot: kimiLogo,
   zhipu: zhipuLogo,
+  zai: zaiLogo,
   aliyun: aliyunLogo,
   doubao: doubaoLogo,
   xiaomi: xiaomiLogo,
   minimax: minimaxLogo,
   hunyuan: hunyuanLogo,
+  tokenhub: tokenhubLogo,
   siliconflow: siliconflowLogo,
+  baidu: baiduLogo,
+  iflytek: iflytekLogo,
+  stepfun: stepfunLogo,
+  baichuan: baichuanLogo,
+  internlm: internlmLogo,
+  giteeai: giteeaiLogo,
+  infiniai: infiniaiLogo,
+  modelscope: modelscopeLogo,
+  ppio: ppioLogo,
+  qiniu: qiniuLogo,
+  lanyun: ppioLogo,
+  longcat: longcatLogo,
+  sensenova: sensenovaLogo,
   openai: openaiLogo,
+  anthropic: anthropicLogo,
+  gemini: geminiLogo,
+  xai: xaiLogo,
+  mistral: mistralLogo,
+  openrouter: openrouterLogo,
+  fireworks: fireworksLogo,
+  nvidia: nvidiaLogo,
+  perplexity: perplexityLogo,
+  cerebras: cerebrasLogo,
 };
 
 /** 自定义服务商的结构兜底（目录未加载完成时的表单回退用） */
