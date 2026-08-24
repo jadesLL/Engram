@@ -249,10 +249,13 @@ type ActiveExecution = {
   targetKey: string;
 };
 
-// default 车道双并发（之前临时降到 1 是为规避「固定 150s 超时误判 → 重试风暴 →
+// default 车道 4 并发（之前临时降到 1 是为规避「固定 150s 超时误判 → 重试风暴 →
 // 网关连接堆积」；根因已修：动态超时 + 独立 dispatcher 不复用坏连接 + 网络异常
-// 纳入重试，恢复双并发提速）。document 车道单并发。
-const LANE_LIMITS: Record<JobLane, number> = { default: 2, document: 1 };
+// 纳入重试 + 流式传输消除静默长等待，恢复并提升并发提速。
+// 单文件是串行管线，吞吐瓶颈在文件级并行度：2→4 直接翻倍，峰值并发
+// 4 文件 × 批内 2 = 8 路（undici dispatcher connections=16 可承载），
+// 批失败降级兜底网关偶发限流）。document 车道单并发。
+const LANE_LIMITS: Record<JobLane, number> = { default: 4, document: 1 };
 /** 任务完成后的冷却间隔（毫秒）：给网关喘息窗口，避免连续高频请求触发限流 */
 const JOB_COOLDOWN_MS = 5_000;
 let laneCooldownUntil = 0;
