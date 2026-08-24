@@ -602,22 +602,41 @@ test('thinkingLevel 配置矩阵：low/high/max 显式发送，拒绝时不静�
     })]));
     setSetting('active_chat_model', `glm-${level}`);
     await chatModule.chat([{ role: 'user', content: 'hi' }], { tag: `level-${level}` });
-    assert.deepEqual(bodies[0].thinking, { type: level }, `${level} 应原样发送`);
+    // GLM-5.2/5.3 家族走 reasoning_effort（hermes-agent zai 插件同款旋钮），
+    // 不再是 thinking:{type} 开关语义
+    assert.equal(bodies[0].reasoning_effort, level, `${level} 应原样发送`);
+    assert.equal(bodies[0].thinking, undefined, 'GLM 不应再发送 thinking 开关参数');
   }
-  // 供应商拒绝用户显式等级 → 明确失败，不删除参数伪装成功
+  // 未配置 thinkingLevel 的 GLM-5.3 默认 high（GLM 推荐档）
+  {
+    const bodies: Record<string, any>[] = [];
+    mockChatEndpoint(bodies, () => chatOkResponse('pong'));
+    const defaultEntry = entry({
+      id: 'glm-default',
+      baseUrl: 'https://glm.example/v1',
+      model: 'glm-5.3',
+    });
+    setSetting('chat_models', JSON.stringify([defaultEntry]));
+    setSetting('active_chat_model', 'glm-default');
+    await chatModule.chat([{ role: 'user', content: 'hi' }], { tag: 'level-default' });
+    assert.equal(bodies[0].reasoning_effort, 'high', '未配置默认 high');
+  }
+  // 供应商拒绝用户显式等级 → 明确失败，不删除参数伪装成功。
+  // GLM 走 reasoning_effort 后，thinking fallback 链不再拦截（无 thinking 参数），
+  // 网关 400 原样上抛——仍然"失败可见"而非静默降级
   const bodies: Record<string, any>[] = [];
   mockChatEndpoint(bodies, () => thinkingRejectedResponse());
-  setSetting('chat_models', JSON.stringify([entry({
+  const rejectEntry = entry({
     id: 'glm-reject',
     baseUrl: 'https://glm-reject.example/v1',
     model: 'glm-5.3',
-    apiKey: 'test-key',
     thinkingLevel: 'high',
-  })]));
+  });
+  setSetting('chat_models', JSON.stringify([rejectEntry]));
   setSetting('active_chat_model', 'glm-reject');
   await assert.rejects(
     chatModule.chat([{ role: 'user', content: 'hi' }], { tag: 'level-reject' }),
-    /拒绝用户选择的思考等级/,
+    /LLM 请求失败 400/,
   );
 });
 

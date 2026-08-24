@@ -189,7 +189,13 @@ async function request(
           || /^LLM 请求失败 429/.test(msg)
           || /^LLM 请求失败 40[13]/.test(msg));
       if (!retriable || nth >= 5) throw error;
-      const delay = Math.min(15_000, 3_000 * nth);
+      // 429 过载专用长退避（30/60/90/120s，来自 hermes-agent 对 GLM 网关
+      // 429 code 1305 过载的实测：短退避会反复撞同一个过载窗口）；
+      // 其余瞬时故障维持短退避 3/6/9/12/15s
+      const is429 = /^LLM 请求失败 429/.test(msg);
+      const delay = is429
+        ? [30_000, 60_000, 90_000, 120_000, 120_000][nth] ?? 120_000
+        : Math.min(15_000, 3_000 * nth);
       console.warn(`[llm.request] ${error.message.slice(0, 120)}，${delay / 1000} 秒后自动重试（第 ${nth + 1}/5 次）`);
       // 网关挂起 + 多级重试的累计时长可能很长（150s × 4 次），重试前刷新
       // 调用方心跳，防止无进度探针误杀仍在重试链中的任务
@@ -544,11 +550,25 @@ async function requestChatWithThinkingFallback(
 }
 
 
+/** 构造思考参数。两类模型用不同旋钮（参考 NousResearch/hermes-agent zai 插件）：
+ *  - GLM-5.2/5.3（OpenAI 兼容线）：`reasoning_effort` 是思考力度旋钮
+ *    （low/medium/high/max，GLM-5.3 全档），实测可控思考量——这才是
+ *    控制思考的正道；`thinking:{type}` 只是开关，不控制力度且实测显式
+ *    发送会诱导思考膨胀。未配置时默认 high（GLM 推荐档，hermes 同款默认）
+ *  - 其他思考模型：`thinking:{type}` 开关语义，未配置不显式发送
+ *  Anthropic 协议两者都不支持，明确报错。 */
 function applyConfiguredThinking(body: Record<string, unknown>, entry: ModelEntry | null): void {
-  if (!entry?.thinkingLevel) return;
-  if (entry.protocol === 'anthropic') {
+  if (entry?.protocol === 'anthropic' && entry?.thinkingLevel) {
     throw new LlmError('当前 Anthropic 协议不支持 low/high/max thinking 参数，请改用 OpenAI 兼容线路');
   }
+  const model = (entry?.model || '').toLowerCase();
+  // GLM-5.2/5.3 家族（含中继别名 glm-5-3/glm-5p3 等）走 reasoning_effort；
+  // 未配置默认 high（GLM 推荐档）
+  if (/glm-5[.-]?[23]|glm-5p[23]/.test(model)) {
+    body.reasoning_effort = entry?.thinkingLevel || 'high';
+    return;
+  }
+  if (!entry?.thinkingLevel) return;
   body.thinking = { type: entry.thinkingLevel };
 }
 

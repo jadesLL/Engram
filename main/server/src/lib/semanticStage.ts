@@ -199,7 +199,9 @@ export async function runSemanticStage<T>(options: SemanticStageInput<T>): Promi
   try {
     const stageOpts = {
       temperature: options.temperature ?? 0.1,
-      maxTokens: options.maxTokens ?? 8000,
+      // undefined = 不发 max_tokens 字段，由网关用模型自身默认输出上限
+      // （hermes-agent 方式：写死预算会与思考量抢额度）
+      maxTokens: options.maxTokens,
       retries: options.retries ?? 1,
       tag: options.tag,
       signal: options.signal,
