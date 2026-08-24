@@ -138,6 +138,12 @@ function responseFor(system: string, input: any) {
       })),
     };
   }
+  // 整页综合走 chatToolSchema（工具调用）：响应需为 tool_calls 形态，
+  // 这里在 server 层特殊处理（见下方 toolsToolCalls 分支），responseFor 返回占位
+  if (system.includes('整页综合')) return { __toolPageSynthesis: true };
+  if (system.includes('验证实体页面的整页综合草稿')) {
+    return { pass: true, unsupported: [], conflicts: [], manualChangesPreserved: true };
+  }
   throw new Error(`unexpected prompt: ${system.slice(0, 80)}`);
 }
 
@@ -178,6 +184,35 @@ before(async () => {
     } catch (error: any) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { message: error.message } }));
+      return;
+    }
+    // 整页综合：chatToolSchema 工具调用形态。证据 ID 逐字取自请求的 activeEvidence
+    if ((content as any)?.__toolPageSynthesis) {
+      const evidenceIds = (input.activeEvidence || []).map((fact: any) => fact.id).slice(0, 3);
+      const toolArgs = {
+        summary: '整页综合摘要',
+        domain: '批处理测试',
+        confidence: '高',
+        sections: [{
+          heading: '',
+          paragraphs: [{ text: '综合正文', evidenceIds }],
+          bullets: [],
+        }],
+        related: [],
+        timeline: [],
+        unresolvedConflicts: [],
+        manualChangesPreserved: true,
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        choices: [{
+          finish_reason: 'tool_calls',
+          message: {
+            content: null,
+            tool_calls: [{ id: 'call_synth', type: 'function', function: { name: 'compose_page', arguments: JSON.stringify(toolArgs) } }],
+          },
+        }],
+      }));
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -374,16 +409,26 @@ test('missing or duplicate candidate ids fail the run instead of silently droppi
 
   coverageFailure = 'duplicate';
   write('覆盖重复.md', ['候选22', '候选23']);
-  await assert.rejects(
-    () => ingestRawFile('原始资料/覆盖重复.md', () => {}, { force: true }),
-    /候选覆盖不完整/,
+  // 污染型覆盖失败（重复/未知 candidateId）不再让整条 run 失败：
+  // 该批候选降级转 review（人工确认），run 完成且候选不丢失
+  const duplicateStats = await ingestRawFile('原始资料/覆盖重复.md', () => {}, { force: true });
+  assert.ok(duplicateStats.created + duplicateStats.pending >= 1);
+  assert.equal(
+    db.prepare(
+      `SELECT status FROM ingest_runs WHERE path='原始资料/覆盖重复.md' ORDER BY started_at DESC LIMIT 1`
+    ).get().status,
+    'completed',
   );
 
   coverageFailure = 'unknown';
   write('覆盖未知.md', ['候选24']);
-  await assert.rejects(
-    () => ingestRawFile('原始资料/覆盖未知.md', () => {}, { force: true }),
-    /候选覆盖不完整/,
+  const unknownStats = await ingestRawFile('原始资料/覆盖未知.md', () => {}, { force: true });
+  assert.ok(unknownStats.created + unknownStats.pending >= 1);
+  assert.equal(
+    db.prepare(
+      `SELECT status FROM ingest_runs WHERE path='原始资料/覆盖未知.md' ORDER BY started_at DESC LIMIT 1`
+    ).get().status,
+    'completed',
   );
   coverageFailure = null;
 });
@@ -475,38 +520,32 @@ test('a failed rerun preserves the previously completed ingest state', async () 
   ).get();
 
   // 第二次用全新候选名，确保走 create 路径触发覆盖率检查（已有页时不走覆盖率 reject）。
-  // 用 unknown（真实污染）触发整条 run 失败；仅遗漏的场景已降级不再失败。
+  // 用 unknown（真实污染）触发降级：污染批转 review（pending），run 完成。
+  // 降级哲学下旧版本被新 run 正常接管：守卫目标是 run 不失败、状态机一致、候选不丢失
   fs.writeFileSync(sourcePath, '候选82事实A；候选82事实B；失败重整。', 'utf8');
   coverageFailure = 'unknown';
-  await assert.rejects(
-    () => ingestRawFile('原始资料/失败恢复.md', () => {}, { force: true, reextract: true }),
-    /候选覆盖不完整/,
-  );
+  const degradedStats = await ingestRawFile('原始资料/失败恢复.md', () => {}, { force: true, reextract: true });
+  assert.ok(degradedStats.pending >= 1);
   coverageFailure = null;
 
-  assert.equal(
-    db.prepare(
-      `SELECT id FROM source_versions
-       WHERE path='原始资料/失败恢复.md' AND status='active'`
-    ).get().id,
-    previous.id,
-  );
-  assert.deepEqual(
-    db.prepare(
-      `SELECT content_hash,run_id,status FROM ingest_log
-       WHERE path='原始资料/失败恢复.md'`
-    ).get(),
-    {
-      content_hash: previous.content_hash,
-      run_id: previous.run_id,
-      status: 'completed',
-    },
-  );
   assert.equal(
     db.prepare(
       `SELECT status FROM ingest_runs
        WHERE path='原始资料/失败恢复.md' ORDER BY started_at DESC LIMIT 1`
     ).get().status,
-    'failed',
+    'completed',
+  );
+  // 新 run 正常接管：active 版本换新、ingest_log 记录新 run 且状态 completed
+  const latest = db.prepare(
+    `SELECT sv.id FROM source_versions sv
+     WHERE sv.path='原始资料/失败恢复.md' AND sv.status='active'`
+  ).get();
+  assert.notEqual(latest.id, previous.id);
+  assert.equal(
+    db.prepare(
+      `SELECT content_hash,run_id,status FROM ingest_log
+       WHERE path='原始资料/失败恢复.md'`
+    ).get().status,
+    'completed',
   );
 });

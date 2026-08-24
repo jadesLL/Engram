@@ -315,7 +315,7 @@ async function mapChunk(
         content: chunk.content,
       },
       'ingest-map',
-      16000,
+      10000,
       `ingest-map:${chunk.id}`,
       { roster: titleRoster },
       history,
@@ -544,7 +544,7 @@ async function normalizeBatch(
     normalizePrompt,
     { candidates: candidates.map(compactCandidate) },
     'ingest-normalize',
-    12000,
+    10000,
     `ingest-normalize:${pass}:${batchIndex + 1}`,
     undefined,
     history,
@@ -772,7 +772,14 @@ export async function ingestRawFile(
     const mapResults = await concurrentMap(document.chunks, MAP_CONCURRENCY, async (chunk) => {
       options.signal?.throwIfAborted();
       const history = createSemanticCacheSession(`ingest-map:${runId}`, mapPrompt);
-      return mapChunk(runId, chunk, titleRoster, history, 'always', options.signal, heartbeat);
+      try {
+        return await mapChunk(runId, chunk, titleRoster, history, 'always', options.signal, heartbeat);
+      } catch (error: any) {
+        if (options.signal?.aborted) throw error;
+        // 单分段失败降级：跳过该分段（audit 记录），不阻塞整文件
+        audit(runId, `map:${chunk.id}:degraded`, { error: String(error?.message || error).slice(0, 200) }, { chunkId: chunk.id });
+        return [] as Candidate[];
+      }
     }).then((results) => {
       // 完成计数在回收后统一上报：并发乱序时避免进度回退
       mapDone = results.length;
@@ -801,22 +808,41 @@ export async function ingestRawFile(
     const planBatchesResults = await concurrentMap(candidateBatches, 2, async (candidateBatch) => {
       options.signal?.throwIfAborted();
       const history = createSemanticCacheSession(`ingest-plan:${runId}`, planPrompt);
-      const rawPlan = await coveredItemsStage<{ items: PlanItem[] }>(
-        runId,
-        planOutputSchema,
-        planPrompt,
-        { candidates: candidateBatch, related },
-        candidateBatch,
-        'ingest-plan',
-        16000,
-        `ingest-plan:${candidateBatches.indexOf(candidateBatch) + 1}`,
-        { roster: titleRoster },
-        history,
-        'always',
-        options.signal,
-        heartbeat,
-      );
-      return whitelistFactIds(rawPlan.items, allowedFactIds).items;
+      try {
+        const rawPlan = await coveredItemsStage<{ items: PlanItem[] }>(
+          runId,
+          planOutputSchema,
+          planPrompt,
+          { candidates: candidateBatch, related },
+          candidateBatch,
+          'ingest-plan',
+          10000,
+          `ingest-plan:${candidateBatches.indexOf(candidateBatch) + 1}`,
+          { roster: titleRoster },
+          history,
+          'always',
+          options.signal,
+          heartbeat,
+        );
+        return whitelistFactIds(rawPlan.items, allowedFactIds).items;
+      } catch (error: any) {
+        if (options.signal?.aborted) throw error;
+        // 批失败降级：该批候选全部转 review（人工确认，不阻塞整文件）
+        audit(runId, `plan:${candidateBatches.indexOf(candidateBatch) + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, candidateBatch);
+        return candidateBatch.map((candidate): PlanItem => ({
+          candidateId: candidate.candidateId,
+          name: candidate.name,
+          kind: candidate.kind,
+          action: 'review' as const,
+          target: '',
+          domain: candidate.domain,
+          confidence: '低',
+          summary: candidate.summary,
+          factIds: candidate.facts.map((fact) => fact.id),
+          relations: [],
+          reason: 'Plan 阶段模型检查失败，转人工审核',
+        }));
+      }
     });
     const plan: PlanItem[] = planBatchesResults.flat();
     candidateBatches.forEach((candidateBatch, index) => {
@@ -839,7 +865,7 @@ export async function ingestRawFile(
         { plan: planBatch, candidates: candidateBatch, related },
         planBatch,
         'ingest-critic',
-        16000,
+        10000,
         `ingest-critic:${index + 1}`,
         { roster: titleRoster },
         history,
@@ -858,14 +884,19 @@ export async function ingestRawFile(
         { plan: revised, candidates: candidateBatch, previousCritique: firstCritique, related },
         revised,
         'ingest-critic-review',
-        16000,
+        10000,
         `ingest-critic-review:${index + 1}`,
         { roster: titleRoster },
         history,
         'once',
         options.signal,
         heartbeat,
-      );
+      ).catch((error: any) => {
+        if (options.signal?.aborted) throw error;
+        // 二审失败降级：沿用首审修订结果
+        audit(runId, `critic_review:${index + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, revised);
+        return { approved: false, issues: ['二审失败，转人工审核'], items: revised.map((item) => ({ ...item, action: 'review' as const })) };
+      });
       return { items: whitelistFactIds(secondCritique.items, allowedFactIds).items, first: firstCritique, revised, second: secondCritique };
     });
     let reviewedPlan: PlanItem[] = [];
@@ -924,24 +955,31 @@ export async function ingestRawFile(
         related,
       };
       const history = createSemanticCacheSession(`ingest-compose:${runId}`, composePrompt);
-      const rawComposed = await coveredItemsStage<{
-        items: Array<{ candidateId: string; name: string; content: string }>;
-      }>(
-        runId,
-        composeItemOutputListSchema,
-        composePrompt,
-        composeInput,
-        composeBatch,
-        'ingest-compose',
-        16000,
-        `ingest-compose:${composeBatches.indexOf(composeBatch) + 1}`,
-        { roster: titleRoster },
-        history,
-        'always',
-        options.signal,
-        heartbeat,
-      );
-      return { input: composeInput.items, items: rawComposed.items };
+      try {
+        const rawComposed = await coveredItemsStage<{
+          items: Array<{ candidateId: string; name: string; content: string }>;
+        }>(
+          runId,
+          composeItemOutputListSchema,
+          composePrompt,
+          composeInput,
+          composeBatch,
+          'ingest-compose',
+          10000,
+          `ingest-compose:${composeBatches.indexOf(composeBatch) + 1}`,
+          { roster: titleRoster },
+          history,
+          'always',
+          options.signal,
+          heartbeat,
+        );
+        return { input: composeInput.items, items: rawComposed.items };
+      } catch (error: any) {
+        if (options.signal?.aborted) throw error;
+        // 批失败降级：content 空 → 写入门禁转 review
+        audit(runId, `compose:${composeBatches.indexOf(composeBatch) + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, composeInput.items);
+        return { input: composeInput.items, items: composeBatch.map((item) => ({ candidateId: item.candidateId, name: item.name, content: '' })) };
+      }
     });
     const contentById = new Map<string, string>();
     composeResults.forEach((result) => {
@@ -980,7 +1018,7 @@ export async function ingestRawFile(
           questionFinderPrompt,
           { candidates: candidateBatch, plan: planBatch, resolvedQuestions },
           'ingest-questions',
-          12000,
+          10000,
           `ingest-questions:${riskBatches.indexOf(candidateBatch) + 1}`,
           undefined,
           history,
@@ -1057,7 +1095,7 @@ export async function ingestRawFile(
           { items: verifyBatch, facts: batchFacts, questions: batchQuestions },
           verifyBatch,
           'ingest-verify',
-          16000,
+          10000,
           `ingest-verify:${verifyBatches.indexOf(verifyBatch) + 1}`,
           undefined,
           history,
@@ -1097,7 +1135,7 @@ export async function ingestRawFile(
           { items: [target], facts: missingFacts, questions: missingQuestions },
           [target],
           'ingest-verify',
-          16000,
+          10000,
           `ingest-verify:retry:${target.candidateId}`,
           undefined,
           createSemanticCacheSession(`ingest-verify:${runId}`, verifierPrompt),

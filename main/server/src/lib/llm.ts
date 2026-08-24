@@ -565,7 +565,84 @@ type ChatOptions = {
   onRetry?: () => void;
 };
 
-/** 非流式对话 */
+/** 流式读取一次 SSE 响应并累积为完整文本。
+ *  返回 content 拼接结果与截断判定所需信息；用量经 captureUsage 精确记账
+ *  （含 stream_options.include_usage 的最终 usage 帧）。
+ *  思考失控熔断：思考增量累计超过阈值且正文仍为空时提前中止——
+ *  实测思考量随机波动，小预算下重发往往恢复正常，远优于干等思考耗尽预算。 */
+async function readStreamResponse(
+  result: LlmHttpResponse,
+  opts?: { json?: boolean },
+): Promise<{ content: string; finishReason: string; hasReasoning: boolean; reasoningChars: number }> {
+  if (!result.response.body) throw new LlmError('LLM 无流式响应体');
+  // 部分网关忽略 stream 参数直接返回整包 JSON（Content-Type: application/json）。
+  // 读取整个 body 按非流式响应解析，与旧 chat 行为等价
+  const contentType = result.response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const json = await readJsonResponse(result);
+    const choice = json?.choices?.[0];
+    const msg = choice?.message;
+    return {
+      content: typeof msg?.content === 'string' ? msg.content : '',
+      finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : '',
+      hasReasoning: typeof msg?.reasoning_content === 'string' && msg.reasoning_content.length > 0,
+      reasoningChars: typeof msg?.reasoning_content === 'string' ? msg.reasoning_content.length : 0,
+    };
+  }
+  const parser = result.adapter.createStreamParser();
+  const reader = result.response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+  let reasoning = '';
+  let finishReason = '';
+  let usageCaptured = false;
+  // 熔断阈值：正文为空时思考累计字符上限。正常思考 2-3k chars，失控时 10k+；
+  // 按 ~1.6 chars/token 折算约 9k token 思考预算，超限即止损
+  const reasoningLimit = 16_000;
+  for (;;) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // 空闲超时：相邻 chunk 间隔超过 60s 视为挂起。流式下正常间隔为亚秒级
+    const idleTimeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        void reader.cancel();
+        reject(new LlmError('LLM 流式响应超时'));
+      }, 60_000);
+    });
+    const { done, value } = await Promise.race([reader.read(), idleTimeout])
+      .finally(() => {
+        if (timer) clearTimeout(timer);
+      });
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t.startsWith('data:')) continue;
+      const parsed = parser.feed(t.slice(5).trim());
+      if (parsed.done) {
+        if (parsed.finishReason) finishReason = parsed.finishReason;
+        return { content, finishReason, hasReasoning: reasoning.length > 0, reasoningChars: reasoning.length };
+      }
+      if (parsed.text) content += parsed.text;
+      if (parsed.reasoning) reasoning += parsed.reasoning;
+      if (!usageCaptured && parsed.usage) {
+        captureUsage(result, parsed.usage);
+        usageCaptured = true;
+      }
+      // 熔断：思考已远超正常量而正文一个字没出——继续等只会耗尽 max_tokens
+      if (!content && !opts?.json && reasoning.length > reasoningLimit) {
+        void reader.cancel().catch(() => {});
+        throw new LlmError('输出被截断（思考失控熔断）');
+      }
+    }
+  }
+  return { content, finishReason, hasReasoning: reasoning.length > 0, reasoningChars: reasoning.length };
+}
+
+/** 对话：底层一律流式传输（思考模型网关下非流式长等待易被中间层掐断；
+ *  SSE 边收边拼，用量含缓存命中精确记账），对外仍返回完整文本 */
 export async function chat(
   messages: ChatMessage[],
   opts?: ChatOptions
@@ -575,6 +652,7 @@ export async function chat(
     model: cfg.chatModel,
     messages,
     temperature: opts?.temperature ?? 0.3,
+    stream: true,
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
@@ -582,7 +660,14 @@ export async function chat(
   if (opts?.json) body.response_format = { type: 'json_object' };
   const active = getActiveChat();
   applyConfiguredThinking(body, active);
-  const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
+  const capabilityKey = `${cfg.baseUrl}|${cfg.chatModel}`;
+  // include_usage 让最终帧带精确用量（prompt/cache/completion），缺失的网关由非流式形态回退
+  const useStreamOptions =
+    !streamUsageUnsupported.has(capabilityKey) && !(active?.dialect?.streamUsageRejected);
+  if (useStreamOptions && active?.protocol !== 'anthropic') {
+    body.stream_options = { include_usage: true };
+  }
+  const streamOpts = {
     signal: opts?.signal,
     tag: opts?.tag || 'chat',
     usageContext: opts?.usageContext,
@@ -590,34 +675,66 @@ export async function chat(
     entryId: active?.id,
     dialect: active?.dialect,
     onRetry: opts?.onRetry,
-  });
-  const json = await readJsonResponse(res);
-  const choice = json?.choices?.[0];
-  const msg = choice?.message;
-  const finishReason = choice?.finish_reason;
-  // json 模式下只接受 content（结构化输出）；reasoning_content 是推理过程，不是 JSON，
-  // 回退用它会导致上层 JSON 解析失败。非 json 模式可回退 reasoning_content（普通对话）。
+  } satisfies LlmRequestOptions;
+
   let content = '';
-  if (typeof msg?.content === 'string' && msg.content) {
-    content = msg.content;
-  } else if (!opts?.json && typeof msg?.reasoning_content === 'string' && msg.reasoning_content) {
-    content = msg.reasoning_content;
+  let finishReason = '';
+  let hasReasoning = false;
+  try {
+    let res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
+    try {
+      const parsed = await readStreamResponse(res, { json: opts?.json });
+      content = parsed.content;
+      finishReason = parsed.finishReason;
+      hasReasoning = parsed.hasReasoning;
+    } catch (error: any) {
+      // stream_options 不被支持（400）时去掉重发；流中断/熔断错误原样上抛
+      const streamUsageRejected =
+        error instanceof LlmError && [400, 422].includes(error.status || 0) && body.stream_options;
+      if (!streamUsageRejected) throw error;
+      delete body.stream_options;
+      res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
+      streamUsageUnsupported.add(capabilityKey);
+      if (active?.id) markEntryDialect(active.id, { streamUsageRejected: true });
+      const parsed = await readStreamResponse(res, { json: opts?.json });
+      content = parsed.content;
+      finishReason = parsed.finishReason;
+      hasReasoning = parsed.hasReasoning;
+    }
+  } catch (error: any) {
+    // 网关明确拒绝 stream 参数（400/422 且报错提及 stream）时回退非流式重试。
+    // 5xx 不在此列：那是服务端故障，走网络层统一重试，删 stream 重发只会
+    // 把失败链拉长一倍（每次 request 调用各有独立重试预算）
+    const streamRejected =
+      error instanceof LlmError &&
+      [400, 422].includes(error.status || 0) &&
+      /stream/i.test(error.message || '') &&
+      body.stream;
+    if (streamRejected) {
+      delete body.stream;
+      delete body.stream_options;
+      const res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
+      const json = await readJsonResponse(res);
+      const choice = json?.choices?.[0];
+      const msg = choice?.message;
+      content = typeof msg?.content === 'string' ? msg.content : '';
+      finishReason = choice?.finish_reason || '';
+      hasReasoning = typeof msg?.reasoning_content === 'string' && msg.reasoning_content.length > 0;
+    } else {
+      throw error;
+    }
   }
+
   if (!content) {
     // content 为空的三类诱因，分别给出可被上层重试逻辑识别的错误：
-    // 1) finish_reason='length'：max_tokens 真截断 → 翻倍重试
+    // 1) finish_reason='length'：max_tokens 真截断
     // 2) 推理模型 reasoning_content 吃光预算但 content 为空（finish_reason 常为 stop）
-    //    → 同样视为截断，翻倍 max_tokens 给推理+正文留预算，而非误判为格式异常
-    // 3) 真·空内容（无 reasoning，疑似服务商内容过滤）→ 格式异常，按提示重试
-    const hasReasoning = typeof msg?.reasoning_content === 'string' && msg.reasoning_content.length > 0;
-    const truncated = finishReason === 'length' || hasReasoning;
-    console.warn('[llm.chat] 返回内容为空', { model: cfg.chatModel, finishReason, hasReasoning, raw: JSON.stringify(json).slice(0, 300) });
+    // 3) 真·空内容（疑似服务商内容过滤）→ 格式异常，按提示重试
+    console.warn('[llm.chat] 返回内容为空', { model: cfg.chatModel, finishReason, hasReasoning });
     throw new LlmError(
-      finishReason === 'length'
-        ? '输出被截断（max_tokens 不足）'
-        : hasReasoning
-          ? '输出被截断（推理占用 max_tokens，content 为空）'
-          : 'LLM 返回格式异常',
+      finishReason === 'length' || hasReasoning
+        ? '输出被截断（推理占用 max_tokens，content 为空）'
+        : 'LLM 返回格式异常',
     );
   }
   return content;
@@ -690,9 +807,8 @@ export async function chatJson<T = any>(
   const retries = opts?.retries ?? 1;
   // 截断翻倍独立预算：思考模型的思考量随机波动导致的长度截断，与内容质量无关，
   // 允许调用方（chatJsonSchema 内层 retries=0 时）保留一次翻倍自愈
-  let truncationRetriesLeft = opts?.truncationRetries ?? 2;
+  let truncationRetriesLeft = opts?.truncationRetries ?? 1;
   let lastErr = '';
-  let curMaxTokens = opts?.maxTokens;
   let retryReason = opts?.usageContext?.retryReason || '';
   for (let attempt = 0; attempt <= retries; attempt++) {
     let raw: string;
@@ -700,7 +816,7 @@ export async function chatJson<T = any>(
       raw = await chat(messages, {
         ...opts,
         json: true,
-        maxTokens: curMaxTokens,
+        maxTokens: opts?.maxTokens,
         usageContext: opts?.usageContext
           ? { ...opts.usageContext, retryReason }
           : undefined,
@@ -711,14 +827,14 @@ export async function chatJson<T = any>(
       if (opts?.signal?.aborted) throw e;
       const isTruncation = e.message.includes('截断');
       // 截断走独立预算（truncationRetries）：思考模型的思考量随机波动导致的
-      // 长度问题与内容质量无关，retries=0 的调用方（chatJsonSchema 内层）仍保留一次翻倍自愈
+      // 长度问题与内容质量无关；不放大 max_tokens（实测预算越大思考越长），
+      // 原样重发一次，波动消退即可通过
       const canTruncationRetry = isTruncation && truncationRetriesLeft > 0;
       if (attempt < retries || canTruncationRetry) {
         if (isTruncation) {
           if (!canTruncationRetry) throw e;
           truncationRetriesLeft--;
           retryReason = 'output_truncated';
-          curMaxTokens = Math.min(32_000, (curMaxTokens || 4000) * 2);
           continue;
         }
         retryReason = 'request_failed';
@@ -738,11 +854,10 @@ export async function chatJson<T = any>(
     console.warn(`[llm.chatJson:${tag}] 解析失败${looksTruncated ? '（疑似截断）' : ''}`, lastErr);
     if (attempt < retries) {
       if (looksTruncated) {
-        // 截断：翻倍 max_tokens 重试，不追加消息
+        // 截断：原样重发（思考波动随机，重发即可能恢复），不追加消息、不放大预算
         if (truncationRetriesLeft <= 0 && attempt >= retries) break;
         truncationRetriesLeft--;
         retryReason = 'json_truncated';
-        curMaxTokens = Math.min(32_000, (curMaxTokens || 4000) * 2);
         continue;
       }
       retryReason = 'json_parse_failed';
@@ -860,7 +975,7 @@ export async function chatToolSchema<T>(
           (trimmed.startsWith('{') && !trimmed.endsWith('}')) ||
           (trimmed.startsWith('[') && !trimmed.endsWith(']'));
         if (looksTruncated) {
-          curMaxTokens = Math.min(32_000, (curMaxTokens || 4000) * 2);
+          curMaxTokens = Math.min(32_000, (curMaxTokens || 4000) * 2);  // 翻倍仅一次空间
         }
         current = [
           ...current,

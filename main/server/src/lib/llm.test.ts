@@ -408,7 +408,7 @@ function activateChat(baseUrl = 'https://chat.example/v1'): void {
   setSetting('active_chat_model', chatEntry.id);
 }
 
-test('chatJson treats empty content with reasoning_content as truncation and doubles max_tokens', async () => {
+test('chatJson treats empty content with reasoning_content as truncation and resends without enlarging the budget', async () => {
   activateChat('https://chat.example/v1');
   let chatModule: any;
   const bodies: Record<string, any>[] = [];
@@ -416,7 +416,8 @@ test('chatJson treats empty content with reasoning_content as truncation and dou
     const body = JSON.parse(String(init?.body));
     bodies.push(body);
     // 第一次：content 为空但有 reasoning_content，finish_reason 非 length
-    // 应被识别为推理占用预算导致的截断，chatJson 翻倍 max_tokens 重试
+    // 应被识别为推理占用预算导致的截断；思考量随机波动，原样重发即可恢复，
+    // 不放大 max_tokens（实测预算越大思考越长，翻倍只会复现截断）
     if (bodies.length === 1) {
       return new Response(JSON.stringify({
         choices: [{
@@ -425,7 +426,7 @@ test('chatJson treats empty content with reasoning_content as truncation and dou
         }],
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
-    // 第二次（翻倍 max_tokens 后）：正常返回 JSON
+    // 第二次（原样重发）：正常返回 JSON
     return new Response(JSON.stringify({
       choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -437,10 +438,10 @@ test('chatJson treats empty content with reasoning_content as truncation and dou
     { maxTokens: 2000, retries: 1, tag: 'empty-reasoning' },
   );
   assert.deepEqual(result, { ok: true });
-  // 两次请求，第二次 max_tokens 翻倍（2000 → 4000）
+  // 两次请求，预算保持不变（截断重发不翻倍）
   assert.equal(bodies.length, 2);
   assert.equal(bodies[0].max_tokens, 2000);
-  assert.equal(bodies[1].max_tokens, 4000);
+  assert.equal(bodies[1].max_tokens, 2000);
 });
 
 test('chatJson retries with a targeted prompt when content is truly empty (no reasoning)', async () => {
