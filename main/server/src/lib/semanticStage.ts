@@ -26,6 +26,11 @@ export interface SemanticStageInput<T> {
   cacheContext?: unknown;
   /** Include cacheContext once per history by default, or force it into the current turn. */
   cacheContextMode?: SemanticCacheContextMode;
+  /** 结果缓存键使用的上下文。默认取 cacheContext；当 cacheContext 含轮次间
+   *  动态变化的成分（如随提炼进度增长的页面名录）时，传入静态等价物，
+   *  使「相同输入 → 命中缓存」跨轮成立（roster 只是提示性上下文，
+   *  同输入产出由输入本身保证）。 */
+  cacheKeyContext?: unknown;
   /** Append-only provider-visible history. Mutated only after a successful validated response. */
   history?: ChatMessage[];
   maxHistoryChars?: number;
@@ -105,12 +110,18 @@ function appendHistory(
  */
 export async function runSemanticStage<T>(options: SemanticStageInput<T>): Promise<T> {
   const startedAt = Date.now();
+  // 审计事件用的完整输入哈希（含真实 cacheContext，反映实际请求形态）
   const inputHash = options.cacheContext === undefined
     ? hash(options.input)
     : hash({ cacheContext: options.cacheContext, input: options.input });
   const promptVersion = options.promptVersion || '1';
   const cacheScope = options.cacheScope || `${options.scope}:${options.stage}`;
-  const dependencyHash = options.dependencyHash || hash(options.cacheContext ?? '');
+  // 缓存键用静态等价上下文（调用方显式指定的 cacheKeyContext），
+  // 避免 cacheContext 中的动态成分（页面名录随提炼进度增长）让键永不相等
+  const cacheKeyContext = options.cacheKeyContext !== undefined
+    ? options.cacheKeyContext
+    : options.cacheContext;
+  const dependencyHash = options.dependencyHash || hash(cacheKeyContext ?? '');
   const modelKey = activeModelKey();
   const resultCacheKey = hash({
     modelKey,
@@ -119,7 +130,7 @@ export async function runSemanticStage<T>(options: SemanticStageInput<T>): Promi
     promptVersion,
     dependencyHash,
     system: options.system,
-    cacheContext: options.cacheContext,
+    cacheContext: cacheKeyContext,
     input: options.input,
   });
   const historyHasTurns = Boolean(options.history && options.history.length > 1);

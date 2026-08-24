@@ -247,6 +247,8 @@ export async function classifyEntityNames(
           summary: entry.summary || '',
         })),
       },
+      // 缓存键用静态空名录（existingPages 随提炼进度增长，进键则跨轮永不命中）
+      cacheKeyContext: { existingPages: [] },
       cacheContextMode: 'always',
       input: {
         items: batchItems.map((item) => ({

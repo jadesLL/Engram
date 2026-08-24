@@ -151,6 +151,10 @@ async function jsonStage<T>(
   cacheContextMode: SemanticCacheContextMode = 'once',
   signal?: AbortSignal,
   heartbeat?: () => void,
+  /** 结果缓存键上下文：调用方传入静态等价物（如固定空名录）。
+   *  cacheContext 里的页面名录随提炼进度增长，若直接进缓存键，
+   *  同一文件在两轮提炼中的键永不相等 → 跨轮缓存 0 命中 */
+  cacheKeyContext?: unknown,
 ): Promise<T> {
   // 阶段内每次 LLM 调用前刷新任务 updated_at，防止 abortStaleJobs 的
   // 「20 分钟无进度」探针误杀长阶段（Map 多分段/Critic 多轮时单阶段可超 5 分钟）。
@@ -163,6 +167,7 @@ async function jsonStage<T>(
     schema,
     system,
     cacheContext,
+    ...(cacheKeyContext !== undefined ? { cacheKeyContext } : {}),
     cacheContextMode,
     history,
     maxHistoryChars: 96_000,
@@ -324,6 +329,8 @@ async function mapChunk(
       cacheContextMode,
       signal,
       heartbeat,
+      // 缓存键用静态空名录：roster 随提炼进度增长，进键则跨轮永不命中
+      { roster: [] },
     );
     const valid = validateFacts(out.candidates, [chunk]);
     if (out.candidates.length >= MAP_BATCH_LIMIT) {
@@ -396,6 +403,8 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
   cacheContextMode: SemanticCacheContextMode = 'once',
   signal?: AbortSignal,
   heartbeat?: () => void,
+  /** 结果缓存键上下文（静态等价物，见 jsonStage 注释） */
+  cacheKeyContext?: unknown,
 ): Promise<T> {
   let coverageError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -420,6 +429,7 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
       attempt ? 'once' : cacheContextMode,
       signal,
       heartbeat,
+      cacheKeyContext,
     );
     try {
       exactCandidateCoverage(expected, result.items, stage);
@@ -842,6 +852,7 @@ export async function ingestRawFile(
           'always',
           options.signal,
           heartbeat,
+          { roster: [] },
         );
         return whitelistFactIds(rawPlan.items, allowedFactIds).items;
       } catch (error: any) {
@@ -893,6 +904,7 @@ export async function ingestRawFile(
         'always',
         options.signal,
         heartbeat,
+        { roster: [] },
       ).catch((error: any) => {
         if (options.signal?.aborted) throw error;
         audit(runId, `critic:${index + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, planBatch);
@@ -920,6 +932,7 @@ export async function ingestRawFile(
         'once',
         options.signal,
         heartbeat,
+        { roster: [] },
       ).catch((error: any) => {
         if (options.signal?.aborted) throw error;
         // 二审失败降级：沿用首审修订结果
@@ -1001,6 +1014,7 @@ export async function ingestRawFile(
           'always',
           options.signal,
           heartbeat,
+          { roster: [] },
         );
         return { input: composeInput.items, items: rawComposed.items };
       } catch (error: any) {
