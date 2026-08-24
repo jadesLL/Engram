@@ -121,7 +121,9 @@ const TABLES_TO_WIPE = [
   'ingest_history_hidden',
   'source_versions',
   'semantic_events',
-  'semantic_cache',
+  // semantic_cache 不在清除清单：缓存键含模型/prompt 版本/输入哈希，
+  // 清知识数据后同内容重提炼仍应命中（重复提炼提速的核心）。
+  // 过期条目由 last_used_at 淘汰机制清理
   'llm_usage',
   'page_syntheses',
   'page_contributions',
