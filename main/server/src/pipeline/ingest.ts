@@ -858,6 +858,8 @@ export async function ingestRawFile(
       const candidateIds = new Set(planBatch.map((item) => item.candidateId));
       const candidateBatch = candidates.filter((candidate) => candidateIds.has(candidate.candidateId));
       const history = createSemanticCacheSession(`ingest-critic:${runId}`, criticPrompt);
+      // 首审失败降级：沿用 plan 原结果全部转 review（人工确认，不阻塞整文件）。
+      // 思考模型思考量随机波动，两轮都截断时继续重试只会拖垮整个 run
       const firstCritique = await coveredItemsStage<{ approved: boolean; issues: string[]; items: PlanItem[] }>(
         runId,
         criticOutputSchema,
@@ -872,7 +874,15 @@ export async function ingestRawFile(
         'always',
         options.signal,
         heartbeat,
-      );
+      ).catch((error: any) => {
+        if (options.signal?.aborted) throw error;
+        audit(runId, `critic:${index + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, planBatch);
+        return {
+          approved: false,
+          issues: ['首审失败，转人工审核'],
+          items: planBatch.map((item): PlanItem => ({ ...item, action: 'review' as const })),
+        };
+      });
       const revised = whitelistFactIds(firstCritique.items, allowedFactIds).items;
       if (firstCritique.approved && !firstCritique.issues.length) {
         return { items: revised, first: firstCritique, revised, second: null as null | { approved: boolean; issues: string[]; items: PlanItem[] } };
