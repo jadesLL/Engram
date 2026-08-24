@@ -571,7 +571,16 @@ async function normalizeCandidates(
   const history = createSemanticCacheSession(`ingest-normalize:${runId}`, normalizePrompt);
   const firstPass = batches(mapped, NORMALIZE_BATCH_LIMIT);
   for (let index = 0; index < firstPass.length; index++) {
-    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history, signal, heartbeat));
+    // 批失败降级：跳过该批合并（候选原样保留），不阻塞整文件。
+    // normalize 只做同义合并，合并缺失仅影响去重，不影响内容完整性
+    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history, signal, heartbeat)
+      .catch((error: any) => {
+        if (signal?.aborted) throw error;
+        audit(runId, `normalize:1:${index + 1}:degraded`, {
+          error: String(error?.message || error).slice(0, 200),
+        }, firstPass[index].map((candidate) => candidate.candidateId));
+        return firstPass[index];
+      }));
   }
   if (firstPass.length > 1) {
     const secondPass = candidates.length <= NORMALIZE_BATCH_LIMIT
@@ -579,7 +588,14 @@ async function normalizeCandidates(
       : spreadBatches(candidates, NORMALIZE_BATCH_LIMIT);
     const crossed: Candidate[] = [];
     for (let index = 0; index < secondPass.length; index++) {
-      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index, history, signal, heartbeat));
+      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index, history, signal, heartbeat)
+        .catch((error: any) => {
+          if (signal?.aborted) throw error;
+          audit(runId, `normalize:2:${index + 1}:degraded`, {
+            error: String(error?.message || error).slice(0, 200),
+          }, secondPass[index].map((candidate) => candidate.candidateId));
+          return secondPass[index];
+        }));
     }
     candidates = crossed;
   }
@@ -1022,6 +1038,8 @@ export async function ingestRawFile(
         const candidateIds = new Set(candidateBatch.map((item) => item.candidateId));
         const planBatch = reviewedPlan.filter((item) => candidateIds.has(item.candidateId));
         const history = createSemanticCacheSession(`ingest-questions:${runId}`, questionFinderPrompt);
+        // 批失败降级：该批不产生追问（问题列表为空），不阻塞整文件。
+        // 追问是增强信息而非必需产物，缺失只影响澄清体验
         return jsonStage<QuestionOutput>(
           runId,
           questionOutputSchema,
@@ -1035,7 +1053,13 @@ export async function ingestRawFile(
           'always',
           options.signal,
           heartbeat,
-        );
+        ).catch((error: any) => {
+          if (options.signal?.aborted) throw error;
+          audit(runId, `questions:${riskBatches.indexOf(candidateBatch) + 1}:degraded`, {
+            error: String(error?.message || error).slice(0, 200),
+          }, candidateBatch.map((item) => item.candidateId));
+          return { questions: [] } satisfies QuestionOutput;
+        });
       });
       questionResults.forEach((result, index) => {
         generatedQuestions.push(...result.questions);
