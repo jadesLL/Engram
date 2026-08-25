@@ -1438,6 +1438,9 @@ onUnmounted(() => {
   padding: 10px 18px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
+  /* 窄屏兜底：节点是固定宽不可缩的 flex 项，一行总宽超出容器时
+     横向滚动，避免 flex 溢出把序号/转折竖条压到 pill 上 */
+  overflow-x: auto;
 }
 .snake-flow {
   --node-width: 116px;
@@ -1448,8 +1451,10 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 100%;
-  max-width: 920px;
+  /* min-content 而非 100%/max-width：滚动场景下按最宽行撑开，
+     宽屏时仍居中且不超过 920px */
+  width: min(100%, 920px);
+  min-width: min-content;
   margin: 0 auto;
 }
 .snake-row {
@@ -2590,6 +2595,16 @@ onUnmounted(() => {
     grid-column: 1 / -1;
   }
 
+  /* 蛇形流程图中等屏缩一档（一行需 ~736px，避免触发横向滚动） */
+  .snake-flow {
+    --node-width: 96px;
+  }
+
+  .snake-node-pill {
+    padding: 0 8px;
+    font-size: 11.5px;
+  }
+
   .history-workspace {
     display: block;
   }
@@ -2656,6 +2671,28 @@ onUnmounted(() => {
 
   .history-count {
     grid-column: auto;
+  }
+
+  /* 蛇形流程图窄屏缩放：一行 6 节点 + 间隙需要 ~856px，
+     面板内可用宽度远小于视口（还有列表列/内边距），
+     不缩则 flex 溢出导致序号/竖条与 pill 重叠 */
+  .snake-flow {
+    --node-width: 88px;
+    --pill-height: 28px;
+  }
+
+  .snake-node-pill {
+    padding: 0 6px;
+    font-size: 11px;
+  }
+
+  .snake-node-gap,
+  .turn-gap {
+    width: 16px;
+  }
+
+  .guide-bar {
+    width: 16px;
   }
 
   .trajectory-summary {

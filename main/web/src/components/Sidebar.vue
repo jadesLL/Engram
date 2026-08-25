@@ -165,17 +165,19 @@
           >
             <span class="sec-name">原始资料</span>
           </button>
+          <!-- 提炼看板一级入口：进度数字即按钮（有待处理时高亮提醒） -->
           <button
             v-if="filesCoverage.supported"
             class="coverage-badge"
             :class="{ warn: filesCoverage.attention > 0 }"
             type="button"
             v-tooltip="filesCoverage.attention > 0
-              ? `${filesCoverage.ingested}/${filesCoverage.supported} 已整理,${filesCoverage.attention} 份需要处理 — 点击查看提炼看板`
-              : `${filesCoverage.supported} 份资料全部已整理 — 点击查看提炼看板`"
+              ? `提炼看板：${filesCoverage.ingested}/${filesCoverage.supported} 已整理，${filesCoverage.attention} 份需要处理`
+              : `提炼看板：${filesCoverage.supported} 份资料全部已整理`"
             @click="router.push('/ingest-coverage')"
           >
-            {{ filesCoverage.ingested }}/{{ filesCoverage.supported }}
+            <Icon name="list-tree" :size="12" />
+            <span class="coverage-num">{{ filesCoverage.ingested }}/{{ filesCoverage.supported }}</span>
           </button>
           <div class="sec-actions">
             <label class="sort-control section-sort" v-tooltip="`原始资料排序：${sortFilesLabel}`">
@@ -1331,7 +1333,7 @@ onUnmounted(() => {
 .coverage-badge {
   flex-shrink: 0;
   margin-left: 4px;
-  padding: 0 6px;
+  padding: 0 7px;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: transparent;
@@ -1341,7 +1343,12 @@ onUnmounted(() => {
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition: border-color .15s, background .15s;
+  /* 一级入口形态：图标 + 进度数字并排，区标题旁可点击 */
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
+.coverage-badge .coverage-num { line-height: 17px; }
 .coverage-badge:hover { border-color: var(--accent); background: var(--accent-soft); }
 .coverage-badge.warn {
   color: var(--warning);
