@@ -84,10 +84,12 @@ test('startup recovery discards interrupted derived jobs before restoring safe w
     `INSERT INTO jobs(kind,payload,status,created_at,updated_at,run_at,run_token,cancel_requested)
      VALUES('embed','{"pageId":"safe"}','running',?,?,?,'safe-run',0)`
   ).run(now(), now(), now());
+  // stale-run 的时间戳须超出 20 分钟无进度探针窗口（旧 5 分钟窗口时代用 -10 分钟），
+  // 才会被启动清理判为超时残留标 failed
   db.prepare(
     `INSERT INTO jobs(kind,payload,status,created_at,updated_at,run_at,run_token,cancel_requested)
-     VALUES('rebuild','{}','running',datetime('now','-10 minutes'),datetime('now','-10 minutes'),
-            datetime('now','-10 minutes'),'stale-run',0)`
+     VALUES('rebuild','{}','running',datetime('now','-25 minutes'),datetime('now','-25 minutes'),
+            datetime('now','-25 minutes'),'stale-run',0)`
   ).run();
 
   recoverStaleJobs();

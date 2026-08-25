@@ -8,11 +8,14 @@ import type { ProviderProtocol } from './modelCatalog.js';
 export type ModelKind = 'chat' | 'embedding' | 'document';
 export type ImageInputStatus = 'supported' | 'unsupported' | 'unknown';
 export type ImageInputSource = 'stored' | 'catalog' | 'metadata' | 'probe';
+export type ThinkingLevel = 'low' | 'high' | 'max';
 
 /** 供应商不兼容参数的持久化降级声明（原进程内 Set 的落库形态） */
 export interface ModelDialect {
   /** 供应商对 thinking 参数返回 400，请求不再携带 */
   thinkingRejected?: boolean;
+  /** 「始终思考」模型（GLM-5.3 一类）：拒绝 disabled 只接受 low/high/max，固定 low 档 */
+  thinkingLevelOnly?: boolean;
   /** 供应商对 stream_options 返回 400，流式请求不再携带 */
   streamUsageRejected?: boolean;
 }
@@ -35,6 +38,8 @@ export interface ModelEntry {
   authOptional?: boolean;
   /** 模型列表接口匿名可访问（拉取不需要 Key） */
   modelsAnonymous?: boolean;
+  /** 用户选择的思考等级；配置后所有对话调用显式发送（GLM-5.2/5.3 走 reasoning_effort） */
+  thinkingLevel?: ThinkingLevel;
   dim?: number;      // embedding 维度
   supportsDimensions?: boolean;
   imageInput?: ImageInputStatus;
@@ -58,6 +63,7 @@ interface ModelEntryRow {
   models_protocol: string | null;
   auth_optional: number | null;
   models_anonymous: number | null;
+  thinking_level: string | null;
   dim: number | null;
   supports_dimensions: number | null;
   image_input: string | null;
@@ -121,6 +127,7 @@ function rowToEntry(row: ModelEntryRow): ModelEntry {
     ...(modelsProtocol ? { modelsProtocol } : {}),
     ...(row.auth_optional ? { authOptional: true } : {}),
     ...(row.models_anonymous ? { modelsAnonymous: true } : {}),
+    ...(['low', 'high', 'max'].includes(row.thinking_level || '') ? { thinkingLevel: row.thinking_level as ThinkingLevel } : {}),
     ...(row.dim !== null && row.dim !== undefined ? { dim: row.dim } : {}),
     ...(row.supports_dimensions ? { supportsDimensions: true } : {}),
     ...(row.image_input ? { imageInput: row.image_input as ImageInputStatus } : {}),
@@ -147,6 +154,7 @@ function entryToRow(entry: ModelEntry, kind: ModelKind, sortOrder: number): Mode
     models_protocol: entry.modelsProtocol || null,
     auth_optional: entry.authOptional ? 1 : 0,
     models_anonymous: entry.modelsAnonymous ? 1 : 0,
+    thinking_level: ['low', 'high', 'max'].includes(entry.thinkingLevel || '') ? entry.thinkingLevel! : null,
     dim: entry.dim ?? null,
     supports_dimensions: entry.supportsDimensions ? 1 : 0,
     image_input: entry.imageInput || null,
@@ -221,13 +229,13 @@ export function saveModelConfig(payload: ModelConfigPayload): void {
 function saveKindEntries(kind: ModelKind, entries: ModelEntry[] | undefined): void {
   if (!Array.isArray(entries)) return;
   const existing = new Map(
-    (db.prepare('SELECT id, api_key, dialect FROM model_entries WHERE kind = ?').all(kind) as
-      { id: string; api_key: string; dialect: string }[])
+    (db.prepare('SELECT id, api_key, dialect, thinking_level FROM model_entries WHERE kind = ?').all(kind) as
+      { id: string; api_key: string; dialect: string; thinking_level: string | null }[])
       .map((row) => [row.id, row]),
   );
   db.prepare('DELETE FROM model_entries WHERE kind = ?').run(kind);
   const insert = db.prepare(
-    'INSERT INTO model_entries (id, kind, name, provider, line, base_url, models_url, logo, model, api_key, protocol, models_protocol, auth_optional, models_anonymous, dim, supports_dimensions, image_input, image_input_source, image_input_checked_at, dialect, sort_order, created_at, updated_at) VALUES (@id, @kind, @name, @provider, @line, @base_url, @models_url, @logo, @model, @api_key, @protocol, @models_protocol, @auth_optional, @models_anonymous, @dim, @supports_dimensions, @image_input, @image_input_source, @image_input_checked_at, @dialect, @sort_order, @created_at, @updated_at)'
+    'INSERT INTO model_entries (id, kind, name, provider, line, base_url, models_url, logo, model, api_key, protocol, models_protocol, auth_optional, models_anonymous, thinking_level, dim, supports_dimensions, image_input, image_input_source, image_input_checked_at, dialect, sort_order, created_at, updated_at) VALUES (@id, @kind, @name, @provider, @line, @base_url, @models_url, @logo, @model, @api_key, @protocol, @models_protocol, @auth_optional, @models_anonymous, @thinking_level, @dim, @supports_dimensions, @image_input, @image_input_source, @image_input_checked_at, @dialect, @sort_order, @created_at, @updated_at)'
   );
   entries.forEach((entry, index) => {
     const row = entryToRow(entry, kind, index);
@@ -236,6 +244,8 @@ function saveKindEntries(kind: ModelKind, entries: ModelEntry[] | undefined): vo
     // 防止掩码字面量覆盖明文
     if (prev && (!row.api_key || row.api_key.includes('*'))) row.api_key = prev.api_key;
     if (prev && !entry.dialect) row.dialect = prev.dialect;
+    // 兼容旧客户端：缺少字段时沿用库中的用户选择，避免全量保存意外清空
+    if (prev && entry.thinkingLevel === undefined) row.thinking_level = prev.thinking_level;
     insert.run(row as unknown as Record<string, unknown>);
   });
 }

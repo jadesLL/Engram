@@ -314,9 +314,15 @@ function restorePage(item: TrashItem, targetPath: string): string {
   const existingById = desiredId
     ? db.prepare(`SELECT id, path, deleted FROM pages WHERE id = ?`).get(desiredId) as any
     : undefined;
-  const canReuse =
-    Boolean(desiredId) &&
-    (!existingById || (existingById.deleted === 1 && existingById.path === targetPath));
+  // moveToTrash 软删时一定留下了 id=desiredId 的行（或 legacy 条目对应行缺失）。
+  // 恢复目标路径是「原路径」或其 -恢复-N 变体：
+  //  - 行仍指向本路径且软删 → 干净恢复，复用 id；
+  //  - 行查不到（原路径被新内容顶替，同路径唯一行已改 id）→ 旧 id 事实上已被
+  //    放弃，但复用会让恢复页与「顶替前的历史」纠缠（页面统计、外链按 id 追溯），
+  //    一律换新 id；
+  //  - 行被其他路径占用 → 必须换新 id。
+  const cleanSoftDeleted = existingById?.deleted === 1 && existingById.path === item.originalPath;
+  const canReuse = Boolean(desiredId) && cleanSoftDeleted;
   if (!canReuse) rewritePageId(targetPath, newId());
   const meta = syncPageFile(targetPath);
   if (!meta) throw new Error('页面索引恢复失败');

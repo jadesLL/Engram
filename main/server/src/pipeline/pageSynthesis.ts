@@ -924,6 +924,7 @@ export async function recomposePage(
         cacheScope: 'page-synthesis:compose',
         dependencyHash: state.inputHash,
         resultCache: true,
+        onRetry: () => onProgress?.('compose', round),
         input: {
           page: bundle.page,
           activeEvidence: bundle.facts,
@@ -976,6 +977,7 @@ export async function recomposePage(
         : isConceptPage ? 'page-synthesis-verify:concept-1' : 'page-synthesis-verify:3',
       cacheScope: 'page-synthesis:verify',
       dependencyHash: state.inputHash,
+      onRetry: () => onProgress?.('verify', round),
       // verify 是证据校验关卡，不缓存结果：自纠错回路每轮都要对当前草稿重新校验，
       // 缓存校验结论会在草稿不变时命中旧结论、跳过本轮校验，导致回路短路。
       resultCache: false,

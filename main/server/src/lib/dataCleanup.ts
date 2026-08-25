@@ -121,7 +121,9 @@ const TABLES_TO_WIPE = [
   'ingest_history_hidden',
   'source_versions',
   'semantic_events',
-  'semantic_cache',
+  // semantic_cache 不在清除清单：缓存键含模型/prompt 版本/输入哈希，
+  // 清知识数据后同内容重提炼仍应命中（重复提炼提速的核心）。
+  // 过期条目由 last_used_at 淘汰机制清理
   'llm_usage',
   'page_syntheses',
   'page_contributions',
@@ -245,7 +247,10 @@ export async function wipeAiLogsAndRelations(): Promise<AiLogWipeResult> {
   await yieldEventLoop();
   db.prepare(`DELETE FROM llm_usage`).run();
   await yieldEventLoop();
-  db.prepare(`DELETE FROM semantic_cache`).run();
+  // 语义缓存保留：缓存键含模型/prompt 版本/输入哈希（静态 cacheKeyContext），
+  // 知识数据清空后同内容重提炼仍应命中——这是重复提炼提速的核心。
+  // 过期条目由 db.ts 的 last_used_at 淘汰机制清理。清空缓存会让
+  // 「每次测试后清知识数据再重测」的流程永远无法享受缓存
   await yieldEventLoop();
   try { db.prepare(`DELETE FROM embedding_cache`).run(); } catch { /* 表可能尚未创建 */ }
   await yieldEventLoop();

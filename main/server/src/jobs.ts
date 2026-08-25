@@ -140,7 +140,7 @@ const handlers: Record<string, JobHandler> = {
       String(synthesisId),
       String(inputHash),
       context.signal,
-      // 每轮 LLM 调用前上报进度刷新 updated_at，避免 abortStaleJobs 的 5 分钟无进度探针
+      // 每轮 LLM 调用前上报进度刷新 updated_at，避免 abortStaleJobs 的 20 分钟无进度探针
       // 误杀正在多轮自纠错的合成任务（单次 LLM 最长 120s，多轮累计易超 5 分钟）。
       (stage, round) => update({
         stage: `整页综合·${stage}`,
@@ -249,7 +249,16 @@ type ActiveExecution = {
   targetKey: string;
 };
 
-const LANE_LIMITS: Record<JobLane, number> = { default: 2, document: 1 };
+// default 车道 4 并发（之前临时降到 1 是为规避「固定 150s 超时误判 → 重试风暴 →
+// 网关连接堆积」；根因已修：动态超时 + 独立 dispatcher 不复用坏连接 + 网络异常
+// 纳入重试 + 流式传输消除静默长等待，恢复并提升并发提速。
+// 单文件是串行管线，吞吐瓶颈在文件级并行度：2→4 直接翻倍，峰值并发
+// 4 文件 × 批内 2 = 8 路（undici dispatcher connections=16 可承载），
+// 批失败降级兜底网关偶发限流）。document 车道单并发。
+const LANE_LIMITS: Record<JobLane, number> = { default: 4, document: 1 };
+/** 任务完成后的冷却间隔（毫秒）：给网关喘息窗口，避免连续高频请求触发限流 */
+const JOB_COOLDOWN_MS = 5_000;
+let laneCooldownUntil = 0;
 const JOB_QUEUE_ENABLED_SETTING = 'job_queue_enabled';
 const STARTUP_DISCARDED_JOB_KINDS = [
   'page_recompose',
@@ -282,10 +291,10 @@ export function recoverStaleJobs() {
   db.prepare(
     `UPDATE jobs SET status = 'pending', run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'
-       AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at)) > julianday('now', '-5 minutes')`
+       AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at)) > julianday('now', '-20 minutes')`
   ).run(now());
   db.prepare(
-    `UPDATE jobs SET status = 'failed', error = '执行超时（超过5分钟无进度，疑似中断未恢复）',
+    `UPDATE jobs SET status = 'failed', error = '执行超时（超过20分钟无进度，疑似中断未恢复）',
        run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'`
   ).run(now());
@@ -479,6 +488,13 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
     activeExecutions.delete(job.id);
     notifyIdleWaiters();
     if (!maintenanceDepth && getJobQueueState().running) resumePausedJobs();
+    // 任务结束（含失败）后进入冷却期：给网关喘息窗口，降低连续高频请求
+    // 触发限流挂起的概率（实测双路持续压 ~20 分钟后网关进入长时间挂起）
+    if (execution.lane === 'default') {
+      laneCooldownUntil = Math.max(laneCooldownUntil, Date.now() + JOB_COOLDOWN_MS);
+      setTimeout(() => pollLane('default'), JOB_COOLDOWN_MS + 50);
+      return;
+    }
     // 任务完成后的下一轮调度延迟到下一个事件循环 tick，避免同步 DB 写密集冻结主线程。
     setImmediate(() => pollLane(execution.lane));
   }
@@ -502,11 +518,13 @@ function startJob(job: any, lane: JobLane): boolean {
   return true;
 }
 
-/** 文档识别单并发；普通 AI 任务最多双并发，同一目标仍保持串行。 */
+/** 文档识别单并发；普通 AI 任务默认车道单并发（网关限流保护），同一目标保持串行。 */
 function pollLane(lane: JobLane) {
   if (maintenanceDepth || !getJobQueueState().running || polling[lane]) return;
   polling[lane] = true;
   try {
+    // 冷却期内不取新任务（仅 default 车道；document/embed 等低频车道不受限）
+    if (lane === 'default' && Date.now() < laneCooldownUntil) return;
     while (activeLaneCount(lane) < LANE_LIMITS[lane]) {
       const job = nextJob(lane);
       if (!job || !startJob(job, lane)) break;
@@ -696,17 +714,20 @@ export function retryFailedJobs(): { retried: number; failed: number; errors: st
 }
 
 function abortStaleJobs(): void {
+  // 思考模型（thinking low）单次 LLM 调用 2-4 分钟，单阶段多轮调用累计可达 10 分钟；
+  // 心跳只在「LLM 调用前」上报，单次长调用期间无法刷新，5 分钟探针会误杀正常
+  // 推进的任务。放宽到 20 分钟，真正的死任务仍会被兜底清理。
   const stale = db.prepare(
     `SELECT * FROM jobs WHERE status='running'
      AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at))
-       <= julianday('now','-5 minutes')`
+       <= julianday('now','-20 minutes')`
   ).all() as any[];
   for (const job of stale) {
     activeExecutions.get(job.id)?.controller.abort();
     db.prepare(
       `UPDATE jobs SET status='failed',stage='失败',
-       error='执行超时（超过5分钟无进度）',
-       detail='执行超时（超过5分钟无进度）',
+       error='执行超时（超过20分钟无进度）',
+       detail='执行超时（超过20分钟无进度）',
        run_token='',cancel_requested=0,updated_at=?
        WHERE id=? AND status='running'`
     ).run(now(), job.id);

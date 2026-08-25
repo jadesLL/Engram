@@ -406,6 +406,16 @@
           </select>
           <span class="field-help">决定请求地址拼接、鉴权头与消息格式；预设服务商按线路自动确定。</span>
         </div>
+        <div v-if="form.kind === 'chat'" class="field">
+          <label for="model-thinking-level">思考等级</label>
+          <select id="model-thinking-level" v-model="form.thinkingLevel">
+            <option value="">自动（不显式指定）</option>
+            <option value="low">低（low）</option>
+            <option value="high">高（high）</option>
+            <option value="max">最大（max）</option>
+          </select>
+          <span class="field-help">由模型条目控制；GLM-5.3 可选择 low / high / max，所有对话调用统一生效。</span>
+        </div>
         <div class="field field-wide">
           <label>模型目录</label>
           <div class="discovery-url-row">
@@ -491,6 +501,7 @@ import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 
 type ModelKind = 'chat' | 'emb' | 'document';
+type ThinkingLevel = 'low' | 'high' | 'max';
 
 interface ModelEntry {
   id: string;
@@ -506,6 +517,7 @@ interface ModelEntry {
   modelsProtocol?: ProviderProtocol;
   authOptional?: boolean;
   modelsAnonymous?: boolean;
+  thinkingLevel?: ThinkingLevel;
   dim?: number;
   supportsDimensions?: boolean;
   imageInput?: ImageInputStatus;
@@ -525,6 +537,7 @@ interface ModelDraft {
   modelsProtocol: ProviderProtocol;
   authOptional: boolean;
   modelsAnonymous: boolean;
+  thinkingLevel: '' | ThinkingLevel;
   dim: number;
 }
 
@@ -836,6 +849,7 @@ const form = ref({
   modelsProtocol: 'openai' as ProviderProtocol,
   authOptional: false,
   modelsAnonymous: false,
+  thinkingLevel: '' as '' | ThinkingLevel,
   dim: 1024,
 });
 const providerLogoInput = ref<HTMLInputElement>();
@@ -1025,6 +1039,7 @@ function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: Model
       || 'openai',
     authOptional: existing?.authOptional || lineFor(provider, line, kind)?.authOptional || false,
     modelsAnonymous: existing?.modelsAnonymous || lineFor(provider, line, kind)?.modelsAnonymous || false,
+    thinkingLevel: existing?.thinkingLevel || '',
     dim: existing?.dim || existingOption?.dim || 1024,
   };
 }
@@ -1096,6 +1111,7 @@ function entryFromDraft(
     ...(draft.modelsProtocol === 'anthropic' ? { modelsProtocol: 'anthropic' as const } : {}),
     ...(draft.authOptional ? { authOptional: true } : {}),
     ...(draft.modelsAnonymous ? { modelsAnonymous: true } : {}),
+    ...(kind === 'chat' && draft.thinkingLevel ? { thinkingLevel: draft.thinkingLevel } : {}),
     ...(kind === 'emb' ? { dim: draft.dim || option?.dim || 1024, supportsDimensions } : {}),
     ...(imageInput ? { imageInput, imageInputSource } : {}),
     ...(sameEndpoint && existing?.imageInputCheckedAt
@@ -1148,6 +1164,7 @@ function pickProvider(id: string) {
   form.value.modelsProtocol = draft.modelsProtocol;
   form.value.authOptional = draft.authOptional;
   form.value.modelsAnonymous = draft.modelsAnonymous;
+  form.value.thinkingLevel = draft.thinkingLevel;
   form.value.dim = draft.dim;
   if (hasGeneratedName) form.value.name = provider.name;
   formError.value = '';

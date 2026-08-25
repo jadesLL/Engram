@@ -230,12 +230,33 @@ export function syncPageFile(relPath: string): PageMeta | null {
     word_count: wordCount(parsed.content),
   };
 
+  // frontmatter 携带的 id 可能已被其他路径占用（文件复制带 id / 并发同步竞态）。
+  // 优先按路径 upsert；仅当 id 撞上别的路径的行（含回收站软删行）时换新 id 重写
+  // frontmatter，不再整页 500。
+  const clash = db.prepare(`SELECT path FROM pages WHERE id = ? AND path != ?`).get(meta.id, relPath) as { path: string } | undefined;
+  if (clash) {
+    const effId = newId();
+    data.id = effId;
+    data['更新日期'] = now();
+    atomicWrite(abs, matter.stringify(parsed.content, data));
+    meta.id = effId;
+  }
+
+  // 同路径已有行但 id 不同（active-copy 顶替 trash 软删行、或手动改过 frontmatter id）：
+  // 行 id 跟随 frontmatter（唯一行唯一路径不变量）；旧行的 fts 先清理再按新 id 重建。
+  const samePathRow = db.prepare(`SELECT id FROM pages WHERE path = ? AND id != ?`).get(relPath, meta.id) as { id: string } | undefined;
+  if (samePathRow) {
+    db.prepare(`DELETE FROM pages_fts WHERE page_id = ?`).run(samePathRow.id);
+    db.prepare(`UPDATE pages SET id = ? WHERE path = ?`).run(meta.id, relPath);
+  }
+
   db.prepare(
     `INSERT INTO pages(id, path, title, type, tags, summary, created_at, updated_at, deleted, word_count)
      VALUES(@id, @path, @title, @type, @tags, @summary, @created_at, @updated_at, 0, @word_count)
      ON CONFLICT(path) DO UPDATE SET
        title=excluded.title, type=excluded.type, tags=excluded.tags, summary=excluded.summary,
-       updated_at=excluded.updated_at, deleted=0, word_count=excluded.word_count`
+       updated_at=excluded.updated_at, deleted=0, word_count=excluded.word_count,
+       id=excluded.id`
   ).run({ ...meta, tags: JSON.stringify(tags) });
 
   db.prepare(`DELETE FROM pages_fts WHERE page_id = ?`).run(meta.id);

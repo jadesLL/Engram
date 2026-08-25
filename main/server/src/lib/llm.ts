@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { createCanvas } from '@napi-rs/canvas';
 import type { ZodType } from 'zod';
+import { Agent } from 'undici';
 import { db } from './db.js';
 import { recordLlmResultCacheHit, recordLlmUsage, type LlmOperation, type LlmUsageIdentity } from './llmUsage.js';
 import {
@@ -97,6 +98,8 @@ type LlmRequestOptions = {
   entryId?: string;
   /** 条目已持久化的降级声明（发送前预检，避免重启后重复 400 往返） */
   dialect?: ModelDialect;
+  /** 重试/长调用期间刷新任务心跳，防止无进度探针在网关挂起重试链中被误触发 */
+  onRetry?: () => void;
   usageContext?: {
     scope: string;
     refId: string;
@@ -173,20 +176,56 @@ async function request(
   if (!apiKey && !opts?.authOptional) {
     throw new LlmError('尚未配置 LLM API Key（设置页 → LLM）');
   }
-  try {
-    return await requestOnce(path, body, opts, baseUrl, apiKey);
-  } catch (error: any) {
-    // 网络抖动/超时不属于内容问题，同参数静默重试一次再上抛，
-    // 避免上层把瞬时网络故障固化成整条任务的失败。
-    const retriable = error instanceof LlmError
-      && !opts?.signal?.aborted
-      && (error.message === 'LLM 请求超时' || error.message.startsWith('LLM 请求失败 5'));
-    if (!retriable) throw error;
-    console.warn(`[llm.request] ${error.message}，3 秒后自动重试一次`);
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-    return await requestOnce(path, body, opts, baseUrl, apiKey);
-  }
+  const attempt = async (nth: number): Promise<LlmHttpResponse> => {
+    try {
+      return await requestOnce(path, body, opts, baseUrl, apiKey);
+    } catch (error: any) {
+      // 瞬时故障不属于内容问题，同参数静默重试再上抛，避免上层把网络抖动固化成
+      // 整条任务的失败。覆盖：超时、网络层异常（fetch failed）、408/429/5xx、
+      // 以及网关间歇性 401/403（实测自建网关在并发压力下会误报 Invalid API key，
+      // 随后同 key 请求恢复）。
+      const msg = error.message || '';
+      const retriable = error instanceof LlmError
+        && !opts?.signal?.aborted
+        && (msg === 'LLM 请求超时'
+          || msg.startsWith('LLM 网络异常')
+          || msg.startsWith('LLM 请求失败 5')
+          || /^LLM 请求失败 408/.test(msg)
+          || /^LLM 请求失败 429/.test(msg)
+          || /^LLM 请求失败 40[13]/.test(msg));
+      if (!retriable || nth >= 5) throw error;
+      // 429 过载专用长退避（30/60/90/120s，来自 hermes-agent 对 GLM 网关
+      // 429 code 1305 过载的实测：短退避会反复撞同一个过载窗口）；
+      // 其余瞬时故障维持短退避 3/6/9/12/15s
+      const is429 = /^LLM 请求失败 429/.test(msg);
+      const delay = is429
+        ? [30_000, 60_000, 90_000, 120_000, 120_000][nth] ?? 120_000
+        : Math.min(15_000, 3_000 * nth);
+      console.warn(`[llm.request] ${error.message.slice(0, 120)}，${delay / 1000} 秒后自动重试（第 ${nth + 1}/5 次）`);
+      // 网关挂起 + 多级重试的累计时长可能很长（150s × 4 次），重试前刷新
+      // 调用方心跳，防止无进度探针误杀仍在重试链中的任务
+      try { opts?.onRetry?.(); } catch { /* 心跳失败不阻塞重试 */ }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return attempt(nth + 1);
+    }
+  };
+  return attempt(0);
+
 }
+
+/** LLM 专用 dispatcher：不复用连接、headersTimeout 放宽到 20 分钟。
+ *  全局 fetch（undici 默认 dispatcher）的两个坑：
+ *  1) headersTimeout 默认 300s，慢响应（大 max_tokens 长输出）先于我们的动态
+ *     超时被 undici 掐断（Headers Timeout Error），随后重试又复用同一个
+ *     keep-alive 坏连接 → 连续失败的重试风暴；
+ *  2) keep-alive 连接池里挂起过的连接会污染后续请求。 */
+const llmDispatcher = new Agent({
+  keepAliveTimeout: 1,          // 实质上禁用连接复用
+  keepAliveMaxTimeout: 1,
+  headersTimeout: 20 * 60_000,  // 与动态超时上限对齐
+  bodyTimeout: 20 * 60_000,
+  connections: 16,
+});
 
 async function requestOnce(
   path: string,
@@ -200,7 +239,13 @@ async function requestOnce(
   const signal = opts?.signal
     ? AbortSignal.any([controller.signal, opts.signal])
     : controller.signal;
-  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 120_000);
+  // 超时按输出预算动态估算：实测网关吞吐 ~11s/1000 completion tokens（8k 输出
+  // 约 90-140s）。固定值会把「正常的长输出请求」误判为超时，陷入重试死循环
+  //（重发同样的请求又是同样的长输出）。按 max_tokens 0.03s/token 估算并留足
+  // 余量，下限 150s。
+  const budgetTokens = typeof (body as any)?.max_tokens === 'number' ? (body as any).max_tokens : 4000;
+  const estimatedMs = Math.max(150_000, Math.ceil(budgetTokens * 30));
+  const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? estimatedMs);
   const adapter = protocolAdapter(opts?.protocol);
   try {
     const res = await fetch(adapter.url(baseUrl, path), {
@@ -208,7 +253,9 @@ async function requestOnce(
       headers: apiKey ? adapter.headers(apiKey) : { 'Content-Type': 'application/json' },
       body: JSON.stringify(adapter.buildBody(body as Record<string, unknown> & { model: string; messages: unknown[] })),
       signal,
-    });
+      // Node fetch 支持 dispatcher 选项（undici）；类型定义未包含，断言绕过
+      dispatcher: llmDispatcher,
+    } as unknown as RequestInit);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new LlmError(`LLM 请求失败 ${res.status}: ${text.slice(0, 300)}`, res.status);
@@ -222,6 +269,12 @@ async function requestOnce(
   } catch (error: any) {
     if (error?.name === 'AbortError') {
       throw new LlmError(opts?.signal?.aborted ? 'AI 请求已取消' : 'LLM 请求超时');
+    }
+    // 网络层异常（连接重置/DNS/TLS）：undici 包成 TypeError 'fetch failed'，
+    // 统一转 LlmError 交给网络层重试（不重试的话瞬时断连会固化成任务失败）
+    if (error instanceof TypeError && /fetch failed/i.test(error?.message || '')) {
+      const cause = (error as any)?.cause ? `（${String((error as any).cause.message || (error as any).cause).slice(0, 80)}）` : '';
+      throw new LlmError(`LLM 网络异常 fetch failed${cause}`);
     }
     throw error;
   } finally {
@@ -432,39 +485,99 @@ export async function probeImageInput(
   }
 }
 
-/** 已确认不支持 thinking 参数的模型（key 为 baseUrl|model）。部分供应商（如火山方舟上的
- *  GLM/Kimi 等非思考模型）对 thinking 参数直接返回 400，与 stream_options 同构：删除该
- *  参数重试一次并记忆，进程内后续请求不再携带；重启后首个请求多一次 400 往返。 */
+/** 模型 thinking 适配状态（key 为 baseUrl|model）。两类供应商：
+ *  1) 非思考模型：带 thinking 参数直接 400 → 完全删除该参数重试；
+ *  2) 「始终思考」模型（如 GLM-5.3）：拒绝 {type:'disabled'}，提示只支持 low/high/max
+ *     → 必须以思考模式使用，固定 {type:'low'}。降级记忆走条目 dialect 字段
+ *     （markEntryDialect，重启后仍生效，不重复撞 400）。
+ *     这类模型 reasoning_content 无法关闭，靠 max_tokens 截断识别
+ *     （chat() 的 hasReasoning 分支翻倍重试）兜底。 */
 const thinkingUnsupported = new Set<string>();
+const thinkingLevelOnly = new Set<string>();
 
-function rejectsThinkingParam(error: unknown): boolean {
-  return (
-    error instanceof LlmError &&
-    [400, 422].includes(error.status || 0) &&
-    /thinking/i.test(error.message || '')
-  );
+function thinkingErrorDetail(error: unknown): { rejectsParam: boolean; requiresLevel: boolean } {
+  if (!(error instanceof LlmError)) return { rejectsParam: false, requiresLevel: false };
+  // 部分网关把上游 400 包装成 502 upstream_error（实测 GLM-5.3 网关两种都有），一并接受
+  if (![400, 422, 502].includes(error.status || 0)) {
+    return { rejectsParam: false, requiresLevel: false };
+  }
+  const msg = error.message || '';
+  // 供应商报错文案两类：带英文参数名 "thinking"，或纯中文「该模型始终思考，不支持关闭思考」
+  //（实测 GLM-5.3 网关的 400 文案完全不含 "thinking"，只认中文关键词）。
+  const mentionsThinking = /thinking/i.test(msg) || /思考/i.test(msg);
+  if (!mentionsThinking) return { rejectsParam: false, requiresLevel: false };
+  // 「始终思考，不支持关闭思考；请使用 low、high 或 max」一类错误：参数本身被接受，
+  // 但 disabled 值非法，必须以思考模式（low 档）使用而非删除参数。
+  // level 词用 \b 词边界匹配，排除 max_tokens 报错形态（"max" 后跟 "_" 不构成边界）。
+  const requiresLevel =
+    /\b(low|high|max)\b/i.test(msg) ||
+    /始终思考|不支持关闭|cannot be disabled|always think/i.test(msg);
+  return { rejectsParam: true, requiresLevel };
 }
 
 /** 发送 /chat/completions 请求；供应商拒绝 thinking 参数时自动降级重试。
- *  降级记忆双写：进程内 Set（热路径零开销）+ 条目 dialect 字段（重启后免重复 400）。 */
+ *  降级记忆双写：进程内 Set（热路径零开销）+ 条目 dialect 字段（重启后免重复 400）。
+ *  两类拒绝：完全不支持 thinking 参数（删除重试）与「始终思考」只接受
+ *  low/high/max（GLM-5.3 一类，降级 {type:'low'} 以思考模式使用）。 */
 async function requestChatWithThinkingFallback(
   body: Record<string, unknown>,
   capabilityKey: string,
   opts: LlmRequestOptions,
 ): Promise<LlmHttpResponse> {
-  if (body.thinking && (thinkingUnsupported.has(capabilityKey) || opts.dialect?.thinkingRejected)) {
-    delete body.thinking;
+  const configuredLevel = body.thinking && (body.thinking as any).type !== 'disabled';
+  // 用户显式配置 low/high/max 时，能力记忆不得删除/覆盖用户选择
+  if (!configuredLevel && body.thinking) {
+    if (thinkingUnsupported.has(capabilityKey) || opts.dialect?.thinkingRejected) {
+      delete body.thinking;
+    } else if (thinkingLevelOnly.has(capabilityKey) || opts.dialect?.thinkingLevelOnly) {
+      body.thinking = { type: 'low' };
+    }
   }
   try {
     return await request('/chat/completions', body, opts);
   } catch (error) {
-    if (!body.thinking || !rejectsThinkingParam(error)) throw error;
+    if (!body.thinking) throw error;
+    const detail = thinkingErrorDetail(error);
+    if (!detail.rejectsParam) throw error;
+    if (configuredLevel) {
+      throw new LlmError(`模型拒绝用户选择的思考等级 ${(body.thinking as any).type}：${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (detail.requiresLevel) {
+      body.thinking = { type: 'low' };
+      const res = await request('/chat/completions', body, opts);
+      thinkingLevelOnly.add(capabilityKey);
+      if (opts.entryId) markEntryDialect(opts.entryId, { thinkingLevelOnly: true });
+      return res;
+    }
     delete body.thinking;
     const res = await request('/chat/completions', body, opts);
     thinkingUnsupported.add(capabilityKey);
     if (opts.entryId) markEntryDialect(opts.entryId, { thinkingRejected: true });
     return res;
   }
+}
+
+
+/** 构造思考参数。两类模型用不同旋钮（参考 NousResearch/hermes-agent zai 插件）：
+ *  - GLM-5.2/5.3（OpenAI 兼容线）：`reasoning_effort` 是思考力度旋钮
+ *    （low/medium/high/max，GLM-5.3 全档），实测可控思考量——这才是
+ *    控制思考的正道；`thinking:{type}` 只是开关，不控制力度且实测显式
+ *    发送会诱导思考膨胀。未配置时默认 high（GLM 推荐档，hermes 同款默认）
+ *  - 其他思考模型：`thinking:{type}` 开关语义，未配置不显式发送
+ *  Anthropic 协议两者都不支持，明确报错。 */
+function applyConfiguredThinking(body: Record<string, unknown>, entry: ModelEntry | null): void {
+  if (entry?.protocol === 'anthropic' && entry?.thinkingLevel) {
+    throw new LlmError('当前 Anthropic 协议不支持 low/high/max thinking 参数，请改用 OpenAI 兼容线路');
+  }
+  const model = (entry?.model || '').toLowerCase();
+  // GLM-5.2/5.3 家族（含中继别名 glm-5-3/glm-5p3 等）走 reasoning_effort；
+  // 未配置默认 high（GLM 推荐档）
+  if (/glm-5[.-]?[23]|glm-5p[23]/.test(model)) {
+    body.reasoning_effort = entry?.thinkingLevel || 'high';
+    return;
+  }
+  if (!entry?.thinkingLevel) return;
+  body.thinking = { type: entry.thinkingLevel };
 }
 
 type ChatOptions = {
@@ -476,9 +589,88 @@ type ChatOptions = {
   tag?: string;
   usageContext?: LlmRequestOptions['usageContext'];
   disableThinking?: boolean;
+  /** 网络层重试期间刷新（任务心跳） */
+  onRetry?: () => void;
 };
 
-/** 非流式对话 */
+/** 流式读取一次 SSE 响应并累积为完整文本。
+ *  返回 content 拼接结果与截断判定所需信息；用量经 captureUsage 精确记账
+ *  （含 stream_options.include_usage 的最终 usage 帧）。
+ *  思考失控熔断：思考增量累计超过阈值且正文仍为空时提前中止——
+ *  实测思考量随机波动，小预算下重发往往恢复正常，远优于干等思考耗尽预算。 */
+async function readStreamResponse(
+  result: LlmHttpResponse,
+  opts?: { json?: boolean },
+): Promise<{ content: string; finishReason: string; hasReasoning: boolean; reasoningChars: number }> {
+  if (!result.response.body) throw new LlmError('LLM 无流式响应体');
+  // 部分网关忽略 stream 参数直接返回整包 JSON（Content-Type: application/json）。
+  // 读取整个 body 按非流式响应解析，与旧 chat 行为等价
+  const contentType = result.response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const json = await readJsonResponse(result);
+    const choice = json?.choices?.[0];
+    const msg = choice?.message;
+    return {
+      content: typeof msg?.content === 'string' ? msg.content : '',
+      finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : '',
+      hasReasoning: typeof msg?.reasoning_content === 'string' && msg.reasoning_content.length > 0,
+      reasoningChars: typeof msg?.reasoning_content === 'string' ? msg.reasoning_content.length : 0,
+    };
+  }
+  const parser = result.adapter.createStreamParser();
+  const reader = result.response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+  let reasoning = '';
+  let finishReason = '';
+  let usageCaptured = false;
+  // 熔断阈值：正文为空时思考累计字符上限。正常思考 2-3k chars，失控时 10k+；
+  // 按 ~1.6 chars/token 折算约 9k token 思考预算，超限即止损
+  const reasoningLimit = 16_000;
+  for (;;) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // 空闲超时：相邻 chunk 间隔超过 60s 视为挂起。流式下正常间隔为亚秒级
+    const idleTimeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        void reader.cancel();
+        reject(new LlmError('LLM 流式响应超时'));
+      }, 60_000);
+    });
+    const { done, value } = await Promise.race([reader.read(), idleTimeout])
+      .finally(() => {
+        if (timer) clearTimeout(timer);
+      });
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t.startsWith('data:')) continue;
+      const parsed = parser.feed(t.slice(5).trim());
+      if (parsed.done) {
+        if (parsed.finishReason) finishReason = parsed.finishReason;
+        return { content, finishReason, hasReasoning: reasoning.length > 0, reasoningChars: reasoning.length };
+      }
+      if (parsed.text) content += parsed.text;
+      if (parsed.reasoning) reasoning += parsed.reasoning;
+      if (!usageCaptured && parsed.usage) {
+        captureUsage(result, parsed.usage);
+        usageCaptured = true;
+      }
+      // 熔断：思考已远超正常量而正文一个字没出——继续等只会耗尽 max_tokens
+      if (!content && !opts?.json && reasoning.length > reasoningLimit) {
+        void reader.cancel().catch(() => {});
+        throw new LlmError('输出被截断（思考失控熔断）');
+      }
+    }
+  }
+  return { content, finishReason, hasReasoning: reasoning.length > 0, reasoningChars: reasoning.length };
+}
+
+/** 对话：底层一律流式传输（思考模型网关下非流式长等待易被中间层掐断；
+ *  SSE 边收边拼，用量含缓存命中精确记账），对外仍返回完整文本 */
 export async function chat(
   messages: ChatMessage[],
   opts?: ChatOptions
@@ -488,20 +680,22 @@ export async function chat(
     model: cfg.chatModel,
     messages,
     temperature: opts?.temperature ?? 0.3,
+    stream: true,
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
   // 部分服务商（DeepSeek/通义/Kimi/OpenAI）支持 json_object 模式；不支持的会忽略该字段
   if (opts?.json) body.response_format = { type: 'json_object' };
-  // 推理模型（DeepSeek-R1/通义千问思考版等）默认开启思考，json 模式下 reasoning_content
-  // 会吃光 max_tokens 导致 content 为空、合成任务必然失败。结构化输出场景一律关闭思考，
-  // 让模型直接产出 content。原先只对 baseUrl 含 deepseek 的配置生效，自定义中转网关会漏过。
-  if (opts?.json) {
-    body.thinking = { type: 'disabled' };
-    // 关闭思考后 temperature/top_p 才有效（思考模式下这些参数被忽略）
-  }
   const active = getActiveChat();
-  const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
+  applyConfiguredThinking(body, active);
+  const capabilityKey = `${cfg.baseUrl}|${cfg.chatModel}`;
+  // include_usage 让最终帧带精确用量（prompt/cache/completion），缺失的网关由非流式形态回退
+  const useStreamOptions =
+    !streamUsageUnsupported.has(capabilityKey) && !(active?.dialect?.streamUsageRejected);
+  if (useStreamOptions && active?.protocol !== 'anthropic') {
+    body.stream_options = { include_usage: true };
+  }
+  const streamOpts = {
     signal: opts?.signal,
     tag: opts?.tag || 'chat',
     usageContext: opts?.usageContext,
@@ -509,34 +703,67 @@ export async function chat(
     authOptional: active?.authOptional,
     entryId: active?.id,
     dialect: active?.dialect,
-  });
-  const json = await readJsonResponse(res);
-  const choice = json?.choices?.[0];
-  const msg = choice?.message;
-  const finishReason = choice?.finish_reason;
-  // json 模式下只接受 content（结构化输出）；reasoning_content 是推理过程，不是 JSON，
-  // 回退用它会导致上层 JSON 解析失败。非 json 模式可回退 reasoning_content（普通对话）。
+    onRetry: opts?.onRetry,
+  } satisfies LlmRequestOptions;
+
   let content = '';
-  if (typeof msg?.content === 'string' && msg.content) {
-    content = msg.content;
-  } else if (!opts?.json && typeof msg?.reasoning_content === 'string' && msg.reasoning_content) {
-    content = msg.reasoning_content;
+  let finishReason = '';
+  let hasReasoning = false;
+  try {
+    let res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
+    try {
+      const parsed = await readStreamResponse(res, { json: opts?.json });
+      content = parsed.content;
+      finishReason = parsed.finishReason;
+      hasReasoning = parsed.hasReasoning;
+    } catch (error: any) {
+      // stream_options 不被支持（400）时去掉重发；流中断/熔断错误原样上抛
+      const streamUsageRejected =
+        error instanceof LlmError && [400, 422].includes(error.status || 0) && body.stream_options;
+      if (!streamUsageRejected) throw error;
+      delete body.stream_options;
+      res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
+      streamUsageUnsupported.add(capabilityKey);
+      if (active?.id) markEntryDialect(active.id, { streamUsageRejected: true });
+      const parsed = await readStreamResponse(res, { json: opts?.json });
+      content = parsed.content;
+      finishReason = parsed.finishReason;
+      hasReasoning = parsed.hasReasoning;
+    }
+  } catch (error: any) {
+    // 网关明确拒绝 stream 参数（400/422 且报错提及 stream）时回退非流式重试。
+    // 5xx 不在此列：那是服务端故障，走网络层统一重试，删 stream 重发只会
+    // 把失败链拉长一倍（每次 request 调用各有独立重试预算）
+    const streamRejected =
+      error instanceof LlmError &&
+      [400, 422].includes(error.status || 0) &&
+      /stream/i.test(error.message || '') &&
+      body.stream;
+    if (streamRejected) {
+      delete body.stream;
+      delete body.stream_options;
+      const res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
+      const json = await readJsonResponse(res);
+      const choice = json?.choices?.[0];
+      const msg = choice?.message;
+      content = typeof msg?.content === 'string' ? msg.content : '';
+      finishReason = choice?.finish_reason || '';
+      hasReasoning = typeof msg?.reasoning_content === 'string' && msg.reasoning_content.length > 0;
+    } else {
+      throw error;
+    }
   }
+
   if (!content) {
     // content 为空的三类诱因，分别给出可被上层重试逻辑识别的错误：
-    // 1) finish_reason='length'：max_tokens 真截断 → 翻倍重试
+    // 1) finish_reason='length'：max_tokens 真截断
     // 2) 推理模型 reasoning_content 吃光预算但 content 为空（finish_reason 常为 stop）
-    //    → 同样视为截断，翻倍 max_tokens 给推理+正文留预算，而非误判为格式异常
-    // 3) 真·空内容（无 reasoning，疑似服务商内容过滤）→ 格式异常，按提示重试
-    const hasReasoning = typeof msg?.reasoning_content === 'string' && msg.reasoning_content.length > 0;
-    const truncated = finishReason === 'length' || hasReasoning;
-    console.warn('[llm.chat] 返回内容为空', { model: cfg.chatModel, finishReason, hasReasoning, raw: JSON.stringify(json).slice(0, 300) });
+    // 3) 真·空内容（疑似服务商内容过滤）→ 格式异常，按提示重试
+    console.warn('[llm.chat] 返回内容为空', { model: cfg.chatModel, finishReason, hasReasoning });
     throw new LlmError(
-      finishReason === 'length'
-        ? '输出被截断（max_tokens 不足）'
-        : hasReasoning
-          ? '输出被截断（推理占用 max_tokens，content 为空）'
-          : 'LLM 返回格式异常',
+      finishReason === 'length' || hasReasoning
+        ? '输出被截断（推理占用 max_tokens，content 为空）'
+        : 'LLM 返回格式异常',
     );
   }
   return content;
@@ -558,9 +785,9 @@ export async function chatWithTools(
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
-  // 结构化输出场景关闭推理，避免 reasoning_content 占满 max_tokens 导致 content 为空
-  if (opts?.disableThinking) body.thinking = { type: 'disabled' };
   const active = getActiveChat();
+  if (active?.thinkingLevel) applyConfiguredThinking(body, active);
+  else if (opts?.disableThinking) body.thinking = { type: 'disabled' };
   const res = await requestChatWithThinkingFallback(body, `${cfg.baseUrl}|${cfg.chatModel}`, {
     signal: opts?.signal,
     tag: opts?.tag || 'chat-tools',
@@ -569,6 +796,7 @@ export async function chatWithTools(
     authOptional: active?.authOptional,
     entryId: active?.id,
     dialect: active?.dialect,
+    onRetry: opts?.onRetry,
   });
   const payload = await readJsonResponse(res);
   const choice = payload?.choices?.[0];
@@ -603,12 +831,14 @@ export async function chatWithTools(
  *  输出被 max_tokens 截断时，重试自动翻倍 max_tokens。 */
 export async function chatJson<T = any>(
   messages: ChatMessage[],
-  opts?: Omit<ChatOptions, 'json'> & { retries?: number; tag?: string }
+  opts?: Omit<ChatOptions, 'json'> & { retries?: number; truncationRetries?: number; tag?: string }
 ): Promise<T> {
   const tag = opts?.tag || 'chatJson';
   const retries = opts?.retries ?? 1;
+  // 截断翻倍独立预算：思考模型的思考量随机波动导致的长度截断，与内容质量无关，
+  // 允许调用方（chatJsonSchema 内层 retries=0 时）保留一次翻倍自愈
+  let truncationRetriesLeft = opts?.truncationRetries ?? 1;
   let lastErr = '';
-  let curMaxTokens = opts?.maxTokens;
   let retryReason = opts?.usageContext?.retryReason || '';
   for (let attempt = 0; attempt <= retries; attempt++) {
     let raw: string;
@@ -616,7 +846,7 @@ export async function chatJson<T = any>(
       raw = await chat(messages, {
         ...opts,
         json: true,
-        maxTokens: curMaxTokens,
+        maxTokens: opts?.maxTokens,
         usageContext: opts?.usageContext
           ? { ...opts.usageContext, retryReason }
           : undefined,
@@ -625,11 +855,16 @@ export async function chatJson<T = any>(
       lastErr = `请求失败: ${e.message}`;
       console.warn(`[llm.chatJson:${tag}] 请求失败`, e.message);
       if (opts?.signal?.aborted) throw e;
-      if (attempt < retries) {
-        // 截断错误：翻倍 max_tokens 重试，不追加多余消息（问题在长度而非内容）
-        if (e.message.includes('截断')) {
+      const isTruncation = e.message.includes('截断');
+      // 截断走独立预算（truncationRetries）：思考模型的思考量随机波动导致的
+      // 长度问题与内容质量无关；不放大 max_tokens（实测预算越大思考越长），
+      // 原样重发一次，波动消退即可通过
+      const canTruncationRetry = isTruncation && truncationRetriesLeft > 0;
+      if (attempt < retries || canTruncationRetry) {
+        if (isTruncation) {
+          if (!canTruncationRetry) throw e;
+          truncationRetriesLeft--;
           retryReason = 'output_truncated';
-          curMaxTokens = (curMaxTokens || 4000) * 2;
           continue;
         }
         retryReason = 'request_failed';
@@ -649,9 +884,10 @@ export async function chatJson<T = any>(
     console.warn(`[llm.chatJson:${tag}] 解析失败${looksTruncated ? '（疑似截断）' : ''}`, lastErr);
     if (attempt < retries) {
       if (looksTruncated) {
-        // 截断：翻倍 max_tokens 重试，不追加消息
+        // 截断：原样重发（思考波动随机，重发即可能恢复），不追加消息、不放大预算
+        if (truncationRetriesLeft <= 0 && attempt >= retries) break;
+        truncationRetriesLeft--;
         retryReason = 'json_truncated';
-        curMaxTokens = (curMaxTokens || 4000) * 2;
         continue;
       }
       retryReason = 'json_parse_failed';
@@ -672,7 +908,7 @@ export async function chatJson<T = any>(
 export async function chatJsonSchema<T>(
   schema: ZodType<T>,
   messages: ChatMessage[],
-  opts?: Omit<ChatOptions, 'json'> & { retries?: number; tag?: string }
+  opts?: Omit<ChatOptions, 'json'> & { retries?: number; truncationRetries?: number; tag?: string }
 ): Promise<T> {
   const tag = opts?.tag || 'chatJsonSchema';
   const attempts = opts?.retries ?? 1;
@@ -680,11 +916,13 @@ export async function chatJsonSchema<T>(
   let lastError = 'schema validation failed';
   for (let attempt = 0; attempt <= attempts; attempt++) {
     opts?.signal?.throwIfAborted();
-    // 保留 retries 给 chatJson 处理截断重试（翻倍 max_tokens）；
-    // schema 校验失败的重试由本函数外层循环负责
+    // 拆除嵌套乘法：schema 层独占内容重试预算；但「截断翻倍」是长度修复
+    // 而非内容重试（思考模型思考量随机波动，8k 预算 1/3 概率被思考吃光），
+    // 内层保留一次截断翻倍能力，与 schema 层不叠加
     const value = await chatJson<unknown>(current, {
       ...opts,
-      retries: opts?.retries ?? 1,
+      retries: 0,
+      truncationRetries: 1,
       tag,
       usageContext: opts?.usageContext
         ? {
@@ -767,7 +1005,7 @@ export async function chatToolSchema<T>(
           (trimmed.startsWith('{') && !trimmed.endsWith('}')) ||
           (trimmed.startsWith('[') && !trimmed.endsWith(']'));
         if (looksTruncated) {
-          curMaxTokens = (curMaxTokens || 4000) * 2;
+          curMaxTokens = Math.min(32_000, (curMaxTokens || 4000) * 2);  // 翻倍仅一次空间
         }
         current = [
           ...current,
@@ -835,6 +1073,7 @@ export async function chatStream(
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
   const active = getActiveChat();
+  applyConfiguredThinking(body, active);
   const capabilityKey = `${cfg.baseUrl}|${cfg.chatModel}`;
   const streamOpts = {
     signal: opts?.signal,
@@ -843,6 +1082,8 @@ export async function chatStream(
     protocol: active?.protocol,
     authOptional: active?.authOptional,
     entryId: active?.id,
+    dialect: active?.dialect,
+    onRetry: opts?.onRetry,
   } satisfies LlmRequestOptions;
   const useStreamOptions =
     !streamUsageUnsupported.has(capabilityKey) && !(active?.dialect?.streamUsageRejected);
@@ -851,14 +1092,14 @@ export async function chatStream(
   }
   let res: LlmHttpResponse;
   try {
-    res = await request('/chat/completions', body, streamOpts);
+    res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
   } catch (error) {
     const unsupported =
       error instanceof LlmError &&
       [400, 422].includes(error.status || 0);
     if (!unsupported || !body.stream_options) throw error;
     delete body.stream_options;
-    res = await request('/chat/completions', body, streamOpts);
+    res = await requestChatWithThinkingFallback(body, capabilityKey, streamOpts);
     streamUsageUnsupported.add(capabilityKey);
     if (active?.id) markEntryDialect(active.id, { streamUsageRejected: true });
   }
@@ -1102,15 +1343,14 @@ export async function testModel(
   if (!resolved.model) return { ok: false, error: '未填写模型名' };
   try {
     if (kind === 'chat') {
-      // 带 thinking 与提炼管线的结构化请求参数面对齐（json 请求一律关闭思考）；
-      // 不支持该参数的供应商自动降级，避免「测试通过但提炼报 400」的盲区。
+      // 连接测试使用该条目真实的思考等级，保证测试参数与生产调用一致。
       const body: Record<string, unknown> = {
         model: resolved.model,
         messages: [{ role: 'user', content: 'ping' }],
         temperature: 0.3,
         max_tokens: 64,
-        thinking: { type: 'disabled' },
       };
+      applyConfiguredThinking(body, resolved);
       const res = await requestChatWithThinkingFallback(body, `${baseUrl}|${resolved.model}`, {
         baseUrl,
         apiKey: resolved.apiKey,

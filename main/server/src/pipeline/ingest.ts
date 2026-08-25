@@ -48,7 +48,8 @@ import { appendWikiLog } from './indexFile.js';
 export type { IngestStats } from './knowledgeCommit.js';
 export type IngestStage = '解析' | 'Map' | 'Normalize' | 'Plan' | 'Critic' | 'Retrieve' | 'Compose' | 'Verify' | 'Commit';
 export type IngestProgress = { stage: IngestStage; progress: number; detail?: string };
-export type IngestProgressCallback = (update: IngestProgress) => void;
+/** 空 update = 心跳：只刷新 updated_at（updateJob 跳过 undefined 字段） */
+export type IngestProgressCallback = (update: Partial<IngestProgress>) => void;
 const EMPTY: IngestStats = { created: 0, merged: 0, skipped: 0, pending: 0 };
 export const INGEST_PIPELINE_VERSION = '2026-08-20.1';
 
@@ -141,16 +142,22 @@ async function jsonStage<T>(
   system: string,
   input: unknown,
   tag: string,
-  maxTokens = 8000,
   stage = tag,
+  /** 不传 = 不发 max_tokens 字段，由网关用模型自身默认输出上限
+   *  （hermes-agent 的做法：写死预算与思考量抢额度，截断由重试+降级兜底） */
+  maxTokens?: number,
   cacheContext?: unknown,
   history?: ChatMessage[],
   cacheContextMode: SemanticCacheContextMode = 'once',
   signal?: AbortSignal,
   heartbeat?: () => void,
+  /** 结果缓存键上下文：调用方传入静态等价物（如固定空名录）。
+   *  cacheContext 里的页面名录随提炼进度增长，若直接进缓存键，
+   *  同一文件在两轮提炼中的键永不相等 → 跨轮缓存 0 命中 */
+  cacheKeyContext?: unknown,
 ): Promise<T> {
   // 阶段内每次 LLM 调用前刷新任务 updated_at，防止 abortStaleJobs 的
-  // 「5 分钟无进度」探针误杀长阶段（Map 多分段/Critic 多轮时单阶段可超 5 分钟）。
+  // 「20 分钟无进度」探针误杀长阶段（Map 多分段/Critic 多轮时单阶段可超 5 分钟）。
   heartbeat?.();
   return runSemanticStage<T>({
     scope: 'ingest',
@@ -160,6 +167,7 @@ async function jsonStage<T>(
     schema,
     system,
     cacheContext,
+    ...(cacheKeyContext !== undefined ? { cacheKeyContext } : {}),
     cacheContextMode,
     history,
     maxHistoryChars: 96_000,
@@ -171,6 +179,8 @@ async function jsonStage<T>(
     maxTokens,
     retries: 1,
     signal,
+    // 网关挂起 + 网络层重试的累计时长可能超探针窗口，重试期间也刷新心跳
+    onRetry: heartbeat,
   });
 }
 
@@ -312,13 +322,15 @@ async function mapChunk(
         content: chunk.content,
       },
       'ingest-map',
-      8000,
       `ingest-map:${chunk.id}`,
+      undefined,
       { roster: titleRoster },
       history,
       cacheContextMode,
       signal,
       heartbeat,
+      // 缓存键用静态空名录：roster 随提炼进度增长，进键则跨轮永不命中
+      { roster: [] },
     );
     const valid = validateFacts(out.candidates, [chunk]);
     if (out.candidates.length >= MAP_BATCH_LIMIT) {
@@ -383,13 +395,16 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
   input: unknown,
   expected: Array<{ candidateId: string }>,
   tag: string,
-  maxTokens: number,
   stage: string,
+  /** 不传 = 不发 max_tokens 字段（模型默认输出上限） */
+  maxTokens?: number,
   cacheContext?: unknown,
   history?: ChatMessage[],
   cacheContextMode: SemanticCacheContextMode = 'once',
   signal?: AbortSignal,
   heartbeat?: () => void,
+  /** 结果缓存键上下文（静态等价物，见 jsonStage 注释） */
+  cacheKeyContext?: unknown,
 ): Promise<T> {
   let coverageError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -407,13 +422,14 @@ async function coveredItemsStage<T extends { items: Array<{ candidateId: string 
       system,
       stageInput,
       tag,
-      maxTokens,
       `${stage}${attempt ? ':coverage-retry' : ''}`,
+      maxTokens,
       cacheContext,
       history,
       attempt ? 'once' : cacheContextMode,
       signal,
       heartbeat,
+      cacheKeyContext,
     );
     try {
       exactCandidateCoverage(expected, result.items, stage);
@@ -541,8 +557,8 @@ async function normalizeBatch(
     normalizePrompt,
     { candidates: candidates.map(compactCandidate) },
     'ingest-normalize',
-    6000,
     `ingest-normalize:${pass}:${batchIndex + 1}`,
+    undefined,
     undefined,
     history,
     'once',
@@ -568,7 +584,16 @@ async function normalizeCandidates(
   const history = createSemanticCacheSession(`ingest-normalize:${runId}`, normalizePrompt);
   const firstPass = batches(mapped, NORMALIZE_BATCH_LIMIT);
   for (let index = 0; index < firstPass.length; index++) {
-    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history, signal, heartbeat));
+    // 批失败降级：跳过该批合并（候选原样保留），不阻塞整文件。
+    // normalize 只做同义合并，合并缺失仅影响去重，不影响内容完整性
+    candidates.push(...await normalizeBatch(runId, firstPass[index], 1, index, history, signal, heartbeat)
+      .catch((error: any) => {
+        if (signal?.aborted) throw error;
+        audit(runId, `normalize:1:${index + 1}:degraded`, {
+          error: String(error?.message || error).slice(0, 200),
+        }, firstPass[index].map((candidate) => candidate.candidateId));
+        return firstPass[index];
+      }));
   }
   if (firstPass.length > 1) {
     const secondPass = candidates.length <= NORMALIZE_BATCH_LIMIT
@@ -576,7 +601,14 @@ async function normalizeCandidates(
       : spreadBatches(candidates, NORMALIZE_BATCH_LIMIT);
     const crossed: Candidate[] = [];
     for (let index = 0; index < secondPass.length; index++) {
-      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index, history, signal, heartbeat));
+      crossed.push(...await normalizeBatch(runId, secondPass[index], 2, index, history, signal, heartbeat)
+        .catch((error: any) => {
+          if (signal?.aborted) throw error;
+          audit(runId, `normalize:2:${index + 1}:degraded`, {
+            error: String(error?.message || error).slice(0, 200),
+          }, secondPass[index].map((candidate) => candidate.candidateId));
+          return secondPass[index];
+        }));
     }
     candidates = crossed;
   }
@@ -654,8 +686,8 @@ export async function ingestRawFile(
   options.signal?.throwIfAborted();
   onProgress({ stage: '解析', progress: 2, detail: relPath });
   // 心跳：仅刷新任务 updated_at（undefined 字段被 updateJob 跳过），
-  // 让 5 分钟无进度探针在阶段内多次 LLM 调用期间保持存活。
-  const heartbeat = () => onProgress({ stage: '解析', progress: 2, detail: relPath });
+  // 让无进度探针在阶段内多次 LLM 调用期间保持存活。
+  const heartbeat = () => onProgress({});
   let document: StructuredDocument;
   try {
     document = await loadSourceDocument(relPath);
@@ -764,13 +796,25 @@ export async function ingestRawFile(
     }
     const rosterEntries = loadRoster();
     const titleRoster = roster(rosterEntries);
-    const MAP_CONCURRENCY = 1;
-    const mapResults = await concurrentMap(document.chunks, MAP_CONCURRENCY, async (chunk, chunkIndex) => {
+    const MAP_CONCURRENCY = 2;
+    let mapDone = 0;
+    const mapResults = await concurrentMap(document.chunks, MAP_CONCURRENCY, async (chunk) => {
       options.signal?.throwIfAborted();
-      onProgress({ stage: 'Map', progress: 10 + Math.round(((chunkIndex + 1) / document.chunks.length) * 24), detail: `${chunkIndex + 1}/${document.chunks.length}` });
       const history = createSemanticCacheSession(`ingest-map:${runId}`, mapPrompt);
-      return mapChunk(runId, chunk, titleRoster, history, 'always', options.signal, heartbeat);
+      try {
+        return await mapChunk(runId, chunk, titleRoster, history, 'always', options.signal, heartbeat);
+      } catch (error: any) {
+        if (options.signal?.aborted) throw error;
+        // 单分段失败降级：跳过该分段（audit 记录），不阻塞整文件
+        audit(runId, `map:${chunk.id}:degraded`, { error: String(error?.message || error).slice(0, 200) }, { chunkId: chunk.id });
+        return [] as Candidate[];
+      }
+    }).then((results) => {
+      // 完成计数在回收后统一上报：并发乱序时避免进度回退
+      mapDone = results.length;
+      return results;
     });
+    onProgress({ stage: 'Map', progress: 34, detail: `${mapDone}/${document.chunks.length}` });
     const rawMapped: Candidate[] = mapResults.flat();
     const mapped = rawMapped.map((candidate, index) => ({
       ...candidate,
@@ -788,96 +832,140 @@ export async function ingestRawFile(
     const related = await dynamicContext(candidates, document); audit(runId, 'retrieve', { related }, candidates.map((c) => c.name));
 
     onProgress({ stage: 'Plan', progress: 56 });
-    const plan: PlanItem[] = [];
     const candidateBatches = batches(candidates, PLAN_BATCH_LIMIT);
-    const planHistory = createSemanticCacheSession(`ingest-plan:${runId}`, planPrompt);
-    for (let index = 0; index < candidateBatches.length; index++) {
+    // 批次间无数据依赖：并发 2 + 每批独立 history（禁止并发共享可变 history）
+    const planBatchesResults = await concurrentMap(candidateBatches, 2, async (candidateBatch) => {
       options.signal?.throwIfAborted();
-      const candidateBatch = candidateBatches[index];
-      const rawPlan = await coveredItemsStage<{ items: PlanItem[] }>(
-        runId,
-        planOutputSchema,
-        planPrompt,
-        { candidates: candidateBatch, related },
-        candidateBatch,
-        'ingest-plan',
-        8000,
-        `ingest-plan:${index + 1}`,
-        { roster: titleRoster },
-        planHistory,
-        index === 0 ? 'always' : 'once',
-        options.signal,
-        heartbeat,
-      );
-      const batchPlan = whitelistFactIds(rawPlan.items, allowedFactIds).items;
-      plan.push(...batchPlan);
-      audit(runId, `plan:${index + 1}`, batchPlan, candidateBatch);
-    }
+      const history = createSemanticCacheSession(`ingest-plan:${runId}`, planPrompt);
+      try {
+        const rawPlan = await coveredItemsStage<{ items: PlanItem[] }>(
+          runId,
+          planOutputSchema,
+          planPrompt,
+          { candidates: candidateBatch },
+          candidateBatch,
+          'ingest-plan',
+          `ingest-plan:${candidateBatches.indexOf(candidateBatch) + 1}`,
+          undefined,
+          { roster: titleRoster, related },
+          history,
+          'always',
+          options.signal,
+          heartbeat,
+          { roster: [], related: '' },
+        );
+        return whitelistFactIds(rawPlan.items, allowedFactIds).items;
+      } catch (error: any) {
+        if (options.signal?.aborted) throw error;
+        // 批失败降级：该批候选全部转 review（人工确认，不阻塞整文件）
+        audit(runId, `plan:${candidateBatches.indexOf(candidateBatch) + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, candidateBatch);
+        return candidateBatch.map((candidate): PlanItem => ({
+          candidateId: candidate.candidateId,
+          name: candidate.name,
+          kind: candidate.kind,
+          action: 'review' as const,
+          target: '',
+          domain: candidate.domain,
+          confidence: '低',
+          summary: candidate.summary,
+          factIds: candidate.facts.map((fact) => fact.id),
+          relations: [],
+          reason: 'Plan 阶段模型检查失败，转人工审核',
+        }));
+      }
+    });
+    const plan: PlanItem[] = planBatchesResults.flat();
+    candidateBatches.forEach((candidateBatch, index) => {
+      audit(runId, `plan:${index + 1}`, planBatchesResults[index], candidateBatch);
+    });
     audit(runId, 'plan', plan, candidates);
 
-    let reviewedPlan: PlanItem[] = [];
     const planBatches = batches(plan, PLAN_BATCH_LIMIT);
-    const criticHistory = createSemanticCacheSession(`ingest-critic:${runId}`, criticPrompt);
-    for (let index = 0; index < planBatches.length; index++) {
+    // 批次间独立：并发 2；每批内部「首审→必要时二审」保持串行；独立 history
+    const criticResults = await concurrentMap(planBatches, 2, async (planBatch) => {
       options.signal?.throwIfAborted();
-      const planBatch = planBatches[index];
+      const index = planBatches.indexOf(planBatch);
       const candidateIds = new Set(planBatch.map((item) => item.candidateId));
       const candidateBatch = candidates.filter((candidate) => candidateIds.has(candidate.candidateId));
-      onProgress({ stage: 'Critic', progress: 64, detail: `首次审查 ${index + 1}/${planBatches.length}` });
+      const history = createSemanticCacheSession(`ingest-critic:${runId}`, criticPrompt);
+      // 首审失败降级：沿用 plan 原结果全部转 review（人工确认，不阻塞整文件）。
+      // 思考模型思考量随机波动，两轮都截断时继续重试只会拖垮整个 run
       const firstCritique = await coveredItemsStage<{ approved: boolean; issues: string[]; items: PlanItem[] }>(
         runId,
         criticOutputSchema,
         criticPrompt,
-        { plan: planBatch, candidates: candidateBatch, related },
+        { plan: planBatch, candidates: candidateBatch },
         planBatch,
         'ingest-critic',
-        8000,
         `ingest-critic:${index + 1}`,
-        { roster: titleRoster },
-        criticHistory,
-        index === 0 ? 'always' : 'once',
+        undefined,
+        { roster: titleRoster, related },
+        history,
+        'always',
         options.signal,
         heartbeat,
-      );
+        { roster: [], related: '' },
+      ).catch((error: any) => {
+        if (options.signal?.aborted) throw error;
+        audit(runId, `critic:${index + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, planBatch);
+        return {
+          approved: false,
+          issues: ['首审失败，转人工审核'],
+          items: planBatch.map((item): PlanItem => ({ ...item, action: 'review' as const })),
+        };
+      });
       const revised = whitelistFactIds(firstCritique.items, allowedFactIds).items;
-      audit(runId, `critic:${index + 1}`, { ...firstCritique, items: revised }, planBatch);
       if (firstCritique.approved && !firstCritique.issues.length) {
-        reviewedPlan.push(...revised);
-        audit(runId, `critic_review:${index + 1}`, {
-          approved: true,
-          issues: [],
-          skippedSecondPass: true,
-          items: revised,
-        }, revised);
-        continue;
+        return { items: revised, first: firstCritique, revised, second: null as null | { approved: boolean; issues: string[]; items: PlanItem[] } };
       }
-      onProgress({ stage: 'Critic', progress: 69, detail: `修订复核 ${index + 1}/${planBatches.length}` });
       const secondCritique = await coveredItemsStage<{ approved: boolean; issues: string[]; items: PlanItem[] }>(
         runId,
         criticOutputSchema,
         criticPrompt,
-        { plan: revised, candidates: candidateBatch, previousCritique: firstCritique, related },
+        { plan: revised, candidates: candidateBatch, previousCritique: firstCritique },
         revised,
         'ingest-critic-review',
-        8000,
         `ingest-critic-review:${index + 1}`,
-        { roster: titleRoster },
-        criticHistory,
+        undefined,
+        { roster: titleRoster, related },
+        history,
         'once',
         options.signal,
         heartbeat,
-      );
-      let reviewedBatch = whitelistFactIds(secondCritique.items, allowedFactIds).items;
-      if (!secondCritique.approved) {
+        { roster: [], related: '' },
+      ).catch((error: any) => {
+        if (options.signal?.aborted) throw error;
+        // 二审失败降级：沿用首审修订结果
+        audit(runId, `critic_review:${index + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, revised);
+        return { approved: false, issues: ['二审失败，转人工审核'], items: revised.map((item) => ({ ...item, action: 'review' as const })) };
+      });
+      return { items: whitelistFactIds(secondCritique.items, allowedFactIds).items, first: firstCritique, revised, second: secondCritique };
+    });
+    let reviewedPlan: PlanItem[] = [];
+    criticResults.forEach((result, index) => {
+      const revised = result.revised;
+      audit(runId, `critic:${index + 1}`, { ...result.first, items: revised }, planBatches[index]);
+      if (!result.second) {
+        reviewedPlan.push(...result.items);
+        audit(runId, `critic_review:${index + 1}`, {
+          approved: true,
+          issues: [],
+          skippedSecondPass: true,
+          items: result.items,
+        }, result.items);
+        return;
+      }
+      let reviewedBatch = result.items;
+      if (!result.second.approved) {
         reviewedBatch = reviewedBatch.map((item) => item.action === 'skip' ? item : {
           ...item,
           action: 'review' as const,
-          reason: [item.reason, ...secondCritique.issues].filter(Boolean).join('；'),
+          reason: [item.reason, ...result.second!.issues].filter(Boolean).join('；'),
         });
       }
       reviewedPlan.push(...reviewedBatch);
-      audit(runId, `critic_review:${index + 1}`, { ...secondCritique, items: reviewedBatch }, revised);
-    }
+      audit(runId, `critic_review:${index + 1}`, { ...result.second, items: reviewedBatch }, revised);
+    });
     reviewedPlan = await guardAmbiguousEntityNames(
       reviewedPlan,
       candidates,
@@ -888,13 +976,10 @@ export async function ingestRawFile(
     audit(runId, 'critic_review', { items: reviewedPlan }, plan);
 
     onProgress({ stage: 'Compose', progress: 76 });
-    const contentById = new Map<string, string>();
     const composeTargets = reviewedPlan.filter((item) => item.action !== 'skip');
     const composeBatches = batches(composeTargets, COMPOSE_BATCH_LIMIT);
-    const composeHistory = createSemanticCacheSession(`ingest-compose:${runId}`, composePrompt);
-    for (let index = 0; index < composeBatches.length; index++) {
+    const composeResults = await concurrentMap(composeBatches, 2, async (composeBatch) => {
       options.signal?.throwIfAborted();
-      const composeBatch = composeBatches[index];
       const factIds = new Set(composeBatch.flatMap((item) => item.factIds));
       const batchFacts = facts.filter((fact) => factIds.has(fact.id));
       const composeInput = {
@@ -909,28 +994,42 @@ export async function ingestRawFile(
           relations: item.relations,
         })),
         facts: batchFacts,
-        related,
       };
-      const rawComposed = await coveredItemsStage<{
-        items: Array<{ candidateId: string; name: string; content: string }>;
-      }>(
-        runId,
-        composeItemOutputListSchema,
-        composePrompt,
-        composeInput,
-        composeBatch,
-        'ingest-compose',
-        9000,
-        `ingest-compose:${index + 1}`,
-        { roster: titleRoster },
-        composeHistory,
-        index === 0 ? 'always' : 'once',
-        options.signal,
-        heartbeat,
-      );
-      for (const item of rawComposed.items) contentById.set(item.candidateId, item.content);
-      audit(runId, `compose:${index + 1}`, rawComposed, composeInput.items);
-    }
+      const history = createSemanticCacheSession(`ingest-compose:${runId}`, composePrompt);
+      try {
+        const rawComposed = await coveredItemsStage<{
+          items: Array<{ candidateId: string; name: string; content: string }>;
+        }>(
+          runId,
+          composeItemOutputListSchema,
+          composePrompt,
+          composeInput,
+          composeBatch,
+          'ingest-compose',
+          `ingest-compose:${composeBatches.indexOf(composeBatch) + 1}`,
+          undefined,
+          { roster: titleRoster, related },
+          history,
+          'always',
+          options.signal,
+          heartbeat,
+          { roster: [], related: '' },
+        );
+        return { input: composeInput.items, items: rawComposed.items };
+      } catch (error: any) {
+        if (options.signal?.aborted) throw error;
+        // 批失败降级：content 空 → 写入门禁转 review
+        audit(runId, `compose:${composeBatches.indexOf(composeBatch) + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, composeInput.items);
+        return { input: composeInput.items, items: composeBatch.map((item) => ({ candidateId: item.candidateId, name: item.name, content: '' })) };
+      }
+    });
+    const contentById = new Map<string, string>();
+    composeResults.forEach((result) => {
+      for (const item of result.items) contentById.set(item.candidateId, item.content);
+    });
+    composeBatches.forEach((_batch, index) => {
+      audit(runId, `compose:${index + 1}`, composeResults[index], composeResults[index].input);
+    });
     const composedItems: KnowledgeItem[] = reviewedPlan.map((item) => ({
       ...item,
       content: item.action === 'skip' ? '' : contentById.get(item.candidateId) || '',
@@ -939,36 +1038,49 @@ export async function ingestRawFile(
     audit(runId, 'compose', composed, reviewedPlan);
 
     const generatedQuestions: QuestionOutput['questions'] = [];
-    const needsQuestionFinder = reviewedPlan.some((item) =>
+    const isQuestionRisk = (item: PlanItem) =>
       item.action === 'review' ||
       Boolean(item.ambiguity) ||
       item.confidence === '低' ||
-      /冲突|未知|不确定/.test(item.reason)
-    );
-    if (needsQuestionFinder) {
+      /冲突|未知|不确定/.test(item.reason);
+    const riskPlan = reviewedPlan.filter(isQuestionRisk);
+    if (riskPlan.length) {
       const questionHistory = createSemanticCacheSession(`ingest-questions:${runId}`, questionFinderPrompt);
-      for (let index = 0; index < candidateBatches.length; index++) {
+      const riskCandidateIds = new Set(riskPlan.map((item) => item.candidateId));
+      const riskCandidates = candidates.filter((candidate) => riskCandidateIds.has(candidate.candidateId));
+      const riskBatches = batches(riskCandidates, PLAN_BATCH_LIMIT);
+      const questionResults = await concurrentMap(riskBatches, 2, async (candidateBatch) => {
         options.signal?.throwIfAborted();
-        const candidateBatch = candidateBatches[index];
         const candidateIds = new Set(candidateBatch.map((item) => item.candidateId));
         const planBatch = reviewedPlan.filter((item) => candidateIds.has(item.candidateId));
-        const result = await jsonStage<QuestionOutput>(
+        const history = createSemanticCacheSession(`ingest-questions:${runId}`, questionFinderPrompt);
+        // 批失败降级：该批不产生追问（问题列表为空），不阻塞整文件。
+        // 追问是增强信息而非必需产物，缺失只影响澄清体验
+        return jsonStage<QuestionOutput>(
           runId,
           questionOutputSchema,
           questionFinderPrompt,
           { candidates: candidateBatch, plan: planBatch, resolvedQuestions },
           'ingest-questions',
-          6000,
-          `ingest-questions:${index + 1}`,
+          `ingest-questions:${riskBatches.indexOf(candidateBatch) + 1}`,
           undefined,
-          questionHistory,
-          'once',
+          undefined,
+          history,
+          'always',
           options.signal,
           heartbeat,
-        );
+        ).catch((error: any) => {
+          if (options.signal?.aborted) throw error;
+          audit(runId, `questions:${riskBatches.indexOf(candidateBatch) + 1}:degraded`, {
+            error: String(error?.message || error).slice(0, 200),
+          }, candidateBatch.map((item) => item.candidateId));
+          return { questions: [] } satisfies QuestionOutput;
+        });
+      });
+      questionResults.forEach((result, index) => {
         generatedQuestions.push(...result.questions);
-        audit(runId, `questions:${index + 1}`, result, candidateBatch.map((item) => item.candidateId));
-      }
+        audit(runId, `questions:${index + 1}`, result, riskBatches[index].map((item) => item.candidateId));
+      });
     }
     const ambiguityQuestions = reviewedPlan.flatMap((item) => item.ambiguity ? [{
       question: item.ambiguity.question,
@@ -991,34 +1103,69 @@ export async function ingestRawFile(
     onProgress({ stage: 'Verify', progress: 86 });
     const verifiedItems: VerifierOutput['items'] = [];
     const verifyTargets = composed.items.filter((item) => item.action !== 'skip');
-    const verifyBatches = batches(verifyTargets, COMPOSE_BATCH_LIMIT);
-    const verifyHistory = createSemanticCacheSession(`ingest-verify:${runId}`, verifierPrompt);
-    for (let index = 0; index < verifyBatches.length; index++) {
+    // 确定性安全快路径：高置信、事实齐备、无歧义/问题/冲突的候选直接本地通过，
+    // 只有风险候选走 LLM Verify（合成与写入门禁契约一致的 VerifierOutput 结构）
+    const isVerifyRisk = (item: KnowledgeItem) =>
+      item.action === 'review' ||
+      Boolean(item.ambiguity) ||
+      item.confidence !== '高' ||
+      /冲突|未知|不确定/.test(item.reason) ||
+      !item.factIds.length ||
+      questions.questions.some((question) =>
+        !question.factIds.length || question.factIds.some((factId) => item.factIds.includes(factId))
+      );
+    const safeVerifyTargets = verifyTargets.filter((item) => !isVerifyRisk(item) && item.content.trim());
+    for (const item of safeVerifyTargets) {
+      verifiedItems.push({
+        candidateId: item.candidateId,
+        name: item.name,
+        pass: true,
+        unsupported: [],
+        conflicts: [],
+        content: item.content,
+      });
+    }
+    const riskVerifyTargets = verifyTargets.filter((item) => !safeVerifyTargets.includes(item));
+    const verifyBatches = batches(riskVerifyTargets, COMPOSE_BATCH_LIMIT);
+    // 风险项 Verify 失败不致命：verify 是证据校验关卡而非内容生产，模型思考
+    // 波动导致的批失败让该批缺失 → 写入门禁自动转 review，不该让整 run 报错
+    const verifyResults = await concurrentMap(verifyBatches, 2, async (verifyBatch) => {
       options.signal?.throwIfAborted();
-      const verifyBatch = verifyBatches[index];
       const factIds = new Set(verifyBatch.flatMap((item) => item.factIds));
       const batchFacts = facts.filter((fact) => factIds.has(fact.id));
       const batchQuestions = questions.questions.filter((question) =>
         !question.factIds.length || question.factIds.some((factId) => factIds.has(factId))
       );
-      const result = await coveredItemsStage<VerifierOutput>(
-        runId,
-        verifierOutputSchema,
-        verifierPrompt,
-        { items: verifyBatch, facts: batchFacts, questions: batchQuestions },
-        verifyBatch,
-        'ingest-verify',
-        7000,
-        `ingest-verify:${index + 1}`,
-        undefined,
-        verifyHistory,
-        'once',
-        options.signal,
-        heartbeat,
-      );
+      const history = createSemanticCacheSession(`ingest-verify:${runId}`, verifierPrompt);
+      try {
+        return await coveredItemsStage<VerifierOutput>(
+          runId,
+          verifierOutputSchema,
+          verifierPrompt,
+          { items: verifyBatch, facts: batchFacts, questions: batchQuestions },
+          verifyBatch,
+          'ingest-verify',
+          `ingest-verify:${verifyBatches.indexOf(verifyBatch) + 1}`,
+          undefined,
+          undefined,
+          history,
+          'always',
+          options.signal,
+          heartbeat,
+        );
+      } catch (error: any) {
+        if (options.signal?.aborted) throw error;
+        audit(runId, `verify:${verifyBatches.indexOf(verifyBatch) + 1}:degraded`, {
+          error: String(error?.message || error).slice(0, 200),
+          fallback: 'review',
+        }, verifyBatch);
+        return { items: [] as VerifierOutput['items'] };
+      }
+    });
+    verifyResults.forEach((result, index) => {
       verifiedItems.push(...result.items);
-      audit(runId, `verify:${index + 1}`, result, verifyBatch);
-    }
+      audit(runId, `verify:${index + 1}`, result, verifyBatches[index]);
+    });
     // 防御性补跑：coveredItemsStage 已做批次内覆盖校验，此处补齐跨批次遗漏的验证结果，
     // 避免因单次 LLM 抖动让本可验证的候选落入待审；补跑仍失败则保留缺失，由写入门禁转 review。
     const verifiedIds = new Set(verifiedItems.map((v) => v.candidateId));
@@ -1038,10 +1185,10 @@ export async function ingestRawFile(
           { items: [target], facts: missingFacts, questions: missingQuestions },
           [target],
           'ingest-verify',
-          7000,
           `ingest-verify:retry:${target.candidateId}`,
           undefined,
-          verifyHistory,
+          undefined,
+          createSemanticCacheSession(`ingest-verify:${runId}`, verifierPrompt),
           'once',
           options.signal,
           heartbeat,

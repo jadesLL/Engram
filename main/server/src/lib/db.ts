@@ -551,6 +551,7 @@ export function migrate() {
     model TEXT NOT NULL DEFAULT '',
     api_key TEXT NOT NULL DEFAULT '',
     protocol TEXT NOT NULL DEFAULT 'openai',  -- 'openai' | 'anthropic'
+    thinking_level TEXT,             -- 用户选择：'low' | 'high' | 'max'
     dim INTEGER,
     supports_dimensions INTEGER NOT NULL DEFAULT 0,
     image_input TEXT,
@@ -569,7 +570,8 @@ export function migrate() {
   ensureColumn('model_entries', 'models_protocol', 'TEXT');
   ensureColumn('model_entries', 'auth_optional', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('model_entries', 'models_anonymous', 'INTEGER NOT NULL DEFAULT 0');
-
+  // 1.1.18：思考等级（GLM reasoning_effort 档位，空=自动）
+  ensureColumn('model_entries', 'thinking_level', 'TEXT');
   ensureColumn('ingest_log', 'content_hash', 'TEXT');
   ensureColumn('ingest_log', 'status', `TEXT NOT NULL DEFAULT 'completed'`);
   ensureColumn('ingest_log', 'run_id', 'TEXT');

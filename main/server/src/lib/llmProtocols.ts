@@ -26,6 +26,10 @@ interface OpenAiStyleBody {
 
 export interface StreamParsedLine {
   text?: string;
+  /** 思考增量（OpenAI: delta.reasoning_content；Anthropic: thinking_delta） */
+  reasoning?: string;
+  /** 结束原因（length/stop/tool_calls），随最后几个 chunk 到达 */
+  finishReason?: string;
   usage?: unknown;
   done?: boolean;
 }
@@ -204,9 +208,11 @@ export function parseAnthropicResponse(payload: unknown): unknown {
   };
 }
 
-/** Anthropic SSE 事件解析：text_delta 出文本、message_start/message_delta 出用量、message_stop 收尾 */
+/** Anthropic SSE 事件解析：text_delta 出文本、thinking_delta 出思考、
+ *  message_start/message_delta 出用量与 stop_reason、message_stop 收尾 */
 function createAnthropicStreamParser() {
   let inputTokens = 0;
+  let finishReason = '';
   return {
     feed(data: string): StreamParsedLine {
       let event: any;
@@ -217,6 +223,9 @@ function createAnthropicStreamParser() {
         if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
           return { text: delta.text };
         }
+        if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string' && delta.thinking) {
+          return { reasoning: delta.thinking };
+        }
         return {};
       }
       if (event.type === 'message_start') {
@@ -226,7 +235,14 @@ function createAnthropicStreamParser() {
       if (event.type === 'message_delta') {
         const usage = event.usage && typeof event.usage === 'object' ? event.usage : {};
         const outputTokens = Number(usage.output_tokens || 0);
+        if (typeof event.delta?.stop_reason === 'string') {
+          finishReason =
+            event.delta.stop_reason === 'max_tokens' ? 'length'
+            : event.delta.stop_reason === 'tool_use' ? 'tool_calls'
+            : 'stop';
+        }
         return {
+          finishReason: finishReason || undefined,
           usage: {
             ...usage,
             input_tokens: inputTokens,
@@ -236,7 +252,7 @@ function createAnthropicStreamParser() {
           },
         };
       }
-      if (event.type === 'message_stop') return { done: true };
+      if (event.type === 'message_stop') return { done: true, finishReason: finishReason || undefined };
       return {};
     },
   };
@@ -303,11 +319,17 @@ function createOpenAiStreamParser() {
       if (data === '[DONE]') return { done: true };
       let json: any;
       try { json = JSON.parse(data); } catch { return {}; }
-      const delta = json?.choices?.[0]?.delta?.content;
+      const choice = json?.choices?.[0];
+      const delta = choice?.delta?.content;
+      // GLM 等思考模型把推理过程放 delta.reasoning_content，与 content 并行到达
+      const reasoning = choice?.delta?.reasoning_content;
+      const finishReason = typeof choice?.finish_reason === 'string' ? choice.finish_reason : undefined;
       const usage = !usageCaptured && json?.usage ? json.usage : undefined;
       if (usage) usageCaptured = true;
       return {
         ...(typeof delta === 'string' && delta ? { text: delta } : {}),
+        ...(typeof reasoning === 'string' && reasoning ? { reasoning } : {}),
+        ...(finishReason ? { finishReason } : {}),
         ...(usage ? { usage } : {}),
       };
     },
