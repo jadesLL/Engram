@@ -48,7 +48,6 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { useRouter } from 'vue-router';
 import Icon from '../components/Icon.vue';
 import AccountPanel from '../components/settings/AccountPanel.vue';
 import ModelsPanel from '../components/settings/ModelsPanel.vue';
@@ -60,14 +59,12 @@ import ImPanel from '../components/settings/ImPanel.vue';
 import StoragePanel from '../components/settings/StoragePanel.vue';
 import DataPanel from '../components/settings/DataPanel.vue';
 
-type SettingsSection = 'account' | 'models' | 'history' | 'automation' | 'mcp' | 'desktop' | 'update' | 'im' | 'storage' | 'data';
+type SettingsSection = 'account' | 'models' | 'automation' | 'mcp' | 'desktop' | 'update' | 'im' | 'storage' | 'data';
 
-const router = useRouter();
 const activeSettingsSection = ref<SettingsSection>('account');
 const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: string }> = [
   { id: 'account', label: '账户与外观', icon: 'settings' },
   { id: 'models', label: '模型配置', icon: 'ai' },
-  { id: 'history', label: '提炼看板', icon: 'list-tree' },
   { id: 'automation', label: '自动化', icon: 'activity' },
   { id: 'mcp', label: 'MCP 集成', icon: 'link' },
   { id: 'desktop', label: '桌面端连接', icon: 'external' },
@@ -77,16 +74,10 @@ const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: stri
   { id: 'data', label: '数据管理', icon: 'trash' },
 ];
 
-/** 「提炼看板」不再是内嵌面板,点击直接跳转提炼看板页(与侧边栏角标同源) */
 function onSelectSection(id: SettingsSection) {
-  if (id === 'history') {
-    router.push('/ingest-coverage');
-    return;
-  }
   activeSettingsSection.value = id;
 }
 
-/** 窄屏下拉走同一逻辑;「提炼看板」跳转后 activeSettingsSection 不变,下拉回显原分类 */
 function onSectionChange(event: Event) {
   onSelectSection((event.target as HTMLSelectElement).value as SettingsSection);
 }
