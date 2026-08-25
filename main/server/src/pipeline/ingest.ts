@@ -842,17 +842,17 @@ export async function ingestRawFile(
           runId,
           planOutputSchema,
           planPrompt,
-          { candidates: candidateBatch, related },
+          { candidates: candidateBatch },
           candidateBatch,
           'ingest-plan',
           `ingest-plan:${candidateBatches.indexOf(candidateBatch) + 1}`,
           undefined,
-          { roster: titleRoster },
+          { roster: titleRoster, related },
           history,
           'always',
           options.signal,
           heartbeat,
-          { roster: [] },
+          { roster: [], related: '' },
         );
         return whitelistFactIds(rawPlan.items, allowedFactIds).items;
       } catch (error: any) {
@@ -894,17 +894,17 @@ export async function ingestRawFile(
         runId,
         criticOutputSchema,
         criticPrompt,
-        { plan: planBatch, candidates: candidateBatch, related },
+        { plan: planBatch, candidates: candidateBatch },
         planBatch,
         'ingest-critic',
         `ingest-critic:${index + 1}`,
         undefined,
-        { roster: titleRoster },
+        { roster: titleRoster, related },
         history,
         'always',
         options.signal,
         heartbeat,
-        { roster: [] },
+        { roster: [], related: '' },
       ).catch((error: any) => {
         if (options.signal?.aborted) throw error;
         audit(runId, `critic:${index + 1}:degraded`, { error: String(error?.message || error).slice(0, 200) }, planBatch);
@@ -922,17 +922,17 @@ export async function ingestRawFile(
         runId,
         criticOutputSchema,
         criticPrompt,
-        { plan: revised, candidates: candidateBatch, previousCritique: firstCritique, related },
+        { plan: revised, candidates: candidateBatch, previousCritique: firstCritique },
         revised,
         'ingest-critic-review',
         `ingest-critic-review:${index + 1}`,
         undefined,
-        { roster: titleRoster },
+        { roster: titleRoster, related },
         history,
         'once',
         options.signal,
         heartbeat,
-        { roster: [] },
+        { roster: [], related: '' },
       ).catch((error: any) => {
         if (options.signal?.aborted) throw error;
         // 二审失败降级：沿用首审修订结果
@@ -994,7 +994,6 @@ export async function ingestRawFile(
           relations: item.relations,
         })),
         facts: batchFacts,
-        related,
       };
       const history = createSemanticCacheSession(`ingest-compose:${runId}`, composePrompt);
       try {
@@ -1009,12 +1008,12 @@ export async function ingestRawFile(
           'ingest-compose',
           `ingest-compose:${composeBatches.indexOf(composeBatch) + 1}`,
           undefined,
-          { roster: titleRoster },
+          { roster: titleRoster, related },
           history,
           'always',
           options.signal,
           heartbeat,
-          { roster: [] },
+          { roster: [], related: '' },
         );
         return { input: composeInput.items, items: rawComposed.items };
       } catch (error: any) {

@@ -300,9 +300,11 @@ test('dense input is split and all candidates pass through bounded stages withou
     assert.equal(typeof context.roster, 'string', `${marker} roster`);
     const dynamicInput = requestBody.input;
     assert.equal(Object.hasOwn(dynamicInput, 'roster'), false, `${marker} dynamic roster`);
-    // 缓存优化（b3e3c6d）后动态检索的 related 移入 input 提升 prefix 命中；Map 输入是原文分块不含 related
-    const relatedInInput = marker !== '执行 Map';
-    assert.equal(Object.hasOwn(dynamicInput, 'related'), relatedInInput, `${marker} dynamic related`);
+    // 动态检索的 related 在 sharedContext（提示性上下文）：它与 roster 一样随知识库
+    // 重建而变，放进 input 会进结果缓存键导致跨轮永不命中（b3e3c6d 的教训）
+    const relatedInContext = marker !== '执行 Map';
+    assert.equal(Object.hasOwn(context, 'related'), relatedInContext, `${marker} related in sharedContext`);
+    assert.equal(Object.hasOwn(dynamicInput, 'related'), false, `${marker} dynamic related`);
   }
   assert.equal(requestsFor('执行 Critic').length, Math.ceil(21 / 8));
   assert.equal(requestsFor('执行 Question Finder').length, 0);
