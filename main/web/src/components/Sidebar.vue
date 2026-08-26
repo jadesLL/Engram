@@ -242,6 +242,7 @@
             @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
             @ingest="ingestFile"
             @remove="removeFile"
+            @context-menu="onFileContextMenu"
           />
           <p v-if="!visibleFiles.length" class="none">
             {{ filter ? '没有匹配资料' : '暂无资料' }}
@@ -291,6 +292,7 @@
             @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
             @ingest="ingestFile"
             @remove="removeFile"
+            @context-menu="onFileContextMenu"
           />
           <p v-if="!visibleChatFiles.length" class="none">
             {{ filter ? '没有匹配对话' : '暂无对话' }}
@@ -680,6 +682,35 @@ function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) 
     },
     { id: 'delete', label: '删除', icon: 'trash', action: () => removePage(page) },
   ];
+  openContextMenu({ x, y, items });
+}
+
+/** 右键/⋯ 资料行：整理 / 下载 / 删除 */
+function onFileContextMenu({ x, y, file, ingestable }: { x: number; y: number; file: any; ingestable: boolean }) {
+  const items: ContextMenuItem[] = [];
+  if (ingestable) {
+    items.push({
+      id: 'ingest',
+      label: 'AI 整理',
+      icon: 'ai',
+      action: () => ingestFile(file),
+    });
+  }
+  items.push(
+    {
+      id: 'download',
+      label: '下载',
+      icon: 'download',
+      separatorBefore: ingestable,
+      action: () => {
+        const a = document.createElement('a');
+        a.href = `/api/files/raw?path=${encodeURIComponent(file.path)}`;
+        a.download = file.name;
+        a.click();
+      },
+    },
+    { id: 'delete', label: '删除', icon: 'trash', action: () => removeFile(file) },
+  );
   openContextMenu({ x, y, items });
 }
 
@@ -1672,6 +1703,23 @@ onUnmounted(() => {
 
   .sort-control.section-sort {
     opacity: 0.72;
+    pointer-events: auto;
+  }
+}
+
+/* 触屏（无 hover）：分区操作按钮、排序、日志行下载常显，769-1024px 触屏（折叠屏内屏）同样适用 */
+@media (hover: none) and (pointer: coarse) {
+  .add-btn {
+    opacity: 0.82;
+  }
+
+  .sort-control.section-sort {
+    opacity: 0.72;
+    pointer-events: auto;
+  }
+
+  .log-row .row-actions {
+    opacity: 1;
     pointer-events: auto;
   }
 }

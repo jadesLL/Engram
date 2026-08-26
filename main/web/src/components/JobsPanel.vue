@@ -481,7 +481,8 @@ function toggleWarning(id: number) {
   box-shadow: var(--shadow);
   padding: 12px 14px;
 }
-.jobs-panel.resized { max-height: calc(100vh - 32px); }
+/* 100dvh：地址栏可见时也不被遮（旧浏览器回退 100vh） */
+.jobs-panel.resized { max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); }
 .jp-resize-handle {
   position: absolute;
   top: 2px;
@@ -675,6 +676,7 @@ function toggleWarning(id: number) {
     min-height: 0;
     max-width: none;
     max-height: calc(100vh - 76px);
+    max-height: calc(100dvh - 76px);
     bottom: 60px;
   }
   .jp-resize-handle { display: none; }

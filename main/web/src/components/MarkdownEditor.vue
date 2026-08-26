@@ -586,7 +586,7 @@ onMounted(init);
   top: 52px;
   left: 24px;
   z-index: var(--z-popup);
-  width: 340px;
+  width: min(340px, calc(100vw - 48px));
   padding: 8px;
   box-shadow: var(--shadow);
 }

@@ -7,6 +7,7 @@
     @click="onClick"
     @keydown.enter.self="onClick"
     @keydown.space.self.prevent="onClick"
+    @contextmenu.prevent="onRowContextMenu"
   >
     <span
       class="check"
@@ -88,6 +89,15 @@
           <Icon name="trash" :size="13" />
         </button>
       </span>
+      <!-- 触屏无 hover：以 ⋯ 常显按钮唤起操作菜单 -->
+      <button
+        class="row-kebab"
+        type="button"
+        aria-label="更多操作"
+        @click.stop="onKebab"
+      >
+        <Icon name="more" :size="15" />
+      </button>
     </span>
   </div>
 </template>
@@ -107,13 +117,31 @@ const props = defineProps<{
   /** 该文件当前正在进行的任务（提取/整理进度），无则 null */
   job?: any;
 }>();
-const emit = defineEmits(['open', 'toggle-select', 'ingest', 'remove']);
+const emit = defineEmits(['open', 'toggle-select', 'ingest', 'remove', 'context-menu']);
 
 const rawUrl = computed(() => `/api/files/raw?path=${encodeURIComponent(props.file.path)}`);
 
 function onClick() {
   if (props.selectionMode) emit('toggle-select', props.file);
   else emit('open', props.file);
+}
+
+function emitContextMenu(x: number, y: number) {
+  emit('context-menu', {
+    x,
+    y,
+    file: props.file,
+    ingestable: INGESTABLE_EXTS.includes(props.file.ext),
+  });
+}
+
+function onRowContextMenu(e: MouseEvent) {
+  emitContextMenu(e.clientX, e.clientY);
+}
+
+function onKebab(e: MouseEvent) {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  emitContextMenu(rect.right, rect.bottom);
 }
 
 function fileIcon(ext: string): string {
@@ -299,5 +327,33 @@ function fileIconClass(ext: string): string {
   color: var(--text);
   background: var(--sidebar-active);
   outline: none;
+}
+
+/* 触屏：hover 行内按钮不可用，改用 ⋯ 菜单；状态标签左移避免被遮 */
+.row-kebab {
+  display: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .row-actions { display: none; }
+  .row-status { right: 28px; max-width: 48px; }
+  .row-kebab {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 6px;
+    color: var(--text-faint);
+    transform: translateY(-50%);
+  }
+  .row-kebab:active {
+    color: var(--text);
+    background: var(--sidebar-active);
+  }
 }
 </style>
