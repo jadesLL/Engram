@@ -48,6 +48,15 @@
           <Icon name="trash" :size="13" />
         </button>
       </span>
+      <!-- 触屏无 hover：以 ⋯ 常显按钮唤起与右键相同的操作菜单 -->
+      <button
+        class="row-kebab"
+        type="button"
+        aria-label="更多操作"
+        @click.stop="onKebab"
+      >
+        <Icon name="more" :size="15" />
+      </button>
     </span>
   </div>
 </template>
@@ -80,6 +89,11 @@ function onDragStart(e: DragEvent) {
 
 function onContextMenu(e: MouseEvent) {
   emit('context-menu', { x: e.clientX, y: e.clientY, page: props.page });
+}
+
+function onKebab(e: MouseEvent) {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  emit('context-menu', { x: rect.right, y: rect.bottom, page: props.page });
 }
 
 const timeText = computed(() => {
@@ -208,6 +222,34 @@ const timeText = computed(() => {
   color: var(--text);
   background: var(--sidebar-active);
   outline: none;
+}
+
+/* 触屏：hover 行内按钮不可用，改用 ⋯ 菜单；时间标签左移避免被遮 */
+.row-kebab {
+  display: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .row-actions { display: none; }
+  .page-time { right: 28px; }
+  .row-kebab {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 6px;
+    color: var(--text-faint);
+    transform: translateY(-50%);
+  }
+  .row-kebab:active {
+    color: var(--text);
+    background: var(--sidebar-active);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

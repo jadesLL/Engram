@@ -101,7 +101,7 @@
     </transition>
     <!-- 拖动分隔条：桌面端 232–420px，且不超过窗口宽度的 40% -->
     <div
-      v-if="app.sidebarOpen && !isMobile"
+      v-if="app.sidebarOpen && !sidebarOverlay"
       class="resizer"
       v-tooltip="'拖动调整宽度，双击还原'"
       role="separator"
@@ -119,7 +119,7 @@
       @keydown.end.prevent="setSidebarWidth(sidebarMaxWidth)"
     />
     <transition name="fade">
-      <div v-if="app.sidebarOpen && isMobile" class="mask" @click="app.sidebarOpen = false" />
+      <div v-if="app.sidebarOpen && sidebarOverlay" class="mask" @click="app.sidebarOpen = false" />
     </transition>
 
     <!-- 主内容区 -->
@@ -147,6 +147,33 @@
         <Icon :name="item.icon" :size="20" /><span>{{ item.label }}</span>
       </button>
     </nav>
+
+    <!-- 移动端「更多」面板：收纳 rail 上手机无处进入的入口 -->
+    <Teleport to="body">
+      <transition name="fade">
+        <div v-if="moreOpen" class="more-mask" @click="moreOpen = false" />
+      </transition>
+      <transition name="more-sheet">
+        <div v-if="moreOpen" class="more-sheet" role="dialog" aria-label="更多功能">
+          <div class="more-sheet-bar" />
+          <div class="more-grid">
+            <button
+              v-for="item in moreItems"
+              :key="item.label"
+              type="button"
+              @click="item.action"
+            >
+              <span class="more-icon">
+                <Icon :name="item.icon" :size="20" />
+                <span v-if="item.badge" class="more-badge">{{ item.badge }}</span>
+                <span v-else-if="item.dot" class="more-dot" />
+              </span>
+              <span class="more-label">{{ item.label }}</span>
+            </button>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
   </div>
 </template>
 
@@ -189,6 +216,9 @@ const MAX_SIDEBAR = 420;
 const DEFAULT_SIDEBAR = 280;
 const viewportWidth = ref(window.innerWidth);
 const isMobile = computed(() => viewportWidth.value <= 768);
+/* 769-1024px 紧凑档（折叠屏内屏等）：侧栏浮层化，需要遮罩 */
+const isCompact = computed(() => viewportWidth.value > 768 && viewportWidth.value <= 1024);
+const sidebarOverlay = computed(() => isMobile.value || isCompact.value);
 const sidebarMaxWidth = computed(() =>
   Math.max(MIN_SIDEBAR, Math.min(MAX_SIDEBAR, Math.floor(viewportWidth.value * 0.4)))
 );
@@ -238,7 +268,10 @@ function nudgeSidebar(delta: number) {
 }
 
 function onWindowResize() {
+  const prevOverlay = sidebarOverlay.value;
   viewportWidth.value = window.innerWidth;
+  // 跨入浮层档位时收起侧栏，避免展开的桌面侧栏瞬间盖住内容
+  if (!prevOverlay && sidebarOverlay.value) app.sidebarOpen = false;
   if (!isMobile.value) {
     const clamped = clampSidebarWidth(sidebarWidth.value);
     if (clamped !== sidebarWidth.value) setSidebarWidth(clamped);
@@ -258,6 +291,53 @@ const bottomItems = computed(() => [
   { label: '搜索', icon: 'search', action: () => router.push('/search') },
   { label: '新建', icon: 'plus', action: () => quickNew() },
   { label: 'AI', icon: 'ai', action: () => app.toggleAi() },
+  { label: '更多', icon: 'more', action: () => { moreOpen.value = true; } },
+]);
+
+/* 「更多」面板：rail 在 ≤768px 隐藏后，这些入口仅在此处可达 */
+const moreOpen = ref(false);
+
+function runMore(action: () => void) {
+  moreOpen.value = false;
+  action();
+}
+
+const moreItems = computed(() => [
+  {
+    label: '知识图谱',
+    icon: 'graph',
+    badge: undefined as string | undefined,
+    dot: false,
+    action: () => runMore(() => router.push('/graph')),
+  },
+  {
+    label: '整理报告',
+    icon: 'report',
+    badge: app.openReportCount > 0 ? (app.openReportCount > 99 ? '99+' : String(app.openReportCount)) : undefined,
+    dot: false,
+    action: () => runMore(() => router.push('/reports')),
+  },
+  {
+    label: '提炼看板',
+    icon: 'list-tree',
+    badge: undefined as string | undefined,
+    dot: false,
+    action: () => runMore(() => router.push('/ingest-coverage')),
+  },
+  {
+    label: '任务队列',
+    icon: 'activity',
+    badge: app.activeJobCount > 0 ? (app.activeJobCount > 99 ? '99+' : String(app.activeJobCount)) : undefined,
+    dot: false,
+    action: () => runMore(() => { jobsPanelOpen.value = true; }),
+  },
+  {
+    label: '设置',
+    icon: 'settings',
+    badge: undefined as string | undefined,
+    dot: updateStore.hasNewVersion,
+    action: () => runMore(() => router.push('/settings')),
+  },
 ]);
 
 async function quickNew() {
@@ -570,6 +650,47 @@ onUnmounted(() => {
 .bottom-nav { display: none; }
 .mask { display: none; }
 
+.more-mask { display: none; }
+.more-sheet { display: none; }
+
+/* 769-1024px 紧凑档（折叠屏内屏/平板竖屏）：rail 保留，侧栏改浮层，AI 抽屉收窄并排 */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .sidebar {
+    position: fixed;
+    top: 8px;
+    bottom: 8px;
+    left: 60px;
+    width: min(var(--sidebar-width), calc(100vw - 80px)) !important;
+    max-width: 400px;
+    box-shadow: var(--sidebar-mobile-shadow);
+  }
+
+  .resizer { display: none; }
+
+  .mask {
+    position: fixed;
+    inset: 0;
+    display: block;
+    background: rgba(15, 15, 15, 0.26);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    z-index: var(--z-mask);
+  }
+
+  .content,
+  .layout.sidebar-open .content {
+    padding-left: 64px;
+  }
+
+  .ai-drawer { width: clamp(300px, 30vw, 380px); }
+
+  /* 触屏紧凑档：放大 rail 触控目标 */
+  @media (hover: none) and (pointer: coarse) {
+    .rail-btn { width: 36px; height: 36px; }
+    .rail { padding: 6px 4px; }
+  }
+}
+
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .rail { background: var(--sidebar-rail-solid); }
   .sidebar { background: var(--sidebar-material-solid); }
@@ -643,6 +764,112 @@ onUnmounted(() => {
   }
 
   .bottom-nav button span { font-size: 10px; }
+
+  /* 「更多」底部面板 */
+  .more-mask {
+    position: fixed;
+    inset: 0;
+    display: block;
+    background: rgba(15, 15, 15, 0.26);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    z-index: var(--z-chrome);
+  }
+
+  .more-sheet {
+    position: fixed;
+    right: 8px;
+    bottom: 64px;
+    left: 8px;
+    display: block;
+    padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+    border: 1px solid var(--sidebar-glass-border);
+    border-radius: 16px;
+    background: var(--sidebar-material);
+    box-shadow: var(--sidebar-mobile-shadow);
+    backdrop-filter: saturate(150%) blur(24px);
+    -webkit-backdrop-filter: saturate(150%) blur(24px);
+    z-index: calc(var(--z-chrome) + 1);
+  }
+
+  .more-sheet-bar {
+    width: 36px;
+    height: 4px;
+    margin: 0 auto 12px;
+    border-radius: 2px;
+    background: var(--sidebar-hairline);
+  }
+
+  .more-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
+  }
+
+  .more-grid button {
+    min-height: 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border-radius: 10px;
+    color: var(--text-secondary);
+  }
+
+  .more-grid button:active { background: var(--sidebar-hover); }
+
+  .more-icon {
+    position: relative;
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: var(--sidebar-selection);
+    color: var(--text);
+  }
+
+  .more-badge {
+    position: absolute;
+    top: -4px;
+    right: -7px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    border: 2px solid var(--sidebar-glass-solid);
+    border-radius: 8px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 9px;
+    line-height: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .more-dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 7px;
+    height: 7px;
+    border: 1.5px solid var(--sidebar-glass-solid);
+    border-radius: 50%;
+    background: var(--sidebar-accent);
+  }
+
+  .more-label { font-size: 11px; }
+}
+
+.more-sheet-enter-active,
+.more-sheet-leave-active {
+  transition: transform 200ms ease, opacity 200ms ease;
+}
+
+.more-sheet-enter-from,
+.more-sheet-leave-to {
+  transform: translateY(24px);
+  opacity: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

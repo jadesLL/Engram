@@ -30,7 +30,7 @@ function iconFor(kind: ToastKind): string {
 <style scoped>
 .toast-stack {
   position: fixed;
-  top: 18px;
+  top: max(18px, env(safe-area-inset-top));
   right: 22px;
   z-index: var(--z-toast);
   display: flex;

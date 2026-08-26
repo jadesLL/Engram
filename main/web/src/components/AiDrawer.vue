@@ -649,4 +649,17 @@ onUnmounted(() => {
 .agent-input textarea { flex: 1; min-height: 58px; max-height: 160px; resize: vertical; font-size: 13px; }
 .send-btn { color: var(--accent); }
 .send-btn:disabled { color: var(--text-faint); cursor: default; }
+
+/* 极窄屏（折叠屏外屏/小屏手机，全屏抽屉态）：隐藏品牌文字只留图标，发送按钮触控加大 */
+@media (max-width: 480px) {
+  .agent-head { gap: 4px; padding: 6px 8px; }
+  /* 文字按 font-size:0 收起，Icon 为 svg 固定尺寸不受影响 */
+  .agent-brand { font-size: 0; gap: 0; }
+  .session-select { min-width: 0; }
+  .send-btn {
+    width: 38px;
+    height: 38px;
+    flex-basis: 38px;
+  }
+}
 </style>

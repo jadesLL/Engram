@@ -161,6 +161,7 @@ const ICONS: Record<string, string[]> = {
     'M12 18v-6',
     'M9 15h6',
   ],
+  more: ['M12 12h.01', 'M12 5h.01', 'M12 19h.01'],
   merge: [
     'M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
     'M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',

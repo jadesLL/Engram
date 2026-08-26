@@ -23,7 +23,8 @@ export const useAppStore = defineStore('app', {
   state: () => {
     const theme = (localStorage.getItem('theme') as Theme) || 'light';
     return {
-      sidebarOpen: window.innerWidth > 768,
+      // ≤1024px（手机/折叠屏外屏/紧凑档）侧栏为浮层，默认收起
+      sidebarOpen: window.innerWidth > 1024,
       aiDrawerOpen: false,
       theme,
       dark: resolveDarkTheme(theme),
