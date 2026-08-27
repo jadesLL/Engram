@@ -216,7 +216,7 @@
             v-for="n in related.neighbors"
             :key="'n' + n.id"
             class="tag rel-item"
-            v-tooltip="'n.direction === \'out\' ? \'本页引用了它\' : \'它引用了本页\''"
+            v-tooltip="n.direction === 'out' ? '本页引用了它' : '它引用了本页'"
             @click="$router.push(`/page/${n.id}`)"
           >{{ n.direction === 'out' ? '→' : '←' }} {{ n.title }}</span>
           <span
