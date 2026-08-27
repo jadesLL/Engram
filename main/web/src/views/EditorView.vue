@@ -78,12 +78,20 @@
             来源 {{ evidence.sources.length }}
           </button>
           <span
-            v-if="synthesisPending"
+            v-if="synthesisQueued"
             class="synthesis-inline small"
             v-tooltip="'来源事实已入账，正在生成整页正文'"
           >
             <Icon name="activity" :size="13" />
             综合中
+          </span>
+          <span
+            v-else-if="synthesisFailed"
+            class="synthesis-inline failed small"
+            v-tooltip="synthesisFailedTip"
+          >
+            <Icon name="activity" :size="13" />
+            综合未通过
           </span>
           <button class="btn icon" v-tooltip="'查看本页图谱'" aria-label="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
             <Icon name="graph" :size="14" />
@@ -309,10 +317,26 @@ const isDark = computed(() => app.dark);
 const tags = computed(() =>
   tagsInput.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)
 );
-const synthesisPending = computed(() =>
+/** 有来源事实且无有效综合稿：可能是排队中（pending）、失败/冲突（failed/conflict）或从未综合 */
+const synthesisMissing = computed(() =>
   Boolean(evidence.value?.sources?.length) &&
   (!evidence.value?.synthesis || evidence.value.synthesis.outdated)
 );
+/** 失败态优先级高于排队态：无 active 综合稿且最新一次记录是 failed/conflict */
+const synthesisFailed = computed(() =>
+  synthesisMissing.value &&
+  !evidence.value?.synthesis &&
+  ['failed', 'conflict'].includes(evidence.value?.latestSynthesis?.status)
+);
+/** 排队中 / 过期重排中（非失败态） */
+const synthesisQueued = computed(() =>
+  synthesisMissing.value && !synthesisFailed.value
+);
+const synthesisFailedTip = computed(() => {
+  const latest = evidence.value?.latestSynthesis;
+  const reason = latest?.error ? `：${String(latest.error).slice(0, 120)}` : '';
+  return `上一次综合未通过质量校验${reason}。点击「重新组织」可强制重试`;
+});
 
 /** 概念页与实体页（人物/客户/组织/地点/作品/产品/其他）可整页综合（重新组织/重新提炼） */
 const canSynthesize = computed(() =>
@@ -954,6 +978,7 @@ onUnmounted(() => {
   color: var(--warning);
   white-space: nowrap;
 }
+.synthesis-inline.failed { color: var(--danger); }
 .save-state {
   display: inline-flex;
   align-items: center;

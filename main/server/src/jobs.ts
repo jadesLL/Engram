@@ -298,6 +298,13 @@ export function recoverStaleJobs() {
        run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'`
   ).run(now());
+  // 上面把排队的 page_recompose 任务丢弃了，但 page_syntheses 的 pending 行不随 job 走。
+  // 留着的 pending 行会让 queuePageRecompose 提前返回（视为已在队列）而永不重新入队，
+  // 页面因此永久卡在「综合中」。这里一并标 failed，交给失败冷却 + 定期补齐按节奏重试。
+  db.prepare(
+    `UPDATE page_syntheses SET status='failed', error='启动时清理：综合任务被中断', updated_at=?
+     WHERE status='pending'`
+  ).run(now());
   recoverApplyingReports();
   recoverIngestCommits();
   recoverIngestQuestionJobs();
