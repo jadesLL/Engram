@@ -46,6 +46,7 @@ function cleanupSystemPages() {
 }
 import { startJobRunner } from './jobs.js';
 import { scheduleDreamCycle } from './dream/scheduler.js';
+import { queueMissingPageSynthesesAsync } from './pipeline/pageSynthesis.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -119,8 +120,18 @@ async function main() {
 
   await app.listen({ port: PORT, host: HOST });
   console.log(`LLM Wiki 已启动: http://localhost:${PORT}`);
-  // 不在启动时自动批量补齐合成。loadPageEvidence 的同步 DB 读会冻结事件循环，
-  // 延迟/降批只是推迟阻塞，仍会拖垮容器。合成改为只在入库或手动触发时按单页跑。
+  // 定期补齐缺失/过期的页面综合：启动后 2 分钟先跑一轮，之后每 15 分钟一轮。
+  // listen 之后异步小批量执行（每页之间让出事件循环），不阻塞服务；
+  // 去重与失败冷却在 queuePageRecompose 内已有：active 最新页跳过、失败页 1 小时冷却、
+  // pending 页不重复入队。事实变化（evidence_hash 变）会自然触发重排。
+  const SYNTHESIS_BACKFILL_FIRST_MS = 2 * 60 * 1000;
+  const SYNTHESIS_BACKFILL_INTERVAL_MS = 15 * 60 * 1000;
+  const synthesisBackfill = async () => {
+    const queued = await queueMissingPageSynthesesAsync();
+    if (queued > 0) console.log(`[synthesis] 定期补齐：本轮入队 ${queued} 个页面综合任务`);
+  };
+  setTimeout(() => { void synthesisBackfill(); }, SYNTHESIS_BACKFILL_FIRST_MS).unref();
+  setInterval(() => { void synthesisBackfill(); }, SYNTHESIS_BACKFILL_INTERVAL_MS).unref();
 }
 
 main().catch((e) => {

@@ -24,6 +24,7 @@ let renderKnowledgeProjection: any;
 let queuePageRecompose: any;
 let recomposePage: any;
 let pageEvidenceResponse: any;
+let queueMissingPageSyntheses: () => number;
 let clearSharedSemanticHistories: () => void;
 let preserveManualChanges = true;
 // 可选的 verify 覆盖：测试自纠错回路时按 verify 调用次数返回不同结果。返回 undefined 走默认分支。
@@ -137,7 +138,7 @@ before(async () => {
     contributionsForProjection,
   } = await import('./sourceLedger.js'));
   ({ renderKnowledgeProjection } = await import('./knowledgePage.js'));
-  ({ queuePageRecompose, recomposePage, pageEvidenceResponse } = await import('./pageSynthesis.js'));
+  ({ queuePageRecompose, recomposePage, pageEvidenceResponse, queueMissingPageSyntheses } = await import('./pageSynthesis.js'));
   ({ clearSharedSemanticHistories } = await import('../lib/semanticStage.js'));
 });
 
@@ -353,4 +354,60 @@ test('self-correction loop exhausts correction rounds and falls back to conflict
   // 初稿 + 2 次修正 = 3 次 verify，耗尽后落 conflict
   assert.equal(verifyCalls, 3);
   assert.equal(db.prepare(`SELECT status FROM page_syntheses WHERE id=?`).get(synthesisId).status, 'conflict');
+});
+
+test('backfill queues synthesizable pages including customer/place/work/other entity types', async () => {
+  // 旧类型清单只查 person/project/org/concept，customer 等四类实体页永远不会被补齐
+  const page = createPage('Wiki/实体', '补齐客户');
+  writePage(page.path, '# 补齐客户\n', { type: 'customer' });
+  addSource(page.id, '原始资料/补齐客户来源.md', 'backfill-run-1', 'hash-b1', [
+    { id: 'bf1', statement: '补齐客户是重点客户。' },
+  ]);
+  db.prepare(`DELETE FROM jobs`).run();
+
+  const queued = queueMissingPageSyntheses();
+
+  assert.equal(queued, 1);
+  const job = db.prepare(
+    `SELECT kind,status FROM jobs WHERE kind='page_recompose'`
+  ).get();
+  assert.equal(job.status, 'pending');
+});
+
+test('backfill is idempotent: pending synthesis is not re-queued, active up-to-date page is skipped', async () => {
+  const page = createPage('Wiki/实体', '幂等补齐实体');
+  writePage(page.path, '# 幂等补齐实体\n', { type: 'person' });
+  addSource(page.id, '原始资料/幂等来源.md', 'backfill-run-2', 'hash-b2', [
+    { id: 'bf2', statement: '幂等补齐实体负责补齐测试。' },
+  ]);
+  db.prepare(`DELETE FROM jobs`).run();
+
+  // 第一轮：入队 1 个；pending 行已存在，第二轮不再入队
+  assert.equal(queueMissingPageSyntheses(), 1);
+  assert.equal(queueMissingPageSyntheses(), 0);
+  assert.equal(
+    db.prepare(`SELECT COUNT(*) c FROM jobs WHERE kind='page_recompose'`).get().c,
+    1,
+  );
+});
+
+test('pageEvidenceResponse reports latestSynthesis so the UI can distinguish failure from queued', async () => {
+  const page = createPage('Wiki/实体', '最新综合状态实体');
+  writePage(page.path, '# 最新综合状态实体\n', { type: 'person' });
+  addSource(page.id, '原始资料/最新状态来源.md', 'backfill-run-3', 'hash-b3', [
+    { id: 'bf3', statement: '最新综合状态实体负责状态展示。' },
+  ]);
+  // 造一行 conflict：latestSynthesis 应带出 failed/conflict 状态供前端区分
+  db.prepare(
+    `INSERT INTO page_syntheses(id,page_id,input_hash,evidence_hash,status,error,created_at,updated_at)
+     VALUES('syn-latest','latest-page','hash-l','ev-l','conflict','引用证据不足',?,?)`
+  ).run(now(), now());
+  db.prepare(`UPDATE page_syntheses SET page_id=? WHERE id='syn-latest'`).run(page.id);
+
+  const response = pageEvidenceResponse(page.id);
+  assert.ok(response);
+  assert.equal((response.latestSynthesis as any).status, 'conflict');
+  assert.match((response.latestSynthesis as any).error, /引用证据不足/);
+  // 无 active 综合稿时 synthesis 为 null，前端据 latestSynthesis 显示「综合未通过」而非「综合中」
+  assert.equal(response.synthesis, null);
 });

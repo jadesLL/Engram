@@ -1145,6 +1145,12 @@ export function pageEvidenceResponse(pageId: string): Record<string, unknown> | 
   const bundle = loadPageEvidence(pageId);
   if (!bundle) return null;
   const active = activePageSynthesis(pageId);
+  // 任意状态的最新一行：前端据此区分「排队中（pending）」与「失败/冲突（failed/conflict）」，
+  // 而不是把所有无 active 综合的页面一律显示成「综合中」。
+  const latest = db.prepare(
+    `SELECT status, error, updated_at FROM page_syntheses
+     WHERE page_id=? ORDER BY updated_at DESC LIMIT 1`
+  ).get(pageId) as { status: string; error: string; updated_at: string } | undefined;
   const body = readPage(bundle.page.path);
   const state = body ? inputState(bundle, body.content) : null;
   const evidenceMap = evidenceMapFor(active);
@@ -1187,6 +1193,11 @@ export function pageEvidenceResponse(pageId: string): Record<string, unknown> | 
   }
   return {
     page: bundle.page,
+    latestSynthesis: latest ? {
+      status: latest.status,
+      error: latest.error,
+      updatedAt: latest.updated_at,
+    } : null,
     synthesis: active ? {
       id: active.id,
       status: active.status,
@@ -1208,13 +1219,18 @@ export function pageEvidenceResponse(pageId: string): Record<string, unknown> | 
   };
 }
 
+/** 可综合页面类型（与 isSynthesizable 对齐：概念 + 全部实体类型） */
+const SYNTHESIZABLE_PAGE_TYPES = [
+  'concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other',
+] as const;
+
 export function queueMissingPageSyntheses(): number {
   if (!llmReady()) return 0;
   const pages = db.prepare(
     `SELECT DISTINCT p.id FROM pages p
      JOIN page_contributions pc ON pc.page_id=p.id AND pc.active=1
-     WHERE p.deleted=0 AND p.type IN ('person','project','org','concept')`
-  ).all() as Array<{ id: string }>;
+     WHERE p.deleted=0 AND p.type IN (${SYNTHESIZABLE_PAGE_TYPES.map(() => '?').join(',')})`
+  ).all(...SYNTHESIZABLE_PAGE_TYPES) as Array<{ id: string }>;
   let queued = 0;
   for (const page of pages) {
     if (queued >= SYNTHESIS_BATCH_LIMIT) break;
@@ -1231,17 +1247,17 @@ export function queueMissingPageSyntheses(): number {
 }
 
 /**
- * 异步、不阻塞启动地补齐缺失合成。在 app.listen 之后延迟执行，
- * 每入队一个就让出事件循环，避免启动阶段同步 DB 写冻结主线程致 502。
- * 单批上限 SYNTHESIS_BATCH_LIMIT，剩余页由后续启动或手动触发补齐。
+ * 异步、不阻塞地补齐缺失合成。供 listen 之后定时调用，
+ * 每入队一个就让出事件循环，避免同步 DB 写冻结主线程。
+ * 单批上限 SYNTHESIS_BATCH_LIMIT，剩余页由下轮定时补齐。
  */
 export async function queueMissingPageSynthesesAsync(): Promise<number> {
   if (!llmReady()) return 0;
   const pages = db.prepare(
     `SELECT DISTINCT p.id FROM pages p
      JOIN page_contributions pc ON pc.page_id=p.id AND pc.active=1
-     WHERE p.deleted=0 AND p.type IN ('person','project','org','concept')`
-  ).all() as Array<{ id: string }>;
+     WHERE p.deleted=0 AND p.type IN (${SYNTHESIZABLE_PAGE_TYPES.map(() => '?').join(',')})`
+  ).all(...SYNTHESIZABLE_PAGE_TYPES) as Array<{ id: string }>;
   let queued = 0;
   for (const page of pages) {
     if (queued >= SYNTHESIS_BATCH_LIMIT) break;

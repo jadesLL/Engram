@@ -114,6 +114,30 @@ test('startup recovery discards interrupted derived jobs before restoring safe w
   );
 });
 
+test('startup recovery marks interrupted pending syntheses as failed (zombie rows)', () => {
+  // 场景：重启把排队的 page_recompose job 丢弃，page_syntheses 的 pending 行残留。
+  // 若不清理，queuePageRecompose 遇 pending 行提前返回，页面永久卡「综合中」。
+  db.prepare(
+    `INSERT INTO page_syntheses(id,page_id,input_hash,evidence_hash,status,created_at,updated_at)
+     VALUES('syn-zombie','zombie-page','hash-z','ev-z','pending',?,?)`
+  ).run(now(), now());
+  db.prepare(
+    `INSERT INTO page_syntheses(id,page_id,input_hash,evidence_hash,status,created_at,updated_at)
+     VALUES('syn-active','zombie-page','hash-a','ev-a','active',?,?)`
+  ).run(now(), now());
+
+  recoverStaleJobs();
+
+  const zombie = db.prepare(`SELECT status,error FROM page_syntheses WHERE id='syn-zombie'`).get();
+  assert.equal(zombie.status, 'failed');
+  assert.match(zombie.error, /启动时清理/);
+  // 非pending 状态不受影响
+  assert.equal(
+    db.prepare(`SELECT status FROM page_syntheses WHERE id='syn-active'`).get().status,
+    'active',
+  );
+});
+
 test('cancelling a pending candidate reconciliation releases claimed reports', () => {
   const report = db.prepare(
     `INSERT INTO reports(run_at,kind,payload,status,issue_key,fingerprint)
