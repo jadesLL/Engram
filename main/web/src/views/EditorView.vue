@@ -213,20 +213,24 @@
         <div class="related-title faint small">🔗 本页关联（AI 自动生成）</div>
         <div class="related-items">
           <span
-            v-for="n in related.neighbors"
-            :key="'n' + n.id"
+            v-for="(n, i) in related.neighbors"
+            :key="'n' + n.id + '-' + n.rel + '-' + i"
             class="tag rel-item"
             v-tooltip="n.direction === 'out' ? '本页引用了它' : '它引用了本页'"
             @click="$router.push(`/page/${n.id}`)"
           >{{ n.direction === 'out' ? '→' : '←' }} {{ n.title }}</span>
           <span
-            v-for="s in related.similar"
-            :key="'s' + s.id"
+            v-for="(s, i) in related.similar"
+            :key="'s' + s.id + '-' + i"
             class="tag rel-item"
             v-tooltip="`语义相似 ${(1 - s.distance).toFixed(2)}`"
             @click="$router.push(`/page/${s.id}`)"
           >≈ {{ s.title }}</span>
-          <span v-for="e in related.entities" :key="'e' + e.name" class="tag entity">{{ e.name }}</span>
+          <span
+            v-for="(e, i) in related.entities"
+            :key="'e' + e.name + '-' + e.rel + '-' + i"
+            class="tag entity"
+          >{{ e.name }}</span>
         </div>
       </div>
     </template>
