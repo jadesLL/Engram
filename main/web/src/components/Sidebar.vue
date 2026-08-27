@@ -45,7 +45,7 @@
               :class="{ 'drop-target': g.key === 'concept' && dragOverKey === 'concept' && canDropTo('concept') }"
               type="button"
               :aria-expanded="!collapsed[g.key]"
-              v-tooltip="'collapsed[g.key] ? `展开${g.label}` : `收起${g.label}`'"
+              v-tooltip="collapsed[g.key] ? `展开${g.label}` : `收起${g.label}`"
               @click="toggle(g.key)"
               @dragover="g.key === 'concept' && onDragOverSub($event, 'concept')"
               @dragleave="g.key === 'concept' && onDragLeave('concept')"
@@ -90,7 +90,7 @@
                   :class="{ 'drop-target': dragOverKey === sub.key && canDropTo(sub.key) }"
                   type="button"
                   :aria-expanded="!collapsed[`${g.key}:${sub.key}`]"
-                  v-tooltip="'collapsed[`${g.key}:${sub.key}`] ? `展开${sub.label}` : `收起${sub.label}`'"
+                  v-tooltip="collapsed[`${g.key}:${sub.key}`] ? `展开${sub.label}` : `收起${sub.label}`"
                   @click="toggle(`${g.key}:${sub.key}`)"
                   @dragover="onDragOverSub($event, sub.key)"
                   @dragleave="onDragLeave(sub.key)"
@@ -160,7 +160,7 @@
             class="sec-toggle"
             type="button"
             :aria-expanded="!collapsed.files"
-            v-tooltip="'collapsed.files ? \'展开原始资料\' : \'收起原始资料\''"
+            v-tooltip="collapsed.files ? '展开原始资料' : '收起原始资料'"
             @click="toggle('files')"
           >
             <span class="sec-name">原始资料</span>
@@ -261,7 +261,7 @@
             class="sec-toggle"
             type="button"
             :aria-expanded="!collapsed.chat"
-            v-tooltip="'collapsed.chat ? \'展开对话\' : \'收起对话\''"
+            v-tooltip="collapsed.chat ? '展开对话' : '收起对话'"
             @click="toggle('chat')"
           >
             <span class="sec-name">对话</span>
@@ -312,7 +312,7 @@
             class="sec-toggle"
             type="button"
             :aria-expanded="!collapsed.ailog"
-            v-tooltip="'collapsed.ailog ? \'展开 AI 整理日志\' : \'收起 AI 整理日志\''"
+            v-tooltip="collapsed.ailog ? '展开 AI 整理日志' : '收起 AI 整理日志'"
             @click="toggle('ailog')"
           >
             <span class="sec-name">AI 整理日志</span>
@@ -372,7 +372,7 @@
             class="sec-toggle"
             type="button"
             :aria-expanded="!collapsed.tags"
-            v-tooltip="'collapsed.tags ? \'展开标签\' : \'收起标签\''"
+            v-tooltip="collapsed.tags ? '展开标签' : '收起标签'"
             @click="toggle('tags')"
           >
             <span class="sec-name">标签</span>

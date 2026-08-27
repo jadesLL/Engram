@@ -13,7 +13,7 @@
         class="rail-btn action"
         type="button"
         :class="{ open: app.sidebarOpen }"
-        v-tooltip="'app.sidebarOpen ? \'收起侧栏\' : \'展开侧栏\''"
+        v-tooltip="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
         :aria-label="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
         :aria-pressed="app.sidebarOpen"
         @click="app.sidebarOpen = !app.sidebarOpen"
@@ -702,7 +702,7 @@ onUnmounted(() => {
   .sidebar {
     position: fixed;
     top: 8px;
-    bottom: 64px;
+    bottom: calc(64px + env(safe-area-inset-bottom));
     left: 8px;
     width: calc(100vw - 16px) !important;
     max-width: 320px;
@@ -725,7 +725,7 @@ onUnmounted(() => {
   }
 
   .content {
-    padding-bottom: 64px;
+    padding-bottom: calc(64px + env(safe-area-inset-bottom));
     padding-left: 0;
   }
 
@@ -733,16 +733,16 @@ onUnmounted(() => {
     padding-left: 0;
   }
 
-  .ai-drawer { position: fixed; inset: 0 0 60px 0; width: 100%; border-left: none; }
+  .ai-drawer { position: fixed; inset: 0 calc(60px + env(safe-area-inset-bottom)) 0 0; width: 100%; border-left: none; }
 
   .bottom-nav {
     position: fixed;
     right: 8px;
-    bottom: 8px;
+    /* 手势条设备上整栏抬到手势条上方，内容在 48px 内垂直居中（border-box 下 padding 会压缩内容区导致偏移） */
+    bottom: calc(8px + env(safe-area-inset-bottom));
     left: 8px;
     display: flex;
     height: 48px;
-    padding-bottom: env(safe-area-inset-bottom);
     overflow: hidden;
     border: 1px solid var(--sidebar-glass-border);
     border-radius: 12px;
@@ -779,10 +779,10 @@ onUnmounted(() => {
   .more-sheet {
     position: fixed;
     right: 8px;
-    bottom: 64px;
+    bottom: calc(64px + env(safe-area-inset-bottom));
     left: 8px;
     display: block;
-    padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+    padding: 10px 14px 14px;
     border: 1px solid var(--sidebar-glass-border);
     border-radius: 16px;
     background: var(--sidebar-material);

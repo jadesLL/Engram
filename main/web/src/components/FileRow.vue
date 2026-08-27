@@ -27,24 +27,24 @@
       <span
         v-if="job"
         class="row-status ingest-progress"
-        v-tooltip="'job.detail || job.stage'"
+        v-tooltip="job.detail || job.stage"
       >
         {{ job.stage }} {{ job.progress }}%
       </span>
       <span
         v-else-if="file.extractionStatus === 'failed'"
         class="row-status ingested-flag failed"
-        v-tooltip="'file.extractionError ? `提取失败：${humanError(file.extractionError)}` : \'提取失败，可重试\''"
+        v-tooltip="file.extractionError ? `提取失败：${humanError(file.extractionError)}` : '提取失败，可重试'"
       >提取失败</span>
       <span
         v-else-if="file.extractionStatus === 'blocked'"
         class="row-status ingested-flag unsupported"
-        v-tooltip="'file.extractionError || \'需要支持图片的对话模型或单独配置视觉模型\''"
+        v-tooltip="file.extractionError || '需要支持图片的对话模型或单独配置视觉模型'"
       >待配置</span>
       <span
         v-else-if="file.extractionStatus === 'partial'"
         class="row-status ingested-flag warning"
-        v-tooltip="'file.extractionError || \'部分页面尚未识别\''"
+        v-tooltip="file.extractionError || '部分页面尚未识别'"
       >部分提取</span>
       <span
         v-else-if="file.ingestedAt"
@@ -54,7 +54,7 @@
       <span
         v-else-if="file.ingestStatus === 'failed'"
         class="row-status ingested-flag failed"
-        v-tooltip="'file.ingestError ? `整理失败：${humanError(file.ingestError)}` : \'整理失败，可重试\''"
+        v-tooltip="file.ingestError ? `整理失败：${humanError(file.ingestError)}` : '整理失败，可重试'"
       >失败</span>
       <span
         v-else-if="file.extractionStatus === 'completed'"

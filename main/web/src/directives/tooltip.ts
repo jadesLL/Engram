@@ -47,12 +47,17 @@ function attach(el: TooltipEl, binding: DirectiveBinding) {
     return;
   }
 
+  // 触屏（无 hover）：tap 触发的 mouseenter 不弹提示；实时判断以覆盖运行中 hover 能力变化（折叠屏形态切换/DevTools 模拟）
+  const isTouchOnly = () => window.matchMedia('(hover: none)').matches;
+
   const enter = () => {
+    if (isTouchOnly()) return;
     if (auto && !isTruncated(el)) return;
     showTooltip(el, value, placement);
   };
   const leave = () => hideTooltip(el);
 
+  // 统一绑定 mouse 事件：触屏下 enter 内部短路，无需在绑定期区分
   el.addEventListener('mouseenter', enter);
   el.addEventListener('mouseleave', leave);
   el.addEventListener('focus', enter);
@@ -70,9 +75,7 @@ function detach(el: TooltipEl) {
   el.removeEventListener('blur', handlers.leave);
   hideTooltip(el);
   delete el.__tooltipHandlers__;
-}
-
-export const vTooltip: Directive<TooltipEl, string> = {
+}export const vTooltip: Directive<TooltipEl, string> = {
   mounted: attach,
   updated: attach,
   unmounted: detach,

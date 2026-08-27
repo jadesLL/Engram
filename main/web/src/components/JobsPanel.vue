@@ -677,7 +677,8 @@ function toggleWarning(id: number) {
     max-width: none;
     max-height: calc(100vh - 76px);
     max-height: calc(100dvh - 76px);
-    bottom: 60px;
+    /* 底部导航已整体抬到手势条上方，面板同步上移避免被遮 */
+    bottom: calc(60px + env(safe-area-inset-bottom));
   }
   .jp-resize-handle { display: none; }
 }

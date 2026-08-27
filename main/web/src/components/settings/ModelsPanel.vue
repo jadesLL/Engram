@@ -233,7 +233,7 @@
                 <button
                   class="model-chip-select"
                   type="button"
-                  v-tooltip="'entry.id === section.activeId ? \'当前使用的模型\' : \'设为当前模型\''"
+                  v-tooltip="entry.id === section.activeId ? '当前使用的模型' : '设为当前模型'"
                   @click="entry.id !== section.activeId && selectModel(section.kind, entry.id)"
                 >
                   <Icon v-if="entry.id === section.activeId" name="check" :size="12" class="model-chip-check" />
@@ -321,7 +321,7 @@
     <!-- 模型配置对话框（AppModal：Esc 关闭 + 焦点陷阱） -->
     <AppModal
       :open="form.show"
-      v-tooltip="'form.id ? \'编辑模型配置\' : \'添加模型配置\''"
+      v-tooltip="form.id ? '编辑模型配置' : '添加模型配置'"
       width="min(680px, 100%)"
       @close="form.show = false"
     >
