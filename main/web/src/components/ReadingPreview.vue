@@ -98,18 +98,21 @@
           <p>本页关联</p>
           <div>
             <button
-              v-for="item in related?.neighbors || []"
-              :key="`n-${item.id}`"
+              v-for="(item, i) in related?.neighbors || []"
+              :key="`n-${item.id}-${item.rel}-${i}`"
               type="button"
               @click="emit('open-related', item.id)"
             >{{ item.direction === 'out' ? '→' : '←' }} {{ item.title }}</button>
             <button
-              v-for="item in related?.similar || []"
-              :key="`s-${item.id}`"
+              v-for="(item, i) in related?.similar || []"
+              :key="`s-${item.id}-${i}`"
               type="button"
               @click="emit('open-related', item.id)"
             >≈ {{ item.title }}</button>
-            <span v-for="item in related?.entities || []" :key="`e-${item.name}`">{{ item.name }}</span>
+            <span
+              v-for="(item, i) in related?.entities || []"
+              :key="`e-${item.name}-${item.rel}-${i}`"
+            >{{ item.name }}</span>
           </div>
         </section>
         <div class="reading-tail-space" :style="{ height: `${tailSpace}px` }" aria-hidden="true" />
