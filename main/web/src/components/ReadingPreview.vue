@@ -94,8 +94,22 @@
           />
         </article>
 
-        <section v-if="hasRelated" class="reading-related" aria-label="本页关联">
-          <p>本页关联</p>
+        <section
+          v-if="hasRelated"
+          class="reading-related"
+          :class="{ collapsed: relatedCollapsed }"
+          aria-label="本页关联"
+        >
+          <button
+            type="button"
+            class="reading-related-toggle"
+            :aria-expanded="!relatedCollapsed"
+            @click="toggleRelated"
+          >
+            本页关联
+            <span class="reading-related-count">{{ relatedCount }}</span>
+            <Icon :name="relatedCollapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
+          </button>
           <div>
             <button
               v-for="(item, i) in related?.neighbors || []"
@@ -238,6 +252,23 @@ const hasRelated = computed(() =>
     props.related?.entities?.length
   )
 );
+/* 本页关联折叠：移动端默认收起（编辑视图同策略——多关联页铺开可占大半屏）；
+ * 用户选择在组件存活期内保留，跨档位切换回该档默认。 */
+const relatedMobile = window.matchMedia('(max-width: 768px)');
+const relatedCollapsed = ref(relatedMobile.matches);
+let relatedUserTouched = false;
+relatedMobile.addEventListener('change', (e) => {
+  if (!relatedUserTouched) relatedCollapsed.value = e.matches;
+});
+const relatedCount = computed(() =>
+  (props.related?.neighbors?.length || 0) +
+  (props.related?.similar?.length || 0) +
+  (props.related?.entities?.length || 0)
+);
+function toggleRelated() {
+  relatedUserTouched = true;
+  relatedCollapsed.value = !relatedCollapsed.value;
+}
 
 function updatePreferences(value: Partial<ReadingPreferences>) {
   app.updateReadingPreferences(value);
@@ -858,6 +889,26 @@ onBeforeUnmount(() => {
   padding-top: 16px;
   border-top: 1px dashed var(--border);
 }
+.reading-related-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 8px;
+  padding: 0;
+  background: transparent !important;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.reading-related-toggle:hover { background: transparent !important; color: var(--text-secondary); }
+.reading-related-count {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.reading-related.collapsed > div { display: none; }
+.reading-related.collapsed { margin-top: 24px; }
 .reading-related p {
   margin: 0 0 8px;
   color: var(--text-faint);

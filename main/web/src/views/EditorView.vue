@@ -216,9 +216,17 @@
         </div>
       </aside>
 
-      <!-- 本页关联 -->
-      <div v-if="!app.readingMode && related" class="related">
-        <div class="related-title faint small">🔗 本页关联（AI 自动生成）</div>
+      <!-- 本页关联：移动端默认折叠为一行摘要（关联项多时铺开可占大半屏，正文反而看不到） -->
+      <div v-if="!app.readingMode && related" class="related" :class="{ collapsed: relatedCollapsed }">
+        <button
+          type="button"
+          class="related-title related-toggle faint small"
+          :aria-expanded="!relatedCollapsed"
+          @click="toggleRelated"
+        >
+          🔗 本页关联（AI 自动生成）<span class="related-count">{{ relatedCount }}</span>
+          <Icon :name="relatedCollapsed ? 'chevron-down' : 'chevron-up'" :size="14" />
+        </button>
         <div class="related-items">
           <span
             v-for="(n, i) in related.neighbors"
@@ -309,6 +317,23 @@ const pageType = ref('note');
 const tagsInput = ref('');
 const saveState = ref('');
 const related = ref<any>(null);
+/* 本页关联折叠：移动端默认收起（多关联页铺开可占大半屏，正文不可见）；桌面默认展开。
+ * 用户点开/收起的选择在会话内跨页面保留；跨档位（桌面↔手机）切换时回到该档默认。 */
+const relatedMobile = window.matchMedia('(max-width: 768px)');
+const relatedCollapsed = ref(relatedMobile.matches);
+let relatedUserTouched = false;
+relatedMobile.addEventListener('change', (e) => {
+  if (!relatedUserTouched) relatedCollapsed.value = e.matches;
+});
+const relatedCount = computed(() =>
+  (related.value?.neighbors?.length || 0) +
+  (related.value?.similar?.length || 0) +
+  (related.value?.entities?.length || 0)
+);
+function toggleRelated() {
+  relatedUserTouched = true;
+  relatedCollapsed.value = !relatedCollapsed.value;
+}
 const evidence = ref<any>(null);
 const evidenceOpen = ref(false);
 const pageLoading = ref(false);
@@ -1273,6 +1298,23 @@ onUnmounted(() => {
 }
 .related-title { margin-bottom: 6px; }
 .related-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.related-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  color: inherit;
+}
+.related-toggle:hover { color: var(--text-secondary); }
+.related-count {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.related.collapsed .related-items { display: none; }
+.related.collapsed { padding-bottom: 12px; }
 .rel-item { cursor: pointer; }
 .rel-item:hover { background: var(--bg-active); }
 .entity { background: var(--accent-soft); color: var(--accent); }
