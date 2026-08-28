@@ -25,9 +25,27 @@
         @context-menu="(request) => showContextMenu(request, 'reading')"
       />
 
-      <div v-show="!app.readingMode" class="page-head">
+      <div v-show="!app.readingMode" class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
         <input v-model="title" class="title-input" placeholder="无标题" @change="save(true)" />
-        <div class="head-meta">
+        <!-- 手机端摘要行：折叠时仅此一行（选项切换 + 保存状态），桌面隐藏 -->
+        <div class="head-summary">
+          <button
+            type="button"
+            class="chrome-toggle"
+            :aria-expanded="!chromeCollapsed"
+            @click="toggleChrome"
+          >
+            <Icon name="settings" :size="13" />
+            页面选项与 AI 工具
+            <Icon :name="chromeCollapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
+          </button>
+          <span class="save-state faint small" :class="{ 'save-failed': saveState === '保存失败' }">
+            <Icon v-if="saveState === '保存失败'" name="activity" :size="12" />
+            {{ saveState }}
+          </span>
+        </div>
+        <div class="page-chrome">
+          <div class="head-meta">
           <select v-model="pageType" @change="save(true)" class="ghost-select">
             <option value="concept">概念</option>
             <option value="person">人物</option>
@@ -96,16 +114,17 @@
           <button class="btn icon" v-tooltip="'查看本页图谱'" aria-label="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
             <Icon name="graph" :size="14" />
           </button>
-        </div>
-      </div>
+          </div>
 
-      <!-- AI 写作操作条 -->
-      <div v-show="!app.readingMode" class="ai-bar">
-        <Icon name="ai" :size="13" class="ai-bar-icon" />
-        <button v-for="a in aiActions" :key="a.key" class="ai-action" @click="runAi(a.key)">
-          {{ a.label }}
-        </button>
-        <span class="muted small ai-hint">选中文本后使用，未选中则作用于全文</span>
+          <!-- AI 写作操作条（并入手机折叠区） -->
+          <div class="ai-bar">
+            <Icon name="ai" :size="13" class="ai-bar-icon" />
+            <button v-for="a in aiActions" :key="a.key" class="ai-action" @click="runAi(a.key)">
+              {{ a.label }}
+            </button>
+            <span class="muted small ai-hint">选中文本后使用，未选中则作用于全文</span>
+          </div>
+        </div>
       </div>
 
       <div v-show="!app.readingMode" class="editor-area">
@@ -333,6 +352,18 @@ const relatedCount = computed(() =>
 function toggleRelated() {
   relatedUserTouched = true;
   relatedCollapsed.value = !relatedCollapsed.value;
+}
+/* 手机端页头操作区（类型/标签/AI 整理/来源 + AI 写作条）折叠：
+ * 这些是低频操作，手机上铺开占上半屏，正文反而看不到。默认收起，桌面始终展开。 */
+const chromeMobile = window.matchMedia('(max-width: 768px)');
+const chromeCollapsed = ref(chromeMobile.matches);
+let chromeUserTouched = false;
+chromeMobile.addEventListener('change', (e) => {
+  if (!chromeUserTouched) chromeCollapsed.value = e.matches;
+});
+function toggleChrome() {
+  chromeUserTouched = true;
+  chromeCollapsed.value = !chromeCollapsed.value;
 }
 const evidence = ref<any>(null);
 const evidenceOpen = ref(false);
@@ -973,6 +1004,20 @@ onUnmounted(() => {
   background: transparent;
 }
 .title-input::placeholder { color: var(--text-faint); }
+/* 手机端摘要行：桌面隐藏；折叠区 page-chrome 桌面始终显示 */
+.head-summary { display: none; }
+.chrome-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.chrome-toggle:hover { color: var(--text); background: var(--bg-hover); }
 .head-meta {
   display: flex;
   align-items: center;
@@ -1373,5 +1418,21 @@ onUnmounted(() => {
   .title-input { font-size: 26px; }
   .ai-hint { display: none; }
   .evidence-drawer { width: 100%; border-left: 0; }
+
+  /* 页头操作区折叠：摘要行显示、折叠区随状态隐藏；展开时隐藏摘要行的保存状态避免与区内重复 */
+  .head-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .page-chrome { padding-top: 8px; }
+  .page-head.chrome-collapsed .page-chrome { display: none; }
+  .page-head.chrome-collapsed .page-chrome .head-meta { border-bottom: 1px solid var(--border); }
+  .page-head:not(.chrome-collapsed) .head-summary .save-state { display: none; }
+  .ai-bar { padding-top: 0; }
 }
 </style>

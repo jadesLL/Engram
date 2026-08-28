@@ -201,6 +201,36 @@ function observeEditMode() {
   });
 }
 
+const readingToolbarItem = {
+  name: 'reading',
+  tip: '沉浸阅读',
+  icon: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  click: () => emit('enter-reading'),
+};
+// 手机端精简到一行（390px 视口最多放 10 个按钮），完整工具栏桌面不变
+const mobileToolbar = [
+  'headings', 'bold', 'italic', 'list', 'ordered-list',
+  {
+    name: 'wikilink',
+    tip: '插入双链 [[页面]]',
+    icon: '🔗',
+    click: () => openLinkPopup(),
+  },
+  'link', 'undo', 'edit-mode', readingToolbarItem,
+];
+const desktopToolbar = [
+  'headings', 'bold', 'italic', 'strike', 'quote', 'list', 'ordered-list', 'code', 'inline-code',
+  'table', 'link', '|',
+  {
+    name: 'wikilink',
+    tip: '插入双链 [[页面]]',
+    icon: '🔗',
+    click: () => openLinkPopup(),
+  },
+  '|', 'undo', 'redo', '|', 'edit-mode', 'fullscreen', 'outline', '|',
+  readingToolbarItem,
+];
+
 function init() {
   const initialValue = stripIngestComments(wikiLinksToMarkdown(props.modelValue));
   lastProgrammaticValue = initialValue;
@@ -217,23 +247,7 @@ function init() {
       isOpen: false,
       click: openEditorLink,
     },
-    toolbar: [
-      'headings', 'bold', 'italic', 'strike', 'quote', 'list', 'ordered-list', 'code', 'inline-code',
-      'table', 'link', '|',
-      {
-        name: 'wikilink',
-        tip: '插入双链 [[页面]]',
-        icon: '🔗',
-        click: () => openLinkPopup(),
-      },
-      '|', 'undo', 'redo', '|', 'edit-mode', 'fullscreen', 'outline', '|',
-      {
-        name: 'reading',
-        tip: '沉浸阅读',
-        icon: '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2zM22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-        click: () => emit('enter-reading'),
-      },
-    ],
+    toolbar: window.matchMedia('(max-width: 768px)').matches ? mobileToolbar : desktopToolbar,
     toolbarConfig: { pin: true },
     upload: {
       url: '/api/files/upload',
@@ -563,6 +577,13 @@ onMounted(init);
 }
 /* 隐藏 edit-mode 下拉里的 wysiwyg 选项（即时渲染已覆盖所见即所得场景，只保留源码+即时渲染两态） */
 :deep(.vditor-toolbar button[data-mode="wysiwyg"]) { display: none !important; }
+/* 手机端压缩工具栏按钮内边距，保证精简后的按钮单行放下 */
+@media (max-width: 768px) {
+  :deep(.vditor-toolbar) { padding: 0 4px !important; }
+  :deep(.vditor-toolbar .vditor-toolbar__item) { padding: 0 2px !important; }
+  :deep(.vditor-toolbar button) { padding: 0 3px !important; }
+  :deep(.vditor-toolbar .vditor-splitter) { margin: 0 2px !important; }
+}
 :deep(.vditor-ir), :deep(.vditor-wysiwyg), :deep(.vditor-sv) {
   background: var(--bg);
   color: var(--text);
