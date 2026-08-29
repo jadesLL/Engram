@@ -1,6 +1,6 @@
 {
   "name": "@example-wiki/desktop",
-  "version": "1.1.25",
+  "version": "1.1.26",
   "private": true,
   "description": "LLM Wiki Windows 桌面端（本地内嵌 / 远端连接双模式）",
   "main": "main.js",
