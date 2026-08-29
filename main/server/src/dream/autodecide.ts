@@ -39,8 +39,8 @@ const LIMIT_CARDS = 15;
 const LIMIT_CANDIDATES = 15;
 const LIMIT_REMINDERS = 15;
 
-/** 候选一步式入库支持的类型(candidate_review_batch 通道约束) */
-const AUTO_COMMIT_KINDS = ['concept', 'person', 'project', 'org'];
+/** 候选一步式入库支持的类型(candidate_review_batch 通道约束,与 ReviewKind 一致) */
+const AUTO_COMMIT_KINDS = ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'];
 /** 候选来源摘要低于该长度视为信息过弱,入库质量无保障,留人工 */
 const MIN_CANDIDATE_SUMMARY = 30;
 
