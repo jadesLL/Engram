@@ -6,6 +6,7 @@
         <span v-if="lastRun">上次运行:{{ new Date(lastRun).toLocaleString('zh-CN') }}</span>
         <span v-else>尚未运行过</span>
         <span>· 计划:{{ cron }}{{ enabled ? '' : '(已停用)' }}</span>
+        <span v-if="lastAutoDecide">· AI 自动决策:{{ new Date(lastAutoDecide.at).toLocaleString('zh-CN') }}(决策 {{ lastAutoDecide.cardsResolved }} / 入库 {{ lastAutoDecide.candidatesApproved }} / 提醒 {{ lastAutoDecide.remindersHandled }})</span>
       </div>
       <div class="head-actions">
         <select v-model="batchKind" aria-label="按分类筛选报告">
@@ -18,6 +19,12 @@
           v-tooltip.auto="batchKind === 'pending_review' ? '待入库候选逐条处理,不支持批量' : '打开该分类的批量处理预览'"
           @click="openBatchPreview"
         >批量</button>
+        <button
+          class="btn"
+          :disabled="autoDeciding || running"
+          v-tooltip.auto="autoDecideStage || 'AI 按整理阶段给出的建议自动处理决策卡/候选入库/提醒,不确定项保留人工'"
+          @click="runAutoDecide"
+        >{{ autoDeciding ? (autoDecideStage || 'AI 决策中…') : 'AI 自动决策' }}</button>
         <button class="btn primary" :disabled="running" @click="runNow">
           {{ running ? '整理中…' : '立即运行智能整理' }}
         </button>
@@ -207,6 +214,10 @@ const enabled = ref(true);
 const running = ref(false);
 const resolving = ref(false);
 const wikiPages = ref<any[]>([]);
+/** 最近一次 AI 自动决策统计(overview.lastAutoDecide) */
+const lastAutoDecide = ref<any>(null);
+const autoDeciding = ref(false);
+const autoDecideStage = ref('');
 
 const decideBusy = reactive<Record<number, boolean>>({});
 const candidateBusy = reactive<Record<number, boolean>>({});
@@ -274,6 +285,7 @@ async function load() {
   lastRun.value = data.lastRun || '';
   cron.value = data.cron || '';
   enabled.value = data.enabled !== false;
+  lastAutoDecide.value = data.lastAutoDecide || null;
   app.openReportCount = data.counts?.actionable ?? (decisions.value.length + pendingCandidates.value.length);
   restoreCandidateProgress();
 }
@@ -285,6 +297,28 @@ async function runNow() {
     await load();
   } finally {
     running.value = false;
+  }
+}
+
+/** AI 自动决策:入队后台任务,轮询进度,完成后刷新报告 */
+async function runAutoDecide() {
+  if (autoDeciding.value) return;
+  autoDeciding.value = true;
+  try {
+    const { data } = await api.post('/api/reports/auto-decide');
+    if (data.jobId) {
+      await waitForJobProgress(data.jobId, (stage, progress, detail) => {
+        autoDecideStage.value = detail ? `${stage}:${detail}` : stage;
+      });
+    }
+    notify.success('AI 自动决策完成');
+    await load();
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || 'AI 自动决策失败');
+    await load().catch(() => {});
+  } finally {
+    autoDeciding.value = false;
+    autoDecideStage.value = '';
   }
 }
 

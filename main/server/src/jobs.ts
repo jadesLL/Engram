@@ -16,6 +16,7 @@ import { enqueue, enqueuePagePipeline } from './jobQueue.js';
 import { allPageContributions, finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
 import { recoverKnowledgeCommit } from './pipeline/knowledgeCommit.js';
 import { runDreamCycle } from './dream/tasks.js';
+import { runAutoDecideCycle } from './dream/autodecide.js';
 import { scanIdentityAmbiguityForPages } from './dream/tasks.js';
 import {
   applyCandidateReviewBatch,
@@ -91,6 +92,29 @@ function updateJob(id: number, values: Partial<JobProgress>, runToken?: string) 
 }
 
 const handlers: Record<string, JobHandler> = {
+  /** AI 自动决策:整理报告的决策卡/候选/提醒由 AI 按管线阶段建议直接执行;
+   * 循环多轮直到清空或无进展(单轮各类上限 15,存量多时需多轮) */
+  autodecide: async (_payload, update, context) => {
+    const totals = { cardsResolved: 0, candidatesApproved: 0, remindersHandled: 0, skipped: 0, failed: 0 };
+    let round = 0;
+    let actionable = Infinity;
+    while (round < 8) {
+      context.signal.throwIfAborted();
+      round++;
+      update({ stage: `AI 自动决策中(第 ${round} 轮)`, progress: Math.min(90, round * 12), detail: `已处理 决策 ${totals.cardsResolved} · 入库 ${totals.candidatesApproved} · 提醒 ${totals.remindersHandled}` });
+      const stats = await runAutoDecideCycle(context.signal);
+      totals.cardsResolved += stats.cardsResolved;
+      totals.candidatesApproved += stats.candidatesApproved;
+      totals.remindersHandled += stats.remindersHandled;
+      totals.skipped += stats.skipped;
+      totals.failed += stats.failed;
+      actionable = (await import('./dream/reportCards.js')).buildReportsOverview().counts.actionable;
+      // 无进展(全是留人工项)或已清空则停止
+      if (actionable === 0 || (stats.cardsResolved + stats.candidatesApproved + stats.remindersHandled) === 0) break;
+    }
+    const summary = `决策卡 ${totals.cardsResolved} · 候选入库 ${totals.candidatesApproved} · 提醒 ${totals.remindersHandled} · 留人工 ${totals.skipped}${totals.failed ? ` · 失败 ${totals.failed}` : ''} · 剩余 ${Math.max(0, actionable)}`;
+    update({ stage: 'AI 自动决策已完成', progress: 100, detail: summary });
+  },
   embed: async ({ pageId }, _update, context) => {
     await indexPage(pageId, context.signal);
   },

@@ -109,6 +109,8 @@ export interface ReportsOverview {
   lastRun: string | null;
   cron: string;
   enabled: boolean;
+  /** 最近一次 AI 自动决策的统计(dream_auto_decide_last,无则为 null) */
+  lastAutoDecide: { at: string; cardsResolved: number; candidatesApproved: number; remindersHandled: number; skipped: number; failed: number } | null;
   decisions: DecisionCard[];
   pendingCandidates: PendingCandidateItem[];
   reminders: ReminderItem[];
@@ -510,10 +512,18 @@ export function buildReportsOverview(): ReportsOverview {
   }));
 
   const pendingCandidates = pendingCandidateList();
+  let lastAutoDecide: ReportsOverview['lastAutoDecide'] = null;
+  try {
+    const raw = getSetting('dream_auto_decide_last');
+    if (raw) lastAutoDecide = JSON.parse(raw);
+  } catch {
+    /* 历史数据损坏时忽略 */
+  }
   return {
     lastRun: getSetting('dream_last_run') || null,
     cron: getSetting('dream_cron') || '0 3 * * *',
     enabled: (getSetting('dream_enabled') ?? '1') !== '0',
+    lastAutoDecide,
     decisions,
     pendingCandidates,
     reminders,
