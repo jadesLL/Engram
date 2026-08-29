@@ -351,7 +351,21 @@ html .vditor-reset table tbody tr:nth-child(2n) {
 
 /* 移动端通用 */
 @media (max-width: 768px) {
-  :root { font-size: 14px; }
+  /* 0.875rem（默认等效 14px）而非固定 px：root 用相对单位，浏览器/系统字体设置调大时全局 rem 元素跟随放大 */
+  :root { font-size: 0.875rem; }
+
+  /* 正文字号跟随浏览器/系统字体设置：直接作用于 .vditor-reset（库样式对其固定 16px，
+   * 只改容器 .vditor-ir 会被子的显式 16px 盖住）。1.14rem 在 root 14px 基准下仍为 16px，
+   * 浏览器调大字号时等比放大。桌面端走下方 16px 固定规则（--root 16px 下 rem 基准相同） */
+  .vditor-ir, .vditor-wysiwyg, .vditor-sv,
+  .editor-area .vditor-reset { font-size: 1.14rem; }
+
+  /* 编辑卡片与页面融合：去边框+同色背景，正文底部不再有突兀的卡片截断线
+   * （!important 兜底：vditor 库样式随组件延迟注入，普通优先级存在被压风险） */
+  .editor-area .vditor-reset {
+    border-color: transparent !important;
+    background: var(--bg) !important;
+  }
 }
 
 /* 全局减弱动效偏好：所有过渡/动画瞬时完成（各组件无需再单独处理） */

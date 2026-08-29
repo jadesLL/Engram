@@ -1101,11 +1101,14 @@ onUnmounted(() => {
 }
 .editor-area :deep(.vditor-toolbar) { max-width: 100%; }
 
-/* 排版精修（Typora/Obsidian 风可读宽行，三种编辑模式统一） */
+/* 排版精修（Typora/Obsidian 风可读宽行，三种编辑模式统一）
+ * 正文用 rem：桌面 root 16px 时 1rem=16px 与原值一致；
+ * 手机端在 media query 里放大到 1.14rem（root 14px 基准下仍为 16px），
+ * 两端都随浏览器/系统字体设置等比缩放 */
 .editor-area :deep(.vditor-ir),
 .editor-area :deep(.vditor-wysiwyg),
 .editor-area :deep(.vditor-sv) {
-  font-size: 16px;
+  font-size: 1rem;
   line-height: 1.8;
   color: var(--text);
 }
