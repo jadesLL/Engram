@@ -1,11 +1,13 @@
 import { z } from 'zod';
-import { db, now } from '../lib/db.js';
+import { db, now, getSetting } from '../lib/db.js';
+import { enqueue } from '../jobQueue.js';
 import { llmReady } from '../lib/llm.js';
 import { runSemanticStage } from '../lib/semanticStage.js';
 import { readPage, readPageMeta } from '../lib/vault.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { runUpgrades } from '../pipeline/mentions.js';
 import { addReports } from './reports.js';
+import { autoDecideEnabled } from './autodecide.js';
 import { classifyEntityName, type EntityRosterEntry } from '../pipeline/entityAmbiguity.js';
 
 interface ReportItem { kind: string; payload: Record<string, any> }
@@ -554,6 +556,14 @@ export async function runDreamCycle(signal?: AbortSignal): Promise<Record<string
     );
   } catch {
     /* 日志失败不影响审计结果。 */
+  }
+  // 审计产出报告后,AI 按各阶段建议自动决策执行,不再等人工逐项处理(开关 dream_auto_decide)
+  if (autoDecideEnabled()) {
+    try {
+      enqueue('autodecide', { nonce: Date.now() });
+    } catch {
+      /* 入队失败不影响审计结果,报告仍可手动处理 */
+    }
   }
   return result;
 }

@@ -16,6 +16,7 @@ import { enqueue, enqueuePagePipeline } from './jobQueue.js';
 import { allPageContributions, finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
 import { recoverKnowledgeCommit } from './pipeline/knowledgeCommit.js';
 import { runDreamCycle } from './dream/tasks.js';
+import { runAutoDecideCycle } from './dream/autodecide.js';
 import { scanIdentityAmbiguityForPages } from './dream/tasks.js';
 import {
   applyCandidateReviewBatch,
@@ -91,6 +92,13 @@ function updateJob(id: number, values: Partial<JobProgress>, runToken?: string) 
 }
 
 const handlers: Record<string, JobHandler> = {
+  /** AI 自动决策:整理报告的决策卡/候选/提醒由 AI 按管线阶段建议直接执行 */
+  autodecide: async (_payload, update, context) => {
+    update({ stage: 'AI 自动决策中', progress: 10, detail: '按 AI 建议逐项处理报告' });
+    const stats = await runAutoDecideCycle(context.signal);
+    const summary = `决策卡 ${stats.cardsResolved} · 候选入库 ${stats.candidatesApproved} · 提醒 ${stats.remindersHandled} · 留人工 ${stats.skipped}${stats.failed ? ` · 失败 ${stats.failed}` : ''}`;
+    update({ stage: 'AI 自动决策已完成', progress: 100, detail: summary });
+  },
   embed: async ({ pageId }, _update, context) => {
     await indexPage(pageId, context.signal);
   },

@@ -2,12 +2,24 @@ import { FastifyInstance } from 'fastify';
 import { requireAuth } from './auth.js';
 import { buildReportsOverview } from '../dream/reportCards.js';
 import { decideReportGroup, reopenReport, DecideError } from '../dream/decide.js';
+import { autoDecideEnabled } from '../dream/autodecide.js';
+import { enqueue } from '../jobQueue.js';
 
 /** 新版整理报告:聚合概览 + 单个决策执行。旧 /api/dream/reports 接口保持不动。 */
 export async function reportRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
   app.get('/api/reports/overview', async () => buildReportsOverview());
+
+  /** AI 自动决策:按各管线阶段 AI 的建议直接执行决策卡/候选入库/提醒处理(后台任务) */
+  app.post('/api/reports/auto-decide', async (req, reply) => {
+    if (!autoDecideEnabled()) {
+      return reply.code(409).send({ error: 'AI 自动决策已在设置中关闭' });
+    }
+    const jobId = enqueue('autodecide', { nonce: Date.now() });
+    if (!jobId) return reply.code(409).send({ error: '任务无法入队,请稍后重试' });
+    return { ok: true, jobId };
+  });
 
   app.post('/api/reports/:id/decide', async (req, reply) => {
     const reportId = Number((req.params as { id: string }).id);
