@@ -99,6 +99,31 @@ jobs:
           echo ">> 构建产物："
           ls -la desktop-dist
 
+      - name: 构建 Android APK（Linux 容器内打包，签名密钥经环境变量注入）
+        shell: bash
+        env:
+          MSYS_NO_PATHCONV: '1'
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          cd main
+          # 镜像只准备构建环境（JDK + Android SDK + 源码），gradle 构建在 run 时执行，
+          # keystore 经容器环境变量注入，不进入镜像层
+          docker build -f mobile/Dockerfile.ci -t exampleproject-android-builder .
+          docker rm exampleproject-android-build > /dev/null 2>&1 || true
+          docker run --name exampleproject-android-build \
+            -e ANDROID_KEYSTORE_BASE64 -e ANDROID_KEYSTORE_PASSWORD \
+            -e ANDROID_KEY_ALIAS -e ANDROID_KEY_PASSWORD \
+            exampleproject-android-builder bash mobile/scripts/build-apk-ci.sh
+          mkdir -p ../mobile-apk-dist
+          docker cp "exampleproject-android-build:/work/mobile/android/app/build/outputs/apk/release/." ../mobile-apk-dist
+          docker rm exampleproject-android-build > /dev/null
+          cd ..
+          echo ">> 构建产物："
+          ls -la mobile-apk-dist
+
       - name: 整理发布产物并计算校验值
         shell: bash
         run: |
@@ -109,11 +134,22 @@ jobs:
             ls -la desktop-dist || true
             exit 1
           fi
+          # APK：优先取已签名产物，未配置签名时回退未签名包
+          APK=""
+          for f in "mobile-apk-dist/app-release.apk" "mobile-apk-dist/app-release-unsigned.apk"; do
+            if [ -f "$f" ]; then APK="$f"; break; fi
+          done
+          if [ -z "$APK" ]; then
+            echo "未找到 APK 产物"
+            ls -la mobile-apk-dist || true
+            exit 1
+          fi
           mkdir -p release-out
           cp "$EXE" "release-out/LLM Wiki Setup ${VER}.exe"
+          cp "$APK" "release-out/LLM Wiki ${VER}.apk"
           docker save "$IMAGE:$VER" | gzip > "release-out/example-wiki-${VER}.tar.gz"
           cd release-out
-          sha256sum "LLM Wiki Setup ${VER}.exe" "example-wiki-${VER}.tar.gz" > "sha256-${VER}.txt"
+          sha256sum "LLM Wiki Setup ${VER}.exe" "LLM Wiki ${VER}.apk" "example-wiki-${VER}.tar.gz" > "sha256-${VER}.txt"
           cat "sha256-${VER}.txt"
 
       - name: 上传构建产物（手动触发测试模式）

@@ -6,3 +6,9 @@ data-test
 desktop/src-tauri
 *.log
 .git
+# 安卓本地构建产物与签名配置（不进 docker 上下文）
+mobile/android/.gradle
+mobile/android/build
+mobile/android/app/build
+mobile/android/local.properties
+mobile/android/key.properties

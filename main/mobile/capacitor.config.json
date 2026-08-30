@@ -1,0 +1,12 @@
+{
+  "appId": "com.example.exampleproject",
+  "appName": "LLM Wiki",
+  "webDir": "www",
+  "server": {
+    "allowNavigation": ["*"],
+    "errorPath": "index.html?err=net"
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
