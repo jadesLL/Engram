@@ -8,6 +8,15 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.1.29（2026-08-30）
+
+CI 转绿 + 综合失败冷却修复：
+
+- **修复综合失败冷却从未生效（真 bug）**：启动补齐/自愈调度判断「失败/冲突页 1 小时冷却」时，把 ISO UTC 格式的 updated_at 当本地时间串拼接 'Z' 解析得到 NaN，冷却恒不生效——conflict/failed 页每次启动都被重排队、白烧 LLM 调用。改为 `Date.parse` 兼容 ISO 与旧本地格式，解析失败按刚失败处理（宁可冷却不重排）
+- **修复三处违反外键的测试插桩**：pageSynthesis/jobs 测试直插不存在的占位 page_id（`latest-page`/`zombie-page`），违反 page_syntheses 外键约束导致 CI 必挂，改为真实父页
+- **backfill 测试隔离**：补齐用例清空前序用例页的活跃贡献，消除异步任务时序导致的排队数浮动（此前 Windows 与 Linux CI 结果不一致的根因）
+- 以上合计使 main 分支 CI verify 自本版本起恢复全绿（Linux 容器同环境全量 556/556 通过）
+
 ## v1.1.28（2026-08-30）
 
 产品更名 Engram：
