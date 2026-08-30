@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      Android 15（API 35）对 targetSdk 35 强制 edge-to-edge：WebView 内容延伸到
+      系统 Navigation Bar 后面，web 端 fixed 底栏（bottom-nav / 编辑器工具栏）会被
+      导航条遮挡而无法点击（WebView 的 safe-area-inset 不可靠）。 opted out 后
+      WebView 视口回到导航条上方，与 targetSdk 34 行为一致。
+    -->
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:background">@null</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+
+</resources>

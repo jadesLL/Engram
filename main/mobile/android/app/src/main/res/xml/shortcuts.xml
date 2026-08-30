@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="select_server"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_select"
+        android:shortcutShortLabel="@string/shortcut_select_short"
+        android:shortcutLongLabel="@string/shortcut_select_long">
+        <intent
+            android:action="com.example.exampleproject.SELECT_SERVER"
+            android:targetPackage="com.example.exampleproject"
+            android:targetClass="com.example.exampleproject.MainActivity" />
+    </shortcut>
+</shortcuts>

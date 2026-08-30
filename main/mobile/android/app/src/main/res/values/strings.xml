@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">LLM Wiki</string>
+    <string name="title_activity_main">LLM Wiki</string>
+    <string name="package_name">com.example.exampleproject</string>
+    <string name="custom_url_scheme">com.example.exampleproject</string>
+    <string name="shortcut_select_short">切换服务器</string>
+    <string name="shortcut_select_long">更改服务器地址</string>
+</resources>

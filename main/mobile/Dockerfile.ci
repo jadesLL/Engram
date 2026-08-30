@@ -1,0 +1,46 @@
+# CI 环境构建 Android APK（Linux 容器内打包，产物 docker cp 拷出；与桌面端 Dockerfile.ci 同模式）
+# Windows runner 上不支持源码 bind mount，故 COPY 进镜像；实际 gradle 构建在 docker run 时
+# 执行（签名密钥经容器环境变量注入，不进入镜像层）。
+#
+# 构建上下文为 main/ 目录：
+#   docker build -f mobile/Dockerfile.ci -t exampleproject-android-builder .
+# 运行构建（keystore secrets 可选；缺省时产出未签名 release APK）：
+#   docker run --name exampleproject-android-build \
+#     -e ANDROID_KEYSTORE_BASE64 -e ANDROID_KEYSTORE_PASSWORD -e ANDROID_KEY_ALIAS -e ANDROID_KEY_PASSWORD \
+#     exampleproject-android-builder bash mobile/scripts/build-apk-ci.sh
+# 拷出产物（app-release.apk 或 app-release-unsigned.apk）：
+#   docker cp exampleproject-android-build:/work/mobile/android/app/build/outputs/apk/release/. <输出目录>
+#   docker rm exampleproject-android-build
+# 基础镜像走加速域名镜像源（runner 网络无法直连 Docker Hub，2026-08 起 xuanyuan.run）
+# trixie 变体：apt 自带 OpenJDK 21（Capacitor 7.6 要求 Java 21 源级别，bookworm 只有 17）
+FROM v8a3htyccucd1ri7q2.xuanyuan.run/library/node:22-trixie
+
+ENV ANDROID_HOME=/opt/android-sdk \
+    JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
+    npm_config_registry=https://registry.npmmirror.com
+
+# JDK 21（Capacitor 7.6 / AGP 8.7 要求）
+# deb.debian.org 直连不稳（大索引下载频繁断连），换阿里云镜像源
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    || sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openjdk-21-jdk-headless unzip curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Android cmdline-tools + SDK 组件（API 35；runner 联网下载属既定流程）
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
+    && curl -sSL -o /tmp/clt.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+    && unzip -q /tmp/clt.zip -d ${ANDROID_HOME}/cmdline-tools \
+    && mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
+    && rm /tmp/clt.zip \
+    && yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null \
+    && ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+WORKDIR /work
+
+# 先只复制依赖清单安装依赖（依赖清单不变时命中层缓存）
+COPY mobile/package.json mobile/pnpm-lock.yaml ./mobile/
+RUN cd mobile && npm install -g pnpm@10 && pnpm install --ignore-workspace
+
+# 再复制全部源码（cap sync 与 gradle 构建在 docker run 时执行）
+COPY . .
