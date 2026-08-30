@@ -8,6 +8,16 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.1.27（2026-08-30）
+
+安卓 APP 版本：
+
+- **Android APP（远程客户端）**：新增 `main/mobile/` Capacitor 原生壳，直连已部署的 ExampleProject 服务器（NAS Docker 或任意自建实例），复用移动端深度适配的 Web 界面；服务端零改动。首启填服务器地址后自动直连，httpOnly Cookie 长期保持登录；服务器不可达时自动弹回连接页并提示，恢复后一键重连不丢登录态；长按桌面图标快捷方式「切换服务器」；返回键在网页内后退、顶层退到后台保留状态；附件/原始资料「下载」走系统下载管理器——自动携带登录 Cookie、正确还原 UTF-8 中文文件名（修复 URLUtil 把文件名存成 raw.bin 的问题）、完成后系统通知；页面/编辑/AI 助手/知识图谱等全部功能在 WebView 内可用，键盘弹出不遮挡输入区
+- **版本号自动对齐**：APP versionName/versionCode 构建时自动解析 desktop/package.json 的版本（1.1.27 / 1001027），日常 bump 无需单独维护安卓版本
+- **CI 发版接入**：打 `v*` 标签时 release.yml 在 Linux 容器内自动构建 APK（Node 22 + JDK 21 + Android SDK 35 镜像，cap sync + gradle），签名密钥经仓库 secrets 注入（`ANDROID_KEYSTORE_*`），产物 `LLM Wiki <版本>.apk` 随 Gitea Release 发布并计入 sha256 校验文件；未配置签名时自动回退未签名包
+- **修复 Android 15 底栏遮挡**：targetSdk 35 触发系统强制 edge-to-edge，WebView 内容延伸到导航条后导致移动端底栏（页面/搜索/新建/AI/更多）与编辑器工具栏无法点击——已在 API 35+ 主题 opt-out 恢复常规布局，真机/模拟器一致
+- 允许 http 明文连接（家庭局域网自建场景）；自签名 HTTPS 不做证书豁免；环境搭建、本地打包与签名说明见 `main/docs/ANDROID.md`
+
 ## v1.1.26（2026-08-29）
 
 AI 自动整理决策版本：
