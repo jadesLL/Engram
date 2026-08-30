@@ -23,9 +23,9 @@ test('switcher 内联脚本语法正确（node --check）', () => {
 });
 
 test('switcher 脚本引用注入的环境变量且不含镜像内路径依赖', () => {
-  assert.ok(SWITCHER_SCRIPT.includes('WIKILLM_UPDATE_OLD_ID'));
-  assert.ok(SWITCHER_SCRIPT.includes('WIKILLM_UPDATE_NEW_ID'));
-  assert.ok(SWITCHER_SCRIPT.includes('WIKILLM_UPDATE_NAME'), '回滚还原容器名所需的原名变量');
+  assert.ok(SWITCHER_SCRIPT.includes('ENGRAM_UPDATE_OLD_ID'));
+  assert.ok(SWITCHER_SCRIPT.includes('ENGRAM_UPDATE_NEW_ID'));
+  assert.ok(SWITCHER_SCRIPT.includes('ENGRAM_UPDATE_NAME'), '回滚还原容器名所需的原名变量');
   assert.ok(SWITCHER_SCRIPT.includes('/var/run/docker.sock'));
   // 回滚路径存在且会 rename 回原名
   assert.ok(SWITCHER_SCRIPT.includes('rolling back'));
@@ -78,7 +78,7 @@ test('buildSwitcherCreateBody 用目标镜像 + sock + AutoRemove', () => {
   assert.equal(body.HostConfig.NetworkMode, 'none');
   assert.equal(body.HostConfig.AutoRemove, true);
   assert.deepEqual(body.HostConfig.Binds, ['/var/run/docker.sock:/var/run/docker.sock']);
-  assert.ok(String(body.Cmd[2]).includes('WIKILLM_UPDATE_OLD_ID'));
+  assert.ok(String(body.Cmd[2]).includes('ENGRAM_UPDATE_OLD_ID'));
 });
 
 test('deriveDefaultImageRef 推导规则', () => {

@@ -22,7 +22,7 @@ try {
   /* 迁移失败不阻断启动：新目录为空时等价于首次使用 */
 }
 
-// 默认 18180 避开 Docker 版的 18080；用户本机若同时跑 Docker example-wiki(18080) 与 desktop，
+// 默认 18180 避开 Docker 版的 18080；用户本机若同时跑 Docker engram(18080) 与 desktop，
 // 两者互不抢占端口、可共存。
 const LOCAL_PORT = 18180;
 const HEALTH_TIMEOUT_MS = 30000;

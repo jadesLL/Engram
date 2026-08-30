@@ -125,7 +125,7 @@ fi
 run_main_checks_in_docker() {
   local revision verify_image
   revision="$(git -C "$WIKILLM_REPO_ROOT" rev-parse --short=12 HEAD)"
-  verify_image="example-wiki:pre-$revision"
+  verify_image="engram:pre-$revision"
 
   if docker image inspect "$verify_image" >/dev/null 2>&1; then
     docker image rm "$verify_image" >/dev/null
@@ -160,16 +160,16 @@ run_main_checks_in_docker
 deploy_main() {
   local revision image compose_project="main" app_project="" office_project="" compose_args
   revision="$(git -C "$WIKILLM_REPO_ROOT" rev-parse --short=12 HEAD)"
-  image="example-wiki:main-$revision"
-  if docker container inspect example-wiki-onlyoffice >/dev/null 2>&1; then
+  image="engram:main-$revision"
+  if docker container inspect engram-onlyoffice >/dev/null 2>&1; then
     office_project="$(
-      docker container inspect example-wiki-onlyoffice \
+      docker container inspect engram-onlyoffice \
         --format '{{index .Config.Labels "com.docker.compose.project"}}'
     )"
   fi
-  if docker container inspect example-wiki >/dev/null 2>&1; then
+  if docker container inspect engram >/dev/null 2>&1; then
     app_project="$(
-      docker container inspect example-wiki \
+      docker container inspect engram \
         --format '{{index .Config.Labels "com.docker.compose.project"}}'
     )"
   fi
@@ -192,7 +192,7 @@ deploy_main() {
     --label "org.opencontainers.image.revision=$revision" \
     --label "org.opencontainers.image.source=local-main" \
     --tag "$image" \
-    --tag example-wiki:local-current \
+    --tag engram:local-current \
     "$WIKILLM_MAIN_DIR"
   then
     exampleproject_explain_offline_build_failure
@@ -201,7 +201,7 @@ deploy_main() {
         "$WIKILLM_MAIN_DIR" \
         "$image" \
         "$revision" \
-        example-wiki:local-current
+        engram:local-current
     then
       exampleproject_log ">> Docker 缓存不足，已改用共享 pnpm 生成离线主镜像"
     else
@@ -209,17 +209,17 @@ deploy_main() {
     fi
   fi
 
-  if docker ps --format '{{.Names}}' | grep -Fx example-wiki-onlyoffice >/dev/null; then
-    docker exec example-wiki-onlyoffice documentserver-prepare4shutdown.sh >/dev/null 2>&1 || \
+  if docker ps --format '{{.Names}}' | grep -Fx engram-onlyoffice >/dev/null; then
+    docker exec engram-onlyoffice documentserver-prepare4shutdown.sh >/dev/null 2>&1 || \
       exampleproject_log "   WARN: ONLYOFFICE 未响应优雅关闭请求，继续由 Compose 重启"
     docker compose "${compose_args[@]}" stop onlyoffice
   fi
-  if docker container inspect example-wiki >/dev/null 2>&1 &&
+  if docker container inspect engram >/dev/null 2>&1 &&
     [ -n "$app_project" ] &&
     [ "$app_project" != "$compose_project" ]
   then
     exampleproject_log ">> 应用容器属于 Compose 项目 $app_project，改由 $compose_project 接管"
-    docker container rm -f example-wiki >/dev/null
+    docker container rm -f engram >/dev/null
   fi
 
   exampleproject_log ">> 部署主环境（Compose project=$compose_project）"

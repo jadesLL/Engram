@@ -18,7 +18,7 @@ export const PORT = Number(process.env.PORT || 8080);
 export const HOST = process.env.HOST || '0.0.0.0';
 export const OFFICE_EDITOR_ENABLED = process.env.OFFICE_EDITOR_ENABLED !== 'false';
 export const OFFICE_INTERNAL_URL = process.env.OFFICE_INTERNAL_URL || 'http://onlyoffice';
-export const OFFICE_INTERNAL_APP_URL = process.env.OFFICE_INTERNAL_APP_URL || 'http://example-wiki:8080';
+export const OFFICE_INTERNAL_APP_URL = process.env.OFFICE_INTERNAL_APP_URL || 'http://engram:8080';
 export const OFFICE_PUBLIC_PATH = normalizePublicPath(process.env.OFFICE_PUBLIC_PATH || '/onlyoffice/');
 export const OFFICE_INSTANCE_ID = process.env.OFFICE_INSTANCE_ID || 'main';
 export const OFFICE_JWT_SECRET = process.env.ONLYOFFICE_JWT_SECRET || '';

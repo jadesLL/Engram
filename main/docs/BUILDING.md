@@ -74,7 +74,7 @@ workflow 会在构建前自动校验以下内容，**任何一条不满足直接
 |---|---|---|
 | `main/desktop/package.json` | `"version"` 字段 | 版本号权威来源（CI 硬校验） |
 | `main/web/src/version.ts` | `APP_VERSION` | 软件内页面显示的版本号 |
-| `main/docker-compose.yml` | `image: example-wiki:<版本>` | 本地开发 compose 的镜像 tag |
+| `main/docker-compose.yml` | `image: engram:<版本>` | 本地开发 compose 的镜像 tag |
 
 ---
 
@@ -138,7 +138,7 @@ git push gitea v<版本>              # release.yml 启动
 
 ```bash
 cd main
-docker build -t example-wiki:<版本> .
+docker build -t engram:<版本> .
 ```
 
 `main/Dockerfile` 是多阶段构建：`build`（装依赖 + 编译 server/web + 写入 `/app/VERSION`）→ `deps`（生产依赖 + better-sqlite3 原生编译）→ `test` / `verify`（跑测试，CI 用）→ 最终运行时镜像（`node:22-slim`，`CMD node dist/index.js`，暴露 8080，数据卷 `/data`）。
@@ -146,8 +146,8 @@ docker build -t example-wiki:<版本> .
 只想验证代码而不出镜像时，可以只构建 verify 阶段（typecheck + test 在 `docker build` 期间执行，失败即构建失败）：
 
 ```bash
-docker build --target verify -t example-wiki:verify .
-docker run --rm example-wiki:verify     # 打印 Engram verification passed 即全部通过
+docker build --target verify -t engram:verify .
+docker run --rm engram:verify     # 打印 Engram verification passed 即全部通过
 ```
 
 ### 4.2 构建 Windows 安装包（wine 容器交叉打包）
@@ -274,7 +274,7 @@ Docker 部署在网页「设置 → 软件更新」一键更新（拉 latest 镜
   1. 同步 bump 三处版本号：
      main/desktop/package.json 的 "version"
      main/web/src/version.ts 的 APP_VERSION
-     main/docker-compose.yml 的 image: example-wiki:<版本>
+     main/docker-compose.yml 的 image: engram:<版本>
   2. CHANGELOG.md 顶部新增 "## v<版本>（YYYY-MM-DD）" 段落，写入全部新功能
   3. git commit + git push gitea main → 等 ci.yml（verify）全绿
   4. git tag v<版本> && git push gitea v<版本>
@@ -297,7 +297,7 @@ Docker 部署在网页「设置 → 软件更新」一键更新（拉 latest 镜
   · docker version 正常（Windows 需 Docker Desktop 已启动）
   · 能访问 docker.m.daocloud.io 与 registry.npmmirror.com（国内源）
 命令序列：
-  · 服务端镜像：cd main && docker build -t example-wiki:<版本> .
+  · 服务端镜像：cd main && docker build -t engram:<版本> .
   · Windows 安装包：
       cd main
       docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .

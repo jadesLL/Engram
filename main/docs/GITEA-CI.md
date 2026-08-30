@@ -61,7 +61,7 @@ docker compose -f docker-compose.pull.yml up -d
 
 ### 一次性引导（Docker 部署机）
 
-在 `docker-compose.pull.yml` 的 example-wiki 服务 volumes 中确认有 docker.sock 挂载（模板已内置）：
+在 `docker-compose.pull.yml` 的 engram 服务 volumes 中确认有 docker.sock 挂载（模板已内置）：
 
 ```yaml
     volumes:
@@ -88,9 +88,9 @@ docker compose -f docker-compose.pull.yml up -d
 ### 更新流程与安全机制
 
 - **检查更新**：比对 Gitea 最新 Release 版本号 + Registry `latest` digest（两者取或）。进入应用时自动检测一次（8 小时节流），有新版本时侧栏设置按钮出现红点并 toast 提醒。
-- **一键更新（Docker）**：拉取 `latest` 镜像 → 用旧镜像临时起 switcher 容器接管 → 旧容器改名 `example-wiki-old` → 按原容器配置（端口/卷/网络/环境变量全保留）创建新容器 → 停旧起新 → 等新容器健康（最长 180s）→ 健康则删旧容器；**新容器起不来则自动回滚**重启旧容器。
+- **一键更新（Docker）**：拉取 `latest` 镜像 → 用旧镜像临时起 switcher 容器接管 → 旧容器改名 `engram-old` → 按原容器配置（端口/卷/网络/环境变量全保留）创建新容器 → 停旧起新 → 等新容器健康（最长 180s）→ 健康则删旧容器；**新容器起不来则自动回滚**重启旧容器。
 - **桌面端更新**：设置页下载 Release 的 exe 安装包（带进度条）→ 运行安装包覆盖安装，应用自动退出。
-- 手动恢复（极端情况 switcher 也失败）：`docker start example-wiki-old`，然后浏览器刷新。
+- 手动恢复（极端情况 switcher 也失败）：`docker start engram-old`，然后浏览器刷新。
 
 ### 安全说明
 

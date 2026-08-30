@@ -141,13 +141,13 @@ export function writeUpdateEnv(patch: Partial<UpdateEnv>): UpdateEnv {
 /**
  * 从当前运行容器的镜像 ref 推导默认更新源：
  * `registry/repo:tag` → `registry/repo`（tag 固定用 latest 跟踪发版线）。
- * 本地构建镜像（如 example-wiki:1.1.5，无 registry 前缀）无法推导，返回 null。
+ * 本地构建镜像（如 engram:1.1.5，无 registry 前缀）无法推导，返回 null。
  */
 export function deriveDefaultImageRef(currentImage: string): string | null {
   const ref = currentImage.split('@')[0];
   const lastSlash = ref.lastIndexOf('/');
   const lastColon = ref.lastIndexOf(':');
-  // 无斜杠 = 本地镜像名（如 example-wiki:1.1.5），没有 registry 主机可推导
+  // 无斜杠 = 本地镜像名（如 engram:1.1.5），没有 registry 主机可推导
   if (lastSlash <= 0) return null;
   // 冒号在最后一个斜杠之后才是 tag；否则（如 registry:5000/repo）无 tag
   if (lastColon > lastSlash) {

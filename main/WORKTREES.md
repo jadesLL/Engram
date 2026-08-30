@@ -242,9 +242,9 @@ bash main/scripts/cleanup-feature.sh example-feature
 
 脚本删除后会重新查询 Git 和 Docker。只要 worktree、分支、容器、镜像、数据卷或网络仍有一项残留，就必须非零退出，并将任务报告为“清理失败/尚未完成”，不得打印或汇报“已清理”。
 
-部署成功后，合并脚本还会删除未被任何容器引用的旧 `example-wiki:main-*`、`example-wiki:pre-*` 和历史提交号镜像标签，只保留当前主提交镜像。以下资源不属于功能清理范围：
+部署成功后，合并脚本还会删除未被任何容器引用的旧 `engram:main-*`、`engram:pre-*` 和历史提交号镜像标签，只保留当前主提交镜像。以下资源不属于功能清理范围：
 
-- 当前 `example-wiki` 主容器、`example-wiki-data` 主数据卷和主环境网络；
+- 当前 `engram` 主容器、主环境数据 bind mount（main/data）和主环境网络；
 - 当前主提交镜像；
 - 仍被其他容器引用的镜像；
 - `node`、ONLYOFFICE 等共享基础镜像和共享主环境数据。

@@ -55,7 +55,7 @@ export interface DockerPullEvent {
 }
 
 /** host 网络探针容器固定名（启动前清理同名残留） */
-export const NET_PROBE_CONTAINER_NAME = 'example-wiki-net-probe';
+export const NET_PROBE_CONTAINER_NAME = 'engram-net-probe';
 
 /** 探针内执行的 node 单行脚本：fetch 目标 URL，单行 JSON 输出到 stdout。
  *  错误取 cause 链（undici 把网络故障包成 fetch failed，根因在 cause）。 */
@@ -292,7 +292,7 @@ export const docker = {
           `ENGRAM_PROBE_AUTH=${opts.authorization || ''}`,
         ],
         Tty: true,
-        Labels: { 'com.exampleproject.net-probe': 'true' },
+        Labels: { 'com.engram.net-probe': 'true' },
         HostConfig: { NetworkMode: 'host' },
       },
       NET_PROBE_CONTAINER_NAME,
