@@ -4,9 +4,9 @@ services:
     build: .
     container_name: engram
     ports:
+      # 唯一对外映射；Cloudflare Tunnel ingress（systemprofile cloudflared config.yml）
+      # 已指向 http://localhost:18080，公网经 wiki.example.com 进来，无需 8080 桥接
       - "18080:8080"
-      # Cloudflare Tunnel 仍指向 localhost:8080，此映射作桥接；隧道改指 18080 后可删
-      - "8080:8080"
     volumes:
       # 知识库全部数据（markdown 页面 + 附件 + SQLite 索引）都在这个目录
       - ./data:/data
