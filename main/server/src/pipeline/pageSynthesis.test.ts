@@ -360,6 +360,9 @@ test('backfill queues synthesizable pages including customer/place/work/other en
   // 旧类型清单只查 person/project/org/concept，customer 等四类实体页永远不会被补齐
   const page = createPage('Wiki/实体', '补齐客户');
   writePage(page.path, '# 补齐客户\n', { type: 'customer' });
+  // 隔离：清掉前序用例页的活跃贡献，backfill 候选只含本用例新页
+  //（前序页的综合状态随异步任务时序浮动，不能作为本断言的固定前提）
+  db.prepare('DELETE FROM page_contributions').run();
   addSource(page.id, '原始资料/补齐客户来源.md', 'backfill-run-1', 'hash-b1', [
     { id: 'bf1', statement: '补齐客户是重点客户。' },
   ]);
@@ -398,11 +401,11 @@ test('pageEvidenceResponse reports latestSynthesis so the UI can distinguish fai
     { id: 'bf3', statement: '最新综合状态实体负责状态展示。' },
   ]);
   // 造一行 conflict：latestSynthesis 应带出 failed/conflict 状态供前端区分
+  //（page_syntheses.page_id 有外键约束，直接用真实 page_id 插入）
   db.prepare(
     `INSERT INTO page_syntheses(id,page_id,input_hash,evidence_hash,status,error,created_at,updated_at)
-     VALUES('syn-latest','latest-page','hash-l','ev-l','conflict','引用证据不足',?,?)`
-  ).run(now(), now());
-  db.prepare(`UPDATE page_syntheses SET page_id=? WHERE id='syn-latest'`).run(page.id);
+     VALUES('syn-latest',?,'hash-l','ev-l','conflict','引用证据不足',?,?)`
+  ).run(page.id, now(), now());
 
   const response = pageEvidenceResponse(page.id);
   assert.ok(response);

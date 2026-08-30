@@ -810,7 +810,10 @@ export function queuePageRecompose(
     // 狂调 LLM 并密集同步写 DB 拖垮事件循环。force 可绕过冷却。
     if ((existing?.status === 'failed' || existing?.status === 'conflict') && existing.updated_at) {
       const cooldownMs = SYNTHESIS_FAILURE_COOLDOWN_MS;
-      const elapsed = Date.now() - new Date(existing.updated_at.replace(' ', 'T') + 'Z').getTime();
+      // now() 是 ISO UTC（2026-08-30T05:20:00.123Z），历史行可能是本地 'YYYY-MM-DD HH:mm:ss'：
+      // Date.parse 对两者都能得到正确时刻；解析失败按“刚失败”处理，宁可冷却不重排。
+      const failedAt = Date.parse(existing.updated_at);
+      const elapsed = Number.isNaN(failedAt) ? 0 : Date.now() - failedAt;
       if (elapsed < cooldownMs) return existing.id;
     }
   }
