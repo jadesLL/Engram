@@ -8,6 +8,16 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.1.28（2026-08-30）
+
+产品更名 Engram：
+
+- **产品更名 ExampleProject → Engram**（engram＝记忆痕迹）：全端显示名统一为 Engram——Web 标题/登录页/欢迎页、桌面端窗口与安装包（`Engram Setup <版本>.exe`）、安卓 APP 名、服务端提示词、MCP 服务名（`claude mcp add --transport http engram ...`）；npm 包 `@example-wiki/*` → `@engram/*`；Gitea 仓库同步改名 `example/Engram`（旧地址自动重定向），Docker 镜像路径更改为三层 `example/engram/engram:<版本>`
+- **全新品牌图标「E 痕迹标志」**：字母 E 由三条圆角痕迹构成、末端各带一枚发光触点（呼应知识图谱节点）；安卓 launcher（方形/圆形/自适应前景）、启动屏、桌面端 icon.png、浏览器 favicon、应用内字母 logo（登录页/侧栏/欢迎页/桌面启动页）全部换新
+- **桌面端更名数据迁移**：Electron userData 目录随 productName 变化，新版首次启动自动把旧 `%APPDATA%\LLM Wiki` 目录一次性迁移，本地模式数据与连接配置无损延续；内嵌 server 环境变量 `WIKILLM_WEB_DIST/APP_VERSION/PROBE_*` 更名 `ENGRAM_*`
+- **兼容性保留**：自更新流程内部契约（`WIKILLM_UPDATE_*`、`com.exampleproject.*` 标签）、部署侧容器/数据卷名（`example-wiki`）、安卓包名 `com.example.exampleproject`（覆盖升级不重装不丢登录）保持不变
+- **发版后注意**：已部署实例请在「设置 → 软件更新」把远端仓库地址改为 `example/Engram`；NAS 拉取部署请拉取新代码获取 pull compose 的新镜像路径
+
 ## v1.1.27（2026-08-30）
 
 安卓 APP 版本：
