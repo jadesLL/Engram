@@ -1,6 +1,6 @@
 # Engram 工作区入口
 
-> 产品更名：**Engram**（2026-08，原名 ExampleProject）。本地检出目录仍为 `ExampleProject/`，Gitea 仓库与镜像路径改用 `engram`。部署侧运行时标识（容器名 `example-wiki`、数据卷、`com.exampleproject.*` 标签、worktree 脚本命名）保持不变，以兼容现有环境与跨版本自更新契约。
+> 产品更名：**Engram**（2026-08，原名 ExampleProject）。本地检出目录仍为 `ExampleProject/`，Gitea 仓库与镜像路径改用 `engram`。运行时容器/服务已改名 `engram`（ONLYOFFICE 容器 `engram-onlyoffice`，自更新临时容器 `engram-update-switcher`/`engram-old`/`engram-net-probe`，环境变量 `ENGRAM_UPDATE_*`/`ENGRAM_PROBE_*`）；ONLYOFFICE 数据卷名 `example-wiki-onlyoffice-*` 保留（Docker 卷不可改名，改名即丢数据）；worktree 生命周期基建命名（`example-wiki:<feature>`、`com.exampleproject.feature` 标签）暂保留，待在途 worktree 清理后统一。
 
 Git 工作目录位于当前 `ExampleProject/` 目录，使用以下布局：
 

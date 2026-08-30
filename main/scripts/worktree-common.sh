@@ -230,15 +230,15 @@ exampleproject_run_local_offline_verification() {
 exampleproject_current_main_image() {
   local base_image=""
 
-  if docker container inspect example-wiki >/dev/null 2>&1; then
+  if docker container inspect engram >/dev/null 2>&1; then
     base_image="$(
-      docker container inspect example-wiki --format '{{.Config.Image}}'
+      docker container inspect engram --format '{{.Config.Image}}'
     )"
   fi
   if [ -z "$base_image" ] || ! docker image inspect "$base_image" >/dev/null 2>&1; then
     base_image="$(
       docker image ls \
-        --filter 'reference=example-wiki:main-*' \
+        --filter 'reference=engram:main-*' \
         --format '{{.Repository}}:{{.Tag}}' |
         head -n 1
     )"
@@ -855,14 +855,14 @@ exampleproject_cleanup_old_main_images() {
   exampleproject_require_docker
 
   local current_tag current_image_id failed=0
-  current_tag="example-wiki:main-$(git -C "$WIKILLM_REPO_ROOT" rev-parse --short=12 HEAD)"
-  current_image_id="$(docker inspect example-wiki --format '{{.Image}}' 2>/dev/null || true)"
-  [ -n "$current_image_id" ] || exampleproject_die "主容器 example-wiki 不存在，无法判断应保留的主镜像"
+  current_tag="engram:main-$(git -C "$WIKILLM_REPO_ROOT" rev-parse --short=12 HEAD)"
+  current_image_id="$(docker inspect engram --format '{{.Image}}' 2>/dev/null || true)"
+  [ -n "$current_image_id" ] || exampleproject_die "主容器 engram 不存在，无法判断应保留的主镜像"
 
   exampleproject_log ">> 清理未被容器引用的旧主镜像"
   local repository tag image_ref image_id
   while IFS='|' read -r repository tag; do
-    [ "$repository" = "example-wiki" ] || continue
+    [ "$repository" = "engram" ] || continue
     if [[ "$tag" != main-* && "$tag" != pre-* && ! "$tag" =~ ^[0-9a-f]{7,40}$ ]]; then
       continue
     fi

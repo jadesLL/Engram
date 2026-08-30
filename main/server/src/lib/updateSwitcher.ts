@@ -10,9 +10,9 @@ import type { DockerInspectContainer } from './dockerSocket.js';
 export const SWITCHER_SCRIPT = `
 const http = require('http');
 const SOCK = '/var/run/docker.sock';
-const OLD_ID = process.env.WIKILLM_UPDATE_OLD_ID;
-const NEW_ID = process.env.WIKILLM_UPDATE_NEW_ID;
-const NAME = process.env.WIKILLM_UPDATE_NAME;
+const OLD_ID = process.env.ENGRAM_UPDATE_OLD_ID;
+const NEW_ID = process.env.ENGRAM_UPDATE_NEW_ID;
+const NAME = process.env.ENGRAM_UPDATE_NAME;
 
 function api(method, path) {
   return new Promise((resolve, reject) => {
@@ -51,8 +51,8 @@ async function waitHealthy(id, timeoutMs) {
 
 async function rollback() {
   await api('POST', '/containers/' + OLD_ID + '/start');
-  // 回滚后把容器名还原（此刻它叫 example-wiki-old），保持下次更新的连续性
-  if (NAME && NAME !== 'example-wiki-old') {
+  // 回滚后把容器名还原（此刻它叫 engram-old），保持下次更新的连续性
+  if (NAME && NAME !== 'engram-old') {
     await api('POST', '/containers/' + OLD_ID + '/rename?name=' + encodeURIComponent(NAME));
   }
 }
@@ -81,13 +81,13 @@ main().catch(async (e) => {
 });
 `.trim();
 
-export const SWITCHER_CONTAINER_NAME = 'example-wiki-update-switcher';
-export const OLD_CONTAINER_NAME = 'example-wiki-old';
+export const SWITCHER_CONTAINER_NAME = 'engram-update-switcher';
+export const OLD_CONTAINER_NAME = 'engram-old';
 
 /**
  * 由旧容器 inspect 结果构造新容器的 create 请求体：
  * 原样复制 Env/Cmd/Labels/Healthcheck 与全部 HostConfig（端口/卷/restart/sysctls/网络），
- * 镜像换成目标 ref；保留网络别名（OnlyOffice 经 http://example-wiki:8080 访问依赖别名）。
+ * 镜像换成目标 ref；保留网络别名（OnlyOffice 经 http://engram:8080 访问依赖别名）。
  * 容器名经 createContainer 的 query 参数传递（保持原名，避免随机名断掉内网互访）。
  * Hostname 不复制——Docker 会按新容器 ID 分配，恰好是服务端下次自定位所需的默认行为。
  */
@@ -141,11 +141,11 @@ export function buildSwitcherCreateBody(
     Image: imageRef,
     Cmd: ['node', '-e', SWITCHER_SCRIPT],
     Env: [
-      `WIKILLM_UPDATE_OLD_ID=${oldContainerId}`,
-      `WIKILLM_UPDATE_NEW_ID=${newContainerId}`,
-      `WIKILLM_UPDATE_NAME=${containerName}`,
+      `ENGRAM_UPDATE_OLD_ID=${oldContainerId}`,
+      `ENGRAM_UPDATE_NEW_ID=${newContainerId}`,
+      `ENGRAM_UPDATE_NAME=${containerName}`,
     ],
-    Labels: { 'com.exampleproject.update-switcher': 'true' },
+    Labels: { 'com.engram.update-switcher': 'true' },
     HostConfig: {
       Binds: ['/var/run/docker.sock:/var/run/docker.sock'],
       NetworkMode: 'none',

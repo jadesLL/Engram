@@ -22,7 +22,7 @@
       <!-- 环境不支持：未挂 sock -->
       <div v-else-if="!state.supported" class="integration-note">
         当前服务器未挂载 Docker socket，无法在网页内自动更新。请编辑服务器上的
-        <code>docker-compose.pull.yml</code>，在 example-wiki 服务的 volumes 增加一行
+        <code>docker-compose.pull.yml</code>，在 engram 服务的 volumes 增加一行
         <code>- /var/run/docker.sock:/var/run/docker.sock</code>，然后执行
         <code>docker compose -f docker-compose.pull.yml up -d</code> 重新创建容器，之后即可在此页一键更新。
       </div>
@@ -66,7 +66,7 @@
         </div>
         <p v-if="healthTimeout" class="setting-message err">
           服务长时间未恢复。若更新失败，旧容器已自动回滚；仍无法访问时请在服务器执行
-          <code>docker start example-wiki-old</code> 手动恢复，然后刷新本页。
+          <code>docker start engram-old</code> 手动恢复，然后刷新本页。
         </p>
       </template>
     </div>

@@ -1,8 +1,8 @@
 services:
-  example-wiki:
-    image: example-wiki:1.1.29
+  engram:
+    image: engram:1.1.29
     build: .
-    container_name: example-wiki
+    container_name: engram
     ports:
       - "18080:8080"
       # Cloudflare Tunnel 仍指向 localhost:8080，此映射作桥接；隧道改指 18080 后可删
@@ -18,7 +18,7 @@ services:
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
       - OFFICE_EDITOR_ENABLED=true
       - OFFICE_INTERNAL_URL=http://onlyoffice
-      - OFFICE_INTERNAL_APP_URL=http://example-wiki:8080
+      - OFFICE_INTERNAL_APP_URL=http://engram:8080
       - OFFICE_PUBLIC_PATH=/onlyoffice/
       - OFFICE_INSTANCE_ID=main
     restart: unless-stopped
@@ -35,7 +35,7 @@ services:
 
   onlyoffice:
     image: onlyoffice/documentserver:9.4.0
-    container_name: example-wiki-onlyoffice
+    container_name: engram-onlyoffice
     expose:
       - "80"
     env_file:

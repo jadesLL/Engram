@@ -3,10 +3,10 @@
 # 因此改用命名卷 example-wiki-data 持久化数据。该卷已含最新权威数据（wiki.db + brain）。
 # 用法：docker compose -f docker-compose.unc.yml up -d --build
 services:
-  example-wiki:
+  engram:
     image: example-wiki:0.1.0
     build: .
-    container_name: example-wiki
+    container_name: engram
     ports:
       - "8080:8080"
     volumes:
@@ -19,7 +19,7 @@ services:
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
       - OFFICE_EDITOR_ENABLED=true
       - OFFICE_INTERNAL_URL=http://onlyoffice
-      - OFFICE_INTERNAL_APP_URL=http://example-wiki:8080
+      - OFFICE_INTERNAL_APP_URL=http://engram:8080
       - OFFICE_PUBLIC_PATH=/onlyoffice/
       - OFFICE_INSTANCE_ID=main
     restart: unless-stopped
@@ -36,7 +36,7 @@ services:
 
   onlyoffice:
     image: onlyoffice/documentserver:9.4.0
-    container_name: example-wiki-onlyoffice
+    container_name: engram-onlyoffice
     expose:
       - "80"
     env_file:
