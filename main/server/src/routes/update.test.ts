@@ -56,11 +56,11 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
     headers: { authorization: `Bearer ${token}` },
     payload: {
       giteaUrl: 'https://gitea.example.com/',
-      giteaRepo: 'example/ExampleProject',
+      giteaRepo: 'example/Engram',
       giteaAuthType: 'password',
       giteaUsername: 'example',
       giteaPassword: 'repo-pass-1',
-      imageRef: 'registry.example.com/example-wiki',
+      imageRef: 'registry.example.com/engram',
       registryUsername: 'example',
       registryToken: 'secret-token-2',
     },
@@ -117,7 +117,7 @@ test('POST /api/update/check 未配置远端仓库时返回可判定结果（无
 test('POST /api/update/check 远端不可达时错误带 cause 链展开（不再是光秃秃 fetch failed）', async () => {
   fs.writeFileSync(path.join(temp, '.env'), [
     'UPDATE_GITEA_URL=https://invalid.invalid',
-    'UPDATE_GITEA_REPO=example/ExampleProject',
+    'UPDATE_GITEA_REPO=example/Engram',
   ].join('\n'));
   const res = await app.inject({
     method: 'POST',

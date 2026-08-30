@@ -39,7 +39,7 @@ test('reading preview utilities cover preferences, headings and metrics', async 
     lineHeight: 1.7,
   })), DEFAULT_READING_PREFERENCES);
 
-  assert.equal(isDuplicateDocumentTitle('  ExampleProject 阅读模式 ', 'ExampleProject  阅读模式'), true);
+  assert.equal(isDuplicateDocumentTitle('  Engram 阅读模式 ', 'Engram  阅读模式'), true);
   assert.equal(isDuplicateDocumentTitle('阅读模式', '编辑模式'), false);
 
   assert.deepEqual(headingNumbers([

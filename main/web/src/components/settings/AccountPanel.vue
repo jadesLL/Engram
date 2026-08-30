@@ -49,7 +49,7 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>应用版本</strong>
-          <span>当前安装的 ExampleProject 版本。</span>
+          <span>当前安装的 Engram 版本。</span>
         </div>
         <code class="app-version">{{ APP_VERSION }}</code>
       </div>

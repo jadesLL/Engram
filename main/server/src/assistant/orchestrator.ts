@@ -205,7 +205,7 @@ async function compactSessionIfNeeded(
     stage: 'compact',
     tag: 'assistant-compact',
     schema: sessionSummarySchema,
-    system: `你负责压缩 ExampleProject Agent 的历史会话。保留用户长期目标、已确认事实、来源编号、关键决定、失败原因和已执行工具结果。不要加入原文中不存在的信息。只输出 JSON：{"summary":""}。`,
+    system: `你负责压缩 Engram Agent 的历史会话。保留用户长期目标、已确认事实、来源编号、关键决定、失败原因和已执行工具结果。不要加入原文中不存在的信息。只输出 JSON：{"summary":""}。`,
     input: {
       previousSummary: session.summary,
       messages: compactable

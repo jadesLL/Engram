@@ -137,9 +137,9 @@
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>远端仓库地址</strong>
-          <span>浏览器打开仓库首页，把地址栏整条复制粘贴过来即可（Release 页地址也行），如 https://gitea.example.com/example/ExampleProject。</span>
+          <span>浏览器打开仓库首页，把地址栏整条复制粘贴过来即可（Release 页地址也行），如 https://gitea.example.com/example/Engram。</span>
         </div>
-        <input v-model="form.repoUrl" type="text" placeholder="https://gitea.example.com/example/ExampleProject" aria-label="远端仓库地址" @input="repoUrlError = ''" />
+        <input v-model="form.repoUrl" type="text" placeholder="https://gitea.example.com/example/Engram" aria-label="远端仓库地址" @input="repoUrlError = ''" />
         <p v-if="repoUrlError" class="setting-message err">{{ repoUrlError }}</p>
       </div>
 
@@ -175,7 +175,7 @@
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像更新源</strong>
-            <span>留空即自动使用当前容器的镜像仓库（推荐）。仅私有仓库或需切换镜像源时填写，如 registry.example.com/example-wiki（不含 tag）。</span>
+            <span>留空即自动使用当前容器的镜像仓库（推荐）。仅私有仓库或需切换镜像源时填写，如 registry.example.com/engram（不含 tag）。</span>
           </div>
           <input
             v-model="form.imageRef"
@@ -302,7 +302,7 @@ function parseRepoUrl(input: string): { url: string; repo: string } | { error: s
   }
   const segs = u.pathname.split('/').filter(Boolean);
   if (segs.length < 2) {
-    return { error: '这是站点首页地址，缺少仓库路径；请先打开仓库页面再复制，例如 https://gitea.example.com/example/ExampleProject' };
+    return { error: '这是站点首页地址，缺少仓库路径；请先打开仓库页面再复制，例如 https://gitea.example.com/example/Engram' };
   }
   const owner = decodeURIComponent(segs[0]);
   const name = decodeURIComponent(segs[1]).replace(/\.git$/, '');

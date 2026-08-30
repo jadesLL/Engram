@@ -1,17 +1,17 @@
 {
-  "name": "example-wiki",
+  "name": "engram",
   "version": "0.1.0",
   "private": true,
   "description": "LLM-native personal knowledge brain: markdown as source of truth, DB as retrieval engine",
   "scripts": {
     "dev": "pnpm -r --parallel run dev",
-    "dev:server": "pnpm --filter @example-wiki/server run dev",
-    "dev:web": "pnpm --filter @example-wiki/web run dev",
+    "dev:server": "pnpm --filter @engram/server run dev",
+    "dev:web": "pnpm --filter @engram/web run dev",
     "build": "pnpm -r run build",
-    "start": "pnpm --filter @example-wiki/server run start",
-    "test": "pnpm --filter @example-wiki/server run test",
+    "start": "pnpm --filter @engram/server run start",
+    "test": "pnpm --filter @engram/server run test",
     "typecheck": "pnpm -r run typecheck",
-    "build:desktop": "pnpm --filter @example-wiki/server build && pnpm --filter @example-wiki/web build && node desktop/scripts/prepare-desktop.js && (pnpm -C desktop/server install --prod --node-linker=hoisted --ignore-workspace --no-frozen-lockfile || true) && pnpm --filter @example-wiki/desktop dist"
+    "build:desktop": "pnpm --filter @engram/server build && pnpm --filter @engram/web build && node desktop/scripts/prepare-desktop.js && (pnpm -C desktop/server install --prod --node-linker=hoisted --ignore-workspace --no-frozen-lockfile || true) && pnpm --filter @engram/desktop dist"
   },
   "engines": {
     "node": ">=20"

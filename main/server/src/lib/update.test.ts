@@ -142,12 +142,12 @@ test('compareVersions 语义化比较', () => {
 test('currentVersion 环境变量注入优先', () => {
   // 不直接断言「返回 dev」：CI 的 verify 容器里 /app/VERSION 存在（值为构建版本号），
   // 该函数的环境行为依赖运行位置；这里只验证可控的 env 优先级维度
-  const prev = process.env.WIKILLM_APP_VERSION;
-  process.env.WIKILLM_APP_VERSION = '9.9.9-test';
+  const prev = process.env.ENGRAM_APP_VERSION;
+  process.env.ENGRAM_APP_VERSION = '9.9.9-test';
   try {
     assert.equal(currentVersion(), '9.9.9-test');
   } finally {
-    if (prev === undefined) delete process.env.WIKILLM_APP_VERSION;
-    else process.env.WIKILLM_APP_VERSION = prev;
+    if (prev === undefined) delete process.env.ENGRAM_APP_VERSION;
+    else process.env.ENGRAM_APP_VERSION = prev;
   }
 });

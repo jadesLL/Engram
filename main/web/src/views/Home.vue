@@ -6,7 +6,7 @@
   >
     <!-- 窄图标导航栏 -->
     <nav class="rail" aria-label="主导航">
-      <button class="rail-logo" type="button" v-tooltip="'回到首页'" aria-label="回到首页" @click="$router.push('/page')">W</button>
+      <button class="rail-logo" type="button" v-tooltip="'回到首页'" aria-label="回到首页" @click="$router.push('/page')">E</button>
 
       <!-- 侧栏开关 -->
       <button

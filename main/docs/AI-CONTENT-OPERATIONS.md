@@ -1,6 +1,6 @@
 # 知识内容操作 AI 约定
 
-本文件适用于应用内 Dream Cycle、入库管线，以及通过 MCP 读写 LLM Wiki 知识内容的外部 Agent。它不适用于修改本仓库源码的软件开发 Agent。
+本文件适用于应用内 Dream Cycle、入库管线，以及通过 MCP 读写 Engram 知识内容的外部 Agent。它不适用于修改本仓库源码的软件开发 Agent。
 
 ## 操作日志
 

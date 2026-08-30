@@ -1,8 +1,8 @@
 <template>
   <div class="login-wrap">
     <div class="login-card card">
-      <div class="logo">W</div>
-      <h1>LLM Wiki</h1>
+      <div class="logo">E</div>
+      <h1>Engram</h1>
       <p class="muted">{{ isSetup ? '首次使用，请设置访问密码' : '请输入密码进入知识库' }}</p>
       <input
         v-model="password"

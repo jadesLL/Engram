@@ -26,8 +26,8 @@ npm run install || npx --yes node-gyp rebuild --release
 cd -
 
 echo ">> 构建 server（tsc）+ web（vite）"
-pnpm --filter @example-wiki/server build
-pnpm --filter @example-wiki/web build
+pnpm --filter @engram/server build
+pnpm --filter @engram/web build
 
 echo ">> 复制构建产物到 desktop/（prepare-desktop.js）"
 node desktop/scripts/prepare-desktop.js

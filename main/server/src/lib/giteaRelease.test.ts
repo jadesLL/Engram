@@ -32,8 +32,8 @@ test('repoAuthHeaders password 缺一不可时回退 token', () => {
 
 test('latestReleaseUrl 拼接并容忍末尾斜杠', () => {
   assert.equal(
-    latestReleaseUrl('https://gitea.example.com/', 'example/ExampleProject'),
-    'https://gitea.example.com/api/v1/repos/example/ExampleProject/releases/latest',
+    latestReleaseUrl('https://gitea.example.com/', 'example/Engram'),
+    'https://gitea.example.com/api/v1/repos/example/Engram/releases/latest',
   );
 });
 

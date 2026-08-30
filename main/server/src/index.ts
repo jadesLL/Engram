@@ -89,8 +89,8 @@ async function main() {
   app.get('/health', async () => 'ok');
 
   // 静态托管前端构建产物 + SPA fallback
-  const webDist = process.env.WIKILLM_WEB_DIST
-    ? path.resolve(process.env.WIKILLM_WEB_DIST)
+  const webDist = process.env.ENGRAM_WEB_DIST
+    ? path.resolve(process.env.ENGRAM_WEB_DIST)
     : path.resolve(__dirname, '../../web/dist');
   const cache = await registerStaticAssetCache(app, webDist);
   if (cache.files) {
@@ -119,7 +119,7 @@ async function main() {
   hb.unref();
 
   await app.listen({ port: PORT, host: HOST });
-  console.log(`LLM Wiki 已启动: http://localhost:${PORT}`);
+  console.log(`Engram 已启动: http://localhost:${PORT}`);
   // 定期补齐缺失/过期的页面综合：启动后 2 分钟先跑一轮，之后每 15 分钟一轮。
   // listen 之后异步小批量执行（每页之间让出事件循环），不阻塞服务；
   // 去重与失败冷却在 queuePageRecompose 内已有：active 最新页跳过、失败页 1 小时冷却、

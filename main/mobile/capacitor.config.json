@@ -1,6 +1,6 @@
 {
   "appId": "com.example.exampleproject",
-  "appName": "LLM Wiki",
+  "appName": "Engram",
   "webDir": "www",
   "server": {
     "allowNavigation": ["*"],

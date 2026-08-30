@@ -1,4 +1,4 @@
-# ExampleProject 发布流程：版本号 Docker 镜像 + Windows NSIS 安装包 + Gitea Release
+# Engram 发布流程：版本号 Docker 镜像 + Windows NSIS 安装包 + Gitea Release
 # 触发：
 #   - 推送 v* 标签（如 v1.1.5）：完整发布（镜像推送 + exe 构建 + 创建 Release 上传附件）
 #   - 手动 workflow_dispatch：测试模式（镜像推送 + exe 构建 + 产物上传为 Artifact，不创建 Release）
@@ -15,7 +15,7 @@ env:
   REGISTRY: gitea.example.com
   # 镜像走「owner/repo/imagename」三层路径，归属仓库（与 XINJE 一致）；
   # 两层路径归属用户命名空间，NAS 实测拉取异常，不要改回
-  IMAGE: gitea.example.com/example/exampleproject/example-wiki
+  IMAGE: gitea.example.com/example/engram/engram
 
 jobs:
   release:
@@ -91,8 +91,8 @@ jobs:
           # 上下文用 . 而非 main：Windows runner 上 docker CLI 解析相对路径上下文时
           # 对 Git Bash 的 UNC cwd 处理有问题，cd 进 main 后用 . 稳定可靠
           cd main
-          docker build -f desktop/Dockerfile.ci -t exampleproject-desktop-builder .
-          CID=$(docker create exampleproject-desktop-builder)
+          docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .
+          CID=$(docker create engram-desktop-builder)
           docker cp "$CID:/work/desktop/dist/." ../desktop-dist
           docker rm "$CID" > /dev/null
           cd ..
@@ -111,15 +111,15 @@ jobs:
           cd main
           # 镜像只准备构建环境（JDK + Android SDK + 源码），gradle 构建在 run 时执行，
           # keystore 经容器环境变量注入，不进入镜像层
-          docker build -f mobile/Dockerfile.ci -t exampleproject-android-builder .
-          docker rm exampleproject-android-build > /dev/null 2>&1 || true
-          docker run --name exampleproject-android-build \
+          docker build -f mobile/Dockerfile.ci -t engram-android-builder .
+          docker rm engram-android-build > /dev/null 2>&1 || true
+          docker run --name engram-android-build \
             -e ANDROID_KEYSTORE_BASE64 -e ANDROID_KEYSTORE_PASSWORD \
             -e ANDROID_KEY_ALIAS -e ANDROID_KEY_PASSWORD \
-            exampleproject-android-builder bash mobile/scripts/build-apk-ci.sh
+            engram-android-builder bash mobile/scripts/build-apk-ci.sh
           mkdir -p ../mobile-apk-dist
-          docker cp "exampleproject-android-build:/work/mobile/android/app/build/outputs/apk/release/." ../mobile-apk-dist
-          docker rm exampleproject-android-build > /dev/null
+          docker cp "engram-android-build:/work/mobile/android/app/build/outputs/apk/release/." ../mobile-apk-dist
+          docker rm engram-android-build > /dev/null
           cd ..
           echo ">> 构建产物："
           ls -la mobile-apk-dist
@@ -147,16 +147,16 @@ jobs:
           mkdir -p release-out
           cp "$EXE" "release-out/LLM Wiki Setup ${VER}.exe"
           cp "$APK" "release-out/LLM Wiki ${VER}.apk"
-          docker save "$IMAGE:$VER" | gzip > "release-out/example-wiki-${VER}.tar.gz"
+          docker save "$IMAGE:$VER" | gzip > "release-out/engram-${VER}.tar.gz"
           cd release-out
-          sha256sum "LLM Wiki Setup ${VER}.exe" "LLM Wiki ${VER}.apk" "example-wiki-${VER}.tar.gz" > "sha256-${VER}.txt"
+          sha256sum "LLM Wiki Setup ${VER}.exe" "LLM Wiki ${VER}.apk" "engram-${VER}.tar.gz" > "sha256-${VER}.txt"
           cat "sha256-${VER}.txt"
 
       - name: 上传构建产物（手动触发测试模式）
         if: github.event_name == 'workflow_dispatch'
         uses: https://gitea.com/actions/upload-artifact@v4
         with:
-          name: exampleproject-release-test-${{ steps.ver.outputs.version }}
+          name: engram-release-test-${{ steps.ver.outputs.version }}
           path: release-out/
           retention-days: 7
 
@@ -169,7 +169,7 @@ jobs:
           files: |
             release-out/LLM Wiki Setup *.exe
             release-out/LLM Wiki *.apk
-            release-out/example-wiki-*.tar.gz
+            release-out/engram-*.tar.gz
             release-out/sha256-*.txt
           token: ${{ secrets.RELEASE_TOKEN }}
           draft: false

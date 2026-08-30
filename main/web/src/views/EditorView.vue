@@ -285,8 +285,8 @@
     <!-- 欢迎页 -->
     <div v-else class="welcome">
       <div class="welcome-inner">
-        <div class="welcome-logo">W</div>
-        <h2>欢迎来到 LLM Wiki</h2>
+        <div class="welcome-logo">E</div>
+        <h2>欢迎来到 Engram</h2>
         <p class="muted">写下的每一页都会被 AI 消化：自动索引、自动关联、随问随答。</p>
         <div class="welcome-actions">
           <button class="btn primary" @click="createFirst">新建页面</button>
@@ -925,7 +925,7 @@ function syncAssistantContext() {
 }
 
 async function createFirst() {
-  const { data } = await api.post('/api/pages', { dir: '', title: '欢迎使用 LLM Wiki' });
+  const { data } = await api.post('/api/pages', { dir: '', title: '欢迎使用 Engram' });
   router.push(`/page/${data.meta.id}`);
 }
 

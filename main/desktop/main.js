@@ -1,4 +1,4 @@
-// LLM Wiki 桌面端主进程（Electron）
+// Engram 桌面端主进程（Electron）
 // 双模式：
 //  - 本地：fork 内嵌 server 子进程（ELECTRON_RUN_AS_NODE 纯 Node 模式）+ 探活后加载
 //  - 远端：凭 desktop token 调 /api/auth/desktop-exchange 兑换 JWT，预置 cookie 后加载远端页面
@@ -8,6 +8,19 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { spawn } = require('node:child_process');
+
+// 产品更名（LLM Wiki → Engram）后 productName 变化会让 Electron 默认 userData 目录
+// （%APPDATA%/<productName>）跟着变。旧目录里有本地模式全部数据与连接配置，
+// 这里一次性迁移到新目录，之后不再回看旧路径。
+const LEGACY_USER_DATA = path.join(app.getPath('appData'), 'LLM Wiki');
+try {
+  if (fs.existsSync(LEGACY_USER_DATA) && !fs.existsSync(app.getPath('userData'))) {
+    fs.mkdirSync(path.dirname(app.getPath('userData')), { recursive: true });
+    fs.renameSync(LEGACY_USER_DATA, app.getPath('userData'));
+  }
+} catch {
+  /* 迁移失败不阻断启动：新目录为空时等价于首次使用 */
+}
 
 // 默认 18180 避开 Docker 版的 18080；用户本机若同时跑 Docker example-wiki(18080) 与 desktop，
 // 两者互不抢占端口、可共存。
@@ -51,7 +64,7 @@ function createWindow() {
     height: 800,
     minWidth: 860,
     minHeight: 600,
-    title: 'LLM Wiki',
+    title: 'Engram',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -86,8 +99,8 @@ function startLocalMode() {
     PORT: String(LOCAL_PORT),
     HOST: '127.0.0.1',
     OFFICE_EDITOR_ENABLED: 'false',
-    WIKILLM_WEB_DIST: webDistPath(),
-    WIKILLM_APP_VERSION: app.getVersion(),
+    ENGRAM_WEB_DIST: webDistPath(),
+    ENGRAM_APP_VERSION: app.getVersion(),
   };
   // 命门：必须 fork（默认 execPath=electron.exe）+ ELECTRON_RUN_AS_NODE，子进程才以 Electron 纯
   // Node 模式运行、能读 app.asar 内的 node_modules；改 spawn('node') 会让 server 读不了 asar。
@@ -191,7 +204,7 @@ function launchByConfig() {
 function buildAppMenu() {
   return Menu.buildFromTemplate([
     {
-      label: 'LLM Wiki',
+      label: 'Engram',
       submenu: [
         {
           label: '返回启动页 / 切换模式',
@@ -271,7 +284,7 @@ ipcMain.handle('open-connection-settings', () => {
 // 远程文件「用系统程序打开」：渲染进程把文件字节传过来，写临时目录后调系统默认程序
 ipcMain.handle('open-file-bytes', (_e, name, bytes) => {
   const safe = String(name).replace(/[\\/:*?"<>|]/g, '-');
-  const dir = path.join(app.getPath('temp'), 'example-wiki');
+  const dir = path.join(app.getPath('temp'), 'engram');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, safe);
   fs.writeFileSync(file, Buffer.from(bytes));
@@ -457,7 +470,7 @@ ipcMain.handle('desktop-update-download', async (e, url, passedCfg) => {
   }
   const dir = path.join(app.getPath('userData'), 'downloads');
   fs.mkdirSync(dir, { recursive: true });
-  const name = target.split('/').pop().split('?')[0] || 'LLM Wiki Setup.exe';
+  const name = target.split('/').pop().split('?')[0] || 'Engram Setup.exe';
   const file = path.join(dir, name);
   let res;
   try {

@@ -1,5 +1,5 @@
 /**
- * Agent 直连核心：把 IM 消息喂进 ExampleProject 内置助手 agent，进程内订阅事件，
+ * Agent 直连核心：把 IM 消息喂进 Engram 内置助手 agent，进程内订阅事件，
  * 把 agent 回复回发飞书；审批请求发交互卡片，等用户点按钮。
  *
  * 调用链：

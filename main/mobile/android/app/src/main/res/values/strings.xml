@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">LLM Wiki</string>
-    <string name="title_activity_main">LLM Wiki</string>
+    <string name="app_name">Engram</string>
+    <string name="title_activity_main">Engram</string>
     <string name="package_name">com.example.exampleproject</string>
     <string name="custom_url_scheme">com.example.exampleproject</string>
     <string name="shortcut_select_short">切换服务器</string>

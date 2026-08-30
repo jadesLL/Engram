@@ -33,7 +33,7 @@ export function regenerateIndex() {
     else groups['其他'].push(entry);
   }
 
-  const lines = ['# LLM Wiki 索引', ''];
+  const lines = ['# Engram 索引', ''];
   for (const [g, items] of Object.entries(groups)) {
     lines.push(`## ${g}`, '');
     lines.push(...(items.length ? items : ['（暂无）']));
@@ -41,7 +41,7 @@ export function regenerateIndex() {
   }
   const total = pages.length;
   writePage('Wiki/index.md', lines.join('\n'), {
-    title: 'LLM Wiki 索引',
+    title: 'Engram 索引',
     type: 'doc',
     summary: total ? `共 ${total} 个条目（实体 ${groups['实体'].length} / 概念 ${groups['概念'].length} / 其他 ${groups['其他'].length}）` : '暂无条目',
   });
