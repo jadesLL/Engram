@@ -117,6 +117,11 @@ test('startup recovery discards interrupted derived jobs before restoring safe w
 test('startup recovery marks interrupted pending syntheses as failed (zombie rows)', () => {
   // 场景：重启把排队的 page_recompose job 丢弃，page_syntheses 的 pending 行残留。
   // 若不清理，queuePageRecompose 遇 pending 行提前返回，页面永久卡「综合中」。
+  // page_syntheses.page_id 有外键约束，先建真实父页行。
+  db.prepare(
+    `INSERT INTO pages(id, path, title, created_at, updated_at)
+     VALUES('zombie-page','Wiki/实体/僵尸页.md','僵尸页',?,?)`
+  ).run(now(), now());
   db.prepare(
     `INSERT INTO page_syntheses(id,page_id,input_hash,evidence_hash,status,created_at,updated_at)
      VALUES('syn-zombie','zombie-page','hash-z','ev-z','pending',?,?)`
