@@ -20,7 +20,7 @@ async function runProbe(url: string, auth = ''): Promise<unknown> {
     NET_PROBE_SCRIPT: string;
   };
   const { stdout } = await run('node', ['-e', NET_PROBE_SCRIPT], {
-    env: { ...process.env, WIKILLM_PROBE_URL: url, WIKILLM_PROBE_AUTH: auth },
+    env: { ...process.env, ENGRAM_PROBE_URL: url, ENGRAM_PROBE_AUTH: auth },
     timeout: 30_000,
   });
   return JSON.parse(stdout.trim());

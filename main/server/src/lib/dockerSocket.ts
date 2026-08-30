@@ -60,8 +60,8 @@ export const NET_PROBE_CONTAINER_NAME = 'example-wiki-net-probe';
 /** 探针内执行的 node 单行脚本：fetch 目标 URL，单行 JSON 输出到 stdout。
  *  错误取 cause 链（undici 把网络故障包成 fetch failed，根因在 cause）。 */
 export const NET_PROBE_SCRIPT = [
-  'const u=process.env.WIKILLM_PROBE_URL||"";',
-  'const a=process.env.WIKILLM_PROBE_AUTH||"";',
+  'const u=process.env.ENGRAM_PROBE_URL||"";',
+  'const a=process.env.ENGRAM_PROBE_AUTH||"";',
   'const chain=e=>{const p=[];for(let c=e;c;c=c.cause){if(c.message&&!p.includes(c.message))p.push(c.message)}return p.join(" <- ")};',
   'fetch(u,{headers:a?{Authorization:a}:{},redirect:"follow",signal:AbortSignal.timeout(15000)})',
   '.then(async r=>{process.stdout.write(JSON.stringify({status:r.status,body:await r.text()}))})',
@@ -288,8 +288,8 @@ export const docker = {
         Image: opts.image,
         Cmd: ['node', '-e', NET_PROBE_SCRIPT],
         Env: [
-          `WIKILLM_PROBE_URL=${opts.url}`,
-          `WIKILLM_PROBE_AUTH=${opts.authorization || ''}`,
+          `ENGRAM_PROBE_URL=${opts.url}`,
+          `ENGRAM_PROBE_AUTH=${opts.authorization || ''}`,
         ],
         Tty: true,
         Labels: { 'com.exampleproject.net-probe': 'true' },

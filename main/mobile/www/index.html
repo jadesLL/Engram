@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="theme-color" content="#ffffff" />
-  <title>LLM Wiki</title>
+  <title>Engram</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -83,8 +83,8 @@
   </style>
 </head>
 <body>
-  <div class="logo">🧠</div>
-  <h1>LLM Wiki</h1>
+  <div class="logo" style="color:#3D7BFF;font-weight:800">E</div>
+  <h1>Engram</h1>
   <p class="sub">连接你的知识库服务器</p>
   <form id="form">
     <input id="url" type="text" inputmode="url" autocomplete="off" autocapitalize="off"
@@ -92,7 +92,7 @@
     <button type="submit">连接</button>
   </form>
   <p id="msg" class="msg"></p>
-  <p class="hint">填入 ExampleProject 服务器地址（含端口），例如 http://192.168.1.101:8080。<br />首次使用可在服务器网页端完成初始密码设置。</p>
+  <p class="hint">填入 Engram 服务器地址（含端口），例如 http://192.168.1.101:8080。<br />首次使用可在服务器网页端完成初始密码设置。</p>
   <p class="version" id="version"></p>
   <script>
     var KEY = 'serverUrl';
@@ -139,7 +139,7 @@
       if (Plugins.App && Plugins.App.getInfo) {
         Plugins.App.getInfo().then(function (info) {
           if (info && info.version) {
-            document.getElementById('version').textContent = 'LLM Wiki App v' + info.version;
+            document.getElementById('version').textContent = 'Engram App v' + info.version;
           }
         }).catch(function () {}).then(after);
       } else {

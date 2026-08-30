@@ -1,6 +1,6 @@
 # Android APP（远程客户端）
 
-ExampleProject 的安卓端是**纯远程客户端**：原生壳（Capacitor WebView）连接已部署的 ExampleProject
+Engram 的安卓端是**纯远程客户端**：原生壳（Capacitor WebView）连接已部署的 Engram
 服务器（NAS Docker 或任意可访问的部署），复用服务器的移动端 Web 界面。APP 内不内嵌
 服务端——服务端依赖 better-sqlite3/sqlite-vec 原生模块与 Node 运行时，不适合跑在手机上。
 
@@ -70,11 +70,11 @@ cd android && JAVA_HOME=<jdk21> ./gradlew assembleDebug    # 调试包
 
 打 `v*` 标签时，release.yml 在 APK 步骤中：
 
-1. `docker build -f mobile/Dockerfile.ci -t exampleproject-android-builder main`（准备
+1. `docker build -f mobile/Dockerfile.ci -t engram-android-builder main`（准备
    Node + JDK 21 + Android SDK + 源码镜像，依赖清单不变时命中层缓存）；
 2. `docker run`（注入签名 secrets）执行 `mobile/scripts/build-apk-ci.sh`：
    `cap sync android` + `gradlew assembleRelease`；
-3. `docker cp` 拷出 APK，命名为 `LLM Wiki <版本>.apk` 随 Release 发布，
+3. `docker cp` 拷出 APK，命名为 `Engram <版本>.apk` 随 Release 发布，
    sha256 记入 `sha256-<版本>.txt`。
 
 ### 需要配置的 Gitea 仓库 secrets（一次性）

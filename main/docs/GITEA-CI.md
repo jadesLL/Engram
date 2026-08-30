@@ -1,6 +1,6 @@
 # Gitea CI 与镜像分发指南
 
-本项目通过 Gitea Actions（`https://gitea.example.com/example/ExampleProject`）实现持续集成、Docker 镜像分发和 Windows 安装包发布。
+本项目通过 Gitea Actions（`https://github.com/jadesLL/Engram`）实现持续集成、Docker 镜像分发和 Windows 安装包发布。
 
 > 从源码构建安装包的完整指南（含不依赖 CI 的本地 Docker 构建路径、部署方式与 AI 操作清单）见 [`BUILDING.md`](./BUILDING.md)；本文聚焦 CI/CD 流水线本身的维护与历史踩坑。
 
@@ -37,17 +37,17 @@
 ## 镜像地址（重要）
 
 ```bash
-# 正确：三层路径 example/exampleproject/example-wiki（owner/repo/imagename，镜像归属 ExampleProject 仓库）
-gitea.example.com/example/exampleproject/example-wiki:<版本>
+# 正确：三层路径 example/engram/engram（owner/repo/imagename，镜像归属 Engram 仓库）
+gitea.example.com/example/engram/engram:<版本>
 
-# 错误：两层路径 example/example-wiki（归属用户命名空间）——1.1.5 曾用此路径，NAS 实测拉取异常，已废弃
+# 错误：两层路径 example/engram（归属用户命名空间）——1.1.5 曾用此路径，NAS 实测拉取异常，已废弃
 ```
 
 部署示例：
 
 ```bash
 # Docker 镜像未公开发布（原私有 Registry 不对外）
-docker pull gitea.example.com/example/exampleproject/example-wiki:1.1.5
+docker pull gitea.example.com/example/engram/engram:1.1.5
 docker compose -f docker-compose.pull.yml up -d
 ```
 
@@ -122,7 +122,7 @@ act_runner 以 Windows 宿主机模式运行（label `windows`），Docker 命�
 |---|---|
 | 机器 | 开发机 DESKTOP-BBO2MIL（Windows，Docker Desktop Linux 引擎） |
 | 安装目录 | `C:\Users\example\gitea-runner\`（gitea-runner.exe v3.3.0 + config.yaml + .runner） |
-| 注册方式 | **全局（instance 级）**，runner id=3，name `dev-pc-bbo2mil`，labels `windows:host, ubuntu-latest:docker://node:22-bookworm`——ExampleProject 与 XINJE_Selection_Tool 的 CI 都由它执行 |
+| 注册方式 | **全局（instance 级）**，runner id=3，name `dev-pc-bbo2mil`，labels `windows:host, ubuntu-latest:docker://node:22-bookworm`——Engram（原 ExampleProject）与 XINJE_Selection_Tool 的 CI 都由它执行 |
 | 启动 | `gitea-runner.exe daemon --config config.yaml`；开机自启走计划任务 `GiteaRunnerDaemon`（登录触发、崩溃自动重启，`Get-ScheduledTask GiteaRunnerDaemon` 查状态） |
 | config.yaml 关键项 | `container.docker_host: npipe:////./pipe/dockerDesktopLinuxEngine`（Windows 下 runner 默认探测 /var/run/docker.sock 失败，必须显式指向 Docker Desktop 的 Linux 引擎命名管道）；日志级别 debug（排查认领问题用，平时可调回 info） |
 
@@ -145,7 +145,7 @@ Linux 容器里交叉打 Windows exe 的三个必踩坑，脚本已内置修复�
 file desktop-dist/win-unpacked/resources/app.asar.unpacked/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node
 # → 必须是 PE32+ executable for MS Windows
 # 2. fork server 起服务
-cd desktop-dist/win-unpacked && ELECTRON_RUN_AS_NODE=1 "./LLM Wiki.exe" resources/app.asar/server/dist/index.js &
+cd desktop-dist/win-unpacked && ELECTRON_RUN_AS_NODE=1 "./Engram.exe" resources/app.asar/server/dist/index.js &
 curl http://localhost:18080/health   # → 200
 # 3. asar 内版本号
 grep -c '<版本号>' app.asar 二进制内容（或查 staging package.json 的 version 字段）
@@ -163,7 +163,7 @@ grep -c '<版本号>' app.asar 二进制内容（或查 staging package.json 的
 
 | 版本 | 镜像路径 | 说明 |
 |---|---|---|
-| 1.1.4 / 1.1.5 初版 | `example/example-wiki`（两层） | 用户命名空间归属；1.1.5 发布时 NAS 拉取异常 |
-| 1.1.5 起 | `example/exampleproject/example-wiki`（三层） | 仓库归属，与 XINJE_Selection_Tool 同款形式，NAS 拉取正常 |
+| 1.1.4 / 1.1.5 初版 | `example/engram`（两层） | 用户命名空间归属；1.1.5 发布时 NAS 拉取异常 |
+| 1.1.5 起 | `example/engram/engram`（三层） | 仓库归属，与 XINJE_Selection_Tool 同款形式，NAS 拉取正常 |
 
 旧两层路径的镜像仍留在 Registry（`1.1.4`、`1.1.5`），但不再更新；新发版全部走三层路径。

@@ -7,7 +7,7 @@
       :class="{ ready, 'submenu-left': submenuLeft }"
       :style="{ left: `${left}px`, top: `${top}px` }"
       role="menu"
-      aria-label="ExampleProject 操作菜单"
+      aria-label="Engram 操作菜单"
       @contextmenu.prevent
       @keydown="handleKeydown"
     >

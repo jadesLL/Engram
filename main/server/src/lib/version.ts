@@ -3,11 +3,11 @@ import fs from 'node:fs';
 /**
  * 当前运行版本：
  *  - Docker 镜像：构建期写入的 /app/VERSION
- *  - 桌面端：Electron 主进程 fork 时经 WIKILLM_APP_VERSION 注入
+ *  - 桌面端：Electron 主进程 fork 时经 ENGRAM_APP_VERSION 注入
  *  - 开发环境：'dev'，前端 fallback 到编译期 APP_VERSION
  */
 export function currentVersion(): string {
-  const fromEnv = process.env.WIKILLM_APP_VERSION;
+  const fromEnv = process.env.ENGRAM_APP_VERSION;
   if (fromEnv) return fromEnv;
   try {
     const v = fs.readFileSync('/app/VERSION', 'utf8').trim();

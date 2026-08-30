@@ -3,14 +3,14 @@
 # 执行（签名密钥经容器环境变量注入，不进入镜像层）。
 #
 # 构建上下文为 main/ 目录：
-#   docker build -f mobile/Dockerfile.ci -t exampleproject-android-builder .
+#   docker build -f mobile/Dockerfile.ci -t engram-android-builder .
 # 运行构建（keystore secrets 可选；缺省时产出未签名 release APK）：
-#   docker run --name exampleproject-android-build \
+#   docker run --name engram-android-build \
 #     -e ANDROID_KEYSTORE_BASE64 -e ANDROID_KEYSTORE_PASSWORD -e ANDROID_KEY_ALIAS -e ANDROID_KEY_PASSWORD \
-#     exampleproject-android-builder bash mobile/scripts/build-apk-ci.sh
+#     engram-android-builder bash mobile/scripts/build-apk-ci.sh
 # 拷出产物（app-release.apk 或 app-release-unsigned.apk）：
-#   docker cp exampleproject-android-build:/work/mobile/android/app/build/outputs/apk/release/. <输出目录>
-#   docker rm exampleproject-android-build
+#   docker cp engram-android-build:/work/mobile/android/app/build/outputs/apk/release/. <输出目录>
+#   docker rm engram-android-build
 # 基础镜像走加速域名镜像源（runner 网络无法直连 Docker Hub，2026-08 起 xuanyuan.run）
 # trixie 变体：apt 自带 OpenJDK 21（Capacitor 7.6 要求 Java 21 源级别，bookworm 只有 17）
 FROM v8a3htyccucd1ri7q2.xuanyuan.run/library/node:22-trixie

@@ -14,8 +14,8 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY server server
 COPY web web
-RUN pnpm --filter @example-wiki/web build \
-  && pnpm --filter @example-wiki/server build
+RUN pnpm --filter @engram/web build \
+  && pnpm --filter @engram/server build
 
 FROM base
 COPY --from=build /build/node_modules /app/node_modules

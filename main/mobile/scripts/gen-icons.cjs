@@ -1,15 +1,16 @@
 /**
- * 生成 ExampleProject 安卓应用图标与启动屏（一次性开发工具，不参与构建/CI）。
+ * 生成 Engram 安卓应用图标、启动屏与桌面端图标（一次性开发工具，不参与构建/CI）。
  *
  * 依赖 @napi-rs/canvas：默认从主检出目录的共享 node_modules 加载；
  * 其他机器可先 `pnpm add -D @napi-rs/canvas` 到 mobile/ 再运行。
  *
  * 用法：node scripts/gen-icons.cjs
  * 读取 res 下现有 PNG 的尺寸，按同尺寸重新渲染：
- *   - mipmap 各密度 ic_launcher.png        圆角方块图标（蓝底 + 🧠）
+ *   - mipmap 各密度 ic_launcher.png        圆角方块图标（蓝底 + Engram 痕迹标志）
  *   - mipmap 各密度 ic_launcher_round.png  圆形图标
- *   - mipmap 各密度 ic_launcher_foreground.png 自适应图标前景（透明底，emoji 居中 50%）
- *   - drawable 各密度 splash.png           启动屏（浅底 + 🧠 + 产品名）
+ *   - mipmap 各密度 ic_launcher_foreground.png 自适应图标前景（透明底，标志居中）
+ *   - drawable 各密度 splash.png           启动屏（浅底 + 标志 + 产品名）
+ *   - desktop/build/icon.png               桌面端/安装包图标（512×512，蓝底 + 标志）
  */
 const fs = require('fs');
 const path = require('path');
@@ -25,18 +26,12 @@ function loadCanvas() {
   throw new Error('找不到 @napi-rs/canvas，请先安装');
 }
 
-const { createCanvas, GlobalFonts } = loadCanvas();
+const { createCanvas } = loadCanvas();
 const resDir = path.join(__dirname, '..', 'android', 'app', 'src', 'main', 'res');
 
 const BG_TOP = '#3D7BFF';
 const BG_BOTTOM = '#245BDB';
-const EMOJI = '\u{1F9E0}'; // 🧠 与 web favicon 品牌一致
-
-// 检查 emoji 字体是否可用，不可用时回退为 W 字母标志
-function hasEmojiFont() {
-  return GlobalFonts.families.some((f) => /emoji/i.test(f.family || ''));
-}
-const USE_EMOJI = hasEmojiFont();
+const BRAND = '#3D7BFF';
 
 function pngSize(file) {
   const buf = fs.readFileSync(file);
@@ -66,18 +61,43 @@ function drawBackground(ctx, w, h, radius) {
   }
 }
 
-function drawBrand(ctx, w, h, scale) {
-  const size = Math.min(w, h) * scale;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  if (USE_EMOJI) {
-    ctx.font = `${size}px "Segoe UI Emoji"`;
-    ctx.fillText(EMOJI, w / 2, h / 2 + size * 0.04);
-  } else {
-    // 回退：白色 W 标志
-    ctx.font = `900 ${size * 0.8}px "Segoe UI", sans-serif`;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText('W', w / 2, h / 2);
+// Engram 痕迹标志：字母 E 由三条圆角「记忆痕迹」构成，末端各带一枚发光触点
+// （engram = 记忆痕迹；触点呼应知识图谱的节点）。
+// cyOffset：整体垂直偏移（splash 里给下方的产品名让位）。
+function drawMark(ctx, w, h, scale, color, cyOffset = 0) {
+  const unit = Math.min(w, h) * scale;
+  const cx = w / 2;
+  const cy = h / 2 + cyOffset;
+  const barH = unit * 0.16;   // 痕迹粗细
+  const barW = unit * 0.68;   // 标志总宽
+  const gap = unit * 0.15;    // 行距
+  const dotR = barH * 0.52;   // 触点半径
+  const dotGap = dotR * 1.5;  // 痕迹与触点的间隙
+  const spineW = barH;
+  const totalH = barH * 3 + gap * 2;
+  const left = cx - barW / 2;
+  const top = cy - totalH / 2;
+  const traceLen = barW - dotGap - dotR * 2;
+  ctx.fillStyle = color;
+  roundRectPath(ctx, left, top, spineW, totalH, spineW / 2);
+  ctx.fill();
+  const rows = [0, 1, 2].map((i) => ({
+    y: top + (barH + gap) * i,
+    len: i === 1 ? traceLen * 0.78 : traceLen,
+  }));
+  for (const row of rows) {
+    roundRectPath(ctx, left, row.y, row.len, barH, barH / 2);
+    ctx.fill();
+    const dx = left + row.len + dotGap + dotR;
+    const dy = row.y + barH / 2;
+    ctx.beginPath();
+    ctx.arc(dx, dy, dotR * 2.2, 0, Math.PI * 2);
+    ctx.globalAlpha = 0.22;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(dx, dy, dotR, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 
@@ -93,7 +113,7 @@ function renderLauncher(file, { round }) {
     ctx.clip();
   }
   drawBackground(ctx, w, h, radius);
-  drawBrand(ctx, w, h, 0.62);
+  drawMark(ctx, w, h, 0.62, '#ffffff');
   fs.writeFileSync(file, canvas.toBuffer('image/png'));
   console.log('ok', path.relative(resDir, file), `${w}x${h}`);
 }
@@ -102,8 +122,8 @@ function renderForeground(file) {
   const { w, h } = pngSize(file);
   const canvas = createCanvas(w, h);
   const ctx = canvas.getContext('2d');
-  // 自适应图标前景需留安全区（内容约 44%）
-  drawBrand(ctx, w, h, 0.44);
+  // 自适应图标前景需留安全区（内容约 50%）
+  drawMark(ctx, w, h, 0.5, '#ffffff');
   fs.writeFileSync(file, canvas.toBuffer('image/png'));
   console.log('ok', path.relative(resDir, file), `${w}x${h}`);
 }
@@ -115,22 +135,12 @@ function renderSplash(file) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, w, h);
   const unit = Math.min(w, h);
+  drawMark(ctx, w, h, 0.2, BRAND, -unit * 0.08);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const emojiSize = unit * 0.22;
-  const cx = w / 2;
-  const cy = h / 2;
-  if (USE_EMOJI) {
-    ctx.font = `${emojiSize}px "Segoe UI Emoji"`;
-    ctx.fillText(EMOJI, cx, cy - unit * 0.06);
-  } else {
-    ctx.font = `900 ${unit * 0.16}px "Segoe UI", sans-serif`;
-    ctx.fillStyle = '#3D7BFF';
-    ctx.fillText('W', cx, cy - unit * 0.06);
-  }
   ctx.fillStyle = '#1f2329';
   ctx.font = `600 ${unit * 0.075}px "Segoe UI", sans-serif`;
-  ctx.fillText('LLM Wiki', cx, cy + unit * 0.12);
+  ctx.fillText('Engram', w / 2, h / 2 + unit * 0.16);
   fs.writeFileSync(file, canvas.toBuffer('image/png'));
   console.log('ok', path.relative(resDir, file), `${w}x${h}`);
 }
@@ -166,5 +176,16 @@ const splashFiles = fs
   .filter((f) => fs.existsSync(f));
 for (const f of splashFiles) renderSplash(f);
 
-console.log('emoji font used:', USE_EMOJI);
+// 桌面端/安装包图标（electron-builder 从 build/icon.png 生成 ico/exe 资源）
+const desktopIconPath = path.join(__dirname, '..', '..', 'desktop', 'build', 'icon.png');
+{
+  const size = 512;
+  const canvas = createCanvas(size, size);
+  const ctx = canvas.getContext('2d');
+  drawBackground(ctx, size, size, size * 0.22);
+  drawMark(ctx, size, size, 0.62, '#ffffff');
+  fs.writeFileSync(desktopIconPath, canvas.toBuffer('image/png'));
+  console.log('ok', path.relative(path.join(__dirname, '..'), desktopIconPath), `${size}x${size}`);
+}
+
 console.log('DONE');

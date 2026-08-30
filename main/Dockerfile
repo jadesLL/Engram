@@ -12,7 +12,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY server server
 COPY web web
 # /app/VERSION：应用内自更新的版本比对依据（server /api/update 读取）
-RUN pnpm --filter @example-wiki/web build && pnpm --filter @example-wiki/server build \
+RUN pnpm --filter @engram/web build && pnpm --filter @engram/server build \
   && node -p "require('./desktop/package.json').version" > /app/VERSION
 
 # ---------- 生产依赖（编译 better-sqlite3 原生模块） ----------
@@ -42,12 +42,12 @@ RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 \
 FROM build AS test
 COPY --from=deps /app/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/better-sqlite3/build \
   /app/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/better-sqlite3/build
-CMD ["pnpm", "--filter", "@example-wiki/server", "test"]
+CMD ["pnpm", "--filter", "@engram/server", "test"]
 
 # ---------- 一次完成构建、类型检查和测试 ----------
 FROM test AS verify
 RUN pnpm typecheck && pnpm test
-CMD ["node", "-e", "console.log('ExampleProject verification passed')"]
+CMD ["node", "-e", "console.log('Engram verification passed')"]
 
 # ---------- 运行时 ----------
 FROM node:22-slim

@@ -2,9 +2,9 @@
 # Windows runner 上 Z 盘不支持 docker bind mount，故源码 COPY 进镜像构建、
 # 产物用 docker create + docker cp 拷出（与 XINJE 项目的做法一致）。
 # 构建上下文为 main/ 目录：
-#   docker build -f desktop/Dockerfile.ci -t exampleproject-desktop-builder .
+#   docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .
 # 产物在镜像内 /work/desktop/dist/：
-#   CID=$(docker create exampleproject-desktop-builder)
+#   CID=$(docker create engram-desktop-builder)
 #   docker cp "$CID:/work/desktop/dist/." <输出目录>
 #   docker rm "$CID"
 # 基础镜像走加速域名镜像源（runner 网络无法直连 Docker Hub；daocloud 拉大层过慢，2026-08-23 起换 xuanyuan.run）

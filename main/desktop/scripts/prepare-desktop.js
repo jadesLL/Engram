@@ -30,7 +30,7 @@ fs.writeFileSync(
   path.join(desktopRoot, 'server', 'package.json'),
   JSON.stringify(
     {
-      name: '@example-wiki/desktop-server-runtime',
+      name: '@engram/desktop-server-runtime',
       version: serverPkg.version,
       private: true,
       type: serverPkg.type || 'commonjs',

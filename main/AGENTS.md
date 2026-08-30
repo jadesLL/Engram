@@ -1,4 +1,4 @@
-# ExampleProject 开发 Agent 约定
+# Engram 开发 Agent 约定
 
 本文件适用于 `ExampleProject/` 仓库中的 `main/` 源码，以及该仓库创建的所有 Git worktree 内的 `main/` 源码。
 

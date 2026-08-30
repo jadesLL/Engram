@@ -1,4 +1,4 @@
-# 🧠 LLM Wiki（ExampleProject）— 个人知识大脑
+# 🧠 Engram（Engram）— 个人知识大脑
 
 一个 **LLM 原生** 的知识库系统：Markdown 文件是权威数据源，数据库只做检索引擎。资料写入即被 AI 自动消化（分块 / 向量化 / 实体抽取 / 建图谱 / 智能整理），查询时直接给你**带引用的答案**，而不是一堆文件列表。
 
@@ -119,7 +119,7 @@ node-cron 定时任务（默认每天 03:00，支持工作日 / 每周 / 每月 
 ### 📱 多端与部署
 
 - **NAS Docker**：单容器 + ONLYOFFICE，任意浏览器访问
-- **Android APP**（远程客户端）：Capacitor 原生壳直连已部署的 ExampleProject 服务器，密码登录后 Cookie 长期保持；首启填服务器地址、断连自动弹回重连页、长按图标快捷方式「切换服务器」、附件下载走系统下载管理器（带 Cookie 与 UTF-8 文件名）、返回键网页后退/顶层退后台；版本号随仓库发版自动对齐；APK 随 Gitea Release 发布（详见 [docs/ANDROID.md](main/docs/ANDROID.md)）
+- **Android APP**（远程客户端）：Capacitor 原生壳直连已部署的 Engram 服务器，密码登录后 Cookie 长期保持；首启填服务器地址、断连自动弹回重连页、长按图标快捷方式「切换服务器」、附件下载走系统下载管理器（带 Cookie 与 UTF-8 文件名）、返回键网页后退/顶层退后台；版本号随仓库发版自动对齐；APK 随 Gitea Release 发布（详见 [docs/ANDROID.md](main/docs/ANDROID.md)）
 - **移动端/折叠屏深度适配**：手机（≤768px）底部导航 + 侧栏抽屉 + AI 全屏，「更多」面板收纳知识图谱 / 整理报告 / 提炼看板 / 任务队列 / 设置入口；触屏设备行尾常显「⋯」菜单（下载 / 归档 / AI 整理 / 删除 / 合并），侧栏上传 / 新建 / AI 整理全部等操作常显；折叠屏（OPPO Find N6 等）内屏 769-1024px 走紧凑桌面档——左侧图标栏保留、知识库侧栏点按浮层展开、AI 助手抽屉收窄并排；键盘弹出时输入区自动上移（Android resizes-content）、任务面板高度用 dvh 适配浏览器地址栏
 - **Windows 桌面端**（Electron）：**本地模式**内嵌后端零服务器开箱即用（数据在本机），**远端模式**凭连接令牌免密登录 NAS 实例；独有的远程文件「用系统程序打开」（调起本机 Word/WPS）
 - **应用内自更新**（设置 → 软件更新）：Docker 版网页一键拉取新镜像并自动重建容器（进度实时滚动、失败自动回滚）；桌面端同页检测并下载 exe 安装包覆盖安装，本地/远端模式统一读当前所连服务器的更新源配置（远端模式由主进程自动向服务器拉取，无需在本机重复配置），旧版桌面端壳不支持时给出明确升级指引；进入应用自动检测新版本（红点 + 提醒）；更新源只需粘贴远端仓库整条地址自动识别，访问凭据支持访问令牌/用户名密码二选一（明文回显所见即所得，存数据目录 `.env`）；镜像源自动从当前容器推导，自定义镜像源等高级选项默认折叠；更新检测在容器网络受限（如 IPv6-only 仓库域名、出站防火墙）时自动改借宿主机网络（镜像比对走 Docker daemon，版本号查询走一次性 host 网络探针容器，用完即删），普通环境保持直连；失败原因逐层展开网络层根因（如 `fetch failed ← getaddrinfo ENOTFOUND`）而非一句 `fetch failed`
@@ -129,8 +129,8 @@ node-cron 定时任务（默认每天 03:00，支持工作日 / 每周 / 每月 
 ## 快速开始（Docker 部署）
 
 ```bash
-git clone https://gitea.example.com/example/ExampleProject.git
-cd ExampleProject/main
+git clone https://github.com/jadesLL/Engram.git
+cd Engram/main
 docker compose up -d --build
 ```
 
@@ -140,11 +140,11 @@ docker compose up -d --build
 
 ```bash
 # Docker 镜像未公开发布（原私有 Registry 不对外）
-docker pull gitea.example.com/example/exampleproject/example-wiki:<版本>
+# 需要镜像请自行构建：docker compose -f main/docker-compose.yml up -d --build
 docker compose -f docker-compose.pull.yml up -d
 ```
 
-Windows 桌面端安装包从 [Releases](https://gitea.example.com/example/ExampleProject/releases) 下载（`LLM Wiki Setup <版本>.exe`），详见 [`main/desktop/README.md`](./main/desktop/README.md)。
+Windows 桌面端安装包从 [Releases](https://github.com/jadesLL/Engram/releases) 下载（`Engram Setup <版本>.exe`），详见 [`main/desktop/README.md`](./main/desktop/README.md)。
 
 > 想从源码自行构建 Docker 镜像或 Windows 安装包（含不依赖 CI 的本地 Docker 构建路径与部署方式），见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)。
 
@@ -207,7 +207,7 @@ data/
 设置页 → MCP → 生成 Token，然后在 Claude Code 中：
 
 ```bash
-claude mcp add --transport http example-wiki http://<主机IP>:8080/mcp \
+claude mcp add --transport http engram http://<主机IP>:8080/mcp \
   --header "Authorization: Bearer <你的token>"
 ```
 
@@ -239,7 +239,7 @@ Fastify + better-sqlite3（FTS5 + sqlite-vec）· Vue 3 + Vditor + vis-network �
 
 - **更新日志**：[`CHANGELOG.md`](./CHANGELOG.md)——每个版本的全部新功能与变更；发版时由 CI 自动发布到 GitHub Release 正文
 - **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Docker 镜像包（tar.gz）与 sha256 校验
-- **镜像**：`gitea.example.com/example/exampleproject/example-wiki:<版本>`（未公开发布；需要请自行构建）
+- **镜像**：`gitea.example.com/example/engram/engram:<版本>`（未公开发布；需要请自行构建）
 - **发版流程**：详见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)（构建与部署完整指南）
 - **CI/CD 维护**：Runner 环境、Secrets、镜像分发细则见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)
 

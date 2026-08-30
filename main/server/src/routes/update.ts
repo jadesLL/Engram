@@ -33,7 +33,7 @@ import {
 
 /** 桌面端壳内运行（Electron fork，无法重建容器，但也参与版本检测/提示） */
 function isDesktopMode(): boolean {
-  return Boolean(process.env.WIKILLM_APP_VERSION && !dockerSocketAvailable()) || Boolean(process.env.WIKILLM_WEB_DIST && process.env.HOST === '127.0.0.1');
+  return Boolean(process.env.ENGRAM_APP_VERSION && !dockerSocketAvailable()) || Boolean(process.env.ENGRAM_WEB_DIST && process.env.HOST === '127.0.0.1');
 }
 
 /** 当前容器 ID：Docker 默认 hostname 即短容器 ID */

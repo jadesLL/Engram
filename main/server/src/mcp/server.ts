@@ -16,11 +16,11 @@ const mcpToolContext = {
 };
 
 /** 下发给知识内容操作 Agent 的纪律：先读操作日志、动手后追加，原始不提炼 */
-const MCP_INSTRUCTIONS = `这是 LLM Wiki 个人知识大脑。操作日志位于 Wiki/log.md（标题「操作日志」），是知识内容操作的唯一记录与索引：时间倒序（新的在上）、原始不提炼。
+const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑。操作日志位于 Wiki/log.md（标题「操作日志」），是知识内容操作的唯一记录与索引：时间倒序（新的在上）、原始不提炼。
 通过 MCP 对知识内容执行任何写操作前，先用 read_page 读取 "Wiki/log.md" 了解最近状态；动作完成后，用 write_page 向 "Wiki/log.md" 追加一行，格式 "- YYYY-MM-DD HH:MM:SS 动作：细节"（插在 # 操作日志 标题正下方，保持倒序）。智能整理 / 实体升级 / 合并 / 删除 / 批量失败等 AI 副产物一律记进操作日志，不再另建独立文档。原始资料按正常入库管线处理，不做绕过提炼的笔记。详细规范见 docs/AI-CONTENT-OPERATIONS.md。`;
 
 function makeServer(): McpServer {
-  const server = new McpServer({ name: 'example-wiki', version: '0.1.0' }, { instructions: MCP_INSTRUCTIONS });
+  const server = new McpServer({ name: 'engram', version: '0.1.0' }, { instructions: MCP_INSTRUCTIONS });
 
   server.tool(
     'search',

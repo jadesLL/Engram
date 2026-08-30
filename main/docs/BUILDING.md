@@ -1,6 +1,6 @@
 # 构建与部署指南（BUILDING）
 
-本文是 ExampleProject 从源码到安装包、再到部署运行的**完整构建手册**，面向两类读者：
+本文是 Engram 从源码到安装包、再到部署运行的**完整构建手册**，面向两类读者：
 
 - **其他用户**：拿到源码后想自己构建 Docker 镜像 / Windows 安装包，或把系统部署到自己的服务器；
 - **AI Agent / 维护者**：需要快速执行「发新版本」「本地构建」「部署」等操作，本文提供可直接复制执行的命令清单（见 §7）。
@@ -50,12 +50,12 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 
 | 产物 | 名称 / 地址 | 用途 |
 |---|---|---|
-| Docker 镜像 | `gitea.example.com/example/exampleproject/example-wiki:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry） |
-| Windows 安装包 | `LLM Wiki Setup <版本>.exe`（约 110 MB） | NSIS 安装器，装出 Electron 桌面端 |
-| Docker 镜像离线包 | `example-wiki-<版本>.tar.gz`（`docker save`，约 160 MB） | 无 Registry 环境离线部署（`docker load`） |
+| Docker 镜像 | `gitea.example.com/example/engram/engram:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry） |
+| Windows 安装包 | `Engram Setup <版本>.exe`（约 110 MB） | NSIS 安装器，装出 Electron 桌面端 |
+| Docker 镜像离线包 | `engram-<版本>.tar.gz`（`docker save`，约 160 MB） | 无 Registry 环境离线部署（`docker load`） |
 | 校验值文件 | `sha256-<版本>.txt` | 前两者的 sha256 |
 
-镜像地址是**三层路径**（`owner/repo/imagename`，归属 ExampleProject 仓库）。历史上曾用两层路径 `example/example-wiki`，NAS 实测拉取异常，**不要改回**。
+镜像地址是**三层路径**（`owner/repo/imagename`，归属 Engram 仓库）。历史上曾用两层路径（更名前的 `example/example-wiki`），NAS 实测拉取异常，**不要改回**。
 
 版本号的**唯一权威来源是 `main/desktop/package.json` 的 `version` 字段**：发版 tag、镜像 tag、exe 文件名、镜像内 `/app/VERSION`（应用内自更新的比对依据）全部由它派生。
 
@@ -116,8 +116,8 @@ git push gitea v<版本>              # release.yml 启动
 3. **校验 tag = v<版本>**（仅 tag 触发时）；
 4. **提取 CHANGELOG 段落**：awk 截取 `## v<版本>` 到下一个 `## ` 的内容，缺失即失败；
 5. **构建并推送 Docker 镜像**：`docker build --label org.opencontainers.image.version=<版本> -t $IMAGE:<版本> -t $IMAGE:latest main`，login 后连推两个 tag；
-6. **构建 Windows 安装包**：`cd main && docker build -f desktop/Dockerfile.ci -t exampleproject-desktop-builder .`（wine 容器内跑 `scripts/build-desktop-ci.sh`，详见 §4.2），再 `docker create` + `docker cp` 把 `/work/desktop/dist/` 拷出来；
-7. **整理产物**：断言 `LLM Wiki Setup <版本>.exe` 存在 → `docker save | gzip` 生成镜像 tar.gz → `sha256sum` 生成校验文件；
+6. **构建 Windows 安装包**：`cd main && docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .`（wine 容器内跑 `scripts/build-desktop-ci.sh`，详见 §4.2），再 `docker create` + `docker cp` 把 `/work/desktop/dist/` 拷出来；
+7. **整理产物**：断言 `Engram Setup <版本>.exe` 存在 → `docker save | gzip` 生成镜像 tar.gz → `sha256sum` 生成校验文件；
 8. **发布**：tag 触发则用 gitea-release-action 创建 Release（正文 = CHANGELOG 段落 + 固定的镜像地址说明，附件 = exe / tar.gz / sha256）；手动触发则上传为 Artifact。
 
 ### 3.4 一次性环境前置（已配置，复现细节见 GITEA-CI.md）
@@ -147,19 +147,19 @@ docker build -t example-wiki:<版本> .
 
 ```bash
 docker build --target verify -t example-wiki:verify .
-docker run --rm example-wiki:verify     # 打印 ExampleProject verification passed 即全部通过
+docker run --rm example-wiki:verify     # 打印 Engram verification passed 即全部通过
 ```
 
 ### 4.2 构建 Windows 安装包（wine 容器交叉打包）
 
 ```bash
 cd main
-docker build -f desktop/Dockerfile.ci -t exampleproject-desktop-builder .
-CID=$(docker create exampleproject-desktop-builder)
+docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .
+CID=$(docker create engram-desktop-builder)
 mkdir -p ../desktop-dist
 docker cp "$CID:/work/desktop/dist/." ../desktop-dist
 docker rm "$CID"
-ls -la ../desktop-dist     # → LLM Wiki Setup <版本>.exe + win-unpacked/
+ls -la ../desktop-dist     # → Engram Setup <版本>.exe + win-unpacked/
 ```
 
 > Windows 上用 Git Bash 执行时，若 `docker cp` 的容器路径被转义成 `C:/Program Files/...`，在命令前加 `MSYS_NO_PATHCONV=1`。
@@ -177,13 +177,13 @@ ls -la ../desktop-dist     # → LLM Wiki Setup <版本>.exe + win-unpacked/
 
 ```bash
 # 1. 安装包存在且原生模块是 Windows PE 二进制（头两字节 = MZ）
-ls "../desktop-dist/LLM Wiki Setup <版本>.exe"
+ls "../desktop-dist/Engram Setup <版本>.exe"
 head -c 2 "../desktop-dist/win-unpacked/resources/app.asar.unpacked/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
 # → 应输出 MZ
 
 # 2. 在 Windows 上 fork 内嵌 server 起服务（exe 只能在 Windows 运行）
 cd ../desktop-dist/win-unpacked
-PORT=18080 ELECTRON_RUN_AS_NODE=1 "./LLM Wiki.exe" resources/app.asar/server/dist/index.js &
+PORT=18080 ELECTRON_RUN_AS_NODE=1 "./Engram.exe" resources/app.asar/server/dist/index.js &
 curl http://localhost:18080/health        # → 200
 # 3. 确认 asar 里是本次版本号（返回计数 > 0 即命中）
 grep -c "<版本>" resources/app.asar
@@ -217,8 +217,8 @@ pnpm build:desktop
 **方式一：源码构建部署**（开发 / 内网无 Registry）
 
 ```bash
-git clone https://gitea.example.com/example/ExampleProject.git
-cd ExampleProject/main
+git clone https://github.com/jadesLL/Engram.git
+cd Engram/main
 docker compose up -d --build
 ```
 
@@ -232,18 +232,18 @@ docker compose -f docker-compose.pull.yml up -d     # 模板默认拉 :latest
 **方式三：离线部署**（目标机无法访问 Registry）
 
 ```bash
-# 在有网机器上（或直接用 Release 附件 example-wiki-<版本>.tar.gz）
-docker load < example-wiki-<版本>.tar.gz
+# 在有网机器上（或直接用 Release 附件 engram-<版本>.tar.gz）
+docker load < engram-<版本>.tar.gz
 # 载入的镜像名是完整三层路径 :<版本>；compose 模板引用 :latest，二选一：
-docker tag gitea.example.com/example/exampleproject/example-wiki:<版本> \
-           gitea.example.com/example/exampleproject/example-wiki:latest
+docker tag gitea.example.com/example/engram/engram:<版本> \
+           gitea.example.com/example/engram/engram:latest
 # 或者把 compose 里的 image 固定为 :<版本>
 docker compose -f docker-compose.pull.yml up -d
 ```
 
 **部署三条铁律**：
 
-1. 镜像地址用三层路径 `example/exampleproject/example-wiki`，不要写两层的 `example/example-wiki`（NAS 拉取异常）；
+1. 镜像地址用三层路径 `example/engram/engram`，不要写两层的 `example/engram`（NAS 拉取异常）；
 2. **不要写 `pull_policy: never`**——它禁止拉取，本地无镜像时必报「找不到镜像」，曾多次被误判为 Registry 故障；
 3. `docker-compose.pull.yml` 里的 `/var/run/docker.sock` 挂载是**应用内自更新**（设置 → 软件更新，网页一键拉新镜像重建容器）所需；不需要该功能可删掉这行。
 
@@ -251,7 +251,7 @@ docker compose -f docker-compose.pull.yml up -d
 
 ### 6.2 Windows 桌面端
 
-直接安装 Release 附件里的 `LLM Wiki Setup <版本>.exe`（NSIS，可选安装目录）。桌面端有本地模式（内嵌后端，零服务器）和远端模式（连 Docker 实例，凭连接令牌免密登录）两种，详见 [`../desktop/README.md`](../desktop/README.md)。
+直接安装 Release 附件里的 `Engram Setup <版本>.exe`（NSIS，可选安装目录）。桌面端有本地模式（内嵌后端，零服务器）和远端模式（连 Docker 实例，凭连接令牌免密登录）两种，详见 [`../desktop/README.md`](../desktop/README.md)。
 
 ### 6.3 应用内更新
 
@@ -300,15 +300,15 @@ Docker 部署在网页「设置 → 软件更新」一键更新（拉 latest 镜
   · 服务端镜像：cd main && docker build -t example-wiki:<版本> .
   · Windows 安装包：
       cd main
-      docker build -f desktop/Dockerfile.ci -t exampleproject-desktop-builder .
-      CID=$(docker create exampleproject-desktop-builder)
+      docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .
+      CID=$(docker create engram-desktop-builder)
       docker cp "$CID:/work/desktop/dist/." ../desktop-dist
       docker rm "$CID"
     （Windows Git Bash 下 docker cp 前缀加 MSYS_NO_PATHCONV=1）
 结果验证：
-  · ../desktop-dist/LLM Wiki Setup <版本>.exe 存在
+  · ../desktop-dist/Engram Setup <版本>.exe 存在
   · better_sqlite3.node 头两字节 = MZ（§4.3 命令）
-  · Windows 上 fork server：PORT=18080 ELECTRON_RUN_AS_NODE=1 "./LLM Wiki.exe" \
+  · Windows 上 fork server：PORT=18080 ELECTRON_RUN_AS_NODE=1 "./Engram.exe" \
     resources/app.asar/server/dist/index.js 后 curl /health 返回 200
 常见失败对照：
   · 基础镜像拉不动            → 网络可达 Docker Hub 时把 Dockerfile.ci 基础镜像换回官方名
@@ -321,10 +321,10 @@ Docker 部署在网页「设置 → 软件更新」一键更新（拉 latest 镜
 ```text
 前置检查：
   · 目标机 docker + docker compose 可用
-  · 镜像可及：能 docker login Registry，或已拿到 example-wiki-<版本>.tar.gz
+  · 镜像可及：能 docker login Registry，或已拿到 engram-<版本>.tar.gz
 命令序列：
   · 在线：docker login <registry> → docker compose -f docker-compose.pull.yml up -d
-  · 离线：docker load < example-wiki-<版本>.tar.gz → retag 到 :latest（或改 compose 镜像 tag）→ up -d
+  · 离线：docker load < engram-<版本>.tar.gz → retag 到 :latest（或改 compose 镜像 tag）→ up -d
 结果验证：
   · curl http://<主机IP>:8080/health 返回 200
   · 浏览器打开出现登录页，登录后设置页版本号 = <版本>
@@ -339,7 +339,7 @@ Docker 部署在网页「设置 → 软件更新」一键更新（拉 latest 镜
 ## 8. 常见问题排查
 
 **镜像拉不到 / 找不到**
-依次检查：① 地址是三层路径 `example/exampleproject/example-wiki`（两层 `example/example-wiki` 是废弃路径，Registry 里残留旧版本但不再更新）；② 没写 `pull_policy: never`；③ 私有 Registry 先 `docker login`（token 需 **package 权限**，repository-only 权限的 token 过不了认证）。
+依次检查：① 地址是三层路径 `example/engram/engram`（两层 `example/engram` 是废弃路径，Registry 里残留旧版本但不再更新）；② 没写 `pull_policy: never`；③ 私有 Registry 先 `docker login`（token 需 **package 权限**，repository-only 权限的 token 过不了认证）。
 
 **Release 附件上传 413**
 exe 约 110 MB、tar.gz 约 160 MB，超出 Gitea 默认附件上限。调大 `app.ini` 的 `[attachment] MAX_SIZE` 后重启 Gitea。

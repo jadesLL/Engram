@@ -119,7 +119,7 @@ public class MainActivity extends BridgeActivity {
                 if (userAgent != null) request.addRequestHeader("User-Agent", userAgent);
                 if (mimetype != null) request.setMimeType(mimetype);
                 request.setTitle(fileName);
-                request.setDescription("LLM Wiki 附件下载");
+                request.setDescription("Engram 附件下载");
                 request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
                 request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
                 DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
