@@ -96,8 +96,11 @@
   <p class="version" id="version"></p>
   <script>
     var KEY = 'serverUrl';
+    var KEY_LAST_GOOD = 'serverUrlLastGood';
     var params = new URLSearchParams(location.search);
     var Plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
+    var PROBE_TIMEOUT_MS = 4000;
+    var FAILOVER_DELAY_MS = 1200;
 
     function normalize(raw) {
       var v = (raw || '').trim();
@@ -117,19 +120,90 @@
         .catch(function () { return ''; });
     }
 
+    function prefGet(key) {
+      if (!Plugins.Preferences || !Plugins.Preferences.get) return Promise.resolve(null);
+      return Plugins.Preferences.get({ key: key }).then(function (r) { return (r && r.value) || null; })
+        .catch(function () { return null; });
+    }
+
+    function prefSet(key, value) {
+      if (Plugins.Preferences && Plugins.Preferences.set) {
+        return Plugins.Preferences.set({ key: key, value: value }).catch(function () {});
+      }
+      return Promise.resolve();
+    }
+
+    // 探活：no-cors fetch opaque 成功 resolve 即视为可达
+    function probe(origin) {
+      return fetch(origin + '/health', { mode: 'no-cors', cache: 'no-store' })
+        .then(function () { return true; })
+        .catch(function () { return false; });
+    }
+
+    // 从服务端 /health 发现直连地址（env DIRECT_ACCESS_URL；无则返回 null）
+    function discoverDirect(origin) {
+      return fetch(origin + '/health', { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (h) { return (h && h.direct) || null; })
+        .catch(function () { return null; });
+    }
+
+    // 择优：lastGood 可达直接用；否则并发探「发现直连」与「已保存地址」，先通先走
+    function smartConnect(saved, msgEl) {
+      return prefGet(KEY_LAST_GOOD).then(function (lastGood) {
+        if (lastGood) {
+          return probe(lastGood).then(function (ok) {
+            if (ok) { location.replace(lastGood); return 'last-good'; }
+            return prefSet(KEY_LAST_GOOD, '').then(function () { return null; });
+          });
+        }
+        return null;
+      }).then(function (hit) {
+        if (hit) return hit;
+        var directP = discoverDirect(saved).then(function (direct) {
+          if (!direct) return null;
+          return probe(direct).then(function (ok) { return ok ? direct : null; });
+        });
+        var savedP = probe(saved).then(function (ok) { return ok ? saved : null; });
+        return Promise.all([directP, savedP]).then(function (r) {
+          var direct = r[0], reach = r[1];
+          var target = direct || reach;
+          if (target) {
+            prefSet(KEY_LAST_GOOD, target);
+            location.replace(target);
+            return direct ? 'direct' : 'tunnel';
+          }
+          return null;
+        });
+      });
+    }
+
     function showReady() { document.body.classList.add('ready'); }
 
     function main() {
       var err = params.get('err');
       if (err) {
         document.getElementById('msg').textContent =
-          '无法连接到已保存的服务器，请检查地址或网络后重试';
+          '正在自动重连…（直连不通时切换隧道）';
       }
       var after = function () {
         var p = getSaved().then(function (saved) {
           if (saved) document.getElementById('url').value = saved;
-          if (saved && !params.has('select') && !params.has('err')) {
-            location.replace(saved);
+          // 自动续连：正常启动 / 断连弹回（err）都走智能择优；select=强制停留连接页
+          if (saved && !params.has('select')) {
+            var msgEl = document.getElementById('msg');
+            var attempt = function () {
+              return smartConnect(saved, msgEl).then(function (r) {
+                if (!r) {
+                  // 两路都不通：等一会再试（网络恢复/前缀切换窗口）
+                  return new Promise(function (resolve) {
+                    setTimeout(function () { resolve(smartConnect(saved, msgEl)); }, FAILOVER_DELAY_MS);
+                  });
+                }
+                return r;
+              });
+            };
+            attempt();
             return;
           }
           showReady();
@@ -166,7 +240,9 @@
         save = Promise.reject(new Error('未检测到原生环境（需在 APP 内运行）'));
         save.catch(function (err) { msg.textContent = err.message; });
       }
-      save.then(function () { location.replace(url); }).catch(function () {});
+      save.then(function () {
+        prefSet(KEY_LAST_GOOD, '').then(function () { location.replace(url); });
+      }).catch(function () {});
     });
 
     main().then(showReady, showReady);

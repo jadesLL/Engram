@@ -149,10 +149,27 @@ function stopLocalChild() {
 }
 
 // ---------- 远端模式 ----------
+// 直连发现：远端 /health 若带 direct 字段（env DIRECT_ACCESS_URL），且直连可探通，
+// 则优先用直连 origin（低延迟、不绕 Cloudflare）；探不通回退原地址。
+async function pickRemoteOrigin(origin) {
+  try {
+    const r = await fetch(origin + '/health', { signal: AbortSignal.timeout(5000) });
+    const h = await r.json().catch(() => null);
+    const direct = h && h.direct;
+    if (!direct) return origin;
+    const probe = await fetch(direct + '/health', { signal: AbortSignal.timeout(4000) }).catch(() => null);
+    if (probe && probe.ok) return direct;
+    return origin;
+  } catch {
+    return origin; // /health 都拿不到（隧道故障等）：按原地址走，让后续流程报错
+  }
+}
+
 async function startRemoteMode(remoteUrl, token) {
   const origin = remoteUrl.replace(/\/+$/, '');
+  const actualOrigin = await pickRemoteOrigin(origin);
   try {
-    const r = await fetch(origin + '/api/auth/desktop-exchange', {
+    const r = await fetch(actualOrigin + '/api/auth/desktop-exchange', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
@@ -163,7 +180,7 @@ async function startRemoteMode(remoteUrl, token) {
     }
     const { jwt } = await r.json();
     await session.defaultSession.cookies.set({
-      url: origin,
+      url: actualOrigin,
       name: 'token',
       value: jwt,
       path: '/',
@@ -171,13 +188,13 @@ async function startRemoteMode(remoteUrl, token) {
       sameSite: 'lax',
       expirationDate: Math.floor(Date.now() / 1000) + 30 * 24 * 3600,
     });
-    win.loadURL(origin);
+    win.loadURL(actualOrigin);
   } catch (e) {
     win.loadURL(
       dataUrl(
         '<h2>无法连接远端服务器</h2><p>' +
           (e && e.message ? e.message : String(e)) +
-          '</p><p>地址：' + origin + '</p>'
+          '</p><p>地址：' + actualOrigin + '</p>'
       )
     );
   }
