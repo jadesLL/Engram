@@ -8,6 +8,10 @@ Engram 的安卓端是**纯远程客户端**：原生壳（Capacitor WebView）�
 
 - **首启/切换服务器**：内置启动页（`mobile/www/index.html`）填服务器地址（如
   `http://192.168.1.101:8080`），保存在本机后自动跳转登录。
+- **IPv6 直连自动择优**：服务器配置 `DIRECT_ACCESS_URL`（如 `http://v6.example.com:18080`）
+  后，`/health` 会通告直连地址；APP 启动时「发现直连 → 并发探测 → 可达即自动切直连」
+  （延迟低、不绕 Cloudflare），不可达自动走原地址。记住上次可用通道（lastGood）优先复用，
+  断连弹回启动页时自动重试并切换通道，无需手动干预。未配置直连时行为与旧版完全一致。
 - **登录态**：服务器签发的 httpOnly JWT Cookie 持久保存在 WebView 中，长期免登录。
 - **断连恢复**：服务器不可达时自动弹回启动页并提示（Capacitor `server.errorPath`），
   恢复后在启动页点「连接」即可，登录态不丢。

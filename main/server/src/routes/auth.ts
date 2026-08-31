@@ -3,6 +3,37 @@ import bcrypt from 'bcryptjs';
 import { db, getSetting, setSetting, now } from '../lib/db.js';
 import crypto from 'node:crypto';
 
+/**
+ * 登录失败限速（进程内）：直连路径绕过 Cloudflare Access 后，这里是唯一防线。
+ * 同 IP 连续 5 次失败锁 10 分钟；成功登录清零。计数存内存即可——重启清零可接受。
+ */
+const LOGIN_MAX_FAILURES = 5;
+const LOGIN_LOCK_MS = 10 * 60 * 1000;
+const loginFailures = new Map<string, { count: number; lockedUntil: number }>();
+
+function clientKey(req: FastifyRequest): string {
+  return req.ip || 'unknown';
+}
+
+function loginLocked(req: FastifyRequest): number {
+  const rec = loginFailures.get(clientKey(req));
+  if (!rec) return 0;
+  if (rec.lockedUntil > Date.now()) return rec.lockedUntil - Date.now();
+  if (rec.lockedUntil) loginFailures.delete(clientKey(req));
+  return 0;
+}
+
+function recordLoginFailure(req: FastifyRequest): void {
+  const key = clientKey(req);
+  const rec = loginFailures.get(key) || { count: 0, lockedUntil: 0 };
+  rec.count += 1;
+  if (rec.count >= LOGIN_MAX_FAILURES) {
+    rec.lockedUntil = Date.now() + LOGIN_LOCK_MS;
+    rec.count = 0;
+  }
+  loginFailures.set(key, rec);
+}
+
 export function ensureJwtSecret(): string {
   let secret = getSetting('jwt_secret');
   if (!secret) {
@@ -52,11 +83,18 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/auth/login', async (req, reply) => {
+    const lockRemaining = loginLocked(req);
+    if (lockRemaining > 0) {
+      const minutes = Math.ceil(lockRemaining / 60000);
+      return reply.code(429).send({ error: `失败次数过多，请 ${minutes} 分钟后再试` });
+    }
     const { password } = req.body as { password?: string };
     const hash = getSetting('password_hash');
     if (!hash || !password || !bcrypt.compareSync(password, hash)) {
+      recordLoginFailure(req);
       return reply.code(401).send({ error: '密码错误' });
     }
+    loginFailures.delete(clientKey(req));
     const token = app.jwt.sign({ sub: 'owner' }, { expiresIn: '30d' });
     reply.setCookie('token', token, cookieOpts());
     return { ok: true };

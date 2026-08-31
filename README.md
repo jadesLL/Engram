@@ -215,6 +215,21 @@ claude mcp add --transport http engram http://<主机IP>:8080/mcp \
 
 > 接入方须遵守 [`main/docs/AI-CONTENT-OPERATIONS.md`](./main/docs/AI-CONTENT-OPERATIONS.md)：写入知识内容前先读取 `Wiki/log.md`，完成后追加一条倒序记录。服务端会经 MCP `instructions` 下发同一条纪律。
 
+## IPv6 直连与多通道访问
+
+外网推荐入口 `https://engram.example.com`（Cloudflare Tunnel + Zero Trust Access）。
+具备公网 IPv6 的家庭宽带可叠加**直连通道**（低延迟、不绕 CDN）：
+
+1. 路由器放行 IPv6 入站 TCP 18080；Windows 防火墙放行同端口；`v6.example.com` 由
+   DDNS 自动维护（指向家庭 IPv6，参见部署机 `ddns-v6.ps1`）
+2. 服务端 compose 设 `DIRECT_ACCESS_URL=http://v6.example.com:18080`
+3. 之后**所有客户端仍只配置 `engram.example.com` 一个地址**：连上后从 `/health` 发现
+   直连地址，探测可达即自动切换（手机 APP / 桌面远端模式 / 浏览器入口页
+   `https://engram.example.com/go`），不可达自动走隧道
+4. 直连路径的安全防线是应用密码（登录失败限速：5 次锁 10 分钟）；隧道侧 Access OTP 照旧
+5. MCP 建议仍走隧道地址（稳定且 Access 策略允许 bots）；IPv6 环境下也可直连
+   `http://v6.example.com:18080/mcp`
+
 ## 本地开发
 
 ```bash

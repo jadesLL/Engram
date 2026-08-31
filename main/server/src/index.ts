@@ -86,7 +86,13 @@ async function main() {
   await app.register(mcpRoutes);
 
   // 轻量健康探针：恒 200、不触碰数据层，供容器 healthcheck 与负载探活使用。
-  app.get('/health', async () => 'ok');
+  // direct：可选直连地址（env DIRECT_ACCESS_URL，如 http://v6.example.com:18080），
+  // 是 IPv6 直连路径的客户端发现入口；不设置时返回纯文本 'ok'，行为与历史完全一致。
+  app.get('/health', async () =>
+    process.env.DIRECT_ACCESS_URL
+      ? { ok: 'ok', direct: process.env.DIRECT_ACCESS_URL }
+      : 'ok'
+  );
 
   // 静态托管前端构建产物 + SPA fallback
   const webDist = process.env.ENGRAM_WEB_DIST
