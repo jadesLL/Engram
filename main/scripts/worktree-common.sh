@@ -340,7 +340,7 @@ RUN --mount=type=bind,source=server/dist,target=/mnt/server-dist,ro \\
     mkdir -p /app/server/dist /app/.exampleproject-runtime/$runtime_id/web \\
     && cp -a /mnt/server-dist/. /app/server/dist/ \\
     && cp -a /mnt/web-dist/. /app/.exampleproject-runtime/$runtime_id/web/
-ENV WIKILLM_WEB_DIST=/app/.exampleproject-runtime/$runtime_id/web
+ENV ENGRAM_WEB_DIST=/app/.exampleproject-runtime/$runtime_id/web
 LABEL com.exampleproject.runtime=$runtime_id
 EOF
     docker build \
