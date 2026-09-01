@@ -235,36 +235,36 @@
         </div>
       </aside>
 
-      <!-- 本页关联：移动端默认折叠为一行摘要（关联项多时铺开可占大半屏，正文反而看不到） -->
-      <div v-if="!app.readingMode && related" class="related" :class="{ collapsed: relatedCollapsed }">
+      <!-- 本页关联：默认折叠为一行摘要（关联项多时铺开可占大半屏，正文反而看不到）；
+           左缘由 ResizeObserver 跟随 vditor 动态居中的正文文字列（alignRelated） -->
+      <div v-if="!app.readingMode && related" ref="relatedRef" class="related" :class="{ collapsed: relatedCollapsed }">
         <button
           type="button"
-          class="related-title related-toggle faint small"
+          class="related-title related-toggle"
           :aria-expanded="!relatedCollapsed"
           @click="toggleRelated"
         >
-          🔗 本页关联（AI 自动生成）<span class="related-count">{{ relatedCount }}</span>
-          <Icon :name="relatedCollapsed ? 'chevron-down' : 'chevron-up'" :size="14" />
+          本页关联<span class="related-count">{{ relatedCount }}</span>
         </button>
         <div class="related-items">
           <span
             v-for="(n, i) in related.neighbors"
             :key="'n' + n.id + '-' + n.rel + '-' + i"
-            class="tag rel-item"
+            class="rel-item"
             v-tooltip="n.direction === 'out' ? '本页引用了它' : '它引用了本页'"
             @click="$router.push(`/page/${n.id}`)"
           >{{ n.direction === 'out' ? '→' : '←' }} {{ n.title }}</span>
           <span
             v-for="(s, i) in related.similar"
             :key="'s' + s.id + '-' + i"
-            class="tag rel-item"
+            class="rel-item"
             v-tooltip="`语义相似 ${(1 - s.distance).toFixed(2)}`"
             @click="$router.push(`/page/${s.id}`)"
           >≈ {{ s.title }}</span>
           <span
             v-for="(e, i) in related.entities"
             :key="'e' + e.name + '-' + e.rel + '-' + i"
-            class="tag entity"
+            class="rel-item entity"
           >{{ e.name }}</span>
         </div>
       </div>
@@ -336,22 +336,64 @@ const pageType = ref('note');
 const tagsInput = ref('');
 const saveState = ref('');
 const related = ref<any>(null);
-/* 本页关联折叠：移动端默认收起（多关联页铺开可占大半屏，正文不可见）；桌面默认展开。
- * 用户点开/收起的选择在会话内跨页面保留；跨档位（桌面↔手机）切换时回到该档默认。 */
-const relatedMobile = window.matchMedia('(max-width: 768px)');
-const relatedCollapsed = ref(relatedMobile.matches);
-let relatedUserTouched = false;
-relatedMobile.addEventListener('change', (e) => {
-  if (!relatedUserTouched) relatedCollapsed.value = e.matches;
-});
+/* 本页关联折叠：默认收起为一行摘要（关联属页脚参考信息，不该抢正文空间）。
+ * 用户点开/收起的选择写入 localStorage 跨会话保留，未操作过时跟随默认收起。 */
+const RELATED_STORE_KEY = 'engram.related.expanded';
+const relatedRef = ref<HTMLElement>();
+const relatedCollapsed = ref(localStorage.getItem(RELATED_STORE_KEY) !== '1');
 const relatedCount = computed(() =>
   (related.value?.neighbors?.length || 0) +
   (related.value?.similar?.length || 0) +
   (related.value?.entities?.length || 0)
 );
 function toggleRelated() {
-  relatedUserTouched = true;
   relatedCollapsed.value = !relatedCollapsed.value;
+  localStorage.setItem(RELATED_STORE_KEY, relatedCollapsed.value ? '0' : '1');
+}
+/* 对齐：vditor 用 JS 内联 padding 把正文文字列动态居中（(容器宽-maxWidth)/2），
+ * 固定 CSS 值永远追不上；这里实测正文列 x 坐标，同步写到区块 padding-left。
+ * 断点（<768px）区块走全宽 20px，不参与对齐。 */
+const relatedAlignMedia = window.matchMedia('(min-width: 768px)');
+let relatedAlignObs: ResizeObserver | undefined;
+function alignRelated() {
+  const relatedEl = relatedRef.value;
+  if (!relatedEl || !relatedAlignMedia.matches) return;
+  // vditor 在 DOM 里保留多个模式的 reset（sv/wysiwyg/ir），只有当前模式的可见
+  const editor = visibleReset(relatedEl.parentElement);
+  if (!editor) return;
+  const contentCol = editor.getBoundingClientRect();
+  const inlinePad = parseFloat(getComputedStyle(editor).paddingLeft) || 0;
+  const textColX = contentCol.x + inlinePad;
+  const baseX = relatedEl.getBoundingClientRect().x;
+  const pad = Math.max(0, Math.round(textColX - baseX));
+  relatedEl.style.paddingLeft = pad + 'px';
+}
+function visibleReset(root: ParentNode | null | undefined): HTMLElement | undefined {
+  return Array.from(
+    root?.querySelectorAll<HTMLElement>('.editor-area .vditor-reset') || []
+  ).find(el => el.offsetHeight > 0 && el.children.length > 0);
+}
+function setupRelatedAlign() {
+  relatedAlignObs?.disconnect();
+  const host = relatedRef.value?.parentElement?.querySelector('.editor-area');
+  if (!host || typeof ResizeObserver === 'undefined') return;
+  relatedAlignObs = new ResizeObserver(() => alignRelated());
+  // 观察 host（窗口/侧栏引起的宽度变化）和 reset 本身（vditor 初始化/换算内联 padding
+  // 只改 reset 自身尺寸，host 不动，必须两者都观察才能捕捉）
+  relatedAlignObs.observe(host);
+  const reset = visibleReset(host);
+  if (reset) relatedAlignObs.observe(reset);
+  alignRelated();
+  // vditor 初始化是异步的：首帧 reset 往往还不可见，短轮询兜底到就位为止
+  let tries = 0;
+  const timer = setInterval(() => {
+    const r = visibleReset(host);
+    if (r) {
+      if (tries > 0) relatedAlignObs?.observe(r);
+      alignRelated();
+    }
+    if (r || ++tries > 20) clearInterval(timer);
+  }, 150);
 }
 /* 手机端页头操作区（类型/标签/AI 整理/来源 + AI 写作条）折叠：
  * 这些是低频操作，手机上铺开占上半屏，正文反而看不到。默认收起，桌面始终展开。 */
@@ -972,10 +1014,16 @@ function beforeUnload(e: BeforeUnloadEvent) {
 onMounted(() => {
   if (route.params.id) loadPage(route.params.id as string);
   window.addEventListener('beforeunload', beforeUnload);
+  nextTick(setupRelatedAlign);
+});
+/* related 是条件渲染（v-if），页面数据到位后才出现在 DOM；届时挂对齐 observer */
+watch(related, (v) => {
+  if (v) nextTick(setupRelatedAlign);
 });
 onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload);
   if (saveTimer) clearTimeout(saveTimer);
+  relatedAlignObs?.disconnect();
   assistant.clearContext();
 });
 </script>
@@ -1337,35 +1385,47 @@ onUnmounted(() => {
 }
 .source-row small { color: var(--text-faint); }
 
+/* 本页关联：安静的页脚区块——弱色小号标题 + 无底色 chip。
+ * 左缘对齐正文文字列：vditor 用 JS 动态居中正文（内联 padding 随宽度变化），
+ * 固定值追不上，由 setupRelatedAlign 的 ResizeObserver 实测后写内联 padding-left；
+ * 这里 64px 只是 JS 未就绪时的兜底 */
 .related {
   max-width: var(--editor-max);
   margin: 0 auto;
   width: 100%;
-  padding: 10px 48px 24px;
-  border-top: 1px dashed var(--border);
+  padding: 14px 48px 40px 64px;
 }
-.related-title { margin-bottom: 6px; }
+.related-title { margin-bottom: 8px; }
 .related-items { display: flex; flex-wrap: wrap; gap: 6px; }
 .related-toggle {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font: inherit;
-  color: inherit;
+  color: var(--text-faint);
+  font-size: 12px;
 }
-.related-toggle:hover { color: var(--text-secondary); }
+.related-toggle:hover { color: var(--text-secondary); background: transparent; }
 .related-count {
   padding: 0 6px;
   border-radius: 8px;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 .related.collapsed .related-items { display: none; }
-.related.collapsed { padding-bottom: 12px; }
-.rel-item { cursor: pointer; }
-.rel-item:hover { background: var(--bg-active); }
-.entity { background: var(--accent-soft); color: var(--accent); }
+.related.collapsed { padding-bottom: 20px; }
+.rel-item {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.rel-item:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.rel-item.entity { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
 
 .welcome {
   height: 100%;
@@ -1416,7 +1476,9 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .page-head, .ai-bar, .related { padding-left: 20px; padding-right: 20px; }
+  .page-head, .ai-bar { padding-left: 20px; padding-right: 20px; }
+  /* !important 覆盖桌面档 ResizeObserver 写入的内联对齐值；窄屏正文不再居中，区块跟随 20px 通栏 */
+  .related { padding-left: 20px !important; padding-right: 20px; }
   .page-head { padding-top: 20px; }
   .title-input { font-size: 26px; }
   .ai-hint { display: none; }
