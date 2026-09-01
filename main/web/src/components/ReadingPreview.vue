@@ -108,7 +108,6 @@
           >
             本页关联
             <span class="reading-related-count">{{ relatedCount }}</span>
-            <Icon :name="relatedCollapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
           </button>
           <div>
             <button
@@ -252,22 +251,18 @@ const hasRelated = computed(() =>
     props.related?.entities?.length
   )
 );
-/* 本页关联折叠：移动端默认收起（编辑视图同策略——多关联页铺开可占大半屏）；
- * 用户选择在组件存活期内保留，跨档位切换回该档默认。 */
-const relatedMobile = window.matchMedia('(max-width: 768px)');
-const relatedCollapsed = ref(relatedMobile.matches);
-let relatedUserTouched = false;
-relatedMobile.addEventListener('change', (e) => {
-  if (!relatedUserTouched) relatedCollapsed.value = e.matches;
-});
+/* 本页关联折叠：默认收起（编辑视图同策略——页脚参考信息不抢正文空间）；
+ * 用户选择写入 localStorage 与编辑视图共享（engram.related.expanded）。 */
+const RELATED_STORE_KEY = 'engram.related.expanded';
+const relatedCollapsed = ref(localStorage.getItem(RELATED_STORE_KEY) !== '1');
 const relatedCount = computed(() =>
   (props.related?.neighbors?.length || 0) +
   (props.related?.similar?.length || 0) +
   (props.related?.entities?.length || 0)
 );
 function toggleRelated() {
-  relatedUserTouched = true;
   relatedCollapsed.value = !relatedCollapsed.value;
+  localStorage.setItem(RELATED_STORE_KEY, relatedCollapsed.value ? '0' : '1');
 }
 
 function updatePreferences(value: Partial<ReadingPreferences>) {
