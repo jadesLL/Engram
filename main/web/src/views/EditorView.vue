@@ -239,7 +239,7 @@
       <div v-if="!app.readingMode && related" class="related" :class="{ collapsed: relatedCollapsed }">
         <button
           type="button"
-          class="related-title related-toggle faint small"
+          class="related-title related-toggle"
           :aria-expanded="!relatedCollapsed"
           @click="toggleRelated"
         >
@@ -250,21 +250,21 @@
           <span
             v-for="(n, i) in related.neighbors"
             :key="'n' + n.id + '-' + n.rel + '-' + i"
-            class="tag rel-item"
+            class="rel-item"
             v-tooltip="n.direction === 'out' ? '本页引用了它' : '它引用了本页'"
             @click="$router.push(`/page/${n.id}`)"
           >{{ n.direction === 'out' ? '→' : '←' }} {{ n.title }}</span>
           <span
             v-for="(s, i) in related.similar"
             :key="'s' + s.id + '-' + i"
-            class="tag rel-item"
+            class="rel-item"
             v-tooltip="`语义相似 ${(1 - s.distance).toFixed(2)}`"
             @click="$router.push(`/page/${s.id}`)"
           >≈ {{ s.title }}</span>
           <span
             v-for="(e, i) in related.entities"
             :key="'e' + e.name + '-' + e.rel + '-' + i"
-            class="tag entity"
+            class="rel-item entity"
           >{{ e.name }}</span>
         </div>
       </div>
@@ -1337,35 +1337,45 @@ onUnmounted(() => {
 }
 .source-row small { color: var(--text-faint); }
 
+/* 本页关联：安静的页脚区块——弱色小号标题 + 无底色 chip，
+ * 左缘与正文文字列对齐（正文卡片带 64px 内边距，区块左内边距取同值补偿边框差） */
 .related {
   max-width: var(--editor-max);
   margin: 0 auto;
   width: 100%;
-  padding: 10px 48px 24px;
-  border-top: 1px dashed var(--border);
+  padding: 14px 48px 40px 64px;
 }
-.related-title { margin-bottom: 6px; }
+.related-title { margin-bottom: 8px; }
 .related-items { display: flex; flex-wrap: wrap; gap: 6px; }
 .related-toggle {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font: inherit;
-  color: inherit;
+  color: var(--text-faint);
+  font-size: 12px;
 }
-.related-toggle:hover { color: var(--text-secondary); }
+.related-toggle:hover { color: var(--text-secondary); background: transparent; }
 .related-count {
   padding: 0 6px;
   border-radius: 8px;
-  background: var(--bg-tertiary);
+  background: var(--bg-secondary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 .related.collapsed .related-items { display: none; }
-.related.collapsed { padding-bottom: 12px; }
-.rel-item { cursor: pointer; }
-.rel-item:hover { background: var(--bg-active); }
-.entity { background: var(--accent-soft); color: var(--accent); }
+.related.collapsed { padding-bottom: 20px; }
+.rel-item {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.rel-item:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.rel-item.entity { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
 
 .welcome {
   height: 100%;
@@ -1416,7 +1426,8 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .page-head, .ai-bar, .related { padding-left: 20px; padding-right: 20px; }
+  .page-head, .ai-bar { padding-left: 20px; padding-right: 20px; }
+  .related { padding-left: 20px; padding-right: 20px; }
   .page-head { padding-top: 20px; }
   .title-input { font-size: 26px; }
   .ai-hint { display: none; }

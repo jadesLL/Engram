@@ -886,8 +886,6 @@ onBeforeUnmount(() => {
 }
 .reading-related {
   margin-top: 36px;
-  padding-top: 16px;
-  border-top: 1px dashed var(--border);
 }
 .reading-related-toggle {
   display: inline-flex;
@@ -921,13 +919,15 @@ onBeforeUnmount(() => {
 }
 .reading-related button,
 .reading-related span {
-  padding: 4px 8px;
-  border-radius: 4px;
-  background: var(--bg-secondary);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
 }
 .reading-related button:hover {
+  border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
 }
