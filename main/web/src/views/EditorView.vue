@@ -244,7 +244,7 @@
           :aria-expanded="!relatedCollapsed"
           @click="toggleRelated"
         >
-          本页关联（AI 自动生成）<span class="related-count">{{ relatedCount }}</span>
+          本页关联<span class="related-count">{{ relatedCount }}</span>
         </button>
         <div class="related-items">
           <span
