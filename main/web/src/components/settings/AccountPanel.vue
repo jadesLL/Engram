@@ -45,7 +45,10 @@
         </div>
         <div class="conn-controls">
           <span class="conn-badge" :class="'conn-' + connState">{{ connBadgeText }}</span>
-          <button v-if="connState !== 'direct'" class="btn" type="button" @click="probeConn">重测</button>
+          <button v-if="connState === 'tunnel-ok'" class="btn primary" type="button" @click="switchToDirect">
+            使用直连访问
+          </button>
+          <button v-else-if="connState !== 'direct'" class="btn" type="button" @click="probeConn">重测</button>
         </div>
         <p v-if="directUrl && connState !== 'direct'" class="setting-message conn-direct-row">
           直连地址（可填入 APP / 桌面端的「直连地址」可选框）：
@@ -152,6 +155,11 @@ async function copyDirect() {
   } catch {
     /* 剪贴板不可用时忽略 */
   }
+}
+
+/** 一键切直连：仅直连探测可用时展示；跳转直连域（登录态随父域 Cookie 共享，免重登） */
+function switchToDirect() {
+  if (directUrl.value) location.href = directUrl.value + '/';
 }
 
 onMounted(probeConn);
