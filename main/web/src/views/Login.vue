@@ -4,18 +4,18 @@
       <div class="logo">
         <svg viewBox="0 0 100 100" width="28" height="28" aria-hidden="true">
           <defs>
-            <linearGradient id="engram-orbit-login" gradientUnits="userSpaceOnUse" x1="22" y1="78" x2="78" y2="22">
+            <linearGradient id="engram-orbit-login" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">
               <stop offset="0" stop-color="#22D3EE" />
               <stop offset="1" stop-color="#4D8AFF" />
             </linearGradient>
-            <linearGradient id="engram-core-login" gradientUnits="userSpaceOnUse" x1="42" y1="42" x2="58" y2="58">
+            <linearGradient id="engram-core-login" gradientUnits="userSpaceOnUse" x1="39" y1="39" x2="61" y2="61">
               <stop offset="0" stop-color="#4D8AFF" />
               <stop offset="1" stop-color="#245BDB" />
             </linearGradient>
           </defs>
-          <ellipse cx="50" cy="50" rx="28" ry="12" fill="none" stroke="url(#engram-orbit-login)" stroke-width="7" transform="rotate(-28 50 50)" />
-          <circle cx="67" cy="34" r="4" fill="#22D3EE" />
-          <circle cx="50" cy="50" r="8.5" fill="url(#engram-core-login)" />
+          <ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="url(#engram-orbit-login)" stroke-width="8.5" transform="rotate(-28 50 50)" />
+          <circle cx="74" cy="28.5" r="5" fill="#22D3EE" />
+          <circle cx="50" cy="50" r="11" fill="url(#engram-core-login)" />
         </svg>
       </div>
       <h1>Engram</h1>
