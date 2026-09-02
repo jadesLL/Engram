@@ -38,6 +38,22 @@
         </select>
       </div>
 
+      <div v-if="connState !== 'unconfigured'" class="setting-row">
+        <div class="setting-copy">
+          <strong>连接通道</strong>
+          <span>当前访问路径与直连可用性。</span>
+        </div>
+        <div class="conn-controls">
+          <span class="conn-badge" :class="'conn-' + connState">{{ connBadgeText }}</span>
+          <button v-if="connState !== 'direct'" class="btn" type="button" @click="probeConn">重测</button>
+        </div>
+        <p v-if="directUrl && connState !== 'direct'" class="setting-message conn-direct-row">
+          直连地址（可填入 APP / 桌面端的「直连地址」可选框）：
+          <code>{{ directUrl }}</code>
+          <button class="btn" type="button" @click="copyDirect">{{ directCopied ? '已复制' : '复制' }}</button>
+        </p>
+      </div>
+
       <div class="setting-row">
         <div class="setting-copy">
           <strong>当前会话</strong>
@@ -58,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
 import { useAuthStore } from '../../stores/auth';
@@ -70,6 +86,75 @@ const auth = useAuthStore();
 const pwd = ref({ old: '', next: '' });
 const pwdMsg = ref('');
 const pwdOk = ref(false);
+
+// ---------- 连接通道状态（服务器经 /health 通告直连地址；未通告则整块隐藏） ----------
+const connState = ref<'loading' | 'unconfigured' | 'direct' | 'tunnel-ok' | 'tunnel'>('loading');
+const directUrl = ref('');
+const directLatency = ref<number | null>(null);
+const directCopied = ref(false);
+
+const connBadgeText = computed(() => {
+  switch (connState.value) {
+    case 'loading':
+      return '检测中…';
+    case 'direct':
+      return 'IPv6 直连';
+    case 'tunnel-ok':
+      return `隧道（直连可用 ${directLatency.value ?? '?'}ms）`;
+    case 'tunnel':
+      return '隧道';
+    default:
+      return '';
+  }
+});
+
+async function probeConn() {
+  connState.value = 'loading';
+  directCopied.value = false;
+  try {
+    // 同源请求：/health 未配置 DIRECT_ACCESS_URL 时是纯文本 'ok'，视为未通告
+    const res = await api.get('/health');
+    const h = res.data;
+    const direct =
+      typeof h === 'object' && h !== null ? String((h as any).direct || '').replace(/\/+$/, '') : '';
+    if (!direct) {
+      connState.value = 'unconfigured';
+      directUrl.value = '';
+      return;
+    }
+    directUrl.value = direct;
+    if (location.origin === direct) {
+      connState.value = 'direct';
+      return;
+    }
+    // 当前走隧道：测直连可达性与延迟（no-cors opaque，resolve 即可达，3.5s 硬超时）
+    const t0 = performance.now();
+    const ok = await new Promise<boolean>((resolve) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3500);
+      fetch(direct + '/health', { mode: 'no-cors', cache: 'no-store', signal: ctrl.signal })
+        .then(() => resolve(true))
+        .catch(() => resolve(false))
+        .finally(() => clearTimeout(timer));
+    });
+    directLatency.value = ok ? Math.round(performance.now() - t0) : null;
+    connState.value = ok ? 'tunnel-ok' : 'tunnel';
+  } catch {
+    connState.value = 'unconfigured';
+  }
+}
+
+async function copyDirect() {
+  try {
+    await navigator.clipboard.writeText(directUrl.value);
+    directCopied.value = true;
+    setTimeout(() => (directCopied.value = false), 2000);
+  } catch {
+    /* 剪贴板不可用时忽略 */
+  }
+}
+
+onMounted(probeConn);
 
 async function changePwd() {
   pwdMsg.value = '';
@@ -93,6 +178,37 @@ function logout() {
 </script>
 
 <style scoped>
+.conn-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.conn-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.conn-loading { background: #f5f6f7; color: #8a9099; }
+.conn-direct { background: #e6f6ea; color: #1a7f37; }
+.conn-tunnel-ok { background: #e8f0fe; color: #245bdb; }
+.conn-tunnel { background: #fdf0e6; color: #b2621f; }
+.conn-direct-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.conn-direct-row code {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #f5f6f7;
+  font-size: 12.5px;
+  user-select: all;
+}
 .password-controls {
   display: grid;
   grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr) auto;

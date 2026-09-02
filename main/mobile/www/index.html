@@ -56,6 +56,7 @@
       color: var(--fg);
       outline: none;
     }
+    input + input { margin-top: 8px; }
     input:focus { border-color: var(--accent); }
     button {
       width: 100%;
@@ -89,16 +90,21 @@
   <form id="form">
     <input id="url" type="text" inputmode="url" autocomplete="off" autocapitalize="off"
            autocorrect="off" spellcheck="false" placeholder="http://192.168.1.101:8080" />
+    <input id="directUrl" type="text" inputmode="url" autocomplete="off" autocapitalize="off"
+           autocorrect="off" spellcheck="false" placeholder="直连地址（可选，可用时优先）" />
     <button type="submit">连接</button>
   </form>
   <p id="msg" class="msg"></p>
-  <p class="hint">填入 Engram 服务器地址（含端口），例如 http://192.168.1.101:8080。<br />首次使用可在服务器网页端完成初始密码设置。</p>
+  <p class="hint">填入 Engram 服务器地址（含端口），例如 http://192.168.1.101:8080。<br />直连地址（IPv6 / 局域网）可用时将优先连接，不可用自动走主地址；可在网页端 设置 → 账户与外观 复制。</p>
   <p class="version" id="version"></p>
   <script>
     var KEY = 'serverUrl';
     var KEY_LAST_GOOD = 'serverUrlLastGood';
+    var KEY_DIRECT = 'serverUrlDirect';
     var params = new URLSearchParams(location.search);
     var Plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
+    var PROBE_TIMEOUT_MS = 3500;
+    var DIRECT_PROBE_TIMEOUT_MS = 1500;
     var FAILOVER_DELAY_MS = 1200;
 
     function normalize(raw) {
@@ -132,29 +138,68 @@
       return Promise.resolve();
     }
 
-    function probe(origin) {
-      return fetch(origin + '/health', { mode: 'no-cors', cache: 'no-store' })
-        .then(function () { return true; })
-        .catch(function () { return false; });
+    // 探测通道可达性：no-cors opaque 响应 resolve 即认为 TCP+HTTP 可达，硬超时防止 SYN 重传挂死。
+    // 直连候选用短超时——正常可达 RTT <150ms，不可达时尽快落主地址；其余候选 3.5s。
+    function probe(origin, timeoutMs) {
+      var t = timeoutMs || PROBE_TIMEOUT_MS;
+      return new Promise(function (resolve) {
+        var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, t) : null;
+        fetch(origin + '/health', { mode: 'no-cors', cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
+          .then(function () { resolve(true); })
+          .catch(function () { resolve(false); })
+          .then(function () { if (timer) clearTimeout(timer); });
+      });
     }
 
+    // 从服务器 /health 发现直连地址（服务端经 CORS 白名单放行本启动页读取）。
+    // 走主地址且已有会话 cookie 时成功；被 Cloudflare Access 拦截或网络不通则静默返回 null。
+    function discoverDirect(origin) {
+      return fetch(origin + '/health', { credentials: 'include', cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (h) {
+          var d = h && h.direct ? normalize(h.direct) : '';
+          return d || null;
+        })
+        .catch(function () { return null; });
+    }
+
+    // 择优连接：候选顺序「直连地址 → 上次成功通道 → 主地址」，逐个探测首个可达者进入。
+    // 直连排第一即「IPv6 优先」：可达时秒进直连；不可达时最多 1.5s 即落回其他通道，
+    // 且直连恢复（如路由器放行）后的下一次启动立即切回。页面跳转会杀掉后台 fetch，
+    // 因此不做「跳转后补探」——直连每次启动都真探一遍。
     function connectSaved(saved) {
-      return prefGet(KEY_LAST_GOOD).then(function (lastGood) {
-        if (lastGood) {
-          return probe(lastGood).then(function (ok) {
-            if (ok) { location.replace(lastGood); return 'last-good'; }
-            return prefSet(KEY_LAST_GOOD, '').then(function () { return null; });
+      return Promise.all([prefGet(KEY_LAST_GOOD), prefGet(KEY_DIRECT)]).then(function (vals) {
+        var lastGood = vals[0] || '';
+        var direct = vals[1] || '';
+        var candidates = [];
+        if (direct) candidates.push(direct);
+        if (lastGood && candidates.indexOf(lastGood) < 0) candidates.push(lastGood);
+        if (saved && candidates.indexOf(saved) < 0) candidates.push(saved);
+        if (!candidates.length) return null;
+
+        if (saved) {
+          discoverDirect(saved).then(function (d) {
+            if (d && d !== direct) prefSet(KEY_DIRECT, d);
           });
         }
-        return null;
-      }).then(function (hit) {
-        if (hit) return hit;
-        return probe(saved).then(function (ok) {
-          if (!ok) return null;
-          prefSet(KEY_LAST_GOOD, saved);
-          location.replace(saved);
-          return 'saved';
-        });
+
+        var i = 0;
+        function tryNext() {
+          if (i >= candidates.length) return Promise.resolve(null);
+          var cand = candidates[i++];
+          var t = cand === direct ? DIRECT_PROBE_TIMEOUT_MS : PROBE_TIMEOUT_MS;
+          return probe(cand, t).then(function (ok) {
+            if (ok) {
+              prefSet(KEY_LAST_GOOD, cand);
+              location.replace(cand);
+              return 'connected';
+            }
+            if (cand === lastGood) prefSet(KEY_LAST_GOOD, '');
+            return tryNext();
+          });
+        }
+        return tryNext();
       });
     }
 
@@ -166,9 +211,12 @@
         document.getElementById('msg').textContent = '正在自动重连…';
       }
       var after = function () {
-        var p = getSaved().then(function (saved) {
+        var p = Promise.all([getSaved(), prefGet(KEY_DIRECT)]).then(function (vals) {
+          var saved = vals[0] || '';
+          var direct = vals[1] || '';
           if (saved) document.getElementById('url').value = saved;
-          // 自动续连：正常启动 / 断连弹回（err）都检查已保存的服务器；select=强制停留连接页
+          if (direct) document.getElementById('directUrl').value = direct;
+          // 自动续连：正常启动 / 断连弹回（err）都按候选序列择优；select=强制停留连接页
           if (saved && !params.has('select')) {
             var attempt = function () {
               return connectSaved(saved).then(function (r) {
@@ -202,14 +250,23 @@
       e.preventDefault();
       var msg = document.getElementById('msg');
       var url = normalize(document.getElementById('url').value);
+      var directUrl = normalize(document.getElementById('directUrl').value);
       if (!url) {
         msg.textContent = '地址无效，请检查格式（例：http://192.168.1.101:8080）';
+        return;
+      }
+      if (document.getElementById('directUrl').value.trim() && !directUrl) {
+        msg.textContent = '直连地址格式无效（例：http://192.168.1.101:8080 或 http://[2408:…]:18080）';
         return;
       }
       msg.textContent = '';
       var save;
       if (Plugins.Preferences && Plugins.Preferences.set) {
-        save = Plugins.Preferences.set({ key: KEY, value: url }).catch(function (err) {
+        save = Promise.all([
+          Plugins.Preferences.set({ key: KEY, value: url }),
+          Plugins.Preferences.set({ key: KEY_DIRECT, value: directUrl || '' }),
+          Plugins.Preferences.set({ key: KEY_LAST_GOOD, value: '' }),
+        ]).catch(function (err) {
           msg.textContent = '保存设置失败：' + ((err && err.message) || err);
           throw err;
         });
@@ -218,7 +275,15 @@
         save.catch(function (err) { msg.textContent = err.message; });
       }
       save.then(function () {
-        prefSet(KEY_LAST_GOOD, '').then(function () { location.replace(url); });
+        // 跳转前先尝试发现直连地址并缓存（用户没手填时这是 direct 的唯一来源；
+        // 2.5s 内未完成不阻塞跳转，择优留给下一次启动/重连）
+        var disc = directUrl
+          ? Promise.resolve(directUrl)
+          : Promise.race([discoverDirect(url), new Promise(function (r) { setTimeout(function () { r(null); }, 2500); })]);
+        disc.then(function (d) {
+          if (d) prefSet(KEY_DIRECT, d);
+          location.replace(url);
+        });
       }).catch(function () {});
     });
 

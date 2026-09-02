@@ -1,6 +1,6 @@
 services:
   engram:
-    image: engram:1.1.33
+    image: engram:1.1.34
     build: .
     container_name: engram
     ports:
@@ -14,6 +14,9 @@ services:
       - .env.onlyoffice
     environment:
       - TZ=Asia/Shanghai
+      # 直连地址通告（IPv6 直连优先的客户端发现入口）。真实值写在部署侧同目录 .env（不入库），
+      # 例：DIRECT_ACCESS_URL=http://direct.example.com:18080；未配置时 /health 保持纯文本
+      - DIRECT_ACCESS_URL=${DIRECT_ACCESS_URL:-}
       # 初始登录密码（仅首次启动生效，之后可在设置页修改）
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
       - OFFICE_EDITOR_ENABLED=true

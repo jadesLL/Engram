@@ -122,6 +122,7 @@ node-cron 定时任务（默认每天 03:00，支持工作日 / 每周 / 每月 
 - **Android APP**（远程客户端）：Capacitor 原生壳直连已部署的 Engram 服务器，密码登录后 Cookie 长期保持；首启填服务器地址、断连自动弹回重连页、长按图标快捷方式「切换服务器」、附件下载走系统下载管理器（带 Cookie 与 UTF-8 文件名）、返回键网页后退/顶层退后台；版本号随仓库发版自动对齐；APK 随 Gitea Release 发布（详见 [docs/ANDROID.md](main/docs/ANDROID.md)）
 - **移动端/折叠屏深度适配**：手机（≤768px）底部导航 + 侧栏抽屉 + AI 全屏，「更多」面板收纳知识图谱 / 整理报告 / 提炼看板 / 任务队列 / 设置入口；触屏设备行尾常显「⋯」菜单（下载 / 归档 / AI 整理 / 删除 / 合并），侧栏上传 / 新建 / AI 整理全部等操作常显；折叠屏（OPPO Find N6 等）内屏 769-1024px 走紧凑桌面档——左侧图标栏保留、知识库侧栏点按浮层展开、AI 助手抽屉收窄并排；键盘弹出时输入区自动上移（Android resizes-content）、任务面板高度用 dvh 适配浏览器地址栏
 - **Windows 桌面端**（Electron）：**本地模式**内嵌后端零服务器开箱即用（数据在本机），**远端模式**凭连接令牌免密登录 NAS 实例；独有的远程文件「用系统程序打开」（调起本机 Word/WPS）
+- **IPv6 直连优先 + 隧道兜底**（智能接入）：远程客户端（APP / 桌面端 / 浏览器 go 入口页）启动时自动择优——直连地址（IPv6 DDNS / 局域网）可达秒进直连，不可达自动落 Cloudflare 隧道等主地址，直连恢复后下次启动自动切回，全程无感；探测带 1.5/3.5 秒硬超时不会卡死。直连地址由服务端 `.env` 的 `DIRECT_ACCESS_URL` 经 `/health` 通告（仓库零域名硬编码），也可在 APP/桌面端手填（设置 → 账户与外观「连接通道」可看当前通道状态并一键复制直连地址）；部署与路由器 IPv6 放行指南见 [main/docs/IPV6.md](./main/docs/IPV6.md)
 - **应用内自更新**（设置 → 软件更新）：Docker 版网页一键拉取新镜像并自动重建容器（进度实时滚动、失败自动回滚）；桌面端同页检测并下载 exe 安装包覆盖安装，本地/远端模式统一读当前所连服务器的更新源配置（远端模式由主进程自动向服务器拉取，无需在本机重复配置），旧版桌面端壳不支持时给出明确升级指引；进入应用自动检测新版本（红点 + 提醒）；更新源只需粘贴远端仓库整条地址自动识别，访问凭据支持访问令牌/用户名密码二选一（明文回显所见即所得，存数据目录 `.env`）；镜像源自动从当前容器推导，自定义镜像源等高级选项默认折叠；更新检测在容器网络受限（如 IPv6-only 仓库域名、出站防火墙）时自动改借宿主机网络（镜像比对走 Docker daemon，版本号查询走一次性 host 网络探针容器，用完即删），普通环境保持直连；失败原因逐层展开网络层根因（如 `fetch failed ← getaddrinfo ENOTFOUND`）而非一句 `fetch failed`
 - 设置页 9 大面板：账户、模型配置（对话/向量/视觉三类+测试+重建索引+服务端厂商目录+多协议）、自动化、MCP、桌面端连接、软件更新、飞书、存储空间、数据管理；提炼看板入口在侧边栏「原始资料」区标题旁（图标+进度数字）
 - **模型用量统计**：按操作类型汇总调用次数、**综合缓存命中率**（总命中率含本机结果缓存复用 / 供应商前缀命中率分开标注）、缓存读取 token、重试次数，本地向量缓存与管线级复用同样计入命中，LLM 成本看得见
@@ -251,6 +252,7 @@ Fastify + better-sqlite3（FTS5 + sqlite-vec）· Vue 3 + Vditor + vis-network �
 | [`main/WORKTREES.md`](./main/WORKTREES.md) | Worktree 工作流与资源隔离规则 |
 | [`main/docs/BUILDING.md`](./main/docs/BUILDING.md) | 构建与部署指南（安装包生成、发版、部署） |
 | [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md) | Gitea CI/CD、发版流程、镜像分发 |
+| [`main/docs/IPV6.md`](./main/docs/IPV6.md) | IPv6 直连优先 + 隧道兜底（部署、DDNS、路由器放行） |
 | [`main/docs/AI-CONTENT-OPERATIONS.md`](./main/docs/AI-CONTENT-OPERATIONS.md) | AI 操作知识内容的纪律 |
 | [`main/docs/LLM-FIRST-ARCHITECTURE.md`](./main/docs/LLM-FIRST-ARCHITECTURE.md) | LLM 优先架构设计 |
 | [`main/desktop/README.md`](./main/desktop/README.md) | Windows 桌面端（双模式、打包） |

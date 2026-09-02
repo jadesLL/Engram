@@ -9,6 +9,7 @@ import { ensureDirs, PORT, HOST } from './config.js';
 import { migrate, db } from './lib/db.js';
 import { registerStaticAssetCache } from './lib/staticAssets.js';
 import { ensureJwtSecret, ensureDefaultPassword, authRoutes } from './routes/auth.js';
+import { healthRoutes } from './routes/health.js';
 import { pageRoutes } from './routes/pages.js';
 import { fileRoutes } from './routes/files.js';
 import { searchRoutes } from './routes/search.js';
@@ -67,6 +68,7 @@ async function main() {
 
   await registerOfficeProxy(app);
   await app.register(authRoutes);
+  await app.register(healthRoutes);
   await app.register(pageRoutes);
   await app.register(fileRoutes);
   await app.register(officeRoutes);
@@ -84,9 +86,6 @@ async function main() {
   await app.register(eventRoutes);
   await app.register(trashRoutes);
   await app.register(mcpRoutes);
-
-  // 轻量健康探针：恒 200、不触碰数据层，供容器 healthcheck 与负载探活使用。
-  app.get('/health', async () => 'ok');
 
   // 静态托管前端构建产物 + SPA fallback
   const webDist = process.env.ENGRAM_WEB_DIST

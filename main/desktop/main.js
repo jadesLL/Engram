@@ -149,8 +149,76 @@ function stopLocalChild() {
 }
 
 // ---------- 远端模式 ----------
+// 直连优先择优：服务器 /health 可能通告直连地址（DIRECT_ACCESS_URL，如 IPv6 DDNS 域名）。
+// 候选顺序：缓存的直连地址（手填/上次发现）→ 服务器通告 → 主地址；直连探测 1.5s 超时 +
+// 状态码校验，首个可达者用于 token 兑换与加载。直连不可达自动落回主地址（隧道）。
+const DIRECT_PROBE_TIMEOUT_MS = 1500;
+
+function normalizeOrigin(raw) {
+  let v = String(raw || '').trim().replace(/\/+$/, '');
+  if (!v) return '';
+  if (!/^https?:\/\//i.test(v)) v = 'http://' + v;
+  try {
+    const u = new URL(v);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    return u.origin;
+  } catch {
+    return '';
+  }
+}
+
+/** 从服务器 /health 读取通告的直连地址；主地址走隧道时须带上会话 cookie 才能过 Cloudflare Access */
+async function discoverDirectFromServer(origin) {
+  try {
+    const cookies = await session.defaultSession.cookies.get({ url: origin });
+    const header = cookies
+      .filter((c) => c.name === 'token' || c.name.startsWith('CF_Authorization'))
+      .map((c) => `${c.name}=${c.value}`)
+      .join('; ');
+    const res = await fetch(origin + '/health', {
+      headers: header ? { Cookie: header } : {},
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const h = await res.json().catch(() => null);
+    return (h && h.direct && normalizeOrigin(h.direct)) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function probeOrigin(origin) {
+  try {
+    const res = await fetch(origin + '/health', { signal: AbortSignal.timeout(DIRECT_PROBE_TIMEOUT_MS) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function pickRemoteOrigin(cfg) {
+  const primary = normalizeOrigin(cfg.remoteUrl) || String(cfg.remoteUrl || '').replace(/\/+$/, '');
+  const cached = normalizeOrigin(cfg.directUrl);
+  const candidates = [];
+  if (cached && cached !== primary) candidates.push(cached);
+  const announced = await discoverDirectFromServer(primary);
+  if (announced && announced !== primary && !candidates.includes(announced)) candidates.push(announced);
+  for (const cand of candidates) {
+    if (await probeOrigin(cand)) {
+      if (cand !== cached) {
+        const c = readConfig();
+        c.directUrl = cand;
+        writeConfig(c);
+      }
+      return cand;
+    }
+  }
+  return primary;
+}
+
 async function startRemoteMode(remoteUrl, token) {
-  const actualOrigin = remoteUrl.replace(/\/+$/, '');
+  win.loadURL(dataUrl('<h2>正在连接远端服务器…</h2>'));
+  const actualOrigin = await pickRemoteOrigin(readConfig());
   try {
     const r = await fetch(actualOrigin + '/api/auth/desktop-exchange', {
       method: 'POST',
@@ -257,7 +325,7 @@ app.on('before-quit', () => {
 // ---------- IPC ----------
 ipcMain.handle('get-connection', () => {
   const c = readConfig();
-  return { mode: c.mode || '', remoteUrl: c.remoteUrl || '', remoteToken: c.remoteToken || '' };
+  return { mode: c.mode || '', remoteUrl: c.remoteUrl || '', remoteToken: c.remoteToken || '', directUrl: c.directUrl || '' };
 });
 
 ipcMain.handle('set-local-mode', () => {
@@ -267,8 +335,8 @@ ipcMain.handle('set-local-mode', () => {
   return true;
 });
 
-ipcMain.handle('set-remote-mode', (_e, url, token) => {
-  writeConfig({ mode: 'remote', remoteUrl: url, remoteToken: token });
+ipcMain.handle('set-remote-mode', (_e, url, token, directUrl) => {
+  writeConfig({ mode: 'remote', remoteUrl: url, remoteToken: token, directUrl: normalizeOrigin(directUrl) });
   stopLocalChild();
   startRemoteMode(url, token);
   return true;

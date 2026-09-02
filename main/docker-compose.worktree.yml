@@ -21,6 +21,8 @@ services:
       TZ: Asia/Shanghai
       DEFAULT_PASSWORD: "${DEFAULT_PASSWORD:-CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER}"
       OFFICE_EDITOR_ENABLED: "false"
+      # 直连地址通告（预览验证用；主 compose 同款透传）
+      DIRECT_ACCESS_URL: "${DIRECT_ACCESS_URL:-}"
     sysctls:
       net.ipv4.tcp_mtu_probing: "1"
     restart: unless-stopped
