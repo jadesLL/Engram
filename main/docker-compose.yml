@@ -1,6 +1,6 @@
 services:
   engram:
-    image: engram:1.1.35
+    image: engram:1.1.36
     build: .
     container_name: engram
     ports:
@@ -25,6 +25,8 @@ services:
       - TLS_DNS_API_TOKEN=${TLS_DNS_API_TOKEN:-}
       - TLS_EMAIL=${TLS_EMAIL:-}
       - TLS_ACME_DIRECTORY=${TLS_ACME_DIRECTORY:-}
+      # 会话 Cookie 父域（跨子域共享登录态：隧道域/直连域免重登）。例：COOKIE_DOMAIN=.example.com
+      - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
       # 初始登录密码（仅首次启动生效，之后可在设置页修改）
       - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
       - OFFICE_EDITOR_ENABLED=true

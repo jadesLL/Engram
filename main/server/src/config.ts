@@ -18,6 +18,14 @@ export const PORT = Number(process.env.PORT || 8080);
 export const HOST = process.env.HOST || '0.0.0.0';
 
 /**
+ * 会话 Cookie 的 Domain 属性（可选）。配置为父域（如 .example.com）时，
+ * 隧道域与直连域两个子域共享登录态——浏览器「一键切直连」免重登的前提。
+ * 未配置时为 host-only（默认行为，仅当前域有效）。
+ * 注意：该父域下所有子域都会携带此 Cookie，请勿在不可信子域上部署服务。
+ */
+export const COOKIE_DOMAIN = (process.env.COOKIE_DOMAIN || '').trim();
+
+/**
  * HTTPS 直连入口（内置 TLS/ACME）。TLS_DOMAIN 未配置时全部为空，行为与历史版本一致。
  * - TLS_DOMAIN：直连证书域名（如 DDNS 域名），存在即启用 8443 HTTPS 监听
  * - TLS_DNS_API_TOKEN：Cloudflare API token（需 Zone.DNS Edit 权限，写 DNS-01 TXT 记录）

@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { db, getSetting, setSetting, now } from '../lib/db.js';
+import { COOKIE_DOMAIN } from '../config.js';
 import crypto from 'node:crypto';
 
 /**
@@ -101,7 +102,8 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/auth/logout', async (_req, reply) => {
-    reply.clearCookie('token', { path: '/' });
+    // clearCookie 属性须与 setCookie 匹配（含 domain），否则父域 Cookie 清不掉
+    reply.clearCookie('token', { path: '/', ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}) });
     return { ok: true };
   });
 
@@ -142,5 +144,7 @@ function cookieOpts() {
     httpOnly: true,
     sameSite: 'lax' as const,
     maxAge: 30 * 24 * 3600,
+    // 配置 COOKIE_DOMAIN（如 .example.com）时跨子域共享登录态（隧道域/直连域免重登）
+    ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
   };
 }
