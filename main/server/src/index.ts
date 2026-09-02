@@ -49,6 +49,7 @@ import { startJobRunner } from './jobs.js';
 import { scheduleDreamCycle } from './dream/scheduler.js';
 import { queueMissingPageSynthesesAsync } from './pipeline/pageSynthesis.js';
 import { CertManager, type LoadedCert } from './lib/tls.js';
+import { startDdnsScheduler } from './lib/ddns.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -129,6 +130,8 @@ async function main() {
   scheduleDreamCycle();
   // 飞书长连接客户端（凭证未配置则跳过）
   startFeishuLongConn();
+  // DDNS 直连域名维护（设置页/env 未配置则完全静默跳过；纯 Node 定时器，无控制台窗口）
+  startDdnsScheduler();
   // SSE 心跳：保活长连接、探活死连接（断线 EventSource 自动重连）
   const hb = setInterval(heartbeat, 30_000);
   hb.unref();

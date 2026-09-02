@@ -55,6 +55,19 @@ export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
 export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
 export const FEISHU_API_BASE = process.env.FEISHU_API_BASE || 'https://open.feishu.cn';
 
+/**
+ * DDNS 直连域名维护（设置页 ddns_config 可配，env 为 Docker/无 GUI 部署的逐字段回退）：
+ * - DDNS_TOKEN：Cloudflare API Token（需 Zone.DNS Edit 权限）
+ * - DDNS_RECORD：维护的记录 FQDN（如 home.example.com）
+ * - DDNS_TYPE：A / AAAA / auto（默认 auto，有全局 IPv6 用 AAAA，否则 A）
+ * - DDNS_INTERVAL_MIN：同步间隔分钟数（默认 5）
+ */
+const DDNS_TYPE_RAW = (process.env.DDNS_TYPE || '').trim().toLowerCase();
+export const DDNS_TOKEN = (process.env.DDNS_TOKEN || '').trim();
+export const DDNS_RECORD = (process.env.DDNS_RECORD || '').trim();
+export const DDNS_TYPE = DDNS_TYPE_RAW === 'a' || DDNS_TYPE_RAW === 'aaaa' ? DDNS_TYPE_RAW : 'auto';
+export const DDNS_INTERVAL_MIN = positiveInt(process.env.DDNS_INTERVAL_MIN, 5);
+
 function normalizePublicPath(value: string): string {
   const withLeading = value.startsWith('/') ? value : `/${value}`;
   return withLeading.endsWith('/') ? withLeading : `${withLeading}/`;
