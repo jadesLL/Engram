@@ -8,6 +8,17 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.1.35（2026-09-02）
+
+**HTTPS 直连（内置 TLS/ACME）**：直连地址支持 `https://`，彻底消除浏览器混合内容限制（此前 https 页面无法探测 http 明文直连是浏览器硬规则，`/go` 入口与设置页徽章在浏览器下无法走直连）：
+
+- **内置 Let's Encrypt 证书自动签发与续期**：DNS-01 验证经 Cloudflare API 写 `_acme-challenge` TXT 并以 DoH 轮询确认传播，无需开 80 端口、无需任何反代组件；证书/私钥/账户 key 持久化数据卷，余量不足 30 天自动重签并热更换监听证书
+- **服务端双监听**：8080 HTTP 照旧（隧道 ingress/局域网/healthcheck 不受影响），证书就绪后追加 8443 HTTPS 直连监听；`createApp()` 工厂重构使两实例共用全部路由
+- **部署极简**：`.env` 配 `TLS_DOMAIN` + `TLS_DNS_API_TOKEN`（与 DDNS 同一 token，需 Zone.DNS Edit 权限）+ 放行 443 即生效；`DIRECT_ACCESS_URL` 改配 `https://` 后四端（浏览器/APP/桌面端/MCP）全部吃上直连，客户端零改动
+- 未配置 `TLS_DOMAIN` 时行为与历史版本完全一致，零成本退场
+- 兼容性修复：绕开 acme-client 5.4 + Node 22 的 CSR 解析崩溃（"Cannot get schema for 'CertificationRequest' target"），改用手动 ACME order 流程
+- 新增 13 例单测（配置解析/证书缓存命中/临期重签/续期回调语义/CF zone 逐级查询/TXT 传播轮询超时/签发失败透出），并以真实域名完成 Let's Encrypt staging 全链路签发冒烟（DNS-01 → 签发 → HTTPS 握手 → TXT 清理）
+
 ## v1.1.34（2026-09-02）
 
 稳定性修复 + IPv6 智能接入重做：根治「编辑实体页后服务重启崩溃循环」、终止综合任务失败风暴、关联接口提速；客户端「IPv6 直连优先 + 隧道兜底」修正版回归：

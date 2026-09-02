@@ -340,33 +340,65 @@ export class CertManager {
       commonName: domain,
       altNames: [domain],
     });
+    // CSR 为 PEM 文本（forge 输出）；finalizeOrder 内部 getPemBodyAsB64u 可直接处理。
+    // 不使用 client.auto()：其 readCsrDomains 走 @peculiar/x509 解析 CSR，在
+    // acme-client 5.4 + Node 22 上报 "Cannot get schema for 'CertificationRequest'
+    // target"。单域名场景域名已知，手动 order 流程完全绕开该解析。
+    const csrPem = csr.toString('utf8');
 
-    const challengeCreate = async (
-      _authz: unknown,
-      challenge: { type: string },
-      keyAuthorization: string,
-    ): Promise<void> => {
-      if (challenge.type !== 'dns-01') {
-        throw new Error(`不支持的 challenge 类型: ${challenge.type}`);
-      }
-      await createDns01Challenge(domain, keyAuthorization, dnsApiToken, this.fetchImpl, propagationTimeoutMs);
-    };
-    const challengeRemove = async (
-      _authz: unknown,
-      challenge: { type: string },
-      keyAuthorization: string,
-    ): Promise<void> => {
-      if (challenge.type !== 'dns-01') return;
-      await removeDns01Challenge(domain, keyAuthorization, dnsApiToken, this.fetchImpl);
-    };
-
-    const cert = await client.auto({
-      csr,
-      email,
-      challengePriority: ['dns-01'],
-      challengeCreateFn: challengeCreate,
-      challengeRemoveFn: challengeRemove,
+    // 0) 注册/载入 ACME 账户（程序化同意 LE 订户条款）
+    await client.createAccount({
+      termsOfServiceAgreed: true,
+      ...(email ? { contact: [`mailto:${email}`] } : {}),
     });
+
+    // 1) 下单（单域名）
+    const order = await client.createOrder({
+      identifiers: [{ type: 'dns', value: domain }],
+    });
+
+    // 2) 逐个 authorization 完成 DNS-01 challenge（写 TXT → 等 ACME 验证通过 → 删 TXT）
+    const authorizations = await client.getAuthorizations(order);
+    for (const authz of authorizations) {
+      if (authz.status === 'valid') continue;
+      const authzDomain = authz.identifier?.value || domain;
+      const challenge = authz.challenges.find((c) => c.type === 'dns-01');
+      if (!challenge) {
+        throw new Error(`ACME 未为 ${authzDomain} 提供 dns-01 challenge`);
+      }
+      const keyAuthorization = await client.getChallengeKeyAuthorization(challenge);
+      let completed = false;
+      try {
+        const cleanup = await createDns01Challenge(
+          authzDomain,
+          keyAuthorization,
+          dnsApiToken,
+          this.fetchImpl,
+          propagationTimeoutMs,
+        );
+        try {
+          await client.completeChallenge(challenge);
+          completed = true;
+          await client.waitForValidStatus(challenge);
+        } finally {
+          await cleanup();
+        }
+      } catch (e) {
+        if (!completed) {
+          try {
+            await client.deactivateAuthorization(authz);
+          } catch {
+            /* 停用失败不影响错误上抛 */
+          }
+        }
+        throw e;
+      }
+    }
+
+    // 3) 等 order ready → finalize（提交 CSR）→ 等 valid → 下载证书
+    await client.waitForValidStatus(order);
+    const finalized = await client.finalizeOrder(order, csrPem);
+    const cert = await client.getCertificate(finalized);
     return { key: certKey.toString('utf8'), cert };
   }
 }
