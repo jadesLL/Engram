@@ -58,26 +58,26 @@ function drawMark(ctx, w, h, scale, cyOffset = 0) {
   ctx.translate(w / 2, h / 2 + cyOffset);
   ctx.scale(s / 100, s / 100);
   // 轨道环（青→蓝渐变）
-  const orbit = ctx.createLinearGradient(-28, 28, 28, -28);
+  const orbit = ctx.createLinearGradient(-26, 26, 26, -26);
   orbit.addColorStop(0, '#22D3EE');
   orbit.addColorStop(1, '#4D8AFF');
   ctx.strokeStyle = orbit;
-  ctx.lineWidth = 7;
+  ctx.lineWidth = 8.5;
   ctx.beginPath();
-  ctx.ellipse(0, 0, 28, 12, -28 * Math.PI / 180, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 36, 15.5, -28 * Math.PI / 180, 0, Math.PI * 2);
   ctx.stroke();
   // 轨道电子
   ctx.fillStyle = ELECTRON;
   ctx.beginPath();
-  ctx.arc(17, -16, 4, 0, Math.PI * 2);
+  ctx.arc(24, -21.5, 5, 0, Math.PI * 2);
   ctx.fill();
   // 知识核（蓝→深蓝渐变）
-  const core = ctx.createLinearGradient(-8, -8, 8, 8);
+  const core = ctx.createLinearGradient(-11, -11, 11, 11);
   core.addColorStop(0, '#4D8AFF');
   core.addColorStop(1, '#245BDB');
   ctx.fillStyle = core;
   ctx.beginPath();
-  ctx.arc(0, 0, 8.5, 0, Math.PI * 2);
+  ctx.arc(0, 0, 11, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -104,7 +104,7 @@ function renderLauncher(file, { round }) {
     ctx.clip();
   }
   drawBackground(ctx, w, h, radius);
-  drawMark(ctx, w, h, 0.82);
+  drawMark(ctx, w, h, 1.0);
   fs.writeFileSync(file, canvas.toBuffer('image/png'));
   console.log('ok', path.relative(resDir, file), `${w}x${h}`);
 }
@@ -114,7 +114,7 @@ function renderForeground(file) {
   const canvas = createCanvas(w, h);
   const ctx = canvas.getContext('2d');
   // 自适应图标前景需留安全区（内容约 50%）
-  drawMark(ctx, w, h, 0.6);
+  drawMark(ctx, w, h, 0.72);
   fs.writeFileSync(file, canvas.toBuffer('image/png'));
   console.log('ok', path.relative(resDir, file), `${w}x${h}`);
 }
@@ -126,7 +126,7 @@ function renderSplash(file) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, w, h);
   const unit = Math.min(w, h);
-  drawMark(ctx, w, h, 0.26, -unit * 0.08);
+  drawMark(ctx, w, h, 0.3, -unit * 0.08);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#1f2329';
@@ -174,7 +174,7 @@ const desktopIconPath = path.join(__dirname, '..', '..', 'desktop', 'build', 'ic
   const canvas = createCanvas(size, size);
   const ctx = canvas.getContext('2d');
   drawBackground(ctx, size, size, size * 0.22);
-  drawMark(ctx, size, size, 0.82);
+  drawMark(ctx, size, size, 1.0);
   fs.writeFileSync(desktopIconPath, canvas.toBuffer('image/png'));
   console.log('ok', path.relative(path.join(__dirname, '..'), desktopIconPath), `${size}x${size}`);
 }
