@@ -29,11 +29,13 @@ import { withJobsStopped } from '../jobs.js';
 import { fetchTenantAccessToken, clearTokenCache } from '../im/feishu/token.js';
 import { getFeishuConfig, isFeishuConfigured } from '../im/feishu/config.js';
 import { getFeishuLongConnStatus, restartFeishuLongConn } from '../im/feishu/longconn.js';
+import { getDdnsConfig, getDdnsStatus, kickDdns, syncDdnsRecord } from '../lib/ddns.js';
 
 const PUBLIC_SETTINGS = [
   'dream_cron', 'dream_enabled',
   'acs_mode',
   'feishu_config',
+  'ddns_config',
 ];
 
 /** 从活跃 embedding 条目同步 embedding_dim（驱动 vec 表维度） */
@@ -126,6 +128,10 @@ export async function settingsRoutes(app: FastifyInstance) {
       clearTokenCache();
       restartFeishuLongConn();
     }
+    // DDNS 配置变更后立即到期，下个 30s tick 内按新配置执行
+    if (body['ddns_config'] !== undefined) {
+      kickDdns();
+    }
     const { changed } = syncEmbeddingDim();
     // 维度变化 → 自动后台重建全部索引（vec 表换维度后旧向量已失效）
     if (changed) {
@@ -176,6 +182,38 @@ export async function settingsRoutes(app: FastifyInstance) {
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
+  });
+
+  /** DDNS 同步状态：配置是否完整、上次执行结果与下次执行时间。 */
+  app.get('/api/settings/ddns-status', async () => {
+    const cfg = getDdnsConfig();
+    return {
+      configured: Boolean(cfg.token && cfg.record),
+      enabled: cfg.enabled,
+      record: cfg.record,
+      type: cfg.type,
+      intervalMin: cfg.intervalMin,
+      status: getDdnsStatus(),
+    };
+  });
+
+  /** 立即检测 DDNS（dryRun：探测本机 IP 并与 Cloudflare 比对，不写入）。token 传掩码时沿用库中原值。 */
+  app.post('/api/settings/test-ddns', async (req) => {
+    const body = (req.body || {}) as { token?: string; record?: string; type?: string };
+    const stored = getDdnsConfig();
+    const typeRaw = String(body.type || '').toLowerCase();
+    const cfg = {
+      ...stored,
+      enabled: true,
+      token: !body.token || body.token.includes('*') ? stored.token : body.token.trim(),
+      record: (body.record || stored.record).trim().toLowerCase(),
+      type: typeRaw === 'a' ? ('A' as const) : typeRaw === 'aaaa' ? ('AAAA' as const) : typeRaw === 'auto' ? ('auto' as const) : stored.type,
+    };
+    if (!cfg.token) return { ok: false, error: '缺少 Cloudflare API Token' };
+    if (!cfg.record) return { ok: false, error: '缺少记录域名' };
+    const r = await syncDdnsRecord(cfg, { dryRun: true });
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, record: r.record, type: r.type, detectedIp: r.ip, dnsIp: r.dnsIp, outcome: r.outcome };
   });
 
   app.post('/api/settings/discover-models', async (req, reply) => {
