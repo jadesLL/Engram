@@ -43,14 +43,50 @@
     <button class="btn" id="fallback" type="button">通过 Cloudflare 进入</button>
   </div>
   <script>
-    // 本页部署在 Cloudflare 隧道域名上，直接进入同源应用。
+    // 本页部署在 Cloudflare 隧道域名上，同源 /health 可读（用户已过 Access OTP）。
+    // 若服务器通告了直连地址（DIRECT_ACCESS_URL），优先探测直连（IPv6/局域网，低延迟无中转），
+    // 2s 内可达则整页跳转直连；未配置 / 不可达 / 超时则留在隧道进入。
     (function () {
-      var spin = document.getElementById('spin');
+      var PROBE_TIMEOUT_MS = 2000;
       var msg = document.getElementById('msg');
       var fallbackBtn = document.getElementById('fallback');
-      msg.textContent = '正在进入（Cloudflare 隧道）…';
-      location.replace('/');
-      fallbackBtn.addEventListener('click', function () { location.replace('/'); });
+      var entered = false;
+
+      function enter(url, label) {
+        if (entered) return;
+        entered = true;
+        msg.textContent = label;
+        location.replace(url);
+      }
+
+      function probe(origin) {
+        return new Promise(function (resolve) {
+          var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+          var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, PROBE_TIMEOUT_MS) : null;
+          fetch(origin + '/health', { mode: 'no-cors', cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
+            .then(function () { resolve(true); })
+            .catch(function () { resolve(false); })
+            .then(function () { if (timer) clearTimeout(timer); });
+        });
+      }
+
+      msg.textContent = '正在选择最快的连接方式…';
+      fetch('/health', { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (h) {
+          var direct = h && h.direct;
+          if (!direct) throw new Error('no-direct');
+          return probe(direct).then(function (ok) {
+            if (ok) enter(direct + '/', '正在通过直连进入…');
+            else throw new Error('direct-unreachable');
+          });
+        })
+        .catch(function () {
+          enter('/', '正在进入（Cloudflare 隧道）…');
+        });
+
+      setTimeout(function () { fallbackBtn.style.display = 'block'; }, 3000);
+      fallbackBtn.addEventListener('click', function () { enter('/', '正在进入（Cloudflare 隧道）…'); });
     })();
   </script>
 </body>

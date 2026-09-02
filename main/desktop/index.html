@@ -56,7 +56,8 @@
       <h2>连接远端服务器</h2>
       <p>在远端「设置 → 桌面端连接」生成令牌，填入地址与令牌即可免密码登录。</p>
       <input id="url" placeholder="http://192.168.1.101:8080" />
-      <input id="token" placeholder="lwid_..." />
+      <input id="directUrl" placeholder="直连地址（可选，可用时优先）" style="margin-top:8px" />
+      <input id="token" placeholder="lwid_..." style="margin-top:8px" />
       <button class="btn-primary btn-block" id="go">连接</button>
     </div>
 
@@ -65,12 +66,14 @@
   </div>
   <script>
     const urlInput = document.getElementById('url');
+    const directUrlInput = document.getElementById('directUrl');
     const tokenInput = document.getElementById('token');
     const err = document.getElementById('err');
     const current = document.getElementById('current');
 
     window.wikiDesktop?.getConnection().then((c) => {
       if (c.remoteUrl) urlInput.value = c.remoteUrl;
+      if (c.directUrl) directUrlInput.value = c.directUrl;
       if (c.mode === 'local') current.textContent = '当前：本地模式';
       else if (c.mode === 'remote') current.textContent = '当前：远端 ' + c.remoteUrl;
       else current.textContent = '当前：未配置';
@@ -84,13 +87,15 @@
     async function go() {
       err.textContent = '';
       let u = urlInput.value.trim();
+      const d = directUrlInput.value.trim();
       const t = tokenInput.value.trim();
       if (!u) { err.textContent = '请输入服务器地址'; return; }
       if (!t) { err.textContent = '请输入连接令牌'; return; }
+      if (d && !/^https?:\/\//.test(d)) { err.textContent = '直连地址需以 http:// 或 https:// 开头'; return; }
       if (!/^https?:\/\//.test(u)) u = 'http://' + u;
       u = u.replace(/\/+$/, '');
       try {
-        await window.wikiDesktop.setRemoteMode(u, t);
+        await window.wikiDesktop.setRemoteMode(u, t, d);
       } catch (e) {
         err.textContent = '连接失败：' + (e.message || e);
       }

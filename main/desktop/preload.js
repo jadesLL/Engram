@@ -6,8 +6,8 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   getConnection: () => ipcRenderer.invoke('get-connection'),
   // 切换到本地模式（内嵌后端）
   setLocalMode: () => ipcRenderer.invoke('set-local-mode'),
-  // 切换到远端模式（地址 + 令牌，免密兑换）
-  setRemoteMode: (url, token) => ipcRenderer.invoke('set-remote-mode', url, token),
+  // 切换到远端模式（地址 + 令牌，免密兑换；directUrl 可选直连地址，可用时优先连接）
+  setRemoteMode: (url, token, directUrl) => ipcRenderer.invoke('set-remote-mode', url, token, directUrl),
   // 返回启动页重新选择模式
   openConnectionSettings: () => ipcRenderer.invoke('open-connection-settings'),
   // 远程文件「用系统程序打开」
