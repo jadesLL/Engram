@@ -6,11 +6,14 @@
  *
  * 用法：node scripts/gen-icons.cjs
  * 读取 res 下现有 PNG 的尺寸，按同尺寸重新渲染：
- *   - mipmap 各密度 ic_launcher.png        圆角方块图标（蓝底 + Engram 痕迹标志）
+ *   - mipmap 各密度 ic_launcher.png        圆角方块图标（深蓝黑底 + 原子轨道标志）
  *   - mipmap 各密度 ic_launcher_round.png  圆形图标
  *   - mipmap 各密度 ic_launcher_foreground.png 自适应图标前景（透明底，标志居中）
- *   - drawable 各密度 splash.png           启动屏（浅底 + 标志 + 产品名）
- *   - desktop/build/icon.png               桌面端/安装包图标（512×512，蓝底 + 标志）
+ *   - drawable 各密度 splash.png           启动屏（白底 + 彩色标志 + 产品名）
+ *   - desktop/build/icon.png               桌面端/安装包图标（512×512）
+ *
+ * 品牌标志「原子轨道」：中心知识核 + 倾斜轨道环（青→蓝渐变）+ 轨道电子，
+ * 设计坐标 100×100、中心 (50,50)，见 docs/brand/engram-mark.svg。
  */
 const fs = require('fs');
 const path = require('path');
@@ -29,9 +32,8 @@ function loadCanvas() {
 const { createCanvas } = loadCanvas();
 const resDir = path.join(__dirname, '..', 'android', 'app', 'src', 'main', 'res');
 
-const BG_TOP = '#3D7BFF';
-const BG_BOTTOM = '#245BDB';
-const BRAND = '#3D7BFF';
+const BRAND_BG = '#0F172A'; // 图标底色：深蓝黑
+const ELECTRON = '#22D3EE'; // 轨道电子：青
 
 function pngSize(file) {
   const buf = fs.readFileSync(file);
@@ -48,56 +50,45 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// 原子轨道标志（彩色，透明底）：轨道环 + 电子 + 知识核。
+// cyOffset：整体垂直偏移（splash 里给下方的产品名让位）。
+function drawMark(ctx, w, h, scale, cyOffset = 0) {
+  const s = Math.min(w, h) * scale;
+  ctx.save();
+  ctx.translate(w / 2, h / 2 + cyOffset);
+  ctx.scale(s / 100, s / 100);
+  // 轨道环（青→蓝渐变）
+  const orbit = ctx.createLinearGradient(-28, 28, 28, -28);
+  orbit.addColorStop(0, '#22D3EE');
+  orbit.addColorStop(1, '#4D8AFF');
+  ctx.strokeStyle = orbit;
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 28, 12, -28 * Math.PI / 180, 0, Math.PI * 2);
+  ctx.stroke();
+  // 轨道电子
+  ctx.fillStyle = ELECTRON;
+  ctx.beginPath();
+  ctx.arc(17, -16, 4, 0, Math.PI * 2);
+  ctx.fill();
+  // 知识核（蓝→深蓝渐变）
+  const core = ctx.createLinearGradient(-8, -8, 8, 8);
+  core.addColorStop(0, '#4D8AFF');
+  core.addColorStop(1, '#245BDB');
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(0, 0, 8.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawBackground(ctx, w, h, radius) {
-  const g = ctx.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, BG_TOP);
-  g.addColorStop(1, BG_BOTTOM);
-  ctx.fillStyle = g;
+  ctx.fillStyle = BRAND_BG;
   if (radius > 0) {
     roundRectPath(ctx, 0, 0, w, h, radius);
     ctx.fill();
   } else {
     ctx.fillRect(0, 0, w, h);
-  }
-}
-
-// Engram 痕迹标志：字母 E 由三条圆角「记忆痕迹」构成，末端各带一枚发光触点
-// （engram = 记忆痕迹；触点呼应知识图谱的节点）。
-// cyOffset：整体垂直偏移（splash 里给下方的产品名让位）。
-function drawMark(ctx, w, h, scale, color, cyOffset = 0) {
-  const unit = Math.min(w, h) * scale;
-  const cx = w / 2;
-  const cy = h / 2 + cyOffset;
-  const barH = unit * 0.16;   // 痕迹粗细
-  const barW = unit * 0.68;   // 标志总宽
-  const gap = unit * 0.15;    // 行距
-  const dotR = barH * 0.52;   // 触点半径
-  const dotGap = dotR * 1.5;  // 痕迹与触点的间隙
-  const spineW = barH;
-  const totalH = barH * 3 + gap * 2;
-  const left = cx - barW / 2;
-  const top = cy - totalH / 2;
-  const traceLen = barW - dotGap - dotR * 2;
-  ctx.fillStyle = color;
-  roundRectPath(ctx, left, top, spineW, totalH, spineW / 2);
-  ctx.fill();
-  const rows = [0, 1, 2].map((i) => ({
-    y: top + (barH + gap) * i,
-    len: i === 1 ? traceLen * 0.78 : traceLen,
-  }));
-  for (const row of rows) {
-    roundRectPath(ctx, left, row.y, row.len, barH, barH / 2);
-    ctx.fill();
-    const dx = left + row.len + dotGap + dotR;
-    const dy = row.y + barH / 2;
-    ctx.beginPath();
-    ctx.arc(dx, dy, dotR * 2.2, 0, Math.PI * 2);
-    ctx.globalAlpha = 0.22;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.beginPath();
-    ctx.arc(dx, dy, dotR, 0, Math.PI * 2);
-    ctx.fill();
   }
 }
 
@@ -113,7 +104,7 @@ function renderLauncher(file, { round }) {
     ctx.clip();
   }
   drawBackground(ctx, w, h, radius);
-  drawMark(ctx, w, h, 0.62, '#ffffff');
+  drawMark(ctx, w, h, 0.82);
   fs.writeFileSync(file, canvas.toBuffer('image/png'));
   console.log('ok', path.relative(resDir, file), `${w}x${h}`);
 }
@@ -123,7 +114,7 @@ function renderForeground(file) {
   const canvas = createCanvas(w, h);
   const ctx = canvas.getContext('2d');
   // 自适应图标前景需留安全区（内容约 50%）
-  drawMark(ctx, w, h, 0.5, '#ffffff');
+  drawMark(ctx, w, h, 0.6);
   fs.writeFileSync(file, canvas.toBuffer('image/png'));
   console.log('ok', path.relative(resDir, file), `${w}x${h}`);
 }
@@ -135,7 +126,7 @@ function renderSplash(file) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, w, h);
   const unit = Math.min(w, h);
-  drawMark(ctx, w, h, 0.2, BRAND, -unit * 0.08);
+  drawMark(ctx, w, h, 0.26, -unit * 0.08);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#1f2329';
@@ -154,7 +145,7 @@ for (const d of densities) {
   renderForeground(path.join(dir, 'ic_launcher_foreground.png'));
 }
 
-// 自适应图标背景：纯色矢量（替换 Capacitor 默认绿色）
+// 自适应图标背景：纯色矢量（深蓝黑，与 PNG 图标底一致）
 fs.writeFileSync(
   path.join(resDir, 'drawable', 'ic_launcher_background.xml'),
   `<?xml version="1.0" encoding="utf-8"?>
@@ -163,7 +154,7 @@ fs.writeFileSync(
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#3D7BFF" android:pathData="M0,0h108v108h-108z" />
+    <path android:fillColor="#0F172A" android:pathData="M0,0h108v108h-108z" />
 </vector>
 `
 );
@@ -183,7 +174,7 @@ const desktopIconPath = path.join(__dirname, '..', '..', 'desktop', 'build', 'ic
   const canvas = createCanvas(size, size);
   const ctx = canvas.getContext('2d');
   drawBackground(ctx, size, size, size * 0.22);
-  drawMark(ctx, size, size, 0.62, '#ffffff');
+  drawMark(ctx, size, size, 0.82);
   fs.writeFileSync(desktopIconPath, canvas.toBuffer('image/png'));
   console.log('ok', path.relative(path.join(__dirname, '..'), desktopIconPath), `${size}x${size}`);
 }

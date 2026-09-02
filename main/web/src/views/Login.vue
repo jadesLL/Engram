@@ -1,7 +1,23 @@
 <template>
   <div class="login-wrap">
     <div class="login-card card">
-      <div class="logo">E</div>
+      <div class="logo">
+        <svg viewBox="0 0 100 100" width="28" height="28" aria-hidden="true">
+          <defs>
+            <linearGradient id="engram-orbit-login" gradientUnits="userSpaceOnUse" x1="22" y1="78" x2="78" y2="22">
+              <stop offset="0" stop-color="#22D3EE" />
+              <stop offset="1" stop-color="#4D8AFF" />
+            </linearGradient>
+            <linearGradient id="engram-core-login" gradientUnits="userSpaceOnUse" x1="42" y1="42" x2="58" y2="58">
+              <stop offset="0" stop-color="#4D8AFF" />
+              <stop offset="1" stop-color="#245BDB" />
+            </linearGradient>
+          </defs>
+          <ellipse cx="50" cy="50" rx="28" ry="12" fill="none" stroke="url(#engram-orbit-login)" stroke-width="7" transform="rotate(-28 50 50)" />
+          <circle cx="67" cy="34" r="4" fill="#22D3EE" />
+          <circle cx="50" cy="50" r="8.5" fill="url(#engram-core-login)" />
+        </svg>
+      </div>
       <h1>Engram</h1>
       <p class="muted">{{ isSetup ? '首次使用，请设置访问密码' : '请输入密码进入知识库' }}</p>
       <input
@@ -122,10 +138,7 @@ async function submit() {
   height: 44px;
   margin: 0 auto;
   border-radius: 11px;
-  background: var(--text);
-  color: var(--bg);
-  font-size: 22px;
-  font-weight: 700;
+  background: #0f172a;
   display: flex;
   align-items: center;
   justify-content: center;

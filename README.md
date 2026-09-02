@@ -1,4 +1,8 @@
-# 🧠 Engram（Engram）— 个人知识大脑
+<p align="center">
+  <img src="main/docs/brand/logo-lockup.svg" alt="Engram" width="440" />
+</p>
+
+# Engram — 个人知识大脑
 
 一个 **LLM 原生** 的知识库系统：Markdown 文件是权威数据源，数据库只做检索引擎。资料写入即被 AI 自动消化（分块 / 向量化 / 实体抽取 / 建图谱 / 智能整理），查询时直接给你**带引用的答案**，而不是一堆文件列表。
 
