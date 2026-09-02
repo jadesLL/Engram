@@ -149,25 +149,8 @@ function stopLocalChild() {
 }
 
 // ---------- 远端模式 ----------
-// 直连发现：远端 /health 若带 direct 字段（env DIRECT_ACCESS_URL），且直连可探通，
-// 则优先用直连 origin（低延迟、不绕 Cloudflare）；探不通回退原地址。
-async function pickRemoteOrigin(origin) {
-  try {
-    const r = await fetch(origin + '/health', { signal: AbortSignal.timeout(5000) });
-    const h = await r.json().catch(() => null);
-    const direct = h && h.direct;
-    if (!direct) return origin;
-    const probe = await fetch(direct + '/health', { signal: AbortSignal.timeout(4000) }).catch(() => null);
-    if (probe && probe.ok) return direct;
-    return origin;
-  } catch {
-    return origin; // /health 都拿不到（隧道故障等）：按原地址走，让后续流程报错
-  }
-}
-
 async function startRemoteMode(remoteUrl, token) {
-  const origin = remoteUrl.replace(/\/+$/, '');
-  const actualOrigin = await pickRemoteOrigin(origin);
+  const actualOrigin = remoteUrl.replace(/\/+$/, '');
   try {
     const r = await fetch(actualOrigin + '/api/auth/desktop-exchange', {
       method: 'POST',

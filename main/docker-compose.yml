@@ -21,9 +21,6 @@ services:
       - OFFICE_INTERNAL_APP_URL=http://engram:8080
       - OFFICE_PUBLIC_PATH=/onlyoffice/
       - OFFICE_INSTANCE_ID=main
-      # IPv6 直连发现：/health 向客户端通告直连地址；可达自动切直连，不通走 Cloudflare 隧道
-      # （v6.example.com 由本机计划任务 EngramDDNSv6 每 5 分钟自动维护）
-      - DIRECT_ACCESS_URL=http://v6.example.com:18080
     restart: unless-stopped
     sysctls:
       net.ipv4.tcp_mtu_probing: "1"

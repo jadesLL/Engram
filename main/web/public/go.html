@@ -43,47 +43,13 @@
     <button class="btn" id="fallback" type="button">通过 Cloudflare 进入</button>
   </div>
   <script>
-    // 智能入口：并发探测直连（/health.direct 发现）与当前隧道路径，先通先用。
-    // 本页部署在隧道域名上（同源），直连地址由 /health 的 direct 字段提供。
+    // 本页部署在 Cloudflare 隧道域名上，直接进入同源应用。
     (function () {
-      var PROBE_TIMEOUT_MS = 4000;
       var spin = document.getElementById('spin');
       var msg = document.getElementById('msg');
       var fallbackBtn = document.getElementById('fallback');
-
-      function probe(origin) {
-        return fetch(origin + '/health', { mode: 'no-cors', cache: 'no-store' })
-          .then(function () { return true; })
-          .catch(function () { return false; });
-      }
-
-      // 直连探测：opaque 响应无法读 direct 字段，因此先同源拿 direct 再探直连。
-      fetch('/health', { cache: 'no-store' })
-        .then(function (r) { return r.json(); })
-        .then(function (h) {
-          var direct = h && h.direct;
-          if (!direct) throw new Error('no-direct');
-          msg.textContent = '发现直连通道，正在验证…';
-          return probe(direct).then(function (ok) {
-            if (ok) { location.replace(direct + '/'); return null; }
-            throw new Error('direct-down');
-          });
-        })
-        .catch(function () {
-          // 无 direct 字段（未配置）或直连不通：本页已在隧道域名上，直接放行
-          msg.textContent = '正在进入（Cloudflare 隧道）…';
-          location.replace('/');
-        });
-
-      // 兜底：4 秒探测仍未跳转时给手动按钮（页面本身就在隧道路径上）
-      setTimeout(function () {
-        if (document.visibilityState === 'visible' && !document.hidden) {
-          spin.style.display = 'none';
-          msg.textContent = '自动选择较慢，可手动进入';
-          msg.className = 'err';
-          fallbackBtn.style.display = 'inline-block';
-        }
-      }, PROBE_TIMEOUT_MS);
+      msg.textContent = '正在进入（Cloudflare 隧道）…';
+      location.replace('/');
       fallbackBtn.addEventListener('click', function () { location.replace('/'); });
     })();
   </script>
