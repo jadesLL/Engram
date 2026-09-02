@@ -16,6 +16,20 @@ export const DB_FILE = path.join(DATA_DIR, 'wiki.db');
 
 export const PORT = Number(process.env.PORT || 8080);
 export const HOST = process.env.HOST || '0.0.0.0';
+
+/**
+ * HTTPS 直连入口（内置 TLS/ACME）。TLS_DOMAIN 未配置时全部为空，行为与历史版本一致。
+ * - TLS_DOMAIN：直连证书域名（如 DDNS 域名），存在即启用 8443 HTTPS 监听
+ * - TLS_DNS_API_TOKEN：Cloudflare API token（需 Zone.DNS Edit 权限，写 DNS-01 TXT 记录）
+ * - TLS_EMAIL：ACME 账户邮箱（可选）
+ * - TLS_ACME_DIRECTORY：ACME directory URL（默认 Let's Encrypt production；测试可切 staging）
+ * - TLS_PORT：容器内 HTTPS 监听端口（默认 8443，compose 映射宿主 443）
+ */
+export const TLS_DOMAIN = (process.env.TLS_DOMAIN || '').trim();
+export const TLS_DNS_API_TOKEN = (process.env.TLS_DNS_API_TOKEN || '').trim();
+export const TLS_EMAIL = (process.env.TLS_EMAIL || '').trim();
+export const TLS_ACME_DIRECTORY = (process.env.TLS_ACME_DIRECTORY || '').trim();
+export const TLS_PORT = Number(process.env.TLS_PORT || 8443);
 export const OFFICE_EDITOR_ENABLED = process.env.OFFICE_EDITOR_ENABLED !== 'false';
 export const OFFICE_INTERNAL_URL = process.env.OFFICE_INTERNAL_URL || 'http://onlyoffice';
 export const OFFICE_INTERNAL_APP_URL = process.env.OFFICE_INTERNAL_APP_URL || 'http://engram:8080';

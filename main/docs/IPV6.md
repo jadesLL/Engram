@@ -65,8 +65,32 @@ IPv6 没有 NAT 的「天然保护」，路由器默认用**有状态防火墙**
 
 5. 全部放弃直连也无妨：客户端自动走隧道，功能不受任何影响。
 
+## HTTPS 直连（内置 TLS/ACME，v1.1.35+）
+
+直连地址可配置为 **HTTPS**（推荐）：浏览器不再受混合内容限制（https 页面无法探测 http 直连是浏览器硬规则，http 直连下 `/go` 入口页与设置页徽章在浏览器里无法工作），APP/桌面端照常。Engram 内置 Let's Encrypt 证书自动签发与续期（DNS-01 验证，无需开 80 端口、无需任何反代组件）。
+
+部署侧在 `main/.env` 增配：
+
+```dotenv
+TLS_DOMAIN=<直连域名>            # 如 direct.example.com；存在即启用 HTTPS 直连
+TLS_DNS_API_TOKEN=<CF token>     # 需 Zone.DNS Edit 权限（写 _acme-challenge TXT），与 DDNS 同一 token 即可
+DIRECT_ACCESS_URL=https://<直连域名>
+```
+
+配套步骤：
+
+1. **DNS**：直连域名需在 Cloudflare 托管（DNS-01 写 TXT 用），记录为灰云（DNS only）AAAA → NAS 稳定 IPv6。
+2. **compose**：新增 `443:8443` 端口映射（v1.1.35 起自带）；宿主 443 若被占用需先释放。
+3. **路由器**：追加放行 TCP 443 → NAS 稳定 IPv6（与 18080 同法）。
+4. **重建**：`docker compose up -d`。首次签发约 1-2 分钟（期间 HTTP 照常），日志出现 `[tls] 证书已就绪` 即生效；证书 90 天有效，余量不足 30 天自动重签并热更换监听。
+5. **验证**：浏览器访问 `https://<直连域名>` 出现绿锁；`/health` 通告的 `direct` 已是 https 地址；设置页徽章显示「直连可用」。
+
+可选：`TLS_EMAIL`（ACME 账户邮箱）、`TLS_ACME_DIRECTORY`（默认 Let's Encrypt 正式环境，测试可切 `https://acme-staging-v02.api.letsencrypt.org/directory`）、`TLS_PORT`（容器内端口，默认 8443）。
+
+证书与账户 key 缓存在数据卷 `tls/` 目录（`cert.pem` / `privkey.pem` / `account.pem`），删除该目录即触发重新签发。
+
 ## 安全须知
 
 - 直连路径**绕过 Cloudflare Access**（如有），防线是应用密码 + 登录限速（同 IP 连续 5 次失败锁 10 分钟）。请确保密码强度。
-- 直连为明文 HTTP 时，公网链路理论可被嗅探（家宽/蜂窝被定向嗅探的现实风险低）。介意者可用反代（如 Lucky/caddy）给直连加 HTTPS + 自动证书（Let's Encrypt DNS 验证无需开 80 端口），然后把 `DIRECT_ACCESS_URL` 配成 `https://…` 即可，客户端无需任何改动。
+- 直连**推荐配置 HTTPS**（见上节）：明文 HTTP 在公网链路理论可被嗅探，且浏览器侧功能受限。
 - `DIRECT_ACCESS_URL` 通告给「已通过 Cloudflare Access 登录的本地启动页」读取（服务端 CORS 白名单仅放行 Capacitor/Electron 本地页，任意第三方网页读不到）。

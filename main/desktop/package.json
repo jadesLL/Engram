@@ -1,6 +1,6 @@
 {
   "name": "@engram/desktop",
-  "version": "1.1.34",
+  "version": "1.1.35",
   "private": true,
   "description": "Engram Windows 桌面端（本地内嵌 / 远端连接双模式）",
   "main": "main.js",
