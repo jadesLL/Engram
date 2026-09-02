@@ -8,6 +8,17 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.1.37（2026-09-03）
+
+**内置 DDNS 直连域名维护**：把直连域名的解析维护做进应用（此前自托管用户需在宿主机自装 DDNS 客户端或计划任务，Windows 计划任务跑 PowerShell 每次执行还会闪控制台弹窗）：
+
+- **设置页新增「DDNS 直连」面板**：填 Cloudflare API Token（Zone → DNS → Edit 权限）+ 记录域名即可启用；状态块实时展示最近同步结果、当前指向与下次同步时间；「立即检测」只探测比对不写入；Token 掩码显示，保存即生效无需重启
+- **完全静默的调度**：服务端内置纯 Node 定时器（默认 5 分钟），全程不调 PowerShell、不产生任何可见窗口——Windows 甄别临时 IPv6 地址所需的系统信息以 `CREATE_NO_WINDOW` 隐藏执行 `ipconfig` 获取
+- **地址探测**：IPv6 直接读本机网卡并自动甄别排除隐私临时地址（发布稳定地址；Windows 解析 ipconfig/GBK、Linux 解析 /proc/net/if_inet6），现有 DNS 指向命中候选时优先沿用避免多候选抖动；IPv4（NAT 场景）经回声服务取公网地址；记录类型 auto 自动取舍 A/AAAA
+- **Cloudflare 同步语义保守**：与记录现值比对、变化才写（TTL 60、仅 DNS 不代理），记录不存在时自动创建；zone 按记录域名逐级推导，复用 TLS/ACME 的 Cloudflare 查询实现
+- **Docker 同样可用**：配置存 settings 表（`ddns_config`），逐字段回退 `DDNS_TOKEN`/`DDNS_RECORD`/`DDNS_TYPE`/`DDNS_INTERVAL_MIN` 环境变量；注意容器内看不到宿主网卡，宿主网络复杂场景仍建议在宿主侧维护解析
+- 新增 12 例单测（ipconfig 中英文解析含默认网关/DNS 延续行陷阱、/proc flags 过滤、IP 规范化、unchanged/updated/created/dryRun/auto 回退/失败透出、配置回退与间隔钳制），并以真实 Cloudflare zone 完成建记录→公网解析生效→停用即停的端到端验收
+
 ## v1.1.36（2026-09-02）
 
 **跨子域共享登录态 + 浏览器一键切直连**：隧道域与直连域 Cookie 按域隔离（跳转即被登出）的问题根治：
