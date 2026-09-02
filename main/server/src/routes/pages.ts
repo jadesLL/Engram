@@ -260,8 +260,16 @@ export async function pageRoutes(app: FastifyInstance) {
   });
 
   /** 页面关联：图谱邻居 + 语义相似（供编辑器底部展示） */
+  // 短 TTL 内存缓存：向量 KNN 是全表扫描，数据库在 Windows bind mount 上随机
+  // 读极慢（实测每页 ~0.85s），编辑器每次打开页面都会请求本接口。60s 内重复
+  // 点击同一页面直接返回缓存；关联数据对实时性不敏感，可接受 60s 陈旧窗口。
+  const relatedCache = new Map<string, { at: number; data: unknown }>();
+  const RELATED_CACHE_TTL_MS = 60_000;
+  const RELATED_CACHE_MAX = 200;
   app.get('/api/pages/:id/related', async (req) => {
     const { id } = req.params as { id: string };
+    const cached = relatedCache.get(id);
+    if (cached && Date.now() - cached.at < RELATED_CACHE_TTL_MS) return cached.data;
     // 图谱邻居（出边 + 入边）
     const neighbors = db
       .prepare(
@@ -304,6 +312,19 @@ export async function pageRoutes(app: FastifyInstance) {
       )
       .all(id) as any[];
 
-    return { neighbors, similar, entities };
+    const data = { neighbors, similar, entities };
+    relatedCache.set(id, { at: Date.now(), data });
+    if (relatedCache.size > RELATED_CACHE_MAX) {
+      let oldestKey: string | undefined;
+      let oldestAt = Infinity;
+      for (const [key, value] of relatedCache) {
+        if (value.at < oldestAt) {
+          oldestAt = value.at;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey) relatedCache.delete(oldestKey);
+    }
+    return data;
   });
 }

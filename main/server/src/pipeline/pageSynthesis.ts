@@ -270,6 +270,11 @@ class PageSynthesisConflict extends Error {}
 const PAGE_SYNTHESIS_VERSION = 2;
 /** 失败/冲突的合成在此冷却期内不重新排队，避免启动时狂调 LLM 拖垮事件循环。 */
 const SYNTHESIS_FAILURE_COOLDOWN_MS = 60 * 60 * 1000;
+// 冲突 = 上一版综合边界被人工修改破坏，自动重投注定失败，只有人工处理或
+// 页面成功重新综合（conflict 行会被置 superseded）才能解除。按页面而非按
+// input_hash 行冷却：冲突恢复重写文件会让 hash 微变生成新行，绕过按行冷却，
+// 2026-09 曾致 46 个页面每 15 分钟无限重投、持续空烧 LLM。
+const SYNTHESIS_CONFLICT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 /** 单次补齐合成的入队上限，避免一次性全量入队压垮队列与事件循环。 */
 const SYNTHESIS_BATCH_LIMIT = 10;
 
@@ -815,6 +820,21 @@ export function queuePageRecompose(
       const failedAt = Date.parse(existing.updated_at);
       const elapsed = Number.isNaN(failedAt) ? 0 : Date.now() - failedAt;
       if (elapsed < cooldownMs) return existing.id;
+    }
+    // 按页面维度的冲突冷却：input_hash 会因人工区/mark 标记微变而生成新行、
+    // 绕过上面的按行冷却（2026-09 曾致 46 个页面每 15 分钟无限重投空烧 LLM），
+    // 故对「证据未变」的页面无论落到哪一行都按页面冷却；证据真正变化
+    // （evidence_hash 不同）说明有新事实需要综合，不受冷却影响立即放行。
+    // 页面综合成功后旧冲突行会被置为 superseded，冷却随之自然解除；
+    // force（人工触发）不受影响。
+    const lastFailure = db.prepare(
+      `SELECT MAX(updated_at) AS at FROM page_syntheses
+       WHERE page_id=? AND status IN ('failed','conflict') AND evidence_hash=?`
+    ).get(pageId, bundle.evidenceHash) as { at: string | null };
+    if (lastFailure?.at) {
+      const failedAt = Date.parse(lastFailure.at);
+      const elapsed = Number.isNaN(failedAt) ? 0 : Date.now() - failedAt;
+      if (elapsed < SYNTHESIS_CONFLICT_COOLDOWN_MS) return undefined;
     }
   }
   const timestamp = now();

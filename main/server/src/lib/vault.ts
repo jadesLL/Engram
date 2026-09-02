@@ -169,6 +169,24 @@ function atomicWrite(abs: string, content: string | Buffer): void {
 /** 解析 md 文件并 upsert 到 pages 表；无 id 时生成并回写 frontmatter。
  *  frontmatter 写入用中文字段名（标题/创建日期/更新日期/类型/来源/置信度/领域），
  *  读取兼容旧英文键。 */
+/**
+ * 页面行 id 变更时，把按页面 id 引用旧 id 的子表记录一并迁到新 id。
+ * page_contributions / page_syntheses 带 FK（ON DELETE CASCADE 对 UPDATE 无级联），
+ * 不先迁移会让 `UPDATE pages SET id` 撞 SQLITE_CONSTRAINT_FOREIGNKEY，启动
+ * scanVault 阶段直接崩溃进入重启循环（2026-08/09 已三次）。chunks / edges /
+ * ingest_candidates 无 FK 但按页面 id 逻辑引用，不同步迁移会让向量检索与
+ * 关联图谱静默丢失。调用方负责包事务。
+ */
+function migratePageReferences(oldId: string, newId: string): void {
+  if (oldId === newId) return;
+  db.prepare(`UPDATE page_contributions SET page_id = ? WHERE page_id = ?`).run(newId, oldId);
+  db.prepare(`UPDATE page_syntheses SET page_id = ? WHERE page_id = ?`).run(newId, oldId);
+  db.prepare(`UPDATE chunks SET ref_id = ? WHERE ref_type = 'page' AND ref_id = ?`).run(newId, oldId);
+  db.prepare(`UPDATE edges SET src_page = ? WHERE src_page = ?`).run(newId, oldId);
+  db.prepare(`UPDATE edges SET dst_page = ? WHERE dst_page = ?`).run(newId, oldId);
+  db.prepare(`UPDATE ingest_candidates SET target_page_id = ? WHERE target_page_id = ?`).run(newId, oldId);
+}
+
 export function syncPageFile(relPath: string): PageMeta | null {
   const abs = safeJoin(relPath);
   if (!fs.existsSync(abs)) return null;
@@ -243,11 +261,18 @@ export function syncPageFile(relPath: string): PageMeta | null {
   }
 
   // 同路径已有行但 id 不同（active-copy 顶替 trash 软删行、或手动改过 frontmatter id）：
-  // 行 id 跟随 frontmatter（唯一行唯一路径不变量）；旧行的 fts 先清理再按新 id 重建。
+  // 行 id 跟随 frontmatter（唯一行唯一路径不变量）。迁移中子表引用先指向新 id、
+  // 而新 id 的 pages 行最后一步才出现，无论先改哪边都会撞 SQLite 的立即 FK 检查
+  // ——事务内打开 defer_foreign_keys，把一致性检查统一推迟到 COMMIT 时刻，
+  // 任何一步失败整体回滚，不留下半迁移状态。
   const samePathRow = db.prepare(`SELECT id FROM pages WHERE path = ? AND id != ?`).get(relPath, meta.id) as { id: string } | undefined;
   if (samePathRow) {
-    db.prepare(`DELETE FROM pages_fts WHERE page_id = ?`).run(samePathRow.id);
-    db.prepare(`UPDATE pages SET id = ? WHERE path = ?`).run(meta.id, relPath);
+    db.transaction(() => {
+      db.pragma('defer_foreign_keys = ON');
+      migratePageReferences(samePathRow.id, meta.id);
+      db.prepare(`DELETE FROM pages_fts WHERE page_id = ?`).run(samePathRow.id);
+      db.prepare(`UPDATE pages SET id = ? WHERE path = ?`).run(meta.id, relPath);
+    })();
   }
 
   db.prepare(
