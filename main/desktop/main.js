@@ -3,11 +3,19 @@
 //  - 本地：fork 内嵌 server 子进程（ELECTRON_RUN_AS_NODE 纯 Node 模式）+ 探活后加载
 //  - 远端：凭 desktop token 调 /api/auth/desktop-exchange 兑换 JWT，预置 cookie 后加载远端页面
 // 启动页 index.html 供用户选择模式或切换连接。
-const { app, BrowserWindow, ipcMain, shell, session, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, session, Menu, Tray, nativeImage, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { spawn } = require('node:child_process');
+
+// 单实例锁：点 X 后应用驻留托盘，此时再次启动若开新实例，其 fork 的后端会撞 18180 端口、
+// 探活又探测到旧实例的服务，出现双窗口共用单后端的混乱。故第二实例直接退出并唤起已有窗口。
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => showMainWindow());
+}
 
 // 产品更名（LLM Wiki → Engram）后 productName 变化会让 Electron 默认 userData 目录
 // （%APPDATA%/<productName>）跟着变。旧目录里有本地模式全部数据与连接配置，
@@ -57,6 +65,9 @@ function dataUrl(html) {
 
 let win = null;
 let serverChild = null;
+let tray = null;
+let quitting = false;
+let trayHintShown = false;
 
 function createWindow() {
   win = new BrowserWindow({
@@ -72,7 +83,63 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  // 点 X 不退出：隐藏窗口驻留托盘，内嵌 server 继续运行；真正退出（托盘/菜单「退出」、升级安装）
+  // 走 before-quit 先置 quitting，close 不再拦截。
+  win.on('close', (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      hideToTray();
+    }
+  });
   return win;
+}
+
+// ---------- 托盘 ----------
+function trayIcon() {
+  const packed = path.join(__dirname, 'icon.png'); // 打包后：pack-asar.js 把 build/icon.png 复制进 asar
+  const dev = path.join(__dirname, 'build', 'icon.png'); // 源码运行（electron .）
+  return nativeImage.createFromPath(fs.existsSync(packed) ? packed : dev);
+}
+
+function ensureTray() {
+  if (tray) return;
+  tray = new Tray(trayIcon());
+  tray.setToolTip('Engram');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开 Engram', click: () => showMainWindow() },
+    { type: 'separator' },
+    { label: '退出 Engram', click: () => app.quit() },
+  ]));
+  tray.on('click', () => showMainWindow());
+  tray.on('double-click', () => showMainWindow());
+}
+
+function showMainWindow() {
+  if (!win || win.isDestroyed()) {
+    launchByConfig();
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function hideToTray() {
+  if (!win || win.isDestroyed()) return;
+  win.hide();
+  ensureTray();
+  if (!trayHintShown) {
+    trayHintShown = true;
+    if (Notification.isSupported()) {
+      const n = new Notification({
+        title: 'Engram 仍在后台运行',
+        body: '已最小化到系统托盘，服务继续运行；双击托盘图标可重新打开。',
+        icon: trayIcon(),
+      });
+      n.on('click', () => showMainWindow());
+      n.show();
+    }
+  }
 }
 
 // ---------- 本地模式 ----------
@@ -312,6 +379,15 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
+  quitting = true; // 真退出：放行窗口 close，不再隐藏进托盘
+  if (tray) {
+    try {
+      tray.destroy();
+    } catch {
+      /* 忽略 */
+    }
+    tray = null;
+  }
   if (serverChild) {
     try {
       serverChild.kill('SIGKILL');
