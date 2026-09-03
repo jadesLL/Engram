@@ -10,6 +10,9 @@ test('image capability inference recognizes known visual and text-only model fam
   assert.equal(inferImageInputStatus('gpt-4.1-mini'), 'supported');
   assert.equal(inferImageInputStatus('qwen3.5-plus'), 'supported');
   assert.equal(inferImageInputStatus('glm-4.6v-flash'), 'supported');
+  assert.equal(inferImageInputStatus('glm-5.3-flash'), 'supported');
+  assert.equal(inferImageInputStatus('glm-5.3'), 'supported');
+  assert.equal(inferImageInputStatus('glm-5v'), 'supported');
   assert.equal(inferImageInputStatus('deepseek-v4-flash'), 'unsupported');
   assert.equal(inferImageInputStatus('qwen3.5-coder'), 'unknown');
   assert.equal(inferImageInputStatus('doubao-seed-2-0-code'), 'unknown');
