@@ -62,6 +62,8 @@ copy(path.join(desktopRoot, 'preload.js'), path.join(staging, 'preload.js'));
 copy(path.join(desktopRoot, 'index.html'), path.join(staging, 'index.html'));
 copy(path.join(desktopRoot, 'server'), path.join(staging, 'server'));
 copy(path.join(desktopRoot, 'web', 'dist'), path.join(staging, 'web', 'dist'));
+// 托盘图标：main.js 的 trayIcon() 在 asar 内找 __dirname/icon.png（源码运行则回退 build/icon.png）
+copy(path.join(desktopRoot, 'build', 'icon.png'), path.join(staging, 'icon.png'));
 
 // 2. staging/package.json（Electron 据此定位 main: main.js）
 const pkg = JSON.parse(fs.readFileSync(path.join(desktopRoot, 'package.json'), 'utf8'));
