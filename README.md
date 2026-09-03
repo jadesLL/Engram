@@ -179,24 +179,24 @@ data/
 
 ## 配置 LLM
 
-设置页 → 模型配置：**选服务商 → 填 API Key 即可**，其余参数（Base URL/模型/Embedding）自动填充并持久化。
+设置页 → 模型配置：**左选厂商 → 填一次 API Key → 全部模型自动拉取 → 点选即用**。对话 / 向量 / 视觉三类模型分页管理，其余参数（Base URL/协议/维度）自动填充并持久化。
 
-内置预设 **46 家**（厂商目录由服务端统一维护，新模型上线无需更新前端）：
+内置预设 **19 家**（目录范围对齐 [hermes-agent](https://github.com/NousResearch/hermes-agent) 支持的厂商清单，由服务端统一维护，新模型上线无需更新前端）：
 
-- **国内直连（28）**：DeepSeek、Kimi、智谱 GLM、智谱国际 Z.ai、通义百炼、火山方舟、小米 MiMo、MiniMax、腾讯混元、腾讯 TokenHub、硅基流动、百度千帆、讯飞星火、阶跃星辰、百川、书生 InternLM、Gitee AI、无问芯穹、蚂蚁百灵、紫东太初、360 智脑、魔搭 ModelScope、PPIO 派欧、七牛、蓝耘、美团龙猫、商汤日日新、天翼云息壤
-- **聚合中转（3）**：302.AI、AiHubMix、DMXAPI
-- **国际（12）**：OpenAI、Anthropic、Google Gemini、xAI Grok、Groq、Mistral、OpenRouter、Together、Fireworks、NVIDIA、Perplexity、Cerebras
+- **国内直连（9）**：DeepSeek、Kimi、智谱 GLM、智谱国际 Z.ai、通义百炼、小米 MiMo、MiniMax、腾讯 TokenHub、阶跃星辰
+- **国际（7）**：OpenAI、Anthropic、Google Gemini、xAI Grok、OpenRouter、Fireworks AI、NVIDIA NIM
 - **本地推理（2，免 API Key）**：Ollama、LM Studio
+- **自定义配置（不限量）**：自建网关 / 中转端点与内置厂商同级——可命名、可添加多个、独立管理（拉取 / 编辑连接 / 删除整个配置）
 
-- **API Key 安全**：列表与编辑回显只显示掩码，完整 Key 按需查看；保存时留空自动沿用已存 Key，前端不经手明文。
-- **多协议支持**：除 OpenAI 兼容协议外，支持 **Anthropic Messages 协议**（`/v1/messages` + `x-api-key`）——16 条「Anthropic 兼容」内置线路（DeepSeek/Kimi/智谱/MiniMax/小米/阶跃/百灵/龙猫/TokenHub/七牛/302.AI/AiHubMix/DMXAPI/商汤等）可直接选用，自定义服务商也可手动选择协议。
-- **模型自动拉取**：填 Key 后自动拉取该账号可用模型；Gitee AI/魔搭/PPIO/七牛/蓝耘/OpenRouter 等目录接口免 Key 可先浏览；拉取失败或厂商无列表接口（如讯飞）时自动回退内置目录（下拉标注「目录」）。
+- **模型全量拉取**：填 Key 保存后自动拉取该账号全部模型入库，「重新拉取」增量同步厂商新增；点击任意模型即切换使用，无需逐个建配置。
+- **API Key 安全**：默认密文显示，眼睛图标按需查看；编辑连接可从服务端安全取回已保存 Key；保存时留空自动沿用已存 Key，前端不经手明文。
+- **多协议支持**：除 OpenAI 兼容协议外，支持 **Anthropic Messages 协议**（`/v1/messages` + `x-api-key`）——8 条「Anthropic 兼容」内置线路（DeepSeek/Kimi/智谱/Z.ai/小米/MiniMax/TokenHub/阶跃）可直接选用，自定义配置也可选择协议。
 - **自动降级记忆**：供应商不兼容的参数（thinking/stream_options）自动降级重试并持久化记忆，服务重启后不会重复踩坑。
 - **思考等级**：对话模型可配置思考档位（自动 / low / high / max）。GLM-5.2/5.3 映射为 `reasoning_effort`（默认 high，GLM 推荐档），其余思考模型映射为 `thinking` 参数；选「自动」则不显式发送。提炼管线与对话统一生效。
 
-视觉模型是可选覆盖项。当前对话模型支持 OpenAI 兼容图片输入时无需重复配置；否则可以选择内置视觉模型或自定义模型。只有图片和 PDF 中没有足够内嵌文字的页面会发送给视觉模型。
+视觉模型是可选覆盖项；GLM-5 系列等具备视觉输入的对话模型会被自动识别，无需重复配置。只有图片和 PDF 中没有足够内嵌文字的页面会发送给视觉模型。
 
-> DeepSeek / Kimi 没有 Embedding 服务，系统会自动搭配「硅基流动 bge-m3」作为向量化渠道（有免费额度，单独填一个 Embedding Key 即可）。更换 Embedding 模型/维度后需点「重建全部索引」。
+> DeepSeek / Kimi 没有 Embedding 服务：向量化请选用智谱 GLM（embedding-3）、通义百炼（Qwen Embedding）、OpenAI、Gemini、NVIDIA 等提供 Embedding 的厂商，或添加一个自定义端点。更换 Embedding 模型/维度后需点「重建全部索引」。
 >
 > 未配置 LLM 时系统仍可用：编辑、关键词搜索、图谱、智能整理（除 AI 项）均正常工作。
 
