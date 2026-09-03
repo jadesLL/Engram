@@ -23,6 +23,8 @@ const IMAGE_MODEL_PATTERNS = [
   /^kimi-k2\.5(?:-\d+)?$/i,
   /^doubao-seed-(?:1[.-]?6(?:-flash)?|2[.-]?0-(?:pro|lite|mini)|2[.-]?1-(?:pro|turbo))(?:-\d+)?$/i,
   /^glm-(?:4(?:\.\d+)?v|4v|5v)(?:[.-]|$)/i,
+  // GLM-5 系列对话模型原生多模态（GLM-5.3 flash 实测具备视觉输入）
+  /^glm-5(?:\.\d+)?(?:-(?:flash|plus|air|x))?(?:-\d{4}-\d{2}-\d{2})?$/i,
 ];
 
 const TEXT_ONLY_MODEL_PATTERNS = [

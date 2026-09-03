@@ -190,129 +190,341 @@
           <span>{{ section.cards.length }} 家服务商</span>
         </div>
 
-        <div class="provider-list">
-          <section
-            v-for="card in section.cards"
-            :key="`${section.kind}-${card.provider.id}`"
-            class="provider-row"
-            :class="{ active: card.entries.some((entry) => entry.id === section.activeId) }"
-          >
-            <div class="provider-row-head">
-              <div class="provider-identity">
-                <div class="provider-mark" :class="{ 'has-logo': Boolean(card.provider.logo) }">
-                  <span>{{ providerMark(card.provider.name) }}</span>
-                  <img
-                    v-if="card.provider.logo"
-                    :src="card.provider.logo"
-                    :alt="`${card.provider.name} Logo`"
-                    @error="hideProviderLogo"
-                  />
-                </div>
-                <div class="provider-title">
-                  <strong>{{ card.provider.name }}</strong>
-                  <span>{{ card.entries.length ? `${card.entries.length} 个配置` : '尚未配置' }}</span>
+        <div class="provider-split">
+          <aside class="provider-nav" aria-label="服务商列表">
+            <button
+              v-for="card in section.cards"
+              :key="card.provider.id"
+              type="button"
+              class="provider-nav-item"
+              :class="{ active: selectedProviderId(section.kind) === card.provider.id }"
+              @click="chooseProvider(section.kind, card.provider.id)"
+            >
+              <span>{{ card.provider.name }}</span>
+              <em v-if="card.entries.length">{{ card.entries.length }}</em>
+            </button>
+            <template v-if="unknownGroups(section.kind).length">
+              <div class="provider-nav-divider">自定义</div>
+              <button
+                v-for="group in unknownGroups(section.kind)"
+                :key="group.provider.id"
+                type="button"
+                class="provider-nav-item"
+                :class="{ active: selectedProviderId(section.kind) === group.provider.id }"
+                @click="chooseProvider(section.kind, group.provider.id)"
+              >
+                <span>{{ group.provider.name }}</span>
+                <em v-if="group.entries.length">{{ group.entries.length }}</em>
+              </button>
+            </template>
+            <button type="button" class="provider-nav-add" @click="chooseProvider(section.kind, '__new-custom__')">
+              <Icon name="plus" :size="12" />
+              新增自定义配置
+            </button>
+          </aside>
+
+          <div class="provider-detail">
+            <!-- 新增自定义配置 -->
+            <template v-if="selectedProvider[section.kind] === '__new-custom__'">
+              <div class="detail-head">
+                <div class="detail-title">
+                  <strong>新增自定义配置</strong>
+                  <span>为自建网关或中转端点建立独立配置，可与内置厂商并列使用</span>
                 </div>
               </div>
-              <button
-                class="provider-add-btn"
-                type="button"
-                @click="openForm(section.kind, undefined, card.provider.id)"
-              >
-                <Icon name="plus" :size="13" />
-                添加
-              </button>
-            </div>
+              <div class="conn-form">
+                <div class="conn-grid">
+                  <label>
+                    配置名称
+                    <input v-model="conn.configName" placeholder="例如：我的 GLM 网关" />
+                  </label>
+                  <label>
+                    Base URL
+                    <input v-model="conn.baseUrl" placeholder="https://.../v1" @change="onConnBaseUrlChange" />
+                  </label>
+                  <label>
+                    请求协议
+                    <select v-model="conn.protocol" @change="onConnProtocolChange">
+                      <option value="openai">OpenAI 兼容（/chat/completions + Bearer）</option>
+                      <option value="anthropic">Anthropic 兼容（/v1/messages + x-api-key）</option>
+                    </select>
+                  </label>
+                  <label>
+                    API Key
+                    <div class="conn-key-field">
+                      <input
+                        v-model="conn.apiKey"
+                        type="password"
+                        class="api-key-input"
+                        placeholder="API Key"
+                        autocomplete="new-password"
+                        spellcheck="false"
+                      />
+                    </div>
+                  </label>
+                </div>
+                <span class="field-help">保存后自动拉取该端点的全部模型；配置会出现在左侧导航，与内置厂商同级。</span>
+                <p v-if="conn.message" class="conn-msg" :class="{ ok: conn.ok, err: !conn.ok }">{{ conn.message }}</p>
+                <div class="conn-actions">
+                  <button class="btn primary" type="button" :disabled="conn.busy" @click="saveConnection(section.kind)">
+                    {{ conn.busy ? '拉取中...' : '保存并拉取全部模型' }}
+                  </button>
+                  <button class="btn" type="button" @click="cancelNewCustom(section.kind)">取消</button>
+                </div>
+              </div>
+            </template>
 
-            <div class="model-chip-list">
+            <!-- 自定义配置面板（与预设厂商同一套连接/拉取流程） -->
+            <template v-else-if="detailCustomCard(section)">
+              <div class="detail-head">
+                <div class="detail-title">
+                  <strong>{{ detailCustomCard(section)!.provider.name }}</strong>
+                  <span>已配置 {{ detailCustomCard(section)!.entries.length }} 个模型</span>
+                </div>
+                <div class="provider-head-actions">
+                  <button
+                    class="icon-btn"
+                    type="button"
+                    v-tooltip="'重新拉取该端点的模型列表'"
+                    aria-label="重新拉取模型"
+                    :disabled="refreshingProvider === `${section.kind}:${detailCustomCard(section)!.provider.id}`"
+                    @click="refreshProviderModels(section.kind, detailCustomCard(section)!)"
+                  >
+                    <Icon name="rotate-right" :size="14" />
+                  </button>
+                  <button
+                    class="provider-add-btn"
+                    type="button"
+                    v-tooltip="'编辑名称 / 连接（API Key / 协议），保存后同步全部模型'"
+                    @click="startEditConnection(section.kind, detailCustomCard(section)!)"
+                  >
+                    <Icon name="settings" :size="13" />
+                    编辑连接
+                  </button>
+                  <button
+                    class="provider-add-btn danger"
+                    type="button"
+                    v-tooltip="'删除此配置及其全部模型'"
+                    @click="deleteCustomConfig(section.kind, detailCustomCard(section)!)"
+                  >
+                    <Icon name="x" :size="13" />
+                    删除配置
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="conn.open && conn.kind === section.kind && conn.providerId === detailCustomCard(section)!.provider.id" class="conn-form">
+                <div class="conn-grid">
+                  <label>
+                    配置名称
+                    <input v-model="conn.configName" placeholder="例如：我的 GLM 网关" />
+                  </label>
+                  <label>
+                    Base URL
+                    <input v-model="conn.baseUrl" placeholder="https://.../v1" @change="onConnBaseUrlChange" />
+                  </label>
+                  <label>
+                    请求协议
+                    <select v-model="conn.protocol" @change="onConnProtocolChange">
+                      <option value="openai">OpenAI 兼容（/chat/completions + Bearer）</option>
+                      <option value="anthropic">Anthropic 兼容（/v1/messages + x-api-key）</option>
+                    </select>
+                  </label>
+                  <label>
+                    API Key
+                    <div class="conn-key-field">
+                      <input
+                        v-model="conn.apiKey"
+                        :type="conn.showKey ? 'text' : 'password'"
+                        class="api-key-input"
+                        :placeholder="conn.mode === 'edit' ? '留空沿用已保存的 Key' : 'API Key'"
+                        autocomplete="new-password"
+                        spellcheck="false"
+                      />
+                      <button
+                        class="conn-key-toggle"
+                        type="button"
+                        v-tooltip="conn.showKey ? '隐藏 Key' : '显示 Key'"
+                        :aria-label="conn.showKey ? '隐藏 Key' : '显示 Key'"
+                        @click="toggleConnKey(section.kind, detailCustomCard(section)!)"
+                      >
+                        <Icon :name="conn.showKey ? 'eye-off' : 'eye'" :size="14" />
+                      </button>
+                    </div>
+                  </label>
+                </div>
+                <span class="field-help">修改名称后保存会同步更新该配置下的全部模型。</span>
+                <p v-if="conn.message" class="conn-msg" :class="{ ok: conn.ok, err: !conn.ok }">{{ conn.message }}</p>
+                <div class="conn-actions">
+                  <button
+                    class="btn primary"
+                    type="button"
+                    :disabled="conn.busy"
+                    @click="saveConnection(section.kind)"
+                  >
+                    {{ conn.busy ? '拉取中...' : conn.mode === 'connect' ? '保存并拉取全部模型' : '保存修改' }}
+                  </button>
+                  <button v-if="conn.mode === 'edit'" class="btn" type="button" @click="conn.open = false">取消</button>
+                </div>
+              </div>
+
+              <template v-else>
+                <div class="model-catalog">
+                  <div class="model-catalog-head">
+                    <span>全部模型</span>
+                    <span class="model-catalog-tip">点击模型切换使用</span>
+                  </div>
+                  <div
+                    v-for="model in detailCustomCard(section)!.entries"
+                    :key="model.id"
+                    class="model-catalog-row"
+                    :class="{ active: model.id === section.activeId }"
+                    role="button"
+                    tabindex="0"
+                    v-tooltip="model.id === section.activeId ? '正在使用的模型' : '点击切换为该模型'"
+                    @click="model.id !== section.activeId && selectModel(section.kind, model.id)"
+                    @keydown.enter="model.id !== section.activeId && selectModel(section.kind, model.id)"
+                  >
+                    <span class="model-catalog-dot" :class="{ active: model.id === section.activeId }"></span>
+                    <span class="model-catalog-name">{{ model.model }}</span>
+                    <span v-if="section.kind === 'emb' && model.dim" class="model-catalog-dim">{{ model.dim }} 维</span>
+                    <span v-if="model.id === section.activeId" class="model-catalog-current">使用中</span>
+                    <button
+                      class="model-catalog-remove"
+                      type="button"
+                      v-tooltip="'删除该配置'"
+                      @click.stop="removeModel(section.kind, model.id)"
+                    >
+                      <Icon name="x" :size="12" />
+                    </button>
+                  </div>
+                </div>
+                <div class="custom-add-row">
+                  <button class="text-action" type="button" @click="openManualAdd(section.kind, detailCustomCard(section)!)">
+                    <Icon name="plus" :size="12" />
+                    手动添加单个模型
+                  </button>
+                </div>
+              </template>
+            </template>
+
+            <!-- 预设服务商面板 -->
+            <template v-else-if="detailCardFor(section)">
+              <div class="detail-head">
+                <div class="detail-title">
+                  <strong>{{ detailCardFor(section)!.provider.name }}</strong>
+                  <span>
+                    {{ detailCardFor(section)!.entries.length
+                      ? `已配置 ${detailCardFor(section)!.entries.length} 个模型`
+                      : '尚未配置 · 填入 API Key 自动拉取全部模型' }}
+                  </span>
+                </div>
+                <div v-if="detailCardFor(section)!.entries.length" class="provider-head-actions">
+                  <button
+                    class="icon-btn"
+                    type="button"
+                    v-tooltip="'重新拉取该厂商的模型列表'"
+                    aria-label="重新拉取模型"
+                    :disabled="refreshingProvider === `${section.kind}:${detailCardFor(section)!.provider.id}`"
+                    @click="refreshProviderModels(section.kind, detailCardFor(section)!)"
+                  >
+                    <Icon name="rotate-right" :size="14" />
+                  </button>
+                  <button
+                    class="provider-add-btn"
+                    type="button"
+                    v-tooltip="'编辑连接（API Key / 线路），保存后同步全部模型'"
+                    @click="startEditConnection(section.kind, detailCardFor(section)!)"
+                  >
+                    <Icon name="settings" :size="13" />
+                    编辑连接
+                  </button>
+                </div>
+              </div>
+
               <div
-                v-for="entry in card.entries"
-                :key="entry.id"
-                class="model-config-chip"
-                :class="{ active: entry.id === section.activeId }"
+                v-if="conn.open && conn.kind === section.kind && conn.providerId === detailCardFor(section)!.provider.id"
+                class="conn-form"
               >
+                <div class="conn-grid">
+                  <label>
+                    线路
+                    <select v-model="conn.line" @change="onConnLineChange(section.kind, detailCardFor(section)!.provider)">
+                      <option v-for="line in linesFor(detailCardFor(section)!.provider, section.kind)" :key="line.id" :value="line.id">
+                        {{ line.name }}
+                      </option>
+                    </select>
+                  </label>
+                  <label>
+                    Base URL
+                    <input v-model="conn.baseUrl" placeholder="https://.../v1" @change="onConnBaseUrlChange" />
+                  </label>
+                  <label>
+                    API Key
+                    <div class="conn-key-field">
+                      <input
+                        v-model="conn.apiKey"
+                        :type="conn.showKey ? 'text' : 'password'"
+                        class="api-key-input"
+                        :placeholder="connKeyPlaceholder(section.kind)"
+                        autocomplete="new-password"
+                        spellcheck="false"
+                      />
+                      <button
+                        class="conn-key-toggle"
+                        type="button"
+                        v-tooltip="conn.showKey ? '隐藏 Key' : '显示 Key'"
+                        :aria-label="conn.showKey ? '隐藏 Key' : '显示 Key'"
+                        @click="toggleConnKey(section.kind, detailCardFor(section)!)"
+                      >
+                        <Icon :name="conn.showKey ? 'eye-off' : 'eye'" :size="14" />
+                      </button>
+                    </div>
+                  </label>
+                </div>
+                <span v-if="connHint(section.kind)" class="field-help">{{ connHint(section.kind) }}</span>
+                <p v-if="conn.message" class="conn-msg" :class="{ ok: conn.ok, err: !conn.ok }">{{ conn.message }}</p>
+                <div class="conn-actions">
+                  <button
+                    class="btn primary"
+                    type="button"
+                    :disabled="conn.busy"
+                    @click="saveConnection(section.kind)"
+                  >
+                    {{ conn.busy ? '拉取中...' : conn.mode === 'connect' ? '保存并拉取全部模型' : '保存修改' }}
+                  </button>
+                  <button v-if="conn.mode === 'edit'" class="btn" type="button" @click="conn.open = false">取消</button>
+                </div>
+              </div>
+
+              <div v-else-if="!detailCardFor(section)!.entries.length" class="conn-empty">
+                <p>填入该厂商的 API Key，自动拉取全部模型；点击任意模型即可切换使用。</p>
+                <button class="btn primary" type="button" @click="startConnect(section.kind, detailCardFor(section)!.provider)">
+                  <Icon name="plus" :size="13" />
+                  开始配置
+                </button>
+              </div>
+
+              <div v-else class="model-catalog">
+                <div class="model-catalog-head">
+                  <span>全部模型</span>
+                  <span class="model-catalog-tip">点击模型切换使用</span>
+                </div>
                 <button
-                  class="model-chip-select"
+                  v-for="entry in detailCardFor(section)!.entries"
+                  :key="entry.id"
                   type="button"
-                  v-tooltip="entry.id === section.activeId ? '当前使用的模型' : '设为当前模型'"
+                  class="model-catalog-row"
+                  :class="{ active: entry.id === section.activeId }"
+                  v-tooltip="entry.id === section.activeId ? '正在使用的模型' : '点击切换为该模型'"
                   @click="entry.id !== section.activeId && selectModel(section.kind, entry.id)"
                 >
-                  <Icon v-if="entry.id === section.activeId" name="check" :size="12" class="model-chip-check" />
-                  <span v-else class="model-chip-dot"></span>
-                  <span class="model-chip-copy">
-                    <strong>{{ entry.model }}</strong>
-                  </span>
-                  <span v-if="entry.id === section.activeId" class="model-chip-current">当前</span>
+                  <span class="model-catalog-dot" :class="{ active: entry.id === section.activeId }"></span>
+                  <span class="model-catalog-name">{{ entry.model }}</span>
+                  <span v-if="entry.id === section.activeId" class="model-catalog-current">使用中</span>
                 </button>
-                <div class="model-chip-actions">
-                  <button
-                    type="button"
-                    v-tooltip="'测试连接'"
-                    :disabled="testingId === entry.id"
-                    @click="testOne(section.kind, entry)"
-                  >
-                    <Icon name="activity" :size="13" />
-                  </button>
-                  <button type="button" v-tooltip="'编辑配置'" @click="openForm(section.kind, entry)">
-                    编辑
-                  </button>
-                  <button class="danger" type="button" v-tooltip="'删除配置'" @click="removeModel(section.kind, entry.id)">
-                    <Icon name="x" :size="13" />
-                  </button>
-                </div>
               </div>
-
-              <button
-                v-if="!card.entries.length"
-                class="empty-model-chip"
-                type="button"
-                @click="openForm(section.kind, undefined, card.provider.id)"
-              >
-                <Icon name="plus" :size="14" />
-                配置第一个模型
-              </button>
-            </div>
-          </section>
-        </div>
-
-        <div v-if="section.unknown.length" class="unknown-configs">
-          <div class="subsection-head">
-            <h4>自定义与历史配置</h4>
-            <span>{{ section.unknown.length }} 项</span>
-          </div>
-          <div class="unknown-grid">
-            <article
-              v-for="model in section.unknown"
-              :key="model.id"
-              class="custom-model-row"
-              :class="{ active: model.id === section.activeId }"
-            >
-              <div
-                class="provider-mark"
-                :class="{ 'has-logo': Boolean(model.logo || providerLogo(model.provider)) }"
-              >
-                <span>{{ providerMark(providerName(model.provider)) }}</span>
-                <img
-                  v-if="model.logo || providerLogo(model.provider)"
-                  :src="model.logo || providerLogo(model.provider)"
-                  :alt="`${providerName(model.provider)} Logo`"
-                  @error="hideProviderLogo"
-                />
-              </div>
-              <div class="custom-model-copy">
-                <strong>{{ model.name }}</strong>
-                <span>
-                  {{ providerName(model.provider) }} · {{ model.model }}
-                  <template v-if="section.kind === 'emb'"> · {{ model.dim }} 维</template>
-                </span>
-              </div>
-              <span v-if="model.id === section.activeId" class="status-indicator active">使用中</span>
-              <div class="custom-model-actions">
-                <button class="text-action" type="button" :disabled="!model.apiKey || testingId === model.id" @click="testOne(section.kind, model)">测试</button>
-                <button v-if="model.id !== section.activeId" class="text-action accent" type="button" :disabled="!model.apiKey" @click="selectModel(section.kind, model.id)">启用</button>
-                <button class="text-action" type="button" @click="openForm(section.kind, model)">编辑</button>
-                <button class="text-action danger" type="button" @click="removeModel(section.kind, model.id)">删除</button>
-              </div>
-            </article>
+            </template>
           </div>
         </div>
       </div>
@@ -330,42 +542,18 @@
       </template>
 
       <div class="modal-form">
-        <div class="field">
+        <div v-if="!batchPickAvailable" class="field">
           <label for="model-name">备注名</label>
           <input id="model-name" v-model="form.name" placeholder="例如：主力配置" />
         </div>
         <div class="field">
           <label for="model-provider">服务商</label>
           <select id="model-provider" v-model="form.provider" @change="pickProvider(form.provider)">
-            <option v-if="!providerById(form.provider)" :value="form.provider">{{ providerName(form.provider) }}</option>
+            <option v-if="!providerById(form.provider)" :value="form.provider">{{ providerDisplayName(form.provider) }}</option>
             <option v-for="provider in providerOptions" :key="provider.id" :value="provider.id">
               {{ provider.name }}
             </option>
           </select>
-        </div>
-        <div
-          v-if="form.provider === 'custom' || !providerById(form.provider)"
-          class="field field-wide"
-        >
-          <label>服务商 Logo</label>
-          <div class="custom-logo-control">
-            <span class="custom-logo-preview">
-              <img v-if="form.logo" :src="form.logo" alt="自定义服务商 Logo 预览" />
-              <Icon v-else name="image" :size="18" />
-            </span>
-            <button class="btn" type="button" @click="providerLogoInput?.click()">
-              {{ form.logo ? '更换图片' : '上传图片' }}
-            </button>
-            <button v-if="form.logo" class="text-action danger" type="button" @click="form.logo = ''">移除</button>
-            <input
-              ref="providerLogoInput"
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/svg+xml"
-              hidden
-              @change="onProviderLogoUpload"
-            />
-          </div>
-          <span class="field-help">支持 PNG、JPG、WebP 或 SVG，保存前会压缩为 96 × 96。</span>
         </div>
         <div class="field">
           <label for="model-line">线路</label>
@@ -375,7 +563,7 @@
             </option>
           </select>
         </div>
-        <div class="field">
+        <div v-if="!batchPickAvailable" class="field">
           <label for="model-choice">模型</label>
           <select id="model-choice" v-model="form.modelChoice" @change="onFormModelChange">
             <option value="" disabled>
@@ -390,7 +578,7 @@
             当前账号的模型目录未返回此模型，配置已保留；请选择可用模型或继续手动使用。
           </span>
         </div>
-        <div v-if="form.modelChoice === '__custom__'" class="field field-wide">
+        <div v-if="!batchPickAvailable && form.modelChoice === '__custom__'" class="field field-wide">
           <label for="custom-model-name">自定义模型名称</label>
           <input id="custom-model-name" v-model="form.model" placeholder="完整模型 ID 或 ep- 接入点" />
         </div>
@@ -406,7 +594,7 @@
           </select>
           <span class="field-help">决定请求地址拼接、鉴权头与消息格式；预设服务商按线路自动确定。</span>
         </div>
-        <div v-if="form.kind === 'chat'" class="field">
+        <div v-if="form.kind === 'chat' && !batchPickAvailable" class="field">
           <label for="model-thinking-level">思考等级</label>
           <select id="model-thinking-level" v-model="form.thinkingLevel">
             <option value="">自动（不显式指定）</option>
@@ -449,7 +637,16 @@
           <span v-else-if="form.authOptional" class="field-help">本地免鉴权线路，无需 API Key。</span>
           <span v-else-if="form.id" class="field-help">请为当前服务商和线路输入 API Key。</span>
         </div>
-        <div v-if="form.kind === 'emb'" class="field">
+        <div v-if="batchPickAvailable" class="field field-wide batch-summary">
+          <span class="field-help">
+            已拉取该厂商 {{ batchModelOptions.length }} 个模型，保存后全部入库；在列表页点击任意模型即可切换使用。
+          </span>
+          <button v-if="!connectionEdit" class="text-action" type="button" @click="batchManual = true">手动模式</button>
+        </div>
+        <p v-if="connectionEdit" class="field-help connection-edit-hint">
+          正在编辑连接：保存后新的 API Key / 线路将应用到该厂商的全部模型，并同步最新模型列表。
+        </p>
+        <div v-if="form.kind === 'emb' && !batchPickAvailable" class="field">
           <label for="model-dimension">向量维度</label>
           <select v-if="formDimensionOptions.length" id="model-dimension" v-model.number="form.dim">
             <option v-for="dim in formDimensionOptions" :key="dim" :value="dim">{{ dim }}</option>
@@ -471,8 +668,13 @@
         </button>
         <div class="dialog-footer-right">
           <button class="btn" type="button" @click="form.show = false">取消</button>
-          <button class="btn primary" type="button" :disabled="formSaving" @click="saveModel">
-            {{ formSaving ? '保存中...' : '保存配置' }}
+          <button
+            class="btn primary"
+            type="button"
+            :disabled="formSaving || (batchPickAvailable && !batchModelOptions.length)"
+            @click="saveModel"
+          >
+            {{ formSaving ? '保存中...' : batchPickAvailable ? '保存并同步模型' : '保存配置' }}
           </button>
         </div>
       </template>
@@ -510,7 +712,6 @@ interface ModelEntry {
   line?: string;
   baseUrl: string;
   modelsUrl?: string;
-  logo?: string;
   model: string;
   apiKey: string;
   protocol?: ProviderProtocol;
@@ -529,7 +730,6 @@ interface ModelDraft {
   line: string;
   baseUrl: string;
   modelsUrl: string;
-  logo: string;
   model: string;
   modelChoice: string;
   apiKey: string;
@@ -649,6 +849,10 @@ function modelsRef(kind: ModelKind) {
   return documentModels;
 }
 
+function providerEntries(kind: ModelKind, providerId: string): ModelEntry[] {
+  return modelsRef(kind).value.filter((model) => model.provider === providerId);
+}
+
 function activeIdFor(kind: ModelKind): string {
   if (kind === 'chat') return activeChat.value;
   if (kind === 'emb') return activeEmb.value;
@@ -707,46 +911,11 @@ function configuredProviderCount(section: { cards: ProviderCard[] }): number {
   return section.cards.filter((card) => card.entries.some((entry) => Boolean(entry.apiKey))).length;
 }
 
-function providerMark(name: string): string {
-  const compact = name.trim().replace(/\s+/g, '');
-  return compact.slice(0, 2).toUpperCase() || 'AI';
-}
-
-function providerLogo(id: string): string {
-  return providerById(id)?.logo || '';
-}
-
-function hideProviderLogo(event: Event) {
-  const image = event.currentTarget as HTMLImageElement;
-  const fallback = image.previousElementSibling as HTMLElement | null;
-  image.style.display = 'none';
-  if (fallback) fallback.style.visibility = 'visible';
-  image.parentElement?.classList.remove('has-logo');
-}
-
 // ---------- 连接测试（notify 替代局部 toast） ----------
-const testingId = ref('');
 const testingAll = ref(false);
 
 function errorMessage(error: any, fallback: string): string {
   return error?.response?.data?.error || error?.message || fallback;
-}
-
-async function testOne(kind: ModelKind, model: ModelEntry) {
-  if (!model.apiKey) return;
-  testingId.value = model.id;
-  try {
-    const { data } = await api.post('/api/settings/test-llm', {
-      entry: model,
-      kind: kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
-    });
-    if (data.ok) notify.success(`连接成功 · ${providerName(model.provider)} · ${model.model}`);
-    else notify.error(data.error || '模型连接测试失败。');
-  } catch (error: any) {
-    notify.error(errorMessage(error, '连接测试失败。'));
-  } finally {
-    testingId.value = '';
-  }
 }
 
 async function testAll() {
@@ -810,21 +979,21 @@ function unknownModels(kind: ModelKind): ModelEntry[] {
 const modelSections = computed(() => [
   {
     kind: 'chat' as const,
-    copy: '同一厂商可以并列配置多个模型，点击其中一个即可切换使用。',
+    copy: '配置一次 API Key 即自动拉取该厂商的全部模型，点击任意模型即可切换使用。',
     cards: cardsFor('chat'),
     unknown: unknownModels('chat'),
     activeId: activeChat.value,
   },
   {
     kind: 'emb' as const,
-    copy: '只显示提供文本向量模型的厂商。切换模型或维度后会自动重建索引。',
+    copy: '配置后自动拉取该厂商的向量模型；切换模型或维度后会自动重建索引。',
     cards: cardsFor('emb'),
     unknown: unknownModels('emb'),
     activeId: activeEmb.value,
   },
   {
     kind: 'document' as const,
-    copy: '专用视觉模型是可选覆盖项，仅处理图片和 PDF 中没有足够内嵌文字的页面。',
+    copy: '配置后自动列出支持视觉的模型；作为可选覆盖项，仅处理图片和 PDF 中没有足够内嵌文字的页面。',
     cards: cardsFor('document'),
     unknown: unknownModels('document'),
     activeId: activeDocument.value,
@@ -841,7 +1010,6 @@ const form = ref({
   line: 'custom',
   baseUrl: '',
   modelsUrl: '',
-  logo: '',
   model: '',
   modelChoice: '__custom__',
   apiKey: '',
@@ -852,7 +1020,6 @@ const form = ref({
   thinkingLevel: '' as '' | ThinkingLevel,
   dim: 1024,
 });
-const providerLogoInput = ref<HTMLInputElement>();
 const apiKeyInput = ref<HTMLInputElement>();
 const apiKeyRevealed = ref(false);
 const revealedStoredKey = ref('');
@@ -865,6 +1032,381 @@ const discoveryBusy = ref(false);
 const discoveryMessage = ref('');
 const discoveryOk = ref(false);
 let modelDiscoveryRequestId = 0;
+
+// ---------- 服务商详情（hermes 式：左选厂商，右列全部模型点选即用） ----------
+const selectedProvider = ref<Record<ModelKind, string>>({ chat: '', emb: '', document: '' });
+const batchManual = ref(false);
+const refreshingProvider = ref('');
+/** 在线拉取结果按线路白名单过滤（coding-plan 线路只允许白名单内模型） */
+const batchModelOptions = computed<FormModelOption[]>(() => {
+  const whitelist = formLine.value?.models?.length ? new Set(formLine.value.models) : null;
+  return discoveredModels.value.filter((model) => !whitelist || whitelist.has(model.id));
+});
+const batchPickAvailable = computed(() => !batchManual.value && batchModelOptions.value.length > 0);
+
+function selectedProviderId(kind: ModelKind): string {
+  return selectedProvider.value[kind]
+    || cardsFor(kind)[0]?.provider.id
+    || unknownGroups(kind)[0]?.provider.id
+    || '';
+}
+
+/** 左导航里的自定义分组：按 provider id 聚合非目录条目，显示名取条目上的配置名 */
+function unknownGroups(kind: ModelKind): ProviderCard[] {
+  const groups = new Map<string, ModelEntry[]>();
+  for (const model of unknownModels(kind)) {
+    const list = groups.get(model.provider) || [];
+    list.push(model);
+    groups.set(model.provider, list);
+  }
+  return [...groups.entries()].map(([id, entries]) => ({
+    provider: { ...customPreset, id, name: entries[0]?.name?.trim() || (id === 'custom' ? '自定义配置' : id) },
+    entries,
+  }));
+}
+
+function detailCustomCard(section: { kind: ModelKind }): ProviderCard | null {
+  const sel = selectedProvider.value[section.kind];
+  if (!sel || sel === '__new-custom__') return null;
+  return unknownGroups(section.kind).find((group) => group.provider.id === sel) || null;
+}
+
+function detailCardFor(section: { kind: ModelKind; cards: ProviderCard[] }): ProviderCard | null {
+  if (selectedProvider.value[section.kind] === '__new-custom__') return null;
+  if (detailCustomCard(section)) return null;
+  return section.cards.find((card) => card.provider.id === selectedProviderId(section.kind)) || null;
+}
+
+const conn = ref({
+  open: false,
+  kind: 'chat' as ModelKind,
+  providerId: '',
+  mode: 'connect' as 'connect' | 'edit',
+  configName: '',
+  line: '',
+  baseUrl: '',
+  modelsUrl: '',
+  apiKey: '',
+  showKey: false,
+  protocol: 'openai' as ProviderProtocol,
+  modelsProtocol: 'openai' as ProviderProtocol,
+  authOptional: false,
+  modelsAnonymous: false,
+  busy: false,
+  message: '',
+  ok: false,
+});
+
+function chooseProvider(kind: ModelKind, id: string) {
+  selectedProvider.value = { ...selectedProvider.value, [kind]: id };
+  conn.value.open = false;
+  conn.value.message = '';
+  if (id === '__new-custom__') {
+    startConnectCustom(kind);
+    return;
+  }
+  const customGroup = unknownGroups(kind).find((group) => group.provider.id === id);
+  if (customGroup) {
+    if (!customGroup.entries.length) startConnect(kind, customGroup.provider);
+    return;
+  }
+  const card = cardsFor(kind).find((item) => item.provider.id === id);
+  if (card && !card.entries.length) startConnect(kind, card.provider);
+}
+
+function startConnect(kind: ModelKind, provider: ProviderPreset) {
+  const draft = createDraft(kind, provider, undefined);
+  conn.value = {
+    open: true,
+    kind,
+    providerId: provider.id,
+    mode: 'connect',
+    configName: '',
+    line: draft.line,
+    baseUrl: draft.baseUrl,
+    modelsUrl: draft.modelsUrl,
+    apiKey: '',
+    showKey: false,
+    protocol: draft.protocol,
+    modelsProtocol: draft.modelsProtocol,
+    authOptional: draft.authOptional,
+    modelsAnonymous: draft.modelsAnonymous,
+    busy: false,
+    message: '',
+    ok: false,
+  };
+}
+
+function startEditConnection(kind: ModelKind, card: ProviderCard) {
+  const source = card.entries.find((model) => model.apiKey || model.authOptional) || card.entries[0];
+  if (!source) {
+    startConnect(kind, card.provider);
+    return;
+  }
+  conn.value = {
+    open: true,
+    kind,
+    providerId: card.provider.id,
+    mode: 'edit',
+    configName: card.provider.id.startsWith('custom') ? card.provider.name : '',
+    line: source.line || lineFor(card.provider, undefined, kind)?.id || '',
+    baseUrl: source.baseUrl,
+    modelsUrl: source.modelsUrl || '',
+    apiKey: '',
+    showKey: false,
+    protocol: source.protocol || 'openai',
+    modelsProtocol: source.modelsProtocol || source.protocol || 'openai',
+    authOptional: Boolean(source.authOptional),
+    modelsAnonymous: Boolean(source.modelsAnonymous),
+    busy: false,
+    message: '',
+    ok: false,
+  };
+}
+
+function startConnectCustom(kind: ModelKind) {
+  startConnect(kind, { ...customPreset, id: '__new-custom__', name: '自定义' });
+}
+
+function cancelNewCustom(kind: ModelKind) {
+  conn.value.open = false;
+  selectedProvider.value = { ...selectedProvider.value, [kind]: selectedProviderId(kind) };
+}
+
+function onConnProtocolChange() {
+  conn.value.modelsProtocol = conn.value.protocol;
+}
+
+function onConnLineChange(kind: ModelKind, provider: ProviderPreset) {
+  const line = lineFor(provider, conn.value.line, kind);
+  conn.value.baseUrl = line?.baseUrl || '';
+  conn.value.modelsUrl = line ? (line.modelsUrl || inferredModelsUrl(line.baseUrl)) : '';
+  conn.value.protocol = line?.protocol || 'openai';
+  conn.value.modelsProtocol = line?.modelsProtocol || line?.protocol || 'openai';
+  conn.value.authOptional = line?.authOptional || false;
+  conn.value.modelsAnonymous = line?.modelsAnonymous || false;
+  conn.value.message = '';
+  conn.value.ok = false;
+}
+
+/** 手动修改 Base URL 后，模型目录地址跟随推导（否则会打到原线路的 models 接口） */
+function onConnBaseUrlChange() {
+  conn.value.modelsUrl = inferredModelsUrl(conn.value.baseUrl);
+  conn.value.message = '';
+  conn.value.ok = false;
+}
+
+function connKeyPlaceholder(kind: ModelKind): string {
+  const provider = providerById(conn.value.providerId);
+  const line = provider ? lineFor(provider, conn.value.line, kind) : undefined;
+  return line?.apiKeyPlaceholder || 'API Key';
+}
+
+/** Key 默认密文显示；点击眼睛切换明文。编辑模式下输入框为空时，先取回已保存的完整 Key 再显示 */
+async function toggleConnKey(kind: ModelKind, card: ProviderCard) {
+  if (!conn.value.showKey && conn.value.mode === 'edit' && !conn.value.apiKey) {
+    const source = providerEntries(kind, card.provider.id).find((model) => model.apiKey);
+    if (source) {
+      try {
+        const { data } = await api.get(`/api/settings/models/${source.id}/key`);
+        if (data.apiKey) conn.value.apiKey = data.apiKey;
+      } catch {
+        // 取回失败（如网络异常）时仅切换明文显示，不打断操作
+      }
+    }
+  }
+  conn.value.showKey = !conn.value.showKey;
+}
+
+function connHint(kind: ModelKind): string {
+  const provider = providerById(conn.value.providerId);
+  const line = provider ? lineFor(provider, conn.value.line, kind) : undefined;
+  return line?.hint || provider?.hint || '';
+}
+
+/** 按当前 conn 配置拉取厂商目录并同步入库：更新既有条目连接、补齐新增模型；nameOverride 用于自定义配置改名 */
+async function syncConnection(kind: ModelKind, provider: ProviderPreset, sourceEntryId?: string, nameOverride?: string): Promise<{ added: number; total: number }> {
+  const keyless = conn.value.authOptional || conn.value.modelsAnonymous;
+  const { data } = await api.post('/api/settings/discover-models', {
+    baseUrl: conn.value.baseUrl,
+    modelsUrl: conn.value.modelsUrl || undefined,
+    modelsProtocol: conn.value.modelsProtocol === 'anthropic' ? 'anthropic' : 'openai',
+    anonymous: keyless,
+    apiKey: conn.value.apiKey.trim(),
+    entryId: sourceEntryId,
+    kind: kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
+  });
+  const line = providerById(provider.id)?.lines.find((item) => item.id === conn.value.line);
+  const whitelist = line?.models?.length ? new Set(line.models) : null;
+  const ids = (data.models || []).filter((id: string) => !whitelist || whitelist.has(id));
+  if (!ids.length) throw new Error('厂商未返回可识别的模型列表');
+
+  let apiKey = conn.value.apiKey.trim();
+  if (!apiKey && !keyless) {
+    const source = providerEntries(kind, provider.id).find((model) => model.apiKey);
+    if (source) {
+      const revealed = await api.get(`/api/settings/models/${source.id}/key`);
+      apiKey = revealed.data.apiKey || '';
+    }
+  }
+
+  const list = modelsRef(kind);
+  let added = 0;
+  for (const id of ids) {
+    const draft: ModelDraft = {
+      line: conn.value.line,
+      baseUrl: conn.value.baseUrl,
+      modelsUrl: conn.value.modelsUrl,
+      model: id,
+      modelChoice: id,
+      apiKey,
+      protocol: conn.value.protocol,
+      modelsProtocol: conn.value.modelsProtocol,
+      authOptional: conn.value.authOptional,
+      modelsAnonymous: conn.value.modelsAnonymous,
+      thinkingLevel: '',
+      dim: 1024,
+    };
+    const existing = list.value.find((model) => model.provider === provider.id && model.model === id);
+    const entry = entryFromDraft(kind, provider, draft, existing, nameOverride || existing?.name || provider.name, []);
+    entry.apiKey = apiKey || existing?.apiKey || entry.apiKey;
+    const index = list.value.findIndex((model) => model.id === entry.id);
+    if (index >= 0) list.value[index] = entry;
+    else {
+      list.value.push(entry);
+      added++;
+    }
+  }
+  if (!activeIdFor(kind)) {
+    const recommended = recommendedModelId(provider, kind);
+    const preferred = recommended
+      ? list.value.find((model) => model.provider === provider.id && model.model === recommended)
+      : undefined;
+    const target = preferred || list.value.find((model) => model.provider === provider.id);
+    if (target) setActiveId(kind, target.id);
+  }
+  await persist();
+  return { added, total: ids.length };
+}
+
+async function saveConnection(kind: ModelKind) {
+  if (!normalizeUrl(conn.value.baseUrl)) {
+    conn.value.ok = false;
+    conn.value.message = '请填写 Base URL。';
+    return;
+  }
+  let provider: ProviderPreset;
+  let sourceEntryId: string | undefined;
+  let nameOverride: string | undefined;
+  if (conn.value.providerId === '__new-custom__') {
+    const name = conn.value.configName.trim();
+    if (!name) {
+      conn.value.ok = false;
+      conn.value.message = '请填写配置名称。';
+      return;
+    }
+    if (!conn.value.apiKey.trim() && !conn.value.authOptional) {
+      conn.value.ok = false;
+      conn.value.message = '请填写 API Key。';
+      return;
+    }
+    provider = { ...customPreset, id: `custom-${Math.random().toString(36).slice(2, 8)}`, name };
+  } else if (conn.value.providerId === 'custom' || conn.value.providerId.startsWith('custom-')) {
+    const group = unknownGroups(kind).find((item) => item.provider.id === conn.value.providerId);
+    provider = group?.provider || { ...customPreset, id: conn.value.providerId, name: conn.value.configName.trim() || '自定义配置' };
+    sourceEntryId = (group?.entries || []).find((model) => model.apiKey || model.authOptional)?.id;
+    if (conn.value.configName.trim()) nameOverride = conn.value.configName.trim();
+  } else {
+    const card = cardsFor(kind).find((item) => item.provider.id === conn.value.providerId);
+    if (!card) {
+      conn.value.message = '配置不存在，请刷新页面后重试。';
+      return;
+    }
+    provider = card.provider;
+    sourceEntryId = card.entries.find((model) => model.apiKey || model.authOptional)?.id;
+  }
+  if (!conn.value.apiKey.trim() && !conn.value.authOptional && conn.value.mode === 'connect' && !sourceEntryId) {
+    conn.value.ok = false;
+    conn.value.message = '请填写 API Key。';
+    return;
+  }
+  conn.value.busy = true;
+  conn.value.ok = false;
+  conn.value.message = '正在拉取模型列表...';
+  try {
+    const res = await syncConnection(kind, provider, sourceEntryId, nameOverride);
+    conn.value.ok = true;
+    conn.value.message = `已同步 ${res.total} 个模型（新增 ${res.added}），点击模型即可切换使用。`;
+    notify.success(`已保存 · ${provider.name} · ${res.total} 个模型`);
+    if (conn.value.providerId !== provider.id) {
+      selectedProvider.value = { ...selectedProvider.value, [kind]: provider.id };
+      conn.value.providerId = provider.id;
+    }
+    conn.value.open = false;
+    if (kind === 'chat') void refreshActiveChatImageCapability();
+  } catch (error: any) {
+    conn.value.ok = false;
+    conn.value.message = errorMessage(error, '拉取模型失败，请检查 API Key 与网络。');
+  } finally {
+    conn.value.busy = false;
+  }
+}
+
+/** 删除整个自定义配置（含其全部模型条目） */
+async function deleteCustomConfig(kind: ModelKind, card: ProviderCard) {
+  const ok = await confirmDialog({
+    title: '删除自定义配置',
+    message: `删除「${card.provider.name}」及其全部 ${card.entries.length} 个模型配置？`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
+  const list = modelsRef(kind);
+  const previousList = list.value.map((model) => ({ ...model }));
+  const previousActive = activeIdFor(kind);
+  try {
+    list.value = list.value.filter((model) => model.provider !== card.provider.id);
+    if (previousActive && card.entries.some((entry) => entry.id === previousActive)) {
+      setActiveId(kind, list.value[0]?.id || '');
+    }
+    await persist();
+    selectedProvider.value = { ...selectedProvider.value, [kind]: '' };
+    notify.success(`已删除自定义配置 · ${card.provider.name}`);
+  } catch (error: any) {
+    list.value = previousList;
+    setActiveId(kind, previousActive);
+    notify.error(errorMessage(error, '删除失败，请重试。'));
+  }
+}
+
+/** 自定义配置里的手动添加：沿用该配置的连接，仅补录一个目录里没有的模型 */
+function openManualAdd(kind: ModelKind, group: ProviderCard) {
+  openForm(kind, undefined, group.provider.id);
+  form.value.name = group.provider.name;
+}
+
+/** 目录外 provider 的显示名：优先取自定义分组名 */
+function providerDisplayName(id: string): string {
+  const preset = providerById(id);
+  if (preset) return preset.name;
+  for (const kind of ['chat', 'emb', 'document'] as ModelKind[]) {
+    const group = unknownGroups(kind).find((item) => item.provider.id === id);
+    if (group) return group.provider.name;
+  }
+  return providerName(id);
+}
+
+/** 批量入库用的完整 Key：优先取刚输入的明文；未输入时从服务端取该厂商已存条目的原值（新建条目无法依赖服务端掩码沿用） */
+async function resolveBatchApiKey(): Promise<string> {
+  const typed = form.value.apiKey.trim();
+  if (typed) return typed;
+  const list = modelsRef(form.value.kind).value;
+  const source = list.find((model) => model.provider === form.value.provider && model.line === form.value.line && model.apiKey)
+    || list.find((model) => model.provider === form.value.provider && model.apiKey);
+  if (!source) return '';
+  const { data } = await api.get(`/api/settings/models/${source.id}/key`);
+  return data.apiKey || '';
+}
 
 const providerOptions = computed(() =>
   form.value.kind === 'emb'
@@ -1028,7 +1570,6 @@ function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: Model
     line,
     baseUrl: existing?.baseUrl || lineFor(provider, line, kind)?.baseUrl || '',
     modelsUrl: existing?.modelsUrl || lineFor(provider, line, kind)?.modelsUrl || '',
-    logo: existing?.logo || '',
     model: existing?.model || '',
     modelChoice: existing?.model || '',
     apiKey: '',
@@ -1103,7 +1644,6 @@ function entryFromDraft(
     line: draft.line,
     baseUrl: normalizeUrl(draft.baseUrl),
     modelsUrl: normalizeUrl(draft.modelsUrl),
-    ...(draft.logo ? { logo: draft.logo } : {}),
     model,
     // 留空保存 = 服务端沿用库中原 Key；新输入的明文原样提交
     apiKey: draft.apiKey.trim(),
@@ -1124,6 +1664,7 @@ function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
   modelDiscoveryRequestId++;
   apiKeyRevealed.value = false;
   revealedStoredKey.value = '';
+  batchManual.value = false;
   formError.value = '';
   discoveredModels.value = [];
   modelDiscoveryCompleted.value = false;
@@ -1150,13 +1691,13 @@ function pickProvider(id: string) {
   modelDiscoveryRequestId++;
   apiKeyRevealed.value = false;
   revealedStoredKey.value = '';
+  batchManual.value = false;
   const provider = providerById(id) || customPreset;
   const hasGeneratedName = !form.value.name || catalogList.value.some((item) => item.name === form.value.name);
   const draft = createDraft(form.value.kind, provider);
   form.value.line = draft.line;
   form.value.baseUrl = draft.baseUrl;
   form.value.modelsUrl = draft.modelsUrl;
-  form.value.logo = draft.logo;
   form.value.model = draft.model;
   form.value.modelChoice = draft.modelChoice;
   form.value.apiKey = '';
@@ -1289,46 +1830,6 @@ function selectDiscoveredModelId(
   if (preserveUnavailable && currentId) return currentId;
   if (recommendedId && modelIds.includes(recommendedId)) return recommendedId;
   return modelIds[0] || '';
-}
-
-async function onProviderLogoUpload(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
-  if (!file.type.startsWith('image/')) {
-    formError.value = '请选择图片文件。';
-    return;
-  }
-  if (file.size > 2 * 1024 * 1024) {
-    formError.value = 'Logo 图片不能超过 2 MB。';
-    return;
-  }
-
-  const objectUrl = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('图片无法读取'));
-      image.src = objectUrl;
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = 96;
-    canvas.height = 96;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('浏览器不支持图片处理');
-    const scale = Math.min(88 / image.naturalWidth, 88 / image.naturalHeight);
-    const width = Math.max(1, image.naturalWidth * scale);
-    const height = Math.max(1, image.naturalHeight * scale);
-    context.drawImage(image, (96 - width) / 2, (96 - height) / 2, width, height);
-    form.value.logo = canvas.toDataURL('image/png');
-    formError.value = '';
-  } catch (error: any) {
-    formError.value = error?.message || 'Logo 处理失败。';
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
 }
 
 function onFormBaseUrlChange() {
@@ -1493,7 +1994,148 @@ async function refreshActiveChatImageCapability(force = false) {
   }
 }
 
+/** 批量保存：拉取到的模型全部入库（同一厂商+线路共用 Key），推荐模型优先设为当前 */
+async function saveBatchModels() {
+  formError.value = '';
+  const kind = form.value.kind;
+  const provider = currentFormProvider.value;
+  const selected = [...batchModelOptions.value];
+  if (!selected.length) {
+    formError.value = '请先拉取模型列表。';
+    return;
+  }
+  if (!normalizeUrl(form.value.baseUrl)) {
+    formError.value = '请填写 Base URL。';
+    return;
+  }
+  if (!effectiveFormApiKey.value && !form.value.authOptional) {
+    formError.value = '请填写 API Key。';
+    return;
+  }
+  formSaving.value = true;
+  const list = modelsRef(kind);
+  const previousList = list.value.map((model) => ({ ...model }));
+  const previousActive = activeIdFor(kind);
+  try {
+    const apiKey = await resolveBatchApiKey();
+    if (!apiKey && !form.value.authOptional) {
+      throw new Error('无法获取完整 API Key，请重新输入后再保存。');
+    }
+    let firstEntryId = '';
+    for (const option of selected) {
+      const draft: ModelDraft = { ...form.value, model: option.id, modelChoice: option.id };
+      const existing = list.value.find(
+        (model) => model.provider === provider.id
+          && model.model === option.id
+          && normalizeUrl(model.baseUrl) === normalizeUrl(form.value.baseUrl),
+      );
+      const entry = entryFromDraft(kind, provider, draft, existing, existing?.name || provider.name, discoveredModels.value);
+      entry.apiKey = apiKey;
+      const index = list.value.findIndex((model) => model.id === entry.id);
+      if (index >= 0) list.value[index] = entry;
+      else list.value.push(entry);
+      if (!firstEntryId) firstEntryId = entry.id;
+    }
+    if (!activeIdFor(kind)) {
+      const recommended = recommendedModelId(provider, kind);
+      const preferred = recommended
+        && list.value.find((model) => model.provider === provider.id && model.model === recommended);
+      setActiveId(kind, (preferred?.id || firstEntryId) as string);
+    }
+    await persist();
+    form.value.show = false;
+    notify.success(`已保存 ${selected.length} 个模型 · ${provider.name}`);
+    if (kind === 'chat' && activeChat.value) {
+      checkedImageCapabilityIds.delete(activeChat.value);
+      void refreshActiveChatImageCapability();
+    }
+  } catch (error: any) {
+    list.value = previousList;
+    setActiveId(kind, previousActive);
+    formError.value = errorMessage(error, '保存失败，请重试。');
+  } finally {
+    formSaving.value = false;
+  }
+}
+
+/** 批量模式下测试连接：测第一个模型（Key 掩码时先取完整原值） */
+async function testBatchModel() {
+  formError.value = '';
+  const kind = form.value.kind;
+  const provider = currentFormProvider.value;
+  const option = batchModelOptions.value[0];
+  if (!option) {
+    formError.value = '请先拉取模型列表。';
+    return;
+  }
+  formTesting.value = true;
+  try {
+    const apiKey = await resolveBatchApiKey();
+    const entry = entryFromDraft(
+      kind,
+      provider,
+      { ...form.value, model: option.id, modelChoice: option.id, apiKey },
+      undefined,
+      provider.name,
+      discoveredModels.value,
+    );
+    const { data } = await api.post('/api/settings/test-llm', {
+      entry,
+      kind: kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
+    });
+    if (data.ok) notify.success(`连接成功 · ${provider.name} · ${entry.model}`);
+    else notify.error(data.error || '模型连接测试失败。');
+  } catch (error: any) {
+    notify.error(errorMessage(error, '连接测试失败。'));
+  } finally {
+    formTesting.value = false;
+  }
+}
+
+/** 「重新拉取」：沿用已存连接增量同步该厂商的模型列表（只新增，不自动删除） */
+async function refreshProviderModels(kind: ModelKind, card: ProviderCard) {
+  if (refreshingProvider.value) return;
+  const source = card.entries.find((model) => model.apiKey || model.authOptional) || card.entries[0];
+  if (!source) return;
+  conn.value = {
+    open: false,
+    kind,
+    providerId: card.provider.id,
+    mode: 'edit',
+    line: source.line || '',
+    baseUrl: source.baseUrl,
+    modelsUrl: source.modelsUrl || '',
+    apiKey: '',
+    showKey: false,
+    protocol: source.protocol || 'openai',
+    modelsProtocol: source.modelsProtocol || source.protocol || 'openai',
+    authOptional: Boolean(source.authOptional),
+    modelsAnonymous: Boolean(source.modelsAnonymous),
+    busy: true,
+    message: '',
+    ok: false,
+  };
+  refreshingProvider.value = `${kind}:${card.provider.id}`;
+  try {
+    const res = await syncConnection(kind, card.provider, source.id);
+    notify.success(`已同步 ${res.total} 个模型（新增 ${res.added}）· ${card.provider.name}`);
+  } catch (error: any) {
+    notify.error(errorMessage(error, '拉取模型失败。'));
+  } finally {
+    refreshingProvider.value = '';
+    conn.value.busy = false;
+  }
+}
+
 async function saveModel() {
+  if (batchPickAvailable.value) {
+    // 刚填完 Key 直接点保存时，Key 的 blur 拉取可能还在路上：先等拉取完成再入库
+    if (!modelDiscoveryCompleted.value && !discoveryBusy.value && form.value.apiKey.trim() && normalizeUrl(form.value.baseUrl)) {
+      await discoverFormModels();
+    }
+    await saveBatchModels();
+    return;
+  }
   formError.value = '';
   const existing = existingFormEntry.value;
   const effectiveKey = effectiveFormApiKey.value;
@@ -1580,6 +2222,10 @@ async function removeModel(kind: ModelKind, id: string) {
 }
 
 async function testForm() {
+  if (batchPickAvailable.value) {
+    await testBatchModel();
+    return;
+  }
   formError.value = '';
   const existing = existingFormEntry.value;
   // 掩码 Key（已存条目未重输）也放行校验：服务端测试入口会按 id 补全原值；
@@ -2051,26 +2697,6 @@ onMounted(async () => {
   line-height: 1.45;
 }
 
-.provider-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  overflow: hidden;
-}
-.provider-mark.has-logo > span {
-  visibility: hidden;
-}
-
 .model-section-intro {
   display: flex;
   align-items: center;
@@ -2084,8 +2710,7 @@ onMounted(async () => {
   font-size: 12px;
   line-height: 1.5;
 }
-.model-section-intro > span,
-.subsection-head > span {
+.model-section-intro > span {
   flex-shrink: 0;
   color: var(--text-faint);
   font-size: 11px;
@@ -2097,93 +2722,121 @@ onMounted(async () => {
   font-size: 11px;
 }
 
-.provider-list {
-  border-top: 0;
-}
-.provider-row {
-  position: relative;
+/* ---------- 服务商主从布局（左导航 + 右详情） ---------- */
+.provider-split {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 14px;
-  padding: 10px 2px;
+  grid-template-columns: 200px minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  overflow: hidden;
 }
-.provider-row:not(:last-child)::after {
-  position: absolute;
-  right: 4px;
-  bottom: 0;
-  left: 42px;
-  height: 1px;
-  background: color-mix(in srgb, var(--border) 58%, transparent);
-  content: '';
-  pointer-events: none;
+.provider-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-secondary);
+  overflow-y: auto;
+  max-height: 560px;
 }
-.provider-row.active {
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent) 3%, transparent);
-}
-.provider-row.active::after {
-  opacity: 0;
-}
-.provider-row-head {
-  min-width: 0;
+.provider-nav-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 7px;
-}
-.provider-identity {
+  gap: 8px;
   min-width: 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+}
+.provider-nav-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-nav-item em {
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-faint);
+  font-size: 9px;
+  font-style: normal;
+  text-align: center;
+}
+.provider-nav-item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+.provider-nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.provider-nav-item.active em {
+  background: var(--accent);
+  color: #fff;
+}
+.provider-nav-divider {
+  margin: 10px 6px 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.provider-nav-add {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 4px;
+  margin: 8px 2px 0;
+  padding: 7px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
 }
-.provider-row .provider-mark,
-.custom-model-row .provider-mark {
-  position: relative;
-  overflow: visible;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
+.provider-nav-add:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
-.provider-row .provider-mark {
-  width: 28px;
-  height: 28px;
-  flex-basis: 28px;
-  border-radius: 7px;
-  font-size: 9px;
+.provider-detail {
+  min-width: 0;
+  padding: 16px 18px 18px;
 }
-.provider-row .provider-mark img,
-.custom-model-row .provider-mark img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border-radius: 7px;
-  background: transparent;
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.5),
-    0 2px 5px rgba(0, 0, 0, 0.14);
+.detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
 }
-:global(html.dark) .provider-row .provider-mark img,
-:global(html.dark) .custom-model-row .provider-mark img {
-  box-shadow:
-    0 0 0 0.5px rgba(255, 255, 255, 0.34),
-    0 2px 6px rgba(0, 0, 0, 0.42);
-}
-.provider-title {
+.detail-title {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
-.provider-row .provider-title strong {
-  font-size: 12px;
-  overflow: visible;
-  text-overflow: clip;
-  white-space: nowrap;
+.detail-title strong {
+  font-size: 14px;
 }
-.provider-row .provider-title span {
-  font-size: 9px;
+.detail-title span {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.provider-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .provider-add-btn {
   display: inline-flex;
@@ -2198,213 +2851,199 @@ onMounted(async () => {
 .provider-add-btn:hover {
   background: var(--accent-soft);
 }
+.provider-add-btn.danger {
+  color: var(--danger);
+}
+.provider-add-btn.danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
 
-.model-chip-list {
-  min-width: 0;
+/* 连接表单（未配置 / 编辑连接） */
+.conn-form {
   display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
 }
-.model-config-chip {
-  min-width: 0;
+.conn-grid {
   display: grid;
-  grid-template-columns: minmax(0, auto) auto;
-  align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  background: var(--bg);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
-.model-config-chip:hover {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-strong));
+.conn-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
 }
-.model-config-chip.active {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 28%, transparent);
-}
-.model-chip-select {
+.conn-grid input,
+.conn-grid select {
+  width: 100%;
   min-width: 0;
+  font-weight: 400;
+}
+.conn-key-field {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 8px 6px 10px;
-  border-radius: 999px 0 0 999px;
+  gap: 6px;
+}
+.conn-key-field input {
+  flex: 1;
+  min-width: 0;
+}
+.conn-key-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--text-faint);
+}
+.conn-key-toggle:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
+}
+.conn-msg {
+  margin: 0;
+  font-size: 11px;
+}
+.conn-msg.ok {
+  color: var(--accent);
+}
+.conn-msg.err {
+  color: var(--danger);
+}
+.conn-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.conn-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 26px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  text-align: center;
+}
+.conn-empty p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 全部模型列表（点选即用） */
+.model-catalog {
+  margin-top: 14px;
+}
+.model-catalog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.model-catalog-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+  color: var(--text);
+  font-size: 12px;
   text-align: left;
 }
-.model-chip-dot {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 6px;
+.model-catalog-row:hover {
+  background: var(--bg-secondary);
+}
+.model-catalog-row.active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 2.5px 0 0 var(--accent);
+}
+.model-catalog-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
   border-radius: 50%;
   background: var(--border-strong);
 }
-.model-config-chip.active .model-chip-dot {
+.model-catalog-row:hover .model-catalog-dot {
+  background: var(--text-faint);
+}
+.model-catalog-dot.active {
   background: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.model-chip-copy {
+.model-catalog-name {
   min-width: 0;
-}
-.model-chip-copy strong {
-  display: block;
-  max-width: 190px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
+}
+.model-catalog-row.active .model-catalog-name {
+  color: var(--accent);
   font-weight: 600;
 }
-.model-config-chip.active .model-chip-copy strong,
-.model-config-chip.active .model-chip-check {
-  color: #fff;
-}
-.model-chip-current {
-  margin-left: 3px;
-  padding: 1px 5px;
+.model-catalog-current {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--accent);
   color: #fff;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 700;
 }
-.model-chip-actions {
-  display: flex;
-  align-items: center;
-  align-self: stretch;
-  border-left: 1px solid var(--border);
+.model-catalog-row.active .model-catalog-current + .model-catalog-remove {
+  margin-left: 8px;
 }
-.model-config-chip.active .model-chip-actions {
-  border-left-color: rgba(255, 255, 255, 0.28);
-}
-.model-chip-actions button {
+.model-catalog-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 27px;
-  height: 100%;
-  padding: 0 6px;
-  border-radius: 0;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border-radius: 5px;
   color: var(--text-faint);
-  font-size: 9px;
+  opacity: 0;
 }
-.model-chip-actions button:hover {
-  background: var(--bg-hover);
-  color: var(--text);
+.model-catalog-row:hover .model-catalog-remove,
+.model-catalog-remove:focus-visible {
+  opacity: 1;
 }
-.model-chip-actions button.danger:hover {
+.model-catalog-remove:hover {
+  background: var(--bg-tertiary);
   color: var(--danger);
 }
-.model-config-chip.active .model-chip-actions button {
-  color: rgba(255, 255, 255, 0.82);
+.model-catalog-row.active .model-catalog-remove {
+  margin-left: 0;
 }
-.model-config-chip.active .model-chip-actions button:hover {
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
-}
-.model-chip-actions button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.empty-model-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 34px;
-  padding: 6px 12px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: 10px;
-}
-.empty-model-chip:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.unknown-configs {
-  margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border);
-}
-.subsection-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 9px;
-}
-.subsection-head h4 {
-  margin: 0;
-  font-size: 13px;
-}
-.unknown-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  border-top: 1px solid var(--border);
-}
-.custom-model-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 62px;
-  padding: 9px 2px;
-  border-bottom: 1px solid var(--border);
-}
-.custom-model-row.active {
-  background: var(--accent-soft);
-}
-.custom-model-copy {
-  min-width: 0;
-}
-.custom-model-copy strong,
-.custom-model-copy span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.custom-model-copy strong {
-  font-size: 12px;
-}
-.custom-model-copy span {
-  margin-top: 3px;
-  color: var(--text-faint);
-  font-size: 10px;
-}
-.status-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+.model-catalog-dim {
   flex-shrink: 0;
   color: var(--text-faint);
-  font-size: 11px;
-  white-space: nowrap;
+  font-size: 10px;
 }
-.status-indicator::before {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--border-strong);
-  content: "";
-}
-.status-indicator.active {
-  color: var(--accent);
-  font-weight: 600;
-}
-.status-indicator.active::before {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-.custom-model-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.custom-add-row {
+  margin-top: 12px;
 }
 
 /* ---------- 模型对话框 ---------- */
@@ -2449,34 +3088,15 @@ onMounted(async () => {
   color: var(--warn);
   line-height: 1.45;
 }
-.custom-logo-control {
+.batch-summary {
   display: flex;
   align-items: center;
-  gap: 9px;
+  justify-content: space-between;
+  gap: 10px;
 }
-.custom-logo-preview {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
-  border-radius: 8px;
-  color: var(--text-faint);
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.42),
-    0 2px 6px rgba(0, 0, 0, 0.12);
-}
-.custom-logo-preview img {
-  width: 100%;
-  height: 100%;
-  border-radius: inherit;
-  object-fit: contain;
-}
-:global(html.dark) .custom-logo-preview {
-  box-shadow:
-    0 0 0 0.5px rgba(255, 255, 255, 0.32),
-    0 2px 6px rgba(0, 0, 0, 0.38);
+.connection-edit-hint {
+  margin: -4px 0 0;
+  color: var(--warn);
 }
 .discovery-url-row {
   display: grid;
@@ -2548,20 +3168,23 @@ onMounted(async () => {
     grid-column: 2;
     justify-self: start;
   }
-  .provider-row {
+  .provider-split {
     grid-template-columns: 1fr;
-    gap: 8px;
-    padding: 11px 0;
   }
-  .provider-row-head {
-    padding: 0 2px;
+  .provider-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
-  .custom-model-row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+  .provider-nav-divider {
+    margin: 4px 6px;
+    padding-top: 0;
+    border-top: 0;
   }
-  .custom-model-actions {
-    grid-column: 2 / -1;
-    justify-content: flex-end;
+  .provider-detail {
+    padding: 14px;
   }
 }
 
@@ -2594,37 +3217,8 @@ onMounted(async () => {
   .model-section-intro {
     align-items: flex-start;
   }
-  .model-chip-list {
-    align-items: stretch;
-    flex-direction: column;
-  }
-  .model-config-chip,
-  .empty-model-chip {
-    width: 100%;
-  }
-  .model-config-chip {
-    grid-template-columns: minmax(0, 1fr) auto;
-    border-radius: 8px;
-  }
-  .model-chip-select {
-    border-radius: 8px 0 0 8px;
-  }
-  .model-chip-copy strong {
-    max-width: none;
-  }
-  .empty-model-chip {
-    justify-content: center;
-    border-radius: 8px;
-  }
-  .custom-model-row {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-  .custom-model-row > .status-indicator {
-    grid-column: 2;
-    justify-self: start;
-  }
-  .custom-model-actions {
-    grid-column: 1 / -1;
+  .conn-grid {
+    grid-template-columns: 1fr;
   }
   .modal-form {
     grid-template-columns: 1fr;

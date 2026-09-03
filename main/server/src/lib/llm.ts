@@ -442,7 +442,9 @@ export async function probeImageInput(
   try {
     const response = await request(
       '/chat/completions',
-      buildDocumentRequestBody(entry, challenge.dataUrl, challenge.prompt, 32),
+      // 2048：「始终思考」模型（GLM-5.3 网关）的 reasoning 也占 max_tokens，
+      // 给太小会截断到正文为空，探测永远 unknown
+      buildDocumentRequestBody(entry, challenge.dataUrl, challenge.prompt, 2048),
       {
         baseUrl: entry.baseUrl.replace(/\/+$/, ''),
         apiKey: entry.apiKey,
@@ -458,8 +460,12 @@ export async function probeImageInput(
       },
     );
     const payload = await readJsonResponse(response);
-    const content = messageText(payload?.choices?.[0]?.message).trim();
-    if (normalizedChallengeAnswer(content).includes(challenge.code)) {
+    const message = payload?.choices?.[0]?.message;
+    const content = messageText(message).trim();
+    // 部分思考模型把读图结果写在 reasoning_content，正文被截断或为空时兜底扫推理文本
+    const reasoning = typeof message?.reasoning_content === 'string' ? message.reasoning_content : '';
+    if (normalizedChallengeAnswer(content).includes(challenge.code)
+      || (!content && normalizedChallengeAnswer(reasoning).includes(challenge.code))) {
       return { status: 'supported', source: 'probe' };
     }
     return {
@@ -467,7 +473,9 @@ export async function probeImageInput(
       source: 'probe',
       detail: content
         ? `模型已响应，但未能读出测试图片中的数字：${content.slice(0, 80)}`
-        : '模型已响应，但未返回可验证的图片内容。',
+        : reasoning.trim()
+          ? `模型仅返回了思考过程，未输出正文：${reasoning.trim().slice(0, 80)}`
+          : '模型已响应，但未返回可验证的图片内容。',
     };
   } catch (error: any) {
     if (explicitlyRejectsImageInput(error)) {
