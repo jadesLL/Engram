@@ -198,20 +198,9 @@
             :class="{ active: card.entries.some((entry) => entry.id === section.activeId) }"
           >
             <div class="provider-row-head">
-              <div class="provider-identity">
-                <div class="provider-mark" :class="{ 'has-logo': Boolean(card.provider.logo) }">
-                  <span>{{ providerMark(card.provider.name) }}</span>
-                  <img
-                    v-if="card.provider.logo"
-                    :src="card.provider.logo"
-                    :alt="`${card.provider.name} Logo`"
-                    @error="hideProviderLogo"
-                  />
-                </div>
-                <div class="provider-title">
-                  <strong>{{ card.provider.name }}</strong>
-                  <span>{{ card.entries.length ? `${card.entries.length} 个配置` : '尚未配置' }}</span>
-                </div>
+              <div class="provider-title">
+                <strong>{{ card.provider.name }}</strong>
+                <span>{{ card.entries.length ? `${card.entries.length} 个配置` : '尚未配置' }}</span>
               </div>
               <button
                 class="provider-add-btn"
@@ -286,18 +275,6 @@
               class="custom-model-row"
               :class="{ active: model.id === section.activeId }"
             >
-              <div
-                class="provider-mark"
-                :class="{ 'has-logo': Boolean(model.logo || providerLogo(model.provider)) }"
-              >
-                <span>{{ providerMark(providerName(model.provider)) }}</span>
-                <img
-                  v-if="model.logo || providerLogo(model.provider)"
-                  :src="model.logo || providerLogo(model.provider)"
-                  :alt="`${providerName(model.provider)} Logo`"
-                  @error="hideProviderLogo"
-                />
-              </div>
               <div class="custom-model-copy">
                 <strong>{{ model.name }}</strong>
                 <span>
@@ -342,30 +319,6 @@
               {{ provider.name }}
             </option>
           </select>
-        </div>
-        <div
-          v-if="form.provider === 'custom' || !providerById(form.provider)"
-          class="field field-wide"
-        >
-          <label>服务商 Logo</label>
-          <div class="custom-logo-control">
-            <span class="custom-logo-preview">
-              <img v-if="form.logo" :src="form.logo" alt="自定义服务商 Logo 预览" />
-              <Icon v-else name="image" :size="18" />
-            </span>
-            <button class="btn" type="button" @click="providerLogoInput?.click()">
-              {{ form.logo ? '更换图片' : '上传图片' }}
-            </button>
-            <button v-if="form.logo" class="text-action danger" type="button" @click="form.logo = ''">移除</button>
-            <input
-              ref="providerLogoInput"
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/svg+xml"
-              hidden
-              @change="onProviderLogoUpload"
-            />
-          </div>
-          <span class="field-help">支持 PNG、JPG、WebP 或 SVG，保存前会压缩为 96 × 96。</span>
         </div>
         <div class="field">
           <label for="model-line">线路</label>
@@ -510,7 +463,6 @@ interface ModelEntry {
   line?: string;
   baseUrl: string;
   modelsUrl?: string;
-  logo?: string;
   model: string;
   apiKey: string;
   protocol?: ProviderProtocol;
@@ -529,7 +481,6 @@ interface ModelDraft {
   line: string;
   baseUrl: string;
   modelsUrl: string;
-  logo: string;
   model: string;
   modelChoice: string;
   apiKey: string;
@@ -707,23 +658,6 @@ function configuredProviderCount(section: { cards: ProviderCard[] }): number {
   return section.cards.filter((card) => card.entries.some((entry) => Boolean(entry.apiKey))).length;
 }
 
-function providerMark(name: string): string {
-  const compact = name.trim().replace(/\s+/g, '');
-  return compact.slice(0, 2).toUpperCase() || 'AI';
-}
-
-function providerLogo(id: string): string {
-  return providerById(id)?.logo || '';
-}
-
-function hideProviderLogo(event: Event) {
-  const image = event.currentTarget as HTMLImageElement;
-  const fallback = image.previousElementSibling as HTMLElement | null;
-  image.style.display = 'none';
-  if (fallback) fallback.style.visibility = 'visible';
-  image.parentElement?.classList.remove('has-logo');
-}
-
 // ---------- 连接测试（notify 替代局部 toast） ----------
 const testingId = ref('');
 const testingAll = ref(false);
@@ -841,7 +775,6 @@ const form = ref({
   line: 'custom',
   baseUrl: '',
   modelsUrl: '',
-  logo: '',
   model: '',
   modelChoice: '__custom__',
   apiKey: '',
@@ -852,7 +785,6 @@ const form = ref({
   thinkingLevel: '' as '' | ThinkingLevel,
   dim: 1024,
 });
-const providerLogoInput = ref<HTMLInputElement>();
 const apiKeyInput = ref<HTMLInputElement>();
 const apiKeyRevealed = ref(false);
 const revealedStoredKey = ref('');
@@ -1028,7 +960,6 @@ function createDraft(kind: ModelKind, provider: ProviderPreset, existing?: Model
     line,
     baseUrl: existing?.baseUrl || lineFor(provider, line, kind)?.baseUrl || '',
     modelsUrl: existing?.modelsUrl || lineFor(provider, line, kind)?.modelsUrl || '',
-    logo: existing?.logo || '',
     model: existing?.model || '',
     modelChoice: existing?.model || '',
     apiKey: '',
@@ -1103,7 +1034,6 @@ function entryFromDraft(
     line: draft.line,
     baseUrl: normalizeUrl(draft.baseUrl),
     modelsUrl: normalizeUrl(draft.modelsUrl),
-    ...(draft.logo ? { logo: draft.logo } : {}),
     model,
     // 留空保存 = 服务端沿用库中原 Key；新输入的明文原样提交
     apiKey: draft.apiKey.trim(),
@@ -1156,7 +1086,6 @@ function pickProvider(id: string) {
   form.value.line = draft.line;
   form.value.baseUrl = draft.baseUrl;
   form.value.modelsUrl = draft.modelsUrl;
-  form.value.logo = draft.logo;
   form.value.model = draft.model;
   form.value.modelChoice = draft.modelChoice;
   form.value.apiKey = '';
@@ -1289,46 +1218,6 @@ function selectDiscoveredModelId(
   if (preserveUnavailable && currentId) return currentId;
   if (recommendedId && modelIds.includes(recommendedId)) return recommendedId;
   return modelIds[0] || '';
-}
-
-async function onProviderLogoUpload(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
-  if (!file.type.startsWith('image/')) {
-    formError.value = '请选择图片文件。';
-    return;
-  }
-  if (file.size > 2 * 1024 * 1024) {
-    formError.value = 'Logo 图片不能超过 2 MB。';
-    return;
-  }
-
-  const objectUrl = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('图片无法读取'));
-      image.src = objectUrl;
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = 96;
-    canvas.height = 96;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('浏览器不支持图片处理');
-    const scale = Math.min(88 / image.naturalWidth, 88 / image.naturalHeight);
-    const width = Math.max(1, image.naturalWidth * scale);
-    const height = Math.max(1, image.naturalHeight * scale);
-    context.drawImage(image, (96 - width) / 2, (96 - height) / 2, width, height);
-    form.value.logo = canvas.toDataURL('image/png');
-    formError.value = '';
-  } catch (error: any) {
-    formError.value = error?.message || 'Logo 处理失败。';
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
 }
 
 function onFormBaseUrlChange() {
@@ -2051,26 +1940,6 @@ onMounted(async () => {
   line-height: 1.45;
 }
 
-.provider-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  overflow: hidden;
-}
-.provider-mark.has-logo > span {
-  visibility: hidden;
-}
-
 .model-section-intro {
   display: flex;
   align-items: center;
@@ -2130,45 +1999,6 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 7px;
-}
-.provider-identity {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.provider-row .provider-mark,
-.custom-model-row .provider-mark {
-  position: relative;
-  overflow: visible;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.provider-row .provider-mark {
-  width: 28px;
-  height: 28px;
-  flex-basis: 28px;
-  border-radius: 7px;
-  font-size: 9px;
-}
-.provider-row .provider-mark img,
-.custom-model-row .provider-mark img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border-radius: 7px;
-  background: transparent;
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.5),
-    0 2px 5px rgba(0, 0, 0, 0.14);
-}
-:global(html.dark) .provider-row .provider-mark img,
-:global(html.dark) .custom-model-row .provider-mark img {
-  box-shadow:
-    0 0 0 0.5px rgba(255, 255, 255, 0.34),
-    0 2px 6px rgba(0, 0, 0, 0.42);
 }
 .provider-title {
   min-width: 0;
@@ -2349,7 +2179,7 @@ onMounted(async () => {
 }
 .custom-model-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   min-height: 62px;
@@ -2449,35 +2279,6 @@ onMounted(async () => {
   color: var(--warn);
   line-height: 1.45;
 }
-.custom-logo-control {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-.custom-logo-preview {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
-  border-radius: 8px;
-  color: var(--text-faint);
-  box-shadow:
-    0 0 0 0.5px rgba(0, 0, 0, 0.42),
-    0 2px 6px rgba(0, 0, 0, 0.12);
-}
-.custom-logo-preview img {
-  width: 100%;
-  height: 100%;
-  border-radius: inherit;
-  object-fit: contain;
-}
-:global(html.dark) .custom-logo-preview {
-  box-shadow:
-    0 0 0 0.5px rgba(255, 255, 255, 0.32),
-    0 2px 6px rgba(0, 0, 0, 0.38);
-}
 .discovery-url-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2557,10 +2358,10 @@ onMounted(async () => {
     padding: 0 2px;
   }
   .custom-model-row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
   .custom-model-actions {
-    grid-column: 2 / -1;
+    grid-column: 2;
     justify-content: flex-end;
   }
 }
@@ -2617,10 +2418,10 @@ onMounted(async () => {
     border-radius: 8px;
   }
   .custom-model-row {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   .custom-model-row > .status-indicator {
-    grid-column: 2;
+    grid-column: 1;
     justify-self: start;
   }
   .custom-model-actions {
