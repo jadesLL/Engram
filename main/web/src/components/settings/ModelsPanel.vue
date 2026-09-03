@@ -641,11 +641,8 @@
           <span class="field-help">
             已拉取该厂商 {{ batchModelOptions.length }} 个模型，保存后全部入库；在列表页点击任意模型即可切换使用。
           </span>
-          <button v-if="!connectionEdit" class="text-action" type="button" @click="batchManual = true">手动模式</button>
+          <button class="text-action" type="button" @click="batchManual = true">手动模式</button>
         </div>
-        <p v-if="connectionEdit" class="field-help connection-edit-hint">
-          正在编辑连接：保存后新的 API Key / 线路将应用到该厂商的全部模型，并同步最新模型列表。
-        </p>
         <div v-if="form.kind === 'emb' && !batchPickAvailable" class="field">
           <label for="model-dimension">向量维度</label>
           <select v-if="formDimensionOptions.length" id="model-dimension" v-model.number="form.dim">
@@ -2039,8 +2036,9 @@ async function saveBatchModels() {
     if (!activeIdFor(kind)) {
       const recommended = recommendedModelId(provider, kind);
       const preferred = recommended
-        && list.value.find((model) => model.provider === provider.id && model.model === recommended);
-      setActiveId(kind, (preferred?.id || firstEntryId) as string);
+        ? list.value.find((model) => model.provider === provider.id && model.model === recommended)
+        : undefined;
+      setActiveId(kind, preferred?.id || firstEntryId);
     }
     await persist();
     form.value.show = false;
@@ -2102,6 +2100,7 @@ async function refreshProviderModels(kind: ModelKind, card: ProviderCard) {
     kind,
     providerId: card.provider.id,
     mode: 'edit',
+    configName: '',
     line: source.line || '',
     baseUrl: source.baseUrl,
     modelsUrl: source.modelsUrl || '',
