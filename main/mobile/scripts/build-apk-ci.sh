@@ -20,7 +20,24 @@ pnpm exec cap sync android
 
 echo ">> gradlew assembleRelease"
 cd android
-./gradlew assembleRelease --no-daemon
+
+# 镜像构建期已预热 gradle 缓存（Dockerfile.ci 末层，标记文件在 GRADLE_USER_HOME）：
+# 优先 --offline 复用，彻底消除发版时的运行时网络依赖；离线失败回退在线构建（与旧行为一致）
+GRADLE_CACHE="${GRADLE_USER_HOME:-$HOME/.gradle}"
+GRADLE_ARGS=(assembleRelease --no-daemon)
+if [ -f "$GRADLE_CACHE/.warm-ok" ]; then
+  echo ">> 检测到镜像预热缓存，优先离线构建"
+  GRADLE_ARGS+=(--offline)
+fi
+
+if ! ./gradlew "${GRADLE_ARGS[@]}"; then
+  if [ -f "$GRADLE_CACHE/.warm-ok" ]; then
+    echo ">> 离线构建失败，回退在线构建"
+    ./gradlew assembleRelease --no-daemon
+  else
+    exit 1
+  fi
+fi
 
 echo ">> 产物："
 ls -la app/build/outputs/apk/release/
