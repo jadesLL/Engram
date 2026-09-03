@@ -308,13 +308,25 @@
                   </label>
                   <label>
                     API Key
-                    <input
-                      v-model="conn.apiKey"
-                      class="api-key-input"
-                      :placeholder="connKeyPlaceholder(section.kind)"
-                      autocomplete="off"
-                      spellcheck="false"
-                    />
+                    <div class="conn-key-field">
+                      <input
+                        v-model="conn.apiKey"
+                        :type="conn.showKey ? 'text' : 'password'"
+                        class="api-key-input"
+                        :placeholder="connKeyPlaceholder(section.kind)"
+                        autocomplete="new-password"
+                        spellcheck="false"
+                      />
+                      <button
+                        class="conn-key-toggle"
+                        type="button"
+                        v-tooltip="conn.showKey ? '隐藏 Key' : '显示 Key'"
+                        :aria-label="conn.showKey ? '隐藏 Key' : '显示 Key'"
+                        @click="toggleConnKey(section.kind, detailCardFor(section)!)"
+                      >
+                        <Icon :name="conn.showKey ? 'eye-off' : 'eye'" :size="14" />
+                      </button>
+                    </div>
                   </label>
                 </div>
                 <span v-if="connHint(section.kind)" class="field-help">{{ connHint(section.kind) }}</span>
@@ -914,6 +926,7 @@ const conn = ref({
   baseUrl: '',
   modelsUrl: '',
   apiKey: '',
+  showKey: false,
   protocol: 'openai' as ProviderProtocol,
   modelsProtocol: 'openai' as ProviderProtocol,
   authOptional: false,
@@ -944,6 +957,7 @@ function startConnect(kind: ModelKind, provider: ProviderPreset) {
     baseUrl: draft.baseUrl,
     modelsUrl: draft.modelsUrl,
     apiKey: '',
+    showKey: false,
     protocol: draft.protocol,
     modelsProtocol: draft.modelsProtocol,
     authOptional: draft.authOptional,
@@ -969,6 +983,7 @@ function startEditConnection(kind: ModelKind, card: ProviderCard) {
     baseUrl: source.baseUrl,
     modelsUrl: source.modelsUrl || '',
     apiKey: '',
+    showKey: false,
     protocol: source.protocol || 'openai',
     modelsProtocol: source.modelsProtocol || source.protocol || 'openai',
     authOptional: Boolean(source.authOptional),
@@ -1002,6 +1017,22 @@ function connKeyPlaceholder(kind: ModelKind): string {
   const provider = providerById(conn.value.providerId);
   const line = provider ? lineFor(provider, conn.value.line, kind) : undefined;
   return line?.apiKeyPlaceholder || 'API Key';
+}
+
+/** Key 默认密文显示；点击眼睛切换明文。编辑模式下输入框为空时，先取回已保存的完整 Key 再显示 */
+async function toggleConnKey(kind: ModelKind, card: ProviderCard) {
+  if (!conn.value.showKey && conn.value.mode === 'edit' && !conn.value.apiKey) {
+    const source = providerEntries(kind, card.provider.id).find((model) => model.apiKey);
+    if (source) {
+      try {
+        const { data } = await api.get(`/api/settings/models/${source.id}/key`);
+        if (data.apiKey) conn.value.apiKey = data.apiKey;
+      } catch {
+        // 取回失败（如网络异常）时仅切换明文显示，不打断操作
+      }
+    }
+  }
+  conn.value.showKey = !conn.value.showKey;
 }
 
 function connHint(kind: ModelKind): string {
@@ -1816,6 +1847,7 @@ async function refreshProviderModels(kind: ModelKind, card: ProviderCard) {
     baseUrl: source.baseUrl,
     modelsUrl: source.modelsUrl || '',
     apiKey: '',
+    showKey: false,
     protocol: source.protocol || 'openai',
     modelsProtocol: source.modelsProtocol || source.protocol || 'openai',
     authOptional: Boolean(source.authOptional),
@@ -2573,6 +2605,29 @@ onMounted(async () => {
   width: 100%;
   min-width: 0;
   font-weight: 400;
+}
+.conn-key-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.conn-key-field input {
+  flex: 1;
+  min-width: 0;
+}
+.conn-key-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--text-faint);
+}
+.conn-key-toggle:hover {
+  background: var(--bg-tertiary);
+  color: var(--text);
 }
 .conn-msg {
   margin: 0;
