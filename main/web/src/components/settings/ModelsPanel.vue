@@ -203,57 +203,122 @@
               <span>{{ card.provider.name }}</span>
               <em v-if="card.entries.length">{{ card.entries.length }}</em>
             </button>
-            <template v-if="section.unknown.length">
+            <template v-if="unknownGroups(section.kind).length">
               <div class="provider-nav-divider">自定义</div>
               <button
+                v-for="group in unknownGroups(section.kind)"
+                :key="group.provider.id"
                 type="button"
                 class="provider-nav-item"
-                :class="{ active: selectedProviderId(section.kind) === '__custom__' }"
-                @click="chooseProvider(section.kind, '__custom__')"
+                :class="{ active: selectedProviderId(section.kind) === group.provider.id }"
+                @click="chooseProvider(section.kind, group.provider.id)"
               >
-                <span>自定义配置</span>
-                <em>{{ section.unknown.length }}</em>
+                <span>{{ group.provider.name }}</span>
+                <em v-if="group.entries.length">{{ group.entries.length }}</em>
               </button>
             </template>
+            <button type="button" class="provider-nav-add" @click="chooseProvider(section.kind, '__new-custom__')">
+              <Icon name="plus" :size="12" />
+              新增自定义配置
+            </button>
           </aside>
 
           <div class="provider-detail">
-            <!-- 自定义配置面板（与预设厂商同一套连接/拉取流程） -->
-            <template v-if="selectedProviderId(section.kind) === '__custom__'">
+            <!-- 新增自定义配置 -->
+            <template v-if="selectedProvider[section.kind] === '__new-custom__'">
               <div class="detail-head">
                 <div class="detail-title">
-                  <strong>自定义配置</strong>
-                  <span>
-                    {{ section.unknown.length
-                      ? `已配置 ${section.unknown.length} 个模型`
-                      : '尚未配置 · 填入 Base URL 与 API Key 自动拉取模型' }}
-                  </span>
+                  <strong>新增自定义配置</strong>
+                  <span>为自建网关或中转端点建立独立配置，可与内置厂商并列使用</span>
                 </div>
-                <div v-if="customCardFor(section).entries.length" class="provider-head-actions">
+              </div>
+              <div class="conn-form">
+                <div class="conn-grid">
+                  <label>
+                    配置名称
+                    <input v-model="conn.configName" placeholder="例如：我的 GLM 网关" />
+                  </label>
+                  <label>
+                    Base URL
+                    <input v-model="conn.baseUrl" placeholder="https://.../v1" @change="onConnBaseUrlChange" />
+                  </label>
+                  <label>
+                    请求协议
+                    <select v-model="conn.protocol" @change="onConnProtocolChange">
+                      <option value="openai">OpenAI 兼容（/chat/completions + Bearer）</option>
+                      <option value="anthropic">Anthropic 兼容（/v1/messages + x-api-key）</option>
+                    </select>
+                  </label>
+                  <label>
+                    API Key
+                    <div class="conn-key-field">
+                      <input
+                        v-model="conn.apiKey"
+                        type="password"
+                        class="api-key-input"
+                        placeholder="API Key"
+                        autocomplete="new-password"
+                        spellcheck="false"
+                      />
+                    </div>
+                  </label>
+                </div>
+                <span class="field-help">保存后自动拉取该端点的全部模型；配置会出现在左侧导航，与内置厂商同级。</span>
+                <p v-if="conn.message" class="conn-msg" :class="{ ok: conn.ok, err: !conn.ok }">{{ conn.message }}</p>
+                <div class="conn-actions">
+                  <button class="btn primary" type="button" :disabled="conn.busy" @click="saveConnection(section.kind)">
+                    {{ conn.busy ? '拉取中...' : '保存并拉取全部模型' }}
+                  </button>
+                  <button class="btn" type="button" @click="cancelNewCustom(section.kind)">取消</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- 自定义配置面板（与预设厂商同一套连接/拉取流程） -->
+            <template v-else-if="detailCustomCard(section)">
+              <div class="detail-head">
+                <div class="detail-title">
+                  <strong>{{ detailCustomCard(section)!.provider.name }}</strong>
+                  <span>已配置 {{ detailCustomCard(section)!.entries.length }} 个模型</span>
+                </div>
+                <div class="provider-head-actions">
                   <button
                     class="icon-btn"
                     type="button"
                     v-tooltip="'重新拉取该端点的模型列表'"
                     aria-label="重新拉取模型"
-                    :disabled="refreshingProvider === `${section.kind}:custom`"
-                    @click="refreshProviderModels(section.kind, customCardFor(section))"
+                    :disabled="refreshingProvider === `${section.kind}:${detailCustomCard(section)!.provider.id}`"
+                    @click="refreshProviderModels(section.kind, detailCustomCard(section)!)"
                   >
                     <Icon name="rotate-right" :size="14" />
                   </button>
                   <button
                     class="provider-add-btn"
                     type="button"
-                    v-tooltip="'编辑连接（API Key / 协议），保存后同步全部模型'"
-                    @click="startEditConnection(section.kind, customCardFor(section))"
+                    v-tooltip="'编辑名称 / 连接（API Key / 协议），保存后同步全部模型'"
+                    @click="startEditConnection(section.kind, detailCustomCard(section)!)"
                   >
                     <Icon name="settings" :size="13" />
                     编辑连接
                   </button>
+                  <button
+                    class="provider-add-btn danger"
+                    type="button"
+                    v-tooltip="'删除此配置及其全部模型'"
+                    @click="deleteCustomConfig(section.kind, detailCustomCard(section)!)"
+                  >
+                    <Icon name="x" :size="13" />
+                    删除配置
+                  </button>
                 </div>
               </div>
 
-              <div v-if="conn.open && conn.kind === section.kind && conn.providerId === 'custom'" class="conn-form">
+              <div v-if="conn.open && conn.kind === section.kind && conn.providerId === detailCustomCard(section)!.provider.id" class="conn-form">
                 <div class="conn-grid">
+                  <label>
+                    配置名称
+                    <input v-model="conn.configName" placeholder="例如：我的 GLM 网关" />
+                  </label>
                   <label>
                     Base URL
                     <input v-model="conn.baseUrl" placeholder="https://.../v1" @change="onConnBaseUrlChange" />
@@ -272,7 +337,7 @@
                         v-model="conn.apiKey"
                         :type="conn.showKey ? 'text' : 'password'"
                         class="api-key-input"
-                        :placeholder="conn.mode === 'edit' ? '留空沿用已保存的 Key' : connKeyPlaceholder(section.kind)"
+                        :placeholder="conn.mode === 'edit' ? '留空沿用已保存的 Key' : 'API Key'"
                         autocomplete="new-password"
                         spellcheck="false"
                       />
@@ -281,34 +346,26 @@
                         type="button"
                         v-tooltip="conn.showKey ? '隐藏 Key' : '显示 Key'"
                         :aria-label="conn.showKey ? '隐藏 Key' : '显示 Key'"
-                        @click="toggleConnKey(section.kind, customCardFor(section))"
+                        @click="toggleConnKey(section.kind, detailCustomCard(section)!)"
                       >
                         <Icon :name="conn.showKey ? 'eye-off' : 'eye'" :size="14" />
                       </button>
                     </div>
                   </label>
                 </div>
-                <span class="field-help">填写 OpenAI 兼容或 Anthropic 兼容端点的 Base URL；保存后自动拉取该端点的全部模型。</span>
+                <span class="field-help">修改名称后保存会同步更新该配置下的全部模型。</span>
                 <p v-if="conn.message" class="conn-msg" :class="{ ok: conn.ok, err: !conn.ok }">{{ conn.message }}</p>
                 <div class="conn-actions">
                   <button
                     class="btn primary"
                     type="button"
                     :disabled="conn.busy"
-                    @click="saveConnection(section.kind, customCardFor(section))"
+                    @click="saveConnection(section.kind)"
                   >
                     {{ conn.busy ? '拉取中...' : conn.mode === 'connect' ? '保存并拉取全部模型' : '保存修改' }}
                   </button>
                   <button v-if="conn.mode === 'edit'" class="btn" type="button" @click="conn.open = false">取消</button>
                 </div>
-              </div>
-
-              <div v-else-if="!section.unknown.length" class="conn-empty">
-                <p>填入自建网关或中转端点的 Base URL 与 API Key，自动拉取全部模型；点击任意模型即可切换使用。</p>
-                <button class="btn primary" type="button" @click="startConnectCustom(section.kind)">
-                  <Icon name="plus" :size="13" />
-                  开始配置
-                </button>
               </div>
 
               <template v-else>
@@ -318,7 +375,7 @@
                     <span class="model-catalog-tip">点击模型切换使用</span>
                   </div>
                   <div
-                    v-for="model in section.unknown"
+                    v-for="model in detailCustomCard(section)!.entries"
                     :key="model.id"
                     class="model-catalog-row"
                     :class="{ active: model.id === section.activeId }"
@@ -343,7 +400,7 @@
                   </div>
                 </div>
                 <div class="custom-add-row">
-                  <button class="text-action" type="button" @click="openForm(section.kind)">
+                  <button class="text-action" type="button" @click="openManualAdd(section.kind, detailCustomCard(section)!)">
                     <Icon name="plus" :size="12" />
                     手动添加单个模型
                   </button>
@@ -432,7 +489,7 @@
                     class="btn primary"
                     type="button"
                     :disabled="conn.busy"
-                    @click="saveConnection(section.kind, detailCardFor(section)!)"
+                    @click="saveConnection(section.kind)"
                   >
                     {{ conn.busy ? '拉取中...' : conn.mode === 'connect' ? '保存并拉取全部模型' : '保存修改' }}
                   </button>
@@ -492,7 +549,7 @@
         <div class="field">
           <label for="model-provider">服务商</label>
           <select id="model-provider" v-model="form.provider" @change="pickProvider(form.provider)">
-            <option v-if="!providerById(form.provider)" :value="form.provider">{{ providerName(form.provider) }}</option>
+            <option v-if="!providerById(form.provider)" :value="form.provider">{{ providerDisplayName(form.provider) }}</option>
             <option v-for="provider in providerOptions" :key="provider.id" :value="provider.id">
               {{ provider.name }}
             </option>
@@ -988,10 +1045,35 @@ const batchModelOptions = computed<FormModelOption[]>(() => {
 const batchPickAvailable = computed(() => !batchManual.value && batchModelOptions.value.length > 0);
 
 function selectedProviderId(kind: ModelKind): string {
-  return selectedProvider.value[kind] || cardsFor(kind)[0]?.provider.id || '__custom__';
+  return selectedProvider.value[kind]
+    || cardsFor(kind)[0]?.provider.id
+    || unknownGroups(kind)[0]?.provider.id
+    || '';
+}
+
+/** 左导航里的自定义分组：按 provider id 聚合非目录条目，显示名取条目上的配置名 */
+function unknownGroups(kind: ModelKind): ProviderCard[] {
+  const groups = new Map<string, ModelEntry[]>();
+  for (const model of unknownModels(kind)) {
+    const list = groups.get(model.provider) || [];
+    list.push(model);
+    groups.set(model.provider, list);
+  }
+  return [...groups.entries()].map(([id, entries]) => ({
+    provider: { ...customPreset, id, name: entries[0]?.name?.trim() || (id === 'custom' ? '自定义配置' : id) },
+    entries,
+  }));
+}
+
+function detailCustomCard(section: { kind: ModelKind }): ProviderCard | null {
+  const sel = selectedProvider.value[section.kind];
+  if (!sel || sel === '__new-custom__') return null;
+  return unknownGroups(section.kind).find((group) => group.provider.id === sel) || null;
 }
 
 function detailCardFor(section: { kind: ModelKind; cards: ProviderCard[] }): ProviderCard | null {
+  if (selectedProvider.value[section.kind] === '__new-custom__') return null;
+  if (detailCustomCard(section)) return null;
   return section.cards.find((card) => card.provider.id === selectedProviderId(section.kind)) || null;
 }
 
@@ -1000,6 +1082,7 @@ const conn = ref({
   kind: 'chat' as ModelKind,
   providerId: '',
   mode: 'connect' as 'connect' | 'edit',
+  configName: '',
   line: '',
   baseUrl: '',
   modelsUrl: '',
@@ -1018,8 +1101,13 @@ function chooseProvider(kind: ModelKind, id: string) {
   selectedProvider.value = { ...selectedProvider.value, [kind]: id };
   conn.value.open = false;
   conn.value.message = '';
-  if (id === '__custom__') {
-    if (!unknownModels(kind).length) startConnectCustom(kind);
+  if (id === '__new-custom__') {
+    startConnectCustom(kind);
+    return;
+  }
+  const customGroup = unknownGroups(kind).find((group) => group.provider.id === id);
+  if (customGroup) {
+    if (!customGroup.entries.length) startConnect(kind, customGroup.provider);
     return;
   }
   const card = cardsFor(kind).find((item) => item.provider.id === id);
@@ -1033,6 +1121,7 @@ function startConnect(kind: ModelKind, provider: ProviderPreset) {
     kind,
     providerId: provider.id,
     mode: 'connect',
+    configName: '',
     line: draft.line,
     baseUrl: draft.baseUrl,
     modelsUrl: draft.modelsUrl,
@@ -1059,6 +1148,7 @@ function startEditConnection(kind: ModelKind, card: ProviderCard) {
     kind,
     providerId: card.provider.id,
     mode: 'edit',
+    configName: card.provider.id.startsWith('custom') ? card.provider.name : '',
     line: source.line || lineFor(card.provider, undefined, kind)?.id || '',
     baseUrl: source.baseUrl,
     modelsUrl: source.modelsUrl || '',
@@ -1075,11 +1165,12 @@ function startEditConnection(kind: ModelKind, card: ProviderCard) {
 }
 
 function startConnectCustom(kind: ModelKind) {
-  startConnect(kind, { ...customPreset });
+  startConnect(kind, { ...customPreset, id: '__new-custom__', name: '自定义' });
 }
 
-function customCardFor(section: { kind: ModelKind; unknown: ModelEntry[] }): ProviderCard {
-  return { provider: { ...customPreset }, entries: section.unknown.filter((model) => model.provider === 'custom') };
+function cancelNewCustom(kind: ModelKind) {
+  conn.value.open = false;
+  selectedProvider.value = { ...selectedProvider.value, [kind]: selectedProviderId(kind) };
 }
 
 function onConnProtocolChange() {
@@ -1133,8 +1224,8 @@ function connHint(kind: ModelKind): string {
   return line?.hint || provider?.hint || '';
 }
 
-/** 按当前 conn 配置拉取厂商目录并同步入库：更新既有条目连接、补齐新增模型 */
-async function syncConnection(kind: ModelKind, provider: ProviderPreset, sourceEntryId?: string): Promise<{ added: number; total: number }> {
+/** 按当前 conn 配置拉取厂商目录并同步入库：更新既有条目连接、补齐新增模型；nameOverride 用于自定义配置改名 */
+async function syncConnection(kind: ModelKind, provider: ProviderPreset, sourceEntryId?: string, nameOverride?: string): Promise<{ added: number; total: number }> {
   const keyless = conn.value.authOptional || conn.value.modelsAnonymous;
   const { data } = await api.post('/api/settings/discover-models', {
     baseUrl: conn.value.baseUrl,
@@ -1177,7 +1268,7 @@ async function syncConnection(kind: ModelKind, provider: ProviderPreset, sourceE
       dim: 1024,
     };
     const existing = list.value.find((model) => model.provider === provider.id && model.model === id);
-    const entry = entryFromDraft(kind, provider, draft, existing, existing?.name || provider.name, []);
+    const entry = entryFromDraft(kind, provider, draft, existing, nameOverride || existing?.name || provider.name, []);
     entry.apiKey = apiKey || existing?.apiKey || entry.apiKey;
     const index = list.value.findIndex((model) => model.id === entry.id);
     if (index >= 0) list.value[index] = entry;
@@ -1198,27 +1289,59 @@ async function syncConnection(kind: ModelKind, provider: ProviderPreset, sourceE
   return { added, total: ids.length };
 }
 
-async function saveConnection(kind: ModelKind, card: ProviderCard) {
-  const provider = card.provider;
+async function saveConnection(kind: ModelKind) {
   if (!normalizeUrl(conn.value.baseUrl)) {
     conn.value.ok = false;
     conn.value.message = '请填写 Base URL。';
     return;
   }
-  if (!conn.value.apiKey.trim() && !conn.value.authOptional && conn.value.mode === 'connect') {
+  let provider: ProviderPreset;
+  let sourceEntryId: string | undefined;
+  let nameOverride: string | undefined;
+  if (conn.value.providerId === '__new-custom__') {
+    const name = conn.value.configName.trim();
+    if (!name) {
+      conn.value.ok = false;
+      conn.value.message = '请填写配置名称。';
+      return;
+    }
+    if (!conn.value.apiKey.trim() && !conn.value.authOptional) {
+      conn.value.ok = false;
+      conn.value.message = '请填写 API Key。';
+      return;
+    }
+    provider = { ...customPreset, id: `custom-${Math.random().toString(36).slice(2, 8)}`, name };
+  } else if (conn.value.providerId === 'custom' || conn.value.providerId.startsWith('custom-')) {
+    const group = unknownGroups(kind).find((item) => item.provider.id === conn.value.providerId);
+    provider = group?.provider || { ...customPreset, id: conn.value.providerId, name: conn.value.configName.trim() || '自定义配置' };
+    sourceEntryId = (group?.entries || []).find((model) => model.apiKey || model.authOptional)?.id;
+    if (conn.value.configName.trim()) nameOverride = conn.value.configName.trim();
+  } else {
+    const card = cardsFor(kind).find((item) => item.provider.id === conn.value.providerId);
+    if (!card) {
+      conn.value.message = '配置不存在，请刷新页面后重试。';
+      return;
+    }
+    provider = card.provider;
+    sourceEntryId = card.entries.find((model) => model.apiKey || model.authOptional)?.id;
+  }
+  if (!conn.value.apiKey.trim() && !conn.value.authOptional && conn.value.mode === 'connect' && !sourceEntryId) {
     conn.value.ok = false;
     conn.value.message = '请填写 API Key。';
     return;
   }
-  const source = providerEntries(kind, provider.id).find((model) => model.apiKey || model.authOptional);
   conn.value.busy = true;
   conn.value.ok = false;
   conn.value.message = '正在拉取模型列表...';
   try {
-    const res = await syncConnection(kind, provider, conn.value.mode === 'edit' ? (source?.id || undefined) : undefined);
+    const res = await syncConnection(kind, provider, sourceEntryId, nameOverride);
     conn.value.ok = true;
     conn.value.message = `已同步 ${res.total} 个模型（新增 ${res.added}），点击模型即可切换使用。`;
     notify.success(`已保存 · ${provider.name} · ${res.total} 个模型`);
+    if (conn.value.providerId !== provider.id) {
+      selectedProvider.value = { ...selectedProvider.value, [kind]: provider.id };
+      conn.value.providerId = provider.id;
+    }
     conn.value.open = false;
     if (kind === 'chat') void refreshActiveChatImageCapability();
   } catch (error: any) {
@@ -1227,6 +1350,50 @@ async function saveConnection(kind: ModelKind, card: ProviderCard) {
   } finally {
     conn.value.busy = false;
   }
+}
+
+/** 删除整个自定义配置（含其全部模型条目） */
+async function deleteCustomConfig(kind: ModelKind, card: ProviderCard) {
+  const ok = await confirmDialog({
+    title: '删除自定义配置',
+    message: `删除「${card.provider.name}」及其全部 ${card.entries.length} 个模型配置？`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
+  const list = modelsRef(kind);
+  const previousList = list.value.map((model) => ({ ...model }));
+  const previousActive = activeIdFor(kind);
+  try {
+    list.value = list.value.filter((model) => model.provider !== card.provider.id);
+    if (previousActive && card.entries.some((entry) => entry.id === previousActive)) {
+      setActiveId(kind, list.value[0]?.id || '');
+    }
+    await persist();
+    selectedProvider.value = { ...selectedProvider.value, [kind]: '' };
+    notify.success(`已删除自定义配置 · ${card.provider.name}`);
+  } catch (error: any) {
+    list.value = previousList;
+    setActiveId(kind, previousActive);
+    notify.error(errorMessage(error, '删除失败，请重试。'));
+  }
+}
+
+/** 自定义配置里的手动添加：沿用该配置的连接，仅补录一个目录里没有的模型 */
+function openManualAdd(kind: ModelKind, group: ProviderCard) {
+  openForm(kind, undefined, group.provider.id);
+  form.value.name = group.provider.name;
+}
+
+/** 目录外 provider 的显示名：优先取自定义分组名 */
+function providerDisplayName(id: string): string {
+  const preset = providerById(id);
+  if (preset) return preset.name;
+  for (const kind of ['chat', 'emb', 'document'] as ModelKind[]) {
+    const group = unknownGroups(kind).find((item) => item.provider.id === id);
+    if (group) return group.provider.name;
+  }
+  return providerName(id);
 }
 
 /** 批量入库用的完整 Key：优先取刚输入的明文；未输入时从服务端取该厂商已存条目的原值（新建条目无法依赖服务端掩码沿用） */
@@ -2623,6 +2790,23 @@ onMounted(async () => {
   color: var(--text-faint);
   font-size: 10px;
 }
+.provider-nav-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 8px 2px 0;
+  padding: 7px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.provider-nav-add:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .provider-detail {
   min-width: 0;
   padding: 16px 18px 18px;
@@ -2666,6 +2850,12 @@ onMounted(async () => {
 }
 .provider-add-btn:hover {
   background: var(--accent-soft);
+}
+.provider-add-btn.danger {
+  color: var(--danger);
+}
+.provider-add-btn.danger:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 /* 连接表单（未配置 / 编辑连接） */
