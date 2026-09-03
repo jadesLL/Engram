@@ -70,6 +70,14 @@ jobs:
           echo ">> 已提取 v${VER} 段落："
           echo "$BODY" | head -5
 
+      - name: verify 门禁（build + typecheck + test，与 ci.yml 同标准）
+        shell: bash
+        run: |
+          # 发版门禁：任何产物构建/推送前先完整 verify。main 连红期间 release 曾照常
+          # 发版（v1.1.22~v1.1.28），此步骤保证带标签的产物只能来自测试通过的代码
+          cd main
+          docker build --target verify -t engram:release-verify .
+
       - name: 构建并推送 Docker 镜像
         shell: bash
         env:

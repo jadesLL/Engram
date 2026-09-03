@@ -11,7 +11,7 @@
 →（合并时）新功能同步整合进根 README.md
 →（推送）git push gitea main：CI 只做 verify（build+typecheck+test），不构建镜像
 →（发版）bump 三处版本号 + CHANGELOG.md 写 v<版本> 段落 → 提交并立即推送 → git tag v<版本> && git push gitea v<版本>
-→ release.yml 自动：校验并提取 CHANGELOG 段落（缺失即失败）→ 构建并推送镜像（版本 tag + latest）+ Windows exe + Gitea Release（正文=CHANGELOG 版本段落，附件= exe / docker tar.gz / sha256）
+→ release.yml 自动：校验并提取 CHANGELOG 段落（缺失即失败）→ verify 门禁（build+typecheck+test）→ 构建并推送镜像（版本 tag + latest）+ Windows exe + Android APK + Gitea Release（正文=CHANGELOG 版本段落，附件= exe / apk / docker tar.gz / sha256）
 → 下载 Release 附件归档到 releases/<版本>/（AGENTS.md 项目规则 3）
 → 部署机 docker login + docker pull 新版本镜像
 ```
@@ -21,11 +21,12 @@
 - **只要更新版本号，提交后必须立即推送 gitea**（版本号 = 镜像 tag = Release 标签，留在本地会造成远端镜像与版本号脱节），并确认 Actions 运行成功。
 - **镜像只在发版时构建**（2026-08-20 起生效）：main 日常推送不构建不推送任何镜像，Registry 里的版本 tag 永远只对应发版产物，不会被日常推送覆盖。
 - **功能合并 main 时同步整合进根 `README.md`**；**发版时必须写 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落**（距上次发布以来的全部新功能），release.yml 校验缺失即失败，段落会自动发布为 Release 正文。
+- **发版必须过 verify 门禁**（2026-09-04 起）：release.yml 在构建任何产物前先跑完整 verify（build+typecheck+test），main 测试不红才能带标签发版——堵住 2026-08-27~08-30 main 连红期间 v1.1.22~v1.1.28 照常发版的缺口。
 
 | 环节 | 命令/动作 | 自动发生什么 |
 |---|---|---|
 | 日常推送 | `git push gitea main` | ci.yml：仅 verify（build+typecheck+test），不碰镜像 |
-| 发版 | bump 版本号 + CHANGELOG 段落 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：校验提取 CHANGELOG 段落（缺失失败）→ 构建推送镜像（`:<版本>` + `:latest`）+ wine 交叉打 exe + 创建 Release（正文=CHANGELOG 段落，附件 exe/docker tar.gz/sha256） |
+| 发版 | bump 版本号 + CHANGELOG 段落 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：校验提取 CHANGELOG 段落（缺失失败）→ verify 门禁（build+typecheck+test）→ 构建推送镜像（`:<版本>` + `:latest`）+ wine 交叉打 exe + Android APK + 创建 Release（正文=CHANGELOG 段落，附件 exe/apk/docker tar.gz/sha256） |
 | Release 测试 | Gitea 网页手动触发 release.yml（workflow_dispatch） | 完整构建（含镜像推送）但**不发布 Release**，产物传 Artifact（保留 7 天） |
 | 部署 | `docker login` → `docker compose -f docker-compose.pull.yml up -d` | — |
 
@@ -124,6 +125,7 @@ act_runner 以 Windows 宿主机模式运行（label `windows`），Docker 命�
 | 安装目录 | `C:\Users\example\gitea-runner\`（gitea-runner.exe v3.3.0 + config.yaml + .runner） |
 | 注册方式 | **全局（instance 级）**，runner id=3，name `dev-pc-bbo2mil`，labels `windows:host, ubuntu-latest:docker://node:22-bookworm`——Engram（原 ExampleProject）与 XINJE_Selection_Tool 的 CI 都由它执行 |
 | 启动 | `gitea-runner.exe daemon --config config.yaml`；开机自启走计划任务 `GiteaRunnerDaemon`（登录触发、崩溃自动重启，`Get-ScheduledTask GiteaRunnerDaemon` 查状态） |
+| 看门狗 | 计划任务 `GiteaRunnerWatchdog`（2026-09-04 起，每 5 分钟）：`gitea-runner.exe` 进程消失即调 `start-runner.ps1` 拉起并记 `watchdog.log`。覆盖进程崩溃、开机时 Docker 管道未就绪导致启动失败等场景（原计划任务只在登录时拉一次，runner 启动失败会一直无人认领任务，2026-08-23 迁移时曾排队 6 小时） |
 | config.yaml 关键项 | `container.docker_host: npipe:////./pipe/dockerDesktopLinuxEngine`（Windows 下 runner 默认探测 /var/run/docker.sock 失败，必须显式指向 Docker Desktop 的 Linux 引擎命名管道）；日志级别 debug（排查认领问题用，平时可调回 info） |
 
 **迁移踩坑（旧机下线后 CI 全部排队无人认领）**：
@@ -158,6 +160,7 @@ grep -c '<版本号>' app.asar 二进制内容（或查 staging package.json 的
 - **本地开发 compose**（`docker-compose.yml`）仍用本地构建镜像；生产 pull 部署用 `docker-compose.pull.yml`。
 - **Gitea secrets API** 字段名是 `data` 不是 `value`（PUT `/api/v1/repos/{owner}/{repo}/actions/secrets/{name}`，`{"data":"..."}`），用错报 422 "[Data]: Required"。
 - **Release 测试模式**（手动 dispatch）产物在 Artifact 页，保留 7 天，正式产物必须走 `v*` 标签。
+- **APK 依赖烘焙**（2026-09-04 起）：`mobile/Dockerfile.ci` 构建期预热 gradle 发行版、maven 依赖与 `build-tools;34.0.0`（AGP 8.7 默认版本，镜像只装 35 时 run 期会现下载）到 `/opt/gradle-home`，消除发版时对 services.gradle.org / maven 中央仓库的运行时网络依赖。`build-apk-ci.sh` 检测到预热标记（`.warm-ok`）优先 `--offline` 构建，失败自动回退在线构建；预热层失败不阻塞镜像构建（行为与旧版一致）。
 
 ## 历史版本与镜像路径变更记录
 
