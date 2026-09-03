@@ -200,16 +200,30 @@
             <div class="provider-row-head">
               <div class="provider-title">
                 <strong>{{ card.provider.name }}</strong>
-                <span>{{ card.entries.length ? `${card.entries.length} 个配置` : '尚未配置' }}</span>
+                <span>{{ card.entries.length ? `${card.entries.length} 个模型` : '尚未配置' }}</span>
               </div>
-              <button
-                class="provider-add-btn"
-                type="button"
-                @click="openForm(section.kind, undefined, card.provider.id)"
-              >
-                <Icon name="plus" :size="13" />
-                添加
-              </button>
+              <div class="provider-head-actions">
+                <button
+                  v-if="card.entries.length"
+                  class="icon-btn"
+                  type="button"
+                  v-tooltip="'重新拉取该厂商的模型列表'"
+                  aria-label="重新拉取模型"
+                  :disabled="refreshingProvider === `${section.kind}:${card.provider.id}`"
+                  @click="refreshProviderModels(section.kind, card)"
+                >
+                  <Icon name="rotate-right" :size="14" />
+                </button>
+                <button
+                  class="provider-add-btn"
+                  type="button"
+                  v-tooltip="card.entries.length ? '手动添加单个模型' : '填入 API Key 后自动拉取全部模型'"
+                  @click="openForm(section.kind, undefined, card.provider.id)"
+                >
+                  <Icon name="plus" :size="13" />
+                  {{ card.entries.length ? '添加' : '配置' }}
+                </button>
+              </div>
             </div>
 
             <div class="model-chip-list">
@@ -307,7 +321,7 @@
       </template>
 
       <div class="modal-form">
-        <div class="field">
+        <div v-if="!batchPickAvailable" class="field">
           <label for="model-name">备注名</label>
           <input id="model-name" v-model="form.name" placeholder="例如：主力配置" />
         </div>
@@ -328,7 +342,7 @@
             </option>
           </select>
         </div>
-        <div class="field">
+        <div v-if="!batchPickAvailable" class="field">
           <label for="model-choice">模型</label>
           <select id="model-choice" v-model="form.modelChoice" @change="onFormModelChange">
             <option value="" disabled>
@@ -343,7 +357,7 @@
             当前账号的模型目录未返回此模型，配置已保留；请选择可用模型或继续手动使用。
           </span>
         </div>
-        <div v-if="form.modelChoice === '__custom__'" class="field field-wide">
+        <div v-if="!batchPickAvailable && form.modelChoice === '__custom__'" class="field field-wide">
           <label for="custom-model-name">自定义模型名称</label>
           <input id="custom-model-name" v-model="form.model" placeholder="完整模型 ID 或 ep- 接入点" />
         </div>
@@ -359,7 +373,7 @@
           </select>
           <span class="field-help">决定请求地址拼接、鉴权头与消息格式；预设服务商按线路自动确定。</span>
         </div>
-        <div v-if="form.kind === 'chat'" class="field">
+        <div v-if="form.kind === 'chat' && !batchPickAvailable" class="field">
           <label for="model-thinking-level">思考等级</label>
           <select id="model-thinking-level" v-model="form.thinkingLevel">
             <option value="">自动（不显式指定）</option>
@@ -402,7 +416,30 @@
           <span v-else-if="form.authOptional" class="field-help">本地免鉴权线路，无需 API Key。</span>
           <span v-else-if="form.id" class="field-help">请为当前服务商和线路输入 API Key。</span>
         </div>
-        <div v-if="form.kind === 'emb'" class="field">
+        <div v-if="batchPickAvailable" class="field field-wide">
+          <div class="batch-model-head">
+            <label>拉取到的模型（已选 {{ batchSelection.size }}/{{ batchModelOptions.length }}）</label>
+            <button class="text-action" type="button" @click="batchManual = true">手动添加单个模型</button>
+          </div>
+          <div class="batch-model-list">
+            <label
+              v-for="model in batchModelOptions"
+              :key="model.id"
+              class="batch-model-item"
+              :class="{ checked: batchSelection.has(model.id) }"
+            >
+              <input
+                type="checkbox"
+                :checked="batchSelection.has(model.id)"
+                @change="toggleBatchModel(model.id)"
+              />
+              <span>{{ model.name }}</span>
+              <em v-if="model.id === recommendedModelId(currentFormProvider, form.kind)">推荐</em>
+            </label>
+          </div>
+          <span class="field-help">保存后这些模型全部进入上方列表，点击任意模型即可切换使用。</span>
+        </div>
+        <div v-if="form.kind === 'emb' && !batchPickAvailable" class="field">
           <label for="model-dimension">向量维度</label>
           <select v-if="formDimensionOptions.length" id="model-dimension" v-model.number="form.dim">
             <option v-for="dim in formDimensionOptions" :key="dim" :value="dim">{{ dim }}</option>
@@ -424,8 +461,13 @@
         </button>
         <div class="dialog-footer-right">
           <button class="btn" type="button" @click="form.show = false">取消</button>
-          <button class="btn primary" type="button" :disabled="formSaving" @click="saveModel">
-            {{ formSaving ? '保存中...' : '保存配置' }}
+          <button
+            class="btn primary"
+            type="button"
+            :disabled="formSaving || (batchPickAvailable && !batchSelection.size)"
+            @click="saveModel"
+          >
+            {{ formSaving ? '保存中...' : batchPickAvailable ? `保存 ${batchSelection.size} 个模型` : '保存配置' }}
           </button>
         </div>
       </template>
@@ -744,21 +786,21 @@ function unknownModels(kind: ModelKind): ModelEntry[] {
 const modelSections = computed(() => [
   {
     kind: 'chat' as const,
-    copy: '同一厂商可以并列配置多个模型，点击其中一个即可切换使用。',
+    copy: '配置一次 API Key 即自动拉取该厂商的全部模型，点击任意模型即可切换使用。',
     cards: cardsFor('chat'),
     unknown: unknownModels('chat'),
     activeId: activeChat.value,
   },
   {
     kind: 'emb' as const,
-    copy: '只显示提供文本向量模型的厂商。切换模型或维度后会自动重建索引。',
+    copy: '配置后自动拉取该厂商的向量模型；切换模型或维度后会自动重建索引。',
     cards: cardsFor('emb'),
     unknown: unknownModels('emb'),
     activeId: activeEmb.value,
   },
   {
     kind: 'document' as const,
-    copy: '专用视觉模型是可选覆盖项，仅处理图片和 PDF 中没有足够内嵌文字的页面。',
+    copy: '配置后自动列出支持视觉的模型；作为可选覆盖项，仅处理图片和 PDF 中没有足够内嵌文字的页面。',
     cards: cardsFor('document'),
     unknown: unknownModels('document'),
     activeId: activeDocument.value,
@@ -797,6 +839,36 @@ const discoveryBusy = ref(false);
 const discoveryMessage = ref('');
 const discoveryOk = ref(false);
 let modelDiscoveryRequestId = 0;
+
+// ---------- 批量拉取（hermes 式：一次配置 Key，全量模型入库点选即用） ----------
+const batchManual = ref(false);
+const batchSelection = ref<Set<string>>(new Set());
+const refreshingProvider = ref('');
+/** 在线拉取结果按线路白名单过滤（coding-plan 线只允许白名单内模型） */
+const batchModelOptions = computed<FormModelOption[]>(() => {
+  const whitelist = formLine.value?.models?.length ? new Set(formLine.value.models) : null;
+  return discoveredModels.value.filter((model) => !whitelist || whitelist.has(model.id));
+});
+const batchPickAvailable = computed(() => !batchManual.value && batchModelOptions.value.length > 0);
+
+function toggleBatchModel(id: string) {
+  const next = new Set(batchSelection.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  batchSelection.value = next;
+}
+
+/** 批量入库用的完整 Key：优先取刚输入的明文；未输入时从服务端取该厂商已存条目的原值（新建条目无法依赖服务端掩码沿用） */
+async function resolveBatchApiKey(): Promise<string> {
+  const typed = form.value.apiKey.trim();
+  if (typed) return typed;
+  const list = modelsRef(form.value.kind).value;
+  const source = list.find((model) => model.provider === form.value.provider && model.line === form.value.line && model.apiKey)
+    || list.find((model) => model.provider === form.value.provider && model.apiKey);
+  if (!source) return '';
+  const { data } = await api.get(`/api/settings/models/${source.id}/key`);
+  return data.apiKey || '';
+}
 
 const providerOptions = computed(() =>
   form.value.kind === 'emb'
@@ -1054,6 +1126,8 @@ function openForm(kind: ModelKind, existing?: ModelEntry, providerId?: string) {
   modelDiscoveryRequestId++;
   apiKeyRevealed.value = false;
   revealedStoredKey.value = '';
+  batchManual.value = false;
+  batchSelection.value = new Set();
   formError.value = '';
   discoveredModels.value = [];
   modelDiscoveryCompleted.value = false;
@@ -1080,6 +1154,8 @@ function pickProvider(id: string) {
   modelDiscoveryRequestId++;
   apiKeyRevealed.value = false;
   revealedStoredKey.value = '';
+  batchManual.value = false;
+  batchSelection.value = new Set();
   const provider = providerById(id) || customPreset;
   const hasGeneratedName = !form.value.name || catalogList.value.some((item) => item.name === form.value.name);
   const draft = createDraft(form.value.kind, provider);
@@ -1157,6 +1233,7 @@ function onFormModelChange() {
 function resetFormModelDiscovery(clearNewSelection = false) {
   modelDiscoveryRequestId++;
   discoveredModels.value = [];
+  batchSelection.value = new Set();
   modelDiscoveryCompleted.value = false;
   discoveryBusy.value = false;
   discoveryMessage.value = '';
@@ -1283,6 +1360,7 @@ async function discoverFormModels(apiKeyOverride?: string) {
     });
     modelDiscoveryCompleted.value = true;
     discoveryOk.value = true;
+    batchSelection.value = new Set(batchModelOptions.value.map((model) => model.id));
     const current = form.value.modelChoice === '__custom__' ? form.value.model : form.value.modelChoice;
     const nextModelId = selectDiscoveredModelId(
       discoveredModels.value.map((model) => model.id),
@@ -1382,7 +1460,169 @@ async function refreshActiveChatImageCapability(force = false) {
   }
 }
 
+/** 批量保存：勾选的模型全部入库（同一厂商+线路共用 Key），推荐模型优先设为当前 */
+async function saveBatchModels() {
+  formError.value = '';
+  const kind = form.value.kind;
+  const provider = currentFormProvider.value;
+  const selected = batchModelOptions.value.filter((model) => batchSelection.value.has(model.id));
+  if (!selected.length) {
+    formError.value = '请至少选择一个模型。';
+    return;
+  }
+  if (!normalizeUrl(form.value.baseUrl)) {
+    formError.value = '请填写 Base URL。';
+    return;
+  }
+  if (!effectiveFormApiKey.value && !form.value.authOptional) {
+    formError.value = '请填写 API Key。';
+    return;
+  }
+  formSaving.value = true;
+  const list = modelsRef(kind);
+  const previousList = list.value.map((model) => ({ ...model }));
+  const previousActive = activeIdFor(kind);
+  try {
+    const apiKey = await resolveBatchApiKey();
+    if (!apiKey && !form.value.authOptional) {
+      throw new Error('无法获取完整 API Key，请重新输入后再保存。');
+    }
+    let firstEntryId = '';
+    for (const option of selected) {
+      const draft: ModelDraft = { ...form.value, model: option.id, modelChoice: option.id };
+      const existing = list.value.find(
+        (model) => model.provider === provider.id
+          && model.model === option.id
+          && normalizeUrl(model.baseUrl) === normalizeUrl(form.value.baseUrl),
+      );
+      const entry = entryFromDraft(kind, provider, draft, existing, existing?.name || provider.name, discoveredModels.value);
+      entry.apiKey = apiKey;
+      const index = list.value.findIndex((model) => model.id === entry.id);
+      if (index >= 0) list.value[index] = entry;
+      else list.value.push(entry);
+      if (!firstEntryId) firstEntryId = entry.id;
+    }
+    if (!activeIdFor(kind)) {
+      const recommended = recommendedModelId(provider, kind);
+      const preferred = recommended
+        && list.value.find((model) => model.provider === provider.id && model.model === recommended);
+      setActiveId(kind, (preferred?.id || firstEntryId) as string);
+    }
+    await persist();
+    form.value.show = false;
+    notify.success(`已保存 ${selected.length} 个模型 · ${provider.name}`);
+    if (kind === 'chat' && activeChat.value) {
+      checkedImageCapabilityIds.delete(activeChat.value);
+      void refreshActiveChatImageCapability();
+    }
+  } catch (error: any) {
+    list.value = previousList;
+    setActiveId(kind, previousActive);
+    formError.value = errorMessage(error, '保存失败，请重试。');
+  } finally {
+    formSaving.value = false;
+  }
+}
+
+/** 批量模式下测试连接：测第一个勾选模型（Key 掩码时先取完整原值） */
+async function testBatchModel() {
+  formError.value = '';
+  const kind = form.value.kind;
+  const provider = currentFormProvider.value;
+  const option = batchModelOptions.value.find((model) => batchSelection.value.has(model.id));
+  if (!option) {
+    formError.value = '请至少选择一个模型。';
+    return;
+  }
+  formTesting.value = true;
+  try {
+    const apiKey = await resolveBatchApiKey();
+    const entry = entryFromDraft(
+      kind,
+      provider,
+      { ...form.value, model: option.id, modelChoice: option.id, apiKey },
+      undefined,
+      provider.name,
+      discoveredModels.value,
+    );
+    const { data } = await api.post('/api/settings/test-llm', {
+      entry,
+      kind: kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
+    });
+    if (data.ok) notify.success(`连接成功 · ${provider.name} · ${entry.model}`);
+    else notify.error(data.error || '模型连接测试失败。');
+  } catch (error: any) {
+    notify.error(errorMessage(error, '连接测试失败。'));
+  } finally {
+    formTesting.value = false;
+  }
+}
+
+/** 卡片“重新拉取”：用已存 Key 增量同步该厂商的模型列表（只新增，不自动删除） */
+async function refreshProviderModels(kind: ModelKind, card: ProviderCard) {
+  if (refreshingProvider.value) return;
+  const source = card.entries.find((model) => model.apiKey || model.authOptional) || card.entries[0];
+  if (!source) return;
+  refreshingProvider.value = `${kind}:${card.provider.id}`;
+  try {
+    const { data } = await api.post('/api/settings/discover-models', {
+      baseUrl: source.baseUrl,
+      modelsUrl: source.modelsUrl || undefined,
+      modelsProtocol: source.modelsProtocol === 'anthropic' ? 'anthropic' : 'openai',
+      anonymous: Boolean(source.modelsAnonymous || source.authOptional),
+      // 列表通道的 Key 是掩码：服务端按 entryId 补全库中原值
+      apiKey: '',
+      entryId: source.id,
+      kind: kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
+    });
+    const provider = card.provider;
+    const line = provider.lines.find((item) => item.id === source.line);
+    const whitelist = line?.models?.length ? new Set(line.models) : null;
+    const known = new Set(card.entries.map((model) => model.model));
+    const newIds = (data.models || []).filter(
+      (id: string) => !known.has(id) && (!whitelist || whitelist.has(id)),
+    );
+    if (!newIds.length) {
+      notify.success(`模型列表已是最新 · ${provider.name}`);
+      return;
+    }
+    let apiKey = '';
+    if (!source.authOptional) {
+      const revealed = await api.get(`/api/settings/models/${source.id}/key`);
+      apiKey = revealed.data.apiKey || '';
+    }
+    const list = modelsRef(kind);
+    const draft: ModelDraft = {
+      line: source.line || '',
+      baseUrl: source.baseUrl,
+      modelsUrl: source.modelsUrl || '',
+      model: '',
+      modelChoice: '',
+      apiKey,
+      protocol: source.protocol || 'openai',
+      modelsProtocol: source.modelsProtocol || source.protocol || 'openai',
+      authOptional: Boolean(source.authOptional),
+      modelsAnonymous: Boolean(source.modelsAnonymous),
+      thinkingLevel: '',
+      dim: 1024,
+    };
+    for (const id of newIds) {
+      list.value.push(entryFromDraft(kind, provider, { ...draft, model: id, modelChoice: id }, undefined, provider.name, []));
+    }
+    await persist();
+    notify.success(`新增 ${newIds.length} 个模型 · ${provider.name}`);
+  } catch (error: any) {
+    notify.error(errorMessage(error, '拉取模型失败。'));
+  } finally {
+    refreshingProvider.value = '';
+  }
+}
+
 async function saveModel() {
+  if (batchPickAvailable.value) {
+    await saveBatchModels();
+    return;
+  }
   formError.value = '';
   const existing = existingFormEntry.value;
   const effectiveKey = effectiveFormApiKey.value;
@@ -1469,6 +1709,10 @@ async function removeModel(kind: ModelKind, id: string) {
 }
 
 async function testForm() {
+  if (batchPickAvailable.value) {
+    await testBatchModel();
+    return;
+  }
   formError.value = '';
   const existing = existingFormEntry.value;
   // 掩码 Key（已存条目未重输）也放行校验：服务端测试入口会按 id 补全原值；
@@ -2015,6 +2259,12 @@ onMounted(async () => {
 .provider-row .provider-title span {
   font-size: 9px;
 }
+.provider-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
 .provider-add-btn {
   display: inline-flex;
   align-items: center;
@@ -2279,6 +2529,56 @@ onMounted(async () => {
   color: var(--warn);
   line-height: 1.45;
 }
+.batch-model-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.batch-model-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 220px;
+  padding: 2px;
+  overflow-y: auto;
+}
+.batch-model-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+.batch-model-item:hover {
+  border-color: var(--border-strong);
+}
+.batch-model-item.checked {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.batch-model-item input {
+  width: auto;
+  flex-shrink: 0;
+}
+.batch-model-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-model-item em {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 9px;
+  font-style: normal;
+}
 .discovery-url-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2428,6 +2728,9 @@ onMounted(async () => {
     grid-column: 1 / -1;
   }
   .modal-form {
+    grid-template-columns: 1fr;
+  }
+  .batch-model-list {
     grid-template-columns: 1fr;
   }
   .field-wide {
