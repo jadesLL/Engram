@@ -46,14 +46,15 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 
 ## 1. 产物一览
 
-每次发版（`v*` 标签）固定产出以下四类：
+每次发版（`v*` 标签）固定产出以下五类：
 
 | 产物 | 名称 / 地址 | 用途 |
 |---|---|---|
 | Docker 镜像 | `gitea.example.com/example/engram/engram:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry） |
 | Windows 安装包 | `Engram Setup <版本>.exe`（约 110 MB） | NSIS 安装器，装出 Electron 桌面端 |
+| Android 安装包 | `Engram <版本>.apk` | 安卓远程客户端（未配置签名 secrets 时为未签名包） |
 | Docker 镜像离线包 | `engram-<版本>.tar.gz`（`docker save`，约 160 MB） | 无 Registry 环境离线部署（`docker load`） |
-| 校验值文件 | `sha256-<版本>.txt` | 前两者的 sha256 |
+| 校验值文件 | `sha256-<版本>.txt` | 前三者的 sha256 |
 
 镜像地址是**三层路径**（`owner/repo/imagename`，归属 Engram 仓库）。历史上曾用两层路径（更名前的 `example/example-wiki`），NAS 实测拉取异常，**不要改回**。
 
@@ -109,7 +110,7 @@ git push gitea v<版本>              # release.yml 启动
 
 **铁律**：bump 版本号的提交必须**立即推送** gitea——版本号是镜像 tag 和 Release 标签的来源，留在本地会导致远端镜像与版本号脱节。
 
-### 3.3 workflow 内部做了什么（release.yml 八步）
+### 3.3 workflow 内部做了什么（release.yml 九步）
 
 1. **检出代码**；
 2. **提取版本号**：从 `main/desktop/package.json` sed 出 `version`；
@@ -117,8 +118,9 @@ git push gitea v<版本>              # release.yml 启动
 4. **提取 CHANGELOG 段落**：awk 截取 `## v<版本>` 到下一个 `## ` 的内容，缺失即失败；
 5. **构建并推送 Docker 镜像**：`docker build --label org.opencontainers.image.version=<版本> -t $IMAGE:<版本> -t $IMAGE:latest main`，login 后连推两个 tag；
 6. **构建 Windows 安装包**：`cd main && docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .`（wine 容器内跑 `scripts/build-desktop-ci.sh`，详见 §4.2），再 `docker create` + `docker cp` 把 `/work/desktop/dist/` 拷出来；
-7. **整理产物**：断言 `Engram Setup <版本>.exe` 存在 → `docker save | gzip` 生成镜像 tar.gz → `sha256sum` 生成校验文件；
-8. **发布**：tag 触发则用 gitea-release-action 创建 Release（正文 = CHANGELOG 段落 + 固定的镜像地址说明，附件 = exe / tar.gz / sha256）；手动触发则上传为 Artifact。
+7. **构建 Android APK**：`docker build -f mobile/Dockerfile.ci -t engram-android-builder .`（Node + JDK 21 + Android SDK 容器内跑 `mobile/scripts/build-apk-ci.sh`，签名密钥经 secrets 注入），`docker cp` 拷出 APK（详见 [`ANDROID.md`](./ANDROID.md)）；
+8. **整理产物**：断言 `Engram Setup <版本>.exe` 存在 → APK 取已签名产物（未配置签名时回退未签名包）→ `docker save | gzip` 生成镜像 tar.gz → `sha256sum` 生成校验文件；
+9. **发布**：tag 触发则用 gitea-release-action 创建 Release（正文 = CHANGELOG 段落 + 固定的镜像地址说明，附件 = exe / apk / tar.gz / sha256）；手动触发则上传为 Artifact。
 
 ### 3.4 一次性环境前置（已配置，复现细节见 GITEA-CI.md）
 
@@ -247,7 +249,7 @@ docker compose -f docker-compose.pull.yml up -d
 2. **不要写 `pull_policy: never`**——它禁止拉取，本地无镜像时必报「找不到镜像」，曾多次被误判为 Registry 故障；
 3. `docker-compose.pull.yml` 里的 `/var/run/docker.sock` 挂载是**应用内自更新**（设置 → 软件更新，网页一键拉新镜像重建容器）所需；不需要该功能可删掉这行。
 
-部署后访问 `http://<主机IP>:8080`；初始密码由 compose 的 `DEFAULT_PASSWORD` 环境变量指定。onlyoffice 协同编辑是独立服务，第三方源拉不动时换官方镜像 `onlyoffice/documentserver:9.4.0`。
+部署后访问端口按所用 compose 而定：方式一源码构建（`docker-compose.yml`）映射宿主 **18080**，方式二/三（`docker-compose.pull.yml`）映射 **8080**。初始密码由 compose 的 `DEFAULT_PASSWORD` 环境变量指定。onlyoffice 协同编辑是独立服务，第三方源拉不动时换官方镜像 `onlyoffice/documentserver:9.4.0`。
 
 ### 6.2 Windows 桌面端
 

@@ -96,7 +96,7 @@ node-cron 定时任务（默认每天 03:00，支持工作日 / 每周 / 每月 
 
 `Ctrl+J` 打开工作台，会话保存在服务端可跨浏览器续接。同一个 Agent 内核同时驱动搜索问答、编辑器写作和飞书对话：
 
-- **31 个工具**、四级风险管控：查询类自动执行；可逆操作（建页/改页/归档）先展示 diff 预览等你批准，支持**一键撤销**；高风险（合并页面/重建索引/清空回收站）额外二次确认；API Key、密码、Token 永不对 Agent 开放
+- **34 个工具**、四级风险管控：查询类自动执行；可逆操作（建页/改页/归档）先展示 diff 预览等你批准，支持**一键撤销**；高风险（合并页面/重建索引/清空回收站）额外二次确认；API Key、密码、Token 永不对 Agent 开放
 - 执行前校验 precondition——等待审批期间页面被改过会拒绝执行，防止拿着旧快照覆盖新内容
 - 工具结果自动脱敏（key/password/secret/token 字段），页面正文视为不可信数据
 - 任务完成后可把对话沉淀到 `原始资料/对话/`，进入提炼管线变成新知识
@@ -141,7 +141,7 @@ cd Engram/main
 docker compose up -d --build
 ```
 
-访问 `http://<主机IP>:8080`，初始登录密码由 `docker-compose.yml` 的 `DEFAULT_PASSWORD` 环境变量指定（请自行修改；登录后可在设置页修改）。
+访问 `http://<主机IP>:18080`（`docker-compose.yml` 将容器 8080 映射到宿主 18080；`docker-compose.pull.yml` 拉取部署模板映射为 8080），初始登录密码由 `docker-compose.yml` 的 `DEFAULT_PASSWORD` 环境变量指定（请自行修改；登录后可在设置页修改）。
 
 公开仓库未发布 Docker 镜像；自建部署请从源码构建：
 
@@ -167,7 +167,8 @@ data/
 │   │   ├── 概念/        # 概念类页面
 │   │   ├── 实体/        # 人物/客户/组织/地点/作品/产品/其他 七类子目录
 │   │   ├── 查询/        # AI 问答保存结果
-│   │   └── 归档/        # 归档页面
+│   │   ├── 归档/        # 归档页面
+│   │   └── 关系/        # 图谱关系词表（relationships.md）
 │   ├── AIWorks/        # AI 工作区（索引/整理日志/方案）
 │   ├── assets/         # 编辑器粘贴的图片（系统目录，不出现在文件树）
 │   └── .trash/         # 回收站（软删除）
@@ -214,7 +215,7 @@ data/
 设置页 → MCP → 生成 Token，然后在 Claude Code 中：
 
 ```bash
-claude mcp add --transport http engram http://<主机IP>:8080/mcp \
+claude mcp add --transport http engram http://<主机IP>:18080/mcp \
   --header "Authorization: Bearer <你的token>"
 ```
 
@@ -245,7 +246,7 @@ Fastify + better-sqlite3（FTS5 + sqlite-vec）· Vue 3 + Vditor + vis-network �
 ## 版本与发布
 
 - **更新日志**：[`CHANGELOG.md`](./CHANGELOG.md)——每个版本的全部新功能与变更；发版时由 CI 自动发布到 GitHub Release 正文
-- **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Docker 镜像包（tar.gz）与 sha256 校验
+- **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Android 安装包（apk）、Docker 镜像包（tar.gz）与 sha256 校验
 - **镜像**：`gitea.example.com/example/engram/engram:<版本>`（未公开发布；需要请自行构建）
 - **发版流程**：详见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)（构建与部署完整指南）
 - **CI/CD 维护**：Runner 环境、Secrets、镜像分发细则见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)

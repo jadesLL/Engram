@@ -39,7 +39,11 @@ Engram 的远程访问支持双通道自动择优：客户端启动时按「直�
 
 ## DDNS（让域名跟踪家宽 IPv6）
 
-家宽 IPv6 前缀会不定期变化（运营商重拨），需要 DDNS 定期把稳定 IPv6 写入 DNS AAAA 记录。以 Cloudflare DNS 为例（PowerShell，计划任务每 5 分钟）：
+家宽 IPv6 前缀会不定期变化（运营商重拨），需要 DDNS 定期把稳定 IPv6 写入 DNS AAAA 记录。
+
+**优先用应用内置 DDNS**（v1.1.37+，设置 → DDNS 直连）：填 Cloudflare API Token（Zone.DNS Edit 权限）与记录域名即可，服务端默认每 5 分钟探测本机公网 IP、与 Cloudflare 记录比对、变化才写（自动甄别排除 IPv6 隐私临时地址，IPv4 经回声服务取公网地址），无需在宿主机另装 DDNS 客户端或计划任务；Docker 部署也可用 `DDNS_TOKEN`/`DDNS_RECORD` 等环境变量配置。
+
+**宿主机手动方案**（兜底——容器内看不到宿主网卡、宿主网络复杂的场景仍建议在宿主侧维护解析）以 Cloudflare DNS 为例（PowerShell，计划任务每 5 分钟）：
 
 - 选**稳定地址**：优先 DHCPv6 分配的后缀（`Get-NetIPAddress` 的 `SuffixOrigin = Dhcp`），排除隐私临时地址（`Temporary`）
 - 每次运行与现有 AAAA 比对，变化才更新（幂等）

@@ -80,7 +80,7 @@ docker compose -f docker-compose.pull.yml up -d
 |---|---|---|
 | Gitea 服务地址 | `UPDATE_GITEA_URL` | 版本检测来源，如 `https://gitea.example.com` |
 | Gitea 仓库 | `UPDATE_GITEA_REPO` | `owner/name` 形式 |
-| Gitea 访问令牌 | `UPDATE_GITEA_TOKEN` | **公开仓库无需填写**；私有仓库需能读 Release |
+| Gitea 访问凭据（二选一） | `UPDATE_GITEA_TOKEN`（访问令牌），或 `UPDATE_GITEA_AUTH_TYPE=password` + `UPDATE_GITEA_USERNAME` / `UPDATE_GITEA_PASSWORD`（用户名密码） | **公开仓库无需填写**；私有仓库需能读 Release |
 | 镜像更新源 | `UPDATE_IMAGE_REF` | 不含 tag 的镜像地址，自动拉 `latest`；未配置时从当前容器镜像推导 |
 | 镜像仓库用户名/令牌 | `UPDATE_REGISTRY_USERNAME` / `UPDATE_REGISTRY_TOKEN` | 私有 Registry 必填；公开仓库无需填写 |
 
@@ -107,6 +107,7 @@ docker compose -f docker-compose.pull.yml up -d
 | `REGISTRY_USERNAME` | runner 上 docker login 推镜像 | `example` |
 | `REGISTRY_TOKEN` | 同上 | **package 写权限** token（repository-only 权限的 token 过不了 Registry 认证） |
 | `RELEASE_TOKEN` | 创建 Release / 上传附件 | repository 写权限 token |
+| `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` | APK release 签名（见 [`ANDROID.md`](./ANDROID.md)）；未配置时 CI 回退未签名包 | 本机 keystore，不入库 |
 
 ## Runner 环境约束（Windows 宿主机模式）
 

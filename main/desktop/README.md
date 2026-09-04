@@ -13,7 +13,8 @@
    - 选「使用本地」→ 直接进入本地模式（首次会初始化本地数据库与目录）。
    - 或在远端 Web 端「设置 → 桌面端连接」生成令牌，回桌面端填入服务器地址 + 令牌 → 连接。
 2. 之后启动会记住上次模式，直接进入。
-3. 切换模式（进入本地/远端模式后唯一切换途径，快捷键 CmdOrCtrl+Shift+L）：
+3. **点 × 驻留系统托盘**：关闭窗口不退出应用，最小化到系统托盘后台继续运行（本地模式下内嵌后端与任务不中断；首次关闭弹通知说明）；最小化按钮仍进任务栏。托盘单击/双击恢复窗口，右键菜单「打开 Engram / 退出 Engram」真正退出（退出时内嵌后端一并结束）。驻留托盘期间再次启动只唤起已有窗口（单实例锁，避免双实例抢占本地端口）。
+4. 切换模式（进入本地/远端模式后唯一切换途径，快捷键 CmdOrCtrl+Shift+L）：
    - 应用菜单「Engram → 返回启动页 / 切换模式」回到启动页重新选择；
    - 或在远端 Web 端「设置 → 桌面端连接」面板点「返回启动页 / 切换模式」（仅桌面端壳内显示该按钮）。
 
@@ -38,7 +39,7 @@ pnpm build:desktop
 ## 技术说明
 
 - `main.js`：主进程。双模式调度——本地 fork 内嵌 server 子进程（`ELECTRON_RUN_AS_NODE` 纯 Node 模式，探活后加载）；远端用 token 兑换 JWT 预置 cookie 后加载远端页面。
-- `preload.js`：通过 `window.wikiDesktop` 暴露受控 API（`getConnection` / `setLocalMode` / `setRemoteMode` / `openConnectionSettings` / `openFileBytes`），`contextIsolation` 开启。
+- `preload.js`：通过 `window.wikiDesktop` 暴露受控 API（`getConnection` / `setLocalMode` / `setRemoteMode` / `openConnectionSettings` / `openFileBytes`，以及桌面端自更新 `desktopUpdateCheck` / `desktopUpdateDownload` / `desktopUpdateRunInstaller` / `onUpdateProgress`），`contextIsolation` 开启。
 - `scripts/prepare-desktop.js`：打包前复制 server/web 产物并生成 server 运行时依赖清单。
 - 原生模块：`better-sqlite3` 按 Electron ABI 重编；`sqlite-vec`（平台包 `sqlite-vec-windows-x64`）与 `@napi-rs/canvas` 用 Windows 预编译二进制，均通过 `asarUnpack` 解包以便加载。
 - 本地模式默认关闭 ONLYOFFICE 在线编辑（`OFFICE_EDITOR_ENABLED=false`），Office 文件以本地预览或「用系统程序打开」替代；远端模式（Docker 版）保留完整协同编辑。
