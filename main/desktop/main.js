@@ -103,7 +103,9 @@ function trayIcon() {
 
 function ensureTray() {
   if (tray) return;
-  tray = new Tray(trayIcon());
+  const icon = trayIcon();
+  if (icon.isEmpty()) log('警告：托盘图标为空（asar 内缺少 icon.png），托盘将显示空白槽位');
+  tray = new Tray(icon);
   tray.setToolTip('Engram');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开 Engram', click: () => showMainWindow() },

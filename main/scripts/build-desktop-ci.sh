@@ -64,6 +64,10 @@ find server/node_modules -xtype l -delete 2>/dev/null || true
 # electron zip 由 EB 下载；wine 下无 Defender，走完整流程（下载+解压+asar+NSIS）
 # npmRebuild=false：EB 内置 @electron/rebuild 会按当前平台（Linux）重编原生模块，
 # 覆盖掉上面预放的 Electron win32-x64 prebuild 二进制；CI 里二进制已就绪，必须跳过重编。
+# 托盘图标：package.json files 里的「icon.png」指 desktop 根文件（main.js trayIcon() 在 asar
+# 根找 icon.png），仓库里只有 build/icon.png，不拷贝则 glob 静默落空、发布版 asar 无托盘图标
+# （v1.1.39/1.1.40 托盘空白的根因；对齐 pack-asar.js 手动打包的 staging 布局）。
+cp build/icon.png icon.png
 npx electron-builder --win nsis --config.npmRebuild=false
 
 echo ">> 产物清单"
