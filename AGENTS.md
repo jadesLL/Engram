@@ -42,6 +42,7 @@ Git 以本地管理为主，官方远端为 `gitea`（`https://github.com/jadesL
 5.只要更新了版本号，提交后必须推送 gitea 远端（触发 CI 更新镜像 tag 与 latest），并确认 Actions 运行成功。
 6.**每次功能合并进 main 时，同步把新功能整合进仓库根 `README.md`**（功能总览、使用说明、数据目录等对应章节；纯内部重构/CI 调整可只更新 CHANGELOG）。README 是 Gitea 仓库主页的展示位，不允许与实际功能漂移。
 7.**每次发布新版本，必须把距上次发布以来的全部新功能写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落**，与版本号 bump 同一提交推送。release.yml 会校验该段落（缺失即发版失败），并自动把它发布为 Gitea Release 正文。
+8.在 ZCode 中凡需要向用户提问（如验收后的「三选一」、方案选择、操作确认等），必须使用 AskUserQuestion 对话框列出选项让用户点选，不得用纯文本提问让用户手打回复；仅当对话框工具不可用时才退回文本提问。
 
 
 
