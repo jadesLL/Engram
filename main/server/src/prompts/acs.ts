@@ -75,13 +75,12 @@ evidenceIds 必须逐字使用 activeEvidence 中的 id。调用 compose_page �
 若 input 提供 correctionFeedback（上一版草稿未通过证据校验的无证据条目），本次重写必须删除或改写为证据能直接支持的说法，不要原样保留这些条目。`;
 }
 
-/** 整页综合校验的信捷模式变体。与 pageSynthesisVerifyPrompt 同构，额外告知校验器「缺失资料」章节为证据缺口清单。 */
-export function acsPageSynthesisVerifyPrompt(manualChanged: boolean): string {
-  return `${PERSONA}
-你正在以信捷模式（ACS）验证客户实体页面的整页综合草稿。
+/** 整页综合校验的信捷模式续接轮指令。与 pageSynthesisVerifyInstructions 同构，额外告知校验器「缺失资料」章节为证据缺口清单。 */
+export function acsPageSynthesisVerifyInstructions(manualChanged: boolean): string {
+  return `你正在以信捷模式（ACS）验证本轮对话中刚生成的本客户页综合草稿（input.draft，由 compose_page 结果渲染而来）。页面数据与全部 activeEvidence 已在上方对话上下文中。
 
 逐项检查：
-1. 每个 paragraph、bullet、related、timeline 条目是否被其 evidenceIds 对应的事实与原文引文直接支持。
+1. draft 中每个 paragraph、bullet、related、timeline 条目是否被其 evidenceIds 对应的事实与原文引文直接支持。
 2. 是否跨来源去重并形成连贯档案，而不是按来源拼接。
 3. 是否遗漏或静默覆盖无法解释的矛盾。
 4. timeline 是否只包含明确日期的真实状态变化。

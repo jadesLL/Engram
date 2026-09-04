@@ -139,11 +139,9 @@ function responseFor(system: string, input: any) {
     };
   }
   // 整页综合走 chatToolSchema（工具调用）：响应需为 tool_calls 形态，
-  // 这里在 server 层特殊处理（见下方 toolsToolCalls 分支），responseFor 返回占位
+  // 这里在 server 层特殊处理（见下方 toolsToolCalls 分支），responseFor 返回占位。
+  // verify 已改为会话续接轮，由 server 层按 "task":"verify" 识别，不再进入 responseFor。
   if (system.includes('整页综合')) return { __toolPageSynthesis: true };
-  if (system.includes('验证实体页面的整页综合草稿')) {
-    return { pass: true, unsupported: [], conflicts: [], manualChangesPreserved: true };
-  }
   throw new Error(`unexpected prompt: ${system.slice(0, 80)}`);
 }
 
@@ -170,7 +168,7 @@ before(async () => {
       const parsed = JSON.parse(rawInput);
       input = Object.hasOwn(parsed, 'sharedContext') ||
         (Object.keys(parsed).length === 1 && Object.hasOwn(parsed, 'input'))
-        ? parsed.input
+        ? { ...(parsed.sharedContext || {}), ...(parsed.input || {}) }
         : parsed;
     } catch { /* retain plain text */ }
     let content: unknown;
@@ -180,7 +178,11 @@ before(async () => {
         mapStarted?.();
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
-      content = responseFor(system, input);
+      // 整页综合 verify 是会话续接轮（system 与 compose 相同），按本轮 user 消息识别
+      const lastUserText = typeof inputMessage?.content === 'string' ? inputMessage.content : '';
+      content = lastUserText.includes('"task":"verify"')
+        ? { pass: true, unsupported: [], conflicts: [], manualChangesPreserved: true }
+        : responseFor(system, input);
     } catch (error: any) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: { message: error.message } }));

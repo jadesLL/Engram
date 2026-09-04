@@ -42,12 +42,19 @@ before(async () => {
       }));
       return;
     }
-    const system = body.messages?.find((message: any) => message.role === 'system')?.content || '';
-    const payload = JSON.parse(
-      [...(body.messages || [])].reverse().find((message: any) => message.role === 'user')?.content || '{}'
-    );
-    const input = payload.input || payload;
-    const content = system.includes('跨来源整页综合')
+    const messages = body.messages || [];
+    const system = messages.find((message: any) => message.role === 'system')?.content || '';
+    const lastUser = [...messages].reverse().find((message: any) => message.role === 'user');
+    const lastUserText = typeof lastUser?.content === 'string' ? lastUser.content : '';
+    const payload = JSON.parse(lastUserText || '{}');
+    // compose/refine 首轮的重负载在 sharedContext（会话首轮），修正/续接轮只有 input
+    const input = { ...(payload.sharedContext || {}), ...(payload.input || payload) };
+    // verify 是续接轮：本轮 user 消息带 {"task":"verify"}，system 与所属阶段首轮相同；
+    // 页面综合 verify 的 draft 含 current，候选审核 verify 的 draft 含 usedEvidenceIds
+    const isVerifyTask = lastUserText.includes('"task":"verify"');
+    const isPageVerify = isVerifyTask && payload.draft && 'current' in payload.draft;
+    const isCandidateVerify = isVerifyTask && !isPageVerify;
+    const content = system.includes('跨来源整页综合') && !isVerifyTask
       ? {
           summary: '依据全部来源综合后的页面摘要。',
           domain: '测试',
@@ -65,7 +72,7 @@ before(async () => {
           unresolvedConflicts: [],
           manualChangesPreserved: true,
         }
-      : system.includes('验证实体页面')
+      : isPageVerify
       ? {
           pass: true,
           unsupported: [],
@@ -84,7 +91,7 @@ before(async () => {
           }],
           relations: [],
         }
-      : system.includes('最终验证')
+      : isCandidateVerify
       ? {
           pass: true,
           unsupported: [],

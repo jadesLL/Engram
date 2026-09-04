@@ -2,18 +2,18 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { db, newId, now } from '../lib/db.js';
 import { llmReady } from '../lib/llm.js';
-import { runSemanticStage } from '../lib/semanticStage.js';
+import { createSemanticCacheSession, runSemanticStage } from '../lib/semanticStage.js';
 import { readPage, readPageMeta, writePage } from '../lib/vault.js';
 import { isEntity, isSynthesizable } from '../lib/pageTypes.js';
 import { enqueue } from '../jobQueue.js';
 import { addReports } from '../dream/reports.js';
 import {
   conceptSynthesisPrompt,
-  conceptSynthesisVerifyPrompt,
+  conceptSynthesisVerifyInstructions,
   pageSynthesisPrompt,
-  pageSynthesisVerifyPrompt,
+  pageSynthesisVerifyInstructions,
 } from '../prompts/pageSynthesis.js';
-import { acsPageSynthesisPrompt, acsPageSynthesisVerifyPrompt } from '../prompts/acs.js';
+import { acsPageSynthesisPrompt, acsPageSynthesisVerifyInstructions } from '../prompts/acs.js';
 import { isAcsMode, pageIsCustomer } from '../lib/acs.js';
 import { allPageContributions, contributionsForProjection, type StoredContribution } from './sourceLedger.js';
 import {
@@ -921,9 +921,34 @@ export async function recomposePage(
   let output: SynthesisOutput;
   try {
     // 自纠错回路：compose 生成草稿 → verify 校验；校验失败时把证据校验反馈注入 compose 重新生成，
-    // 最多重试 maxCorrectionRounds 次。反馈注入系统提示（而非 input）使 runSemanticStage 的
-    // 缓存键随 system 变化而 miss，避免 job 重试时 compose 命中缓存返回同一份失败草稿。
+    // 最多重试 maxCorrectionRounds 次。反馈注入 input（而非 system）使 runSemanticStage 的
+    // 缓存键随 input 变化而 miss，避免 job 重试时 compose 命中缓存返回同一份失败草稿。
     const maxCorrectionRounds = 2;
+    // 每页一个追加式会话：compose → verify → 修正轮共享同一条对话前缀。
+    // 实测当前网关只对「含 assistant 轮次的对话式前缀」做缓存，单轮 [system,user] 请求
+    // 完全不走缓存（prod-shots/2026-09-04-gateway-cache-ab.log）；verify 作为续接轮
+    // 直接命中 compose 刚写入的前缀缓存，且无需重发页面与证据（token 直降 ~10k/页）。
+    const composeSystem = acs
+      ? acsPageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged)
+      : isConceptPage
+        ? conceptSynthesisPrompt(bundle.page.title, roster.text, state.manualChanged)
+        : pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged);
+    // 上限放宽到与旧单请求形态等价：旧实现把全部上下文塞进单条请求且无上限，
+    // 会话上限过小会在页内触发 resetHistory 导致 verify 丢证据上下文，属正确性问题。
+    const pageSessionMaxChars = 500_000;
+    const session = createSemanticCacheSession(`page-synthesis:${synthesisId}`, composeSystem);
+    const sharedContext = {
+      page: bundle.page,
+      activeEvidence: bundle.facts,
+      relations: bundle.relations,
+      manualSections: state.manualSections,
+      previousSynthesis: state.active ? {
+        current: state.active.current_content,
+        related: state.active.related_content,
+        timeline: state.active.timeline_content,
+      } : null,
+      currentEditedSynthesis: manualEdited,
+    };
     let correctionFeedback: string[] | undefined;
     let rendered!: ReturnType<typeof renderOutput>;
     for (let round = 0; ; round++) {
@@ -934,33 +959,18 @@ export async function recomposePage(
         stage: 'compose',
         tag: 'page-synthesis-compose',
         schema: synthesisOutputSchema,
-        // correctionFeedback 移入 input 而非 system：system 稳定后 provider 前缀缓存可命中，
-        // 不同轮次 input 含不同 feedback → cacheKey 仍不同，不会误命中上一轮失败草稿。
-        system: acs
-          ? acsPageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged)
-          : isConceptPage
-            ? conceptSynthesisPrompt(bundle.page.title, roster.text, state.manualChanged)
-            : pageSynthesisPrompt(bundle.page.title, bundle.page.type, roster.text, state.manualChanged),
+        system: composeSystem,
+        history: session,
+        maxHistoryChars: pageSessionMaxChars,
         promptVersion: acs
-          ? 'page-synthesis-compose:acs-2'
-          : isConceptPage ? 'page-synthesis-compose:concept-2' : 'page-synthesis-compose:5',
+          ? 'page-synthesis-compose:acs-3'
+          : isConceptPage ? 'page-synthesis-compose:concept-3' : 'page-synthesis-compose:6',
         cacheScope: 'page-synthesis:compose',
         dependencyHash: state.inputHash,
         resultCache: true,
         onRetry: () => onProgress?.('compose', round),
-        input: {
-          page: bundle.page,
-          activeEvidence: bundle.facts,
-          relations: bundle.relations,
-          manualSections: state.manualSections,
-          previousSynthesis: state.active ? {
-            current: state.active.current_content,
-            related: state.active.related_content,
-            timeline: state.active.timeline_content,
-          } : null,
-          currentEditedSynthesis: manualEdited,
-          correctionFeedback,
-        },
+        cacheContext: sharedContext,
+        input: { correctionFeedback },
         temperature: 0.1,
         maxTokens: 12000,
         retries: 1,
@@ -990,35 +1000,33 @@ export async function recomposePage(
         stage: 'verify',
         tag: 'page-synthesis-verify',
         schema: synthesisVerifySchema,
-      system: acs
-        ? acsPageSynthesisVerifyPrompt(state.manualChanged)
-        : isConceptPage
-          ? conceptSynthesisVerifyPrompt(state.manualChanged)
-          : pageSynthesisVerifyPrompt(state.manualChanged),
-      promptVersion: acs
-        ? 'page-synthesis-verify:acs-1'
-        : isConceptPage ? 'page-synthesis-verify:concept-1' : 'page-synthesis-verify:3',
-      cacheScope: 'page-synthesis:verify',
-      dependencyHash: state.inputHash,
-      onRetry: () => onProgress?.('verify', round),
-      // verify 是证据校验关卡，不缓存结果：自纠错回路每轮都要对当前草稿重新校验，
-      // 缓存校验结论会在草稿不变时命中旧结论、跳过本轮校验，导致回路短路。
-      resultCache: false,
-      input: {
-        page: bundle.page,
-        activeEvidence: bundle.facts,
-        draft: {
+        // verify 续接在 compose 会话上：system 复用 compose 提示词以通过会话一致性校验，
+        // 校验指令与草稿放进本轮 user 消息；页面与证据已在会话上文，不再重发。
+        system: composeSystem,
+        history: session,
+        maxHistoryChars: pageSessionMaxChars,
+        promptVersion: acs
+          ? 'page-synthesis-verify:acs-2'
+          : isConceptPage ? 'page-synthesis-verify:concept-2' : 'page-synthesis-verify:4',
+        cacheScope: 'page-synthesis:verify',
+        dependencyHash: state.inputHash,
+        onRetry: () => onProgress?.('verify', round),
+        // verify 是证据校验关卡，不缓存结果：自纠错回路每轮都要对当前草稿重新校验，
+        // 缓存校验结论会在草稿不变时命中旧结论、跳过本轮校验，导致回路短路。
+        resultCache: false,
+        input: {
+          task: 'verify',
+          instructions: acs
+            ? acsPageSynthesisVerifyInstructions(state.manualChanged)
+            : isConceptPage
+              ? conceptSynthesisVerifyInstructions(state.manualChanged)
+              : pageSynthesisVerifyInstructions(state.manualChanged),
+          draft: {
             current: rendered.sections.current,
             related: rendered.sections.related,
             timeline: rendered.sections.timeline,
             evidenceMap: rendered.evidenceMap,
           },
-          previousSynthesis: state.active ? {
-            current: state.active.current_content,
-            related: state.active.related_content,
-            timeline: state.active.timeline_content,
-          } : null,
-          currentEditedSynthesis: manualEdited,
         },
         temperature: 0,
         maxTokens: 2500,
