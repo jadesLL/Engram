@@ -11,3 +11,4 @@ main/docker-compose.dev.yml
 /.preview-rte/
 /.zcode/
 /test-results/
+/prod-shots/
