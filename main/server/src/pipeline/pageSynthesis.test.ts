@@ -29,18 +29,33 @@ let clearSharedSemanticHistories: () => void;
 let preserveManualChanges = true;
 // 可选的 verify 覆盖：测试自纠错回路时按 verify 调用次数返回不同结果。返回 undefined 走默认分支。
 let verifyOverride: (() => { pass: boolean; unsupported: string[]; conflicts: string[]; manualChangesPreserved: boolean } | undefined) | null = null;
+// 捕获发往 mock 的请求体，供会话形态断言使用
+let capturedBodies: any[] = [];
 
 before(async () => {
   server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
-    const system = body.messages?.find((message: any) => message.role === 'system')?.content || '';
-    const payload = JSON.parse(
-      [...(body.messages || [])].reverse().find((message: any) => message.role === 'user')?.content || '{}'
-    );
-    const input = payload.input || payload;
-    const isVerify = system.includes('验证实体页面');
+    capturedBodies.push(body);
+    const messages = body.messages || [];
+    const system = messages.find((message: any) => message.role === 'system')?.content || '';
+    const lastUser = [...messages].reverse().find((message: any) => message.role === 'user');
+    const lastUserText = typeof lastUser?.content === 'string' ? lastUser.content : '';
+    // verify 是综合会话的续接轮：本轮 user 消息带 {"task":"verify"}，system 与 compose 相同
+    const isVerify = lastUserText.includes('"task":"verify"');
+    const payload = JSON.parse(lastUserText || '{}');
+    // 追加式会话：页面与证据只在首轮 sharedContext，修正/续接轮的 user 消息不带，
+    // mock 需从完整消息历史里取最近一份 sharedContext
+    let sharedContext: any = {};
+    for (const message of messages) {
+      if (message.role !== 'user' || typeof message.content !== 'string') continue;
+      try {
+        const parsed = JSON.parse(message.content);
+        if (parsed?.sharedContext?.activeEvidence) sharedContext = parsed.sharedContext;
+      } catch { /* plain text */ }
+    }
+    const input = isVerify ? payload : { ...sharedContext, ...(payload.input || {}) };
     const hasTools = Boolean(body.tools?.length);
     let content: any;
     if (isVerify) {
@@ -146,6 +161,7 @@ beforeEach(() => {
   clearSharedSemanticHistories();
   verifyOverride = null;
   preserveManualChanges = true;
+  capturedBodies = [];
 });
 
 after(async () => {
@@ -305,6 +321,32 @@ test('self-correction loop rewrites the draft when verify reports unsupported ev
   const row = db.prepare(`SELECT status FROM page_syntheses WHERE page_id=? ORDER BY id DESC LIMIT 1`).get(page.id);
   assert.equal(row.status, 'active');
   assert.match(readPage(page.path).content, /自纠错实体有业绩数据/);
+});
+
+test('compose and verify share one append-only conversation for provider prefix cache', async () => {
+  const page = createPage('Wiki/实体', '会话复用实体');
+  writePage(page.path, '# 会话复用实体\n', { type: 'person' });
+  addSource(page.id, '原始资料/会话复用来源.md', 'session-run-1', 'hash-s1', [
+    { id: 'sf1', statement: '会话复用实体负责区域销售。' },
+  ]);
+  await runPendingSynthesis(page.id);
+  const conv = capturedBodies.filter((body) => Array.isArray(body.messages));
+  assert.ok(conv.length >= 2, '至少应有 compose 与 verify 两次请求');
+  const [compose, verify] = conv;
+  // compose 首轮：单 system + 单 user，页面与证据放在 sharedContext
+  assert.equal(compose.messages.length, 2);
+  assert.ok(compose.messages[1].content.includes('"sharedContext"'));
+  assert.ok(compose.messages[1].content.includes('activeEvidence'));
+  // verify 续接同一会话：system 与 compose 相同，前缀含 compose 的 user/assistant 轮，
+  // 校验指令与草稿在本轮 user 消息，证据不再重发（网关只缓存对话式前缀）
+  assert.equal(verify.messages[0].content, compose.messages[0].content);
+  assert.equal(verify.messages.length, 4);
+  assert.equal(verify.messages[2].role, 'assistant');
+  const verifyPayload = JSON.parse(verify.messages[3].content);
+  assert.equal(verifyPayload.task, 'verify');
+  assert.ok(verifyPayload.draft);
+  // 证据不随 verify 轮重发（已在会话首轮 sharedContext，指令文本中的字样不算）
+  assert.equal(verifyPayload.activeEvidence, undefined);
 });
 
 test('verify output with object-shaped unsupported entries is stringified instead of failing schema', async () => {

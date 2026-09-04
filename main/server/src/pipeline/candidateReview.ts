@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { db, newId, now } from '../lib/db.js';
 import { llmReady } from '../lib/llm.js';
-import { runSemanticStage } from '../lib/semanticStage.js';
+import { createSemanticCacheSession, runSemanticStage } from '../lib/semanticStage.js';
 import { TYPE_LABEL } from '../lib/pageTypes.js';
 import { readPage } from '../lib/vault.js';
 import { hybridSearch } from '../retrieval/hybrid.js';
@@ -371,8 +371,8 @@ ${target ? `目标页当前正文：\n${target.content.slice(0, 4000)}` : ''}
 {"name":"","summary":"","content":"","usedEvidenceIds":[],"relations":[{"src":"","word":"主责|目标|管理|政委|带教|攻坚","dst":"","evidenceIds":[]}]}。`;
 }
 
-const verifyPrompt = `${PERSONA}
-执行人工待审候选的最终验证。逐项对照 sourceContexts 原文，检查草稿是否完全由 focusedEvidence 支持、是否与原文冲突、关系是否有明确原文证据。
+/** verify 续接轮指令：refine→verify 共享会话后作为 user 消息嵌入，sourceContexts/focusedEvidence 已在会话上文。 */
+const verifyInstructions = `执行人工待审候选的最终验证。逐项对照上方对话上下文中的 sourceContexts 原文，检查 input.draft 草稿是否完全由 focusedEvidence 支持、是否与原文冲突、关系是否有明确原文证据。
 删除或改写无依据内容，不得新增事实。unsupported 或 conflicts 非空时 pass 必须为 false。
 只输出 JSON：
 {"pass":true,"unsupported":[],"conflicts":[],"usedEvidenceIds":[],"content":"","relations":[{"src":"","word":"主责|目标|管理|政委|带教|攻坚","dst":"","evidenceIds":[]}]}。`;
@@ -418,28 +418,37 @@ export async function previewCandidateReview(
   const allowedEvidence = new Set(facts.map((fact) => fact.evidenceId));
   const related = await retrievalContext(name, candidate.summary);
   options.onProgress?.({ stage: '局部再提炼', progress: 40 });
-  const refinedInput = {
-    requestedName: name,
-    kind: reviewKind,
+  // refine→verify 共享一个追加式会话：当前网关只对「含 assistant 轮次的对话式前缀」做缓存
+  // （prod-shots/2026-09-04-gateway-cache-ab.log），verify 续接在 refine 刚写入的缓存上，
+  // 且 sourceContexts/focusedEvidence 留在会话首轮，verify 无需重发。
+  const refineSystem = refinePrompt(
     action,
-    targetTitle: targetPage?.title || '',
-    sourceContexts: contexts,
-    focusedEvidence: evidence,
-  };
+    reviewKind,
+    targetPage ? { title: targetPage.title, content: targetContent } : null,
+    roster(),
+    related,
+  );
+  const session = createSemanticCacheSession(`candidate-review:${candidate.id}`, refineSystem);
   const refined = await runSemanticStage({
     scope: 'candidate-review',
     refId: candidate.id,
     stage: 'recompose',
     tag: 'candidate-refine',
     schema: refineSchema,
-    system: refinePrompt(
+    system: refineSystem,
+    history: session,
+    maxHistoryChars: 500_000,
+    promptVersion: 'candidate-refine:2',
+    cacheContext: {
+      sourceContexts: contexts,
+      focusedEvidence: evidence,
+    },
+    input: {
+      requestedName: name,
+      kind: reviewKind,
       action,
-      reviewKind,
-      targetPage ? { title: targetPage.title, content: targetContent } : null,
-      roster(),
-      related,
-    ),
-    input: refinedInput,
+      targetTitle: targetPage?.title || '',
+    },
     temperature: 0.1,
     maxTokens: 9000,
     retries: 1,
@@ -457,12 +466,16 @@ export async function previewCandidateReview(
     stage: 'verify',
     tag: 'candidate-review-verify',
     schema: reviewVerifySchema,
-    system: verifyPrompt,
+    // verify 续接 refine 会话：system 复用 refine 提示词，校验指令与草稿在本轮 user 消息
     input: {
-      sourceContexts: contexts,
-      focusedEvidence: evidence,
+      task: 'verify',
+      instructions: verifyInstructions,
       draft: { ...refined, usedEvidenceIds, relations: filteredRelations },
     },
+    system: refineSystem,
+    history: session,
+    maxHistoryChars: 500_000,
+    promptVersion: 'candidate-review-verify:2',
     temperature: 0.1,
     maxTokens: 9000,
     retries: 1,

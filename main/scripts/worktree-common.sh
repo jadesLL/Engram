@@ -143,7 +143,7 @@ exampleproject_cleanup_local_verification() {
 
 exampleproject_run_local_offline_verification() {
   local source_dir="$1"
-  local resolved_source verify_dir local_app_data native_cache native_source=""
+  local resolved_source verify_dir local_app_data native_cache native_source="" candidate
   local check_status=0 cleanup_status=0
   local -a native_candidates=()
 
@@ -175,22 +175,32 @@ exampleproject_run_local_offline_verification() {
     "$WIKILLM_MAIN_DIR"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
     "$(cygpath -u "${TEMP:-${TMP:-/tmp}}")"/ExampleProject-*/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
   )
-  if [ "${#native_candidates[@]}" -gt 0 ]; then
-    native_source="${native_candidates[0]}"
-  fi
+  shopt -u nullglob
+  # ELF 头（7f 45 4c 46）= Linux 构件，Windows 宿主机 node 加载会报
+  # "not a valid Win32 application"；缓存目录可能残留 Docker 侧拷出的构件，跳过并告警。
+  for candidate in "${native_candidates[@]}"; do
+    if [ "$(
+      head -c 4 "$candidate" 2>/dev/null | od -An -tx1 | tr -d ' \n'
+    )" = "7f454c46" ]; then
+      exampleproject_log "   WARN: 跳过 Linux ELF 构件（Windows 宿主机无法加载）: $candidate"
+      continue
+    fi
+    native_source="$candidate"
+    break
+  done
+  [ -n "$native_source" ] || {
+    printf '!! 缺少本机可用的 Windows 版 better_sqlite3.node，无法离线运行服务端测试\n' >&2
+    return 1
+  }
 
   exampleproject_log ">> Docker 离线缓存缺失，改用本机临时目录离线验证"
   exampleproject_log "   shared_pnpm=$WIKILLM_SHARED_PNPM ($(exampleproject_shared_pnpm --version))"
-  set +e
+  # 本函数通常在 if 条件中被调用：调用期间 bash 会压制函数体内的 set -e，
+  # 因此每一步都必须显式检查状态（依赖 errexit 会让 test 失败被后续 build 成功掩盖）。
   (
-    set -euo pipefail
-    local -a native_targets=()
-    [ -n "$native_source" ] || {
-      printf '!! 缺少本地 better_sqlite3.node，无法离线运行服务端测试\n' >&2
-      exit 1
-    }
+    set -o pipefail
     (
-      cd "$resolved_source"
+      cd "$resolved_source" || exit 1
       tar -cf - \
         --exclude='./node_modules' \
         --exclude='./server/node_modules' \
@@ -204,24 +214,23 @@ exampleproject_run_local_offline_verification() {
         --exclude='./.env.*' \
         --exclude='./*.log' \
         .
-    ) | tar -xf - -C "$verify_dir"
-    cd "$verify_dir"
-    exampleproject_shared_pnpm install --offline --frozen-lockfile --ignore-scripts
+    ) | tar -xf - -C "$verify_dir" || exit 1
+    cd "$verify_dir" || exit 1
+    exampleproject_shared_pnpm install --offline --frozen-lockfile --ignore-scripts || exit 1
     native_targets=(
       "$verify_dir"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3
     )
-    if [ "${#native_targets[@]}" -ne 1 ]; then
+    if [ "${#native_targets[@]}" -ne 1 ] || [ ! -d "${native_targets[0]}" ]; then
       printf '!! 临时验证目录中的 better-sqlite3 位置异常\n' >&2
       exit 1
     fi
-    mkdir -p "${native_targets[0]}/build/Release"
-    cp "$native_source" "${native_targets[0]}/build/Release/better_sqlite3.node"
-    exampleproject_shared_pnpm test
-    exampleproject_shared_pnpm typecheck
-    exampleproject_shared_pnpm build
+    mkdir -p "${native_targets[0]}/build/Release" || exit 1
+    cp "$native_source" "${native_targets[0]}/build/Release/better_sqlite3.node" || exit 1
+    exampleproject_shared_pnpm test || exit 1
+    exampleproject_shared_pnpm typecheck || exit 1
+    exampleproject_shared_pnpm build || exit 1
   )
   check_status=$?
-  set -e
 
   exampleproject_cleanup_local_verification "$verify_dir" || cleanup_status=$?
   [ "$check_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]

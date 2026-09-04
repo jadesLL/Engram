@@ -42,12 +42,18 @@ evidenceIds 必须逐字使用 activeEvidence 中的 id。调用 compose_page �
 若 input 提供 correctionFeedback（上一版草稿未通过证据校验的无证据条目），本次重写必须删除或改写为证据能直接支持的说法，不要原样保留这些条目。`;
 }
 
-export function pageSynthesisVerifyPrompt(manualChanged: boolean): string {
-  return `${PERSONA}
-你正在验证实体页面的整页综合草稿。
+/**
+ * verify 续接轮指令：作为 user 消息嵌入综合会话（不再作为独立 system）。
+ * 页面数据与 activeEvidence 已在会话上文（compose 首轮 sharedContext），无需重发；
+ * 网关只对「含 assistant 轮次的对话式前缀」做缓存（单轮 [system,user] 请求完全不缓存，
+ * 见 prod-shots/2026-09-04-gateway-cache-ab.log），verify 续接在 compose 刚写入的
+ * 缓存上可全量命中，且免去证据重发。
+ */
+export function pageSynthesisVerifyInstructions(manualChanged: boolean): string {
+  return `你正在验证本轮对话中刚生成的本页综合草稿（input.draft，由 compose_page 结果渲染而来）。页面数据与全部 activeEvidence 已在上方对话上下文中。
 
 逐项检查：
-1. 每段和每个列表项是否被其 evidenceIds 对应的事实与原文引文直接支持。
+1. draft 中每段和每个列表项是否被其 evidenceIds 对应的事实与原文引文直接支持。
 2. 是否跨来源去重并形成连贯文档，而不是按来源拼接。
 3. 是否遗漏或静默覆盖无法解释的矛盾。
 4. timeline 是否只包含明确日期的真实状态变化。
@@ -99,12 +105,12 @@ evidenceIds 必须逐字使用 activeEvidence 中的 id。调用 compose_page �
 若 input 提供 correctionFeedback（上一版草稿未通过证据校验的无证据条目），本次重写必须删除或改写为证据能直接支持的说法，不要原样保留这些条目。`;
 }
 
-export function conceptSynthesisVerifyPrompt(manualChanged: boolean): string {
-  return `${PERSONA}
-你正在验证概念页面的整页综合草稿。
+/** 概念页 verify 续接轮指令，与 pageSynthesisVerifyInstructions 同构。 */
+export function conceptSynthesisVerifyInstructions(manualChanged: boolean): string {
+  return `你正在验证本轮对话中刚生成的本概念页综合草稿（input.draft，由 compose_page 结果渲染而来）。概念数据与全部 activeEvidence 已在上方对话上下文中。
 
 逐项检查：
-1. 每段和每个列表项是否被其 evidenceIds 对应的事实与原文引文直接支持。
+1. draft 中每段和每个列表项是否被其 evidenceIds 对应的事实与原文引文直接支持。
 2. 是否跨来源去重并形成连贯文档，而不是按来源拼接。
 3. 是否遗漏或静默覆盖无法解释的矛盾。
 4. timeline 必须为空；若不为空，pass=false 并在 unsupported 中列出。
