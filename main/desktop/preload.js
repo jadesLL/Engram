@@ -26,4 +26,15 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
     ipcRenderer.on('desktop-update-progress', listener);
     return () => ipcRenderer.removeListener('desktop-update-progress', listener);
   },
+  // ---------- 自动更新（主进程状态机：idle/unconfigured/checking/downloading/up-to-date/installing/failed） ----------
+  // 查询自动更新当前状态（含开关、阶段、最新版本、下载进度、失败原因）
+  desktopUpdateGetState: () => ipcRenderer.invoke('desktop-update-get-state'),
+  // 开关自动更新（持久化到 config.json；开启后立即触发一次检查）
+  desktopUpdateSetAuto: (enabled) => ipcRenderer.invoke('desktop-update-set-auto', enabled),
+  // 自动更新状态订阅（返回取消函数）
+  onUpdateState: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on('desktop-update-state', listener);
+    return () => ipcRenderer.removeListener('desktop-update-state', listener);
+  },
 });

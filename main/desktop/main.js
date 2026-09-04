@@ -9,6 +9,9 @@ const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { spawn } = require('node:child_process');
 
+// 隔离/自定义数据目录：自动化测试与便携场景用；必须在单实例锁之前生效（锁文件位于 userData 内）
+if (process.env.ENGRAM_USER_DATA) app.setPath('userData', path.resolve(process.env.ENGRAM_USER_DATA));
+
 // 单实例锁：点 X 后应用驻留托盘，此时再次启动若开新实例，其 fork 的后端会撞 18180 端口、
 // 探活又探测到旧实例的服务，出现双窗口共用单后端的混乱。故第二实例直接退出并唤起已有窗口。
 if (!app.requestSingleInstanceLock()) {
@@ -31,8 +34,8 @@ try {
 }
 
 // 默认 18180 避开 Docker 版的 18080；用户本机若同时跑 Docker engram(18080) 与 desktop，
-// 两者互不抢占端口、可共存。
-const LOCAL_PORT = 18180;
+// 两者互不抢占端口、可共存。ENGRAM_LOCAL_PORT 供隔离测试等场景覆写。
+const LOCAL_PORT = Number(process.env.ENGRAM_LOCAL_PORT || 18180);
 const HEALTH_TIMEOUT_MS = 30000;
 
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
@@ -48,6 +51,11 @@ function readConfig() {
 function writeConfig(cfg) {
   fs.mkdirSync(path.dirname(configFile()), { recursive: true });
   fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2));
+}
+
+// 模式切换会重置连接信息；自动更新开关是用户偏好，跨模式保留
+function writeConnectionConfig(cfg) {
+  writeConfig({ autoUpdate: readConfig().autoUpdate, ...cfg });
 }
 
 function log(msg) {
@@ -348,7 +356,7 @@ function buildAppMenu() {
           accelerator: 'CmdOrCtrl+Shift+L',
           click: () => {
             stopLocalChild();
-            writeConfig({});
+            writeConnectionConfig({});
             if (win) win.loadFile('index.html');
           },
         },
@@ -370,6 +378,12 @@ function buildAppMenu() {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(buildAppMenu());
   launchByConfig();
+  // 自动更新：启动延迟首查 + 每 8 小时复查（仅 Windows 安装形态）
+  if (process.platform === 'win32') {
+    autoState.enabled = readConfig().autoUpdate !== false;
+    setTimeout(autoUpdateTick, AUTO_UPDATE_STARTUP_DELAY_MS);
+    setInterval(autoUpdateTick, AUTO_UPDATE_INTERVAL_MS);
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -407,14 +421,14 @@ ipcMain.handle('get-connection', () => {
 });
 
 ipcMain.handle('set-local-mode', () => {
-  writeConfig({ mode: 'local' });
+  writeConnectionConfig({ mode: 'local' });
   stopLocalChild();
   startLocalMode();
   return true;
 });
 
 ipcMain.handle('set-remote-mode', (_e, url, token, directUrl) => {
-  writeConfig({ mode: 'remote', remoteUrl: url, remoteToken: token, directUrl: normalizeOrigin(directUrl) });
+  writeConnectionConfig({ mode: 'remote', remoteUrl: url, remoteToken: token, directUrl: normalizeOrigin(directUrl) });
   stopLocalChild();
   startRemoteMode(url, token);
   return true;
@@ -422,7 +436,7 @@ ipcMain.handle('set-remote-mode', (_e, url, token, directUrl) => {
 
 ipcMain.handle('open-connection-settings', () => {
   stopLocalChild();
-  writeConfig({});
+  writeConnectionConfig({});
   win.loadFile('index.html');
   return true;
 });
@@ -580,7 +594,8 @@ async function giteaLatestRelease(cfg) {
   return { tag, version, assets };
 }
 
-ipcMain.handle('desktop-update-check', async (_e, passedCfg) => {
+/** 检查更新（手动 IPC 与自动轮询共用）：passedCfg 未传时按优先级自动解析更新源 */
+async function checkForUpdate(passedCfg) {
   const cfg = await resolveUpdateCfg(passedCfg);
   if (!cfg.giteaUrl || !cfg.giteaRepo) {
     return { ok: false, error: 'not-configured' };
@@ -602,25 +617,24 @@ ipcMain.handle('desktop-update-check', async (_e, passedCfg) => {
   } catch (e) {
     return { ok: false, error: describeError(e) };
   }
-});
+}
 
-// 下载安装包到 userData/downloads/，进度经 webContents.send 推给渲染进程
-ipcMain.handle('desktop-update-download', async (e, url, passedCfg) => {
+ipcMain.handle('desktop-update-check', (_e, passedCfg) => checkForUpdate(passedCfg));
+
+// 下载安装包到 userData/downloads/；进度经 send 回调推送（手动=发起窗口，自动=广播所有窗口）
+async function downloadUpdateFile(cfg, url, send, signal) {
   const target = String(url);
-  // 只允许从配置的远端仓库下载（防注入任意 URL）；优先渲染进程传入与最近检查所用的配置
-  const cfg = (passedCfg && typeof passedCfg === 'object' && passedCfg.giteaUrl && passedCfg.giteaRepo)
-    ? passedCfg
-    : (lastCheckCfg || (await resolveUpdateCfg(null)));
-  if (!cfg.giteaUrl || !target.startsWith(cfg.giteaUrl + '/')) {
+  // 只允许从配置的远端仓库下载（防注入任意 URL）
+  if (!cfg || !cfg.giteaUrl || !target.startsWith(cfg.giteaUrl + '/')) {
     throw new Error('下载地址不在配置的远端仓库源内');
   }
   const dir = path.join(app.getPath('userData'), 'downloads');
   fs.mkdirSync(dir, { recursive: true });
-  const name = target.split('/').pop().split('?')[0] || 'Engram Setup.exe';
+  const name = decodeURIComponent(target.split('/').pop().split('?')[0]) || 'Engram Setup.exe';
   const file = path.join(dir, name);
   let res;
   try {
-    res = await fetch(target, { headers: repoAuthHeaders(cfg), redirect: 'follow' });
+    res = await fetch(target, { headers: repoAuthHeaders(cfg), redirect: 'follow', signal });
   } catch (e) {
     throw new Error(describeError(e));
   }
@@ -634,9 +648,7 @@ ipcMain.handle('desktop-update-download', async (e, url, passedCfg) => {
     if (done) break;
     received += value.length;
     out.write(Buffer.from(value));
-    if (e.sender && !e.sender.isDestroyed()) {
-      e.sender.send('desktop-update-progress', { received, total, percent: total ? Math.floor((received / total) * 100) : null });
-    }
+    if (send) send('desktop-update-progress', { received, total, percent: total ? Math.floor((received / total) * 100) : null });
   }
   await new Promise((resolve, reject) => {
     out.on('error', reject);
@@ -644,19 +656,183 @@ ipcMain.handle('desktop-update-download', async (e, url, passedCfg) => {
   });
   log(`update installer downloaded: ${file} (${received} bytes)`);
   return { path: file, size: received };
+}
+
+ipcMain.handle('desktop-update-download', async (e, url, passedCfg) => {
+  // 优先渲染进程传入与最近检查所用的配置，确保与资产 URL 同源
+  const cfg = (passedCfg && typeof passedCfg === 'object' && passedCfg.giteaUrl && passedCfg.giteaRepo)
+    ? passedCfg
+    : (lastCheckCfg || (await resolveUpdateCfg(null)));
+  const sender = e.sender;
+  return downloadUpdateFile(cfg, url, (ch, data) => {
+    if (sender && !sender.isDestroyed()) sender.send(ch, data);
+  });
 });
 
-// 运行安装包并退出当前应用（NSIS 覆盖安装，安装器自身处理旧进程）
-ipcMain.handle('desktop-update-run-installer', (_e, filePath) => {
+function validateInstallerFile(filePath) {
   const file = path.resolve(String(filePath));
   const dir = path.resolve(path.join(app.getPath('userData'), 'downloads'));
   if (!file.startsWith(dir + path.sep)) {
     throw new Error('只允许运行 downloads 目录内的安装包');
   }
   if (!fs.existsSync(file)) throw new Error('安装包不存在');
+  return file;
+}
+
+// 运行安装包并退出当前应用（NSIS 覆盖安装，安装器自身处理旧进程）；手动兜底路径，保留安装向导
+ipcMain.handle('desktop-update-run-installer', (_e, filePath) => {
+  const file = validateInstallerFile(filePath);
   const child = spawn('cmd.exe', ['/c', 'start', '', '/wait', file], { detached: true, stdio: 'ignore' });
   child.unref();
   log(`update installer launched: ${file}`);
   setTimeout(() => app.quit(), 500);
   return true;
+});
+
+// ---------- 自动更新（默认开启） ----------
+// 启动延迟首查 + 每 8 小时复查；发现新版本 → 后台下载 → 全屏「正在更新」提示 → /S 静默安装 →
+// 装完自动重启。安装器本身保持向导式（双击安装包仍可选目录），只有应用内自动更新走 /S 静默参数。
+// 便携版（PORTABLE_EXECUTABLE_DIR）无安装目录概念，不参与自动更新。
+const AUTO_UPDATE_STARTUP_DELAY_MS = 30_000;
+const AUTO_UPDATE_INTERVAL_MS = 8 * 3600 * 1000;
+const INSTALL_NOTICE_MS = 3500; // 「正在更新」提示层展示时长，随后退出并静默安装
+
+const autoState = {
+  enabled: true,
+  phase: 'idle', // idle | unconfigured | checking | downloading | up-to-date | installing | failed
+  latestVersion: null,
+  percent: null,
+  error: '',
+};
+let autoBusy = false;
+let autoAbort = null;
+
+function broadcast(channel, data) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send(channel, data);
+  }
+}
+
+function setAutoPhase(phase) {
+  autoState.phase = phase;
+  if (phase !== 'failed') autoState.error = '';
+  broadcast('desktop-update-state', { ...autoState });
+}
+
+/** 已安装应用的 exe 路径：静默安装完成后由 cmd 链拉起新版 */
+function installedAppExe() {
+  const exe = app.getPath('exe');
+  if (path.basename(exe).toLowerCase() === 'engram.exe' && fs.existsSync(exe)) return exe;
+  const fallback = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Engram', 'Engram.exe');
+  return fs.existsSync(fallback) ? fallback : exe;
+}
+
+/** 清理 downloads 目录中除本次安装包外的旧 exe，避免版本残留累积 */
+function cleanupOldInstallers(keepPath) {
+  const dir = path.join(app.getPath('userData'), 'downloads');
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.toLowerCase().endsWith('.exe')) continue;
+    const p = path.join(dir, name);
+    if (path.resolve(p) === path.resolve(keepPath)) continue;
+    try {
+      fs.unlinkSync(p);
+    } catch {
+      /* 被占用时忽略，下次更新再清 */
+    }
+  }
+}
+
+/** 静默安装：cmd 链等待 /S 安装完成后无条件拉起新版（不依赖 NSIS 静默模式是否自动启动）。
+ *  spawn 后主进程随即退出——先撤锁、撤端口、撤文件占用，NSIS 无需强杀旧进程即可覆盖安装。 */
+function launchSilentInstall(file) {
+  const target = installedAppExe();
+  const cmd = `start "" /wait "${file}" /S & start "" "${target}"`;
+  const child = spawn('cmd.exe', ['/d', '/s', '/c', `"${cmd}"`], {
+    detached: true,
+    stdio: 'ignore',
+    windowsVerbatimArguments: true,
+  });
+  child.unref();
+  log(`auto update: silent installer launched: ${file} (relaunch -> ${target})`);
+  setTimeout(() => app.quit(), 500);
+}
+
+async function autoUpdateTick() {
+  if (process.platform !== 'win32' || autoBusy) return;
+  if (process.env.PORTABLE_EXECUTABLE_DIR) return; // 便携版不自动更新
+  autoState.enabled = readConfig().autoUpdate !== false;
+  if (!autoState.enabled) {
+    setAutoPhase('idle');
+    return;
+  }
+  autoBusy = true;
+  autoAbort = new AbortController();
+  try {
+    setAutoPhase('checking');
+    const cfg = await resolveUpdateCfg(null);
+    if (!cfg.giteaUrl || !cfg.giteaRepo) {
+      setAutoPhase('unconfigured');
+      return;
+    }
+    lastCheckCfg = cfg;
+    const release = await giteaLatestRelease(cfg);
+    const current = app.getVersion();
+    const exe = (release && release.assets.find((a) => a.name.endsWith('.exe'))) || null;
+    const hasUpdate = Boolean(release && release.version && exe && cmpVersions(current, release.version) < 0);
+    if (!hasUpdate) {
+      setAutoPhase('up-to-date');
+      return;
+    }
+    autoState.latestVersion = release.version;
+    setAutoPhase('downloading');
+    const { path: file } = await downloadUpdateFile(cfg, exe.url, (ch, data) => {
+      if (ch === 'desktop-update-progress') autoState.percent = data.percent ?? null;
+      broadcast(ch, data);
+    }, autoAbort.signal);
+    if (readConfig().autoUpdate === false) {
+      setAutoPhase('idle'); // 下载期间开关被关掉：放弃本次安装
+      return;
+    }
+    autoState.percent = 100;
+    setAutoPhase('installing');
+    // 留出全屏提示层展示时间，再退出并静默安装（cmd 链装完自动拉起新版）
+    setTimeout(() => {
+      try {
+        cleanupOldInstallers(file);
+      } catch {
+        /* 忽略 */
+      }
+      launchSilentInstall(file);
+    }, INSTALL_NOTICE_MS);
+  } catch (e) {
+    if (autoAbort && autoAbort.signal.aborted) {
+      setAutoPhase('idle'); // 手动中止（如关闭开关），不算失败
+    } else {
+      autoState.error = describeError(e);
+      setAutoPhase('failed');
+      log('auto update failed: ' + autoState.error);
+    }
+  } finally {
+    autoBusy = false;
+    autoAbort = null;
+  }
+}
+
+ipcMain.handle('desktop-update-get-state', () => ({ ...autoState }));
+
+ipcMain.handle('desktop-update-set-auto', (_e, enabled) => {
+  const c = readConfig();
+  c.autoUpdate = Boolean(enabled);
+  writeConfig(c);
+  autoState.enabled = c.autoUpdate;
+  if (!c.autoUpdate && autoAbort) autoAbort.abort(); // 中断进行中的自动下载
+  setAutoPhase('idle');
+  if (c.autoUpdate) setTimeout(autoUpdateTick, 1000); // 开启后立即触发一次检查
+  return { ...autoState };
 });

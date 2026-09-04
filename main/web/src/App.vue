@@ -3,6 +3,7 @@
   <ToastHost />
   <ConfirmHost />
   <MergeDialog />
+  <UpdateOverlay />
   <AppTooltip />
 </template>
 
@@ -13,6 +14,7 @@ import ToastHost from './components/ui/ToastHost.vue';
 import ConfirmHost from './components/ui/ConfirmHost.vue';
 import AppTooltip from './components/ui/AppTooltip.vue';
 import MergeDialog from './components/MergeDialog.vue';
+import UpdateOverlay from './components/UpdateOverlay.vue';
 
 const app = useAppStore();
 onMounted(() => {
