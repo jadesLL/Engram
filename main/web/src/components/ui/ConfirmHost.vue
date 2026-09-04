@@ -7,6 +7,17 @@
     @close="settleConfirm(false)"
   >
     <p v-if="confirmState.message" class="confirm-message">{{ confirmState.message }}</p>
+    <input
+      v-if="confirmState.placeholder !== undefined"
+      ref="inputRef"
+      v-model="inputValue"
+      class="confirm-input"
+      type="text"
+      :placeholder="confirmState.placeholder"
+      autocomplete="off"
+      spellcheck="false"
+      @keydown.enter.prevent="settleConfirm(true, inputValue)"
+    />
     <template #footer>
       <button ref="cancelRef" class="btn" @click="settleConfirm(false)">
         {{ confirmState.cancelText || '取消' }}
@@ -15,7 +26,7 @@
         ref="okRef"
         class="btn"
         :class="confirmState.danger ? 'danger-solid' : 'primary'"
-        @click="settleConfirm(true)"
+        @click="submit"
       >
         {{ confirmState.confirmText || '确定' }}
       </button>
@@ -30,13 +41,26 @@ import { confirmState, settleConfirm } from '../../lib/confirm';
 
 const okRef = ref<HTMLButtonElement>();
 const cancelRef = ref<HTMLButtonElement>();
+const inputRef = ref<HTMLInputElement>();
+const inputValue = ref('');
 
-// 破坏性操作默认焦点落在「取消」，防止回车误删
+function submit() {
+  settleConfirm(true, confirmState.placeholder !== undefined ? inputValue.value : undefined);
+}
+
 watch(
   () => confirmState.open,
   async (open) => {
     if (!open) return;
     await nextTick();
+    // 输入框模式：预填默认值并聚焦输入框，回车直接提交
+    if (confirmState.placeholder !== undefined) {
+      inputValue.value = confirmState.value ?? '';
+      inputRef.value?.focus();
+      inputRef.value?.select();
+      return;
+    }
+    // 破坏性操作默认焦点落在「取消」，防止回车误删
     (confirmState.danger ? cancelRef.value : okRef.value)?.focus();
   }
 );
@@ -49,5 +73,21 @@ watch(
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.confirm-input {
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+.confirm-input:focus {
+  border-color: var(--accent, #3b82f6);
 }
 </style>

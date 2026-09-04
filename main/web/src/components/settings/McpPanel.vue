@@ -43,14 +43,20 @@
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import Icon from '../Icon.vue';
-import { confirmDialog } from '../../lib/confirm';
+import { confirmDialog, promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 
 const mcpTokens = ref<any[]>([]);
 const mcpUrl = computed(() => `${location.origin}/mcp`);
 
 async function newToken() {
-  const name = prompt('Token 备注名：', 'claude-code') || 'default';
+  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog（取消也按原行为走默认备注名）
+  const name = (await promptDialog({
+    title: '生成 MCP Token',
+    message: 'Token 备注名：',
+    value: 'claude-code',
+    confirmText: '生成',
+  })) || 'default';
   await api.post('/api/settings/mcp-tokens', { name });
   const { data } = await api.get('/api/settings/mcp-tokens');
   mcpTokens.value = data.tokens;

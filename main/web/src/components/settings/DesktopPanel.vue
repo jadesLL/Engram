@@ -61,7 +61,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import Icon from '../Icon.vue';
-import { confirmDialog } from '../../lib/confirm';
+import { confirmDialog, promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 
 interface DesktopToken {
@@ -100,7 +100,13 @@ function fmt(iso: string | null): string {
 }
 
 async function newToken() {
-  const name = prompt('令牌备注名：', '我的电脑') || 'default';
+  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog（取消也按原行为走默认备注名）
+  const name = (await promptDialog({
+    title: '生成桌面端连接令牌',
+    message: '令牌备注名：',
+    value: '我的电脑',
+    confirmText: '生成',
+  })) || 'default';
   await api.post('/api/settings/desktop-tokens', { name });
   await load();
 }

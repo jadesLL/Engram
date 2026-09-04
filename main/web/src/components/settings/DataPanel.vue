@@ -58,7 +58,7 @@ import { ref } from 'vue';
 import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
 import Icon from '../Icon.vue';
-import { confirmDialog } from '../../lib/confirm';
+import { confirmDialog, promptDialog } from '../../lib/confirm';
 
 const app = useAppStore();
 const wipeMsg = ref('');
@@ -73,7 +73,14 @@ async function confirmWithPassword(actionLabel: string): Promise<string | null> 
     danger: true,
   });
   if (!first) return null;
-  const password = prompt('请输入登录密码以确认：');
+  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog 收密码
+  const password = await promptDialog({
+    title: '身份确认',
+    message: '请输入登录密码以确认：',
+    placeholder: '登录密码',
+    confirmText: '确认',
+    danger: true,
+  });
   if (password === null) return null;
   if (!password) {
     wipeOk.value = false;

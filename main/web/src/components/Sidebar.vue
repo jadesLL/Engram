@@ -408,7 +408,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { humanError } from '../lib/ingestError';
 import { useAppStore } from '../stores/app';
-import { confirmDialog } from '../lib/confirm';
+import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
 import { openMergeDialog } from '../lib/mergeDialog';
@@ -934,7 +934,13 @@ function isActiveFile(file: any) {
 }
 
 async function createFile() {
-  const name = prompt('文件名（.md 可直接编辑）：', '未命名.md');
+  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog
+  const name = await promptDialog({
+    title: '新建文件',
+    message: '文件名（.md 可直接编辑）：',
+    value: '未命名.md',
+    confirmText: '创建',
+  });
   if (name === null) return;
   try {
     const { data } = await api.post('/api/files/create', { name: name || '未命名.md' });
