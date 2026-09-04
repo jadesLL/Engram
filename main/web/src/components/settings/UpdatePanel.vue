@@ -127,7 +127,7 @@
         <div v-if="desktopCheck?.ok && desktopCheck.hasUpdate && desktopCheck.exe" class="setting-row">
           <div class="setting-copy">
             <strong>下载并安装</strong>
-            <span>{{ desktopCheck.exe.name }}（{{ fmtSize(desktopCheck.exe.size) }}），下载完成后运行安装包覆盖安装。</span>
+            <span>{{ desktopCheck.exe.name }}（{{ fmtSize(desktopCheck.exe.size) }}），点击后自动下载并静默安装，全程无需操作。</span>
           </div>
           <button class="btn primary" type="button" :disabled="downloading || installing" @click="downloadAndInstall">
             {{ installing ? '安装中…' : downloading ? `下载中 ${downloadPercent ?? ''}${downloadPercent !== null ? '%' : ''}` : '下载并安装' }}
@@ -137,7 +137,7 @@
           <div class="update-progress-bar" :style="{ width: downloadPercent + '%' }" />
         </div>
         <p v-if="downloadError" class="setting-message err">{{ downloadError }}</p>
-        <p v-else-if="installing" class="setting-message warn">安装包已启动，应用即将退出，请按安装向导完成更新。</p>
+        <p v-else-if="installing" class="setting-message warn">正在静默安装更新，应用将自动重启，请勿关闭。</p>
       </template>
     </div>
 
@@ -483,12 +483,7 @@ async function downloadAndInstall() {
   const wd = wikiDesktop();
   const exe = desktopCheck.value?.exe;
   if (!wd?.desktopUpdateDownload || !exe) return;
-  const ok = await confirmDialog({
-    title: '下载并安装更新',
-    message: `将下载 ${exe.name}（约 ${fmtSize(exe.size)}）并运行安装包，应用会退出并按向导完成覆盖安装。继续？`,
-    confirmText: '下载并安装',
-  });
-  if (!ok) return;
+  // 点击即全自动：下载（进度条）→ 静默安装（应用内全屏提示 + 独立进度窗）→ 自动重启，无需再点任何确认
   downloading.value = true;
   downloadError.value = '';
   try {
@@ -502,7 +497,7 @@ async function downloadAndInstall() {
     });
     downloading.value = false;
     installing.value = true;
-    await wd.desktopUpdateRunInstaller(filePath);
+    await wd.desktopUpdateRunInstaller(filePath, desktopCheck.value?.latestVersion);
   } catch (e: any) {
     downloading.value = false;
     downloadError.value = e?.message || '下载失败';
