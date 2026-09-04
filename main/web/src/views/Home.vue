@@ -202,6 +202,7 @@ import { useUpdateStore } from '../stores/update';
 import { api } from '../api';
 import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
+import { promptDialog } from '../lib/confirm';
 import Sidebar from '../components/Sidebar.vue';
 import AiDrawer from '../components/AiDrawer.vue';
 import JobsPanel from '../components/JobsPanel.vue';
@@ -357,7 +358,13 @@ const moreItems = computed(() => [
 ]);
 
 async function quickNew() {
-  const title = prompt('页面标题：', '未命名页面');
+  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog
+  const title = await promptDialog({
+    title: '新建页面',
+    message: '页面标题：',
+    value: '未命名页面',
+    confirmText: '创建',
+  });
   if (title === null) return;
   const { data } = await api.post('/api/pages', { dir: 'Wiki', title: title || '未命名页面' });
   sidebarRef.value?.load();
