@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <h3>软件更新</h3>
-        <p>检测新版本并就地更新；服务器（Docker）拉取镜像自动重建，桌面端下载安装包覆盖安装。</p>
+        <p>检测新版本并就地更新；服务器（Docker）拉取镜像自动重建，桌面端默认自动下载并静默安装，也可手动下载安装包覆盖安装。</p>
       </div>
       <span v-if="state.currentVersion" class="app-version">v{{ state.currentVersion }}</span>
     </div>
@@ -83,10 +83,28 @@
       </div>
 
       <template v-else>
+        <div v-if="autoSupported" class="setting-row">
+          <div class="setting-copy">
+            <strong>自动更新</strong>
+            <span>启动后自动检查（之后每 8 小时复查），发现新版本自动在后台下载并静默安装；安装前应用内会提示，装完自动重启，全程无需手动操作。</span>
+          </div>
+          <label class="switch-control">
+            <input type="checkbox" :checked="autoState.enabled" @change="toggleAuto" />
+            <span aria-hidden="true"></span>
+            <em>{{ autoState.enabled ? '已开启' : '已关闭' }}</em>
+          </label>
+        </div>
+        <p v-if="autoSupported && autoStatus && (!autoState.enabled || autoState.phase !== 'idle')" class="setting-message" :class="autoState.phase === 'failed' ? 'err' : autoState.phase === 'installing' ? 'warn' : ''">
+          {{ autoStatus }}
+        </p>
+        <div v-if="autoSupported && autoState.enabled && autoState.phase === 'downloading' && autoState.percent !== null" class="update-progress">
+          <div class="update-progress-bar" :style="{ width: autoState.percent + '%' }" />
+        </div>
+
         <div class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>从远端仓库 Release 比对桌面端版本。</span>
+            <span>手动从远端仓库 Release 比对桌面端版本。</span>
           </div>
           <div class="check-controls">
             <span v-if="desktopCheck && desktopCheck.ok" class="check-status" :class="desktopCheck.hasUpdate ? 'has' : 'none'">
@@ -283,9 +301,47 @@ const downloadPercent = ref<number | null>(null);
 const downloadError = ref('');
 let offProgress: (() => void) | null = null;
 
+// 自动更新（主进程状态机）：旧版壳无 desktopUpdateGetState API 时隐藏该节
+const autoSupported = ref(false);
+const autoState = ref<any>({ enabled: true, phase: 'idle', latestVersion: null, percent: null, error: '' });
+let offAutoState: (() => void) | null = null;
+
 const savingConfig = ref(false);
 
 const wikiDesktop = () => (window as any).wikiDesktop;
+
+/** 自动更新状态机的用户可读描述 */
+const autoStatus = computed(() => {
+  const s = autoState.value;
+  switch (s.phase) {
+    case 'checking':
+      return '正在检查更新…';
+    case 'downloading':
+      return `发现新版本 v${s.latestVersion ?? '?'}，正在后台下载${s.percent != null ? ` ${s.percent}%` : ''}…`;
+    case 'up-to-date':
+      return '自动检查完成，已是最新版本';
+    case 'installing':
+      return s.latestVersion ? `正在安装 v${s.latestVersion}，应用即将自动重启…` : '正在安装更新，应用即将自动重启…';
+    case 'failed':
+      return `自动更新失败：${s.error}。可关闭后重开自动更新，或用下方「下载并安装」手动更新。`;
+    case 'unconfigured':
+      return '尚未配置更新源，自动更新未生效（见下方「更新源配置」）。';
+    default:
+      return '';
+  }
+});
+
+async function toggleAuto(e: Event) {
+  const wd = wikiDesktop();
+  const enabled = (e.target as HTMLInputElement).checked;
+  if (!wd?.desktopUpdateSetAuto) return;
+  try {
+    autoState.value = await wd.desktopUpdateSetAuto(enabled);
+    notify.success(enabled ? '自动更新已开启' : '自动更新已关闭');
+  } catch {
+    notify.error('设置失败，请重试');
+  }
+}
 
 /**
  * 解析用户粘贴的远端仓库地址 → { url: 服务地址, repo: owner/name }。
@@ -497,9 +553,21 @@ onMounted(() => {
       downloadPercent.value = p?.percent ?? null;
     });
   }
+  if (wd?.desktopUpdateGetState) {
+    autoSupported.value = true;
+    wd.desktopUpdateGetState().then((s: any) => {
+      autoState.value = s;
+    });
+    if (wd.onUpdateState) {
+      offAutoState = wd.onUpdateState((s: any) => {
+        autoState.value = s;
+      });
+    }
+  }
 });
 onUnmounted(() => {
   offProgress?.();
+  offAutoState?.();
 });
 </script>
 

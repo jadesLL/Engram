@@ -21,6 +21,15 @@
 
 在远端服务的 Web 端「设置 → 桌面端连接」生成令牌（默认有效期 365 天，可随时撤销），令牌格式 `lwid_…`。桌面端用它调 `/api/auth/desktop-exchange` 免密兑换登录态，30 天有效，期间所有请求复用现有 cookie 鉴权。
 
+## 软件更新
+
+更新源在 Web 端「设置 → 软件更新 → 更新源配置」配置（远端仓库地址 + 可选凭据），保存在数据目录 `.env`，本地/远端模式均可用。
+
+- **自动更新（默认开启）**：应用启动约 30 秒后自动检查更新，之后每 8 小时复查一次。发现新版本后自动在后台下载（设置页可见进度），下载完成后应用内弹出全屏「正在更新」提示，随后退出并以 `/S` 静默参数运行安装包（无向导），装完自动重启新版；`userData/downloads` 中的旧安装包随之清理。
+- **手动更新**：同一页面保留「检查更新」「下载并安装」按钮作为兜底，手动路径运行安装包时仍走完整安装向导（可选安装目录）。
+- **开关**：设置页「自动更新」开关即时生效（关闭会中断进行中的自动下载），状态持久化在 `config.json` 的 `autoUpdate` 字段，跨模式切换保留。
+- **边界**：便携版（portable）不参与自动更新；安装器本身保持向导式（`oneClick: false`），只有应用内自动更新走静默参数。
+
 ## 重新构建
 
 在仓库 `main/` 根目录执行（需联网下载 electron / electron-builder / 原生模块，届时申请 `--allow-downloads`）：
@@ -37,8 +46,8 @@ pnpm build:desktop
 
 ## 技术说明
 
-- `main.js`：主进程。双模式调度——本地 fork 内嵌 server 子进程（`ELECTRON_RUN_AS_NODE` 纯 Node 模式，探活后加载）；远端用 token 兑换 JWT 预置 cookie 后加载远端页面。
-- `preload.js`：通过 `window.wikiDesktop` 暴露受控 API（`getConnection` / `setLocalMode` / `setRemoteMode` / `openConnectionSettings` / `openFileBytes`），`contextIsolation` 开启。
+- `main.js`：主进程。双模式调度——本地 fork 内嵌 server 子进程（`ELECTRON_RUN_AS_NODE` 纯 Node 模式，探活后加载）；远端用 token 兑换 JWT 预置 cookie 后加载远端页面。环境变量 `ENGRAM_USER_DATA` 可覆写 userData 目录、`ENGRAM_LOCAL_PORT` 可覆写本地模式端口（默认 18180），用于隔离测试/便携场景；两者须在启动前设置，前者在单实例锁之前生效。
+- `preload.js`：通过 `window.wikiDesktop` 暴露受控 API（`getConnection` / `setLocalMode` / `setRemoteMode` / `openConnectionSettings` / `openFileBytes` / `desktopUpdateCheck` / `desktopUpdateDownload` / `desktopUpdateRunInstaller` / `desktopUpdateGetState` / `desktopUpdateSetAuto`），`contextIsolation` 开启。
 - `scripts/prepare-desktop.js`：打包前复制 server/web 产物并生成 server 运行时依赖清单。
 - 原生模块：`better-sqlite3` 按 Electron ABI 重编；`sqlite-vec`（平台包 `sqlite-vec-windows-x64`）与 `@napi-rs/canvas` 用 Windows 预编译二进制，均通过 `asarUnpack` 解包以便加载。
 - 本地模式默认关闭 ONLYOFFICE 在线编辑（`OFFICE_EDITOR_ENABLED=false`），Office 文件以本地预览或「用系统程序打开」替代；远端模式（Docker 版）保留完整协同编辑。
