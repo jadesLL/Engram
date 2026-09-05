@@ -679,18 +679,28 @@ function validateInstallerFile(filePath) {
   return file;
 }
 
-// 运行安装包并退出当前应用：与自动更新同款 /S 静默安装（装完由 cmd 链自动拉起新版），
-// 不再弹 NSIS 向导——「下载并安装」按钮语义即一键到底；覆盖安装沿用注册表里的原安装目录
-ipcMain.handle('desktop-update-run-installer', (_e, filePath) => {
+// 运行安装包并退出当前应用：与自动更新共用同一条静默链（/S 静默 + 独立安装进度窗 + 自动重启），
+// 不再弹安装向导。version 用于进度窗文案（可空）。
+ipcMain.handle('desktop-update-run-installer', (_e, filePath, version) => {
   const file = validateInstallerFile(filePath);
-  launchSilentInstall(file, 'manual update');
+  const v = sanitizeVersion(version);
+  if (v) autoState.latestVersion = v;
+  setAutoPhase('installing');
+  setTimeout(() => {
+    try {
+      cleanupOldInstallers(file);
+    } catch {
+      /* 忽略 */
+    }
+    beginSilentInstall(file, autoState.latestVersion, 'manual update');
+  }, INSTALL_NOTICE_MS);
   return true;
 });
 
 // ---------- 自动更新（默认开启） ----------
 // 启动延迟首查 + 每 8 小时复查；发现新版本 → 后台下载 → 全屏「正在更新」提示 → /S 静默安装 →
-// 装完自动重启。安装器本身保持向导式（双击安装包仍可选目录），只有应用内自动更新走 /S 静默参数。
-// 便携版（PORTABLE_EXECUTABLE_DIR）无安装目录概念，不参与自动更新。
+// 装完自动重启。应用内更新（自动与手动「下载并安装」）均走静默链，无安装向导；
+// 仅双击安装包本身保留向导（可选目录）。便携版（PORTABLE_EXECUTABLE_DIR）不参与自动更新。
 const AUTO_UPDATE_STARTUP_DELAY_MS = 30_000;
 const AUTO_UPDATE_INTERVAL_MS = 8 * 3600 * 1000;
 const INSTALL_NOTICE_MS = 3500; // 「正在更新」提示层展示时长，随后退出并静默安装
@@ -717,12 +727,18 @@ function setAutoPhase(phase) {
   broadcast('desktop-update-state', { ...autoState });
 }
 
-/** 已安装应用的 exe 路径：静默安装完成后由 cmd 链拉起新版 */
+/** 已安装应用的 exe 路径：静默安装完成后由安装编排脚本拉起新版 */
 function installedAppExe() {
   const exe = app.getPath('exe');
   if (path.basename(exe).toLowerCase() === 'engram.exe' && fs.existsSync(exe)) return exe;
   const fallback = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Engram', 'Engram.exe');
   return fs.existsSync(fallback) ? fallback : exe;
+}
+
+/** 版本号白名单化（仅数字与点），用于拼进安装进度窗文案 */
+function sanitizeVersion(v) {
+  const m = String(v || '').match(/\d+(\.\d+)*/);
+  return m ? m[0] : null;
 }
 
 /** 清理 downloads 目录中除本次安装包外的旧 exe，避免版本残留累积 */
@@ -746,18 +762,79 @@ function cleanupOldInstallers(keepPath) {
   }
 }
 
-/** 静默安装：cmd 链等待 /S 安装完成后无条件拉起新版（不依赖 NSIS 静默模式是否自动启动）。
+/** 推断当前安装作用域：Program Files 下视为所有用户安装（NSIS /allusers，静默时会触发 UAC），
+ *  其余（用户目录）为当前用户安装（/currentuser，无提权）。不传模式参数时 NSIS 会继承上次
+ *  安装记住的模式，可能与本次实际位置不符导致静默参数失效。 */
+function installerScopeFlag() {
+  const exe = app.getPath('exe').toLowerCase();
+  const pf = (process.env.ProgramFiles || 'C:\\Program Files').toLowerCase();
+  const pf86 = (process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)').toLowerCase();
+  if (exe.startsWith(pf + path.sep) || exe.startsWith(pf86 + path.sep)) return '/allusers';
+  return '/currentuser';
+}
+
+/** 生成安装进度窗（powershell WinForms 无边框置顶窗，经 -EncodedCommand 启动，无临时脚本文件）。
+ *  窗口纯装饰：按安装包进程名轮询，安装器退出即自动关窗；被安全软件拦截也不影响安装——
+ *  安装与重启由下方独立的 cmd 链执行，不依赖任何脚本解释器。 */
+function spawnInstallUiForm(version, scopeFlag) {
+  const v = sanitizeVersion(version);
+  const title = v ? `正在安装更新 Engram v${v}` : '正在安装更新 Engram';
+  const script = [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -AssemblyName System.Drawing",
+    '$form = New-Object System.Windows.Forms.Form',
+    '$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None',
+    '$form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen',
+    '$form.TopMost = $true',
+    '$form.Size = New-Object System.Drawing.Size(420, 150)',
+    '$form.BackColor = [System.Drawing.Color]::White',
+    '$title = New-Object System.Windows.Forms.Label',
+    '$title.Dock = [System.Windows.Forms.DockStyle]::Top',
+    '$title.Height = 64',
+    '$title.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter',
+    `$title.Text = ${psq(title)}`,
+    "$title.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 12)",
+    '$form.Controls.Add($title)',
+    '$sub = New-Object System.Windows.Forms.Label',
+    '$sub.Dock = [System.Windows.Forms.DockStyle]::Fill',
+    '$sub.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter',
+    "$sub.Text = '安装完成后应用将自动重启，请稍候，请勿关机'",
+    "$sub.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9.5)",
+    '$form.Controls.Add($sub)',
+    '$form.Show()',
+    '$deadline = (Get-Date).AddMinutes(3)',
+    'while ((Get-Date) -lt $deadline) {',
+    '  [System.Windows.Forms.Application]::DoEvents()',
+    "  if (-not (Get-Process -Name 'Engram Setup*' -ErrorAction SilentlyContinue)) { break }",
+    '  Start-Sleep -Milliseconds 500',
+    '}',
+    '$form.Close()',
+    '',
+  ].join('\n');
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  const child = spawn('powershell.exe', ['-NoProfile', '-EncodedCommand', encoded], { detached: true, stdio: 'ignore' });
+  child.unref();
+}
+
+/** 静默安装 + 自动重启：cmd 链等待 /S 安装完成后无条件拉起新版（不依赖 NSIS 静默模式是否
+ *  自动启动，也不依赖任何脚本解释器）；PS 进度窗为尽力而为的装饰层。
  *  spawn 后主进程随即退出——先撤锁、撤端口、撤文件占用，NSIS 无需强杀旧进程即可覆盖安装。 */
-function launchSilentInstall(file, source = 'auto update') {
+function beginSilentInstall(file, version, source = 'auto update') {
   const target = installedAppExe();
-  const cmd = `start "" /wait "${file}" /S & start "" "${target}"`;
+  const scopeFlag = installerScopeFlag();
+  const cmd = `start "" /wait "${file}" /S ${scopeFlag} & start "" "${target}"`;
   const child = spawn('cmd.exe', ['/d', '/s', '/c', `"${cmd}"`], {
     detached: true,
     stdio: 'ignore',
     windowsVerbatimArguments: true,
   });
   child.unref();
-  log(`${source}: silent installer launched: ${file} (relaunch -> ${target})`);
+  try {
+    spawnInstallUiForm(version);
+  } catch (e) {
+    log('install ui form failed (non-fatal): ' + describeError(e));
+  }
+  log(`${source}: silent installer launched (scope ${scopeFlag}): ${file} (relaunch -> ${target})`);
   setTimeout(() => app.quit(), 500);
 }
 
@@ -799,14 +876,14 @@ async function autoUpdateTick() {
     }
     autoState.percent = 100;
     setAutoPhase('installing');
-    // 留出全屏提示层展示时间，再退出并静默安装（cmd 链装完自动拉起新版）
+    // 留出全屏提示层展示时间，再退出并静默安装（独立进度窗衔接，装完自动拉起新版）
     setTimeout(() => {
       try {
         cleanupOldInstallers(file);
       } catch {
         /* 忽略 */
       }
-      launchSilentInstall(file);
+      beginSilentInstall(file, autoState.latestVersion);
     }, INSTALL_NOTICE_MS);
   } catch (e) {
     if (autoAbort && autoAbort.signal.aborted) {

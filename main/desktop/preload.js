@@ -18,8 +18,8 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   desktopUpdateCheck: (cfg) => ipcRenderer.invoke('desktop-update-check', cfg),
   // 下载安装包（cfg 同上，用于下载鉴权与来源校验；进度经 desktop-update-progress 事件推送）
   desktopUpdateDownload: (url, cfg) => ipcRenderer.invoke('desktop-update-download', url, cfg),
-  // 运行安装包并退出应用
-  desktopUpdateRunInstaller: (filePath) => ipcRenderer.invoke('desktop-update-run-installer', filePath),
+  // 运行安装包并退出应用（静默安装：/S 静默 + 独立进度窗 + 装完自动重启；version 仅用于进度窗文案）
+  desktopUpdateRunInstaller: (filePath, version) => ipcRenderer.invoke('desktop-update-run-installer', filePath, version),
   // 下载进度订阅（返回取消函数）
   onUpdateProgress: (cb) => {
     const listener = (_e, data) => cb(data);
