@@ -541,7 +541,7 @@ test('chatJson drops the thinking param after a 400 and remembers it per model',
   assert.equal(bodies[2].thinking, undefined);
 });
 
-test('chatJson drops the thinking param when a gateway wraps the rejection as 502 upstream_error', async () => {
+test('chatJson degrades a 502 upstream_error thinking rejection instead of failing', async () => {
   activateChat('https://gateway-502.example/v1');
   const bodies: Record<string, any>[] = [];
   mockChatEndpoint(bodies, (index) =>
@@ -550,11 +550,13 @@ test('chatJson drops the thinking param when a gateway wraps the rejection as 50
 
   const result = await chatModule.chatJson(
     [{ role: 'user', content: '生成 JSON' }],
-    { tag: 'thinking-fallback-502' },
+    { disableThinking: true, tag: 'thinking-fallback-502' },
   );
   assert.deepEqual(result, { ok: true });
+  // 显式关闭思考的请求遇网关 502 包装拒绝时：不再同参重试，直接进入降级链；
+  // 报错含「始终思考…请使用 low、high 或 max」→ 按 always-think 语义降级 low 档重发
   assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
-  assert.equal(bodies[1].thinking, undefined);
+  assert.deepEqual(bodies[1].thinking, { type: 'low' });
 });
 
 test('chatJson keeps the error when a 400 is unrelated to thinking', async () => {
