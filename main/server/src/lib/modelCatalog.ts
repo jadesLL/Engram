@@ -45,9 +45,11 @@ export interface CatalogProvider {
   chatModels: CatalogModelOption[];
   embeddingModels: CatalogModelOption[];
   documentModels?: CatalogModelOption[];
+  rerankModels?: CatalogModelOption[];
   defaultChat?: string;
   defaultEmbedding?: string;
   defaultDocument?: string;
+  defaultRerank?: string;
   hint?: string;
 }
 
@@ -186,9 +188,13 @@ export const MODEL_CATALOG: CatalogProvider[] = [
       { id: 'glm-4.6v-flashx', name: 'GLM-4.6V-FlashX', description: '高速视觉理解', imageInput: 'supported' },
       { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash', description: '轻量图片与文字识别', imageInput: 'supported' },
     ],
+    rerankModels: [
+      { id: 'rerank-3', name: 'rerank-3', description: '智谱重排模型' },
+    ],
     defaultChat: 'glm-5.2',
     defaultEmbedding: 'embedding-3',
     defaultDocument: 'glm-4.6v-flash',
+    defaultRerank: 'rerank-3',
   },
   {
     id: 'zai',
@@ -301,9 +307,14 @@ export const MODEL_CATALOG: CatalogProvider[] = [
       { id: 'qwen-vl-max', name: 'Qwen VL Max', description: '图片、表格与文档视觉理解', imageInput: 'supported' },
       { id: 'qwen3.5-ocr', name: 'Qwen3.5 OCR', description: '扫描件、图片和复杂文档文字识别', imageInput: 'supported' },
     ],
+    rerankModels: [
+      { id: 'gte-rerank', name: 'gte-rerank', description: '通义重排模型' },
+      { id: 'gte-rerank-v2', name: 'gte-rerank-v2', description: '通义重排模型 v2' },
+    ],
     defaultChat: 'qwen3.7-plus',
     defaultEmbedding: 'qwen3.7-text-embedding',
     defaultDocument: 'qwen3.5-ocr',
+    defaultRerank: 'gte-rerank',
   },
   {
     id: 'xiaomi',

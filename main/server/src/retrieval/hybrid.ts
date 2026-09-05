@@ -15,6 +15,8 @@ export interface SearchHit {
   updated_at?: string;
   type?: string;
   ageDays?: number;
+  /** 向量命中的最佳 chunk 完整内容（供 think 喂完整上下文；FTS-only 命中时为空） */
+  chunkContent?: string;
 }
 
 const RRF_K = 60;
@@ -151,6 +153,7 @@ export async function hybridSearch(
         updated_at: page.updated_at,
         type: page.type,
         ageDays,
+        ...(a.bestChunk ? { chunkContent: a.bestChunk.content } : {}),
       });
     } else {
       const file = db
@@ -167,6 +170,7 @@ export async function hybridSearch(
         score: a.rrf,
         evidence: [...a.evidence],
         updated_at: file.updated_at,
+        ...(a.bestChunk ? { chunkContent: a.bestChunk.content } : {}),
       });
     }
   }
@@ -192,4 +196,40 @@ export async function hybridSearchMany(
       hybridSearch(query, limit, vectors ? vectors[index] : null)
     ),
   );
+}
+
+/** 跨查询 RRF 融合：多路检索结果按 RRF(K=60) 汇总排名，evidence 取并集，
+ *  同一 page/file 多 chunk 命中保留最佳 chunk 内容。 */
+export function mergeSearchResults(hitArrays: SearchHit[][], limit: number): SearchHit[] {
+  interface Merged {
+    hit: SearchHit;
+    rrf: number;
+    evidence: Set<string>;
+  }
+  const acc = new Map<string, Merged>();
+  for (const hits of hitArrays) {
+    hits.forEach((hit, index) => {
+      const key = `${hit.refType}:${hit.refId}`;
+      const rank = index + 1;
+      const current = acc.get(key);
+      if (!current) {
+        acc.set(key, {
+          hit,
+          rrf: 1 / (RRF_K + rank),
+          evidence: new Set(hit.evidence),
+        });
+        return;
+      }
+      current.rrf += 1 / (RRF_K + rank);
+      for (const e of hit.evidence) current.evidence.add(e);
+      // 保留更完整的 chunk 内容（有 chunkContent 的覆盖只有 snippet 的）
+      if (hit.chunkContent && !current.hit.chunkContent) {
+        current.hit = { ...current.hit, chunkContent: hit.chunkContent, heading: hit.heading || current.hit.heading };
+      }
+    });
+  }
+  return [...acc.values()]
+    .map(({ hit, rrf, evidence }) => ({ ...hit, score: rrf, evidence: [...evidence] }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
 }

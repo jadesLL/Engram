@@ -33,6 +33,10 @@ export function getActiveDocument(): ModelEntry | null {
   return getActiveModelEntry('document');
 }
 
+export function getActiveRerank(): ModelEntry | null {
+  return getActiveModelEntry('rerank');
+}
+
 export function getEffectiveDocumentModel(): ModelEntry | null {
   const dedicated = getActiveDocument();
   if (dedicated?.apiKey) return dedicated;
@@ -127,7 +131,8 @@ function responseIdentity(
   opts: LlmRequestOptions | undefined,
 ): LlmUsageIdentity {
   const active = path === '/embeddings' ? getActiveEmbedding() : getActiveChat();
-  const operation = opts?.operation || (path === '/embeddings' ? 'embedding' : 'chat');
+  const defaultOperation = path === '/embeddings' ? 'embedding' : path === '/rerank' ? 'rerank' : 'chat';
+  const operation = opts?.operation || defaultOperation;
   return {
     provider: opts?.provider || active?.provider || 'custom',
     model: opts?.model || String((body as any)?.model || active?.model || 'unknown'),
@@ -185,7 +190,13 @@ async function request(
       // 以及网关间歇性 401/403（实测自建网关在并发压力下会误报 Invalid API key，
       // 随后同 key 请求恢复）。
       const msg = error.message || '';
-      const retriable = error instanceof LlmError
+      // thinking 参数被供应商/中转网关拒绝时同参重试必然复现（400/422 本就不重试，
+      // 502 upstream_error 形态会被下方 5xx 规则误重试），直接上抛给
+      // requestChatWithThinkingFallback 删参重试，省掉整段退避等待。
+      const isThinkingUpstreamRejection = thinkingErrorDetail(error).rejectsParam
+        && Boolean((body as any)?.thinking);
+      const retriable = !isThinkingUpstreamRejection
+        && error instanceof LlmError
         && !opts?.signal?.aborted
         && (msg === 'LLM 请求超时'
           || msg.startsWith('LLM 网络异常')
@@ -511,7 +522,7 @@ function thinkingErrorDetail(error: unknown): { rejectsParam: boolean; requiresL
   }
   const msg = error.message || '';
   // 供应商报错文案两类：带英文参数名 "thinking"，或纯中文「该模型始终思考，不支持关闭思考」
-  //（实测 GLM-5.3 网关的 400 文案完全不含 "thinking"，只认中文关键词）。
+  //（实测 GLM-5.3 的 400 文案完全不含 "thinking"，只认中文关键词）。
   const mentionsThinking = /thinking/i.test(msg) || /思考/i.test(msg);
   if (!mentionsThinking) return { rejectsParam: false, requiresLevel: false };
   // 「始终思考，不支持关闭思考；请使用 low、high 或 max」一类错误：参数本身被接受，
@@ -1176,6 +1187,62 @@ type EmbeddingRequestBody = {
   dimensions?: number;
 };
 
+export interface RerankResult {
+  index: number;
+  score: number;
+}
+
+export function buildRerankRequestBody(
+  entry: Pick<ModelEntry, 'model'>,
+  query: string,
+  documents: string[],
+  topN: number,
+): Record<string, unknown> {
+  return { model: entry.model, query, documents, top_n: topN };
+}
+
+/** 解析 rerank 响应：兼容硅基流动/Jina/Cohere 的 results[].{index, relevance_score}。 */
+export function parseRerankResponse(payload: unknown): RerankResult[] {
+  const results = (payload as any)?.results;
+  if (!Array.isArray(results)) return [];
+  return results
+    .map((item: any): RerankResult | null => {
+      const index = Number(item?.index);
+      const score = Number(item?.relevance_score ?? item?.score);
+      if (!Number.isInteger(index) || index < 0 || !Number.isFinite(score)) return null;
+      return { index, score };
+    })
+    .filter((item): item is RerankResult => item !== null);
+}
+
+export function rerankReady(): boolean {
+  return Boolean(getActiveRerank()?.apiKey);
+}
+
+/** 调用重排接口精排候选文档。未配置返回 null；调用失败抛 LlmError（由调用方降级）。 */
+export async function rerank(
+  query: string,
+  documents: string[],
+  topN: number,
+  options: { entry?: ModelEntry; timeoutMs?: number } = {},
+): Promise<RerankResult[] | null> {
+  const entry = options.entry || getActiveRerank();
+  if (!entry?.apiKey) return null;
+  const res = await request('/rerank', buildRerankRequestBody(entry, query, documents, topN), {
+    baseUrl: entry.baseUrl.replace(/\/+$/, ''),
+    apiKey: entry.apiKey,
+    timeoutMs: options.timeoutMs ?? 30_000,
+    provider: entry.provider,
+    model: entry.model,
+    operation: 'rerank',
+    tag: 'rerank',
+  });
+  const payload = await readJsonResponse(res);
+  const results = parseRerankResponse(payload);
+  if (!results.length) throw new LlmError('重排接口返回格式异常（无 results）');
+  return results;
+}
+
 export function buildEmbeddingRequestBody(
   entry: Pick<ModelEntry, 'model' | 'dim' | 'supportsDimensions'>,
   input: string[]
@@ -1363,7 +1430,7 @@ export async function testConnection(): Promise<{
  *  （带推理的模型在 token 紧张时可能只产出 reasoning_content 而 content 为空）。 */
 export async function testModel(
   entry: ModelEntry,
-  kind: 'chat' | 'embedding' | 'document',
+  kind: 'chat' | 'embedding' | 'document' | 'rerank',
   options: { imageChallenge?: ImageCapabilityChallenge } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   // 前端带回的 entry.apiKey 可能是掩码（列表回显不再下发明文），测试前按 id 补全库中原值
@@ -1420,6 +1487,13 @@ export async function testModel(
       const json = await readJsonResponse(res);
       if (!Array.isArray(json?.data)) return { ok: false, error: '返回格式异常（无 data 数组）' };
       validateEmbedding(json.data[0]?.embedding, resolved.dim);
+      return { ok: true };
+    } else if (kind === 'rerank') {
+      const results = await rerank('ping', ['知识库检索测试文档'], 1, {
+        entry,
+        timeoutMs: 30_000,
+      });
+      if (!results || !results.length) return { ok: false, error: '返回格式异常（无 results）' };
       return { ok: true };
     } else {
       const capability = await probeImageInput(resolved, {

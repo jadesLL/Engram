@@ -76,9 +76,11 @@ export interface ProviderPreset {
   chatModels: ModelOption[];
   embeddingModels: ModelOption[];
   documentModels?: ModelOption[];
+  rerankModels?: ModelOption[];
   defaultChat?: string;
   defaultEmbedding?: string;
   defaultDocument?: string;
+  defaultRerank?: string;
   hint?: string;
 }
 
@@ -162,7 +164,7 @@ export function providerById(id: string): ProviderPreset | undefined {
 export function modelById(
   providerId: string,
   modelId?: string,
-  kind?: 'chat' | 'embedding' | 'document'
+  kind?: 'chat' | 'embedding' | 'document' | 'rerank'
 ): ModelOption | undefined {
   const id = modelId ?? providerId;
   const providers = modelId ? [providerById(providerId)].filter(Boolean) as ProviderPreset[] : catalogRef.value;
@@ -173,7 +175,9 @@ export function modelById(
         ? [provider.embeddingModels]
         : kind === 'document'
           ? [provider.documentModels || []]
-          : [provider.chatModels, provider.embeddingModels, provider.documentModels || []];
+          : kind === 'rerank'
+            ? [provider.rerankModels || []]
+            : [provider.chatModels, provider.embeddingModels, provider.documentModels || [], provider.rerankModels || []];
     for (const pool of pools) {
       const match = pool.find((model) => model.id === id);
       if (match) return match;

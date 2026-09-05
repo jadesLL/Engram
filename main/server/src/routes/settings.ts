@@ -65,9 +65,11 @@ export async function settingsRoutes(app: FastifyInstance) {
       chat: listModelEntries('chat').map(maskEntryKey),
       embedding: listModelEntries('embedding').map(maskEntryKey),
       document: listModelEntries('document').map(maskEntryKey),
+      rerank: listModelEntries('rerank').map(maskEntryKey),
       activeChat: activeModelId('chat'),
       activeEmbedding: activeModelId('embedding'),
       activeDocument: activeModelId('document'),
+      activeRerank: activeModelId('rerank'),
     };
   });
 
@@ -76,9 +78,11 @@ export async function settingsRoutes(app: FastifyInstance) {
       chat?: ModelEntry[];
       embedding?: ModelEntry[];
       document?: ModelEntry[];
+      rerank?: ModelEntry[];
       activeChat?: string;
       activeEmbedding?: string;
       activeDocument?: string;
+      activeRerank?: string;
     };
     saveModelConfig(body);
     const { changed } = syncEmbeddingDim();
@@ -148,7 +152,7 @@ export async function settingsRoutes(app: FastifyInstance) {
    *  - 无入参：测试当前激活的 chat + embedding（兼容旧的全局测试按钮）。
    *  - 带 { entry, kind }：测试单个模型配置（不依赖激活状态，用于逐个验证）。 */
   app.post('/api/settings/test-llm', async (req) => {
-    const body = req.body as { entry?: ModelEntry; kind?: 'chat' | 'embedding' | 'document' } | null;
+    const body = req.body as { entry?: ModelEntry; kind?: 'chat' | 'embedding' | 'document' | 'rerank' } | null;
     if (body?.entry && body?.kind) {
       return testModel(body.entry, body.kind);
     }
@@ -223,12 +227,12 @@ export async function settingsRoutes(app: FastifyInstance) {
       apiKey?: string;
       /** 已存条目 id：apiKey 为掩码/留空时按 id 补全库中原值 */
       entryId?: string;
-      kind?: 'chat' | 'embedding' | 'document';
+      kind?: 'chat' | 'embedding' | 'document' | 'rerank';
       /** 模型列表接口协议（anthropic 用 x-api-key 头）与匿名访问标志：由前端按当前线路提供 */
       modelsProtocol?: 'openai' | 'anthropic';
       anonymous?: boolean;
     };
-    if (!['chat', 'embedding', 'document'].includes(body.kind || '')) {
+    if (!['chat', 'embedding', 'document', 'rerank'].includes(body.kind || '')) {
       return reply.code(400).send({ error: '模型类型无效' });
     }
     let apiKey = body.apiKey;
@@ -240,7 +244,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         baseUrl: body.baseUrl,
         modelsUrl: body.modelsUrl,
         apiKey,
-        kind: body.kind as 'chat' | 'embedding' | 'document',
+        kind: body.kind as 'chat' | 'embedding' | 'document' | 'rerank',
         ...(body.modelsProtocol ? { modelsProtocol: body.modelsProtocol } : {}),
         ...(body.anonymous !== undefined ? { anonymous: body.anonymous } : {}),
       });

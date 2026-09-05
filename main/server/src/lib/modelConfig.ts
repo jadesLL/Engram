@@ -5,7 +5,7 @@
 import { db, getSetting, setSetting, now, newId } from './db.js';
 import type { ProviderProtocol } from './modelCatalog.js';
 
-export type ModelKind = 'chat' | 'embedding' | 'document';
+export type ModelKind = 'chat' | 'embedding' | 'document' | 'rerank';
 export type ImageInputStatus = 'supported' | 'unsupported' | 'unknown';
 export type ImageInputSource = 'stored' | 'catalog' | 'metadata' | 'probe';
 export type ThinkingLevel = 'low' | 'high' | 'max';
@@ -79,19 +79,24 @@ const KIND_SETTINGS_KEY: Record<ModelKind, string> = {
   chat: 'chat_models',
   embedding: 'embedding_models',
   document: 'document_models',
+  rerank: 'rerank_models',
 };
 
 const KIND_ACTIVE_KEY: Record<ModelKind, string> = {
   chat: 'active_chat_model',
   embedding: 'active_embedding_model',
   document: 'active_document_model',
+  rerank: 'active_rerank_model',
 };
 
 const KIND_NEW_ACTIVE_KEY: Record<ModelKind, string> = {
   chat: 'model_active_chat',
   embedding: 'model_active_embedding',
   document: 'model_active_document',
+  rerank: 'model_active_rerank',
 };
+
+const ALL_MODEL_KINDS: ModelKind[] = ['chat', 'embedding', 'document', 'rerank'];
 
 function safeParseJson(raw: string | null | undefined): unknown {
   if (!raw) return null;
@@ -207,21 +212,24 @@ export interface ModelConfigPayload {
   chat?: ModelEntry[];
   embedding?: ModelEntry[];
   document?: ModelEntry[];
+  rerank?: ModelEntry[];
   activeChat?: string;
   activeEmbedding?: string;
   activeDocument?: string;
+  activeRerank?: string;
 }
 
 /** 全量保存模型配置（前端语义：整列表回传）。
  *  API Key 留空的既有条目自动沿用库中原值，前端无需持有明文 key。 */
 export function saveModelConfig(payload: ModelConfigPayload): void {
   const persist = db.transaction(() => {
-    saveKindEntries('chat', payload.chat);
-    saveKindEntries('embedding', payload.embedding);
-    saveKindEntries('document', payload.document);
+    for (const kind of ALL_MODEL_KINDS) {
+      saveKindEntries(kind, payload[kind]);
+    }
     if (payload.activeChat !== undefined) setSetting(KIND_NEW_ACTIVE_KEY.chat, payload.activeChat);
     if (payload.activeEmbedding !== undefined) setSetting(KIND_NEW_ACTIVE_KEY.embedding, payload.activeEmbedding);
     if (payload.activeDocument !== undefined) setSetting(KIND_NEW_ACTIVE_KEY.document, payload.activeDocument);
+    if (payload.activeRerank !== undefined) setSetting(KIND_NEW_ACTIVE_KEY.rerank, payload.activeRerank);
   });
   persist();
 }
@@ -259,19 +267,20 @@ export function migrateLegacyModelConfig(): number {
   const hasRows = counts.some((row) => row.n > 0);
   const legacyPayload: ModelConfigPayload = {};
   let migrated = 0;
-  legacyPayload.chat = parseLegacyEntries('chat');
-  legacyPayload.embedding = parseLegacyEntries('embedding');
-  legacyPayload.document = parseLegacyEntries('document');
-  migrated = legacyPayload.chat.length + legacyPayload.embedding.length + legacyPayload.document.length;
+  for (const kind of ALL_MODEL_KINDS) {
+    legacyPayload[kind] = parseLegacyEntries(kind);
+    migrated += legacyPayload[kind]!.length;
+  }
   if (hasRows || migrated === 0) return 0;
   // 旧 key 里的激活 id 一并搬迁；迁移成功后写入新 key 并删除旧 key，
   // 读取路径自此全部走新表
   legacyPayload.activeChat = getSetting(KIND_ACTIVE_KEY.chat) || undefined;
   legacyPayload.activeEmbedding = getSetting(KIND_ACTIVE_KEY.embedding) || undefined;
   legacyPayload.activeDocument = getSetting(KIND_ACTIVE_KEY.document) || undefined;
+  legacyPayload.activeRerank = getSetting(KIND_ACTIVE_KEY.rerank) || undefined;
   const run = db.transaction(() => {
     saveModelConfig(legacyPayload);
-    for (const kind of ['chat', 'embedding', 'document'] as ModelKind[]) {
+    for (const kind of ALL_MODEL_KINDS) {
       db.prepare('DELETE FROM settings WHERE key = ?').run(KIND_SETTINGS_KEY[kind]);
       db.prepare('DELETE FROM settings WHERE key = ?').run(KIND_ACTIVE_KEY[kind]);
     }
@@ -297,7 +306,7 @@ export function revealModelKey(id: string): string | undefined {
   const row = db.prepare('SELECT api_key FROM model_entries WHERE id = ?')
     .get(id) as { api_key: string } | undefined;
   if (row) return row.api_key;
-  for (const kind of ['chat', 'embedding', 'document'] as ModelKind[]) {
+  for (const kind of ALL_MODEL_KINDS) {
     const legacy = parseLegacyEntries(kind).find((entry) => entry.id === id);
     if (legacy) return legacy.apiKey;
   }
@@ -311,7 +320,7 @@ export function resolveEntrySecretKey(entry: ModelEntry): string {
   if (stored) return stored;
   // 掩码但库里查不到（未迁移旧数据）时在旧池里按 同 provider+baseUrl+model 兜底；
   // 未保存的新条目：前端刚输入的明文 key（非掩码）已在前面的分支返回
-  for (const kind of ['chat', 'embedding', 'document'] as ModelKind[]) {
+  for (const kind of ALL_MODEL_KINDS) {
     const hit = parseLegacyEntries(kind).find((candidate) =>
       candidate.provider === entry.provider
       && candidate.baseUrl.replace(/\/+$/, '') === entry.baseUrl.replace(/\/+$/, '')
