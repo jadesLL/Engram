@@ -51,6 +51,7 @@ import {
 import {
   agentContextPrompt,
   agentSystemPrompt,
+  chatSystemPrompt,
   fallbackToolPrompt,
   ragSystemPrompt,
   ragUserPrompt,
@@ -68,7 +69,7 @@ const MAX_AGENT_STEPS = 8;
 const MAX_HISTORY_MESSAGES = 80;
 const MAX_ASSISTANT_CONTEXT_CHARS = 72_000;
 const COMPACTION_KEEP_VISIBLE_MESSAGES = 12;
-const ASSISTANT_PROMPT_VERSION = '2026-08-13.2';
+const ASSISTANT_PROMPT_VERSION = '2026-08-23.1';
 const TOOL_RESULT_MODEL_LIMIT = 8_000;
 const sessionSummarySchema = z.object({
   summary: z.string().min(1).max(12_000),
@@ -86,7 +87,7 @@ const fallbackDecisionSchema = z.object({
 );
 
 const assistantRouteSchema = z.object({
-  mode: z.enum(['question', 'agent']),
+  mode: z.enum(['question', 'agent', 'chat']),
   retrievalQuery: z.string(),
   reason: z.string(),
 });
@@ -254,12 +255,14 @@ async function routeRun(
     tag: 'assistant-route',
     schema: assistantRouteSchema,
     system: `你是应用内助手的路由模型。根据用户问题、当前界面上下文和最近对话决定：
-- question：只需检索知识库并回答，不需要改变软件状态。
+- chat：与知识库和软件功能都无关的通用对话（问候、闲聊、常识问题、写作建议等），不需要检索知识库，也不需要调用工具。
+- question：需要依据知识库内容回答的问题，不需要改变软件状态。
 - agent：需要调用工具、读取特定页面/文件、修改软件状态，或必须先澄清再操作。
 
-同时生成 retrievalQuery：把代词、承接词和追问改写为可独立检索的完整查询；agent 模式也可返回用于后续检索的查询。
+边界判断：优先看用户意图是否涉及个人知识库或本软件；仅提及界面上下文但话题本身是通用闲聊时仍选 chat；不确定是否需要知识库证据时选 question。
+同时生成 retrievalQuery：把代词、承接词和追问改写为可独立检索的完整查询；agent 模式也可返回用于后续检索的查询，chat 模式返回空字符串即可。
 不要用关键词或句长规则，必须理解真实意图。
-只输出 JSON：{"mode":"question|agent","retrievalQuery":"","reason":""}。`,
+只输出 JSON：{"mode":"chat|question|agent","retrievalQuery":"","reason":""}。`,
     input: {
       question,
       context: run.context,
@@ -428,6 +431,54 @@ async function runFastQuestion(
     }
   );
   completeRun(run.id, validateCitations(output.trim(), sources.length), { sources });
+}
+
+async function runChat(
+  run: AssistantRun,
+  question: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const messageId = assistantPlaceholder(run);
+  let output = '';
+  const requestMessages: ChatMessage[] = [
+    { role: 'system', content: chatSystemPrompt() },
+  ];
+  const sessionSummary = getSession(run.sessionId)?.summary || '';
+  if (sessionSummary) {
+    requestMessages.push({
+      role: 'system',
+      content: `已压缩会话摘要：\n${sessionSummary}`,
+    });
+  }
+  for (const message of visibleHistory(run.sessionId, run.assistantMessageId)
+    .filter((message) => message.id !== run.userMessageId)
+    .slice(-8)) {
+    requestMessages.push(message.role === 'user'
+      ? { role: 'user', content: message.content.slice(0, 4000) }
+      : { role: 'assistant', content: message.content.slice(0, 4000) });
+  }
+  requestMessages.push({
+    role: 'user',
+    content: `${agentContextPrompt(run.context)}\n\n${question}`,
+  });
+  await chatStream(
+    requestMessages,
+    (delta) => {
+      output += delta;
+      publishAssistantEvent(run.id, 'delta', { messageId, text: delta });
+    },
+    {
+      temperature: 0.6,
+      signal,
+      tag: 'assistant-chat',
+      usageContext: assistantUsageContext(
+        run,
+        'chat',
+        requestMessages.slice(0, -1),
+      ),
+    }
+  );
+  completeRun(run.id, output.trim());
 }
 
 function llmMessagesForRun(run: AssistantRun): ChatMessage[] {
@@ -791,7 +842,9 @@ async function executeRun(runId: string): Promise<void> {
       await runWriterPreset(run, question, controller.signal);
     } else {
       const route = await routeRun(run, question, controller.signal);
-      if (route.mode === 'question') {
+      if (route.mode === 'chat') {
+        await runChat(run, question, controller.signal);
+      } else if (route.mode === 'question') {
         await runFastQuestion(run, question, controller.signal, route.retrievalQuery);
       } else {
         activeControllers.delete(runId);
