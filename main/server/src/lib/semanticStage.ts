@@ -41,6 +41,8 @@ export interface SemanticStageInput<T> {
   input: unknown;
   temperature?: number;
   maxTokens?: number;
+  /** 校验类阶段对思考模型显式关闭思考：推理会吃满小输出预算导致正文为空 */
+  disableThinking?: boolean;
   retries?: number;
   signal?: AbortSignal;
   /** 网络层重试期间刷新（任务心跳），防止无进度探针误杀长重试链 */
@@ -213,6 +215,7 @@ export async function runSemanticStage<T>(options: SemanticStageInput<T>): Promi
       // undefined = 不发 max_tokens 字段，由网关用模型自身默认输出上限
       // （hermes-agent 方式：写死预算会与思考量抢额度）
       maxTokens: options.maxTokens,
+      disableThinking: options.disableThinking,
       retries: options.retries ?? 1,
       tag: options.tag,
       signal: options.signal,

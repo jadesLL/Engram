@@ -35,6 +35,7 @@ import { extractFile } from './pipeline/fileExtraction.js';
 import { releaseCandidateReports } from './pipeline/candidateLedger.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
 import { LlmError } from './lib/llm.js';
+import { LlmStreamError } from './lib/llmProtocols.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -61,6 +62,7 @@ type JobHandler = (
  */
 export function isModelRelatedError(error: any): boolean {
   if (error instanceof LlmError) return true;
+  if (error instanceof LlmStreamError) return true;
   if (error?.name === 'AbortError') return true;
   const msg = String(error?.message || error || '');
   // 网络通讯错误（fetch 底层异常）
