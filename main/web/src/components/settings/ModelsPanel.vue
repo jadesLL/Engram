@@ -1056,7 +1056,7 @@ const discoveryOk = ref(false);
 let modelDiscoveryRequestId = 0;
 
 // ---------- 服务商详情（hermes 式：左选厂商，右列全部模型点选即用） ----------
-const selectedProvider = ref<Record<ModelKind, string>>({ chat: '', emb: '', document: '' });
+const selectedProvider = ref<Record<ModelKind, string>>({ chat: '', emb: '', document: '', rerank: '' });
 const batchManual = ref(false);
 const refreshingProvider = ref('');
 /** 在线拉取结果按线路白名单过滤（coding-plan 线路只允许白名单内模型） */
@@ -1256,7 +1256,7 @@ async function syncConnection(kind: ModelKind, provider: ProviderPreset, sourceE
     anonymous: keyless,
     apiKey: conn.value.apiKey.trim(),
     entryId: sourceEntryId,
-    kind: kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
+    kind: apiKindFor(kind),
   });
   const line = providerById(provider.id)?.lines.find((item) => item.id === conn.value.line);
   const whitelist = line?.models?.length ? new Set(line.models) : null;
@@ -2096,7 +2096,7 @@ async function testBatchModel() {
     );
     const { data } = await api.post('/api/settings/test-llm', {
       entry,
-      kind: kind === 'chat' ? 'chat' : kind === 'emb' ? 'embedding' : 'document',
+      kind: apiKindFor(kind),
     });
     if (data.ok) notify.success(`连接成功 · ${provider.name} · ${entry.model}`);
     else notify.error(data.error || '模型连接测试失败。');
