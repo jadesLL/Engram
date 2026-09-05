@@ -679,13 +679,11 @@ function validateInstallerFile(filePath) {
   return file;
 }
 
-// 运行安装包并退出当前应用（NSIS 覆盖安装，安装器自身处理旧进程）；手动兜底路径，保留安装向导
+// 运行安装包并退出当前应用：与自动更新同款 /S 静默安装（装完由 cmd 链自动拉起新版），
+// 不再弹 NSIS 向导——「下载并安装」按钮语义即一键到底；覆盖安装沿用注册表里的原安装目录
 ipcMain.handle('desktop-update-run-installer', (_e, filePath) => {
   const file = validateInstallerFile(filePath);
-  const child = spawn('cmd.exe', ['/c', 'start', '', '/wait', file], { detached: true, stdio: 'ignore' });
-  child.unref();
-  log(`update installer launched: ${file}`);
-  setTimeout(() => app.quit(), 500);
+  launchSilentInstall(file, 'manual update');
   return true;
 });
 
@@ -750,7 +748,7 @@ function cleanupOldInstallers(keepPath) {
 
 /** 静默安装：cmd 链等待 /S 安装完成后无条件拉起新版（不依赖 NSIS 静默模式是否自动启动）。
  *  spawn 后主进程随即退出——先撤锁、撤端口、撤文件占用，NSIS 无需强杀旧进程即可覆盖安装。 */
-function launchSilentInstall(file) {
+function launchSilentInstall(file, source = 'auto update') {
   const target = installedAppExe();
   const cmd = `start "" /wait "${file}" /S & start "" "${target}"`;
   const child = spawn('cmd.exe', ['/d', '/s', '/c', `"${cmd}"`], {
@@ -759,7 +757,7 @@ function launchSilentInstall(file) {
     windowsVerbatimArguments: true,
   });
   child.unref();
-  log(`auto update: silent installer launched: ${file} (relaunch -> ${target})`);
+  log(`${source}: silent installer launched: ${file} (relaunch -> ${target})`);
   setTimeout(() => app.quit(), 500);
 }
 

@@ -485,7 +485,7 @@ async function downloadAndInstall() {
   if (!wd?.desktopUpdateDownload || !exe) return;
   const ok = await confirmDialog({
     title: '下载并安装更新',
-    message: `将下载 ${exe.name}（约 ${fmtSize(exe.size)}）并运行安装包，应用会退出并按向导完成覆盖安装。继续？`,
+    message: `将下载 ${exe.name}（约 ${fmtSize(exe.size)}）并静默完成覆盖安装（沿用当前安装目录）：应用会退出，安装完成后自动启动新版，全程无需操作。继续？`,
     confirmText: '下载并安装',
   });
   if (!ok) return;
