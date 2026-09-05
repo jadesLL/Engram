@@ -677,6 +677,26 @@ async function readStreamResponse(
   return { content, finishReason, hasReasoning: reasoning.length > 0, reasoningChars: reasoning.length };
 }
 
+/** json_object 契约守卫：OpenAI 系规范要求提示词含 "json" 字样，DeepSeek/OpenAI
+ *  官方严格校验（缺失直接 400 invalid_request_error，且 400 不在网络层重试白名单，
+ *  阶段/任务当场判死）；GLM/通义等宽松实现不校验。仅在整组消息缺失该字样时把
+ *  一句指令追加到首条 system 消息末尾补齐契约（无 system 则前置一条）——不改各
+ *  阶段提示词文本与消息顺序，「末条消息=阶段输入」约定、语义缓存键（更上层按
+ *  input 计算）与网关前缀缓存（SHARED_HEADER 在 system 开头，块前缀不变）均不受
+ *  影响。实测网关按 /json/i 不区分大小写。 */
+const JSON_CONTRACT_LINE = '输出必须是合法的 JSON（json）对象，不要包含解释或 Markdown 围栏。';
+
+export function withJsonContractMessage(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.some((message) => typeof message.content === 'string' && /json/i.test(message.content))) {
+    return messages;
+  }
+  const [first, ...rest] = messages;
+  if (first?.role === 'system') {
+    return [{ ...first, content: `${first.content}\n${JSON_CONTRACT_LINE}` }, ...rest];
+  }
+  return [{ role: 'system', content: JSON_CONTRACT_LINE }, ...messages];
+}
+
 /** 对话：底层一律流式传输（思考模型网关下非流式长等待易被中间层掐断；
  *  SSE 边收边拼，用量含缓存命中精确记账），对外仍返回完整文本 */
 export async function chat(
@@ -692,10 +712,13 @@ export async function chat(
   };
   if (opts?.maxTokens) body.max_tokens = opts.maxTokens;
   if (opts?.topP !== undefined) body.top_p = opts.topP;
-  // 部分服务商（DeepSeek/通义/Kimi/OpenAI）支持 json_object 模式；不支持的会忽略该字段
-  if (opts?.json) body.response_format = { type: 'json_object' };
+  if (opts?.json) {
+    body.response_format = { type: 'json_object' };
+    body.messages = withJsonContractMessage(messages);
+  }
   const active = getActiveChat();
-  applyConfiguredThinking(body, active);
+  if (opts?.disableThinking) body.thinking = { type: 'disabled' };
+  else applyConfiguredThinking(body, active);
   const capabilityKey = `${cfg.baseUrl}|${cfg.chatModel}`;
   // include_usage 让最终帧带精确用量（prompt/cache/completion），缺失的网关由非流式形态回退
   const useStreamOptions =

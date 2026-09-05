@@ -1030,6 +1030,11 @@ export async function recomposePage(
         },
         temperature: 0,
         maxTokens: 2500,
+        // verify 是证据校验关卡：思考模型的推理会吃满小输出预算导致正文为空
+        //（实测 2500 预算被推理吃光，报「推理占用 max_tokens」截断），校验无需
+        // 深度思考，与 compose 的 toolMode 链路（chatToolSchema 内 disableThinking）
+        // 对齐；网关拒绝时由 requestChatWithThinkingFallback 降级兜底
+        disableThinking: true,
         retries: 1,
         signal,
       });

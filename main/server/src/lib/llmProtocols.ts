@@ -7,6 +7,12 @@
 
 export type ProtocolKind = 'openai' | 'anthropic';
 
+/** 流中途错误帧：部分网关以 200 + SSE error 帧返回失败（HTTP 层看不到）。
+ *  必须显式抛出，否则错误帧被当作普通帧忽略，最终以「空内容/LLM 返回格式异常」
+ *  的不可诊断面目浮出。不继承 LlmError（避免反向依赖 llm.ts），
+ *  任务层经 isModelRelatedError 的 instanceof 分支识别。 */
+export class LlmStreamError extends Error {}
+
 // ---------- OpenAI 形状（与 llm.ts 的请求构造一致） ----------
 
 interface OpenAiStyleBody {
@@ -218,6 +224,9 @@ function createAnthropicStreamParser() {
       let event: any;
       try { event = JSON.parse(data); } catch { return {}; }
       if (!event || typeof event !== 'object') return {};
+      if (event.type === 'error') {
+        throw new LlmStreamError(`LLM 流式返回错误: ${String(event.error?.message || JSON.stringify(event.error || event)).slice(0, 300)}`);
+      }
       if (event.type === 'content_block_delta') {
         const delta = event.delta;
         if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
@@ -319,6 +328,10 @@ function createOpenAiStreamParser() {
       if (data === '[DONE]') return { done: true };
       let json: any;
       try { json = JSON.parse(data); } catch { return {}; }
+      // OpenAI 形状错误帧（error 字段）：显式抛出，保持网关真实报错可诊断
+      if (json?.error) {
+        throw new LlmStreamError(`LLM 流式返回错误: ${String(json.error?.message || JSON.stringify(json.error)).slice(0, 300)}`);
+      }
       const choice = json?.choices?.[0];
       const delta = choice?.delta?.content;
       // GLM 等思考模型把推理过程放 delta.reasoning_content，与 content 并行到达

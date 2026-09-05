@@ -640,3 +640,84 @@ test('thinkingLevel 配置矩阵：low/high/max 显式发送，拒绝时不静�
   );
 });
 
+// --- json_object 契约守卫（提示词须含 "json" 字样，DeepSeek 系严格校验） ---
+
+test('withJsonContractMessage appends the guard only when no message mentions json', async () => {
+  const { withJsonContractMessage } = await import('./llm.js');
+  // 无 json 字样 → 守卫句并入首条 system 消息（实测网关按 /json/i 校验）
+  const bare = [
+    { role: 'system' as const, content: '执行 Map。' },
+    { role: 'user' as const, content: '总结要点' },
+  ];
+  const guarded = withJsonContractMessage(bare);
+  assert.equal(guarded.length, 2, '消息条数不变（守卫并入 system，不新增消息）');
+  assert.notEqual(guarded[0], bare[0], 'system 消息为拷贝，不改调用方对象');
+  assert.equal(guarded[1], bare[1]);
+  assert.match(String(guarded[0].content), /^执行 Map。\n.+json/i);
+  // 已含大写 JSON（如 assistant-route 提示词）→ 原样返回，零改动
+  const upper = [{ role: 'system' as const, content: '只输出 JSON：{"mode":""}' }];
+  assert.equal(withJsonContractMessage(upper), upper);
+  // 无 system 消息时前置一条守卫 system
+  const noSystem = [{ role: 'user' as const, content: '总结要点' }];
+  const prepended = withJsonContractMessage(noSystem);
+  assert.equal(prepended.length, 2);
+  assert.equal(prepended[0].role, 'system');
+  assert.match(String(prepended[0].content), /json/i);
+});
+
+test('chatJson appends the json contract message only for prompts without the word json', async () => {
+  activateChat('https://json-contract.example/v1');
+  const bodies: Record<string, any>[] = [];
+  mockChatEndpoint(bodies, () => chatOkResponse('{"ok":true}'));
+  const chatModule = await import('./llm.js');
+
+  await chatModule.chatJson(
+    [{ role: 'user', content: '总结这段话的要点并结构化输出' }],
+    { tag: 'json-contract' },
+  );
+  assert.equal(bodies[0].response_format?.type, 'json_object');
+  assert.match(bodies[0].messages[0].content, /json/i);
+  // 「末条消息=阶段输入」约定不被破坏
+  assert.equal(bodies[0].messages.at(-1).role, 'user');
+
+  // 提示词已含 JSON 字样 → system 内容零改动
+  await chatModule.chatJson(
+    [{ role: 'user', content: '以 JSON 输出 {"ok":1}' }],
+    { tag: 'json-contract-2' },
+  );
+  assert.doesNotMatch(bodies[1].messages[0].content, /合法的 JSON/);
+});
+
+test('chatJson forwards disableThinking for structured calls', async () => {
+  activateChat('https://disable-thinking.example/v1');
+  const bodies: Record<string, any>[] = [];
+  mockChatEndpoint(bodies, () => chatOkResponse('{"ok":true}'));
+  const chatModule = await import('./llm.js');
+
+  await chatModule.chatJson(
+    [{ role: 'user', content: '以 JSON 输出' }],
+    { disableThinking: true, tag: 'verify-no-thinking' },
+  );
+  assert.deepEqual(bodies[0].thinking, { type: 'disabled' });
+});
+
+// --- SSE 错误帧透出（网关以 200 + SSE error 帧返回失败时不再吞成空内容） ---
+
+test('chat surfaces the gateway error from a mid-stream SSE error frame', async () => {
+  activateChat('https://sse-error.example/v1');
+  globalThis.fetch = async () => new Response(
+    'data: {"error":{"message":"upstream overloaded","type":"server_error"}}\n\n',
+    { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+  );
+  const chatModule = await import('./llm.js');
+
+  await assert.rejects(
+    chatModule.chat([{ role: 'user', content: '以 JSON 输出' }], { json: true }),
+    (err: any) => {
+      assert.match(err.message, /LLM 流式返回错误/);
+      assert.match(err.message, /upstream overloaded/);
+      return true;
+    },
+  );
+});
+
