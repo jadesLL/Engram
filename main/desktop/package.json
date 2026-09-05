@@ -1,6 +1,6 @@
 {
   "name": "@engram/desktop",
-  "version": "1.1.43",
+  "version": "1.1.44",
   "private": true,
   "description": "Engram Windows 桌面端（本地内嵌 / 远端连接双模式）",
   "main": "main.js",
@@ -34,7 +34,10 @@
       "server/node_modules/@napi-rs/canvas*/**"
     ],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
