@@ -47,13 +47,16 @@ cd desktop/server/node_modules/better-sqlite3
 #（会拼出软 404 HTML 页报 incorrect header check），直接取精确文件解压：
 # Electron 35 → ABI v133，npmmirror binaries 按该名存放
 BETTER_SQLITE3_TARBALL="better-sqlite3-v12.11.1-electron-v133-win32-x64.tar.gz"
-if curl -fsSL --retry 3 -o "$BETTER_SQLITE3_TARBALL" \
+# --retry-all-errors：npmmirror 偶发断连/5xx 在默认 --retry 下不算可重试错误（09-06 发版三连失败根因）
+if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$BETTER_SQLITE3_TARBALL" \
   "https://registry.npmmirror.com/-/binary/better-sqlite3/v12.11.1/$BETTER_SQLITE3_TARBALL"; then
   tar -xzf "$BETTER_SQLITE3_TARBALL"
   rm -f "$BETTER_SQLITE3_TARBALL"
 else
-  echo ">> 预编译拉取失败，尝试源码编译（wine 交叉编译 win32-x64）"
-  npx --yes node-gyp rebuild --release --target=35.7.5 --runtime=electron --arch=x64 --dist-url=https://electronjs.org/headers/
+  # 不再回退 node-gyp：本容器是 Linux 工具链（gcc），编出来只能是无用的 ELF，
+  # 跑到下方 PE 断言照样失败，白烧几分钟（09-06 失败 run 的实际行为）
+  echo "错误：Electron win32-x64 预编译下载失败（npmmirror 不可达），无可用回退，直接失败"
+  exit 1
 fi
 ls build/Release/better_sqlite3.node
 # 断言是 Windows PE 二进制（MZ 头），防止被装成 Linux ELF 装进 exe 本地模式必崩
