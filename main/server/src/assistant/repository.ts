@@ -1,5 +1,6 @@
 import { db, newId, now } from '../lib/db.js';
 import crypto from 'node:crypto';
+import { agentContextPrompt } from './prompts.js';
 import type {
   AssistantArtifact,
   AssistantContext,
@@ -26,6 +27,7 @@ function sessionRow(row: any): AssistantSession {
     title: row.title,
     summary: row.summary || '',
     archived: Boolean(row.archived),
+    chatAnchorId: row.chat_anchor_id || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -113,16 +115,17 @@ export function getSession(id: string): AssistantSession | null {
 
 export function updateSession(
   id: string,
-  patch: { title?: string; archived?: boolean; summary?: string }
+  patch: { title?: string; archived?: boolean; summary?: string; chatAnchorId?: string }
 ): AssistantSession | null {
   const current = getSession(id);
   if (!current) return null;
   db.prepare(
-    `UPDATE assistant_sessions SET title = ?, archived = ?, summary = ?, updated_at = ? WHERE id = ?`
+    `UPDATE assistant_sessions SET title = ?, archived = ?, summary = ?, chat_anchor_id = ?, updated_at = ? WHERE id = ?`
   ).run(
     patch.title !== undefined ? (patch.title.trim().slice(0, 80) || current.title) : current.title,
     patch.archived !== undefined ? Number(patch.archived) : Number(current.archived),
     patch.summary !== undefined ? patch.summary.slice(0, 20_000) : current.summary,
+    patch.chatAnchorId !== undefined ? patch.chatAnchorId : (current.chatAnchorId ?? null),
     now(),
     id
   );
@@ -197,7 +200,16 @@ export function createRun(
   if (!session) throw new Error('会话不存在');
   const at = now();
   const id = newId();
-  const userMessage = appendMessage({ sessionId, runId: id, role: 'user', content: message });
+  // 界面上下文随消息入库（metadata，不进正文）：请求时按「首次发送形态」重建，
+  // 使下一轮历史里的这条消息与上一轮请求字节一致，provider 前缀缓存得以延续。
+  const contextPrompt = agentContextPrompt(context || {});
+  const userMessage = appendMessage({
+    sessionId,
+    runId: id,
+    role: 'user',
+    content: message,
+    metadata: contextPrompt ? { contextPrompt } : {},
+  });
   db.prepare(
     `INSERT INTO assistant_runs(
        id, session_id, user_message_id, status, context, step_count,

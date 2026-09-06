@@ -281,19 +281,27 @@ function buildAnthropicBody(body: OpenAiStyleBody): Record<string, unknown> {
     max_tokens: body.max_tokens || ANTHROPIC_DEFAULT_MAX_TOKENS,
     messages,
   };
-  if (system) out.system = system;
+  // Anthropic 缓存按 tools → system → messages 顺序做前缀匹配：
+  // 两个断点锁住静态头部（system + 工具定义），对话尾部逐轮追加即可持续命中。
+  if (system) {
+    out.system = [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
+  }
   if (typeof body.temperature === 'number') out.temperature = body.temperature;
   if (typeof body.top_p === 'number') out.top_p = body.top_p;
   if (body.stream === true) out.stream = true;
   if (Array.isArray(body.tools) && body.tools.length) {
-    out.tools = body.tools
+    const tools = body.tools
       .map((tool) => {
         const fn = (tool as any)?.function;
         if (!fn?.name) return null;
         return { name: fn.name, description: fn.description || '', input_schema: fn.parameters || { type: 'object' } };
       })
-      .filter(Boolean);
-    if (body.tool_choice === 'auto') out.tool_choice = { type: 'auto' };
+      .filter(Boolean) as Record<string, unknown>[];
+    if (tools.length) {
+      tools[tools.length - 1] = { ...tools[tools.length - 1], cache_control: { type: 'ephemeral' } };
+      out.tools = tools;
+      if (body.tool_choice === 'auto') out.tool_choice = { type: 'auto' };
+    }
   }
   // OpenAI 专属参数在 Anthropic 协议下直接丢弃：
   // thinking（Anthropic 思考默认关闭，禁用语义天然成立）、response_format、stream_options

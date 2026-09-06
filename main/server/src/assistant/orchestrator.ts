@@ -69,6 +69,10 @@ const MAX_AGENT_STEPS = 8;
 const MAX_HISTORY_MESSAGES = 80;
 const MAX_ASSISTANT_CONTEXT_CHARS = 72_000;
 const COMPACTION_KEEP_VISIBLE_MESSAGES = 12;
+/** chat/question 历史窗口的字符预算（按发送形态、与旧版 slice(-8)×4000 上限持平） */
+const CHAT_HISTORY_BUDGET_CHARS = 32_000;
+/** 预算超限时锚点跳进保留的比例：保留越少，下次跳进间隔越长 */
+const CHAT_WINDOW_KEEP_RATIO = 0.5;
 const ASSISTANT_PROMPT_VERSION = '2026-08-23.1';
 const TOOL_RESULT_MODEL_LIMIT = 8_000;
 const sessionSummarySchema = z.object({
@@ -157,6 +161,43 @@ function visibleHistory(sessionId: string, excludeMessageId?: string): Assistant
       message.content.trim()
     )
     .slice(-MAX_HISTORY_MESSAGES);
+}
+
+/**
+ * chat/question 历史窗口（世代锚点式）：世代内头部冻结、逐轮只追加尾部，
+ * provider 前缀缓存可以把整个世代当作命中前缀；预算超限时锚点一次性跳进
+ * （保留末尾 CHAT_WINDOW_KEEP_RATIO），相当于把旧版"每轮滑一格"的全量失效
+ * 改成"每积累约半个预算跳一次"的单次失效。agent 模式不经过此函数。
+ */
+function chatHistoryWindow(sessionId: string, excludeAssistantId?: string): AssistantMessage[] {
+  const visible = visibleHistory(sessionId, excludeAssistantId);
+  const anchorId = getSession(sessionId)?.chatAnchorId || '';
+  let start = anchorId ? visible.findIndex((message) => message.id === anchorId) : 0;
+  if (start < 0) start = 0;
+  let window = visible.slice(start);
+  const sentChars = (messages: AssistantMessage[]) =>
+    messages.reduce((sum, message) => sum + Math.min(message.content.length, 4000), 0);
+  if (sentChars(window) > CHAT_HISTORY_BUDGET_CHARS && window.length > 1) {
+    let drop = 0;
+    let acc = 0;
+    const target = sentChars(window) * (1 - CHAT_WINDOW_KEEP_RATIO);
+    while (drop < window.length - 1 && acc < target) {
+      acc += Math.min(window[drop].content.length, 4000);
+      drop++;
+    }
+    window = window.slice(drop);
+  }
+  const nextAnchor = window[0]?.id || '';
+  if (nextAnchor && nextAnchor !== anchorId) {
+    updateSession(sessionId, { chatAnchorId: nextAnchor });
+  }
+  return window;
+}
+
+/** 用户消息的请求形态：带落库时的界面上下文包装，保证与首次发送字节一致（前缀缓存链延续） */
+function userMessageRequestContent(message: AssistantMessage): string {
+  const contextPrompt = message.metadata?.contextPrompt;
+  return contextPrompt ? `${contextPrompt}\n\n${message.content}` : message.content;
 }
 
 async function compactSessionIfNeeded(
@@ -402,16 +443,14 @@ async function runFastQuestion(
       content: `已压缩会话摘要：\n${sessionSummary}`,
     });
   }
-  for (const message of visibleHistory(run.sessionId, run.assistantMessageId)
-    .filter((message) => message.id !== run.userMessageId)
-    .slice(-8)) {
+  for (const message of chatHistoryWindow(run.sessionId, run.assistantMessageId)) {
     requestMessages.push(message.role === 'user'
-      ? { role: 'user', content: message.content.slice(0, 4000) }
+      ? { role: 'user', content: userMessageRequestContent(message).slice(0, 4000) }
       : { role: 'assistant', content: message.content.slice(0, 4000) });
   }
   requestMessages.push({
     role: 'user',
-    content: `${agentContextPrompt(run.context)}\n\n${ragUserPrompt(question, sources, '')}`,
+    content: ragUserPrompt(question, sources, ''),
   });
   await chatStream(
     requestMessages,
@@ -450,17 +489,11 @@ async function runChat(
       content: `已压缩会话摘要：\n${sessionSummary}`,
     });
   }
-  for (const message of visibleHistory(run.sessionId, run.assistantMessageId)
-    .filter((message) => message.id !== run.userMessageId)
-    .slice(-8)) {
+  for (const message of chatHistoryWindow(run.sessionId, run.assistantMessageId)) {
     requestMessages.push(message.role === 'user'
-      ? { role: 'user', content: message.content.slice(0, 4000) }
+      ? { role: 'user', content: userMessageRequestContent(message).slice(0, 4000) }
       : { role: 'assistant', content: message.content.slice(0, 4000) });
   }
-  requestMessages.push({
-    role: 'user',
-    content: `${agentContextPrompt(run.context)}\n\n${question}`,
-  });
   await chatStream(
     requestMessages,
     (delta) => {
@@ -527,6 +560,14 @@ export function assistantModelMessagesForRun(runId: string): ChatMessage[] {
   const run = getRun(runId);
   if (!run) throw new Error('运行不存在');
   return llmMessagesForRun(run);
+}
+
+/** 测试/调试用：查看 chat/question 当前世代窗口的请求形态（与实际发送一致，会推进锚点） */
+export function assistantChatWindowMessages(sessionId: string): Array<{ role: 'user' | 'assistant'; content: string }> {
+  return chatHistoryWindow(sessionId).map((message) => ({
+    role: message.role as 'user' | 'assistant',
+    content: message.content.slice(0, 4000),
+  }));
 }
 
 export async function compactAssistantSessionForRun(runId: string): Promise<void> {
