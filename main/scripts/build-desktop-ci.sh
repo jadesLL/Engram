@@ -43,13 +43,18 @@ pnpm -C desktop/server install --prod \
 
 echo ">> 拉取 better-sqlite3 的 Electron win32-x64 预编译"
 cd desktop/server/node_modules/better-sqlite3
-# GitHub releases 在受限网络不可达，prebuild-install 走 npmmirror 二进制镜像
-#（prebuild-install 把 electron 版本映射为 ABI 名 v133 后拼到镜像路径下）
-npx --yes prebuild-install -r electron -t 35.7.5 --arch x64 --platform win32 \
-  --download https://registry.npmmirror.com/-/binary/better-sqlite3 || {
-  echo ">> prebuild-install 失败，尝试源码编译（wine 交叉编译 win32-x64）"
+# GitHub releases 在受限网络不可达。prebuild-install 的镜像拼接路径不可控
+#（会拼出软 404 HTML 页报 incorrect header check），直接取精确文件解压：
+# Electron 35 → ABI v133，npmmirror binaries 按该名存放
+BETTER_SQLITE3_TARBALL="better-sqlite3-v12.11.1-electron-v133-win32-x64.tar.gz"
+if curl -fsSL --retry 3 -o "$BETTER_SQLITE3_TARBALL" \
+  "https://registry.npmmirror.com/-/binary/better-sqlite3/v12.11.1/$BETTER_SQLITE3_TARBALL"; then
+  tar -xzf "$BETTER_SQLITE3_TARBALL"
+  rm -f "$BETTER_SQLITE3_TARBALL"
+else
+  echo ">> 预编译拉取失败，尝试源码编译（wine 交叉编译 win32-x64）"
   npx --yes node-gyp rebuild --release --target=35.7.5 --runtime=electron --arch=x64 --dist-url=https://electronjs.org/headers/
-}
+fi
 ls build/Release/better_sqlite3.node
 # 断言是 Windows PE 二进制（MZ 头），防止被装成 Linux ELF 装进 exe 本地模式必崩
 if ! head -c 2 build/Release/better_sqlite3.node | grep -q MZ; then
