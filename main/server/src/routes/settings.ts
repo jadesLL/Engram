@@ -1,7 +1,16 @@
 import { FastifyInstance } from 'fastify';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { db, getSetting, setSetting, now } from '../lib/db.js';
+import {
+  getZcodeConfig,
+  zcodeInstalled,
+  zcodeCliConfigPath,
+  zcodeMcpUrl,
+} from '../assistant/zcodeRuntime.js';
 import { requireAuth } from './auth.js';
 import {
   getActiveChat,
@@ -36,6 +45,7 @@ const PUBLIC_SETTINGS = [
   'acs_mode',
   'feishu_config',
   'ddns_config',
+  'zcode_config',
 ];
 
 /** 从活跃 embedding 条目同步 embedding_dim（驱动 vec 表维度） */
@@ -287,6 +297,62 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.delete('/api/settings/mcp-tokens/:id', async (req) => {
     const { id } = req.params as { id: string };
     db.prepare(`DELETE FROM mcp_tokens WHERE id = ?`).run(id);
+    return { ok: true };
+  });
+
+  // ---------- ZCode 引擎（桌面端独占：凭据按设备加密，容器内无 CLI）----------
+
+  /** 检测本机 ZCode 安装/登录状态与当前引擎配置 */
+  app.get('/api/settings/zcode-status', async () => {
+    const config = getZcodeConfig();
+    const installed = zcodeInstalled(config);
+    let loggedIn = false;
+    try {
+      const credentials = JSON.parse(fs.readFileSync(
+        path.join(os.homedir(), '.zcode', 'v2', 'credentials.json'), 'utf8'
+      ) as string);
+      loggedIn = Object.keys(credentials).some((key) => key.startsWith('oauth:'));
+    } catch { /* 无凭据文件视为未登录 */ }
+    let registered = false;
+    try {
+      const cliConfig = JSON.parse(fs.readFileSync(zcodeCliConfigPath(), 'utf8') as string);
+      registered = Boolean(cliConfig?.mcp?.servers?.engram);
+    } catch { /* 无配置文件视为未注册 */ }
+    return { installed, loggedIn, registered, mode: config.mode, path: config.path, enabled: config.enabled };
+  });
+
+  /** 把 Engram MCP（回环地址 + Bearer token）注册进 ZCode 的 cli/config.json */
+  app.post('/api/settings/zcode-register', async () => {
+    let token = (db.prepare(`SELECT token FROM mcp_tokens WHERE name = 'zcode'`).get() as any)?.token;
+    if (!token) {
+      token = `lwiki_${crypto.randomBytes(24).toString('hex')}`;
+      db.prepare(`INSERT INTO mcp_tokens(token, name, created_at) VALUES(?, ?, ?)`)
+        .run(token, 'zcode', now());
+    }
+    const configPath = zcodeCliConfigPath();
+    let cliConfig: any = {};
+    try { cliConfig = JSON.parse(fs.readFileSync(configPath, 'utf8') as string); } catch { /* 新建 */ }
+    cliConfig.mcp = cliConfig.mcp || {};
+    cliConfig.mcp.servers = cliConfig.mcp.servers || {};
+    cliConfig.mcp.servers.engram = {
+      url: zcodeMcpUrl,
+      headers: { Authorization: `Bearer ${token}` },
+    };
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(cliConfig, null, 2));
+    return { ok: true, mcpUrl: zcodeMcpUrl };
+  });
+
+  app.post('/api/settings/zcode-unregister', async () => {
+    const configPath = zcodeCliConfigPath();
+    try {
+      const cliConfig = JSON.parse(fs.readFileSync(configPath, 'utf8') as string);
+      if (cliConfig?.mcp?.servers?.engram) {
+        delete cliConfig.mcp.servers.engram;
+        fs.writeFileSync(configPath, JSON.stringify(cliConfig, null, 2));
+      }
+    } catch { /* 无配置文件时无需移除 */ }
+    db.prepare(`DELETE FROM mcp_tokens WHERE name = 'zcode'`).run();
     return { ok: true };
   });
 
