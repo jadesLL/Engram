@@ -77,6 +77,24 @@ let tray = null;
 let quitting = false;
 let trayHintShown = false;
 
+// 外部链接收口：window.open / target=_blank 的子窗口会继承 preload（window.wikiDesktop），
+// 等于把含远端令牌的桥暴露给任意外部站点；页面内导航同理只允许应用自身来源。
+// http(s) 链接一律交给系统浏览器打开，其余协议直接拒绝。
+function isInternalNavUrl(target) {
+  try {
+    const u = new URL(target);
+    if (u.protocol === 'data:' || u.protocol === 'file:') return true;
+    const cur = win ? new URL(win.webContents.getURL()) : null;
+    return Boolean(cur && cur.origin && cur.origin !== 'null' && cur.origin === u.origin);
+  } catch {
+    return false;
+  }
+}
+
+function openExternally(url) {
+  if (/^https?:/i.test(url)) void shell.openExternal(url);
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -90,6 +108,15 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    openExternally(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isInternalNavUrl(url)) return;
+    event.preventDefault();
+    openExternally(url);
   });
   // 点 X 不退出：隐藏窗口驻留托盘，内嵌 server 继续运行；真正退出（托盘/菜单「退出」、升级安装）
   // 走 before-quit 先置 quitting，close 不再拦截。

@@ -133,6 +133,20 @@ export async function indexPage(
   return { chunks: chunks.length, embedded: vectors.length > 0 };
 }
 
+/** 清空一个文件的全部索引（vec/chunks/fts/index_states），用于文本被清空或删除时 */
+export function clearFileIndex(fileId: string): void {
+  db.transaction(() => {
+    db.prepare(
+      `DELETE FROM vec_chunks WHERE rowid IN (
+         SELECT id FROM chunks WHERE ref_type='file' AND ref_id=?
+       )`
+    ).run(fileId);
+    db.prepare(`DELETE FROM chunks WHERE ref_type='file' AND ref_id=?`).run(fileId);
+    db.prepare(`DELETE FROM files_fts WHERE file_id = ?`).run(fileId);
+    db.prepare(`DELETE FROM index_states WHERE ref_type='file' AND ref_id=?`).run(fileId);
+  })();
+}
+
 /** 索引非 md 文件的提取文本（docx 等） */
 export async function indexFileText(
   fileId: string,
@@ -141,7 +155,13 @@ export async function indexFileText(
   signal?.throwIfAborted();
   ensureVecTable(getVecDim());
   const file = db.prepare(`SELECT * FROM files WHERE id = ? AND deleted = 0`).get(fileId) as any;
-  if (!file || !file.text) return { chunks: 0, embedded: false };
+  if (!file) return { chunks: 0, embedded: false };
+  if (!file.text) {
+    // 提取文本为空（如新版 PDF 全页失败）：必须清掉旧索引，否则 FTS/向量
+    // 继续返回已失效的旧内容，且 rebuildAll 跳过空文本文件、无自愈路径。
+    clearFileIndex(fileId);
+    return { chunks: 0, embedded: false };
+  }
   const signature = indexSignature(file.name, file.text);
   const current = currentIndexState('file', fileId, signature);
   if (current) return current;
@@ -233,6 +253,11 @@ export async function rebuildAll(
   ensureVecTable(getVecDim());
   cleanupOrphanVectors();
   await scanVault();
+  // 空文本文件不进重建列表，但要清掉可能残留的旧索引（历史版本提取过、新版提取为空）
+  const emptyFiles = db
+    .prepare(`SELECT id FROM files WHERE deleted = 0 AND (text IS NULL OR text = '')`)
+    .all() as { id: string }[];
+  for (const f of emptyFiles) clearFileIndex(f.id);
   const pages = db.prepare(`SELECT id FROM pages WHERE deleted = 0`).all() as { id: string }[];
   const files = db
     .prepare(`SELECT id FROM files WHERE deleted = 0 AND text != ''`)

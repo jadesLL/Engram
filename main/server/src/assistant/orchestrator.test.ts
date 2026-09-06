@@ -15,6 +15,7 @@ let ensureDirs: typeof import('../config.js').ensureDirs;
 let readPage: typeof import('../lib/vault.js').readPage;
 let createSession: typeof import('./repository.js').createSession;
 let createRun: typeof import('./repository.js').createRun;
+let createToolCall: typeof import('./repository.js').createToolCall;
 let appendMessage: typeof import('./repository.js').appendMessage;
 let getRun: typeof import('./repository.js').getRun;
 let getSession: typeof import('./repository.js').getSession;
@@ -36,6 +37,7 @@ before(async () => {
     appendMessage,
     createSession,
     createRun,
+    createToolCall,
     getRun,
     getSession,
     getSnapshotByRun,
@@ -261,6 +263,46 @@ test('waiting approval can be cancelled and running states recover as interrupte
   updateRun(second.id, { status: 'running' });
   migrate();
   assert.equal(getRun(second.id)?.status, 'interrupted');
+});
+
+test('高风险缺二次确认：decide 在置 executing 之前拒绝，run 停留 waiting_approval 可重新提交', async () => {
+  const session = createSession();
+  const run = createRun(session.id, '高危动作测试', {});
+  updateRun(run.id, { status: 'waiting_approval' });
+  const call = createToolCall({
+    runId: run.id,
+    name: 'create_page',
+    arguments: { title: '高危目标', type: 'concept', content: '# 高危目标' },
+    risk: 'high',
+    status: 'proposed',
+  });
+
+  // 回归点：修复前这里先置 executing 再抛错，run 卡在 executing——
+  // cancel/retry 都不接受该状态，会话被 activeRunForSession 永久锁死
+  await assert.rejects(
+    () => decideAssistantRun(run.id, [{ toolCallId: call.id, approved: true }]),
+    /二次确认/,
+  );
+  assert.equal(getRun(run.id)?.status, 'waiting_approval');
+  assert.equal(getSnapshotByRun(run.id)!.toolCalls[0].status, 'proposed');
+});
+
+test('未知工具：decide 预校验拒绝，run 同样停留 waiting_approval', async () => {
+  const session = createSession();
+  const run = createRun(session.id, '未知工具测试', {});
+  updateRun(run.id, { status: 'waiting_approval' });
+  const call = createToolCall({
+    runId: run.id,
+    name: 'no_such_tool',
+    arguments: {},
+    risk: 'reversible',
+    status: 'proposed',
+  });
+  await assert.rejects(
+    () => decideAssistantRun(run.id, [{ toolCallId: call.id, approved: true }]),
+    /未知工具/,
+  );
+  assert.equal(getRun(run.id)?.status, 'waiting_approval');
 });
 
 test('agent keeps committed history before volatile interface context', () => {

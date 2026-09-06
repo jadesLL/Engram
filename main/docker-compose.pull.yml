@@ -20,8 +20,8 @@ services:
       - .env.onlyoffice
     environment:
       - TZ=Asia/Shanghai
-      # 初始登录密码（仅首次启动生效，之后可在设置页修改）
-      - DEFAULT_PASSWORD=CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER
+      # 初始登录密码（仅首次启动生效；留空则首次登录时在页面设置）
+      - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-}
       - OFFICE_EDITOR_ENABLED=true
       - OFFICE_INTERNAL_URL=http://onlyoffice
       - OFFICE_INTERNAL_APP_URL=http://engram:8080

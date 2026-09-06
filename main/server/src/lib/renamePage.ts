@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import { db } from './db.js';
 import { readPage, readPageMeta, writePage, movePage, safeJoin } from './vault.js';
 import { enqueuePagePipeline } from '../jobs.js';
@@ -32,6 +33,12 @@ export function renamePageSafely(pageId: string, newTitle: string): void {
   if (path.posix.basename(newRel) === path.posix.basename(page.path)) {
     // 文件名相同但标题不同（极端字符归一化），仍需改正文标题，用 -1 后缀避免覆盖
     newRel = path.posix.join(dir, `${safeTitle}-1.md`);
+  }
+  // 同目录已有同名文件（同题页面/历史残留）时依次加 -N 后缀：
+  // movePage 底层是 renameSync，撞名会静默覆盖它页数据（pages.path 冲突报错发生在覆盖之后）。
+  let suffix = 1;
+  while (fs.existsSync(safeJoin(newRel))) {
+    newRel = path.posix.join(dir, `${safeTitle}-${++suffix}.md`);
   }
 
   const body = readPage(page.path);

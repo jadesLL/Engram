@@ -71,3 +71,20 @@ test('mapZcodeEvent: stream-json 事件映射（探针 fixture 形态）', async
   assert.equal(mapZcodeEvent('not json'), null);
   assert.equal(mapZcodeEvent(JSON.stringify({ payload: { type: 'unknown_thing' } }))?.kind, 'ignore');
 });
+
+test('zcodeSpawnEnv: 显式带 ELECTRON_RUN_AS_NODE=1（打包 exe 须以纯 Node 模式执行 CLI）', async () => {
+  const { zcodeSpawnEnv } = await import('./zcodeRuntime.js');
+
+  // 桌面版场景：server 进程环境里已有该变量（fork 而来），子进程必须保持为 1
+  const fromForked = zcodeSpawnEnv({ PATH: 'x', ELECTRON_RUN_AS_NODE: '1' } as NodeJS.ProcessEnv);
+  assert.equal(fromForked.ELECTRON_RUN_AS_NODE, '1');
+
+  // Docker/开发态场景：源环境没有该变量，也要补上（node 会忽略它，无副作用）
+  const fromPlainNode = zcodeSpawnEnv({ PATH: 'x' } as NodeJS.ProcessEnv);
+  assert.equal(fromPlainNode.ELECTRON_RUN_AS_NODE, '1');
+
+  // 不改动源对象
+  const source: Record<string, string> = {};
+  zcodeSpawnEnv(source as NodeJS.ProcessEnv);
+  assert.equal(source.ELECTRON_RUN_AS_NODE, undefined);
+});

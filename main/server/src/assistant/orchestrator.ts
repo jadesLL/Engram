@@ -928,6 +928,17 @@ export async function decideAssistantRun(
   if (!pending.length || pending.some((call) => !decisionMap.has(call.id))) {
     throw new Error('必须对全部待审批动作作出决定');
   }
+  // 预校验必须在置 executing 之前完成：中途抛错会让 run 卡在 executing——
+  // cancel/retry 都不接受该状态，会话从此被 activeRunForSession 永久锁死。
+  // 停在 waiting_approval 则用户补上 confirmHighImpact 后可重新提交。
+  for (const call of pending) {
+    const decision = decisionMap.get(call.id)!;
+    if (!decision.approved) continue;
+    if (!getAgentTool(call.name)) throw new Error(`未知工具：${call.name}`);
+    if (call.risk === 'high' && !decision.confirmHighImpact) {
+      throw new Error(`高影响动作 ${call.name} 需要二次确认`);
+    }
+  }
   updateRun(runId, { status: 'executing' });
   publishSnapshot(runId);
   // Content-operation policy: every write run reads the latest operation log before execution.
@@ -935,7 +946,7 @@ export async function decideAssistantRun(
   for (const call of pending) {
     const decision = decisionMap.get(call.id)!;
     const tool = getAgentTool(call.name);
-    if (!tool) throw new Error(`未知工具：${call.name}`);
+    if (!tool) throw new Error(`未知工具：${call.name}`); // 预校验已拦截，防御性兜底
     if (!decision.approved) {
       updateToolCall(call.id, { status: 'rejected', result: { summary: '用户拒绝执行' } });
       appendMessage({
@@ -946,9 +957,6 @@ export async function decideAssistantRun(
         metadata: { hidden: true, toolCallId: call.id, toolName: call.name },
       });
       continue;
-    }
-    if (call.risk === 'high' && !decision.confirmHighImpact) {
-      throw new Error(`高影响动作 ${call.name} 需要二次确认`);
     }
     updateToolCall(call.id, { status: 'approved' });
     try {
