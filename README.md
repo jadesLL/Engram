@@ -144,7 +144,7 @@ cd Engram/main
 docker compose up -d --build
 ```
 
-访问 `http://<主机IP>:18080`（`docker-compose.yml` 将容器 8080 映射到宿主 18080；`docker-compose.pull.yml` 拉取部署模板映射为 8080），初始登录密码由 `docker-compose.yml` 的 `DEFAULT_PASSWORD` 环境变量指定（请自行修改；登录后可在设置页修改）。
+访问 `http://<主机IP>:18080`（`docker-compose.yml` 将容器 8080 映射到宿主 18080；`docker-compose.pull.yml` 拉取部署模板映射为 8080）。初始密码：`DEFAULT_PASSWORD` 环境变量非空时用其值（适合无头部署）；留空或未设置时首次登录页面直接设置初始密码（仓库不再内置默认密码，登录后可在设置页修改）。
 
 公开仓库未发布 Docker 镜像；自建部署请从源码构建：
 
