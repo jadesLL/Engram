@@ -159,6 +159,17 @@ function failRun(runId: string, error: unknown): void {
   publishAssistantEvent(runId, 'error', { message, cancelled });
 }
 
+/**
+ * 子进程环境：必须显式带上 ELECTRON_RUN_AS_NODE=1。
+ * 桌面版 server 由 electron exe 以该变量 fork 而来（process.execPath 是打包后的 Engram.exe），
+ * 子进程沿用 execPath 启动时，只有带该变量 exe 才以纯 Node 模式执行 zcode CLI；
+ * 反之删掉它会拉起完整的桌面应用（撞单实例锁后退出码 0，表现为空回复+主窗口被弹起）。
+ * 纯 node 环境（Docker/开发态）下该变量无副作用。
+ */
+export function zcodeSpawnEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return { ...source, ELECTRON_RUN_AS_NODE: '1' } as Record<string, string>;
+}
+
 function executeZcodeRun(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run) return Promise.resolve();
@@ -169,17 +180,13 @@ function executeZcodeRun(runId: string): Promise<void> {
   let output = '';
   const toolIds = new Map<string, string>(); // zcode 工具调用 id → engram toolCall id
 
-  // 桌面版 server 以 ELECTRON_RUN_AS_NODE 运行，子进程要去掉该变量才能正常启动 node CLI
-  const env: Record<string, string> = { ...process.env } as any;
-  delete env.ELECTRON_RUN_AS_NODE;
-
   const args = ['--output-format', 'stream-json', '--mode', config.mode];
   if (resumeId) args.push('--resume', resumeId);
   // --prompt= 前缀形式：用户消息整体是该选项的值，带 --prompt= 前缀不会被解析成额外选项
   args.push(`--prompt=${question}`);
   const child = spawn(process.execPath, [config.path, ...args], {
     cwd: BRAIN_DIR,
-    env,
+    env: zcodeSpawnEnv(),
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -219,6 +226,9 @@ function executeZcodeRun(runId: string): Promise<void> {
         break;
       case 'tool_start': {
         const toolKey = mapped.toolId || '';
+        // CLI 对同一次调用重发 tool_use/tool_started（多别名兼容下可能各发一条）：
+        // internalId 是主键，重复 INSERT 会抛 SqliteError——跳过重发事件。
+        if (toolIds.has(toolKey)) break;
         const internalId = `zcode:${toolKey}`;
         toolIds.set(toolKey, internalId);
         createToolCall({
@@ -257,14 +267,21 @@ function executeZcodeRun(runId: string): Promise<void> {
       buffer += chunk;
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
-      for (const line of lines) if (line.trim()) handleLine(line.trim());
+      // handleLine 直接写 SQLite，异常必须就地吞掉：这里是 stdio 事件回调，
+      // 抛出即 uncaughtException，整个服务进程会崩（殃及所有会话与飞书桥接）。
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try { handleLine(line.trim()); } catch (error) { console.error('[zcode] 事件处理失败', error); }
+      }
     });
     child.on('error', (error) => {
       if (!finish()) failRun(runId, error);
       resolve();
     });
     child.on('close', (code) => {
-      if (buffer.trim()) handleLine(buffer.trim());
+      if (buffer.trim()) {
+        try { handleLine(buffer.trim()); } catch (error) { console.error('[zcode] 事件处理失败', error); }
+      }
       if (finish()) return resolve();
       if (run.cancelRequested || getRun(runId)?.cancelRequested) {
         failRun(runId, new Error('已取消'));

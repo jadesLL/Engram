@@ -135,13 +135,16 @@ export async function pageRoutes(app: FastifyInstance) {
     const current = readPage(page.path);
     const currentTags = current?.meta.tags || JSON.parse(page.tags || '[]');
     const nextTags = Array.isArray(tags) ? tags : currentTags;
+    // content 未传时保留现有正文：本路由支持 title/type/tags 单独更新（如侧栏拖拽改类型只发 type），
+    // 缺省成 '' 会把整页正文清空。
+    const nextContent = content === undefined ? (current?.content ?? '') : String(content);
     const unchanged = current &&
-      comparablePageContent(String(content ?? '')) === comparablePageContent(current.content) &&
+      comparablePageContent(nextContent) === comparablePageContent(current.content) &&
       (title === undefined || title === page.title) &&
       (type === undefined || type === page.type) &&
       JSON.stringify(nextTags) === JSON.stringify(currentTags);
     if (unchanged) return { meta: current.meta, unchanged: true };
-    const meta = writePage(page.path, content ?? '', { title, type, tags });
+    const meta = writePage(page.path, nextContent, { title, type, tags });
     // 类型变化 → 物理移动到映射目录（归档区与 Wiki 树外的页面不自动移动）
     if (type && type !== page.type && page.path.startsWith('Wiki/') && !page.path.startsWith('Wiki/归档/')) {
       const targetDir = typeToDir(type);

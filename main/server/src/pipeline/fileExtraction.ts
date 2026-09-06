@@ -270,7 +270,8 @@ function finalizeExtraction(
     file.id,
   );
 
-  if (text) enqueue('index_file', { fileId: file.id, revision: textHash.slice(0, 16) });
+  // 无条件入队：text 为空时 indexFileText 会清理旧索引（新版提取失败不能继续命中旧内容）
+  enqueue('index_file', { fileId: file.id, revision: textHash.slice(0, 16) });
   if (status === 'completed' && text && ingestAfter) {
     enqueue('ingest', {
       path: file.path,

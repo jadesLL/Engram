@@ -299,6 +299,29 @@ describe('CertManager', () => {
     await assert.rejects(() => mgr.waitReady(), /acme down/);
     mgr.stop();
   });
+
+  test('定时器续期失败：rejection 被就地捕获，不产生 unhandledRejection', async () => {
+    const dir = tmpDir();
+    dirs.push(dir);
+    let unhandled: unknown = null;
+    const onUnhandled = (reason: unknown) => { unhandled = reason; };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const mgr = await CertManager.create({
+        ...makeOpts(dir, async () => {
+          throw new Error('renewal boom');
+        }),
+        renewalCheckIntervalMs: 20,
+      });
+      // 等至少两个续期 tick。回归点：修复前定时器里 void checkAndRenew() 的
+      // rejection 无人接盘，Node ≥15 默认直接终止整个进程。
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      mgr.stop();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    assert.equal(unhandled, null);
+  });
 });
 
 describe('Cloudflare DNS-01', () => {

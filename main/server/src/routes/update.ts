@@ -309,10 +309,12 @@ export async function updateRoutes(app: FastifyInstance) {
           }
         }
 
-        // 2) 清理可能残留的上次更新现场（同名的旧容器/switcher）
+        // 2) 清理可能残留的上次更新现场（同名的旧容器/switcher）。
+        //    排除自身：上次更新若在改名后进程被杀，当前活服务就以 engram-old 运行，
+        //    此时按名字强删等于自杀（挂载数据卷的服务直接下线）。
         try {
           const stale = await docker.inspectContainer(OLD_CONTAINER_NAME);
-          if (stale) await docker.removeContainer(stale.Id, true);
+          if (stale && stale.Id !== oldId) await docker.removeContainer(stale.Id, true);
         } catch {
           /* 无残留 */
         }
@@ -326,14 +328,22 @@ export async function updateRoutes(app: FastifyInstance) {
         // 3) 旧容器重命名腾出名字，按原配置 + 新镜像创建新容器（保留原容器名）
         const originalName = inspect.Name.replace(/^\//, '');
         const newBody = buildCreateBody(inspect, targetRef);
-        await docker.renameContainer(oldId, OLD_CONTAINER_NAME);
-        progressLine(`已重命名旧容器为 ${OLD_CONTAINER_NAME}`);
+        // 回滚状态：改名后的任一步骤失败（建新容器/起 switcher），局部 catch 据此恢复现场，
+        // 避免活服务长期顶着 engram-old 名字运行（会被下次重试的残留清理误删）
+        let renamedOld = false;
+        let createdId: string | null = null;
+        if (originalName !== OLD_CONTAINER_NAME) {
+          await docker.renameContainer(oldId, OLD_CONTAINER_NAME);
+          renamedOld = true;
+          progressLine(`已重命名旧容器为 ${OLD_CONTAINER_NAME}`);
+        }
         let created;
         try {
           created = await docker.createContainer(newBody, originalName);
+          createdId = created.Id;
         } catch (e) {
           // 创建失败立即回滚重命名，保持现状
-          await docker.renameContainer(oldId, originalName).catch(() => {});
+          if (renamedOld) await docker.renameContainer(oldId, originalName).catch(() => {});
           throw e;
         }
         progressLine(`已创建新容器 (${created.Id.slice(0, 12)})`);
@@ -342,12 +352,27 @@ export async function updateRoutes(app: FastifyInstance) {
         //    Image 用 targetRef：新容器刚用它 create 成功，存在性已验证；
         //    若用旧镜像 ImageID，旧镜像在本流程中途被清理（如同名 tag 被 rebuild 顶掉变 dangling 后回收）会导致 switcher 起不来。
         const switcherBody = buildSwitcherCreateBody(targetRef, oldId, created.Id, originalName);
-        await docker.createContainer(switcherBody).then((s) => docker.startContainer(s.Id));
+        try {
+          const s = await docker.createContainer(switcherBody);
+          try {
+            await docker.startContainer(s.Id);
+          } catch (e) {
+            await docker.removeContainer(s.Id, true).catch(() => {});
+            throw e;
+          }
+        } catch (e) {
+          // switcher 未起来：新容器占着原名，删掉它再把旧容器名字改回来，服务原样继续
+          if (createdId) await docker.removeContainer(createdId, true).catch(() => {});
+          if (renamedOld) await docker.renameContainer(oldId, originalName).catch(() => {});
+          throw e;
+        }
         progressLine('切换容器已启动，服务即将重启…');
 
         send('done', { message: '更新已交由切换容器执行，服务即将重启', pulled });
         stream.close();
       } catch (e) {
+        // 改名之后的失败已在 step 3/4 就地回滚（新容器删除 + 旧容器恢复原名）；
+        // 走到这里的其余失败都发生在改名前，服务保持原样。
         send('error', { error: describeError(e) });
         stream.close();
       } finally {

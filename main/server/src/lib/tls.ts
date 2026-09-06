@@ -229,7 +229,13 @@ export class CertManager {
     mgr.hadCachedCert = cached !== null;
     const interval = opts.renewalCheckIntervalMs ?? RENEWAL_CHECK_INTERVAL_MS;
     mgr.renewalTimer = setInterval(() => {
-      void mgr.checkAndRenew();
+      // checkAndRenew 的 rejection 必须就地捕获：定时器回调里的 void promise
+      // 无人接盘会变成 unhandledRejection，Node ≥15 默认直接终止整个进程。
+      mgr.checkAndRenew().catch((error) => {
+        console.error(
+          `[tls] 证书续期失败（将在下个周期重试）: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
     }, interval);
     mgr.renewalTimer.unref();
     return mgr;

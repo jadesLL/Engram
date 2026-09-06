@@ -14,6 +14,8 @@ let ensureDirs: () => void;
 let createPage: (dir: string, title: string) => any;
 let writePage: (relPath: string, content: string, extra?: Record<string, any>) => any;
 let indexPage: (pageId: string) => Promise<{ chunks: number; embedded: boolean }>;
+let indexFileText: (fileId: string) => Promise<{ chunks: number; embedded: boolean }>;
+let upsertFileRecord: (relPath: string, text: string, size: number) => string;
 let requests = 0;
 
 before(async () => {
@@ -23,7 +25,7 @@ before(async () => {
   dbModule.migrate();
   ({ ensureDirs } = await import('../config.js'));
   ({ createPage, writePage } = await import('../lib/vault.js'));
-  ({ indexPage } = await import('./indexer.js'));
+  ({ indexPage, indexFileText, upsertFileRecord } = await import('./indexer.js'));
 });
 
 beforeEach(() => {
@@ -35,6 +37,7 @@ beforeEach(() => {
     DELETE FROM entities;
     DELETE FROM pages_fts;
     DELETE FROM pages;
+    DELETE FROM files;
     DELETE FROM settings;
   `);
   fs.rmSync(path.join(temp, 'brain'), { recursive: true, force: true });
@@ -98,4 +101,29 @@ test('unchanged page content reuses the completed vector index', async () => {
   writePage(page.path, '# 索引复用\n\n正文已经变化。', { type: 'concept' });
   await indexPage(page.id);
   assert.equal(requests, 2);
+});
+
+test('提取文本清空后：indexFileText 清掉旧索引，检索不再命中旧内容', async () => {
+  const fileId = upsertFileRecord('资料/报告.txt', '第一版全文内容，应当被索引一次。', 100);
+  const first = await indexFileText(fileId);
+  assert.ok(first.chunks > 0);
+  assert.equal(first.embedded, true);
+  const ftsRows = () =>
+    (db.prepare(`SELECT COUNT(*) c FROM files_fts WHERE file_id = ?`).get(fileId) as any).c;
+  const chunkRows = () =>
+    (db.prepare(`SELECT COUNT(*) c FROM chunks WHERE ref_type='file' AND ref_id=?`).get(fileId) as any).c;
+  const stateRows = () =>
+    (db.prepare(`SELECT COUNT(*) c FROM index_states WHERE ref_type='file' AND ref_id=?`).get(fileId) as any).c;
+  assert.equal(ftsRows(), 1);
+  assert.ok(chunkRows() > 0);
+  assert.equal(stateRows(), 1);
+
+  // 新版提取为空（如 PDF 全页失败）：同路径覆写后重新索引，旧 FTS/分块/向量必须被清理
+  const again = upsertFileRecord('资料/报告.txt', '', 0);
+  assert.equal(again, fileId);
+  const second = await indexFileText(fileId);
+  assert.deepEqual(second, { chunks: 0, embedded: false });
+  assert.equal(ftsRows(), 0);
+  assert.equal(chunkRows(), 0);
+  assert.equal(stateRows(), 0);
 });

@@ -44,12 +44,20 @@ export function ensureJwtSecret(): string {
   return secret;
 }
 
-/** 首次启动写入默认密码（可用环境变量 DEFAULT_PASSWORD 覆盖），登录后可自行修改 */
+/**
+ * 首次启动写入初始密码。仅在显式提供 DEFAULT_PASSWORD 时预写（compose/无头部署场景）；
+ * 否则保持未初始化，登录页会走 /api/auth/setup 首次设密流程（Login.vue 已支持）。
+ * 不再内置仓库可见的默认密码：公网部署下那等于现成登录凭据。
+ */
 export function ensureDefaultPassword() {
   if (getSetting('password_hash')) return;
-  const initial = process.env.DEFAULT_PASSWORD || 'CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER';
+  const initial = process.env.DEFAULT_PASSWORD;
+  if (!initial) {
+    console.log('[auth] 未设置 DEFAULT_PASSWORD，首次登录时将在页面设置初始密码');
+    return;
+  }
   setSetting('password_hash', bcrypt.hashSync(initial, 10));
-  console.log('[auth] 已写入初始密码（环境变量 DEFAULT_PASSWORD 可自定义）');
+  console.log('[auth] 已写入环境变量 DEFAULT_PASSWORD 指定的初始密码');
 }
 
 export function authInitialized(): boolean {
