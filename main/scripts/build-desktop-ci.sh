@@ -16,6 +16,10 @@ echo ">> 激活 pnpm@10.20.0 + npmmirror 源"
 corepack enable
 corepack prepare pnpm@10.20.0 --activate
 pnpm config set registry https://registry.npmmirror.com
+# prebuild-install（better-sqlite3 原生包）默认拉 GitHub releases，受限网络静默挂死；
+# 全程指到 npmmirror 二进制镜像（node-ABI 与 electron-ABI 两处拉取共用）
+export npm_config_better_sqlite3_binary_host_mirror="https://registry.npmmirror.com/-/binary/better-sqlite3"
+export npm_config_better_sqlite3_binary_host="https://registry.npmmirror.com/-/binary/better-sqlite3"
 
 echo ">> 安装依赖（含 desktop 构建依赖）"
 pnpm install --frozen-lockfile --ignore-scripts
