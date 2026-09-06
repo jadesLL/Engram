@@ -169,13 +169,8 @@ function visibleHistory(sessionId: string, excludeMessageId?: string): Assistant
  * （保留末尾 CHAT_WINDOW_KEEP_RATIO），相当于把旧版"每轮滑一格"的全量失效
  * 改成"每积累约半个预算跳一次"的单次失效。agent 模式不经过此函数。
  */
-function chatHistoryWindow(
-  sessionId: string,
-  excludeAssistantId?: string,
-  excludeUserId?: string,
-): AssistantMessage[] {
-  const visible = visibleHistory(sessionId, excludeAssistantId)
-    .filter((message) => message.id !== excludeUserId);
+function chatHistoryWindow(sessionId: string, excludeAssistantId?: string): AssistantMessage[] {
+  const visible = visibleHistory(sessionId, excludeAssistantId);
   const anchorId = getSession(sessionId)?.chatAnchorId || '';
   let start = anchorId ? visible.findIndex((message) => message.id === anchorId) : 0;
   if (start < 0) start = 0;
@@ -197,6 +192,12 @@ function chatHistoryWindow(
     updateSession(sessionId, { chatAnchorId: nextAnchor });
   }
   return window;
+}
+
+/** 用户消息的请求形态：带落库时的界面上下文包装，保证与首次发送字节一致（前缀缓存链延续） */
+function userMessageRequestContent(message: AssistantMessage): string {
+  const contextPrompt = message.metadata?.contextPrompt;
+  return contextPrompt ? `${contextPrompt}\n\n${message.content}` : message.content;
 }
 
 async function compactSessionIfNeeded(
@@ -442,14 +443,14 @@ async function runFastQuestion(
       content: `已压缩会话摘要：\n${sessionSummary}`,
     });
   }
-  for (const message of chatHistoryWindow(run.sessionId, run.assistantMessageId, run.userMessageId)) {
+  for (const message of chatHistoryWindow(run.sessionId, run.assistantMessageId)) {
     requestMessages.push(message.role === 'user'
-      ? { role: 'user', content: message.content.slice(0, 4000) }
+      ? { role: 'user', content: userMessageRequestContent(message).slice(0, 4000) }
       : { role: 'assistant', content: message.content.slice(0, 4000) });
   }
   requestMessages.push({
     role: 'user',
-    content: `${agentContextPrompt(run.context)}\n\n${ragUserPrompt(question, sources, '')}`,
+    content: ragUserPrompt(question, sources, ''),
   });
   await chatStream(
     requestMessages,
@@ -488,15 +489,11 @@ async function runChat(
       content: `已压缩会话摘要：\n${sessionSummary}`,
     });
   }
-  for (const message of chatHistoryWindow(run.sessionId, run.assistantMessageId, run.userMessageId)) {
+  for (const message of chatHistoryWindow(run.sessionId, run.assistantMessageId)) {
     requestMessages.push(message.role === 'user'
-      ? { role: 'user', content: message.content.slice(0, 4000) }
+      ? { role: 'user', content: userMessageRequestContent(message).slice(0, 4000) }
       : { role: 'assistant', content: message.content.slice(0, 4000) });
   }
-  requestMessages.push({
-    role: 'user',
-    content: `${agentContextPrompt(run.context)}\n\n${question}`,
-  });
   await chatStream(
     requestMessages,
     (delta) => {

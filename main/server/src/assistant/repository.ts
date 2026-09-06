@@ -1,5 +1,6 @@
 import { db, newId, now } from '../lib/db.js';
 import crypto from 'node:crypto';
+import { agentContextPrompt } from './prompts.js';
 import type {
   AssistantArtifact,
   AssistantContext,
@@ -199,7 +200,16 @@ export function createRun(
   if (!session) throw new Error('会话不存在');
   const at = now();
   const id = newId();
-  const userMessage = appendMessage({ sessionId, runId: id, role: 'user', content: message });
+  // 界面上下文随消息入库（metadata，不进正文）：请求时按「首次发送形态」重建，
+  // 使下一轮历史里的这条消息与上一轮请求字节一致，provider 前缀缓存得以延续。
+  const contextPrompt = agentContextPrompt(context || {});
+  const userMessage = appendMessage({
+    sessionId,
+    runId: id,
+    role: 'user',
+    content: message,
+    metadata: contextPrompt ? { contextPrompt } : {},
+  });
   db.prepare(
     `INSERT INTO assistant_runs(
        id, session_id, user_message_id, status, context, step_count,
