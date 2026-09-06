@@ -57,6 +57,6 @@ RUN cd /work/mobile \
        -alias warmup -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=gradle-warmup" \
     && ANDROID_KEYSTORE_BASE64="$(base64 -w0 /tmp/warmup.keystore)" \
        ANDROID_KEYSTORE_PASSWORD=warmup ANDROID_KEY_ALIAS=warmup ANDROID_KEY_PASSWORD=warmup \
-       bash mobile/scripts/build-apk-ci.sh \
+       bash scripts/build-apk-ci.sh \
     && touch /opt/gradle-home/.warm-ok \
     || echo "!! gradle 预热失败：run 期将回退在线构建"
