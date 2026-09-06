@@ -1,8 +1,16 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 
+// 受限网络下 google()/mavenCentral() 直连不可达，前置阿里云镜像（原源保留兜底）
+def ALIYUN_GOOGLE = 'https://maven.aliyun.com/repository/google'
+def ALIYUN_CENTRAL = 'https://maven.aliyun.com/repository/central'
+def ALIYUN_PLUGIN = 'https://maven.aliyun.com/repository/gradle-plugin'
+
 buildscript {
-    
+
     repositories {
+        maven { url ALIYUN_GOOGLE }
+        maven { url ALIYUN_CENTRAL }
+        maven { url ALIYUN_PLUGIN }
         google()
         mavenCentral()
     }
@@ -19,6 +27,8 @@ apply from: "variables.gradle"
 
 allprojects {
     repositories {
+        maven { url ALIYUN_GOOGLE }
+        maven { url ALIYUN_CENTRAL }
         google()
         mavenCentral()
     }
