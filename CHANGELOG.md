@@ -8,6 +8,16 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.1.46（2026-09-06）
+
+**新功能：ZCode 引擎——聊天界面可由本机 ZCode 驱动（对标 Obsidian Claudian 模式）**
+
+- 应用内 AI 助手新增第二个运行时引擎：启用后聊天界面直接由本机已安装的 ZCode CLI（headless 模式）驱动，模型、订阅、工具能力全部复用现有 ZCode 安装，Engram 只做子进程管理、事件流转发与历史落库，不内置 CLI、不复制凭据
+- 设置页新增「ZCode 引擎」面板：CLI 安装/登录/注册三态检测、全局引擎开关、权限档位（默认只读 plan 档，可切自动执行 yolo 档）、CLI 路径手动覆盖
+- MCP 互通：一键把 Engram 知识库 MCP（回环地址 + Bearer token）注册进 ZCode 客户端配置，聊天中的 ZCode 可用 search_knowledge / read_page 等工具直接读写知识库；支持随时移除注册
+- 多轮会话经 `--resume` 续接，ZCode 侧会话 id 与 Engram 会话自动映射；对话与工具动作照常记入会话历史、可沉淀入原始资料
+- 桌面端独占：凭据按设备加密，Docker 部署下检测不到 CLI 自动回退内置引擎并隐藏面板
+
 ## v1.1.45（2026-09-06）
 
 **新功能：问 AI 三重增强——多查询改写、跨查询 RRF 融合与可选 rerank 精排**
