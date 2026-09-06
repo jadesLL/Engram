@@ -26,6 +26,7 @@ function sessionRow(row: any): AssistantSession {
     title: row.title,
     summary: row.summary || '',
     archived: Boolean(row.archived),
+    chatAnchorId: row.chat_anchor_id || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -113,16 +114,17 @@ export function getSession(id: string): AssistantSession | null {
 
 export function updateSession(
   id: string,
-  patch: { title?: string; archived?: boolean; summary?: string }
+  patch: { title?: string; archived?: boolean; summary?: string; chatAnchorId?: string }
 ): AssistantSession | null {
   const current = getSession(id);
   if (!current) return null;
   db.prepare(
-    `UPDATE assistant_sessions SET title = ?, archived = ?, summary = ?, updated_at = ? WHERE id = ?`
+    `UPDATE assistant_sessions SET title = ?, archived = ?, summary = ?, chat_anchor_id = ?, updated_at = ? WHERE id = ?`
   ).run(
     patch.title !== undefined ? (patch.title.trim().slice(0, 80) || current.title) : current.title,
     patch.archived !== undefined ? Number(patch.archived) : Number(current.archived),
     patch.summary !== undefined ? patch.summary.slice(0, 20_000) : current.summary,
+    patch.chatAnchorId !== undefined ? patch.chatAnchorId : (current.chatAnchorId ?? null),
     now(),
     id
   );

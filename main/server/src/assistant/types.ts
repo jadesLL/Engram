@@ -45,6 +45,8 @@ export interface AssistantSession {
   title: string;
   summary: string;
   archived: boolean;
+  /** chat/question 历史世代的锚点消息 id：世代内窗口头部冻结，保证 provider 前缀缓存命中 */
+  chatAnchorId?: string;
   createdAt: string;
   updatedAt: string;
 }

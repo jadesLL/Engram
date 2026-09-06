@@ -583,6 +583,7 @@ export function migrate() {
   ensureColumn('ingest_runs', 'llm_prompt_tokens', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('ingest_questions', 'job_id', 'INTEGER');
   ensureColumn('ingest_questions', 'error', 'TEXT');
+  ensureColumn('assistant_sessions', 'chat_anchor_id', 'TEXT');
   ensureColumn('ingest_candidates', 'evidence_eligible', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('semantic_events', 'status', `TEXT NOT NULL DEFAULT 'succeeded'`);
   ensureColumn('semantic_events', 'error', `TEXT NOT NULL DEFAULT ''`);
