@@ -33,7 +33,11 @@ COPY web/package.json web/
 COPY desktop/package.json desktop/
 RUN pnpm install --prod --frozen-lockfile
 # pnpm 默认拦截原生构建脚本，这里显式执行 better-sqlite3 的安装脚本
-#（prebuild-install 拉预编译二进制，失败则 node-gyp 源码编译）
+#（prebuild-install 拉预编译二进制，失败则 node-gyp 源码编译）。
+# prebuild-install 默认从 GitHub releases 下载，受限网络下会长时间挂死，
+# 指到 npmmirror 的二进制镜像（同宿主机安装配方）
+ENV npm_config_better_sqlite3_binary_host_mirror=https://registry.npmmirror.com/-/binary/better-sqlite3 \
+    npm_config_better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3
 RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 \
   && (npm run install || npx --yes node-gyp rebuild --release) \
   && ls build/Release/better_sqlite3.node
