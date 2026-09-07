@@ -3,24 +3,25 @@
     <div class="panel-head">
       <div>
         <h3>ZCode 引擎</h3>
-        <p>聊天界面直接由本机 ZCode 驱动（需已安装并登录 ZCode CLI），仅桌面版可用。</p>
+        <p>聊天界面直接由本机 ZCode 桌面端驱动（需已安装并登录 ZCode），仅桌面版可用。</p>
       </div>
     </div>
 
     <div v-if="!status.installed" class="empty-panel">
-      未检测到本机 ZCode CLI（{{ status.path }}）。Docker 部署下此功能不可用。
+      未检测到 ZCode 桌面端（检测过 {{ status.path }}）。请在本机安装 ZCode 桌面端并登录——需与 Engram
+      桌面版在同一台电脑；Docker/远程部署不支持此功能。
     </div>
 
     <template v-else>
       <div class="status-rows">
         <div class="status-row">
-          <span>CLI 安装</span>
+          <span>ZCode 桌面端</span>
           <strong class="ok">已检测到</strong>
         </div>
         <div class="status-row">
-          <span>CLI 登录</span>
+          <span>ZCode 登录</span>
           <strong :class="status.loggedIn ? 'ok' : 'warn'">
-            {{ status.loggedIn ? '已登录' : '未登录（在终端运行 zcode login 完成一次授权）' }}
+            {{ status.loggedIn ? '已登录' : '未登录（打开 ZCode 桌面端完成一次登录）' }}
           </strong>
         </div>
         <div class="status-row">
@@ -59,9 +60,9 @@
       </div>
 
       <div class="field-block">
-        <span class="field-label">CLI 路径（默认自动检测）</span>
+        <span class="field-label">引擎路径（默认自动检测，留空即可）</span>
         <div class="path-row">
-          <input v-model="cliPath" type="text" placeholder="C:\Program Files\ZCode\resources\glm\zcode.cjs" @change="save" />
+          <input v-model="cliPath" type="text" :placeholder="status.path" @change="save" />
         </div>
       </div>
 
@@ -84,7 +85,7 @@ import { onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 
-const status = ref<any>({ installed: false, loggedIn: false, registered: false, mode: 'plan', path: '', enabled: false });
+const status = ref<any>({ installed: false, loggedIn: false, registered: false, mode: 'plan', path: '', overridePath: '', enabled: false });
 const enabled = ref(false);
 const mode = ref<'plan' | 'yolo'>('plan');
 const cliPath = ref('');
@@ -94,7 +95,7 @@ async function load() {
   status.value = data;
   enabled.value = Boolean(data.enabled);
   mode.value = data.mode === 'yolo' ? 'yolo' : 'plan';
-  cliPath.value = data.path || '';
+  cliPath.value = data.overridePath || '';
 }
 
 async function save() {

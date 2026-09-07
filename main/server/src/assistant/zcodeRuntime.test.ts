@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { ZcodeConfig } from './zcodeRuntime.js';
 
 // mapZcodeEvent 是纯函数，但模块顶层 import db（better-sqlite3），
 // 用临时 DATA_DIR 兜底再动态 import，避免污染开发库。
@@ -87,4 +88,27 @@ test('zcodeSpawnEnv: 显式带 ELECTRON_RUN_AS_NODE=1（打包 exe 须以纯 Nod
   const source: Record<string, string> = {};
   zcodeSpawnEnv(source as NodeJS.ProcessEnv);
   assert.equal(source.ELECTRON_RUN_AS_NODE, undefined);
+});
+
+test('resolveZcodeEnginePath/zcodeInstalled: override 优先、候选回退、全缺失回退首候选', async () => {
+  const { resolveZcodeEnginePath, zcodeInstalled } = await import('./zcodeRuntime.js');
+  const yes = () => true;
+  const no = () => false;
+  const empty: ZcodeConfig = { enabled: false, mode: 'plan', path: '' };
+
+  // 用户显式填写的路径原样优先：填错时也原样返回并判未安装，由面板暴露错误路径
+  const override: ZcodeConfig = { enabled: false, mode: 'plan', path: 'D:\\custom\\zcode.cjs' };
+  assert.equal(resolveZcodeEnginePath(override, no), 'D:\\custom\\zcode.cjs');
+  assert.equal(zcodeInstalled(override, no), false);
+  assert.equal(zcodeInstalled(override, yes), true);
+
+  // 未填写：按候选顺序取第一个存在的（per-machine 优先，其次 per-user Programs 目录）
+  assert.ok(resolveZcodeEnginePath(empty, (p) => p.includes('Program Files')).includes('Program Files'));
+  const second = resolveZcodeEnginePath(empty, (p) => /Programs[/\\]ZCode/.test(p));
+  assert.ok(!second.includes('Program Files'), '应跳过第一个候选取 per-user 候选');
+
+  // 全缺失：回退首个候选供提示展示，且判未安装
+  assert.ok(resolveZcodeEnginePath(empty, no).includes('Program Files'));
+  assert.equal(zcodeInstalled(empty, no), false);
+  assert.equal(zcodeInstalled(empty, yes), true);
 });

@@ -8,6 +8,7 @@ import { db, getSetting, setSetting, now } from '../lib/db.js';
 import {
   getZcodeConfig,
   zcodeInstalled,
+  resolveZcodeEnginePath,
   zcodeCliConfigPath,
   zcodeMcpUrl,
 } from '../assistant/zcodeRuntime.js';
@@ -318,7 +319,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       const cliConfig = JSON.parse(fs.readFileSync(zcodeCliConfigPath(), 'utf8') as string);
       registered = Boolean(cliConfig?.mcp?.servers?.engram);
     } catch { /* 无配置文件视为未注册 */ }
-    return { installed, loggedIn, registered, mode: config.mode, path: config.path, enabled: config.enabled };
+    return { installed, loggedIn, registered, mode: config.mode, path: resolveZcodeEnginePath(config), overridePath: config.path, enabled: config.enabled };
   });
 
   /** 把 Engram MCP（回环地址 + Bearer token）注册进 ZCode 的 cli/config.json */
