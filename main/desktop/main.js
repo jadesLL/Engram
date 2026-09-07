@@ -414,8 +414,8 @@ app.whenReady().then(() => {
   app.setAccessibilitySupportEnabled(true);
   Menu.setApplicationMenu(buildAppMenu());
   launchByConfig();
-  // 自动更新：启动延迟首查 + 每 8 小时复查（仅 Windows 安装形态）
-  if (process.platform === 'win32') {
+  // 自动更新：启动延迟首查 + 每 8 小时复查（仅打包安装形态；源码模式走 scripts/update-from-source.ps1，不自动下载安装包）
+  if (process.platform === 'win32' && app.isPackaged) {
     autoState.enabled = readConfig().autoUpdate !== false;
     setTimeout(autoUpdateTick, AUTO_UPDATE_STARTUP_DELAY_MS);
     setInterval(autoUpdateTick, AUTO_UPDATE_INTERVAL_MS);
