@@ -93,6 +93,108 @@ function dataUrl(html) {
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html + '<style>html,body{-webkit-app-region:drag}</style>');
 }
 
+// ---------- 启动页 / 错误页（品牌化深色主题，替代裸 <h2> 文案页） ----------
+const SPLASH_BG = '#0d1424';
+
+function logoSvg(cls) {
+  return (
+    `<svg class="${cls}" viewBox="0 0 100 100" aria-hidden="true">` +
+    '<defs><linearGradient id="orbit-g" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">' +
+    '<stop offset="0" stop-color="#22D3EE"/><stop offset="1" stop-color="#4D8AFF"/></linearGradient>' +
+    '<linearGradient id="core-g" gradientUnits="userSpaceOnUse" x1="39" y1="39" x2="61" y2="61">' +
+    '<stop offset="0" stop-color="#4D8AFF"/><stop offset="1" stop-color="#245BDB"/></linearGradient></defs>' +
+    '<ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="url(#orbit-g)" stroke-width="8.5" transform="rotate(-28 50 50)"/>' +
+    '<circle cx="74" cy="28.5" r="5" fill="#22D3EE"/>' +
+    '<circle cx="50" cy="50" r="11" fill="url(#core-g)"/></svg>'
+  );
+}
+
+const SPLASH_STYLE = `
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; align-items: center; justify-content: center;
+    background: ${SPLASH_BG}; color: #e6e9f0; user-select: none;
+    font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+  .wrap { display: flex; flex-direction: column; align-items: center; width: min(520px, 78vw); }
+  .logo { width: 92px; height: 92px; margin-bottom: 30px; animation: breathe 2.4s ease-in-out infinite; }
+  h1 { margin: 0 0 12px; font-size: 30px; font-weight: 700; letter-spacing: 2px; }
+  .desc { margin: 0 0 40px; font-size: 14px; color: #8a93a6; text-align: center; }
+  .bar { width: 100%; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.10); overflow: hidden; }
+  .bar i {
+    display: block; height: 100%; width: 42%; border-radius: 3px;
+    background: linear-gradient(90deg, #22D3EE, #4D8AFF);
+    animation: slide 1.4s ease-in-out infinite;
+  }
+  .status { margin-top: 16px; font-size: 12.5px; color: #67718a; min-height: 18px; text-align: center; }
+  @keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(340%); } }
+  @keyframes breathe { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.06); opacity: 1; } }
+  .err-icon {
+    width: 72px; height: 72px; border-radius: 50%; margin-bottom: 26px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(248, 113, 113, 0.12); color: #f87171;
+    font-size: 34px; font-weight: 700;
+  }
+  .detail { margin: 4px 0; font-size: 13px; color: #8a93a6; text-align: center; word-break: break-all; }
+  .detail code { font-family: Consolas, monospace; font-size: 12px; color: #aab4c8; }
+`;
+
+function splashPage(title, desc, status) {
+  return (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
+    SPLASH_STYLE +
+    '</style></head><body><div class="wrap">' +
+    logoSvg('logo') +
+    `<h1>${title}</h1><p class="desc">${desc}</p>` +
+    '<div class="bar"><i></i></div>' +
+    `<div class="status" id="status">${status}</div>` +
+    '</div></body></html>'
+  );
+}
+
+/** 错误页：与启动页同主题；lines 中的路径用 <code> 呈现 */
+function errorPage(title, lines) {
+  const esc = (s) =>
+    String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const body = lines
+    .map((l) => `<p class="detail">${l.includes('\\') || l.includes('/') ? '<code>' + esc(l) + '</code>' : esc(l)}</p>`)
+    .join('');
+  return (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
+    SPLASH_STYLE +
+    '</style></head><body><div class="wrap">' +
+    '<div class="err-icon">!</div>' +
+    `<h1 style="font-size:24px;letter-spacing:1px;">${esc(title)}</h1>` +
+    body +
+    '</div></body></html>'
+  );
+}
+
+/** 启动页状态文案原地更新；页面已切走（非 data: URL）时静默放弃 */
+function setSplashStatus(text) {
+  if (!win || win.isDestroyed()) return;
+  if (!win.webContents.getURL().startsWith('data:')) return;
+  win.webContents
+    .executeJavaScript(`const el=document.getElementById('status'); if (el) el.textContent=${JSON.stringify(text)}; true;`)
+    .catch(() => {});
+}
+
+// 主进程侧页面底色跟随：窗口背景 + Windows 标题栏 overlay 一起切（进应用后由渲染进程经 IPC 接管）
+function applyPageChrome(bg) {
+  const dark = bg === SPLASH_BG;
+  try {
+    if (win && !win.isDestroyed()) {
+      win.setBackgroundColor(bg);
+      if (typeof win.setTitleBarOverlay === 'function') {
+        win.setTitleBarOverlay({ color: bg, symbolColor: dark ? '#e6e9f0' : '#37352f' });
+      }
+    }
+  } catch {
+    /* 非 Windows 或未启用 overlay 时忽略 */
+  }
+}
+
 let win = null;
 let serverChild = null;
 let tray = null;
@@ -218,10 +320,12 @@ function webDistPath() {
 function startLocalMode() {
   const entry = serverEntryPath();
   if (!fs.existsSync(entry)) {
-    win.loadURL(dataUrl('<h2>本地后端缺失</h2><p>未找到内置服务：' + entry + '</p>'));
+    applyPageChrome(SPLASH_BG);
+    win.loadURL(dataUrl(errorPage('本地后端缺失', ['未找到内置服务：', entry])));
     return;
   }
-  win.loadURL(dataUrl('<h2>正在启动本地服务…</h2>'));
+  win.loadURL(dataUrl(splashPage('环境准备中', '正在准备运行环境，请稍候，完成后自动进入主界面。', '正在启动本地服务…')));
+  applyPageChrome(SPLASH_BG);
   const port = getLocalPort();
   const env = {
     ...process.env,
@@ -243,9 +347,16 @@ function startLocalMode() {
   serverChild.on('exit', (code) => log(`[server] exited code=${code}`));
 
   const base = `http://127.0.0.1:${port}`;
+  // 探活超过 6 秒时补充说明：首次启动要初始化数据库，慢是正常的，避免被当成卡死
+  const slowHint = setTimeout(() => setSplashStatus('仍在准备中，首次启动需要初始化数据库，会稍慢一些…'), 6000);
   waitForHealth(base, HEALTH_TIMEOUT_MS).then((ok) => {
-    if (ok) win.loadURL(base);
-    else win.loadURL(dataUrl('<h2>本地服务启动失败</h2><p>详见日志：' + logFile() + '</p>'));
+    clearTimeout(slowHint);
+    if (ok) {
+      setSplashStatus('启动完成，正在进入界面…');
+      win.loadURL(base);
+    } else {
+      win.loadURL(dataUrl(errorPage('本地服务启动失败', ['启动超时或内嵌服务异常，详见日志：', logFile()])));
+    }
   });
 }
 
@@ -350,8 +461,10 @@ async function pickRemoteOrigin(cfg) {
 }
 
 async function startRemoteMode(remoteUrl, token) {
-  win.loadURL(dataUrl('<h2>正在连接远端服务器…</h2>'));
+  win.loadURL(dataUrl(splashPage('正在连接', '正在连接远端服务器并验证身份，完成后自动进入主界面。', '正在选择最优线路…')));
+  applyPageChrome(SPLASH_BG);
   const actualOrigin = await pickRemoteOrigin(readConfig());
+  setSplashStatus('正在验证连接身份…');
   try {
     const r = await fetch(actualOrigin + '/api/auth/desktop-exchange', {
       method: 'POST',
@@ -372,13 +485,15 @@ async function startRemoteMode(remoteUrl, token) {
       sameSite: 'lax',
       expirationDate: Math.floor(Date.now() / 1000) + 30 * 24 * 3600,
     });
+    setSplashStatus('连接成功，正在进入界面…');
     win.loadURL(actualOrigin);
   } catch (e) {
     win.loadURL(
       dataUrl(
-        '<h2>无法连接远端服务器</h2><p>' +
-          (e && e.message ? e.message : String(e)) +
-          '</p><p>地址：' + actualOrigin + '</p>'
+        errorPage('无法连接远端服务器', [
+          e && e.message ? e.message : String(e),
+          '地址：' + actualOrigin,
+        ])
       )
     );
   }
@@ -393,6 +508,7 @@ function launchByConfig() {
   } else if (cfg.mode === 'remote' && cfg.remoteUrl && cfg.remoteToken) {
     startRemoteMode(cfg.remoteUrl, cfg.remoteToken);
   } else {
+    applyPageChrome('#f7f7f5');
     win.loadFile('index.html');
   }
 }
@@ -413,7 +529,10 @@ function buildAppMenu() {
           click: () => {
             stopLocalChild();
             writeConnectionConfig({});
-            if (win) win.loadFile('index.html');
+            if (win) {
+              applyPageChrome('#f7f7f5');
+              win.loadFile('index.html');
+            }
           },
         },
         { type: 'separator' },
@@ -597,6 +716,7 @@ ipcMain.handle('set-remote-mode', (_e, url, token, directUrl) => {
 ipcMain.handle('open-connection-settings', () => {
   stopLocalChild();
   writeConnectionConfig({});
+  applyPageChrome('#f7f7f5');
   win.loadFile('index.html');
   return true;
 });
