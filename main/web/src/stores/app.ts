@@ -60,6 +60,15 @@ export const useAppStore = defineStore('app', {
       this.dark = resolveDarkTheme(this.theme);
       document.documentElement.classList.toggle('dark', this.dark);
       localStorage.setItem('theme', this.theme);
+      // 桌面端：窗口控制按钮（标题栏融合条 WCO）配色跟随主题，取值直接来自 CSS 变量
+      const wd = (window as any).wikiDesktop;
+      if (wd?.setTitleBarOverlay) {
+        const cs = getComputedStyle(document.documentElement);
+        wd.setTitleBarOverlay({
+          color: cs.getPropertyValue('--bg').trim(),
+          symbolColor: cs.getPropertyValue('--text').trim(),
+        });
+      }
     },
     setTheme(t: Theme) {
       this.theme = t;
