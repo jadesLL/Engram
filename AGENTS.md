@@ -41,6 +41,8 @@
 
 ## Windows 桌面端打包
 
+**仅当用户明确要求生成安装包时才打包，其余时候一律不打包**：版本号提交和 CI 发版的安装包由 release.yml 在 tag 上自动构建，本地无需重做；自用机器日常更新走源码模式（`powershell -File main/scripts/update-from-source.ps1`，合 main 即更新，见脚本头部说明），也不产生安装包。
+
 安装包版本号与发布版本对齐（`desktop/package.json`），产物写入 `releases/<version>/`。因 Windows Defender 实时扫描锁定 `electron.exe` 导致 `EPERM rename`，不走 `pnpm build:desktop`，分两步手动打包：
 
 **前置**（每次改了 server/web 源码都必做，否则 asar 里是旧代码）：`cd main/server && node ../node_modules/typescript/bin/tsc -p tsconfig.json` → `cd main/web && node ../node_modules/vite/bin/vite.js build` → `node desktop/scripts/prepare-desktop.js` 复制产物。

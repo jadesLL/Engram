@@ -89,7 +89,8 @@ function log(msg) {
 }
 
 function dataUrl(html) {
-  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+  // 过渡/错误页无交互元素：整页可拖拽，标题栏隐藏后窗口仍可移动
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html + '<style>html,body{-webkit-app-region:drag}</style>');
 }
 
 let win = null;
@@ -124,6 +125,12 @@ function createWindow() {
     minHeight: 600,
     title: 'Engram',
     autoHideMenuBar: true,
+    // 标题栏融合进应用：系统标题栏隐藏，右上角最小化/最大化/关闭由 Windows WCO 原生绘制，
+    // 颜色初值匹配启动页，进入应用后由渲染进程按主题经 set-title-bar-overlay 同步。
+    // height 36 须与 web 端 main.css 的 --win-titlebar-h 一致。
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#f7f7f5', symbolColor: '#37352f', height: 36 },
+    backgroundColor: '#f7f7f5',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -429,8 +436,8 @@ app.whenReady().then(() => {
   app.setAccessibilitySupportEnabled(true);
   Menu.setApplicationMenu(buildAppMenu());
   launchByConfig();
-  // 自动更新：启动延迟首查 + 每 8 小时复查（仅 Windows 安装形态）
-  if (process.platform === 'win32') {
+  // 自动更新：启动延迟首查 + 每 8 小时复查（仅打包安装形态；源码模式走 scripts/update-from-source.ps1，不自动下载安装包）
+  if (process.platform === 'win32' && app.isPackaged) {
     autoState.enabled = readConfig().autoUpdate !== false;
     setTimeout(autoUpdateTick, AUTO_UPDATE_STARTUP_DELAY_MS);
     setInterval(autoUpdateTick, AUTO_UPDATE_INTERVAL_MS);
@@ -466,6 +473,18 @@ app.on('before-quit', () => {
 });
 
 // ---------- IPC ----------
+// 主题切换时同步窗口控制按钮（WCO）配色；未启用 overlay 或平台不支持时静默忽略
+ipcMain.handle('set-title-bar-overlay', (_e, opts) => {
+  try {
+    if (win && !win.isDestroyed() && typeof win.setTitleBarOverlay === 'function') {
+      win.setTitleBarOverlay({ color: String(opts?.color), symbolColor: String(opts?.symbolColor) });
+    }
+  } catch (e) {
+    log('set-title-bar-overlay failed: ' + (e && e.message ? e.message : e));
+  }
+  return true;
+});
+
 ipcMain.handle('get-connection', () => {
   const c = readConfig();
   return { mode: c.mode || '', remoteUrl: c.remoteUrl || '', remoteToken: c.remoteToken || '', directUrl: c.directUrl || '' };

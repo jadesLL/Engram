@@ -153,6 +153,49 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/*
+ * 桌面端无边框标题栏（titleBarOverlay）：顶部 36px 融合条（logo + 应用名，整条可拖拽），
+ * 内容整体下移，右上角最小化/最大化/关闭按钮由 Windows 原生绘制并随主题变色。
+ * 高度须与 desktop/main.js 的 titleBarOverlay.height 一致。
+ */
+html.desktop-frame { --win-titlebar-h: 36px; }
+html.desktop-frame #app { padding-top: var(--win-titlebar-h); }
+.win-titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--win-titlebar-h);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  -webkit-app-region: drag;
+  z-index: var(--z-chrome);
+}
+.win-titlebar svg { flex-shrink: 0; }
+/* 与 rail logo 同款盒装样式（等比缩小：rail 30px 盒/20px 图 → 标题栏 20px 盒/13px 图） */
+.win-titlebar-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: #0f172a;
+  box-shadow: var(--rail-logo-shadow);
+}
+.win-titlebar-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+}
+/* 顶部右侧 toast 落在拖拽区内会点不到关闭按钮，整体下移到融合条之下 */
+html.desktop-frame .toast-stack {
+  top: calc(var(--win-titlebar-h) + 18px);
+}
+
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 

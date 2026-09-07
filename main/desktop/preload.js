@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   setLocalPort: (port) => ipcRenderer.invoke('set-local-port', port),
   // 远程文件「用系统程序打开」
   openFileBytes: (name, bytes) => ipcRenderer.invoke('open-file-bytes', name, bytes),
+  // 同步窗口控制按钮（标题栏融合条 WCO）配色，主题切换时调用；不支持的平台主进程忽略
+  setTitleBarOverlay: (opts) => ipcRenderer.invoke('set-title-bar-overlay', opts),
   // ---------- 桌面端自更新（本地/远端模式均可用；配置取自当前连接服务器的 /api/update/config） ----------
   // 检查 Gitea 最新 Release（cfg 传设置页已保存的更新源配置，旧版主进程会忽略该参数自行解析；
   // 返回 { ok, currentVersion, latestVersion, hasUpdate, exe, releaseUrl }）
