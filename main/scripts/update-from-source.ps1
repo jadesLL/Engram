@@ -8,7 +8,8 @@
 # 前置（一次性）：Git + Node 22 + pnpm 在 PATH，本仓库已 clone。
 # 数据与配置在 %APPDATA%\@engram\desktop，与打包版共用；本脚本只重建代码，不碰数据。
 # 注意：与打包版共用 userData，受单实例锁互斥——同时只能运行一个，启动前请先退出另一个。
-# 18180 被占用时自动改用 18181（ENGRAM_USER_DATA 隔离测试等场景）。
+# 目标端口：优先设置页自定义的 localPort（%APPDATA%\@engram\desktop\config.json），默认 18180；
+# 被占用时自动改用 18181（ENGRAM_USER_DATA 隔离测试等场景）。
 param(
   [switch]$SkipPull,
   [switch]$NoLaunch
@@ -128,9 +129,18 @@ if (-not $electron) {
   if (-not (Test-Path $electron)) { throw 'Electron 运行时不可用：下载失败。可手动解压 electron-v35 zip 到 desktop\dist\win-unpacked\' }
 }
 
-if (Test-PortBusy 18180) {
+# 目标端口：优先设置页自定义的 localPort，默认 18180；被占时回退 18181
+[int]$targetPort = 18180
+$userCfg = Join-Path $env:APPDATA '@engram\desktop\config.json'
+if (Test-Path $userCfg) {
+  try {
+    $custom = (Get-Content $userCfg -Raw | ConvertFrom-Json).localPort
+    if ($custom) { $targetPort = [int]$custom }
+  } catch {}
+}
+if (Test-PortBusy $targetPort) {
   $env:ENGRAM_LOCAL_PORT = '18181'
-  Write-Host '18180 被占用（可能打包版正在运行），本实例改用 18181'
+  Write-Host "$targetPort 被占用（可能打包版正在运行），本实例改用 18181"
 }
 Start-Process -FilePath $electron -ArgumentList '.' -WorkingDirectory $desktop
 Start-Sleep -Seconds 4
@@ -140,4 +150,4 @@ if (-not $alive) {
   Write-Host '启动失败：实例立即退出。最常见原因是单实例锁——打包版 Engram.exe 正在运行（两者共用数据目录，同时只能跑一个），请先退出它再试。' -ForegroundColor Yellow
   exit 1
 }
-Write-Host "`nDONE：已启动（默认端口 18180，被占时 18181）。数据目录未变动。" -ForegroundColor Green
+Write-Host "`nDONE：已启动（端口 $targetPort，被占时 18181）。数据目录未变动。" -ForegroundColor Green
