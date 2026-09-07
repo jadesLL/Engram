@@ -80,8 +80,9 @@ export function savePageRevision(path: string, revision: number, content: string
   ).run(path, revision, content, nodeId, now());
   db.prepare(
     `DELETE FROM page_revisions WHERE path = ? AND revision NOT IN (
-       SELECT revision FROM page_revisions WHERE path = ? ORDER BY revision DESC LIMIT ?`
-    ).run(path, path, PAGE_REVISION_KEEP);
+       SELECT revision FROM page_revisions WHERE path = ? ORDER BY revision DESC LIMIT ?
+     )`
+  ).run(path, path, PAGE_REVISION_KEEP);
 }
 
 export function getPageRevision(path: string, revision: number): string | null {
