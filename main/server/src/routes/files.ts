@@ -4,7 +4,7 @@ import path from 'node:path';
 import matter from 'gray-matter';
 import JSZip from 'jszip';
 import { db } from '../lib/db.js';
-import { safeJoin } from '../lib/vault.js';
+import { safeJoin, notifySyncChange } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { requireAuth } from './auth.js';
 import { officeToText } from '../pipeline/office.js';
@@ -138,9 +138,11 @@ export async function fileRoutes(app: FastifyInstance) {
       const meta = syncPageFile(rel);
       pageId = meta?.id;
       if (pageId) enqueuePagePipeline(pageId);
+      notifySyncChange('page', rel);
     } else if (TEXT_EXTS.has(ext)) {
       const fileId = upsertFileRecord(rel, '', 0);
       enqueue('index_file', { fileId });
+      notifySyncChange('file', rel);
     }
     try { appendWikiLog('新建文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
     return { ok: true, path: rel, pageId };
@@ -189,11 +191,13 @@ export async function fileRoutes(app: FastifyInstance) {
         } catch (e: any) {
           app.log.warn(`Office 提取失败 ${rel}: ${e.message}`);
         }
+        notifySyncChange('file', rel);
       } else if (TEXT_EXTS.has(ext)) {
         const text = buffer.toString('utf8').replace(/\r\n/g, '\n');
         const fileId = upsertFileRecord(rel, text, buffer.length);
         enqueue('index_file', { fileId });
         indexed = true;
+        notifySyncChange('file', rel);
       } else if (['md', 'markdown'].includes(ext)) {
         // 上传的 md 直接登记为可编辑页面并入库索引
         const meta = syncPageFile(rel);
@@ -202,9 +206,11 @@ export async function fileRoutes(app: FastifyInstance) {
           enqueuePagePipeline(pageId);
           indexed = true;
         }
+        notifySyncChange('page', rel);
       } else if (dir === '原始资料' && EXTRACTABLE_EXTENSIONS.has(ext)) {
         const fileId = ensureFileRecord(rel, buffer.length);
         const scheduled = scheduleFileExtraction(rel, { mode: 'auto' });
+        notifySyncChange('file', rel);
         saved.push({
           path: rel,
           name: path.basename(rel),
@@ -213,6 +219,9 @@ export async function fileRoutes(app: FastifyInstance) {
           extractionJobId: scheduled.jobId || null,
         });
         continue;
+      } else {
+        // 其余格式（图片等）仅落盘，不入索引，但同样需要多端同步
+        notifySyncChange('file', rel);
       }
       try { appendWikiLog('上传文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
       saved.push({

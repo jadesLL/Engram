@@ -15,7 +15,7 @@ import {
 } from '../config.js';
 import { db, newId, now } from '../lib/db.js';
 import { emit } from '../lib/events.js';
-import { safeJoin } from '../lib/vault.js';
+import { safeJoin, notifySyncChange } from '../lib/vault.js';
 import { enqueue } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { upsertFileRecord } from '../pipeline/indexer.js';
@@ -267,6 +267,7 @@ async function refreshOfficeFile(relPath: string, buffer: Buffer, finalSave: boo
     console.error(`[office] 刷新索引失败 ${relPath}`, error);
   }
   emit('file-changed', { path: relPath });
+  notifySyncChange('file', relPath);
 }
 
 export async function handleOfficeCallback(

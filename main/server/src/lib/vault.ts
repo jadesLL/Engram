@@ -166,6 +166,23 @@ function atomicWrite(abs: string, content: string | Buffer): void {
   }
 }
 
+/** 写入来源：local=本端业务写入（进入同步链路）；sync=多端同步写入（防回声，不再入队） */
+export type WriteOrigin = 'local' | 'sync';
+
+/**
+ * 通知同步层一次本端内容变更。动态 import 解耦：同步模块不可用/未启用时静默跳过，
+ * 也避免 lib ↔ sync 形成静态循环依赖。同步故障绝不阻塞业务写入。
+ */
+export function notifySyncChange(
+  kind: 'page' | 'file' | 'delete' | 'move',
+  target: string,
+  extra?: { oldPath?: string }
+): void {
+  import('../sync/index.js')
+    .then((m) => m.recordLocalChange(kind, target, extra))
+    .catch(() => { /* 同步模块不可用时忽略 */ });
+}
+
 /** 解析 md 文件并 upsert 到 pages 表；无 id 时生成并回写 frontmatter。
  *  frontmatter 写入用中文字段名（标题/创建日期/更新日期/类型/来源/置信度/领域），
  *  读取兼容旧英文键。 */
@@ -334,7 +351,8 @@ const EXTRA_FM_KEYS = [
 export function writePage(
   relPath: string,
   content: string,
-  extra?: Record<string, any>
+  extra?: Record<string, any>,
+  origin: WriteOrigin = 'local'
 ): PageMeta {
   const abs = safeJoin(relPath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -359,6 +377,7 @@ export function writePage(
   atomicWrite(abs, matter.stringify(content, data));
   const meta = syncPageFile(relPath)!;
   emit('page-changed', { path: relPath, id: meta.id });
+  if (origin === 'local') notifySyncChange('page', relPath);
   return meta;
 }
 
@@ -376,7 +395,7 @@ export function createPage(dir: string, title: string): PageMeta {
 }
 
 /** 重命名/移动（文件与 DB 同步） */
-export function movePage(oldRel: string, newRel: string): PageMeta | null {
+export function movePage(oldRel: string, newRel: string, origin: WriteOrigin = 'local'): PageMeta | null {
   const oldAbs = safeJoin(oldRel);
   const newAbs = safeJoin(newRel);
   if (!fs.existsSync(oldAbs)) return null;
@@ -385,6 +404,7 @@ export function movePage(oldRel: string, newRel: string): PageMeta | null {
   db.prepare(`UPDATE pages SET path = ?, updated_at = ? WHERE path = ?`).run(newRel, now(), oldRel);
   const meta = syncPageFile(newRel);
   if (meta) emit('page-moved', { oldPath: oldRel, newPath: newRel, id: meta.id });
+  if (origin === 'local') notifySyncChange('move', newRel, { oldPath: oldRel });
   return meta;
 }
 
