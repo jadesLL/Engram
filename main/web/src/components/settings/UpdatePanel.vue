@@ -83,7 +83,11 @@
       </div>
 
       <template v-else>
-        <div v-if="autoSupported" class="setting-row">
+        <div v-if="sourceMode" class="integration-note">
+          当前为<strong>源码模式</strong>：更新 = 增量拉取源码并重新构建，不使用安装包。构建约需 1 分钟，期间会显示最小化控制台窗口，完成后应用自动重启，数据不受影响。
+        </div>
+
+        <div v-if="autoSupported && !sourceMode" class="setting-row">
           <div class="setting-copy">
             <strong>自动更新</strong>
             <span>启动后自动检查（之后每 8 小时复查），发现新版本自动在后台下载并静默安装；安装前应用内会提示，装完自动重启，全程无需手动操作。</span>
@@ -94,14 +98,14 @@
             <em>{{ autoState.enabled ? '已开启' : '已关闭' }}</em>
           </label>
         </div>
-        <p v-if="autoSupported && autoStatus && (!autoState.enabled || autoState.phase !== 'idle')" class="setting-message" :class="autoState.phase === 'failed' ? 'err' : autoState.phase === 'installing' ? 'warn' : ''">
+        <p v-if="autoSupported && !sourceMode && autoStatus && (!autoState.enabled || autoState.phase !== 'idle')" class="setting-message" :class="autoState.phase === 'failed' ? 'err' : autoState.phase === 'installing' ? 'warn' : ''">
           {{ autoStatus }}
         </p>
-        <div v-if="autoSupported && autoState.enabled && autoState.phase === 'downloading' && autoState.percent !== null" class="update-progress">
+        <div v-if="autoSupported && !sourceMode && autoState.enabled && autoState.phase === 'downloading' && autoState.percent !== null" class="update-progress">
           <div class="update-progress-bar" :style="{ width: autoState.percent + '%' }" />
         </div>
 
-        <div class="setting-row">
+        <div v-if="!sourceMode" class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
             <span>手动从远端仓库 Release 比对桌面端版本。</span>
@@ -116,15 +120,15 @@
             </button>
           </div>
         </div>
-        <p v-if="desktopUnsupported" class="setting-message warn">
+        <p v-if="!sourceMode && desktopUnsupported" class="setting-message warn">
           当前桌面端版本过旧，不支持应用内更新。请到仓库 Release 页手动下载最新安装包覆盖安装一次，之后即可在应用内更新。
         </p>
-        <p v-if="desktopCheck && !desktopCheck.ok && desktopCheck.error === 'not-configured'" class="setting-message warn">
+        <p v-if="!sourceMode && desktopCheck && !desktopCheck.ok && desktopCheck.error === 'not-configured'" class="setting-message warn">
           尚未配置远端仓库更新源（见下方「更新源配置」）。
         </p>
-        <p v-else-if="desktopCheck && !desktopCheck.ok" class="setting-message err">{{ desktopCheck.error }}</p>
+        <p v-else-if="!sourceMode && desktopCheck && !desktopCheck.ok" class="setting-message err">{{ desktopCheck.error }}</p>
 
-        <div v-if="desktopCheck?.ok && desktopCheck.hasUpdate && desktopCheck.exe" class="setting-row">
+        <div v-if="!sourceMode && desktopCheck?.ok && desktopCheck.hasUpdate && desktopCheck.exe" class="setting-row">
           <div class="setting-copy">
             <strong>下载并安装</strong>
             <span>{{ desktopCheck.exe.name }}（{{ fmtSize(desktopCheck.exe.size) }}），点击后自动下载并静默安装，全程无需操作。</span>
@@ -133,11 +137,42 @@
             {{ installing ? '安装中…' : downloading ? `下载中 ${downloadPercent ?? ''}${downloadPercent !== null ? '%' : ''}` : '下载并安装' }}
           </button>
         </div>
-        <div v-if="downloading && downloadPercent !== null" class="update-progress">
+        <div v-if="!sourceMode && downloading && downloadPercent !== null" class="update-progress">
           <div class="update-progress-bar" :style="{ width: downloadPercent + '%' }" />
         </div>
-        <p v-if="downloadError" class="setting-message err">{{ downloadError }}</p>
-        <p v-else-if="installing" class="setting-message warn">正在静默安装更新，应用将自动重启，请勿关闭。</p>
+        <p v-if="!sourceMode && downloadError" class="setting-message err">{{ downloadError }}</p>
+        <p v-else-if="!sourceMode && installing" class="setting-message warn">正在静默安装更新，应用将自动重启，请勿关闭。</p>
+
+        <!-- 源码模式：增量拉源码 + 重新构建 -->
+        <template v-if="sourceMode">
+          <div class="setting-row">
+            <div class="setting-copy">
+              <strong>检查更新</strong>
+              <span>增量拉取远端源码，比对当前分支落后多少提交。</span>
+            </div>
+            <div class="check-controls">
+              <span v-if="srcResult && srcResult.ok" class="check-status" :class="srcResult.upToDate ? 'none' : 'has'">
+                {{ srcResult.upToDate ? '已是最新' : `落后 ${srcResult.behind} 个提交（分支 ${srcResult.branch}）` }}
+              </span>
+              <button class="btn" type="button" :disabled="srcChecking || srcUpdating" @click="doSourceCheck">
+                <AppSpinner v-if="srcChecking" :size="11" />
+                <template v-else>检查更新</template>
+              </button>
+            </div>
+          </div>
+          <p v-if="srcError" class="setting-message err">{{ srcError }}</p>
+
+          <div v-if="srcResult?.ok && !srcResult.upToDate" class="setting-row">
+            <div class="setting-copy">
+              <strong>更新并重启</strong>
+              <span>增量拉取 {{ srcResult.behind }} 个提交并重新构建（约 1 分钟），应用将自动重启，数据不受影响。</span>
+            </div>
+            <button class="btn primary" type="button" :disabled="srcUpdating" @click="doSourceUpdate">
+              更新并重启
+            </button>
+          </div>
+          <p v-if="srcUpdating" class="setting-message warn">正在增量拉取源码并重新构建，应用即将自动重启，请勿关闭；任务栏最小化窗口为构建过程。</p>
+        </template>
       </template>
     </div>
 
@@ -307,6 +342,13 @@ const autoState = ref<any>({ enabled: true, phase: 'idle', latestVersion: null, 
 let offAutoState: (() => void) | null = null;
 
 const savingConfig = ref(false);
+
+// 源码模式（非打包形态）：更新 = 增量拉源码 + 重新构建，不使用安装包
+const sourceMode = ref(false);
+const srcChecking = ref(false);
+const srcResult = ref<any>(null);
+const srcUpdating = ref(false);
+const srcError = ref('');
 
 const wikiDesktop = () => (window as any).wikiDesktop;
 
@@ -504,6 +546,49 @@ async function downloadAndInstall() {
   }
 }
 
+async function doSourceCheck() {
+  const wd = wikiDesktop();
+  if (!wd?.desktopSourceUpdateCheck) {
+    srcError.value = '当前桌面端壳过旧，不支持源码更新，请更新一次桌面端后再试。';
+    return;
+  }
+  srcChecking.value = true;
+  srcError.value = '';
+  try {
+    srcResult.value = await wd.desktopSourceUpdateCheck();
+    if (!srcResult.value?.ok) srcError.value = srcResult.value?.error || '检查失败';
+  } catch (e: any) {
+    srcResult.value = null;
+    srcError.value = e?.message || '检查失败';
+  } finally {
+    srcChecking.value = false;
+  }
+}
+
+async function doSourceUpdate() {
+  const wd = wikiDesktop();
+  if (!wd?.desktopSourceUpdate) return;
+  const ok = await confirmDialog({
+    title: '更新并重启',
+    message: `将增量拉取 ${srcResult.value?.behind ?? ''} 个提交并重新构建（约 1 分钟），构建在后台最小化窗口进行，完成后应用自动重启，数据不受影响。继续？`,
+    confirmText: '开始更新',
+  });
+  if (!ok) return;
+  srcUpdating.value = true;
+  srcError.value = '';
+  try {
+    const r = await wd.desktopSourceUpdate();
+    if (!r?.ok) {
+      srcUpdating.value = false;
+      srcError.value = r?.error || '更新失败';
+    }
+    // ok：主进程已拉起构建脚本，约 1.5s 后应用自动退出并由新实例接管
+  } catch (e: any) {
+    srcUpdating.value = false;
+    srcError.value = e?.message || '更新失败';
+  }
+}
+
 async function saveConfig() {
   const parsed = parseRepoUrl(form.repoUrl);
   if ('error' in parsed) {
@@ -543,6 +628,11 @@ function fmtSize(bytes: number): string {
 onMounted(() => {
   load();
   const wd = wikiDesktop();
+  if (wd?.getDesktopEnv) {
+    wd.getDesktopEnv().then((env: any) => {
+      sourceMode.value = Boolean(env && !env.packaged && env.platform === 'win32');
+    });
+  }
   if (wd?.onUpdateProgress) {
     offProgress = wd.onUpdateProgress((p: any) => {
       downloadPercent.value = p?.percent ?? null;

@@ -17,8 +17,15 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   chooseDataDir: () => ipcRenderer.invoke('choose-data-dir'),
   // 重启内嵌后端（恢复备份暂存后使其生效；窗口会重新加载）
   restartServer: () => ipcRenderer.invoke('restart-server'),
+  // ---------- 本地服务端口（本地模式） ----------
+  // 查询当前本地服务端口（{ port, isDefault, envOverridden }）
+  getLocalPort: () => ipcRenderer.invoke('get-local-port'),
+  // 更改本地服务端口（占用预检通过后写入 config.json 并重启内嵌后端；未变化返回 { same }，失败返回 { error }）
+  setLocalPort: (port) => ipcRenderer.invoke('set-local-port', port),
   // 远程文件「用系统程序打开」
   openFileBytes: (name, bytes) => ipcRenderer.invoke('open-file-bytes', name, bytes),
+  // 同步窗口控制按钮（标题栏融合条 WCO）配色，主题切换时调用；不支持的平台主进程忽略
+  setTitleBarOverlay: (opts) => ipcRenderer.invoke('set-title-bar-overlay', opts),
   // ---------- 桌面端自更新（本地/远端模式均可用；配置取自当前连接服务器的 /api/update/config） ----------
   // 检查 Gitea 最新 Release（cfg 传设置页已保存的更新源配置，旧版主进程会忽略该参数自行解析；
   // 返回 { ok, currentVersion, latestVersion, hasUpdate, exe, releaseUrl }）
@@ -44,4 +51,11 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
     ipcRenderer.on('desktop-update-state', listener);
     return () => ipcRenderer.removeListener('desktop-update-state', listener);
   },
+  // ---------- 源码模式自更新（非打包形态；安装包形态主进程会拒绝） ----------
+  // 查询运行形态（{ packaged, platform, version }）：false = 源码模式，更新走源码拉取
+  getDesktopEnv: () => ipcRenderer.invoke('desktop-get-env'),
+  // 检查源码更新：fetch 远端并比对当前分支落后多少提交（{ ok, branch, behind, upToDate }）
+  desktopSourceUpdateCheck: () => ipcRenderer.invoke('desktop-source-update-check'),
+  // 增量拉取源码并重建：主进程 pull 后拉起构建脚本，应用自动退出并由新实例接管
+  desktopSourceUpdate: () => ipcRenderer.invoke('desktop-source-update'),
 });

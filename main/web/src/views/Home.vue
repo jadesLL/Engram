@@ -641,7 +641,8 @@ onUnmounted(() => {
 @media (min-width: 769px) and (max-width: 1024px) {
   .sidebar {
     position: fixed;
-    top: 8px;
+    /* fixed 相对视口定位：桌面端须避开顶部拖拽融合条（非桌面端变量回退 0px） */
+    top: calc(8px + var(--win-titlebar-h, 0px));
     bottom: 8px;
     left: 60px;
     width: min(var(--sidebar-width), calc(100vw - 80px)) !important;

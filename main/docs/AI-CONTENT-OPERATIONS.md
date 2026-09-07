@@ -22,7 +22,7 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 
 ## 操作日志
 
-- **位置**：`data/brain/Wiki/log.md`（frontmatter 标题「操作日志」），时间倒序，新条目插在 `# 操作日志` 标题正下方：`- YYYY-MM-DD HH:MM:SS 动作：细节`。服务端启动时自动预置该文件，新知识库亦可直接读取。
+- **位置**：`data/brain/AIWorks/log/log.md`（frontmatter 标题「操作日志」；历史版本在 `Wiki/log.md`，升级启动时自动迁移），时间倒序，新条目插在 `# 操作日志` 标题正下方：`- YYYY-MM-DD HH:MM:SS 动作：细节`。服务端启动时自动预置该文件，新知识库亦可直接读取。
 - **写操作自动记录**：Agent 经 `write_page` / `/api/agent/page` / `save_chat` 的写入由**服务端自动追加**日志，Agent 无需重复记录；只有合并、批量重整等复合动作才用 `write_page` 手工补一条动作说明。
 - **原始不提炼**：`原始资料/` 下的对话、纪要和文件保持原样，Agent 的产出写到 `Wiki/`；日志条目保持一行式，不蒸馏、不汇总。
 
@@ -36,7 +36,7 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 
 ## 动手前 / 动手后
 
-1. 任何写操作前，先 `read_page` 读取 `Wiki/log.md` 了解最近状态。
+1. 任何写操作前，先 `read_page` 读取 `AIWorks/log/log.md` 了解最近状态。
 2. 按指南（`kb_guide`）完成作业；写入交给 `write_page`，门禁与日志自动兜底。
 
 ## 实际执行位置
