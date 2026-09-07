@@ -8,6 +8,16 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.2.3（2026-09-08）
+
+**分发通道重构：源码模式自更新 + 发行仓库 engram-dist**
+
+- **源码模式一键更新（自用机器）**：新增 `main/scripts/update-from-source.ps1`——合 main 即更新，无需发版安装包：`git pull` →（依赖清单变化才）重装依赖 → tsc+vite 构建 → prepare-desktop 组装运行目录 → 启动；数据与配置在 `%APPDATA%\@engram\desktop`，与打包版共用，重建代码不碰数据。与打包版受单实例锁互斥（同时只跑一个），18180 被占自动切 18181
+- **better-sqlite3 按 Electron ABI 装 prebuild**：pnpm 10 忽略构建脚本，且系统 Node ABI 的 binding 在 `ELECTRON_RUN_AS_NODE` 下 `ERR_DLOPEN_FAILED`——脚本按当前 Electron 版本自动从 npmmirror 拉官方 electron prebuild，拷主工作区 binding 仅作兜底
+- **发行仓库 engram-dist**：`release.yml` 创建的 Release 改挂 Gitea 发行仓库 `example/engram-dist`（只放 exe/APK/docker tar.gz/sha256，不含源码），源码仓库保持私有；客户端「更新源配置」里的仓库改为 `example/engram-dist` 即可继续接收更新（旧客户端需手动切一次）
+- **自动更新守卫**：桌面端自动更新仅在打包形态生效（`app.isPackaged`），源码模式不自动下载安装包
+- Docker 版发布流程不变：镜像仍推 `example/engram/engram:<版本>` + latest
+
 ## v1.2.2（2026-09-08）
 
 **数据保存位置自定义（类 Obsidian 仓库）+ 整库备份/恢复**
