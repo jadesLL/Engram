@@ -8,6 +8,18 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.2.1（2026-09-08）
+
+**提炼工作流五点改进 + ZCode 引擎路径全盘符探测**
+
+- **CLI 优先、MCP 兜底**：《Agent 作业指南》（MCP `kb_guide` / `GET /api/guide` / `engram guide` 三端同源）与 MCP instructions 重排——能跑 shell 的 Agent 优先用 engram CLI（命令直出结果、`--json` 机器可读），MCP 用于无法跑 shell、或需把图片作为图像内容直读（`read_raw_file` 带 `raw=true`）时
+- **逐份串行提炼**：删除「可批量读完统一写页」的允许，指南改为明确纪律——读一份、提炼、`write_page` 提交成功再取下一份，单份失败记录原因后跳过不阻塞后续文件
+- **收到提炼指令自动索引待提炼清单**：MCP `list_raw_files` 新增 `pending` 参数、CLI `files list` 新增 `--pending`，一条命令只列未提炼文件；指南流程改为「收到指令 → 先自动索引待提炼清单 → 逐份串行处理」，不需要用户逐个指定文件
+- **「已提炼」自动标记**：原始资料文件列表（侧栏 / `/api/files/list` / MCP `list_raw_files` / CLI `files list`）新增 `distilled` 状态——Agent 带证据写页成功后自动点亮，前端绿色徽标经 SSE 即时刷新；判定与证据门禁同语义（source_versions ⋈ page_contributions active，不带证据的写页不点亮）
+- **修复 log.md 找不到**：`Wiki/log.md` 操作日志改为服务端启动时自动预置——原先懒创建（首次写操作才生成），而指南要求 Agent 动手前先读它，新知识库首读必报「页面不存在： Wiki/log.md」
+- **ZCode 引擎路径全盘符探测**：桌面端引擎检测从 C 盘两个固定位置扩展到全盘符扫描（D 盘等自定义安装位置自动识别）；设置页新增手动指定引擎路径入口
+- 新增 `sourceLedger.test.ts` 覆盖已提炼判定；verify 全绿（Docker 内 build + typecheck + 106 项测试）
+
 ## v1.2.0（2026-09-07）
 
 **架构重构：外部 Agent 驱动——移除全部内置 AI，MCP/CLI 成为一等接口**

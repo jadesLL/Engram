@@ -1,6 +1,6 @@
 services:
   engram:
-    image: engram:1.2.0
+    image: engram:1.2.1
     build: .
     container_name: engram
     ports:
