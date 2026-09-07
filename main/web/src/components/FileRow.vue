@@ -32,6 +32,11 @@
         {{ job.stage }} {{ job.progress }}%
       </span>
       <span
+        v-else-if="file.distilled"
+        class="row-status ingested-flag distilled"
+        v-tooltip="'已由外部 Agent 提炼入库（来源证据抽屉可复核）'"
+      >已提炼</span>
+      <span
         v-else-if="file.extractionStatus === 'failed'"
         class="row-status ingested-flag failed"
         v-tooltip="file.extractionError ? `提取失败：${humanError(file.extractionError)}` : '提取失败，可重试'"
@@ -239,6 +244,7 @@ function fileIconClass(ext: string): string {
 .ingested-flag.unsupported { color: var(--text-faint); }
 .ingested-flag.warning { color: var(--warning); }
 .ingested-flag.extracted { color: var(--accent); }
+.ingested-flag.distilled { color: var(--success); }
 
 .ingest-progress {
   padding: 1px 5px;

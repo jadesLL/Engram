@@ -21,18 +21,18 @@ Engram 不内置任何 AI——读、写、提炼、综合全部由你（外部 
 
 ## 二、接入工具
 
-MCP（endpoint: /mcp，Bearer Token 鉴权）：
+CLI（engram，与 MCP 同一服务端，token 相同）——**能跑 shell 的 Agent 优先用 CLI**：命令直出结果、上下文消耗低，加 --json 可得机器可读输出。命令：engram status / import / files list|read / search / pages list|read|write|evidence / chat save / guide / mcp-config。
+
+MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把图片作为图像内容直读（read_raw_file raw=true）时使用：
 - search —— 关键词检索知识库（页面 + 原始文件提取文本），返回片段与出处
 - list_pages —— 知识库目录树
 - read_page —— 按标题或页面 ID 读页面全文
 - page_evidence —— 读页面的证据账本（来源、版本、事实引文）
-- list_raw_files —— 原始资料清单（含提取状态）
+- list_raw_files —— 原始资料清单（含提取状态与已提炼标记；pending=true 只返回未提炼文件）
 - read_raw_file —— 读原始资料：有文本层返回提取文本；图片/PDF 返回 base64（供视觉模型自行阅读）
 - write_page —— 创建/覆盖页面（新建概念/实体页必须带 evidence 通过两来源门禁）
 - save_chat —— 把外部对话沉积到 原始资料/对话/
 - kb_guide —— 输出本指南全文
-
-CLI（engram，与 MCP 同一服务端，token 相同）：engram status / import / files list|read / search / pages list|read|write / chat save / guide / mcp-config。任何能跑 shell 的 Agent 都可以用 CLI 完成全部操作。
 
 ## 三、操作纪律
 
@@ -40,9 +40,14 @@ CLI（engram，与 MCP 同一服务端，token 相同）：engram status / impor
 2. 原始资料只读不改：原始文件与对话沉积一律保持原样，你的产出写到 Wiki/。
 3. 日志条目保持一行式原始记录，不蒸馏、不汇总成状态看板。
 
-## 四、提炼作业流程（按份处理原始资料）
+## 四、提炼作业流程（自动索引，逐份提炼）
 
-对每份新资料按以下阶段作业。一次可以只处理一份，也可以批量读完再统一写页。
+收到提炼指令后不需要用户逐个指定文件，按下面两步走：
+
+- **Index（索引）**：先 engram files list --pending（CLI）或 list_raw_files 传 pending=true（MCP）自动索引待提炼清单——已提炼的文件带标记，自动跳过；清单中提取状态尚未完成的文件也先跳过（服务端会自动提取文本，稍后重取清单即可）。
+- **逐份串行**：一次只处理一份——读一份、提炼、write_page 提交成功，再取下一份；**不要批量读完再统一写页**。单份失败（如证据校验未通过）记录原因后跳过，不阻塞后续文件。
+
+对每份资料按以下阶段作业：
 
 1. **Map（抽取）**：通读资料（read_raw_file），抽取候选知识对象与原子事实。每条事实必须带一条来源逐字引文（quote，必须是原文连续片段，不能改写拼接）。候选不超过 16 个/份；只抽取，不决定建页。
 2. **Normalize（归并）**：判断哪些候选指向同一对象。职务称谓归并到姓名（「刘经理」→「刘子谕」）；录音转写/OCR 同音错字归并到正确名（「新建/新杰」→「信捷」）；仅在有明确上下文依据时归并，不确定就保留为独立候选。

@@ -9,9 +9,20 @@
 
 Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）、FTS5 关键词检索、来源版本与证据账本、写入门禁由 Engram 确定性完成；总结、提炼、消歧、综合、问答、图片识别全部由外部 Agent 负责。
 
+## 接入方式与优先级
+
+- **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|evidence / chat save / guide / mcp-config），`--json` 得机器可读输出。
+- **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
+- **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
+
+## 提炼作业纪律
+
+- **自动索引**：收到提炼指令后先用上面的待提炼清单命令索引未提炼文件，不需要用户逐个指定。
+- **逐份串行**：一次只处理一份——读一份、提炼、`write_page` 提交成功，再处理下一份；不要批量读完统一写页。单份失败记录原因后跳过，不阻塞后续。
+
 ## 操作日志
 
-- **位置**：`data/brain/Wiki/log.md`（frontmatter 标题「操作日志」），时间倒序，新条目插在 `# 操作日志` 标题正下方：`- YYYY-MM-DD HH:MM:SS 动作：细节`。
+- **位置**：`data/brain/Wiki/log.md`（frontmatter 标题「操作日志」），时间倒序，新条目插在 `# 操作日志` 标题正下方：`- YYYY-MM-DD HH:MM:SS 动作：细节`。服务端启动时自动预置该文件，新知识库亦可直接读取。
 - **写操作自动记录**：Agent 经 `write_page` / `/api/agent/page` / `save_chat` 的写入由**服务端自动追加**日志，Agent 无需重复记录；只有合并、批量重整等复合动作才用 `write_page` 手工补一条动作说明。
 - **原始不提炼**：`原始资料/` 下的对话、纪要和文件保持原样，Agent 的产出写到 `Wiki/`；日志条目保持一行式，不蒸馏、不汇总。
 
