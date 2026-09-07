@@ -135,7 +135,6 @@ export function typeToDir(type: string): string {
 
 export const ARCHIVE_DIR = 'Wiki/归档';
 export const QUERY_DIR = 'Wiki/查询';
-export const AILOG_DIR = 'AIWorks/log';
 
 export function ensureDirs() {
   for (const dir of [DATA_DIR, BRAIN_DIR, TRASH_DIR, ASSETS_DIR]) {

@@ -24,7 +24,7 @@ import { AGENT_GUIDE } from '../content/agentGuide.js';
 const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，读、写、提炼全部由你（外部 Agent）完成。
 能跑 shell 的 Agent 优先用 CLI（engram status/import/files/search/pages/chat/guide，--json 可得机器可读输出）；MCP 用于无法跑 shell、或需把图片作为图像内容直读（read_raw_file raw=true）时。
 提炼作业收到指令后自动索引待提炼清单（CLI engram files list --pending，或 list_raw_files 传 pending=true），然后逐份串行处理：读一份、write_page 提交成功，再处理下一份，不要批量读完统一写页。
-任何写操作前先读 Wiki/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
+任何写操作前先读 AIWorks/log/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
 新建 概念/实体 页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条引文），已有页面增量不受限。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
 完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取。`;

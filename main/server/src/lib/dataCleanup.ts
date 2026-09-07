@@ -2,14 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ensureDirs } from '../config.js';
 import { RELATION_WORDS } from '../pipeline/extractor.js';
-import { appendWikiLog, regenerateIndex, regenerateRelationships } from '../pipeline/indexFile.js';
+import { appendWikiLog, regenerateIndex, regenerateRelationships, LOG_PAGE } from '../pipeline/indexFile.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { db, ensureVecTable, getVecDim } from './db.js';
 import { invalidateGraphCache } from './graphCache.js';
 import { safeJoin, writePage } from './vault.js';
 
 const KNOWLEDGE_DIRS = ['原始资料', 'Wiki/概念', 'Wiki/实体', 'Wiki/归档', 'Wiki/查询'];
-const SYSTEM_PAGE_PATHS = ['Wiki/index.md', 'Wiki/log.md', 'Wiki/关系/relationships.md'];
+/** 系统区三件套现位置 + 历史版本位置（升级前的旧文件也要清索引） */
+const SYSTEM_PAGE_PATHS = [
+  'AIWorks/index/index.md', 'AIWorks/log/log.md', 'AIWorks/scheme/relationships.md',
+  'Wiki/index.md', 'Wiki/log.md', 'Wiki/关系/relationships.md',
+];
 
 export interface KnowledgeWipeResult {
   fileCount: number;
@@ -266,7 +270,7 @@ export async function wipeAiLogsAndRelations(): Promise<AiLogWipeResult> {
     relationCount ? `清空 ${relationCount} 条关系记录` : '',
   ].filter(Boolean);
   const resetLog = `# 操作日志\n\n- ${currentStamp()} 清除：重置操作日志与关系库${details.length ? `（${details.join('，')}）` : ''}\n`;
-  writePage('Wiki/log.md', resetLog, { title: '操作日志', type: 'doc' });
+  writePage(LOG_PAGE, resetLog, { title: '操作日志', type: 'doc' });
   regenerateRelationships();
   regenerateIndex();
   clearStaleSystemPageIndexes();
