@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import { applyStagedRestore } from './lib/stagedRestore.js';
 
 const cwd = process.cwd();
 
@@ -13,6 +14,10 @@ export const TRASH_DIR = path.join(BRAIN_DIR, '.trash');
 export const ASSETS_DIR = path.join(BRAIN_DIR, 'assets');
 /** SQLite 数据库文件 */
 export const DB_FILE = path.join(DATA_DIR, 'wiki.db');
+
+// 整库恢复的暂存换入必须发生在 SQLite 打开之前：lib/db.js 在模块求值时即打开 DB，
+// 而 index.ts 的导入求值顺序里本模块先于 lib/db.js，这里是唯一的同步挂点。
+applyStagedRestore(DATA_DIR);
 
 export const PORT = Number(process.env.PORT || 8080);
 export const HOST = process.env.HOST || '0.0.0.0';
