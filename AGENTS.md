@@ -14,7 +14,7 @@
 
 推送 main 或 `v*` 标签触发 Gitea Actions（详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送只跑 verify（build+typecheck+test）；镜像只在 `v*` 发版时由 release.yml 构建推送（版本 tag + latest），并构建 Windows 安装包发 Release。CI runner 的联网下载属既定流程，本地开发机的下载限制不因此放宽。
 
-发版流程（细则见 main/docs/GITEA-CI.md）：
+发版流程（细则见 main/docs/GITEA-CI.md）。发版是显式动作：仅当用户要求产出 exe/APK/镜像给他人时执行，日常迭代不发版：
 
 1. 功能合并 main 后推送：`git push gitea main` → ci.yml 只做 verify。
 2. 发版：同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 把距上次发布的**全部新功能**写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落（缺失则 release.yml 直接失败）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像并发布 Gitea Release（exe + docker tar.gz + sha256 附件）。
@@ -31,9 +31,9 @@
 ## 项目规则
 
 1. 优先使用中文。
-2. 功能和代码优化要兼顾 desktop 和 docker 两个版本，软件内版本号显示同步改为最新。
+2. 功能和代码优化要兼顾 desktop 和 docker 两个版本。版本号节奏参照 hermes-agent：日常开发只合 main，不 bump 版本号、不发产物——自用机器走源码模式（桌面快捷方式或 `main/scripts/update-from-source.ps1`，新机器双击 `main/scripts/setup-source.cmd` 装环境；应用内「检查更新」即增量拉源码重建）。三处版本号仅在用户明确要求发版时 bump。
 3. 构建安装包时同步构建同版本 tar 和 win 安装包，放入 `releases/` 相同版本号文件夹。
-4. 每次功能验收完成后询问「仅合并 / 合并并推送远端 / 合并推送+发版」三选一；合并后必须推送 gitea。
+4. 每次功能验收完成后询问「仅合并 / 合并并推送远端」两选一，默认推荐合并并推送（推送后源码模式客户端即可更新）；发版是显式动作，仅当用户明确提出时才执行（见下方发版流程）。合并后必须推送 gitea。
 5. 只要更新了版本号，提交后必须立即推送 gitea（触发 CI 更新镜像 tag 与 latest），并确认 Actions 运行成功。
 6. 功能合并进 main 时同步把新功能整合进仓库根 `README.md`（功能总览、使用说明、数据目录等；纯内部重构/CI 调整可只更新 CHANGELOG）。
 7. 发布新版本时，距上次发布的全部新功能写入 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落，与 bump 同一提交推送。
