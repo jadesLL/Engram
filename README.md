@@ -102,7 +102,7 @@ node-cron 定时任务（默认每天 03:00，支持工作日 / 每周 / 每月 
 - 执行前校验 precondition——等待审批期间页面被改过会拒绝执行，防止拿着旧快照覆盖新内容
 - 工具结果自动脱敏（key/password/secret/token 字段），页面正文视为不可信数据
 - 任务完成后可把对话沉淀到 `原始资料/对话/`，进入提炼管线变成新知识
-- **ZCode 引擎（桌面端可选）**：设置页开启后，聊天界面改由本机已安装的 ZCode CLI 驱动（对标 Obsidian Claudian 模式）——模型走 ZCode 订阅免 API key，工具能力即 ZCode 全量能力；默认只读档，可切自动执行；一键注册后 ZCode 可经 MCP 工具读写知识库（仅桌面版，Docker 下自动回退内置引擎）
+- **ZCode 引擎（桌面端可选）**：设置页开启后，聊天界面改由本机已安装的 ZCode 桌面端驱动（引擎随 ZCode 桌面端自带，无需单独安装 CLI；对标 Obsidian Claudian 模式）——模型走 ZCode 订阅免 API key，工具能力即 ZCode 全量能力；默认只读档，可切自动执行；一键注册后 ZCode 可经 MCP 工具读写知识库（仅桌面版，Docker 下自动回退内置引擎）
 
 ### 💬 飞书 IM 集成
 

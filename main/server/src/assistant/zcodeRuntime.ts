@@ -23,8 +23,14 @@ import { ingestAssistantRun, nativeAssistantRuntime } from './orchestrator.js';
 import type { AssistantContext, AssistantRun } from './types.js';
 import type { AssistantRuntime } from './runtime.js';
 
-/** ZCode CLI 默认安装位置（Windows 桌面安装版） */
-const DEFAULT_ZCODE_CJS = 'C:\\Program Files\\ZCode\\resources\\glm\\zcode.cjs';
+/** ZCode 桌面端自带引擎的候选位置（安装版 per-machine 与 per-user） */
+const ZCODE_ENGINE_CANDIDATES = [
+  'C:\\Program Files\\ZCode\\resources\\glm\\zcode.cjs',
+  path.join(
+    process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+    'Programs', 'ZCode', 'resources', 'glm', 'zcode.cjs',
+  ),
+];
 const SETTING_KEY = 'zcode_config';
 
 export interface ZcodeConfig {
@@ -41,12 +47,28 @@ export function getZcodeConfig(): ZcodeConfig {
   return {
     enabled: parsed.enabled === true,
     mode: parsed.mode === 'yolo' ? 'yolo' : 'plan',
-    path: typeof parsed.path === 'string' && parsed.path.trim() ? parsed.path.trim() : DEFAULT_ZCODE_CJS,
+    path: typeof parsed.path === 'string' ? parsed.path.trim() : '',
   };
 }
 
-export function zcodeInstalled(config = getZcodeConfig()): boolean {
-  return fs.existsSync(config.path);
+export function zcodeInstalled(
+  config: ZcodeConfig = getZcodeConfig(),
+  exists: (p: string) => boolean = (p) => fs.existsSync(p),
+): boolean {
+  if (config.path) return exists(config.path);
+  return ZCODE_ENGINE_CANDIDATES.some(exists);
+}
+
+/**
+ * 引擎实际路径：用户显式填写的优先（即使不存在也原样返回，让面板暴露配置错误）；
+ * 未填写时按候选顺序取第一个存在的，全部缺失则回退首个候选供提示展示。
+ */
+export function resolveZcodeEnginePath(
+  config: ZcodeConfig = getZcodeConfig(),
+  exists: (p: string) => boolean = (p) => fs.existsSync(p),
+): string {
+  if (config.path) return config.path;
+  return ZCODE_ENGINE_CANDIDATES.find(exists) || ZCODE_ENGINE_CANDIDATES[0];
 }
 
 /** Engram ↔ ZCode 会话映射（zcode --resume 用的 sess_* id），存 settings KV */
@@ -174,6 +196,7 @@ function executeZcodeRun(runId: string): Promise<void> {
   const run = getRun(runId);
   if (!run) return Promise.resolve();
   const config = getZcodeConfig();
+  const enginePath = resolveZcodeEnginePath(config);
   const question = getMessage(run.userMessageId)?.content || '';
   const resumeId = zcodeSessionId(run.sessionId);
   const messageId = assistantPlaceholder(run);
@@ -184,7 +207,9 @@ function executeZcodeRun(runId: string): Promise<void> {
   if (resumeId) args.push('--resume', resumeId);
   // --prompt= 前缀形式：用户消息整体是该选项的值，带 --prompt= 前缀不会被解析成额外选项
   args.push(`--prompt=${question}`);
-  const child = spawn(process.execPath, [config.path, ...args], {
+  // enginePath 来自管理设置或安装位置候选清单；argv 数组直传、不开 shell（spawn 默认 shell:false）
+  const argv = [enginePath, ...args];
+  const child = spawn(process.execPath, argv, {
     cwd: BRAIN_DIR,
     env: zcodeSpawnEnv(),
     windowsHide: true,
@@ -306,7 +331,7 @@ export function startZcodeRun(
   if (active) throw new Error('当前会话已有进行中的任务');
   const config = getZcodeConfig();
   if (!zcodeInstalled(config)) {
-    throw new Error('未找到本机 ZCode CLI，请在「设置 → ZCode 引擎」中确认安装路径');
+    throw new Error('未找到本机 ZCode 桌面端，请在「设置 → ZCode 引擎」确认已安装 ZCode 桌面端并登录');
   }
   const run = createRun(sessionId, message.trim(), {
     ...context,
