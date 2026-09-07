@@ -75,6 +75,26 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 - **应用内自更新**：Docker 网页一键升级；桌面端全自动更新
 - 设置页 8 大面板：账户、MCP 集成、Agent 接入、桌面端连接、软件更新、DDNS 直连、存储空间、数据管理
 
+## 下载与安装
+
+三种使用方式，按机器选择：
+
+**Windows 桌面端 · 安装包**（给非开发机器）
+
+1. 从发行仓库 [engram-dist Releases](https://gitea.example.com/example/engram-dist/releases) 下载 `Engram Setup <版本>.exe`（该仓库只放成品，不含源码；私有仓库，需已授权账号）
+2. 双击安装；数据在 `%APPDATA%\@engram\desktop`，与源码版互通
+3. 更新：应用内 设置 → 软件更新 → 「检查更新」，自动下载并静默安装
+
+**Windows 桌面端 · 源码版**（自用开发机，推荐）
+
+1. 安装 Git → `git clone https://github.com/jadesLL/Engram.git`（私有仓库，需账号/令牌）
+2. 双击 `main/scripts/setup-source.cmd`：自动检查补齐 Node/pnpm、安装依赖、构建桌面端、生成桌面快捷方式并启动
+3. 日常双击桌面「Engram」= 增量拉最新源码重建启动；应用内「检查更新」同样增量拉源码更新——合 main 即更新，无需等发版
+
+**Docker（服务器 / NAS）**：见下方「快速开始（Docker 部署）」；更新可在 设置 → 软件更新 一键拉镜像重建（需挂载 docker.sock）。
+
+> Android APK 随发版附于 engram-dist Releases。
+
 ## 快速开始（Docker 部署）
 
 ```bash
@@ -93,7 +113,7 @@ docker compose up -d --build
 docker compose -f docker-compose.pull.yml up -d
 ```
 
-Windows 桌面端安装包从 [Releases](https://github.com/jadesLL/Engram/releases) 下载（`Engram Setup <版本>.exe`）。
+Windows 桌面端安装包从 [engram-dist Releases](https://gitea.example.com/example/engram-dist/releases) 下载（`Engram Setup <版本>.exe`），更多安装方式见上文「下载与安装」。
 
 > 想从源码自行构建，见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)。
 
@@ -149,7 +169,8 @@ Fastify + better-sqlite3（FTS5）· Vue 3 + Vditor + vis-network · Electron（
 ## 版本与发布
 
 - **更新日志**：[`CHANGELOG.md`](./CHANGELOG.md)——每个版本的全部新功能与变更；发版时由 CI 自动发布到 GitHub Release 正文
-- **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Android 安装包（apk）、Docker 镜像包（tar.gz）与 sha256 校验
+- **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Android 安装包（apk）、Docker 镜像包（tar.gz）与 sha256 校验；Release 挂在发行仓库 [example/engram-dist](https://gitea.example.com/example/engram-dist)（只放产物不含源码），发版是显式动作，仅按需执行
+- **源码模式通道**：自用机器不依赖发版——合 main 后即可通过桌面快捷方式或应用内「检查更新」增量拉源码更新（见「下载与安装」）
 - **镜像**：`gitea.example.com/example/engram/engram:<版本>`（未公开发布；需要请自行构建）
 - **发版流程**：详见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)；CI/CD 维护见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)
 
