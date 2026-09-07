@@ -9,7 +9,7 @@ import { moveToTrash } from '../lib/trash.js';
 import { requireAuth } from './auth.js';
 import { officeToText } from '../pipeline/office.js';
 import { ensureFileRecord, upsertFileRecord } from '../pipeline/indexer.js';
-import { enqueue } from '../jobs.js';
+import { enqueue, enqueuePagePipeline } from '../jobs.js';
 import { normalizeDir, isUploadDir } from '../config.js';
 import { syncPageFile } from '../lib/vault.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
@@ -25,10 +25,6 @@ import {
 /** 可提取文本入索引的 Office 格式 */
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
 const TEXT_EXTS = new Set(['txt']);
-const INGEST_EXTS = new Set([
-  'docx', 'md', 'markdown', 'txt', 'xlsx', 'pptx',
-  ...EXTRACTABLE_EXTENSIONS,
-]);
 
 const CONTENT_TYPES: Record<string, string> = {
   pdf: 'application/pdf',
@@ -75,7 +71,6 @@ export async function fileRoutes(app: FastifyInstance) {
         const page = db.prepare(`SELECT id FROM pages WHERE path = ? AND deleted = 0`).get(rel) as any;
         pageId = page?.id;
       }
-      const ing = db.prepare(`SELECT at, status, error FROM ingest_log WHERE path = ?`).get(rel) as any;
       const extraction = db.prepare(
         `SELECT fe.* FROM file_extractions fe
          JOIN files f ON f.id=fe.file_id
@@ -85,10 +80,6 @@ export async function fileRoutes(app: FastifyInstance) {
         name, path: rel, ext, size: stat.size,
         updated_at: stat.mtime.toISOString(),
         pageId,
-        ingestSupported: INGEST_EXTS.has(ext),
-        ingestedAt: ing?.status === 'completed' ? ing.at : null,
-        ingestStatus: ing?.status || null,
-        ingestError: ing?.error || null,
         extractionStatus: extraction?.status || null,
         extractionMethod: extraction?.method || null,
         extractionPageCount: extraction?.page_count || 0,
@@ -144,13 +135,12 @@ export async function fileRoutes(app: FastifyInstance) {
     if (['md', 'markdown'].includes(ext)) {
       const meta = syncPageFile(rel);
       pageId = meta?.id;
-      if (pageId) enqueue('embed', { pageId });
+      if (pageId) enqueuePagePipeline(pageId);
     } else if (TEXT_EXTS.has(ext)) {
       const fileId = upsertFileRecord(rel, '', 0);
       enqueue('index_file', { fileId });
     }
     try { appendWikiLog('新建文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
-    enqueue('ingest', { path: rel });
     return { ok: true, path: rel, pageId };
   });
 
@@ -207,25 +197,20 @@ export async function fileRoutes(app: FastifyInstance) {
         const meta = syncPageFile(rel);
         pageId = meta?.id;
         if (pageId) {
-          enqueue('embed', { pageId });
+          enqueuePagePipeline(pageId);
           indexed = true;
         }
       } else if (dir === '原始资料' && EXTRACTABLE_EXTENSIONS.has(ext)) {
         const fileId = ensureFileRecord(rel, buffer.length);
-        const scheduled = scheduleFileExtraction(rel, { mode: 'auto', ingestAfter: true });
+        const scheduled = scheduleFileExtraction(rel, { mode: 'auto' });
         saved.push({
           path: rel,
           name: path.basename(rel),
           indexed: false,
           fileId,
           extractionJobId: scheduled.jobId || null,
-          ingestSupported: true,
         });
         continue;
-      }
-      // 原始资料入料即消化（AI 提炼概念/实体页到 Wiki）
-      if (dir === '原始资料' && INGEST_EXTS.has(ext)) {
-        enqueue('ingest', { path: rel });
       }
       try { appendWikiLog('上传文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
       saved.push({
@@ -233,10 +218,6 @@ export async function fileRoutes(app: FastifyInstance) {
         name: path.basename(rel),
         indexed,
         pageId,
-        ingestSupported: dir === '原始资料' && INGEST_EXTS.has(ext),
-        ingestNote: dir === '原始资料' && INGEST_EXTS.has(ext)
-          ? undefined
-          : '文件已保存，当前格式暂不支持 AI 整理',
       });
     }
     if (saved.length === 0 && duplicates.length > 0) {
@@ -355,7 +336,6 @@ export async function fileRoutes(app: FastifyInstance) {
       const scheduled = scheduleFileExtraction(p, {
         mode,
         pages: pages.map(Number).filter(Number.isInteger).slice(0, 100),
-        ingestAfter: true,
       });
       return reply.code(202).send({ ok: true, jobId: scheduled.jobId || null });
     } catch (error: any) {

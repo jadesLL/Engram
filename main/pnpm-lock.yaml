@@ -37,9 +37,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.1
         version: 1.30.0(zod@3.25.76)
-      '@napi-rs/canvas':
-        specifier: 1.0.5
-        version: 1.0.5
       acme-client:
         specifier: ^5.4.0
         version: 5.4.0
@@ -61,9 +58,6 @@ importers:
       mammoth:
         specifier: ^1.9.0
         version: 1.12.0
-      node-cron:
-        specifier: ^3.0.3
-        version: 3.0.3
       pdfjs-dist:
         specifier: 6.2.108
         version: 6.2.108
@@ -92,9 +86,6 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
-      '@types/node-cron':
-        specifier: ^3.0.11
-        version: 3.0.11
       tsx:
         specifier: ^4.19.2
         version: 4.23.5
@@ -952,9 +943,6 @@ packages:
 
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
-
-  '@types/node-cron@3.0.11':
-    resolution: {integrity: sha512-0ikrnug3/IyneSHqCBeslAhlK2aBfYek1fGo4bP4QnZPmiqSGRK+Oy7ZMisLWkesffJvQ1cqAcBnJC+8+nxIAg==}
 
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
@@ -2232,10 +2220,6 @@ packages:
 
   node-api-version@0.2.1:
     resolution: {integrity: sha512-2xP/IGGMmmSQpI1+O/k72jF/ykvZ89JeuKX3TLJAYPDVLUalrshrLHkeVcCCZqG/eEa635cr8IBYzgnDvM2O8Q==}
-
-  node-cron@3.0.3:
-    resolution: {integrity: sha512-dOal67//nohNgYWb+nWmg5dkFdIwDm8EpeGYMekPMrngV3637lqnX0lbUcCtgibHTz6SEz7DAIjKvKDFYCnO1A==}
-    engines: {node: '>=6.0.0'}
 
   node-fetch@1.6.3:
     resolution: {integrity: sha512-BDxbhLHXFFFvilHjh9xihcDyPkXQ+kjblxnl82zAX41xUYSNvuRpFRznmldR9+OKu+p+ULZ7hNoyunlLB5ecUA==}
@@ -3843,8 +3827,6 @@ snapshots:
 
   '@types/ms@2.1.0': {}
 
-  '@types/node-cron@3.0.11': {}
-
   '@types/node@22.20.1':
     dependencies:
       undici-types: 6.21.0
@@ -5335,10 +5317,6 @@ snapshots:
   node-api-version@0.2.1:
     dependencies:
       semver: 7.8.5
-
-  node-cron@3.0.3:
-    dependencies:
-      uuid: 8.3.2
 
   node-fetch@1.6.3:
     dependencies:

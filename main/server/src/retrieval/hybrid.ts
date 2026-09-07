@@ -1,7 +1,8 @@
 import { db } from '../lib/db.js';
-import { embed, llmReady } from '../lib/llm.js';
 import { buildFtsQuery } from '../lib/fts.js';
 import { readPage } from '../lib/vault.js';
+
+/** 知识库关键词检索（FTS5：页面 + 原始文件提取文本） */
 
 export interface SearchHit {
   refType: 'page' | 'file';
@@ -11,15 +12,11 @@ export interface SearchHit {
   heading: string;
   snippet: string;
   score: number;
-  evidence: string[]; // ['语义', '关键词']
+  evidence: string[];
   updated_at?: string;
   type?: string;
   ageDays?: number;
-  /** 向量命中的最佳 chunk 完整内容（供 think 喂完整上下文；FTS-only 命中时为空） */
-  chunkContent?: string;
 }
-
-const RRF_K = 60;
 
 /** 系统生成或查询派生页不应挤占用户知识证据。 */
 export function derivedPageWeight(path: string): number {
@@ -27,10 +24,8 @@ export function derivedPageWeight(path: string): number {
   if (normalized.startsWith('AIWorks/')) return 0;
   if (normalized.startsWith('Wiki/查询/')) return 0;
   if (/^Wiki\/(?:index|索引)(?:\/|\.md$)/i.test(normalized)) return 0;
-  // Wiki 根目录的系统索引/查询文件也直接排除。
   const basename = normalized.split('/').pop()?.replace(/\.md$/i, '') || '';
   if (normalized.startsWith('Wiki/') && /^(?:index|索引|查询)$|(?:系统|自动).*(?:索引|查询)/i.test(basename)) return 0;
-  // 其他明确的归档/派生区域保留但降权，避免完全丢失可用证据。
   if (normalized.startsWith('Wiki/归档/')) return 0.35;
   return 1;
 }
@@ -49,187 +44,63 @@ function evidenceSnippet(content: string, query: string, maxLength = 220): strin
   return `${start > 0 ? '…' : ''}${compact.slice(start, start + maxLength)}${start + maxLength < compact.length ? '…' : ''}`;
 }
 
-/** 混合检索：向量 + FTS5 关键词，RRF 融合，chunk→page/file 取最佳代表 */
+/** 关键词检索：pages_fts + files_fts 双路 bm25，加权融合排序 */
 export async function hybridSearch(
   query: string,
   limit = 12,
-  prefetchedVector?: number[] | null,
 ): Promise<SearchHit[]> {
-  const vecRank = new Map<number, number>(); // chunkId -> rank
-  const ftsRank = new Map<string, number>(); // 'page:id' | 'file:id' -> rank
-
-  // ---- 向量召回（chunk 级） ----
-  if (llmReady() && prefetchedVector !== null) {
-    try {
-      const qv = prefetchedVector || (await embed([query]))[0];
-      const rows = db
-        .prepare(
-          `SELECT rowid AS id, distance FROM vec_chunks WHERE embedding MATCH ? AND k = ? ORDER BY distance`
-        )
-        .all(JSON.stringify(qv), limit * 2) as { id: number; distance: number }[];
-      rows.forEach((r, i) => vecRank.set(r.id, i + 1));
-    } catch {
-      /* embedding 失败时降级为纯关键词 */
-    }
-  }
-
-  // ---- 关键词召回（page 级 + file 级） ----
   const fq = buildFtsQuery(query);
   const ftsPages = db
     .prepare(
       `SELECT page_id AS id, bm25(pages_fts) AS rank FROM pages_fts WHERE pages_fts MATCH ? ORDER BY rank LIMIT ?`
     )
     .all(fq, limit * 2) as { id: string; rank: number }[];
-  ftsPages.forEach((r, i) => ftsRank.set(`page:${r.id}`, i + 1));
-
   const ftsFiles = db
     .prepare(
       `SELECT file_id AS id, bm25(files_fts) AS rank FROM files_fts WHERE files_fts MATCH ? ORDER BY rank LIMIT ?`
     )
     .all(fq, limit * 2) as { id: string; rank: number }[];
-  ftsFiles.forEach((r, i) => ftsRank.set(`file:${r.id}`, i + 1));
 
-  // ---- 汇总候选 ----
-  interface Acc {
-    refType: 'page' | 'file';
-    refId: string;
-    rrf: number;
-    evidence: Set<string>;
-    bestChunk?: { heading: string; content: string; rank: number };
-  }
-  const acc = new Map<string, Acc>();
-  const get = (refType: 'page' | 'file', refId: string): Acc => {
-    const key = `${refType}:${refId}`;
-    if (!acc.has(key)) acc.set(key, { refType, refId, rrf: 0, evidence: new Set() });
-    return acc.get(key)!;
-  };
-
-  if (vecRank.size > 0) {
-    const chunkIds = [...vecRank.keys()];
-    const placeholders = chunkIds.map(() => '?').join(',');
-    const chunkRows = db
-      .prepare(`SELECT id, ref_type, ref_id, heading, content FROM chunks WHERE id IN (${placeholders})`)
-      .all(...chunkIds) as any[];
-    for (const c of chunkRows) {
-      const a = get(c.ref_type, c.ref_id);
-      const rank = vecRank.get(c.id)!;
-      a.rrf += 1 / (RRF_K + rank);
-      a.evidence.add('语义');
-      if (!a.bestChunk || rank < a.bestChunk.rank) {
-        a.bestChunk = { heading: c.heading, content: c.content, rank };
-      }
-    }
-  }
-  for (const [key, rank] of ftsRank) {
-    const [refType, refId] = key.split(':') as ['page' | 'file', string];
-    const a = get(refType, refId);
-    a.rrf += 1 / (RRF_K + rank);
-    a.evidence.add('关键词');
-  }
-
-  // ---- 组装结果 ----
   const hits: SearchHit[] = [];
-  for (const a of acc.values()) {
-    if (a.refType === 'page') {
-      const page = db
-        .prepare(`SELECT id, path, title, type, updated_at FROM pages WHERE id = ? AND deleted = 0`)
-        .get(a.refId) as any;
-      if (!page) continue;
-      const weight = derivedPageWeight(page.path);
-      if (weight === 0) continue;
-      const snippet = a.bestChunk
-        ? evidenceSnippet(a.bestChunk.content, query)
-        : evidenceSnippet(readPage(page.path)?.content || '', query);
-      const ageDays = Math.floor((Date.now() - new Date(page.updated_at).getTime()) / 86400000);
-      hits.push({
-        refType: 'page',
-        refId: page.id,
-        title: page.title,
-        path: page.path,
-        heading: a.bestChunk?.heading || '',
-        snippet,
-        score: a.rrf * weight,
-        evidence: [...a.evidence],
-        updated_at: page.updated_at,
-        type: page.type,
-        ageDays,
-        ...(a.bestChunk ? { chunkContent: a.bestChunk.content } : {}),
-      });
-    } else {
-      const file = db
-        .prepare(`SELECT id, path, name, updated_at FROM files WHERE id = ? AND deleted = 0`)
-        .get(a.refId) as any;
-      if (!file) continue;
-      hits.push({
-        refType: 'file',
-        refId: file.id,
-        title: file.name,
-        path: file.path,
-        heading: a.bestChunk?.heading || '',
-        snippet: a.bestChunk ? evidenceSnippet(a.bestChunk.content, query) : '',
-        score: a.rrf,
-        evidence: [...a.evidence],
-        updated_at: file.updated_at,
-        ...(a.bestChunk ? { chunkContent: a.bestChunk.content } : {}),
-      });
-    }
-  }
-
-  return hits.sort((a, b) => b.score - a.score).slice(0, limit);
-}
-
-export async function hybridSearchMany(
-  queries: string[],
-  limit = 12,
-): Promise<SearchHit[][]> {
-  if (!queries.length) return [];
-  let vectors: number[][] | null = null;
-  if (llmReady()) {
-    try {
-      vectors = await embed(queries);
-    } catch {
-      vectors = null;
-    }
-  }
-  return Promise.all(
-    queries.map((query, index) =>
-      hybridSearch(query, limit, vectors ? vectors[index] : null)
-    ),
-  );
-}
-
-/** 跨查询 RRF 融合：多路检索结果按 RRF(K=60) 汇总排名，evidence 取并集，
- *  同一 page/file 多 chunk 命中保留最佳 chunk 内容。 */
-export function mergeSearchResults(hitArrays: SearchHit[][], limit: number): SearchHit[] {
-  interface Merged {
-    hit: SearchHit;
-    rrf: number;
-    evidence: Set<string>;
-  }
-  const acc = new Map<string, Merged>();
-  for (const hits of hitArrays) {
-    hits.forEach((hit, index) => {
-      const key = `${hit.refType}:${hit.refId}`;
-      const rank = index + 1;
-      const current = acc.get(key);
-      if (!current) {
-        acc.set(key, {
-          hit,
-          rrf: 1 / (RRF_K + rank),
-          evidence: new Set(hit.evidence),
-        });
-        return;
-      }
-      current.rrf += 1 / (RRF_K + rank);
-      for (const e of hit.evidence) current.evidence.add(e);
-      // 保留更完整的 chunk 内容（有 chunkContent 的覆盖只有 snippet 的）
-      if (hit.chunkContent && !current.hit.chunkContent) {
-        current.hit = { ...current.hit, chunkContent: hit.chunkContent, heading: hit.heading || current.hit.heading };
-      }
+  for (const r of ftsPages) {
+    const page = db
+      .prepare(`SELECT id, path, title, type, updated_at FROM pages WHERE id = ? AND deleted = 0`)
+      .get(r.id) as any;
+    if (!page) continue;
+    const weight = derivedPageWeight(page.path);
+    if (weight === 0) continue;
+    const snippet = evidenceSnippet(readPage(page.path)?.content || '', query);
+    const ageDays = Math.floor((Date.now() - new Date(page.updated_at).getTime()) / 86400000);
+    hits.push({
+      refType: 'page',
+      refId: page.id,
+      title: page.title,
+      path: page.path,
+      heading: '',
+      snippet,
+      score: -r.rank * weight,
+      evidence: ['关键词'],
+      updated_at: page.updated_at,
+      type: page.type,
+      ageDays,
     });
   }
-  return [...acc.values()]
-    .map(({ hit, rrf, evidence }) => ({ ...hit, score: rrf, evidence: [...evidence] }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+  for (const r of ftsFiles) {
+    const file = db
+      .prepare(`SELECT id, path, name, text, updated_at FROM files WHERE id = ? AND deleted = 0`)
+      .get(r.id) as any;
+    if (!file) continue;
+    hits.push({
+      refType: 'file',
+      refId: file.id,
+      title: file.name,
+      path: file.path,
+      heading: '',
+      snippet: evidenceSnippet(String(file.text || ''), query),
+      score: -r.rank,
+      evidence: ['关键词'],
+      updated_at: file.updated_at,
+    });
+  }
+  return hits.sort((a, b) => b.score - a.score).slice(0, limit);
 }

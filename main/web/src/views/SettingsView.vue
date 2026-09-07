@@ -3,7 +3,7 @@
     <header class="settings-page-head">
       <div>
         <h2>设置</h2>
-        <p>管理账户、模型、自动化与本地数据。</p>
+        <p>管理账户、Agent 接入与本地数据。</p>
       </div>
     </header>
 
@@ -33,13 +33,10 @@
 
       <div class="settings-content">
         <AccountPanel v-show="activeSettingsSection === 'account'" />
-        <ModelsPanel v-show="activeSettingsSection === 'models'" />
-        <AutomationPanel v-show="activeSettingsSection === 'automation'" />
         <McpPanel v-show="activeSettingsSection === 'mcp'" />
         <ZCodePanel v-show="activeSettingsSection === 'zcode'" />
         <DesktopPanel v-show="activeSettingsSection === 'desktop'" />
         <UpdatePanel v-show="activeSettingsSection === 'update'" />
-        <ImPanel v-show="activeSettingsSection === 'im'" />
         <DdnsPanel v-show="activeSettingsSection === 'ddns'" />
         <StoragePanel v-show="activeSettingsSection === 'storage'" />
         <DataPanel v-show="activeSettingsSection === 'data'" />
@@ -52,29 +49,23 @@
 import { ref } from 'vue';
 import Icon from '../components/Icon.vue';
 import AccountPanel from '../components/settings/AccountPanel.vue';
-import ModelsPanel from '../components/settings/ModelsPanel.vue';
-import AutomationPanel from '../components/settings/AutomationPanel.vue';
 import McpPanel from '../components/settings/McpPanel.vue';
 import ZCodePanel from '../components/settings/ZCodePanel.vue';
 import DesktopPanel from '../components/settings/DesktopPanel.vue';
 import UpdatePanel from '../components/settings/UpdatePanel.vue';
-import ImPanel from '../components/settings/ImPanel.vue';
 import DdnsPanel from '../components/settings/DdnsPanel.vue';
 import StoragePanel from '../components/settings/StoragePanel.vue';
 import DataPanel from '../components/settings/DataPanel.vue';
 
-type SettingsSection = 'account' | 'models' | 'automation' | 'mcp' | 'zcode' | 'desktop' | 'update' | 'im' | 'ddns' | 'storage' | 'data';
+type SettingsSection = 'account' | 'mcp' | 'zcode' | 'desktop' | 'update' | 'ddns' | 'storage' | 'data';
 
 const activeSettingsSection = ref<SettingsSection>('account');
 const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: string }> = [
   { id: 'account', label: '账户与外观', icon: 'settings' },
-  { id: 'models', label: '模型配置', icon: 'ai' },
-  { id: 'automation', label: '自动化', icon: 'activity' },
   { id: 'mcp', label: 'MCP 集成', icon: 'link' },
-  { id: 'zcode', label: 'ZCode 引擎', icon: 'ai' },
+  { id: 'zcode', label: 'Agent 接入', icon: 'ai' },
   { id: 'desktop', label: '桌面端连接', icon: 'external' },
   { id: 'update', label: '软件更新', icon: 'download' },
-  { id: 'im', label: 'IM / 飞书', icon: 'send' },
   { id: 'ddns', label: 'DDNS 直连', icon: 'external' },
   { id: 'storage', label: '存储空间', icon: 'archive' },
   { id: 'data', label: '数据管理', icon: 'trash' },

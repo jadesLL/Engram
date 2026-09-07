@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import matter from 'gray-matter';
 import { safeJoin, writePage, type PageMeta } from './vault.js';
-import { enqueue } from '../jobs.js';
+import { appendWikiLog } from '../pipeline/indexFile.js';
 import { now } from './db.js';
 
 /**
- * 外置 Agent 对话沉积：写入 原始资料/对话/，并立即入队正常 ingest 提炼。
+ * 外置 Agent 对话沉积：写入 原始资料/对话/（提炼工作由外部 Agent 按指南后续处理）。
  * 作用域受限：只生成 原始资料/对话/... 路径，绝不接受外部 path。
  * 命名以时间为维度 + 简单标识；project 提供项目维度（子目录）。
  */
@@ -108,7 +108,7 @@ export async function saveChat(input: SaveChatInput): Promise<SaveChatResult> {
       const prev = readBody(existing) ?? '';
       const merged = `${prev.replace(/\n+$/, '')}\n\n---\n\n${content.trim()}\n`;
       const meta = writePage(existing, merged, { sources, tags, retrieved: now() });
-      enqueue('ingest', { path: existing });
+      try { appendWikiLog('对话沉积', `追加到「${meta.title}」（${meta.path}）`); } catch { /* 日志失败不阻塞 */ }
       return { id: meta.id, path: meta.path, title: meta.title, appended: true };
     }
     // 找不到则落到新建分支
@@ -124,6 +124,6 @@ export async function saveChat(input: SaveChatInput): Promise<SaveChatResult> {
   const title = input.identifier?.trim() ? input.identifier.trim() : `${date} Agent 对话`;
   const body = `# ${title}\n\n${content.trim()}\n`;
   const meta: PageMeta = writePage(rel, body, { title, sources, tags, retrieved: now() });
-  enqueue('ingest', { path: rel });
+  try { appendWikiLog('对话沉积', `「${title}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
   return { id: meta.id, path: meta.path, title: meta.title, appended: false };
 }

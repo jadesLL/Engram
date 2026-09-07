@@ -13,8 +13,6 @@ export const router = createRouter({
         { path: 'page/:id?', component: () => import('./views/EditorView.vue') },
         { path: 'search', component: () => import('./views/SearchView.vue') },
         { path: 'graph/:id?', component: () => import('./views/GraphView.vue') },
-        { path: 'reports', component: () => import('./views/ReportsView.vue') },
-        { path: 'ingest-coverage', component: () => import('./views/IngestCoverageView.vue') },
         { path: 'settings', component: () => import('./views/SettingsView.vue') },
       ],
     },

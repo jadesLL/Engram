@@ -4,57 +4,45 @@
       <input
         v-model="q"
         class="search-input"
-        placeholder="搜索知识库，或直接向 AI 提问…"
+        placeholder="搜索知识库（页面 / 原始资料）…"
         autofocus
         @keydown.enter="run"
       />
       <div class="mode-switch">
-        <button class="btn" :class="{ primary: mode === 'search' }" :disabled="searching" @click="mode = 'search'; run()">搜索</button>
-        <button class="btn" :class="{ primary: mode === 'think' }" :disabled="searching" @click="mode = 'think'; run()">问 AI</button>
+        <button class="btn primary" :disabled="searching" @click="run">搜索</button>
       </div>
     </div>
 
     <div v-if="searching" class="search-loading muted">
-      <AppSpinner :size="14" /> {{ mode === 'search' ? '正在搜索…' : '正在提交问题…' }}
-    </div>
-
-    <div v-if="mode === 'think' && searched" class="think-result">
-      <span>问题已交给 AI 助手。</span>
-      <button class="btn small" @click="app.aiDrawerOpen = true">打开助手</button>
+      <AppSpinner :size="14" /> 正在搜索…
     </div>
 
     <!-- 结果列表 -->
     <div v-if="hits.length" class="hits">
-      <div class="hits-head faint small">
-        {{ mode === 'think' ? '引用来源' : `共 ${hits.length} 条结果` }}
-      </div>
+      <div class="hits-head faint small">共 {{ hits.length }} 条结果</div>
       <div v-for="(h, i) in hits" :key="i" class="hit card" @click="openHit(h)">
         <div class="hit-title">
-          <span class="hit-index" v-if="mode === 'think'">[{{ i + 1 }}]</span>
           {{ h.title }}
           <span class="tag" v-if="h.type && h.type !== 'note'">{{ h.type }}</span>
           <span class="tag" v-if="h.refType === 'file'">文件</span>
         </div>
         <div class="hit-meta faint small">
-          <span v-for="e in h.evidence" :key="e" class="tag">{{ e }}</span>
           <span v-if="h.updated_at">更新于 {{ fromNow(h.updated_at) }}</span>
         </div>
-        <div class="hit-snippet muted">{{ h.heading ? `#${h.heading} — ` : '' }}{{ h.snippet }}</div>
+        <div class="hit-snippet muted">{{ h.snippet }}</div>
       </div>
     </div>
     <AppEmptyState
-      v-else-if="mode === 'search' && searched"
+      v-else-if="searched"
       icon="search"
       title="没有找到相关内容"
-      hint="换个关键词试试，或切换到「问 AI」让助手跨页推理"
-    >
-      <button class="btn small primary" @click="mode = 'think'; run()">改用 AI 提问</button>
-    </AppEmptyState>
+      hint="换个关键词试试；深度问答与提炼交给你的外部 Agent（MCP search 工具 / engram search）"
+    />
     <AppEmptyState
-      v-else-if="!searched && !searching"
+      v-else-if="!searching"
       icon="search"
-      title="搜索或提问"
-      hint="输入关键词搜索页面，或切换到「问 AI」让助手跨页综合回答"
+      title="搜索知识库"
+      hint="输入关键词搜索 Wiki 页面与原始资料提取文本"
     />
   </div>
 </template>
@@ -63,19 +51,14 @@
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
-import { useAppStore } from '../stores/app';
-import { useAssistantStore } from '../stores/assistant';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import { notify } from '../lib/notify';
 
 const route = useRoute();
 const router = useRouter();
-const app = useAppStore();
-const assistant = useAssistantStore();
 
 const q = ref('');
-const mode = ref<'search' | 'think'>('search');
 const hits = ref<any[]>([]);
 const searched = ref(false);
 const searching = ref(false);
@@ -86,16 +69,11 @@ async function run() {
   searched.value = false;
   searching.value = true;
   try {
-    if (mode.value === 'search') {
-      const { data } = await api.get('/api/search', { params: { q: q.value } });
-      hits.value = data.hits;
-      searched.value = true;
-    } else {
-      await assistant.openWith(q.value, { route: route.fullPath }, true);
-      searched.value = true;
-    }
+    const { data } = await api.get('/api/search', { params: { q: q.value } });
+    hits.value = data.hits;
+    searched.value = true;
   } catch (error: any) {
-    notify.error(error?.response?.data?.error || error?.message || (mode.value === 'search' ? '搜索失败，请稍后重试' : '提问失败，请稍后重试'));
+    notify.error(error?.response?.data?.error || error?.message || '搜索失败，请稍后重试');
   } finally {
     searching.value = false;
   }
@@ -135,16 +113,13 @@ onMounted(() => {
 .search-input { flex: 1; min-width: 240px; padding: 12px 16px; font-size: 16px; border-radius: 10px; }
 .mode-switch { display: flex; gap: 6px; }
 .search-loading { display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: var(--font-md); }
-.think-result { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; color: var(--text-secondary); }
 .hits { display: flex; flex-direction: column; gap: 10px; }
 .hit { cursor: pointer; transition: border-color 0.15s; }
 .hit:hover { border-color: var(--accent); }
 .hit-title { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
-.hit-index { color: var(--accent); }
 .hit-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
 .hit-snippet { font-size: var(--font-md); line-height: 1.6; }
 .stale { color: var(--warn); }
-.empty-hint { text-align: center; padding: 40px 0; }
 
 @media (max-width: 768px) {
   .search-view { padding: 20px 14px; }

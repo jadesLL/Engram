@@ -13,27 +13,22 @@ import { healthRoutes } from './routes/health.js';
 import { pageRoutes } from './routes/pages.js';
 import { fileRoutes } from './routes/files.js';
 import { searchRoutes } from './routes/search.js';
-import { aiRoutes } from './routes/ai.js';
 import { graphRoutes } from './routes/graph.js';
-import { dreamRoutes } from './routes/dream.js';
-import { reportRoutes } from './routes/reports.js';
 import { settingsRoutes } from './routes/settings.js';
 import { updateRoutes } from './routes/update.js';
 import { jobRoutes } from './routes/jobs.js';
-import { ingestHistoryRoutes } from './routes/ingestHistory.js';
 import { rawRoutes } from './routes/raw.js';
+import { guideRoutes } from './routes/guide.js';
+import { agentRoutes } from './routes/agent.js';
 import { eventRoutes } from './routes/events.js';
 import { trashRoutes } from './routes/trash.js';
 import { officeRoutes } from './routes/office.js';
-import { assistantRoutes } from './routes/assistant.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { mcpRoutes } from './mcp/server.js';
-import { startFeishuLongConn } from './im/feishu/longconn.js';
 import { scanVault, readPage, writePage } from './lib/vault.js';
 import { heartbeat } from './lib/events.js';
 import { migrateAiLogsToOperationLog } from './pipeline/indexFile.js';
-import { migrateIngestLedger } from './pipeline/sourceLedger.js';
-import { reconcilePendingCandidates } from './pipeline/candidateLedger.js';
+import { queueMissingDerivedPages } from './pipeline/sourceLedger.js';
 
 /** AIWorks 系统区页面不参与整理、不打标签 */
 function cleanupSystemPages() {
@@ -46,8 +41,6 @@ function cleanupSystemPages() {
   }
 }
 import { startJobRunner } from './jobs.js';
-import { scheduleDreamCycle } from './dream/scheduler.js';
-import { queueMissingPageSynthesesAsync } from './pipeline/pageSynthesis.js';
 import { CertManager, type LoadedCert } from './lib/tls.js';
 import { startDdnsScheduler } from './lib/ddns.js';
 
@@ -79,16 +72,13 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(fileRoutes);
   await app.register(officeRoutes);
   await app.register(searchRoutes);
-  await app.register(aiRoutes);
-  await app.register(assistantRoutes);
   await app.register(graphRoutes);
-  await app.register(dreamRoutes);
-  await app.register(reportRoutes);
   await app.register(settingsRoutes);
   await app.register(updateRoutes);
   await app.register(jobRoutes);
-  await app.register(ingestHistoryRoutes);
   await app.register(rawRoutes);
+  await app.register(guideRoutes);
+  await app.register(agentRoutes);
   await app.register(eventRoutes);
   await app.register(trashRoutes);
   await app.register(mcpRoutes);
@@ -115,21 +105,17 @@ async function main() {
 
   const app = await createApp();
 
-  // 启动：扫描 vault 同步 DB、迁移历史 AI 日志进操作日志、清理系统区页面标签、启动任务队列与 Dream Cycle
+  // 启动：扫描 vault 同步 DB、迁移历史 AI 日志进操作日志、清理系统区页面标签、启动任务队列
   // （进程级单例：双监听共享一份，createApp() 只做路由装配不碰数据）
   await scanVault();
-  migrateIngestLedger();
-  reconcilePendingCandidates();
   migrateAiLogsToOperationLog();
   cleanupSystemPages();
+  queueMissingDerivedPages();
   // 清理 30 天前的终态 jobs 行，避免表无限膨胀拖慢 job runner tick 的全表扫描。
   db.prepare(
     `DELETE FROM jobs WHERE status IN ('failed','done','cancelled') AND updated_at < ?`
   ).run(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' '));
   startJobRunner();
-  scheduleDreamCycle();
-  // 飞书长连接客户端（凭证未配置则跳过）
-  startFeishuLongConn();
   // DDNS 直连域名维护（设置页/env 未配置则完全静默跳过；纯 Node 定时器，无控制台窗口）
   startDdnsScheduler();
   // SSE 心跳：保活长连接、探活死连接（断线 EventSource 自动重连）
@@ -170,19 +156,6 @@ async function main() {
       .then(startHttpsListener)
       .catch((e) => console.error('[tls] HTTPS 直连入口启动失败（HTTP 不受影响）:', e));
   }
-
-  // 定期补齐缺失/过期的页面综合：启动后 2 分钟先跑一轮，之后每 15 分钟一轮。
-  // listen 之后异步小批量执行（每页之间让出事件循环），不阻塞服务；
-  // 去重与失败冷却在 queuePageRecompose 内已有：active 最新页跳过、失败页 1 小时冷却、
-  // pending 页不重复入队。事实变化（evidence_hash 变）会自然触发重排。
-  const SYNTHESIS_BACKFILL_FIRST_MS = 2 * 60 * 1000;
-  const SYNTHESIS_BACKFILL_INTERVAL_MS = 15 * 60 * 1000;
-  const synthesisBackfill = async () => {
-    const queued = await queueMissingPageSynthesesAsync();
-    if (queued > 0) console.log(`[synthesis] 定期补齐：本轮入队 ${queued} 个页面综合任务`);
-  };
-  setTimeout(() => { void synthesisBackfill(); }, SYNTHESIS_BACKFILL_FIRST_MS).unref();
-  setInterval(() => { void synthesisBackfill(); }, SYNTHESIS_BACKFILL_INTERVAL_MS).unref();
 }
 
 main().catch((e) => {

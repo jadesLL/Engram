@@ -1,257 +1,81 @@
-import crypto from 'node:crypto';
-import { db, getVecDim, ensureVecTable, newId, now } from '../lib/db.js';
+import { db, newId, now } from '../lib/db.js';
 import { invalidateGraphCache } from '../lib/graphCache.js';
-import { embed, getActiveEmbedding, getLlmConfig, llmReady } from '../lib/llm.js';
-import { chunkMarkdown, chunkPlainText } from './chunker.js';
 import { wirePageEdges, resolveDeadLinks } from './extractor.js';
 import { ftsSegment } from '../lib/fts.js';
 import { readPage, scanVault } from '../lib/vault.js';
 
-function indexSignature(label: string, content: string): {
-  contentHash: string;
-  modelKey: string;
-} {
-  const active = getActiveEmbedding();
-  const config = getLlmConfig();
-  return {
-    contentHash: crypto.createHash('sha256')
-      .update(`${label}\0${content}`)
-      .digest('hex'),
-    modelKey: llmReady()
-      ? `${active?.provider || 'custom'}|${config.embeddingBaseUrl}|${config.embeddingModel}|${config.embeddingDim}`
-      : 'keyword-only',
-  };
-}
-
-function currentIndexState(
-  refType: 'page' | 'file',
-  refId: string,
-  signature: { contentHash: string; modelKey: string },
-): { chunks: number; embedded: boolean } | null {
-  const state = db.prepare(
-    `SELECT content_hash,model_key FROM index_states WHERE ref_type=? AND ref_id=?`
-  ).get(refType, refId) as { content_hash: string; model_key: string } | undefined;
-  if (
-    !state ||
-    state.content_hash !== signature.contentHash ||
-    state.model_key !== signature.modelKey
-  ) return null;
-  const chunks = Number(
-    (db.prepare(`SELECT COUNT(*) count FROM chunks WHERE ref_type=? AND ref_id=?`)
-      .get(refType, refId) as { count: number }).count,
-  );
-  if (!chunks) return null;
-  if (llmReady()) {
-    const vectors = Number(
-      (db.prepare(
-        `SELECT COUNT(*) count FROM vec_chunks
-         WHERE rowid IN (SELECT id FROM chunks WHERE ref_type=? AND ref_id=?)`
-      ).get(refType, refId) as { count: number }).count,
-    );
-    if (vectors !== chunks) return null;
-  }
-  return { chunks, embedded: llmReady() };
-}
-
-function saveIndexState(
-  refType: 'page' | 'file',
-  refId: string,
-  signature: { contentHash: string; modelKey: string },
-): void {
-  db.prepare(
-    `INSERT INTO index_states(ref_type,ref_id,content_hash,model_key,updated_at)
-     VALUES(?,?,?,?,?)
-     ON CONFLICT(ref_type,ref_id) DO UPDATE SET
-       content_hash=excluded.content_hash,
-       model_key=excluded.model_key,
-       updated_at=excluded.updated_at`
-  ).run(refType, refId, signature.contentHash, signature.modelKey, now());
-}
-
 /**
- * 索引一个 md 页面：分块 → embedding → vec 表；同步重建 wikilink/tag 边。
- * LLM 未配置时仅做文本索引（FTS 已在 vault 层完成）与建边。
+ * 纯 FTS 索引层：向量/embedding 已随模型适配层移除。
+ * 页面正文 FTS（pages_fts）由 vault.writePage 同步完成，这里只负责
+ * 图谱边重建与兜底补写；文件提取文本 FTS（files_fts）在本层维护。
  */
+
+/** 索引一个 md 页面：重建 wikilink 边 + 兜底补写 pages_fts（幂等） */
 export async function indexPage(
   pageId: string,
   signal?: AbortSignal,
-): Promise<{ chunks: number; embedded: boolean }> {
+): Promise<{ indexed: boolean }> {
   signal?.throwIfAborted();
-  ensureVecTable(getVecDim()); // 维度变化时自动重建 vec 表（旧向量随之清空）
   const page = db.prepare(`SELECT * FROM pages WHERE id = ? AND deleted = 0`).get(pageId) as any;
-  if (!page) return { chunks: 0, embedded: false };
+  if (!page) return { indexed: false };
   const rd = readPage(page.path);
-  if (!rd) return { chunks: 0, embedded: false };
+  if (!rd) return { indexed: false };
 
   wirePageEdges(pageId, rd.content);
   resolveDeadLinks();
   // 边已重建，图谱缓存必须失效，否则用户刚保存就看不到新链接
   invalidateGraphCache();
-  const signature = indexSignature(page.title, rd.content);
-  const current = currentIndexState('page', pageId, signature);
-  if (current) return current;
 
-  const chunks = chunkMarkdown(rd.content);
-  const vectors = llmReady()
-    ? await embedInBatches(
-        chunks.map((c) => `${page.title}\n${c.heading ? c.heading + '\n' : ''}${c.content}`),
-        16,
-        signal,
-      )
-    : [];
-  if (vectors.length && vectors.length !== chunks.length) {
-    throw new Error(`Embedding 返回数量不匹配：期望 ${chunks.length} 条，实际 ${vectors.length} 条`);
+  const fts = db.prepare(`SELECT 1 FROM pages_fts WHERE page_id = ?`).get(pageId);
+  if (!fts) {
+    db.prepare(`INSERT INTO pages_fts(title, content, tags, page_id) VALUES(?, ?, ?, ?)`).run(
+      ftsSegment(page.title),
+      ftsSegment(rd.content),
+      ftsSegment((rd.meta.tags || []).join(' ')),
+      pageId,
+    );
   }
-  if (vectors.length) assertDim(vectors);
-  signal?.throwIfAborted();
-  // 先清除旧索引（原子小事务），再分批写入 chunks + 向量，每批之间让出事件循环，
-  // 避免大页（chunk 多）独占主线程冻结 /health 探针。
-  db.transaction(() => {
-    db.prepare(
-      `DELETE FROM vec_chunks WHERE rowid IN (
-         SELECT id FROM chunks WHERE ref_type='page' AND ref_id=?
-       )`
-    ).run(pageId);
-    db.prepare(`DELETE FROM chunks WHERE ref_type='page' AND ref_id=?`).run(pageId);
-  })();
-  const ins = db.prepare(
-    `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('page', ?, ?, ?, ?)`
-  );
-  const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
-  const VEC_BATCH = 64;
-  for (let i = 0; i < chunks.length; i += VEC_BATCH) {
-    const end = Math.min(i + VEC_BATCH, chunks.length);
-    db.transaction(() => {
-      for (let j = i; j < end; j++) {
-        const r = ins.run(pageId, j, chunks[j].heading, chunks[j].content);
-        if (vectors.length) insVec.run(BigInt(Number(r.lastInsertRowid)), JSON.stringify(vectors[j]));
-      }
-    })();
-    if (end < chunks.length) await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-  saveIndexState('page', pageId, signature);
-  return { chunks: chunks.length, embedded: vectors.length > 0 };
+  return { indexed: true };
 }
 
-/** 清空一个文件的全部索引（vec/chunks/fts/index_states），用于文本被清空或删除时 */
+/** 清空一个文件的索引（fts），用于文本被清空或删除时 */
 export function clearFileIndex(fileId: string): void {
   db.transaction(() => {
-    db.prepare(
-      `DELETE FROM vec_chunks WHERE rowid IN (
-         SELECT id FROM chunks WHERE ref_type='file' AND ref_id=?
-       )`
-    ).run(fileId);
-    db.prepare(`DELETE FROM chunks WHERE ref_type='file' AND ref_id=?`).run(fileId);
     db.prepare(`DELETE FROM files_fts WHERE file_id = ?`).run(fileId);
     db.prepare(`DELETE FROM index_states WHERE ref_type='file' AND ref_id=?`).run(fileId);
   })();
 }
 
-/** 索引非 md 文件的提取文本（docx 等） */
+/** 索引非 md 文件的提取文本（docx / pdf 文本层 / txt 等） */
 export async function indexFileText(
   fileId: string,
   signal?: AbortSignal,
-): Promise<{ chunks: number; embedded: boolean }> {
+): Promise<{ indexed: boolean }> {
   signal?.throwIfAborted();
-  ensureVecTable(getVecDim());
   const file = db.prepare(`SELECT * FROM files WHERE id = ? AND deleted = 0`).get(fileId) as any;
-  if (!file) return { chunks: 0, embedded: false };
+  if (!file) return { indexed: false };
   if (!file.text) {
-    // 提取文本为空（如新版 PDF 全页失败）：必须清掉旧索引，否则 FTS/向量
-    // 继续返回已失效的旧内容，且 rebuildAll 跳过空文本文件、无自愈路径。
+    // 提取文本为空（如新版 PDF 全页失败）：必须清掉旧索引，
+    // 否则 FTS 继续返回已失效的旧内容，且 rebuildAll 跳过空文本文件、无自愈路径。
     clearFileIndex(fileId);
-    return { chunks: 0, embedded: false };
+    return { indexed: false };
   }
-  const signature = indexSignature(file.name, file.text);
-  const current = currentIndexState('file', fileId, signature);
-  if (current) return current;
-
-  const chunks = chunkPlainText(file.text);
-  const vectors = llmReady()
-    ? await embedInBatches(
-        chunks.map((c) => `${file.name}\n${c.content}`),
-        16,
-        signal,
-      )
-    : [];
-  if (vectors.length && vectors.length !== chunks.length) {
-    throw new Error(`Embedding 返回数量不匹配：期望 ${chunks.length} 条，实际 ${vectors.length} 条`);
-  }
-  if (vectors.length) assertDim(vectors);
-  signal?.throwIfAborted();
   db.transaction(() => {
-    db.prepare(
-      `DELETE FROM vec_chunks WHERE rowid IN (
-         SELECT id FROM chunks WHERE ref_type='file' AND ref_id=?
-       )`
-    ).run(fileId);
-    db.prepare(`DELETE FROM chunks WHERE ref_type='file' AND ref_id=?`).run(fileId);
     db.prepare(`DELETE FROM files_fts WHERE file_id = ?`).run(fileId);
     db.prepare(`INSERT INTO files_fts(name, content, file_id) VALUES(?, ?, ?)`).run(
       ftsSegment(file.name),
       ftsSegment(file.text),
-      fileId
+      fileId,
     );
   })();
-  const ins = db.prepare(
-    `INSERT INTO chunks(ref_type, ref_id, idx, heading, content) VALUES('file', ?, ?, '', ?)`
-  );
-  const insVec = db.prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES(?, ?)`);
-  const FILE_VEC_BATCH = 64;
-  for (let i = 0; i < chunks.length; i += FILE_VEC_BATCH) {
-    const end = Math.min(i + FILE_VEC_BATCH, chunks.length);
-    db.transaction(() => {
-      for (let j = i; j < end; j++) {
-        const r = ins.run(fileId, j, chunks[j].content);
-        if (vectors.length) insVec.run(BigInt(Number(r.lastInsertRowid)), JSON.stringify(vectors[j]));
-      }
-    })();
-    if (end < chunks.length) await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-  saveIndexState('file', fileId, signature);
-  return { chunks: chunks.length, embedded: vectors.length > 0 };
+  return { indexed: true };
 }
 
-/** 维度校验：模型实际返回维度与配置不一致时给出可操作的中文提示 */
-function assertDim(vectors: number[][]) {
-  const expected = getVecDim();
-  const actual = vectors[0]?.length;
-  if (actual && actual !== expected) {
-    throw new Error(
-      `Embedding 维度不匹配：模型返回 ${actual} 维，当前配置为 ${expected} 维。` +
-      `请到「设置 → 向量模型」把该模型的维度改为 ${actual} 并保存（保存后会自动重建索引）。`
-    );
-  }
-}
-
-/** 分批向量化：阿里百炼等厂商单批限制 20 条，保守取 16 */
-async function embedInBatches(
-  texts: string[],
-  batchSize = 16,
-  signal?: AbortSignal,
-): Promise<number[][]> {
-  const out: number[][] = [];
-  for (let i = 0; i < texts.length; i += batchSize) {
-    signal?.throwIfAborted();
-    const batch = texts.slice(i, i + batchSize);
-    out.push(...(await embed(batch, signal)));
-  }
-  return out;
-}
-
-/** 清理已无 chunk 行对应的向量，覆盖历史错误删除顺序留下的孤儿。 */
-export function cleanupOrphanVectors(): number {
-  const result = db.prepare(`DELETE FROM vec_chunks WHERE rowid NOT IN (SELECT id FROM chunks)`).run();
-  return result.changes;
-}
-
-/** 全量重建：扫描 vault → 逐页重建索引。返回统计。 */
+/** 全量重建：扫描 vault → 逐页重建边与 FTS、逐文件重建 files_fts。返回统计。 */
 export async function rebuildAll(
   onProgress?: (msg: string) => void,
   signal?: AbortSignal,
 ): Promise<{ pages: number; files: number; errors: string[] }> {
-  ensureVecTable(getVecDim());
-  cleanupOrphanVectors();
   await scanVault();
   // 空文本文件不进重建列表，但要清掉可能残留的旧索引（历史版本提取过、新版提取为空）
   const emptyFiles = db

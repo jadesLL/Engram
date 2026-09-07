@@ -29,7 +29,6 @@
           </button>
         </div>
       </div>
-      <span v-if="ingestHint" class="ingest-hint" v-tooltip="ingestHint" aria-live="polite">✦ {{ ingestHint }}</span>
     </header>
 
     <div class="side-scroll">
@@ -150,7 +149,7 @@
 
       <div class="section-separator" />
 
-      <!-- 原始资料：进料口。上传/新建；AI 整理提炼到 Wiki -->
+      <!-- 原始资料：进料口。上传/新建；提炼由外部 Agent 处理 -->
       <section class="section">
         <div
           class="sec-row"
@@ -164,20 +163,6 @@
             @click="toggle('files')"
           >
             <span class="sec-name">原始资料</span>
-          </button>
-          <!-- 提炼看板一级入口：进度数字即按钮（有待处理时高亮提醒） -->
-          <button
-            v-if="filesCoverage.supported"
-            class="coverage-badge"
-            :class="{ warn: filesCoverage.attention > 0 }"
-            type="button"
-            v-tooltip="filesCoverage.attention > 0
-              ? `提炼看板：${filesCoverage.ingested}/${filesCoverage.supported} 已整理，${filesCoverage.attention} 份需要处理`
-              : `提炼看板：${filesCoverage.supported} 份资料全部已整理`"
-            @click="router.push('/ingest-coverage')"
-          >
-            <Icon name="list-tree" :size="12" />
-            <span class="coverage-num">{{ filesCoverage.ingested }}/{{ filesCoverage.supported }}</span>
           </button>
           <div class="sec-actions">
             <label class="sort-control section-sort" v-tooltip="`原始资料排序：${sortFilesLabel}`">
@@ -198,15 +183,6 @@
               @click="exportAllFiles"
             >
               <Icon name="download" :size="13" />
-            </button>
-            <button
-              class="add-btn"
-              type="button"
-              v-tooltip="'AI 整理全部(已整理且未变更的自动跳过,只处理新增/变更/失败的)'"
-              aria-label="AI 整理全部"
-              @click="ingestAll"
-            >
-              <Icon name="ai" :size="13" />
             </button>
             <button
               class="add-btn"
@@ -240,7 +216,6 @@
             :job="fileJob(f.path)"
             @open="openFile"
             @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
-            @ingest="ingestFile"
             @remove="removeFile"
             @context-menu="onFileContextMenu"
           />
@@ -290,77 +265,11 @@
             :job="fileJob(f.path)"
             @open="openFile"
             @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
-            @ingest="ingestFile"
             @remove="removeFile"
             @context-menu="onFileContextMenu"
           />
           <p v-if="!visibleChatFiles.length" class="none">
             {{ filter ? '没有匹配对话' : '暂无对话' }}
-          </p>
-        </div>
-      </section>
-
-      <div class="section-separator" />
-
-      <!-- AI 整理日志（只读） -->
-      <section class="section">
-        <div
-          class="sec-row"
-          :class="{ expanded: !collapsed.ailog }"
-        >
-          <button
-            class="sec-toggle"
-            type="button"
-            :aria-expanded="!collapsed.ailog"
-            v-tooltip="collapsed.ailog ? '展开 AI 整理日志' : '收起 AI 整理日志'"
-            @click="toggle('ailog')"
-          >
-            <span class="sec-name">AI 整理日志</span>
-          </button>
-          <div class="sec-actions">
-            <button
-              class="add-btn"
-              type="button"
-              v-tooltip="'导出全部 AI 整理日志'"
-              aria-label="导出全部 AI 整理日志"
-              :disabled="!visibleAiLogs.length || exporting"
-              @click="exportAllAiLogs"
-            >
-              <Icon name="download" :size="13" />
-            </button>
-            <span class="sec-count">{{ visibleAiLogs.length }}</span>
-          </div>
-        </div>
-        <div v-show="!collapsed.ailog" class="sec-body">
-          <div
-            v-for="p in sortList(visibleAiLogs, 'updated-desc')"
-            :key="p.id"
-            class="page-row log-row"
-            :class="{ active: p.id === activeId }"
-            role="button"
-            tabindex="0"
-            @click="openPage(p)"
-            @keydown.enter.self="openPage(p)"
-            @keydown.space.self.prevent="openPage(p)"
-          >
-            <Icon name="report" :size="13" class="log-file-icon" />
-            <span class="page-title" v-tooltip="p.title">{{ p.title }}</span>
-            <span class="row-trailing">
-              <span class="row-actions" @click.stop>
-                <a
-                  class="row-action-link"
-                  :href="`/api/files/raw?path=${encodeURIComponent(p.path)}`"
-                  :download="p.title + '.md'"
-                  v-tooltip="`下载 ${p.title}`"
-                  :aria-label="`下载 ${p.title}`"
-                >
-                  <Icon name="download" :size="13" />
-                </a>
-              </span>
-            </span>
-          </div>
-          <p v-if="!visibleAiLogs.length" class="none">
-            {{ filter ? '没有匹配日志' : '智能整理运行后自动生成' }}
           </p>
         </div>
       </section>
@@ -411,7 +320,6 @@ import { useAppStore } from '../stores/app';
 import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
-import { openMergeDialog } from '../lib/mergeDialog';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
 import FileRow from './FileRow.vue';
@@ -471,10 +379,9 @@ function loadCollapsedState() {
 }
 
 const collapsed = ref<Record<string, boolean>>(loadCollapsedState());
-const ingestHint = ref('');
 let chatTimer: ReturnType<typeof setTimeout> | undefined;
 let chatStopped = false;
-/** 轻量刷新对话文件列表：外置 Agent 经 save_chat 写入后，对话分区数秒内出现新文件与整理状态 */
+/** 轻量刷新对话文件列表：外部 Agent 经 save_chat 写入后，对话分区数秒内出现新文件 */
 async function refreshChats() {
   try {
     const { data } = await api.get('/api/files/list?dir=' + encodeURIComponent('原始资料/对话'));
@@ -483,7 +390,7 @@ async function refreshChats() {
   if (!chatStopped) chatTimer = setTimeout(refreshChats, 5000);
 }
 
-/** 文件行整理进度：取自 app 共享任务队列（Home 自适应轮询维护，角标/面板/侧栏同一数据源） */
+/** 文件行提取进度：取自 app 共享任务队列（Home 自适应轮询维护，角标/面板/侧栏同一数据源） */
 function fileJob(path: string) {
   return app.fileJob(path);
 }
@@ -560,13 +467,6 @@ async function exportAllPages(g: any) {
   const paths = pages.map((p: any) => p.path).filter(Boolean);
   if (!paths.length) return;
   await exportFiles(paths, g.label + '导出');
-}
-
-/** 导出 AI 整理日志分区的全部页面 */
-async function exportAllAiLogs() {
-  const paths = aiLogs.value.map((p: any) => p.path).filter(Boolean);
-  if (!paths.length) return;
-  await exportFiles(paths, 'AI整理日志');
 }
 
 function toggleSelect(item: any) {
@@ -663,21 +563,14 @@ async function changePageType(page: any, newType: string) {
   }
 }
 
-/** 右键页面行：合并 / 归档 / 删除 */
+/** 右键页面行：归档 / 删除（语义合并交给外部 Agent 处理） */
 function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) {
   const isArchived = page.path.startsWith('Wiki/归档/');
   const items: ContextMenuItem[] = [
     {
-      id: 'merge',
-      label: '合并到…',
-      icon: 'merge',
-      action: () => openMergeDialog(page),
-    },
-    {
       id: 'archive',
       label: isArchived ? '取消归档' : '归档',
       icon: isArchived ? 'restore' : 'archive',
-      separatorBefore: true,
       action: () => (isArchived ? unarchivePage(page) : archivePage(page)),
     },
     { id: 'delete', label: '删除', icon: 'trash', action: () => removePage(page) },
@@ -685,23 +578,13 @@ function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) 
   openContextMenu({ x, y, items });
 }
 
-/** 右键/⋯ 资料行：整理 / 下载 / 删除 */
-function onFileContextMenu({ x, y, file, ingestable }: { x: number; y: number; file: any; ingestable: boolean }) {
-  const items: ContextMenuItem[] = [];
-  if (ingestable) {
-    items.push({
-      id: 'ingest',
-      label: 'AI 整理',
-      icon: 'ai',
-      action: () => ingestFile(file),
-    });
-  }
-  items.push(
+/** 右键/⋯ 资料行：下载 / 删除 */
+function onFileContextMenu({ x, y, file }: { x: number; y: number; file: any }) {
+  const items: ContextMenuItem[] = [
     {
       id: 'download',
       label: '下载',
       icon: 'download',
-      separatorBefore: ingestable,
       action: () => {
         const a = document.createElement('a');
         a.href = `/api/files/raw?path=${encodeURIComponent(file.path)}`;
@@ -710,7 +593,7 @@ function onFileContextMenu({ x, y, file, ingestable }: { x: number; y: number; f
       },
     },
     { id: 'delete', label: '删除', icon: 'trash', action: () => removeFile(file) },
-  );
+  ];
   openContextMenu({ x, y, items });
 }
 
@@ -807,7 +690,7 @@ const aiLogs = computed(() =>
   )
 );
 
-/** 对话分区文件（原始资料/对话/，递归；与原始资料同构：带已整理/整理中/整理失败标志） */
+/** 对话分区文件（原始资料/对话/，递归；与原始资料同构） */
 const chatFiles = ref<any[]>([]);
 
 const normalizedFilter = computed(() => filter.value.trim().toLocaleLowerCase('zh-CN'));
@@ -832,26 +715,6 @@ const visibleFiles = computed(() =>
     : files.value
 );
 
-/** 原始资料提炼覆盖率:已整理/支持提炼/需处理 三计数,供分组角标展示 */
-const filesCoverage = computed(() => {
-  let supported = 0;
-  let ingested = 0;
-  let attention = 0;
-  for (const file of files.value) {
-    if (file.ingestSupported === false) continue;
-    supported++;
-    if (file.ingestedAt) {
-      ingested++;
-      continue;
-    }
-    if (file.ingestStatus === 'failed' || ['failed', 'blocked', 'partial'].includes(file.extractionStatus || '')) {
-      attention++;
-    } else if (!file.extractionStatus) {
-      attention++;
-    }
-  }
-  return { supported, ingested, attention };
-});
 const visibleChatFiles = computed(() =>
   normalizedFilter.value
     ? chatFiles.value.filter((file) => textMatches(file.name) || textMatches(file.path))
@@ -962,7 +825,7 @@ async function onUpload(e: Event) {
     const { data } = await api.post('/api/files/upload', fd);
     // 部分文件重复时提示，但已成功的照常导入
     if (data.duplicates?.length) {
-      ingestHint.value = `以下文件已存在，未重复导入：${data.duplicates.join('、')}`;
+      notify.info(`以下文件已存在，未重复导入：${data.duplicates.join('、')}`);
     }
   } catch (err: any) {
     notify.error(err.response?.data?.error || '上传失败');
@@ -1005,33 +868,6 @@ async function removeFile(f: any) {
   if (!ok) return;
   await api.delete('/api/files', { data: { path: f.path } });
   await load();
-}
-
-/** AI 整理单个原始资料：提炼概念/实体页到 Wiki */
-async function ingestFile(f: any) {
-  try {
-    await api.post('/api/ai/ingest', { path: f.path, force: true });
-    ingestHint.value = `「${f.name}」已加入整理队列`;
-    await app.refreshJobs();
-  } catch (e: any) {
-    ingestHint.value = humanError(e?.response?.data?.error || e?.message || '请求失败');
-  }
-}
-
-async function ingestAll() {
-  const ok = await confirmDialog({
-    title: '整理全部原始资料',
-    message: '将全部原始资料加入整理队列。已整理且内容未变更的会自动跳过,实际只处理新增、变更或之前失败的资料。继续?',
-    confirmText: '继续',
-  });
-  if (!ok) return;
-  try {
-    const { data } = await api.post('/api/ai/ingest-all', { force: true });
-    ingestHint.value = data.queued > 0 ? `已加入 ${data.queued} 份资料的整理队列` : '原始资料为空';
-    if (data.queued > 0) await app.refreshJobs();
-  } catch (e: any) {
-    ingestHint.value = humanError(e?.response?.data?.error || e?.message || '请求失败');
-  }
 }
 
 function searchTag(tag: string) {

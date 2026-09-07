@@ -1,41 +1,9 @@
 import { db, getSetting, newId, now, setSetting } from './lib/db.js';
 import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
-import { extractEntities } from './graph/entities.js';
-import { organizePage } from './ai/organize.js';
-import { ingestRawFile } from './pipeline/ingest.js';
-import { runUpgrades } from './pipeline/mentions.js';
 import { regenerateIndex, regenerateRelationships, appendWikiLog } from './pipeline/indexFile.js';
-import {
-  applyReportDecisions,
-  claimReports,
-  releaseReports,
-  type ReportActionKind,
-  type ReportDecision,
-} from './dream/apply.js';
 import { enqueue, enqueuePagePipeline } from './jobQueue.js';
-import { allPageContributions, finalizeDerivedRun, recoverIngestCommits } from './pipeline/sourceLedger.js';
-import { recoverKnowledgeCommit } from './pipeline/knowledgeCommit.js';
-import { runDreamCycle } from './dream/tasks.js';
-import { runAutoDecideCycle } from './dream/autodecide.js';
-import { scanIdentityAmbiguityForPages } from './dream/tasks.js';
-import {
-  applyCandidateReviewBatch,
-  claimCandidateReviewBatch,
-  reconcileCandidateReports,
-  releaseCandidateReviewBatch,
-  type CandidateReviewDecision,
-} from './pipeline/candidateReview.js';
-import {
-  completeIngestQuestionJob,
-  failIngestQuestionJob,
-  recoverIngestQuestionJobs,
-} from './pipeline/ingestQuestions.js';
-import { recomposePage } from './pipeline/pageSynthesis.js';
 import { extractFile } from './pipeline/fileExtraction.js';
-import { releaseCandidateReports } from './pipeline/candidateLedger.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
-import { LlmError } from './lib/llm.js';
-import { LlmStreamError } from './lib/llmProtocols.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -51,28 +19,56 @@ type JobHandler = (
   context: { jobId: number; signal: AbortSignal },
 ) => Promise<void>;
 
-/**
- * 判断错误是否为模型相关错误（允许在任务队列中显示为失败）。
- * 仅以下三类错误允许标记为 failed：
- * 1. 模型通讯失败（LlmError、网络错误、超时、取消）
- * 2. 没有额度（429、quota）
- * 3. 没有配置（未配置 API Key、未配置 LLM）
- * 其他所有错误（JSON 解析、Zod 校验、数据库、文件系统、逻辑错误等）
- * 一律不标记为失败，改为标记为"已完成（有警告）"。
- */
-export function isModelRelatedError(error: any): boolean {
-  if (error instanceof LlmError) return true;
-  if (error instanceof LlmStreamError) return true;
-  if (error?.name === 'AbortError') return true;
-  const msg = String(error?.message || error || '');
-  // 网络通讯错误（fetch 底层异常）
-  if (error?.name === 'TypeError' && /fetch/i.test(msg)) return true;
-  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN/i.test(msg)) return true;
-  // LLM 相关错误消息
-  if (/未配置.*LLM|尚未配置.*API.*Key|LLM.*请求失败|LLM.*请求超时|AI.*请求已取消|Embedding.*异常|Embedding.*不匹配|推理占用|返回了空内容|返回格式异常|无流式响应|流式响应超时/i.test(msg)) return true;
-  // 额度/限流相关
-  if (/insufficient_quota|rate_limit|429|quota/i.test(msg)) return true;
-  return false;
+const handlers: Record<string, JobHandler> = {
+  extract_file: async ({ path, mode, pages }, update, context) => {
+    await extractFile(path, (progress) => update(progress), {
+      mode,
+      pages,
+      signal: context.signal,
+    });
+  },
+  index_file: async ({ fileId }, _update, context) => {
+    await indexFileText(fileId, context.signal);
+  },
+  /** 页面处理：FTS 兜底 + 图谱边重建 */
+  process: async ({ pageId }, _update, context) => {
+    await indexPage(pageId, context.signal);
+  },
+  metagen: async () => {
+    regenerateIndex();
+    regenerateRelationships();
+  },
+  rebuild: async (_payload, update, context) => {
+    let progress = 10;
+    await rebuildAll((message) => {
+      progress = Math.min(95, progress + 5);
+      update({ stage: '重建索引', progress, detail: message });
+    }, context.signal);
+    try { appendWikiLog('重建索引', '全量重建完成'); } catch { /* 日志失败不阻塞 */ }
+  },
+};
+
+/** 现存任务类型（启动清理时用于识别已移除的提炼类残留任务） */
+const KNOWN_KINDS = new Set(Object.keys(handlers));
+
+let running = false;
+type JobLane = 'default' | 'document';
+type ActiveExecution = {
+  controller: AbortController;
+  lane: JobLane;
+  runToken: string;
+  targetKey: string;
+};
+const LANE_LIMITS: Record<JobLane, number> = { default: 4, document: 1 };
+const activeExecutions = new Map<number, ActiveExecution>();
+const polling = { default: false, document: false };
+const idleWaiters = new Set<() => void>();
+let maintenanceDepth = 0;
+let maintenanceTail: Promise<void> = Promise.resolve();
+const JOB_QUEUE_ENABLED_SETTING = 'job_queue_enabled';
+
+export function getJobQueueState(): { running: boolean } {
+  return { running: (getSetting(JOB_QUEUE_ENABLED_SETTING) ?? '1') !== '0' };
 }
 
 function jobColumns(): Set<string> {
@@ -93,227 +89,14 @@ function updateJob(id: number, values: Partial<JobProgress>, runToken?: string) 
     .run(...params, id, ...(runToken ? [runToken] : []));
 }
 
-const handlers: Record<string, JobHandler> = {
-  /** AI 自动决策:整理报告的决策卡/候选/提醒由 AI 按管线阶段建议直接执行;
-   * 循环多轮直到清空或无进展(单轮各类上限 15,存量多时需多轮) */
-  autodecide: async (_payload, update, context) => {
-    const totals = { cardsResolved: 0, candidatesApproved: 0, remindersHandled: 0, skipped: 0, failed: 0 };
-    let round = 0;
-    let actionable = Infinity;
-    while (round < 8) {
-      context.signal.throwIfAborted();
-      round++;
-      update({ stage: `AI 自动决策中(第 ${round} 轮)`, progress: Math.min(90, round * 12), detail: `已处理 决策 ${totals.cardsResolved} · 入库 ${totals.candidatesApproved} · 提醒 ${totals.remindersHandled}` });
-      const stats = await runAutoDecideCycle(context.signal);
-      totals.cardsResolved += stats.cardsResolved;
-      totals.candidatesApproved += stats.candidatesApproved;
-      totals.remindersHandled += stats.remindersHandled;
-      totals.skipped += stats.skipped;
-      totals.failed += stats.failed;
-      actionable = (await import('./dream/reportCards.js')).buildReportsOverview().counts.actionable;
-      // 无进展(全是留人工项)或已清空则停止
-      if (actionable === 0 || (stats.cardsResolved + stats.candidatesApproved + stats.remindersHandled) === 0) break;
-    }
-    const summary = `决策卡 ${totals.cardsResolved} · 候选入库 ${totals.candidatesApproved} · 提醒 ${totals.remindersHandled} · 留人工 ${totals.skipped}${totals.failed ? ` · 失败 ${totals.failed}` : ''} · 剩余 ${Math.max(0, actionable)}`;
-    update({ stage: 'AI 自动决策已完成', progress: 100, detail: summary });
-  },
-  embed: async ({ pageId }, _update, context) => {
-    await indexPage(pageId, context.signal);
-  },
-  index_file: async ({ fileId }, _update, context) => {
-    await indexFileText(fileId, context.signal);
-  },
-  extract_file: async ({ path, mode, pages, ingestAfter, forceIngest }, update, context) => {
-    await extractFile(path, (progress) => update(progress), {
-      mode,
-      pages,
-      ingestAfter: ingestAfter !== false,
-      forceIngest: Boolean(forceIngest),
-      signal: context.signal,
-    });
-  },
-  extract: async ({ pageId }, _update, context) => {
-    await extractEntities(pageId, context.signal);
-  },
-  summarize: async ({ pageId }, _update, context) => {
-    await organizePage(pageId, context.signal);
-  },
-  ingest: async ({ path, force, reextract, questionId }, update, context) => {
-    await ingestRawFile(path, (progress) => update(progress), {
-      force: Boolean(force),
-      reextract: Boolean(reextract),
-      signal: context.signal,
-    });
-    if (questionId) completeIngestQuestionJob(String(questionId), context.jobId);
-  },
-  mentions: async () => {
-    await runUpgrades();
-  },
-  metagen: async () => {
-    regenerateIndex();
-    regenerateRelationships();
-  },
-  /** 单页全流程：索引+抽取+整理一步到位（减少队列任务数） */
-  process: async ({ pageId }, _update, context) => {
-    await indexPage(pageId, context.signal);
-    await extractEntities(pageId, context.signal);
-    await organizePage(pageId, context.signal);
-  },
-  page_recompose: async ({ pageId, synthesisId, inputHash }, update, context) => {
-    update({ stage: '跨来源整页综合', progress: 15, detail: String(pageId) });
-    const result = await recomposePage(
-      String(pageId),
-      String(synthesisId),
-      String(inputHash),
-      context.signal,
-      // 每轮 LLM 调用前上报进度刷新 updated_at，避免 abortStaleJobs 的 20 分钟无进度探针
-      // 误杀正在多轮自纠错的合成任务（单次 LLM 最长 120s，多轮累计易超 5 分钟）。
-      (stage, round) => update({
-        stage: `整页综合·${stage}`,
-        progress: Math.min(85, 15 + round * 20 + (stage === 'verify' ? 10 : 0)),
-        detail: `${pageId} · 第 ${round + 1} 轮 ${stage}`,
-      }),
-    );
-    if (result.changed) {
-      update({ stage: '整页综合已写入', progress: 90, detail: result.synthesisId });
-      enqueue('process', { pageId: String(pageId), synthesisId: result.synthesisId });
-      enqueue('metagen', {});
-    }
-  },
-  ingest_finalize: async ({ runId }) => {
-    finalizeDerivedRun(runId);
-  },
-  /** 按页面重新提炼：反查该页依赖的来源，逐个强制重跑 ingest 管线 */
-  page_reextract: async ({ pageId }, update) => {
-    update({ stage: '按页面重新提炼', progress: 5, detail: String(pageId) });
-    const contribs = allPageContributions(String(pageId));
-    const paths = [...new Set(contribs.map((item) => item.source_path))];
-    if (!paths.length) {
-      update({ stage: '按页面重新提炼', progress: 100, detail: '无可重新提炼的来源' });
-      return;
-    }
-    for (const p of paths) enqueue('ingest', { path: p, force: true, reextract: true });
-    update({ stage: '按页面重新提炼', progress: 50, detail: `已入队 ${paths.length} 份来源` });
-  },
-  ingest_recover: async ({ runId }) => {
-    recoverKnowledgeCommit(runId);
-  },
-  candidate_reconcile: async ({ path, candidateIds, reportIds }, update, context) => {
-    update({
-      stage: '准备局部候选对账',
-      progress: 5,
-      detail: `${path} · ${(candidateIds || []).length} 个候选`,
-    });
-    try {
-      const result = await reconcileCandidateReports(
-        reportIds || [],
-        (progress) => update(progress),
-        context.signal,
-      );
-      if (!result.completed) {
-        throw new Error(result.errors.join('；') || '候选仍未满足自动入库条件');
-      }
-    } catch (error) {
-      releaseCandidateReports(reportIds || []);
-      throw error;
-    }
-  },
-  candidate_review_batch: async ({ decisions }, update, context) => {
-    try {
-      await applyCandidateReviewBatch(
-        decisions as CandidateReviewDecision[],
-        (progress) => update(progress),
-        context.signal,
-      );
-    } catch (error) {
-      releaseCandidateReviewBatch(decisions as CandidateReviewDecision[]);
-      throw error;
-    }
-  },
-  /** 分类批量处理：只执行请求中显式选择的报告和动作。 */
-  dream_apply: async ({ kind, decisions }, update, context) => {
-    try {
-      await applyReportDecisions(
-        kind as ReportActionKind,
-        decisions as ReportDecision[],
-        (progress) => update(progress),
-        context.signal,
-      );
-    } catch (error) {
-      releaseReports(decisions as ReportDecision[]);
-      throw error;
-    }
-  },
-  dream: async (_payload, update, context) => {
-    update({ stage: '运行 智能整理', progress: 10, detail: '扫描知识库问题' });
-    const result = await runDreamCycle(context.signal);
-    update({ stage: '智能整理 已完成', progress: 100, detail: JSON.stringify(result) });
-    try { appendWikiLog('智能整理', JSON.stringify(result)); } catch { /* 日志失败不阻塞 */ }
-  },
-  /** 入库后增量扫描：检测新建页面与已有页面之间的身份歧义。 */
-  identity_audit: async ({ pageIds }, update, context) => {
-    update({ stage: '身份歧义增量扫描', progress: 5, detail: `${(pageIds || []).length} 个新建页面` });
-    const count = await scanIdentityAmbiguityForPages(pageIds || [], context.signal);
-    update({ stage: '身份歧义增量扫描 已完成', progress: 100, detail: `发现 ${count} 项歧义` });
-  },
-  rebuild: async (_payload, update, context) => {
-    let progress = 10;
-    await rebuildAll((message) => {
-      progress = Math.min(95, progress + 5);
-      update({ stage: '重建索引', progress, detail: message });
-    }, context.signal);
-    try { appendWikiLog('重建索引', '全量重建完成'); } catch { /* 日志失败不阻塞 */ }
-  },
-};
-
-let running = false;
-type JobLane = 'default' | 'document';
-type ActiveExecution = {
-  controller: AbortController;
-  lane: JobLane;
-  runToken: string;
-  targetKey: string;
-};
-
-// default 车道 4 并发（之前临时降到 1 是为规避「固定 150s 超时误判 → 重试风暴 →
-// 网关连接堆积」；根因已修：动态超时 + 独立 dispatcher 不复用坏连接 + 网络异常
-// 纳入重试 + 流式传输消除静默长等待，恢复并提升并发提速。
-// 单文件是串行管线，吞吐瓶颈在文件级并行度：2→4 直接翻倍，峰值并发
-// 4 文件 × 批内 2 = 8 路（undici dispatcher connections=16 可承载），
-// 批失败降级兜底网关偶发限流）。document 车道单并发。
-const LANE_LIMITS: Record<JobLane, number> = { default: 4, document: 1 };
-/** 任务完成后的冷却间隔（毫秒）：给网关喘息窗口，避免连续高频请求触发限流 */
-const JOB_COOLDOWN_MS = 5_000;
-let laneCooldownUntil = 0;
-const JOB_QUEUE_ENABLED_SETTING = 'job_queue_enabled';
-const STARTUP_DISCARDED_JOB_KINDS = [
-  'page_recompose',
-  'process',
-  'metagen',
-  'dream_apply',
-  'candidate_review_batch',
-  // 注意：candidate_reconcile 不在此列。它幂等（复用已抽取事实、可安全重入），
-  // 且重启后正是要靠它完成对账救济；若清理成 failed 会触发 previousFailure 窗口跳过，
-  // 导致重启后自动对账完全失效（生产 193 待审无法救济的根因之一）。
-] as const;
-const activeExecutions = new Map<number, ActiveExecution>();
-const polling = { default: false, document: false };
-const idleWaiters = new Set<() => void>();
-let maintenanceDepth = 0;
-let maintenanceTail: Promise<void> = Promise.resolve();
-
-export function getJobQueueState(): { running: boolean } {
-  return { running: (getSetting(JOB_QUEUE_ENABLED_SETTING) ?? '1') !== '0' };
-}
-
-/** 启动时恢复：先丢弃高负载派生任务，再恢复可安全续跑的近期任务。 */
+/** 启动时恢复：清理已移除的提炼类残留任务，恢复可安全续跑的近期任务。 */
 export function recoverStaleJobs() {
-  const discardedKinds = STARTUP_DISCARDED_JOB_KINDS.map(() => '?').join(',');
+  const kinds = [...KNOWN_KINDS];
   db.prepare(
-    `UPDATE jobs SET status='failed',stage='启动清理',detail='',
-       error='启动时清理的残留AI任务',run_token='',cancel_requested=0,updated_at=?
-     WHERE status IN ('pending','running') AND kind IN (${discardedKinds})`
-  ).run(now(), ...STARTUP_DISCARDED_JOB_KINDS);
+    `UPDATE jobs SET status='failed',stage='启动清理',error='任务类型已随提炼管线移除',
+       run_token='',cancel_requested=0,updated_at=?
+     WHERE status IN ('pending','running','paused') AND kind NOT IN (${kinds.map(() => '?').join(',')})`
+  ).run(now(), ...kinds);
   db.prepare(
     `UPDATE jobs SET status = 'pending', run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'
@@ -324,93 +107,16 @@ export function recoverStaleJobs() {
        run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'`
   ).run(now());
-  // 上面把排队的 page_recompose 任务丢弃了，但 page_syntheses 的 pending 行不随 job 走。
-  // 留着的 pending 行会让 queuePageRecompose 提前返回（视为已在队列）而永不重新入队，
-  // 页面因此永久卡在「综合中」。这里一并标 failed，交给失败冷却 + 定期补齐按节奏重试。
-  db.prepare(
-    `UPDATE page_syntheses SET status='failed', error='启动时清理：综合任务被中断', updated_at=?
-     WHERE status='pending'`
-  ).run(now());
-  recoverApplyingReports();
-  recoverIngestCommits();
-  recoverIngestQuestionJobs();
-  recoverMissingIndexes();
-}
-
-/**
- * 启动索引救济：启动清理丢弃的 process/embed 任务不会自动重跑，
- * 对应页面会缺 chunks/向量索引而搜索不到（重启后部分页面搜索缺失的根因）。
- * 以 index_states 为判据（indexPage 完成后必写，含空页面），
- * 从未完成索引的页面重新入队；indexPage 有内容签名幂等，重复入队安全。
- */
-export function recoverMissingIndexes(): number {
+  // FTS 兜底：从未进过 pages_fts 的页面（历史向量时代数据）补一次索引任务
   const rows = db.prepare(
     `SELECT p.id FROM pages p
      WHERE p.deleted = 0
-       AND NOT EXISTS (
-         SELECT 1 FROM index_states s WHERE s.ref_type = 'page' AND s.ref_id = p.id
-       )
+       AND NOT EXISTS (SELECT 1 FROM pages_fts f WHERE f.page_id = p.id)
      LIMIT 500`
   ).all() as { id: string }[];
   for (const row of rows) enqueuePagePipeline(row.id);
   if (rows.length) {
-    console.log(`[jobs] 启动索引救济:重新入队 ${rows.length} 个缺索引页面`);
-  }
-  return rows.length;
-}
-
-/** 仅保留仍被 pending/running 批量任务引用的 applying 报告。 */
-export function recoverApplyingReports() {
-  const claimed = new Set<number>();
-  const active = db.prepare(
-    `SELECT payload FROM jobs
-     WHERE kind IN ('dream_apply','candidate_review_batch','candidate_reconcile')
-       AND status IN ('pending', 'running')`
-  ).all() as { payload: string }[];
-  for (const row of active) {
-    try {
-      const payload = JSON.parse(row.payload);
-      for (const decision of payload.decisions || []) claimed.add(Number(decision.reportId));
-      for (const reportId of payload.reportIds || []) claimed.add(Number(reportId));
-    } catch { /* malformed jobs will fail in the runner */ }
-  }
-  const applying = db.prepare(`SELECT id FROM reports WHERE status = 'applying'`).all() as { id: number }[];
-  const release = applying.filter((report) => !claimed.has(report.id)).map((report) => ({ reportId: report.id, action: '' }));
-  releaseReports(release);
-}
-
-function releaseJobClaims(job: any): void {
-  let payload: any = {};
-  try { payload = JSON.parse(job.payload); } catch { return; }
-  if (job.kind === 'candidate_reconcile') {
-    releaseCandidateReports(payload.reportIds || []);
-  } else if (job.kind === 'candidate_review_batch') {
-    releaseCandidateReviewBatch(payload.decisions || []);
-  } else if (job.kind === 'dream_apply') {
-    releaseReports(payload.decisions || []);
-  }
-}
-
-function claimJobReports(job: any): void {
-  let payload: any = {};
-  try { payload = JSON.parse(job.payload); } catch { return; }
-  if (job.kind === 'candidate_reconcile') {
-    const reportIds = (payload.reportIds || []).map(Number).filter(Number.isInteger);
-    const claim = db.prepare(
-      `UPDATE reports SET status='applying'
-       WHERE id=? AND kind='pending_review' AND status='open'`
-    );
-    db.transaction(() => {
-      for (const reportId of reportIds) {
-        if (claim.run(reportId).changes !== 1) {
-          throw new Error(`候选 #${reportId} 已处理或不存在`);
-        }
-      }
-    })();
-  } else if (job.kind === 'candidate_review_batch') {
-    claimCandidateReviewBatch(payload.decisions || []);
-  } else if (job.kind === 'dream_apply') {
-    claimReports(payload.kind, payload.decisions || []);
+    console.log(`[jobs] 启动 FTS 兜底：重新入队 ${rows.length} 个缺索引页面`);
   }
 }
 
@@ -439,31 +145,20 @@ function nextJob(lane: JobLane): any | undefined {
     `SELECT * FROM jobs
      WHERE status='pending'
        AND ${lane === 'document' ? `kind='extract_file'` : `kind<>'extract_file'`}
-     ORDER BY
-       CASE kind
-         WHEN 'ingest' THEN 0
-         WHEN 'candidate_review_batch' THEN 0
-         WHEN 'dream_apply' THEN 0
-         WHEN 'candidate_reconcile' THEN 1
-         WHEN 'page_recompose' THEN 2
-         WHEN 'process' THEN 2
-         ELSE 3
-       END,
-       id
-     LIMIT 50`
+       ORDER BY id
+       LIMIT 50`
   ).all() as any[];
-  return rows.find((job) => !activeTargets.has(targetKey(job)));
+  return rows.find((job) => KNOWN_KINDS.has(job.kind) && !activeTargets.has(targetKey(job)));
 }
 
 async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
   const { controller, runToken } = execution;
-  const payload = JSON.parse(job.payload);
   try {
     const handler = handlers[job.kind];
     updateJob(job.id, { stage: '执行中', progress: 5 }, runToken);
     if (!handler) throw new Error(`未知任务类型：${job.kind}`);
     await handler(
-      payload,
+      JSON.parse(job.payload),
       (progress) => updateJob(job.id, progress, runToken),
       { jobId: job.id, signal: controller.signal },
     );
@@ -474,9 +169,8 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
     if (controller.signal.aborted || state.cancel_requested) {
       db.prepare(
         `UPDATE jobs SET status='cancelled',stage='已取消',detail='',
-           error=NULL,run_token='',updated_at=? WHERE id=? AND run_token=?`
+           error=NULL,run_token='',cancel_requested=0,updated_at=? WHERE id=? AND run_token=?`
       ).run(now(), job.id, runToken);
-      releaseJobClaims(job);
       return;
     }
     const completed = db.prepare(
@@ -491,44 +185,23 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
     ).get(job.id, runToken) as { status: string; cancel_requested: number } | undefined;
     if (state?.status === 'running') {
       const cancelled = controller.signal.aborted || Boolean(state.cancel_requested);
-      const modelError = !cancelled && isModelRelatedError(error);
       const errorMsg = String(error?.message || error).slice(0, 500);
       if (cancelled) {
         db.prepare(
           `UPDATE jobs SET status='cancelled',stage='已取消',detail='',error=NULL,
              run_token='',cancel_requested=0,updated_at=? WHERE id=? AND run_token=?`
         ).run(now(), job.id, runToken);
-      } else if (modelError) {
-        // 模型相关错误（通讯失败/无额度/未配置）才标记为失败
+      } else {
         db.prepare(
           `UPDATE jobs SET status='failed',stage='失败',detail=?,error=?,
              run_token='',cancel_requested=0,updated_at=? WHERE id=? AND run_token=?`
         ).run(errorMsg, errorMsg, now(), job.id, runToken);
-      } else {
-        // 非模型错误不标记为失败，改为"已完成（有警告）"
-        console.warn(`[jobs] 非模型错误已自动处理（job #${job.id} ${job.kind}）:`, errorMsg);
-        db.prepare(
-          `UPDATE jobs SET status='done',stage='已完成（有警告）',progress=100,
-             detail=?,error=?,run_token='',cancel_requested=0,updated_at=? WHERE id=? AND run_token=?`
-        ).run(`非模型错误已自动处理：${errorMsg.slice(0, 200)}`, errorMsg, now(), job.id, runToken);
       }
-    }
-    releaseJobClaims(job);
-    if (job.kind === 'ingest' && payload.questionId && state?.status !== 'paused' && isModelRelatedError(error)) {
-      failIngestQuestionJob(String(payload.questionId), job.id, error);
     }
   } finally {
     activeExecutions.delete(job.id);
     notifyIdleWaiters();
     if (!maintenanceDepth && getJobQueueState().running) resumePausedJobs();
-    // 任务结束（含失败）后进入冷却期：给网关喘息窗口，降低连续高频请求
-    // 触发限流挂起的概率（实测双路持续压 ~20 分钟后网关进入长时间挂起）
-    if (execution.lane === 'default') {
-      laneCooldownUntil = Math.max(laneCooldownUntil, Date.now() + JOB_COOLDOWN_MS);
-      setTimeout(() => pollLane('default'), JOB_COOLDOWN_MS + 50);
-      return;
-    }
-    // 任务完成后的下一轮调度延迟到下一个事件循环 tick，避免同步 DB 写密集冻结主线程。
     setImmediate(() => pollLane(execution.lane));
   }
 }
@@ -551,13 +224,11 @@ function startJob(job: any, lane: JobLane): boolean {
   return true;
 }
 
-/** 文档识别单并发；普通 AI 任务默认车道单并发（网关限流保护），同一目标保持串行。 */
+/** 文档解析单并发（CPU 密集）；其余任务默认车道并发。同一目标保持串行。 */
 function pollLane(lane: JobLane) {
   if (maintenanceDepth || !getJobQueueState().running || polling[lane]) return;
   polling[lane] = true;
   try {
-    // 冷却期内不取新任务（仅 default 车道；document/embed 等低频车道不受限）
-    if (lane === 'default' && Date.now() < laneCooldownUntil) return;
     while (activeLaneCount(lane) < LANE_LIMITS[lane]) {
       const job = nextJob(lane);
       if (!job || !startJob(job, lane)) break;
@@ -576,7 +247,6 @@ export function cancelJob(jobId: number): { status: string } {
        cancel_requested=0,run_token='',updated_at=?
        WHERE id=? AND status IN ('pending','paused')`
     ).run(now(), jobId);
-    releaseJobClaims(job);
     return { status: 'cancelled' };
   }
   if (job.status !== 'running') return { status: job.status };
@@ -586,7 +256,6 @@ export function cancelJob(jobId: number): { status: string } {
       `UPDATE jobs SET status='cancelled',stage='已取消',error=NULL,
        cancel_requested=0,run_token='',updated_at=? WHERE id=? AND status='running'`
     ).run(now(), jobId);
-    releaseJobClaims(job);
     return { status: 'cancelled' };
   }
   db.prepare(
@@ -649,10 +318,10 @@ export async function withJobsStopped<T>(
 export function retryJob(jobId: number): { status: string } {
   const job = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(jobId) as any;
   if (!job) throw new Error('任务不存在');
+  if (!KNOWN_KINDS.has(job.kind)) throw new Error('该任务类型已随提炼管线移除，无法重试');
   if (!['failed', 'cancelled'].includes(job.status)) {
     throw new Error('仅失败或已取消任务可重试');
   }
-  claimJobReports(job);
   db.prepare(
     `UPDATE jobs SET status='pending',error=NULL,run_at=NULL,
      stage='等待执行',progress=0,detail='',cancel_requested=0,
@@ -668,33 +337,27 @@ function resumePausedJobs(): { started: number; failed: number; errors: string[]
   const errors: string[] = [];
   for (const job of paused) {
     if (activeExecutions.has(job.id)) continue;
-    try {
-      claimJobReports(job);
-      const resumed = db.prepare(
-        `UPDATE jobs SET status='pending',stage='等待执行',progress=0,detail='',
-         error=NULL,cancel_requested=0,run_token='',run_at=NULL,updated_at=?
-         WHERE id=? AND status='paused'`
-      ).run(now(), job.id);
-      started += resumed.changes;
-    } catch (error: any) {
-      const message = String(error?.message || error || '任务恢复失败').slice(0, 500);
+    if (!KNOWN_KINDS.has(job.kind)) {
       db.prepare(
-        `UPDATE jobs SET status='failed',stage='失败',detail=?,error=?,
-         cancel_requested=0,run_token='',updated_at=?
-         WHERE id=? AND status='paused'`
-      ).run(message, message, now(), job.id);
+        `UPDATE jobs SET status='failed',stage='失败',error='任务类型已随提炼管线移除',
+         cancel_requested=0,run_token='',updated_at=? WHERE id=? AND status='paused'`
+      ).run(now(), job.id);
       failed++;
-      errors.push(`#${job.id} ${message}`);
+      continue;
     }
+    const resumed = db.prepare(
+      `UPDATE jobs SET status='pending',stage='等待执行',progress=0,detail='',
+       error=NULL,cancel_requested=0,run_token='',run_at=NULL,updated_at=?
+       WHERE id=? AND status='paused'`
+    ).run(now(), job.id);
+    started += resumed.changes;
   }
   return { started, failed, errors };
 }
 
 export function stopJobQueue(): { status: 'stopped'; stopped: number } {
   setSetting(JOB_QUEUE_ENABLED_SETTING, '0');
-  const jobs = db.prepare(
-    `SELECT * FROM jobs WHERE status IN ('pending','running') ORDER BY id`
-  ).all() as any[];
+  const jobs = db.prepare(`SELECT * FROM jobs WHERE status IN ('pending','running') ORDER BY id`).all() as any[];
   let stopped = 0;
   for (const job of jobs) {
     const updated = db.prepare(
@@ -704,7 +367,6 @@ export function stopJobQueue(): { status: 'stopped'; stopped: number } {
     ).run(job.status === 'running' ? 1 : 0, now(), job.id, job.status);
     if (!updated.changes) continue;
     stopped++;
-    releaseJobClaims(job);
     if (job.status === 'running') activeExecutions.get(job.id)?.controller.abort();
   }
   return { status: 'stopped', stopped };
@@ -726,7 +388,7 @@ export function startJobQueue(): {
 }
 
 export function retryFailedJobs(): { retried: number; failed: number; errors: string[] } {
-  const jobs = db.prepare(`SELECT id FROM jobs WHERE status='failed' ORDER BY id`).all() as Array<{ id: number }>;
+  const jobs = db.prepare(`SELECT id, kind FROM jobs WHERE status='failed' ORDER BY id`).all() as Array<{ id: number; kind: string }>;
   let retried = 0;
   let failed = 0;
   const errors: string[] = [];
@@ -747,9 +409,6 @@ export function retryFailedJobs(): { retried: number; failed: number; errors: st
 }
 
 function abortStaleJobs(): void {
-  // 思考模型（thinking low）单次 LLM 调用 2-4 分钟，单阶段多轮调用累计可达 10 分钟；
-  // 心跳只在「LLM 调用前」上报，单次长调用期间无法刷新，5 分钟探针会误杀正常
-  // 推进的任务。放宽到 20 分钟，真正的死任务仍会被兜底清理。
   const stale = db.prepare(
     `SELECT * FROM jobs WHERE status='running'
      AND julianday(COALESCE(NULLIF(updated_at,''),run_at,created_at))
@@ -764,7 +423,6 @@ function abortStaleJobs(): void {
        run_token='',cancel_requested=0,updated_at=?
        WHERE id=? AND status='running'`
     ).run(now(), job.id);
-    releaseJobClaims(job);
   }
 }
 
@@ -774,7 +432,6 @@ export function startJobRunner() {
   recoverStaleJobs();
   const tick = () => {
     abortStaleJobs();
-    recoverIngestQuestionJobs();
     pollLane('default');
     pollLane('document');
   };

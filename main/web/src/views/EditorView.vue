@@ -67,25 +67,6 @@
             <Icon v-if="saveState === '保存失败'" name="activity" :size="12" />
             {{ saveState }}
           </span>
-          <button class="btn ghost small" v-tooltip="'AI 整理（摘要/标签/实体）'" @click="organize">
-            <Icon name="ai" :size="14" /> 整理
-          </button>
-          <button
-            v-if="canSynthesize"
-            class="btn ghost small"
-            v-tooltip="'基于已入库事实重新生成本页正文（不重读原始资料）'"
-            @click="recompose"
-          >
-            <Icon name="restore" :size="14" /> 重新组织
-          </button>
-          <button
-            v-if="canSynthesize"
-            class="btn ghost small"
-            v-tooltip="'重跑本页依赖的原始资料，重新提炼（连带刷新共享来源的其他页面）'"
-            @click="reextract"
-          >
-            <Icon name="rotate-right" :size="14" /> 重新提炼
-          </button>
           <button
             v-if="evidence?.sources?.length"
             class="btn ghost small"
@@ -95,34 +76,9 @@
             <Icon name="book-open" :size="14" />
             来源 {{ evidence.sources.length }}
           </button>
-          <span
-            v-if="synthesisQueued"
-            class="synthesis-inline small"
-            v-tooltip="'来源事实已入账，正在生成整页正文'"
-          >
-            <Icon name="activity" :size="13" />
-            综合中
-          </span>
-          <span
-            v-else-if="synthesisFailed"
-            class="synthesis-inline failed small"
-            v-tooltip="synthesisFailedTip"
-          >
-            <Icon name="activity" :size="13" />
-            综合未通过
-          </span>
           <button class="btn icon" v-tooltip="'查看本页图谱'" aria-label="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
             <Icon name="graph" :size="14" />
           </button>
-          </div>
-
-          <!-- AI 写作操作条（并入手机折叠区） -->
-          <div class="ai-bar">
-            <Icon name="ai" :size="13" class="ai-bar-icon" />
-            <button v-for="a in aiActions" :key="a.key" class="ai-action" @click="runAi(a.key)">
-              {{ a.label }}
-            </button>
-            <span class="muted small ai-hint">选中文本后使用，未选中则作用于全文</span>
           </div>
         </div>
       </div>
@@ -152,21 +108,6 @@
           <button class="btn icon" v-tooltip="'关闭来源证据'" aria-label="关闭来源证据" @click="evidenceOpen = false">
             <Icon name="x" :size="18" />
           </button>
-        </div>
-
-        <div
-          v-if="evidence.synthesis"
-          class="synthesis-state small"
-          :class="{ warning: evidence.synthesis.manualModified || evidence.synthesis.outdated }"
-        >
-          <Icon :name="evidence.synthesis.manualModified || evidence.synthesis.outdated ? 'activity' : 'check'" :size="15" />
-          <span v-if="evidence.synthesis.manualModified">检测到人工修改，下次资料更新将执行三方合并</span>
-          <span v-else-if="evidence.synthesis.outdated">新资料正在等待整页综合</span>
-          <span v-else>整页综合已通过证据验证</span>
-        </div>
-        <div v-else class="synthesis-state warning small">
-          <Icon name="activity" :size="15" />
-          <span>来源事实已入账，正在等待首次整页综合</span>
         </div>
 
         <div class="evidence-scroll">
@@ -303,15 +244,14 @@
           </svg>
         </div>
         <h2>欢迎来到 Engram</h2>
-        <p class="muted">写下的每一页都会被 AI 消化：自动索引、自动关联、随问随答。</p>
+        <p class="muted">不内置 AI 的知识大脑：导入资料，用你的外部 Agent（ZCode / Codex / Claude Code…）经 MCP 或 CLI 提炼与问答。</p>
         <div class="welcome-actions">
           <button class="btn primary" @click="createFirst">新建页面</button>
-          <button class="btn" @click="$router.push('/search')">向知识库提问</button>
+          <button class="btn" @click="$router.push('/search')">搜索知识库</button>
           <button class="btn" @click="$router.push('/graph')">知识图谱</button>
         </div>
         <div class="welcome-shortcuts">
           <span class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>K</kbd> 搜索</span>
-          <span class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>J</kbd> AI 助手</span>
           <span class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>N</kbd> 新建页面</span>
         </div>
       </div>
@@ -324,7 +264,6 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
-import { useAssistantStore } from '../stores/assistant';
 import {
   canReadClipboard,
   copyText,
@@ -343,7 +282,6 @@ import { notify } from '../lib/notify';
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
-const assistant = useAssistantStore();
 
 const page = ref<any>(null);
 const content = ref('');
@@ -435,48 +373,7 @@ const isDark = computed(() => app.dark);
 const tags = computed(() =>
   tagsInput.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)
 );
-/** 有来源事实且无有效综合稿：可能是排队中（pending）、失败/冲突（failed/conflict）或从未综合 */
-const synthesisMissing = computed(() =>
-  Boolean(evidence.value?.sources?.length) &&
-  (!evidence.value?.synthesis || evidence.value.synthesis.outdated)
-);
-/** 失败态优先级高于排队态：无 active 综合稿且最新一次记录是 failed/conflict */
-const synthesisFailed = computed(() =>
-  synthesisMissing.value &&
-  !evidence.value?.synthesis &&
-  ['failed', 'conflict'].includes(evidence.value?.latestSynthesis?.status)
-);
-/** 排队中 / 过期重排中（非失败态） */
-const synthesisQueued = computed(() =>
-  synthesisMissing.value && !synthesisFailed.value
-);
-const synthesisFailedTip = computed(() => {
-  const latest = evidence.value?.latestSynthesis;
-  const reason = latest?.error ? `：${String(latest.error).slice(0, 120)}` : '';
-  return `上一次综合未通过质量校验${reason}。点击「重新组织」可强制重试`;
-});
 
-/** 概念页与实体页（人物/客户/组织/地点/作品/产品/其他）可整页综合（重新组织/重新提炼） */
-const canSynthesize = computed(() =>
-  ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(pageType.value)
-);
-
-type WriterPreset = 'continue' | 'polish' | 'expand' | 'summarize' | 'translate';
-
-const aiActions: { key: WriterPreset; label: string }[] = [
-  { key: 'continue', label: '续写' },
-  { key: 'polish', label: '润色' },
-  { key: 'expand', label: '扩写' },
-  { key: 'summarize', label: '总结' },
-  { key: 'translate', label: '翻译' },
-];
-
-const contextAiActions: Array<{ key: WriterPreset; label: string; icon: string }> = [
-  { key: 'summarize', label: '总结', icon: 'sort' },
-  { key: 'polish', label: '润色', icon: 'ai' },
-  { key: 'expand', label: '扩写', icon: 'plus' },
-  { key: 'translate', label: '翻译', icon: 'languages' },
-];
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
 let loading = false; // 加载页面时抑制 content watch
@@ -506,7 +403,6 @@ async function loadPage(id: string) {
     tagsInput.value = (data.meta.tags || []).join(', ');
     saveState.value = '';
     dirty = false;
-    syncAssistantContext();
     loadRelated();
     loadEvidence();
   } catch (error: any) {
@@ -596,7 +492,6 @@ async function save(manual = false) {
     setTimeout(() => (saveState.value = ''), 2000);
     loadRelated();
     loadEvidence();
-    syncAssistantContext();
   } catch (error: any) {
     // dirty 保持 true：beforeunload 会继续提醒，下次编辑/手动保存可重试
     saveState.value = '保存失败';
@@ -638,83 +533,6 @@ async function openWikilink(wikiTitle: string) {
   }
 }
 
-async function runAi(action: WriterPreset) {
-  const sel = editorRef.value?.getSelectionText() || '';
-  const text = sel || editorRef.value?.getValue() || '';
-  if (!text.trim()) return;
-  const label = aiActions.find((a) => a.key === action)?.label || action;
-  if (dirty) await save(true);
-  const context = pageAssistantContext(sel, action, text);
-  await assistant.openWith(`请${label}以下${sel ? '选中内容' : '页面内容'}。`, context, true);
-}
-
-function fileAssistantContext(
-  selection = '',
-  preset?: WriterPreset,
-  presetText?: string,
-) {
-  return {
-    route: route.fullPath,
-    currentFile: filePath.value ? {
-      path: filePath.value,
-      name: filePath.value.split('/').pop(),
-    } : undefined,
-    selection: selection || undefined,
-    preset,
-    presetText,
-  };
-}
-
-function activeAssistantContext(
-  selection = '',
-  preset?: WriterPreset,
-  presetText?: string,
-) {
-  return filePath.value
-    ? fileAssistantContext(selection, preset, presetText)
-    : pageAssistantContext(selection, preset, presetText);
-}
-
-async function runSelectionAi(action: WriterPreset, selection: string) {
-  const label = aiActions.find((item) => item.key === action)?.label || action;
-  if (!selection.trim()) return;
-  if (!filePath.value && dirty) await save(true);
-  await assistant.openWith(
-    `请${label}以下选中内容。`,
-    activeAssistantContext(selection, action, selection),
-    true,
-  );
-}
-
-async function askAboutSelection(selection: string) {
-  if (!selection.trim()) return;
-  if (!filePath.value && dirty) await save(true);
-  await assistant.openWith(
-    '关于这段选中内容，我想问：',
-    activeAssistantContext(selection),
-    false,
-  );
-}
-
-async function askAboutCurrentPage() {
-  if (!page.value) return;
-  if (dirty) await save(true);
-  await assistant.openWith(
-    '关于当前页面，我想问：',
-    pageAssistantContext(),
-    false,
-  );
-}
-
-async function askAboutCurrentFile() {
-  if (!filePath.value) return;
-  await assistant.openWith(
-    '关于当前文件，我想问：',
-    fileAssistantContext(),
-    false,
-  );
-}
-
 function searchSelection(selection: string) {
   router.push({
     path: '/search',
@@ -731,49 +549,16 @@ function selectionBusinessItems(selection: string): ContextMenuItem[] {
       separatorBefore: true,
       action: () => searchSelection(selection),
     },
-    {
-      id: 'ask-selection',
-      label: '询问 AI',
-      icon: 'ai',
-      action: () => askAboutSelection(selection),
-    },
-    {
-      id: 'ai-selection',
-      label: 'AI 处理',
-      icon: 'ai',
-      children: contextAiActions.map((item) => ({
-        id: `ai-${item.key}`,
-        label: item.label,
-        icon: item.icon,
-        action: () => runSelectionAi(item.key, selection),
-      })),
-    },
   ];
 }
 
 function pageContextItems(separatorBefore = false): ContextMenuItem[] {
   return [
     {
-      id: 'ask-page',
-      label: '询问当前页面',
-      icon: 'ai',
-      separatorBefore,
-      action: askAboutCurrentPage,
-    },
-    {
-      id: 'organize-page',
-      label: '整理当前页面',
-      icon: 'sort',
-      action: organize,
-    },
-    ...(canSynthesize.value ? [
-      { id: 'recompose-page', label: '重新组织正文', icon: 'restore', action: recompose },
-      { id: 'reextract-page', label: '重新提炼', icon: 'rotate-right', action: reextract },
-    ] : []),
-    {
       id: 'page-graph',
       label: '查看页面图谱',
       icon: 'graph',
+      separatorBefore,
       action: () => page.value && router.push(`/graph/${page.value.id}`),
     },
     {
@@ -787,12 +572,6 @@ function pageContextItems(separatorBefore = false): ContextMenuItem[] {
 
 function fileContextItems(): ContextMenuItem[] {
   const items: ContextMenuItem[] = [
-    {
-      id: 'ask-file',
-      label: '询问当前文件',
-      icon: 'ai',
-      action: askAboutCurrentFile,
-    },
     {
       id: 'download-file',
       label: '下载文件',
@@ -894,94 +673,6 @@ function showContextMenu(
   openContextMenu({ x: request.x, y: request.y, items });
 }
 
-async function organize() {
-  if (!page.value) return;
-  if (dirty) await save(true);
-  await assistant.openWith(
-    '请整理当前页面，生成摘要并抽取实体关系。先展示将执行的动作，等待我确认后加入后台队列。',
-    pageAssistantContext(),
-    true
-  );
-}
-
-/** 重新组织：基于已入库事实重新生成本页正文（浅层，不重读原始资料，无连带影响） */
-async function recompose() {
-  if (!page.value) return;
-  if (dirty) await save(true);
-  try {
-    const { data } = await api.post(`/api/pages/${page.value.id}/recompose?force=true`);
-    if (data?.ok) {
-      notify.success('已加入后台队列，将基于已有事实重新生成本页正文');
-      await loadEvidence();
-    } else {
-      notify.error('重新组织未能入队');
-    }
-  } catch (error: any) {
-    notify.error(error?.response?.data?.error || '重新组织失败，请稍后重试');
-  }
-}
-
-/** 重新提炼：重跑本页依赖的原始资料（深层，连带刷新共享来源的其他页面） */
-async function reextract() {
-  if (!page.value) return;
-  if (dirty) await save(true);
-  let sources = 0;
-  try {
-    const { data } = await api.get(`/api/pages/${page.value.id}/evidence`);
-    sources = data?.sources?.length || 0;
-  } catch { /* ignore */ }
-  const confirmed = await confirmDialog({
-    title: '重新提炼',
-    message: `将重跑本页依赖的${sources || ''}份原始资料，重新抽取事实并生成正文。` +
-      '共享这些来源的其他页面也会被连带刷新，可能需要一些时间。是否继续？',
-    confirmText: '重新提炼',
-  });
-  if (!confirmed) return;
-  try {
-    const { data } = await api.post(`/api/pages/${page.value.id}/reextract`);
-    if (data?.ok) {
-      notify.success(`已入队，正在重新提炼 ${data.sources} 份来源，完成后本页及共享页面将自动刷新`);
-      await loadEvidence();
-    } else {
-      notify.error('重新提炼未能入队');
-    }
-  } catch (error: any) {
-    notify.error(error?.response?.data?.error || '重新提炼失败，请稍后重试');
-  }
-}
-
-function pageAssistantContext(
-  selection = '',
-  preset?: WriterPreset,
-  presetText?: string
-) {
-  return {
-    route: route.fullPath,
-    currentPage: page.value ? {
-      id: page.value.id,
-      title: title.value,
-      path: page.value.path,
-      updatedAt: page.value.updated_at,
-    } : undefined,
-    selection: selection || undefined,
-    preset,
-    presetText,
-  };
-}
-
-function syncAssistantContext() {
-  if (filePath.value) {
-    assistant.setContext({
-      route: route.fullPath,
-      currentFile: { path: filePath.value, name: filePath.value.split('/').pop() },
-    });
-  } else if (page.value) {
-    assistant.setContext(pageAssistantContext());
-  } else {
-    assistant.clearContext();
-  }
-}
-
 async function createFirst() {
   const { data } = await api.post('/api/pages', { dir: '', title: '欢迎使用 Engram' });
   router.push(`/page/${data.meta.id}`);
@@ -999,12 +690,9 @@ watch(
     else if (!id) {
       page.value = null; // 无 id 才回欢迎页
       pageError.value = '';
-      syncAssistantContext();
     }
   }
 );
-
-watch(filePath, syncAssistantContext);
 
 // 服务端 SSE 推送：当前页内容被任意来源（本会话/Dream/MCP/多标签）改动时即时重载
 watch(
@@ -1040,7 +728,6 @@ onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload);
   if (saveTimer) clearTimeout(saveTimer);
   relatedAlignObs?.disconnect();
-  assistant.clearContext();
 });
 </script>
 
