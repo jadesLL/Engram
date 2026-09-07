@@ -103,6 +103,8 @@ Windows 桌面端安装包从 [Releases](https://github.com/jadesLL/Engram/relea
 
 **备份/恢复**：设置 → 数据管理 → 「导出备份」一键打包整库（`wiki.db` + `brain/`）为 zip 下载；「从备份恢复」上传备份 zip 并输密码后暂存，重启服务生效（桌面端本地模式自动重启，Docker 版重启容器）。旧数据会保留一代（`wiki.db.pre-restore` / `brain.pre-restore`）便于手动回退。桌面端还可在设置里自定义数据保存位置（类 Obsidian 仓库位置，更换时旧数据自动迁移），Docker 版数据位置由 compose 卷挂载决定。
 
+**本地服务端口**（桌面端本地模式）：设置 → 数据管理 → 「本地服务端口」可修改内嵌后端监听端口，默认 18180（与 Docker 版 18080 互不冲突）；改动前自动预检端口占用，应用后内嵌服务以新端口重启，配置存桌面端 `config.json`。Docker 版端口仍由 compose 映射控制。
+
 ```
 data/
 ├── brain/              # 权威源：Markdown 页面 + 原始文件

@@ -8,6 +8,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { spawn } = require('node:child_process');
+const net = require('node:net');
 
 // 隔离/自定义数据目录：自动化测试与便携场景用；必须在单实例锁之前生效（锁文件位于 userData 内）
 if (process.env.ENGRAM_USER_DATA) app.setPath('userData', path.resolve(process.env.ENGRAM_USER_DATA));
@@ -34,8 +35,9 @@ try {
 }
 
 // 默认 18180 避开 Docker 版的 18080；用户本机若同时跑 Docker engram(18080) 与 desktop，
-// 两者互不抢占端口、可共存。ENGRAM_LOCAL_PORT 供隔离测试等场景覆写。
-const LOCAL_PORT = Number(process.env.ENGRAM_LOCAL_PORT || 18180);
+// 两者互不抢占端口、可共存。自定义端口存 config.json 的 localPort（设置页可改）；
+// ENGRAM_LOCAL_PORT 环境变量优先级最高，供隔离测试等场景覆写。
+const DEFAULT_LOCAL_PORT = 18180;
 const HEALTH_TIMEOUT_MS = 30000;
 
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
@@ -51,6 +53,18 @@ function readConfig() {
 function writeConfig(cfg) {
   fs.mkdirSync(path.dirname(configFile()), { recursive: true });
   fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2));
+}
+
+function validPort(n) {
+  return Number.isInteger(n) && n >= 1 && n <= 65535;
+}
+
+function getLocalPort() {
+  const env = Number(process.env.ENGRAM_LOCAL_PORT);
+  if (validPort(env)) return env;
+  const cfg = Number(readConfig().localPort);
+  if (validPort(cfg)) return cfg;
+  return DEFAULT_LOCAL_PORT;
 }
 
 // 模式切换会重置连接信息；自动更新开关是用户偏好，跨模式保留
@@ -208,13 +222,14 @@ function startLocalMode() {
     return;
   }
   win.loadURL(dataUrl('<h2>正在启动本地服务…</h2>'));
+  const port = getLocalPort();
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
     NODE_ENV: 'production',
     TZ: 'Asia/Shanghai',
     DATA_DIR: getDataDir(),
-    PORT: String(LOCAL_PORT),
+    PORT: String(port),
     HOST: '127.0.0.1',
     OFFICE_EDITOR_ENABLED: 'false',
     ENGRAM_WEB_DIST: webDistPath(),
@@ -227,7 +242,7 @@ function startLocalMode() {
   serverChild.stderr.on('data', (d) => log('[server!] ' + d.toString().trim()));
   serverChild.on('exit', (code) => log(`[server] exited code=${code}`));
 
-  const base = `http://127.0.0.1:${LOCAL_PORT}`;
+  const base = `http://127.0.0.1:${port}`;
   waitForHealth(base, HEALTH_TIMEOUT_MS).then((ok) => {
     if (ok) win.loadURL(base);
     else win.loadURL(dataUrl('<h2>本地服务启动失败</h2><p>详见日志：' + logFile() + '</p>'));
@@ -535,6 +550,41 @@ ipcMain.handle('choose-data-dir', async () => {
   writeConfig({ ...readConfig(), dataDir: target });
   startLocalMode(); // 健康检查通过后窗口自动加载新 server
   return result;
+});
+
+// 本地服务端口查询（仅本地模式有意义；isDefault=未自定义，envOverridden=环境变量覆写中）
+ipcMain.handle('get-local-port', () => {
+  const cfg = readConfig();
+  return {
+    port: getLocalPort(),
+    isDefault: !cfg.localPort,
+    envOverridden: Boolean(process.env.ENGRAM_LOCAL_PORT),
+  };
+});
+
+// 改前临时 bind 探测占用，避免改到被占端口后内嵌服务起不来只剩失败页
+function portBusy(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(true));
+    srv.once('listening', () => srv.close(() => resolve(false)));
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
+ipcMain.handle('set-local-port', async (_e, raw) => {
+  const port = Number(raw);
+  if (!validPort(port)) return { error: '端口需为 1-65535 的整数' };
+  if (process.env.ENGRAM_LOCAL_PORT) return { error: 'ENGRAM_LOCAL_PORT 环境变量已指定端口，本次修改不生效' };
+  if (port === getLocalPort()) return { port, same: true };
+  if (await portBusy(port)) return { error: `端口 ${port} 已被其他程序占用，请换一个` };
+  const cfg = readConfig();
+  if (port === DEFAULT_LOCAL_PORT) delete cfg.localPort; // 改回默认值即清除自定义记录
+  else cfg.localPort = port;
+  writeConfig(cfg);
+  stopLocalChild();
+  startLocalMode(); // 健康检查通过后窗口自动加载新端口的 server
+  return { port };
 });
 
 ipcMain.handle('set-remote-mode', (_e, url, token, directUrl) => {

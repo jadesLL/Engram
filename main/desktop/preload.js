@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   chooseDataDir: () => ipcRenderer.invoke('choose-data-dir'),
   // 重启内嵌后端（恢复备份暂存后使其生效；窗口会重新加载）
   restartServer: () => ipcRenderer.invoke('restart-server'),
+  // ---------- 本地服务端口（本地模式） ----------
+  // 查询当前本地服务端口（{ port, isDefault, envOverridden }）
+  getLocalPort: () => ipcRenderer.invoke('get-local-port'),
+  // 更改本地服务端口（占用预检通过后写入 config.json 并重启内嵌后端；未变化返回 { same }，失败返回 { error }）
+  setLocalPort: (port) => ipcRenderer.invoke('set-local-port', port),
   // 远程文件「用系统程序打开」
   openFileBytes: (name, bytes) => ipcRenderer.invoke('open-file-bytes', name, bytes),
   // 同步窗口控制按钮（标题栏融合条 WCO）配色，主题切换时调用；不支持的平台主进程忽略
