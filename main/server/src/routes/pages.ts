@@ -8,15 +8,10 @@ import {
 import { moveToTrash } from '../lib/trash.js';
 import { FIXED_DIRS, normalizeDir, isPageDir, typeToDir, ARCHIVE_DIR } from '../config.js';
 import { requireAuth } from './auth.js';
-import { enqueue, enqueuePagePipeline } from '../jobs.js';
+import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
-import { mergePages, MergeError } from '../lib/mergePages.js';
 import { renamePageSafely, RenameError } from '../lib/renamePage.js';
-import { pageEvidenceResponse, queuePageRecompose } from '../pipeline/pageSynthesis.js';
-import { isSynthesizable } from '../lib/pageTypes.js';
-import { allPageContributions } from '../pipeline/sourceLedger.js';
-
-export { stamp } from '../lib/mergePages.js';
+import { pageEvidenceResponse } from '../pipeline/pageEvidence.js';
 
 function comparablePageContent(value: string): string {
   return value
@@ -64,31 +59,6 @@ export async function pageRoutes(app: FastifyInstance) {
     const evidence = pageEvidenceResponse(id);
     if (!evidence) return reply.code(404).send({ error: '页面不存在或不是可综合的概念/实体页' });
     return evidence;
-  });
-
-  app.post('/api/pages/:id/recompose', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const force = (req.query as { force?: string } | undefined)?.force === 'true';
-    const page = db.prepare(`SELECT id,title,type FROM pages WHERE id=? AND deleted=0`).get(id) as { title: string; type: string } | undefined;
-    if (!page) return reply.code(404).send({ error: '页面不存在' });
-    if (!isSynthesizable(page.type)) return reply.code(409).send({ error: '该页面类型不支持整页综合' });
-    const synthesisId = queuePageRecompose(id, { force });
-    if (!synthesisId) return reply.code(409).send({ error: '页面没有可综合的有效来源事实，或尚未配置模型' });
-    try { appendWikiLog('整页综合', `[[${page.title}]]（${id}）`); } catch { /* 日志失败不阻塞 */ }
-    return { ok: true, synthesisId };
-  });
-
-  /** 按页面重新提炼：反查依赖来源，强制重跑完整提炼管线（连带刷新共享来源的其他页面） */
-  app.post('/api/pages/:id/reextract', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const page = db.prepare(`SELECT id,title,type FROM pages WHERE id=? AND deleted=0`).get(id) as { id: string; title: string; type: string } | undefined;
-    if (!page) return reply.code(404).send({ error: '页面不存在' });
-    if (!isSynthesizable(page.type)) return reply.code(409).send({ error: '该页面类型不支持重新提炼' });
-    const sources = [...new Set(allPageContributions(id).map((item) => item.source_path))];
-    if (!sources.length) return reply.code(409).send({ error: '该页面没有可重新提炼的来源' });
-    enqueue('page_reextract', { pageId: id });
-    try { appendWikiLog('重新提炼', `[[${page.title}]]（${sources.length} 份来源）`); } catch { /* 日志失败不阻塞 */ }
-    return { ok: true, sources: sources.length };
   });
 
   /** wikilink 跳转：按标题解析 */
@@ -177,18 +147,6 @@ export async function pageRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  /** 合并两页：keep 吸收 other 的内容（追加为其时间线事件），other 归档，写合并日志 */
-  app.post('/api/pages/merge', async (req, reply) => {
-    const { keepId, otherId } = req.body as { keepId?: string; otherId?: string };
-    try {
-      await mergePages(keepId || '', otherId || '');
-    } catch (e) {
-      const status = e instanceof MergeError ? e.status : 500;
-      return reply.code(status).send({ error: e instanceof Error ? e.message : String(e) });
-    }
-    return { ok: true };
-  });
-
   /** 安全重命名：移动文件 + 改标题 + 重定向所有引用双链（用于实体歧义澄清） */
   app.post('/api/pages/:id/rename', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -262,13 +220,9 @@ export async function pageRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  /** 页面关联：图谱邻居 + 语义相似（供编辑器底部展示） */
-  // 短 TTL 内存缓存：向量 KNN 是全表扫描，数据库在 Windows bind mount 上随机
-  // 读极慢（实测每页 ~0.85s），编辑器每次打开页面都会请求本接口。60s 内重复
-  // 点击同一页面直接返回缓存；关联数据对实时性不敏感，可接受 60s 陈旧窗口。
+  /** 页面关联：图谱邻居（供编辑器底部展示）；语义相似随向量索引移除 */
   const relatedCache = new Map<string, { at: number; data: unknown }>();
   const RELATED_CACHE_TTL_MS = 60_000;
-  const RELATED_CACHE_MAX = 200;
   app.get('/api/pages/:id/related', async (req) => {
     const { id } = req.params as { id: string };
     const cached = relatedCache.get(id);
@@ -283,31 +237,6 @@ export async function pageRoutes(app: FastifyInstance) {
       )
       .all(id, id, id, id) as any[];
 
-    // 语义相似（第一 chunk 向量最近邻）
-    let similar: any[] = [];
-    try {
-      const rep = db
-        .prepare(`SELECT id FROM chunks WHERE ref_type = 'page' AND ref_id = ? AND idx = 0`)
-        .get(id) as any;
-      const vecRow = rep
-        ? (db.prepare(`SELECT embedding FROM vec_chunks WHERE rowid = ?`).get(rep.id) as any)
-        : null;
-      if (vecRow?.embedding) {
-        similar = db
-          .prepare(
-            `SELECT c.ref_id AS id, p.title, p.path, p.type, v.distance
-             FROM vec_chunks v JOIN chunks c ON c.id = v.rowid
-             JOIN pages p ON p.id = c.ref_id
-             WHERE v.embedding MATCH ?
-               AND k = 6 AND c.ref_type = 'page' AND c.ref_id != ? AND p.deleted = 0
-             ORDER BY v.distance`
-          )
-          .all(vecRow.embedding, id) as any[];
-      }
-    } catch {
-      /* 无向量时忽略 */
-    }
-
     const entities = db
       .prepare(
         `SELECT e2.name, e2.type, e.rel FROM edges e JOIN entities e2 ON e2.id = e.entity_id
@@ -315,19 +244,8 @@ export async function pageRoutes(app: FastifyInstance) {
       )
       .all(id) as any[];
 
-    const data = { neighbors, similar, entities };
+    const data = { neighbors, similar: [] as any[], entities };
     relatedCache.set(id, { at: Date.now(), data });
-    if (relatedCache.size > RELATED_CACHE_MAX) {
-      let oldestKey: string | undefined;
-      let oldestAt = Infinity;
-      for (const [key, value] of relatedCache) {
-        if (value.at < oldestAt) {
-          oldestAt = value.at;
-          oldestKey = key;
-        }
-      }
-      if (oldestKey) relatedCache.delete(oldestKey);
-    }
     return data;
   });
 }

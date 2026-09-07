@@ -64,8 +64,18 @@ export function authInitialized(): boolean {
   return Boolean(getSetting('password_hash'));
 }
 
-/** 受保护路由的前置校验 */
+/**
+ * 受保护路由的前置校验：
+ * 1) Bearer MCP Token（设置页生成，供 CLI / 外部 Agent 脚本访问 REST API）
+ * 2) JWT Cookie（浏览器登录态）
+ */
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
+  const auth = req.headers.authorization || '';
+  const bearer = auth.startsWith('Bearer ') || auth.startsWith('bearer ') ? auth.replace(/^Bearer\s+/i, '') : '';
+  if (bearer) {
+    const valid = db.prepare(`SELECT id FROM mcp_tokens WHERE token = ?`).get(bearer);
+    if (valid) return;
+  }
   try {
     await req.jwtVerify();
   } catch {

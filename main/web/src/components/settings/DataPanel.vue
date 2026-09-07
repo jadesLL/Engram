@@ -22,8 +22,8 @@
       </div>
       <div class="danger-row">
         <div>
-          <strong>清空 AI 整理日志</strong>
-          <p>清空 AIWorks/log、操作日志和关系库；待执行和运行中的 AI 任务会先停止，概念、实体和原始资料不受影响。</p>
+          <strong>清空操作日志与关系库</strong>
+          <p>清空 AIWorks/log、操作日志和关系库；待执行和运行中的任务会先停止，概念、实体和原始资料不受影响。</p>
         </div>
         <button
           class="btn danger"
@@ -37,7 +37,7 @@
       <div class="danger-row">
         <div>
           <strong>一键清除知识数据</strong>
-          <p>先停止待执行和运行中的 AI 任务，再删除全部概念、实体、原始资料、归档和查询页面，并清空整理报告、入库记录与索引。</p>
+          <p>先停止待执行和运行中的任务，再删除全部概念、实体、原始资料、归档和查询页面，并清空整理报告、入库记录与索引。</p>
         </div>
         <button
           class="btn danger-solid"
@@ -107,7 +107,6 @@ async function wipe() {
     wipeOk.value = true;
     const stopped = data.cancelledJobs ? `，并停止 ${data.cancelledJobs} 个 AI 任务` : '';
     wipeMsg.value = `已清除 ${data.fileCount} 个文件、${data.reportCount} 条整理报告${stopped}，索引已重置。`;
-    app.openReportCount = 0;
     await app.refreshJobs();
     app.bumpSidebar();
   } catch (error: any) {

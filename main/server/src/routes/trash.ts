@@ -46,7 +46,7 @@ export async function trashRoutes(app: FastifyInstance) {
         if (item.pageId) enqueuePagePipeline(item.pageId);
         if (item.fileId) {
           if (supportsFileExtraction(item.path)) {
-            scheduleFileExtraction(item.path, { mode: 'auto', ingestAfter: true });
+            scheduleFileExtraction(item.path, { mode: 'auto' });
           } else {
             enqueue('index_file', { fileId: item.fileId });
           }

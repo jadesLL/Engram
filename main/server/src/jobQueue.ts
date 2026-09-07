@@ -1,10 +1,4 @@
-import path from 'node:path';
 import { db, now } from './lib/db.js';
-
-export interface PagePipelineOptions {
-  ingestRunId?: string;
-  revision?: string;
-}
 
 export function enqueue(kind: string, payload: unknown): number | undefined {
   const payloadStr = JSON.stringify(payload);
@@ -27,22 +21,7 @@ export function enqueue(kind: string, payload: unknown): number | undefined {
   return Number(info.lastInsertRowid);
 }
 
-export function enqueuePagePipeline(pageId: string, options: PagePipelineOptions = {}): void {
-  const page = db.prepare(`SELECT path FROM pages WHERE id = ?`).get(pageId) as { path?: string } | undefined;
-  const pagePath = page?.path || '';
-  const payload = options.ingestRunId
-    ? { pageId, ingestRunId: options.ingestRunId, ...(options.revision ? { revision: options.revision } : {}) }
-    : { pageId };
-
-  if (pagePath.startsWith('原始资料/')) {
-    enqueue('embed', payload);
-    const ext = path.posix.extname(pagePath).slice(1).toLowerCase();
-    if (['md', 'markdown', 'txt'].includes(ext)) enqueue('ingest', { path: pagePath });
-  } else if (pagePath.startsWith('AIWorks/')) {
-    enqueue('embed', payload);
-  } else {
-    enqueue('process', payload);
-  }
-  enqueue('mentions', {});
-  enqueue('metagen', {});
+/** 页面保存后的后台处理：FTS/图谱边（vault 层已同步写 pages_fts，这里补边与兜底） */
+export function enqueuePagePipeline(pageId: string): void {
+  enqueue('process', { pageId });
 }

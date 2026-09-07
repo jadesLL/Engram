@@ -1,27 +1,24 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { clearAllCache, createCanvas, loadImage } from '@napi-rs/canvas';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { db, now } from '../lib/db.js';
-import {
-  documentModelReady,
-  LlmError,
-  recognizeDocumentImage,
-} from '../lib/llm.js';
 import { safeJoin } from '../lib/vault.js';
 import { enqueue } from '../jobQueue.js';
 import { ensureFileRecord, upsertFileRecord } from './indexer.js';
+
+/**
+ * 文件文本层提取（纯确定性，无模型）：
+ * PDF 提取内嵌文字层；无文字层的扫描页与图片文件不再内置 OCR，
+ * 由外部 Agent 通过 MCP read_raw_file / CLI 读取原文件自行识别。
+ */
 
 export const PDF_EXTENSIONS = new Set(['pdf']);
 export const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg']);
 export const EXTRACTABLE_EXTENSIONS = new Set([...PDF_EXTENSIONS, ...IMAGE_EXTENSIONS]);
 
-const OCR_PAGE_LIMIT = 100;
 const MIN_EMBEDDED_TEXT_CHARS = 40;
-const MAX_RENDER_EDGE = 2560;
-const OCR_PROMPT = `忠实转写图片中的全部可见文字，保留标题、段落、列表和表格结构。
-输出 Markdown 正文，不要总结、解释、补写或猜测看不清的内容；无法辨认处写「[无法辨认]」。`;
+const NO_TEXT_HINT = '无内嵌文字层（扫描/图片页）：文字识别由外部 Agent 读取原文件完成';
 
 export type ExtractionStatus =
   | 'pending'
@@ -36,8 +33,6 @@ export type ExtractionMode = 'auto' | 'continue' | 'pages';
 export interface ExtractionOptions {
   mode?: ExtractionMode;
   pages?: number[];
-  ingestAfter?: boolean;
-  forceIngest?: boolean;
   signal?: AbortSignal;
 }
 
@@ -155,13 +150,6 @@ function upsertExtractionPage(
   );
 }
 
-function normalizedModelText(value: string): string {
-  let text = value.trim();
-  const fence = text.match(/^```(?:markdown|md|text)?\s*([\s\S]*?)\s*```$/i);
-  if (fence) text = fence[1].trim();
-  return text.replace(/\r\n/g, '\n').replace(/\n{4,}/g, '\n\n\n').trim();
-}
-
 function usableCharacters(value: string): number {
   return value.match(/[\p{L}\p{N}]/gu)?.length || 0;
 }
@@ -234,8 +222,6 @@ function finalizeExtraction(
   file: FileRow,
   sourceHash: string,
   pageCount: number,
-  ingestAfter: boolean,
-  forceIngest = false,
 ): FileExtractionDetails {
   const pages = pageRows(file.id);
   const text = aggregateText(file.ext, pages);
@@ -272,13 +258,6 @@ function finalizeExtraction(
 
   // 无条件入队：text 为空时 indexFileText 会清理旧索引（新版提取失败不能继续命中旧内容）
   enqueue('index_file', { fileId: file.id, revision: textHash.slice(0, 16) });
-  if (status === 'completed' && text && ingestAfter) {
-    enqueue('ingest', {
-      path: file.path,
-      revision: textHash.slice(0, 16),
-      ...(forceIngest ? { force: true } : {}),
-    });
-  }
   return extractionDetails(file.path)!;
 }
 
@@ -302,52 +281,11 @@ function beginExtraction(file: FileRow, sourceHash: string): { row?: ExtractionR
   return { row, sourceChanged };
 }
 
-async function recognizeWithRetry(
-  imageDataUrl: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    signal?.throwIfAborted();
-    try {
-      return normalizedModelText(await recognizeDocumentImage(
-        imageDataUrl,
-        OCR_PROMPT,
-        { signal },
-      ));
-    } catch (error) {
-      lastError = error;
-      const status = error instanceof LlmError ? error.status : undefined;
-      if (attempt === 2 || (status !== undefined && status !== 429 && status < 500)) break;
-      await new Promise((resolve) => setTimeout(resolve, 750 * (2 ** attempt)));
-      signal?.throwIfAborted();
-    }
-  }
-  throw lastError;
-}
-
 function friendlyError(error: unknown): string {
   const message = String((error as any)?.message || error || '识别失败');
   if (/password|encrypted/i.test(message)) return '加密 PDF 暂不支持，请先移除密码保护';
   if (/invalid pdf|pdf header|format/i.test(message)) return 'PDF 文件损坏或格式无效';
   return message.slice(0, 500);
-}
-
-async function renderPdfPage(page: any): Promise<string> {
-  const base = page.getViewport({ scale: 1 });
-  const scale = Math.max(0.5, Math.min(2, MAX_RENDER_EDGE / Math.max(base.width, base.height)));
-  const viewport = page.getViewport({ scale });
-  const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
-  const context = canvas.getContext('2d');
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({
-    canvas: canvas as any,
-    canvasContext: context as any,
-    viewport,
-    background: '#ffffff',
-  }).promise;
-  return `data:image/jpeg;base64,${canvas.toBuffer('image/jpeg', 90).toString('base64')}`;
 }
 
 async function extractPdf(
@@ -374,10 +312,9 @@ async function extractPdf(
       (options.pages || [])
         .map(Number)
         .filter((page) => Number.isInteger(page) && page >= 1 && page <= pageCount)
-        .slice(0, OCR_PAGE_LIMIT)
+        .slice(0, 100)
     );
     const mode = options.mode || 'auto';
-    let ocrUsed = 0;
 
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
       options.signal?.throwIfAborted();
@@ -399,48 +336,24 @@ async function extractPdf(
           const content = await page.getTextContent();
           localText = textContent(content.items as any[]);
         }
-        const forceOcr = mode === 'pages';
-        if (!forceOcr && usableCharacters(localText) >= MIN_EMBEDDED_TEXT_CHARS) {
+        if (usableCharacters(localText) >= MIN_EMBEDDED_TEXT_CHARS) {
           upsertExtractionPage(file.id, pageNumber, {
             method: 'embedded',
             status: 'completed',
             text: localText,
           });
-        } else if (ocrUsed >= OCR_PAGE_LIMIT) {
+        } else {
           upsertExtractionPage(file.id, pageNumber, {
             method: 'embedded',
             status: 'skipped',
             text: localText,
-            error: `本批 OCR 已达到 ${OCR_PAGE_LIMIT} 页上限，可继续下一批`,
-          });
-        } else if (!documentModelReady()) {
-          upsertExtractionPage(file.id, pageNumber, {
-            method: 'embedded',
-            status: 'blocked',
-            text: localText,
-            error: '当前对话模型不支持图片输入，且尚未配置视觉模型',
-          });
-        } else {
-          ocrUsed++;
-          update({
-            stage: 'OCR 识别',
-            progress: 10 + Math.round((pageNumber / Math.max(1, pageCount)) * 80),
-            detail: `第 ${pageNumber}/${pageCount} 页`,
-          });
-          const recognized = await recognizeWithRetry(
-            await renderPdfPage(page),
-            options.signal,
-          );
-          upsertExtractionPage(file.id, pageNumber, {
-            method: 'ocr',
-            status: 'completed',
-            text: recognized || localText,
+            error: NO_TEXT_HINT,
           });
         }
       } catch (error) {
         if (options.signal?.aborted) throw error;
         upsertExtractionPage(file.id, pageNumber, {
-          method: prior?.method || 'ocr',
+          method: prior?.method || 'embedded',
           status: 'failed',
           text: localText,
           error: friendlyError(error),
@@ -454,13 +367,7 @@ async function extractPdf(
         detail: `第 ${pageNumber}/${pageCount} 页`,
       });
     }
-    const result = finalizeExtraction(
-      file,
-      sourceHash,
-      pageCount,
-      options.ingestAfter !== false,
-      options.forceIngest === true,
-    );
+    const result = finalizeExtraction(file, sourceHash, pageCount);
     if (result.status === 'failed') throw new Error(result.error || 'PDF 文字提取失败');
     return result;
   } catch (error) {
@@ -470,82 +377,20 @@ async function extractPdf(
     throw error;
   } finally {
     await loadingTask.destroy();
-    clearAllCache();
   }
 }
 
-async function normalizedImageDataUrl(buffer: Buffer): Promise<string> {
-  const image = await loadImage(buffer);
-  const scale = Math.max(0.1, Math.min(2, MAX_RENDER_EDGE / Math.max(image.width, image.height)));
-  const width = Math.max(1, Math.round(image.width * scale));
-  const height = Math.max(1, Math.round(image.height * scale));
-  const canvas = createCanvas(width, height);
-  const context = canvas.getContext('2d');
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, width, height);
-  context.drawImage(image, 0, 0, width, height);
-  return `data:image/jpeg;base64,${canvas.toBuffer('image/jpeg', 90).toString('base64')}`;
-}
-
+/** 图片：无内置识别，直接标记由外部 Agent 处理，保证文件可被检索与读取 */
 async function extractImage(
   file: FileRow,
-  buffer: Buffer,
   sourceHash: string,
-  options: ExtractionOptions,
-  update: ProgressCallback,
 ): Promise<FileExtractionDetails> {
-  if (!documentModelReady()) {
-    upsertExtractionPage(file.id, 1, {
-      method: 'ocr',
-      status: 'blocked',
-      error: '当前对话模型不支持图片输入，且尚未配置视觉模型',
-    });
-    return finalizeExtraction(
-      file,
-      sourceHash,
-      1,
-      options.ingestAfter !== false,
-      options.forceIngest === true,
-    );
-  }
-  try {
-    options.signal?.throwIfAborted();
-    update({ stage: '处理图片', progress: 25, detail: file.name });
-    const recognized = await recognizeWithRetry(
-      await normalizedImageDataUrl(buffer),
-      options.signal,
-    );
-    upsertExtractionPage(file.id, 1, {
-      method: 'ocr',
-      status: 'completed',
-      text: recognized,
-    });
-    const result = finalizeExtraction(
-      file,
-      sourceHash,
-      1,
-      options.ingestAfter !== false,
-      options.forceIngest === true,
-    );
-    if (result.status === 'failed') throw new Error(result.error || '图片文字提取失败');
-    return result;
-  } catch (error) {
-    upsertExtractionPage(file.id, 1, {
-      method: 'ocr',
-      status: 'failed',
-      error: friendlyError(error),
-    });
-    const result = finalizeExtraction(
-      file,
-      sourceHash,
-      1,
-      options.ingestAfter !== false,
-      options.forceIngest === true,
-    );
-    throw new Error(result.error || '图片文字提取失败');
-  } finally {
-    clearAllCache();
-  }
+  upsertExtractionPage(file.id, 1, {
+    method: 'ocr',
+    status: 'ignored',
+    error: NO_TEXT_HINT,
+  });
+  return finalizeExtraction(file, sourceHash, 1);
 }
 
 export async function extractFile(
@@ -571,13 +416,6 @@ export async function extractFile(
     existing.status === 'completed'
   ) {
     if (file.text) enqueue('index_file', { fileId: file.id, revision: existing.text_hash.slice(0, 16) });
-    if (file.text && options.ingestAfter !== false) {
-      enqueue('ingest', {
-        path: file.path,
-        revision: existing.text_hash.slice(0, 16),
-        ...(options.forceIngest ? { force: true } : {}),
-      });
-    }
     return extractionDetails(relPath)!;
   }
 
@@ -585,7 +423,7 @@ export async function extractFile(
   const begun = beginExtraction(file, sourceHash);
   return file.ext === 'pdf'
     ? extractPdf(file, buffer, sourceHash, options, update, begun.row, begun.sourceChanged)
-    : extractImage(file, buffer, sourceHash, options, update);
+    : extractImage(file, sourceHash);
 }
 
 export function scheduleFileExtraction(
@@ -611,9 +449,7 @@ export function scheduleFileExtraction(
     jobId: enqueue('extract_file', {
       path: relPath,
       mode: options.mode || 'auto',
-      ...(options.pages?.length ? { pages: options.pages.slice(0, OCR_PAGE_LIMIT) } : {}),
-      ingestAfter: options.ingestAfter !== false,
-      forceIngest: options.forceIngest === true,
+      ...(options.pages?.length ? { pages: options.pages.slice(0, 100) } : {}),
     }),
   };
 }
@@ -634,17 +470,28 @@ export function acceptPartialExtraction(relPath: string): FileExtractionDetails 
     ).run(now(), file.id);
   });
   tx();
-  const result = finalizeExtraction(
+  return finalizeExtraction(
     file,
     extraction.source_hash,
     extraction.page_count || Math.max(1, pageRows(file.id).length),
-    true,
   );
-  return result;
 }
 
-export function extractionDetails(relPath: string): FileExtractionDetails | null {
+/** 提取结果是否对应当前文件内容（供启动补齐判断是否需要重提） */
+export function extractionIsCurrent(relPath: string, bytes?: Buffer): boolean {
   const file = fileByPath(relPath);
+  if (!file) return false;
+  const extraction = extractionByFileId(file.id);
+  if (!extraction?.source_hash) return false;
+  try {
+    const current = bytes || fs.readFileSync(safeJoin(relPath));
+    return sha256(current) === extraction.source_hash;
+  } catch {
+    return false;
+  }
+}
+
+export function extractionDetails(relPath: string): FileExtractionDetails | null {  const file = fileByPath(relPath);
   if (!file) return null;
   const extraction = extractionByFileId(file.id);
   if (!extraction) return null;
@@ -669,42 +516,5 @@ export function extractionDetails(relPath: string): FileExtractionDetails | null
       error: page.error,
       updatedAt: page.updated_at,
     })),
-  };
-}
-
-export function extractionIsCurrent(relPath: string, bytes?: Buffer): boolean {
-  const file = fileByPath(relPath);
-  if (!file) return false;
-  const extraction = extractionByFileId(file.id);
-  if (!extraction?.source_hash) return false;
-  try {
-    const current = bytes || fs.readFileSync(safeJoin(relPath));
-    return sha256(current) === extraction.source_hash;
-  } catch {
-    return false;
-  }
-}
-
-export function extractedSource(relPath: string, bytes?: Buffer): {
-  text: string;
-  contentHash: string;
-  status: ExtractionStatus;
-} {
-  const file = fileByPath(relPath);
-  if (!file) throw new Error('文件尚未建立索引');
-  const extraction = extractionByFileId(file.id);
-  if (!extraction || !extraction.text_hash || !file.text.trim()) {
-    throw new Error('文件尚未完成文字提取');
-  }
-  if (extraction.status !== 'completed') {
-    throw new Error('文件文字提取尚未完成，请继续识别或明确跳过失败页');
-  }
-  if (!extractionIsCurrent(relPath, bytes)) {
-    throw new Error('原文件已变化，请先重新提取文字');
-  }
-  return {
-    text: file.text,
-    contentHash: sha256(`${extraction.source_hash}\0${extraction.text_hash}`),
-    status: extraction.status,
   };
 }

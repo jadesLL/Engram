@@ -37,45 +37,21 @@
         v-tooltip="file.extractionError ? `提取失败：${humanError(file.extractionError)}` : '提取失败，可重试'"
       >提取失败</span>
       <span
-        v-else-if="file.extractionStatus === 'blocked'"
-        class="row-status ingested-flag unsupported"
-        v-tooltip="file.extractionError || '需要支持图片的对话模型或单独配置视觉模型'"
-      >待配置</span>
-      <span
         v-else-if="file.extractionStatus === 'partial'"
         class="row-status ingested-flag warning"
-        v-tooltip="file.extractionError || '部分页面尚未识别'"
+        v-tooltip="file.extractionError || '部分页面无文字层，识别交由外部 Agent'"
       >部分提取</span>
-      <span
-        v-else-if="file.ingestedAt"
-        class="row-status ingested-flag"
-        v-tooltip="`已于 ${file.ingestedAt.slice(0, 10)} 整理`"
-      >已整理</span>
-      <span
-        v-else-if="file.ingestStatus === 'failed'"
-        class="row-status ingested-flag failed"
-        v-tooltip="file.ingestError ? `整理失败：${humanError(file.ingestError)}` : '整理失败，可重试'"
-      >失败</span>
       <span
         v-else-if="file.extractionStatus === 'completed'"
         class="row-status ingested-flag extracted"
-        v-tooltip="'文字已提取，等待或可重新执行 AI 整理'"
+        v-tooltip="'文字已提取，可被检索；提炼由外部 Agent 处理'"
       >已提取</span>
       <span
-        v-else-if="file.ingestSupported === false"
+        v-else-if="file.extractionStatus"
         class="row-status ingested-flag unsupported"
-        v-tooltip="'文件已保存，当前格式暂不支持 AI 整理'"
-      >仅保存</span>
+        v-tooltip="'待提取'"
+      >待提取</span>
       <span class="row-actions" @click.stop>
-        <button
-          v-if="INGESTABLE_EXTS.includes(file.ext)"
-          type="button"
-          v-tooltip="'AI 整理'"
-          aria-label="AI 整理"
-          @click="$emit('ingest', file)"
-        >
-          <Icon name="ai" :size="13" />
-        </button>
         <a
           class="row-action-link"
           :href="rawUrl"
@@ -107,17 +83,15 @@ import { computed } from 'vue';
 import Icon from './Icon.vue';
 import { humanError } from '../lib/ingestError';
 
-const INGESTABLE_EXTS = ['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
-
 const props = defineProps<{
   file: any;
   active: boolean;
   selected?: boolean;
   selectionMode?: boolean;
-  /** 该文件当前正在进行的任务（提取/整理进度），无则 null */
+  /** 该文件当前正在进行的提取任务进度，无则 null */
   job?: any;
 }>();
-const emit = defineEmits(['open', 'toggle-select', 'ingest', 'remove', 'context-menu']);
+const emit = defineEmits(['open', 'toggle-select', 'remove', 'context-menu']);
 
 const rawUrl = computed(() => `/api/files/raw?path=${encodeURIComponent(props.file.path)}`);
 
@@ -131,7 +105,6 @@ function emitContextMenu(x: number, y: number) {
     x,
     y,
     file: props.file,
-    ingestable: INGESTABLE_EXTS.includes(props.file.ext),
   });
 }
 

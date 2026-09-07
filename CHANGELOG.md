@@ -8,6 +8,22 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.2.0（2026-09-07）
+
+**架构重构：外部 Agent 驱动——移除全部内置 AI，MCP/CLI 成为一等接口**
+
+Engram 不再内置任何 LLM。读、写、提炼、综合、问答、OCR 全部交给外部 Agent（ZCode / Codex / Claude Code / Kimi 等）通过 MCP 或 CLI 完成；Engram 专注存储、解析、检索与确定性写入门禁。数据零破坏：原有原始资料、知识库、对话沉积与证据账本全部保留，旧提炼数据（报告/账本/向量）留存可查，仅代码移除。
+
+- **移除自动提炼**：删除六阶段提炼管线（Map/Normalize/Plan/Critic/Compose/Verify）、整页综合、待审候选、追问闭环、实体抽取/升级、语义合并、Dream Cycle 定时体检、整理报告页、提炼看板与轨迹、AI 写作条、AI 自动决策——上传只做存储与文本提取，提炼由外部 Agent 按指南作业
+- **移除模型适配层**：删除 19 家厂商目录、四类模型池（对话/向量/视觉/重排）、多协议适配、模型发现/测试/用量统计、语义缓存——应用零 API Key、零出站 LLM 调用；移除内置 OCR（图片/无文字层 PDF 由外部 Agent 读原文件自行识别），向量检索随 embedding 一并移除，检索收敛为纯 FTS5 关键词（中文逐字分词 + bm25）
+- **移除应用内 Agent 与 IM**：AiDrawer 工作台、原生 LLM 引擎、ZCode 聊天引擎、飞书长连接全部移除；对话一律在外部 Agent 进行，经 `save_chat` 沉淀回 `原始资料/对话/`
+- **MCP 强化（9 工具）**：新增 `page_evidence`（证据账本）、`list_raw_files` / `read_raw_file`（原始资料读取，图片以 MCP image 内容返回供视觉 Agent 识别）、`kb_guide`（下发《Agent 作业指南》全文）；`write_page` 支持 `evidence` 证据参数——引文服务端逐字校验 + 新建概念/实体页两来源门禁（≥2 个不同原始资料路径各 1 条引文，或单路径 ≥2 条），通过后记入证据账本，编辑器来源抽屉继续可读；instructions 下发浓缩版作业纪律
+- **《Agent 作业指南》三端同源**：知识库结构、操作日志纪律、页面契约、八阶段作业流程（浓缩自原管线提示词）、证据规则——MCP `kb_guide` / `GET /api/guide` / `engram guide` 输出同一份（`server/src/content/agentGuide.ts` 单一来源）
+- **engram CLI（新）**：`server/dist/cli.js` 零依赖 CLI（Node 22 全局 fetch），命令 login / status / import / files list|read / search / pages list|read|write|evidence / chat save / guide / mcp-config，全部支持 `--json`；宿主机、`docker exec`、桌面端 `ELECTRON_RUN_AS_NODE` 三种运行方式；出网统一校验（仅 http/https、云元数据/链路本地阻断、DNS 解析级私网校验防 rebinding，私网/环回目标经 `login` 显式登记后放行）
+- **Agent 兼容**：REST API 接受 Bearer MCP Token（与 /mcp 同一张令牌表）；设置页 MCP 面板内置 ZCode / Codex / Claude Code / Kimi / 通用配置片段一键复制 + 工具清单 + 指南查看；「Agent 接入」面板保留 ZCode 一键注册
+- **服务端瘦身**：任务队列收敛为 5 类（extract_file / index_file / process / metagen / rebuild），启动自动清理残留提炼任务并兜底补建 FTS 索引；移除 `@napi-rs/canvas`、`node-cron` 直接依赖；服务端代码净删约 1.4 万行
+- **前端同步**：设置页收敛为 8 面板；侧栏去整理入口/看板角标/AI 整理日志分区；搜索去「问 AI」；编辑器去整理按钮/AI 写作条/综合徽章（保留来源证据抽屉）；版本号 1.2.0
+
 ## v1.1.48（2026-09-07）
 
 **修复：ZCode 引擎检测加固与文案去「CLI」化**

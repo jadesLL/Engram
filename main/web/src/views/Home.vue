@@ -52,9 +52,6 @@
         @click="item.action"
       >
         <Icon :name="item.icon" :size="19" />
-        <span v-if="item.key === 'reports' && app.openReportCount" class="badge">
-          {{ app.openReportCount > 99 ? '99+' : app.openReportCount }}
-        </span>
       </button>
 
       <div class="rail-spacer" />
@@ -67,25 +64,13 @@
         class="rail-btn action"
         type="button"
         :class="{ open: jobsPanelOpen }"
-        v-tooltip="'AI 任务队列'"
-        aria-label="AI 任务队列"
+        v-tooltip="'任务队列'"
+        aria-label="任务队列"
         :aria-pressed="jobsPanelOpen"
         @click="jobsPanelOpen = !jobsPanelOpen"
       >
         <Icon name="activity" :size="19" />
         <span v-if="app.activeJobCount > 0" class="badge">{{ app.activeJobCount > 99 ? '99+' : app.activeJobCount }}</span>
-      </button>
-      <button
-        class="rail-btn action"
-        type="button"
-        :class="{ open: app.aiDrawerOpen }"
-        v-tooltip="'AI 助手 (Ctrl+J)'"
-        aria-label="AI 助手"
-        :aria-pressed="app.aiDrawerOpen"
-        @click="app.toggleAi()"
-      >
-        <Icon name="ai" :size="19" />
-        <span v-if="!app.aiDrawerOpen && app.aiUnread" class="dot" />
       </button>
 
       <div class="rail-divider" />
@@ -144,33 +129,7 @@
       <router-view />
     </main>
 
-    <!-- AI 抽屉 -->
-    <transition name="slide">
-      <aside
-        v-show="app.aiDrawerOpen"
-        class="ai-drawer"
-        :class="{ overlay: aiDrawerOverlay }"
-        :style="aiDrawerStyle"
-      >
-        <AiDrawer />
-      </aside>
-    </transition>
-    <!-- AI 抽屉拖动条：拖到超过视口 70% 时覆盖正文区只留左侧栏，双击还原默认宽度 -->
-    <div
-      v-if="app.aiDrawerOpen && !isMobile"
-      class="ai-resizer"
-      :style="aiResizerStyle"
-      v-tooltip="'拖动调整 AI 助手宽度，超过 70% 覆盖正文，双击还原'"
-      role="separator"
-      aria-label="调整 AI 助手宽度"
-      aria-orientation="vertical"
-      :aria-valuenow="aiDrawerWidth"
-      tabindex="0"
-      @mousedown="startAiResize"
-      @dblclick="resetAiDrawerWidth"
-    />
-
-    <!-- AI 任务队列面板 -->
+    <!-- 任务队列面板 -->
     <transition name="slide">
       <JobsPanel v-if="jobsPanelOpen" @close="jobsPanelOpen = false" />
     </transition>
@@ -214,17 +173,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
-import { useAssistantStore } from '../stores/assistant';
 import { useUpdateStore } from '../stores/update';
 import { api } from '../api';
 import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
 import Sidebar from '../components/Sidebar.vue';
-import AiDrawer from '../components/AiDrawer.vue';
 import JobsPanel from '../components/JobsPanel.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
 import Icon from '../components/Icon.vue';
@@ -232,18 +189,15 @@ import Icon from '../components/Icon.vue';
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
-const assistant = useAssistantStore();
 const updateStore = useUpdateStore();
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
 const jobsPanelOpen = ref(false);
 
-/* ===== AI 任务队列：自适应轮询（活跃 1.5s / 空闲 6s），状态存 app store 供角标/面板/侧栏共用 ===== */
+/* ===== 任务队列：自适应轮询（活跃 1.5s / 空闲 6s），状态存 app store 供角标/面板/侧栏共用 ===== */
 let jobPollStopped = true;
 let jobTimer: ReturnType<typeof setTimeout>;
 async function pollJobs() {
   await app.refreshJobs();
-  // 有活跃任务时同步刷新侧栏（整理后可能生成新页面）
-  if (app.activeJobCount > 0) sidebarRef.value?.load();
   if (!jobPollStopped) jobTimer = setTimeout(pollJobs, app.activeJobCount > 0 ? 1500 : 6000);
 }
 
@@ -304,45 +258,6 @@ function nudgeSidebar(delta: number) {
   setSidebarWidth(sidebarWidth.value + delta);
 }
 
-/* ===== AI 抽屉宽度拖拽 ===== */
-const MIN_AI_DRAWER = 360;
-const aiDrawerWidth = computed(() => app.aiDrawerWidth);
-const aiDrawerOverlay = computed(() =>
-  app.aiDrawerWidth > 0 && app.aiDrawerWidth > viewportWidth.value * 0.7
-);
-const aiDrawerStyle = computed(() =>
-  app.aiDrawerWidth > 0 ? { width: `${app.aiDrawerWidth}px` } : {}
-);
-const aiResizerStyle = computed(() => {
-  const width = app.aiDrawerWidth > 0
-    ? app.aiDrawerWidth
-    : Math.min(520, Math.max(400, Math.floor(viewportWidth.value * 0.34)));
-  return { left: `calc(100% - ${width + 4}px)` };
-});
-
-function startAiResize(e: MouseEvent) {
-  e.preventDefault();
-  const move = (ev: MouseEvent) => {
-    // 抽屉贴右侧，宽度 = 视口右缘到鼠标位置
-    const width = Math.max(MIN_AI_DRAWER, Math.floor(window.innerWidth - ev.clientX));
-    app.setAiDrawerWidth(width);
-  };
-  const up = () => {
-    window.removeEventListener('mousemove', move);
-    window.removeEventListener('mouseup', up);
-    document.body.style.userSelect = '';
-    document.body.style.cursor = '';
-  };
-  window.addEventListener('mousemove', move);
-  window.addEventListener('mouseup', up);
-  document.body.style.userSelect = 'none';
-  document.body.style.cursor = 'col-resize';
-}
-
-function resetAiDrawerWidth() {
-  app.setAiDrawerWidth(0);
-}
-
 function onWindowResize() {
   const prevOverlay = sidebarOverlay.value;
   viewportWidth.value = window.innerWidth;
@@ -357,16 +272,14 @@ function onWindowResize() {
 const isActive = (p: string) => route.path.startsWith(p);
 
 const navItems = computed(() => [
-  { key: 'search', icon: 'search', title: '搜索 / 问AI (Ctrl+K)', active: isActive('/search'), action: () => router.push('/search') },
+  { key: 'search', icon: 'search', title: '搜索 (Ctrl+K)', active: isActive('/search'), action: () => router.push('/search') },
   { key: 'graph', icon: 'graph', title: '知识图谱', active: isActive('/graph'), action: () => router.push('/graph') },
-  { key: 'reports', icon: 'report', title: '整理报告', active: isActive('/reports'), action: () => router.push('/reports') },
 ]);
 
 const bottomItems = computed(() => [
   { label: '页面', icon: 'pages', action: () => { app.sidebarOpen = true; router.push('/page'); } },
   { label: '搜索', icon: 'search', action: () => router.push('/search') },
   { label: '新建', icon: 'plus', action: () => quickNew() },
-  { label: 'AI', icon: 'ai', action: () => app.toggleAi() },
   { label: '更多', icon: 'more', action: () => { moreOpen.value = true; } },
 ]);
 
@@ -385,20 +298,6 @@ const moreItems = computed(() => [
     badge: undefined as string | undefined,
     dot: false,
     action: () => runMore(() => router.push('/graph')),
-  },
-  {
-    label: '整理报告',
-    icon: 'report',
-    badge: app.openReportCount > 0 ? (app.openReportCount > 99 ? '99+' : String(app.openReportCount)) : undefined,
-    dot: false,
-    action: () => runMore(() => router.push('/reports')),
-  },
-  {
-    label: '提炼看板',
-    icon: 'list-tree',
-    badge: undefined as string | undefined,
-    dot: false,
-    action: () => runMore(() => router.push('/ingest-coverage')),
   },
   {
     label: '任务队列',
@@ -430,30 +329,14 @@ async function quickNew() {
   router.push(`/page/${data.meta.id}`);
 }
 
-async function loadReportCount() {
-  try {
-    const { data } = await api.get('/api/reports/overview');
-    // 角标只统计需要行动的:待决策 + 待入库清单;提醒类不计入
-    app.openReportCount = data.counts?.actionable ?? 0;
-  } catch { /* ignore */ }
-}
-
 function onKey(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
     e.preventDefault();
     router.push('/search');
-  } else if ((e.ctrlKey || e.metaKey) && e.key === 'j') {
-    e.preventDefault();
-    app.toggleAi();
   } else if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
     e.preventDefault();
     quickNew();
   }
-}
-
-function onAssistantUpload() {
-  app.sidebarOpen = true;
-  nextTick(() => sidebarRef.value?.openUpload());
 }
 
 /* ===== 软件更新自动检测：进入应用查一次（8 小时节流），有新版本时 toast 提醒 ===== */
@@ -464,29 +347,21 @@ async function autoCheckUpdate() {
   }
 }
 
-let reportTimer: ReturnType<typeof setInterval>;
 let closeStream: (() => void) | null = null;
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onWindowResize);
-  loadReportCount();
-  reportTimer = setInterval(loadReportCount, 60_000);
   jobPollStopped = false;
   pollJobs();
-  assistant.init().catch(() => {});
   autoCheckUpdate().catch(() => {});
-  window.addEventListener('assistant-open-upload', onAssistantUpload);
   // 服务端 SSE 实时推送：页面增删改/移动时刷新正文与侧栏
   closeStream = openPageStream((ev) => app.applyPageEvent(ev));
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onWindowResize);
-  clearInterval(reportTimer);
   jobPollStopped = true;
   if (jobTimer) clearTimeout(jobTimer);
-  window.removeEventListener('assistant-open-upload', onAssistantUpload);
-  assistant.closeEvents();
   closeStream?.();
   closeStream = null;
 });

@@ -423,10 +423,9 @@ export async function scanVault() {
     }
   }
 
-  // 原始资料补齐消化：递归扫描直接拷入目录/历史遗留文件，自动入队。
+  // 原始资料补齐提取：递归扫描直接拷入目录/历史遗留的 PDF/图片，自动入队文本提取。
+  // （office/txt/md 建议经 UI/CLI 导入以建立文本索引；md 由上方 syncPageFile 处理）
   try {
-    const { llmReady } = await import('./llm.js');
-    const { enqueue } = await import('../jobQueue.js');
     const {
       extractionDetails,
       extractionIsCurrent,
@@ -445,14 +444,9 @@ export async function scanVault() {
         if (supportsFileExtraction(child)) {
           const extraction = extractionDetails(child);
           if (!extraction || extraction.status !== 'completed' || !extractionIsCurrent(child)) {
-            scheduleFileExtraction(child, { mode: 'auto', ingestAfter: true });
+            scheduleFileExtraction(child, { mode: 'auto' });
           }
-          continue;
         }
-        const ext = path.extname(entry.name).slice(1).toLowerCase();
-        if (!llmReady() || !['md', 'markdown', 'txt', 'docx', 'xlsx', 'pptx'].includes(ext)) continue;
-        const done = db.prepare(`SELECT path FROM ingest_log WHERE path = ? AND status = 'completed'`).get(child);
-        if (!done) enqueue('ingest', { path: child });
       }
     };
     walkRaw('原始资料');

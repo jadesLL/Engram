@@ -1,8 +1,7 @@
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { DB_FILE, ensureDirs } from '../config.js';
-import { deriveReportIdentity } from '../dream/reportIdentity.js';
-import { migrateLegacyModelConfig } from './modelConfig.js';
+import { deriveReportIdentity } from './reportIdentity.js';
 
 ensureDirs();
 
@@ -636,8 +635,6 @@ export function migrate() {
   ).run(now());
   });
   migrateSchema();
-  // 旧 settings JSON 模型配置 → model_entries 一次性迁移（幂等；已迁移或无旧数据时为空操作）
-  migrateLegacyModelConfig();
   const usageCutoff = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
   db.prepare(`DELETE FROM llm_usage WHERE created_at < ?`).run(usageCutoff);
   const semanticCacheCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
