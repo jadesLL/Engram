@@ -99,7 +99,9 @@ Windows 桌面端安装包从 [Releases](https://github.com/jadesLL/Engram/relea
 
 ## 数据目录
 
-数据都在 `./data`（映射到容器 `/data`），备份 = 复制整个 `data/` 目录；DB 丢失后可从 brain/ 重建。
+数据都在 `./data`（映射到容器 `/data`）；DB 丢失后可从 brain/ 重建。
+
+**备份/恢复**：设置 → 数据管理 → 「导出备份」一键打包整库（`wiki.db` + `brain/`）为 zip 下载；「从备份恢复」上传备份 zip 并输密码后暂存，重启服务生效（桌面端本地模式自动重启，Docker 版重启容器）。旧数据会保留一代（`wiki.db.pre-restore` / `brain.pre-restore`）便于手动回退。桌面端还可在设置里自定义数据保存位置（类 Obsidian 仓库位置，更换时旧数据自动迁移），Docker 版数据位置由 compose 卷挂载决定。
 
 ```
 data/

@@ -8,6 +8,17 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.3.0（2026-09-08）
+
+**数据保存位置自定义（类 Obsidian 仓库）+ 整库备份/恢复**
+
+- **数据保存位置（桌面端）**：设置 → 数据管理新增「数据保存位置」区，显示当前目录并可「更改位置」——系统目录选择框任选目录（类 Obsidian 仓库位置），旧数据自动整体迁移过去（原位置保留一份副本，可自行删除），本地服务自动重启；选到已有 Engram 数据的目录则直接切换使用不覆盖。首次启动仍使用默认位置（`%APPDATA%\@engram\desktop\data`），`config.json` 新增 `dataDir` 字段记忆；新位置不能选在当前数据目录内部，不可写目录会被拒绝
+- **整库备份**：`GET /api/settings/backup` 把 wiki.db（`VACUUM INTO` 一致性快照，含已提交 WAL 数据）与 `brain/` 全部内容（不含回收站）打包为 `engram-backup-<日期>.zip` 下载；设置页「导出备份」一键触发
+- **整库恢复**：`POST /api/settings/restore` 接收备份 zip + 登录密码（bcrypt 校验），逐条防 zip-slip、校验含 `wiki.db` 后解压到 `.restore-staging` 暂存（不动运行中的数据）；进程下次启动时在 SQLite 打开前原子换入（`lib/stagedRestore.ts`，挂点在 `config.ts` 顶层先于 `db.js` 求值），现有数据保留为 `*.pre-restore` 一代便于手动回退。桌面端本地模式恢复后自动重启本地服务；Docker 版提示重启容器后生效
+- **设置面板**：DataPanel 新增数据位置区（仅桌面端本地模式显示）与备份/恢复区（桌面/浏览器通用），恢复走密码三重确认（复用危险操作组件）；「复制整个 data/ 目录即可完成备份」的旧文案改为指向导出备份
+- **桌面端辅助功能**：常开渲染进程辅助功能（`app.setAccessibilitySupportEnabled(true)`），读屏器与自动化可直接访问页面 DOM 树
+- CLI/MCP 接口不受数据目录变更影响；新增 `stagedRestore` 单测 4 例，合并前 Docker verify 全绿（build + typecheck + 110 项测试）
+
 ## v1.2.1（2026-09-08）
 
 **提炼工作流五点改进 + ZCode 引擎路径全盘符探测**
