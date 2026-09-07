@@ -3,7 +3,7 @@
 //  - 本地：fork 内嵌 server 子进程（ELECTRON_RUN_AS_NODE 纯 Node 模式）+ 探活后加载
 //  - 远端：凭 desktop token 调 /api/auth/desktop-exchange 兑换 JWT，预置 cookie 后加载远端页面
 // 启动页 index.html 供用户选择模式或切换连接。
-const { app, BrowserWindow, ipcMain, shell, session, Menu, Tray, nativeImage, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, session, Menu, Tray, nativeImage, Notification, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
@@ -56,6 +56,13 @@ function writeConfig(cfg) {
 // 模式切换会重置连接信息；自动更新开关是用户偏好，跨模式保留
 function writeConnectionConfig(cfg) {
   writeConfig({ autoUpdate: readConfig().autoUpdate, ...cfg });
+}
+
+// 数据保存位置（类 Obsidian 仓库位置）：首次启动用默认位置，设置页可改到任意目录。
+// 改目录自动迁移旧数据并重启内嵌 server（见 choose-data-dir IPC）。
+function getDataDir() {
+  const custom = readConfig().dataDir;
+  return custom ? path.resolve(String(custom)) : path.join(app.getPath('userData'), 'data');
 }
 
 function log(msg) {
@@ -199,7 +206,7 @@ function startLocalMode() {
     ELECTRON_RUN_AS_NODE: '1',
     NODE_ENV: 'production',
     TZ: 'Asia/Shanghai',
-    DATA_DIR: path.join(app.getPath('userData'), 'data'),
+    DATA_DIR: getDataDir(),
     PORT: String(LOCAL_PORT),
     HOST: '127.0.0.1',
     OFFICE_EDITOR_ENABLED: 'false',
@@ -403,6 +410,8 @@ function buildAppMenu() {
 }
 
 app.whenReady().then(() => {
+  // 常开渲染进程辅助功能：读屏器/自动化可直接访问页面 DOM 树（须在 ready 后调用）
+  app.setAccessibilitySupportEnabled(true);
   Menu.setApplicationMenu(buildAppMenu());
   launchByConfig();
   // 自动更新：启动延迟首查 + 每 8 小时复查（仅 Windows 安装形态）
@@ -452,6 +461,61 @@ ipcMain.handle('set-local-mode', () => {
   stopLocalChild();
   startLocalMode();
   return true;
+});
+
+// 数据保存位置查询与更改（仅本地模式有意义；远端模式数据在服务端）
+ipcMain.handle('get-data-dir', () => {
+  const cfg = readConfig();
+  return { dataDir: getDataDir(), isDefault: !cfg.dataDir };
+});
+
+// 恢复备份暂存后重启内嵌 server 使其生效（applyStagedRestore 在 server 启动早期执行）
+ipcMain.handle('restart-server', () => {
+  stopLocalChild();
+  startLocalMode();
+  return true;
+});
+
+ipcMain.handle('choose-data-dir', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: '选择数据保存位置',
+    message: '选择 Engram 数据的保存目录（可选已有数据目录或空目录）',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const target = path.resolve(r.filePaths[0]);
+  const current = getDataDir();
+  if (target === current) return { dir: target, same: true };
+  // 新位置在当前数据目录内部：迁移会把正在用的数据挪进自己，直接拒绝
+  if (target.startsWith(current + path.sep)) {
+    return { error: '新位置不能在当前数据目录内部' };
+  }
+  try {
+    fs.mkdirSync(target, { recursive: true });
+    fs.accessSync(target, fs.constants.W_OK);
+  } catch {
+    return { error: '该目录不可写，请换一个位置' };
+  }
+  const hadExisting = fs.existsSync(path.join(target, 'wiki.db')) || fs.existsSync(path.join(target, 'brain'));
+  const result = { dir: target, copied: false, hadExisting };
+  if (!hadExisting) {
+    stopLocalChild(); // 迁移前先停 server，避免边写边拷
+    const hasOldData = fs.existsSync(path.join(current, 'wiki.db')) || fs.existsSync(path.join(current, 'brain'));
+    if (hasOldData) {
+      try {
+        fs.cpSync(current, target, { recursive: true });
+        result.copied = true;
+      } catch (e) {
+        startLocalMode(); // 迁移失败：配置未变，用旧目录拉起，数据不受影响
+        return { error: '迁移旧数据失败：' + e.message };
+      }
+    }
+  } else {
+    stopLocalChild();
+  }
+  writeConfig({ ...readConfig(), dataDir: target });
+  startLocalMode(); // 健康检查通过后窗口自动加载新 server
+  return result;
 });
 
 ipcMain.handle('set-remote-mode', (_e, url, token, directUrl) => {

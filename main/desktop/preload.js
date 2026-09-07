@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   setRemoteMode: (url, token, directUrl) => ipcRenderer.invoke('set-remote-mode', url, token, directUrl),
   // 返回启动页重新选择模式
   openConnectionSettings: () => ipcRenderer.invoke('open-connection-settings'),
+  // ---------- 数据保存位置与整库恢复（本地模式） ----------
+  // 查询当前数据保存位置（{ dataDir, isDefault }）
+  getDataDir: () => ipcRenderer.invoke('get-data-dir'),
+  // 打开系统目录选择框更改数据保存位置（旧数据自动迁移并重启内嵌后端；取消返回 null，失败返回 { error }）
+  chooseDataDir: () => ipcRenderer.invoke('choose-data-dir'),
+  // 重启内嵌后端（恢复备份暂存后使其生效；窗口会重新加载）
+  restartServer: () => ipcRenderer.invoke('restart-server'),
   // 远程文件「用系统程序打开」
   openFileBytes: (name, bytes) => ipcRenderer.invoke('open-file-bytes', name, bytes),
   // ---------- 桌面端自更新（本地/远端模式均可用；配置取自当前连接服务器的 /api/update/config） ----------
