@@ -69,6 +69,7 @@ let backoffMs = 1000;
 let loopPromise: Promise<void> | null = null;
 let streamAbort: AbortController | null = null;
 let pushing = false;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 function hubUrl(): string {
   return (getSetting('sync_hub_url') || '').replace(/\/+$/, '');
@@ -101,8 +102,19 @@ function readPageRaw(relPath: string): string | null {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done(): void {
+      clearTimeout(timer);
+      sleepAbort = null;
+      resolve();
+    }
+    sleepAbort = done;
+  });
 }
+
+/** 中断在途退避 sleep：stopClient 时让后台循环立即退出，避免配置变更等待最长 30s */
+let sleepAbort: (() => void) | null = null;
 
 async function getJson(pathname: string): Promise<any> {
   const res = await fetch(hubUrl() + pathname, { headers: authHeaders() });
@@ -282,21 +294,26 @@ async function pushLoop(): Promise<void> {
   pushing = true;
   try {
     while (queue.length > 0) {
-      const item = queue[0];
+      // 先出队再推送：推送在途时同目标的新写入仍可入队（否则最新内容会被去重吞掉）
+      const item = queue.shift()!;
       try {
         await pushOne(item);
-        queue.shift();
       } catch (error: any) {
         if (item.kind === 'page' && readPageRaw(item.target) === null) {
-          queue.shift();
           continue;
         }
         if (item.kind === 'file' && !fs.existsSync(safeJoin(item.target))) {
-          queue.shift();
           continue;
         }
-        // 网络/hub 错误：保留队列，等重连后重试
+        // 网络/hub 错误：塞回队首保序；3 秒后自动重试（不再依赖下一次入队或重连触发）
+        queue.unshift(item);
         lastError = String(error?.message || error);
+        if (!retryTimer) {
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            void pushLoop();
+          }, 3000);
+        }
         return;
       }
     }
@@ -471,6 +488,10 @@ export function startClient(): void {
 export function stopClient(): void {
   running = false;
   connected = false;
+  // 唤醒可能在退避 sleep 中的后台循环，让它立即观察到 running=false
+  try {
+    sleepAbort?.();
+  } catch { /* already done */ }
   try {
     streamAbort?.abort();
   } catch { /* 已结束 */ }

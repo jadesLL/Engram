@@ -205,9 +205,9 @@ function formatTime(iso: string): string {
 async function copy(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
-    notify('已复制', 'success');
+    notify.success('已复制');
   } catch {
-    notify('复制失败，请手动选择复制', 'error');
+    notify.error('复制失败，请手动选择复制');
   }
 }
 
@@ -228,13 +228,13 @@ async function postConfig(body: Record<string, unknown>, okMsg: string): Promise
   try {
     const res = await api.post('/api/sync/config', body);
     if (res.data?.ok) {
-      notify(okMsg, 'success');
+      notify.success(okMsg);
       await loadStatus();
       return true;
     }
     return false;
   } catch (error: any) {
-    notify(error?.response?.data?.error || '保存失败', 'error');
+    notify.error(error?.response?.data?.error || '保存失败');
     return false;
   } finally {
     saving.value = false;
@@ -249,7 +249,7 @@ async function becomeHub(): Promise<void> {
 
 async function joinHub(): Promise<void> {
   if (!hubUrl.value.trim() || !hubToken.value.trim()) {
-    notify('请填写中枢地址与绑定令牌', 'error');
+    notify.error('请填写中枢地址与绑定令牌');
     return;
   }
   if (await postConfig({ role: 'member', enabled: true, hub_url: hubUrl.value.trim(), hub_token: hubToken.value.trim() }, '绑定成功，正在连接中枢并同步')) {
@@ -287,7 +287,7 @@ async function addPeer(): Promise<void> {
       await loadStatus();
     }
   } catch (error: any) {
-    notify(error?.response?.data?.error || '创建失败', 'error');
+    notify.error(error?.response?.data?.error || '创建失败');
   } finally {
     creating.value = false;
   }
@@ -299,20 +299,20 @@ async function regenPeer(peer: PeerView): Promise<void> {
     if (res.data?.token) {
       newPeer.value = { ...peer, token: res.data.token };
       await loadStatus();
-      notify('令牌已重置，旧令牌立即失效', 'success');
+      notify.success('令牌已重置，旧令牌立即失效');
     }
   } catch (error: any) {
-    notify(error?.response?.data?.error || '重置失败', 'error');
+    notify.error(error?.response?.data?.error || '重置失败');
   }
 }
 
 async function revokePeer(peer: PeerView): Promise<void> {
   try {
     await api.delete(`/api/sync/peers/${peer.id}`);
-    notify(`已移除成员「${peer.name}」`, 'success');
+    notify.success(`已移除成员「${peer.name}」`);
     await loadStatus();
   } catch (error: any) {
-    notify(error?.response?.data?.error || '移除失败', 'error');
+    notify.error(error?.response?.data?.error || '移除失败');
   }
 }
 
@@ -320,9 +320,9 @@ async function reconcileNow(): Promise<void> {
   reconciling.value = true;
   try {
     await api.post('/api/sync/reconcile');
-    notify('已开始全量对账，稍后查看状态', 'success');
+    notify.success('已开始全量对账，稍后查看状态');
   } catch (error: any) {
-    notify(error?.response?.data?.error || '触发失败', 'error');
+    notify.error(error?.response?.data?.error || '触发失败');
   } finally {
     setTimeout(() => { reconciling.value = false; }, 1500);
   }

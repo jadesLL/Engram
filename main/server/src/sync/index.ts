@@ -137,17 +137,24 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
   return null;
 }
 
+/** 按序执行的重初始化锁：快速连续禁用/启用时避免两轮 stop/reconcile/start 交错竞态 */
+let reinitChain: Promise<void> = Promise.resolve();
+
 /** 按当前配置重启同步客户端（配置变更/启动时调用） */
 export async function reinitClient(): Promise<void> {
-  await stopClientAndWait();
-  if (!syncConfigEnabled()) return;
-  // 先对账一次（首次接入拉全量/补齐离线差异），再进常驻循环
-  try {
-    await reconcile();
-  } catch (error) {
-    console.error('[sync] 初始对账失败（将随重连重试）:', error);
-  }
-  startClient();
+  const run = reinitChain.then(async () => {
+    await stopClientAndWait();
+    if (!syncConfigEnabled()) return;
+    // 先对账一次（首次接入拉全量/补齐离线差异），再进常驻循环
+    try {
+      await reconcile();
+    } catch (error) {
+      console.error('[sync] 初始对账失败（将随重连重试）:', error);
+    }
+    startClient();
+  });
+  reinitChain = run.catch(() => { /* 锁链不断 */ });
+  await run;
 }
 
 /** 供启动流程调用 */
