@@ -94,7 +94,7 @@ const HELP = `Engram CLI —— 外部 Agent 操作知识库
                                                        （私网/环回地址经此显式登记后才放行）
   status                                             服务健康与连接检查
   import <file|dir...> [--dir 原始资料]               上传文件/目录到原始资料（自动提取文本）
-  files list [--dir 原始资料]                         列出原始资料（含提取状态）
+  files list [--dir 原始资料] [--pending]              列出原始资料（含提取状态/已提炼标记）；--pending 只列未提炼文件
   files read <path> [--raw] [--out <file>]            读原始资料提取文本；--raw 下载原文件
   search <query>                                      关键词检索知识库
   pages list                                          列出知识库页面
@@ -173,6 +173,7 @@ async function main(): Promise<number> {
       identifier: { type: 'string' },
       project: { type: 'string' },
       append: { type: 'boolean', default: false },
+      pending: { type: 'boolean', default: false },
       format: { type: 'string', default: 'generic' },
     },
   });
@@ -239,6 +240,7 @@ async function main(): Promise<number> {
       const sub = positional[0];
       if (sub === 'list') {
         const result = await api(ctx, 'GET', '/api/files/list', { query: args.dir ? { dir: String(args.dir) } : {} });
+        if (args.pending) result.files = (result.files ?? []).filter((f: any) => !f.distilled);
         output(result, asJson);
         return 0;
       }

@@ -109,6 +109,8 @@ async function main() {
   // （进程级单例：双监听共享一份，createApp() 只做路由装配不碰数据）
   await scanVault();
   migrateAiLogsToOperationLog();
+  // 作业指南要求 Agent 动手前先读 Wiki/log.md；该文件原本懒创建，新库首读必报「页面不存在」，此处预置
+  if (!readPage('Wiki/log.md')) writePage('Wiki/log.md', '# 操作日志\n', { title: '操作日志', type: 'doc' });
   cleanupSystemPages();
   queueMissingDerivedPages();
   // 清理 30 天前的终态 jobs 行，避免表无限膨胀拖慢 job runner tick 的全表扫描。

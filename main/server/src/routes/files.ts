@@ -9,6 +9,7 @@ import { moveToTrash } from '../lib/trash.js';
 import { requireAuth } from './auth.js';
 import { officeToText } from '../pipeline/office.js';
 import { ensureFileRecord, upsertFileRecord } from '../pipeline/indexer.js';
+import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import { enqueue, enqueuePagePipeline } from '../jobs.js';
 import { normalizeDir, isUploadDir } from '../config.js';
 import { syncPageFile } from '../lib/vault.js';
@@ -86,6 +87,7 @@ export async function fileRoutes(app: FastifyInstance) {
         extractionOcrPages: extraction?.ocr_pages || 0,
         extractionSkippedPages: extraction?.skipped_pages || 0,
         extractionError: extraction?.error || null,
+        distilled: isDistilledPath(rel),
       });
     };
     if (sub) {

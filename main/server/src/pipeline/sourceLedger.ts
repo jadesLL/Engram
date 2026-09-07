@@ -60,6 +60,15 @@ export function beginSourceVersion(path: string, contentHash: string): SourceVer
   return version;
 }
 
+/** 该来源路径是否已被提炼过：存在任一 active 页面贡献即视为已提炼（与证据门禁同语义） */
+export function isDistilledPath(path: string): boolean {
+  return !!db.prepare(
+    `SELECT 1 FROM page_contributions pc
+     JOIN source_versions sv ON sv.id = pc.source_version_id
+     WHERE sv.path = ? AND pc.active = 1 LIMIT 1`
+  ).get(path);
+}
+
 export function contributionsForProjection(pageId: string): StoredContribution[] {
   return db.prepare(
     `SELECT pc.*, sv.path source_path FROM page_contributions pc

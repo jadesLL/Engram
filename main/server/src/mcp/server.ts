@@ -10,6 +10,7 @@ import { saveChat } from '../lib/chat.js';
 import { hybridSearch } from '../retrieval/hybrid.js';
 import { pageEvidenceResponse } from '../pipeline/pageEvidence.js';
 import { agentWritePage, WriteGateError } from '../pipeline/agentWrite.js';
+import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
 import { AGENT_GUIDE } from '../content/agentGuide.js';
 
@@ -21,6 +22,8 @@ import { AGENT_GUIDE } from '../content/agentGuide.js';
  */
 
 const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，读、写、提炼全部由你（外部 Agent）完成。
+能跑 shell 的 Agent 优先用 CLI（engram status/import/files/search/pages/chat/guide，--json 可得机器可读输出）；MCP 用于无法跑 shell、或需把图片作为图像内容直读（read_raw_file raw=true）时。
+提炼作业收到指令后自动索引待提炼清单（CLI engram files list --pending，或 list_raw_files 传 pending=true），然后逐份串行处理：读一份、write_page 提交成功，再处理下一份，不要批量读完统一写页。
 任何写操作前先读 Wiki/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
 新建 概念/实体 页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条引文），已有页面增量不受限。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
@@ -37,9 +40,9 @@ function relExt(rel: string): string {
   return path.posix.extname(rel).slice(1).toLowerCase();
 }
 
-/** 递归列出原始资料（上限 500 条，Agent 按目录分批读取） */
-function listRawFiles(): Array<{ path: string; ext: string; size: number; extractionStatus: string | null }> {
-  const out: Array<{ path: string; ext: string; size: number; extractionStatus: string | null }> = [];
+/** 递归列出原始资料（上限 500 条，Agent 按目录分批读取）；pending=true 时只返回未提炼文件 */
+function listRawFiles(pending = false): Array<{ path: string; ext: string; size: number; extractionStatus: string | null; distilled: boolean }> {
+  const out: Array<{ path: string; ext: string; size: number; extractionStatus: string | null; distilled: boolean }> = [];
   const root = safeJoin(RAW_DIR);
   const walk = (abs: string, rel: string) => {
     let entries: fs.Dirent[];
@@ -72,7 +75,9 @@ function listRawFiles(): Array<{ path: string; ext: string; size: number; extrac
             extractionStatus = file?.text?.trim() ? '已索引' : null;
           }
         }
-        out.push({ path: childRel, ext, size, extractionStatus });
+        const distilled = isDistilledPath(childRel);
+        if (pending && distilled) continue;
+        out.push({ path: childRel, ext, size, extractionStatus, distilled });
       }
     }
   };
@@ -194,14 +199,14 @@ function makeServer(): McpServer {
 
   server.tool(
     'list_raw_files',
-    '列出 原始资料/ 全部文件（含提取状态；图片/无文字层文件需用 read_raw_file 读取原文件自行识别）',
-    {},
-    async () => {
-      const files = listRawFiles();
+    '列出 原始资料/ 全部文件（含提取状态与已提炼标记；图片/无文字层文件需用 read_raw_file 读取原文件自行识别）',
+    { pending: z.boolean().optional().describe('true 时只返回尚未提炼的文件（提炼作业索引用）') },
+    async ({ pending }) => {
+      const files = listRawFiles(!!pending);
       const lines = files.map((f) =>
-        `${f.path} · ${f.ext} · ${Math.round(f.size / 1024)}KB · 提取:${f.extractionStatus ?? 'md页面'}`
+        `${f.path} · ${f.ext} · ${Math.round(f.size / 1024)}KB · 提取:${f.extractionStatus ?? 'md页面'}${f.distilled ? ' · 已提炼' : ''}`
       );
-      return { content: [{ type: 'text', text: lines.join('\n') || '（原始资料为空）' }] };
+      return { content: [{ type: 'text', text: lines.join('\n') || (pending ? '（没有待提炼的文件）' : '（原始资料为空）') }] };
     }
   );
 
