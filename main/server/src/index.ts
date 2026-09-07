@@ -23,6 +23,8 @@ import { agentRoutes } from './routes/agent.js';
 import { eventRoutes } from './routes/events.js';
 import { trashRoutes } from './routes/trash.js';
 import { officeRoutes } from './routes/office.js';
+import { syncRoutes } from './routes/sync.js';
+import { initSync } from './sync/index.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { mcpRoutes } from './mcp/server.js';
 import { scanVault, readPage, writePage } from './lib/vault.js';
@@ -81,6 +83,7 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(agentRoutes);
   await app.register(eventRoutes);
   await app.register(trashRoutes);
+  await app.register(syncRoutes);
   await app.register(mcpRoutes);
 
   // 静态托管前端构建产物 + SPA fallback（HTTP/HTTPS 实例各自缓存一份）
@@ -120,6 +123,8 @@ async function main() {
   startJobRunner();
   // DDNS 直连域名维护（设置页/env 未配置则完全静默跳过；纯 Node 定时器，无控制台窗口）
   startDdnsScheduler();
+  // 多端同步：配置了 hub 连接则启动同步客户端（首次接入自动全量对账）
+  await initSync();
   // SSE 心跳：保活长连接、探活死连接（断线 EventSource 自动重连）
   const hb = setInterval(heartbeat, 30_000);
   hb.unref();

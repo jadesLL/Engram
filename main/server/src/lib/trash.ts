@@ -6,7 +6,7 @@ import { TRASH_DIR, typeToDir } from '../config.js';
 import { db, newId, now } from './db.js';
 import { emit } from './events.js';
 import { invalidateGraphCache } from './graphCache.js';
-import { safeJoin, syncPageFile } from './vault.js';
+import { safeJoin, syncPageFile, notifySyncChange, type WriteOrigin } from './vault.js';
 
 export type TrashKind = 'page' | 'file';
 
@@ -80,7 +80,7 @@ function rowForFilePath(relPath: string): any {
 }
 
 /** 将 brain 内的页面或资料移动到回收站，并写入可恢复的元数据。 */
-export function moveToTrash(relPath: string): TrashItem {
+export function moveToTrash(relPath: string, origin: WriteOrigin = 'local'): TrashItem {
   const originalPath = normalizedRel(relPath);
   const source = safeJoin(originalPath);
   if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error('文件不存在');
@@ -139,6 +139,7 @@ export function moveToTrash(relPath: string): TrashItem {
     invalidateGraphCache();
     emit('page-deleted', { path: originalPath, id: page.id });
   }
+  if (origin === 'local') notifySyncChange('delete', originalPath);
 
   return {
     ...metadata,
@@ -372,6 +373,8 @@ export function restoreTrashItem(id: string): RestoredTrashItem {
     if (item.metadataName) {
       try { fs.unlinkSync(metadataPath(item.metadataName)); } catch { /* stale sidecars are ignored */ }
     }
+    // 恢复 = 内容重新出现，进入同步链路（页面推送正文、文件推送字节）
+    notifySyncChange(item.kind === 'page' ? 'page' : 'file', targetPath);
     return { id: item.id, kind: item.kind, name: item.name, path: targetPath, pageId, fileId };
   } catch (error) {
     try { fs.renameSync(target, source); } catch { /* preserve the original failure */ }

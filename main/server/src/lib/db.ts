@@ -608,6 +608,8 @@ export function migrate() {
   ensureColumn('jobs', 'updated_at', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('jobs', 'cancel_requested', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('jobs', 'run_token', `TEXT NOT NULL DEFAULT ''`);
+  // 多端同步：本端已知的每页 hub 版本号（仅 hub 上必然等于当前版本；节点上是最后已知值）
+  ensureColumn('pages', 'sync_revision', 'INTEGER NOT NULL DEFAULT 0');
   // jobs 表 status 索引：job runner 每秒 tick 查 WHERE status='pending'/'running'，
   // 无索引时全表扫描；大量 failed/done 行积累后拖慢 DB、争用磁盘 I/O 致事件循环间歇阻塞。
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id)`);
@@ -651,6 +653,38 @@ export function migrate() {
        SELECT rowid FROM embedding_cache ORDER BY last_used_at DESC LIMIT -1 OFFSET 10000
      )`
   ).run();
+
+  // ---------- 多端同步 ----------
+  // hub 全局变更日志：成员按 seq 游标拉增量；定期裁剪，落后过多走全量对账
+  db.prepare(`CREATE TABLE IF NOT EXISTS sync_oplog (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    target TEXT NOT NULL,
+    old_path TEXT NOT NULL DEFAULT '',
+    revision INTEGER NOT NULL DEFAULT 0,
+    node_id TEXT NOT NULL DEFAULT '',
+    ts TEXT NOT NULL
+  )`).run();
+  // 每页版本快照（保留最近 10 版）：三方合并的祖先来源
+  db.prepare(`CREATE TABLE IF NOT EXISTS page_revisions (
+    path TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    node_id TEXT NOT NULL DEFAULT '',
+    ts TEXT NOT NULL,
+    PRIMARY KEY(path, revision)
+  )`).run();
+  // 同步群组成员（中枢端）：为每个成员设备命名并签发专属 token
+  db.prepare(`CREATE TABLE IF NOT EXISTS sync_peers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token TEXT UNIQUE NOT NULL,
+    node_label TEXT NOT NULL DEFAULT '',
+    last_seen_at TEXT,
+    last_seq INTEGER NOT NULL DEFAULT 0,
+    revoked INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`).run();
 
   ensureVecTable(getVecDim());
 }
