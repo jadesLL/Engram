@@ -29,6 +29,31 @@
       <p v-if="dirMsg" class="setting-message" :class="dirOk ? 'ok' : 'err'">{{ dirMsg }}</p>
     </div>
 
+    <div v-if="isDesktopLocal" class="dir-section">
+      <div class="dir-row">
+        <div class="dir-info">
+          <strong>本地服务端口</strong>
+          <p>内嵌服务监听 127.0.0.1:{{ portCurrent }}，默认 18180，与 Docker 版（18080）互不冲突；端口被其他程序占用时可修改，改动后本地服务自动以新端口重启。</p>
+          <p v-if="portEnvOverridden">检测到环境变量 ENGRAM_LOCAL_PORT 指定端口，此处修改不生效。</p>
+        </div>
+        <div class="port-controls">
+          <input
+            v-model="portInput"
+            class="port-input"
+            type="number"
+            min="1"
+            max="65535"
+            :disabled="portBusy || portEnvOverridden"
+            @keyup.enter="changePort"
+          />
+          <button class="btn" type="button" :disabled="portBusy || portEnvOverridden" @click="changePort">
+            {{ portBusy ? '重启中...' : '应用' }}
+          </button>
+        </div>
+      </div>
+      <p v-if="portMsg" class="setting-message" :class="portOk ? 'ok' : 'err'">{{ portMsg }}</p>
+    </div>
+
     <div class="backup-section">
       <div class="backup-row">
         <div>
@@ -118,6 +143,10 @@ onMounted(async () => {
     isDesktopLocal.value = true;
     const r = await wikiDesktop.getDataDir();
     dataDir.value = r.dataDir;
+    const p = await wikiDesktop.getLocalPort();
+    portInput.value = String(p.port);
+    portCurrent.value = p.port;
+    portEnvOverridden.value = Boolean(p.envOverridden);
   } catch {
     /* 桥不可用时按非桌面端处理 */
   }
@@ -147,6 +176,43 @@ async function changeDataDir() {
         : '数据位置已更新，本地服务已重启。';
   } finally {
     dirBusy.value = false;
+  }
+}
+
+// ---------- 本地服务端口（桌面端本地模式） ----------
+const portInput = ref('');
+const portCurrent = ref<number | ''>('');
+const portBusy = ref(false);
+const portMsg = ref('');
+const portOk = ref(false);
+const portEnvOverridden = ref(false);
+
+async function changePort() {
+  portMsg.value = '';
+  const port = Number(portInput.value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    portOk.value = false;
+    portMsg.value = '端口需为 1-65535 的整数';
+    return;
+  }
+  portBusy.value = true;
+  try {
+    const r = await wikiDesktop.setLocalPort(port);
+    if (r.same) {
+      portOk.value = true;
+      portMsg.value = `端口未变化，仍是 ${port}。`;
+      return;
+    }
+    if (r.error) {
+      portOk.value = false;
+      portMsg.value = r.error;
+      return;
+    }
+    portCurrent.value = port;
+    portOk.value = true;
+    portMsg.value = `端口已改为 ${port}，本地服务正在以新端口重启…`;
+  } finally {
+    portBusy.value = false;
   }
 }
 
@@ -346,6 +412,24 @@ async function wipeAiLogs() {
 }
 .dir-path {
   word-break: break-all;
+}
+.port-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.port-input {
+  width: 96px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.port-input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 .backup-message {
   padding: 10px 16px;
