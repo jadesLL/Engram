@@ -21,6 +21,15 @@ pnpm exec cap sync android
 echo ">> gradlew assembleRelease"
 cd android
 
+# CI 发版机内存紧张：默认 -Xmx1536m + 多 worker 在 lint 阶段被 OOM 杀掉守护进程
+# （连续两次 "Gradle build daemon disappeared unexpectedly"），此处压低堆与并发
+cat >> gradle.properties <<'EOF'
+
+# build-apk-ci.sh 注入的 CI 内存上限（覆盖上方默认值；仅发版容器内生效，不入库覆盖本地配置）
+org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m
+org.gradle.workers.max=1
+EOF
+
 # 镜像构建期已预热 gradle 缓存（Dockerfile.ci 末层，标记文件在 GRADLE_USER_HOME）：
 # 优先 --offline 复用，彻底消除发版时的运行时网络依赖；离线失败回退在线构建（与旧行为一致）
 GRADLE_CACHE="${GRADLE_USER_HOME:-$HOME/.gradle}"
