@@ -37,6 +37,7 @@ export async function agentRoutes(app: FastifyInstance) {
         meta: result.meta,
         created: result.created,
         evidenceRecorded: result.evidenceRecorded,
+        guideVersion: result.guideVersion,
       };
     } catch (error) {
       if (error instanceof WriteGateError) {

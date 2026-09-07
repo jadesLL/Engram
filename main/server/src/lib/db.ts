@@ -50,7 +50,8 @@ export function migrate() {
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
-    word_count INTEGER NOT NULL DEFAULT 0
+    word_count INTEGER NOT NULL DEFAULT 0,
+    guide_version INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
@@ -635,6 +636,8 @@ export function migrate() {
   ).run(now());
   });
   migrateSchema();
+  // 存量库补列：旧行 guide_version=0（视为落后于当前提炼指南），Agent 写页时刷新
+  ensureColumn('pages', 'guide_version', 'INTEGER NOT NULL DEFAULT 0');
   const usageCutoff = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
   db.prepare(`DELETE FROM llm_usage WHERE created_at < ?`).run(usageCutoff);
   const semanticCacheCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();

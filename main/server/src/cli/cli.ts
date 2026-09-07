@@ -97,7 +97,7 @@ const HELP = `Engram CLI —— 外部 Agent 操作知识库
   files list [--dir 原始资料] [--pending]              列出原始资料（含提取状态/已提炼标记）；--pending 只列未提炼文件
   files read <path> [--raw] [--out <file>]            读原始资料提取文本；--raw 下载原文件
   search <query>                                      关键词检索知识库
-  pages list                                          列出知识库页面
+  pages list [--outdated]                              列出知识库页面（含提炼规则版本）；--outdated 只列落后于当前指南的页面（规则升级后重提炼用）
   pages read <titleOrId>                              读页面全文
   pages write <path> --title <t> [--type concept] [--tags a,b] [--evidence "路径::引文"]...
                                                        写页面（stdin 或 --file 为正文；新建概念/实体页需证据）
@@ -174,6 +174,7 @@ async function main(): Promise<number> {
       project: { type: 'string' },
       append: { type: 'boolean', default: false },
       pending: { type: 'boolean', default: false },
+      outdated: { type: 'boolean', default: false },
       format: { type: 'string', default: 'generic' },
     },
   });
@@ -285,7 +286,8 @@ async function main(): Promise<number> {
     case 'pages': {
       const sub = positional[0];
       if (sub === 'list') {
-        output(await api(ctx, 'GET', '/api/pages/list'), asJson);
+        const result = await api(ctx, 'GET', '/api/pages/list', args.outdated ? { query: { outdated: 'true' } } : {});
+        output(result, asJson);
         return 0;
       }
       if (sub === 'read' || sub === 'evidence') {
