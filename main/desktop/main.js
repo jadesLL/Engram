@@ -1191,3 +1191,74 @@ ipcMain.handle('desktop-update-set-auto', (_e, enabled) => {
   if (c.autoUpdate) setTimeout(autoUpdateTick, 1000); // 开启后立即触发一次检查
   return { ...autoState };
 });
+
+// ---------- 源码模式自更新（非打包形态：应用内增量拉源码并重建） ----------
+// 源码模式跑在 git 检出目录上，更新 = git pull 增量拉取 → 重建 server/web → 重启；
+// 构建期间不能持有文件锁（server 子进程占着 better_sqlite3.node），所以流程是：
+// 主进程先 pull（增量下载在应用存活时完成）→ 拉起 update-from-source.ps1 -SkipPull
+// （构建 + 组装 + 关旧实例 + 启动）→ 本进程退出，新实例接管。数据目录不受影响。
+const appRootDir = path.join(__dirname, '..');
+const sourceUpdateScript = path.join(appRootDir, 'scripts', 'update-from-source.ps1');
+
+function gitArgs(args) {
+  return { cmd: 'git', args: ['-C', appRootDir, ...args] };
+}
+
+function runGit(args, timeoutMs = 120_000) {
+  const { cmd, args: full } = gitArgs(args);
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, full, { windowsHide: true });
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.stdout.on('data', (d) => (out += d.toString()));
+    child.stderr.on('data', (d) => (err += d.toString()));
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(out.trim());
+      else reject(new Error(`git ${args[0]} 失败(code ${code})：${err.trim().split('\n')[0] || out.trim()}`));
+    });
+  });
+}
+
+ipcMain.handle('desktop-get-env', () => ({
+  packaged: app.isPackaged,
+  platform: process.platform,
+  version: app.getVersion(),
+}));
+
+ipcMain.handle('desktop-source-update-check', async () => {
+  if (app.isPackaged) return { ok: false, error: '安装包形态不使用源码更新' };
+  try {
+    const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
+    await runGit(['fetch', 'origin', '--prune']);
+    const behind = Number((await runGit(['rev-list', '--count', `HEAD..origin/${branch}`])) || 0);
+    return { ok: true, branch, behind, upToDate: behind === 0 };
+  } catch (e) {
+    return { ok: false, error: describeError(e) };
+  }
+});
+
+ipcMain.handle('desktop-source-update', async () => {
+  if (app.isPackaged) return { ok: false, error: '安装包形态不使用源码更新' };
+  if (!fs.existsSync(sourceUpdateScript)) return { ok: false, error: `未找到更新脚本：${sourceUpdateScript}` };
+  try {
+    const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
+    await runGit(['pull', '--ff-only', 'origin', branch], 180_000);
+  } catch (e) {
+    return { ok: false, error: describeError(e) + '（本地有未提交改动时请先提交/暂存）' };
+  }
+  // 增量代码已就位：交给构建脚本完成编译组装并拉起新实例，本应用随即退出
+  const child = spawn(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Minimized', '-File', sourceUpdateScript, '-SkipPull'],
+    { detached: true, stdio: 'ignore', windowsHide: false, cwd: appRootDir },
+  );
+  child.unref();
+  setTimeout(() => app.quit(), 1500); // 留时间让渲染进程展示「正在更新」
+  return { ok: true, restarting: true };
+});
