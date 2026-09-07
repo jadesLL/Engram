@@ -274,6 +274,44 @@
         </div>
       </section>
 
+      <!-- AI 工作区：服务端自动生成的系统区（操作日志/索引/关系库），只读 -->
+      <section class="section">
+        <div
+          class="sec-row"
+          :class="{ expanded: !collapsed.ailog }"
+        >
+          <button
+            class="sec-toggle"
+            type="button"
+            :aria-expanded="!collapsed.ailog"
+            v-tooltip="collapsed.ailog ? '展开 AI 工作区' : '收起 AI 工作区'"
+            @click="toggle('ailog')"
+          >
+            <span class="sec-name">AI 工作区</span>
+          </button>
+          <span class="sec-count">{{ visibleAiLogs.length }}</span>
+        </div>
+        <div v-show="!collapsed.ailog" class="sec-body">
+          <div
+            v-for="p in sortList(visibleAiLogs, 'updated-desc')"
+            :key="p.id"
+            class="page-row log-row"
+            :class="{ active: p.id === activeId }"
+            role="button"
+            tabindex="0"
+            @click="openPage(p)"
+            @keydown.enter.self="openPage(p)"
+            @keydown.space.self.prevent="openPage(p)"
+          >
+            <Icon name="report" :size="13" class="log-file-icon" />
+            <span class="page-title" v-tooltip="p.title">{{ p.title }}</span>
+          </div>
+          <p v-if="!visibleAiLogs.length" class="none">
+            {{ filter ? '没有匹配页面' : '服务端自动生成' }}
+          </p>
+        </div>
+      </section>
+
       <!-- 标签 -->
       <div v-if="tags.length" class="tags-block">
         <div class="sec-row" :class="{ expanded: !collapsed.tags }">
@@ -680,10 +718,11 @@ function visibleSubGroups(g: any) {
   );
 }
 
+/** AI 系统区（操作日志/索引/关系结构，含历史版本遗留路径）在日志区展示 */
 const aiLogs = computed(() =>
   allPages.value.filter(
     (p) =>
-      p.path.startsWith('AIWorks/log/') ||
+      p.path.startsWith('AIWorks/') ||
       p.path.startsWith('Wiki/关系/') ||
       p.path === 'Wiki/index.md' ||
       p.path === 'Wiki/log.md'

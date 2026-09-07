@@ -85,7 +85,7 @@
       <div class="danger-row">
         <div>
           <strong>清空操作日志与关系库</strong>
-          <p>清空 AIWorks/log、操作日志和关系库；待执行和运行中的任务会先停止，概念、实体和原始资料不受影响。</p>
+          <p>清空 AIWorks 系统区（操作日志、索引与关系库）；待执行和运行中的任务会先停止，概念、实体和原始资料不受影响。</p>
         </div>
         <button
           class="btn danger"

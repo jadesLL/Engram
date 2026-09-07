@@ -16,8 +16,7 @@ Engram 不内置任何 AI——读、写、提炼、综合全部由你（外部 
 - Wiki/概念/ —— 概念页（方法论、标准、技术、理念等抽象对象）。
 - Wiki/实体/ —— 实体页（人物 person、客户 customer、组织 org、地点 place、作品 work、项目 project、其他 other 七类，目录不分家，类型写在 frontmatter type）。
 - Wiki/归档/ —— 归档区。
-- Wiki/log.md —— 操作日志：时间倒序的知识内容操作记录（新的在上），是知识库状态的唯一索引。
-- AIWorks/ —— 系统区（索引、查询缓存），不要读写。
+- AIWorks/ —— 系统区（服务端自动生成，Agent 只读）：log/log.md 操作日志（时间倒序，新的在上，是知识库状态的唯一索引）、index/index.md 全库索引、scheme/relationships.md 六词表关系结构。不参与检索。
 
 ## 二、接入工具
 
@@ -36,7 +35,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 
 ## 三、操作纪律
 
-1. 动手前先 read_page 读 Wiki/log.md 了解最近状态；写操作完成后服务端会自动追加日志（Agent 写入/Agent 更新页面/对话沉积等），你无需重复记录，只在你执行了合并、批量重整等复合动作时才用 write_page 手工补一条动作说明。
+1. 动手前先 read_page 读 AIWorks/log/log.md 了解最近状态；写操作完成后服务端会自动追加日志（Agent 写入/Agent 更新页面/对话沉积等），你无需重复记录，只在你执行了合并、批量重整等复合动作时才用 write_page 手工补一条动作说明。
 2. 原始资料只读不改：原始文件与对话沉积一律保持原样，你的产出写到 Wiki/。
 3. 日志条目保持一行式原始记录，不蒸馏、不汇总成状态看板。
 

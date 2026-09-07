@@ -27,7 +27,7 @@ import { registerOfficeProxy } from './office/proxy.js';
 import { mcpRoutes } from './mcp/server.js';
 import { scanVault, readPage, writePage } from './lib/vault.js';
 import { heartbeat } from './lib/events.js';
-import { migrateAiLogsToOperationLog } from './pipeline/indexFile.js';
+import { ensureSystemFiles, migrateLegacySystemFiles } from './pipeline/indexFile.js';
 import { queueMissingDerivedPages } from './pipeline/sourceLedger.js';
 
 /** AIWorks 系统区页面不参与整理、不打标签 */
@@ -105,12 +105,12 @@ async function main() {
 
   const app = await createApp();
 
-  // 启动：扫描 vault 同步 DB、迁移历史 AI 日志进操作日志、清理系统区页面标签、启动任务队列
+  // 启动：扫描 vault 同步 DB、迁移历史系统文件进 AIWorks 系统区、清理系统区页面标签、启动任务队列
   // （进程级单例：双监听共享一份，createApp() 只做路由装配不碰数据）
   await scanVault();
-  migrateAiLogsToOperationLog();
-  // 作业指南要求 Agent 动手前先读 Wiki/log.md；该文件原本懒创建，新库首读必报「页面不存在」，此处预置
-  if (!readPage('Wiki/log.md')) writePage('Wiki/log.md', '# 操作日志\n', { title: '操作日志', type: 'doc' });
+  migrateLegacySystemFiles();
+  // 预置 AIWorks 系统区三件套（操作日志/索引/关系结构），新库首读不报「页面不存在」
+  ensureSystemFiles();
   cleanupSystemPages();
   queueMissingDerivedPages();
   // 清理 30 天前的终态 jobs 行，避免表无限膨胀拖慢 job runner tick 的全表扫描。

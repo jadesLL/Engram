@@ -1,6 +1,6 @@
 import { db, getSetting, newId, now, setSetting } from './lib/db.js';
 import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
-import { regenerateIndex, regenerateRelationships, appendWikiLog } from './pipeline/indexFile.js';
+import { appendWikiLog } from './pipeline/indexFile.js';
 import { enqueue, enqueuePagePipeline } from './jobQueue.js';
 import { extractFile } from './pipeline/fileExtraction.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
@@ -33,10 +33,6 @@ const handlers: Record<string, JobHandler> = {
   /** 页面处理：FTS 兜底 + 图谱边重建 */
   process: async ({ pageId }, _update, context) => {
     await indexPage(pageId, context.signal);
-  },
-  metagen: async () => {
-    regenerateIndex();
-    regenerateRelationships();
   },
   rebuild: async (_payload, update, context) => {
     let progress = 10;

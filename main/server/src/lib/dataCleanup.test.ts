@@ -184,8 +184,8 @@ test('one-click wipe removes reports, ingest history, queued jobs and nested sou
     db.prepare(`SELECT count(*) n FROM settings WHERE key = 'dream_last_run'`).get().n,
     0
   );
-  assert.doesNotMatch(readPage('Wiki/关系/relationships.md').content, /\[\[负责人\]\]::主责::\[\[项目\]\]/);
-  assert.match(readPage('Wiki/log.md').content, /1 条整理报告/);
+  assert.doesNotMatch(readPage('AIWorks/scheme/relationships.md').content, /\[\[负责人\]\]::主责::\[\[项目\]\]/);
+  assert.match(readPage('AIWorks/log/log.md').content, /1 条整理报告/);
 });
 
 test('AI log wipe removes typed relations while preserving knowledge pages and ordinary links', async () => {
@@ -207,7 +207,7 @@ test('AI log wipe removes typed relations while preserving knowledge pages and o
 
   assert.equal(db.prepare(`SELECT count(*) n FROM edges WHERE rel = '主责'`).get().n, 1);
   assert.ok(db.prepare(`SELECT count(*) n FROM edges WHERE rel = 'link' AND src_page = ?`).get(source.id).n > 0);
-  assert.match(readPage('Wiki/关系/relationships.md').content, /\[\[负责人\]\]::主责::\[\[项目\]\]/);
+  assert.match(readPage('AIWorks/scheme/relationships.md').content, /\[\[负责人\]\]::主责::\[\[项目\]\]/);
   db.prepare(
     `INSERT INTO llm_usage(provider,model,operation,tag,prompt_tokens,created_at)
      VALUES('test','test','chat','cleanup-test',10,'2026-01-01')`
@@ -219,10 +219,10 @@ test('AI log wipe removes typed relations while preserving knowledge pages and o
   assert.equal(result.relationCount, 1);
   assert.equal(db.prepare(`SELECT count(*) n FROM edges WHERE rel = '主责'`).get().n, 0);
   assert.ok(db.prepare(`SELECT count(*) n FROM edges WHERE rel = 'link' AND src_page = ?`).get(source.id).n > 0);
-  assert.equal(db.prepare(`SELECT count(*) n FROM pages WHERE path LIKE 'AIWorks/log/%'`).get().n, 0);
+  assert.equal(db.prepare(`SELECT count(*) n FROM pages WHERE path LIKE 'AIWorks/log/%' AND path != 'AIWorks/log/log.md'`).get().n, 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM llm_usage`).get().n, 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM chunks WHERE ref_id = ?`).get(aiLog.id).n, 0);
   assert.equal(db.prepare(`SELECT count(*) n FROM pages WHERE id IN (?, ?)`).get(source.id, target.id).n, 2);
-  assert.doesNotMatch(readPage('Wiki/关系/relationships.md').content, /\[\[负责人\]\]::主责::\[\[项目\]\]/);
-  assert.match(readPage('Wiki/log.md').content, /重置操作日志与关系库/);
+  assert.doesNotMatch(readPage('AIWorks/scheme/relationships.md').content, /\[\[负责人\]\]::主责::\[\[项目\]\]/);
+  assert.match(readPage('AIWorks/log/log.md').content, /重置操作日志与关系库/);
 });

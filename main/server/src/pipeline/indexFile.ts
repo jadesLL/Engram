@@ -5,14 +5,21 @@ import { readPage, writePage, safeJoin } from '../lib/vault.js';
 import { RELATION_WORDS } from './extractor.js';
 
 /**
- * Wiki 自维护文件生成（SKILL 规范）：
- * - Wiki/index.md：按类型分组的 [[双链]] 目录
- * - Wiki/log.md：操作流水
- * - Wiki/关系/relationships.md：六词表关系落库
- * 这些文件参与索引但不参与分区展示（系统页）。
+ * AIWorks 系统区自维护文件（服务端生成，Agent 只读；检索权重 0，不挤占知识证据）：
+ * - AIWorks/log/log.md：操作流水
+ * - AIWorks/index/index.md：全库索引
+ * - AIWorks/scheme/relationships.md：六词表关系结构
+ * 每次操作日志追加后同步重建索引与关系结构，系统区始终与知识库一致。
  */
 
-/** 重新生成 Wiki/index.md（全量重写，幂等） */
+export const LOG_PAGE = 'AIWorks/log/log.md';
+const INDEX_PAGE = 'AIWorks/index/index.md';
+const RELATIONSHIPS_PAGE = 'AIWorks/scheme/relationships.md';
+
+/** 历史版本的系统文件位置：启动迁移并入新位置后删除 */
+const LEGACY_SYSTEM_PAGES = ['Wiki/index.md', 'Wiki/log.md', 'Wiki/关系/relationships.md'];
+
+/** 重新生成 AIWorks/index/index.md（全量重写，幂等） */
 export function regenerateIndex() {
   const pages = db
     .prepare(
@@ -20,7 +27,6 @@ export function regenerateIndex() {
        WHERE deleted = 0 AND path LIKE 'Wiki/%'
          AND path NOT LIKE 'Wiki/归档/%' AND path NOT LIKE 'Wiki/查询/%'
          AND path NOT LIKE 'Wiki/关系/%'
-         AND path != 'Wiki/index.md' AND path != 'Wiki/log.md'
        ORDER BY updated_at DESC`
     )
     .all() as any[];
@@ -40,17 +46,16 @@ export function regenerateIndex() {
     lines.push('');
   }
   const total = pages.length;
-  writePage('Wiki/index.md', lines.join('\n'), {
+  writePage(INDEX_PAGE, lines.join('\n'), {
     title: 'Engram 索引',
     type: 'doc',
     summary: total ? `共 ${total} 个条目（实体 ${groups['实体'].length} / 概念 ${groups['概念'].length} / 其他 ${groups['其他'].length}）` : '暂无条目',
   });
 }
 
-/** 写操作日志到 Wiki/log.md（带年月日时分秒；时间倒序：新的在上） */
+/** 写操作日志到 AIWorks/log/log.md（带年月日时分秒；时间倒序：新的在上） */
 export function appendWikiLog(action: string, detail: string) {
-  const rel = 'Wiki/log.md';
-  const rd = readPage(rel);
+  const rd = readPage(LOG_PAGE);
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
@@ -59,10 +64,13 @@ export function appendWikiLog(action: string, detail: string) {
   const HEADER = '# 操作日志';
   const body = rd ? String(rd.content).replace(/^#\s*操作日志\s*/, '').replace(/^[\s\r\n]+/, '') : '';
   const content = body ? `${HEADER}\n\n${line}\n${body}` : `${HEADER}\n\n${line}`;
-  writePage(rel, content + '\n', { title: '操作日志', type: 'doc' });
+  writePage(LOG_PAGE, content + '\n', { title: '操作日志', type: 'doc' });
+  // 每次写操作都伴随日志追加，顺带重建索引与关系结构（全量重写，量级毫秒）
+  try { regenerateIndex(); } catch { /* 索引重建失败不阻塞日志 */ }
+  try { regenerateRelationships(); } catch { /* 关系结构重建失败不阻塞日志 */ }
 }
 
-/** 重建六词表关系库 Wiki/关系/relationships.md */
+/** 重建六词表关系库 AIWorks/scheme/relationships.md */
 export function regenerateRelationships() {
   const ph = RELATION_WORDS.map(() => '?').join(',');
   const rows = db
@@ -92,40 +100,54 @@ export function regenerateRelationships() {
     lines.push(...items);
     lines.push('');
   }
-  writePage('Wiki/关系/relationships.md', lines.join('\n'), {
+  writePage(RELATIONSHIPS_PAGE, lines.join('\n'), {
     title: '关系库',
     type: 'doc',
     summary: rows.length ? `共 ${rows.length} 条六词表关系` : '暂无关系',
   });
 }
 
+/** 预置系统区三件套（新库首读不报「页面不存在」）并立即生成索引与关系结构 */
+export function ensureSystemFiles() {
+  if (!readPage(LOG_PAGE)) writePage(LOG_PAGE, '# 操作日志\n', { title: '操作日志', type: 'doc' });
+  regenerateIndex();
+  regenerateRelationships();
+}
+
 /**
- * 一次性迁移：把 AIWorks/log/ 下的历史独立日志（Dream Cycle 运行文件 / upgrades.md /
- * merges.md / deleted.md / apply-errors.md）原始并入操作日志 Wiki/log.md（时间倒序，新的在上），
- * 并删除源文件与 DB 索引。迁移后 AIWorks/log 永久为空，Dream Cycle 也不再写它。
- * 幂等：无文件可迁移时直接返回。启动时调用一次。
+ * 一次性迁移：历史版本把系统文件放在 Wiki 根与 Wiki/关系/ 下、Dream Cycle 运行日志
+ * 放在 AIWorks/log/ 独立文件里。统一并入 AIWorks 系统区新位置：
+ * - Wiki/log.md 与 AIWorks/log/*.md 的日志条目原始并入 AIWorks/log/log.md（时间倒序，新的在上，逐行去重）
+ * - Wiki/index.md、Wiki/关系/relationships.md 直接删除（ensureSystemFiles 在新位置重新生成）
+ * 幂等：无历史文件时直接返回。启动时调用一次。
  */
-export function migrateAiLogsToOperationLog() {
-  const dir = safeJoin('AIWorks/log');
-  if (!fs.existsSync(dir)) return;
-  const entries = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
-  if (!entries.length) return;
+export function migrateLegacySystemFiles() {
+  const logDir = safeJoin('AIWorks/log');
+  const legacyDirEntries = fs.existsSync(logDir)
+    ? fs.readdirSync(logDir).filter((f) => f.endsWith('.md'))
+    : [];
+  const hasLegacyLog = fs.existsSync(safeJoin('Wiki/log.md'));
+  const hasLegacyGenerated =
+    fs.existsSync(safeJoin('Wiki/index.md')) || fs.existsSync(safeJoin('Wiki/关系/relationships.md'));
+  if (!legacyDirEntries.length && !hasLegacyLog && !hasLegacyGenerated) return;
 
   const tsRe = /^- (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (.+)$/;
   const collected: { ts: string; line: string }[] = [];
 
-  // 1. 现有操作日志条目（fs 直读 + gray-matter 剥 frontmatter，不走 readPage，避免 DB 未索引时读空）
-  const logAbs = safeJoin('Wiki/log.md');
-  if (fs.existsSync(logAbs)) {
-    const body = String(matter(fs.readFileSync(logAbs, 'utf8')).content);
+  // 1. 现有操作日志条目（新位置 + 旧 Wiki/log.md）：fs 直读 + gray-matter 剥 frontmatter，
+  //    不走 readPage，避免 DB 未索引时读空
+  for (const rel of [LOG_PAGE, 'Wiki/log.md']) {
+    const abs = safeJoin(rel);
+    if (!fs.existsSync(abs)) continue;
+    const body = String(matter(fs.readFileSync(abs, 'utf8')).content);
     for (const line of body.split(/\r?\n/)) {
       const m = line.match(tsRe);
       if (m) collected.push({ ts: m[1], line });
     }
   }
 
-  // 2. 扫描 AIWorks/log/*.md，按类型原始转条目（不蒸馏）
-  for (const entry of entries) {
+  // 2. 扫描 AIWorks/log/*.md 历史独立日志，按类型原始转条目（不蒸馏）
+  for (const entry of legacyDirEntries) {
     const abs = safeJoin(`AIWorks/log/${entry}`);
     let body = '';
     try {
@@ -154,40 +176,47 @@ export function migrateAiLogsToOperationLog() {
     }
   }
 
-  // 3. 倒序去重，重建 Wiki/log.md
-  collected.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
-  const seen = new Set<string>();
-  const lines = ['# 操作日志', ''];
-  for (const c of collected) {
-    if (seen.has(c.line)) continue;
-    seen.add(c.line);
-    lines.push(c.line);
+  // 3. 有日志条目才重建日志页；倒序去重，新的在上
+  if (collected.length) {
+    collected.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+    const seen = new Set<string>();
+    const lines = ['# 操作日志', ''];
+    for (const c of collected) {
+      if (seen.has(c.line)) continue;
+      seen.add(c.line);
+      lines.push(c.line);
+    }
+    lines.push('');
+    writePage(LOG_PAGE, lines.join('\n'), { title: '操作日志', type: 'doc' });
   }
-  lines.push('');
-  writePage('Wiki/log.md', lines.join('\n'), { title: '操作日志', type: 'doc' });
 
-  // 4. 删除已迁移源文件 + 清理其 DB 索引
-  for (const entry of entries) {
+  // 4. 删除历史文件，并清理其 DB 行与派生索引（索引/关系结构由 ensureSystemFiles 在新位置重新生成）
+  const staleIds = LEGACY_SYSTEM_PAGES
+    .map((rel) => (db.prepare(`SELECT id FROM pages WHERE path = ?`).get(rel) as { id: string } | undefined)?.id)
+    .filter((id): id is string => Boolean(id));
+  for (const entry of legacyDirEntries) {
+    const row = db.prepare(`SELECT id FROM pages WHERE path = ?`).get(`AIWorks/log/${entry}`) as { id: string } | undefined;
+    if (row) staleIds.push(row.id);
+  }
+  if (staleIds.length) {
+    const ph = staleIds.map(() => '?').join(',');
+    db.prepare(`DELETE FROM pages WHERE id IN (${ph})`).run(...staleIds);
+    db.prepare(`DELETE FROM pages_fts WHERE page_id IN (${ph})`).run(...staleIds);
+    db.prepare(`DELETE FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})`).run(...staleIds);
+    db.prepare(`DELETE FROM edges WHERE src_page IN (${ph}) OR dst_page IN (${ph})`).run(...staleIds, ...staleIds);
+  }
+  for (const rel of LEGACY_SYSTEM_PAGES) {
+    try { fs.unlinkSync(safeJoin(rel)); } catch { /* 单文件失败不阻塞 */ }
+  }
+  for (const entry of legacyDirEntries) {
     try { fs.unlinkSync(safeJoin(`AIWorks/log/${entry}`)); } catch { /* 单文件失败不阻塞 */ }
   }
-  const logIds = db.prepare(`SELECT id FROM pages WHERE path LIKE 'AIWorks/log/%'`).all() as { id: string }[];
-  if (logIds.length) {
-    const ids = logIds.map((r) => r.id);
-    const ph = ids.map(() => '?').join(',');
-    db.prepare(`DELETE FROM pages WHERE id IN (${ph})`).run(...ids);
-    db.prepare(`DELETE FROM pages_fts WHERE page_id IN (${ph})`).run(...ids);
-    db.prepare(`DELETE FROM chunks WHERE ref_type = 'page' AND ref_id IN (${ph})`).run(...ids);
-    const ph2 = ids.map(() => '?').join(',');
-    db.prepare(`DELETE FROM edges WHERE src_page IN (${ph}) OR dst_page IN (${ph2})`).run(...ids, ...ids);
-  }
-  try { regenerateIndex(); } catch { /* 索引重生成失败不阻塞 */ }
 }
 
 /** 解析 Dream Cycle 运行文件正文里的 8 项计数（死链/疑似重复/矛盾/…/实体升级） */
 function parseDreamCounts(body: string): Record<string, number> {
   const counts: Record<string, number> = {};
   const re = /^- (.+?)[:：](\d+)\s*$/gm;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(body))) counts[m[1]] = Number(m[2]);
+  for (const m of body.matchAll(re)) counts[m[1]] = Number(m[2]);
   return counts;
 }
