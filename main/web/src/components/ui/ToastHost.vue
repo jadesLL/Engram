@@ -46,12 +46,12 @@ function iconFor(kind: ToastKind): string {
   align-items: start;
   gap: 10px;
   padding: 12px 12px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--bg) 94%, transparent);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.2);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: saturate(150%) blur(20px);
+  -webkit-backdrop-filter: saturate(150%) blur(20px);
 }
 .app-toast.success { border-left: 3px solid var(--success); }
 .app-toast.error { border-left: 3px solid var(--danger); }

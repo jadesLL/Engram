@@ -84,15 +84,18 @@ watch(
   width: 100%;
   margin-top: 10px;
   padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
+  border: 1px solid var(--control-border);
+  border-bottom-color: var(--control-border-strong);
+  border-radius: 4px;
+  background: var(--control-bg);
   color: var(--text);
   font-size: 13px;
   outline: none;
 }
 
 .confirm-input:focus {
-  border-color: var(--accent, #3b82f6);
+  background: var(--control-bg-hover);
+  border-bottom-color: var(--accent);
+  box-shadow: inset 0 -1px 0 var(--accent);
 }
 </style>

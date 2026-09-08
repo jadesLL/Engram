@@ -298,10 +298,6 @@ onMounted(async () => {
 }
 .snippet-controls select {
   padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-secondary);
-  color: var(--text);
 }
 .guide-pre {
   max-height: 320px;

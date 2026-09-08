@@ -44,29 +44,41 @@
   top: 22px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   padding: 4px;
 }
 .settings-nav button {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
+  min-height: 36px;
   padding: 8px 11px;
-  border-radius: 8px;
+  border-radius: 4px;
   color: var(--text-secondary);
   font-size: 13px;
   text-align: left;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .settings-nav button:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 .settings-nav button.active {
-  background: var(--bg-tertiary);
+  background: var(--bg-hover);
   color: var(--text);
   font-weight: 600;
+}
+/* Win11 NavigationView 选中指示条 */
+.settings-nav button.active::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 .settings-nav button:focus-visible {
   outline: 2px solid var(--accent);
@@ -81,13 +93,13 @@
   min-width: 0;
 }
 
-/* ---------- 原生设置面板共享框架 ---------- */
+/* ---------- 原生设置面板共享框架（Win11 设置卡片） ---------- */
 .settings-panel {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg);
+  background: var(--card-bg);
 }
 
 .settings-native .panel-head {
@@ -118,11 +130,8 @@
 }
 
 .settings-native .btn {
-  min-height: 34px;
+  min-height: 32px;
   justify-content: center;
-}
-.settings-native .btn:active {
-  transform: translateY(1px);
 }
 
 .settings-native .settings-group {
@@ -240,7 +249,7 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 .settings-native .icon-btn:hover { background: var(--bg-hover); }
 .settings-native .icon-btn:focus-visible {
@@ -253,7 +262,7 @@
 .settings-native .segmented-control {
   display: inline-flex;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: 4px;
   overflow: hidden;
 }
 .settings-native .segmented-btn {
@@ -266,24 +275,29 @@
   line-height: 1;
   padding: 7px 16px;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .settings-native .segmented-btn + .segmented-btn {
   border-left: 1px solid var(--border-strong);
 }
 .settings-native .segmented-btn:hover {
   color: var(--text);
+  background: var(--bg-hover);
 }
 .settings-native .segmented-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
+}
+.settings-native .segmented-btn.active:hover {
+  background: var(--accent-hover);
+  color: var(--on-accent);
 }
 .settings-native .segmented-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
-/* 开关控件（自动化面板） */
+/* Win11 ToggleSwitch：40×20 细轨 + 小圆钮，开启为强调色 */
 .settings-native .switch-control {
   display: inline-flex;
   align-items: center;
@@ -297,29 +311,40 @@
 }
 .settings-native .switch-control > span {
   position: relative;
-  width: 38px;
-  height: 22px;
-  border-radius: 11px;
-  background: var(--border-strong);
-  transition: background 0.15s ease;
+  width: 40px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  transition: background 0.12s ease, box-shadow 0.12s ease;
 }
 .settings-native .switch-control > span::after {
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
+  top: 4px;
+  left: 4px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  background: var(--text-secondary);
   content: "";
-  transition: transform 0.15s ease;
+  transition: transform 0.15s ease, background 0.12s ease;
+}
+.settings-native .switch-control:hover > span::after {
+  transform: scale(1.17);
 }
 .settings-native .switch-control input:checked + span {
   background: var(--accent);
+  box-shadow: none;
 }
 .settings-native .switch-control input:checked + span::after {
-  transform: translateX(16px);
+  background: var(--on-accent);
+  transform: translateX(20px);
+}
+.settings-native .switch-control input:checked:hover + span {
+  background: var(--accent-hover);
+}
+.settings-native .switch-control input:checked:hover + span::after {
+  transform: translateX(20px) scale(1.17);
 }
 .settings-native .switch-control input:focus-visible + span {
   outline: 2px solid var(--accent);

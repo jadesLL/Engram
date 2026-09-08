@@ -943,7 +943,7 @@ onUnmounted(() => {
   height: 26px;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--text-secondary);
 }
 
@@ -974,17 +974,22 @@ onUnmounted(() => {
   height: 30px;
   display: flex;
   align-items: center;
-  border: 1px solid transparent;
-  border-radius: 7px;
+  border: 1px solid var(--sidebar-control-border);
+  border-bottom-color: color-mix(in srgb, var(--sidebar-control-border) 60%, var(--text-faint));
+  border-radius: var(--radius-control);
   background: var(--sidebar-control);
-  box-shadow: inset 0 0 0 1px var(--sidebar-control-border);
-  transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
 
-.search-field:focus-within {
-  border-color: var(--sidebar-accent);
+.search-field:hover {
   background: var(--sidebar-control-focus);
-  box-shadow: 0 0 0 3px var(--sidebar-focus-ring);
+}
+
+/* Win11 文本框聚焦：无 halo，底缘 2px 强调线 */
+.search-field:focus-within {
+  background: var(--sidebar-control-focus);
+  border-bottom-color: var(--sidebar-accent);
+  box-shadow: inset 0 -1px 0 var(--sidebar-accent);
 }
 
 .search-icon {
@@ -1022,7 +1027,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--text-faint);
 }
 
@@ -1051,7 +1056,7 @@ onUnmounted(() => {
   margin-left: auto;
   padding: 0 5px;
   border: 1px solid var(--sidebar-control-border);
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--text-faint);
   background: var(--sidebar-control);
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
@@ -1064,7 +1069,7 @@ onUnmounted(() => {
 
 .sort-control:focus-within {
   color: var(--text);
-  box-shadow: 0 0 0 3px var(--sidebar-focus-ring);
+  box-shadow: 0 0 0 2px var(--sidebar-focus-ring);
 }
 
 .sort-control select {
@@ -1089,7 +1094,7 @@ onUnmounted(() => {
   margin-left: 0;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   background: transparent;
   opacity: 0;
   pointer-events: none;
@@ -1145,7 +1150,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 3px;
   padding: 0 8px;
-  border-radius: 8px;
+  border-radius: 4px;
   user-select: none;
   transition: background 150ms ease;
 }
@@ -1173,7 +1178,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   padding: 0 0 0 3px;
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--text-secondary);
   text-align: left;
 }
@@ -1247,7 +1252,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--text-faint);
   opacity: 0;
   transition: color 150ms ease, background 150ms ease, opacity 150ms ease;
@@ -1285,7 +1290,7 @@ onUnmounted(() => {
   gap: 4px;
   padding: 4px 8px 2px 4px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-faint);
   font-size: 11px;
@@ -1355,7 +1360,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   padding: 0 6px;
-  border-radius: 7px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 12.5px;
   outline: none;
@@ -1375,6 +1380,18 @@ onUnmounted(() => {
   background: var(--sidebar-selection);
   box-shadow: inset 0 0 0 1px var(--sidebar-selection-border);
   font-weight: 500;
+}
+
+/* Win11 NavigationView 选中指示条：行左缘 3px 圆角强调色 pill */
+.page-row.active::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--sidebar-accent);
 }
 
 .page-row.selected {
@@ -1428,7 +1445,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--text-faint);
   text-decoration: none;
 }
@@ -1477,7 +1494,7 @@ onUnmounted(() => {
   min-width: 42px;
   height: 26px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: 4px;
   color: var(--text-secondary);
   background: var(--sidebar-control);
   font-size: 11px;

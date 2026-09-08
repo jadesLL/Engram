@@ -56,9 +56,9 @@ onUnmounted(() => {
   gap: 8px;
   padding: 28px 44px;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--bg);
-  box-shadow: 0 12px 40px rgb(0 0 0 / 25%);
+  border-radius: 8px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-dialog);
   text-align: center;
 }
 

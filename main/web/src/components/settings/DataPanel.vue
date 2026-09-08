@@ -420,16 +420,7 @@ async function wipeAiLogs() {
 }
 .port-input {
   width: 96px;
-  padding: 7px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
   font-size: 13px;
-}
-.port-input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .backup-message {
   padding: 10px 16px;

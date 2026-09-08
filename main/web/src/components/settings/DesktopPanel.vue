@@ -232,7 +232,7 @@ onMounted(load);
 }
 .token-status {
   padding: 1px 7px;
-  border-radius: 10px;
+  border-radius: 4px;
   font-size: 10px;
   background: var(--bg-secondary);
   color: var(--text-faint);

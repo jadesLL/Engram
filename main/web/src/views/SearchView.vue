@@ -111,12 +111,12 @@ onMounted(() => {
   gap: 16px;
 }
 .search-box { display: flex; gap: 10px; flex-wrap: wrap; }
-.search-input { flex: 1; min-width: 240px; padding: 12px 16px; font-size: 16px; border-radius: 10px; }
+.search-input { flex: 1; min-width: 240px; padding: 12px 16px; font-size: 16px; border-radius: 4px; }
 .mode-switch { display: flex; gap: 6px; }
 .search-loading { display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: var(--font-md); }
 .hits { display: flex; flex-direction: column; gap: 10px; }
-.hit { cursor: pointer; transition: border-color 0.15s; }
-.hit:hover { border-color: var(--accent); }
+.hit { cursor: pointer; transition: border-color 0.12s, box-shadow 0.12s; }
+.hit:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
 .hit-title { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tag-label { font-weight: 400; }
 .hit-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
