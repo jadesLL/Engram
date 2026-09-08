@@ -8,7 +8,7 @@ import { RELATION_WORDS } from './extractor.js';
  * AIWorks 系统区自维护文件（服务端生成，Agent 只读；检索权重 0，不挤占知识证据）：
  * - AIWorks/log/log.md：操作流水
  * - AIWorks/index/index.md：全库索引
- * - AIWorks/scheme/relationships.md：六词表关系结构
+ * - AIWorks/scheme/relationships.md：关系词表关系结构
  * 每次操作日志追加后同步重建索引与关系结构，系统区始终与知识库一致。
  */
 
@@ -70,7 +70,7 @@ export function appendWikiLog(action: string, detail: string) {
   try { regenerateRelationships(); } catch { /* 关系结构重建失败不阻塞日志 */ }
 }
 
-/** 重建六词表关系库 AIWorks/scheme/relationships.md */
+/** 重建关系库 AIWorks/scheme/relationships.md（按词表分组） */
 export function regenerateRelationships() {
   const ph = RELATION_WORDS.map(() => '?').join(',');
   const rows = db
@@ -92,7 +92,7 @@ export function regenerateRelationships() {
     byRel.get(r.rel)!.push(line);
   }
 
-  const lines = ['# 关系库', '', '> 六词表：主责 / 目标 / 管理 / 政委 / 带教 / 攻坚（每次写入后自动生成）', ''];
+  const lines = ['# 关系库', '', `> 词表：${RELATION_WORDS.join(' / ')}（每次写入后自动生成）`, ''];
   for (const w of RELATION_WORDS) {
     const items = byRel.get(w) || [];
     if (!items.length) continue;
@@ -103,7 +103,7 @@ export function regenerateRelationships() {
   writePage(RELATIONSHIPS_PAGE, lines.join('\n'), {
     title: '关系库',
     type: 'doc',
-    summary: rows.length ? `共 ${rows.length} 条六词表关系` : '暂无关系',
+    summary: rows.length ? `共 ${rows.length} 条词表关系` : '暂无关系',
   });
 }
 

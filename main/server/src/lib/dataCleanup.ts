@@ -213,7 +213,7 @@ export async function wipeKnowledgeData(options: WipeOptions = {}): Promise<Know
   return { fileCount, reportCount, jobCount, ingestRunCount };
 }
 
-/** 清空 AI 日志、操作日志和六词表关系库，不删除知识正文。 */
+/** 清空 AI 日志、操作日志和关系词表关系库，不删除知识正文。 */
 export async function wipeAiLogsAndRelations(): Promise<AiLogWipeResult> {
   const fileCount = clearDirectory('AIWorks/log');
   const logIds = db.prepare(`SELECT id FROM pages WHERE path LIKE 'AIWorks/log/%'`).all() as {
