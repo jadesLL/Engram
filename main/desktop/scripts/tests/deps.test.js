@@ -136,6 +136,19 @@ test('resolvePnpmEntry：无共享副本时返回 null，有副本时返回入�
   assert.equal(deps.resolvePnpmEntry(root), entry);
 });
 
+test('lockfileRegistry：按 lockfile 里 tarball URL 的唯一 host 推断 registry', () => {
+  const root = makeApp();
+  assert.equal(deps.lockfileRegistry(root), null); // 无 tarball URL
+  const lock = path.join(root, 'pnpm-lock.yaml');
+  fs.writeFileSync(
+    lock,
+    'packages:\n  a@1.0.0:\n    resolution: {tarball: https://registry.npmmirror.com/a/-/a-1.0.0.tgz}\n',
+  );
+  assert.equal(deps.lockfileRegistry(root), 'https://registry.npmmirror.com');
+  fs.appendFileSync(lock, '  b@1.0.0:\n    resolution: {tarball: https://registry.npmjs.org/b/-/b-1.0.0.tgz}\n');
+  assert.equal(deps.lockfileRegistry(root), null); // host 不唯一，交给环境配置
+});
+
 (async () => {
   let failed = 0;
   for (const c of cases) {

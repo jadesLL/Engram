@@ -55,10 +55,17 @@ function pnpmInvoker() {
   };
 }
 
+/**
+ * 从 lockfile 推断 registry（见 lib/deps.js）：本仓库 lockfile 记的是 npmmirror 的 tarball
+ * URL，而 pnpm 11 的供应链策略会拿它跟当前 registry（默认 npmjs）的元数据比对，不一致就直接
+ * 拒绝安装（ERR_PNPM_TARBALL_URL_MISMATCH，实测 PATH 上的 pnpm 11 在本仓库必现）。
+ */
 async function runPnpm(args, cwd) {
   const invoker = pnpmInvoker();
-  say(`运行 ${invoker.label} ${args.join(' ')}`);
-  const code = await run(invoker.cmd, invoker.args(args), { cwd, ...invoker.options });
+  const registry = deps.lockfileRegistry(appRoot);
+  const fullArgs = registry ? [...args, '--registry', registry] : args;
+  say(`运行 ${invoker.label} ${fullArgs.join(' ')}`);
+  const code = await run(invoker.cmd, invoker.args(fullArgs), { cwd, ...invoker.options });
   return code;
 }
 

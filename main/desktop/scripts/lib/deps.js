@@ -173,6 +173,21 @@ function resolvePnpmEntry(appRoot) {
   return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
+/**
+ * 从 lockfile 推断 registry：本仓库 lockfile 记的是 npmmirror 的 tarball URL，而 pnpm 11 的
+ * 供应链策略会拿它跟当前 registry（默认 npmjs）的元数据比对，不一致就直接拒绝安装
+ * （ERR_PNPM_TARBALL_URL_MISMATCH，实测 PATH 上的 pnpm 11 在本仓库必现）。这里按 lockfile
+ * 里 tarball URL 的唯一 host 推断 registry，让安装与 lockfile 保持一致；host 不唯一或没有
+ * lockfile 时返回 null，调用方沿用环境配置。
+ */
+function lockfileRegistry(appRoot) {
+  const text = readText(path.join(appRoot, 'pnpm-lock.yaml'));
+  if (!text) return null;
+  const hosts = new Set();
+  for (const m of text.matchAll(/https:\/\/([^/"'\s]+)\/[^"'\s]*?\/-\//g)) hosts.add(m[1]);
+  return hosts.size === 1 ? `https://${[...hosts][0]}` : null;
+}
+
 module.exports = {
   RAW_MANIFESTS,
   PACKAGE_MANIFESTS,
@@ -184,6 +199,7 @@ module.exports = {
   workspaceInstallState,
   serverInstallState,
   resolvePnpmEntry,
+  lockfileRegistry,
   readRecord,
   writeRecord,
   recordFile,
