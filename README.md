@@ -100,7 +100,8 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 1. 从 [Engram Releases](https://gitea.xxx.com:11111/example/Engram/releases) 下载源码版安装器 `Engram-source-setup.exe`（或取仓库内 `main/scripts/install-engram.ps1` 用 PowerShell 运行），双击后全自动：下载便携 Git/Node/pnpm（免管理员，装在 `%LOCALAPPDATA%\engram`）→ 克隆源码（公开仓库无需凭据）→ 构建桌面端 → 生成桌面快捷方式并启动
 2. 日常双击桌面「Engram」直接启动（Engram 品牌图标，无更新窗口）；更新走应用内 设置 → 软件更新 → 「检查更新」（增量拉源码重建重启），或手动运行 `main/scripts/update-from-source.ps1`——合 main 即更新，无需等发版
-3. 源码模式怎么确认「更新到了哪一版」：设置 → 账户与外观 → 「应用版本」显示 `版本号 · 提交号 · 提交日期`（工作区有未提交改动时提交号带 `-dirty`），软件更新页右上角同样带提交号，「检查更新」显示本地 → 远端提交号对比。**版本号只在正式发版时变，提交号随每次更新变**，以提交号判断是否已更新到最新代码（与 Docker 镜像、安装包的版本号语义一致）
+3. 更新是全自动的：**依赖清单真变化时应用内会自己装依赖**（`pnpm install`，含 desktop/server 运行时依赖与 better-sqlite3 的 Electron 原生模块），不需要再去终端跑脚本；判断依据是「依赖指纹」（lockfile/workspace 配置 + 各 package.json 的依赖字段），`appId` 之类的元信息改动不会误报。源码模式默认**自动检查更新**（启动后检查一次，之后每 8 小时复查），发现新提交时只弹系统通知 + 设置页提示，更新时机仍由你点「更新并重启」决定，不会自动重启
+4. 源码模式怎么确认「更新到了哪一版」：设置 → 账户与外观 → 「应用版本」显示 `版本号 · 提交号 · 提交日期`（工作区有未提交改动时提交号带 `-dirty`），软件更新页右上角同样带提交号，「检查更新」显示本地 → 远端提交号对比。**版本号只在正式发版时变，提交号随每次更新变**，以提交号判断是否已更新到最新代码（与 Docker 镜像、安装包的版本号语义一致）
 
 **Docker（服务器 / NAS）**：见下方「快速开始（Docker 部署）」；更新可在 设置 → 软件更新 一键拉镜像重建（需挂载 docker.sock）。镜像构建期会把提交号烤入 `/app/GIT_SHA`（release.yml 自动传，本地构建可 `ENGRAM_GIT_SHA=$(git rev-parse HEAD) docker compose up -d --build`），因此设置 → 应用版本 显示 `版本号 · 提交号`，一眼能看出当前跑的是哪次构建。
 

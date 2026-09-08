@@ -13,6 +13,8 @@ COPY desktop/package.json desktop/
 RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY server server
 COPY web web
+# desktop/scripts：依赖同步（sync-deps.js）与桌面端脚本的单测，随 verify 目标一起跑
+COPY desktop desktop
 # /app/VERSION：应用内自更新的版本比对依据（server /api/update 读取）
 # /app/GIT_SHA：构建期烤入的提交号，镜像内无 .git 时由 server codeIdentity() 读取
 RUN pnpm --filter @engram/web build && pnpm --filter @engram/server build \
