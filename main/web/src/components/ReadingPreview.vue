@@ -78,11 +78,17 @@
       <div class="reading-main">
         <article class="reading-article" @contextmenu="handleContextMenu">
           <header class="reading-document-head">
-            <p class="reading-kicker">{{ typeLabel }}</p>
             <h1>{{ title }}</h1>
             <div class="reading-meta">
-              <span v-if="updatedAt">更新于 {{ formatDate(updatedAt) }}</span>
-              <span v-for="tag in tags" :key="tag" class="reading-tag">{{ tag }}</span>
+              <span class="reading-type">{{ typeLabel }}</span>
+              <template v-if="updatedAt">
+                <span class="reading-meta-sep">·</span>
+                <span>更新于 {{ formatDate(updatedAt) }}</span>
+              </template>
+              <template v-if="tags.length">
+                <span class="reading-meta-sep">·</span>
+                <span v-for="tag in tags" :key="tag" class="reading-tag">{{ tag }}</span>
+              </template>
             </div>
           </header>
 
@@ -677,12 +683,6 @@ onBeforeUnmount(() => {
   padding-bottom: 22px;
   border-bottom: 1px solid var(--border);
 }
-.reading-kicker {
-  margin: 0 0 8px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 650;
-}
 .reading-document-head h1 {
   margin: 0 0 12px;
   font-size: clamp(28px, 4vw, 38px);
@@ -693,9 +693,17 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 14px;
+  gap: 4px 9px;
   color: var(--text-faint);
   font-size: 12px;
+}
+.reading-type {
+  color: var(--accent);
+  font-weight: 650;
+}
+.reading-meta-sep {
+  color: var(--text-faint);
+  opacity: 0.7;
 }
 .reading-tag {
   padding: 2px 8px;
