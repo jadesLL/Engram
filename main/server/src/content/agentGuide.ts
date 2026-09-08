@@ -29,16 +29,19 @@ Engram 不内置任何 AI——读、写、提炼、综合全部由你（外部 
 
 ## 二、接入工具
 
-CLI（engram，与 MCP 同一服务端，token 相同）——**能跑 shell 的 Agent 优先用 CLI**：命令直出结果、上下文消耗低，加 --json 可得机器可读输出。命令：engram status / import / files list|read / search / pages list|read|write|delete|evidence / chat save / guide / mcp-config。
+CLI（engram，与 MCP 同一服务端，token 相同）——**能跑 shell 的 Agent 优先用 CLI**：命令直出结果、上下文消耗低，加 --json 可得机器可读输出。命令：engram status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / chat save / guide / mcp-config。
 
 MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把图片作为图像内容直读（read_raw_file raw=true）时使用：
 - search —— 关键词检索知识库（页面 + 原始文件提取文本），返回片段与出处
-- list_pages —— 知识库目录树
+- list_pages —— 知识库目录树（可叠加过滤：outdated=true 列规则落后页面；path 路径前缀；tag 标签）
 - read_page —— 按标题或页面 ID 读页面全文
+- related_pages —— 读页面的图谱关联（相邻页面入链/出链与实体关系；写「相关页面」章节、验证 [[双链]] 目标、查反向引用用）
 - page_evidence —— 读页面的证据账本（来源、版本、事实引文）
 - list_raw_files —— 原始资料清单（含提取状态与已提炼标记；pending=true 只返回未提炼文件）
 - read_raw_file —— 读原始资料：有文本层返回提取文本；图片/PDF 返回 base64（供视觉模型自行阅读）
-- write_page —— 创建/覆盖页面（新建概念/实体页必须带 evidence 通过两来源门禁）
+- write_page —— 创建/覆盖页面（只能写 Wiki/ 下；新建概念/实体页必须带 evidence 通过两来源门禁）
+- rename_page —— 重命名页面：文件随标题移动、[[旧标题]] 双链自动重定向，页面 ID 与图谱边保持不变
+- move_page —— 移动页面到 Wiki 树内其他目录（页面 ID 与图谱边保持不变，可顺带改标题）
 - delete_page —— 把单个 Wiki/ 页面移入回收站（软删除、可恢复；原始资料与 AIWorks 只读不可删，且无永久删除/清空回收站能力）
 - save_chat —— 把外部对话沉积到 原始资料/对话/
 - kb_guide —— 输出本指南全文
@@ -47,7 +50,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 
 1. 动手前先 read_page 读 AIWorks/log/log.md 了解最近状态；写操作完成后服务端会自动追加日志（Agent 写入/Agent 更新页面/对话沉积等），你无需重复记录，只在你执行了合并、批量重整等复合动作时才用 write_page 手工补一条动作说明。
 2. 原始资料只读不改：原始文件与对话沉积一律保持原样，你的产出写到 Wiki/。
-3. 误建的页面用 delete_page（CLI：pages delete）删除，只入回收站、可恢复；原始资料与 AIWorks 不可删，也不存在永久删除/清空回收站的入口。删除是纠错手段而非整理手段：已有页面优先增量改写，不要反复删建。
+3. 误建的页面用 delete_page（CLI：pages delete）删除，只入回收站、可恢复；原始资料与 AIWorks 不可删，也不存在永久删除/清空回收站的入口。删除是纠错手段而非整理手段：已有页面优先增量改写，不要反复删建；确需改名/换目录时用 rename_page / move_page（CLI：pages rename|move），不要「新建+删除」——那会换掉页面 ID 并让引用双链悬空。
 4. 日志条目保持一行式原始记录，不蒸馏、不汇总成状态看板。
 
 ## 四、提炼作业流程（自动索引，逐份提炼）

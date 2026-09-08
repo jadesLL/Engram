@@ -395,6 +395,15 @@ export function createPage(dir: string, title: string): PageMeta {
   return writePage(rel, `# ${safeTitle}\n\n`, { title: safeTitle });
 }
 
+/**
+ * 目标路径是否已被文件或 pages 记录占用（含回收站软删除行——pages.path 唯一约束不含 deleted 条件，
+ * 软删除行同样占位）。rename / move 的撞名判定统一走这里，绕过它会撞 UNIQUE 约束 500。
+ */
+export function pagePathTaken(rel: string): boolean {
+  if (fs.existsSync(safeJoin(rel))) return true;
+  return !!db.prepare(`SELECT 1 FROM pages WHERE path = ?`).get(rel);
+}
+
 /** 重命名/移动（文件与 DB 同步） */
 export function movePage(oldRel: string, newRel: string, origin: WriteOrigin = 'local'): PageMeta | null {
   const oldAbs = safeJoin(oldRel);
