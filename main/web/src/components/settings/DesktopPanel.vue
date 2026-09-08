@@ -147,7 +147,8 @@ onMounted(load);
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  margin: 0 24px 12px;
+  /* 与 panel-head 分割线留出与 .endpoint-block 一致的首块间距（原先为 0，模式块紧贴分割线） */
+  margin: 22px 24px 12px;
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--accent, #3b82f6) 30%, var(--border));
   border-radius: 8px;
