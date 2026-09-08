@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import matter from 'gray-matter';
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-trash-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-trash-'));
 process.env.DATA_DIR = temp;
 
 let db: any;

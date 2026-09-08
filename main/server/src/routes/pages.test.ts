@@ -7,7 +7,7 @@ import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import bcrypt from 'bcryptjs';
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-pages-routes-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-pages-routes-'));
 process.env.DATA_DIR = temp;
 
 let app: ReturnType<typeof Fastify>;

@@ -7,7 +7,7 @@ import Fastify from 'fastify';
 
 import { healthRoutes } from './health.js';
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-health-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-health-'));
 process.env.DATA_DIR = temp;
 
 async function makeApp() {
@@ -32,16 +32,16 @@ test('/health keeps the historical plain-text response when DIRECT_ACCESS_URL is
 });
 
 test('/health announces direct when DIRECT_ACCESS_URL is set', async () => {
-  process.env.DIRECT_ACCESS_URL = 'http://direct.example.com:18080';
+  process.env.DIRECT_ACCESS_URL = 'http://direct.xxx.com:18080';
   const app = await makeApp();
   const res = await app.inject({ method: 'GET', url: '/health' });
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(JSON.parse(res.body), { ok: 'ok', direct: 'http://direct.example.com:18080' });
+  assert.deepEqual(JSON.parse(res.body), { ok: 'ok', direct: 'http://direct.xxx.com:18080' });
   await app.close();
 });
 
 test('/health returns CORS credential headers for local launcher origins', async () => {
-  process.env.DIRECT_ACCESS_URL = 'http://direct.example.com:18080';
+  process.env.DIRECT_ACCESS_URL = 'http://direct.xxx.com:18080';
   const app = await makeApp();
   for (const origin of ['https://localhost', 'http://localhost:8100', 'https://127.0.0.1']) {
     const res = await app.inject({ method: 'GET', url: '/health', headers: { origin } });
@@ -53,12 +53,12 @@ test('/health returns CORS credential headers for local launcher origins', async
 });
 
 test('/health does not leak CORS headers to arbitrary origins', async () => {
-  process.env.DIRECT_ACCESS_URL = 'http://direct.example.com:18080';
+  process.env.DIRECT_ACCESS_URL = 'http://direct.xxx.com:18080';
   const app = await makeApp();
   const res = await app.inject({
     method: 'GET',
     url: '/health',
-    headers: { origin: 'https://evil.example.com' },
+    headers: { origin: 'https://evil.xxx.com' },
   });
   assert.equal(res.statusCode, 200);
   assert.equal(res.headers['access-control-allow-origin'], undefined);

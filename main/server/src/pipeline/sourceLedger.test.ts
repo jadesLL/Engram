@@ -27,17 +27,17 @@ after(() => {
 });
 
 test('isDistilledPath：带证据写页后来源标记为已提炼，未引用来源不算', () => {
-  writePage('原始资料/已提炼.md', '# 原始资料/已提炼.md\n\n信捷科技2026年签约。信捷科技主营自动化设备。', { title: '已提炼' });
+  writePage('原始资料/已提炼.md', '# 原始资料/已提炼.md\n\n示例科技2026年签约。示例科技主营自动化设备。', { title: '已提炼' });
   writePage('原始资料/未提炼.md', '# 原始资料/未提炼.md\n\n暂无引用。', { title: '未提炼' });
   assert.equal(isDistilledPath('原始资料/已提炼.md'), false);
   agentWritePage({
-    path: 'Wiki/实体/信捷科技.md',
-    title: '信捷科技',
+    path: 'Wiki/实体/示例科技.md',
+    title: '示例科技',
     type: 'org',
-    content: '# 信捷科技\n\n## 当前理解\n\n自动化设备厂商。\n',
+    content: '# 示例科技\n\n## 当前理解\n\n自动化设备厂商。\n',
     evidence: [
-      { path: '原始资料/已提炼.md', quote: '信捷科技2026年签约' },
-      { path: '原始资料/已提炼.md', quote: '信捷科技主营自动化设备' },
+      { path: '原始资料/已提炼.md', quote: '示例科技2026年签约' },
+      { path: '原始资料/已提炼.md', quote: '示例科技主营自动化设备' },
     ],
   });
   assert.equal(isDistilledPath('原始资料/已提炼.md'), true);

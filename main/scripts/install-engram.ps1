@@ -1,4 +1,4 @@
-﻿# Engram 源码版部署引擎（GUI 安装器与命令行共用）
+# Engram 源码版部署引擎（GUI 安装器与命令行共用）
 # GUI 靠解析 ##STEPS/##STEP/##DONE/##FAIL/##ALLDONE 标记驱动界面；标记经
 # [Console]::Out.WriteLine 直刷——PowerShell 管道输出是块缓冲，Write-Output 会憋到进程退出。
 #
@@ -12,7 +12,7 @@
 # 数据与安装包版共用 %APPDATA%\@engram\desktop；删除 %LOCALAPPDATA%\engram 即完全卸载。
 param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'engram'),
-  [string]$RepoUrl = 'https://github.com/jadesLL/Engram.git',
+  [string]$RepoUrl = 'https://gitea.xxx.com:11111/example/Engram.git',
   [string]$GiteaUser = $(if ($env:ENGRAM_GITEA_USER) { $env:ENGRAM_GITEA_USER } else { '' }),
   [string]$GiteaPass = $(if ($env:ENGRAM_GITEA_PASS) { $env:ENGRAM_GITEA_PASS } else { '' })
 )

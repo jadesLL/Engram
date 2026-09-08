@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { describeError } from './describeError.js';
 
 test('describeError 展开嵌套 cause 链（fetch failed → DNS 失败）', () => {
-  const root = new Error('getaddrinfo ENOTFOUND gitea.example.com');
+  const root = new Error('getaddrinfo ENOTFOUND gitea.xxx.com');
   const outer = new Error('fetch failed');
   (outer as Error & { cause?: unknown }).cause = root;
-  assert.equal(describeError(outer), 'fetch failed ← getaddrinfo ENOTFOUND gitea.example.com');
+  assert.equal(describeError(outer), 'fetch failed ← getaddrinfo ENOTFOUND gitea.xxx.com');
 });
 
 test('describeError 展开 AggregateError 的多路尝试错误', () => {
@@ -24,8 +24,8 @@ test('describeError 展开 AggregateError 的多路尝试错误', () => {
 
 test('describeError 处理普通对象 cause（code/address/port）', () => {
   const outer = new Error('fetch failed');
-  (outer as Error & { cause?: unknown }).cause = { code: 'ENOTFOUND', address: 'gitea.example.com' };
-  assert.equal(describeError(outer), 'fetch failed ← ENOTFOUND gitea.example.com');
+  (outer as Error & { cause?: unknown }).cause = { code: 'ENOTFOUND', address: 'gitea.xxx.com' };
+  assert.equal(describeError(outer), 'fetch failed ← ENOTFOUND gitea.xxx.com');
 });
 
 test('describeError 去重重复消息并防 cause 环', () => {

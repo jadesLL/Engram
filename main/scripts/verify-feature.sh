@@ -31,12 +31,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     -*)
       usage
-      exampleproject_die "未知参数: $1"
+      engram_die "未知参数: $1"
       ;;
     *)
       [ -z "$FEATURE" ] || {
         usage
-        exampleproject_die "只能指定一个功能名"
+        engram_die "只能指定一个功能名"
       }
       FEATURE="$1"
       ;;
@@ -49,49 +49,49 @@ done
   exit 2
 }
 
-exampleproject_init_feature "$FEATURE"
-exampleproject_require_docker
-exampleproject_require_feature_worktree
-exampleproject_configure_build_network "$ALLOW_DOWNLOADS"
+engram_init_feature "$FEATURE"
+engram_require_docker
+engram_require_feature_worktree
+engram_configure_build_network "$ALLOW_DOWNLOADS"
 
 for dependency_dir in \
-  "$WIKILLM_WORKTREE/main/node_modules" \
-  "$WIKILLM_WORKTREE/main/server/node_modules" \
-  "$WIKILLM_WORKTREE/main/web/node_modules" \
-  "$WIKILLM_WORKTREE/main/desktop/node_modules"
+  "$ENGRAM_WORKTREE/main/node_modules" \
+  "$ENGRAM_WORKTREE/main/server/node_modules" \
+  "$ENGRAM_WORKTREE/main/web/node_modules" \
+  "$ENGRAM_WORKTREE/main/desktop/node_modules"
 do
   if [ -e "$dependency_dir" ]; then
-    exampleproject_log "   WARN: 发现宿主机依赖目录，Docker 会忽略它: $dependency_dir"
+    engram_log "   WARN: 发现宿主机依赖目录，Docker 会忽略它: $dependency_dir"
   fi
 done
 
-exampleproject_log ">> Docker 验证 $FEATURE（network=$WIKILLM_BUILD_NETWORK）"
+engram_log ">> Docker 验证 $FEATURE（network=$ENGRAM_BUILD_NETWORK）"
 if ! docker build \
   --pull=false \
-  --network "$WIKILLM_BUILD_NETWORK" \
+  --network "$ENGRAM_BUILD_NETWORK" \
   --target verify \
-  --label com.exampleproject.scope=feature \
-  --label "com.exampleproject.feature=$FEATURE" \
-  --tag "$WIKILLM_VERIFY_IMAGE" \
-  "$WIKILLM_WORKTREE/main"
+  --label com.engram.scope=feature \
+  --label "com.engram.feature=$FEATURE" \
+  --tag "$ENGRAM_VERIFY_IMAGE" \
+  "$ENGRAM_WORKTREE/main"
 then
-  exampleproject_explain_offline_build_failure
-  if [ "$WIKILLM_BUILD_NETWORK" = "none" ] &&
-    exampleproject_run_local_offline_verification "$WIKILLM_WORKTREE/main"
+  engram_explain_offline_build_failure
+  if [ "$ENGRAM_BUILD_NETWORK" = "none" ] &&
+    engram_run_local_offline_verification "$ENGRAM_WORKTREE/main"
   then
-    docker image rm "$WIKILLM_VERIFY_IMAGE" >/dev/null 2>&1 || true
-    exampleproject_log "DONE: $FEATURE 已通过本机临时目录离线 build、typecheck 和 test"
+    docker image rm "$ENGRAM_VERIFY_IMAGE" >/dev/null 2>&1 || true
+    engram_log "DONE: $FEATURE 已通过本机临时目录离线 build、typecheck 和 test"
     exit 0
   fi
-  exampleproject_die "Docker build/typecheck/test 未通过"
+  engram_die "Docker build/typecheck/test 未通过"
 fi
 
 image_feature="$(
-  docker image inspect "$WIKILLM_VERIFY_IMAGE" \
-    --format '{{index .Config.Labels "com.exampleproject.feature"}}'
+  docker image inspect "$ENGRAM_VERIFY_IMAGE" \
+    --format '{{index .Config.Labels "com.engram.feature"}}'
 )"
 [ "$image_feature" = "$FEATURE" ] || \
-  exampleproject_die "验证镜像缺少正确的功能归属标签"
+  engram_die "验证镜像缺少正确的功能归属标签"
 
-exampleproject_log "DONE: $FEATURE 已在 Docker 中通过 build、typecheck 和 test"
-exampleproject_log "DONE: verify_image=$WIKILLM_VERIFY_IMAGE"
+engram_log "DONE: $FEATURE 已在 Docker 中通过 build、typecheck 和 test"
+engram_log "DONE: verify_image=$ENGRAM_VERIFY_IMAGE"

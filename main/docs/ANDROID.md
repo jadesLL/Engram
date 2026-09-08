@@ -25,10 +25,10 @@ Engram 的安卓端是**纯远程客户端**：原生壳（Capacitor WebView）�
 
 ```
 main/mobile/
-├── capacitor.config.json     # appId com.example.exampleproject / allowNavigation / errorPath
+├── capacitor.config.json     # appId com.engram.app / allowNavigation / errorPath
 ├── www/index.html            # 内置启动页（服务器地址选择，无构建步骤）
 ├── android/                  # 原生工程（cap add android 生成后定制并提交）
-│   └── app/src/main/java/com/example/exampleproject/MainActivity.java
+│   └── app/src/main/java/com/engram/app/MainActivity.java
 ├── scripts/gen-icons.cjs     # 图标/启动屏生成（开发期一次性工具）
 ├── scripts/build-apk-ci.sh   # CI 容器内执行：cap sync + gradle assembleRelease
 └── Dockerfile.ci             # CI 构建镜像（Node 22 + JDK 21 + Android SDK 35）
@@ -64,9 +64,9 @@ cd android && JAVA_HOME=<jdk21> ./gradlew assembleDebug    # 调试包
 
 - release 签名从 `mobile/android/key.properties`（不入库）读取：
   `storeFile` / `storePassword` / `keyAlias` / `keyPassword`。
-- keystore 保存在本机用户目录（如 `~/.android/exampleproject-release.keystore`），
+- keystore 保存在本机用户目录（如 `~/.android/engram-release.keystore`），
   **不进仓库**；丢失后无法对已安装用户增量升级（需卸载重装），务必备份。
-- 生成：`keytool -genkeypair -keystore <路径> -alias exampleproject -keyalg RSA -keysize 2048 -validity 10950`。
+- 生成：`keytool -genkeypair -keystore <路径> -alias ENGRAM -keyalg RSA -keysize 2048 -validity 10950`。
 
 ## CI 发版（release.yml）
 
@@ -83,9 +83,9 @@ cd android && JAVA_HOME=<jdk21> ./gradlew assembleDebug    # 调试包
 
 | Secret | 说明 |
 |---|---|
-| `ANDROID_KEYSTORE_BASE64` | release keystore 文件的 base64（`base64 -w0 exampleproject-release.keystore`） |
+| `ANDROID_KEYSTORE_BASE64` | release keystore 文件的 base64（`base64 -w0 engram-release.keystore`） |
 | `ANDROID_KEYSTORE_PASSWORD` | keystore 密码 |
-| `ANDROID_KEY_ALIAS` | `exampleproject` |
+| `ANDROID_KEY_ALIAS` | `ENGRAM` |
 | `ANDROID_KEY_PASSWORD` | key 密码（与 keystore 密码相同即可） |
 
 未配置 secrets 时 CI 仍会构建，产出 `app-release-unsigned.apk`（无法直接安装升级）。

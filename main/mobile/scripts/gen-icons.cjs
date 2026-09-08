@@ -21,7 +21,7 @@ const path = require('path');
 function loadCanvas() {
   const candidates = [
     '@napi-rs/canvas',
-    'C:/Workspace/ExampleProject/main/node_modules/.pnpm/@napi-rs+canvas@1.0.5/node_modules/@napi-rs/canvas',
+    'C:/Workspace/Engram/main/node_modules/.pnpm/@napi-rs+canvas@1.0.5/node_modules/@napi-rs/canvas',
   ];
   for (const c of candidates) {
     try { return require(c); } catch (e) { /* try next */ }

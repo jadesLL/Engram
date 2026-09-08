@@ -174,7 +174,7 @@ Engram 不再内置任何 LLM。读、写、提炼、综合、问答、OCR 全�
 
 - **整页综合会话化**：每页一个 compose→verify→自纠错回路共享的追加式会话；verify 变续接轮，直接命中 compose 刚写入的前缀缓存，且页面与证据只在会话首轮发送——verify 单次输入从 ~12k tokens 降至 ~1.6k（约 -87%），自纠错第 2 轮起的请求走对话前缀缓存
 - **候选审核会话化**：人工审核的「局部再提炼→重新验证」合并为一个会话，重新验证不再重发原文证据
-- **verify 提示词改为续接轮指令**（标准/概念/信捷 ACS 三套变体），语义阶段结果缓存键随 promptVersion 升位，避免旧键误命中
+- **verify 提示词改为续接轮指令**（标准/概念/客户 ACS 三套变体），语义阶段结果缓存键随 promptVersion 升位，避免旧键误命中
 - 语义结果缓存与 embedding 缓存行为不变；实体消歧多轮复用机制不变
 
 **修复**：本机离线验证脚本误报通过——`verify-feature.sh`/`merge-feature.sh` 的本机回退验证在 if 条件中调用导致函数内 `set -e` 被压制，test 失败被后续 build 成功掩盖、整体误报 DONE；改为逐步显式检查退出状态，并对 native 缓存增加 Linux ELF 构件检测（跳过 Windows 宿主机无法加载的 better_sqlite3.node 残留）
@@ -218,7 +218,7 @@ Engram 不再内置任何 LLM。读、写、提炼、综合、问答、OCR 全�
 
 **跨子域共享登录态 + 浏览器一键切直连**：隧道域与直连域 Cookie 按域隔离（跳转即被登出）的问题根治：
 
-- **`COOKIE_DOMAIN` 配置**（部署侧 `.env`，如 `.example.com`）：会话 Cookie 升级为父域共享，登录一次后隧道域与直连域两个子域互认登录态；未配置时维持 host-only 历史行为
+- **`COOKIE_DOMAIN` 配置**（部署侧 `.env`，如 `.xxx.com`）：会话 Cookie 升级为父域共享，登录一次后隧道域与直连域两个子域互认登录态；未配置时维持 host-only 历史行为
 - **设置页「连接通道」新增「使用直连访问」一键切换按钮**：直连探测可用时展示，点击跳转直连域且登录态无缝跟随（免重登）；切换按钮替代原位置的「重测」（重测保留在直连不可达态）
 - `/go` 入口跳直连同步免登；退出登录时按同属性清除父域 Cookie
 - 文档：`main/docs/IPV6.md` 新增「跨子域共享登录态」章节（配置方法与父域子域安全提示）
@@ -246,9 +246,9 @@ Engram 不再内置任何 LLM。读、写、提炼、综合、问答、OCR 全�
 
 ## v1.1.33（2026-09-02）
 
-撤销 IPv6 直连优先方案，外网访问统一走 Cloudflare Tunnel（`engram.example.com`）：
+撤销 IPv6 直连优先方案，外网访问统一走 Cloudflare Tunnel（`engram.xxx.com`）：
 
-- **实测结论**：手机具备 IPv6 出站能力，但对 `v6.example.com:18080` 的公网入站 TCP 连接根本无法到达服务器——服务端本机双栈监听、Windows 防火墙（整体关闭）、DDNS、Docker `[::]:18080` 端口发布全部正常，持续监控期间无任何公网入站连接。家宽拨号 + 路由器环境下该通道不可达，客户端择优逻辑只会白等超时
+- **实测结论**：手机具备 IPv6 出站能力，但对 `v6.xxx.com:18080` 的公网入站 TCP 连接根本无法到达服务器——服务端本机双栈监听、Windows 防火墙（整体关闭）、DDNS、Docker `[::]:18080` 端口发布全部正常，持续监控期间无任何公网入站连接。家宽拨号 + 路由器环境下该通道不可达，客户端择优逻辑只会白等超时
 - **服务端**：`/health` 恢复纯文本 `ok`，移除 `DIRECT_ACCESS_URL` 环境变量通告（compose 同步删除该配置）
 - **四端直连探测与自动切换全部移除**：浏览器入口页 `/go` 直接进隧道；安卓 APP 启动页只探已保存地址（保留 lastGood 断线续连）；桌面远端模式直连所配置地址；设置页「连接通道 / IPv6 直连」状态区块整体删除
 - **文档**：README 与 Android 文档移除 IPv6 直连部署章节（DDNS、路由器/防火墙放行、`DIRECT_ACCESS_URL` 配置指引）
@@ -266,7 +266,7 @@ Engram 不再内置任何 LLM。读、写、提炼、综合、问答、OCR 全�
 
 修复（工程）：
 
-- **离线叠加层环境变量更名遗漏**（WIKILLM_WEB_DIST→ENGRAM_WEB_DIST）：v1.1.28 产品更名时 worktree 脚本生成的叠加层 Dockerfile 漏改，导致此后所有离线预览/部署叠加层的前端变更从未生效（服务端静默回落主镜像旧产物）。已修复并实测验证
+- **离线叠加层环境变量更名遗漏**（叠加层 Dockerfile 漏改 `ENGRAM_WEB_DIST`）：v1.1.28 命名统一时 worktree 脚本生成的叠加层 Dockerfile 漏改，导致此后所有离线预览/部署叠加层的前端变更从未生效（服务端静默回落主镜像旧产物）。已修复并实测验证
 
 ## v1.1.31（2026-08-31）
 
@@ -279,7 +279,7 @@ Engram 不再内置任何 LLM。读、写、提炼、综合、问答、OCR 全�
 
 IPv6 直连优先 + Cloudflare 隧道兜底（单地址智能接入）：
 
-- **一个地址直连优先**：所有客户端仍只配置 `engram.example.com` 一个地址——服务端 `/health` 经环境变量 `DIRECT_ACCESS_URL` 通告直连地址（如 `http://v6.example.com:18080`，由 DDNS 自动维护的家庭 IPv6），客户端自动「发现 → 探测 → 可达即无感切换直连」（低延迟、不绕 CDN），不可达自动走 Cloudflare 隧道（Access OTP 照旧）。不配置该环境变量时行为与旧版完全一致
+- **一个地址直连优先**：所有客户端仍只配置 `engram.xxx.com` 一个地址——服务端 `/health` 经环境变量 `DIRECT_ACCESS_URL` 通告直连地址（如 `http://v6.xxx.com:18080`，由 DDNS 自动维护的家庭 IPv6），客户端自动「发现 → 探测 → 可达即无感切换直连」（低延迟、不绕 CDN），不可达自动走 Cloudflare 隧道（Access OTP 照旧）。不配置该环境变量时行为与旧版完全一致
 - **四端接入**：浏览器入口页 `https://<域名>/go`（并发探测择优）；安卓 APP 启动自动择优 + 记住上次可用通道 + 断连自动重试切换；桌面端远端模式连接前探活直连；MCP 保持隧道地址（文档附直连可选说明）
 - **登录失败限速**：同 IP 连续 5 次密码错误锁定 10 分钟（进程内计数，成功登录清零）——IPv6 直连路径绕过 Cloudflare Access 后，应用密码是唯一防线，防爆破必备
 - **部署配套**：compose 提供 `DIRECT_ACCESS_URL` 配置示例；README 新增「IPv6 直连与多通道访问」章节（路由器/防火墙放行、DDNS 脚本位置、安全模型）
@@ -295,21 +295,21 @@ CI 转绿 + 综合失败冷却修复：
 
 ## v1.1.28（2026-08-30）
 
-产品更名 Engram：
+产品命名统一为 Engram：
 
-- **产品更名 ExampleProject → Engram**（engram＝记忆痕迹）：全端显示名统一为 Engram——Web 标题/登录页/欢迎页、桌面端窗口与安装包（`Engram Setup <版本>.exe`）、安卓 APP 名、服务端提示词、MCP 服务名（`claude mcp add --transport http engram ...`）；npm 包 `@example-wiki/*` → `@engram/*`；Gitea 仓库同步改名 `example/Engram`（旧地址自动重定向），Docker 镜像路径更改为三层 `example/engram/engram:<版本>`
+- **产品命名统一为 Engram**（engram＝记忆痕迹）：全端显示名统一——Web 标题/登录页/欢迎页、桌面端窗口与安装包（`Engram Setup <版本>.exe`）、安卓 APP 名、服务端提示词、MCP 服务名（`claude mcp add --transport http engram ...`）；npm 包统一 `@engram/*`；Gitea 仓库地址 `example/Engram`，Docker 镜像路径为三层 `example/engram/engram:<版本>`
 - **全新品牌图标「E 痕迹标志」**：字母 E 由三条圆角痕迹构成、末端各带一枚发光触点（呼应知识图谱节点）；安卓 launcher（方形/圆形/自适应前景）、启动屏、桌面端 icon.png、浏览器 favicon、应用内字母 logo（登录页/侧栏/欢迎页/桌面启动页）全部换新
-- **桌面端更名数据迁移**：Electron userData 目录随 productName 变化，新版首次启动自动把旧 `%APPDATA%\LLM Wiki` 目录一次性迁移，本地模式数据与连接配置无损延续；内嵌 server 环境变量 `WIKILLM_WEB_DIST/APP_VERSION/PROBE_*` 更名 `ENGRAM_*`
-- **兼容性保留**：自更新流程内部契约（`WIKILLM_UPDATE_*`、`com.exampleproject.*` 标签）、部署侧容器/数据卷名（`example-wiki`）、安卓包名 `com.example.exampleproject`（覆盖升级不重装不丢登录）保持不变
+- **桌面端数据目录迁移**：Electron userData 目录随 productName 变化，新版首次启动自动把旧目录一次性迁移到 `%APPDATA%\Engram`，本地模式数据与连接配置无损延续；内嵌 server 环境变量统一为 `ENGRAM_WEB_DIST/APP_VERSION/PROBE_*`
+- **兼容性**：自更新流程内部契约（`ENGRAM_UPDATE_*`、`com.engram.*` 标签）、部署侧容器/数据卷名（`engram`）、安卓包名 `com.engram.app` 均支持覆盖升级、不重装、不丢登录
 - **发版后注意**：已部署实例请在「设置 → 软件更新」把远端仓库地址改为 `example/Engram`；NAS 拉取部署请拉取新代码获取 pull compose 的新镜像路径
 
 ## v1.1.27（2026-08-30）
 
 安卓 APP 版本：
 
-- **Android APP（远程客户端）**：新增 `main/mobile/` Capacitor 原生壳，直连已部署的 ExampleProject 服务器（NAS Docker 或任意自建实例），复用移动端深度适配的 Web 界面；服务端零改动。首启填服务器地址后自动直连，httpOnly Cookie 长期保持登录；服务器不可达时自动弹回连接页并提示，恢复后一键重连不丢登录态；长按桌面图标快捷方式「切换服务器」；返回键在网页内后退、顶层退到后台保留状态；附件/原始资料「下载」走系统下载管理器——自动携带登录 Cookie、正确还原 UTF-8 中文文件名（修复 URLUtil 把文件名存成 raw.bin 的问题）、完成后系统通知；页面/编辑/AI 助手/知识图谱等全部功能在 WebView 内可用，键盘弹出不遮挡输入区
+- **Android APP（远程客户端）**：新增 `main/mobile/` Capacitor 原生壳，直连已部署的 Engram 服务器（NAS Docker 或任意自建实例），复用移动端深度适配的 Web 界面；服务端零改动。首启填服务器地址后自动直连，httpOnly Cookie 长期保持登录；服务器不可达时自动弹回连接页并提示，恢复后一键重连不丢登录态；长按桌面图标快捷方式「切换服务器」；返回键在网页内后退、顶层退到后台保留状态；附件/原始资料「下载」走系统下载管理器——自动携带登录 Cookie、正确还原 UTF-8 中文文件名（修复 URLUtil 把文件名存成 raw.bin 的问题）、完成后系统通知；页面/编辑/AI 助手/知识图谱等全部功能在 WebView 内可用，键盘弹出不遮挡输入区
 - **版本号自动对齐**：APP versionName/versionCode 构建时自动解析 desktop/package.json 的版本（1.1.27 / 1001027），日常 bump 无需单独维护安卓版本
-- **CI 发版接入**：打 `v*` 标签时 release.yml 在 Linux 容器内自动构建 APK（Node 22 + JDK 21 + Android SDK 35 镜像，cap sync + gradle），签名密钥经仓库 secrets 注入（`ANDROID_KEYSTORE_*`），产物 `LLM Wiki <版本>.apk` 随 Gitea Release 发布并计入 sha256 校验文件；未配置签名时自动回退未签名包
+- **CI 发版接入**：打 `v*` 标签时 release.yml 在 Linux 容器内自动构建 APK（Node 22 + JDK 21 + Android SDK 35 镜像，cap sync + gradle），签名密钥经仓库 secrets 注入（`ANDROID_KEYSTORE_*`），产物 `Engram <版本>.apk` 随 Gitea Release 发布并计入 sha256 校验文件；未配置签名时自动回退未签名包
 - **修复 Android 15 底栏遮挡**：targetSdk 35 触发系统强制 edge-to-edge，WebView 内容延伸到导航条后导致移动端底栏（页面/搜索/新建/AI/更多）与编辑器工具栏无法点击——已在 API 35+ 主题 opt-out 恢复常规布局，真机/模拟器一致
 - 允许 http 明文连接（家庭局域网自建场景）；自签名 HTTPS 不做证书豁免；环境搭建、本地打包与签名说明见 `main/docs/ANDROID.md`
 
@@ -420,7 +420,7 @@ AI 自动整理决策版本：
   - **供应商参数降级持久化**：thinking/stream_options 等「试错一次→不再携带」的供应商兼容记忆从进程内存落库，服务重启后不再重复踩坑
 - **Anthropic Messages 协议支持**：新增协议适配层，除 OpenAI 兼容外可直连 Anthropic 兼容服务（`/v1/messages` + `x-api-key` 鉴权、消息/工具调用/流式/用量双向转换）；DeepSeek 与硅基流动内置「Anthropic 兼容」线路（官方 /anthropic 端点）可直接选用，自定义服务商也可手动选择协议；既有稳定性机制（截断翻倍重试、5xx 退避、用量记账）在两种协议下行为一致
 - Agent 助手的「切换激活模型」工具适配新配置存储；设置页模型配置面板对接服务端目录与脱敏 Key 交互
-- CI 基础设施：Gitea Actions runner 迁移到新机并改为全局注册（此前为单仓库作用域，曾导致 ExampleProject CI 排队无人执行）；根 .gitignore 排除本地开发与工具产物目录
+- CI 基础设施：Gitea Actions runner 迁移到新机并改为全局注册（此前为单仓库作用域，曾导致 Engram CI 排队无人执行）；根 .gitignore 排除本地开发与工具产物目录
 - 验证：单元测试 262 项全部通过；隔离容器真实路径验收（旧版数据自动迁移、掩码 Key、Anthropic 线路切换、端到端对话链路）
 
 ## v1.1.15（2026-08-22）
@@ -455,7 +455,7 @@ AI 自动整理决策版本：
 
 ## v1.1.11（2026-08-20）
 
-- 版本号查询（远端仓库 Releases API）容器直连失败时自动借宿主机网络代查：经 docker.sock 起一次性 host 网络探针容器（复用当前服务镜像、固定名 `example-wiki-net-probe`、查完即删），IPv6-only 仓库域名或出站受限环境下「检查更新」彻底无警告；访问凭据经环境变量注入透传，普通环境保持直连行为不变
+- 版本号查询（远端仓库 Releases API）容器直连失败时自动借宿主机网络代查：经 docker.sock 起一次性 host 网络探针容器（复用当前服务镜像、固定名 `engram-net-probe`、查完即删），IPv6-only 仓库域名或出站受限环境下「检查更新」彻底无警告；访问凭据经环境变量注入透传，普通环境保持直连行为不变
 - 探针与直连两级都失败时聚合展示各自失败原因（含 cause 链），排障信息完整
 - 补充探针脚本与 Release 响应解析的单元测试（6 项）
 
@@ -505,7 +505,7 @@ AI 自动整理决策版本：
 ## v1.1.5（2026-08-19）
 
 - Gitea CI/CD 落地：推送远端自动 verify（build+typecheck+test），打 `v*` 标签自动发版（版本号镜像 + wine 容器交叉打 Windows NSIS 安装包 + Release 三附件）
-- Docker 镜像改走仓库三层路径 `example/exampleproject/example-wiki`（两层用户命名空间路径 NAS 拉取异常，废弃）
+- Docker 镜像改走仓库三层路径 `example/Engram/engram`（两层用户命名空间路径 NAS 拉取异常，废弃）
 - 修复 web typecheck 12 处错误（AppModal/AppEmptyState/ReadingPreview 的 title prop 改可选）
 - 修复 2 个过期测试断言（缓存优化后未同步）
 - wine 交叉打包修复：EB `npmRebuild=false` 防 Linux ELF 覆盖、prebuild-install 显式 win32 + PE32 断言、`.bin` 悬空 symlink 清理
@@ -623,7 +623,7 @@ AI 自动整理决策版本：
 - vec0/FTS5 虚表改 DROP+重建空表，chunks 分批删除并逐表让出事件循环
 - /api/settings/wipe 清除后立即返回，全量索引重建转后台执行
 - 新增 GET /health 轻量健康端点（恒 200、不触碰数据层）
-- docker-compose 为 example-wiki 增加 node /health 容器级 healthcheck
+- docker-compose 为 engram 增加 node /health 容器级 healthcheck
 
 ## v1.0.7（2026-08-15）
 
@@ -633,7 +633,7 @@ AI 自动整理决策版本：
 ## v1.0.6（2026-08-15）
 
 - 侧边栏分组改为顶层「概念/实体/归档」，实体分类扩展为 7 类
-- 客户独立 type 走专属信捷模式；实体二级子类支持折叠
+- 客户独立 type 走专属客户 ACS 模式；实体二级子类支持折叠
 - 飞书改用长连接（WebSocket）模式，删除 webhook
 
 ## v1.0.5（2026-08-14）
@@ -641,7 +641,7 @@ AI 自动整理决策版本：
 - 飞书 IM 直连应用内 Agent（进程内调用 orchestrator，绕过 MCP）
 - 飞书凭证改为设置页 GUI 配置，不再依赖环境变量
 - 概念和实体页可单独重新提炼（浅层重组+深层重跑）
-- 信捷模式（ACS 客户梳理）：客户实体页按 ACS 框架综合
+- 客户 ACS 模式（ACS 客户梳理）：客户实体页按 ACS 框架综合
 - 设置页拆分为面板组件；左侧标签栏默认折叠
 
 ## v1.0.4（2026-08-14）

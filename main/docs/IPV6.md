@@ -5,9 +5,9 @@ Engram 的远程访问支持双通道自动择优：客户端启动时按「直�
 ```
 手机 / 桌面端
   ├─ 直连通道（优先）：手机蜂窝 IPv6 ──运营商路由──▶ 家宽 IPv6 ──▶ Engram
-  │   例：http://<ddns.example.com>:18080   ← 需路由器放行 IPv6 入站（一次性）
+  │   例：http://<ddns.xxx.com>:18080   ← 需路由器放行 IPv6 入站（一次性）
   └─ 隧道兜底：Cloudflare Tunnel（或任何可公网访问的主地址）
-      例：https://engram.example.com
+      例：https://engram.xxx.com
 ```
 
 仓库代码零域名硬编码：直连地址由**服务端通告**——部署侧在 `main/.env`（不入库）配置 `DIRECT_ACCESS_URL`，经 `/health` 下发给已登录客户端；安卓 APP 与桌面端也提供可选手填直连地址（在网页端 设置 → 账户与外观 的「连接通道」区可一键复制）。
@@ -18,7 +18,7 @@ Engram 的远程访问支持双通道自动择优：客户端启动时按「直�
 
    ```dotenv
    DIRECT_ACCESS_URL=http://<你的DDNS域名>:<端口>
-   # 例：DIRECT_ACCESS_URL=http://ddns.example.com:18080
+   # 例：DIRECT_ACCESS_URL=http://ddns.xxx.com:18080
    ```
 
    注意：compose 会自动读取同目录 `.env` 做变量插值，无需修改 `docker-compose.yml`。
@@ -76,7 +76,7 @@ IPv6 没有 NAT 的「天然保护」，路由器默认用**有状态防火墙**
 部署侧在 `main/.env` 增配：
 
 ```dotenv
-TLS_DOMAIN=<直连域名>            # 如 direct.example.com；存在即启用 HTTPS 直连
+TLS_DOMAIN=<直连域名>            # 如 direct.xxx.com；存在即启用 HTTPS 直连
 TLS_DNS_API_TOKEN=<CF token>     # 需 Zone.DNS Edit 权限（写 _acme-challenge TXT），与 DDNS 同一 token 即可
 DIRECT_ACCESS_URL=https://<直连域名>
 ```
@@ -99,7 +99,7 @@ DIRECT_ACCESS_URL=https://<直连域名>
 
 ```dotenv
 COOKIE_DOMAIN=<父域>
-# 例：COOKIE_DOMAIN=.example.com（与直连域名同属的父域，注意带前导点）
+# 例：COOKIE_DOMAIN=.xxx.com（与直连域名同属的父域，注意带前导点）
 ```
 
 即可实现：登录一次，隧道域与直连域两个子域共享登录态；设置页「连接通道」处出现**「使用直连访问」一键切换按钮**（直连探测可用时展示），`/go` 入口跳直连也不再需要重新登录。

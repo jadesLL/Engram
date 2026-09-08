@@ -16,7 +16,7 @@
 - Docker 构建默认断网 `network=none`、复用本机依赖层和缓存；只有用户明确批准下载时才对当前命令加 `--allow-downloads`，缓存缺失不得自行联网重试。
 - 只有确实无法在 Linux Docker 完成的宿主机原生任务（如 Windows 桌面端打包），经说明原因并取得用户同意后才可建立持久本地依赖环境；自动清理的临时离线验证目录不算持久环境。
 - 功能预览按需用 `preview-feature.sh` 创建；不要仅为开始编码提前创建容器、端口、镜像或数据卷。
-- 当前任务创建的所有 Docker 资源必须带 `com.exampleproject.feature=<feature>` 标签；不覆盖、回退或删除其他 Agent 的分支、worktree、容器、数据卷和未提交改动。
+- 当前任务创建的所有 Docker 资源必须带 `com.engram.feature=<feature>` 标签；不覆盖、回退或删除其他 Agent 的分支、worktree、容器、数据卷和未提交改动。
 
 ## 验收与合并
 

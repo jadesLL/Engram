@@ -30,12 +30,12 @@ FEATURE="${1:-}"
   exit 2
 }
 
-exampleproject_init_feature "$FEATURE"
+engram_init_feature "$FEATURE"
 
 check_absent() {
-  [ ! -e "$WIKILLM_WORKTREE" ] || exampleproject_die "worktree 已存在: $WIKILLM_WORKTREE"
-  if git -C "$WIKILLM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$WIKILLM_BRANCH"; then
-    exampleproject_die "分支已存在: $WIKILLM_BRANCH"
+  [ ! -e "$ENGRAM_WORKTREE" ] || engram_die "worktree 已存在: $ENGRAM_WORKTREE"
+  if git -C "$ENGRAM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ENGRAM_BRANCH"; then
+    engram_die "分支已存在: $ENGRAM_BRANCH"
   fi
 }
 
@@ -46,47 +46,47 @@ rollback_creation() {
     return
   fi
   set +e
-  exampleproject_log "!! 创建未完成，回滚本次 Git worktree"
-  if [ -e "$WIKILLM_WORKTREE" ]; then
-    git -C "$WIKILLM_REPO_ROOT" worktree remove "$WIKILLM_WORKTREE"
+  engram_log "!! 创建未完成，回滚本次 Git worktree"
+  if [ -e "$ENGRAM_WORKTREE" ]; then
+    git -C "$ENGRAM_REPO_ROOT" worktree remove "$ENGRAM_WORKTREE"
   fi
-  if git -C "$WIKILLM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$WIKILLM_BRANCH"; then
-    git -C "$WIKILLM_REPO_ROOT" branch -d "$WIKILLM_BRANCH"
+  if git -C "$ENGRAM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ENGRAM_BRANCH"; then
+    git -C "$ENGRAM_REPO_ROOT" branch -d "$ENGRAM_BRANCH"
   fi
-  for safe_value in "$WIKILLM_SAFE_DIRECTORY" "$WIKILLM_WORKTREE"; do
+  for safe_value in "$ENGRAM_SAFE_DIRECTORY" "$ENGRAM_WORKTREE"; do
     if git config --global --get-all safe.directory 2>/dev/null |
       grep -Fx "$safe_value" >/dev/null
     then
       git config --global --fixed-value --unset-all safe.directory "$safe_value"
     fi
   done
-  git -C "$WIKILLM_REPO_ROOT" worktree prune
+  git -C "$ENGRAM_REPO_ROOT" worktree prune
   exit "$exit_code"
 }
 trap rollback_creation EXIT
 
-exampleproject_log ">> 检查 worktree 与分支名称"
+engram_log ">> 检查 worktree 与分支名称"
 check_absent
 
-exampleproject_log ">> 创建 worktree $WIKILLM_WORKTREE"
-git -C "$WIKILLM_REPO_ROOT" worktree add "$WIKILLM_WORKTREE" -b "$WIKILLM_BRANCH" main
+engram_log ">> 创建 worktree $ENGRAM_WORKTREE"
+git -C "$ENGRAM_REPO_ROOT" worktree add "$ENGRAM_WORKTREE" -b "$ENGRAM_BRANCH" main
 
-if ! git config --global --get-all safe.directory | grep -Fx "$WIKILLM_SAFE_DIRECTORY" >/dev/null; then
-  git config --global --add safe.directory "$WIKILLM_SAFE_DIRECTORY"
+if ! git config --global --get-all safe.directory | grep -Fx "$ENGRAM_SAFE_DIRECTORY" >/dev/null; then
+  git config --global --add safe.directory "$ENGRAM_SAFE_DIRECTORY"
 fi
 
 for dependency_dir in \
-  "$WIKILLM_WORKTREE/main/node_modules" \
-  "$WIKILLM_WORKTREE/main/server/node_modules" \
-  "$WIKILLM_WORKTREE/main/web/node_modules" \
-  "$WIKILLM_WORKTREE/main/desktop/node_modules"
+  "$ENGRAM_WORKTREE/main/node_modules" \
+  "$ENGRAM_WORKTREE/main/server/node_modules" \
+  "$ENGRAM_WORKTREE/main/web/node_modules" \
+  "$ENGRAM_WORKTREE/main/desktop/node_modules"
 do
   [ ! -e "$dependency_dir" ] || \
-    exampleproject_die "新 worktree 不应包含宿主机依赖目录: $dependency_dir"
+    engram_die "新 worktree 不应包含宿主机依赖目录: $dependency_dir"
 done
 
 COMPLETE=1
-exampleproject_log "DONE: worktree=$WIKILLM_WORKTREE"
-exampleproject_log "DONE: branch=$WIKILLM_BRANCH"
-exampleproject_log "NEXT: bash main/scripts/verify-feature.sh $FEATURE"
-exampleproject_log "NEXT: bash main/scripts/preview-feature.sh $FEATURE <host-port>"
+engram_log "DONE: worktree=$ENGRAM_WORKTREE"
+engram_log "DONE: branch=$ENGRAM_BRANCH"
+engram_log "NEXT: bash main/scripts/verify-feature.sh $FEATURE"
+engram_log "NEXT: bash main/scripts/preview-feature.sh $FEATURE <host-port>"

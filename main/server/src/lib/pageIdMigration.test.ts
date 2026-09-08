@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import matter from 'gray-matter';
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-page-id-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-page-id-'));
 process.env.DATA_DIR = temp;
 
 let db: any;

@@ -1,4 +1,4 @@
-package com.example.exampleproject;
+package com.engram.app;
 
 import android.app.DownloadManager;
 import android.content.Context;
@@ -18,7 +18,7 @@ import com.getcapacitor.WebViewListener;
 public class MainActivity extends BridgeActivity {
 
     /** 长按桌面图标快捷方式的 action：打开服务器选择页 */
-    private static final String ACTION_SELECT_SERVER = "com.example.exampleproject.SELECT_SERVER";
+    private static final String ACTION_SELECT_SERVER = "com.engram.app.SELECT_SERVER";
 
     private boolean forceSelectServer = false;
 

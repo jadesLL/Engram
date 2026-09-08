@@ -2,9 +2,9 @@ services:
   engram:
     image: engram:local-current
     volumes:
-      - example-wiki-data:/data
+      - engram-data:/data
 
 volumes:
-  example-wiki-data:
-    name: example-wiki-data
+  engram-data:
+    name: engram-data
     external: true

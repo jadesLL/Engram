@@ -8,7 +8,7 @@ import Fastify from 'fastify';
 import { registerStaticAssetCache } from './staticAssets.js';
 
 test('static files and SPA fallback remain available after the build directory disappears', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-static-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-static-'));
   fs.mkdirSync(path.join(root, 'assets'), { recursive: true });
   fs.writeFileSync(path.join(root, 'index.html'), '<main>cached shell</main>');
   fs.writeFileSync(path.join(root, 'assets', 'app.js'), 'window.cached = true;');

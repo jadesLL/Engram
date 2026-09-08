@@ -1,20 +1,20 @@
 # 通用功能 worktree 预览配置。
 # 由 scripts/preview-feature.sh 注入功能名、端口和构建网络策略。
 services:
-  example-wiki:
-    image: "example-wiki:${WIKILLM_FEATURE:?请设置 WIKILLM_FEATURE}"
+  engram:
+    image: "engram:${ENGRAM_FEATURE:?请设置 ENGRAM_FEATURE}"
     build:
       context: .
-      network: "${WIKILLM_BUILD_NETWORK:-none}"
+      network: "${ENGRAM_BUILD_NETWORK:-none}"
       labels:
-        com.exampleproject.scope: feature
-        com.exampleproject.feature: "${WIKILLM_FEATURE}"
-    container_name: "example-wiki-${WIKILLM_FEATURE}"
+        com.engram.scope: feature
+        com.engram.feature: "${ENGRAM_FEATURE}"
+    container_name: "engram-${ENGRAM_FEATURE}"
     labels:
-      com.exampleproject.scope: feature
-      com.exampleproject.feature: "${WIKILLM_FEATURE}"
+      com.engram.scope: feature
+      com.engram.feature: "${ENGRAM_FEATURE}"
     ports:
-      - "${WIKILLM_PORT:?请设置 WIKILLM_PORT}:8080"
+      - "${ENGRAM_PORT:?请设置 ENGRAM_PORT}:8080"
     volumes:
       - worktree-data:/data
     environment:
@@ -29,11 +29,11 @@ services:
 
 volumes:
   worktree-data:
-    name: "example-wiki-data-${WIKILLM_FEATURE}"
+    name: "engram-data-${ENGRAM_FEATURE}"
     external: true
 
 networks:
   default:
     driver: bridge
     driver_opts:
-      com.docker.network.driver.mtu: "${WIKILLM_NETWORK_MTU:-1400}"
+      com.docker.network.driver.mtu: "${ENGRAM_NETWORK_MTU:-1400}"

@@ -30,7 +30,7 @@ export const TYPE_LABEL: Record<string, string> = {
   note: '笔记',
 };
 
-/** 是否为实体类（进 Wiki/实体，采用双层结构：当前理解+时间线）。customer 为业务实体：开启信捷模式（acs_mode）时客户页综合走专属 ACS 提示词。 */
+/** 是否为实体类（进 Wiki/实体，采用双层结构：当前理解+时间线）。customer 为业务实体：开启客户 ACS 模式（acs_mode）时客户页综合走专属 ACS 提示词。 */
 export function isEntity(type: string | undefined | null): boolean {
   return (
     type === 'person' ||

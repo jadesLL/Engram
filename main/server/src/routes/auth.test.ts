@@ -8,7 +8,7 @@ import jwt from '@fastify/jwt';
 import cookie from '@fastify/cookie';
 import bcrypt from 'bcryptjs';
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-auth-routes-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-auth-routes-'));
 process.env.DATA_DIR = temp;
 
 let app: ReturnType<typeof Fastify>;

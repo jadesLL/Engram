@@ -1,6 +1,6 @@
 # CI 环境构建 Windows 安装包（wine 容器内交叉打包）
 # Windows runner 上 Z 盘不支持 docker bind mount，故源码 COPY 进镜像构建、
-# 产物用 docker create + docker cp 拷出（与 XINJE 项目的做法一致）。
+# 产物用 docker create + docker cp 拷出（与另一示例项目的做法一致）。
 # 构建上下文为 main/ 目录：
 #   docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .
 # 产物在镜像内 /work/desktop/dist/：

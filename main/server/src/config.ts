@@ -23,7 +23,7 @@ export const PORT = Number(process.env.PORT || 8080);
 export const HOST = process.env.HOST || '0.0.0.0';
 
 /**
- * 会话 Cookie 的 Domain 属性（可选）。配置为父域（如 .example.com）时，
+ * 会话 Cookie 的 Domain 属性（可选）。配置为父域（如 .xxx.com）时，
  * 隧道域与直连域两个子域共享登录态——浏览器「一键切直连」免重登的前提。
  * 未配置时为 host-only（默认行为，仅当前域有效）。
  * 注意：该父域下所有子域都会携带此 Cookie，请勿在不可信子域上部署服务。
@@ -63,7 +63,7 @@ export const FEISHU_API_BASE = process.env.FEISHU_API_BASE || 'https://open.feis
 /**
  * DDNS 直连域名维护（设置页 ddns_config 可配，env 为 Docker/无 GUI 部署的逐字段回退）：
  * - DDNS_TOKEN：Cloudflare API Token（需 Zone.DNS Edit 权限）
- * - DDNS_RECORD：维护的记录 FQDN（如 home.example.com）
+ * - DDNS_RECORD：维护的记录 FQDN（如 home.xxx.com）
  * - DDNS_TYPE：A / AAAA / auto（默认 auto，有全局 IPv6 用 AAAA，否则 A）
  * - DDNS_INTERVAL_MIN：同步间隔分钟数（默认 5）
  */

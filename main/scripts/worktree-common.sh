@@ -2,26 +2,26 @@
 
 set -euo pipefail
 
-exampleproject_log() {
+engram_log() {
   printf '%s\n' "$*"
 }
 
-exampleproject_die() {
+engram_die() {
   printf '!! %s\n' "$*" >&2
   exit 1
 }
 
-exampleproject_validate_feature() {
+engram_validate_feature() {
   local feature="${1:-}"
   if ! [[ "$feature" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
-    exampleproject_die "功能名只能包含小写字母、数字和中划线，当前值: ${feature:-<empty>}"
+    engram_die "功能名只能包含小写字母、数字和中划线，当前值: ${feature:-<empty>}"
   fi
 }
 
-exampleproject_discover_repo_root() {
-  if [ -n "${WIKILLM_REPO_ROOT:-}" ]; then
+engram_discover_repo_root() {
+  if [ -n "${ENGRAM_REPO_ROOT:-}" ]; then
     (
-      cd "$WIKILLM_REPO_ROOT"
+      cd "$ENGRAM_REPO_ROOT"
       pwd -P
     )
     return
@@ -35,7 +35,7 @@ exampleproject_discover_repo_root() {
     git -c "safe.directory=$checkout_root" \
       -C "$app_dir" rev-parse --path-format=absolute --git-common-dir
   )"; then
-    exampleproject_die "无法从脚本位置识别 Git common directory: $app_dir"
+    engram_die "无法从脚本位置识别 Git common directory: $app_dir"
   fi
   (
     cd "$common_dir/.."
@@ -43,63 +43,63 @@ exampleproject_discover_repo_root() {
   )
 }
 
-exampleproject_init_feature() {
+engram_init_feature() {
   local feature="$1"
-  exampleproject_validate_feature "$feature"
+  engram_validate_feature "$feature"
 
-  WIKILLM_FEATURE="$feature"
-  WIKILLM_REPO_ROOT="$(exampleproject_discover_repo_root)"
-  WIKILLM_MAIN_DIR="$WIKILLM_REPO_ROOT/main"
-  WIKILLM_SHARED_PNPM="$WIKILLM_MAIN_DIR/node_modules/pnpm/bin/pnpm.cjs"
-  WIKILLM_WORKTREE="$WIKILLM_REPO_ROOT/worktrees/$feature"
-  WIKILLM_BRANCH="feat/$feature"
-  WIKILLM_PROJECT="exampleproject-$feature"
-  WIKILLM_IMAGE="example-wiki:$feature"
-  WIKILLM_VERIFY_IMAGE="example-wiki:$feature-verify"
-  WIKILLM_CONTAINER="example-wiki-$feature"
-  WIKILLM_ONLYOFFICE_CONTAINER="example-wiki-$feature-onlyoffice"
-  WIKILLM_VOLUME="example-wiki-data-$feature"
-  WIKILLM_SAFE_DIRECTORY="%(prefix)/$WIKILLM_WORKTREE"
+  ENGRAM_FEATURE="$feature"
+  ENGRAM_REPO_ROOT="$(engram_discover_repo_root)"
+  ENGRAM_MAIN_DIR="$ENGRAM_REPO_ROOT/main"
+  ENGRAM_SHARED_PNPM="$ENGRAM_MAIN_DIR/node_modules/pnpm/bin/pnpm.cjs"
+  ENGRAM_WORKTREE="$ENGRAM_REPO_ROOT/worktrees/$feature"
+  ENGRAM_BRANCH="feat/$feature"
+  ENGRAM_PROJECT="engram-$feature"
+  ENGRAM_IMAGE="engram:$feature"
+  ENGRAM_VERIFY_IMAGE="engram:$feature-verify"
+  ENGRAM_CONTAINER="engram-$feature"
+  ENGRAM_ONLYOFFICE_CONTAINER="engram-$feature-onlyoffice"
+  ENGRAM_VOLUME="engram-data-$feature"
+  ENGRAM_SAFE_DIRECTORY="%(prefix)/$ENGRAM_WORKTREE"
 
-  case "$WIKILLM_WORKTREE" in
-    "$WIKILLM_REPO_ROOT"/worktrees/*) ;;
-    *) exampleproject_die "拒绝操作工作区之外的路径: $WIKILLM_WORKTREE" ;;
+  case "$ENGRAM_WORKTREE" in
+    "$ENGRAM_REPO_ROOT"/worktrees/*) ;;
+    *) engram_die "拒绝操作工作区之外的路径: $ENGRAM_WORKTREE" ;;
   esac
 }
 
-exampleproject_shared_pnpm() {
-  [ -f "$WIKILLM_SHARED_PNPM" ] || \
-    exampleproject_die "共享 pnpm 不存在: $WIKILLM_SHARED_PNPM"
-  node "$WIKILLM_SHARED_PNPM" "$@"
+engram_shared_pnpm() {
+  [ -f "$ENGRAM_SHARED_PNPM" ] || \
+    engram_die "共享 pnpm 不存在: $ENGRAM_SHARED_PNPM"
+  node "$ENGRAM_SHARED_PNPM" "$@"
 }
 
-exampleproject_require_docker() {
-  command -v docker >/dev/null 2>&1 || exampleproject_die "未找到 docker 命令"
-  docker info >/dev/null 2>&1 || exampleproject_die "Docker 当前不可用"
+engram_require_docker() {
+  command -v docker >/dev/null 2>&1 || engram_die "未找到 docker 命令"
+  docker info >/dev/null 2>&1 || engram_die "Docker 当前不可用"
 }
 
-exampleproject_require_feature_worktree() {
-  [ -d "$WIKILLM_WORKTREE/main" ] || \
-    exampleproject_die "功能 worktree 不存在: $WIKILLM_WORKTREE"
-  git -c "safe.directory=$WIKILLM_WORKTREE" \
-    -C "$WIKILLM_WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || \
-    exampleproject_die "目录不是有效 Git worktree: $WIKILLM_WORKTREE"
+engram_require_feature_worktree() {
+  [ -d "$ENGRAM_WORKTREE/main" ] || \
+    engram_die "功能 worktree 不存在: $ENGRAM_WORKTREE"
+  git -c "safe.directory=$ENGRAM_WORKTREE" \
+    -C "$ENGRAM_WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || \
+    engram_die "目录不是有效 Git worktree: $ENGRAM_WORKTREE"
 }
 
-exampleproject_configure_build_network() {
+engram_configure_build_network() {
   local allow_downloads="${1:-0}"
   if [ "$allow_downloads" -eq 1 ]; then
-    WIKILLM_BUILD_NETWORK="default"
+    ENGRAM_BUILD_NETWORK="default"
     return
   fi
 
-  WIKILLM_BUILD_NETWORK="none"
+  ENGRAM_BUILD_NETWORK="none"
   docker image inspect node:22-slim >/dev/null 2>&1 || \
-    exampleproject_die "本机缺少 node:22-slim；未获得下载许可，拒绝拉取基础镜像"
+    engram_die "本机缺少 node:22-slim；未获得下载许可，拒绝拉取基础镜像"
 }
 
-exampleproject_explain_offline_build_failure() {
-  if [ "${WIKILLM_BUILD_NETWORK:-none}" = "none" ]; then
+engram_explain_offline_build_failure() {
+  if [ "${ENGRAM_BUILD_NETWORK:-none}" = "none" ]; then
     cat >&2 <<'EOF'
 !! Docker 离线构建失败。
    如果日志显示依赖或基础工具缓存缺失，必须先获得用户明确下载许可，
@@ -108,15 +108,15 @@ EOF
   fi
 }
 
-exampleproject_cleanup_local_verification() {
+engram_cleanup_local_verification() {
   local verify_dir="$1"
   local verify_dir_windows=""
   local failed=0 cleanup_attempt
 
   if command -v cygpath >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
     verify_dir_windows="$(cygpath -w "$verify_dir")"
-    if ! WIKILLM_VERIFY_TEMP="$verify_dir_windows" powershell.exe -NoProfile -Command \
-      '$target=$env:WIKILLM_VERIFY_TEMP; $root=Join-Path $env:LOCALAPPDATA "pnpm\store\v11\projects"; if (Test-Path -LiteralPath $root) { $rootPrefix=[IO.Path]::GetFullPath($root).TrimEnd("\") + "\"; Get-ChildItem -Force -LiteralPath $root | Where-Object { ($_.Target -join "") -eq $target } | ForEach-Object { $full=[IO.Path]::GetFullPath($_.FullName); if (-not $full.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Refusing path outside pnpm projects: $full" }; [IO.Directory]::Delete($full,$false) } }' \
+    if ! ENGRAM_VERIFY_TEMP="$verify_dir_windows" powershell.exe -NoProfile -Command \
+      '$target=$env:ENGRAM_VERIFY_TEMP; $root=Join-Path $env:LOCALAPPDATA "pnpm\store\v11\projects"; if (Test-Path -LiteralPath $root) { $rootPrefix=[IO.Path]::GetFullPath($root).TrimEnd("\") + "\"; Get-ChildItem -Force -LiteralPath $root | Where-Object { ($_.Target -join "") -eq $target } | ForEach-Object { $full=[IO.Path]::GetFullPath($_.FullName); if (-not $full.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Refusing path outside pnpm projects: $full" }; [IO.Directory]::Delete($full,$false) } }' \
       >/dev/null
     then
       failed=1
@@ -124,7 +124,7 @@ exampleproject_cleanup_local_verification() {
   fi
 
   case "$verify_dir" in
-    /tmp/exampleproject-verify.*|/tmp/exampleproject-preview.*|/tmp/exampleproject-main.*)
+    /tmp/engram-verify.*|/tmp/engram-preview.*|/tmp/engram-main.*)
       for cleanup_attempt in 1 2 3 4 5; do
         if rm -rf -- "$verify_dir" && [ ! -e "$verify_dir" ]; then
           break
@@ -141,15 +141,15 @@ exampleproject_cleanup_local_verification() {
   return "$failed"
 }
 
-exampleproject_run_local_offline_verification() {
+engram_run_local_offline_verification() {
   local source_dir="$1"
   local resolved_source verify_dir local_app_data native_cache native_source="" candidate
   local check_status=0 cleanup_status=0
   local -a native_candidates=()
 
   command -v node >/dev/null 2>&1 || return 1
-  [ -f "$WIKILLM_SHARED_PNPM" ] || {
-    printf '!! 缺少共享 pnpm: %s\n' "$WIKILLM_SHARED_PNPM" >&2
+  [ -f "$ENGRAM_SHARED_PNPM" ] || {
+    printf '!! 缺少共享 pnpm: %s\n' "$ENGRAM_SHARED_PNPM" >&2
     return 1
   }
   command -v cygpath >/dev/null 2>&1 || return 1
@@ -158,22 +158,22 @@ exampleproject_run_local_offline_verification() {
     pwd -P
   )"
   case "$resolved_source" in
-    "$WIKILLM_MAIN_DIR"|"$WIKILLM_REPO_ROOT"/worktrees/*/main) ;;
+    "$ENGRAM_MAIN_DIR"|"$ENGRAM_REPO_ROOT"/worktrees/*/main) ;;
     *)
       printf '!! 拒绝验证工作区之外的源码目录: %s\n' "$resolved_source" >&2
       return 1
       ;;
   esac
 
-  verify_dir="$(mktemp -d -t exampleproject-verify.XXXXXX)"
+  verify_dir="$(mktemp -d -t engram-verify.XXXXXX)"
   local_app_data="$(cygpath -u "${LOCALAPPDATA:?LOCALAPPDATA 未设置}")"
-  native_cache="$local_app_data/ExampleProject/verification-native"
+  native_cache="$local_app_data/Engram/verification-native"
 
   shopt -s nullglob
   native_candidates=(
     "$native_cache"/better-sqlite3@*/better_sqlite3.node
-    "$WIKILLM_MAIN_DIR"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
-    "$(cygpath -u "${TEMP:-${TMP:-/tmp}}")"/ExampleProject-*/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+    "$ENGRAM_MAIN_DIR"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+    "$(cygpath -u "${TEMP:-${TMP:-/tmp}}")"/engram-*/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build/Release/better_sqlite3.node
   )
   shopt -u nullglob
   # ELF 头（7f 45 4c 46）= Linux 构件，Windows 宿主机 node 加载会报
@@ -182,7 +182,7 @@ exampleproject_run_local_offline_verification() {
     if [ "$(
       head -c 4 "$candidate" 2>/dev/null | od -An -tx1 | tr -d ' \n'
     )" = "7f454c46" ]; then
-      exampleproject_log "   WARN: 跳过 Linux ELF 构件（Windows 宿主机无法加载）: $candidate"
+      engram_log "   WARN: 跳过 Linux ELF 构件（Windows 宿主机无法加载）: $candidate"
       continue
     fi
     native_source="$candidate"
@@ -193,8 +193,8 @@ exampleproject_run_local_offline_verification() {
     return 1
   }
 
-  exampleproject_log ">> Docker 离线缓存缺失，改用本机临时目录离线验证"
-  exampleproject_log "   shared_pnpm=$WIKILLM_SHARED_PNPM ($(exampleproject_shared_pnpm --version))"
+  engram_log ">> Docker 离线缓存缺失，改用本机临时目录离线验证"
+  engram_log "   shared_pnpm=$ENGRAM_SHARED_PNPM ($(engram_shared_pnpm --version))"
   # 本函数通常在 if 条件中被调用：调用期间 bash 会压制函数体内的 set -e，
   # 因此每一步都必须显式检查状态（依赖 errexit 会让 test 失败被后续 build 成功掩盖）。
   (
@@ -216,7 +216,7 @@ exampleproject_run_local_offline_verification() {
         .
     ) | tar -xf - -C "$verify_dir" || exit 1
     cd "$verify_dir" || exit 1
-    exampleproject_shared_pnpm install --offline --frozen-lockfile --ignore-scripts || exit 1
+    engram_shared_pnpm install --offline --frozen-lockfile --ignore-scripts || exit 1
     native_targets=(
       "$verify_dir"/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3
     )
@@ -226,17 +226,17 @@ exampleproject_run_local_offline_verification() {
     fi
     mkdir -p "${native_targets[0]}/build/Release" || exit 1
     cp "$native_source" "${native_targets[0]}/build/Release/better_sqlite3.node" || exit 1
-    exampleproject_shared_pnpm test || exit 1
-    exampleproject_shared_pnpm typecheck || exit 1
-    exampleproject_shared_pnpm build || exit 1
+    engram_shared_pnpm test || exit 1
+    engram_shared_pnpm typecheck || exit 1
+    engram_shared_pnpm build || exit 1
   )
   check_status=$?
 
-  exampleproject_cleanup_local_verification "$verify_dir" || cleanup_status=$?
+  engram_cleanup_local_verification "$verify_dir" || cleanup_status=$?
   [ "$check_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]
 }
 
-exampleproject_current_main_image() {
+engram_current_main_image() {
   local base_image=""
 
   if docker container inspect engram >/dev/null 2>&1; then
@@ -257,7 +257,7 @@ exampleproject_current_main_image() {
   printf '%s\n' "$base_image"
 }
 
-exampleproject_build_local_offline_overlay_image() {
+engram_build_local_offline_overlay_image() {
   local source_dir="$1"
   local temp_prefix="$2"
   local base_image="$3"
@@ -268,8 +268,8 @@ exampleproject_build_local_offline_overlay_image() {
 
   command -v node >/dev/null 2>&1 || return 1
   command -v cygpath >/dev/null 2>&1 || return 1
-  [ -f "$WIKILLM_SHARED_PNPM" ] || {
-    printf '!! 缺少共享 pnpm: %s\n' "$WIKILLM_SHARED_PNPM" >&2
+  [ -f "$ENGRAM_SHARED_PNPM" ] || {
+    printf '!! 缺少共享 pnpm: %s\n' "$ENGRAM_SHARED_PNPM" >&2
     return 1
   }
   docker image inspect "$base_image" >/dev/null 2>&1 || return 1
@@ -280,7 +280,7 @@ exampleproject_build_local_offline_overlay_image() {
     pwd -P
   )"
   case "$resolved_source" in
-    "$WIKILLM_MAIN_DIR"|"$WIKILLM_REPO_ROOT"/worktrees/*/main) ;;
+    "$ENGRAM_MAIN_DIR"|"$ENGRAM_REPO_ROOT"/worktrees/*/main) ;;
     *)
       printf '!! 拒绝构建工作区之外的源码目录: %s\n' "$resolved_source" >&2
       return 1
@@ -288,9 +288,9 @@ exampleproject_build_local_offline_overlay_image() {
   esac
 
   build_dir="$(mktemp -d -t "${temp_prefix}.XXXXXX")"
-  exampleproject_log ">> 使用共享 pnpm 构建$description"
-  exampleproject_log "   shared_pnpm=$WIKILLM_SHARED_PNPM ($(exampleproject_shared_pnpm --version))"
-  exampleproject_log "   base_image=$base_image"
+  engram_log ">> 使用共享 pnpm 构建$description"
+  engram_log "   shared_pnpm=$ENGRAM_SHARED_PNPM ($(engram_shared_pnpm --version))"
+  engram_log "   base_image=$base_image"
   set +e
   (
     set -euo pipefail
@@ -312,8 +312,8 @@ exampleproject_build_local_offline_overlay_image() {
         .
     ) | tar -xf - -C "$build_dir"
     cd "$build_dir"
-    exampleproject_shared_pnpm install --offline --frozen-lockfile --ignore-scripts
-    exampleproject_shared_pnpm build
+    engram_shared_pnpm install --offline --frozen-lockfile --ignore-scripts
+    engram_shared_pnpm build
     runtime_id="$(
       node - "$build_dir/server/dist" "$build_dir/web/dist" <<'NODE'
 const crypto = require('node:crypto');
@@ -347,12 +347,12 @@ FROM $base_image
 ARG ENGRAM_GIT_SHA=""
 RUN --mount=type=bind,source=server/dist,target=/mnt/server-dist,ro \\
     --mount=type=bind,source=web/dist,target=/mnt/web-dist,ro \\
-    mkdir -p /app/server/dist /app/.exampleproject-runtime/$runtime_id/web \\
+    mkdir -p /app/server/dist /app/.engram-runtime/$runtime_id/web \\
     && cp -a /mnt/server-dist/. /app/server/dist/ \\
-    && cp -a /mnt/web-dist/. /app/.exampleproject-runtime/$runtime_id/web/ \\
+    && cp -a /mnt/web-dist/. /app/.engram-runtime/$runtime_id/web/ \\
     && printf '%s' "\$ENGRAM_GIT_SHA" > /app/GIT_SHA
-ENV ENGRAM_WEB_DIST=/app/.exampleproject-runtime/$runtime_id/web
-LABEL com.exampleproject.runtime=$runtime_id
+ENV ENGRAM_WEB_DIST=/app/.engram-runtime/$runtime_id/web
+LABEL com.engram.runtime=$runtime_id
 EOF
     docker build \
       --pull=false \
@@ -363,11 +363,11 @@ EOF
   build_status=$?
   set -e
 
-  exampleproject_cleanup_local_verification "$build_dir" || cleanup_status=$?
+  engram_cleanup_local_verification "$build_dir" || cleanup_status=$?
   [ "$build_status" -eq 0 ] && [ "$cleanup_status" -eq 0 ]
 }
 
-exampleproject_build_local_offline_preview_image() {
+engram_build_local_offline_preview_image() {
   local source_dir="$1"
   local resolved_source base_image
   local relative_path
@@ -386,7 +386,7 @@ exampleproject_build_local_offline_preview_image() {
     pwd -P
   )"
   case "$resolved_source" in
-    "$WIKILLM_REPO_ROOT"/worktrees/*/main) ;;
+    "$ENGRAM_REPO_ROOT"/worktrees/*/main) ;;
     *)
       printf '!! 拒绝预览工作区之外的源码目录: %s\n' "$resolved_source" >&2
       return 1
@@ -396,30 +396,30 @@ exampleproject_build_local_offline_preview_image() {
   for relative_path in "${dependency_files[@]}"; do
     if ! cmp -s \
       "$resolved_source/$relative_path" \
-      "$WIKILLM_MAIN_DIR/$relative_path"
+      "$ENGRAM_MAIN_DIR/$relative_path"
     then
       printf '!! %s 已改变，不能复用主镜像依赖进行离线预览\n' "$relative_path" >&2
       return 1
     fi
   done
 
-  if ! base_image="$(exampleproject_current_main_image)"; then
+  if ! base_image="$(engram_current_main_image)"; then
     printf '!! 缺少可复用的主运行镜像，无法创建离线预览\n' >&2
     return 1
   fi
 
-  exampleproject_build_local_offline_overlay_image \
+  engram_build_local_offline_overlay_image \
     "$resolved_source" \
-    exampleproject-preview \
+    engram-preview \
     "$base_image" \
     "离线预览叠加层" \
-    --label com.exampleproject.scope=feature \
-    --label "com.exampleproject.feature=$WIKILLM_FEATURE" \
+    --label com.engram.scope=feature \
+    --label "com.engram.feature=$ENGRAM_FEATURE" \
     --build-arg "ENGRAM_GIT_SHA=$(git -C "$resolved_source" rev-parse HEAD)" \
-    --tag "$WIKILLM_IMAGE"
+    --tag "$ENGRAM_IMAGE"
 }
 
-exampleproject_normalize_runtime_dockerfile() {
+engram_normalize_runtime_dockerfile() {
   awk '
     /^# ---------- 一次完成构建、类型检查和测试 ----------/ { skip = 1; next }
     skip && /^# ---------- 运行时 ----------/ { skip = 0 }
@@ -427,7 +427,7 @@ exampleproject_normalize_runtime_dockerfile() {
   '
 }
 
-exampleproject_build_local_offline_main_image() {
+engram_build_local_offline_main_image() {
   local source_dir="$1"
   local image="$2"
   local revision="$3"
@@ -453,13 +453,13 @@ exampleproject_build_local_offline_main_image() {
     pwd -P
   )"
   case "$resolved_source" in
-    "$WIKILLM_MAIN_DIR"|"$WIKILLM_REPO_ROOT"/worktrees/*/main) ;;
+    "$ENGRAM_MAIN_DIR"|"$ENGRAM_REPO_ROOT"/worktrees/*/main) ;;
     *)
       printf '!! 拒绝部署工作区之外的源码目录: %s\n' "$resolved_source" >&2
       return 1
       ;;
   esac
-  if ! base_image="$(exampleproject_current_main_image)"; then
+  if ! base_image="$(engram_current_main_image)"; then
     printf '!! 缺少可复用的主运行镜像，无法创建离线主镜像\n' >&2
     return 1
   fi
@@ -487,10 +487,10 @@ exampleproject_build_local_offline_main_image() {
 
   base_dockerfile="$(
     git -C "$resolved_source" show "$base_revision:main/Dockerfile" |
-      exampleproject_normalize_runtime_dockerfile
+      engram_normalize_runtime_dockerfile
   )"
   current_dockerfile="$(
-    exampleproject_normalize_runtime_dockerfile < "$resolved_source/Dockerfile"
+    engram_normalize_runtime_dockerfile < "$resolved_source/Dockerfile"
   )"
   if [ "$base_dockerfile" != "$current_dockerfile" ]; then
     printf '!! Docker 运行阶段相对主镜像已改变，不能使用离线叠加部署\n' >&2
@@ -500,63 +500,63 @@ exampleproject_build_local_offline_main_image() {
     image_args+=(--tag "$extra_tag")
   fi
 
-  exampleproject_build_local_offline_overlay_image \
+  engram_build_local_offline_overlay_image \
     "$resolved_source" \
-    exampleproject-main \
+    engram-main \
     "$base_image" \
     "离线主镜像叠加层" \
     "${image_args[@]}"
 }
 
-exampleproject_acquire_merge_lock() {
-  if [ "${WIKILLM_LOCK_HELD:-0}" = "1" ]; then
+engram_acquire_merge_lock() {
+  if [ "${ENGRAM_LOCK_HELD:-0}" = "1" ]; then
     return
   fi
 
   local common_dir
-  common_dir="$(git -C "$WIKILLM_REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)"
-  WIKILLM_LOCK_DIR="$common_dir/exampleproject-merge.lock"
-  if ! mkdir "$WIKILLM_LOCK_DIR" 2>/dev/null; then
-    exampleproject_die "已有合并或清理流程占用锁: $WIKILLM_LOCK_DIR"
+  common_dir="$(git -C "$ENGRAM_REPO_ROOT" rev-parse --path-format=absolute --git-common-dir)"
+  ENGRAM_LOCK_DIR="$common_dir/engram-merge.lock"
+  if ! mkdir "$ENGRAM_LOCK_DIR" 2>/dev/null; then
+    engram_die "已有合并或清理流程占用锁: $ENGRAM_LOCK_DIR"
   fi
-  printf 'pid=%s\nfeature=%s\nstarted=%s\n' "$$" "$WIKILLM_FEATURE" "$(date -Iseconds)" \
-    > "$WIKILLM_LOCK_DIR/owner"
-  WIKILLM_LOCK_HELD=1
-  trap exampleproject_release_merge_lock EXIT
+  printf 'pid=%s\nfeature=%s\nstarted=%s\n' "$$" "$ENGRAM_FEATURE" "$(date -Iseconds)" \
+    > "$ENGRAM_LOCK_DIR/owner"
+  ENGRAM_LOCK_HELD=1
+  trap engram_release_merge_lock EXIT
 }
 
-exampleproject_release_merge_lock() {
-  if [ "${WIKILLM_LOCK_HELD:-0}" = "1" ] && [ -n "${WIKILLM_LOCK_DIR:-}" ]; then
-    rm -f -- "$WIKILLM_LOCK_DIR/owner" 2>/dev/null || true
-    if ! rmdir -- "$WIKILLM_LOCK_DIR" 2>/dev/null; then
-      printf '!! 无法释放合并锁: %s\n' "$WIKILLM_LOCK_DIR" >&2
+engram_release_merge_lock() {
+  if [ "${ENGRAM_LOCK_HELD:-0}" = "1" ] && [ -n "${ENGRAM_LOCK_DIR:-}" ]; then
+    rm -f -- "$ENGRAM_LOCK_DIR/owner" 2>/dev/null || true
+    if ! rmdir -- "$ENGRAM_LOCK_DIR" 2>/dev/null; then
+      printf '!! 无法释放合并锁: %s\n' "$ENGRAM_LOCK_DIR" >&2
     fi
-    WIKILLM_LOCK_HELD=0
+    ENGRAM_LOCK_HELD=0
   fi
   return 0
 }
 
-exampleproject_feature_container_ids() {
+engram_feature_container_ids() {
   {
-    docker ps -aq --filter "label=com.exampleproject.feature=$WIKILLM_FEATURE"
-    docker ps -aq --filter "label=com.docker.compose.project=$WIKILLM_PROJECT"
+    docker ps -aq --filter "label=com.engram.feature=$ENGRAM_FEATURE"
+    docker ps -aq --filter "label=com.docker.compose.project=$ENGRAM_PROJECT"
     docker ps -a --format '{{.ID}}|{{.Names}}' |
       awk -F'|' \
-        -v app="$WIKILLM_CONTAINER" \
-        -v office="$WIKILLM_ONLYOFFICE_CONTAINER" \
+        -v app="$ENGRAM_CONTAINER" \
+        -v office="$ENGRAM_ONLYOFFICE_CONTAINER" \
         '$2 == app || $2 == office { print $1 }'
   } | awk 'NF && !seen[$0]++'
 }
 
-exampleproject_feature_volume_names() {
+engram_feature_volume_names() {
   {
-    docker volume ls -q --filter "label=com.exampleproject.feature=$WIKILLM_FEATURE"
-    docker volume ls -q --filter "label=com.docker.compose.project=$WIKILLM_PROJECT"
+    docker volume ls -q --filter "label=com.engram.feature=$ENGRAM_FEATURE"
+    docker volume ls -q --filter "label=com.docker.compose.project=$ENGRAM_PROJECT"
     for name in \
-      "$WIKILLM_VOLUME" \
-      "$WIKILLM_ONLYOFFICE_CONTAINER-data" \
-      "$WIKILLM_ONLYOFFICE_CONTAINER-lib" \
-      "$WIKILLM_ONLYOFFICE_CONTAINER-logs"
+      "$ENGRAM_VOLUME" \
+      "$ENGRAM_ONLYOFFICE_CONTAINER-data" \
+      "$ENGRAM_ONLYOFFICE_CONTAINER-lib" \
+      "$ENGRAM_ONLYOFFICE_CONTAINER-logs"
     do
       if docker volume inspect "$name" >/dev/null 2>&1; then
         printf '%s\n' "$name"
@@ -565,113 +565,113 @@ exampleproject_feature_volume_names() {
   } | awk 'NF && !seen[$0]++'
 }
 
-exampleproject_feature_network_names() {
+engram_feature_network_names() {
   {
-    docker network ls -q --filter "label=com.exampleproject.feature=$WIKILLM_FEATURE" |
+    docker network ls -q --filter "label=com.engram.feature=$ENGRAM_FEATURE" |
       while IFS= read -r id; do
         [ -n "$id" ] && docker network inspect "$id" --format '{{.Name}}'
       done
-    docker network ls -q --filter "label=com.docker.compose.project=$WIKILLM_PROJECT" |
+    docker network ls -q --filter "label=com.docker.compose.project=$ENGRAM_PROJECT" |
       while IFS= read -r id; do
         [ -n "$id" ] && docker network inspect "$id" --format '{{.Name}}'
       done
-    local legacy_network="${WIKILLM_PROJECT}_default"
+    local legacy_network="${ENGRAM_PROJECT}_default"
     if docker network inspect "$legacy_network" >/dev/null 2>&1; then
       printf '%s\n' "$legacy_network"
     fi
   } | awk 'NF && !seen[$0]++'
 }
 
-exampleproject_feature_image_ids() {
-  docker image ls -q --filter "label=com.exampleproject.feature=$WIKILLM_FEATURE" |
+engram_feature_image_ids() {
+  docker image ls -q --filter "label=com.engram.feature=$ENGRAM_FEATURE" |
     awk 'NF && !seen[$0]++'
 }
 
-exampleproject_print_feature_status() {
-  exampleproject_log "feature=$WIKILLM_FEATURE"
-  exampleproject_log "worktree=$WIKILLM_WORKTREE"
-  exampleproject_log "branch=$WIKILLM_BRANCH"
+engram_print_feature_status() {
+  engram_log "feature=$ENGRAM_FEATURE"
+  engram_log "worktree=$ENGRAM_WORKTREE"
+  engram_log "branch=$ENGRAM_BRANCH"
 
-  if git -C "$WIKILLM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$WIKILLM_BRANCH"; then
-    if git -C "$WIKILLM_REPO_ROOT" merge-base --is-ancestor "$WIKILLM_BRANCH" main; then
-      exampleproject_log "branch_state=merged"
+  if git -C "$ENGRAM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ENGRAM_BRANCH"; then
+    if git -C "$ENGRAM_REPO_ROOT" merge-base --is-ancestor "$ENGRAM_BRANCH" main; then
+      engram_log "branch_state=merged"
     else
-      exampleproject_log "branch_state=not-merged"
+      engram_log "branch_state=not-merged"
     fi
   else
-    exampleproject_log "branch_state=absent"
+    engram_log "branch_state=absent"
   fi
 
-  if [ -e "$WIKILLM_WORKTREE" ]; then
+  if [ -e "$ENGRAM_WORKTREE" ]; then
     local worktree_status
     worktree_status="$(
-      git -c "safe.directory=$WIKILLM_WORKTREE" \
-        -C "$WIKILLM_WORKTREE" status --porcelain
+      git -c "safe.directory=$ENGRAM_WORKTREE" \
+        -C "$ENGRAM_WORKTREE" status --porcelain
     )"
     if [ -n "$worktree_status" ]; then
-      exampleproject_log "worktree_state=present-dirty"
+      engram_log "worktree_state=present-dirty"
     else
-      exampleproject_log "worktree_state=present-clean"
+      engram_log "worktree_state=present-clean"
     fi
   else
-    exampleproject_log "worktree_state=absent"
+    engram_log "worktree_state=absent"
   fi
 
   if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-    exampleproject_log "docker_state=unavailable"
+    engram_log "docker_state=unavailable"
     return
   fi
 
   local values
-  values="$(exampleproject_feature_container_ids | xargs 2>/dev/null || true)"
-  exampleproject_log "containers=${values:-none}"
-  values="$(exampleproject_feature_volume_names | xargs 2>/dev/null || true)"
-  exampleproject_log "volumes=${values:-none}"
-  values="$(exampleproject_feature_network_names | xargs 2>/dev/null || true)"
-  exampleproject_log "networks=${values:-none}"
-  values="$(exampleproject_feature_image_ids | xargs 2>/dev/null || true)"
+  values="$(engram_feature_container_ids | xargs 2>/dev/null || true)"
+  engram_log "containers=${values:-none}"
+  values="$(engram_feature_volume_names | xargs 2>/dev/null || true)"
+  engram_log "volumes=${values:-none}"
+  values="$(engram_feature_network_names | xargs 2>/dev/null || true)"
+  engram_log "networks=${values:-none}"
+  values="$(engram_feature_image_ids | xargs 2>/dev/null || true)"
   local image_tag
-  for image_tag in "$WIKILLM_IMAGE" "$WIKILLM_VERIFY_IMAGE"; do
+  for image_tag in "$ENGRAM_IMAGE" "$ENGRAM_VERIFY_IMAGE"; do
     if docker image inspect "$image_tag" >/dev/null 2>&1; then
       values="$image_tag ${values:-}"
     fi
   done
-  exampleproject_log "images=${values:-none}"
+  engram_log "images=${values:-none}"
 }
 
-exampleproject_assert_feature_cleanup_safe() {
-  if git -C "$WIKILLM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$WIKILLM_BRANCH"; then
-    if ! git -C "$WIKILLM_REPO_ROOT" merge-base --is-ancestor "$WIKILLM_BRANCH" main; then
-      exampleproject_die "分支 $WIKILLM_BRANCH 尚未并入 main，拒绝清理"
+engram_assert_feature_cleanup_safe() {
+  if git -C "$ENGRAM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ENGRAM_BRANCH"; then
+    if ! git -C "$ENGRAM_REPO_ROOT" merge-base --is-ancestor "$ENGRAM_BRANCH" main; then
+      engram_die "分支 $ENGRAM_BRANCH 尚未并入 main，拒绝清理"
     fi
-  elif [ -e "$WIKILLM_WORKTREE" ]; then
-    exampleproject_die "worktree 仍存在但分支 $WIKILLM_BRANCH 不存在，拒绝推断其归属"
+  elif [ -e "$ENGRAM_WORKTREE" ]; then
+    engram_die "worktree 仍存在但分支 $ENGRAM_BRANCH 不存在，拒绝推断其归属"
   fi
 
-  if [ -e "$WIKILLM_WORKTREE" ]; then
+  if [ -e "$ENGRAM_WORKTREE" ]; then
     local status
-    status="$(git -c "safe.directory=$WIKILLM_WORKTREE" -C "$WIKILLM_WORKTREE" status --porcelain)"
+    status="$(git -c "safe.directory=$ENGRAM_WORKTREE" -C "$ENGRAM_WORKTREE" status --porcelain)"
     if [ -n "$status" ]; then
       printf '%s\n' "$status" >&2
-      exampleproject_die "worktree 有未提交内容，拒绝清理: $WIKILLM_WORKTREE"
+      engram_die "worktree 有未提交内容，拒绝清理: $ENGRAM_WORKTREE"
     fi
   fi
 }
 
-exampleproject_cleanup_feature_docker() {
-  exampleproject_require_docker
+engram_cleanup_feature_docker() {
+  engram_require_docker
 
   local failed=0
   local -a container_ids=()
   local -a volume_names=()
   local -a network_names=()
   local -a image_ids=()
-  mapfile -t container_ids < <(exampleproject_feature_container_ids)
-  mapfile -t volume_names < <(exampleproject_feature_volume_names)
-  mapfile -t network_names < <(exampleproject_feature_network_names)
-  mapfile -t image_ids < <(exampleproject_feature_image_ids)
+  mapfile -t container_ids < <(engram_feature_container_ids)
+  mapfile -t volume_names < <(engram_feature_volume_names)
+  mapfile -t network_names < <(engram_feature_network_names)
+  mapfile -t image_ids < <(engram_feature_image_ids)
 
-  exampleproject_log ">> 清理 Docker 容器"
+  engram_log ">> 清理 Docker 容器"
   local id name running
   for id in "${container_ids[@]}"; do
     [ -n "$id" ] || continue
@@ -679,7 +679,7 @@ exampleproject_cleanup_feature_docker() {
     running="$(docker inspect "$id" --format '{{.State.Running}}')"
     if [ "$running" = "true" ] && [[ "$name" == *-onlyoffice ]]; then
       docker exec "$id" documentserver-prepare4shutdown.sh >/dev/null 2>&1 || \
-        exampleproject_log "   WARN: $name 未响应优雅关闭请求，继续删除功能容器"
+        engram_log "   WARN: $name 未响应优雅关闭请求，继续删除功能容器"
     fi
     if ! docker rm -f "$id"; then
       printf '!! 删除容器失败: %s\n' "$name" >&2
@@ -687,7 +687,7 @@ exampleproject_cleanup_feature_docker() {
     fi
   done
 
-  exampleproject_log ">> 清理 Docker 数据卷"
+  engram_log ">> 清理 Docker 数据卷"
   local volume
   for volume in "${volume_names[@]}"; do
     [ -n "$volume" ] || continue
@@ -697,7 +697,7 @@ exampleproject_cleanup_feature_docker() {
     fi
   done
 
-  exampleproject_log ">> 清理 Docker 网络"
+  engram_log ">> 清理 Docker 网络"
   local network
   for network in "${network_names[@]}"; do
     [ -n "$network" ] || continue
@@ -707,9 +707,9 @@ exampleproject_cleanup_feature_docker() {
     fi
   done
 
-  exampleproject_log ">> 清理 Docker 功能镜像"
+  engram_log ">> 清理 Docker 功能镜像"
   local image_tag
-  for image_tag in "$WIKILLM_IMAGE" "$WIKILLM_VERIFY_IMAGE"; do
+  for image_tag in "$ENGRAM_IMAGE" "$ENGRAM_VERIFY_IMAGE"; do
     if docker image inspect "$image_tag" >/dev/null 2>&1; then
       if ! docker image rm "$image_tag"; then
         printf '!! 删除镜像标签失败: %s\n' "$image_tag" >&2
@@ -727,37 +727,37 @@ exampleproject_cleanup_feature_docker() {
     fi
   done
 
-  if ! exampleproject_verify_feature_docker_clean; then
+  if ! engram_verify_feature_docker_clean; then
     failed=1
   fi
   return "$failed"
 }
 
-exampleproject_verify_feature_docker_clean() {
+engram_verify_feature_docker_clean() {
   local failed=0 values
 
-  values="$(exampleproject_feature_container_ids | xargs 2>/dev/null || true)"
+  values="$(engram_feature_container_ids | xargs 2>/dev/null || true)"
   if [ -n "$values" ]; then
     printf '!! 残留容器: %s\n' "$values" >&2
     failed=1
   fi
-  values="$(exampleproject_feature_volume_names | xargs 2>/dev/null || true)"
+  values="$(engram_feature_volume_names | xargs 2>/dev/null || true)"
   if [ -n "$values" ]; then
     printf '!! 残留数据卷: %s\n' "$values" >&2
     failed=1
   fi
-  values="$(exampleproject_feature_network_names | xargs 2>/dev/null || true)"
+  values="$(engram_feature_network_names | xargs 2>/dev/null || true)"
   if [ -n "$values" ]; then
     printf '!! 残留网络: %s\n' "$values" >&2
     failed=1
   fi
-  values="$(exampleproject_feature_image_ids | xargs 2>/dev/null || true)"
+  values="$(engram_feature_image_ids | xargs 2>/dev/null || true)"
   if [ -n "$values" ]; then
     printf '!! 残留功能镜像: %s\n' "$values" >&2
     failed=1
   fi
   local image_tag
-  for image_tag in "$WIKILLM_IMAGE" "$WIKILLM_VERIFY_IMAGE"; do
+  for image_tag in "$ENGRAM_IMAGE" "$ENGRAM_VERIFY_IMAGE"; do
     if docker image inspect "$image_tag" >/dev/null 2>&1; then
       printf '!! 残留功能镜像标签: %s\n' "$image_tag" >&2
       failed=1
@@ -765,41 +765,41 @@ exampleproject_verify_feature_docker_clean() {
   done
 
   if [ "$failed" -eq 0 ]; then
-    exampleproject_log "   Docker 功能资源残留检查通过"
+    engram_log "   Docker 功能资源残留检查通过"
   fi
   return "$failed"
 }
 
-exampleproject_cleanup_feature_git() {
+engram_cleanup_feature_git() {
   local failed=0
 
-  exampleproject_log ">> 移除 Git worktree"
-  if [ -e "$WIKILLM_WORKTREE" ]; then
-    if ! git -C "$WIKILLM_REPO_ROOT" worktree remove "$WIKILLM_WORKTREE"; then
-      printf '!! 删除 worktree 失败: %s\n' "$WIKILLM_WORKTREE" >&2
+  engram_log ">> 移除 Git worktree"
+  if [ -e "$ENGRAM_WORKTREE" ]; then
+    if ! git -C "$ENGRAM_REPO_ROOT" worktree remove "$ENGRAM_WORKTREE"; then
+      printf '!! 删除 worktree 失败: %s\n' "$ENGRAM_WORKTREE" >&2
       failed=1
     fi
   fi
 
-  if ! git -C "$WIKILLM_REPO_ROOT" worktree prune; then
+  if ! git -C "$ENGRAM_REPO_ROOT" worktree prune; then
     printf '!! git worktree prune 执行失败\n' >&2
     failed=1
   fi
 
   if [ "$failed" -eq 0 ] &&
-    git -C "$WIKILLM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$WIKILLM_BRANCH"
+    git -C "$ENGRAM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ENGRAM_BRANCH"
   then
-    exampleproject_log ">> 删除已合并功能分支"
-    if ! git -C "$WIKILLM_REPO_ROOT" branch -d "$WIKILLM_BRANCH"; then
-      printf '!! 删除分支失败: %s\n' "$WIKILLM_BRANCH" >&2
+    engram_log ">> 删除已合并功能分支"
+    if ! git -C "$ENGRAM_REPO_ROOT" branch -d "$ENGRAM_BRANCH"; then
+      printf '!! 删除分支失败: %s\n' "$ENGRAM_BRANCH" >&2
       failed=1
     fi
   fi
 
-  exampleproject_log ">> 清理 Git safe.directory 记录"
+  engram_log ">> 清理 Git safe.directory 记录"
   local safe_value
-  if [ ! -e "$WIKILLM_WORKTREE" ]; then
-    for safe_value in "$WIKILLM_SAFE_DIRECTORY" "$WIKILLM_WORKTREE"; do
+  if [ ! -e "$ENGRAM_WORKTREE" ]; then
+    for safe_value in "$ENGRAM_SAFE_DIRECTORY" "$ENGRAM_WORKTREE"; do
       if git config --global --get-all safe.directory 2>/dev/null |
         grep -Fx "$safe_value" >/dev/null
       then
@@ -810,38 +810,38 @@ exampleproject_cleanup_feature_git() {
       fi
     done
   else
-    exampleproject_log "   worktree 仍存在，保留其 safe.directory 记录"
+    engram_log "   worktree 仍存在，保留其 safe.directory 记录"
   fi
 
-  if ! git -C "$WIKILLM_REPO_ROOT" worktree prune; then
+  if ! git -C "$ENGRAM_REPO_ROOT" worktree prune; then
     printf '!! git worktree prune 复验前执行失败\n' >&2
     failed=1
   fi
-  if ! exampleproject_verify_feature_git_clean; then
+  if ! engram_verify_feature_git_clean; then
     failed=1
   fi
   return "$failed"
 }
 
-exampleproject_verify_feature_git_clean() {
+engram_verify_feature_git_clean() {
   local failed=0
-  if git -C "$WIKILLM_REPO_ROOT" worktree list --porcelain |
+  if git -C "$ENGRAM_REPO_ROOT" worktree list --porcelain |
     sed -n 's/^worktree //p' |
-    grep -Fx "$WIKILLM_WORKTREE" >/dev/null
+    grep -Fx "$ENGRAM_WORKTREE" >/dev/null
   then
-    printf '!! worktree 仍在 Git 注册表中: %s\n' "$WIKILLM_WORKTREE" >&2
+    printf '!! worktree 仍在 Git 注册表中: %s\n' "$ENGRAM_WORKTREE" >&2
     failed=1
   fi
-  if [ -e "$WIKILLM_WORKTREE" ]; then
-    printf '!! worktree 目录仍存在: %s\n' "$WIKILLM_WORKTREE" >&2
+  if [ -e "$ENGRAM_WORKTREE" ]; then
+    printf '!! worktree 目录仍存在: %s\n' "$ENGRAM_WORKTREE" >&2
     failed=1
   fi
-  if git -C "$WIKILLM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$WIKILLM_BRANCH"; then
-    printf '!! 功能分支仍存在: %s\n' "$WIKILLM_BRANCH" >&2
+  if git -C "$ENGRAM_REPO_ROOT" show-ref --verify --quiet "refs/heads/$ENGRAM_BRANCH"; then
+    printf '!! 功能分支仍存在: %s\n' "$ENGRAM_BRANCH" >&2
     failed=1
   fi
   local safe_value
-  for safe_value in "$WIKILLM_SAFE_DIRECTORY" "$WIKILLM_WORKTREE"; do
+  for safe_value in "$ENGRAM_SAFE_DIRECTORY" "$ENGRAM_WORKTREE"; do
     if git config --global --get-all safe.directory 2>/dev/null |
       grep -Fx "$safe_value" >/dev/null
     then
@@ -850,12 +850,12 @@ exampleproject_verify_feature_git_clean() {
     fi
   done
   if [ "$failed" -eq 0 ]; then
-    exampleproject_log "   Git worktree 与功能分支残留检查通过"
+    engram_log "   Git worktree 与功能分支残留检查通过"
   fi
   return "$failed"
 }
 
-exampleproject_image_used_by_container() {
+engram_image_used_by_container() {
   local image_id="$1"
   docker ps -aq |
     while IFS= read -r container_id; do
@@ -865,30 +865,30 @@ exampleproject_image_used_by_container() {
     grep -Fx "$image_id" >/dev/null
 }
 
-exampleproject_cleanup_old_main_images() {
-  exampleproject_require_docker
+engram_cleanup_old_main_images() {
+  engram_require_docker
 
   local current_tag current_image_id failed=0
-  current_tag="engram:main-$(git -C "$WIKILLM_REPO_ROOT" rev-parse --short=12 HEAD)"
+  current_tag="engram:main-$(git -C "$ENGRAM_REPO_ROOT" rev-parse --short=12 HEAD)"
   current_image_id="$(docker inspect engram --format '{{.Image}}' 2>/dev/null || true)"
-  [ -n "$current_image_id" ] || exampleproject_die "主容器 engram 不存在，无法判断应保留的主镜像"
+  [ -n "$current_image_id" ] || engram_die "主容器 engram 不存在，无法判断应保留的主镜像"
 
-  exampleproject_log ">> 清理未被容器引用的旧主镜像"
+  engram_log ">> 清理未被容器引用的旧主镜像"
   local repository tag image_ref image_id
   while IFS='|' read -r repository tag; do
     [ "$repository" = "engram" ] || continue
     if [[ "$tag" != main-* && "$tag" != pre-* && ! "$tag" =~ ^[0-9a-f]{7,40}$ ]]; then
       continue
     fi
-    if git -C "$WIKILLM_REPO_ROOT" show-ref --verify --quiet "refs/heads/feat/$tag"; then
-      exampleproject_log "   保留活动功能分支镜像: $repository:$tag"
+    if git -C "$ENGRAM_REPO_ROOT" show-ref --verify --quiet "refs/heads/feat/$tag"; then
+      engram_log "   保留活动功能分支镜像: $repository:$tag"
       continue
     fi
     image_ref="$repository:$tag"
     [ "$image_ref" != "$current_tag" ] || continue
     image_id="$(docker image inspect "$image_ref" --format '{{.Id}}')"
-    if [ "$image_id" != "$current_image_id" ] && exampleproject_image_used_by_container "$image_id"; then
-      exampleproject_log "   保留仍被其他容器引用的镜像: $image_ref"
+    if [ "$image_id" != "$current_image_id" ] && engram_image_used_by_container "$image_id"; then
+      engram_log "   保留仍被其他容器引用的镜像: $image_ref"
       continue
     fi
     if ! docker image rm "$image_ref"; then

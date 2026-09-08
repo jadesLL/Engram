@@ -15,7 +15,7 @@
     "electron-builder": "^26.0.12"
   },
   "build": {
-    "appId": "com.llmwiki.app",
+    "appId": "com.engram.app",
     "productName": "Engram",
     "asar": true,
     "files": [

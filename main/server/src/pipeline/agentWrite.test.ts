@@ -29,7 +29,7 @@ function seedSource(rel: string, body: string): void {
 }
 
 test('证据逐字校验：引文必须能在来源中命中', () => {
-  seedSource('原始资料/资料A.md', '张三是信捷科技的销售总监，负责华东区。');
+  seedSource('原始资料/资料A.md', '张三是示例科技的销售总监，负责华东区。');
   assert.throws(
     () => agentWritePage({
       path: 'Wiki/实体/张三.md',
@@ -90,7 +90,7 @@ test('单来源两条引文满足门禁；已有页面增量不需要证据', ()
 });
 
 test('写页守卫：只允许 Wiki/ 路径，原始资料与 AIWorks 只读区拒绝（403）', () => {
-  seedSource('原始资料/资料A.md', '张三是信捷科技的销售总监，负责华东区。');
+  seedSource('原始资料/资料A.md', '张三是示例科技的销售总监，负责华东区。');
   for (const bad of ['原始资料/资料A.md', 'AIWorks/log/log.md', 'notes.md']) {
     assert.throws(
       () => agentWritePage({ path: bad, title: '越权', content: '# 越权' }),

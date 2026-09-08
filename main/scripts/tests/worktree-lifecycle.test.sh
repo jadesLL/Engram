@@ -7,8 +7,8 @@ FEATURE="lifecycle-smoke-$$"
 DIRTY_FEATURE="lifecycle-dirty-$$"
 CREATE_FEATURE="lifecycle-create-$$"
 DEPLOY_FEATURE="lifecycle-deploy-$$"
-TEST_REPO="$(mktemp -d -t exampleproject-lifecycle.XXXXXX)"
-TEST_MAIN_VOLUME="exampleproject-test-main-$$"
+TEST_REPO="$(mktemp -d -t engram-lifecycle.XXXXXX)"
+TEST_MAIN_VOLUME="engram-test-main-$$"
 
 remove_safe_directory() {
   local value="$1"
@@ -19,13 +19,13 @@ cleanup_test() {
   local exit_code=$?
   set +e
   if [ -d "$TEST_REPO/.git" ]; then
-    WIKILLM_REPO_ROOT="$TEST_REPO" \
+    ENGRAM_REPO_ROOT="$TEST_REPO" \
       bash "$SCRIPT_DIR/cleanup-feature.sh" --docker-only "$FEATURE" >/dev/null 2>&1
-    WIKILLM_REPO_ROOT="$TEST_REPO" \
+    ENGRAM_REPO_ROOT="$TEST_REPO" \
       bash "$SCRIPT_DIR/cleanup-feature.sh" --docker-only "$DIRTY_FEATURE" >/dev/null 2>&1
-    WIKILLM_REPO_ROOT="$TEST_REPO" \
+    ENGRAM_REPO_ROOT="$TEST_REPO" \
       bash "$SCRIPT_DIR/cleanup-feature.sh" --docker-only "$CREATE_FEATURE" >/dev/null 2>&1
-    WIKILLM_REPO_ROOT="$TEST_REPO" \
+    ENGRAM_REPO_ROOT="$TEST_REPO" \
       bash "$SCRIPT_DIR/cleanup-feature.sh" --docker-only "$DEPLOY_FEATURE" >/dev/null 2>&1
   fi
   remove_safe_directory "%(prefix)/$TEST_REPO/worktrees/$FEATURE"
@@ -38,7 +38,7 @@ cleanup_test() {
   remove_safe_directory "$TEST_REPO/worktrees/$DEPLOY_FEATURE"
   docker volume rm "$TEST_MAIN_VOLUME" >/dev/null 2>&1 || true
   case "$TEST_REPO" in
-    */exampleproject-lifecycle.*) rm -rf -- "$TEST_REPO" ;;
+    */engram-lifecycle.*) rm -rf -- "$TEST_REPO" ;;
     *) printf '!! 拒绝删除意外测试路径: %s\n' "$TEST_REPO" >&2 ;;
   esac
   exit "$exit_code"
@@ -70,40 +70,40 @@ assert_absent() {
 
 create_docker_fixture() {
   local feature="$1"
-  local project="exampleproject-$feature"
-  local image="example-wiki:$feature"
-  local container="example-wiki-$feature"
-  local extra_container="exampleproject-extra-$feature"
-  local volume="example-wiki-data-$feature"
-  local extra_volume="exampleproject-extra-data-$feature"
+  local project="engram-$feature"
+  local image="engram:$feature"
+  local container="engram-$feature"
+  local extra_container="engram-extra-$feature"
+  local volume="engram-data-$feature"
+  local extra_volume="engram-extra-data-$feature"
   local network="${project}_default"
 
   docker tag node:22-slim "$image"
   docker volume create \
-    --label com.exampleproject.scope=feature \
-    --label "com.exampleproject.feature=$feature" \
+    --label com.engram.scope=feature \
+    --label "com.engram.feature=$feature" \
     "$volume" >/dev/null
   docker volume create \
-    --label com.exampleproject.scope=feature \
-    --label "com.exampleproject.feature=$feature" \
+    --label com.engram.scope=feature \
+    --label "com.engram.feature=$feature" \
     "$extra_volume" >/dev/null
   docker network create \
-    --label com.exampleproject.scope=feature \
-    --label "com.exampleproject.feature=$feature" \
+    --label com.engram.scope=feature \
+    --label "com.engram.feature=$feature" \
     --label "com.docker.compose.project=$project" \
     "$network" >/dev/null
   MSYS_NO_PATHCONV=1 docker create \
     --name "$container" \
-    --label com.exampleproject.scope=feature \
-    --label "com.exampleproject.feature=$feature" \
+    --label com.engram.scope=feature \
+    --label "com.engram.feature=$feature" \
     --label "com.docker.compose.project=$project" \
     --network "$network" \
     --mount "type=volume,source=$volume,target=/data" \
     "$image" sleep 300 >/dev/null
   MSYS_NO_PATHCONV=1 docker create \
     --name "$extra_container" \
-    --label com.exampleproject.scope=feature \
-    --label "com.exampleproject.feature=$feature" \
+    --label com.engram.scope=feature \
+    --label "com.engram.feature=$feature" \
     --network "$network" \
     "$image" sleep 300 >/dev/null
 }
@@ -121,15 +121,15 @@ do
 done
 
 printf '== compose interpolation ==\n'
-WIKILLM_FEATURE="$FEATURE" WIKILLM_PORT=18081 WIKILLM_BUILD_NETWORK=none \
+ENGRAM_FEATURE="$FEATURE" ENGRAM_PORT=18081 ENGRAM_BUILD_NETWORK=none \
   docker compose \
-    --project-name "exampleproject-$FEATURE" \
+    --project-name "engram-$FEATURE" \
     -f "$SCRIPT_DIR/../docker-compose.worktree.yml" \
     config >/dev/null
 
 printf '== temporary git repository ==\n'
 git init --initial-branch=main "$TEST_REPO" >/dev/null
-git -C "$TEST_REPO" config user.name "ExampleProject Script Test"
+git -C "$TEST_REPO" config user.name "Engram Script Test"
 git -C "$TEST_REPO" config user.email "scripts@example.invalid"
 mkdir -p "$TEST_REPO/main" "$TEST_REPO/worktrees"
 printf '/worktrees/*\n' > "$TEST_REPO/.gitignore"
@@ -149,21 +149,21 @@ git -C "$TEST_REPO" add .gitignore main/base.txt main/docker-compose.worktree.ym
 git -C "$TEST_REPO" commit -m "test: base" >/dev/null
 
 printf '== create code-only worktree ==\n'
-WIKILLM_REPO_ROOT="$TEST_REPO" \
+ENGRAM_REPO_ROOT="$TEST_REPO" \
   bash "$SCRIPT_DIR/new-worktree.sh" "$CREATE_FEATURE"
 CREATE_WORKTREE="$TEST_REPO/worktrees/$CREATE_FEATURE"
 test -d "$CREATE_WORKTREE/main"
 test ! -e "$CREATE_WORKTREE/main/node_modules"
-assert_absent container "example-wiki-$CREATE_FEATURE"
-assert_absent volume "example-wiki-data-$CREATE_FEATURE"
-assert_absent image "example-wiki:$CREATE_FEATURE"
+assert_absent container "engram-$CREATE_FEATURE"
+assert_absent volume "engram-data-$CREATE_FEATURE"
+assert_absent image "engram:$CREATE_FEATURE"
 
 printf '== Docker verification without host node_modules ==\n'
-WIKILLM_REPO_ROOT="$TEST_REPO" \
+ENGRAM_REPO_ROOT="$TEST_REPO" \
   bash "$SCRIPT_DIR/verify-feature.sh" "$CREATE_FEATURE"
 test "$(
-  docker image inspect "example-wiki:$CREATE_FEATURE-verify" \
-    --format '{{index .Config.Labels "com.exampleproject.feature"}}'
+  docker image inspect "engram:$CREATE_FEATURE-verify" \
+    --format '{{index .Config.Labels "com.engram.feature"}}'
 )" = "$CREATE_FEATURE"
 test ! -e "$CREATE_WORKTREE/main/node_modules"
 
@@ -175,25 +175,25 @@ MSYS_NO_PATHCONV=1 docker run --rm \
 CREATE_PORT="$(
   node -e "const net=require('node:net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})"
 )"
-WIKILLM_REPO_ROOT="$TEST_REPO" \
-WIKILLM_MAIN_VOLUME="$TEST_MAIN_VOLUME" \
+ENGRAM_REPO_ROOT="$TEST_REPO" \
+ENGRAM_MAIN_VOLUME="$TEST_MAIN_VOLUME" \
   bash "$SCRIPT_DIR/preview-feature.sh" "$CREATE_FEATURE" "$CREATE_PORT"
-MSYS_NO_PATHCONV=1 docker exec "example-wiki-$CREATE_FEATURE" test -f /data/seed.txt
+MSYS_NO_PATHCONV=1 docker exec "engram-$CREATE_FEATURE" test -f /data/seed.txt
 test "$(
-  docker inspect "example-wiki-$CREATE_FEATURE" \
-    --format '{{index .Config.Labels "com.exampleproject.feature"}}'
+  docker inspect "engram-$CREATE_FEATURE" \
+    --format '{{index .Config.Labels "com.engram.feature"}}'
 )" = "$CREATE_FEATURE"
 test "$(
-  docker image inspect "example-wiki:$CREATE_FEATURE" \
-    --format '{{index .Config.Labels "com.exampleproject.feature"}}'
+  docker image inspect "engram:$CREATE_FEATURE" \
+    --format '{{index .Config.Labels "com.engram.feature"}}'
 )" = "$CREATE_FEATURE"
-WIKILLM_REPO_ROOT="$TEST_REPO" \
+ENGRAM_REPO_ROOT="$TEST_REPO" \
   bash "$SCRIPT_DIR/cleanup-feature.sh" "$CREATE_FEATURE"
-assert_absent container "example-wiki-$CREATE_FEATURE"
-assert_absent volume "example-wiki-data-$CREATE_FEATURE"
-assert_absent network "exampleproject-${CREATE_FEATURE}_default"
-assert_absent image "example-wiki:$CREATE_FEATURE"
-assert_absent image "example-wiki:$CREATE_FEATURE-verify"
+assert_absent container "engram-$CREATE_FEATURE"
+assert_absent volume "engram-data-$CREATE_FEATURE"
+assert_absent network "engram-${CREATE_FEATURE}_default"
+assert_absent image "engram:$CREATE_FEATURE"
+assert_absent image "engram:$CREATE_FEATURE-verify"
 
 FEATURE_WORKTREE="$TEST_REPO/worktrees/$FEATURE"
 git -C "$TEST_REPO" worktree add "$FEATURE_WORKTREE" -b "feat/$FEATURE" main >/dev/null
@@ -208,20 +208,20 @@ docker image inspect node:22-slim >/dev/null
 create_docker_fixture "$FEATURE"
 
 printf '== merge, verify, and zero-residue cleanup ==\n'
-WIKILLM_REPO_ROOT="$TEST_REPO" \
+ENGRAM_REPO_ROOT="$TEST_REPO" \
   bash "$SCRIPT_DIR/merge-feature.sh" "$FEATURE"
 
 test -f "$TEST_REPO/main/feature.txt"
 test ! -e "$TEST_REPO/main/node_modules"
 test ! -e "$FEATURE_WORKTREE"
 ! git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/feat/$FEATURE"
-assert_absent container "example-wiki-$FEATURE"
-assert_absent container "exampleproject-extra-$FEATURE"
-assert_absent volume "example-wiki-data-$FEATURE"
-assert_absent volume "exampleproject-extra-data-$FEATURE"
-assert_absent network "exampleproject-$FEATURE"
-assert_absent network "exampleproject-${FEATURE}_default"
-assert_absent image "example-wiki:$FEATURE"
+assert_absent container "engram-$FEATURE"
+assert_absent container "engram-extra-$FEATURE"
+assert_absent volume "engram-data-$FEATURE"
+assert_absent volume "engram-extra-data-$FEATURE"
+assert_absent network "engram-$FEATURE"
+assert_absent network "engram-${FEATURE}_default"
+assert_absent image "engram:$FEATURE"
 ! git config --global --get-all safe.directory | grep -Fx "$FEATURE_WORKTREE" >/dev/null
 ! git config --global --get-all safe.directory | grep -Fx "%(prefix)/$FEATURE_WORKTREE" >/dev/null
 
@@ -231,21 +231,21 @@ git -C "$TEST_REPO" worktree add "$DIRTY_WORKTREE" -b "feat/$DIRTY_FEATURE" main
 printf 'uncommitted\n' > "$DIRTY_WORKTREE/main/uncommitted.txt"
 git config --global --add safe.directory "%(prefix)/$DIRTY_WORKTREE"
 create_docker_fixture "$DIRTY_FEATURE"
-if WIKILLM_REPO_ROOT="$TEST_REPO" \
+if ENGRAM_REPO_ROOT="$TEST_REPO" \
   bash "$SCRIPT_DIR/cleanup-feature.sh" "$DIRTY_FEATURE"
 then
   printf '!! 脏 worktree 被错误清理\n' >&2
   exit 1
 fi
-docker volume inspect "example-wiki-data-$DIRTY_FEATURE" >/dev/null
+docker volume inspect "engram-data-$DIRTY_FEATURE" >/dev/null
 
 rm -f -- "$DIRTY_WORKTREE/main/uncommitted.txt"
-WIKILLM_REPO_ROOT="$TEST_REPO" \
+ENGRAM_REPO_ROOT="$TEST_REPO" \
   bash "$SCRIPT_DIR/cleanup-feature.sh" "$DIRTY_FEATURE"
-assert_absent container "example-wiki-$DIRTY_FEATURE"
-assert_absent volume "example-wiki-data-$DIRTY_FEATURE"
-assert_absent network "exampleproject-${DIRTY_FEATURE}_default"
-assert_absent image "example-wiki:$DIRTY_FEATURE"
+assert_absent container "engram-$DIRTY_FEATURE"
+assert_absent volume "engram-data-$DIRTY_FEATURE"
+assert_absent network "engram-${DIRTY_FEATURE}_default"
+assert_absent image "engram:$DIRTY_FEATURE"
 
 printf '== deploy path with command stubs ==\n'
 DEPLOY_WORKTREE="$TEST_REPO/worktrees/$DEPLOY_FEATURE"
@@ -261,13 +261,13 @@ mkdir -p "$DEPLOY_BIN"
 cat > "$DEPLOY_BIN/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >> "$WIKILLM_TEST_DOCKER_LOG"
+printf '%s\n' "$*" >> "$ENGRAM_TEST_DOCKER_LOG"
 case "${1:-}" in
   info|build|ps|compose|rm|exec)
     exit 0
     ;;
   inspect)
-    if [ "${2:-}" = "example-wiki" ]; then
+    if [ "${2:-}" = "engram" ]; then
       printf 'sha256:test-current\n'
       exit 0
     fi
@@ -278,19 +278,19 @@ case "${1:-}" in
       ls)
         if printf '%s\n' "$*" | grep -F -- '--format' >/dev/null; then
           printf '%s\n' \
-            'example-wiki|main-old-test' \
-            'example-wiki|pre-old-test' \
-            'example-wiki|a1b2c3d' \
-            'example-wiki|0.1.0'
+            'engram|main-old-test' \
+            'engram|pre-old-test' \
+            'engram|a1b2c3d' \
+            'engram|0.1.0'
         fi
         exit 0
         ;;
       inspect)
         case "${3:-}" in
           node:22-slim) printf 'sha256:node-test\n'; exit 0 ;;
-          example-wiki:main-old-test) printf 'sha256:main-old\n'; exit 0 ;;
-          example-wiki:pre-old-test) printf 'sha256:pre-old\n'; exit 0 ;;
-          example-wiki:a1b2c3d) printf 'sha256:commit-old\n'; exit 0 ;;
+          engram:main-old-test) printf 'sha256:main-old\n'; exit 0 ;;
+          engram:pre-old-test) printf 'sha256:pre-old\n'; exit 0 ;;
+          engram:a1b2c3d) printf 'sha256:commit-old\n'; exit 0 ;;
           *) exit 1 ;;
         esac
         ;;
@@ -312,8 +312,8 @@ exit 0
 EOF
 chmod +x "$DEPLOY_BIN/docker" "$DEPLOY_BIN/curl"
 
-WIKILLM_REPO_ROOT="$TEST_REPO" \
-WIKILLM_TEST_DOCKER_LOG="$DOCKER_LOG" \
+ENGRAM_REPO_ROOT="$TEST_REPO" \
+ENGRAM_TEST_DOCKER_LOG="$DOCKER_LOG" \
 PATH="$DEPLOY_BIN:$PATH" \
   bash "$SCRIPT_DIR/merge-feature.sh" --deploy "$DEPLOY_FEATURE"
 
@@ -323,10 +323,10 @@ grep -F "build --pull=false --network none --target verify" "$DOCKER_LOG" >/dev/
 grep -F "build --pull=false --network none --label" "$DOCKER_LOG" >/dev/null
 grep -F "compose --project-name main" "$DOCKER_LOG" >/dev/null
 grep -F "up -d --no-build --remove-orphans" "$DOCKER_LOG" >/dev/null
-grep -F "image rm example-wiki:main-old-test" "$DOCKER_LOG" >/dev/null
-grep -F "image rm example-wiki:pre-old-test" "$DOCKER_LOG" >/dev/null
-grep -F "image rm example-wiki:a1b2c3d" "$DOCKER_LOG" >/dev/null
-! grep -F "image rm example-wiki:0.1.0" "$DOCKER_LOG" >/dev/null
+grep -F "image rm engram:main-old-test" "$DOCKER_LOG" >/dev/null
+grep -F "image rm engram:pre-old-test" "$DOCKER_LOG" >/dev/null
+grep -F "image rm engram:a1b2c3d" "$DOCKER_LOG" >/dev/null
+! grep -F "image rm engram:0.1.0" "$DOCKER_LOG" >/dev/null
 test ! -e "$DEPLOY_WORKTREE"
 ! git -C "$TEST_REPO" show-ref --verify --quiet "refs/heads/feat/$DEPLOY_FEATURE"
 

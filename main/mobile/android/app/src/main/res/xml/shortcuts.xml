@@ -7,8 +7,8 @@
         android:shortcutShortLabel="@string/shortcut_select_short"
         android:shortcutLongLabel="@string/shortcut_select_long">
         <intent
-            android:action="com.example.exampleproject.SELECT_SERVER"
-            android:targetPackage="com.example.exampleproject"
-            android:targetClass="com.example.exampleproject.MainActivity" />
+            android:action="com.engram.app.SELECT_SERVER"
+            android:targetPackage="com.engram.app"
+            android:targetClass="com.engram.app.MainActivity" />
     </shortcut>
 </shortcuts>

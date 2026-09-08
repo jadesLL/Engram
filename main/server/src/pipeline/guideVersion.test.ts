@@ -18,7 +18,7 @@ let app: ReturnType<typeof Fastify>;
 let token = '';
 
 const SOURCE = '原始资料/版本实验源.md';
-const PAGE = 'Wiki/实体/信捷科技.md';
+const PAGE = 'Wiki/实体/示例科技.md';
 
 before(async () => {
   const dbModule = await import('../lib/db.js');
@@ -35,7 +35,7 @@ before(async () => {
   await app.ready();
   token = app.jwt.sign({ sub: 'owner' });
 
-  writePage(SOURCE, '# 版本实验源\n\n信捷科技2026年签约。信捷科技主营自动化设备。', { title: '版本实验源' });
+  writePage(SOURCE, '# 版本实验源\n\n示例科技2026年签约。示例科技主营自动化设备。', { title: '版本实验源' });
 });
 
 after(async () => {
@@ -49,10 +49,10 @@ function writeAgentPage(target = PAGE) {
     path: target,
     title: target.replace(/\.md$/, '').split('/').pop()!,
     type: 'org',
-    content: `# 信捷科技\n\n## 当前理解\n\n自动化设备厂商。\n`,
+    content: `# 示例科技\n\n## 当前理解\n\n自动化设备厂商。\n`,
     evidence: [
-      { path: SOURCE, quote: '信捷科技2026年签约' },
-      { path: SOURCE, quote: '信捷科技主营自动化设备' },
+      { path: SOURCE, quote: '示例科技2026年签约' },
+      { path: SOURCE, quote: '示例科技主营自动化设备' },
     ],
   });
 }

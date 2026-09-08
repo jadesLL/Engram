@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-update-lib-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-update-lib-'));
 process.env.DATA_DIR = temp;
 
 const { SWITCHER_SCRIPT, buildCreateBody, buildSwitcherCreateBody, OLD_CONTAINER_NAME } = await import(
@@ -36,13 +36,13 @@ test('switcher 脚本引用注入的环境变量且不含镜像内路径依赖',
 test('buildCreateBody 复制容器配置并替换镜像', () => {
   const inspect = {
     Id: 'abc123def456789',
-    Name: '/example-wiki',
+    Name: '/engram',
     Image: 'sha256:oldimage',
     Config: {
-      Image: 'registry.example.com/example-wiki:1.1.5',
+      Image: 'registry.xxx.com/engram:1.1.5',
       Env: ['TZ=Asia/Shanghai', 'DEFAULT_PASSWORD=x'],
       Cmd: null,
-      Labels: { 'com.docker.compose.project': 'exampleproject' },
+      Labels: { 'com.docker.compose.project': 'engram' },
       Healthcheck: { Test: ['CMD', 'node', '-e', '...'] },
     },
     HostConfig: {
@@ -50,22 +50,22 @@ test('buildCreateBody 复制容器配置并替换镜像', () => {
       PortBindings: { '8080/tcp': [{ HostPort: '8080' }] },
       RestartPolicy: { Name: 'unless-stopped' },
       Sysctls: { 'net.ipv4.tcp_mtu_probing': '1' },
-      NetworkMode: 'exampleproject_default',
+      NetworkMode: 'engram_default',
     },
     NetworkSettings: {
       Networks: {
-        exampleproject_default: { Aliases: ['example-wiki', 'abc123def456'] },
+        engram_default: { Aliases: ['engram', 'abc123def456'] },
       },
     },
   };
-  const body = buildCreateBody(inspect as any, 'registry.example.com/example-wiki:latest');
-  assert.equal((body as any).Image, 'registry.example.com/example-wiki:latest');
+  const body = buildCreateBody(inspect as any, 'registry.xxx.com/engram:latest');
+  assert.equal((body as any).Image, 'registry.xxx.com/engram:latest');
   assert.deepEqual((body as any).Env, ['TZ=Asia/Shanghai', 'DEFAULT_PASSWORD=x']);
   assert.deepEqual((body as any).HostConfig.Binds, ['./data:/data']);
   assert.deepEqual((body as any).HostConfig.PortBindings, { '8080/tcp': [{ HostPort: '8080' }] });
   assert.equal((body as any).HostConfig.RestartPolicy.Name, 'unless-stopped');
   // 网络别名保留（去掉容器短 ID 别名）
-  assert.deepEqual((body as any).NetworkingConfig.EndpointsConfig['exampleproject_default'].Aliases, ['example-wiki']);
+  assert.deepEqual((body as any).NetworkingConfig.EndpointsConfig['engram_default'].Aliases, ['engram']);
   // Hostname 不复制（由 Docker 重新分配）；Cmd/Healthcheck 不复制（新镜像自己的生效）
   assert.equal((body as any).Hostname, undefined);
   assert.equal((body as any).Cmd, undefined);
@@ -73,8 +73,8 @@ test('buildCreateBody 复制容器配置并替换镜像', () => {
 });
 
 test('buildSwitcherCreateBody 用目标镜像 + sock + AutoRemove', () => {
-  const body = buildSwitcherCreateBody('registry.example.com/example-wiki:latest', 'oldid123', 'newid456', 'example-wiki') as any;
-  assert.equal(body.Image, 'registry.example.com/example-wiki:latest');
+  const body = buildSwitcherCreateBody('registry.xxx.com/engram:latest', 'oldid123', 'newid456', 'engram') as any;
+  assert.equal(body.Image, 'registry.xxx.com/engram:latest');
   assert.equal(body.HostConfig.NetworkMode, 'none');
   assert.equal(body.HostConfig.AutoRemove, true);
   assert.deepEqual(body.HostConfig.Binds, ['/var/run/docker.sock:/var/run/docker.sock']);
@@ -82,22 +82,22 @@ test('buildSwitcherCreateBody 用目标镜像 + sock + AutoRemove', () => {
 });
 
 test('deriveDefaultImageRef 推导规则', () => {
-  assert.equal(deriveDefaultImageRef('gitea.example.com:11111/example/exampleproject/example-wiki:1.1.5'), 'gitea.example.com:11111/example/exampleproject/example-wiki');
+  assert.equal(deriveDefaultImageRef('gitea.xxx.com:11111/example/Engram/engram:1.1.5'), 'gitea.xxx.com:11111/example/Engram/engram');
   assert.equal(deriveDefaultImageRef('registry.io/repo/app'), 'registry.io/repo/app');
   // 本地构建镜像无法推导
-  assert.equal(deriveDefaultImageRef('example-wiki:1.1.5'), null);
-  assert.equal(deriveDefaultImageRef('example-wiki'), null);
+  assert.equal(deriveDefaultImageRef('engram:1.1.5'), null);
+  assert.equal(deriveDefaultImageRef('engram'), null);
   // digest ref 去除 digest
   assert.equal(deriveDefaultImageRef('reg.io/app@sha256:abc'), 'reg.io/app');
 });
 
 test('buildRegistryAuthHeader base64 编码凭据', () => {
-  const header = buildRegistryAuthHeader('gitea.example.com:11111/example/app', 'user', 'pass');
+  const header = buildRegistryAuthHeader('gitea.xxx.com:11111/example/app', 'user', 'pass');
   assert.ok(header);
   const decoded = JSON.parse(Buffer.from(header!, 'base64').toString('utf8'));
   assert.equal(decoded.username, 'user');
   assert.equal(decoded.password, 'pass');
-  assert.equal(decoded.serveraddress, 'gitea.example.com:11111');
+  assert.equal(decoded.serveraddress, 'gitea.xxx.com:11111');
   assert.equal(buildRegistryAuthHeader('x', '', 'y'), undefined);
   assert.equal(buildRegistryAuthHeader('x', 'y', ''), undefined);
 });

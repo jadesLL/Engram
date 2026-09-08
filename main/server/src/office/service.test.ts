@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import JSZip from 'jszip';
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-office-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-office-'));
 process.env.DATA_DIR = temp;
 process.env.OFFICE_EDITOR_ENABLED = 'true';
 process.env.ONLYOFFICE_JWT_SECRET = 'test-onlyoffice-secret-with-at-least-32-characters';

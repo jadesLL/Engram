@@ -40,21 +40,21 @@ FEATURE="${1:-}"
   exit 2
 }
 
-exampleproject_init_feature "$FEATURE"
+engram_init_feature "$FEATURE"
 
 if [ "$MODE" = "inspect" ]; then
-  exampleproject_print_feature_status
+  engram_print_feature_status
   exit 0
 fi
 
 if [ "$MODE" = "docker-only" ]; then
-  exampleproject_cleanup_feature_docker
-  exampleproject_log "DONE: $FEATURE 的 Docker 功能资源已清理并复验"
+  engram_cleanup_feature_docker
+  engram_log "DONE: $FEATURE 的 Docker 功能资源已清理并复验"
   exit 0
 fi
 
-exampleproject_acquire_merge_lock
-exampleproject_assert_feature_cleanup_safe
-exampleproject_cleanup_feature_docker
-exampleproject_cleanup_feature_git
-exampleproject_log "DONE: $FEATURE 的 worktree、分支和 Docker 功能资源已全部清理并复验"
+engram_acquire_merge_lock
+engram_assert_feature_cleanup_safe
+engram_cleanup_feature_docker
+engram_cleanup_feature_git
+engram_log "DONE: $FEATURE 的 worktree、分支和 Docker 功能资源已全部清理并复验"

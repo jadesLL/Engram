@@ -25,10 +25,10 @@ on:
         default: false
 
 env:
-  REGISTRY: gitea.example.com
-  # 镜像走「owner/repo/imagename」三层路径，归属仓库（与 XINJE 一致）；
+  REGISTRY: gitea.xxx.com:11111
+  # 镜像走「owner/repo/imagename」三层路径，归属仓库（与另一示例仓库一致）；
   # 两层路径归属用户命名空间，NAS 实测拉取异常，不要改回
-  IMAGE: gitea.example.com/example/engram/engram
+  IMAGE: gitea.xxx.com:11111/example/engram/engram
 
 jobs:
   release:

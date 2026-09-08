@@ -84,7 +84,7 @@ function cfHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
-/** 逐级剥标签查询域名所属 CF zone（如 a.b.example.com → example.com） */
+/** 逐级剥标签查询域名所属 CF zone（如 a.b.xxx.com → xxx.com） */
 export async function findCloudflareZoneId(
   domain: string,
   token: string,

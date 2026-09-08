@@ -8,7 +8,7 @@ import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import bcrypt from 'bcryptjs';
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-update-routes-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-update-routes-'));
 process.env.DATA_DIR = temp;
 
 let app: ReturnType<typeof Fastify>;
@@ -77,12 +77,12 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
     url: '/api/update/config',
     headers: { authorization: `Bearer ${token}` },
     payload: {
-      giteaUrl: 'https://gitea.example.com/',
+      giteaUrl: 'https://gitea.xxx.com/',
       giteaRepo: 'example/Engram',
       giteaAuthType: 'password',
       giteaUsername: 'example',
       giteaPassword: 'repo-pass-1',
-      imageRef: 'registry.example.com/engram',
+      imageRef: 'registry.xxx.com/engram',
       registryUsername: 'example',
       registryToken: 'secret-token-2',
     },
@@ -90,7 +90,7 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
   assert.equal(put.statusCode, 200);
 
   const envText = fs.readFileSync(path.join(temp, '.env'), 'utf8');
-  assert.ok(envText.includes('UPDATE_GITEA_URL=https://gitea.example.com'));
+  assert.ok(envText.includes('UPDATE_GITEA_URL=https://gitea.xxx.com'));
   assert.ok(envText.includes('UPDATE_GITEA_AUTH_TYPE=password'));
   assert.ok(envText.includes('UPDATE_GITEA_PASSWORD=repo-pass-1'));
   assert.ok(envText.includes('UPDATE_REGISTRY_TOKEN=secret-token-2'));
@@ -101,7 +101,7 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
     headers: { authorization: `Bearer ${token}` },
   });
   const data = get.json();
-  assert.equal(data.giteaUrl, 'https://gitea.example.com');
+  assert.equal(data.giteaUrl, 'https://gitea.xxx.com');
   assert.equal(data.giteaAuthType, 'password');
   assert.equal(data.giteaUsername, 'example');
   assert.equal(data.giteaPassword, 'repo-pass-1');

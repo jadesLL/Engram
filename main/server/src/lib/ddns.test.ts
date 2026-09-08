@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 // 先设 DATA_DIR 再动态导入（db.js 在导入时按 DATA_DIR 建库，避免污染 worktree）
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-ddns-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-ddns-'));
 process.env.DATA_DIR = temp;
 
 const {
@@ -29,15 +29,15 @@ Windows IP 配置
 无线局域网适配器 WLAN:
 
    连接特定的 DNS 后缀. . . . . . . . :
-   本地链接 IPv6 地址. . . . . . . . : fe80::fcba:a319:1e3e:d5f4%17
-   IPv4 地址 . . . . . . . . . . . . : 192.168.31.100
+   本地链接 IPv6 地址. . . . . . . . : fe80::1%17
+   IPv4 地址 . . . . . . . . . . . . : 192.168.1.100
    子网掩码  . . . . . . . . . . . . : 255.255.255.0
    默认网关. . . . . . . . . . . . . : fe80::1%17
-                                        2408:8210:5400:feb0::1
-   IPv6 地址 . . . . . . . . . . . . : 2408:8210:5400:feb0::abd
-   IPv6 地址 . . . . . . . . . . . . : 2408:8210:5400:feb0:7226:d527:175f:b42b
-   临时 IPv6 地址. . . . . . . . . . : 2408:8210:5400:feb0:192b:a826:47d5:47ac
-   DNS 服务器 . . . . . . . . . . . . : 2408:8210::8888
+                                        2001:db8:5400:feb0::1
+   IPv6 地址 . . . . . . . . . . . . : 2001:db8:5400:feb0::abd
+   IPv6 地址 . . . . . . . . . . . . : 2001:db8:5400:feb0:7226:d527:175f:b42b
+   临时 IPv6 地址. . . . . . . . . . : 2001:db8:5400:feb0:192b:a826:47d5:47ac
+   DNS 服务器 . . . . . . . . . . . . : 2001:db8::8888
 `;
 
 const IPCONFIG_EN = `
@@ -57,10 +57,10 @@ Ethernet adapter Ethernet:
 const PROC_INET6 = [
   '00000000000000000000000000000001 01 80 10 80 lo',              // ::1（scope 10 host）
   'fe800000000000000000000000000002 02 64 20 00 eth0',            // link-local（scope 20）
-  '240882100540feb 03 40 00 00 eth0',                             // 地址长度非法，跳过
-  '240882100540feb00000000000000abd 03 40 00 00 eth0',            // 全局稳定
-  '240882100540feb0192ba82647d547ac 03 40 00 01 eth0',            // 全局临时（flags 0x01）
-  '240882100540feb07226d527175fb42b 03 40 00 40 eth0',            // tentative（flags 0x40）
+  '20010db80540feb 03 40 00 00 eth0',                             // 地址长度非法，跳过
+  '20010db80540feb00000000000000abd 03 40 00 00 eth0',            // 全局稳定
+  '20010db80540feb0192ba82647d547ac 03 40 00 01 eth0',            // 全局临时（flags 0x01）
+  '20010db80540feb07226d527175fb42b 03 40 00 40 eth0',            // tentative（flags 0x40）
 ].join('\n');
 
 // ---------- 工具 ----------
@@ -101,7 +101,7 @@ function cfStub(opts: { zone?: string | null; records?: Array<{ id: string; cont
 const baseCfg: DdnsConfig = {
   enabled: true,
   token: 'tok',
-  record: 'home.example.com',
+  record: 'home.xxx.com',
   type: 'AAAA',
   intervalMin: 5,
 };
@@ -117,10 +117,10 @@ describe('parseWindowsIpconfig', () => {
   test('zh 输出：稳定/临时分类正确，排除网关/DNS/链路本地', () => {
     const r = parseWindowsIpconfig(IPCONFIG_ZH);
     assert.deepEqual(r.stable, [
-      '2408:8210:5400:feb0::abd',
-      '2408:8210:5400:feb0:7226:d527:175f:b42b',
+      '2001:db8:5400:feb0::abd',
+      '2001:db8:5400:feb0:7226:d527:175f:b42b',
     ]);
-    assert.deepEqual(r.temporary, ['2408:8210:5400:feb0:192b:a826:47d5:47ac']);
+    assert.deepEqual(r.temporary, ['2001:db8:5400:feb0:192b:a826:47d5:47ac']);
   });
 
   test('en 输出：Temporary 行排除，网关延续行不误收', () => {
@@ -132,14 +132,14 @@ describe('parseWindowsIpconfig', () => {
 
 describe('parseLinuxIfInet6', () => {
   test('仅保留 global 非临时非 tentative 地址', () => {
-    assert.deepEqual(parseLinuxIfInet6(PROC_INET6), ['2408:8210:0540:feb0:0000:0000:0000:0abd']);
+    assert.deepEqual(parseLinuxIfInet6(PROC_INET6), ['2001:0db8:0540:feb0:0000:0000:0000:0abd']);
   });
 });
 
 describe('normIp', () => {
   test('展开 :: 与前导零，大小写与 zone 后缀归一', () => {
-    assert.equal(normIp('2408:8210:5400:FEB0::ABD%17'), '2408:8210:5400:feb0:0000:0000:0000:0abd');
-    assert.equal(normIp('2408:8210:5400:feb0::abd'), '2408:8210:5400:feb0:0000:0000:0000:0abd');
+    assert.equal(normIp('2001:db8:5400:FEB0::ABD%17'), '2001:0db8:5400:feb0:0000:0000:0000:0abd');
+    assert.equal(normIp('2001:db8:5400:feb0::abd'), '2001:0db8:5400:feb0:0000:0000:0000:0abd');
     assert.equal(normIp('1:2:3:4:5:6:7:8'), '0001:0002:0003:0004:0005:0006:0007:0008');
     assert.equal(normIp('1.2.3.4'), '1.2.3.4');
   });
@@ -150,12 +150,12 @@ describe('normIp', () => {
 describe('syncDdnsRecord', () => {
   test('指向一致 → unchanged，不写入', async () => {
     const { calls, fetchImpl } = cfStub({
-      zone: 'example.com',
-      records: [{ id: 'rec-1', content: '2408:8210:5400:feb0::abd' }],
+      zone: 'xxx.com',
+      records: [{ id: 'rec-1', content: '2001:db8:5400:feb0::abd' }],
     });
     const r = await syncDdnsRecord(baseCfg, {
       fetchImpl,
-      detectCandidates: async () => ['2408:8210:5400:feb0::abd'],
+      detectCandidates: async () => ['2001:db8:5400:feb0::abd'],
     });
     assert.equal(r.ok, true);
     assert.equal(r.outcome, 'unchanged');
@@ -165,14 +165,14 @@ describe('syncDdnsRecord', () => {
 
   test('现值是候选之一时优先沿用（多候选不抖动）', async () => {
     const { calls, fetchImpl } = cfStub({
-      zone: 'example.com',
-      records: [{ id: 'rec-1', content: '2408:8210:5400:feb0:7226:d527:175f:b42b' }],
+      zone: 'xxx.com',
+      records: [{ id: 'rec-1', content: '2001:db8:5400:feb0:7226:d527:175f:b42b' }],
     });
     const r = await syncDdnsRecord(baseCfg, {
       fetchImpl,
       detectCandidates: async () => [
-        '2408:8210:5400:feb0::abd',
-        '2408:8210:5400:feb0:7226:d527:175f:b42b',
+        '2001:db8:5400:feb0::abd',
+        '2001:db8:5400:feb0:7226:d527:175f:b42b',
       ],
     });
     assert.equal(r.outcome, 'unchanged');
@@ -181,24 +181,24 @@ describe('syncDdnsRecord', () => {
 
   test('IP 变化 → PUT 更新（TTL 60、仅 DNS）', async () => {
     const { calls, fetchImpl } = cfStub({
-      zone: 'example.com',
-      records: [{ id: 'rec-9', content: '2408:8210:5400:feb0::old' }],
+      zone: 'xxx.com',
+      records: [{ id: 'rec-9', content: '2001:db8:5400:feb0::old' }],
     });
     const r = await syncDdnsRecord(baseCfg, {
       fetchImpl,
-      detectCandidates: async () => ['2408:8210:5400:feb0::abd'],
+      detectCandidates: async () => ['2001:db8:5400:feb0::abd'],
     });
     assert.equal(r.outcome, 'updated');
     const put = calls.find((c) => c.method === 'PUT');
     assert.ok(put);
     assert.ok(put.url.includes('/dns_records/rec-9'));
-    assert.equal((put.body as { content: string }).content, '2408:8210:5400:feb0::abd');
+    assert.equal((put.body as { content: string }).content, '2001:db8:5400:feb0::abd');
     assert.equal((put.body as { proxied: boolean }).proxied, false);
     assert.equal((put.body as { ttl: number }).ttl, 60);
   });
 
   test('记录不存在 → POST 创建', async () => {
-    const { calls, fetchImpl } = cfStub({ zone: 'example.com', records: [] });
+    const { calls, fetchImpl } = cfStub({ zone: 'xxx.com', records: [] });
     const r = await syncDdnsRecord({ ...baseCfg, type: 'A' }, {
       fetchImpl,
       detectCandidates: async () => ['192.168.1.101'],
@@ -212,12 +212,12 @@ describe('syncDdnsRecord', () => {
 
   test('dryRun 探测到差异 → needs-update 且不写入', async () => {
     const { calls, fetchImpl } = cfStub({
-      zone: 'example.com',
-      records: [{ id: 'rec-9', content: '2408:8210:5400:feb0::old' }],
+      zone: 'xxx.com',
+      records: [{ id: 'rec-9', content: '2001:db8:5400:feb0::old' }],
     });
     const r = await syncDdnsRecord(baseCfg, {
       fetchImpl,
-      detectCandidates: async () => ['2408:8210:5400:feb0::abd'],
+      detectCandidates: async () => ['2001:db8:5400:feb0::abd'],
       dryRun: true,
     });
     assert.equal(r.outcome, 'needs-update');
@@ -225,10 +225,10 @@ describe('syncDdnsRecord', () => {
   });
 
   test('auto：有 IPv6 候选选 AAAA；无则回退 A', async () => {
-    const { fetchImpl } = cfStub({ zone: 'example.com', records: [] });
+    const { fetchImpl } = cfStub({ zone: 'xxx.com', records: [] });
     const r6 = await syncDdnsRecord({ ...baseCfg, type: 'auto' }, {
       fetchImpl,
-      detectCandidates: async (t) => (t === 'AAAA' ? ['2408:8210:5400:feb0::abd'] : []),
+      detectCandidates: async (t) => (t === 'AAAA' ? ['2001:db8:5400:feb0::abd'] : []),
     });
     assert.equal(r6.type, 'AAAA');
     assert.equal(r6.outcome, 'created');
@@ -241,7 +241,7 @@ describe('syncDdnsRecord', () => {
   });
 
   test('无候选 → error 带提示', async () => {
-    const { fetchImpl } = cfStub({ zone: 'example.com', records: [] });
+    const { fetchImpl } = cfStub({ zone: 'xxx.com', records: [] });
     const r = await syncDdnsRecord(baseCfg, { fetchImpl, detectCandidates: async () => [] });
     assert.equal(r.ok, false);
     assert.match(r.error || '', /未探测到/);
@@ -265,10 +265,10 @@ describe('syncDdnsRecord', () => {
 describe('getDdnsConfig', () => {
   test('DB 配置优先，空字段回退 env，缺省 enabled 由完整性推导', () => {
     migrate();
-    setSetting('ddns_config', JSON.stringify({ enabled: true, token: 'tok-db', record: 'A.Example.com.', type: 'a', intervalMin: 10 }));
+    setSetting('ddns_config', JSON.stringify({ enabled: true, token: 'tok-db', record: 'A.xxx.com.', type: 'a', intervalMin: 10 }));
     const cfg = getDdnsConfig();
     assert.equal(cfg.token, 'tok-db');
-    assert.equal(cfg.record, 'a.example.com');
+    assert.equal(cfg.record, 'a.xxx.com');
     assert.equal(cfg.type, 'A');
     assert.equal(cfg.intervalMin, 10);
     assert.equal(cfg.enabled, true);

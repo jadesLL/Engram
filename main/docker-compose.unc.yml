@@ -1,16 +1,16 @@
 # 适用于 tsclient/UNC 远程目录环境的部署配置
 # 说明：本环境下 Docker Desktop 无法绑定挂载 \\tsclient\D\...（"not a valid Windows path"），
-# 因此改用命名卷 example-wiki-data 持久化数据。该卷已含最新权威数据（wiki.db + brain）。
+# 因此改用命名卷 engram-data 持久化数据。该卷已含最新权威数据（wiki.db + brain）。
 # 用法：docker compose -f docker-compose.unc.yml up -d --build
 services:
   engram:
-    image: example-wiki:0.1.0
+    image: engram:0.1.0
     build: .
     container_name: engram
     ports:
       - "18080:8080"
     volumes:
-      - example-wiki-data:/data
+      - engram-data:/data
     env_file:
       - .env.onlyoffice
     environment:
@@ -49,9 +49,9 @@ services:
       - ALLOW_META_IP_ADDRESS=false
       - EXAMPLE_ENABLED=false
     volumes:
-      - example-wiki-onlyoffice-data:/var/www/onlyoffice/Data
-      - example-wiki-onlyoffice-lib:/var/lib/onlyoffice
-      - example-wiki-onlyoffice-logs:/var/log/onlyoffice
+      - engram-onlyoffice-data:/var/www/onlyoffice/Data
+      - engram-onlyoffice-lib:/var/lib/onlyoffice
+      - engram-onlyoffice-logs:/var/log/onlyoffice
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost/healthcheck"]
       interval: 10s
@@ -61,14 +61,14 @@ services:
     restart: unless-stopped
 
 volumes:
-  example-wiki-data:
+  engram-data:
     external: true
-  example-wiki-onlyoffice-data:
-  example-wiki-onlyoffice-lib:
-  example-wiki-onlyoffice-logs:
+  engram-onlyoffice-data:
+  engram-onlyoffice-lib:
+  engram-onlyoffice-logs:
 
 networks:
   default:
     driver: bridge
     driver_opts:
-      com.docker.network.driver.mtu: "${WIKILLM_NETWORK_MTU:-1400}"
+      com.docker.network.driver.mtu: "${ENGRAM_NETWORK_MTU:-1400}"

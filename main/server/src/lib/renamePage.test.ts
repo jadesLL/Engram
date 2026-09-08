@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'example-wiki-rename-page-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-rename-page-'));
 process.env.DATA_DIR = temp;
 
 let db: any;

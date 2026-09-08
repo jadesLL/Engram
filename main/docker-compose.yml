@@ -10,7 +10,7 @@ services:
     container_name: engram
     ports:
       # 唯一对外映射；Cloudflare Tunnel ingress（systemprofile cloudflared config.yml）
-      # 已指向 http://localhost:18080，公网经 wiki.example.com 进来，无需 8080 桥接
+      # 已指向 http://localhost:18080，公网经 wiki.xxx.com 进来，无需 8080 桥接
       - "18080:8080"
       # HTTPS 直连入口（TLS_DOMAIN 配置时容器内 8443 才监听；宿主 443 需路由器放行到本机）
       - "443:8443"
@@ -22,15 +22,15 @@ services:
     environment:
       - TZ=Asia/Shanghai
       # 直连地址通告（IPv6 直连优先的客户端发现入口）。真实值写在部署侧同目录 .env（不入库），
-      # 例：DIRECT_ACCESS_URL=http://direct.example.com:18080；未配置时 /health 保持纯文本
+      # 例：DIRECT_ACCESS_URL=http://direct.xxx.com:18080；未配置时 /health 保持纯文本
       - DIRECT_ACCESS_URL=${DIRECT_ACCESS_URL:-}
       # HTTPS 直连（内置 ACME；TLS_DOMAIN 为空则完全关闭）。真实值在部署侧 .env（不入库）：
-      # TLS_DOMAIN=direct.example.com、TLS_DNS_API_TOKEN=<CF token 需 Zone.DNS Edit 权限>
+      # TLS_DOMAIN=direct.xxx.com、TLS_DNS_API_TOKEN=<CF token 需 Zone.DNS Edit 权限>
       - TLS_DOMAIN=${TLS_DOMAIN:-}
       - TLS_DNS_API_TOKEN=${TLS_DNS_API_TOKEN:-}
       - TLS_EMAIL=${TLS_EMAIL:-}
       - TLS_ACME_DIRECTORY=${TLS_ACME_DIRECTORY:-}
-      # 会话 Cookie 父域（跨子域共享登录态：隧道域/直连域免重登）。例：COOKIE_DOMAIN=.example.com
+      # 会话 Cookie 父域（跨子域共享登录态：隧道域/直连域免重登）。例：COOKIE_DOMAIN=.xxx.com
       - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
       # 初始登录密码（仅首次启动生效；留空则首次登录时在页面设置，仓库不再内置默认值）
       - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-}
@@ -66,9 +66,9 @@ services:
       - ALLOW_META_IP_ADDRESS=false
       - EXAMPLE_ENABLED=false
     volumes:
-      - example-wiki-onlyoffice-data:/var/www/onlyoffice/Data
-      - example-wiki-onlyoffice-lib:/var/lib/onlyoffice
-      - example-wiki-onlyoffice-logs:/var/log/onlyoffice
+      - engram-onlyoffice-data:/var/www/onlyoffice/Data
+      - engram-onlyoffice-lib:/var/lib/onlyoffice
+      - engram-onlyoffice-logs:/var/log/onlyoffice
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost/healthcheck"]
       interval: 10s
@@ -78,12 +78,12 @@ services:
     restart: unless-stopped
 
 volumes:
-  example-wiki-onlyoffice-data:
-  example-wiki-onlyoffice-lib:
-  example-wiki-onlyoffice-logs:
+  engram-onlyoffice-data:
+  engram-onlyoffice-lib:
+  engram-onlyoffice-logs:
 
 networks:
   default:
     driver: bridge
     driver_opts:
-      com.docker.network.driver.mtu: "${WIKILLM_NETWORK_MTU:-1400}"
+      com.docker.network.driver.mtu: "${ENGRAM_NETWORK_MTU:-1400}"

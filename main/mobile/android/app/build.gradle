@@ -25,10 +25,10 @@ def keystoreKeyAlias = keystoreProperties['keyAlias'] ?: System.getenv('ANDROID_
 def keystoreKeyPassword = keystoreProperties['keyPassword'] ?: System.getenv('ANDROID_KEY_PASSWORD')
 
 android {
-    namespace "com.example.exampleproject"
+    namespace "com.engram.app"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.example.exampleproject"
+        applicationId "com.engram.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode appVersionCode

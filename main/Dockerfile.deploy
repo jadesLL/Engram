@@ -1,4 +1,4 @@
-FROM example-wiki:0.1.0 AS base
+FROM engram:0.1.0 AS base
 
 FROM base AS build
 WORKDIR /build

@@ -162,7 +162,7 @@ function cookieOpts() {
     httpOnly: true,
     sameSite: 'lax' as const,
     maxAge: 30 * 24 * 3600,
-    // 配置 COOKIE_DOMAIN（如 .example.com）时跨子域共享登录态（隧道域/直连域免重登）
+    // 配置 COOKIE_DOMAIN（如 .xxx.com）时跨子域共享登录态（隧道域/直连域免重登）
     ...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
   };
 }

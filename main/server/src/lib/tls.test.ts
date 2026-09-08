@@ -126,7 +126,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-/** 构造 CF API + DoH 的 mock fetch：zones 查询命中 example.com，TXT 创建返回记录 id，DoH 立即命中 */
+/** 构造 CF API + DoH 的 mock fetch：zones 查询命中 xxx.com，TXT 创建返回记录 id，DoH 立即命中 */
 function cfFetchStub(options: { txtPropagated?: boolean } = {}): FetchLike & { calls: string[] } {
   const calls: string[] = [];
   const txtPropagated = options.txtPropagated ?? true;
@@ -134,14 +134,14 @@ function cfFetchStub(options: { txtPropagated?: boolean } = {}): FetchLike & { c
     calls.push(url);
     if (url.includes('/zones?name=')) {
       const name = decodeURIComponent(url.split('name=')[1]);
-      if (name === 'example.com') return jsonResponse({ success: true, result: [{ id: 'zone-1' }] });
+      if (name === 'xxx.com') return jsonResponse({ success: true, result: [{ id: 'zone-1' }] });
       return jsonResponse({ success: true, result: [] });
     }
     if (url.includes('/dns_records') && (url as string).includes('_acme-challenge') === false) {
-      return jsonResponse({ success: true, result: [{ id: 'txt-1', type: 'TXT', name: '_acme-challenge.a.example.com', content: 'ka-value' }] });
+      return jsonResponse({ success: true, result: [{ id: 'txt-1', type: 'TXT', name: '_acme-challenge.a.xxx.com', content: 'ka-value' }] });
     }
     if (url.includes('method=POST') || url.includes('/dns_records')) {
-      return jsonResponse({ success: true, result: { id: 'txt-1', type: 'TXT', name: '_acme-challenge.a.example.com', content: 'ka-value' } });
+      return jsonResponse({ success: true, result: { id: 'txt-1', type: 'TXT', name: '_acme-challenge.a.xxx.com', content: 'ka-value' } });
     }
     if (url.includes('dns.alidns.com/resolve')) {
       return jsonResponse(
@@ -164,7 +164,7 @@ describe('readTlsConfig', () => {
 
   test('配置 TLS_DOMAIN 但缺少 token 抛错', () => {
     assert.throws(
-      () => readTlsConfig({ TLS_DOMAIN: 'a.example.com' }, '/data'),
+      () => readTlsConfig({ TLS_DOMAIN: 'a.xxx.com' }, '/data'),
       /TLS_DNS_API_TOKEN/,
     );
   });
@@ -172,17 +172,17 @@ describe('readTlsConfig', () => {
   test('完整配置解析', () => {
     const cfg = readTlsConfig(
       {
-        TLS_DOMAIN: 'a.example.com',
+        TLS_DOMAIN: 'a.xxx.com',
         TLS_DNS_API_TOKEN: 'tok',
-        TLS_EMAIL: 'me@example.com',
+        TLS_EMAIL: 'me@xxx.com',
         TLS_ACME_DIRECTORY: 'https://acme-staging-v02.api.letsencrypt.org/directory',
       },
       '/data',
     );
     assert.ok(cfg);
-    assert.equal(cfg.domain, 'a.example.com');
+    assert.equal(cfg.domain, 'a.xxx.com');
     assert.equal(cfg.dnsApiToken, 'tok');
-    assert.equal(cfg.email, 'me@example.com');
+    assert.equal(cfg.email, 'me@xxx.com');
     assert.equal(cfg.cacheDir, path.resolve('/data', 'tls'));
     assert.match(cfg.acmeDirectoryUrl, /acme-staging/);
     assert.equal(cfg.renewalThresholdDays, 30);
@@ -206,7 +206,7 @@ describe('CertManager', () => {
   });
 
   const makeOpts = (cacheDir: string, issueImpl?: (domain: string) => Promise<{ key: string; cert: string }>) => ({
-    domain: 'a.example.com',
+    domain: 'a.xxx.com',
     dnsApiToken: 'tok',
     cacheDir,
     acmeDirectoryUrl: 'https://acme.example/directory',
@@ -327,26 +327,26 @@ describe('CertManager', () => {
 describe('Cloudflare DNS-01', () => {
   test('findCloudflareZoneId：逐级剥标签命中', async () => {
     const fetchStub = cfFetchStub();
-    const zoneId = await findCloudflareZoneId('a.example.com', 'tok', fetchStub);
+    const zoneId = await findCloudflareZoneId('a.xxx.com', 'tok', fetchStub);
     assert.equal(zoneId, 'zone-1');
-    assert.ok(fetchStub.calls.some((u) => u.includes('name=a.example.com')));
-    assert.ok(fetchStub.calls.some((u) => u.includes('name=example.com')));
+    assert.ok(fetchStub.calls.some((u) => u.includes('name=a.xxx.com')));
+    assert.ok(fetchStub.calls.some((u) => u.includes('name=xxx.com')));
   });
 
   test('waitForTxtPropagation：命中即返回', async () => {
-    await waitForTxtPropagation('_acme-challenge.a.example.com', 'ka-value', 2000, cfFetchStub());
+    await waitForTxtPropagation('_acme-challenge.a.xxx.com', 'ka-value', 2000, cfFetchStub());
   });
 
   test('waitForTxtPropagation：不命中超时抛错', async () => {
     await assert.rejects(
-      () => waitForTxtPropagation('_acme-challenge.a.example.com', 'ka-value', 30, cfFetchStub({ txtPropagated: false }), 5),
+      () => waitForTxtPropagation('_acme-challenge.a.xxx.com', 'ka-value', 30, cfFetchStub({ txtPropagated: false }), 5),
       /超时/,
     );
   });
 
   test('createDns01Challenge：创建→轮询→返回清理函数', async () => {
     const fetchStub = cfFetchStub();
-    const cleanup = await createDns01Challenge('a.example.com', 'ka-value', 'tok', fetchStub, 2000);
+    const cleanup = await createDns01Challenge('a.xxx.com', 'ka-value', 'tok', fetchStub, 2000);
     assert.equal(typeof cleanup, 'function');
     await cleanup();
     assert.ok(fetchStub.calls.some((u) => u.includes('/dns_records') && !u.includes('?type=TXT')));

@@ -21,7 +21,7 @@ export interface DdnsConfig {
   enabled: boolean;
   /** Cloudflare API Token（Zone.DNS Edit） */
   token: string;
-  /** 维护的记录 FQDN，如 home.example.com */
+  /** 维护的记录 FQDN，如 home.xxx.com */
   record: string;
   /** auto：有全局 IPv6 用 AAAA，否则 A */
   type: 'A' | 'AAAA' | 'auto';

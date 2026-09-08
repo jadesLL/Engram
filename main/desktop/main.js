@@ -21,10 +21,10 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => showMainWindow());
 }
 
-// 产品更名（LLM Wiki → Engram）后 productName 变化会让 Electron 默认 userData 目录
+// productName 变化会让 Electron 默认 userData 目录
 // （%APPDATA%/<productName>）跟着变。旧目录里有本地模式全部数据与连接配置，
 // 这里一次性迁移到新目录，之后不再回看旧路径。
-const LEGACY_USER_DATA = path.join(app.getPath('appData'), 'LLM Wiki');
+const LEGACY_USER_DATA = path.join(app.getPath('appData'), 'Engram');
 try {
   if (fs.existsSync(LEGACY_USER_DATA) && !fs.existsSync(app.getPath('userData'))) {
     fs.mkdirSync(path.dirname(app.getPath('userData')), { recursive: true });

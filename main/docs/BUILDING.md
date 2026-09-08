@@ -51,7 +51,7 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 
 | 产物 | 名称 / 地址 | 用途 |
 |---|---|---|
-| Docker 镜像 | `gitea.example.com/example/engram/engram:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry）；应用内一键更新的版本信号源 |
+| Docker 镜像 | `gitea.xxx.com:11111/example/engram/engram:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry）；应用内一键更新的版本信号源 |
 | Gitea Release | `v<版本>`，正文=CHANGELOG 版本段落 | 版本记录与更新检测信号源 |
 
 以下二进制产物**不随发版构建**，需要分发给他人时按需构建（CI dispatch：Actions → Release → Run workflow，输入标签+勾选产物，自动补挂 Release；或走路径 B/C 本地构建）：
@@ -63,7 +63,7 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 | Docker 镜像离线包 | `engram-<版本>.tar.gz`（`docker save`，约 160 MB） | 无 Registry 环境离线部署（`docker load`） |
 | 校验值文件 | `sha256-<版本>.txt` | 本次所构建产物的 sha256 |
 
-镜像地址是**三层路径**（`owner/repo/imagename`，归属 Engram 仓库）。历史上曾用两层路径（更名前的 `example/example-wiki`），NAS 实测拉取异常，**不要改回**。
+镜像地址是**三层路径**（`owner/repo/imagename`，归属 Engram 仓库）。历史上曾用两层路径（`example/engram`），NAS 实测拉取异常，**不要改回**。
 
 版本号的**唯一权威来源是 `main/desktop/package.json` 的 `version` 字段**：发版 tag、镜像 tag、exe 文件名、镜像内 `/app/VERSION`（应用内自更新的比对依据）全部由它派生。
 
@@ -235,7 +235,7 @@ pnpm build:desktop
 **方式一：源码构建部署**（开发 / 内网无 Registry）
 
 ```bash
-git clone https://github.com/jadesLL/Engram.git
+git clone https://gitea.xxx.com:11111/example/Engram.git
 cd Engram/main
 docker compose up -d --build
 ```
@@ -243,7 +243,7 @@ docker compose up -d --build
 **方式二：从 Registry 拉取**（生产，模板 `main/docker-compose.pull.yml`）
 
 ```bash
-# Docker 镜像未公开发布（原私有 Registry 不对外）
+docker login gitea.xxx.com:11111 -u example -p <package权限token>
 docker compose -f docker-compose.pull.yml up -d     # 模板默认拉 :latest
 ```
 
@@ -253,8 +253,8 @@ docker compose -f docker-compose.pull.yml up -d     # 模板默认拉 :latest
 # 在有网机器上（或直接用 Release 附件 engram-<版本>.tar.gz）
 docker load < engram-<版本>.tar.gz
 # 载入的镜像名是完整三层路径 :<版本>；compose 模板引用 :latest，二选一：
-docker tag gitea.example.com/example/engram/engram:<版本> \
-           gitea.example.com/example/engram/engram:latest
+docker tag gitea.xxx.com:11111/example/engram/engram:<版本> \
+           gitea.xxx.com:11111/example/engram/engram:latest
 # 或者把 compose 里的 image 固定为 :<版本>
 docker compose -f docker-compose.pull.yml up -d
 ```

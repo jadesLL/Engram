@@ -31,7 +31,7 @@
 
       <label class="ddns-field">
         <span>记录域名（FQDN）</span>
-        <input type="text" v-model="form.record" placeholder="home.example.com" autocomplete="off" spellcheck="false" />
+        <input type="text" v-model="form.record" placeholder="home.xxx.com" autocomplete="off" spellcheck="false" />
       </label>
 
       <label class="ddns-field">

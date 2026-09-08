@@ -1,6 +1,6 @@
 # Gitea CI 与镜像分发指南
 
-本项目通过 Gitea Actions（`https://github.com/jadesLL/Engram`）实现持续集成、Docker 镜像分发和按需二进制产物（exe/APK/离线包）构建。
+本项目通过 Gitea Actions（`https://gitea.xxx.com:11111/example/Engram`）实现持续集成、Docker 镜像分发和按需二进制产物（exe/APK/离线包）构建。
 
 > 从源码构建安装包的完整指南（含不依赖 CI 的本地 Docker 构建路径、部署方式与 AI 操作清单）见 [`BUILDING.md`](./BUILDING.md)；本文聚焦 CI/CD 流水线本身的维护与历史踩坑。
 
@@ -41,7 +41,7 @@
 
 ```bash
 # 正确：三层路径 example/engram/engram（owner/repo/imagename，镜像归属 Engram 仓库）
-gitea.example.com/example/engram/engram:<版本>
+gitea.xxx.com:11111/example/engram/engram:<版本>
 
 # 错误：两层路径 example/engram（归属用户命名空间）——1.1.5 曾用此路径，NAS 实测拉取异常，已废弃
 ```
@@ -49,8 +49,8 @@ gitea.example.com/example/engram/engram:<版本>
 部署示例：
 
 ```bash
-# Docker 镜像未公开发布（原私有 Registry 不对外）
-docker pull gitea.example.com/example/engram/engram:1.1.5
+docker login gitea.xxx.com:11111 -u example -p <package权限token>
+docker pull gitea.xxx.com:11111/example/engram/engram:1.1.5
 docker compose -f docker-compose.pull.yml up -d
 ```
 
@@ -80,7 +80,7 @@ docker compose -f docker-compose.pull.yml up -d
 
 | 配置项 | 键 | 说明 |
 |---|---|---|
-| Gitea 服务地址 | `UPDATE_GITEA_URL` | 版本检测来源，如 `https://gitea.example.com` |
+| Gitea 服务地址 | `UPDATE_GITEA_URL` | 版本检测来源，如 `https://gitea.xxx.com` |
 | Gitea 仓库 | `UPDATE_GITEA_REPO` | `owner/name` 形式 |
 | Gitea 访问凭据（二选一） | `UPDATE_GITEA_TOKEN`（访问令牌），或 `UPDATE_GITEA_AUTH_TYPE=password` + `UPDATE_GITEA_USERNAME` / `UPDATE_GITEA_PASSWORD`（用户名密码） | **公开仓库无需填写**；私有仓库需能读 Release |
 | 镜像更新源 | `UPDATE_IMAGE_REF` | 不含 tag 的镜像地址，自动拉 `latest`；未配置时从当前容器镜像推导 |
@@ -120,19 +120,19 @@ act_runner 以 Windows 宿主机模式运行（label `windows`），Docker 命�
 3. **Docker Hub 直连不通**——`desktop/Dockerfile.ci` 基础镜像固定走 DaoCloud 镜像源 `docker.m.daocloud.io/electronuserland/builder:wine`；其他基础镜像靠本机缓存。
 4. **Z 盘不支持 bind mount**——CI 里容器构建一律「源码 COPY 进镜像 + `docker create`/`docker cp` 拷出产物」，不用 volume 挂载。
 
-### 当前 Runner 部署（2026-08-23 迁移：DESKTOP-JQR7MEU → DESKTOP-BBO2MIL）
+### 当前 Runner 部署（2026-08-23 迁移：OLD-DEV-PC → DEV-PC）
 
 | 项 | 值 |
 |---|---|
-| 机器 | 开发机 DESKTOP-BBO2MIL（Windows，Docker Desktop Linux 引擎） |
+| 机器 | 开发机 DEV-PC（Windows，Docker Desktop Linux 引擎） |
 | 安装目录 | `C:\Users\example\gitea-runner\`（gitea-runner.exe v3.3.0 + config.yaml + .runner） |
-| 注册方式 | **全局（instance 级）**，runner id=3，name `dev-pc-bbo2mil`，labels `windows:host, ubuntu-latest:docker://node:22-bookworm`——Engram（原 ExampleProject）与 XINJE_Selection_Tool 的 CI 都由它执行 |
+| 注册方式 | **全局（instance 级）**，runner id=3，name `dev-pc`，labels `windows:host, ubuntu-latest:docker://node:22-bookworm`——Engram 与 Example_Selection_Tool 的 CI 都由它执行 |
 | 启动 | `gitea-runner.exe daemon --config config.yaml`；开机自启走计划任务 `GiteaRunnerDaemon`（登录触发、崩溃自动重启，`Get-ScheduledTask GiteaRunnerDaemon` 查状态） |
 | 看门狗 | 计划任务 `GiteaRunnerWatchdog`（2026-09-04 起，每 5 分钟）：`gitea-runner.exe` 进程消失即调 `start-runner.ps1` 拉起并记 `watchdog.log`。覆盖进程崩溃、开机时 Docker 管道未就绪导致启动失败等场景（原计划任务只在登录时拉一次，runner 启动失败会一直无人认领任务，2026-08-23 迁移时曾排队 6 小时） |
 | config.yaml 关键项 | `container.docker_host: npipe:////./pipe/dockerDesktopLinuxEngine`（Windows 下 runner 默认探测 /var/run/docker.sock 失败，必须显式指向 Docker Desktop 的 Linux 引擎命名管道）；日志级别 debug（排查认领问题用，平时可调回 info） |
 
 **迁移踩坑（旧机下线后 CI 全部排队无人认领）**：
-- 旧 runner（id=1 dev-pc / id=2 仓库级 dev-pc-bbo2mil）已于 2026-08-23 删除；注意 **runner 注册有作用域**——用仓库页 token 注册的 runner 只服务该仓库（曾导致 ExampleProject CI 排队 6 小时无人认领而 XINJE 正常），必须用全局管理页（`/-/admin/actions/runners`，注意 `/-/` 前缀）的 Registration Token 注册。
+- 旧 runner（id=1 dev-pc / id=2 仓库级 dev-pc）已于 2026-08-23 删除；注意 **runner 注册有作用域**——用仓库页 token 注册的 runner 只服务该仓库（曾导致 Engram CI 排队 6 小时无人认领而 另一示例仓库 正常），必须用全局管理页（`/-/admin/actions/runners`，注意 `/-/` 前缀）的 Registration Token 注册。
 - 管理页「创建新运行器」是**下拉菜单**，Registration Token 直接嵌在菜单的只读输入框里（页面 HTML 即含，无需点击交互）。
 - 派发卡死恢复：任务派给已下线 runner 的会永久排队，推送一个空提交（`git commit --allow-empty`）触发新 run 即可被在线 runner 认领。
 
@@ -170,6 +170,6 @@ grep -c '<版本号>' app.asar 二进制内容（或查 staging package.json 的
 | 版本 | 镜像路径 | 说明 |
 |---|---|---|
 | 1.1.4 / 1.1.5 初版 | `example/engram`（两层） | 用户命名空间归属；1.1.5 发布时 NAS 拉取异常 |
-| 1.1.5 起 | `example/engram/engram`（三层） | 仓库归属，与 XINJE_Selection_Tool 同款形式，NAS 拉取正常 |
+| 1.1.5 起 | `example/engram/engram`（三层） | 仓库归属，与 Example_Selection_Tool 同款形式，NAS 拉取正常 |
 
 旧两层路径的镜像仍留在 Registry（`1.1.4`、`1.1.5`），但不再更新；新发版全部走三层路径。

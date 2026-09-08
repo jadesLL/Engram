@@ -2,7 +2,7 @@
 
 ## 目录布局
 
-Git 工作目录和工作区根目录均为 `ExampleProject/`（即仓库根，`.git/` 在此，不在 `main/` 内）：
+Git 工作目录和工作区根目录均为 `Engram/`（即仓库根，`.git/` 在此，不在 `main/` 内）：
 
 | 路径 | 用途 |
 |---|---|
@@ -77,14 +77,14 @@ Windows PowerShell 必须显式调用 Git Bash（避免命中 WSL 的 `bash.exe`
 ```text
 分支：    feat/<feature>
 worktree: worktrees/<feature>
-镜像：    example-wiki:<feature>
-验证镜像：example-wiki:<feature>-verify
-容器：    example-wiki-<feature>
-数据卷：  example-wiki-data-<feature>
-Compose： exampleproject-<feature>
+镜像：    engram:<feature>
+验证镜像：engram:<feature>-verify
+容器：    engram-<feature>
+数据卷：  engram-data-<feature>
+Compose： engram-<feature>
 ```
 
-所有功能专属容器、镜像、数据卷和网络（含临时 mock、备份容器、额外数据卷）都必须带标签 `com.exampleproject.scope=feature` + `com.exampleproject.feature=<feature>`；自动清理按精确标签、标准名称和 Compose project 匹配，无标签且非标准命名的资源禁止创建。
+所有功能专属容器、镜像、数据卷和网络（含临时 mock、备份容器、额外数据卷）都必须带标签 `com.engram.scope=feature` + `com.engram.feature=<feature>`；自动清理按精确标签、标准名称和 Compose project 匹配，无标签且非标准命名的资源禁止创建。
 
 `8080` 保留给主环境。功能端口启动前必须实时检查占用（`Get-NetTCPConnection -State Listen -LocalPort <port>` 和 `docker ps` 端口映射），冲突时改用空闲端口并同步更新任务配置，不得停止其他 Agent 或用户的服务。
 
@@ -118,7 +118,7 @@ bash main/scripts/merge-feature.sh --finish example-feature     # 冲突解决�
 
 用户批准合并后，清理是合并流程的必需收尾，不需再次申请删除功能预览环境；只有合并、主分支检查和必要部署都成功后才开始，前置失败时保留环境用于修复或回退。
 
-自动清理必须删除该功能拥有的全部资源：`worktrees/<feature>/` 及 Git worktree 注册、已合并的 `feat/<feature>` 分支、`example-wiki-<feature>` 容器及所有带功能标签的容器、`example-wiki:<feature>`/`-verify` 镜像及带标签镜像、`example-wiki-data-<feature>` 及带标签数据卷、`exampleproject-<feature>` Compose 网络、为该 worktree 加入的 Git `safe.directory` 记录。检查或单独收尾旧任务用 `cleanup-feature.sh --inspect <feature>` / `cleanup-feature.sh <feature>`。
+自动清理必须删除该功能拥有的全部资源：`worktrees/<feature>/` 及 Git worktree 注册、已合并的 `feat/<feature>` 分支、`engram-<feature>` 容器及所有带功能标签的容器、`engram:<feature>`/`-verify` 镜像及带标签镜像、`engram-data-<feature>` 及带标签数据卷、`engram-<feature>` Compose 网络、为该 worktree 加入的 Git `safe.directory` 记录。检查或单独收尾旧任务用 `cleanup-feature.sh --inspect <feature>` / `cleanup-feature.sh <feature>`。
 
 脚本删除后会重新查询 Git 和 Docker，任一资源残留即非零退出，任务必须报告"清理失败/尚未完成"，不得汇报"已清理"。
 

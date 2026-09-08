@@ -25,7 +25,7 @@
       <div v-if="pickJoin" class="sync-config">
         <div class="field-row">
           <label for="sync-hub-url">中枢地址</label>
-          <input id="sync-hub-url" v-model="hubUrl" type="text" placeholder="http://192.168.x.x:18080 或 https://engram.example.com" spellcheck="false" />
+          <input id="sync-hub-url" v-model="hubUrl" type="text" placeholder="http://192.168.x.x:18080 或 https://engram.xxx.com" spellcheck="false" />
         </div>
         <div class="field-row">
           <label for="sync-hub-token">绑定令牌</label>
