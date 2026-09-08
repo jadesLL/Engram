@@ -175,7 +175,8 @@ onMounted(load);
 
 <style scoped>
 .harness-picker {
-  margin: 0 24px;
+  /* 与 panel-head 分割线留出与其它面板一致的首块间距（原先为 0，选择框紧贴分割线） */
+  margin: 22px 24px 0;
 }
 .harness-picker select {
   min-width: 240px;
