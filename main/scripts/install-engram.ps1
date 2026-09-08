@@ -139,17 +139,20 @@ Step 'build' '构建桌面端'
 if ($LASTEXITCODE -ne 0) { StepFail 'build' '构建/启动失败，请查看上方日志。' }
 StepDone 'build'
 
-# ---------- 7) 桌面快捷方式 ----------
+# ---------- 7) 桌面快捷方式（双击直接启动，不拉取不构建；更新走应用内「检查更新」） ----------
 Step 'shortcut' '创建桌面快捷方式'
 $desktop = [Environment]::GetFolderPath('Desktop')
+$electronExe = Join-Path $mainDir 'desktop\node_modules\electron\dist\electron.exe'
+if (-not (Test-Path $electronExe)) { $electronExe = Join-Path $mainDir 'desktop\dist\win-unpacked\electron.exe' }
+if (-not (Test-Path $electronExe)) { StepFail 'shortcut' '未找到 Electron 运行时（node_modules 与 win-unpacked 均缺失）' }
 $ws = New-Object -ComObject WScript.Shell
 $lnk = $ws.CreateShortcut((Join-Path $desktop 'Engram.lnk'))
-$lnk.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-$lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$repoDir\main\scripts\update-from-source.ps1`""
-$lnk.IconLocation = (Join-Path $repoDir 'main\desktop\build\icon.ico') + ',0'
-$lnk.WorkingDirectory = (Join-Path $repoDir 'main')
-$lnk.WindowStyle = 7
-$lnk.Description = 'Engram 源码版：启动即增量更新到最新'
+$lnk.TargetPath = $electronExe
+$lnk.Arguments = '.'
+$lnk.IconLocation = (Join-Path $mainDir 'desktop\build\icon.ico') + ',0'
+$lnk.WorkingDirectory = (Join-Path $mainDir 'desktop')
+$lnk.WindowStyle = 1
+$lnk.Description = 'Engram（源码版）：双击直接启动；更新请在应用内 设置→软件更新→检查更新'
 $lnk.Save()
 StepDone 'shortcut' "$desktop\Engram.lnk"
 

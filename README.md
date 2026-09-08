@@ -90,7 +90,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 **Windows 桌面端 · 源码版**（自用开发机，推荐）
 
 1. 从 [Engram Releases](https://github.com/jadesLL/Engram/releases) 下载源码版安装器 `Engram-source-setup.exe`（或取仓库内 `main/scripts/install-engram.ps1` 用 PowerShell 运行），双击后全自动：下载便携 Git/Node/pnpm（免管理员，装在 `%LOCALAPPDATA%\engram`）→ 克隆源码（公开仓库无需凭据）→ 构建桌面端 → 生成桌面快捷方式并启动
-2. 日常双击桌面「Engram」= 增量拉最新源码重建启动；应用内「检查更新」同样增量拉源码更新——合 main 即更新，无需等发版
+2. 日常双击桌面「Engram」直接启动（Engram 品牌图标，无更新窗口）；更新走应用内 设置 → 软件更新 → 「检查更新」（增量拉源码重建重启），或手动运行 `main/scripts/update-from-source.ps1`——合 main 即更新，无需等发版
 
 **Docker（服务器 / NAS）**：见下方「快速开始（Docker 部署）」；更新可在 设置 → 软件更新 一键拉镜像重建（需挂载 docker.sock）。
 

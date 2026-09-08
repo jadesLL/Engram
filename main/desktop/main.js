@@ -227,6 +227,8 @@ function createWindow() {
     minHeight: 600,
     title: 'Engram',
     autoHideMenuBar: true,
+    // 源码模式窗口/任务栏图标（electron.exe 自带的是 Electron 默认图标）；打包版 exe 已内嵌图标
+    icon: windowIcon(),
     // 标题栏融合进应用：系统标题栏隐藏，右上角最小化/最大化/关闭由 Windows WCO 原生绘制，
     // 颜色初值匹配启动页，进入应用后由渲染进程按主题经 set-title-bar-overlay 同步。
     // height 36 须与 web 端 main.css 的 --win-titlebar-h 一致。
@@ -260,6 +262,12 @@ function createWindow() {
 }
 
 // ---------- 托盘 ----------
+function windowIcon() {
+  if (app.isPackaged) return undefined; // 打包版：exe 内嵌图标
+  const dev = path.join(__dirname, 'build', 'icon.ico'); // 源码运行（electron .）
+  return fs.existsSync(dev) ? dev : undefined;
+}
+
 function trayIcon() {
   const packed = path.join(__dirname, 'icon.png'); // 打包后：pack-asar.js 把 build/icon.png 复制进 asar
   const dev = path.join(__dirname, 'build', 'icon.png'); // 源码运行（electron .）
