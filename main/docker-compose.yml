@@ -1,7 +1,12 @@
 services:
   engram:
     image: engram:1.2.4
-    build: .
+    build:
+      context: .
+      # 构建身份：本地构建时传 ENGRAM_GIT_SHA=$(git rev-parse HEAD) 即可在应用内看到提交号
+      # （不传则 /app/GIT_SHA 为空，界面只显示版本号）
+      args:
+        ENGRAM_GIT_SHA: ${ENGRAM_GIT_SHA:-}
     container_name: engram
     ports:
       # 唯一对外映射；Cloudflare Tunnel ingress（systemprofile cloudflared config.yml）

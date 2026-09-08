@@ -325,7 +325,7 @@ function webDistPath() {
   return path.join(__dirname, 'web', 'dist');
 }
 
-function startLocalMode() {
+async function startLocalMode() {
   const entry = serverEntryPath();
   if (!fs.existsSync(entry)) {
     applyPageChrome(SPLASH_BG);
@@ -335,6 +335,8 @@ function startLocalMode() {
   win.loadURL(dataUrl(splashPage('环境准备中', '正在准备运行环境，请稍候，完成后自动进入主界面。', '正在启动本地服务…')));
   applyPageChrome(SPLASH_BG);
   const port = getLocalPort();
+  // 提交身份一并交给内嵌 server（/api/update/state 返回），与渲染层经 IPC 拿到的是同一份
+  const identity = await gitIdentity();
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
@@ -346,6 +348,7 @@ function startLocalMode() {
     OFFICE_EDITOR_ENABLED: 'false',
     ENGRAM_WEB_DIST: webDistPath(),
     ENGRAM_APP_VERSION: app.getVersion(),
+    ENGRAM_GIT_SHA: identity.commit,
   };
   // 命门：必须 fork（默认 execPath=electron.exe）+ ELECTRON_RUN_AS_NODE，子进程才以 Electron 纯
   // Node 模式运行、能读 app.asar 内的 node_modules；改 spawn('node') 会让 server 读不了 asar。

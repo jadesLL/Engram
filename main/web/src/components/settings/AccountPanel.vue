@@ -87,14 +87,27 @@ import { formatVersionLabel, type GitIdentity } from '../../lib/buildLabel';
 const app = useAppStore();
 const auth = useAuthStore();
 
-// 源码模式：主进程给出 git 提交身份，版本号后附「提交号 · 提交日期」（见 lib/buildLabel.ts）。
-// 安装包形态与浏览器访问服务器时拿不到 git 身份，显示保持纯版本号。
+// 提交身份两个来源：桌面源码模式由主进程经 IPC 给出（含提交日期/脏标记），
+// Docker 镜像与浏览器访问由服务端 /api/update/state 给出（镜像内烤入 /app/GIT_SHA）。
+// 都拿不到时（安装包形态、无 git 的部署）退回纯版本号。
 const desktopEnv = ref<GitIdentity | null>(null);
-const versionLabel = computed(() => formatVersionLabel(APP_VERSION, desktopEnv.value));
+const serverCommit = ref('');
+const identity = computed<GitIdentity>(() => {
+  const commit = desktopEnv.value?.commit || serverCommit.value;
+  if (!commit) return { commit: '' };
+  return {
+    commit,
+    commitDate: desktopEnv.value?.commitDate || '',
+    dirty: desktopEnv.value?.dirty,
+  };
+});
+const versionLabel = computed(() => formatVersionLabel(APP_VERSION, identity.value));
 const versionHint = computed(() =>
   desktopEnv.value?.commit
     ? '源码模式：版本号仅随发版变化，提交号随每次更新变化。'
-    : '当前安装的 Engram 版本。',
+    : serverCommit.value
+      ? '当前运行部署的构建版本：版本号随发版变化，提交号随每次构建变化。'
+      : '当前安装的 Engram 版本。',
 );
 
 const pwd = ref({ old: '', next: '' });
@@ -175,7 +188,7 @@ function switchToDirect() {
 
 onMounted(() => {
   probeConn();
-  // 桌面端源码模式才有 git 身份；取不到（安装包形态 / 浏览器访问）时保持纯版本号
+  // 桌面端源码模式：主进程经 IPC 给提交身份
   const wd = (window as any).wikiDesktop;
   if (wd?.getDesktopEnv) {
     wd.getDesktopEnv()
@@ -186,6 +199,15 @@ onMounted(() => {
         /* 主进程未就绪时忽略，版本号照常显示 */
       });
   }
+  // Docker 镜像 / 浏览器访问：服务端读 /app/GIT_SHA 或源码检出的 .git
+  api
+    .get('/api/update/state')
+    .then((res) => {
+      serverCommit.value = String(res.data?.commit || '');
+    })
+    .catch(() => {
+      /* 未登录或接口不可用时保持纯版本号 */
+    });
 });
 
 async function changePwd() {

@@ -1,5 +1,7 @@
 # ---------- 前端构建 ----------
 FROM node:22-slim AS build
+# 构建身份：镜像里没有 .git，构建期把提交号烤进 /app/GIT_SHA（对齐 hermes-agent 的 .hermes_build_sha）
+ARG ENGRAM_GIT_SHA=""
 RUN corepack enable && corepack prepare pnpm@10.20.0 --activate
 RUN pnpm config set registry https://registry.npmmirror.com
 WORKDIR /app
@@ -12,8 +14,10 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY server server
 COPY web web
 # /app/VERSION：应用内自更新的版本比对依据（server /api/update 读取）
+# /app/GIT_SHA：构建期烤入的提交号，镜像内无 .git 时由 server codeIdentity() 读取
 RUN pnpm --filter @engram/web build && pnpm --filter @engram/server build \
-  && node -p "require('./desktop/package.json').version" > /app/VERSION
+  && node -p "require('./desktop/package.json').version" > /app/VERSION \
+  && printf '%s' "$ENGRAM_GIT_SHA" > /app/GIT_SHA
 
 # ---------- 生产依赖（编译 better-sqlite3 原生模块） ----------
 FROM node:22-slim AS deps
@@ -64,6 +68,7 @@ COPY --from=deps /app/server/node_modules ./server/node_modules
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/web/dist ./web/dist
 COPY --from=build /app/VERSION /app/VERSION
+COPY --from=build /app/GIT_SHA /app/GIT_SHA
 COPY package.json pnpm-workspace.yaml ./
 COPY server/package.json ./server/
 VOLUME /data

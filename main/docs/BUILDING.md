@@ -84,6 +84,11 @@ workflow 会在构建前自动校验以下内容，**任何一条不满足直接
 | `main/web/src/version.ts` | `APP_VERSION` | 软件内页面显示的版本号 |
 | `main/docker-compose.yml` | `image: engram:<版本>` | 本地开发 compose 的镜像 tag |
 
+> 版本号只在发版时变；**当前提交号**另有来源，不随发版节奏走（对齐 hermes-agent `build_info.py` 的 build-file 路线）：
+> Docker 镜像由 release.yml 以 `--build-arg ENGRAM_GIT_SHA=<提交>` 烤入镜像内 `/app/GIT_SHA`（镜像里没有 `.git`）；
+> 源码检出由 server 直接读 `.git`（不 spawn git）；桌面端源码模式由 Electron 主进程注入 `ENGRAM_GIT_SHA`。
+> 设置页「应用版本」显示 `版本号 · 提交号 [· 提交日期]`，软件更新页右上角与源码模式「检查更新」同样带提交号。
+
 ---
 
 ## 3. 路径 A：标准发版（Gitea Actions workflow）

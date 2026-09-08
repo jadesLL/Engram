@@ -2,7 +2,7 @@ import os from 'node:os';
 import { FastifyInstance } from 'fastify';
 import { requireAuth } from './auth.js';
 import { sse } from '../lib/sse.js';
-import { currentVersion, compareVersions } from '../lib/version.js';
+import { currentVersion, compareVersions, codeIdentity } from '../lib/version.js';
 import {
   docker,
   dockerSocketAvailable,
@@ -75,11 +75,15 @@ export async function updateRoutes(app: FastifyInstance) {
       containerName = inspect?.Name.replace(/^\//, '') || '';
       currentImage = inspect?.Config.Image || '';
     }
+    // 提交身份：版本号只在发版时变，提交号才是「更新有没有落地」的依据
+    const identity = codeIdentity();
     return {
       supported,
       reason,
       desktop,
       currentVersion: currentVersion(),
+      commit: identity.commit,
+      commitSource: identity.source,
       imageRef: cfg.imageRef || (currentImage ? deriveDefaultImageRef(currentImage) || '' : ''),
       imageRefConfigured: Boolean(cfg.imageRef),
       registryAuthConfigured: Boolean(cfg.registryUsername && cfg.registryToken),

@@ -47,6 +47,28 @@ test('GET /api/update/state 无 sock 时 unsupported 且不泄漏明文', async 
   assert.equal(data.supported, false);
   assert.ok(['no-sock', 'desktop'].includes(data.reason));
   assert.equal(data.busy, false);
+  // 构建身份字段恒定返回（取不到时为空串 + unknown），供设置页显示提交号
+  assert.equal(typeof data.commit, 'string');
+  assert.ok(['env', 'build-file', 'git', 'unknown'].includes(data.commitSource));
+});
+
+test('GET /api/update/state 的提交号来自 ENGRAM_GIT_SHA 注入', async () => {
+  const prev = process.env.ENGRAM_GIT_SHA;
+  process.env.ENGRAM_GIT_SHA = 'abcdef0123456789abcdef0123456789abcdef01';
+  try {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/update/state',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.statusCode, 200);
+    const data = res.json();
+    assert.equal(data.commit, 'abcdef0');
+    assert.equal(data.commitSource, 'env');
+  } finally {
+    if (prev === undefined) delete process.env.ENGRAM_GIT_SHA;
+    else process.env.ENGRAM_GIT_SHA = prev;
+  }
 });
 
 test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得）', async () => {
