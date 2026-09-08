@@ -8,6 +8,7 @@ import vue from '@vitejs/plugin-vue';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const vditorDist = path.join(path.dirname(require.resolve('vditor/package.json')), 'dist');
+const vditorRoot = path.resolve(vditorDist);
 
 function contentType(filePath: string): string {
   const extension = path.extname(filePath).toLowerCase();
@@ -39,8 +40,8 @@ function localVditorAssets(): Plugin {
           res.end('Bad request');
           return;
         }
-        const target = path.resolve(vditorDist, relative);
-        if (!target.startsWith(path.resolve(vditorDist) + path.sep) || !fs.statSync(target, { throwIfNoEntry: false })?.isFile()) {
+        const target = path.resolve(vditorRoot, relative);
+        if ((target !== vditorRoot && !target.startsWith(vditorRoot + path.sep)) || !fs.statSync(target, { throwIfNoEntry: false })?.isFile()) {
           next();
           return;
         }
