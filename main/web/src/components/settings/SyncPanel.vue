@@ -52,7 +52,7 @@
           <h4>群组成员（{{ peers.length }}）</h4>
           <button class="btn small" type="button" :disabled="creating" @click="addPeer">添加成员</button>
         </div>
-        <p class="faint small">为每台成员设备命名并生成绑定令牌；令牌与中枢地址一起填到对应设备的「多端同步」设置里。</p>
+        <p class="faint small">为每台成员设备命名并生成绑定令牌；令牌与中枢地址一起填到对应设备的「多端同步」设置里。点击令牌可展开查看完整值。</p>
         <ul v-if="peers.length" class="peer-list">
           <li v-for="p in peers" :key="p.id" class="peer-row">
             <div class="peer-info">
@@ -63,7 +63,13 @@
                 {{ p.online ? '在线' : '离线' }}
                 <template v-if="p.node_label"> · {{ p.node_label }}</template>
                 <template v-if="p.last_seen_at"> · 最近同步 {{ formatTime(p.last_seen_at) }}</template>
-                · 令牌 {{ p.token_hint }}
+              </span>
+              <span class="token-line faint small">
+                令牌
+                <code class="token-code" :title="revealedTokens.has(p.id) ? '点击隐藏' : '点击查看完整令牌'" @click="toggleToken(p.id)">{{
+                  revealedTokens.has(p.id) ? p.token : maskToken(p.token)
+                }}</code>
+                <button v-if="revealedTokens.has(p.id)" class="btn small" type="button" @click="copy(p.token)">复制</button>
               </span>
             </div>
             <div class="peer-actions">
@@ -76,7 +82,7 @@
       </div>
 
       <div v-if="newPeer" class="new-peer-card">
-        <h4>「{{ newPeer.name }}」绑定信息（令牌仅显示这一次）</h4>
+        <h4>「{{ newPeer.name }}」绑定信息</h4>
         <div class="field-row">
           <label>中枢地址</label>
           <div class="copy-row"><code>{{ location.origin }}</code><button class="btn small" type="button" @click="copy(location.origin)">复制</button></div>
@@ -86,6 +92,12 @@
           <div class="copy-row"><code>{{ newPeer.token }}</code><button class="btn small" type="button" @click="copy(newPeer.token)">复制</button></div>
         </div>
         <button class="btn small" type="button" @click="newPeer = null">我已保存，关闭</button>
+      </div>
+
+      <div v-if="status.role === 'hub'" class="ddns-block">
+        <h4>DDNS 直连域名</h4>
+        <p class="faint small">只有中枢设备可以开启：把一条域名指向中枢公网 IP，成员绑定中枢时可直接填这个域名。</p>
+        <DdnsSection />
       </div>
     </template>
 
@@ -144,10 +156,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { api } from '../../api';
 import { promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
+import DdnsSection from './DdnsSection.vue';
 
 interface PeerView {
   id: string;
@@ -157,8 +170,7 @@ interface PeerView {
   last_seen_at: string | null;
   last_seq: number;
   created_at: string;
-  token_hint: string;
-  token?: string;
+  token: string;
 }
 
 interface SyncStatus {
@@ -200,6 +212,19 @@ function formatTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+// 令牌默认掩码（显示头尾，中间打星），点击展开完整值；不再限制仅创建时可见
+const revealedTokens = reactive(new Set<string>());
+
+function toggleToken(id: string): void {
+  if (revealedTokens.has(id)) revealedTokens.delete(id);
+  else revealedTokens.add(id);
+}
+
+function maskToken(token: string): string {
+  if (!token || token.length <= 16) return token;
+  return `${token.slice(0, 12)}********${token.slice(-4)}`;
 }
 
 async function copy(text: string): Promise<void> {
@@ -415,6 +440,28 @@ onUnmounted(() => {
 .dot.on { background: var(--success, #2e9e5b); }
 .dot.off { background: var(--border, rgba(127, 127, 127, 0.4)); }
 .peer-actions { display: flex; align-items: center; gap: 10px; }
+.token-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.token-code {
+  cursor: pointer;
+  word-break: break-all;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.ddns-block {
+  border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  padding-top: 14px;
+  margin-top: 4px;
+}
+.ddns-block h4 { margin: 0 0 4px; }
+.ddns-block > p { margin: 0 0 12px; }
 
 .new-peer-card {
   border: 1px solid var(--warning, #d8a012);

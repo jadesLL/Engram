@@ -38,7 +38,7 @@ const TOP_ORDER = ['原始资料', 'Wiki', 'AIWorks'];
 /** 子目录固定顺序 */
 const SUB_ORDER: Record<string, string[]> = {
   Wiki: ['概念', '实体', '查询', '归档'],
-  AIWorks: ['index', 'log', 'scheme'],
+  AIWorks: ['index', 'log', 'scheme', '同步冲突'],
 };
 /** 系统目录不在文件树展示 */
 const HIDDEN = new Set(['.trash', 'assets']);

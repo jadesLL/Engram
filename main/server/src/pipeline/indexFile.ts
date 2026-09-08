@@ -107,9 +107,30 @@ export function regenerateRelationships() {
   });
 }
 
-/** 预置系统区三件套（新库首读不报「页面不存在」）并立即生成索引与关系结构 */
+/** 静态系统页清单：缺失即建（每次启动检查，新库开库即有，不等内容用到才补） */
+const STATIC_SYSTEM_PAGES: Array<{ path: string; title: string; body: string }> = [
+  { path: LOG_PAGE, title: '操作日志', body: '# 操作日志\n' },
+  {
+    path: 'AIWorks/同步冲突/说明.md',
+    title: '同步冲突备份',
+    body: [
+      '# 同步冲突备份',
+      '',
+      '> 多端同步两端同时修改同一页面且无法自动合并时，后到方的完整内容会自动备份为',
+      '> 本目录下的独立页面（不丢内容，线上页面以先到方为准）。',
+      '',
+      '请人工核对后把内容合并回原页面，再删除对应备份页。本说明页由系统维护，可随时删除，',
+      '下次启动会自动重建。',
+      '',
+    ].join('\n'),
+  },
+];
+
+/** 预置系统区页面（静态页缺失即建；索引与关系结构无条件重建），每次启动都会执行 */
 export function ensureSystemFiles() {
-  if (!readPage(LOG_PAGE)) writePage(LOG_PAGE, '# 操作日志\n', { title: '操作日志', type: 'doc' });
+  for (const p of STATIC_SYSTEM_PAGES) {
+    if (!readPage(p.path)) writePage(p.path, p.body, { title: p.title, type: 'doc' });
+  }
   regenerateIndex();
   regenerateRelationships();
 }

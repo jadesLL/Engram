@@ -97,6 +97,7 @@ export const FIXED_DIRS = [
   'AIWorks/index',
   'AIWorks/log',
   'AIWorks/scheme',
+  'AIWorks/同步冲突',
 ] as const;
 
 /** 允许新建/移入页面的目录（Wiki 树内） */

@@ -35,8 +35,18 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { settings: out };
   });
 
-  app.put('/api/settings', async (req) => {
+  app.put('/api/settings', async (req, reply) => {
     const body = req.body as Record<string, unknown>;
+    // DDNS 仅中枢设备可开启（UI 已按角色隐藏，这里兜底拦 API 直调）
+    if (body['ddns_config'] !== undefined) {
+      let incoming: Record<string, unknown> = {};
+      try {
+        incoming = JSON.parse(String(body['ddns_config'])) as Record<string, unknown>;
+      } catch { /* 非法 JSON 交由原样保存 */ }
+      if (incoming.enabled === true && getSetting('sync_role') !== 'hub') {
+        return reply.code(400).send({ error: '仅中枢设备可开启 DDNS' });
+      }
+    }
     for (const k of PUBLIC_SETTINGS) {
       const v = body[k];
       if (v === undefined) continue;
