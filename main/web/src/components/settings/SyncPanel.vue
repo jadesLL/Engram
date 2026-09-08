@@ -373,7 +373,7 @@ onUnmounted(() => {
 }
 .role-card {
   border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -388,7 +388,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 12px 14px;
   margin: 22px 24px 16px;
   flex-wrap: wrap;
@@ -397,7 +397,7 @@ onUnmounted(() => {
 
 .sync-role-note {
   background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 12px 14px;
   font-size: 13px;
   line-height: 1.7;
@@ -426,7 +426,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 10px 12px;
 }
 .peer-info { display: flex; flex-direction: column; gap: 2px; }
@@ -465,7 +465,7 @@ onUnmounted(() => {
 
 .new-peer-card {
   border: 1px solid var(--warning, #d8a012);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 14px;
   margin: 0 24px 16px;
   display: flex;

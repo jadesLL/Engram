@@ -237,11 +237,13 @@ onBeforeUnmount(() => {
   z-index: var(--z-menu);
   width: 226px;
   max-width: calc(100vw - 16px);
-  padding: 5px;
-  border: 1px solid var(--border-strong);
-  border-radius: 7px;
-  background: var(--bg);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-bg) 88%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: saturate(150%) blur(20px);
+  -webkit-backdrop-filter: saturate(150%) blur(20px);
   color: var(--text);
   opacity: 0;
   pointer-events: none;
@@ -264,7 +266,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 7px;
   padding: 6px 8px;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--text-secondary);
   text-align: left;
 }
@@ -317,11 +319,13 @@ onBeforeUnmount(() => {
   top: -5px;
   left: calc(100% + 5px);
   width: 220px;
-  padding: 5px;
-  border: 1px solid var(--border-strong);
-  border-radius: 7px;
-  background: var(--bg);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-bg) 88%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: saturate(150%) blur(20px);
+  -webkit-backdrop-filter: saturate(150%) blur(20px);
 }
 
 .submenu-left .context-submenu {

@@ -763,7 +763,7 @@ onUnmounted(() => {
   gap: 5px;
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 12px;
@@ -828,12 +828,11 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-secondary);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 4px;
   border: 1px solid var(--border);
-  transition: color 0.12s, border-color 0.12s, background 0.12s, transform 0.1s;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
 .ai-action:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
-.ai-action:active { transform: scale(0.96); }
 .ai-hint { margin-left: auto; }
 .editor-area { flex: 1; min-height: 0; }
 .page-state {
@@ -1075,7 +1074,7 @@ onUnmounted(() => {
 .source-index { display: flex; flex-direction: column; gap: 2px; }
 .source-row {
   padding: 7px 6px;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--text-secondary);
 }
 .source-row:hover { background: var(--bg-hover); color: var(--text); }
@@ -1119,7 +1118,7 @@ onUnmounted(() => {
 .related.collapsed { padding-bottom: 20px; }
 .rel-item {
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-secondary);

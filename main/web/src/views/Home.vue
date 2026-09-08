@@ -388,7 +388,7 @@ onUnmounted(() => {
   gap: 3px;
   padding: 8px 5px;
   border: 1px solid var(--sidebar-glass-border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--sidebar-rail-material);
   box-shadow: var(--sidebar-glass-shadow);
   backdrop-filter: saturate(150%) blur(28px);
@@ -427,18 +427,14 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   color: var(--text-secondary);
-  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
 .rail-btn:hover {
   color: var(--text);
   background: var(--sidebar-hover);
-}
-
-.rail-btn:active {
-  transform: scale(0.96);
 }
 
 .rail-btn:focus-visible,
@@ -451,6 +447,18 @@ onUnmounted(() => {
   color: var(--text);
   background: var(--sidebar-selection);
   box-shadow: inset 0 0 0 1px var(--sidebar-selection-border);
+}
+
+/* Win11 NavigationView 选中指示条：左侧 3px 圆角强调色 pill */
+.rail-btn.active::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: -5px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--sidebar-accent);
 }
 
 .rail-btn.open {
@@ -505,7 +513,7 @@ onUnmounted(() => {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--sidebar-glass-border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--sidebar-material);
   box-shadow: var(--sidebar-glass-shadow);
   backdrop-filter: saturate(150%) blur(28px);

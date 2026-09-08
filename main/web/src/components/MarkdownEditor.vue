@@ -615,7 +615,7 @@ onMounted(init);
 .link-list { margin-top: 6px; max-height: 220px; overflow-y: auto; }
 .link-item {
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
 }

@@ -146,7 +146,7 @@ function fileIconClass(ext: string): string {
   align-items: center;
   gap: 6px;
   padding: 0 6px;
-  border-radius: 7px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 12.5px;
   outline: none;
@@ -159,6 +159,17 @@ function fileIconClass(ext: string): string {
   background: var(--sidebar-selection);
   box-shadow: inset 0 0 0 1px var(--sidebar-selection-border);
   font-weight: 500;
+}
+/* Win11 选中指示条 */
+.page-row.active::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--sidebar-accent);
 }
 .page-row.selected { background: var(--sidebar-selection-strong); }
 
@@ -282,7 +293,7 @@ function fileIconClass(ext: string): string {
   align-items: center;
   justify-content: center;
   padding: 0;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--text-faint);
 }
 .row-actions button:hover,
@@ -297,7 +308,7 @@ function fileIconClass(ext: string): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 5px;
+  border-radius: 4px;
   color: var(--text-faint);
   text-decoration: none;
 }

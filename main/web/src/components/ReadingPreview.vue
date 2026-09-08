@@ -691,7 +691,7 @@ onBeforeUnmount(() => {
 }
 .reading-tag {
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
 }

@@ -123,7 +123,7 @@ async function submit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-secondary);
+  background: var(--bg);
 }
 .login-card {
   width: min(340px, calc(100vw - 32px));
@@ -131,13 +131,13 @@ async function submit() {
   flex-direction: column;
   gap: 12px;
   padding: 32px 28px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-dialog);
 }
 .logo {
   width: 44px;
   height: 44px;
   margin: 0 auto;
-  border-radius: 11px;
+  border-radius: 8px;
   background: #0f172a;
   display: flex;
   align-items: center;

@@ -141,7 +141,8 @@ function onKeydown(event: KeyboardEvent) {
   max-height: min(860px, 92vh);
   display: flex;
   flex-direction: column;
-  box-shadow: var(--shadow);
+  padding: 20px 24px;
+  box-shadow: var(--shadow-dialog);
   outline: none;
 }
 .app-modal.right {

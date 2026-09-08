@@ -5,49 +5,63 @@
  *   1024px 宽屏容器上限
  */
 :root {
-  /* Notion 风格浅色主题（默认） */
-  --bg: #ffffff;
-  --bg-secondary: #f7f7f5;
-  --bg-tertiary: #efefed;
-  --bg-hover: rgba(0, 0, 0, 0.04);
-  --bg-active: rgba(0, 0, 0, 0.07);
-  --text: #37352f;
-  --text-secondary: #787774;
-  --text-faint: #9f9e9b;
-  --border: #e9e9e7;
-  --border-strong: #dcdcd9;
-  --accent: #2563eb;
-  --accent-soft: rgba(37, 99, 235, 0.08);
-  --danger: #dc2626;
-  --warn: #d97706;
-  --success: #16a34a;
+  /* Windows 11 Fluent 浅色主题（默认）：Mica 基底 + 分层卡片 */
+  --bg: #f3f3f3;
+  --bg-secondary: #fafafa;
+  --bg-tertiary: #efefef;
+  --card-bg: #fdfdfd;
+  --bg-hover: rgba(0, 0, 0, 0.045);
+  --bg-active: rgba(0, 0, 0, 0.075);
+  --text: #1b1b1b;
+  --text-secondary: #5c5c5c;
+  --text-faint: #8f8f8f;
+  --border: #e2e2e2;
+  --border-strong: #c6c6c6;
+  --accent: #0067c0;
+  --accent-hover: #1975c5;
+  --accent-pressed: #00579e;
+  --accent-soft: rgba(0, 103, 192, 0.09);
+  --on-accent: #ffffff;
+  --danger: #c42b1c;
+  --warn: #9d5d00;
+  --success: #0f7b0f;
   /* 琥珀色文字/描边场景（Editor/Reports 引用）；浅色下比 --warn 深一档以保证对比度 */
-  --warning: #b45309;
-  --danger-soft: rgba(220, 38, 38, 0.08);
-  --warn-soft: rgba(217, 119, 6, 0.1);
-  --success-soft: rgba(22, 163, 74, 0.1);
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --warning: #8a5200;
+  --danger-soft: rgba(196, 43, 28, 0.08);
+  --warn-soft: rgba(157, 93, 0, 0.1);
+  --success-soft: rgba(15, 123, 15, 0.1);
+  /* Fluent 标准控件：白底 + 底缘深色描边（ControlElevationBorder） */
+  --control-bg: #fcfcfc;
+  --control-bg-hover: #f6f6f6;
+  --control-bg-pressed: #efefef;
+  --control-border: rgba(0, 0, 0, 0.06);
+  --control-border-strong: rgba(0, 0, 0, 0.17);
+  /* 浮层阴影：flyout 常规 / dialog 加深 */
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 12px rgba(0, 0, 0, 0.1);
   --radius: 8px;
+  --radius-control: 4px;
   --content-max: 860px;
-  --sidebar-material: rgba(248, 248, 246, 0.82);
-  --sidebar-material-solid: #f7f7f5;
+  /* 侧栏 Acrylic（Win11 NavigationView 窗格材质） */
+  --sidebar-material: rgba(249, 249, 249, 0.86);
+  --sidebar-material-solid: #f6f6f6;
   --sidebar-rail-material: var(--sidebar-material);
   --sidebar-rail-solid: var(--sidebar-material-solid);
-  --sidebar-glass-solid: #f7f7f5;
-  --sidebar-glass-border: rgba(255, 255, 255, 0.88);
-  --sidebar-glass-shadow: 0 14px 36px rgba(0, 0, 0, 0.14), inset 0 0 0 1px rgba(60, 60, 67, 0.05);
-  --sidebar-hairline: rgba(60, 60, 67, 0.12);
-  --sidebar-hover: rgba(255, 255, 255, 0.56);
-  --sidebar-active: rgba(255, 255, 255, 0.72);
-  --sidebar-accent: #007aff;
-  --sidebar-focus-ring: rgba(0, 122, 255, 0.18);
-  --sidebar-selection: rgba(255, 255, 255, 0.76);
-  --sidebar-selection-strong: rgba(0, 122, 255, 0.18);
-  --sidebar-selection-border: rgba(255, 255, 255, 0.78);
-  --sidebar-control: rgba(255, 255, 255, 0.58);
-  --sidebar-control-focus: rgba(255, 255, 255, 0.78);
-  --sidebar-control-border: rgba(60, 60, 67, 0.14);
-  --sidebar-mobile-shadow: 0 18px 44px rgba(0, 0, 0, 0.2);
+  --sidebar-glass-solid: #f6f6f6;
+  --sidebar-glass-border: rgba(0, 0, 0, 0.07);
+  --sidebar-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  --sidebar-hairline: rgba(0, 0, 0, 0.08);
+  --sidebar-hover: rgba(0, 0, 0, 0.045);
+  --sidebar-active: rgba(0, 0, 0, 0.075);
+  --sidebar-accent: #0067c0;
+  --sidebar-focus-ring: rgba(0, 103, 192, 0.24);
+  --sidebar-selection: rgba(0, 0, 0, 0.055);
+  --sidebar-selection-strong: rgba(0, 103, 192, 0.13);
+  --sidebar-selection-border: rgba(0, 0, 0, 0.04);
+  --sidebar-control: rgba(255, 255, 255, 0.7);
+  --sidebar-control-focus: #ffffff;
+  --sidebar-control-border: rgba(0, 0, 0, 0.13);
+  --sidebar-mobile-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
   --file-markdown: #756aa6;
   --file-word: #356ca5;
   --file-excel: #2f8255;
@@ -68,6 +82,9 @@
   /* rail logo 阴影（深色主题下覆盖） */
   --rail-logo-shadow: 0 1px 3px rgba(0, 82, 172, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.28);
   --rail-logo-shadow-hover: 0 2px 6px rgba(0, 82, 172, 0.32), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  /* Win11 细滚动条（透明边框 + padding-box 裁剪，hover 时加粗） */
+  --scrollbar: rgba(0, 0, 0, 0.3);
+  --scrollbar-hover: rgba(0, 0, 0, 0.48);
   /*
    * 全局浮层层级令牌：浮层统一引用，禁止手写魔法数。
    * 组件内部局部层叠上下文里的 1/2/5/20 等小值不受此约束。
@@ -92,49 +109,65 @@
 }
 
 html.dark {
-  --bg: #191919;
-  --bg-secondary: #202020;
-  --bg-tertiary: #2a2a2a;
+  /* Windows 11 Fluent 深色主题：Mica 深基底 + 提亮分层 */
+  --bg: #202020;
+  --bg-secondary: #2a2a2a;
+  --bg-tertiary: #333333;
+  --card-bg: #2b2b2b;
   --bg-hover: rgba(255, 255, 255, 0.06);
   --bg-active: rgba(255, 255, 255, 0.1);
-  --text: #d4d4d2;
-  --text-secondary: #9b9b9a;
-  --text-faint: #6f6f6e;
-  --border: #2f2f2f;
-  --border-strong: #3f3f3f;
-  --accent: #3b82f6;
-  --accent-soft: rgba(59, 130, 246, 0.15);
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-  --sidebar-material: rgba(40, 42, 44, 0.74);
-  --sidebar-material-solid: #282a2c;
+  --text: #ffffff;
+  --text-secondary: #c9c9c9;
+  --text-faint: #8b8b8b;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --accent: #4cc2ff;
+  --accent-hover: #69cdff;
+  --accent-pressed: #38b6fa;
+  --accent-soft: rgba(76, 194, 255, 0.14);
+  --on-accent: #0b2a3d;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.5), 0 2px 12px rgba(0, 0, 0, 0.32);
+  --control-bg: rgba(255, 255, 255, 0.06);
+  --control-bg-hover: rgba(255, 255, 255, 0.084);
+  --control-bg-pressed: rgba(255, 255, 255, 0.042);
+  --control-border: rgba(255, 255, 255, 0.07);
+  --control-border-strong: rgba(255, 255, 255, 0.22);
+  --sidebar-material: rgba(43, 43, 43, 0.8);
+  --sidebar-material-solid: #2b2b2b;
   --sidebar-rail-material: var(--sidebar-material);
   --sidebar-rail-solid: var(--sidebar-material-solid);
-  --sidebar-glass-solid: #282a2c;
-  --sidebar-glass-border: rgba(255, 255, 255, 0.12);
-  --sidebar-glass-shadow: 0 16px 42px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+  --sidebar-glass-solid: #2b2b2b;
+  --sidebar-glass-border: rgba(255, 255, 255, 0.08);
+  --sidebar-glass-shadow: 0 12px 32px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
   --sidebar-hairline: rgba(255, 255, 255, 0.08);
-  --sidebar-hover: rgba(255, 255, 255, 0.07);
-  --sidebar-active: rgba(255, 255, 255, 0.11);
-  --sidebar-accent: #0a84ff;
-  --sidebar-focus-ring: rgba(10, 132, 255, 0.24);
-  --sidebar-selection: rgba(255, 255, 255, 0.11);
-  --sidebar-selection-strong: rgba(10, 132, 255, 0.28);
-  --sidebar-selection-border: rgba(255, 255, 255, 0.07);
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-active: rgba(255, 255, 255, 0.1);
+  --sidebar-accent: #4cc2ff;
+  --sidebar-focus-ring: rgba(76, 194, 255, 0.3);
+  --sidebar-selection: rgba(255, 255, 255, 0.09);
+  --sidebar-selection-strong: rgba(76, 194, 255, 0.22);
+  --sidebar-selection-border: rgba(255, 255, 255, 0.06);
   --sidebar-control: rgba(255, 255, 255, 0.06);
   --sidebar-control-focus: rgba(255, 255, 255, 0.09);
-  --sidebar-control-border: rgba(255, 255, 255, 0.11);
+  --sidebar-control-border: rgba(255, 255, 255, 0.15);
   --sidebar-mobile-shadow: 0 18px 46px rgba(0, 0, 0, 0.56);
   --file-markdown: #a79bd5;
   --file-word: #6fa6dc;
   --file-excel: #66b889;
   --file-ppt: #dc956c;
   --file-pdf: #e77b78;
-  --warning: #d97706;
-  --danger-soft: rgba(220, 38, 38, 0.18);
-  --warn-soft: rgba(217, 119, 6, 0.2);
-  --success-soft: rgba(22, 163, 74, 0.18);
-  --rail-logo-shadow: 0 1px 3px rgba(10, 132, 255, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.18);
-  --rail-logo-shadow-hover: 0 2px 6px rgba(10, 132, 255, 0.46), inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  --warning: #e5a63d;
+  --danger: #ff99a4;
+  --warn: #e5b545;
+  --success: #6ccb5f;
+  --danger-soft: rgba(255, 153, 164, 0.16);
+  --warn-soft: rgba(229, 166, 61, 0.16);
+  --success-soft: rgba(108, 203, 95, 0.16);
+  --rail-logo-shadow: 0 1px 3px rgba(76, 194, 255, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  --rail-logo-shadow-hover: 0 2px 6px rgba(76, 194, 255, 0.46), inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  --scrollbar: rgba(255, 255, 255, 0.32);
+  --scrollbar-hover: rgba(255, 255, 255, 0.5);
 }
 
 * { box-sizing: border-box; }
@@ -146,8 +179,9 @@ html, body, #app {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  /* Win11 优先 Segoe UI Variable，中文回落雅黑 */
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont,
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -205,40 +239,50 @@ button {
   background: none;
   border: none;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
 }
 
+/* Fluent 文本框：白底 + 底缘深描边；聚焦时底缘变为 2px 强调色（无 halo 光圈） */
 input, textarea, select {
   font: inherit;
   color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-bottom-color: var(--control-border-strong);
+  border-radius: var(--radius-control);
   padding: 7px 10px;
   outline: none;
-  transition: border-color 150ms ease;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
-input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+input:hover, textarea:hover, select:hover { background: var(--control-bg-hover); }
+input:focus, textarea:focus, select:focus {
+  background: var(--control-bg-hover);
+  border-bottom-color: var(--accent);
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
 
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 14px;
-  border-radius: 6px;
-  background: var(--bg-tertiary);
+  padding: 6px 14px;
+  border: 1px solid var(--control-border);
+  border-bottom-color: var(--control-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--control-bg);
   color: var(--text);
-  transition: background 0.15s, transform 0.1s;
+  transition: background 120ms ease, border-color 120ms ease;
   white-space: nowrap;
 }
-.btn:hover { background: var(--bg-active); }
-.btn:active { transform: scale(0.97); }
-.btn.primary { background: var(--accent); color: #fff; }
-.btn.primary:hover { opacity: 0.9; }
+.btn:hover { background: var(--control-bg-hover); }
+.btn:active { background: var(--control-bg-pressed); border-bottom-color: var(--control-border); }
+.btn.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn.primary:active { background: var(--accent-pressed); }
 .btn.danger { color: var(--danger); }
-.btn.danger-solid { background: var(--danger); color: #fff; }
+.btn.danger-solid { background: var(--danger); border-color: transparent; color: #fff; }
 .btn.danger-solid:hover { opacity: 0.9; }
-.btn.ghost { background: transparent; color: var(--text-secondary); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
 .btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
 .btn.icon {
   width: 28px;
@@ -246,6 +290,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   padding: 0;
   justify-content: center;
   background: transparent;
+  border-color: transparent;
   color: var(--text-secondary);
 }
 .btn.icon:hover { background: var(--bg-hover); color: var(--text); }
@@ -253,7 +298,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .card {
-  background: var(--bg);
+  background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
@@ -266,7 +311,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .tag {
   display: inline-block;
   padding: 1px 8px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   font-size: 12px;
@@ -278,14 +323,26 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   padding: 1px 6px;
   border-radius: 9px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 11px;
   text-align: center;
 }
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
+/* Win11 覆盖式细滚动条：常态 ~4px 细条，hover 加粗 */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  background-clip: padding-box;
+  border: 4px solid transparent;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+}
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; }
 
 /* Vditor 主题变量适配 */
 html .vditor {
