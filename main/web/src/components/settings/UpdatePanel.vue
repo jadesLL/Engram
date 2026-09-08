@@ -190,9 +190,9 @@
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>远端仓库地址</strong>
-          <span>浏览器打开仓库首页，把地址栏整条复制粘贴过来即可（Release 页地址也行），如 https://gitea.example.com/example/Engram。</span>
+          <span>打开仓库首页，把浏览器地址栏整条复制粘贴过来（Release 页地址也可以），如 https://gitea.example.com/username/Engram。</span>
         </div>
-        <input v-model="form.repoUrl" type="text" placeholder="https://gitea.example.com/example/Engram" aria-label="远端仓库地址" @input="repoUrlError = ''" />
+        <input v-model="form.repoUrl" type="text" placeholder="https://gitea.example.com/username/Engram" aria-label="远端仓库地址" @input="repoUrlError = ''" />
         <p v-if="repoUrlError" class="setting-message err">{{ repoUrlError }}</p>
       </div>
 
@@ -400,7 +400,7 @@ function parseRepoUrl(input: string): { url: string; repo: string } | { error: s
   }
   const segs = u.pathname.split('/').filter(Boolean);
   if (segs.length < 2) {
-    return { error: '这是站点首页地址，缺少仓库路径；请先打开仓库页面再复制，例如 https://gitea.example.com/example/Engram' };
+    return { error: '这是站点首页地址，缺少仓库路径；请先打开仓库页面再复制，例如 https://gitea.example.com/username/Engram' };
   }
   const owner = decodeURIComponent(segs[0]);
   const name = decodeURIComponent(segs[1]).replace(/\.git$/, '');
