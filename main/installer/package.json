@@ -14,7 +14,8 @@
     "appId": "com.engram.installer",
     "productName": "Engram Source Setup",
     "electronVersion": "35.7.5",
-    "asar": true,
+    "electronDist": "../desktop/node_modules/electron/dist",
+    "asar": false,
     "files": [
       "main.js",
       "ui.html"

@@ -1,4 +1,4 @@
-﻿﻿# Engram 源码版部署引擎（GUI 安装器与命令行共用）
+﻿# Engram 源码版部署引擎（GUI 安装器与命令行共用）
 # GUI 靠解析 ##STEPS/##STEP/##DONE/##FAIL/##ALLDONE 标记驱动界面；标记经
 # [Console]::Out.WriteLine 直刷——PowerShell 管道输出是块缓冲，Write-Output 会憋到进程退出。
 #
@@ -19,13 +19,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest 进度条在 PS5.1 慢十倍
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
+# 注意：不要在此设 [Console]::OutputEncoding——windowsHide 重定向无控制台句柄时会抛异常终止脚本
 
 # 进度日志：GUI 轮询此文件取实时进度（PS5.1 管道输出块缓冲，stdout 不可靠）
 $logFile = if ($env:ENGRAM_INSTALL_LOG) { $env:ENGRAM_INSTALL_LOG } else { Join-Path $env:TEMP 'engram-install.log' }
 function Out-Line([string]$s) {
-  [Console]::Out.WriteLine($s)
-  Add-Content -Path $logFile -Value $s -Encoding UTF8
+  try { Add-Content -Path $logFile -Value $s -Encoding UTF8 } catch { }
+  try { [Console]::Out.WriteLine($s) } catch { }
 }
 function Step([string]$id, [string]$label) { Out-Line "[[STEP]$id|$label]" }
 function StepDone([string]$id, [string]$note = '') { Out-Line "[[DONE]$id]"; if ($note) { Out-Line "   $note" } }

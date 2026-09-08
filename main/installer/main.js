@@ -22,7 +22,7 @@ function send(ch, data) {
 }
 
 function handleLine(line) {
-  line = line.replace(/\r$/, '');
+  line = line.replace(/^[\uFEFF\r]+/, '').replace(/\r$/, '');
   if (!line.trim()) return;
   if (line.startsWith('##STEPS:')) {
     const steps = line.slice(8).split(';').filter(Boolean).map((p) => {
@@ -115,6 +115,12 @@ app.whenReady().then(() => {
     },
   });
   win.loadFile('ui.html');
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error(`[installer] load fail ${code} ${desc} ${url}`);
+  });
+  win.webContents.on('console-message', (_e, level, message) => {
+    console.error(`[ui] ${message}`);
+  });
 
   ipcMain.on('start-install', (_e, creds) => startInstall(creds));
   ipcMain.on('cancel-install', () => cancelInstall());
