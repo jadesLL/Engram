@@ -171,7 +171,7 @@
               更新并重启
             </button>
           </div>
-          <p v-if="srcUpdating" class="setting-message warn">正在增量拉取源码并重新构建，应用即将自动重启，请勿关闭；任务栏最小化窗口为构建过程。</p>
+          <p v-if="srcUpdating" class="setting-message warn">正在增量拉取源码并重新构建，请看置顶的更新进度窗口；构建完成后应用自动重启，数据不受影响。</p>
         </template>
       </template>
     </div>
@@ -570,7 +570,7 @@ async function doSourceUpdate() {
   if (!wd?.desktopSourceUpdate) return;
   const ok = await confirmDialog({
     title: '更新并重启',
-    message: `将增量拉取 ${srcResult.value?.behind ?? ''} 个提交并重新构建（约 1 分钟），构建在后台最小化窗口进行，完成后应用自动重启，数据不受影响。继续？`,
+    message: `将增量拉取 ${srcResult.value?.behind ?? ''} 个提交并重新构建（约 1 分钟），期间会弹出置顶进度窗口实时显示构建步骤，完成后应用自动重启，数据不受影响。继续？`,
     confirmText: '开始更新',
   });
   if (!ok) return;
