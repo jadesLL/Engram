@@ -1,4 +1,4 @@
-﻿# Engram 源码模式一键更新（自用机器：合 main 即更新，无需发版 / 安装包）
+# Engram 源码模式一键更新（自用机器：合 main 即更新，无需发版 / 安装包）
 #
 # 用法（在 main/ 目录下）：
 #   powershell -ExecutionPolicy Bypass -File scripts\update-from-source.ps1              # 更新 + 构建 + 启动
@@ -8,6 +8,10 @@
 # 前置（一次性）：Git + Node 22 + pnpm 在 PATH，本仓库已 clone。
 # 数据与配置在 %APPDATA%\@engram\desktop，与打包版共用；本脚本只重建代码，不碰数据。
 # 注意：与打包版共用 userData，受单实例锁互斥——同时只能运行一个，启动前请先退出另一个。
+# 依赖同步（装不装、装什么）统一交给 desktop\scripts\sync-deps.js：按依赖指纹判断，只在依赖
+# 真变化时装，并补齐 desktop/server 运行时依赖与 better-sqlite3 的 Electron binding。应用内
+# 「检查更新」走同一条实现，不会出现「一边提示要装、另一边跳过安装」的分歧（旧版按
+# ORIG_HEAD..HEAD 比对，应用内更新先 pull 过就会把 ORIG_HEAD 重置，导致脚本漏装）。
 # 目标端口：优先设置页自定义的 localPort（%APPDATA%\@engram\desktop\config.json），默认 18180；
 # 被占用时自动改用 18181（ENGRAM_USER_DATA 隔离测试等场景）。
 param(
@@ -43,17 +47,12 @@ if (-not $SkipPull) {
   if ($LASTEXITCODE -ne 0) { throw 'git pull 失败：本地未提交改动与远端冲突或历史分叉，请先提交/暂存后再试' }
 }
 
-# 2) 依赖变化检测（对比 pull 前后的 lockfile / package.json），有变化才重装
-$needInstall = $false
-if (-not $SkipPull -and (Test-Path (Join-Path $appRoot '.git'))) {
-  $changed = git -C $appRoot diff --name-only ORIG_HEAD HEAD -- pnpm-lock.yaml server/package.json web/package.json desktop/package.json
-  if ($changed) { $needInstall = $true; Write-Host "依赖清单有变化：$changed" }
-}
-if ($needInstall) {
-  Step '重装工作区依赖（pnpm install --frozen-lockfile）'
-  pnpm -C $appRoot install --frozen-lockfile
-  if ($LASTEXITCODE -ne 0) { throw 'pnpm install 失败' }
-}
+# 2) 同步工作区依赖：依赖指纹变化才 pnpm install --frozen-lockfile（sync-deps.js 判定，
+#    与应用内「检查更新」同一实现；依赖无变化时只打印一行说明）
+Step '同步工作区依赖（依赖变化时 pnpm install --frozen-lockfile）'
+Push-Location $appRoot
+try { node desktop/scripts/sync-deps.js workspace } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) { throw '工作区依赖同步失败' }
 
 # 3) 构建 server 与 web
 Step '构建 server（tsc）'
@@ -70,44 +69,14 @@ Push-Location $appRoot
 try { node desktop/scripts/prepare-desktop.js } finally { Pop-Location }
 if ($LASTEXITCODE -ne 0) { throw 'prepare-desktop 失败' }
 
-# 5) desktop/server 运行时依赖：缺失或依赖变化时重装
-$serverNM = Join-Path $desktop 'server\node_modules'
-if (-not (Test-Path $serverNM) -or $needInstall) {
-  Step '安装 desktop/server 运行时依赖（pnpm --prod, hoisted）'
-  pnpm -C (Join-Path $desktop 'server') install --prod --node-linker=hoisted --ignore-workspace --no-frozen-lockfile
-  if ($LASTEXITCODE -ne 0) { Write-Host '（pnpm 非零退出：ignored builds 可容忍，继续）' -ForegroundColor Yellow }
-}
-
-# 5b) 确保 better-sqlite3 native binding 就位。pnpm 10 忽略构建脚本，须手动补；
-#     且 ABI 必须匹配 Electron（系统 Node 的 binding 在 ELECTRON_RUN_AS_NODE 下 ERR_DLOPEN_FAILED），
-#     故首选按当前 Electron 版本拉官方 prebuild（npmmirror 镜像），拷主工作区 binding 仅作兜底
-$nativeDst = Join-Path $serverNM 'better-sqlite3\build\Release\better_sqlite3.node'
-if (-not (Test-Path $nativeDst)) {
-  $electronVer = ((Get-Content (Join-Path $desktop 'node_modules\electron\package.json') -Raw) | ConvertFrom-Json).version
-  $bsq3 = Join-Path $serverNM 'better-sqlite3'
-  $env:npm_config_runtime = 'electron'
-  $env:npm_config_target = $electronVer
-  $env:npm_config_better_sqlite3_binary_host_mirror = 'https://registry.npmmirror.com/-/binary/better-sqlite3'
-  Push-Location $bsq3
-  try { node (Join-Path $serverNM 'prebuild-install\bin.js') --runtime electron --target $electronVer } finally { Pop-Location }
-  Remove-Item Env:npm_config_runtime, Env:npm_config_target, Env:npm_config_better_sqlite3_binary_host_mirror -ErrorAction SilentlyContinue
-  if (Test-Path $nativeDst) {
-    Write-Host "已安装 better-sqlite3 Electron@$electronVer prebuild"
-  } else {
-    Write-Host 'prebuild 下载失败，回退拷贝主工作区 binding（ABI 可能不匹配，仅系统 Node 与 Electron 同 ABI 时可用）' -ForegroundColor Yellow
-    $candidates = @(Join-Path $appRoot 'node_modules\better-sqlite3\build\Release\better_sqlite3.node')
-    $pnpmDir = Join-Path $appRoot 'node_modules\.pnpm'
-    if (Test-Path $pnpmDir) {
-      $candidates += (Get-ChildItem $pnpmDir -Filter 'better-sqlite3@*' -Directory -ErrorAction SilentlyContinue |
-        ForEach-Object { Join-Path $_.FullName 'node_modules\better-sqlite3\build\Release\better_sqlite3.node' })
-    }
-    $nativeSrc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $nativeSrc) { throw '未找到 better-sqlite3 native binding（先在主工作区跑一次 pnpm install）' }
-    New-Item -ItemType Directory -Force -Path (Split-Path $nativeDst) | Out-Null
-    Copy-Item $nativeSrc $nativeDst -Force
-    Write-Host "已补 better-sqlite3 native binding ← $nativeSrc"
-  }
-}
+# 5) 同步 desktop/server 运行时依赖（依赖变化才装）+ better-sqlite3 的 Electron binding +
+#    Electron 运行时兜底。binding 的 ABI 必须匹配 Electron（系统 Node 的 binding 在
+#    ELECTRON_RUN_AS_NODE 下 ERR_DLOPEN_FAILED），故按当前 Electron 版本取官方 prebuild
+#    （npmmirror 镜像），拷贝主工作区 binding 仅作兜底。
+Step '同步 desktop/server 运行时依赖与原生 binding'
+Push-Location $appRoot
+try { node desktop/scripts/sync-deps.js server } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) { throw 'desktop/server 运行时依赖同步失败' }
 
 if ($NoLaunch) {
   Write-Host "`nDONE：更新构建完成（未启动）。" -ForegroundColor Green

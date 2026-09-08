@@ -566,11 +566,16 @@ app.whenReady().then(() => {
   app.setAccessibilitySupportEnabled(true);
   Menu.setApplicationMenu(buildAppMenu());
   launchByConfig();
-  // 自动更新：启动延迟首查 + 每 8 小时复查（仅打包安装形态；源码模式走 scripts/update-from-source.ps1，不自动下载安装包）
+  // 自动更新：启动延迟首查 + 每 8 小时复查。打包形态自动下载并静默安装；源码模式只自动检查，
+  // 落后时用系统通知 + 设置页提示，更新时机由用户点「更新并重启」确认。
   if (process.platform === 'win32' && app.isPackaged) {
     autoState.enabled = readConfig().autoUpdate !== false;
     setTimeout(autoUpdateTick, AUTO_UPDATE_STARTUP_DELAY_MS);
     setInterval(autoUpdateTick, AUTO_UPDATE_INTERVAL_MS);
+  } else if (process.platform === 'win32') {
+    sourceAutoState.enabled = readConfig().autoUpdate !== false;
+    setTimeout(sourceAutoTick, AUTO_UPDATE_STARTUP_DELAY_MS);
+    setInterval(sourceAutoTick, AUTO_UPDATE_INTERVAL_MS);
   }
 });
 
@@ -1130,7 +1135,7 @@ function beginSilentInstall(file, version, source = 'auto update') {
 }
 
 async function autoUpdateTick() {
-  if (process.platform !== 'win32' || autoBusy) return;
+  if (process.platform !== 'win32' || autoBusy || !app.isPackaged) return;
   if (process.env.PORTABLE_EXECUTABLE_DIR) return; // 便携版不自动更新
   autoState.enabled = readConfig().autoUpdate !== false;
   if (!autoState.enabled) {
@@ -1204,13 +1209,19 @@ ipcMain.handle('desktop-update-set-auto', (_e, enabled) => {
 });
 
 // ---------- 源码模式自更新（非打包形态：应用内增量拉源码并重建） ----------
-// 源码模式跑在 git 检出目录上，更新 = git pull 增量拉取 → 重建 server/web → 组装 → 重启。
-// 全程由主进程编排：弹置顶进度小窗，fork tsc/vite/prepare-desktop 逐步构建（输出实时
+// 源码模式跑在 git 检出目录上，更新 = git pull 增量拉取 → 同步依赖 → 重建 server/web →
+// 组装 → 同步运行时依赖 → 重启。全程由主进程编排：弹置顶进度小窗，fork 各步骤（输出实时
 // 回显小窗），构建期间应用照常可用，到组装前才停内嵌 server、主窗藏进托盘；完成后
-// app.relaunch 重启，新实例接管。不走 update-from-source.ps1：powershell 被 GUI 进程
-// spawn 时行为不可控（句柄为 null 静默秒退、管道场景构建拖慢几十倍，均实测），该脚本
-// 仍保留给终端手动更新。依赖清单变化的更新需 pnpm install（联网），此路径不支持并提示。
+// app.relaunch 重启，新实例接管。
+// 依赖同步统一交给 desktop/scripts/sync-deps.js（与 scripts/update-from-source.ps1 同一实现）：
+// 用依赖指纹判断是否真的需要 pnpm install，只在依赖变化时装，并补齐 desktop/server 运行时
+// 依赖与 better-sqlite3 的 Electron ABI binding。仍不走 powershell（GUI 进程 spawn powershell
+// 行为不可控：句柄为 null 静默秒退、管道场景构建拖慢几十倍，均实测），但 pnpm 本身是 Node CLI，
+// 可以用 Electron 自带的 node 模式直接 fork，不需要任何 shell。
 const appRootDir = path.join(__dirname, '..');
+const syncDepsEntry = () => path.join(appRootDir, 'desktop', 'scripts', 'sync-deps.js');
+/** 更新进行中标志：防止重复点击触发两次 pull/构建 */
+let sourceUpdating = false;
 
 function gitArgs(args) {
   return { cmd: 'git', args: ['-C', appRootDir, ...args] };
@@ -1270,7 +1281,28 @@ ipcMain.handle('desktop-get-env', async () => ({
   ...(app.isPackaged ? {} : await gitIdentity()),
 }));
 
-ipcMain.handle('desktop-source-update-check', async () => {
+// 源码模式自动检查：启动延迟首查 + 每 8 小时复查，落后时只提示（设置页状态 + 系统通知），
+// 不自动升级——源码模式重建会重启应用，时机交给用户点「更新并重启」决定。
+const sourceAutoState = {
+  enabled: true,
+  phase: 'idle', // idle | checking | up-to-date | behind | failed
+  behind: 0,
+  localCommit: '',
+  remoteCommit: '',
+  error: '',
+  checkedAt: null,
+};
+let sourceAutoBusy = false;
+/** 已通知过的远端提交号：同一次落后只弹一次系统通知 */
+let sourceNotifiedCommit = '';
+
+function setSourceAutoState(patch) {
+  Object.assign(sourceAutoState, patch);
+  broadcast('desktop-source-state', { ...sourceAutoState });
+}
+
+/** 比对远端与本地：fetch 后取落后提交数与两侧提交号（手动「检查更新」与自动检查共用） */
+async function sourceCheckCore() {
   if (app.isPackaged) return { ok: false, error: '安装包形态不使用源码更新' };
   try {
     const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -1300,6 +1332,77 @@ ipcMain.handle('desktop-source-update-check', async () => {
   } catch (e) {
     return { ok: false, error: describeError(e) };
   }
+}
+
+/** 把一次检查结果同步进自动检查状态（手动检查也走这里，设置页文案与自动检查一致） */
+function applySourceCheckResult(r) {
+  if (!r || !r.ok) {
+    setSourceAutoState({ phase: 'failed', error: (r && r.error) || '检查失败', checkedAt: Date.now() });
+    return;
+  }
+  setSourceAutoState({
+    phase: r.upToDate ? 'up-to-date' : 'behind',
+    behind: r.behind,
+    localCommit: r.localCommit,
+    remoteCommit: r.remoteCommit,
+    error: '',
+    checkedAt: Date.now(),
+  });
+}
+
+async function sourceAutoTick() {
+  if (app.isPackaged || sourceAutoBusy || sourceUpdating) return;
+  sourceAutoState.enabled = readConfig().autoUpdate !== false;
+  if (!sourceAutoState.enabled) {
+    setSourceAutoState({ phase: 'idle', error: '' });
+    return;
+  }
+  sourceAutoBusy = true;
+  setSourceAutoState({ phase: 'checking', error: '' });
+  try {
+    const r = await sourceCheckCore();
+    applySourceCheckResult(r);
+    if (r.ok && !r.upToDate && r.remoteCommit && r.remoteCommit !== sourceNotifiedCommit) {
+      sourceNotifiedCommit = r.remoteCommit;
+      notifySourceUpdate(r);
+    }
+  } finally {
+    sourceAutoBusy = false;
+  }
+}
+
+/** 落后时的系统通知：点通知唤起主窗，更新仍由用户在设置页确认 */
+function notifySourceUpdate(r) {
+  try {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({
+      title: 'Engram 有源码更新可拉取',
+      body: `远端领先 ${r.behind} 个提交（${r.localCommit || '本地'} → ${r.remoteCommit}）。打开「设置 → 软件更新」点「更新并重启」即可，数据不受影响。`,
+      icon: windowIcon(),
+    });
+    n.on('click', () => showMainWindow());
+    n.show();
+  } catch (e) {
+    log('source update notify failed: ' + describeError(e));
+  }
+}
+
+ipcMain.handle('desktop-source-update-check', async () => {
+  const r = await sourceCheckCore();
+  applySourceCheckResult(r);
+  return r;
+});
+
+ipcMain.handle('desktop-source-auto-state', () => ({ ...sourceAutoState }));
+
+ipcMain.handle('desktop-source-set-auto', (_e, enabled) => {
+  const c = readConfig();
+  c.autoUpdate = Boolean(enabled);
+  writeConfig(c);
+  sourceAutoState.enabled = c.autoUpdate;
+  setSourceAutoState({ phase: 'idle', error: '' });
+  if (c.autoUpdate) setTimeout(sourceAutoTick, 1000); // 开启后立即触发一次检查
+  return { ...sourceAutoState };
 });
 
 // 进度小窗：更新期间唯一的可见窗口（主窗藏进托盘）。复用启动页深色主题，
@@ -1419,6 +1522,17 @@ function resolveToolEntry(relCandidates) {
 
 ipcMain.handle('desktop-source-update', async () => {
   if (app.isPackaged) return { ok: false, error: '安装包形态不使用源码更新' };
+  if (sourceUpdating) return { ok: false, error: '更新已在进行中，请等待当前更新完成' };
+  sourceUpdating = true;
+  try {
+    return await runSourceUpdate();
+  } finally {
+    // 成功路径已 app.exit 重启；这里兜住失败/中断，避免卡住后续更新
+    sourceUpdating = false;
+  }
+});
+
+async function runSourceUpdate() {
   showUpdateProgress();
   setUpdateStep('正在拉取最新代码（git pull）…');
   try {
@@ -1431,18 +1545,11 @@ ipcMain.handle('desktop-source-update', async () => {
     showMainWindow();
     return { ok: false, error: describeError(e) + '（本地有未提交改动时请先提交/暂存）' };
   }
-  // 依赖清单变化的更新需要 pnpm install（联网下载），不在应用内路径支持，提示走脚本
   try {
-    const changed = await runGit(['diff', '--name-only', 'ORIG_HEAD', 'HEAD', '--',
-      'pnpm-lock.yaml', 'server/package.json', 'web/package.json', 'desktop/package.json']);
-    if (changed.trim()) {
-      const msg = '本次更新涉及依赖清单变化，请在终端运行 scripts\\update-from-source.ps1 完成本次升级，之后可继续使用应用内更新';
-      failUpdateProgress(msg);
-      showMainWindow();
-      return { ok: false, error: msg };
-    }
-  } catch { /* 无 ORIG_HEAD（本地已最新）等，视为无变化 */ }
-  try {
+    // 依赖同步交给 sync-deps.js：按依赖指纹判断，真变了才 pnpm install（联网），
+    // appId 之类元信息改动不再误报，也不再需要用户去终端跑脚本
+    setUpdateStep('同步依赖（依赖变化时 pnpm install）…');
+    await forkStep(syncDepsEntry(), ['workspace', '--app-root', appRootDir], appRootDir, appendUpdateLog);
     setUpdateStep('构建 server（tsc）…');
     await forkStep(resolveToolEntry([
       path.join('server', 'node_modules', 'typescript', 'bin', 'tsc'),
@@ -1454,9 +1561,11 @@ ipcMain.handle('desktop-source-update', async () => {
       path.join('node_modules', 'vite', 'bin', 'vite.js'),
     ]), ['build'], path.join(appRootDir, 'web'), appendUpdateLog);
   } catch (e) {
-    failUpdateProgress('更新失败：' + describeError(e));
+    const msg = describeError(e);
+    failUpdateProgress('更新失败：' + msg);
+    appendUpdateLog('> 可再次点击「更新并重启」重试；仍失败时在终端运行 scripts\\update-from-source.ps1');
     showMainWindow();
-    return { ok: false, error: describeError(e) };
+    return { ok: false, error: msg };
   }
   // 组装会覆盖正在运行的 desktop/server 产物副本，先停内嵌 server、主窗藏进托盘
   setUpdateStep('组装桌面运行目录…');
@@ -1468,14 +1577,19 @@ ipcMain.handle('desktop-source-update', async () => {
   try {
     await forkStep(path.join(appRootDir, 'desktop', 'scripts', 'prepare-desktop.js'),
       [], appRootDir, appendUpdateLog);
+    // 组装后 desktop/server/package.json 才是最新的，再同步运行时依赖与原生 binding
+    setUpdateStep('同步桌面运行依赖（desktop/server）…');
+    await forkStep(syncDepsEntry(), ['server', '--app-root', appRootDir], appRootDir, appendUpdateLog);
   } catch (e) {
-    failUpdateProgress('更新失败：' + describeError(e));
+    const msg = describeError(e);
+    failUpdateProgress('更新失败：' + msg);
+    appendUpdateLog('> 可再次点击「更新并重启」重试；仍失败时在终端运行 scripts\\update-from-source.ps1');
     showMainWindow();
-    return { ok: false, error: describeError(e) };
+    return { ok: false, error: msg };
   }
   setUpdateStep('完成，正在启动新版本…');
   appendUpdateLog('> 更新完成');
   app.relaunch({ args: process.argv.slice(1) });
   app.exit(0);
   return { ok: true, restarting: true };
-});
+}

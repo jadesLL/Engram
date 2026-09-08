@@ -84,7 +84,7 @@
 
       <template v-else>
         <div v-if="sourceMode" class="integration-note">
-          当前为<strong>源码模式</strong>：更新 = 增量拉取源码并重新构建，不使用安装包。构建约需 1 分钟，期间会显示最小化控制台窗口，完成后应用自动重启，数据不受影响。版本号仅随发版变化，<strong>提交号随每次更新变化</strong>，用它判断是否已更新到最新代码。
+          当前为<strong>源码模式</strong>：更新 = 增量拉取源码并重新构建，不使用安装包。依赖清单真变化时会<strong>在应用内自动装依赖</strong>（pnpm install），不需要再去终端跑脚本；构建约需 1 分钟，期间弹出置顶进度窗口，完成后应用自动重启，数据不受影响。版本号仅随发版变化，<strong>提交号随每次更新变化</strong>，用它判断是否已更新到最新代码。
         </div>
 
         <div v-if="autoSupported && !sourceMode" class="setting-row">
@@ -145,6 +145,25 @@
 
         <!-- 源码模式：增量拉源码 + 重新构建 -->
         <template v-if="sourceMode">
+          <div v-if="sourceAutoSupported" class="setting-row">
+            <div class="setting-copy">
+              <strong>自动检查更新</strong>
+              <span>启动后自动检查（之后每 8 小时复查）；发现新提交只在设置页与系统通知里提示，更新仍由你点「更新并重启」确认，不会自动重启。</span>
+            </div>
+            <label class="switch-control">
+              <input type="checkbox" :checked="sourceAuto.enabled" @change="toggleSourceAuto" />
+              <span aria-hidden="true"></span>
+              <em>{{ sourceAuto.enabled ? '已开启' : '已关闭' }}</em>
+            </label>
+          </div>
+          <p
+            v-if="sourceAutoSupported && sourceAutoStatus"
+            class="setting-message"
+            :class="sourceAuto.phase === 'behind' ? 'warn' : sourceAuto.phase === 'failed' ? 'err' : ''"
+          >
+            {{ sourceAutoStatus }}
+          </p>
+
           <div class="setting-row">
             <div class="setting-copy">
               <strong>检查更新</strong>
@@ -356,6 +375,10 @@ const srcChecking = ref(false);
 const srcResult = ref<any>(null);
 const srcUpdating = ref(false);
 const srcError = ref('');
+// 源码模式自动检查（主进程状态机）：旧版壳无 desktopSourceAutoState API 时隐藏该节
+const sourceAutoSupported = ref(false);
+const sourceAuto = ref<any>({ enabled: true, phase: 'idle', behind: 0, localCommit: '', remoteCommit: '', error: '', checkedAt: null });
+let offSourceState: (() => void) | null = null;
 
 const wikiDesktop = () => (window as any).wikiDesktop;
 
@@ -381,6 +404,25 @@ const versionBadge = computed(() => {
 
 /** 源码模式检查更新结果：`已是最新（本地 0fbe4e2）` / `落后 3 个提交：0fbe4e2 → a1b2c3d` */
 const sourceCheckText = computed(() => (srcResult.value?.ok ? formatSourceCheckLabel(srcResult.value) : ''));
+
+/** 源码模式自动检查状态文字：只提示，不自动升级（重启时机由用户点「更新并重启」决定） */
+const sourceAutoStatus = computed(() => {
+  const s = sourceAuto.value;
+  switch (s.phase) {
+    case 'checking':
+      return '正在自动检查更新…';
+    case 'up-to-date':
+      return s.localCommit ? `自动检查完成，已是最新（本地 ${s.localCommit}）` : '自动检查完成，已是最新';
+    case 'behind': {
+      const route = s.localCommit && s.remoteCommit ? `（${s.localCommit} → ${s.remoteCommit}）` : '';
+      return `发现 ${s.behind ?? 0} 个新提交${route}，点下方「更新并重启」即可更新`;
+    }
+    case 'failed':
+      return `自动检查失败：${s.error}。不影响使用，可手动点「检查更新」重试。`;
+    default:
+      return s.enabled ? '' : '自动检查已关闭';
+  }
+});
 
 /** 自动更新状态机的用户可读描述 */
 const autoStatus = computed(() => {
@@ -410,6 +452,19 @@ async function toggleAuto(e: Event) {
   try {
     autoState.value = await wd.desktopUpdateSetAuto(enabled);
     notify.success(enabled ? '自动更新已开启' : '自动更新已关闭');
+  } catch {
+    notify.error('设置失败，请重试');
+  }
+}
+
+/** 源码模式的「自动检查」开关：与打包形态共用 config.autoUpdate，但只检查不自动升级 */
+async function toggleSourceAuto(e: Event) {
+  const wd = wikiDesktop();
+  const enabled = (e.target as HTMLInputElement).checked;
+  if (!wd?.desktopSourceSetAuto) return;
+  try {
+    sourceAuto.value = await wd.desktopSourceSetAuto(enabled);
+    notify.success(enabled ? '自动检查更新已开启' : '自动检查更新已关闭');
   } catch {
     notify.error('设置失败，请重试');
   }
@@ -680,10 +735,23 @@ onMounted(() => {
       });
     }
   }
+  // 源码模式自动检查（旧版壳无此 API 时该节自动隐藏）
+  if (wd?.desktopSourceAutoState) {
+    sourceAutoSupported.value = true;
+    wd.desktopSourceAutoState().then((s: any) => {
+      sourceAuto.value = s;
+    });
+    if (wd.onSourceState) {
+      offSourceState = wd.onSourceState((s: any) => {
+        sourceAuto.value = s;
+      });
+    }
+  }
 });
 onUnmounted(() => {
   offProgress?.();
   offAutoState?.();
+  offSourceState?.();
 });
 </script>
 

@@ -129,7 +129,9 @@ if (Test-Path (Join-Path $repoDir '.git')) {
 $mainDir = Join-Path $repoDir 'main'
 Step 'deps' '安装依赖'
 $env:npm_config_registry = $npmmirror
-pnpm -C $mainDir install --frozen-lockfile
+# 与应用内更新、update-from-source.ps1 同一实现：装完会写依赖指纹记录，后续更新不重复装
+Push-Location $mainDir
+try { node desktop/scripts/sync-deps.js workspace } finally { Pop-Location }
 if ($LASTEXITCODE -ne 0) { StepFail 'deps' '依赖安装失败，请检查网络后重试。' }
 StepDone 'deps'
 
