@@ -10,6 +10,7 @@ import { saveChat } from '../lib/chat.js';
 import { hybridSearch } from '../retrieval/hybrid.js';
 import { pageEvidenceResponse } from '../pipeline/pageEvidence.js';
 import { agentWritePage, WriteGateError } from '../pipeline/agentWrite.js';
+import { deletePageAsAgent, DeletePageError } from '../pipeline/agentDelete.js';
 import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
 import { AGENT_GUIDE, GUIDE_VERSION } from '../content/agentGuide.js';
@@ -17,7 +18,7 @@ import { AGENT_GUIDE, GUIDE_VERSION } from '../content/agentGuide.js';
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
  * 读工具（search/list_pages/read_page/page_evidence/list_raw_files/read_raw_file/kb_guide）
- * + 写工具（write_page 带证据门禁与自动日志 / save_chat 对话沉积）。
+ * + 写工具（write_page 带证据门禁与自动日志 / delete_page 软删除入回收站 / save_chat 对话沉积）。
  * 作业方法论见 kb_guide 下发的《Agent 作业指南》。
  */
 
@@ -26,6 +27,7 @@ const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，�
 提炼作业收到指令后自动索引待提炼清单（CLI engram files list --pending，或 list_raw_files 传 pending=true），然后逐份串行处理：读一份、write_page 提交成功，再处理下一份，不要批量读完统一写页。
 任何写操作前先读 AIWorks/log/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
 新建 概念/实体 页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条引文），已有页面增量不受限。
+误建的页面用 delete_page 删除：只做软删除入回收站（可恢复），只能删 Wiki/ 下的页面，原始资料与 AIWorks 只读不可删，且不提供清空回收站能力。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
 完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取。`;
 
@@ -122,7 +124,8 @@ function readRawFile(rel: string, raw: boolean)
   };
 }
 
-function makeServer(): McpServer {
+/** 构建 MCP Server 实例（导出供单测用内存传输直连，生产经 /mcp 端点接入） */
+export function makeServer(): McpServer {
   const server = new McpServer({ name: 'engram', version: '1.0.0' }, { instructions: MCP_INSTRUCTIONS });
 
   server.tool(
@@ -276,6 +279,32 @@ function makeServer(): McpServer {
       } catch (error) {
         if (error instanceof WriteGateError) {
           return { content: [{ type: 'text', text: `写入被门禁拒绝：${error.message}` }], isError: true };
+        }
+        throw error;
+      }
+    }
+  );
+
+  server.tool(
+    'delete_page',
+    '把单个页面移入回收站（软删除、可恢复）。只能删 Wiki/ 下的页面：原始资料/ 与 AIWorks/ 是只读区，拒绝删除；不提供永久删除或清空回收站能力。删除由服务端记入操作日志。',
+    {
+      titleOrId: z.string().describe('页面标题、页面 ID 或页面路径（如 Wiki/概念/xxx.md；标题不唯一时请用 ID 或路径）'),
+      reason: z.string().optional().describe('删除原因，写入操作日志便于复核'),
+    },
+    async ({ titleOrId, reason }) => {
+      try {
+        const result = deletePageAsAgent(titleOrId, { reason });
+        return {
+          content: [{
+            type: 'text',
+            text: `已移入回收站: ${result.title}（${result.path}，回收站条目 id: ${result.trashId}）`
+              + `——可在 Engram「设置 → 存储空间 → 回收站」恢复；本次删除已记入操作日志。`,
+          }],
+        };
+      } catch (error) {
+        if (error instanceof DeletePageError) {
+          return { content: [{ type: 'text', text: `删除被拒绝：${error.message}` }], isError: true };
         }
         throw error;
       }

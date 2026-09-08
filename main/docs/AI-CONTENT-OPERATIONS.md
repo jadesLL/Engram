@@ -11,9 +11,10 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 
 ## 接入方式与优先级
 
-- **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|evidence / chat save / guide / mcp-config），`--json` 得机器可读输出。
+- **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|delete|evidence / chat save / guide / mcp-config），`--json` 得机器可读输出。
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
+- **删除只入回收站**：`delete_page`（MCP）与 `engram pages delete`（CLI）只做软删除，把单个页面移入回收站（按标题 / 页面 ID / 页面路径定位；用户可在 设置 → 存储空间 → 回收站 恢复）；仅允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 是只读区、拒绝删除，也不提供永久删除或清空回收站能力。
 
 ## 提炼作业纪律
 
@@ -42,12 +43,13 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 ## 动手前 / 动手后
 
 1. 任何写操作前，先 `read_page` 读取 `AIWorks/log/log.md` 了解最近状态。
-2. 按指南（`kb_guide`）完成作业；写入交给 `write_page`，门禁与日志自动兜底。
+2. 按指南（`kb_guide`）完成作业；写入交给 `write_page`，删除交给 `delete_page`（只入回收站），门禁与日志自动兜底。
 
 ## 实际执行位置
 
 - 作业指南单一来源：`server/src/content/agentGuide.ts`
 - Agent 写入门禁与账本：`server/src/pipeline/agentWrite.ts`
+- Agent 单页删除内核（只入回收站 + Wiki/ 守卫）：`server/src/pipeline/agentDelete.ts`
 - MCP 端点（streamable HTTP + Bearer）：`server/src/mcp/server.ts`
 - CLI：`server/src/cli/`（`engram` bin）
 - 操作日志写入：`server/src/pipeline/indexFile.ts`（`appendWikiLog`）
