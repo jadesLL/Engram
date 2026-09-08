@@ -20,17 +20,18 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 │ git push    │         │ .gitea/        │        │ Windows 宿主机模式）       │         │ Registry 镜像   │
 │ gitea v1.1.7│         │ workflows/     │        │  └ Docker Desktop         │         │ :<版本> + :latest│
 └────────────┘         │ release.yml 触发│        │    └ Linux 容器内构建：     │         │ + Release 页面  │
-                       └────────────────┘        │      · 服务端 Docker 镜像  │         │ (exe/tar.gz/   │
-                                                 │      · wine 交叉打 exe     │         │  sha256 三附件) │
-                                                 │      · docker save tar.gz │         └────────────────┘
-                                                 └──────────────────────────┘
+                       └────────────────┘        │      · 服务端 Docker 镜像  │         │ (正文=CHANGELOG)│
+                       （dispatch 按需补产：      │      · wine 交叉打 exe*   │         └────────────────┘
+                        exe/APK/tar.gz 勾选构建， │      · docker save tar.gz*│
+                        补挂对应 Release）        └──────────────────────────┘
+                                                 * 仅 dispatch 勾选时构建
 ```
 
 要点：
 
 - **Gitea 与 Runner 分离**：Gitea（含镜像 Registry 和 Release 页面）在 NAS 上；构建执行发生在开发本机。runner 离线时 workflow 会排队等待。
 - **Windows 宿主机 runner + Docker Desktop**：workflow 的 `runs-on: windows` 命中本机 runner，所有构建命令经本机 Docker Desktop 跑 **Linux 容器**——服务端镜像直接 `docker build`，Windows 安装包则在 `electronuserland/builder:wine` 容器里用 **wine 交叉编译**。
-- **产物统一回推 NAS**：镜像推到 Gitea 内置 Registry，安装包等三附件挂到 Release 页面，本地不留依赖残留。
+- **产物统一回推 NAS**：发版时镜像推到 Gitea 内置 Registry、Release 正文=CHANGELOG 段落；exe/APK/tar.gz 仅 dispatch 按需构建并补挂 Release，本地不留依赖残留。
 
 ### 三条构建路径总览
 
@@ -46,15 +47,21 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 
 ## 1. 产物一览
 
-每次发版（`v*` 标签）固定产出以下五类：
+发版（`v*` 标签）默认只产出以下两类（2026-09-08 瘦身，对齐 Hermes 式发版：tag + changelog 即发版，二进制不随 tag 打包）：
 
 | 产物 | 名称 / 地址 | 用途 |
 |---|---|---|
-| Docker 镜像 | `gitea.example.com/example/engram/engram:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry） |
-| Windows 安装包 | `Engram Setup <版本>.exe`（约 110 MB） | NSIS 安装器，装出 Electron 桌面端 |
-| Android 安装包 | `Engram <版本>.apk` | 安卓远程客户端（未配置签名 secrets 时为未签名包） |
+| Docker 镜像 | `gitea.example.com/example/engram/engram:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry）；应用内一键更新的版本信号源 |
+| Gitea Release | `v<版本>`，正文=CHANGELOG 版本段落 | 版本记录与更新检测信号源 |
+
+以下二进制产物**不随发版构建**，需要分发给他人时按需构建（CI dispatch：Actions → Release → Run workflow，输入标签+勾选产物，自动补挂 Release；或走路径 B/C 本地构建）：
+
+| 产物 | 名称 / 地址 | 用途 |
+|---|---|---|
+| Windows 安装包 | `Engram Setup <版本>.exe`（约 110 MB） | NSIS 安装器，装出 Electron 打包版桌面端（自用机器走源码模式，无需 exe） |
+| Android 安装包 | `Engram <版本>.apk` | 安卓远程客户端（无法源码自更新，是 Android 端唯一分发通道；未配置签名 secrets 时为未签名包） |
 | Docker 镜像离线包 | `engram-<版本>.tar.gz`（`docker save`，约 160 MB） | 无 Registry 环境离线部署（`docker load`） |
-| 校验值文件 | `sha256-<版本>.txt` | 前三者的 sha256 |
+| 校验值文件 | `sha256-<版本>.txt` | 本次所构建产物的 sha256 |
 
 镜像地址是**三层路径**（`owner/repo/imagename`，归属 Engram 仓库）。历史上曾用两层路径（更名前的 `example/example-wiki`），NAS 实测拉取异常，**不要改回**。
 
@@ -87,8 +94,8 @@ workflow 会在构建前自动校验以下内容，**任何一条不满足直接
 
 | 触发 | 行为 |
 |---|---|
-| 推送 `v*` 标签（如 `v1.1.7`） | **完整发布**：构建推送镜像（`:<版本>` + `:latest`）→ 打 exe → 创建 Gitea Release 挂三附件 |
-| 网页手动触发（workflow_dispatch） | **测试模式**：同样构建并推送镜像、产出全部产物，但**不创建 Release**，产物上传为 Artifact（保留 7 天） |
+| 推送 `v*` 标签（如 `v1.1.7`） | **发版**：构建推送镜像（`:<版本>` + `:latest`）→ 创建 Gitea Release（正文=CHANGELOG 段落，无二进制附件） |
+| 网页手动触发（workflow_dispatch） | **按需补产**：输入已发版标签 + 勾选 binaries（exe+APK）/ offline_image（tar.gz）→ verify 门禁 → 构建所选产物 → 上传 Artifact（保留 7 天）并自动补挂到对应版本 Release；不推镜像 |
 
 日常推送 main 分支只触发 `ci.yml` 做 verify（build + typecheck + test），**不构建镜像**——Registry 里的版本 tag 永远只对应发版产物。
 
@@ -103,24 +110,28 @@ git push gitea main                 # ci.yml 只做 verify
 git tag v<版本>
 git push gitea v<版本>              # release.yml 启动
 # 4. 到 Gitea 网页 Actions 页盯 release.yml 直到全绿
-# 5. 校验产物：Release 页面出现 v<版本>，正文=CHANGELOG 段落，
-#    附件为 exe / tar.gz / sha256 三件；镜像可 docker pull
-# 6. 把附件下载归档到 releases/<版本>/（记录提交 ID、构建时间、sha256）
+# 5. 校验产物：Release 页面出现 v<版本>，正文=CHANGELOG 段落；
+#    镜像可 docker pull（:<版本> 与 :latest）
+# 6. 需要分发 exe/APK/离线包时（按需，不随发版）：
+#    Actions → Release → Run workflow → 输入 v<版本>、勾选产物 → 运行，
+#    产物自动补挂 Release；下载归档到 releases/<版本>/（记录提交 ID、构建时间、sha256）
 ```
 
 **铁律**：bump 版本号的提交必须**立即推送** gitea——版本号是镜像 tag 和 Release 标签的来源，留在本地会导致远端镜像与版本号脱节。
 
-### 3.3 workflow 内部做了什么（release.yml 九步）
+### 3.3 workflow 内部做了什么（release.yml）
 
-1. **检出代码**；
+1. **检出代码**（dispatch 按输入标签检出）；
 2. **提取版本号**：从 `main/desktop/package.json` sed 出 `version`；
-3. **校验 tag = v<版本>**（仅 tag 触发时）；
+3. **校验标签 = v<版本>**（tag 推送取 `GITHUB_REF_NAME`，dispatch 取输入标签）；dispatch 还校验至少勾选一项产物；
 4. **提取 CHANGELOG 段落**：awk 截取 `## v<版本>` 到下一个 `## ` 的内容，缺失即失败；
-5. **构建并推送 Docker 镜像**：`docker build --label org.opencontainers.image.version=<版本> -t $IMAGE:<版本> -t $IMAGE:latest main`，login 后连推两个 tag；
-6. **构建 Windows 安装包**：`cd main && docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .`（wine 容器内跑 `scripts/build-desktop-ci.sh`，详见 §4.2），再 `docker create` + `docker cp` 把 `/work/desktop/dist/` 拷出来；
-7. **构建 Android APK**：`docker build -f mobile/Dockerfile.ci -t engram-android-builder .`（Node + JDK 21 + Android SDK 容器内跑 `mobile/scripts/build-apk-ci.sh`，签名密钥经 secrets 注入），`docker cp` 拷出 APK（详见 [`ANDROID.md`](./ANDROID.md)）；
-8. **整理产物**：断言 `Engram Setup <版本>.exe` 存在 → APK 取已签名产物（未配置签名时回退未签名包）→ `docker save | gzip` 生成镜像 tar.gz → `sha256sum` 生成校验文件；
-9. **发布**：tag 触发则用 gitea-release-action 创建 Release（正文 = CHANGELOG 段落 + 固定的镜像地址说明，附件 = exe / apk / tar.gz / sha256）；手动触发则上传为 Artifact。
+5. **verify 门禁**：`docker build --target verify` 跑完整 build+typecheck+test，红即失败；
+6. **构建并推送 Docker 镜像**（仅 tag 触发）：`docker build --label org.opencontainers.image.version=<版本> -t $IMAGE:<版本> -t $IMAGE:latest main`，login 后连推两个 tag；
+7. **构建本地镜像**（仅 dispatch + 勾选 offline_image，不推送，供 `docker save`）；
+8. **构建 Windows 安装包**（仅 dispatch + 勾选 binaries）：`cd main && docker build -f desktop/Dockerfile.ci -t engram-desktop-builder .`（wine 容器内跑 `scripts/build-desktop-ci.sh`，详见 §4.2），再 `docker create` + `docker cp` 把 `/work/desktop/dist/` 拷出来；
+9. **构建 Android APK**（仅 dispatch + 勾选 binaries）：`docker build -f mobile/Dockerfile.ci -t engram-android-builder .`（Node + JDK 21 + Android SDK 容器内跑 `mobile/scripts/build-apk-ci.sh`，签名密钥经 secrets 注入），`docker cp` 拷出 APK（详见 [`ANDROID.md`](./ANDROID.md)）；
+10. **整理产物**（dispatch）：按勾选收集 exe/APK/tar.gz → `sha256sum` 生成校验文件 → 上传 Artifact；
+11. **发布**：tag 触发则用 gitea-release-action 创建 Release（正文 = CHANGELOG 段落 + 镜像地址说明，无附件）；dispatch 则把产物补挂到对应版本 Release（正文重传 CHANGELOG 段落，防被覆盖为空）。
 
 ### 3.4 一次性环境前置（已配置，复现细节见 GITEA-CI.md）
 
@@ -282,13 +293,13 @@ Docker 部署在网页「设置 → 软件更新」一键更新（拉 latest 镜
   4. git tag v<版本> && git push gitea v<版本>
   5. 盯 release.yml 至全绿
 结果验证：
-  · Release 页面出现 v<版本>，正文 = CHANGELOG 段落，附件 = exe + tar.gz + sha256 三件
+  · Release 页面出现 v<版本>，正文 = CHANGELOG 段落（默认无二进制附件）
   · docker pull 镜像 :<版本> 成功
-  · 附件下载归档 releases/<版本>/
+  · 需要分发 exe/APK/离线包时：Actions → Release → Run workflow，输入 v<版本> 勾选产物运行，产物补挂 Release 后归档 releases/<版本>/
 常见失败对照：
   · 校验步失败 "标签与版本号不一致"     → tag 必须严格等于 v + desktop/package.json version
   · 校验步失败 "缺少 v<版本> 版本段落"  → CHANGELOG 段落标题格式必须是 ## v<版本>（YYYY-MM-DD）
-  · 上传附件 413                       → 调大 Gitea app.ini [attachment] MAX_SIZE 后重启 Gitea
+  · 补挂产物 413                      → 调大 Gitea app.ini [attachment] MAX_SIZE 后重启 Gitea
   · workflow 一直排队                  → runner 离线，检查本机 act_runner 与 Docker Desktop
 ```
 

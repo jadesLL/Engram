@@ -1,8 +1,7 @@
-# Engram 发布流程：版本号 Docker 镜像 + Windows NSIS 安装包 + Gitea Release
-# Release 挂在本仓库 example/Engram；RELEASE_TOKEN 为账号级令牌，对本仓库有写权限
-# 触发：
-#   - 推送 v* 标签（如 v1.1.5）：完整发布（镜像推送 + exe 构建 + 创建 Release 上传附件）
-#   - 手动 workflow_dispatch：测试模式（镜像推送 + exe 构建 + 产物上传为 Artifact，不创建 Release）
+# Engram 发布流程（2026-09-08 瘦身，对齐 Hermes 式发版：tag+changelog 即发版，二进制不随 tag 打包）：
+#   推送 v* 标签 = 发版：CHANGELOG 校验 → verify 门禁 → 构建推送 Docker 镜像（:<版本> + :latest）→ 创建 Release（正文=CHANGELOG 段落，无二进制附件）
+#   手动 workflow_dispatch = 按需补产：verify 门禁 → 勾选构建 Windows exe / Android APK / docker tar.gz，补挂到对应版本 Release
+# 版本 tag 的 Docker 镜像仍是唯一默认发版产物（NAS 部署 + 应用内一键更新的版本信号源）
 # 注意：标签名必须与 main/desktop/package.json 的 version 一致（v<version>），否则校验失败
 # Runner：Windows 宿主机模式（label: windows），Docker 命令经 Docker Desktop 跑 Linux 容器
 name: Release
@@ -11,6 +10,19 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: '要补产物的已发版标签（如 v1.2.4，须与该提交的 package.json 版本一致）'
+        required: true
+        type: string
+      binaries:
+        description: '构建 Windows exe + Android APK 并补挂 Release'
+        type: boolean
+        default: false
+      offline_image:
+        description: '构建 docker tar.gz 离线镜像包并补挂 Release'
+        type: boolean
+        default: false
 
 env:
   REGISTRY: gitea.example.com
@@ -22,8 +34,10 @@ jobs:
   release:
     runs-on: windows
     steps:
-      - name: 检出代码
+      - name: 检出代码（dispatch 按输入标签检出）
         uses: https://gitea.com/actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: 提取版本号（main/desktop/package.json）
         id: ver
@@ -38,13 +52,29 @@ jobs:
           echo "版本号: $VERSION"
 
       - name: 校验标签与版本号一致
-        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          if [ "v${{ steps.ver.outputs.version }}" != "${GITHUB_REF_NAME}" ]; then
-            echo "标签 ${GITHUB_REF_NAME} 与 desktop/package.json 版本号 ${{ steps.ver.outputs.version }} 不一致"
+          # tag 推送路径取 GITHUB_REF_NAME；dispatch 路径取 inputs.tag
+          REF_NAME="${GITHUB_REF_NAME}"
+          if [ -n "$INPUT_TAG" ]; then REF_NAME="$INPUT_TAG"; fi
+          if [ "v${{ steps.ver.outputs.version }}" != "$REF_NAME" ]; then
+            echo "标签 $REF_NAME 与 desktop/package.json 版本号 ${{ steps.ver.outputs.version }} 不一致"
             exit 1
           fi
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+
+      - name: 校验 dispatch 参数（至少勾选一项产物）
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          if [ "$INPUT_BINARIES" != "true" ] && [ "$INPUT_OFFLINE" != "true" ]; then
+            echo "dispatch 必须至少勾选 binaries 或 offline_image 之一；正式发版请推 v* 标签"
+            exit 1
+          fi
+        env:
+          INPUT_BINARIES: ${{ inputs.binaries }}
+          INPUT_OFFLINE: ${{ inputs.offline_image }}
 
       - name: 提取 CHANGELOG 版本段落
         id: changelog
@@ -79,7 +109,8 @@ jobs:
           cd main
           docker build --target verify -t engram:release-verify .
 
-      - name: 构建并推送 Docker 镜像
+      - name: 构建并推送 Docker 镜像（发版）
+        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         env:
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
@@ -91,7 +122,15 @@ jobs:
           docker push "$IMAGE:$VER"
           docker push "$IMAGE:latest"
 
+      - name: 构建本地镜像（dispatch 补离线包用，不推送）
+        if: github.event_name == 'workflow_dispatch' && inputs.offline_image == true
+        shell: bash
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          docker build --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" main
+
       - name: 构建 Windows 安装包（wine 容器内交叉打包，docker cp 拷出产物）
+        if: github.event_name == 'workflow_dispatch' && inputs.binaries == true
         shell: bash
         env:
           # Windows runner 的 Git Bash 会对参数做 MSYS 路径转换（main → C:/Program Files/Git/main），必须禁用
@@ -109,6 +148,7 @@ jobs:
           ls -la desktop-dist
 
       - name: 构建 Android APK（Linux 容器内打包，签名密钥经环境变量注入）
+        if: github.event_name == 'workflow_dispatch' && inputs.binaries == true
         shell: bash
         env:
           MSYS_NO_PATHCONV: '1'
@@ -133,53 +173,56 @@ jobs:
           echo ">> 构建产物："
           ls -la mobile-apk-dist
 
-      - name: 整理发布产物并计算校验值
+      - name: 整理产物并计算校验值（dispatch）
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
+        env:
+          INPUT_BINARIES: ${{ inputs.binaries }}
+          INPUT_OFFLINE: ${{ inputs.offline_image }}
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          EXE="desktop-dist/Engram Setup ${VER}.exe"
-          if [ ! -f "$EXE" ]; then
-            echo "未找到安装包: $EXE"
-            ls -la desktop-dist || true
-            exit 1
-          fi
-          # APK：优先取已签名产物，未配置签名时回退未签名包
-          APK=""
-          for f in "mobile-apk-dist/app-release.apk" "mobile-apk-dist/app-release-unsigned.apk"; do
-            if [ -f "$f" ]; then APK="$f"; break; fi
-          done
-          if [ -z "$APK" ]; then
-            echo "未找到 APK 产物"
-            ls -la mobile-apk-dist || true
-            exit 1
-          fi
           mkdir -p release-out
-          cp "$EXE" "release-out/Engram Setup ${VER}.exe"
-          cp "$APK" "release-out/Engram ${VER}.apk"
-          docker save "$IMAGE:$VER" | gzip > "release-out/engram-${VER}.tar.gz"
+          if [ "$INPUT_BINARIES" = "true" ]; then
+            EXE="desktop-dist/Engram Setup ${VER}.exe"
+            if [ ! -f "$EXE" ]; then
+              echo "未找到安装包: $EXE"
+              ls -la desktop-dist || true
+              exit 1
+            fi
+            # APK：优先取已签名产物，未配置签名时回退未签名包
+            APK=""
+            for f in "mobile-apk-dist/app-release.apk" "mobile-apk-dist/app-release-unsigned.apk"; do
+              if [ -f "$f" ]; then APK="$f"; break; fi
+            done
+            if [ -z "$APK" ]; then
+              echo "未找到 APK 产物"
+              ls -la mobile-apk-dist || true
+              exit 1
+            fi
+            cp "$EXE" "release-out/Engram Setup ${VER}.exe"
+            cp "$APK" "release-out/Engram ${VER}.apk"
+          fi
+          if [ "$INPUT_OFFLINE" = "true" ]; then
+            docker save "$IMAGE:$VER" | gzip > "release-out/engram-${VER}.tar.gz"
+          fi
           cd release-out
-          sha256sum "Engram Setup ${VER}.exe" "Engram ${VER}.apk" "engram-${VER}.tar.gz" > "sha256-${VER}.txt"
+          sha256sum ./* > "sha256-${VER}.txt"
           cat "sha256-${VER}.txt"
 
-      - name: 上传构建产物（手动触发测试模式）
+      - name: 上传产物到 Artifact（dispatch，保底下载入口）
         if: github.event_name == 'workflow_dispatch'
         uses: https://gitea.com/actions/upload-artifact@v4
         with:
-          name: engram-release-test-${{ steps.ver.outputs.version }}
+          name: engram-release-${{ steps.ver.outputs.version }}
           path: release-out/
           retention-days: 7
 
-      - name: 创建 Release 并上传附件
+      - name: 创建 Release（发版，正文=CHANGELOG 段落）
         if: startsWith(github.ref, 'refs/tags/')
         uses: https://gitea.com/actions/gitea-release-action@v1
         env:
           NODE_OPTIONS: --experimental-fetch
         with:
-          files: |
-            release-out/Engram Setup *.exe
-            release-out/Engram *.apk
-            release-out/engram-*.tar.gz
-            release-out/sha256-*.txt
           token: ${{ secrets.RELEASE_TOKEN }}
           draft: false
           name: v${{ steps.ver.outputs.version }}
@@ -189,6 +232,18 @@ jobs:
             ---
 
             - Docker 镜像: ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}（私有，需先 docker login）
-            - Windows 安装包: Engram Setup ${{ steps.ver.outputs.version }}.exe
-            - Android APK: Engram ${{ steps.ver.outputs.version }}.apk
-            - 校验值见 sha256-${{ steps.ver.outputs.version }}.txt
+            - Windows exe / Android APK / 离线 tar.gz 不随发版构建；需要分发时到 Actions → Release → Run workflow 输入本标签按需构建，产物自动补挂到本 Release
+
+      - name: 补挂产物到已发布 Release（dispatch）
+        if: github.event_name == 'workflow_dispatch'
+        uses: https://gitea.com/actions/gitea-release-action@v1
+        env:
+          NODE_OPTIONS: --experimental-fetch
+        with:
+          files: release-out/*
+          token: ${{ secrets.RELEASE_TOKEN }}
+          draft: false
+          name: v${{ steps.ver.outputs.version }}
+          # 正文重新传 CHANGELOG 段落，避免 action 把已发布正文覆盖为空
+          body: |
+            ${{ steps.changelog.outputs.body }}
