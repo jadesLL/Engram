@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import matter from 'gray-matter';
 import { db } from '../lib/db.js';
 import { readPage, writePage, safeJoin } from '../lib/vault.js';
@@ -129,7 +130,10 @@ const STATIC_SYSTEM_PAGES: Array<{ path: string; title: string; body: string }> 
 /** 预置系统区页面（静态页缺失即建；索引与关系结构无条件重建），每次启动都会执行 */
 export function ensureSystemFiles() {
   for (const p of STATIC_SYSTEM_PAGES) {
-    if (!readPage(p.path)) writePage(p.path, p.body, { title: p.title, type: 'doc' });
+    // 按「文件是否存在」判断，而不是 readPage()：readPage 依赖 pages 表行，
+    // 行缺失（迁移误删行、DB 重建）时会把磁盘上仍有内容的系统页覆盖成空模板。
+    // 文件已存在时的 DB 行由启动顺序中的 scanVault() 负责补齐。
+    if (!fs.existsSync(safeJoin(p.path))) writePage(p.path, p.body, { title: p.title, type: 'doc' });
   }
   regenerateIndex();
   regenerateRelationships();
@@ -138,14 +142,18 @@ export function ensureSystemFiles() {
 /**
  * 一次性迁移：历史版本把系统文件放在 Wiki 根与 Wiki/关系/ 下、Dream Cycle 运行日志
  * 放在 AIWorks/log/ 独立文件里。统一并入 AIWorks 系统区新位置：
- * - Wiki/log.md 与 AIWorks/log/*.md 的日志条目原始并入 AIWorks/log/log.md（时间倒序，新的在上，逐行去重）
+ * - Wiki/log.md 与 AIWorks/log/ 下「除当前日志页外」的历史日志，条目原始并入
+ *   AIWorks/log/log.md（时间倒序，新的在上，逐行去重）
  * - Wiki/index.md、Wiki/关系/relationships.md 直接删除（ensureSystemFiles 在新位置重新生成）
  * 幂等：无历史文件时直接返回。启动时调用一次。
  */
 export function migrateLegacySystemFiles() {
   const logDir = safeJoin('AIWorks/log');
+  // 必须排除当前操作日志页本身：它自 b4abda3 起就住在 AIWorks/log/ 下，
+  // 若把它当作历史遗留文件，每次启动都会先重写再 unlink，操作日志永远为空。
+  const currentLogName = path.posix.basename(LOG_PAGE);
   const legacyDirEntries = fs.existsSync(logDir)
-    ? fs.readdirSync(logDir).filter((f) => f.endsWith('.md'))
+    ? fs.readdirSync(logDir).filter((f) => f.endsWith('.md') && f !== currentLogName)
     : [];
   const hasLegacyLog = fs.existsSync(safeJoin('Wiki/log.md'));
   const hasLegacyGenerated =
