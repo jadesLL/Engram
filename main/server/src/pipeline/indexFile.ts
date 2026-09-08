@@ -8,7 +8,7 @@ import { RELATION_WORDS } from './extractor.js';
  * Wiki 自维护文件生成（SKILL 规范）：
  * - Wiki/index.md：按类型分组的 [[双链]] 目录
  * - Wiki/log.md：操作流水
- * - Wiki/关系/relationships.md：六词表关系落库
+ * - Wiki/关系/relationships.md：关系词表关系落库
  * 这些文件参与索引但不参与分区展示（系统页）。
  */
 
@@ -62,7 +62,7 @@ export function appendWikiLog(action: string, detail: string) {
   writePage(rel, content + '\n', { title: '操作日志', type: 'doc' });
 }
 
-/** 重建六词表关系库 Wiki/关系/relationships.md */
+/** 重建关系库 Wiki/关系/relationships.md（按词表分组） */
 export function regenerateRelationships() {
   const ph = RELATION_WORDS.map(() => '?').join(',');
   const rows = db
@@ -84,7 +84,7 @@ export function regenerateRelationships() {
     byRel.get(r.rel)!.push(line);
   }
 
-  const lines = ['# 关系库', '', '> 六词表：主责 / 目标 / 管理 / 政委 / 带教 / 攻坚（每次写入后自动生成）', ''];
+  const lines = ['# 关系库', '', `> 词表：${RELATION_WORDS.join(' / ')}（每次写入后自动生成）`, ''];
   for (const w of RELATION_WORDS) {
     const items = byRel.get(w) || [];
     if (!items.length) continue;
@@ -95,7 +95,7 @@ export function regenerateRelationships() {
   writePage('Wiki/关系/relationships.md', lines.join('\n'), {
     title: '关系库',
     type: 'doc',
-    summary: rows.length ? `共 ${rows.length} 条六词表关系` : '暂无关系',
+    summary: rows.length ? `共 ${rows.length} 条词表关系` : '暂无关系',
   });
 }
 

@@ -22,7 +22,7 @@ const entityItemsSchema = z.array(z.object({
 /**
  * LLM 实体抽取（GBrain 自布线图谱的 LLM 部分）：
  * 从页面提取实体（人物/概念/项目/组织）及与页面的类型化关系，写入 entities/edges。
- * 对齐：携带已有实体名录（优先链接）、关系向六词表靠拢。
+ * 对齐：携带已有实体名录（优先链接）、关系向封闭词表靠拢。
  */
 export async function extractEntities(pageId: string, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
@@ -126,7 +126,7 @@ export async function extractEntities(pageId: string, signal?: AbortSignal): Pro
       const r = insEntity.run(entityName, entityType);
       entity = { id: Number(r.lastInsertRowid) };
     }
-    // 六词表关系：写成类型化边（dst 指向已存在页，否则留 dst_title 死链态）
+    // 词表关系：写成类型化边（dst 指向已存在页，否则留 dst_title 死链态）
     const rel = (it.relation || '提及').slice(0, 50);
     if ((RELATION_WORDS as readonly string[]).includes(rel)) {
       const dst = findByTitle.get(entityName) as any;

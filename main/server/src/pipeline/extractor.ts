@@ -1,7 +1,10 @@
 import { db, now } from '../lib/db.js';
 
-/** 封闭关系词表（SKILL 规范）：[[A]]::关系词::[[B]] */
-export const RELATION_WORDS = ['主责', '目标', '管理', '政委', '带教', '攻坚'] as const;
+/** 封闭关系词表：[[A]]::关系词::[[B]]。前 9 个为通用知识关系，后 6 个为团队/业务关系（存量数据兼容，勿删）。 */
+export const RELATION_WORDS = [
+  '属于', '包含', '位于', '参与', '创建', '合作', '竞争', '依赖', '影响',
+  '主责', '目标', '管理', '政委', '带教', '攻坚',
+] as const;
 
 export interface TypedRelation {
   src: string;
@@ -9,7 +12,7 @@ export interface TypedRelation {
   dst: string;
 }
 
-/** 提取六词表类型化关系：[[A]]::主责::[[B]] */
+/** 提取词表类型化关系：[[A]]::关系词::[[B]] */
 export function extractTypedRelations(markdown: string): TypedRelation[] {
   const re = new RegExp(
     `\\[\\[([^\\]]+)\\]\\]::(${RELATION_WORDS.join('|')})::\\[\\[([^\\]]+)\\]\\]`,
@@ -63,7 +66,7 @@ export function resolveDeadLinks() {
 export function wirePageEdges(pageId: string, markdown: string) {
   const del = db.prepare(`DELETE FROM edges WHERE src_page = ? AND rel IN ('link', 'tag')`);
   del.run(pageId);
-  // 六词表关系边也要清掉重建（rel 属于词表）
+  // 词表关系边也要清掉重建（rel 属于词表）
   db.prepare(
     `DELETE FROM edges WHERE src_page = ? AND rel IN (${RELATION_WORDS.map(() => '?').join(',')})`
   ).run(pageId, ...RELATION_WORDS);
@@ -89,7 +92,7 @@ export function wirePageEdges(pageId: string, markdown: string) {
     ins.run(pageId, null, `#${tag}`, 'tag', ts);
   }
 
-  // 六词表类型化关系：[[A]]::关系::[[B]] → 边（src=当前页，dst=关系目标页）
+  // 词表类型化关系：[[A]]::关系::[[B]] → 边（src=当前页，dst=关系目标页）
   const myTitle = (db.prepare(`SELECT title FROM pages WHERE id = ?`).get(pageId) as any)?.title;
   for (const r of extractTypedRelations(markdown)) {
     // 仅当 A 就是当前页时，关系方向才有意义

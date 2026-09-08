@@ -210,10 +210,10 @@ ${relationVocabHint()}
 2. sources 中的 quote 必须逐字存在于对应 contextId 的原文。
 3. 尽量恢复候选的身份、职责、状态、事件、数据、约束和明确关系。
 4. 同义重复事实合并；不确定或只是推测的内容不要输出。
-5. 关系只能使用六词表，并引用本次输出的 factIds。
+5. 关系只能使用词表关系词，并引用本次输出的 factIds。
 
 只输出 JSON：
-{"facts":[{"id":"f1","statement":"","sources":[{"contextId":"","quote":""}]}],"relations":[{"src":"","word":"主责|目标|管理|政委|带教|攻坚","dst":"","factIds":["f1"]}]}。`;
+{"facts":[{"id":"f1","statement":"","sources":[{"contextId":"","quote":""}]}],"relations":[{"src":"","word":"${RELATION_WORDS.join('|')}","dst":"","factIds":["f1"]}]}。`;
 }
 
 async function focusedEvidenceForOccurrence(
@@ -356,7 +356,7 @@ ${relationVocabHint()}
 2. 检索片段只用于发现已有页面、补充 [[双链]] 和避免重复。
 3. 根据 ${TYPE_LABEL[kind]} 类型组织 Markdown；实体角色章节使用 ##，相关页面统一放在末尾。
 4. 输出 usedEvidenceIds，正文中的每项实质信息都必须被这些 evidence 支持。
-5. 关系只能使用固定六词表，并为每条关系列出 evidenceIds。
+5. 关系只能使用固定关系词表，并为每条关系列出 evidenceIds。
 6. 没有证据支持的关联不要添加。
 
 已有页面名录：
@@ -368,14 +368,14 @@ ${related || '（暂无）'}
 ${target ? `目标页当前正文：\n${target.content.slice(0, 4000)}` : ''}
 
 只输出 JSON：
-{"name":"","summary":"","content":"","usedEvidenceIds":[],"relations":[{"src":"","word":"主责|目标|管理|政委|带教|攻坚","dst":"","evidenceIds":[]}]}。`;
+{"name":"","summary":"","content":"","usedEvidenceIds":[],"relations":[{"src":"","word":"${RELATION_WORDS.join('|')}","dst":"","evidenceIds":[]}]}。`;
 }
 
 /** verify 续接轮指令：refine→verify 共享会话后作为 user 消息嵌入，sourceContexts/focusedEvidence 已在会话上文。 */
 const verifyInstructions = `执行人工待审候选的最终验证。逐项对照上方对话上下文中的 sourceContexts 原文，检查 input.draft 草稿是否完全由 focusedEvidence 支持、是否与原文冲突、关系是否有明确原文证据。
 删除或改写无依据内容，不得新增事实。unsupported 或 conflicts 非空时 pass 必须为 false。
 只输出 JSON：
-{"pass":true,"unsupported":[],"conflicts":[],"usedEvidenceIds":[],"content":"","relations":[{"src":"","word":"主责|目标|管理|政委|带教|攻坚","dst":"","evidenceIds":[]}]}。`;
+{"pass":true,"unsupported":[],"conflicts":[],"usedEvidenceIds":[],"content":"","relations":[{"src":"","word":"${RELATION_WORDS.join('|')}","dst":"","evidenceIds":[]}]}。`;
 
 export async function previewCandidateReview(
   reportId: number,
