@@ -79,7 +79,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 - **NAS Docker**：单容器 + ONLYOFFICE；**Android APP** 远程客户端；**Windows 桌面端**（Electron 本地模式内嵌后端 / 远端模式凭令牌连 NAS，托盘驻留、自动更新）
 - **IPv6 直连优先 + Cloudflare 隧道兜底**、内置 HTTPS（ACME/DNS-01）、内置 DDNS（Cloudflare API）
 - **应用内自更新**：Docker 网页一键升级；桌面端全自动更新
-- 设置页 7 大面板：账户与外观、Agent 接入、多端同步（含 DDNS 直连）、桌面端连接、软件更新、存储空间、数据管理
+- 设置页 6 大面板：账户与外观、Agent 接入、多端同步（含 DDNS 直连与桌面端免密接入）、软件更新、存储空间、数据管理
 
 ### 🎨 界面
 
