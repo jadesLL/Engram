@@ -369,7 +369,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 14px;
-  margin-bottom: 16px;
+  margin: 22px 24px 16px;
 }
 .role-card {
   border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
@@ -390,7 +390,7 @@ onUnmounted(() => {
   background: var(--bg-soft, rgba(127, 127, 127, 0.08));
   border-radius: 10px;
   padding: 12px 14px;
-  margin-bottom: 16px;
+  margin: 22px 24px 16px;
   flex-wrap: wrap;
 }
 .role-banner div { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
@@ -401,11 +401,11 @@ onUnmounted(() => {
   padding: 12px 14px;
   font-size: 13px;
   line-height: 1.7;
-  margin: 16px 0;
+  margin: 0 24px 16px;
 }
 .sync-role-note p { margin: 0; }
 
-.peers-block { margin-bottom: 16px; }
+.peers-block { margin: 0 24px 16px; }
 .peers-head {
   display: flex;
   justify-content: space-between;
@@ -458,7 +458,7 @@ onUnmounted(() => {
 .ddns-block {
   border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
   padding-top: 14px;
-  margin-top: 4px;
+  margin: 0 24px 24px;
 }
 .ddns-block h4 { margin: 0 0 4px; }
 .ddns-block > p { margin: 0 0 12px; }
@@ -467,7 +467,7 @@ onUnmounted(() => {
   border: 1px solid var(--warning, #d8a012);
   border-radius: 12px;
   padding: 14px;
-  margin-bottom: 16px;
+  margin: 0 24px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -491,7 +491,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-bottom: 18px;
+  margin: 0 24px 24px;
 }
 .field-row {
   display: flex;
@@ -509,7 +509,7 @@ onUnmounted(() => {
 }
 .sync-actions { display: flex; gap: 10px; }
 
-.sync-status { margin-bottom: 8px; }
+.sync-status { margin: 0 24px 24px; }
 .sync-status h4, .conflicts-block h4 { margin: 0 0 8px; }
 .status-grid {
   display: grid;
@@ -534,7 +534,7 @@ onUnmounted(() => {
   margin: 8px 0 0;
 }
 
-.conflicts-block { margin-top: 8px; }
+.conflicts-block { margin: 0 24px 24px; }
 .conflict-list {
   list-style: none;
   margin: 0;
@@ -555,4 +555,19 @@ onUnmounted(() => {
 .faint { opacity: 0.65; }
 .small { font-size: 12px; }
 .empty-panel { font-size: 13px; opacity: 0.7; }
+
+@media (max-width: 768px) {
+  .role-cards,
+  .role-banner,
+  .sync-role-note,
+  .peers-block,
+  .ddns-block,
+  .new-peer-card,
+  .sync-config,
+  .sync-status,
+  .conflicts-block {
+    margin-right: 18px;
+    margin-left: 18px;
+  }
+}
 </style>

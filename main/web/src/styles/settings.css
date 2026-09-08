@@ -19,7 +19,6 @@
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  margin-bottom: 22px;
 }
 .settings-page-head h2 {
   margin: 0;
@@ -344,9 +343,6 @@
   .settings-view {
     padding: 20px 14px 72px;
   }
-  .settings-page-head {
-    margin-bottom: 14px;
-  }
   .settings-page-head h2 {
     font-size: 22px;
   }
@@ -355,7 +351,6 @@
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
     gap: 10px;
-    margin-bottom: 12px;
   }
   .settings-mobile-nav label {
     color: var(--text-secondary);
