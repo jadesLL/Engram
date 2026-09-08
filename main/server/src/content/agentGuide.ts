@@ -25,7 +25,7 @@ Engram 不内置任何 AI——读、写、提炼、综合全部由你（外部 
 - Wiki/概念/ —— 概念页（方法论、标准、技术、理念等抽象对象）。
 - Wiki/实体/ —— 实体页（人物 person、客户 customer、组织 org、项目 project、其他 other 五类，目录不分家，类型写在 frontmatter type）。
 - Wiki/归档/ —— 归档区。
-- AIWorks/ —— 系统区（服务端自动生成，Agent 只读）：log/log.md 操作日志（时间倒序，新的在上，是知识库状态的唯一索引）、index/index.md 全库索引、scheme/relationships.md 六词表关系结构。不参与检索。
+- AIWorks/ —— 系统区（服务端自动生成，Agent 只读）：log/log.md 操作日志（时间倒序，新的在上，是知识库状态的唯一索引）、index/index.md 全库索引（概念 / 实体按类型分组）、scheme/relationships.md 关系结构（词表关系 + 双链关联 + 待建页面）。不参与检索。
 
 ## 二、接入工具
 
