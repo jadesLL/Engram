@@ -8,8 +8,8 @@ import { RELATION_WORDS } from './extractor.js';
 /**
  * AIWorks 系统区自维护文件（服务端生成，Agent 只读；检索权重 0，不挤占知识证据）：
  * - AIWorks/log/log.md：操作流水
- * - AIWorks/index/index.md：全库索引
- * - AIWorks/scheme/relationships.md：关系词表关系结构
+ * - AIWorks/index/index.md：全库索引（概念 / 实体按类型细分）
+ * - AIWorks/scheme/relationships.md：关系结构（词表关系 + 双链关联 + 待建页面）
  * 每次操作日志追加后同步重建索引与关系结构，系统区始终与知识库一致。
  */
 
@@ -20,37 +20,86 @@ const RELATIONSHIPS_PAGE = 'AIWorks/scheme/relationships.md';
 /** 历史版本的系统文件位置：启动迁移并入新位置后删除 */
 const LEGACY_SYSTEM_PAGES = ['Wiki/index.md', 'Wiki/log.md', 'Wiki/关系/relationships.md'];
 
-/** 重新生成 AIWorks/index/index.md（全量重写，幂等） */
-export function regenerateIndex() {
-  const pages = db
+/** 实体页类型 → 索引分组标签（与指南五类实体词表一致；数组顺序即展示顺序） */
+const ENTITY_TYPE_GROUPS: Array<{ type: string; label: string }> = [
+  { type: 'person', label: '人员' },
+  { type: 'customer', label: '客户' },
+  { type: 'org', label: '组织' },
+  { type: 'project', label: '项目' },
+  { type: 'other', label: '其他' },
+];
+
+const zhCompare = (a: string, b: string) => a.localeCompare(b, 'zh-CN');
+
+/**
+ * 索引/关系库共用的页面归类：概念独立成组，实体按 frontmatter 类型细分。
+ * 历史类型（place/work/doc/note 等）按目录兜底归组，保证任何页面都不漏出索引。
+ */
+function classifyPage(type: unknown, relPath: string): { group: '概念' | '实体' | '未分类'; label?: string } {
+  const t = String(type || '').toLowerCase();
+  if (t === 'concept') return { group: '概念' };
+  const entity = ENTITY_TYPE_GROUPS.find((g) => g.type === t);
+  if (entity) return { group: '实体', label: entity.label };
+  if (relPath.startsWith('Wiki/概念/')) return { group: '概念' };
+  if (relPath.startsWith('Wiki/实体/')) return { group: '实体', label: '其他' };
+  return { group: '未分类' };
+}
+
+/** 索引收录范围：Wiki 树下的知识页（归档/查询/关系为历史遗留区，不进索引） */
+function wikiIndexPages(): Array<{ title: string; type: string; path: string }> {
+  return db
     .prepare(
       `SELECT title, type, path FROM pages
        WHERE deleted = 0 AND path LIKE 'Wiki/%'
          AND path NOT LIKE 'Wiki/归档/%' AND path NOT LIKE 'Wiki/查询/%'
-         AND path NOT LIKE 'Wiki/关系/%'
-       ORDER BY updated_at DESC`
+         AND path NOT LIKE 'Wiki/关系/%'`
     )
     .all() as any[];
+}
 
-  const groups: Record<string, string[]> = { 实体: [], 概念: [], 其他: [] };
+/** 重新生成 AIWorks/index/index.md（全量重写，幂等；按分类建组） */
+export function regenerateIndex() {
+  const pages = wikiIndexPages();
+
+  const concepts: string[] = [];
+  const entities = new Map<string, string[]>(ENTITY_TYPE_GROUPS.map((g) => [g.label, []]));
+  const uncategorized: string[] = [];
   for (const p of pages) {
-    const entry = `- [[${p.title}]]`;
-    if (['person', 'project', 'org'].includes(p.type)) groups['实体'].push(entry);
-    else if (p.type === 'concept') groups['概念'].push(entry);
-    else groups['其他'].push(entry);
+    const title = String(p.title);
+    const { group, label } = classifyPage(p.type, String(p.path));
+    if (group === '概念') concepts.push(title);
+    else if (group === '实体') entities.get(label!)!.push(title);
+    else uncategorized.push(title);
   }
+  concepts.sort(zhCompare);
+  for (const list of entities.values()) list.sort(zhCompare);
+  uncategorized.sort(zhCompare);
+
+  const entityTotal = [...entities.values()].reduce((n, list) => n + list.length, 0);
+  const total = concepts.length + entityTotal + uncategorized.length;
+  const counts = `概念 ${concepts.length} · 实体 ${entityTotal}${uncategorized.length ? ` · 未分类 ${uncategorized.length}` : ''}`;
 
   const lines = ['# Engram 索引', ''];
-  for (const [g, items] of Object.entries(groups)) {
-    lines.push(`## ${g}`, '');
-    lines.push(...(items.length ? items : ['（暂无）']));
-    lines.push('');
+  if (!total) {
+    lines.push('（暂无页面）', '');
+  } else {
+    lines.push(`> 共 ${total} 个条目（${counts}）· 每次写入后自动重建`, '');
+    if (concepts.length) lines.push(`## 概念（${concepts.length}）`, '', ...concepts.map((t) => `- [[${t}]]`), '');
+    if (entityTotal) {
+      lines.push(`## 实体（${entityTotal}）`, '');
+      for (const [label, list] of entities) {
+        if (!list.length) continue;
+        lines.push(`### ${label}（${list.length}）`, '', ...list.map((t) => `- [[${t}]]`), '');
+      }
+    }
+    if (uncategorized.length) {
+      lines.push(`## 未分类（${uncategorized.length}）`, '', ...uncategorized.map((t) => `- [[${t}]]`), '');
+    }
   }
-  const total = pages.length;
   writePage(INDEX_PAGE, lines.join('\n'), {
     title: 'Engram 索引',
     type: 'doc',
-    summary: total ? `共 ${total} 个条目（实体 ${groups['实体'].length} / 概念 ${groups['概念'].length} / 其他 ${groups['其他'].length}）` : '暂无条目',
+    summary: total ? `共 ${total} 个条目（${counts}）` : '暂无条目',
   });
 }
 
@@ -71,10 +120,17 @@ export function appendWikiLog(action: string, detail: string) {
   try { regenerateRelationships(); } catch { /* 关系结构重建失败不阻塞日志 */ }
 }
 
-/** 重建关系库 AIWorks/scheme/relationships.md（按词表分组） */
+/**
+ * 重建关系库 AIWorks/scheme/relationships.md：
+ * - 词表关系：正文显式声明的 [[A]]::关系词::[[B]]
+ * - 双链关联：Wiki 页之间的 [[双链]] 结构（按分类 + 源页面聚合，死链标注「待建」）
+ * - 待建页面：被双链指向但尚未建页的目标（反向索引到来源页）
+ * 只读 Wiki 页之间的真实边；系统页自身不参与建边，不会自我污染。
+ */
 export function regenerateRelationships() {
   const ph = RELATION_WORDS.map(() => '?').join(',');
-  const rows = db
+
+  const typed = db
     .prepare(
       `SELECT e.rel, p1.title AS src, p2.title AS dst, e.dst_title
        FROM edges e
@@ -86,25 +142,117 @@ export function regenerateRelationships() {
     .all(...RELATION_WORDS) as any[];
 
   const byRel = new Map<string, string[]>();
-  for (const r of rows) {
+  for (const r of typed) {
     const dst = r.dst || r.dst_title || '?';
-    const line = `- [[${r.src}]]::${r.rel}::[[${dst}]]`;
     if (!byRel.has(r.rel)) byRel.set(r.rel, []);
-    byRel.get(r.rel)!.push(line);
+    byRel.get(r.rel)!.push(`- [[${r.src}]]::${r.rel}::[[${dst}]]`);
   }
 
+  const links = db
+    .prepare(
+      `SELECT p.title AS src, p.type AS type, p.path AS path,
+              p2.title AS dst, e.dst_title AS dead
+       FROM edges e
+       JOIN pages p ON p.id = e.src_page AND p.deleted = 0
+       LEFT JOIN pages p2 ON p2.id = e.dst_page
+       WHERE e.rel = 'link' AND p.path LIKE 'Wiki/%'
+         AND p.path NOT LIKE 'Wiki/归档/%' AND p.path NOT LIKE 'Wiki/查询/%'
+         AND p.path NOT LIKE 'Wiki/关系/%'`
+    )
+    .all() as any[];
+
+  const outlinks = new Map<
+    string,
+    { group: string; label?: string; live: string[]; dead: string[] }
+  >();
+  const deadRefs = new Map<string, Set<string>>();
+  let selfLinks = 0;
+  for (const r of links) {
+    const src = String(r.src);
+    if (!outlinks.has(src)) {
+      const { group, label } = classifyPage(r.type, String(r.path));
+      outlinks.set(src, { group, label, live: [], dead: [] });
+    }
+    const entry = outlinks.get(src)!;
+    if (r.dst) {
+      // 自环无意义：词表关系写法 [[A]]::关系::[[B]] 也会被 wikilink 抽取当成 [[A]]，这里剔掉
+      const dst = String(r.dst);
+      if (dst === src) selfLinks++;
+      else entry.live.push(dst);
+    } else if (r.dead) {
+      const dead = String(r.dead);
+      entry.dead.push(dead);
+      if (!deadRefs.has(dead)) deadRefs.set(dead, new Set());
+      deadRefs.get(dead)!.add(src);
+    }
+  }
+
+  const pageRows = wikiIndexPages();
+  const entityTotal = pageRows.filter((p) => classifyPage(p.type, p.path).group === '实体').length;
+  const conceptTotal = pageRows.filter((p) => classifyPage(p.type, p.path).group === '概念').length;
+  const uncategorizedTotal = pageRows.length - entityTotal - conceptTotal;
+  const deadEdges = [...deadRefs.values()].reduce((n, s) => n + s.size, 0);
+  const linkTotal = links.length - selfLinks;
+
   const lines = ['# 关系库', '', `> 词表：${RELATION_WORDS.join(' / ')}（每次写入后自动生成）`, ''];
-  for (const w of RELATION_WORDS) {
-    const items = byRel.get(w) || [];
-    if (!items.length) continue;
-    lines.push(`## ${w}`, '');
-    lines.push(...items);
+  lines.push('## 概览', '');
+  lines.push(
+    `- 页面 ${pageRows.length} 个（概念 ${conceptTotal} · 实体 ${entityTotal}${uncategorizedTotal ? ` · 未分类 ${uncategorizedTotal}` : ''}）`
+  );
+  lines.push(
+    `- 词表关系 ${typed.length} 条 · 双链关联 ${linkTotal} 条（已解析 ${linkTotal - deadEdges} / 待建 ${deadRefs.size} 个目标）`
+  );
+  lines.push('');
+
+  if (typed.length) {
+    lines.push(`## 词表关系（${typed.length}）`, '');
+    for (const w of RELATION_WORDS) {
+      const items = byRel.get(w) || [];
+      if (!items.length) continue;
+      lines.push(`### ${w}（${items.length}）`, '', ...items, '');
+    }
+  }
+
+  if (outlinks.size) {
+    lines.push(`## 双链关联（${linkTotal}）`, '');
+    const groups: Array<{ key: string; title: string }> = [
+      { key: '概念', title: '概念' },
+      { key: '实体', title: '实体' },
+      { key: '未分类', title: '未分类' },
+    ];
+    for (const g of groups) {
+      const rows = [...outlinks.entries()]
+        .filter(([, v]) => v.group === g.key)
+        .sort((a, b) => zhCompare(a[0], b[0]));
+      if (!rows.length) continue;
+      lines.push(`### ${g.title}（${rows.length}）`, '');
+      for (const [src, v] of rows) {
+        const targets = [
+          ...v.live.sort(zhCompare).map((t) => `[[${t}]]`),
+          ...v.dead.sort(zhCompare).map((t) => `[[${t}]]（待建）`),
+        ];
+        if (!targets.length) continue;
+        lines.push(`- [[${src}]] → ${targets.join('、')}`);
+      }
+      lines.push('');
+    }
+  }
+
+  if (deadRefs.size) {
+    lines.push(`## 待建页面（${deadRefs.size}）`, '');
+    for (const [dead, refs] of [...deadRefs.entries()].sort((a, b) => zhCompare(a[0], b[0]))) {
+      const from = [...refs].sort(zhCompare).map((s) => `[[${s}]]`).join('、');
+      lines.push(`- [[${dead}]] ← ${from}`);
+    }
     lines.push('');
   }
+
   writePage(RELATIONSHIPS_PAGE, lines.join('\n'), {
     title: '关系库',
     type: 'doc',
-    summary: rows.length ? `共 ${rows.length} 条词表关系` : '暂无关系',
+    summary: typed.length || linkTotal
+      ? `词表关系 ${typed.length} 条 · 双链关联 ${linkTotal} 条`
+      : '暂无关系',
   });
 }
 

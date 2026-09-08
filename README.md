@@ -141,7 +141,7 @@ data/
 ├── brain/              # 权威源：Markdown 页面 + 原始文件
 │   ├── 原始资料/        # 上传的资料与对话沉积；文本层提取后可被检索
 │   ├── Wiki/           # 知识库页面（概念/实体五子类/查询/归档/关系，目录固定）
-│   ├── AIWorks/        # 系统区（log/log.md 操作日志、index/index.md 索引、scheme/relationships.md 关系库；服务端自动生成，不参与检索）
+│   ├── AIWorks/        # 系统区（log/log.md 操作日志、index/index.md 分类索引、scheme/relationships.md 关系库：词表关系+双链关联+待建页面；服务端自动生成，不参与检索）
 │   ├── assets/         # 编辑器粘贴的图片
 │   └── .trash/         # 回收站（软删除）
 └── wiki.db             # SQLite（FTS 索引/图谱/配置/证据账本）

@@ -11,9 +11,13 @@ let db: any;
 let ensureDirs: () => void;
 let readPage: (rel: string) => any;
 let safeJoin: (rel: string) => string;
+let writePage: (rel: string, content: string, extra?: Record<string, any>) => any;
+let indexPage: (pageId: string) => Promise<unknown>;
 let appendWikiLog: (action: string, detail: string) => void;
 let migrateLegacySystemFiles: () => void;
 let ensureSystemFiles: () => void;
+let regenerateIndex: () => void;
+let regenerateRelationships: () => void;
 let LOG_PAGE: string;
 
 before(async () => {
@@ -22,8 +26,12 @@ before(async () => {
   dbModule.migrate();
   ({ ensureDirs } = await import('../config.js'));
   ensureDirs();
-  ({ readPage, safeJoin } = await import('../lib/vault.js'));
-  ({ appendWikiLog, migrateLegacySystemFiles, ensureSystemFiles, LOG_PAGE } = await import('./indexFile.js'));
+  ({ readPage, safeJoin, writePage } = await import('../lib/vault.js'));
+  ({ indexPage } = await import('./indexer.js'));
+  ({
+    appendWikiLog, migrateLegacySystemFiles, ensureSystemFiles,
+    regenerateIndex, regenerateRelationships, LOG_PAGE,
+  } = await import('./indexFile.js'));
 });
 
 after(() => {
@@ -84,3 +92,76 @@ test('appendWikiLog 倒序追加，新的在上', () => {
   assert.ok(first > 0 && second > 0, '两条条目都应写入');
   assert.ok(first < second, '新条目应插在标题正下方（倒序）');
 });
+
+/** 回归：索引页曾把客户/组织页一律塞进「其他」桶，等于没按分类建。 */
+test('索引页按分类建组：概念独立、实体按 frontmatter 类型细分', () => {
+  writePage('Wiki/概念/索引测试概念.md', '# 索引测试概念\n', { title: '索引测试概念', type: 'concept' });
+  writePage('Wiki/实体/索引测试人员.md', '# 索引测试人员\n', { title: '索引测试人员', type: 'person' });
+  writePage('Wiki/实体/索引测试客户.md', '# 索引测试客户\n', { title: '索引测试客户', type: 'customer' });
+  writePage('Wiki/实体/索引测试组织.md', '# 索引测试组织\n', { title: '索引测试组织', type: 'org' });
+  writePage('Wiki/实体/索引测试项目.md', '# 索引测试项目\n', { title: '索引测试项目', type: 'project' });
+
+  regenerateIndex();
+  const body = readPage('AIWorks/index/index.md').content;
+
+  assert.match(body, /^# Engram 索引/);
+  assert.match(body, /^## 概念（\d+）$/m);
+  assert.match(body, /^## 实体（\d+）$/m);
+  assert.match(body, /^### 人员（\d+）$/m);
+  assert.match(body, /^### 客户（\d+）$/m);
+  assert.match(body, /^### 组织（\d+）$/m);
+  assert.match(body, /^### 项目（\d+）$/m);
+
+  const section = (start: string, end: string) => body.split(start)[1].split(end)[0];
+  assert.match(section('## 概念', '## 实体'), /\[\[索引测试概念\]\]/, '概念页落在概念分组');
+  assert.match(section('### 人员', '### 客户'), /\[\[索引测试人员\]\]/, '人员页落在人员分组');
+  assert.match(section('### 客户', '### 组织'), /\[\[索引测试客户\]\]/, '客户页落在客户分组（不是其他桶）');
+  assert.match(section('### 组织', '### 项目'), /\[\[索引测试组织\]\]/, '组织页落在组织分组');
+  assert.match(section('### 项目', '\n## '), /\[\[索引测试项目\]\]/, '项目页落在项目分组');
+  assert.doesNotMatch(section('### 客户', '### 组织'), /\[\[索引测试人员\]\]/, '分组之间不串页');
+  assert.doesNotMatch(body, /^## 其他$/m, '不再有笼统的「其他」分组');
+});
+
+/** 回归：关系库只列 4 条词表关系，双链结构完全没进页面，看着像「内容非常少」。 */
+test('关系库收录词表关系、双链关联与待建页面', async () => {
+  const src = writePage(
+    'Wiki/概念/关系测试甲.md',
+    [
+      '# 关系测试甲',
+      '',
+      '- [[关系测试甲]]::参与::[[关系测试乙]]',
+      '- 另见 [[关系测试乙]] 与 [[关系测试未建页]]',
+      '',
+    ].join('\n'),
+    { title: '关系测试甲', type: 'concept' }
+  );
+  const dst = writePage(
+    'Wiki/实体/关系测试乙.md',
+    '# 关系测试乙\n\n- 关联 [[关系测试丙]]\n',
+    { title: '关系测试乙', type: 'person' }
+  );
+  const third = writePage('Wiki/概念/关系测试丙.md', '# 关系测试丙\n', { title: '关系测试丙', type: 'concept' });
+  await indexPage(src.id);
+  await indexPage(dst.id);
+  await indexPage(third.id);
+
+  regenerateRelationships();
+  const body = readPage('AIWorks/scheme/relationships.md').content;
+
+  assert.match(body, /^## 概览$/m, '有关系库概览');
+  assert.match(body, /^## 词表关系（\d+）$/m);
+  assert.match(body, /^- \[\[关系测试甲\]\]::参与::\[\[关系测试乙\]\]$/m, '词表关系逐条列出');
+  assert.match(body, /^## 双链关联（\d+）$/m);
+  assert.match(body, /^### 概念（\d+）$/m, '双链关联按分类分组');
+  assert.match(body, /^### 实体（\d+）$/m);
+  assert.match(
+    body,
+    /^- \[\[关系测试甲\]\] → \[\[关系测试乙\]\]、\[\[关系测试未建页\]\]（待建）$/m,
+    '双链关联按源页面聚合，死链标注待建'
+  );
+  assert.match(body, /^- \[\[关系测试乙\]\] → \[\[关系测试丙\]\]$/m, '实体页的出链同样列出');
+  assert.doesNotMatch(body, /\[\[关系测试甲\]\] → \[\[关系测试甲\]\]/, '自环不进关系库');
+  assert.match(body, /^## 待建页面（\d+）$/m);
+  assert.match(body, /^- \[\[关系测试未建页\]\] ← \[\[关系测试甲\]\]$/m, '待建页面反向索引到来源页');
+});
+
