@@ -1234,10 +1234,37 @@ function runGit(args, timeoutMs = 120_000) {
   });
 }
 
-ipcMain.handle('desktop-get-env', () => ({
+// 构建身份：版本号只在发版时 bump，源码模式日常 pull 重建后版本号不变，光看版本号
+// 判断不出更新是否落地。这里读 git 短提交号 + 提交日期 + 工作区是否脏，供设置页显示
+// （对齐 DSH 侧栏「本地构建」徽标与 hermes-agent `hermes_cli/build_info.py`）。
+// 进程内缓存：代码身份在进程运行期间不会变，更新后需重启才生效——这正是判断一次更新
+// 是否真的落地的依据，也避免设置页每次打开都多跑三条 git。
+let gitIdentityCache = null;
+
+async function gitIdentity() {
+  if (gitIdentityCache) return gitIdentityCache;
+  const unknown = { commit: '', commitDate: '', dirty: false };
+  if (app.isPackaged) {
+    gitIdentityCache = unknown; // 安装包形态没有 .git，显示退回纯版本号
+    return gitIdentityCache;
+  }
+  try {
+    const commit = await runGit(['rev-parse', '--short=7', 'HEAD'], 15_000);
+    const commitDate = await runGit(['log', '-1', '--format=%cs'], 15_000);
+    const dirty = Boolean((await runGit(['status', '--porcelain'], 15_000)).trim());
+    gitIdentityCache = { commit, commitDate, dirty };
+  } catch {
+    // git 不可用（未装 git / 非检出目录）不阻断应用：退回纯版本号显示
+    gitIdentityCache = unknown;
+  }
+  return gitIdentityCache;
+}
+
+ipcMain.handle('desktop-get-env', async () => ({
   packaged: app.isPackaged,
   platform: process.platform,
   version: app.getVersion(),
+  ...(app.isPackaged ? {} : await gitIdentity()),
 }));
 
 ipcMain.handle('desktop-source-update-check', async () => {
@@ -1246,7 +1273,27 @@ ipcMain.handle('desktop-source-update-check', async () => {
     const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
     await runGit(['fetch', 'origin', '--prune']);
     const behind = Number((await runGit(['rev-list', '--count', `HEAD..origin/${branch}`])) || 0);
-    return { ok: true, branch, behind, upToDate: behind === 0 };
+    // 本地/远端提交号：让「已是最新」有可核对的依据（版本号日常不变，只有提交号会变）
+    const local = await gitIdentity();
+    let remoteCommit = '';
+    let remoteDate = '';
+    try {
+      remoteCommit = await runGit(['rev-parse', '--short=7', `origin/${branch}`], 15_000);
+      remoteDate = await runGit(['log', '-1', '--format=%cs', `origin/${branch}`], 15_000);
+    } catch {
+      /* 远端分支刚建或无引用时留空，前端退回分支文案 */
+    }
+    return {
+      ok: true,
+      branch,
+      behind,
+      upToDate: behind === 0,
+      localCommit: local.commit,
+      localDate: local.commitDate,
+      dirty: local.dirty,
+      remoteCommit,
+      remoteDate,
+    };
   } catch (e) {
     return { ok: false, error: describeError(e) };
   }

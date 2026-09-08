@@ -52,9 +52,11 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
     return () => ipcRenderer.removeListener('desktop-update-state', listener);
   },
   // ---------- 源码模式自更新（非打包形态；安装包形态主进程会拒绝） ----------
-  // 查询运行形态（{ packaged, platform, version }）：false = 源码模式，更新走源码拉取
+  // 查询运行形态：{ packaged, platform, version }，源码模式额外带 git 身份
+  // { commit, commitDate, dirty }（版本号仅随发版变化，提交号随每次更新变化）
   getDesktopEnv: () => ipcRenderer.invoke('desktop-get-env'),
-  // 检查源码更新：fetch 远端并比对当前分支落后多少提交（{ ok, branch, behind, upToDate }）
+  // 检查源码更新：fetch 远端并比对当前分支落后多少提交
+  // { ok, branch, behind, upToDate, localCommit, localDate, dirty, remoteCommit, remoteDate }
   desktopSourceUpdateCheck: () => ipcRenderer.invoke('desktop-source-update-check'),
   // 增量拉取源码并重建：主进程 pull 后拉起构建脚本，应用自动退出并由新实例接管
   desktopSourceUpdate: () => ipcRenderer.invoke('desktop-source-update'),
