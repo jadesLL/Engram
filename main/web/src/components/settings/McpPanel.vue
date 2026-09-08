@@ -145,14 +145,15 @@ async function loadGuide() {
 }
 
 async function newToken() {
-  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog（取消也按原行为走默认备注名）
-  const name = (await promptDialog({
+  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog
+  const name = await promptDialog({
     title: '生成 MCP Token',
     message: 'Token 备注名：',
     value: 'zcode',
     confirmText: '生成',
-  })) || 'default';
-  await api.post('/api/settings/mcp-tokens', { name });
+  });
+  if (name === null) return;
+  await api.post('/api/settings/mcp-tokens', { name: name || 'default' });
   const { data } = await api.get('/api/settings/mcp-tokens');
   mcpTokens.value = data.tokens;
 }

@@ -100,14 +100,15 @@ function fmt(iso: string | null): string {
 }
 
 async function newToken() {
-  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog（取消也按原行为走默认备注名）
-  const name = (await promptDialog({
+  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog
+  const name = await promptDialog({
     title: '生成桌面端连接令牌',
     message: '令牌备注名：',
     value: '我的电脑',
     confirmText: '生成',
-  })) || 'default';
-  await api.post('/api/settings/desktop-tokens', { name });
+  });
+  if (name === null) return;
+  await api.post('/api/settings/desktop-tokens', { name: name || 'default' });
   await load();
 }
 

@@ -67,6 +67,7 @@ export function settleConfirm(ok: boolean, value?: string) {
   confirmState.open = false;
   const resolve = confirmState.resolve;
   confirmState.resolve = null;
-  // 输入框模式（promptDialog）把输入值带回给调用方；普通确认框只回传布尔
-  resolve?.(value !== undefined ? value : ok);
+  // 输入框模式（promptDialog）把输入值带回给调用方；普通确认框确认回传 true。
+  // 取消必须回传 null（而非 false），否则 `x || 默认值` 写法会把取消当成默认值提交
+  resolve?.(value !== undefined ? value : ok ? true : null);
 }
