@@ -25,9 +25,9 @@
 
 ## 功能总览
 
-### 🧠 面向 Agent 的 MCP 接口（10 工具）
+### 🧠 面向 Agent 的 MCP 接口（13 工具）
 
-设置页生成 Token（`Authorization: Bearer`，MCP/CLI/REST 三用），streamable HTTP 端点 `/mcp`：
+在 设置 → Agent 接入 →「其他 Agent（MCP 接入）」生成 Token（`Authorization: Bearer`，MCP/CLI/REST 三用），streamable HTTP 端点 `/mcp`：
 
 | 工具 | 说明 |
 |---|---|
@@ -43,7 +43,7 @@
 | `save_chat` | 对话沉积到 `原始资料/对话/` |
 | `kb_guide` | 下发《Agent 作业指南》全文 |
 
-**各 Agent 接入**：设置 → MCP 集成 内置 ZCode / Codex / Claude Code / Kimi / 通用的配置片段一键复制；ZCode 与 DeepSeek Harness（dsh）另有「Agent 接入」页一键注册。Claude Code 示例：
+**各 Agent 接入**：设置 → Agent 接入 一个面板搞定——「接入目标」选 ZCode 桌面端 / DeepSeek Harness（dsh）可一键注册；选「其他 Agent」显示 MCP Server 地址、Token 管理与 Codex / Claude Code / Kimi / 通用配置片段一键复制；面板底部「查看工具」逐条列出现有 MCP 工具（功能、参数、要点与 CLI 等价命令）。Claude Code 示例：
 
 ```bash
 claude mcp add --transport http engram http://<主机IP>:18080/mcp \
@@ -79,11 +79,11 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 - **NAS Docker**：单容器 + ONLYOFFICE；**Android APP** 远程客户端；**Windows 桌面端**（Electron 本地模式内嵌后端 / 远端模式凭令牌连 NAS，托盘驻留、自动更新）
 - **IPv6 直连优先 + Cloudflare 隧道兜底**、内置 HTTPS（ACME/DNS-01）、内置 DDNS（Cloudflare API）
 - **应用内自更新**：Docker 网页一键升级；桌面端全自动更新
-- 设置页 9 大面板：账户、MCP 集成、Agent 接入、多端同步、桌面端连接、软件更新、DDNS 直连、存储空间、数据管理
+- 设置页 7 大面板：账户与外观、Agent 接入、多端同步（含 DDNS 直连）、桌面端连接、软件更新、存储空间、数据管理
 
 ### 🎨 界面
 
-- **Windows 11 Fluent 设计语言**：全局控件统一为 Fluent 令牌（4px 控件圆角 / 8px 卡片圆角、白底 + 底缘深描边文本框、聚焦 2px 强调色底线），覆盖登录、侧栏、编辑器、设置九大面板与沉浸阅读视图
+- **Windows 11 Fluent 设计语言**：全局控件统一为 Fluent 令牌（4px 控件圆角 / 8px 卡片圆角、白底 + 底缘深描边文本框、聚焦 2px 强调色底线），覆盖登录、侧栏、编辑器、设置七大面板与沉浸阅读视图
 - **浅色 / 深色双主题**：阅读视图工具栏可一键切换，主题选择持久记忆
 
 ## 下载与安装
@@ -151,7 +151,7 @@ data/
 
 ## 让 Agent 开始干活
 
-1. 设置 → MCP 集成 → 生成 Token；复制对应 Agent 的接入片段（或 CLI `login` 保存连接）
+1. 设置 → Agent 接入 →「接入目标」选「其他 Agent（MCP 接入）」→ 生成 Token；复制对应 Agent 的接入片段（或 CLI `login` 保存连接）
 2. Agent 侧获取作业方法论：MCP `kb_guide` / `engram guide`
 3. 按指南作业即可——收到提炼指令先自动索引待提炼清单（`files list --pending`），逐份提炼、写页带 `evidence` 引文，门禁与服务端日志自动兜底；提炼过的源文件在侧栏自动标「已提炼」
 

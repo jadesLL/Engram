@@ -35,7 +35,7 @@ function resolveConnection(args: Record<string, any>): SendContext {
   if (!url || !token) {
     process.stderr.write(
       '缺少连接配置：用 `engram login --url http://<host>:<port> --token <mcp-token>` 保存，'
-      + '或设置 ENGRAM_URL / ENGRAM_TOKEN 环境变量（Token 在 设置 → MCP 集成 生成）。\n'
+      + '或设置 ENGRAM_URL / ENGRAM_TOKEN 环境变量（Token 在 设置 → Agent 接入 生成）。\n'
     );
     process.exit(2);
   }

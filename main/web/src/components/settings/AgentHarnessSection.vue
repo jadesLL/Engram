@@ -1,23 +1,9 @@
 <template>
-  <section class="settings-panel settings-native">
-    <div class="panel-head">
-      <div>
-        <h3>Agent 接入</h3>
-        <p>选择本机的 Agent harness，一键把知识库 MCP 注册进去；其他 Agent（Codex / Claude Code / Kimi 等）用「MCP 集成」页的配置片段接入。</p>
-      </div>
-    </div>
-
-    <div class="harness-picker">
-      <select v-model="activeHarness" aria-label="Agent 类型">
-        <option value="zcode">ZCode 桌面端</option>
-        <option value="dsh">DeepSeek Harness（dsh）</option>
-      </select>
-    </div>
-
-    <template v-if="activeHarness === 'zcode'">
+  <div class="harness-section">
+    <template v-if="harness === 'zcode'">
       <div v-if="!status.installed" class="empty-panel">
         未检测到 ZCode 桌面端（检测过 {{ status.path }}）。请在本机安装 ZCode 桌面端并登录——需与 Engram
-        桌面版在同一台电脑；Docker/远程部署请改用「MCP 集成」页的通用配置。
+        桌面版在同一台电脑；Docker/远程部署请改用上方「其他 Agent（MCP 接入）」的通用配置。
         <div class="manual-path">
           <input
             v-model="manualPath"
@@ -59,7 +45,7 @@
 
         <div class="integration-note">
           注册后，ZCode 中的对话即可通过 Engram 的 MCP 工具（检索 / 读页面 / 带证据写页面等）驱动知识库；
-          提炼方法论用 kb_guide 工具获取。CLI 方式：在装有 ZCode 终端的环境执行
+          提炼方法论用 kb_guide 工具获取，工具清单见本页底部「查看工具」。CLI 方式：在装有 ZCode 终端的环境执行
           <code>ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli.js guide</code>。
         </div>
       </template>
@@ -68,7 +54,7 @@
     <template v-else>
       <div v-if="!dstatus.installed" class="empty-panel">
         未检测到 DeepSeek Harness（检查过 {{ dstatus.home }}）。在本机安装 dsh 并至少运行一次（生成
-        $DSH_HOME）后重试；远程部署的知识库请让 Agent 使用「MCP 集成」页的通用配置。
+        $DSH_HOME）后重试；远程部署的知识库请让 Agent 使用上方「其他 Agent（MCP 接入）」的通用配置。
       </div>
 
       <template v-else>
@@ -100,12 +86,12 @@
 
         <div class="integration-note">
           注册写入 <code>$DSH_HOME/cordis.patch.yml</code>（默认 <code>~/.dsh</code>），对所有 dsh profile（web /
-          headless / sdk / acp）生效，模型侧工具名为 <code>mcp__engram__*</code>（检索 / 读页面 / 带证据写页面等）。
-          Engram 未启动时 dsh 照常启动，只是这组工具缺席；本机其他 patch 条目与注释不会被改动。
+          headless / sdk / acp）生效，模型侧工具名为 <code>mcp__engram__*</code>（检索 / 读页面 / 带证据写页面等，
+          清单见本页底部「查看工具」）。Engram 未启动时 dsh 照常启动，只是这组工具缺席；本机其他 patch 条目与注释不会被改动。
         </div>
       </template>
     </template>
-  </section>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -113,7 +99,8 @@ import { onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 
-const activeHarness = ref<'zcode' | 'dsh'>('zcode');
+defineProps<{ harness: 'zcode' | 'dsh' }>();
+
 const status = ref<any>({ installed: false, loggedIn: false, registered: false, path: '' });
 const dstatus = ref<any>({ installed: false, loggedIn: false, registered: false, home: '' });
 const manualPath = ref('');
@@ -174,14 +161,6 @@ onMounted(load);
 </script>
 
 <style scoped>
-.harness-picker {
-  /* 与 panel-head 分割线留出与其它面板一致的首块间距（原先为 0，选择框紧贴分割线） */
-  margin: 22px 24px 0;
-}
-.harness-picker select {
-  min-width: 240px;
-  font-size: 13px;
-}
 .status-rows {
   margin: 14px 24px 18px;
   border: 1px solid var(--border);
@@ -218,6 +197,7 @@ onMounted(load);
   margin: 0 24px 18px;
   color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1.6;
 }
 .empty-panel {
   margin: 14px 24px 18px;
@@ -232,5 +212,15 @@ onMounted(load);
   flex: 1;
   max-width: 480px;
   font-size: 12px;
+}
+
+@media (max-width: 768px) {
+  .status-rows,
+  .actions-row,
+  .integration-note,
+  .empty-panel {
+    margin-right: 18px;
+    margin-left: 18px;
+  }
 }
 </style>
