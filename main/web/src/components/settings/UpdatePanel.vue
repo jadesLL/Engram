@@ -661,6 +661,7 @@ onUnmounted(() => {
   margin: 0 24px 18px;
   color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1.6;
 }
 
 .update-section-title {
