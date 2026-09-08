@@ -31,7 +31,7 @@
 ## 项目规则
 
 1. 优先使用中文。
-2. 功能和代码优化要兼顾 desktop 和 docker 两个版本。版本号节奏参照 hermes-agent：日常开发只合 main，不 bump 版本号、不发产物——自用机器走源码模式（桌面快捷方式或 `main/scripts/update-from-source.ps1`，新机器双击 `main/scripts/setup-source.cmd` 装环境；应用内「检查更新」即增量拉源码重建）。三处版本号仅在用户明确要求发版时 bump。
+2. 功能和代码优化要兼顾 desktop 和 docker 两个版本。版本号节奏参照 hermes-agent：日常开发只合 main，不 bump 版本号、不发产物——自用机器走源码模式（桌面快捷方式或 `main/scripts/update-from-source.ps1`，新机器用 `main/scripts/install-engram.ps1`（或其打包的安装器 exe）一键装环境+克隆+构建+快捷方式；应用内「检查更新」即增量拉源码重建）。三处版本号仅在用户明确要求发版时 bump。
 3. 构建安装包时同步构建同版本 tar 和 win 安装包，放入 `releases/` 相同版本号文件夹。
 4. 每次功能验收完成后询问「仅合并 / 合并并推送远端」两选一，默认推荐合并并推送（推送后源码模式客户端即可更新）；发版是显式动作，仅当用户明确提出时才执行（见下方发版流程）。合并后必须推送 gitea。
 5. 只要更新了版本号，提交后必须立即推送 gitea（触发 CI 更新镜像 tag 与 latest），并确认 Actions 运行成功。

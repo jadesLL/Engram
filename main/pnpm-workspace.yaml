@@ -2,6 +2,7 @@ packages:
   - server
   - web
   - desktop
+  - installer
 allowBuilds:
   better-sqlite3: true
   sqlite-vec: true
