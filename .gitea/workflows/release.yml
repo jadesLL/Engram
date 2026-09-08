@@ -1,6 +1,5 @@
 # Engram 发布流程：版本号 Docker 镜像 + Windows NSIS 安装包 + Gitea Release
-# Release 挂在发行仓库 example/engram-dist（只有产物没有源码，客户端更新源指向它），
-# 源码仓库保持私有；RELEASE_TOKEN 须对 example/engram-dist 有写权限
+# Release 挂在本仓库 example/Engram；RELEASE_TOKEN 为账号级令牌，对本仓库有写权限
 # 触发：
 #   - 推送 v* 标签（如 v1.1.5）：完整发布（镜像推送 + exe 构建 + 创建 Release 上传附件）
 #   - 手动 workflow_dispatch：测试模式（镜像推送 + exe 构建 + 产物上传为 Artifact，不创建 Release）
@@ -181,7 +180,6 @@ jobs:
             release-out/Engram *.apk
             release-out/engram-*.tar.gz
             release-out/sha256-*.txt
-          repository: example/engram-dist
           token: ${{ secrets.RELEASE_TOKEN }}
           draft: false
           name: v${{ steps.ver.outputs.version }}
