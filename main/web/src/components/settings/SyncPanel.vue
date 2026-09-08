@@ -501,10 +501,6 @@ onUnmounted(() => {
 .field-row label { font-size: 13px; font-weight: 600; }
 .field-row input {
   padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
-  background: transparent;
-  color: inherit;
   font-size: 13px;
 }
 .sync-actions { display: flex; gap: 10px; }

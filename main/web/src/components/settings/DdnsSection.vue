@@ -310,16 +310,7 @@ onUnmounted(() => {
 .ddns-field input[type='password'],
 .ddns-field select {
   padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-input);
-  color: var(--text);
   font-size: 13px;
-}
-.ddns-field input:focus,
-.ddns-field select:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .ddns-switch-row {
   flex-direction: row;

@@ -179,11 +179,6 @@ onMounted(load);
 }
 .harness-picker select {
   min-width: 240px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-secondary);
-  color: var(--text);
   font-size: 13px;
 }
 .status-rows {
@@ -235,11 +230,6 @@ onMounted(load);
 .manual-path input {
   flex: 1;
   max-width: 480px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
   font-size: 12px;
 }
 </style>
