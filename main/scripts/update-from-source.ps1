@@ -16,6 +16,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 便携布局（install-engram.ps1 安装在 %LOCALAPPDATA%\engram）：优先使用自带 Node/MinGit
+$portableRoot = Join-Path $env:LOCALAPPDATA 'engram'
+foreach ($p in @((Join-Path $portableRoot 'node'), (Join-Path $portableRoot 'MinGit\cmd'))) {
+  if (Test-Path $p) { $env:Path = "$p;$env:Path" }
+}
+
 $appRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $desktop = Join-Path $appRoot 'desktop'
 

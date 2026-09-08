@@ -1,0 +1,42 @@
+{
+  "name": "@engram/installer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Engram 源码版安装器 GUI",
+  "main": "main.js",
+  "scripts": {
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.engram.installer",
+    "productName": "Engram Source Setup",
+    "electronVersion": "35.7.5",
+    "electronDist": "../desktop/node_modules/electron/dist",
+    "asar": false,
+    "files": [
+      "main.js",
+      "ui.html"
+    ],
+    "extraResources": [
+      {
+        "from": "../scripts/install-engram.ps1",
+        "to": "install-engram.ps1"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "../desktop/build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "Engram-source-setup.exe"
+    }
+  }
+}

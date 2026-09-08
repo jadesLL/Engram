@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Engram 源码版安装器</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    display: flex; flex-direction: column; overflow: hidden;
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    background: linear-gradient(160deg, #1e3a8a 0%, #1e40af 100%);
+    color: #fff; user-select: none;
+  }
+  .head { display: flex; align-items: center; gap: 14px; padding: 26px 28px 10px; }
+  .logo { width: 46px; height: 46px; border-radius: 12px; background: #fff; display: flex; align-items: center; justify-content: center; flex: none; }
+  .head h1 { font-size: 19px; font-weight: 700; }
+  .head p { font-size: 12px; opacity: .82; margin-top: 4px; line-height: 1.5; }
+  .progress-wrap { padding: 14px 28px 6px; }
+  .progress-meta { display: flex; justify-content: space-between; font-size: 12px; opacity: .85; margin-bottom: 6px; }
+  .bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,.18); overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: #93c5fd; border-radius: 4px; transition: width .3s ease; }
+  .steps { flex: 1; overflow-y: auto; padding: 10px 28px; }
+  .step { display: flex; align-items: center; gap: 12px; padding: 9px 4px; font-size: 13.5px; opacity: .45; }
+  .step.active { opacity: 1; font-weight: 600; }
+  .step.done { opacity: .9; }
+  .step .ico { width: 18px; text-align: center; flex: none; }
+  .step .note { margin-left: auto; font-size: 11px; opacity: .7; max-width: 46%; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .creds { padding: 8px 28px; }
+  .creds input {
+    width: 100%; padding: 9px 12px; margin: 6px 0; border: 1px solid rgba(255,255,255,.35);
+    border-radius: 8px; background: rgba(255,255,255,.12); color: #fff; font-size: 13px; outline: none;
+  }
+  .creds input::placeholder { color: rgba(255,255,255,.6); }
+  .creds .hint { font-size: 11px; opacity: .75; margin-top: 4px; }
+  .foot { display: flex; align-items: center; gap: 14px; padding: 10px 28px 16px; }
+  .details-toggle { font-size: 12px; opacity: .8; background: none; border: 0; color: #fff; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+  .foot .spacer { flex: 1; }
+  .btn {
+    padding: 8px 22px; border: 0; border-radius: 8px; font-size: 13px; cursor: pointer;
+    background: rgba(255,255,255,.16); color: #fff;
+  }
+  .btn.primary { background: #fff; color: #1e3a8a; font-weight: 600; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .log {
+    display: none; margin: 0 28px 10px; padding: 10px 12px; height: 140px; overflow-y: auto;
+    background: rgba(0,0,0,.28); border-radius: 8px; font-family: Consolas, monospace;
+    font-size: 11px; line-height: 1.6; color: #cbd5e1; white-space: pre-wrap; word-break: break-all;
+  }
+  .log.show { display: block; }
+  .done-view { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 20px; }
+  .done-view .big { width: 64px; height: 64px; border-radius: 50%; background: #22c55e; display: flex; align-items: center; justify-content: center; font-size: 34px; }
+  .done-view h2 { font-size: 18px; }
+  .done-view p { font-size: 12.5px; opacity: .85; text-align: center; line-height: 1.6; }
+  body.done .steps, body.done .progress-wrap, body.done .creds, body.done .foot { display: none; }
+  body.done .done-view { display: flex; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="logo">
+      <svg width="30" height="30" viewBox="0 0 100 100"><defs><radialGradient id="g" cx="35%" cy="35%"><stop offset="0%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#1d4ed8"/></radialGradient></defs><ellipse cx="50" cy="50" rx="46" ry="30" fill="none" stroke="url(#g)" stroke-width="9" transform="rotate(-18 50 50)"/><circle cx="50" cy="50" r="13" fill="#1d4ed8"/></svg>
+    </div>
+    <div>
+      <h1>正在部署 Engram 源码版</h1>
+      <p>一次性安装：自动准备便携环境、克隆源码并构建桌面端。之后每次启动都会增量更新到最新，无需再走此向导。</p>
+    </div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-meta"><span id="meta-left">准备中…</span><span id="meta-right">0%</span></div>
+    <div class="bar"><div id="bar"></div></div>
+  </div>
+
+  <div class="creds" id="creds" style="display:none">
+    <input id="user" type="text" placeholder="Gitea 账号" autocomplete="off" />
+    <input id="pass" type="password" placeholder="密码或访问令牌" />
+    <p class="hint">私有仓库首次克隆需要一次凭据；仅保存在本机安装目录的 .git\config 中，用于后续静默更新。</p>
+  </div>
+
+  <div class="steps" id="steps"></div>
+  <div class="log" id="log"></div>
+
+  <div class="foot">
+    <button class="details-toggle" id="details-btn">▸ 显示详情</button>
+    <div class="spacer"></div>
+    <button class="btn" id="cancel-btn">取消</button>
+    <button class="btn primary" id="start-btn" style="display:none">开始安装</button>
+    <button class="btn primary" id="close-btn" style="display:none">关闭</button>
+  </div>
+
+  <div class="done-view" id="done-view">
+    <div class="big">✓</div>
+    <h2>安装完成</h2>
+    <p>Engram 已启动并创建了桌面快捷方式。<br/>以后双击桌面「Engram」即可打开并自动增量更新到最新。</p>
+    <button class="btn primary" id="done-close">关闭</button>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const $ = (id) => document.getElementById(id);
+    let total = 0, doneCount = 0, started = false;
+
+    function renderProgress() {
+      const pct = total ? Math.round((doneCount / total) * 100) : 0;
+      $('meta-left').textContent = `${doneCount} / ${total} 步完成`;
+      $('meta-right').textContent = pct + '%';
+      $('bar').style.width = pct + '%';
+    }
+
+    ipcRenderer.on('steps', (_e, steps) => {
+      total = steps.length;
+      const box = $('steps');
+      box.innerHTML = '';
+      for (const s of steps) {
+        const row = document.createElement('div');
+        row.className = 'step'; row.id = 'step-' + s.id;
+        row.innerHTML = `<span class="ico">○</span><span>${s.label}</span><span class="note" id="note-${s.id}"></span>`;
+        box.appendChild(row);
+      }
+      renderProgress();
+    });
+    ipcRenderer.on('step', (_e, d) => {
+      const row = $('step-' + d.id);
+      if (row) { row.classList.add('active'); row.querySelector('.ico').innerHTML = '<div class="spinner"></div>'; }
+      renderProgress();
+    });
+    ipcRenderer.on('done', (_e, d) => {
+      doneCount++;
+      const row = $('step-' + d.id);
+      if (row) { row.classList.remove('active'); row.classList.add('done'); row.querySelector('.ico').textContent = '✓'; }
+      renderProgress();
+    });
+    ipcRenderer.on('fail', (_e, d) => {
+      const active = document.querySelector('.step.active .ico');
+      if (active) active.textContent = '✕';
+      appendLog('✖ ' + d.msg);
+      $('meta-left').textContent = '安装失败';
+    });
+    ipcRenderer.on('log', (_e, d) => appendLog(d.line));
+    ipcRenderer.on('exit', (_e, d) => {
+      if (d.code !== 0 && !document.body.classList.contains('done')) {
+        $('meta-left').textContent = '安装失败（退出码 ' + d.code + '）';
+      }
+    });
+    ipcRenderer.on('alldone', () => {
+      document.body.classList.add('done');
+      $('close-btn').style.display = 'none';
+    });
+
+    function appendLog(line) {
+      const el = $('log');
+      el.textContent += line + '\n';
+      el.scrollTop = el.scrollHeight;
+    }
+
+    $('details-btn').addEventListener('click', () => {
+      const el = $('log');
+      el.classList.toggle('show');
+      $('details-btn').textContent = (el.classList.contains('show') ? '▾' : '▸') + ' 显示详情';
+    });
+    $('cancel-btn').addEventListener('click', () => ipcRenderer.send('cancel-install'));
+    $('close-btn').addEventListener('click', () => window.close());
+    $('done-close').addEventListener('click', () => window.close());
+
+    async function begin(creds) {
+      if (started) return;
+      started = true;
+      if (creds) $('creds').style.display = 'none';
+      $('start-btn').style.display = 'none';
+      $('cancel-btn').style.display = '';
+      $('meta-left').textContent = '准备中…';
+      ipcRenderer.send('start-install', creds);
+    }
+
+    (async () => {
+      $('cancel-btn').style.display = 'none';
+      const hasRepo = await ipcRenderer.invoke('has-repo');
+      if (hasRepo) {
+        begin(null); // 已有源码目录：无需凭据，直接增量安装
+      } else {
+        $('creds').style.display = '';
+        $('start-btn').style.display = '';
+        $('meta-left').textContent = '输入 Gitea 凭据后开始安装';
+      }
+    })();
+
+    $('start-btn').addEventListener('click', () => {
+      const user = $('user').value.trim();
+      const pass = $('pass').value;
+      if (!user || !pass) { appendLog('✖ 请填写 Gitea 账号与密码/令牌'); return; }
+      begin({ user, pass });
+    });
+  </script>
+</body>
+</html>
