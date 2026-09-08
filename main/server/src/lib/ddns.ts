@@ -408,6 +408,8 @@ export function kickDdns(): void {
 
 async function ddnsTick(): Promise<void> {
   const cfg = getDdnsConfig();
+  // DDNS 仅中枢设备运行（成员/未组网设备即使残留 enabled 配置也不执行）
+  if (getSetting('sync_role') !== 'hub') return;
   if (!cfg.enabled || !cfg.token || !cfg.record) return;
   if (Date.now() - lastRunAt < cfg.intervalMin * 60_000) return;
   if (syncing) return;

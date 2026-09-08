@@ -64,7 +64,7 @@ export interface SyncStatus {
     last_seen_at: string | null;
     last_seq: number;
     created_at: string;
-    token_hint: string;
+    token: string;
   }>;
 }
 
@@ -92,7 +92,7 @@ export function status(): SyncStatus {
             last_seen_at: p.last_seen_at,
             last_seq: p.last_seq,
             created_at: p.created_at,
-            token_hint: `${p.token.slice(0, 11)}…`,
+            token: p.token,
           }))
         : [],
   };

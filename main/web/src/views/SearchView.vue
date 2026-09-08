@@ -25,6 +25,7 @@
           {{ h.title }}
           <span class="tag" v-if="h.type && h.type !== 'note'">{{ h.type }}</span>
           <span class="tag" v-if="h.refType === 'file'">文件</span>
+          <span class="tag tag-label" v-for="t in h.tags" :key="t" :title="`标签：${t}`">#{{ t }}</span>
         </div>
         <div class="hit-meta faint small">
           <span v-if="h.updated_at">更新于 {{ fromNow(h.updated_at) }}</span>
@@ -116,7 +117,8 @@ onMounted(() => {
 .hits { display: flex; flex-direction: column; gap: 10px; }
 .hit { cursor: pointer; transition: border-color 0.15s; }
 .hit:hover { border-color: var(--accent); }
-.hit-title { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.hit-title { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tag-label { font-weight: 400; }
 .hit-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
 .hit-snippet { font-size: var(--font-md); line-height: 1.6; }
 .stale { color: var(--warn); }

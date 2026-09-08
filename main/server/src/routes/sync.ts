@@ -72,7 +72,8 @@ function peerView(peer: SyncPeer) {
     last_seen_at: peer.last_seen_at,
     last_seq: peer.last_seq,
     created_at: peer.created_at,
-    token_hint: `${peer.token.slice(0, 11)}…`,
+    // owner 鉴权面：完整令牌随时可查（前端默认掩码显示，点击展开）
+    token: peer.token,
   };
 }
 
@@ -104,6 +105,7 @@ export async function syncRoutes(app: FastifyInstance) {
       .prepare(
         `SELECT id, path, title, updated_at FROM pages
          WHERE path LIKE 'AIWorks/同步冲突/%' AND deleted = 0
+           AND path != 'AIWorks/同步冲突/说明.md'
          ORDER BY updated_at DESC LIMIT 200`
       )
       .all();
@@ -115,7 +117,7 @@ export async function syncRoutes(app: FastifyInstance) {
     return { peers: listPeers().map(peerView) };
   });
 
-  /** 为成员设备签发专属 token（完整 token 仅此次返回，请复制给对应设备） */
+  /** 为成员设备签发专属 token（owner 可随时在成员列表查看完整 token） */
   app.post('/api/sync/peers', { preHandler: requireAuth }, async (req, reply) => {
     const { name } = (req.body || {}) as { name?: string };
     const trimmed = String(name || '').trim();

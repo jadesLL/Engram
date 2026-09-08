@@ -312,26 +312,7 @@
         </div>
       </section>
 
-      <!-- 标签 -->
-      <div v-if="tags.length" class="tags-block">
-        <div class="sec-row" :class="{ expanded: !collapsed.tags }">
-          <button
-            class="sec-toggle"
-            type="button"
-            :aria-expanded="!collapsed.tags"
-            v-tooltip="collapsed.tags ? '展开标签' : '收起标签'"
-            @click="toggle('tags')"
-          >
-            <span class="sec-name">标签</span>
-          </button>
-          <span class="sec-count">{{ tags.length }}</span>
-        </div>
-        <div v-show="!collapsed.tags" class="tags">
-          <button v-for="t in tags" :key="t.name" class="tag" type="button" @click="searchTag(t.name)">
-            #{{ t.name }} {{ t.count }}
-          </button>
-        </div>
-      </div>
+      <!-- 标签已按产品要求从侧栏移除，仅在搜索结果中展示 -->
     </div>
 
     <!-- 多选操作栏 -->
@@ -369,7 +350,6 @@ const emit = defineEmits(['close', 'new-page']);
 
 const allPages = ref<any[]>([]);
 const files = ref<any[]>([]);
-const tags = ref<{ name: string; count: number }[]>([]);
 const filter = ref('');
 /** 每个分列独立排序并持久化；AI 整理日志固定按时间倒序。 */
 const legacySortWiki = localStorage.getItem('sortWiki') || 'name-asc';
@@ -402,7 +382,6 @@ const defaultCollapsed: Record<string, boolean> = {
   files: true,
   chat: true,
   ailog: true,
-  tags: true,
 };
 
 function loadCollapsedState() {
@@ -805,16 +784,14 @@ watch(
 );
 
 async function load() {
-  const [{ data: pl }, { data: fl }, { data: cf }, { data: tg }] = await Promise.all([
+  const [{ data: pl }, { data: fl }, { data: cf }] = await Promise.all([
     api.get('/api/pages/list'),
     api.get('/api/files/list'),
     api.get('/api/files/list?dir=' + encodeURIComponent('原始资料/对话')),
-    api.get('/api/pages/tags'),
   ]);
   allPages.value = pl.pages;
   files.value = fl.files;
   chatFiles.value = cf.files;
-  tags.value = tg.tags;
 }
 
 function openPage(p: any) {
@@ -907,10 +884,6 @@ async function removeFile(f: any) {
   if (!ok) return;
   await api.delete('/api/files', { data: { path: f.path } });
   await load();
-}
-
-function searchTag(tag: string) {
-  router.push({ path: '/search', query: { q: `#${tag}` } });
 }
 
 function openUpload() {
@@ -1209,7 +1182,6 @@ onUnmounted(() => {
 .add-btn:focus-visible,
 .sidebar-close:focus-visible,
 .search-clear:focus-visible,
-.tag:focus-visible,
 .batch-btn:focus-visible {
   outline: 2px solid var(--sidebar-accent);
   outline-offset: 1px;
@@ -1474,41 +1446,12 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-.tags-block {
-  padding: 9px 5px 4px;
-}
-
 .side-sub {
   padding: 0 6px 6px;
   color: var(--text-faint);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0;
-}
-
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 4px;
-}
-
-.tags .tag {
-  max-width: 100%;
-  overflow: hidden;
-  padding: 2px 7px;
-  border: 1px solid var(--sidebar-control-border);
-  border-radius: 6px;
-  color: var(--text-secondary);
-  background: var(--sidebar-control);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tags .tag:hover {
-  color: var(--text);
-  background: var(--sidebar-hover);
 }
 
 .batch-bar {

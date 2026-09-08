@@ -1,16 +1,9 @@
 <template>
-  <section class="settings-panel settings-native">
-    <div class="panel-head">
-      <div>
-        <h3>DDNS 直连域名</h3>
-        <p>维护一条指向本机公网 IP 的 Cloudflare DNS 记录，供外网直连访问；每 5 分钟自动比对，IP 变化才写入，全程静默执行。</p>
-      </div>
-    </div>
-
+  <div class="ddns-section">
     <div class="integration-note">
-      需要一个 Cloudflare API Token（权限 <strong>Zone → DNS → Edit</strong>）。填写记录域名（如
-      <code>home.example.com</code>），记录不存在时自动创建（TTL 60、仅 DNS）。桌面端本地模式直接读取本机网卡，IPv6
-      会自动排除隐私临时地址，结果最准确；Docker 部署为容器内尽力探测。
+      DDNS 维护一条指向本机公网 IP 的 Cloudflare DNS 记录，给成员设备提供稳定的中枢访问地址；每 5
+      分钟自动比对，IP 变化才写入。需要一个 Cloudflare API Token（权限 <strong>Zone → DNS → Edit</strong>），记录不存在时自动创建（TTL
+      60、仅 DNS）。桌面端本地模式直接读取本机网卡，IPv6 会自动排除隐私临时地址；Docker 部署为容器内尽力探测。
     </div>
 
     <div v-if="statusLoaded" class="conn-status" :class="{ ok: statusOk, bad: statusBad }">
@@ -72,7 +65,7 @@
         {{ testing ? '检测中…' : '立即检测（不写入）' }}
       </button>
     </div>
-  </section>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -206,8 +199,8 @@ async function save(): Promise<void> {
     editedToken.value = '';
     notify.success('DDNS 配置已保存，稍候自动同步');
     setTimeout(() => void loadStatus(), 3000);
-  } catch (e) {
-    notify.error('保存失败');
+  } catch (e: any) {
+    notify.error(e?.response?.data?.error || '保存失败');
     console.error(e);
   } finally {
     saving.value = false;
@@ -261,13 +254,13 @@ onUnmounted(() => {
 
 <style scoped>
 .integration-note {
-  margin: 22px 24px 18px;
+  margin: 0 0 14px;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;
 }
 .conn-status {
-  margin: 0 24px 18px;
+  margin: 0 0 14px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -302,7 +295,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  margin: 0 24px 18px;
+  margin: 0 0 14px;
 }
 .ddns-field {
   display: flex;
@@ -341,11 +334,5 @@ onUnmounted(() => {
 .ddns-actions {
   display: flex;
   gap: 10px;
-  margin: 0 24px 24px;
-}
-
-@media (max-width: 768px) {
-  .integration-note { margin: 18px 18px 16px; }
-  .ddns-form, .ddns-actions { margin-left: 18px; margin-right: 18px; }
 }
 </style>
