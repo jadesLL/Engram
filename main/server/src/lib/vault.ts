@@ -402,7 +402,9 @@ export function movePage(oldRel: string, newRel: string, origin: WriteOrigin = '
   if (!fs.existsSync(oldAbs)) return null;
   fs.mkdirSync(path.dirname(newAbs), { recursive: true });
   fs.renameSync(oldAbs, newAbs);
-  db.prepare(`UPDATE pages SET path = ?, updated_at = ? WHERE path = ?`).run(newRel, now(), oldRel);
+  // deleted = 0：与 reconcileMissingPages 竞态时自愈（对账可能正好在 rename 之后、
+  // 本语句之前看到旧路径已消失，把行标成 deleted；这里复位回来）
+  db.prepare(`UPDATE pages SET path = ?, updated_at = ?, deleted = 0 WHERE path = ?`).run(newRel, now(), oldRel);
   const meta = syncPageFile(newRel);
   if (meta) emit('page-moved', { oldPath: oldRel, newPath: newRel, id: meta.id });
   if (origin === 'local') notifySyncChange('move', newRel, { oldPath: oldRel });
@@ -413,9 +415,27 @@ export function mkdir(rel: string) {
   fs.mkdirSync(safeJoin(rel), { recursive: true });
 }
 
+/**
+ * 把「索引行还在、磁盘文件已消失」的页面标为 deleted。
+ *
+ * 文件可能被服务端之外的路径移走（Agent 用 shell/文件工具裸移、外部程序删除、
+ * 同步冲突残留），这类带外删除不会经过 moveToTrash，行会一直停在 deleted = 0，
+ * 于是侧栏继续列出、点开报「文件不存在」。启动扫描与页面列表都会对账一次。
+ * ponytail: 全量 stat 每行，页面数上万后再改增量（记录目录 mtime / 落盘事件）。
+ */
+export function reconcileMissingPages(): number {
+  const rows = db.prepare(`SELECT id, path FROM pages WHERE deleted = 0`).all() as { id: string; path: string }[];
+  let marked = 0;
+  for (const row of rows) {
+    if (fs.existsSync(safeJoin(row.path))) continue;
+    db.prepare(`UPDATE pages SET deleted = 1 WHERE id = ? AND deleted = 0`).run(row.id);
+    marked++;
+  }
+  return marked;
+}
+
 /** 全量扫描 brain 目录：同步 pages/files 表（用于启动时与索引重建） */
 export async function scanVault() {
-  const seen = new Set<string>();
   function walk(dir: string) {
     let entries: fs.Dirent[];
     try {
@@ -430,19 +450,12 @@ export async function scanVault() {
       if (e.isDirectory()) {
         walk(abs);
       } else if (e.name.toLowerCase().endsWith('.md')) {
-        seen.add(rel);
         syncPageFile(rel);
       }
     }
   }
   walk(BRAIN_DIR);
-  // 标记已不存在的文件为 deleted
-  const rows = db.prepare(`SELECT path FROM pages WHERE deleted = 0`).all() as { path: string }[];
-  for (const r of rows) {
-    if (!seen.has(r.path)) {
-      db.prepare(`UPDATE pages SET deleted = 1 WHERE path = ?`).run(r.path);
-    }
-  }
+  reconcileMissingPages();
 
   // 原始资料补齐提取：递归扫描直接拷入目录/历史遗留的 PDF/图片，自动入队文本提取。
   // （office/txt/md 建议经 UI/CLI 导入以建立文本索引；md 由上方 syncPageFile 处理）

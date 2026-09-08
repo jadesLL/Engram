@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db } from '../lib/db.js';
 import {
-  listTree, readPage, writePage, createPage, movePage, mkdir, safeJoin,
+  listTree, readPage, writePage, createPage, movePage, mkdir, safeJoin, reconcileMissingPages,
 } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { FIXED_DIRS, normalizeDir, isPageDir, typeToDir, ARCHIVE_DIR } from '../config.js';
@@ -29,6 +29,9 @@ export async function pageRoutes(app: FastifyInstance) {
 
   app.get('/api/pages/list', async (req) => {
     const { type, tag, outdated } = req.query as { type?: string; tag?: string; outdated?: string };
+    // 带外删除（Agent 裸移文件、外部程序）会让行停在 deleted=0：列表前对账一次，
+    // 否则侧栏留下点开报「文件不存在」的幽灵页（等价于启动扫描，只是立刻生效）
+    reconcileMissingPages();
     let rows = db
       .prepare(`SELECT id, path, title, type, tags, summary, created_at, updated_at, word_count, guide_version FROM pages WHERE deleted = 0 ORDER BY updated_at DESC`)
       .all() as any[];
