@@ -92,3 +92,42 @@ test('PUT 显式传空 content 仍会清空正文（语义保留）', async () =
   const onDisk = fs.readFileSync(path.join(temp, 'brain', row.path), 'utf8');
   assert.doesNotMatch(onDisk, /旧内容/);
 });
+
+test('带外删除（裸移文件到 .trash）后列表自愈：幽灵页不再列出，行标 deleted', async () => {
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/pages',
+    headers: { authorization: `Bearer ${token}` },
+    payload: { title: '带外删除测试', type: 'concept' },
+  });
+  const id = created.json().meta.id;
+  const row = db.prepare(`SELECT path FROM pages WHERE id = ?`).get(id) as { path: string };
+
+  // 复现现场：Agent 用 shell/文件工具把文件裸移进 .trash，不经过 moveToTrash，
+  // DB 行停在 deleted=0（用户看到侧栏还有、点开报「文件不存在」）
+  const abs = path.join(temp, 'brain', row.path);
+  const trash = path.join(temp, 'brain', '.trash');
+  fs.mkdirSync(trash, { recursive: true });
+  fs.renameSync(abs, path.join(trash, path.basename(row.path)));
+  assert.equal(
+    (db.prepare(`SELECT deleted FROM pages WHERE id = ?`).get(id) as any).deleted,
+    0,
+    '前置条件：带外移动不动 DB 行'
+  );
+
+  const res = await app.inject({
+    method: 'GET',
+    url: '/api/pages/list',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(res.statusCode, 200);
+  assert.ok(
+    !res.json().pages.some((p: any) => p.id === id),
+    '幽灵页不得再出现在列表里'
+  );
+  assert.equal((db.prepare(`SELECT deleted FROM pages WHERE id = ?`).get(id) as any).deleted, 1);
+
+  // 对账只针对缺失文件：正常页面照常列出
+  const kept = res.json().pages.map((p: any) => p.title);
+  assert.ok(kept.includes('显式清空测试'));
+});
