@@ -1,15 +1,16 @@
 <template>
-  <section class="settings-panel settings-native">
-    <div class="panel-head">
-      <div>
-        <h3>桌面端连接</h3>
-        <p>为 Windows 桌面端生成连接令牌，填入桌面端即可免密码访问本服务。</p>
-      </div>
+  <div class="desktop-section">
+    <div class="desktop-head">
+      <h4>桌面端免密接入</h4>
       <button class="btn primary" type="button" @click="newToken">
         <Icon name="plus" :size="15" />
         生成令牌
       </button>
     </div>
+    <p class="section-note">
+      桌面端不参与同步时，也可用「远端模式」直接连到本服务：在这里生成连接令牌，填入 Windows
+      桌面端「连接远端服务器」即可免密码登录。令牌默认有效期 365 天，可随时撤销。
+    </p>
 
     <div v-if="isDesktop" class="desktop-mode-block">
       <div>
@@ -25,10 +26,6 @@
         <code>{{ serverUrl }}</code>
       </div>
       <button class="btn" type="button" @click="copy(serverUrl)">复制地址</button>
-    </div>
-
-    <div class="integration-note">
-      在 Windows 桌面端「连接远端服务器」处填入上方地址与下方令牌，即可免密码登录。令牌默认有效期 365 天，可随时撤销。
     </div>
 
     <div v-if="tokens.length" class="token-list">
@@ -53,8 +50,8 @@
         </div>
       </div>
     </div>
-    <div v-else class="empty-panel">尚未生成桌面端连接令牌。</div>
-  </section>
+    <p v-else class="empty-note">尚未生成桌面端连接令牌。</p>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -77,7 +74,7 @@ interface DesktopToken {
 const tokens = ref<DesktopToken[]>([]);
 const serverUrl = computed(() => location.origin);
 // 桌面端壳内 window.wikiDesktop 存在；本地模式下启动页被内嵌 Web 应用替换，
-// 设置面板的此按钮成为切换回启动页 / 远端的入口（与菜单互补）。
+// 此处的按钮成为切换回启动页 / 远端的入口（与菜单互补）。
 const isDesktop = computed(() => typeof window !== 'undefined' && Boolean((window as any).wikiDesktop));
 
 async function backToLauncher() {
@@ -142,13 +139,26 @@ onMounted(load);
 </script>
 
 <style scoped>
+.desktop-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.desktop-head h4 { margin: 0; }
+.section-note {
+  margin: 4px 0 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .desktop-mode-block {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  /* 与 panel-head 分割线留出与 .endpoint-block 一致的首块间距（原先为 0，模式块紧贴分割线） */
-  margin: 22px 24px 12px;
+  margin: 0 0 12px;
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--accent, #3b82f6) 30%, var(--border));
   border-radius: 8px;
@@ -175,7 +185,7 @@ onMounted(load);
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  margin: 22px 24px 12px;
+  margin: 0 0 12px;
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -200,15 +210,7 @@ onMounted(load);
   white-space: nowrap;
 }
 
-.integration-note {
-  margin: 0 24px 18px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
 .token-list {
-  margin: 0 24px 24px;
   border-top: 1px solid var(--border);
 }
 .token-row {
@@ -271,19 +273,10 @@ onMounted(load);
   align-items: center;
   gap: 10px;
 }
-
-@media (max-width: 768px) {
-  .endpoint-block {
-    margin: 18px 18px 10px;
-  }
-  .integration-note {
-    margin: 0 18px 16px;
-  }
-  .token-list,
-  .empty-panel {
-    margin-right: 18px;
-    margin-left: 18px;
-  }
+.empty-note {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.7;
 }
 
 @media (max-width: 640px) {

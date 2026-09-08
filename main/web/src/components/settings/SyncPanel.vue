@@ -152,6 +152,11 @@
         </li>
       </ul>
     </div>
+
+    <!-- 桌面端连接：与同步群组并列的另一种接入方式，任何角色下都显示 -->
+    <div class="desktop-block">
+      <DesktopSection />
+    </div>
   </section>
 </template>
 
@@ -161,6 +166,7 @@ import { api } from '../../api';
 import { promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
+import DesktopSection from './DesktopSection.vue';
 
 interface PeerView {
   id: string;
@@ -455,7 +461,8 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-.ddns-block {
+.ddns-block,
+.desktop-block {
   border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
   padding-top: 14px;
   margin: 0 24px 24px;
@@ -558,6 +565,7 @@ onUnmounted(() => {
   .sync-role-note,
   .peers-block,
   .ddns-block,
+  .desktop-block,
   .new-peer-card,
   .sync-config,
   .sync-status,
