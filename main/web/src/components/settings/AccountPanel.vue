@@ -68,9 +68,9 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>应用版本</strong>
-          <span>当前安装的 Engram 版本。</span>
+          <span>{{ versionHint }}</span>
         </div>
-        <code class="app-version">{{ APP_VERSION }}</code>
+        <code class="app-version">{{ versionLabel }}</code>
       </div>
     </div>
   </section>
@@ -82,9 +82,20 @@ import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION } from '../../version';
+import { formatVersionLabel, type GitIdentity } from '../../lib/buildLabel';
 
 const app = useAppStore();
 const auth = useAuthStore();
+
+// 源码模式：主进程给出 git 提交身份，版本号后附「提交号 · 提交日期」（见 lib/buildLabel.ts）。
+// 安装包形态与浏览器访问服务器时拿不到 git 身份，显示保持纯版本号。
+const desktopEnv = ref<GitIdentity | null>(null);
+const versionLabel = computed(() => formatVersionLabel(APP_VERSION, desktopEnv.value));
+const versionHint = computed(() =>
+  desktopEnv.value?.commit
+    ? '源码模式：版本号仅随发版变化，提交号随每次更新变化。'
+    : '当前安装的 Engram 版本。',
+);
 
 const pwd = ref({ old: '', next: '' });
 const pwdMsg = ref('');
@@ -162,7 +173,20 @@ function switchToDirect() {
   if (directUrl.value) location.href = directUrl.value + '/';
 }
 
-onMounted(probeConn);
+onMounted(() => {
+  probeConn();
+  // 桌面端源码模式才有 git 身份；取不到（安装包形态 / 浏览器访问）时保持纯版本号
+  const wd = (window as any).wikiDesktop;
+  if (wd?.getDesktopEnv) {
+    wd.getDesktopEnv()
+      .then((env: GitIdentity | null) => {
+        desktopEnv.value = env;
+      })
+      .catch(() => {
+        /* 主进程未就绪时忽略，版本号照常显示 */
+      });
+  }
+});
 
 async function changePwd() {
   pwdMsg.value = '';

@@ -5,7 +5,7 @@
         <h3>软件更新</h3>
         <p>检测新版本并就地更新；服务器（Docker）拉取镜像自动重建，桌面端默认自动下载并静默安装，也可手动下载安装包覆盖安装。</p>
       </div>
-      <span v-if="state.currentVersion" class="app-version">v{{ state.currentVersion }}</span>
+      <span v-if="versionBadge" class="app-version">{{ versionBadge }}</span>
     </div>
 
     <!-- ============ 服务器（Docker）节 ============ -->
@@ -84,7 +84,7 @@
 
       <template v-else>
         <div v-if="sourceMode" class="integration-note">
-          当前为<strong>源码模式</strong>：更新 = 增量拉取源码并重新构建，不使用安装包。构建约需 1 分钟，期间会显示最小化控制台窗口，完成后应用自动重启，数据不受影响。
+          当前为<strong>源码模式</strong>：更新 = 增量拉取源码并重新构建，不使用安装包。构建约需 1 分钟，期间会显示最小化控制台窗口，完成后应用自动重启，数据不受影响。版本号仅随发版变化，<strong>提交号随每次更新变化</strong>，用它判断是否已更新到最新代码。
         </div>
 
         <div v-if="autoSupported && !sourceMode" class="setting-row">
@@ -152,7 +152,7 @@
             </div>
             <div class="check-controls">
               <span v-if="srcResult && srcResult.ok" class="check-status" :class="srcResult.upToDate ? 'none' : 'has'">
-                {{ srcResult.upToDate ? '已是最新' : `落后 ${srcResult.behind} 个提交（分支 ${srcResult.branch}）` }}
+                {{ sourceCheckText }}
               </span>
               <button class="btn" type="button" :disabled="srcChecking || srcUpdating" @click="doSourceCheck">
                 <AppSpinner v-if="srcChecking" :size="11" />
@@ -275,6 +275,7 @@ import Icon from '../Icon.vue';
 import AppSpinner from '../ui/AppSpinner.vue';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
+import { formatVersionLabel, formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
 
 interface UpdateStateInfo {
   supported: boolean;
@@ -345,12 +346,27 @@ const savingConfig = ref(false);
 
 // 源码模式（非打包形态）：更新 = 增量拉源码 + 重新构建，不使用安装包
 const sourceMode = ref(false);
+/** 源码模式的 git 身份（提交号/日期/是否脏），打包形态与浏览器访问时为空 */
+const desktopEnv = ref<GitIdentity | null>(null);
 const srcChecking = ref(false);
 const srcResult = ref<any>(null);
 const srcUpdating = ref(false);
 const srcError = ref('');
 
 const wikiDesktop = () => (window as any).wikiDesktop;
+
+/**
+ * 面板右上角版本徽标：源码模式附 git 提交号（版本号仅随发版变化，提交号随每次更新变化，
+ * 见 lib/buildLabel.ts），其他形态保持纯版本号。
+ */
+const versionBadge = computed(() => {
+  const base = state.value.currentVersion ? `v${state.value.currentVersion}` : '';
+  if (!base) return '';
+  return sourceMode.value ? formatVersionLabel(base, desktopEnv.value) : base;
+});
+
+/** 源码模式检查更新结果：`已是最新（本地 0fbe4e2）` / `落后 3 个提交：0fbe4e2 → a1b2c3d` */
+const sourceCheckText = computed(() => (srcResult.value?.ok ? formatSourceCheckLabel(srcResult.value) : ''));
 
 /** 自动更新状态机的用户可读描述 */
 const autoStatus = computed(() => {
@@ -630,6 +646,7 @@ onMounted(() => {
   const wd = wikiDesktop();
   if (wd?.getDesktopEnv) {
     wd.getDesktopEnv().then((env: any) => {
+      desktopEnv.value = env;
       sourceMode.value = Boolean(env && !env.packaged && env.platform === 'win32');
     });
   }
