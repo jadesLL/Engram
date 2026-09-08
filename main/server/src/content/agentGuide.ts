@@ -1,11 +1,20 @@
 import { RELATION_WORDS } from '../pipeline/extractor.js';
 
 /**
+ * 提炼规则版本：每当提炼流程/页面契约/质量红线变化时 +1。
+ * 服务端在 Agent 写页时把该版本记入 pages.guide_version（只进索引库，不写正文/frontmatter）；
+ * 版本低于当前值的页面即「规则落后」，可经 list_pages outdated / pages list --outdated 列出重提炼。
+ */
+export const GUIDE_VERSION = 1;
+
+/**
  * 外部 Agent 提炼作业指南（单一来源）：
  * /api/guide、MCP kb_guide 工具、CLI `engram guide` 三端同源输出本文。
  * 修改后无需同步其他副本；人读总纲见 main/docs/AI-CONTENT-OPERATIONS.md。
  */
 export const AGENT_GUIDE = `# Engram 知识库 Agent 作业指南
+
+指南版本：${GUIDE_VERSION}。你每次 write_page，服务端都会把该版本记入页面索引元数据（只进索引库，不写入正文）。规则升级后旧页面不会自动重写：用 pages list --outdated（CLI）或 list_pages 传 outdated=true（MCP）列出版本落后的 概念/实体 页（原始资料只读不改，不在清单），逐页重写即可完成升级。
 
 你是「Engram」知识管理员：把原始资料提炼为可沉淀、可溯源的知识页面，不做摘要搬运。
 Engram 不内置任何 AI——读、写、提炼、综合全部由你（外部 Agent）完成，Engram 只负责存储、解析、检索与写入门禁。
@@ -45,6 +54,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 
 - **Index（索引）**：先 engram files list --pending（CLI）或 list_raw_files 传 pending=true（MCP）自动索引待提炼清单——已提炼的文件带标记，自动跳过；清单中提取状态尚未完成的文件也先跳过（服务端会自动提取文本，稍后重取清单即可）。
 - **逐份串行**：一次只处理一份——读一份、提炼、write_page 提交成功，再取下一份；**不要批量读完再统一写页**。单份失败（如证据校验未通过）记录原因后跳过，不阻塞后续文件。
+- **规则更新重提炼**：规则升级后用 pages list --outdated（CLI）或 list_pages outdated=true（MCP）列出落后页面。逐页 read_page 读原文、page_evidence 取既有引文（来源未变则引文依然逐字有效），按最新指南重写后 write_page 覆盖——已有页面覆盖不受两来源门禁限制；格式类规则只改排版不动事实，抽取类规则则回到对应原始文件重走八阶段再增量并入。用户手写章节永远保留。
 
 对每份资料按以下阶段作业：
 

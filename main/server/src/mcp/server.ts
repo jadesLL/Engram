@@ -12,7 +12,7 @@ import { pageEvidenceResponse } from '../pipeline/pageEvidence.js';
 import { agentWritePage, WriteGateError } from '../pipeline/agentWrite.js';
 import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
-import { AGENT_GUIDE } from '../content/agentGuide.js';
+import { AGENT_GUIDE, GUIDE_VERSION } from '../content/agentGuide.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
@@ -138,18 +138,38 @@ function makeServer(): McpServer {
     }
   );
 
-  server.tool('list_pages', '列出知识库目录树', {}, async () => {
-    const tree = listTree();
-    const lines: string[] = [];
-    const walk = (nodes: any[], depth: number) => {
-      for (const n of nodes) {
-        lines.push(`${'  '.repeat(depth)}- ${n.name || n.title || n.path}${n.children ? '/' : ''}`);
-        if (n.children) walk(n.children, depth + 1);
+  server.tool(
+    'list_pages',
+    '列出知识库目录树（页面带提炼规则版本；outdated=true 只列落后于当前指南的页面，供按新规则重提炼）',
+    { outdated: z.boolean().optional().describe('true 时只列提炼规则版本落后于当前指南的页面（旧页面版本为 0）') },
+    async ({ outdated }) => {
+      let tree = listTree() as any[];
+      if (outdated) {
+        const isRefineTarget = (p: any) => p.startsWith('Wiki/概念/') || p.startsWith('Wiki/实体/');
+        const prune = (nodes: any[]): any[] =>
+          nodes
+            .map((n) => (n.children ? { ...n, children: prune(n.children) } : n))
+            .filter((n) =>
+              n.kind === 'page'
+                ? isRefineTarget(n.path) && Number(n.guide_version ?? 0) < GUIDE_VERSION
+                : n.kind === 'dir' ? n.children.length > 0 : false
+            );
+        tree = prune(tree);
       }
-    };
-    walk(tree as any[], 0);
-    return { content: [{ type: 'text', text: lines.join('\n') || '（空）' }] };
-  });
+      const lines: string[] = [];
+      const walk = (nodes: any[], depth: number) => {
+        for (const n of nodes) {
+          const versionTag = n.kind === 'page'
+            ? ` · 规则v${n.guide_version ?? 0}${Number(n.guide_version ?? 0) < GUIDE_VERSION ? `（落后，当前 v${GUIDE_VERSION}）` : ''}`
+            : '';
+          lines.push(`${'  '.repeat(depth)}- ${n.name || n.title || n.path}${n.children ? '/' : ''}${versionTag}`);
+          if (n.children) walk(n.children, depth + 1);
+        }
+      };
+      walk(tree, 0);
+      return { content: [{ type: 'text', text: lines.join('\n') || '（无匹配页面）' }] };
+    }
+  );
 
   server.tool(
     'read_page',
@@ -250,7 +270,7 @@ function makeServer(): McpServer {
         return {
           content: [{
             type: 'text',
-            text: `已保存: ${result.meta.path}（id: ${result.meta.id}，${result.created ? '新建' : '更新'}${result.evidenceRecorded ? `，证据 ${result.evidenceRecorded} 条入账` : ''}）`,
+            text: `已保存: ${result.meta.path}（id: ${result.meta.id}，${result.created ? '新建' : '更新'}，规则版本 v${result.guideVersion}${result.evidenceRecorded ? `，证据 ${result.evidenceRecorded} 条入账` : ''}）`,
           }],
         };
       } catch (error) {

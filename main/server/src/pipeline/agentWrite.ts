@@ -3,6 +3,7 @@ import { db, newId, now } from '../lib/db.js';
 import { readPage, writePage, type PageMeta } from '../lib/vault.js';
 import { appendWikiLog } from './indexFile.js';
 import { beginSourceVersion } from './sourceLedger.js';
+import { GUIDE_VERSION } from '../content/agentGuide.js';
 
 /**
  * 外部 Agent 写入知识页的确定性门禁与证据账本：
@@ -193,6 +194,7 @@ export interface AgentWriteResult {
   meta: PageMeta;
   created: boolean;
   evidenceRecorded: number;
+  guideVersion: number;
 }
 
 /** Agent 写页入口：校验证据 → 两来源门禁 → 落盘 → 记账本 → 记操作日志 */
@@ -207,12 +209,15 @@ export function agentWritePage(input: AgentWriteInput): AgentWriteResult {
     type: input.type,
     tags: input.tags,
   });
+  // 规则版本只进索引库（pages.guide_version），不写正文/frontmatter；
+  // syncPageFile 的 upsert 不触碰未列出的列，这里单独刷新
+  db.prepare(`UPDATE pages SET guide_version = ? WHERE path = ?`).run(GUIDE_VERSION, rel);
   const evidenceRecorded = recordEvidence(meta, validated);
   try {
     appendWikiLog(
       isNew ? 'Agent 新建页面' : 'Agent 更新页面',
-      `[[${meta.title}]]（${rel}）${evidenceRecorded ? `，证据 ${evidenceRecorded} 条` : ''}`,
+      `[[${meta.title}]]（${rel}）${evidenceRecorded ? `，证据 ${evidenceRecorded} 条` : ''}，规则版本 v${GUIDE_VERSION}`,
     );
   } catch { /* 日志失败不阻塞写入 */ }
-  return { meta, created: isNew, evidenceRecorded };
+  return { meta, created: isNew, evidenceRecorded, guideVersion: GUIDE_VERSION };
 }

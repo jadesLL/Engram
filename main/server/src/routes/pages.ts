@@ -12,6 +12,7 @@ import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { renamePageSafely, RenameError } from '../lib/renamePage.js';
 import { pageEvidenceResponse } from '../pipeline/pageEvidence.js';
+import { GUIDE_VERSION } from '../content/agentGuide.js';
 
 function comparablePageContent(value: string): string {
   return value
@@ -27,13 +28,21 @@ export async function pageRoutes(app: FastifyInstance) {
   app.get('/api/pages/tree', async () => ({ tree: listTree() }));
 
   app.get('/api/pages/list', async (req) => {
-    const { type, tag } = req.query as { type?: string; tag?: string };
+    const { type, tag, outdated } = req.query as { type?: string; tag?: string; outdated?: string };
     let rows = db
-      .prepare(`SELECT id, path, title, type, tags, summary, created_at, updated_at, word_count FROM pages WHERE deleted = 0 ORDER BY updated_at DESC`)
+      .prepare(`SELECT id, path, title, type, tags, summary, created_at, updated_at, word_count, guide_version FROM pages WHERE deleted = 0 ORDER BY updated_at DESC`)
       .all() as any[];
     if (type) rows = rows.filter((r) => r.type === type);
     if (tag) rows = rows.filter((r) => (JSON.parse(r.tags) as string[]).includes(tag));
-    return { pages: rows.map((r) => ({ ...r, tags: JSON.parse(r.tags) })) };
+    // 规则落后 = 提炼规则版本低于当前指南（存量旧行为 0）。重提炼对象只含 Agent 维护的
+    // 概念/实体 页：原始资料只读不改，归档页不再维护，均不入清单
+    if (outdated === 'true' || outdated === '1') {
+      rows = rows.filter((r) =>
+        (r.path.startsWith('Wiki/概念/') || r.path.startsWith('Wiki/实体/'))
+        && Number(r.guide_version ?? 0) < GUIDE_VERSION
+      );
+    }
+    return { guideVersion: GUIDE_VERSION, pages: rows.map((r) => ({ ...r, tags: JSON.parse(r.tags) })) };
   });
 
   app.get('/api/pages/tags', async () => {

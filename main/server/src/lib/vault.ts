@@ -62,7 +62,7 @@ export function listTree() {
         out.push({ kind: 'dir', name: e.name, path: rel, children: walk(abs, SUB_ORDER[e.name]) });
       } else if (e.name.toLowerCase().endsWith('.md')) {
         const page = db
-          .prepare(`SELECT id, title, type, tags, updated_at FROM pages WHERE path = ? AND deleted = 0`)
+          .prepare(`SELECT id, title, type, tags, updated_at, guide_version FROM pages WHERE path = ? AND deleted = 0`)
           .get(rel) as any;
         out.push({
           kind: 'page',
@@ -73,6 +73,7 @@ export function listTree() {
           type: page?.type || 'note',
           tags: page ? JSON.parse(page.tags) : [],
           updated_at: page?.updated_at,
+          guide_version: page?.guide_version ?? 0,
         });
       } else {
         const stat = fs.statSync(abs);

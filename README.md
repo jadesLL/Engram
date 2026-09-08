@@ -20,6 +20,7 @@
 
 - **《Agent 作业指南》三端同源**：MCP `kb_guide` 工具、`GET /api/guide`、`engram guide` 输出同一份方法论（页面契约、八阶段作业流程、证据规则），Agent 接上就能按既有逻辑干活。
 - **CLI 优先、逐份串行**：能跑 shell 的 Agent 优先用 CLI（MCP 兜底用于图像直读等场景）；收到提炼指令先用 `files list --pending` 自动索引待提炼清单，逐份提炼、写完一份再下一份。
+- **规则版本化，旧库可升级**：提炼规则带版本号（`GUIDE_VERSION`），Agent 每次写页服务端把版本记入页面索引元数据（只进索引库，不写正文）；规则升级后用 `pages list --outdated`（CLI）或 `list_pages` 传 `outdated=true`（MCP）列出落后的概念/实体页（原始资料只读不改），按最新指南逐页重写覆盖即完成旧库升级。
 - **质量由确定性门禁兜底**：引文逐字校验（编造即拒绝）、新建概念/实体页两来源门禁（≥2 个不同原始资料路径各 1 条引文，或单路径 ≥2 条）、每次写入自动记入 `Wiki/log.md` 操作日志与证据账本（编辑器「来源证据」抽屉可逐条复核）。
 
 ## 功能总览
@@ -31,7 +32,7 @@
 | 工具 | 说明 |
 |---|---|
 | `search` | 关键词检索（Wiki 页面 + 原始资料提取文本，FTS5 BM25） |
-| `list_pages` / `read_page` | 目录树 / 按标题或 ID 读页面全文 |
+| `list_pages` / `read_page` | 目录树（页面带提炼规则版本；`outdated=true` 只列落后页面） / 按标题或 ID 读页面全文 |
 | `page_evidence` | 读页面证据账本（来源、版本、事实与逐字引文） |
 | `list_raw_files` / `read_raw_file` | 原始资料清单（含提取状态与「已提炼」标记；`pending=true` 只列未提炼文件）与读取；图片返回原图（image 内容）供视觉 Agent 自行识别 |
 | `write_page` | 写页面；新建概念/实体页必须带 `evidence` 过两来源门禁，引文服务端逐字校验 |
@@ -47,7 +48,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 ### ⌨️ engram CLI（零依赖，Node 22）
 
-`node server/dist/cli.js <command>`（Docker 内 `docker exec engram node dist/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli.js`）。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|evidence / chat save / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`files list --pending` 只列未提炼文件（提炼作业索引用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
+`node server/dist/cli.js <command>`（Docker 内 `docker exec engram node dist/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli.js`）。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|evidence / chat save / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`files list --pending` 只列未提炼文件（提炼作业索引用）；`pages list --outdated` 只列提炼规则版本落后于当前指南的概念/实体页（规则升级后重提炼用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
 
 ### 📄 页面编辑与管理
 

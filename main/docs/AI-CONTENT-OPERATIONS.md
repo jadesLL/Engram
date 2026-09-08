@@ -20,6 +20,11 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 - **自动索引**：收到提炼指令后先用上面的待提炼清单命令索引未提炼文件，不需要用户逐个指定。
 - **逐份串行**：一次只处理一份——读一份、提炼、`write_page` 提交成功，再处理下一份；不要批量读完统一写页。单份失败记录原因后跳过，不阻塞后续。
 
+## 规则版本与重提炼
+
+- **指南版本**：提炼规则（流程/页面契约/质量红线）以 `agentGuide.ts` 中的 `GUIDE_VERSION` 为准，规则变化时 +1；Agent 每次 `write_page`，服务端把该版本记入 `pages.guide_version`（**只进索引库，不写入页面正文/frontmatter**）。
+- **落后页面**：`guide_version` 低于当前指南的页面即规则落后（存量旧页面补列后为 0），清单只含 Agent 维护的 概念/实体 页（原始资料只读不改，归档页不再维护）。用 `engram pages list --outdated`（CLI）或 `list_pages` 传 `outdated=true`（MCP）列出，逐页按最新指南重写后 `write_page` 覆盖即完成升级；已有页面覆盖不受两来源门禁限制，用户手写章节永远保留。
+
 ## 操作日志
 
 - **位置**：`data/brain/AIWorks/log/log.md`（frontmatter 标题「操作日志」；历史版本在 `Wiki/log.md`，升级启动时自动迁移），时间倒序，新条目插在 `# 操作日志` 标题正下方：`- YYYY-MM-DD HH:MM:SS 动作：细节`。服务端启动时自动预置该文件，新知识库亦可直接读取。
