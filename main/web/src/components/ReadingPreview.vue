@@ -565,7 +565,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 5px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   color: var(--text-secondary);
 }
 .reading-tool {
@@ -573,8 +573,16 @@ onBeforeUnmount(() => {
 }
 .reading-tool:hover,
 .reading-tool[aria-pressed="true"] {
-  border-color: var(--border);
-  background: var(--bg-hover);
+  border-color: var(--control-border);
+  background: var(--control-bg-hover);
+  color: var(--text);
+}
+.reading-tool:active {
+  background: var(--control-bg-pressed);
+}
+.font-stepper button:hover,
+.width-segment button:hover:not([aria-pressed="true"]) {
+  background: var(--control-bg-hover);
   color: var(--text);
 }
 .reading-stats {
@@ -593,8 +601,10 @@ onBeforeUnmount(() => {
   min-height: 34px;
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid var(--control-border);
+  border-bottom-color: var(--control-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--control-bg);
   overflow: hidden;
 }
 .font-stepper button {
@@ -609,7 +619,7 @@ onBeforeUnmount(() => {
 }
 .width-segment button {
   padding: 0 10px;
-  border-left-color: var(--border);
+  border-left-color: var(--control-border);
   border-radius: 0;
   font-size: 12px;
 }
@@ -691,7 +701,7 @@ onBeforeUnmount(() => {
 }
 .reading-tag {
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--bg-secondary);
   color: var(--text-secondary);
 }
@@ -751,7 +761,7 @@ onBeforeUnmount(() => {
   margin: 1.3em 0;
   padding: 0.85em 1.1em;
   border-left: 4px solid var(--accent);
-  border-radius: 0;
+  border-radius: var(--radius-control);
   background: var(--bg-secondary);
   color: var(--text-secondary);
 }
@@ -771,13 +781,13 @@ onBeforeUnmount(() => {
 .reading-content :deep(pre) {
   margin: 1.25em 0;
   padding: 18px 20px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-control);
   background: var(--bg-secondary);
   overflow-x: auto;
 }
 .reading-content :deep(code) {
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   padding: 0.15em 0.38em;
   background: var(--bg-tertiary);
   color: var(--accent);
@@ -818,7 +828,7 @@ onBeforeUnmount(() => {
   max-width: 100%;
   height: auto;
   margin-inline: auto;
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 .reading-content :deep(figure) { margin: 1.4em 0; }
 .reading-content :deep(figcaption) {
@@ -915,8 +925,8 @@ onBeforeUnmount(() => {
 .reading-related button,
 .reading-related span {
   padding: 2px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--control-border);
   background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
