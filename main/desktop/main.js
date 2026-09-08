@@ -1201,12 +1201,13 @@ ipcMain.handle('desktop-update-set-auto', (_e, enabled) => {
 });
 
 // ---------- 源码模式自更新（非打包形态：应用内增量拉源码并重建） ----------
-// 源码模式跑在 git 检出目录上，更新 = git pull 增量拉取 → 重建 server/web → 重启；
-// 构建期间不能持有文件锁（server 子进程占着 better_sqlite3.node），所以流程是：
-// 主进程先 pull（增量下载在应用存活时完成）→ 拉起 update-from-source.ps1 -SkipPull
-// （构建 + 组装 + 关旧实例 + 启动）→ 本进程退出，新实例接管。数据目录不受影响。
+// 源码模式跑在 git 检出目录上，更新 = git pull 增量拉取 → 重建 server/web → 组装 → 重启。
+// 全程由主进程编排：弹置顶进度小窗，fork tsc/vite/prepare-desktop 逐步构建（输出实时
+// 回显小窗），构建期间应用照常可用，到组装前才停内嵌 server、主窗藏进托盘；完成后
+// app.relaunch 重启，新实例接管。不走 update-from-source.ps1：powershell 被 GUI 进程
+// spawn 时行为不可控（句柄为 null 静默秒退、管道场景构建拖慢几十倍，均实测），该脚本
+// 仍保留给终端手动更新。依赖清单变化的更新需 pnpm install（联网），此路径不支持并提示。
 const appRootDir = path.join(__dirname, '..');
-const sourceUpdateScript = path.join(appRootDir, 'scripts', 'update-from-source.ps1');
 
 function gitArgs(args) {
   return { cmd: 'git', args: ['-C', appRootDir, ...args] };
@@ -1251,22 +1252,180 @@ ipcMain.handle('desktop-source-update-check', async () => {
   }
 });
 
+// 进度小窗：更新期间唯一的可见窗口（主窗藏进托盘）。复用启动页深色主题，
+// 主进程经 executeJavaScript 原地更新步骤文字与日志，不开 nodeIntegration、无 IPC 桥。
+function updateProgressPage() {
+  const extra = `
+    body { align-items: flex-start; padding-top: 40px; }
+    .wrap { width: min(500px, 82vw); }
+    .logo { width: 54px; height: 54px; margin-bottom: 16px; }
+    h1 { font-size: 20px; letter-spacing: 1px; margin: 0 0 8px; }
+    .step { font-size: 14px; color: #c6cddc; margin: 0 0 18px; min-height: 20px; text-align: left; }
+    .bar { margin-bottom: 14px; }
+    #log {
+      margin: 0; height: 116px; overflow: hidden; font-size: 11px; line-height: 1.55;
+      color: #566078; font-family: Consolas, monospace; white-space: pre-wrap; word-break: break-all;
+    }
+    .failed .bar i { animation: none; background: #f87171; }
+    .failed .step { color: #f87171; }
+  `;
+  return (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
+    SPLASH_STYLE +
+    extra +
+    '</style></head><body><div class="wrap">' +
+    logoSvg('logo') +
+    '<h1>正在更新 Engram</h1>' +
+    '<p class="step" id="step">准备中…</p>' +
+    '<div class="bar"><i></i></div>' +
+    '<pre id="log"></pre>' +
+    '</div></body></html>'
+  );
+}
+
+let updateWin = null;
+
+function showUpdateProgress() {
+  if (updateWin && !updateWin.isDestroyed()) return updateWin;
+  updateWin = new BrowserWindow({
+    width: 560,
+    height: 430,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    frame: false,
+    show: false,
+    title: 'Engram 更新',
+    backgroundColor: SPLASH_BG,
+    icon: windowIcon(),
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  updateWin.setAlwaysOnTop(true, 'screen-saver');
+  updateWin.once('ready-to-show', () => updateWin.show());
+  updateWin.loadURL(dataUrl(updateProgressPage()));
+  return updateWin;
+}
+
+function updateProgressExec(script) {
+  if (!updateWin || updateWin.isDestroyed()) return;
+  updateWin.webContents.executeJavaScript(script).catch(() => { /* 页面已切走或窗口已关 */ });
+}
+
+function setUpdateStep(text) {
+  // IIFE 包裹：executeJavaScript 与页面共享全局作用域，裸 const 二次执行会重复声明报错
+  updateProgressExec(`(function(){const el=document.getElementById('step'); if (el) el.textContent=${JSON.stringify(text)};})()`);
+}
+
+function appendUpdateLog(line) {
+  updateProgressExec(
+    '(function(){const el=document.getElementById("log");if(!el)return;' +
+      `el.textContent=(el.textContent?el.textContent+"\\n":"")+${JSON.stringify(line)};` +
+      'const ls=el.textContent.split("\\n");if(ls.length>120)el.textContent=ls.slice(-120).join("\\n");' +
+      'el.scrollTop=el.scrollHeight;})()',
+  );
+}
+
+function failUpdateProgress(message) {
+  updateProgressExec(
+    `document.body.classList.add('failed');` +
+      `const el=document.getElementById('step'); if (el) el.textContent=${JSON.stringify(message)};`,
+  );
+}
+
+// fork 一个 Node 侧构建子进程（tsc/vite/prepare-desktop），输出按行实时回显到进度小窗。
+// 全程同为 Node 生态：stdio 管道行为正常，与被 GUI 进程 spawn 的 powershell（静默秒退、
+// 管道场景把构建拖慢几十倍，均实测）不同。
+function forkStep(entry, args, cwd, onLine) {
+  return new Promise((resolve, reject) => {
+    const child = fork(entry, args, { cwd, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    const tail = [];
+    const collect = (d) => {
+      for (const line of d.toString().replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        tail.push(line);
+        if (tail.length > 30) tail.shift();
+        onLine(line);
+      }
+    };
+    child.stdout.on('data', collect);
+    child.stderr.on('data', collect);
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${path.basename(entry)} 退出码 ${code}：${tail.slice(-4).join(' | ')}`));
+    });
+  });
+}
+
+// 构建工具入口按候选路径探测：pnpm 布局下 typescript/vite 位于各自包的 node_modules，
+// 其他布局（hoisted）兜底到工作区根
+function resolveToolEntry(relCandidates) {
+  for (const rel of relCandidates) {
+    const p = path.join(appRootDir, rel);
+    if (fs.existsSync(p)) return p;
+  }
+  throw new Error(`未找到构建工具：${relCandidates[0]}`);
+}
+
 ipcMain.handle('desktop-source-update', async () => {
   if (app.isPackaged) return { ok: false, error: '安装包形态不使用源码更新' };
-  if (!fs.existsSync(sourceUpdateScript)) return { ok: false, error: `未找到更新脚本：${sourceUpdateScript}` };
+  showUpdateProgress();
+  setUpdateStep('正在拉取最新代码（git pull）…');
   try {
     const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
     await runGit(['pull', '--ff-only', 'origin', branch], 180_000);
   } catch (e) {
+    // 拉取失败：小窗没有可展示的过程，关掉回主窗，由设置页展示错误
+    if (updateWin && !updateWin.isDestroyed()) updateWin.close();
+    updateWin = null;
+    showMainWindow();
     return { ok: false, error: describeError(e) + '（本地有未提交改动时请先提交/暂存）' };
   }
-  // 增量代码已就位：交给构建脚本完成编译组装并拉起新实例，本应用随即退出
-  const child = spawn(
-    'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Minimized', '-File', sourceUpdateScript, '-SkipPull'],
-    { detached: true, stdio: 'ignore', windowsHide: false, cwd: appRootDir },
-  );
-  child.unref();
-  setTimeout(() => app.quit(), 1500); // 留时间让渲染进程展示「正在更新」
+  // 依赖清单变化的更新需要 pnpm install（联网下载），不在应用内路径支持，提示走脚本
+  try {
+    const changed = await runGit(['diff', '--name-only', 'ORIG_HEAD', 'HEAD', '--',
+      'pnpm-lock.yaml', 'server/package.json', 'web/package.json', 'desktop/package.json']);
+    if (changed.trim()) {
+      const msg = '本次更新涉及依赖清单变化，请在终端运行 scripts\\update-from-source.ps1 完成本次升级，之后可继续使用应用内更新';
+      failUpdateProgress(msg);
+      showMainWindow();
+      return { ok: false, error: msg };
+    }
+  } catch { /* 无 ORIG_HEAD（本地已最新）等，视为无变化 */ }
+  try {
+    setUpdateStep('构建 server（tsc）…');
+    await forkStep(resolveToolEntry([
+      path.join('server', 'node_modules', 'typescript', 'bin', 'tsc'),
+      path.join('node_modules', 'typescript', 'bin', 'tsc'),
+    ]), ['-p', 'tsconfig.json'], path.join(appRootDir, 'server'), appendUpdateLog);
+    setUpdateStep('构建 web（vite）…');
+    await forkStep(resolveToolEntry([
+      path.join('web', 'node_modules', 'vite', 'bin', 'vite.js'),
+      path.join('node_modules', 'vite', 'bin', 'vite.js'),
+    ]), ['build'], path.join(appRootDir, 'web'), appendUpdateLog);
+  } catch (e) {
+    failUpdateProgress('更新失败：' + describeError(e));
+    showMainWindow();
+    return { ok: false, error: describeError(e) };
+  }
+  // 组装会覆盖正在运行的 desktop/server 产物副本，先停内嵌 server、主窗藏进托盘
+  setUpdateStep('组装桌面运行目录…');
+  stopLocalChild();
+  if (win && !win.isDestroyed()) {
+    ensureTray();
+    win.hide();
+  }
+  try {
+    await forkStep(path.join(appRootDir, 'desktop', 'scripts', 'prepare-desktop.js'),
+      [], appRootDir, appendUpdateLog);
+  } catch (e) {
+    failUpdateProgress('更新失败：' + describeError(e));
+    showMainWindow();
+    return { ok: false, error: describeError(e) };
+  }
+  setUpdateStep('完成，正在启动新版本…');
+  appendUpdateLog('> 更新完成');
+  app.relaunch({ args: process.argv.slice(1) });
+  app.exit(0);
   return { ok: true, restarting: true };
 });
