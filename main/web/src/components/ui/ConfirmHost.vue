@@ -8,7 +8,7 @@
   >
     <p v-if="confirmState.message" class="confirm-message">{{ confirmState.message }}</p>
     <input
-      v-if="confirmState.placeholder !== undefined"
+      v-if="hasInput"
       ref="inputRef"
       v-model="inputValue"
       class="confirm-input"
@@ -35,9 +35,14 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import AppModal from './AppModal.vue';
 import { confirmState, settleConfirm } from '../../lib/confirm';
+
+// 输入模式 = 提供了预填值或占位符（只传 value 不传 placeholder 的 promptDialog 也要渲染输入框）
+const hasInput = computed(
+  () => confirmState.placeholder !== undefined || confirmState.value !== undefined
+);
 
 const okRef = ref<HTMLButtonElement>();
 const cancelRef = ref<HTMLButtonElement>();
@@ -45,7 +50,7 @@ const inputRef = ref<HTMLInputElement>();
 const inputValue = ref('');
 
 function submit() {
-  settleConfirm(true, confirmState.placeholder !== undefined ? inputValue.value : undefined);
+  settleConfirm(true, hasInput.value ? inputValue.value : undefined);
 }
 
 watch(
@@ -54,7 +59,7 @@ watch(
     if (!open) return;
     await nextTick();
     // 输入框模式：预填默认值并聚焦输入框，回车直接提交
-    if (confirmState.placeholder !== undefined) {
+    if (hasInput.value) {
       inputValue.value = confirmState.value ?? '';
       inputRef.value?.focus();
       inputRef.value?.select();
