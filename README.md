@@ -48,7 +48,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 ### ⌨️ engram CLI（零依赖，Node 22）
 
-`node server/dist/cli.js <command>`（Docker 内 `docker exec engram node dist/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli.js`）。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|evidence / chat save / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`files list --pending` 只列未提炼文件（提炼作业索引用）；`pages list --outdated` 只列提炼规则版本落后于当前指南的概念/实体页（规则升级后重提炼用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
+`node server/dist/cli/cli.js <command>`（Docker 内 `docker exec engram node dist/cli/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli/cli.js`）。**本机服务零配置**：服务端启动时自动把本机地址与专用 token 登记到 `~/.engram/config.json`（地址随实际端口自适应，不写死；用户手动 `login` 保存的配置优先、不被覆盖），CLI 开箱即用，远程服务再手动 `login` 一次。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|evidence / chat save / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`pages read/evidence` 接受 `pages list` 返回的页面 ID（UUID）或标题；`files list --pending` 只列未提炼文件（提炼作业索引用）；`pages list --outdated` 只列提炼规则版本落后于当前指南的概念/实体页（规则升级后重提炼用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
 
 ### 📄 页面编辑与管理
 
