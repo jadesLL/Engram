@@ -80,7 +80,7 @@ export async function graphRoutes(app: FastifyInstance) {
       .all(...ids) as any[];
 
     const TYPE_COLORS: Record<string, string> = {
-      note: '#64748b', concept: '#16a34a', person: '#ea580c', customer: '#d97706', org: '#0891b2', place: '#65a30d', work: '#db2777', project: '#7c3aed', other: '#71717a', doc: '#2563eb',
+      note: '#64748b', concept: '#16a34a', person: '#ea580c', customer: '#d97706', org: '#0891b2', project: '#7c3aed', other: '#71717a', doc: '#2563eb',
     };
 
     const nodes: any[] = pages.map((p) => ({

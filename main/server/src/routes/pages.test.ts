@@ -67,6 +67,27 @@ test('PUT 只改 type 时保留正文（侧栏拖拽改类型路径）', async (
   assert.match(onDisk, /重要正文，不能丢。/);
 });
 
+test('POST 拒绝已从词表移除的旧类型（place/work）', async () => {
+  for (const legacyType of ['place', 'work']) {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/pages',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { title: `旧类型测试-${legacyType}`, type: legacyType },
+    });
+    assert.equal(res.statusCode, 400);
+  }
+  // 合法类型仍可创建
+  const ok = await app.inject({
+    method: 'POST',
+    url: '/api/pages',
+    headers: { authorization: `Bearer ${token}` },
+    payload: { title: '项目类型测试', type: 'project' },
+  });
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.json().meta.type, 'project');
+});
+
 test('PUT 显式传空 content 仍会清空正文（语义保留）', async () => {
   const created = await app.inject({
     method: 'POST',

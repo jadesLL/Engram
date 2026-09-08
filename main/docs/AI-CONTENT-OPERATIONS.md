@@ -23,7 +23,7 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 
 ## 规则版本与重提炼
 
-- **指南版本**：提炼规则（流程/页面契约/质量红线）以 `agentGuide.ts` 中的 `GUIDE_VERSION` 为准，规则变化时 +1；Agent 每次 `write_page`，服务端把该版本记入 `pages.guide_version`（**只进索引库，不写入页面正文/frontmatter**）。
+- **指南版本**：提炼规则（流程/页面契约/质量红线）以 `agentGuide.ts` 中的 `GUIDE_VERSION` 为准，规则变化时 +1；Agent 每次 `write_page`，服务端把该版本记入 `pages.guide_version`（**只进索引库，不写入页面正文/frontmatter**）。仅类型词表一类「存量页面无需重写、也不改变抽取口径」的机制性调整不加版本（避免把全库页面误标为落后）。
 - **落后页面**：`guide_version` 低于当前指南的页面即规则落后（存量旧页面补列后为 0），清单只含 Agent 维护的 概念/实体 页（原始资料只读不改，归档页不再维护）。用 `engram pages list --outdated`（CLI）或 `list_pages` 传 `outdated=true`（MCP）列出，逐页按最新指南重写后 `write_page` 覆盖即完成升级；已有页面覆盖不受两来源门禁限制，用户手写章节永远保留。
 
 ## 操作日志
