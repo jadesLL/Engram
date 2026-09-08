@@ -39,7 +39,7 @@
 | `save_chat` | 对话沉积到 `原始资料/对话/` |
 | `kb_guide` | 下发《Agent 作业指南》全文 |
 
-**各 Agent 接入**：设置 → MCP 集成 内置 ZCode / Codex / Claude Code / Kimi / 通用的配置片段一键复制；ZCode 另有「Agent 接入」页一键注册。Claude Code 示例：
+**各 Agent 接入**：设置 → MCP 集成 内置 ZCode / Codex / Claude Code / Kimi / 通用的配置片段一键复制；ZCode 与 DeepSeek Harness（dsh）另有「Agent 接入」页一键注册。Claude Code 示例：
 
 ```bash
 claude mcp add --transport http engram http://<主机IP>:18080/mcp \

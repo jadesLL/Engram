@@ -15,6 +15,7 @@ import {
   zcodeCliConfigPath,
   zcodeMcpUrl,
 } from '../lib/zcodeConfig.js';
+import { getDshStatus, registerDshMcp, unregisterDshMcp } from '../lib/dshConfig.js';
 import { requireAuth } from './auth.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
@@ -174,6 +175,27 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
     } catch { /* 无配置文件时无需移除 */ }
     db.prepare(`DELETE FROM mcp_tokens WHERE name = 'zcode'`).run();
+    return { ok: true };
+  });
+
+  // ---------- DeepSeek Harness（dsh）接入（写 $DSH_HOME/cordis.patch.yml）----------
+
+  app.get('/api/settings/dsh-status', async () => getDshStatus());
+
+  app.post('/api/settings/dsh-register', async () => {
+    let token = (db.prepare(`SELECT token FROM mcp_tokens WHERE name = 'dsh'`).get() as any)?.token;
+    if (!token) {
+      token = `lwiki_${crypto.randomBytes(24).toString('hex')}`;
+      db.prepare(`INSERT INTO mcp_tokens(token, name, created_at) VALUES(?, ?, ?)`)
+        .run(token, 'dsh', now());
+    }
+    const patchPath = registerDshMcp(zcodeMcpUrl, token);
+    return { ok: true, mcpUrl: zcodeMcpUrl, patchPath };
+  });
+
+  app.post('/api/settings/dsh-unregister', async () => {
+    unregisterDshMcp();
+    db.prepare(`DELETE FROM mcp_tokens WHERE name = 'dsh'`).run();
     return { ok: true };
   });
 
