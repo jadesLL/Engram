@@ -15,6 +15,8 @@ export interface SearchHit {
   evidence: string[];
   updated_at?: string;
   type?: string;
+  /** 页面标签（标签仅在搜索结果展示） */
+  tags?: string[];
   ageDays?: number;
 }
 
@@ -64,13 +66,17 @@ export async function hybridSearch(
   const hits: SearchHit[] = [];
   for (const r of ftsPages) {
     const page = db
-      .prepare(`SELECT id, path, title, type, updated_at FROM pages WHERE id = ? AND deleted = 0`)
+      .prepare(`SELECT id, path, title, type, tags, updated_at FROM pages WHERE id = ? AND deleted = 0`)
       .get(r.id) as any;
     if (!page) continue;
     const weight = derivedPageWeight(page.path);
     if (weight === 0) continue;
     const snippet = evidenceSnippet(readPage(page.path)?.content || '', query);
     const ageDays = Math.floor((Date.now() - new Date(page.updated_at).getTime()) / 86400000);
+    let tags: string[] = [];
+    try {
+      tags = JSON.parse(page.tags || '[]');
+    } catch { /* 标签解析失败不影响检索结果 */ }
     hits.push({
       refType: 'page',
       refId: page.id,
@@ -82,6 +88,7 @@ export async function hybridSearch(
       evidence: ['关键词'],
       updated_at: page.updated_at,
       type: page.type,
+      tags,
       ageDays,
     });
   }
