@@ -4,11 +4,12 @@
  * 零依赖（Node 22 全局 fetch）；与 MCP 共用同一套 REST API 与 Bearer Token。
  *
  * 运行方式：
- *   宿主机:    node server/dist/cli.js <command>
- *   Docker:    docker exec <容器> node dist/cli.js <command>
- *   桌面端:    ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli.js <command>
+ *   宿主机:    node server/dist/cli/cli.js <command>
+ *   Docker:    docker exec <容器> node dist/cli/cli.js <command>
+ *   桌面端:    ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli/cli.js <command>
  *
  * 连接配置优先级：--url/--token 参数 > ENGRAM_URL/ENGRAM_TOKEN 环境变量 > ~/.engram/config.json
+ * （本机服务启动时自动登记连接配置，CLI 零配置可用；远程服务用 login 手动登记）
  * 出网统一走 ./net.ts（协议/私网/环回/DNS rebinding 校验，私网目标需 login 显式登记）。
  */
 import fs from 'node:fs';
@@ -297,7 +298,8 @@ async function main(): Promise<number> {
           return 2;
         }
         let id = ref;
-        if (!/^[a-f0-9]{8,}$/i.test(ref)) {
+        // UUID 是系统生成的（8-4-4-4-12 hex），与真实标题不冲突；纯 hex 长标题仍走 by-title
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)) {
           try {
             const byTitle = await api(ctx, 'GET', `/api/pages/by-title/${encodeURIComponent(ref)}`);
             id = byTitle.id;

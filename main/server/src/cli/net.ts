@@ -76,15 +76,28 @@ export interface SendContext {
   allowPrivate: boolean;
 }
 
+/** fetch 网络层失败（DNS/拒绝连接/超时）转成可诊断的错误信息 */
+async function rawFetch(url: URL, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    const cause = (e as any)?.cause?.code ?? (e as any)?.code;
+    throw new Error(
+      `无法连接 ${url.origin}${cause ? `（${cause}）` : ''}——服务未启动或地址不对。`
+      + '本机 Engram 启动后会自动登记连接配置；远程服务请用 `engram login --url <地址> --token <令牌>` 更新。'
+    );
+  }
+}
+
 /** 唯一发送函数：校验通过后才 fetch；重定向手动跟随并复检 */
 export async function httpSend(url: URL, init: RequestInit, ctx: SendContext): Promise<Response> {
   await validateTarget(url.toString(), ctx.allowPrivate);
-  const res = await fetch(url, { ...init, redirect: 'manual' });
+  const res = await rawFetch(url, { ...init, redirect: 'manual' });
   if (res.status >= 300 && res.status < 400) {
     const location = res.headers.get('location');
     if (location) {
       const next = await validateTarget(new URL(location, url).toString(), ctx.allowPrivate);
-      return fetch(next, { ...init, redirect: 'manual' });
+      return rawFetch(next, { ...init, redirect: 'manual' });
     }
   }
   return res;

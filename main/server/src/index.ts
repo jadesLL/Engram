@@ -31,6 +31,7 @@ import { scanVault, readPage, writePage } from './lib/vault.js';
 import { heartbeat } from './lib/events.js';
 import { ensureSystemFiles, migrateLegacySystemFiles } from './pipeline/indexFile.js';
 import { queueMissingDerivedPages } from './pipeline/sourceLedger.js';
+import { autoRegisterCliConfig } from './lib/cliAutoRegister.js';
 
 /** AIWorks 系统区页面不参与整理、不打标签 */
 function cleanupSystemPages() {
@@ -105,6 +106,8 @@ async function main() {
   ensureDirs();
   migrate();
   ensureDefaultPassword();
+  // CLI 零配置：本机地址+专用 token 登记到 ~/.engram/config.json（手动 login 过则不覆盖）
+  autoRegisterCliConfig();
 
   const app = await createApp();
 
