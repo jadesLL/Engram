@@ -32,10 +32,13 @@
 | 工具 | 说明 |
 |---|---|
 | `search` | 关键词检索（Wiki 页面 + 原始资料提取文本，FTS5 BM25） |
-| `list_pages` / `read_page` | 目录树（页面带提炼规则版本；`outdated=true` 只列落后页面） / 按标题或 ID 读页面全文 |
+| `list_pages` / `read_page` | 目录树（页面带提炼规则版本；`outdated=true` 只列落后页面，`path`/`tag` 按路径前缀与标签过滤） / 按标题或 ID 读页面全文 |
+| `related_pages` | 读页面图谱关联（入链/出链邻居与实体关系，与编辑器「相关页面」同一数据） |
 | `page_evidence` | 读页面证据账本（来源、版本、事实与逐字引文） |
 | `list_raw_files` / `read_raw_file` | 原始资料清单（含提取状态与「已提炼」标记；`pending=true` 只列未提炼文件）与读取；图片返回原图（image 内容）供视觉 Agent 自行识别 |
-| `write_page` | 写页面；新建概念/实体页必须带 `evidence` 过两来源门禁，引文服务端逐字校验 |
+| `write_page` | 写页面（只允许 `Wiki/` 下）；新建概念/实体页必须带 `evidence` 过两来源门禁，引文服务端逐字校验 |
+| `rename_page` | 重命名页面：文件随标题移动、`[[旧标题]]` 双链自动重定向，页面 ID 与图谱边保持不变 |
+| `move_page` | 移动页面到 `Wiki/` 树内其他目录（页面 ID 与图谱边保持不变，可顺带改标题） |
 | `delete_page` | 单页软删除入回收站（可恢复，按标题 / ID / 路径定位）；只允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 拒删，无永久删除/清空回收站能力 |
 | `save_chat` | 对话沉积到 `原始资料/对话/` |
 | `kb_guide` | 下发《Agent 作业指南》全文 |

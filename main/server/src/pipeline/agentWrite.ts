@@ -197,10 +197,19 @@ export interface AgentWriteResult {
   guideVersion: number;
 }
 
+/** 可写前缀：Wiki 树（原始资料、AIWorks 为只读区，与 agentDelete 删除守卫同一规矩） */
+const WRITABLE_PREFIX = 'Wiki/';
+
 /** Agent 写页入口：校验证据 → 两来源门禁 → 落盘 → 记账本 → 记操作日志 */
 export function agentWritePage(input: AgentWriteInput): AgentWriteResult {
   let rel = String(input.path || '').replace(/\\/g, '/').replace(/^\/+/, '');
   if (!rel.endsWith('.md')) rel = `${rel}.md`;
+  if (!rel.startsWith(WRITABLE_PREFIX)) {
+    throw new WriteGateError(
+      `只能写 Wiki/ 下的页面；${rel} 属于只读区（原始资料 / AIWorks），Agent 不可写入`,
+      403,
+    );
+  }
   const isNew = !db.prepare(`SELECT 1 FROM pages WHERE path = ? AND deleted = 0`).get(rel);
   const validated = validateEvidence(input.evidence || []);
   enforceNewPageGate(rel, isNew, validated);

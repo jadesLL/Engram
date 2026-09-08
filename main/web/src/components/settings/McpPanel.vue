@@ -79,12 +79,16 @@ import { notify } from '../../lib/notify';
 
 const TOOLS = [
   { name: 'search', desc: '关键词检索（Wiki 页面 + 原始资料提取文本）' },
-  { name: 'list_pages', desc: '知识库目录树' },
+  { name: 'list_pages', desc: '知识库目录树（支持 outdated/path/tag 过滤）' },
   { name: 'read_page', desc: '按标题/ID 读页面全文' },
+  { name: 'related_pages', desc: '读页面图谱关联（入链/出链邻居与实体关系）' },
   { name: 'page_evidence', desc: '读页面证据账本（来源/版本/引文）' },
   { name: 'list_raw_files', desc: '原始资料清单（含提取状态）' },
   { name: 'read_raw_file', desc: '读原始资料文本；图片返回原图供视觉识别' },
-  { name: 'write_page', desc: '写页面（新建概念/实体页需证据过两来源门禁）' },
+  { name: 'write_page', desc: '写页面（只能写 Wiki/；新建概念/实体页需证据过两来源门禁）' },
+  { name: 'rename_page', desc: '重命名页面（移动文件+重定向引用双链，保持页面 ID）' },
+  { name: 'move_page', desc: '移动页面到 Wiki 树内目录（保持页面 ID，可顺带改标题）' },
+  { name: 'delete_page', desc: '移入回收站（软删除可恢复；只能删 Wiki/ 页面）' },
   { name: 'save_chat', desc: '对话沉积到 原始资料/对话/' },
   { name: 'kb_guide', desc: '下发《Agent 作业指南》全文' },
 ];

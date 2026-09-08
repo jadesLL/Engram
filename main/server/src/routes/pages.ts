@@ -11,6 +11,7 @@ import { requireAuth } from './auth.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { renamePageSafely, RenameError } from '../lib/renamePage.js';
+import { relatedPageData } from '../lib/graphCache.js';
 import { pageEvidenceResponse } from '../pipeline/pageEvidence.js';
 import { GUIDE_VERSION } from '../content/agentGuide.js';
 
@@ -229,31 +230,14 @@ export async function pageRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  /** 页面关联：图谱邻居（供编辑器底部展示）；语义相似随向量索引移除 */
+  /** 页面关联：图谱邻居（供编辑器底部展示；与 MCP related_pages 同一查询）；语义相似随向量索引移除 */
   const relatedCache = new Map<string, { at: number; data: unknown }>();
   const RELATED_CACHE_TTL_MS = 60_000;
   app.get('/api/pages/:id/related', async (req) => {
     const { id } = req.params as { id: string };
     const cached = relatedCache.get(id);
     if (cached && Date.now() - cached.at < RELATED_CACHE_TTL_MS) return cached.data;
-    // 图谱邻居（出边 + 入边）
-    const neighbors = db
-      .prepare(
-        `SELECT DISTINCT p.id, p.title, p.path, p.type,
-                CASE WHEN e.src_page = ? THEN 'out' ELSE 'in' END AS direction, e.rel
-         FROM edges e JOIN pages p ON p.id = (CASE WHEN e.src_page = ? THEN e.dst_page ELSE e.src_page END)
-         WHERE (e.src_page = ? OR e.dst_page = ?) AND p.deleted = 0 AND e.dst_page IS NOT NULL`
-      )
-      .all(id, id, id, id) as any[];
-
-    const entities = db
-      .prepare(
-        `SELECT e2.name, e2.type, e.rel FROM edges e JOIN entities e2 ON e2.id = e.entity_id
-         WHERE e.src_page = ? AND e.entity_id IS NOT NULL`
-      )
-      .all(id) as any[];
-
-    const data = { neighbors, similar: [] as any[], entities };
+    const data = relatedPageData(id);
     relatedCache.set(id, { at: Date.now(), data });
     return data;
   });

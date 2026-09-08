@@ -89,6 +89,17 @@ test('单来源两条引文满足门禁；已有页面增量不需要证据', ()
   assert.equal(update.evidenceRecorded, 0);
 });
 
+test('写页守卫：只允许 Wiki/ 路径，原始资料与 AIWorks 只读区拒绝（403）', () => {
+  seedSource('原始资料/资料A.md', '张三是信捷科技的销售总监，负责华东区。');
+  for (const bad of ['原始资料/资料A.md', 'AIWorks/log/log.md', 'notes.md']) {
+    assert.throws(
+      () => agentWritePage({ path: bad, title: '越权', content: '# 越权' }),
+      (error: any) => error.status === 403 && /只读区|Wiki\//.test(error.message),
+      `路径 ${bad} 应被拒绝`,
+    );
+  }
+});
+
 test('共享同一来源的多页面证据互不踢出 active（回归：按版本而非按路径退出）', () => {
   seedSource('原始资料/共享资料D.md', '甲公司完成了A项目交付。乙公司签署了B项目合同。');
   seedSource('原始资料/补充资料E.md', '甲公司在2026年获评优秀供应商。');

@@ -98,10 +98,12 @@ const HELP = `Engram CLI —— 外部 Agent 操作知识库
   files list [--dir 原始资料] [--pending]              列出原始资料（含提取状态/已提炼标记）；--pending 只列未提炼文件
   files read <path> [--raw] [--out <file>]            读原始资料提取文本；--raw 下载原文件
   search <query>                                      关键词检索知识库
-  pages list [--outdated]                              列出知识库页面（含提炼规则版本）；--outdated 只列落后于当前指南的页面（规则升级后重提炼用）
+  pages list [--outdated] [--tag t]                    列出知识库页面（含提炼规则版本）；--outdated 只列落后于当前指南的页面（规则升级后重提炼用），--tag 按标签过滤
   pages read <titleOrId>                              读页面全文
   pages write <path> --title <t> [--type concept] [--tags a,b] [--evidence "路径::引文"]...
-                                                       写页面（stdin 或 --file 为正文；新建概念/实体页需证据）
+                                                       写页面（stdin 或 --file 为正文；新建概念/实体页需证据；只能写 Wiki/）
+  pages rename <titleOrId> --title <新标题>              重命名页面（移动文件+改标题+重定向引用双链，保持页面 ID）
+  pages move <titleOrId> [--dir Wiki/实体] [--title <t>]  移动页面到 Wiki 树内目录（保持页面 ID，可顺带改标题）
   pages delete <titleOrId|路径> [--reason <原因>]         把单个 Wiki/ 页面移入回收站（软删除、可恢复；原始资料/AIWorks 只读不可删）
   pages evidence <titleOrId>                          读页面证据账本
   chat save [--identifier i] [--project p] [--append] 沉积对话（stdin 为正文）
@@ -178,6 +180,7 @@ async function main(): Promise<number> {
       append: { type: 'boolean', default: false },
       pending: { type: 'boolean', default: false },
       outdated: { type: 'boolean', default: false },
+      tag: { type: 'string' },
       format: { type: 'string', default: 'generic' },
     },
   });
@@ -289,7 +292,10 @@ async function main(): Promise<number> {
     case 'pages': {
       const sub = positional[0];
       if (sub === 'list') {
-        const result = await api(ctx, 'GET', '/api/pages/list', args.outdated ? { query: { outdated: 'true' } } : {});
+        const query: Record<string, string> = {};
+        if (args.outdated) query.outdated = 'true';
+        if (args.tag) query.tag = String(args.tag);
+        const result = await api(ctx, 'GET', '/api/pages/list', { query });
         output(result, asJson);
         return 0;
       }
@@ -337,6 +343,41 @@ async function main(): Promise<number> {
         output(result, asJson);
         return 0;
       }
+      if (sub === 'rename') {
+        const ref = positional[1];
+        if (!ref || !args.title) {
+          process.stderr.write('用法: pages rename <titleOrId> --title <新标题>\n');
+          return 2;
+        }
+        const result = await api(ctx, 'POST', '/api/agent/page/rename', {
+          json: { titleOrId: ref, newTitle: String(args.title) },
+        });
+        if (asJson) {
+          output(result, true);
+        } else {
+          output(`已重命名: 「${result.title}」，现在位于 ${result.path}（引用双链已重定向，页面 ID 保持不变）。`, false);
+        }
+        return 0;
+      }
+      if (sub === 'move') {
+        const ref = positional[1];
+        if (!ref) {
+          process.stderr.write('用法: pages move <titleOrId> [--dir Wiki/实体] [--title <新标题>]\n');
+          return 2;
+        }
+        const body: Record<string, unknown> = { titleOrId: ref };
+        if (args.dir) body.dir = String(args.dir);
+        if (args.title) body.newTitle = String(args.title);
+        const result = await api(ctx, 'POST', '/api/agent/page/move', { json: body });
+        if (asJson) {
+          output(result, true);
+        } else {
+          output(result.moved
+            ? `已移动: 「${result.title}」→ ${result.path}（页面 ID 保持不变）。`
+            : `位置未变化: ${result.path}`, false);
+        }
+        return 0;
+      }
       if (sub === 'delete') {
         const ref = positional[1];
         if (!ref) {
@@ -353,7 +394,7 @@ async function main(): Promise<number> {
         }
         return 0;
       }
-      process.stderr.write('用法: pages list|read|write|delete|evidence\n');
+      process.stderr.write('用法: pages list|read|write|rename|move|delete|evidence\n');
       return 2;
     }
     case 'chat': {
