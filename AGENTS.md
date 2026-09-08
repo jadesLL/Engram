@@ -12,13 +12,13 @@
 
 官方远端为 `gitea`（`https://github.com/jadesLL/Engram.git`，私有）。开发、合并、发版均在本地完成后按用户明确指示推送 gitea；不经批准不推其他远端，不强推或改写远端历史。
 
-推送 main 或 `v*` 标签触发 Gitea Actions（详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送只跑 verify（build+typecheck+test）；镜像只在 `v*` 发版时由 release.yml 构建推送（版本 tag + latest），并构建 Windows 安装包发 Release。CI runner 的联网下载属既定流程，本地开发机的下载限制不因此放宽。
+推送 main 或 `v*` 标签触发 Gitea Actions（详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送只跑 verify（build+typecheck+test）；镜像只在 `v*` 发版时由 release.yml 构建推送（版本 tag + latest）并创建 Release（正文=CHANGELOG 段落，无二进制附件）；exe/APK/离线 tar.gz 不随发版构建，需要分发时手动 dispatch release.yml（输入标签+勾选产物）按需构建并补挂到对应 Release（2026-09-08 起对齐 Hermes 式发版）。CI runner 的联网下载属既定流程，本地开发机的下载限制不因此放宽。
 
-发版流程（细则见 main/docs/GITEA-CI.md）。发版是显式动作：仅当用户要求产出 exe/APK/镜像给他人时执行，日常迭代不发版：
+发版流程（细则见 main/docs/GITEA-CI.md）。发版是显式动作：仅当用户要求产出镜像/exe/APK 给他人时执行，日常迭代不发版：
 
 1. 功能合并 main 后推送：`git push gitea main` → ci.yml 只做 verify。
-2. 发版：同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 把距上次发布的**全部新功能**写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落（缺失则 release.yml 直接失败）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像并发布 Gitea Release（exe + docker tar.gz + sha256 附件）。
-3. 从 Release 附件下载产物归档到 `releases/<版本>/`（含 release.json）。
+2. 发版：同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 把距上次发布的**全部新功能**写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落（缺失则 release.yml 直接失败）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像并发布 Gitea Release（正文=CHANGELOG 段落，无二进制附件）。
+3. 需要分发 exe/APK/离线 tar.gz 时（按需，不随发版）：Actions → Release → Run workflow，输入标签+勾选产物，构建后自动补挂 Release；Windows exe 也可按「Windows 桌面端打包」本地打包。产物归档到 `releases/<版本>/`（含 release.json）。
 4. 镜像地址固定三层路径 `gitea.example.com/example/engram/engram:<版本>`（两层 `owner/image` 形式 NAS 拉取异常，勿改回）。
 5. 部署 compose 不得写 `pull_policy: never`。
 
@@ -32,7 +32,7 @@
 
 1. 优先使用中文。
 2. 功能和代码优化要兼顾 desktop 和 docker 两个版本。版本号节奏参照 hermes-agent：日常开发只合 main，不 bump 版本号、不发产物——自用机器走源码模式（桌面快捷方式或 `main/scripts/update-from-source.ps1`，新机器用 `main/scripts/install-engram.ps1`（或其打包的安装器 exe）一键装环境+克隆+构建+快捷方式；应用内「检查更新」即增量拉源码重建）。三处版本号仅在用户明确要求发版时 bump。
-3. 构建安装包时同步构建同版本 tar 和 win 安装包，放入 `releases/` 相同版本号文件夹。
+3. 按需构建的安装包/离线包（exe/APK/tar.gz）归档到 `releases/` 相同版本号文件夹，记录提交 ID、构建时间、sha256；Docker 镜像走 Registry 不重复归档。
 4. 每次功能验收完成后询问「仅合并 / 合并并推送远端」两选一，默认推荐合并并推送（推送后源码模式客户端即可更新）；发版是显式动作，仅当用户明确提出时才执行（见下方发版流程）。合并后必须推送 gitea。
 5. 只要更新了版本号，提交后必须立即推送 gitea（触发 CI 更新镜像 tag 与 latest），并确认 Actions 运行成功。
 6. 功能合并进 main 时同步把新功能整合进仓库根 `README.md`（功能总览、使用说明、数据目录等；纯内部重构/CI 调整可只更新 CHANGELOG）。
@@ -41,7 +41,7 @@
 
 ## Windows 桌面端打包
 
-**仅当用户明确要求生成安装包时才打包，其余时候一律不打包**：版本号提交和 CI 发版的安装包由 release.yml 在 tag 上自动构建，本地无需重做；自用机器日常更新走源码模式（`powershell -File main/scripts/update-from-source.ps1`，合 main 即更新，见脚本头部说明），也不产生安装包。
+**仅当用户明确要求生成安装包时才打包，其余时候一律不打包**：exe 安装包已不随 CI 发版自动构建（2026-09-08 起），按需分发走 CI dispatch 或本节手动流程二选一；自用机器日常更新走源码模式（`powershell -File main/scripts/update-from-source.ps1`，合 main 即更新，见脚本头部说明），不产生安装包。
 
 安装包版本号与发布版本对齐（`desktop/package.json`），产物写入 `releases/<version>/`。因 Windows Defender 实时扫描锁定 `electron.exe` 导致 `EPERM rename`，不走 `pnpm build:desktop`，分两步手动打包：
 
