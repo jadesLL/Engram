@@ -2,11 +2,12 @@
   <section class="settings-panel settings-native">
     <div class="panel-head">
       <div>
-        <h3>Agent 接入（ZCode）</h3>
-        <p>一键把知识库 MCP 注册进本机 ZCode 桌面端；其他 Agent（Codex / Claude Code / Kimi 等）用「MCP 集成」页的配置片段接入。</p>
+        <h3>Agent 接入</h3>
+        <p>一键把知识库 MCP 注册进本机 ZCode 桌面端或 DeepSeek Harness（dsh）；其他 Agent（Codex / Claude Code / Kimi 等）用「MCP 集成」页的配置片段接入。</p>
       </div>
     </div>
 
+    <h4 class="harness-title">ZCode 桌面端</h4>
     <div v-if="!status.installed" class="empty-panel">
       未检测到 ZCode 桌面端（检测过 {{ status.path }}）。请在本机安装 ZCode 桌面端并登录——需与 Engram
       桌面版在同一台电脑；Docker/远程部署请改用「MCP 集成」页的通用配置。
@@ -55,6 +56,46 @@
         <code>ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli.js guide</code>。
       </div>
     </template>
+
+    <h4 class="harness-title">DeepSeek Harness（dsh）</h4>
+    <div v-if="!dstatus.installed" class="empty-panel">
+      未检测到 DeepSeek Harness（检查过 {{ dstatus.home }}）。在本机安装 dsh 并至少运行一次（生成
+      $DSH_HOME）后重试；远程部署的知识库请让 Agent 使用「MCP 集成」页的通用配置。
+    </div>
+
+    <template v-else>
+      <div class="status-rows">
+        <div class="status-row">
+          <span>DeepSeek Harness</span>
+          <strong class="ok">已检测到（{{ dstatus.home }}）</strong>
+        </div>
+        <div class="status-row">
+          <span>dsh 登录</span>
+          <strong :class="dstatus.loggedIn ? 'ok' : 'warn'">
+            {{ dstatus.loggedIn ? '已配置凭据' : '未配置（先配置 DEEPSEEK_API_KEY 等凭据）' }}
+          </strong>
+        </div>
+        <div class="status-row">
+          <span>知识库 MCP</span>
+          <strong :class="dstatus.registered ? 'ok' : 'warn'">
+            {{ dstatus.registered ? '已写入 cordis.patch.yml' : '未注册' }}
+          </strong>
+        </div>
+      </div>
+
+      <div class="actions-row">
+        <button class="btn primary" type="button" @click="registerDsh">
+          {{ dstatus.registered ? '重新注册' : '注册' }}知识库 MCP 到 DeepSeek Harness
+        </button>
+        <button v-if="dstatus.registered" class="btn" type="button" @click="unregisterDsh">移除注册</button>
+      </div>
+
+      <div class="integration-note">
+        注册写入 <code>$DSH_HOME/cordis.patch.yml</code>（默认 <code>~/.dsh</code>），对所有 dsh profile（web /
+        headless / sdk / acp）生效，模型侧工具名为 <code>mcp__engram__*</code>（检索 / 读页面 / 带证据写页面等）。
+        Engram 未启动时 dsh 照常启动，只是这组工具缺席；本机其他 patch 条目与注释不会被改动。
+      </div>
+    </template>
   </section>
 </template>
 
@@ -64,6 +105,7 @@ import { api } from '../../api';
 import { notify } from '../../lib/notify';
 
 const status = ref<any>({ installed: false, loggedIn: false, registered: false, path: '' });
+const dstatus = ref<any>({ installed: false, loggedIn: false, registered: false, home: '' });
 const manualPath = ref('');
 const savingPath = ref(false);
 
@@ -74,6 +116,7 @@ async function load() {
     const { data: s } = await api.get('/api/settings');
     try { manualPath.value = JSON.parse(s.settings?.zcode_config || '{}').path || ''; } catch { /* 忽略坏配置 */ }
   }
+  dstatus.value = (await api.get('/api/settings/dsh-status')).data;
 }
 
 /** 手动指定引擎路径：与现有 zcode_config 合并保存，避免覆盖其他字段 */
@@ -105,12 +148,34 @@ async function unregisterMcp() {
   notify.success('已移除注册');
 }
 
+async function registerDsh() {
+  await api.post('/api/settings/dsh-register');
+  await load();
+  notify.success('已写入 DeepSeek Harness 的 cordis.patch.yml');
+}
+
+async function unregisterDsh() {
+  await api.post('/api/settings/dsh-unregister');
+  await load();
+  notify.success('已移除注册');
+}
+
 onMounted(load);
 </script>
 
 <style scoped>
+.harness-title {
+  margin: 22px 24px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.harness-title + .empty-panel,
+.harness-title + .status-rows {
+  margin-top: 10px;
+}
 .status-rows {
-  margin: 18px 24px;
+  margin: 10px 24px 18px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
@@ -139,12 +204,15 @@ onMounted(load);
 .actions-row {
   display: flex;
   gap: 10px;
-  margin: 18px 24px;
+  margin: 0 24px 18px;
 }
 .integration-note {
   margin: 0 24px 18px;
   color: var(--text-secondary);
   font-size: 12px;
+}
+.empty-panel {
+  margin: 10px 24px 18px;
 }
 .manual-path {
   display: flex;
