@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * 当前运行版本：
@@ -15,6 +17,118 @@ export function currentVersion(): string {
   } catch {
     return 'dev';
   }
+}
+
+/**
+ * 提交身份来源：
+ *  - env        Electron 主进程（源码模式）或环境变量显式注入
+ *  - build-file 镜像构建期烤入的 /app/GIT_SHA（镜像里没有 .git）
+ *  - git        源码检出，实时读 .git
+ *  - unknown    取不到（安装包形态、非检出目录、git 不可用）
+ */
+export type IdentitySource = 'env' | 'build-file' | 'git' | 'unknown';
+
+export interface CodeIdentity {
+  /** 短提交号（7 位）；取不到时为空串 */
+  commit: string;
+  source: IdentitySource;
+}
+
+/** Dockerfile 构建期写入（`--build-arg ENGRAM_GIT_SHA=...`），与 /app/VERSION 同级 */
+const BUILD_SHA_FILE = '/app/GIT_SHA';
+const SHORT_SHA = 7;
+const SHA_RE = /^[0-9a-f]{40}$/i;
+
+function shortSha(raw: string): string {
+  const v = raw.trim();
+  return v ? v.slice(0, SHORT_SHA) : '';
+}
+
+function readTrimmed(file: string): string {
+  try {
+    return fs.readFileSync(file, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+/** 定位 .git 目录：普通检出是目录，worktree/submodule 是指向真实目录的指针文件 */
+function resolveGitDir(start: string): string {
+  const dotGit = path.join(start, '.git');
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(dotGit);
+  } catch {
+    return '';
+  }
+  if (stat.isDirectory()) return dotGit;
+  if (!stat.isFile()) return '';
+  const pointer = readTrimmed(dotGit);
+  if (!pointer.startsWith('gitdir:')) return '';
+  const target = pointer.slice('gitdir:'.length).trim();
+  return path.isAbsolute(target) ? target : path.resolve(start, target);
+}
+
+/**
+ * 源码检出的 HEAD 提交号：直接读 .git（HEAD → 松散引用 → packed-refs）。
+ * 刻意不 spawn `git rev-parse`：本函数在服务启动路径上，spawn 慢且会干扰
+ * mock 子进程的测试（hermes-agent `build_info.py` 的同一取舍）。
+ * 取不到一律返回空串，不抛错。
+ */
+export function readGitHeadSha(repoRoot: string): string {
+  const gitDir = resolveGitDir(repoRoot);
+  if (!gitDir) return '';
+  // worktree/submodule 的引用放在公共 git 目录里（commondir 指针）
+  let commonDir = gitDir;
+  const commonPointer = readTrimmed(path.join(gitDir, 'commondir'));
+  if (commonPointer) {
+    commonDir = path.isAbsolute(commonPointer)
+      ? commonPointer
+      : path.resolve(gitDir, commonPointer);
+  }
+  const head = readTrimmed(path.join(gitDir, 'HEAD'));
+  if (!head) return '';
+  if (!head.startsWith('ref:')) return SHA_RE.test(head) ? head : ''; // detached HEAD 本身就是 sha
+  const refName = head.slice('ref:'.length).trim();
+  const loose = readTrimmed(path.join(commonDir, refName));
+  if (loose) return SHA_RE.test(loose) ? loose : '';
+  for (const line of readTrimmed(path.join(commonDir, 'packed-refs')).split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('^')) continue;
+    const [sha, name] = trimmed.split(/\s+/);
+    if (name === refName && SHA_RE.test(sha)) return sha;
+  }
+  return '';
+}
+
+/**
+ * 检出根候选：应用根（`main/`），以及 monorepo 检出里的仓库根（`.git` 在 `main/` 上一级）。
+ * 从本文件位置推导，与 cwd 无关。
+ */
+function defaultRepoRoots(): string[] {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const appRoot = path.resolve(here, '../../..'); // lib -> src -> server -> main
+  return [appRoot, path.dirname(appRoot)];
+}
+
+/**
+ * 当前代码身份（提交号 + 来源），对齐 hermes-agent `get_code_identity()`：
+ * 源码检出实时读 .git，镜像读构建期烤入的 /app/GIT_SHA，桌面端读主进程注入的
+ * ENGRAM_GIT_SHA；都取不到时返回 unknown，绝不抛错、不阻断启动。
+ * 版本号只在发版时变，提交号才是「更新有没有落地」的依据。
+ */
+export function codeIdentity(opts: { buildShaFile?: string; repoRoots?: string[] } = {}): CodeIdentity {
+  const fromEnv = process.env.ENGRAM_GIT_SHA;
+  if (fromEnv && fromEnv.trim()) return { commit: shortSha(fromEnv), source: 'env' };
+
+  const fromFile = readTrimmed(opts.buildShaFile ?? BUILD_SHA_FILE);
+  if (fromFile) return { commit: shortSha(fromFile), source: 'build-file' };
+
+  for (const root of opts.repoRoots ?? defaultRepoRoots()) {
+    const sha = readGitHeadSha(root);
+    if (sha) return { commit: shortSha(sha), source: 'git' };
+  }
+  return { commit: '', source: 'unknown' };
 }
 
 /**

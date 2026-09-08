@@ -189,6 +189,7 @@ deploy_main() {
   if ! docker build \
     --pull=false \
     --network "$WIKILLM_BUILD_NETWORK" \
+    --build-arg "ENGRAM_GIT_SHA=$revision" \
     --label "org.opencontainers.image.revision=$revision" \
     --label "org.opencontainers.image.source=local-main" \
     --tag "$image" \

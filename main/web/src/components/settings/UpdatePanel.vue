@@ -282,6 +282,10 @@ interface UpdateStateInfo {
   reason: string;
   desktop: boolean;
   currentVersion: string;
+  /** 构建提交号（Docker 镜像烤入 /app/GIT_SHA、源码检出读 .git、桌面端注入） */
+  commit: string;
+  /** 提交号来源：env / build-file / git / unknown */
+  commitSource: string;
   imageRef: string;
   imageRefConfigured: boolean;
   registryAuthConfigured: boolean;
@@ -306,7 +310,7 @@ interface ConfigInfo {
 const isDesktop = computed(() => typeof window !== 'undefined' && Boolean((window as any).wikiDesktop));
 
 const state = ref<UpdateStateInfo>({
-  supported: false, reason: '', desktop: false, currentVersion: '',
+  supported: false, reason: '', desktop: false, currentVersion: '', commit: '', commitSource: 'unknown',
   imageRef: '', imageRefConfigured: false, registryAuthConfigured: false,
   giteaConfigured: false, busy: false, containerName: '', currentImage: '',
 });
@@ -356,13 +360,23 @@ const srcError = ref('');
 const wikiDesktop = () => (window as any).wikiDesktop;
 
 /**
- * 面板右上角版本徽标：源码模式附 git 提交号（版本号仅随发版变化，提交号随每次更新变化，
- * 见 lib/buildLabel.ts），其他形态保持纯版本号。
+ * 提交身份：桌面源码模式取主进程 IPC（含提交日期/脏标记），Docker 镜像与浏览器
+ * 访问取服务端 /api/update/state（镜像内烤入的 /app/GIT_SHA）。
+ */
+const identity = computed<GitIdentity>(() => {
+  const env = desktopEnv.value;
+  const commit = env?.commit || state.value.commit || '';
+  if (!commit) return { commit: '' };
+  return { commit, commitDate: env?.commitDate || '', dirty: env?.dirty };
+});
+
+/**
+ * 面板右上角版本徽标：附构建提交号（版本号仅随发版变化，提交号随每次更新/构建变化，
+ * 见 lib/buildLabel.ts）；取不到提交号时退回纯版本号。
  */
 const versionBadge = computed(() => {
   const base = state.value.currentVersion ? `v${state.value.currentVersion}` : '';
-  if (!base) return '';
-  return sourceMode.value ? formatVersionLabel(base, desktopEnv.value) : base;
+  return base ? formatVersionLabel(base, identity.value) : '';
 });
 
 /** 源码模式检查更新结果：`已是最新（本地 0fbe4e2）` / `落后 3 个提交：0fbe4e2 → a1b2c3d` */

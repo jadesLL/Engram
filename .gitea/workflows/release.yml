@@ -117,7 +117,9 @@ jobs:
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          docker build --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" -t "$IMAGE:latest" main
+          # ENGRAM_GIT_SHA 烤进镜像 /app/GIT_SHA：镜像内没有 .git，应用内靠它显示提交号
+          docker build --build-arg ENGRAM_GIT_SHA="${{ github.sha }}" \
+            --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" -t "$IMAGE:latest" main
           echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
           docker push "$IMAGE:$VER"
           docker push "$IMAGE:latest"
@@ -127,7 +129,8 @@ jobs:
         shell: bash
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          docker build --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" main
+          docker build --build-arg ENGRAM_GIT_SHA="${{ github.sha }}" \
+            --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" main
 
       - name: 构建 Windows 安装包（wine 容器内交叉打包，docker cp 拷出产物）
         if: github.event_name == 'workflow_dispatch' && inputs.binaries == true

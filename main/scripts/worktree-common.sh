@@ -344,11 +344,13 @@ NODE
     cp -a "$build_dir/web/dist" "$image_context/web/dist"
     cat > "$image_context/Dockerfile" <<EOF
 FROM $base_image
+ARG ENGRAM_GIT_SHA=""
 RUN --mount=type=bind,source=server/dist,target=/mnt/server-dist,ro \\
     --mount=type=bind,source=web/dist,target=/mnt/web-dist,ro \\
     mkdir -p /app/server/dist /app/.exampleproject-runtime/$runtime_id/web \\
     && cp -a /mnt/server-dist/. /app/server/dist/ \\
-    && cp -a /mnt/web-dist/. /app/.exampleproject-runtime/$runtime_id/web/
+    && cp -a /mnt/web-dist/. /app/.exampleproject-runtime/$runtime_id/web/ \\
+    && printf '%s' "\$ENGRAM_GIT_SHA" > /app/GIT_SHA
 ENV ENGRAM_WEB_DIST=/app/.exampleproject-runtime/$runtime_id/web
 LABEL com.exampleproject.runtime=$runtime_id
 EOF
@@ -413,6 +415,7 @@ exampleproject_build_local_offline_preview_image() {
     "离线预览叠加层" \
     --label com.exampleproject.scope=feature \
     --label "com.exampleproject.feature=$WIKILLM_FEATURE" \
+    --build-arg "ENGRAM_GIT_SHA=$(git -C "$resolved_source" rev-parse HEAD)" \
     --tag "$WIKILLM_IMAGE"
 }
 
@@ -471,6 +474,8 @@ exampleproject_build_local_offline_main_image() {
     return 1
   fi
   source_revision="$(git -C "$resolved_source" rev-parse HEAD)"
+  # 离线叠加层同样烤入提交号（/app/GIT_SHA），否则镜像会沿用基底镜像的旧提交号
+  image_args+=(--build-arg "ENGRAM_GIT_SHA=$source_revision")
   for relative_path in "${dependency_files[@]}"; do
     if ! git -C "$resolved_source" diff --quiet \
       "$base_revision" "$source_revision" -- "main/$relative_path"
