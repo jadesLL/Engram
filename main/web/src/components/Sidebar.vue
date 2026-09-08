@@ -529,7 +529,7 @@ async function batchDelete() {
 
 const TYPE_LABELS: Record<string, string> = {
   concept: '概念', person: '人物', customer: '客户', org: '组织',
-  place: '地点', work: '作品', project: '产品', other: '其他',
+  project: '项目', other: '其他',
 };
 
 /** 拖拽改归属：拖动页面行到实体子类/概念标题上，改变页面 type */
@@ -626,14 +626,15 @@ const GROUPS = [
       { key: 'person', label: '人物' },
       { key: 'customer', label: '客户' },
       { key: 'org', label: '组织' },
-      { key: 'place', label: '地点' },
-      { key: 'work', label: '作品' },
-      { key: 'project', label: '产品' },
+      { key: 'project', label: '项目' },
       { key: 'other', label: '其他' },
     ],
   },
   { key: 'archived', label: '归档' },
 ];
+
+/** 已从词表移除的历史类型（place/work）：归到「其他」，避免老页面在侧栏消失 */
+const LEGACY_ENTITY_TYPES = ['place', 'work'];
 
 /** 顶层分组：概念 / 实体 / 归档（状态分类），其余走原始资料、AI 日志等专属分区 */
 function topGroupOf(p: any): string {
@@ -642,18 +643,17 @@ function topGroupOf(p: any): string {
   if (p.path.startsWith('Wiki/归档/')) return 'archived';
   if (p.path.startsWith('Wiki/查询/')) return 'qa';
   if (p.type === 'concept') return 'concept';
-  if (['person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(p.type)) return 'entity';
+  if (['person', 'customer', 'org', 'project', 'other', ...LEGACY_ENTITY_TYPES].includes(p.type)) return 'entity';
   return 'unclassified'; // 未分类页面只在「全部页面」出现
 }
 
-/** 实体下的子类：人物 / 客户 / 组织 / 地点 / 作品 / 产品 / 其他 */
+/** 实体下的子类：人物 / 客户 / 组织 / 项目 / 其他 */
 function subGroupOf(p: any): string | null {
   if (p.type === 'person') return 'person';
   if (p.type === 'customer') return 'customer';
   if (p.type === 'org') return 'org';
-  if (p.type === 'place') return 'place';
-  if (p.type === 'work') return 'work';
   if (p.type === 'project') return 'project';
+  if (LEGACY_ENTITY_TYPES.includes(p.type)) return 'other';
   if (p.type === 'other') return 'other';
   return null;
 }

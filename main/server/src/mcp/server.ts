@@ -32,7 +32,7 @@ const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，�
 完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取。`;
 
 const RAW_DIR = '原始资料';
-const PAGE_TYPE_ENUM = ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other', 'note'] as const;
+const PAGE_TYPE_ENUM = ['concept', 'person', 'customer', 'org', 'project', 'other', 'note'] as const;
 
 const IMAGE_MIME: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',

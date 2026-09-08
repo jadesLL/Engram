@@ -51,11 +51,9 @@
             <option value="person">人物</option>
             <option value="customer">客户</option>
             <option value="org">组织</option>
-            <option value="place">地点</option>
-            <option value="work">作品</option>
-            <option value="project">产品</option>
+            <option value="project">项目</option>
             <option value="other">其他</option>
-            <option v-if="!['concept','person','customer','org','place','work','project','other'].includes(pageType)" :value="pageType">未分类</option>
+            <option v-if="!['concept','person','customer','org','project','other'].includes(pageType)" :value="pageType">未分类</option>
           </select>
           <input
             v-model="tagsInput"
@@ -428,7 +426,7 @@ async function loadRelated() {
 }
 
 async function loadEvidence() {
-  if (!page.value || !['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other'].includes(pageType.value)) {
+  if (!page.value || !['concept', 'person', 'customer', 'org', 'project', 'other'].includes(pageType.value)) {
     evidence.value = null;
     evidenceOpen.value = false;
     return;

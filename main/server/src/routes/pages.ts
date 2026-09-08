@@ -12,6 +12,7 @@ import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { renamePageSafely, RenameError } from '../lib/renamePage.js';
 import { pageEvidenceResponse } from '../pipeline/pageEvidence.js';
+import { isValidType } from '../lib/pageTypes.js';
 import { GUIDE_VERSION } from '../content/agentGuide.js';
 
 function comparablePageContent(value: string): string {
@@ -92,10 +93,14 @@ export async function pageRoutes(app: FastifyInstance) {
     return { suggestions: rows };
   });
 
-  app.post('/api/pages', async (req) => {
+  app.post('/api/pages', async (req, reply) => {
     const { dir, title, type } = req.body as { dir?: string; title?: string; type?: string };
     // 类型即目录：显式 dir 优先（需为合法页面目录），否则按类型映射；默认概念
     const pageType = type || 'concept';
+    // 词表以 lib/pageTypes.ts 为唯一来源：已移除的旧类型（place/work）不允许再新建
+    if (!isValidType(pageType)) {
+      return reply.code(400).send({ error: `非法页面类型：${pageType}` });
+    }
     const targetDir = dir && isPageDir(normalizeDir(dir)) ? normalizeDir(dir) : typeToDir(pageType);
     const meta = createPage(targetDir, title || '未命名页面');
     appendWikiLog('新建页面', `[[${meta.title}]]（${meta.path}）`);

@@ -5,7 +5,7 @@
  */
 
 /** 全部合法页面类型（机制字段 `type`） */
-export const PAGE_TYPES = ['concept', 'person', 'customer', 'org', 'place', 'work', 'project', 'other', 'doc', 'note'] as const;
+export const PAGE_TYPES = ['concept', 'person', 'customer', 'org', 'project', 'other', 'doc', 'note'] as const;
 export type PageType = (typeof PAGE_TYPES)[number];
 
 /** 类型 -> 物理目录（与 config.ts typeToDir 保持一致；实体类一律进 Wiki/实体） */
@@ -14,8 +14,6 @@ export const TYPE_DIR: Record<string, string> = {
   person: 'Wiki/实体',
   customer: 'Wiki/实体',
   org: 'Wiki/实体',
-  place: 'Wiki/实体',
-  work: 'Wiki/实体',
   project: 'Wiki/实体',
   other: 'Wiki/实体',
 };
@@ -26,9 +24,7 @@ export const TYPE_LABEL: Record<string, string> = {
   person: '人物',
   customer: '客户',
   org: '组织',
-  place: '地点',
-  work: '作品',
-  project: '产品',
+  project: '项目',
   other: '其他',
   doc: '文档',
   note: '笔记',
@@ -40,8 +36,6 @@ export function isEntity(type: string | undefined | null): boolean {
     type === 'person' ||
     type === 'customer' ||
     type === 'org' ||
-    type === 'place' ||
-    type === 'work' ||
     type === 'project' ||
     type === 'other'
   );
