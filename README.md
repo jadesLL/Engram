@@ -11,7 +11,7 @@
 ```
 你导入资料 ──► Engram 存储并提取文本层（PDF 文字层 / Office / md）
                     │
-外部 Agent ◄───────┤  MCP 9 工具 或 engram CLI（同一 Bearer Token）
+外部 Agent ◄───────┤  MCP 10 工具 或 engram CLI（同一 Bearer Token）
 （ZCode/Codex/…）   ▼
               按指南作业：Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit
                     │
@@ -25,7 +25,7 @@
 
 ## 功能总览
 
-### 🧠 面向 Agent 的 MCP 接口（9 工具）
+### 🧠 面向 Agent 的 MCP 接口（10 工具）
 
 设置页生成 Token（`Authorization: Bearer`，MCP/CLI/REST 三用），streamable HTTP 端点 `/mcp`：
 
@@ -36,6 +36,7 @@
 | `page_evidence` | 读页面证据账本（来源、版本、事实与逐字引文） |
 | `list_raw_files` / `read_raw_file` | 原始资料清单（含提取状态与「已提炼」标记；`pending=true` 只列未提炼文件）与读取；图片返回原图（image 内容）供视觉 Agent 自行识别 |
 | `write_page` | 写页面；新建概念/实体页必须带 `evidence` 过两来源门禁，引文服务端逐字校验 |
+| `delete_page` | 单页软删除入回收站（可恢复，按标题 / ID / 路径定位）；只允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 拒删，无永久删除/清空回收站能力 |
 | `save_chat` | 对话沉积到 `原始资料/对话/` |
 | `kb_guide` | 下发《Agent 作业指南》全文 |
 
@@ -48,7 +49,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 ### ⌨️ engram CLI（零依赖，Node 22）
 
-`node server/dist/cli/cli.js <command>`（Docker 内 `docker exec engram node dist/cli/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli/cli.js`）。**本机服务零配置**：服务端启动时自动把本机地址与专用 token 登记到 `~/.engram/config.json`（地址随实际端口自适应，不写死；用户手动 `login` 保存的配置优先、不被覆盖），CLI 开箱即用，远程服务再手动 `login` 一次。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|evidence / chat save / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`pages read/evidence` 接受 `pages list` 返回的页面 ID（UUID）或标题；`files list --pending` 只列未提炼文件（提炼作业索引用）；`pages list --outdated` 只列提炼规则版本落后于当前指南的概念/实体页（规则升级后重提炼用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
+`node server/dist/cli/cli.js <command>`（Docker 内 `docker exec engram node dist/cli/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli/cli.js`）。**本机服务零配置**：服务端启动时自动把本机地址与专用 token 登记到 `~/.engram/config.json`（地址随实际端口自适应，不写死；用户手动 `login` 保存的配置优先、不被覆盖），CLI 开箱即用，远程服务再手动 `login` 一次。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|delete|evidence / chat save / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`pages read/evidence/delete` 接受 `pages list` 返回的页面 ID（UUID）、标题或页面路径；`pages delete` 只把 `Wiki/` 下的页面移入回收站（软删除，`原始资料/`、`AIWorks/` 拒删）；`files list --pending` 只列未提炼文件（提炼作业索引用）；`pages list --outdated` 只列提炼规则版本落后于当前指南的概念/实体页（规则升级后重提炼用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
 
 ### 📄 页面编辑与管理
 
@@ -56,7 +57,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 - **`[[双链]]`**：输入 `[[` 补全，点击跳转；改名自动重定向全部引用
 - **页面类型系统**：概念 / 实体七子类（人物/客户/组织/地点/作品/产品/其他），类型即目录，头部下拉切换自动移动
 - **来源证据抽屉**：每页的原子事实 + 原文逐字引文 + 来源版本时间线，AI 写的内容可溯源、可核对
-- **回收站**（软删除）、标签、本页关联（双链邻居/实体关系）、阅读模式
+- **回收站**（软删除，Agent 经 MCP `delete_page` / CLI `pages delete` 删除同样只入回收站）、标签、本页关联（双链邻居/实体关系）、阅读模式
 
 ### 🕸 知识图谱
 

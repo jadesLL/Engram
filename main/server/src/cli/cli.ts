@@ -102,6 +102,7 @@ const HELP = `Engram CLI —— 外部 Agent 操作知识库
   pages read <titleOrId>                              读页面全文
   pages write <path> --title <t> [--type concept] [--tags a,b] [--evidence "路径::引文"]...
                                                        写页面（stdin 或 --file 为正文；新建概念/实体页需证据）
+  pages delete <titleOrId|路径> [--reason <原因>]         把单个 Wiki/ 页面移入回收站（软删除、可恢复；原始资料/AIWorks 只读不可删）
   pages evidence <titleOrId>                          读页面证据账本
   chat save [--identifier i] [--project p] [--append] 沉积对话（stdin 为正文）
   guide                                               输出《Agent 作业指南》全文
@@ -173,6 +174,7 @@ async function main(): Promise<number> {
       evidence: { type: 'string', multiple: true },
       identifier: { type: 'string' },
       project: { type: 'string' },
+      reason: { type: 'string' },
       append: { type: 'boolean', default: false },
       pending: { type: 'boolean', default: false },
       outdated: { type: 'boolean', default: false },
@@ -335,7 +337,23 @@ async function main(): Promise<number> {
         output(result, asJson);
         return 0;
       }
-      process.stderr.write('用法: pages list|read|write|evidence\n');
+      if (sub === 'delete') {
+        const ref = positional[1];
+        if (!ref) {
+          process.stderr.write('用法: pages delete <titleOrId> [--reason <原因>]\n');
+          return 2;
+        }
+        const body: Record<string, unknown> = { titleOrId: ref };
+        if (args.reason) body.reason = String(args.reason);
+        const result = await api(ctx, 'POST', '/api/agent/page/delete', { json: body });
+        if (asJson) {
+          output(result, true);
+        } else {
+          output(`已移入回收站: ${result.title}（${result.path}，回收站条目 id: ${result.trashId}）——可在 Engram 回收站恢复。`, false);
+        }
+        return 0;
+      }
+      process.stderr.write('用法: pages list|read|write|delete|evidence\n');
       return 2;
     }
     case 'chat': {
