@@ -230,7 +230,7 @@ pnpm build:desktop
 
 ## 6. 部署
 
-### 6.1 Docker 部署（三种方式）
+### 6.1 Docker 部署（四种方式）
 
 **方式一：源码构建部署**（开发 / 内网无 Registry）
 
@@ -259,13 +259,62 @@ docker tag gitea.xxx.com:11111/example/engram/engram:<版本> \
 docker compose -f docker-compose.pull.yml up -d
 ```
 
+**方式四：NAS 部署**（极空间 / 群晖 / 威联通等，模板 `main/docker-compose.nas.yml`）
+
+与方式二同源，但按 NAS 环境做了四处适配：宿主端口可调（默认 18080，避开 NAS 上常被占用的 8080）、JWT 密钥走 `.env` 而不依赖仓库里的 bash 脚本生成的 `.env.onlyoffice`、三个 onlyoffice 数据卷显式固定卷名、网络 MTU 默认 1500。**只需要两个文件**：`docker-compose.nas.yml` 和同目录 `.env`（不必克隆整个仓库）。
+
+```bash
+# 1) .env（与 compose 同目录），ONLYOFFICE_JWT_SECRET 必填，其余可留空
+cat > .env <<EOF
+ONLYOFFICE_JWT_SECRET=$(openssl rand -hex 32)
+ENGRAM_HOST_PORT=18080
+ENGRAM_DATA_DIR=/volume1/docker/engram/data
+DEFAULT_PASSWORD=
+EOF
+
+# 2) 登录私有 Registry 并启动
+docker login gitea.xxx.com:11111 -u example -p <package权限token>
+docker compose -f docker-compose.nas.yml up -d
+```
+
+访问 `http://<NAS_IP>:18080`，首次进入在页面设置初始密码（`.env` 里填了 `DEFAULT_PASSWORD` 则用它）。
+
+`.env` 各项含义：
+
+| 键 | 必填 | 说明 |
+|---|---|---|
+| `ONLYOFFICE_JWT_SECRET` | 是 | ONLYOFFICE 编辑器 JWT 密钥，engram 与 onlyoffice 两容器共用；未设置 compose 直接报错 |
+| `ENGRAM_HOST_PORT` | 否 | 宿主映射端口，默认 18080 |
+| `ENGRAM_DATA_DIR` | 否 | 数据目录的宿主路径（`wiki.db` + `brain/` 全在此），默认 compose 同目录 `./data` |
+| `DEFAULT_PASSWORD` | 否 | 首次启动预置的登录密码；留空则首次登录页面设置 |
+| `ENGRAM_NETWORK_MTU` | 否 | bridge MTU，默认 1500；NAS 跨公网链路 PMTU 异常时改 1400 |
+
+**NAS 上的应用内一键更新**：模板已挂 `/var/run/docker.sock`，启动后在网页 设置 → 软件更新 → 更新源配置 填一次即可（配置落在 `/data/.env`，容器重建不丢）：
+
+| 配置项 | 值 |
+|---|---|
+| Gitea 服务地址 | `https://gitea.xxx.com:11111` |
+| Gitea 仓库 | `example/Engram` |
+| Gitea 访问令牌 | 能读 Release 的 token |
+| 镜像更新源 | **留空**（自动从当前容器镜像推导 `gitea.xxx.com:11111/example/engram/engram`，跟踪 `latest`） |
+| 镜像仓库用户名 / 令牌 | `example` / package 读权限 token |
+
+之后发版后点「一键更新」即可。手动更新等价命令：`docker compose -f docker-compose.nas.yml pull && docker compose -f docker-compose.nas.yml up -d`。
+
+**NAS 常见坑**：
+
+1. 镜像架构：Registry 里的镜像由普通 `docker build` 构建，**只有 `linux/amd64`**。x86_64 机型（极空间 Z4 系列、群晖 DS920+ 等）可直接用；ARM 机型需先给 release.yml 加 buildx 多架构构建。
+2. 极空间 / 群晖的 Docker 管理界面若不允许挂 `/var/run/docker.sock`，删掉该行（只损失网页内更新，其他功能不受影响）。
+3. `onlyoffice/documentserver:9.4.0` 走 Docker Hub，拉不动时配镜像加速器或离线 `docker load` 导入。
+4. 私有 Registry 用自签证书时，需在 NAS 的 Docker 配置里加 `insecure-registries` 或导入 CA，否则 `docker login` 报 `x509`。
+
 **部署三条铁律**：
 
 1. 镜像地址用三层路径 `example/engram/engram`，不要写两层的 `example/engram`（NAS 拉取异常）；
 2. **不要写 `pull_policy: never`**——它禁止拉取，本地无镜像时必报「找不到镜像」，曾多次被误判为 Registry 故障；
-3. `docker-compose.pull.yml` 里的 `/var/run/docker.sock` 挂载是**应用内自更新**（设置 → 软件更新，网页一键拉新镜像重建容器）所需；不需要该功能可删掉这行。
+3. `docker-compose.pull.yml` / `docker-compose.nas.yml` 里的 `/var/run/docker.sock` 挂载是**应用内自更新**（设置 → 软件更新，网页一键拉新镜像重建容器）所需；不需要该功能可删掉这行。
 
-部署后访问端口按所用 compose 而定：方式一源码构建（`docker-compose.yml`）映射宿主 **18080**，方式二/三（`docker-compose.pull.yml`）映射 **8080**。初始密码由 compose 的 `DEFAULT_PASSWORD` 环境变量指定。onlyoffice 协同编辑是独立服务，第三方源拉不动时换官方镜像 `onlyoffice/documentserver:9.4.0`。
+部署后访问端口按所用 compose 而定：方式一源码构建（`docker-compose.yml`）映射宿主 **18080**，方式二/三（`docker-compose.pull.yml`）映射 **8080**，方式四 NAS（`docker-compose.nas.yml`）默认 **18080** 且可用 `ENGRAM_HOST_PORT` 改。初始密码由 compose 的 `DEFAULT_PASSWORD` 环境变量指定。onlyoffice 协同编辑是独立服务，第三方源拉不动时换官方镜像 `onlyoffice/documentserver:9.4.0`。
 
 ### 6.2 Windows 桌面端
 
@@ -388,6 +437,7 @@ exe 约 110 MB、tar.gz 约 160 MB，超出 Gitea 默认附件上限。调大 `a
 | `main/desktop/build/installer.nsh` | NSIS 定制：安装时显示详情与阶段日志 |
 | `main/docker-compose.yml` | 本地开发 compose（本地构建镜像） |
 | `main/docker-compose.pull.yml` | 生产部署模板（Registry 拉取 + docker.sock 挂载） |
+| `main/docker-compose.nas.yml` | NAS 部署模板（端口可调 + JWT 走 .env + 卷名固定，仅需 compose + .env 两个文件） |
 | `main/docker-compose.local-deploy.yml` | 内部部署辅助片段（叠加本地镜像用） |
 | `main/Dockerfile.deploy` | 旧版遗留，release.yml 未使用 |
 | `CHANGELOG.md` | 版本段落 = 发版硬门禁 + Release 正文来源 |

@@ -127,6 +127,8 @@ docker pull gitea.xxx.com:11111/example/engram/engram:<版本>
 docker compose -f docker-compose.pull.yml up -d
 ```
 
+**NAS 部署**（极空间 / 群晖 / 威联通等）用 `main/docker-compose.nas.yml`：宿主端口可调（默认 18080）、JWT 密钥走同目录 `.env`、卷名固定，只需 compose + `.env` 两个文件，无需克隆仓库。完整步骤与坑位见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md) 的「方式四：NAS 部署」。
+
 Windows 桌面端安装包从 [Engram Releases](https://gitea.xxx.com:11111/example/Engram/releases) 下载（`Engram Setup <版本>.exe`），更多安装方式见上文「下载与安装」。
 
 > 想从源码自行构建，见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)。
