@@ -13,7 +13,7 @@
       <ReadingPreview
         v-if="app.readingMode"
         :markdown="content"
-        v-tooltip="title"
+        :title="title"
         :page-type="pageType"
         :tags="tags"
         :updated-at="page.updated_at"
