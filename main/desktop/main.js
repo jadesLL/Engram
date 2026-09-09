@@ -38,7 +38,9 @@ try {
 // 两者互不抢占端口、可共存。自定义端口存 config.json 的 localPort（设置页可改）；
 // ENGRAM_LOCAL_PORT 环境变量优先级最高，供隔离测试等场景覆写。
 const DEFAULT_LOCAL_PORT = 18180;
-const HEALTH_TIMEOUT_MS = 30000;
+// 冷启动（Defender 实时扫描冷文件等）server 就绪可超 1 分钟，固定 30s 会先弹「启动失败」
+// 而服务随后其实就绪；放宽到 5 分钟，子进程退出时 waitForHealth 会提前返回。
+const HEALTH_TIMEOUT_MS = 5 * 60_000;
 
 const configFile = () => path.join(app.getPath('userData'), 'config.json');
 const logFile = () => path.join(app.getPath('userData'), 'app.log');
@@ -360,7 +362,7 @@ async function startLocalMode() {
   const base = `http://127.0.0.1:${port}`;
   // 探活超过 6 秒时补充说明：首次启动要初始化数据库，慢是正常的，避免被当成卡死
   const slowHint = setTimeout(() => setSplashStatus('仍在准备中，首次启动需要初始化数据库，会稍慢一些…'), 6000);
-  waitForHealth(base, HEALTH_TIMEOUT_MS).then((ok) => {
+  waitForHealth(base, HEALTH_TIMEOUT_MS, () => serverChild && serverChild.exitCode === null).then((ok) => {
     clearTimeout(slowHint);
     if (ok) {
       setSplashStatus('启动完成，正在进入界面…');
@@ -371,7 +373,7 @@ async function startLocalMode() {
   });
 }
 
-async function waitForHealth(base, timeoutMs) {
+async function waitForHealth(base, timeoutMs, isAlive = () => true) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -380,6 +382,7 @@ async function waitForHealth(base, timeoutMs) {
     } catch {
       /* 尚未就绪 */
     }
+    if (!isAlive()) return false; // 子进程已退出，不必等满超时
     await new Promise((r) => setTimeout(r, 250));
   }
   return false;
