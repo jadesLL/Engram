@@ -85,11 +85,27 @@ export const MCP_TOOLS: McpToolDoc[] = [
     cli: 'engram guide',
   },
   {
+    name: 'skill_list',
+    group: '读',
+    summary: '列出服务端内置的作业 skill 元数据（名称 / 用途 / 何时用 / 版本），不含正文。',
+    params: '无参数。',
+    notes: 'skill 与《Agent 作业指南》同级但按需获取：先看清单，需要时再用 skill_guide 取全文；skill 版本独立于指南版本，改 skill 不会把已有页面标为规则落后。',
+    cli: '（CLI 未提供，用 MCP skill_list）',
+  },
+  {
+    name: 'skill_guide',
+    group: '读',
+    summary: '按名读取一份内置 skill 的全文（作业手法与纪律）。',
+    params: 'name skill 名称（必填，如 docx-meeting-to-md；名称见 skill_list）。',
+    notes: '读到的正文是工具返回值，无需访问软件安装目录；名称不存在时返回可用清单。',
+    cli: '（CLI 未提供，用 MCP skill_guide）',
+  },
+  {
     name: 'write_page',
     group: '写',
     summary: '创建或覆盖知识库页面；保存后自动建索引、建图谱边并记入操作日志。',
     params: 'path 页面路径（必填，如 Wiki/概念/xxx.md）；title 标题（必填）；content markdown 正文（必填）；type 类型（concept/person/customer/org/project/other/note）；tags 标签数组；evidence 证据数组 {path, quote}。',
-    notes: '只能写 Wiki/ 下，原始资料与 AIWorks 只读。新建概念/实体页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条），引文由服务端逐字校验；已有页面增量更新不受此限。',
+    notes: '只能写 Wiki/ 下，原始资料与 AIWorks 对 Agent 是只读区。新建概念/实体页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条），引文由服务端逐字校验；已有页面增量更新不受此限。',
     cli: 'engram pages write <路径> --title <标题> [--type concept] [--tags a,b] [--evidence "路径::引文"]',
   },
   {
@@ -121,7 +137,7 @@ export const MCP_TOOLS: McpToolDoc[] = [
     group: '写',
     summary: '把一段与外部 Agent 的对话沉积到 原始资料/对话/，按时间 + 标识命名。',
     params: 'content 对话正文 markdown（必填）；identifier 标识（可选，用于文件名与标题）；project 项目维度（可选，归到子目录）；append 追加合并到当日最近一条（可选）。',
-    notes: '沉积结果进入原始资料区，可被后续提炼作业引用。',
+    notes: '须用户明确指示（或先问并得到同意）才可调用，不得自行判断"这段有价值"就沉淀；已沉淀的对话属原始资料，可被后续提炼作业引用。',
     cli: 'engram chat save [--identifier <标识>] [--project <项目>] [--append]（正文走 stdin）',
   },
 ];

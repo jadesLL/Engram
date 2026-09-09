@@ -63,7 +63,8 @@
       <p class="faint small tools-foot">
         CLI（<code>engram</code>）与 MCP 共用同一套接口和 Token，另有 <code>status</code>（服务健康与连接检查）、
         <code>import</code>（上传文件到原始资料）、<code>login</code>（保存连接配置）、<code>mcp-config</code>
-        （输出各 Agent 配置片段）等命令；作业方法论见《Agent 作业指南》。
+        （输出各 Agent 配置片段）等命令；作业方法论见《Agent 作业指南》，具体作业手法与纪律用
+        <code>skill_list</code> 看清单、<code>skill_guide</code> 取全文。
       </p>
       <div class="guide-actions">
         <button class="btn small" type="button" @click="loadGuide">
@@ -87,7 +88,8 @@ import AgentMcpSection from './AgentMcpSection.vue';
 type AgentTarget = 'zcode' | 'dsh' | 'other';
 
 const target = ref<AgentTarget>('zcode');
-const toolsOpen = ref(true);
+/** 工具清单默认收起：条目随 skill 增多会变长，展开会淹没接入状态与 Token 区 */
+const toolsOpen = ref(false);
 const guideOpen = ref(false);
 const guide = ref('');
 

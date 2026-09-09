@@ -17,13 +17,15 @@ import { relatedPageData } from '../lib/graphCache.js';
 import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
 import { AGENT_GUIDE, GUIDE_VERSION } from '../content/agentGuide.js';
+import { SKILLS, findSkill } from '../content/skills/index.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
- * 读工具（search/list_pages/read_page/related_pages/page_evidence/list_raw_files/read_raw_file/kb_guide）
+ * 读工具（search/list_pages/read_page/related_pages/page_evidence/list_raw_files/read_raw_file/
+ * kb_guide/skill_list/skill_guide）
  * + 写工具（write_page 带证据门禁与自动日志 / rename_page / move_page / delete_page 软删除入回收站 /
- * save_chat 对话沉积）。全部写操作只允许 Wiki/，原始资料与 AIWorks 为只读区。
- * 作业方法论见 kb_guide 下发的《Agent 作业指南》。
+ * save_chat 对话沉积）。全部写操作只允许 Wiki/，原始资料与 AIWorks 对 Agent 是只读区。
+ * 作业方法论见 kb_guide；按需作业手法见 skill_list / skill_guide。
  */
 
 const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，读、写、提炼全部由你（外部 Agent）完成。
@@ -31,10 +33,12 @@ const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，�
 提炼作业收到指令后自动索引待提炼清单（CLI engram files list --pending，或 list_raw_files 传 pending=true），然后逐份串行处理：读一份、write_page 提交成功，再处理下一份，不要批量读完统一写页。
 任何写操作前先读 AIWorks/log/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
 新建 概念/实体 页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条引文），已有页面增量不受限。
-误建的页面用 delete_page 删除：只做软删除入回收站（可恢复），只能删 Wiki/ 下的页面，原始资料与 AIWorks 只读不可删，且不提供清空回收站能力。
+原始资料与 AIWorks 对 Agent 是只读区：写工具只能写 Wiki/。软件本身具备上传/新建/删除原始资料的能力，但那是用户的操作——需要新增或删除原始资料时先问用户，得到同意再做，不得走 HTTP 旁路自行写入。
+对话沉积（save_chat）只在用户明确指示、或你先问并得到同意后才可执行；不要自行判断"这段对话有价值"就沉淀。已沉淀的对话属于原始资料，可被后续提炼引用。
+误建的页面用 delete_page 删除：只做软删除入回收站（可恢复），只能删 Wiki/ 下的页面，不提供清空回收站能力。
 页面改名/移动用 rename_page / move_page（保持页面 ID 与图谱边，重命名会重定向引用双链）；写页与页面操作都只允许 Wiki/。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
-完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取。`;
+完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取；具体作业手法与纪律先用 skill_list 看清单，再用 skill_guide(name) 取全文。`;
 
 const RAW_DIR = '原始资料';
 const PAGE_TYPE_ENUM = ['concept', 'person', 'customer', 'org', 'project', 'other', 'note'] as const;
@@ -433,6 +437,51 @@ export function makeServer(): McpServer {
     '输出《Engram 知识库 Agent 作业指南》全文：知识库结构、提炼作业流程（八阶段）、页面契约与证据门禁规则',
     {},
     async () => ({ content: [{ type: 'text', text: AGENT_GUIDE }] })
+  );
+
+  server.tool(
+    'skill_list',
+    '列出服务端内置的作业 skill 元数据（名称/用途/何时用/版本）。skill 与《Agent 作业指南》同级但按需获取：先列清单，需要时再用 skill_guide 取全文',
+    {},
+    async () => {
+      const text = SKILLS
+        .map((skill) => [
+          `- ${skill.name}（v${skill.version}）｜${skill.title}`,
+          `  用途：${skill.description}`,
+          `  何时用：${skill.whenToUse}`,
+        ].join('\n'))
+        .join('\n\n');
+      return {
+        content: [{
+          type: 'text',
+          text: `${text}\n\n用 skill_guide(name) 取某份 skill 的全文。skill 版本独立于指南版本，改 skill 不会把已有页面标为规则落后。`,
+        }],
+      };
+    }
+  );
+
+  server.tool(
+    'skill_guide',
+    '按名读取一份内置 skill 的全文（作业手法与纪律）。名称见 skill_list；读到的正文是工具返回值，无需访问软件安装目录',
+    { name: z.string().describe('skill 名称，如 docx-meeting-to-md；用 skill_list 查看可用清单') },
+    async ({ name }) => {
+      const skill = findSkill(name);
+      if (!skill) {
+        return {
+          content: [{
+            type: 'text',
+            text: `未找到 skill: ${name}。可用：${SKILLS.map((s) => s.name).join('、')}`,
+          }],
+          isError: true,
+        };
+      }
+      return {
+        content: [{
+          type: 'text',
+          text: `# ${skill.title}（${skill.name} · v${skill.version}）\n\n${skill.body}`,
+        }],
+      };
+    }
   );
 
   return server;
