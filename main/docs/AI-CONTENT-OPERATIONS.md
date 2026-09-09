@@ -3,7 +3,8 @@
 本文件适用于通过 MCP 或 CLI 读写 Engram 知识内容的**外部 Agent**（ZCode / Codex / Claude Code / Kimi 等），不适用于修改本仓库源码的开发 Agent。
 
 > 完整作业方法论（八阶段流程、页面模板、证据规则）由服务端统一对外下发，与本文同源：
-> MCP `kb_guide` 工具 / `GET /api/guide` / `engram guide`（单一来源：`server/src/content/agentGuide.ts`）。
+> 指南正文 MCP `kb_guide` / `GET /api/guide` / `engram guide`（单一来源：`server/src/content/agentGuide.ts`）；
+> 作业手法与纪律 MCP `skill_list` / `skill_guide`（单一来源：`server/src/content/skills/`，按需下发）。
 
 ## 架构边界
 
@@ -57,7 +58,7 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 
 - 作业指南单一来源：`server/src/content/agentGuide.ts`
 - 内置 skill 单一来源：`server/src/content/skills/`（注册表 `index.ts`）
-- Agent 接入界面的工具清单：`web/src/lib/mcpTools.ts`（新增/改名工具时与 `server/src/mcp/server.ts` 两处同步）
+- Agent 接入界面的工具清单：`web/src/lib/mcpTools.ts`（新增/改名工具时三处同步：`server/src/mcp/server.ts` 注册、`web/src/lib/mcpTools.ts` 界面清单、本文）
 - Agent 写入门禁与账本：`server/src/pipeline/agentWrite.ts`
 - Agent 单页删除内核（只入回收站 + Wiki/ 守卫）：`server/src/pipeline/agentDelete.ts`
 - MCP 端点（streamable HTTP + Bearer）：`server/src/mcp/server.ts`
