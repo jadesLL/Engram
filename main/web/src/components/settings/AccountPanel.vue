@@ -263,36 +263,20 @@ function logout() {
   font-size: 12.5px;
   user-select: all;
 }
+/* 可换行 flex：窄列时输入框收缩、按钮换行。不依赖视口媒体查询——
+   桌面端 DPI 缩放使 CSS 视口远宽于实际内容列，断点感知不到侧栏挤占 */
 .password-controls {
-  display: grid;
-  grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
-  width: min(530px, 100%);
+  max-width: 530px;
 }
-
-@media (max-width: 1024px) {
-  .password-controls {
-    grid-template-columns: 1fr 1fr;
-  }
-  .password-controls .btn {
-    grid-column: 1 / -1;
-    justify-self: end;
-  }
+.password-controls input {
+  flex: 1 1 130px;
+  min-width: 0;
 }
-
-@media (max-width: 768px) {
-  .password-controls {
-    width: 100%;
-  }
-}
-
-@media (max-width: 640px) {
-  .password-controls {
-    grid-template-columns: 1fr;
-  }
-  .password-controls .btn {
-    grid-column: auto;
-    width: 100%;
-  }
+.password-controls .btn {
+  flex: 0 0 auto;
 }
 </style>
