@@ -25,9 +25,26 @@
         @context-menu="(request) => showContextMenu(request, 'reading')"
       />
 
+      <!-- 顶部条：目录面包屑 + 常驻保存状态 -->
+      <div v-show="!app.readingMode" class="editor-topbar">
+        <nav class="crumb">
+          <Icon name="folder" :size="13" />
+          <template v-if="crumbDirs.length">
+            <span v-for="(d, i) in crumbDirs" :key="i" class="crumb-item">
+              {{ d }}<span v-if="i < crumbDirs.length - 1" class="crumb-sep">/</span>
+            </span>
+          </template>
+          <span v-else class="crumb-item">根目录</span>
+        </nav>
+        <div class="spacer"></div>
+        <span v-if="saveState" class="save-pill" :class="savePillClass">
+          <span class="dot"></span>{{ saveState }}
+        </span>
+      </div>
+
       <div v-show="!app.readingMode" class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
         <input v-model="title" class="title-input" placeholder="无标题" @change="save(true)" />
-        <!-- 手机端摘要行：折叠时仅此一行（选项切换 + 保存状态），桌面隐藏 -->
+        <!-- 手机端摘要行：折叠时仅此一行（选项切换），桌面隐藏 -->
         <div class="head-summary">
           <button
             type="button"
@@ -39,14 +56,10 @@
             页面选项与 AI 工具
             <Icon :name="chromeCollapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
           </button>
-          <span class="save-state faint small" :class="{ 'save-failed': saveState === '保存失败' }">
-            <Icon v-if="saveState === '保存失败'" name="activity" :size="12" />
-            {{ saveState }}
-          </span>
         </div>
         <div class="page-chrome">
           <div class="head-meta">
-          <select v-model="pageType" @change="save(true)" class="ghost-select">
+          <select v-model="pageType" @change="save(true)" class="chip-select">
             <option value="concept">概念</option>
             <option value="person">人物</option>
             <option value="customer">客户</option>
@@ -55,28 +68,21 @@
             <option value="other">其他</option>
             <option v-if="!['concept','person','customer','org','project','other'].includes(pageType)" :value="pageType">未分类</option>
           </select>
-          <input
-            v-model="tagsInput"
-            class="tags-input"
-            placeholder="添加标签，逗号分隔"
-            @change="save(true)"
-          />
-          <span class="save-state faint small" :class="{ 'save-failed': saveState === '保存失败' }">
-            <Icon v-if="saveState === '保存失败'" name="activity" :size="12" />
-            {{ saveState }}
-          </span>
-          <button
-            v-if="evidence?.sources?.length"
-            class="btn ghost small"
-            v-tooltip="'查看本页来源证据'"
-            @click="evidenceOpen = !evidenceOpen"
-          >
-            <Icon name="book-open" :size="14" />
-            来源 {{ evidence.sources.length }}
-          </button>
-          <button class="btn icon" v-tooltip="'查看本页图谱'" aria-label="查看本页图谱" @click="$router.push(`/graph/${page.id}`)">
-            <Icon name="graph" :size="14" />
-          </button>
+          <div class="tags-chips">
+            <span v-for="(t, i) in tags" :key="t" class="chip">
+              #{{ t }}
+              <button type="button" class="chip-x" aria-label="移除标签" @click="removeTag(i)">×</button>
+            </span>
+            <input
+              v-model="tagDraft"
+              class="tag-draft"
+              placeholder="+ 标签"
+              @keydown.enter.prevent="commitTagDraft"
+              @keydown="onTagDraftKey"
+              @blur="commitTagDraft"
+            />
+          </div>
+          <span class="meta-date faint">更新于 {{ formatDate(page.updated_at) }}</span>
           </div>
         </div>
       </div>
@@ -174,38 +180,66 @@
         </div>
       </aside>
 
-      <!-- 本页关联：默认折叠为一行摘要（关联项多时铺开可占大半屏，正文反而看不到）；
-           左缘由 ResizeObserver 跟随 vditor 动态居中的正文文字列（alignRelated） -->
-      <div v-if="!app.readingMode && related" ref="relatedRef" class="related" :class="{ collapsed: relatedCollapsed }">
+      <!-- 本页关联：默认折叠为一行摘要；与正文同一内容列，不再需要 JS 实测对齐 -->
+      <div v-if="!app.readingMode && related" class="related" :class="{ collapsed: relatedCollapsed }">
+        <div class="related-inner">
+          <button
+            type="button"
+            class="related-title related-toggle"
+            :aria-expanded="!relatedCollapsed"
+            @click="toggleRelated"
+          >
+            本页关联<span class="related-count">{{ relatedCount }}</span>
+            <Icon class="related-chev" :name="relatedCollapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
+          </button>
+          <div class="related-items">
+            <span
+              v-for="(n, i) in related.neighbors"
+              :key="'n' + n.id + '-' + n.rel + '-' + i"
+              class="rel-item"
+              v-tooltip="n.direction === 'out' ? '本页引用了它' : '它引用了本页'"
+              @click="$router.push(`/page/${n.id}`)"
+            >{{ n.direction === 'out' ? '→' : '←' }} {{ n.title }}</span>
+            <span
+              v-for="(s, i) in related.similar"
+              :key="'s' + s.id + '-' + i"
+              class="rel-item"
+              v-tooltip="`语义相似 ${(1 - s.distance).toFixed(2)}`"
+              @click="$router.push(`/page/${s.id}`)"
+            >≈ {{ s.title }}</span>
+            <span
+              v-for="(e, i) in related.entities"
+              :key="'e' + e.name + '-' + e.rel + '-' + i"
+              class="rel-item entity"
+            >{{ e.name }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部状态栏：字数 / 编辑模式；来源、图谱等低频入口收拢到右下 -->
+      <div v-show="!app.readingMode" class="statusbar">
+        <span class="sb-item">{{ wordCount }} 字</span>
+        <span class="sb-item">{{ app.editorMode === 'sv' ? '源码' : '即时渲染' }}</span>
+        <div class="spacer"></div>
+        <button
+          v-if="evidence?.sources?.length"
+          type="button"
+          class="sb-item sb-btn"
+          v-tooltip="'查看本页来源证据'"
+          @click="evidenceOpen = !evidenceOpen"
+        >
+          <Icon name="book-open" :size="12" />
+          来源 {{ evidence.sources.length }}
+        </button>
         <button
           type="button"
-          class="related-title related-toggle"
-          :aria-expanded="!relatedCollapsed"
-          @click="toggleRelated"
+          class="sb-item sb-btn"
+          v-tooltip="'查看本页图谱'"
+          @click="$router.push(`/graph/${page.id}`)"
         >
-          本页关联<span class="related-count">{{ relatedCount }}</span>
+          <Icon name="graph" :size="12" />
+          页面图谱
         </button>
-        <div class="related-items">
-          <span
-            v-for="(n, i) in related.neighbors"
-            :key="'n' + n.id + '-' + n.rel + '-' + i"
-            class="rel-item"
-            v-tooltip="n.direction === 'out' ? '本页引用了它' : '它引用了本页'"
-            @click="$router.push(`/page/${n.id}`)"
-          >{{ n.direction === 'out' ? '→' : '←' }} {{ n.title }}</span>
-          <span
-            v-for="(s, i) in related.similar"
-            :key="'s' + s.id + '-' + i"
-            class="rel-item"
-            v-tooltip="`语义相似 ${(1 - s.distance).toFixed(2)}`"
-            @click="$router.push(`/page/${s.id}`)"
-          >≈ {{ s.title }}</span>
-          <span
-            v-for="(e, i) in related.entities"
-            :key="'e' + e.name + '-' + e.rel + '-' + i"
-            class="rel-item entity"
-          >{{ e.name }}</span>
-        </div>
       </div>
     </template>
 
@@ -285,13 +319,13 @@ const page = ref<any>(null);
 const content = ref('');
 const title = ref('');
 const pageType = ref('note');
-const tagsInput = ref('');
+const tags = ref<string[]>([]);
+const tagDraft = ref('');
 const saveState = ref('');
 const related = ref<any>(null);
 /* 本页关联折叠：默认收起为一行摘要（关联属页脚参考信息，不该抢正文空间）。
  * 用户点开/收起的选择写入 localStorage 跨会话保留，未操作过时跟随默认收起。 */
 const RELATED_STORE_KEY = 'engram.related.expanded';
-const relatedRef = ref<HTMLElement>();
 const relatedCollapsed = ref(localStorage.getItem(RELATED_STORE_KEY) !== '1');
 const relatedCount = computed(() =>
   (related.value?.neighbors?.length || 0) +
@@ -302,52 +336,7 @@ function toggleRelated() {
   relatedCollapsed.value = !relatedCollapsed.value;
   localStorage.setItem(RELATED_STORE_KEY, relatedCollapsed.value ? '0' : '1');
 }
-/* 对齐：vditor 用 JS 内联 padding 把正文文字列动态居中（(容器宽-maxWidth)/2），
- * 固定 CSS 值永远追不上；这里实测正文列 x 坐标，同步写到区块 padding-left。
- * 断点（<768px）区块走全宽 20px，不参与对齐。 */
-const relatedAlignMedia = window.matchMedia('(min-width: 768px)');
-let relatedAlignObs: ResizeObserver | undefined;
-function alignRelated() {
-  const relatedEl = relatedRef.value;
-  if (!relatedEl || !relatedAlignMedia.matches) return;
-  // vditor 在 DOM 里保留多个模式的 reset（sv/wysiwyg/ir），只有当前模式的可见
-  const editor = visibleReset(relatedEl.parentElement);
-  if (!editor) return;
-  const contentCol = editor.getBoundingClientRect();
-  const inlinePad = parseFloat(getComputedStyle(editor).paddingLeft) || 0;
-  const textColX = contentCol.x + inlinePad;
-  const baseX = relatedEl.getBoundingClientRect().x;
-  const pad = Math.max(0, Math.round(textColX - baseX));
-  relatedEl.style.paddingLeft = pad + 'px';
-}
-function visibleReset(root: ParentNode | null | undefined): HTMLElement | undefined {
-  return Array.from(
-    root?.querySelectorAll<HTMLElement>('.editor-area .vditor-reset') || []
-  ).find(el => el.offsetHeight > 0 && el.children.length > 0);
-}
-function setupRelatedAlign() {
-  relatedAlignObs?.disconnect();
-  const host = relatedRef.value?.parentElement?.querySelector('.editor-area');
-  if (!host || typeof ResizeObserver === 'undefined') return;
-  relatedAlignObs = new ResizeObserver(() => alignRelated());
-  // 观察 host（窗口/侧栏引起的宽度变化）和 reset 本身（vditor 初始化/换算内联 padding
-  // 只改 reset 自身尺寸，host 不动，必须两者都观察才能捕捉）
-  relatedAlignObs.observe(host);
-  const reset = visibleReset(host);
-  if (reset) relatedAlignObs.observe(reset);
-  alignRelated();
-  // vditor 初始化是异步的：首帧 reset 往往还不可见，短轮询兜底到就位为止
-  let tries = 0;
-  const timer = setInterval(() => {
-    const r = visibleReset(host);
-    if (r) {
-      if (tries > 0) relatedAlignObs?.observe(r);
-      alignRelated();
-    }
-    if (r || ++tries > 20) clearInterval(timer);
-  }, 150);
-}
-/* 手机端页头操作区（类型/标签/AI 整理/来源 + AI 写作条）折叠：
+/* 手机端页头操作区（类型/标签）折叠：
  * 这些是低频操作，手机上铺开占上半屏，正文反而看不到。默认收起，桌面始终展开。 */
 const chromeMobile = window.matchMedia('(max-width: 768px)');
 const chromeCollapsed = ref(chromeMobile.matches);
@@ -368,9 +357,72 @@ const filePreviewRef = ref<InstanceType<typeof FilePreview>>();
 
 const filePath = computed(() => (route.query.file as string) || '');
 const isDark = computed(() => app.dark);
-const tags = computed(() =>
-  tagsInput.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean)
+
+/** 面包屑：页面路径去掉文件名后的目录段 */
+const crumbDirs = computed(() =>
+  String(page.value?.path || '').split('/').slice(0, -1).filter(Boolean)
 );
+
+/** 保存状态点的三态样式 */
+const savePillClass = computed(() => {
+  if (saveState.value === '保存失败') return 'failed';
+  if (saveState.value === '编辑中…') return 'dirty';
+  return 'ok';
+});
+
+/** 字数统计：CJK 按字、拉丁按词；剔除代码块与注释 */
+const wordCount = computed(() => {
+  const text = content.value
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[#>*`~|()[\]!:-]/g, ' ');
+  const cjk = (text.match(/[㐀-鿿豈-﫿]/g) || []).length;
+  const latin = (text.replace(/[㐀-鿿豈-﫿]/g, ' ').match(/[A-Za-z0-9_'-]+/g) || []).length;
+  return (cjk + latin).toLocaleString();
+});
+
+function formatDate(value: string | number | undefined): string {
+  if (!value) return '';
+  let d: Date;
+  if (typeof value === 'number' || /^\d+$/.test(String(value))) {
+    const n = Number(value);
+    d = new Date(String(n).length === 10 ? n * 1000 : n);
+  } else {
+    d = new Date(String(value).replace(' ', 'T'));
+  }
+  if (isNaN(d.getTime())) return String(value);
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function commitTagDraft() {
+  const parts = tagDraft.value.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
+  if (!parts.length) {
+    tagDraft.value = '';
+    return;
+  }
+  let changed = false;
+  for (const t of parts) {
+    if (!tags.value.includes(t)) {
+      tags.value.push(t);
+      changed = true;
+    }
+  }
+  tagDraft.value = '';
+  if (changed) save(true);
+}
+
+function onTagDraftKey(e: KeyboardEvent) {
+  if (e.key === ',' || e.key === '，') {
+    e.preventDefault();
+    commitTagDraft();
+  }
+}
+
+function removeTag(index: number) {
+  tags.value.splice(index, 1);
+  save(true);
+}
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
@@ -398,7 +450,8 @@ async function loadPage(id: string) {
     // 标题为空时回退到文件名（去掉 .md 后缀）
     title.value = data.meta.title || data.meta.path.split('/').pop()?.replace(/\.md$/i, '') || '无标题';
     pageType.value = data.meta.type;
-    tagsInput.value = (data.meta.tags || []).join(', ');
+    tags.value = [...(data.meta.tags || [])];
+    tagDraft.value = '';
     saveState.value = '';
     dirty = false;
     loadRelated();
@@ -472,14 +525,13 @@ function closeReading() {
 
 async function save(manual = false) {
   if (!page.value) return;
-  const tags = tagsInput.value.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
   const contentToSave = editorRef.value?.getValue() ?? content.value;
   try {
     const { data } = await api.put(`/api/pages/${page.value.id}`, {
       content: contentToSave,
       title: title.value,
       type: pageType.value,
-      tags,
+      tags: tags.value,
     });
     page.value = data.meta;
     loadedContentKey = visibleContentKey(contentToSave);
@@ -716,16 +768,10 @@ function beforeUnload(e: BeforeUnloadEvent) {
 onMounted(() => {
   if (route.params.id) loadPage(route.params.id as string);
   window.addEventListener('beforeunload', beforeUnload);
-  nextTick(setupRelatedAlign);
-});
-/* related 是条件渲染（v-if），页面数据到位后才出现在 DOM；届时挂对齐 observer */
-watch(related, (v) => {
-  if (v) nextTick(setupRelatedAlign);
 });
 onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload);
   if (saveTimer) clearTimeout(saveTimer);
-  relatedAlignObs?.disconnect();
 });
 </script>
 
@@ -735,19 +781,70 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   position: relative;
-  /* 宽幅：占满主内容区，仅靠 padding 留呼吸空间（Typora/Obsidian 全屏式） */
+  /* 内容列：页头 / 正文 / 关联区统一 760px 居中，vditor 内联 padding 被下方 !important 覆盖 */
   --editor-max: 100%;
+  --content-col: 760px;
 }
+
+/* ---------- 顶部条：面包屑 + 保存状态 ---------- */
+.editor-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 20px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border);
+}
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.crumb-item {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crumb-sep { color: var(--text-faint); margin-left: 6px; }
+.editor-topbar .spacer,
+.statusbar .spacer { flex: 1; }
+.save-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+.save-pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success, #107c10);
+}
+.save-pill.dirty .dot { background: var(--warning); animation: save-pulse 1.2s infinite; }
+.save-pill.failed { color: var(--danger); }
+.save-pill.failed .dot { background: var(--danger); }
+@keyframes save-pulse { 50% { opacity: 0.35; } }
+
+/* ---------- 页头：标题 + 元信息 chips，与正文列对齐 ---------- */
 .page-head {
-  max-width: var(--editor-max);
-  margin: 0 auto;
+  flex: none;
   width: 100%;
-  padding: 36px 48px 0;
+  padding: 28px max(24px, calc((100% - var(--content-col)) / 2)) 0;
 }
 .title-input {
   width: 100%;
   border: none;
-  font-size: 34px;
+  font-size: 32px;
   font-weight: 700;
   padding: 4px 0;
   background: transparent;
@@ -770,30 +867,65 @@ onUnmounted(() => {
 .head-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 6px;
-  padding-bottom: 10px;
+  gap: 8px;
+  margin-top: 8px;
+  padding-bottom: 12px;
   flex-wrap: wrap;
-  border-bottom: 1px solid var(--border);
 }
-.ghost-select {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  padding: 3px 4px;
+.chip-select {
+  border: 1px solid transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
 }
-.ghost-select:hover { background: var(--bg-hover); }
-.tags-input {
+.chip-select:hover { border-color: var(--accent); }
+.tags-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   flex: 1;
-  min-width: 140px;
-  border: none;
-  background: transparent;
-  padding: 3px 4px;
-  font-size: 13px;
+  min-width: 160px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
   color: var(--text-secondary);
 }
-.tags-input:hover { background: var(--bg-hover); }
+.chip-x {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 1px;
+}
+.chip-x:hover { color: var(--danger); }
+.tag-draft {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 3px 4px;
+  min-width: 64px;
+  flex: 0 1 110px;
+}
+.tag-draft:hover { background: var(--bg-hover); border-radius: 4px; }
+.meta-date {
+  margin-left: auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
 .synthesis-inline {
   display: inline-flex;
   align-items: center;
@@ -802,36 +934,7 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .synthesis-inline.failed { color: var(--danger); }
-.save-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.save-state.save-failed {
-  color: var(--danger);
-  font-weight: 500;
-}
-.ai-bar {
-  max-width: var(--editor-max);
-  margin: 0 auto;
-  width: 100%;
-  padding: 6px 48px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-.ai-bar-icon { color: var(--text-faint); margin-right: 2px; }
-.ai-action {
-  font-size: 12px;
-  color: var(--text-secondary);
-  padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  transition: color 0.12s, border-color 0.12s, background 0.12s;
-}
-.ai-action:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
-.ai-hint { margin-left: auto; }
+
 .editor-area { flex: 1; min-height: 0; }
 .page-state {
   flex: 1;
@@ -848,6 +951,16 @@ onUnmounted(() => {
   margin: 0 !important;
 }
 .editor-area :deep(.vditor-toolbar) { max-width: 100%; }
+/* 正文文字列与页头/关联区同一内容列：覆盖 vditor JS 写入的居中内联 padding */
+.editor-area :deep(.vditor-reset) {
+  padding-left: max(24px, calc((100% - var(--content-col)) / 2)) !important;
+  padding-right: max(24px, calc((100% - var(--content-col)) / 2)) !important;
+}
+/* 工具栏内联 padding-left 同样来自 vditor 的 820px 居中公式，同步对齐到内容列 */
+.editor-area :deep(.vditor-toolbar) {
+  padding-left: max(24px, calc((100% - var(--content-col)) / 2)) !important;
+  padding-right: max(10px, calc((100% - var(--content-col)) / 2)) !important;
+}
 
 /* 排版精修（Typora/Obsidian 风可读宽行，三种编辑模式统一）
  * 正文用 rem：桌面 root 16px 时 1rem=16px 与原值一致；
@@ -1085,47 +1198,78 @@ onUnmounted(() => {
 }
 .source-row small { color: var(--text-faint); }
 
-/* 本页关联：安静的页脚区块——弱色小号标题 + 无底色 chip。
- * 左缘对齐正文文字列：vditor 用 JS 动态居中正文（内联 padding 随宽度变化），
- * 固定值追不上，由 setupRelatedAlign 的 ResizeObserver 实测后写内联 padding-left；
- * 这里 64px 只是 JS 未就绪时的兜底 */
+/* ---------- 本页关联：与正文同一内容列，胶囊卡片 ---------- */
 .related {
-  max-width: var(--editor-max);
-  margin: 0 auto;
-  width: 100%;
-  padding: 14px 48px 40px 64px;
+  flex: none;
+  padding: 0 max(24px, calc((100% - var(--content-col)) / 2)) 26px;
 }
-.related-title { margin-bottom: 8px; }
-.related-items { display: flex; flex-wrap: wrap; gap: 6px; }
-.related-toggle {
+.related-inner {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.related-title {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  color: var(--text-faint);
-  font-size: 12px;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
-.related-toggle:hover { color: var(--text-secondary); background: transparent; }
+.related-toggle:hover { color: var(--text); background: transparent; }
 .related-count {
-  padding: 0 6px;
-  border-radius: 8px;
-  background: var(--bg-secondary);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-faint);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+.related-chev { color: var(--text-faint); }
+.related-items { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .related.collapsed .related-items { display: none; }
-.related.collapsed { padding-bottom: 20px; }
 .rel-item {
-  padding: 2px 8px;
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border-radius: 999px;
   border: 1px solid var(--border);
-  background: transparent;
+  background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
   transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
 .rel-item:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .rel-item.entity { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
+
+/* ---------- 底部状态栏 ---------- */
+.statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 20px;
+  font-size: 12px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.sb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sb-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.sb-btn:hover { background: var(--bg-hover); color: var(--text); }
 
 .welcome {
   height: 100%;
@@ -1171,15 +1315,23 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .page-head, .ai-bar { padding-left: 20px; padding-right: 20px; }
-  /* !important 覆盖桌面档 ResizeObserver 写入的内联对齐值；窄屏正文不再居中，区块跟随 20px 通栏 */
-  .related { padding-left: 20px !important; padding-right: 20px; }
-  .page-head { padding-top: 20px; }
+  .editor-topbar { padding: 6px 14px; }
+  .page-head { padding: 20px 20px 0; }
+  .related { padding: 0 20px 20px; }
+  .editor-area :deep(.vditor-reset) {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+  .editor-area :deep(.vditor-toolbar) {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
   .title-input { font-size: 26px; }
-  .ai-hint { display: none; }
+  .meta-date { display: none; }
   .evidence-drawer { width: 100%; border-left: 0; }
+  .statusbar { padding: 4px 14px; gap: 10px; }
 
-  /* 页头操作区折叠：摘要行显示、折叠区随状态隐藏；展开时隐藏摘要行的保存状态避免与区内重复 */
+  /* 页头操作区折叠：摘要行显示、折叠区随状态隐藏 */
   .head-summary {
     display: flex;
     align-items: center;
@@ -1191,8 +1343,5 @@ onUnmounted(() => {
   }
   .page-chrome { padding-top: 8px; }
   .page-head.chrome-collapsed .page-chrome { display: none; }
-  .page-head.chrome-collapsed .page-chrome .head-meta { border-bottom: 1px solid var(--border); }
-  .page-head:not(.chrome-collapsed) .head-summary .save-state { display: none; }
-  .ai-bar { padding-top: 0; }
 }
 </style>
