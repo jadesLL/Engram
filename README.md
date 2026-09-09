@@ -11,7 +11,7 @@
 ```
 你导入资料 ──► Engram 存储并提取文本层（PDF 文字层 / Office / md）
                     │
-外部 Agent ◄───────┤  MCP 10 工具 或 engram CLI（同一 Bearer Token）
+外部 Agent ◄───────┤  MCP 15 工具 或 engram CLI（同一 Bearer Token）
 （ZCode/Codex/…）   ▼
               按指南作业：Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit
                     │
@@ -19,13 +19,14 @@
 ```
 
 - **《Agent 作业指南》三端同源**：MCP `kb_guide` 工具、`GET /api/guide`、`engram guide` 输出同一份方法论（页面契约、八阶段作业流程、证据规则），Agent 接上就能按既有逻辑干活。
+- **内置 skill 按需下发**：服务端内置作业手法（`skill_list` 列清单、`skill_guide` 取全文），如纪要转 Markdown、入库纪律；skill 版本独立于指南版本，改 skill 不把已有页面标为规则落后。
 - **CLI 优先、逐份串行**：能跑 shell 的 Agent 优先用 CLI（MCP 兜底用于图像直读等场景）；收到提炼指令先用 `files list --pending` 自动索引待提炼清单，逐份提炼、写完一份再下一份。
 - **规则版本化，旧库可升级**：提炼规则带版本号（`GUIDE_VERSION`），Agent 每次写页服务端把版本记入页面索引元数据（只进索引库，不写正文）；规则升级后用 `pages list --outdated`（CLI）或 `list_pages` 传 `outdated=true`（MCP）列出落后的概念/实体页（原始资料只读不改），按最新指南逐页重写覆盖即完成旧库升级。
 - **质量由确定性门禁兜底**：引文逐字校验（编造即拒绝）、新建概念/实体页两来源门禁（≥2 个不同原始资料路径各 1 条引文，或单路径 ≥2 条）、每次写入自动记入 `Wiki/log.md` 操作日志与证据账本（编辑器「来源证据」抽屉可逐条复核）。
 
 ## 功能总览
 
-### 🧠 面向 Agent 的 MCP 接口（13 工具）
+### 🧠 面向 Agent 的 MCP 接口（15 工具）
 
 在 设置 → Agent 接入 →「其他 Agent（MCP 接入）」生成 Token（`Authorization: Bearer`，MCP/CLI/REST 三用），streamable HTTP 端点 `/mcp`：
 
@@ -40,10 +41,11 @@
 | `rename_page` | 重命名页面：文件随标题移动、`[[旧标题]]` 双链自动重定向，页面 ID 与图谱边保持不变 |
 | `move_page` | 移动页面到 `Wiki/` 树内其他目录（页面 ID 与图谱边保持不变，可顺带改标题） |
 | `delete_page` | 单页软删除入回收站（可恢复，按标题 / ID / 路径定位）；只允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 拒删，无永久删除/清空回收站能力 |
-| `save_chat` | 对话沉积到 `原始资料/对话/` |
+| `save_chat` | 对话沉积到 `原始资料/对话/`（**须用户明确指示**才可调用） |
 | `kb_guide` | 下发《Agent 作业指南》全文 |
+| `skill_list` / `skill_guide` | 内置作业 skill：先列清单（名称 / 用途 / 何时用 / 版本），需要时再取某份全文。skill 与指南同级但按需获取，版本独立于 `GUIDE_VERSION`，改 skill 不触发全库「规则落后」 |
 
-**各 Agent 接入**：设置 → Agent 接入 一个面板搞定——「接入目标」选 ZCode 桌面端 / DeepSeek Harness（dsh）可一键注册；选「其他 Agent」显示 MCP Server 地址、Token 管理与 Codex / Claude Code / Kimi / 通用配置片段一键复制；面板底部「查看工具」逐条列出现有 MCP 工具（功能、参数、要点与 CLI 等价命令）。Claude Code 示例：
+**各 Agent 接入**：设置 → Agent 接入 一个面板搞定——「接入目标」选 ZCode 桌面端 / DeepSeek Harness（dsh）可一键注册；选「其他 Agent」显示 MCP Server 地址、Token 管理与 Codex / Claude Code / Kimi / 通用配置片段一键复制；面板底部「查看工具」（默认收起，点「展开全部」查看）逐条列出现有 MCP 工具（功能、参数、要点与 CLI 等价命令）。Claude Code 示例：
 
 ```bash
 claude mcp add --transport http engram http://<主机IP>:18080/mcp \

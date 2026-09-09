@@ -45,7 +45,8 @@
 
         <div class="integration-note">
           注册后，ZCode 中的对话即可通过 Engram 的 MCP 工具（检索 / 读页面 / 带证据写页面等）驱动知识库；
-          提炼方法论用 kb_guide 工具获取，工具清单见本页底部「查看工具」。CLI 方式：在装有 ZCode 终端的环境执行
+          提炼方法论用 kb_guide 工具获取，具体作业手法与纪律用 skill_list 看清单、skill_guide 取全文，
+          工具清单见本页底部「查看工具」。CLI 方式：在装有 ZCode 终端的环境执行
           <code>ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli.js guide</code>。
         </div>
       </template>
@@ -87,7 +88,8 @@
         <div class="integration-note">
           注册写入 <code>$DSH_HOME/cordis.patch.yml</code>（默认 <code>~/.dsh</code>），对所有 dsh profile（web /
           headless / sdk / acp）生效，模型侧工具名为 <code>mcp__engram__*</code>（检索 / 读页面 / 带证据写页面等，
-          清单见本页底部「查看工具」）。Engram 未启动时 dsh 照常启动，只是这组工具缺席；本机其他 patch 条目与注释不会被改动。
+          作业手法用 <code>skill_list</code> / <code>skill_guide</code>，清单见本页底部「查看工具」）。
+          Engram 未启动时 dsh 照常启动，只是这组工具缺席；本机其他 patch 条目与注释不会被改动。
         </div>
       </template>
     </template>

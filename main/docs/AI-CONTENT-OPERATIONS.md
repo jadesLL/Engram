@@ -15,6 +15,10 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
 - **只读区服务端强制**：Agent 的写入（`write_page`）与页面操作（`rename_page` / `move_page` / `delete_page` 及对应 CLI 子命令）只允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 是只读区，越界一律 403 拒绝。
+  - 「只读」约束的是 **Agent 的权限**，不等于文件不可改：软件本身（Web 界面与 REST API）具备上传、新建、删除原始资料的能力，那是**用户的操作**。Agent 需要新增或删除原始资料时，**先问用户并说明原因，得到明确同意再做**，不得走 HTTP/CLI 旁路自行写入。权限不等于授权。
+  - 证据门禁报「来源必须在 `原始资料/` 下」时同理：停下来问用户「要沉淀这份资料，需要先导入原始资料，可以吗？」，不要自己找旁路把文件塞进去。
+- **对话沉积须用户指示**：`save_chat`（CLI `chat save`）只在用户明确说「沉淀」、或 Agent 先问并得到同意后才可执行；Agent 不得自行判断「这段对话有价值」就沉淀。已沉淀的对话属于原始资料，**可以**被后续提炼作业引用——卡的是「谁决定沉淀」，不是「沉淀后能不能用」。
+- **内置 skill 按需下发**：`skill_list`（MCP）列服务端内置的作业 skill 元数据（名称 / 用途 / 何时用 / 版本），`skill_guide` 按名取全文。skill 与《Agent 作业指南》同级、同样由服务端内置经 MCP 下发（Agent 读的是工具返回值，不是安装目录文件）；区别是**按需**——清单只回元数据，需要时才取正文，因此 skill 增多不会一次性灌满上下文。skill 版本独立于 `GUIDE_VERSION`，改 skill 不改抽取口径、**不触发全库「规则落后」**；skill 仅服务端内置，不开放用户自定义。新增 skill 时同步 `web/src/lib/mcpTools.ts`（Agent 接入界面清单）与本文。
 - **删除只入回收站**：`delete_page`（MCP）与 `engram pages delete`（CLI）只做软删除，把单个页面移入回收站（按标题 / 页面 ID / 页面路径定位；用户可在 设置 → 存储空间 → 回收站 恢复）；也不提供永久删除或清空回收站能力。
 - **改名/移动不换 ID**：`rename_page` / `move_page`（CLI `pages rename|move`）保持页面 ID 与图谱边；重命名会把其他页面引用的 `[[旧标题]]` 双链重定向。不要用「新建+删除」模拟改名——那会产生新页面 ID 并让引用悬空。
 - **图谱关联可查询**：`related_pages`（MCP）返回页面的入链/出链邻居与实体关系（与编辑器「相关页面」同一数据），供写「相关页面」章节、验证 `[[双链]]` 目标与排查反向引用。
@@ -46,11 +50,14 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 ## 动手前 / 动手后
 
 1. 任何写操作前，先 `read_page` 读取 `AIWorks/log/log.md` 了解最近状态。
-2. 按指南（`kb_guide`）完成作业；写入交给 `write_page`，删除交给 `delete_page`（只入回收站），门禁与日志自动兜底。
+2. 按指南（`kb_guide`）完成作业；具体作业手法与纪律用 `skill_list` 看清单、`skill_guide` 取全文；写入交给 `write_page`，删除交给 `delete_page`（只入回收站），门禁与日志自动兜底。
+3. 涉及原始资料的写入/删除、对话沉积，先取得用户同意（见上文「接入方式与优先级」）。
 
 ## 实际执行位置
 
 - 作业指南单一来源：`server/src/content/agentGuide.ts`
+- 内置 skill 单一来源：`server/src/content/skills/`（注册表 `index.ts`）
+- Agent 接入界面的工具清单：`web/src/lib/mcpTools.ts`（新增/改名工具时与 `server/src/mcp/server.ts` 两处同步）
 - Agent 写入门禁与账本：`server/src/pipeline/agentWrite.ts`
 - Agent 单页删除内核（只入回收站 + Wiki/ 守卫）：`server/src/pipeline/agentDelete.ts`
 - MCP 端点（streamable HTTP + Bearer）：`server/src/mcp/server.ts`
