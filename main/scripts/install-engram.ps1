@@ -66,7 +66,9 @@ function Invoke-Logged([string]$file, [string[]]$arguments) {
   try {
     & cmd /c exit 251 | Out-Null
     $captured = New-Object System.Collections.Generic.List[string]
-    & $file @arguments 2>&1 | ForEach-Object {
+    # 必须用 *>&1 而非 2>&1：嵌套 .ps1 的 Write-Host 走 Information 流（PS5.1），
+    # 只有 *>&1 能把它收进日志；2>&1 只并错误流，build 步的进度会凭空消失。
+    & $file @arguments *>&1 | ForEach-Object {
       $line = "$($_)"
       if ($line.Trim()) {
         $safe = Redact $line

@@ -37,11 +37,15 @@ const ok = path.join(tmp, 'ok.js');
 fs.writeFileSync(ok, "process.stdout.write('done\\n');process.exit(0);\n");
 const noExit = path.join(tmp, 'noexit.ps1');
 fs.writeFileSync(noExit, "Write-Host 'ran without setting exit code'\n");
+// 嵌套 .ps1 的 Write-Host 走 Information 流，只有 *>&1 能收进日志
+const hostOut = path.join(tmp, 'hostout.ps1');
+fs.writeFileSync(hostOut, "Write-Host 'child progress line'\n");
 
 const driver = `
 $ErrorActionPreference = 'Stop'
 $script:LastErrorLine = ''
-function Out-Line([string]$s) { }
+$script:logged = New-Object System.Collections.Generic.List[string]
+function Out-Line([string]$s) { $script:logged.Add($s) | Out-Null }
 ${helpers}
 ${pickFn}
 $c1 = Invoke-Logged 'node' @('${fail.replace(/\\/g, '\\\\')}')
@@ -51,6 +55,9 @@ $c2 = Invoke-Logged 'node' @('${ok.replace(/\\/g, '\\\\')}')
 Write-Host ("R2=" + $c2)
 $c3 = Invoke-Logged 'powershell.exe' @('-NoProfile','-ExecutionPolicy','Bypass','-File','${noExit.replace(/\\/g, '\\\\')}')
 Write-Host ("R3=" + $c3)
+$c4 = Invoke-Logged '${hostOut.replace(/\\/g, '\\\\')}' @()
+Write-Host ("R4=" + $c4)
+Write-Host ("HOSTLOGGED=" + [bool]($script:logged -match 'child progress line'))
 `;
 const driverFile = path.join(tmp, 'driver.ps1');
 // 带 BOM 写出：宿主按 GBK 读无 BOM 的 UTF-8 会撞上解析错误
@@ -70,6 +77,7 @@ check('失败命令保留真实退出码（128）', get('R1'), '128');
 check('报错取 fatal: 行而非末行', (get('L1') || '').includes('fatal: unable to access'), 'true');
 check('成功命令返回 0', get('R2'), '0');
 check('无 exit 的嵌套脚本不被陈旧退出码误判', get('R3'), '0');
+check('嵌套脚本的 Write-Host 也能进日志（须用 *>&1）', get('HOSTLOGGED'), 'True');
 
 // 含非 ASCII 的 .ps1 必须有 UTF-8 BOM：PS 5.1 按 ANSI(GBK) 读无 BOM 的 UTF-8，会把中文
 // 字符串里的引号吃掉导致整脚本 ParserError（2026-09-10 实测：install-engram.ps1 丢 BOM 后
