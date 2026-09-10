@@ -1,6 +1,8 @@
-# Engram 持续集成：仅 verify（build + typecheck + test）
+# Engram 持续集成
 # 触发：任意分支推送（v* 标签除外，标签走 release.yml）、PR、手动触发
-# 不构建不推送任何镜像——镜像（版本 tag + latest）只在发版时由 release.yml 构建推送
+#   - 全部分支：verify（build + typecheck + test）
+#   - main 分支推送：verify 通过后额外构建推送「主分支滚动镜像」:main
+#     （发版前的测试通道：合 main 即更新，无需发版本号；版本 tag 与 :latest 仍只在发版时由 release.yml 产出）
 # Runner：Windows 宿主机模式（label: windows），Docker 命令经 Docker Desktop 跑 Linux 容器
 name: CI
 
@@ -14,6 +16,9 @@ on:
 env:
   # Windows runner 的 Git Bash 会对参数做 MSYS 路径转换（main → C:/Program Files/Git/main），必须禁用
   MSYS_NO_PATHCONV: '1'
+  # 与 release.yml 同一套镜像地址（三层路径 owner/repo/imagename，两层会致 NAS 拉取异常）
+  REGISTRY: ${{ vars.DOCKER_REGISTRY || 'gitea.example.com' }}
+  IMAGE: ${{ vars.DOCKER_IMAGE || 'gitea.example.com/example/engram/engram' }}
 
 jobs:
   build:
@@ -25,3 +30,18 @@ jobs:
       - name: verify 阶段（build + typecheck + test）
         shell: bash
         run: docker build --target verify -t engram:ci-verify main
+
+      - name: 构建并推送主分支滚动镜像（:main）
+        # 只在 main 分支推送上执行：:main 是发版前的测试通道，供测试部署跟踪
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+        run: |
+          # verify 目标不产出运行时镜像，这里按同一提交构建完整镜像并打 :main
+          docker build --build-arg ENGRAM_GIT_SHA="${{ github.sha }}" \
+            --label org.opencontainers.image.revision="${{ github.sha }}" \
+            -t "$IMAGE:main" main
+          echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
+          docker push "$IMAGE:main"

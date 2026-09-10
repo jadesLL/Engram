@@ -52,6 +52,7 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 | 产物 | 名称 / 地址 | 用途 |
 |---|---|---|
 | Docker 镜像 | `gitea.example.com/example/engram/engram:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry）；应用内一键更新的版本信号源 |
+| Docker 滚动镜像 | `.../engram:main` | 每次 main 推送由 ci.yml 构建；发版前测试通道，合 main 即更新、无需发版本号（应用内「更新通道」选 `main`） |
 | Gitea Release | `v<版本>`，正文=CHANGELOG 版本段落 | 版本记录与更新检测信号源 |
 
 以下二进制产物**不随发版构建**，需要分发给他人时按需构建（CI dispatch：Actions → Release → Run workflow，输入标签+勾选产物，自动补挂 Release；或走路径 B/C 本地构建）：
@@ -322,7 +323,9 @@ docker compose -f docker-compose.nas.yml up -d
 
 ### 6.3 应用内更新
 
-Docker 部署在网页「设置 → 软件更新」一键更新（拉 latest 镜像 → switcher 容器接管重建 → 失败自动回滚）；桌面端同页下载新 exe 覆盖安装。更新源与令牌在设置页配置，存数据目录 `.env`。机制与安全说明见 [`GITEA-CI.md`](./GITEA-CI.md) 的「应用内自更新」章节。
+Docker 部署在网页「设置 → 软件更新」一键更新（拉目标 tag 镜像 → switcher 容器接管重建 → 失败自动回滚）；桌面端同页下载新 exe 覆盖安装。更新源与令牌在设置页配置，存数据目录 `.env`。机制与安全说明见 [`GITEA-CI.md`](./GITEA-CI.md) 的「应用内自更新」章节。
+
+**更新通道**（设置 → 软件更新 → 高级选项）：`latest`（默认）跟正式发版线；`main` 跟主分支滚动构建，合 main 即更新、不发版即可测试。发版前想提早在 Docker 上验证最新代码，就把测试部署切到 `main`，验证完切回 `latest`。
 
 ---
 

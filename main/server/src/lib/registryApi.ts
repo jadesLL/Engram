@@ -9,6 +9,7 @@ export async function fetchRemoteDigest(
   registry: string,
   repository: string,
   auth: { username: string; token: string },
+  tag = 'latest',
 ): Promise<string | null> {
   // 镜像 ref 拆出的 registry 是裸主机名（如 host:11111），fetch 需要显式协议；
   // 缺省按 Docker 惯例走 https（localhost/内网 IP 裸名按 http）
@@ -26,7 +27,7 @@ export async function fetchRemoteDigest(
     'application/vnd.docker.distribution.manifest.v1+prettyjws',
   ].join(', ');
 
-  const url = `${base}/v2/${repository}/manifests/latest`;
+  const url = `${base}/v2/${repository}/manifests/${encodeURIComponent(tag)}`;
   const headers: Record<string, string> = { Accept: accept };
   if (auth.username && auth.token) {
     headers.Authorization = `Basic ${Buffer.from(`${auth.username}:${auth.token}`).toString('base64')}`;

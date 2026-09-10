@@ -9,17 +9,20 @@
 ```text
 开发（worktree）→ verify → 用户三选一：仅合并 / 合并并推送远端 / 合并推送+发版
 →（合并时）新功能同步整合进根 README.md
-→（推送）git push gitea main：CI 只做 verify（build+typecheck+test），不构建镜像
+→（推送）git push gitea main：CI verify（build+typecheck+test）+ 构建推送主分支滚动镜像 :main
 →（发版）bump 三处版本号 + CHANGELOG.md 写 v<版本> 段落 → 提交并立即推送 → git tag v<版本> && git push gitea v<版本>
 → release.yml 自动：校验并提取 CHANGELOG 段落（缺失即失败）→ verify 门禁（build+typecheck+test）→ 构建并推送镜像（版本 tag + latest）→ 创建 Gitea Release（正文=CHANGELOG 版本段落，无二进制附件）
 →（按需分发）Actions → Release → Run workflow：输入标签+勾选 exe/APK/离线包 → verify 门禁 → 构建并补挂到对应 Release → 归档 releases/<版本>/
 → 部署机 docker login + docker pull 新版本镜像
 ```
 
+**两条镜像通道**：`:latest`（+ 版本 tag）只在发版时由 release.yml 产出，是正式发版线；`:main` 由 ci.yml 在每次 main 推送后产出，是发版前的滚动测试通道（合 main 即更新，无需发版本号）。选择哪条由部署机在应用内「更新通道」配置决定，详见「应用内自更新」章节。
+
 **铁律**：
 - 功能验收后必须问用户三选一（仅合并 / 合并并推送 / 合并推送+发版），合并后必须推送 gitea，不得留本地远端分叉。
 - **只要更新版本号，提交后必须立即推送 gitea**（版本号 = 镜像 tag = Release 标签，留在本地会造成远端镜像与版本号脱节），并确认 Actions 运行成功。
-- **镜像只在发版时构建**（2026-08-20 起生效）：main 日常推送不构建不推送任何镜像，Registry 里的版本 tag 永远只对应发版产物，不会被日常推送覆盖。
+- **版本 tag 与 :latest 只在发版时构建**（2026-08-20 起生效）：Registry 里的版本 tag 永远只对应发版产物，不会被日常推送覆盖。
+- **`:main` 滚动镜像由 ci.yml 在 main 推送时构建推送**（2026-09-11 起生效，与 verify 同一 job、verify 通过后执行）：供测试部署跟踪主分支最新代码，不带版本语义（身份看烤入的 `/app/GIT_SHA`）。它是独立 tag，不触碰版本 tag 与 `:latest`，故不与「版本 tag 只在发版构建」冲突。
 - **二进制产物不随发版构建**（2026-09-08 起生效，对齐 Hermes 式发版）：推 v* 标签只构建推送镜像 + 创建 Release；exe/APK/离线 tar.gz 需要分发他人时手动 dispatch release.yml 按需构建补挂（输入标签+勾选产物），日常自用全部走源码模式与 Registry 镜像，无二进制消费方。
 - **功能合并 main 时同步整合进根 `README.md`**；**发版时必须写 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落**（距上次发布以来的全部新功能），release.yml 校验缺失即失败，段落会自动发布为 Release 正文。
 - **镜像烤入提交号**（2026-09-09 起，对齐 hermes-agent 的 build-file 路线）：release.yml 构建镜像时传 `--build-arg ENGRAM_GIT_SHA=<提交>`，写入镜像内 `/app/GIT_SHA`；镜像里没有 `.git`，应用内 设置 → 应用版本 靠它显示 `版本号 · 提交号`。本地 `docker compose up -d --build` 想显示提交号，先 `export ENGRAM_GIT_SHA=$(git rev-parse HEAD)`（不传则只显示版本号）。
@@ -27,9 +30,9 @@
 
 | 环节 | 命令/动作 | 自动发生什么 |
 |---|---|---|
-| 日常推送 | `git push gitea main` | ci.yml：仅 verify（build+typecheck+test），不碰镜像 |
+| 日常推送 | `git push gitea main` | ci.yml：verify（build+typecheck+test）+ 构建推送滚动镜像 `:main` |
 | 发版 | bump 版本号 + CHANGELOG 段落 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：校验提取 CHANGELOG 段落（缺失失败）→ verify 门禁（build+typecheck+test）→ 构建推送镜像（`:<版本>` + `:latest`）→ 创建 Release（正文=CHANGELOG 段落，无二进制附件） |
-| 按需分发 | Gitea 网页手动触发 release.yml（workflow_dispatch）：输入已发版标签 + 勾选 binaries（exe+APK）/ offline_image（docker tar.gz） | verify 门禁 → 构建所选产物 → 产物上传 Artifact（保留 7 天）并自动补挂到对应版本 Release；不推镜像。提前验证 main 最新代码请走 BUILDING.md 本地构建 |
+| 按需分发 | Gitea 网页手动触发 release.yml（workflow_dispatch）：输入已发版标签 + 勾选 binaries（exe+APK）/ offline_image（docker tar.gz） | verify 门禁 → 构建所选产物 → 产物上传 Artifact（保留 7 天）并自动补挂到对应版本 Release；不推镜像。提前验证 main 最新代码用 `:main` 通道（应用内一键更新）或 BUILDING.md 本地构建 |
 | 部署 | `docker login` → `docker compose -f docker-compose.pull.yml up -d` | — |
 
 **版本号一致性（发版门禁，release.yml 有校验）**：
@@ -118,15 +121,28 @@ docker compose -f docker-compose.pull.yml up -d
 | Gitea 服务地址 | `UPDATE_GITEA_URL` | 版本检测来源，如 `https://gitea.example.com` |
 | Gitea 仓库 | `UPDATE_GITEA_REPO` | `owner/name` 形式 |
 | Gitea 访问凭据（二选一） | `UPDATE_GITEA_TOKEN`（访问令牌），或 `UPDATE_GITEA_AUTH_TYPE=password` + `UPDATE_GITEA_USERNAME` / `UPDATE_GITEA_PASSWORD`（用户名密码） | **公开仓库无需填写**；私有仓库需能读 Release |
-| 镜像更新源 | `UPDATE_IMAGE_REF` | 不含 tag 的镜像地址，自动拉 `latest`；未配置时从当前容器镜像推导 |
+| 镜像更新源 | `UPDATE_IMAGE_REF` | 不含 tag 的镜像地址；未配置时从当前容器镜像推导 |
+| 更新通道 | `UPDATE_IMAGE_TAG` | 跟踪的镜像 tag：`latest` 正式发版线（默认）、`main` 主分支滚动构建（发版前测试用）。未配置时按当前容器镜像自动判断（跑在 `:main` 就继续跟 main，版本号 tag 回退 latest） |
 | 镜像仓库用户名/令牌 | `UPDATE_REGISTRY_USERNAME` / `UPDATE_REGISTRY_TOKEN` | 私有 Registry 必填；公开仓库无需填写 |
 
 私有化部署用户把 Gitea 地址/仓库换成自己的即可，镜像源同样可换。
 
+### 测试通道：跟随主分支最新代码
+
+不想为每个小修复发版、只想到手验证时，把部署机切到 `:main` 通道：
+
+1. 设置 → 软件更新 → 「高级选项（更新通道 / 自定义镜像源）」→ 更新通道选 `main` → 保存。
+2. 之后每次 main 推送，ci.yml 都会重推 `:main` 镜像；页面点「立即更新」即拉到主分支最新代码。
+3. 版本号在这条通道上**不变**（版本号只在发版时 bump），判断更新是否落地看 设置 → 应用版本 的**提交号**，与「检查更新」结果一致。
+
+切回正式发版线：更新通道选 `latest`（或留空自动），保存后重新点「立即更新」把容器换成 `:latest` 镜像。
+
+> `:main` 是移动 tag，同一提交号每次都覆盖重推；它不是发布产物，不应作为长期部署基线。发版后请回到 `:latest`。
+
 ### 更新流程与安全机制
 
-- **检查更新**：比对 Gitea 最新 Release 版本号 + Registry `latest` digest（两者取或）。进入应用时自动检测一次（8 小时节流），有新版本时侧栏设置按钮出现红点并 toast 提醒。
-- **一键更新（Docker）**：拉取 `latest` 镜像 → 用旧镜像临时起 switcher 容器接管 → 旧容器改名 `engram-old` → 按原容器配置（端口/卷/网络/环境变量全保留）创建新容器 → 停旧起新 → 等新容器健康（最长 180s）→ 健康则删旧容器；**新容器起不来则自动回滚**重启旧容器。
+- **检查更新**：比对 Gitea 最新 Release 版本号 + Registry 目标 tag 的 digest（两者取或）。`main` 通道下 Release 版本号与本地相同，故实际由 digest 驱动，提示为「主分支镜像有更新」。进入应用时自动检测一次（8 小时节流），有新版本时侧栏设置按钮出现红点并 toast 提醒。
+- **一键更新（Docker）**：拉取目标 tag（默认 `latest`，可切 `main`）镜像 → 用旧镜像临时起 switcher 容器接管 → 旧容器改名 `engram-old` → 按原容器配置（端口/卷/网络/环境变量全保留）创建新容器 → 停旧起新 → 等新容器健康（最长 180s）→ 健康则删旧容器；**新容器起不来则自动回滚**重启旧容器。
 - **桌面端更新**：设置页下载 Release 的 exe 安装包（带进度条）→ 运行安装包覆盖安装，应用自动退出。
 - 手动恢复（极端情况 switcher 也失败）：`docker start engram-old`，然后浏览器刷新。
 

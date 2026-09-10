@@ -11,7 +11,7 @@ process.env.DATA_DIR = temp;
 const { SWITCHER_SCRIPT, buildCreateBody, buildSwitcherCreateBody, OLD_CONTAINER_NAME } = await import(
   '../lib/updateSwitcher.js'
 );
-const { deriveDefaultImageRef, buildRegistryAuthHeader, parseEnv, writeUpdateEnv, readUpdateEnv } = await import(
+const { deriveDefaultImageRef, deriveDefaultImageTag, buildRegistryAuthHeader, parseEnv, writeUpdateEnv, readUpdateEnv } = await import(
   '../lib/updateConfig.js'
 );
 const { compareVersions, currentVersion } = await import('../lib/version.js');
@@ -91,6 +91,18 @@ test('deriveDefaultImageRef 推导规则', () => {
   assert.equal(deriveDefaultImageRef('reg.io/app@sha256:abc'), 'reg.io/app');
 });
 
+test('deriveDefaultImageTag 只继承滚动 tag，钉住的版本号回退 latest', () => {
+  // 容器跑在哪个滚动通道上就继续跟哪个
+  assert.equal(deriveDefaultImageTag('gitea.xxx.com:11111/example/engram:main'), 'main');
+  assert.equal(deriveDefaultImageTag('gitea.xxx.com:11111/example/engram:latest'), 'latest');
+  assert.equal(deriveDefaultImageTag('engram:dev'), 'dev');
+  // 版本号 tag 是发布快照，继续跟踪会永远"已是最新"，回退 latest
+  assert.equal(deriveDefaultImageTag('gitea.xxx.com:11111/example/engram:1.2.5'), 'latest');
+  // 无 tag（registry 端口冒号不算 tag）
+  assert.equal(deriveDefaultImageTag('gitea.xxx.com:11111/example/engram'), 'latest');
+  assert.equal(deriveDefaultImageTag('engram'), 'latest');
+});
+
 test('buildRegistryAuthHeader base64 编码凭据', () => {
   const header = buildRegistryAuthHeader('gitea.xxx.com:11111/example/app', 'user', 'pass');
   assert.ok(header);
@@ -116,6 +128,14 @@ test('writeUpdateEnv 保留无关行、空值清除', () => {
   const text2 = fs.readFileSync(file, 'utf8');
   assert.ok(!text2.includes('UPDATE_GITEA_TOKEN='));
   assert.ok(text2.includes('UPDATE_GITEA_URL=https://b.com'));
+
+  // 更新通道同样是可保留写入的普通键
+  writeUpdateEnv({ imageTag: 'main' });
+  assert.ok(fs.readFileSync(file, 'utf8').includes('UPDATE_IMAGE_TAG=main'));
+  assert.equal(readUpdateEnv().imageTag, 'main');
+  writeUpdateEnv({ imageTag: '' });
+  assert.ok(!fs.readFileSync(file, 'utf8').includes('UPDATE_IMAGE_TAG='));
+  assert.equal(readUpdateEnv().imageTag, '');
 
   const cfg = readUpdateEnv();
   assert.equal(cfg.giteaUrl, 'https://b.com');
