@@ -261,22 +261,25 @@ docker compose -f docker-compose.pull.yml up -d
 
 **方式四：NAS 部署**（极空间 / 群晖 / 威联通等，模板 `main/docker-compose.nas.yml`）
 
-与方式二同源，但按 NAS 环境做了四处适配：宿主端口可调（默认 18080，避开 NAS 上常被占用的 8080）、JWT 密钥用 compose 变量而不依赖仓库里的 bash 脚本生成的 `.env.onlyoffice`、三个 onlyoffice 数据卷显式固定卷名、网络 MTU 默认 1500。**只需 `docker-compose.nas.yml` 一个文件**（不必克隆整个仓库），所有变量都有默认值，直接启动即可。
+与方式二同源，但按 NAS 环境做了四处适配：宿主端口可调（默认 18080，避开 NAS 上常被占用的 8080）、镜像地址与 JWT 密钥走 compose 变量而不依赖仓库里的 bash 脚本生成的 `.env.onlyoffice`、三个 onlyoffice 数据卷显式固定卷名、网络 MTU 默认 1500。**只需 `docker-compose.nas.yml` 一个文件**（不必克隆整个仓库）。
+
+> **先改 `ENGRAM_IMAGE`**：模板里的镜像地址是仓库内的脱敏占位符（`gitea.xxx.com:11111/...`），**直接启动会连不上**（报 `request canceled while waiting for connection`）。真实地址见 Gitea 仓库变量 `DOCKER_IMAGE`，在项目的「环境变量」里设 `ENGRAM_IMAGE=<真实三层路径>:latest`，或直接改 compose 文件里的字面值。
 
 ```bash
-# 登录私有 Registry 并启动
-docker login gitea.xxx.com:11111 -u example -p <package权限token>
+# 登录私有 Registry（地址同上，即 DOCKER_REGISTRY）并启动
+docker login <你的Registry地址> -u <用户名> -p <package权限token>
 docker compose -f docker-compose.nas.yml up -d
 ```
 
 访问 `http://<NAS_IP>:18080`，首次进入在页面设置初始密码。
 
-> **图形界面部署（极空间 / 群晖）**：把 `docker-compose.nas.yml` 内容粘贴到 NAS 的 Compose 项目里时，**界面不会加载同目录的 `.env` 文件**，需要在项目的「环境变量」设置里逐项填写，或直接改 compose 文件里的字面值。例如数据目录要填 `ENGRAM_DATA_DIR=/你的存储路径/engram/data`（不填则用项目目录下的 `./data`）。
+> **图形界面部署（极空间 / 群晖）**：把 `docker-compose.nas.yml` 内容粘贴到 NAS 的 Compose 项目里时，**界面不会加载同目录的 `.env` 文件**，需要在项目的「环境变量」设置里逐项填写，或直接改 compose 文件里的字面值。例如 `ENGRAM_IMAGE` 填真实镜像地址、`ENGRAM_DATA_DIR=/你的存储路径/engram/data`（不填则用项目目录下的 `./data`）。
 
 需要覆盖默认值时（`.env` 仅对命令行 `docker compose` 生效）：
 
 | 键 | 必填 | 说明 |
 |---|---|---|
+| `ENGRAM_IMAGE` | **是** | 镜像地址，三层路径 `registry/owner/repo/imagename:latest`。默认值是脱敏占位符，必须换成真实地址，否则拉取超时 |
 | `ONLYOFFICE_JWT_SECRET` | 否 | ONLYOFFICE 编辑器 JWT 密钥，engram 与 onlyoffice 两容器共用。有内置默认值，不填也能启动；默认值是公开占位，建议在 NAS 项目的环境变量里覆盖为自选随机值（`openssl rand -hex 32`） |
 | `ENGRAM_HOST_PORT` | 否 | 宿主映射端口，默认 18080 |
 | `ENGRAM_DATA_DIR` | 否 | 数据目录的宿主路径（`wiki.db` + `brain/` 全在此），默认 compose 同目录 `./data` |
@@ -298,10 +301,12 @@ docker compose -f docker-compose.nas.yml up -d
 **NAS 常见坑**：
 
 1. 镜像架构：Registry 里的镜像由普通 `docker build` 构建，**只有 `linux/amd64`**。x86_64 机型（极空间 Z4 系列、群晖 DS920+ 等）可直接用；ARM 机型需先给 release.yml 加 buildx 多架构构建。
-2. 图形界面不读 `.env`：极空间 / 群晖的 Compose 项目界面只解析 compose 文件本身，`${VAR}` 未在项目环境变量里设置时会用模板默认值或直接报「required variable ... is missing a value」。变量要在项目设置里填，或直接改 compose 字面值。
-3. 极空间 / 群晖的 Docker 管理界面若不允许挂 `/var/run/docker.sock`，删掉该行（只损失网页内更新，其他功能不受影响）。
-4. `onlyoffice/documentserver:9.4.0` 走 Docker Hub，拉不动时配镜像加速器或离线 `docker load` 导入。
-5. 私有 Registry 用自签证书时，需在 NAS 的 Docker 配置里加 `insecure-registries` 或导入 CA，否则 `docker login` 报 `x509`。
+2. `ENGRAM_IMAGE` 没改：模板默认值 `gitea.xxx.com:11111/...` 是仓库内脱敏占位符，该域名解析到公网某处，`docker pull` 会卡到超时报 `request canceled while waiting for connection`。换成仓库变量 `DOCKER_IMAGE` 里的真实三层路径即可。
+3. Registry 只有 AAAA 记录（IPv6-only）时，NAS 必须有可用的 IPv6 出口才能 `docker login` / `docker pull`；纯 IPv4 环境下改用局域网 IP 形式的 Registry 地址，或先在别的机器 `docker save` 后离线导入。
+4. 图形界面不读 `.env`：极空间 / 群晖的 Compose 项目界面只解析 compose 文件本身，`${VAR}` 未在项目环境变量里设置时会用模板默认值。变量要在项目设置里填，或直接改 compose 字面值。
+5. 极空间 / 群晖的 Docker 管理界面若不允许挂 `/var/run/docker.sock`，删掉该行（只损失网页内更新，其他功能不受影响）。
+6. `onlyoffice/documentserver:9.4.0` 走 Docker Hub，拉不动时配镜像加速器或离线 `docker load` 导入。
+7. 私有 Registry 用自签证书时，需在 NAS 的 Docker 配置里加 `insecure-registries` 或导入 CA，否则 `docker login` 报 `x509`。
 
 **部署三条铁律**：
 

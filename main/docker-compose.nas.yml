@@ -1,16 +1,18 @@
 # NAS 部署（极空间 / 群晖 / 威联通等，x86_64 或 arm64 均需镜像架构匹配）
-# 镜像名是三层路径 example/engram/engram（owner/repo/imagename，归属仓库），不要写成两层的 example/engram
 # 用法：
-#   docker login gitea.xxx.com:11111 -u example -p <package权限token>
+#   docker login <你的Registry地址> -u <用户名> -p <package权限token>
 #   docker compose -f docker-compose.nas.yml up -d
 # 访问 http://<NAS_IP>:${ENGRAM_HOST_PORT:-18080}
 # 注意：
-#   1) 不要加 pull_policy: never（禁止拉取，本地无镜像时必报"找不到镜像"）
-#   2) 极空间/群晖的图形界面不会加载同目录 .env，环境变量要在项目的「环境变量」设置里填，
+#   1) ENGRAM_IMAGE 必须改成你的真实镜像地址（三层路径 owner/repo/imagename，
+#      不要写成两层的 owner/image，NAS 实测拉取异常）。下方默认值是仓库里的脱敏占位符，
+#      真实地址见 Gitea 仓库变量 DOCKER_IMAGE，直接照着填。
+#   2) 不要加 pull_policy: never（禁止拉取，本地无镜像时必报"找不到镜像"）
+#   3) 极空间/群晖的图形界面不会加载同目录 .env，环境变量要在项目的「环境变量」设置里填，
 #      或直接改本文件的字面值。ONLYOFFICE_JWT_SECRET 有内置默认值，不填也能启动。
 services:
   engram:
-    image: gitea.xxx.com:11111/example/engram/engram:latest
+    image: ${ENGRAM_IMAGE:-gitea.xxx.com:11111/example/engram/engram:latest}
     container_name: engram
     ports:
       # 宿主端口可调（NAS 上 8080 常被系统占用）；改 ENGRAM_HOST_PORT（命令行 .env 或项目环境变量）
