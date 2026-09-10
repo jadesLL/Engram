@@ -9,6 +9,12 @@ const fs = require('node:fs');
 const { fork } = require('node:child_process');
 const { spawn } = require('node:child_process');
 const net = require('node:net');
+const dataDirLib = require('./lib/data-dir');
+
+// 主进程没有全局兜底时，任何未处理的 Promise 拒绝都会让整个应用静默退出
+// （Node ≥15 语义；本应用多处后台任务不 await，必须自己接住）。
+process.on('unhandledRejection', (reason) => log('[main] 未处理的 Promise 拒绝：' + describeError(reason)));
+process.on('uncaughtException', (e) => log('[main] 未捕获异常：' + describeError(e)));
 
 // 隔离/自定义数据目录：自动化测试与便携场景用；必须在单实例锁之前生效（锁文件位于 userData 内）
 if (process.env.ENGRAM_USER_DATA) app.setPath('userData', path.resolve(process.env.ENGRAM_USER_DATA));
@@ -69,13 +75,19 @@ function getLocalPort() {
   return DEFAULT_LOCAL_PORT;
 }
 
-// 模式切换会重置连接信息；自动更新开关是用户偏好，跨模式保留
+// 模式切换会重置连接信息；数据仓库位置、端口、自动更新开关都是用户偏好，必须原样保留
+// （旧实现只留 autoUpdate，切一次模式就把 dataDir/localPort 清掉，数据位置静默回默认）
 function writeConnectionConfig(cfg) {
-  writeConfig({ autoUpdate: readConfig().autoUpdate, ...cfg });
+  const next = { ...readConfig() };
+  delete next.mode;
+  delete next.remoteUrl;
+  delete next.remoteToken;
+  delete next.directUrl;
+  writeConfig({ ...next, ...cfg });
 }
 
-// 数据保存位置（类 Obsidian 仓库位置）：首次启动用默认位置，设置页可改到任意目录。
-// 改目录自动迁移旧数据并重启内嵌 server（见 choose-data-dir IPC）。
+// 数据仓库位置（类 Obsidian 仓库）：首次启动用默认位置，设置页可切换到任意目录。
+// 切换不迁移数据，目标空目录由内嵌 server 启动时初始化为新仓库（见 choose-data-dir IPC）。
 function getDataDir() {
   const custom = readConfig().dataDir;
   return custom ? path.resolve(String(custom)) : path.join(app.getPath('userData'), 'data');
@@ -142,6 +154,10 @@ const SPLASH_STYLE = `
   .detail code { font-family: Consolas, monospace; font-size: 12px; color: #aab4c8; }
 `;
 
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function splashPage(title, desc, status) {
   return (
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
@@ -157,17 +173,18 @@ function splashPage(title, desc, status) {
 
 /** 错误页：与启动页同主题；lines 中的路径用 <code> 呈现 */
 function errorPage(title, lines) {
-  const esc = (s) =>
-    String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const body = lines
-    .map((l) => `<p class="detail">${l.includes('\\') || l.includes('/') ? '<code>' + esc(l) + '</code>' : esc(l)}</p>`)
+    .map(
+      (l) =>
+        `<p class="detail">${l.includes('\\') || l.includes('/') ? '<code>' + escHtml(l) + '</code>' : escHtml(l)}</p>`,
+    )
     .join('');
   return (
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>' +
     SPLASH_STYLE +
     '</style></head><body><div class="wrap">' +
     '<div class="err-icon">!</div>' +
-    `<h1 style="font-size:24px;letter-spacing:1px;">${esc(title)}</h1>` +
+    `<h1 style="font-size:24px;letter-spacing:1px;">${escHtml(title)}</h1>` +
     body +
     '</div></body></html>'
   );
@@ -327,14 +344,34 @@ function webDistPath() {
   return path.join(__dirname, 'web', 'dist');
 }
 
-async function startLocalMode() {
+async function startLocalMode(notice) {
+  try {
+    await startLocalModeInner(notice);
+  } catch (e) {
+    // 调用方都不 await，异常若逃逸即 unhandledRejection → 主进程静默退出
+    log('[local] 启动本地服务异常：' + describeError(e));
+    loadWin(dataUrl(errorPage('本地服务启动失败', ['启动过程出错：', describeError(e)])));
+  }
+}
+
+async function startLocalModeInner(notice) {
   const entry = serverEntryPath();
   if (!fs.existsSync(entry)) {
     applyPageChrome(SPLASH_BG);
-    win.loadURL(dataUrl(errorPage('本地后端缺失', ['未找到内置服务：', entry])));
+    loadWin(dataUrl(errorPage('本地后端缺失', ['未找到内置服务：', entry])));
     return;
   }
-  win.loadURL(dataUrl(splashPage('环境准备中', '正在准备运行环境，请稍候，完成后自动进入主界面。', '正在启动本地服务…')));
+  // notice 作为启动页初始状态直接内联（setSplashStatus 要等 data: URL 就绪，紧跟 loadURL 会静默失效）
+  const status = notice || '正在启动本地服务…';
+  loadWin(
+    dataUrl(
+      splashPage(
+        '环境准备中',
+        '正在准备运行环境，请稍候，完成后自动进入主界面。',
+        escHtml(status),
+      ),
+    ),
+  );
   applyPageChrome(SPLASH_BG);
   const port = getLocalPort();
   // 提交身份一并交给内嵌 server（/api/update/state 返回），与渲染层经 IPC 拿到的是同一份
@@ -358,19 +395,38 @@ async function startLocalMode() {
   serverChild.stdout.on('data', (d) => log('[server] ' + d.toString().trim()));
   serverChild.stderr.on('data', (d) => log('[server!] ' + d.toString().trim()));
   serverChild.on('exit', (code) => log(`[server] exited code=${code}`));
+  // 子进程 spawn 失败只发 'error' 事件；无监听者会变成 uncaughtException 直接带走主进程
+  serverChild.on('error', (e) => log('[server] spawn 失败：' + describeError(e)));
 
   const base = `http://127.0.0.1:${port}`;
   // 探活超过 6 秒时补充说明：首次启动要初始化数据库，慢是正常的，避免被当成卡死
   const slowHint = setTimeout(() => setSplashStatus('仍在准备中，首次启动需要初始化数据库，会稍慢一些…'), 6000);
-  waitForHealth(base, HEALTH_TIMEOUT_MS, () => serverChild && serverChild.exitCode === null).then((ok) => {
-    clearTimeout(slowHint);
-    if (ok) {
-      setSplashStatus('启动完成，正在进入界面…');
-      win.loadURL(base);
-    } else {
-      win.loadURL(dataUrl(errorPage('本地服务启动失败', ['启动超时或内嵌服务异常，详见日志：', logFile()])));
-    }
-  });
+  waitForHealth(base, HEALTH_TIMEOUT_MS, () => serverChild && serverChild.exitCode === null)
+    .then((ok) => {
+      clearTimeout(slowHint);
+      if (ok) {
+        setSplashStatus('启动完成，正在进入界面…');
+        loadWin(base);
+      } else {
+        loadWin(dataUrl(errorPage('本地服务启动失败', ['启动超时或内嵌服务异常，详见日志：', logFile()])));
+      }
+    })
+    .catch((e) => {
+      clearTimeout(slowHint);
+      log('[local] 探活异常：' + describeError(e));
+      loadWin(dataUrl(errorPage('本地服务启动失败', ['探活过程出错：', describeError(e)])));
+    });
+}
+
+/** 窗口可能已被销毁（退出流程中）；loadURL 对已销毁窗口会同步抛错 */
+function loadWin(url) {
+  if (!win || win.isDestroyed()) return;
+  Promise.resolve(win.loadURL(url)).catch((e) => log('[local] 页面加载失败：' + describeError(e)));
+}
+
+function loadFileWin(rel) {
+  if (!win || win.isDestroyed()) return;
+  Promise.resolve(win.loadFile(rel)).catch((e) => log('[local] 页面加载失败：' + describeError(e)));
 }
 
 async function waitForHealth(base, timeoutMs, isAlive = () => true) {
@@ -388,22 +444,34 @@ async function waitForHealth(base, timeoutMs, isAlive = () => true) {
   return false;
 }
 
+/** 停掉内嵌 server 并等待其真正退出：不等就重启会撞端口，切换仓库还会撞上未关闭的数据库 */
 function stopLocalChild() {
-  if (!serverChild) return;
-  try {
-    serverChild.kill('SIGTERM');
-    const c = serverChild;
-    setTimeout(() => {
+  const c = serverChild;
+  serverChild = null;
+  if (!c || c.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(killTimer);
+      resolve();
+    };
+    const killTimer = setTimeout(() => {
       try {
         c.kill('SIGKILL');
       } catch {
         /* 已退出 */
       }
     }, 5000);
-  } catch {
-    /* 忽略 */
-  }
-  serverChild = null;
+    c.once('exit', finish);
+    c.once('error', finish);
+    try {
+      c.kill('SIGTERM');
+    } catch {
+      finish();
+    }
+  });
 }
 
 // ---------- 远端模式 ----------
@@ -475,7 +543,16 @@ async function pickRemoteOrigin(cfg) {
 }
 
 async function startRemoteMode(remoteUrl, token) {
-  win.loadURL(dataUrl(splashPage('正在连接', '正在连接远端服务器并验证身份，完成后自动进入主界面。', '正在选择最优线路…')));
+  try {
+    await startRemoteModeInner(remoteUrl, token);
+  } catch (e) {
+    log('[remote] 连接远端异常：' + describeError(e));
+    loadWin(dataUrl(errorPage('无法连接远端服务器', ['连接过程出错：', describeError(e)])));
+  }
+}
+
+async function startRemoteModeInner(remoteUrl, token) {
+  loadWin(dataUrl(splashPage('正在连接', '正在连接远端服务器并验证身份，完成后自动进入主界面。', '正在选择最优线路…')));
   applyPageChrome(SPLASH_BG);
   const actualOrigin = await pickRemoteOrigin(readConfig());
   setSplashStatus('正在验证连接身份…');
@@ -500,9 +577,9 @@ async function startRemoteMode(remoteUrl, token) {
       expirationDate: Math.floor(Date.now() / 1000) + 30 * 24 * 3600,
     });
     setSplashStatus('连接成功，正在进入界面…');
-    win.loadURL(actualOrigin);
+    loadWin(actualOrigin);
   } catch (e) {
-    win.loadURL(
+    loadWin(
       dataUrl(
         errorPage('无法连接远端服务器', [
           e && e.message ? e.message : String(e),
@@ -523,7 +600,7 @@ function launchByConfig() {
     startRemoteMode(cfg.remoteUrl, cfg.remoteToken);
   } else {
     applyPageChrome('#f7f7f5');
-    win.loadFile('index.html');
+    loadFileWin('index.html');
   }
 }
 
@@ -540,13 +617,11 @@ function buildAppMenu() {
         {
           label: '返回启动页 / 切换模式',
           accelerator: 'CmdOrCtrl+Shift+L',
-          click: () => {
-            stopLocalChild();
+          click: async () => {
+            await stopLocalChild();
             writeConnectionConfig({});
-            if (win) {
-              applyPageChrome('#f7f7f5');
-              win.loadFile('index.html');
-            }
+            applyPageChrome('#f7f7f5');
+            loadFileWin('index.html');
           },
         },
         { type: 'separator' },
@@ -628,9 +703,9 @@ ipcMain.handle('get-connection', () => {
   return { mode: c.mode || '', remoteUrl: c.remoteUrl || '', remoteToken: c.remoteToken || '', directUrl: c.directUrl || '' };
 });
 
-ipcMain.handle('set-local-mode', () => {
+ipcMain.handle('set-local-mode', async () => {
   writeConnectionConfig({ mode: 'local' });
-  stopLocalChild();
+  await stopLocalChild();
   startLocalMode();
   return true;
 });
@@ -642,52 +717,38 @@ ipcMain.handle('get-data-dir', () => {
 });
 
 // 恢复备份暂存后重启内嵌 server 使其生效（applyStagedRestore 在 server 启动早期执行）
-ipcMain.handle('restart-server', () => {
-  stopLocalChild();
+ipcMain.handle('restart-server', async () => {
+  await stopLocalChild();
   startLocalMode();
   return true;
 });
 
+// 切换数据仓库（类 Obsidian）：只切位置并重启内嵌 server，不迁移数据。
+// 目标已有 wiki.db 则打开它；没有则由 server 启动时自动初始化出新仓库（ensureDirs + 建表）。
 ipcMain.handle('choose-data-dir', async () => {
   const r = await dialog.showOpenDialog(win, {
-    title: '选择数据保存位置',
-    message: '选择 Engram 数据的保存目录（可选已有数据目录或空目录）',
+    title: '选择数据仓库位置',
+    message: '选择 Engram 数据仓库目录（已有仓库则打开，空目录则新建）',
     properties: ['openDirectory', 'createDirectory'],
   });
   if (r.canceled || !r.filePaths[0]) return null;
   const target = path.resolve(r.filePaths[0]);
   const current = getDataDir();
-  if (target === current) return { dir: target, same: true };
-  // 新位置在当前数据目录内部：迁移会把正在用的数据挪进自己，直接拒绝
-  if (target.startsWith(current + path.sep)) {
-    return { error: '新位置不能在当前数据目录内部' };
-  }
+  const invalid = dataDirLib.validateSwitch(current, target);
+  if (invalid) return invalid;
   try {
     fs.mkdirSync(target, { recursive: true });
     fs.accessSync(target, fs.constants.W_OK);
   } catch {
     return { error: '该目录不可写，请换一个位置' };
   }
-  const hadExisting = fs.existsSync(path.join(target, 'wiki.db')) || fs.existsSync(path.join(target, 'brain'));
-  const result = { dir: target, copied: false, hadExisting };
-  if (!hadExisting) {
-    stopLocalChild(); // 迁移前先停 server，避免边写边拷
-    const hasOldData = fs.existsSync(path.join(current, 'wiki.db')) || fs.existsSync(path.join(current, 'brain'));
-    if (hasOldData) {
-      try {
-        fs.cpSync(current, target, { recursive: true });
-        result.copied = true;
-      } catch (e) {
-        startLocalMode(); // 迁移失败：配置未变，用旧目录拉起，数据不受影响
-        return { error: '迁移旧数据失败：' + e.message };
-      }
-    }
-  } else {
-    stopLocalChild();
-  }
+  const isNew = !dataDirLib.hasRepo(target);
   writeConfig({ ...readConfig(), dataDir: target });
-  startLocalMode(); // 健康检查通过后窗口自动加载新 server
-  return result;
+  await stopLocalChild(); // 等旧服务真正退出，避免新旧进程抢端口
+  startLocalMode(
+    isNew ? `已在 ${target} 新建数据仓库，正在启动本地服务…` : `已切换到 ${target}，正在启动本地服务…`,
+  );
+  return { dir: target, isNew };
 });
 
 // 本地服务端口查询（仅本地模式有意义；isDefault=未自定义，envOverridden=环境变量覆写中）
@@ -720,23 +781,23 @@ ipcMain.handle('set-local-port', async (_e, raw) => {
   if (port === DEFAULT_LOCAL_PORT) delete cfg.localPort; // 改回默认值即清除自定义记录
   else cfg.localPort = port;
   writeConfig(cfg);
-  stopLocalChild();
+  await stopLocalChild();
   startLocalMode(); // 健康检查通过后窗口自动加载新端口的 server
   return { port };
 });
 
-ipcMain.handle('set-remote-mode', (_e, url, token, directUrl) => {
+ipcMain.handle('set-remote-mode', async (_e, url, token, directUrl) => {
   writeConnectionConfig({ mode: 'remote', remoteUrl: url, remoteToken: token, directUrl: normalizeOrigin(directUrl) });
-  stopLocalChild();
+  await stopLocalChild();
   startRemoteMode(url, token);
   return true;
 });
 
-ipcMain.handle('open-connection-settings', () => {
-  stopLocalChild();
+ipcMain.handle('open-connection-settings', async () => {
+  await stopLocalChild();
   writeConnectionConfig({});
   applyPageChrome('#f7f7f5');
-  win.loadFile('index.html');
+  loadFileWin('index.html');
   return true;
 });
 
@@ -765,7 +826,8 @@ const UPDATE_KEYS = {
 };
 
 function desktopUpdateEnvFile() {
-  return path.join(app.getPath('userData'), 'data', '.env');
+  // 与内嵌 server 的 DATA_DIR/.env 同一份；写死默认目录会在切换仓库后读到旧位置
+  return path.join(getDataDir(), '.env');
 }
 
 function readDesktopUpdateEnv() {
@@ -1572,7 +1634,7 @@ async function runSourceUpdate() {
   }
   // 组装会覆盖正在运行的 desktop/server 产物副本，先停内嵌 server、主窗藏进托盘
   setUpdateStep('组装桌面运行目录…');
-  stopLocalChild();
+  await stopLocalChild();
   if (win && !win.isDestroyed()) {
     ensureTray();
     win.hide();
