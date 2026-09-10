@@ -29,9 +29,16 @@ function Out-Line([string]$s) {
   try { Add-Content -Path $logFile -Value $s -Encoding UTF8 } catch { }
   try { [Console]::Out.WriteLine($s) } catch { }
 }
-function Step([string]$id, [string]$label) { Out-Line "[[STEP]$id|$label]" }
-function StepDone([string]$id, [string]$note = '') { Out-Line "[[DONE]$id]"; if ($note) { Out-Line "   $note" } }
-function StepFail([string]$id, [string]$msg) { Out-Line "[[FAIL]$id|$msg]"; throw $msg }
+# 进度标记协议（GUI 端解析见 installer/main.js 的 handleLine，两处格式必须一致）：
+#   ##STEPS:id=label;...  步骤总表   ##STEP:id  进入某步   ##DONE:id  该步完成
+#   ##FAIL:id|消息        某步失败   ##ALLDONE 全部完成
+# 步骤标签已在 ##STEPS: 行给出，故 ##STEP: 只带 id（GUI 用它定位到对应行）。
+function Step([string]$id, [string]$label) {
+  Out-Line "##STEP:$id"
+  if ($label) { Out-Line "   $label" }
+}
+function StepDone([string]$id, [string]$note = '') { Out-Line "##DONE:$id"; if ($note) { Out-Line "   $note" } }
+function StepFail([string]$id, [string]$msg) { Out-Line "##FAIL:$id|$msg"; throw $msg }
 function StepLog([string]$msg) { Out-Line "   $msg" }
 function Test-Command([string]$name) { [Boolean](Get-Command $name -ErrorAction SilentlyContinue) }
 function Refresh-Path {
