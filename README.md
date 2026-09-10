@@ -94,13 +94,13 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 **Windows 桌面端 · 安装包**（给非开发机器）
 
-1. 从 [Engram Releases](https://gitea.xxx.com:11111/example/Engram/releases) 下载 `Engram Setup <版本>.exe`
+1. 从 [Engram Releases](https://github.com/jadesLL/Engram/releases) 下载 `Engram Setup <版本>.exe`
 2. 双击安装；数据在 `%APPDATA%\@engram\desktop`，与源码版互通
 3. 更新：应用内 设置 → 软件更新 → 「检查更新」，自动下载并静默安装
 
 **Windows 桌面端 · 源码版**（自用开发机，推荐）
 
-1. 从 **[源码版安装器（固定链接，永远最新）](https://gitea.xxx.com:11111/api/packages/example/generic/engram-installer/latest/Engram-source-setup.exe)** 下载 `Engram-source-setup.exe`（或取仓库内 `main/scripts/install-engram.ps1` 用 PowerShell 运行），双击后全自动：下载便携 Git/Node/pnpm（免管理员，装在 `%LOCALAPPDATA%\engram`）→ 克隆源码（公开仓库无需凭据）→ 构建桌面端 → 生成桌面快捷方式并启动。该链接固定指向最新引导器、**不绑版本号**——装机逻辑（clone 地址、pnpm 版本等）更新后单独重发布即可，不必等发版（见 [GITEA-CI.md](main/docs/GITEA-CI.md)）
+1. 从 **[源码版安装器（固定链接，永远最新）](https://github.com/jadesLL/Engram/releases/download/installer-latest/Engram-source-setup.exe)** 下载 `Engram-source-setup.exe`（或取仓库内 `main/scripts/install-engram.ps1` 用 PowerShell 运行），双击后全自动：下载便携 Git/Node/pnpm（免管理员，装在 `%LOCALAPPDATA%\engram`）→ 克隆源码（公开仓库无需凭据）→ 构建桌面端 → 生成桌面快捷方式并启动。该链接固定指向最新引导器、**不绑版本号**——装机逻辑（clone 地址、pnpm 版本等）更新后单独重发布即可，不必等发版（见 [GITEA-CI.md](main/docs/GITEA-CI.md)）
 2. 日常双击桌面「Engram」直接启动（Engram 品牌图标，无更新窗口）；更新走应用内 设置 → 软件更新 → 「检查更新」（增量拉源码重建重启），或手动运行 `main/scripts/update-from-source.ps1`——合 main 即更新，无需等发版
 3. 更新是全自动的：**依赖清单真变化时应用内会自己装依赖**（`pnpm install`，含 desktop/server 运行时依赖与 better-sqlite3 的 Electron 原生模块），不需要再去终端跑脚本；判断依据是「依赖指纹」（lockfile/workspace 配置 + 各 package.json 的依赖字段），`appId` 之类的元信息改动不会误报。源码模式默认**自动检查更新**（启动后检查一次，之后每 8 小时复查），发现新提交时只弹系统通知 + 设置页提示，更新时机仍由你点「更新并重启」决定，不会自动重启
 4. 源码模式怎么确认「更新到了哪一版」：设置 → 账户与外观 → 「应用版本」显示 `版本号 · 提交号 · 提交日期`（工作区有未提交改动时提交号带 `-dirty`），软件更新页右上角同样带提交号，「检查更新」显示本地 → 远端提交号对比。**版本号只在正式发版时变，提交号随每次更新变**，以提交号判断是否已更新到最新代码（与 Docker 镜像、安装包的版本号语义一致）
@@ -112,7 +112,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 ## 快速开始（Docker 部署）
 
 ```bash
-git clone https://gitea.xxx.com:11111/example/Engram.git
+git clone https://github.com/jadesLL/Engram.git
 cd Engram/main
 docker compose up -d --build
 ```
@@ -122,14 +122,14 @@ docker compose up -d --build
 公开仓库未发布 Docker 镜像；自建部署请从源码构建：
 
 ```bash
-docker login gitea.xxx.com:11111 -u example -p <package权限token>
-docker pull gitea.xxx.com:11111/example/engram/engram:<版本>
+# Docker 镜像未公开发布（原私有 Registry 不对外）
+# 需要镜像请自行构建：docker compose -f main/docker-compose.yml up -d --build
 docker compose -f docker-compose.pull.yml up -d
 ```
 
 **NAS 部署**（极空间 / 群晖 / 威联通等）用 `main/docker-compose.nas.yml`：宿主端口可调（默认 18080）、JWT 密钥走同目录 `.env`、卷名固定，只需 compose + `.env` 两个文件，无需克隆仓库。完整步骤与坑位见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md) 的「方式四：NAS 部署」。
 
-Windows 桌面端安装包从 [Engram Releases](https://gitea.xxx.com:11111/example/Engram/releases) 下载（`Engram Setup <版本>.exe`），更多安装方式见上文「下载与安装」。
+Windows 桌面端安装包从 [Engram Releases](https://github.com/jadesLL/Engram/releases) 下载（`Engram Setup <版本>.exe`），更多安装方式见上文「下载与安装」。
 
 > 想从源码自行构建，见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)。
 
@@ -185,9 +185,9 @@ Fastify + better-sqlite3（FTS5）· Vue 3 + Vditor + vis-network · Electron（
 ## 版本与发布
 
 - **更新日志**：[`CHANGELOG.md`](./CHANGELOG.md)——每个版本的全部新功能与变更；发版时由 CI 自动发布到 GitHub Release 正文
-- **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Android 安装包（apk）、Docker 镜像包（tar.gz）与 sha256 校验；Release 挂在本仓库 [Releases](https://gitea.xxx.com:11111/example/Engram/releases)，发版是显式动作，仅按需执行
+- **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Android 安装包（apk）、Docker 镜像包（tar.gz）与 sha256 校验；Release 挂在本仓库 [Releases](https://github.com/jadesLL/Engram/releases)，发版是显式动作，仅按需执行
 - **源码模式通道**：自用机器不依赖发版——合 main 后即可通过桌面快捷方式或应用内「检查更新」增量拉源码更新（见「下载与安装」）
-- **镜像**：`gitea.xxx.com:11111/example/engram/engram:<版本>`（未公开发布；需要请自行构建）
+- **镜像**：`gitea.example.com/example/engram/engram:<版本>`（未公开发布；需要请自行构建）
 - **发版流程**：详见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)；CI/CD 维护见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)
 
 ## 文档索引

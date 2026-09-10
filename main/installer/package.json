@@ -5,8 +5,7 @@
   "description": "Engram 源码版安装器 GUI",
   "main": "main.js",
   "scripts": {
-    "stage": "node scripts/stage-ps1.js",
-    "dist": "node scripts/stage-ps1.js && electron-builder --win portable",
+    "dist": "electron-builder --win portable",
     "publish": "node scripts/publish-installer.js"
   },
   "devDependencies": {
@@ -24,7 +23,7 @@
     ],
     "extraResources": [
       {
-        "from": "build/install-engram.ps1",
+        "from": "../scripts/install-engram.ps1",
         "to": "install-engram.ps1"
       }
     ],

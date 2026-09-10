@@ -12,7 +12,7 @@
 #      或直接改本文件的字面值。ONLYOFFICE_JWT_SECRET 有内置默认值，不填也能启动。
 services:
   engram:
-    image: ${ENGRAM_IMAGE:-gitea.xxx.com:11111/example/engram/engram:latest}
+    image: ${ENGRAM_IMAGE:-gitea.example.com/example/engram/engram:latest}
     container_name: engram
     ports:
       # 宿主端口可调（NAS 上 8080 常被系统占用）；改 ENGRAM_HOST_PORT（命令行 .env 或项目环境变量）

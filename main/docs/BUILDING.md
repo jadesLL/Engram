@@ -51,7 +51,7 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 
 | 产物 | 名称 / 地址 | 用途 |
 |---|---|---|
-| Docker 镜像 | `gitea.xxx.com:11111/example/engram/engram:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry）；应用内一键更新的版本信号源 |
+| Docker 镜像 | `gitea.example.com/example/engram/engram:<版本>` 和 `:latest` | Docker 部署（push 到 Gitea 内置 Registry）；应用内一键更新的版本信号源 |
 | Gitea Release | `v<版本>`，正文=CHANGELOG 版本段落 | 版本记录与更新检测信号源 |
 
 以下二进制产物**不随发版构建**，需要分发给他人时按需构建（CI dispatch：Actions → Release → Run workflow，输入标签+勾选产物，自动补挂 Release；或走路径 B/C 本地构建）：
@@ -235,7 +235,7 @@ pnpm build:desktop
 **方式一：源码构建部署**（开发 / 内网无 Registry）
 
 ```bash
-git clone https://gitea.xxx.com:11111/example/Engram.git
+git clone https://github.com/jadesLL/Engram.git
 cd Engram/main
 docker compose up -d --build
 ```
@@ -243,7 +243,7 @@ docker compose up -d --build
 **方式二：从 Registry 拉取**（生产，模板 `main/docker-compose.pull.yml`）
 
 ```bash
-docker login gitea.xxx.com:11111 -u example -p <package权限token>
+# Docker 镜像未公开发布（原私有 Registry 不对外）
 docker compose -f docker-compose.pull.yml up -d     # 模板默认拉 :latest
 ```
 
@@ -253,8 +253,8 @@ docker compose -f docker-compose.pull.yml up -d     # 模板默认拉 :latest
 # 在有网机器上（或直接用 Release 附件 engram-<版本>.tar.gz）
 docker load < engram-<版本>.tar.gz
 # 载入的镜像名是完整三层路径 :<版本>；compose 模板引用 :latest，二选一：
-docker tag gitea.xxx.com:11111/example/engram/engram:<版本> \
-           gitea.xxx.com:11111/example/engram/engram:latest
+docker tag gitea.example.com/example/engram/engram:<版本> \
+           gitea.example.com/example/engram/engram:latest
 # 或者把 compose 里的 image 固定为 :<版本>
 docker compose -f docker-compose.pull.yml up -d
 ```
@@ -263,7 +263,7 @@ docker compose -f docker-compose.pull.yml up -d
 
 与方式二同源，但按 NAS 环境做了四处适配：宿主端口可调（默认 18080，避开 NAS 上常被占用的 8080）、镜像地址与 JWT 密钥走 compose 变量而不依赖仓库里的 bash 脚本生成的 `.env.onlyoffice`、三个 onlyoffice 数据卷显式固定卷名、网络 MTU 默认 1500。**只需 `docker-compose.nas.yml` 一个文件**（不必克隆整个仓库）。
 
-> **先改 `ENGRAM_IMAGE`**：模板里的镜像地址是仓库内的脱敏占位符（`gitea.xxx.com:11111/...`），**直接启动会连不上**（报 `request canceled while waiting for connection`）。真实地址见 Gitea 仓库变量 `DOCKER_IMAGE`，在项目的「环境变量」里设 `ENGRAM_IMAGE=<真实三层路径>:latest`，或直接改 compose 文件里的字面值。
+> **`ENGRAM_IMAGE` 默认就是本仓库真实地址**（`gitea.example.com/example/engram/engram:latest`），照原样可直接启动。只有换 Registry 或改镜像路径时才需要覆盖：在项目「环境变量」里设 `ENGRAM_IMAGE=<三层路径>:latest`，或直接改 compose 字面值。
 
 ```bash
 # 登录私有 Registry（地址同上，即 DOCKER_REGISTRY）并启动
@@ -279,7 +279,7 @@ docker compose -f docker-compose.nas.yml up -d
 
 | 键 | 必填 | 说明 |
 |---|---|---|
-| `ENGRAM_IMAGE` | **是** | 镜像地址，三层路径 `registry/owner/repo/imagename:latest`。默认值是脱敏占位符，必须换成真实地址，否则拉取超时 |
+| `ENGRAM_IMAGE` | 否 | 镜像地址，三层路径 `registry/owner/repo/imagename:latest`。默认已是本仓库真实地址，可直接用；换 Registry 时覆盖 |
 | `ONLYOFFICE_JWT_SECRET` | 否 | ONLYOFFICE 编辑器 JWT 密钥，engram 与 onlyoffice 两容器共用。有内置默认值，不填也能启动；默认值是公开占位，建议在 NAS 项目的环境变量里覆盖为自选随机值（`openssl rand -hex 32`） |
 | `ENGRAM_HOST_PORT` | 否 | 宿主映射端口，默认 18080 |
 | `ENGRAM_DATA_DIR` | 否 | 数据目录的宿主路径（`wiki.db` + `brain/` 全在此），默认 compose 同目录 `./data` |
@@ -290,10 +290,10 @@ docker compose -f docker-compose.nas.yml up -d
 
 | 配置项 | 值 |
 |---|---|
-| Gitea 服务地址 | `https://gitea.xxx.com:11111` |
+| Gitea 服务地址 | `https://gitea.example.com` |
 | Gitea 仓库 | `example/Engram` |
 | Gitea 访问令牌 | 能读 Release 的 token |
-| 镜像更新源 | **留空**（自动从当前容器镜像推导 `gitea.xxx.com:11111/example/engram/engram`，跟踪 `latest`） |
+| 镜像更新源 | **留空**（自动从当前容器镜像推导 `gitea.example.com/example/engram/engram`，跟踪 `latest`） |
 | 镜像仓库用户名 / 令牌 | `example` / package 读权限 token |
 
 之后发版后点「一键更新」即可。手动更新等价命令：`docker compose -f docker-compose.nas.yml pull && docker compose -f docker-compose.nas.yml up -d`。
@@ -301,7 +301,7 @@ docker compose -f docker-compose.nas.yml up -d
 **NAS 常见坑**：
 
 1. 镜像架构：Registry 里的镜像由普通 `docker build` 构建，**只有 `linux/amd64`**。x86_64 机型（极空间 Z4 系列、群晖 DS920+ 等）可直接用；ARM 机型需先给 release.yml 加 buildx 多架构构建。
-2. `ENGRAM_IMAGE` 没改：模板默认值 `gitea.xxx.com:11111/...` 是仓库内脱敏占位符，该域名解析到公网某处，`docker pull` 会卡到超时报 `request canceled while waiting for connection`。换成仓库变量 `DOCKER_IMAGE` 里的真实三层路径即可。
+2. `ENGRAM_IMAGE` 与 Registry 不一致：默认值已是本仓库真实地址，只有手改错或指向别的 Registry 时才会 `docker pull` 失败（报 `request canceled while waiting for connection` 或 404）。核对 compose 里 `ENGRAM_IMAGE` 与本仓库 Registry 三层路径一致即可。
 3. Registry 只有 AAAA 记录（IPv6-only）时，NAS 必须有可用的 IPv6 出口才能 `docker login` / `docker pull`；纯 IPv4 环境下改用局域网 IP 形式的 Registry 地址，或先在别的机器 `docker save` 后离线导入。
 4. 图形界面不读 `.env`：极空间 / 群晖的 Compose 项目界面只解析 compose 文件本身，`${VAR}` 未在项目环境变量里设置时会用模板默认值。变量要在项目设置里填，或直接改 compose 字面值。
 5. 极空间 / 群晖的 Docker 管理界面若不允许挂 `/var/run/docker.sock`，删掉该行（只损失网页内更新，其他功能不受影响）。
