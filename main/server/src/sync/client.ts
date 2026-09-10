@@ -460,6 +460,14 @@ function localSnapshot(): { kind: 'page' | 'file'; path: string; hash: string }[
   return out;
 }
 
+/**
+ * 本模块内 AbortError 只可能来自 stopClient() 主动中止在途 SSE 读
+ * （真实网络故障是 TypeError: fetch failed / terminated），故不作为同步错误上报
+ */
+function isSelfAbort(error: any): boolean {
+  return error?.name === 'AbortError';
+}
+
 async function runLoop(): Promise<void> {
   while (running) {
     try {
@@ -467,7 +475,8 @@ async function runLoop(): Promise<void> {
       await pushLoop();
       await consumeStream();
     } catch (error: any) {
-      lastError = String(error?.message || error);
+      // 停用/改配置导致的主动中断不是故障：不写「最近错误」，避免误报
+      if (!isSelfAbort(error)) lastError = String(error?.message || error);
     }
     if (!running) break;
     await sleep(backoffMs);
