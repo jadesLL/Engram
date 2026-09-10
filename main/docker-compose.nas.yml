@@ -1,11 +1,13 @@
 # NAS 部署（极空间 / 群晖 / 威联通等，x86_64 或 arm64 均需镜像架构匹配）
 # 镜像名是三层路径 example/engram/engram（owner/repo/imagename，归属仓库），不要写成两层的 example/engram
 # 用法：
-#   1) 同目录建 .env，至少写 ONLYOFFICE_JWT_SECRET（openssl rand -hex 32）
-#   2) docker login gitea.xxx.com:11111 -u example -p <package权限token>
-#   3) docker compose -f docker-compose.nas.yml up -d
+#   docker login gitea.xxx.com:11111 -u example -p <package权限token>
+#   docker compose -f docker-compose.nas.yml up -d
 # 访问 http://<NAS_IP>:${ENGRAM_HOST_PORT:-18080}
-# 注意：不要加 pull_policy: never（禁止拉取，本地无镜像时必报"找不到镜像"）
+# 注意：
+#   1) 不要加 pull_policy: never（禁止拉取，本地无镜像时必报"找不到镜像"）
+#   2) 极空间/群晖的图形界面不会加载同目录 .env，环境变量要在项目的「环境变量」设置里填，
+#      或直接改本文件的字面值。ONLYOFFICE_JWT_SECRET 有内置默认值，不填也能启动。
 services:
   engram:
     image: gitea.xxx.com:11111/example/engram/engram:latest
@@ -23,8 +25,10 @@ services:
       - TZ=Asia/Shanghai
       # 初始登录密码（仅首次启动生效；留空则首次登录时在页面设置）
       - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-}
-      # ONLYOFFICE 编辑器的 JWT 密钥，与 onlyoffice 服务的 JWT_SECRET 必须同值
-      - ONLYOFFICE_JWT_SECRET=${ONLYOFFICE_JWT_SECRET:?请在 .env 中设置 ONLYOFFICE_JWT_SECRET（openssl rand -hex 32）}
+      # ONLYOFFICE 编辑器的 JWT 密钥，与 onlyoffice 服务的 JWT_SECRET 必须同值。
+      # 默认值为公开占位，仅在容器内网 engram↔onlyoffice 间使用（onlyoffice 不对外暴露端口）；
+      # 想改成自选随机值（openssl rand -hex 32），在 NAS 项目的环境变量里覆盖同名键即可。
+      - ONLYOFFICE_JWT_SECRET=${ONLYOFFICE_JWT_SECRET:-CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER}
       - OFFICE_EDITOR_ENABLED=true
       - OFFICE_INTERNAL_URL=http://onlyoffice
       - OFFICE_INTERNAL_APP_URL=http://engram:8080
@@ -51,7 +55,7 @@ services:
       - JWT_ENABLED=true
       - JWT_HEADER=AuthorizationJwt
       - JWT_IN_BODY=true
-      - JWT_SECRET=${ONLYOFFICE_JWT_SECRET:?请在 .env 中设置 ONLYOFFICE_JWT_SECRET（openssl rand -hex 32）}
+      - JWT_SECRET=${ONLYOFFICE_JWT_SECRET:-CHANGE_ME_PUBLIC_SNAPSHOT_PLACEHOLDER}
       - ALLOW_PRIVATE_IP_ADDRESS=true
       - ALLOW_META_IP_ADDRESS=false
       - EXAMPLE_ENABLED=false
