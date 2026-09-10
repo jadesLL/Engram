@@ -6,6 +6,8 @@
 .tmp-*
 # 本地开发与工具产物，不入库（docker-compose.dev.yml 含本地默认密码）
 main/docker-compose.dev.yml
+# 安装器打包中间产物（stage-ps1.js 由构建检出的真实远端地址生成）
+main/installer/build/
 /.edge-profile/
 /.mimosa/
 /.preview-rte/
