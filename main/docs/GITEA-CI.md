@@ -1,6 +1,6 @@
 # Gitea CI 与镜像分发指南
 
-本项目通过 Gitea Actions（`https://gitea.xxx.com:11111/example/Engram`）实现持续集成、Docker 镜像分发和按需二进制产物（exe/APK/离线包）构建。
+本项目通过 Gitea Actions（`https://github.com/jadesLL/Engram`）实现持续集成、Docker 镜像分发和按需二进制产物（exe/APK/离线包）构建。
 
 > 从源码构建安装包的完整指南（含不依赖 CI 的本地 Docker 构建路径、部署方式与 AI 操作清单）见 [`BUILDING.md`](./BUILDING.md)；本文聚焦 CI/CD 流水线本身的维护与历史踩坑。
 
@@ -49,17 +49,16 @@
 # 在**主检出目录**做：打包依赖主检出的 node_modules 与 desktop 的 electron 运行时，
 # worktree 内没有依赖、无法打包（同 Windows 桌面端打包，属宿主机原生任务）。
 cd main
-node node_modules/pnpm/bin/pnpm.cjs -C installer dist    # 构建（自动注入真实 clone 地址）
+node node_modules/pnpm/bin/pnpm.cjs -C installer dist    # 构建
 ENGRAM_GITEA_TOKEN=<令牌> node installer/scripts/publish-installer.js
 ```
 
 - **固定下载链接**（写进 README，永不失效）：
-  `https://<host>/api/packages/<owner>/generic/engram-installer/latest/Engram-source-setup.exe`
-  （generic 包下载走 API 路径 `/api/packages/...`，不是仓库 UI 路径）
-- **clone 地址自动注入**：`install-engram.ps1` 里的 `$RepoUrl` 在仓库中是占位符
-  `https://gitea.xxx.com:11111/example/Engram.git`（开源清洗约定，私有域名不入库），
-  打包时由 `installer/scripts/stage-ps1.js` 读取构建检出的 `git remote origin` 替换为真实地址。
-  全新机器装失败第一步先查这里：`grep RepoUrl` 包内 ps1 应显示真实域名。
+  `https://github.com/jadesLL/Engram/releases/download/installer-latest/Engram-source-setup.exe`
+  （generic 包下载走 API 路径 `/api/packages/...`，不是仓库 UI 路径；该包为公开包，无需登录）
+- **clone 地址直接写真实值**：`install-engram.ps1` 的 `$RepoUrl` 默认就是本仓库真实地址，
+  克隆仓库时一并拿到，无需任何打包期注入。全新机器装失败第一步先查这里：
+  `grep RepoUrl` 包内 ps1 应显示真实域名。
 - **覆盖发布后无需改 README**（链接固定）；只有包名/版本槽位改动才动链接。
 
 ### 两个必须记住的坑（都有回归测试锁死）
@@ -77,7 +76,7 @@ ENGRAM_GITEA_TOKEN=<令牌> node installer/scripts/publish-installer.js
 
 ```bash
 # 正确：三层路径 example/engram/engram（owner/repo/imagename，镜像归属 Engram 仓库）
-gitea.xxx.com:11111/example/engram/engram:<版本>
+gitea.example.com/example/engram/engram:<版本>
 
 # 错误：两层路径 example/engram（归属用户命名空间）——1.1.5 曾用此路径，NAS 实测拉取异常，已废弃
 ```
@@ -85,8 +84,8 @@ gitea.xxx.com:11111/example/engram/engram:<版本>
 部署示例：
 
 ```bash
-docker login gitea.xxx.com:11111 -u example -p <package权限token>
-docker pull gitea.xxx.com:11111/example/engram/engram:1.1.5
+# Docker 镜像未公开发布（原私有 Registry 不对外）
+docker pull gitea.example.com/example/engram/engram:1.1.5
 docker compose -f docker-compose.pull.yml up -d
 ```
 
@@ -116,7 +115,7 @@ docker compose -f docker-compose.pull.yml up -d
 
 | 配置项 | 键 | 说明 |
 |---|---|---|
-| Gitea 服务地址 | `UPDATE_GITEA_URL` | 版本检测来源，如 `https://gitea.xxx.com` |
+| Gitea 服务地址 | `UPDATE_GITEA_URL` | 版本检测来源，如 `https://gitea.example.com` |
 | Gitea 仓库 | `UPDATE_GITEA_REPO` | `owner/name` 形式 |
 | Gitea 访问凭据（二选一） | `UPDATE_GITEA_TOKEN`（访问令牌），或 `UPDATE_GITEA_AUTH_TYPE=password` + `UPDATE_GITEA_USERNAME` / `UPDATE_GITEA_PASSWORD`（用户名密码） | **公开仓库无需填写**；私有仓库需能读 Release |
 | 镜像更新源 | `UPDATE_IMAGE_REF` | 不含 tag 的镜像地址，自动拉 `latest`；未配置时从当前容器镜像推导 |

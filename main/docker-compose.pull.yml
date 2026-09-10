@@ -1,12 +1,12 @@
 # docker pull 拉取镜像部署（Gitea Registry）
 # 镜像名是三层路径 example/engram/engram（owner/repo/imagename，归属仓库），不要写成两层的 example/engram
 # 用法：
-#   docker login gitea.xxx.com:11111 -u example -p <token>
+#   docker login gitea.example.com -u example -p <token>
 #   docker compose -f docker-compose.pull.yml up -d
 # 注意：不要加 pull_policy: never（禁止拉取，本地无镜像时必报"找不到镜像"）
 services:
   engram:
-    image: gitea.xxx.com:11111/example/engram/engram:latest
+    image: gitea.example.com/example/engram/engram:latest
     container_name: engram
     ports:
       - "8080:8080"

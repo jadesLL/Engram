@@ -12,7 +12,7 @@
 # 数据与安装包版共用 %APPDATA%\@engram\desktop；删除 %LOCALAPPDATA%\engram 即完全卸载。
 param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'engram'),
-  [string]$RepoUrl = 'https://gitea.xxx.com:11111/example/Engram.git',
+  [string]$RepoUrl = 'https://github.com/jadesLL/Engram.git',
   [string]$GiteaUser = $(if ($env:ENGRAM_GITEA_USER) { $env:ENGRAM_GITEA_USER } else { '' }),
   [string]$GiteaPass = $(if ($env:ENGRAM_GITEA_PASS) { $env:ENGRAM_GITEA_PASS } else { '' })
 )
@@ -190,11 +190,6 @@ if (Test-Path (Join-Path $repoDir '.git')) {
   if ($code -ne 0) { StepLog "增量更新失败（git 退出码 $code）：$(Hint 'git 无错误输出')；继续用本地已有代码构建" }
   StepDone 'clone' '源码已就位（增量更新）'
 } else {
-  # 仓库地址占位符（开源清洗约定）：打包时由 installer/scripts/stage-ps1.js 注入真实地址。
-  # 先于凭据输入校验，否则未注入的包会先弹出账号密码框、输完才发现地址是假的。
-  if ($RepoUrl -match 'xxx\.com|example/') {
-    StepFail 'clone' "安装器内置的仓库地址是占位符（$RepoUrl），无法克隆。请使用官方发布的 Engram-source-setup.exe 安装器（见 README 下载链接），或手动指定：powershell -File install-engram.ps1 -RepoUrl <真实仓库地址>"
-  }
   if (-not $GiteaUser) { $GiteaUser = Read-Host 'Gitea 账号（如 example）' }
   if (-not $GiteaPass) {
     $sec = Read-Host 'Gitea 密码或访问令牌' -AsSecureString

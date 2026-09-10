@@ -25,12 +25,12 @@ on:
         default: false
 
 env:
-  # 真实 Registry 经 Gitea repo 变量注入（DOCKER_REGISTRY / DOCKER_IMAGE），
-  # 提交内只留占位符（开源安全）；未配置时回退占位符
-  REGISTRY: ${{ vars.DOCKER_REGISTRY || 'gitea.xxx.com:11111' }}
-  # 镜像走「owner/repo/imagename」三层路径，归属仓库（与另一示例仓库一致）；
+  # Registry 与镜像地址直接写真实值（仓库私有，脱敏只会让产物指向不存在的域名）；
+  # 仍保留 repo 变量 DOCKER_REGISTRY / DOCKER_IMAGE 覆盖能力，便于换仓时不动代码
+  REGISTRY: ${{ vars.DOCKER_REGISTRY || 'gitea.example.com' }}
+  # 镜像走「owner/repo/imagename」三层路径，归属仓库；
   # 两层路径归属用户命名空间，NAS 实测拉取异常，不要改回
-  IMAGE: ${{ vars.DOCKER_IMAGE || 'gitea.xxx.com:11111/example/engram/engram' }}
+  IMAGE: ${{ vars.DOCKER_IMAGE || 'gitea.example.com/example/engram/engram' }}
 
 jobs:
   release:
