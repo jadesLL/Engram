@@ -34,7 +34,6 @@
       <div class="settings-content">
         <AccountPanel v-show="activeSettingsSection === 'account'" />
         <AgentPanel v-show="activeSettingsSection === 'agent'" />
-        <SearchPanel v-show="activeSettingsSection === 'search'" />
         <SyncPanel v-show="activeSettingsSection === 'sync'" />
         <UpdatePanel v-show="activeSettingsSection === 'update'" />
         <StoragePanel v-show="activeSettingsSection === 'storage'" />
@@ -49,19 +48,17 @@ import { ref } from 'vue';
 import Icon from '../components/Icon.vue';
 import AccountPanel from '../components/settings/AccountPanel.vue';
 import AgentPanel from '../components/settings/AgentPanel.vue';
-import SearchPanel from '../components/settings/SearchPanel.vue';
 import SyncPanel from '../components/settings/SyncPanel.vue';
 import UpdatePanel from '../components/settings/UpdatePanel.vue';
 import StoragePanel from '../components/settings/StoragePanel.vue';
 import DataPanel from '../components/settings/DataPanel.vue';
 
-type SettingsSection = 'account' | 'agent' | 'search' | 'sync' | 'update' | 'storage' | 'data';
+type SettingsSection = 'account' | 'agent' | 'sync' | 'update' | 'storage' | 'data';
 
 const activeSettingsSection = ref<SettingsSection>('account');
 const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: string }> = [
   { id: 'account', label: '账户与外观', icon: 'settings' },
   { id: 'agent', label: 'Agent 接入', icon: 'ai' },
-  { id: 'search', label: '搜索', icon: 'search' },
   { id: 'sync', label: '多端同步', icon: 'external' },
   { id: 'update', label: '软件更新', icon: 'download' },
   { id: 'storage', label: '存储空间', icon: 'archive' },

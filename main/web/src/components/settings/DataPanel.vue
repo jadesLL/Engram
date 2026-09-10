@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <h3>数据管理</h3>
-        <p>查看本地存储方式并执行不可撤销的数据操作。</p>
+        <p>存储方式、搜索同义词与不可撤销的数据操作。</p>
       </div>
     </div>
 
@@ -77,6 +77,8 @@
       <p v-if="backupMsg" class="setting-message backup-message" :class="backupOk ? 'ok' : 'err'">{{ backupMsg }}</p>
     </div>
 
+    <SearchPanel />
+
     <div class="danger-section">
       <div class="danger-section-head">
         <h4>危险操作</h4>
@@ -120,6 +122,7 @@ import { ref, onMounted } from 'vue';
 import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
 import Icon from '../Icon.vue';
+import SearchPanel from './SearchPanel.vue';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
 
 const app = useAppStore();

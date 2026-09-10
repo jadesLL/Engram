@@ -112,7 +112,7 @@ docker compose -f docker-compose.pull.yml up -d
 
 然后 `docker compose -f docker-compose.pull.yml up -d` 重建容器一次。之后所有更新都可以在网页 设置 → 软件更新 中完成，无需再登录部署机。
 
-### 更新源与令牌配置（设置 → 软件更新 → 更新源配置）
+### 仓库与更新通道配置（设置 → 软件更新）
 
 所有配置保存在**服务器数据目录的 `.env` 文件**（Docker 内 `/data/.env`，随数据卷持久化，不进数据库不进代码库）：
 
@@ -121,17 +121,17 @@ docker compose -f docker-compose.pull.yml up -d
 | Gitea 服务地址 | `UPDATE_GITEA_URL` | 版本检测来源，如 `https://gitea.example.com` |
 | Gitea 仓库 | `UPDATE_GITEA_REPO` | `owner/name` 形式 |
 | Gitea 访问凭据（二选一） | `UPDATE_GITEA_TOKEN`（访问令牌），或 `UPDATE_GITEA_AUTH_TYPE=password` + `UPDATE_GITEA_USERNAME` / `UPDATE_GITEA_PASSWORD`（用户名密码） | **公开仓库无需填写**；私有仓库需能读 Release |
-| 镜像更新源 | `UPDATE_IMAGE_REF` | 不含 tag 的镜像地址；未配置时从当前容器镜像推导 |
 | 更新通道 | `UPDATE_IMAGE_TAG` | 跟踪的镜像 tag：`latest` 正式发版线（默认）、`main` 主分支滚动构建（发版前测试用）。未配置时按当前容器镜像自动判断（跑在 `:main` 就继续跟 main，版本号 tag 回退 latest） |
-| 镜像仓库用户名/令牌 | `UPDATE_REGISTRY_USERNAME` / `UPDATE_REGISTRY_TOKEN` | 私有 Registry 必填；公开仓库无需填写 |
 
-私有化部署用户把 Gitea 地址/仓库换成自己的即可，镜像源同样可换。
+**镜像地址与拉取凭据无需配置**：地址从当前容器镜像名推导（部署时 compose/`docker pull` 写了什么，这里就读回什么）；拉取私有 Registry 的凭据由宿主 Docker 守护进程持有（容器挂了 `/var/run/docker.sock` 时，拉取与 digest 查询都经守护进程完成，用它 `docker login` 的登录态）。
+
+私有化部署用户把 Gitea 地址/仓库换成自己的即可。
 
 ### 测试通道：跟随主分支最新代码
 
 不想为每个小修复发版、只想到手验证时，把部署机切到 `:main` 通道：
 
-1. 设置 → 软件更新 → 「高级选项（更新通道 / 自定义镜像源）」→ 更新通道选 `main` → 保存。
+1. 设置 → 软件更新 → 「更新通道」选 `main`（顶部常规设置行，改动即存）。
 2. 之后每次 main 推送，ci.yml 都会重推 `:main` 镜像；页面点「立即更新」即拉到主分支最新代码。
 3. 版本号在这条通道上**不变**（版本号只在发版时 bump），判断更新是否落地看 设置 → 应用版本 的**提交号**，与「检查更新」结果一致。
 
