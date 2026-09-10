@@ -3,6 +3,7 @@ import * as sqliteVec from 'sqlite-vec';
 import { DB_FILE, ensureDirs } from '../config.js';
 import { deriveReportIdentity } from './reportIdentity.js';
 import { ftsSegment } from './fts.js';
+import { DEFAULT_SEARCH_SYNONYMS } from './searchSynonyms.js';
 
 ensureDirs();
 
@@ -714,6 +715,17 @@ export function migrate() {
       for (const f of files) insert.run(ftsSegment(f.name), ftsSegment(f.text), f.id);
     })();
     setSetting('fts_segment_version', FTS_SEGMENT_VERSION);
+  }
+
+  // ---------- 搜索同义词预置（仅首次，用户改过/清空后不再覆盖） ----------
+  // 单独用 seeded 标记判首次：用户把同义词清空为 '' 也算已自定义，不该被重置回预置表。
+  // ponytail: 预置表升级（新增常用词）时旧库不会自动补——需要新词就让用户自己加，
+  // 或将来加版本号按需合并；当前不做，避免覆盖用户编辑。
+  if (getSetting('search_synonyms_seeded') !== '1') {
+    if (getSetting('search_synonyms') === undefined) {
+      setSetting('search_synonyms', DEFAULT_SEARCH_SYNONYMS);
+    }
+    setSetting('search_synonyms_seeded', '1');
   }
 }
 

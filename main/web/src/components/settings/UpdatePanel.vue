@@ -30,8 +30,26 @@
       <template v-else>
         <div class="setting-row">
           <div class="setting-copy">
+            <strong>更新通道</strong>
+            <span>
+              <code>latest</code> 跟随正式发版（默认）；<code>main</code> 跟随主分支滚动构建，合入 main 即可更新测试，无需发版。切换后即时生效。
+            </span>
+          </div>
+          <div class="channel-control">
+            <select v-model="form.imageTag" aria-label="更新通道" @change="saveChannel">
+              <option value="">自动（按当前镜像判断）</option>
+              <option value="latest">latest（正式发版线）</option>
+              <option value="main">main（主分支滚动，测试用）</option>
+            </select>
+            <span v-if="channelSaved" class="channel-saved">已保存</span>
+            <AppSpinner v-else-if="savingChannel" :size="11" />
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>从远端仓库 Release 与镜像仓库比对当前版本。当前更新通道：<code>{{ state.imageTag || 'latest' }}</code></span>
+            <span>从远端仓库 Release 与镜像仓库比对当前版本。<template v-if="state.imageTag">当前通道：<code>{{ state.imageTag }}</code></template></span>
           </div>
           <div class="check-controls">
             <span v-if="checkResult" class="check-status" :class="checkResult.hasUpdate ? 'has' : 'none'">
@@ -239,26 +257,11 @@
       <!-- 高级选项：绝大多数部署用不到（镜像源自动从当前容器推导，公开仓库免认证），默认收起 -->
       <div v-if="!state.desktop && state.supported" class="advanced-toggle">
         <button type="button" class="text-action" @click="showAdvanced = !showAdvanced">
-          {{ showAdvanced ? '收起高级选项' : '高级选项（更新通道 / 自定义镜像源）' }}
+          {{ showAdvanced ? '收起高级选项' : '高级选项（自定义镜像源）' }}
         </button>
       </div>
 
       <template v-if="!state.desktop && state.supported && showAdvanced">
-        <div class="setting-row setting-row-form">
-          <div class="setting-copy">
-            <strong>更新通道</strong>
-            <span>
-              <code>latest</code> 跟随正式发版（默认）；<code>main</code> 跟随主分支滚动构建，
-              合入 main 即可更新测试，无需发版。留空则按当前容器镜像自动判断。
-            </span>
-          </div>
-          <select v-model="form.imageTag" aria-label="更新通道">
-            <option value="">自动（按当前镜像判断）</option>
-            <option value="latest">latest（正式发版线）</option>
-            <option value="main">main（主分支滚动，测试用）</option>
-          </select>
-        </div>
-
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像更新源</strong>
@@ -387,6 +390,9 @@ const autoState = ref<any>({ enabled: true, phase: 'idle', latestVersion: null, 
 let offAutoState: (() => void) | null = null;
 
 const savingConfig = ref(false);
+/** 更新通道单独即时保存（顶部常规行，不随「保存配置」按钮） */
+const savingChannel = ref(false);
+const channelSaved = ref(false);
 
 // 源码模式（非打包形态）：更新 = 增量拉源码 + 重新构建，不使用安装包
 const sourceMode = ref(false);
@@ -737,6 +743,22 @@ async function saveConfig() {
   }
 }
 
+/** 更新通道：顶部常规行，改动即存（不必再滚到页底点「保存配置」） */
+async function saveChannel() {
+  savingChannel.value = true;
+  channelSaved.value = false;
+  try {
+    await api.put('/api/update/config', { imageTag: form.imageTag });
+    await load();
+    channelSaved.value = true;
+    setTimeout(() => (channelSaved.value = false), 2000);
+  } catch (e: any) {
+    notify.error(e.response?.data?.error || '更新通道保存失败');
+  } finally {
+    savingChannel.value = false;
+  }
+}
+
 function fmtSize(bytes: number): string {
   if (!bytes) return '未知大小';
   if (bytes > 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(1) + ' GB';
@@ -812,6 +834,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+/* 更新通道行：下拉即时保存 + 短暂「已保存」提示 */
+.channel-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.channel-saved {
+  color: var(--success);
+  font-size: 12px;
+  white-space: nowrap;
 }
 .check-status {
   font-size: 12px;

@@ -1,30 +1,34 @@
 <template>
-  <section class="settings-panel settings-native">
-    <div class="panel-head">
-      <div>
-        <h3>搜索</h3>
-        <p>搜索默认已支持错别字容错（多字词错一个字仍可命中）与单字检索。同义词可补足「用词不同、意思相同」的召回：每行一组，组内词互为同义词，逗号分隔。</p>
-      </div>
-    </div>
+  <details class="synonym-section">
+    <summary>
+      <span class="synonym-title">搜索同义词</span>
+      <span class="synonym-hint">补足「用词不同、意思相同」的召回；展开后可编辑</span>
+    </summary>
 
-    <div class="field-row synonym-editor">
-      <label for="search-synonyms">同义词组</label>
+    <div class="synonym-body">
+      <p class="synonym-desc">
+        每行一组，组内词互为同义词、逗号分隔；查询命中组内任一词时，会一并检索组内其余词。
+        搜索本就支持错别字容错（多字词错一个字仍可命中）与单字检索，这里补充的是同义/近义表述。
+      </p>
+      <label class="synonym-label" for="search-synonyms">同义词组</label>
       <textarea
         id="search-synonyms"
         v-model="synonymsText"
-        rows="8"
-        placeholder="部署,上线,发布&#10;服务器,主机&#10;图书馆,书库"
+        rows="14"
+        placeholder="部署,上线,发布&#10;服务器,主机,服务端,Server&#10;图书馆,书库"
         spellcheck="false"
       ></textarea>
+      <div class="synonym-actions">
+        <button class="btn primary" type="button" :disabled="saving || synonymsText === loadedText" @click="save">
+          {{ saving ? '保存中…' : '保存同义词' }}
+        </button>
+        <button class="btn" type="button" :disabled="saving || synonymsText === loadedText" @click="resetText">
+          放弃修改
+        </button>
+        <span v-if="savedAt" class="synonym-saved">已保存</span>
+      </div>
     </div>
-
-    <div class="synonym-actions">
-      <button class="btn primary" type="button" :disabled="saving || synonymsText === loadedText" @click="save">
-        保存同义词
-      </button>
-      <span v-if="savedAt" class="synonym-saved">已保存</span>
-    </div>
-  </section>
+  </details>
 </template>
 
 <script setup lang="ts">
@@ -47,6 +51,10 @@ onMounted(async () => {
   }
 });
 
+function resetText() {
+  synonymsText.value = loadedText.value;
+}
+
 async function save() {
   saving.value = true;
   savedAt.value = false;
@@ -56,7 +64,7 @@ async function save() {
     savedAt.value = true;
     notify.success('同义词已保存');
   } catch (error: any) {
-    notify.error(`保存失败：${error?.message || error}`);
+    notify.error(`保存失败：${error?.response?.data?.error || error?.message || error}`);
   } finally {
     saving.value = false;
   }
@@ -64,32 +72,90 @@ async function save() {
 </script>
 
 <style scoped>
-.synonym-editor {
-  flex-direction: column;
-  align-items: stretch;
+/* 作为「数据管理」内的折叠子区块，与 dir-section/backup-section 同款卡片边距 */
+.synonym-section {
+  margin: 0 24px 22px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
 }
-
-.synonym-editor textarea {
+.synonym-section > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.synonym-section > summary::-webkit-details-marker {
+  display: none;
+}
+.synonym-section > summary::before {
+  content: '';
+  flex: 0 0 auto;
+  align-self: center;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--text-faint);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+}
+.synonym-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+.synonym-section > summary:hover {
+  background: var(--bg-hover);
+}
+.synonym-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.synonym-hint {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.synonym-body {
+  padding: 2px 16px 16px;
+  border-top: 1px solid var(--border);
+}
+.synonym-desc {
+  margin: 12px 0 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.synonym-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+#search-synonyms {
   width: 100%;
-  min-height: 160px;
+  min-height: 200px;
   padding: 10px 12px;
-  font: inherit;
+  font-family: inherit;
+  font-size: 12.5px;
   line-height: 1.7;
   resize: vertical;
-  border: 1px solid var(--border-color, #d0d5dd);
-  border-radius: 8px;
-  background: var(--bg-color, #fff);
-  color: inherit;
 }
-
 .synonym-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  margin-top: 12px;
+}
+.synonym-saved {
+  color: var(--success);
+  font-size: 12px;
 }
 
-.synonym-saved {
-  color: var(--success-color, #16a34a);
-  font-size: 13px;
+@media (max-width: 768px) {
+  .synonym-section {
+    margin-right: 18px;
+    margin-left: 18px;
+  }
 }
 </style>

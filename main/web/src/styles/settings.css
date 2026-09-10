@@ -224,6 +224,9 @@
   border-radius: 3px;
   color: var(--text-secondary);
   font-size: 12px;
+  /* 显式继承正文字体：个别浏览器对 button 的 font:inherit 处理不一致，
+     会回退到默认衬线字体（宋体），与相邻文字明显不一致 */
+  font-family: inherit;
   white-space: nowrap;
 }
 .settings-native .text-action:hover {
