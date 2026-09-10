@@ -10,5 +10,5 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
   vue-demi: true
-  core-js: set this to true or false
-  x-data-spreadsheet: set this to true or false
+  core-js: false
+  x-data-spreadsheet: false

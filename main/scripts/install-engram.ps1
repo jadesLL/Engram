@@ -19,6 +19,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest 进度条在 PS5.1 慢十倍
+# npm 镜像（pnpm 安装与依赖安装共用；原先漏了定义，$npmmirror 一直是 $null）
+$npmmirror = 'https://registry.npmmirror.com'
 # 注意：不要在此设 [Console]::OutputEncoding——windowsHide 重定向无控制台句柄时会抛异常终止脚本
 
 # 进度日志：GUI 轮询此文件取实时进度（PS5.1 管道输出块缓冲，stdout 不可靠）
@@ -96,12 +98,27 @@ if (-not $nodeOk) {
 }
 
 # ---------- 3) pnpm ----------
+# 本仓库仅在 pnpm 10 上构建验证过（CI Dockerfile 固定 pnpm@10.20.0）。pnpm 11 改了依赖构建
+# 策略（allowBuilds 取代 onlyBuiltDependencies）并新增 lockfile tarball 校验，在本仓库会直接
+# 拒绝安装；故锁定主版本 10，已装其他大版本（如 11）时改装，避免把「装到未验证的大版本」
+# 变成安装失败的根因。
 Step 'pnpm' '安装 pnpm'
-if (-not (Test-Command 'pnpm')) {
+$pnpmMajor = 10
+function Get-PnpmMajor {
+  if (-not (Test-Command 'pnpm')) { return $null }
+  $v = (pnpm -v 2>$null | Select-Object -First 1)
+  if ("$v" -match '^\s*(\d+)\.') { return [int]$Matches[1] }
+  return $null
+}
+$detected = Get-PnpmMajor
+if ($detected -ne $pnpmMajor) {
+  if ($detected) { StepLog "检测到 pnpm 主版本 $detected，与本仓库验证版本（pnpm $pnpmMajor）不符，改装 pnpm@$pnpmMajor" }
   $env:npm_config_registry = $npmmirror
-  npm install -g pnpm
+  npm install -g "pnpm@$pnpmMajor"
   Refresh-Path
-  if (-not (Test-Command 'pnpm')) { StepFail 'pnpm' 'pnpm 安装失败，请手动执行：npm install -g pnpm' }
+  if ((Get-PnpmMajor) -ne $pnpmMajor) {
+    StepFail 'pnpm' "pnpm 安装失败，请手动执行：npm install -g pnpm@$pnpmMajor"
+  }
 }
 StepDone 'pnpm' "pnpm $(pnpm -v)"
 
