@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { DB_FILE, ensureDirs } from '../config.js';
 import { deriveReportIdentity } from './reportIdentity.js';
+import { ftsSegment } from './fts.js';
 
 ensureDirs();
 
@@ -73,6 +74,10 @@ export function migrate() {
   CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
     name, content, file_id UNINDEXED, tokenize = 'unicode61'
   );
+
+  -- FTS 词表（错字兜底在词表内做编辑距离 ≤1 邻居扩展）
+  CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts_v USING fts5vocab('pages_fts', 'row');
+  CREATE VIRTUAL TABLE IF NOT EXISTS files_fts_v USING fts5vocab('files_fts', 'row');
 
   CREATE TABLE IF NOT EXISTS file_extractions (
     file_id TEXT PRIMARY KEY,
@@ -690,6 +695,26 @@ export function migrate() {
   )`).run();
 
   ensureVecTable(getVecDim());
+
+  // ---------- FTS 分词版本迁移 ----------
+  // 分词规则变化后存量索引与新查询口径不一致（bigram token 在旧单字索引中不存在，
+  // 查询会全部落空），必须全量重写：pages_fts 清空后由启动 scanVault 逐页重插
+  // （syncPageFile 每次启动无条件重写 FTS）；files_fts 无此路径，这里直接重插。
+  const FTS_SEGMENT_VERSION = 'bigram-v1';
+  if (getSetting('fts_segment_version') !== FTS_SEGMENT_VERSION) {
+    db.exec(`DELETE FROM pages_fts`);
+    db.exec(`DELETE FROM files_fts`);
+    const files = db
+      .prepare(`SELECT id, name, text FROM files WHERE deleted = 0 AND text != ''`)
+      .all() as { id: string; name: string; text: string }[];
+    const insert = db.prepare(
+      `INSERT INTO files_fts(name, content, file_id) VALUES(?, ?, ?)`
+    );
+    db.transaction(() => {
+      for (const f of files) insert.run(ftsSegment(f.name), ftsSegment(f.text), f.id);
+    })();
+    setSetting('fts_segment_version', FTS_SEGMENT_VERSION);
+  }
 }
 
 function dedupeReportIdentity() {

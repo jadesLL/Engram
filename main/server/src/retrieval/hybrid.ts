@@ -1,5 +1,11 @@
-import { db } from '../lib/db.js';
-import { buildFtsQuery } from '../lib/fts.js';
+import { db, getSetting } from '../lib/db.js';
+import {
+  buildFtsQuery,
+  parseSynonyms,
+  expandSynonymTerms,
+  cjkQueryTerms,
+  fuzzyNeighbors,
+} from '../lib/fts.js';
 import { readPage } from '../lib/vault.js';
 
 /** 知识库关键词检索（FTS5：页面 + 原始文件提取文本） */
@@ -46,12 +52,47 @@ function evidenceSnippet(content: string, query: string, maxLength = 220): strin
   return `${start > 0 ? '…' : ''}${compact.slice(start, start + maxLength)}${start + maxLength < compact.length ? '…' : ''}`;
 }
 
+/** 词表中是否存在某 term（fts5vocab 虚表支持 term 等值约束，走内部结构不全扫） */
+function termInVocab(term: string): boolean {
+  if (db.prepare(`SELECT 1 FROM pages_fts_v WHERE term = ? LIMIT 1`).get(term)) return true;
+  return Boolean(db.prepare(`SELECT 1 FROM files_fts_v WHERE term = ? LIMIT 1`).get(term));
+}
+
+/** 加载全量词表（多字 CJK token），供错字兜底找编辑距离邻居 */
+function loadVocab(): string[] {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT term FROM pages_fts_v UNION SELECT DISTINCT term FROM files_fts_v`
+      )
+      .all() as { term: string }[];
+    return rows.map((r) => r.term);
+  } catch {
+    return []; // 词表虚表异常时跳过模糊兜底，不影响基础检索
+  }
+}
+
+/**
+ * 错字兜底：查询中词表不存在的 bigram 在词表内找编辑距离 ≤1 邻居并入查询。
+ * 正常查询（无 miss 词）只有几次存在性检查，零词表加载成本。
+ * ponytail: 词表全量加载每次兜底跑一遍，个人库毫秒级；库大到十万词后可加缓存。
+ */
+function fuzzyExpand(query: string): string[] {
+  const missTerms = cjkQueryTerms(query).filter((t) => !termInVocab(t));
+  if (!missTerms.length) return [];
+  const vocab = loadVocab();
+  const extras: string[] = [];
+  for (const term of missTerms) extras.push(...fuzzyNeighbors(term, vocab));
+  return extras;
+}
+
 /** 关键词检索：pages_fts + files_fts 双路 bm25，加权融合排序 */
 export async function hybridSearch(
   query: string,
   limit = 12,
 ): Promise<SearchHit[]> {
-  const fq = buildFtsQuery(query);
+  const synonymExtras = expandSynonymTerms(query, parseSynonyms(getSetting('search_synonyms')));
+  const fq = buildFtsQuery(query, [...synonymExtras, ...fuzzyExpand(query)]);
   const ftsPages = db
     .prepare(
       `SELECT page_id AS id, bm25(pages_fts) AS rank FROM pages_fts WHERE pages_fts MATCH ? ORDER BY rank LIMIT ?`

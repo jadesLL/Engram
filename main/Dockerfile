@@ -15,6 +15,10 @@ COPY server server
 COPY web web
 # desktop/scripts：依赖同步（sync-deps.js）与桌面端脚本的单测，随 verify 目标一起跑
 COPY desktop desktop
+# installer/scripts/tests：根 test script 会跑安装器脚本单测（node 原生 assert，无依赖）；
+# 其用例校验 scripts/install-engram.ps1 与 update-from-source.ps1 的 BOM/内容
+COPY installer installer
+COPY scripts scripts
 # /app/VERSION：应用内自更新的版本比对依据（server /api/update 读取）
 # /app/GIT_SHA：构建期烤入的提交号，镜像内无 .git 时由 server codeIdentity() 读取
 RUN pnpm --filter @engram/web build && pnpm --filter @engram/server build \

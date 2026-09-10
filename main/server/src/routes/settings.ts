@@ -25,6 +25,7 @@ import { getDdnsConfig, getDdnsStatus, kickDdns, syncDdnsRecord } from '../lib/d
 const PUBLIC_SETTINGS = [
   'zcode_config',
   'ddns_config',
+  'search_synonyms',
 ];
 
 export async function settingsRoutes(app: FastifyInstance) {
