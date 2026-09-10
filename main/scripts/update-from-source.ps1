@@ -1,4 +1,4 @@
-# Engram 源码模式一键更新（自用机器：合 main 即更新，无需发版 / 安装包）
+﻿# Engram 源码模式一键更新（自用机器：合 main 即更新，无需发版 / 安装包）
 #
 # 用法（在 main/ 目录下）：
 #   powershell -ExecutionPolicy Bypass -File scripts\update-from-source.ps1              # 更新 + 构建 + 启动

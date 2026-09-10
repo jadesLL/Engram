@@ -37,6 +37,42 @@
 - bump 时三处同步：`main/desktop/package.json` 的 `version`、`main/web/src/version.ts`（软件内版本显示）、`main/docker-compose.yml` 镜像 tag。
 - 仓库根 `CHANGELOG.md` 必须有 `## v<版本>（YYYY-MM-DD）` 段落（距上次发布以来的全部新功能），release.yml 用 awk 提取该段落（段落标题行到下一个 `## ` 标题前），缺失直接失败；段落内容自动作为 Gitea Release 正文发布。
 
+## 源码版安装器发布（generic 包，独立于发版）
+
+源码版安装器 `Engram-source-setup.exe` 是**引导器**：它的行为全在内嵌的
+`install-engram.ps1` 里（clone 地址、便携 Node/Git/pnpm 下载、依赖安装、构建桌面端），
+需要在**发版之外**单独更新。因此它不挂 Release，而是发布到 Gitea generic 包的固定版本
+`latest`——下载链接永不变，每次发布覆盖同名文件。
+
+```bash
+# 本地构建并发布（需 package 写权限的 Gitea 令牌）
+# 在**主检出目录**做：打包依赖主检出的 node_modules 与 desktop 的 electron 运行时，
+# worktree 内没有依赖、无法打包（同 Windows 桌面端打包，属宿主机原生任务）。
+cd main
+node node_modules/pnpm/bin/pnpm.cjs -C installer dist    # 构建（自动注入真实 clone 地址）
+ENGRAM_GITEA_TOKEN=<令牌> node installer/scripts/publish-installer.js
+```
+
+- **固定下载链接**（写进 README，永不失效）：
+  `https://<host>/api/packages/<owner>/generic/engram-installer/latest/Engram-source-setup.exe`
+  （generic 包下载走 API 路径 `/api/packages/...`，不是仓库 UI 路径）
+- **clone 地址自动注入**：`install-engram.ps1` 里的 `$RepoUrl` 在仓库中是占位符
+  `https://gitea.xxx.com:11111/example/Engram.git`（开源清洗约定，私有域名不入库），
+  打包时由 `installer/scripts/stage-ps1.js` 读取构建检出的 `git remote origin` 替换为真实地址。
+  全新机器装失败第一步先查这里：`grep RepoUrl` 包内 ps1 应显示真实域名。
+- **覆盖发布后无需改 README**（链接固定）；只有包名/版本槽位改动才动链接。
+
+### 两个必须记住的坑（都有回归测试锁死）
+
+1. **含中文的 `.ps1` 必须有 UTF-8 BOM**。Windows PowerShell 5.1 读无 BOM 的 UTF-8 文件时
+   按系统 ANSI（简体中文是 GBK）解码，中文串里的字节会吃掉后续引号 → 整脚本 ParserError
+   （2026-09-10 实测：`install-engram.ps1` 丢 BOM 后 19 处解析错误、安装器完全无法运行；
+   开源清洗提交 86c6a39 曾误删该 BOM）。`installer-error-capture.test.js` 会检查。
+2. **`$ErrorActionPreference='Stop'` 下不要用 `2>&1` 收子进程 stderr**。它会把子进程的
+   首行 stderr 当终止性异常，导致 git clone 失败只留下 `Cloning into ...`、真正的 `fatal:`
+   行与退出码全丢，用户看到的报错被误导成「请检查账号密码」。`Invoke-Logged` 已在函数内
+   临时降级为 `Continue`，并用 `Pick-ErrorLine` 取 `fatal:`/`ERR_PNPM_*` 关键行（不取末行）。
+
 ## 镜像地址（重要）
 
 ```bash
