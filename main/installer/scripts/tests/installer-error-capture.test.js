@@ -13,6 +13,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
+// 本测试驱动真实 powershell.exe（Windows PowerShell 5.1），Docker/Linux verify 环境无此
+// 二进制；跳过而非失败——安装器只面向 Windows，脚本逻辑由 Windows 端（本机/CI）覆盖。
+if (process.platform !== 'win32') {
+  console.log('skip: 需要 powershell.exe，仅在 Windows 上运行');
+  process.exit(0);
+}
+
 const ps1 = path.join(__dirname, '..', '..', '..', 'scripts', 'install-engram.ps1');
 const text = fs.readFileSync(ps1, 'utf8');
 
