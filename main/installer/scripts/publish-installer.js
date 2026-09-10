@@ -52,6 +52,14 @@ async function main() {
   const size = fs.statSync(exe).size;
   console.log(`上传 ${exe}（${size} 字节）-> ${url}`);
 
+  // Gitea 对同名文件重复 PUT 返回 409，没有覆盖语义。latest 槽位要「永远指向最新」，
+  // 故先删掉该包版本再传（首次发布时删除返回 404，忽略即可）——重复发布因此是幂等的。
+  const del = await fetch(url.replace(`/${FILE}`, ''), { method: 'DELETE', headers: { Authorization: authHeader } });
+  if (!del.ok && del.status !== 404) {
+    throw new Error(`清理旧包失败：HTTP ${del.status} ${await del.text()}`);
+  }
+  if (del.ok) console.log('已删除旧包版本（覆盖发布）');
+
   const res = await fetch(url, {
     method: 'PUT',
     headers: { Authorization: authHeader, 'Content-Type': 'application/octet-stream' },
