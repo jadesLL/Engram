@@ -1,6 +1,5 @@
-﻿# Engram 源码版卸载引擎（GUI 安装器「卸载」入口与命令行共用）
-# 进度标记协议与 install-engram.ps1 完全一致（##STEPS/##STEP/##DONE/##FAIL/##ALLDONE），
-# 安装器 GUI 无需改解析逻辑即可渲染本脚本。
+﻿# Engram 源码版卸载引擎（应用内 设置→软件更新→「卸载」入口与命令行共用）
+# 进度标记协议与 install-engram.ps1 完全一致（##STEPS/##STEP/##DONE/##FAIL/##ALLDONE）。
 #
 # 交互式运行：powershell -NoProfile -ExecutionPolicy Bypass -File uninstall-engram.ps1 [-DeleteData]
 #   -DeleteData  连同知识库数据目录一起删除；默认保留。

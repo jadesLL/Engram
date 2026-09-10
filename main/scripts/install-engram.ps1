@@ -9,7 +9,7 @@
 #   便携 Git(MinGit)/Node.js/pnpm（缺失才下载，npmmirror→huaweicloud 镜像回退）
 #   → 克隆/更新 Engram 源码到 %LOCALAPPDATA%\engram\Engram
 #   → 安装依赖、构建桌面端、创建桌面快捷方式、启动
-# 数据与安装包版共用 %APPDATA%\@engram\desktop；卸载运行 uninstall-engram.ps1（或安装器 exe 的「卸载」）。
+# 数据与安装包版共用 %APPDATA%\@engram\desktop；卸载走应用内 设置→软件更新→「卸载」，或运行 uninstall-engram.ps1。
 param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'engram'),
   [string]$RepoUrl = 'https://github.com/jadesLL/Engram.git',
@@ -248,5 +248,5 @@ StepDone 'shortcut' "$desktop\Engram.lnk"
 
 # ---------- 8) 完成（应用已由 build 步的脚本启动） ----------
 Step 'launch' '启动 Engram'
-StepDone 'launch' '数据在 %APPDATA%\@engram\desktop；卸载运行 uninstall-engram.ps1 或安装器 exe 的「卸载」'
+StepDone 'launch' '数据在 %APPDATA%\@engram\desktop；卸载走应用内 设置→软件更新→「卸载」'
 Out-Line '##ALLDONE'

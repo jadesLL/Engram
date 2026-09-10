@@ -43,7 +43,6 @@
     background: rgba(255,255,255,.16); color: #fff;
   }
   .btn.primary { background: #fff; color: #1e3a8a; font-weight: 600; }
-  .btn.danger { background: #ef4444; color: #fff; font-weight: 600; }
   .btn:disabled { opacity: .5; cursor: default; }
   .log {
     display: none; margin: 0 28px 10px; padding: 10px 12px; height: 140px; overflow-y: auto;
@@ -65,8 +64,8 @@
       <svg width="30" height="30" viewBox="0 0 100 100"><defs><radialGradient id="g" cx="35%" cy="35%"><stop offset="0%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#1d4ed8"/></radialGradient></defs><ellipse cx="50" cy="50" rx="46" ry="30" fill="none" stroke="url(#g)" stroke-width="9" transform="rotate(-18 50 50)"/><circle cx="50" cy="50" r="13" fill="#1d4ed8"/></svg>
     </div>
     <div>
-      <h1 id="title">正在部署 Engram 源码版</h1>
-      <p id="subtitle">一次性安装：自动准备便携环境、克隆源码并构建桌面端。之后每次启动都会增量更新到最新，无需再走此向导。</p>
+      <h1>正在部署 Engram 源码版</h1>
+      <p>一次性安装：自动准备便携环境、克隆源码并构建桌面端。之后每次启动都会增量更新到最新，无需再走此向导。</p>
     </div>
   </div>
 
@@ -81,15 +80,6 @@
     <p class="hint">私有仓库首次克隆需要一次凭据；仅保存在本机安装目录的 .git\config 中，用于后续静默更新。</p>
   </div>
 
-  <div class="creds" id="confirm" style="display:none">
-    <p class="hint" style="margin:0 0 8px">将停止运行中的 Engram、删除桌面快捷方式与整个安装目录（源码、便携 Node/Git、Electron）。</p>
-    <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; opacity:.95; cursor:pointer">
-      <input id="del-data" type="checkbox" style="width:auto" />
-      同时删除知识库数据（%APPDATA%\@engram\desktop）
-    </label>
-    <p class="hint">数据默认保留；全局 pnpm 不受影响。</p>
-  </div>
-
   <div class="steps" id="steps"></div>
   <div class="log" id="log"></div>
 
@@ -97,23 +87,21 @@
     <button class="details-toggle" id="details-btn">▸ 显示详情</button>
     <div class="spacer"></div>
     <button class="btn" id="cancel-btn">取消</button>
-    <button class="btn danger" id="uninstall-btn" style="display:none">卸载</button>
-    <button class="btn danger" id="confirm-btn" style="display:none">确认卸载</button>
     <button class="btn primary" id="start-btn" style="display:none">开始安装</button>
     <button class="btn primary" id="close-btn" style="display:none">关闭</button>
   </div>
 
   <div class="done-view" id="done-view">
     <div class="big">✓</div>
-    <h2 id="done-title">安装完成</h2>
-    <p id="done-text">Engram 已启动并创建了桌面快捷方式。<br/>以后双击桌面「Engram」即可打开并自动增量更新到最新。</p>
+    <h2>安装完成</h2>
+    <p>Engram 已启动并创建了桌面快捷方式。<br/>以后双击桌面「Engram」即可打开并自动增量更新到最新。</p>
     <button class="btn primary" id="done-close">关闭</button>
   </div>
 
   <script>
     const { ipcRenderer } = require('electron');
     const $ = (id) => document.getElementById(id);
-    let total = 0, doneCount = 0, started = false, needCreds = false, mode = 'install', uninstallDelData = false;
+    let total = 0, doneCount = 0, started = false;
 
     function renderProgress() {
       const pct = total ? Math.round((doneCount / total) * 100) : 0;
@@ -149,24 +137,17 @@
       const active = document.querySelector('.step.active .ico');
       if (active) active.textContent = '✕';
       appendLog('✖ ' + d.msg);
-      $('meta-left').textContent = mode === 'uninstall' ? '卸载失败' : '安装失败';
+      $('meta-left').textContent = '安装失败';
     });
     ipcRenderer.on('log', (_e, d) => appendLog(d.line));
     ipcRenderer.on('exit', (_e, d) => {
       if (d.code !== 0 && !document.body.classList.contains('done')) {
-        $('meta-left').textContent = (mode === 'uninstall' ? '卸载失败' : '安装失败') + '（退出码 ' + d.code + '）';
+        $('meta-left').textContent = '安装失败（退出码 ' + d.code + '）';
       }
     });
     ipcRenderer.on('alldone', () => {
       document.body.classList.add('done');
       $('close-btn').style.display = 'none';
-      if (mode === 'uninstall') {
-        $('done-title').textContent = '卸载完成';
-        $('done-text').innerHTML =
-          '已停止应用、删除桌面快捷方式与安装目录。<br/>知识库数据：' +
-          (uninstallDelData ? '已删除' : '已保留') +
-          '。全局 pnpm 未受影响。';
-      }
     });
 
     function appendLog(line) {
@@ -184,29 +165,22 @@
     $('close-btn').addEventListener('click', () => window.close());
     $('done-close').addEventListener('click', () => window.close());
 
-    function begin() {
+    async function begin(creds) {
       if (started) return;
       started = true;
-      $('creds').style.display = 'none';
-      $('confirm').style.display = 'none';
+      if (creds) $('creds').style.display = 'none';
       $('start-btn').style.display = 'none';
-      $('uninstall-btn').style.display = 'none';
-      $('confirm-btn').style.display = 'none';
       $('cancel-btn').style.display = '';
       $('meta-left').textContent = '准备中…';
+      ipcRenderer.send('start-install', creds);
     }
 
     (async () => {
       $('cancel-btn').style.display = 'none';
       const hasRepo = await ipcRenderer.invoke('has-repo');
       if (hasRepo) {
-        needCreds = false;
-        $('start-btn').textContent = '更新 / 重装';
-        $('start-btn').style.display = '';
-        $('uninstall-btn').style.display = '';
-        $('meta-left').textContent = '已安装：可更新 / 重装，或卸载';
+        begin(null); // 已有源码目录：无需凭据，直接增量安装
       } else {
-        needCreds = true;
         $('creds').style.display = '';
         $('start-btn').style.display = '';
         $('meta-left').textContent = '输入 Gitea 凭据后开始安装';
@@ -214,34 +188,10 @@
     })();
 
     $('start-btn').addEventListener('click', () => {
-      if (!needCreds) {
-        begin();
-        ipcRenderer.send('start-install', null);
-        return;
-      }
       const user = $('user').value.trim();
       const pass = $('pass').value;
       if (!user || !pass) { appendLog('✖ 请填写 Gitea 账号与密码/令牌'); return; }
-      begin();
-      ipcRenderer.send('start-install', { user, pass });
-    });
-
-    $('uninstall-btn').addEventListener('click', () => {
-      $('title').textContent = '准备卸载 Engram 源码版';
-      $('subtitle').textContent = '将停止运行中的实例、删除桌面快捷方式与整个安装目录。知识库数据默认保留。';
-      $('start-btn').style.display = 'none';
-      $('uninstall-btn').style.display = 'none';
-      $('confirm').style.display = '';
-      $('confirm-btn').style.display = '';
-      $('meta-left').textContent = '确认卸载';
-    });
-
-    $('confirm-btn').addEventListener('click', () => {
-      uninstallDelData = $('del-data').checked;
-      $('title').textContent = '正在卸载 Engram 源码版';
-      mode = 'uninstall';
-      begin();
-      ipcRenderer.send('start-uninstall', { deleteData: uninstallDelData });
+      begin({ user, pass });
     });
   </script>
 </body>

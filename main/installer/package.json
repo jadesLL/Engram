@@ -25,10 +25,6 @@
       {
         "from": "../scripts/install-engram.ps1",
         "to": "install-engram.ps1"
-      },
-      {
-        "from": "../scripts/uninstall-engram.ps1",
-        "to": "uninstall-engram.ps1"
       }
     ],
     "win": {
