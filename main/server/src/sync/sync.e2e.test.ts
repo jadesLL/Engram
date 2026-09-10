@@ -280,7 +280,11 @@ test('三端同步端到端：实时传播、三方合并、冲突备份、文�
     // ---------- 场景 5：同一位置冲突 → 先到方为准 + 冲突备份页 ----------
     const pageK = await createPage(hub, '同步验证冲突', '结论：待定');
     await waitFor('B 同步冲突基线', async () => (await pageContent(nodeB, pageK))?.includes('待定') === true);
+    const errBeforeDisable = ((await (await api(nodeB, 'GET', '/api/sync/status')).json()) as { lastError: string | null }).lastError;
     await setSync(nodeB, false);
+    // 停用会主动 abort 在途 SSE 读：那是我们自己发起的中断，不得记成「最近错误」误报
+    const errAfterDisable = ((await (await api(nodeB, 'GET', '/api/sync/status')).json()) as { lastError: string | null }).lastError;
+    assert.equal(errAfterDisable, errBeforeDisable, `停用不应产生错误记录，实得: ${errAfterDisable}`);
     // hub（先到方）与 B（后到方）改同一行
     assert.ok((await api(hub, 'PUT', `/api/pages/${pageK}`, { content: '结论：采纳方案 A' })).ok);
     assert.ok((await api(nodeB, 'PUT', `/api/pages/${pageK}`, { content: '结论：采纳方案 B' })).ok);
