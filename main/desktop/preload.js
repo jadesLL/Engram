@@ -10,10 +10,11 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   setRemoteMode: (url, token, directUrl) => ipcRenderer.invoke('set-remote-mode', url, token, directUrl),
   // 返回启动页重新选择模式
   openConnectionSettings: () => ipcRenderer.invoke('open-connection-settings'),
-  // ---------- 数据保存位置与整库恢复（本地模式） ----------
-  // 查询当前数据保存位置（{ dataDir, isDefault }）
+  // ---------- 数据仓库位置与整库恢复（本地模式） ----------
+  // 查询当前数据仓库位置（{ dataDir, isDefault }）
   getDataDir: () => ipcRenderer.invoke('get-data-dir'),
-  // 打开系统目录选择框更改数据保存位置（旧数据自动迁移并重启内嵌后端；取消返回 null，失败返回 { error }）
+  // 打开系统目录选择框切换数据仓库（不迁移数据：已有仓库直接打开，空目录由后端新建；
+  // 取消返回 null，位置未变返回 { same }，失败返回 { error }，成功返回 { dir, isNew }）
   chooseDataDir: () => ipcRenderer.invoke('choose-data-dir'),
   // 重启内嵌后端（恢复备份暂存后使其生效；窗口会重新加载）
   restartServer: () => ipcRenderer.invoke('restart-server'),

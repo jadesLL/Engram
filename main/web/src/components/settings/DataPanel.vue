@@ -18,12 +18,12 @@
     <div v-if="isDesktopLocal" class="dir-section">
       <div class="dir-row">
         <div class="dir-info">
-          <strong>数据保存位置</strong>
+          <strong>数据仓库</strong>
           <p><code class="dir-path">{{ dataDir }}</code></p>
-          <p>首次启动使用默认位置；更换位置时旧数据会自动迁移过去（原位置保留一份副本），本地服务自动重启。</p>
+          <p>切换仓库不会迁移数据：已有 Engram 数据的目录会被直接打开（需用该仓库的登录密码），空目录则会新建一个空仓库。切换后本地服务自动重启。</p>
         </div>
         <button class="btn" type="button" :disabled="dirBusy" @click="changeDataDir">
-          {{ dirBusy ? '迁移中...' : '更改位置' }}
+          {{ dirBusy ? '切换中...' : '切换仓库' }}
         </button>
       </div>
       <p v-if="dirMsg" class="setting-message" :class="dirOk ? 'ok' : 'err'">{{ dirMsg }}</p>
@@ -159,7 +159,8 @@ async function changeDataDir() {
     const r = await wikiDesktop.chooseDataDir();
     if (!r) return; // 用户取消
     if (r.same) {
-      dataDir.value = r.dir;
+      dirOk.value = true;
+      dirMsg.value = '已在该位置，无需切换。';
       return;
     }
     if (r.error) {
@@ -169,11 +170,13 @@ async function changeDataDir() {
     }
     dataDir.value = r.dir;
     dirOk.value = true;
-    dirMsg.value = r.hadExisting
-      ? '已切换到该位置（检测到已有数据，直接使用），本地服务已重启。'
-      : r.copied
-        ? '旧数据已迁移到新位置（原位置保留副本，可自行删除），本地服务已重启。'
-        : '数据位置已更新，本地服务已重启。';
+    dirMsg.value = r.isNew
+      ? '已在新位置创建空仓库，服务正在重启；进入后会先要求设置访问密码。'
+      : '已打开该位置的已有仓库，服务正在重启；请用该仓库的登录密码进入。';
+  } catch (e: any) {
+    // IPC 抛错（主进程异常）时也必须给出反馈，否则按钮复位后看起来「没反应」
+    dirOk.value = false;
+    dirMsg.value = '切换失败：' + (e && e.message ? e.message : String(e));
   } finally {
     dirBusy.value = false;
   }
@@ -211,6 +214,9 @@ async function changePort() {
     portCurrent.value = port;
     portOk.value = true;
     portMsg.value = `端口已改为 ${port}，本地服务正在以新端口重启…`;
+  } catch (e: any) {
+    portOk.value = false;
+    portMsg.value = '修改失败：' + (e && e.message ? e.message : String(e));
   } finally {
     portBusy.value = false;
   }

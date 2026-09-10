@@ -21,6 +21,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "lib/**",
       "index.html",
       "icon.png",
       "server/dist/**",
