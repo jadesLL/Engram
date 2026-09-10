@@ -107,6 +107,8 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 **Docker（服务器 / NAS）**：见下方「快速开始（Docker 部署）」；更新可在 设置 → 软件更新 一键拉镜像重建（需挂载 docker.sock）。镜像构建期会把提交号烤入 `/app/GIT_SHA`（release.yml 自动传，本地构建可 `ENGRAM_GIT_SHA=$(git rev-parse HEAD) docker compose up -d --build`），因此设置 → 应用版本 显示 `版本号 · 提交号`，一眼能看出当前跑的是哪次构建。
 
+Docker 版同样支持**跟主分支不发版更新**：设置 → 软件更新 → 高级选项 → 更新通道选 `main`，之后每次 main 推送 CI 都会重推 `:main` 镜像，点「立即更新」即拿到主分支最新代码（版本号不变，看提交号判断）；发版前的测试就靠这条通道，验证完切回 `latest`。默认通道 `latest` 只跟正式发版。
+
 > Android APK 随发版附于 Engram Releases。
 
 ## 快速开始（Docker 部署）
@@ -186,7 +188,7 @@ Fastify + better-sqlite3（FTS5）· Vue 3 + Vditor + vis-network · Electron（
 
 - **更新日志**：[`CHANGELOG.md`](./CHANGELOG.md)——每个版本的全部新功能与变更；发版时由 CI 自动发布到 GitHub Release 正文
 - **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Android 安装包（apk）、Docker 镜像包（tar.gz）与 sha256 校验；Release 挂在本仓库 [Releases](https://github.com/jadesLL/Engram/releases)，发版是显式动作，仅按需执行
-- **源码模式通道**：自用机器不依赖发版——合 main 后即可通过桌面快捷方式或应用内「检查更新」增量拉源码更新（见「下载与安装」）
+- **源码模式通道**：自用机器不依赖发版——合 main 后即可通过桌面快捷方式或应用内「检查更新」增量拉源码更新（见「下载与安装」）；Docker 部署可切「更新通道 → main」用镜像形式达到同样效果（合 main 即更新）
 - **镜像**：`gitea.example.com/example/engram/engram:<版本>`（未公开发布；需要请自行构建）
 - **发版流程**：详见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)；CI/CD 维护见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)
 

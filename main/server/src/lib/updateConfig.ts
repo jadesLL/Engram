@@ -9,6 +9,8 @@ import { DATA_DIR } from '../config.js';
  *
  * 键说明：
  *  - UPDATE_IMAGE_REF          镜像更新源（不含 tag 的镜像地址），缺省从当前容器镜像推导
+ *  - UPDATE_IMAGE_TAG          更新的镜像 tag（更新通道）：latest=正式发版线（默认）；
+ *                              main=主分支滚动构建，发版前合 main 即可更新测试
  *  - UPDATE_REGISTRY_USERNAME  私有 Registry 用户名
  *  - UPDATE_REGISTRY_TOKEN     私有 Registry 令牌
  *  - UPDATE_GITEA_URL          远端仓库服务地址（版本检测用，可空）
@@ -22,6 +24,7 @@ export const UPDATE_ENV_FILE = path.join(DATA_DIR, '.env');
 
 export const UPDATE_ENV_KEYS = {
   imageRef: 'UPDATE_IMAGE_REF',
+  imageTag: 'UPDATE_IMAGE_TAG',
   registryUsername: 'UPDATE_REGISTRY_USERNAME',
   registryToken: 'UPDATE_REGISTRY_TOKEN',
   giteaUrl: 'UPDATE_GITEA_URL',
@@ -34,6 +37,7 @@ export const UPDATE_ENV_KEYS = {
 
 export interface UpdateEnv {
   imageRef: string;
+  imageTag: string;
   registryUsername: string;
   registryToken: string;
   giteaUrl: string;
@@ -75,6 +79,7 @@ export function readUpdateEnv(): UpdateEnv {
   }
   return {
     imageRef: parsed[UPDATE_ENV_KEYS.imageRef] || '',
+    imageTag: parsed[UPDATE_ENV_KEYS.imageTag] || '',
     registryUsername: parsed[UPDATE_ENV_KEYS.registryUsername] || '',
     registryToken: parsed[UPDATE_ENV_KEYS.registryToken] || '',
     giteaUrl: parsed[UPDATE_ENV_KEYS.giteaUrl] || '',
@@ -154,6 +159,23 @@ export function deriveDefaultImageRef(currentImage: string): string | null {
     return ref.slice(0, lastColon) || null;
   }
   return ref;
+}
+
+/**
+ * 从当前运行容器的镜像 ref 推导跟踪的 tag（更新通道）：
+ * 只有滚动 tag 才继承认（main=主分支通道、latest=发版通道、dev=开发）——
+ * 版本号 tag（如 1.2.5）是被钉住的发布快照，继续跟踪它会永远「已是最新」，故回退 latest。
+ * 显式配置 UPDATE_IMAGE_TAG 优先，本函数只提供缺省值。
+ */
+export function deriveDefaultImageTag(currentImage: string): string {
+  const ref = currentImage.split('@')[0];
+  const lastSlash = ref.lastIndexOf('/');
+  const lastColon = ref.lastIndexOf(':');
+  if (lastColon > lastSlash && lastColon >= 0) {
+    const tag = ref.slice(lastColon + 1);
+    if (['main', 'latest', 'dev'].includes(tag)) return tag;
+  }
+  return 'latest';
 }
 
 /**

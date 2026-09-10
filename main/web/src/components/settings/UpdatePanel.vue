@@ -31,11 +31,11 @@
         <div class="setting-row">
           <div class="setting-copy">
             <strong>检查更新</strong>
-            <span>从远端仓库 Release 与镜像仓库比对当前版本。</span>
+            <span>从远端仓库 Release 与镜像仓库比对当前版本。当前更新通道：<code>{{ state.imageTag || 'latest' }}</code></span>
           </div>
           <div class="check-controls">
             <span v-if="checkResult" class="check-status" :class="checkResult.hasUpdate ? 'has' : 'none'">
-              {{ checkResult.hasUpdate ? (checkResult.latestVersion ? `有新版本 v${checkResult.latestVersion}` : '远端镜像有更新') : '已是最新' }}
+              {{ checkLabel }}
             </span>
             <button class="btn" type="button" :disabled="checking" @click="doCheck">
               <AppSpinner v-if="checking" :size="11" />
@@ -239,11 +239,26 @@
       <!-- 高级选项：绝大多数部署用不到（镜像源自动从当前容器推导，公开仓库免认证），默认收起 -->
       <div v-if="!state.desktop && state.supported" class="advanced-toggle">
         <button type="button" class="text-action" @click="showAdvanced = !showAdvanced">
-          {{ showAdvanced ? '收起高级选项' : '高级选项（自定义镜像源）' }}
+          {{ showAdvanced ? '收起高级选项' : '高级选项（更新通道 / 自定义镜像源）' }}
         </button>
       </div>
 
       <template v-if="!state.desktop && state.supported && showAdvanced">
+        <div class="setting-row setting-row-form">
+          <div class="setting-copy">
+            <strong>更新通道</strong>
+            <span>
+              <code>latest</code> 跟随正式发版（默认）；<code>main</code> 跟随主分支滚动构建，
+              合入 main 即可更新测试，无需发版。留空则按当前容器镜像自动判断。
+            </span>
+          </div>
+          <select v-model="form.imageTag" aria-label="更新通道">
+            <option value="">自动（按当前镜像判断）</option>
+            <option value="latest">latest（正式发版线）</option>
+            <option value="main">main（主分支滚动，测试用）</option>
+          </select>
+        </div>
+
         <div class="setting-row setting-row-form">
           <div class="setting-copy">
             <strong>镜像更新源</strong>
@@ -307,6 +322,9 @@ interface UpdateStateInfo {
   commitSource: string;
   imageRef: string;
   imageRefConfigured: boolean;
+  /** 生效的更新通道（镜像 tag）：latest / main */
+  imageTag: string;
+  imageTagConfigured: boolean;
   registryAuthConfigured: boolean;
   giteaConfigured: boolean;
   busy: boolean;
@@ -316,6 +334,7 @@ interface UpdateStateInfo {
 
 interface ConfigInfo {
   imageRef: string;
+  imageTag: string;
   registryUsername: string;
   registryToken: string;
   giteaUrl: string;
@@ -330,14 +349,16 @@ const isDesktop = computed(() => typeof window !== 'undefined' && Boolean((windo
 
 const state = ref<UpdateStateInfo>({
   supported: false, reason: '', desktop: false, currentVersion: '', commit: '', commitSource: 'unknown',
-  imageRef: '', imageRefConfigured: false, registryAuthConfigured: false,
+  imageRef: '', imageRefConfigured: false, imageTag: 'latest', imageTagConfigured: false,
+  registryAuthConfigured: false,
   giteaConfigured: false, busy: false, containerName: '', currentImage: '',
 });
 const config = ref<ConfigInfo>({
-  imageRef: '', registryUsername: '', registryToken: '',
+  imageRef: '', imageTag: '',
+  registryUsername: '', registryToken: '',
   giteaUrl: '', giteaRepo: '', giteaAuthType: 'token', giteaToken: '', giteaUsername: '', giteaPassword: '',
 });
-const form = reactive({ repoUrl: '', authType: 'token', token: '', username: '', password: '', imageRef: '', registryUsername: '', registryToken: '' });
+const form = reactive({ repoUrl: '', authType: 'token', token: '', username: '', password: '', imageRef: '', imageTag: '', registryUsername: '', registryToken: '' });
 const repoUrlError = ref('');
 const showAdvanced = ref(false);
 
@@ -404,6 +425,17 @@ const versionBadge = computed(() => {
 
 /** 源码模式检查更新结果：`已是最新（本地 0fbe4e2）` / `落后 3 个提交：0fbe4e2 → a1b2c3d` */
 const sourceCheckText = computed(() => (srcResult.value?.ok ? formatSourceCheckLabel(srcResult.value) : ''));
+
+/** 检查更新结果文案：main 通道无 Release 版本可比，只说「主分支镜像有更新」 */
+const checkLabel = computed(() => {
+  const r = checkResult.value;
+  if (!r) return '';
+  if (!r.hasUpdate) return '已是最新';
+  // main 通道更新由镜像 digest 驱动，Release 版本号与本地相同，不能拿它当「新版本」
+  if (r.imageTag === 'main') return '主分支镜像有更新';
+  if (r.latestVersion) return `有新版本 v${r.latestVersion}`;
+  return '远端镜像有更新';
+});
 
 /** 源码模式自动检查状态文字：只提示，不自动升级（重启时机由用户点「更新并重启」决定） */
 const sourceAutoStatus = computed(() => {
@@ -509,6 +541,7 @@ async function load() {
     form.username = c.data.giteaUsername || '';
     form.password = c.data.giteaPassword || '';
     form.imageRef = c.data.imageRef;
+    form.imageTag = c.data.imageTag || '';
     form.registryUsername = c.data.registryUsername;
     form.registryToken = c.data.registryToken || '';
   } catch {
@@ -691,6 +724,7 @@ async function saveConfig() {
       giteaUsername: form.authType === 'password' ? form.username : '',
       giteaPassword: form.authType === 'password' ? form.password : '',
       imageRef: form.imageRef,
+      imageTag: form.imageTag,
       registryUsername: form.registryUsername,
       registryToken: form.registryToken,
     });

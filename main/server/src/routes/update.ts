@@ -12,7 +12,9 @@ import {
   readUpdateEnv,
   writeUpdateEnv,
   deriveDefaultImageRef,
+  deriveDefaultImageTag,
   buildRegistryAuthHeader,
+  type UpdateEnv,
 } from '../lib/updateConfig.js';
 import {
   fetchLatestRelease,
@@ -43,6 +45,18 @@ function selfContainerId(): string {
 
 /** 进行中的更新（服务端单进程内互斥；容器重启即自动复位） */
 let updating = false;
+
+/**
+ * 解析生效的更新目标：镜像源 + 跟踪 tag（更新通道）。
+ * 都由显式配置优先，缺省从当前容器镜像推导——容器跑在 :main 上就继续跟 main，
+ * 在 :latest（或钉版本号）上则回退 latest 发版线。
+ */
+function resolveUpdateTarget(cfg: UpdateEnv, currentImage: string): { imageRef: string; tag: string } {
+  return {
+    imageRef: cfg.imageRef || deriveDefaultImageRef(currentImage) || '',
+    tag: cfg.imageTag || deriveDefaultImageTag(currentImage),
+  };
+}
 
 /**
  * 应用内更新路由：
@@ -77,6 +91,7 @@ export async function updateRoutes(app: FastifyInstance) {
     }
     // 提交身份：版本号只在发版时变，提交号才是「更新有没有落地」的依据
     const identity = codeIdentity();
+    const target = resolveUpdateTarget(cfg, currentImage);
     return {
       supported,
       reason,
@@ -84,8 +99,10 @@ export async function updateRoutes(app: FastifyInstance) {
       currentVersion: currentVersion(),
       commit: identity.commit,
       commitSource: identity.source,
-      imageRef: cfg.imageRef || (currentImage ? deriveDefaultImageRef(currentImage) || '' : ''),
+      imageRef: target.imageRef,
       imageRefConfigured: Boolean(cfg.imageRef),
+      imageTag: target.tag,
+      imageTagConfigured: Boolean(cfg.imageTag),
       registryAuthConfigured: Boolean(cfg.registryUsername && cfg.registryToken),
       giteaConfigured: Boolean(cfg.giteaUrl && cfg.giteaRepo),
       busy: updating,
@@ -99,6 +116,7 @@ export async function updateRoutes(app: FastifyInstance) {
     // 凭据明文回显：设置页所见即所得（接口在 owner 登录态之后才可访问）
     return {
       imageRef: cfg.imageRef,
+      imageTag: cfg.imageTag,
       registryUsername: cfg.registryUsername,
       registryToken: cfg.registryToken,
       giteaUrl: cfg.giteaUrl,
@@ -113,6 +131,7 @@ export async function updateRoutes(app: FastifyInstance) {
   app.put('/api/update/config', async (req, reply) => {
     const body = (req.body || {}) as {
       imageRef?: string;
+      imageTag?: string;
       registryUsername?: string;
       registryToken?: string;
       giteaUrl?: string;
@@ -124,6 +143,14 @@ export async function updateRoutes(app: FastifyInstance) {
     };
     const patch: Parameters<typeof writeUpdateEnv>[0] = {};
     if (body.imageRef !== undefined) patch.imageRef = String(body.imageRef).trim();
+    // tag 只接受合法镜像 tag 字符（字母数字开头，字母数字._- 组成），空串即清除回默认通道
+    if (body.imageTag !== undefined) {
+      const tag = String(body.imageTag).trim().replace(/^:+/, '');
+      if (tag && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(tag)) {
+        return reply.code(400).send({ error: '不合法的镜像 tag（只允许字母数字与 . _ -，且字母数字开头）' });
+      }
+      patch.imageTag = tag;
+    }
     if (body.registryUsername !== undefined) patch.registryUsername = String(body.registryUsername).trim();
     // 凭据空串即清除（设置页明文回显后无需专门的清除接口）；不传（undefined）表示保持不变
     if (body.registryToken !== undefined) patch.registryToken = String(body.registryToken).trim();
@@ -151,6 +178,7 @@ export async function updateRoutes(app: FastifyInstance) {
       hasUpdate: boolean;
       digestMatch: boolean | null;
       registryChecked: boolean;
+      imageTag: string;
       exeAsset: { name: string; url: string; size: number } | null;
       error?: string;
     } = {
@@ -160,6 +188,7 @@ export async function updateRoutes(app: FastifyInstance) {
       hasUpdate: false,
       digestMatch: null,
       registryChecked: false,
+      imageTag: '',
       exeAsset: null,
     };
 
@@ -213,14 +242,15 @@ export async function updateRoutes(app: FastifyInstance) {
     let registryError = '';
     if (!desktop && sock) {
       const inspect = await docker.inspectContainer(selfContainerId());
-      const imageRef = cfg.imageRef || (inspect ? deriveDefaultImageRef(inspect.Config.Image) || '' : '');
+      const { imageRef, tag } = resolveUpdateTarget(cfg, inspect?.Config.Image || '');
+      result.imageTag = tag;
       if (imageRef) {
         try {
-          const local = await docker.inspectImage(`${imageRef}:latest`);
+          const local = await docker.inspectImage(`${imageRef}:${tag}`);
           let remote: string | null = null;
           try {
             remote = await docker.inspectRemoteImage(
-              `${imageRef}:latest`,
+              `${imageRef}:${tag}`,
               buildRegistryAuthHeader(imageRef, cfg.registryUsername, cfg.registryToken),
             );
           } catch (e) {
@@ -230,6 +260,7 @@ export async function updateRoutes(app: FastifyInstance) {
                 imageRef.split('/')[0],
                 imageRef.split('/').slice(1).join('/'),
                 { username: cfg.registryUsername, token: cfg.registryToken },
+                tag,
               );
             } catch (e2) {
               throw new Error(`${describeError(e)}；容器直连回退也失败: ${describeError(e2)}`);
@@ -242,7 +273,7 @@ export async function updateRoutes(app: FastifyInstance) {
             result.digestMatch = match;
             if (!match) result.hasUpdate = true;
           } else if (local) {
-            // 远端 404：latest 尚未推送过（或无权限），不能判定
+            // 远端 404：该 tag 尚未推送过（或无权限），不能判定
           }
         } catch (e) {
           registryError = describeError(e);
@@ -279,12 +310,12 @@ export async function updateRoutes(app: FastifyInstance) {
         const inspect = await docker.inspectContainer(oldId);
         if (!inspect) throw new Error(`无法定位当前容器 (${oldId})`);
 
-        const imageRef = cfg.imageRef || deriveDefaultImageRef(inspect.Config.Image) || '';
+        const { imageRef, tag } = resolveUpdateTarget(cfg, inspect.Config.Image || '');
         if (!imageRef) throw new Error('未配置更新镜像源（UPDATE_IMAGE_REF），且无法从当前镜像推导');
-        const targetRef = `${imageRef}:latest`;
+        const targetRef = `${imageRef}:${tag}`;
 
         progressLine(`当前容器: ${inspect.Name.replace(/^\//, '')} (${oldId.slice(0, 12)})`);
-        progressLine(`目标镜像: ${targetRef}`);
+        progressLine(`目标镜像: ${targetRef}（通道: ${tag}）`);
 
         // 1) 拉取镜像（容忍失败：本地已有同名镜像时继续，支持离线/内网重放场景）
         let pulled = true;
@@ -292,7 +323,7 @@ export async function updateRoutes(app: FastifyInstance) {
           progressLine('开始拉取镜像…');
           const authHeader = buildRegistryAuthHeader(imageRef, cfg.registryUsername, cfg.registryToken);
           const lastStatus = new Map<string, string>();
-          await docker.pullImage(imageRef, 'latest', authHeader, (ev: DockerPullEvent) => {
+          await docker.pullImage(imageRef, tag, authHeader, (ev: DockerPullEvent) => {
             if (ev.error) throw new Error(ev.errorDetail?.message || ev.error);
             if (ev.id && ev.status && ev.status !== lastStatus.get(ev.id)) {
               lastStatus.set(ev.id, ev.status);

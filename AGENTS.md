@@ -12,11 +12,11 @@
 
 官方远端为 `gitea`（`https://github.com/jadesLL/Engram.git`，私有）。开发、合并、发版均在本地完成后按用户明确指示推送 gitea；不经批准不推其他远端，不强推或改写远端历史。
 
-推送 main 或 `v*` 标签触发 Gitea Actions（详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送只跑 verify（build+typecheck+test）；镜像只在 `v*` 发版时由 release.yml 构建推送（版本 tag + latest）并创建 Release（正文=CHANGELOG 段落，无二进制附件）；exe/APK/离线 tar.gz 不随发版构建，需要分发时手动 dispatch release.yml（输入标签+勾选产物）按需构建并补挂到对应 Release（2026-09-08 起对齐 Hermes 式发版）。CI runner 的联网下载属既定流程，本地开发机的下载限制不因此放宽。
+推送 main 或 `v*` 标签触发 Gitea Actions（详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送跑 verify（build+typecheck+test）并构建推送**主分支滚动镜像 `:main`**（发版前的测试通道，合 main 即更新）；版本 tag 与 `:latest` 只在 `v*` 发版时由 release.yml 构建推送并创建 Release（正文=CHANGELOG 段落，无二进制附件）；exe/APK/离线 tar.gz 不随发版构建，需要分发时手动 dispatch release.yml（输入标签+勾选产物）按需构建并补挂到对应 Release（2026-09-08 起对齐 Hermes 式发版）。CI runner 的联网下载属既定流程，本地开发机的下载限制不因此放宽。
 
 发版流程（细则见 main/docs/GITEA-CI.md）。发版是显式动作：仅当用户要求产出镜像/exe/APK 给他人时执行，日常迭代不发版：
 
-1. 功能合并 main 后推送：`git push gitea main` → ci.yml 只做 verify。
+1. 功能合并 main 后推送：`git push gitea main` → ci.yml 跑 verify 并推送滚动镜像 `:main`（测试部署可切「更新通道 → main」跟主分支）。
 2. 发版：同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 把距上次发布的**全部新功能**写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落（缺失则 release.yml 直接失败）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像并发布 Gitea Release（正文=CHANGELOG 段落，无二进制附件）。
 3. 需要分发 exe/APK/离线 tar.gz 时（按需，不随发版）：Actions → Release → Run workflow，输入标签+勾选产物，构建后自动补挂 Release；Windows exe 也可按「Windows 桌面端打包」本地打包。产物归档到 `releases/<版本>/`（含 release.json）。
 4. 镜像地址固定三层路径 `gitea.example.com/example/engram/engram:<版本>`（两层 `owner/image` 形式 NAS 拉取异常，勿改回）。
