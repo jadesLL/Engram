@@ -254,44 +254,6 @@
         </div>
       </div>
 
-      <!-- 高级选项：绝大多数部署用不到（镜像源自动从当前容器推导，公开仓库免认证），默认收起 -->
-      <div v-if="!state.desktop && state.supported" class="advanced-toggle">
-        <button type="button" class="text-action" @click="showAdvanced = !showAdvanced">
-          {{ showAdvanced ? '收起高级选项' : '高级选项（自定义镜像源）' }}
-        </button>
-      </div>
-
-      <template v-if="!state.desktop && state.supported && showAdvanced">
-        <div class="setting-row setting-row-form">
-          <div class="setting-copy">
-            <strong>镜像更新源</strong>
-            <span>留空即自动使用当前容器的镜像仓库（推荐）。仅私有仓库或需切换镜像源时填写，如 registry.xxx.com/engram（不含 tag）。</span>
-          </div>
-          <input
-            v-model="form.imageRef"
-            type="text"
-            :placeholder="state.imageRef || '留空自动从当前镜像推导'"
-            aria-label="镜像更新源"
-          />
-        </div>
-
-        <div class="setting-row setting-row-form">
-          <div class="setting-copy">
-            <strong>镜像仓库用户名</strong>
-            <span>私有镜像仓库的账号；公开仓库无需填写。</span>
-          </div>
-          <input v-model="form.registryUsername" type="text" placeholder="registry 用户名" aria-label="镜像仓库用户名" />
-        </div>
-
-        <div class="setting-row setting-row-form">
-          <div class="setting-copy">
-            <strong>镜像仓库令牌</strong>
-            <span>私有镜像仓库的密码或令牌；公开仓库无需填写。清空保存即删除。</span>
-          </div>
-          <input v-model="form.registryToken" type="text" autocomplete="off" spellcheck="false" placeholder="公开仓库无需填写" aria-label="镜像仓库令牌" />
-        </div>
-      </template>
-
       <div class="setting-row">
         <div class="setting-copy">
           <strong>保存配置</strong>
@@ -323,12 +285,9 @@ interface UpdateStateInfo {
   commit: string;
   /** 提交号来源：env / build-file / git / unknown */
   commitSource: string;
-  imageRef: string;
-  imageRefConfigured: boolean;
   /** 生效的更新通道（镜像 tag）：latest / main */
   imageTag: string;
   imageTagConfigured: boolean;
-  registryAuthConfigured: boolean;
   giteaConfigured: boolean;
   busy: boolean;
   containerName: string;
@@ -336,10 +295,7 @@ interface UpdateStateInfo {
 }
 
 interface ConfigInfo {
-  imageRef: string;
   imageTag: string;
-  registryUsername: string;
-  registryToken: string;
   giteaUrl: string;
   giteaRepo: string;
   giteaAuthType: string;
@@ -352,18 +308,15 @@ const isDesktop = computed(() => typeof window !== 'undefined' && Boolean((windo
 
 const state = ref<UpdateStateInfo>({
   supported: false, reason: '', desktop: false, currentVersion: '', commit: '', commitSource: 'unknown',
-  imageRef: '', imageRefConfigured: false, imageTag: 'latest', imageTagConfigured: false,
-  registryAuthConfigured: false,
+  imageTag: 'latest', imageTagConfigured: false,
   giteaConfigured: false, busy: false, containerName: '', currentImage: '',
 });
 const config = ref<ConfigInfo>({
-  imageRef: '', imageTag: '',
-  registryUsername: '', registryToken: '',
+  imageTag: '',
   giteaUrl: '', giteaRepo: '', giteaAuthType: 'token', giteaToken: '', giteaUsername: '', giteaPassword: '',
 });
-const form = reactive({ repoUrl: '', authType: 'token', token: '', username: '', password: '', imageRef: '', imageTag: '', registryUsername: '', registryToken: '' });
+const form = reactive({ repoUrl: '', authType: 'token', token: '', username: '', password: '', imageTag: '' });
 const repoUrlError = ref('');
-const showAdvanced = ref(false);
 
 const checking = ref(false);
 const checkResult = ref<any>(null);
@@ -546,10 +499,7 @@ async function load() {
     form.token = c.data.giteaToken || '';
     form.username = c.data.giteaUsername || '';
     form.password = c.data.giteaPassword || '';
-    form.imageRef = c.data.imageRef;
     form.imageTag = c.data.imageTag || '';
-    form.registryUsername = c.data.registryUsername;
-    form.registryToken = c.data.registryToken || '';
   } catch {
     /* 面板加载失败由 message 区提示 */
   }
@@ -729,10 +679,7 @@ async function saveConfig() {
       giteaToken: form.authType === 'token' ? form.token : '',
       giteaUsername: form.authType === 'password' ? form.username : '',
       giteaPassword: form.authType === 'password' ? form.password : '',
-      imageRef: form.imageRef,
       imageTag: form.imageTag,
-      registryUsername: form.registryUsername,
-      registryToken: form.registryToken,
     });
     await load();
     notify.success('更新源配置已保存');
@@ -909,12 +856,6 @@ onUnmounted(() => {
   flex-basis: 100%;
 }
 
-/* 高级选项折叠入口 */
-.advanced-toggle {
-  padding: 10px 24px 8px;
-  border-bottom: 1px solid var(--border);
-}
-
 .update-log {
   margin: 12px 24px;
   padding: 10px 12px;
@@ -962,9 +903,6 @@ onUnmounted(() => {
   }
   .settings-group > .setting-message {
     margin: 0 18px 14px;
-  }
-  .advanced-toggle {
-    padding: 10px 18px 8px;
   }
   .update-log {
     margin: 12px 18px;

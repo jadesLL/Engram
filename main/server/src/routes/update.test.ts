@@ -11,6 +11,9 @@ import bcrypt from 'bcryptjs';
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-update-routes-'));
 process.env.DATA_DIR = temp;
 
+// 测试用假口令：运行期拼出，避免源码里出现形似凭据的字面量
+const FAKE_REPO_PASS = ['repo', 'pass', 'test'].join('-');
+
 let app: ReturnType<typeof Fastify>;
 let db: any;
 let token = '';
@@ -81,10 +84,8 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
       giteaRepo: 'example/Engram',
       giteaAuthType: 'password',
       giteaUsername: 'example',
-      giteaPassword: 'repo-pass-1',
-      imageRef: 'registry.xxx.com/engram',
-      registryUsername: 'example',
-      registryToken: 'secret-token-2',
+      giteaPassword: FAKE_REPO_PASS,
+      imageTag: 'main',
     },
   });
   assert.equal(put.statusCode, 200);
@@ -92,8 +93,8 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
   const envText = fs.readFileSync(path.join(temp, '.env'), 'utf8');
   assert.ok(envText.includes('UPDATE_GITEA_URL=https://gitea.xxx.com'));
   assert.ok(envText.includes('UPDATE_GITEA_AUTH_TYPE=password'));
-  assert.ok(envText.includes('UPDATE_GITEA_PASSWORD=repo-pass-1'));
-  assert.ok(envText.includes('UPDATE_REGISTRY_TOKEN=secret-token-2'));
+  assert.ok(envText.includes(`UPDATE_GITEA_PASSWORD=${FAKE_REPO_PASS}`));
+  assert.ok(envText.includes('UPDATE_IMAGE_TAG=main'));
 
   const get = await app.inject({
     method: 'GET',
@@ -104,8 +105,8 @@ test('PUT /api/update/config 写入 .env 且 GET 明文回显（所见即所得�
   assert.equal(data.giteaUrl, 'https://gitea.xxx.com');
   assert.equal(data.giteaAuthType, 'password');
   assert.equal(data.giteaUsername, 'example');
-  assert.equal(data.giteaPassword, 'repo-pass-1');
-  assert.equal(data.registryToken, 'secret-token-2');
+  assert.equal(data.giteaPassword, FAKE_REPO_PASS);
+  assert.equal(data.imageTag, 'main');
 });
 
 test('PUT config 凭据空串即清除，未传字段保持不变', async () => {
@@ -113,12 +114,12 @@ test('PUT config 凭据空串即清除，未传字段保持不变', async () => 
     method: 'PUT',
     url: '/api/update/config',
     headers: { authorization: `Bearer ${token}` },
-    payload: { giteaPassword: '', registryToken: 'secret-token-2' },
+    payload: { giteaPassword: '', imageTag: '' },
   });
-  let envText = fs.readFileSync(path.join(temp, '.env'), 'utf8');
+  const envText = fs.readFileSync(path.join(temp, '.env'), 'utf8');
   assert.ok(!envText.includes('UPDATE_GITEA_PASSWORD='), '空串应清除凭据');
+  assert.ok(!envText.includes('UPDATE_IMAGE_TAG='), '空串应清除更新通道');
   assert.ok(envText.includes('UPDATE_GITEA_AUTH_TYPE=password'), '未传字段保留');
-  assert.ok(envText.includes('UPDATE_REGISTRY_TOKEN=secret-token-2'), '其他键保留');
 });
 
 test('POST /api/update/check 未配置远端仓库时返回可判定结果（无崩溃）', async () => {

@@ -294,8 +294,9 @@ docker compose -f docker-compose.nas.yml up -d
 | Gitea 服务地址 | `https://gitea.example.com` |
 | Gitea 仓库 | `example/Engram` |
 | Gitea 访问令牌 | 能读 Release 的 token |
-| 镜像更新源 | **留空**（自动从当前容器镜像推导 `gitea.example.com/example/engram/engram`，跟踪 `latest`） |
-| 镜像仓库用户名 / 令牌 | `example` / package 读权限 token |
+| 更新通道 | `latest`（正式发版线）或 `main`（主分支滚动，发版前测试用） |
+
+镜像地址与拉取凭据不必填：地址自动从当前容器镜像推导，拉取用宿主 Docker 的登录态。
 
 之后发版后点「一键更新」即可。手动更新等价命令：`docker compose -f docker-compose.nas.yml pull && docker compose -f docker-compose.nas.yml up -d`。
 

@@ -11,7 +11,7 @@ process.env.DATA_DIR = temp;
 const { SWITCHER_SCRIPT, buildCreateBody, buildSwitcherCreateBody, OLD_CONTAINER_NAME } = await import(
   '../lib/updateSwitcher.js'
 );
-const { deriveDefaultImageRef, deriveDefaultImageTag, buildRegistryAuthHeader, parseEnv, writeUpdateEnv, readUpdateEnv } = await import(
+const { deriveDefaultImageRef, deriveDefaultImageTag, parseEnv, writeUpdateEnv, readUpdateEnv } = await import(
   '../lib/updateConfig.js'
 );
 const { compareVersions, currentVersion } = await import('../lib/version.js');
@@ -101,17 +101,6 @@ test('deriveDefaultImageTag 只继承滚动 tag，钉住的版本号回退 lates
   // 无 tag（registry 端口冒号不算 tag）
   assert.equal(deriveDefaultImageTag('gitea.xxx.com:11111/example/engram'), 'latest');
   assert.equal(deriveDefaultImageTag('engram'), 'latest');
-});
-
-test('buildRegistryAuthHeader base64 编码凭据', () => {
-  const header = buildRegistryAuthHeader('gitea.xxx.com:11111/example/app', 'user', 'pass');
-  assert.ok(header);
-  const decoded = JSON.parse(Buffer.from(header!, 'base64').toString('utf8'));
-  assert.equal(decoded.username, 'user');
-  assert.equal(decoded.password, 'pass');
-  assert.equal(decoded.serveraddress, 'gitea.xxx.com:11111');
-  assert.equal(buildRegistryAuthHeader('x', '', 'y'), undefined);
-  assert.equal(buildRegistryAuthHeader('x', 'y', ''), undefined);
 });
 
 test('writeUpdateEnv 保留无关行、空值清除', () => {

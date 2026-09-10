@@ -8,25 +8,22 @@ import { DATA_DIR } from '../config.js';
  * 写入时保留文件中其他无关行，只增改本模块持有的键。
  *
  * 键说明：
- *  - UPDATE_IMAGE_REF          镜像更新源（不含 tag 的镜像地址），缺省从当前容器镜像推导
  *  - UPDATE_IMAGE_TAG          更新的镜像 tag（更新通道）：latest=正式发版线（默认）；
  *                              main=主分支滚动构建，发版前合 main 即可更新测试
- *  - UPDATE_REGISTRY_USERNAME  私有 Registry 用户名
- *  - UPDATE_REGISTRY_TOKEN     私有 Registry 令牌
  *  - UPDATE_GITEA_URL          远端仓库服务地址（版本检测用，可空）
  *  - UPDATE_GITEA_REPO         远端仓库 owner/name（版本检测用，可空）
  *  - UPDATE_GITEA_AUTH_TYPE    凭据方式：token（访问令牌）/ password（用户名密码）
  *  - UPDATE_GITEA_TOKEN        访问令牌（token 方式）
  *  - UPDATE_GITEA_USERNAME     用户名（password 方式）
  *  - UPDATE_GITEA_PASSWORD     密码（password 方式）
+ *
+ * 镜像地址与拉取凭据不需要配置：地址从当前容器镜像名推导，凭据由宿主 Docker
+ * 守护进程持有（容器挂了 /var/run/docker.sock 时拉取/查询都经守护进程完成）。
  */
 export const UPDATE_ENV_FILE = path.join(DATA_DIR, '.env');
 
 export const UPDATE_ENV_KEYS = {
-  imageRef: 'UPDATE_IMAGE_REF',
   imageTag: 'UPDATE_IMAGE_TAG',
-  registryUsername: 'UPDATE_REGISTRY_USERNAME',
-  registryToken: 'UPDATE_REGISTRY_TOKEN',
   giteaUrl: 'UPDATE_GITEA_URL',
   giteaRepo: 'UPDATE_GITEA_REPO',
   giteaAuthType: 'UPDATE_GITEA_AUTH_TYPE',
@@ -36,10 +33,7 @@ export const UPDATE_ENV_KEYS = {
 } as const;
 
 export interface UpdateEnv {
-  imageRef: string;
   imageTag: string;
-  registryUsername: string;
-  registryToken: string;
   giteaUrl: string;
   giteaRepo: string;
   giteaAuthType: string;
@@ -78,10 +72,7 @@ export function readUpdateEnv(): UpdateEnv {
     /* 文件不存在视为未配置 */
   }
   return {
-    imageRef: parsed[UPDATE_ENV_KEYS.imageRef] || '',
     imageTag: parsed[UPDATE_ENV_KEYS.imageTag] || '',
-    registryUsername: parsed[UPDATE_ENV_KEYS.registryUsername] || '',
-    registryToken: parsed[UPDATE_ENV_KEYS.registryToken] || '',
     giteaUrl: parsed[UPDATE_ENV_KEYS.giteaUrl] || '',
     giteaRepo: parsed[UPDATE_ENV_KEYS.giteaRepo] || '',
     giteaAuthType: parsed[UPDATE_ENV_KEYS.giteaAuthType] || 'token',
@@ -176,19 +167,4 @@ export function deriveDefaultImageTag(currentImage: string): string {
     if (['main', 'latest', 'dev'].includes(tag)) return tag;
   }
   return 'latest';
-}
-
-/**
- * 构造 Docker Engine API 的 X-Registry-Auth 头：
- * base64(JSON({username, password, serveraddress}))，由 dockerd 向 registry 认证。
- */
-export function buildRegistryAuthHeader(imageRef: string, username: string, token: string): string | undefined {
-  if (!username || !token) return undefined;
-  // imageRef 形如 registryhost[:port]/path → serveraddress 取 host 部分
-  const firstSlash = imageRef.indexOf('/');
-  const host = firstSlash > 0 ? imageRef.slice(0, firstSlash) : imageRef;
-  return Buffer.from(
-    JSON.stringify({ username, password: token, serveraddress: host }),
-    'utf8',
-  ).toString('base64');
 }
