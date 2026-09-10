@@ -8,6 +8,18 @@
 - 每次发版必须把**距上次发布以来的全部新功能**写入对应版本段落，段落标题固定格式 `## v<版本>（YYYY-MM-DD）`，随版本号 bump 同一提交推送；`release.yml` 会校验该段落（缺失即发版失败）并自动把它发布为 Gitea Release 正文。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.2.6（2026-09-11）
+
+**中文搜索增强 + Docker 主分支滚动更新通道 + NAS 部署模板 + 安装器全新机可用性修复**
+
+- **中文搜索增强**：全文索引改为 bigram 预分词（索引侧双字组 + 单字，单字查询可命中；查询侧多字串只取双字组，兼顾词级区分度与边缘错字存活）；**错字兜底**——查询中词表不存在的 bigram 经 `fts5vocab` 词表做编辑距离 ≤1 邻居扩展并入 OR（如「部属」→「部署」），正常查询只有存在性检查零开销；**同义词扩展**——设置页新增「搜索」分类，`search_synonyms` 每行一组逗号分隔，查询子串命中组内词即展开其余词；索引迁移经 `settings.fts_segment_version` 标记，版本变化时重建索引
+- **Docker 主分支滚动更新（合 main 即更新，不发版也能测）**：新增 `:main` 滚动镜像通道——`ci.yml` 在每次 main 推送 verify 通过后构建推送 `:main` 镜像，设置 → 软件更新 → 高级选项新增「更新通道」下拉（`latest` 正式发版线 / `main` 主分支滚动），测试部署切到 `main` 后点「立即更新」即拿到主分支最新代码，版本号不变、看提交号判断；未配置时按当前容器镜像自动判断（跑在 `:main` 续跟 main，版本号 tag 回退 latest）；检查/拉取/registry digest 对比全程透传目标 tag。版本 tag 与 `:latest` 仍只在发版时由 release.yml 产出
+- **NAS 专用部署模板**：新增 `docker-compose.nas.yml`（极空间/群晖/威联通），只需 compose + 同目录 `.env` 两个文件、无需克隆仓库；宿主端口可调（默认 18080）、JWT 密钥走 `.env` 的 `ONLYOFFICE_JWT_SECRET`、三个 onlyoffice 数据卷显式固定卷名（换目录不丢数据）、网络 MTU 默认 1500
+- **源码版安装器修复（全新机器装不上系列）**：恢复含中文 `.ps1` 的 UTF-8 BOM（PS 5.1 按 GBK 读无 BOM 的 UTF-8 致 19+7 处 ParserError）；`Invoke-Logged` 收集子进程输出改回 `*>&1`（`2>&1` 会漏掉嵌套脚本 `Write-Host` 的 Information 流，也会把首行 stderr 误当终止异常吞掉真正的 `fatal:` 与退出码）；安装进度标记协议统一为 `##STEP:/##DONE:/##FAIL:`（此前脚本发 `[[STEP]`、GUI 只认 `##STEP:`，导致步骤列表能出现但永远不点亮、跑完直接跳「安装完成」）；`pnpm` 锁定主版本 10（此前装最新 pnpm 11 因依赖构建策略变更直接拒绝安装）；安装器发布改为「先 DELETE 再 PUT」幂等覆盖（Gitea generic 包同名重复 PUT 返 409）
+- **桌面端数据位置修复**：设置 → 数据管理「更改位置」改为切换仓库（不迁移），修复选完目录应用直接退出、位置不生效（迁移路径撞仍在写的 SQLite WAL 报 EBUSY，catch 中重启未 await 触发 unhandledRejection 终止进程）
+- **多端同步误报修复**：停用同步或改配置时不再把主动中断（AbortError）记成「最近错误」（真实网络故障抛 TypeError，按 name 过滤）
+- **文档与配置改用仓库真实地址**：README/AGENTS/BUILDING/GITEA-CI/compose/workflow 及安装器默认地址由占位符改为本仓库真实地址（占位符会让文档链接全成死链）；删除随之多余的安装器地址注入机制
+
 ## v1.2.5（2026-09-09）
 
 **Windows 11 Fluent 全界面改造 + 编辑页重设计 + MCP 页面操作补全 + 桌面端源码更新体验**
