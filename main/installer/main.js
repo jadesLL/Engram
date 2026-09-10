@@ -1,4 +1,4 @@
-// Engram 源码版安装器 GUI：驱动 install-engram.ps1 部署引擎。
+// Engram 源码版安装器 GUI：驱动 install-engram.ps1（安装/更新）与 uninstall-engram.ps1（卸载）部署引擎。
 // 进度采集：部署脚本逐行写进度日志文件（PS5.1 管道输出块缓冲，stdout 不可靠），此处轮询解析。
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawn } = require('node:child_process');
@@ -10,11 +10,16 @@ let child = null;
 let pollTimer = null;
 let processed = 0; // 已消费的日志字符数
 
-function scriptPath() {
+function installRoot() {
+  // 安装/卸载共用的根目录；ENGRAM_INSTALL_DIR 供隔离测试覆盖
+  return process.env.ENGRAM_INSTALL_DIR || path.join(process.env.LOCALAPPDATA || '', 'engram');
+}
+
+function scriptPath(name) {
   // 打包后 ps1 在 resources 根（extraResources 不进 asar）；开发态直接用仓库脚本
   return app.isPackaged
-    ? path.join(process.resourcesPath, 'install-engram.ps1')
-    : path.join(__dirname, '..', 'scripts', 'install-engram.ps1');
+    ? path.join(process.resourcesPath, name)
+    : path.join(__dirname, '..', 'scripts', name);
 }
 
 function send(ch, data) {
@@ -57,11 +62,9 @@ function pollLog(logFile) {
   });
 }
 
-function startInstall(creds) {
+function startDeploy(scriptFile, args, extraEnv) {
   if (child) return;
-  const env = { ...process.env };
-  if (creds && creds.user) env.ENGRAM_GITEA_USER = creds.user;
-  if (creds && creds.pass) env.ENGRAM_GITEA_PASS = creds.pass;
+  const env = { ...process.env, ...extraEnv };
   const logFile = path.join(app.getPath('temp'), 'engram-install.log');
   try {
     fs.writeFileSync(logFile, '');
@@ -73,7 +76,7 @@ function startInstall(creds) {
 
   const ps = spawn(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath()],
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptFile, ...args],
     { env, windowsHide: true },
   );
   child = ps;
@@ -122,10 +125,20 @@ app.whenReady().then(() => {
     console.error(`[ui] ${message}`);
   });
 
-  ipcMain.on('start-install', (_e, creds) => startInstall(creds));
+  ipcMain.on('start-install', (_e, creds) => {
+    const env = {};
+    if (creds && creds.user) env.ENGRAM_GITEA_USER = creds.user;
+    if (creds && creds.pass) env.ENGRAM_GITEA_PASS = creds.pass;
+    startDeploy(scriptPath('install-engram.ps1'), [], env);
+  });
+  ipcMain.on('start-uninstall', (_e, opts) => {
+    const args = ['-InstallDir', installRoot()];
+    if (opts && opts.deleteData) args.push('-DeleteData');
+    startDeploy(scriptPath('uninstall-engram.ps1'), args, {});
+  });
   ipcMain.on('cancel-install', () => cancelInstall());
   ipcMain.handle('has-repo', () => {
-    return Boolean(fs.existsSync(path.join(process.env.LOCALAPPDATA || '', 'engram', 'Engram', '.git')));
+    return Boolean(fs.existsSync(path.join(installRoot(), 'Engram', '.git')));
   });
 });
 
