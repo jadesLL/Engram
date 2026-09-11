@@ -105,8 +105,8 @@ export async function syncRoutes(app: FastifyInstance) {
     const rows = db
       .prepare(
         `SELECT id, path, title, updated_at FROM pages
-         WHERE path LIKE 'AIWorks/同步冲突/%' AND deleted = 0
-           AND path != 'AIWorks/同步冲突/说明.md'
+         WHERE path LIKE '同步冲突/%' AND deleted = 0
+           AND path != '同步冲突/说明.md'
          ORDER BY updated_at DESC LIMIT 200`
       )
       .all();

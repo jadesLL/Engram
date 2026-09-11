@@ -340,11 +340,18 @@ test('三端同步端到端：实时传播、三方合并、冲突备份、文�
     assert.ok(!hubContent?.includes('方案 B'), '先到方内容不应被后到方覆盖');
     // 后到方内容进冲突备份页
     const conflictsRes2 = await api(hub, 'GET', '/api/sync/conflicts');
-    const conflicts2 = (await conflictsRes2.json()) as { conflicts: { title: string }[] };
+    const conflicts2 = (await conflictsRes2.json()) as { conflicts: { path: string; title: string }[] };
+    const kBackups = conflicts2.conflicts.filter((c) => c.title.includes('同步验证冲突'));
+    assert.ok(kBackups.length > 0, `应产生冲突备份页: ${JSON.stringify(conflicts2)}`);
     assert.ok(
-      conflicts2.conflicts.some((c) => c.title.includes('同步验证冲突')),
-      `应产生冲突备份页: ${JSON.stringify(conflicts2)}`
+      kBackups.every((c) => c.path.startsWith('同步冲突/')),
+      `备份页应落在顶级 同步冲突/ 目录: ${JSON.stringify(kBackups)}`
     );
+    // AIWorks 中只留冲突记录页，记录本次冲突
+    const logRes = await api(hub, 'GET', '/api/pages/list');
+    const logList = (await logRes.json()) as { pages: { path: string }[] };
+    const conflictLog = logList.pages?.find((p) => p.path === 'AIWorks/log/conflict.md');
+    assert.ok(conflictLog, 'AIWorks/log/conflict.md 冲突记录页应存在');
     // 冲突备份页同步到节点，B 端能看到自己的完整内容不丢
     await waitFor('冲突备份页同步到 B', async () => {
       const res = await api(nodeB, 'GET', '/api/sync/conflicts');

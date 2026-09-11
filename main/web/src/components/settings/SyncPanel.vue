@@ -152,13 +152,13 @@
     <div v-if="status && status.role !== 'none'" class="sync-role-note">
       <p>同步范围：页面、附件图片、原始资料文件与证据账本。各端密码、令牌、助手会话、模型配置保持独立。
         两端同时修改同一页面时按字符级智能合并；无法自动合并的同位置冲突以先到方为准，后到方完整内容保存到
-        <code>AIWorks/同步冲突/</code> 页面，不丢内容。</p>
+        <code>同步冲突/</code> 目录下的页面（AIWorks 中只留冲突记录），不丢内容。</p>
     </div>
 
     <SettingsGroup
       v-if="conflicts.length"
       :title="`冲突备份页（${conflicts.length}）`"
-      hint="同步冲突时后到方的完整内容会保存为 AIWorks/同步冲突/ 下的页面，请人工核对合并后删除"
+      hint="同步冲突时后到方的完整内容会保存为 同步冲突/ 目录下的页面，请人工核对合并后删除"
       :default-open="true"
     >
       <ul class="conflict-list">

@@ -80,7 +80,8 @@ test('系统页缺失时仍会补建', () => {
   db.prepare(`DELETE FROM pages WHERE path = ?`).run(LOG_PAGE);
   ensureSystemFiles();
   assert.match(readPage(LOG_PAGE).content, /^# 操作日志/, '缺失的操作日志页应被补建');
-  assert.ok(fs.existsSync(safeJoin('AIWorks/同步冲突/说明.md')), '静态系统页清单缺失即建');
+  assert.ok(fs.existsSync(safeJoin('同步冲突/说明.md')), '静态系统页清单缺失即建');
+  assert.ok(fs.existsSync(safeJoin('AIWorks/log/conflict.md')), '冲突记录页缺失即建');
 });
 
 test('appendWikiLog 倒序追加，新的在上', () => {

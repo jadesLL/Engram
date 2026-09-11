@@ -11,7 +11,7 @@ import { safeJoin, writePage } from './vault.js';
 const KNOWLEDGE_DIRS = ['原始资料', 'Wiki/概念', 'Wiki/实体', 'Wiki/归档', 'Wiki/查询'];
 /** 系统区三件套现位置 + 历史版本位置（升级前的旧文件也要清索引） */
 const SYSTEM_PAGE_PATHS = [
-  'AIWorks/index/index.md', 'AIWorks/log/log.md', 'AIWorks/scheme/relationships.md',
+  'AIWorks/index/index.md', 'AIWorks/log/log.md', 'AIWorks/log/conflict.md', 'AIWorks/scheme/relationships.md',
   'Wiki/index.md', 'Wiki/log.md', 'Wiki/关系/relationships.md',
 ];
 
