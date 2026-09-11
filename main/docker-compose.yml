@@ -1,6 +1,6 @@
 services:
   engram:
-    image: engram:1.2.6
+    image: engram:1.2.7
     build:
       context: .
       # 构建身份：本地构建时传 ENGRAM_GIT_SHA=$(git rev-parse HEAD) 即可在应用内看到提交号
