@@ -22,13 +22,14 @@ import {
   getPageRevision,
   getOpsSince,
   listPeers,
-  minOplogSeq,
+  needsResync,
   revokePeer,
   touchPeer,
   type SyncOp,
   type SyncPeer,
 } from '../sync/store.js';
-import { collectEvidenceForPage } from '../sync/rows.js';
+import { collectEvidenceForPage, collectEvidenceForPath } from '../sync/rows.js';
+import { distilledSourcePaths } from '../pipeline/sourceLedger.js';
 import { configure, reconcileNow, status } from '../sync/index.js';
 
 /**
@@ -234,11 +235,11 @@ export async function syncRoutes(app: FastifyInstance) {
     if (req.syncPeer) touchPeer(req.syncPeer.id);
     return {
       ops: enriched,
-      resync: ops.length === 0 && minOplogSeq() > since + 1,
+      resync: needsResync(since),
     };
   });
 
-  /** 全量对账清单 */
+  /** 全量对账清单（页面/文件带内容 hash 与 revision；条目另带 distilled 供对端比对本端账本） */
   app.get('/api/sync/snapshot', { preHandler: requireSyncAccess }, async () => {
     return { entries: buildSnapshotEntries() };
   });
@@ -251,11 +252,38 @@ export async function syncRoutes(app: FastifyInstance) {
     if (content === null) return reply.code(404).send({ error: '页面不存在' });
     return { content };
   });
+
+  /**
+   * 证据账本拉取：按来源路径返回该路径的完整证据快照（版本/运行/事实/贡献）。
+   * 「已提炼」标记只存在于这些账本行里，页面与文件同步带不动它；对端发现
+   * 清单里 distilled=true 而本端为 false 时，用本端点补齐（snapshot 为 null 表示本端未提炼过）。
+   */
+  app.get('/api/sync/evidence', { preHandler: requireSyncAccess }, async (req) => {
+    const query = req.query as { path?: string };
+    const sourcePath = String(query.path || '');
+    if (!sourcePath) return { snapshot: null };
+    return { snapshot: collectEvidenceForPath(sourcePath) };
+  });
 }
 
-/** brain 目录全量清单（页面取 raw 文本 hash，文件取字节 hash） */
-function buildSnapshotEntries(): { kind: 'page' | 'file'; path: string; hash: string; revision: number }[] {
-  const entries: { kind: 'page' | 'file'; path: string; hash: string; revision: number }[] = [];
+/** brain 目录全量清单（页面取 raw 文本 hash，文件取字节 hash；
+ *  distilled 为中文本端该路径的「已提炼」状态——标记只存在于账本里，清单必须显式带上，
+ *  否则对端无法区分「内容已同步」与「账本已同步」） */
+function buildSnapshotEntries(): {
+  kind: 'page' | 'file';
+  path: string;
+  hash: string;
+  revision: number;
+  distilled: boolean;
+}[] {
+  const entries: {
+    kind: 'page' | 'file';
+    path: string;
+    hash: string;
+    revision: number;
+    distilled: boolean;
+  }[] = [];
+  const distilledPaths = distilledSourcePaths();
   function walk(rel: string): void {
     const absDir = safeJoin(rel);
     let dirents: fs.Dirent[];
@@ -277,9 +305,21 @@ function buildSnapshotEntries(): { kind: 'page' | 'file'; path: string; hash: st
             | { sync_revision: number }
             | undefined)?.sync_revision || 0
         );
-        entries.push({ kind: 'page', path: childRel, hash: sha256(Buffer.from(raw, 'utf8')), revision });
+        entries.push({
+          kind: 'page',
+          path: childRel,
+          hash: sha256(Buffer.from(raw, 'utf8')),
+          revision,
+          distilled: distilledPaths.has(childRel),
+        });
       } else {
-        entries.push({ kind: 'file', path: childRel, hash: sha256(fs.readFileSync(childAbs)), revision: 0 });
+        entries.push({
+          kind: 'file',
+          path: childRel,
+          hash: sha256(fs.readFileSync(childAbs)),
+          revision: 0,
+          distilled: distilledPaths.has(childRel),
+        });
       }
     }
   }

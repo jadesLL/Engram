@@ -67,6 +67,17 @@ export function minOplogSeq(): number {
   return row.min_seq ?? 0;
 }
 
+/**
+ * 游标需要的那条 op 是否已被裁剪（即「落后超过保留窗口」，该走全量对账）。
+ * 判据是「保留区最老的 op 比游标的下一条还新」，不能只看本轮取回 0 条：
+ * 缺口之后仍有新 op 时同样会取回若干条，只看条数会把缺口当成正常增量静默跳过，
+ * 缺口里的删除/移动 op 与证据账本再也取不回来。
+ * 空 oplog（min=0）视为无缺口——此时没有可重放的 op，也不会无限触发对账。
+ */
+export function needsResync(since: number): boolean {
+  return minOplogSeq() > since + 1;
+}
+
 export function getOpsSince(since: number, limit = 500): SyncOp[] {
   return db
     .prepare(`SELECT * FROM sync_oplog WHERE seq > ? ORDER BY seq ASC LIMIT ?`)
