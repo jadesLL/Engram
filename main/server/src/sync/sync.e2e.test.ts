@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 
 /**
  * 多端同步端到端集成测试：同机起 1 个 hub + 2 个节点（真实 HTTP/SSE 实例），
- * 覆盖 双向实时传播、三方非重叠合并、同位置冲突备份、文件同步、删除传播、
+ * 覆盖 双向实时传播、三方非重叠合并、同位置冲突最新者胜裁决、文件同步、删除传播、
  * 停用-重连对账补推、提炼账本（「已提炼」标记）跨端补齐与 oplog 缺口判定。
  * 实例以 worker_threads 运行完整 server（每线程独立模块注册表与 DATA_DIR，
  * 与多进程部署等价）；均为测试期间的一次性临时实例，密码每次运行随机生成。
@@ -180,7 +180,7 @@ async function countSyncEvents(inst: Instance, event: string): Promise<number> {
   return st.log.filter((l) => l.event === event).length;
 }
 
-test('三端同步端到端：实时传播、三方合并、冲突备份、文件与删除同步、提炼账本补齐', { timeout: 300_000 }, async () => {
+test('三端同步端到端：实时传播、三方合并、冲突最新者胜裁决、文件与删除同步、提炼账本补齐', { timeout: 300_000 }, async () => {
   const instances: Instance[] = [];
   const cleanup = async () => {
     for (const inst of instances) {
@@ -310,16 +310,16 @@ test('三端同步端到端：实时传播、三方合并、冲突备份、文�
       const c = await pageContent(nodeC, pageM);
       return c?.includes('第一行：hub 修订') === true && c?.includes('第三行：B 修订') === true;
     }, 40_000);
-    // 合并无冲突 → 不应产生冲突备份页
-    const conflictsRes = await api(hub, 'GET', '/api/sync/conflicts');
-    const conflicts = (await conflictsRes.json()) as { conflicts: { title: string }[] };
+    // 合并无冲突 → 不产生任何重命名副本
+    const listRes0 = await api(hub, 'GET', '/api/pages/list');
+    const pages0 = (await listRes0.json()) as { pages: { path: string }[] };
     assert.equal(
-      conflicts.conflicts.filter((c) => c.title.includes('同步验证合并')).length,
+      pages0.pages.filter((p) => /^同步验证合并-\d{14}\.md$/.test(p.path)).length,
       0,
-      '非重叠合并不应产生冲突备份'
+      '非重叠合并不应产生重命名副本'
     );
 
-    // ---------- 场景 5：同一位置冲突 → 先到方为准 + 冲突备份页 ----------
+    // ---------- 场景 5：同一位置冲突 → 修改时间最新者胜，败者原名+时间重命名保留 ----------
     const pageK = await createPage(hub, '同步验证冲突', '结论：待定');
     await waitFor('B 同步冲突基线', async () => (await pageContent(nodeB, pageK))?.includes('待定') === true);
     const errBeforeDisable = ((await (await api(nodeB, 'GET', '/api/sync/status')).json()) as { lastError: string | null }).lastError;
@@ -327,36 +327,47 @@ test('三端同步端到端：实时传播、三方合并、冲突备份、文�
     // 停用会主动 abort 在途 SSE 读：那是我们自己发起的中断，不得记成「最近错误」误报
     const errAfterDisable = ((await (await api(nodeB, 'GET', '/api/sync/status')).json()) as { lastError: string | null }).lastError;
     assert.equal(errAfterDisable, errBeforeDisable, `停用不应产生错误记录，实得: ${errAfterDisable}`);
-    // hub（先到方）与 B（后到方）改同一行
+    // hub（先改，mtime 较早）与 B（后改，mtime 较晚）改同一行
     assert.ok((await api(hub, 'PUT', `/api/pages/${pageK}`, { content: '结论：采纳方案 A' })).ok);
+    await new Promise((r) => setTimeout(r, 50));
     assert.ok((await api(nodeB, 'PUT', `/api/pages/${pageK}`, { content: '结论：采纳方案 B' })).ok);
     await setSync(nodeB, true, hub.port, tokenB);
-    // hub 保留先到方内容
+    // 修改时间较新的 B 版本成为正本
     await waitFor('冲突裁决完成', async () => {
       const c = await pageContent(hub, pageK);
-      return c?.includes('方案 A') === true;
+      return c?.includes('方案 B') === true;
     }, 40_000);
     const hubContent = await pageContent(hub, pageK);
-    assert.ok(!hubContent?.includes('方案 B'), '先到方内容不应被后到方覆盖');
-    // 后到方内容进冲突备份页
-    const conflictsRes2 = await api(hub, 'GET', '/api/sync/conflicts');
-    const conflicts2 = (await conflictsRes2.json()) as { conflicts: { path: string; title: string }[] };
-    const kBackups = conflicts2.conflicts.filter((c) => c.title.includes('同步验证冲突'));
-    assert.ok(kBackups.length > 0, `应产生冲突备份页: ${JSON.stringify(conflicts2)}`);
-    assert.ok(
-      kBackups.every((c) => c.path.startsWith('同步冲突/')),
-      `备份页应落在顶级 同步冲突/ 目录: ${JSON.stringify(kBackups)}`
+    assert.ok(!hubContent?.includes('方案 A'), '正本不应保留较旧的 hub 版本内容');
+    // 被取代的 hub 旧版本以「原名-时间戳」重命名保留在同一目录
+    const listRes = await api(hub, 'GET', '/api/pages/list');
+    const allPages = (await listRes.json()) as { pages: { id: string; path: string; title: string }[] };
+    const kPath = allPages.pages.find((p) => p.id === pageK)!.path;
+    const kDir = kPath.slice(0, kPath.lastIndexOf('/') + 1);
+    const renamedCopies = allPages.pages.filter(
+      (p) => p.path.startsWith(kDir) && /^同步验证冲突-\d{8}T\d{6}\.md$/.test(p.path.slice(kDir.length))
     );
-    // AIWorks 中只留冲突记录页，记录本次冲突
-    const logRes = await api(hub, 'GET', '/api/pages/list');
-    const logList = (await logRes.json()) as { pages: { path: string }[] };
-    const conflictLog = logList.pages?.find((p) => p.path === 'AIWorks/log/conflict.md');
-    assert.ok(conflictLog, 'AIWorks/log/conflict.md 冲突记录页应存在');
-    // 冲突备份页同步到节点，B 端能看到自己的完整内容不丢
-    await waitFor('冲突备份页同步到 B', async () => {
-      const res = await api(nodeB, 'GET', '/api/sync/conflicts');
-      const list = (await res.json()) as { conflicts: { title: string }[] };
-      return list.conflicts.some((c) => c.title.includes('同步验证冲突'));
+    assert.ok(renamedCopies.length > 0, `被取代的旧版本应重命名保留在原目录: ${JSON.stringify(allPages.pages.map((p) => p.path))}`);
+    for (const copy of renamedCopies) {
+      const detail = await api(hub, 'GET', `/api/pages/${copy.id}`);
+      const body = ((await detail.json()) as { content: string }).content;
+      assert.ok(body.includes('方案 A'), `重命名副本应保存被取代的旧内容: ${copy.path}`);
+      assert.ok(!body.includes('方案 B'), `副本不应混入胜者内容: ${copy.path}`);
+    }
+    // 无备份目录、无 AIWorks 冲突记录页（旧机制已废弃）
+    assert.ok(
+      !allPages.pages.some((p) => p.path.startsWith('同步冲突/')),
+      '不应再向 同步冲突/ 目录写入新备份页'
+    );
+    assert.ok(
+      !allPages.pages.some((p) => p.path === 'AIWorks/log/conflict.md'),
+      '冲突记录页已废弃，不应存在'
+    );
+    // 重命名副本同步到节点 B
+    await waitFor('重命名副本同步到 B', async () => {
+      const res = await api(nodeB, 'GET', '/api/pages/list');
+      const list = (await res.json()) as { pages: { path: string }[] };
+      return list.pages.some((p) => /^同步验证冲突-\d{8}T\d{6}\.md$/.test(p.path.slice(kDir.length)) && p.path.startsWith(kDir));
     }, 45_000);
 
     // ---------- 场景 6：状态端点 ----------

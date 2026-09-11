@@ -21,8 +21,9 @@ import {
 /**
  * 中枢端：持有权威 revision 序列。
  *  - 本端写入 → commitLocalChange()：发号、快照、oplog、广播
- *  - 成员推送 → applyPush()：base 落后时以 page_revisions 祖先做字符级三方合并，
- *    同位置冲突取先到方（中枢当前内容），后到方完整内容写入冲突备份页
+ *  - 成员推送 → applyPush()：base 落后时先以 page_revisions 祖先做字符级三方合并，
+ *    无法融合的冲突按文件修改时间最新者胜整页裁决：AIWorks 区直接覆盖不产生新文件，
+ *    其他页面败者以「原名-时间戳」重命名保留在原目录
  *  - 广播经独立的成员 SSE 订阅集合下发（与浏览器 SSE 互不干扰），排除来源成员防回声；
  *    成员身份由群组 token（sync_peers 表）认证
  */
@@ -90,79 +91,81 @@ function writeRawFile(relPath: string, buf: Buffer): void {
   fs.renameSync(temp, abs);
 }
 
-/** 冲突备份页独立目录（顶级，与 Wiki/AIWorks 平级；Agent 只读守卫天然覆盖非 Wiki 区） */
-const CONFLICT_DIR = '同步冲突';
-/** AIWorks 内只留冲突记录流水（一条一行），完整冲突内容都在 CONFLICT_DIR 下 */
-const CONFLICT_LOG_PAGE = 'AIWorks/log/conflict.md';
-
-/** 冲突备份页：后到方的完整内容不丢，落到 同步冲突/ 并随同步传播；AIWorks 记录页追加一行流水 */
-function writeConflictBackup(relPath: string, theirsRaw: string, nodeId: string, baseRevision: number): void {
-  const stamp = now().replace(/[-:]/g, '').replace(/\..+/, '');
-  const base = path.basename(relPath).replace(/\.md$/i, '');
-  const backupRel = `${CONFLICT_DIR}/${base}-${stamp}.md`;
-  const body = [
-    '---',
-    `标题: "同步冲突: ${base}（${stamp}）"`,
-    '类型: doc',
-    '---',
-    '',
-    `> 多端同步自动生成的冲突备份。冲突页面：\`${relPath}\`；`,
-    `> 内容来源节点：\`${nodeId || '未知'}\`（其基准版本 ${baseRevision} 已过期）。`,
-    `> 按先到方为准保留了线上页面内容，本页保存后到方完整内容，请人工核对合并后删除。`,
-    '',
-    '```markdown',
-    theirsRaw.replace(/```/g, '```\u200b'),
-    '```',
-    '',
-  ].join('\n');
+/** 文件修改时间（ms；读取失败按 0 = 最旧） */
+function mtimeMsOf(relPath: string): number {
   try {
-    applyPageContent(backupRel, body);
-    commit('page', backupRel, HUB_ACTOR, { evidence: null });
-    const prev = readPageRaw(CONFLICT_LOG_PAGE) ?? '# 同步冲突记录\n\n';
-    applyPageContent(
-      CONFLICT_LOG_PAGE,
-      `${prev}- ${now().slice(0, 19)} 「${base}」与节点 \`${nodeId || '未知'}\` 冲突，后到方内容备份至 \`${backupRel}\`\n`,
-    );
-    commit('page', CONFLICT_LOG_PAGE, HUB_ACTOR, { evidence: null });
+    return fs.statSync(safeJoin(relPath)).mtimeMs;
   } catch {
-    // 备份页写失败不阻塞主流程（冲突内容仍在推送方本地）
+    return 0;
+  }
+}
+
+/** 冲突副本文件名时间戳（UTC 紧凑格式，与正文无关联，仅用于命名排序） */
+function conflictStamp(): string {
+  return now().replace(/[-:]/g, '').replace(/\..+/, '');
+}
+
+/**
+ * 冲突裁决（以修改时间最新者为准，废弃旧的「先到方为准 + 备份页」）：
+ *  - 胜者内容占用原页面；
+ *  - AIWorks 系统区不允许产生任何新文件：败者直接丢弃；
+ *  - 其他页面：败者以「原名-时间戳」重命名保存在原目录，供人工核对后删除。
+ * 返回需要写入的副本路径（无副本时为 null）。副本写失败不阻塞正本。
+ */
+function applyConflictResolution(target: string, hubRaw: string, theirsRaw: string, theirsMs: number, actorId: string): void {
+  const hubMs = mtimeMsOf(target);
+  const theirsWins = theirsMs > hubMs;
+  const winner = theirsWins ? theirsRaw : hubRaw;
+  const loser = theirsWins ? hubRaw : theirsRaw;
+  applyPageContent(target, winner);
+  const isSystemArea = target.startsWith('AIWorks/');
+  if (isSystemArea || !loser.trim()) return;
+  const dir = path.posix.dirname(target);
+  const base = path.basename(target).replace(/\.md$/i, '');
+  let copyRel = `${dir === '.' ? '' : dir + '/'}${base}-${conflictStamp()}.md`;
+  while (fs.existsSync(safeJoin(copyRel))) {
+    copyRel = `${dir === '.' ? '' : dir + '/'}${base}-${conflictStamp()}.md`;
+  }
+  try {
+    applyPageContent(copyRel, loser);
+    commit('page', copyRel, actorId, { evidence: null });
+  } catch {
+    // 副本写失败不阻塞主流程（败者内容仍在原持有方本地）
   }
 }
 
 /**
- * 一次性迁移：旧版冲突备份页存放在 AIWorks/同步冲突/ 下，改为顶级 同步冲突/ 目录。
- * 备份页逐页 move（发 move op，成员端经 oplog 补拉跟随）；旧说明页内容过时直接入回收站，
- * 新说明页由 ensureSystemFiles 建在新目录（本函数须先于 ensureSystemFiles 执行）。
+ * 一次性迁移：冲突备份机制已废弃（改为最新者胜 + 原目录重命名副本）。
+ *  - AIWorks 下用户无法自行删除的冲突遗留（AIWorks/同步冲突/*、记录页 conflict.md）入回收站；
+ *  - 顶级 同步冲突/ 的历史备份页（说明页之外）是用户可删内容，保留原样由用户自行处理，
+ *    其中的说明页已过时，入回收站。
+ * 仅数据权威端（hub/未组网端）执行；成员端的清理由 hub 发出的 delete op 传播完成。
  */
 export function migrateConflictBackupDir(): void {
-  const OLD_DIR = 'AIWorks/同步冲突';
-  let rows: { path: string }[];
+  let rows: { path: string }[] = [];
   try {
     rows = db
-      .prepare(`SELECT path FROM pages WHERE path LIKE '${OLD_DIR}/%' AND deleted = 0`)
+      .prepare(
+        `SELECT path FROM pages WHERE deleted = 0 AND (
+           path LIKE 'AIWorks/同步冲突/%' OR path = 'AIWorks/log/conflict.md' OR path = '同步冲突/说明.md'
+         )`,
+      )
       .all() as { path: string }[];
   } catch {
     return;
   }
-  for (const { path: oldRel } of rows) {
+  for (const { path: rel } of rows) {
     try {
-      if (oldRel === `${OLD_DIR}/说明.md`) {
-        moveToTrash(oldRel, 'sync');
-        commit('delete', oldRel, HUB_ACTOR);
-        continue;
-      }
-      const newRel = `${CONFLICT_DIR}/${path.basename(oldRel)}`;
-      if (fs.existsSync(safeJoin(newRel))) continue;
-      movePage(oldRel, newRel, 'sync');
-      commit('move', newRel, HUB_ACTOR, { oldPath: oldRel });
+      moveToTrash(rel, 'sync');
+      commit('delete', rel, HUB_ACTOR);
     } catch {
-      // 单页迁移失败不阻塞其余迁移与启动
+      // 单页清理失败不阻塞其余迁移与启动
     }
   }
   try {
-    fs.rmdirSync(safeJoin(OLD_DIR));
+    fs.rmdirSync(safeJoin('AIWorks/同步冲突'));
   } catch {
-    // 目录非空（含已删除残留）或不存在时忽略
+    // 目录非空或不存在时忽略
   }
 }
 
@@ -219,6 +222,8 @@ export interface PushPayload {
   target: string;
   base_revision?: number;
   content?: string;
+  /** 推送方源文件的修改时间（ms）；冲突裁决「最新者胜」的依据，缺失按 0（最旧） */
+  mtime?: number;
   evidence?: EvidenceSnapshot | null;
   old_path?: string;
 }
@@ -249,19 +254,27 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
         content: String(result.content),
       };
     }
-    // 基准落后：三方合并（祖先 = 成员基准版本的快照）
+    // 基准落后：先做字符级三方合并；无法融合的冲突按修改时间最新者胜整页裁决
     const hubRaw = readPageRaw(target) ?? '';
     const ancestor = getPageRevision(target, base);
+    const theirsMs = Number(push.mtime || 0);
     if (ancestor === null) {
-      // 祖先缺失（离线太久/快照被裁剪）：保守处理——保留中枢内容，后到方写入冲突备份
-      writeConflictBackup(target, raw, actorId, base);
-      return { ok: true, seq: 0, revision: getPageSyncRevision(target), content: hubRaw };
+      // 祖先缺失（离线太久/快照被裁剪/双方各自创建）：无法融合，整页按最新裁决
+      applyConflictResolution(target, hubRaw, raw, theirsMs, actorId);
+      const result = commit('page', target, actorId, {});
+      return {
+        ok: true,
+        seq: Number(result.seq),
+        revision: Number(result.revision),
+        content: String(result.content),
+      };
     }
     const merged = merge3(ancestor, hubRaw, raw);
     if (merged.conflicts.length > 0) {
-      writeConflictBackup(target, raw, actorId, base);
+      applyConflictResolution(target, hubRaw, raw, theirsMs, actorId);
+    } else {
+      applyPageContent(target, merged.content);
     }
-    applyPageContent(target, merged.content);
     const result = commit('page', target, actorId, {});
     return {
       ok: true,

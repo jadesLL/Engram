@@ -130,6 +130,15 @@ function readPageRaw(relPath: string): string | null {
   }
 }
 
+/** 源文件修改时间（ms；读取失败按 0 = 最旧，与 hub 端裁决口径一致） */
+function mtimeMsOf(relPath: string): number {
+  try {
+    return fs.statSync(safeJoin(relPath)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(done, ms);
@@ -285,6 +294,8 @@ async function pushOne(item: QueueItem): Promise<void> {
         target: item.target,
         base_revision: getPageSyncRevision(item.target),
         content: raw,
+        // 冲突裁决「最新者胜」的依据：源文件修改时间
+        mtime: mtimeMsOf(item.target),
       };
       const evidence = collectEvidenceForPage(item.target);
       if (evidence) payload.evidence = evidence;

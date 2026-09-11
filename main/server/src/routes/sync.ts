@@ -101,18 +101,6 @@ export async function syncRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get('/api/sync/conflicts', { preHandler: requireAuth }, async () => {
-    const rows = db
-      .prepare(
-        `SELECT id, path, title, updated_at FROM pages
-         WHERE path LIKE '同步冲突/%' AND deleted = 0
-           AND path != '同步冲突/说明.md'
-         ORDER BY updated_at DESC LIMIT 200`
-      )
-      .all();
-    return { conflicts: rows };
-  });
-
   // ---------- 群组成员管理（中枢，owner） ----------
   app.get('/api/sync/peers', { preHandler: requireAuth }, async () => {
     return { peers: listPeers().map(peerView) };
