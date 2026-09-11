@@ -157,11 +157,12 @@ export async function syncRoutes(app: FastifyInstance) {
     const peerId = peer?.id || String(query.node_id || 'owner-client');
     const stream = sse(reply);
     const unsubscribe = addNodeSubscriber({ peerId, send: stream.send });
+    // 15s：低于常见反代上游读超时（Lucky 默认 30s），留一倍余量避免心跳与超时同刻竞争
     const keepalive = setInterval(() => {
       try {
         (reply.raw as import('node:http').ServerResponse).write(': ping\n\n');
       } catch { /* 断开时由 close 清理 */ }
-    }, 30_000);
+    }, 15_000);
     keepalive.unref();
     req.raw.on('close', () => {
       clearInterval(keepalive);
