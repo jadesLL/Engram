@@ -750,9 +750,16 @@ watch(
   () => {
     const ev = app.lastPageEvent;
     if (!page.value || !ev) return;
-    const myPath = page.value.path;
-    // 只在当前页内容变化或被移动时重载；删除不重载（避免 404，侧栏已处理树）
-    const matchChanged = ev.type === 'page-changed' && ev.path === myPath;
+        const myPath = page.value.path;
+        // 当前页被任意来源删除（含其他端同步）：编辑页跟随关闭（本端侧栏删除同款跳转），
+        // 否则侧栏树已删、编辑页仍显示已删内容
+        if (ev.type === 'page-deleted' && ev.path === myPath) {
+          page.value = null;
+          router.push('/page');
+          return;
+        }
+        // 只在当前页内容变化或被移动时重载
+        const matchChanged = ev.type === 'page-changed' && ev.path === myPath;
     const matchMoved = ev.type === 'page-moved' && (ev.oldPath === myPath || ev.newPath === myPath);
     if (!matchChanged && !matchMoved) return;
     if (dirty) return; // 用户正在编辑，不覆盖未保存内容
