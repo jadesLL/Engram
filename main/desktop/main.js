@@ -1370,7 +1370,9 @@ function setSourceAutoState(patch) {
 async function sourceCheckCore() {
   if (app.isPackaged) return { ok: false, error: '安装包形态不使用源码更新' };
   try {
-    const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
+    // branch --show-current 而非 rev-parse --abbrev-ref：仓库里有与分支同名的 tag（如游离 tag main）时
+    // abbrev-ref 会消歧成 heads/main，拼 origin/heads/main 直接报 128
+    const branch = await runGit(['branch', '--show-current']);
     await runGit(['fetch', 'origin', '--prune']);
     const behind = Number((await runGit(['rev-list', '--count', `HEAD..origin/${branch}`])) || 0);
     // 本地/远端提交号：让「已是最新」有可核对的依据（版本号日常不变，只有提交号会变）
@@ -1601,7 +1603,7 @@ async function runSourceUpdate() {
   showUpdateProgress();
   setUpdateStep('正在拉取最新代码（git pull）…');
   try {
-    const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD']);
+    const branch = await runGit(['branch', '--show-current']);
     await runGit(['pull', '--ff-only', 'origin', branch], 180_000);
   } catch (e) {
     // 拉取失败：小窗没有可展示的过程，关掉回主窗，由设置页展示错误
