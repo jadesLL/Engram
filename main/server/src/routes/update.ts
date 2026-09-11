@@ -1,6 +1,7 @@
 import os from 'node:os';
 import { FastifyInstance } from 'fastify';
 import { requireAuth } from './auth.js';
+import { requireSyncAccess } from './sync.js';
 import { sse } from '../lib/sse.js';
 import { currentVersion, compareVersions, codeIdentity } from '../lib/version.js';
 import {
@@ -66,11 +67,13 @@ function resolveUpdateTarget(cfg: UpdateEnv, currentImage: string): { imageRef: 
  *  - PUT  /api/update/config         保存更新源配置（写入 DATA_DIR/.env，空串即清除）
  *  - POST /api/update/check          检查新版本（Gitea latest + Registry digest 对比）
  *  - POST /api/update/apply          拉镜像并切换容器（SSE 进度流）
+ *
+ * 鉴权分两档：state/check/apply 是更新执行面，owner 与同步成员令牌（lsync_）均可——
+ * 绑定了多端同步的本地桌面端经 routes/syncHubUpdate.ts 转发即可远程更新本中枢；
+ * config 含更新源凭据明文读写，仅 owner。
  */
 export async function updateRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', requireAuth);
-
-  app.get('/api/update/state', async () => {
+  app.get('/api/update/state', { preHandler: requireSyncAccess }, async () => {
     const cfg = readUpdateEnv();
     const sock = dockerSocketAvailable();
     const desktop = isDesktopMode();
@@ -109,7 +112,7 @@ export async function updateRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get('/api/update/config', async () => {
+  app.get('/api/update/config', { preHandler: requireAuth }, async () => {
     const cfg = readUpdateEnv();
     // 凭据明文回显：设置页所见即所得（接口在 owner 登录态之后才可访问）
     return {
@@ -123,7 +126,7 @@ export async function updateRoutes(app: FastifyInstance) {
     };
   });
 
-  app.put('/api/update/config', async (req, reply) => {
+  app.put('/api/update/config', { preHandler: requireAuth }, async (req, reply) => {
     const body = (req.body || {}) as {
       imageTag?: string;
       giteaUrl?: string;
@@ -154,7 +157,7 @@ export async function updateRoutes(app: FastifyInstance) {
     return reply.send({ ok: true });
   });
 
-  app.post('/api/update/check', async (req, reply) => {
+  app.post('/api/update/check', { preHandler: requireSyncAccess }, async (req, reply) => {
     const cfg = readUpdateEnv();
     const desktop = isDesktopMode();
     const sock = dockerSocketAvailable();
@@ -276,7 +279,7 @@ export async function updateRoutes(app: FastifyInstance) {
     return reply.send({ ...result, warning: errors.length ? errors.join('；') : undefined });
   });
 
-  app.post('/api/update/apply', async (req, reply) => {
+  app.post('/api/update/apply', { preHandler: requireSyncAccess }, async (req, reply) => {
     if (isDesktopMode()) return reply.code(400).send({ error: '桌面端模式不支持容器自更新，请在设置中下载安装包' });
     if (!dockerSocketAvailable()) {
       return reply.code(400).send({ error: '未挂载 Docker socket，无法自更新（需在 compose 中挂载 /var/run/docker.sock）' });

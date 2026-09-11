@@ -171,3 +171,27 @@ test('未认证请求被拒绝', async () => {
   const res = await app.inject({ method: 'GET', url: '/api/update/state' });
   assert.equal(res.statusCode, 401);
 });
+
+test('同步成员令牌（lsync_）可调更新执行面 state/check/apply，config 仍仅 owner', async () => {
+  const { createPeer, revokePeer } = await import('../sync/store.js');
+  const peer = createPeer('member-a', `lsync_${'a'.repeat(24)}`);
+  const headers = { authorization: `Bearer ${peer.token}` };
+
+  const state = await app.inject({ method: 'GET', url: '/api/update/state', headers });
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.json().supported, false); // 测试环境无 sock
+
+  const check = await app.inject({ method: 'POST', url: '/api/update/check', headers, payload: {} });
+  assert.equal(check.statusCode, 200);
+
+  // apply 无 sock 返回 400（非 401）：证明已通过成员令牌鉴权、卡在环境检查
+  const apply = await app.inject({ method: 'POST', url: '/api/update/apply', headers, payload: {} });
+  assert.equal(apply.statusCode, 400);
+
+  const config = await app.inject({ method: 'GET', url: '/api/update/config', headers });
+  assert.equal(config.statusCode, 401, '更新源配置（含凭据）不得开放给成员令牌');
+
+  revokePeer(peer.id);
+  const revoked = await app.inject({ method: 'GET', url: '/api/update/state', headers });
+  assert.equal(revoked.statusCode, 401);
+});

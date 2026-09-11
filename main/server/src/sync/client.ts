@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { emit } from '../lib/events.js';
 import { getSetting } from '../lib/db.js';
+import { consumeSseStream } from '../lib/sseStream.js';
 import { safeJoin, syncPageFile, movePage, toRel } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
@@ -98,11 +99,11 @@ function logEvent(level: SyncLogEntry['level'], event: string, detail?: string):
   if (syncLog.length > SYNC_LOG_KEEP) syncLog.splice(0, syncLog.length - SYNC_LOG_KEEP);
 }
 
-function hubUrl(): string {
+export function hubUrl(): string {
   return (getSetting('sync_hub_url') || '').replace(/\/+$/, '');
 }
 
-function hubToken(): string {
+export function hubToken(): string {
   return getSetting('sync_hub_token') || '';
 }
 
@@ -386,7 +387,7 @@ async function syncMissedChanges(): Promise<void> {
   }
 }
 
-/** 解析 SSE 字节流（event: sync / data: {...}），流结束或出错时返回 */
+/** 解析 SSE 字节流（事件流断开或出错时返回，重连由 runLoop 负责） */
 async function consumeStream(): Promise<void> {
   streamAbort = new AbortController();
   const deviceName = os.hostname().slice(0, 60);
@@ -397,30 +398,11 @@ async function consumeStream(): Promise<void> {
   backoffMs = 1000;
   lastError = null;
   logEvent('info', 'connected', `中枢事件流已连接`);
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buffer.indexOf('\n\n')) >= 0) {
-        const frame = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
-        if (!dataLine) continue;
-        let op: any;
-        try {
-          op = JSON.parse(dataLine.slice(6));
-        } catch {
-          continue; // 单帧解析失败忽略
-        }
-        // 应用失败（含写盘异常）向外抛：断开本条流，重连后从 cursor 重放
-        applyRemoteOp(op);
-      }
-    }
+    // 应用失败（含写盘异常）由回调经共享解析器向外抛：断开本条流，重连后从 cursor 重放
+    await consumeSseStream(res.body, (_event, data) => {
+      if (data && typeof data === 'object') applyRemoteOp(data);
+    });
   } finally {
     connected = false;
     streamAbort = null;

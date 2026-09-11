@@ -24,6 +24,7 @@ import { eventRoutes } from './routes/events.js';
 import { trashRoutes } from './routes/trash.js';
 import { officeRoutes } from './routes/office.js';
 import { syncRoutes } from './routes/sync.js';
+import { hubUpdateRoutes } from './routes/syncHubUpdate.js';
 import { initSync } from './sync/index.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { mcpRoutes } from './mcp/server.js';
@@ -85,6 +86,7 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(eventRoutes);
   await app.register(trashRoutes);
   await app.register(syncRoutes);
+  await app.register(hubUpdateRoutes);
   await app.register(mcpRoutes);
 
   // 静态托管前端构建产物 + SPA fallback（HTTP/HTTPS 实例各自缓存一份）

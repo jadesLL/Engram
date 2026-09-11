@@ -15,10 +15,77 @@
         <span>服务器（Docker 部署）</span>
       </div>
 
-      <!-- 环境不支持：桌面端壳 -->
-      <div v-if="state.desktop" class="integration-note">
-        当前运行在桌面端壳内，服务器容器更新请从浏览器登录服务器地址操作；桌面端自身的更新见下方「桌面端」一节。
-      </div>
+      <!-- 本地内嵌 server（桌面本地模式 / 浏览器访问桌面本地服务） -->
+      <template v-if="state.desktop">
+        <!-- 已绑定多端同步：在此直接远程更新同步中枢服务器 -->
+        <template v-if="syncHubUrl">
+          <div class="setting-row">
+            <div class="setting-copy">
+              <strong>同步服务器 <code>{{ syncHubHost }}</code></strong>
+              <span>
+                多端同步绑定的服务器（Docker 部署）。在此即可远程更新，无需登录服务器网页。<template v-if="hubState">
+                  当前 <code>v{{ hubState.currentVersion }}</code><template v-if="hubState.commit">（{{ hubState.commit }}）</template><template v-if="hubState.imageTag">，通道 <code>{{ hubState.imageTag }}</code></template>。
+                </template>
+              </span>
+            </div>
+            <div class="check-controls">
+              <span v-if="hubState?.busy" class="check-status">服务器更新中…</span>
+              <button class="btn primary" type="button" :disabled="hubUpdating || !hubState?.supported || hubState?.busy" @click="confirmHubApply">
+                立即更新
+              </button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-copy">
+              <strong>检查更新</strong>
+              <span>在服务器侧比对远端仓库 Release 与镜像仓库版本。</span>
+            </div>
+            <div class="check-controls">
+              <span v-if="hubCheckResult" class="check-status" :class="hubCheckResult.hasUpdate ? 'has' : 'none'">
+                {{ hubCheckLabel }}
+              </span>
+              <button class="btn" type="button" :disabled="hubChecking" @click="doHubCheck">
+                <AppSpinner v-if="hubChecking" :size="11" />
+                <template v-else>检查更新</template>
+              </button>
+            </div>
+          </div>
+          <p v-if="hubCheckError" class="setting-message err">{{ hubCheckError }}</p>
+          <p v-else-if="hubCheckResult?.warning" class="setting-message warn">{{ hubCheckResult.warning }}</p>
+
+          <div v-if="hubState && !hubState.supported" class="integration-note">
+            服务器未挂载 Docker socket，无法远程更新。请在服务器上编辑
+            <code>docker-compose.pull.yml</code>，在 engram 服务的 volumes 增加一行
+            <code>- /var/run/docker.sock:/var/run/docker.sock</code>，然后执行
+            <code>docker compose -f docker-compose.pull.yml up -d</code> 重新创建容器，之后即可在此页一键更新。
+          </div>
+
+          <p v-if="hubStateError" class="setting-message err">{{ hubStateError }}</p>
+
+          <!-- 远程更新进度日志 -->
+          <div v-if="hubLog.length" class="update-log">
+            <div v-for="(line, i) in hubLog" :key="i" class="log-line">{{ line }}</div>
+            <div v-if="hubUpdating" class="log-line pending">
+              <AppSpinner :size="10" />
+              <span>等待同步服务器恢复…</span>
+            </div>
+          </div>
+          <p v-if="hubTimeout" class="setting-message err">
+            服务器长时间未恢复。若更新失败，旧容器已自动回滚；仍无法访问时请在服务器执行
+            <code>docker start engram-old</code> 手动恢复，然后重新检查。
+          </p>
+        </template>
+
+        <!-- 桌面本地模式但未绑定同步 -->
+        <div v-else-if="isDesktop" class="integration-note">
+          当前运行在桌面端本地模式。在「设置 → 多端同步」绑定服务器后，即可在此直接远程更新服务器，无需登录服务器网页；桌面端自身的更新见下方「桌面端」一节。
+        </div>
+        <!-- 浏览器访问桌面本地服务 -->
+        <div v-else class="integration-note">
+          当前页面由桌面端本地服务提供，服务器（Docker）容器更新请从浏览器登录服务器地址操作。
+        </div>
+      </template>
       <!-- 环境不支持：未挂 sock -->
       <div v-else-if="!state.supported" class="integration-note">
         当前服务器未挂载 Docker socket，无法在网页内自动更新。请编辑服务器上的
@@ -284,7 +351,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api, ssePost } from '../../api';
 import Icon from '../Icon.vue';
 import AppSpinner from '../ui/AppSpinner.vue';
@@ -382,6 +449,118 @@ const uninstallData = ref(false);
 const uninstalling = ref(false);
 const uninstallError = ref('');
 
+// ---- 同步中枢远程更新（本地模式绑定多端同步后可用，转发走本地内嵌 server） ----
+const syncStatus = ref<{ role: string; enabled: boolean; hubUrl: string } | null>(null);
+/** 已绑定且启用的同步中枢才渲染远程更新块——后端 memberHub() 同一判定
+ *  （解除绑定/停用后 hub_url 故意残留供重连，role 仍报 member，须再看 enabled） */
+const syncHubUrl = computed(() =>
+  syncStatus.value?.role === 'member' && syncStatus.value.enabled && syncStatus.value.hubUrl
+    ? syncStatus.value.hubUrl
+    : ''
+);
+const syncHubHost = computed(() => {
+  try {
+    return new URL(syncHubUrl.value).host;
+  } catch {
+    return syncHubUrl.value;
+  }
+});
+const hubState = ref<any>(null);
+const hubStateError = ref('');
+const hubChecking = ref(false);
+const hubCheckResult = ref<any>(null);
+const hubCheckError = ref('');
+const hubUpdating = ref(false);
+const hubTimeout = ref(false);
+const hubLog = ref<string[]>([]);
+
+async function loadSync() {
+  try {
+    const { data } = await api.get('/api/sync/status');
+    syncStatus.value = data;
+  } catch {
+    syncStatus.value = null;
+  }
+  if (!syncHubUrl.value) return;
+  await loadHubState();
+}
+
+async function loadHubState() {
+  hubStateError.value = '';
+  try {
+    const { data } = await api.get('/api/sync/hub-update/state');
+    hubState.value = data;
+  } catch (e: any) {
+    hubState.value = null;
+    hubStateError.value = e.response?.data?.error || '无法获取服务器更新状态';
+  }
+}
+
+async function doHubCheck() {
+  hubChecking.value = true;
+  hubCheckError.value = '';
+  try {
+    const { data } = await api.post('/api/sync/hub-update/check', {});
+    hubCheckResult.value = data;
+  } catch (e: any) {
+    hubCheckResult.value = null;
+    hubCheckError.value = e.response?.data?.error || '检查失败，请确认同步服务器可访问';
+  } finally {
+    hubChecking.value = false;
+  }
+}
+
+async function confirmHubApply() {
+  const ok = await confirmDialog({
+    title: '更新同步服务器',
+    message: `将在服务器（${syncHubHost.value}）上拉取最新镜像并重建容器，服务中断约 1–3 分钟（数据不受影响；期间本端同步短暂断开，恢复后自动重连）。更新失败会自动回滚旧版本。继续？`,
+    confirmText: '开始更新',
+  });
+  if (!ok) return;
+  hubUpdating.value = true;
+  hubTimeout.value = false;
+  hubLog.value = [];
+  try {
+    await ssePost('/api/sync/hub-update/apply', {}, {
+      onEvent: (event, data) => {
+        if (event === 'progress' && data?.text) hubLog.value.push(String(data.text));
+        else if (event === 'done') hubLog.value.push(String(data?.message || '更新流程已移交'));
+        else if (event === 'error') {
+          hubLog.value.push(`更新失败: ${data?.error || '未知错误'}`);
+          hubUpdating.value = false;
+        } else if (event === 'recovered') {
+          if (data?.state) hubState.value = data.state;
+          hubLog.value.push('服务器已恢复，远程更新完成');
+          hubUpdating.value = false;
+          hubCheckResult.value = null;
+          notify.success('同步服务器更新完成');
+        } else if (event === 'timeout') {
+          hubTimeout.value = true;
+          hubUpdating.value = false;
+        }
+      },
+    });
+    // 流正常结束时必有终态事件；仍停在更新中说明本地连接中途断流（更新在服务端继续执行）
+    if (hubUpdating.value) {
+      hubLog.value.push('与本地服务的连接中断，更新可能仍在服务器端执行；稍后点「检查更新」确认版本。');
+      hubUpdating.value = false;
+    }
+  } catch (e: any) {
+    hubLog.value.push(`连接中断: ${e?.message || e}`);
+    hubUpdating.value = false;
+  }
+}
+
+// 设置分区激活态（面板 v-show 常驻挂载）：切回本分区时重拉同步状态——
+// 用户可能刚在「多端同步」分区完成绑定/解绑，不重拉会一直显示挂载时的旧快照
+const props = defineProps<{ active?: boolean }>();
+watch(
+  () => props.active,
+  (now) => {
+    if (now) loadSync();
+  }
+);
+
 const wikiDesktop = () => (window as any).wikiDesktop;
 
 /**
@@ -408,15 +587,17 @@ const versionBadge = computed(() => {
 const sourceCheckText = computed(() => (srcResult.value?.ok ? formatSourceCheckLabel(srcResult.value) : ''));
 
 /** 检查更新结果文案：main 通道无 Release 版本可比，只说「主分支镜像有更新」 */
-const checkLabel = computed(() => {
-  const r = checkResult.value;
+function fmtCheckLabel(r: any): string {
   if (!r) return '';
   if (!r.hasUpdate) return '已是最新';
   // main 通道更新由镜像 digest 驱动，Release 版本号与本地相同，不能拿它当「新版本」
   if (r.imageTag === 'main') return '主分支镜像有更新';
   if (r.latestVersion) return `有新版本 v${r.latestVersion}`;
   return '远端镜像有更新';
-});
+}
+
+const checkLabel = computed(() => fmtCheckLabel(checkResult.value));
+const hubCheckLabel = computed(() => fmtCheckLabel(hubCheckResult.value));
 
 /** 源码模式自动检查状态文字：只提示，不自动升级（重启时机由用户点「更新并重启」决定） */
 const sourceAutoStatus = computed(() => {
@@ -762,6 +943,7 @@ function fmtSize(bytes: number): string {
 
 onMounted(() => {
   load();
+  loadSync();
   const wd = wikiDesktop();
   if (wd?.getDesktopEnv) {
     wd.getDesktopEnv().then((env: any) => {

@@ -35,7 +35,9 @@
         <AccountPanel v-show="activeSettingsSection === 'account'" />
         <AgentPanel v-show="activeSettingsSection === 'agent'" />
         <SyncPanel v-show="activeSettingsSection === 'sync'" />
-        <UpdatePanel v-show="activeSettingsSection === 'update'" />
+        <!-- active 传给 UpdatePanel：面板常驻挂载（v-show），绑定同步发生在别的分区时，
+             靠激活态重拉同步状态，否则远程更新块要用旧数据等到下次刷新 -->
+        <UpdatePanel v-show="activeSettingsSection === 'update'" :active="activeSettingsSection === 'update'" />
         <StoragePanel v-show="activeSettingsSection === 'storage'" />
         <DataPanel v-show="activeSettingsSection === 'data'" />
       </div>
