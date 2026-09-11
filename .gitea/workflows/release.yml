@@ -248,6 +248,9 @@ jobs:
           files: release-out/*
           token: ${{ secrets.RELEASE_TOKEN }}
           draft: false
+          # 显式指定目标 tag：dispatch 时 GITHUB_REF_NAME 是触发分支（main）而非发版标签，
+          # 不传 tag_name 会按 main 找/建 Release——曾把产物误挂到 stray main 标签的 Release（#325）
+          tag_name: ${{ inputs.tag }}
           name: v${{ steps.ver.outputs.version }}
           # 正文重新传 CHANGELOG 段落，避免 action 把已发布正文覆盖为空
           body: |
