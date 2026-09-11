@@ -209,6 +209,22 @@
             </button>
           </div>
           <p v-if="srcUpdating" class="setting-message warn">正在增量拉取源码并重新构建，请看置顶的更新进度窗口；构建完成后应用自动重启，数据不受影响。</p>
+
+          <!-- 卸载：调起卸载脚本停止应用并删除安装目录；旧版壳无此 API 时自动隐藏 -->
+          <div v-if="uninstallAvailable" class="setting-row">
+            <div class="setting-copy">
+              <strong>卸载 Engram</strong>
+              <span>停止应用并删除桌面快捷方式与整个安装目录（源码、便携环境、Electron）。知识库数据默认保留，可勾选一并删除。<strong>操作不可撤销。</strong></span>
+            </div>
+            <div class="check-controls">
+              <label class="uninstall-data-opt">
+                <input v-model="uninstallData" type="checkbox" />
+                <span>同时删除知识库数据</span>
+              </label>
+              <button class="btn danger" type="button" :disabled="uninstalling" @click="doUninstall">卸载…</button>
+            </div>
+          </div>
+          <p v-if="uninstallError" class="setting-message err">{{ uninstallError }}</p>
         </template>
       </template>
     </div>
@@ -359,6 +375,12 @@ const srcError = ref('');
 const sourceAutoSupported = ref(false);
 const sourceAuto = ref<any>({ enabled: true, phase: 'idle', behind: 0, localCommit: '', remoteCommit: '', error: '', checkedAt: null });
 let offSourceState: (() => void) | null = null;
+
+// 源码模式卸载：旧版壳无 desktopSourceUninstallState API 时隐藏该行
+const uninstallAvailable = ref(false);
+const uninstallData = ref(false);
+const uninstalling = ref(false);
+const uninstallError = ref('');
 
 const wikiDesktop = () => (window as any).wikiDesktop;
 
@@ -663,6 +685,31 @@ async function doSourceUpdate() {
   }
 }
 
+async function doUninstall() {
+  const wd = wikiDesktop();
+  if (!wd?.desktopSourceUninstall) return;
+  const ok = await confirmDialog({
+    title: '卸载 Engram',
+    message: `将停止应用、删除桌面快捷方式与整个安装目录。知识库数据${uninstallData.value ? '将一并删除' : '保留在 %APPDATA%\\@engram\\desktop'}。操作不可撤销，确定卸载？`,
+    confirmText: '卸载',
+    danger: true,
+  });
+  if (!ok) return;
+  uninstalling.value = true;
+  uninstallError.value = '';
+  try {
+    const r = await wd.desktopSourceUninstall(uninstallData.value);
+    if (!r?.ok) {
+      uninstalling.value = false;
+      uninstallError.value = r?.error || '卸载失败';
+    }
+    // ok：主进程已拉起独立卸载脚本并退出应用；卸载脚本随后删除安装目录
+  } catch (e: any) {
+    uninstalling.value = false;
+    uninstallError.value = e?.message || '卸载失败';
+  }
+}
+
 async function saveConfig() {
   const parsed = parseRepoUrl(form.repoUrl);
   if ('error' in parsed) {
@@ -750,6 +797,12 @@ onMounted(() => {
       });
     }
   }
+  // 卸载入口：仅源码安装形态显示（安装包形态走系统「添加或删除程序」）
+  if (wd?.desktopSourceUninstallState) {
+    wd.desktopSourceUninstallState().then((s: any) => {
+      uninstallAvailable.value = Boolean(s?.available);
+    });
+  }
 });
 onUnmounted(() => {
   offProgress?.();
@@ -796,6 +849,16 @@ onUnmounted(() => {
 .check-status {
   font-size: 12px;
   color: var(--text-faint);
+}
+/* 卸载行：数据勾选框 + 危险按钮 */
+.uninstall-data-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
 }
 .check-status.has {
   color: var(--accent, #3b82f6);

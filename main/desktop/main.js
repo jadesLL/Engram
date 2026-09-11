@@ -1658,3 +1658,40 @@ async function runSourceUpdate() {
   app.exit(0);
   return { ok: true, restarting: true };
 }
+
+// ---------- 源码模式卸载：设置页「卸载」→ uninstall-engram.ps1 → 应用退出 ----------
+// 仅源码安装形态可用：进程可执行文件位于源码版安装根（%LOCALAPPDATA%\engram）下；
+// ENGRAM_INSTALL_DIR 供隔离测试/自定义安装位置显式指定。安装包形态走 NSIS 卸载器，不显示该功能。
+function sourceInstallRoot() {
+  if (process.env.ENGRAM_INSTALL_DIR) return process.env.ENGRAM_INSTALL_DIR;
+  const local = process.env.LOCALAPPDATA || '';
+  if (!local) return '';
+  const root = path.join(local, 'engram');
+  const prefix = root.toLowerCase() + path.sep;
+  return process.execPath.toLowerCase().startsWith(prefix) ? root : '';
+}
+
+ipcMain.handle('desktop-source-uninstall-state', () => ({ available: Boolean(sourceInstallRoot()) }));
+
+ipcMain.handle('desktop-source-uninstall', async (_e, deleteData) => {
+  const root = sourceInstallRoot();
+  if (!root) return { ok: false, error: '未识别出源码版安装目录；安装包形态请在系统「添加或删除程序」中卸载' };
+  const script = path.join(root, 'Engram', 'main', 'scripts', 'uninstall-engram.ps1');
+  if (!fs.existsSync(script)) return { ok: false, error: '未找到卸载脚本：' + script };
+  // 先优雅停掉内嵌 server（数据库落盘），再拉起独立卸载进程并退出本应用。
+  // 不能直接 spawn powershell：GUI 进程 spawn 的 powershell 会空句柄静默秒退（实测），
+  // 必须经 fork 出的 Node 中转（uninstall-launcher.js），fork 的子进程在 app.exit 后存活。
+  await stopLocalChild();
+  await new Promise((resolve) => {
+    const child = fork(
+      path.join(__dirname, 'scripts', 'uninstall-launcher.js'),
+      ['--root', root, ...(deleteData ? ['--delete-data'] : [])],
+      { detached: true, stdio: 'ignore' },
+    );
+    child.once('spawn', resolve);
+    child.once('error', resolve);
+    setTimeout(resolve, 3000);
+  });
+  app.exit(0);
+  return { ok: true };
+});
