@@ -45,15 +45,7 @@
 
       <label class="ddns-field">
         <span>Cloudflare API Token</span>
-        <input
-          :type="revealed ? 'text' : 'password'"
-          :value="tokenDisplay"
-          @input="onTokenInput"
-          @focus="reveal"
-          @blur="hide"
-          placeholder="Zone.DNS Edit 权限的 API Token"
-          autocomplete="off"
-        />
+        <SecretField v-model="editedToken" :stored="stored.token" placeholder="Zone.DNS Edit 权限的 API Token" />
       </label>
     </div>
 
@@ -72,6 +64,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
+import SecretField from '../SecretField.vue';
 
 interface DdnsForm {
   enabled: boolean;
@@ -83,7 +76,6 @@ interface DdnsForm {
 const form = reactive<DdnsForm>({ enabled: false, record: '', type: 'auto', token: '' });
 const stored = reactive<DdnsForm>({ ...form });
 const editedToken = ref('');
-const revealed = ref(false);
 const saving = ref(false);
 const testing = ref(false);
 
@@ -137,32 +129,6 @@ const statusLabel = computed(() => {
   if (s.status?.running) return '正在同步…';
   return OUTCOME_LABEL[s.status?.lastOutcome || ''] || '已启用';
 });
-
-function maskToken(token: string): string {
-  if (!token) return '';
-  if (token.length <= 8) return `${token.slice(0, 2)}****${token.slice(-2)}`;
-  return `${token.slice(0, 4)}********${token.slice(-4)}`;
-}
-
-const tokenDisplay = computed(() => {
-  if (editedToken.value) return editedToken.value;
-  if (revealed.value) return stored.token;
-  return maskToken(stored.token);
-});
-
-function reveal(): void {
-  if (stored.token) revealed.value = true;
-}
-
-function hide(): void {
-  revealed.value = false;
-}
-
-function onTokenInput(event: Event): void {
-  const value = (event.currentTarget as HTMLInputElement).value;
-  editedToken.value = value === stored.token ? '' : value;
-  revealed.value = true;
-}
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -307,7 +273,7 @@ onUnmounted(() => {
   font-size: 12px;
 }
 .ddns-field input[type='text'],
-.ddns-field input[type='password'],
+.ddns-field :deep(input),
 .ddns-field select {
   padding: 8px 10px;
   font-size: 13px;

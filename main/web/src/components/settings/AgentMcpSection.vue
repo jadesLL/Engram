@@ -28,7 +28,7 @@
       <div v-for="tokenItem in mcpTokens" :key="tokenItem.id" class="token-row">
         <div class="token-copy">
           <strong>{{ tokenItem.name }}</strong>
-          <code class="token">{{ tokenItem.token }}</code>
+          <SecretField mode="text" :value="tokenItem.token" />
         </div>
         <div class="token-actions">
           <button class="btn small" type="button" @click="copy(tokenItem.token)">复制</button>
@@ -59,6 +59,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import Icon from '../Icon.vue';
+import SecretField from '../SecretField.vue';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 
@@ -221,17 +222,6 @@ onMounted(async () => {
   display: block;
   margin-bottom: 4px;
   font-size: 12px;
-}
-.token {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  padding: 0;
-  background: transparent;
-  color: var(--text-faint);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .token-actions {
   display: flex;

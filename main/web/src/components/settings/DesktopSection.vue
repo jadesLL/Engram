@@ -35,7 +35,7 @@
             <strong>{{ tokenItem.name }}</strong>
             <span class="token-status" :class="statusOf(tokenItem).cls">{{ statusOf(tokenItem).label }}</span>
           </div>
-          <code class="token">{{ tokenItem.token }}</code>
+          <SecretField mode="text" :value="tokenItem.token" class="token" />
           <div class="token-meta">
             <span>创建：{{ fmt(tokenItem.created_at) }}</span>
             <span v-if="tokenItem.expires_at">过期：{{ fmt(tokenItem.expires_at) }}</span>
@@ -58,6 +58,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import Icon from '../Icon.vue';
+import SecretField from '../SecretField.vue';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 

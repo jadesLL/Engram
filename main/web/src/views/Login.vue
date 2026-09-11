@@ -20,19 +20,17 @@
       </div>
       <h1>Engram</h1>
       <p class="muted">{{ isSetup ? '首次使用，请设置访问密码' : '请输入密码进入知识库' }}</p>
-      <input
+      <SecretField
         v-model="password"
-        type="password"
         :placeholder="isSetup ? '设置密码（至少6位）' : '密码'"
         :aria-label="isSetup ? '设置密码（至少6位）' : '密码'"
         autofocus
         @keyup.enter="submit"
         @keyup="checkCaps"
       />
-      <input
+      <SecretField
         v-if="isSetup"
         v-model="confirm"
-        type="password"
         placeholder="确认密码"
         aria-label="确认密码"
         @keyup.enter="submit"
@@ -62,6 +60,7 @@ import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
 import { api } from '../api';
 import Icon from '../components/Icon.vue';
+import SecretField from '../components/SecretField.vue';
 
 const router = useRouter();
 const auth = useAuthStore();

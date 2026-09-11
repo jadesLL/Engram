@@ -51,11 +51,14 @@ export interface SyncStatus {
   enabled: boolean;
   connected: boolean;
   hubUrl: string;
+  hubToken: string;
   nodeId: string;
   cursor: number;
   pending: number;
+  pendingPulls: number;
   lastSyncAt: string | null;
   lastError: string | null;
+  log: Array<{ ts: string; level: string; event: string; detail?: string }>;
   peers: Array<{
     id: string;
     name: string;
@@ -77,11 +80,14 @@ export function status(): SyncStatus {
     enabled: s.enabled,
     connected: s.connected,
     hubUrl: s.hubUrl,
+    hubToken: s.hubToken,
     nodeId: s.nodeId,
     cursor: s.cursor,
     pending: s.pending,
+    pendingPulls: s.pendingPulls,
     lastSyncAt: s.lastSyncAt,
     lastError: s.lastError,
+    log: s.log,
     peers:
       role === 'hub'
         ? listPeers().map((p) => ({
