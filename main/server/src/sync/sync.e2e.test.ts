@@ -317,10 +317,23 @@ test('三端同步端到端：实时传播、三方合并、冲突备份、文�
       return s.connected;
     });
     const statusB = await api(nodeB, 'GET', '/api/sync/status');
-    const stB = (await statusB.json()) as { role: string; connected: boolean; cursor: number };
+    const stB = (await statusB.json()) as {
+      role: string;
+      connected: boolean;
+      cursor: number;
+      hubToken: string;
+      log: { ts: string; level: string; event: string }[];
+    };
     assert.equal(stB.role, 'member');
     assert.equal(stB.connected, true);
     assert.ok(stB.cursor > 0);
+    // 成员端状态应带回已存绑定令牌与同步事件日志（前端掩码显示/排查面板数据源）
+    assert.ok(stB.hubToken.startsWith('lsync_'), `status 应返回已存绑定令牌: ${stB.hubToken}`);
+    assert.ok(Array.isArray(stB.log) && stB.log.length > 0, 'status 应包含同步事件日志');
+    assert.ok(
+      stB.log.some((l) => l.event === 'connected'),
+      `日志应含中枢连接事件: ${JSON.stringify(stB.log.slice(0, 6))}`
+    );
     const statusHub = await api(hub, 'GET', '/api/sync/status');
     const stHub = (await statusHub.json()) as { role: string };
     assert.equal(stHub.role, 'hub');

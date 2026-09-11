@@ -14,8 +14,8 @@
           <span>新密码至少需要 6 位。</span>
         </div>
         <div class="password-controls">
-          <input v-model="pwd.old" type="password" autocomplete="current-password" placeholder="原密码" aria-label="原密码" />
-          <input v-model="pwd.next" type="password" autocomplete="new-password" placeholder="新密码" aria-label="新密码" />
+          <SecretField v-model="pwd.old" autocomplete="current-password" placeholder="原密码" aria-label="原密码" />
+          <SecretField v-model="pwd.next" autocomplete="new-password" placeholder="新密码" aria-label="新密码" />
           <button class="btn primary" type="button" @click="changePwd">修改密码</button>
         </div>
         <p v-if="pwdMsg" class="setting-message" :class="pwdOk ? 'ok' : 'err'">{{ pwdMsg }}</p>
@@ -79,6 +79,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
+import SecretField from '../SecretField.vue';
 import { useAppStore } from '../../stores/app';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION } from '../../version';
@@ -272,7 +273,7 @@ function logout() {
   gap: 8px;
   max-width: 530px;
 }
-.password-controls input {
+.password-controls :deep(.secret-input-wrap) {
   flex: 1 1 130px;
   min-width: 0;
 }

@@ -29,7 +29,7 @@
         </div>
         <div class="field-row">
           <label for="sync-hub-token">绑定令牌</label>
-          <input id="sync-hub-token" v-model="hubToken" type="password" placeholder="lsync_…" spellcheck="false" />
+          <SecretField id="sync-hub-token" v-model="hubToken" placeholder="lsync_…" />
         </div>
         <div class="sync-actions">
           <button class="btn primary" type="button" :disabled="saving" @click="joinHub">保存并绑定</button>
@@ -66,10 +66,7 @@
               </span>
               <span class="token-line faint small">
                 令牌
-                <code class="token-code" :title="revealedTokens.has(p.id) ? '点击隐藏' : '点击查看完整令牌'" @click="toggleToken(p.id)">{{
-                  revealedTokens.has(p.id) ? p.token : maskToken(p.token)
-                }}</code>
-                <button v-if="revealedTokens.has(p.id)" class="btn small" type="button" @click="copy(p.token)">复制</button>
+                <SecretField mode="text" :value="p.token" copyable class="token-code-host" />
               </span>
             </div>
             <div class="peer-actions">
@@ -89,7 +86,10 @@
         </div>
         <div class="field-row">
           <label>绑定令牌</label>
-          <div class="copy-row"><code>{{ newPeer.token }}</code><button class="btn small" type="button" @click="copy(newPeer.token)">复制</button></div>
+          <div class="copy-row">
+            <SecretField mode="text" :value="newPeer.token" copyable class="token-code-host" />
+            <button class="btn small" type="button" @click="copy(newPeer.token)">复制</button>
+          </div>
         </div>
         <button class="btn small" type="button" @click="newPeer = null">我已保存，关闭</button>
       </div>
@@ -117,7 +117,7 @@
         </div>
         <div class="field-row">
           <label for="sync-hub-token">绑定令牌</label>
-          <input id="sync-hub-token" v-model="hubToken" type="password" placeholder="留空则保持现有令牌" spellcheck="false" />
+          <SecretField id="sync-hub-token" v-model="hubToken" :stored="status.hubToken" />
         </div>
         <div class="sync-actions">
           <button class="btn" type="button" :disabled="saving" @click="saveBinding">保存修改</button>
@@ -129,10 +129,21 @@
         <div class="status-grid">
           <div><span>连接</span><strong :class="status.connected ? 'ok' : 'bad'">{{ status.connected ? '已连接' : '未连接' }}</strong></div>
           <div><span>待推送</span><strong>{{ status.pending }}</strong></div>
+          <div><span v-if="status.pendingPulls">待补拉文件</span><strong v-if="status.pendingPulls">{{ status.pendingPulls }}</strong></div>
           <div><span>最近同步</span><strong>{{ status.lastSyncAt ? formatTime(status.lastSyncAt) : '—' }}</strong></div>
           <div><span>同步水位</span><strong>{{ status.cursor }}</strong></div>
         </div>
         <p v-if="status.lastError" class="sync-error">最近错误：{{ status.lastError }}</p>
+        <details v-if="status.log && status.log.length" class="sync-log">
+          <summary>同步日志（最近 {{ status.log.length }} 条，排查同步问题用）</summary>
+          <ul>
+            <li v-for="(entry, i) in logView" :key="logKey(entry, i)" :class="entry.level">
+              <span class="log-ts">{{ formatTime(entry.ts) }}</span>
+              <span class="log-event">{{ eventLabel(entry.event) }}</span>
+              <span v-if="entry.detail" class="log-detail">{{ entry.detail }}</span>
+            </li>
+          </ul>
+        </details>
       </div>
     </template>
 
@@ -161,12 +172,13 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../../api';
 import { promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
 import DesktopSection from './DesktopSection.vue';
+import SecretField from '../SecretField.vue';
 
 interface PeerView {
   id: string;
@@ -179,16 +191,26 @@ interface PeerView {
   token: string;
 }
 
+interface SyncLogEntry {
+  ts: string;
+  level: string;
+  event: string;
+  detail?: string;
+}
+
 interface SyncStatus {
   role: 'hub' | 'member' | 'none';
   enabled: boolean;
   connected: boolean;
   hubUrl: string;
+  hubToken: string;
   nodeId: string;
   cursor: number;
   pending: number;
+  pendingPulls: number;
   lastSyncAt: string | null;
   lastError: string | null;
+  log: SyncLogEntry[];
   peers: PeerView[];
 }
 
@@ -220,17 +242,33 @@ function formatTime(iso: string): string {
   }
 }
 
-// 令牌默认掩码（显示头尾，中间打星），点击展开完整值；不再限制仅创建时可见
-const revealedTokens = reactive(new Set<string>());
+// 同步事件日志：倒序取最近 30 条，事件名映射为中文说明
+const EVENT_LABELS: Record<string, string> = {
+  start: '客户端启动',
+  connected: '已连接中枢',
+  disconnected: '连接断开，自动重连中',
+  replay: '补拉远端变更',
+  'oplog-trimmed': '落后过多，转全量对账',
+  'push-retry': '推送失败，退避重试',
+  'apply-failed': '应用远端变更失败（将重放）',
+  'file-pull-deferred': '文件拉取失败，待重试',
+  'file-pull-retry-ok': '文件补拉成功',
+  'file-pull-retry-failed': '文件补拉重试失败',
+  'reconcile-start': '全量对账开始',
+  'reconcile-done': '全量对账完成',
+  'reconcile-item-failed': '对账单项失败',
+  'reconcile-failed': '全量对账失败',
+  heal: '周期自愈对账',
+};
 
-function toggleToken(id: string): void {
-  if (revealedTokens.has(id)) revealedTokens.delete(id);
-  else revealedTokens.add(id);
+function eventLabel(event: string): string {
+  return EVENT_LABELS[event] || event;
 }
 
-function maskToken(token: string): string {
-  if (!token || token.length <= 16) return token;
-  return `${token.slice(0, 12)}********${token.slice(-4)}`;
+const logView = computed<SyncLogEntry[]>(() => (status.value?.log || []).slice(-30).reverse());
+
+function logKey(entry: SyncLogEntry, index: number): string {
+  return `${entry.ts}-${entry.event}-${index}`;
 }
 
 async function copy(text: string): Promise<void> {
@@ -452,13 +490,12 @@ onUnmounted(() => {
   gap: 6px;
   flex-wrap: wrap;
 }
-.token-code {
-  cursor: pointer;
-  word-break: break-all;
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 6px;
-  padding: 2px 6px;
-  font-size: 12px;
+.token-line .token-code-host {
+  min-width: 0;
+}
+.copy-row .token-code-host {
+  flex: 1;
+  min-width: 0;
 }
 
 .ddns-block,
@@ -506,7 +543,8 @@ onUnmounted(() => {
   gap: 6px;
 }
 .field-row label { font-size: 13px; font-weight: 600; }
-.field-row input {
+.field-row input,
+.field-row :deep(input) {
   padding: 8px 10px;
   font-size: 13px;
 }
@@ -535,6 +573,49 @@ onUnmounted(() => {
   color: var(--danger, #d64545);
   font-size: 12px;
   margin: 8px 0 0;
+}
+.sync-log {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.sync-log summary {
+  cursor: pointer;
+  opacity: 0.75;
+  user-select: none;
+}
+.sync-log ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sync-log li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+  border-radius: 6px;
+  padding: 4px 8px;
+  flex-wrap: wrap;
+}
+.sync-log .log-ts {
+  opacity: 0.6;
+  white-space: nowrap;
+}
+.sync-log .log-event {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sync-log li.warn .log-event { color: var(--warning, #d8a012); }
+.sync-log li.error .log-event { color: var(--danger, #d64545); }
+.sync-log .log-detail {
+  opacity: 0.8;
+  word-break: break-all;
+  min-width: 0;
 }
 
 .conflicts-block { margin: 0 24px 24px; }

@@ -30,11 +30,14 @@ export interface ClientStatus {
   enabled: boolean;
   connected: boolean;
   hubUrl: string;
+  hubToken: string;
   nodeId: string;
   cursor: number;
   pending: number;
+  pendingPulls: number;
   lastSyncAt: string | null;
   lastError: string | null;
+  log: SyncLogEntry[];
 }
 
 export function syncConfigEnabled(): boolean {
@@ -70,6 +73,30 @@ let loopPromise: Promise<void> | null = null;
 let streamAbort: AbortController | null = null;
 let pushing = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+/** 推送失败重试退避（3s 起、倍增、30s 封顶；任一推送成功即复位） */
+let pushRetryMs = 3000;
+/** 拉取失败待补拉文件（path → 远端 hash），成功后移除 */
+const pendingFilePulls = new Map<string, string>();
+let pullRetryTimer: ReturnType<typeof setInterval> | null = null;
+let healTimer: ReturnType<typeof setInterval> | null = null;
+let reconcileRunning = false;
+
+// ---------- 同步事件日志（内存环形缓冲，/api/sync/status 暴露给前端排查） ----------
+
+export interface SyncLogEntry {
+  ts: string;
+  level: 'info' | 'warn' | 'error';
+  event: string;
+  detail?: string;
+}
+
+const SYNC_LOG_KEEP = 200;
+const syncLog: SyncLogEntry[] = [];
+
+function logEvent(level: SyncLogEntry['level'], event: string, detail?: string): void {
+  syncLog.push({ ts: new Date().toISOString(), level, event, detail: detail?.slice(0, 500) });
+  if (syncLog.length > SYNC_LOG_KEEP) syncLog.splice(0, syncLog.length - SYNC_LOG_KEEP);
+}
 
 function hubUrl(): string {
   return (getSetting('sync_hub_url') || '').replace(/\/+$/, '');
@@ -179,7 +206,9 @@ async function pullFile(relPath: string): Promise<void> {
   lastSyncAt = new Date().toISOString();
 }
 
-/** 应用一条 hub 广播/补拉 op（seq 单调 guard 防重复应用） */
+/** 应用一条 hub 广播/补拉 op（seq 单调 guard 防重复应用）。
+ *  cursor 只在应用成功后推进：page 应用失败向上抛断开事件流，重连后从 cursor 重放，
+ *  避免「失败也前推水位」造成静默丢更新（对齐 fast-note-sync 的未确认不算完成语义） */
 function applyRemoteOp(op: any): void {
   const seq = Number(op.seq || 0);
   if (seq <= getCursor()) return;
@@ -197,8 +226,11 @@ function applyRemoteOp(op: any): void {
         if (op.evidence) applyEvidenceSnapshot(op.evidence);
       }
     } else if (op.kind === 'file') {
-      // 文件不进内存队列：hash 不同才拉取（失败由对账兜底）
-      pullFileIfChanged(target, String(op.hash || '')).catch(() => { /* 对账兜底 */ });
+      // 文件不进内存队列：hash 不同才拉取；失败记入待补拉集合周期重试（水位照常推进）
+      void pullFileIfChanged(target, String(op.hash || '')).catch(() => {
+        pendingFilePulls.set(target, String(op.hash || ''));
+        logEvent('warn', 'file-pull-deferred', target);
+      });
     } else if (op.kind === 'delete') {
       try {
         moveToTrash(target, 'sync');
@@ -209,10 +241,12 @@ function applyRemoteOp(op: any): void {
         setPageSyncRevision(target, Number(op.revision || 0));
       } catch { /* 源不存在时忽略（后续内容同步会补齐新路径） */ }
     }
-  } finally {
-    if (seq > 0) setCursor(seq);
-    lastSyncAt = new Date().toISOString();
+  } catch (error: any) {
+    logEvent('error', 'apply-failed', `${op.kind} ${target}: ${error?.message || error}`);
+    throw error;
   }
+  if (seq > 0) setCursor(seq);
+  lastSyncAt = new Date().toISOString();
 }
 
 async function pullFileIfChanged(relPath: string, remoteHash: string): Promise<void> {
@@ -305,18 +339,21 @@ async function pushLoop(): Promise<void> {
         if (item.kind === 'file' && !fs.existsSync(safeJoin(item.target))) {
           continue;
         }
-        // 网络/hub 错误：塞回队首保序；3 秒后自动重试（不再依赖下一次入队或重连触发）
+        // 网络/hub 错误：塞回队首保序，指数退避后自动重试（3s→30s，成功复位）
         queue.unshift(item);
         lastError = String(error?.message || error);
+        logEvent('warn', 'push-retry', `${item.kind} ${item.target}: ${lastError}（${Math.round(pushRetryMs / 1000)}s 后重试，队列 ${queue.length} 项）`);
         if (!retryTimer) {
           retryTimer = setTimeout(() => {
             retryTimer = null;
             void pushLoop();
-          }, 3000);
+          }, pushRetryMs);
+          pushRetryMs = Math.min(pushRetryMs * 2, 30_000);
         }
         return;
       }
     }
+    pushRetryMs = 3000;
   } finally {
     pushing = false;
   }
@@ -338,10 +375,12 @@ async function syncMissedChanges(): Promise<void> {
   for (;;) {
     const res = await getJson(`/api/sync/changes?since=${getCursor()}`);
     if (res?.resync) {
+      logEvent('info', 'oplog-trimmed', `落后过多，转全量对账（cursor=${getCursor()}）`);
       await reconcile();
       return;
     }
     const ops: any[] = res?.ops || [];
+    if (ops.length > 0) logEvent('info', 'replay', `补拉 ${ops.length} 条远端变更（自水位 ${getCursor()}）`);
     for (const op of ops) applyRemoteOp(op);
     if (ops.length < 500) return;
   }
@@ -357,6 +396,7 @@ async function consumeStream(): Promise<void> {
   connected = true;
   backoffMs = 1000;
   lastError = null;
+  logEvent('info', 'connected', `中枢事件流已连接`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -371,10 +411,14 @@ async function consumeStream(): Promise<void> {
         buffer = buffer.slice(idx + 2);
         const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
         if (!dataLine) continue;
+        let op: any;
         try {
-          const op = JSON.parse(dataLine.slice(6));
-          applyRemoteOp(op);
-        } catch { /* 单帧解析失败忽略 */ }
+          op = JSON.parse(dataLine.slice(6));
+        } catch {
+          continue; // 单帧解析失败忽略
+        }
+        // 应用失败（含写盘异常）向外抛：断开本条流，重连后从 cursor 重放
+        applyRemoteOp(op);
       }
     }
   } finally {
@@ -383,54 +427,79 @@ async function consumeStream(): Promise<void> {
   }
 }
 
-/** 全量对账：首次接入、手动触发、oplog 落后过多时使用 */
+/** 全量对账：首次接入、手动触发、oplog 落后过多、周期自愈时使用（并发触发时仅跑一轮） */
 export async function reconcile(): Promise<void> {
-  const snap = await getJson('/api/sync/snapshot');
-  const entries: { kind: 'page' | 'file'; path: string; hash: string; revision: number }[] = snap?.entries || [];
-  const hubTargets = new Set(entries.map((e) => e.path));
+  if (reconcileRunning) return;
+  reconcileRunning = true;
+  try {
+    logEvent('info', 'reconcile-start');
+    const snap = await getJson('/api/sync/snapshot');
+    const entries: { kind: 'page' | 'file'; path: string; hash: string; revision: number }[] = snap?.entries || [];
+    const hubTargets = new Set(entries.map((e) => e.path));
+    let pulled = 0;
+    let queued = 0;
 
-  // hub → 本端
-  for (const entry of entries) {
-    try {
-      if (entry.kind === 'page') {
-        const localRaw = readPageRaw(entry.path);
-        if (localRaw !== null && sha256Text(localRaw) === entry.hash) {
-          setPageSyncRevision(entry.path, entry.revision);
-          continue;
+    // hub → 本端
+    for (const entry of entries) {
+      try {
+        if (entry.kind === 'page') {
+          const localRaw = readPageRaw(entry.path);
+          if (localRaw !== null && sha256Text(localRaw) === entry.hash) {
+            setPageSyncRevision(entry.path, entry.revision);
+            continue;
+          }
+          if (localRaw !== null && getPageSyncRevision(entry.path) > 0) {
+            // 两端都有且内容不同、本端同步过该页 → 推本端内容由 hub 裁决（离线改动不丢）
+            queued++;
+            enqueueLocalChange('page', entry.path);
+            continue;
+          }
+          // 本端没有、或从未同步过（首次接入）→ 以 hub 为准拉取
+          const detail = await getJson(`/api/sync/page-content?path=${encodeURIComponent(entry.path)}`);
+          applyRemotePage(entry.path, String(detail.content ?? ''), entry.revision);
+          pulled++;
+        } else {
+          let localHash = '';
+          try {
+            localHash = sha256Buf(fs.readFileSync(safeJoin(entry.path)));
+          } catch { /* 本端没有 */ }
+          if (localHash === entry.hash) {
+            pendingFilePulls.delete(entry.path);
+            continue;
+          }
+          if (localHash) {
+            // 两端文件不同 → 本端为准推送（文件不可合并，按到达先后覆盖）
+            queued++;
+            enqueueLocalChange('file', entry.path);
+            continue;
+          }
+          await pullFile(entry.path);
+          pendingFilePulls.delete(entry.path);
+          pulled++;
         }
-        if (localRaw !== null && getPageSyncRevision(entry.path) > 0) {
-          // 两端都有且内容不同、本端同步过该页 → 推本端内容由 hub 裁决（离线改动不丢）
-          enqueueLocalChange('page', entry.path);
-          continue;
-        }
-        // 本端没有、或从未同步过（首次接入）→ 以 hub 为准拉取
-        const detail = await getJson(`/api/sync/page-content?path=${encodeURIComponent(entry.path)}`);
-        applyRemotePage(entry.path, String(detail.content ?? ''), entry.revision);
-      } else {
-        let localHash = '';
-        try {
-          localHash = sha256Buf(fs.readFileSync(safeJoin(entry.path)));
-        } catch { /* 本端没有 */ }
-        if (localHash === entry.hash) continue;
-        if (localHash) {
-          // 两端文件不同 → 本端为准推送（文件不可合并，按到达先后覆盖）
-          enqueueLocalChange('file', entry.path);
-          continue;
-        }
-        await pullFile(entry.path);
+      } catch (error: any) {
+        lastError = String(error?.message || error);
+        logEvent('warn', 'reconcile-item-failed', `${entry.kind} ${entry.path}: ${lastError}`);
       }
-    } catch (error: any) {
-      lastError = String(error?.message || error);
     }
-  }
 
-  // 本端 → hub：hub 没有的页面/文件推上去
-  const localEntries = localSnapshot();
-  for (const entry of localEntries) {
-    if (!hubTargets.has(entry.path)) enqueueLocalChange(entry.kind, entry.path);
+    // 本端 → hub：hub 没有的页面/文件推上去
+    const localEntries = localSnapshot();
+    for (const entry of localEntries) {
+      if (!hubTargets.has(entry.path)) {
+        queued++;
+        enqueueLocalChange(entry.kind, entry.path);
+      }
+    }
+    lastSyncAt = new Date().toISOString();
+    logEvent('info', 'reconcile-done', `hub ${entries.length} 项：拉取 ${pulled}、入队补推 ${queued}、待补拉文件 ${pendingFilePulls.size}`);
+    await pushLoop();
+  } catch (error: any) {
+    logEvent('error', 'reconcile-failed', String(error?.message || error));
+    throw error;
+  } finally {
+    reconcileRunning = false;
   }
-  lastSyncAt = new Date().toISOString();
-  await pushLoop();
 }
 
 /** 本端 brain 目录全量清单（页面取 raw 文本 hash，文件取字节 hash）；路径经 safeJoin 限定在根目录内 */
@@ -460,10 +529,24 @@ function localSnapshot(): { kind: 'page' | 'file'; path: string; hash: string }[
   return out;
 }
 
-/**
- * 本模块内 AbortError 只可能来自 stopClient() 主动中止在途 SSE 读
- * （真实网络故障是 TypeError: fetch failed / terminated），故不作为同步错误上报
- */
+/** 重试此前拉取失败的文件（成功移出集合；失败留待下一轮） */
+async function retryPendingFilePulls(): Promise<void> {
+  if (pendingFilePulls.size === 0) return;
+  for (const [relPath, hash] of Array.from(pendingFilePulls)) {
+    try {
+      await pullFileIfChanged(relPath, hash);
+      pendingFilePulls.delete(relPath);
+      logEvent('info', 'file-pull-retry-ok', relPath);
+    } catch {
+      logEvent('warn', 'file-pull-retry-failed', relPath);
+    }
+  }
+}
+
+/** 周期自愈：全量对账兜底未知路径的漏同步（SSE/补拉都修不了的静默不一致） */
+const HEAL_INTERVAL_MS = 15 * 60_000;
+const PULL_RETRY_MS = 60_000;
+
 function isSelfAbort(error: any): boolean {
   return error?.name === 'AbortError';
 }
@@ -473,10 +556,14 @@ async function runLoop(): Promise<void> {
     try {
       await syncMissedChanges();
       await pushLoop();
+      await retryPendingFilePulls();
       await consumeStream();
     } catch (error: any) {
       // 停用/改配置导致的主动中断不是故障：不写「最近错误」，避免误报
-      if (!isSelfAbort(error)) lastError = String(error?.message || error);
+      if (!isSelfAbort(error)) {
+        lastError = String(error?.message || error);
+        logEvent('warn', 'disconnected', `${lastError}（${Math.round(backoffMs / 1000)}s 后重连）`);
+      }
     }
     if (!running) break;
     await sleep(backoffMs);
@@ -488,15 +575,37 @@ export function startClient(): void {
   if (running) return;
   running = true;
   backoffMs = 1000;
+  pushRetryMs = 3000;
+  logEvent('info', 'start', `同步客户端启动（节点 ${currentNodeId().slice(0, 8)}）`);
   loopPromise = runLoop();
   loopPromise.catch(() => {
     running = false;
   });
+  if (pullRetryTimer) clearInterval(pullRetryTimer);
+  pullRetryTimer = setInterval(() => {
+    void retryPendingFilePulls();
+  }, PULL_RETRY_MS);
+  pullRetryTimer.unref();
+  if (healTimer) clearInterval(healTimer);
+  healTimer = setInterval(() => {
+    if (!running) return;
+    logEvent('info', 'heal', '周期自愈对账触发');
+    void reconcile().catch(() => { /* reconcile 内部已记日志 */ });
+  }, HEAL_INTERVAL_MS);
+  healTimer.unref();
 }
 
 export function stopClient(): void {
   running = false;
   connected = false;
+  if (pullRetryTimer) {
+    clearInterval(pullRetryTimer);
+    pullRetryTimer = null;
+  }
+  if (healTimer) {
+    clearInterval(healTimer);
+    healTimer = null;
+  }
   // 唤醒可能在退避 sleep 中的后台循环，让它立即观察到 running=false
   try {
     sleepAbort?.();
@@ -511,11 +620,14 @@ export function clientStatus(): ClientStatus {
     enabled: syncConfigEnabled(),
     connected,
     hubUrl: hubUrl(),
+    hubToken: hubToken(),
     nodeId: currentNodeId(),
     cursor: getCursor(),
     pending: queue.length,
+    pendingPulls: pendingFilePulls.size,
     lastSyncAt,
     lastError,
+    log: syncLog.slice(),
   };
 }
 
