@@ -47,7 +47,7 @@ declare module 'fastify' {
 }
 
 /** 数据面鉴权：群组成员 token 优先，其次 owner 通道（登录 cookie / MCP token） */
-async function requireSyncAccess(req: FastifyRequest, reply: FastifyReply) {
+export async function requireSyncAccess(req: FastifyRequest, reply: FastifyReply) {
   const auth = req.headers.authorization || '';
   const bearer = auth.startsWith('Bearer ') || auth.startsWith('bearer ')
     ? auth.replace(/^Bearer\s+/i, '')
