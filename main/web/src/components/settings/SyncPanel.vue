@@ -151,23 +151,9 @@
 
     <div v-if="status && status.role !== 'none'" class="sync-role-note">
       <p>同步范围：页面、附件图片、原始资料文件与证据账本。各端密码、令牌、助手会话、模型配置保持独立。
-        两端同时修改同一页面时按字符级智能合并；无法自动合并的同位置冲突以先到方为准，后到方完整内容保存到
-        <code>同步冲突/</code> 目录下的页面（AIWorks 中只留冲突记录），不丢内容。</p>
+        两端同时修改同一页面时按字符级智能合并；无法自动合并的冲突以修改时间最新的一方为准：
+        普通页面中被取代的旧版本以「原名-时间」重命名保留在原目录（可删除），AI 工作区直接以最新为准覆盖，不产生新文件。</p>
     </div>
-
-    <SettingsGroup
-      v-if="conflicts.length"
-      :title="`冲突备份页（${conflicts.length}）`"
-      hint="同步冲突时后到方的完整内容会保存为 同步冲突/ 目录下的页面，请人工核对合并后删除"
-      :default-open="true"
-    >
-      <ul class="conflict-list">
-        <li v-for="c in conflicts" :key="c.id">
-          <strong>{{ c.title }}</strong>
-          <span class="faint">{{ formatTime(c.updated_at) }}</span>
-        </li>
-      </ul>
-    </SettingsGroup>
 
     <!-- 桌面端连接：与同步群组并列的另一种接入方式，任何角色下都显示 -->
     <SettingsGroup title="桌面端免密接入" hint="不参与同步的桌面端，可用连接令牌直连本服务">
@@ -220,17 +206,9 @@ interface SyncStatus {
   peers: PeerView[];
 }
 
-interface ConflictItem {
-  id: string;
-  path: string;
-  title: string;
-  updated_at: string;
-}
-
 const location = window.location;
 const status = ref<SyncStatus | null>(null);
 const peers = ref<PeerView[]>([]);
-const conflicts = ref<ConflictItem[]>([]);
 const pickJoin = ref(false);
 const hubUrl = ref('');
 const hubToken = ref('');
@@ -292,10 +270,6 @@ async function loadStatus(): Promise<void> {
     status.value = res.data;
     peers.value = res.data.peers || [];
   } catch { /* 服务未就绪时忽略 */ }
-  try {
-    const res = await api.get('/api/sync/conflicts');
-    conflicts.value = res.data.conflicts || [];
-  } catch { /* 忽略 */ }
 }
 
 async function postConfig(body: Record<string, unknown>, okMsg: string): Promise<boolean> {
@@ -615,23 +589,6 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.conflict-list {
-  list-style: none;
-  margin: 10px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.conflict-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 13px;
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 8px 10px;
-}
 .faint { opacity: 0.65; }
 .small { font-size: 12px; }
 .empty-panel { font-size: 13px; opacity: 0.7; }
