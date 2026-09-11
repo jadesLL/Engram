@@ -9,6 +9,7 @@ import { safeJoin, syncPageFile, movePage, toRel } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
+import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import {
   currentNodeId,
   getCursor,
@@ -373,17 +374,21 @@ export function enqueueLocalChange(kind: SyncKind, target: string, oldPath?: str
 }
 
 async function syncMissedChanges(): Promise<void> {
+  // oplog 缺口（落后超过保留窗口）不能只重放保留区：缺口里的删除/移动 op 与证据账本
+  // 再也取不回来，必须补一次全量对账。但保留区里的 op 仍要先逐条应用——它们带着账本快照
+  // 与删除语义，而且应用后游标会推过保留区起点，缺口判据随之消失，不会每轮重连都触发对账。
+  let gap = false;
   for (;;) {
     const res = await getJson(`/api/sync/changes?since=${getCursor()}`);
-    if (res?.resync) {
-      logEvent('info', 'oplog-trimmed', `落后过多，转全量对账（cursor=${getCursor()}）`);
-      await reconcile();
-      return;
-    }
+    if (res?.resync) gap = true;
     const ops: any[] = res?.ops || [];
     if (ops.length > 0) logEvent('info', 'replay', `补拉 ${ops.length} 条远端变更（自水位 ${getCursor()}）`);
     for (const op of ops) applyRemoteOp(op);
-    if (ops.length < 500) return;
+    if (ops.length < 500) break;
+  }
+  if (gap) {
+    logEvent('info', 'oplog-trimmed', `落后超过保留窗口，补一次全量对账补齐内容与提炼账本（cursor=${getCursor()}）`);
+    await reconcile();
   }
 }
 
@@ -416,14 +421,26 @@ export async function reconcile(): Promise<void> {
   try {
     logEvent('info', 'reconcile-start');
     const snap = await getJson('/api/sync/snapshot');
-    const entries: { kind: 'page' | 'file'; path: string; hash: string; revision: number }[] = snap?.entries || [];
+    const entries: {
+      kind: 'page' | 'file';
+      path: string;
+      hash: string;
+      revision: number;
+      /** 中枢端该路径是否已提炼（旧中枢不带此字段 → 视为未知，跳过账本补齐） */
+      distilled?: boolean;
+    }[] = snap?.entries || [];
     const hubTargets = new Set(entries.map((e) => e.path));
     let pulled = 0;
     let queued = 0;
+    /** 中枢已提炼、本端账本缺失的来源路径：页面全部落位后统一补拉账本 */
+    const ledgerRepairs: string[] = [];
 
     // hub → 本端
     for (const entry of entries) {
       try {
+        // 「已提炼」标记不在页面/文件正文里，内容 hash 一致≠账本一致：
+        // 本端账本为空就记下来，循环结束后按来源路径补（页面先到位，账本才挂得上）
+        if (entry.distilled === true && !isDistilledPath(entry.path)) ledgerRepairs.push(entry.path);
         if (entry.kind === 'page') {
           const localRaw = readPageRaw(entry.path);
           if (localRaw !== null && sha256Text(localRaw) === entry.hash) {
@@ -473,8 +490,25 @@ export async function reconcile(): Promise<void> {
         enqueueLocalChange(entry.kind, entry.path);
       }
     }
+    // 证据账本补齐：中枢已提炼而本端账本为空（载体页面 op 早已被 oplog 裁剪、或本端是后加入的）。
+    // 必须排在页面拉取之后——账本贡献按页路径落位，页面尚未到位时会被 applyEvidenceSnapshot 丢弃；
+    // 这一步与内容一样是可重复执行的（applyEvidenceSnapshot 按来源路径做精确状态替换）。
+    let repaired = 0;
+    for (const sourcePath of ledgerRepairs) {
+      try {
+        const res = await getJson(`/api/sync/evidence?path=${encodeURIComponent(sourcePath)}`);
+        const snapshot = (res?.snapshot || null) as EvidenceSnapshot | null;
+        if (snapshot && applyEvidenceSnapshot(snapshot) > 0) repaired++;
+      } catch (error: any) {
+        logEvent('warn', 'ledger-repair-failed', `${sourcePath}: ${error?.message || error}`);
+      }
+    }
     lastSyncAt = new Date().toISOString();
-    logEvent('info', 'reconcile-done', `hub ${entries.length} 项：拉取 ${pulled}、入队补推 ${queued}、待补拉文件 ${pendingFilePulls.size}`);
+    logEvent(
+      'info',
+      'reconcile-done',
+      `hub ${entries.length} 项：拉取 ${pulled}、入队补推 ${queued}、待补拉文件 ${pendingFilePulls.size}、补齐提炼账本 ${repaired}/${ledgerRepairs.length}`
+    );
     await pushLoop();
   } catch (error: any) {
     logEvent('error', 'reconcile-failed', String(error?.message || error));

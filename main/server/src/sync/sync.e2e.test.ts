@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 /**
  * 多端同步端到端集成测试：同机起 1 个 hub + 2 个节点（真实 HTTP/SSE 实例），
  * 覆盖 双向实时传播、三方非重叠合并、同位置冲突备份、文件同步、删除传播、
- * 停用-重连对账补推。
+ * 停用-重连对账补推、提炼账本（「已提炼」标记）跨端补齐与 oplog 缺口判定。
  * 实例以 worker_threads 运行完整 server（每线程独立模块注册表与 DATA_DIR，
  * 与多进程部署等价）；均为测试期间的一次性临时实例，密码每次运行随机生成。
  * 节点按顺序启动：worker 内的 env 写入在其 import 完成后不再影响其他线程
@@ -138,7 +138,49 @@ async function createPeer(hub: Instance, name: string): Promise<string> {
   return ((await res.json()) as { peer: { token: string } }).peer.token;
 }
 
-test('三端同步端到端：实时传播、三方合并、冲突备份、文件与删除同步', { timeout: 300_000 }, async () => {
+/**
+ * 直接打开某个实例的索引库。oplog 裁剪只发生在服务端内部（保留窗口很小、测试里跑不出
+ * 5000 条 op），要在端到端下复现「载体 op 已被裁剪」只能直接改这份状态；WAL 下与
+ * worker 的写连接可共存，实例本身是测试期一次性临时实例。
+ */
+function withDb<T>(dataDir: string, fn: (conn: any) => T): T {
+  const Database = nodeRequire('better-sqlite3') as any;
+  const conn = new Database(path.join(dataDir, 'wiki.db'));
+  try {
+    return fn(conn);
+  } finally {
+    conn.close();
+  }
+}
+
+/** 丢弃某游标之后的中枢 op（保留更早的行，避免同时触发缺口对账）：模拟载体 op 从未到达该成员 */
+function dropHubOpsAfter(inst: Instance, seq: number): number {
+  return withDb(inst.dataDir, (conn) => conn.prepare('DELETE FROM sync_oplog WHERE seq > ?').run(seq).changes);
+}
+
+/** 只保留最后一条 op：游标之后出现缺口，但保留区仍有新 op（旧判据「本轮取回 0 条」漏判的场景） */
+function trimHubOplogToLast(inst: Instance): number {
+  return withDb(inst.dataDir, (conn) =>
+    conn.prepare('DELETE FROM sync_oplog WHERE seq < (SELECT MAX(seq) FROM sync_oplog)').run().changes
+  );
+}
+
+/** 某实例资料清单里一条原始资料的「已提炼」标记 */
+async function distilledOf(inst: Instance, relPath: string): Promise<boolean | undefined> {
+  const res = await api(inst, 'GET', '/api/files/list');
+  const files = (await res.json()) as { files: { path: string; distilled: boolean }[] };
+  return files.files.find((f) => f.path === relPath)?.distilled;
+}
+
+/** 同步事件日志里某个事件的条数（用于断言「本轮确实走了缺口对账」而不是复用历史事件） */
+async function countSyncEvents(inst: Instance, event: string): Promise<number> {
+  const st = (await (await api(inst, 'GET', '/api/sync/status')).json()) as {
+    log: { event: string; detail?: string }[];
+  };
+  return st.log.filter((l) => l.event === event).length;
+}
+
+test('三端同步端到端：实时传播、三方合并、冲突备份、文件与删除同步、提炼账本补齐', { timeout: 300_000 }, async () => {
   const instances: Instance[] = [];
   const cleanup = async () => {
     for (const inst of instances) {
@@ -337,6 +379,71 @@ test('三端同步端到端：实时传播、三方合并、冲突备份、文�
     const statusHub = await api(hub, 'GET', '/api/sync/status');
     const stHub = (await statusHub.json()) as { role: string };
     assert.equal(stHub.role, 'hub');
+
+    // ---------- 场景 7：提炼账本（「已提炼」标记）跨端补齐 ----------
+    // 「已提炼」只由 source_versions + active page_contributions 推导，页面正文里没有这份信息：
+    // 内容一致 ≠ 标记一致，页面 hash 比对永远发现不了这个差异。这里让 B 停用期间中枢完成提炼，
+    // 并丢弃这些载体 op（等价于「早已被 oplog 裁剪，B 从未收到账本快照」）→ B 重新接入时
+    // 内容能拉到，标记只能靠全量对账按来源路径补。
+    const distillRawName = '提炼账本同步验证.md';
+    const distillRawRel = `原始资料/${distillRawName}`;
+    const cursorBefore = ((await (await api(nodeB, 'GET', '/api/sync/status')).json()) as { cursor: number }).cursor;
+    await setSync(nodeB, false);
+    const rawForm = new FormData();
+    rawForm.append('dir', '原始资料');
+    rawForm.append(
+      'file',
+      new Blob(
+        [Buffer.from('# 提炼账本同步验证\n\n戊公司与己公司2026年签署五年期战略合作协议，覆盖三个城市。', 'utf8')],
+        { type: 'text/markdown' }
+      ),
+      distillRawName
+    );
+    const rawUp = await fetch(`http://127.0.0.1:${hub.port}/api/files/upload`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${hub.token}` },
+      body: rawForm,
+    });
+    assert.ok(rawUp.ok, `上传原始资料失败: ${await rawUp.text()}`);
+    const agentWrite = await api(hub, 'POST', '/api/agent/page', {
+      path: 'Wiki/实体/戊公司.md',
+      title: '戊公司',
+      type: 'org',
+      content: '# 戊公司\n\n## 当前理解\n\n战略合作伙伴。\n',
+      evidence: [
+        { path: distillRawRel, quote: '戊公司与己公司2026年签署五年期战略合作协议' },
+        { path: distillRawRel, quote: '覆盖三个城市' },
+      ],
+    });
+    assert.ok(agentWrite.ok, `带证据写页失败: ${await agentWrite.text()}`);
+    await waitFor('中枢把该资料标记为已提炼', async () => (await distilledOf(hub, distillRawRel)) === true);
+    assert.ok(dropHubOpsAfter(hub, cursorBefore) > 0, '应丢弃至少一条载体 op（资料/页面写入）');
+    await setSync(nodeB, true, hub.port, tokenB);
+    await waitFor('B 补齐内容与「已提炼」标记', async () => (await distilledOf(nodeB, distillRawRel)) === true, 60_000, async () => {
+      const st = (await (await api(nodeB, 'GET', '/api/sync/status')).json()) as {
+        log: { event: string; detail?: string }[];
+      };
+      return `B 该资料 distilled=${await distilledOf(nodeB, distillRawRel)}`
+        + `\nB 同步日志 = ${JSON.stringify(st.log.slice(-8))}`;
+    });
+
+    // ---------- 场景 8：oplog 缺口判定（缺口后面仍有新 op 时也必须走全量对账） ----------
+    // 旧判据是「本轮取回 0 条」，缺口后面还跟着新 op 时会漏判：成员只重放保留区、
+    // 静默跳过缺口，缺口里的删除/移动 op 与账本快照再也取不回来。
+    const trimmedBefore = await countSyncEvents(nodeB, 'oplog-trimmed');
+    await setSync(nodeB, false);
+    const gapPageA = await createPage(hub, '同步验证缺口甲', '缺口甲内容');
+    await createPage(hub, '同步验证缺口乙', '缺口乙内容');
+    assert.ok(trimHubOplogToLast(hub) > 0, '应裁掉缺口里的 op、只留最后一条');
+    await setSync(nodeB, true, hub.port, tokenB);
+    await waitFor('B 判定为落后并补一次全量对账', async () => (await countSyncEvents(nodeB, 'oplog-trimmed')) > trimmedBefore, 60_000, async () => {
+      const st = (await (await api(nodeB, 'GET', '/api/sync/status')).json()) as {
+        log: { event: string; detail?: string }[];
+      };
+      return `B 同步日志 = ${JSON.stringify(st.log.slice(-10))}`;
+    });
+    // 缺口期的页面内容同样要补到位（内容与账本都靠这次全量对账收敛）
+    await waitFor('B 补到缺口期的页面', async () => (await pageContent(nodeB, gapPageA))?.includes('缺口甲内容') === true);
   } catch (error) {
     failed = true;
     await cleanup();

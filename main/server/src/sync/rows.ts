@@ -8,6 +8,11 @@ import { db, now } from '../lib/db.js';
  *
  * 应用端做「按来源路径的精确状态替换」：快照里没有的本路径版本删除
  * （级联清理 runs/facts/contributions），快照里的全部 upsert。
+ *
+ * 两个收集锚点：
+ *  - collectEvidenceForPage：随页面 op 实时携带（页面写入/合并广播用）
+ *  - collectEvidenceForPath：全量对账按来源路径补齐（「已提炼」标记的同锚点视图，
+ *    覆盖「页面 op 已被 oplog 裁剪因而账本从未到达对端」的缺口）
  */
 
 type Row = Record<string, any>;
@@ -22,6 +27,31 @@ export interface EvidenceSnapshot {
   runs: Row[];
   facts: Row[];
   contributions: ContributionRow[];
+}
+
+/** 由「版本集合」物化证据链快照：runs/facts/贡献按这些版本收集，贡献带 __page_path 供对端重映射 */
+function collectEvidenceByVersions(versions: Row[]): EvidenceSnapshot | null {
+  if (!versions.length) return null;
+  const versionIdList = versions.map((v) => v.id);
+  const versionPlaceholders = versionIdList.map(() => '?').join(',');
+
+  const runs = db
+    .prepare(`SELECT * FROM ingest_runs WHERE source_version_id IN (${versionPlaceholders})`)
+    .all(...versionIdList) as Row[];
+  const runIds = runs.map((r) => r.id);
+  const facts = runIds.length
+    ? (db
+        .prepare(`SELECT * FROM ingest_facts WHERE run_id IN (${runIds.map(() => '?').join(',')})`)
+        .all(...runIds) as Row[])
+    : [];
+  const contributions = db
+    .prepare(
+      `SELECT pc.*, p.path AS __page_path
+       FROM page_contributions pc LEFT JOIN pages p ON p.id = pc.page_id
+       WHERE pc.source_version_id IN (${versionPlaceholders})`
+    )
+    .all(...versionIdList) as ContributionRow[];
+  return { versions, runs, facts, contributions };
 }
 
 /** 收集一个页面的证据链快照；该页没有任何证据时返回 null */
@@ -48,28 +78,18 @@ export function collectEvidenceForPage(pagePath: string): EvidenceSnapshot | nul
        )`
     )
     .all(...versionIds) as Row[];
-  if (!versions.length) return null;
-  const pathPlaceholders = versions.map(() => '?').join(',');
-  const versionIdList = versions.map((v) => v.id);
-  const versionAllPlaceholders = versionIdList.map(() => '?').join(',');
+  return collectEvidenceByVersions(versions);
+}
 
-  const runs = db
-    .prepare(`SELECT * FROM ingest_runs WHERE source_version_id IN (${versionAllPlaceholders})`)
-    .all(...versionIdList) as Row[];
-  const runIds = runs.map((r) => r.id);
-  const facts = runIds.length
-    ? (db
-        .prepare(`SELECT * FROM ingest_facts WHERE run_id IN (${runIds.map(() => '?').join(',')})`)
-        .all(...runIds) as Row[])
-    : [];
-  const contributions = db
-    .prepare(
-      `SELECT pc.*, p.path AS __page_path
-       FROM page_contributions pc LEFT JOIN pages p ON p.id = pc.page_id
-       WHERE pc.source_version_id IN (${versionAllPlaceholders})`
-    )
-    .all(...versionIdList) as ContributionRow[];
-  return { versions, runs, facts, contributions };
+/**
+ * 按「来源路径」收集证据链快照（与「已提炼」标记同一个锚点）：
+ * 页面 op 只带得动「自己引用过的来源」，标记却是来源路径自身的属性，两者并不等价——
+ * 页面/文件同步过去、载体 op 却早已被 oplog 裁剪时，对端的账本就是空的。
+ * 全量对账用本函数逐条补齐这些路径。
+ */
+export function collectEvidenceForPath(sourcePath: string): EvidenceSnapshot | null {
+  const versions = db.prepare(`SELECT * FROM source_versions WHERE path = ?`).all(sourcePath) as Row[];
+  return collectEvidenceByVersions(versions);
 }
 
 /**

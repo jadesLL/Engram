@@ -69,6 +69,21 @@ export function isDistilledPath(path: string): boolean {
   ).get(path);
 }
 
+/**
+ * 全部已提炼的来源路径（isDistilledPath 的批量版，语义完全一致）：
+ * 供多端同步的全量清单一次性打标，避免逐文件查库；因为标记只存在于
+ * source_versions / page_contributions 而不在页面正文里，对端必须靠这个集合
+ * 才能发现「内容一致但账本缺失」，进而按来源路径把账本补齐。
+ */
+export function distilledSourcePaths(): Set<string> {
+  const rows = db.prepare(
+    `SELECT DISTINCT sv.path AS path FROM source_versions sv
+     JOIN page_contributions pc ON pc.source_version_id = sv.id
+     WHERE pc.active = 1`
+  ).all() as { path: string }[];
+  return new Set(rows.map((row) => row.path));
+}
+
 export function contributionsForProjection(pageId: string): StoredContribution[] {
   return db.prepare(
     `SELECT pc.*, sv.path source_path FROM page_contributions pc
