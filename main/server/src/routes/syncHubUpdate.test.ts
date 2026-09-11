@@ -27,6 +27,8 @@ let hubServer: http.Server;
 let hubUrl = '';
 /** fake hub 收到的 Authorization 头（按路径记录，校验转发确实带上了成员令牌） */
 const seenAuth: Record<string, string> = {};
+/** 模拟中枢切换窗口起点：apply 后 1s 旧容器才停（此前 /health 一直 200），停 4s 后新容器接管 */
+let hubRestartAt = 0;
 
 before(async () => {
   const dbModule = await import('../lib/db.js');
@@ -42,8 +44,11 @@ before(async () => {
     const url = req.url || '';
     seenAuth[url.split('?')[0]] = String(req.headers.authorization || '');
     if (url === '/health') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      // done 发出时旧容器还活着（第一轮探测必得 200）；waitHubHealthy 必须先观察到
+      // 下线、再等到恢复，否则会把切换前的旧 state 当恢复结果
+      const down = hubRestartAt > 0 && Date.now() >= hubRestartAt && Date.now() < hubRestartAt + 4000;
+      res.writeHead(down ? 503 : 200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: !down }));
       return;
     }
     if (req.headers.authorization !== `Bearer ${HUB_TOKEN}`) {
@@ -52,8 +57,10 @@ before(async () => {
       return;
     }
     if (url === '/api/update/state') {
+      // 恢复后版本号/提交号变化：断言 recovered 携带的是恢复后的新 state
+      const restarted = hubRestartAt > 0 && Date.now() >= hubRestartAt + 4000;
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ supported: true, desktop: false, currentVersion: '9.9.9', commit: 'abc1234', imageTag: 'main', busy: false }));
+      res.end(JSON.stringify({ supported: true, desktop: false, currentVersion: restarted ? '9.9.10' : '9.9.9', commit: restarted ? 'def5678' : 'abc1234', imageTag: 'main', busy: false }));
       return;
     }
     if (url === '/api/update/check') {
@@ -62,6 +69,7 @@ before(async () => {
       return;
     }
     if (url === '/api/update/apply') {
+      hubRestartAt = Date.now() + 1000;
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
       res.write('event: progress\ndata: {"text":"拉取镜像…"}\n\n');
       res.write('event: done\ndata: {"message":"更新流程已移交"}\n\n');
@@ -150,7 +158,10 @@ test('apply 透传中枢 SSE 事件并代等恢复（recovered 附新 state）',
   assert.ok(names.includes('done'), `应透传 done: ${names}`);
   const recoveredIdx = names.indexOf('recovered');
   assert.ok(recoveredIdx >= 0, `应发出 recovered: ${names}`);
-  assert.equal(events[recoveredIdx].data.state.currentVersion, '9.9.9');
+  // 竞态回归断言：done 时旧容器还活着（fake hub 1s 后才停），recovered 必须等
+  // 真恢复后携带新 state（9.9.10/def5678），不得携带切换前的旧 state（9.9.9/abc1234）
+  assert.equal(events[recoveredIdx].data.state.currentVersion, '9.9.10');
+  assert.equal(events[recoveredIdx].data.state.commit, 'def5678');
   assert.ok(names.indexOf('recovered') > names.indexOf('done'), 'recovered 应在 done 之后');
   assert.equal(seenAuth['/api/update/apply'], `Bearer ${HUB_TOKEN}`);
 });

@@ -520,11 +520,21 @@ async function confirmHubApply() {
           hubLog.value.push(`更新失败: ${data?.error || '未知错误'}`);
           hubUpdating.value = false;
         } else if (event === 'recovered') {
-          if (data?.state) hubState.value = data.state;
-          hubLog.value.push('服务器已恢复，远程更新完成');
-          hubUpdating.value = false;
-          hubCheckResult.value = null;
-          notify.success('同步服务器更新完成');
+          // 对比恢复前后的提交号/版本号：没变化说明更新已回滚或远端镜像与本地一致，
+          // 不能再报「更新完成」误导用户以为已升级
+          const prev = hubState.value;
+          const st = data?.state;
+          if (st) hubState.value = st;
+          const changed = !st || !prev || st.commit !== prev.commit || st.currentVersion !== prev.currentVersion;
+          if (changed) {
+            hubLog.value.push('服务器已恢复，远程更新完成');
+            hubUpdating.value = false;
+            hubCheckResult.value = null;
+            notify.success('同步服务器更新完成');
+          } else {
+            hubLog.value.push('服务器已恢复，但版本未变化——更新可能已自动回滚，或远端镜像与本地一致；可稍后点「检查更新」复核');
+            hubUpdating.value = false;
+          }
         } else if (event === 'timeout') {
           hubTimeout.value = true;
           hubUpdating.value = false;
@@ -741,9 +751,13 @@ async function confirmApply() {
     updateLog.value.push(`连接中断: ${e?.message || e}`);
   }
   if (streamEnded && updating.value) {
-    // 服务即将重启：轮询 /health 等恢复，然后刷新页面加载新版本前端
+    // 服务即将重启：轮询 /health 等恢复，然后刷新页面加载新版本前端。
+    // done 事件发出时旧容器还活着（switcher 随后才停旧起新），必须先观察到一次
+    // 下线再等回 200，否则会把切换前的旧容器当恢复、reload 到旧版本前端。
     healthWaiting.value = true;
     const deadline = Date.now() + 5 * 60_000;
+    await new Promise((res) => setTimeout(res, 8000));
+    let sawDown = false;
     for (;;) {
       if (Date.now() > deadline) {
         healthTimeout.value = true;
@@ -753,11 +767,17 @@ async function confirmApply() {
       try {
         const r = await fetch('/health', { cache: 'no-store' });
         if (r.ok) {
-          await new Promise((res) => setTimeout(res, 1500));
-          location.reload();
-          return;
+          if (sawDown) {
+            await new Promise((res) => setTimeout(res, 1500));
+            location.reload();
+            return;
+          }
+        } else {
+          sawDown = true;
         }
-      } catch { /* 服务重启中 */ }
+      } catch {
+        sawDown = true;
+      }
       await new Promise((res) => setTimeout(res, 3000));
     }
   } else if (!streamEnded) {

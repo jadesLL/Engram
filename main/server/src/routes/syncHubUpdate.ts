@@ -56,16 +56,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** 等中枢恢复（更新重启 1–3 分钟；上限 5 分钟与浏览器侧自更新口径一致） */
+/**
+ * 等中枢恢复（更新重启 1–3 分钟；上限 5 分钟与浏览器侧自更新口径一致）。
+ * 必须先观察到一次服务下线（非 200/连接失败）再等回 200：done 事件发出时旧容器
+ * 还活着（switcher 随后才停旧起新），直接采信第一个 200 会把切换前的旧版本当恢复。
+ */
 async function waitHubHealthy(url: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  let sawDown = false;
   for (;;) {
     if (Date.now() > deadline) return false;
     try {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
-      if (res.ok) return true;
+      if (res.ok) {
+        if (sawDown) return true;
+      } else {
+        sawDown = true;
+      }
     } catch {
-      /* 重启中 */
+      sawDown = true;
     }
     await sleep(3000);
   }

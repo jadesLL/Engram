@@ -1604,7 +1604,9 @@ async function runSourceUpdate() {
   setUpdateStep('正在拉取最新代码（git pull）…');
   try {
     const branch = await runGit(['branch', '--show-current']);
-    await runGit(['pull', '--ff-only', 'origin', branch], 180_000);
+    // refspec 必须全限定到 refs/heads/：仓库远端存在与分支同名的 tag（main）时，
+    // 裸分支名会被解析成 tag —— pull 等于拿 tag 合并当前 HEAD，静默假成功且版本不变
+    await runGit(['pull', '--ff-only', 'origin', `refs/heads/${branch}`], 180_000);
   } catch (e) {
     // 拉取失败：小窗没有可展示的过程，关掉回主窗，由设置页展示错误
     if (updateWin && !updateWin.isDestroyed()) updateWin.close();
