@@ -1,16 +1,15 @@
 <template>
   <div class="desktop-section">
     <div class="desktop-head">
-      <h4>桌面端免密接入</h4>
-      <button class="btn primary" type="button" @click="newToken">
+      <p class="section-note">
+        桌面端不参与同步时，也可用「远端模式」直接连到本服务：在这里生成连接令牌，填入 Windows
+        桌面端「连接远端服务器」即可免密码登录。令牌默认有效期 365 天，可随时撤销。
+      </p>
+      <button class="btn primary head-action" type="button" @click="newToken">
         <Icon name="plus" :size="15" />
         生成令牌
       </button>
     </div>
-    <p class="section-note">
-      桌面端不参与同步时，也可用「远端模式」直接连到本服务：在这里生成连接令牌，填入 Windows
-      桌面端「连接远端服务器」即可免密码登录。令牌默认有效期 365 天，可随时撤销。
-    </p>
 
     <div v-if="isDesktop" class="desktop-mode-block">
       <div>
@@ -143,12 +142,15 @@ onMounted(load);
 .desktop-head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
+  margin: 10px 0 12px;
 }
-.desktop-head h4 { margin: 0; }
+.desktop-head .head-action {
+  flex: 0 0 auto;
+}
 .section-note {
-  margin: 4px 0 12px;
+  margin: 0;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;

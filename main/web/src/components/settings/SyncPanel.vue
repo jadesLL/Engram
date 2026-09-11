@@ -94,11 +94,13 @@
         <button class="btn small" type="button" @click="newPeer = null">我已保存，关闭</button>
       </div>
 
-      <div v-if="status.role === 'hub'" class="ddns-block">
-        <h4>DDNS 直连域名</h4>
-        <p class="faint small">只有中枢设备可以开启：把一条域名指向中枢公网 IP，成员绑定中枢时可直接填这个域名。</p>
+      <SettingsGroup
+        v-if="status.role === 'hub'"
+        title="DDNS 直连域名"
+        hint="只有中枢可开启：把一条域名指向中枢公网 IP，成员绑定中枢时可直接填这个域名"
+      >
         <DdnsSection />
-      </div>
+      </SettingsGroup>
     </template>
 
     <!-- 成员：绑定与状态 -->
@@ -153,21 +155,24 @@
         <code>AIWorks/同步冲突/</code> 页面，不丢内容。</p>
     </div>
 
-    <div v-if="conflicts.length" class="conflicts-block">
-      <h4>冲突备份页（{{ conflicts.length }}）</h4>
-      <p class="faint small">同步冲突时后到方的完整内容会保存为 AIWorks/同步冲突/ 下的页面，请人工核对合并后删除。</p>
+    <SettingsGroup
+      v-if="conflicts.length"
+      :title="`冲突备份页（${conflicts.length}）`"
+      hint="同步冲突时后到方的完整内容会保存为 AIWorks/同步冲突/ 下的页面，请人工核对合并后删除"
+      :default-open="true"
+    >
       <ul class="conflict-list">
         <li v-for="c in conflicts" :key="c.id">
           <strong>{{ c.title }}</strong>
           <span class="faint">{{ formatTime(c.updated_at) }}</span>
         </li>
       </ul>
-    </div>
+    </SettingsGroup>
 
     <!-- 桌面端连接：与同步群组并列的另一种接入方式，任何角色下都显示 -->
-    <div class="desktop-block">
+    <SettingsGroup title="桌面端免密接入" hint="不参与同步的桌面端，可用连接令牌直连本服务">
       <DesktopSection />
-    </div>
+    </SettingsGroup>
   </section>
 </template>
 
@@ -178,6 +183,7 @@ import { promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
 import DesktopSection from './DesktopSection.vue';
+import SettingsGroup from './SettingsGroup.vue';
 import SecretField from '../SecretField.vue';
 
 interface PeerView {
@@ -498,15 +504,6 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.ddns-block,
-.desktop-block {
-  border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
-  padding-top: 14px;
-  margin: 0 24px 24px;
-}
-.ddns-block h4 { margin: 0 0 4px; }
-.ddns-block > p { margin: 0 0 12px; }
-
 .new-peer-card {
   border: 1px solid var(--warning, #d8a012);
   border-radius: 8px;
@@ -551,7 +548,7 @@ onUnmounted(() => {
 .sync-actions { display: flex; gap: 10px; }
 
 .sync-status { margin: 0 24px 24px; }
-.sync-status h4, .conflicts-block h4 { margin: 0 0 8px; }
+.sync-status h4 { margin: 0 0 8px; }
 .status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -618,10 +615,9 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.conflicts-block { margin: 0 24px 24px; }
 .conflict-list {
   list-style: none;
-  margin: 0;
+  margin: 10px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -645,12 +641,9 @@ onUnmounted(() => {
   .role-banner,
   .sync-role-note,
   .peers-block,
-  .ddns-block,
-  .desktop-block,
   .new-peer-card,
   .sync-config,
-  .sync-status,
-  .conflicts-block {
+  .sync-status {
     margin-right: 18px;
     margin-left: 18px;
   }

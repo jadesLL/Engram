@@ -220,7 +220,7 @@ onUnmounted(() => {
 
 <style scoped>
 .integration-note {
-  margin: 0 0 14px;
+  margin: 10px 0 14px;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;

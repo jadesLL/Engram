@@ -19,22 +19,15 @@
     <AgentHarnessSection v-if="target !== 'other'" :harness="harnessTarget" />
     <AgentMcpSection v-else />
 
-    <div class="tools-block">
-      <div class="tools-head">
-        <div>
-          <h4>查看工具</h4>
-          <p class="faint small">
-            接入后 Agent 可用以下 {{ MCP_TOOLS.length }} 个 MCP 工具（模型侧名称
-            <code>mcp__engram__&lt;工具名&gt;</code>）：读工具 {{ readTools.length }} 个不改动知识库，写工具
-            {{ writeTools.length }} 个带证据门禁并自动记入操作日志。
-          </p>
-        </div>
-        <button class="btn small" type="button" @click="toolsOpen = !toolsOpen">
-          {{ toolsOpen ? '收起' : '展开全部' }}
-        </button>
-      </div>
+    <SettingsGroup
+      title="查看工具"
+      :hint="`接入后 Agent 可用 ${MCP_TOOLS.length} 个 MCP 工具：读 ${readTools.length} 个不改动知识库，写 ${writeTools.length} 个带证据门禁并记入操作日志`"
+    >
+      <p class="faint small tools-intro">
+        模型侧工具名为 <code>mcp__engram__&lt;工具名&gt;</code>；每个工具附参数、要点与 CLI 用法。
+      </p>
 
-      <div v-if="toolsOpen" class="tools-groups">
+      <div class="tools-groups">
         <section v-for="group in toolGroups" :key="group.label" class="tools-group">
           <h5>{{ group.label }}（{{ group.items.length }}）</h5>
           <article v-for="tool in group.items" :key="tool.name" class="tool-row">
@@ -73,7 +66,7 @@
         <button class="btn small" type="button" @click="copy(guide)">复制指南全文</button>
       </div>
       <pre v-if="guideOpen" class="guide-pre">{{ guide || '加载中…' }}</pre>
-    </div>
+    </SettingsGroup>
   </section>
 </template>
 
@@ -84,12 +77,12 @@ import { notify } from '../../lib/notify';
 import { MCP_TOOLS, groupedMcpTools } from '../../lib/mcpTools';
 import AgentHarnessSection from './AgentHarnessSection.vue';
 import AgentMcpSection from './AgentMcpSection.vue';
+import SettingsGroup from './SettingsGroup.vue';
 
 type AgentTarget = 'zcode' | 'dsh' | 'other';
 
 const target = ref<AgentTarget>('zcode');
-/** 工具清单默认收起：条目随 skill 增多会变长，展开会淹没接入状态与 Token 区 */
-const toolsOpen = ref(false);
+/** 《Agent 作业指南》较长，默认收起在「查看工具」分组底部 */
 const guideOpen = ref(false);
 const guide = ref('');
 
@@ -139,24 +132,8 @@ async function copy(text: string) {
   font-size: 13px;
 }
 
-.tools-block {
-  margin: 8px 24px 24px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.tools-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-.tools-head h4 {
-  margin: 0 0 6px;
-  font-size: 13px;
-}
-.tools-head p {
-  margin: 0;
+.tools-intro {
+  margin: 10px 0 0;
   line-height: 1.6;
 }
 .tools-groups {
@@ -242,8 +219,7 @@ async function copy(text: string) {
 }
 
 @media (max-width: 768px) {
-  .harness-picker,
-  .tools-block {
+  .harness-picker {
     margin-right: 18px;
     margin-left: 18px;
   }
