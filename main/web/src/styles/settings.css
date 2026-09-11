@@ -134,10 +134,6 @@
   justify-content: center;
 }
 
-.settings-native .settings-group {
-  display: flex;
-  flex-direction: column;
-}
 .settings-native .setting-row {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(180px, auto);

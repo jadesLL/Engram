@@ -7,83 +7,83 @@
       </div>
     </div>
 
-    <div class="data-location">
-      <Icon name="folder" :size="20" />
-      <div>
-        <strong>本地 Markdown 数据</strong>
-        <p>知识内容位于服务端 <code>data/brain/</code>，整库备份请使用下方「导出备份」。</p>
-      </div>
-    </div>
-
-    <div v-if="isDesktopLocal" class="dir-section">
-      <div class="dir-row">
-        <div class="dir-info">
-          <strong>数据仓库</strong>
-          <p><code class="dir-path">{{ dataDir }}</code></p>
-          <p>切换仓库不会迁移数据：已有 Engram 数据的目录会被直接打开（需用该仓库的登录密码），空目录则会新建一个空仓库。切换后本地服务自动重启。</p>
+    <SettingsGroup title="存储位置" hint="数据目录与本地服务端口" :default-open="true">
+      <div class="data-location">
+        <Icon name="folder" :size="20" />
+        <div>
+          <strong>本地 Markdown 数据</strong>
+          <p>知识内容位于服务端 <code>data/brain/</code>，整库备份请使用下方「导出备份」。</p>
         </div>
-        <button class="btn" type="button" :disabled="dirBusy" @click="changeDataDir">
-          {{ dirBusy ? '切换中...' : '切换仓库' }}
-        </button>
       </div>
-      <p v-if="dirMsg" class="setting-message" :class="dirOk ? 'ok' : 'err'">{{ dirMsg }}</p>
-    </div>
 
-    <div v-if="isDesktopLocal" class="dir-section">
-      <div class="dir-row">
-        <div class="dir-info">
-          <strong>本地服务端口</strong>
-          <p>内嵌服务监听 127.0.0.1:{{ portCurrent }}，默认 18180，与 Docker 版（18080）互不冲突；端口被其他程序占用时可修改，改动后本地服务自动以新端口重启。</p>
-          <p v-if="portEnvOverridden">检测到环境变量 ENGRAM_LOCAL_PORT 指定端口，此处修改不生效。</p>
-        </div>
-        <div class="port-controls">
-          <input
-            v-model="portInput"
-            class="port-input"
-            type="number"
-            min="1"
-            max="65535"
-            :disabled="portBusy || portEnvOverridden"
-            @keyup.enter="changePort"
-          />
-          <button class="btn" type="button" :disabled="portBusy || portEnvOverridden" @click="changePort">
-            {{ portBusy ? '重启中...' : '应用' }}
+      <div v-if="isDesktopLocal" class="dir-section">
+        <div class="dir-row">
+          <div class="dir-info">
+            <strong>数据仓库</strong>
+            <p><code class="dir-path">{{ dataDir }}</code></p>
+            <p>切换仓库不会迁移数据：已有 Engram 数据的目录会被直接打开（需用该仓库的登录密码），空目录则会新建一个空仓库。切换后本地服务自动重启。</p>
+          </div>
+          <button class="btn" type="button" :disabled="dirBusy" @click="changeDataDir">
+            {{ dirBusy ? '切换中...' : '切换仓库' }}
           </button>
         </div>
+        <p v-if="dirMsg" class="setting-message" :class="dirOk ? 'ok' : 'err'">{{ dirMsg }}</p>
       </div>
-      <p v-if="portMsg" class="setting-message" :class="portOk ? 'ok' : 'err'">{{ portMsg }}</p>
-    </div>
 
-    <div class="backup-section">
-      <div class="backup-row">
-        <div>
-          <strong>整库备份</strong>
-          <p>打包 wiki.db 数据库与 brain/ 全部内容（不含回收站）为 zip 下载。</p>
+      <div v-if="isDesktopLocal" class="dir-section">
+        <div class="dir-row">
+          <div class="dir-info">
+            <strong>本地服务端口</strong>
+            <p>内嵌服务监听 127.0.0.1:{{ portCurrent }}，默认 18180，与 Docker 版（18080）互不冲突；端口被其他程序占用时可修改，改动后本地服务自动以新端口重启。</p>
+            <p v-if="portEnvOverridden">检测到环境变量 ENGRAM_LOCAL_PORT 指定端口，此处修改不生效。</p>
+          </div>
+          <div class="port-controls">
+            <input
+              v-model="portInput"
+              class="port-input"
+              type="number"
+              min="1"
+              max="65535"
+              :disabled="portBusy || portEnvOverridden"
+              @keyup.enter="changePort"
+            />
+            <button class="btn" type="button" :disabled="portBusy || portEnvOverridden" @click="changePort">
+              {{ portBusy ? '重启中...' : '应用' }}
+            </button>
+          </div>
         </div>
-        <button class="btn" type="button" :disabled="Boolean(backupBusy)" @click="exportBackup">
-          {{ backupBusy === 'export' ? '打包中...' : '导出备份' }}
-        </button>
+        <p v-if="portMsg" class="setting-message" :class="portOk ? 'ok' : 'err'">{{ portMsg }}</p>
       </div>
-      <div class="backup-row">
-        <div>
-          <strong>从备份恢复</strong>
-          <p>选择整库备份 zip，恢复会替换当前全部数据（含登录密码与模型配置）。暂存成功后重启服务生效：桌面端本地模式自动重启，Docker 版需重启容器。</p>
+    </SettingsGroup>
+
+    <SettingsGroup title="备份与恢复" hint="整库打包导出，或用备份 zip 整体替换" :default-open="true">
+      <div class="backup-section">
+        <div class="backup-row">
+          <div>
+            <strong>整库备份</strong>
+            <p>打包 wiki.db 数据库与 brain/ 全部内容（不含回收站）为 zip 下载。</p>
+          </div>
+          <button class="btn" type="button" :disabled="Boolean(backupBusy)" @click="exportBackup">
+            {{ backupBusy === 'export' ? '打包中...' : '导出备份' }}
+          </button>
         </div>
-        <button class="btn" type="button" :disabled="Boolean(backupBusy)" @click="pickRestore">
-          {{ backupBusy === 'restore' ? '恢复中...' : '选择备份文件' }}
-        </button>
-        <input ref="restoreInput" type="file" accept=".zip" style="display: none" @change="onRestoreFile" />
+        <div class="backup-row">
+          <div>
+            <strong>从备份恢复</strong>
+            <p>选择整库备份 zip，恢复会替换当前全部数据（含登录密码与模型配置）。暂存成功后重启服务生效：桌面端本地模式自动重启，Docker 版需重启容器。</p>
+          </div>
+          <button class="btn" type="button" :disabled="Boolean(backupBusy)" @click="pickRestore">
+            {{ backupBusy === 'restore' ? '恢复中...' : '选择备份文件' }}
+          </button>
+          <input ref="restoreInput" type="file" accept=".zip" style="display: none" @change="onRestoreFile" />
+        </div>
+        <p v-if="backupMsg" class="setting-message backup-message" :class="backupOk ? 'ok' : 'err'">{{ backupMsg }}</p>
       </div>
-      <p v-if="backupMsg" class="setting-message backup-message" :class="backupOk ? 'ok' : 'err'">{{ backupMsg }}</p>
-    </div>
+    </SettingsGroup>
 
     <SearchPanel />
 
-    <div class="danger-section">
-      <div class="danger-section-head">
-        <h4>危险操作</h4>
-        <span>执行前需要再次确认登录密码。</span>
-      </div>
+    <SettingsGroup title="危险操作" hint="不可撤销；执行前需要再次确认登录密码" danger flush>
       <div class="danger-row">
         <div>
           <strong>清空操作日志与关系库</strong>
@@ -112,7 +112,7 @@
           {{ wipeBusy === 'knowledge' ? '清除中...' : '一键清除' }}
         </button>
       </div>
-    </div>
+    </SettingsGroup>
     <p v-if="wipeMsg" class="setting-message wipe-message" :class="wipeOk ? 'ok' : 'err'">{{ wipeMsg }}</p>
   </section>
 </template>
@@ -123,6 +123,7 @@ import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
 import Icon from '../Icon.vue';
 import SearchPanel from './SearchPanel.vue';
+import SettingsGroup from './SettingsGroup.vue';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
 
 const app = useAppStore();
@@ -366,11 +367,15 @@ async function wipeAiLogs() {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  margin: 22px 24px;
+  margin: 10px 0 14px;
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
+}
+/* 分组卡片（SettingsGroup）自带外边距与内边距，内部块只保留纵向间距 */
+.data-location:last-child {
+  margin-bottom: 0;
 }
 .data-location > svg {
   flex-shrink: 0;
@@ -388,9 +393,15 @@ async function wipeAiLogs() {
 
 .dir-section,
 .backup-section {
-  margin: 0 24px 22px;
+  margin: 0 0 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
+}
+.dir-section:last-child {
+  margin-bottom: 0;
+}
+.backup-section {
+  margin: 10px 0 0;
 }
 .dir-row,
 .backup-row {
@@ -435,28 +446,6 @@ async function wipeAiLogs() {
   padding: 10px 16px;
 }
 
-.danger-section {
-  margin: 0 24px 24px;
-  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
-  border-radius: 8px;
-  overflow: hidden;
-}
-.danger-section-head {
-  padding: 13px 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border));
-  background: color-mix(in srgb, var(--danger) 5%, var(--bg));
-}
-.danger-section-head h4 {
-  margin: 0;
-  color: var(--danger);
-  font-size: 13px;
-}
-.danger-section-head span {
-  display: block;
-  margin-top: 3px;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
 .danger-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -479,16 +468,6 @@ async function wipeAiLogs() {
 }
 .wipe-message {
   margin: 0 24px 22px;
-}
-
-@media (max-width: 768px) {
-  .data-location,
-  .danger-section,
-  .dir-section,
-  .backup-section {
-    margin-right: 18px;
-    margin-left: 18px;
-  }
 }
 
 @media (max-width: 640px) {

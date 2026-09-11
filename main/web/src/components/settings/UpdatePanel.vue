@@ -8,13 +8,8 @@
       <span v-if="versionBadge" class="app-version">{{ versionBadge }}</span>
     </div>
 
-    <!-- ============ 服务器（Docker）节 ============ -->
-    <div class="settings-group">
-      <div class="update-section-title">
-        <Icon name="archive" :size="14" />
-        <span>服务器（Docker 部署）</span>
-      </div>
-
+    <!-- ============ 服务器（Docker）分组 ============ -->
+    <SettingsGroup title="服务器（Docker 部署）" hint="更新通道、检查与一键重建容器" :default-open="true" flush>
       <!-- 本地内嵌 server（桌面本地模式 / 浏览器访问桌面本地服务） -->
       <template v-if="state.desktop">
         <!-- 已绑定多端同步：在此直接远程更新同步中枢服务器 -->
@@ -154,14 +149,10 @@
           <code>docker start engram-old</code> 手动恢复，然后刷新本页。
         </p>
       </template>
-    </div>
+    </SettingsGroup>
 
-    <!-- ============ 桌面端节 ============ -->
-    <div class="settings-group">
-      <div class="update-section-title">
-        <Icon name="external" :size="14" />
-        <span>桌面端（Windows）</span>
-      </div>
+    <!-- ============ 桌面端分组 ============ -->
+    <SettingsGroup title="桌面端（Windows）" hint="安装包 / 源码模式的检查、下载与更新" :default-open="isDesktop" flush>
 
       <div v-if="!isDesktop" class="integration-note">
         在 Windows 桌面端本地模式内可在此下载并安装最新安装包；浏览器访问服务器时此节仅作展示。
@@ -294,15 +285,15 @@
           <p v-if="uninstallError" class="setting-message err">{{ uninstallError }}</p>
         </template>
       </template>
-    </div>
+    </SettingsGroup>
 
-    <!-- ============ 更新源配置节 ============ -->
-    <div class="settings-group">
-      <div class="update-section-title">
-        <Icon name="link" :size="14" />
-        <span>更新源配置</span>
-      </div>
-
+    <!-- ============ 更新源配置分组 ============ -->
+    <SettingsGroup
+      title="更新源配置"
+      hint="远端仓库地址与访问凭据，保存在服务器数据目录 .env"
+      :default-open="!state.giteaConfigured"
+      flush
+    >
       <div class="integration-note">
         只需粘贴仓库地址，服务器和仓库会自动识别；配置保存在服务器数据目录 .env 文件中（随数据卷持久化，不进代码库）。公开仓库无需填凭据。
       </div>
@@ -346,15 +337,15 @@
           {{ savingConfig ? '保存中…' : '保存配置' }}
         </button>
       </div>
-    </div>
+    </SettingsGroup>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api, ssePost } from '../../api';
-import Icon from '../Icon.vue';
 import AppSpinner from '../ui/AppSpinner.vue';
+import SettingsGroup from './SettingsGroup.vue';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import { formatVersionLabel, formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
@@ -995,21 +986,10 @@ onUnmounted(() => {
 
 <style scoped>
 .integration-note {
-  margin: 0 24px 18px;
+  margin: 14px 24px 18px;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.update-section-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 18px 24px 4px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
 }
 
 .check-controls {
@@ -1047,9 +1027,13 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-/* 组内错误/警告消息：全局规则只覆盖面板直接子级，组内的须自行补边距 */
-.settings-group > .setting-message {
+/* 分组卡片（flush 内容）内的行级消息：全局规则只覆盖面板直接子级，这里补齐边距；
+   位于 setting-row 内的消息保持网格定位不加边距 */
+.setting-message {
   margin: 0 24px 14px;
+}
+.setting-row .setting-message {
+  margin: 0;
 }
 
 /* 凭据方式二选一分段按钮 */
@@ -1141,13 +1125,13 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .integration-note {
-    margin: 0 18px 16px;
+    margin: 12px 18px 16px;
   }
-  .update-section-title {
-    margin: 18px 18px 4px;
-  }
-  .settings-group > .setting-message {
+  .setting-message {
     margin: 0 18px 14px;
+  }
+  .setting-row .setting-message {
+    margin: 0;
   }
   .update-log {
     margin: 12px 18px;

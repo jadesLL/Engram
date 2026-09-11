@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <div class="settings-group">
+    <SettingsGroup title="账户" hint="登录密码与当前会话" :default-open="true" flush>
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>修改密码</strong>
@@ -21,6 +21,16 @@
         <p v-if="pwdMsg" class="setting-message" :class="pwdOk ? 'ok' : 'err'">{{ pwdMsg }}</p>
       </div>
 
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>当前会话</strong>
+          <span>退出后需要重新输入密码。</span>
+        </div>
+        <button class="btn danger" type="button" @click="logout">退出登录</button>
+      </div>
+    </SettingsGroup>
+
+    <SettingsGroup title="外观" hint="界面显示方式" :default-open="true" flush>
       <div class="setting-row">
         <div class="setting-copy">
           <strong>主题</strong>
@@ -37,7 +47,9 @@
           <option value="system">跟随系统</option>
         </select>
       </div>
+    </SettingsGroup>
 
+    <SettingsGroup title="连接与版本" hint="访问通道与当前版本" :default-open="true" flush>
       <div v-if="connState !== 'unconfigured'" class="setting-row">
         <div class="setting-copy">
           <strong>连接通道</strong>
@@ -59,20 +71,12 @@
 
       <div class="setting-row">
         <div class="setting-copy">
-          <strong>当前会话</strong>
-          <span>退出后需要重新输入密码。</span>
-        </div>
-        <button class="btn danger" type="button" @click="logout">退出登录</button>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-copy">
           <strong>应用版本</strong>
           <span>{{ versionHint }}</span>
         </div>
         <code class="app-version">{{ versionLabel }}</code>
       </div>
-    </div>
+    </SettingsGroup>
   </section>
 </template>
 
@@ -80,6 +84,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import SecretField from '../SecretField.vue';
+import SettingsGroup from './SettingsGroup.vue';
 import { useAppStore } from '../../stores/app';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION } from '../../version';
