@@ -131,7 +131,7 @@
         <div class="status-grid">
           <div><span>连接</span><strong :class="status.connected ? 'ok' : 'bad'">{{ status.connected ? '已连接' : '未连接' }}</strong></div>
           <div><span>待推送</span><strong>{{ status.pending }}</strong></div>
-          <div><span v-if="status.pendingPulls">待补拉文件</span><strong v-if="status.pendingPulls">{{ status.pendingPulls }}</strong></div>
+          <div v-if="status.pendingPulls"><span>待补拉文件</span><strong>{{ status.pendingPulls }}</strong></div>
           <div><span>最近同步</span><strong>{{ status.lastSyncAt ? formatTime(status.lastSyncAt) : '—' }}</strong></div>
           <div><span>同步水位</span><strong>{{ status.cursor }}</strong></div>
         </div>
