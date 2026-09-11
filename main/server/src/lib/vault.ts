@@ -34,11 +34,11 @@ export function toRel(abs: string): string {
 }
 
 /** 顶层目录固定展示顺序 */
-const TOP_ORDER = ['原始资料', 'Wiki', 'AIWorks'];
+const TOP_ORDER = ['原始资料', 'Wiki', 'AIWorks', '同步冲突'];
 /** 子目录固定顺序 */
 const SUB_ORDER: Record<string, string[]> = {
   Wiki: ['概念', '实体', '查询', '归档'],
-  AIWorks: ['index', 'log', 'scheme', '同步冲突'],
+  AIWorks: ['index', 'log', 'scheme'],
 };
 /** 系统目录不在文件树展示 */
 const HIDDEN = new Set(['.trash', 'assets']);

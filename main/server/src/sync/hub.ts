@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { now } from '../lib/db.js';
+import { now, db } from '../lib/db.js';
 import { emit } from '../lib/events.js';
 import { safeJoin, syncPageFile, movePage } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
@@ -90,11 +90,16 @@ function writeRawFile(relPath: string, buf: Buffer): void {
   fs.renameSync(temp, abs);
 }
 
-/** 冲突备份页：后到方的完整内容不丢，落到 AIWorks/同步冲突/ 并随同步传播 */
+/** 冲突备份页独立目录（顶级，与 Wiki/AIWorks 平级；Agent 只读守卫天然覆盖非 Wiki 区） */
+const CONFLICT_DIR = '同步冲突';
+/** AIWorks 内只留冲突记录流水（一条一行），完整冲突内容都在 CONFLICT_DIR 下 */
+const CONFLICT_LOG_PAGE = 'AIWorks/log/conflict.md';
+
+/** 冲突备份页：后到方的完整内容不丢，落到 同步冲突/ 并随同步传播；AIWorks 记录页追加一行流水 */
 function writeConflictBackup(relPath: string, theirsRaw: string, nodeId: string, baseRevision: number): void {
   const stamp = now().replace(/[-:]/g, '').replace(/\..+/, '');
   const base = path.basename(relPath).replace(/\.md$/i, '');
-  const backupRel = `AIWorks/同步冲突/${base}-${stamp}.md`;
+  const backupRel = `${CONFLICT_DIR}/${base}-${stamp}.md`;
   const body = [
     '---',
     `标题: "同步冲突: ${base}（${stamp}）"`,
@@ -113,8 +118,51 @@ function writeConflictBackup(relPath: string, theirsRaw: string, nodeId: string,
   try {
     applyPageContent(backupRel, body);
     commit('page', backupRel, HUB_ACTOR, { evidence: null });
+    const prev = readPageRaw(CONFLICT_LOG_PAGE) ?? '# 同步冲突记录\n\n';
+    applyPageContent(
+      CONFLICT_LOG_PAGE,
+      `${prev}- ${now().slice(0, 19)} 「${base}」与节点 \`${nodeId || '未知'}\` 冲突，后到方内容备份至 \`${backupRel}\`\n`,
+    );
+    commit('page', CONFLICT_LOG_PAGE, HUB_ACTOR, { evidence: null });
   } catch {
     // 备份页写失败不阻塞主流程（冲突内容仍在推送方本地）
+  }
+}
+
+/**
+ * 一次性迁移：旧版冲突备份页存放在 AIWorks/同步冲突/ 下，改为顶级 同步冲突/ 目录。
+ * 备份页逐页 move（发 move op，成员端经 oplog 补拉跟随）；旧说明页内容过时直接入回收站，
+ * 新说明页由 ensureSystemFiles 建在新目录（本函数须先于 ensureSystemFiles 执行）。
+ */
+export function migrateConflictBackupDir(): void {
+  const OLD_DIR = 'AIWorks/同步冲突';
+  let rows: { path: string }[];
+  try {
+    rows = db
+      .prepare(`SELECT path FROM pages WHERE path LIKE '${OLD_DIR}/%' AND deleted = 0`)
+      .all() as { path: string }[];
+  } catch {
+    return;
+  }
+  for (const { path: oldRel } of rows) {
+    try {
+      if (oldRel === `${OLD_DIR}/说明.md`) {
+        moveToTrash(oldRel, 'sync');
+        commit('delete', oldRel, HUB_ACTOR);
+        continue;
+      }
+      const newRel = `${CONFLICT_DIR}/${path.basename(oldRel)}`;
+      if (fs.existsSync(safeJoin(newRel))) continue;
+      movePage(oldRel, newRel, 'sync');
+      commit('move', newRel, HUB_ACTOR, { oldPath: oldRel });
+    } catch {
+      // 单页迁移失败不阻塞其余迁移与启动
+    }
+  }
+  try {
+    fs.rmdirSync(safeJoin(OLD_DIR));
+  } catch {
+    // 目录非空（含已删除残留）或不存在时忽略
   }
 }
 
