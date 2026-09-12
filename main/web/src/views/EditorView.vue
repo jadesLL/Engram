@@ -58,7 +58,10 @@
         </label>
       </div>
 
-      <div v-show="!app.readingMode" class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
+      <!-- 纸面卡片：页头 / 工具栏 / 正文 / 关联 / 状态栏收进同一张悬浮卡片
+           （内部元素保持原缩进；evidence-drawer 为绝对定位浮层，不参与卡片流） -->
+      <div v-show="!app.readingMode" class="editor-paper">
+      <div class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
         <input v-model="title" class="title-input" placeholder="无标题" @change="save(true)" />
         <!-- 手机端摘要行：折叠时仅此一行（选项切换），桌面隐藏 -->
         <div class="head-summary">
@@ -258,6 +261,7 @@
           页面图谱
         </button>
       </div>
+      </div><!-- /editor-paper -->
     </template>
 
     <!-- 页面加载 / 错误状态 -->
@@ -915,6 +919,8 @@ onUnmounted(() => {
   flex: none;
   width: 100%;
   padding: 28px max(24px, calc((100% - var(--content-col)) / 2)) 0;
+  /* 页头区与工具栏带的区段分隔 */
+  border-bottom: 1px solid var(--paper-toolbar-border);
 }
 .title-input {
   width: 100%;
@@ -1010,6 +1016,18 @@ onUnmounted(() => {
 }
 .synthesis-inline.failed { color: var(--danger); }
 
+/* ---------- 纸面卡片：细描边 + 单层轻投影，简洁克制地浮于灰底 ---------- */
+.editor-paper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 4px 12px 12px;
+  background: var(--paper-bg);
+  border: 1px solid var(--paper-border);
+  border-radius: 10px;
+  box-shadow: var(--paper-shadow);
+}
 .editor-area { flex: 1; min-height: 0; }
 .page-state {
   flex: 1;
@@ -1024,6 +1042,10 @@ onUnmounted(() => {
   max-width: var(--editor-max);
   width: 100% !important;
   margin: 0 !important;
+  /* 原生 1px 描边 + 3px 方角由纸面卡片的描边/圆角/投影取代 */
+  border: none;
+  border-radius: 0;
+  background: var(--paper-bg);
 }
 .editor-area :deep(.vditor-toolbar) { max-width: 100%; }
 /* 正文文字列与页头/关联区同一内容列：覆盖 vditor JS 写入的居中内联 padding */
@@ -1181,7 +1203,9 @@ onUnmounted(() => {
   width: min(390px, 100%);
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--glass-bg, var(--bg));
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border-left: 1px solid var(--border);
   box-shadow: -12px 0 28px rgba(0, 0, 0, 0.1);
 }
@@ -1273,13 +1297,14 @@ onUnmounted(() => {
 }
 .source-row small { color: var(--text-faint); }
 
-/* ---------- 本页关联：与正文同一内容列，胶囊卡片 ---------- */
+/* ---------- 本页关联：与正文同一内容列，纯白 + hairline 分区 ---------- */
 .related {
   flex: none;
   padding: 0 max(24px, calc((100% - var(--content-col)) / 2)) 26px;
+  background: var(--paper-zone-bg);
+  border-top: 1px solid var(--paper-toolbar-border);
 }
 .related-inner {
-  border-top: 1px solid var(--border);
   padding-top: 12px;
 }
 .related-title {
@@ -1327,8 +1352,11 @@ onUnmounted(() => {
   padding: 4px 20px;
   font-size: 12px;
   color: var(--text-faint);
-  border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
+  /* 底部状态区：纯白 + 向上柔和投影浮起分区；9px 内圆角贴合卡片 10px 外圆角 */
+  border-top: none;
+  background: var(--paper-zone-bg);
+  box-shadow: var(--paper-zone-shadow);
+  border-radius: 0 0 9px 9px;
 }
 .sb-item {
   display: inline-flex;
@@ -1391,6 +1419,7 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .editor-topbar { padding: 6px 14px; }
+  .editor-paper { margin: 2px 8px 8px; border-radius: 10px; }
   .page-head { padding: 20px 20px 0; }
   .related { padding: 0 20px 20px; }
   .editor-area :deep(.vditor-reset) {
