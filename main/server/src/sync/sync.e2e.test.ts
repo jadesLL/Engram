@@ -454,6 +454,54 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
         + `\nB 同步日志 = ${JSON.stringify(st.log.slice(-8))}`;
     });
 
+    // ---------- 场景 7b：产物页面在中枢被删除后，成员仍必须恢复「已提炼」标记 ----------
+    // 标记寄存在 source_versions + page_contributions 上；产物页被删后全量清单不再包含该页，
+    // 成员永远收不到它 → 贡献挂不上页。此时唯一能跨端落地的权威记录是 active 版本行
+    // （applyEvidenceSnapshot 无条件 upsert 版本），判定口径必须认它，否则成员端永远显示未提炼。
+    const orphanRawName = '孤儿提炼验证.md';
+    const orphanRawRel = `原始资料/${orphanRawName}`;
+    await setSync(nodeB, false);
+    const cursorBefore2 = ((await (await api(nodeB, 'GET', '/api/sync/status')).json()) as { cursor: number }).cursor;
+    const orphanForm = new FormData();
+    orphanForm.append('dir', '原始资料');
+    orphanForm.append(
+      'file',
+      new Blob([Buffer.from('# 孤儿提炼验证\n\n壬公司2026年发布新一代控制器并量产，首批交付三家客户。', 'utf8')], { type: 'text/markdown' }),
+      orphanRawName
+    );
+    const orphanUp = await fetch(`http://127.0.0.1:${hub.port}/api/files/upload`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${hub.token}` },
+      body: orphanForm,
+    });
+    assert.ok(orphanUp.ok, `上传孤儿资料失败: ${await orphanUp.text()}`);
+    const orphanWrite = await api(hub, 'POST', '/api/agent/page', {
+      path: 'Wiki/实体/壬公司.md',
+      title: '壬公司',
+      type: 'org',
+      content: '# 壬公司\n\n## 当前理解\n\n新一代控制器量产。\n',
+      evidence: [
+        { path: orphanRawRel, quote: '壬公司2026年发布新一代控制器并量产' },
+        { path: orphanRawRel, quote: '首批交付三家客户' },
+      ],
+    });
+    assert.ok(orphanWrite.ok, `孤儿场景写页失败: ${await orphanWrite.text()}`);
+    const orphanPageId = ((await (await api(hub, 'GET', '/api/pages/list')).json()) as { pages: { id: string; path: string }[] })
+      .pages.find((p) => p.path === 'Wiki/实体/壬公司.md')?.id;
+    assert.ok(orphanPageId, '产物页应存在于中枢');
+    const orphanDel = await api(hub, 'DELETE', `/api/pages/${orphanPageId}`);
+    assert.ok(orphanDel.ok, '删除产物页失败');
+    await waitFor('中枢删除产物页后资料仍显示已提炼', async () => (await distilledOf(hub, orphanRawRel)) === true);
+    assert.ok(dropHubOpsAfter(hub, cursorBefore2) > 0, '应丢弃孤儿场景的载体 op');
+    await setSync(nodeB, true, hub.port, tokenB);
+    await waitFor('B 恢复孤儿来源的「已提炼」标记', async () => (await distilledOf(nodeB, orphanRawRel)) === true, 60_000, async () => {
+      const st = (await (await api(nodeB, 'GET', '/api/sync/status')).json()) as {
+        log: { event: string; detail?: string }[];
+      };
+      return `B 孤儿资料 distilled=${await distilledOf(nodeB, orphanRawRel)}`
+        + `\nB 同步日志 = ${JSON.stringify(st.log.slice(-8))}`;
+    });
+
     // ---------- 场景 8：oplog 缺口判定（缺口后面仍有新 op 时也必须走全量对账） ----------
     // 旧判据是「本轮取回 0 条」，缺口后面还跟着新 op 时会漏判：成员只重放保留区、
     // 静默跳过缺口，缺口里的删除/移动 op 与账本快照再也取不回来。
