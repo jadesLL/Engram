@@ -58,7 +58,7 @@ function pathSegment(s: string | undefined): string | null {
 function slugify(identifier: string | undefined, content: string, time: string): string {
   const fromId = pathSegment(identifier);
   if (fromId) return fromId;
-  return crypto.createHash('sha1').update(`${content}${time}`).digest('hex').slice(0, 6);
+  return crypto.createHash('sha256').update(`${content}${time}`).digest('hex').slice(0, 6);
 }
 
 /** 读取现有文件正文（不依赖 pages 表是否已同步） */

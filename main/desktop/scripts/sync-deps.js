@@ -63,7 +63,9 @@ function pnpmInvoker() {
 async function runPnpm(args, cwd) {
   const invoker = pnpmInvoker();
   const registry = deps.lockfileRegistry(appRoot);
-  const fullArgs = registry ? [...args, '--registry', registry] : args;
+  // registry 进的是 PATH 回退分支的 shell 命令行，lockfile 里的脏值必须拦在 shell 外
+  const safeRegistry = registry && /^https?:\/\//.test(registry) ? registry : null;
+  const fullArgs = safeRegistry ? [...args, '--registry', safeRegistry] : args;
   say(`运行 ${invoker.label} ${fullArgs.join(' ')}`);
   const code = await run(invoker.cmd, invoker.args(fullArgs), { cwd, ...invoker.options });
   return code;
