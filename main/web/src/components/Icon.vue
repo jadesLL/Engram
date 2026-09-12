@@ -176,6 +176,8 @@ const ICONS: Record<string, string[]> = {
     'M6 12h7',
     'M18 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
   ],
+  unfold: ['m7 15 5 5 5-5', 'm7 9 5-5 5 5'],
+  fold: ['m7 20 5-5 5 5', 'm7 4 5 5 5-5'],
 };
 
 const paths = computed(() => ICONS[props.name] || ICONS.file);

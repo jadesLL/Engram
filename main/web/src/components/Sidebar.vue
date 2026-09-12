@@ -4,6 +4,15 @@
       <div class="sidebar-titlebar">
         <h2>知识库</h2>
         <div class="sidebar-title-actions">
+          <button
+            class="sidebar-fold"
+            type="button"
+            v-tooltip="allCollapsed ? '全部展开' : '全部收起'"
+            :aria-label="allCollapsed ? '全部展开' : '全部收起'"
+            @click="toggleAll"
+          >
+            <Icon :name="allCollapsed ? 'unfold' : 'fold'" :size="16" />
+          </button>
           <button class="sidebar-new" type="button" v-tooltip="'新建页面'" aria-label="新建页面" @click="emit('new-page')">
             <Icon name="plus" :size="16" />
           </button>
@@ -149,8 +158,14 @@
 
       <div class="section-separator" />
 
-      <!-- 原始资料：进料口。上传/新建；提炼由外部 Agent 处理 -->
-      <section class="section">
+      <!-- 原始资料：进料口。上传/新建/拖入；提炼由外部 Agent 处理 -->
+      <section
+        class="section"
+        :class="{ 'files-drop': filesDropHot }"
+        @dragover="onFilesDragOver"
+        @dragleave="onFilesDragLeave"
+        @drop.prevent="onFilesDrop"
+      >
         <div
           class="sec-row"
           :class="{ expanded: !collapsed.files }"
@@ -396,6 +411,18 @@ function loadCollapsedState() {
 }
 
 const collapsed = ref<Record<string, boolean>>(loadCollapsedState());
+
+/** 一键全部收起/展开：顶层分区 + 实体子类 */
+const COLLAPSE_ALL_KEYS = [
+  'concept', 'entity', 'archived', 'files', 'chat', 'ailog',
+  'entity:person', 'entity:customer', 'entity:org', 'entity:project', 'entity:other',
+];
+const allCollapsed = computed(() => COLLAPSE_ALL_KEYS.every((k) => collapsed.value[k]));
+
+function toggleAll() {
+  const target = !allCollapsed.value;
+  for (const k of COLLAPSE_ALL_KEYS) collapsed.value[k] = target;
+}
 let chatTimer: ReturnType<typeof setTimeout> | undefined;
 let chatStopped = false;
 /** 轻量刷新对话文件列表：外部 Agent 经 save_chat 写入后，对话分区数秒内出现新文件 */
@@ -831,12 +858,11 @@ async function createFile() {
   }
 }
 
-async function onUpload(e: Event) {
-  const input = e.target as HTMLInputElement;
-  if (!input.files?.length) return;
+async function uploadFiles(list: File[]) {
+  if (!list.length) return;
   const fd = new FormData();
   fd.append('dir', '原始资料');
-  for (const f of input.files) fd.append('files', f);
+  for (const f of list) fd.append('files', f);
   try {
     const { data } = await api.post('/api/files/upload', fd);
     // 部分文件重复时提示，但已成功的照常导入
@@ -846,8 +872,40 @@ async function onUpload(e: Event) {
   } catch (err: any) {
     notify.error(err.response?.data?.error || '上传失败');
   }
-  input.value = '';
   await load();
+}
+
+async function onUpload(e: Event) {
+  const input = e.target as HTMLInputElement;
+  await uploadFiles([...(input.files || [])]);
+  input.value = '';
+}
+
+/** 外部文件拖入原始资料分区即上传；内部页面拖拽（types 无 Files）不受影响 */
+const filesDropHot = ref(false);
+
+function isFileDrag(e: DragEvent): boolean {
+  return !!(e.dataTransfer && [...e.dataTransfer.types].includes('Files'));
+}
+
+function onFilesDragOver(e: DragEvent) {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  e.dataTransfer!.dropEffect = 'copy';
+  filesDropHot.value = true;
+}
+
+function onFilesDragLeave(e: DragEvent) {
+  if (!isFileDrag(e)) return;
+  const rt = e.relatedTarget as Node | null;
+  if (rt && (e.currentTarget as Node).contains(rt)) return;
+  filesDropHot.value = false;
+}
+
+async function onFilesDrop(e: DragEvent) {
+  if (!isFileDrag(e)) return;
+  filesDropHot.value = false;
+  await uploadFiles([...(e.dataTransfer?.files || [])]);
 }
 
 async function archivePage(p: any) {
@@ -937,6 +995,7 @@ onUnmounted(() => {
   gap: 2px;
 }
 
+.sidebar-fold,
 .sidebar-new,
 .sidebar-close {
   width: 26px;
@@ -947,6 +1006,7 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
+.sidebar-fold,
 .sidebar-new {
   display: flex;
 }
@@ -955,6 +1015,7 @@ onUnmounted(() => {
   display: none;
 }
 
+.sidebar-fold:hover,
 .sidebar-new:hover,
 .sidebar-close:hover {
   color: var(--text);
@@ -1311,6 +1372,14 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--sidebar-accent) 15%, transparent);
   box-shadow: inset 0 0 0 2px var(--sidebar-accent);
   color: var(--sidebar-accent);
+}
+
+/* 外部文件拖入原始资料分区的落点高亮 */
+.section.files-drop {
+  outline: 2px dashed var(--sidebar-accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--sidebar-accent) 8%, transparent);
 }
 
 .sub-head:focus-visible {
