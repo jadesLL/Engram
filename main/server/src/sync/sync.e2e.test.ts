@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
+import { PassThrough } from 'node:stream';
 import { createRequire } from 'node:module';
 
 /**
@@ -57,13 +58,21 @@ async function startServer(name: string, dataDir: string, port: number): Promise
     stderr: true,
     stdout: true,
   });
-  // 无条件转发 worker 输出（测试进程自身的诊断面，避免环境差异时无从定位）
-  worker.stderr?.on('data', (d: Buffer) => {
-    process.stderr.write(`[${name}] ${String(d)}`);
-  });
-  worker.stdout?.on('data', (d: Buffer) => {
-    process.stderr.write(`[${name}] ${String(d)}`);
-  });
+  // 无条件转发 worker 输出（测试进程自身的诊断面，避免环境差异时无从定位）。
+  // 必须经 PassThrough 缓冲做背压：POSIX 上到管道的 process.stderr.write 是同步写，
+  // 下游（act 写 Gitea 日志 / 终端捕获）变慢充满管道时会冻结主线程，
+  // 三个实例全部停摆直到外层 300s 超时（CI 连续复现的挂起根因）。
+  const forward = (src: NodeJS.ReadableStream | null, name: string) => {
+    if (!src) return;
+    const buffered = new PassThrough();
+    buffered.pipe(process.stderr, { end: false });
+    const prefix = Buffer.from(`[${name}] `);
+    src.on('data', (chunk: Buffer) => {
+      buffered.write(Buffer.concat([prefix, chunk]));
+    });
+  };
+  forward(worker.stderr, name);
+  forward(worker.stdout, name);
   const base = `http://127.0.0.1:${port}`;
   // 等 /health 就绪
   const deadline = Date.now() + 60_000;
