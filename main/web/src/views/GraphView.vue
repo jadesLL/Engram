@@ -1,5 +1,5 @@
 <template>
-  <div ref="rootRef" class="graph-view">
+  <div ref="rootRef" class="graph-view" :class="{ 'g-dark': app.dark }">
     <canvas ref="canvasRef" class="g-canvas" :style="{ cursor }" />
 
     <!-- 顶部工具条 -->
@@ -80,11 +80,13 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
+import { useAppStore } from '../stores/app';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import { notify } from '../lib/notify';
 
 const route = useRoute();
 const router = useRouter();
+const app = useAppStore();
 const rootRef = ref<HTMLElement>();
 const canvasRef = ref<HTMLCanvasElement>();
 
@@ -94,22 +96,30 @@ const loading = ref(false);
 const loadError = ref('');
 const pageId = ref((route.params.id as string) || '');
 
-// ---------- 主题与类型（方案A：固定暗色画布，与全站主题解耦） ----------
-const PALETTE: Record<string, string> = {
-  concept: '#4cc38a', person: '#f0883e', customer: '#e3b341', org: '#39c5cf',
-  project: '#a371f7', note: '#8b949e', other: '#6e7681', doc: '#539bf5',
+// ---------- 主题（跟随应用 light/dark/system 设置：app.dark 变化即重绘+切面板配色） ----------
+const THEMES = {
+  dark: {
+    palette: { concept: '#4cc38a', person: '#f0883e', customer: '#e3b341', org: '#39c5cf', project: '#a371f7', note: '#8b949e', other: '#6e7681', doc: '#539bf5' } as Record<string, string>,
+    ent: { person: '#f0883e', concept: '#4cc38a', project: '#a371f7', org: '#39c5cf', tech: '#539bf5' } as Record<string, string>,
+    raw: '#6e7681', dead: '#f85149', nodeFill: '#2a2a30', fallback: '#8b949e',
+    text: '201,209,221', deadText: '248,81,73',
+    edge: 'rgba(139,148,158,0.20)', edgeDim: 'rgba(139,148,158,0.05)', arrow: 'rgba(139,148,158,0.55)',
+    bg0: '#232329', bg1: '#151518',
+  },
+  light: {
+    palette: { concept: '#1a7f37', person: '#bc4c00', customer: '#9a6700', org: '#0e7490', project: '#8250df', note: '#656d76', other: '#8b949e', doc: '#0969da' } as Record<string, string>,
+    ent: { person: '#bc4c00', concept: '#1a7f37', project: '#8250df', org: '#0e7490', tech: '#0969da' } as Record<string, string>,
+    raw: '#9aa2af', dead: '#cf222e', nodeFill: '#ffffff', fallback: '#656d76',
+    text: '55,65,81', deadText: '207,34,46',
+    edge: 'rgba(101,109,118,0.28)', edgeDim: 'rgba(101,109,118,0.07)', arrow: 'rgba(101,109,118,0.60)',
+    bg0: '#fbfbfc', bg1: '#edeff3',
+  },
 };
 const GROUP_NAMES: Record<string, string> = {
   concept: '概念', person: '人物', customer: '客户', org: '组织',
   project: '项目', note: '笔记', other: '其他', doc: '文档',
   entity: '实体', raw: '原始资料', dead: '死链',
 };
-const ENT_PALETTE: Record<string, string> = {
-  person: '#f0883e', concept: '#4cc38a', project: '#a371f7', org: '#39c5cf', tech: '#539bf5',
-};
-const TEXT_RGB = '201,209,221';
-const EDGE = 'rgba(139,148,158,0.20)';
-const EDGE_DIM = 'rgba(139,148,158,0.05)';
 
 interface GNode {
   id: string; label: string; group: string; raw: boolean; words: number;
@@ -123,7 +133,7 @@ let edges: GEdge[] = [];
 // ---------- 设置（localStorage 持久化，Obsidian 式记忆） ----------
 const DEFAULTS = {
   raw: false, dead: true, orphans: true,
-  showType: Object.fromEntries([...Object.keys(PALETTE), 'entity'].map((k) => [k, true])) as Record<string, boolean>,
+  showType: Object.fromEntries([...Object.keys(THEMES.dark.palette), 'entity'].map((k) => [k, true])) as Record<string, boolean>,
   arrows: false, fade: 60, nodeScale: 100, linkScale: 100,
   cF: 40, rF: 55, lF: 60, lD: 55,
 };
@@ -152,11 +162,12 @@ function resetSettings() {
   draw();
 }
 
+const th = computed(() => THEMES[app.dark ? 'dark' : 'light']);
 const groupList = computed(() => [
-  ...Object.keys(PALETTE).map((k) => ({ key: k, name: GROUP_NAMES[k], color: PALETTE[k] })),
-  { key: 'entity', name: GROUP_NAMES.entity, color: '#8b949e' },
+  ...Object.keys(th.value.palette).map((k) => ({ key: k, name: GROUP_NAMES[k], color: th.value.palette[k] })),
+  { key: 'entity', name: GROUP_NAMES.entity, color: th.value.fallback },
 ]);
-const legendList = computed(() => [...groupList.value, { key: 'raw', name: GROUP_NAMES.raw, color: '#6e7681' }]);
+const legendList = computed(() => [...groupList.value, { key: 'raw', name: GROUP_NAMES.raw, color: th.value.raw }]);
 function legendOff(key: string) {
   if (key === 'raw') return !opt.raw;
   if (key === 'dead') return !opt.dead;
@@ -166,11 +177,11 @@ function legendOff(key: string) {
 // ---------- 可见性与颜色 ----------
 function normGroup(g: string) { return g.startsWith('entity-') ? 'entity' : g; }
 function colorOf(n: GNode) {
-  if (n.raw) return '#6e7681';
+  if (n.raw) return th.value.raw;
   const g = n.group;
-  if (g === 'dead') return '#f85149';
-  if (g.startsWith('entity-')) return ENT_PALETTE[g.slice(7)] || '#8b949e';
-  return PALETTE[g] || '#8b949e';
+  if (g === 'dead') return th.value.dead;
+  if (g.startsWith('entity-')) return th.value.ent[g.slice(7)] || th.value.fallback;
+  return th.value.palette[g] || th.value.fallback;
 }
 function visible(n: GNode) {
   if (n.raw && !opt.raw) return false;
@@ -260,7 +271,7 @@ function draw() {
   const ctx = canvasRef.value?.getContext('2d');
   if (!ctx || !W) return;
   const bg = ctx.createRadialGradient(W / 2, H * 0.45, 80, W / 2, H * 0.45, Math.max(W, H) * 0.75);
-  bg.addColorStop(0, '#232329'); bg.addColorStop(1, '#151518');
+  bg.addColorStop(0, th.value.bg0); bg.addColorStop(1, th.value.bg1);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
@@ -286,7 +297,7 @@ function draw() {
     const a = nodes[e.a], b = nodes[e.b];
     if (!visible(a) || !visible(b)) continue;
     ctx.setLineDash(e.dashed ? [4, 4] : []);
-    ctx.strokeStyle = dimmed(e.a) || dimmed(e.b) ? EDGE_DIM : EDGE;
+    ctx.strokeStyle = dimmed(e.a) || dimmed(e.b) ? th.value.edgeDim : th.value.edge;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -296,7 +307,7 @@ function draw() {
       const ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
       const bx = b.x - ux * (b.r * scale + 3), by = b.y - uy * (b.r * scale + 3);
       const s = 5.5 / view.s;
-      ctx.fillStyle = 'rgba(139,148,158,0.55)';
+      ctx.fillStyle = th.value.arrow;
       ctx.beginPath();
       ctx.moveTo(bx, by);
       ctx.lineTo(bx - ux * s - uy * s * 0.5, by - uy * s + ux * s * 0.5);
@@ -318,7 +329,7 @@ function draw() {
     const ring = n.group.startsWith('entity-');
     if (!ring && r > 8 && !faded) { ctx.shadowColor = col; ctx.shadowBlur = 18; }
     if (ring || n.group === 'dead') {
-      ctx.fillStyle = '#2a2a30';
+      ctx.fillStyle = th.value.nodeFill;
       ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fill();
       ctx.strokeStyle = col;
       ctx.lineWidth = 1.4 / view.s;
@@ -348,7 +359,7 @@ function draw() {
     if (n.raw) a *= 0.55;
     if (focus) a = 0.98;
     if (a <= 0.02) continue;
-    ctx.fillStyle = n.group === 'dead' ? `rgba(248,81,73,${a})` : `rgba(${TEXT_RGB},${a})`;
+    ctx.fillStyle = n.group === 'dead' ? `rgba(${th.value.deadText},${a})` : `rgba(${th.value.text},${a})`;
     ctx.fillText(n.label, n.sx, n.sy + n.r * scale * view.s + 13);
   }
 }
@@ -356,6 +367,7 @@ function draw() {
 // nodes/edges 是普通数组，用 dataVersion 通知 computed 重算；opt 面板变化需重绘画布
 const dataVersion = ref(0);
 watch(opt, () => { saveSettings(); draw(); }, { deep: true });
+watch(() => app.dark, () => draw());
 
 const countText = computed(() => {
   void dataVersion.value;
@@ -615,82 +627,120 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.graph-view { height: 100%; position: relative; overflow: hidden; background: #151518; }
+.graph-view {
+  --g-bg: #f2f3f6;
+  --g-chip-bg: rgba(255, 255, 255, 0.94);
+  --g-chip-border: rgba(15, 23, 42, 0.08);
+  --g-shadow: 0 10px 34px rgba(15, 23, 42, 0.10);
+  --g-strong: #1f2937;
+  --g-panel-text: #374151;
+  --g-muted: #6b7280;
+  --g-faint: #9ca3af;
+  --g-count: #9aa3af;
+  --g-seg-on-bg: rgba(130, 80, 223, 0.12);
+  --g-field-bg: rgba(15, 23, 42, 0.04);
+  --g-field-border: rgba(15, 23, 42, 0.08);
+  --g-sw-off: #d1d5db;
+  --g-sw-knob: #ffffff;
+  --g-track: rgba(15, 23, 42, 0.05);
+  --g-accent: #8250df;
+  --g-danger: #cf222e;
+  height: 100%; position: relative; overflow: hidden; background: var(--g-bg);
+}
+.graph-view.g-dark {
+  --g-bg: #151518;
+  --g-chip-bg: rgba(28, 28, 35, 0.9);
+  --g-chip-border: rgba(255, 255, 255, 0.08);
+  --g-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --g-strong: #e6e9f0;
+  --g-panel-text: #c3cad6;
+  --g-muted: #8b93a5;
+  --g-faint: #767f90;
+  --g-count: #5d6572;
+  --g-seg-on-bg: rgba(163, 113, 247, 0.22);
+  --g-field-bg: rgba(255, 255, 255, 0.06);
+  --g-field-border: rgba(255, 255, 255, 0.08);
+  --g-sw-off: #3a3f4b;
+  --g-sw-knob: #aab2c0;
+  --g-track: rgba(255, 255, 255, 0.05);
+  --g-accent: #8b5cf6;
+  --g-danger: #f85149;
+}
 .g-canvas { position: absolute; inset: 0; touch-action: none; }
 
 .g-chip {
-  background: rgba(28, 28, 35, 0.9);
+  background: var(--g-chip-bg);
   backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--g-chip-border);
+  box-shadow: var(--g-shadow);
 }
 .g-topbar {
   position: absolute; top: 16px; left: 16px;
   display: flex; gap: 10px; align-items: center; z-index: 5;
   flex-wrap: wrap;
 }
-.g-title { border-radius: 10px; padding: 8px 14px; color: #e6e9f0; font-size: 13.5px; font-weight: 600; }
+.g-title { border-radius: 10px; padding: 8px 14px; color: var(--g-strong); font-size: 13.5px; font-weight: 600; }
 .g-seg { display: flex; border-radius: 10px; overflow: hidden; }
-.g-seg span { padding: 8px 14px; font-size: 12.5px; color: #8b93a5; cursor: pointer; user-select: none; }
-.g-seg span.on { background: rgba(163, 113, 247, 0.22); color: #e6e9f0; }
-.g-btn { border-radius: 10px; padding: 8px 14px; font-size: 12.5px; color: #8b93a5; cursor: pointer; user-select: none; }
-.g-btn:hover { color: #e6e9f0; }
+.g-seg span { padding: 8px 14px; font-size: 12.5px; color: var(--g-muted); cursor: pointer; user-select: none; }
+.g-seg span.on { background: var(--g-seg-on-bg); color: var(--g-strong); }
+.g-btn { border-radius: 10px; padding: 8px 14px; font-size: 12.5px; color: var(--g-muted); cursor: pointer; user-select: none; }
+.g-btn:hover { color: var(--g-strong); }
 
 .g-gear {
   position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  color: #aab2c0; font-size: 15px; cursor: pointer; z-index: 6; user-select: none;
+  color: var(--g-muted); font-size: 15px; cursor: pointer; z-index: 6; user-select: none;
 }
 .g-panel {
   position: absolute; top: 62px; right: 16px; width: 270px;
-  border-radius: 14px; color: #c3cad6; font-size: 12.5px; z-index: 5;
+  border-radius: 14px; color: var(--g-panel-text); font-size: 12.5px; z-index: 5;
   max-height: calc(100% - 80px); overflow: auto;
-  background: rgba(28, 28, 35, 0.9);
+  background: var(--g-chip-bg);
   backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--g-chip-border);
+  box-shadow: var(--g-shadow);
 }
-.g-panel h3 { margin: 0; padding: 12px 16px 4px; font-size: 10.5px; letter-spacing: 0.14em; color: #767f90; font-weight: 600; }
-.g-sec { padding: 4px 16px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); }
+.g-panel h3 { margin: 0; padding: 12px 16px 4px; font-size: 10.5px; letter-spacing: 0.14em; color: var(--g-faint); font-weight: 600; }
+.g-sec { padding: 4px 16px 12px; border-bottom: 1px solid var(--g-chip-border); }
 .g-sec.g-last { border-bottom: none; padding-bottom: 16px; }
 .g-search {
   width: 100%; box-sizing: border-box; margin-top: 8px;
-  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px; padding: 7px 10px; color: #e6e9f0; font-size: 12px; outline: none;
+  background: var(--g-field-bg); border: 1px solid var(--g-field-border);
+  border-radius: 8px; padding: 7px 10px; color: var(--g-strong); font-size: 12px; outline: none;
 }
 .g-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; gap: 8px; }
-.g-row output { color: #8b93a5; font-size: 11.5px; min-width: 32px; text-align: right; }
+.g-row output { color: var(--g-muted); font-size: 11.5px; min-width: 32px; text-align: right; }
 .g-grow { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .g-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; }
 .g-sw { position: relative; width: 32px; height: 18px; flex: none; margin-left: auto; }
 .g-sw input { opacity: 0; width: 0; height: 0; position: absolute; }
-.g-sw i { position: absolute; inset: 0; background: #3a3f4b; border-radius: 99px; transition: 0.18s; cursor: pointer; }
-.g-sw i:after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #aab2c0; transition: 0.18s; }
-.g-sw input:checked + i { background: #7c5cd6; }
+.g-sw i { position: absolute; inset: 0; background: var(--g-sw-off); border-radius: 99px; transition: 0.18s; cursor: pointer; }
+.g-sw i:after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--g-sw-knob); transition: 0.18s; }
+.g-sw input:checked + i { background: var(--g-accent); }
 .g-sw input:checked + i:after { transform: translateX(14px); background: #fff; }
-.g-panel input[type='range'] { width: 100%; accent-color: #8b5cf6; height: 18px; margin: 0 0 6px; }
-.g-reset { margin-top: 8px; text-align: center; color: #8b93a5; font-size: 11.5px; cursor: pointer; padding: 6px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); }
-.g-reset:hover { color: #e6e9f0; }
+.g-panel input[type='range'] { width: 100%; accent-color: var(--g-accent); height: 18px; margin: 0 0 6px; }
+.g-reset { margin-top: 8px; text-align: center; color: var(--g-muted); font-size: 11.5px; cursor: pointer; padding: 6px; border-radius: 8px; background: var(--g-field-bg); }
+.g-reset:hover { color: var(--g-strong); }
 
 .g-legend {
   position: absolute; left: 16px; bottom: 16px;
   display: flex; gap: 12px; padding: 9px 14px; border-radius: 10px;
-  color: #9aa2b1; font-size: 11.5px; z-index: 4; flex-wrap: wrap; max-width: 70vw;
+  color: var(--g-muted); font-size: 11.5px; z-index: 4; flex-wrap: wrap; max-width: 70vw;
 }
 .g-legend-item { display: flex; align-items: center; gap: 6px; }
 .g-legend-item.off { opacity: 0.35; text-decoration: line-through; }
-.g-count { position: absolute; bottom: 16px; right: 16px; color: #5d6572; font-size: 12px; z-index: 4; }
+.g-count { position: absolute; bottom: 16px; right: 16px; color: var(--g-count); font-size: 12px; z-index: 4; }
 
 .graph-state {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 3;
 }
 .graph-state:has(.app-spinner) { flex-direction: row; }
-.graph-state.muted { color: #8b93a5; }
-.graph-error-text { margin: 0; color: #f85149; }
+.graph-state.muted { color: var(--g-muted); }
+.graph-error-text { margin: 0; color: var(--g-danger); }
 .empty-hint {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  text-align: center; color: #8b93a5; z-index: 3; margin: 0; padding: 0 20px;
+  text-align: center; color: var(--g-muted); z-index: 3; margin: 0; padding: 0 20px;
 }
 
 @media (max-width: 768px) {
