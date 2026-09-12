@@ -40,6 +40,17 @@ function clearTimer() {
   }
 }
 
+/** 单向气泡的最小视觉尺寸约 30px：锚点到视口边缘余量不足时翻转到另一侧，避免气泡被窗口裁掉 */
+const EDGE_ROOM = 40;
+
+function flipIfClipped(rect: DOMRect, placement: TooltipPlacement): TooltipPlacement {
+  if (placement === 'top' && rect.top < EDGE_ROOM) return 'bottom';
+  if (placement === 'bottom' && window.innerHeight - rect.bottom < EDGE_ROOM) return 'top';
+  if (placement === 'left' && rect.left < EDGE_ROOM) return 'right';
+  if (placement === 'right' && window.innerWidth - rect.right < EDGE_ROOM) return 'left';
+  return placement;
+}
+
 export function showTooltip(
   anchor: HTMLElement,
   text: string,
@@ -57,7 +68,7 @@ export function showTooltip(
     tooltipState.y = rect.top;
     tooltipState.width = rect.width;
     tooltipState.height = rect.height;
-    tooltipState.placement = placement;
+    tooltipState.placement = flipIfClipped(rect, placement);
     tooltipState.visible = true;
   };
   if (immediate) doShow();
