@@ -296,19 +296,19 @@
   outline-offset: -2px;
 }
 
-/* Win11 ToggleSwitch：40×20 细轨 + 小圆钮，开启为强调色 */
-.settings-native .switch-control {
+/* Win11 ToggleSwitch：40×20 细轨 + 小圆钮，开启为强调色（全局类，编辑器顶栏等复用） */
+.switch-control {
   display: inline-flex;
   align-items: center;
   gap: 9px;
   cursor: pointer;
 }
-.settings-native .switch-control input {
+.switch-control input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
-.settings-native .switch-control > span {
+.switch-control > span {
   position: relative;
   width: 40px;
   height: 20px;
@@ -317,7 +317,7 @@
   box-shadow: inset 0 0 0 1px var(--border-strong);
   transition: background 0.12s ease, box-shadow 0.12s ease;
 }
-.settings-native .switch-control > span::after {
+.switch-control > span::after {
   position: absolute;
   top: 4px;
   left: 4px;
@@ -328,28 +328,28 @@
   content: "";
   transition: transform 0.15s ease, background 0.12s ease;
 }
-.settings-native .switch-control:hover > span::after {
+.switch-control:hover > span::after {
   transform: scale(1.17);
 }
-.settings-native .switch-control input:checked + span {
+.switch-control input:checked + span {
   background: var(--accent);
   box-shadow: none;
 }
-.settings-native .switch-control input:checked + span::after {
+.switch-control input:checked + span::after {
   background: var(--on-accent);
   transform: translateX(20px);
 }
-.settings-native .switch-control input:checked:hover + span {
+.switch-control input:checked:hover + span {
   background: var(--accent-hover);
 }
-.settings-native .switch-control input:checked:hover + span::after {
+.switch-control input:checked:hover + span::after {
   transform: translateX(20px) scale(1.17);
 }
-.settings-native .switch-control input:focus-visible + span {
+.switch-control input:focus-visible + span {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.settings-native .switch-control em {
+.switch-control em {
   color: var(--text-secondary);
   font-size: 12px;
   font-style: normal;
@@ -439,8 +439,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .settings-nav button,
-  .settings-native .switch-control > span,
-  .settings-native .switch-control > span::after {
+  .switch-control > span,
+  .switch-control > span::after {
     transition: none;
   }
 }

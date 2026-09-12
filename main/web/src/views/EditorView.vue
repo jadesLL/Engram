@@ -40,6 +40,22 @@
         <span v-if="saveState" class="save-pill" :class="savePillClass">
           <span class="dot"></span>{{ saveState }}
         </span>
+        <button
+          class="btn small topbar-save"
+          :disabled="!dirtyUi"
+          v-tooltip="'保存当前修改（Ctrl+S）'"
+          @click="save(true)"
+        >保存</button>
+        <label class="switch-control autosave-toggle" v-tooltip="'按文件记忆；关闭后仅手动保存'">
+          <input
+            type="checkbox"
+            :checked="autosave"
+            aria-label="自动保存"
+            @change="setAutosave(($event.target as HTMLInputElement).checked)"
+          />
+          <span></span>
+          <em>自动保存</em>
+        </label>
       </div>
 
       <div v-show="!app.readingMode" class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
@@ -323,6 +339,30 @@ const pageType = ref('note');
 const tags = ref<string[]>([]);
 const tagDraft = ref('');
 const saveState = ref('');
+/* 自动保存按文件记忆（localStorage 映射，缺省开）；dirtyUi 是 dirty 的响应式镜像，驱动保存按钮可用态 */
+const AUTOSAVE_STORE_KEY = 'engram.editor.autosave';
+const autosave = ref(true);
+const dirtyUi = ref(false);
+function autosaveMap(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(AUTOSAVE_STORE_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+function loadAutosave() {
+  if (!page.value) return;
+  autosave.value = autosaveMap()[page.value.id] !== false;
+}
+function setAutosave(on: boolean) {
+  autosave.value = on;
+  if (!page.value) return;
+  const m = autosaveMap();
+  m[page.value.id] = on;
+  localStorage.setItem(AUTOSAVE_STORE_KEY, JSON.stringify(m));
+  // 重新开启时把未保存的改动立刻落盘
+  if (on && dirty) save();
+}
 const related = ref<any>(null);
 /* 本页关联折叠：默认收起为一行摘要（关联属页脚参考信息，不该抢正文空间）。
  * 用户点开/收起的选择写入 localStorage 跨会话保留，未操作过时跟随默认收起。 */
@@ -460,6 +500,8 @@ async function loadPage(id: string) {
     tagDraft.value = '';
     saveState.value = '';
     dirty = false;
+    dirtyUi.value = false;
+    loadAutosave();
     loadRelated();
     loadEvidence();
   } catch (error: any) {
@@ -549,6 +591,7 @@ async function save(manual = false) {
     page.value = data.meta;
     loadedContentKey = visibleContentKey(contentToSave);
     dirty = false;
+    dirtyUi.value = false;
     justSavedAt = Date.now(); // 抑制本次保存触发的 SSE 回声
     saveState.value = manual ? '已保存 ✓' : '已自动保存';
     app.bumpSidebar(); // 类型/标题变化后立刻刷新侧栏分区
@@ -570,8 +613,10 @@ watch(content, () => {
     return;
   }
   dirty = true;
+  dirtyUi.value = true;
   saveState.value = '编辑中…';
   if (saveTimer) clearTimeout(saveTimer);
+  if (!autosave.value) return; // 本文件关闭自动保存：只标脏，等手动保存/Ctrl+S
   const scheduledPageId = page.value.id;
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -858,6 +903,12 @@ onUnmounted(() => {
 .save-pill.failed { color: var(--danger); }
 .save-pill.failed .dot { background: var(--danger); }
 @keyframes save-pulse { 50% { opacity: 0.35; } }
+.topbar-save { flex: none; }
+.autosave-toggle { flex: none; }
+/* 窄屏只留开关本体，文字收进 tooltip */
+@media (max-width: 640px) {
+  .autosave-toggle em { display: none; }
+}
 
 /* ---------- 页头：标题 + 元信息 chips，与正文列对齐 ---------- */
 .page-head {
