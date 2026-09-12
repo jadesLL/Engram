@@ -405,6 +405,12 @@ async function syncMissedChanges(): Promise<void> {
 
 /** 解析 SSE 字节流（事件流断开或出错时返回，重连由 runLoop 负责） */
 async function consumeStream(): Promise<void> {
+  // stopClient 可能落在本轮迭代更早的阶段（如 syncMissedChanges 在途请求）：那时 abort
+  // 打在旧 controller 上无害，若此处仍开新流，会得到一条无人 abort 的僵尸 SSE——
+  // 中枢 keepalive 使其永不断开，loopPromise 永不 resolve，stopClientAndWait 死锁。
+  // 该检查与下方 fetch 之间无 await（同步段），stopClient 只能落在 fetch 之后命中新
+  // controller，二者必居其一，窗口确定闭合。
+  if (!running) return;
   streamAbort = new AbortController();
   const deviceName = os.hostname().slice(0, 60);
   const url = `${hubUrl()}/api/sync/events?node_id=${encodeURIComponent(currentNodeId())}&name=${encodeURIComponent(deviceName)}`;
