@@ -60,12 +60,20 @@ export function beginSourceVersion(path: string, contentHash: string): SourceVer
   return version;
 }
 
-/** 该来源路径是否已被提炼过：存在任一 active 页面贡献即视为已提炼（与证据门禁同语义） */
+/**
+ * 该来源路径是否已被提炼过：存在 status='active' 的来源版本，或任一 active 页面贡献。
+ * 提炼提交成功即把版本置为 active（agentWrite），这是「已提炼」的权威记录；
+ * 贡献单独列出是因为同步对端可能只有版本行——产物页面被删除/从未同步时贡献挂不上页
+ * （applyEvidenceSnapshot 会跳过），只按贡献判定会让对端永远显示未提炼。
+ */
 export function isDistilledPath(path: string): boolean {
   return !!db.prepare(
-    `SELECT 1 FROM page_contributions pc
-     JOIN source_versions sv ON sv.id = pc.source_version_id
-     WHERE sv.path = ? AND pc.active = 1 LIMIT 1`
+    `SELECT 1 FROM source_versions sv
+     WHERE sv.path = ? AND (
+       sv.status = 'active'
+       OR EXISTS (SELECT 1 FROM page_contributions pc
+                  WHERE pc.source_version_id = sv.id AND pc.active = 1)
+     ) LIMIT 1`
   ).get(path);
 }
 
@@ -78,8 +86,9 @@ export function isDistilledPath(path: string): boolean {
 export function distilledSourcePaths(): Set<string> {
   const rows = db.prepare(
     `SELECT DISTINCT sv.path AS path FROM source_versions sv
-     JOIN page_contributions pc ON pc.source_version_id = sv.id
-     WHERE pc.active = 1`
+     WHERE sv.status = 'active'
+        OR EXISTS (SELECT 1 FROM page_contributions pc
+                   WHERE pc.source_version_id = sv.id AND pc.active = 1)`
   ).all() as { path: string }[];
   return new Set(rows.map((row) => row.path));
 }

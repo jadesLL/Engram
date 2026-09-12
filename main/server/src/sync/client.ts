@@ -502,14 +502,18 @@ export async function reconcile(): Promise<void> {
       }
     }
     // 证据账本补齐：中枢已提炼而本端账本为空（载体页面 op 早已被 oplog 裁剪、或本端是后加入的）。
-    // 必须排在页面拉取之后——账本贡献按页路径落位，页面尚未到位时会被 applyEvidenceSnapshot 丢弃；
-    // 这一步与内容一样是可重复执行的（applyEvidenceSnapshot 按来源路径做精确状态替换）。
+    // 排在页面拉取之后——贡献按页路径落位，页面到位才能挂上；但产物页面在中枢已删除时
+    // 本端永远不会有该页，此时快照里的 active 版本行也已足以恢复「已提炼」标记
+    // （isDistilledPath 认版本行）。这一步可重复执行（applyEvidenceSnapshot 按来源路径精确替换）。
     let repaired = 0;
     for (const sourcePath of ledgerRepairs) {
       try {
         const res = await getJson(`/api/sync/evidence?path=${encodeURIComponent(sourcePath)}`);
         const snapshot = (res?.snapshot || null) as EvidenceSnapshot | null;
-        if (snapshot && applyEvidenceSnapshot(snapshot) > 0) repaired++;
+        if (snapshot) {
+          applyEvidenceSnapshot(snapshot);
+          if (isDistilledPath(sourcePath)) repaired++;
+        }
       } catch (error: any) {
         logEvent('warn', 'ledger-repair-failed', `${sourcePath}: ${error?.message || error}`);
       }

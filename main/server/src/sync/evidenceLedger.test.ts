@@ -136,18 +136,61 @@ test('账本按页路径重映射 page_id：两端各自建页、id 不同也不
   assert.equal(isDistilledPath(source), true);
 });
 
-test('载体页面尚未到位时账本应用不落位（对账必须「先补页、后补账本」）', () => {
+test('载体页面尚未到位：贡献不挂空，但 active 版本行先恢复「已提炼」标记', () => {
   const source = '原始资料/顺序.md';
   writePage(source, '# 原始资料/顺序.md\n\n丁公司2026年交付首批设备。', { title: '顺序' });
   const snapshot = foreignSnapshot(source, 'Wiki/实体/丁公司.md', 'sv-order');
 
   assert.equal(applyEvidenceSnapshot(snapshot), 0, '页面不在位时贡献应被跳过而不是挂空');
-  assert.equal(isDistilledPath(source), false, '此时不能凭空标成已提炼');
+  assert.equal(isDistilledPath(source), true, 'active 版本行已落地，标记即恢复（否则产物页在中枢已删的来源在对端永远显示未提炼）');
 
-  // 页面随后同步到位 → 同一份账本再补一次即落位（对账把补账本排在拉页面之后的原因）
+  // 页面随后同步到位 → 同一份账本再补一次即落位（贡献只是证据抽屉的展示层）
   writePage('Wiki/实体/丁公司.md', '# 丁公司\n\n设备交付。\n', { title: '丁公司' });
   assert.equal(applyEvidenceSnapshot(snapshot), 1);
   assert.equal(isDistilledPath(source), true);
+});
+
+test('中枢产物页面已删除：快照仍带页路径的贡献，对端无此页也必须恢复标记', () => {
+  const source = '原始资料/页已删.md';
+  writePage(source, '# 原始资料/页已删.md\n\n庚公司2026年完成股权融资，金额三亿元。', { title: '页已删' });
+  agentWritePage({
+    path: 'Wiki/实体/庚公司.md',
+    title: '庚公司',
+    type: 'org',
+    content: '# 庚公司\n\n## 当前理解\n\n完成股权融资。\n',
+    evidence: [
+      { path: source, quote: '庚公司2026年完成股权融资' },
+      { path: source, quote: '金额三亿元' },
+    ],
+  });
+  assert.equal(isDistilledPath(source), true, '源端提炼完成');
+
+  // 中枢端删除产物页面（软删，账本贡献保留）→ 全量清单不再包含该页，对端永远不会收到它
+  const page = db.prepare(`SELECT id FROM pages WHERE path = 'Wiki/实体/庚公司.md'`).get() as { id: string };
+  db.prepare('UPDATE pages SET deleted = 1 WHERE id = ?').run(page.id);
+
+  const snapshot = collectEvidenceForPath(source);
+  assert.ok(snapshot, '页面删除不得连带丢失来源账本快照');
+  // 对端视角（只按路径同步过账本、从未有过该页面行）：清掉本路径账本与页面行
+  db.prepare(
+    'DELETE FROM page_contributions WHERE source_version_id IN (SELECT id FROM source_versions WHERE path = ?)'
+  ).run(source);
+  db.prepare('DELETE FROM ingest_runs WHERE path = ?').run(source);
+  db.prepare('DELETE FROM source_versions WHERE path = ?').run(source);
+  db.prepare('DELETE FROM pages WHERE id = ?').run(page.id);
+
+  assert.equal(applyEvidenceSnapshot(snapshot), 0, '对端无产物页，贡献确实挂不上');
+  assert.equal(isDistilledPath(source), true, '仅凭 active 版本行就必须显示已提炼');
+});
+
+test('superseded 版本 + active 贡献：旧数据口径不回退', () => {
+  const source = '原始资料/旧口径.md';
+  const snapshot = foreignSnapshot(source, 'Wiki/实体/辛公司.md', 'sv-legacy');
+  snapshot.versions[0].status = 'superseded';
+  // 先造「页面在位」让贡献落位：验证旧口径数据（无 active 版本、靠 active 贡献）仍判定已提炼
+  writePage('Wiki/实体/辛公司.md', '# 辛公司\n\n存量贡献。\n', { title: '辛公司' });
+  assert.equal(applyEvidenceSnapshot(snapshot), 1);
+  assert.equal(isDistilledPath(source), true, 'active 贡献仍应视为已提炼');
 });
 
 test('collectEvidenceForPath：未提炼的来源不产出账本（对端无需多拉）', () => {
