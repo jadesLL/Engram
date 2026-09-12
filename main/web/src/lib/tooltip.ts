@@ -40,11 +40,18 @@ function clearTimer() {
   }
 }
 
-/** 单向气泡的最小视觉尺寸约 30px：锚点到视口边缘余量不足时翻转到另一侧，避免气泡被窗口裁掉 */
+/** 单向气泡的最小视觉尺寸约 30px：锚点到安全区边缘余量不足时翻转到另一侧，避免气泡被裁/被盖 */
 const EDGE_ROOM = 40;
 
+/** 桌面端 titleBarOverlay 是不透明原生色条、永远盖在 web 内容上，顶部安全区从标题栏下缘起算（main.css --win-titlebar-h） */
+function desktopTitlebarHeight(): number {
+  if (!document.documentElement.classList.contains('desktop-frame')) return 0;
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--win-titlebar-h'));
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
 function flipIfClipped(rect: DOMRect, placement: TooltipPlacement): TooltipPlacement {
-  if (placement === 'top' && rect.top < EDGE_ROOM) return 'bottom';
+  if (placement === 'top' && rect.top - desktopTitlebarHeight() < EDGE_ROOM) return 'bottom';
   if (placement === 'bottom' && window.innerHeight - rect.bottom < EDGE_ROOM) return 'top';
   if (placement === 'left' && rect.left < EDGE_ROOM) return 'right';
   if (placement === 'right' && window.innerWidth - rect.right < EDGE_ROOM) return 'left';
