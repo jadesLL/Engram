@@ -439,12 +439,17 @@ function visibleContentKey(value: string) {
     .trim();
 }
 
+let loadSeq = 0;
+
 async function loadPage(id: string) {
+  const seq = ++loadSeq;
   pageLoading.value = true;
   pageError.value = '';
   loading = true; // 抑制 watch
   try {
     const { data } = await api.get(`/api/pages/${id}`);
+    // 过期响应丢弃：SSE 触发的当前页重载与用户切页并发时，慢的旧响应不得覆盖新页
+    if (seq !== loadSeq) return;
     page.value = data.meta;
     content.value = data.content;
     loadedContentKey = visibleContentKey(data.content);
@@ -458,11 +463,14 @@ async function loadPage(id: string) {
     loadRelated();
     loadEvidence();
   } catch (error: any) {
+    if (seq !== loadSeq) return;
     pageError.value = error?.response?.data?.error || '页面加载失败';
     notify.error(pageError.value);
   } finally {
-    loading = false;
-    pageLoading.value = false;
+    if (seq === loadSeq) {
+      loading = false;
+      pageLoading.value = false;
+    }
   }
 }
 
@@ -755,6 +763,10 @@ watch(
   () => {
     const ev = app.lastPageEvent;
     if (!page.value || !ev) return;
+    // 切页进行中（路由已指向新页、新页尚未加载完成）时跳过：page.value 还是旧页，
+    // 按它重载会与新页自己的 loadPage 竞态，把刚切过去的内容覆盖回旧页
+    const routeId = route.params.id as string;
+    if (routeId && page.value.id !== routeId) return;
         const myPath = page.value.path;
         // 当前页被任意来源删除（含其他端同步）：编辑页跟随关闭（本端侧栏删除同款跳转），
         // 否则侧栏树已删、编辑页仍显示已删内容
