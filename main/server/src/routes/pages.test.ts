@@ -13,6 +13,7 @@ process.env.DATA_DIR = temp;
 let app: ReturnType<typeof Fastify>;
 let db: any;
 let token = '';
+let resetReconcileThrottle: () => void = () => {};
 
 before(async () => {
   const dbModule = await import('../lib/db.js');
@@ -20,10 +21,11 @@ before(async () => {
   dbModule.migrate();
   dbModule.setSetting('password_hash', bcrypt.hashSync('test-password', 4));
 
-  const { pageRoutes } = await import('./pages.js');
+  const routes = await import('./pages.js');
+  resetReconcileThrottle = routes.resetReconcileThrottle;
   app = Fastify();
   await app.register(jwt, { secret: 'pages-route-test-secret' });
-  await app.register(pageRoutes);
+  await app.register(routes.pageRoutes);
   await app.ready();
   token = app.jwt.sign({ sub: 'owner' });
 });
@@ -115,6 +117,8 @@ test('PUT 显式传空 content 仍会清空正文（语义保留）', async () =
 });
 
 test('带外删除（裸移文件到 .trash）后列表自愈：幽灵页不再列出，行标 deleted', async () => {
+  // 列表对账有 30s 节流（生产省全量 stat）：本用例验证「对账生效」，先重置窗口
+  resetReconcileThrottle();
   const created = await app.inject({
     method: 'POST',
     url: '/api/pages',

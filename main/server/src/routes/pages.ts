@@ -24,6 +24,22 @@ function comparablePageContent(value: string): string {
     .trim();
 }
 
+/** 带外删除对账节流：pages/list 是最高频路由（每次保存/SSE 事件都会触发前端刷列表），
+ * 全量 fs.existsSync 成本随页面数线性涨（磁盘忙时数百 ms）且同步阻塞事件循环，放大并发请求延迟。
+ * 30s 窗口内直接信任索引，带外删除最迟一个窗口后自愈；启动扫描（scanVault）不走此节流。 */
+let lastReconcileAt = 0;
+const RECONCILE_INTERVAL_MS = 30_000;
+
+export function resetReconcileThrottle() {
+  lastReconcileAt = 0;
+}
+
+function reconcileMissingPagesThrottled() {
+  if (Date.now() - lastReconcileAt < RECONCILE_INTERVAL_MS) return;
+  lastReconcileAt = Date.now();
+  reconcileMissingPages();
+}
+
 export async function pageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
@@ -33,7 +49,7 @@ export async function pageRoutes(app: FastifyInstance) {
     const { type, tag, outdated } = req.query as { type?: string; tag?: string; outdated?: string };
     // 带外删除（Agent 裸移文件、外部程序）会让行停在 deleted=0：列表前对账一次，
     // 否则侧栏留下点开报「文件不存在」的幽灵页（等价于启动扫描，只是立刻生效）
-    reconcileMissingPages();
+    reconcileMissingPagesThrottled();
     let rows = db
       .prepare(`SELECT id, path, title, type, tags, summary, created_at, updated_at, word_count, guide_version FROM pages WHERE deleted = 0 ORDER BY updated_at DESC`)
       .all() as any[];

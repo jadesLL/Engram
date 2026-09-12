@@ -374,18 +374,39 @@ function prepareLinks(root: HTMLElement) {
   }
 }
 
+/** 大页阅读渲染缓存：Vditor.preview + 后处理对 15 万字页是一次 ~2s 的同步主线程阻塞。
+ * 按「标题+转换后正文」作键（内容或标题变即失效），LRU 限 3 份、只缓存 ≥2 万字的页
+ * （小页渲染 <100ms，不值得占内存）。存 innerHTML 字符串而非 detached DOM：
+ * 复访省 cloneNode，内存也更省；缓存的 HTML 与主题无关（配色走 CSS 变量）。 */
+const RENDER_CACHE_MAX = 3;
+const RENDER_CACHE_MIN_CHARS = 20_000;
+const renderCache = new Map<string, { html: string; outline: OutlineItem[]; metrics: { units: number; minutes: number } }>();
+
 async function renderMarkdown() {
   const host = contentEl.value;
   if (!host) return;
   const version = ++renderVersion;
+  const source = wikiLinksToMarkdown(props.markdown);
+  const cacheKey = `${props.title}\u0000${source}`;
+  const cached = renderCache.get(cacheKey);
+  if (cached) {
+    renderCache.delete(cacheKey);
+    renderCache.set(cacheKey, cached); // LRU 命中刷新
+    host.innerHTML = cached.html;
+    outline.value = cached.outline;
+    currentHeading.value = cached.outline[0]?.id || '';
+    metrics.value = cached.metrics;
+    await nextTick();
+    if (version !== renderVersion) return;
+    readerEl.value?.scrollTo({ top: 0 });
+    measureLayout();
+    scheduleTailSpace();
+    return;
+  }
   rendering.value = true;
   const next = document.createElement('div');
   try {
-    await Vditor.preview(
-      next,
-      wikiLinksToMarkdown(props.markdown),
-      vditorPreviewOptions(props.dark),
-    );
+    await Vditor.preview(next, source, vditorPreviewOptions(props.dark));
     if (version !== renderVersion) return;
     wrapTables(next);
     addImageCaptions(next);
@@ -393,6 +414,12 @@ async function renderMarkdown() {
     prepareLinks(next);
     // textContent 而非 innerText：纯遍历无布局开销，15 万字页面省数百毫秒，计数结果一致
     metrics.value = readingMetrics(`${props.title}\n${next.textContent}`);
+    if (source.length >= RENDER_CACHE_MIN_CHARS) {
+      renderCache.set(cacheKey, { html: next.innerHTML, outline: [...outline.value], metrics: metrics.value });
+      while (renderCache.size > RENDER_CACHE_MAX) {
+        renderCache.delete(renderCache.keys().next().value!);
+      }
+    }
     host.replaceChildren(...Array.from(next.childNodes));
     await nextTick();
     readerEl.value?.scrollTo({ top: 0 });
