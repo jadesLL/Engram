@@ -216,8 +216,9 @@
         </div>
       </div>
 
-      <!-- 底部状态栏：字数 / 编辑模式；来源、图谱等低频入口收拢到右下 -->
-      <div v-show="!app.readingMode" class="statusbar">
+      <!-- 底部状态栏：字数 / 编辑模式；来源、图谱等低频入口收拢到右下。
+           v-if 而非 v-show：阅读模式不挂载，wordCount 大页面全文字数统计不跑 -->
+      <div v-if="!app.readingMode" class="statusbar">
         <span class="sb-item">{{ wordCount }} 字</span>
         <span class="sb-item">{{ app.editorMode === 'sv' ? '源码' : '即时渲染' }}</span>
         <div class="spacer"></div>
@@ -520,7 +521,11 @@ function enterReading() {
 
 function closeReading() {
   app.setReadingMode(false);
-  nextTick(() => editorRef.value?.focus());
+  // 阅读期间可能已切换/重载过页面：编辑器隐藏时跳过了同步，恢复显示后补一次
+  nextTick(() => {
+    editorRef.value?.syncIfPending();
+    editorRef.value?.focus();
+  });
 }
 
 async function save(manual = false) {

@@ -638,22 +638,45 @@ function selectAll(): boolean {
   return document.execCommand('selectAll');
 }
 
+let pendingHiddenSync = false;
+
+/** 阅读模式下编辑器被 v-show 隐藏：跳过整页重渲染（大页面可省约一半卡顿），恢复显示时由 syncIfPending 补一次。 */
+function editorHidden(): boolean {
+  return (wrapEl.value?.offsetParent ?? 1) === null;
+}
+
+function applyModelValue(v: string) {
+  if (!ready || !vditor) return;
+  const editorValue = stripIngestComments(wikiLinksToMarkdown(v));
+  if (editorValue !== vditor.getValue()) {
+    syncingModelValue = true;
+    vditor.setValue(editorValue);
+    lastProgrammaticValue = vditor.getValue();
+    releaseModelSyncSoon();
+    scheduleHideManagedPlaceholders();
+  } else {
+    lastProgrammaticValue = editorValue;
+  }
+}
+
 watch(
   () => props.modelValue,
   (v) => {
     if (!ready || !vditor) return;
-    const editorValue = stripIngestComments(wikiLinksToMarkdown(v));
-    if (editorValue !== vditor.getValue()) {
-      syncingModelValue = true;
-      vditor.setValue(editorValue);
-      lastProgrammaticValue = vditor.getValue();
-      releaseModelSyncSoon();
-      scheduleHideManagedPlaceholders();
-    } else {
-      lastProgrammaticValue = editorValue;
+    if (editorHidden()) {
+      pendingHiddenSync = true;
+      return;
     }
+    pendingHiddenSync = false;
+    applyModelValue(v);
   }
 );
+
+function syncIfPending() {
+  if (!pendingHiddenSync || editorHidden()) return;
+  pendingHiddenSync = false;
+  applyModelValue(props.modelValue);
+}
 watch(
   () => props.dark,
   (d) => {
@@ -689,6 +712,7 @@ defineExpose({
   getValue,
   getCurrentMode,
   focus,
+  syncIfPending,
   undo: () => executeHistoryCommand('undo'),
   redo: () => executeHistoryCommand('redo'),
   cutSelection,
