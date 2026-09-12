@@ -188,7 +188,6 @@ let seed = 42;
 const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
 
 function initPositions() {
-  seed = 42;
   nodes.forEach((n, i) => {
     const a = (i / Math.max(1, nodes.length)) * Math.PI * 2;
     n.x = Math.cos(a) * 24 + rnd() * 8;
@@ -419,7 +418,11 @@ function fit(animated: boolean) {
   fitAnim = requestAnimationFrame(anim);
 }
 function relayout() {
+  // 每次换随机种子：重排必须产生不同的布局，而不是回放同一场大爆炸
+  seed = Math.floor(Math.random() * 2147483647);
   initPositions();
+  // 节点回到世界原点炸开，视图跟着回中心，避免用户盯着原来的空白区域等收敛
+  view.x = W / 2; view.y = H / 2; view.s = 1;
   needFitOnce = true;
   kick();
 }
