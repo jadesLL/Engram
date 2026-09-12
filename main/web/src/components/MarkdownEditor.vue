@@ -789,6 +789,27 @@ onMounted(init);
 }
 /* 隐藏 edit-mode 下拉里的 wysiwyg 选项（即时渲染已覆盖所见即所得场景，只保留源码+即时渲染两态） */
 :deep(.vditor-toolbar button[data-mode="wysiwyg"]) { display: none !important; }
+/* edit-mode 下拉等 .vditor-hint 面板挂在工具栏 DOM 内，上面的按钮皮肤会污染面板项，恢复 vditor 原生布局 */
+:deep(.vditor-toolbar .vditor-hint button) {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 3px 10px;
+  border-radius: 0;
+  text-align: left;
+  line-height: 20px;
+  white-space: nowrap;
+  color: var(--toolbar-icon-color, var(--text));
+}
+:deep(.vditor-toolbar .vditor-hint button:hover) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+/* 桌面端无边框窗口顶部 36px 是标题栏拖拽区（几何判定不看 z-index），全屏编辑器必须避开，否则工具栏点击被窗口拖拽吞掉 */
+:deep(.vditor--fullscreen) {
+  top: var(--win-titlebar-h, 0px);
+  height: calc(100vh - var(--win-titlebar-h, 0px)) !important;
+}
 /* 手机端压缩工具栏按钮内边距，保证精简后的按钮单行放下 */
 @media (max-width: 768px) {
   :deep(.vditor-toolbar) { padding: 4px !important; }
