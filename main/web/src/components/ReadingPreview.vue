@@ -391,7 +391,8 @@ async function renderMarkdown() {
     addImageCaptions(next);
     prepareHeadings(next);
     prepareLinks(next);
-    metrics.value = readingMetrics(`${props.title}\n${next.innerText}`);
+    // textContent 而非 innerText：纯遍历无布局开销，15 万字页面省数百毫秒，计数结果一致
+    metrics.value = readingMetrics(`${props.title}\n${next.textContent}`);
     host.replaceChildren(...Array.from(next.childNodes));
     await nextTick();
     readerEl.value?.scrollTo({ top: 0 });
