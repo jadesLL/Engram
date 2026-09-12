@@ -253,6 +253,16 @@ input:focus, textarea:focus, select:focus {
   box-shadow: inset 0 -1px 0 var(--accent);
 }
 
+/*
+ * Chromium 会把 select 自身的底色带进原生弹层——深色主题的 --control-bg 是半透明白，
+ * 叠在弹层白底上仍是白色，option 文字继承白色即不可见。显式给 option 配主题色后
+ * 弹层深底白字，选中/悬停高亮行仍由系统绘制。
+ */
+select option {
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
