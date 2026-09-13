@@ -8,10 +8,21 @@
   /* Windows 11 Fluent 浅色主题（默认）：Mica 基底 + 分层卡片 */
   /* color-scheme 必须显式声明：否则系统深色时原生控件（select 弹层/滚动条）会跟系统而非应用主题 */
   color-scheme: light;
-  --bg: #f3f3f3;
+  --bg: #fafbfc;
   --bg-secondary: #fafafa;
   --bg-tertiary: #efefef;
   --card-bg: #fdfdfd;
+  /* 编辑器「纸面」悬浮卡片：白底白卡；分区不用灰色染色，工具栏/状态栏用柔和投影浮起，浮层用毛玻璃 */
+  --paper-bg: #ffffff;
+  --paper-border: rgba(0, 0, 0, 0.06);
+  --paper-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px -6px rgba(0, 0, 0, 0.1), 0 20px 44px -16px rgba(0, 0, 0, 0.1);
+  --paper-toolbar-bg: transparent;
+  --paper-toolbar-border: rgba(0, 0, 0, 0.05);
+  --paper-zone-bg: transparent;
+  --paper-toolbar-shadow: 0 1px 0 rgba(0, 0, 0, 0.03), 0 10px 22px -10px rgba(0, 0, 0, 0.14);
+  --paper-zone-shadow: 0 -1px 0 rgba(0, 0, 0, 0.03), 0 -10px 22px -10px rgba(0, 0, 0, 0.14);
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-blur: saturate(160%) blur(24px);
   --bg-hover: rgba(0, 0, 0, 0.045);
   --bg-active: rgba(0, 0, 0, 0.075);
   --text: #1b1b1b;
@@ -106,6 +117,17 @@ html.dark {
   --bg-secondary: #2a2a2a;
   --bg-tertiary: #333333;
   --card-bg: #2b2b2b;
+  /* 纸张卡片：深色下纸面微提亮；分区同用投影浮起，浮层毛玻璃 */
+  --paper-bg: #292b2e;
+  --paper-border: rgba(255, 255, 255, 0.08);
+  --paper-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 12px 32px -8px rgba(0, 0, 0, 0.5);
+  --paper-toolbar-bg: transparent;
+  --paper-toolbar-border: rgba(255, 255, 255, 0.06);
+  --paper-zone-bg: transparent;
+  --paper-toolbar-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 10px 22px -10px rgba(0, 0, 0, 0.55);
+  --paper-zone-shadow: 0 -1px 0 rgba(0, 0, 0, 0.3), 0 -10px 22px -10px rgba(0, 0, 0, 0.55);
+  --glass-bg: rgba(41, 43, 46, 0.72);
+  --glass-blur: saturate(140%) blur(24px);
   --bg-hover: rgba(255, 255, 255, 0.06);
   --bg-active: rgba(255, 255, 255, 0.1);
   --text: #ffffff;

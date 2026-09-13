@@ -748,8 +748,12 @@ onMounted(init);
   stroke-linejoin: round !important;
 }
 :deep(.vditor-toolbar) {
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  /* 工具栏不带灰色染色：纯白 + 柔和投影浮在正文之上 */
+  background: var(--paper-toolbar-bg, transparent);
+  border-bottom: none;
+  box-shadow: var(--paper-toolbar-shadow);
+  position: relative;
+  z-index: 2;
   padding: 4px 10px;
   gap: 1px;
   /* 阅读按钮右对齐到工具栏最右端 */
@@ -819,7 +823,7 @@ onMounted(init);
 }
 
 :deep(.vditor-ir), :deep(.vditor-wysiwyg), :deep(.vditor-sv) {
-  background: var(--bg);
+  background: var(--paper-bg, var(--bg));
   color: var(--text);
 }
 /* 双链：虚线下划线柔和样式（替代刺眼的实色块） */
