@@ -142,8 +142,13 @@ function onKeydown(event: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   padding: 20px 24px;
-  box-shadow: var(--shadow-dialog);
+  border-radius: 12px;
+  /* 极简线条：压扁拉长尾影，替代厚重 dialog 投影 */
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.07), 0 24px 60px -20px rgba(0, 0, 0, 0.28);
   outline: none;
+}
+:global(html.dark) .app-modal {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45), 0 24px 60px -20px rgba(0, 0, 0, 0.68);
 }
 .app-modal.right {
   height: 100%;
@@ -162,6 +167,8 @@ function onKeydown(event: KeyboardEvent) {
 }
 .app-modal-title h3 {
   margin: 0;
+  font-size: 15px;
+  font-weight: 600;
 }
 .app-modal-title p {
   margin: 5px 0 0;
@@ -184,13 +191,13 @@ function onKeydown(event: KeyboardEvent) {
 .app-modal-leave-active,
 .app-modal-side-enter-active,
 .app-modal-side-leave-active {
-  transition: opacity 160ms ease;
+  transition: opacity 200ms ease;
 }
 .app-modal-enter-active .app-modal,
 .app-modal-leave-active .app-modal,
 .app-modal-side-enter-active .app-modal,
 .app-modal-side-leave-active .app-modal {
-  transition: transform 160ms ease, opacity 160ms ease;
+  transition: transform 200ms ease, opacity 200ms ease;
 }
 .app-modal-enter-from,
 .app-modal-leave-to,
@@ -200,7 +207,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 .app-modal-enter-from .app-modal,
 .app-modal-leave-to .app-modal {
-  transform: translateY(8px) scale(0.99);
+  transform: translateY(6px) scale(0.98);
 }
 .app-modal-side-enter-from .app-modal,
 .app-modal-side-leave-to .app-modal {

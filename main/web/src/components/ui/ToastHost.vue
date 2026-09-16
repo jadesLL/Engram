@@ -4,7 +4,7 @@
       <TransitionGroup name="toast">
         <div v-for="item in toastState.items" :key="item.id" class="app-toast" :class="item.kind">
           <span class="toast-icon">
-            <Icon :name="iconFor(item.kind)" :size="14" />
+            <Icon :name="iconFor(item.kind)" :size="15" />
           </span>
           <span class="toast-text">{{ item.text }}</span>
           <button class="btn icon toast-close" aria-label="关闭通知" @click="dismissToast(item.id)">
@@ -28,6 +28,10 @@ function iconFor(kind: ToastKind): string {
 </script>
 
 <style scoped>
+/*
+ * 极简线条（Linear 风）：1px 细线框 + 零色块 + 小字号高密度。
+ * 类型仅由行内彩色图标表达，不铺设色块/色条，阴影压到最轻。
+ */
 .toast-stack {
   position: fixed;
   top: max(18px, env(safe-area-inset-top));
@@ -36,72 +40,64 @@ function iconFor(kind: ToastKind): string {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: min(360px, calc(100vw - 28px));
+  width: min(340px, calc(100vw - 28px));
   pointer-events: none;
 }
 .app-toast {
   pointer-events: auto;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px;
-  padding: 12px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
-  box-shadow: var(--shadow);
-  backdrop-filter: saturate(150%) blur(20px);
-  -webkit-backdrop-filter: saturate(150%) blur(20px);
+  border-radius: 9px;
+  background: var(--card-bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px -12px rgba(0, 0, 0, 0.14);
 }
-.app-toast.success { border-left: 3px solid var(--success); }
-.app-toast.error { border-left: 3px solid var(--danger); }
-.app-toast.info { border-left: 3px solid var(--accent); }
+:global(html.dark) .app-toast {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -10px rgba(0, 0, 0, 0.6);
+}
 
 .toast-icon {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
 }
-.app-toast.success .toast-icon {
-  background: color-mix(in srgb, var(--success) 14%, var(--bg));
-  color: var(--success);
-}
-.app-toast.error .toast-icon {
-  background: color-mix(in srgb, var(--danger) 12%, var(--bg));
-  color: var(--danger);
-}
-.app-toast.info .toast-icon {
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
-  color: var(--accent);
-}
+.app-toast.success .toast-icon { color: var(--success); }
+.app-toast.error .toast-icon { color: var(--danger); }
+.app-toast.info .toast-icon { color: var(--accent); }
 
 .toast-text {
   min-width: 0;
-  padding-top: 4px;
-  font-size: 13px;
-  line-height: 1.5;
+  flex: 1;
+  font-size: var(--font-sm);
+  line-height: 1.45;
   word-break: break-word;
 }
 .toast-close {
-  width: 24px;
-  height: 24px;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: var(--text-faint);
 }
+.toast-close:hover { color: var(--text); }
 
 .toast-enter-active,
 .toast-leave-active,
 .toast-move {
-  transition: opacity 160ms ease, transform 160ms ease;
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+.toast-leave-active {
+  transition-duration: 160ms;
 }
 .toast-enter-from {
   opacity: 0;
-  transform: translateX(16px);
+  transform: translateX(14px);
 }
 .toast-leave-to {
   opacity: 0;
-  transform: translateY(-6px);
 }
 .toast-leave-active {
   position: absolute;

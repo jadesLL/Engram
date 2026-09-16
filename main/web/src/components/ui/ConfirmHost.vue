@@ -74,6 +74,7 @@ watch(
 <style scoped>
 .confirm-message {
   margin: 0;
+  font-size: var(--font-sm);
   color: var(--text-secondary);
   line-height: 1.6;
   white-space: pre-wrap;
@@ -83,13 +84,13 @@ watch(
 .confirm-input {
   width: 100%;
   margin-top: 10px;
-  padding: 8px 12px;
+  padding: 7px 11px;
   border: 1px solid var(--control-border);
   border-bottom-color: var(--control-border-strong);
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--control-bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-sm);
   outline: none;
 }
 
