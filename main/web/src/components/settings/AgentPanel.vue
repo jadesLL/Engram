@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <h3>Agent 接入</h3>
-        <p>把 Engram 知识库接入外部 Agent：ZCode 桌面端与 DeepSeek Harness 支持一键注册；其他 Agent 用 MCP 配置片段接入。</p>
+        <p>把 Engram 知识库接入外部 Agent：ZCode 桌面端、Codex CLI 与 DeepSeek Harness 支持一键注册；其他 Agent 用 MCP 配置片段接入。</p>
       </div>
     </div>
 
@@ -11,6 +11,7 @@
       <label for="agent-target">接入目标</label>
       <select id="agent-target" v-model="target" aria-label="接入目标">
         <option value="zcode">ZCode 桌面端（一键接入）</option>
+        <option value="codex">Codex CLI（一键接入）</option>
         <option value="dsh">DeepSeek Harness / dsh（一键接入）</option>
         <option value="other">其他 Agent（MCP 接入）</option>
       </select>
@@ -79,15 +80,17 @@ import AgentHarnessSection from './AgentHarnessSection.vue';
 import AgentMcpSection from './AgentMcpSection.vue';
 import SettingsGroup from './SettingsGroup.vue';
 
-type AgentTarget = 'zcode' | 'dsh' | 'other';
+type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'other';
 
 const target = ref<AgentTarget>('zcode');
 /** 《Agent 作业指南》较长，默认收起在「查看工具」分组底部 */
 const guideOpen = ref(false);
 const guide = ref('');
 
-/** 一键接入区只接受 zcode / dsh（选「其他」时不渲染该组件） */
-const harnessTarget = computed<'zcode' | 'dsh'>(() => (target.value === 'dsh' ? 'dsh' : 'zcode'));
+/** 一键接入区只接受 zcode / codex / dsh（选「其他」时不渲染该组件） */
+const harnessTarget = computed<'zcode' | 'codex' | 'dsh'>(() => (
+  target.value === 'codex' || target.value === 'dsh' ? target.value : 'zcode'
+));
 
 const toolGroups = groupedMcpTools();
 const readTools = computed(() => MCP_TOOLS.filter((t) => t.group === '读'));

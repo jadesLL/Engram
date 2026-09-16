@@ -42,7 +42,7 @@
       <h4>Agent 接入配置片段</h4>
       <div class="snippet-controls">
         <select v-model="snippetFormat" aria-label="Agent 类型">
-          <option value="codex">Codex CLI</option>
+          <option value="codex">Codex CLI（也可用上方一键接入）</option>
           <option value="claude">Claude Code</option>
           <option value="kimi">Kimi</option>
           <option value="zcode">ZCode（也可用上方一键接入）</option>

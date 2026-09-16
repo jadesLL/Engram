@@ -14,6 +14,7 @@ Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）
 
 - **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / chat save / guide / mcp-config），`--json` 得机器可读输出。
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
+- **一键接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 接入直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；远程部署仍用 MCP 配置片段或 `engram login`。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
 - **只读区服务端强制**：Agent 的写入（`write_page`）与页面操作（`rename_page` / `move_page` / `delete_page` 及对应 CLI 子命令）只允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 是只读区，越界一律 403 拒绝。
   - 「只读」约束的是 **Agent 的权限**，不等于文件不可改：软件本身（Web 界面与 REST API）具备上传、新建、删除原始资料的能力，那是**用户的操作**。Agent 需要新增或删除原始资料时，**先问用户并说明原因，得到明确同意再做**，不得走 HTTP/CLI 旁路自行写入。权限不等于授权。

@@ -52,6 +52,48 @@
       </template>
     </template>
 
+    <template v-else-if="harness === 'codex'">
+      <div v-if="!cstatus.installed" class="empty-panel">
+        未检测到 Codex CLI（检查过 PATH 与 {{ cstatus.home }}）。请先在本机安装 Codex CLI（
+        <code>codex</code> 命令可用或已运行过一次），再回来一键注册；远程部署的知识库请让 Codex 使用上方
+        「其他 Agent（MCP 接入）」的配置片段。
+      </div>
+
+      <template v-else>
+        <div class="status-rows">
+          <div class="status-row">
+            <span>Codex CLI</span>
+            <strong class="ok">已检测到</strong>
+          </div>
+          <div class="status-row">
+            <span>知识库 MCP</span>
+            <strong :class="cstatus.registered ? 'ok' : 'warn'">
+              {{ cstatus.registered ? '已写入 config.toml' : '未注册' }}
+            </strong>
+          </div>
+          <div class="status-row">
+            <span>配置文件</span>
+            <strong class="path-value">{{ cstatus.configPath }}</strong>
+          </div>
+        </div>
+
+        <div class="actions-row">
+          <button class="btn primary" type="button" @click="registerCodex">
+            {{ cstatus.registered ? '重新注册' : '注册' }}知识库 MCP 到 Codex
+          </button>
+          <button v-if="cstatus.registered" class="btn" type="button" @click="unregisterCodex">移除注册</button>
+        </div>
+
+        <div class="integration-note">
+          注册写入 <code>~/.codex/config.toml</code> 的 <code>[mcp_servers.engram]</code> 表（streamable HTTP +
+          Bearer），其余配置、注释与 <code>[mcp_servers.*]</code> 条目原样保留；重新注册后重启 Codex
+          会话即可看到 <code>mcp__engram__*</code> 工具（检索 / 读页面 / 带证据写页面等，作业手法用
+          <code>skill_list</code> / <code>skill_guide</code>，清单见本页底部「查看工具」）。Engram
+          未启动时 Codex 照常启动，只是这组工具缺席。
+        </div>
+      </template>
+    </template>
+
     <template v-else>
       <div v-if="!dstatus.installed" class="empty-panel">
         未检测到 DeepSeek Harness（检查过 {{ dstatus.home }}）。在本机安装 dsh 并至少运行一次（生成
@@ -101,9 +143,10 @@ import { onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 
-defineProps<{ harness: 'zcode' | 'dsh' }>();
+defineProps<{ harness: 'zcode' | 'codex' | 'dsh' }>();
 
 const status = ref<any>({ installed: false, loggedIn: false, registered: false, path: '' });
+const cstatus = ref<any>({ installed: false, registered: false, home: '', configPath: '' });
 const dstatus = ref<any>({ installed: false, loggedIn: false, registered: false, home: '' });
 const manualPath = ref('');
 const savingPath = ref(false);
@@ -115,6 +158,7 @@ async function load() {
     const { data: s } = await api.get('/api/settings');
     try { manualPath.value = JSON.parse(s.settings?.zcode_config || '{}').path || ''; } catch { /* 忽略坏配置 */ }
   }
+  cstatus.value = (await api.get('/api/settings/codex-status')).data;
   dstatus.value = (await api.get('/api/settings/dsh-status')).data;
 }
 
@@ -143,6 +187,18 @@ async function registerMcp() {
 
 async function unregisterMcp() {
   await api.post('/api/settings/zcode-unregister');
+  await load();
+  notify.success('已移除注册');
+}
+
+async function registerCodex() {
+  await api.post('/api/settings/codex-register');
+  await load();
+  notify.success('已写入 Codex 的 config.toml');
+}
+
+async function unregisterCodex() {
+  await api.post('/api/settings/codex-unregister');
   await load();
   notify.success('已移除注册');
 }
@@ -188,6 +244,12 @@ onMounted(load);
 }
 .status-row .warn {
   color: var(--warn, #c77916);
+}
+.status-row .path-value {
+  max-width: 62%;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .actions-row {
