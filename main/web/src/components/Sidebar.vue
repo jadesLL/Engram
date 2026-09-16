@@ -4,6 +4,7 @@
       <div class="sidebar-titlebar">
         <h2>知识库</h2>
         <div class="sidebar-title-actions">
+          <SyncButton />
           <button
             class="sidebar-fold"
             type="button"
@@ -364,6 +365,7 @@ import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
 import FileRow from './FileRow.vue';
+import SyncButton from './SyncButton.vue';
 
 const route = useRoute();
 const router = useRouter();
