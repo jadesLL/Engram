@@ -45,7 +45,15 @@
 | `kb_guide` | 下发《Agent 作业指南》全文 |
 | `skill_list` / `skill_guide` | 内置作业 skill：先列清单（名称 / 用途 / 何时用 / 版本），需要时再取某份全文。skill 与指南同级但按需获取，版本独立于 `GUIDE_VERSION`，改 skill 不触发全库「规则落后」 |
 
-**各 Agent 接入**：设置 → Agent 接入 一个面板搞定——「接入目标」选 ZCode 桌面端 / DeepSeek Harness（dsh）可一键注册；选「其他 Agent」显示 MCP Server 地址、Token 管理与 Codex / Claude Code / Kimi / 通用配置片段一键复制；面板底部「查看工具」（默认收起，点「展开全部」查看）逐条列出现有 MCP 工具（功能、参数、要点与 CLI 等价命令）。Claude Code 示例：
+**各 Agent 接入**：设置 → Agent 接入 一个面板搞定——「接入目标」选 ZCode 桌面端 / Codex CLI / DeepSeek Harness（dsh）可一键注册；选「其他 Agent」显示 MCP Server 地址、Token 管理与 Codex / Claude Code / Kimi / 通用配置片段一键复制；面板底部「查看工具」（默认收起，点「展开全部」查看）逐条列出现有 MCP 工具（功能、参数、要点与 CLI 等价命令）。
+
+| 一键接入目标 | 写入位置 | 说明 |
+|---|---|---|
+| ZCode 桌面端 | `~/.zcode/cli/config.json` | 检测本机安装与登录状态，注册/移除知识库 MCP |
+| Codex CLI | `~/.codex/config.toml`（`[mcp_servers.engram]`） | 只维护 Engram 这一个 TOML 表，其余配置、注释与其他 `[mcp_servers.*]` 条目原样保留；重启 Codex 会话生效 |
+| DeepSeek Harness（dsh） | `$DSH_HOME/cordis.patch.yml` | 对整个 patch 层注册，对所有 dsh profile 生效 |
+
+一键注册只对本机安装的客户端落地（需与 Engram 桌面版同一台电脑）；Docker/远程部署时让 Agent 用「其他 Agent」的 MCP 片段或 `engram login` 连接。Claude Code 示例：
 
 ```bash
 claude mcp add --transport http engram http://<主机IP>:18080/mcp \

@@ -16,6 +16,11 @@ import {
   zcodeMcpUrl,
 } from '../lib/zcodeConfig.js';
 import { getDshStatus, registerDshMcp, unregisterDshMcp } from '../lib/dshConfig.js';
+import {
+  getCodexStatus,
+  registerCodexMcp,
+  unregisterCodexMcp,
+} from '../lib/codexConfig.js';
 import { requireAuth } from './auth.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
@@ -30,6 +35,16 @@ const PUBLIC_SETTINGS = [
 
 export async function settingsRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
+
+  /** 一键接入用的专属 Token：按 Agent 名取用，缺失则生成并入库 */
+  function harnessToken(name: string): string {
+    const existing = (db.prepare(`SELECT token FROM mcp_tokens WHERE name = ?`).get(name) as any)?.token;
+    if (existing) return existing;
+    const token = `lwiki_${crypto.randomBytes(24).toString('hex')}`;
+    db.prepare(`INSERT INTO mcp_tokens(token, name, created_at) VALUES(?, ?, ?)`)
+      .run(token, name, now());
+    return token;
+  }
 
   app.get('/api/settings', async () => {
     const out: Record<string, string> = {};
@@ -146,12 +161,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   /** 把 Engram MCP（回环地址 + Bearer token）注册进 ZCode 的 cli/config.json */
   app.post('/api/settings/zcode-register', async () => {
-    let token = (db.prepare(`SELECT token FROM mcp_tokens WHERE name = 'zcode'`).get() as any)?.token;
-    if (!token) {
-      token = `lwiki_${crypto.randomBytes(24).toString('hex')}`;
-      db.prepare(`INSERT INTO mcp_tokens(token, name, created_at) VALUES(?, ?, ?)`)
-        .run(token, 'zcode', now());
-    }
+    const token = harnessToken('zcode');
     const configPath = zcodeCliConfigPath();
     let cliConfig: any = {};
     try { cliConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { /* 新建 */ }
@@ -184,12 +194,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.get('/api/settings/dsh-status', async () => getDshStatus());
 
   app.post('/api/settings/dsh-register', async () => {
-    let token = (db.prepare(`SELECT token FROM mcp_tokens WHERE name = 'dsh'`).get() as any)?.token;
-    if (!token) {
-      token = `lwiki_${crypto.randomBytes(24).toString('hex')}`;
-      db.prepare(`INSERT INTO mcp_tokens(token, name, created_at) VALUES(?, ?, ?)`)
-        .run(token, 'dsh', now());
-    }
+    const token = harnessToken('dsh');
     const patchPath = registerDshMcp(zcodeMcpUrl, token);
     return { ok: true, mcpUrl: zcodeMcpUrl, patchPath };
   });
@@ -197,6 +202,22 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post('/api/settings/dsh-unregister', async () => {
     unregisterDshMcp();
     db.prepare(`DELETE FROM mcp_tokens WHERE name = 'dsh'`).run();
+    return { ok: true };
+  });
+
+  // ---------- Codex CLI 接入（写 $CODEX_HOME/config.toml）----------
+
+  app.get('/api/settings/codex-status', async () => getCodexStatus());
+
+  app.post('/api/settings/codex-register', async () => {
+    const token = harnessToken('codex');
+    const configPath = registerCodexMcp(zcodeMcpUrl, token);
+    return { ok: true, mcpUrl: zcodeMcpUrl, configPath };
+  });
+
+  app.post('/api/settings/codex-unregister', async () => {
+    unregisterCodexMcp();
+    db.prepare(`DELETE FROM mcp_tokens WHERE name = 'codex'`).run();
     return { ok: true };
   });
 
