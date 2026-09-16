@@ -11,7 +11,7 @@
     "dist:portable": "electron-builder --win portable"
   },
   "devDependencies": {
-    "electron": "^35.1.5",
+    "electron": "^36.9.5",
     "electron-builder": "^26.0.12"
   },
   "build": {

@@ -50,7 +50,7 @@
 1. **组装 win-unpacked**：
    * `pnpm -C desktop/server install --prod --node-linker=hoisted --ignore-workspace --no-frozen-lockfile`（ignored builds 的 exit 1 用 `|| true` 容忍）。
    * 手动补 better-sqlite3 native：从 `main/node_modules/better-sqlite3/build/Release/better_sqlite3.node` 复制到 `desktop/server/node_modules/better-sqlite3/build/Release/`（缺失则 server 启动报 `Could not locate the bindings file`）。
-   * 完整解压 electron 运行时：`powershell -Command "Expand-Archive electron-v35.7.5-win32-x64.zip dist/win-unpacked"`——必须得到含 `electron.exe` 的完整目录，否则 pack-asar 仍会跑但产出的 exe 无法启动。
+   * 完整解压 electron 运行时：`powershell -Command "Expand-Archive electron-v36.9.5-win32-x64.zip dist/win-unpacked"`——必须得到含 `electron.exe` 的完整目录，否则 pack-asar 仍会跑但产出的 exe 无法启动。
    * `node desktop/scripts/pack-asar.js` 生成 `resources/app.asar` + `app.asar.unpacked/`，三个原生模块（better-sqlite3/sqlite-vec/@napi-rs/canvas）解包（`desktop/package.json` 已设 `asar: true` + `asarUnpack`）。
 2. **打 NSIS 安装包**：`cd desktop && pnpm exec electron-builder --prepackaged dist/win-unpacked --win nsis`，产出 `Engram Setup <version>.exe`，复制到 `releases/<version>/` 并记录提交 ID、构建时间、sha256。
 
