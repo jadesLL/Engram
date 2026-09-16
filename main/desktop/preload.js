@@ -2,14 +2,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('wikiDesktop', {
-  // 查询当前连接模式（mode: '' | 'local' | 'remote'，远端含地址与令牌）
-  getConnection: () => ipcRenderer.invoke('get-connection'),
-  // 切换到本地模式（内嵌后端）
-  setLocalMode: () => ipcRenderer.invoke('set-local-mode'),
-  // 切换到远端模式（地址 + 令牌，免密兑换；directUrl 可选直连地址，可用时优先连接）
-  setRemoteMode: (url, token, directUrl) => ipcRenderer.invoke('set-remote-mode', url, token, directUrl),
-  // 返回启动页重新选择模式
-  openConnectionSettings: () => ipcRenderer.invoke('open-connection-settings'),
   // ---------- 数据仓库位置与整库恢复（本地模式） ----------
   // 查询当前数据仓库位置（{ dataDir, isDefault }）
   getDataDir: () => ipcRenderer.invoke('get-data-dir'),
@@ -27,7 +19,7 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   openFileBytes: (name, bytes) => ipcRenderer.invoke('open-file-bytes', name, bytes),
   // 同步窗口控制按钮（标题栏融合条 WCO）配色，主题切换时调用；不支持的平台主进程忽略
   setTitleBarOverlay: (opts) => ipcRenderer.invoke('set-title-bar-overlay', opts),
-  // ---------- 桌面端自更新（本地/远端模式均可用；配置取自当前连接服务器的 /api/update/config） ----------
+  // ---------- 桌面端自更新 ----------
   // 检查 Gitea 最新 Release（cfg 传设置页已保存的更新源配置，旧版主进程会忽略该参数自行解析；
   // 返回 { ok, currentVersion, latestVersion, hasUpdate, exe, releaseUrl }）
   desktopUpdateCheck: (cfg) => ipcRenderer.invoke('desktop-update-check', cfg),

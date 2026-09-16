@@ -320,7 +320,7 @@ docker compose -f docker-compose.nas.yml up -d
 
 ### 6.2 Windows 桌面端
 
-直接安装 Release 附件里的 `Engram Setup <版本>.exe`（NSIS，可选安装目录）。桌面端有本地模式（内嵌后端，零服务器）和远端模式（连 Docker 实例，凭连接令牌免密登录）两种，详见 [`../desktop/README.md`](../desktop/README.md)。
+直接安装 Release 附件里的 `Engram Setup <版本>.exe`（NSIS，可选安装目录）。桌面端内嵌完整后端，零服务器即可使用；需要多设备协作时加入多端同步群组，详见 [`../desktop/README.md`](../desktop/README.md)。
 
 ### 6.3 应用内更新
 

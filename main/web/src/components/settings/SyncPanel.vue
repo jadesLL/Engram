@@ -155,10 +155,6 @@
         普通页面中被取代的旧版本以「原名-时间」重命名保留在原目录（可删除），AI 工作区直接以最新为准覆盖，不产生新文件。</p>
     </div>
 
-    <!-- 桌面端连接：与同步群组并列的另一种接入方式，任何角色下都显示 -->
-    <SettingsGroup title="桌面端免密接入" hint="不参与同步的桌面端，可用连接令牌直连本服务">
-      <DesktopSection />
-    </SettingsGroup>
   </section>
 </template>
 
@@ -168,7 +164,6 @@ import { api } from '../../api';
 import { promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
-import DesktopSection from './DesktopSection.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import SecretField from '../SecretField.vue';
 

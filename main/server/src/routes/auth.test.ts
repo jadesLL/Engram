@@ -62,8 +62,3 @@ test('锁定计数在成功登录后清零（模拟锁过期后重置）', async
   const still = await login('auth-test-pass');
   assert.equal(still.statusCode, 429, '锁定期内继续保持 429');
 });
-
-test('desktop-exchange 缺 token 返回 400', async () => {
-  const res = await app.inject({ method: 'POST', url: '/api/auth/desktop-exchange', payload: {} });
-  assert.equal(res.statusCode, 400);
-});

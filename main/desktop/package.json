@@ -2,7 +2,7 @@
   "name": "@engram/desktop",
   "version": "1.2.7",
   "private": true,
-  "description": "Engram Windows 桌面端（本地内嵌 / 远端连接双模式）",
+  "description": "Engram Windows 桌面端（本地内嵌后端）",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -22,7 +22,6 @@
       "main.js",
       "preload.js",
       "lib/**",
-      "index.html",
       "icon.png",
       "server/dist/**",
       "server/node_modules/**",

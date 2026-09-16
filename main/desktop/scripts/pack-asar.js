@@ -59,7 +59,6 @@ fs.rmSync(staging, { recursive: true, force: true });
 fs.mkdirSync(staging, { recursive: true });
 copy(path.join(desktopRoot, 'main.js'), path.join(staging, 'main.js'));
 copy(path.join(desktopRoot, 'preload.js'), path.join(staging, 'preload.js'));
-copy(path.join(desktopRoot, 'index.html'), path.join(staging, 'index.html'));
 copy(path.join(desktopRoot, 'server'), path.join(staging, 'server'));
 copy(path.join(desktopRoot, 'web', 'dist'), path.join(staging, 'web', 'dist'));
 // 托盘图标：main.js 的 trayIcon() 在 asar 内找 __dirname/icon.png（源码运行则回退 build/icon.png）

@@ -70,7 +70,7 @@
         <div class="backup-row">
           <div>
             <strong>从备份恢复</strong>
-            <p>选择整库备份 zip，恢复会替换当前全部数据（含登录密码与模型配置）。暂存成功后重启服务生效：桌面端本地模式自动重启，Docker 版需重启容器。</p>
+            <p>选择整库备份 zip，恢复会替换当前全部数据（含登录密码与模型配置）。暂存成功后重启服务生效：桌面端自动重启，Docker 版需重启容器。</p>
           </div>
           <button class="btn" type="button" :disabled="Boolean(backupBusy)" @click="pickRestore">
             {{ backupBusy === 'restore' ? '恢复中...' : '选择备份文件' }}
@@ -131,7 +131,7 @@ const wipeMsg = ref('');
 const wipeOk = ref(false);
 const wipeBusy = ref<'' | 'knowledge' | 'ai-logs'>('');
 
-// ---------- 数据保存位置（桌面端本地模式） ----------
+// ---------- 数据保存位置（桌面端） ----------
 const wikiDesktop = (window as any).wikiDesktop;
 const isDesktopLocal = ref(false);
 const dataDir = ref('');
@@ -142,8 +142,6 @@ const dirOk = ref(false);
 onMounted(async () => {
   if (!wikiDesktop) return;
   try {
-    const conn = await wikiDesktop.getConnection();
-    if (conn.mode !== 'local') return;
     isDesktopLocal.value = true;
     const r = await wikiDesktop.getDataDir();
     dataDir.value = r.dataDir;
@@ -186,7 +184,7 @@ async function changeDataDir() {
   }
 }
 
-// ---------- 本地服务端口（桌面端本地模式） ----------
+// ---------- 本地服务端口（桌面端） ----------
 const portInput = ref('');
 const portCurrent = ref<number | ''>('');
 const portBusy = ref(false);
