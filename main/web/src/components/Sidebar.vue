@@ -875,7 +875,8 @@ function gateImport(list: File[]): File[] {
   const skipped = list.filter((f) => !keep.includes(f));
   if (skipped.length) {
     notify.error(
-      `Windows 版仅支持导入 Markdown（.md）文档，以下文件未导入：${skipped.map((f) => f.name).join('、')}`,
+      `Windows 版只接收 Markdown 文档，以下文件未导入：${skipped.map((f) => f.name).join('、')}；` +
+        '其他格式请先用外置 Agent 转成 Markdown 再导入（ZCode / Codex / Claude Code 经 MCP 读写本库）',
     );
   }
   return keep;

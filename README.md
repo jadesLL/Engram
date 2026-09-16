@@ -99,7 +99,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 - **Windows 11 Fluent 设计语言**：全局控件统一为 Fluent 令牌（4px 控件圆角 / 8px 卡片圆角、白底 + 底缘深描边文本框、聚焦 2px 强调色底线），覆盖登录、侧栏、编辑器、设置七大面板与沉浸阅读视图
 - **浅色 / 深色双主题**：阅读视图工具栏可一键切换，主题选择持久记忆
 - **侧栏批量折叠 / 拖拽导入**：知识库侧栏一键全部收起/展开（含实体子类，状态记忆）；原始资料分区支持从资源管理器直接拖入文件导入（桌面端与 Docker 网页版一致）
-- **Windows 桌面端导入只收 Markdown**：桌面端（Windows）原始资料导入仅接受 `.md` / `.markdown`，文件选择器默认只列 Markdown；拖入其他格式会被拦下并逐个点名提示（"Windows 版仅支持导入 Markdown（.md）文档"）。需要导入 PDF / Office / 图片等格式时走 Docker 网页版或 CLI（`engram import`），服务端接口本身不限格式
+- **Windows 桌面端导入只收 Markdown**：桌面端（Windows）原始资料导入仅接受 `.md` / `.markdown`，文件选择器默认只列 Markdown；拖入其他格式会被拦下并逐个点名提示，同时告诉用户出路——「其他格式请先用外置 Agent 转成 Markdown 再导入」（ZCode / Codex / Claude Code 经 MCP 读写本库）。Docker 网页版、CLI（`engram import`）不受此限，服务端接口本身不限格式；把文件直接拷进仓库的 `原始资料` 目录也会被启动扫描补齐提取
 
 ## 下载与安装
 
