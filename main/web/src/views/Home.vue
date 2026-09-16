@@ -60,19 +60,6 @@
       <button class="rail-btn action" type="button" v-tooltip="'新建页面 (Ctrl+N)'" aria-label="新建页面" @click="quickNew">
         <Icon name="plus" :size="19" />
       </button>
-      <button
-        class="rail-btn action"
-        type="button"
-        :class="{ open: jobsPanelOpen }"
-        v-tooltip="'任务队列'"
-        aria-label="任务队列"
-        :aria-pressed="jobsPanelOpen"
-        @click="jobsPanelOpen = !jobsPanelOpen"
-      >
-        <Icon name="activity" :size="19" />
-        <span v-if="app.activeJobCount > 0" class="badge">{{ app.activeJobCount > 99 ? '99+' : app.activeJobCount }}</span>
-      </button>
-
       <div class="rail-divider" />
 
       <!-- 设置（导航） -->
@@ -129,11 +116,6 @@
       <router-view />
     </main>
 
-    <!-- 任务队列面板 -->
-    <transition name="slide">
-      <JobsPanel v-if="jobsPanelOpen" @close="jobsPanelOpen = false" />
-    </transition>
-
     <AppContextMenu />
 
     <!-- 移动端底部导航 -->
@@ -160,8 +142,7 @@
             >
               <span class="more-icon">
                 <Icon :name="item.icon" :size="20" />
-                <span v-if="item.badge" class="more-badge">{{ item.badge }}</span>
-                <span v-else-if="item.dot" class="more-dot" />
+                <span v-if="item.dot" class="more-dot" />
               </span>
               <span class="more-label">{{ item.label }}</span>
             </button>
@@ -182,7 +163,6 @@ import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
 import Sidebar from '../components/Sidebar.vue';
-import JobsPanel from '../components/JobsPanel.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
 import Icon from '../components/Icon.vue';
 
@@ -191,14 +171,14 @@ const router = useRouter();
 const app = useAppStore();
 const updateStore = useUpdateStore();
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
-const jobsPanelOpen = ref(false);
 
-/* ===== 任务队列：自适应轮询（活跃 1.5s / 空闲 6s），状态存 app store 供角标/面板/侧栏共用 ===== */
+/* ===== 文件提取进度：只在对应文件旁显示，系统后台处理不提供通用队列界面 ===== */
 let jobPollStopped = true;
 let jobTimer: ReturnType<typeof setTimeout>;
 async function pollJobs() {
   await app.refreshJobs();
-  if (!jobPollStopped) jobTimer = setTimeout(pollJobs, app.activeJobCount > 0 ? 1500 : 6000);
+  const extracting = app.jobs.active.some((job: any) => job.kind === 'extract_file');
+  if (!jobPollStopped) jobTimer = setTimeout(pollJobs, extracting ? 1500 : 6000);
 }
 
 /* ===== 侧栏宽度拖拽 ===== */
@@ -295,21 +275,12 @@ const moreItems = computed(() => [
   {
     label: '知识图谱',
     icon: 'graph',
-    badge: undefined as string | undefined,
     dot: false,
     action: () => runMore(() => router.push('/graph')),
   },
   {
-    label: '任务队列',
-    icon: 'activity',
-    badge: app.activeJobCount > 0 ? (app.activeJobCount > 99 ? '99+' : String(app.activeJobCount)) : undefined,
-    dot: false,
-    action: () => runMore(() => { jobsPanelOpen.value = true; }),
-  },
-  {
     label: '设置',
     icon: 'settings',
-    badge: undefined as string | undefined,
     dot: updateStore.hasNewVersion,
     action: () => runMore(() => router.push('/settings')),
   },
@@ -470,20 +441,6 @@ onUnmounted(() => {
   background: var(--sidebar-hover);
 }
 
-.rail-btn .badge {
-  position: absolute;
-  top: -3px;
-  right: -5px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
-  border: 2px solid var(--sidebar-glass-solid);
-  border-radius: 8px;
-  font-size: 9px;
-  line-height: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
 .rail-btn .dot {
   position: absolute;
   top: 3px;
@@ -605,17 +562,6 @@ onUnmounted(() => {
 .ai-resizer:focus-visible {
   background: var(--sidebar-accent);
   opacity: 0.35;
-}
-
-.slide-enter-active,
-.slide-leave-active {
-  transition: transform 180ms ease, opacity 180ms ease;
-}
-
-.slide-enter-from,
-.slide-leave-to {
-  transform: translateX(30px);
-  opacity: 0;
 }
 
 .sidebar-slide-enter-active,
@@ -824,22 +770,6 @@ onUnmounted(() => {
     color: var(--text);
   }
 
-  .more-badge {
-    position: absolute;
-    top: -4px;
-    right: -7px;
-    min-width: 17px;
-    height: 17px;
-    padding: 0 4px;
-    border: 2px solid var(--sidebar-glass-solid);
-    border-radius: 8px;
-    background: var(--danger);
-    color: #fff;
-    font-size: 9px;
-    line-height: 13px;
-    font-variant-numeric: tabular-nums;
-  }
-
   .more-dot {
     position: absolute;
     top: 4px;
@@ -869,8 +799,6 @@ onUnmounted(() => {
   .rail-logo,
   .rail-btn,
   .resizer::before,
-  .slide-enter-active,
-  .slide-leave-active,
   .sidebar-slide-enter-active,
   .sidebar-slide-leave-active,
   .fade-enter-active,

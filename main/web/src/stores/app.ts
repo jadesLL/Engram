@@ -39,7 +39,7 @@ export const useAppStore = defineStore('app', {
       pageVersion: 0,
       /** 最近一次页面事件（page-changed/deleted/moved），EditorView 据此判断是否重载当前页 */
       lastPageEvent: null as any,
-      /** AI 任务队列：单一数据源（Home 角标 / JobsPanel / Sidebar 进度共用） */
+      /** 后台处理状态：仅用于把文档提取进度显示在对应文件旁 */
       jobs: {
         active: [] as any[],
         recent: [] as any[],
@@ -50,10 +50,6 @@ export const useAppStore = defineStore('app', {
         queueRunning: true,
       },
     };
-  },
-  getters: {
-    /** 角标数 = 待执行 + 执行中 */
-    activeJobCount: (state) => state.jobs.pending + state.jobs.running + state.jobs.paused,
   },
   actions: {
     applyTheme() {
@@ -98,7 +94,7 @@ export const useAppStore = defineStore('app', {
       this.pageVersion++;
       this.bumpSidebar();
     },
-    /** 拉取一次任务队列；失败保留上次状态（自适应轮询会很快重试） */
+    /** 拉取后台处理状态；失败时保留上次状态，供文件行继续显示提取进度 */
     async refreshJobs() {
       try {
         const { data } = await api.get('/api/jobs');
