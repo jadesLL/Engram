@@ -211,8 +211,8 @@
             <button
               class="add-btn"
               type="button"
-              v-tooltip="'上传文件'"
-              aria-label="上传文件"
+              v-tooltip="desktopMdOnly ? '导入 Markdown 文档' : '上传文件'"
+              :aria-label="desktopMdOnly ? '导入 Markdown 文档' : '上传文件'"
               @click="uploadInput?.click()"
             >
               <Icon name="upload" :size="13" />
@@ -238,7 +238,14 @@
             {{ filter ? '没有匹配资料' : '暂无资料' }}
           </p>
         </div>
-        <input ref="uploadInput" type="file" multiple hidden @change="onUpload" />
+        <input
+          ref="uploadInput"
+          type="file"
+          :accept="desktopMdOnly ? '.md,.markdown' : undefined"
+          multiple
+          hidden
+          @change="onUpload"
+        />
       </section>
 
       <!-- 对话：外置 Agent 沉积的对话文件 -->
@@ -390,6 +397,9 @@ function sortLabel(mode: string) {
 const sortFilesLabel = computed(() => SORT_LABELS[sortFiles.value] || '名称 A→Z');
 const sortChatLabel = computed(() => SORT_LABELS[sortChat.value] || '名称 A→Z');
 const uploadInput = ref<HTMLInputElement>();
+// Windows 桌面版导入只收 Markdown：其他格式落盘后无法作为页面提炼，拦在入口并把原因说清楚
+const desktopMdOnly = Boolean((window as any).wikiDesktop);
+const MD_EXTS = ['.md', '.markdown'];
 const defaultCollapsed: Record<string, boolean> = {
   concept: true,
   entity: true,
@@ -858,7 +868,21 @@ async function createFile() {
   }
 }
 
+/** 桌面版导入前的格式闸门；返回放行的文件，被拦下的逐个点名提示 */
+function gateImport(list: File[]): File[] {
+  if (!desktopMdOnly) return list;
+  const keep = list.filter((f) => MD_EXTS.some((ext) => f.name.toLowerCase().endsWith(ext)));
+  const skipped = list.filter((f) => !keep.includes(f));
+  if (skipped.length) {
+    notify.error(
+      `Windows 版仅支持导入 Markdown（.md）文档，以下文件未导入：${skipped.map((f) => f.name).join('、')}`,
+    );
+  }
+  return keep;
+}
+
 async function uploadFiles(list: File[]) {
+  list = gateImport(list);
   if (!list.length) return;
   const fd = new FormData();
   fd.append('dir', '原始资料');
