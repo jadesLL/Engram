@@ -328,7 +328,7 @@ async function wipe() {
   try {
     const { data } = await api.post('/api/settings/wipe', { password });
     wipeOk.value = true;
-    const stopped = data.cancelledJobs ? `，并停止 ${data.cancelledJobs} 个 AI 任务` : '';
+    const stopped = data.cancelledJobs ? `，并停止 ${data.cancelledJobs} 个后台处理` : '';
     wipeMsg.value = `已清除 ${data.fileCount} 个文件、${data.reportCount} 条整理报告${stopped}，索引已重置。`;
     await app.refreshJobs();
     app.bumpSidebar();
@@ -348,7 +348,7 @@ async function wipeAiLogs() {
   try {
     const { data } = await api.post('/api/settings/wipe-ai-logs', { password });
     wipeOk.value = true;
-    const stopped = data.cancelledJobs ? `，并停止 ${data.cancelledJobs} 个 AI 任务` : '';
+    const stopped = data.cancelledJobs ? `，并停止 ${data.cancelledJobs} 个后台处理` : '';
     wipeMsg.value = `已清空 ${data.fileCount} 个 AI 整理日志文件，重置 ${data.relationCount} 条关系记录${stopped}。`;
     app.bumpSidebar();
   } catch (error: any) {

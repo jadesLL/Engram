@@ -434,7 +434,7 @@ async function refreshChats() {
   if (!chatStopped) chatTimer = setTimeout(refreshChats, 5000);
 }
 
-/** 文件行提取进度：取自 app 共享任务队列（Home 自适应轮询维护，角标/面板/侧栏同一数据源） */
+/** 文件行提取进度：后台处理保持隐藏，只把当前文件自身的进度就地展示 */
 function fileJob(path: string) {
   return app.fileJob(path);
 }
