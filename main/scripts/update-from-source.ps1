@@ -102,7 +102,7 @@ if (-not $electron) {
   try { node install.js } finally { Pop-Location }
   if ($LASTEXITCODE -ne 0) { Write-Host '（install.js 非零退出，检查产物）' -ForegroundColor Yellow }
   $electron = Join-Path $desktop 'node_modules\electron\dist\electron.exe'
-  if (-not (Test-Path $electron)) { throw 'Electron 运行时不可用：下载失败。可手动解压 electron-v35 zip 到 desktop\dist\win-unpacked\' }
+  if (-not (Test-Path $electron)) { throw 'Electron 运行时不可用：下载失败。可手动解压 electron-v36 zip 到 desktop\dist\win-unpacked\' }
 }
 
 # 目标端口：优先设置页自定义的 localPort，默认 18180；被占时回退 18181
