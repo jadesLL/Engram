@@ -72,9 +72,9 @@
           </p>
         </template>
 
-        <!-- 桌面本地模式但未绑定同步 -->
+        <!-- 桌面端但未绑定同步 -->
         <div v-else-if="isDesktop" class="integration-note">
-          当前运行在桌面端本地模式。在「设置 → 多端同步」绑定服务器后，即可在此直接远程更新服务器，无需登录服务器网页；桌面端自身的更新见下方「桌面端」一节。
+          当前运行在桌面端。在「设置 → 多端同步」绑定服务器后，即可在此直接远程更新服务器，无需登录服务器网页；桌面端自身的更新见下方「桌面端」一节。
         </div>
         <!-- 浏览器访问桌面本地服务 -->
         <div v-else class="integration-note">
@@ -155,7 +155,7 @@
     <SettingsGroup title="桌面端（Windows）" hint="安装包 / 源码模式的检查、下载与更新" :default-open="isDesktop" flush>
 
       <div v-if="!isDesktop" class="integration-note">
-        在 Windows 桌面端本地模式内可在此下载并安装最新安装包；浏览器访问服务器时此节仅作展示。
+        在 Windows 桌面端内可在此下载并安装最新安装包；浏览器访问服务器时此节仅作展示。
       </div>
 
       <template v-else>
@@ -794,8 +794,7 @@ async function doDesktopCheck() {
   desktopUnsupported.value = false;
   desktopChecking.value = true;
   try {
-    // 把设置页当前的更新源配置传给主进程：本地/远端模式均所见即所得，
-    // 也兼容主进程尚未从远端服务器拉到配置的窗口期
+    // 把设置页当前的更新源配置传给主进程，确保检查使用页面中已保存的值
     desktopCheck.value = await wd.desktopUpdateCheck({
       giteaUrl: config.value.giteaUrl,
       giteaRepo: config.value.giteaRepo,

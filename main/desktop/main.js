@@ -1,9 +1,6 @@
 // Engram 桌面端主进程（Electron）
-// 双模式：
-//  - 本地：fork 内嵌 server 子进程（ELECTRON_RUN_AS_NODE 纯 Node 模式）+ 探活后加载
-//  - 远端：凭 desktop token 调 /api/auth/desktop-exchange 兑换 JWT，预置 cookie 后加载远端页面
-// 启动页 index.html 供用户选择模式或切换连接。
-const { app, BrowserWindow, ipcMain, shell, session, Menu, Tray, nativeImage, Notification, dialog } = require('electron');
+// fork 内嵌 server 子进程（ELECTRON_RUN_AS_NODE 纯 Node 模式），探活后加载本地页面。
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, nativeImage, Notification, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
@@ -28,7 +25,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 // productName 变化会让 Electron 默认 userData 目录
-// （%APPDATA%/<productName>）跟着变。旧目录里有本地模式全部数据与连接配置，
+// （%APPDATA%/<productName>）跟着变。旧目录里有全部本地数据，
 // 这里一次性迁移到新目录，之后不再回看旧路径。
 const LEGACY_USER_DATA = path.join(app.getPath('appData'), 'Engram');
 try {
@@ -75,15 +72,18 @@ function getLocalPort() {
   return DEFAULT_LOCAL_PORT;
 }
 
-// 模式切换会重置连接信息；数据仓库位置、端口、自动更新开关都是用户偏好，必须原样保留
-// （旧实现只留 autoUpdate，切一次模式就把 dataDir/localPort 清掉，数据位置静默回默认）
-function writeConnectionConfig(cfg) {
-  const next = { ...readConfig() };
-  delete next.mode;
-  delete next.remoteUrl;
-  delete next.remoteToken;
-  delete next.directUrl;
-  writeConfig({ ...next, ...cfg });
+// 旧版本曾把远端连接信息写入 config.json；远端模式移除后一次性清理，避免令牌继续留在本机。
+function pruneLegacyConnectionConfig() {
+  const cfg = readConfig();
+  if (!cfg || typeof cfg !== 'object') return;
+  let changed = false;
+  for (const key of ['mode', 'remoteUrl', 'remoteToken', 'directUrl']) {
+    if (key in cfg) {
+      delete cfg[key];
+      changed = true;
+    }
+  }
+  if (changed) writeConfig(cfg);
 }
 
 // 数据仓库位置（类 Obsidian 仓库）：首次启动用默认位置，设置页可切换到任意目录。
@@ -221,7 +221,7 @@ let quitting = false;
 let trayHintShown = false;
 
 // 外部链接收口：window.open / target=_blank 的子窗口会继承 preload（window.wikiDesktop），
-// 等于把含远端令牌的桥暴露给任意外部站点；页面内导航同理只允许应用自身来源。
+// 等于把桌面端桥暴露给任意外部站点；页面内导航同理只允许应用自身来源。
 // http(s) 链接一律交给系统浏览器打开，其余协议直接拒绝。
 function isInternalNavUrl(target) {
   try {
@@ -424,11 +424,6 @@ function loadWin(url) {
   Promise.resolve(win.loadURL(url)).catch((e) => log('[local] 页面加载失败：' + describeError(e)));
 }
 
-function loadFileWin(rel) {
-  if (!win || win.isDestroyed()) return;
-  Promise.resolve(win.loadFile(rel)).catch((e) => log('[local] 页面加载失败：' + describeError(e)));
-}
-
 async function waitForHealth(base, timeoutMs, isAlive = () => true) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -474,158 +469,19 @@ function stopLocalChild() {
   });
 }
 
-// ---------- 远端模式 ----------
-// 直连优先择优：服务器 /health 可能通告直连地址（DIRECT_ACCESS_URL，如 IPv6 DDNS 域名）。
-// 候选顺序：缓存的直连地址（手填/上次发现）→ 服务器通告 → 主地址；直连探测 1.5s 超时 +
-// 状态码校验，首个可达者用于 token 兑换与加载。直连不可达自动落回主地址（隧道）。
-const DIRECT_PROBE_TIMEOUT_MS = 1500;
-
-function normalizeOrigin(raw) {
-  let v = String(raw || '').trim().replace(/\/+$/, '');
-  if (!v) return '';
-  if (!/^https?:\/\//i.test(v)) v = 'http://' + v;
-  try {
-    const u = new URL(v);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
-    return u.origin;
-  } catch {
-    return '';
-  }
-}
-
-/** 从服务器 /health 读取通告的直连地址；主地址走隧道时须带上会话 cookie 才能过 Cloudflare Access */
-async function discoverDirectFromServer(origin) {
-  try {
-    const cookies = await session.defaultSession.cookies.get({ url: origin });
-    const header = cookies
-      .filter((c) => c.name === 'token' || c.name.startsWith('CF_Authorization'))
-      .map((c) => `${c.name}=${c.value}`)
-      .join('; ');
-    const res = await fetch(origin + '/health', {
-      headers: header ? { Cookie: header } : {},
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    const h = await res.json().catch(() => null);
-    return (h && h.direct && normalizeOrigin(h.direct)) || null;
-  } catch {
-    return null;
-  }
-}
-
-async function probeOrigin(origin) {
-  try {
-    const res = await fetch(origin + '/health', { signal: AbortSignal.timeout(DIRECT_PROBE_TIMEOUT_MS) });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function pickRemoteOrigin(cfg) {
-  const primary = normalizeOrigin(cfg.remoteUrl) || String(cfg.remoteUrl || '').replace(/\/+$/, '');
-  const cached = normalizeOrigin(cfg.directUrl);
-  const candidates = [];
-  if (cached && cached !== primary) candidates.push(cached);
-  const announced = await discoverDirectFromServer(primary);
-  if (announced && announced !== primary && !candidates.includes(announced)) candidates.push(announced);
-  for (const cand of candidates) {
-    if (await probeOrigin(cand)) {
-      if (cand !== cached) {
-        const c = readConfig();
-        c.directUrl = cand;
-        writeConfig(c);
-      }
-      return cand;
-    }
-  }
-  return primary;
-}
-
-async function startRemoteMode(remoteUrl, token) {
-  try {
-    await startRemoteModeInner(remoteUrl, token);
-  } catch (e) {
-    log('[remote] 连接远端异常：' + describeError(e));
-    loadWin(dataUrl(errorPage('无法连接远端服务器', ['连接过程出错：', describeError(e)])));
-  }
-}
-
-async function startRemoteModeInner(remoteUrl, token) {
-  loadWin(dataUrl(splashPage('正在连接', '正在连接远端服务器并验证身份，完成后自动进入主界面。', '正在选择最优线路…')));
-  applyPageChrome(SPLASH_BG);
-  const actualOrigin = await pickRemoteOrigin(readConfig());
-  setSplashStatus('正在验证连接身份…');
-  try {
-    const r = await fetch(actualOrigin + '/api/auth/desktop-exchange', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    });
-    if (!r.ok) {
-      const t = await r.text().catch(() => '');
-      throw new Error(t || `HTTP ${r.status}`);
-    }
-    const { jwt } = await r.json();
-    await session.defaultSession.cookies.set({
-      url: actualOrigin,
-      name: 'token',
-      value: jwt,
-      path: '/',
-      httpOnly: true,
-      sameSite: 'lax',
-      expirationDate: Math.floor(Date.now() / 1000) + 30 * 24 * 3600,
-    });
-    setSplashStatus('连接成功，正在进入界面…');
-    loadWin(actualOrigin);
-  } catch (e) {
-    loadWin(
-      dataUrl(
-        errorPage('无法连接远端服务器', [
-          e && e.message ? e.message : String(e),
-          '地址：' + actualOrigin,
-        ])
-      )
-    );
-  }
-}
-
 // ---------- 启动调度 ----------
 function launchByConfig() {
+  pruneLegacyConnectionConfig();
   createWindow();
-  const cfg = readConfig();
-  if (cfg.mode === 'local') {
-    startLocalMode();
-  } else if (cfg.mode === 'remote' && cfg.remoteUrl && cfg.remoteToken) {
-    startRemoteMode(cfg.remoteUrl, cfg.remoteToken);
-  } else {
-    applyPageChrome('#f7f7f5');
-    loadFileWin('index.html');
-  }
+  startLocalMode();
 }
 
-/**
- * 应用菜单：进入本地模式后启动页被内嵌 Web 应用替换，且下次启动会直接跳过启动页，
- * 用户无处切换回远端。菜单「返回启动页 / 切换模式」是该场景下唯一稳定的切换入口
- * （快捷键 CmdOrCtrl+Shift+L），复用 open-connection-settings IPC 的逻辑。
- */
 function buildAppMenu() {
   return Menu.buildFromTemplate([
     {
       label: 'Engram',
       submenu: [
-        {
-          label: '返回启动页 / 切换模式',
-          accelerator: 'CmdOrCtrl+Shift+L',
-          click: async () => {
-            await stopLocalChild();
-            writeConnectionConfig({});
-            applyPageChrome('#f7f7f5');
-            loadFileWin('index.html');
-          },
-        },
-        { type: 'separator' },
-        { role: 'quit' },
+        { role: 'quit', label: '退出 Engram' },
       ],
     },
     {
@@ -698,19 +554,7 @@ ipcMain.handle('set-title-bar-overlay', (_e, opts) => {
   return true;
 });
 
-ipcMain.handle('get-connection', () => {
-  const c = readConfig();
-  return { mode: c.mode || '', remoteUrl: c.remoteUrl || '', remoteToken: c.remoteToken || '', directUrl: c.directUrl || '' };
-});
-
-ipcMain.handle('set-local-mode', async () => {
-  writeConnectionConfig({ mode: 'local' });
-  await stopLocalChild();
-  startLocalMode();
-  return true;
-});
-
-// 数据保存位置查询与更改（仅本地模式有意义；远端模式数据在服务端）
+// 数据保存位置查询与更改
 ipcMain.handle('get-data-dir', () => {
   const cfg = readConfig();
   return { dataDir: getDataDir(), isDefault: !cfg.dataDir };
@@ -786,21 +630,6 @@ ipcMain.handle('set-local-port', async (_e, raw) => {
   return { port };
 });
 
-ipcMain.handle('set-remote-mode', async (_e, url, token, directUrl) => {
-  writeConnectionConfig({ mode: 'remote', remoteUrl: url, remoteToken: token, directUrl: normalizeOrigin(directUrl) });
-  await stopLocalChild();
-  startRemoteMode(url, token);
-  return true;
-});
-
-ipcMain.handle('open-connection-settings', async () => {
-  await stopLocalChild();
-  writeConnectionConfig({});
-  applyPageChrome('#f7f7f5');
-  loadFileWin('index.html');
-  return true;
-});
-
 // 远程文件「用系统程序打开」：渲染进程把文件字节传过来，写临时目录后调系统默认程序
 ipcMain.handle('open-file-bytes', (_e, name, bytes) => {
   const safe = String(name).replace(/[\\/:*?"<>|]/g, '-');
@@ -813,9 +642,8 @@ ipcMain.handle('open-file-bytes', (_e, name, bytes) => {
 
 // ---------- 桌面端自更新（远端仓库 Releases 拉安装包） ----------
 // 更新源配置按优先级解析：
-//  1) 渲染进程传入——设置页「更新源配置」所见即所得（本地模式=本地 .env，远端模式=所连服务器配置）
-//  2) 远端模式下主进程向所连服务器拉取（渲染进程为旧版前端、不传参时的兜底）
-//  3) 本地 userData/data/.env（本地模式主路径，与内嵌 server 的 /api/update/config 读写同一文件）
+//  1) 渲染进程传入——设置页「更新源配置」所见即所得
+//  2) 本地 userData/data/.env（与内嵌 server 的 /api/update/config 读写同一文件）
 const UPDATE_KEYS = {
   giteaUrl: 'UPDATE_GITEA_URL',
   giteaRepo: 'UPDATE_GITEA_REPO',
@@ -864,42 +692,11 @@ function repoAuthHeaders(cfg) {
   return {};
 }
 
-/** 远端模式下从所连服务器读取更新源配置；非远端模式或读取失败返回 null */
-async function fetchRemoteUpdateEnv() {
-  const c = readConfig();
-  if (c.mode !== 'remote' || !c.remoteUrl) return null;
-  const origin = String(c.remoteUrl).replace(/\/+$/, '');
-  try {
-    // 主进程 fetch 不带渲染进程会话的 cookie，须从会话取出 JWT 手动附上
-    const cookies = await session.defaultSession.cookies.get({ url: origin });
-    const token = cookies.find((ck) => ck.name === 'token');
-    const res = await fetch(origin + '/api/update/config', {
-      headers: token ? { Cookie: `token=${token.value}` } : {},
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data || !data.giteaUrl || !data.giteaRepo) return null;
-    return {
-      giteaUrl: String(data.giteaUrl).replace(/\/+$/, ''),
-      giteaRepo: String(data.giteaRepo),
-      giteaAuthType: data.giteaAuthType === 'password' ? 'password' : 'token',
-      giteaToken: String(data.giteaToken || ''),
-      giteaUsername: String(data.giteaUsername || ''),
-      giteaPassword: String(data.giteaPassword || ''),
-    };
-  } catch {
-    return null;
-  }
-}
-
 /** 解析本次更新检查/下载使用的配置（优先级见文件顶部注释） */
 async function resolveUpdateCfg(passed) {
   if (passed && typeof passed === 'object' && passed.giteaUrl && passed.giteaRepo) {
     return passed;
   }
-  const remote = await fetchRemoteUpdateEnv();
-  if (remote) return remote;
   return readDesktopUpdateEnv();
 }
 

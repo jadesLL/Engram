@@ -3,7 +3,7 @@
     <div class="integration-note">
       DDNS 维护一条指向本机公网 IP 的 Cloudflare DNS 记录，给成员设备提供稳定的中枢访问地址；每 5
       分钟自动比对，IP 变化才写入。需要一个 Cloudflare API Token（权限 <strong>Zone → DNS → Edit</strong>），记录不存在时自动创建（TTL
-      60、仅 DNS）。桌面端本地模式直接读取本机网卡，IPv6 会自动排除隐私临时地址；Docker 部署为容器内尽力探测。
+      60、仅 DNS）。桌面端直接读取本机网卡，IPv6 会自动排除隐私临时地址；Docker 部署为容器内尽力探测。
     </div>
 
     <div v-if="statusLoaded" class="conn-status" :class="{ ok: statusOk, bad: statusBad }">

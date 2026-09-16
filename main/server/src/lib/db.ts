@@ -175,17 +175,6 @@ export function migrate() {
     created_at TEXT NOT NULL
   );
 
-  -- 桌面端远端连接令牌：远端服务器签发，桌面端凭 token 免密兑换 JWT cookie
-  CREATE TABLE IF NOT EXISTS desktop_tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    token TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL DEFAULT 'default',
-    created_at TEXT NOT NULL,
-    expires_at TEXT,
-    revoked INTEGER NOT NULL DEFAULT 0,
-    last_used_at TEXT
-  );
-
   -- 原始资料消化记录（保留旧 API 的 at 字段，并增加内容幂等状态）
   CREATE TABLE IF NOT EXISTS ingest_log (
     path TEXT PRIMARY KEY,
@@ -570,6 +559,9 @@ export function migrate() {
   );
   CREATE INDEX IF NOT EXISTS idx_model_entries_kind
     ON model_entries(kind, sort_order);
+
+  -- 桌面端远端免密接入已移除，清理旧版本留下的连接令牌
+  DROP TABLE IF EXISTS desktop_tokens;
   `);
 
   // model_entries 增量列（1.1.17：跨协议模型列表/免鉴权线路标志；存量库补列，新库由上方 DDL 含 models_protocol 等列时也不会重复）
