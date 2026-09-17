@@ -286,7 +286,24 @@ async function syncServer() {
       ['-C', path.join('desktop', 'server'), 'install', '--prod', '--node-linker=hoisted', '--ignore-workspace', '--no-frozen-lockfile'],
       appRoot,
     );
-    if (code !== 0) say('（pnpm 非零退出：ignored builds 可容忍，继续）');
+    if (code !== 0) {
+      // pnpm 在某些机器上会静默失败（客户机实测：无任何输出、进程被杀）。换 npm 再试一次——
+      // 两套安装实现互相独立，npm 的扁平布局同样满足后续路径（desktop/server/node_modules/<pkg>）。
+      say(`（pnpm 非零退出 ${code}，改用 npm 重试一次）`);
+      const npmEnv = {
+        ...process.env,
+        npm_config_registry: 'https://registry.npmmirror.com',
+        npm_config_better_sqlite3_binary_host_mirror: 'https://registry.npmmirror.com/-/binary/better-sqlite3',
+      };
+      if (process.versions.electron) npmEnv.ELECTRON_RUN_AS_NODE = '1';
+      const npmCode = await run('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+        cwd: serverDir,
+        env: npmEnv,
+        shell: process.platform === 'win32',
+      });
+      if (npmCode !== 0) say(`（npm 也非零退出 ${npmCode}：由下方 binding 步骤兜底，失败再报）`);
+      else say('desktop/server 运行时依赖已用 npm 装好');
+    }
   } else {
     say(`desktop/server 运行时依赖${state.installReason || '无变化'}，跳过安装`);
   }
