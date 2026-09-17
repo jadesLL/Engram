@@ -7,7 +7,9 @@
 // 这里刻意不做「拒绝私网/环回地址」的限制：自建 Gitea 常跑在局域网或 NAS 上
 // （如 http://192.168.1.101:3000/example/Engram.git），地址是本机用户在安装器里手输的、
 // 请求也由本机发出，不存在服务端 SSRF 面；限制反而会把正当用法挡掉。
-const DEFAULT_REPO_URL = 'https://github.com/jadesLL/Engram.git';
+//
+// 注意：安装器不再内置默认仓库地址（2026-09-18 用户要求「默认没有任何地址」），
+// 地址一律由用户填写。
 
 /** 解析并校验仓库地址；ok=false 时 message 可直接展示给用户 */
 function normalizeRepoUrl(input) {
@@ -41,13 +43,4 @@ function redactRepoUrl(url) {
   return String(url == null ? '' : url).replace(/\/\/[^/@\s]+@/, '//***@');
 }
 
-/** 从既有克隆的 .git/config 里读 origin 地址（重装时用它预填输入框） */
-function readOriginFromGitConfig(configText) {
-  const text = String(configText == null ? '' : configText);
-  const remote = text.match(/\[remote "origin"\]([\s\S]*?)(?=\n\[|$)/);
-  if (!remote) return null;
-  const url = remote[1].match(/^\s*url\s*=\s*(\S+)\s*$/m);
-  return url ? url[1] : null;
-}
-
-module.exports = { DEFAULT_REPO_URL, normalizeRepoUrl, redactRepoUrl, readOriginFromGitConfig };
+module.exports = { normalizeRepoUrl, redactRepoUrl };

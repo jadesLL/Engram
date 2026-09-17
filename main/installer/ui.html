@@ -79,15 +79,15 @@
   </div>
 
   <div class="repo" id="repo-step">
-    <div class="label">仓库地址（自建 Gitea 或 GitHub，公开仓库无需凭据）</div>
+    <div class="label">仓库地址（自建 Gitea 或 GitHub）</div>
     <input id="repo-url" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo.git" />
-    <p class="hint" id="repo-msg">填好地址点「下一步」：会自动检查——公开仓库直接开始，私有仓库再让你填账号与令牌。</p>
+    <p class="hint" id="repo-msg">填好地址点「下一步」，再填账号与密码/访问令牌即可开始安装。</p>
   </div>
 
   <div class="creds" id="creds" style="display:none">
     <input id="user" type="text" placeholder="账号" autocomplete="off" />
     <input id="pass" type="password" placeholder="密码或访问令牌" />
-    <p class="hint">私有仓库首次克隆需要一次凭据（GitHub 用用户名 + 个人访问令牌）；仅保存在本机安装目录的 .git\config 中，用于后续静默更新。</p>
+    <p class="hint">克隆源码需要凭据（GitHub 用用户名 + 个人访问令牌；自建 Gitea 用账号 + 密码或令牌）。仅保存在本机安装目录的 .git\config 中，用于后续静默更新。</p>
   </div>
 
   <div class="steps" id="steps"></div>
@@ -95,6 +95,7 @@
 
   <div class="foot">
     <button class="details-toggle" id="details-btn">▸ 显示详情</button>
+    <button class="details-toggle" id="copy-btn">复制日志</button>
     <div class="spacer"></div>
     <button class="btn" id="cancel-btn">取消</button>
     <button class="btn primary" id="next-btn">下一步</button>
@@ -110,7 +111,7 @@
   </div>
 
   <script>
-    const { ipcRenderer } = require('electron');
+    const { ipcRenderer, clipboard } = require('electron');
     const $ = (id) => document.getElementById(id);
     let total = 0, doneCount = 0, started = false, repoUrl = '';
 
@@ -182,7 +183,7 @@
       $('creds').style.display = '';
       $('start-btn').style.display = '';
       $('next-btn').style.display = 'none';
-      setRepoMsg(message, 'err');
+      setRepoMsg(message);
       $('meta-left').textContent = '等待填写仓库凭据';
     }
 
@@ -190,6 +191,14 @@
       const el = $('log');
       el.classList.toggle('show');
       $('details-btn').textContent = (el.classList.contains('show') ? '▾' : '▸') + ' 显示详情';
+    });
+    // 一键复制日志：客户与我们都受够了截图/乱码，直接复制全文（Electron 剪贴板，不依赖网页 API）
+    $('copy-btn').addEventListener('click', () => {
+      const text = $('log').textContent || '';
+      clipboard.writeText(text);
+      const btn = $('copy-btn');
+      btn.textContent = text.trim() ? '已复制 ✓' : '暂无日志';
+      setTimeout(() => { btn.textContent = '复制日志'; }, 1500);
     });
     $('cancel-btn').addEventListener('click', () => ipcRenderer.send('cancel-install'));
     $('close-btn').addEventListener('click', () => window.close());
@@ -219,15 +228,14 @@
         result = { status: 'unreachable', message: '检查失败：' + (e && e.message ? e.message : e) };
       }
       $('next-btn').disabled = false;
-      appendLog('仓库 ' + shown + '：' + result.message);
-      if (result.status === 'public' || result.status === 'unknown') {
-        begin(null);
-      } else if (result.status === 'private') {
-        showCreds(result.message);
-      } else {
+      if (result.status === 'unreachable') {
         setRepoMsg('无法访问：' + result.message, 'err');
         $('meta-left').textContent = '地址检查未通过';
+        return;
       }
+      appendLog('仓库 ' + shown + '：' + result.message);
+      // 凭据一律必填（2026-09-18 用户要求）：不靠「公开/私有」判断来决定要不要密码
+      showCreds('填好账号与密码/访问令牌后点「开始安装」——' + result.message);
     });
 
     $('start-btn').addEventListener('click', () => {
@@ -239,11 +247,11 @@
 
     (async () => {
       $('cancel-btn').style.display = 'none';
-      $('repo-url').value = await ipcRenderer.invoke('default-repo-url');
+      // 默认不填任何地址（用户要求）：仓库地址一律由用户自己填
       const hasRepo = await ipcRenderer.invoke('has-repo');
       setRepoMsg(hasRepo
-        ? '检测到本机已有源码目录：直接点「下一步」增量更新（想换仓库就改上面的地址）。'
-        : '填好地址点「下一步」：会自动检查——公开仓库直接开始，私有仓库再让你填账号与令牌。');
+        ? '检测到本机已有源码目录：填上仓库地址点「下一步」会按需增量更新。'
+        : '填好地址点「下一步」，再填账号与密码/访问令牌即可开始安装。');
     })();
   </script>
 </body>
