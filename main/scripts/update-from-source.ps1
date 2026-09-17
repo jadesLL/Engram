@@ -20,6 +20,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# 子进程（pnpm/node）输出是 UTF-8，PS5.1 默认按 OEM 代码页解码会整片乱码（本脚本被
+# install-engram.ps1 的构建步嵌套调用，父进程已设 UTF-8，这里不设就会反过来乱在父侧）。
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
 
 # 便携布局（install-engram.ps1 安装在 %LOCALAPPDATA%\engram）：优先使用自带 Node/MinGit
 $portableRoot = Join-Path $env:LOCALAPPDATA 'engram'
