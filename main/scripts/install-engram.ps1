@@ -54,13 +54,19 @@ $script:LastErrorLine = ''
 function Redact([string]$s) { return ($s -replace '://[^/@\s]+@', '://***@') }  # 打码 URL 内嵌的账号密码
 # 取「最像原因」的一行：git 的 `fatal:` / npm 的 `ERR_PNPM_*` / node 的 Error: 往往不是最后一行
 # （git clone 失败时末行是超时描述，真正原因在上一行 fatal:），只取末行会把原因丢掉。
+# -like 本身不区分大小写，故 'error ' 同时覆盖 pnpm 的 `ERROR  EPERM: ...`。
 function Pick-ErrorLine([string[]]$lines) {
-  foreach ($kw in @('fatal:', 'ERR_PNPM', 'error ', 'Error:', 'error:')) {
+  foreach ($kw in @('fatal:', 'ERR_PNPM', 'ELIFECYCLE', 'ERR!', 'error ', 'Error:', 'error:', 'EACCES', 'EPERM', 'EBUSY', 'ENOSPC')) {
     for ($i = $lines.Count - 1; $i -ge 0; $i--) {
       if ($lines[$i] -like "*$kw*") { return $lines[$i] }
     }
   }
-  for ($i = $lines.Count - 1; $i -ge 0; $i--) { if ($lines[$i].Trim()) { return $lines[$i] } }
+  # 兜底：末行非空输出，但跳过 Node 的弃用/警告噪音——它常在真正报错之后才 flush，会把原因顶掉
+  # （2026-09-17 客户机就因此只显示 DEP0190 警告，真正的失败原因读不出来）
+  for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+    $t = $lines[$i].Trim()
+    if ($t -and $t -notmatch 'DeprecationWarning|DEP0\d{3}|node --trace-deprecation') { return $t }
+  }
   return ''
 }
 # 退出码：嵌套 .ps1 正常结束时不写 LASTEXITCODE，直接读会拿到上一条命令的陈旧值（实测会把

@@ -71,31 +71,58 @@ async function runPnpm(args, cwd) {
   return code;
 }
 
-/** 工作区阶段：构建前，依赖变化才 pnpm install --frozen-lockfile */
+/**
+ * 工作区阶段的动作判定（拆成纯判定便于单测，见 tests/sync-deps.workspace.test.js）：
+ *   skip      依赖与 Electron 运行时都齐 → 什么都不做
+ *   install   依赖需要（重）装 → pnpm install --frozen-lockfile
+ *   reinstall Electron 包目录被剪枝删一半（缺 install.js，补不回来）→ --force 重落整套依赖
+ *   runtime   依赖齐但运行时缺（postinstall 失败的残局）→ 只补运行时，不整树重装
+ */
+function workspaceAction(root) {
+  const state = deps.workspaceInstallState(root);
+  const electronDir = path.join(root, 'desktop', 'node_modules', 'electron');
+  // 包目录整个不在（全新机器）不算残缺，交给正常安装；在、但缺 install.js 才是剪枝残骸
+  const packageBroken = fs.existsSync(electronDir) && !fs.existsSync(path.join(electronDir, 'install.js'));
+  if (packageBroken) return { action: 'reinstall', reason: state.reason };
+  if (state.needed) return { action: 'install', reason: state.reason };
+  if (!deps.electronRuntimeOk(root)) return { action: 'runtime', reason: state.reason };
+  return { action: 'skip', reason: state.reason };
+}
+
+/**
+ * 工作区阶段：构建前，依赖变化才 pnpm install --frozen-lockfile，装完显式确认 Electron 运行时。
+ *
+ * 「包在、dist 不在」是最常见的残局：上一次安装在 electron 的 postinstall 阶段失败（下载被掐断等），
+ * pnpm 仍把整套依赖记成已装，之后再跑 pnpm install 一律空转、不会再跑 postinstall —— 2026-09-17
+ * 客户机正是卡在这里：deps 步显示成功但 dist 始终缺，build 步整树 `--force` 重装又失败。
+ * 故运行时缺失一律直接跑 electron 自带的 install.js 补齐（走 npmmirror 镜像），不整树重装。
+ */
 async function syncWorkspace() {
-  const state = deps.workspaceInstallState(appRoot);
-  // Electron 运行时目录残缺（package.json 被剪枝删掉）时依赖指纹可能判定「无变化」而不装，
-  // 运行时永远修不回来；这种情况按必须装处理，并用 --force 让 pnpm 重新落盘整套依赖。
-  const runtimeBroken = !deps.electronRuntimeOk(appRoot);
-  if (!state.needed && !runtimeBroken) {
-    say(`工作区依赖无需安装（${state.reason}）`);
+  const { action, reason } = workspaceAction(appRoot);
+  if (action === 'skip') {
+    say(`工作区依赖无需安装（${reason}）`);
     return;
   }
-  if (runtimeBroken) say('Electron 运行时目录不完整（缺 package.json 或 dist），强制重装工作区依赖');
-  else say(`工作区依赖需要安装（${state.reason}）`);
-  const args = ['install', '--frozen-lockfile'];
-  if (runtimeBroken) args.push('--force');
-  const code = await runPnpm(args, appRoot);
-  if (code !== 0) {
-    throw new Error('pnpm install --frozen-lockfile 失败：请检查网络与 pnpm-lock.yaml 是否与 package.json 一致');
+  if (action === 'reinstall') say('Electron 包目录残缺（缺 install.js），强制重装工作区依赖');
+  else if (action === 'install') say(`工作区依赖需要安装（${reason}）`);
+  else say(`工作区依赖无需安装（${reason}），仅补齐 Electron 运行时`);
+
+  if (action === 'install' || action === 'reinstall') {
+    const args = ['install', '--frozen-lockfile'];
+    if (action === 'reinstall') args.push('--force');
+    const code = await runPnpm(args, appRoot);
+    if (code !== 0) {
+      throw new Error('pnpm install --frozen-lockfile 失败：请检查网络与 pnpm-lock.yaml 是否与 package.json 一致');
+    }
+    const nodeModules = path.join(appRoot, 'node_modules');
+    deps.writeRecord(nodeModules, {
+      fingerprint: deps.workspaceFingerprint(appRoot).fingerprint,
+      phase: 'workspace',
+      installedAt: new Date().toISOString(),
+    });
+    say('工作区依赖已就绪');
   }
-  const nodeModules = path.join(appRoot, 'node_modules');
-  deps.writeRecord(nodeModules, {
-    fingerprint: deps.workspaceFingerprint(appRoot).fingerprint,
-    phase: 'workspace',
-    installedAt: new Date().toISOString(),
-  });
-  say('工作区依赖已就绪');
+  await ensureElectronRuntime();
 }
 
 /** 取 better-sqlite3 的 Electron ABI prebuild（优先 npmmirror 镜像） */
@@ -248,7 +275,7 @@ async function main() {
   sweepBrokenElectronStore();
 }
 
-module.exports = { sweepBrokenElectronStore };
+module.exports = { sweepBrokenElectronStore, workspaceAction };
 
 // 被测试脚本 require 时只导出清扫函数，不跑 CLI 主流程
 if (require.main === module) {
