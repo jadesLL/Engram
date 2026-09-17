@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const deps = require('./lib/deps');
 const { repairElectronRuntime } = require('./lib/electron-runtime');
+const { fetchNativeBinding } = require('./lib/native-binding');
 
 const appRoot = (() => {
   const i = process.argv.indexOf('--app-root');
@@ -180,7 +181,31 @@ async function ensureNativeBinding(serverNodeModules, electronVer) {
   }
   if (fs.existsSync(binding)) return;
 
-  // 兜底：从工作区 node_modules（含 .pnpm 存储）拷一份 binding。ABI 可能与 Electron 不符，
+  // 兜底一：问 Electron 运行时自己的 ABI，自己从镜像取 prebuild。
+  // 客户机实测 prebuild-install 静默失败（只有一条弃用警告、零错误输出），而 curl+tar 那条路可用。
+  const electronExe = path.join(appRoot, 'desktop', 'node_modules', 'electron', 'dist',
+    process.platform === 'win32' ? 'electron.exe' : 'electron');
+  if (electronVer && fs.existsSync(electronExe)) {
+    const captured = [];
+    const abiCode = await run(electronExe, ['-p', 'process.versions.modules'], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      capture: captured,
+    });
+    const abi = String(captured.join('')).trim();
+    if (abiCode === 0 && /^\d+$/.test(abi)) {
+      try {
+        const bsq3Version = JSON.parse(fs.readFileSync(path.join(bsq3Dir, 'package.json'), 'utf8')).version;
+        await fetchNativeBinding({ version: bsq3Version, abi, targetDir: path.dirname(binding), say });
+      } catch (e) {
+        say(`（自带 prebuild 兜底失败：${e && e.message ? e.message : e}）`);
+      }
+      if (fs.existsSync(binding)) return;
+    } else {
+      say('（问不出 Electron ABI，跳过自带 prebuild 兜底）');
+    }
+  }
+
+  // 兜底二：从工作区 node_modules（含 .pnpm 存储）拷一份 binding。ABI 可能与 Electron 不符，
   // 仅在系统 Node 与 Electron 同 ABI 时可用，故只作最后手段。
   const candidates = [path.join(appRoot, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')];
   const store = path.join(appRoot, 'node_modules', '.pnpm');
