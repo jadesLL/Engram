@@ -210,32 +210,35 @@ if (Test-Path (Join-Path $repoDir '.git')) {
   if ($code -ne 0) { StepLog "增量更新失败（git 退出码 $code）：$(Hint 'git 无错误输出')；继续用本地已有代码构建" }
   StepDone 'clone' '源码已就位（增量更新）'
 } else {
-  # 先不带凭据试一次：公开仓库（含 GitHub 公开库）直接过；私有仓库再按需补凭据，
-  # 这样公开仓库不再无谓地要求账号，私有仓库的失败也能给出「就是要凭据」的准确判断。
+  # 有凭据就带着克隆（安装器一律要求填写凭据）；只有命令行没给凭据时才先试匿名，
+  # 失败且像认证问题再按需补——公开仓库的 CLI 安装因此不必白填账号。
   $authPattern = '(?i)authentication|could not read username|terminal prompts|invalid username|permission denied|403|401|not found|repository not found'
-  $code = Invoke-Logged 'git' @('clone', '--branch', 'main', $RepoUrl, $repoDir)
-  if ($code -ne 0 -and -not $GiteaUser -and (Hint '') -match $authPattern) {
-    if ($NoPrompt) {
-      Out-Line '##AUTH:clone'
-      StepFail 'clone' '需要仓库凭据：这是私有仓库（或地址不存在）。请在安装器里填写账号与密码/访问令牌后重试'
-    }
-    # 交互式：问一次凭据再试（失败的首克隆可能留下半个目录，先清掉）
-    StepLog '需要仓库凭据，请输入后重试'
-    if (Test-Path $repoDir) { Remove-Item $repoDir -Recurse -Force -ErrorAction SilentlyContinue }
-    $GiteaUser = Read-Host '仓库账号（GitHub 填用户名）'
-    $sec = Read-Host '密码或访问令牌' -AsSecureString
-    $GiteaPass = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-      [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+  if ($GiteaUser -and $GiteaPass) {
     $authUrl = $RepoUrl -replace '://', "://$([Uri]::EscapeDataString($GiteaUser)):$([Uri]::EscapeDataString($GiteaPass))@"
     $code = Invoke-Logged 'git' @('clone', '--branch', 'main', $authUrl, $repoDir)
-  } elseif ($code -eq 0 -and -not $GiteaUser) {
-    StepLog '公开仓库，无需凭据'
+  } else {
+    $code = Invoke-Logged 'git' @('clone', '--branch', 'main', $RepoUrl, $repoDir)
+    if ($code -ne 0 -and (Hint '') -match $authPattern) {
+      if ($NoPrompt) {
+        Out-Line '##AUTH:clone'
+        StepFail 'clone' '需要仓库凭据：这是私有仓库（或地址不存在）。请在安装器里填写账号与密码/访问令牌后重试'
+      }
+      # 交互式：问一次凭据再试（失败的首克隆可能留下半个目录，先清掉）
+      StepLog '需要仓库凭据，请输入后重试'
+      if (Test-Path $repoDir) { Remove-Item $repoDir -Recurse -Force -ErrorAction SilentlyContinue }
+      $GiteaUser = Read-Host '仓库账号（GitHub 填用户名）'
+      $sec = Read-Host '密码或访问令牌' -AsSecureString
+      $GiteaPass = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+      $authUrl = $RepoUrl -replace '://', "://$([Uri]::EscapeDataString($GiteaUser)):$([Uri]::EscapeDataString($GiteaPass))@"
+      $code = Invoke-Logged 'git' @('clone', '--branch', 'main', $authUrl, $repoDir)
+    }
   }
   if ($code -ne 0) { StepFail 'clone' "克隆失败（git 退出码 $code）：$(Hint 'git 无错误输出')" }
   if ($GiteaUser) {
     StepDone 'clone' '凭据已保存在本机 .git\config，用于后续静默更新'
   } else {
-    StepDone 'clone' '源码已就位（公开仓库）'
+    StepDone 'clone' '源码已就位（克隆未使用凭据）'
   }
 }
 

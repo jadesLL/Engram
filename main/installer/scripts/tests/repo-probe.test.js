@@ -3,6 +3,8 @@
 // 两步流程的第二步全靠这个分类：判成 public 就直接开始安装，判成 private 才要凭据，
 // 判错会让公开仓库白要密码、或让私有仓库直接失败。这里把 git 的真实 stderr 原文喂进去。
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { classifyProbe, probeRepo } = require('../lib/repo-probe.js');
 
 const cases = [];
@@ -10,9 +12,16 @@ function test(name, fn) {
   cases.push({ name, fn });
 }
 
-test('退出码 0 = 公开仓库', () => {
+test('退出码 0 = 可匿名读取', () => {
   assert.equal(classifyProbe(0, '').status, 'public');
   assert.equal(classifyProbe(0, 'abc\trefs/heads/main\n').status, 'public');
+});
+
+test('探测参数必须清空凭据助手（否则本机缓存凭据会让私有库看起来是公开）', () => {
+  // 2026-09-18 实测：GIT_TERMINAL_PROMPT=0 只挡弹窗询问，挡不住 GCM 自动取用已存凭据——
+  // 私有库因此被判成公开并直接开装。这里守死 `-c credential.helper=` 这半边。
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'repo-probe.js'), 'utf8');
+  assert.ok(src.includes("'-c', 'credential.helper='"), '探测的 git 参数里必须清空凭据助手');
 });
 
 test('GitHub 私有库（"Repository not found"）判为需要凭据', () => {

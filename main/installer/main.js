@@ -4,7 +4,6 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
-const { DEFAULT_REPO_URL, readOriginFromGitConfig } = require('./scripts/lib/repo-url.js');
 const { probeRepo } = require('./scripts/lib/repo-probe.js');
 
 let win = null;
@@ -58,17 +57,6 @@ function resolveGitExe() {
  */
 function probe(rawUrl) {
   return probeRepo(rawUrl, { gitExe: resolveGitExe() });
-}
-
-/** 重装时用既有克隆的 origin 预填地址输入框 */
-function defaultRepoUrl() {
-  try {
-    const origin = readOriginFromGitConfig(fs.readFileSync(insideInstallRoot('.git', 'config'), 'utf8'));
-    if (origin) return origin;
-  } catch {
-    /* 没有既有克隆：用内置默认地址 */
-  }
-  return DEFAULT_REPO_URL;
 }
 
 function send(ch, data) {
@@ -206,7 +194,6 @@ app.whenReady().then(() => {
       return false;
     }
   });
-  ipcMain.handle('default-repo-url', () => defaultRepoUrl());
   ipcMain.handle('probe-repo', (_e, url) => probe(url));
 });
 
