@@ -79,17 +79,35 @@ async function runPnpm(args, cwd) {
 }
 
 /**
+ * Electron 包目录是否残缺。除了「剪枝删一半」（缺 package.json/install.js），还要挡「空文件」：
+ * 客户机实测（2026-09-17）install.js 只剩 0 字节，`node install.js` 于是静默退出 0、dist 永远补
+ * 不出来，而只按「文件存在」判定会一直走下载路径，每次都以「下载失败」收场。残缺只能重装依赖
+ * （pnpm install --force 会 refetch 被改坏的 store 文件）。
+ */
+function electronPackageBroken(electronDir) {
+  const installJs = path.join(electronDir, 'install.js');
+  const pkgJson = path.join(electronDir, 'package.json');
+  if (!fs.existsSync(installJs) || !fs.existsSync(pkgJson)) return true;
+  try {
+    if (fs.statSync(installJs).size < 200) return true; // electron 的 install.js 约 3KB，空/截断即残缺
+    return !JSON.parse(fs.readFileSync(pkgJson, 'utf8')).version;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * 工作区阶段的动作判定（拆成纯判定便于单测，见 tests/sync-deps.workspace.test.js）：
  *   skip      依赖与 Electron 运行时都齐 → 什么都不做
  *   install   依赖需要（重）装 → pnpm install --frozen-lockfile
- *   reinstall Electron 包目录被剪枝删一半（缺 install.js，补不回来）→ --force 重落整套依赖
+ *   reinstall Electron 包目录残缺（缺/空 install.js，补不回来）→ --force 重落整套依赖
  *   runtime   依赖齐但运行时缺（postinstall 失败的残局）→ 只补运行时，不整树重装
  */
 function workspaceAction(root) {
   const state = deps.workspaceInstallState(root);
   const electronDir = path.join(root, 'desktop', 'node_modules', 'electron');
-  // 包目录整个不在（全新机器）不算残缺，交给正常安装；在、但缺 install.js 才是剪枝残骸
-  const packageBroken = fs.existsSync(electronDir) && !fs.existsSync(path.join(electronDir, 'install.js'));
+  // 包目录整个不在（全新机器）不算残缺，交给正常安装
+  const packageBroken = fs.existsSync(electronDir) && electronPackageBroken(electronDir);
   if (packageBroken) return { action: 'reinstall', reason: state.reason };
   if (state.needed) return { action: 'install', reason: state.reason };
   if (!deps.electronRuntimeOk(root)) return { action: 'runtime', reason: state.reason };
@@ -183,7 +201,7 @@ async function ensureNativeBinding(serverNodeModules, electronVer) {
  */
 const ELECTRON_ENV_TRAPS = ['ELECTRON_SKIP_BINARY_DOWNLOAD', 'ELECTRON_OVERRIDE_DIST_PATH'];
 
-/** 下载失败时给出可判断的细节：退出码、install.js 的最后几行输出、dist 里到底有什么 */
+/** 下载失败时给出可判断的细节：退出码、install.js 大小与最后几行输出、dist 里到底有什么 */
 function describeInstallFailure(electronDir, code, captured) {
   const lines = captured
     .join('')
@@ -191,6 +209,12 @@ function describeInstallFailure(electronDir, code, captured) {
     .map((l) => l.trim())
     .filter(Boolean)
     .slice(-6);
+  let installJs = 'install.js 缺失';
+  try {
+    installJs = `install.js ${fs.statSync(path.join(electronDir, 'install.js')).size} 字节`;
+  } catch {
+    /* 缺就保持上面的文案 */
+  }
   let dist = '';
   try {
     const entries = fs.readdirSync(path.join(electronDir, 'dist'));
@@ -198,8 +222,8 @@ function describeInstallFailure(electronDir, code, captured) {
   } catch {
     dist = 'dist 目录不存在';
   }
-  const out = lines.length ? lines.join(' / ') : 'install.js 没有任何输出（多为环境开关让它静默跳过）';
-  return `install.js 退出码 ${code}，${dist}，输出：${out}`;
+  const out = lines.length ? lines.join(' / ') : 'install.js 没有任何输出（多为环境开关或空脚本让它静默跳过）';
+  return `install.js 退出码 ${code}，${installJs}，${dist}，输出：${out}`;
 }
 
 /** Electron 运行时缺失/残缺时补齐（约 110MB，仅首次；默认走 npmmirror 镜像） */
@@ -208,9 +232,9 @@ async function ensureElectronRuntime() {
   const exe = path.join(electronDir, 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
   const hasPackage = fs.existsSync(path.join(electronDir, 'package.json'));
   if (fs.existsSync(exe) && hasPackage) return;
-  if (!fs.existsSync(path.join(electronDir, 'install.js'))) {
-    // package.json/install.js 都没了：要么工作区依赖还没装，要么是剪枝删一半的残骸（install.js 补不回来）
-    throw new Error(`Electron 包缺失或不完整（${electronDir} 缺 package.json/install.js）：请先装工作区依赖，或删除该目录后重跑依赖安装`);
+  if (electronPackageBroken(electronDir)) {
+    // 缺/空 install.js、package.json 读不出：补不回来，只能重装依赖
+    throw new Error(`Electron 包缺失或不完整（${electronDir}）：请先装工作区依赖，或删除该目录后重跑依赖安装`);
   }
   say('Electron 运行时缺失，开始下载（约 110MB，默认 npmmirror 镜像）');
   const env = { ...process.env, ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || 'https://npmmirror.com/mirrors/electron/' };

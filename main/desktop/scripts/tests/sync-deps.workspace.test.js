@@ -47,8 +47,11 @@ function makeRoot({ withNodeModules = true, record = false, electron = null } = 
   if (electron) {
     const dir = path.join(root, 'desktop', 'node_modules', 'electron');
     fs.mkdirSync(dir, { recursive: true });
-    if (electron.package) fs.writeFileSync(path.join(dir, 'package.json'), '{}\n');
-    if (electron.installJs) fs.writeFileSync(path.join(dir, 'install.js'), '');
+    if (electron.package) {
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'electron', version: '36.9.5' }));
+    }
+    if (electron.installJs === 'empty') fs.writeFileSync(path.join(dir, 'install.js'), '');
+    else if (electron.installJs) fs.writeFileSync(path.join(dir, 'install.js'), '// electron install\n'.padEnd(300, ' '));
     if (electron.dist) {
       fs.mkdirSync(path.join(dir, 'dist'), { recursive: true });
       fs.writeFileSync(path.join(dir, 'dist', 'electron.exe'), '');
@@ -78,6 +81,11 @@ test('依赖齐、electron 包在但 dist 缺（postinstall 失败残局）→ �
 
 test('electron 包目录被剪枝删一半（缺 install.js）→ --force 重装整套依赖', () => {
   const root = makeRoot({ record: true, electron: { package: true, installJs: false, dist: false } });
+  assert.equal(workspaceAction(root).action, 'reinstall');
+});
+
+test('install.js 是空文件（0 字节，客户机实测）→ 按包残缺重装，不再徒劳下载', () => {
+  const root = makeRoot({ record: true, electron: { package: true, installJs: 'empty', dist: false } });
   assert.equal(workspaceAction(root).action, 'reinstall');
 });
 

@@ -30,6 +30,7 @@ test('带输出失败：报出 dist 内容与 install.js 的末几行', () => {
   noisy.push('RequestError: read ECONNRESET\n');
   const text = describeInstallFailure(dir, 1, noisy);
   assert.ok(text.includes('退出码 1'), text);
+  assert.ok(text.includes('install.js 缺失'), text);
   assert.ok(text.includes('dist 有 1 项'), text);
   assert.ok(text.includes('RequestError'), text);
   assert.ok(!text.includes('noise-0'), text); // 只留末尾几行，别把整段日志塞进提示
