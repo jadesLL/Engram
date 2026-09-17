@@ -19,7 +19,8 @@
     "asar": false,
     "files": [
       "main.js",
-      "ui.html"
+      "ui.html",
+      "scripts/lib/**/*.js"
     ],
     "extraResources": [
       {
