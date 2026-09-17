@@ -9,6 +9,9 @@ COPY web/package.json web/
 COPY desktop/package.json desktop/
 # 构建阶段无需原生模块，跳过 install 脚本
 RUN pnpm install --frozen-lockfile --ignore-scripts
+# .npmrc 必须在依赖层之后复制：它是给宿主机/客户机 pnpm install 的下载镜像（electron、
+# better-sqlite3 postinstall），镜像内 verify 的单测会断言它在位；放前面会让依赖层每次失效
+COPY .npmrc ./
 COPY server server
 COPY web web
 # desktop/scripts：依赖同步（sync-deps.js）与桌面端脚本的单测，随 verify 目标一起跑
