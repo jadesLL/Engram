@@ -11,6 +11,11 @@ let pollTimer = null;
 let processed = 0; // 已消费的日志字符数
 
 function scriptPath() {
+  // 已装过的机器优先用克隆里的引擎脚本：它随 git pull 更新，引擎侧的修复（如日志编码）
+  // 因此不必重打安装器 exe 就能到客户机——2026-09-18 就因为 exe 里是打包时的旧脚本，
+  // 客户机的 GUI 日志一直是乱码。
+  const cloned = path.join(process.env.LOCALAPPDATA || '', 'engram', 'Engram', 'main', 'scripts', 'install-engram.ps1');
+  if (fs.existsSync(cloned)) return cloned;
   // 打包后 ps1 在 resources 根（extraResources 不进 asar）；开发态直接用仓库脚本
   return app.isPackaged
     ? path.join(process.resourcesPath, 'install-engram.ps1')
