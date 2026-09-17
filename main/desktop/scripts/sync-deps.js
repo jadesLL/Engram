@@ -261,7 +261,8 @@ async function ensureElectronRuntime() {
     // install.js 这条链会吞掉失败细节（客户机实测：退出码 0、无输出、dist 只剩 locales/），
     // 故不再直接失败，改用安装器自带的下载+解压+逐项校验兜底。
     say(`install.js 未能补出运行时：${describeInstallFailure(electronDir, code, captured)}`);
-    await repairElectronRuntime(electronDir, deps.electronVersion(appRoot), { say });
+    const version = JSON.parse(fs.readFileSync(path.join(electronDir, 'package.json'), 'utf8')).version;
+    await repairElectronRuntime(electronDir, version, { say });
   }
   if (!fs.existsSync(exe)) {
     throw new Error(`Electron 运行时仍不可用（缺 ${exe}）：请把 ${electronDir} 加入杀软白名单后重试`);
