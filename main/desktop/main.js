@@ -7,6 +7,7 @@ const { fork } = require('node:child_process');
 const { spawn } = require('node:child_process');
 const net = require('node:net');
 const dataDirLib = require('./lib/data-dir');
+const depsLib = require('./lib/deps');
 
 // 主进程没有全局兜底时，任何未处理的 Promise 拒绝都会让整个应用静默退出
 // （Node ≥15 语义；本应用多处后台任务不 await，必须自己接住）。
@@ -1080,10 +1081,42 @@ ipcMain.handle('desktop-update-set-auto', (_e, enabled) => {
 // 依赖与 better-sqlite3 的 Electron ABI binding。仍不走 powershell（GUI 进程 spawn powershell
 // 行为不可控：句柄为 null 静默秒退、管道场景构建拖慢几十倍，均实测），但 pnpm 本身是 Node CLI，
 // 可以用 Electron 自带的 node 模式直接 fork，不需要任何 shell。
+// 例外：本次更新要换 Electron 运行时时改走「交接」路径（见 runtimeSwapPending）——换运行时
+// 必须先退出应用，否则 pnpm 删旧版 store 目录只能删一半，留下残骸把后续启动打挂。
 const appRootDir = path.join(__dirname, '..');
 const syncDepsEntry = () => path.join(appRootDir, 'desktop', 'scripts', 'sync-deps.js');
 /** 更新进行中标志：防止重复点击触发两次 pull/构建 */
 let sourceUpdating = false;
+
+/**
+ * 本次更新是否需要更换正在运行的 Electron 运行时。换版本时 pnpm 会剪枝掉旧版的 store 目录，
+ * 而 Windows 不允许删应用正在使用的 electron.exe 与被映射的 dll，只能删一半（package.json 没了、
+ * 只剩 dist），残骸不是可加载的应用 —— 之后任何解析到该目录的启动方式都会弹
+ * 「Unable to find Electron app」并退出（2026-09-17 客户实例实测）。判定见 lib/deps.js。
+ */
+function runtimeSwapPending() {
+  return depsLib.electronRuntimeSwapPending(appRootDir);
+}
+
+/**
+ * 把更新交接给 source-root 里的更新脚本：fork 一个中转进程（app.exit 后仍存活），由它新开控制台
+ * 窗口跑 scripts/update-from-source.ps1（同步依赖 → 构建 → 启动），本进程随即退出把文件让出来。
+ * 与卸载走 uninstall-launcher 同理：GUI 进程直接 spawn powershell 会空句柄秒退，必须经 Node 中转。
+ */
+function handOffSourceUpdate() {
+  return new Promise((resolve) => {
+    const root = sourceInstallRoot();
+    if (!root) return resolve(false);
+    const child = fork(path.join(__dirname, 'scripts', 'update-handoff-launcher.js'), ['--root', root], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    // 等中转进程自己退出：它退出码为 0 才算更新脚本已交出去（非零=脚本缺失/起不来，不能关应用）
+    child.once('exit', (code) => resolve(code === 0));
+    child.once('error', () => resolve(false));
+    setTimeout(() => resolve(false), 8000);
+  });
+}
 
 function gitArgs(args) {
   return { cmd: 'git', args: ['-C', appRootDir, ...args] };
@@ -1410,6 +1443,21 @@ async function runSourceUpdate() {
     updateWin = null;
     showMainWindow();
     return { ok: false, error: describeError(e) + '（本地有未提交改动时请先提交/暂存）' };
+  }
+  // 换 Electron 运行时不能在应用运行时做：交接给更新脚本，退出后由它同步依赖、构建并启动
+  if (runtimeSwapPending()) {
+    const scriptRel = path.join('main', 'scripts', 'update-from-source.ps1');
+    setUpdateStep('本次更新包含 Electron 运行时升级，正在交接给更新脚本…');
+    appendUpdateLog('> 运行时升级要先退出应用：将打开「Engram 更新」窗口完成，完成后自动启动');
+    if (!(await handOffSourceUpdate())) {
+      failUpdateProgress('无法启动更新脚本，请手动运行 ' + scriptRel);
+      showMainWindow();
+      return { ok: false, error: `运行时升级需要退出应用后完成：请手动运行 ${scriptRel}` };
+    }
+    await new Promise((r) => setTimeout(r, 2500)); // 让进度小窗把提示显示完整
+    await stopLocalChild(); // 优雅停内嵌 server（数据库落盘），其余进程由更新脚本清理
+    app.exit(0);
+    return { ok: true, restarting: true };
   }
   try {
     // 依赖同步交给 sync-deps.js：按依赖指纹判断，真变了才 pnpm install（联网），

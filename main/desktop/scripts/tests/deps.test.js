@@ -127,6 +127,34 @@ test('server 安装判定：binding 缺失或 Electron 版本变化都要求重�
   assert.match(deps.serverInstallState(root).nativeReason, /Electron 版本变化/);
 });
 
+test('Electron 运行时残骸（剪枝删一半）算不完整，并要求重装', () => {
+  const root = makeApp();
+  const electronDir = path.join(root, 'desktop/node_modules/electron');
+  fs.mkdirSync(path.join(electronDir, 'dist'), { recursive: true });
+  fs.writeFileSync(path.join(electronDir, 'dist/electron.exe'), '');
+  // 只剩 dist、package.json 被删 = Windows 上 pnpm 剪枝删一半留下的残骸（2026-09-17 实测形态）
+  assert.equal(deps.electronRuntimeOk(root), false);
+  assert.equal(deps.serverInstallState(root).needsElectronRuntime, true);
+
+  fs.writeFileSync(path.join(electronDir, 'package.json'), JSON.stringify({ name: 'electron', version: '35.7.5' }));
+  assert.equal(deps.electronRuntimeOk(root), true);
+  assert.equal(deps.serverInstallState(root).needsElectronRuntime, false);
+});
+
+test('lockfile 不再认当前 Electron 版本时判定为本次更新要换运行时', () => {
+  const root = makeApp();
+  fs.mkdirSync(path.join(root, 'desktop/node_modules/electron'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'desktop/node_modules/electron/package.json'),
+    JSON.stringify({ name: 'electron', version: '35.7.5' }),
+  );
+  fs.writeFileSync(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n  electron@35.7.5:\n    resolution: {}\n');
+  assert.equal(deps.electronRuntimeSwapPending(root), false);
+
+  fs.writeFileSync(path.join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n  electron@36.9.5:\n    resolution: {}\n');
+  assert.equal(deps.electronRuntimeSwapPending(root), true);
+});
+
 test('resolvePnpmEntry：无共享副本时返回 null，有副本时返回入口', () => {
   const root = makeApp();
   assert.equal(deps.resolvePnpmEntry(root), null);

@@ -115,7 +115,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 1. 从 **[源码版安装器（固定链接，永远最新）](https://github.com/jadesLL/Engram/releases/download/installer-latest/Engram-source-setup.exe)** 下载 `Engram-source-setup.exe`（或取仓库内 `main/scripts/install-engram.ps1` 用 PowerShell 运行），双击后全自动：下载便携 Git/Node/pnpm（免管理员，装在 `%LOCALAPPDATA%\engram`）→ 克隆源码（公开仓库无需凭据）→ 构建桌面端 → 生成桌面快捷方式并启动。该链接固定指向最新引导器、**不绑版本号**——装机逻辑（clone 地址、pnpm 版本等）更新后单独重发布即可，不必等发版（见 [GITEA-CI.md](main/docs/GITEA-CI.md)）
 2. 日常双击桌面「Engram」直接启动（Engram 品牌图标，无更新窗口）；更新走应用内 设置 → 软件更新 → 「检查更新」（增量拉源码重建重启），或手动运行 `main/scripts/update-from-source.ps1`——合 main 即更新，无需等发版
-3. 更新是全自动的：**依赖清单真变化时应用内会自己装依赖**（`pnpm install`，含 desktop/server 运行时依赖与 better-sqlite3 的 Electron 原生模块），不需要再去终端跑脚本；判断依据是「依赖指纹」（lockfile/workspace 配置 + 各 package.json 的依赖字段），`appId` 之类的元信息改动不会误报。源码模式默认**自动检查更新**（启动后检查一次，之后每 8 小时复查），发现新提交时只弹系统通知 + 设置页提示，更新时机仍由你点「更新并重启」决定，不会自动重启
+3. 更新是全自动的：**依赖清单真变化时应用内会自己装依赖**（`pnpm install`，含 desktop/server 运行时依赖与 better-sqlite3 的 Electron 原生模块），不需要再去终端跑脚本；判断依据是「依赖指纹」（lockfile/workspace 配置 + 各 package.json 的依赖字段），`appId` 之类的元信息改动不会误报。源码模式默认**自动检查更新**（启动后检查一次，之后每 8 小时复查），发现新提交时只弹系统通知 + 设置页提示，更新时机仍由你点「更新并重启」决定，不会自动重启。**例外**：本次更新要换 Electron 运行时时（如 Electron 35 → 36），应用内会交接给 `update-from-source.ps1` 并在退出后打开一个更新控制台窗口完成（同步依赖 → 构建 → 自动启动）——因为运行时不能在应用自己还在跑的时候替换（Windows 删不掉正在使用的 `electron.exe`，pnpm 剪枝只会删一半，留下解析不到应用的残骸）
 4. 源码模式怎么确认「更新到了哪一版」：设置 → 账户与外观 → 「应用版本」显示 `版本号 · 提交号 · 提交日期`（工作区有未提交改动时提交号带 `-dirty`），软件更新页右上角同样带提交号，「检查更新」显示本地 → 远端提交号对比。**版本号只在正式发版时变，提交号随每次更新变**，以提交号判断是否已更新到最新代码（与 Docker 镜像、安装包的版本号语义一致）
 5. 卸载：应用内 设置 → 软件更新 → 「卸载 Engram」，自动停止应用、删除桌面快捷方式与整个安装目录；知识库数据 `%APPDATA%\@engram\desktop` 默认保留，确认不要可勾选一并删除。也可手动运行 `main/scripts/uninstall-engram.ps1`。全局 pnpm 不受影响
 

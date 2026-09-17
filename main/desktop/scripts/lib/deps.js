@@ -118,11 +118,35 @@ function workspaceInstallState(appRoot) {
 }
 
 /**
+ * Electron 运行时是否完整。只看 dist/electron.exe 会把「剪枝删一半的残骸」误判成可用：
+ * Windows 上 pnpm 删不掉正在使用的 electron.exe 与被映射的 dll，会留下只剩 dist、package.json
+ * 已被删的 store 目录（2026-09-17 实测：更新换 Electron 版本后 .pnpm/electron@<旧版本> 就长这样）。
+ * 残骸不是可加载的应用，任何解析到它的启动方式都会弹「Unable to find Electron app」并退出。
+ */
+function electronRuntimeOk(appRoot) {
+  const dir = path.join(appRoot, 'desktop', 'node_modules', 'electron');
+  return fs.existsSync(path.join(dir, 'package.json')) && fs.existsSync(path.join(dir, 'dist', 'electron.exe'));
+}
+
+/**
+ * 拉取后的代码是否要换掉当前正在用的 Electron 运行时。换运行时时 pnpm 会剪枝旧版的 store 目录，
+ * 必须先把应用退出（否则 Windows 删不掉正在使用的 electron.exe，只能删一半留下残骸）。
+ * 判定依据：lockfile 里不再出现 electron@<当前安装版本> —— 版本没变就一定还在。
+ */
+function electronRuntimeSwapPending(appRoot) {
+  const linked = electronVersion(appRoot);
+  if (!linked) return false; // 读不到当前版本就不擅自改流程
+  const lock = readText(path.join(appRoot, 'pnpm-lock.yaml'));
+  if (lock === null) return false;
+  return !lock.includes(`electron@${linked}`);
+}
+
+/**
  * desktop/server 运行时依赖状态。
  *  - needsInstall：prod 依赖需要（重）装
  *  - needsNative：better-sqlite3 的 Electron ABI binding 需要（重）取——文件缺失，
  *    或 Electron / better-sqlite3 版本变了（pnpm 的 install 脚本可能装成系统 Node 的 ABI）
- *  - needsElectronRuntime：Electron 运行时缺失（pnpm 升级 electron 包后 dist 可能没落盘）
+ *  - needsElectronRuntime：Electron 运行时缺失或被剪枝删了一半（缺 package.json）
  */
 function serverInstallState(appRoot) {
   const serverDir = path.join(appRoot, 'desktop', 'server');
@@ -130,7 +154,6 @@ function serverInstallState(appRoot) {
   const { fingerprint } = serverFingerprint(appRoot);
   const record = readRecord(nodeModules);
   const binding = path.join(nodeModules, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node');
-  const electronExe = path.join(appRoot, 'desktop', 'node_modules', 'electron', 'dist', 'electron.exe');
   const hasNodeModules = fs.existsSync(nodeModules);
 
   let installReason = '';
@@ -150,7 +173,7 @@ function serverInstallState(appRoot) {
     installReason,
     needsNative: Boolean(nativeReason),
     nativeReason,
-    needsElectronRuntime: !fs.existsSync(electronExe),
+    needsElectronRuntime: !electronRuntimeOk(appRoot),
     electronVersion: electronVersion(appRoot),
     betterSqlite3Version: betterSqlite3Version(appRoot),
   };
@@ -198,6 +221,8 @@ module.exports = {
   serverFingerprint,
   workspaceInstallState,
   serverInstallState,
+  electronRuntimeOk,
+  electronRuntimeSwapPending,
   resolvePnpmEntry,
   lockfileRegistry,
   readRecord,

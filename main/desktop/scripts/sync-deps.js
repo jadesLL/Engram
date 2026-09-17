@@ -74,12 +74,18 @@ async function runPnpm(args, cwd) {
 /** 工作区阶段：构建前，依赖变化才 pnpm install --frozen-lockfile */
 async function syncWorkspace() {
   const state = deps.workspaceInstallState(appRoot);
-  if (!state.needed) {
+  // Electron 运行时目录残缺（package.json 被剪枝删掉）时依赖指纹可能判定「无变化」而不装，
+  // 运行时永远修不回来；这种情况按必须装处理，并用 --force 让 pnpm 重新落盘整套依赖。
+  const runtimeBroken = !deps.electronRuntimeOk(appRoot);
+  if (!state.needed && !runtimeBroken) {
     say(`工作区依赖无需安装（${state.reason}）`);
     return;
   }
-  say(`工作区依赖需要安装（${state.reason}）`);
-  const code = await runPnpm(['install', '--frozen-lockfile'], appRoot);
+  if (runtimeBroken) say('Electron 运行时目录不完整（缺 package.json 或 dist），强制重装工作区依赖');
+  else say(`工作区依赖需要安装（${state.reason}）`);
+  const args = ['install', '--frozen-lockfile'];
+  if (runtimeBroken) args.push('--force');
+  const code = await runPnpm(args, appRoot);
   if (code !== 0) {
     throw new Error('pnpm install --frozen-lockfile 失败：请检查网络与 pnpm-lock.yaml 是否与 package.json 一致');
   }
@@ -136,13 +142,15 @@ async function ensureNativeBinding(serverNodeModules, electronVer) {
   say(`回退拷贝 better-sqlite3 binding ← ${src}（ABI 可能与 Electron 不符）`);
 }
 
-/** Electron 运行时缺失时下载（约 110MB，仅首次；默认走 npmmirror 镜像） */
+/** Electron 运行时缺失/残缺时补齐（约 110MB，仅首次；默认走 npmmirror 镜像） */
 async function ensureElectronRuntime() {
   const electronDir = path.join(appRoot, 'desktop', 'node_modules', 'electron');
   const exe = path.join(electronDir, 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
-  if (fs.existsSync(exe)) return;
+  const hasPackage = fs.existsSync(path.join(electronDir, 'package.json'));
+  if (fs.existsSync(exe) && hasPackage) return;
   if (!fs.existsSync(path.join(electronDir, 'install.js'))) {
-    throw new Error(`Electron 运行时缺失且找不到 ${electronDir}/install.js（请先安装工作区依赖）`);
+    // package.json/install.js 都没了：要么工作区依赖还没装，要么是剪枝删一半的残骸（install.js 补不回来）
+    throw new Error(`Electron 包缺失或不完整（${electronDir} 缺 package.json/install.js）：请先装工作区依赖，或删除该目录后重跑依赖安装`);
   }
   say('Electron 运行时缺失，开始下载（约 110MB，默认 npmmirror 镜像）');
   const env = { ...process.env, ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || 'https://npmmirror.com/mirrors/electron/' };
@@ -195,6 +203,40 @@ async function syncServer() {
   say('desktop/server 运行时依赖已就绪');
 }
 
+/**
+ * 清扫 Electron 运行时残骸：pnpm 剪枝在 Windows 上删不掉正在使用的 electron.exe 与被映射的 dll，
+ * 会把旧版本的 store 目录删成「只剩 dist、package.json 已没了」的半成品。残骸不是可加载的应用，
+ * 一旦有启动方式解析到它（如从 electron 包位置推算应用目录）就必弹「Unable to find Electron app」，
+ * 故每次依赖同步后顺手清掉；当前链接指向的那份哪怕残缺也留着，交给工作区阶段的强制重装修复。
+ */
+function sweepBrokenElectronStore(root = appRoot) {
+  const store = path.join(root, 'node_modules', '.pnpm');
+  let linkedReal = '';
+  try {
+    linkedReal = fs.realpathSync(path.join(root, 'desktop', 'node_modules', 'electron')).toLowerCase();
+  } catch {
+    /* 链接缺失或悬空：没有要保护的目标 */
+  }
+  let names = [];
+  try {
+    names = fs.readdirSync(store).filter((n) => /^electron@/.test(n));
+  } catch {
+    return; // 无 .pnpm 存储
+  }
+  for (const name of names) {
+    const dir = path.join(store, name);
+    const pkgDir = path.join(dir, 'node_modules', 'electron');
+    if (fs.existsSync(path.join(pkgDir, 'package.json'))) continue;
+    if (linkedReal && pkgDir.toLowerCase() === linkedReal) continue;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      say(`清理 Electron 运行时残骸：node_modules/.pnpm/${name}（包目录缺 package.json）`);
+    } catch (e) {
+      say(`（残骸 .pnpm/${name} 暂时删不掉，忽略：${e && e.message ? e.message : e}）`);
+    }
+  }
+}
+
 async function main() {
   if (phase !== 'workspace' && phase !== 'server') {
     process.stderr.write('用法：node desktop/scripts/sync-deps.js <workspace|server> [--app-root <main 目录>]\n');
@@ -203,9 +245,15 @@ async function main() {
   say(`应用目录 ${appRoot}`);
   if (phase === 'workspace') await syncWorkspace();
   else await syncServer();
+  sweepBrokenElectronStore();
 }
 
-main().catch((e) => {
-  process.stderr.write(`[deps] 失败：${e && e.message ? e.message : e}\n`);
-  process.exit(1);
-});
+module.exports = { sweepBrokenElectronStore };
+
+// 被测试脚本 require 时只导出清扫函数，不跑 CLI 主流程
+if (require.main === module) {
+  main().catch((e) => {
+    process.stderr.write(`[deps] 失败：${e && e.message ? e.message : e}\n`);
+    process.exit(1);
+  });
+}
