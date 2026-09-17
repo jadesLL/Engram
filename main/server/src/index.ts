@@ -26,7 +26,7 @@ import { trashRoutes } from './routes/trash.js';
 import { officeRoutes } from './routes/office.js';
 import { syncRoutes } from './routes/sync.js';
 import { hubUpdateRoutes } from './routes/syncHubUpdate.js';
-import { initSync, currentRole } from './sync/index.js';
+import { initSync } from './sync/index.js';
 import { migrateConflictBackupDir } from './sync/hub.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { mcpRoutes } from './mcp/server.js';
@@ -120,10 +120,10 @@ async function main() {
   // （进程级单例：双监听共享一份，createApp() 只做路由装配不碰数据）
   await scanVault();
   migrateLegacySystemFiles();
-  // 旧版 AIWorks/同步冲突/ 备份页迁到顶级 同步冲突/（须先于 ensureSystemFiles，避免新旧说明页撞名）。
-  // 仅数据权威端（hub/未组网端）执行：成员端搬走后会被未更新 hub 的对账拉回，且 commit()
-  // 属中枢通道会污染成员端 oplog——成员端的旧页由 hub 迁移发出的 move op 传播搬走。
-  if (currentRole() !== 'member') migrateConflictBackupDir();
+  // 旧版冲突备份遗留（AIWorks/同步冲突/ 备份页、记录页、过时说明页）入回收站：须先于
+  // ensureSystemFiles，避免新旧说明页撞名。各角色都跑——成员端也有本地遗留（早期接入或
+  // 从旧快照播种），且删除经同步链路传播，不再依赖中枢单方面清理。
+  migrateConflictBackupDir();
   // 预置 AIWorks 系统区页面（操作日志/同步冲突说明等，缺失即建），并重建索引与关系结构
   ensureSystemFiles();
   cleanupSystemPages();

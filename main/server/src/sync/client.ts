@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { emit } from '../lib/events.js';
 import { getSetting } from '../lib/db.js';
 import { consumeSseStream } from '../lib/sseStream.js';
-import { safeJoin, syncPageFile, movePage, toRel } from '../lib/vault.js';
+import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
@@ -245,7 +245,11 @@ function applyRemoteOp(op: any): void {
     } else if (op.kind === 'delete') {
       try {
         moveToTrash(target, 'sync');
-      } catch { /* 本端没有该文件/已删除 */ }
+      } catch {
+        // 本端没有该文件（从没拉到/已被带外删除）：索引行仍要落删除标记，
+        // 否则行停在 deleted = 0，侧栏留下点开报「文件不存在」的幽灵页
+        markPageDeleted(target);
+      }
     } else if (op.kind === 'move') {
       try {
         movePage(String(op.old_path || ''), target, 'sync');

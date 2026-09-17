@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { now, db } from '../lib/db.js';
 import { emit } from '../lib/events.js';
-import { safeJoin, syncPageFile, movePage } from '../lib/vault.js';
+import { safeJoin, syncPageFile, movePage, markPageDeleted, notifySyncChange } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { merge3 } from './merge.js';
@@ -136,10 +136,14 @@ function applyConflictResolution(target: string, hubRaw: string, theirsRaw: stri
 
 /**
  * 一次性迁移：冲突备份机制已废弃（改为最新者胜 + 原目录重命名副本）。
- *  - AIWorks 下用户无法自行删除的冲突遗留（AIWorks/同步冲突/*、记录页 conflict.md）入回收站；
- *  - 顶级 同步冲突/ 的历史备份页（说明页之外）是用户可删内容，保留原样由用户自行处理，
- *    其中的说明页已过时，入回收站。
- * 仅数据权威端（hub/未组网端）执行；成员端的清理由 hub 发出的 delete op 传播完成。
+ * 该机制产生的页面全部入回收站（可恢复）：
+ *  - AIWorks 下用户无法自行删除的遗留（AIWorks/同步冲突/*、记录页 conflict.md）；
+ *  - 顶级 同步冲突/ 的历史备份页与过时说明页（含冲突败者内容，但机制已废，不再展示）。
+ * 各角色都执行：成员端没有中枢迁移可依赖（后加入的成员游标从当前水位起，收不到早期
+ * delete op；从旧快照播种的库更是一路留着这些页），而侧栏「AI 工作区」按路径列出
+ * AIWorks/ 下全部页面，遗留会长期显示。删除经 notifySyncChange 入同步链路
+ * （中枢=本地提交广播，成员=推送队列），删除会传播到中枢与其余成员，不会只清本端
+ * 后被对账拉回。
  */
 export function migrateConflictBackupDir(): void {
   let rows: { path: string }[] = [];
@@ -147,7 +151,7 @@ export function migrateConflictBackupDir(): void {
     rows = db
       .prepare(
         `SELECT path FROM pages WHERE deleted = 0 AND (
-           path LIKE 'AIWorks/同步冲突/%' OR path = 'AIWorks/log/conflict.md' OR path = '同步冲突/说明.md'
+           path LIKE 'AIWorks/同步冲突/%' OR path = 'AIWorks/log/conflict.md' OR path LIKE '同步冲突/%'
          )`,
       )
       .all() as { path: string }[];
@@ -156,8 +160,11 @@ export function migrateConflictBackupDir(): void {
   }
   for (const { path: rel } of rows) {
     try {
-      moveToTrash(rel, 'sync');
-      commit('delete', rel, HUB_ACTOR);
+      // 文件已被带外删除（只剩索引行）时 moveToTrash 会抛错，此时直接落删除标记，
+      // 否则行停在 deleted = 0，侧栏留下点开报「文件不存在」的幽灵页
+      if (fs.existsSync(safeJoin(rel))) moveToTrash(rel, 'sync');
+      else markPageDeleted(rel);
+      notifySyncChange('delete', rel);
     } catch {
       // 单页清理失败不阻塞其余迁移与启动
     }
