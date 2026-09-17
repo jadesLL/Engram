@@ -9,7 +9,7 @@
     "dev:web": "pnpm --filter @engram/web run dev",
     "build": "pnpm -r run build",
     "start": "pnpm --filter @engram/server run start",
-    "test": "pnpm --filter @engram/server run test && node desktop/scripts/tests/deps.test.js && node desktop/scripts/tests/sync-deps.sweep.test.js && node desktop/scripts/tests/data-dir.test.js && node installer/scripts/tests/publish-installer.test.js && node installer/scripts/tests/installer-error-capture.test.js && node installer/scripts/tests/installer-markers.test.js",
+    "test": "pnpm --filter @engram/server run test && node desktop/scripts/tests/deps.test.js && node desktop/scripts/tests/sync-deps.sweep.test.js && node desktop/scripts/tests/relative-requires.test.js && node desktop/scripts/tests/data-dir.test.js && node installer/scripts/tests/publish-installer.test.js && node installer/scripts/tests/installer-error-capture.test.js && node installer/scripts/tests/installer-markers.test.js",
     "typecheck": "pnpm -r run typecheck",
     "build:desktop": "pnpm --filter @engram/server build && pnpm --filter @engram/web build && node desktop/scripts/prepare-desktop.js && (pnpm -C desktop/server install --prod --node-linker=hoisted --ignore-workspace --no-frozen-lockfile || true) && pnpm --filter @engram/desktop dist"
   },
