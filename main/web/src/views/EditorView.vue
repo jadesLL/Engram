@@ -297,7 +297,7 @@
           </svg>
         </div>
         <h2>欢迎来到 Engram</h2>
-        <p class="muted">不内置 AI 的知识大脑：导入资料，用你的外部 Agent（ZCode / Codex / Claude Code…）经 MCP 或 CLI 提炼与问答。</p>
+        <p class="muted">内核不内置 AI 的知识大脑：导入资料，用外部 Agent（ZCode / Codex / Claude Code…）经 MCP 或 CLI 提炼与问答；也可以用左栏 ✨ 打开随包内置的 Agent 直接开问。</p>
         <div class="welcome-actions">
           <button class="btn primary" @click="createFirst">新建页面</button>
           <button class="btn" @click="$router.push('/search')">搜索知识库</button>

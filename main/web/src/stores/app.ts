@@ -49,6 +49,10 @@ export const useAppStore = defineStore('app', {
         failed: 0,
         queueRunning: true,
       },
+      /** 内置 Agent 聊天抽屉：开合、宽度与未读提示 */
+      chatDrawerOpen: false,
+      chatDrawerWidth: Number(localStorage.getItem('chatDrawerWidth')) || 420,
+      chatUnread: false,
     };
   },
   actions: {
@@ -87,6 +91,15 @@ export const useAppStore = defineStore('app', {
     },
     bumpSidebar() {
       this.sidebarVersion++;
+    },
+    /** 开合聊天抽屉：打开即清未读 */
+    toggleChat(open?: boolean) {
+      this.chatDrawerOpen = open ?? !this.chatDrawerOpen;
+      if (this.chatDrawerOpen) this.chatUnread = false;
+    },
+    setChatDrawerWidth(width: number) {
+      this.chatDrawerWidth = Math.min(720, Math.max(320, Math.round(width)));
+      localStorage.setItem('chatDrawerWidth', String(this.chatDrawerWidth));
     },
     /** 应用服务端推送的页面事件：记录事件 + 自增版本号 + 刷新侧栏 */
     applyPageEvent(ev: any) {

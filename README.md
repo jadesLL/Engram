@@ -2,9 +2,9 @@
   <img src="main/docs/brand/logo-lockup.svg" alt="Engram" width="440" />
 </p>
 
-# Engram — 个人知识大脑（外部 Agent 驱动）
+# Engram — 个人知识大脑（确定性内核 + Agent 驱动）
 
-一个**不内置任何 AI** 的自托管知识库：Markdown 文件是权威数据源，Engram 负责存储、文档解析、关键词检索与**确定性写入门禁**；读、写、提炼、综合、问答全部由你选用的外部 Agent（ZCode / Codex / Claude Code / Kimi / Cursor 等）通过 **MCP** 或 **CLI** 完成。模型与费用始终掌握在你自己的 Agent 订阅里，知识库零 API Key。
+一个**内核不内置任何 AI** 的自托管知识库：Markdown 文件是权威数据源，Engram 负责存储、文档解析、关键词检索与**确定性写入门禁**；读、写、提炼、综合、问答由 Agent 通过 **MCP** 或 **CLI** 完成——既可以用你已有的外部 Agent（ZCode / Codex / Claude Code / Kimi / Cursor 等），也可以用 Engram **随包内置的 Agent**（内嵌 DeepSeek Harness 的聊天抽屉，配一把你自己的模型 Key 即可开口）。两条路都走同一套 MCP 工具与证据门禁；不配 Key 时内置 Agent 不出网，知识库依旧零 API Key。
 
 ## 工作流
 
@@ -25,6 +25,14 @@
 - **质量由确定性门禁兜底**：引文逐字校验（编造即拒绝）、新建概念/实体页两来源门禁（≥2 个不同原始资料路径各 1 条引文，或单路径 ≥2 条）、每次写入自动记入 `Wiki/log.md` 操作日志与证据账本（编辑器「来源证据」抽屉可逐条复核）。
 
 ## 功能总览
+
+### ✨ 内置 Agent（聊天抽屉）
+
+- **随包内置、开箱即用**：DeepSeek Harness（dsh）作为依赖随桌面端与 Docker 镜像一起发，无需另外安装；左栏点亮 ✨ 打开聊天抽屉，输入问题即可
+- **只读沙箱 + 仅经 MCP 工具**：Agent 的工作目录是数据目录下的空壳 `data/dsh/workspace`，不是知识库目录；知识库的读写全部经 `mcp__engram__*` 工具，因此 `write_page` 的证据逐字校验、两来源门禁与操作日志照常生效
+- **按步呈现**：工具调用（检索 / 读页 / 写页…）作为执行卡片实时出现，助手正文在该步提交后整段到达；可随时「停止」，可把一轮对话「沉淀到原始资料」供后续提炼
+- **自己的 Key、自己的账**：模型与 Key 填在 设置 → Agent 接入 → 内置 Agent（仅存本机数据库，运行时经环境变量注入）；不填就不能对话，Engram 其余功能完全不受影响
+- **会话与桌面/Docker 一致**：会话与消息存本机库（`assistant_*` 表），dsh 自身的会话日志随 `data/dsh/` 走持久卷，续聊不丢上下文
 
 ### 🧠 面向 Agent 的 MCP 接口（15 工具）
 

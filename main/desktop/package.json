@@ -31,7 +31,10 @@
     "asarUnpack": [
       "server/node_modules/**/better-sqlite3/**",
       "server/node_modules/**/sqlite-vec*/**",
-      "server/node_modules/@napi-rs/canvas*/**"
+      "server/node_modules/@napi-rs/canvas*/**",
+      "server/node_modules/**/*.node",
+      "server/node_modules/**/*.dll",
+      "server/node_modules/**/*.exe"
     ],
     "win": {
       "target": [

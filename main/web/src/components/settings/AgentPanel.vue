@@ -7,6 +7,49 @@
       </div>
     </div>
 
+    <SettingsGroup
+      title="内置 Agent（聊天抽屉）"
+      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉，Agent 只读沙箱 + 仅经 MCP 工具读写知识库"
+    >
+      <div class="builtin-rows">
+        <div class="builtin-row">
+          <span>dsh 运行时</span>
+          <strong :class="status.bundled ? 'ok' : 'warn'">
+            {{ status.bundled ? '已随包内置' : '未找到（依赖缺失）' }}
+          </strong>
+        </div>
+        <div class="builtin-row">
+          <span>模型凭据</span>
+          <strong :class="status.hasKey ? 'ok' : 'warn'">
+            {{ status.hasKey ? '已配置' : '未配置（未配置前无法对话）' }}
+          </strong>
+        </div>
+        <div class="builtin-row">
+          <span>工作目录</span>
+          <strong class="path-value">{{ status.workspace }}</strong>
+        </div>
+      </div>
+
+      <div class="builtin-form">
+        <label>
+          <span>模型</span>
+          <input v-model="model" placeholder="留空用默认（deepseek-v4-flash）" @keyup.enter="saveBuiltin" />
+        </label>
+        <label>
+          <span>API Key</span>
+          <SecretField id="agent-api-key" v-model="apiKey" :stored="storedKey" placeholder="DeepSeek 平台 API Key" />
+        </label>
+        <div class="builtin-actions">
+          <button class="btn primary small" type="button" :disabled="savingBuiltin" @click="saveBuiltin">
+            {{ savingBuiltin ? '保存中…' : '保存' }}
+          </button>
+          <span class="faint small">
+            仅存本机数据库；运行 Agent 时经环境变量注入，不写入 dsh 配置文件的明文里。
+          </span>
+        </div>
+      </div>
+    </SettingsGroup>
+
     <div class="harness-picker">
       <label for="agent-target">接入目标</label>
       <select id="agent-target" v-model="target" aria-label="接入目标">
@@ -72,12 +115,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 import { MCP_TOOLS, groupedMcpTools } from '../../lib/mcpTools';
 import AgentHarnessSection from './AgentHarnessSection.vue';
 import AgentMcpSection from './AgentMcpSection.vue';
+import SecretField from '../SecretField.vue';
 import SettingsGroup from './SettingsGroup.vue';
 
 type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'other';
@@ -86,6 +130,43 @@ const target = ref<AgentTarget>('zcode');
 /** 《Agent 作业指南》较长，默认收起在「查看工具」分组底部 */
 const guideOpen = ref(false);
 const guide = ref('');
+
+/* ===== 内置 Agent（聊天抽屉）配置 ===== */
+const status = ref<any>({ bundled: false, hasKey: false, model: '', workspace: '', home: '' });
+const model = ref('');
+const apiKey = ref('');
+const storedKey = ref('');
+const savingBuiltin = ref(false);
+
+async function loadBuiltin() {
+  try {
+    const [s, c] = await Promise.all([
+      api.get('/api/assistant/status'),
+      api.get('/api/assistant/config'),
+    ]);
+    status.value = s.data;
+    model.value = c.data.model || '';
+    storedKey.value = c.data.apiKey || '';
+  } catch {
+    /* 未登录或服务未就绪时静默 */
+  }
+}
+
+async function saveBuiltin() {
+  savingBuiltin.value = true;
+  try {
+    await api.put('/api/assistant/config', { model: model.value, apiKey: apiKey.value });
+    apiKey.value = '';
+    await loadBuiltin();
+    notify.success('内置 Agent 配置已保存');
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '保存失败');
+  } finally {
+    savingBuiltin.value = false;
+  }
+}
+
+onMounted(loadBuiltin);
 
 /** 一键接入区只接受 zcode / codex / dsh（选「其他」时不渲染该组件） */
 const harnessTarget = computed<'zcode' | 'codex' | 'dsh'>(() => (
@@ -119,6 +200,66 @@ async function copy(text: string) {
 </script>
 
 <style scoped>
+.builtin-rows {
+  margin: 12px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.builtin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.builtin-row:last-child {
+  border-bottom: none;
+}
+.builtin-row span {
+  color: var(--text-faint);
+}
+.builtin-row .ok {
+  color: var(--accent, #2e9e6b);
+}
+.builtin-row .warn {
+  color: var(--warn, #c77916);
+}
+.builtin-row .path-value {
+  max-width: 62%;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.builtin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0 0;
+}
+.builtin-form label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.builtin-form label > span {
+  width: 64px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.builtin-form input {
+  flex: 1;
+  max-width: 420px;
+  font-size: 12px;
+}
+.builtin-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .harness-picker {
   /* 与 panel-head 分割线留出与其它面板一致的首块间距 */
   display: flex;

@@ -56,6 +56,19 @@
 
       <div class="rail-spacer" />
 
+      <!-- 内置 Agent（聊天抽屉） -->
+      <button
+        class="rail-btn"
+        type="button"
+        :class="{ active: app.chatDrawerOpen }"
+        v-tooltip="'内置 Agent'"
+        aria-label="内置 Agent"
+        @click="app.toggleChat()"
+      >
+        <Icon name="ai" :size="19" />
+        <span v-if="app.chatUnread" class="dot" />
+      </button>
+
       <!-- 动作/面板组 -->
       <button class="rail-btn action" type="button" v-tooltip="'新建页面 (Ctrl+N)'" aria-label="新建页面" @click="quickNew">
         <Icon name="plus" :size="19" />
@@ -116,6 +129,9 @@
       <router-view />
     </main>
 
+    <!-- 内置 Agent 聊天抽屉：桌面端占位并排，≤1024px 覆盖正文 -->
+    <ChatDrawer v-if="app.chatDrawerOpen" :overlay="sidebarOverlay" />
+
     <AppContextMenu />
 
     <!-- 移动端底部导航 -->
@@ -163,6 +179,7 @@ import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
 import Sidebar from '../components/Sidebar.vue';
+import ChatDrawer from '../components/ChatDrawer.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
 import Icon from '../components/Icon.vue';
 
@@ -272,6 +289,12 @@ function runMore(action: () => void) {
 }
 
 const moreItems = computed(() => [
+  {
+    label: '内置 Agent',
+    icon: 'ai',
+    dot: app.chatUnread,
+    action: () => runMore(() => app.toggleChat(true)),
+  },
   {
     label: '知识图谱',
     icon: 'graph',
