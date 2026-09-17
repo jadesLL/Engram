@@ -22,6 +22,7 @@ const PROTOCOL = [
   { marker: '##STEP:', hasOffset: true },
   { marker: '##DONE:', hasOffset: true },
   { marker: '##FAIL:', hasOffset: false }, // GUI 用 indexOf('|') 取消息
+  { marker: '##AUTH:', hasOffset: true }, // 私有仓库要凭据：GUI 据此亮出账号/令牌表单
   { marker: '##ALLDONE', hasOffset: false }, // 无载荷
 ];
 

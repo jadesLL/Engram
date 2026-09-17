@@ -29,12 +29,16 @@
   .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .creds { padding: 8px 28px; }
-  .creds input {
+  .creds input, .repo input {
     width: 100%; padding: 9px 12px; margin: 6px 0; border: 1px solid rgba(255,255,255,.35);
     border-radius: 8px; background: rgba(255,255,255,.12); color: #fff; font-size: 13px; outline: none;
   }
-  .creds input::placeholder { color: rgba(255,255,255,.6); }
-  .creds .hint { font-size: 11px; opacity: .75; margin-top: 4px; }
+  .creds input::placeholder, .repo input::placeholder { color: rgba(255,255,255,.6); }
+  .creds .hint, .repo .hint { font-size: 11px; opacity: .75; margin-top: 4px; line-height: 1.5; }
+  .repo { padding: 6px 28px 2px; }
+  .repo .label { font-size: 12px; opacity: .85; margin-top: 6px; }
+  .repo .hint.err { color: #fca5a5; opacity: 1; }
+  .repo .hint.ok { color: #86efac; opacity: 1; }
   .foot { display: flex; align-items: center; gap: 14px; padding: 10px 28px 16px; }
   .details-toggle { font-size: 12px; opacity: .8; background: none; border: 0; color: #fff; cursor: pointer; display: flex; align-items: center; gap: 4px; }
   .foot .spacer { flex: 1; }
@@ -74,10 +78,16 @@
     <div class="bar"><div id="bar"></div></div>
   </div>
 
+  <div class="repo" id="repo-step">
+    <div class="label">仓库地址（自建 Gitea 或 GitHub，公开仓库无需凭据）</div>
+    <input id="repo-url" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo.git" />
+    <p class="hint" id="repo-msg">填好地址点「下一步」：会自动检查——公开仓库直接开始，私有仓库再让你填账号与令牌。</p>
+  </div>
+
   <div class="creds" id="creds" style="display:none">
-    <input id="user" type="text" placeholder="Gitea 账号" autocomplete="off" />
+    <input id="user" type="text" placeholder="账号" autocomplete="off" />
     <input id="pass" type="password" placeholder="密码或访问令牌" />
-    <p class="hint">私有仓库首次克隆需要一次凭据；仅保存在本机安装目录的 .git\config 中，用于后续静默更新。</p>
+    <p class="hint">私有仓库首次克隆需要一次凭据（GitHub 用用户名 + 个人访问令牌）；仅保存在本机安装目录的 .git\config 中，用于后续静默更新。</p>
   </div>
 
   <div class="steps" id="steps"></div>
@@ -87,6 +97,7 @@
     <button class="details-toggle" id="details-btn">▸ 显示详情</button>
     <div class="spacer"></div>
     <button class="btn" id="cancel-btn">取消</button>
+    <button class="btn primary" id="next-btn">下一步</button>
     <button class="btn primary" id="start-btn" style="display:none">开始安装</button>
     <button class="btn primary" id="close-btn" style="display:none">关闭</button>
   </div>
@@ -101,7 +112,7 @@
   <script>
     const { ipcRenderer } = require('electron');
     const $ = (id) => document.getElementById(id);
-    let total = 0, doneCount = 0, started = false;
+    let total = 0, doneCount = 0, started = false, repoUrl = '';
 
     function renderProgress() {
       const pct = total ? Math.round((doneCount / total) * 100) : 0;
@@ -149,11 +160,30 @@
       document.body.classList.add('done');
       $('close-btn').style.display = 'none';
     });
+    // 引擎侧发现需要凭据（预检说公开、克隆时才要，或本机没 git 没法预检）：把凭据表单亮出来重试
+    ipcRenderer.on('need-creds', () => {
+      started = false;
+      showCreds('这一步需要仓库凭据：填账号与密码/访问令牌后点「开始安装」重试。');
+    });
 
     function appendLog(line) {
       const el = $('log');
       el.textContent += line + '\n';
       el.scrollTop = el.scrollHeight;
+    }
+
+    function setRepoMsg(text, kind) {
+      const el = $('repo-msg');
+      el.textContent = text;
+      el.className = 'hint' + (kind ? ' ' + kind : '');
+    }
+
+    function showCreds(message) {
+      $('creds').style.display = '';
+      $('start-btn').style.display = '';
+      $('next-btn').style.display = 'none';
+      setRepoMsg(message, 'err');
+      $('meta-left').textContent = '等待填写仓库凭据';
     }
 
     $('details-btn').addEventListener('click', () => {
@@ -168,31 +198,53 @@
     async function begin(creds) {
       if (started) return;
       started = true;
-      if (creds) $('creds').style.display = 'none';
+      $('creds').style.display = 'none';
       $('start-btn').style.display = 'none';
+      $('next-btn').style.display = 'none';
+      $('repo-step').style.display = 'none';
       $('cancel-btn').style.display = '';
       $('meta-left').textContent = '准备中…';
-      ipcRenderer.send('start-install', creds);
+      ipcRenderer.send('start-install', Object.assign({ repoUrl }, creds || {}));
     }
 
-    (async () => {
-      $('cancel-btn').style.display = 'none';
-      const hasRepo = await ipcRenderer.invoke('has-repo');
-      if (hasRepo) {
-        begin(null); // 已有源码目录：无需凭据，直接增量安装
-      } else {
-        $('creds').style.display = '';
-        $('start-btn').style.display = '';
-        $('meta-left').textContent = '输入 Gitea 凭据后开始安装';
+    $('next-btn').addEventListener('click', async () => {
+      repoUrl = $('repo-url').value.trim();
+      const shown = repoUrl.replace(/\/\/[^/@\s]+@/, '//***@'); // 地址里可能内嵌凭据，别打进日志
+      $('next-btn').disabled = true;
+      setRepoMsg('正在检查仓库地址…');
+      let result;
+      try {
+        result = await ipcRenderer.invoke('probe-repo', repoUrl);
+      } catch (e) {
+        result = { status: 'unreachable', message: '检查失败：' + (e && e.message ? e.message : e) };
       }
-    })();
+      $('next-btn').disabled = false;
+      appendLog('仓库 ' + shown + '：' + result.message);
+      if (result.status === 'public' || result.status === 'unknown') {
+        begin(null);
+      } else if (result.status === 'private') {
+        showCreds(result.message);
+      } else {
+        setRepoMsg('无法访问：' + result.message, 'err');
+        $('meta-left').textContent = '地址检查未通过';
+      }
+    });
 
     $('start-btn').addEventListener('click', () => {
       const user = $('user').value.trim();
       const pass = $('pass').value;
-      if (!user || !pass) { appendLog('✖ 请填写 Gitea 账号与密码/令牌'); return; }
+      if (!user || !pass) { appendLog('✖ 请填写账号与密码/访问令牌'); return; }
       begin({ user, pass });
     });
+
+    (async () => {
+      $('cancel-btn').style.display = 'none';
+      $('repo-url').value = await ipcRenderer.invoke('default-repo-url');
+      const hasRepo = await ipcRenderer.invoke('has-repo');
+      setRepoMsg(hasRepo
+        ? '检测到本机已有源码目录：直接点「下一步」增量更新（想换仓库就改上面的地址）。'
+        : '填好地址点「下一步」：会自动检查——公开仓库直接开始，私有仓库再让你填账号与令牌。');
+    })();
   </script>
 </body>
 </html>

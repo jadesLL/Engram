@@ -1,9 +1,12 @@
 ﻿# Engram 源码版部署引擎（GUI 安装器与命令行共用）
-# GUI 靠解析 ##STEPS/##STEP/##DONE/##FAIL/##ALLDONE 标记驱动界面；标记经
+# GUI 靠解析 ##STEPS/##STEP/##DONE/##FAIL/##AUTH/##ALLDONE 标记驱动界面；标记经
 # [Console]::Out.WriteLine 直刷——PowerShell 管道输出是块缓冲，Write-Output 会憋到进程退出。
 #
 # 交互式运行：powershell -NoProfile -ExecutionPolicy Bypass -File install-engram.ps1
-# 凭据：参数 -GiteaUser/-GiteaPass，或环境变量 ENGRAM_GITEA_USER/ENGRAM_GITEA_PASS，或交互输入。
+# 仓库地址：-RepoUrl（自建 Gitea 或 GitHub 都行，公开仓库不需要凭据）。
+# 凭据：参数 -GiteaUser/-GiteaPass，或环境变量 ENGRAM_REPO_USER/ENGRAM_REPO_PASS
+#       （兼容旧名 ENGRAM_GITEA_USER/ENGRAM_GITEA_PASS），或交互输入；
+#       -NoPrompt（GUI 驱动）时不交互，缺凭据改发 ##AUTH:clone 让界面再问一次。
 #
 # 做的事（全自动，无需管理员权限，不污染系统）：
 #   便携 Git(MinGit)/Node.js/pnpm（缺失才下载，npmmirror→huaweicloud 镜像回退）
@@ -13,8 +16,9 @@
 param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'engram'),
   [string]$RepoUrl = 'https://github.com/jadesLL/Engram.git',
-  [string]$GiteaUser = $(if ($env:ENGRAM_GITEA_USER) { $env:ENGRAM_GITEA_USER } else { '' }),
-  [string]$GiteaPass = $(if ($env:ENGRAM_GITEA_PASS) { $env:ENGRAM_GITEA_PASS } else { '' })
+  [string]$GiteaUser = $(if ($env:ENGRAM_REPO_USER) { $env:ENGRAM_REPO_USER } elseif ($env:ENGRAM_GITEA_USER) { $env:ENGRAM_GITEA_USER } else { '' }),
+  [string]$GiteaPass = $(if ($env:ENGRAM_REPO_PASS) { $env:ENGRAM_REPO_PASS } elseif ($env:ENGRAM_GITEA_PASS) { $env:ENGRAM_GITEA_PASS } else { '' }),
+  [switch]$NoPrompt
 )
 
 $ErrorActionPreference = 'Stop'
@@ -206,16 +210,33 @@ if (Test-Path (Join-Path $repoDir '.git')) {
   if ($code -ne 0) { StepLog "增量更新失败（git 退出码 $code）：$(Hint 'git 无错误输出')；继续用本地已有代码构建" }
   StepDone 'clone' '源码已就位（增量更新）'
 } else {
-  if (-not $GiteaUser) { $GiteaUser = Read-Host 'Gitea 账号（如 example）' }
-  if (-not $GiteaPass) {
-    $sec = Read-Host 'Gitea 密码或访问令牌' -AsSecureString
+  # 先不带凭据试一次：公开仓库（含 GitHub 公开库）直接过；私有仓库再按需补凭据，
+  # 这样公开仓库不再无谓地要求账号，私有仓库的失败也能给出「就是要凭据」的准确判断。
+  $authPattern = '(?i)authentication|could not read username|terminal prompts|invalid username|permission denied|403|401|not found|repository not found'
+  $code = Invoke-Logged 'git' @('clone', '--branch', 'main', $RepoUrl, $repoDir)
+  if ($code -ne 0 -and -not $GiteaUser -and (Hint '') -match $authPattern) {
+    if ($NoPrompt) {
+      Out-Line '##AUTH:clone'
+      StepFail 'clone' '需要仓库凭据：这是私有仓库（或地址不存在）。请在安装器里填写账号与密码/访问令牌后重试'
+    }
+    # 交互式：问一次凭据再试（失败的首克隆可能留下半个目录，先清掉）
+    StepLog '需要仓库凭据，请输入后重试'
+    if (Test-Path $repoDir) { Remove-Item $repoDir -Recurse -Force -ErrorAction SilentlyContinue }
+    $GiteaUser = Read-Host '仓库账号（GitHub 填用户名）'
+    $sec = Read-Host '密码或访问令牌' -AsSecureString
     $GiteaPass = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
       [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+    $authUrl = $RepoUrl -replace '://', "://$([Uri]::EscapeDataString($GiteaUser)):$([Uri]::EscapeDataString($GiteaPass))@"
+    $code = Invoke-Logged 'git' @('clone', '--branch', 'main', $authUrl, $repoDir)
+  } elseif ($code -eq 0 -and -not $GiteaUser) {
+    StepLog '公开仓库，无需凭据'
   }
-  $authUrl = $RepoUrl -replace '://', "://$([Uri]::EscapeDataString($GiteaUser)):$([Uri]::EscapeDataString($GiteaPass))@"
-  $code = Invoke-Logged 'git' @('clone', '--branch', 'main', $authUrl, $repoDir)
   if ($code -ne 0) { StepFail 'clone' "克隆失败（git 退出码 $code）：$(Hint 'git 无错误输出')" }
-  StepDone 'clone' '凭据已保存在本机 .git\config，用于后续静默更新'
+  if ($GiteaUser) {
+    StepDone 'clone' '凭据已保存在本机 .git\config，用于后续静默更新'
+  } else {
+    StepDone 'clone' '源码已就位（公开仓库）'
+  }
 }
 
 # ---------- 5) 依赖 ----------
