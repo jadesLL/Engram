@@ -8,7 +8,7 @@
 
 ## 架构边界
 
-Engram **不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）、FTS5 关键词检索、来源版本与证据账本、写入门禁由 Engram 确定性完成；总结、提炼、消歧、综合、问答、图片识别全部由外部 Agent 负责。
+Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）、FTS5 关键词检索、来源版本与证据账本、写入门禁由 Engram 确定性完成；总结、提炼、消歧、综合、问答、图片识别全部由 Agent 负责——外部 Agent（ZCode / Codex / Claude Code / DeepSeek Harness 等）经 MCP 或 CLI 接入，或使用 Engram 随包内置的 Agent（设置页填自己的模型 Key 后，左栏 ✨ 聊天抽屉即用；它同样只经 MCP 工具读写知识库）。
 
 ## 接入方式与优先级
 
