@@ -162,8 +162,36 @@ async function ensureNativeBinding(serverNodeModules, electronVer) {
   const bsq3Dir = path.join(serverNodeModules, 'better-sqlite3');
   const binding = path.join(bsq3Dir, 'build', 'Release', 'better_sqlite3.node');
   const prebuild = path.join(serverNodeModules, 'prebuild-install', 'bin.js');
+  // 首选：问 Electron 运行时自己的 ABI，用 curl + bsdtar 自己取 prebuild（两个都是非 node 下载器）。
+  // 客户机实测：凡"node 进程自己下载二进制"的路径（electron 的 install.js、prebuild-install、
+  // pnpm --force 重取）都会被安全软件连整棵进程树掐掉（零输出、非零退出），而 curl+tar 可用，
+  // 故把自带路径放在最前面，prebuild-install 降为备选。
+  const electronExe = path.join(appRoot, 'desktop', 'node_modules', 'electron', 'dist',
+    process.platform === 'win32' ? 'electron.exe' : 'electron');
+  if (electronVer && fs.existsSync(electronExe)) {
+    const captured = [];
+    const abiCode = await run(electronExe, ['-p', 'process.versions.modules'], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      capture: captured,
+    });
+    const abi = String(captured.join('')).trim();
+    if (abiCode === 0 && /^\d+$/.test(abi)) {
+      say(`获取 better-sqlite3 Electron@${electronVer} prebuild（electron ABI ${abi}）`);
+      try {
+        const bsq3Version = JSON.parse(fs.readFileSync(path.join(bsq3Dir, 'package.json'), 'utf8')).version;
+        await fetchNativeBinding({ version: bsq3Version, abi, targetDir: path.dirname(binding), say });
+      } catch (e) {
+        say(`（自带 prebuild 路径失败：${e && e.message ? e.message : e}）`);
+      }
+      if (fs.existsSync(binding)) return;
+    } else {
+      say('（问不出 Electron ABI，退回 prebuild-install）');
+    }
+  }
+
+  // 备选：prebuild-install（客户机上会被掐，别的机器上通常可用）
   if (fs.existsSync(prebuild) && electronVer) {
-    say(`获取 better-sqlite3 Electron@${electronVer} prebuild`);
+    say(`改用 prebuild-install 取 better-sqlite3 Electron@${electronVer} prebuild`);
     const env = {
       ...process.env,
       npm_config_runtime: 'electron',
@@ -180,30 +208,6 @@ async function ensureNativeBinding(serverNodeModules, electronVer) {
     say('未找到 prebuild-install，尝试复用工作区已有 binding');
   }
   if (fs.existsSync(binding)) return;
-
-  // 兜底一：问 Electron 运行时自己的 ABI，自己从镜像取 prebuild。
-  // 客户机实测 prebuild-install 静默失败（只有一条弃用警告、零错误输出），而 curl+tar 那条路可用。
-  const electronExe = path.join(appRoot, 'desktop', 'node_modules', 'electron', 'dist',
-    process.platform === 'win32' ? 'electron.exe' : 'electron');
-  if (electronVer && fs.existsSync(electronExe)) {
-    const captured = [];
-    const abiCode = await run(electronExe, ['-p', 'process.versions.modules'], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-      capture: captured,
-    });
-    const abi = String(captured.join('')).trim();
-    if (abiCode === 0 && /^\d+$/.test(abi)) {
-      try {
-        const bsq3Version = JSON.parse(fs.readFileSync(path.join(bsq3Dir, 'package.json'), 'utf8')).version;
-        await fetchNativeBinding({ version: bsq3Version, abi, targetDir: path.dirname(binding), say });
-      } catch (e) {
-        say(`（自带 prebuild 兜底失败：${e && e.message ? e.message : e}）`);
-      }
-      if (fs.existsSync(binding)) return;
-    } else {
-      say('（问不出 Electron ABI，跳过自带 prebuild 兜底）');
-    }
-  }
 
   // 兜底二：从工作区 node_modules（含 .pnpm 存储）拷一份 binding。ABI 可能与 Electron 不符，
   // 仅在系统 Node 与 Electron 同 ABI 时可用，故只作最后手段。
@@ -267,7 +271,20 @@ async function ensureElectronRuntime() {
     // 缺/空 install.js、package.json 读不出：补不回来，只能重装依赖
     throw new Error(`Electron 包缺失或不完整（${electronDir}）：请先装工作区依赖，或删除该目录后重跑依赖安装`);
   }
-  say('Electron 运行时缺失，开始下载（约 110MB，默认 npmmirror 镜像）');
+  say('Electron 运行时缺失，开始补齐');
+  // 首选：自己用 curl + bsdtar 取（非 node 下载器；客户机上 node 自己下载会被安全软件掐掉整棵树）。
+  // install.js 降为备选，且它一旦被掐整棵进程都会没了，所以不能放在前面。
+  try {
+    const version = JSON.parse(fs.readFileSync(path.join(electronDir, 'package.json'), 'utf8')).version;
+    await repairElectronRuntime(electronDir, version, { say });
+  } catch (e) {
+    say(`（自带运行时路径失败：${e && e.message ? e.message : e}）`);
+  }
+  if (fs.existsSync(exe)) {
+    say('Electron 运行时已就绪');
+    return;
+  }
+
   const env = { ...process.env, ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || 'https://npmmirror.com/mirrors/electron/' };
   for (const key of ELECTRON_ENV_TRAPS) {
     if (env[key]) {
@@ -288,11 +305,7 @@ async function ensureElectronRuntime() {
   const captured = [];
   const code = await run(process.execPath, ['install.js'], { cwd: electronDir, env, capture: captured });
   if (code !== 0 || !fs.existsSync(exe)) {
-    // install.js 这条链会吞掉失败细节（客户机实测：退出码 0、无输出、dist 只剩 locales/），
-    // 故不再直接失败，改用安装器自带的下载+解压+逐项校验兜底。
-    say(`install.js 未能补出运行时：${describeInstallFailure(electronDir, code, captured)}`);
-    const version = JSON.parse(fs.readFileSync(path.join(electronDir, 'package.json'), 'utf8')).version;
-    await repairElectronRuntime(electronDir, version, { say });
+    say(`install.js 也未能补出运行时：${describeInstallFailure(electronDir, code, captured)}`);
   }
   if (!fs.existsSync(exe)) {
     throw new Error(`Electron 运行时仍不可用（缺 ${exe}）：请把 ${electronDir} 加入杀软白名单后重试`);

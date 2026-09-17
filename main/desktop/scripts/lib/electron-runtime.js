@@ -1,18 +1,16 @@
 // Electron 运行时的兜底补齐：不依赖 electron 自带 install.js 的语义，自己下载 → 解压 → 逐项校验。
 //
 // 背景（2026-09-18 客户机实测）：install.js 退出码 0、没有任何输出，可 dist 里只剩 locales/
-// （zip 条目本身是乱序的，所以既不像"顺序解压到一半"，也不像杀软只删可执行文件）。install.js
-// 内部用 @electron/get + extract-zip，失败细节被吞掉，客户机上连查两轮都拿不到原因。
-// 这条兜底路径把每一步都做成可校验、可报错的：
-//   1) 优先复用 @electron/get 的缓存 zip（大小可疑就当没有），否则自己从 npmmirror 下载；
-//   2) 用系统自带 tar.exe 解压到临时目录（bsdtar 能解 zip；先落地再复制，不污染 dist）；
+// （zip 条目本身是乱序的，所以既不像"顺序解压到一半"，也不像杀软只删可执行文件）；而且凡是
+// "node 进程自己下载二进制"的路径（install.js、prebuild-install、pnpm --force）都会被安全软件
+// 连整棵进程树掐掉（零输出、非零退出），curl + bsdtar 那条路却一直可用。故这条路径：
+//   1) 优先复用 @electron/get 的缓存 zip（大小可疑就当没有），否则用系统 curl 从 npmmirror 下载；
+//   2) 用系统 bsdtar 解压到临时目录（先落地再复制，不污染 dist）；
 //   3) 逐项校验必要文件，缺谁报谁 —— 缺文件基本就是安全软件在拦，提示加白名单。
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const https = require('node:https');
 const { spawn } = require('node:child_process');
-const { pipeline } = require('node:stream/promises');
 
 const MIRROR = 'https://npmmirror.com/mirrors/electron/';
 const MIN_ZIP_BYTES = 50 * 1024 * 1024; // 完整包约 110-120MB，明显更小就是残包
@@ -56,8 +54,12 @@ function findCachedZip(version, { platform = process.platform, arch = process.ar
   return best;
 }
 
-/** 下载到本地文件；只允许 https 且 host 限镜像自身（含其 CDN） */
-function downloadFile(url, dest, { redirects = 5 } = {}) {
+/**
+ * 下载到本地文件；只允许 https 且 host 限镜像自身（含其 CDN）。
+ * 用系统 curl（不是 node 的 https）：客户机上"node 自己下载"会被安全软件掐掉整棵进程树，
+ * 而 curl 这条路已被证实可用。
+ */
+function downloadFile(url, dest, { curlExe } = {}) {
   return new Promise((resolve, reject) => {
     let parsed;
     try {
@@ -69,21 +71,19 @@ function downloadFile(url, dest, { redirects = 5 } = {}) {
     if (!/(^|\.)npmmirror\.(com|cn)$/.test(parsed.host)) {
       return reject(new Error(`镜像 host 不在白名单：${parsed.host}`));
     }
-    https
-      .get(parsed, (res) => {
-        const status = res.statusCode || 0;
-        if (status >= 300 && status < 400 && res.headers.location) {
-          res.resume();
-          if (redirects <= 0) return reject(new Error('重定向次数过多'));
-          return resolve(downloadFile(new URL(res.headers.location, parsed).toString(), dest, { redirects: redirects - 1 }));
-        }
-        if (status !== 200) {
-          res.resume();
-          return reject(new Error(`下载失败：HTTP ${status}`));
-        }
-        pipeline(res, fs.createWriteStream(dest)).then(resolve, reject);
-      })
-      .on('error', reject);
+    const args = ['--fail', '-L', '--retry', '2', '-o', dest, url];
+    const child = curlExe
+      ? spawn(curlExe, args, { windowsHide: true })
+      : process.platform === 'win32'
+        ? spawn('curl.exe', args, { windowsHide: true })
+        : spawn('curl', args, { windowsHide: true });
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (e) => reject(new Error(`无法启动 curl：${e && e.message ? e.message : e}`)));
+    child.on('exit', (code) => {
+      if (code === 0 && fs.existsSync(dest)) return resolve();
+      reject(new Error(`curl 下载失败（退出码 ${code}）：${stderr.trim().split('\n').filter(Boolean).pop() || '无输出'}`));
+    });
   });
 }
 
