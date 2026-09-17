@@ -25,12 +25,19 @@ function say(msg) {
   process.stdout.write(`[deps] ${msg}\n`);
 }
 
-/** 子进程执行：输出直接透传（应用内更新据此实时回显），返回退出码 */
+/** 子进程执行：输出直接透传（应用内更新据此实时回显），返回退出码；options.capture 传数组时同时收集输出 */
 function run(cmd, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], ...options });
-    child.stdout.on('data', (d) => process.stdout.write(d));
-    child.stderr.on('data', (d) => process.stderr.write(d));
+    const { capture, ...spawnOptions } = options;
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], ...spawnOptions });
+    const pipe = (stream, sink) => {
+      stream.on('data', (d) => {
+        sink.write(d);
+        if (capture) capture.push(String(d));
+      });
+    };
+    pipe(child.stdout, process.stdout);
+    pipe(child.stderr, process.stderr);
     child.on('error', reject);
     child.on('exit', (code) => resolve(code === null ? 1 : code));
   });
@@ -169,6 +176,32 @@ async function ensureNativeBinding(serverNodeModules, electronVer) {
   say(`回退拷贝 better-sqlite3 binding ← ${src}（ABI 可能与 Electron 不符）`);
 }
 
+/**
+ * 会让 electron 的 install.js 静默走偏的环境开关。客户机实测（2026-09-17）：设了这类键时
+ * install.js 一声不响地退出 0、dist 依旧空，日志里连一行报错都没有，只能看到「下载失败」。
+ * 安装必须有真实运行时，故这里直接忽略它们并在日志里说明。
+ */
+const ELECTRON_ENV_TRAPS = ['ELECTRON_SKIP_BINARY_DOWNLOAD', 'ELECTRON_OVERRIDE_DIST_PATH'];
+
+/** 下载失败时给出可判断的细节：退出码、install.js 的最后几行输出、dist 里到底有什么 */
+function describeInstallFailure(electronDir, code, captured) {
+  const lines = captured
+    .join('')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-6);
+  let dist = '';
+  try {
+    const entries = fs.readdirSync(path.join(electronDir, 'dist'));
+    dist = `dist 有 ${entries.length} 项${entries.length ? `（${entries.slice(0, 8).join(', ')}）` : '（空目录）'}`;
+  } catch {
+    dist = 'dist 目录不存在';
+  }
+  const out = lines.length ? lines.join(' / ') : 'install.js 没有任何输出（多为环境开关让它静默跳过）';
+  return `install.js 退出码 ${code}，${dist}，输出：${out}`;
+}
+
 /** Electron 运行时缺失/残缺时补齐（约 110MB，仅首次；默认走 npmmirror 镜像） */
 async function ensureElectronRuntime() {
   const electronDir = path.join(appRoot, 'desktop', 'node_modules', 'electron');
@@ -181,10 +214,26 @@ async function ensureElectronRuntime() {
   }
   say('Electron 运行时缺失，开始下载（约 110MB，默认 npmmirror 镜像）');
   const env = { ...process.env, ELECTRON_MIRROR: process.env.ELECTRON_MIRROR || 'https://npmmirror.com/mirrors/electron/' };
+  for (const key of ELECTRON_ENV_TRAPS) {
+    if (env[key]) {
+      say(`（忽略环境变量 ${key}=${env[key]}：安装必须有真实运行时）`);
+      delete env[key];
+    }
+  }
+  // 平台/架构按当前进程来：被别处设成别的值时 install.js 会下错平台的包，解压完没有 electron.exe
+  if (env.npm_config_platform && env.npm_config_platform !== process.platform) {
+    say(`（忽略环境变量 npm_config_platform=${env.npm_config_platform}：按当前平台 ${process.platform} 下载）`);
+  }
+  if (env.npm_config_arch && env.npm_config_arch !== process.arch) {
+    say(`（忽略环境变量 npm_config_arch=${env.npm_config_arch}：按当前架构 ${process.arch} 下载）`);
+  }
+  env.npm_config_platform = process.platform;
+  env.npm_config_arch = process.arch;
   if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
-  const code = await run(process.execPath, ['install.js'], { cwd: electronDir, env });
+  const captured = [];
+  const code = await run(process.execPath, ['install.js'], { cwd: electronDir, env, capture: captured });
   if (code !== 0 || !fs.existsSync(exe)) {
-    throw new Error('Electron 运行时下载失败：可手动解压 electron 压缩包到 desktop/node_modules/electron/dist/');
+    throw new Error(`Electron 运行时下载失败：${describeInstallFailure(electronDir, code, captured)}（也可手动解压 electron-v*-win32-x64.zip 到 desktop/node_modules/electron/dist/）`);
   }
   say('Electron 运行时已就绪');
 }
@@ -275,7 +324,7 @@ async function main() {
   sweepBrokenElectronStore();
 }
 
-module.exports = { sweepBrokenElectronStore, workspaceAction };
+module.exports = { sweepBrokenElectronStore, workspaceAction, describeInstallFailure };
 
 // 被测试脚本 require 时只导出清扫函数，不跑 CLI 主流程
 if (require.main === module) {
