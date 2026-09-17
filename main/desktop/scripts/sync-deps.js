@@ -12,6 +12,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const deps = require('./lib/deps');
+const { repairElectronRuntime } = require('./lib/electron-runtime');
 
 const appRoot = (() => {
   const i = process.argv.indexOf('--app-root');
@@ -257,7 +258,13 @@ async function ensureElectronRuntime() {
   const captured = [];
   const code = await run(process.execPath, ['install.js'], { cwd: electronDir, env, capture: captured });
   if (code !== 0 || !fs.existsSync(exe)) {
-    throw new Error(`Electron 运行时下载失败：${describeInstallFailure(electronDir, code, captured)}（也可手动解压 electron-v*-win32-x64.zip 到 desktop/node_modules/electron/dist/）`);
+    // install.js 这条链会吞掉失败细节（客户机实测：退出码 0、无输出、dist 只剩 locales/），
+    // 故不再直接失败，改用安装器自带的下载+解压+逐项校验兜底。
+    say(`install.js 未能补出运行时：${describeInstallFailure(electronDir, code, captured)}`);
+    await repairElectronRuntime(electronDir, deps.electronVersion(appRoot), { say });
+  }
+  if (!fs.existsSync(exe)) {
+    throw new Error(`Electron 运行时仍不可用（缺 ${exe}）：请把 ${electronDir} 加入杀软白名单后重试`);
   }
   say('Electron 运行时已就绪');
 }
