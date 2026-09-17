@@ -437,10 +437,15 @@ export function reconcileMissingPages(): number {
   let marked = 0;
   for (const row of rows) {
     if (fs.existsSync(safeJoin(row.path))) continue;
-    db.prepare(`UPDATE pages SET deleted = 1 WHERE id = ? AND deleted = 0`).run(row.id);
+    markPageDeleted(row.path);
     marked++;
   }
   return marked;
+}
+
+/** 单个路径落删除标记（文件缺失时的兜底：对账、删除 op 找不到文件时调用；不写 updated_at） */
+export function markPageDeleted(relPath: string): void {
+  db.prepare(`UPDATE pages SET deleted = 1 WHERE path = ? AND deleted = 0`).run(relPath);
 }
 
 /** 全量扫描 brain 目录：同步 pages/files 表（用于启动时与索引重建） */

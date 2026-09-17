@@ -736,14 +736,19 @@ function visibleSubGroups(g: any) {
   );
 }
 
+/** 已废弃的冲突备份机制遗留（2026-09-12 前那套备份页）：系统区不再产生这类页面，
+ *  历史遗留（旧库/旧快照播种的成员端）一律不入侧栏，等启动迁移收进回收站 */
+const LEGACY_CONFLICT_RE = /^AIWorks\/同步冲突\/|^AIWorks\/log\/conflict\.md$|^同步冲突\//;
+
 /** AI 系统区（操作日志/索引/关系结构，含历史版本遗留路径）在日志区展示 */
 const aiLogs = computed(() =>
   allPages.value.filter(
     (p) =>
-      p.path.startsWith('AIWorks/') ||
-      p.path.startsWith('Wiki/关系/') ||
-      p.path === 'Wiki/index.md' ||
-      p.path === 'Wiki/log.md'
+      !LEGACY_CONFLICT_RE.test(p.path) &&
+      (p.path.startsWith('AIWorks/') ||
+        p.path.startsWith('Wiki/关系/') ||
+        p.path === 'Wiki/index.md' ||
+        p.path === 'Wiki/log.md')
   )
 );
 
