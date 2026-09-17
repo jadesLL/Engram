@@ -218,6 +218,8 @@ const TOOL_LABELS: Record<string, string> = {
   rename_page: '重命名页面',
   move_page: '移动页面',
   delete_page: '删除页面（回收站）',
+  ask_user: '登记待确认问题',
+  list_questions: '读取待确认问题',
 };
 
 function toolLabel(name: string): string {

@@ -18,13 +18,16 @@ import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
 import { AGENT_GUIDE, GUIDE_VERSION } from '../content/agentGuide.js';
 import { SKILLS, findSkill } from '../content/skills/index.js';
+import {
+  askQuestion, listQuestions, openQuestionCount, formatQuestions,
+} from '../lib/agentQuestions.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
  * 读工具（search/list_pages/read_page/related_pages/page_evidence/list_raw_files/read_raw_file/
- * kb_guide/skill_list/skill_guide）
+ * list_questions/kb_guide/skill_list/skill_guide）
  * + 写工具（write_page 带证据门禁与自动日志 / rename_page / move_page / delete_page 软删除入回收站 /
- * save_chat 对话沉积）。全部写操作只允许 Wiki/，原始资料与 AIWorks 对 Agent 是只读区。
+ * save_chat 对话沉积 / ask_user 登记待确认问题）。全部写操作只允许 Wiki/，原始资料与 AIWorks 对 Agent 是只读区。
  * 作业方法论见 kb_guide；按需作业手法见 skill_list / skill_guide。
  */
 
@@ -35,6 +38,7 @@ const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，�
 新建 概念/实体 页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条引文），已有页面增量不受限。
 原始资料与 AIWorks 对 Agent 是只读区：写工具只能写 Wiki/。软件本身具备上传/新建/删除原始资料的能力，但那是用户的操作——需要新增或删除原始资料时先问用户，得到同意再做，不得走 HTTP 旁路自行写入。
 对话沉积（save_chat）只在用户明确指示、或你先问并得到同意后才可执行；不要自行判断"这段对话有价值"就沉淀。已沉淀的对话属于原始资料，可被后续提炼引用。
+只有用户才知道的信息（公司工商全名、同名主体区分、客户身份口径等）资料里查不到时，用 ask_user 登记待确认问题（附背景与候选），不要编造；提问后不要空等，下次作业先 list_questions 读答复。
 误建的页面用 delete_page 删除：只做软删除入回收站（可恢复），只能删 Wiki/ 下的页面，不提供清空回收站能力。
 页面改名/移动用 rename_page / move_page（保持页面 ID 与图谱边，重命名会重定向引用双链）；写页与页面操作都只允许 Wiki/。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
@@ -428,6 +432,44 @@ export function makeServer(): McpServer {
         content: [
           { type: 'text', text: `已沉积对话: ${r.path}（id: ${r.id}）${r.appended ? '（追加合并）' : '（新建）'}` },
         ],
+      };
+    }
+  );
+
+  server.tool(
+    'ask_user',
+    '登记一条「待确认问题」给用户：只有用户才知道的信息（公司工商全名、同名主体区分、客户身份口径等）在资料里查不到时用；问题会出现在 Engram 界面「待确认」并即时提示，用户答复后用 list_questions 读取。能自查的不要问，也不要拿它代替向用户征求操作授权。',
+    {
+      question: z.string().describe('一句话问题，用户一句话能答（如「天津津亚电子的工商全名是哪个？」）'),
+      context: z.string().optional().describe('背景：你在做什么、卡在哪、已查到什么（帮助用户判断）'),
+      options: z.array(z.string()).optional().describe('候选答案（如疑似全名的几个公司），用户可直接点选'),
+    },
+    async ({ question, context, options }) => {
+      const created = askQuestion({ question, context, options });
+      return {
+        content: [{
+          type: 'text',
+          text: `已登记待确认问题 #${created.id}：${created.question}\n`
+            + '用户可在 Engram 界面「待确认」中答复；答复后用 list_questions 读取（本次不要空等，能推进的先推进）。',
+        }],
+      };
+    }
+  );
+
+  server.tool(
+    'list_questions',
+    '读取待确认问题与用户答复（默认全部，最新在前）：提问后下次作业先看这里，拿到答复再落页/改名。',
+    {
+      status: z.enum(['open', 'answered', 'all']).optional().describe('open 只列待答复；answered 只列已答复；默认 all'),
+    },
+    async ({ status }) => {
+      const questions = listQuestions(status || 'all');
+      return {
+        content: [{
+          type: 'text',
+          text: `${formatQuestions(questions, status || 'all')}\n\n`
+            + `（待答复 ${openQuestionCount()} 条；答复属用户提供的口径，写进正文时标注「用户确认」，不要为它编造引文。）`,
+        }],
       };
     }
   );

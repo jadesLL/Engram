@@ -44,6 +44,7 @@ beforeEach(() => {
     DELETE FROM ingest_history_hidden;
     DELETE FROM ingest_questions;
     DELETE FROM ingest_candidates;
+    DELETE FROM agent_questions;
     DELETE FROM semantic_events;
     DELETE FROM semantic_cache;
     DELETE FROM llm_usage;
@@ -121,6 +122,10 @@ test('one-click wipe removes reports, ingest history, queued jobs and nested sou
     `INSERT INTO ingest_log(path, at, content_hash, status, run_id)
      VALUES('原始资料/对话/记录.md', '2026-01-01', 'hash', 'completed', 'run-1')`
   ).run();
+  db.prepare(
+    `INSERT INTO agent_questions(id, question, created_at)
+     VALUES('q-1', '这家客户的工商全名是哪个？', '2026-01-01')`
+  ).run();
   const officeHistory = safeJoin('.history/office/raw-file/version.docx');
   fs.mkdirSync(path.dirname(officeHistory), { recursive: true });
   fs.writeFileSync(officeHistory, 'history', 'utf8');
@@ -159,6 +164,7 @@ test('one-click wipe removes reports, ingest history, queued jobs and nested sou
     'ingest_history_hidden',
     'ingest_questions',
     'ingest_candidates',
+    'agent_questions',
     'semantic_events',
     'semantic_cache',
     'llm_usage',

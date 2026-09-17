@@ -12,7 +12,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 
 ## 接入方式与优先级
 
-- **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / chat save / guide / mcp-config），`--json` 得机器可读输出。
+- **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / chat save / ask / questions / guide / mcp-config），`--json` 得机器可读输出。
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
 - **一键接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 接入直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；远程部署仍用 MCP 配置片段或 `engram login`。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
@@ -24,6 +24,8 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - **删除只入回收站**：`delete_page`（MCP）与 `engram pages delete`（CLI）只做软删除，把单个页面移入回收站（按标题 / 页面 ID / 页面路径定位；用户可在 设置 → 存储空间 → 回收站 恢复）；也不提供永久删除或清空回收站能力。
 - **改名/移动不换 ID**：`rename_page` / `move_page`（CLI `pages rename|move`）保持页面 ID 与图谱边；重命名会把其他页面引用的 `[[旧标题]]` 双链重定向。不要用「新建+删除」模拟改名——那会产生新页面 ID 并让引用悬空。
 - **图谱关联可查询**：`related_pages`（MCP）返回页面的入链/出链邻居与实体关系（与编辑器「相关页面」同一数据），供写「相关页面」章节、验证 `[[双链]]` 目标与排查反向引用。
+- **待确认问题（问用户，不猜）**：只有用户才知道、资料里查不到的信息——公司工商全名、同名主体区分、客户身份口径、要不要导入某份资料——用 `ask_user`（CLI `engram ask`）登记：写清背景与候选，用户会在 Engram 左侧「待确认」看到并答复（有未答复时角标提示，SSE 实时推送）；Agent 下次作业开工先 `list_questions`（CLI `engram questions`）读答复再继续，登记后不空等。答复属用户提供的口径，写进正文标注「用户确认」，**不要为它编造引文**；能自查的先自查，本通道不替代向用户征求操作授权（见上文「只读区」「对话沉积」）。
+- **客户/公司页契约（指南 v3）**：客户页「当前理解」按 名称口径 / 概览 / 核心机型 / 客户画像 / 核心卡点 / 合作策略 组织（缺证据的章节省略）；公司类实体页（客户/供应商/渠道商）标题用**工商全名**，「当前理解」首节固定为「名称口径」（全称 / 英文名 / 简称别名 / 易混淆的同名公司），内部组织与个人用惯用名。全名优先取自材料里的工商登记信息，找不到先 `search` 全库、再用 `ask_user` 问用户；**不得编造或推测全名**，未确认前标题暂用材料写法并标注「全称待确认」。存量页面改用全名走 `rename_page`。本次属页面契约变化，`GUIDE_VERSION` 升 3，只重提炼客户页即可：`list_pages` 传 `outdated=true` 叠加 `tag=客户`。
 
 ## 提炼作业纪律
 
@@ -62,6 +64,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - Agent 接入界面的工具清单：`web/src/lib/mcpTools.ts`（新增/改名工具时三处同步：`server/src/mcp/server.ts` 注册、`web/src/lib/mcpTools.ts` 界面清单、本文）
 - Agent 写入门禁与账本：`server/src/pipeline/agentWrite.ts`
 - Agent 单页删除内核（只入回收站 + Wiki/ 守卫）：`server/src/pipeline/agentDelete.ts`
+- 待确认问题内核（登记/列表/答复 + SSE）：`server/src/lib/agentQuestions.ts`（表 `agent_questions`；REST 在 `server/src/routes/questions.ts`，界面在 `web/src/components/QuestionsModal.vue`）
 - MCP 端点（streamable HTTP + Bearer）：`server/src/mcp/server.ts`
 - CLI：`server/src/cli/`（`engram` bin）
 - 操作日志写入：`server/src/pipeline/indexFile.ts`（`appendWikiLog`）

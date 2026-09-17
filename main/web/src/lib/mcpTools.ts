@@ -140,6 +140,22 @@ export const MCP_TOOLS: McpToolDoc[] = [
     notes: '须用户明确指示（或先问并得到同意）才可调用，不得自行判断"这段有价值"就沉淀；已沉淀的对话属原始资料，可被后续提炼作业引用。',
     cli: 'engram chat save [--identifier <标识>] [--project <项目>] [--append]（正文走 stdin）',
   },
+  {
+    name: 'ask_user',
+    group: '写',
+    summary: '登记一条「待确认问题」给用户：只有用户才知道的信息（公司工商全名、同名主体区分、客户身份口径等）资料里查不到时用。',
+    params: 'question 一句话问题（必填）；context 背景与已查到什么（可选）；options 候选答案数组（可选，用户可直接点选）。',
+    notes: '问题出现在 Engram 左侧「待确认」并即时提示；能自查的不要问，也不要用它代替征求操作授权；登记后不要空等，下次作业先 list_questions 读答复。',
+    cli: 'engram ask --question "..." [--context "..."] [--options "候选1,候选2"]',
+  },
+  {
+    name: 'list_questions',
+    group: '读',
+    summary: '读取待确认问题与用户答复（默认全部，最新在前）。',
+    params: 'status open 只列待答复 / answered 只列已答复 / all 全部（可选，默认 all）。',
+    notes: '提问后的下一次作业先读这里再继续；答复属用户提供的口径，写进正文标注「用户确认」，不要为它编造引文。',
+    cli: 'engram questions [--status open|answered|all]',
+  },
 ];
 
 /** 读 / 写分组（保持 MCP_TOOLS 内的书写顺序） */

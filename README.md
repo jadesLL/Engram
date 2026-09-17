@@ -23,6 +23,7 @@
 - **CLI 优先、逐份串行**：能跑 shell 的 Agent 优先用 CLI（MCP 兜底用于图像直读等场景）；收到提炼指令先用 `files list --pending` 自动索引待提炼清单，逐份提炼、写完一份再下一份。
 - **规则版本化，旧库可升级**：提炼规则带版本号（`GUIDE_VERSION`），Agent 每次写页服务端把版本记入页面索引元数据（只进索引库，不写正文）；规则升级后用 `pages list --outdated`（CLI）或 `list_pages` 传 `outdated=true`（MCP）列出落后的概念/实体页（原始资料只读不改），按最新指南逐页重写覆盖即完成旧库升级。
 - **质量由确定性门禁兜底**：引文逐字校验（编造即拒绝）、新建概念/实体页两来源门禁（≥2 个不同原始资料路径各 1 条引文，或单路径 ≥2 条）、每次写入自动记入 `Wiki/log.md` 操作日志与证据账本（编辑器「来源证据」抽屉可逐条复核）。
+- **问不到就问用户，不编造**：只有用户才知道的信息（公司工商全名、同名主体区分、客户身份口径）用 `ask_user` 登记到左侧「待确认」并即时提示，用户答复后 Agent 下次作业用 `list_questions` 读回；客户/公司页按 v3 契约写「概览」「核心机型」与「名称口径」，标题用工商全名、别名收在名称口径里。
 
 ## 功能总览
 
@@ -34,7 +35,7 @@
 - **自己的 Key、自己的账**：模型与 Key 填在 设置 → Agent 接入 → 内置 Agent（仅存本机数据库，运行时经环境变量注入）；不填就不能对话，Engram 其余功能完全不受影响
 - **会话与桌面/Docker 一致**：会话与消息存本机库（`assistant_*` 表），dsh 自身的会话日志随 `data/dsh/` 走持久卷，续聊不丢上下文
 
-### 🧠 面向 Agent 的 MCP 接口（15 工具）
+### 🧠 面向 Agent 的 MCP 接口（17 工具）
 
 在 设置 → Agent 接入 →「其他 Agent（MCP 接入）」生成 Token（`Authorization: Bearer`，MCP/CLI/REST 三用），streamable HTTP 端点 `/mcp`：
 
@@ -50,6 +51,7 @@
 | `move_page` | 移动页面到 `Wiki/` 树内其他目录（页面 ID 与图谱边保持不变，可顺带改标题） |
 | `delete_page` | 单页软删除入回收站（可恢复，按标题 / ID / 路径定位）；只允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 拒删，无永久删除/清空回收站能力 |
 | `save_chat` | 对话沉积到 `原始资料/对话/`（**须用户明确指示**才可调用） |
+| `ask_user` / `list_questions` | 待确认问题：只有用户才知道的信息（公司工商全名、同名主体区分、客户身份口径）登记到左侧「待确认」（可带候选答案），用户在界面答复、Agent 下次作业读回；答复属用户口径，落页标注「用户确认」 |
 | `kb_guide` | 下发《Agent 作业指南》全文 |
 | `skill_list` / `skill_guide` | 内置作业 skill：先列清单（名称 / 用途 / 何时用 / 版本），需要时再取某份全文。skill 与指南同级但按需获取，版本独立于 `GUIDE_VERSION`，改 skill 不触发全库「规则落后」 |
 
@@ -70,7 +72,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 ### ⌨️ engram CLI（零依赖，Node 22）
 
-`node server/dist/cli/cli.js <command>`（Docker 内 `docker exec engram node dist/cli/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli/cli.js`）。**本机服务零配置**：服务端启动时自动把本机地址与专用 token 登记到 `~/.engram/config.json`（地址随实际端口自适应，不写死；用户手动 `login` 保存的配置优先、不被覆盖），CLI 开箱即用，远程服务再手动 `login` 一次。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|delete|evidence / chat save / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`pages read/evidence/delete` 接受 `pages list` 返回的页面 ID（UUID）、标题或页面路径；`pages delete` 只把 `Wiki/` 下的页面移入回收站（软删除，`原始资料/`、`AIWorks/` 拒删）；`files list --pending` 只列未提炼文件（提炼作业索引用）；`pages list --outdated` 只列提炼规则版本落后于当前指南的概念/实体页（规则升级后重提炼用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
+`node server/dist/cli/cli.js <command>`（Docker 内 `docker exec engram node dist/cli/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli/cli.js`）。**本机服务零配置**：服务端启动时自动把本机地址与专用 token 登记到 `~/.engram/config.json`（地址随实际端口自适应，不写死；用户手动 `login` 保存的配置优先、不被覆盖），CLI 开箱即用，远程服务再手动 `login` 一次。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|delete|evidence / chat save / ask / questions / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`pages read/evidence/delete` 接受 `pages list` 返回的页面 ID（UUID）、标题或页面路径；`pages delete` 只把 `Wiki/` 下的页面移入回收站（软删除，`原始资料/`、`AIWorks/` 拒删）；`files list --pending` 只列未提炼文件（提炼作业索引用）；`pages list --outdated` 只列提炼规则版本落后于当前指南的概念/实体页（规则升级后重提炼用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
 
 ### 📄 页面编辑与管理
 
