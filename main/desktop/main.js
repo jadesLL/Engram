@@ -7,7 +7,8 @@ const { fork } = require('node:child_process');
 const { spawn } = require('node:child_process');
 const net = require('node:net');
 const dataDirLib = require('./lib/data-dir');
-const depsLib = require('./lib/deps');
+// 注意：deps.js 在 desktop/scripts/lib/ 下（构建期脚本与主进程共用的判定），不是 desktop/lib/
+const depsLib = require('./scripts/lib/deps');
 
 // 主进程没有全局兜底时，任何未处理的 Promise 拒绝都会让整个应用静默退出
 // （Node ≥15 语义；本应用多处后台任务不 await，必须自己接住）。
