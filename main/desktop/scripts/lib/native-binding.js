@@ -28,7 +28,10 @@ function downloadWithCurl(url, dest) {
     if (!/(^|\.)npmmirror\.(com|cn)$/.test(parsed.host)) {
       return reject(new Error(`镜像 host 不在白名单：${parsed.host}`));
     }
-    const child = spawn('curl.exe', ['--fail', '-L', '--retry', '2', '-o', dest, url], { windowsHide: true });
+    const curlArgs = ['--fail', '-L', '--retry', '2', '-o', dest, url];
+    const child = process.platform === 'win32'
+      ? spawn('curl.exe', curlArgs, { windowsHide: true })
+      : spawn('curl', curlArgs, { windowsHide: true });
     let stderr = '';
     child.stderr.on('data', (d) => { stderr += d; });
     child.on('error', (e) => reject(new Error(`无法启动 curl：${e && e.message ? e.message : e}`)));
