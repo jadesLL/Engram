@@ -155,13 +155,16 @@ test('lockfile 不再认当前 Electron 版本时判定为本次更新要换运�
   assert.equal(deps.electronRuntimeSwapPending(root), true);
 });
 
-test('resolvePnpmEntry：无共享副本时返回 null，有副本时返回入口', () => {
+test('resolvePnpmEntry：优先用仓库内副本，否则回退全局安装（或 null）', () => {
   const root = makeApp();
-  assert.equal(deps.resolvePnpmEntry(root), null);
+  // 没有仓库内副本时可能解析到本机全局安装的 pnpm（客户机就是这种：安装器 npm i -g pnpm@10），
+  // 也可能整机都没有 —— 两种都算正常，但解析出来的入口必须真实存在
+  const fallback = deps.resolvePnpmEntry(root);
+  assert.ok(fallback === null || fs.existsSync(fallback), `解析出的入口不存在：${fallback}`);
   const entry = path.join(root, 'node_modules/pnpm/bin/pnpm.cjs');
   fs.mkdirSync(path.dirname(entry), { recursive: true });
   fs.writeFileSync(entry, '');
-  assert.equal(deps.resolvePnpmEntry(root), entry);
+  assert.equal(deps.resolvePnpmEntry(root), entry); // 仓库内副本优先
 });
 
 test('lockfileRegistry：按 lockfile 里 tarball URL 的唯一 host 推断 registry', () => {

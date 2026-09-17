@@ -15,6 +15,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 /** 参与指纹的原文文件（lockfile 与 workspace 配置本身即依赖声明） */
 const RAW_MANIFESTS = ['pnpm-lock.yaml', 'pnpm-workspace.yaml'];
@@ -183,6 +184,14 @@ function serverInstallState(appRoot) {
  * 解析 pnpm 的 JS 入口：优先仓库内共享副本（WORKTREES.md 约定的 main/node_modules/pnpm），
  * 其次 pnpm 作为依赖被装进 .pnpm 存储的路径。找不到时调用方回退到 PATH 上的 pnpm。
  */
+/**
+ * 找 pnpm 的 JS 入口（用当前 node 直接跑，不经过任何 shell）。
+ *
+ * 仓库自己不带 pnpm（不是依赖），客户机上的 pnpm 是安装器 `npm i -g pnpm@10` 装的 —— 这时
+ * 只有 PATH 上的 pnpm.cmd，用它就得 `shell: true`（node → cmd.exe → pnpm.cmd → node）。客户机
+ * 实测（2026-09-18）：同一条 install 命令手动在 PowerShell 里跑 17 秒成功，经我们这条 shell 链
+ * 却是"零输出 + 非零退出"，所以这里也去找全局安装的 pnpm JS 入口，能绕开 cmd.exe 那层。
+ */
 function resolvePnpmEntry(appRoot) {
   const candidates = [path.join(appRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')];
   const store = path.join(appRoot, 'node_modules', '.pnpm');
@@ -193,7 +202,35 @@ function resolvePnpmEntry(appRoot) {
   } catch {
     /* 无 .pnpm 存储 */
   }
-  return candidates.find((p) => fs.existsSync(p)) || null;
+  // 全局安装（npm i -g pnpm）：Windows 的 npm 全局目录在 %APPDATA%\npm
+  const globalRoots = [
+    process.env.APPDATA && path.join(process.env.APPDATA, 'npm', 'node_modules'),
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'npm', 'node_modules'),
+    process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'nodejs', 'node_modules'),
+    '/usr/local/lib/node_modules',
+    '/usr/lib/node_modules',
+  ].filter(Boolean);
+  for (const root of globalRoots) {
+    candidates.push(path.join(root, 'pnpm', 'bin', 'pnpm.cjs'));
+    candidates.push(path.join(root, 'pnpm', 'bin', 'pnpm'));
+  }
+  const hit = candidates.find((p) => fs.existsSync(p));
+  if (hit) return hit;
+  // 兜底（仅 Windows）：问系统 pnpm 的 shim 在哪，再从它的目录推 JS 入口，覆盖自定义 prefix
+  if (process.platform === 'win32') {
+    try {
+      const shim = execFileSync('where.exe', ['pnpm'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+        .split('\n')[0]
+        .trim();
+      if (shim) {
+        const derived = path.join(path.dirname(shim), 'node_modules', 'pnpm', 'bin', 'pnpm.cjs');
+        if (fs.existsSync(derived)) return derived;
+      }
+    } catch {
+      /* 没有全局 pnpm：交给调用方回退 PATH */
+    }
+  }
+  return null;
 }
 
 /**

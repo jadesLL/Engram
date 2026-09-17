@@ -40,7 +40,12 @@ function run(cmd, args, options = {}) {
     pipe(child.stdout, process.stdout);
     pipe(child.stderr, process.stderr);
     child.on('error', reject);
-    child.on('exit', (code) => resolve(code === null ? 1 : code));
+    child.on('exit', (code, signal) => {
+      // 被信号/外部终止时明确打出来：客户机上出现过"零输出 + 非零退出"的静默失败，
+      // 只有这行能区分"命令自己报错退出"和"进程被外部杀掉"
+      if (signal) process.stderr.write(`[deps] 子进程被信号 ${signal} 终止：${cmd}\n`);
+      resolve(code === null ? 1 : code);
+    });
   });
 }
 
