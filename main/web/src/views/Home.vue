@@ -134,8 +134,8 @@
 
     <AppContextMenu />
 
-    <!-- 移动端底部导航 -->
-    <nav class="bottom-nav">
+    <!-- 移动端底部导航（聊天抽屉打开时让位，避免盖住输入区） -->
+    <nav class="bottom-nav" :class="{ 'chat-open': app.chatDrawerOpen }">
       <button v-for="item in bottomItems" :key="item.label" type="button" @click="item.action">
         <Icon :name="item.icon" :size="20" /><span>{{ item.label }}</span>
       </button>
@@ -728,6 +728,9 @@ onUnmounted(() => {
   }
 
   .bottom-nav button span { font-size: 10px; }
+
+  /* 聊天抽屉在窄屏是整屏浮层：底部导航让位，否则盖住输入框与发送按钮 */
+  .bottom-nav.chat-open { display: none; }
 
   /* 「更多」底部面板 */
   .more-mask {

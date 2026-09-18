@@ -1,5 +1,9 @@
 <template>
-  <aside class="chat-drawer" :class="{ overlay: overlay }" aria-label="内置 Agent">
+  <aside
+    class="chat-drawer"
+    :class="{ overlay: overlay && !isFull, full: isFull }"
+    aria-label="内置 Agent"
+  >
     <header class="chat-head">
       <div class="chat-brand"><Icon name="ai" :size="16" /> 内置 Agent</div>
       <select
@@ -14,6 +18,16 @@
           {{ session.title }}
         </option>
       </select>
+      <button
+        class="btn icon"
+        type="button"
+        v-tooltip="isFull ? '收回右侧' : '全屏'"
+        :aria-label="isFull ? '收回右侧' : '全屏'"
+        :aria-pressed="isFull"
+        @click="app.toggleChatDrawerMode()"
+      >
+        <Icon :name="isFull ? 'minimize' : 'maximize'" :size="15" />
+      </button>
       <button class="btn icon" type="button" v-tooltip="'新建会话'" aria-label="新建会话" @click="chat.createSession()">
         <Icon name="plus" :size="15" />
       </button>
@@ -46,17 +60,14 @@
         </div>
       </AppEmptyState>
 
-      <!-- 对话流：用户右侧、模型左侧，执行记录（工具卡）插在它发生的那两步之间 -->
-      <div v-else class="stream">
-        <div
-          v-for="(item, index) in timeline"
-          :key="item.key"
-          class="turn"
-          :class="item.role"
-        >
-          <template v-if="item.kind === 'message'">
-            <div class="turn-meta" :class="{ 'no-name': !showName(index) }">
-              <span v-if="showName(index)">{{ item.role === 'user' ? '你' : '内置 Agent' }}</span>
+      <!-- 单列转录（dsh 风格）：消息与执行记录按发生顺序排成一条流，工具卡默认收起 -->
+      <div v-else class="transcript">
+        <template v-for="(item, index) in timeline" :key="item.key">
+          <div v-if="index > 0 && startsNewRun(timeline, index)" class="run-sep" aria-hidden="true" />
+
+          <div v-if="item.kind === 'message'" class="entry" :class="item.role">
+            <div class="entry-head" :class="{ 'no-name': !showName(index) }">
+              <span v-if="showName(index)" class="entry-name">{{ item.role === 'user' ? '你' : '内置 Agent' }}</span>
               <button
                 v-if="item.role === 'assistant' && item.message.content"
                 class="text-action"
@@ -64,18 +75,35 @@
                 @click="copy(item.message.content)"
               >复制</button>
             </div>
-            <div v-if="item.message.content" class="message-content" v-html="renderAssistantMarkdown(item.message.content)" />
+            <div v-if="item.role === 'user'" class="entry-plain">{{ item.message.content }}</div>
+            <div
+              v-else-if="item.message.content"
+              class="entry-markdown"
+              v-html="renderAssistantMarkdown(item.message.content)"
+            />
             <span v-if="item.message.id === streamingId" class="cursor">▍</span>
-          </template>
-          <article v-else class="tool-call" :class="item.call.status">
-            <div class="tool-head">
-              <span class="tool-state">{{ toolState(item.call.status) }}</span>
+          </div>
+
+          <div v-else class="tool" :class="item.call.status">
+            <button
+              class="tool-head"
+              type="button"
+              :aria-expanded="isToolOpen(item.call)"
+              @click="toggleTool(item.call)"
+            >
+              <Icon :name="toolIcon(item.call.name)" :size="13" />
               <b>{{ toolLabel(item.call.name) }}</b>
+              <span class="tool-summary">{{ toolCallSummary(item.call.args) }}</span>
+              <span class="tool-state">{{ toolState(item.call.status) }}</span>
+              <Icon :name="isToolOpen(item.call) ? 'chevron-up' : 'chevron-down'" :size="13" />
+            </button>
+            <div v-if="isToolOpen(item.call)" class="tool-body">
+              <pre v-if="item.call.args && item.call.args !== '{}'" class="tool-args">{{ item.call.args }}</pre>
+              <pre v-if="item.call.text" class="tool-result">{{ item.call.text }}</pre>
+              <p v-else-if="item.call.status === 'running'" class="tool-pending">执行中…</p>
             </div>
-            <p v-if="item.call.args && item.call.args !== '{}'" class="tool-args">{{ shortArgs(item.call.args) }}</p>
-            <pre v-if="item.call.text" class="tool-result">{{ shortResult(item.call.text) }}</pre>
-          </article>
-        </div>
+          </div>
+        </template>
       </div>
 
       <div v-if="chat.statusText" class="run-status">
@@ -135,8 +163,8 @@ import Icon from './Icon.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 import { useAppStore } from '../stores/app';
-import { useChatStore, type ChatContext, type ChatRun } from '../stores/chat';
-import { buildChatTimeline, showStreamName } from '../lib/chatTimeline';
+import { useChatStore, type ChatContext, type ChatRun, type ChatToolCall } from '../stores/chat';
+import { buildChatTimeline, showStreamName, startsNewRun, toolCallSummary } from '../lib/chatTimeline';
 import { renderAssistantMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
 
@@ -147,6 +175,9 @@ const chat = useChatStore();
 const draft = ref('');
 const scrollEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
+
+/** 满窗形态：铺满内容区（形态本身不重建组件，会话/草稿/滚动都保留） */
+const isFull = computed(() => app.chatDrawerMode === 'full');
 
 const suggestions = [
   '列出还没有提炼的原始资料',
@@ -183,6 +214,17 @@ const streamingId = computed(() => {
 });
 
 const showName = (index: number) => showStreamName(timeline.value, index);
+
+/* ===== 工具卡折叠：默认收起，失败默认展开，用户点过就以用户为准 ===== */
+const toolOpenOverride = ref<Record<string, boolean>>({});
+
+function isToolOpen(call: ChatToolCall): boolean {
+  return toolOpenOverride.value[call.id] ?? call.status === 'failed';
+}
+
+function toggleTool(call: ChatToolCall) {
+  toolOpenOverride.value = { ...toolOpenOverride.value, [call.id]: !isToolOpen(call) };
+}
 
 function onSelectSession(event: Event) {
   const id = (event.target as HTMLSelectElement).value;
@@ -229,9 +271,36 @@ const TOOL_LABELS: Record<string, string> = {
   delete_page: '删除页面（回收站）',
 };
 
+/** 执行记录一行的工具图标（与 TOOL_LABELS 同一套键） */
+const TOOL_ICONS: Record<string, string> = {
+  search: 'search',
+  read_page: 'markdown',
+  list_pages: 'pages',
+  list_raw_files: 'folder',
+  read_raw_file: 'file',
+  write_page: 'file-plus',
+  page_evidence: 'report',
+  related_pages: 'graph',
+  save_chat: 'archive',
+  kb_guide: 'book-open',
+  skill_list: 'list-tree',
+  skill_guide: 'list-tree',
+  rename_page: 'move',
+  move_page: 'move',
+  delete_page: 'trash',
+};
+
+function bareToolName(name: string): string {
+  return name.replace(/^mcp__engram__/, '');
+}
+
 function toolLabel(name: string): string {
-  const bare = name.replace(/^mcp__engram__/, '');
+  const bare = bareToolName(name);
   return TOOL_LABELS[bare] || bare;
+}
+
+function toolIcon(name: string): string {
+  return TOOL_ICONS[bareToolName(name)] || 'activity';
 }
 
 function toolState(status: string): string {
@@ -241,17 +310,15 @@ function toolState(status: string): string {
   return status;
 }
 
-function shortArgs(args: string): string {
-  return args.length > 160 ? `${args.slice(0, 160)}…` : args;
-}
-
-function shortResult(text: string): string {
-  return text.length > 600 ? `${text.slice(0, 600)}…` : text;
-}
-
 async function scrollToBottom() {
   await nextTick();
   if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
+}
+
+/** Esc 只把满窗收回右侧：不关抽屉、不取消正在跑的一轮（弹窗的 Esc 会 stopPropagation，不会误触发） */
+function onKey(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
+  if (app.chatDrawerMode === 'full') app.setChatDrawerMode('dock');
 }
 
 watch(
@@ -268,10 +335,12 @@ watch(() => app.chatDrawerOpen, (open) => {
 });
 
 onMounted(() => {
+  window.addEventListener('keydown', onKey);
   if (app.chatDrawerOpen) void chat.init();
 });
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', onKey);
   chat.closeEvents();
 });
 </script>
@@ -298,6 +367,28 @@ onUnmounted(() => {
   width: auto;
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
   z-index: var(--z-sidebar);
+}
+
+/*
+ * 满窗：铺满 .layout（桌面端标题栏以下的整块内容区），盖住 rail / 文件树 / 正文。
+ * 用 absolute 而不是 fixed：fixed 会盖住顶部 36px 拖拽条，窗口就拖不动了。
+ */
+.chat-drawer.full {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  border-left: none;
+  box-shadow: none;
+  z-index: var(--z-panel);
+}
+
+/* 满窗下头部/正文/输入区同列居中限宽，长文与工具结果不被拉成一整屏 */
+.chat-drawer.full .chat-head,
+.chat-drawer.full .context-strip,
+.chat-drawer.full .chat-body,
+.chat-drawer.full .chat-composer {
+  padding-left: max(12px, calc((100% - 1080px) / 2));
+  padding-right: max(12px, calc((100% - 1080px) / 2));
 }
 
 .chat-head {
@@ -387,67 +478,111 @@ onUnmounted(() => {
   color: var(--text);
 }
 
-.stream {
+/* ===== 单列转录：一条流按发生顺序排，轮间一条细分隔 ===== */
+.transcript {
   display: flex;
   flex-direction: column;
+  gap: 12px;
 }
 
-/* 用户右侧、模型左侧；工具卡跟模型同侧 */
-.turn {
+.run-sep {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--border);
+}
+
+.entry {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  max-width: 100%;
-  margin-bottom: 14px;
+  min-width: 0;
 }
 
-.turn.user {
-  align-items: flex-end;
-}
-
-.turn-meta {
+.entry-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  align-self: stretch;
   gap: 8px;
-  margin-bottom: 4px;
+  min-height: 16px;
+  margin-bottom: 2px;
   color: var(--text-faint);
   font-size: 11px;
 }
 
-.turn-meta.no-name {
+.entry-name {
+  font-weight: 600;
+}
+
+/* 同一轮的后续正文不再署名，操作按钮仍靠右对齐，避免位置跳动 */
+.entry-head.no-name {
   justify-content: flex-end;
 }
 
-.text-action {
-  border: none;
-  background: none;
-  color: var(--text-faint);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.text-action:hover {
+/* 用户消息：纯文本块 + 左缘强调色竖条（不渲染 Markdown，保持原样） */
+.entry-plain {
+  padding: 7px 10px;
+  border-left: 2px solid var(--accent, #4d8aff);
+  border-radius: 0 8px 8px 0;
+  background: var(--bg-secondary);
   color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.message-content {
-  max-width: 88%;
+.entry-markdown {
   font-size: 13px;
-  line-height: 1.65;
+  line-height: 1.7;
   color: var(--text);
   overflow-wrap: anywhere;
 }
 
-.turn.assistant .message-content {
-  max-width: 100%;
+/* 助手正文里的 Markdown 子元素全局没有样式，这里按转录排版补齐 */
+.entry-markdown :deep(h2),
+.entry-markdown :deep(h3),
+.entry-markdown :deep(h4) {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
 }
 
-.turn.user .message-content {
+.entry-markdown :deep(p) {
+  margin: 0 0 8px;
+}
+
+.entry-markdown :deep(pre) {
+  margin: 8px 0;
   padding: 8px 10px;
-  border-radius: 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   background: var(--bg-secondary);
+}
+
+.entry-markdown :deep(code) {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+
+.entry-markdown :deep(pre code) {
+  padding: 0;
+  background: none;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.entry-markdown :deep(sup.cite) {
+  color: var(--accent, #4d8aff);
+  font-size: 10px;
+}
+
+/* 列表项由 Markdown 渲染器转成 span + <br>，这里不再改成块级，避免每项之间多空一行 */
+.entry-markdown :deep(.list-line) {
+  padding-left: 2px;
 }
 
 .cursor {
@@ -460,32 +595,53 @@ onUnmounted(() => {
   to { visibility: hidden; }
 }
 
-.tool-call {
-  align-self: stretch;
-  margin-bottom: 8px;
-  padding: 8px 10px;
+/* ===== 执行记录：一行摘要，点开看完整参数与完整结果（靠滚动，不截断） ===== */
+.tool {
   border: 1px solid var(--border);
   border-left: 2px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
+  overflow: hidden;
 }
 
-.tool-call.running {
+.tool.running {
   border-left-color: var(--accent, #4d8aff);
 }
 
-.tool-call.failed {
+.tool.failed {
   border-left-color: var(--danger, #d64545);
 }
 
 .tool-head {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 7px 10px;
+  color: var(--text-secondary);
   font-size: 12px;
+  text-align: left;
+}
+
+.tool-head b {
+  flex-shrink: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tool-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .tool-state {
+  flex-shrink: 0;
   padding: 1px 6px;
   border-radius: 8px;
   background: var(--bg);
@@ -493,28 +649,36 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-.tool-call.running .tool-state {
+.tool.running .tool-state {
   color: var(--accent, #4d8aff);
 }
 
-.tool-call.failed .tool-state {
+.tool.failed .tool-state {
   color: var(--danger, #d64545);
+}
+
+.tool-body {
+  padding: 0 10px 8px;
+  border-top: 1px solid var(--border);
 }
 
 .tool-args,
 .tool-result {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
+  max-height: 320px;
+  overflow: auto;
   color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
   font-size: 11px;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.tool-result {
-  max-height: 200px;
-  overflow-y: auto;
-  font-family: var(--font-mono, monospace);
+.tool-pending {
+  margin: 8px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
 }
 
 .run-status {
@@ -561,6 +725,11 @@ onUnmounted(() => {
   .chat-drawer {
     width: 100%;
     border-left: none;
+  }
+
+  /* 手机端 rail 已隐藏，浮层不该再留 60px 空档 */
+  .chat-drawer.overlay {
+    left: 0;
   }
 }
 </style>

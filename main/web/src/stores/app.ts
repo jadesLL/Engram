@@ -7,6 +7,9 @@ import {
 
 type Theme = 'light' | 'dark' | 'system';
 
+/** 内置 Agent 聊天抽屉的形态：dock=右侧并排，full=满窗铺满内容区 */
+export type ChatDrawerMode = 'dock' | 'full';
+
 function resolveDarkTheme(theme: Theme): boolean {
   return theme === 'dark' ||
     (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -49,8 +52,10 @@ export const useAppStore = defineStore('app', {
         failed: 0,
         queueRunning: true,
       },
-      /** 内置 Agent 聊天抽屉：开合、宽度与未读提示 */
+      /** 内置 Agent 聊天抽屉：开合、形态与未读提示 */
       chatDrawerOpen: false,
+      /** 上次使用的抽屉形态（dock 右侧并排 / full 满窗），刷新与重开都沿用 */
+      chatDrawerMode: (localStorage.getItem('chatDrawerMode') === 'full' ? 'full' : 'dock') as ChatDrawerMode,
       chatDrawerWidth: Number(localStorage.getItem('chatDrawerWidth')) || 420,
       chatUnread: false,
     };
@@ -100,6 +105,14 @@ export const useAppStore = defineStore('app', {
     setChatDrawerWidth(width: number) {
       this.chatDrawerWidth = Math.min(720, Math.max(320, Math.round(width)));
       localStorage.setItem('chatDrawerWidth', String(this.chatDrawerWidth));
+    },
+    /** 切换抽屉形态：写入偏好，下次打开（含 rail ✨ 入口）沿用 */
+    setChatDrawerMode(mode: ChatDrawerMode) {
+      this.chatDrawerMode = mode;
+      localStorage.setItem('chatDrawerMode', mode);
+    },
+    toggleChatDrawerMode() {
+      this.setChatDrawerMode(this.chatDrawerMode === 'full' ? 'dock' : 'full');
     },
     /** 应用服务端推送的页面事件：记录事件 + 自增版本号 + 刷新侧栏 */
     applyPageEvent(ev: any) {

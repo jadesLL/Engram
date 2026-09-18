@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 // 测试由 node 内置类型擦除直接跑（web 包无额外测试框架），相对导入要带真实扩展名
-import { buildChatTimeline, showStreamName } from './chatTimeline.ts';
+import { buildChatTimeline, showStreamName, startsNewRun, toolCallSummary } from './chatTimeline.ts';
 import type { ChatMessage, ChatRun, ChatToolCall } from '../stores/chat';
 
 /** 用最少字段造一条消息 / 一张工具卡 / 一轮运行 */
@@ -93,4 +93,30 @@ test('署名只落在每轮第一条正文上，以工具卡开头的轮也能�
     // u2 起新轮；a3 同理。工具卡不渲染署名，但判定结果本身为 true。
     ['u1', 't1', 'a1', '', 'u2', 't2', 'a3']
   );
+});
+
+test('轮间分隔只在换轮处出现，散项各自成段', () => {
+  const runs = [run('r1', '2026-01-01T00:00:00.000Z'), run('r2', '2026-01-01T00:10:00.000Z')];
+  const messages = [
+    message('legacy', 'user', '2025-12-31T23:00:00.000Z'),
+    message('u1', 'user', '2026-01-01T00:00:00.000Z', 'r1'),
+    message('a1', 'assistant', '2026-01-01T00:00:02.000Z', 'r1'),
+    message('u2', 'user', '2026-01-01T00:10:00.000Z', 'r2'),
+  ];
+  const calls = [call('t1', '2026-01-01T00:00:01.000Z', 'r1')];
+  const items = buildChatTimeline(messages, calls, runs);
+
+  assert.deepEqual(items.map((item) => item.key), ['legacy', 'u1', 't1', 'a1', 'u2']);
+  assert.deepEqual(items.map((_, index) => startsNewRun(items, index)), [true, true, false, false, true]);
+});
+
+test('工具卡摘要取第一个字符串字段，坏 JSON 原样、超长截断', () => {
+  assert.equal(toolCallSummary('{"query":"同步 冲突"}'), '同步 冲突');
+  assert.equal(toolCallSummary('{"path":"Wiki/a.md","title":"A"}'), 'Wiki/a.md');
+  assert.equal(toolCallSummary('{"limit":10}'), 'limit: 10');
+  assert.equal(toolCallSummary('{}'), '');
+  assert.equal(toolCallSummary(''), '');
+  assert.equal(toolCallSummary('not json'), 'not json');
+  assert.equal(toolCallSummary('{"query":"a\\nb"}'), 'a b');
+  assert.equal(toolCallSummary(`{"query":"${'x'.repeat(120)}"}`), `${'x'.repeat(80)}…`);
 });
