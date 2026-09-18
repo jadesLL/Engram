@@ -6,6 +6,7 @@ import { subscribeRun } from '../assistant/events.js';
 import { AgentNotConfiguredError, cancelRun, isRunning, RunConflictError, startRun } from '../assistant/runner.js';
 import { agentRuntimeStatus } from '../assistant/dshRuntime.js';
 import { bundledDshBin, getAgentConfig, setAgentConfig } from '../assistant/config.js';
+import { AGENT_APIS, agentApi } from '../assistant/agentSettings.js';
 import * as repo from '../assistant/repository.js';
 import type { InterfaceContext } from '../assistant/prompts.js';
 
@@ -33,6 +34,9 @@ export async function assistantRoutes(app: FastifyInstance) {
     const config = getAgentConfig();
     return {
       model: config.model || '',
+      /** 自定义 API 地址与线协议：留空表示走 dsh 自带的 deepseek-official */
+      baseUrl: config.baseUrl || '',
+      api: agentApi(config.api),
       dshPath: config.dshPath || '',
       /** 返回明文由前端 SecretField 负责掩码展示（与同步令牌同一约定） */
       apiKey: config.apiKey || '',
@@ -40,13 +44,36 @@ export async function assistantRoutes(app: FastifyInstance) {
   });
 
   app.put('/api/assistant/config', async (req, reply) => {
-    const body = (req.body || {}) as { model?: string; apiKey?: string | null; dshPath?: string };
+    const body = (req.body || {}) as {
+      model?: string;
+      apiKey?: string | null;
+      dshPath?: string;
+      baseUrl?: string;
+      api?: string;
+    };
     if (body.model !== undefined && typeof body.model !== 'string') {
       return reply.code(400).send({ error: 'model 必须是字符串' });
+    }
+    if (body.baseUrl !== undefined && typeof body.baseUrl !== 'string') {
+      return reply.code(400).send({ error: 'baseUrl 必须是字符串' });
+    }
+    // 自定义地址：必须是一个不带空格的 http(s) 地址，且自定义路由没有内置模型清单 → 模型必填
+    const baseUrl = (body.baseUrl || '').trim();
+    if (baseUrl && !/^https?:\/\/\S+$/i.test(baseUrl)) {
+      return reply.code(400).send({ error: 'API 地址要以 http:// 或 https:// 开头，且不能含空格' });
+    }
+    if (baseUrl && !((body.model ?? getAgentConfig().model) || '').trim()) {
+      return reply.code(400).send({ error: '填了自定义 API 地址就要一起填模型名（自定义地址没有内置模型清单）' });
+    }
+    if (body.api !== undefined && body.api !== '' && !(AGENT_APIS as readonly string[]).includes(body.api)) {
+      return reply.code(400).send({ error: `接口协议只能是 ${AGENT_APIS.join(' / ')}` });
     }
     const patch: Record<string, string | undefined> = {};
     if (body.model !== undefined) patch.model = body.model.trim();
     if (body.dshPath !== undefined) patch.dshPath = body.dshPath.trim();
+    // 地址由设置页整值回传：空串 = 清掉自定义地址，回到官方路由
+    if (body.baseUrl !== undefined) patch.baseUrl = baseUrl || undefined;
+    if (body.api !== undefined) patch.api = body.api.trim() || undefined;
     // 空串表示维持原值（SecretField 的约定）；传 null 表示清除已存的 Key
     if (body.apiKey === null) patch.apiKey = undefined;
     else if (body.apiKey !== undefined && body.apiKey !== '') patch.apiKey = body.apiKey.trim();

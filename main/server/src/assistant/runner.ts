@@ -62,7 +62,7 @@ export function startRun(input: {
   // 没配 key 就不起运行：dsh 会在模型调用处失败，而那条错误对用户不可读
   if (!getAgentConfig().apiKey) {
     throw new AgentNotConfiguredError(
-      '内置 Agent 还没配模型凭据：到 设置 → Agent 接入 → 内置 Agent 填一把 DeepSeek 平台 API Key 再试'
+      '内置 Agent 还没配模型凭据：到 设置 → Agent 接入 → 内置 Agent 填模型凭据（官方地址填 DeepSeek 平台 API Key；中转或自建网关先填 API 地址与模型，再填该网关的 Key）'
     );
   }
 
@@ -148,7 +148,7 @@ export function startRun(input: {
       const fallback = !ok
         ? `运行失败：${briefError(error)}`
         : turnReason && turnReason !== 'completed'
-          ? `本轮没有产出内容（结束原因：${turnReason}）——多半是模型凭据无效或额度问题，可在 设置 → Agent 接入 → 内置 Agent 检查。`
+          ? `本轮没有产出内容（结束原因：${turnReason}）——多半是模型地址、模型名或凭据不对，或额度问题，可在 设置 → Agent 接入 → 内置 Agent 检查。`
           : '（本轮没有产出内容）';
       if (last) setMessageContent(last.id, fallback);
       else {

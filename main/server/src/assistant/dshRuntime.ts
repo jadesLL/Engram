@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { DeepSeekHarness, type HarnessNotification } from '@deepseek-ai/dsh-sdk-client';
 import { engramPatchBlock } from '../lib/dshConfig.js';
 import { zcodeMcpUrl } from '../lib/zcodeConfig.js';
-import { agentWorkspaceDir, bundledDshHome, getAgentConfig } from './config.js';
+import { agentWorkspaceDir, bundledDshHome, getAgentConfig, type AgentConfig } from './config.js';
+import { customRoute, syncAgentSettings } from './agentSettings.js';
 import { mapNotification, type AgentEvent } from './mapping.js';
 import { ensureAgentToken } from './repository.js';
 
@@ -20,7 +21,11 @@ import { ensureAgentToken } from './repository.js';
  * 整段到达。映射逻辑在 mapping.ts（纯函数，可单测）。
  *
  * 姿态：只读沙箱 + 知识库只经 MCP 工具。工作目录是数据目录下的空壳 workspace，
- * 不是知识库目录；凭据经 DEEPSEEK_API_KEY 环境变量注入（对该次运行优先于凭据文件）。
+ * 不是知识库目录；凭据经环境变量注入（对该次运行优先于凭据文件）。
+ *
+ * 模型路由：默认走 dsh 自带的 `deepseek-official`（官方地址 + DEEPSEEK_API_KEY）；设置页
+ * 填了自定义 API 地址就改用 `llm-pi-ai` 手工声明的 provider 路由（见 agentSettings.ts），
+ * 地址与模型清单写进内置 DSH_HOME 的 settings.yaml，Key 仍只经环境变量注入。
  */
 
 export type { AgentEvent } from './mapping.js';
@@ -45,7 +50,22 @@ interface RuntimeEntry {
   harness: DeepSeekHarness;
   /** 该运行时进程内的 dsh 会话 id（不跨进程复用：sdk profile 不接受既有 id 的二次创建） */
   dshSessionId: string;
+  /** 建这个运行时用的配置指纹：设置改了要重开，否则池里的旧进程还按旧地址/旧 Key 跑 */
+  configKey: string;
   idleTimer?: NodeJS.Timeout;
+}
+
+/** 模型路由指纹：地址、协议、模型、凭据、dsh 入口任一变化都要重开运行时 */
+function routeKey(config: AgentConfig): string {
+  const route = customRoute(config);
+  return JSON.stringify([
+    config.dshPath || '',
+    route?.provider || 'deepseek-official',
+    route?.baseUrl || '',
+    route?.api || '',
+    config.model || '',
+    config.apiKey || '',
+  ]);
 }
 
 /**
@@ -116,21 +136,33 @@ function dropLegacyHomePatch(): void {
 
 /** 取（或新建）本会话的运行时：新建时连 dsh 会话 id 一起铸 */
 function acquireRuntime(key: string): RuntimeEntry {
+  const config = getAgentConfig();
+  const configKey = routeKey(config);
   const existing = runtimes.get(key);
   if (existing) {
-    if (existing.idleTimer) clearTimeout(existing.idleTimer);
-    return existing;
+    if (existing.configKey === configKey) {
+      if (existing.idleTimer) clearTimeout(existing.idleTimer);
+      return existing;
+    }
+    // 模型地址/凭据/模型变了：池里的旧进程还按旧路由跑，直接回收重开（下一轮换新 dsh 会话，
+    // 上下文靠 Engram 侧的有界历史衔接）
+    closeRuntime(key);
   }
   const patchPath = ensureAgentPatch(ensureAgentToken());
-  const config = getAgentConfig();
   const workspace = agentWorkspaceDir();
   fs.mkdirSync(workspace, { recursive: true });
+  // 自定义地址 → 把 provider 路由写进内置 DSH_HOME 的 settings.yaml；没配则清掉本方两段
+  syncAgentSettings(bundledDshHome(), config);
+  const route = customRoute(config);
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1', // 桌面端：SDK 用 process.execPath 起子进程，必须是纯 Node 模式
     DSH_HOME: bundledDshHome(),
-    ...(config.apiKey ? { DEEPSEEK_API_KEY: config.apiKey } : {}),
+    // 自定义路由按它自己的 apiKeyEnv 注入；官方路由走 DEEPSEEK_API_KEY
+    ...(config.apiKey
+      ? (route ? { [route.keyEnv]: config.apiKey } : { DEEPSEEK_API_KEY: config.apiKey })
+      : {}),
   };
 
   const harness = new DeepSeekHarness({
@@ -140,11 +172,12 @@ function acquireRuntime(key: string): RuntimeEntry {
     processCwd: workspace, // dsh 进程自己的工作目录：独立空目录
     cwd: workspace,        // 会话记录的工作目录：同上，知识库只经 MCP 工具访问
     env,
+    ...(route ? { provider: route.provider } : {}),
     ...(config.model ? { model: config.model } : {}),
     ...(config.dshPath ? { dshBin: config.dshPath } : {}),
   });
 
-  const entry: RuntimeEntry = { harness, dshSessionId: `session-${randomUUID()}` };
+  const entry: RuntimeEntry = { harness, dshSessionId: `session-${randomUUID()}`, configKey };
   runtimes.set(key, entry);
   return entry;
 }
@@ -198,13 +231,25 @@ export function startAgentTurn(options: AgentTurnOptions): AgentTurn {
 }
 
 /** 运行时就绪状态（设置页展示用） */
-export function agentRuntimeStatus(): { workspace: string; home: string; hasKey: boolean; model: string } {
+export function agentRuntimeStatus(): {
+  workspace: string;
+  home: string;
+  hasKey: boolean;
+  model: string;
+  baseUrl: string;
+  api: string;
+  custom: boolean;
+} {
   const config = getAgentConfig();
+  const route = customRoute(config);
   return {
     workspace: agentWorkspaceDir(),
     home: bundledDshHome(),
     hasKey: Boolean(config.apiKey),
-    model: config.model || 'deepseek-v4-flash',
+    model: config.model || (route ? '' : 'deepseek-v4-flash'),
+    baseUrl: config.baseUrl || '',
+    api: route?.api || '',
+    custom: Boolean(route),
   };
 }
 
