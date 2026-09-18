@@ -26,7 +26,8 @@
 #   SNAPSHOT_TOKEN              目标仓库写入令牌
 #   SNAPSHOT_DRY_RUN            1 = 只重写与校验，不推送
 #   SNAPSHOT_KEEP               1 = 保留快照目录供排查
-#   SNAPSHOT_BRANCH / SNAPSHOT_PUSH_TAGS / SNAPSHOT_SRC_REPO / SNAPSHOT_FILTER_REPO
+#   SNAPSHOT_BRANCH / SNAPSHOT_PUSH_TAGS / SNAPSHOT_SYNC_RELEASES
+#   SNAPSHOT_SRC_REPO / SNAPSHOT_FILTER_REPO
 #   SNAPSHOT_HOST_FROM / SNAPSHOT_OWNER_FROM / SNAPSHOT_HOST_TO / SNAPSHOT_OWNER_TO
 set -euo pipefail
 
@@ -34,6 +35,7 @@ DRY_RUN="${SNAPSHOT_DRY_RUN:-0}"
 SNAPSHOT_NAME="${SNAPSHOT_NAME:-Engram}"
 BRANCH="${SNAPSHOT_BRANCH:-main}"
 PUSH_TAGS="${SNAPSHOT_PUSH_TAGS:-1}"
+SYNC_RELEASES="${SNAPSHOT_SYNC_RELEASES:-1}"
 HOST_TO="${SNAPSHOT_HOST_TO:-gitea.example.com}"
 OWNER_TO="${SNAPSHOT_OWNER_TO:-example}"
 
@@ -115,10 +117,30 @@ else
   echo ">> 提示：未拿到公开仓库地址，仓库内链接只做占位替换（本地干跑可传 SNAPSHOT_PUBLIC_URL）" >&2
 fi
 
+# ①b 私有 Registry 的镜像命令：公开仓库没有对应 Registry，换成明确说明。
+#     这两串在所有文件里都指私有 Registry，所以全局替换语义正确；
+#     必须排在主机名占位之前（左串里含真实主机名）。
+{
+  printf 'literal:docker login %s -u %s -p <package权限token>==># Docker 镜像未公开发布（原私有 Registry 不对外）\n' "$HOST_FROM" "$OWNER_FROM"
+  printf 'literal:docker pull %s/%s/engram/engram:<版本>==># 需要镜像请自行构建：docker compose -f main/docker-compose.yml up -d --build\n' "$HOST_FROM" "$OWNER_FROM"
+} >> "$RULES"
+
 # ② 其余 Gitea 主机名占位（带端口的必须在前，否则会残留端口）
 {
   printf 'literal:%s==>%s\n' "$HOST_FROM" "$HOST_TO"
   printf 'literal:%s==>%s\n' "$HOST_NOPORT" "$HOST_TO"
+} >> "$RULES"
+
+# ③ README 口径修正：这几句描述的是私有仓库，在公开仓库里不成立。
+#    经确认这几串只出现在 README.md，所以全局替换是精确的。
+#    （Docker 镜像那几行无法靠替换修好——公开仓库没有对应 Registry，只能保留占位串。）
+{
+  printf 'literal:==>\n'
+  printf 'literal:公开仓库无需凭据==>公开仓库无需凭据\n'
+  printf 'literal:- **GitHub Release**：==>- **GitHub Release**：\n'
+  printf 'literal:发布到 GitHub Release 正文==>发布到 GitHub Release 正文\n'
+  printf 'literal:公开仓库未发布 Docker 镜像；自建部署请从源码构建：==>公开仓库未发布 Docker 镜像；自建部署请从源码构建：\n'
+  printf 'literal:（未公开发布；需要请自行构建）==>（未公开发布；需要请自行构建）\n'
 } >> "$RULES"
 
 EXTRA_FILE=""
@@ -293,5 +315,118 @@ g push --force --quiet "$PUSH_URL" "refs/heads/$BRANCH:refs/heads/$BRANCH"
 if [ "$PUSH_TAGS" = "1" ]; then
   echo ">> 推送标签 ..."
   g push --force --quiet "$PUSH_URL" 'refs/tags/*:refs/tags/*'
+fi
+# ---------- 发布同步：按 CHANGELOG 段落建公开仓库 Release ----------
+# 正文来源是快照内（已脱敏）的 CHANGELOG.md，与 Gitea 侧 release.yml 同一约定，
+# 因此不需要调 Gitea API、也不需要额外凭据（复用推送用的那把 PAT）。
+# 幂等：正文一致就不动，缺了才建、变了才改。
+if [ "$SYNC_RELEASES" = "1" ] && { [ "$DRY_RUN" != "1" ] || [ -n "${SNAPSHOT_TOKEN:-}" ]; }; then
+  GH_API_BASE=""
+  case "$PUBLIC_BASE" in
+    https://github.com/*) GH_API_BASE="https://api.github.com/repos/${PUBLIC_BASE#https://github.com/}" ;;
+  esac
+  if [ -z "$GH_API_BASE" ]; then
+    echo ">> 跳过发布同步：目标不是 github.com（当前 ${PUBLIC_BASE:-<未设置>}）" >&2
+  else
+    echo ">> 同步发布（CHANGELOG 段落 → Release）..."
+    GH_API_BASE="$GH_API_BASE" GH_TOKEN="${SNAPSHOT_TOKEN:-}" SNAP_REPO="$(nat "$SNAP")" \
+      GH_DRY_RUN="$DRY_RUN" python - <<'PY'
+import json, os, re, subprocess, time, urllib.error, urllib.request
+
+api = os.environ['GH_API_BASE'].rstrip('/')
+token = os.environ.get('GH_TOKEN', '')
+snap = os.environ['SNAP_REPO']
+dry = os.environ.get('GH_DRY_RUN') == '1'
+
+
+def git(*args):
+    return subprocess.run(['git', '-C', snap, *args], capture_output=True, check=True).stdout
+
+
+CHANGELOG = git('show', 'HEAD:CHANGELOG.md').decode('utf-8', 'replace')
+
+
+def changelog_section(tag):
+    """取当前 CHANGELOG.md 里 '## <tag>' 到下一个 '## ' 之间的段落。
+
+    刻意读 HEAD 而不是 '<tag>:CHANGELOG.md'：早期标签当时仓库根还没有这份文件
+    （根 CHANGELOG 是后来才加的），只有当前这份才覆盖全部 77 个版本段落。
+    """
+    want = re.compile(r'^## ' + re.escape(tag) + r'(?![0-9.])')
+    out, found = [], False
+    for line in CHANGELOG.splitlines():
+        if line.startswith('## '):
+            if found:
+                break
+            if want.match(line):
+                found = True
+        if found:
+            out.append(line)
+    return '\n'.join(out).strip()
+
+
+def call(method, url, payload=None):
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    if token:
+        req.add_header('Authorization', f'Bearer {token}')
+    req.add_header('Accept', 'application/vnd.github+json')
+    req.add_header('User-Agent', 'engram-public-mirror')
+    if data:
+        req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, json.loads(r.read().decode() or '{}')
+    except urllib.error.HTTPError as e:
+        return e.code, {}
+
+
+tags = [t.decode() for t in git('tag', '--list', 'v*').splitlines() if t.strip()]
+created = updated = unchanged = skipped = failed = 0
+for tag in tags:
+    body = changelog_section(tag)
+    if not body:
+        print(f'   skip {tag}（CHANGELOG 无对应段落）')
+        skipped += 1
+        continue
+    status, rel = call('GET', f'{api}/releases/tags/{tag}')
+    if status == 200:
+        if rel.get('body', '').strip() == body:
+            unchanged += 1
+            continue
+        if dry:
+            print(f'   would update {tag}')
+            updated += 1
+            continue
+        st, _ = call('PATCH', f"{api}/releases/{rel['id']}", {'body': body})
+        if st == 200:
+            updated += 1
+        else:
+            print(f'   !! update {tag} HTTP {st}')
+            failed += 1
+    elif status == 404:
+        if dry:
+            print(f'   would create {tag}')
+            created += 1
+            continue
+        st, _ = call('POST', f'{api}/releases', {
+            'tag_name': tag, 'name': tag, 'body': body,
+            'draft': False, 'prerelease': False,
+        })
+        if st in (200, 201):
+            created += 1
+        else:
+            print(f'   !! create {tag} HTTP {st}')
+            failed += 1
+    else:
+        print(f'   !! {tag} 查询失败 HTTP {status}')
+        failed += 1
+    time.sleep(0.2)
+
+print(f'>> 发布同步：新建 {created}，更新 {updated}，未变 {unchanged}，跳过 {skipped}，失败 {failed}')
+if failed:
+    raise SystemExit(1)
+PY
+  fi
 fi
 echo ">> 完成。"
