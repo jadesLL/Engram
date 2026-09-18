@@ -118,7 +118,6 @@ const CHUNK_DELETE_BATCH = 1000;
 const TABLES_TO_WIPE = [
   'file_extraction_pages',
   'file_extractions',
-  'agent_questions',
   'ingest_questions',
   'ingest_candidates',
   'ingest_facts',

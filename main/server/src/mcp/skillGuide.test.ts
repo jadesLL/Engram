@@ -82,18 +82,20 @@ test('MCP instructions 指向 skill 工具并声明对话沉积触发条件', as
   const instructions = client.getInstructions?.() || '';
   assert.match(instructions, /skill_list/);
   assert.match(instructions, /skill_guide/);
-  assert.match(instructions, /先问用户/);
+  assert.match(instructions, /不要卡住整批作业/);
   assert.match(instructions, /save_chat/);
 });
 
-test('指南正文：原始资料口径为「Agent 无写权限 + 须用户授权」，且沉淀须指示', async () => {
+test('指南正文：原始资料口径为「Agent 无写权限 + 不停下来等用户」，且沉淀须指示', async () => {
   const result = await callTool('kb_guide');
   assert.equal(result.isError, false, result.text);
   assert.match(result.text, /没有写权限/);
-  assert.match(result.text, /先问用户/);
+  assert.match(result.text, /不要停下来等用户/);
+  assert.match(result.text, /待核实/);
   assert.match(result.text, /不得走 HTTP\/CLI 旁路/);
   assert.match(result.text, /save_chat）须用户指示/);
   assert.match(result.text, /可被后续作业当资料提炼/);
-  // 旧的错误口径不应残留
+  // 已移除的「问用户」通道与旧的错误口径都不应残留
+  assert.doesNotMatch(result.text, /ask_user|list_questions|待确认问题/);
   assert.doesNotMatch(result.text, /原始资料只读不改/);
 });

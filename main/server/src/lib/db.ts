@@ -175,20 +175,6 @@ export function migrate() {
     created_at TEXT NOT NULL
   );
 
-  -- 外部 Agent 的待确认问题：Agent 经 ask_user 登记、用户在界面答复、Agent 经 list_questions 读取。
-  -- 与 ingest_questions（旧内置提炼管线，已停用）无关，不复用其 run/fact 外键结构。
-  CREATE TABLE IF NOT EXISTS agent_questions (
-    id TEXT PRIMARY KEY,
-    question TEXT NOT NULL,
-    context TEXT NOT NULL DEFAULT '',
-    options TEXT NOT NULL DEFAULT '[]',
-    answer TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL,
-    answered_at TEXT
-  );
-  CREATE INDEX IF NOT EXISTS idx_agent_questions_status ON agent_questions(status, created_at DESC);
-
   -- 原始资料消化记录（保留旧 API 的 at 字段，并增加内容幂等状态）
   CREATE TABLE IF NOT EXISTS ingest_log (
     path TEXT PRIMARY KEY,

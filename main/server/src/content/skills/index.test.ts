@@ -31,11 +31,14 @@ test('findSkill：大小写与空白容错，未知名称返回 undefined', () =
   assert.equal(findSkill('not-a-skill'), undefined);
 });
 
-test('skill 正文承载纪律口径：原始资料须授权、对话沉积须用户指示', () => {
+test('skill 正文承载纪律口径：原始资料无写权限、作业不打断、对话沉积须用户指示', () => {
   const discipline = findSkill('kb-ingest-discipline');
   assert.ok(discipline, 'kb-ingest-discipline 应存在');
   assert.match(discipline.body, /没有写权限/);
-  assert.match(discipline.body, /先问用户/);
+  // 全自动口径：拿不准自己定并标注，不停下来问用户
+  assert.match(discipline.body, /不要停下来等用户/);
+  assert.match(discipline.body, /待核实/);
+  assert.doesNotMatch(discipline.body, /ask_user|list_questions|先问用户/);
   assert.match(discipline.body, /须用户指示/);
   assert.match(discipline.body, /可以被提炼/);
 });
