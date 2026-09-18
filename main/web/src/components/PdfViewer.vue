@@ -322,6 +322,13 @@ async function buildSearchIndex() {
   }
 }
 
+/** Android 本地端复用 PDF.js，只提取文件自带的文字层；扫描件不触发 OCR。 */
+async function extractEmbeddedText(): Promise<Array<{ pageNumber: number; text: string }>> {
+  if (!pdfDocument && loadingTask) await loadingTask.promise;
+  await buildSearchIndex();
+  return (searchTexts || []).map((text, index) => ({ pageNumber: index + 1, text }));
+}
+
 async function refreshMatches() {
   const query = searchQuery.value.trim().toLocaleLowerCase('zh-CN');
   if (!query) {
@@ -395,7 +402,7 @@ async function toggleFullscreen() {
   else await document.exitFullscreen();
 }
 
-defineExpose({ goToPage });
+defineExpose({ goToPage, extractEmbeddedText });
 
 watch(() => props.url, loadPdf);
 watch(() => props.extractedPages, () => {

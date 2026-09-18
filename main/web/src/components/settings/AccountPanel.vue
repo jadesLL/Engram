@@ -50,7 +50,7 @@
     </SettingsGroup>
 
     <SettingsGroup title="连接与版本" hint="访问通道与当前版本" :default-open="true" flush>
-      <div v-if="connState !== 'unconfigured'" class="setting-row">
+      <div v-if="capabilities.runtime !== 'android-local' && connState !== 'unconfigured'" class="setting-row">
         <div class="setting-copy">
           <strong>连接通道</strong>
           <span>当前访问路径与直连可用性。</span>
@@ -89,9 +89,11 @@ import { useAppStore } from '../../stores/app';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION } from '../../version';
 import { formatVersionLabel, type GitIdentity } from '../../lib/buildLabel';
+import { useRuntimeCapabilities } from '../../lib/capabilities';
 
 const app = useAppStore();
 const auth = useAuthStore();
+const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
 
 // 提交身份两个来源：桌面源码模式由主进程经 IPC 给出（含提交日期/脏标记），
 // Docker 镜像与浏览器访问由服务端 /api/update/state 给出（镜像内烤入 /app/GIT_SHA）。
@@ -192,8 +194,9 @@ function switchToDirect() {
   if (directUrl.value) location.href = directUrl.value + '/';
 }
 
-onMounted(() => {
-  probeConn();
+onMounted(async () => {
+  await loadCapabilities();
+  if (capabilities.value.runtime !== 'android-local') probeConn();
   // 桌面端源码模式：主进程经 IPC 给提交身份
   const wd = (window as any).wikiDesktop;
   if (wd?.getDesktopEnv) {
@@ -206,14 +209,16 @@ onMounted(() => {
       });
   }
   // Docker 镜像 / 浏览器访问：服务端读 /app/GIT_SHA 或源码检出的 .git
-  api
-    .get('/api/update/state')
-    .then((res) => {
-      serverCommit.value = String(res.data?.commit || '');
-    })
-    .catch(() => {
-      /* 未登录或接口不可用时保持纯版本号 */
-    });
+  if (capabilities.value.features.serverUpdate) {
+    api
+      .get('/api/update/state')
+      .then((res) => {
+        serverCommit.value = String(res.data?.commit || '');
+      })
+      .catch(() => {
+        /* 未登录或接口不可用时保持纯版本号 */
+      });
+  }
 });
 
 async function changePwd() {

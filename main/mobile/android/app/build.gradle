@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
 
 // 版本号与仓库发版版本对齐：自动解析 main/desktop/package.json 的 version（bump 零新增步骤）
 def desktopPackageJson = file('../../../desktop/package.json')
@@ -23,6 +24,10 @@ def keystorePath = keystoreProperties['storeFile'] ?: System.getenv('ANDROID_KEY
 def keystoreStorePassword = keystoreProperties['storePassword'] ?: System.getenv('ANDROID_KEYSTORE_PASSWORD')
 def keystoreKeyAlias = keystoreProperties['keyAlias'] ?: System.getenv('ANDROID_KEY_ALIAS')
 def keystoreKeyPassword = keystoreProperties['keyPassword'] ?: System.getenv('ANDROID_KEY_PASSWORD')
+def debugKeystorePath = System.getenv('ANDROID_DEBUG_KEYSTORE_FILE')
+def debugKeystorePassword = System.getenv('ANDROID_DEBUG_KEYSTORE_PASSWORD') ?: 'android'
+def debugKeyAlias = System.getenv('ANDROID_DEBUG_KEY_ALIAS') ?: 'engram-local-debug'
+def debugKeyPassword = System.getenv('ANDROID_DEBUG_KEY_PASSWORD') ?: debugKeystorePassword
 
 android {
     namespace "com.engram.app"
@@ -41,6 +46,14 @@ android {
         }
     }
     signingConfigs {
+        debug {
+            if (debugKeystorePath != null) {
+                storeFile file(debugKeystorePath)
+                storePassword debugKeystorePassword
+                keyAlias debugKeyAlias
+                keyPassword debugKeyPassword
+            }
+        }
         release {
             if (keystorePath != null) {
                 storeFile file(keystorePath)
@@ -51,6 +64,11 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // 调试包可与正式版并行安装；release 仍保持 com.engram.app 与既有签名升级链。
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-local-first-debug"
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
@@ -58,6 +76,14 @@ android {
                 signingConfig signingConfigs.release
             }
         }
+    }
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    kotlinOptions {
+        jvmTarget = '21'
     }
 }
 
@@ -68,11 +94,15 @@ repositories {
 }
 
 dependencies {
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    implementation "io.ktor:ktor-server-core-jvm:3.1.3"
+    implementation "io.ktor:ktor-server-cio-jvm:3.1.3"
+    implementation "io.ktor:ktor-server-status-pages-jvm:3.1.3"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

@@ -60,7 +60,7 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 | 产物 | 名称 / 地址 | 用途 |
 |---|---|---|
 | Windows 安装包 | `Engram Setup <版本>.exe`（约 110 MB） | NSIS 安装器，装出 Electron 打包版桌面端（自用机器走源码模式，无需 exe） |
-| Android 安装包 | `Engram <版本>.apk` | 安卓远程客户端（无法源码自更新，是 Android 端唯一分发通道；未配置签名 secrets 时为未签名包） |
+| Android 安装包 | `Engram <版本>.apk` | 安卓本地优先客户端（内置本地库、离线编辑与成员同步；无法源码自更新，是 Android 端唯一分发通道；未配置签名 secrets 时为未签名包） |
 | Docker 镜像离线包 | `engram-<版本>.tar.gz`（`docker save`，约 160 MB） | 无 Registry 环境离线部署（`docker load`） |
 | 校验值文件 | `sha256-<版本>.txt` | 本次所构建产物的 sha256 |
 

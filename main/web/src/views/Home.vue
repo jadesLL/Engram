@@ -162,6 +162,7 @@ import { api } from '../api';
 import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
+import { loadRuntimeCapabilities, runtimeCapabilitiesSnapshot } from '../lib/capabilities';
 import Sidebar from '../components/Sidebar.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
 import Icon from '../components/Icon.vue';
@@ -312,6 +313,8 @@ function onKey(e: KeyboardEvent) {
 
 /* ===== 软件更新自动检测：进入应用查一次（8 小时节流），有新版本时 toast 提醒 ===== */
 async function autoCheckUpdate() {
+  await loadRuntimeCapabilities();
+  if (!runtimeCapabilitiesSnapshot().features.serverUpdate) return;
   await updateStore.check();
   if (updateStore.hasNewVersion && updateStore.lastResult) {
     notify.info(`发现新版本 v${updateStore.lastResult.latestVersion}，可在 设置 → 软件更新 中升级`);
@@ -322,11 +325,17 @@ let closeStream: (() => void) | null = null;
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onWindowResize);
-  jobPollStopped = false;
-  pollJobs();
+  loadRuntimeCapabilities().then((caps) => {
+    if (caps.features.jobs) {
+      jobPollStopped = false;
+      pollJobs();
+    }
+    // Android 的本地 API 与 WebView 同进程，不建立常驻 SSE；保存操作会直接刷新对应界面。
+    if (caps.runtime !== 'android-local') {
+      closeStream = openPageStream((ev) => app.applyPageEvent(ev));
+    }
+  });
   autoCheckUpdate().catch(() => {});
-  // 服务端 SSE 实时推送：页面增删改/移动时刷新正文与侧栏
-  closeStream = openPageStream((ev) => app.applyPageEvent(ev));
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);

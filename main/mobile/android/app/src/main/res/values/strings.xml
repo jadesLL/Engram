@@ -4,6 +4,6 @@
     <string name="title_activity_main">Engram</string>
     <string name="package_name">com.engram.app</string>
     <string name="custom_url_scheme">com.engram.app</string>
-    <string name="shortcut_select_short">切换服务器</string>
-    <string name="shortcut_select_long">更改服务器地址</string>
+    <string name="shortcut_select_short">同步设置</string>
+    <string name="shortcut_select_long">配置同步中枢</string>
 </resources>
