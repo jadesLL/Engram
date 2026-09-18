@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatVersionLabel, formatSourceCheckLabel } from './buildLabel.js';
+import { formatVersionLabel, formatSourceCheckLabel } from './buildLabel.ts';
 
 test('formatVersionLabel appends short commit and date in source mode', () => {
   assert.equal(

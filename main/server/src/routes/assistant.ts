@@ -166,10 +166,22 @@ export async function assistantRoutes(app: FastifyInstance) {
     const snap = repo.snapshot(run.sessionId);
     if (!snap) return reply.code(404).send({ error: '会话不存在' });
     const lines: string[] = [`# ${snap.session.title}`, ''];
+    // 助手正文按步分段落库（工具卡要能插在段间），沉淀时把同一轮的连续段落并回一段
+    let agentParts: string[] = [];
+    const flushAgent = () => {
+      if (!agentParts.length) return;
+      lines.push(`**Agent**：${agentParts.join('\n\n')}`, '');
+      agentParts = [];
+    };
     for (const message of snap.messages) {
-      if (message.role === 'user') lines.push(`**用户**：${message.content}`, '');
-      else if (message.content.trim()) lines.push(`**Agent**：${message.content}`, '');
+      if (message.role === 'user') {
+        flushAgent();
+        lines.push(`**用户**：${message.content}`, '');
+      } else if (message.content.trim()) {
+        agentParts.push(message.content);
+      }
     }
+    flushAgent();
     const content = lines.join('\n').trim();
     if (!content) return reply.code(400).send({ error: '没有可沉淀的内容' });
     const result = await saveChat({ content, identifier: snap.session.title, project: '内置 Agent' });

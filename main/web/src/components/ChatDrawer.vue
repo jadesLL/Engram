@@ -36,7 +36,7 @@
       <div v-if="chat.loading" class="empty-hint"><AppSpinner :size="14" /> 正在加载会话…</div>
 
       <AppEmptyState
-        v-else-if="!chat.messages.length && !chat.sessionToolCalls.length"
+        v-else-if="!timeline.length"
         icon="ai"
         title="内置 Agent"
         hint="由 Engram 随包的 DeepSeek Harness 驱动：可以直接问知识库，也可以让它检索、提炼与写页（写页走证据门禁）。"
@@ -46,38 +46,37 @@
         </div>
       </AppEmptyState>
 
-      <template v-for="message in chat.messages" :key="message.id">
-        <article class="message" :class="message.role">
-          <div class="message-meta">
-            <span>{{ message.role === 'user' ? '你' : '内置 Agent' }}</span>
-            <button
-              v-if="message.role === 'assistant' && message.content"
-              class="text-action"
-              type="button"
-              @click="copy(message.content)"
-            >复制</button>
-          </div>
-          <div v-if="message.content" class="message-content" v-html="renderAssistantMarkdown(message.content)" />
-          <span v-if="isStreaming(message)" class="cursor">▍</span>
-        </article>
-      </template>
-
-      <section v-if="chat.sessionToolCalls.length" class="activity">
-        <div class="section-label">执行记录</div>
-        <article
-          v-for="call in visibleToolCalls"
-          :key="call.id"
-          class="tool-call"
-          :class="call.status"
+      <!-- 对话流：用户右侧、模型左侧，执行记录（工具卡）插在它发生的那两步之间 -->
+      <div v-else class="stream">
+        <div
+          v-for="(item, index) in timeline"
+          :key="item.key"
+          class="turn"
+          :class="item.role"
         >
-          <div class="tool-head">
-            <span class="tool-state">{{ toolState(call.status) }}</span>
-            <b>{{ toolLabel(call.name) }}</b>
-          </div>
-          <p v-if="call.args && call.args !== '{}'" class="tool-args">{{ shortArgs(call.args) }}</p>
-          <pre v-if="call.text" class="tool-result">{{ shortResult(call.text) }}</pre>
-        </article>
-      </section>
+          <template v-if="item.kind === 'message'">
+            <div class="turn-meta" :class="{ 'no-name': !showName(index) }">
+              <span v-if="showName(index)">{{ item.role === 'user' ? '你' : '内置 Agent' }}</span>
+              <button
+                v-if="item.role === 'assistant' && item.message.content"
+                class="text-action"
+                type="button"
+                @click="copy(item.message.content)"
+              >复制</button>
+            </div>
+            <div v-if="item.message.content" class="message-content" v-html="renderAssistantMarkdown(item.message.content)" />
+            <span v-if="item.message.id === streamingId" class="cursor">▍</span>
+          </template>
+          <article v-else class="tool-call" :class="item.call.status">
+            <div class="tool-head">
+              <span class="tool-state">{{ toolState(item.call.status) }}</span>
+              <b>{{ toolLabel(item.call.name) }}</b>
+            </div>
+            <p v-if="item.call.args && item.call.args !== '{}'" class="tool-args">{{ shortArgs(item.call.args) }}</p>
+            <pre v-if="item.call.text" class="tool-result">{{ shortResult(item.call.text) }}</pre>
+          </article>
+        </div>
+      </div>
 
       <div v-if="chat.statusText" class="run-status">
         <AppSpinner :size="13" /> {{ chat.statusText }}
@@ -136,7 +135,8 @@ import Icon from './Icon.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 import { useAppStore } from '../stores/app';
-import { useChatStore, type ChatContext, type ChatMessage, type ChatRun } from '../stores/chat';
+import { useChatStore, type ChatContext, type ChatRun } from '../stores/chat';
+import { buildChatTimeline, showStreamName } from '../lib/chatTimeline';
 import { renderAssistantMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
 
@@ -163,17 +163,26 @@ const contextChips = computed(() => {
   return chips;
 });
 
-const visibleToolCalls = computed(() => chat.sessionToolCalls.slice(-12));
-
 const terminalRun = computed<ChatRun | null>(() => {
   const run = chat.latestRun;
   if (!run) return null;
   return ['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status) ? run : null;
 });
 
-function isStreaming(message: ChatMessage): boolean {
-  return message.role === 'assistant' && message.metadata?.streaming === true && Boolean(chat.currentRun);
-}
+/** 对话流：按轮分组，轮内消息与工具卡按落库时间排（见 lib/chatTimeline） */
+const timeline = computed(() =>
+  buildChatTimeline(chat.messages, chat.sessionToolCalls, chat.runs)
+);
+
+/** 正在流式到达的那一段正文（光标只画在它后面） */
+const streamingId = computed(() => {
+  const run = chat.currentRun;
+  if (!run) return '';
+  const segments = chat.messages.filter((m) => m.runId === run.id && m.role === 'assistant');
+  return segments.length ? segments[segments.length - 1].id : '';
+});
+
+const showName = (index: number) => showStreamName(timeline.value, index);
 
 function onSelectSession(event: Event) {
   const id = (event.target as HTMLSelectElement).value;
@@ -247,7 +256,10 @@ async function scrollToBottom() {
   if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
 }
 
-watch(() => chat.messages.map((m) => m.content.length).join(','), () => void scrollToBottom());
+watch(
+  () => `${chat.messages.map((m) => m.content.length).join(',')}|${chat.sessionToolCalls.length}|${chat.statusText}`,
+  () => void scrollToBottom()
+);
 watch(() => app.chatDrawerOpen, (open) => {
   if (open) {
     void chat.init().then(() => {
@@ -377,17 +389,37 @@ onUnmounted(() => {
   color: var(--text);
 }
 
-.message {
+.stream {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 用户右侧、模型左侧；工具卡跟模型同侧 */
+.turn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 100%;
   margin-bottom: 14px;
 }
 
-.message-meta {
+.turn.user {
+  align-items: flex-end;
+}
+
+.turn-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  align-self: stretch;
+  gap: 8px;
   margin-bottom: 4px;
   color: var(--text-faint);
   font-size: 11px;
+}
+
+.turn-meta.no-name {
+  justify-content: flex-end;
 }
 
 .text-action {
@@ -403,15 +435,20 @@ onUnmounted(() => {
 }
 
 .message-content {
+  max-width: 88%;
   font-size: 13px;
   line-height: 1.65;
   color: var(--text);
   overflow-wrap: anywhere;
 }
 
-.message.user .message-content {
+.turn.assistant .message-content {
+  max-width: 100%;
+}
+
+.turn.user .message-content {
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg-secondary);
 }
 
@@ -425,24 +462,22 @@ onUnmounted(() => {
   to { visibility: hidden; }
 }
 
-.activity {
-  margin-top: 4px;
-  border-top: 1px dashed var(--border);
-  padding-top: 8px;
-}
-
-.section-label {
-  margin-bottom: 6px;
-  color: var(--text-faint);
-  font-size: 11px;
-}
-
 .tool-call {
+  align-self: stretch;
   margin-bottom: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
+  border-left: 2px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
+}
+
+.tool-call.running {
+  border-left-color: var(--accent, #4d8aff);
+}
+
+.tool-call.failed {
+  border-left-color: var(--danger, #d64545);
 }
 
 .tool-head {
