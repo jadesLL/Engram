@@ -63,15 +63,18 @@
               <span class="sec-name">{{ g.label }}</span>
             </button>
             <div class="sec-actions">
-              <label class="sort-control section-sort" v-tooltip="`${g.label}排序：${sortLabel(groupSort[g.key])}`">
+              <button
+                class="sort-control section-sort"
+                type="button"
+                :class="{ 'menu-open': isSortMenuOpen(`group:${g.key}`) }"
+                v-tooltip="`${g.label}排序：${sortLabel(groupSort[g.key])}`"
+                :aria-label="`${g.label}排序，当前 ${sortLabel(groupSort[g.key])}`"
+                aria-haspopup="menu"
+                :aria-expanded="isSortMenuOpen(`group:${g.key}`)"
+                @click="openSortMenu($event, `group:${g.key}`, g.label)"
+              >
                 <Icon name="sort" :size="12" />
-                <select v-model="groupSort[g.key]" :aria-label="`${g.label}排序`">
-                  <option value="name-asc">名称 A→Z</option>
-                  <option value="name-desc">名称 Z→A</option>
-                  <option value="updated-desc">更新时间</option>
-                  <option value="created-desc">创建时间</option>
-                </select>
-              </label>
+              </button>
               <button
                 class="add-btn"
                 type="button"
@@ -181,15 +184,18 @@
             <span class="sec-name">原始资料</span>
           </button>
           <div class="sec-actions">
-            <label class="sort-control section-sort" v-tooltip="`原始资料排序：${sortFilesLabel}`">
+            <button
+              class="sort-control section-sort"
+              type="button"
+              :class="{ 'menu-open': isSortMenuOpen('files') }"
+              v-tooltip="`原始资料排序：${sortFilesLabel}`"
+              :aria-label="`原始资料排序，当前 ${sortFilesLabel}`"
+              aria-haspopup="menu"
+              :aria-expanded="isSortMenuOpen('files')"
+              @click="openSortMenu($event, 'files', '原始资料')"
+            >
               <Icon name="sort" :size="12" />
-              <select v-model="sortFiles" aria-label="原始资料排序">
-                <option value="name-asc">名称 A→Z</option>
-                <option value="name-desc">名称 Z→A</option>
-                <option value="updated-desc">更新时间</option>
-                <option value="created-desc">创建时间</option>
-              </select>
-            </label>
+            </button>
             <button
               class="add-btn"
               type="button"
@@ -265,15 +271,18 @@
             <span class="sec-name">对话</span>
           </button>
           <div class="sec-actions">
-            <label class="sort-control section-sort" v-tooltip="`对话排序：${sortChatLabel}`">
+            <button
+              class="sort-control section-sort"
+              type="button"
+              :class="{ 'menu-open': isSortMenuOpen('chat') }"
+              v-tooltip="`对话排序：${sortChatLabel}`"
+              :aria-label="`对话排序，当前 ${sortChatLabel}`"
+              aria-haspopup="menu"
+              :aria-expanded="isSortMenuOpen('chat')"
+              @click="openSortMenu($event, 'chat', '对话')"
+            >
               <Icon name="sort" :size="12" />
-              <select v-model="sortChat" aria-label="对话排序">
-                <option value="name-asc">名称 A→Z</option>
-                <option value="name-desc">名称 Z→A</option>
-                <option value="updated-desc">更新时间</option>
-                <option value="created-desc">创建时间</option>
-              </select>
-            </label>
+            </button>
             <span class="sec-count">{{ visibleChatFiles.length }}</span>
           </div>
         </div>
@@ -350,17 +359,52 @@
         <button class="batch-btn faint-btn" type="button" @click="clearSelection">取消</button>
       </div>
     </transition>
+
+    <!-- 排序下拉：自绘弹层，原生 select 弹层宽度不可控且文字紧贴边缘 -->
+    <Teleport to="body">
+      <div
+        v-if="sortMenu.open"
+        ref="sortMenuEl"
+        class="sort-menu"
+        :class="{ ready: sortMenu.ready }"
+        :style="{ left: `${sortMenu.left}px`, top: `${sortMenu.top}px` }"
+        role="menu"
+        :aria-label="sortMenuLabel"
+        @keydown="onSortMenuKeydown"
+      >
+        <button
+          v-for="option in SORT_OPTIONS"
+          :key="option.value"
+          class="sort-menu-item"
+          type="button"
+          role="menuitemradio"
+          :data-value="option.value"
+          :aria-checked="option.value === sortMenuValue"
+          @click="chooseSort(option.value)"
+        >
+          <Icon
+            v-if="option.value === sortMenuValue"
+            name="check"
+            :size="13"
+            class="sort-menu-check"
+          />
+          <span v-else class="sort-menu-check" />
+          <span class="sort-menu-text">{{ option.label }}</span>
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { humanError } from '../lib/ingestError';
 import { useAppStore } from '../stores/app';
 import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
+import { hideTooltip } from '../lib/tooltip';
 import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
@@ -398,6 +442,121 @@ function sortLabel(mode: string) {
 
 const sortFilesLabel = computed(() => SORT_LABELS[sortFiles.value] || '名称 A→Z');
 const sortChatLabel = computed(() => SORT_LABELS[sortChat.value] || '名称 A→Z');
+
+/** 排序下拉：自绘弹层。原生 select 的弹层宽度由控件决定，23px 图标触发器下文字紧贴边缘。 */
+const SORT_OPTIONS = Object.entries(SORT_LABELS).map(([value, label]) => ({ value, label }));
+const SORT_MENU_MIN_WIDTH = 152;
+const SORT_MENU_MARGIN = 8;
+const sortMenuEl = ref<HTMLElement>();
+let sortMenuTrigger: HTMLElement | null = null;
+const sortMenu = ref({ open: false, ready: false, left: 0, top: 0, target: '', label: '列表' });
+
+const sortMenuValue = computed(() => {
+  if (sortMenu.value.target === 'files') return sortFiles.value;
+  if (sortMenu.value.target === 'chat') return sortChat.value;
+  return groupSort.value[sortMenu.value.target.replace(/^group:/, '')] || 'name-asc';
+});
+
+const sortMenuLabel = computed(() => `${sortMenu.value.label}排序`);
+
+function isSortMenuOpen(target: string) {
+  return sortMenu.value.open && sortMenu.value.target === target;
+}
+
+function sortMenuItems(): HTMLButtonElement[] {
+  return Array.from(sortMenuEl.value?.querySelectorAll<HTMLButtonElement>('.sort-menu-item') || []);
+}
+
+function focusSortMenuItem(value?: string) {
+  const items = sortMenuItems();
+  if (!items.length) return;
+  const current = items.find((item) => item.dataset.value === value);
+  (current || items[0]).focus({ preventScroll: true });
+}
+
+async function openSortMenu(event: MouseEvent, target: string, label: string) {
+  if (isSortMenuOpen(target)) {
+    closeSortMenu();
+    return;
+  }
+  sortMenuTrigger = event.currentTarget as HTMLElement;
+  const rect = sortMenuTrigger.getBoundingClientRect();
+  sortMenu.value = {
+    open: true,
+    ready: false,
+    target,
+    label,
+    left: rect.right - SORT_MENU_MIN_WIDTH,
+    top: rect.bottom + 4,
+  };
+  await nextTick();
+  const menu = sortMenuEl.value;
+  if (!menu) return;
+  const { width, height } = menu.getBoundingClientRect();
+  const maxLeft = Math.max(SORT_MENU_MARGIN, window.innerWidth - width - SORT_MENU_MARGIN);
+  sortMenu.value.left = Math.min(Math.max(SORT_MENU_MARGIN, rect.right - width), maxLeft);
+  sortMenu.value.top = rect.bottom + height + 4 > window.innerHeight - SORT_MENU_MARGIN
+    ? Math.max(SORT_MENU_MARGIN, rect.top - height - 4)
+    : rect.bottom + 4;
+  sortMenu.value.ready = true;
+  await nextTick();
+  focusSortMenuItem(sortMenuValue.value);
+}
+
+function closeSortMenu(restoreFocus = false) {
+  if (!sortMenu.value.open) return;
+  sortMenu.value.open = false;
+  sortMenu.value.ready = false;
+  if (restoreFocus && sortMenuTrigger) {
+    sortMenuTrigger.focus({ preventScroll: true });
+    // 焦点回到触发器会触发 v-tooltip 的 focus 提示，选择后立即收起，避免气泡滞留在界面上
+    hideTooltip(sortMenuTrigger);
+  }
+}
+
+function chooseSort(value: string) {
+  const target = sortMenu.value.target;
+  if (target === 'files') sortFiles.value = value;
+  else if (target === 'chat') sortChat.value = value;
+  else if (target.startsWith('group:')) groupSort.value[target.slice('group:'.length)] = value;
+  closeSortMenu(true);
+}
+
+function onSortMenuKeydown(event: KeyboardEvent) {
+  const items = sortMenuItems();
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeSortMenu(true);
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    items[(current + 1 + items.length) % items.length]?.focus();
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    items[(current - 1 + items.length) % items.length]?.focus();
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    items[0]?.focus();
+  } else if (event.key === 'End') {
+    event.preventDefault();
+    items[items.length - 1]?.focus();
+  } else if (event.key === 'Tab') {
+    closeSortMenu();
+  }
+}
+
+function onSortMenuPointerDown(event: PointerEvent) {
+  if (!sortMenu.value.open) return;
+  const node = event.target as Node;
+  if (sortMenuEl.value?.contains(node) || sortMenuTrigger?.contains(node)) return;
+  closeSortMenu();
+}
+
+/** 滚动、缩放、失焦时收起弹层，避免弹层与触发器脱节 */
+function closeSortMenuOnViewportChange() {
+  closeSortMenu();
+}
+
 const uploadInput = ref<HTMLInputElement>();
 // Windows 桌面版导入只收 Markdown：其他格式落盘后无法作为页面提炼，拦在入口并把原因说清楚
 const desktopMdOnly = Boolean((window as any).wikiDesktop);
@@ -986,10 +1145,18 @@ onMounted(() => {
   load();
   chatStopped = false;
   refreshChats();
+  document.addEventListener('pointerdown', onSortMenuPointerDown, true);
+  window.addEventListener('resize', closeSortMenuOnViewportChange);
+  window.addEventListener('blur', closeSortMenuOnViewportChange);
+  window.addEventListener('scroll', closeSortMenuOnViewportChange, true);
 });
 onUnmounted(() => {
   chatStopped = true;
   if (chatTimer) clearTimeout(chatTimer);
+  document.removeEventListener('pointerdown', onSortMenuPointerDown, true);
+  window.removeEventListener('resize', closeSortMenuOnViewportChange);
+  window.removeEventListener('blur', closeSortMenuOnViewportChange);
+  window.removeEventListener('scroll', closeSortMenuOnViewportChange, true);
 });
 </script>
 <style scoped>
@@ -1165,18 +1332,6 @@ onUnmounted(() => {
   box-shadow: 0 0 0 2px var(--sidebar-focus-ring);
 }
 
-.sort-control select {
-  min-width: 0;
-  height: 22px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  font-size: 11px;
-  cursor: pointer;
-  outline: none;
-}
-
 .sort-control.section-sort {
   position: relative;
   width: 23px;
@@ -1189,6 +1344,7 @@ onUnmounted(() => {
   border: 0;
   border-radius: 4px;
   background: transparent;
+  cursor: pointer;
   opacity: 0;
   pointer-events: none;
   transition: color 150ms ease, background 150ms ease, opacity 150ms ease;
@@ -1197,17 +1353,82 @@ onUnmounted(() => {
 .sec-row:hover .sort-control.section-sort,
 .sec-row:focus-within .sort-control.section-sort,
 .sort-control.section-sort:hover,
-.sort-control.section-sort:focus-within {
+.sort-control.section-sort:focus-within,
+.sort-control.section-sort.menu-open {
   opacity: 1;
   pointer-events: auto;
 }
 
-.sort-control.section-sort select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+/* 弹层展开时保持触发器高亮，鼠标移入弹层后图标不消失 */
+.sort-control.section-sort.menu-open {
+  color: var(--text);
+  background: var(--sidebar-hover);
+}
+
+/* 排序弹层：宽 152px 起，选项左右留白，当前项打勾 */
+.sort-menu {
+  position: fixed;
+  z-index: var(--z-menu);
+  min-width: 152px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+  box-shadow: var(--shadow);
+  backdrop-filter: saturate(150%) blur(20px);
+  -webkit-backdrop-filter: saturate(150%) blur(20px);
+  color: var(--text);
   opacity: 0;
+  pointer-events: none;
+}
+
+.sort-menu.ready {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sort-menu-item {
+  width: 100%;
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sort-menu-item:hover,
+.sort-menu-item:focus {
+  outline: 0;
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.sort-menu-item[aria-checked='true'] {
+  color: var(--text);
+}
+
+.sort-menu-check {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sidebar-accent);
+}
+
+.sort-menu-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .side-scroll {
