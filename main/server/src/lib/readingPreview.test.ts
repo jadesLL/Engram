@@ -9,6 +9,7 @@ const moduleUrl = pathToFileURL(
 
 test('reading preview utilities cover preferences, headings and metrics', async () => {
   const {
+    clampReadingFontSize,
     DEFAULT_READING_PREFERENCES,
     headingNumbers,
     isDuplicateDocumentTitle,
@@ -33,11 +34,23 @@ test('reading preview utilities cover preferences, headings and metrics', async 
     numberedHeadings: true,
     outline: false,
   });
+  // 字号不再限制为固定档位：任意整数保留，宽度/行距仍回落默认
   assert.deepEqual(parseReadingPreferences(JSON.stringify({
     fontSize: 17,
     width: 1000,
     lineHeight: 1.7,
-  })), DEFAULT_READING_PREFERENCES);
+  })), { ...DEFAULT_READING_PREFERENCES, fontSize: 17 });
+
+  assert.equal(clampReadingFontSize(23), 23);
+  assert.equal(clampReadingFontSize(20.6), 21);
+  assert.equal(clampReadingFontSize(4), 12);
+  assert.equal(clampReadingFontSize(999), 48);
+  assert.equal(clampReadingFontSize('large'), DEFAULT_READING_PREFERENCES.fontSize);
+  assert.equal(clampReadingFontSize(undefined), DEFAULT_READING_PREFERENCES.fontSize);
+  assert.equal(clampReadingFontSize(null), DEFAULT_READING_PREFERENCES.fontSize);
+  assert.equal(clampReadingFontSize(''), DEFAULT_READING_PREFERENCES.fontSize);
+  assert.equal(parseReadingPreferences(JSON.stringify({ fontSize: 27 })).fontSize, 27);
+  assert.equal(parseReadingPreferences(JSON.stringify({ fontSize: 999 })).fontSize, 48);
 
   assert.equal(isDuplicateDocumentTitle('  Engram 阅读模式 ', 'Engram  阅读模式'), true);
   assert.equal(isDuplicateDocumentTitle('阅读模式', '编辑模式'), false);

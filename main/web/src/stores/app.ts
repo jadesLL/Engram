@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { api } from '../api';
 import {
+  clampReadingFontSize,
   parseReadingPreferences,
   type ReadingPreferences,
 } from '../lib/readingPreview';
@@ -88,7 +89,10 @@ export const useAppStore = defineStore('app', {
       localStorage.setItem('readingMode', on ? '1' : '0');
     },
     updateReadingPreferences(value: Partial<ReadingPreferences>) {
-      this.readingPreferences = { ...this.readingPreferences, ...value };
+      const next = { ...this.readingPreferences, ...value };
+      // 字号连续可调，仅收敛到安全区间（非法值回落默认）
+      next.fontSize = clampReadingFontSize(value.fontSize ?? this.readingPreferences.fontSize);
+      this.readingPreferences = next;
       localStorage.setItem('readingPreferences', JSON.stringify(this.readingPreferences));
     },
     toggleResolvedTheme() {
