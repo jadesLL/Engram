@@ -370,16 +370,25 @@ onUnmounted(() => {
 }
 
 /*
- * 满窗：铺满 .layout（桌面端标题栏以下的整块内容区），盖住 rail / 文件树 / 正文。
+ * 满窗：铺满正文区（.content 的可视范围），不占用左侧图标栏与文件树——侧栏保持可见可用。
  * 用 absolute 而不是 fixed：fixed 会盖住顶部 36px 拖拽条，窗口就拖不动了。
+ * z-index 取 --z-subpanel：低于遮罩(32)与侧栏(35)，紧凑档/手机端文件树浮层打开时能压在满窗之上。
  */
 .chat-drawer.full {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 64px;
+  right: 0;
   width: auto;
   border-left: none;
   box-shadow: none;
-  z-index: var(--z-panel);
+  z-index: var(--z-subpanel);
+}
+
+/* 文件树展开时让出侧栏宽度（与 .layout.sidebar-open .content 的 padding-left 同步） */
+.layout.sidebar-open .chat-drawer.full {
+  left: calc(var(--sidebar-width) + 72px);
 }
 
 /* 满窗下头部/正文/输入区同列居中限宽，长文与工具结果不被拉成一整屏 */
@@ -721,6 +730,13 @@ onUnmounted(() => {
   margin-top: 8px;
 }
 
+/* 紧凑档（769-1024px）：文件树是浮层、不占布局位，满窗只让开左侧图标栏 */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .layout.sidebar-open .chat-drawer.full {
+    left: 64px;
+  }
+}
+
 @media (max-width: 768px) {
   .chat-drawer {
     width: 100%;
@@ -729,6 +745,12 @@ onUnmounted(() => {
 
   /* 手机端 rail 已隐藏，浮层不该再留 60px 空档 */
   .chat-drawer.overlay {
+    left: 0;
+  }
+
+  /* 手机端没有常驻侧栏（文件树也是浮层），满窗仍铺满整屏 */
+  .chat-drawer.full,
+  .layout.sidebar-open .chat-drawer.full {
     left: 0;
   }
 }
