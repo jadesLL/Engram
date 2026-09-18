@@ -6,7 +6,7 @@ import {
   wikiLinksToMarkdown,
   wikiTargetFromHref,
   wikiTargetFromMarkdownLink,
-} from './wikiLinks.js';
+} from './wikiLinks.ts';
 
 test('wiki links convert to clean markdown links and back', () => {
   const raw = '项目涉及 [[ClawChat]] 与 [[董老师|负责人]]。';

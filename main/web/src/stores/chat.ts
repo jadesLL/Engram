@@ -80,6 +80,9 @@ export const useChatStore = defineStore('chat', {
     messages(state): ChatMessage[] {
       return state.snapshot?.messages || [];
     },
+    runs(state): ChatRun[] {
+      return state.snapshot?.runs || [];
+    },
     currentRun(state): ChatRun | null {
       const runs = state.snapshot?.runs || [];
       return [...runs].reverse().find((run) =>
@@ -203,7 +206,7 @@ export const useChatStore = defineStore('chat', {
             runId,
             role: 'assistant',
             content: '',
-            metadata: { streaming: true },
+            metadata: {},
             createdAt: new Date().toISOString(),
           };
           this.snapshot.messages.push(message);

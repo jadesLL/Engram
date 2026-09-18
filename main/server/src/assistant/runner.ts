@@ -11,7 +11,6 @@ import {
   insertMessage,
   insertToolCall,
   latestRunningToolCall,
-  setMessageMetadata,
   setMessageContent,
   snapshot,
   touchSession,
@@ -73,7 +72,6 @@ export function startRun(input: {
     content: input.message.trim(),
   });
   const run = createRun({ sessionId: input.sessionId, userMessageId: userMessage.id, context: input.context ?? {} });
-  db_assistantMessage(run, input.sessionId);
   touchSession(input.sessionId);
 
   // 历史上下文：运行时是「每会话保活」的，同进程内 dsh 自带连续性；跨进程（取消/空闲回收/
@@ -87,22 +85,36 @@ export function startRun(input: {
   const toolCallRows = new Map<string, string>();
   // 本轮结束原因（turn/end.reason）：空产出时用它给出可读解释
   let turnReason = '';
+  // 当前可追加的助手正文段。dsh 的 assistant/message 是「每步一条」，正文因此按步分段落库：
+  // 工具调用才能在对话流里插在它发生的两步之间（与 dsh 自己的有序 surface 同构）。
+  let openSegmentId = '';
   const turn = startAgentTurn({
     key: input.sessionId,
     task,
     onEvent: (event) => {
       const current = getRun(run.id);
       if (!current || ['completed', 'failed', 'cancelled'].includes(current.status)) return;
-      const assistantMessageId = current.assistantMessageId!;
       switch (event.kind) {
         case 'status':
           publishRun(run.id, 'status', { text: event.text });
           break;
-        case 'text':
-          appendMessageContent(assistantMessageId, event.text);
-          publishRun(run.id, 'delta', { messageId: assistantMessageId, text: event.text });
+        case 'text': {
+          if (!openSegmentId) {
+            const message = insertMessage({
+              sessionId: input.sessionId,
+              runId: run.id,
+              role: 'assistant',
+              content: '',
+            });
+            openSegmentId = message.id;
+            updateRun(run.id, { assistantMessageId: message.id });
+          }
+          appendMessageContent(openSegmentId, event.text);
+          publishRun(run.id, 'delta', { messageId: openSegmentId, text: event.text });
           break;
+        }
         case 'tool-call': {
+          openSegmentId = ''; // 关段：工具卡之后的正文另起一段
           const call = insertToolCall({ runId: run.id, name: event.name, args: event.args });
           if (event.callId) toolCallRows.set(event.callId, call.id);
           publishSnapshot(input.sessionId, run.id);
@@ -129,18 +141,24 @@ export function startRun(input: {
 
   void turn.done.then(({ ok, error }) => {
     running.delete(run.id);
-    const current = getRun(run.id);
-    if (current?.assistantMessageId) {
-      const snap = snapshot(input.sessionId);
-      const message = snap?.messages.find((m) => m.id === current.assistantMessageId);
-      if (message) {
-        setMessageMetadata(message.id, { ...message.metadata, streaming: false });
-        if (!message.content.trim()) {
-          if (!ok) setMessageContent(message.id, `运行失败：${briefError(error)}`);
-          else if (turnReason && turnReason !== 'completed') {
-            setMessageContent(message.id, `本轮没有产出内容（结束原因：${turnReason}）——多半是模型凭据无效或额度问题，可在 设置 → Agent 接入 → 内置 Agent 检查。`);
-          } else setMessageContent(message.id, '（本轮没有产出内容）');
-        }
+    // 收口：本轮最后一段正文（可能压根没有——纯工具轮或起手就失败）
+    const lastId = getRun(run.id)?.assistantMessageId;
+    const last = lastId ? snapshot(input.sessionId)?.messages.find((m) => m.id === lastId) : undefined;
+    if (!last?.content.trim()) {
+      const fallback = !ok
+        ? `运行失败：${briefError(error)}`
+        : turnReason && turnReason !== 'completed'
+          ? `本轮没有产出内容（结束原因：${turnReason}）——多半是模型凭据无效或额度问题，可在 设置 → Agent 接入 → 内置 Agent 检查。`
+          : '（本轮没有产出内容）';
+      if (last) setMessageContent(last.id, fallback);
+      else {
+        const message = insertMessage({
+          sessionId: input.sessionId,
+          runId: run.id,
+          role: 'assistant',
+          content: fallback,
+        });
+        updateRun(run.id, { assistantMessageId: message.id });
       }
     }
     if (ok) {
@@ -161,18 +179,6 @@ export function startRun(input: {
   });
 
   return run;
-}
-
-/** 助手占位消息：先落库，正文随后按步追加 */
-function db_assistantMessage(run: RunDto, sessionId: string): void {
-  const message = insertMessage({
-    sessionId,
-    runId: run.id,
-    role: 'assistant',
-    content: '',
-    metadata: { streaming: true },
-  });
-  updateRun(run.id, { assistantMessageId: message.id });
 }
 
 export function cancelRun(runId: string): boolean {
