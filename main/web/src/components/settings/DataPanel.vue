@@ -12,7 +12,8 @@
         <Icon name="folder" :size="20" />
         <div>
           <strong>本地 Markdown 数据</strong>
-          <p>知识内容位于服务端 <code>data/brain/</code>，整库备份请使用下方「导出备份」。</p>
+          <p v-if="capabilities.runtime === 'android-local'">知识内容保存在本应用的私有目录。卸载应用会删除尚未同步或导出的本地数据，请定期使用下方「导出备份」。</p>
+          <p v-else>知识内容位于服务端 <code>data/brain/</code>，整库备份请使用下方「导出备份」。</p>
         </div>
       </div>
 
@@ -61,7 +62,7 @@
         <div class="backup-row">
           <div>
             <strong>整库备份</strong>
-            <p>打包 wiki.db 数据库与 brain/ 全部内容（不含回收站）为 zip 下载。</p>
+            <p>{{ capabilities.runtime === 'android-local' ? '导出可移植备份（知识文件与必要元数据，不含会话和同步令牌）。' : '打包 wiki.db 数据库与 brain/ 全部内容（不含回收站）为 zip 下载。' }}</p>
           </div>
           <button class="btn" type="button" :disabled="Boolean(backupBusy)" @click="exportBackup">
             {{ backupBusy === 'export' ? '打包中...' : '导出备份' }}
@@ -70,7 +71,8 @@
         <div class="backup-row">
           <div>
             <strong>从备份恢复</strong>
-            <p>选择整库备份 zip，恢复会替换当前全部数据（含登录密码与模型配置）。暂存成功后重启服务生效：桌面端自动重启，Docker 版需重启容器。</p>
+            <p v-if="capabilities.runtime === 'android-local'">选择可移植 v2 或旧版整库备份 zip。恢复会替换本机知识文件并重建索引，但保留本机登录密码和同步令牌，立即生效。</p>
+            <p v-else>选择整库备份 zip，恢复会替换当前全部数据（含登录密码与模型配置）。暂存成功后重启服务生效：桌面端自动重启，Docker 版需重启容器。</p>
           </div>
           <button class="btn" type="button" :disabled="Boolean(backupBusy)" @click="pickRestore">
             {{ backupBusy === 'restore' ? '恢复中...' : '选择备份文件' }}
@@ -84,7 +86,7 @@
     <SearchPanel />
 
     <SettingsGroup title="危险操作" hint="不可撤销；执行前需要再次确认登录密码" danger flush>
-      <div class="danger-row">
+      <div v-if="capabilities.features.agent" class="danger-row">
         <div>
           <strong>清空操作日志与关系库</strong>
           <p>清空 AIWorks 系统区（操作日志、索引与关系库）；待执行和运行中的任务会先停止，概念、实体和原始资料不受影响。</p>
@@ -125,8 +127,10 @@ import Icon from '../Icon.vue';
 import SearchPanel from './SearchPanel.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
+import { useRuntimeCapabilities } from '../../lib/capabilities';
 
 const app = useAppStore();
+const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
 const wipeMsg = ref('');
 const wipeOk = ref(false);
 const wipeBusy = ref<'' | 'knowledge' | 'ai-logs'>('');
@@ -140,6 +144,7 @@ const dirMsg = ref('');
 const dirOk = ref(false);
 
 onMounted(async () => {
+  await loadCapabilities();
   if (!wikiDesktop) return;
   try {
     isDesktopLocal.value = true;
@@ -276,6 +281,10 @@ async function onRestoreFile(ev: Event) {
       backupOk.value = true;
       backupMsg.value = '备份已暂存，正在重启本地服务使其生效…';
       await wikiDesktop.restartServer();
+    } else if (capabilities.value.runtime === 'android-local') {
+      backupOk.value = true;
+      backupMsg.value = '备份已恢复，本地索引已重建。';
+      app.bumpSidebar();
     } else {
       backupOk.value = true;
       backupMsg.value = '备份已暂存，重启服务（Docker 版重启容器）后生效。';

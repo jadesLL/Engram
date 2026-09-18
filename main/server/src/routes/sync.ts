@@ -17,6 +17,7 @@ import {
 } from '../sync/hub.js';
 import {
   createPeer,
+  currentRevision,
   findPeerByToken,
   getPeer,
   getPageRevision,
@@ -212,10 +213,14 @@ export async function syncRoutes(app: FastifyInstance) {
 
   /** 重连补拉：cursor 之后的 op（页面 op 附带当前内容与证据快照）；oplog 已裁剪时要求全量对账 */
   app.get('/api/sync/changes', { preHandler: requireSyncAccess }, async (req) => {
-    const query = req.query as { since?: string };
+    const query = req.query as { since?: string; limit?: string; compact?: string };
     const since = Number(query.since || 0);
-    const ops = getOpsSince(since) as SyncOp[];
+    const requestedLimit = Number(query.limit || 500);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, Math.trunc(requestedLimit))) : 500;
+    const compact = query.compact === '1' || query.compact === 'true';
+    const ops = getOpsSince(since, limit) as SyncOp[];
     const enriched = ops.map((op) => {
+      if (compact) return op;
       if (op.kind !== 'page') return op;
       const content = getPageRevision(op.target, op.revision) ?? readPageRaw(op.target) ?? '';
       return { ...op, content, evidence: collectEvidenceForPage(op.target) };
@@ -224,12 +229,13 @@ export async function syncRoutes(app: FastifyInstance) {
     return {
       ops: enriched,
       resync: needsResync(since),
+      compact,
     };
   });
 
   /** 全量对账清单（页面/文件带内容 hash 与 revision；条目另带 distilled 供对端比对本端账本） */
   app.get('/api/sync/snapshot', { preHandler: requireSyncAccess }, async () => {
-    return { entries: buildSnapshotEntries() };
+    return { entries: buildSnapshotEntries(), cursor: currentRevision() };
   });
 
   /** 页面内容拉取（对账用） */

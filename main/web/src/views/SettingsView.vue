@@ -3,7 +3,7 @@
     <header class="settings-page-head">
       <div>
         <h2>设置</h2>
-        <p>管理账户、Agent 接入与本地数据。</p>
+        <p>{{ capabilities.features.agent ? '管理账户、Agent 接入与本地数据。' : '管理账户、多端同步与本地数据。' }}</p>
       </div>
     </header>
 
@@ -33,11 +33,11 @@
 
       <div class="settings-content">
         <AccountPanel v-show="activeSettingsSection === 'account'" />
-        <AgentPanel v-show="activeSettingsSection === 'agent'" />
+        <AgentPanel v-if="capabilities.features.agent" v-show="activeSettingsSection === 'agent'" />
         <SyncPanel v-show="activeSettingsSection === 'sync'" />
         <!-- active 传给 UpdatePanel：面板常驻挂载（v-show），绑定同步发生在别的分区时，
              靠激活态重拉同步状态，否则远程更新块要用旧数据等到下次刷新 -->
-        <UpdatePanel v-show="activeSettingsSection === 'update'" :active="activeSettingsSection === 'update'" />
+        <UpdatePanel v-if="capabilities.features.serverUpdate" v-show="activeSettingsSection === 'update'" :active="activeSettingsSection === 'update'" />
         <StoragePanel v-show="activeSettingsSection === 'storage'" />
         <DataPanel v-show="activeSettingsSection === 'data'" />
       </div>
@@ -46,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import Icon from '../components/Icon.vue';
 import AccountPanel from '../components/settings/AccountPanel.vue';
 import AgentPanel from '../components/settings/AgentPanel.vue';
@@ -54,11 +54,13 @@ import SyncPanel from '../components/settings/SyncPanel.vue';
 import UpdatePanel from '../components/settings/UpdatePanel.vue';
 import StoragePanel from '../components/settings/StoragePanel.vue';
 import DataPanel from '../components/settings/DataPanel.vue';
+import { useRuntimeCapabilities } from '../lib/capabilities';
+import { useRoute } from 'vue-router';
 
 type SettingsSection = 'account' | 'agent' | 'sync' | 'update' | 'storage' | 'data';
 
 const activeSettingsSection = ref<SettingsSection>('account');
-const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: string }> = [
+const allSettingsNavigation: Array<{ id: SettingsSection; label: string; icon: string }> = [
   { id: 'account', label: '账户与外观', icon: 'settings' },
   { id: 'agent', label: 'Agent 接入', icon: 'ai' },
   { id: 'sync', label: '多端同步', icon: 'external' },
@@ -66,6 +68,25 @@ const settingsNavigation: Array<{ id: SettingsSection; label: string; icon: stri
   { id: 'storage', label: '存储空间', icon: 'archive' },
   { id: 'data', label: '数据管理', icon: 'trash' },
 ];
+const { capabilities, load } = useRuntimeCapabilities();
+const route = useRoute();
+const settingsNavigation = computed(() => allSettingsNavigation.filter((item) => {
+  if (item.id === 'agent') return capabilities.value.features.agent;
+  if (item.id === 'update') return capabilities.value.features.serverUpdate;
+  return true;
+}));
+
+watch(settingsNavigation, (items) => {
+  if (!items.some((item) => item.id === activeSettingsSection.value)) {
+    activeSettingsSection.value = 'account';
+  }
+});
+
+onMounted(async () => {
+  await load();
+  const requested = String(route.query.section || '') as SettingsSection;
+  if (settingsNavigation.value.some((item) => item.id === requested)) activeSettingsSection.value = requested;
+});
 
 function onSelectSection(id: SettingsSection) {
   activeSettingsSection.value = id;

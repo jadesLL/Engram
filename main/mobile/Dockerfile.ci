@@ -40,9 +40,18 @@ RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
 
 WORKDIR /work
 
-# 先只复制依赖清单安装依赖（依赖清单不变时命中层缓存）
+# 先安装主 workspace 依赖，Android 构建前需要编译与桌面/服务端共用的 Vue 界面。
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY server/package.json ./server/
+COPY web/package.json ./web/
+COPY desktop/package.json ./desktop/
+COPY installer/package.json ./installer/
+RUN npm install -g pnpm@10 \
+    && pnpm install --frozen-lockfile --ignore-scripts
+
+# Capacitor 仍使用独立锁文件，保持既有 Android 依赖链与签名升级链不变。
 COPY mobile/package.json mobile/pnpm-lock.yaml ./mobile/
-RUN cd mobile && npm install -g pnpm@10 && pnpm install --ignore-workspace
+RUN cd mobile && pnpm install --ignore-workspace --frozen-lockfile
 
 # 再复制全部源码（cap sync 与 gradle 构建在 docker run 时执行）
 COPY . .

@@ -11,7 +11,7 @@
         >{{ extractionStatusLabel }}</span>
       </div>
       <div class="fp-actions">
-        <button v-if="kind === 'office'" class="btn small" @click="openVersions">
+        <button v-if="kind === 'office' && capabilities.features.onlyOffice" class="btn small" @click="openVersions">
           <Icon name="restore" :size="14" /> 历史版本
         </button>
         <button
@@ -44,7 +44,7 @@
     <template v-else-if="kind === 'office'">
       <div v-if="officeMode === 'online'" :id="editorId" class="office-online"></div>
       <div v-else class="office-fallback-wrap">
-        <div class="fallback-banner">
+        <div v-if="capabilities.features.onlyOffice" class="fallback-banner">
           <b>简化预览</b>
           <span>{{ officeError || '在线编辑服务暂不可用，可下载或用系统程序打开。' }}</span>
           <button class="btn small" @click="retryOnlineOffice">重试在线编辑</button>
@@ -189,6 +189,7 @@ import PdfViewer from './PdfViewer.vue';
 import AppModal from './ui/AppModal.vue';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
+import { useRuntimeCapabilities } from '../lib/capabilities';
 
 const props = defineProps<{ path: string }>();
 const emit = defineEmits<{
@@ -222,6 +223,7 @@ type FileExtraction = {
 };
 
 const app = useAppStore();
+const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
 const loading = ref(true);
 const kind = ref('');
 const html = ref('');
@@ -252,7 +254,9 @@ let extractionTimer: ReturnType<typeof setInterval> | undefined;
 
 const fileName = computed(() => props.path.split('/').pop() || props.path);
 const rawUrl = computed(() => `/api/files/raw?path=${encodeURIComponent(props.path)}`);
-const supportsExtraction = computed(() => ['pdf', 'image'].includes(kind.value));
+const supportsExtraction = computed(() => capabilities.value.runtime === 'android-local'
+  ? kind.value === 'pdf'
+  : ['pdf', 'image'].includes(kind.value));
 const activeFileJob = computed(() => app.fileJob(props.path));
 const isDesktop = Boolean((window as any).wikiDesktop || (window as any).__TAURI__);
 const officeStatusTone = computed(() => {
@@ -389,6 +393,15 @@ async function renderOnlineOffice(version: number) {
 async function renderOffice(url: string, officeExtension: string, version: number) {
   officeUrl.value = url;
   officeExt.value = officeExtension;
+  if (!capabilities.value.features.onlyOffice) {
+    officeError.value = '';
+    officeStatus.value = '本地预览';
+    officeMode.value = 'fallback';
+    loading.value = false;
+    await nextTick();
+    await renderFallbackOffice(url, officeExtension);
+    return;
+  }
   try {
     await renderOnlineOffice(version);
   } catch (error: any) {
@@ -425,14 +438,17 @@ async function renderFallbackOffice(url: string, officeExtension: string) {
   const buf = await res.arrayBuffer();
   const el = officeEl.value;
   if (!el) return;
+  let extractedText = '';
   if (officeExtension === 'docx') {
     const { renderAsync } = await import('docx-preview');
     await renderAsync(buf, el, undefined, { inWrapper: true });
+    extractedText = el.innerText;
   } else if (officeExtension === 'xlsx') {
     const XLSX = await import('xlsx');
     const { default: Spreadsheet } = await import('x-data-spreadsheet');
     await import('x-data-spreadsheet/dist/xspreadsheet.css');
     const wb = XLSX.read(new Uint8Array(buf));
+    extractedText = wb.SheetNames.map((name: string) => `# ${name}\n${XLSX.utils.sheet_to_csv(wb.Sheets[name])}`).join('\n\n');
     currentSpreadsheet = new Spreadsheet(el, {
       mode: 'read',
       showToolbar: false,
@@ -443,6 +459,13 @@ async function renderFallbackOffice(url: string, officeExtension: string) {
     const { init } = await import('pptx-preview');
     const width = Math.max(320, Math.min(960, el.clientWidth - 32));
     await init(el, { width, height: Math.round(width * 9 / 16) }).preview(buf);
+    extractedText = el.innerText;
+  }
+  if (capabilities.value.runtime === 'android-local') {
+    await api.post('/api/files/extract', {
+      path: props.path,
+      embedded_pages: [{ pageNumber: 1, text: extractedText }],
+    }).catch((error) => console.warn('保存本地 Office 文字索引失败', error));
   }
 }
 
@@ -564,6 +587,17 @@ async function loadExtraction() {
 async function queueExtraction(mode: 'auto' | 'continue' | 'pages', pages?: number[]) {
   extractionBusy.value = true;
   try {
+    if (capabilities.value.runtime === 'android-local') {
+      const previousTab = activeTab.value;
+      activeTab.value = 'source';
+      await nextTick();
+      const embeddedPages = await pdfViewer.value?.extractEmbeddedText() || [];
+      const { data } = await api.post('/api/files/extract', { path: props.path, embedded_pages: embeddedPages });
+      extraction.value = data.extraction;
+      activeTab.value = previousTab === 'text' ? 'text' : 'source';
+      app.bumpSidebar();
+      return;
+    }
     await api.post('/api/files/extract', { path: props.path, mode, pages });
     if (extraction.value) extraction.value.status = 'pending';
     await app.refreshJobs();
@@ -660,8 +694,9 @@ async function loadFile() {
   }
 }
 
-onMounted(() => {
-  void loadFile();
+onMounted(async () => {
+  await loadCapabilities();
+  await loadFile();
   extractionTimer = setInterval(async () => {
     if (!supportsExtraction.value) return;
     const status = extraction.value?.status;

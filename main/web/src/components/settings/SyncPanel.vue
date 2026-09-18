@@ -3,14 +3,14 @@
     <div class="panel-head">
       <div>
         <h3>多端同步</h3>
-        <p>把多台设备组成一个同步群组：只要求中枢设备可被其他设备访问（如有公网 IP / 内网可达），成员设备之间无需互通。每台设备的 Agent 经本地 MCP 写入的内容会实时同步到群组内其他设备。</p>
+        <p>把多台设备组成一个同步群组：只要求中枢设备可被其他设备访问（如有公网 IP / 内网可达），成员设备之间无需互通。页面、附件与证据账本会在各端之间同步。</p>
       </div>
     </div>
 
     <!-- 未配置：选择角色 -->
     <template v-if="status && status.role === 'none'">
       <div class="role-cards">
-        <div class="role-card">
+        <div v-if="canBeHub" class="role-card">
           <h4>这台设备作为中枢</h4>
           <p>中枢保存群组权威数据，可查看每个成员的连接状态，并为成员设备生成绑定令牌。建议由常开的 NAS Docker 版担任。</p>
           <button class="btn primary" type="button" :disabled="saving" @click="becomeHub">作为中枢启用</button>
@@ -30,6 +30,10 @@
         <div class="field-row">
           <label for="sync-hub-token">绑定令牌</label>
           <SecretField id="sync-hub-token" v-model="hubToken" placeholder="lsync_…" />
+        </div>
+        <div v-if="capabilities.runtime === 'android-local'" class="field-row">
+          <label for="sync-direct-urls">局域网 / IPv6 直连地址（可选，每行一个）</label>
+          <textarea id="sync-direct-urls" v-model="directUrlsText" rows="2" placeholder="http://192.168.1.101:18080" spellcheck="false" />
         </div>
         <div class="sync-actions">
           <button class="btn primary" type="button" :disabled="saving" @click="joinHub">保存并绑定</button>
@@ -95,7 +99,7 @@
       </div>
 
       <SettingsGroup
-        v-if="status.role === 'hub'"
+        v-if="status.role === 'hub' && capabilities.features.ddns"
         title="DDNS 直连域名"
         hint="只有中枢可开启：把一条域名指向中枢公网 IP，成员绑定中枢时可直接填这个域名"
       >
@@ -121,6 +125,10 @@
           <label for="sync-hub-token">绑定令牌</label>
           <SecretField id="sync-hub-token" v-model="hubToken" :stored="status.hubToken" />
         </div>
+        <div v-if="capabilities.runtime === 'android-local'" class="field-row">
+          <label for="sync-direct-urls-member">局域网 / IPv6 直连地址（可选，每行一个）</label>
+          <textarea id="sync-direct-urls-member" v-model="directUrlsText" rows="2" placeholder="http://192.168.1.101:18080" spellcheck="false" />
+        </div>
         <div class="sync-actions">
           <button class="btn" type="button" :disabled="saving" @click="saveBinding">保存修改</button>
           <button class="btn" type="button" :disabled="reconciling" @click="reconcileNow">{{ reconciling ? '对账中…' : '立即全量对账' }}</button>
@@ -129,7 +137,7 @@
       <div class="sync-status">
         <h4>运行状态</h4>
         <div class="status-grid">
-          <div><span>连接</span><strong :class="status.connected ? 'ok' : 'bad'">{{ status.connected ? '已连接' : '未连接' }}</strong></div>
+          <div><span>{{ capabilities.runtime === 'android-local' ? '最近一轮' : '连接' }}</span><strong :class="status.connected ? 'ok' : 'bad'">{{ connectionLabel }}</strong></div>
           <div><span>待推送</span><strong>{{ status.pending }}</strong></div>
           <div v-if="status.pendingPulls"><span>待补拉文件</span><strong>{{ status.pendingPulls }}</strong></div>
           <div><span>最近同步</span><strong>{{ status.lastSyncAt ? formatTime(status.lastSyncAt) : '—' }}</strong></div>
@@ -166,6 +174,7 @@ import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import SecretField from '../SecretField.vue';
+import { useRuntimeCapabilities } from '../../lib/capabilities';
 
 interface PeerView {
   id: string;
@@ -189,8 +198,10 @@ interface SyncStatus {
   role: 'hub' | 'member' | 'none';
   enabled: boolean;
   connected: boolean;
+  running?: boolean;
   hubUrl: string;
   hubToken: string;
+  directUrls?: string[];
   nodeId: string;
   cursor: number;
   pending: number;
@@ -202,11 +213,14 @@ interface SyncStatus {
 }
 
 const location = window.location;
+const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
+const canBeHub = computed(() => capabilities.value.syncRoles.includes('hub'));
 const status = ref<SyncStatus | null>(null);
 const peers = ref<PeerView[]>([]);
 const pickJoin = ref(false);
 const hubUrl = ref('');
 const hubToken = ref('');
+const directUrlsText = ref('');
 const saving = ref(false);
 const creating = ref(false);
 const reconciling = ref(false);
@@ -245,6 +259,11 @@ function eventLabel(event: string): string {
 }
 
 const logView = computed<SyncLogEntry[]>(() => (status.value?.log || []).slice(-30).reverse());
+const connectionLabel = computed(() => {
+  if (capabilities.value.runtime !== 'android-local') return status.value?.connected ? '已连接' : '未连接';
+  if (status.value?.running) return '同步中';
+  return status.value?.connected ? '已同步并断开' : '尚未成功';
+});
 
 function logKey(entry: SyncLogEntry, index: number): string {
   return `${entry.ts}-${entry.event}-${index}`;
@@ -286,6 +305,7 @@ async function postConfig(body: Record<string, unknown>, okMsg: string): Promise
 }
 
 async function becomeHub(): Promise<void> {
+  if (!canBeHub.value) return;
   if (await postConfig({ role: 'hub' }, '已启用中枢角色，快去添加成员吧')) {
     pickJoin.value = false;
   }
@@ -296,17 +316,21 @@ async function joinHub(): Promise<void> {
     notify.error('请填写中枢地址与绑定令牌');
     return;
   }
-  if (await postConfig({ role: 'member', enabled: true, hub_url: hubUrl.value.trim(), hub_token: hubToken.value.trim() }, '绑定成功，正在连接中枢并同步')) {
+  if (await postConfig({ role: 'member', enabled: true, hub_url: hubUrl.value.trim(), hub_token: hubToken.value.trim(), direct_urls: parsedDirectUrls() }, '绑定成功，正在连接中枢并同步')) {
     pickJoin.value = false;
   }
 }
 
 async function saveBinding(): Promise<void> {
-  const body: Record<string, unknown> = { role: 'member', enabled: true, hub_url: hubUrl.value.trim() };
+  const body: Record<string, unknown> = { role: 'member', enabled: true, hub_url: hubUrl.value.trim(), direct_urls: parsedDirectUrls() };
   if (hubToken.value.trim()) body.hub_token = hubToken.value.trim();
   if (await postConfig(body, '已保存')) {
     hubToken.value = '';
   }
+}
+
+function parsedDirectUrls(): string[] {
+  return directUrlsText.value.split(/[\n,，]+/).map((item) => item.trim()).filter(Boolean);
 }
 
 async function leaveRole(target: 'none'): Promise<void> {
@@ -373,8 +397,12 @@ async function reconcileNow(): Promise<void> {
 }
 
 onMounted(async () => {
+  await loadCapabilities();
   await loadStatus();
-  if (status.value?.role === 'member') hubUrl.value = status.value.hubUrl || '';
+  if (status.value?.role === 'member') {
+    hubUrl.value = status.value.hubUrl || '';
+    directUrlsText.value = (status.value.directUrls || []).join('\n');
+  }
   pollTimer = window.setInterval(loadStatus, 5000);
 });
 
@@ -510,6 +538,7 @@ onUnmounted(() => {
 }
 .field-row label { font-size: 13px; font-weight: 600; }
 .field-row input,
+.field-row textarea,
 .field-row :deep(input) {
   padding: 8px 10px;
   font-size: 13px;

@@ -26,6 +26,7 @@ import { trashRoutes } from './routes/trash.js';
 import { officeRoutes } from './routes/office.js';
 import { syncRoutes } from './routes/sync.js';
 import { hubUpdateRoutes } from './routes/syncHubUpdate.js';
+import { runtimeRoutes } from './routes/runtime.js';
 import { initSync } from './sync/index.js';
 import { migrateConflictBackupDir } from './sync/hub.js';
 import { registerOfficeProxy } from './office/proxy.js';
@@ -73,6 +74,7 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
 
   await registerOfficeProxy(app);
   await app.register(authRoutes);
+  await app.register(runtimeRoutes);
   await app.register(healthRoutes);
   await app.register(pageRoutes);
   await app.register(fileRoutes);

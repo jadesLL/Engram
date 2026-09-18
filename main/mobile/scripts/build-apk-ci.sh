@@ -2,6 +2,12 @@
 # CI 容器内执行：同步 web 资产 + gradle 构建 release APK
 # 签名密钥经环境变量注入（见 Dockerfile.ci 头部说明）；未注入时产出未签名 APK
 set -euo pipefail
+cd /work
+
+echo ">> build web"
+pnpm --filter @engram/web build
+node mobile/scripts/prepare-mobile-web.cjs
+
 cd /work/mobile
 
 if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
@@ -33,7 +39,7 @@ EOF
 # 镜像构建期已预热 gradle 缓存（Dockerfile.ci 末层，标记文件在 GRADLE_USER_HOME）：
 # 优先 --offline 复用，彻底消除发版时的运行时网络依赖；离线失败回退在线构建（与旧行为一致）
 GRADLE_CACHE="${GRADLE_USER_HOME:-$HOME/.gradle}"
-GRADLE_ARGS=(assembleRelease --no-daemon)
+GRADLE_ARGS=(testDebugUnitTest assembleRelease --no-daemon)
 if [ -f "$GRADLE_CACHE/.warm-ok" ]; then
   echo ">> 检测到镜像预热缓存，优先离线构建"
   GRADLE_ARGS+=(--offline)
@@ -42,7 +48,7 @@ fi
 if ! ./gradlew "${GRADLE_ARGS[@]}"; then
   if [ -f "$GRADLE_CACHE/.warm-ok" ]; then
     echo ">> 离线构建失败，回退在线构建"
-    ./gradlew assembleRelease --no-daemon
+    ./gradlew testDebugUnitTest assembleRelease --no-daemon
   else
     exit 1
   fi

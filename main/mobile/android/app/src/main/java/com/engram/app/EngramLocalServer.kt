@@ -1,0 +1,526 @@
+package com.engram.app
+
+import android.content.Context
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.PartData
+import io.ktor.http.content.forEachPart
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.install
+import io.ktor.server.cio.CIO
+import io.ktor.server.cio.CIOApplicationEngine
+import io.ktor.server.engine.EmbeddedServer
+import io.ktor.server.engine.EngineConnectorBuilder
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.plugins.statuspages.exception
+import io.ktor.server.request.header
+import io.ktor.server.request.receiveMultipart
+import io.ktor.server.request.receiveText
+import io.ktor.server.response.header
+import io.ktor.server.response.respondOutputStream
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.delete
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.routing.put
+import io.ktor.server.routing.routing
+import io.ktor.utils.io.jvm.javaio.toInputStream
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.net.URLDecoder
+import java.security.SecureRandom
+import java.time.Instant
+import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
+/**
+ * APK 内嵌的本地优先服务。只监听 loopback，WebView 与桌面版共用 REST 契约。
+ * Android 永远是同步成员，不开放成员签发、Agent、MCP、更新或 DDNS 接口。
+ */
+class EngramLocalServer private constructor(private val context: Context) {
+    private val db = LocalDatabase(context)
+    private val secrets = SecretStore(context)
+    private val sync = SyncEngine(db, secrets)
+    private val sessionToken: String = secrets.get("local_session_token") ?: randomToken().also {
+        secrets.put("local_session_token", it)
+    }
+    private var engine: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
+
+    @Synchronized
+    fun start() {
+        if (engine != null) return
+        engine = embeddedServer(CIO, configure = {
+            connectors.add(EngineConnectorBuilder().apply {
+                host = "127.0.0.1"
+                port = PORT
+            })
+            // 只有单个 WebView 客户端；避免默认按 CPU 核数创建多组调度线程与缓冲区。
+            connectionGroupSize = 1
+            workerGroupSize = 1
+            callGroupSize = 2
+            connectionIdleTimeoutSeconds = 5
+        }) {
+            install(StatusPages) {
+                exception<IllegalArgumentException> { call, error ->
+                    call.json(JSONObject().put("error", error.message ?: "请求无效"), HttpStatusCode.BadRequest)
+                }
+                exception<Throwable> { call, error ->
+                    call.json(JSONObject().put("error", error.message ?: "本地服务错误"), HttpStatusCode.InternalServerError)
+                }
+            }
+            routing { routes() }
+        }.start(wait = false)
+    }
+
+    fun onForeground() = sync.onForeground()
+    fun onBackground() = sync.onBackground()
+    fun requestSync(full: Boolean) = sync.request(full)
+
+    /** 旧远程壳升级：只把旧地址预填为候选中枢，不启用同步、不覆盖本地库。 */
+    fun migrateLegacyRemoteUrl() {
+        if (!db.setting("sync_hub_url").isNullOrBlank()) return
+        val legacy = context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+        val primary = legacy.getString("serverUrl", "").orEmpty().trim()
+        val direct = legacy.getString("serverUrlDirect", "").orEmpty().trim()
+        if (primary.startsWith("http://") || primary.startsWith("https://")) db.setSetting("sync_hub_url", primary.trimEnd('/'))
+        if (direct.startsWith("http://") || direct.startsWith("https://")) db.setSetting("sync_direct_urls", JSONArray().put(direct.trimEnd('/')).toString())
+    }
+
+    private fun io.ktor.server.routing.Route.routes() {
+        get("/health") { call.json(JSONObject().put("ok", true).put("runtime", "android-local")) }
+        get("/api/runtime/capabilities") {
+            call.json(JSONObject()
+                .put("runtime", "android-local").put("localFirst", true)
+                .put("syncRoles", JSONArray().put("none").put("member"))
+                .put("features", JSONObject()
+                    .put("agent", false).put("mcp", false).put("jobs", false)
+                    .put("onlyOffice", false).put("serverUpdate", false).put("ddns", false)
+                    .put("backup", true).put("fileExtraction", true)))
+        }
+
+        get("/api/auth/status") {
+            call.json(JSONObject().put("initialized", db.authInitialized()).put("authed", call.isAuthed()))
+        }
+        post("/api/auth/setup") {
+            if (db.authInitialized()) return@post call.error("已初始化", HttpStatusCode.BadRequest)
+            db.setPassword(call.body().optString("password"))
+            call.setSession(); call.json(JSONObject().put("ok", true))
+        }
+        post("/api/auth/login") {
+            if (!db.checkPassword(call.body().optString("password"))) return@post call.error("密码错误", HttpStatusCode.Unauthorized)
+            call.setSession(); call.json(JSONObject().put("ok", true))
+        }
+        post("/api/auth/logout") {
+            call.response.header(HttpHeaders.SetCookie, "$SESSION_COOKIE=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+            call.json(JSONObject().put("ok", true))
+        }
+        post("/api/auth/password") {
+            if (!call.authorize()) return@post
+            val body = call.body()
+            if (!db.checkPassword(body.optString("oldPassword"))) return@post call.error("原密码错误", HttpStatusCode.BadRequest)
+            db.setPassword(body.optString("newPassword")); call.json(JSONObject().put("ok", true))
+        }
+
+        get("/api/pages/tree") { if (call.authorize()) call.json(JSONObject().put("tree", db.tree())) }
+        get("/api/pages/list") {
+            if (!call.authorize()) return@get
+            var pages = db.pages()
+            call.request.queryParameters["type"]?.let { type -> pages = pages.filter { it.optString("type") == type } }
+            call.request.queryParameters["tag"]?.let { tag -> pages = pages.filter { it.optJSONArray("tags")?.contains(tag) == true } }
+            call.json(JSONObject().put("guideVersion", 0).put("pages", pages))
+        }
+        get("/api/pages/tags") { if (call.authorize()) call.json(JSONObject().put("tags", db.tags())) }
+        get("/api/pages/suggest") {
+            if (call.authorize()) call.json(JSONObject().put("suggestions", db.suggest(call.request.queryParameters["q"].orEmpty())))
+        }
+        get("/api/pages/by-title/{title}") {
+            if (!call.authorize()) return@get
+            val page = db.pageByTitle(decoded(call.parameters["title"].orEmpty())) ?: return@get call.error("not found", HttpStatusCode.NotFound)
+            call.json(JSONObject().put("id", page.getString("id")))
+        }
+        post("/api/pages") {
+            if (!call.authorize()) return@post
+            val body = call.body()
+            call.json(JSONObject().put("meta", db.createPage(body.optStringOrNull("dir"), body.optStringOrNull("title"), body.optStringOrNull("type"))))
+        }
+        get("/api/pages/{id}/evidence") {
+            if (!call.authorize()) return@get
+            call.json(db.pageEvidence(call.parameters["id"].orEmpty()))
+        }
+        get("/api/pages/{id}/related") {
+            if (!call.authorize()) return@get
+            call.json(db.related(call.parameters["id"].orEmpty()))
+        }
+        get("/api/pages/{id}") {
+            if (!call.authorize()) return@get
+            val page = db.page(call.parameters["id"].orEmpty()) ?: return@get call.error("页面不存在", HttpStatusCode.NotFound)
+            val content = page.optString("content"); page.remove("content")
+            call.json(JSONObject().put("meta", page).put("content", content))
+        }
+        put("/api/pages/{id}") {
+            if (!call.authorize()) return@put
+            call.json(JSONObject().put("meta", db.updatePage(call.parameters["id"].orEmpty(), call.body())))
+        }
+        post("/api/pages/{id}/archive") { if (call.authorize()) { db.archive(call.parameters["id"].orEmpty()); call.ok() } }
+        post("/api/pages/{id}/unarchive") { if (call.authorize()) { db.unarchive(call.parameters["id"].orEmpty()); call.ok() } }
+        post("/api/pages/{id}/move") {
+            if (!call.authorize()) return@post
+            val body = call.body(); call.json(JSONObject().put("ok", true).put("meta", db.movePage(call.parameters["id"].orEmpty(), body.optStringOrNull("dir"), body.optStringOrNull("newTitle"))))
+        }
+        post("/api/pages/{id}/rename") {
+            if (!call.authorize()) return@post
+            db.renamePage(call.parameters["id"].orEmpty(), call.body().optString("newTitle")); call.ok()
+        }
+        delete("/api/pages/{id}") { if (call.authorize()) { db.deletePage(call.parameters["id"].orEmpty()); call.ok() } }
+        post("/api/mkdir") { if (call.authorize()) call.ok() }
+
+        get("/api/files/list") {
+            if (!call.authorize()) return@get
+            call.json(JSONObject().put("files", db.files(call.request.queryParameters["dir"])))
+        }
+        post("/api/files/create") {
+            if (!call.authorize()) return@post
+            call.json(db.createRawFile(call.body().optString("name", "未命名.md")))
+        }
+        post("/api/files/upload") {
+            if (!call.authorize()) return@post
+            val incoming = mutableListOf<Pair<String, File>>()
+            var dir = "原始资料"
+            try {
+                call.receiveMultipart(formFieldLimit = MAX_FILE_BYTES).forEachPart { part ->
+                    when (part) {
+                        is PartData.FormItem -> if (part.name == "dir") dir = part.value.trim('/').ifBlank { "原始资料" }
+                        is PartData.FileItem -> {
+                            val name = sanitizeFileName(part.originalFileName ?: "file")
+                            val staged = File(db.root, "upload-${UUID.randomUUID()}.tmp")
+                            try {
+                                part.provider().toInputStream().use { input -> staged.outputStream().use { copyLimited(input, it) } }
+                                incoming += name to staged
+                            } catch (error: Exception) {
+                                staged.delete()
+                                throw error
+                            }
+                        }
+                        else -> Unit
+                    }
+                    part.dispose()
+                }
+            } catch (error: Exception) {
+                incoming.forEach { it.second.delete() }
+                throw error
+            }
+            require(dir == "原始资料" || dir.startsWith("原始资料/")) { "文件只能上传到「原始资料」目录" }
+            val saved = JSONArray(); val duplicates = JSONArray()
+            incoming.forEach { (name, staged) ->
+                try { saved.put(db.installImportedFile("$dir/$name", staged)) }
+                catch (error: IllegalArgumentException) { duplicates.put(name) }
+                finally { staged.delete() }
+            }
+            if (saved.length() == 0 && duplicates.length() > 0) return@post call.error("已存在同名文件，未重复导入", HttpStatusCode.Conflict)
+            call.json(JSONObject().put("saved", saved).put("duplicates", duplicates))
+        }
+        get("/api/files/preview") {
+            if (!call.authorize()) return@get
+            val path = call.request.queryParameters["path"] ?: return@get call.error("缺少 path", HttpStatusCode.BadRequest)
+            val file = db.file(path); if (!file.isFile) return@get call.error("文件不存在", HttpStatusCode.NotFound)
+            val ext = file.extension.lowercase()
+            val response = when (ext) {
+                "docx", "xlsx", "pptx" -> JSONObject().put("kind", "office").put("ext", ext).put("url", "/api/files/raw?path=${encoded(path)}")
+                "pdf" -> JSONObject().put("kind", "pdf").put("ext", ext).put("url", "/api/files/content?path=${encoded(path)}").put("extraction", db.extraction(path) ?: JSONObject.NULL)
+                "png", "jpg", "jpeg", "gif", "webp", "svg" -> JSONObject().put("kind", "image").put("url", "/api/files/content?path=${encoded(path)}").put("extraction", db.extraction(path) ?: JSONObject.NULL)
+                "md", "markdown" -> JSONObject().put("kind", "markdown").put("text", db.rawPage(path).orEmpty().substringAfter("\n---\n", db.rawPage(path).orEmpty()).trim())
+                "txt", "json", "log", "yaml", "yml", "csv" -> JSONObject().put("kind", "text").put("text", file.readText().take(200_000))
+                else -> JSONObject().put("kind", "unsupported").put("ext", ext)
+            }
+            call.json(response)
+        }
+        get("/api/files/content") { if (call.authorize()) call.sendFile(inline = true) }
+        get("/api/files/raw") { if (call.authorize()) call.sendFile(inline = false) }
+        get("/api/files/open") { if (call.authorize()) call.sendFile(inline = false) }
+        get("/api/files/extraction") {
+            if (!call.authorize()) return@get
+            val path = call.request.queryParameters["path"] ?: return@get call.error("缺少 path", HttpStatusCode.BadRequest)
+            val extraction = db.extraction(path) ?: return@get call.error("尚无文字提取记录", HttpStatusCode.NotFound)
+            call.json(JSONObject().put("extraction", extraction))
+        }
+        post("/api/files/extract") {
+            if (!call.authorize()) return@post
+            val body = call.body(); val pages = body.optJSONArray("embedded_pages")
+                ?: return@post call.error("Android 端不执行 OCR；请使用本地内嵌文字提取", HttpStatusCode.NotImplemented)
+            call.json(JSONObject().put("ok", true).put("extraction", db.saveExtraction(body.optString("path"), pages)))
+        }
+        post("/api/files/export") {
+            if (!call.authorize()) return@post
+            val body = call.body(); val paths = body.optJSONArray("paths") ?: JSONArray()
+            val temp = File(db.root, "export-${UUID.randomUUID()}.zip")
+            ZipOutputStream(temp.outputStream().buffered()).use { zip ->
+                for (i in 0 until paths.length()) addZipFile(zip, db.file(paths.optString(i)), paths.optString(i))
+            }
+            call.download(temp, "${sanitizeFileName(body.optString("name", "导出"))}-${Instant.now().toString().take(10)}.zip")
+        }
+        delete("/api/files") {
+            if (!call.authorize()) return@delete
+            db.deleteFile(call.body().optString("path")); call.ok()
+        }
+
+        get("/api/search") {
+            if (!call.authorize()) return@get
+            call.json(JSONObject().put("hits", db.search(call.request.queryParameters["q"].orEmpty())))
+        }
+        get("/api/graph") {
+            if (!call.authorize()) return@get
+            call.json(db.graph(call.request.queryParameters["scope"], call.request.queryParameters["id"]))
+        }
+        get("/api/jobs") { if (call.authorize()) call.json(JSONObject().put("active", JSONArray()).put("recent", JSONArray()).put("queue", JSONObject().put("running", false))) }
+
+        get("/api/trash") { if (call.authorize()) call.json(db.trash()) }
+        post("/api/trash/restore") { if (call.authorize()) call.json(db.restoreTrash(call.body().ids())) }
+        delete("/api/trash") { if (call.authorize()) call.json(db.deleteTrash(call.body().ids())) }
+        delete("/api/trash/all") { if (call.authorize()) call.json(db.emptyTrash()) }
+
+        get("/api/settings") { if (call.authorize()) call.json(JSONObject().put("settings", db.publicSettings())) }
+        put("/api/settings") {
+            if (!call.authorize()) return@put
+            val body = call.body(); if (body.has("search_synonyms")) db.setSetting("search_synonyms", body.optString("search_synonyms")); call.ok()
+        }
+        get("/api/settings/backup") {
+            if (!call.authorize()) return@get
+            val temp = createBackup(); call.download(temp, "engram-backup-${Instant.now().toString().take(10)}.zip")
+        }
+        post("/api/settings/restore") {
+            if (!call.authorize()) return@post
+            var password = ""; var archive: File? = null
+            call.receiveMultipart(formFieldLimit = MAX_BACKUP_BYTES).forEachPart { part ->
+                when (part) {
+                    is PartData.FormItem -> if (part.name == "password") password = part.value
+                    is PartData.FileItem -> {
+                        val target = File(db.root, "restore-${UUID.randomUUID()}.zip")
+                        try {
+                            part.provider().toInputStream().use { input -> target.outputStream().use { copyLimited(input, it, MAX_BACKUP_BYTES) } }
+                            archive = target
+                        } catch (error: Exception) {
+                            target.delete()
+                            throw error
+                        }
+                    }
+                    else -> Unit
+                }
+                part.dispose()
+            }
+            if (!db.checkPassword(password)) { archive?.delete(); return@post call.error("密码错误", HttpStatusCode.Unauthorized) }
+            val result = restoreBackup(archive ?: return@post call.error("未选择备份文件", HttpStatusCode.BadRequest))
+            call.json(JSONObject().put("ok", true).put("needsRestart", false).put("files", result))
+        }
+        post("/api/settings/wipe") {
+            if (!call.authorize()) return@post
+            if (!db.checkPassword(call.body().optString("password"))) return@post call.error("密码错误", HttpStatusCode.Unauthorized)
+            val count = db.knowledgeFileCount(); db.wipe()
+            call.json(JSONObject().put("ok", true).put("fileCount", count).put("reportCount", 0).put("cancelledJobs", 0))
+        }
+
+        get("/api/sync/status") {
+            if (!call.authorize()) return@get
+            call.json(JSONObject()
+                .put("role", db.setting("sync_role") ?: "none")
+                .put("enabled", db.setting("sync_enabled") == "1")
+                .put("connected", sync.connected).put("running", sync.isRunning()).put("hubUrl", db.setting("sync_hub_url") ?: "")
+                .put("directUrls", JSONArray(db.setting("sync_direct_urls") ?: "[]"))
+                .put("hubToken", if (secrets.get("sync_hub_token").isNullOrBlank()) "" else "••••••••")
+                .put("nodeId", db.setting("sync_node_id") ?: "").put("cursor", db.setting("sync_cursor")?.toLongOrNull() ?: 0)
+                .put("pending", db.outboxCount()).put("pendingPulls", 0).put("lastSyncAt", sync.lastSyncAt)
+                .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray()))
+        }
+        post("/api/sync/config") {
+            if (!call.authorize()) return@post
+            val body = call.body(); val role = body.optString("role", "member")
+            require(role == "none" || role == "member") { "Android 只能作为同步成员" }
+            if (role == "member") {
+                val url = body.optString("hub_url", db.setting("sync_hub_url").orEmpty()).trimEnd('/')
+                val token = body.optString("hub_token")
+                require(url.startsWith("http://") || url.startsWith("https://")) { "中枢地址无效" }
+                if (token.isNotBlank()) secrets.put("sync_hub_token", token)
+                require(!secrets.get("sync_hub_token").isNullOrBlank()) { "请填写绑定令牌" }
+                db.setSetting("sync_hub_url", url); db.setSetting("sync_enabled", if (body.optBoolean("enabled", true)) "1" else "0")
+                if (body.has("direct_urls")) {
+                    val incoming = body.optJSONArray("direct_urls") ?: JSONArray()
+                    val valid = JSONArray()
+                    for (i in 0 until incoming.length()) incoming.optString(i).trimEnd('/').takeIf { it.startsWith("http://") || it.startsWith("https://") }?.let(valid::put)
+                    db.setSetting("sync_direct_urls", valid.toString())
+                }
+            } else {
+                db.setSetting("sync_enabled", "0"); secrets.put("sync_hub_token", null)
+            }
+            db.setSetting("sync_role", role); call.ok(); if (role == "member") sync.request(false)
+        }
+        post("/api/sync/reconcile") { if (call.authorize()) { sync.request(true); call.ok() } }
+
+        get("/") { call.serveAsset("index.html") }
+        get("/{path...}") {
+            val requested = call.parameters.getAll("path")?.joinToString("/").orEmpty().ifBlank { "index.html" }
+            if (requested.startsWith("api/")) return@get call.error("接口不存在", HttpStatusCode.NotFound)
+            call.serveAsset(requested)
+        }
+    }
+
+    private suspend fun ApplicationCall.body(): JSONObject = receiveText().takeIf { it.isNotBlank() }?.let(::JSONObject) ?: JSONObject()
+    private fun ApplicationCall.isAuthed() = request.cookies[SESSION_COOKIE] == sessionToken
+    private suspend fun ApplicationCall.authorize(): Boolean {
+        if (isAuthed()) return true
+        error("未授权", HttpStatusCode.Unauthorized); return false
+    }
+    private fun ApplicationCall.setSession() = response.header(HttpHeaders.SetCookie, "$SESSION_COOKIE=$sessionToken; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
+    private suspend fun ApplicationCall.ok() = json(JSONObject().put("ok", true))
+    private suspend fun ApplicationCall.error(message: String, status: HttpStatusCode) = json(JSONObject().put("error", message), status)
+    private suspend fun ApplicationCall.json(value: Any, status: HttpStatusCode = HttpStatusCode.OK) = respondText(value.toString(), ContentType.Application.Json, status)
+
+    private suspend fun ApplicationCall.sendFile(inline: Boolean) {
+        val path = request.queryParameters["path"] ?: return error("缺少 path", HttpStatusCode.BadRequest)
+        val file = db.file(path); if (!file.isFile) return error("文件不存在", HttpStatusCode.NotFound)
+        val type = mime(file.extension)
+        response.header(HttpHeaders.ContentDisposition, "${if (inline) "inline" else "attachment"}; filename*=UTF-8''${encoded(file.name)}")
+        response.header(HttpHeaders.AcceptRanges, "bytes")
+        val range = request.header(HttpHeaders.Range)?.let { parseRange(it, file.length()) }
+        if (range != null) {
+            response.header(HttpHeaders.ContentRange, "bytes ${range.first}-${range.last}/${file.length()}")
+            response.header(HttpHeaders.ContentLength, (range.last - range.first + 1).toString())
+            respondOutputStream(type, HttpStatusCode.PartialContent) {
+                file.inputStream().use { input -> input.skip(range.first); copyCount(input, this, range.last - range.first + 1) }
+            }
+        } else {
+            response.header(HttpHeaders.ContentLength, file.length().toString())
+            respondOutputStream(type) { file.inputStream().use { it.copyTo(this, 64 * 1024) } }
+        }
+    }
+
+    private suspend fun ApplicationCall.download(file: File, name: String) {
+        response.header(HttpHeaders.ContentDisposition, "attachment; filename*=UTF-8''${encoded(name)}")
+        response.header(HttpHeaders.ContentLength, file.length().toString())
+        respondOutputStream(ContentType("application", "zip")) {
+            try { file.inputStream().use { it.copyTo(this, 64 * 1024) } }
+            finally { file.delete() }
+        }
+    }
+
+    private suspend fun ApplicationCall.serveAsset(requested: String) {
+        val clean = requested.substringBefore('?').trimStart('/').takeIf { it.split('/').none { part -> part == ".." } } ?: "index.html"
+        val candidate = "public/$clean"
+        val resolved = if (runCatching { context.assets.open(candidate).use { } }.isSuccess) candidate else "public/index.html"
+        val extension = resolved.substringAfterLast('.', "html")
+        val length = context.assets.open(resolved).use { it.available().toLong() }
+        response.header(HttpHeaders.ContentLength, length.toString())
+        if (resolved.startsWith("public/assets/") || resolved.startsWith("public/vendor/")) {
+            response.header(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
+        } else {
+            response.header(HttpHeaders.CacheControl, "no-cache")
+        }
+        // APK 内可能包含数 MB 的编辑器/PDF 资源。禁止 readBytes() 整块进堆，固定 64 KiB 流式发送。
+        respondOutputStream(mime(extension)) {
+            context.assets.open(resolved).use { input -> input.copyTo(this, 64 * 1024) }
+        }
+    }
+
+    private fun createBackup(): File {
+        val target = File(db.root, "backup-${UUID.randomUUID()}.zip")
+        ZipOutputStream(target.outputStream().buffered()).use { zip ->
+            val manifest = JSONObject().put("format", "engram-portable-backup").put("version", 2).put("createdAt", Instant.now().toString())
+            addZipBytes(zip, "manifest.json", manifest.toString(2).toByteArray())
+            addZipBytes(zip, "portable-metadata.json", db.portableMetadata().toString().toByteArray())
+            db.brain.walkTopDown().filter { it.isFile && !it.canonicalPath.contains("${File.separator}.trash${File.separator}") }.forEach { file ->
+                val rel = file.canonicalPath.removePrefix(db.brain.canonicalPath + File.separator).replace('\\', '/')
+                addZipFile(zip, file, "brain/$rel")
+            }
+        }
+        return target
+    }
+
+    private fun restoreBackup(archive: File): Int {
+        val staging = File(db.root, "restore-staging-${UUID.randomUUID()}")
+        val stagedBrain = File(staging, "brain")
+        var metadata: JSONObject? = null; var files = 0; var expanded = 0L; var portableV2 = false
+        try {
+            stagedBrain.mkdirs()
+            ZipInputStream(archive.inputStream().buffered()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    val name = entry.name.replace('\\', '/').trimStart('/')
+                    require(name.split('/').none { it == ".." || it.isEmpty() }) { "备份包含非法路径" }
+                    if (!entry.isDirectory && name == "manifest.json") {
+                        val bytes = zip.readBytesLimited(1024L * 1024); expanded += bytes.size
+                        val manifest = JSONObject(String(bytes))
+                        portableV2 = manifest.optString("format") == "engram-portable-backup" && manifest.optInt("version") == 2
+                    } else if (!entry.isDirectory && name == "portable-metadata.json") {
+                        val bytes = zip.readBytesLimited(20L * 1024 * 1024); expanded += bytes.size; metadata = JSONObject(String(bytes))
+                    } else if (!entry.isDirectory && name.startsWith("brain/")) {
+                        val rel = name.removePrefix("brain/"); val target = File(stagedBrain, rel).canonicalFile
+                        require(target.path.startsWith(stagedBrain.canonicalPath + File.separator)) { "备份包含越界路径" }
+                        target.parentFile?.mkdirs(); target.outputStream().use { output -> expanded += copyLimited(zip, output, MAX_FILE_BYTES) }
+                        files++
+                    }
+                    require(expanded <= MAX_BACKUP_BYTES) { "备份解压后过大" }
+                    zip.closeEntry()
+                }
+            }
+            require(files > 0 || portableV2) { "备份缺少 brain/ 内容" }
+            db.replaceBrain(stagedBrain, metadata)
+            return files
+        } finally { archive.delete(); staging.deleteRecursively() }
+    }
+
+    companion object {
+        const val PORT = 18182
+        const val BASE_URL = "http://127.0.0.1:18182"
+        private const val SESSION_COOKIE = "engram_local_session"
+        private const val MAX_FILE_BYTES = 200L * 1024 * 1024
+        private const val MAX_BACKUP_BYTES = 1024L * 1024 * 1024
+        @Volatile private var instance: EngramLocalServer? = null
+
+        @JvmStatic fun getInstance(context: Context): EngramLocalServer = instance ?: synchronized(this) {
+            instance ?: EngramLocalServer(context.applicationContext).also { instance = it }
+        }
+        @JvmStatic fun peek(): EngramLocalServer? = instance
+
+        private fun randomToken(): String = ByteArray(32).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
+        private fun JSONObject.optStringOrNull(key: String) = if (!has(key) || isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
+        private fun JSONObject.ids(): List<String> = (optJSONArray("ids") ?: JSONArray()).let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it).takeIf(String::isNotBlank) } }
+        private fun JSONArray.contains(value: String) = (0 until length()).any { optString(it) == value }
+        private fun JSONArray.filter(predicate: (JSONObject) -> Boolean) = JSONArray().also { out -> for (i in 0 until length()) optJSONObject(i)?.takeIf(predicate)?.let(out::put) }
+        private fun decoded(value: String) = URLDecoder.decode(value, "UTF-8")
+        private fun encoded(value: String) = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+        private fun sanitizeFileName(value: String) = File(value).name.replace(Regex("[\\\\/:*?\"<>|]"), "-").ifBlank { "file" }
+        private fun mime(ext: String): ContentType = when (ext.lowercase()) {
+            "html" -> ContentType.Text.Html; "js", "mjs" -> ContentType("application", "javascript"); "css" -> ContentType.Text.CSS
+            "json" -> ContentType.Application.Json; "pdf" -> ContentType.Application.Pdf
+            "png" -> ContentType.Image.PNG; "jpg", "jpeg" -> ContentType.Image.JPEG; "gif" -> ContentType.Image.GIF
+            "svg" -> ContentType("image", "svg+xml"); "txt", "md", "markdown" -> ContentType.Text.Plain
+            "woff" -> ContentType("font", "woff"); "woff2" -> ContentType("font", "woff2")
+            "ico" -> ContentType("image", "x-icon"); "webmanifest" -> ContentType.Application.Json
+            else -> ContentType.Application.OctetStream
+        }
+        private fun parseRange(value: String, size: Long): LongRange? {
+            val match = Regex("bytes=(\\d+)-(\\d*)").matchEntire(value) ?: return null
+            val start = match.groupValues[1].toLongOrNull() ?: return null
+            val end = match.groupValues[2].toLongOrNull() ?: (size - 1)
+            if (start < 0 || start >= size || end < start) return null
+            return start..minOf(end, size - 1)
+        }
+        private fun copyCount(input: java.io.InputStream, output: java.io.OutputStream, requested: Long) {
+            var remaining = requested; val buffer = ByteArray(64 * 1024)
+            while (remaining > 0) { val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt()); if (read < 0) break; output.write(buffer, 0, read); remaining -= read }
+        }
+        private fun copyLimited(input: java.io.InputStream, output: java.io.OutputStream, limit: Long = MAX_FILE_BYTES): Long {
+            var total = 0L; val buffer = ByteArray(64 * 1024)
+            while (true) { val read = input.read(buffer); if (read < 0) break; total += read; require(total <= limit) { "单文件超过 200 MB 上限" }; output.write(buffer, 0, read) }
+            return total
+        }
+        private fun java.io.InputStream.readBytesLimited(limit: Long): ByteArray {
+            val output = java.io.ByteArrayOutputStream(); copyLimited(this, output, limit); return output.toByteArray()
+        }
+        private fun addZipBytes(zip: ZipOutputStream, name: String, bytes: ByteArray) { zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry() }
+        private fun addZipFile(zip: ZipOutputStream, file: File, name: String) { if (!file.isFile) return; zip.putNextEntry(ZipEntry(name.replace('\\', '/'))); file.inputStream().use { it.copyTo(zip, 64 * 1024) }; zip.closeEntry() }
+    }
+}
