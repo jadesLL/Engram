@@ -26,6 +26,7 @@
 #   SNAPSHOT_TOKEN              目标仓库写入令牌
 #   SNAPSHOT_DRY_RUN            1 = 只重写与校验，不推送
 #   SNAPSHOT_KEEP               1 = 保留快照目录供排查
+#   SNAPSHOT_EXPORT_INSTALLER   目录；把脱敏后的安装器源码导出到此处（供发布公开安装器）
 #   SNAPSHOT_BRANCH / SNAPSHOT_PUSH_TAGS / SNAPSHOT_SYNC_RELEASES
 #   SNAPSHOT_SRC_REPO / SNAPSHOT_FILTER_REPO
 #   SNAPSHOT_HOST_FROM / SNAPSHOT_OWNER_FROM / SNAPSHOT_HOST_TO / SNAPSHOT_OWNER_TO
@@ -299,6 +300,19 @@ if [ "$FAIL" != "0" ]; then
   if [ "${SNAPSHOT_KEEP:-0}" = "1" ]; then trap - EXIT; echo ">> 快照保留在 $SNAP"; fi
   echo ">> 校验失败，拒绝推送" >&2
   exit 1
+fi
+
+# ---------- 可选：导出脱敏后的安装器源码（供发布公开安装器用）----------
+# 复用这里已经验证过的脱敏结果，发布脚本就不必自己再实现一遍替换逻辑。
+if [ -n "${SNAPSHOT_EXPORT_INSTALLER:-}" ]; then
+  mkdir -p "$SNAPSHOT_EXPORT_INSTALLER/scripts/lib"
+  export_one() { g show "HEAD:$1" > "$SNAPSHOT_EXPORT_INSTALLER/$2"; }
+  export_one "main/installer/main.js" "main.js"
+  export_one "main/installer/ui.html" "ui.html"
+  export_one "main/installer/scripts/lib/repo-url.js" "scripts/lib/repo-url.js"
+  export_one "main/installer/scripts/lib/repo-probe.js" "scripts/lib/repo-probe.js"
+  export_one "main/scripts/install-engram.ps1" "install-engram.ps1"
+  echo ">> 已导出脱敏后的安装器源码: $SNAPSHOT_EXPORT_INSTALLER"
 fi
 
 if [ "$DRY_RUN" = "1" ]; then
