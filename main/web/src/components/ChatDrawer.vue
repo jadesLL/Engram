@@ -101,6 +101,8 @@
               <pre v-if="item.call.args && item.call.args !== '{}'" class="tool-args">{{ item.call.args }}</pre>
               <pre v-if="item.call.text" class="tool-result">{{ item.call.text }}</pre>
               <p v-else-if="item.call.status === 'running'" class="tool-pending">执行中…</p>
+              <!-- 兜底：展开后不能是空白（无参数又无输出时给出明确说明，用户才知道是「没输出」而非「没展开」） -->
+              <p v-else-if="!item.call.args || item.call.args === '{}'" class="tool-pending">这次调用没有输出内容</p>
             </div>
           </div>
         </template>
