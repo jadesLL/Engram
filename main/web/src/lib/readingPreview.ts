@@ -1,4 +1,7 @@
-export type ReadingFontSize = 15 | 16 | 18;
+/** 正文字号：1px 连续可调，不再限制为固定档位，仅保留防止排版崩坏的安全边界 */
+export const READING_FONT_SIZE_MIN = 12;
+export const READING_FONT_SIZE_MAX = 48;
+export type ReadingFontSize = number;
 export type ReadingWidth = 680 | 780 | 960;
 export type ReadingLineHeight = 1.6 | 1.8 | 2;
 
@@ -23,20 +26,27 @@ export const DEFAULT_READING_PREFERENCES: ReadingPreferences = {
   outline: true,
 };
 
-const FONT_SIZES = new Set<ReadingFontSize>([15, 16, 18]);
 const WIDTHS = new Set<ReadingWidth>([680, 780, 960]);
 const LINE_HEIGHTS = new Set<ReadingLineHeight>([1.6, 1.8, 2]);
 const EXPLICIT_NUMBER_RE =
   /^\s*(?:[（(][一二三四五六七八九十百零\d]+[）)]|[一二三四五六七八九十百零\d]+(?:\.\d+)*\s*[.、．)）])/;
+
+/** 任意来源的字号都收敛到整数安全区间，缺失或非法值回落到默认字号 */
+export function clampReadingFontSize(value: unknown): ReadingFontSize {
+  if (value === null || value === undefined || value === '') {
+    return DEFAULT_READING_PREFERENCES.fontSize;
+  }
+  const size = Math.round(Number(value));
+  if (!Number.isFinite(size)) return DEFAULT_READING_PREFERENCES.fontSize;
+  return Math.min(READING_FONT_SIZE_MAX, Math.max(READING_FONT_SIZE_MIN, size));
+}
 
 export function parseReadingPreferences(raw: string | null): ReadingPreferences {
   if (!raw) return { ...DEFAULT_READING_PREFERENCES };
   try {
     const value = JSON.parse(raw) as Partial<ReadingPreferences>;
     return {
-      fontSize: FONT_SIZES.has(value.fontSize as ReadingFontSize)
-        ? value.fontSize as ReadingFontSize
-        : DEFAULT_READING_PREFERENCES.fontSize,
+      fontSize: clampReadingFontSize(value.fontSize),
       width: WIDTHS.has(value.width as ReadingWidth)
         ? value.width as ReadingWidth
         : DEFAULT_READING_PREFERENCES.width,

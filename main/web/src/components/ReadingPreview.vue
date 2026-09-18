@@ -25,9 +25,19 @@
 
       <div class="reading-settings">
         <div class="font-stepper" aria-label="正文字号">
-          <button type="button" aria-label="减小字号" @click="stepFont(-1)">A−</button>
+          <button
+            type="button"
+            aria-label="减小字号"
+            :disabled="preferences.fontSize <= READING_FONT_SIZE_MIN"
+            @click="stepFont(-1)"
+          >A−</button>
           <span>{{ preferences.fontSize }}px</span>
-          <button type="button" aria-label="增大字号" @click="stepFont(1)">A+</button>
+          <button
+            type="button"
+            aria-label="增大字号"
+            :disabled="preferences.fontSize >= READING_FONT_SIZE_MAX"
+            @click="stepFont(1)"
+          >A+</button>
         </div>
 
         <div class="width-segment" aria-label="正文宽度">
@@ -161,10 +171,11 @@ import { useAppStore } from '../stores/app';
 import {
   headingNumbers,
   isDuplicateDocumentTitle,
+  READING_FONT_SIZE_MAX,
+  READING_FONT_SIZE_MIN,
   readingMetrics,
   requiredReadingTailSpace,
   uniqueHeadingId,
-  type ReadingFontSize,
   type ReadingLineHeight,
   type ReadingPreferences,
   type ReadingWidth,
@@ -219,7 +230,6 @@ let scrollFrame = 0;
 let tailFrame = 0;
 let layoutObserver: ResizeObserver | null = null;
 
-const fontOptions: ReadingFontSize[] = [15, 16, 18];
 const widthOptions: Array<{ value: ReadingWidth; label: string }> = [
   { value: 680, label: '窄' },
   { value: 780, label: '标准' },
@@ -273,10 +283,9 @@ function updatePreferences(value: Partial<ReadingPreferences>) {
   app.updateReadingPreferences(value);
 }
 
+/* 字号连续可调：每次 ±1px，仅在安全区间两端收敛 */
 function stepFont(direction: number) {
-  const index = fontOptions.indexOf(preferences.value.fontSize);
-  const next = Math.max(0, Math.min(fontOptions.length - 1, index + direction));
-  updatePreferences({ fontSize: fontOptions[next] });
+  updatePreferences({ fontSize: preferences.value.fontSize + direction });
 }
 
 function setLineHeight(event: Event) {
@@ -643,10 +652,20 @@ onBeforeUnmount(() => {
   width: 32px;
   border-radius: 0;
 }
+.font-stepper button:disabled {
+  color: var(--text-faint);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.font-stepper button:disabled:hover {
+  background: transparent;
+  color: var(--text-faint);
+}
 .font-stepper span {
-  min-width: 42px;
+  min-width: 46px;
   color: var(--text-secondary);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
 .width-segment button {
