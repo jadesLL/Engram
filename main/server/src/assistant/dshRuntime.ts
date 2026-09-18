@@ -6,6 +6,7 @@ import { engramPatchBlock } from '../lib/dshConfig.js';
 import { zcodeMcpUrl } from '../lib/zcodeConfig.js';
 import { agentWorkspaceDir, bundledDshHome, getAgentConfig, type AgentConfig } from './config.js';
 import { customRoute, syncAgentSettings } from './agentSettings.js';
+import { INITIALIZE_TIMEOUT_MS, startWithRetry } from './handshake.js';
 import { mapNotification, type AgentEvent } from './mapping.js';
 import { ensureAgentToken } from './repository.js';
 
@@ -26,6 +27,10 @@ import { ensureAgentToken } from './repository.js';
  * 模型路由：默认走 dsh 自带的 `deepseek-official`（官方地址 + DEEPSEEK_API_KEY）；设置页
  * 填了自定义 API 地址就改用 `llm-pi-ai` 手工声明的 provider 路由（见 agentSettings.ts），
  * 地址与模型清单写进内置 DSH_HOME 的 settings.yaml，Key 仍只经环境变量注入。
+ *
+ * 握手：SDK 默认只给 `initialize` 10s，升级/自动重启后的第一次 spawn 是冷启动，会超时
+ * （界面报 `initialize timed out after 10000ms waiting for dsh profile "sdk"`，重启即好）。
+ * 这里显式放宽预算并对握手失败重试一次，策略与原因见 handshake.ts。
  */
 
 export type { AgentEvent } from './mapping.js';
@@ -172,6 +177,7 @@ function acquireRuntime(key: string): RuntimeEntry {
     processCwd: workspace, // dsh 进程自己的工作目录：独立空目录
     cwd: workspace,        // 会话记录的工作目录：同上，知识库只经 MCP 工具访问
     env,
+    initializeTimeoutMs: INITIALIZE_TIMEOUT_MS, // SDK 默认 10s 扛不住升级后的冷启动
     ...(route ? { provider: route.provider } : {}),
     ...(config.model ? { model: config.model } : {}),
     ...(config.dshPath ? { dshBin: config.dshPath } : {}),
@@ -199,6 +205,9 @@ export function startAgentTurn(options: AgentTurnOptions): AgentTurn {
 
   const done = (async (): Promise<{ ok: boolean; error?: string }> => {
     try {
+      // 先单独把握手做完（run() 内部也是先 start()），这样重试只覆盖握手：
+      // 冷启动超时不至于把同一轮 prompt 重复投递；握手成功后续聊直接复用 memo。
+      await startWithRetry(entry.harness);
       await entry.harness.run(options.task, {
         sessionId: entry.dshSessionId,
         onNotification: (notification: HarnessNotification) => {
