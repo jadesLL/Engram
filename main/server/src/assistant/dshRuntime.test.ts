@@ -49,17 +49,69 @@ test('tool/call：名称与原始参数字符串进工具卡', () => {
   }]);
 });
 
-test('tool/result：isError 决定成败，文本来自内容块', () => {
+test('tool/result：文本取自 tool-result 块的第二层内容（真实载荷形状）', () => {
+  // 形状照抄真实会话日志（DSH_HOME/sessions/*/session.v3.jsonl.zstd 的 tool/result 行）：
+  // message.content[0] 是 tool-result 块，正文在它的 content[0].text
   const ok = mapSessionEvent('tool/result', {
-    message: { toolCallId: 'call-1', content: [{ type: 'text', text: '3 条结果' }] },
+    turn: 4,
+    step: 1,
+    message: {
+      source: { kind: 'tool', callId: 'call_00_G8VZgpXj6DUHFJ0mPfVV9978' },
+      content: [{
+        type: 'tool-result',
+        toolCallId: 'call_00_G8VZgpXj6DUHFJ0mPfVV9978',
+        content: [{ type: 'text', text: '原始资料/甲.md · md · 2KB · 提取:md页面 · 已提炼' }],
+        isError: false,
+      }],
+      role: 'user',
+      id: 'e7cdf03b-0110-4134-8dd0-e6db4dc9b9cb',
+    },
   });
-  assert.deepEqual(ok, [{ kind: 'tool-result', callId: 'call-1', ok: true, text: '3 条结果' }]);
+  assert.deepEqual(ok, [{
+    kind: 'tool-result',
+    callId: 'call_00_G8VZgpXj6DUHFJ0mPfVV9978',
+    ok: true,
+    text: '原始资料/甲.md · md · 2KB · 提取:md页面 · 已提炼',
+  }]);
 
+  // 失败：isError 在 tool-result 块上（不是 message 上），事件级 error 也要算失败
   const bad = mapSessionEvent('tool/result', {
-    message: { toolCallId: 'call-2', isError: true, content: [{ type: 'text', text: '权限不足' }] },
-    error: { name: 'ToolError', code: 'denied' },
+    message: {
+      source: { kind: 'tool', callId: 'call-2' },
+      content: [{ type: 'tool-result', toolCallId: 'call-2', content: [{ type: 'text', text: '权限不足' }], isError: true }],
+    },
   });
   assert.deepEqual(bad, [{ kind: 'tool-result', callId: 'call-2', ok: false, text: '权限不足' }]);
+
+  const errored = mapSessionEvent('tool/result', {
+    message: {
+      content: [{ type: 'tool-result', toolCallId: 'call-3', content: [{ type: 'text', text: '挂了' }] }],
+    },
+    error: { name: 'ToolError', code: 'denied' },
+  });
+  assert.deepEqual(errored, [{ kind: 'tool-result', callId: 'call-3', ok: false, text: '挂了' }]);
+});
+
+test('tool/result：只有 source.callId 时也能对上工具卡', () => {
+  const events = mapSessionEvent('tool/result', {
+    message: {
+      source: { kind: 'tool', callId: 'call-9' },
+      content: [{ type: 'tool-result', content: [{ type: 'text', text: '空参数调用' }] }],
+    },
+  });
+  assert.deepEqual(events, [{ kind: 'tool-result', callId: 'call-9', ok: true, text: '空参数调用' }]);
+});
+
+test('tool/result：文本直接铺在 content 上（旧/简化形状）仍认', () => {
+  const events = mapSessionEvent('tool/result', {
+    message: { toolCallId: 'call-1', content: [{ type: 'text', text: '3 条结果' }] },
+  });
+  assert.deepEqual(events, [{ kind: 'tool-result', callId: 'call-1', ok: true, text: '3 条结果' }]);
+
+  const flatError = mapSessionEvent('tool/result', {
+    message: { toolCallId: 'call-2', isError: true, content: [{ type: 'text', text: '权限不足' }] },
+  });
+  assert.deepEqual(flatError, [{ kind: 'tool-result', callId: 'call-2', ok: false, text: '权限不足' }]);
 });
 
 test('step/start 与 turn/end：只做进度与收口', () => {
