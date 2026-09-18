@@ -12,3 +12,5 @@ main/docker-compose.dev.yml
 /.zcode/
 /test-results/
 /prod-shots/
+# 公开镜像的本地规则与配置（含真实域名/账号/密码，绝不入库）
+main/.public-mirror/

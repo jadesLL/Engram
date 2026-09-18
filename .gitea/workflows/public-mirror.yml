@@ -1,0 +1,68 @@
+# Engram 公开镜像（脱敏后推送到 GitHub）
+#
+# 用途：把私有 Gitea 仓库的历史脱敏后，作为一个独立快照推送到公开仓库。
+#       源仓库一行不改，CI、部署、安装器、其他 worktree 全部不受影响。
+#
+# 设计要点：
+#   * 全量脱敏：凭据、身份（作者邮箱/姓名）、基础设施域名、内网 IP、其他私有项目名、
+#     以及路径名（如 Android 包目录 com/<owner>/<project>/）都会被替换。
+#   * 脚本本身不含任何真实敏感串：Gitea 主机与 owner 从 origin 远端推导，
+#     其余敏感串由本 secret 提供。
+#   * 推送前逐条规则反查全历史（blob + 提交信息 + 标签信息 + 路径），
+#     任一残留即失败、拒绝推送。
+#
+# 需要先在本仓库（Gitea）设置里配置：
+#
+#   Actions → Secrets（都是 secret，不要用 variable）：
+#     PUBLIC_MIRROR_TOKEN        GitHub PAT，fine-grained 只需 Contents: Read and write
+#     PUBLIC_SANITIZE_RULES      额外脱敏规则（多行，格式见 main/docs/PUBLIC-MIRROR.md）
+#
+#   Actions → Variables：
+#     PUBLIC_MIRROR_REPO_URL     https://github.com/<你的账号>/Engram.git
+#     PUBLIC_MIRROR_EMAIL        <你的账号>@users.noreply.github.com
+#     PUBLIC_MIRROR_NAME         快照作者名（可选，默认 Engram）
+#
+# 首次配置后到 Actions → Public Mirror → Run workflow 手动跑一次验证。
+
+name: Public Mirror
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  # Windows runner 的 Git Bash 会做 MSYS 路径转换，必须禁用
+  MSYS_NO_PATHCONV: '1'
+
+jobs:
+  mirror:
+    # 与 ci.yml / release.yml 同一 runner：Windows 宿主机模式
+    runs-on: windows
+    steps:
+      - name: 检出代码（需要完整历史）
+        uses: https://gitea.com/actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 安装 git-filter-repo
+        shell: bash
+        run: |
+          # CI runner 的联网下载属既定流程
+          if command -v python >/dev/null 2>&1; then
+            python -m pip install --user --disable-pip-version-check --quiet git-filter-repo
+          else
+            py -3 -m pip install --user --disable-pip-version-check --quiet git-filter-repo
+          fi
+          python -c "import git_filter_repo; print('git-filter-repo ok:', git_filter_repo.__file__)"
+
+      - name: 生成脱敏快照并推送
+        shell: bash
+        env:
+          PUBLIC_SANITIZE_RULES: ${{ secrets.PUBLIC_SANITIZE_RULES }}
+          SNAPSHOT_REPO_URL: ${{ vars.PUBLIC_MIRROR_REPO_URL }}
+          SNAPSHOT_TOKEN: ${{ secrets.PUBLIC_MIRROR_TOKEN }}
+          SNAPSHOT_EMAIL: ${{ vars.PUBLIC_MIRROR_EMAIL }}
+          SNAPSHOT_NAME: ${{ vars.PUBLIC_MIRROR_NAME }}
+        run: bash main/scripts/make-public-snapshot.sh
