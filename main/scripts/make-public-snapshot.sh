@@ -21,7 +21,8 @@
 #   PUBLIC_SANITIZE_RULES_FILE  额外规则文件路径
 #   SNAPSHOT_EMAIL              快照使用的邮箱（必填）
 #   SNAPSHOT_NAME               快照使用的作者名（默认 Engram）
-#   SNAPSHOT_REPO_URL           目标公开仓库地址
+#   SNAPSHOT_REPO_URL           目标公开仓库地址（同时用于推导仓库内链接的改写目标）
+#   SNAPSHOT_PUBLIC_URL         可选，覆盖链接改写目标（默认取 SNAPSHOT_REPO_URL 去掉 .git）
 #   SNAPSHOT_TOKEN              目标仓库写入令牌
 #   SNAPSHOT_DRY_RUN            1 = 只重写与校验，不推送
 #   SNAPSHOT_KEEP               1 = 保留快照目录供排查
@@ -82,12 +83,43 @@ src_fp() { git -C "$SRC_REPO_NAT" for-each-ref --format='%(refname) %(objectname
 SRC_FP_BEFORE="$(src_fp)"
 echo ">> 源仓库 refs 指纹（前）: ${SRC_FP_BEFORE%% *}"
 
-# ---------- 合并规则：推导规则 + 外部规则 ----------
+# ---------- 公开仓库基址：把指向本仓库的 Gitea 链接改写成公开仓库对应链接 ----------
+# 全部由已有信息推导，不需要额外配置：公开仓库地址 + 从 origin 解析出的主机/owner/仓库名。
+PUBLIC_BASE="${SNAPSHOT_PUBLIC_URL:-}"
+if [ -z "$PUBLIC_BASE" ] && [ -n "${SNAPSHOT_REPO_URL:-}" ]; then
+  PUBLIC_BASE="${SNAPSHOT_REPO_URL%.git}"
+fi
+PUBLIC_BASE="${PUBLIC_BASE%/}"
+
+# ---------- 规则顺序：改写 → 主机占位 → 外部规则 → 裸 owner ----------
 RULES="$WORK/rules.txt"
+: > "$RULES"
+
+# ① 指向本仓库的 Gitea 链接改写成公开仓库链接。
+#    必须排在主机名占位之前，否则主机名先被换成占位串，这里就再也匹配不到完整 URL。
+if [ -n "$PUBLIC_BASE" ]; then
+  REPO_FROM="$(printf '%s' "$REMOTE_URL" | sed -n 's#^.*/\([^/]\+\)\.git$#\1#p')"
+  [ -n "$REPO_FROM" ] || REPO_FROM="$(basename "${REMOTE_URL%.git}")"
+  {
+    # 安装器固定链接（Gitea generic 包）→ 公开仓库固定标签 installer-latest 下的 Release 附件
+    printf 'literal:https://%s/api/packages/%s/generic/engram-installer/latest/==>%s/releases/download/installer-latest/\n' \
+      "$HOST_FROM" "$OWNER_FROM" "$PUBLIC_BASE"
+    printf 'literal:https://%s/api/packages/%s/generic/engram-installer/latest/==>%s/releases/download/installer-latest/\n' \
+      "$HOST_NOPORT" "$OWNER_FROM" "$PUBLIC_BASE"
+    # 仓库地址：仓库首页 / .git / releases / 任意子路径都归到公开仓库同名路径
+    printf 'literal:https://%s/%s/%s==>%s\n' "$HOST_FROM" "$OWNER_FROM" "$REPO_FROM" "$PUBLIC_BASE"
+    printf 'literal:https://%s/%s/%s==>%s\n' "$HOST_NOPORT" "$OWNER_FROM" "$REPO_FROM" "$PUBLIC_BASE"
+  } >> "$RULES"
+  echo ">> 仓库内链接改写为: $PUBLIC_BASE（源 $OWNER_FROM/$REPO_FROM）"
+else
+  echo ">> 提示：未拿到公开仓库地址，仓库内链接只做占位替换（本地干跑可传 SNAPSHOT_PUBLIC_URL）" >&2
+fi
+
+# ② 其余 Gitea 主机名占位（带端口的必须在前，否则会残留端口）
 {
-  printf 'literal:%s==>%s\n' "$HOST_FROM" "$HOST_TO"        # 带端口必须最先
+  printf 'literal:%s==>%s\n' "$HOST_FROM" "$HOST_TO"
   printf 'literal:%s==>%s\n' "$HOST_NOPORT" "$HOST_TO"
-} > "$RULES"
+} >> "$RULES"
 
 EXTRA_FILE=""
 LOCAL_RULES="$SRC_REPO/main/.public-mirror/rules.local.txt"
