@@ -43,6 +43,22 @@ Workflow：`.gitea/workflows/public-mirror.yml`
 2. `git filter-repo` 的 cwd 必须是快照目录——它的 `--target` 默认是当前目录，**只在 `--source` 之外不写 `--target` 会把重写结果写进 cwd**，这一点踩过坑；
 3. 执行前后比对源仓库全部 refs 的 sha256 指纹，一旦变化立即中止。
 
+### 仓库内链接的改写
+
+脚本会**自动**把指向本仓库的 Gitea 链接改写成公开仓库的对应链接，**不需要额外配置**——目标地址从 `SNAPSHOT_REPO_URL` 推导，源地址从 `origin` 远端推导：
+
+| 私有仓库里的链接 | 公开快照里变成 |
+|---|---|
+| `https://<gitea>/<owner>/<repo>.git` | `https://github.com/<账号>/<repo>.git` |
+| `https://<gitea>/<owner>/<repo>/releases` | `https://github.com/<账号>/<repo>/releases` |
+| `https://<gitea>/api/packages/<owner>/generic/engram-installer/latest/<文件>` | `https://github.com/<账号>/<repo>/releases/download/installer-latest/<文件>` |
+
+规则是**按顺序**作用的，所以这些改写规则排在主机名占位规则**之前**——否则主机名先被换成 `gitea.example.com`，完整 URL 就再也匹配不到。`main/scripts/install-engram.ps1` 的 `-RepoUrl` 默认值也因此变成公开仓库地址，公开出去的安装器默认就对着 GitHub 克隆。
+
+**没有 GitHub 对应物的部分**：Docker 镜像（私有 Registry）会退化成 `gitea.example.com/example/engram/engram` 这样的占位串——除非另外把镜像推到 GHCR，否则 README 里那段 docker 命令在公开仓库里是无效的。
+
+**安装器固定链接要真的可用**，需要在公开仓库里有一个标签为 `installer-latest` 的 Release，并把 `Engram-source-setup.exe` 挂成它的附件（Gitea 侧原本走 generic 包，GitHub 没有对应机制）。
+
 ## 首次配置
 
 ### 1. 建 GitHub 空仓库
