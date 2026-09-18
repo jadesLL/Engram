@@ -56,19 +56,6 @@
 
       <div class="rail-spacer" />
 
-      <!-- 待确认问题（Agent 提炼时登记的提问） -->
-      <button
-        class="rail-btn"
-        type="button"
-        :class="{ active: questionsOpen }"
-        v-tooltip="'待确认问题'"
-        aria-label="待确认问题"
-        @click="questionsOpen = true"
-      >
-        <Icon name="clipboard" :size="19" />
-        <span v-if="questions.open" class="dot" />
-      </button>
-
       <!-- 内置 Agent（聊天抽屉） -->
       <button
         class="rail-btn"
@@ -147,9 +134,6 @@
 
     <AppContextMenu />
 
-    <!-- 待确认问题：Agent 提炼时登记的提问，答复后 Agent 下次作业读取 -->
-    <QuestionsModal :open="questionsOpen" @close="questionsOpen = false" />
-
     <!-- 移动端底部导航 -->
     <nav class="bottom-nav">
       <button v-for="item in bottomItems" :key="item.label" type="button" @click="item.action">
@@ -190,14 +174,12 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
 import { useUpdateStore } from '../stores/update';
-import { useQuestionsStore } from '../stores/questions';
 import { api } from '../api';
 import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
 import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
-import QuestionsModal from '../components/QuestionsModal.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
 import Icon from '../components/Icon.vue';
 
@@ -205,10 +187,7 @@ const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
 const updateStore = useUpdateStore();
-const questions = useQuestionsStore();
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
-/** 待确认问题面板开合 */
-const questionsOpen = ref(false);
 
 /* ===== 文件提取进度：只在对应文件旁显示，系统后台处理不提供通用队列界面 ===== */
 let jobPollStopped = true;
@@ -311,12 +290,6 @@ function runMore(action: () => void) {
 
 const moreItems = computed(() => [
   {
-    label: '待确认',
-    icon: 'clipboard',
-    dot: questions.open > 0,
-    action: () => runMore(() => { questionsOpen.value = true; }),
-  },
-  {
     label: '内置 Agent',
     icon: 'ai',
     dot: app.chatUnread,
@@ -375,16 +348,10 @@ onMounted(() => {
   jobPollStopped = false;
   pollJobs();
   autoCheckUpdate().catch(() => {});
-  // 服务端 SSE 实时推送：页面增删改/移动时刷新正文与侧栏；Agent 提问时刷新「待确认」角标
+  // 服务端 SSE 实时推送：页面增删改/移动时刷新正文与侧栏
   closeStream = openPageStream((ev) => {
-    if (ev.type === 'question') {
-      void questions.refresh();
-      if ((ev as any).status === 'open') notify.info('Agent 登记了待确认问题，可在左侧「待确认」查看');
-      return;
-    }
     app.applyPageEvent(ev);
   });
-  void questions.refresh();
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);

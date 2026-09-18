@@ -1,5 +1,5 @@
 /**
- * 全局 SSE 订阅：服务端页面变更与 Agent 提问实时推送。
+ * 全局 SSE 订阅：服务端页面变更实时推送。
  * EventSource 同源自动带 cookie 鉴权，断线原生自动重连。
  * 断线/重连通过回调通知外部（用于全局提示）。
  */
@@ -7,13 +7,11 @@
 import { notify } from './notify';
 
 export interface PageEvent {
-  type: string; // page-changed | page-deleted | page-moved | file-changed | question
+  type: string; // page-changed | page-deleted | page-moved | file-changed
   path?: string;
   id?: string;
   oldPath?: string;
   newPath?: string;
-  /** question 事件：open 新提问 / answered 已被答复（多端同步） */
-  status?: string;
 }
 
 let es: EventSource | null = null;
@@ -42,7 +40,7 @@ export function openPageStream(onEvent: (ev: PageEvent) => void): () => void {
       /* ignore malformed */
     }
   };
-  for (const type of ['page-changed', 'page-deleted', 'page-moved', 'file-changed', 'question']) {
+  for (const type of ['page-changed', 'page-deleted', 'page-moved', 'file-changed']) {
     es.addEventListener(type, handle(type));
   }
   es.onerror = () => {

@@ -107,8 +107,6 @@ const HELP = `Engram CLI —— 外部 Agent 操作知识库
   pages delete <titleOrId|路径> [--reason <原因>]         把单个 Wiki/ 页面移入回收站（软删除、可恢复；原始资料/AIWorks 只读不可删）
   pages evidence <titleOrId>                          读页面证据账本
   chat save [--identifier i] [--project p] [--append] 沉积对话（stdin 为正文）
-  ask --question "..." [--context "..."] [--options "a,b"]  登记待确认问题（只有用户才知道的信息，如公司工商全名；用户答复后用 questions 读）
-  questions [--status open|answered|all]               读待确认问题与用户答复（默认全部，最新在前）
   guide                                               输出《Agent 作业指南》全文
   mcp-config [--format zcode|codex|claude|kimi|generic]  输出各 Agent 的 MCP 接入配置片段
 `;
@@ -423,44 +421,6 @@ async function main(): Promise<number> {
         },
       });
       output(result, asJson);
-      return 0;
-    }
-    case 'ask': {
-      const question = String(args.question || positional.join(' ') || '').trim();
-      if (!question) {
-        process.stderr.write('用法: ask --question "..." [--context "..."] [--options "候选1,候选2"]\n');
-        return 2;
-      }
-      const body: Record<string, unknown> = { question };
-      if (args.context) body.context = String(args.context);
-      if (args.options) {
-        body.options = String(args.options).split(',').map((item: string) => item.trim()).filter(Boolean);
-      }
-      const result = await api(ctx, 'POST', '/api/agent/question', { json: body });
-      if (asJson) {
-        output(result, true);
-      } else {
-        output(`已登记待确认问题 #${result.question.id}：${result.question.question}`
-          + '（用户可在 Engram 界面「待确认」答复，答复后用 questions 读取）', false);
-      }
-      return 0;
-    }
-    case 'questions': {
-      const status = ['open', 'answered', 'all'].includes(String(args.status)) ? String(args.status) : 'all';
-      const result = await api(ctx, 'GET', '/api/questions', { query: { status } });
-      if (asJson) {
-        output(result, true);
-      } else {
-        const items: any[] = result.questions || [];
-        output(items.length
-          ? items.map((item) => [
-            `[${item.status === 'open' ? '待答复' : '已答复'}] #${item.id} ${item.question}（登记 ${new Date(item.created_at).toLocaleString('sv-SE').slice(0, 16)}）`,
-            item.context ? `  背景：${item.context}` : '',
-            item.options?.length ? `  候选：${item.options.join(' / ')}` : '',
-            item.status === 'answered' ? `  用户答复：${item.answer}` : '',
-          ].filter(Boolean).join('\n')).join('\n\n')
-          : '（暂无待确认问题）', false);
-      }
       return 0;
     }
     case 'guide': {
