@@ -13,9 +13,13 @@ import { getSetting, setSetting } from '../lib/db.js';
 export interface AgentConfig {
   /** 覆盖 dsh 入口（默认用随包依赖里的 @deepseek-ai/dsh/lib/bin.js） */
   dshPath?: string;
-  /** 模型名（留空用 dsh 默认） */
+  /** 模型名（留空用 dsh 默认；填了自定义地址则必填） */
   model?: string;
-  /** DeepSeek 官方 API Key：跑 dsh 时经 DEEPSEEK_API_KEY 注入（对该次运行优先于凭据文件） */
+  /** 自定义 API 地址：填了就走 llm-pi-ai 自定义 provider 路由，留空走 dsh 自带的 deepseek-official */
+  baseUrl?: string;
+  /** 自定义地址的线协议（取值见 agentSettings.AGENT_APIS，默认 openai-completions） */
+  api?: string;
+  /** 模型凭据：跑 dsh 时经环境变量注入（自定义地址用 ENGRAM_AGENT_API_KEY，官方用 DEEPSEEK_API_KEY） */
   apiKey?: string;
 }
 

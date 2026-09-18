@@ -19,6 +19,10 @@
           </strong>
         </div>
         <div class="builtin-row">
+          <span>模型地址</span>
+          <strong class="path-value">{{ status.custom ? `${status.baseUrl}（${status.api}）` : 'DeepSeek 官方（api.deepseek.com）' }}</strong>
+        </div>
+        <div class="builtin-row">
           <span>模型凭据</span>
           <strong :class="status.hasKey ? 'ok' : 'warn'">
             {{ status.hasKey ? '已配置' : '未配置（未配置前无法对话）' }}
@@ -32,19 +36,45 @@
 
       <div class="builtin-form">
         <label>
+          <span>API 地址</span>
+          <input
+            v-model="baseUrl"
+            placeholder="留空走 DeepSeek 官方；中转/自建网关填完整地址，如 https://api.example.com/v1"
+            @keyup.enter="saveBuiltin"
+          />
+        </label>
+        <label>
+          <span>接口协议</span>
+          <select v-model="apiProtocol" :disabled="!baseUrl.trim()" aria-label="接口协议">
+            <option value="openai-completions">openai-completions（OpenAI 兼容，多数中转站）</option>
+            <option value="openai-responses">openai-responses（OpenAI Responses）</option>
+            <option value="anthropic-messages">anthropic-messages（Anthropic Messages）</option>
+          </select>
+        </label>
+        <label>
           <span>模型</span>
-          <input v-model="model" placeholder="留空用默认（deepseek-v4-flash）" @keyup.enter="saveBuiltin" />
+          <input
+            v-model="model"
+            placeholder="官方地址留空用默认（deepseek-v4-flash）；填了自定义地址则必填"
+            @keyup.enter="saveBuiltin"
+          />
         </label>
         <label>
           <span>API Key</span>
-          <SecretField id="agent-api-key" v-model="apiKey" :stored="storedKey" placeholder="DeepSeek 平台 API Key" />
+          <SecretField
+            id="agent-api-key"
+            v-model="apiKey"
+            :stored="storedKey"
+            :placeholder="baseUrl.trim() ? '该网关的 API Key' : 'DeepSeek 平台 API Key'"
+          />
         </label>
         <div class="builtin-actions">
           <button class="btn primary small" type="button" :disabled="savingBuiltin" @click="saveBuiltin">
             {{ savingBuiltin ? '保存中…' : '保存' }}
           </button>
           <span class="faint small">
-            仅存本机数据库；运行 Agent 时经环境变量注入，不写入 dsh 配置文件的明文里。
+            Key 只存本机数据库，运行 Agent 时经环境变量注入，不写进配置文件的明文里；自定义地址会写进内置
+            dsh 的 settings.yaml（含地址与模型清单，不含 Key）。
           </span>
         </div>
       </div>
@@ -132,8 +162,11 @@ const guideOpen = ref(false);
 const guide = ref('');
 
 /* ===== 内置 Agent（聊天抽屉）配置 ===== */
-const status = ref<any>({ bundled: false, hasKey: false, model: '', workspace: '', home: '' });
+const status = ref<any>({ bundled: false, hasKey: false, model: '', workspace: '', home: '', baseUrl: '', api: '', custom: false });
 const model = ref('');
+const baseUrl = ref('');
+/** 自定义地址的线协议（不要叫 api：会与 api 客户端 import 撞名） */
+const apiProtocol = ref('openai-completions');
 const apiKey = ref('');
 const storedKey = ref('');
 const savingBuiltin = ref(false);
@@ -146,6 +179,8 @@ async function loadBuiltin() {
     ]);
     status.value = s.data;
     model.value = c.data.model || '';
+    baseUrl.value = c.data.baseUrl || '';
+    apiProtocol.value = c.data.api || 'openai-completions';
     storedKey.value = c.data.apiKey || '';
   } catch {
     /* 未登录或服务未就绪时静默 */
@@ -155,7 +190,12 @@ async function loadBuiltin() {
 async function saveBuiltin() {
   savingBuiltin.value = true;
   try {
-    await api.put('/api/assistant/config', { model: model.value, apiKey: apiKey.value });
+    await api.put('/api/assistant/config', {
+      model: model.value,
+      baseUrl: baseUrl.value,
+      api: apiProtocol.value,
+      apiKey: apiKey.value,
+    });
     apiKey.value = '';
     await loadBuiltin();
     notify.success('内置 Agent 配置已保存');
@@ -239,25 +279,30 @@ async function copy(text: string) {
   margin: 14px 0 0;
 }
 .builtin-form label {
-  display: flex;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   font-size: 12px;
 }
 .builtin-form label > span {
-  width: 64px;
-  flex-shrink: 0;
   color: var(--text-faint);
 }
-.builtin-form input {
-  flex: 1;
-  max-width: 420px;
+/* 地址/模型名可能很长：输入框铺满可用宽度（面板内最大 720px），不截断 */
+.builtin-form input,
+.builtin-form select {
+  width: 100%;
+  max-width: 720px;
   font-size: 12px;
+}
+.builtin-form select:disabled {
+  opacity: 0.55;
 }
 .builtin-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .harness-picker {

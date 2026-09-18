@@ -32,7 +32,8 @@
 - **随包内置、开箱即用**：DeepSeek Harness（dsh）作为依赖随桌面端与 Docker 镜像一起发，无需另外安装；左栏点亮 ✨ 打开聊天抽屉，输入问题即可
 - **只读沙箱 + 仅经 MCP 工具**：Agent 的工作目录是数据目录下的空壳 `data/dsh/workspace`，不是知识库目录；知识库的读写全部经 `mcp__engram__*` 工具，因此 `write_page` 的证据逐字校验、两来源门禁与操作日志照常生效
 - **按步呈现、执行记录内联**：对话流用户消息靠右、Agent 回复靠左，工具调用（检索 / 读页 / 写页…）作为执行卡片插在它发生的那两步之间实时出现，助手正文在该步提交后整段到达；可随时「停止」，可把一轮对话「沉淀到原始资料」供后续提炼
-- **自己的 Key、自己的账**：模型与 Key 填在 设置 → Agent 接入 → 内置 Agent（仅存本机数据库，运行时经环境变量注入）；不填就不能对话，Engram 其余功能完全不受影响
+- **自己的 Key、自己的账**：模型与 Key 填在 设置 → Agent 接入 → 内置 Agent（Key 仅存本机数据库，运行时经环境变量注入，不写进配置文件的明文里）；不填就不能对话，Engram 其余功能完全不受影响
+- **API 地址可自定义**：地址留空走 DeepSeek 官方（`api.deepseek.com`）；填中转站或自建网关（`openai-completions` / `openai-responses` / `anthropic-messages` 三种协议）即改用该地址与它自己的模型名——地址与模型清单写进内置 dsh 的 `data/dsh/settings.yaml`（dsh 的 `llm-pi-ai` 自定义 provider 路由，不含 Key），改完下一次对话即生效（池里的旧运行时按旧路由跑，会自动重开）
 - **会话与桌面/Docker 一致**：会话与消息存本机库（`assistant_*` 表），dsh 自身的会话日志随 `data/dsh/` 走持久卷，续聊不丢上下文
 
 ### 🧠 面向 Agent 的 MCP 接口（15 工具）
