@@ -86,6 +86,36 @@ README 里有些文案描述的是私有仓库，在公开仓库里不成立，�
 - `SNAPSHOT_SYNC_RELEASES=0` 可关闭；目标不是 github.com 时自动跳过
 - 不附带任何二进制附件（与 Gitea 侧现状一致）
 
+## 发布公开安装器
+
+README 里那条「源码版安装器（固定链接，永远最新）」在公开仓库里指向
+`https://github.com/<账号>/<repo>/releases/download/installer-latest/Engram-source-setup.exe`。
+要让它真的能下载，需要把安装器 exe 挂到 `installer-latest` 标签的 Release 下。
+
+按需在本机跑（**不参与 CI**，与「安装包只在明确要求时才构建」一致）：
+
+```powershell
+.\main\scripts\publish-public-installer.ps1 -Token 'github_pat_xxx'
+```
+
+它做三件事：
+
+1. 调 `make-public-snapshot.sh` 并把 `SNAPSHOT_EXPORT_INSTALLER` 指向暂存目录，
+   直接复用已验证的脱敏结果导出安装器源码。**绝不能用私有树里的源码**——
+   `main/installer/scripts/lib/repo-url.js` 的注释带着内网 IP 与账号名，会被原样打进 exe。
+2. 用本机已有的 electron 运行时与 electron-builder 打包 portable exe。
+3. 上传到 `installer-latest` Release（不存在则创建；同名旧附件先删再传）。
+
+只构建不上传用 `-SkipUpload`。脚本自带两道自检：导出的 ps1 默认地址必须等于公开仓库
+地址；打包后再解包确认 exe 内 ps1 的默认地址正确、且不含任何私有串。
+
+两个已踩过并已处理的坑：
+
+* electron-builder 26 默认用 `npm` 枚举依赖树，而本机只有 pnpm，不在 `package.json`
+  里声明 `packageManager` 会报 `spawn npm ENOENT`。
+* 暂存的 `package.json` 必须写**无 BOM** 的 UTF-8，否则 `@electron/rebuild` 的
+  `JSON.parse` 报 `Unexpected token '﻿'`。
+
 ## 首次配置
 
 ### 1. 建 GitHub 空仓库
