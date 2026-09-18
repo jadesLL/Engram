@@ -55,9 +55,36 @@ Workflow：`.gitea/workflows/public-mirror.yml`
 
 规则是**按顺序**作用的，所以这些改写规则排在主机名占位规则**之前**——否则主机名先被换成 `gitea.example.com`，完整 URL 就再也匹配不到。`main/scripts/install-engram.ps1` 的 `-RepoUrl` 默认值也因此变成公开仓库地址，公开出去的安装器默认就对着 GitHub 克隆。
 
-**没有 GitHub 对应物的部分**：Docker 镜像（私有 Registry）会退化成 `gitea.example.com/example/engram/engram` 这样的占位串——除非另外把镜像推到 GHCR，否则 README 里那段 docker 命令在公开仓库里是无效的。
+**Docker 镜像没有 GitHub 对应物**：公开仓库没有 Registry，所以 README 里那几条 `docker login` / `docker pull` 会被换成一句明确说明，镜像那一行也标注「未公开发布；需要请自行构建」。要真正可用只有一条路——把镜像推到 GHCR（需要 PAT 再加 `packages: write`）。
 
 **安装器固定链接要真的可用**，需要在公开仓库里有一个标签为 `installer-latest` 的 Release，并把 `Engram-source-setup.exe` 挂成它的附件（Gitea 侧原本走 generic 包，GitHub 没有对应机制）。
+
+### README 口径修正
+
+README 里有些文案描述的是私有仓库，在公开仓库里不成立，脚本会把它们换成公开口径：
+
+| 原文 | 公开快照里变成 |
+|---|---|
+| `` | 删除 |
+| `公开仓库无需凭据` | `公开仓库无需凭据` |
+| `- **GitHub Release**：` | `- **GitHub Release**：` |
+| `发布到 GitHub Release 正文` | `发布到 GitHub Release 正文` |
+| `生产环境可从私有 Registry 拉取镜像部署…` | `公开仓库未发布 Docker 镜像；自建部署请从源码构建：` |
+| `docker login <gitea> -u <owner> -p <token>` | `# Docker 镜像未公开发布（原私有 Registry 不对外）` |
+| `docker pull <gitea>/<owner>/engram/engram:<版本>` | `# 需要镜像请自行构建：docker compose … up -d --build` |
+| `（未公开发布；需要请自行构建）` | `（未公开发布；需要请自行构建）` |
+
+这些是**按字面匹配**的，所以改动 README 措辞后对应规则会静默失效——改文案时记得同步脚本里这一段规则。
+
+## 发布同步
+
+推完标签后，脚本会按 `CHANGELOG.md` 的版本段落给每个 `v*` 标签建/更新公开仓库的 Release：
+
+- 正文取**快照内**的 `CHANGELOG.md`（已脱敏），与 Gitea 侧 `release.yml` 同一约定，因此**不需要调 Gitea API、不需要额外凭据**（复用推送用的那把 PAT）
+- 刻意读 `HEAD` 的 CHANGELOG 而不是 `<tag>:CHANGELOG.md`：早期标签当时仓库根还没有这份文件，只有当前这份覆盖全部版本段落
+- **幂等**：先 `GET` 该标签的 Release，正文一致就不动；缺了才 `POST`，变了才 `PATCH`
+- `SNAPSHOT_SYNC_RELEASES=0` 可关闭；目标不是 github.com 时自动跳过
+- 不附带任何二进制附件（与 Gitea 侧现状一致）
 
 ## 首次配置
 
