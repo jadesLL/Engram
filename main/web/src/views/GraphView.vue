@@ -491,7 +491,6 @@ function onPointerMove(ev: PointerEvent) {
 }
 function onPointerUp(ev: PointerEvent) {
   if (!pointerDown) return;
-  const pd = pointerDown;
   pointerDown = null;
   dragNode = null;
   cursor.value = 'grab';

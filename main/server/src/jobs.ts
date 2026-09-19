@@ -1,7 +1,7 @@
 import { db, getSetting, newId, now, setSetting } from './lib/db.js';
 import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { appendWikiLog } from './pipeline/indexFile.js';
-import { enqueue, enqueuePagePipeline } from './jobQueue.js';
+import { enqueuePagePipeline } from './jobQueue.js';
 import { extractFile } from './pipeline/fileExtraction.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
 

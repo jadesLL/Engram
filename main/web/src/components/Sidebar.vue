@@ -400,7 +400,6 @@
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
-import { humanError } from '../lib/ingestError';
 import { useAppStore } from '../stores/app';
 import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';

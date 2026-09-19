@@ -51,10 +51,6 @@ export function hubConfigured(): boolean {
   return Boolean(getSetting('sync_hub_url'));
 }
 
-export function isNodeMode(): boolean {
-  return syncConfigEnabled();
-}
-
 interface QueueItem {
   kind: SyncKind;
   target: string;

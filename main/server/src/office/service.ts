@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import JSZip from 'jszip';
 import {
-  BRAIN_DIR,
   OFFICE_EDITOR_ENABLED,
   OFFICE_HISTORY_LIMIT,
   OFFICE_INSTANCE_ID,

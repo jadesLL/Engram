@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { db } from './db.js';
-import { readPage, readPageMeta, writePage, movePage, pagePathTaken } from './vault.js';
+import { readPage, writePage, movePage, pagePathTaken } from './vault.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 

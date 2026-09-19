@@ -199,10 +199,6 @@ export function setMessageContent(id: string, content: string): void {
   db.prepare(`UPDATE assistant_messages SET content = ? WHERE id = ?`).run(content, id);
 }
 
-export function setMessageMetadata(id: string, metadata: Record<string, unknown>): void {
-  db.prepare(`UPDATE assistant_messages SET metadata = ? WHERE id = ?`).run(JSON.stringify(metadata), id);
-}
-
 export function createRun(input: { sessionId: string; userMessageId: string; context: unknown }): RunDto {
   const id = uuid();
   const stamp = now();

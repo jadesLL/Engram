@@ -55,11 +55,6 @@ export const OFFICE_MAX_FILE_SIZE = positiveInt(
   200 * 1024 * 1024
 );
 
-/** 飞书开放平台自建应用凭证（未配置则长连接不启动；长连接模式由 SDK 封装鉴权，无需签名/加密密钥） */
-export const FEISHU_APP_ID = process.env.FEISHU_APP_ID || '';
-export const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
-export const FEISHU_API_BASE = process.env.FEISHU_API_BASE || 'https://open.feishu.cn';
-
 /**
  * DDNS 直连域名维护（设置页 ddns_config 可配，env 为 Docker/无 GUI 部署的逐字段回退）：
  * - DDNS_TOKEN：Cloudflare API Token（需 Zone.DNS Edit 权限）
@@ -134,7 +129,6 @@ export function typeToDir(type: string): string {
 }
 
 export const ARCHIVE_DIR = 'Wiki/归档';
-export const QUERY_DIR = 'Wiki/查询';
 
 export function ensureDirs() {
   for (const dir of [DATA_DIR, BRAIN_DIR, TRASH_DIR, ASSETS_DIR]) {
