@@ -10,18 +10,23 @@ import {
   appendMessageContent,
   countUserMessages,
   createRun,
+  findSubagentByChildSession,
   finishToolCallById,
   getRun,
   getSession,
   insertMessage,
+  insertSubagent,
   insertToolCall,
   latestRunningToolCall,
+  markSubagentsBackground,
+  recordSubagentActivity,
   setMessageContent,
   setSessionTitleIfAuto,
   snapshot,
   touchSession,
   updateMessageMetadata,
   updateRun,
+  updateSubagent,
   type MessageDto,
   type RunDto,
 } from './repository.js';
@@ -62,6 +67,59 @@ function briefError(error: string | undefined): string {
 function publishSnapshot(sessionId: string, runId: string): void {
   const snap = snapshot(sessionId);
   if (snap) publishRun(runId, 'snapshot', snap);
+}
+
+/**
+ * 会起子代理的工具名（dsh sdk/base profile 里的委派面）。
+ * 子代理卡要靠它认出「是哪一次工具调用派的它」，从而把那张工具卡合并进卡片里。
+ */
+const DELEGATION_TOOLS = new Set(['subagent', 'subagent_fork', 'workflow', 'ralph', 'task']);
+
+/** 去掉 MCP 前缀，只留工具本名（mcp__engram__search → search） */
+function bareToolName(name: string): string {
+  return name.replace(/^mcp__[a-z0-9_-]+__/i, '');
+}
+
+/** 一次委派工具调用（落库后才知道自己那张工具卡的行 id） */
+interface DelegationCall {
+  callId: string;
+  name: string;
+  args: string;
+  claimed: boolean;
+  /** 委派工具卡的行 id：认领时据此把子代理卡挂到它上面（并合并显示） */
+  rowId: string;
+}
+
+/**
+ * 委派工具调用的 prompt 原文：subagent 的 args 就是 { description, prompt, run_in_background }，
+ * 取不到就退回整段参数（workflow / ralph 的参数形状不同，原样展示也比空白强）。
+ */
+function delegationPrompt(args: string): string {
+  try {
+    const parsed = JSON.parse(args || '{}');
+    if (parsed && typeof parsed === 'object' && typeof (parsed as any).prompt === 'string') {
+      return (parsed as any).prompt;
+    }
+    if (parsed && typeof parsed === 'object' && typeof (parsed as any).task === 'string') {
+      return (parsed as any).task;
+    }
+  } catch {
+    /* 参数不是 JSON 就原样退回 */
+  }
+  return args || '';
+}
+
+/** 委派调用里模型给的短标签（3-5 词）：descriptor 还没到时先用它顶上 */
+function delegationLabel(args: string): string {
+  try {
+    const parsed = JSON.parse(args || '{}');
+    if (parsed && typeof parsed === 'object' && typeof (parsed as any).description === 'string') {
+      return (parsed as any).description.trim();
+    }
+  } catch {
+    /* 同上 */
+  }
+  return '';
 }
 
 /**
@@ -173,6 +231,11 @@ export function startRun(input: {
   const task = buildTask(input.message, input.context, history);
   // dsh 的 callId → 工具卡行 id：结果事件按 callId 回填，缺失时退到“最近一条运行中”
   const toolCallRows = new Map<string, string>();
+  // 本轮的委派工具调用（按发生顺序）：子代理开工时认领最近一条还没主的，卡片才知道自己是谁派的
+  const delegations: DelegationCall[] = [];
+  // 子会话 id → 子代理卡行 id；子会话集合用来判断父会话是根会话还是另一个子代理（嵌套委派）
+  const subagentRows = new Map<string, string>();
+  const childSessions = new Set<string>();
   // 本轮结束原因（turn/end.reason）：空产出时用它给出可读解释
   let turnReason = '';
   // 当前可追加的助手正文段。dsh 的 assistant/message 是「每步一条」，正文因此按步分段落库：
@@ -181,6 +244,37 @@ export function startRun(input: {
   // 首轮跑完的自动命名：turn/end 时就起跑，与收尾重叠，收口时限时等一小会儿
   let namingTask: Promise<boolean> | null = null;
   const queue = new ContentQueue();
+
+  /**
+   * 认领一次委派：最近一条还没主的委派调用。
+   * 必须有行 id 才认领（先让前面的工具卡落库），实在没有就退回不带父卡的裸卡。
+   */
+  function claimDelegation(): { rowId: string; name: string; args: string } | null {
+    for (let i = delegations.length - 1; i >= 0; i -= 1) {
+      const call = delegations[i];
+      if (call.claimed) continue;
+      const rowId = call.rowId || toolCallRows.get(call.callId) || '';
+      if (!rowId) continue;
+      call.claimed = true;
+      return { rowId, name: call.name, args: call.args };
+    }
+    return null;
+  }
+
+  /** 子代理卡：子会话 id → 行 id；缺席时按需补建（通知乱序也不丢） */
+  function subagentRow(childSessionId: string): string {
+    const known = subagentRows.get(childSessionId);
+    if (known) return known;
+    childSessions.add(childSessionId);
+    const created = insertSubagent({
+      sessionId: input.sessionId,
+      runId: run.id,
+      parentSessionId: '',
+      childSessionId,
+    });
+    subagentRows.set(childSessionId, created.id);
+    return created.id;
+  }
 
   const turn = startAgentTurn({
     key: input.sessionId,
@@ -233,10 +327,18 @@ export function startRun(input: {
           break;
         }
         case 'tool-call': {
+          // 委派调用先在这里同步登记（行 id 等落库的队内任务回填），否则子代理开工时认不到主
+          if (event.callId && DELEGATION_TOOLS.has(bareToolName(event.name))) {
+            delegations.push({ callId: event.callId, name: event.name, args: event.args, claimed: false, rowId: '' });
+          }
           queue.push(async () => {
             openSegmentId = ''; // 关段：工具卡之后的正文另起一段
             const call = insertToolCall({ runId: run.id, name: event.name, args: event.args });
-            if (event.callId) toolCallRows.set(event.callId, call.id);
+            if (event.callId) {
+              toolCallRows.set(event.callId, call.id);
+              const record = delegations.find((item) => item.callId === event.callId);
+              if (record) record.rowId = call.id;
+            }
             publishSnapshot(input.sessionId, run.id);
           });
           break;
@@ -248,6 +350,88 @@ export function startRun(input: {
               finishToolCallById(rowId, { ok: event.ok, text: event.text });
               if (event.callId) toolCallRows.delete(event.callId);
             }
+            publishSnapshot(input.sessionId, run.id);
+          });
+          break;
+        }
+        // ---- 子代理：起卡、过程、收工。都排在内容队尾，卡片才会落在委派它的那次工具卡之后 ----
+        case 'subagent-start': {
+          queue.push(async () => {
+            childSessions.add(event.childSessionId);
+            const known = subagentRows.get(event.childSessionId);
+            // 父会话是子会话 → 嵌套委派（子代理又派了子代理）；否则就是根会话派的
+            const nested = childSessions.has(event.parentSessionId) && event.parentSessionId !== event.childSessionId
+              ? event.parentSessionId
+              : '';
+            const claimed = nested ? null : claimDelegation();
+            if (known) {
+              updateSubagent(known, {
+                parentSessionId: nested || event.parentSessionId,
+                ...(claimed ? { parentCallId: claimed.rowId, prompt: delegationPrompt(claimed.args) } : {}),
+              });
+              publishSnapshot(input.sessionId, run.id);
+              return;
+            }
+            const created = insertSubagent({
+              sessionId: input.sessionId,
+              runId: run.id,
+              parentSessionId: nested || event.parentSessionId,
+              childSessionId: event.childSessionId,
+              ...(claimed ? { parentCallId: claimed.rowId, prompt: delegationPrompt(claimed.args) } : {}),
+            });
+            subagentRows.set(event.childSessionId, created.id);
+            if (claimed) {
+              const label = delegationLabel(claimed.args);
+              if (label) updateSubagent(created.id, { label });
+            }
+            publishSnapshot(input.sessionId, run.id);
+          });
+          break;
+        }
+        case 'subagent-descriptor': {
+          queue.push(async () => {
+            const rowId = subagentRow(event.childSessionId);
+            updateSubagent(rowId, {
+              ...(event.label ? { label: event.label } : {}),
+              ...(event.mode ? { mode: event.mode } : {}),
+              ...(event.provider ? { provider: event.provider } : {}),
+            });
+            publishSnapshot(input.sessionId, run.id);
+          });
+          break;
+        }
+        case 'subagent-activity': {
+          queue.push(async () => {
+            const rowId = subagentRow(event.childSessionId);
+            recordSubagentActivity(rowId, {
+              callId: event.callId,
+              name: event.name,
+              summary: event.summary,
+              status: event.status,
+              text: event.text,
+              at: new Date().toISOString(),
+            });
+            publishSnapshot(input.sessionId, run.id);
+          });
+          break;
+        }
+        case 'subagent-text': {
+          queue.push(async () => {
+            const rowId = subagentRow(event.childSessionId);
+            // 收工前的最新产出预览：给卡片一行「当前输出」，定稿仍以 subagent-end 为准
+            updateSubagent(rowId, { result: event.text });
+            publishSnapshot(input.sessionId, run.id);
+          });
+          break;
+        }
+        case 'subagent-end': {
+          queue.push(async () => {
+            const rowId = subagentRow(event.childSessionId);
+            updateSubagent(rowId, {
+              status: event.ok ? 'completed' : 'failed',
+              stopReason: event.stopReason,
+              ...(event.text ? { result: event.text } : {}),
+            });
             publishSnapshot(input.sessionId, run.id);
           });
           break;
@@ -269,6 +453,9 @@ export function startRun(input: {
     // 收口前排空队列：正在回放的思考要播完，正文与工具卡才不会错序或丢内容
     if (!ok) queue.flushNow();
     await queue.drain();
+    // 本轮结束时还没收工的子代理：标成「后台运行中」。它的结束通知本轮之后才到，
+    // 到了就照常改回 completed/failed（卡片不会一直假装在跑）。
+    markSubagentsBackground(run.id);
     // 收口：本轮最后一段正文（可能压根没有——纯工具轮或起手就失败）
     const cancelled = !ok && error === '已取消';
     const lastId = getRun(run.id)?.assistantMessageId;

@@ -8,12 +8,38 @@ import {
   startsNewRun,
   toolCallSummary,
 } from './chatTimeline.ts';
-import type { ChatMessage, ChatRun, ChatToolCall } from '../stores/chat';
+import type { ChatMessage, ChatRun, ChatSubagent, ChatToolCall } from '../stores/chat';
 import type { ChatStreamItem } from './chatTimeline.ts';
 
-/** 用最少字段造一条消息 / 一张工具卡 / 一轮运行 */
+/** 用最少字段造一条消息 / 一张工具卡 / 一轮运行 / 一张子代理卡 */
 function message(id: string, role: 'user' | 'assistant', at: string, runId?: string): ChatMessage {
   return { id, sessionId: 's1', ...(runId ? { runId } : {}), role, content: id, metadata: {}, createdAt: at };
+}
+
+/** 子代理卡：默认是最小可用形状，测试只覆盖关心到的字段 */
+function subagent(
+  id: string,
+  at: string,
+  runId: string,
+  extra: Partial<ChatSubagent> = {}
+): ChatSubagent {
+  return {
+    id,
+    runId,
+    parentSessionId: 'session-root',
+    childSessionId: `child-${id}`,
+    label: id,
+    mode: 'one-shot',
+    provider: 'spawn',
+    prompt: '',
+    status: 'running',
+    stopReason: '',
+    result: '',
+    activity: [],
+    createdAt: at,
+    updatedAt: at,
+    ...extra,
+  };
 }
 
 /** 思考段：服务端按 metadata.kind='reasoning' 落库 */
@@ -197,4 +223,66 @@ test('思考段与工具卡同轮共存时仍按发生顺序排', () => {
 
   assert.deepEqual(items.map((item) => item.key), ['u1', 'k1', 'a1', 't1']);
   assert.deepEqual(items.map((_, index) => startsNewRun(items, index)), [true, false, false, false]);
+});
+
+test('子代理单独成卡：派它的那次工具调用被并进卡里，不再单独占一行', () => {
+  const runs = [run('r1', '2026-01-01T00:00:00.000Z')];
+  const messages = [
+    message('u1', 'user', '2026-01-01T00:00:00.000Z', 'r1'),
+    message('a1', 'assistant', '2026-01-01T00:00:01.000Z', 'r1'),
+    message('a2', 'assistant', '2026-01-01T00:00:05.000Z', 'r1'),
+  ];
+  const calls = [
+    call('t1', '2026-01-01T00:00:02.000Z', 'r1'),
+    call('t2', '2026-01-01T00:00:03.000Z', 'r1'),
+  ];
+  const subs = [
+    subagent('sub1', '2026-01-01T00:00:02.500Z', 'r1', { parentCallId: 't1', label: '检索同步' }),
+  ];
+
+  const items = buildChatTimeline(messages, calls, runs, subs);
+  // t1 被 sub1 接管 → 只留 sub1；t2 是普通工具卡，照旧
+  assert.deepEqual(items.map((item) => item.key), ['u1', 'a1', 'sub1', 't2', 'a2']);
+  assert.deepEqual(items.map((item) => item.kind), ['message', 'message', 'subagent', 'tool', 'message']);
+});
+
+test('子代理没挂上的那次工具调用照旧显示（不吞卡片）', () => {
+  const runs = [run('r1', '2026-01-01T00:00:00.000Z')];
+  const calls = [call('t1', '2026-01-01T00:00:02.000Z', 'r1')];
+  const subs = [subagent('sub1', '2026-01-01T00:00:02.500Z', 'r1')];
+
+  assert.deepEqual(
+    buildChatTimeline([], calls, runs, subs).map((item) => item.key),
+    ['t1', 'sub1']
+  );
+});
+
+test('子代理再派子代理：嵌套的挂进父卡，不再单独成行', () => {
+  const runs = [run('r1', '2026-01-01T00:00:00.000Z')];
+  const subs = [
+    subagent('sub1', '2026-01-01T00:00:01.000Z', 'r1'),
+    subagent('sub2', '2026-01-01T00:00:02.000Z', 'r1', { parentSessionId: 'child-sub1' }),
+    subagent('sub3', '2026-01-01T00:00:03.000Z', 'r1'),
+  ];
+
+  const items = buildChatTimeline([], [], runs, subs);
+  assert.deepEqual(items.map((item) => item.key), ['sub1', 'sub3']);
+  const first = items[0];
+  assert.equal(first.kind, 'subagent');
+  if (first.kind === 'subagent') {
+    assert.deepEqual(first.children.map((child) => child.id), ['sub2']);
+  }
+});
+
+test('子代理卡参与轮次归属：同轮内不乱序、跨轮画分隔', () => {
+  const runs = [run('r1', '2026-01-01T00:00:00.000Z'), run('r2', '2026-01-01T00:01:00.000Z')];
+  const items = buildChatTimeline(
+    [message('u2', 'user', '2026-01-01T00:01:00.000Z', 'r2')],
+    [],
+    runs,
+    [subagent('sub1', '2026-01-01T00:00:30.000Z', 'r1')]
+  );
+
+  assert.deepEqual(items.map((item) => item.key), ['sub1', 'u2']);
+  assert.deepEqual(items.map((_, index) => startsNewRun(items, index)), [true, true]);
 });

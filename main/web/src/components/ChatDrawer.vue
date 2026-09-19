@@ -31,6 +31,11 @@
 
     <header class="chat-head">
       <div class="chat-brand"><Icon name="ai" :size="16" /> 内置 Agent</div>
+      <!-- 正在跑：贴着标题给一眼状态（用时每秒跳），滚到哪一段都看得见 -->
+      <span v-if="liveRun" class="head-live">
+        <AppSpinner :size="11" />
+        <span class="head-live-text">回复中 {{ liveElapsed }}</span>
+      </span>
       <span class="chat-spacer" />
       <button
         class="btn icon session-toggle"
@@ -191,6 +196,74 @@
             <pre v-if="isThinkOpen(item.message)" class="think-body">{{ item.message.content }}<span v-if="isThinking(item.message)" class="cursor">▍</span></pre>
           </div>
 
+          <!-- 子代理：内置 Agent 派出去的子会话。派它的那次工具调用已并入本卡，不再单独成行 -->
+          <div v-else-if="item.kind === 'subagent'" class="subagent" :class="item.subagent.status">
+            <button
+              class="subagent-head"
+              type="button"
+              :aria-expanded="isSubagentOpen(item.subagent)"
+              @click="toggleSubagent(item.subagent)"
+            >
+              <Icon name="subagent" :size="13" />
+              <b>子代理</b>
+              <span class="subagent-label">{{ subagentLabel(item.subagent) }}</span>
+              <span class="subagent-state">
+                <AppSpinner v-if="isSubagentLive(item.subagent)" :size="11" />
+                {{ subagentState(item.subagent) }}
+              </span>
+              <span class="subagent-time">{{ subagentDuration(item.subagent) }}</span>
+              <Icon :name="isSubagentOpen(item.subagent) ? 'chevron-up' : 'chevron-down'" :size="13" />
+            </button>
+            <p v-if="!isSubagentOpen(item.subagent)" class="subagent-summary">{{ subagentSummary(item.subagent) }}</p>
+            <div v-else class="subagent-body">
+              <p class="subagent-meta">
+                <span v-if="item.subagent.mode">{{ item.subagent.mode === 'continuable' ? '可续聊子代理' : '一次性子代理' }}</span>
+                <span v-if="item.subagent.provider">· {{ item.subagent.provider }}</span>
+                <span>· 子会话 {{ item.subagent.childSessionId.slice(0, 8) }}</span>
+                <span>· {{ formatSessionTime(item.subagent.createdAt) }}</span>
+              </p>
+              <section v-if="item.subagent.prompt" class="subagent-block">
+                <h4>委托任务</h4>
+                <pre class="subagent-prompt">{{ item.subagent.prompt }}</pre>
+              </section>
+              <section v-if="item.subagent.activity.length" class="subagent-block">
+                <h4>过程 · {{ item.subagent.activity.length }} 步</h4>
+                <ul class="subagent-steps">
+                  <li v-for="(step, stepIndex) in item.subagent.activity" :key="`${item.key}-step-${stepIndex}`" :class="step.status">
+                    <Icon :name="step.name ? toolIcon(step.name) : 'activity'" :size="12" />
+                    <span class="step-name">{{ step.name ? toolLabel(step.name) : '工具调用' }}</span>
+                    <span class="step-summary">{{ step.summary }}</span>
+                    <span class="step-state">{{ toolState(step.status) }}</span>
+                    <span class="step-time">{{ activityTime(step.at) }}</span>
+                  </li>
+                </ul>
+              </section>
+              <section v-if="item.subagent.result" class="subagent-block">
+                <h4>{{ isSubagentLive(item.subagent) ? '当前输出' : '产出' }}</h4>
+                <pre class="subagent-result">{{ item.subagent.result }}</pre>
+              </section>
+              <p v-else-if="isSubagentLive(item.subagent)" class="subagent-pending">子代理正在干活，过程会实时更新…</p>
+              <p v-else-if="item.subagent.status === 'failed' && item.subagent.stopReason" class="subagent-pending">
+                结束原因：{{ item.subagent.stopReason }}
+              </p>
+              <section v-if="item.children.length" class="subagent-block">
+                <h4>它派出的子代理 · {{ item.children.length }}</h4>
+                <div v-for="child in item.children" :key="child.id" class="subagent-nested" :class="child.status">
+                  <div class="nested-head">
+                    <Icon name="subagent" :size="12" />
+                    <span class="nested-label">{{ subagentLabel(child) }}</span>
+                    <span class="nested-state">
+                      <AppSpinner v-if="isSubagentLive(child)" :size="10" />
+                      {{ subagentState(child) }}
+                    </span>
+                    <span class="nested-time">{{ subagentDuration(child) }}</span>
+                  </div>
+                  <p class="nested-summary">{{ subagentSummary(child) }}</p>
+                </div>
+              </section>
+            </div>
+          </div>
+
           <div v-else class="tool" :class="item.call.status">
             <button
               class="tool-head"
@@ -215,9 +288,6 @@
         </template>
       </div>
 
-      <div v-if="chat.statusText" class="run-status">
-        <AppSpinner :size="13" /> {{ chat.statusText }}
-      </div>
       <div v-if="chat.error" class="run-error">{{ chat.error }}</div>
 
       <div v-if="terminalRun" class="completion">
@@ -231,6 +301,14 @@
           沉淀对话到原始资料
         </button>
         <span v-if="terminalRun.ingestedPath" class="faint small">已沉淀：{{ terminalRun.ingestedPath }}</span>
+      </div>
+
+      <!-- 常驻运行状态：只要这一轮还在跑就贴在转录区底部（滚到哪都看得见），收口即消失 -->
+      <div v-if="liveRun" class="run-live" role="status" aria-live="polite">
+        <AppSpinner :size="13" />
+        <b class="run-live-title">内置 Agent 正在回复</b>
+        <span class="run-live-detail">{{ liveDetail }}</span>
+        <span class="run-live-time">{{ liveElapsed }}</span>
       </div>
     </div>
 
@@ -320,6 +398,7 @@ import {
   type ChatMessage,
   type ChatRun,
   type ChatSession,
+  type ChatSubagent,
   type ChatToolCall,
 } from '../stores/chat';
 import type { SelectionExcerpt } from '../lib/askAgent';
@@ -508,9 +587,9 @@ const terminalRun = computed<ChatRun | null>(() => {
   return ['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status) ? run : null;
 });
 
-/** 对话流：按轮分组，轮内消息与工具卡按落库时间排（见 lib/chatTimeline） */
+/** 对话流：按轮分组，轮内消息、工具卡与子代理卡按落库时间排（见 lib/chatTimeline） */
 const timeline = computed(() =>
-  buildChatTimeline(chat.messages, chat.sessionToolCalls, chat.runs)
+  buildChatTimeline(chat.messages, chat.sessionToolCalls, chat.runs, chat.sessionSubagents)
 );
 
 /** 正在流式到达的那一条（正文段或思考段；光标只画在它后面） */
@@ -518,7 +597,11 @@ const streamingKey = computed(() => {
   const items = timeline.value;
   const last = items[items.length - 1];
   if (!last) return '';
-  const runId = last.kind === 'tool' ? last.call.runId : last.message.runId || '';
+  const runId = last.kind === 'tool'
+    ? last.call.runId
+    : last.kind === 'subagent'
+      ? last.subagent.runId || ''
+      : last.message.runId || '';
   if (!runId) return '';
   const active = chat.runs.some((run) => run.id === runId && ['queued', 'running'].includes(run.status));
   return active ? last.key : '';
@@ -568,6 +651,127 @@ function isToolOpen(call: ChatToolCall): boolean {
 function toggleTool(call: ChatToolCall) {
   toolOpenOverride.value = { ...toolOpenOverride.value, [call.id]: !isToolOpen(call) };
 }
+
+/* ===== 子代理卡：在跑就默认展开（看得见它在干什么），收工自动收起；用户点过就以用户为准 ===== */
+const subagentOpenOverride = ref<Record<string, boolean>>({});
+
+/** 子代理卡片标题：模型给的短标签优先，退回派发工具卡上的描述，最后退回子会话号 */
+function subagentLabel(subagent: ChatSubagent): string {
+  if (subagent.label) return subagent.label;
+  const parent = subagent.parentCallId
+    ? chat.sessionToolCalls.find((call) => call.id === subagent.parentCallId)
+    : undefined;
+  if (parent) {
+    const summary = toolCallSummary(parent.args, 40);
+    if (summary) return summary;
+  }
+  return `子会话 ${subagent.childSessionId.slice(0, 8)}`;
+}
+
+function isSubagentLive(subagent: ChatSubagent): boolean {
+  return subagent.status === 'running';
+}
+
+function isSubagentOpen(subagent: ChatSubagent): boolean {
+  return subagentOpenOverride.value[subagent.id] ?? (isSubagentLive(subagent) || subagent.status === 'failed');
+}
+
+function toggleSubagent(subagent: ChatSubagent) {
+  subagentOpenOverride.value = { ...subagentOpenOverride.value, [subagent.id]: !isSubagentOpen(subagent) };
+}
+
+/** 子代理一行状态：运行中 / 已完成 / 失败 / 后台运行中 */
+function subagentState(subagent: ChatSubagent): string {
+  if (subagent.status === 'running') return '运行中';
+  if (subagent.status === 'background') return '后台运行中';
+  if (subagent.status === 'failed') return '失败';
+  return '已完成';
+}
+
+/** 子代理用时：跑着就按当前时刻算（每秒跳），收工按落库的起止时间算 */
+function subagentDuration(subagent: ChatSubagent): string {
+  const started = Date.parse(subagent.createdAt);
+  if (!Number.isFinite(started)) return '';
+  const ended = isSubagentLive(subagent) ? clock.value : Date.parse(subagent.updatedAt);
+  const ms = (Number.isFinite(ended) ? ended : Date.now()) - started;
+  return ms > 0 ? `用时 ${formatDuration(ms)}` : '';
+}
+
+/** 收起态的一行摘要：最新一步在干什么，或最后产出 */
+function subagentSummary(subagent: ChatSubagent): string {
+  if (subagent.status === 'running' && subagent.activity.length) {
+    const last = subagent.activity[subagent.activity.length - 1];
+    const name = last.name ? toolLabel(last.name) : '子代理';
+    const detail = last.summary || last.text || '';
+    return detail ? `${name} · ${detail}` : name;
+  }
+  const flat = (subagent.result || '').replace(/\s+/g, ' ').trim();
+  if (flat) return flat.length > 90 ? `${flat.slice(0, 90)}…` : flat;
+  if (subagent.status === 'running') return '正在干活…';
+  if (subagent.status === 'background') return '本轮已结束，子代理仍在后台跑';
+  if (subagent.status === 'failed') return subagent.stopReason ? `失败：${subagent.stopReason}` : '失败';
+  return '（没有产出内容）';
+}
+
+/** 子代理过程的时间点（HH:MM:SS），够看清先后顺序 */
+function activityTime(at: string): string {
+  const ms = Date.parse(at);
+  if (!Number.isFinite(ms)) return '';
+  return new Date(ms).toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+/* ===== 常驻运行状态：只要这一轮还在跑就一直显示（含用时秒表） ===== */
+const clock = ref(Date.now());
+let clockTimer: number | undefined;
+
+/** 当前会话正在跑的那一轮（跑着就显示状态条，不依赖任何一条事件） */
+const liveRun = computed<ChatRun | null>(() => chat.currentRun);
+
+const liveElapsed = computed(() => {
+  const run = liveRun.value;
+  if (!run) return '';
+  const started = Date.parse(run.createdAt);
+  if (!Number.isFinite(started)) return '';
+  return formatDuration(Math.max(0, clock.value - started));
+});
+
+/**
+ * 状态条右侧那句「正在干什么」：子代理 → 工具 → 服务端状态文本，逐级退回。
+ * 都为空时至少还有「正在回复」+ 秒表，用户永远看得出这一轮还活着。
+ */
+const liveDetail = computed(() => {
+  if (!liveRun.value) return '';
+  const running = chat.runningSubagents;
+  if (running.length === 1) return `子代理「${subagentLabel(running[0])}」运行中`;
+  if (running.length > 1) return `${running.length} 个子代理运行中`;
+  const call = [...chat.sessionToolCalls].reverse().find((item) => item.status === 'running');
+  if (call) return `执行 ${toolLabel(call.name)}${toolCallSummary(call.args, 24) ? ` · ${toolCallSummary(call.args, 24)}` : ''}`;
+  if (chat.statusText) return chat.statusText;
+  if (isThinkingLast()) return '正在思考';
+  return '正在生成回复';
+});
+
+/** 最后一条是不是还在长的思考段（状态条据此说「正在思考」而不是「正在生成回复」） */
+function isThinkingLast(): boolean {
+  const items = timeline.value;
+  const last = items[items.length - 1];
+  return Boolean(last && last.kind === 'reasoning' && last.message.id === streamingKey.value);
+}
+
+watch(
+  () => Boolean(liveRun.value),
+  (running) => {
+    if (window === undefined) return;
+    if (running && clockTimer === undefined) {
+      clock.value = Date.now();
+      clockTimer = window.setInterval(() => { clock.value = Date.now(); }, 1000);
+    } else if (!running && clockTimer !== undefined) {
+      window.clearInterval(clockTimer);
+      clockTimer = undefined;
+    }
+  },
+  { immediate: true }
+);
 
 /* ===== 会话列表：切换 / 新建 / 改名 / 删除 ===== */
 const renamingId = ref('');
@@ -655,6 +859,12 @@ const TOOL_LABELS: Record<string, string> = {
   rename_page: '重命名页面',
   move_page: '移动页面',
   delete_page: '删除页面（回收站）',
+  // 委派类工具：正常会被子代理卡接管（不再单独成行），这里兜住没起成子会话的那次调用
+  subagent: '派子代理',
+  subagent_fork: '派子代理（继承对话）',
+  workflow: '跑工作流',
+  ralph: '跑 Ralph 循环',
+  task: '派子代理',
 };
 
 /** 执行记录一行的工具图标（与 TOOL_LABELS 同一套键） */
@@ -708,7 +918,8 @@ function onKey(event: KeyboardEvent) {
 }
 
 watch(
-  () => `${chat.messages.map((m) => m.content.length).join(',')}|${chat.sessionToolCalls.length}|${chat.statusText}`,
+  // 子代理卡的内容随快照刷新：过程步数与产出也要参与「有没有新内容」的判断，否则停在原地不跟随
+  () => `${chat.messages.map((m) => m.content.length).join(',')}|${chat.sessionToolCalls.length}|${chat.statusText}|${chat.sessionSubagents.map((s) => `${s.status}${s.activity.length}${s.result.length}`).join(',')}`,
   () => void scrollToBottom()
 );
 watch(() => app.chatDrawerOpen, (open) => {
@@ -741,6 +952,11 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onDrawerViewportResize);
+  // 秒表随抽屉卸载一起停（抽屉是随开关挂载/卸载的，不停会一直空转）
+  if (clockTimer !== undefined) {
+    window.clearInterval(clockTimer);
+    clockTimer = undefined;
+  }
   // 事件流故意不断开：抽屉是随开关挂载/卸载的，后台会话跑完还要能标未读
   // （每轮收口时由 store 自行关闭对应连接，不会堆积）。
 });
@@ -1370,13 +1586,292 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-.run-status {
+/* ===== 常驻运行状态条：还在跑就一直贴在转录区底部（sticky），收口即消失 ===== */
+.run-live {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent, #4d8aff);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.run-live-title {
+  flex-shrink: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.run-live-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.run-live-time {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+
+/* 标题右侧的「回复中 用时」：抽屉滚到哪一段都看得见 */
+.head-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--bg-secondary);
+  color: var(--accent, #4d8aff);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.head-live-text {
+  font-family: var(--font-mono, monospace);
+}
+
+/* ===== 子代理卡：内置 Agent 派出去的子会话（比工具卡多一层「它是谁、在干什么」） ===== */
+.subagent {
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.subagent.running {
+  border-left-color: var(--accent, #4d8aff);
+}
+
+.subagent.failed {
+  border-left-color: var(--danger, #d64545);
+}
+
+.subagent.background {
+  border-left-color: var(--warning, #d99a2b);
+}
+
+.subagent-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+}
+
+.subagent-head b {
+  flex-shrink: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.subagent-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.subagent-state {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.subagent.running .subagent-state {
+  color: var(--accent, #4d8aff);
+}
+
+.subagent.failed .subagent-state {
+  color: var(--danger, #d64545);
+}
+
+.subagent.background .subagent-state {
+  color: var(--warning, #d99a2b);
+}
+
+.subagent-time {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+
+.subagent-summary {
+  margin: 0;
+  padding: 0 10px 8px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.subagent-body {
+  padding: 0 10px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.subagent-meta {
+  margin: 8px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.subagent-block h4 {
+  margin: 10px 0 4px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.subagent-prompt,
+.subagent-result {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.subagent-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.subagent-steps li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.subagent-steps li + li {
+  border-top: 1px dashed var(--border);
+}
+
+.subagent-steps .step-name {
+  flex-shrink: 0;
+  color: var(--text);
+}
+
+.subagent-steps .step-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.subagent-steps .step-state,
+.subagent-steps .step-time {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.subagent-steps li.running .step-state {
+  color: var(--accent, #4d8aff);
+}
+
+.subagent-steps li.failed .step-state {
+  color: var(--danger, #d64545);
+}
+
+.subagent-pending {
+  margin: 8px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.subagent-nested {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.nested-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 8px 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.nested-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.nested-state {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-faint);
-  font-size: 12px;
+}
+
+.subagent-nested.running .nested-state {
+  color: var(--accent, #4d8aff);
+}
+
+.subagent-nested.failed .nested-state {
+  color: var(--danger, #d64545);
+}
+
+.nested-time {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-family: var(--font-mono, monospace);
+}
+
+.nested-summary {
+  margin: 4px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .run-error {

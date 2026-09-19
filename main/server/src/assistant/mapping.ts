@@ -10,6 +10,13 @@
  *   step/start | turn/end ...
  * 事件表由 dsh 插件可扩展，未知类型一律忽略（不猜测语义）。
  *
+ * 子代理：dsh 的子会话也是本会话树的一部分，SDK 的 onNotification 把整棵树的通知都送过来，
+ * 所以除了根会话事件还有两类信号——
+ *   subagent.started  { parentSessionId, childSessionId }（谱系边）
+ *   subagent.finished { parentSessionId, childSessionId, status:'ok'|'error', stopReason, lastAssistantMessage? }
+ * 子会话自己的事件里，第一条是 subagent/descriptor（version 3：mode/provider/label），
+ * 其后才是常规的 turn/step/tool/assistant 事件，sessionId 是子会话 id。
+ *
  * 流式：SDK 的 session.event 是「按步提交」——一步（一次模型请求）结束时才落一条
  * assistant/message，正文与思考一起到达。但这条持久事件里带着模型原始增量流
  * （`stream: AssistantStreamRecord[]`，reasoning-chunks 记录含 time0 + 逐块 dt 与 texts），
@@ -29,7 +36,18 @@ export type AgentEvent =
   | { kind: 'reasoning'; text: string; parts: ReasoningPart[]; interrupted?: boolean }
   | { kind: 'tool-call'; callId: string; name: string; args: string }
   | { kind: 'tool-result'; callId: string; ok: boolean; text: string }
-  | { kind: 'turn-end'; reason: string };
+  | { kind: 'turn-end'; reason: string }
+  // ---- 子代理（dsh subagent / subagent_fork / workflow / ralph 起的子会话）----
+  /** 子代理开工：dsh 通知 subagent.started（父会话 → 子会话的谱系边） */
+  | { kind: 'subagent-start'; childSessionId: string; parentSessionId: string }
+  /** 子会话自己的第一条事件 subagent/descriptor：标签、模式、provider 都在这 */
+  | { kind: 'subagent-descriptor'; childSessionId: string; label: string; mode: string; provider: string }
+  /** 子代理过程里的一步（子会话的工具调用/结果） */
+  | { kind: 'subagent-activity'; childSessionId: string; callId: string; name: string; summary: string; status: 'running' | 'completed' | 'failed'; text: string }
+  /** 子代理的正文（只作最新产出预览，不进主对话流） */
+  | { kind: 'subagent-text'; childSessionId: string; text: string }
+  /** 子代理收工：dsh 通知 subagent.finished（含最后一条助手消息与停止原因） */
+  | { kind: 'subagent-end'; childSessionId: string; ok: boolean; stopReason: string; text: string };
 
 /** 从 ContentBlock[] / string 里拼出文本（容错：未知块型忽略） */
 function textOfContent(content: unknown): string {
@@ -88,6 +106,39 @@ function toolResultFailed(data: any, message: any): boolean {
     if (block && typeof block === 'object' && (block as Record<string, unknown>).isError === true) return true;
   }
   return message?.isError === true || Boolean(data?.error);
+}
+
+/** 取字符串字段（空/非字符串一律给空串，调用方不必再判） */
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * 工具参数的一行摘要：第一个非空字符串字段（对象键序），没有就退回压平后的原文。
+ * 与前端 lib/chatTimeline 的 toolCallSummary 同一口径——子代理过程在服务端落库，
+ * 前端只负责显示，所以摘要必须在写入时就定下来。
+ */
+export function briefArgs(args: unknown, limit = 120): string {
+  const raw = typeof args === 'string' ? args : JSON.stringify(args ?? {});
+  let picked = '';
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const entries = Object.entries(parsed as Record<string, unknown>);
+      const firstString = entries.find(([, value]) => typeof value === 'string' && value.trim() !== '');
+      if (firstString) picked = firstString[1] as string;
+      else if (entries.length) {
+        const [key, value] = entries[0];
+        picked = `${key}: ${typeof value === 'string' ? value : JSON.stringify(value) ?? ''}`;
+      }
+    } else {
+      picked = typeof parsed === 'string' ? parsed : raw;
+    }
+  } catch {
+    picked = raw;
+  }
+  const text = picked.replace(/\s+/g, ' ').trim();
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
 /**
@@ -277,16 +328,91 @@ export function describeTurnReason(reason: unknown): string {
 }
 
 /**
+ * 子会话（子代理）事件 → 归一化事件。
+ *
+ * 子代理自己的正文与思考**不进**主对话流（那会把一条对话搅成两股声音），
+ * 但要看得出「它在干什么、干出了什么」：过程收成过程条目，正文只作最新产出预览，
+ * 收工时再由 subagent.finished 的 lastAssistantMessage 定稿。
+ */
+export function mapChildSessionEvent(childSessionId: string, type: string, data: any): AgentEvent[] {
+  switch (type) {
+    // 子会话的第一条事件：标签（模型给的 3-5 词任务名）、模式、provider
+    case 'subagent/descriptor':
+      return [{
+        kind: 'subagent-descriptor',
+        childSessionId,
+        label: str(data?.label),
+        mode: str(data?.mode),
+        provider: str(data?.provider),
+      }];
+    case 'tool/call':
+      return typeof data?.name === 'string'
+        ? [{
+            kind: 'subagent-activity',
+            childSessionId,
+            callId: str(data.callId),
+            name: data.name,
+            summary: briefArgs(data.arguments, 90),
+            status: 'running',
+            text: '',
+          }]
+        : [];
+    case 'tool/result': {
+      const message = data?.message ?? {};
+      return [{
+        kind: 'subagent-activity',
+        childSessionId,
+        callId: toolResultCallId(message),
+        name: '',
+        summary: '',
+        status: toolResultFailed(data, message) ? 'failed' : 'completed',
+        text: toolResultText(message),
+      }];
+    }
+    case 'assistant/message': {
+      const text = textOfContent(data?.message?.content).trim();
+      return text ? [{ kind: 'subagent-text', childSessionId, text }] : [];
+    }
+    default:
+      return [];
+  }
+}
+
+/**
  * SDK 通知 → 归一化事件。
- * 只透传根会话：子 Agent（subagent）的事件按设计不进主对话流。
+ *
+ * 根会话照旧进主对话流；子会话（子代理）转成过程/产出事件，由 runner 挂到子代理卡上；
+ * 子代理的开收工由 subagent.started / subagent.finished 两条谱系通知界定
+ * （dsh 的 sdk profile 只会推这两种，故不必猜）。
  */
 export function mapNotification(method: string, params: any, rootSessionId: string): AgentEvent[] {
+  if (method === 'subagent.started') {
+    const childSessionId = str(params?.childSessionId);
+    if (!childSessionId) return [];
+    return [{ kind: 'subagent-start', childSessionId, parentSessionId: str(params?.parentSessionId) }];
+  }
+  if (method === 'subagent.finished') {
+    const childSessionId = str(params?.childSessionId) || str(params?.agentId);
+    if (!childSessionId) return [];
+    return [{
+      kind: 'subagent-end',
+      childSessionId,
+      ok: params?.status !== 'error',
+      stopReason: str(params?.stopReason),
+      text: textOfContent(params?.lastAssistantMessage),
+    }];
+  }
   if (method === 'session.status') {
+    // 子代理的运行状态不是主对话的状态：早期实现照单全收，子代理一开工主对话就显示「处理中」
+    if (params?.sessionId && rootSessionId && params.sessionId !== rootSessionId) return [];
     return params?.status === 'running' ? [{ kind: 'status', text: '处理中' }] : [];
   }
   if (method !== 'session.event') return [];
-  if (params?.sessionId && rootSessionId && params.sessionId !== rootSessionId) return [];
+  const sessionId = str(params?.sessionId);
   const event = params?.event;
   if (!event || typeof event.type !== 'string') return [];
+  if (sessionId && rootSessionId && sessionId !== rootSessionId) {
+    return mapChildSessionEvent(sessionId, event.type, event.data);
+  }
   return mapSessionEvent(event.type, event.data);
 }
