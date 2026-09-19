@@ -223,6 +223,7 @@ import {
   type ReadingWidth,
 } from '../lib/readingPreview';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
+import { headingFoldRanges } from '../lib/readingFold';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
 import {
   selectionInside,
@@ -246,6 +247,8 @@ const props = defineProps<{
   related?: any;
   /** 存在双链/关联跳转轨迹时显示「返回上一页」 */
   canGoBack?: boolean;
+  /** 当前页面 id：换页时清空按标题收放的状态 */
+  pageKey?: string;
 }>();
 
 const emit = defineEmits<{
@@ -456,9 +459,116 @@ function prepareHeadings(root: HTMLElement) {
     heading.classList.add('reading-heading');
     heading.dataset.readingNumber = numbers[index];
     if (numbers[index]) heading.classList.add('reading-numbered');
+    ensureFoldButton(heading);
     return { id, level, text: heading.textContent || '' };
   });
   currentHeading.value = outline.value[0]?.id || '';
+}
+
+/* ---------- 按标题收放 ---------- */
+
+type FoldSection = {
+  id: string;
+  level: number;
+  heading: HTMLElement;
+  /** 随该标题一起收放的块（含其下子节） */
+  targets: HTMLElement[];
+};
+
+const foldSections = ref<FoldSection[]>([]);
+/** 已收起的标题 id：仅当前会话有效（切页/刷新后恢复展开） */
+const collapsedHeadings = ref<Set<string>>(new Set());
+
+function ensureFoldButton(heading: HTMLElement) {
+  if (heading.querySelector(':scope > .reading-fold')) return;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'reading-fold';
+  button.setAttribute('aria-expanded', 'true');
+  button.setAttribute('aria-label', '收起本节');
+  button.innerHTML =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"' +
+    ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="m6 9 6 6 6-6"/></svg>';
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleFold(heading.id);
+  });
+  heading.prepend(button);
+}
+
+/** 扫描正文块，重建「标题 → 收放范围」映射，并套用当前收放状态 */
+function bindFoldSections(root: HTMLElement) {
+  const blocks = Array.from(root.children) as HTMLElement[];
+  const headingBlocks = blocks
+    .map((element, block) => ({ element, block }))
+    .filter((item) => item.element.classList.contains('reading-heading'));
+  const ranges = headingFoldRanges(
+    headingBlocks.map((item) => ({ level: Number(item.element.tagName.slice(1)), block: item.block })),
+    blocks.length,
+  );
+
+  foldSections.value = headingBlocks.map((item, index) => ({
+    id: item.element.id,
+    level: ranges[index].level,
+    heading: item.element,
+    targets: blocks.slice(ranges[index].block + 1, ranges[index].end),
+  }));
+  applyFoldState();
+}
+
+function applyFoldState() {
+  // 一个块可能同时属于外层（H2）和内层（H3）两个收放范围：只要任一外层收起就必须隐藏，
+  // 因此先求并集再统一切换，避免内层「展开」把外层收起的块又放出来
+  const hidden = new Set<HTMLElement>();
+  for (const section of foldSections.value) {
+    if (!collapsedHeadings.value.has(section.id)) continue;
+    for (const target of section.targets) hidden.add(target);
+  }
+  for (const section of foldSections.value) {
+    for (const target of section.targets) {
+      target.classList.toggle('reading-folded', hidden.has(target));
+    }
+    const collapsed = collapsedHeadings.value.has(section.id);
+    section.heading.classList.toggle('reading-collapsed', collapsed);
+    const button = section.heading.querySelector<HTMLElement>(':scope > .reading-fold');
+    button?.setAttribute('aria-expanded', String(!collapsed));
+    button?.setAttribute('aria-label', collapsed ? '展开本节' : '收起本节');
+  }
+}
+
+function toggleFold(id: string) {
+  if (!id) return;
+  const next = new Set(collapsedHeadings.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsedHeadings.value = next;
+  applyFoldState();
+  scheduleTailSpace();
+  updateCurrentHeading();
+}
+
+/** 展开包含目标标题的所有折叠节（目录跳到被收起的小节时用），由外到内逐层解开 */
+function expandAncestors(heading: HTMLElement): boolean {
+  const toExpand = new Set<string>();
+  for (let pass = 0; pass < foldSections.value.length; pass++) {
+    let changed = false;
+    for (const section of foldSections.value) {
+      if (toExpand.has(section.id) || !collapsedHeadings.value.has(section.id)) continue;
+      if (section.targets.includes(heading)) {
+        toExpand.add(section.id);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  if (!toExpand.size) return false;
+  const next = new Set(collapsedHeadings.value);
+  for (const id of toExpand) next.delete(id);
+  collapsedHeadings.value = next;
+  applyFoldState();
+  return true;
 }
 
 function prepareLinks(root: HTMLElement) {
@@ -495,6 +605,7 @@ async function renderMarkdown() {
     outline.value = cached.outline;
     currentHeading.value = cached.outline[0]?.id || '';
     metrics.value = cached.metrics;
+    bindFoldSections(host);
     await nextTick();
     if (version !== renderVersion) return;
     readerEl.value?.scrollTo({ top: 0 });
@@ -520,6 +631,7 @@ async function renderMarkdown() {
       }
     }
     host.replaceChildren(...Array.from(next.childNodes));
+    bindFoldSections(host);
     await nextTick();
     readerEl.value?.scrollTo({ top: 0 });
     measureLayout();
@@ -557,6 +669,8 @@ function scrollToHeading(id: string) {
   const reader = readerEl.value;
   const heading = contentEl.value?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
   if (!reader || !heading) return;
+  // 目录里点到被收起的小节时，先把包含它的折叠节逐层展开再定位
+  if (expandAncestors(heading)) scheduleTailSpace();
   const readerRect = reader.getBoundingClientRect();
   const headingY = reader.scrollTop + heading.getBoundingClientRect().top - readerRect.top;
   reader.scrollTo({
@@ -579,10 +693,17 @@ function keepCurrentOutlineVisible() {
   }
 }
 
+/** 当前可见（未被折叠节收进去）的标题 */
+function visibleHeadings(): HTMLElement[] {
+  return Array.from(contentEl.value?.querySelectorAll<HTMLElement>('.reading-heading') || [])
+    .filter((heading) => heading.offsetParent !== null);
+}
+
 function updateCurrentHeading() {
   cancelAnimationFrame(scrollFrame);
   scrollFrame = requestAnimationFrame(() => {
-    const headings = Array.from(contentEl.value?.querySelectorAll<HTMLElement>('.reading-heading') || []);
+    // 被收起的小节不在视口里参与「当前标题」判定（display:none 的 rect 会退化成 0）
+    const headings = visibleHeadings();
     let current = headings[0]?.id || '';
     const anchorOffset = toolbarHeight.value + 28;
     for (const heading of headings) {
@@ -605,8 +726,7 @@ function scheduleTailSpace() {
   cancelAnimationFrame(tailFrame);
   tailFrame = requestAnimationFrame(() => {
     const reader = readerEl.value;
-    const headings = Array.from(contentEl.value?.querySelectorAll<HTMLElement>('.reading-heading') || []);
-    const lastHeading = headings.at(-1);
+    const lastHeading = visibleHeadings().at(-1);
     if (!reader || !lastHeading) {
       tailSpace.value = 0;
       return;
@@ -636,6 +756,16 @@ function handleMediaChange() {
 watch(
   () => [props.markdown, props.title, props.dark],
   () => void renderMarkdown(),
+);
+
+/* 换页即恢复展开：按标题收放的状态只属于当前这次阅读会话 */
+watch(
+  () => props.pageKey,
+  () => {
+    if (!collapsedHeadings.value.size) return;
+    collapsedHeadings.value = new Set();
+    applyFoldState();
+  },
 );
 
 onMounted(() => {
@@ -934,6 +1064,11 @@ onBeforeUnmount(() => {
   color: var(--text);
   font-size: inherit;
   line-height: inherit;
+  /* 折叠箭头要落在标题左侧的空槽里，而 .vditor-reset 自带 overflow:auto 会把负边距
+   * 溢出的内容裁掉：这里把内容盒向左扩 22px 并用等宽 padding 抵消，
+   * 箭头落在 padding 区内（不被裁剪、可点击），标题文字仍与正文左对齐 */
+  margin-left: -22px;
+  padding-left: 22px;
 }
 .reading-content[aria-busy="true"] { opacity: 0.65; }
 /* 正文首个块去掉上外边距：实体页删掉与标题重复的 H1 后，「## 当前理解」的
@@ -948,8 +1083,42 @@ onBeforeUnmount(() => {
   letter-spacing: 0;
 }
 .reading-content :deep(.reading-heading) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   scroll-margin-top: var(--reading-anchor-offset);
 }
+/* 折叠箭头：桌面落在标题左侧空槽里（标题文字仍与正文左对齐），窄屏改为内联避免出屏 */
+.reading-content :deep(.reading-fold) {
+  order: -1;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: -22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.reading-content :deep(.reading-fold:hover) {
+  background: var(--control-bg-hover);
+  color: var(--accent);
+}
+.reading-content :deep(.reading-fold svg) {
+  transition: transform 140ms ease;
+}
+.reading-content :deep(.reading-collapsed > .reading-fold svg) {
+  transform: rotate(-90deg);
+}
+/* 收起的块整体隐藏；标题本身保留，方便再点开 */
+.reading-content :deep(.reading-folded) { display: none; }
+.reading-content :deep(.reading-collapsed) { color: var(--text-secondary); }
 .reading-content :deep(h2) {
   margin: 2.3em 0 0.8em;
   padding-bottom: 0.35em;
@@ -1189,6 +1358,9 @@ onBeforeUnmount(() => {
   .reading-grid { padding: 24px 20px 54px; }
   .reading-outline { display: none; }
   .mobile-outline-open:not(.outline-hidden) .reading-outline { display: block; }
+  /* 窄屏没有左槽：箭头改内联，标题文字右移而不是溢出到屏幕外 */
+  .reading-content { margin-left: 0; padding-left: 0; }
+  .reading-content :deep(.reading-fold) { margin-left: 0; }
 }
 @media (max-width: 640px) {
   .reading-toolbar {
