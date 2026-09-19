@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 // 测试由 node 内置类型擦除直接跑（web 包无额外测试框架），相对导入要带真实扩展名
 import {
   buildChatTimeline,
+  isReasoningLive,
   reasoningDurationMs,
   showStreamName,
   startsNewRun,
@@ -190,6 +191,18 @@ test('思考段进同一条流：同一步里排在正文之前，同毫秒也�
   const thinkingItems = reasoningMessages(items);
   assert.equal(reasoningDurationMs(thinkingItems[0]), 4200);
   assert.equal(reasoningDurationMs(thinkingItems[1]), 0);
+});
+
+test('思考段跑完就收起：收了口或不再是最后一条，都不算「还在长」', () => {
+  const live = thinking('k1', '2026-01-01T00:00:01.000Z', 'r1');
+  // 正在长：它就是本轮最后一条（streamingKey 命中），服务端还没收口
+  assert.equal(isReasoningLive(live, 'k1'), true);
+  // 服务端播完补写 metadata.ms 并推一份快照：本轮还在跑，但这一段已经跑完 → 自动收起
+  assert.equal(isReasoningLive(thinking('k2', '2026-01-01T00:00:02.000Z', 'r1', 4200), 'k2'), false);
+  // 后面又来了一条（正文 / 工具卡 / 子代理卡）：光标已经交出去，早先那段收起
+  assert.equal(isReasoningLive(live, 'a1'), false);
+  // 本轮收口（streamingKey 为空）：没有正在长的段落
+  assert.equal(isReasoningLive(live, ''), false);
 });
 
 test('思考段不署名也不吞掉署名：正文仍在本轮第一条正文上署一次', () => {

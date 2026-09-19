@@ -38,6 +38,15 @@ export function reasoningDurationMs(message: ChatMessage): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+/**
+ * 思考段是否还在长：它是本轮最后一条（streamingKey 命中）且服务端还没给它收口。
+ * 服务端在这段播完时补写 metadata.ms 并推一份快照，所以「有 ms」就等于「这段已经跑完」——
+ * 界面据此在思考跑完的那一刻自动收起，不必等整轮结束。
+ */
+export function isReasoningLive(message: ChatMessage, streamingKey: string): boolean {
+  return streamingKey === message.id && reasoningDurationMs(message) === 0;
+}
+
 function byAt(a: ChatStreamItem, b: ChatStreamItem): number {
   return a.at.localeCompare(b.at) || a.rank - b.rank;
 }
