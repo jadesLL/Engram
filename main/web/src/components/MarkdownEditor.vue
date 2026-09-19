@@ -285,14 +285,14 @@ const mobileToolbar = [
   wikilinkToolbarItem,
   'link', 'undo', 'edit-mode', readingToolbarItem,
 ];
-// UI 2.0：按「格式 / 段落 / 插入 / 历史 / 视图」分组，18 个图标收敛视觉主次
+// UI 2.0 mockup 4.3：按「格式 / 段落 / 插入 / 历史」四段分组；
+// 双链、源码切换、全屏、大纲、沉浸阅读是 Engram 专有入口，收在末尾同一段里
 const desktopToolbar = [
   'headings', 'bold', 'italic', 'strike', '|',
   'quote', 'list', 'ordered-list', 'check', '|',
   'inline-code', 'code', 'table', 'link', wikilinkToolbarItem, '|',
   'undo', 'redo', '|',
-  'edit-mode', 'fullscreen', 'outline', '|',
-  readingToolbarItem,
+  'edit-mode', 'fullscreen', 'outline', readingToolbarItem,
 ];
 
 function init() {
@@ -736,7 +736,7 @@ onMounted(init);
   display: none !important;
 }
 
-/* ---------- 工具栏换肤：分组气泡按钮，跟随应用设计令牌 ---------- */
+/* ---------- 工具栏换肤：悬浮卡片 + 分组气泡按钮（UI 2.0 mockup 4.3） ---------- */
 /* Vditor 对工具栏 svg 预置 fill: currentColor，我们的描边图标必须压回 fill:none */
 :deep(.vditor-toolbar .eg-icon),
 :deep(.vditor-toolbar .eg-icon path) {
@@ -747,22 +747,27 @@ onMounted(init);
   stroke-linejoin: round !important;
 }
 :deep(.vditor-toolbar) {
-  /* 工具栏不带灰色染色：纯白 + 柔和投影浮在正文之上 */
-  background: var(--paper-toolbar-bg, transparent);
-  border-bottom: none;
-  box-shadow: var(--paper-toolbar-shadow);
+  /* 白卡片 + 细描边 + 单层轻投影，左缘对齐正文列，浮在纸面上 */
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  width: fit-content;
+  max-width: calc(100% - var(--col-inset, 24px) - 24px);
+  margin: 0 0 18px var(--col-inset, 24px);
+  /* !important 必须带：vditor 的 setPadding 会写内联 padding-left（正文列居中公式），
+     否则卡片左内边距被它顶掉 */
+  padding: 6px 8px !important;
+  gap: 2px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow-raised);
   position: relative;
   z-index: 2;
-  padding: 4px 10px;
-  gap: 1px;
-  /* 阅读按钮右对齐到工具栏最右端 */
-  & .vditor-tooltipped[data-type="reading"] {
-    margin-left: auto;
-  }
 }
-:deep(.vditor-toolbar .vditor-toolbar__item) { padding: 0 1px; }
+:deep(.vditor-toolbar .vditor-toolbar__item) { padding: 0; }
 :deep(.vditor-toolbar button) {
-  width: 30px;
+  width: 28px;
   height: 28px;
   padding: 0;
   border-radius: 6px;
@@ -777,10 +782,12 @@ onMounted(init);
   background: var(--accent-soft);
 }
 :deep(.vditor-toolbar .vditor-toolbar__divider) {
-  margin: 0 6px;
+  float: none;
+  width: 1px;
   height: 16px;
-  border-left-color: var(--border-strong);
-  opacity: 0.55;
+  margin: 0 5px;
+  border-left: none;
+  background: var(--border);
 }
 /* 双链 / 沉浸阅读作为强调入口 */
 :deep(.vditor-toolbar button[data-type="wikilink"]),
@@ -815,14 +822,17 @@ onMounted(init);
 }
 /* 手机端压缩工具栏按钮内边距，保证精简后的按钮单行放下 */
 @media (max-width: 768px) {
-  :deep(.vditor-toolbar) { padding: 4px !important; }
-  :deep(.vditor-toolbar .vditor-toolbar__item) { padding: 0 !important; }
+  :deep(.vditor-toolbar) {
+    margin: 0 20px 14px;
+    max-width: calc(100% - 40px);
+    padding: 4px !important;
+  }
   :deep(.vditor-toolbar button) { width: 28px; }
-  :deep(.vditor-toolbar .vditor-toolbar__divider) { margin: 0 3px !important; }
+  :deep(.vditor-toolbar .vditor-toolbar__divider) { margin: 0 3px; }
 }
 
 :deep(.vditor-ir), :deep(.vditor-wysiwyg), :deep(.vditor-sv) {
-  background: var(--paper-bg, var(--bg));
+  background: transparent;
   color: var(--text);
 }
 /* 双链：虚线下划线柔和样式（替代刺眼的实色块） */

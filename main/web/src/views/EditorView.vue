@@ -30,16 +30,15 @@
         @context-menu="(request) => showContextMenu(request, 'reading')"
       />
 
-      <!-- 顶部条：目录面包屑 + 常驻保存状态 -->
+      <!-- 顶部条：Wiki / 分区 / 标题 面包屑 + 常驻保存状态 -->
       <div v-show="!app.readingMode" class="editor-topbar">
         <nav class="crumb">
-          <Icon name="folder" :size="13" />
-          <template v-if="crumbDirs.length">
-            <span v-for="(d, i) in crumbDirs" :key="i" class="crumb-item">
-              {{ d }}<span v-if="i < crumbDirs.length - 1" class="crumb-sep">/</span>
-            </span>
+          <template v-for="(d, i) in crumbDirs" :key="i">
+            <span v-if="i" class="crumb-sep">/</span>
+            <span :class="i ? 'crumb-item' : 'crumb-root'">{{ d }}</span>
           </template>
-          <span v-else class="crumb-item">根目录</span>
+          <span class="crumb-sep">/</span>
+          <b class="crumb-current">{{ title || '无标题' }}</b>
         </nav>
         <BackTrailMenu v-if="canGoBack" :trail="app.pageTrail" @select="goBackToTrail">
           <template #default="{ open }">
@@ -57,11 +56,10 @@
           </template>
         </BackTrailMenu>
         <div class="spacer"></div>
-        <!-- 保存按钮并入状态 pill：dirty 时 pill 本身就是保存按钮（Ctrl+S 不变） -->
+        <!-- 保存态：绿点 + 文案的状态指示，dirty 时它本身就是保存按钮（Ctrl+S 不变） -->
         <button
-          v-if="saveState"
-          class="save-pill"
-          :class="savePillClass"
+          class="save-state"
+          :class="saveStateClass"
           type="button"
           :disabled="saveState !== '编辑中…'"
           v-tooltip="saveState === '编辑中…' ? '点击保存（Ctrl+S）' : ''"
@@ -81,9 +79,9 @@
         </label>
       </div>
 
-      <!-- 纸面卡片：页头 / 工具栏 / 正文 / 关联 / 状态栏收进同一张悬浮卡片
-           （内部元素保持原缩进；evidence-drawer 为绝对定位浮层，不参与卡片流） -->
-      <div v-show="!app.readingMode" class="editor-paper">
+      <!-- 扁平编辑区：页头 / 工具栏 / 正文 / 关联 / 状态栏直接铺在灰底上（UI 2.0 mockup 4.3，
+           不再用悬浮纸面卡片；evidence-drawer 为绝对定位浮层，不参与文档流） -->
+      <div v-show="!app.readingMode" class="editor-body">
       <div class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
         <input v-model="title" class="title-input" placeholder="无标题" @change="save(true)" />
         <!-- 手机端摘要行：折叠时仅此一行（选项切换），桌面隐藏 -->
@@ -101,28 +99,34 @@
         </div>
         <div class="page-chrome">
           <div class="head-meta">
-          <select v-model="pageType" @change="save(true)" class="chip-select">
-            <option value="concept">概念</option>
-            <option value="person">人物</option>
-            <option value="customer">客户</option>
-            <option value="org">组织</option>
-            <option value="project">项目</option>
-            <option value="other">其他</option>
-            <option v-if="!['concept','person','customer','org','project','other'].includes(pageType)" :value="pageType">未分类</option>
-          </select>
+          <span class="kind-pill">
+            <select v-model="pageType" class="chip-select" aria-label="页面类型" @change="save(true)">
+              <option value="concept">概念</option>
+              <option value="person">人物</option>
+              <option value="customer">客户</option>
+              <option value="org">组织</option>
+              <option value="project">项目</option>
+              <option value="other">其他</option>
+              <option v-if="!['concept','person','customer','org','project','other'].includes(pageType)" :value="pageType">未分类</option>
+            </select>
+            <Icon class="kind-caret" name="chevron-down" :size="11" />
+          </span>
           <div class="tags-chips">
             <span v-for="(t, i) in tags" :key="t" class="chip">
               #{{ t }}
               <button type="button" class="chip-x" aria-label="移除标签" @click="removeTag(i)">×</button>
             </span>
             <input
+              v-if="tagEditing"
+              ref="tagInputRef"
               v-model="tagDraft"
               class="tag-draft"
-              placeholder="+ 标签"
+              placeholder="标签名"
               @keydown.enter.prevent="commitTagDraft"
               @keydown="onTagDraftKey"
               @blur="commitTagDraft"
             />
+            <button v-else type="button" class="chip chip-add" @click="startTagEdit">+ 标签</button>
           </div>
           <span class="meta-date faint">更新于 {{ formatDate(page.updated_at) }}</span>
           </div>
@@ -284,7 +288,7 @@
           页面图谱
         </button>
       </div>
-      </div><!-- /editor-paper -->
+      </div><!-- /editor-body -->
     </template>
 
     <!-- 页面加载 / 错误状态 -->
@@ -405,7 +409,12 @@ const title = ref('');
 const pageType = ref('note');
 const tags = ref<string[]>([]);
 const tagDraft = ref('');
-const saveState = ref('');
+/* 标签输入按需展开：「+ 标签」是虚线 pill，点开才出现输入框（mockup 4.3） */
+const tagEditing = ref(false);
+const tagInputRef = ref<HTMLInputElement>();
+/* 保存态常驻顶栏：'已保存' 是静止态，编辑中转 '编辑中…'，落盘后短暂显示保存结果 */
+const SAVED_IDLE = '已保存';
+const saveState = ref(SAVED_IDLE);
 /* 自动保存按文件记忆（localStorage 映射，缺省开）；dirtyUi 是 dirty 的响应式镜像，驱动保存按钮可用态 */
 const AUTOSAVE_STORE_KEY = 'engram.editor.autosave';
 const autosave = ref(true);
@@ -466,13 +475,14 @@ const filePreviewRef = ref<InstanceType<typeof FilePreview>>();
 const filePath = computed(() => (route.query.file as string) || '');
 const isDark = computed(() => app.dark);
 
-/** 面包屑：页面路径去掉文件名后的目录段 */
-const crumbDirs = computed(() =>
-  String(page.value?.path || '').split('/').slice(0, -1).filter(Boolean)
-);
+/** 面包屑：库根 Wiki + 页面路径去掉文件名后的目录段（路径本身已带 Wiki/ 前缀时不重复） */
+const crumbDirs = computed(() => {
+  const dirs = String(page.value?.path || '').split('/').slice(0, -1).filter(Boolean);
+  return dirs[0] === 'Wiki' ? dirs : ['Wiki', ...dirs];
+});
 
 /** 保存状态点的三态样式 */
-const savePillClass = computed(() => {
+const saveStateClass = computed(() => {
   if (saveState.value === '保存失败') return 'failed';
   if (saveState.value === '编辑中…') return 'dirty';
   return 'ok';
@@ -503,7 +513,15 @@ function formatDate(value: string | number | undefined): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+async function startTagEdit() {
+  tagEditing.value = true;
+  await nextTick();
+  tagInputRef.value?.focus();
+}
+
 function commitTagDraft() {
+  if (!tagEditing.value) return; // Enter 提交后输入框卸载会再触发一次 blur
+  tagEditing.value = false;
   const parts = tagDraft.value.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
   if (!parts.length) {
     tagDraft.value = '';
@@ -565,7 +583,8 @@ async function loadPage(id: string) {
     pageType.value = data.meta.type;
     tags.value = [...(data.meta.tags || [])];
     tagDraft.value = '';
-    saveState.value = '';
+    tagEditing.value = false;
+    saveState.value = SAVED_IDLE;
     dirty = false;
     dirtyUi.value = false;
     loadAutosave();
@@ -687,7 +706,7 @@ async function save(manual = false) {
     justSavedAt = Date.now(); // 抑制本次保存触发的 SSE 回声
     saveState.value = manual ? '已保存 ✓' : '已自动保存';
     app.bumpSidebar(); // 类型/标题变化后立刻刷新侧栏分区
-    setTimeout(() => (saveState.value = ''), 2000);
+    setTimeout(() => (saveState.value = SAVED_IDLE), 2000);
     loadRelated();
     loadEvidence();
   } catch (error: any) {
@@ -701,7 +720,7 @@ watch(content, () => {
   if (loading || !page.value) return; // 加载阶段不触发
   if (visibleContentKey(content.value) === loadedContentKey) {
     dirty = false;
-    saveState.value = '';
+    saveState.value = SAVED_IDLE;
     return;
   }
   dirty = true;
@@ -1029,20 +1048,26 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   position: relative;
-  /* 内容列：页头 / 正文 / 关联区统一 720px 居中（UI 2.0 行长收敛），vditor 内联 padding 被下方 !important 覆盖 */
+  /* 文档列（mockup 4.3）：720px 列宽 + 左右 40px 留白 = 640px 正文文字列。
+     --col-inset 是文字列左内边距，页头 / 正文 / 关联区 / 工具栏统一用它对齐；
+     vditor 写入的内联 padding 由下方 !important 覆盖 */
   --editor-max: 100%;
-  --content-col: 720px;
+  --doc-col: 720px;
+  --doc-pad: 40px;
+  --col-inset: max(24px, calc((100% - var(--doc-col)) / 2 + var(--doc-pad)));
 }
 
-/* ---------- 顶部条：面包屑 + 保存状态 ---------- */
+/* ---------- 顶部条：面包屑 + 保存状态（46px 白条，mockup 4.3） ---------- */
 .editor-topbar {
   flex: none;
+  height: 46px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 20px;
+  padding: 0 18px;
   font-size: 12.5px;
   color: var(--text-faint);
+  background: var(--card-bg);
   border-bottom: 1px solid var(--border);
 }
 .crumb {
@@ -1053,37 +1078,41 @@ onUnmounted(() => {
   overflow: hidden;
   white-space: nowrap;
 }
-.crumb-item {
+.crumb-root,
+.crumb-item { color: var(--text-faint); }
+.crumb-item { overflow: hidden; text-overflow: ellipsis; }
+.crumb-current {
   color: var(--text-secondary);
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.crumb-sep { color: var(--text-faint); margin-left: 6px; }
+.crumb-sep { color: var(--text-faint); }
 .editor-topbar .spacer,
 .statusbar .spacer { flex: 1; }
-.save-pill {
+/* 保存态：状态指示而非按钮；dirty 时点它即保存（Ctrl+S 不变） */
+.save-state {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   font-size: 12px;
-  color: var(--text-secondary);
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
+  color: var(--text-faint);
+  padding: 0;
+  border: none;
+  background: none;
 }
-button.save-pill { font: inherit; font-size: 12px; cursor: default; }
-button.save-pill.dirty { cursor: pointer; }
-button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text); }
-.save-pill .dot {
-  width: 7px;
-  height: 7px;
+button.save-state { font: inherit; font-size: 12px; cursor: default; }
+button.save-state.dirty { cursor: pointer; color: var(--text-secondary); }
+button.save-state.dirty:hover { color: var(--accent); }
+.save-state .dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: var(--success, #107c10);
+  background: var(--success);
 }
-.save-pill.dirty .dot { background: var(--warning); animation: save-pulse 1.2s infinite; }
-.save-pill.failed { color: var(--danger); }
-.save-pill.failed .dot { background: var(--danger); }
+.save-state.dirty .dot { background: var(--warning); animation: save-pulse 1.2s infinite; }
+.save-state.failed { color: var(--danger); }
+.save-state.failed .dot { background: var(--danger); }
 @keyframes save-pulse { 50% { opacity: 0.35; } }
 .autosave-toggle { flex: none; }
 /* 双链跳转后的返回入口：紧邻面包屑，图标 + 文案 */
@@ -1110,16 +1139,15 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
 .page-head {
   flex: none;
   width: 100%;
-  padding: 28px max(24px, calc((100% - var(--content-col)) / 2)) 0;
-  /* 页头区与工具栏带的区段分隔 */
-  border-bottom: 1px solid var(--paper-toolbar-border);
+  padding: 28px var(--col-inset) 0;
 }
 .title-input {
   width: 100%;
   border: none;
-  font-size: 32px;
+  font-size: 30px;
   font-weight: 700;
-  padding: 4px 0;
+  letter-spacing: -0.01em;
+  padding: 0;
   background: transparent;
 }
 .title-input::placeholder { color: var(--text-faint); }
@@ -1141,24 +1169,39 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 8px;
-  padding-bottom: 12px;
+  margin: 14px 0 20px;
   flex-wrap: wrap;
 }
+/* 类型 pill：软色强调 + 自绘下拉箭头（原生箭头在 pill 里位置不对） */
+.kind-pill {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  flex: none;
+}
 .chip-select {
+  appearance: none;
   border: 1px solid transparent;
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
   font-size: 12px;
-  padding: 3px 8px;
-  border-radius: 999px;
+  height: 24px;
+  padding: 0 22px 0 10px;
+  border-radius: 12px;
+  cursor: pointer;
 }
 .chip-select:hover { border-color: var(--accent); }
+.kind-caret {
+  position: absolute;
+  right: 8px;
+  color: var(--accent);
+  pointer-events: none;
+}
 .tags-chips {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
   flex: 1;
   min-width: 160px;
@@ -1166,14 +1209,21 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  height: 24px;
   font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--bg-secondary);
+  padding: 0 10px;
+  border-radius: 12px;
+  background: var(--card-bg);
   border: 1px solid var(--border);
   color: var(--text-secondary);
 }
+.chip-add {
+  border-style: dashed;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.chip-add:hover { border-color: var(--border-strong); color: var(--text-secondary); }
 .chip-x {
   border: none;
   background: none;
@@ -1185,32 +1235,27 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
 }
 .chip-x:hover { color: var(--danger); }
 .tag-draft {
-  border: none;
-  background: transparent;
+  height: 24px;
+  width: 110px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--card-bg);
   font-size: 12px;
-  color: var(--text-secondary);
-  padding: 3px 4px;
-  min-width: 64px;
-  flex: 0 1 110px;
+  color: var(--text);
+  padding: 0 10px;
 }
-.tag-draft:hover { background: var(--bg-hover); border-radius: 4px; }
 .meta-date {
   margin-left: auto;
-  font-size: 12px;
+  font-size: 11.5px;
   white-space: nowrap;
 }
 
-/* ---------- 纸面卡片：细描边 + 单层轻投影，简洁克制地浮于灰底 ---------- */
-.editor-paper {
+/* ---------- 编辑区：UI 2.0 mockup 4.3 起扁平化，页头/正文/关联直接铺在灰底上 ---------- */
+.editor-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  margin: 4px 12px 12px;
-  background: var(--paper-bg);
-  border: 1px solid var(--paper-border);
-  border-radius: 10px;
-  box-shadow: var(--paper-shadow);
 }
 .editor-area { flex: 1; min-height: 0; }
 .page-state {
@@ -1226,21 +1271,15 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
   max-width: var(--editor-max);
   width: 100% !important;
   margin: 0 !important;
-  /* 原生 1px 描边 + 3px 方角由纸面卡片的描边/圆角/投影取代 */
+  /* 原生 1px 描边 + 3px 方角去掉：正文直接铺在灰底上 */
   border: none;
   border-radius: 0;
-  background: var(--paper-bg);
+  background: transparent;
 }
-.editor-area :deep(.vditor-toolbar) { max-width: 100%; }
 /* 正文文字列与页头/关联区同一内容列：覆盖 vditor JS 写入的居中内联 padding */
 .editor-area :deep(.vditor-reset) {
-  padding-left: max(24px, calc((100% - var(--content-col)) / 2)) !important;
-  padding-right: max(24px, calc((100% - var(--content-col)) / 2)) !important;
-}
-/* 工具栏内联 padding-left 同样来自 vditor 的 820px 居中公式，同步对齐到内容列 */
-.editor-area :deep(.vditor-toolbar) {
-  padding-left: max(24px, calc((100% - var(--content-col)) / 2)) !important;
-  padding-right: max(10px, calc((100% - var(--content-col)) / 2)) !important;
+  padding-left: var(--col-inset) !important;
+  padding-right: var(--col-inset) !important;
 }
 
 /* 排版精修（Typora/Obsidian 风可读宽行，三种编辑模式统一）
@@ -1334,6 +1373,17 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow-x: auto;
+}
+/* vditor 用 <pre class="vditor-reset"> 承载正文本身（.vditor-ir / .vditor-sv 的直接子元素），
+   上面那条代码块卡片样式会连整篇正文一起画成卡片；正文容器必须透明（UI 2.0 mockup 4.3 扁平纸面） */
+.editor-area :deep(.vditor-ir > pre.vditor-reset),
+.editor-area :deep(.vditor-wysiwyg > pre.vditor-reset),
+.editor-area :deep(.vditor-sv > pre.vditor-reset) {
+  margin: 0;
+  padding: 10px 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
 }
 .editor-area :deep(.vditor-ir pre code),
 .editor-area :deep(.vditor-wysiwyg pre code),
@@ -1471,12 +1521,10 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
 }
 .source-row small { color: var(--text-faint); }
 
-/* ---------- 本页关联：与正文同一内容列，纯白 + hairline 分区 ---------- */
+/* ---------- 本页关联：与正文同一内容列，铺在灰底上 ---------- */
 .related {
   flex: none;
-  padding: 0 max(24px, calc((100% - var(--content-col)) / 2)) 26px;
-  background: var(--paper-zone-bg);
-  border-top: 1px solid var(--paper-toolbar-border);
+  padding: 0 var(--col-inset) 26px;
 }
 .related-inner {
   padding-top: 12px;
@@ -1517,20 +1565,18 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
 .rel-item:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .rel-item.entity { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
 
-/* ---------- 底部状态栏 ---------- */
+/* ---------- 底部状态栏：34px 白条 + hairline 顶边（mockup 4.3） ---------- */
 .statusbar {
   flex: none;
+  height: 34px;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 4px 20px;
-  font-size: 12px;
+  gap: 16px;
+  padding: 0 18px;
+  font-size: 11.5px;
   color: var(--text-faint);
-  /* 底部状态区：纯白 + 向上柔和投影浮起分区；9px 内圆角贴合卡片 10px 外圆角 */
-  border-top: none;
-  background: var(--paper-zone-bg);
-  box-shadow: var(--paper-zone-shadow);
-  border-radius: 0 0 9px 9px;
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
 }
 .sb-item {
   display: inline-flex;
@@ -1543,10 +1589,10 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
   cursor: pointer;
   padding: 2px 6px;
   border-radius: 4px;
-  color: var(--text-faint);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
 }
-.sb-btn:hover { background: var(--bg-hover); color: var(--text); }
+.sb-btn:hover { background: var(--bg-hover); color: var(--accent); }
 
 .welcome {
   height: 100%;
@@ -1670,22 +1716,17 @@ button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text);
 }
 
 @media (max-width: 768px) {
-  .editor-topbar { padding: 6px 14px; }
-  .editor-paper { margin: 2px 8px 8px; border-radius: 10px; }
+  .editor-topbar { height: 42px; padding: 0 14px; }
   .page-head { padding: 20px 20px 0; }
   .related { padding: 0 20px 20px; }
   .editor-area :deep(.vditor-reset) {
     padding-left: 20px !important;
     padding-right: 20px !important;
   }
-  .editor-area :deep(.vditor-toolbar) {
-    padding-left: 8px !important;
-    padding-right: 8px !important;
-  }
   .title-input { font-size: 26px; }
   .meta-date { display: none; }
   .evidence-drawer { width: 100%; border-left: 0; }
-  .statusbar { padding: 4px 14px; gap: 10px; }
+  .statusbar { padding: 0 14px; gap: 10px; }
 
   /* 页头操作区折叠：摘要行显示、折叠区随状态隐藏 */
   .head-summary {

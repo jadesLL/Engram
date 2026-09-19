@@ -13,15 +13,6 @@
   --bg-secondary: #faf9f7;
   --bg-tertiary: #f0eeeb;
   --card-bg: #ffffff;
-  /* 编辑器「纸面」悬浮卡片：白底白卡；分区不用灰色染色，工具栏/状态栏用柔和投影浮起，浮层用毛玻璃 */
-  --paper-bg: #ffffff;
-  --paper-border: rgba(0, 0, 0, 0.06);
-  --paper-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px -6px rgba(0, 0, 0, 0.1), 0 20px 44px -16px rgba(0, 0, 0, 0.1);
-  --paper-toolbar-bg: transparent;
-  --paper-toolbar-border: rgba(0, 0, 0, 0.05);
-  --paper-zone-bg: transparent;
-  --paper-toolbar-shadow: 0 1px 0 rgba(0, 0, 0, 0.03), 0 10px 22px -10px rgba(0, 0, 0, 0.14);
-  --paper-zone-shadow: 0 -1px 0 rgba(0, 0, 0, 0.03), 0 -10px 22px -10px rgba(0, 0, 0, 0.14);
   --glass-bg: rgba(255, 255, 255, 0.72);
   --glass-blur: saturate(160%) blur(24px);
   --bg-hover: rgba(0, 0, 0, 0.045);
@@ -49,9 +40,10 @@
   --control-bg-pressed: #edeae7;
   --control-border: rgba(0, 0, 0, 0.06);
   --control-border-strong: rgba(0, 0, 0, 0.17);
-  /* 浮层阴影：flyout 常规 / dialog 加深 */
+  /* 浮层阴影：flyout 常规 / dialog 加深 / raised 小卡片（编辑器工具栏） */
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 12px rgba(0, 0, 0, 0.1);
+  --shadow-raised: 0 1px 2px rgba(31, 30, 29, 0.05), 0 2px 8px -2px rgba(31, 30, 29, 0.06);
   --radius: 11px;
   --radius-control: 6px;
   --content-max: 720px;
@@ -114,15 +106,6 @@ html.dark {
   --bg-secondary: #282726;
   --bg-tertiary: #33312f;
   --card-bg: #2a2927;
-  /* 纸张卡片：深色下纸面微提亮；分区同用投影浮起，浮层毛玻璃 */
-  --paper-bg: #292827;
-  --paper-border: rgba(255, 255, 255, 0.08);
-  --paper-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 12px 32px -8px rgba(0, 0, 0, 0.5);
-  --paper-toolbar-bg: transparent;
-  --paper-toolbar-border: rgba(255, 255, 255, 0.06);
-  --paper-zone-bg: transparent;
-  --paper-toolbar-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 10px 22px -10px rgba(0, 0, 0, 0.55);
-  --paper-zone-shadow: 0 -1px 0 rgba(0, 0, 0, 0.3), 0 -10px 22px -10px rgba(0, 0, 0, 0.55);
   --glass-bg: rgba(40, 39, 38, 0.72);
   --glass-blur: saturate(140%) blur(24px);
   --bg-hover: rgba(255, 255, 255, 0.06);
@@ -138,6 +121,7 @@ html.dark {
   --on-accent: #0b2a3d;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.5), 0 2px 12px rgba(0, 0, 0, 0.32);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px -2px rgba(0, 0, 0, 0.36);
   --control-bg: rgba(255, 255, 255, 0.06);
   --control-bg-hover: rgba(255, 255, 255, 0.084);
   --control-bg-pressed: rgba(255, 255, 255, 0.042);
