@@ -443,5 +443,4 @@ exe 约 110 MB、tar.gz 约 160 MB，超出 Gitea 默认附件上限。调大 `a
 | `main/docker-compose.pull.yml` | 生产部署模板（Registry 拉取 + docker.sock 挂载） |
 | `main/docker-compose.nas.yml` | NAS 部署模板（端口可调 + JWT 走 .env + 卷名固定，仅需 compose + .env 两个文件） |
 | `main/docker-compose.local-deploy.yml` | 内部部署辅助片段（叠加本地镜像用） |
-| `main/Dockerfile.deploy` | 旧版遗留，release.yml 未使用 |
 | `CHANGELOG.md` | 版本段落 = 发版硬门禁 + Release 正文来源 |
