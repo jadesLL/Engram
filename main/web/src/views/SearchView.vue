@@ -121,7 +121,6 @@ onMounted(() => {
 .tag-label { font-weight: 400; }
 .hit-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
 .hit-snippet { font-size: var(--font-md); line-height: 1.6; }
-.stale { color: var(--warn); }
 
 @media (max-width: 768px) {
   .search-view { padding: 20px 14px; }

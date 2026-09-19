@@ -121,13 +121,6 @@
   font-size: 13px;
   line-height: 1.55;
 }
-.settings-native .panel-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 
 .settings-native .btn {
   min-height: 32px;
@@ -166,9 +159,6 @@
 }
 .settings-native .setting-control {
   width: 170px;
-}
-.settings-native .setting-control.wide {
-  width: 250px;
 }
 
 .settings-native .setting-message {
@@ -230,7 +220,6 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.settings-native .text-action.accent { color: var(--accent); }
 .settings-native .text-action.danger { color: var(--danger); }
 .settings-native .text-action:disabled {
   opacity: 0.45;
@@ -258,43 +247,6 @@
 .settings-native .danger-icon { color: var(--danger); }
 
 /* 分段选择控件（客户梳理模式等） */
-.settings-native .segmented-control {
-  display: inline-flex;
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  overflow: hidden;
-}
-.settings-native .segmented-btn {
-  appearance: none;
-  margin: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1;
-  padding: 7px 16px;
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-.settings-native .segmented-btn + .segmented-btn {
-  border-left: 1px solid var(--border-strong);
-}
-.settings-native .segmented-btn:hover {
-  color: var(--text);
-  background: var(--bg-hover);
-}
-.settings-native .segmented-btn.active {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-.settings-native .segmented-btn.active:hover {
-  background: var(--accent-hover);
-  color: var(--on-accent);
-}
-.settings-native .segmented-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
 
 /* Win11 ToggleSwitch：40×20 细轨 + 小圆钮，开启为强调色（全局类，编辑器顶栏等复用） */
 .switch-control {
@@ -392,10 +344,6 @@
   .settings-native .panel-head {
     padding: 18px;
   }
-  .settings-native .panel-actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
   .settings-native .setting-row {
     grid-template-columns: 1fr;
     gap: 12px;
@@ -406,9 +354,6 @@
     grid-column: auto;
   }
   .settings-native .setting-control,
-  .settings-native .setting-control.wide {
-    width: 100%;
-  }
 }
 
 @media (max-width: 640px) {
@@ -424,16 +369,6 @@
     border-right: 0;
     border-left: 0;
     border-radius: 0;
-  }
-  .settings-native .panel-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-  .settings-native .panel-actions .btn {
-    width: 100%;
-  }
-  .settings-native .panel-actions .btn.primary {
-    grid-column: 1 / -1;
   }
 }
 

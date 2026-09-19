@@ -24,7 +24,6 @@
   --glass-bg: rgba(255, 255, 255, 0.72);
   --glass-blur: saturate(160%) blur(24px);
   --bg-hover: rgba(0, 0, 0, 0.045);
-  --bg-active: rgba(0, 0, 0, 0.075);
   --text: #1b1b1b;
   --text-secondary: #5c5c5c;
   --text-faint: #8f8f8f;
@@ -97,15 +96,12 @@
   --z-resizer: 36;
   --z-chrome: 40;
   --z-popup: 60;
-  --z-panel: 80;
   --z-overlay: 100;
   --z-toast: 220;
   --z-menu: 1200;
   /* 字号层级 */
-  --font-xs: 11px;
   --font-sm: 12.5px;
   --font-md: 13px;
-  --font-base: 15px;
   font-size: 15px;
 }
 
@@ -129,7 +125,6 @@ html.dark {
   --glass-bg: rgba(41, 43, 46, 0.72);
   --glass-blur: saturate(140%) blur(24px);
   --bg-hover: rgba(255, 255, 255, 0.06);
-  --bg-active: rgba(255, 255, 255, 0.1);
   --text: #ffffff;
   --text-secondary: #c9c9c9;
   --text-faint: #8b8b8b;
@@ -306,8 +301,6 @@ select option {
 .btn.danger { color: var(--danger); }
 .btn.danger-solid { background: var(--danger); border-color: transparent; color: #fff; }
 .btn.danger-solid:hover { opacity: 0.9; }
-.btn.ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
-.btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
 .btn.icon {
   width: 28px;
   height: 28px;
@@ -339,17 +332,6 @@ select option {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   font-size: 12px;
-}
-
-.badge {
-  display: inline-block;
-  min-width: 18px;
-  padding: 1px 6px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 11px;
-  text-align: center;
 }
 
 /* Win11 覆盖式细滚动条：常态 ~4px 细条，hover 加粗 */

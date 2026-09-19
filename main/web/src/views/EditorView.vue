@@ -1066,14 +1066,6 @@ onUnmounted(() => {
   font-size: 12px;
   white-space: nowrap;
 }
-.synthesis-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--warning);
-  white-space: nowrap;
-}
-.synthesis-inline.failed { color: var(--danger); }
 
 /* ---------- 纸面卡片：细描边 + 单层轻投影，简洁克制地浮于灰底 ---------- */
 .editor-paper {
@@ -1278,16 +1270,6 @@ onUnmounted(() => {
 }
 .evidence-head h3 { margin: 0 0 3px; font-size: 17px; }
 .evidence-head p { margin: 0; }
-.synthesis-state {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-}
-.synthesis-state.warning { color: var(--warning); }
 .evidence-scroll {
   flex: 1;
   min-height: 0;
