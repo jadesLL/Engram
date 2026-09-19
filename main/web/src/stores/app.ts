@@ -149,8 +149,14 @@ export const useAppStore = defineStore('app', {
     focusChatComposer() {
       this.chatComposerFocus += 1;
     },
+    /**
+     * 记下抽屉宽度偏好。这里只做安全收敛（不小于 320、不超过窗口宽度）：
+     * 「并排最多占窗口 70%，越过即转满窗」是 ChatDrawer 的交互规则，不能在这里写死上限——
+     * 否则拖过 70% 前就被悄悄截断（旧实现在这里固定 720，拖拽永远够不到满窗线）。
+     */
     setChatDrawerWidth(width: number) {
-      this.chatDrawerWidth = Math.min(720, Math.max(320, Math.round(width)));
+      const max = Math.max(320, window.innerWidth);
+      this.chatDrawerWidth = Math.min(max, Math.max(320, Math.round(width)));
       localStorage.setItem('chatDrawerWidth', String(this.chatDrawerWidth));
     },
     /** 切换抽屉形态：写入偏好，下次打开（含 rail ✨ 入口）沿用 */
