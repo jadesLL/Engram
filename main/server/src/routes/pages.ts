@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db } from '../lib/db.js';
 import {
-  readPage, writePage, createPage, movePage, safeJoin, reconcileMissingPages,
+  readPage, writePage, createPage, movePage, safeJoin, reconcileMissingPages, pagePathTaken,
 } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { normalizeDir, isPageDir, typeToDir, ARCHIVE_DIR } from '../config.js';
@@ -152,7 +152,7 @@ export async function pageRoutes(app: FastifyInstance) {
       const targetDir = typeToDir(type);
       const filename = path.posix.basename(page.path);
       const newRel = path.posix.join(targetDir, filename);
-      if (newRel !== page.path && !fs.existsSync(safeJoin(newRel))) {
+      if (newRel !== page.path && !pagePathTaken(newRel)) {
         movePage(page.path, newRel);
       }
     }
@@ -170,7 +170,8 @@ export async function pageRoutes(app: FastifyInstance) {
     if (page.path.startsWith(ARCHIVE_DIR + '/')) return { ok: true }; // 已在归档区
     let newRel = path.posix.join(ARCHIVE_DIR, path.posix.basename(page.path));
     let i = 1;
-    while (fs.existsSync(safeJoin(newRel))) {
+    // 撞名判定必须连 pages 行（含回收站软删行）一起看：movePage 撞名会直接拒绝
+    while (pagePathTaken(newRel)) {
       const base = path.posix.basename(page.path, '.md');
       newRel = path.posix.join(ARCHIVE_DIR, `${base}-${i++}.md`);
     }
@@ -201,7 +202,7 @@ export async function pageRoutes(app: FastifyInstance) {
     const targetDir = typeToDir(page.type);
     let newRel = path.posix.join(targetDir, path.posix.basename(page.path));
     let i = 1;
-    while (fs.existsSync(safeJoin(newRel))) {
+    while (pagePathTaken(newRel)) {
       const base = path.posix.basename(page.path, '.md');
       newRel = path.posix.join(targetDir, `${base}-${i++}.md`);
     }
@@ -223,6 +224,10 @@ export async function pageRoutes(app: FastifyInstance) {
     const filename = (newTitle || page.title).replace(/[\\/:*?"<>|]/g, '-') + '.md';
     const newRel = path.posix.join(targetDir, filename);
     if (newRel === page.path) return { ok: true };
+    // 撞名（文件或 pages 行，含回收站软删行）必须先拦下：movePage 撞名直接拒绝
+    if (pagePathTaken(newRel)) {
+      return reply.code(400).send({ error: '目标位置已有同名页面，请换个标题或目录' });
+    }
     const meta = movePage(page.path, newRel);
     if (!meta) return reply.code(500).send({ error: '移动失败' });
     if (newTitle && newTitle !== page.title) {

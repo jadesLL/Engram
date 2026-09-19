@@ -198,6 +198,8 @@ interface SyncStatus {
   role: 'hub' | 'member' | 'none';
   enabled: boolean;
   connected: boolean;
+  /** 首次接入引导（全量对账 + 补拉）仍在进行 */
+  syncing?: boolean;
   running?: boolean;
   hubUrl: string;
   hubToken: string;
@@ -244,6 +246,7 @@ const EVENT_LABELS: Record<string, string> = {
   'oplog-trimmed': '落后过多，转全量对账',
   'push-retry': '推送失败，退避重试',
   'apply-failed': '应用远端变更失败（将重放）',
+  'move-superseded': '页面已在新路径，旧路径残留入回收站',
   'file-pull-deferred': '文件拉取失败，待重试',
   'file-pull-retry-ok': '文件补拉成功',
   'file-pull-retry-failed': '文件补拉重试失败',
@@ -260,7 +263,12 @@ function eventLabel(event: string): string {
 
 const logView = computed<SyncLogEntry[]>(() => (status.value?.log || []).slice(-30).reverse());
 const connectionLabel = computed(() => {
-  if (capabilities.value.runtime !== 'android-local') return status.value?.connected ? '已连接' : '未连接';
+  if (capabilities.value.runtime !== 'android-local') {
+    if (!status.value?.connected) return '未连接';
+    // 首次接入要先把整库对账拉全、再从水位补拉，可能持续数分钟：这期间中枢已连上、
+    // 内容正在进来，只显示「未连接」会让用户以为没生效（重启后水位已推进才变正常）
+    return status.value?.syncing ? '已连接 · 首次同步中' : '已连接';
+  }
   if (status.value?.running) return '同步中';
   return status.value?.connected ? '已同步并断开' : '尚未成功';
 });

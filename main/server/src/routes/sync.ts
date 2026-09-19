@@ -233,9 +233,12 @@ export async function syncRoutes(app: FastifyInstance) {
     };
   });
 
-  /** 全量对账清单（页面/文件带内容 hash 与 revision；条目另带 distilled 供对端比对本端账本） */
+  /**
+   * 全量对账清单（页面/文件带内容 hash 与 revision；条目另带 distilled 供对端比对本端账本；
+   * stale 为本端「见过但当前不持有」的路径：对端据此不再把已删/已改名旧路径补推回来）。
+   */
   app.get('/api/sync/snapshot', { preHandler: requireSyncAccess }, async () => {
-    return { entries: buildSnapshotEntries(), cursor: currentRevision() };
+    return { entries: buildSnapshotEntries(), cursor: currentRevision(), stale: buildStalePaths() };
   });
 
   /** 页面内容拉取（对账用） */
@@ -319,4 +322,36 @@ function buildSnapshotEntries(): {
   }
   walk('');
   return entries;
+}
+
+/**
+ * 中枢「见过、但当前不持有」的路径清单（对账时下发给成员）。
+ *
+ * 全量对账的反向补推只对「中枢从没见过」的本端内容成立：成员停用期间中枢删页、
+ * 或页面在中枢被改名移走时，成员手里的旧副本若被补推回来，等于让中枢复活已删页面
+ * 并广播给所有端（用户可见的「之前删了的文件又冒出来」）。四个来源合起来覆盖
+ * 「行还在但已软删」「已永久删除（行没了）」「已改名移走的旧路径」三类：
+ *  - pages/files 软删行
+ *  - page_revisions 里出现过的路径（改名后旧路径的历史版本仍留在这里，不受 oplog 裁剪影响）
+ *  - oplog 里 move 的 old_path 与 delete 的 target
+ * 当前仍然存活的路径一律剔除（页面可能在同一路径上被删后重建）。
+ */
+function buildStalePaths(): string[] {
+  const rows = db
+    .prepare(
+      `SELECT path FROM pages WHERE deleted = 1
+       UNION SELECT path FROM files WHERE deleted = 1
+       UNION SELECT path FROM page_revisions
+       UNION SELECT old_path FROM sync_oplog WHERE kind = 'move' AND old_path != ''
+       UNION SELECT target FROM sync_oplog WHERE kind = 'delete'`
+    )
+    .all() as { path: string }[];
+  const live = new Set<string>();
+  for (const row of db.prepare(`SELECT path FROM pages WHERE deleted = 0`).all() as { path: string }[]) {
+    live.add(row.path);
+  }
+  for (const row of db.prepare(`SELECT path FROM files WHERE deleted = 0`).all() as { path: string }[]) {
+    live.add(row.path);
+  }
+  return rows.map((r) => r.path).filter((p) => p && !live.has(p));
 }

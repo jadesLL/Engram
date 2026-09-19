@@ -404,11 +404,28 @@ export function pagePathTaken(rel: string): boolean {
   return !!db.prepare(`SELECT 1 FROM pages WHERE path = ?`).get(rel);
 }
 
-/** 重命名/移动（文件与 DB 同步） */
+/** 目标路径已被占用（文件或 pages 行）时由 movePage 抛出：调用方先处理撞名再搬移 */
+export class PagePathTakenError extends Error {
+  constructor(public relPath: string) {
+    super(`目标路径已被占用：${relPath}`);
+    this.name = 'PagePathTakenError';
+  }
+}
+
+/**
+ * 重命名/移动（文件与 DB 同步）。
+ *
+ * 撞名防线必须在任何文件系统改动之前：renameSync 会覆盖目标文件，而 pages.path 的
+ * 唯一约束报错发生在覆盖之后——旧路径的行会停在 deleted = 0 却没有文件（幽灵页：
+ * 侧栏列出、点开报「文件不存在」，只有重启扫描才清），目标页正文同时被顶替。
+ * 同步链路重放历史 move 时目标路径往往已由全量对账落位，这条路径必然被走到；
+ * 本地 rename/move 入口同样可能撞上回收站软删行占位。
+ */
 export function movePage(oldRel: string, newRel: string, origin: WriteOrigin = 'local'): PageMeta | null {
   const oldAbs = safeJoin(oldRel);
   const newAbs = safeJoin(newRel);
   if (!fs.existsSync(oldAbs)) return null;
+  if (pagePathTaken(newRel)) throw new PagePathTakenError(newRel);
   fs.mkdirSync(path.dirname(newAbs), { recursive: true });
   fs.renameSync(oldAbs, newAbs);
   // deleted = 0：与 reconcileMissingPages 竞态时自愈（对账可能正好在 rename 之后、
