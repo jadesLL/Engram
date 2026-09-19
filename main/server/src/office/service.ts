@@ -80,8 +80,13 @@ function internalUrl(route: string, token: string): string {
   return `${base}${route}?token=${encodeURIComponent(token)}`;
 }
 
+/** 编辑器是否已完成静态配置（不含在线探测）：能力协商与可用性判断共用同一口径 */
+export function officeConfigured(): boolean {
+  return OFFICE_EDITOR_ENABLED && Boolean(OFFICE_JWT_SECRET);
+}
+
 export async function officeAvailable(): Promise<boolean> {
-  if (!OFFICE_EDITOR_ENABLED || !OFFICE_JWT_SECRET) return false;
+  if (!officeConfigured()) return false;
   try {
     const res = await fetch(`${OFFICE_INTERNAL_URL.replace(/\/$/, '')}/healthcheck`, {
       signal: AbortSignal.timeout(2500),

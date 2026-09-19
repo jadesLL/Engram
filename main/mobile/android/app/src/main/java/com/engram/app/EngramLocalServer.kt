@@ -214,7 +214,8 @@ class EngramLocalServer private constructor(private val context: Context) {
                 incoming.forEach { it.second.delete() }
                 throw error
             }
-            require(dir == "原始资料" || dir.startsWith("原始资料/")) { "文件只能上传到「原始资料」目录" }
+            // 与 server config.ts UPLOAD_DIRS 同口径（assets 供编辑器贴图），改一处要同步另一处
+            require(dir == "原始资料" || dir == "assets") { "文件只能上传到「原始资料」或「assets」目录" }
             val saved = JSONArray(); val duplicates = JSONArray()
             incoming.forEach { (name, staged) ->
                 try { saved.put(db.installImportedFile("$dir/$name", staged)) }
