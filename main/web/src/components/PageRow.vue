@@ -183,6 +183,7 @@ const timeText = computed(() => {
   color: var(--text-faint);
   font-size: 10.5px;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   transform: translateY(-50%);
   transition: opacity 150ms ease;
 }

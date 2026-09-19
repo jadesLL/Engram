@@ -57,15 +57,18 @@
           </template>
         </BackTrailMenu>
         <div class="spacer"></div>
-        <span v-if="saveState" class="save-pill" :class="savePillClass">
-          <span class="dot"></span>{{ saveState }}
-        </span>
+        <!-- 保存按钮并入状态 pill：dirty 时 pill 本身就是保存按钮（Ctrl+S 不变） -->
         <button
-          class="btn small topbar-save"
-          :disabled="!dirtyUi"
-          v-tooltip="'保存当前修改（Ctrl+S）'"
-          @click="save(true)"
-        >保存</button>
+          v-if="saveState"
+          class="save-pill"
+          :class="savePillClass"
+          type="button"
+          :disabled="saveState !== '编辑中…'"
+          v-tooltip="saveState === '编辑中…' ? '点击保存（Ctrl+S）' : ''"
+          @click="saveState === '编辑中…' && save(true)"
+        >
+          <span class="dot"></span>{{ saveState }}
+        </button>
         <label class="switch-control autosave-toggle" v-tooltip="'按文件记忆；关闭后仅手动保存'">
           <input
             type="checkbox"
@@ -296,37 +299,72 @@
       </template>
     </div>
 
-    <!-- 欢迎页 -->
+    <!-- 欢迎页：问候 + 库概览 + 快捷入口 + 最近编辑 -->
     <div v-else class="welcome">
       <div class="welcome-inner">
-        <div class="welcome-logo" aria-hidden="true">
-          <svg viewBox="0 0 100 100" width="56" height="56">
-            <defs>
-              <linearGradient id="engram-orbit-welcome" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">
-                <stop offset="0" stop-color="#22D3EE" />
-                <stop offset="1" stop-color="#4D8AFF" />
-              </linearGradient>
-              <linearGradient id="engram-core-welcome" gradientUnits="userSpaceOnUse" x1="39" y1="39" x2="61" y2="61">
-                <stop offset="0" stop-color="#4D8AFF" />
-                <stop offset="1" stop-color="#245BDB" />
-              </linearGradient>
-            </defs>
-            <ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="url(#engram-orbit-welcome)" stroke-width="8.5" transform="rotate(-28 50 50)" />
-            <circle cx="74" cy="28.5" r="5" fill="#22D3EE" />
-            <circle cx="50" cy="50" r="11" fill="url(#engram-core-welcome)" />
-          </svg>
+        <header class="welcome-head">
+          <div class="welcome-logo" aria-hidden="true">
+            <svg viewBox="0 0 100 100" width="40" height="40">
+              <defs>
+                <linearGradient id="engram-orbit-welcome" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">
+                  <stop offset="0" stop-color="#22D3EE" />
+                  <stop offset="1" stop-color="#4D8AFF" />
+                </linearGradient>
+                <linearGradient id="engram-core-welcome" gradientUnits="userSpaceOnUse" x1="39" y1="39" x2="61" y2="61">
+                  <stop offset="0" stop-color="#4D8AFF" />
+                  <stop offset="1" stop-color="#245BDB" />
+                </linearGradient>
+              </defs>
+              <ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="url(#engram-orbit-welcome)" stroke-width="8.5" transform="rotate(-28 50 50)" />
+              <circle cx="74" cy="28.5" r="5" fill="#22D3EE" />
+              <circle cx="50" cy="50" r="11" fill="url(#engram-core-welcome)" />
+            </svg>
+          </div>
+          <div class="welcome-head-text">
+            <h2 class="welcome-greeting">{{ greeting }}</h2>
+            <p class="muted welcome-sub">
+              库中已有 <strong>{{ welcomeStats.pages }}</strong> 个页面、<strong>{{ welcomeStats.files }}</strong> 份原始资料
+            </p>
+          </div>
+        </header>
+
+        <div class="welcome-cards">
+          <button class="welcome-card" type="button" @click="createFirst">
+            <span class="wc-icon accent"><Icon name="file-plus" :size="17" /></span>
+            <span class="wc-text"><strong>新建页面</strong><em>Ctrl+N</em></span>
+          </button>
+          <button class="welcome-card" type="button" @click="$router.push('/search')">
+            <span class="wc-icon"><Icon name="search" :size="17" /></span>
+            <span class="wc-text"><strong>搜索知识库</strong><em>Ctrl+K</em></span>
+          </button>
+          <button class="welcome-card" type="button" @click="$router.push('/graph')">
+            <span class="wc-icon"><Icon name="graph" :size="17" /></span>
+            <span class="wc-text"><strong>知识图谱</strong><em>总览关系结构</em></span>
+          </button>
+          <button class="welcome-card" type="button" @click="app.toggleChat(true)">
+            <span class="wc-icon"><Icon name="ai" :size="17" /></span>
+            <span class="wc-text"><strong>问问 Agent</strong><em>内置助手开问</em></span>
+          </button>
         </div>
-        <h2>欢迎来到 Engram</h2>
-        <p class="muted">内核不内置 AI 的知识大脑：导入资料，用外部 Agent（ZCode / Codex / Claude Code…）经 MCP 或 CLI 提炼与问答；也可以用左栏 ✨ 打开随包内置的 Agent 直接开问。</p>
-        <div class="welcome-actions">
-          <button class="btn primary" @click="createFirst">新建页面</button>
-          <button class="btn" @click="$router.push('/search')">搜索知识库</button>
-          <button class="btn" @click="$router.push('/graph')">知识图谱</button>
+
+        <div v-if="recentPages.length" class="welcome-recent">
+          <h3>最近编辑</h3>
+          <button
+            v-for="p in recentPages"
+            :key="p.id"
+            class="recent-row"
+            type="button"
+            @click="$router.push(`/page/${p.id}`)"
+          >
+            <Icon name="file" :size="13" class="recent-icon" />
+            <span class="recent-title">{{ p.title }}</span>
+            <span class="recent-time">{{ fromNow(p.updated_at) }}</span>
+          </button>
         </div>
-        <div class="welcome-shortcuts">
-          <span class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>K</kbd> 搜索</span>
-          <span class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>N</kbd> 新建页面</span>
-        </div>
+
+        <p class="welcome-tip muted">
+          把资料拖进左栏「原始资料」，用外部 Agent（ZCode / Claude Code…）经 MCP 提炼进 Wiki；也可以直接用内置 Agent 开问。
+        </p>
       </div>
     </div>
   </div>
@@ -874,6 +912,45 @@ async function createFirst() {
   router.push(`/page/${data.meta.id}`);
 }
 
+/* 欢迎页：问候语 + 库统计 + 最近编辑（无页面 id 时加载一次） */
+const greeting = computed(() => {
+  const h = new Date().getHours();
+  if (h < 6) return '夜深了';
+  if (h < 12) return '早上好';
+  if (h < 18) return '下午好';
+  return '晚上好';
+});
+
+const welcomeStats = ref({ pages: 0, files: 0 });
+const recentPages = ref<any[]>([]);
+let welcomeLoaded = false;
+
+function fromNow(iso: string) {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return '刚刚';
+  if (mins < 60) return `${mins} 分钟前`;
+  const days = Math.floor(diff / 86400000);
+  if (days < 1) return '今天';
+  if (days < 30) return `${days} 天前`;
+  return `${Math.floor(days / 30)} 个月前`;
+}
+
+async function loadWelcome() {
+  try {
+    const [{ data: pl }, { data: fl }] = await Promise.all([
+      api.get('/api/pages/list'),
+      api.get('/api/files/list'),
+    ]);
+    const pages = (pl.pages || []) as any[];
+    welcomeStats.value = { pages: pages.length, files: (fl.files || []).length };
+    recentPages.value = pages
+      .filter((p) => p.path.startsWith('Wiki/') && !p.path.startsWith('Wiki/归档/'))
+      .slice(0, 5);
+  } catch { /* 欢迎页数据静默失败，不影响主流程 */ }
+}
+
 watch(
   () => route.params.id,
   (id, oldId) => {
@@ -888,6 +965,7 @@ watch(
     else if (!id) {
       page.value = null; // 无 id 才回欢迎页
       pageError.value = '';
+      loadWelcome(); // 回到欢迎页时刷新统计与最近编辑
     }
   }
 );
@@ -934,6 +1012,7 @@ function onGlobalKey(e: KeyboardEvent) {
 
 onMounted(() => {
   if (route.params.id) loadPage(route.params.id as string);
+  else if (!welcomeLoaded) { welcomeLoaded = true; loadWelcome(); }
   window.addEventListener('beforeunload', beforeUnload);
   window.addEventListener('keydown', onGlobalKey);
 });
@@ -950,9 +1029,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   position: relative;
-  /* 内容列：页头 / 正文 / 关联区统一 760px 居中，vditor 内联 padding 被下方 !important 覆盖 */
+  /* 内容列：页头 / 正文 / 关联区统一 720px 居中（UI 2.0 行长收敛），vditor 内联 padding 被下方 !important 覆盖 */
   --editor-max: 100%;
-  --content-col: 760px;
+  --content-col: 720px;
 }
 
 /* ---------- 顶部条：面包屑 + 保存状态 ---------- */
@@ -993,6 +1072,9 @@ onUnmounted(() => {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
 }
+button.save-pill { font: inherit; font-size: 12px; cursor: default; }
+button.save-pill.dirty { cursor: pointer; }
+button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text); }
 .save-pill .dot {
   width: 7px;
   height: 7px;
@@ -1003,7 +1085,6 @@ onUnmounted(() => {
 .save-pill.failed { color: var(--danger); }
 .save-pill.failed .dot { background: var(--danger); }
 @keyframes save-pulse { 50% { opacity: 0.35; } }
-.topbar-save { flex: none; }
 .autosave-toggle { flex: none; }
 /* 双链跳转后的返回入口：紧邻面包屑，图标 + 文案 */
 .topbar-back {
@@ -1472,42 +1553,120 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow-y: auto;
 }
-.welcome-inner { text-align: center; max-width: 420px; }
-.welcome-logo {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto 16px;
+.welcome-inner { width: 100%; max-width: 520px; padding: 32px 24px; }
+
+/* 问候头：小 logo + 时间问候 + 库概览一行 */
+.welcome-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-}
-.welcome-inner h2 { font-weight: 600; }
-.welcome-actions { display: flex; gap: 10px; justify-content: center; margin: 20px 0; flex-wrap: wrap; }
-.welcome-shortcuts {
-  display: flex;
-  justify-content: center;
   gap: 14px;
-  margin-top: 18px;
-  flex-wrap: wrap;
+  margin-bottom: 22px;
 }
-.shortcut-item {
-  display: inline-flex;
+.welcome-logo {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  display: flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+}
+.welcome-head-text { min-width: 0; }
+.welcome-greeting { font-size: 20px; font-weight: 600; line-height: 1.25; }
+.welcome-sub { margin-top: 3px; font-size: 12.5px; }
+.welcome-sub strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* 快捷入口：2×2 图标卡 */
+.welcome-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.welcome-card {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 11px);
+  background: var(--bg-secondary);
+  text-align: left;
+  transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+.welcome-card:hover {
+  border-color: var(--border-strong, var(--border));
+  background: var(--bg-hover);
+}
+.welcome-card:active { transform: translateY(1px); }
+.welcome-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 1px var(--accent);
+}
+.wc-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--bg-tertiary, var(--bg));
+  color: var(--text-secondary);
+}
+.wc-icon.accent { background: var(--accent-soft); color: var(--accent); }
+.wc-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wc-text strong { font-size: 13px; font-weight: 600; color: var(--text); }
+.wc-text em { font-style: normal; font-size: 11px; color: var(--text-faint); }
+
+/* 最近编辑列表 */
+.welcome-recent { margin-top: 22px; }
+.welcome-recent h3 {
+  margin-bottom: 6px;
   color: var(--text-faint);
   font-size: 11px;
-}
-.shortcut-item kbd {
-  padding: 2px 6px;
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 10px;
   font-weight: 600;
+  letter-spacing: 0.4px;
+}
+.recent-row {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  text-align: left;
+  transition: background 150ms ease, color 150ms ease;
+}
+.recent-row:hover { background: var(--bg-hover); color: var(--text); }
+.recent-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.recent-icon { flex-shrink: 0; color: var(--text-faint); }
+.recent-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+.recent-time {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.welcome-tip {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  line-height: 1.7;
 }
 
 @media (max-width: 768px) {
@@ -1540,5 +1699,8 @@ onUnmounted(() => {
   }
   .page-chrome { padding-top: 8px; }
   .page-head.chrome-collapsed .page-chrome { display: none; }
+
+  /* 欢迎页：窄屏快捷卡单列 */
+  .welcome-cards { grid-template-columns: 1fr; }
 }
 </style>

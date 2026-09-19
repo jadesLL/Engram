@@ -246,7 +246,37 @@
 }
 .settings-native .danger-icon { color: var(--danger); }
 
-/* 分段选择控件（客户梳理模式等） */
+/* 分段选择控件：三选一场景（主题等）替代下拉，选项一眼可见、一键直达 */
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+}
+.segmented button {
+  padding: 5px 14px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+.segmented button:hover {
+  color: var(--text);
+}
+.segmented button.active {
+  background: var(--card-bg);
+  box-shadow: 0 1px 3px rgba(31, 30, 29, 0.12), 0 0 0 1px var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+.segmented button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 /* Win11 ToggleSwitch：40×20 细轨 + 小圆钮，开启为强调色（全局类，编辑器顶栏等复用） */
 .switch-control {
@@ -353,7 +383,9 @@
   .settings-native .setting-row .setting-message {
     grid-column: auto;
   }
-  .settings-native .setting-control,
+  .settings-native .setting-control {
+    width: 100%;
+  }
 }
 
 @media (max-width: 640px) {

@@ -285,11 +285,13 @@ const mobileToolbar = [
   wikilinkToolbarItem,
   'link', 'undo', 'edit-mode', readingToolbarItem,
 ];
+// UI 2.0：按「格式 / 段落 / 插入 / 历史 / 视图」分组，18 个图标收敛视觉主次
 const desktopToolbar = [
-  'headings', 'bold', 'italic', 'strike', 'quote', 'list', 'ordered-list', 'check', 'inline-code', 'code',
-  'table', 'link', '|',
-  wikilinkToolbarItem,
-  '|', 'undo', 'redo', '|', 'edit-mode', 'fullscreen', 'outline', '|',
+  'headings', 'bold', 'italic', 'strike', '|',
+  'quote', 'list', 'ordered-list', 'check', '|',
+  'inline-code', 'code', 'table', 'link', wikilinkToolbarItem, '|',
+  'undo', 'redo', '|',
+  'edit-mode', 'fullscreen', 'outline', '|',
   readingToolbarItem,
 ];
 
