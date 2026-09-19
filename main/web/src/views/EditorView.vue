@@ -20,6 +20,7 @@
         :dark="isDark"
         :related="related"
         :can-go-back="canGoBack"
+        :page-key="page.id"
         @close="closeReading"
         @go-back="goBackToSource"
         @open-wikilink="openWikilink"
