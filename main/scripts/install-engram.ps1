@@ -9,7 +9,8 @@
 #       -NoPrompt（GUI 驱动）时不交互，缺凭据改发 ##AUTH:clone 让界面再问一次。
 #
 # 做的事（全自动，无需管理员权限，不污染系统）：
-#   便携 Git(MinGit)/Node.js/pnpm（缺失才下载，npmmirror→huaweicloud 镜像回退）
+#   便携 Git(MinGit)/Node.js/pnpm（缺失才下载；地址内置在脚本里，npmmirror → 华为云 → 官方源
+#   逐个回退，产物按 ZIP 头校验，可用 ENGRAM_MINGIT_URL / ENGRAM_NODE_URL 覆盖为单一地址）
 #   → 克隆/更新 Engram 源码到 %LOCALAPPDATA%\engram\Engram
 #   → 安装依赖、构建桌面端、创建桌面快捷方式、启动
 # 数据与安装包版共用 %APPDATA%\@engram\desktop；卸载走应用内 设置→软件更新→「卸载」，或运行 uninstall-engram.ps1。
@@ -25,6 +26,38 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Invoke-WebRequest 进度条在 PS5.1 慢十倍
 # npm 镜像（pnpm 安装与依赖安装共用；原先漏了定义，$npmmirror 一直是 $null）
 $npmmirror = 'https://registry.npmmirror.com'
+# npm registry 回退：npmmirror 偶发 5xx/限流时换源往往就过了（pnpm 装不上，后面每一步都做不了）
+$npmRegistryFallback = 'https://repo.huaweicloud.com/repository/npm/'
+# 二进制镜像：electron 运行时与 better-sqlite3 原生模块都从这里取。仓库 .npmrc 里是同一组值，
+# 这里再显式导出一次——环境变量优先级更高，客户机上 .npmrc 被改过或被工具覆盖也照样走镜像。
+$electronMirror = 'https://npmmirror.com/mirrors/electron/'
+$sqlite3Mirror = 'https://registry.npmmirror.com/-/binary/better-sqlite3'
+$env:ELECTRON_MIRROR = $electronMirror
+$env:npm_config_electron_mirror = $electronMirror
+$env:npm_config_better_sqlite3_binary_host_mirror = $sqlite3Mirror
+
+# ---------- 便携工具下载源 ----------
+# 客户机可能既没有 Git 也没有 Node（新电脑、重装系统、只有 WPS 的办公机），安装器必须自己把它们
+# 下回来。每个工具给一组镜像，Get-RemoteFile 按顺序试：国内镜像在前（实测客户机 GitHub 直连常被
+# 掐断，2026-09-17），官方源兜底；版本号写死，地址与产物可复现，单个镜像挂掉还有下一个。
+# 覆盖：ENGRAM_MINGIT_URL / ENGRAM_NODE_URL 指定单一地址（内网代理、自建离线镜像场景）。
+$mingitTag = 'v2.55.0.windows.5'   # git-for-windows 的 Release 标签
+$mingitVer = '2.55.0.5'            # 资产文件名里的版本
+$mingitZip = "MinGit-$mingitVer-64-bit.zip"
+$mingitUrls = @(
+  "https://registry.npmmirror.com/-/binary/git-for-windows/$mingitTag/$mingitZip",
+  "https://mirrors.huaweicloud.com/git-for-windows/$mingitTag/$mingitZip",
+  "https://github.com/git-for-windows/git/releases/download/$mingitTag/$mingitZip"
+)
+$nodeVer = '22.20.0'               # 与 CI/Dockerfile 同一大版本（node:22），>=20 即满足 engines
+$nodeZip = "node-v$nodeVer-win-x64.zip"
+$nodeUrls = @(
+  "https://registry.npmmirror.com/-/binary/node/v$nodeVer/$nodeZip",
+  "https://mirrors.huaweicloud.com/nodejs/v$nodeVer/$nodeZip",
+  "https://nodejs.org/dist/v$nodeVer/$nodeZip"
+)
+if ($env:ENGRAM_MINGIT_URL) { $mingitUrls = @($env:ENGRAM_MINGIT_URL) }
+if ($env:ENGRAM_NODE_URL) { $nodeUrls = @($env:ENGRAM_NODE_URL) }
 # 子进程（node/pnpm）输出是 UTF-8，而 PS5.1 默认按 OEM 代码页（中文机 936）解码，转发进日志的
 # 报错上下文会整片乱码，客户与我们都看不出真正原因。设成 UTF-8 后解码正确（实测「失败：测试」）。
 # 必须 try/catch：--windowsHide 无控制台句柄时赋值会抛异常，捕获掉照常继续，与老行为一致。
@@ -48,8 +81,20 @@ function StepDone([string]$id, [string]$note = '') { Out-Line "##DONE:$id"; if (
 function StepFail([string]$id, [string]$msg) { Out-Line "##FAIL:$id|$msg"; throw $msg }
 function StepLog([string]$msg) { Out-Line "   $msg" }
 function Test-Command([string]$name) { [Boolean](Get-Command $name -ErrorAction SilentlyContinue) }
+# 合并式刷新 PATH（不能整体覆盖）：便携 Node/MinGit 与 pnpm 私有前缀的目录只存在于本进程
+# PATH 里（刻意不写系统环境变量），覆盖式刷新会把它们抹掉——客户机（本机无 Node）实测就是这样
+# 挂的：便携 Node 下好了、pnpm 也装上了，紧跟的 pnpm 校验却找不到命令，报「安装 pnpm 失败」。
 function Refresh-Path {
-  $env:Path = "$([Environment]::GetEnvironmentVariable('Path','Machine'));$([Environment]::GetEnvironmentVariable('Path','User'))"
+  $merged = New-Object System.Collections.Generic.List[string]
+  $sources = @($env:Path) +
+    @([Environment]::GetEnvironmentVariable('Path', 'Machine')) +
+    @([Environment]::GetEnvironmentVariable('Path', 'User'))
+  foreach ($entry in $sources) {
+    foreach ($p in ("$entry" -split ';')) {
+      if ($p -and -not $merged.Contains($p)) { $merged.Add($p) | Out-Null }
+    }
+  }
+  $env:Path = ($merged -join ';')
 }
 # 子进程输出默认只进控制台，而 GUI 只读进度日志文件——不手动接进来，界面失败时就只剩
 # 一句笼统提示，真正的原因（pnpm 报错、git 认证失败等）全丢。这里统一转发进日志。
@@ -110,16 +155,72 @@ function Invoke-Logged([string]$file, [string[]]$arguments) {
   return $code
 }
 function Hint([string]$fallback) { if ($script:LastErrorLine) { return $script:LastErrorLine } return $fallback }
+# 下载单个文件：主地址 + $script:fallback 里的镜像按顺序试，拿到完整压缩包才算成功。
+# 每一步都要校验产物——镜像返回 404 HTML、连接被掐断留下半截文件，curl 的退出码都可能是 0，
+# 不校验就会把坏文件交给 Expand-Archive，报出来的错跟真正的原因（镜像挂了）毫无关系。
 function Get-RemoteFile([string]$url, [string]$out) {
   $tmp = "$out.download"
   $ok = $false
-  foreach ($u in @($url) + ($script:fallback)) {
+  $tried = New-Object System.Collections.Generic.List[string]
+  # 失败原因逐次覆盖：报错里要给出「最后一个地址是怎么失败的」，否则客户只看到一串 URL
+  $reason = '下载器无错误输出'
+  foreach ($u in @($url) + @($script:fallback)) {
+    if (-not $u) { continue }
+    $tried.Add($u) | Out-Null
     StepLog "下载 $u"
-    $code = Invoke-Logged 'curl.exe' @('--fail', '-L', '--retry', '2', '-o', $tmp, $u)
-    if ($code -eq 0 -and (Test-Path $tmp)) { $ok = $true; break }
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    if (Test-Command 'curl.exe') {
+      # -sS：关掉进度条（它用 \r 原地刷新，进日志会糊成一大坨，GUI 详情页没法看），
+      # 但保留错误信息——--fail 让 HTTP 4xx/5xx 直接非零退出，正是换镜像的依据。
+      $code = Invoke-Logged 'curl.exe' @('--fail', '-L', '-sS', '--retry', '2', '-o', $tmp, $u)
+    } else {
+      # Win10 1803 之前没有自带 curl.exe：用 Invoke-WebRequest 顶上，别让「本机没有下载器」
+      # 变成新的安装失败原因。PS5.1 的进度条在慢链路上会拖慢十倍，已由 $ProgressPreference 关掉。
+      $code = 1
+      $savedEap = $ErrorActionPreference
+      $ErrorActionPreference = 'Continue'
+      try {
+        Invoke-WebRequest -Uri $u -OutFile $tmp -UseBasicParsing -TimeoutSec 600
+        $code = 0
+      } catch {
+        $script:LastErrorLine = Redact "$($_.Exception.Message)"
+        Out-Line "   $script:LastErrorLine"
+      } finally { $ErrorActionPreference = $savedEap }
+    }
+    if ($code -ne 0 -or -not (Test-Path $tmp)) { $reason = Hint '下载器无错误输出'; continue }
+    if (Test-DownloadedArchive $tmp) { $ok = $true; break }
+    $reason = '产物不是完整压缩包（多为镜像返回的错误页或被掐断的半截文件）'
+    StepLog '   换下一个镜像'
   }
-  if (-not $ok) { throw "下载失败：$url（及镜像）—— $(Hint 'curl 无错误输出')" }
+  if (-not $ok) {
+    throw "下载失败（已试 $($tried.Count) 个地址）：$($tried -join ' / ')—— $reason"
+  }
   Move-Item $tmp $out -Force
+}
+# 下载产物是否是完整压缩包（zip 头 PK\x03\x04 + 最小体积）。定义放在 Get-RemoteFile 之后是
+# 刻意的：installer-error-capture.test.js 会切出「Redact..Get-RemoteFile」这段单独跑，别把新
+# 依赖塞进去；PowerShell 调用发生在全部函数定义之后，位置不影响可用性。
+function Test-DownloadedArchive([string]$path) {
+  try {
+    $fi = Get-Item $path -ErrorAction Stop
+    if ($fi.Length -lt 1MB) {
+      StepLog "   只有 $($fi.Length) 字节，明显不是完整压缩包"
+      return $false
+    }
+    $fs = [System.IO.File]::OpenRead($path)
+    try {
+      $head = New-Object byte[] 4
+      $read = $fs.Read($head, 0, 4)
+    } finally { $fs.Dispose() }
+    if ($read -lt 4 -or $head[0] -ne 0x50 -or $head[1] -ne 0x4B) {
+      StepLog '   文件头不是 ZIP（多为镜像返回的错误页）'
+      return $false
+    }
+    return $true
+  } catch {
+    StepLog "   无法读取下载产物：$(Redact "$($_.Exception.Message)")"
+    return $false
+  }
 }
 
 Out-Line '##STEPS:git=检测 Git 环境;node=准备便携 Node.js;pnpm=安装 pnpm;clone=克隆 Engram 源码;deps=安装依赖;build=构建桌面端;shortcut=创建桌面快捷方式;launch=启动 Engram'
@@ -137,9 +238,8 @@ if (Test-Command 'git') { $gitExe = 'git'; $gitNote = '使用系统 Git' }
 if (-not $gitExe) {
   $portableGit = Join-Path $InstallDir 'MinGit\cmd\git.exe'
   if (-not (Test-Path $portableGit)) {
-    # 便携 Git 下载地址未内置（$mingitUrls 从未定义）；直接说清，别让用户对着空 URL 的报错猜
-    if (-not $mingitUrls) { StepFail 'git' '本机未安装 Git，且安装器未内置便携 Git 下载地址。请先安装 Git（https://git-scm.com/download/win）后重试' }
-    $script:fallback = $mingitUrls[1]
+    StepLog "本机没有 Git，下载便携 MinGit $mingitVer（约 40MB，免管理员，装在 $InstallDir\MinGit）"
+    $script:fallback = @($mingitUrls | Select-Object -Skip 1)
     Get-RemoteFile $mingitUrls[0] (Join-Path $InstallDir $mingitZip)
     Step 'git' "解压 MinGit 到 $InstallDir\MinGit"
     Expand-Archive (Join-Path $InstallDir $mingitZip) (Join-Path $InstallDir 'MinGit') -Force
@@ -160,14 +260,18 @@ if ($nodeOk) { StepDone 'node' "使用系统 Node $(node -v)" }
 if (-not $nodeOk) {
   $portableNodeDir = Join-Path $InstallDir 'node'
   if (-not (Test-Path (Join-Path $portableNodeDir 'node.exe'))) {
-    # 同上：便携 Node 下载地址未内置（$nodeUrls/$nodeZip/$nodeVer 从未定义）
-    if (-not $nodeUrls) { StepFail 'node' "本机 Node 缺失或低于 20（当前 $(if (Test-Command 'node') { node -v } else { '未安装' })），且安装器未内置便携 Node 下载地址。请先安装 Node.js 20+（https://nodejs.org/）后重试" }
-    StepLog "下载 $nodeZip"
-    $script:fallback = $nodeUrls[1]
+    $current = if (Test-Command 'node') { node -v } else { '未安装' }
+    StepLog "本机 Node 缺失或低于 20（当前 $current），下载便携 Node v$nodeVer（约 35MB，装在 $portableNodeDir）"
+    $script:fallback = @($nodeUrls | Select-Object -Skip 1)
     Get-RemoteFile $nodeUrls[0] (Join-Path $InstallDir $nodeZip)
+    # 残骸清理必须在解压之前：zip 解出来就是 node-v<版本>-win-x64，解压后再「清理残骸」等于把刚
+    # 解出来的整套 Node 删掉（实测报 npx.ps1 被占用、随后 Move-Item 找不到源目录）。
+    # Defender 实时扫描会在解压后短暂锁住文件，清不掉就忽略，交给 Expand-Archive -Force 覆盖。
+    $extracted = Join-Path $InstallDir "node-v$nodeVer-win-x64"
+    if (Test-Path $extracted) { Remove-Item $extracted -Recurse -Force -ErrorAction SilentlyContinue }
     Expand-Archive (Join-Path $InstallDir $nodeZip) $InstallDir -Force
-    if (Test-Path $portableNodeDir) { Remove-Item $portableNodeDir -Recurse -Force }
-    Move-Item (Join-Path $InstallDir "node-$nodeVer-win-x64") $portableNodeDir
+    if (Test-Path $portableNodeDir) { Remove-Item $portableNodeDir -Recurse -Force -ErrorAction SilentlyContinue }
+    Move-Item $extracted $portableNodeDir
     Remove-Item (Join-Path $InstallDir $nodeZip) -Force
   }
   $env:Path = "$portableNodeDir;$env:Path"
@@ -187,18 +291,41 @@ function Get-PnpmMajor {
   if ("$v" -match '^\s*(\d+)\.') { return [int]$Matches[1] }
   return $null
 }
+# pnpm 是后面每一步的前提（装依赖、构建都靠它），单一路径失败不能直接判死。三条退路依次试：
+#   ① npm install -g            常规路径（Node MSI 装的机器走这条）
+#   ② 安装目录内私有前缀        系统 Node 装在 Program Files 时 -g 可能无写权限；也不污染系统
+#   ③ 换 registry 重试          镜像 5xx/限流（①②各自再配 npmmirror → 华为云两个源）
+# 私有前缀目录要显式进 PATH：它不在系统环境变量里，靠 Refresh-Path 是刷不出来的。
+$pnpmHome = Join-Path $InstallDir 'pnpm-home'
+$pnpmBin = Join-Path $pnpmHome 'node_modules\.bin'
+function Install-Pnpm([int]$major) {
+  $attempts = @(
+    @{ label = 'npm install -g'; args = @('install', '-g', "pnpm@$major") },
+    @{ label = "私有前缀（$pnpmHome）"; args = @('install', '--prefix', $pnpmHome, "pnpm@$major") }
+  )
+  foreach ($attempt in $attempts) {
+    foreach ($registry in @($npmmirror, $npmRegistryFallback)) {
+      StepLog "$($attempt.label)：npm $($attempt.args -join ' ')（registry $registry）"
+      $env:npm_config_registry = $registry
+      $code = Invoke-Logged 'npm' @($attempt.args)
+      Refresh-Path
+      if (Test-Path $pnpmBin) { $env:Path = "$pnpmBin;$env:Path" }
+      if ((Get-PnpmMajor) -eq $major) { return $true }
+      StepLog "   未生效（npm 退出码 $code）：$(Hint 'npm 无错误输出')"
+    }
+  }
+  return $false
+}
 $detected = Get-PnpmMajor
 if ($detected -ne $pnpmMajor) {
   if ($detected) { StepLog "检测到 pnpm 主版本 $detected，与本仓库验证版本（pnpm $pnpmMajor）不符，改装 pnpm@$pnpmMajor" }
   if (-not (Test-Command 'npm')) {
     StepFail 'pnpm' "需要 pnpm $pnpmMajor，但本机没有 npm 可用来安装它。请安装 Node.js 自带 npm 后重试，或手动执行：npm install -g pnpm@$pnpmMajor"
   }
-  $env:npm_config_registry = $npmmirror
-  $code = Invoke-Logged 'npm' @('install', '-g', "pnpm@$pnpmMajor")
-  Refresh-Path
-  if ((Get-PnpmMajor) -ne $pnpmMajor -or $code -ne 0) {
-    StepFail 'pnpm' "安装 pnpm@$pnpmMajor 失败（npm 退出码 $code）：$(Hint 'npm 无错误输出')"
+  if (-not (Install-Pnpm $pnpmMajor)) {
+    StepFail 'pnpm' "安装 pnpm@$pnpmMajor 失败（已试全局/私有前缀 × npmmirror/华为云 四个组合）：$(Hint 'npm 无错误输出')"
   }
+  StepLog "pnpm 来自 $(if (Test-Path $pnpmBin) { $pnpmBin } else { '系统全局目录' })"
 }
 StepDone 'pnpm' "pnpm $(pnpm -v)"
 
@@ -245,6 +372,8 @@ if (Test-Path (Join-Path $repoDir '.git')) {
 # ---------- 5) 依赖 ----------
 $mainDir = Join-Path $repoDir 'main'
 Step 'deps' '安装依赖'
+# registry 与二进制镜像（electron / better-sqlite3）在脚本开头已统一导出为环境变量，子进程
+# （node → pnpm → postinstall）直接继承；这里再点一次 registry，避免被上游环境变量带偏。
 $env:npm_config_registry = $npmmirror
 # 与应用内更新、update-from-source.ps1 同一实现：装完会写依赖指纹记录，后续更新不重复装
 Push-Location $mainDir
