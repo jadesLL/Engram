@@ -331,7 +331,6 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
-import { buildSelectionContext } from '../lib/askAgent';
 import {
   canReadClipboard,
   copyText,
@@ -687,19 +686,24 @@ function searchSelection(selection: string) {
 }
 
 /**
- * 选中文字提问：把选中内容与所在位置（文件或页面）写进 Agent 上下文，再打开聊天抽屉；
- * 问题由用户自己组织（抽屉输入框已聚焦），选中内容以上下文 chip 显示、随消息一起送进 Agent。
+ * 选中文字提问：把选中原文追加成一条片段（抽屉里显示在输入框上方，可逐条查看/移除），
+ * 并把所在位置（文件或页面）写进 Agent 上下文，再打开抽屉；问题由用户自己组织。
  */
 function askAgentAboutSelection(selection: string) {
-  if (!selection.trim()) return;
-  chat.setContext(buildSelectionContext({
-    route: route.fullPath,
-    selection,
-    filePath: filePath.value,
-    page: page.value
-      ? { id: page.value.id, title: title.value || page.value.title, path: page.value.path }
-      : undefined,
-  }));
+  const text = selection.trim();
+  if (!text) return;
+  const pageTitle = title.value || page.value?.title || '';
+  chat.askAboutSelection({
+    text,
+    source: filePath.value || (pageTitle ? `《${pageTitle}》` : ''),
+    location: {
+      route: route.fullPath,
+      filePath: filePath.value,
+      page: page.value
+        ? { id: page.value.id, title: pageTitle, path: page.value.path }
+        : undefined,
+    },
+  });
   app.toggleChat(true);
   app.focusChatComposer();
 }

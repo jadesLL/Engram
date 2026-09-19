@@ -128,6 +128,48 @@
     </div>
 
     <footer class="chat-composer">
+      <!-- 选中片段：紧贴输入框上方单独成块，逐条展开看全文、逐条移除或全部清除 -->
+      <section v-if="chat.selections.length" class="selection-panel" aria-label="选中的原文片段">
+        <header class="selection-head">
+          <span class="selection-title">
+            <Icon name="report" :size="12" />
+            选中片段 {{ chat.selections.length }} 条
+          </span>
+          <button class="text-action" type="button" @click="chat.clearSelections()">全部清除</button>
+        </header>
+        <div
+          v-for="(item, index) in chat.selections"
+          :key="item.id"
+          class="selection-item"
+          :class="{ open: isSelectionOpen(item) }"
+        >
+          <div class="selection-item-head">
+            <button
+              class="selection-toggle"
+              type="button"
+              :aria-expanded="isSelectionOpen(item)"
+              @click="toggleSelection(item)"
+            >
+              <Icon :name="isSelectionOpen(item) ? 'chevron-up' : 'chevron-down'" :size="12" />
+              <b>片段 {{ index + 1 }}</b>
+              <span v-if="item.source" class="selection-source" v-tooltip="item.source">{{ item.source }}</span>
+              <span class="selection-count">{{ item.text.length }} 字</span>
+            </button>
+            <button
+              class="selection-remove"
+              type="button"
+              v-tooltip="'移除这段'"
+              aria-label="移除这段"
+              @click="chat.removeSelection(item.id)"
+            >
+              <Icon name="x" :size="12" />
+            </button>
+          </div>
+          <pre v-if="isSelectionOpen(item)" class="selection-text">{{ item.text }}</pre>
+          <p v-else class="selection-preview">{{ selectionPreview(item.text) }}</p>
+        </div>
+      </section>
+
       <textarea
         ref="inputEl"
         v-model="draft"
@@ -166,6 +208,7 @@ import AppEmptyState from './ui/AppEmptyState.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 import { useAppStore } from '../stores/app';
 import { useChatStore, type ChatContext, type ChatRun, type ChatToolCall } from '../stores/chat';
+import type { SelectionExcerpt } from '../lib/askAgent';
 import { buildChatTimeline, showStreamName, startsNewRun, toolCallSummary } from '../lib/chatTimeline';
 import { renderAssistantMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
@@ -192,9 +235,39 @@ const contextChips = computed(() => {
   const chips: string[] = [];
   if (ctx.currentPage?.title) chips.push(`页面：${ctx.currentPage.title}`);
   if (ctx.currentFile?.path) chips.push(`文件：${ctx.currentFile.path}`);
-  if (ctx.selection?.trim()) chips.push(`选中 ${ctx.selection.trim().length} 字`);
+  // 选中原文不再只报字数：输入框上方有独立的片段面板，可逐条展开看全文
   return chips;
 });
+
+/* ===== 选中片段：默认展开看全文，点标题收起为一行摘要；新加入的片段自动展开 ===== */
+const selectionOpen = ref<Record<string, boolean>>({});
+const knownSelections = new Set<string>();
+
+watch(
+  () => chat.selections.map((item) => item.id).join(','),
+  () => {
+    for (const item of chat.selections) {
+      if (knownSelections.has(item.id)) continue;
+      knownSelections.add(item.id);
+      selectionOpen.value = { ...selectionOpen.value, [item.id]: true };
+    }
+  },
+  { immediate: true }
+);
+
+function isSelectionOpen(item: SelectionExcerpt): boolean {
+  return selectionOpen.value[item.id] ?? true;
+}
+
+function toggleSelection(item: SelectionExcerpt) {
+  selectionOpen.value = { ...selectionOpen.value, [item.id]: !isSelectionOpen(item) };
+}
+
+/** 收起态的一行摘要：压掉换行、只留开头，方便多条并排扫一眼 */
+function selectionPreview(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > 80 ? `${flat.slice(0, 80)}…` : flat;
+}
 
 const terminalRun = computed<ChatRun | null>(() => {
   const run = chat.latestRun;
@@ -728,6 +801,142 @@ onUnmounted(() => {
 .chat-composer {
   border-top: 1px solid var(--border);
   padding: 10px 12px 12px;
+}
+
+/* ===== 选中片段面板：贴在输入框上方，长文靠自身滚动，不把输入框顶出视野 ===== */
+.selection-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.selection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.selection-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.selection-head .text-action {
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.selection-head .text-action:hover {
+  color: var(--accent, #4d8aff);
+}
+
+.selection-item {
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent, #4d8aff);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.selection-item-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+}
+
+.selection-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.selection-toggle b {
+  flex-shrink: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.selection-source {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.selection-count {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.selection-remove {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.selection-remove:hover {
+  background: var(--bg-secondary);
+  color: var(--danger, #d64545);
+}
+
+.selection-text {
+  margin: 0;
+  max-height: 168px;
+  overflow: auto;
+  padding: 0 8px 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.selection-preview {
+  margin: 0;
+  padding: 0 8px 7px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .chat-composer textarea {

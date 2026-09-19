@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia';
 import { api } from '../api';
 import { useAppStore } from './app';
+import {
+  buildSelectionContext,
+  composeSelectionText,
+  type SelectionExcerpt,
+  type SelectionLocation,
+} from '../lib/askAgent';
 
 /**
  * 内置 Agent（聊天抽屉）的前端状态：会话列表 + 快照 + SSE 增量。
@@ -73,6 +79,8 @@ export const useChatStore = defineStore('chat', {
     snapshot: null as ChatSnapshot | null,
     eventSource: null as EventSource | null,
     currentContext: {} as ChatContext,
+    /** 输入框上方逐条展示的选中片段（右击「在 Agent 中提问」累积） */
+    selections: [] as SelectionExcerpt[],
     statusText: '',
     error: '',
   }),
@@ -145,8 +153,47 @@ export const useChatStore = defineStore('chat', {
     setContext(context: ChatContext) {
       this.currentContext = context;
     },
+    /**
+     * 选中文字提问：把片段追加进列表（同一段不重复加），刷新所在位置上下文，
+     * 并把全部片段拼成 wire 上的 `selection`。片段本身留给抽屉在输入框上方逐条展示。
+     */
+    askAboutSelection(input: { text: string; source?: string; location: SelectionLocation }) {
+      const text = (input.text || '').trim();
+      if (!text) return;
+      const source = (input.source || '').trim();
+      if (!this.selections.some((item) => item.text === text && item.source === source)) {
+        this.selections.push({
+          id: `sel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          text,
+          source,
+        });
+      }
+      this.currentContext = {
+        ...buildSelectionContext(input.location),
+        ...(composeSelectionText(this.selections)
+          ? { selection: composeSelectionText(this.selections) }
+          : {}),
+      };
+    },
+    removeSelection(id: string) {
+      this.selections = this.selections.filter((item) => item.id !== id);
+      this.syncSelectionText();
+    },
+    clearSelections() {
+      this.selections = [];
+      this.syncSelectionText();
+    },
+    /** 片段增删后同步 wire 上的 selection：没有片段就整条去掉，避免送出空上下文 */
+    syncSelectionText() {
+      const text = composeSelectionText(this.selections);
+      const next: ChatContext = { ...this.currentContext };
+      if (text) next.selection = text;
+      else delete next.selection;
+      this.currentContext = next;
+    },
     clearContext() {
       this.currentContext = {};
+      this.selections = [];
     },
     async send(message: string, context?: ChatContext) {
       await this.init();
