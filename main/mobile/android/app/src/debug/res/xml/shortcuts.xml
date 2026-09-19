@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 正式包 applicationId；debug 包带 ".debug" 后缀，由 src/debug/res/xml/shortcuts.xml 覆盖 -->
+<!-- debug 源集覆盖 src/main/res/xml/shortcuts.xml：debug 的 applicationId 带 ".debug" 后缀，
+     而 applicationIdSuffix 不改类所在包，故只替换 targetPackage，targetClass 保持不变。
+     新增/调整快捷方式时须与 src/main/res/xml/shortcuts.xml 同步。 -->
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
     <shortcut
         android:shortcutId="select_server"
@@ -9,7 +11,7 @@
         android:shortcutLongLabel="@string/shortcut_select_long">
         <intent
             android:action="com.engram.app.SELECT_SERVER"
-            android:targetPackage="com.engram.app"
+            android:targetPackage="com.engram.app.debug"
             android:targetClass="com.engram.app.MainActivity" />
     </shortcut>
 </shortcuts>
