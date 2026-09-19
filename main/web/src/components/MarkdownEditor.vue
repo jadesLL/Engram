@@ -57,7 +57,13 @@ import {
   wikiTargetFromHref,
 } from '../lib/wikiLinks';
 
-const props = defineProps<{ modelValue: string; dark: boolean; mode?: 'ir' | 'sv' }>();
+const props = defineProps<{
+  modelValue: string;
+  dark: boolean;
+  mode?: 'ir' | 'sv';
+  /** 全屏编辑状态：由父级持有（要连同页头/状态栏一起让位），这里只负责图标与提示 */
+  fullscreen?: boolean;
+}>();
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void;
   (e: 'save'): void;
@@ -65,6 +71,7 @@ const emit = defineEmits<{
   (e: 'open-wikilink', title: string): void;
   (e: 'mode-change', mode: 'ir' | 'sv'): void;
   (e: 'enter-reading'): void;
+  (e: 'toggle-fullscreen'): void;
   (e: 'context-menu', request: SelectionContextMenuRequest): void;
 }>();
 
@@ -247,6 +254,8 @@ function toolbarIconSvg(paths: string[]): string {
 
 function overrideToolbarIcons() {
   if (!vditorEl.value) return;
+  // 自定义项（engram-fullscreen）由 Custom 直接塞进 menuItem.icon，本身已是 eg-icon；
+  // 这里只按类型重写内置项的图标路径
   for (const [type, paths] of Object.entries(TOOLBAR_ICONS)) {
     const svg = vditorEl.value
       .querySelector(`.vditor-toolbar button[data-type="${type}"]`)
@@ -265,6 +274,21 @@ function overrideToolbarIcons() {
     svg.setAttribute('stroke-linejoin', 'round');
     svg.innerHTML = paths.map((d) => `<path d="${d}"/>`).join('');
   }
+  // 全屏按钮的提示与图标随状态切换（父级持有状态，这里同步给按钮）
+  const fullscreenButton = vditorEl.value.querySelector<HTMLElement>(
+    '.vditor-toolbar button[data-type="engram-fullscreen"]'
+  );
+  if (fullscreenButton) {
+    const active = Boolean(props.fullscreen);
+    const tip = active ? '退出全屏（Esc）' : '全屏编辑';
+    fullscreenButton.setAttribute('aria-label', tip);
+    fullscreenButton.classList.toggle('vditor-menu--current', active);
+    const paths = active
+      ? ['M8 3v3a2 2 0 0 1-2 2H3', 'M21 8h-3a2 2 0 0 1-2-2V3', 'M3 16h3a2 2 0 0 1 2 2v3', 'M16 21v-3a2 2 0 0 1 2-2h3']
+      : TOOLBAR_ICONS.fullscreen;
+    const svg = fullscreenButton.querySelector('svg');
+    if (svg) svg.innerHTML = paths.map((d) => `<path d="${d}"/>`).join('');
+  }
 }
 
 const wikilinkToolbarItem = {
@@ -279,6 +303,18 @@ const readingToolbarItem = {
   icon: toolbarIconSvg(['M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z', 'M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z']),
   click: () => emit('enter-reading'),
 };
+/**
+ * 全屏编辑：不用 Vditor 内置的 fullscreen 项——它只给 .vditor 加 vditor--fullscreen
+ * （fixed + z-index）并锁 body 滚动，而 Engram 的编辑页是扁平布局（页头/工具栏/正文
+ * 同层铺在灰底上、编辑器背景透明），加类之后页头仍留在原位，两层内容直接叠在一起。
+ * 这里交给父级持有全屏状态，连同页头/状态栏一起让位。
+ */
+const fullscreenToolbarItem = {
+  name: 'engram-fullscreen',
+  tip: '全屏编辑',
+  icon: toolbarIconSvg(TOOLBAR_ICONS.fullscreen),
+  click: () => emit('toggle-fullscreen'),
+};
 // 手机端精简到一行（390px 视口最多放 10 个按钮），完整工具栏桌面不变
 const mobileToolbar = [
   'headings', 'bold', 'italic', 'list', 'ordered-list',
@@ -292,7 +328,7 @@ const desktopToolbar = [
   'quote', 'list', 'ordered-list', 'check', '|',
   'inline-code', 'code', 'table', 'link', wikilinkToolbarItem, '|',
   'undo', 'redo', '|',
-  'edit-mode', 'fullscreen', 'outline', readingToolbarItem,
+  'edit-mode', fullscreenToolbarItem, 'outline', readingToolbarItem,
 ];
 
 function init() {
@@ -683,6 +719,14 @@ watch(
     vditor?.setTheme(d ? 'dark' : 'classic', d ? 'dark' : 'light');
   }
 );
+/* 全屏状态由父级持有：变化时把工具栏按钮的图标/提示同步过去 */
+watch(
+  () => props.fullscreen,
+  () => {
+    if (!ready) return;
+    overrideToolbarIcons();
+  }
+);
 // 父组件传入模式变化（切换页面后恢复持久化模式）
 watch(
   () => props.mode,
@@ -815,11 +859,8 @@ onMounted(init);
   background: var(--bg-hover);
   color: var(--text);
 }
-/* 桌面端无边框窗口顶部 36px 是标题栏拖拽区（几何判定不看 z-index），全屏编辑器必须避开，否则工具栏点击被窗口拖拽吞掉 */
-:deep(.vditor--fullscreen) {
-  top: var(--win-titlebar-h, 0px);
-  height: calc(100vh - var(--win-titlebar-h, 0px)) !important;
-}
+/* 全屏编辑由 EditorView 持有状态（页头/状态栏一起让位），这里不再依赖 Vditor 的
+   .vditor--fullscreen：它只把 .vditor 变成 fixed 覆盖层，扁平布局下会与页头叠字 */
 /* 手机端压缩工具栏按钮内边距，保证精简后的按钮单行放下 */
 @media (max-width: 768px) {
   :deep(.vditor-toolbar) {

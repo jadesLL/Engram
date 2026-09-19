@@ -5,6 +5,7 @@ import {
   parseReadingPreferences,
   type ReadingPreferences,
 } from '../lib/readingPreview';
+import { clampContentWidthRatio } from '../lib/contentWidth';
 import {
   pushTrail,
   settleTrail,
@@ -105,6 +106,10 @@ export const useAppStore = defineStore('app', {
       const next = { ...this.readingPreferences, ...value };
       // 字号连续可调，仅收敛到安全区间（非法值回落默认）
       next.fontSize = clampReadingFontSize(value.fontSize ?? this.readingPreferences.fontSize);
+      // 正文列宽：占可用区百分比，收敛到 40%–100%（默认 70%）
+      next.widthRatio = clampContentWidthRatio(
+        value.widthRatio ?? this.readingPreferences.widthRatio
+      );
       this.readingPreferences = next;
       localStorage.setItem('readingPreferences', JSON.stringify(this.readingPreferences));
     },
