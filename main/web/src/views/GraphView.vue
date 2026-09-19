@@ -99,16 +99,17 @@ const pageId = ref((route.params.id as string) || '');
 // ---------- 主题（跟随应用 light/dark/system 设置：app.dark 变化即重绘+切面板配色） ----------
 const THEMES = {
   dark: {
-    palette: { concept: '#4cc38a', person: '#f0883e', customer: '#e3b341', org: '#39c5cf', project: '#a371f7', note: '#8b949e', other: '#6e7681', doc: '#539bf5' } as Record<string, string>,
-    ent: { person: '#f0883e', concept: '#4cc38a', project: '#a371f7', org: '#39c5cf', tech: '#539bf5' } as Record<string, string>,
+    // UI 2.0 语义色板：同色相不同明度 + 少量对比色，替代原 GitHub 彩虹色板
+    palette: { concept: '#5aa9e6', person: '#8ab6e2', customer: '#b3cfea', org: '#3aa79a', project: '#e08a4c', note: '#9b9a98', other: '#6e6c6a', doc: '#6f9ac0' } as Record<string, string>,
+    ent: { person: '#8ab6e2', concept: '#5aa9e6', project: '#e08a4c', org: '#3aa79a', tech: '#6f9ac0' } as Record<string, string>,
     raw: '#6e7681', dead: '#f85149', nodeFill: '#2a2a30', fallback: '#8b949e',
     text: '201,209,221', deadText: '248,81,73',
     edge: 'rgba(139,148,158,0.20)', edgeDim: 'rgba(139,148,158,0.05)', arrow: 'rgba(139,148,158,0.55)',
     bg0: '#232329', bg1: '#151518',
   },
   light: {
-    palette: { concept: '#1a7f37', person: '#bc4c00', customer: '#9a6700', org: '#0e7490', project: '#8250df', note: '#656d76', other: '#8b949e', doc: '#0969da' } as Record<string, string>,
-    ent: { person: '#bc4c00', concept: '#1a7f37', project: '#8250df', org: '#0e7490', tech: '#0969da' } as Record<string, string>,
+    palette: { concept: '#0f6cbd', person: '#5b8fc9', customer: '#8fb8de', org: '#0e7a6d', project: '#c55a11', note: '#8a8886', other: '#c9c7c4', doc: '#3a6ea5' } as Record<string, string>,
+    ent: { person: '#5b8fc9', concept: '#0f6cbd', project: '#c55a11', org: '#0e7a6d', tech: '#3a6ea5' } as Record<string, string>,
     raw: '#9aa2af', dead: '#cf222e', nodeFill: '#ffffff', fallback: '#656d76',
     text: '55,65,81', deadText: '207,34,46',
     edge: 'rgba(101,109,118,0.28)', edgeDim: 'rgba(101,109,118,0.07)', arrow: 'rgba(101,109,118,0.60)',
@@ -627,22 +628,22 @@ onUnmounted(() => {
 
 <style scoped>
 .graph-view {
-  --g-bg: #f2f3f6;
+  --g-bg: #f4f3f1;
   --g-chip-bg: rgba(255, 255, 255, 0.94);
-  --g-chip-border: rgba(15, 23, 42, 0.08);
-  --g-shadow: 0 10px 34px rgba(15, 23, 42, 0.10);
-  --g-strong: #1f2937;
-  --g-panel-text: #374151;
-  --g-muted: #6b7280;
-  --g-faint: #9ca3af;
+  --g-chip-border: rgba(31, 30, 29, 0.08);
+  --g-shadow: 0 10px 34px rgba(31, 30, 29, 0.10);
+  --g-strong: #1f1e1d;
+  --g-panel-text: #454340;
+  --g-muted: #5f5d5b;
+  --g-faint: #91908e;
   --g-count: #9aa3af;
-  --g-seg-on-bg: rgba(130, 80, 223, 0.12);
-  --g-field-bg: rgba(15, 23, 42, 0.04);
-  --g-field-border: rgba(15, 23, 42, 0.08);
+  --g-seg-on-bg: rgba(15, 108, 189, 0.12);
+  --g-field-bg: rgba(31, 30, 29, 0.04);
+  --g-field-border: rgba(31, 30, 29, 0.08);
   --g-sw-off: #d1d5db;
   --g-sw-knob: #ffffff;
-  --g-track: rgba(15, 23, 42, 0.05);
-  --g-accent: #8250df;
+  --g-track: rgba(31, 30, 29, 0.05);
+  --g-accent: #0f6cbd;
   --g-danger: #cf222e;
   height: 100%; position: relative; overflow: hidden; background: var(--g-bg);
 }
@@ -656,13 +657,13 @@ onUnmounted(() => {
   --g-muted: #8b93a5;
   --g-faint: #767f90;
   --g-count: #5d6572;
-  --g-seg-on-bg: rgba(163, 113, 247, 0.22);
+  --g-seg-on-bg: rgba(90, 169, 230, 0.22);
   --g-field-bg: rgba(255, 255, 255, 0.06);
   --g-field-border: rgba(255, 255, 255, 0.08);
   --g-sw-off: #3a3f4b;
   --g-sw-knob: #aab2c0;
   --g-track: rgba(255, 255, 255, 0.05);
-  --g-accent: #8b5cf6;
+  --g-accent: #5aa9e6;
   --g-danger: #f85149;
 }
 .g-canvas { position: absolute; inset: 0; touch-action: none; }
