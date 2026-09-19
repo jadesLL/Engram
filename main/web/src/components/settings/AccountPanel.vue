@@ -36,16 +36,19 @@
           <strong>主题</strong>
           <span>选择浅色、深色或跟随系统。</span>
         </div>
-        <select
-          class="setting-control"
-          :value="app.theme"
-          aria-label="主题"
-          @change="app.setTheme(($event.target as HTMLSelectElement).value as any)"
-        >
-          <option value="light">浅色</option>
-          <option value="dark">深色</option>
-          <option value="system">跟随系统</option>
-        </select>
+        <div class="segmented" role="radiogroup" aria-label="主题">
+          <button
+            v-for="opt in themeOptions"
+            :key="opt.value"
+            type="button"
+            role="radio"
+            :aria-checked="app.theme === opt.value"
+            :class="{ active: app.theme === opt.value }"
+            @click="app.setTheme(opt.value as any)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
       </div>
     </SettingsGroup>
 
@@ -121,6 +124,12 @@ const versionHint = computed(() =>
 const pwd = ref({ old: '', next: '' });
 const pwdMsg = ref('');
 const pwdOk = ref(false);
+
+const themeOptions = [
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+  { value: 'system', label: '跟随系统' },
+];
 
 // ---------- 连接通道状态（服务器经 /health 通告直连地址；未通告则整块隐藏） ----------
 const connState = ref<'loading' | 'unconfigured' | 'direct' | 'tunnel-ok' | 'tunnel'>('loading');

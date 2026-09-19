@@ -60,6 +60,7 @@
               @dragleave="g.key === 'concept' && onDragLeave('concept')"
               @drop.prevent="g.key === 'concept' && onDropToType('concept')"
             >
+              <span class="sec-dot" :class="`dot-${g.key}`" aria-hidden="true" />
               <span class="sec-name">{{ g.label }}</span>
             </button>
             <div class="sec-actions">
@@ -181,6 +182,7 @@
             v-tooltip="collapsed.files ? '展开原始资料' : '收起原始资料'"
             @click="toggle('files')"
           >
+            <span class="sec-dot dot-files" aria-hidden="true" />
             <span class="sec-name">原始资料</span>
           </button>
           <div class="sec-actions">
@@ -268,6 +270,7 @@
             v-tooltip="collapsed.chat ? '展开对话' : '收起对话'"
             @click="toggle('chat')"
           >
+            <span class="sec-dot dot-chat" aria-hidden="true" />
             <span class="sec-name">对话</span>
           </button>
           <div class="sec-actions">
@@ -319,6 +322,7 @@
             v-tooltip="collapsed.ailog ? '展开 AI 工作区' : '收起 AI 工作区'"
             @click="toggle('ailog')"
           >
+            <span class="sec-dot dot-ailog" aria-hidden="true" />
             <span class="sec-name">AI 工作区</span>
           </button>
           <span class="sec-count">{{ visibleAiLogs.length }}</span>
@@ -1503,6 +1507,26 @@ onUnmounted(() => {
   font-weight: 600;
   letter-spacing: 0;
 }
+
+/* 分区语义色点：概念=品牌蓝，实体/归档=层级灰，原始资料/对话/AI 工作区=弱色区分 */
+.sec-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  margin: 0 6px 0 2px;
+  border-radius: 50%;
+}
+.dot-concept { background: var(--accent); }
+.dot-entity { background: #6e6a66; }
+.dot-archived { background: #9a968f; }
+.dot-files { background: #b8b2aa; }
+.dot-chat { background: #7f9a8b; }
+.dot-ailog { background: #a89f93; }
+html.dark .dot-entity { background: #a5a19d; }
+html.dark .dot-archived { background: #8a877f; }
+html.dark .dot-files { background: #6e6a64; }
+html.dark .dot-chat { background: #6e8a7b; }
+html.dark .dot-ailog { background: #7a756d; }
 
 .sec-actions {
   display: flex;

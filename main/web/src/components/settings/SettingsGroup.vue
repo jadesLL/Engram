@@ -1,34 +1,25 @@
 <template>
-  <details
-    class="settings-group-card"
-    :class="{ 'is-danger': danger }"
-    :open="open"
-    @toggle="onToggle"
-  >
-    <summary class="group-summary" @click="onSummaryClick">
-      <span class="group-chevron" aria-hidden="true" />
-      <span class="group-text">
-        <span class="group-title">{{ title }}</span>
-        <span v-if="hint" class="group-hint">{{ hint }}</span>
-      </span>
-    </summary>
-    <div class="group-body" :class="{ flush }">
+  <div class="settings-group" :class="{ 'is-danger': danger }">
+    <div class="group-head">
+      <h4 class="group-title">{{ title }}</h4>
+      <span v-if="hint" class="group-hint">{{ hint }}</span>
+    </div>
+    <div class="group-card" :class="{ flush }">
       <slot />
     </div>
-  </details>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
-
 /**
- * 设置面板内的可折叠分组卡片（基于原生 details/summary，键盘与读屏可用）。
+ * 设置面板内的静态分组（UI 2.0：不再折叠）。
+ * Win11 设置式「组标题 + 行式卡片」：标题与说明常驻，内容始终展开，
+ * 避免手风琴把关键状态（危险操作、更新源）藏起来。
  * - flush：内容是无内边距的 setting-row 列表时使用（行自带边框与留白）；
- * - danger：危险操作分组，标题与边框用警示色；
- * - defaultOpen 只决定「用户动手之前」的初始开合：父级异步加载状态（如更新源是否已配置）
- *   到达前允许跟随刷新，一旦用户手动开合过就以用户选择为准。
+ * - danger：危险操作分组，标题与边框用警示色常驻提醒；
+ * - defaultOpen 为历史遗留 prop，保留签名兼容旧调用，不再生效。
  */
-const props = withDefaults(
+withDefaults(
   defineProps<{
     title: string;
     hint?: string;
@@ -36,113 +27,59 @@ const props = withDefaults(
     flush?: boolean;
     danger?: boolean;
   }>(),
-  { defaultOpen: false, flush: false, danger: false },
+  { defaultOpen: true, flush: false, danger: false },
 );
-
-const open = ref(props.defaultOpen);
-const touched = ref(false);
-
-watch(
-  () => props.defaultOpen,
-  (value) => {
-    if (!touched.value) open.value = value;
-  },
-);
-
-function onToggle(event: Event) {
-  open.value = (event.target as HTMLDetailsElement).open;
-}
-
-function onSummaryClick() {
-  touched.value = true;
-}
 </script>
 
 <style scoped>
-.settings-group-card {
-  margin: 16px 24px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card-bg);
+.settings-group {
+  margin: 18px 24px;
 }
-.group-summary {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 13px 16px;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
+.settings-group:first-of-type {
+  margin-top: 20px;
 }
-.group-summary::-webkit-details-marker {
-  display: none;
-}
-.group-chevron {
-  flex: 0 0 auto;
-  /* 与首行文字垂直居中对齐：hint 换行时箭头不跟着下沉 */
-  margin-top: 6px;
-  width: 0;
-  height: 0;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 5px solid var(--text-faint);
-  transition: transform 0.15s ease;
-}
-.settings-group-card[open] .group-chevron {
-  transform: rotate(90deg);
-}
-.group-summary:hover {
-  background: var(--bg-hover);
-}
-.group-summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-.group-text {
+
+/* 组标题：Win11 式小标签，独立于卡片之外 */
+.group-head {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  min-width: 0;
   flex-wrap: wrap;
+  padding: 0 2px 8px;
 }
 .group-title {
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
 }
 .group-hint {
-  color: var(--text-secondary);
+  color: var(--text-faint);
   font-size: 11px;
   line-height: 1.5;
 }
-.group-body {
-  padding: 4px 16px 16px;
-  border-top: 1px solid var(--border);
+
+.group-card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
 }
-.group-body.flush {
-  padding: 0;
+.group-card:not(.flush) {
+  padding: 4px 16px 16px;
 }
 
-/* 危险分组：收起时警示色标题仍可见，起到常驻提醒作用 */
-.settings-group-card.is-danger {
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
-}
-.settings-group-card.is-danger .group-title {
+/* 危险分组：警示色常驻可见 */
+.settings-group.is-danger .group-title {
   color: var(--danger);
 }
-.settings-group-card.is-danger > .group-summary {
-  background: color-mix(in srgb, var(--danger) 5%, var(--bg));
+.settings-group.is-danger .group-card {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
 }
 
 @media (max-width: 768px) {
-  .settings-group-card {
+  .settings-group {
     margin-right: 18px;
     margin-left: 18px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .group-chevron {
-    transition: none;
   }
 }
 </style>

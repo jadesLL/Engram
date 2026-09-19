@@ -2,20 +2,10 @@
   <div class="login-wrap">
     <div class="login-card card">
       <div class="logo">
-        <svg viewBox="0 0 100 100" width="28" height="28" aria-hidden="true">
-          <defs>
-            <linearGradient id="engram-orbit-login" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">
-              <stop offset="0" stop-color="#22D3EE" />
-              <stop offset="1" stop-color="#4D8AFF" />
-            </linearGradient>
-            <linearGradient id="engram-core-login" gradientUnits="userSpaceOnUse" x1="39" y1="39" x2="61" y2="61">
-              <stop offset="0" stop-color="#4D8AFF" />
-              <stop offset="1" stop-color="#245BDB" />
-            </linearGradient>
-          </defs>
-          <ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="url(#engram-orbit-login)" stroke-width="8.5" transform="rotate(-28 50 50)" />
-          <circle cx="74" cy="28.5" r="5" fill="#22D3EE" />
-          <circle cx="50" cy="50" r="11" fill="url(#engram-core-login)" />
+        <svg viewBox="0 0 100 100" width="30" height="30" aria-hidden="true">
+          <ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="rgba(255, 255, 255, 0.88)" stroke-width="8.5" transform="rotate(-28 50 50)" />
+          <circle cx="74" cy="28.5" r="5.5" fill="#aee7f8" />
+          <circle cx="50" cy="50" r="11" fill="#ffffff" />
         </svg>
       </div>
       <h1>Engram</h1>
@@ -122,22 +112,40 @@ async function submit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg);
+  /* 顶部浅蓝光晕过渡到中性底，品牌感但不喧宾夺主 */
+  background:
+    radial-gradient(1100px 560px at 50% -12%, rgba(15, 108, 189, 0.10) 0%, rgba(15, 108, 189, 0) 62%),
+    var(--bg);
+}
+html.dark .login-wrap {
+  background:
+    radial-gradient(1100px 560px at 50% -12%, rgba(90, 169, 230, 0.12) 0%, rgba(90, 169, 230, 0) 62%),
+    var(--bg);
 }
 .login-card {
-  width: min(340px, calc(100vw - 32px));
+  width: min(360px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 32px 28px;
-  box-shadow: var(--shadow-dialog);
+  padding: 36px 32px;
+  border-radius: 16px;
+  box-shadow:
+    0 16px 40px rgba(31, 30, 29, 0.10),
+    0 2px 8px rgba(31, 30, 29, 0.05);
 }
+html.dark .login-card {
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+}
+/* 品牌渐变盒：轨道标白色版置于品牌蓝渐变上 */
 .logo {
-  width: 44px;
-  height: 44px;
-  margin: 0 auto;
-  border-radius: 8px;
-  background: #0f172a;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 4px;
+  border-radius: 13px;
+  background: linear-gradient(140deg, #3a97e2 0%, #0f6cbd 58%, #0a5aa8 100%);
+  box-shadow: 0 6px 16px rgba(15, 108, 189, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
