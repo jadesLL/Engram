@@ -9,7 +9,7 @@
     }"
     :style="readingStyle"
     tabindex="-1"
-    @keydown.esc="closeReading"
+    @keydown.esc="onEsc"
   >
     <header ref="toolbarEl" class="reading-toolbar">
       <button class="reading-tool back" type="button" v-tooltip="'返回编辑（Esc）'" @click="closeReading">
@@ -42,7 +42,38 @@
             :disabled="preferences.fontSize <= READING_FONT_SIZE_MIN"
             @click="stepFont(-1)"
           >A−</button>
-          <span>{{ preferences.fontSize }}px</span>
+          <div ref="fontPickerEl" class="font-picker">
+            <button
+              class="font-size-trigger"
+              type="button"
+              aria-haspopup="listbox"
+              :aria-expanded="fontMenuOpen"
+              aria-label="选择正文字号"
+              v-tooltip="'点这里直接选字号'"
+              @click="toggleFontMenu"
+            >
+              <span>{{ preferences.fontSize }}px</span>
+              <Icon name="chevron-down" :size="12" />
+            </button>
+            <div
+              v-if="fontMenuOpen"
+              ref="fontMenuEl"
+              class="font-menu"
+              role="listbox"
+              aria-label="正文字号选项"
+            >
+              <button
+                v-for="size in fontSizeOptions"
+                :key="size"
+                class="font-menu-item"
+                :class="{ active: size === preferences.fontSize }"
+                type="button"
+                role="option"
+                :aria-selected="size === preferences.fontSize"
+                @click="pickFontSize(size)"
+              >{{ size }}px</button>
+            </div>
+          </div>
           <button
             type="button"
             aria-label="增大字号"
@@ -230,6 +261,9 @@ const readerEl = ref<HTMLElement>();
 const toolbarEl = ref<HTMLElement>();
 const contentEl = ref<HTMLDivElement>();
 const outlineNavEl = ref<HTMLElement>();
+const fontPickerEl = ref<HTMLElement>();
+const fontMenuEl = ref<HTMLElement>();
+const fontMenuOpen = ref(false);
 const outline = ref<OutlineItem[]>([]);
 const currentHeading = ref('');
 const rendering = ref(false);
@@ -249,6 +283,11 @@ const widthOptions: Array<{ value: ReadingWidth; label: string }> = [
   { value: 780, label: '标准' },
   { value: 960, label: '宽' },
 ];
+/* 下拉里 8–48px 每 1px 一档，与 A−/A+ 的步进范围完全一致 */
+const fontSizeOptions: number[] = Array.from(
+  { length: READING_FONT_SIZE_MAX - READING_FONT_SIZE_MIN + 1 },
+  (_, index) => READING_FONT_SIZE_MIN + index,
+);
 
 const preferences = computed(() => app.readingPreferences);
 const outlinePressed = computed(() =>
@@ -300,6 +339,43 @@ function updatePreferences(value: Partial<ReadingPreferences>) {
 /* 字号连续可调：每次 ±1px，仅在安全区间两端收敛 */
 function stepFont(direction: number) {
   updatePreferences({ fontSize: preferences.value.fontSize + direction });
+}
+
+/* 点字号直接下拉选（8–48px 每 1px 一档，与步进共用同一套偏好与收敛逻辑） */
+function toggleFontMenu() {
+  fontMenuOpen.value = !fontMenuOpen.value;
+  if (!fontMenuOpen.value) return;
+  // 打开时把当前档位滚到可视区中间，41 项也不用找（只滚菜单本身，不动正文）
+  nextTick(() => {
+    const menu = fontMenuEl.value;
+    const active = menu?.querySelector<HTMLElement>('.active');
+    if (!menu || !active) return;
+    menu.scrollTop = active.offsetTop - menu.clientHeight / 2 + active.clientHeight / 2;
+  });
+}
+
+function pickFontSize(size: number) {
+  updatePreferences({ fontSize: size });
+  fontMenuOpen.value = false;
+}
+
+/* 下拉打开时：点别处或按 Esc 收起；Esc 在菜单关闭后才交回「返回编辑」 */
+function onDocumentPointerDown(event: MouseEvent) {
+  if (!fontMenuOpen.value) return;
+  if (fontPickerEl.value?.contains(event.target as Node)) return;
+  fontMenuOpen.value = false;
+}
+
+function onDocumentKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && fontMenuOpen.value) fontMenuOpen.value = false;
+}
+
+function onEsc() {
+  if (fontMenuOpen.value) {
+    fontMenuOpen.value = false;
+    return;
+  }
+  closeReading();
 }
 
 function setLineHeight(event: Event) {
@@ -571,6 +647,10 @@ onMounted(() => {
   if (toolbarEl.value) layoutObserver.observe(toolbarEl.value);
   measureLayout();
   mobileMedia.addEventListener('change', handleMediaChange);
+  // pointerdown 覆盖真实点击，click 兜底程序化点击（自动化/辅助工具）
+  document.addEventListener('pointerdown', onDocumentPointerDown);
+  document.addEventListener('click', onDocumentPointerDown);
+  document.addEventListener('keydown', onDocumentKeydown);
 });
 
 onBeforeUnmount(() => {
@@ -580,6 +660,9 @@ onBeforeUnmount(() => {
   layoutObserver?.disconnect();
   readerEl.value?.removeEventListener('scroll', updateCurrentHeading);
   mobileMedia.removeEventListener('change', handleMediaChange);
+  document.removeEventListener('pointerdown', onDocumentPointerDown);
+  document.removeEventListener('click', onDocumentPointerDown);
+  document.removeEventListener('keydown', onDocumentKeydown);
 });
 </script>
 
@@ -611,8 +694,9 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--bg) 94%, transparent);
   backdrop-filter: blur(12px);
 }
+/* 只作用于步进按钮本身：用直接子选择器，避免样式漏进字号下拉里的 option 按钮 */
 .reading-tool,
-.font-stepper button,
+.font-stepper > button,
 .width-segment button {
   min-height: 34px;
   display: inline-flex;
@@ -647,7 +731,7 @@ onBeforeUnmount(() => {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.font-stepper button:hover,
+.font-stepper > button:hover,
 .width-segment button:hover:not([aria-pressed="true"]) {
   background: var(--control-bg-hover);
   color: var(--text);
@@ -674,25 +758,86 @@ onBeforeUnmount(() => {
   background: var(--control-bg);
   overflow: hidden;
 }
-.font-stepper button {
+/* 字号下拉要溢出到工具栏下方，不能被组容器的圆角裁剪 */
+.font-stepper { overflow: visible; }
+.font-stepper > button {
   width: 32px;
   border-radius: 0;
 }
-.font-stepper button:disabled {
+.font-stepper > button:first-child { border-radius: var(--radius-control) 0 0 var(--radius-control); }
+.font-stepper > button:last-child { border-radius: 0 var(--radius-control) var(--radius-control) 0; }
+.font-stepper > button:disabled {
   color: var(--text-faint);
   opacity: 0.45;
   cursor: not-allowed;
 }
-.font-stepper button:disabled:hover {
+.font-stepper > button:disabled:hover {
   background: transparent;
   color: var(--text-faint);
 }
-.font-stepper span {
-  min-width: 46px;
+/* 字号触发器 + 下拉面板：41 档一列可滚动，当前档位高亮 */
+.font-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.font-size-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 62px;
+  min-height: 32px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.font-size-trigger:hover,
+.font-size-trigger[aria-expanded="true"] {
+  background: var(--control-bg-hover);
+  color: var(--text);
+}
+.font-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: 20;
+  width: 76px;
+  max-height: 264px;
+  overflow-y: auto;
+  padding: 4px;
+  transform: translateX(-50%);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow);
+}
+.font-menu-item {
+  display: block;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: center;
+  cursor: pointer;
+}
+.font-menu-item:hover {
+  background: var(--control-bg-hover);
+  color: var(--text);
+}
+.font-menu-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
 }
 .width-segment button {
   padding: 0 10px;

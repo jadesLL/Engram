@@ -1,5 +1,5 @@
-/** 正文字号：1px 连续可调，不再限制为固定档位，仅保留防止排版崩坏的安全边界 */
-export const READING_FONT_SIZE_MIN = 12;
+/** 正文字号：1px 连续可调（8–48px），不再限制为固定档位，仅保留防止排版崩坏的安全边界 */
+export const READING_FONT_SIZE_MIN = 8;
 export const READING_FONT_SIZE_MAX = 48;
 export type ReadingFontSize = number;
 export type ReadingWidth = 680 | 780 | 960;

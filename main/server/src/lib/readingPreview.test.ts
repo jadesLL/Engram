@@ -14,6 +14,8 @@ test('reading preview utilities cover preferences, headings and metrics', async 
     headingNumbers,
     isDuplicateDocumentTitle,
     parseReadingPreferences,
+    READING_FONT_SIZE_MAX,
+    READING_FONT_SIZE_MIN,
     readingMetrics,
     requiredReadingTailSpace,
     uniqueHeadingId,
@@ -43,8 +45,10 @@ test('reading preview utilities cover preferences, headings and metrics', async 
 
   assert.equal(clampReadingFontSize(23), 23);
   assert.equal(clampReadingFontSize(20.6), 21);
-  assert.equal(clampReadingFontSize(4), 12);
-  assert.equal(clampReadingFontSize(999), 48);
+  assert.equal(clampReadingFontSize(4), READING_FONT_SIZE_MIN);
+  assert.equal(READING_FONT_SIZE_MIN, 8);
+  assert.equal(clampReadingFontSize(999), READING_FONT_SIZE_MAX);
+  assert.equal(READING_FONT_SIZE_MAX, 48);
   assert.equal(clampReadingFontSize('large'), DEFAULT_READING_PREFERENCES.fontSize);
   assert.equal(clampReadingFontSize(undefined), DEFAULT_READING_PREFERENCES.fontSize);
   assert.equal(clampReadingFontSize(null), DEFAULT_READING_PREFERENCES.fontSize);
