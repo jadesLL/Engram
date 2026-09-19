@@ -17,16 +17,21 @@
         <span class="back-label">返回编辑</span>
       </button>
 
-      <button
-        v-if="canGoBack"
-        class="reading-tool back-page"
-        type="button"
-        v-tooltip="'返回上一页（Alt+←）'"
-        @click="emit('go-back')"
-      >
-        <Icon name="undo" :size="16" />
-        <span class="back-page-label">返回上一页</span>
-      </button>
+      <BackTrailMenu v-if="canGoBack" :trail="trail ?? []" @select="emit('go-back-to', $event)">
+        <template #default="{ open }">
+          <button
+            class="reading-tool back-page"
+            type="button"
+            aria-haspopup="menu"
+            :aria-expanded="open"
+            @click="emit('go-back')"
+          >
+            <Icon name="undo" :size="16" />
+            <span class="back-page-label">返回上一页</span>
+            <Icon name="chevron-down" :size="12" />
+          </button>
+        </template>
+      </BackTrailMenu>
 
       <span class="reading-stats">{{ metrics.units.toLocaleString('zh-CN') }} 字 · 约 {{ metrics.minutes }} 分钟</span>
 
@@ -229,6 +234,8 @@ import {
   selectionInside,
   type SelectionContextMenuRequest,
 } from '../lib/contextMenu';
+import type { PageTrailEntry } from '../lib/pageTrail';
+import BackTrailMenu from './BackTrailMenu.vue';
 import Icon from './Icon.vue';
 
 type OutlineItem = {
@@ -247,6 +254,8 @@ const props = defineProps<{
   related?: any;
   /** 存在双链/关联跳转轨迹时显示「返回上一页」 */
   canGoBack?: boolean;
+  /** 返回轨迹（栈底 → 栈顶）：悬停「返回上一页」时下拉列出全部可返回的页面名称 */
+  trail?: PageTrailEntry[];
   /** 当前页面 id：换页时清空按标题收放的状态 */
   pageKey?: string;
 }>();
@@ -254,6 +263,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'close'): void;
   (event: 'go-back'): void;
+  (event: 'go-back-to', id: string): void;
   (event: 'open-wikilink', title: string): void;
   (event: 'open-related', id: string): void;
   (event: 'context-menu', request: SelectionContextMenuRequest): void;
@@ -1398,6 +1408,13 @@ onBeforeUnmount(() => {
     grid-row: 2;
     justify-content: center;
   }
+  /* 返回入口外面包着悬停下拉容器：栅格项是容器，按钮撑满整行 */
+  .reading-toolbar :deep(.back-trail) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: flex;
+  }
+  .reading-toolbar :deep(.back-trail) .back-page { width: 100%; }
   .reading-settings {
     grid-column: 1 / -1;
     grid-row: 3;
