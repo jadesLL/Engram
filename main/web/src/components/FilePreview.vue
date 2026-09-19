@@ -49,7 +49,7 @@
           <span>{{ officeError || '在线编辑服务暂不可用，可下载或用系统程序打开。' }}</span>
           <button class="btn small" @click="retryOnlineOffice">重试在线编辑</button>
         </div>
-        <div ref="officeEl" class="fp-body office-fallback"></div>
+        <div ref="officeEl" class="fp-body office-fallback" @contextmenu="handleTextContextMenu"></div>
       </div>
     </template>
     <div
