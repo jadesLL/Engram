@@ -25,23 +25,32 @@ test('reading preview utilities cover preferences, headings and metrics', async 
   assert.deepEqual(parseReadingPreferences('{broken'), DEFAULT_READING_PREFERENCES);
   assert.deepEqual(parseReadingPreferences(JSON.stringify({
     fontSize: 18,
-    width: 960,
+    widthRatio: 0.9,
     lineHeight: 2,
     numberedHeadings: true,
     outline: false,
   })), {
     fontSize: 18,
-    width: 960,
+    widthRatio: 0.9,
     lineHeight: 2,
     numberedHeadings: true,
     outline: false,
   });
-  // 字号不再限制为固定档位：任意整数保留，宽度/行距仍回落默认
+  // 字号不再限制为固定档位：任意整数保留；宽度比例越界收敛，行距仍回落默认
   assert.deepEqual(parseReadingPreferences(JSON.stringify({
     fontSize: 17,
-    width: 1000,
+    widthRatio: 5,
     lineHeight: 1.7,
-  })), { ...DEFAULT_READING_PREFERENCES, fontSize: 17 });
+  })), { ...DEFAULT_READING_PREFERENCES, fontSize: 17, widthRatio: 1 });
+  // 旧版按 px 存的页宽迁移成等效百分比（680/780/960 → 0.62/0.71/0.87）
+  assert.equal(parseReadingPreferences(JSON.stringify({ width: 680 })).widthRatio, 0.62);
+  assert.equal(parseReadingPreferences(JSON.stringify({ width: 780 })).widthRatio, 0.71);
+  assert.equal(parseReadingPreferences(JSON.stringify({ width: 960 })).widthRatio, 0.87);
+  // 新字段优先于旧字段
+  assert.equal(
+    parseReadingPreferences(JSON.stringify({ width: 960, widthRatio: 0.5 })).widthRatio,
+    0.5,
+  );
 
   assert.equal(clampReadingFontSize(23), 23);
   assert.equal(clampReadingFontSize(20.6), 21);

@@ -87,14 +87,35 @@
           >A+</button>
         </div>
 
-        <div class="width-segment" aria-label="正文宽度">
+        <div ref="widthPickerEl" class="width-picker">
           <button
-            v-for="option in widthOptions"
-            :key="option.value"
+            class="width-trigger"
             type="button"
-            :aria-pressed="preferences.width === option.value"
-            @click="updatePreferences({ width: option.value })"
-          >{{ option.label }}</button>
+            aria-haspopup="menu"
+            :aria-expanded="widthMenuOpen"
+            aria-label="选择正文宽度"
+            v-tooltip="'正文宽度：按可用区百分比'"
+            @click="toggleWidthMenu"
+          >
+            <span>{{ formatContentWidthRatio(preferences.widthRatio) }}</span>
+            <Icon name="chevron-down" :size="12" />
+          </button>
+          <div
+            v-if="widthMenuOpen"
+            class="width-menu"
+            role="menu"
+            aria-label="正文宽度选项"
+          >
+            <button
+              v-for="ratio in CONTENT_WIDTH_RATIO_STEPS"
+              :key="ratio"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="preferences.widthRatio === ratio"
+              :class="{ active: preferences.widthRatio === ratio }"
+              @click="pickWidthRatio(ratio)"
+            >{{ formatContentWidthRatio(ratio) }}</button>
+          </div>
         </div>
 
         <!-- 低频显示项收进「显示」菜单：行距 / 编号 / 目录 -->
@@ -142,7 +163,7 @@
     </header>
 
     <div class="reading-grid">
-      <div class="reading-main">
+      <div ref="mainEl" class="reading-main">
         <article class="reading-article" @contextmenu="handleContextMenu">
           <header class="reading-document-head">
             <h1>{{ title }}</h1>
@@ -235,8 +256,13 @@ import {
   uniqueHeadingId,
   type ReadingLineHeight,
   type ReadingPreferences,
-  type ReadingWidth,
 } from '../lib/readingPreview';
+import {
+  CONTENT_WIDTH_RATIO_STEPS,
+  contentColumnWidth,
+  formatContentWidthRatio,
+  type ContentWidthRatio,
+} from '../lib/contentWidth';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
 import { headingFoldRanges } from '../lib/readingFold';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
@@ -282,11 +308,14 @@ const emit = defineEmits<{
 const app = useAppStore();
 const readerEl = ref<HTMLElement>();
 const toolbarEl = ref<HTMLElement>();
+const mainEl = ref<HTMLElement>();
 const contentEl = ref<HTMLDivElement>();
 const outlineNavEl = ref<HTMLElement>();
 const fontPickerEl = ref<HTMLElement>();
 const fontMenuEl = ref<HTMLElement>();
 const fontMenuOpen = ref(false);
+const widthPickerEl = ref<HTMLElement>();
+const widthMenuOpen = ref(false);
 const displayWrapEl = ref<HTMLElement>();
 const displayMenuOpen = ref(false);
 const outline = ref<OutlineItem[]>([]);
@@ -297,17 +326,14 @@ const metrics = ref({ units: 0, minutes: 1 });
 const toolbarHeight = ref(56);
 const viewportHeight = ref(0);
 const tailSpace = ref(0);
+/* 正文可用区宽度：--reading-width 按它的百分比算（响应式，随窗口与侧栏变化） */
+const availableWidth = ref(0);
 const mobileMedia = window.matchMedia('(max-width: 768px)');
 let renderVersion = 0;
 let scrollFrame = 0;
 let tailFrame = 0;
 let layoutObserver: ResizeObserver | null = null;
 
-const widthOptions: Array<{ value: ReadingWidth; label: string }> = [
-  { value: 680, label: '窄' },
-  { value: 780, label: '标准' },
-  { value: 960, label: '宽' },
-];
 const lineHeightOptions: Array<{ value: ReadingLineHeight; label: string }> = [
   { value: 1.6, label: '紧凑' },
   { value: 1.8, label: '舒适' },
@@ -325,7 +351,10 @@ const outlinePressed = computed(() =>
   (mobileMedia.matches ? mobileOutlineOpen.value : preferences.value.outline)
 );
 const readingStyle = computed(() => ({
-  '--reading-width': `${preferences.value.width}px`,
+  /* 正文列宽 = 可用区 × 百分比（可用区没量到前回落到 100%，不闪成 0） */
+  '--reading-width': availableWidth.value > 0
+    ? `${contentColumnWidth(preferences.value.widthRatio, availableWidth.value)}px`
+    : '100%',
   '--reading-font-size': `${preferences.value.fontSize}px`,
   '--reading-line-height': String(preferences.value.lineHeight),
   '--reading-toolbar-height': `${toolbarHeight.value}px`,
@@ -389,10 +418,23 @@ function pickFontSize(size: number) {
   fontMenuOpen.value = false;
 }
 
+/* 正文宽度：点开百分比菜单选档（40%–100%，默认 70%），选择即写入偏好 */
+function toggleWidthMenu() {
+  widthMenuOpen.value = !widthMenuOpen.value;
+}
+
+function pickWidthRatio(ratio: ContentWidthRatio) {
+  updatePreferences({ widthRatio: ratio });
+  widthMenuOpen.value = false;
+}
+
 /* 下拉打开时：点别处或按 Esc 收起；Esc 在菜单关闭后才交回「返回编辑」 */
 function onDocumentPointerDown(event: MouseEvent) {
   if (fontMenuOpen.value && !fontPickerEl.value?.contains(event.target as Node)) {
     fontMenuOpen.value = false;
+  }
+  if (widthMenuOpen.value && !widthPickerEl.value?.contains(event.target as Node)) {
+    widthMenuOpen.value = false;
   }
   if (displayMenuOpen.value && !displayWrapEl.value?.contains(event.target as Node)) {
     displayMenuOpen.value = false;
@@ -402,12 +444,17 @@ function onDocumentPointerDown(event: MouseEvent) {
 function onDocumentKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape') return;
   if (fontMenuOpen.value) fontMenuOpen.value = false;
+  if (widthMenuOpen.value) widthMenuOpen.value = false;
   if (displayMenuOpen.value) displayMenuOpen.value = false;
 }
 
 function onEsc() {
   if (fontMenuOpen.value) {
     fontMenuOpen.value = false;
+    return;
+  }
+  if (widthMenuOpen.value) {
+    widthMenuOpen.value = false;
     return;
   }
   if (displayMenuOpen.value) {
@@ -757,6 +804,10 @@ function updateCurrentHeading() {
 function measureLayout() {
   toolbarHeight.value = Math.ceil(toolbarEl.value?.getBoundingClientRect().height || 56);
   viewportHeight.value = readerEl.value?.clientHeight || window.innerHeight;
+  /* 正文可用区 = 阅读栅格里正文那一列的宽度（已扣掉工具栏留白与右侧目录列），
+   * --reading-width 取它的百分比；量不到（首帧）时保持 0，样式回落 100% */
+  const main = mainEl.value;
+  if (main) availableWidth.value = Math.round(main.clientWidth);
 }
 
 function scheduleTailSpace() {
@@ -915,7 +966,7 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 .font-stepper,
-.width-segment {
+.width-picker {
   min-height: 34px;
   display: inline-flex;
   align-items: center;
@@ -1006,14 +1057,64 @@ onBeforeUnmount(() => {
   color: var(--accent);
   font-weight: 600;
 }
-.width-segment button {
-  padding: 0 10px;
-  border-left-color: var(--control-border);
-  border-radius: 0;
-  font-size: 12px;
+/* 正文宽度触发器 + 百分比菜单：按「可用区百分比」选档（默认 70%） */
+.width-picker {
+  position: relative;
+  display: inline-flex;
+  overflow: visible;
 }
-.width-segment button:first-child { border-left: 0; }
-.width-segment button[aria-pressed="true"] {
+.width-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 58px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.width-trigger:hover,
+.width-trigger[aria-expanded="true"] {
+  background: var(--control-bg-hover);
+  color: var(--text);
+}
+.width-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: 20;
+  width: 84px;
+  padding: 4px;
+  transform: translateX(-50%);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow);
+}
+.width-menu button {
+  display: block;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: pointer;
+}
+.width-menu button:hover {
+  background: var(--control-bg-hover);
+  color: var(--text);
+}
+.width-menu button.active {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;

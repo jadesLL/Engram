@@ -1,13 +1,19 @@
+import {
+  clampContentWidthRatio,
+  DEFAULT_CONTENT_WIDTH_RATIO,
+  type ContentWidthRatio,
+} from './contentWidth';
+
 /** 正文字号：1px 连续可调（8–48px），不再限制为固定档位，仅保留防止排版崩坏的安全边界 */
 export const READING_FONT_SIZE_MIN = 8;
 export const READING_FONT_SIZE_MAX = 48;
 export type ReadingFontSize = number;
-export type ReadingWidth = 680 | 780 | 960;
 export type ReadingLineHeight = 1.6 | 1.8 | 2;
 
 export type ReadingPreferences = {
   fontSize: ReadingFontSize;
-  width: ReadingWidth;
+  /** 正文列宽：占「正文可用区」的百分比（默认 70%），阅读与编辑视图共用 */
+  widthRatio: ContentWidthRatio;
   lineHeight: ReadingLineHeight;
   numberedHeadings: boolean;
   outline: boolean;
@@ -20,14 +26,19 @@ export type ReadingHeading = {
 
 export const DEFAULT_READING_PREFERENCES: ReadingPreferences = {
   fontSize: 16,
-  width: 780,
+  widthRatio: DEFAULT_CONTENT_WIDTH_RATIO,
   lineHeight: 1.8,
   numberedHeadings: false,
   outline: true,
 };
 
-const WIDTHS = new Set<ReadingWidth>([680, 780, 960]);
 const LINE_HEIGHTS = new Set<ReadingLineHeight>([1.6, 1.8, 2]);
+/** 旧版按 px 存的三档页宽：迁移成等效百分比（按 1100px 可用区的观感折算） */
+const LEGACY_PIXEL_WIDTH_RATIOS: Record<number, ContentWidthRatio> = {
+  680: 0.62,
+  780: 0.71,
+  960: 0.87,
+};
 const EXPLICIT_NUMBER_RE =
   /^\s*(?:[（(][一二三四五六七八九十百零\d]+[）)]|[一二三四五六七八九十百零\d]+(?:\.\d+)*\s*[.、．)）])/;
 
@@ -41,15 +52,20 @@ export function clampReadingFontSize(value: unknown): ReadingFontSize {
   return Math.min(READING_FONT_SIZE_MAX, Math.max(READING_FONT_SIZE_MIN, size));
 }
 
+/**
+ * 解析本地偏好：widthRatio 优先；旧版按 px 存的 width（680/780/960）迁移成等效百分比，
+ * 两者都没有才回落默认 70%。
+ */
 export function parseReadingPreferences(raw: string | null): ReadingPreferences {
   if (!raw) return { ...DEFAULT_READING_PREFERENCES };
   try {
-    const value = JSON.parse(raw) as Partial<ReadingPreferences>;
+    const value = JSON.parse(raw) as Partial<ReadingPreferences> & { width?: number };
+    const legacyRatio = LEGACY_PIXEL_WIDTH_RATIOS[Number(value.width)];
     return {
       fontSize: clampReadingFontSize(value.fontSize),
-      width: WIDTHS.has(value.width as ReadingWidth)
-        ? value.width as ReadingWidth
-        : DEFAULT_READING_PREFERENCES.width,
+      widthRatio: value.widthRatio === undefined && legacyRatio !== undefined
+        ? legacyRatio
+        : clampContentWidthRatio(value.widthRatio),
       lineHeight: LINE_HEIGHTS.has(value.lineHeight as ReadingLineHeight)
         ? value.lineHeight as ReadingLineHeight
         : DEFAULT_READING_PREFERENCES.lineHeight,

@@ -1,5 +1,10 @@
 <template>
-  <div class="editor-view">
+  <div
+    ref="viewEl"
+    class="editor-view"
+    :class="{ 'editor-fullscreen': fullscreen }"
+    :style="contentColumnStyle"
+  >
     <!-- 文件预览模式（docx 等） -->
     <FilePreview
       v-if="filePath"
@@ -56,6 +61,32 @@
           </template>
         </BackTrailMenu>
         <div class="spacer"></div>
+        <!-- 正文宽度：按可用区百分比（默认 70%），阅读视图与编辑视图共用同一份偏好 -->
+        <div ref="widthPickerEl" class="width-picker">
+          <button
+            class="topbar-width"
+            type="button"
+            aria-haspopup="menu"
+            :aria-expanded="widthMenuOpen"
+            aria-label="选择正文宽度"
+            v-tooltip="'正文宽度：按可用区百分比'"
+            @click="toggleWidthMenu"
+          >
+            <Icon name="unfold" :size="14" />
+            <span>{{ widthLabel }}</span>
+          </button>
+          <div v-if="widthMenuOpen" class="width-menu" role="menu" aria-label="正文宽度选项">
+            <button
+              v-for="ratio in CONTENT_WIDTH_RATIO_STEPS"
+              :key="ratio"
+              type="button"
+              role="menuitemradio"
+              :aria-checked="app.readingPreferences.widthRatio === ratio"
+              :class="{ active: app.readingPreferences.widthRatio === ratio }"
+              @click="pickWidthRatio(ratio)"
+            >{{ formatContentWidthRatio(ratio) }}</button>
+          </div>
+        </div>
         <!-- 保存态：绿点 + 文案的状态指示，dirty 时它本身就是保存按钮（Ctrl+S 不变） -->
         <button
           class="save-state"
@@ -139,10 +170,12 @@
           v-model="content"
           :dark="isDark"
           :mode="app.editorMode"
+          :fullscreen="fullscreen"
           @save="save(true)"
           @open-wikilink="openWikilink"
           @mode-change="(m: 'ir' | 'sv') => app.setEditorMode(m)"
           @enter-reading="enterReading"
+          @toggle-fullscreen="toggleFullscreen"
           @context-menu="(request) => showContextMenu(request, 'editor')"
         />
       </div>
@@ -395,6 +428,12 @@ import Icon from '../components/Icon.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
+import {
+  CONTENT_WIDTH_RATIO_STEPS,
+  contentColumnWidth,
+  formatContentWidthRatio,
+  type ContentWidthRatio,
+} from '../lib/contentWidth';
 
 const route = useRoute();
 const router = useRouter();
@@ -471,6 +510,42 @@ const pageLoading = ref(false);
 const pageError = ref('');
 const editorRef = ref<InstanceType<typeof MarkdownEditor>>();
 const filePreviewRef = ref<InstanceType<typeof FilePreview>>();
+const viewEl = ref<HTMLElement>();
+
+/* ===== 正文列宽：按可用区百分比（默认 70%），阅读与编辑共用同一份偏好 ===== */
+const widthPickerEl = ref<HTMLElement>();
+const widthMenuOpen = ref(false);
+const widthLabel = computed(() => formatContentWidthRatio(app.readingPreferences.widthRatio));
+/** 正文可用区宽度：编辑视图根元素的宽度（已扣掉左侧图标栏与文件树） */
+const availableWidth = ref(0);
+const contentColumnStyle = computed(() => {
+  if (availableWidth.value <= 0) return {};
+  const column = contentColumnWidth(app.readingPreferences.widthRatio, availableWidth.value);
+  return { '--doc-col': `${column}px` };
+});
+function toggleWidthMenu() {
+  widthMenuOpen.value = !widthMenuOpen.value;
+}
+function pickWidthRatio(ratio: ContentWidthRatio) {
+  app.updateReadingPreferences({ widthRatio: ratio });
+  widthMenuOpen.value = false;
+}
+function onWidthPickerPointerDown(event: MouseEvent) {
+  if (!widthMenuOpen.value) return;
+  if (widthPickerEl.value?.contains(event.target as Node)) return;
+  widthMenuOpen.value = false;
+}
+
+/* ===== 全屏编辑：状态在父级，页头/状态栏一起让位（Vditor 内置全屏做不到这点） ===== */
+const fullscreen = ref(false);
+function toggleFullscreen() {
+  fullscreen.value = !fullscreen.value;
+}
+/** 阅读模式、换页、文件预览都不该留在全屏里 */
+watch(
+  () => [app.readingMode, route.params.id, route.params.file],
+  () => { fullscreen.value = false; }
+);
 
 const filePath = computed(() => (route.query.file as string) || '');
 const isDark = computed(() => app.dark);
@@ -1021,12 +1096,26 @@ function beforeUnload(e: BeforeUnloadEvent) {
   if (dirty) e.preventDefault();
 }
 
-/* Alt+← 回上一页（与浏览器后退一致）；轨迹为空时不拦截，交回浏览器默认行为 */
+/* Alt+← 回上一页（与浏览器后退一致）；轨迹为空时不拦截，交回浏览器默认行为。
+ * Esc 只在全屏编辑时拦截（退出全屏），其余场景照旧交给浏览器/编辑器自己处理 */
 function onGlobalKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && fullscreen.value && !e.defaultPrevented) {
+    e.preventDefault();
+    fullscreen.value = false;
+    return;
+  }
   if (!e.altKey || e.key !== 'ArrowLeft' || e.ctrlKey || e.metaKey || e.shiftKey) return;
   if (!canGoBack.value) return;
   e.preventDefault();
   goBackToSource();
+}
+
+/** 正文可用区随窗口与文件树开合变化：量编辑视图根元素的宽度即可 */
+let viewObserver: ResizeObserver | null = null;
+function measureAvailableWidth() {
+  const el = viewEl.value;
+  if (!el) return;
+  availableWidth.value = Math.round(el.clientWidth);
 }
 
 onMounted(() => {
@@ -1034,10 +1123,19 @@ onMounted(() => {
   else if (!welcomeLoaded) { welcomeLoaded = true; loadWelcome(); }
   window.addEventListener('beforeunload', beforeUnload);
   window.addEventListener('keydown', onGlobalKey);
+  document.addEventListener('pointerdown', onWidthPickerPointerDown);
+  document.addEventListener('click', onWidthPickerPointerDown);
+  measureAvailableWidth();
+  viewObserver = new ResizeObserver(measureAvailableWidth);
+  if (viewEl.value) viewObserver.observe(viewEl.value);
 });
 onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload);
   window.removeEventListener('keydown', onGlobalKey);
+  document.removeEventListener('pointerdown', onWidthPickerPointerDown);
+  document.removeEventListener('click', onWidthPickerPointerDown);
+  viewObserver?.disconnect();
+  viewObserver = null;
   if (saveTimer) clearTimeout(saveTimer);
 });
 </script>
@@ -1048,13 +1146,33 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   position: relative;
-  /* 文档列（mockup 4.3）：720px 列宽 + 左右 40px 留白 = 640px 正文文字列。
-     --col-inset 是文字列左内边距，页头 / 正文 / 关联区 / 工具栏统一用它对齐；
-     vditor 写入的内联 padding 由下方 !important 覆盖 */
+  /* 文档列：宽度按「正文可用区 × 百分比」（默认 70%，由 contentColumnStyle 写入 --doc-col）。
+     这里给的是未量到宽度时的回退值；--col-inset 是文字列左内边距，页头 / 正文 / 关联区 /
+     工具栏统一用它对齐，vditor 写入的内联 padding 由下方 !important 覆盖 */
   --editor-max: 100%;
   --doc-col: 720px;
   --doc-pad: 40px;
   --col-inset: max(24px, calc((100% - var(--doc-col)) / 2 + var(--doc-pad)));
+}
+
+/*
+ * 全屏编辑：正文区铺满，页头 / 状态栏 / 关联区让位（编辑器背景透明，留着就会两层叠字）。
+ * 顶栏保留：它只有 46px，且承载保存态、自动保存开关与「正文宽度」——全屏里正需要调宽度。
+ * 用布局让位而不是 fixed 覆盖层：fixed 会盖住桌面端顶部 36px 标题栏拖拽条。
+ */
+.editor-fullscreen .page-head,
+.editor-fullscreen .statusbar,
+.editor-fullscreen .related,
+.editor-fullscreen .evidence-drawer {
+  display: none;
+}
+.editor-fullscreen .editor-body,
+.editor-fullscreen .editor-area {
+  flex: 1;
+  min-height: 0;
+}
+.editor-fullscreen .editor-area {
+  background: var(--bg);
 }
 
 /* ---------- 顶部条：面包屑 + 保存状态（46px 白条，mockup 4.3） ---------- */
@@ -1090,6 +1208,60 @@ onUnmounted(() => {
 .crumb-sep { color: var(--text-faint); }
 .editor-topbar .spacer,
 .statusbar .spacer { flex: 1; }
+/* ---------- 顶栏「正文宽度」：按可用区百分比选档（默认 70%） ---------- */
+.width-picker {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.topbar-width {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.topbar-width:hover,
+.topbar-width[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.width-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: var(--z-popup);
+  width: 92px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow);
+}
+.width-menu button {
+  display: block;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.width-menu button:hover { background: var(--bg-hover); color: var(--text); }
+.width-menu button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
 /* 保存态：状态指示而非按钮；dirty 时点它即保存（Ctrl+S 不变） */
 .save-state {
   display: inline-flex;
@@ -1717,6 +1889,8 @@ button.save-state.dirty:hover { color: var(--accent); }
 
 @media (max-width: 768px) {
   .editor-topbar { height: 42px; padding: 0 14px; }
+  /* 手机上可用区本就窄，正文列铺满（百分比在这里没有意义） */
+  .editor-view { --doc-col: 100%; --doc-pad: 0px; }
   .page-head { padding: 20px 20px 0; }
   .related { padding: 0 20px 20px; }
   .editor-area :deep(.vditor-reset) {
