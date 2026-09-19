@@ -3,10 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db } from '../lib/db.js';
 import {
-  listTree, readPage, writePage, createPage, movePage, mkdir, safeJoin, reconcileMissingPages,
+  readPage, writePage, createPage, movePage, safeJoin, reconcileMissingPages,
 } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
-import { FIXED_DIRS, normalizeDir, isPageDir, typeToDir, ARCHIVE_DIR } from '../config.js';
+import { normalizeDir, isPageDir, typeToDir, ARCHIVE_DIR } from '../config.js';
 import { requireAuth } from './auth.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
@@ -42,8 +42,6 @@ function reconcileMissingPagesThrottled() {
 
 export async function pageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
-
-  app.get('/api/pages/tree', async () => ({ tree: listTree() }));
 
   app.get('/api/pages/list', async (req) => {
     const { type, tag, outdated } = req.query as { type?: string; tag?: string; outdated?: string };
@@ -241,16 +239,6 @@ export async function pageRoutes(app: FastifyInstance) {
     if (!page) return reply.code(404).send({ error: '页面不存在' });
     moveToTrash(page.path);
     appendWikiLog('删除', `[[${page.title}]]（${page.path}，已入回收站）`);
-    return { ok: true };
-  });
-
-  /** 目录结构固定：只允许"创建"预定义目录（幂等种子），禁止任意建目录 */
-  app.post('/api/mkdir', async (req, reply) => {
-    const { path: p } = req.body as { path: string };
-    if (!(FIXED_DIRS as readonly string[]).includes(normalizeDir(p || ''))) {
-      return reply.code(403).send({ error: '目录结构是固定的，不能新建文件夹' });
-    }
-    mkdir(p);
     return { ok: true };
   });
 

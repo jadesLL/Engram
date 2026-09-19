@@ -420,10 +420,6 @@ export function movePage(oldRel: string, newRel: string, origin: WriteOrigin = '
   return meta;
 }
 
-export function mkdir(rel: string) {
-  fs.mkdirSync(safeJoin(rel), { recursive: true });
-}
-
 /**
  * 把「索引行还在、磁盘文件已消失」的页面标为 deleted。
  *

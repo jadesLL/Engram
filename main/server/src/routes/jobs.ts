@@ -1,14 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { db } from '../lib/db.js';
 import { requireAuth } from './auth.js';
-import {
-  cancelJob,
-  getJobQueueState,
-  retryFailedJobs,
-  retryJob,
-  startJobQueue,
-  stopJobQueue,
-} from '../jobs.js';
+import { getJobQueueState } from '../jobs.js';
 import { resolveJobTarget } from '../lib/jobTarget.js';
 
 const KIND_LABELS: Record<string, string> = {
@@ -86,39 +79,5 @@ export async function jobRoutes(app: FastifyInstance) {
       failed: counts.failed || 0,
       queueRunning: getJobQueueState().running,
     };
-  });
-
-  app.post('/api/jobs/queue/start', async () => ({ ok: true, ...startJobQueue() }));
-
-  app.post('/api/jobs/queue/stop', async () => ({ ok: true, ...stopJobQueue() }));
-
-  app.post('/api/jobs/retry-failed', async () => ({ ok: true, ...retryFailedJobs() }));
-
-  /** 失败任务重试 */
-  app.post('/api/jobs/:id/retry', async (req, reply) => {
-    const id = Number((req.params as { id: string }).id);
-    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ error: '任务 ID 无效' });
-    try {
-      return { ok: true, ...retryJob(id) };
-    } catch (error: any) {
-      const message = error?.message || '任务无法重试';
-      return reply.code(message === '任务不存在' ? 404 : 409).send({ error: message });
-    }
-  });
-
-  app.post('/api/jobs/:id/cancel', async (req, reply) => {
-    const id = Number((req.params as { id: string }).id);
-    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ error: '任务 ID 无效' });
-    try {
-      return { ok: true, ...cancelJob(id) };
-    } catch (error: any) {
-      return reply.code(404).send({ error: error?.message || '任务不存在' });
-    }
-  });
-
-  /** 清理已完成/失败历史 */
-  app.post('/api/jobs/clear', async () => {
-    db.prepare(`DELETE FROM jobs WHERE status IN ('done', 'failed', 'cancelled')`).run();
-    return { ok: true };
   });
 }

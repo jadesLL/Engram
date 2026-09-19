@@ -108,14 +108,6 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { ok: true, record: r.record, type: r.type, detectedIp: r.ip, dnsIp: r.dnsIp, outcome: r.outcome };
   });
 
-  /** 全量重建索引（异步执行，立即返回） */
-  app.post('/api/settings/rebuild-index', async () => {
-    void rebuildAll((msg) => app.log.info(`[rebuild] ${msg}`))
-      .then((r) => app.log.info(`[rebuild] done: ${JSON.stringify(r)}`))
-      .catch((e) => app.log.error(`[rebuild] failed: ${e.message}`));
-    return { ok: true };
-  });
-
   // ---------- MCP tokens（同时授权 /mcp 端点与 REST API Bearer）----------
 
   app.get('/api/settings/mcp-tokens', async () => {
