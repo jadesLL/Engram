@@ -32,6 +32,7 @@
         @go-back-to="goBackToTrail"
         @open-wikilink="openWikilink"
         @open-related="openRelated"
+        @open-graph="openPageGraph"
         @context-menu="(request) => showContextMenu(request, 'reading')"
       />
 
@@ -123,7 +124,7 @@
         </label>
       </div>
 
-      <!-- 扁平编辑区：页头 / 工具栏 / 正文 / 关联 / 状态栏直接铺在灰底上（UI 2.0 mockup 4.3，
+      <!-- 扁平编辑区：页头 / 工具栏 / 正文 / 状态栏直接铺在灰底上（UI 2.0 mockup 4.3，
            不再用悬浮纸面卡片；evidence-drawer 为绝对定位浮层，不参与文档流） -->
       <div v-show="!app.readingMode" class="editor-body">
       <div class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
@@ -272,45 +273,9 @@
         </div>
       </aside>
 
-      <!-- 本页关联：默认折叠为一行摘要；与正文同一内容列，不再需要 JS 实测对齐 -->
-      <div v-if="!app.readingMode && related" class="related" :class="{ collapsed: relatedCollapsed }">
-        <div class="related-inner">
-          <button
-            type="button"
-            class="related-title related-toggle"
-            :aria-expanded="!relatedCollapsed"
-            @click="toggleRelated"
-          >
-            本页关联<span class="related-count">{{ relatedCount }}</span>
-            <Icon class="related-chev" :name="relatedCollapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
-          </button>
-          <div class="related-items">
-            <span
-              v-for="(n, i) in related.neighbors"
-              :key="'n' + n.id + '-' + n.rel + '-' + i"
-              class="rel-item"
-              v-tooltip="n.direction === 'out' ? '本页引用了它' : '它引用了本页'"
-              @click="openRelated(n.id)"
-            >{{ n.direction === 'out' ? '→' : '←' }} {{ n.title }}</span>
-            <span
-              v-for="(s, i) in related.similar"
-              :key="'s' + s.id + '-' + i"
-              class="rel-item"
-              v-tooltip="`语义相似 ${(1 - s.distance).toFixed(2)}`"
-              @click="openRelated(s.id)"
-            >≈ {{ s.title }}</span>
-            <span
-              v-for="(e, i) in related.entities"
-              :key="'e' + e.name + '-' + e.rel + '-' + i"
-              class="rel-item entity"
-            >{{ e.name }}</span>
-          </div>
-        </div>
-      </div>
-
       </div><!-- /editor-body -->
 
-      <!-- 底部状态栏：字数 / 编辑模式；来源、图谱等低频入口收拢到右下。
+      <!-- 底部状态栏：字数 / 编辑模式；来源、图谱、本页关联等低频入口收拢到右下。
            放在 editor-body 之外、直接挂 editor-view：它和顶栏一样是悬浮 chrome（绝对定位浮在正文之上），
            不再参与文档流，正文因此多出上下两条白条的高度。
            v-if 而非 v-show：阅读模式不挂载，wordCount 大页面全文字数统计不跑 -->
@@ -337,6 +302,30 @@
           <Icon name="graph" :size="12" />
           页面图谱
         </button>
+        <!-- 本页关联：入口收进状态栏，点开从胶囊上方弹出面板（原来在正文尾部占一行折叠区）。
+             关联为空不放死入口，与「来源」按 sources.length 的做法一致 -->
+        <RelatedMenu
+          v-if="relatedCount > 0"
+          ref="relatedMenuRef"
+          :related="related"
+          :reset-key="page?.id"
+          @open-page="openRelated"
+          @open-graph="openPageGraph"
+        >
+          <template #default="{ toggle, open, count }">
+            <button
+              type="button"
+              class="sb-item sb-btn sb-rel"
+              aria-haspopup="dialog"
+              :aria-expanded="open"
+              v-tooltip="'本页关联'"
+              @click="toggle"
+            >
+              <Icon name="link" :size="12" />
+              关联 <span class="sb-rel-count">{{ count }}</span>
+            </button>
+          </template>
+        </RelatedMenu>
       </div>
     </template>
 
@@ -440,6 +429,7 @@ import MarkdownEditor from '../components/MarkdownEditor.vue';
 import ReadingPreview from '../components/ReadingPreview.vue';
 import FilePreview from '../components/FilePreview.vue';
 import BackTrailMenu from '../components/BackTrailMenu.vue';
+import RelatedMenu from '../components/RelatedMenu.vue';
 import Icon from '../components/Icon.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import { confirmDialog } from '../lib/confirm';
@@ -495,19 +485,14 @@ function setAutosave(on: boolean) {
   if (on && dirty) save();
 }
 const related = ref<any>(null);
-/* 本页关联折叠：默认收起为一行摘要（关联属页脚参考信息，不该抢正文空间）。
- * 用户点开/收起的选择写入 localStorage 跨会话保留，未操作过时跟随默认收起。 */
-const RELATED_STORE_KEY = 'engram.related.expanded';
-const relatedCollapsed = ref(localStorage.getItem(RELATED_STORE_KEY) !== '1');
+const relatedMenuRef = ref<InstanceType<typeof RelatedMenu>>();
+/* 本页关联：数据仍在页面加载时取，展示改由状态栏胶囊里的 RelatedMenu 负责
+ * （原先是正文尾部一行折叠摘要 + localStorage 记忆展开态，已随本次改动去掉） */
 const relatedCount = computed(() =>
   (related.value?.neighbors?.length || 0) +
   (related.value?.similar?.length || 0) +
   (related.value?.entities?.length || 0)
 );
-function toggleRelated() {
-  relatedCollapsed.value = !relatedCollapsed.value;
-  localStorage.setItem(RELATED_STORE_KEY, relatedCollapsed.value ? '0' : '1');
-}
 /* 手机端页头操作区（类型/标签）折叠：
  * 这些是低频操作，手机上铺开占上半屏，正文反而看不到。默认收起，桌面始终展开。 */
 const chromeMobile = window.matchMedia('(max-width: 768px)');
@@ -556,6 +541,8 @@ function onWidthPickerPointerDown(event: MouseEvent) {
 const fullscreen = ref(false);
 function toggleFullscreen() {
   fullscreen.value = !fullscreen.value;
+  /* 状态栏让位后触发按钮也藏了：手机端的面板是 Teleport 到 body 的，得主动收掉 */
+  if (fullscreen.value) relatedMenuRef.value?.close();
 }
 /** 阅读模式、换页、文件预览都不该留在全屏里 */
 watch(
@@ -759,6 +746,12 @@ function closeReading() {
 function openRelated(id: string) {
   app.pushPageTrail(trailSource(), id);
   router.push(`/page/${id}`);
+}
+
+/** 关联面板里的「图谱 ↗」：与状态栏「页面图谱」同一个去处 */
+function openPageGraph() {
+  if (!page.value) return;
+  router.push(`/graph/${page.value.id}`);
 }
 
 /** 入栈来源页：id + 当前标题（返回列表里显示用户眼下看到的文件名） */
@@ -1163,7 +1156,7 @@ onUnmounted(() => {
   flex-direction: column;
   position: relative;
   /* 文档列：宽度按「正文可用区 × 百分比」（默认 70%，由 contentColumnStyle 写入 --doc-col）。
-     这里给的是未量到宽度时的回退值；--col-inset 是文字列左内边距，页头 / 正文 / 关联区 /
+     这里给的是未量到宽度时的回退值；--col-inset 是文字列左内边距，页头 / 正文 /
      工具栏统一用它对齐，vditor 写入的内联 padding 由下方 !important 覆盖 */
   --editor-max: 100%;
   --doc-col: 720px;
@@ -1175,14 +1168,13 @@ onUnmounted(() => {
 }
 
 /*
- * 全屏编辑：正文区铺满，页头 / 状态栏 / 关联区让位（编辑器背景透明，留着就会两层叠字）。
+ * 全屏编辑：正文区铺满，页头 / 状态栏让位（编辑器背景透明，留着就会两层叠字）。
  * 顶栏保留：它只有 40px，且承载保存态、自动保存开关、手动保存按钮与「正文宽度」——
  * 全屏里正需要调宽度，所以它继续以悬浮 chrome 的形态留在最上层。
  * 用布局让位而不是 fixed 覆盖层：fixed 会盖住桌面端顶部 36px 标题栏拖拽条。
  */
 .editor-fullscreen .page-head,
 .editor-fullscreen .statusbar,
-.editor-fullscreen .related,
 .editor-fullscreen .evidence-drawer {
   display: none;
 }
@@ -1493,7 +1485,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   white-space: nowrap;
 }
 
-/* ---------- 编辑区：UI 2.0 mockup 4.3 起扁平化，页头/正文/关联直接铺在灰底上 ---------- */
+/* ---------- 编辑区：UI 2.0 mockup 4.3 起扁平化，页头/正文直接铺在灰底上 ---------- */
 .editor-body {
   flex: 1;
   min-height: 0;
@@ -1527,7 +1519,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   border-radius: 0;
   background: transparent;
 }
-/* 正文文字列与页头/关联区同一内容列：覆盖 vditor JS 写入的居中内联 padding */
+/* 正文文字列与页头同一内容列：覆盖 vditor JS 写入的居中内联 padding */
 .editor-area :deep(.vditor-reset) {
   padding-left: var(--col-inset) !important;
   padding-right: var(--col-inset) !important;
@@ -1772,53 +1764,7 @@ button.save-state.dirty:hover { color: var(--accent); }
 }
 .source-row small { color: var(--text-faint); }
 
-/* ---------- 本页关联：与正文同一内容列，铺在灰底上 ---------- */
-.related {
-  flex: none;
-  /* 底部多留一档：关联区是文档流末端，悬浮状态栏浮在它下面，
-     26px 会让最后一行被胶囊压住（.editor-body 的 --chrome-bottom 只保证不贴边） */
-  padding: 0 var(--col-inset) calc(18px + var(--chrome-bottom));
-}
-.related-inner {
-  padding-top: 12px;
-}
-.related-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-.related-toggle:hover { color: var(--text); background: transparent; }
-.related-count {
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-  color: var(--text-faint);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.related-chev { color: var(--text-faint); }
-.related-items { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.related.collapsed .related-items { display: none; }
-.rel-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: color 0.12s, border-color 0.12s, background 0.12s;
-}
-.rel-item:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
-.rel-item.entity { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
-
-/* ---------- 底部状态栏：左下悬浮胶囊（字数 / 模式在左，来源、图谱在右） ---------- */
+/* ---------- 底部状态栏：左下悬浮胶囊（字数 / 模式在左，来源、图谱、关联在右） ---------- */
 .statusbar {
   left: 18px;
   bottom: 12px;
@@ -1846,6 +1792,22 @@ button.save-state.dirty:hover { color: var(--accent); }
   font-size: 11.5px;
 }
 .sb-btn:hover { background: var(--bg-hover); color: var(--accent); }
+/* 本页关联：展开时按钮点亮，与弹出的面板连成一组 */
+.sb-rel[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.sb-rel-count {
+  min-width: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.sb-rel[aria-expanded="true"] .sb-rel-count {
+  background: rgba(15, 108, 189, 0.16);
+  color: var(--accent);
+}
 
 .welcome {
   height: 100%;
@@ -1973,7 +1935,6 @@ button.save-state.dirty:hover { color: var(--accent); }
   /* 手机上可用区本就窄，正文列铺满（百分比在这里没有意义） */
   .editor-view { --doc-col: 100%; --doc-pad: 0px; }
   .page-head { padding: 20px 20px 0; }
-  .related { padding: 0 20px 20px; }
   .editor-area :deep(.vditor-reset) {
     padding-left: 20px !important;
     padding-right: 20px !important;
