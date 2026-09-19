@@ -311,21 +311,6 @@ export async function withJobsStopped<T>(
   }
 }
 
-export function retryJob(jobId: number): { status: string } {
-  const job = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(jobId) as any;
-  if (!job) throw new Error('任务不存在');
-  if (!KNOWN_KINDS.has(job.kind)) throw new Error('该任务类型已随提炼管线移除，无法重试');
-  if (!['failed', 'cancelled'].includes(job.status)) {
-    throw new Error('仅失败或已取消任务可重试');
-  }
-  db.prepare(
-    `UPDATE jobs SET status='pending',error=NULL,run_at=NULL,
-     stage='等待执行',progress=0,detail='',cancel_requested=0,
-     run_token='',updated_at=? WHERE id=? AND status IN ('failed','cancelled')`
-  ).run(now(), jobId);
-  return { status: 'pending' };
-}
-
 function resumePausedJobs(): { started: number; failed: number; errors: string[] } {
   const paused = db.prepare(`SELECT * FROM jobs WHERE status='paused' ORDER BY id`).all() as any[];
   let started = 0;
@@ -381,27 +366,6 @@ export function startJobQueue(): {
     pollLane('document');
   }
   return { status: 'running', ...result };
-}
-
-export function retryFailedJobs(): { retried: number; failed: number; errors: string[] } {
-  const jobs = db.prepare(`SELECT id, kind FROM jobs WHERE status='failed' ORDER BY id`).all() as Array<{ id: number; kind: string }>;
-  let retried = 0;
-  let failed = 0;
-  const errors: string[] = [];
-  for (const job of jobs) {
-    try {
-      retryJob(job.id);
-      retried++;
-    } catch (error: any) {
-      failed++;
-      errors.push(`#${job.id} ${String(error?.message || error || '重试失败')}`);
-    }
-  }
-  if (running && getJobQueueState().running) {
-    pollLane('default');
-    pollLane('document');
-  }
-  return { retried, failed, errors };
 }
 
 function abortStaleJobs(): void {

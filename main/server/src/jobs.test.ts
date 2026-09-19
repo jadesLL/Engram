@@ -10,14 +10,13 @@ process.env.DATA_DIR = temp;
 let db: any;
 let now: () => string;
 let recoverStaleJobs: () => void;
-let retryJob: (jobId: number) => { status: string };
 
 before(async () => {
   const dbModule = await import('./lib/db.js');
   db = dbModule.db;
   now = dbModule.now;
   dbModule.migrate();
-  ({ recoverStaleJobs, retryJob } = await import('./jobs.js'));
+  ({ recoverStaleJobs } = await import('./jobs.js'));
 });
 
 beforeEach(() => {
@@ -44,13 +43,6 @@ test('启动清理把已移除的提炼类任务标记为失败', () => {
     assert.equal(row.status, 'failed');
     assert.match(row.error, /已随提炼管线移除/);
   }
-});
-
-test('已移除类型的失败任务不可重试', () => {
-  const info = db.prepare(
-    `INSERT INTO jobs(kind,payload,status,error,created_at,updated_at) VALUES('page_recompose','{}','failed','x',?,?)`
-  ).run(now(), now());
-  assert.throws(() => retryJob(Number(info.lastInsertRowid)), /已随提炼管线移除/);
 });
 
 test('启动 FTS 兜底为缺 pages_fts 的页面入队索引任务', () => {
