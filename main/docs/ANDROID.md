@@ -39,8 +39,7 @@ main/mobile/
     ├── EngramLocalServer.kt    # loopback Ktor REST/静态服务
     ├── LocalDatabase.kt        # Markdown/SQLite/备份/回收站
     ├── SyncEngine.kt           # 前台一次性成员同步
-    ├── SecretStore.kt          # Android Keystore
-    └── Merge3.kt               # 与 Node 测试向量一致的三方合并实现
+    └── SecretStore.kt          # Android Keystore
 ```
 
 `mobile/web-dist/` 是构建产物，不入 Git。每次打包必须先构建 `@engram/web`，再运行 `prepare:web` 和 `cap sync android`。
