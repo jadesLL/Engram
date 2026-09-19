@@ -57,15 +57,18 @@
           </template>
         </BackTrailMenu>
         <div class="spacer"></div>
-        <span v-if="saveState" class="save-pill" :class="savePillClass">
-          <span class="dot"></span>{{ saveState }}
-        </span>
+        <!-- 保存按钮并入状态 pill：dirty 时 pill 本身就是保存按钮（Ctrl+S 不变） -->
         <button
-          class="btn small topbar-save"
-          :disabled="!dirtyUi"
-          v-tooltip="'保存当前修改（Ctrl+S）'"
-          @click="save(true)"
-        >保存</button>
+          v-if="saveState"
+          class="save-pill"
+          :class="savePillClass"
+          type="button"
+          :disabled="saveState !== '编辑中…'"
+          v-tooltip="saveState === '编辑中…' ? '点击保存（Ctrl+S）' : ''"
+          @click="saveState === '编辑中…' && save(true)"
+        >
+          <span class="dot"></span>{{ saveState }}
+        </button>
         <label class="switch-control autosave-toggle" v-tooltip="'按文件记忆；关闭后仅手动保存'">
           <input
             type="checkbox"
@@ -950,9 +953,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   position: relative;
-  /* 内容列：页头 / 正文 / 关联区统一 760px 居中，vditor 内联 padding 被下方 !important 覆盖 */
+  /* 内容列：页头 / 正文 / 关联区统一 720px 居中（UI 2.0 行长收敛），vditor 内联 padding 被下方 !important 覆盖 */
   --editor-max: 100%;
-  --content-col: 760px;
+  --content-col: 720px;
 }
 
 /* ---------- 顶部条：面包屑 + 保存状态 ---------- */
@@ -993,6 +996,9 @@ onUnmounted(() => {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
 }
+button.save-pill { font: inherit; font-size: 12px; cursor: default; }
+button.save-pill.dirty { cursor: pointer; }
+button.save-pill.dirty:hover { border-color: var(--warning); color: var(--text); }
 .save-pill .dot {
   width: 7px;
   height: 7px;
@@ -1003,7 +1009,6 @@ onUnmounted(() => {
 .save-pill.failed { color: var(--danger); }
 .save-pill.failed .dot { background: var(--danger); }
 @keyframes save-pulse { 50% { opacity: 0.35; } }
-.topbar-save { flex: none; }
 .autosave-toggle { flex: none; }
 /* 双链跳转后的返回入口：紧邻面包屑，图标 + 文案 */
 .topbar-back {

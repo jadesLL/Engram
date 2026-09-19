@@ -97,37 +97,47 @@
           >{{ option.label }}</button>
         </div>
 
-        <select
-          class="line-height-select"
-          :value="preferences.lineHeight"
-          aria-label="正文行距"
-          @change="setLineHeight"
-        >
-          <option :value="1.6">紧凑</option>
-          <option :value="1.8">舒适</option>
-          <option :value="2">宽松</option>
-        </select>
-
-        <label class="reading-switch">
-          <input
-            type="checkbox"
-            :checked="preferences.numberedHeadings"
-            @change="toggleNumbering"
-          />
-          <span>编号</span>
-        </label>
-
-        <button
-          class="reading-tool outline-tool"
-          type="button"
-          :aria-pressed="outlinePressed"
-          :disabled="outline.length === 0"
-          v-tooltip="'显示或隐藏目录'"
-          @click="toggleOutline"
-        >
-          <Icon name="list-tree" :size="17" />
-          <span class="outline-label">目录</span>
-        </button>
+        <!-- 低频显示项收进「显示」菜单：行距 / 编号 / 目录 -->
+        <div ref="displayWrapEl" class="display-wrap">
+          <button
+            class="reading-tool"
+            type="button"
+            aria-haspopup="menu"
+            :aria-expanded="displayMenuOpen"
+            v-tooltip="'显示选项（行距 / 编号 / 目录）'"
+            @click="toggleDisplayMenu"
+          >
+            <Icon name="more" :size="17" />
+          </button>
+          <div v-if="displayMenuOpen" class="display-menu" role="menu" aria-label="显示选项">
+            <div class="display-menu-label">行距</div>
+            <div class="display-menu-seg" role="radiogroup" aria-label="正文行距">
+              <button
+                v-for="option in lineHeightOptions"
+                :key="option.value"
+                type="button"
+                role="radio"
+                :aria-checked="preferences.lineHeight === option.value"
+                :class="{ active: preferences.lineHeight === option.value }"
+                @click="pickLineHeight(option.value)"
+              >{{ option.label }}</button>
+            </div>
+            <div class="display-menu-sep"></div>
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              :aria-checked="preferences.numberedHeadings"
+              @click="toggleNumberingMenu"
+            ><span class="check" :class="{ on: preferences.numberedHeadings }"></span>标题编号</button>
+            <button
+              type="button"
+              role="menuitemcheckbox"
+              :aria-checked="outlinePressed"
+              :disabled="outline.length === 0"
+              @click="toggleOutline"
+            ><span class="check" :class="{ on: outlinePressed }"></span>本页目录</button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -277,6 +287,8 @@ const outlineNavEl = ref<HTMLElement>();
 const fontPickerEl = ref<HTMLElement>();
 const fontMenuEl = ref<HTMLElement>();
 const fontMenuOpen = ref(false);
+const displayWrapEl = ref<HTMLElement>();
+const displayMenuOpen = ref(false);
 const outline = ref<OutlineItem[]>([]);
 const currentHeading = ref('');
 const rendering = ref(false);
@@ -295,6 +307,11 @@ const widthOptions: Array<{ value: ReadingWidth; label: string }> = [
   { value: 680, label: '窄' },
   { value: 780, label: '标准' },
   { value: 960, label: '宽' },
+];
+const lineHeightOptions: Array<{ value: ReadingLineHeight; label: string }> = [
+  { value: 1.6, label: '紧凑' },
+  { value: 1.8, label: '舒适' },
+  { value: 2, label: '宽松' },
 ];
 /* 下拉里 8–48px 每 1px 一档，与 A−/A+ 的步进范围完全一致 */
 const fontSizeOptions: number[] = Array.from(
@@ -374,13 +391,18 @@ function pickFontSize(size: number) {
 
 /* 下拉打开时：点别处或按 Esc 收起；Esc 在菜单关闭后才交回「返回编辑」 */
 function onDocumentPointerDown(event: MouseEvent) {
-  if (!fontMenuOpen.value) return;
-  if (fontPickerEl.value?.contains(event.target as Node)) return;
-  fontMenuOpen.value = false;
+  if (fontMenuOpen.value && !fontPickerEl.value?.contains(event.target as Node)) {
+    fontMenuOpen.value = false;
+  }
+  if (displayMenuOpen.value && !displayWrapEl.value?.contains(event.target as Node)) {
+    displayMenuOpen.value = false;
+  }
 }
 
 function onDocumentKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && fontMenuOpen.value) fontMenuOpen.value = false;
+  if (event.key !== 'Escape') return;
+  if (fontMenuOpen.value) fontMenuOpen.value = false;
+  if (displayMenuOpen.value) displayMenuOpen.value = false;
 }
 
 function onEsc() {
@@ -388,19 +410,24 @@ function onEsc() {
     fontMenuOpen.value = false;
     return;
   }
+  if (displayMenuOpen.value) {
+    displayMenuOpen.value = false;
+    return;
+  }
   closeReading();
 }
 
-function setLineHeight(event: Event) {
-  updatePreferences({
-    lineHeight: Number((event.target as HTMLSelectElement).value) as ReadingLineHeight,
-  });
+/* 「显示」菜单：行距 / 标题编号低频项从顶栏收进菜单，顶栏只留页宽+字号+主题 */
+function toggleDisplayMenu() {
+  displayMenuOpen.value = !displayMenuOpen.value;
 }
 
-function toggleNumbering(event: Event) {
-  updatePreferences({
-    numberedHeadings: (event.target as HTMLInputElement).checked,
-  });
+function pickLineHeight(value: ReadingLineHeight) {
+  updatePreferences({ lineHeight: value });
+}
+
+function toggleNumberingMenu() {
+  updatePreferences({ numberedHeadings: !preferences.value.numberedHeadings });
 }
 
 function toggleOutline() {
@@ -991,26 +1018,99 @@ onBeforeUnmount(() => {
   color: var(--accent);
   font-weight: 600;
 }
-.line-height-select {
-  min-height: 34px;
-  padding-block: 0;
-  color: var(--text-secondary);
-}
-.reading-switch {
-  min-height: 34px;
+/* 「显示」菜单：触发钮 + 浮层（行距分段 + 两个勾选项） */
+.display-wrap {
+  position: relative;
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding-inline: 6px;
+}
+.display-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: 176px;
+  padding: 6px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow);
+}
+.display-menu-label {
+  padding: 4px 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+}
+.display-menu-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  margin: 2px 4px 4px;
+}
+.display-menu-seg button {
+  flex: 1;
+  padding: 4px 0;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 2px);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
-  white-space: nowrap;
+  cursor: pointer;
 }
-.reading-switch input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--accent);
+.display-menu-seg button:hover { color: var(--text); }
+.display-menu-seg button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.display-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+.display-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.display-menu > button:hover:not(:disabled) { background: var(--control-bg-hover); color: var(--text); }
+.display-menu > button:disabled { opacity: 0.45; cursor: not-allowed; }
+.display-menu .check {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 4px;
+  border: 1px solid var(--control-border-strong);
+  background: var(--control-bg);
+  position: relative;
+}
+.display-menu .check.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.display-menu .check.on::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 .reading-grid {
   display: grid;
@@ -1385,8 +1485,7 @@ onBeforeUnmount(() => {
     width: 36px;
     padding: 0;
   }
-  .back-label,
-  .outline-label { display: none; }
+  .back-label { display: none; }
   .reading-stats {
     grid-column: 2;
     grid-row: 1;
