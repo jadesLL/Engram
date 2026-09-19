@@ -179,6 +179,14 @@ const ICONS: Record<string, string[]> = {
   ],
   unfold: ['m7 15 5 5 5-5', 'm7 9 5-5 5 5'],
   fold: ['m7 20 5-5 5 5', 'm7 4 5 5 5-5'],
+  // 会话列表 / 改名 / 思考过程
+  messages: ['M8 9h8', 'M8 13h5', 'M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z'],
+  pencil: ['M12 20h9', 'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z'],
+  lightbulb: [
+    'M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5',
+    'M9 18h6',
+    'M10 22h4',
+  ],
 };
 
 const paths = computed(() => ICONS[props.name] || ICONS.file);

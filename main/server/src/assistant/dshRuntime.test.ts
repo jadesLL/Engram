@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mapSessionEvent, mapNotification } from './mapping.js';
+import { mapSessionEvent, mapNotification, planReasoningReplay } from './mapping.js';
 import { buildTask } from './prompts.js';
 
 /**
@@ -26,11 +26,92 @@ test('assistant/message：中断标记随事件带出', () => {
   assert.deepEqual(events, [{ kind: 'text', text: '被截断', interrupted: true }]);
 });
 
-test('assistant/message：只有推理块时不产出正文', () => {
+test('assistant/message：思考块与正文块按块序切成两段（思考在前）', () => {
+  const events = mapSessionEvent('assistant/message', {
+    message: {
+      content: [
+        { type: 'reasoning', text: '先看索引' },
+        { type: 'reasoning', text: '，再看同步' },
+        { type: 'text', text: '总结如下' },
+      ],
+    },
+  });
+  assert.deepEqual(events, [
+    { kind: 'reasoning', text: '先看索引，再看同步', parts: [] },
+    { kind: 'text', text: '总结如下' },
+  ]);
+});
+
+test('assistant/message：正文块在前时思考段排在它后面（按真实块序）', () => {
+  const events = mapSessionEvent('assistant/message', {
+    message: { content: [{ type: 'text', text: '先答' }, { type: 'reasoning', text: '再想' }] },
+  });
+  assert.deepEqual(events, [
+    { kind: 'text', text: '先答' },
+    { kind: 'reasoning', text: '再想', parts: [] },
+  ]);
+});
+
+test('assistant/message：只有推理块时只产出思考段（不再整块丢弃）', () => {
   const events = mapSessionEvent('assistant/message', {
     message: { content: [{ type: 'reasoning', text: '想一下' }] },
   });
-  assert.deepEqual(events, []);
+  assert.deepEqual(events, [{ kind: 'reasoning', text: '想一下', parts: [] }]);
+});
+
+test('assistant/message：带原始增量流时思考段带回放时间线', () => {
+  const events = mapSessionEvent('assistant/message', {
+    message: { content: [{ type: 'reasoning', text: '甲乙丙' }] },
+    stream: [
+      // 真实形状：reasoning-chunks 记录 time0 + 逐块 dt（第 i 块时间 = time0 + Σ dt[0..i]）
+      { type: 'reasoning-chunks', time0: 1000, index: 0, dt: [10, 20, 30], texts: ['甲', '乙', '丙'] },
+      { type: 'text-chunks', time0: 2000, index: 1, dt: [5], texts: ['答案'] },
+    ],
+  });
+  assert.deepEqual(events, [{
+    kind: 'reasoning',
+    text: '甲乙丙',
+    parts: [
+      { text: '甲', at: 1010 },
+      { text: '乙', at: 1030 },
+      { text: '丙', at: 1060 },
+    ],
+  }]);
+});
+
+test('assistant/message：增量流拼不回块文本时放弃回放（宁可整段显示）', () => {
+  const events = mapSessionEvent('assistant/message', {
+    message: { content: [{ type: 'reasoning', text: '甲乙丙' }] },
+    stream: [{ type: 'reasoning-chunks', time0: 0, index: 0, dt: [1], texts: ['甲'] }],
+  });
+  assert.deepEqual(events, [{ kind: 'reasoning', text: '甲乙丙', parts: [] }]);
+});
+
+test('回放计划：没有增量记录就整段一次发出（不编造节奏）', () => {
+  assert.deepEqual(planReasoningReplay([], '整段思考'), [{ text: '整段思考', delayMs: 0 }]);
+  assert.deepEqual(
+    planReasoningReplay([{ text: '别', at: 0 }, { text: '的', at: 10 }], '整段思考'),
+    [{ text: '整段思考', delayMs: 0 }]
+  );
+  assert.deepEqual(planReasoningReplay([], ''), []);
+});
+
+test('回放计划：真实间隔超过上限时整体等比压缩', () => {
+  // 10 秒的思考、10 块：压到 2s 上限 → 每块 200ms
+  const parts = Array.from({ length: 10 }, (_, i) => ({ text: `第${i}段。`, at: i * 1000 }));
+  const steps = planReasoningReplay(parts, parts.map((part) => part.text).join(''), { capMs: 2000 });
+  const total = steps.reduce((sum, step) => sum + step.delayMs, 0);
+  assert.ok(total <= 2100, `总时长应被压到上限内，实际 ${total}`);
+  // 首块延迟 0 且不足合并阈值，会与第二块并成一帧 → 10 块变 9 帧，帧间隔约 222ms（1000 × 2000/9000）
+  assert.equal(steps.length, 9);
+  assert.ok(Math.abs(steps[0].delayMs - 222) <= 2, `压缩后间隔应约 222ms，实际 ${steps[0].delayMs}`);
+});
+
+test('回放计划：相邻小增量合并成少量帧，长思考有帧数上限', () => {
+  const parts = Array.from({ length: 400 }, (_, i) => ({ text: '字', at: i * 5 }));
+  const steps = planReasoningReplay(parts, parts.map((part) => part.text).join(''));
+  assert.ok(steps.length <= 60, `帧数应被合并到 60 以内，实际 ${steps.length}`);
+  assert.equal(steps.map((step) => step.text).join(''), '字'.repeat(400));
 });
 
 test('tool/call：名称与原始参数字符串进工具卡', () => {

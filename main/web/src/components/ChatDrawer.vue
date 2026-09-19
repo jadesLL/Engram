@@ -31,18 +31,19 @@
 
     <header class="chat-head">
       <div class="chat-brand"><Icon name="ai" :size="16" /> 内置 Agent</div>
-      <select
-        v-if="chat.sessions.length"
-        class="session-select"
-        :value="chat.activeSessionId"
-        v-tooltip="'切换会话'"
-        aria-label="切换会话"
-        @change="onSelectSession"
+      <span class="chat-spacer" />
+      <button
+        class="btn icon session-toggle"
+        type="button"
+        :class="{ on: chat.sessionPanelOpen }"
+        v-tooltip="'会话列表'"
+        aria-label="会话列表"
+        :aria-pressed="chat.sessionPanelOpen"
+        @click="chat.toggleSessionPanel()"
       >
-        <option v-for="session in chat.sessions" :key="session.id" :value="session.id">
-          {{ session.title }}
-        </option>
-      </select>
+        <Icon name="messages" :size="15" />
+        <span v-if="chat.runningCount" class="session-badge">{{ chat.runningCount }}</span>
+      </button>
       <button
         class="btn icon"
         type="button"
@@ -53,11 +54,8 @@
       >
         <Icon :name="isFull ? 'minimize' : 'maximize'" :size="15" />
       </button>
-      <button class="btn icon" type="button" v-tooltip="'新建会话'" aria-label="新建会话" @click="chat.createSession()">
+      <button class="btn icon" type="button" v-tooltip="'新建会话'" aria-label="新建会话" @click="newSession">
         <Icon name="plus" :size="15" />
-      </button>
-      <button class="btn icon" type="button" v-tooltip="'删除当前会话'" aria-label="删除当前会话" @click="deleteSession">
-        <Icon name="trash" :size="15" />
       </button>
       <button class="btn icon" type="button" v-tooltip="'关闭'" aria-label="关闭" @click="app.toggleChat(false)">
         <Icon name="x" :size="15" />
@@ -71,7 +69,75 @@
       </button>
     </div>
 
-    <div ref="scrollEl" class="chat-body">
+    <!-- 会话列表：标题/时间/进行中状态，可搜索、改名、删除（替换转录区显示） -->
+    <section v-if="chat.sessionPanelOpen" class="session-panel" aria-label="会话列表">
+      <div class="session-search">
+        <Icon name="search" :size="13" />
+        <input
+          v-model="chat.sessionQuery"
+          type="text"
+          placeholder="搜索会话标题"
+          aria-label="搜索会话标题"
+        />
+      </div>
+      <div class="session-list">
+        <div
+          v-for="session in chat.filteredSessions"
+          :key="session.id"
+          class="session-row"
+          :class="{ active: session.id === chat.activeSessionId, running: session.running }"
+        >
+          <template v-if="renamingId === session.id">
+            <input
+              ref="renameEl"
+              v-model="renameDraft"
+              class="session-rename"
+              type="text"
+              aria-label="会话标题"
+              @keydown.enter.prevent="commitRename(session.id)"
+              @keydown.esc.prevent="cancelRename"
+              @blur="commitRename(session.id)"
+            />
+          </template>
+          <template v-else>
+            <button class="session-open" type="button" @click="openSession(session.id)">
+              <span class="session-title">{{ session.title }}</span>
+              <span class="session-sub">
+                <span v-if="session.running" class="session-state running">
+                  <AppSpinner :size="11" /> 回复中
+                </span>
+                <span v-else-if="chat.unread[session.id]" class="session-state unread">新回复</span>
+                <span v-else-if="session.titleSource === 'auto'" class="session-state auto" v-tooltip="'标题由内置 Agent 按内容自动生成'">自动命名</span>
+                <span class="session-time">{{ formatSessionTime(session.updatedAt) }}</span>
+              </span>
+            </button>
+            <button
+              class="session-action"
+              type="button"
+              v-tooltip="'重命名'"
+              aria-label="重命名会话"
+              @click="startRename(session)"
+            >
+              <Icon name="pencil" :size="13" />
+            </button>
+            <button
+              class="session-action danger"
+              type="button"
+              v-tooltip="'删除会话'"
+              aria-label="删除会话"
+              @click="removeSession(session)"
+            >
+              <Icon name="trash" :size="13" />
+            </button>
+          </template>
+        </div>
+        <p v-if="!chat.filteredSessions.length" class="session-empty">
+          {{ chat.sessions.length ? '没有匹配的会话' : '还没有会话' }}
+        </p>
+      </div>
+    </section>
+
+    <div v-else ref="scrollEl" class="chat-body">
       <div v-if="chat.loading" class="empty-hint"><AppSpinner :size="14" /> 正在加载会话…</div>
 
       <AppEmptyState
@@ -106,7 +172,23 @@
               class="entry-markdown"
               v-html="renderAssistantMarkdown(item.message.content)"
             />
-            <span v-if="item.message.id === streamingId" class="cursor">▍</span>
+            <span v-if="streamingKey === item.key" class="cursor">▍</span>
+          </div>
+
+          <!-- 思考过程：默认展开随生成长出来，本轮结束后自动收起（手动点过就以手动为准） -->
+          <div v-else-if="item.kind === 'reasoning'" class="think" :class="{ live: isThinking(item.message) }">
+            <button
+              class="think-head"
+              type="button"
+              :aria-expanded="isThinkOpen(item.message)"
+              @click="toggleThink(item.message)"
+            >
+              <Icon name="lightbulb" :size="13" />
+              <b>思考过程</b>
+              <span class="think-meta">{{ thinkMeta(item.message) }}</span>
+              <Icon :name="isThinkOpen(item.message) ? 'chevron-up' : 'chevron-down'" :size="13" />
+            </button>
+            <pre v-if="isThinkOpen(item.message)" class="think-body">{{ item.message.content }}<span v-if="isThinking(item.message)" class="cursor">▍</span></pre>
           </div>
 
           <div v-else class="tool" :class="item.call.status">
@@ -232,9 +314,24 @@ import Icon from './Icon.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 import { useAppStore } from '../stores/app';
-import { useChatStore, type ChatContext, type ChatRun, type ChatToolCall } from '../stores/chat';
+import {
+  useChatStore,
+  type ChatContext,
+  type ChatMessage,
+  type ChatRun,
+  type ChatSession,
+  type ChatToolCall,
+} from '../stores/chat';
 import type { SelectionExcerpt } from '../lib/askAgent';
-import { buildChatTimeline, showStreamName, startsNewRun, toolCallSummary } from '../lib/chatTimeline';
+import {
+  buildChatTimeline,
+  reasoningDurationMs,
+  showStreamName,
+  startsNewRun,
+  toolCallSummary,
+} from '../lib/chatTimeline';
+import { formatDuration, formatSessionTime } from '../lib/chatTime';
+import { confirmDialog } from '../lib/confirm';
 import { renderAssistantMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
 
@@ -416,15 +513,50 @@ const timeline = computed(() =>
   buildChatTimeline(chat.messages, chat.sessionToolCalls, chat.runs)
 );
 
-/** 正在流式到达的那一段正文（光标只画在它后面） */
-const streamingId = computed(() => {
-  const run = chat.currentRun;
-  if (!run) return '';
-  const segments = chat.messages.filter((m) => m.runId === run.id && m.role === 'assistant');
-  return segments.length ? segments[segments.length - 1].id : '';
+/** 正在流式到达的那一条（正文段或思考段；光标只画在它后面） */
+const streamingKey = computed(() => {
+  const items = timeline.value;
+  const last = items[items.length - 1];
+  if (!last) return '';
+  const runId = last.kind === 'tool' ? last.call.runId : last.message.runId || '';
+  if (!runId) return '';
+  const active = chat.runs.some((run) => run.id === runId && ['queued', 'running'].includes(run.status));
+  return active ? last.key : '';
 });
 
 const showName = (index: number) => showStreamName(timeline.value, index);
+
+/* ===== 思考过程：进行中默认展开并随增量长出来，本轮结束自动收起；用户点过就以用户为准 ===== */
+const thinkOverride = ref<Record<string, boolean>>({});
+
+/**
+ * 这一段思考是否还在长：只有「本轮最后一条」才是正在到达的那一段。
+ * 用「整轮是否在跑」判断会让已播完的思考段一直显示「思考中…」+ 光标。
+ */
+function isThinking(message: ChatMessage): boolean {
+  return streamingKey.value === message.id;
+}
+
+/** 该思考段所属的那一轮是否还在跑（决定默认展开还是收起） */
+function isThinkingRunActive(message: ChatMessage): boolean {
+  if (!message.runId) return false;
+  return chat.runs.some((run) => run.id === message.runId && ['queued', 'running'].includes(run.status));
+}
+
+function isThinkOpen(message: ChatMessage): boolean {
+  return thinkOverride.value[message.id] ?? isThinkingRunActive(message);
+}
+
+function toggleThink(message: ChatMessage) {
+  thinkOverride.value = { ...thinkOverride.value, [message.id]: !isThinkOpen(message) };
+}
+
+/** 思考段标题右侧的状态：正在思考 / 思考用时 */
+function thinkMeta(message: ChatMessage): string {
+  if (isThinking(message)) return '思考中…';
+  const ms = reasoningDurationMs(message);
+  return ms ? `用时 ${formatDuration(ms)}` : '已完成';
+}
 
 /* ===== 工具卡折叠：默认收起，失败默认展开，用户点过就以用户为准 ===== */
 const toolOpenOverride = ref<Record<string, boolean>>({});
@@ -437,13 +569,56 @@ function toggleTool(call: ChatToolCall) {
   toolOpenOverride.value = { ...toolOpenOverride.value, [call.id]: !isToolOpen(call) };
 }
 
-function onSelectSession(event: Event) {
-  const id = (event.target as HTMLSelectElement).value;
-  void chat.selectSession(id);
+/* ===== 会话列表：切换 / 新建 / 改名 / 删除 ===== */
+const renamingId = ref('');
+const renameDraft = ref('');
+const renameEl = ref<HTMLInputElement | null>(null);
+
+async function newSession() {
+  await chat.createSession();
+  draft.value = '';
+  inputEl.value?.focus();
 }
 
-async function deleteSession() {
-  await chat.deleteActiveSession();
+function openSession(id: string) {
+  if (id !== chat.activeSessionId) draft.value = '';
+  void chat.selectSession(id).then(() => {
+    inputEl.value?.focus();
+    void scrollToBottom();
+  });
+}
+
+function startRename(session: ChatSession) {
+  renamingId.value = session.id;
+  renameDraft.value = session.title;
+  void nextTick(() => renameEl.value?.focus());
+}
+
+function cancelRename() {
+  renamingId.value = '';
+}
+
+async function commitRename(id: string) {
+  if (renamingId.value !== id) return;
+  const title = renameDraft.value.trim();
+  renamingId.value = '';
+  if (!title) return;
+  try {
+    await chat.renameSession(id, title);
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '改名失败');
+  }
+}
+
+async function removeSession(session: ChatSession) {
+  const ok = await confirmDialog({
+    title: '删除会话',
+    message: `「${session.title}」的对话记录会一并删除，已沉淀到知识库的内容不受影响。`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
+  await chat.deleteSession(session.id);
 }
 
 async function send(text?: string) {
@@ -566,7 +741,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onDrawerViewportResize);
-  chat.closeEvents();
+  // 事件流故意不断开：抽屉是随开关挂载/卸载的，后台会话跑完还要能标未读
+  // （每轮收口时由 store 自行关闭对应连接，不会堆积）。
 });
 </script>
 
@@ -652,11 +828,12 @@ onUnmounted(() => {
   left: calc(var(--sidebar-width) + 72px);
 }
 
-/* 满窗下头部/正文/输入区同列居中限宽，长文与工具结果不被拉成一整屏 */
+/* 满窗下头部/正文/输入区/会话列表同列居中限宽，长文与工具结果不被拉成一整屏 */
 .chat-drawer.full .chat-head,
 .chat-drawer.full .context-strip,
 .chat-drawer.full .chat-body,
-.chat-drawer.full .chat-composer {
+.chat-drawer.full .chat-composer,
+.chat-drawer.full .session-panel {
   padding-left: max(12px, calc((100% - 1080px) / 2));
   padding-right: max(12px, calc((100% - 1080px) / 2));
 }
@@ -678,9 +855,192 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.session-select {
+/* 会话按钮把标题挤到左边：品牌 + 弹性空隙 + 按钮组 */
+.chat-spacer {
   flex: 1;
   min-width: 0;
+}
+
+.session-toggle {
+  position: relative;
+}
+
+.session-toggle.on {
+  border-color: var(--accent, #4d8aff);
+  color: var(--accent, #4d8aff);
+}
+
+/* 有会话在跑时按钮上挂一个数字：面板关着也知道后台在干活 */
+.session-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent, #4d8aff);
+  color: #fff;
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+}
+
+/* ===== 会话列表面板：替换转录区显示，标题/时间/状态一眼看全 ===== */
+.session-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.session-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-faint);
+}
+
+.session-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.session-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.session-row:hover {
+  background: var(--bg-secondary);
+}
+
+.session-row.active {
+  border-color: var(--border);
+  background: var(--bg-secondary);
+}
+
+.session-row.running .session-title {
+  font-weight: 600;
+}
+
+.session-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.session-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+
+.session-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 10px;
+}
+
+.session-state.running {
+  color: var(--accent, #4d8aff);
+}
+
+.session-state.unread {
+  background: var(--accent, #4d8aff);
+  color: #fff;
+}
+
+.session-state.auto {
+  color: var(--text-faint);
+}
+
+.session-time {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.session-action {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.session-action:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.session-action.danger:hover {
+  color: var(--danger, #d64545);
+}
+
+.session-rename {
+  flex: 1;
+  min-width: 0;
+  margin: 4px 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--accent, #4d8aff);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.session-empty {
+  margin: 12px 4px;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
@@ -863,6 +1223,65 @@ onUnmounted(() => {
 
 @keyframes blink {
   to { visibility: hidden; }
+}
+
+/* ===== 思考过程：弱化的过程块，进行中左缘强调色，正文等宽换行 ===== */
+.think {
+  border: 1px dashed var(--border);
+  border-left: 2px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.think.live {
+  border-left-color: var(--accent, #4d8aff);
+}
+
+.think-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.think-head b {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.think.live .think-head b {
+  color: var(--accent, #4d8aff);
+}
+
+.think-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.think-body {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 0 10px 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 /* ===== 执行记录：一行摘要，点开看完整参数与完整结果（靠滚动，不截断） ===== */

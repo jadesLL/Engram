@@ -513,6 +513,8 @@ export function migrate() {
   ensureColumn('assistant_sessions', 'chat_anchor_id', 'TEXT');
   // 内置 Agent（dsh）会话 id：续聊时用同一条 dsh Session
   ensureColumn('assistant_sessions', 'dsh_session_id', 'TEXT');
+  // 会话标题来源：default（新对话）/ auto（Engram 按内容自动命名）/ user（用户手动改名，自动命名不再覆盖）
+  ensureColumn('assistant_sessions', 'title_source', 'TEXT');
   ensureColumn('ingest_candidates', 'evidence_eligible', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('semantic_events', 'status', `TEXT NOT NULL DEFAULT 'succeeded'`);
   ensureColumn('semantic_events', 'error', `TEXT NOT NULL DEFAULT ''`);
@@ -565,6 +567,15 @@ export function migrate() {
          updated_at = ?
      WHERE status IN ('queued', 'running', 'executing')`
   ).run(now());
+  // 存量会话补标题来源：补列后老行是 NULL，除默认名外都当用户命名过（自动命名不去覆盖用户起的名）
+  db.prepare(
+    `UPDATE assistant_sessions
+     SET title_source = CASE
+       WHEN title IS NULL OR TRIM(title) = '' OR title = '新对话' THEN 'default'
+       ELSE 'user'
+     END
+     WHERE title_source IS NULL`
+  ).run();
   });
   migrateSchema();
   // 存量库补列：旧行 guide_version=0（视为落后于当前提炼指南），Agent 写页时刷新

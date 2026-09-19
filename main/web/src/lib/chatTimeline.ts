@@ -1,10 +1,11 @@
 import type { ChatMessage, ChatRun, ChatToolCall } from '../stores/chat';
 
 /**
- * 聊天抽屉的对话流：把消息与工具卡（执行记录）合成一条按时间排的时间线。
+ * 聊天抽屉的对话流：把消息（正文 / 思考）与工具卡（执行记录）合成一条按时间排的时间线。
  *
- * 助手正文在服务端按步分段落库（每步一条 assistant/message），所以这里要做的就是把
- * 工具卡插回它发生的那两步之间——纯函数，无 Vue 依赖，便于单测。
+ * 助手正文在服务端按步分段落库（每步一条 assistant/message），思考段是同表另一类
+ * （metadata.kind = 'reasoning'），所以这里要做的就是把工具卡插回它发生的那两步之间——
+ * 纯函数，无 Vue 依赖，便于单测。
  */
 
 export type ChatStreamItem = {
@@ -12,13 +13,25 @@ export type ChatStreamItem = {
   key: string;
   /** 排序用的落库时间（ISO 字符串，可直接字典序比较） */
   at: string;
-  /** 同一毫秒时的次序：正文段在前，工具卡在后 */
+  /** 同一毫秒时的次序：消息/思考段在前，工具卡在后 */
   rank: number;
   role: 'user' | 'assistant';
 } & (
   | { kind: 'message'; message: ChatMessage }
+  | { kind: 'reasoning'; message: ChatMessage }
   | { kind: 'tool'; call: ChatToolCall }
 );
+
+/** 思考段：正文之外的「过程」消息（服务端按 metadata.kind 标记） */
+export function isReasoningMessage(message: ChatMessage): boolean {
+  return (message.metadata as any)?.kind === 'reasoning';
+}
+
+/** 思考段时长（毫秒）：服务端在段收口时补写；缺失返回 0 */
+export function reasoningDurationMs(message: ChatMessage): number {
+  const value = Number((message.metadata as any)?.ms);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
 
 function byAt(a: ChatStreamItem, b: ChatStreamItem): number {
   return a.at.localeCompare(b.at) || a.rank - b.rank;
@@ -47,7 +60,7 @@ export function buildChatTimeline(
       at: message.createdAt,
       rank: 0,
       role: message.role,
-      kind: 'message',
+      kind: isReasoningMessage(message) ? 'reasoning' : 'message',
       message,
     });
   }
@@ -64,6 +77,7 @@ export function buildChatTimeline(
 
   // 一轮一组，组内按时间排；组间也按时间排（同一会话同时只有一轮在跑，通常不会交错）。
   // 没挂到轮上的（v1.1 的历史消息、刚乐观插入还没等到快照的那条）各自成组，按自身时间落位。
+  // 同一步里思考段先于正文落库，时间戳可能同毫秒——sort 稳定，靠输入顺序（落库顺序）保住先后。
   const ordered: Array<{ at: string; items: ChatStreamItem[] }> = [];
   for (const [runId, items] of groups) {
     const startedAt = runs.find((run) => run.id === runId)?.createdAt || items[0].at;
@@ -73,11 +87,15 @@ export function buildChatTimeline(
   return ordered.sort((a, b) => a.at.localeCompare(b.at)).flatMap((group) => group.items);
 }
 
-/** 一轮里只在第一条正文上署名，避免按步分段后每段都重复一次「内置 Agent」 */
+/**
+ * 一轮里只在第一条正文上署名，避免按步分段后每段都重复一次「内置 Agent」。
+ * 思考段不署名、也不算「已署名」——它有自己的标题行，夹在正文之间不该把署名吞掉。
+ */
 export function showStreamName(items: ChatStreamItem[], index: number): boolean {
   const current = items[index];
   for (let i = index - 1; i >= 0; i -= 1) {
     const prev = items[i];
+    if (prev.kind === 'reasoning') continue;
     if (prev.role !== current.role) return true; // 换人了（上一轮/上一条用户消息）
     if (prev.kind === 'message') return false; // 本轮已经署过名
   }
@@ -86,7 +104,8 @@ export function showStreamName(items: ChatStreamItem[], index: number): boolean 
 
 /** 取条目挂的那一轮 id（散项没有） */
 function runIdOf(item: ChatStreamItem): string {
-  return (item.kind === 'message' ? item.message.runId : item.call.runId) || '';
+  if (item.kind === 'tool') return item.call.runId;
+  return item.message.runId || '';
 }
 
 /**
