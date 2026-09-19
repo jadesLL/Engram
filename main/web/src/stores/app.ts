@@ -64,6 +64,8 @@ export const useAppStore = defineStore('app', {
       chatDrawerMode: (localStorage.getItem('chatDrawerMode') === 'full' ? 'full' : 'dock') as ChatDrawerMode,
       chatDrawerWidth: Number(localStorage.getItem('chatDrawerWidth')) || 420,
       chatUnread: false,
+      /** 聚焦输入框的请求计数：抽屉已开着时也能把光标送到输入框（自增即触发一次） */
+      chatComposerFocus: 0,
     };
   },
   actions: {
@@ -128,6 +130,10 @@ export const useAppStore = defineStore('app', {
     toggleChat(open?: boolean) {
       this.chatDrawerOpen = open ?? !this.chatDrawerOpen;
       if (this.chatDrawerOpen) this.chatUnread = false;
+    },
+    /** 请聊天抽屉把光标放进输入框（选中文字提问后用户只需敲问题） */
+    focusChatComposer() {
+      this.chatComposerFocus += 1;
     },
     setChatDrawerWidth(width: number) {
       this.chatDrawerWidth = Math.min(720, Math.max(320, Math.round(width)));

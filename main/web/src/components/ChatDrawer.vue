@@ -335,10 +335,21 @@ watch(() => app.chatDrawerOpen, (open) => {
     });
   }
 });
+/* 选中文字提问：抽屉已经开着时 open 不变，靠计数自增把光标送进输入框 */
+watch(() => app.chatComposerFocus, () => {
+  if (!app.chatDrawerOpen) return;
+  void chat.init().then(() => inputEl.value?.focus());
+});
 
 onMounted(() => {
   window.addEventListener('keydown', onKey);
-  if (app.chatDrawerOpen) void chat.init();
+  // 首次打开时抽屉是随开关一起挂载的，上面那个 watch 不会触发，这里补一次初始化 + 聚焦
+  if (app.chatDrawerOpen) {
+    void chat.init().then(async () => {
+      await scrollToBottom();
+      inputEl.value?.focus();
+    });
+  }
 });
 
 onUnmounted(() => {

@@ -330,6 +330,8 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
+import { useChatStore } from '../stores/chat';
+import { buildSelectionContext } from '../lib/askAgent';
 import {
   canReadClipboard,
   copyText,
@@ -348,6 +350,7 @@ import { notify } from '../lib/notify';
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
+const chat = useChatStore();
 /* 双链/关联跳转的返回入口：轨迹非空才显示（从侧栏/搜索跳转会清空轨迹） */
 const canGoBack = computed(() => app.pageTrail.length > 0);
 
@@ -683,13 +686,37 @@ function searchSelection(selection: string) {
   });
 }
 
+/**
+ * 选中文字提问：把选中内容与所在位置（文件或页面）写进 Agent 上下文，再打开聊天抽屉；
+ * 问题由用户自己组织（抽屉输入框已聚焦），选中内容以上下文 chip 显示、随消息一起送进 Agent。
+ */
+function askAgentAboutSelection(selection: string) {
+  if (!selection.trim()) return;
+  chat.setContext(buildSelectionContext({
+    route: route.fullPath,
+    selection,
+    filePath: filePath.value,
+    page: page.value
+      ? { id: page.value.id, title: title.value || page.value.title, path: page.value.path }
+      : undefined,
+  }));
+  app.toggleChat(true);
+  app.focusChatComposer();
+}
+
 function selectionBusinessItems(selection: string): ContextMenuItem[] {
   return [
+    {
+      id: 'ask-agent-selection',
+      label: '在 Agent 中提问',
+      icon: 'ai',
+      separatorBefore: true,
+      action: () => askAgentAboutSelection(selection),
+    },
     {
       id: 'search-selection',
       label: '在知识库中搜索',
       icon: 'search',
-      separatorBefore: true,
       action: () => searchSelection(selection),
     },
   ];
