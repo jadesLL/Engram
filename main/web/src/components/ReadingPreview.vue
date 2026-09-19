@@ -33,8 +33,6 @@
         </template>
       </BackTrailMenu>
 
-      <span class="reading-stats">{{ metrics.units.toLocaleString('zh-CN') }} 字 · 约 {{ metrics.minutes }} 分钟</span>
-
       <button class="reading-tool theme-tool" type="button" v-tooltip="dark ? '切换到浅色' : '切换到深色'" @click="app.toggleResolvedTheme()">
         <Icon :name="dark ? 'sun' : 'moon'" :size="17" />
       </button>
@@ -188,40 +186,6 @@
           />
         </article>
 
-        <section
-          v-if="hasRelated"
-          class="reading-related"
-          :class="{ collapsed: relatedCollapsed }"
-          aria-label="本页关联"
-        >
-          <button
-            type="button"
-            class="reading-related-toggle"
-            :aria-expanded="!relatedCollapsed"
-            @click="toggleRelated"
-          >
-            本页关联
-            <span class="reading-related-count">{{ relatedCount }}</span>
-          </button>
-          <div>
-            <button
-              v-for="(item, i) in related?.neighbors || []"
-              :key="`n-${item.id}-${item.rel}-${i}`"
-              type="button"
-              @click="emit('open-related', item.id)"
-            >{{ item.direction === 'out' ? '→' : '←' }} {{ item.title }}</button>
-            <button
-              v-for="(item, i) in related?.similar || []"
-              :key="`s-${item.id}-${i}`"
-              type="button"
-              @click="emit('open-related', item.id)"
-            >≈ {{ item.title }}</button>
-            <span
-              v-for="(item, i) in related?.entities || []"
-              :key="`e-${item.name}-${item.rel}-${i}`"
-            >{{ item.name }}</span>
-          </div>
-        </section>
         <div class="reading-tail-space" :style="{ height: `${tailSpace}px` }" aria-hidden="true" />
       </div>
 
@@ -238,6 +202,36 @@
           >{{ heading.text }}</a>
         </nav>
       </aside>
+    </div>
+
+    <!-- 底部悬浮胶囊：字数 / 阅读时长在左，本页关联在右。
+         阅读视图自己没有底栏（字数原在顶栏），这里补一条与编辑视图 .statusbar 同一套语言的胶囊；
+         用 sticky 而不是 absolute：.reading-preview 自己就是滚动容器，absolute 会跟着正文滚走，
+         sticky 让它贴在可视区底部，滚到文末时自然停在文档流末端 -->
+    <div class="reading-statusbar">
+      <span class="reading-stat">{{ metrics.units.toLocaleString('zh-CN') }} 字 · 约 {{ metrics.minutes }} 分钟</span>
+      <RelatedMenu
+        v-if="relatedCount > 0"
+        ref="relatedMenuRef"
+        :related="related"
+        :reset-key="pageKey"
+        @open-page="emit('open-related', $event)"
+        @open-graph="emit('open-graph')"
+      >
+        <template #default="{ toggle, open, count }">
+          <button
+            type="button"
+            class="reading-rel"
+            aria-haspopup="dialog"
+            :aria-expanded="open"
+            v-tooltip="'本页关联'"
+            @click="toggle"
+          >
+            <Icon name="link" :size="12" />
+            关联 <span class="reading-rel-count">{{ count }}</span>
+          </button>
+        </template>
+      </RelatedMenu>
     </div>
   </section>
 </template>
@@ -272,6 +266,7 @@ import {
 } from '../lib/contextMenu';
 import type { PageTrailEntry } from '../lib/pageTrail';
 import BackTrailMenu from './BackTrailMenu.vue';
+import RelatedMenu from './RelatedMenu.vue';
 import Icon from './Icon.vue';
 
 type OutlineItem = {
@@ -302,6 +297,7 @@ const emit = defineEmits<{
   (event: 'go-back-to', id: string): void;
   (event: 'open-wikilink', title: string): void;
   (event: 'open-related', id: string): void;
+  (event: 'open-graph'): void;
   (event: 'context-menu', request: SelectionContextMenuRequest): void;
 }>();
 
@@ -370,26 +366,14 @@ const typeLabel = computed(() => ({
   other: '其他',
   note: '知识页面',
 }[props.pageType] || '知识页面'));
-const hasRelated = computed(() =>
-  Boolean(
-    props.related?.neighbors?.length ||
-    props.related?.similar?.length ||
-    props.related?.entities?.length
-  )
-);
-/* 本页关联折叠：默认收起（编辑视图同策略——页脚参考信息不抢正文空间）；
- * 用户选择写入 localStorage 与编辑视图共享（engram.related.expanded）。 */
-const RELATED_STORE_KEY = 'engram.related.expanded';
-const relatedCollapsed = ref(localStorage.getItem(RELATED_STORE_KEY) !== '1');
+/* 本页关联：展示交给底部胶囊里的 RelatedMenu（原先正文尾部有一行折叠摘要，
+ * 展开态记在 localStorage；本次连同那一行一起去掉，面板开合不再跨会话记忆） */
+const relatedMenuRef = ref<InstanceType<typeof RelatedMenu>>();
 const relatedCount = computed(() =>
   (props.related?.neighbors?.length || 0) +
   (props.related?.similar?.length || 0) +
   (props.related?.entities?.length || 0)
 );
-function toggleRelated() {
-  relatedCollapsed.value = !relatedCollapsed.value;
-  localStorage.setItem(RELATED_STORE_KEY, relatedCollapsed.value ? '0' : '1');
-}
 
 function updatePreferences(value: Partial<ReadingPreferences>) {
   app.updateReadingPreferences(value);
@@ -449,6 +433,11 @@ function onDocumentKeydown(event: KeyboardEvent) {
 }
 
 function onEsc() {
+  /* 关联面板开着时 Esc 只关面板：阅读视图的 Esc 默认是「返回编辑」，不能顺手把人踢出去 */
+  if (relatedMenuRef.value?.open) {
+    relatedMenuRef.value.close();
+    return;
+  }
   if (fontMenuOpen.value) {
     fontMenuOpen.value = false;
     return;
@@ -954,12 +943,6 @@ onBeforeUnmount(() => {
   background: var(--control-bg-hover);
   color: var(--text);
 }
-.reading-stats {
-  margin-right: auto;
-  color: var(--text-faint);
-  font-size: 12px;
-  white-space: nowrap;
-}
 .reading-settings {
   display: flex;
   align-items: center;
@@ -1227,8 +1210,7 @@ onBeforeUnmount(() => {
 .outline-hidden .reading-grid { grid-template-columns: minmax(0, 1fr); }
 .outline-hidden .reading-outline { display: none; }
 .reading-main { min-width: 0; }
-.reading-article,
-.reading-related {
+.reading-article {
   width: min(100%, var(--reading-width));
   margin-inline: auto;
 }
@@ -1496,56 +1478,63 @@ onBeforeUnmount(() => {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.reading-related {
-  margin-top: 36px;
+/* ---------- 底部悬浮胶囊：字数 / 阅读时长 + 本页关联入口 ----------
+   sticky 贴可视区底部（见模板注释）；与编辑视图 .statusbar 同一套毛玻璃语言 */
+.reading-statusbar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: fit-content;
+  max-width: calc(100% - 36px);
+  height: 30px;
+  /* 与 bottom 同值：滚到文末时胶囊停在文档流末端，不会因为多留白而往上跳一格 */
+  margin: 0 18px 12px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 26px -14px rgba(0, 0, 0, 0.28);
+  color: var(--text-faint);
+  font-size: 11.5px;
 }
-.reading-related-toggle {
+.reading-stat { white-space: nowrap; }
+.reading-rel {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin: 0 0 8px;
-  padding: 0;
-  background: transparent !important;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.reading-related-toggle:hover { background: transparent !important; color: var(--text-secondary); }
-.reading-related-count {
-  padding: 0 6px;
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.reading-related.collapsed > div { display: none; }
-.reading-related.collapsed { margin-top: 24px; }
-.reading-related p {
-  margin: 0 0 8px;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.reading-related > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-.reading-related button,
-.reading-related span {
-  padding: 2px 8px;
-  border-radius: var(--radius-control);
-  border: 1px solid var(--control-border);
-  background: transparent;
+  margin-left: 12px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
   color: var(--text-secondary);
-  font-size: 12px;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
 }
-.reading-related button:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+.reading-rel:hover { background: var(--bg-hover); color: var(--accent); }
+.reading-rel[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.reading-rel-count {
+  min-width: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.reading-rel[aria-expanded="true"] .reading-rel-count {
+  background: rgba(15, 108, 189, 0.16);
   color: var(--accent);
 }
 @media (max-width: 1024px) {
   .reading-toolbar { flex-wrap: wrap; }
-  .reading-stats { order: 10; width: 100%; }
   .reading-grid { grid-template-columns: minmax(0, 1fr); }
   .reading-outline {
     position: static;
@@ -1572,6 +1561,12 @@ onBeforeUnmount(() => {
   /* 窄屏没有左槽：箭头改内联，标题文字右移而不是溢出到屏幕外 */
   .reading-content { margin-left: 0; padding-left: 0; }
   .reading-content :deep(.reading-fold) { margin-left: 0; }
+  /* 手机端底部导航（Home.vue .bottom-nav）是 fixed 8px + 48px 高：胶囊要抬到它上面 */
+  .reading-statusbar {
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    margin: 0 10px calc(64px + env(safe-area-inset-bottom, 0px));
+    max-width: calc(100% - 20px);
+  }
 }
 @media (max-width: 640px) {
   .reading-toolbar {
@@ -1587,15 +1582,6 @@ onBeforeUnmount(() => {
     padding: 0;
   }
   .back-label { display: none; }
-  .reading-stats {
-    grid-column: 2;
-    grid-row: 1;
-    width: auto;
-    margin: 0;
-    overflow: hidden;
-    text-align: center;
-    text-overflow: ellipsis;
-  }
   .theme-tool {
     grid-column: 3;
     grid-row: 1;
