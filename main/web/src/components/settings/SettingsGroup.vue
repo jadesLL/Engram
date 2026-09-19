@@ -1,25 +1,38 @@
 <template>
-  <div class="settings-group" :class="{ 'is-danger': danger }">
-    <div class="group-head">
-      <h4 class="group-title">{{ title }}</h4>
-      <span v-if="hint" class="group-hint">{{ hint }}</span>
-    </div>
-    <div class="group-card" :class="{ flush }">
+  <div class="settings-group" :class="{ 'is-danger': danger, open }">
+    <button
+      class="group-head"
+      type="button"
+      :aria-expanded="open"
+      @click="toggle"
+    >
+      <span class="group-text">
+        <span class="group-title">{{ title }}</span>
+        <span v-if="hint" class="group-hint">{{ hint }}</span>
+      </span>
+      <span class="group-chevron" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </span>
+    </button>
+    <div v-show="open" class="group-card" :class="{ flush }">
       <slot />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref, watch } from 'vue';
+
 /**
- * 设置面板内的静态分组（UI 2.0：不再折叠）。
- * Win11 设置式「组标题 + 行式卡片」：标题与说明常驻，内容始终展开，
- * 避免手风琴把关键状态（危险操作、更新源）藏起来。
+ * 设置面板内的可折叠分组（Win11 式：组标题在卡片外，点标题行展开/收起）。
  * - flush：内容是无内边距的 setting-row 列表时使用（行自带边框与留白）；
  * - danger：危险操作分组，标题与边框用警示色常驻提醒；
- * - defaultOpen 为历史遗留 prop，保留签名兼容旧调用，不再生效。
+ * - defaultOpen 只决定「用户动手之前」的初始开合：父级异步加载状态（如更新源是否已配置）
+ *   到达前允许跟随刷新，一旦用户手动开合过就以用户选择为准。
  */
-withDefaults(
+const props = withDefaults(
   defineProps<{
     title: string;
     hint?: string;
@@ -27,8 +40,23 @@ withDefaults(
     flush?: boolean;
     danger?: boolean;
   }>(),
-  { defaultOpen: true, flush: false, danger: false },
+  { defaultOpen: false, flush: false, danger: false },
 );
+
+const open = ref(props.defaultOpen);
+const touched = ref(false);
+
+watch(
+  () => props.defaultOpen,
+  (value) => {
+    if (!touched.value) open.value = value;
+  },
+);
+
+function toggle() {
+  touched.value = true;
+  open.value = !open.value;
+}
 </script>
 
 <style scoped>
@@ -39,26 +67,56 @@ withDefaults(
   margin-top: 20px;
 }
 
-/* 组标题：Win11 式小标签，独立于卡片之外 */
+/* 组标题行：Win11 式小标签，整行可点展开/收起 */
 .group-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+.group-head:hover {
+  background: var(--bg-hover);
+}
+.group-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.group-text {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 0 2px 8px;
 }
 .group-title {
-  margin: 0;
   font-size: 13px;
   font-weight: 600;
+  color: var(--text);
 }
 .group-hint {
   color: var(--text-faint);
   font-size: 11px;
   line-height: 1.5;
 }
+.group-chevron {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  transition: transform 0.15s ease;
+}
+.settings-group.open .group-chevron {
+  transform: rotate(180deg);
+}
 
 .group-card {
+  margin-top: 6px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -68,7 +126,7 @@ withDefaults(
   padding: 4px 16px 16px;
 }
 
-/* 危险分组：警示色常驻可见 */
+/* 危险分组：警示色常驻可见（收起时标题仍是红色） */
 .settings-group.is-danger .group-title {
   color: var(--danger);
 }
@@ -80,6 +138,12 @@ withDefaults(
   .settings-group {
     margin-right: 18px;
     margin-left: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .group-chevron {
+    transition: none;
   }
 }
 </style>
