@@ -640,6 +640,8 @@ async function openWikilink(wikiTitle: string) {
     });
     if (ok) {
       const { data } = await api.post('/api/pages', { dir: '', title: wikiTitle });
+      // 新建的空页面没有可读内容，直接进编辑器
+      app.setReadingMode(false);
       router.push(`/page/${data.meta.id}`);
     }
   }
@@ -787,6 +789,8 @@ function showContextMenu(
 
 async function createFirst() {
   const { data } = await api.post('/api/pages', { dir: '', title: '欢迎使用 Engram' });
+  // 新建的空页面没有可读内容，直接进编辑器
+  app.setReadingMode(false);
   router.push(`/page/${data.meta.id}`);
 }
 

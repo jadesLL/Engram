@@ -321,6 +321,8 @@ async function quickNew() {
   if (title === null) return;
   const { data } = await api.post('/api/pages', { dir: 'Wiki', title: title || '未命名页面' });
   sidebarRef.value?.load();
+  // 新建的空页面没有可读内容，直接进编辑器
+  app.setReadingMode(false);
   router.push(`/page/${data.meta.id}`);
 }
 
