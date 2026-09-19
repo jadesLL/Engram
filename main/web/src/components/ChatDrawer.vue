@@ -5,17 +5,17 @@
     :style="drawerStyle"
     aria-label="内置 Agent"
   >
-    <!-- 左缘拖拽手柄：右侧并排形态下调整宽度（双击还原默认，聚焦后方向键微调） -->
+    <!-- 左缘拖拽手柄：右侧并排形态下调整宽度（拖过窗口 70% 自动转满窗，双击还原默认，聚焦后方向键微调） -->
     <div
       v-if="resizable"
       class="drawer-resizer"
       :class="{ dragging: dragWidth !== null }"
-      v-tooltip="'拖动调整宽度，双击还原'"
+      v-tooltip="'拖动调整宽度，双击还原；拖过窗口 70% 自动满窗'"
       role="separator"
       aria-label="调整内置 Agent 宽度"
       aria-orientation="vertical"
       :aria-valuemin="MIN_DRAWER_WIDTH"
-      :aria-valuemax="drawerMaxWidth"
+      :aria-valuemax="dockMaxWidth"
       :aria-valuenow="drawerWidth"
       tabindex="0"
       @pointerdown="startResize"
@@ -26,7 +26,7 @@
       @keydown.left.prevent="nudgeDrawerWidth(16)"
       @keydown.right.prevent="nudgeDrawerWidth(-16)"
       @keydown.home.prevent="setDrawerWidth(MIN_DRAWER_WIDTH)"
-      @keydown.end.prevent="setDrawerWidth(drawerMaxWidth)"
+      @keydown.end.prevent="setDrawerWidth(dockMaxWidth)"
     />
 
     <header class="chat-head">
@@ -251,39 +251,26 @@ const isFull = computed(() => app.chatDrawerMode === 'full');
 
 /* ===== 左缘拖拽调宽：只在「右侧并排」形态下有意义（浮层/满窗/手机端都铺满可用宽度） ===== */
 const MIN_DRAWER_WIDTH = 320;
-const MAX_DRAWER_WIDTH = 720;
-/** 正文阅读列至少留出的宽度：抽屉拖得再宽也不能把文章挤成竖排 */
-const MIN_ARTICLE_WIDTH = 420;
-const viewportWidth = ref(window.innerWidth);
-/** 左侧图标栏（含间距）占掉的宽度；文件树展开时再加上文件树 */
-const leftChromeWidth = ref(64);
-
 /**
- * 量左侧占位：图标栏固定 64px，文件树展开时与 .content 的 padding-left 同源（--sidebar-width + 72）。
- * 读 CSS 变量而不是量 .content 的 padding：后者带 180ms 过渡，切换侧栏瞬间会量到中间值。
+ * 并排形态最多占窗口的比例：拖过这条线就不再是「并排」——自动转满窗形态
+ * （满窗把正文列居中限宽，比一条占满屏幕的并排抽屉好读），因此并排宽度本身不设上限。
  */
-function measureLeftChrome(): number {
-  const layout = document.querySelector('.layout');
-  if (!layout || !app.sidebarOpen) return 64;
-  const sidebar = parseFloat(getComputedStyle(layout).getPropertyValue('--sidebar-width'));
-  return Number.isFinite(sidebar) && sidebar > 0 ? sidebar + 72 : 64;
-}
+const FULL_SNAP_RATIO = 0.7;
+const viewportWidth = ref(window.innerWidth);
 
 const resizable = computed(() => !props.overlay && !isFull.value);
-const drawerMaxWidth = computed(() =>
-  Math.max(
-    MIN_DRAWER_WIDTH,
-    Math.min(MAX_DRAWER_WIDTH, viewportWidth.value - leftChromeWidth.value - MIN_ARTICLE_WIDTH)
-  )
+/** 并排宽度上限 = 窗口宽度的 70%：越过即交棒给满窗 */
+const dockMaxWidth = computed(() =>
+  Math.max(MIN_DRAWER_WIDTH, Math.round(viewportWidth.value * FULL_SNAP_RATIO))
 );
+
+function clampDrawerWidth(width: number) {
+  return Math.min(dockMaxWidth.value, Math.max(MIN_DRAWER_WIDTH, Math.round(width)));
+}
 
 /** 用户没拖过时沿用响应式默认宽度（与拖拽上线前的观感一致），同样受上限约束 */
 function defaultDrawerWidth() {
   return clampDrawerWidth(Math.min(520, Math.max(360, viewportWidth.value * 0.32)));
-}
-
-function clampDrawerWidth(width: number) {
-  return Math.min(drawerMaxWidth.value, Math.max(MIN_DRAWER_WIDTH, Math.round(width)));
 }
 
 /** 本地是否已有用户调过的宽度偏好；没有就跟随窗口宽度 */
@@ -295,7 +282,24 @@ const drawerWidth = computed(() =>
 );
 const drawerStyle = computed(() => (resizable.value ? { width: `${drawerWidth.value}px` } : {}));
 
+/** 收尾拖拽：清掉跟手值并还原全局光标/选择态（转满窗时手柄会被卸载，必须在这里收干净） */
+function stopResize() {
+  dragWidth.value = null;
+  document.body.style.userSelect = '';
+  document.body.style.cursor = '';
+}
+
+/** 拖过 70%：形态转满窗，并排宽度偏好保持原样——「收回右侧」时回到原来的并排宽度 */
+function snapToFull() {
+  stopResize();
+  app.setChatDrawerMode('full');
+}
+
 function setDrawerWidth(width: number) {
+  if (width > dockMaxWidth.value) {
+    snapToFull();
+    return;
+  }
   dragWidth.value = null;
   app.setChatDrawerWidth(clampDrawerWidth(width));
   hasWidthPreference.value = true;
@@ -318,8 +322,6 @@ let resizeStartWidth = 0;
 function startResize(event: PointerEvent) {
   if (event.button !== 0) return;
   event.preventDefault();
-  // 文件树可能刚被拖宽：每次起拖都重新量一次左侧占位，上限跟着变
-  leftChromeWidth.value = measureLeftChrome();
   resizeStartX = event.clientX;
   resizeStartWidth = drawerWidth.value;
   dragWidth.value = resizeStartWidth;
@@ -331,29 +333,31 @@ function startResize(event: PointerEvent) {
   document.body.style.cursor = 'col-resize';
 }
 
-/** 手柄贴在抽屉左缘：向左拖是加宽，位移取反 */
+/** 手柄贴在抽屉左缘：向左拖是加宽，位移取反；越过 70% 直接交棒给满窗 */
 function onResizeMove(event: PointerEvent) {
   if (dragWidth.value === null) return;
-  dragWidth.value = clampDrawerWidth(resizeStartWidth - (event.clientX - resizeStartX));
+  const next = Math.round(resizeStartWidth - (event.clientX - resizeStartX));
+  if (next > dockMaxWidth.value) {
+    snapToFull();
+    return;
+  }
+  dragWidth.value = Math.max(MIN_DRAWER_WIDTH, next);
 }
 
 function endResize(event: PointerEvent) {
   if (dragWidth.value === null) return;
   const width = dragWidth.value;
-  dragWidth.value = null;
   const handle = event.currentTarget as HTMLElement;
   try {
     handle.releasePointerCapture(event.pointerId);
   } catch { /* 已经释放过 */ }
-  document.body.style.userSelect = '';
-  document.body.style.cursor = '';
+  stopResize();
   // 只是点了一下手柄、宽度没变：不动偏好（免得把「跟随窗口」意外钉成固定值）
   if (width !== resizeStartWidth) setDrawerWidth(width);
 }
 
 function onDrawerViewportResize() {
   viewportWidth.value = window.innerWidth;
-  leftChromeWidth.value = measureLeftChrome();
 }
 
 const suggestions = [
@@ -545,16 +549,11 @@ watch(() => app.chatComposerFocus, () => {
   if (!app.chatDrawerOpen) return;
   void chat.init().then(() => inputEl.value?.focus());
 });
-/* 文件树开合会改变正文可用宽度：重新量一次左侧占位，抽屉上限跟着收敛/放宽 */
-watch(() => app.sidebarOpen, () => {
-  leftChromeWidth.value = measureLeftChrome();
-}, { flush: 'post' });
 
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   // 窗口变窄时收窄到上限内（只收敛显示，用户偏好留着，回到大窗口即恢复）
   window.addEventListener('resize', onDrawerViewportResize);
-  leftChromeWidth.value = measureLeftChrome();
   // 首次打开时抽屉是随开关一起挂载的，上面那个 watch 不会触发，这里补一次初始化 + 聚焦
   if (app.chatDrawerOpen) {
     void chat.init().then(async () => {
