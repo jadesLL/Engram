@@ -201,6 +201,8 @@ export async function assistantRoutes(app: FastifyInstance) {
       agentParts = [];
     };
     for (const message of snap.messages) {
+      // 思考段是过程不是对话内容：沉淀进知识库只留问答正文
+      if ((message.metadata as any)?.kind === 'reasoning') continue;
       if (message.role === 'user') {
         flushAgent();
         lines.push(`**用户**：${message.content}`, '');
