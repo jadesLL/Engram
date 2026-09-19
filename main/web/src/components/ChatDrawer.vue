@@ -2,8 +2,33 @@
   <aside
     class="chat-drawer"
     :class="{ overlay: overlay && !isFull, full: isFull }"
+    :style="drawerStyle"
     aria-label="内置 Agent"
   >
+    <!-- 左缘拖拽手柄：右侧并排形态下调整宽度（双击还原默认，聚焦后方向键微调） -->
+    <div
+      v-if="resizable"
+      class="drawer-resizer"
+      :class="{ dragging: dragWidth !== null }"
+      v-tooltip="'拖动调整宽度，双击还原'"
+      role="separator"
+      aria-label="调整内置 Agent 宽度"
+      aria-orientation="vertical"
+      :aria-valuemin="MIN_DRAWER_WIDTH"
+      :aria-valuemax="drawerMaxWidth"
+      :aria-valuenow="drawerWidth"
+      tabindex="0"
+      @pointerdown="startResize"
+      @pointermove="onResizeMove"
+      @pointerup="endResize"
+      @pointercancel="endResize"
+      @dblclick="resetDrawerWidth"
+      @keydown.left.prevent="nudgeDrawerWidth(16)"
+      @keydown.right.prevent="nudgeDrawerWidth(-16)"
+      @keydown.home.prevent="setDrawerWidth(MIN_DRAWER_WIDTH)"
+      @keydown.end.prevent="setDrawerWidth(drawerMaxWidth)"
+    />
+
     <header class="chat-head">
       <div class="chat-brand"><Icon name="ai" :size="16" /> 内置 Agent</div>
       <select
@@ -213,7 +238,7 @@ import { buildChatTimeline, showStreamName, startsNewRun, toolCallSummary } from
 import { renderAssistantMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
 
-defineProps<{ overlay?: boolean }>();
+const props = defineProps<{ overlay?: boolean }>();
 
 const app = useAppStore();
 const chat = useChatStore();
@@ -223,6 +248,113 @@ const inputEl = ref<HTMLTextAreaElement | null>(null);
 
 /** 满窗形态：铺满内容区（形态本身不重建组件，会话/草稿/滚动都保留） */
 const isFull = computed(() => app.chatDrawerMode === 'full');
+
+/* ===== 左缘拖拽调宽：只在「右侧并排」形态下有意义（浮层/满窗/手机端都铺满可用宽度） ===== */
+const MIN_DRAWER_WIDTH = 320;
+const MAX_DRAWER_WIDTH = 720;
+/** 正文阅读列至少留出的宽度：抽屉拖得再宽也不能把文章挤成竖排 */
+const MIN_ARTICLE_WIDTH = 420;
+const viewportWidth = ref(window.innerWidth);
+/** 左侧图标栏（含间距）占掉的宽度；文件树展开时再加上文件树 */
+const leftChromeWidth = ref(64);
+
+/**
+ * 量左侧占位：图标栏固定 64px，文件树展开时与 .content 的 padding-left 同源（--sidebar-width + 72）。
+ * 读 CSS 变量而不是量 .content 的 padding：后者带 180ms 过渡，切换侧栏瞬间会量到中间值。
+ */
+function measureLeftChrome(): number {
+  const layout = document.querySelector('.layout');
+  if (!layout || !app.sidebarOpen) return 64;
+  const sidebar = parseFloat(getComputedStyle(layout).getPropertyValue('--sidebar-width'));
+  return Number.isFinite(sidebar) && sidebar > 0 ? sidebar + 72 : 64;
+}
+
+const resizable = computed(() => !props.overlay && !isFull.value);
+const drawerMaxWidth = computed(() =>
+  Math.max(
+    MIN_DRAWER_WIDTH,
+    Math.min(MAX_DRAWER_WIDTH, viewportWidth.value - leftChromeWidth.value - MIN_ARTICLE_WIDTH)
+  )
+);
+
+/** 用户没拖过时沿用响应式默认宽度（与拖拽上线前的观感一致），同样受上限约束 */
+function defaultDrawerWidth() {
+  return clampDrawerWidth(Math.min(520, Math.max(360, viewportWidth.value * 0.32)));
+}
+
+function clampDrawerWidth(width: number) {
+  return Math.min(drawerMaxWidth.value, Math.max(MIN_DRAWER_WIDTH, Math.round(width)));
+}
+
+/** 本地是否已有用户调过的宽度偏好；没有就跟随窗口宽度 */
+const hasWidthPreference = ref(localStorage.getItem('chatDrawerWidth') !== null);
+/** 拖拽过程中用本地值跟手，松手才写回偏好（避免每帧都写 localStorage） */
+const dragWidth = ref<number | null>(null);
+const drawerWidth = computed(() =>
+  dragWidth.value ?? (hasWidthPreference.value ? clampDrawerWidth(app.chatDrawerWidth) : defaultDrawerWidth())
+);
+const drawerStyle = computed(() => (resizable.value ? { width: `${drawerWidth.value}px` } : {}));
+
+function setDrawerWidth(width: number) {
+  dragWidth.value = null;
+  app.setChatDrawerWidth(clampDrawerWidth(width));
+  hasWidthPreference.value = true;
+}
+
+/** 双击还原：清掉偏好，回到跟随窗口的响应式默认宽度 */
+function resetDrawerWidth() {
+  dragWidth.value = null;
+  localStorage.removeItem('chatDrawerWidth');
+  hasWidthPreference.value = false;
+}
+
+function nudgeDrawerWidth(delta: number) {
+  setDrawerWidth(drawerWidth.value + delta);
+}
+
+let resizeStartX = 0;
+let resizeStartWidth = 0;
+
+function startResize(event: PointerEvent) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  // 文件树可能刚被拖宽：每次起拖都重新量一次左侧占位，上限跟着变
+  leftChromeWidth.value = measureLeftChrome();
+  resizeStartX = event.clientX;
+  resizeStartWidth = drawerWidth.value;
+  dragWidth.value = resizeStartWidth;
+  const handle = event.currentTarget as HTMLElement;
+  try {
+    handle.setPointerCapture(event.pointerId);
+  } catch { /* 拿不到指针捕获也能靠元素自身的 pointermove 跟手 */ }
+  document.body.style.userSelect = 'none';
+  document.body.style.cursor = 'col-resize';
+}
+
+/** 手柄贴在抽屉左缘：向左拖是加宽，位移取反 */
+function onResizeMove(event: PointerEvent) {
+  if (dragWidth.value === null) return;
+  dragWidth.value = clampDrawerWidth(resizeStartWidth - (event.clientX - resizeStartX));
+}
+
+function endResize(event: PointerEvent) {
+  if (dragWidth.value === null) return;
+  const width = dragWidth.value;
+  dragWidth.value = null;
+  const handle = event.currentTarget as HTMLElement;
+  try {
+    handle.releasePointerCapture(event.pointerId);
+  } catch { /* 已经释放过 */ }
+  document.body.style.userSelect = '';
+  document.body.style.cursor = '';
+  // 只是点了一下手柄、宽度没变：不动偏好（免得把「跟随窗口」意外钉成固定值）
+  if (width !== resizeStartWidth) setDrawerWidth(width);
+}
+
+function onDrawerViewportResize() {
+  viewportWidth.value = window.innerWidth;
+  leftChromeWidth.value = measureLeftChrome();
+}
 
 const suggestions = [
   '列出还没有提炼的原始资料',
@@ -413,9 +545,16 @@ watch(() => app.chatComposerFocus, () => {
   if (!app.chatDrawerOpen) return;
   void chat.init().then(() => inputEl.value?.focus());
 });
+/* 文件树开合会改变正文可用宽度：重新量一次左侧占位，抽屉上限跟着收敛/放宽 */
+watch(() => app.sidebarOpen, () => {
+  leftChromeWidth.value = measureLeftChrome();
+}, { flush: 'post' });
 
 onMounted(() => {
   window.addEventListener('keydown', onKey);
+  // 窗口变窄时收窄到上限内（只收敛显示，用户偏好留着，回到大窗口即恢复）
+  window.addEventListener('resize', onDrawerViewportResize);
+  leftChromeWidth.value = measureLeftChrome();
   // 首次打开时抽屉是随开关一起挂载的，上面那个 watch 不会触发，这里补一次初始化 + 聚焦
   if (app.chatDrawerOpen) {
     void chat.init().then(async () => {
@@ -427,12 +566,14 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
+  window.removeEventListener('resize', onDrawerViewportResize);
   chat.closeEvents();
 });
 </script>
 
 <style scoped>
 .chat-drawer {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: clamp(360px, 32vw, 520px);
@@ -442,6 +583,41 @@ onUnmounted(() => {
   border-left: 1px solid var(--border);
   background: var(--bg);
   z-index: var(--z-drawer);
+}
+
+/* 左缘拖拽手柄：8px 命中区跨在边框上，平时不显形，悬停/拖动/聚焦时给一条强调色细线 */
+.drawer-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+  z-index: 2;
+}
+
+.drawer-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: width 150ms ease, background 150ms ease;
+}
+
+.drawer-resizer:hover::before,
+.drawer-resizer:focus-visible::before,
+.drawer-resizer.dragging::before {
+  width: 2px;
+  background: var(--accent, #4d8aff);
+}
+
+.drawer-resizer:focus-visible {
+  box-shadow: 0 0 0 2px var(--sidebar-focus-ring);
 }
 
 .chat-drawer.overlay {
