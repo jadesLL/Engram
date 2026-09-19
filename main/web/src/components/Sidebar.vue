@@ -1295,17 +1295,6 @@ onUnmounted(() => {
   background: var(--sidebar-hover);
 }
 
-.ingest-hint {
-  display: block;
-  overflow: hidden;
-  margin-top: 6px;
-  padding: 0 4px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--sidebar-accent);
-  font-size: 11px;
-}
-
 .sort-control {
   height: 24px;
   max-width: 116px;
@@ -1532,32 +1521,6 @@ onUnmounted(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.coverage-badge {
-  flex-shrink: 0;
-  margin-left: 4px;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: transparent;
-  color: var(--success, #2e7d32);
-  font-size: 10.5px;
-  line-height: 17px;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
-  /* 一级入口形态：图标 + 进度数字并排，区标题旁可点击 */
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-.coverage-badge .coverage-num { line-height: 17px; }
-.coverage-badge:hover { border-color: var(--accent); background: var(--accent-soft); }
-.coverage-badge.warn {
-  color: var(--warning);
-  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
-  background: var(--warn-soft);
-}
-
 .add-btn {
   width: 23px;
   height: 23px;
@@ -1736,60 +1699,11 @@ onUnmounted(() => {
   padding-left: 8px;
 }
 
-/* AI 日志行内下载按钮（log-row 是手写结构，非 PageRow 组件） */
-.log-row .row-trailing {
-  position: relative;
-  width: 22px;
-  height: 100%;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-.log-row .row-actions {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  display: flex;
-  align-items: center;
-  transform: translateY(-50%);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 150ms ease;
-}
-.log-row:hover .row-actions,
-.log-row:focus-within .row-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
-.log-row .row-action-link {
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  color: var(--text-faint);
-  text-decoration: none;
-}
-.log-row .row-action-link:hover,
-.log-row .row-action-link:focus-visible {
-  color: var(--text);
-  background: var(--sidebar-active);
-  outline: none;
-}
-
 .none {
   margin: 2px 0;
   padding: 5px 8px 5px 20px;
   color: var(--text-faint);
   font-size: 11px;
-}
-
-.side-sub {
-  padding: 0 6px 6px;
-  color: var(--text-faint);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0;
 }
 
 .batch-bar {
@@ -1877,11 +1791,6 @@ onUnmounted(() => {
 
   .sort-control.section-sort {
     opacity: 0.72;
-    pointer-events: auto;
-  }
-
-  .log-row .row-actions {
-    opacity: 1;
     pointer-events: auto;
   }
 }

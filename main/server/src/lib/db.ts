@@ -405,16 +405,6 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_semantic_cache_used
     ON semantic_cache(last_used_at DESC);
 
-  CREATE TABLE IF NOT EXISTS embedding_cache (
-    text_hash TEXT NOT NULL,
-    model_key TEXT NOT NULL,
-    embedding BLOB NOT NULL,
-    created_at TEXT NOT NULL,
-    last_used_at TEXT NOT NULL,
-    PRIMARY KEY (text_hash, model_key)
-  );
-  CREATE INDEX IF NOT EXISTS idx_embedding_cache_used ON embedding_cache(last_used_at DESC);
-
   CREATE TABLE IF NOT EXISTS office_edit_sessions (
     document_key TEXT PRIMARY KEY,
     path TEXT NOT NULL,
@@ -505,71 +495,10 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_assistant_tool_calls_run
     ON assistant_tool_calls(run_id, created_at);
 
-  CREATE TABLE IF NOT EXISTS assistant_artifacts (
-    id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL,
-    tool_call_id TEXT,
-    kind TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(run_id) REFERENCES assistant_runs(id) ON DELETE CASCADE,
-    FOREIGN KEY(tool_call_id) REFERENCES assistant_tool_calls(id) ON DELETE CASCADE
-  );
-  CREATE INDEX IF NOT EXISTS idx_assistant_artifacts_run
-    ON assistant_artifacts(run_id, created_at);
-
-  CREATE TABLE IF NOT EXISTS im_sessions (
-    id TEXT PRIMARY KEY,
-    platform TEXT NOT NULL,
-    chat_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(platform, chat_id, user_id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_im_sessions_lookup
-    ON im_sessions(platform, chat_id, user_id);
-
-  -- 模型配置条目（chat/embedding/document 三池），取代 settings 表里的 JSON 大字段；
-  -- 读取与迁移逻辑见 modelConfig.ts
-  CREATE TABLE IF NOT EXISTS model_entries (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,               -- 'chat' | 'embedding' | 'document'
-    name TEXT NOT NULL DEFAULT '',
-    provider TEXT NOT NULL DEFAULT 'custom',
-    line TEXT,
-    base_url TEXT NOT NULL DEFAULT '',
-    models_url TEXT,
-    logo TEXT,
-    model TEXT NOT NULL DEFAULT '',
-    api_key TEXT NOT NULL DEFAULT '',
-    protocol TEXT NOT NULL DEFAULT 'openai',  -- 'openai' | 'anthropic'
-    thinking_level TEXT,             -- 用户选择：'low' | 'high' | 'max'
-    dim INTEGER,
-    supports_dimensions INTEGER NOT NULL DEFAULT 0,
-    image_input TEXT,
-    image_input_source TEXT,
-    image_input_checked_at TEXT,
-    dialect TEXT NOT NULL DEFAULT '{}',       -- 供应商参数降级记忆 JSON
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_model_entries_kind
-    ON model_entries(kind, sort_order);
-
   -- 桌面端远端免密接入已移除，清理旧版本留下的连接令牌
   DROP TABLE IF EXISTS desktop_tokens;
   `);
 
-  // model_entries 增量列（1.1.17：跨协议模型列表/免鉴权线路标志；存量库补列，新库由上方 DDL 含 models_protocol 等列时也不会重复）
-  ensureColumn('model_entries', 'models_protocol', 'TEXT');
-  ensureColumn('model_entries', 'auth_optional', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn('model_entries', 'models_anonymous', 'INTEGER NOT NULL DEFAULT 0');
-  // 1.1.18：思考等级（GLM reasoning_effort 档位，空=自动）
-  ensureColumn('model_entries', 'thinking_level', 'TEXT');
   ensureColumn('ingest_log', 'content_hash', 'TEXT');
   ensureColumn('ingest_log', 'status', `TEXT NOT NULL DEFAULT 'completed'`);
   ensureColumn('ingest_log', 'run_id', 'TEXT');
@@ -647,13 +576,6 @@ export function migrate() {
   db.prepare(
     `DELETE FROM semantic_cache WHERE cache_key IN (
        SELECT cache_key FROM semantic_cache ORDER BY last_used_at DESC LIMIT -1 OFFSET 5000
-     )`
-  ).run();
-  const embeddingCacheCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  db.prepare(`DELETE FROM embedding_cache WHERE last_used_at < ?`).run(embeddingCacheCutoff);
-  db.prepare(
-    `DELETE FROM embedding_cache WHERE rowid IN (
-       SELECT rowid FROM embedding_cache ORDER BY last_used_at DESC LIMIT -1 OFFSET 10000
      )`
   ).run();
 

@@ -560,44 +560,6 @@ onUnmounted(() => {
   padding-left: calc(var(--sidebar-width) + 72px);
 }
 
-.ai-drawer {
-  width: clamp(400px, 34vw, 520px);
-  flex-shrink: 0;
-  border-left: 1px solid var(--border);
-  background: var(--bg);
-  z-index: var(--z-drawer);
-}
-
-/* 超过视口 70% 时脱离文档流，覆盖正文区，只留左侧栏可见 */
-.ai-drawer.overlay {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 60px;
-  right: 0;
-  width: auto;
-  border-left: 1px solid var(--border);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
-  z-index: var(--z-sidebar);
-}
-
-.ai-resizer {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  cursor: col-resize;
-  background: transparent;
-  outline: none;
-  z-index: calc(var(--z-sidebar) + 1);
-}
-
-.ai-resizer:hover,
-.ai-resizer:focus-visible {
-  background: var(--sidebar-accent);
-  opacity: 0.35;
-}
-
 .sidebar-slide-enter-active,
 .sidebar-slide-leave-active {
   transition: transform 160ms ease, opacity 160ms ease;
@@ -655,8 +617,6 @@ onUnmounted(() => {
     padding-left: 64px;
   }
 
-  .ai-drawer { width: clamp(300px, 30vw, 380px); }
-
   /* 触屏紧凑档：放大 rail 触控目标 */
   @media (hover: none) and (pointer: coarse) {
     .rail-btn { width: 36px; height: 36px; }
@@ -705,8 +665,6 @@ onUnmounted(() => {
   .layout.sidebar-open .content {
     padding-left: 0;
   }
-
-  .ai-drawer { position: fixed; inset: 0 calc(60px + env(safe-area-inset-bottom)) 0 0; width: 100%; border-left: none; }
 
   .bottom-nav {
     position: fixed;
