@@ -369,17 +369,6 @@ export async function fileRoutes(app: FastifyInstance) {
     return reply.send(fs.createReadStream(abs));
   });
 
-  /** Tauri 桌面端：下载到临时目录后用系统程序打开（由客户端完成打开动作，这里只提供字节流） */
-  app.get('/api/files/open', async (req, reply) => {
-    const { path: p } = req.query as { path?: string };
-    if (!p) return reply.code(400).send({ error: '缺少 path' });
-    const abs = safeJoin(p);
-    if (!fs.existsSync(abs)) return reply.code(404).send({ error: '文件不存在' });
-    reply.header('X-File-Name', encodeURIComponent(path.basename(abs)));
-    reply.header('Content-Type', 'application/octet-stream');
-    return reply.send(fs.createReadStream(abs));
-  });
-
   /** 批量导出原始资料为 zip：接收 path 列表，打包后流式下载。
    *  - 单文件时直接走 /api/files/raw；这里仍支持传入 1 项。
    *  - 路径都经 safeJoin 校验，越界或不存在则跳过并计入 skipped。
