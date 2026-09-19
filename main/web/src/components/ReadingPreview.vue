@@ -17,6 +17,17 @@
         <span class="back-label">返回编辑</span>
       </button>
 
+      <button
+        v-if="canGoBack"
+        class="reading-tool back-page"
+        type="button"
+        v-tooltip="'返回上一页（Alt+←）'"
+        @click="emit('go-back')"
+      >
+        <Icon name="undo" :size="16" />
+        <span class="back-page-label">返回上一页</span>
+      </button>
+
       <span class="reading-stats">{{ metrics.units.toLocaleString('zh-CN') }} 字 · 约 {{ metrics.minutes }} 分钟</span>
 
       <button class="reading-tool theme-tool" type="button" v-tooltip="dark ? '切换到浅色' : '切换到深色'" @click="app.toggleResolvedTheme()">
@@ -202,10 +213,13 @@ const props = defineProps<{
   updatedAt?: string;
   dark: boolean;
   related?: any;
+  /** 存在双链/关联跳转轨迹时显示「返回上一页」 */
+  canGoBack?: boolean;
 }>();
 
 const emit = defineEmits<{
   (event: 'close'): void;
+  (event: 'go-back'): void;
   (event: 'open-wikilink', title: string): void;
   (event: 'open-related', id: string): void;
   (event: 'context-menu', request: SelectionContextMenuRequest): void;
@@ -620,6 +634,18 @@ onBeforeUnmount(() => {
 }
 .reading-tool:active {
   background: var(--control-bg-pressed);
+}
+/* 双链跳转后的返回入口：跟随工具栏，与「返回编辑」区分开图标与文案 */
+.back-page {
+  border-color: var(--control-border);
+  background: var(--control-bg);
+  color: var(--text);
+  font-weight: 600;
+}
+.back-page:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .font-stepper button:hover,
 .width-segment button:hover:not([aria-pressed="true"]) {
@@ -1046,9 +1072,15 @@ onBeforeUnmount(() => {
     width: 36px;
     padding: 0;
   }
-  .reading-settings {
+  /* 窄屏：返回上一页独占一行（可点区域大），设置组顺延到下一行 */
+  .back-page {
     grid-column: 1 / -1;
     grid-row: 2;
+    justify-content: center;
+  }
+  .reading-settings {
+    grid-column: 1 / -1;
+    grid-row: 3;
     flex-wrap: wrap;
     gap: 7px;
   }

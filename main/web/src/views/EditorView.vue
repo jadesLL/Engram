@@ -19,9 +19,11 @@
         :updated-at="page.updated_at"
         :dark="isDark"
         :related="related"
+        :can-go-back="canGoBack"
         @close="closeReading"
+        @go-back="goBackToSource"
         @open-wikilink="openWikilink"
-        @open-related="(id: string) => $router.push(`/page/${id}`)"
+        @open-related="openRelated"
         @context-menu="(request) => showContextMenu(request, 'reading')"
       />
 
@@ -36,6 +38,16 @@
           </template>
           <span v-else class="crumb-item">根目录</span>
         </nav>
+        <button
+          v-if="canGoBack"
+          class="btn small topbar-back"
+          type="button"
+          v-tooltip="'返回上一页（Alt+←）'"
+          @click="goBackToSource"
+        >
+          <Icon name="chevron-left" :size="14" />
+          <span>返回上一页</span>
+        </button>
         <div class="spacer"></div>
         <span v-if="saveState" class="save-pill" :class="savePillClass">
           <span class="dot"></span>{{ saveState }}
@@ -217,14 +229,14 @@
               :key="'n' + n.id + '-' + n.rel + '-' + i"
               class="rel-item"
               v-tooltip="n.direction === 'out' ? '本页引用了它' : '它引用了本页'"
-              @click="$router.push(`/page/${n.id}`)"
+              @click="openRelated(n.id)"
             >{{ n.direction === 'out' ? '→' : '←' }} {{ n.title }}</span>
             <span
               v-for="(s, i) in related.similar"
               :key="'s' + s.id + '-' + i"
               class="rel-item"
               v-tooltip="`语义相似 ${(1 - s.distance).toFixed(2)}`"
-              @click="$router.push(`/page/${s.id}`)"
+              @click="openRelated(s.id)"
             >≈ {{ s.title }}</span>
             <span
               v-for="(e, i) in related.entities"
@@ -335,6 +347,8 @@ import { notify } from '../lib/notify';
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
+/* 双链/关联跳转的返回入口：轨迹非空才显示（从侧栏/搜索跳转会清空轨迹） */
+const canGoBack = computed(() => app.pageTrail.length > 0);
 
 const page = ref<any>(null);
 const content = ref('');
@@ -582,6 +596,19 @@ function closeReading() {
   });
 }
 
+/** 本页关联（双链邻居/相似/实体）跳转：同样记入返回轨迹 */
+function openRelated(id: string) {
+  app.pushPageTrail(page.value?.id, id);
+  router.push(`/page/${id}`);
+}
+
+/** 返回双链跳转前的页面（多级逐层回退，返回后入口自动隐藏） */
+function goBackToSource() {
+  const from = app.takePageTrailBack();
+  if (!from) return;
+  router.push(`/page/${from}`);
+}
+
 async function save(manual = false) {
   if (!page.value) return;
   const contentToSave = editorRef.value?.getValue() ?? content.value;
@@ -631,6 +658,7 @@ watch(content, () => {
 async function openWikilink(wikiTitle: string) {
   try {
     const { data } = await api.get(`/api/pages/by-title/${encodeURIComponent(wikiTitle)}`);
+    app.pushPageTrail(page.value?.id, data.id);
     router.push(`/page/${data.id}`);
   } catch {
     const ok = await confirmDialog({
@@ -802,6 +830,8 @@ watch(
     related.value = null;
     evidence.value = null;
     evidenceOpen.value = false;
+    // 双链轨迹结算：非轨迹跳转（侧栏/搜索/图谱）视为离开链路，清空返回入口
+    if (id) app.settlePageTrail(id as string);
     if (id && id !== oldId) loadPage(id as string);
     else if (!id) {
       page.value = null; // 无 id 才回欢迎页
@@ -842,12 +872,22 @@ function beforeUnload(e: BeforeUnloadEvent) {
   if (dirty) e.preventDefault();
 }
 
+/* Alt+← 回上一页（与浏览器后退一致）；轨迹为空时不拦截，交回浏览器默认行为 */
+function onGlobalKey(e: KeyboardEvent) {
+  if (!e.altKey || e.key !== 'ArrowLeft' || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (!canGoBack.value) return;
+  e.preventDefault();
+  goBackToSource();
+}
+
 onMounted(() => {
   if (route.params.id) loadPage(route.params.id as string);
   window.addEventListener('beforeunload', beforeUnload);
+  window.addEventListener('keydown', onGlobalKey);
 });
 onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload);
+  window.removeEventListener('keydown', onGlobalKey);
   if (saveTimer) clearTimeout(saveTimer);
 });
 </script>
@@ -913,9 +953,24 @@ onUnmounted(() => {
 @keyframes save-pulse { 50% { opacity: 0.35; } }
 .topbar-save { flex: none; }
 .autosave-toggle { flex: none; }
+/* 双链跳转后的返回入口：紧邻面包屑，图标 + 文案 */
+.topbar-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  color: var(--text-secondary);
+}
+.topbar-back:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 /* 窄屏只留开关本体，文字收进 tooltip */
 @media (max-width: 640px) {
   .autosave-toggle em { display: none; }
+  .topbar-back span { display: none; }
 }
 
 /* ---------- 页头：标题 + 元信息 chips，与正文列对齐 ---------- */

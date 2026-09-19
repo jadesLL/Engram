@@ -5,6 +5,7 @@ import {
   parseReadingPreferences,
   type ReadingPreferences,
 } from '../lib/readingPreview';
+import { pushTrail, settleTrail, takeTrailBack } from '../lib/pageTrail';
 
 type Theme = 'light' | 'dark' | 'system';
 
@@ -37,6 +38,10 @@ export const useAppStore = defineStore('app', {
       /** 沉浸阅读状态：默认开启，会话内切换页面保持（不写本地偏好） */
       readingMode: true,
       readingPreferences: parseReadingPreferences(localStorage.getItem('readingPreferences')),
+      /** 双链/关联跳转的页面轨迹：压入来源页 id，「返回上一页」逐级回退 */
+      pageTrail: [] as string[],
+      /** 最近一次轨迹跳转的目标页 id：路由落到其它页面即视为离开轨迹并清空 */
+      pageTrailTarget: null as string | null,
       /** 侧栏数据版本号：页面增删改/移动后自增，侧栏监听并刷新 */
       sidebarVersion: 0,
       /** 页面内容版本号：服务端 SSE 推送页面变更后自增，EditorView 监听并重载当前页 */
@@ -96,6 +101,25 @@ export const useAppStore = defineStore('app', {
     },
     toggleResolvedTheme() {
       this.setTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+    },
+    /** 双链/关联跳转：记下来源页，供「返回上一页」逐级回退 */
+    pushPageTrail(fromId: string | undefined | null, toId: string) {
+      const next = pushTrail({ trail: this.pageTrail, target: this.pageTrailTarget }, fromId, toId);
+      this.pageTrail = next.trail;
+      this.pageTrailTarget = next.target;
+    },
+    /** 路由已落到 id：是轨迹跳转的目标就保留轨迹，否则（侧栏/搜索/图谱等）清空 */
+    settlePageTrail(id: string) {
+      const next = settleTrail({ trail: this.pageTrail, target: this.pageTrailTarget }, id);
+      this.pageTrail = next.trail;
+      this.pageTrailTarget = next.target;
+    },
+    /** 取上一页并把该页标记为本次导航目标，路由落地时据此保留剩余轨迹 */
+    takePageTrailBack(): string | null {
+      const { state, from } = takeTrailBack({ trail: this.pageTrail, target: this.pageTrailTarget });
+      this.pageTrail = state.trail;
+      this.pageTrailTarget = state.target;
+      return from;
     },
     bumpSidebar() {
       this.sidebarVersion++;
