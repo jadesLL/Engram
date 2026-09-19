@@ -86,7 +86,6 @@ let userInputPending = false;
 let modelSyncReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 let placeholderHideTimer: ReturnType<typeof setTimeout> | null = null;
 let modeObserver: MutationObserver | null = null;
-let lastEmittedMode: 'ir' | 'sv' = 'ir';
 let savedSelectionRange: Range | null = null;
 let savedSelectionText = '';
 
@@ -201,13 +200,11 @@ function observeEditMode() {
   // Vditor 切模式会给 toolbar button 加 vditor-menu--current，并改 vditor 容器 class
   // 更可靠的是直接轮询 vditor.getCurrentMode()
   let last = vditor?.getCurrentMode() || 'ir';
-  lastEmittedMode = last as 'ir' | 'sv';
   modeObserver = new MutationObserver(() => {
     if (!vditor) return;
     const cur = vditor.getCurrentMode();
     if (cur !== last && (cur === 'ir' || cur === 'sv')) {
       last = cur;
-      lastEmittedMode = cur;
       emit('mode-change', cur);
     }
   });

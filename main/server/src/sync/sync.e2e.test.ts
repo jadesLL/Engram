@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { PassThrough } from 'node:stream';
 import { createRequire } from 'node:module';
@@ -20,7 +20,6 @@ import { createRequire } from 'node:module';
  * （config.ts 求值时一次性捕获），规避 Windows 平台 env 共享的竞态。
  */
 
-const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 // tsx loader 绝对路径：worker 的 --import 必须用绝对路径——worker 对裸包名的解析
 // 跟随其 cwd（本仓库 worktree 布局下无 node_modules），相对解析会失败
 const nodeRequire = createRequire(import.meta.url);

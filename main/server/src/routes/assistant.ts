@@ -104,7 +104,7 @@ export async function assistantRoutes(app: FastifyInstance) {
     return { ok: true, session: repo.getSession(id) };
   });
 
-  app.delete('/api/assistant/sessions/:id', async (req, reply) => {
+  app.delete('/api/assistant/sessions/:id', async (req) => {
     const id = (req.params as any).id;
     const active = repo.activeRunForSession(id);
     if (active) cancelRun(active.id);

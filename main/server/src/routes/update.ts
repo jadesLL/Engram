@@ -153,7 +153,7 @@ export async function updateRoutes(app: FastifyInstance) {
     return reply.send({ ok: true });
   });
 
-  app.post('/api/update/check', { preHandler: requireSyncAccess }, async (req, reply) => {
+  app.post('/api/update/check', { preHandler: requireSyncAccess }, async (_req, reply) => {
     const cfg = readUpdateEnv();
     const desktop = isDesktopMode();
     const sock = dockerSocketAvailable();
@@ -275,7 +275,7 @@ export async function updateRoutes(app: FastifyInstance) {
     return reply.send({ ...result, warning: errors.length ? errors.join('；') : undefined });
   });
 
-  app.post('/api/update/apply', { preHandler: requireSyncAccess }, async (req, reply) => {
+  app.post('/api/update/apply', { preHandler: requireSyncAccess }, async (_req, reply) => {
     if (isDesktopMode()) return reply.code(400).send({ error: '桌面端模式不支持容器自更新，请在设置中下载安装包' });
     if (!dockerSocketAvailable()) {
       return reply.code(400).send({ error: '未挂载 Docker socket，无法自更新（需在 compose 中挂载 /var/run/docker.sock）' });

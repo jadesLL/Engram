@@ -71,16 +71,3 @@ export function bundledDshBin(): string | null {
   }
   return cachedBundledBin;
 }
-
-export interface ResolvedDsh {
-  path: string;
-  source: 'config' | 'bundled';
-}
-
-/** 解析实际使用的 dsh 入口：设置页覆盖优先，其次随包依赖 */
-export function resolveDsh(): ResolvedDsh | null {
-  const configured = getAgentConfig().dshPath?.trim();
-  if (configured) return { path: configured, source: 'config' };
-  const bundled = bundledDshBin();
-  return bundled ? { path: bundled, source: 'bundled' } : null;
-}

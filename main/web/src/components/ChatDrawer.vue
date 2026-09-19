@@ -170,7 +170,7 @@ import { buildChatTimeline, showStreamName, startsNewRun, toolCallSummary } from
 import { renderAssistantMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
 
-const props = defineProps<{ overlay?: boolean }>();
+defineProps<{ overlay?: boolean }>();
 
 const app = useAppStore();
 const chat = useChatStore();

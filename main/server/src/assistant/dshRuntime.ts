@@ -261,6 +261,3 @@ export function agentRuntimeStatus(): {
     custom: Boolean(route),
   };
 }
-
-/** patch 文件路径（诊断与测试用） */
-export const agentPatchPath = () => patchFilePath();

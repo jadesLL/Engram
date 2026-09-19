@@ -40,7 +40,6 @@ export interface LoadedCert {
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 const LETSENCRYPT_PRODUCTION = 'https://acme-v02.api.letsencrypt.org/directory';
-const LETSENCRYPT_STAGING = 'https://acme-staging-v02.api.letsencrypt.org/directory';
 const RENEWAL_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 /** DNS 传播轮询间隔 */
 const PROPAGATION_POLL_MS = 5_000;
@@ -64,12 +63,6 @@ export function readTlsConfig(env: NodeJS.ProcessEnv, dataDir: string): TlsConfi
     propagationTimeoutMs: 120_000,
   };
 }
-
-export function isLetsEncryptStaging(directoryUrl: string): boolean {
-  return directoryUrl === LETSENCRYPT_STAGING;
-}
-
-export { LETSENCRYPT_PRODUCTION, LETSENCRYPT_STAGING };
 
 // ---------- Cloudflare DNS（TXT 记录读写） ----------
 
@@ -406,35 +399,6 @@ export class CertManager {
     const finalized = await client.finalizeOrder(order, csrPem);
     const cert = await client.getCertificate(finalized);
     return { key: certKey.toString('utf8'), cert };
-  }
-}
-
-/** 删除 DNS-01 TXT（按 name+content 查找；清理失败静默） */
-export async function removeDns01Challenge(
-  domain: string,
-  keyAuthorization: string,
-  token: string,
-  fetchImpl: FetchLike,
-): Promise<void> {
-  try {
-    const txtName = `_acme-challenge.${domain}`;
-    const zoneId = await findCloudflareZoneId(domain, token, fetchImpl);
-    const listRes = await fetchImpl(
-      `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records?type=TXT&name=${encodeURIComponent(txtName)}`,
-      { headers: cfHeaders(token) },
-    );
-    if (!listRes.ok) return;
-    const list = (await listRes.json()) as { success: boolean; result?: CfDnsRecord[] };
-    for (const rec of list.result || []) {
-      if (rec.content.replace(/^"|"$/g, '') === keyAuthorization) {
-        await fetchImpl(
-          `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records/${rec.id}`,
-          { method: 'DELETE', headers: cfHeaders(token) },
-        );
-      }
-    }
-  } catch {
-    /* 清理失败静默 */
   }
 }
 

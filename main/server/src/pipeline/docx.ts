@@ -46,9 +46,3 @@ export async function extractDocx(buffer: Buffer): Promise<ExtractedDocx> {
 export async function docxToText(buffer: Buffer): Promise<string> {
   return (await extractDocx(buffer)).text;
 }
-
-/** docx → HTML（用于预览） */
-export async function docxToHtml(buffer: Buffer): Promise<string> {
-  const result = await mammoth.convertToHtml({ buffer });
-  return result.value;
-}

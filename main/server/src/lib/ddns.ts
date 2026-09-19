@@ -49,7 +49,7 @@ export function clampInterval(value: unknown): number {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_INTERVAL_MIN;
 }
 
-/** 从 DB settings 读取配置，空字段逐项回退环境变量（镜像飞书配置的运行时读取模式） */
+/** 从 DB settings 读取配置，空字段逐项回退环境变量（与设置页其他配置的运行时读取方式一致） */
 export function getDdnsConfig(): DdnsConfig {
   let raw: Record<string, unknown> = {};
   try {

@@ -8,7 +8,7 @@ import path from 'node:path';
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-update-lib-'));
 process.env.DATA_DIR = temp;
 
-const { SWITCHER_SCRIPT, buildCreateBody, buildSwitcherCreateBody, OLD_CONTAINER_NAME } = await import(
+const { SWITCHER_SCRIPT, buildCreateBody, buildSwitcherCreateBody } = await import(
   '../lib/updateSwitcher.js'
 );
 const { deriveDefaultImageRef, deriveDefaultImageTag, parseEnv, writeUpdateEnv, readUpdateEnv } = await import(
