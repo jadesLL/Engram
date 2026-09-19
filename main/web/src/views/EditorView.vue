@@ -20,9 +20,11 @@
         :dark="isDark"
         :related="related"
         :can-go-back="canGoBack"
+        :trail="app.pageTrail"
         :page-key="page.id"
         @close="closeReading"
         @go-back="goBackToSource"
+        @go-back-to="goBackToTrail"
         @open-wikilink="openWikilink"
         @open-related="openRelated"
         @context-menu="(request) => showContextMenu(request, 'reading')"
@@ -39,16 +41,21 @@
           </template>
           <span v-else class="crumb-item">根目录</span>
         </nav>
-        <button
-          v-if="canGoBack"
-          class="btn small topbar-back"
-          type="button"
-          v-tooltip="'返回上一页（Alt+←）'"
-          @click="goBackToSource"
-        >
-          <Icon name="chevron-left" :size="14" />
-          <span>返回上一页</span>
-        </button>
+        <BackTrailMenu v-if="canGoBack" :trail="app.pageTrail" @select="goBackToTrail">
+          <template #default="{ open }">
+            <button
+              class="btn small topbar-back"
+              type="button"
+              aria-haspopup="menu"
+              :aria-expanded="open"
+              @click="goBackToSource"
+            >
+              <Icon name="chevron-left" :size="14" />
+              <span>返回上一页</span>
+              <Icon name="chevron-down" :size="12" />
+            </button>
+          </template>
+        </BackTrailMenu>
         <div class="spacer"></div>
         <span v-if="saveState" class="save-pill" :class="savePillClass">
           <span class="dot"></span>{{ saveState }}
@@ -342,6 +349,7 @@ import {
 import MarkdownEditor from '../components/MarkdownEditor.vue';
 import ReadingPreview from '../components/ReadingPreview.vue';
 import FilePreview from '../components/FilePreview.vue';
+import BackTrailMenu from '../components/BackTrailMenu.vue';
 import Icon from '../components/Icon.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import { confirmDialog } from '../lib/confirm';
@@ -602,13 +610,25 @@ function closeReading() {
 
 /** 本页关联（双链邻居/相似/实体）跳转：同样记入返回轨迹 */
 function openRelated(id: string) {
-  app.pushPageTrail(page.value?.id, id);
+  app.pushPageTrail(trailSource(), id);
   router.push(`/page/${id}`);
+}
+
+/** 入栈来源页：id + 当前标题（返回列表里显示用户眼下看到的文件名） */
+function trailSource() {
+  return { id: page.value?.id, title: title.value || page.value?.title };
 }
 
 /** 返回双链跳转前的页面（多级逐层回退，返回后入口自动隐藏） */
 function goBackToSource() {
   const from = app.takePageTrailBack();
+  if (!from) return;
+  router.push(`/page/${from}`);
+}
+
+/** 悬停下拉直选某一层：该层之上的记录一并出栈，其余仍可继续逐层返回 */
+function goBackToTrail(id: string) {
+  const from = app.takePageTrailBackTo(id);
   if (!from) return;
   router.push(`/page/${from}`);
 }
@@ -662,7 +682,7 @@ watch(content, () => {
 async function openWikilink(wikiTitle: string) {
   try {
     const { data } = await api.get(`/api/pages/by-title/${encodeURIComponent(wikiTitle)}`);
-    app.pushPageTrail(page.value?.id, data.id);
+    app.pushPageTrail(trailSource(), data.id);
     router.push(`/page/${data.id}`);
   } catch {
     const ok = await confirmDialog({

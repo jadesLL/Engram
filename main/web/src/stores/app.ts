@@ -5,7 +5,14 @@ import {
   parseReadingPreferences,
   type ReadingPreferences,
 } from '../lib/readingPreview';
-import { pushTrail, settleTrail, takeTrailBack } from '../lib/pageTrail';
+import {
+  pushTrail,
+  settleTrail,
+  takeTrailBack,
+  takeTrailBackTo,
+  type PageTrailEntry,
+  type PageTrailSource,
+} from '../lib/pageTrail';
 
 type Theme = 'light' | 'dark' | 'system';
 
@@ -38,8 +45,8 @@ export const useAppStore = defineStore('app', {
       /** 沉浸阅读状态：默认开启，会话内切换页面保持（不写本地偏好） */
       readingMode: true,
       readingPreferences: parseReadingPreferences(localStorage.getItem('readingPreferences')),
-      /** 双链/关联跳转的页面轨迹：压入来源页 id，「返回上一页」逐级回退 */
-      pageTrail: [] as string[],
+      /** 双链/关联跳转的页面轨迹：压入来源页 id + 标题，「返回上一页」逐级回退或下拉直选 */
+      pageTrail: [] as PageTrailEntry[],
       /** 最近一次轨迹跳转的目标页 id：路由落到其它页面即视为离开轨迹并清空 */
       pageTrailTarget: null as string | null,
       /** 侧栏数据版本号：页面增删改/移动后自增，侧栏监听并刷新 */
@@ -104,9 +111,9 @@ export const useAppStore = defineStore('app', {
     toggleResolvedTheme() {
       this.setTheme(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
     },
-    /** 双链/关联跳转：记下来源页，供「返回上一页」逐级回退 */
-    pushPageTrail(fromId: string | undefined | null, toId: string) {
-      const next = pushTrail({ trail: this.pageTrail, target: this.pageTrailTarget }, fromId, toId);
+    /** 双链/关联跳转：记下来源页（id + 标题），供「返回上一页」逐级回退与下拉直选 */
+    pushPageTrail(from: PageTrailSource | null | undefined, toId: string) {
+      const next = pushTrail({ trail: this.pageTrail, target: this.pageTrailTarget }, from, toId);
       this.pageTrail = next.trail;
       this.pageTrailTarget = next.target;
     },
@@ -119,6 +126,13 @@ export const useAppStore = defineStore('app', {
     /** 取上一页并把该页标记为本次导航目标，路由落地时据此保留剩余轨迹 */
     takePageTrailBack(): string | null {
       const { state, from } = takeTrailBack({ trail: this.pageTrail, target: this.pageTrailTarget });
+      this.pageTrail = state.trail;
+      this.pageTrailTarget = state.target;
+      return from;
+    },
+    /** 下拉直选：跳回轨迹中的任意一层，该层之上的记录一并出栈 */
+    takePageTrailBackTo(id: string): string | null {
+      const { state, from } = takeTrailBackTo({ trail: this.pageTrail, target: this.pageTrailTarget }, id);
       this.pageTrail = state.trail;
       this.pageTrailTarget = state.target;
       return from;
