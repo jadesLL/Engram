@@ -18,9 +18,9 @@ function resolveDarkTheme(theme: Theme): boolean {
 
 // 旧版 A/B/C 侧栏方案已收敛为统一样式，清理遗留偏好。
 localStorage.removeItem('sidebarStyle');
-const legacyHtmlPreview = localStorage.getItem('htmlPreview') === '1';
-const initialReadingMode = localStorage.getItem('readingMode') === '1' || legacyHtmlPreview;
-if (legacyHtmlPreview) localStorage.setItem('readingMode', '1');
+// 沉浸阅读改为默认阅读方式：不再记忆上次开关，每次启动都直接进阅读视图，
+// 需要编辑时用「返回编辑」临时切回（会话内保持）。旧的 htmlPreview 迁移偏好一并清理。
+localStorage.removeItem('readingMode');
 localStorage.removeItem('htmlPreview');
 localStorage.removeItem('aiDrawerWidth');
 
@@ -34,8 +34,8 @@ export const useAppStore = defineStore('app', {
       dark: resolveDarkTheme(theme),
       /** 当前编辑模式（ir/sv），切换页面时保持不重置 */
       editorMode: (localStorage.getItem('editorMode') as 'ir' | 'sv') || 'ir',
-      /** 沉浸阅读状态与偏好，切换页面时保持 */
-      readingMode: initialReadingMode,
+      /** 沉浸阅读状态：默认开启，会话内切换页面保持（不写本地偏好） */
+      readingMode: true,
       readingPreferences: parseReadingPreferences(localStorage.getItem('readingPreferences')),
       /** 侧栏数据版本号：页面增删改/移动后自增，侧栏监听并刷新 */
       sidebarVersion: 0,
@@ -86,7 +86,6 @@ export const useAppStore = defineStore('app', {
     },
     setReadingMode(on: boolean) {
       this.readingMode = on;
-      localStorage.setItem('readingMode', on ? '1' : '0');
     },
     updateReadingPreferences(value: Partial<ReadingPreferences>) {
       const next = { ...this.readingPreferences, ...value };
