@@ -56,16 +56,17 @@
 
       <div class="rail-spacer" />
 
-      <!-- 内置 Agent（聊天抽屉） -->
+      <!-- 内置 Agent（聊天抽屉）：有轮次在跑时按钮上就带状态，抽屉关着也知道它还在干活 -->
       <button
         class="rail-btn"
         type="button"
-        :class="{ active: app.chatDrawerOpen }"
-        v-tooltip="'内置 Agent'"
-        aria-label="内置 Agent"
+        :class="{ active: app.chatDrawerOpen, 'is-running': chat.hasRunning }"
+        v-tooltip="chat.hasRunning ? `内置 Agent 正在回复（${chat.runningCount} 个会话）` : '内置 Agent'"
+        :aria-label="chat.hasRunning ? '内置 Agent（正在回复）' : '内置 Agent'"
         @click="app.toggleChat()"
       >
         <Icon name="ai" :size="19" />
+        <span v-if="chat.hasRunning" class="rail-running" aria-hidden="true" />
         <span v-if="app.chatUnread" class="dot" />
       </button>
 
@@ -158,6 +159,7 @@
             >
               <span class="more-icon">
                 <Icon :name="item.icon" :size="20" />
+                <span v-if="item.running" class="more-running" aria-hidden="true" />
                 <span v-if="item.dot" class="more-dot" />
               </span>
               <span class="more-label">{{ item.label }}</span>
@@ -173,6 +175,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
+import { useChatStore } from '../stores/chat';
 import { useUpdateStore } from '../stores/update';
 import { api } from '../api';
 import { openPageStream } from '../lib/events';
@@ -188,6 +191,7 @@ const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
 const updateStore = useUpdateStore();
+const chat = useChatStore();
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
 
 /* ===== 文件提取进度：只在对应文件旁显示，系统后台处理不提供通用队列界面 ===== */
@@ -294,18 +298,21 @@ const moreItems = computed(() => [
     label: '内置 Agent',
     icon: 'ai',
     dot: app.chatUnread,
+    running: chat.hasRunning,
     action: () => runMore(() => app.toggleChat(true)),
   },
   {
     label: '知识图谱',
     icon: 'graph',
     dot: false,
+    running: false,
     action: () => runMore(() => router.push('/graph')),
   },
   {
     label: '设置',
     icon: 'settings',
     dot: updateStore.hasNewVersion,
+    running: false,
     action: () => runMore(() => router.push('/settings')),
   },
 ]);
@@ -361,6 +368,9 @@ onMounted(() => {
     }
   });
   autoCheckUpdate().catch(() => {});
+  // 内置 Agent 正在跑的轮次要接上事件流：页面刷新后、或抽屉从没打开过，
+  // 图标栏那颗「运行中」指示也得亮着（跑完还会亮小红点）。
+  chat.syncRunningRuns().catch(() => {});
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
@@ -485,6 +495,52 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--sidebar-accent);
   pointer-events: none;
+}
+
+/* 「内置 Agent 正在回复」：图标呼吸 + 右上一颗脉冲点，抽屉关着也知道它还在干活 */
+.rail-btn.is-running {
+  color: var(--sidebar-accent);
+}
+
+.rail-btn.is-running > svg {
+  animation: rail-thinking 1.6s ease-in-out infinite;
+}
+
+.rail-btn .rail-running {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sidebar-accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--sidebar-accent) 55%, transparent);
+  animation: rail-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+}
+
+/* 跑完的「新回复」小红点要压住脉冲点：同一位置，未读优先可见 */
+.rail-btn.is-running .dot {
+  border-color: var(--sidebar-glass-solid);
+  animation: none;
+}
+
+@keyframes rail-thinking {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@keyframes rail-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sidebar-accent) 55%, transparent); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-btn.is-running > svg,
+  .rail-btn .rail-running {
+    animation: none;
+  }
 }
 
 .rail-spacer { flex: 1; }
@@ -774,6 +830,18 @@ onUnmounted(() => {
     border: 1.5px solid var(--sidebar-glass-solid);
     border-radius: 50%;
     background: var(--sidebar-accent);
+  }
+
+  /* 「更多」面板里的运行中脉冲点（与 rail 上同一套动效） */
+  .more-running {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--sidebar-accent);
+    animation: rail-pulse 1.6s ease-out infinite;
   }
 
   .more-label { font-size: 11px; }

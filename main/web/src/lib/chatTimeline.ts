@@ -1,11 +1,15 @@
-import type { ChatMessage, ChatRun, ChatToolCall } from '../stores/chat';
+import type { ChatMessage, ChatRun, ChatSubagent, ChatToolCall } from '../stores/chat';
 
 /**
- * 聊天抽屉的对话流：把消息（正文 / 思考）与工具卡（执行记录）合成一条按时间排的时间线。
+ * 聊天抽屉的对话流：把消息（正文 / 思考）、工具卡（执行记录）与子代理卡合成一条按时间排的时间线。
  *
  * 助手正文在服务端按步分段落库（每步一条 assistant/message），思考段是同表另一类
  * （metadata.kind = 'reasoning'），所以这里要做的就是把工具卡插回它发生的那两步之间——
  * 纯函数，无 Vue 依赖，便于单测。
+ *
+ * 子代理（dsh 的 subagent / subagent_fork / workflow / ralph 子会话）单独成卡：
+ * 派它的那次工具调用（subagent.parentCallId）不再单独显示，否则同一件事会出现两行；
+ * 子代理又派子代理时按谱系嵌进父卡（一层展示，再深就并排）。
  */
 
 export type ChatStreamItem = {
@@ -13,13 +17,14 @@ export type ChatStreamItem = {
   key: string;
   /** 排序用的落库时间（ISO 字符串，可直接字典序比较） */
   at: string;
-  /** 同一毫秒时的次序：消息/思考段在前，工具卡在后 */
+  /** 同一毫秒时的次序：消息/思考段在前，工具卡与子代理卡在后 */
   rank: number;
   role: 'user' | 'assistant';
 } & (
   | { kind: 'message'; message: ChatMessage }
   | { kind: 'reasoning'; message: ChatMessage }
   | { kind: 'tool'; call: ChatToolCall }
+  | { kind: 'subagent'; subagent: ChatSubagent; children: ChatSubagent[] }
 );
 
 /** 思考段：正文之外的「过程」消息（服务端按 metadata.kind 标记） */
@@ -40,7 +45,8 @@ function byAt(a: ChatStreamItem, b: ChatStreamItem): number {
 export function buildChatTimeline(
   messages: ChatMessage[],
   calls: ChatToolCall[],
-  runs: ChatRun[]
+  runs: ChatRun[],
+  subagents: ChatSubagent[] = []
 ): ChatStreamItem[] {
   const groups = new Map<string, ChatStreamItem[]>();
   const loose: ChatStreamItem[] = [];
@@ -64,7 +70,27 @@ export function buildChatTimeline(
       message,
     });
   }
+
+  // 子代理卡：先按谱系分组，父会话是另一个子代理的子会话时算嵌套
+  const childSessions = new Set(subagents.map((item) => item.childSessionId));
+  const childrenOf = new Map<string, ChatSubagent[]>();
+  const roots: ChatSubagent[] = [];
+  for (const subagent of subagents) {
+    if (subagent.parentSessionId && childSessions.has(subagent.parentSessionId)) {
+      const list = childrenOf.get(subagent.parentSessionId);
+      if (list) list.push(subagent);
+      else childrenOf.set(subagent.parentSessionId, [subagent]);
+    } else {
+      roots.push(subagent);
+    }
+  }
+  // 被子代理卡接管的那几张工具卡（委派动作本身）：不再单独成行
+  const claimedCalls = new Set(
+    subagents.map((item) => item.parentCallId).filter((id): id is string => Boolean(id))
+  );
+
   for (const call of calls) {
+    if (claimedCalls.has(call.id)) continue;
     add(call.runId, {
       key: call.id,
       at: call.createdAt,
@@ -72,6 +98,17 @@ export function buildChatTimeline(
       role: 'assistant',
       kind: 'tool',
       call,
+    });
+  }
+  for (const subagent of roots) {
+    add(subagent.runId, {
+      key: subagent.id,
+      at: subagent.createdAt,
+      rank: 2,
+      role: 'assistant',
+      kind: 'subagent',
+      subagent,
+      children: childrenOf.get(subagent.childSessionId) || [],
     });
   }
 
@@ -105,6 +142,7 @@ export function showStreamName(items: ChatStreamItem[], index: number): boolean 
 /** 取条目挂的那一轮 id（散项没有） */
 function runIdOf(item: ChatStreamItem): string {
   if (item.kind === 'tool') return item.call.runId;
+  if (item.kind === 'subagent') return item.subagent.runId || '';
   return item.message.runId || '';
 }
 

@@ -57,11 +57,47 @@ export interface ToolCallDto {
   createdAt: string;
 }
 
+/** 子代理状态：running 在跑 / completed 成功 / failed 失败 / background 本轮结束时仍在后台跑 */
+export type SubagentStatus = 'running' | 'completed' | 'failed' | 'background';
+
+/** 子代理过程里的一步（子会话里的工具调用），卡片的折叠区按顺序列出 */
+export interface SubagentActivityDto {
+  name: string;
+  summary: string;
+  status: 'running' | 'completed' | 'failed';
+  text?: string;
+  at: string;
+}
+
+export interface SubagentDto {
+  id: string;
+  runId?: string;
+  /** 派它的那次工具调用行 id：前端把该工具卡合并进子代理卡，不再重复显示两行 */
+  parentCallId?: string;
+  /** 父会话：Engram 会话对应的 dsh 根会话，或另一个子代理的子会话 id */
+  parentSessionId: string;
+  childSessionId: string;
+  label: string;
+  mode: string;
+  provider: string;
+  /** 委派给它的任务原文（取自派发工具调用的 prompt 参数） */
+  prompt: string;
+  status: SubagentStatus;
+  stopReason: string;
+  /** 子代理最终产出（finished 载荷的最后一条助手消息，或流式观察到的最后正文） */
+  result: string;
+  activity: SubagentActivityDto[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Snapshot {
   session: SessionDto;
   messages: MessageDto[];
   runs: RunDto[];
   toolCalls: ToolCallDto[];
+  /** 本会话派出的子代理（含嵌套），对话流据此显示「用了子代理」 */
+  subagents: SubagentDto[];
 }
 
 const ACTIVE_STATUSES = ['queued', 'running'];
@@ -151,6 +187,37 @@ function runningSessionIds(): Set<string> {
   return new Set(rows.map((row) => row.session_id));
 }
 
+function subagentStatusOf(value: unknown): SubagentStatus {
+  return value === 'completed' || value === 'failed' || value === 'background' ? value : 'running';
+}
+
+function toSubagent(row: any): SubagentDto {
+  let activity: SubagentActivityDto[] = [];
+  try {
+    const parsed = JSON.parse(row.activity || '[]');
+    if (Array.isArray(parsed)) activity = parsed as SubagentActivityDto[];
+  } catch {
+    /* 坏 JSON 当空 */
+  }
+  return {
+    id: row.id,
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    ...(row.parent_call_id ? { parentCallId: row.parent_call_id } : {}),
+    parentSessionId: row.parent_session_id || '',
+    childSessionId: row.child_session_id,
+    label: row.label || '',
+    mode: row.mode || '',
+    provider: row.provider || '',
+    prompt: row.prompt || '',
+    status: subagentStatusOf(row.status),
+    stopReason: row.stop_reason || '',
+    result: row.result || '',
+    activity,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export function listSessions(): SessionDto[] {
   const rows = db
     .prepare(`SELECT * FROM assistant_sessions ORDER BY updated_at DESC`)
@@ -203,6 +270,7 @@ export function touchSession(id: string): void {
 }
 
 export function deleteSession(id: string): void {
+  db.prepare(`DELETE FROM assistant_subagents WHERE session_id = ?`).run(id);
   db.prepare(`DELETE FROM assistant_messages WHERE session_id = ?`).run(id);
   db.prepare(`DELETE FROM assistant_runs WHERE session_id = ?`).run(id);
   db.prepare(`DELETE FROM assistant_sessions WHERE id = ?`).run(id);
@@ -343,6 +411,26 @@ export function listRuns(sessionId: string): RunDto[] {
   return rows.map(toRun);
 }
 
+/**
+ * 全库正在跑的轮次（跨会话）。
+ * 前端启动时靠它接上事件流：抽屉没打开过、或页面刚刷新，也要能显示「还在跑」。
+ */
+export function listActiveRuns(): Array<Pick<RunDto, 'id' | 'sessionId' | 'status' | 'createdAt'>> {
+  const rows = db
+    .prepare(
+      `SELECT id, session_id, status, created_at FROM assistant_runs
+       WHERE status IN (${ACTIVE_STATUSES.map(() => '?').join(', ')})
+       ORDER BY created_at`
+    )
+    .all(...ACTIVE_STATUSES) as any[];
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.session_id,
+    status: row.status,
+    createdAt: row.created_at,
+  }));
+}
+
 export function insertToolCall(input: { runId: string; name: string; args: string }): ToolCallDto {
   const id = uuid();
   const stamp = now();
@@ -388,6 +476,142 @@ export function listToolCalls(sessionId: string): ToolCallDto[] {
   return rows.map(toToolCall);
 }
 
+/* ---------- 子代理（dsh 的 subagent / subagent_fork / workflow / ralph 子会话） ---------- */
+
+/** 一条子代理卡最多留多少步过程：够看清它在干什么，也不会把快照撑爆 */
+const SUBAGENT_ACTIVITY_LIMIT = 40;
+/** 子代理结果/任务原文的落库上限（界面按需展示，超出部分截断） */
+const SUBAGENT_TEXT_LIMIT = 20000;
+
+export function insertSubagent(input: {
+  sessionId: string;
+  runId?: string;
+  parentCallId?: string;
+  parentSessionId: string;
+  childSessionId: string;
+  prompt?: string;
+}): SubagentDto {
+  const id = uuid();
+  const stamp = now();
+  db.prepare(
+    `INSERT INTO assistant_subagents(id, session_id, run_id, parent_session_id, child_session_id, parent_call_id,
+       label, mode, provider, prompt, status, stop_reason, result, activity, created_at, updated_at)
+     VALUES(?, ?, ?, ?, ?, ?, '', '', '', ?, 'running', '', '', '[]', ?, ?)`
+  ).run(
+    id,
+    input.sessionId,
+    input.runId ?? null,
+    input.parentSessionId,
+    input.childSessionId,
+    input.parentCallId ?? null,
+    (input.prompt || '').slice(0, SUBAGENT_TEXT_LIMIT),
+    stamp,
+    stamp
+  );
+  return getSubagent(id)!;
+}
+
+export function getSubagent(id: string): SubagentDto | null {
+  const row = db.prepare(`SELECT * FROM assistant_subagents WHERE id = ?`).get(id) as any;
+  return row ? toSubagent(row) : null;
+}
+
+/** 按子会话 id 找卡（dsh 的通知只带会话 id，卡自己带 row id） */
+export function findSubagentByChildSession(childSessionId: string): SubagentDto | null {
+  const row = db
+    .prepare(`SELECT * FROM assistant_subagents WHERE child_session_id = ? ORDER BY created_at DESC LIMIT 1`)
+    .get(childSessionId) as any;
+  return row ? toSubagent(row) : null;
+}
+
+/** 子会话 id → 卡（同一次会话树里一个子会话只会有一张卡） */
+export function updateSubagent(
+  id: string,
+  patch: Partial<Pick<SubagentDto, 'label' | 'mode' | 'provider' | 'prompt' | 'status' | 'stopReason' | 'result' | 'parentCallId' | 'parentSessionId'>>
+): void {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  const assign = (column: string, value: unknown, limit = SUBAGENT_TEXT_LIMIT) => {
+    sets.push(`${column} = ?`);
+    values.push(typeof value === 'string' ? value.slice(0, limit) : value);
+  };
+  if (patch.label !== undefined) assign('label', patch.label, 200);
+  if (patch.mode !== undefined) assign('mode', patch.mode, 40);
+  if (patch.provider !== undefined) assign('provider', patch.provider, 80);
+  if (patch.prompt !== undefined) assign('prompt', patch.prompt);
+  if (patch.status !== undefined) assign('status', patch.status, 40);
+  if (patch.stopReason !== undefined) assign('stop_reason', patch.stopReason, 200);
+  if (patch.result !== undefined) assign('result', patch.result);
+  if (patch.parentCallId !== undefined) assign('parent_call_id', patch.parentCallId, 80);
+  if (patch.parentSessionId !== undefined) assign('parent_session_id', patch.parentSessionId, 120);
+  if (!sets.length) return;
+  sets.push('updated_at = ?');
+  values.push(now(), id);
+  db.prepare(`UPDATE assistant_subagents SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+}
+
+/**
+ * 追加/收口一步过程。
+ * callId 命中已有条目就更新它（工具结果回填），否则追加一条；超过上限丢最旧的。
+ *
+ * 结果事件只带 callId（工具名与摘要在调用事件里），所以空字段一律「保持原值」而不是覆盖成空，
+ * 否则界面上的过程行会退化成一行没有名字的「工具调用」。
+ */
+export function recordSubagentActivity(
+  id: string,
+  activity: SubagentActivityDto & { callId?: string }
+): void {
+  const row = db.prepare(`SELECT activity FROM assistant_subagents WHERE id = ?`).get(id) as any;
+  if (!row) return;
+  let list: Array<SubagentActivityDto & { callId?: string }> = [];
+  try {
+    const parsed = JSON.parse(row.activity || '[]');
+    if (Array.isArray(parsed)) list = parsed as Array<SubagentActivityDto & { callId?: string }>;
+  } catch {
+    /* 坏 JSON 当空 */
+  }
+  const key = activity.callId || '';
+  const index = key ? list.findIndex((item) => item.callId === key) : -1;
+  if (index >= 0) {
+    const previous = list[index];
+    list[index] = {
+      ...previous,
+      ...(activity.name ? { name: activity.name } : {}),
+      ...(activity.summary ? { summary: activity.summary } : {}),
+      status: activity.status,
+      ...(activity.text ? { text: activity.text.slice(0, 2000) } : {}),
+      at: activity.at,
+    };
+  } else {
+    list.push({
+      name: activity.name,
+      summary: activity.summary,
+      status: activity.status,
+      ...(activity.text ? { text: activity.text.slice(0, 2000) } : {}),
+      at: activity.at,
+      ...(key ? { callId: key } : {}),
+    });
+  }
+  const trimmed = list.slice(-SUBAGENT_ACTIVITY_LIMIT);
+  db.prepare(`UPDATE assistant_subagents SET activity = ?, updated_at = ? WHERE id = ?`)
+    .run(JSON.stringify(trimmed), now(), id);
+}
+
+/** 本轮结束时仍在跑的子代理：标成 background（后台继续跑，结束通知可能落在后面某轮里） */
+export function markSubagentsBackground(runId: string): void {
+  db.prepare(
+    `UPDATE assistant_subagents SET status = 'background', updated_at = ?
+     WHERE run_id = ? AND status = 'running'`
+  ).run(now(), runId);
+}
+
+export function listSubagents(sessionId: string): SubagentDto[] {
+  const rows = db
+    .prepare(`SELECT * FROM assistant_subagents WHERE session_id = ? ORDER BY created_at`)
+    .all(sessionId) as any[];
+  return rows.map(toSubagent);
+}
+
 export function snapshot(sessionId: string): Snapshot | null {
   const session = getSession(sessionId);
   if (!session) return null;
@@ -399,6 +623,7 @@ export function snapshot(sessionId: string): Snapshot | null {
     messages: messages.filter((m) => !(m.metadata as any).hidden),
     runs: listRuns(sessionId),
     toolCalls: listToolCalls(sessionId),
+    subagents: listSubagents(sessionId),
   };
 }
 

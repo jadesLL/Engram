@@ -68,11 +68,44 @@ export interface ChatToolCall {
   createdAt: string;
 }
 
+/** 子代理状态：running 在跑 / completed 成功 / failed 失败 / background 本轮结束时仍在后台跑 */
+export type ChatSubagentStatus = 'running' | 'completed' | 'failed' | 'background';
+
+/** 子代理过程里的一步（子会话里的工具调用） */
+export interface ChatSubagentActivity {
+  name: string;
+  summary: string;
+  status: 'running' | 'completed' | 'failed';
+  text?: string;
+  at: string;
+}
+
+/** 内置 Agent 派出的子代理（dsh 的 subagent / subagent_fork / workflow / ralph 子会话） */
+export interface ChatSubagent {
+  id: string;
+  runId?: string;
+  /** 派它的那次工具调用行 id：那张工具卡会合并进子代理卡，不再重复显示 */
+  parentCallId?: string;
+  parentSessionId: string;
+  childSessionId: string;
+  label: string;
+  mode: string;
+  provider: string;
+  prompt: string;
+  status: ChatSubagentStatus;
+  stopReason: string;
+  result: string;
+  activity: ChatSubagentActivity[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ChatSnapshot {
   session: ChatSession;
   messages: ChatMessage[];
   runs: ChatRun[];
   toolCalls: ChatToolCall[];
+  subagents: ChatSubagent[];
 }
 
 /**
@@ -98,6 +131,12 @@ function errorText(error: any): string {
   return error?.response?.data?.error || error?.message || '请求失败';
 }
 
+/** 快照里正在跑的那一轮的 id（同一会话同时只有一轮在跑，取最后一条活动轮） */
+function activeRunIdOf(snapshot: ChatSnapshot | null): string {
+  const runs = snapshot?.runs || [];
+  return [...runs].reverse().find((run) => ['queued', 'running'].includes(run.status))?.id || '';
+}
+
 export const useChatStore = defineStore('chat', {
   state: () => ({
     initialized: false,
@@ -115,6 +154,12 @@ export const useChatStore = defineStore('chat', {
     sessionQuery: '',
     /** 后台会话跑完但还没看：会话列表里标「新回复」 */
     unread: {} as Record<string, boolean>,
+    /**
+     * 本端已经接上事件流、还没收到终态的轮次（runId → sessionId）。
+     * 会话列表里的 running 是「拉取那一刻」的快照，这里是实时事实：抽屉关着、
+     * 甚至从没打开过，也要能让用户看到「还在跑」。
+     */
+    activeRuns: {} as Record<string, string>,
   }),
   getters: {
     messages(state): ChatMessage[] {
@@ -135,9 +180,36 @@ export const useChatStore = defineStore('chat', {
     sessionToolCalls(state): ChatToolCall[] {
       return state.snapshot?.toolCalls || [];
     },
-    /** 正在跑的会话数：头部按钮上给个数字，关着面板也知道有活儿在跑 */
+    sessionSubagents(state): ChatSubagent[] {
+      return state.snapshot?.subagents || [];
+    },
+    /** 本轮派出的子代理（快照是唯一来源；本轮不在跑就为空） */
+    currentSubagents(state): ChatSubagent[] {
+      const runId = activeRunIdOf(state.snapshot);
+      const all = state.snapshot?.subagents || [];
+      return runId ? all.filter((item) => item.runId === runId) : [];
+    },
+    /** 正在跑的子代理（含后台跑着的），状态条据此报「N 个子代理在跑」 */
+    runningSubagents(state): ChatSubagent[] {
+      const runId = activeRunIdOf(state.snapshot);
+      if (!runId) return [];
+      return (state.snapshot?.subagents || []).filter(
+        (item) => item.runId === runId && item.status === 'running'
+      );
+    },
+    /**
+     * 正在跑的会话数：服务端列表 + 本端实时跟踪的轮次取并集。
+     * 头部按钮上给个数字，抽屉关着也知道有活儿在跑。
+     */
     runningCount(state): number {
-      return state.sessions.filter((session) => session.running).length;
+      const ids = new Set(state.sessions.filter((session) => session.running).map((session) => session.id));
+      for (const sessionId of Object.values(state.activeRuns)) ids.add(sessionId);
+      return ids.size;
+    },
+    /** 是否有任意会话在跑（图标栏/导航的「运行中」指示） */
+    hasRunning(state): boolean {
+      if (state.sessions.some((session) => session.running)) return true;
+      return Object.keys(state.activeRuns).length > 0;
     },
     filteredSessions(state): ChatSession[] {
       const query = state.sessionQuery.trim().toLowerCase();
@@ -218,6 +290,9 @@ export const useChatStore = defineStore('chat', {
       if (!id) return;
       await api.delete(`/api/assistant/sessions/${id}`);
       closeSessionConnections(id);
+      this.activeRuns = Object.fromEntries(
+        Object.entries(this.activeRuns).filter(([, sessionId]) => sessionId !== id)
+      );
       this.sessions = this.sessions.filter((session) => session.id !== id);
       if (this.activeSessionId !== id) return;
       this.snapshot = null;
@@ -307,6 +382,7 @@ export const useChatStore = defineStore('chat', {
       if (connections.has(runId)) return; // 同一轮只接一条流，切会话来回不重复叠加
       const source = new EventSource(`/api/assistant/runs/${encodeURIComponent(runId)}/events`);
       connections.set(runId, { source, sessionId });
+      this.activeRuns = { ...this.activeRuns, [runId]: sessionId };
       const isActive = () => this.activeSessionId === sessionId;
 
       source.addEventListener('snapshot', (event) => {
@@ -347,6 +423,7 @@ export const useChatStore = defineStore('chat', {
       });
       source.addEventListener('completed', () => {
         closeConnection(runId);
+        this.forgetRun(runId);
         void this.finishRun(sessionId);
       });
       source.addEventListener('error', (event) => {
@@ -357,6 +434,34 @@ export const useChatStore = defineStore('chat', {
           } catch { /* 网络抖动会让 EventSource 自动重连 */ }
         }
       });
+    },
+    /** 一轮收口（或流被关掉）：从「正在跑」集合里摘掉，指示器才不会一直亮着 */
+    forgetRun(runId: string) {
+      if (!this.activeRuns[runId]) return;
+      const next = { ...this.activeRuns };
+      delete next[runId];
+      this.activeRuns = next;
+    },
+    /**
+     * 应用启动时调用：把服务端正在跑的轮次接上事件流。
+     * 场景是「页面刷新 / 抽屉从没打开过」——此时 store 里没有任何轮次信息，
+     * 图标栏的那颗「运行中」指示就无从谈起。
+     */
+    async syncRunningRuns() {
+      try {
+        const { data } = await api.get('/api/assistant/runs/active');
+        const runs: Array<{ id: string; sessionId: string }> = data?.runs || [];
+        for (const run of runs) this.connect(run.id, run.sessionId);
+        // 服务端已经收口的轮次，本端还挂着的连接要摘掉（例如另一标签页停了它）
+        const alive = new Set(runs.map((run) => run.id));
+        for (const runId of Object.keys(this.activeRuns)) {
+          if (alive.has(runId)) continue;
+          closeConnection(runId);
+          this.forgetRun(runId);
+        }
+      } catch {
+        /* 离线/未登录时静默：打开抽屉会重新对齐 */
+      }
     },
     /** 一轮收口：刷新列表；当前会话重取快照，后台会话标未读 */
     async finishRun(sessionId: string) {
@@ -373,9 +478,11 @@ export const useChatStore = defineStore('chat', {
     closeEvents(runId?: string) {
       if (runId) {
         closeConnection(runId);
+        this.forgetRun(runId);
         return;
       }
       for (const id of [...connections.keys()]) closeConnection(id);
+      this.activeRuns = {};
     },
     async cancel() {
       const run = this.currentRun;

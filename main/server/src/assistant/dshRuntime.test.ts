@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { mapSessionEvent, mapNotification, planReasoningReplay } from './mapping.js';
+import { mapSessionEvent, mapNotification, briefArgs, planReasoningReplay } from './mapping.js';
 import { buildTask } from './prompts.js';
 
 /**
@@ -228,6 +228,119 @@ test('mapNotification：按根会话过滤，子 Agent 事件不透传', () => {
     { kind: 'status', text: '处理中' },
   ]);
   assert.deepEqual(mapNotification('session.status', { sessionId: root, status: 'idle' }, root), []);
+});
+
+test('mapNotification：子代理开工/收工由谱系通知界定（不再当成未知类型丢掉）', () => {
+  const root = 'session-root';
+  // 形状取自 dsh-sdk-jsonrpc-server：session/created 带 parentSession → subagent.started
+  assert.deepEqual(
+    mapNotification('subagent.started', { parentSessionId: root, childSessionId: 'child-1' }, root),
+    [{ kind: 'subagent-start', childSessionId: 'child-1', parentSessionId: root }]
+  );
+  // subagent.finished 携带 status/stopReason/lastAssistantMessage（ContentBlock[]，文本在块里）
+  assert.deepEqual(
+    mapNotification('subagent.finished', {
+      provider: 'spawn',
+      agentId: 'child-1',
+      parentSessionId: root,
+      childSessionId: 'child-1',
+      status: 'ok',
+      stopReason: 'completed',
+      lastAssistantMessage: [{ type: 'text', text: '同步页已整理' }],
+    }, root),
+    [{ kind: 'subagent-end', childSessionId: 'child-1', ok: true, stopReason: 'completed', text: '同步页已整理' }]
+  );
+  // 失败与缺字段都要能扛住（agentId 兜底、无产出给空串）
+  assert.deepEqual(
+    mapNotification('subagent.finished', { agentId: 'child-2', status: 'error', stopReason: 'max-tokens' }, root),
+    [{ kind: 'subagent-end', childSessionId: 'child-2', ok: false, stopReason: 'max-tokens', text: '' }]
+  );
+  assert.deepEqual(mapNotification('subagent.started', { parentSessionId: root }, root), []);
+});
+
+test('mapNotification：子会话事件收成子代理过程，不进主对话流', () => {
+  const root = 'session-root';
+  const child = 'child-1';
+
+  // 子会话第一条事件：subagent/descriptor（version 3）给出标签、模式与 provider
+  assert.deepEqual(
+    mapNotification('session.event', {
+      sessionId: child,
+      event: { type: 'subagent/descriptor', data: { version: 3, mode: 'one-shot', provider: 'spawn', label: '检索同步' } },
+    }, root),
+    [{ kind: 'subagent-descriptor', childSessionId: child, label: '检索同步', mode: 'one-shot', provider: 'spawn' }]
+  );
+
+  // 子会话的工具调用变成「过程」一步（参数压成一行摘要）
+  assert.deepEqual(
+    mapNotification('session.event', {
+      sessionId: child,
+      event: { type: 'tool/call', data: { callId: 'c1', name: 'mcp__engram__search', arguments: '{"query":"同步"}' } },
+    }, root),
+    [{
+      kind: 'subagent-activity',
+      childSessionId: child,
+      callId: 'c1',
+      name: 'mcp__engram__search',
+      summary: '同步',
+      status: 'running',
+      text: '',
+    }]
+  );
+  assert.deepEqual(
+    mapNotification('session.event', {
+      sessionId: child,
+      event: {
+        type: 'tool/result',
+        data: {
+          message: {
+            source: { kind: 'tool', callId: 'c1' },
+            content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: '3 条结果' }], isError: false }],
+          },
+        },
+      },
+    }, root),
+    [{
+      kind: 'subagent-activity',
+      childSessionId: child,
+      callId: 'c1',
+      name: '',
+      summary: '',
+      status: 'completed',
+      text: '3 条结果',
+    }]
+  );
+
+  // 子代理正文只当产出预览，不当主对话正文
+  assert.deepEqual(
+    mapNotification('session.event', {
+      sessionId: child,
+      event: { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '先看索引' }] } } },
+    }, root),
+    [{ kind: 'subagent-text', childSessionId: child, text: '先看索引' }]
+  );
+
+  // 子会话的思考段不冒到父对话
+  assert.deepEqual(
+    mapNotification('session.event', {
+      sessionId: child,
+      event: { type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: '想一下' }] } } },
+    }, root),
+    []
+  );
+
+  // 子代理的运行状态不算主对话的状态（早期实现会让主对话显示「处理中」）
+  assert.deepEqual(mapNotification('session.status', { sessionId: child, status: 'running' }, root), []);
+});
+
+test('briefArgs：参数摘要取第一个非空字符串字段，坏 JSON 退回压平原文', () => {
+  assert.equal(briefArgs('{"query":"同步设计","limit":5}'), '同步设计');
+  // 没有字符串字段时退回「键: 值」
+  assert.equal(briefArgs('{"limit":5,"deep":true}'), 'limit: 5');
+  assert.equal(briefArgs('不是 JSON'), '不是 JSON');
+  assert.equal(briefArgs('{}'), '');
+  assert.equal(briefArgs('{"text":"换\\n行"}'), '换 行');
+  assert.equal(briefArgs(`{"text":"${'字'.repeat(200)}"}`).length, 121);
 });
 
 test('buildTask：约定与用户消息同时在场，界面上下文按不可信标注', () => {

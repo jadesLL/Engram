@@ -114,6 +114,12 @@ export async function assistantRoutes(app: FastifyInstance) {
 
   // ---------- 运行 ----------
 
+  /**
+   * 正在跑的轮次：前端启动时据此接上事件流（页面刷新后 / 抽屉从未打开过也能显示「运行中」）。
+   * 注意路由要在 `/runs/:id/...` 之前声明，否则 active 会被当成 runId。
+   */
+  app.get('/api/assistant/runs/active', async () => ({ runs: repo.listActiveRuns() }));
+
   app.post('/api/assistant/sessions/:id/runs', async (req, reply) => {
     const sessionId = (req.params as any).id;
     const body = (req.body || {}) as { message?: string; context?: InterfaceContext };

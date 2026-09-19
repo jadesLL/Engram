@@ -495,6 +495,35 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_assistant_tool_calls_run
     ON assistant_tool_calls(run_id, created_at);
 
+  -- 内置 Agent 派出的子代理（dsh 的 subagent / subagent_fork / workflow / ralph 子会话）：
+  -- 对话流里要看得见「用了哪个子代理、在干什么、结果如何」，所以生命周期单独落表，
+  -- 而不是塞进 assistant_tool_calls 的 result（后台子代理会比那一轮活得更久）。
+  CREATE TABLE IF NOT EXISTS assistant_subagents (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    run_id TEXT,
+    -- 父会话：根会话（本表 session_id 对应的 dsh 会话）id 或另一个子代理的 child_session_id
+    parent_session_id TEXT NOT NULL DEFAULT '',
+    child_session_id TEXT NOT NULL,
+    -- 派发它的那次工具调用行 id：前端据此把「委派工具卡」升级成子代理卡，不再重复显示
+    parent_call_id TEXT,
+    label TEXT NOT NULL DEFAULT '',
+    mode TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT '',
+    prompt TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    stop_reason TEXT NOT NULL DEFAULT '',
+    result TEXT NOT NULL DEFAULT '',
+    activity TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES assistant_sessions(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_assistant_subagents_session
+    ON assistant_subagents(session_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_assistant_subagents_child
+    ON assistant_subagents(child_session_id);
+
   -- 桌面端远端免密接入已移除，清理旧版本留下的连接令牌
   DROP TABLE IF EXISTS desktop_tokens;
   `);
