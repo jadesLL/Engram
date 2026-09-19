@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { now, db } from '../lib/db.js';
 import { emit } from '../lib/events.js';
-import { safeJoin, syncPageFile, movePage, markPageDeleted, notifySyncChange } from '../lib/vault.js';
+import { safeJoin, syncPageFile, movePage, markPageDeleted, notifySyncChange, PagePathTakenError } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { merge3 } from './merge.js';
@@ -311,7 +311,21 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
   if (push.kind === 'move') {
     const oldRel = String(push.old_path || '');
     const newRel = String(push.target || '');
-    movePage(oldRel, newRel, 'sync');
+    try {
+      movePage(oldRel, newRel, 'sync');
+    } catch (error: any) {
+      if (!(error instanceof PagePathTakenError)) throw error;
+      // 目标路径已被占用（两端各自建了同名页）：绝不覆盖目标正文。把来源路径按删除广播，
+      // 让所有端收敛到「目标页保持原样、来源路径消失」，而不是各端自行搬移互相顶替正文
+      // （旧实现在这里覆盖目标后撞唯一约束，来源路径还会留下点开报「文件不存在」的幽灵行）。
+      try {
+        moveToTrash(oldRel, 'sync');
+      } catch {
+        markPageDeleted(oldRel);
+      }
+      const removed = commit('delete', oldRel, actorId);
+      return { ok: true, seq: Number(removed.seq), revision: Number(removed.revision) };
+    }
     const result = commit('move', newRel, actorId, { oldPath: oldRel });
     return { ok: true, seq: Number(result.seq), revision: Number(result.revision) };
   }

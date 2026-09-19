@@ -1,6 +1,7 @@
 import { getSetting, setSetting } from '../lib/db.js';
 import { commitLocalChange, connectedPeerIds } from './hub.js';
 import {
+  beginBootstrap,
   clientStatus,
   enqueueLocalChange,
   hubConfigured,
@@ -50,6 +51,8 @@ export interface SyncStatus {
   role: SyncRole;
   enabled: boolean;
   connected: boolean;
+  /** 首次接入引导（全量对账 + 补拉重放）仍在进行：面板显示「同步中」 */
+  syncing: boolean;
   hubUrl: string;
   hubToken: string;
   nodeId: string;
@@ -79,6 +82,7 @@ export function status(): SyncStatus {
     role,
     enabled: s.enabled,
     connected: s.connected,
+    syncing: s.syncing,
     hubUrl: s.hubUrl,
     hubToken: s.hubToken,
     nodeId: s.nodeId,
@@ -151,7 +155,10 @@ export async function reinitClient(): Promise<void> {
   const run = reinitChain.then(async () => {
     await stopClientAndWait();
     if (!syncConfigEnabled()) return;
-    // 先对账一次（首次接入拉全量/补齐离线差异），再进常驻循环
+    // 先对账一次（首次接入拉全量/补齐离线差异），再进常驻循环。
+    // 引导期间状态面板显示「已连接 · 首次同步中」：整库对账 + 从头补拉可能持续数分钟，
+    // 此前 SSE 还没建立，旧口径会让用户以为没连上（重启后水位已推进才显示正常）。
+    beginBootstrap();
     try {
       await reconcile();
     } catch (error) {

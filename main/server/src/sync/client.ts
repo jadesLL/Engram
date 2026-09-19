@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { emit } from '../lib/events.js';
 import { getSetting } from '../lib/db.js';
 import { consumeSseStream } from '../lib/sseStream.js';
-import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted } from '../lib/vault.js';
+import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted, PagePathTakenError } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
@@ -31,6 +31,8 @@ import {
 export interface ClientStatus {
   enabled: boolean;
   connected: boolean;
+  /** 首次接入的引导阶段（全量对账 + 从头补拉）尚未走完：面板据此显示「同步中」而不是干等 */
+  syncing: boolean;
   hubUrl: string;
   hubToken: string;
   nodeId: string;
@@ -63,7 +65,14 @@ const pendingTargets = new Set<string>();
 const stashed = new Map<string, { seq: number; kind: SyncKind; target: string; old_path: string; revision: number; content?: string; evidence?: EvidenceSnapshot }>();
 
 let running = false;
+/**
+ * 「已连上中枢」的判定不是「SSE 长连接已建立」，而是「最近一次与中枢的通信成功」：
+ * 首次接入要先做全量对账、再从头补拉整个 oplog，可能持续数分钟，其间 SSE 还没开，
+ * 旧口径会让面板一直显示「未连接」，用户以为根本没连上（重启后水位已推进才显示正常）。
+ */
 let connected = false;
+/** 首次接入引导（全量对账 + 补拉重放）是否仍在进行：SSE 连上即结束 */
+let syncing = false;
 let lastSyncAt: string | null = null;
 let lastError: string | null = null;
 let backoffMs = 1000;
@@ -213,6 +222,33 @@ async function pullFile(relPath: string): Promise<void> {
   lastSyncAt = new Date().toISOString();
 }
 
+/**
+ * 应用远端 move：目标路径已就位（新成员「先全量对账、再从头重放 oplog」时必然如此，
+ * 成员离线期间页面在中枢被改名也一样）说明页面已经在新路径上，旧路径只是残留副本——
+ * 直接入回收站收敛掉，绝不能搬过去覆盖目标正文。
+ * 旧实现直接 renameSync：覆盖目标页正文后 `UPDATE pages SET path` 撞唯一约束抛错并被
+ * 静默吞掉，旧路径留下 deleted = 0 却无文件的幽灵行（侧栏列出、点开报「文件不存在」，
+ * 只有重启扫描才清）。
+ */
+function applyRemoteMove(oldPath: string, target: string, revision: number): void {
+  if (!oldPath || oldPath === target) return;
+  try {
+    movePage(oldPath, target, 'sync');
+  } catch (error: any) {
+    if (!(error instanceof PagePathTakenError)) {
+      // 源不存在（本端从没拉到）等：后续内容同步会补齐新路径
+      return;
+    }
+    try {
+      moveToTrash(oldPath, 'sync');
+    } catch {
+      markPageDeleted(oldPath);
+    }
+    logEvent('info', 'move-superseded', `${oldPath} → ${target}：目标已就位，旧路径入回收站`);
+  }
+  setPageSyncRevision(target, revision);
+}
+
 /** 应用一条 hub 广播/补拉 op（seq 单调 guard 防重复应用）。
  *  cursor 只在应用成功后推进：page 应用失败向上抛断开事件流，重连后从 cursor 重放，
  *  避免「失败也前推水位」造成静默丢更新（对齐 fast-note-sync 的未确认不算完成语义） */
@@ -247,10 +283,7 @@ function applyRemoteOp(op: any): void {
         markPageDeleted(target);
       }
     } else if (op.kind === 'move') {
-      try {
-        movePage(String(op.old_path || ''), target, 'sync');
-        setPageSyncRevision(target, Number(op.revision || 0));
-      } catch { /* 源不存在时忽略（后续内容同步会补齐新路径） */ }
+      applyRemoteMove(String(op.old_path || ''), target, Number(op.revision || 0));
     }
   } catch (error: any) {
     logEvent('error', 'apply-failed', `${op.kind} ${target}: ${error?.message || error}`);
@@ -391,6 +424,7 @@ async function syncMissedChanges(): Promise<void> {
   let gap = false;
   for (;;) {
     const res = await getJson(`/api/sync/changes?since=${getCursor()}`);
+    connected = true;
     if (res?.resync) gap = true;
     const ops: any[] = res?.ops || [];
     if (ops.length > 0) logEvent('info', 'replay', `补拉 ${ops.length} 条远端变更（自水位 ${getCursor()}）`);
@@ -417,6 +451,7 @@ async function consumeStream(): Promise<void> {
   const res = await fetch(url, { headers: authHeaders(), signal: streamAbort.signal });
   if (!res.ok || !res.body) throw new Error(`事件流连接失败: ${res.status}`);
   connected = true;
+  syncing = false;
   backoffMs = 1000;
   lastError = null;
   logEvent('info', 'connected', `中枢事件流已连接`);
@@ -438,6 +473,8 @@ export async function reconcile(): Promise<void> {
   try {
     logEvent('info', 'reconcile-start');
     const snap = await getJson('/api/sync/snapshot');
+    // 中枢已应答即视为已连接：首次接入的全量对账可能持续数分钟，此前不能显示「未连接」
+    connected = true;
     const entries: {
       kind: 'page' | 'file';
       path: string;
@@ -447,6 +484,13 @@ export async function reconcile(): Promise<void> {
       distilled?: boolean;
     }[] = snap?.entries || [];
     const hubTargets = new Set(entries.map((e) => e.path));
+    /**
+     * 中枢见过、但当前不持有的路径（已删除、已改名移走的旧路径）。
+     * 反向补推只对「中枢从没见过」的本端内容成立：把这类路径推回去等于让中枢
+     * 复活已删页面并广播给所有端（成员停用期间中枢删页 → 重新接入即复活）。
+     * 旧中枢不带该字段 → 视为空集，退回旧行为。
+     */
+    const hubStale = new Set<string>(Array.isArray(snap?.stale) ? snap.stale.map(String) : []);
     let pulled = 0;
     let queued = 0;
     /** 中枢已提炼、本端账本缺失的来源路径：页面全部落位后统一补拉账本 */
@@ -499,13 +543,13 @@ export async function reconcile(): Promise<void> {
       }
     }
 
-    // 本端 → hub：hub 没有的页面/文件推上去
+    // 本端 → hub：只补推 hub「从没见过」的页面/文件。hub 报过的已删/已改名旧路径不推，
+    // 否则等于把中枢已删页面复活并广播给所有端（成员停用期间中枢删页 → 重新接入即复活）。
     const localEntries = localSnapshot();
     for (const entry of localEntries) {
-      if (!hubTargets.has(entry.path)) {
-        queued++;
-        enqueueLocalChange(entry.kind, entry.path);
-      }
+      if (hubTargets.has(entry.path) || hubStale.has(entry.path)) continue;
+      queued++;
+      enqueueLocalChange(entry.kind, entry.path);
     }
     // 证据账本补齐：中枢已提炼而本端账本为空（载体页面 op 早已被 oplog 裁剪、或本端是后加入的）。
     // 排在页面拉取之后——贡献按页路径落位，页面到位才能挂上；但产物页面在中枢已删除时
@@ -598,6 +642,7 @@ async function runLoop(): Promise<void> {
     } catch (error: any) {
       // 停用/改配置导致的主动中断不是故障：不写「最近错误」，避免误报
       if (!isSelfAbort(error)) {
+        connected = false;
         lastError = String(error?.message || error);
         logEvent('warn', 'disconnected', `${lastError}（${Math.round(backoffMs / 1000)}s 后重连）`);
       }
@@ -611,6 +656,8 @@ async function runLoop(): Promise<void> {
 export function startClient(): void {
   if (running) return;
   running = true;
+  // 引导阶段开始：全量对账 + 从头补拉走完、SSE 连上之前，面板显示「同步中」
+  syncing = true;
   backoffMs = 1000;
   pushRetryMs = 3000;
   logEvent('info', 'start', `同步客户端启动（节点 ${currentNodeId().slice(0, 8)}）`);
@@ -635,6 +682,7 @@ export function startClient(): void {
 export function stopClient(): void {
   running = false;
   connected = false;
+  syncing = false;
   if (pullRetryTimer) {
     clearInterval(pullRetryTimer);
     pullRetryTimer = null;
@@ -652,10 +700,19 @@ export function stopClient(): void {
   } catch { /* 已结束 */ }
 }
 
+/**
+ * 首次接入引导开始：reinitClient 在「对账 → 进常驻循环」之前调用。
+ * 面板据此在整段引导期间显示「同步中」，而不是在中枢已应答、内容正在进来时显示「未连接」。
+ */
+export function beginBootstrap(): void {
+  syncing = true;
+}
+
 export function clientStatus(): ClientStatus {
   return {
     enabled: syncConfigEnabled(),
     connected,
+    syncing,
     hubUrl: hubUrl(),
     hubToken: hubToken(),
     nodeId: currentNodeId(),
