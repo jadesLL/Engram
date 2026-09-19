@@ -36,7 +36,7 @@
       />
 
       <!-- 顶部条：Wiki / 分区 / 标题 面包屑 + 常驻保存状态 -->
-      <div v-show="!app.readingMode" class="editor-topbar">
+      <div v-show="!app.readingMode" class="editor-topbar chrome-float">
         <nav class="crumb">
           <template v-for="(d, i) in crumbDirs" :key="i">
             <span v-if="i" class="crumb-sep">/</span>
@@ -87,7 +87,7 @@
             >{{ formatContentWidthRatio(ratio) }}</button>
           </div>
         </div>
-        <!-- 保存态：绿点 + 文案的状态指示，dirty 时它本身就是保存按钮（Ctrl+S 不变） -->
+        <!-- 保存态：绿点 + 文案的状态指示；dirty 且手动保存时它本身也能点（Ctrl+S 不变） -->
         <button
           class="save-state"
           :class="saveStateClass"
@@ -97,6 +97,19 @@
           @click="saveState === '编辑中…' && save(true)"
         >
           <span class="dot"></span>{{ saveState }}
+        </button>
+        <!-- 手动保存按钮：关掉「自动保存」才出现，自动保存时完全隐藏（v-if，不留占位）；
+             未改动时置灰，改动后点亮，点击/Ctrl+S 落盘 -->
+        <button
+          v-if="!autosave"
+          class="save-btn"
+          type="button"
+          :disabled="!dirtyUi"
+          v-tooltip="dirtyUi ? '保存（Ctrl+S）' : '暂无未保存改动'"
+          @click="save(true)"
+        >
+          <Icon name="check" :size="13" />
+          保存
         </button>
         <label class="switch-control autosave-toggle" v-tooltip="'按文件记忆；关闭后仅手动保存'">
           <input
@@ -295,9 +308,13 @@
         </div>
       </div>
 
+      </div><!-- /editor-body -->
+
       <!-- 底部状态栏：字数 / 编辑模式；来源、图谱等低频入口收拢到右下。
+           放在 editor-body 之外、直接挂 editor-view：它和顶栏一样是悬浮 chrome（绝对定位浮在正文之上），
+           不再参与文档流，正文因此多出上下两条白条的高度。
            v-if 而非 v-show：阅读模式不挂载，wordCount 大页面全文字数统计不跑 -->
-      <div v-if="!app.readingMode" class="statusbar">
+      <div v-if="!app.readingMode" class="statusbar chrome-float">
         <span class="sb-item">{{ wordCount }} 字</span>
         <span class="sb-item">{{ app.editorMode === 'sv' ? '源码' : '即时渲染' }}</span>
         <div class="spacer"></div>
@@ -321,7 +338,6 @@
           页面图谱
         </button>
       </div>
-      </div><!-- /editor-body -->
     </template>
 
     <!-- 页面加载 / 错误状态 -->
@@ -1153,11 +1169,15 @@ onUnmounted(() => {
   --doc-col: 720px;
   --doc-pad: 40px;
   --col-inset: max(24px, calc((100% - var(--doc-col)) / 2 + var(--doc-pad)));
+  /* 悬浮 chrome 的让位高度：顶栏 12+40、状态栏 12+30，各留一点呼吸 */
+  --chrome-top: 64px;
+  --chrome-bottom: 50px;
 }
 
 /*
  * 全屏编辑：正文区铺满，页头 / 状态栏 / 关联区让位（编辑器背景透明，留着就会两层叠字）。
- * 顶栏保留：它只有 46px，且承载保存态、自动保存开关与「正文宽度」——全屏里正需要调宽度。
+ * 顶栏保留：它只有 40px，且承载保存态、自动保存开关、手动保存按钮与「正文宽度」——
+ * 全屏里正需要调宽度，所以它继续以悬浮 chrome 的形态留在最上层。
  * 用布局让位而不是 fixed 覆盖层：fixed 会盖住桌面端顶部 36px 标题栏拖拽条。
  */
 .editor-fullscreen .page-head,
@@ -1171,22 +1191,43 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
 }
+/* 全屏里状态栏让位了，底部那一档留白跟着收回；顶栏仍在浮层上，--chrome-top 保留 */
+.editor-fullscreen .editor-body {
+  padding-bottom: 0;
+}
 .editor-fullscreen .editor-area {
+  scroll-padding-bottom: 0;
   background: var(--bg);
 }
 
-/* ---------- 顶部条：面包屑 + 保存状态（46px 白条，mockup 4.3） ---------- */
+/* ---------- 顶部条：面包屑 + 保存状态 + 手动保存按钮 + 自动保存开关 ----------
+   悬浮 chrome（UI 2.0 续作）：顶栏与状态栏都不再占文档流，改成毛玻璃胶囊浮在正文之上，
+   与工具栏的悬浮卡片同一套语言。正文因此多出上下两条白条的高度，
+   .editor-body 用 --chrome-top / --chrome-bottom 让位。 */
+.chrome-float {
+  position: absolute;
+  /* 局部层叠上下文（与 vditor 工具栏的 2 / 抽屉的 subpanel 同层内比较），不占全局层级令牌 */
+  z-index: 3;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 26px -14px rgba(0, 0, 0, 0.28);
+}
 .editor-topbar {
-  flex: none;
-  height: 46px;
+  left: 18px;
+  right: 18px;
+  top: 12px;
+  height: 40px;
+  /* 盖住 sticky 工具栏（工具栏是 .editor-area 内的局部层叠上下文，z-index 2） */
+  z-index: 4;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 18px;
+  padding: 0 8px 0 14px;
+  border-radius: var(--radius);
   font-size: 12.5px;
   color: var(--text-faint);
-  background: var(--card-bg);
-  border-bottom: 1px solid var(--border);
 }
 .crumb {
   display: flex;
@@ -1286,6 +1327,33 @@ button.save-state.dirty:hover { color: var(--accent); }
 .save-state.failed { color: var(--danger); }
 .save-state.failed .dot { background: var(--danger); }
 @keyframes save-pulse { 50% { opacity: 0.35; } }
+/* 手动保存按钮：仅「自动保存」关闭时渲染（模板 v-if 已隐藏，这里的 display 覆盖不了 v-if）。
+   未改动时置灰不可点，改动后点亮；点击/ Ctrl+S 落盘 */
+.save-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, opacity 120ms ease;
+}
+.save-btn:hover { background: var(--accent-hover); }
+.save-btn:active { background: var(--accent-pressed); }
+.save-btn:disabled { opacity: 0.42; cursor: default; background: var(--accent); }
+/* 关掉自动保存时按钮刚出现：轻微入场，避免被忽略（v-if 重新挂载触发） */
+.save-btn { animation: save-in 180ms ease-out; }
+@keyframes save-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
 .autosave-toggle { flex: none; }
 /* 双链跳转后的返回入口：紧邻面包屑，图标 + 文案 */
 .topbar-back {
@@ -1305,6 +1373,9 @@ button.save-state.dirty:hover { color: var(--accent); }
 @media (max-width: 640px) {
   .autosave-toggle em { display: none; }
   .topbar-back span { display: none; }
+  /* 窄屏悬浮条贴边：18px 外边距在手机上太浪费 */
+  .editor-topbar { left: 10px; right: 10px; padding: 0 6px 0 10px; }
+  .statusbar { left: 10px; }
 }
 
 /* ---------- 页头：标题 + 元信息 chips，与正文列对齐 ---------- */
@@ -1428,8 +1499,16 @@ button.save-state.dirty:hover { color: var(--accent); }
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* 悬浮顶栏 / 状态栏的让位：正文首行与末行不再被浮条压住 */
+  padding-top: var(--chrome-top);
+  padding-bottom: var(--chrome-bottom);
 }
-.editor-area { flex: 1; min-height: 0; }
+.editor-area {
+  flex: 1;
+  min-height: 0;
+  /* 正文滚到底时给悬浮状态栏留出滚动余量，末行不被胶囊压住 */
+  scroll-padding-bottom: var(--chrome-bottom);
+}
 .page-state {
   flex: 1;
   display: flex;
@@ -1696,7 +1775,9 @@ button.save-state.dirty:hover { color: var(--accent); }
 /* ---------- 本页关联：与正文同一内容列，铺在灰底上 ---------- */
 .related {
   flex: none;
-  padding: 0 var(--col-inset) 26px;
+  /* 底部多留一档：关联区是文档流末端，悬浮状态栏浮在它下面，
+     26px 会让最后一行被胶囊压住（.editor-body 的 --chrome-bottom 只保证不贴边） */
+  padding: 0 var(--col-inset) calc(18px + var(--chrome-bottom));
 }
 .related-inner {
   padding-top: 12px;
@@ -1737,18 +1818,18 @@ button.save-state.dirty:hover { color: var(--accent); }
 .rel-item:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .rel-item.entity { color: var(--accent); border-color: transparent; background: var(--accent-soft); }
 
-/* ---------- 底部状态栏：34px 白条 + hairline 顶边（mockup 4.3） ---------- */
+/* ---------- 底部状态栏：左下悬浮胶囊（字数 / 模式在左，来源、图谱在右） ---------- */
 .statusbar {
-  flex: none;
-  height: 34px;
+  left: 18px;
+  bottom: 12px;
+  height: 30px;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 18px;
+  gap: 14px;
+  padding: 0 6px 0 12px;
+  border-radius: 15px;
   font-size: 11.5px;
   color: var(--text-faint);
-  background: var(--card-bg);
-  border-top: 1px solid var(--border);
 }
 .sb-item {
   display: inline-flex;
@@ -1760,7 +1841,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   background: none;
   cursor: pointer;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: 12px;
   color: var(--text-secondary);
   font-size: 11.5px;
 }
@@ -1888,7 +1969,7 @@ button.save-state.dirty:hover { color: var(--accent); }
 }
 
 @media (max-width: 768px) {
-  .editor-topbar { height: 42px; padding: 0 14px; }
+  .editor-topbar { height: 40px; padding: 0 6px 0 10px; left: 10px; right: 10px; }
   /* 手机上可用区本就窄，正文列铺满（百分比在这里没有意义） */
   .editor-view { --doc-col: 100%; --doc-pad: 0px; }
   .page-head { padding: 20px 20px 0; }
@@ -1900,7 +1981,10 @@ button.save-state.dirty:hover { color: var(--accent); }
   .title-input { font-size: 26px; }
   .meta-date { display: none; }
   .evidence-drawer { width: 100%; border-left: 0; }
-  .statusbar { padding: 0 14px; gap: 10px; }
+  .statusbar { padding: 0 4px 0 10px; gap: 10px; left: 10px; }
+  /* 手机端底部导航（Home.vue .bottom-nav）是 fixed 8px + 48px 高：状态栏要抬到它上面，
+     否则两颗胶囊在同一层叠区域里打架 */
+  .statusbar { bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
 
   /* 页头操作区折叠：摘要行显示、折叠区随状态隐藏 */
   .head-summary {
