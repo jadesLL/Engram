@@ -936,6 +936,9 @@ onBeforeUnmount(() => {
   line-height: inherit;
 }
 .reading-content[aria-busy="true"] { opacity: 0.65; }
+/* 正文首个块去掉上外边距：实体页删掉与标题重复的 H1 后，「## 当前理解」的
+ * 2.3em 上边距会与文档头的 34px 下边距叠加成 ~90px 空行 */
+.reading-content :deep(> :first-child) { margin-top: 0; }
 .reading-content :deep(h1) { font-size: 1.75em; }
 .reading-content :deep(h2),
 .reading-content :deep(h3),
