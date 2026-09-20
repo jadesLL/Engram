@@ -1,13 +1,13 @@
 <template>
   <aside
     class="chat-drawer"
-    :class="{ overlay: overlay && !isFull, full: isFull }"
+    :class="{ dock: !overlay && !isFull, overlay: overlay && !isFull, full: isFull }"
     :style="drawerStyle"
     aria-label="内置 Agent"
   >
-    <!-- 左缘拖拽手柄：右侧并排形态下调整宽度（拖过窗口 70% 自动转满窗，双击还原默认，聚焦后方向键微调） -->
+    <!-- 左缘拖拽手柄：右侧悬浮形态下调整宽度（拖过窗口 70% 自动转满窗，双击还原默认，聚焦后方向键微调） -->
     <div
-      v-if="resizable"
+      v-if="isDock"
       class="drawer-resizer"
       :class="{ dragging: dragWidth !== null }"
       v-tooltip="'拖动调整宽度，双击还原；拖过窗口 70% 自动满窗'"
@@ -450,18 +450,19 @@ const inputEl = ref<HTMLTextAreaElement | null>(null);
 
 /** 满窗形态：铺满内容区（形态本身不重建组件，会话/草稿/滚动都保留） */
 const isFull = computed(() => app.chatDrawerMode === 'full');
+/** 悬浮形态：桌面端的默认档——右侧一张玻璃卡片与正文并排，正文让出它的宽度 */
+const isDock = computed(() => !props.overlay && !isFull.value);
 
-/* ===== 左缘拖拽调宽：只在「右侧并排」形态下有意义（浮层/满窗/手机端都铺满可用宽度） ===== */
+/* ===== 左缘拖拽调宽：只在「右侧悬浮」形态下有意义（浮层/满窗/手机端都铺满可用宽度） ===== */
 const MIN_DRAWER_WIDTH = 320;
 /**
- * 并排形态最多占窗口的比例：拖过这条线就不再是「并排」——自动转满窗形态
- * （满窗把正文列居中限宽，比一条占满屏幕的并排抽屉好读），因此并排宽度本身不设上限。
+ * 悬浮档最多占窗口的比例：拖过这条线就不再是「悬浮卡片」——自动转满窗形态
+ * （满窗把正文列居中限宽，比一条占满屏幕的卡片好读），因此悬浮宽度本身不设上限。
  */
 const FULL_SNAP_RATIO = 0.7;
 const viewportWidth = ref(window.innerWidth);
 
-const resizable = computed(() => !props.overlay && !isFull.value);
-/** 并排宽度上限 = 窗口宽度的 70%：越过即交棒给满窗 */
+/** 悬浮宽度上限 = 窗口宽度的 70%：越过即交棒给满窗 */
 const dockMaxWidth = computed(() =>
   Math.max(MIN_DRAWER_WIDTH, Math.round(viewportWidth.value * FULL_SNAP_RATIO))
 );
@@ -482,7 +483,13 @@ const dragWidth = ref<number | null>(null);
 const drawerWidth = computed(() =>
   dragWidth.value ?? (hasWidthPreference.value ? clampDrawerWidth(app.chatDrawerWidth) : defaultDrawerWidth())
 );
-const drawerStyle = computed(() => (resizable.value ? { width: `${drawerWidth.value}px` } : {}));
+/**
+ * 宽度落到 CSS 变量上，而不是直接写 width：Home 的开合动画（drawer-slide）
+ * 要在收起态把宽度压到 0，好让正文让位跟着一起收，写死的内联 width 会把动画顶掉。
+ */
+const drawerStyle = computed(() =>
+  isDock.value ? { '--drawer-w': `${drawerWidth.value}px` } : {}
+);
 
 /** 收尾拖拽：清掉跟手值并还原全局光标/选择态（转满窗时手柄会被卸载，必须在这里收干净） */
 function stopResize() {
@@ -993,7 +1000,6 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   width: clamp(360px, 32vw, 520px);
-  height: 100%;
   min-height: 0;
   flex-shrink: 0;
   border-left: 1px solid var(--border);
@@ -1001,11 +1007,67 @@ onUnmounted(() => {
   z-index: var(--z-drawer);
 }
 
-/* 左缘拖拽手柄：8px 命中区跨在边框上，平时不显形，悬停/拖动/聚焦时给一条强调色细线 */
+/*
+ * 悬浮档（桌面端默认形态）：与左侧文件树同一套玻璃材质，四周留 8px 露出窗口底色，
+ * 于是右侧也是一张浮起来的卡片，而不是贴边的一条并排面板。
+ * 高度交给 flex 拉伸（stretch 会把上下 margin 扣掉），所以这里不写 height。
+ */
+.chat-drawer.dock {
+  width: var(--drawer-w, clamp(360px, 32vw, 520px));
+  margin: 8px;
+  border: 1px solid var(--sidebar-glass-border);
+  border-radius: 8px;
+  background: var(--sidebar-material);
+  box-shadow: var(--sidebar-glass-shadow);
+  backdrop-filter: saturate(150%) blur(28px);
+  -webkit-backdrop-filter: saturate(150%) blur(28px);
+}
+
+/*
+ * 开合动画（<transition name="drawer-slide"> 在 Home.vue）：与左侧栏同一套节奏——
+ * 右缘滑入 + 轻微缩放 + 淡入，160ms 一套走完。
+ * 悬浮档额外把宽度从 0 收放到目标值：正文让位跟着动画一起走，
+ * 不会出现「卡片还在滑、正文已经跳掉一块」的错位。
+ */
+.drawer-slide-enter-active,
+.drawer-slide-leave-active {
+  overflow: hidden;
+  transition: width 160ms ease, margin 160ms ease, opacity 160ms ease, transform 160ms ease;
+}
+
+.drawer-slide-enter-from,
+.drawer-slide-leave-to {
+  opacity: 0;
+  transform: translateX(14px) scale(0.985);
+}
+
+.chat-drawer.dock.drawer-slide-enter-from,
+.chat-drawer.dock.drawer-slide-leave-to {
+  /* 两侧留白一起收到 0：收起后不留 16px 空档，正文一次性并回来 */
+  width: 0;
+  margin-right: 0;
+  margin-left: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-slide-enter-active,
+  .drawer-slide-leave-active {
+    transition-duration: 0.01ms;
+  }
+}
+
+/* 不支持毛玻璃时退回不透明底色（与左侧栏同一处理） */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .chat-drawer.dock {
+    background: var(--sidebar-material-solid);
+  }
+}
+
+/* 左缘拖拽手柄：8px 命中区跨在卡片左缘上（避开圆角，细线不悬在角外），悬停/拖动/聚焦时给一条强调色细线 */
 .drawer-resizer {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: 14px;
+  bottom: 14px;
   left: -4px;
   width: 8px;
   cursor: col-resize;

@@ -143,8 +143,11 @@
       <router-view />
     </main>
 
-    <!-- 内置 Agent 聊天抽屉：桌面端占位并排，≤1024px 覆盖正文 -->
-    <ChatDrawer v-if="app.chatDrawerOpen" :overlay="sidebarOverlay" />
+    <!-- 内置 Agent 聊天抽屉：桌面端是右侧悬浮卡片（正文让出它的宽度，不遮内容），≤1024px 覆盖正文；
+         开合动画 drawer-slide 与左侧栏同一套节奏，具体样式在 ChatDrawer 里 -->
+    <transition name="drawer-slide">
+      <ChatDrawer v-if="app.chatDrawerOpen" :overlay="sidebarOverlay" />
+    </transition>
 
     <!-- 内置 Agent 最小化后的常驻状态：有轮次在跑时任何视图都看得到，点它回到对话 -->
     <AgentStatusPill />
