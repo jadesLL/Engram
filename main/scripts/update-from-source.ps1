@@ -81,21 +81,35 @@ Push-Location $appRoot
 try { node desktop/scripts/sync-deps.js server } finally { Pop-Location }
 if ($LASTEXITCODE -ne 0) { throw 'desktop/server 运行时依赖同步失败' }
 
+# 5.5) 品牌化启动器：源码模式跑的是 Electron 官方 electron.exe（资源管理器/任务栏显示的是
+#      Electron 原子图标）。复制一份带 Engram 图标的 Engram.exe 作为快捷方式与启动目标；
+#      Electron 运行时刚被换过（pnpm 重装/升级）时这里按 mtime 自动重做。失败不阻断更新——
+#      图标退化成 Electron 默认图标，应用照常可用，设置→软件更新→「重建桌面快捷方式」可重试。
+Step '生成 Engram 图标启动器（Engram.exe）'
+Push-Location $appRoot
+try { node desktop/scripts/ensure-branded-exe.js } finally { Pop-Location }
+if ($LASTEXITCODE -ne 0) {
+  Write-Host '（品牌启动器未生成：图标仍是 Electron 默认图标，可在 设置→软件更新 里重建）' -ForegroundColor Yellow
+}
+
 if ($NoLaunch) {
   Write-Host "`nDONE：更新构建完成（未启动）。" -ForegroundColor Green
   exit 0
 }
 
-# 6) 启动（只管理本 checkout 的 electron 实例，不碰打包版 Engram.exe）
+# 6) 启动（只管理本 checkout 的 electron / Engram 实例，不碰打包版的 Engram.exe——它装在
+#    %LOCALAPPDATA%\Programs 下，被下面的路径前缀过滤挡掉）
 Step '启动 Engram（源码模式）'
-Get-CimInstance Win32_Process -Filter "Name='electron.exe'" |
+Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='Engram.exe'" |
   Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($desktop, [System.StringComparison]::OrdinalIgnoreCase) } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
-# electron 二进制：npm 包 postinstall 产物优先，其次打包工作流解压的 win-unpacked；
-# 都没有则跑一次 electron 的 install.js 下载运行时（约 110MB，仅首次）
+# 启动 exe：品牌化 Engram.exe 优先（图标为 Engram），回退 electron.exe；npm 包 postinstall
+# 产物优先，其次打包工作流解压的 win-unpacked；都没有则跑一次 electron 的 install.js 下载运行时
 $electron = @(
+  (Join-Path $desktop 'node_modules\electron\dist\Engram.exe'),
   (Join-Path $desktop 'node_modules\electron\dist\electron.exe'),
+  (Join-Path $desktop 'dist\win-unpacked\Engram.exe'),
   (Join-Path $desktop 'dist\win-unpacked\electron.exe')
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $electron) {
@@ -123,7 +137,7 @@ if (Test-PortBusy $targetPort) {
 }
 Start-Process -FilePath $electron -ArgumentList '.' -WorkingDirectory $desktop
 Start-Sleep -Seconds 4
-$alive = Get-CimInstance Win32_Process -Filter "Name='electron.exe'" |
+$alive = Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='Engram.exe'" |
   Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($desktop, [System.StringComparison]::OrdinalIgnoreCase) }
 if (-not $alive) {
   Write-Host '启动失败：实例立即退出。最常见原因是单实例锁——打包版 Engram.exe 正在运行（两者共用数据目录，同时只能跑一个），请先退出它再试。' -ForegroundColor Yellow

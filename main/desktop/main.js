@@ -9,6 +9,8 @@ const net = require('node:net');
 const dataDirLib = require('./lib/data-dir');
 // 注意：deps.js 在 desktop/scripts/lib/ 下（构建期脚本与主进程共用的判定），不是 desktop/lib/
 const depsLib = require('./scripts/lib/deps');
+// 桌面快捷方式与品牌化 exe（源码模式的 electron.exe 图标是 Electron 原子，见 lib/shortcut.js）
+const shortcutLib = require('./scripts/lib/shortcut');
 
 // 主进程没有全局兜底时，任何未处理的 Promise 拒绝都会让整个应用静默退出
 // （Node ≥15 语义；本应用多处后台任务不 await，必须自己接住）。
@@ -1545,3 +1547,81 @@ ipcMain.handle('desktop-source-uninstall', async (_e, deleteData) => {
   app.exit(0);
   return { ok: true };
 });
+
+// ---------- 桌面快捷方式：设置页「重建桌面快捷方式」 ----------
+// 桌面图标丢失、或安装目录里的启动 exe 显示 Electron 原子图标时用这里重建：
+// 源码模式先生成/刷新品牌化 Engram.exe（与 electron.exe 同目录，图标 = build/icon.ico），
+// 再把桌面快捷方式指向它；开始菜单里属于本安装的 Engram.lnk 一并同步。
+// 全程走 Electron 自带 API（shell.readShortcutLink / writeShortcutLink），不 spawn powershell：
+// GUI 进程 spawn 的 powershell 会空句柄静默秒退（实测），而 rcedit 是普通 exe，管道 stdio 可直接 spawn。
+function startMenuShortcutPath() {
+  return shortcutLib.shortcutPath(path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'));
+}
+
+/** 开始菜单里的 Engram.lnk 是否属于本安装（指向本安装的 electron.exe/Engram.exe 才动它，不碰安装包形态的项） */
+function startMenuShortcutOwned(lnkPath, desktopDir) {
+  try {
+    const target = String(shell.readShortcutLink(lnkPath)?.target || '').toLowerCase();
+    if (!target) return false;
+    if (target === process.execPath.toLowerCase()) return true;
+    return target.startsWith(desktopDir.toLowerCase() + path.sep);
+  } catch {
+    return false;
+  }
+}
+
+async function rebuildDesktopShortcut() {
+  if (process.platform !== 'win32') return { ok: false, error: '桌面快捷方式仅 Windows 支持' };
+  const desktopDir = path.join(appRootDir, 'desktop');
+  const iconPath = path.join(desktopDir, shortcutLib.ICON_REL);
+  let distDir = '';
+  let exe = 'packaged';
+  let exeWarning = '';
+  if (!app.isPackaged) {
+    distDir = shortcutLib.findElectronDist(desktopDir);
+    if (!distDir) return { ok: false, error: '未找到 Electron 运行时（node_modules/electron/dist 缺失），请先同步依赖' };
+    const r = await shortcutLib.brandExe({ distDir, iconPath, rcedit: shortcutLib.findRcedit(appRootDir) });
+    exe = r.status;
+    exeWarning = r.error || '';
+    // 运行中的 Engram.exe 被 Windows 锁住：覆盖不了就别写半成品，让用户退出后重试（更新脚本会自动完成）
+    if (exe === 'locked') return { ok: false, error: r.error };
+  }
+  const useBranded = !app.isPackaged && (exe === 'built' || exe === 'fresh');
+  const spec = shortcutLib.shortcutSpec({
+    packaged: app.isPackaged,
+    desktopDir,
+    execPath: process.execPath,
+    distDir,
+    useBranded,
+  });
+  const lnk = shortcutLib.shortcutPath(app.getPath('desktop'));
+  let created = false;
+  try {
+    // 已有快捷方式走 update（保留系统附加属性），没有才 create
+    created = shell.writeShortcutLink(lnk, fs.existsSync(lnk) ? 'update' : 'create', spec);
+  } catch (e) {
+    return { ok: false, error: `写入桌面快捷方式失败：${describeError(e)}` };
+  }
+  if (!created) return { ok: false, error: `写入桌面快捷方式失败：${lnk}` };
+
+  let startMenu = 'absent';
+  const smLnk = startMenuShortcutPath();
+  if (fs.existsSync(smLnk)) {
+    if (!startMenuShortcutOwned(smLnk, desktopDir)) {
+      startMenu = 'skipped';
+    } else {
+      try {
+        shell.writeShortcutLink(smLnk, 'update', spec);
+        startMenu = 'updated';
+      } catch {
+        startMenu = 'failed';
+      }
+    }
+  }
+  const result = { ok: true, shortcut: lnk, target: spec.target, exe, exeWarning, startMenu };
+  result.message = shortcutLib.describeShortcutResult(result);
+  log(`[shortcut] 桌面快捷方式已重建：${lnk} → ${spec.target}（exe=${exe}，开始菜单=${startMenu}）`);
+  return result;
+}
+
+ipcMain.handle('desktop-rebuild-shortcut', () => rebuildDesktopShortcut());

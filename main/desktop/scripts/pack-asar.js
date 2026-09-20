@@ -9,6 +9,7 @@
 //   否则 @electron/asar 对 unpack 的 symlink 在 app.asar.unpacked 重建会因非管理员无 symlink 权限失败。
 const fs = require('node:fs');
 const path = require('node:path');
+const { stagingPlan } = require('./lib/asar-staging');
 
 // @electron/asar 是 electron-builder 的传递依赖，pnpm isolated 模式不暴露到 desktop/node_modules 顶层，
 // 需从 .pnpm 虚拟 store 动态查找。
@@ -54,15 +55,11 @@ function copy(src, dst) {
   fs.cpSync(src, dst, { recursive: true });
 }
 
-// 1. 组装 staging（只含运行时文件，对齐 package.json 的 files glob）
+// 1. 组装 staging（只含运行时文件；清单见 scripts/lib/asar-staging.js，与 package.json 的
+//    files glob 对应，并由 tests/asar-staging.test.js 断言「主进程的相对 require 一个都不缺」）
 fs.rmSync(staging, { recursive: true, force: true });
 fs.mkdirSync(staging, { recursive: true });
-copy(path.join(desktopRoot, 'main.js'), path.join(staging, 'main.js'));
-copy(path.join(desktopRoot, 'preload.js'), path.join(staging, 'preload.js'));
-copy(path.join(desktopRoot, 'server'), path.join(staging, 'server'));
-copy(path.join(desktopRoot, 'web', 'dist'), path.join(staging, 'web', 'dist'));
-// 托盘图标：main.js 的 trayIcon() 在 asar 内找 __dirname/icon.png（源码运行则回退 build/icon.png）
-copy(path.join(desktopRoot, 'build', 'icon.png'), path.join(staging, 'icon.png'));
+for (const { from, to } of stagingPlan(desktopRoot)) copy(from, path.join(staging, to));
 
 // 2. staging/package.json（Electron 据此定位 main: main.js）
 const pkg = JSON.parse(fs.readFileSync(path.join(desktopRoot, 'package.json'), 'utf8'));
