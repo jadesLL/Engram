@@ -3,7 +3,7 @@ import { requireAuth } from './auth.js';
 import { sse } from '../lib/sse.js';
 import { saveChat } from '../lib/chat.js';
 import { subscribeRun } from '../assistant/events.js';
-import { AgentNotConfiguredError, cancelRun, isRunning, RunConflictError, startRun } from '../assistant/runner.js';
+import { AgentNotConfiguredError, cancelRun, isRunning, RunConflictError, submitMessage } from '../assistant/runner.js';
 import { agentRuntimeStatus } from '../assistant/dshRuntime.js';
 import { bundledDshBin, getAgentConfig, setAgentConfig } from '../assistant/config.js';
 import { AGENT_APIS, agentApi } from '../assistant/agentSettings.js';
@@ -107,7 +107,7 @@ export async function assistantRoutes(app: FastifyInstance) {
   app.delete('/api/assistant/sessions/:id', async (req) => {
     const id = (req.params as any).id;
     const active = repo.activeRunForSession(id);
-    if (active) cancelRun(active.id);
+    if (active) await cancelRun(active.id);
     repo.deleteSession(id);
     return { ok: true };
   });
@@ -120,14 +120,18 @@ export async function assistantRoutes(app: FastifyInstance) {
    */
   app.get('/api/assistant/runs/active', async () => ({ runs: repo.listActiveRuns() }));
 
+  /**
+   * 发一条消息：会话空闲就立刻起一轮；已有在跑的一轮就排队（queued），
+   * 等它收口自动转正。排队与否由服务端判定，前端据此决定接不接事件流。
+   */
   app.post('/api/assistant/sessions/:id/runs', async (req, reply) => {
     const sessionId = (req.params as any).id;
     const body = (req.body || {}) as { message?: string; context?: InterfaceContext };
     const message = (body.message || '').trim();
     if (!message) return reply.code(400).send({ error: 'message 不能为空' });
     try {
-      const run = startRun({ sessionId, message, context: body.context });
-      return reply.code(202).send({ run });
+      const { run, queued } = submitMessage({ sessionId, message, context: body.context });
+      return reply.code(202).send({ run, queued });
     } catch (error) {
       if (error instanceof RunConflictError || error instanceof AgentNotConfiguredError) {
         return reply.code(error.status).send({ error: error.message });
@@ -159,16 +163,22 @@ export async function assistantRoutes(app: FastifyInstance) {
     return reply;
   });
 
+  /**
+   * 停止：立刻落终态（不等 dsh 进程退出，见 runner.cancelRun），并把该会话排队中的消息一并撤下。
+   * 撤下的原文随响应回给前端填回输入框——停止 = 全停，但用户打过的字不能丢。
+   */
   app.post('/api/assistant/runs/:id/cancel', async (req, reply) => {
     const runId = (req.params as any).id;
     const run = repo.getRun(runId);
     if (!run) return reply.code(404).send({ error: '运行不存在' });
-    const stopped = cancelRun(runId);
-    if (!stopped && !TERMINAL.includes(run.status)) {
-      // 进程不在本进程内（例如服务重启后残留）：直接落终态，避免一直挂 running
+    const stopped = await cancelRun(runId);
+    if (!stopped && !TERMINAL.includes(run.status) && run.status !== 'queued') {
+      // 进程不在本进程内（例如服务重启后残留）：直接落终态，避免一直挂 running。
+      // 排队中的目标不用在这里落终态——下面按「排队」撤下它，原文照样退回输入框。
       repo.updateRun(runId, { status: 'cancelled' });
     }
-    return { ok: true, stopped };
+    const released = repo.discardQueuedRuns(run.sessionId);
+    return { ok: true, stopped, released };
   });
 
   app.post('/api/assistant/runs/:id/retry', async (req, reply) => {
@@ -184,7 +194,8 @@ export async function assistantRoutes(app: FastifyInstance) {
       context = undefined;
     }
     try {
-      return reply.code(202).send({ run: startRun({ sessionId: run.sessionId, message: message.content, context }) });
+      const { run: next, queued } = submitMessage({ sessionId: run.sessionId, message: message.content, context });
+      return reply.code(202).send({ run: next, queued });
     } catch (error) {
       if (error instanceof RunConflictError) return reply.code(409).send({ error: error.message });
       throw error;

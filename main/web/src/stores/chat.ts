@@ -168,11 +168,17 @@ export const useChatStore = defineStore('chat', {
     runs(state): ChatRun[] {
       return state.snapshot?.runs || [];
     },
+    /**
+     * 正在跑的那一轮（只有 running；排队中的轮次还没送进 dsh，不算在跑）。
+     * 输入框的可用性、秒表、状态条都以它为准。
+     */
     currentRun(state): ChatRun | null {
       const runs = state.snapshot?.runs || [];
-      return [...runs].reverse().find((run) =>
-        ['queued', 'running'].includes(run.status)
-      ) || null;
+      return [...runs].reverse().find((run) => run.status === 'running') || null;
+    },
+    /** 排队中的轮次（先来后到）：消息已经在对话里，等当前这轮收口自动接着回复 */
+    queuedRuns(state): ChatRun[] {
+      return (state.snapshot?.runs || []).filter((run) => run.status === 'queued');
     },
     latestRun(state): ChatRun | null {
       return state.snapshot?.runs?.[state.snapshot.runs.length - 1] || null;
@@ -348,6 +354,10 @@ export const useChatStore = defineStore('chat', {
       this.currentContext = {};
       this.selections = [];
     },
+    /**
+     * 发一条消息。会话正在回复时也照发：服务端把它落库成「排队中」的轮次，
+     * 当前这轮一收口自动接着回复（前端重取快照就能看到那条消息与排队标记）。
+     */
     async send(message: string, context?: ChatContext) {
       if (!this.initialized) await this.init();
       const text = message.trim();
@@ -360,8 +370,11 @@ export const useChatStore = defineStore('chat', {
           message: text,
           context: context || this.currentContext,
         });
-        // 先本地插入用户消息，不等服务端快照
-        if (this.snapshot && this.activeSessionId === sessionId) {
+        if (data.queued) {
+          // 排队：服务端已经把这条消息落库了，直接取快照让它立刻出现在转录里
+          if (this.activeSessionId === sessionId) await this.reload(sessionId);
+        } else if (this.snapshot && this.activeSessionId === sessionId) {
+          // 先本地插入用户消息，不等服务端快照
           this.snapshot.messages.push({
             id: `local-${Date.now()}`,
             sessionId,
@@ -371,8 +384,10 @@ export const useChatStore = defineStore('chat', {
             metadata: {},
             createdAt: new Date().toISOString(),
           });
+          this.connect(data.run.id, sessionId);
+        } else {
+          this.connect(data.run.id, sessionId);
         }
-        this.connect(data.run.id, sessionId);
         await this.loadSessions();
       } catch (error) {
         this.error = errorText(error);
@@ -484,17 +499,37 @@ export const useChatStore = defineStore('chat', {
       for (const id of [...connections.keys()]) closeConnection(id);
       this.activeRuns = {};
     },
-    async cancel() {
+    /**
+     * 停止：服务端立刻落终态并广播，这里同步把本端运行态收干净（不等 SSE 终态到达），
+     * 再重取快照——按钮按下即见效，不会还挂着「正在回复」。
+     *
+     * @returns 被一并撤下的排队消息原文（停止 = 全停，交回抽屉填进输入框）
+     */
+    async cancel(): Promise<string[]> {
       const run = this.currentRun;
-      if (!run) return;
-      await api.post(`/api/assistant/runs/${run.id}/cancel`);
+      if (!run) return [];
+      const sessionId = run.sessionId;
+      const { data } = await api.post(`/api/assistant/runs/${run.id}/cancel`);
+      closeConnection(run.id);
+      this.forgetRun(run.id);
+      this.statusText = '';
+      if (this.activeSessionId === sessionId) {
+        await this.reload(sessionId).catch(() => {});
+      }
+      await this.loadSessions().catch(() => {});
+      return Array.isArray(data?.released) ? (data.released as string[]) : [];
     },
     async retry(runId?: string) {
       const target = runId || this.latestRun?.id;
       if (!target) return;
       const sessionId = this.snapshot?.session.id || this.activeSessionId;
       const { data } = await api.post(`/api/assistant/runs/${target}/retry`);
-      this.connect(data.run.id, sessionId);
+      // 重试也可能被排到队尾（会话里还有一轮在跑）：那种情况等它转正自然会接上事件流
+      if (data.queued) {
+        if (this.activeSessionId === sessionId) await this.reload(sessionId).catch(() => {});
+      } else {
+        this.connect(data.run.id, sessionId);
+      }
       await this.loadSessions().catch(() => {});
     },
     async ingest(runId?: string) {

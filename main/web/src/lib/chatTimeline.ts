@@ -32,6 +32,14 @@ export function isReasoningMessage(message: ChatMessage): boolean {
   return (message.metadata as any)?.kind === 'reasoning';
 }
 
+/**
+ * 排队中的用户消息：上一轮还在跑时发的那条，服务端先落库并打 metadata.queued，
+ * 轮到它时转正并摘掉标记。界面据此标「排队中」。
+ */
+export function isQueuedMessage(message: ChatMessage): boolean {
+  return (message.metadata as any)?.queued === true;
+}
+
 /** 思考段时长（毫秒）：服务端在段收口时补写；缺失返回 0 */
 export function reasoningDurationMs(message: ChatMessage): number {
   const value = Number((message.metadata as any)?.ms);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 // 测试由 node 内置类型擦除直接跑（web 包无额外测试框架），相对导入要带真实扩展名
 import {
   buildChatTimeline,
+  isQueuedMessage,
   isReasoningLive,
   reasoningDurationMs,
   showStreamName,
@@ -298,4 +299,25 @@ test('子代理卡参与轮次归属：同轮内不乱序、跨轮画分隔', ()
 
   assert.deepEqual(items.map((item) => item.key), ['sub1', 'u2']);
   assert.deepEqual(items.map((_, index) => startsNewRun(items, index)), [true, true]);
+});
+
+test('排队中的消息排在当前这轮之后，并带得出「排队中」标记', () => {
+  const runs = [
+    run('r1', '2026-01-01T00:00:00.000Z'),
+    { ...run('r2', '2026-01-01T00:00:30.000Z'), status: 'queued' as const },
+  ];
+  const messages = [
+    message('u1', 'user', '2026-01-01T00:00:00.000Z', 'r1'),
+    message('a1', 'assistant', '2026-01-01T00:00:05.000Z', 'r1'),
+    { ...message('u2', 'user', '2026-01-01T00:00:30.000Z', 'r2'), metadata: { queued: true } },
+    // 转正后服务端把标记摘掉（metadata.queued = false），界面就不该再标「排队中」
+    { ...message('u3', 'user', '2026-01-01T00:01:30.000Z', 'r2'), metadata: { queued: false } },
+  ];
+  const items = buildChatTimeline(messages, [], runs);
+
+  assert.deepEqual(items.map((item) => item.key), ['u1', 'a1', 'u2', 'u3']);
+  assert.deepEqual(
+    items.map((item) => (item.kind === 'message' ? isQueuedMessage(item.message) : false)),
+    [false, false, true, false]
+  );
 });
