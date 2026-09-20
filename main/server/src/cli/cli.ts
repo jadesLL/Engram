@@ -106,6 +106,12 @@ const HELP = `Engram CLI —— 外部 Agent 操作知识库
   pages move <titleOrId> [--dir Wiki/实体] [--title <t>]  移动页面到 Wiki 树内目录（保持页面 ID，可顺带改标题）
   pages delete <titleOrId|路径> [--reason <原因>]         把单个 Wiki/ 页面移入回收站（软删除、可恢复；原始资料/AIWorks 只读不可删）
   pages evidence <titleOrId>                          读页面证据账本
+  names check <名称> [--page <titleOrId>] [--note <说明>]  公司全名核验：资料库没有全名时登记请示（用户在界面「名称核验」答复是否允许联网查企查查/天眼查）
+  names propose <核验id> [--full-name <全名>] [--source <出处>] [--note <说明>]
+                                                       回填联网查到的工商全名并请示用户是否改用全名；查不到就不传 --full-name
+  names list [--status pending|open|unresolved|all]    读名称核验清单；unresolved 即「最终不是全名」的条目
+  names audit                                          全库公司页名称盘点（标题不是工商全名形态的页面）
+  names answer <核验id> --allow|--deny [--note <说明>]   用户侧答复（等同在界面「名称核验」点选）
   chat save [--identifier i] [--project p] [--append] 沉积对话（stdin 为正文）
   guide                                               输出《Agent 作业指南》全文
   mcp-config [--format zcode|codex|claude|kimi|generic]  输出各 Agent 的 MCP 接入配置片段
@@ -177,10 +183,13 @@ async function main(): Promise<number> {
       identifier: { type: 'string' },
       project: { type: 'string' },
       reason: { type: 'string' },
-      question: { type: 'string' },
-      context: { type: 'string' },
-      options: { type: 'string' },
       status: { type: 'string' },
+      page: { type: 'string' },
+      note: { type: 'string' },
+      'full-name': { type: 'string' },
+      source: { type: 'string' },
+      allow: { type: 'boolean', default: false },
+      deny: { type: 'boolean', default: false },
       append: { type: 'boolean', default: false },
       pending: { type: 'boolean', default: false },
       outdated: { type: 'boolean', default: false },
@@ -399,6 +408,70 @@ async function main(): Promise<number> {
         return 0;
       }
       process.stderr.write('用法: pages list|read|write|rename|move|delete|evidence\n');
+      return 2;
+    }
+    case 'names': {
+      const sub = positional[0];
+      if (sub === 'check') {
+        const entity = positional[1];
+        if (!entity) {
+          process.stderr.write('用法: names check <名称> [--page <titleOrId>] [--note <说明>]\n');
+          return 2;
+        }
+        const body: Record<string, unknown> = { entity };
+        if (args.page) body.titleOrId = String(args.page);
+        if (args.note) body.note = String(args.note);
+        const result = await api(ctx, 'POST', '/api/agent/entity-name', { json: body });
+        output(asJson ? result : result.text, asJson);
+        return 0;
+      }
+      if (sub === 'propose') {
+        const id = positional[1];
+        if (!id) {
+          process.stderr.write('用法: names propose <核验id> [--full-name <全名>] [--source <出处>] [--note <说明>]\n');
+          return 2;
+        }
+        const body: Record<string, unknown> = { id };
+        if (args['full-name']) body.fullName = String(args['full-name']);
+        if (args.source) body.source = String(args.source);
+        if (args.note) body.note = String(args.note);
+        const result = await api(ctx, 'POST', '/api/agent/entity-name/propose', { json: body });
+        output(asJson ? result : result.text, asJson);
+        return 0;
+      }
+      if (sub === 'list') {
+        const result = await api(ctx, 'GET', '/api/entity-names', {
+          query: args.status ? { status: String(args.status) } : {},
+        });
+        output(asJson ? result : result.text, asJson);
+        return 0;
+      }
+      if (sub === 'audit') {
+        const result = await api(ctx, 'GET', '/api/agent/entity-name/audit');
+        output(asJson ? result : result.text, asJson);
+        return 0;
+      }
+      if (sub === 'answer') {
+        const id = positional[1];
+        if (!id || (args.allow === args.deny)) {
+          process.stderr.write('用法: names answer <核验id> --allow|--deny [--note <说明>]\n');
+          return 2;
+        }
+        const body: Record<string, unknown> = { decision: args.allow ? 'allow' : 'deny' };
+        if (args.note) body.note = String(args.note);
+        const result = await api(ctx, 'POST', `/api/entity-names/${encodeURIComponent(id)}/answer`, { json: body });
+        output(asJson
+          ? result
+          : `已答复 #${result.check.id}：「${result.check.entity}」→ `
+            + `${result.check.outcome === 'renamed' ? `已改用全名「${result.check.fullName}」`
+              : result.check.outcome === 'query_denied' ? '不同意联网查询（标题保持材料写法）'
+                : result.check.outcome === 'kept_material' ? '保持材料写法'
+                  : result.check.outcome === 'no_full_name' ? '查询未找到全名'
+                    : '已同意联网查询，等 Agent 回填结果'}`
+            + `（待答复 ${result.pending} 条）`, asJson);
+        return 0;
+      }
+      process.stderr.write('用法: names check|propose|list|audit|answer\n');
       return 2;
     }
     case 'chat': {

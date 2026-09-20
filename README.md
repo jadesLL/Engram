@@ -11,7 +11,7 @@
 ```
 你导入资料 ──► Engram 存储并提取文本层（PDF 文字层 / Office / md）
                     │
-外部 Agent ◄───────┤  MCP 15 工具 或 engram CLI（同一 Bearer Token）
+外部 Agent ◄───────┤  MCP 19 工具 或 engram CLI（同一 Bearer Token）
 （ZCode/Codex/…）   ▼
               按指南作业：Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit
                     │
@@ -24,6 +24,7 @@
 - **规则版本化，旧库可升级**：提炼规则带版本号（`GUIDE_VERSION`），Agent 每次写页服务端把版本记入页面索引元数据（只进索引库，不写正文）；规则升级后用 `pages list --outdated`（CLI）或 `list_pages` 传 `outdated=true`（MCP）列出落后的概念/实体页（原始资料只读不改），按最新指南逐页重写覆盖即完成旧库升级。
 - **质量由确定性门禁兜底**：引文逐字校验（编造即拒绝）、新建概念/实体页两来源门禁（≥2 个不同原始资料路径各 1 条引文，或单路径 ≥2 条）、每次写入自动记入 `Wiki/log.md` 操作日志与证据账本（编辑器「来源证据」抽屉可逐条复核）。
 - **全自动、不打断**：作业全流程不问用户——资料里查不到的先自查全库，仍无定论就按证据取最可信写法落页，并在正文标注「待核实」与依据（不编造、不空等），后续资料补齐再收敛；客户/公司页按 v3 契约写「概览」「核心机型」与「名称口径」，标题用工商全名、别名收在名称口径里。
+- **公司全名核验（唯一允许问用户的事）**：公司类实体的名称不是工商全名、资料库里也查不到时，Agent 经 `entity_name_check` 登记一条请示——左侧「名称核验」面板随即亮角标（SSE 实时提示）：① 先问你是否允许它**联网用企查查 / 天眼查**查全名；② 同意后它查回全名与出处，再问你是否**把页面标题改成该全名**，点「改用全名」即由服务端改名（保持页面 ID、引用双链自动重定向、自动记操作日志）。全名的界定就是「企查查等能否查到该名称」：不允许、查不到、不同意改名都照旧保持材料写法并标注「全称待确认」，Agent 收尾会把**仍未定全名的条目**逐条列给你。除公司全名外，任何信息都不会打断你。
 
 ## 功能总览
 
@@ -47,7 +48,7 @@
 - **API 地址可自定义**：地址留空走 DeepSeek 官方（`api.deepseek.com`）；填中转站或自建网关（`openai-completions` / `openai-responses` / `anthropic-messages` 三种协议）即改用该地址与它自己的模型名——地址与模型清单写进内置 dsh 的 `data/dsh/settings.yaml`（dsh 的 `llm-pi-ai` 自定义 provider 路由，不含 Key），改完下一次对话即生效（池里的旧运行时按旧路由跑，会自动重开）；自动更名的总结请求也走同一条路由
 - **会话与桌面/Docker 一致**：会话、消息、思考段、标题来源存本机库（`assistant_*` 表，`assistant_sessions.title_source` 区分默认 / 自动 / 手动命名），dsh 自身的会话日志随 `data/dsh/` 走持久卷，续聊不丢上下文
 
-### 🧠 面向 Agent 的 MCP 接口（15 工具）
+### 🧠 面向 Agent 的 MCP 接口（19 工具）
 
 在 设置 → Agent 接入 →「其他 Agent（MCP 接入）」生成 Token（`Authorization: Bearer`，MCP/CLI/REST 三用），streamable HTTP 端点 `/mcp`：
 
@@ -63,6 +64,9 @@
 | `move_page` | 移动页面到 `Wiki/` 树内其他目录（页面 ID 与图谱边保持不变，可顺带改标题） |
 | `delete_page` | 单页软删除入回收站（可恢复，按标题 / ID / 路径定位）；只允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 拒删，无永久删除/清空回收站能力 |
 | `save_chat` | 对话沉积到 `原始资料/对话/`（**须用户明确指示**才可调用） |
+| `entity_name_check` | 公司全名核验：名称不是工商全名、资料库里也查不到时，登记一条请示给用户——**全库唯一允许问用户的事**（服务端先在页面标题 / 证据账本 / 原始资料 / 正文写明全名的提法里自查，有全名就直接返回、不打扰用户；正文里带「待核实/候选」标记的写法只算未核实候选） |
+| `entity_name_propose` | 回填 Agent 联网查到的工商全名（企查查 / 天眼查）并请示用户是否改用全名；用户确认后**由服务端执行改名**（保持页面 ID、双链重定向、自动记日志）；查不到就不传 `fullName` |
+| `list_entity_names` / `entity_name_audit` | 读核验清单（等答复 / 未办结 / **最终不是全名**的条目） / 全库公司页名称盘点（标题不是工商全名形态的页面） |
 | `kb_guide` | 下发《Agent 作业指南》全文 |
 | `skill_list` / `skill_guide` | 内置作业 skill：先列清单（名称 / 用途 / 何时用 / 版本），需要时再取某份全文。skill 与指南同级但按需获取，版本独立于 `GUIDE_VERSION`，改 skill 不触发全库「规则落后」 |
 
@@ -83,7 +87,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 ### ⌨️ engram CLI（零依赖，Node 22）
 
-`node server/dist/cli/cli.js <command>`（Docker 内 `docker exec engram node dist/cli/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli/cli.js`）。**本机服务零配置**：服务端启动时自动把本机地址与专用 token 登记到 `~/.engram/config.json`（地址随实际端口自适应，不写死；用户手动 `login` 保存的配置优先、不被覆盖），CLI 开箱即用，远程服务再手动 `login` 一次。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|delete|evidence / chat save / ask / questions / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`pages read/evidence/delete` 接受 `pages list` 返回的页面 ID（UUID）、标题或页面路径；`pages delete` 只把 `Wiki/` 下的页面移入回收站（软删除，`原始资料/`、`AIWorks/` 拒删）；`files list --pending` 只列未提炼文件（提炼作业索引用）；`pages list --outdated` 只列提炼规则版本落后于当前指南的概念/实体页（规则升级后重提炼用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
+`node server/dist/cli/cli.js <command>`（Docker 内 `docker exec engram node dist/cli/cli.js`；桌面端 `ELECTRON_RUN_AS_NODE=1 Engram.exe app.asar/server/dist/cli/cli.js`）。**本机服务零配置**：服务端启动时自动把本机地址与专用 token 登记到 `~/.engram/config.json`（地址随实际端口自适应，不写死；用户手动 `login` 保存的配置优先、不被覆盖），CLI 开箱即用，远程服务再手动 `login` 一次。命令覆盖 `login / status / import / files list|read / search / pages list|read|write|delete|evidence / names check|propose|list|audit|answer / chat save / guide / mcp-config`，全部支持 `--json` 供 Agent 消费；`pages read/evidence/delete` 接受 `pages list` 返回的页面 ID（UUID）、标题或页面路径；`pages delete` 只把 `Wiki/` 下的页面移入回收站（软删除，`原始资料/`、`AIWorks/` 拒删）；`names check|propose|list|audit` 是公司全名核验通道（登记请示 / 回填联网查到的全名 / 读清单 / 全库公司页盘点），`names answer --allow|--deny` 供用户在终端答复；`files list --pending` 只列未提炼文件（提炼作业索引用）；`pages list --outdated` 只列提炼规则版本落后于当前指南的概念/实体页（规则升级后重提炼用）；私网/环回目标经 `login` 显式登记后放行（出网校验协议/云元数据阻断/DNS rebinding 防护）。
 
 ### 📄 页面编辑与管理
 

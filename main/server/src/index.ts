@@ -20,6 +20,7 @@ import { jobRoutes } from './routes/jobs.js';
 import { rawRoutes } from './routes/raw.js';
 import { guideRoutes } from './routes/guide.js';
 import { agentRoutes } from './routes/agent.js';
+import { entityNameRoutes } from './routes/entityNames.js';
 import { assistantRoutes } from './routes/assistant.js';
 import { eventRoutes } from './routes/events.js';
 import { trashRoutes } from './routes/trash.js';
@@ -87,6 +88,7 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(rawRoutes);
   await app.register(guideRoutes);
   await app.register(agentRoutes);
+  await app.register(entityNameRoutes);
   await app.register(assistantRoutes);
   await app.register(eventRoutes);
   await app.register(trashRoutes);
