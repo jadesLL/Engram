@@ -105,7 +105,9 @@ const THEMES = {
     ent: { person: '#8ab6e2', concept: '#5aa9e6', project: '#e08a4c', org: '#3aa79a', tech: '#6f9ac0' } as Record<string, string>,
     raw: '#6e7681', dead: '#f85149', nodeFill: '#2a2a30', fallback: '#8b949e',
     text: '201,209,221', deadText: '248,81,73',
-    edge: 'rgba(139,148,158,0.20)', edgeDim: 'rgba(139,148,158,0.05)', arrow: 'rgba(139,148,158,0.55)',
+    edge: 'rgba(139,148,158,0.20)', arrow: 'rgba(139,148,158,0.55)',
+    // 关联高亮：强调色加粗，替代原来的「非关联压暗」
+    edgeHot: 'rgba(90,169,230,0.85)', arrowHot: 'rgba(90,169,230,0.92)', focusRing: '#5aa9e6',
     bg0: '#232329', bg1: '#151518',
   },
   light: {
@@ -113,7 +115,8 @@ const THEMES = {
     ent: { person: '#5b8fc9', concept: '#0f6cbd', project: '#c55a11', org: '#0e7a6d', tech: '#3a6ea5' } as Record<string, string>,
     raw: '#9aa2af', dead: '#cf222e', nodeFill: '#ffffff', fallback: '#656d76',
     text: '55,65,81', deadText: '207,34,46',
-    edge: 'rgba(101,109,118,0.28)', edgeDim: 'rgba(101,109,118,0.07)', arrow: 'rgba(101,109,118,0.60)',
+    edge: 'rgba(101,109,118,0.28)', arrow: 'rgba(101,109,118,0.60)',
+    edgeHot: 'rgba(15,108,189,0.82)', arrowHot: 'rgba(15,108,189,0.90)', focusRing: '#0f6cbd',
     bg0: '#fbfbfc', bg1: '#edeff3',
   },
 };
@@ -126,6 +129,7 @@ const GROUP_NAMES: Record<string, string> = {
 interface GNode {
   id: string; label: string; group: string; raw: boolean; words: number;
   deg: number; r: number; x: number; y: number; vx: number; vy: number; sx: number; sy: number;
+  sr: number;
 }
 interface GEdge { a: number; b: number; dashed: boolean; }
 
@@ -280,56 +284,64 @@ function draw() {
   ctx.translate(view.x, view.y);
   ctx.scale(view.s, view.s);
 
-  // hover 聚焦：自身 + 一跳邻居保持高亮，其余压暗
-  let focus: Set<number> | null = null;
+  // 选择/hover 高亮：自身 + 一跳关联节点 + 相连连线一起强调；
+  // 非关联元素保持原样（不压暗、不变灰），高亮只做加法
+  let focusNode = -1;
+  const focusSet = new Set<number>();
+  const focusEdges = new Set<number>();
   if (hoverNode) {
-    const hi = nodes.indexOf(hoverNode);
-    focus = new Set([hi]);
-    for (const e of edges) {
-      if (e.a === hi) focus.add(e.b);
-      if (e.b === hi) focus.add(e.a);
+    focusNode = nodes.indexOf(hoverNode);
+    if (focusNode >= 0) {
+      focusSet.add(focusNode);
+      for (let i = 0; i < edges.length; i++) {
+        const e = edges[i];
+        if (e.a !== focusNode && e.b !== focusNode) continue;
+        focusEdges.add(i);
+        focusSet.add(e.a === focusNode ? e.b : e.a);
+      }
     }
   }
-  const dimmed = (i: number) => focus !== null && !focus.has(i);
   const scale = opt.nodeScale / 100;
 
-  // 边
-  ctx.lineWidth = (0.9 * opt.linkScale) / 100 / view.s;
-  for (const e of edges) {
+  // 边：先铺普通边，关联边最后画，保证高亮压在最上层
+  const baseW = (0.9 * opt.linkScale) / 100 / view.s;
+  const drawEdge = (idx: number, hot: boolean) => {
+    const e = edges[idx];
     const a = nodes[e.a], b = nodes[e.b];
-    if (!visible(a) || !visible(b)) continue;
+    if (!visible(a) || !visible(b)) return;
     ctx.setLineDash(e.dashed ? [4, 4] : []);
-    ctx.strokeStyle = dimmed(e.a) || dimmed(e.b) ? th.value.edgeDim : th.value.edge;
+    ctx.lineWidth = hot ? baseW * 2.2 : baseW;
+    ctx.strokeStyle = hot ? th.value.edgeHot : th.value.edge;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
-    if (opt.arrows && !(dimmed(e.a) || dimmed(e.b))) {
-      const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      const ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
-      const bx = b.x - ux * (b.r * scale + 3), by = b.y - uy * (b.r * scale + 3);
-      const s = 5.5 / view.s;
-      ctx.fillStyle = th.value.arrow;
-      ctx.beginPath();
-      ctx.moveTo(bx, by);
-      ctx.lineTo(bx - ux * s - uy * s * 0.5, by - uy * s + ux * s * 0.5);
-      ctx.lineTo(bx - ux * s + uy * s * 0.5, by - uy * s - ux * s * 0.5);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
+    if (!opt.arrows) return;
+    const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
+    const bx = b.x - ux * (b.r * scale + 3), by = b.y - uy * (b.r * scale + 3);
+    const s = (hot ? 6.8 : 5.5) / view.s;
+    ctx.fillStyle = hot ? th.value.arrowHot : th.value.arrow;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - ux * s - uy * s * 0.5, by - uy * s + ux * s * 0.5);
+    ctx.lineTo(bx - ux * s + uy * s * 0.5, by - uy * s - ux * s * 0.5);
+    ctx.closePath();
+    ctx.fill();
+  };
+  for (let i = 0; i < edges.length; i++) if (!focusEdges.has(i)) drawEdge(i, false);
+  for (const i of focusEdges) drawEdge(i, true);
   ctx.setLineDash([]);
 
-  // 节点：页面实心圆、实体空心环、死链红色空心
+  // 节点：页面实心圆、实体空心环、死链红色空心；关联节点加描边光环（纯描边，不用阴影泛光）
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i];
     if (!visible(n)) continue;
-    const faded = dimmed(i);
+    const hot = i === focusNode;
+    const near = !hot && focusSet.has(i);
     const col = colorOf(n);
-    const r = n.r * scale;
-    ctx.globalAlpha = faded ? 0.15 : 1;
+    const r = n.r * scale * (hot ? 1.12 : 1);
     const ring = n.group.startsWith('entity-');
-    if (!ring && r > 8 && !faded) { ctx.shadowColor = col; ctx.shadowBlur = 18; }
     if (ring || n.group === 'dead') {
       ctx.fillStyle = th.value.nodeFill;
       ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fill();
@@ -340,13 +352,19 @@ function draw() {
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fill();
     }
-    ctx.shadowBlur = 0;
+    if (hot || near) {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + (hot ? 4 : 3) / view.s, 0, 7);
+      ctx.strokeStyle = th.value.focusRing;
+      ctx.lineWidth = (hot ? 2.4 : 1.6) / view.s;
+      ctx.stroke();
+    }
     n.sx = n.x * view.s + view.x;
     n.sy = n.y * view.s + view.y;
+    n.sr = r * view.s;
   }
-  ctx.globalAlpha = 1;
 
-  // 标签（屏幕空间）：透明度 = 节点重要度 × 缩放淡出阈值；聚焦时只画焦点邻域
+  // 标签（屏幕空间）：透明度 = 节点重要度 × 缩放淡出阈值；关联节点标签始终清晰
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.textAlign = 'center';
   ctx.font = '11px "Segoe UI","Microsoft YaHei",sans-serif';
@@ -356,13 +374,12 @@ function draw() {
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i];
     if (!visible(n)) continue;
-    if (dimmed(i)) continue;
     let a = (0.3 + Math.min(0.55, (n.r - 3) * 0.06)) * (0.4 + (opt.fade / 100) * 1.1) * zoomAlpha;
     if (n.raw) a *= 0.55;
-    if (focus) a = 0.98;
+    if (focusSet.has(i)) a = 0.98;
     if (a <= 0.02) continue;
     ctx.fillStyle = n.group === 'dead' ? `rgba(${th.value.deadText},${a})` : `rgba(${th.value.text},${a})`;
-    ctx.fillText(n.label, n.sx, n.sy + n.r * scale * view.s + 13);
+    ctx.fillText(n.label, n.sx, n.sy + n.sr + 13);
   }
 }
 
@@ -603,7 +620,7 @@ async function load() {
   const index = new Map<string, number>();
   nodes = data.nodes.map((n: any) => ({
     id: n.id, label: n.label, group: n.group, raw: !!n.raw, words: n.words || 0,
-    deg: 0, r: 4, x: 0, y: 0, vx: 0, vy: 0, sx: 0, sy: 0,
+    deg: 0, r: 4, x: 0, y: 0, vx: 0, vy: 0, sx: 0, sy: 0, sr: 0,
   }));
   nodes.forEach((n, i) => index.set(n.id, i));
   edges = data.edges
