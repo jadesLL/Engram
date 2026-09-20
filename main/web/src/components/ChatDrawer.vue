@@ -421,6 +421,12 @@ import {
 } from '../stores/chat';
 import type { SelectionExcerpt } from '../lib/askAgent';
 import {
+  agentActivityText,
+  bareToolName,
+  subagentDisplayLabel,
+  toolLabel,
+} from '../lib/agentActivity';
+import {
   buildChatTimeline,
   isQueuedMessage,
   isReasoningLive,
@@ -673,15 +679,7 @@ const subagentOpenOverride = ref<Record<string, boolean>>({});
 
 /** 子代理卡片标题：模型给的短标签优先，退回派发工具卡上的描述，最后退回子会话号 */
 function subagentLabel(subagent: ChatSubagent): string {
-  if (subagent.label) return subagent.label;
-  const parent = subagent.parentCallId
-    ? chat.sessionToolCalls.find((call) => call.id === subagent.parentCallId)
-    : undefined;
-  if (parent) {
-    const summary = toolCallSummary(parent.args, 40);
-    if (summary) return summary;
-  }
-  return `子会话 ${subagent.childSessionId.slice(0, 8)}`;
+  return subagentDisplayLabel(subagent, chat.sessionToolCalls);
 }
 
 function isSubagentLive(subagent: ChatSubagent): boolean {
@@ -770,18 +768,16 @@ const liveElapsed = computed(() => {
 
 /**
  * 状态条右侧那句「正在干什么」：子代理 → 工具 → 服务端状态文本，逐级退回。
- * 都为空时至少还有「正在回复」+ 秒表，用户永远看得出这一轮还活着。
+ * 与最小化后右下角那颗状态胶囊共用同一份文案（lib/agentActivity），两处不会走样。
  */
 const liveDetail = computed(() => {
   if (!liveRun.value) return '';
-  const running = chat.runningSubagents;
-  if (running.length === 1) return `子代理「${subagentLabel(running[0])}」运行中`;
-  if (running.length > 1) return `${running.length} 个子代理运行中`;
-  const call = [...chat.sessionToolCalls].reverse().find((item) => item.status === 'running');
-  if (call) return `执行 ${toolLabel(call.name)}${toolCallSummary(call.args, 24) ? ` · ${toolCallSummary(call.args, 24)}` : ''}`;
-  if (chat.statusText) return chat.statusText;
-  if (isThinkingLast()) return '正在思考';
-  return '正在生成回复';
+  return agentActivityText({
+    subagents: chat.runningSubagents,
+    toolCalls: chat.sessionToolCalls,
+    statusText: chat.statusText,
+    thinking: isThinkingLast(),
+  });
 });
 
 /** 最后一条是不是还在长的思考段（状态条据此说「正在思考」而不是「正在生成回复」） */
@@ -901,31 +897,7 @@ function copy(text: string) {
   notify.success('已复制');
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  search: '检索知识库',
-  read_page: '读取页面',
-  list_pages: '列出页面',
-  list_raw_files: '列出原始资料',
-  read_raw_file: '读取原始资料',
-  write_page: '写入页面',
-  page_evidence: '查看来源证据',
-  related_pages: '查看关联页面',
-  save_chat: '沉淀对话',
-  kb_guide: '获取作业指南',
-  skill_list: '列出作业技能',
-  skill_guide: '获取作业技能',
-  rename_page: '重命名页面',
-  move_page: '移动页面',
-  delete_page: '删除页面（回收站）',
-  // 委派类工具：正常会被子代理卡接管（不再单独成行），这里兜住没起成子会话的那次调用
-  subagent: '派子代理',
-  subagent_fork: '派子代理（继承对话）',
-  workflow: '跑工作流',
-  ralph: '跑 Ralph 循环',
-  task: '派子代理',
-};
-
-/** 执行记录一行的工具图标（与 TOOL_LABELS 同一套键） */
+/** 执行记录一行的工具图标（与 lib/agentActivity 的 TOOL_LABELS 同一套键） */
 const TOOL_ICONS: Record<string, string> = {
   search: 'search',
   read_page: 'markdown',
@@ -943,15 +915,6 @@ const TOOL_ICONS: Record<string, string> = {
   move_page: 'move',
   delete_page: 'trash',
 };
-
-function bareToolName(name: string): string {
-  return name.replace(/^mcp__engram__/, '');
-}
-
-function toolLabel(name: string): string {
-  const bare = bareToolName(name);
-  return TOOL_LABELS[bare] || bare;
-}
 
 function toolIcon(name: string): string {
   return TOOL_ICONS[bareToolName(name)] || 'activity';

@@ -72,6 +72,11 @@ export const useAppStore = defineStore('app', {
       chatDrawerMode: (localStorage.getItem('chatDrawerMode') === 'full' ? 'full' : 'dock') as ChatDrawerMode,
       chatDrawerWidth: Number(localStorage.getItem('chatDrawerWidth')) || 420,
       chatUnread: false,
+      /**
+       * 最近一次「满窗下导航导致 Agent 最小化」的时刻：右下角状态胶囊据此提示 4 秒，
+       * 让用户知道抽屉为什么不见了、点哪儿能回来（0 表示没有待提示的最小化）。
+       */
+      chatMinimizedAt: 0,
       /** 聚焦输入框的请求计数：抽屉已开着时也能把光标送到输入框（自增即触发一次） */
       chatComposerFocus: 0,
     };
@@ -148,7 +153,22 @@ export const useAppStore = defineStore('app', {
     /** 开合聊天抽屉：打开即清未读 */
     toggleChat(open?: boolean) {
       this.chatDrawerOpen = open ?? !this.chatDrawerOpen;
-      if (this.chatDrawerOpen) this.chatUnread = false;
+      if (this.chatDrawerOpen) {
+        this.chatUnread = false;
+        // 抽屉回来了，最小化提示就该收工
+        this.chatMinimizedAt = 0;
+      }
+    },
+    /**
+     * 满窗形态下导航到别的内容：Agent 直接最小化（收进 rail 的 ✨ 入口），
+     * 不留在右侧占一条并排抽屉——用户要的是「点设置/实体就能看内容」，不是换一种占位方式。
+     * 形态偏好（chatDrawerMode）不动，所以从 rail ✨ 或状态胶囊再打开时还是原来的满窗。
+     * 非满窗形态（并排/已关）本来就不挡内容，这里不插手。
+     */
+    minimizeChatForNavigation() {
+      if (!this.chatDrawerOpen || this.chatDrawerMode !== 'full') return;
+      this.chatDrawerOpen = false;
+      this.chatMinimizedAt = Date.now();
     },
     /** 请聊天抽屉把光标放进输入框（选中文字提问后用户只需敲问题） */
     focusChatComposer() {
