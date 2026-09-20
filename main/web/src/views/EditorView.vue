@@ -370,6 +370,9 @@
           </div>
         </header>
 
+        <!-- 配置过多端同步时，首页直接给出「同步中 / 同步已完成」状态（未配置则整块不渲染） -->
+        <SyncHomeStatus />
+
         <div class="welcome-cards">
           <button class="welcome-card" type="button" @click="createFirst">
             <span class="wc-icon accent"><Icon name="file-plus" :size="17" /></span>
@@ -432,6 +435,7 @@ import BackTrailMenu from '../components/BackTrailMenu.vue';
 import RelatedMenu from '../components/RelatedMenu.vue';
 import Icon from '../components/Icon.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
+import SyncHomeStatus from '../components/SyncHomeStatus.vue';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import {

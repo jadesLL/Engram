@@ -1,6 +1,6 @@
 <template>
   <button
-    v-if="role === 'member'"
+    v-if="sync.role === 'member'"
     class="sidebar-sync"
     :class="{ syncing }"
     type="button"
@@ -17,53 +17,36 @@
 /**
  * 侧栏一键同步：成员角色（已绑定中枢）显示，点击触发一次全量对账。
  * 服务端 reconcile 是异步的（POST 立即返回），完成信号取状态日志里新增的 reconcile-done。
+ * 状态轮询交给 stores/sync（与首页状态条共用同一份），这里只维护「本次点击触发的同步」进度。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import { notify } from '../lib/notify';
+import { useSyncStore, type SyncLogEntry } from '../stores/sync';
 import Icon from './Icon.vue';
 
-type Role = 'hub' | 'member' | 'none';
-
-const role = ref<Role | null>(null);
-const pending = ref(0);
-const connected = ref(false);
+const sync = useSyncStore();
 const syncing = ref(false);
-let timer: number | null = null;
 
 const tip = computed(() => {
   if (syncing.value) return '同步中…';
-  if (!connected.value) return '立即同步（未连接中枢）';
-  return pending.value ? `立即同步（待推送 ${pending.value}）` : '立即同步';
+  if (!sync.connected) return '立即同步（未连接中枢）';
+  return sync.pending ? `立即同步（待推送 ${sync.pending}）` : '立即同步';
 });
 
 /** 日志里某事件最新一条的时间戳；ISO 字符串按字典序比较即时间序 */
-function latestTs(log: any[], event: string): string {
+function latestTs(log: SyncLogEntry[], event: string): string {
   const hit = (log || []).filter((e) => e?.event === event).pop();
   return hit?.ts || '';
-}
-
-function applyStatus(data: any): void {
-  role.value = (data?.role as Role) || 'none';
-  pending.value = Number(data?.pending) || 0;
-  connected.value = Boolean(data?.connected);
-}
-
-async function loadStatus(): Promise<void> {
-  try {
-    applyStatus((await api.get('/api/sync/status')).data);
-  } catch { /* 服务未就绪时保持上次状态 */ }
 }
 
 async function waitReconcile(before: string): Promise<'ok' | 'failed' | 'timeout'> {
   for (let i = 0; i < 20; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    try {
-      const { data } = await api.get('/api/sync/status');
-      applyStatus(data);
-      if (latestTs(data.log, 'reconcile-done') > before) return 'ok';
-      if (latestTs(data.log, 'reconcile-failed') > before) return 'failed';
-    } catch { /* 单次轮询失败忽略，下一轮继续 */ }
+    await sync.refresh();
+    const log = sync.status?.log || [];
+    if (latestTs(log, 'reconcile-done') > before) return 'ok';
+    if (latestTs(log, 'reconcile-failed') > before) return 'failed';
   }
   return 'timeout';
 }
@@ -72,7 +55,8 @@ async function syncNow(): Promise<void> {
   if (syncing.value) return;
   syncing.value = true;
   try {
-    const before = latestTs((await api.get('/api/sync/status')).data.log, 'reconcile-done');
+    await sync.refresh();
+    const before = latestTs(sync.status?.log || [], 'reconcile-done');
     await api.post('/api/sync/reconcile');
     const result = await waitReconcile(before);
     if (result === 'ok') notify.success('同步完成');
@@ -82,17 +66,13 @@ async function syncNow(): Promise<void> {
     notify.error(error?.response?.data?.error || '触发同步失败');
   } finally {
     syncing.value = false;
+    // 首页状态条读同一份状态：收尾补拉一次，按钮停下时状态已经是新的
+    void sync.refresh();
   }
 }
 
-onMounted(() => {
-  loadStatus();
-  timer = window.setInterval(loadStatus, 30000);
-});
-
-onUnmounted(() => {
-  if (timer !== null) window.clearInterval(timer);
-});
+onMounted(() => sync.subscribe());
+onUnmounted(() => sync.unsubscribe());
 </script>
 
 <style scoped>

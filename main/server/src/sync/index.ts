@@ -53,6 +53,8 @@ export interface SyncStatus {
   connected: boolean;
   /** 首次接入引导（全量对账 + 补拉重放）仍在进行：面板显示「同步中」 */
   syncing: boolean;
+  /** 全量对账正在执行（首次接入 / 手动触发 / 周期自愈）：首页状态条据此显示「同步中」 */
+  reconciling: boolean;
   hubUrl: string;
   hubToken: string;
   nodeId: string;
@@ -83,6 +85,7 @@ export function status(): SyncStatus {
     enabled: s.enabled,
     connected: s.connected,
     syncing: s.syncing,
+    reconciling: s.reconciling,
     hubUrl: s.hubUrl,
     hubToken: s.hubToken,
     nodeId: s.nodeId,
