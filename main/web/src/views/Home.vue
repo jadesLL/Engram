@@ -6,7 +6,7 @@
   >
     <!-- 窄图标导航栏 -->
     <nav class="rail" aria-label="主导航">
-      <button class="rail-logo" type="button" v-tooltip="'回到首页'" aria-label="回到首页" @click="$router.push('/page')">
+      <button class="rail-logo" type="button" v-tooltip="'回到首页'" aria-label="回到首页" @click="go('/page')">
         <svg viewBox="0 0 100 100" width="20" height="20" aria-hidden="true">
           <defs>
             <linearGradient id="engram-orbit-rail" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">
@@ -84,7 +84,7 @@
         v-tooltip="'设置'"
         aria-label="设置"
         :aria-current="isActive('/settings') ? 'page' : undefined"
-        @click="$router.push('/settings')"
+        @click="go('/settings')"
       >
         <Icon name="settings" :size="19" />
         <span v-if="updateStore.hasNewVersion" class="dot" />
@@ -132,6 +132,9 @@
 
     <!-- 内置 Agent 聊天抽屉：桌面端占位并排，≤1024px 覆盖正文 -->
     <ChatDrawer v-if="app.chatDrawerOpen" :overlay="sidebarOverlay" />
+
+    <!-- 内置 Agent 最小化后的常驻状态：有轮次在跑时任何视图都看得到，点它回到对话 -->
+    <AgentStatusPill />
 
     <AppContextMenu />
 
@@ -184,6 +187,7 @@ import { promptDialog } from '../lib/confirm';
 import { loadRuntimeCapabilities, runtimeCapabilitiesSnapshot } from '../lib/capabilities';
 import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
+import AgentStatusPill from '../components/AgentStatusPill.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
 import Icon from '../components/Icon.vue';
 
@@ -273,14 +277,25 @@ function onWindowResize() {
 
 const isActive = (p: string) => route.path.startsWith(p);
 
+/**
+ * 导航到别的内容：先把内置 Agent 最小化（满窗时它正盖着正文），再跳转。
+ * 路由 afterEach 兜的是「任何导航」（侧栏页面、搜索结果、双链、返回轨迹都不经过这里），
+ * 这里显式再来一次，是为了「已经在这一页时再点一次图标」也能把 Agent 收下去——
+ * 同名路由的重复导航不会触发 afterEach。
+ */
+function go(path: string) {
+  app.minimizeChatForNavigation();
+  void router.push(path);
+}
+
 const navItems = computed(() => [
-  { key: 'search', icon: 'search', title: '搜索 (Ctrl+K)', active: isActive('/search'), action: () => router.push('/search') },
-  { key: 'graph', icon: 'graph', title: '知识图谱', active: isActive('/graph'), action: () => router.push('/graph') },
+  { key: 'search', icon: 'search', title: '搜索 (Ctrl+K)', active: isActive('/search'), action: () => go('/search') },
+  { key: 'graph', icon: 'graph', title: '知识图谱', active: isActive('/graph'), action: () => go('/graph') },
 ]);
 
 const bottomItems = computed(() => [
-  { label: '页面', icon: 'pages', action: () => { app.sidebarOpen = true; router.push('/page'); } },
-  { label: '搜索', icon: 'search', action: () => router.push('/search') },
+  { label: '页面', icon: 'pages', action: () => { app.sidebarOpen = true; go('/page'); } },
+  { label: '搜索', icon: 'search', action: () => go('/search') },
   { label: '新建', icon: 'plus', action: () => quickNew() },
   { label: '更多', icon: 'more', action: () => { moreOpen.value = true; } },
 ]);
@@ -306,14 +321,14 @@ const moreItems = computed(() => [
     icon: 'graph',
     dot: false,
     running: false,
-    action: () => runMore(() => router.push('/graph')),
+    action: () => runMore(() => go('/graph')),
   },
   {
     label: '设置',
     icon: 'settings',
     dot: updateStore.hasNewVersion,
     running: false,
-    action: () => runMore(() => router.push('/settings')),
+    action: () => runMore(() => go('/settings')),
   },
 ]);
 
