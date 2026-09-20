@@ -180,7 +180,9 @@ function shortcutPath(dir) {
 function describeShortcutResult(r) {
   if (!r || !r.ok) return (r && r.error) || '重建失败';
   const parts = [`已重建桌面快捷方式：${r.shortcut}`];
-  const target = path.basename(r.target || '');
+  // 取文件名按两种分隔符切：函数在 Windows 上跑（target 是 Windows 路径），单测在 Linux 容器里
+  // 跑（Docker verify），path.basename 只认当前平台的分隔符，会把整个 Windows 路径当成文件名
+  const target = String(r.target || '').split(/[\\/]/).pop() || '';
   parts.push(`启动目标 ${target}`);
   if (r.exe === 'built') parts.push('已生成带 Engram 图标的 Engram.exe');
   else if (r.exe === 'fresh') parts.push('Engram.exe 已是最新');

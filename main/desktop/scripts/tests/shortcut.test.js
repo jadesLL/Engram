@@ -246,6 +246,18 @@ test('结果文案：说明启动目标与图标是否更新', () => {
   });
   assert.match(noRcedit, /rcedit/);
 
+  // 取启动目标文件名必须与路径风格无关：函数在 Windows 上跑，单测在 Linux 容器里跑
+  // （CI/verify 都用 Linux），path.basename 只认当前平台分隔符——曾因此让 CI 的 verify 变红
+  const posix = shortcut.describeShortcutResult({
+    ok: true,
+    shortcut: '/home/example/Desktop/Engram.lnk',
+    target: '/opt/engram/main/desktop/node_modules/electron/dist/Engram.exe',
+    exe: 'fresh',
+    startMenu: 'absent',
+  });
+  assert.match(posix, /启动目标 Engram\.exe/);
+  assert.match(posix, /Engram\.exe 已是最新/);
+
   assert.equal(shortcut.describeShortcutResult({ ok: false, error: '磁盘只读' }), '磁盘只读');
 });
 
