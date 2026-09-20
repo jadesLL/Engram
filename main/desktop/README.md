@@ -20,6 +20,7 @@ Windows 桌面客户端，内嵌完整后端，所有数据保存在本机，无
 - **手动更新**：同一页面保留「检查更新」「下载并安装」按钮作为兜底，点击「下载并安装」同样全自动——直接下载并静默安装，无中间确认、无安装向导，安装期间持续显示进度提示。
 - **开关**：设置页「自动更新」开关即时生效（关闭会中断进行中的自动下载），状态持久化在 `config.json` 的 `autoUpdate` 字段。
 - **边界**：便携版（portable）不参与自动更新；双击安装包本身仍走完整安装向导（`oneClick: false`，可选安装目录），只有应用内更新（自动与手动按钮）走静默参数。若安装时选择了「为所有用户安装」（Program Files），静默安装会触发一次 UAC 授权，属系统要求。
+- **桌面快捷方式（源码模式）**：源码模式的启动程序是 Electron 官方 `electron.exe`——资源管理器与任务栏里显示的是 Electron 原子图标。构建/更新时由 `desktop/scripts/ensure-branded-exe.js` 在同一运行时目录复制一份带 Engram 图标的 `Engram.exe`（rcedit 打 `desktop/build/icon.ico`，`electron.exe` 原样保留，Electron 升级或重装依赖后按 mtime 自动重做），桌面快捷方式（以及已存在、且属于本安装的开始菜单快捷方式）指向它。桌面图标丢失或显示不对时，用 设置 → 软件更新 → 桌面端 → 「重建桌面快捷方式」重建；若 `Engram.exe` 正在运行（Windows 锁文件）无法覆盖，会提示退出后重试，更新脚本下次会自动补上。
 
 ## 重新构建
 
@@ -38,7 +39,9 @@ pnpm build:desktop
 ## 技术说明
 
 - `main.js`：主进程。启动时 fork 内嵌 server 子进程（`ELECTRON_RUN_AS_NODE` 纯 Node 模式），探活后加载本地页面。环境变量 `ENGRAM_USER_DATA` 可覆写 userData 目录、`ENGRAM_LOCAL_PORT` 可覆写服务端口（默认 18180），用于隔离测试/便携场景；两者须在启动前设置，前者在单实例锁之前生效。
-- `preload.js`：通过 `window.wikiDesktop` 暴露受控 API（`getDataDir` / `chooseDataDir` / `restartServer` / `getLocalPort` / `setLocalPort` / `openFileBytes` / `desktopUpdateCheck` / `desktopUpdateDownload` / `desktopUpdateRunInstaller` / `desktopUpdateGetState` / `desktopUpdateSetAuto`，以及事件订阅 `onUpdateProgress` / `onUpdateState`），`contextIsolation` 开启。
+- `preload.js`：通过 `window.wikiDesktop` 暴露受控 API（`getDataDir` / `chooseDataDir` / `restartServer` / `getLocalPort` / `setLocalPort` / `openFileBytes` / `desktopUpdateCheck` / `desktopUpdateDownload` / `desktopUpdateRunInstaller` / `desktopUpdateGetState` / `desktopUpdateSetAuto` / `desktopRebuildShortcut`，以及事件订阅 `onUpdateProgress` / `onUpdateState`），`contextIsolation` 开启。
 - `scripts/prepare-desktop.js`：打包前复制 server/web 产物并生成 server 运行时依赖清单。
+- `scripts/lib/shortcut.js` + `scripts/ensure-branded-exe.js`：桌面快捷方式与「品牌化 Engram.exe」的共用逻辑（纯 Node，单测 `scripts/tests/shortcut.test.js`）。主进程的「重建桌面快捷方式」走 Electron 的 `shell.writeShortcutLink`（GUI 进程不能 spawn powershell：空句柄会静默秒退），PowerShell 安装/更新脚本则调 `ensure-branded-exe.js` 只做 exe 品牌化，快捷方式由 WScript.Shell 写。
+- `scripts/pack-asar.js` + `scripts/lib/asar-staging.js`：手动生成 `app.asar` / `app.asar.unpacked`（绕过 Defender 锁 electron.exe 导致的 rename EPERM）。staging 清单必须覆盖主进程的相对引入（`lib/`、`scripts/lib/`）——少一个，安装版一启动就报 `Cannot find module`，而源码模式与 Docker 验证都发现不了；由 `scripts/tests/asar-staging.test.js` 锁住，`desktop/package.json` 的 `build.files` 同步含 `scripts/lib/**`。
 - 原生模块：`better-sqlite3` 按 Electron ABI 重编；`sqlite-vec`（平台包 `sqlite-vec-windows-x64`）与 `@napi-rs/canvas` 用 Windows 预编译二进制，均通过 `asarUnpack` 解包以便加载。
 - 桌面端默认关闭 ONLYOFFICE 在线编辑（`OFFICE_EDITOR_ENABLED=false`），Office 文件以本地预览或「用系统程序打开」替代。

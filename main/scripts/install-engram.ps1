@@ -392,11 +392,17 @@ if ($code -ne 0) { StepFail 'build' "构建/启动失败（退出码 $code）：
 StepDone 'build'
 
 # ---------- 7) 桌面快捷方式（双击直接启动，不拉取不构建；更新走应用内「检查更新」） ----------
+# 目标优先取品牌化的 Engram.exe（build 步已用 Engram 图标生成，资源管理器/任务栏图标即为
+# Engram）；缺失时回退 Electron 官方 electron.exe，图标由 IconLocation 的 icon.ico 兜住。
 Step 'shortcut' '创建桌面快捷方式'
 $desktop = [Environment]::GetFolderPath('Desktop')
-$electronExe = Join-Path $mainDir 'desktop\node_modules\electron\dist\electron.exe'
-if (-not (Test-Path $electronExe)) { $electronExe = Join-Path $mainDir 'desktop\dist\win-unpacked\electron.exe' }
-if (-not (Test-Path $electronExe)) { StepFail 'shortcut' '未找到 Electron 运行时（node_modules 与 win-unpacked 均缺失）' }
+$electronExe = @(
+  (Join-Path $mainDir 'desktop\node_modules\electron\dist\Engram.exe'),
+  (Join-Path $mainDir 'desktop\node_modules\electron\dist\electron.exe'),
+  (Join-Path $mainDir 'desktop\dist\win-unpacked\Engram.exe'),
+  (Join-Path $mainDir 'desktop\dist\win-unpacked\electron.exe')
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $electronExe) { StepFail 'shortcut' '未找到 Electron 运行时（node_modules 与 win-unpacked 均缺失）' }
 $ws = New-Object -ComObject WScript.Shell
 $lnk = $ws.CreateShortcut((Join-Path $desktop 'Engram.lnk'))
 $lnk.TargetPath = $electronExe

@@ -72,4 +72,9 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
     ipcRenderer.on('desktop-source-state', listener);
     return () => ipcRenderer.removeListener('desktop-source-state', listener);
   },
+  // ---------- 桌面快捷方式（设置 → 软件更新 → 桌面端） ----------
+  // 重建桌面快捷方式：源码模式同时生成/刷新带 Engram 图标的 Engram.exe 作为启动目标，
+  // 开始菜单里属于本安装的 Engram.lnk 一并同步。
+  // 返回 { ok, shortcut, target, exe, startMenu, message } 或 { ok: false, error }
+  desktopRebuildShortcut: () => ipcRenderer.invoke('desktop-rebuild-shortcut'),
 });

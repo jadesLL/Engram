@@ -284,6 +284,25 @@
           </div>
           <p v-if="uninstallError" class="setting-message err">{{ uninstallError }}</p>
         </template>
+
+        <!-- 桌面快捷方式：图标丢失或显示不对时重建（源码模式同时生成带 Engram 图标的 Engram.exe） -->
+        <div v-if="shortcutSupported" class="setting-row">
+          <div class="setting-copy">
+            <strong>桌面快捷方式</strong>
+            <span>
+              桌面上的 Engram 图标丢失或显示不对时在此重建。
+              <template v-if="sourceMode">源码模式的启动程序是 Electron 官方运行时（图标是 Electron 的原子），重建会在同目录生成一份带 Engram 图标的 Engram.exe 作为启动目标，资源管理器与任务栏图标随之统一。</template>
+              <template v-else>重建指向当前安装目录 Engram.exe 的桌面快捷方式。</template>
+            </span>
+          </div>
+          <div class="check-controls">
+            <button class="btn" type="button" :disabled="shortcutBusy" @click="doRebuildShortcut">
+              <AppSpinner v-if="shortcutBusy" :size="11" />
+              <template v-else>重建桌面快捷方式</template>
+            </button>
+          </div>
+        </div>
+        <p v-if="shortcutMessage" class="setting-message" :class="shortcutError ? 'err' : ''">{{ shortcutMessage }}</p>
       </template>
     </SettingsGroup>
 
@@ -439,6 +458,12 @@ const uninstallAvailable = ref(false);
 const uninstallData = ref(false);
 const uninstalling = ref(false);
 const uninstallError = ref('');
+
+// 桌面快捷方式重建：旧版壳无 desktopRebuildShortcut API 时隐藏该行
+const shortcutSupported = ref(false);
+const shortcutBusy = ref(false);
+const shortcutMessage = ref('');
+const shortcutError = ref(false);
 
 // ---- 同步中枢远程更新（本地模式绑定多端同步后可用，转发走本地内嵌 server） ----
 const syncStatus = ref<{ role: string; enabled: boolean; hubUrl: string } | null>(null);
@@ -901,6 +926,25 @@ async function doUninstall() {
   }
 }
 
+async function doRebuildShortcut() {
+  const wd = wikiDesktop();
+  if (!wd?.desktopRebuildShortcut) return;
+  shortcutBusy.value = true;
+  shortcutMessage.value = '';
+  shortcutError.value = false;
+  try {
+    const r = await wd.desktopRebuildShortcut();
+    shortcutError.value = !r?.ok;
+    shortcutMessage.value = r?.ok ? r.message || '已重建桌面快捷方式' : r?.error || '重建失败';
+    if (r?.ok) notify.success('桌面快捷方式已重建');
+  } catch (e: any) {
+    shortcutError.value = true;
+    shortcutMessage.value = e?.message || '重建失败';
+  } finally {
+    shortcutBusy.value = false;
+  }
+}
+
 async function saveConfig() {
   const parsed = parseRepoUrl(form.repoUrl);
   if ('error' in parsed) {
@@ -995,6 +1039,8 @@ onMounted(() => {
       uninstallAvailable.value = Boolean(s?.available);
     });
   }
+  // 桌面快捷方式重建入口：旧版壳无此 API 时该行自动隐藏
+  shortcutSupported.value = Boolean(wd?.desktopRebuildShortcut);
 });
 onUnmounted(() => {
   offProgress?.();

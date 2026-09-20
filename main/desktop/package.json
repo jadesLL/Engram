@@ -22,6 +22,7 @@
       "main.js",
       "preload.js",
       "lib/**",
+      "scripts/lib/**",
       "icon.png",
       "server/dist/**",
       "server/node_modules/**",
