@@ -1,8 +1,12 @@
 <template>
   <div
     class="layout"
-    :class="{ 'sidebar-open': app.sidebarOpen }"
-    :style="{ '--sidebar-width': sidebarWidth + 'px' }"
+    :class="{
+      'sidebar-open': app.sidebarOpen,
+      'chat-dock-open': chatDockOpen,
+      'chat-dragging': app.chatDragging,
+    }"
+    :style="{ '--sidebar-width': sidebarWidth + 'px', '--chat-w': app.chatDockWidth + 'px' }"
   >
     <!-- 窄图标导航栏：提示一律贴按钮右侧（图标栏只有一列按钮，上/下都会压住相邻图标） -->
     <nav class="rail" aria-label="主导航">
@@ -240,6 +244,10 @@ const isMobile = computed(() => viewportWidth.value <= 768);
 /* 769-1024px 紧凑档（折叠屏内屏等）：侧栏浮层化，需要遮罩 */
 const isCompact = computed(() => viewportWidth.value > 768 && viewportWidth.value <= 1024);
 const sidebarOverlay = computed(() => isMobile.value || isCompact.value);
+/** 悬浮档展开中：正文要按卡片宽度让出右侧空间（满窗与紧凑档浮层都不让位——它们本来就盖在正文上） */
+const chatDockOpen = computed(() =>
+  app.chatDrawerOpen && app.chatDrawerMode === 'dock' && !sidebarOverlay.value
+);
 const sidebarMaxWidth = computed(() =>
   Math.max(MIN_SIDEBAR, Math.min(MAX_SIDEBAR, Math.floor(viewportWidth.value * 0.4)))
 );
@@ -446,7 +454,14 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   height: 100%;
+  /*
+   * clip 而不是 hidden：hidden 仍然是个「可滚动容器」，卡片从右缘滑入时那一瞬的
+   * 溢出会被浏览器「把聚焦元素滚进视野」顺走十几像素，整个界面（图标栏 + 文件树）
+   * 跟着横移再弹回，看着就是呼出时左侧抖一下。clip 直接封掉滚动这条路；
+   * 前面留一行 hidden 给不认 clip 的老浏览器兜底（那边还有 preventScroll 顶着）。
+   */
   overflow: hidden;
+  overflow: clip;
   background: var(--bg);
 }
 
@@ -668,11 +683,24 @@ onUnmounted(() => {
   overflow-y: auto;
   padding-left: 64px;
   background: var(--bg);
-  transition: padding-left 180ms ease;
+  transition: padding-left 180ms ease, padding-right 180ms ease;
 }
 
 .layout.sidebar-open .content {
   padding-left: calc(var(--sidebar-width) + 72px);
+}
+
+/*
+ * 内置 Agent 悬浮卡片打开：正文让出卡片宽度（贴边 8px + 呼吸 12px），
+ * 与左侧文件树让位同一套节奏——两边都是「浮层出现、正文平移让位」，不是压住正文。
+ */
+.layout.chat-dock-open .content {
+  padding-right: calc(var(--chat-w, 0px) + 20px);
+}
+
+/* 拖卡片宽度时正文跟手：过渡会把让位拖后 180ms，卡片就压到字上了 */
+.layout.chat-dragging .content {
+  transition: none;
 }
 
 .sidebar-slide-enter-active,
