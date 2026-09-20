@@ -914,6 +914,10 @@ const TOOL_ICONS: Record<string, string> = {
   rename_page: 'move',
   move_page: 'move',
   delete_page: 'trash',
+  entity_name_check: 'clipboard',
+  entity_name_propose: 'clipboard',
+  list_entity_names: 'clipboard',
+  entity_name_audit: 'clipboard',
 };
 
 function toolIcon(name: string): string {

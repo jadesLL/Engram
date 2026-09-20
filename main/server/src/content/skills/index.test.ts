@@ -42,3 +42,16 @@ test('skill 正文承载纪律口径：原始资料无写权限、作业不打�
   assert.match(discipline.body, /须用户指示/);
   assert.match(discipline.body, /可以被提炼/);
 });
+
+test('skill 正文写清唯一的例外：公司工商全名走名称核验通道', () => {
+  const discipline = findSkill('kb-ingest-discipline');
+  assert.ok(discipline, 'kb-ingest-discipline 应存在');
+  // 例外只此一条，且写明触发条件、工具与「不追问」的边界
+  assert.match(discipline.body, /名称核验/);
+  assert.match(discipline.body, /entity_name_check/);
+  assert.match(discipline.body, /entity_name_propose/);
+  assert.match(discipline.body, /企查查/);
+  assert.match(discipline.body, /不得编造或推测全名/);
+  assert.match(discipline.body, /不追问、不反复请示/);
+  assert.match(discipline.body, /其余任何信息都不打断用户/);
+});

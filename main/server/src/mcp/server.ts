@@ -18,24 +18,31 @@ import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
 import { AGENT_GUIDE, GUIDE_VERSION } from '../content/agentGuide.js';
 import { SKILLS, findSkill } from '../content/skills/index.js';
+import {
+  auditCompanyPages, describeCheckRequest, describeProposal, formatEntityNameAudit,
+  formatEntityNameChecks, listEntityNameChecks, pendingEntityNameCount, proposeEntityName,
+  requestEntityNameCheck, EntityNameError, type EntityNameStatus,
+} from '../lib/entityNameChecks.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
  * 读工具（search/list_pages/read_page/related_pages/page_evidence/list_raw_files/read_raw_file/
- * kb_guide/skill_list/skill_guide）
+ * list_entity_names/entity_name_audit/kb_guide/skill_list/skill_guide）
  * + 写工具（write_page 带证据门禁与自动日志 / rename_page / move_page / delete_page 软删除入回收站 /
- * save_chat 对话沉积）。全部写操作只允许 Wiki/，原始资料与 AIWorks 对 Agent 是只读区。
+ * save_chat 对话沉积 / entity_name_check 登记公司全名核验 / entity_name_propose 回填全名）。
+ * 全部写操作只允许 Wiki/，原始资料与 AIWorks 对 Agent 是只读区。
  * 作业方法论见 kb_guide；按需作业手法见 skill_list / skill_guide。
  */
 
 const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，读、写、提炼全部由你（外部 Agent）完成。
-能跑 shell 的 Agent 优先用 CLI（engram status/import/files/search/pages/chat/guide，--json 可得机器可读输出）；MCP 用于无法跑 shell、或需把图片作为图像内容直读（read_raw_file raw=true）时。
+能跑 shell 的 Agent 优先用 CLI（engram status/import/files/search/pages/names/chat/guide，--json 可得机器可读输出）；MCP 用于无法跑 shell、或需把图片作为图像内容直读（read_raw_file raw=true）时。
 提炼作业收到指令后自动索引待提炼清单（CLI engram files list --pending，或 list_raw_files 传 pending=true），然后逐份串行处理：读一份、write_page 提交成功，再处理下一份，不要批量读完统一写页。
 任何写操作前先读 AIWorks/log/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
 新建 概念/实体 页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条引文），已有页面增量不受限。
 原始资料与 AIWorks 对 Agent 是只读区：写工具只能写 Wiki/。软件本身具备上传/新建/删除原始资料的能力，但那是用户的操作——你没有写权限，也不得走 HTTP 旁路自行写入；作业时需要的资料不在库里就按现有材料推进，把缺口写进页面的「待核实」，不要卡住整批作业。
 对话沉积（save_chat）只在用户明确指示后执行；不要自行判断"这段对话有价值"就沉淀。已沉淀的对话属于原始资料，可被后续提炼引用。
-资料里查不到、又必须有个说法时（公司工商全名、同名主体区分、客户身份口径等）：能自查的先自查（search 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据——不编造、不问用户、不空等。
+资料里查不到、又必须有个说法时（同名主体区分、客户身份口径等）：能自查的先自查（search 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据——不编造、不空等。
+公司工商全名是唯一例外：公司类实体页标题要用工商全名，材料与资料库都没有时走名称核验通道请示用户——entity_name_check 登记（服务端先自查资料库：页面标题/证据账本/原始资料里有全名就直接返回，Wiki 正文里的写法只算未核实候选），用户同意后用你自己的联网检索查企查查/天眼查，entity_name_propose 回填全名与出处，用户确认后服务端改名。登记后不要空等，继续下一份；下次作业先 list_entity_names 读答复。
 误建的页面用 delete_page 删除：只做软删除入回收站（可恢复），只能删 Wiki/ 下的页面，不提供清空回收站能力。
 页面改名/移动用 rename_page / move_page（保持页面 ID 与图谱边，重命名会重定向引用双链）；写页与页面操作都只允许 Wiki/。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
@@ -431,6 +438,76 @@ export function makeServer(): McpServer {
         ],
       };
     }
+  );
+
+  server.tool(
+    'entity_name_check',
+    '公司全名核验（登记待核名称）：公司类实体的名称不是工商全名、资料库里也找不到时，登记一条「是否允许联网用企查查/天眼查查询」的请示给用户——这是全库唯一允许问用户的事。服务端会先自查资料库（页面标题 / 证据账本 / 原始资料提取文本 / 正文里写明全名的提法）：有全名就直接返回，用 rename_page 改用全名即可，不打扰用户；正文里带「待核实/候选」标记的写法只算「疑似候选（未核实）」，仍照常登记请示。登记后不要空等，继续下一份资料；下次作业先 list_entity_names 读用户答复。',
+    {
+      entity: z.string().describe('材料里的公司名称写法（通常是简称），如「津亚电子」'),
+      titleOrId: z.string().optional().describe('关联页面（标题/ID/路径）；用户同意改用全名时服务端据此自动改名'),
+      note: z.string().optional().describe('说明：卡在哪、已查到哪些候选（帮助用户判断）'),
+    },
+    async ({ entity, titleOrId, note }) => {
+      try {
+        const result = requestEntityNameCheck({ entity, titleOrId, note });
+        return { content: [{ type: 'text', text: describeCheckRequest(result) }] };
+      } catch (error) {
+        if (error instanceof EntityNameError) {
+          return { content: [{ type: 'text', text: `名称核验登记被拒绝：${error.message}` }], isError: true };
+        }
+        throw error;
+      }
+    }
+  );
+
+  server.tool(
+    'entity_name_propose',
+    '回填联网查到的工商全名并请示用户是否把页面标题改为该全名（用户同意后由服务端执行改名：保持页面 ID、引用双链重定向、自动记日志）。前置：该核验已被用户允许联网查询。查不到全名时不要传 fullName——本次核验按「未找到全名」办结，收尾列入「最终不是全名」清单。全名的界定是企查查等能否查到该名称，查到的是简称就继续查全称，不得编造或推测。',
+    {
+      id: z.string().describe('核验 id（entity_name_check 登记时返回）'),
+      fullName: z.string().optional().describe('企查查/天眼查 查到的工商登记全名；查不到就不传'),
+      source: z.string().optional().describe('出处：企查查/天眼查 链接或查询说明（用户据此判断可信度）'),
+      note: z.string().optional().describe('补充：同名主体候选、为什么取这个全名'),
+    },
+    async ({ id, fullName, source, note }) => {
+      try {
+        const check = proposeEntityName({ id, fullName, source, note });
+        return { content: [{ type: 'text', text: describeProposal(check) }] };
+      } catch (error) {
+        if (error instanceof EntityNameError) {
+          return { content: [{ type: 'text', text: `回填被拒绝：${error.message}` }], isError: true };
+        }
+        throw error;
+      }
+    }
+  );
+
+  server.tool(
+    'list_entity_names',
+    '读名称核验清单（默认全部，最新在前）：pending 等用户答复 / open 未办结 / unresolved 最终不是全名。登记后下次作业先看这里拿答复；作业收尾用 status=unresolved 把仍未定全名的条目列给用户（名称、页面、卡在哪、为什么）。',
+    {
+      status: z.enum(['pending', 'open', 'unresolved', 'all']).optional()
+        .describe('默认 all；pending 只列等用户答复的，unresolved 只列「最终不是全名」的'),
+    },
+    async ({ status }) => {
+      const key: EntityNameStatus = status || 'all';
+      const checks = listEntityNameChecks(key);
+      return {
+        content: [{
+          type: 'text',
+          text: `${formatEntityNameChecks(checks, key)}\n\n`
+            + `（等用户答复 ${pendingEntityNameCount()} 条。用户答复属用户提供的口径，写进正文时标注「用户确认」，不要为它编造引文。）`,
+        }],
+      };
+    }
+  );
+
+  server.tool(
+    'entity_name_audit',
+    '全库公司页名称盘点：列出公司类实体页（客户/组织）里标题不是工商全名形态的页面及各自核验状态（未核验/待答复/已允许待回填/已办结）。批量核验与收尾汇报「仍未定全名的条目」时用。',
+    {},
+    async () => ({ content: [{ type: 'text', text: formatEntityNameAudit(auditCompanyPages()) }] })
   );
 
   server.tool(

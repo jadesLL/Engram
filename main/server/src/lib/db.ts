@@ -175,6 +175,32 @@ export function migrate() {
     created_at TEXT NOT NULL
   );
 
+  -- 公司全名核验通道（唯一允许问用户的事）：Agent 登记待核名称 → 用户在界面「名称核验」答复
+  -- 是否允许联网查企查查/天眼查 → Agent 回填查到的工商全名 → 用户确认后由服务端改名。
+  -- 与 ingest_questions（旧内置提炼管线，已停用）无关，也不是通用提问通道：
+  -- 只服务「公司类实体页标题用工商全名」这一条口径。
+  CREATE TABLE IF NOT EXISTS entity_name_checks (
+    id TEXT PRIMARY KEY,
+    entity TEXT NOT NULL,                        -- 材料里的写法（待核名称，通常是简称）
+    page_id TEXT,                                -- 关联页面 id（实体尚未建页时为空）
+    page_path TEXT NOT NULL DEFAULT '',
+    page_title TEXT NOT NULL DEFAULT '',
+    stage TEXT NOT NULL DEFAULT 'query_consent', -- query_consent | lookup | rename_consent | closed
+    full_name TEXT NOT NULL DEFAULT '',          -- 全名：kb_hit 为资料库候选，renamed 为采用的全名
+    full_name_source TEXT NOT NULL DEFAULT '',   -- 出处（资料库路径 / 企查查·天眼查 链接或说明）
+    note TEXT NOT NULL DEFAULT '',               -- Agent 说明（候选、同名主体、为什么这么取）
+    query_consent TEXT NOT NULL DEFAULT '',      -- '' | granted | denied
+    rename_consent TEXT NOT NULL DEFAULT '',     -- '' | granted | denied
+    outcome TEXT NOT NULL DEFAULT '',            -- '' | kb_hit | renamed | kept_material | no_full_name | query_denied
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    answered_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_entity_name_checks_stage
+    ON entity_name_checks(stage, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_entity_name_checks_entity
+    ON entity_name_checks(entity, created_at DESC);
+
   -- 原始资料消化记录（保留旧 API 的 at 字段，并增加内容幂等状态）
   CREATE TABLE IF NOT EXISTS ingest_log (
     path TEXT PRIMARY KEY,

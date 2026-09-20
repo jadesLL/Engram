@@ -12,7 +12,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 
 ## 接入方式与优先级
 
-- **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / chat save / guide / mcp-config），`--json` 得机器可读输出。
+- **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / names check|propose|list|audit|answer / chat save / guide / mcp-config），`--json` 得机器可读输出。
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
 - **一键接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 接入直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；远程部署仍用 MCP 配置片段或 `engram login`。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
@@ -24,8 +24,13 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - **删除只入回收站**：`delete_page`（MCP）与 `engram pages delete`（CLI）只做软删除，把单个页面移入回收站（按标题 / 页面 ID / 页面路径定位；用户可在 设置 → 存储空间 → 回收站 恢复）；也不提供永久删除或清空回收站能力。
 - **改名/移动不换 ID**：`rename_page` / `move_page`（CLI `pages rename|move`）保持页面 ID 与图谱边；重命名会把其他页面引用的 `[[旧标题]]` 双链重定向。不要用「新建+删除」模拟改名——那会产生新页面 ID 并让引用悬空。
 - **图谱关联可查询**：`related_pages`（MCP）返回页面的入链/出链邻居与实体关系（与编辑器「相关页面」同一数据），供写「相关页面」章节、验证 `[[双链]]` 目标与排查反向引用。
-- **全自动、不打断（拿不准就自己定）**：作业全流程不问用户、不空等。只有用户才知道、资料里又查不到的信息（公司工商全名、同名主体区分、客户身份口径等），先自查（`search` 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据（候选、出处、为什么这么取）；**不得编造**。事实冲突、对象身份不清同理：不建页，把冲突与候选记进相关页面的「待核实」，继续处理下一份，不要卡住整批作业。
-- **客户/公司页契约（指南 v3）**：客户页「当前理解」按 名称口径 / 概览 / 核心机型 / 客户画像 / 核心卡点 / 合作策略 组织（缺证据的章节省略）；公司类实体页（客户/供应商/渠道商）标题用**工商全名**，「当前理解」首节固定为「名称口径」（全称 / 英文名 / 简称别名 / 易混淆的同名公司），内部组织与个人用惯用名。全名优先取自材料里的工商登记信息，找不到先 `search` 全库；仍找不到**不得编造或推测全名**，标题暂用材料写法并在名称口径标注「全称待确认」，后续资料出现全名再用 `rename_page` 改用全名。本次属页面契约变化，`GUIDE_VERSION` 升 3，只重提炼客户页即可：`list_pages` 传 `outdated=true` 叠加 `tag=客户`。
+- **全自动、不打断（拿不准就自己定）**：作业全流程不问用户、不空等。只有用户才知道、资料里又查不到的信息（同名主体区分、客户身份口径等），先自查（`search` 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据（候选、出处、为什么这么取）；**不得编造**。事实冲突、对象身份不清同理：不建页，把冲突与候选记进相关页面的「待核实」，继续处理下一份，不要卡住整批作业。**唯一例外是公司工商全名**，见下一条。
+- **公司全名核验通道（唯一允许问用户的事）**：公司类实体（客户/供应商/渠道商/组织）的名称不是工商全名、资料库里也没有全名时，走两轮请示：
+  1. `entity_name_check`（CLI `names check`）传 `entity`（材料里的写法）与 `titleOrId`（关联页面）。服务端先自查资料库：**页面标题、证据账本、原始资料提取文本，以及正文里写明全名的提法**都算已有全名，直接返回（用 `rename_page` 改用全名即可，不打扰用户）；正文里带「待核实 / 候选 / 疑似」一类存疑标记的写法只算**疑似候选（未核实）**——那正是此前记下还没确认的写法，服务端把它一并回给 Agent 并照常登记请示。请示出现在界面左侧「名称核验」面板（未答复带角标，SSE 实时提示）。登记后**不要空等**，继续下一份；下次作业先 `list_entity_names`（CLI `names list`）读答复。同一名称只登记一次。
+  2. 用户允许后用 Agent **自带的联网检索**查企查查/天眼查（服务端不抓这两家：登录墙与反爬，且容器常无外网），拿到工商登记全名后 `entity_name_propose`（CLI `names propose`）回填 `fullName` 与 `source`；服务端随即请示「是否改用全名」，**用户同意后由服务端执行改名**（保持页面 ID、双链重定向、自动记日志）。查不到就不传 `fullName`，按「未找到全名」办结。
+  - **全名的界定**：以「企查查/天眼查等能否查到该名称」为准——能查到工商登记信息才是全名，查到的是简称就继续查全称，查不到就不算。服务端的名称形态判断（是否以「有限公司」等结尾）只是提示，不是结论；服务端也会拒绝回填明显不像全名的写法。
+  - 用户不允许 / 查不到 / 不同意改名：标题保持材料写法，名称口径标注「全称待确认」与候选依据，继续作业——**不追问、不反复请示**。收尾必须用 `list_entity_names` 传 `status=unresolved` 把**仍未定全名的条目**列给用户（名称、页面、卡在哪、为什么）；需要知道还有哪些公司页没核验过，用 `entity_name_audit`（CLI `names audit`）。
+- **客户/公司页契约（指南 v3）**：客户页「当前理解」按 名称口径 / 概览 / 核心机型 / 客户画像 / 核心卡点 / 合作策略 组织（缺证据的章节省略）；公司类实体页（客户/供应商/渠道商）标题用**工商全名**，「当前理解」首节固定为「名称口径」（全称 / 英文名 / 简称别名 / 易混淆的同名公司），内部组织与个人用惯用名。全名来源顺序固定：① 材料里的工商登记信息（调研报告、年报、出货表、合同抬头）；② `entity_name_check` 让服务端在页面标题 / 证据账本 / 原始资料提取文本里自查（正文里带「待核实/候选」标记的写法只是疑似候选）；③ 都没有才走上面的核验通道请示用户。**不得编造或推测全名**；走不通时标题暂用材料写法并在名称口径标注「全称待确认」，后续资料出现全名再用 `rename_page` 改用全名。本次属页面契约变化，`GUIDE_VERSION` 升 3，只重提炼客户页即可：`list_pages` 传 `outdated=true` 叠加 `tag=客户`。（名称核验通道本身不改抽取口径，不额外 bump 版本。）
 
 ## 提炼作业纪律
 
@@ -64,6 +69,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - Agent 接入界面的工具清单：`web/src/lib/mcpTools.ts`（新增/改名工具时三处同步：`server/src/mcp/server.ts` 注册、`web/src/lib/mcpTools.ts` 界面清单、本文）
 - Agent 写入门禁与账本：`server/src/pipeline/agentWrite.ts`
 - Agent 单页删除内核（只入回收站 + Wiki/ 守卫）：`server/src/pipeline/agentDelete.ts`
+- 公司全名核验通道内核（资料库自查 + 两轮请示状态机 + 服务端改名）：`server/src/lib/entityNameChecks.ts`（表 `entity_name_checks`；REST `server/src/routes/entityNames.ts`；界面 `web/src/components/EntityNameModal.vue`）
 - MCP 端点（streamable HTTP + Bearer）：`server/src/mcp/server.ts`
 - CLI：`server/src/cli/`（`engram` bin）
 - 操作日志写入：`server/src/pipeline/indexFile.ts`（`appendWikiLog`）
