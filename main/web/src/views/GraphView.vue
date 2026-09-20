@@ -9,12 +9,12 @@
         <span :class="{ on: scope === 'global' }" @click="switchScope('global')">全局</span>
         <span v-if="pageId" :class="{ on: scope === 'page' }" @click="switchScope('page')">本页关联</span>
       </div>
-      <button class="g-chip g-btn" title="铺满" @click="fit(true)">铺满</button>
-      <button class="g-chip g-btn" title="重新布局" @click="relayout">重排</button>
+      <button class="g-chip g-btn" v-tooltip="{ body: '铺满', meta: '把全部节点缩放到可见范围' }" @click="fit(true)">铺满</button>
+      <button class="g-chip g-btn" v-tooltip="{ body: '重排', meta: '换一个随机种子重新跑力导向布局' }" @click="relayout">重排</button>
     </div>
 
     <!-- 设置面板 -->
-    <div class="g-chip g-gear" title="图谱设置" @click="panelOpen = !panelOpen">⚙</div>
+    <div class="g-chip g-gear" v-tooltip="{ body: '图谱设置', meta: '过滤、分组、显示与力学参数' }" @click="panelOpen = !panelOpen">⚙</div>
     <div v-show="panelOpen" class="g-panel">
       <div class="g-sec">
         <input v-model="search" class="g-search" placeholder="搜索文件…" @input="draw()" />
@@ -83,6 +83,7 @@ import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import { notify } from '../lib/notify';
+import { hideTooltip, showTooltip, updateTooltipPointer } from '../lib/tooltip';
 
 const route = useRoute();
 const router = useRouter();
@@ -458,6 +459,33 @@ function hitTest(mx: number, my: number): GNode | null {
   return best;
 }
 
+/**
+ * 节点的屏幕矩形：画布节点没有独立 DOM，用它当「被说明对象」交给提示引擎，
+ * 这样气泡既不会压住节点本身，也不会把整块画布当成锚点。
+ */
+function nodeScreenRect(node: GNode): { left: number; top: number; width: number; height: number } {
+  const rect = canvasRef.value!.getBoundingClientRect();
+  const scale = opt.nodeScale / 100;
+  const radius = Math.max(6, node.r * scale * view.s);
+  const cx = rect.left + view.x + node.x * view.s;
+  const cy = rect.top + view.y + node.y * view.s;
+  // 节点下方还会画标签，按标签宽度一起留出空间
+  const width = Math.max(radius * 2, Math.min(220, node.label.length * 12 * Math.min(1.4, view.s)));
+  return { left: cx - width / 2, top: cy - radius, width, height: radius * 2 + 22 };
+}
+
+function nodeTipContent(node: GNode) {
+  const kind = node.raw ? GROUP_NAMES.raw : GROUP_NAMES[normGroup(node.group)] || '节点';
+  const facts = [kind];
+  if (node.deg) facts.push(`${node.deg} 条关联`);
+  if (node.words) facts.push(`${node.words} 字`);
+  return {
+    title: node.label,
+    body: facts.join(' · '),
+    meta: '单击打开 · 双击看本页关联',
+  };
+}
+
 function onPointerDown(ev: PointerEvent) {
   canvasRef.value?.setPointerCapture(ev.pointerId);
   const rect = canvasRef.value!.getBoundingClientRect();
@@ -487,6 +515,20 @@ function onPointerMove(ev: PointerEvent) {
   if (hit !== hoverNode) {
     hoverNode = hit;
     if (!simActive) draw();
+    // 画布节点没有独立 DOM，提示走「光标跟随」策略，用节点矩形当被说明对象
+    if (hit) {
+      showTooltip(canvasRef.value!, nodeTipContent(hit), {
+        strategy: 'cursor',
+        // 力导向布局里节点会一直动，用函数形式让提示每帧跟着节点走
+        anchorRect: () => nodeScreenRect(hit),
+        pointer: { x: ev.clientX, y: ev.clientY },
+        delay: 0,
+      });
+    } else {
+      hideTooltip();
+    }
+  } else if (hit) {
+    updateTooltipPointer(ev.clientX, ev.clientY);
   }
   cursor.value = hit ? 'pointer' : 'grab';
 }
@@ -582,6 +624,7 @@ async function load() {
   view.x = W / 2; view.y = H / 2; view.s = 1;
   fitScale = 0;
   hoverNode = null;
+  hideTooltip();
   initPositions();
   needFitOnce = true;
   kick();
@@ -613,6 +656,7 @@ onMounted(() => {
   cv.addEventListener('pointerup', onPointerUp);
   cv.addEventListener('wheel', onWheel, { passive: false });
   cv.addEventListener('pointerleave', () => {
+    hideTooltip();
     if (!pointerDown && hoverNode) { hoverNode = null; if (!simActive) draw(); }
   });
   ro = new ResizeObserver(() => { canvasSize(); draw(); });
@@ -623,6 +667,7 @@ onUnmounted(() => {
   cancelAnimationFrame(raf);
   cancelAnimationFrame(fitAnim);
   ro?.disconnect();
+  hideTooltip();
 });
 </script>
 

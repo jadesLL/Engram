@@ -50,6 +50,18 @@
           </button>
         </div>
       </div>
+
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>悬停提示严格避让</strong>
+          <span>开启后提示气泡绝不遮挡内容：附近没有空位时移到旁边的空白处，并用虚线指向被说明对象；关闭后优先贴近被说明对象，允许轻微遮挡。</span>
+        </div>
+        <label class="switch-control">
+          <input type="checkbox" :checked="tipStrict" @change="toggleTipStrict" />
+          <span aria-hidden="true"></span>
+          <em>{{ tipStrict ? '已开启' : '已关闭' }}</em>
+        </label>
+      </div>
     </SettingsGroup>
 
     <SettingsGroup title="连接与版本" hint="访问通道与当前版本" :default-open="true" flush>
@@ -93,10 +105,21 @@ import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION } from '../../version';
 import { formatVersionLabel, type GitIdentity } from '../../lib/buildLabel';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
+import { notify } from '../../lib/notify';
+import { getTooltipStrict, setTooltipStrict } from '../../lib/tooltip';
 
 const app = useAppStore();
 const auth = useAuthStore();
 const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
+
+// 悬停提示避让强度（全局偏好，存 localStorage；提示引擎每次显示时读取）
+const tipStrict = ref(getTooltipStrict());
+function toggleTipStrict(event: Event): void {
+  const on = (event.target as HTMLInputElement).checked;
+  tipStrict.value = on;
+  setTooltipStrict(on);
+  notify.success(on ? '悬停提示：严格避让（不遮挡内容）' : '悬停提示：就近优先');
+}
 
 // 提交身份两个来源：桌面源码模式由主进程经 IPC 给出（含提交日期/脏标记），
 // Docker 镜像与浏览器访问由服务端 /api/update/state 给出（镜像内烤入 /app/GIT_SHA）。

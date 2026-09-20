@@ -17,7 +17,7 @@
         class="back-trail-item"
         type="button"
         role="menuitem"
-        :title="item.title || '未命名页面'"
+        v-tooltip.auto.right="item.title || '未命名页面'"
         @click="select(item.id)"
       >
         <Icon :name="item.depth === 1 ? 'undo' : 'file'" :size="14" />
