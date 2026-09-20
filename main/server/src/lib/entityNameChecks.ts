@@ -1,13 +1,13 @@
 import crypto from 'node:crypto';
 import { db } from './db.js';
-import { emit } from './events.js';
 import { readPage } from './vault.js';
 import { buildFtsQuery } from './fts.js';
 import { AgentPageError, renamePageAsAgent, resolvePageRef } from '../pipeline/agentDelete.js';
 
 /**
- * 公司全名核验通道内核：Agent 登记待核名称 → 用户在界面「名称核验」答复是否允许联网查
- * 企查查/天眼查 → Agent 回填查到的工商全名 → 用户确认后由服务端改名。
+ * 公司全名核验通道内核：Agent 登记待核名称 → **Agent 在对话里问用户**是否允许联网查企查查/
+ * 天眼查（内置 Agent 用 MCP `ask_user` 弹选项，外部 Agent 用自带的提问能力）→ Agent 把答复用
+ * `entity_name_answer` 回填 → Agent 联网查到全名回填 → 用户同意后由服务端改名。
  *
  * 存在意义：公司类实体页标题要求用工商全名（指南 v3），而全名只存在于材料或工商登记里。
  * 材料里没有、资料库里也搜不到时，Agent 既不能编造，也不该永远停在「全称待确认」——
@@ -15,9 +15,11 @@ import { AgentPageError, renamePageAsAgent, resolvePageRef } from '../pipeline/a
  *
  * 边界：
  *  - **服务端不抓企查查/天眼查**：两家都有登录墙与反爬，联网检索由 Agent 用自己的工具完成，
- *    本模块只负责请示、留痕、执行改名。全名的界定以「企查查等能否查到该名称」为准，
+ *    本模块只负责登记、留痕、执行改名。全名的界定以「企查查等能否查到该名称」为准，
  *    服务端的形态判断（looksLikeFullName）只作提示，不作结论。
- *  - **改名由服务端执行**（用户点「改用全名」即生效）：走 renamePageAsAgent 同一内核，
+ *  - **问答都在对话里**：服务端不提供专门的核验页面；本模块只管状态机与改名，
+ *    问用户这件事交给 Agent 的对话（内置 Agent 弹底部选项框，外部 Agent 问在自己的对话里）。
+ *  - **改名由服务端执行**（用户同意即生效）：走 renamePageAsAgent 同一内核，
  *    保持页面 ID、重定向引用双链、自动记操作日志。
  *  - 与知识写入无关：本表不进门禁、不记操作日志（核验记录不是知识事实，落页仍由 Agent 写正文）。
  */
@@ -355,10 +357,6 @@ function update(id: string, patch: Record<string, string | null>): Row {
   return loadRow(id);
 }
 
-function notify(id: string, stage: EntityNameStage): void {
-  emit('entity-name', { id, stage });
-}
-
 /** 最近一条同名记录（用于幂等：同名不重复打扰用户） */
 function latestByEntity(entity: string): Row | undefined {
   return db.prepare(
@@ -388,7 +386,7 @@ export interface CheckResult {
  * 登记一次名称核验（MCP entity_name_check / CLI names check）。
  * 先自查资料库：有**确认口径**的候选全名（页面标题 / 证据账本 / 原始资料提取文本）直接返回
  * （Agent 用 rename_page 改用全名，无需请示）；只剩页面正文里的疑似候选、或什么都没有时，
- * 登记「是否允许联网查企查查/天眼查」的请示，等用户在界面答复（疑似候选一并写进说明供判断）。
+ * 登记「是否允许联网查企查查/天眼查」这一问，Agent 随即在对话里问用户（疑似候选一并写进说明供判断）。
  */
 export function requestEntityNameCheck(input: {
   entity: string;
@@ -448,7 +446,6 @@ export function requestEntityNameCheck(input: {
     entity, pageId, pagePath, pageTitle, note: noteWithHints,
     stage: 'query_consent', queryConsent: '', fullName: '', fullNameSource: '', outcome: '',
   });
-  notify(created.id, 'query_consent');
   return { check: toCheck(created), candidates, created: true };
 }
 
@@ -505,7 +502,8 @@ function insertCheck(input: {
 
 /**
  * 回填联网查到的工商全名（MCP entity_name_propose / CLI names propose）。
- * 前置：用户已同意联网查询（stage=lookup）。回填后登记「是否改用全名」的请示，用户同意即改名。
+ * 前置：用户已同意联网查询（stage=lookup）。回填后进入「是否改用全名」一问，Agent 随即在对话里问用户；
+ * 用户同意由 `entity_name_answer(id, allow)` 落地改名。
  * 查不到全名时不传 fullName：本次核验按「未找到全名」办结，计入「最终不是全名」。
  */
 export function proposeEntityName(input: {
@@ -519,10 +517,10 @@ export function proposeEntityName(input: {
     throw new EntityNameError(`该核验已办结（${describeOutcome(row.outcome)}），无需回填`, 409);
   }
   if (row.stage === 'query_consent') {
-    throw new EntityNameError('用户尚未答复是否允许联网查询，先不要回填；下次作业用 list_entity_names 读答复', 409);
+    throw new EntityNameError('用户还没答复「是否允许联网查询」——先在对话里问，再用 entity_name_answer 回填答复', 409);
   }
   if (row.stage === 'rename_consent') {
-    throw new EntityNameError('已登记改名请示，等用户在界面答复即可，无需重复回填', 409);
+    throw new EntityNameError('已回填全名，等用户答复「是否改用全名」（在对话里问，再用 entity_name_answer 回填），无需重复回填', 409);
   }
 
   const fullName = String(input.fullName || '').trim().slice(0, 120);
@@ -537,7 +535,6 @@ export function proposeEntityName(input: {
       note: note || row.note,
       answered_at: at,
     });
-    notify(row.id, 'closed');
     return toCheck(closed);
   }
 
@@ -554,11 +551,14 @@ export function proposeEntityName(input: {
     full_name_source: source,
     note: note || row.note,
   });
-  notify(row.id, 'rename_consent');
   return toCheck(pending);
 }
 
-/** 用户在界面答复（REST POST /api/entity-names/:id/answer / CLI names answer） */
+/**
+ * 用户答复落地（MCP entity_name_answer / REST POST /api/entity-names/:id/answer / CLI names answer）。
+ * 两轮共用：query_consent 阶段 allow=允许联网查，rename_consent 阶段 allow=同意改用全名（服务端立刻改名）。
+ * 答复来源是 Agent 在对话里问到的用户口径（内置 Agent 经弹窗点选、外部 Agent 问在自己对话里、CLI 供补录）。
+ */
 export function answerEntityNameCheck(
   id: string,
   decision: 'allow' | 'deny',
@@ -581,11 +581,9 @@ export function answerEntityNameCheck(
         note: extra || row.note,
         answered_at: at,
       });
-      notify(row.id, 'closed');
       return toCheck(closed);
     }
     const waiting = update(row.id, { stage: 'lookup', query_consent: 'granted', answered_at: at });
-    notify(row.id, 'lookup');
     return toCheck(waiting);
   }
 
@@ -602,7 +600,6 @@ export function answerEntityNameCheck(
       note: extra || row.note,
       answered_at: at,
     });
-    notify(row.id, 'closed');
     return toCheck(closed);
   }
 
@@ -620,7 +617,6 @@ export function answerEntityNameCheck(
       outcome: 'renamed',
       answered_at: at,
     });
-    notify(row.id, 'closed');
     return toCheck(closed);
   }
   try {
@@ -636,7 +632,6 @@ export function answerEntityNameCheck(
     page_title: row.full_name,
     answered_at: at,
   });
-  notify(row.id, 'closed');
   return toCheck(closed);
 }
 
@@ -763,7 +758,7 @@ export function formatEntityNameCheck(check: EntityNameCheck): string {
 export function formatEntityNameChecks(checks: EntityNameCheck[], status: EntityNameStatus): string {
   if (!checks.length) {
     switch (status) {
-      case 'pending': return '（没有等用户答复的名称核验）';
+      case 'pending': return '（没有已登记还没回填答复的名称核验）';
       case 'open': return '（没有未办结的名称核验）';
       case 'unresolved': return '（没有「最终不是全名」的条目）';
       default: return '（暂无名称核验记录：Agent 从未登记，或清单已被清理）';
@@ -796,9 +791,19 @@ export function formatEntityNameAudit(result: ReturnType<typeof auditCompanyPage
 }
 
 /**
+ * 问用户这件事的统一说法：内置 Agent 用 MCP ask_user（Engram 对话底部弹选项，点选即得答案），
+ * 外部 Agent 不要用那个工具（它们的提问能力在自己的对话里），问答完都要用 entity_name_answer 回填。
+ */
+const ASK_HOWTO = '问法：内置 Agent 调 ask_user（问题会出现在 Engram 对话最下侧的选项弹窗，'
+  + '选择题面如「是否允许联网查询企查查/天眼查？」选项「允许联网查询」/「不允许」），用户点选后你当场拿到答复；'
+  + '外部 Agent 不要用 ask_user（它等的是 Engram 界面），用你自己的提问能力问在对话里。'
+  + '拿到答复立刻用 entity_name_answer 回填（allow/deny），别空等、别自己替用户决定。';
+
+/**
  * entity_name_check 的返回文本（MCP 工具 / CLI names check 共用）：
- * 区分「资料库已有确认全名」「本次新登记请示」「已有未办结」「此前已办结」，
- * 并写清 Agent 的下一步与什么时候回来读答复；页面正文里的疑似候选单独标注「未核实」。
+ * 区分「资料库已有确认全名」「本次新登记」「已有未办结」「此前已办结」，
+ * 并写清 Agent 的下一步（在对话里问用户 → entity_name_answer 回填）；
+ * 页面正文里的疑似候选单独标注「未核实」。
  */
 export function describeCheckRequest(result: CheckResult): string {
   const { check, candidates, created } = result;
@@ -807,7 +812,7 @@ export function describeCheckRequest(result: CheckResult): string {
   if (confirmed.length) {
     const list = confirmed.map((item) => `- ${item.fullName}（${item.source}）`).join('\n');
     const sameTitle = Boolean(check.pageTitle) && check.pageTitle === confirmed[0].fullName;
-    return `资料库里已有全名（无需请示用户）：\n${list}\n`
+    return `资料库里已有全名（无需问用户）：\n${list}\n`
       + (sameTitle
         ? `页面标题「${check.pageTitle}」已是该全名，不用改名；把该页「名称口径」补全即可。`
         : '用 rename_page 把页面标题改成工商全名（保持页面 ID、引用双链自动重定向）；候选来自资料库，最终口径以工商登记为准。');
@@ -822,11 +827,13 @@ export function describeCheckRequest(result: CheckResult): string {
     : '';
   if (check.stage === 'query_consent') {
     return created
-      ? `已登记名称核验 #${check.id}：「${check.entity}」在资料库里没有确认的工商全名，`
-        + '已在 Engram 界面「名称核验」请示用户是否允许联网查企查查/天眼查。'
+      ? `已登记名称核验 #${check.id}：「${check.entity}」在资料库里没有确认的工商全名。`
         + suspectedHint
-        + '\n不要空等：继续处理下一份资料；下次作业先 list_entity_names 读用户答复。'
-      : `「${check.entity}」已有未办结的名称核验，不要重复登记：\n${formatEntityNameCheck(check)}${suspectedHint}`;
+        + `\n请立刻在对话里问用户是否允许联网查企查查/天眼查。${ASK_HOWTO}`
+        + '\n答复允许：用你自己的联网检索查企查查/天眼查拿工商全名，再 entity_name_propose 回填（带出处）；'
+        + '答复不允许：标题保持材料写法，名称口径标注「全称待确认」，继续下一份，不再追问。'
+      : `「${check.entity}」已有未办结的名称核验，不要重复登记：\n${formatEntityNameCheck(check)}${suspectedHint}`
+        + `\n${ASK_HOWTO}`;
   }
   if (check.stage === 'lookup') {
     return `「${check.entity}」的名称核验 #${check.id} 已获用户同意联网查询，等你的回填结果：\n`
@@ -834,10 +841,13 @@ export function describeCheckRequest(result: CheckResult): string {
       + '查不到就不传 fullName，按「未找到全名」办结。';
   }
   if (check.stage === 'rename_consent') {
-    return `「${check.entity}」已回填全名，等用户在界面确认是否改名（服务端执行，无需你操作）：\n`
-      + formatEntityNameCheck(check);
+    return `「${check.entity}」已回填全名，等用户答复是否改名：\n`
+      + formatEntityNameCheck(check)
+      + `\n请在对话里问用户是否把页面标题改为该全名（选项「改用全名」/「保持原样」）；同意后调 `
+      + `entity_name_answer(id="${check.id}", decision="allow") 由服务端改名（保持页面 ID、双链重定向、自动记日志），`
+      + '不同意就 decision="deny"。';
   }
-  return `「${check.entity}」此前已核验办结，不再重复请示用户：\n${formatEntityNameCheck(check)}\n`
+  return `「${check.entity}」此前已核验办结，不再重复问用户：\n${formatEntityNameCheck(check)}\n`
     + '标题保持材料写法并在名称口径标注「全称待确认」；后续材料出现全名时直接用 rename_page 改用全名。';
 }
 
@@ -847,8 +857,29 @@ export function describeProposal(check: EntityNameCheck): string {
     return `名称核验 #${check.id} 已按「联网查询未找到全名」办结：「${check.entity}」标题保持材料写法，`
       + '名称口径标注「全称待确认」与候选依据。收尾时用 list_entity_names 传 status=unresolved 把这类条目列给用户。';
   }
-  return `已登记改名请示 #${check.id}：「${check.entity}」→「${check.fullName}」`
-    + `${check.fullNameSource ? `（${check.fullNameSource}）` : ''}，已在 Engram 界面「名称核验」请用户确认。\n`
-    + '用户同意后由服务端执行改名（保持页面 ID、双链重定向、自动记日志）；不要空等，'
-    + '下次作业用 list_entity_names 看结果并补全该页「名称口径」章节。';
+  return `已回填全名 #${check.id}：「${check.entity}」→「${check.fullName}」`
+    + `${check.fullNameSource ? `（${check.fullNameSource}）` : ''}。\n`
+    + '请在对话里问用户是否改用该全名（选项「改用全名」/「保持原样」）；'
+    + `同意后调 entity_name_answer(id="${check.id}", decision="allow")，由服务端执行改名`
+    + '（保持页面 ID、双链重定向、自动记日志）；不同意就 decision="deny"，标题保持材料写法。';
+}
+
+/** entity_name_answer 的返回文本（MCP 工具 entity_name_answer / CLI names answer 共用） */
+export function describeEntityNameAnswer(check: EntityNameCheck): string {
+  const head = `已按用户答复登记 #${check.id}：「${check.entity}」`;
+  switch (check.outcome) {
+    case 'query_denied':
+      return `${head}——用户不允许联网查询。标题保持材料写法，名称口径标注「全称待确认」与候选依据，`
+        + '继续下一份资料，不要再为这个名称问用户；收尾用 list_entity_names 传 status=unresolved 列出它。';
+    case 'kept_material':
+      return `${head}——用户不同意改用全名。标题保持材料写法，并在名称口径记录候选全名`
+        + `（${check.fullName || '未记录'}）与出处，继续作业，不要反复请示。`;
+    case 'renamed':
+      return `${head}——用户同意改名，服务端已把页面标题改为「${check.fullName}」`
+        + '（保持页面 ID、引用双链已重定向、操作日志已记录）。'
+        + '接着把该页「名称口径」章节补全（全称 / 英文名 / 简称别名 / 易混淆的同名公司），再继续下一份。';
+    default:
+      return `${head}——用户允许联网查询（#${check.id}）。现在用你自己的联网检索查企查查/天眼查拿工商登记全名，`
+        + '查到后 entity_name_propose 回填 fullName 与 source；查不到就不传 fullName，按「未找到全名」办结。';
+  }
 }

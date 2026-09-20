@@ -98,6 +98,8 @@ export interface Snapshot {
   toolCalls: ToolCallDto[];
   /** 本会话派出的子代理（含嵌套），对话流据此显示「用了子代理」 */
   subagents: SubagentDto[];
+  /** 还在等用户点选的提问：对话最下侧弹窗据此渲染（点选后从快照里消失） */
+  questions: QuestionDto[];
 }
 
 /**
@@ -596,6 +598,130 @@ export function listToolCalls(sessionId: string): ToolCallDto[] {
   return rows.map(toToolCall);
 }
 
+/* ---------- Agent 提问（MCP ask_user：对话最下侧弹选项，点选后那次工具调用才返回） ---------- */
+
+/** 提问状态：pending 等用户点选 / answered 已答复 / expired 超时作废 / cancelled 本轮被停 */
+export type QuestionStatus = 'pending' | 'answered' | 'expired' | 'cancelled';
+
+/** 一个可点选的选项（description 是给用户看的一句权衡说明，可为空） */
+export interface QuestionOptionDto {
+  label: string;
+  description?: string;
+}
+
+export interface QuestionDto {
+  id: string;
+  sessionId: string;
+  runId: string;
+  /** 卡片上的小标题（如「名称核验」），可为空 */
+  header: string;
+  question: string;
+  options: QuestionOptionDto[];
+  multiSelect: boolean;
+  status: QuestionStatus;
+  /** 用户点选的选项原文（单选恒为 0 或 1 个） */
+  selected: string[];
+  /** 用户自己填的补充答复（可空） */
+  custom: string;
+  createdAt: string;
+  answeredAt?: string;
+}
+
+function parseArray<T>(raw: unknown): T[] {
+  try {
+    const parsed = JSON.parse(String(raw ?? '[]'));
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function toQuestion(row: any): QuestionDto {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    runId: row.run_id || '',
+    header: row.header || '',
+    question: row.question || '',
+    options: parseArray<QuestionOptionDto>(row.options),
+    multiSelect: Number(row.multi_select) === 1,
+    status: (row.status as QuestionStatus) || 'pending',
+    selected: parseArray<string>(row.selected).map((item) => String(item)),
+    custom: row.custom || '',
+    createdAt: row.created_at,
+    answeredAt: row.answered_at || undefined,
+  };
+}
+
+export function insertQuestion(input: {
+  sessionId: string;
+  runId: string;
+  header?: string;
+  question: string;
+  options?: QuestionOptionDto[];
+  multiSelect?: boolean;
+}): QuestionDto {
+  const id = uuid();
+  db.prepare(
+    `INSERT INTO assistant_questions(id, session_id, run_id, header, question, options, multi_select,
+       status, selected, custom, created_at, answered_at)
+     VALUES(?, ?, ?, ?, ?, ?, ?, 'pending', '[]', '', ?, NULL)`
+  ).run(
+    id,
+    input.sessionId,
+    input.runId,
+    input.header || '',
+    input.question,
+    JSON.stringify(input.options || []),
+    input.multiSelect ? 1 : 0,
+    now()
+  );
+  return getQuestion(id)!;
+}
+
+export function getQuestion(id: string): QuestionDto | null {
+  const row = db.prepare(`SELECT * FROM assistant_questions WHERE id = ?`).get(String(id || '')) as any;
+  return row ? toQuestion(row) : null;
+}
+
+/** 收口一条提问：只有还在 pending 的才会被改写（先到的那次生效，重复答复幂等忽略） */
+export function settleQuestion(
+  id: string,
+  patch: { status: QuestionStatus; selected?: string[]; custom?: string }
+): QuestionDto | null {
+  const info = db
+    .prepare(
+      `UPDATE assistant_questions SET status = ?, selected = ?, custom = ?, answered_at = ?
+       WHERE id = ? AND status = 'pending'`
+    )
+    .run(
+      patch.status,
+      JSON.stringify(patch.selected || []),
+      patch.custom || '',
+      patch.status === 'answered' ? now() : null,
+      id
+    );
+  if (!info.changes) return null;
+  return getQuestion(id);
+}
+
+/** 该会话还在等答复的提问（快照带出去，界面据此渲染底部弹窗） */
+export function listPendingQuestions(sessionId: string): QuestionDto[] {
+  const rows = db
+    .prepare(`SELECT * FROM assistant_questions WHERE session_id = ? AND status = 'pending' ORDER BY created_at, rowid`)
+    .all(sessionId) as any[];
+  return rows.map(toQuestion);
+}
+
+/** 该轮还在等答复的提问（本轮收口时统一作废） */
+export function listPendingQuestionsForRun(runId: string): QuestionDto[] {
+  if (!runId) return [];
+  const rows = db
+    .prepare(`SELECT * FROM assistant_questions WHERE run_id = ? AND status = 'pending' ORDER BY created_at, rowid`)
+    .all(runId) as any[];
+  return rows.map(toQuestion);
+}
+
 /* ---------- 子代理（dsh 的 subagent / subagent_fork / workflow / ralph 子会话） ---------- */
 
 /** 一条子代理卡最多留多少步过程：够看清它在干什么，也不会把快照撑爆 */
@@ -755,6 +881,7 @@ export function snapshot(sessionId: string): Snapshot | null {
     runs: listRuns(sessionId),
     toolCalls: listToolCalls(sessionId),
     subagents: listSubagents(sessionId),
+    questions: listPendingQuestions(sessionId),
   };
 }
 

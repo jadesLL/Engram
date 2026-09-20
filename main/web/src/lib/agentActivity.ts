@@ -27,9 +27,12 @@ export const TOOL_LABELS: Record<string, string> = {
   move_page: '移动页面',
   delete_page: '删除页面（回收站）',
   entity_name_check: '登记公司全名核验',
+  entity_name_answer: '回填用户答复',
   entity_name_propose: '回填工商全名',
   list_entity_names: '读名称核验清单',
   entity_name_audit: '盘点公司页名称',
+  // 提问：问题弹在对话最下侧，图标/状态条据此说明「它在等你点选」
+  ask_user: '向你提问（对话底部弹窗）',
   // 委派类工具：正常会被子代理卡接管（不再单独成行），这里兜住没起成子会话的那次调用
   subagent: '派子代理',
   subagent_fork: '派子代理（继承对话）',

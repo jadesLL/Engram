@@ -1,5 +1,5 @@
 /**
- * 全局 SSE 订阅：服务端页面变更与名称核验请示实时推送。
+ * 全局 SSE 订阅：服务端页面变更与 Agent 提问提醒实时推送。
  * EventSource 同源自动带 cookie 鉴权，断线原生自动重连。
  * 断线/重连通过回调通知外部（用于全局提示）。
  */
@@ -7,13 +7,16 @@
 import { notify } from './notify';
 
 export interface PageEvent {
-  type: string; // page-changed | page-deleted | page-moved | file-changed | entity-name
+  type: string; // page-changed | page-deleted | page-moved | file-changed | agent-question
   path?: string;
   id?: string;
   oldPath?: string;
   newPath?: string;
-  /** entity-name 事件：核验阶段（query_consent 等用户答复 / lookup 等 Agent 回填 / rename_consent 等用户确认改名 / closed） */
-  stage?: string;
+  /** agent-question：Agent 在对话里提了问，抽屉关着时提醒一句（弹窗本体在 ChatDrawer 里） */
+  sessionId?: string;
+  runId?: string;
+  count?: number;
+  text?: string;
 }
 
 let es: EventSource | null = null;
@@ -42,7 +45,7 @@ export function openPageStream(onEvent: (ev: PageEvent) => void): () => void {
       /* ignore malformed */
     }
   };
-  for (const type of ['page-changed', 'page-deleted', 'page-moved', 'file-changed', 'entity-name']) {
+  for (const type of ['page-changed', 'page-deleted', 'page-moved', 'file-changed', 'agent-question']) {
     es.addEventListener(type, handle(type));
   }
   es.onerror = () => {

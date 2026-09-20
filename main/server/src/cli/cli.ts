@@ -106,12 +106,12 @@ const HELP = `Engram CLI —— 外部 Agent 操作知识库
   pages move <titleOrId> [--dir Wiki/实体] [--title <t>]  移动页面到 Wiki 树内目录（保持页面 ID，可顺带改标题）
   pages delete <titleOrId|路径> [--reason <原因>]         把单个 Wiki/ 页面移入回收站（软删除、可恢复；原始资料/AIWorks 只读不可删）
   pages evidence <titleOrId>                          读页面证据账本
-  names check <名称> [--page <titleOrId>] [--note <说明>]  公司全名核验：资料库没有全名时登记请示（用户在界面「名称核验」答复是否允许联网查企查查/天眼查）
+  names check <名称> [--page <titleOrId>] [--note <说明>]  公司全名核验：资料库没有全名时登记，随后在对话里问用户是否允许联网查企查查/天眼查
   names propose <核验id> [--full-name <全名>] [--source <出处>] [--note <说明>]
-                                                       回填联网查到的工商全名并请示用户是否改用全名；查不到就不传 --full-name
+                                                       回填联网查到的工商全名，再在对话里问用户是否改用全名；查不到就不传 --full-name
   names list [--status pending|open|unresolved|all]    读名称核验清单；unresolved 即「最终不是全名」的条目
   names audit                                          全库公司页名称盘点（标题不是工商全名形态的页面）
-  names answer <核验id> --allow|--deny [--note <说明>]   用户侧答复（等同在界面「名称核验」点选）
+  names answer <核验id> --allow|--deny [--note <说明>]   回填用户答复（allow：允许联网查询 / 同意改用全名；同意即由服务端改名）
   chat save [--identifier i] [--project p] [--append] 沉积对话（stdin 为正文）
   guide                                               输出《Agent 作业指南》全文
   mcp-config [--format zcode|codex|claude|kimi|generic]  输出各 Agent 的 MCP 接入配置片段

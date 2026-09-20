@@ -100,37 +100,37 @@ test('资料库正文里写明全名的算确认口径：不打扰用户', () =>
   assert.match(kernel.describeCheckRequest(result), /资料库里已有全名/);
 });
 
-test('资料库正文里带存疑标记的候选不算全名：仍请示用户并标注未核实', () => {
+test('资料库正文里带存疑标记的候选不算全名：仍登记这一问并标注未核实', () => {
   const id = seedPage(
     'Wiki/实体/津亚电子.md',
     '津亚电子',
     '### 名称口径\n\n- 全称待确认：候选写法有「天津津亚电子有限公司」，尚未核实。'
   );
   const result = kernel.requestEntityNameCheck({ entity: '津亚电子', titleOrId: id });
-  assert.equal(result.check.stage, 'query_consent', '未核实候选不能当全名，仍要请示');
+  assert.equal(result.check.stage, 'query_consent', '未核实候选不能当全名，仍要问用户');
   const suspected = result.candidates.filter((c) => !c.confirmed).map((c) => c.fullName);
   assert.ok(suspected.includes('天津津亚电子有限公司'), `应给出疑似候选：${JSON.stringify(result.candidates)}`);
   const text = kernel.describeCheckRequest(result);
   assert.match(text, /未核实，不能当结论/);
-  assert.match(text, /已在 Engram 界面「名称核验」请示用户/);
-  // 疑似候选写进核验说明，用户在面板上判断时看得到
+  assert.match(text, /请立刻在对话里问用户/);
+  // 疑似候选写进核验说明，用户在对话弹窗里判断时看得到
   assert.match(result.check.note, /资料库正文里出现过（未核实）：天津津亚电子有限公司/);
 });
 
 /* ------------------------------------------------------------------ 请示两轮 */
 
-test('资料库没有全名：登记查询许可请示，等用户答复', () => {
+test('资料库没有全名：登记这一问，让 Agent 在对话里问用户', () => {
   const result = kernel.requestEntityNameCheck({ entity: '宏远精密', titleOrId: null as any, note: '材料里只写简称' });
   assert.equal(result.created, true);
   assert.equal(result.check.stage, 'query_consent');
   assert.equal(result.check.outcome, '');
   assert.equal(kernel.pendingEntityNameCount() >= 1, true);
   assert.equal(kernel.listEntityNameChecks('pending').some((c) => c.entity === '宏远精密'), true);
-  assert.match(kernel.describeCheckRequest(result), /已在 Engram 界面「名称核验」请示用户/);
-  assert.match(kernel.describeCheckRequest(result), /不要空等/);
+  assert.match(kernel.describeCheckRequest(result), /请立刻在对话里问用户/);
+  assert.match(kernel.describeCheckRequest(result), /ask_user/);
 });
 
-test('同名重复登记：复用未办结的核验，不再打扰用户', () => {
+test('同名重复登记：复用未办结的核验，不再问你第二次', () => {
   const first = kernel.requestEntityNameCheck({ entity: '恒信物流' });
   assert.equal(first.created, true);
   const second = kernel.requestEntityNameCheck({ entity: '恒信物流' });
@@ -143,7 +143,7 @@ test('未获许可就回填全名会被拒绝', () => {
   const { check } = kernel.requestEntityNameCheck({ entity: '未许可公司' });
   assert.throws(
     () => kernel.proposeEntityName({ id: check.id, fullName: '北京未许可科技有限公司' }),
-    /用户尚未答复是否允许联网查询/
+    /还没答复「是否允许联网查询」/
   );
 });
 

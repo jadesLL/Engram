@@ -5,6 +5,7 @@ import { saveChat } from '../lib/chat.js';
 import { subscribeRun } from '../assistant/events.js';
 import { AgentNotConfiguredError, cancelRun, isRunning, RunConflictError, submitMessage } from '../assistant/runner.js';
 import { agentRuntimeStatus } from '../assistant/dshRuntime.js';
+import { AgentQuestionError, answerAgentQuestion } from '../assistant/questions.js';
 import { bundledDshBin, getAgentConfig, setAgentConfig } from '../assistant/config.js';
 import { AGENT_APIS, agentApi } from '../assistant/agentSettings.js';
 import * as repo from '../assistant/repository.js';
@@ -239,5 +240,25 @@ export async function assistantRoutes(app: FastifyInstance) {
     const run = repo.getRun((req.params as any).id);
     if (!run) return reply.code(404).send({ error: '运行不存在' });
     return { run, running: isRunning(run.id) };
+  });
+
+  /**
+   * 答复 Agent 的提问（对话最下侧弹窗点选）。
+   * 答复会立刻唤醒挂起的那次 MCP ask_user 工具调用——Agent 在同一轮里拿到答案继续，
+   * 所以这里不回「已送达」这种空话，直接把收口后的提问（含用户口径）回给前端。
+   */
+  app.post('/api/assistant/questions/:id/answer', async (req, reply) => {
+    const body = (req.body || {}) as { selected?: unknown; custom?: unknown };
+    const selected = Array.isArray(body.selected) ? body.selected.map((item) => String(item)) : [];
+    try {
+      const question = answerAgentQuestion((req.params as any).id, {
+        selected,
+        custom: typeof body.custom === 'string' ? body.custom : '',
+      });
+      return { ok: true, question };
+    } catch (error) {
+      if (error instanceof AgentQuestionError) return reply.code(error.status).send({ error: error.message });
+      throw error;
+    }
   });
 }

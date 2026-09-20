@@ -56,20 +56,8 @@
 
       <div class="rail-spacer" />
 
-      <!-- 名称核验（Agent 撞上查不到工商全名的公司时登记的请示） -->
-      <button
-        class="rail-btn"
-        type="button"
-        :class="{ active: entityNamesOpen }"
-        v-tooltip.right="'名称核验'"
-        aria-label="名称核验"
-        @click="entityNamesOpen = true"
-      >
-        <Icon name="clipboard" :size="19" />
-        <span v-if="entityNames.pending" class="dot" />
-      </button>
-
       <!-- 内置 Agent（聊天抽屉）：有轮次在跑时按钮上就带状态，抽屉关着也知道它还在干活 -->
+      <!-- Agent 的提问（含公司全名核验）弹在对话最下侧，不再单独占一页 -->
       <button
         class="rail-btn"
         type="button"
@@ -154,9 +142,6 @@
 
     <AppContextMenu />
 
-    <!-- 名称核验：Agent 登记的公司全名请示，答复后 Agent 下次作业读取（同意改名即由服务端执行） -->
-    <EntityNameModal :open="entityNamesOpen" @close="entityNamesOpen = false" />
-
     <!-- 移动端底部导航（聊天抽屉打开时让位，避免盖住输入区） -->
     <nav class="bottom-nav" :class="{ 'chat-open': app.chatDrawerOpen }">
       <button v-for="item in bottomItems" :key="item.label" type="button" @click="item.action">
@@ -199,7 +184,6 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
 import { useUpdateStore } from '../stores/update';
-import { useEntityNamesStore } from '../stores/entityNames';
 import { api } from '../api';
 import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
@@ -209,18 +193,14 @@ import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
 import AgentStatusPill from '../components/AgentStatusPill.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
-import EntityNameModal from '../components/EntityNameModal.vue';
 import Icon from '../components/Icon.vue';
 
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
 const updateStore = useUpdateStore();
-const entityNames = useEntityNamesStore();
 const chat = useChatStore();
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
-/** 名称核验面板开合 */
-const entityNamesOpen = ref(false);
 
 /* ===== 文件提取进度：只在对应文件旁显示，系统后台处理不提供通用队列界面 ===== */
 let jobPollStopped = true;
@@ -334,13 +314,6 @@ function runMore(action: () => void) {
 
 const moreItems = computed(() => [
   {
-    label: '名称核验',
-    icon: 'clipboard',
-    dot: entityNames.pending > 0,
-    running: false,
-    action: () => runMore(() => { entityNamesOpen.value = true; }),
-  },
-  {
     label: '内置 Agent',
     icon: 'ai',
     dot: app.chatUnread,
@@ -410,15 +383,12 @@ onMounted(() => {
     }
     // Android 的本地 API 与 WebView 同进程，不建立常驻 SSE；保存操作会直接刷新对应界面。
     if (caps.runtime !== 'android-local') {
-      // 服务端 SSE 实时推送：页面增删改/移动刷新正文与侧栏；名称核验登记/答复刷新角标与面板
+      // 服务端 SSE 实时推送：页面增删改/移动刷新正文与侧栏；Agent 提问弹在对话里，这里只提醒一句
       closeStream = openPageStream((ev) => {
-        if (ev.type === 'entity-name') {
-          void entityNames.refresh();
-          if (ev.stage === 'query_consent') {
-            notify.info('Agent 登记了公司全名核验，可在左侧「名称核验」答复');
-          } else if (ev.stage === 'rename_consent') {
-            notify.info('Agent 查到了工商全名，可在「名称核验」确认是否改名');
-          }
+        if (ev.type === 'agent-question') {
+          if (app.chatDrawerOpen) return;
+          app.chatUnread = true;
+          notify.info('Agent 在对话里问了一个问题，点选后它接着往下做');
           return;
         }
         app.applyPageEvent(ev);
@@ -429,7 +399,6 @@ onMounted(() => {
   // 内置 Agent 正在跑的轮次要接上事件流：页面刷新后、或抽屉从没打开过，
   // 图标栏那颗「运行中」指示也得亮着（跑完还会亮小红点）。
   chat.syncRunningRuns().catch(() => {});
-  void entityNames.refresh();
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);

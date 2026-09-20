@@ -95,20 +95,24 @@ test('指南正文：原始资料口径为「Agent 无写权限 + 不停下来�
   assert.match(result.text, /不得走 HTTP\/CLI 旁路/);
   assert.match(result.text, /save_chat）须用户指示/);
   assert.match(result.text, /可被后续作业当资料提炼/);
-  // 已移除的「问用户」通道与旧的错误口径都不应残留
-  assert.doesNotMatch(result.text, /ask_user|list_questions|待确认问题/);
+  // 「问用户」只出现在公司全名那条例外里，且没有旧的待确认问题通道
+  assert.doesNotMatch(result.text, /list_questions|待确认问题/);
   assert.doesNotMatch(result.text, /原始资料只读不改/);
 });
 
-test('指南正文：公司全名走名称核验通道，且写明是全库唯一允许问用户的事', async () => {
+test('指南正文：公司全名问在对话里，且写明是全库唯一允许问用户的事', async () => {
   const result = await callTool('kb_guide');
   assert.equal(result.isError, false, result.text);
   assert.match(result.text, /名称核验/);
   assert.match(result.text, /全库唯一允许问用户的事/);
   assert.match(result.text, /企查查/);
   assert.match(result.text, /entity_name_check/);
+  assert.match(result.text, /entity_name_answer/);
   assert.match(result.text, /entity_name_propose/);
   assert.match(result.text, /list_entity_names/);
+  // 问法：内置 Agent 用 ask_user 弹底部选项，外部 Agent 用自带提问能力
+  assert.match(result.text, /ask_user/);
+  assert.match(result.text, /对话最下侧/);
   // 全名的界定与「不编造、不自行改名」的红线
   assert.match(result.text, /全名的界定/);
   assert.match(result.text, /不得编造或推测全名/);
@@ -117,10 +121,12 @@ test('指南正文：公司全名走名称核验通道，且写明是全库唯�
   assert.match(result.text, /最终不是全名/);
 });
 
-test('MCP instructions 交代名称核验通道与联网检索分工', () => {
+test('MCP instructions 交代名称核验通道、对话提问与联网检索分工', () => {
   const instructions = client.getInstructions?.() || '';
   assert.match(instructions, /entity_name_check/);
+  assert.match(instructions, /entity_name_answer/);
   assert.match(instructions, /entity_name_propose/);
   assert.match(instructions, /list_entity_names/);
+  assert.match(instructions, /ask_user/);
   assert.match(instructions, /企查查/);
 });

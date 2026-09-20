@@ -175,10 +175,13 @@ export function migrate() {
     created_at TEXT NOT NULL
   );
 
-  -- 公司全名核验通道（唯一允许问用户的事）：Agent 登记待核名称 → 用户在界面「名称核验」答复
-  -- 是否允许联网查企查查/天眼查 → Agent 回填查到的工商全名 → 用户确认后由服务端改名。
+  -- 公司全名核验通道（唯一允许问用户的事，问在对话里）：Agent 登记待核名称 →
+  -- 在对话里问用户是否允许联网查企查查/天眼查（内置 Agent 经 MCP ask_user 弹底部选项、
+  -- 外部 Agent 用自己的提问能力）→ entity_name_answer 回填答复 → Agent 回填查到的工商全名 →
+  -- 用户同意后由服务端改名。
   -- 与 ingest_questions（旧内置提炼管线，已停用）无关，也不是通用提问通道：
   -- 只服务「公司类实体页标题用工商全名」这一条口径。
+  -- （通用提问通道在 assistant_questions：内置 Agent 的 ask_user 弹窗走那张表。）
   CREATE TABLE IF NOT EXISTS entity_name_checks (
     id TEXT PRIMARY KEY,
     entity TEXT NOT NULL,                        -- 材料里的写法（待核名称，通常是简称）
@@ -550,6 +553,29 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_assistant_subagents_child
     ON assistant_subagents(child_session_id);
 
+  -- Agent 提问（内置 Agent 经 MCP ask_user 向用户提问）：一行一个问题，
+  -- 界面在对话最下侧弹选项，用户点选即答复（status: pending → answered）。
+  -- 提问是「本轮阻塞」的：MCP 工具调用挂起等答复，超时 / 本轮结束由服务端收口成 expired / cancelled。
+  CREATE TABLE IF NOT EXISTS assistant_questions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    run_id TEXT NOT NULL DEFAULT '',
+    header TEXT NOT NULL DEFAULT '',
+    question TEXT NOT NULL,
+    options TEXT NOT NULL DEFAULT '[]',
+    multi_select INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    selected TEXT NOT NULL DEFAULT '[]',
+    custom TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    answered_at TEXT,
+    FOREIGN KEY(session_id) REFERENCES assistant_sessions(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_assistant_questions_session
+    ON assistant_questions(session_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_assistant_questions_run
+    ON assistant_questions(run_id, status);
+
   -- 桌面端远端免密接入已移除，清理旧版本留下的连接令牌
   DROP TABLE IF EXISTS desktop_tokens;
   `);
@@ -622,6 +648,11 @@ export function migrate() {
          updated_at = ?
      WHERE status IN ('queued', 'running', 'executing')`
   ).run(now());
+  // 重启时还在等用户点选的提问一并作废：那一轮已经中断，挂起的 MCP 调用也没了等待者，
+  // 留着 pending 会让弹窗永远挂着（用户点了也无人接收）。
+  db.prepare(
+    `UPDATE assistant_questions SET status = 'expired' WHERE status = 'pending'`
+  ).run();
   // 排队中的消息随重启一起作废：摘掉「排队中」标记，否则界面会一直标着等一条永远不会来的回复
   // （被中断的轮次在界面上可重试，用户点重试即可再发一次）
   const staleQueued = db
