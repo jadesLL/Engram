@@ -3,7 +3,7 @@
   <span v-if="mode === 'text'" class="secret-text-wrap" v-bind="rootAttrs">
     <code
       class="secret-text"
-      :title="revealed ? '点击隐藏' : '点击查看完整内容'"
+      v-tooltip="{ body: revealed ? '点击隐藏' : '点击查看完整内容', meta: revealed ? '再次点击恢复掩码' : '明文仅在本机显示' }"
       @click="revealed = !revealed"
     >{{ revealed ? value : mask(value) }}</code>
     <button
@@ -30,7 +30,7 @@
     <button
       class="eye"
       type="button"
-      :title="revealed ? '隐藏' : '显示完整内容'"
+      v-tooltip.right="{ body: revealed ? '隐藏' : '显示完整内容' }"
       :aria-label="revealed ? '隐藏完整内容' : '显示完整内容'"
       @mousedown.prevent
       @click="toggleEye"
