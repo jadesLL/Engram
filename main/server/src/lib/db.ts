@@ -596,6 +596,29 @@ export function migrate() {
          updated_at = ?
      WHERE status IN ('queued', 'running', 'executing')`
   ).run(now());
+  // 排队中的消息随重启一起作废：摘掉「排队中」标记，否则界面会一直标着等一条永远不会来的回复
+  // （被中断的轮次在界面上可重试，用户点重试即可再发一次）
+  const staleQueued = db
+    .prepare(
+      `SELECT m.id AS id, m.metadata AS metadata
+       FROM assistant_messages m
+       JOIN assistant_runs r ON r.id = m.run_id
+       WHERE r.status = 'interrupted' AND m.metadata LIKE '%"queued":true%'`
+    )
+    .all() as any[];
+  if (staleQueued.length) {
+    const clearQueued = db.prepare(`UPDATE assistant_messages SET metadata = ? WHERE id = ?`);
+    for (const row of staleQueued) {
+      try {
+        const metadata = JSON.parse(row.metadata || '{}');
+        if (metadata?.queued !== true) continue;
+        delete metadata.queued;
+        clearQueued.run(JSON.stringify(metadata), row.id);
+      } catch {
+        /* 坏 JSON 不动它 */
+      }
+    }
+  }
   // 存量会话补标题来源：补列后老行是 NULL，除默认名外都当用户命名过（自动命名不去覆盖用户起的名）
   db.prepare(
     `UPDATE assistant_sessions

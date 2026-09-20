@@ -31,11 +31,23 @@
 
     <header class="chat-head">
       <div class="chat-brand"><Icon name="ai" :size="16" /> 内置 Agent</div>
-      <!-- 正在跑：贴着标题给一眼状态（用时每秒跳），滚到哪一段都看得见 -->
+      <!-- 正在跑：贴着标题给一眼状态（用时每秒跳），滚到哪一段都看得见；
+           停止就挂在胶囊右边——输入框右下角固定留给「发送」，运行中照样能发消息 -->
       <span v-if="liveRun" class="head-live">
         <AppSpinner :size="11" />
         <span class="head-live-text">回复中 {{ liveElapsed }}</span>
+        <span v-if="queuedCount" class="head-live-queued">排队 {{ queuedCount }}</span>
       </span>
+      <button
+        v-if="liveRun"
+        class="btn small head-stop"
+        type="button"
+        :disabled="stopping"
+        v-tooltip="'立即停止这一轮（排队中的消息会退回输入框）'"
+        @click="stopRun()"
+      >
+        <Icon name="square" :size="12" /> {{ stopping ? '停止中…' : '停止' }}
+      </button>
       <span class="chat-spacer" />
       <button
         class="btn icon session-toggle"
@@ -171,7 +183,14 @@
                 @click="copy(item.message.content)"
               >复制</button>
             </div>
-            <div v-if="item.role === 'user'" class="entry-plain">{{ item.message.content }}</div>
+            <div v-if="item.role === 'user'" class="entry-user">
+              <div class="entry-plain">{{ item.message.content }}</div>
+              <!-- 排队中：这轮还没轮到它（前一轮收口后自动接着回复），标出来免得用户以为卡住了 -->
+              <span v-if="isQueuedMessage(item.message)" class="queued-chip">
+                <AppSpinner :size="10" />
+                排队中 · 当前这轮跑完自动接着回复
+              </span>
+            </div>
             <div
               v-else-if="item.message.content"
               class="entry-markdown"
@@ -310,6 +329,7 @@
         <AppSpinner :size="13" />
         <b class="run-live-title">内置 Agent 正在回复</b>
         <span class="run-live-detail">{{ liveDetail }}</span>
+        <span v-if="queuedCount" class="run-live-queued">排队 {{ queuedCount }} 条</span>
         <span class="run-live-time">{{ liveElapsed }}</span>
       </div>
     </div>
@@ -361,27 +381,23 @@
         ref="inputEl"
         v-model="draft"
         rows="3"
-        :placeholder="chat.currentRun ? '正在回复…' : '问点什么，或让我整理知识库（Enter 发送，Shift+Enter 换行）'"
-        :disabled="Boolean(chat.currentRun)"
+        :placeholder="chat.currentRun
+          ? '正在回复…可以继续输入，发送后会排队，等这轮跑完自动接着回复（Enter 发送，Shift+Enter 换行）'
+          : '问点什么，或让我整理知识库（Enter 发送，Shift+Enter 换行）'"
         @keydown.enter.exact.prevent="send()"
       />
       <div class="composer-actions">
+        <!-- 运行中发出去的消息不会丢：服务端排队，当前这轮一收口自动接着回复 -->
+        <span v-if="chat.currentRun" class="composer-hint">
+          运行中发送会排队，这轮跑完自动接着回复
+        </span>
         <button
-          v-if="chat.currentRun"
-          class="btn small"
-          type="button"
-          @click="chat.cancel()"
-        >
-          <Icon name="square" :size="13" /> 停止
-        </button>
-        <button
-          v-else
           class="btn primary small"
           type="button"
           :disabled="!draft.trim()"
           @click="send()"
         >
-          <Icon name="send" :size="13" /> 发送
+          <Icon name="send" :size="13" /> {{ chat.currentRun ? '排队发送' : '发送' }}
         </button>
       </div>
     </footer>
@@ -406,6 +422,7 @@ import {
 import type { SelectionExcerpt } from '../lib/askAgent';
 import {
   buildChatTimeline,
+  isQueuedMessage,
   isReasoningLive,
   reasoningDurationMs,
   showStreamName,
@@ -843,10 +860,35 @@ async function removeSession(session: ChatSession) {
 
 async function send(text?: string) {
   const message = (text ?? draft.value).trim();
-  if (!message || chat.currentRun) return;
+  if (!message) return;
   draft.value = '';
+  // 运行中也照发：服务端会把这条排进队列，当前这轮收口后自动接着回复
   await chat.send(message);
   await scrollToBottom();
+}
+
+/* ===== 停止：按下即见效（服务端立刻落终态，不等 dsh 进程退出），排队中的消息退回输入框 ===== */
+const stopping = ref(false);
+
+/** 排队中的消息条数：标题胶囊与贴底状态条都标一下，运行中发过消息就看得到它在等 */
+const queuedCount = computed(() => chat.queuedRuns.length);
+
+async function stopRun() {
+  if (stopping.value || !chat.currentRun) return;
+  stopping.value = true;
+  try {
+    const released = await chat.cancel();
+    if (released.length) {
+      // 停止 = 全停：排队消息还没真正发出去，撤下来填回输入框，改完可以再发
+      draft.value = [draft.value.trim(), ...released].filter(Boolean).join('\n\n');
+      notify.success(`已停止；排队中的 ${released.length} 条消息已退回输入框`);
+    }
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '停止失败');
+  } finally {
+    stopping.value = false;
+    inputEl.value?.focus();
+  }
 }
 
 async function ingest() {
@@ -1082,9 +1124,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* 会话按钮把标题挤到左边：品牌 + 弹性空隙 + 按钮组 */
@@ -1392,6 +1437,29 @@ onUnmounted(() => {
   overflow-wrap: anywhere;
 }
 
+/* 用户消息 + 排队标记：运行中发的那条还没轮到它，标出来免得用户以为卡住了 */
+.entry-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.entry-user .entry-plain {
+  align-self: stretch;
+}
+
+.queued-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent, #4d8aff);
+  font-size: 11px;
+}
+
 .entry-markdown {
   font-size: 13px;
   line-height: 1.7;
@@ -1642,8 +1710,20 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-/* 标题右侧的「回复中 用时」：抽屉滚到哪一段都看得见 */
+/* 贴底状态条上的排队数：还有几条在等这一轮收口 */
+.run-live-queued {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent, #4d8aff);
+  font-size: 11px;
+}
+
+/* 标题右侧的「回复中 用时」：抽屉滚到哪一段都看得见。
+   不许换行（窄抽屉里宁可先挤掉左侧品牌文字），否则「回复中 / 12 秒」会拆成两行 */
 .head-live {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1654,6 +1734,37 @@ onUnmounted(() => {
   color: var(--accent, #4d8aff);
   font-size: 11px;
   font-weight: 500;
+  white-space: nowrap;
+}
+
+/* 胶囊里的排队数：运行中又发过消息，一眼看得到还有几条在等 */
+.head-live-queued {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* 停止：挂在「回复中」胶囊右侧。输入框右下角固定留给「发送」，所以它挪到标题栏来 */
+.head-stop {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--danger, #c42b1c);
+  border-color: color-mix(in srgb, var(--danger, #c42b1c) 32%, var(--border));
+}
+
+.head-stop:hover:not(:disabled) {
+  border-color: var(--danger, #c42b1c);
+  background: var(--danger-soft);
+}
+
+.head-stop:disabled {
+  opacity: 0.65;
+  cursor: default;
 }
 
 .head-live-text {
@@ -2141,8 +2252,21 @@ onUnmounted(() => {
 
 .composer-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   margin-top: 8px;
+}
+
+/* 运行中左侧那句说明：为什么按钮写着「排队发送」 */
+.composer-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* 紧凑档（769-1024px）：文件树是浮层、不占布局位，满窗只让开左侧图标栏 */

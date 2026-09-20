@@ -100,6 +100,13 @@ export interface Snapshot {
   subagents: SubagentDto[];
 }
 
+/**
+ * 正在执行的轮次：只有它占着会话的单飞位（同一会话同时只跑一轮）。
+ * 排队中的轮次（queued）还没送进 dsh，不占位——前一轮收口后它自动转正。
+ */
+const RUNNING_STATUSES = ['running'];
+
+/** 还在推进的轮次（含排队中）：会话列表的「忙」状态、删会话时的收尾都要算上 */
 const ACTIVE_STATUSES = ['queued', 'running'];
 
 function uuid(): string {
@@ -348,16 +355,44 @@ export function countUserMessages(sessionId: string): number {
   return Number(row?.total) || 0;
 }
 
-export function createRun(input: { sessionId: string; userMessageId: string; context: unknown }): RunDto {
+/**
+ * 建一轮运行。status='queued' 用于「上一轮还在跑时用户又发了一条」：
+ * 先把消息与轮次落库（前端立刻看得见「排队中」），等前一轮收口再转正送进 dsh。
+ */
+export function createRun(input: {
+  sessionId: string;
+  userMessageId: string;
+  context: unknown;
+  status?: 'running' | 'queued';
+}): RunDto {
   const id = uuid();
   const stamp = now();
   db.prepare(
     `INSERT INTO assistant_runs(id, session_id, user_message_id, status, context, created_at, updated_at)
-     VALUES(?, ?, ?, 'running', ?, ?, ?)`
-  ).run(id, input.sessionId, input.userMessageId, JSON.stringify(input.context ?? {}), stamp, stamp);
+     VALUES(?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    input.sessionId,
+    input.userMessageId,
+    input.status === 'queued' ? 'queued' : 'running',
+    JSON.stringify(input.context ?? {}),
+    stamp,
+    stamp
+  );
   // 用户消息回填 run_id：前端靠它把"乐观插入的本地消息"与快照里的同一条对齐
   db.prepare(`UPDATE assistant_messages SET run_id = ? WHERE id = ?`).run(id, input.userMessageId);
   return getRun(id)!;
+}
+
+/** 一轮运行里带的界面上下文（排队轮次转正、重试时都要还原同一份） */
+export function runContext(runId: string): Record<string, unknown> {
+  const row = db.prepare(`SELECT context FROM assistant_runs WHERE id = ?`).get(runId) as any;
+  try {
+    const parsed = JSON.parse(row?.context || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 export function getRun(id: string): RunDto | null {
@@ -394,19 +429,103 @@ export function updateRun(id: string, patch: Partial<Pick<RunDto, 'status' | 'er
   db.prepare(`UPDATE assistant_runs SET ${sets.join(', ')} WHERE id = ?`).run(...values);
 }
 
+/** 该会话正在跑的那一轮（会话单飞位；排队中的不算，它还没送进 dsh） */
+export function runningRunForSession(sessionId: string): RunDto | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM assistant_runs WHERE session_id = ? AND status IN (${RUNNING_STATUSES.map(() => '?').join(', ')})
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`
+    )
+    .get(sessionId, ...RUNNING_STATUSES) as any;
+  return row ? toRun(row) : null;
+}
+
+/** 还在推进的轮次（含排队中）：删会话、取消等收尾动作用它 */
 export function activeRunForSession(sessionId: string): RunDto | null {
   const row = db
     .prepare(
       `SELECT * FROM assistant_runs WHERE session_id = ? AND status IN (${ACTIVE_STATUSES.map(() => '?').join(', ')})
-       ORDER BY created_at DESC LIMIT 1`
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`
     )
     .get(sessionId, ...ACTIVE_STATUSES) as any;
   return row ? toRun(row) : null;
 }
 
+/**
+ * 排队：消息与轮次一起落库（前端立刻看得见这条消息），但先不送 dsh。
+ * 上一轮收口时由 runner 把它转正——同一会话同时只跑一轮，先来先服务。
+ */
+export function queueRun(input: {
+  sessionId: string;
+  message: string;
+  context?: unknown;
+}): { run: RunDto; message: MessageDto } {
+  const message = insertMessage({
+    sessionId: input.sessionId,
+    role: 'user',
+    content: input.message.trim(),
+    metadata: { queued: true },
+  });
+  const run = createRun({
+    sessionId: input.sessionId,
+    userMessageId: message.id,
+    context: input.context ?? {},
+    status: 'queued',
+  });
+  // 重取一次：createRun 会把 run_id 回填到消息上，上面那份 DTO 还是回填前的
+  return { run, message: getMessage(message.id)! };
+}
+
+/** 该会话排队中的轮次（先来后到；同一毫秒建的按写入顺序，别让排队顺序飘） */
+export function listQueuedRuns(sessionId: string): RunDto[] {
+  const rows = db
+    .prepare(`SELECT * FROM assistant_runs WHERE session_id = ? AND status = 'queued' ORDER BY created_at, rowid`)
+    .all(sessionId) as any[];
+  return rows.map(toRun);
+}
+
+/** 队首那条排队轮次 */
+export function nextQueuedRun(sessionId: string): RunDto | null {
+  return listQueuedRuns(sessionId)[0] || null;
+}
+
+/** 排队轮次转正：状态改 running，并摘掉消息上的「排队中」标记（前端据此撤下标记） */
+export function promoteQueuedRun(runId: string): RunDto | null {
+  const run = getRun(runId);
+  if (!run) return null;
+  updateRun(runId, { status: 'running' });
+  updateMessageMetadata(run.userMessageId, { queued: false });
+  return getRun(runId);
+}
+
+/**
+ * 撤下该会话排队中的轮次：连消息一起删掉，返回原文（先来后到）。
+ * 这些消息从没送进 dsh，停止时撤下来才不会在对话里留下一句没人回答的话；
+ * 原文交给前端填回输入框，用户改完可以再发。
+ */
+export function discardQueuedRuns(sessionId: string): string[] {
+  const rows = db
+    .prepare(
+      `SELECT r.id AS run_id, r.user_message_id AS message_id, m.content AS content
+       FROM assistant_runs r
+       JOIN assistant_messages m ON m.id = r.user_message_id
+       WHERE r.session_id = ? AND r.status = 'queued'
+       ORDER BY r.created_at, r.rowid`
+    )
+    .all(sessionId) as any[];
+  if (!rows.length) return [];
+  const dropRun = db.prepare(`DELETE FROM assistant_runs WHERE id = ?`);
+  const dropMessage = db.prepare(`DELETE FROM assistant_messages WHERE id = ?`);
+  for (const row of rows) {
+    dropRun.run(row.run_id);
+    dropMessage.run(row.message_id);
+  }
+  return rows.map((row) => String(row.content || ''));
+}
+
 export function listRuns(sessionId: string): RunDto[] {
   const rows = db
-    .prepare(`SELECT * FROM assistant_runs WHERE session_id = ? ORDER BY created_at`)
+    .prepare(`SELECT * FROM assistant_runs WHERE session_id = ? ORDER BY created_at, rowid`)
     .all(sessionId) as any[];
   return rows.map(toRun);
 }
@@ -414,15 +533,16 @@ export function listRuns(sessionId: string): RunDto[] {
 /**
  * 全库正在跑的轮次（跨会话）。
  * 前端启动时靠它接上事件流：抽屉没打开过、或页面刚刷新，也要能显示「还在跑」。
+ * 排队中的轮次没有事件流可接（还没送进 dsh），不收在这里。
  */
 export function listActiveRuns(): Array<Pick<RunDto, 'id' | 'sessionId' | 'status' | 'createdAt'>> {
   const rows = db
     .prepare(
       `SELECT id, session_id, status, created_at FROM assistant_runs
-       WHERE status IN (${ACTIVE_STATUSES.map(() => '?').join(', ')})
+       WHERE status IN (${RUNNING_STATUSES.map(() => '?').join(', ')})
        ORDER BY created_at`
     )
-    .all(...ACTIVE_STATUSES) as any[];
+    .all(...RUNNING_STATUSES) as any[];
   return rows.map((row) => ({
     id: row.id,
     sessionId: row.session_id,
@@ -603,6 +723,17 @@ export function markSubagentsBackground(runId: string): void {
     `UPDATE assistant_subagents SET status = 'background', updated_at = ?
      WHERE run_id = ? AND status = 'running'`
   ).run(now(), runId);
+}
+
+/**
+ * 停止一轮时收掉它的子代理：取消会关掉 dsh 运行时，子代理是同一进程里的子会话，
+ * 一起被带走——标成 background（「仍在后台跑」）是假的，据实记成失败并写明原因。
+ */
+export function stopSubagentsForRun(runId: string, reason: string): void {
+  db.prepare(
+    `UPDATE assistant_subagents SET status = 'failed', stop_reason = ?, updated_at = ?
+     WHERE run_id = ? AND status IN ('running', 'background')`
+  ).run(reason.slice(0, 200), now(), runId);
 }
 
 export function listSubagents(sessionId: string): SubagentDto[] {

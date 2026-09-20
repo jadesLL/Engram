@@ -5,13 +5,12 @@ import { buildTask, type InterfaceContext } from './prompts.js';
 import { planReasoningReplay, type ReasoningPart } from './mapping.js';
 import { generateSessionTitle, heuristicTitle } from './title.js';
 import {
-  activeRunForSession,
   appendMessageChunk,
   appendMessageContent,
   countUserMessages,
   createRun,
-  findSubagentByChildSession,
   finishToolCallById,
+  getMessage,
   getRun,
   getSession,
   insertMessage,
@@ -19,10 +18,16 @@ import {
   insertToolCall,
   latestRunningToolCall,
   markSubagentsBackground,
+  nextQueuedRun,
+  promoteQueuedRun,
+  queueRun,
   recordSubagentActivity,
+  runContext,
+  runningRunForSession,
   setMessageContent,
   setSessionTitleIfAuto,
   snapshot,
+  stopSubagentsForRun,
   touchSession,
   updateMessageMetadata,
   updateRun,
@@ -35,12 +40,29 @@ import {
  * 一轮对话的编排：落库 + 事件透传 + 终态收口。
  * 单飞：同一会话同时只允许一轮运行（避免两条 dsh 进程写同一份会话日志）；
  * 不同会话各自独立，可并行跑（会话列表显示「回复中」）。
+ *
+ * 运行中又发来的消息不丢也不报错：落库成「排队中」的轮次（queued），
+ * 当前这轮一收口就自动转正接着跑（见 submitMessage / pumpQueue）。
  */
 
-const running = new Map<string, AgentTurn>();
+/** 一轮运行的本进程句柄：turn 用来取消，finish 用来收口（可被取消路径提前调用） */
+interface ActiveRun {
+  turn: AgentTurn;
+  finish: (outcome: { ok: boolean; error?: string; pump?: boolean }) => Promise<void>;
+}
+
+const running = new Map<string, ActiveRun>();
 
 export class RunConflictError extends Error {
   status = 409;
+}
+
+/** 没配 key 就不起运行：dsh 会在模型调用处失败，而那条错误对用户不可读 */
+function assertAgentConfigured(): void {
+  if (getAgentConfig().apiKey) return;
+  throw new AgentNotConfiguredError(
+    '内置 Agent 还没配模型凭据：到 设置 → Agent 接入 → 内置 Agent 填模型凭据（官方地址填 DeepSeek 平台 API Key；中转或自建网关先填 API 地址与模型，再填该网关的 Key）'
+  );
 }
 
 export class AgentNotConfiguredError extends Error {
@@ -187,26 +209,60 @@ function withTimeout<T>(task: Promise<T>, ms: number, fallback: T): Promise<T> {
   });
 }
 
+/** 会话与凭据的门槛：起一轮、排队一条都要先过这里 */
+function requireSession(sessionId: string) {
+  const session = snapshot(sessionId)?.session;
+  if (!session) {
+    const error: any = new Error('会话不存在');
+    error.status = 404;
+    throw error;
+  }
+  assertAgentConfigured();
+  return session;
+}
+
+/**
+ * 用户发来一条消息：会话里已经有在跑的一轮就排队（消息立刻落库、界面标「排队中」，
+ * 前一轮收口后自动转正接着回复），否则立刻起一轮。
+ */
+export function submitMessage(input: {
+  sessionId: string;
+  message: string;
+  context?: InterfaceContext;
+}): { run: RunDto; queued: boolean } {
+  requireSession(input.sessionId);
+  if (runningRunForSession(input.sessionId)) return enqueue(input);
+  try {
+    return { run: startRun(input), queued: false };
+  } catch (error) {
+    // 两个请求同时到：抢单飞位抢输了就排队，别把用户的话原样退回去
+    if (!(error instanceof RunConflictError)) throw error;
+    return enqueue(input);
+  }
+}
+
+function enqueue(input: { sessionId: string; message: string; context?: InterfaceContext }): {
+  run: RunDto;
+  queued: boolean;
+} {
+  const { run } = queueRun({
+    sessionId: input.sessionId,
+    message: input.message,
+    context: input.context ?? {},
+  });
+  touchSession(input.sessionId);
+  return { run, queued: true };
+}
+
 /** 起一轮：写用户消息 → 建 run → 起 dsh → 事件流式落库 */
 export function startRun(input: {
   sessionId: string;
   message: string;
   context?: InterfaceContext;
 }): RunDto {
-  const session = snapshot(input.sessionId)?.session;
-  if (!session) {
-    const error: any = new Error('会话不存在');
-    error.status = 404;
-    throw error;
-  }
-  if (activeRunForSession(input.sessionId)) {
+  const session = requireSession(input.sessionId);
+  if (runningRunForSession(input.sessionId)) {
     throw new RunConflictError('该会话已有正在进行的回复，等它结束或先停止');
-  }
-  // 没配 key 就不起运行：dsh 会在模型调用处失败，而那条错误对用户不可读
-  if (!getAgentConfig().apiKey) {
-    throw new AgentNotConfiguredError(
-      '内置 Agent 还没配模型凭据：到 设置 → Agent 接入 → 内置 Agent 填模型凭据（官方地址填 DeepSeek 平台 API Key；中转或自建网关先填 API 地址与模型，再填该网关的 Key）'
-    );
   }
 
   // 还没起过名字的会话先用首条消息取个临时标题（零延迟），首轮跑完再由模型按主要内容改写
@@ -221,11 +277,26 @@ export function startRun(input: {
   });
   const run = createRun({ sessionId: input.sessionId, userMessageId: userMessage.id, context: input.context ?? {} });
   touchSession(input.sessionId);
+  return beginRun({ ...input, run, userMessageId: userMessage.id });
+}
+
+/**
+ * 真正开跑：消息与轮次都已落库（新发的，或排队转正的那条），这里只管起 dsh 与收口。
+ */
+function beginRun(input: {
+  sessionId: string;
+  message: string;
+  context?: InterfaceContext;
+  run: RunDto;
+  /** 这条用户消息的行 id：历史里要排掉它自己 */
+  userMessageId: string;
+}): RunDto {
+  const run = input.run;
 
   // 历史上下文：运行时是「每会话保活」的，同进程内 dsh 自带连续性；跨进程（取消/空闲回收/
   // 重启）换新会话 id，用这段有界历史衔接。思考段不进历史——它是过程，不是对话内容。
   const history = (snapshot(input.sessionId)?.messages || [])
-    .filter((m) => m.id !== userMessage.id && m.content.trim() && !isReasoning(m))
+    .filter((m) => m.id !== input.userMessageId && m.content.trim() && !isReasoning(m))
     .map((m) => ({ role: m.role, content: m.content }));
 
   const task = buildTask(input.message, input.context, history);
@@ -446,18 +517,31 @@ export function startRun(input: {
       }
     },
   });
-  running.set(run.id, turn);
+  let settled = false;
 
-  void turn.done.then(async ({ ok, error }) => {
+  /**
+   * 收口：落终态 + 广播。取消路径会直接调用它（不等 dsh 进程退出），turn.done 也会调；
+   * 先到的那次生效，后到的按幂等忽略。
+   */
+  async function finish(outcome: { ok: boolean; error?: string; pump?: boolean }): Promise<void> {
+    if (settled) return;
+    settled = true;
     running.delete(run.id);
+    const { ok, error } = outcome;
+    const cancelled = !ok && error === '已取消';
     // 收口前排空队列：正在回放的思考要播完，正文与工具卡才不会错序或丢内容
     if (!ok) queue.flushNow();
     await queue.drain();
-    // 本轮结束时还没收工的子代理：标成「后台运行中」。它的结束通知本轮之后才到，
-    // 到了就照常改回 completed/failed（卡片不会一直假装在跑）。
-    markSubagentsBackground(run.id);
+    if (cancelled) {
+      // 停止会关掉 dsh 运行时，子代理是同一进程里的子会话，一起被带走：
+      // 据实标成失败并写明原因，别留着「仍在后台跑」骗人。
+      stopSubagentsForRun(run.id, '已停止');
+    } else {
+      // 本轮结束时还没收工的子代理：标成「后台运行中」。它的结束通知本轮之后才到，
+      // 到了就照常改回 completed/failed（卡片不会一直假装在跑）。
+      markSubagentsBackground(run.id);
+    }
     // 收口：本轮最后一段正文（可能压根没有——纯工具轮或起手就失败）
-    const cancelled = !ok && error === '已取消';
     const lastId = getRun(run.id)?.assistantMessageId;
     const last = lastId ? snapshot(input.sessionId)?.messages.find((m) => m.id === lastId) : undefined;
     if (!last?.content.trim()) {
@@ -485,30 +569,65 @@ export function startRun(input: {
       const renamed = await withTimeout(namingTask, 2000, false);
       if (renamed) publishSnapshot(input.sessionId, run.id);
     }
-    if (ok) {
-      updateRun(run.id, { status: 'completed' });
-      publishSnapshot(input.sessionId, run.id);
-      publishRun(run.id, 'completed', {});
-    } else if (cancelled) {
-      updateRun(run.id, { status: 'cancelled' });
-      publishSnapshot(input.sessionId, run.id);
-      publishRun(run.id, 'completed', {});
-    } else {
-      updateRun(run.id, { status: 'failed', error });
-      publishSnapshot(input.sessionId, run.id);
-      publishRun(run.id, 'error', { message: error || '运行失败' });
-    }
+    if (ok) updateRun(run.id, { status: 'completed' });
+    else if (cancelled) updateRun(run.id, { status: 'cancelled' });
+    else updateRun(run.id, { status: 'failed', error });
+    // 排队中的下一条先推起来再广播终态：前端收到 completed 就去重取快照，
+    // 那时新一轮已经是 running，能直接接上它的事件流，开头的内容不会漏。
+    if (outcome.pump !== false) pumpQueue(input.sessionId);
+    publishSnapshot(input.sessionId, run.id);
+    if (ok || cancelled) publishRun(run.id, 'completed', {});
+    else publishRun(run.id, 'error', { message: error || '运行失败' });
     touchSession(input.sessionId);
     clearRun(run.id);
-  });
+  }
+
+  running.set(run.id, { turn, finish });
+  void turn.done.then((outcome) => void finish(outcome));
 
   return run;
 }
 
-export function cancelRun(runId: string): boolean {
-  const turn = running.get(runId);
-  if (!turn) return false;
-  turn.cancel();
+/**
+ * 把该会话排队中的下一条推起来：队首转正（状态改 running、摘掉消息上的「排队中」标记）后照常起 dsh。
+ * 只在没有正在跑的轮次时动手；消息已被撤下（停止时退回输入框）就把那条轮次标成中断，继续看下一条。
+ */
+function pumpQueue(sessionId: string): void {
+  if (runningRunForSession(sessionId)) return;
+  for (let guard = 0; guard < 20; guard += 1) {
+    const queued = nextQueuedRun(sessionId);
+    if (!queued) return;
+    const message = getMessage(queued.userMessageId);
+    if (!message) {
+      updateRun(queued.id, { status: 'interrupted', error: '排队消息已不存在' });
+      continue;
+    }
+    const promoted = promoteQueuedRun(queued.id);
+    if (!promoted) return;
+    beginRun({
+      sessionId,
+      message: message.content,
+      context: runContext(queued.id) as InterfaceContext,
+      run: promoted,
+      userMessageId: message.id,
+    });
+    return;
+  }
+}
+
+/**
+ * 停止一轮：立刻落终态并广播，运行时在后台回收。
+ * 不等 dsh 进程退出是有意的——dispose 要等运行中的工具与子代理静默，可能拖好几秒，
+ * 界面那几秒会一直显示「正在回复」，看起来像没停下来。
+ *
+ * @returns 本进程里是否真有这一轮在跑（服务重启后残留的轮次由路由直接落终态）
+ */
+export async function cancelRun(runId: string): Promise<boolean> {
+  const entry = running.get(runId);
+  if (!entry) return false;
+  entry.turn.cancel();
+  // 停止 = 全停：排队中的消息不再接力（路由把它们退回输入框），所以这里不 pump
+  await entry.finish({ ok: false, error: '已取消', pump: false });
   return true;
 }
 
