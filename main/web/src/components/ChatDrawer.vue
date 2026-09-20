@@ -196,26 +196,28 @@
             <pre v-if="isThinkOpen(item.message)" class="think-body">{{ item.message.content }}<span v-if="isThinking(item.message)" class="cursor">▍</span></pre>
           </div>
 
-          <!-- 子代理：内置 Agent 派出去的子会话。派它的那次工具调用已并入本卡，不再单独成行 -->
+          <!-- 子代理：内置 Agent 派出去的子会话。收起态就是一颗胶囊（一行装下标签、动态、状态与用时），
+               点开在胶囊下方接一块详情面板；派它的那次工具调用已并入本卡，不再单独成行 -->
           <div v-else-if="item.kind === 'subagent'" class="subagent" :class="item.subagent.status">
             <button
-              class="subagent-head"
+              class="subagent-pill"
               type="button"
               :aria-expanded="isSubagentOpen(item.subagent)"
               @click="toggleSubagent(item.subagent)"
             >
-              <Icon name="subagent" :size="13" />
+              <Icon name="subagent" :size="12" />
               <b>子代理</b>
               <span class="subagent-label">{{ subagentLabel(item.subagent) }}</span>
+              <!-- 一句「在干什么 / 产出什么」只在收起态塞进胶囊；展开后详情面板里已经有了 -->
+              <span v-if="!isSubagentOpen(item.subagent)" class="subagent-hint">{{ subagentSummary(item.subagent) }}</span>
               <span class="subagent-state">
-                <AppSpinner v-if="isSubagentLive(item.subagent)" :size="11" />
+                <AppSpinner v-if="isSubagentLive(item.subagent)" :size="10" />
                 {{ subagentState(item.subagent) }}
               </span>
-              <span class="subagent-time">{{ subagentDuration(item.subagent) }}</span>
-              <Icon :name="isSubagentOpen(item.subagent) ? 'chevron-up' : 'chevron-down'" :size="13" />
+              <span class="subagent-time" v-tooltip="subagentDuration(item.subagent)">{{ subagentDurationText(item.subagent) }}</span>
+              <Icon :name="isSubagentOpen(item.subagent) ? 'chevron-up' : 'chevron-down'" :size="12" />
             </button>
-            <p v-if="!isSubagentOpen(item.subagent)" class="subagent-summary">{{ subagentSummary(item.subagent) }}</p>
-            <div v-else class="subagent-body">
+            <div v-if="isSubagentOpen(item.subagent)" class="subagent-body">
               <p class="subagent-meta">
                 <span v-if="item.subagent.mode">{{ item.subagent.mode === 'continuable' ? '可续聊子代理' : '一次性子代理' }}</span>
                 <span v-if="item.subagent.provider">· {{ item.subagent.provider }}</span>
@@ -248,17 +250,17 @@
               </p>
               <section v-if="item.children.length" class="subagent-block">
                 <h4>它派出的子代理 · {{ item.children.length }}</h4>
-                <div v-for="child in item.children" :key="child.id" class="subagent-nested" :class="child.status">
-                  <div class="nested-head">
-                    <Icon name="subagent" :size="12" />
+                <div class="nested-list">
+                  <div v-for="child in item.children" :key="child.id" class="subagent-nested" :class="child.status">
+                    <Icon name="subagent" :size="11" />
                     <span class="nested-label">{{ subagentLabel(child) }}</span>
+                    <span class="nested-hint">{{ subagentSummary(child) }}</span>
                     <span class="nested-state">
                       <AppSpinner v-if="isSubagentLive(child)" :size="10" />
                       {{ subagentState(child) }}
                     </span>
-                    <span class="nested-time">{{ subagentDuration(child) }}</span>
+                    <span class="nested-time" v-tooltip="subagentDuration(child)">{{ subagentDurationText(child) }}</span>
                   </div>
-                  <p class="nested-summary">{{ subagentSummary(child) }}</p>
                 </div>
               </section>
             </div>
@@ -404,6 +406,7 @@ import {
 import type { SelectionExcerpt } from '../lib/askAgent';
 import {
   buildChatTimeline,
+  isReasoningLive,
   reasoningDurationMs,
   showStreamName,
   startsNewRun,
@@ -609,25 +612,21 @@ const streamingKey = computed(() => {
 
 const showName = (index: number) => showStreamName(timeline.value, index);
 
-/* ===== 思考过程：进行中默认展开并随增量长出来，本轮结束自动收起；用户点过就以用户为准 ===== */
+/* ===== 思考过程：进行中默认展开并随增量长出来，这一段播完就自动收起；用户点过就以用户为准 ===== */
 const thinkOverride = ref<Record<string, boolean>>({});
 
 /**
- * 这一段思考是否还在长：只有「本轮最后一条」才是正在到达的那一段。
+ * 这一段思考是否还在长：只有「本轮最后一条」才是正在到达的那一段，
+ * 且服务端还没给它收口（收口时补写 metadata.ms，快照随后就到）。
  * 用「整轮是否在跑」判断会让已播完的思考段一直显示「思考中…」+ 光标。
  */
 function isThinking(message: ChatMessage): boolean {
-  return streamingKey.value === message.id;
+  return isReasoningLive(message, streamingKey.value);
 }
 
-/** 该思考段所属的那一轮是否还在跑（决定默认展开还是收起） */
-function isThinkingRunActive(message: ChatMessage): boolean {
-  if (!message.runId) return false;
-  return chat.runs.some((run) => run.id === message.runId && ['queued', 'running'].includes(run.status));
-}
-
+/** 默认开合：正在长的这一段展开，跑完就收起（不等到整轮结束）；用户手动点过就按用户的来 */
 function isThinkOpen(message: ChatMessage): boolean {
-  return thinkOverride.value[message.id] ?? isThinkingRunActive(message);
+  return thinkOverride.value[message.id] ?? isThinking(message);
 }
 
 function toggleThink(message: ChatMessage) {
@@ -652,7 +651,7 @@ function toggleTool(call: ChatToolCall) {
   toolOpenOverride.value = { ...toolOpenOverride.value, [call.id]: !isToolOpen(call) };
 }
 
-/* ===== 子代理卡：在跑就默认展开（看得见它在干什么），收工自动收起；用户点过就以用户为准 ===== */
+/* ===== 子代理卡：一律以胶囊呈现（在跑也只看胶囊里那句动态），点开才展开详情；用户点过就以用户为准 ===== */
 const subagentOpenOverride = ref<Record<string, boolean>>({});
 
 /** 子代理卡片标题：模型给的短标签优先，退回派发工具卡上的描述，最后退回子会话号 */
@@ -672,8 +671,13 @@ function isSubagentLive(subagent: ChatSubagent): boolean {
   return subagent.status === 'running';
 }
 
+/**
+ * 默认收起：子代理的常态显示就是那颗胶囊——标签、当前动态、状态与用时都装在胶囊里，
+ * 点开才在下方展开委托任务/过程/产出。在跑也不自动铺开，否则一个子代理就占掉大半屏，
+ * 转录区会被过程细节淹没（想知道它在干什么，胶囊里那句动态和贴底状态条都写着）。
+ */
 function isSubagentOpen(subagent: ChatSubagent): boolean {
-  return subagentOpenOverride.value[subagent.id] ?? (isSubagentLive(subagent) || subagent.status === 'failed');
+  return subagentOpenOverride.value[subagent.id] ?? false;
 }
 
 function toggleSubagent(subagent: ChatSubagent) {
@@ -688,13 +692,25 @@ function subagentState(subagent: ChatSubagent): string {
   return '已完成';
 }
 
-/** 子代理用时：跑着就按当前时刻算（每秒跳），收工按落库的起止时间算 */
-function subagentDuration(subagent: ChatSubagent): string {
+/** 子代理用时（毫秒）：跑着就按当前时刻算（每秒跳），收工按落库的起止时间算 */
+function subagentDurationMs(subagent: ChatSubagent): number {
   const started = Date.parse(subagent.createdAt);
-  if (!Number.isFinite(started)) return '';
+  if (!Number.isFinite(started)) return 0;
   const ended = isSubagentLive(subagent) ? clock.value : Date.parse(subagent.updatedAt);
   const ms = (Number.isFinite(ended) ? ended : Date.now()) - started;
-  return ms > 0 ? `用时 ${formatDuration(ms)}` : '';
+  return ms > 0 ? ms : 0;
+}
+
+/** 胶囊里的用时：位置紧，省掉「用时」二字（完整说法挂在 tooltip 上） */
+function subagentDurationText(subagent: ChatSubagent): string {
+  const ms = subagentDurationMs(subagent);
+  return ms ? formatDuration(ms) : '';
+}
+
+/** 完整说法：「用时 N 秒」，hover 时看得到 */
+function subagentDuration(subagent: ChatSubagent): string {
+  const text = subagentDurationText(subagent);
+  return text ? `用时 ${text}` : '';
 }
 
 /** 收起态的一行摘要：最新一步在干什么，或最后产出 */
@@ -755,7 +771,7 @@ const liveDetail = computed(() => {
 function isThinkingLast(): boolean {
   const items = timeline.value;
   const last = items[items.length - 1];
-  return Boolean(last && last.kind === 'reasoning' && last.message.id === streamingKey.value);
+  return Boolean(last && last.kind === 'reasoning' && isThinking(last.message));
 }
 
 watch(
@@ -1644,49 +1660,63 @@ onUnmounted(() => {
   font-family: var(--font-mono, monospace);
 }
 
-/* ===== 子代理卡：内置 Agent 派出去的子会话（比工具卡多一层「它是谁、在干什么」） ===== */
+/* ===== 子代理卡：内置 Agent 派出去的子会话。收起态是一颗胶囊（一行装下标签、动态、状态与用时），
+   点开在胶囊下方接详情面板；运行中 / 后台的胶囊带一圈低强度呼吸光晕 ===== */
 .subagent {
-  border: 1px solid var(--border);
-  border-left: 2px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  overflow: hidden;
-}
-
-.subagent.running {
-  border-left-color: var(--accent, #4d8aff);
-}
-
-.subagent.failed {
-  border-left-color: var(--danger, #d64545);
-}
-
-.subagent.background {
-  border-left-color: var(--warning, #d99a2b);
-}
-
-.subagent-head {
-  width: 100%;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  text-align: left;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }
 
-.subagent-head b {
+.subagent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 3px 10px 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.6;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.subagent-pill:hover {
+  border-color: var(--border-strong);
+}
+
+.subagent-pill > svg {
+  flex-shrink: 0;
+}
+
+.subagent-pill b {
   flex-shrink: 0;
   color: var(--text);
   font-weight: 600;
 }
 
+/* 标签是这颗胶囊的「名字」：位置不够时先让动态（hint）退，标签至少留得下 6 个字 */
 .subagent-label {
-  flex: 1;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: 6em;
   overflow: hidden;
   color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 收起态才塞进胶囊的一句「在干什么 / 产出什么」：位置不够时先挤掉它 */
+.subagent-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -1696,46 +1726,94 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 1px 6px;
-  border-radius: 8px;
+  padding: 0 6px;
+  border-radius: 999px;
   background: var(--bg);
   color: var(--text-faint);
-  font-size: 11px;
-}
-
-.subagent.running .subagent-state {
-  color: var(--accent, #4d8aff);
-}
-
-.subagent.failed .subagent-state {
-  color: var(--danger, #d64545);
-}
-
-.subagent.background .subagent-state {
-  color: var(--warning, #d99a2b);
+  font-size: 10.5px;
 }
 
 .subagent-time {
   flex-shrink: 0;
   color: var(--text-faint);
   font-family: var(--font-mono, monospace);
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
-.subagent-summary {
-  margin: 0;
-  padding: 0 10px 8px;
-  color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1.5;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+/* 状态着色：整颗胶囊随状态染色（标签跟着走，动态与用时保持压暗） */
+.subagent.running .subagent-pill {
+  background: var(--accent-soft);
+  color: var(--accent);
+  animation: subagent-breathe 2.4s ease-in-out infinite;
 }
 
+.subagent.background .subagent-pill {
+  background: var(--warn-soft);
+  color: var(--warning);
+  animation: subagent-breathe-warn 3.2s ease-in-out infinite;
+}
+
+.subagent.failed .subagent-pill {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.subagent.running .subagent-pill b,
+.subagent.running .subagent-label,
+.subagent.background .subagent-pill b,
+.subagent.background .subagent-label,
+.subagent.failed .subagent-pill b,
+.subagent.failed .subagent-label {
+  color: inherit;
+}
+
+.subagent.running .subagent-state,
+.subagent.background .subagent-state,
+.subagent.failed .subagent-state {
+  background: transparent;
+  color: inherit;
+}
+
+/* 呼吸光晕：外圈低强度一张一收，收工即停（与首页 rail 的运行脉冲同一套写法） */
+@keyframes subagent-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 32%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent); }
+}
+
+@keyframes subagent-breathe-warn {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 32%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--warning) 12%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent.running .subagent-pill,
+  .subagent.background .subagent-pill,
+  .subagent-nested.running,
+  .subagent-nested.background {
+    animation: none;
+  }
+}
+
+/* 详情面板：点开胶囊后接在它下方，左侧沿用状态色边（与工具卡同一套状态语言） */
 .subagent-body {
+  width: 100%;
   padding: 0 10px 8px;
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+
+.subagent.running .subagent-body {
+  border-left-color: var(--accent);
+}
+
+.subagent.failed .subagent-body {
+  border-left-color: var(--danger);
+}
+
+.subagent.background .subagent-body {
+  border-left-color: var(--warning);
 }
 
 .subagent-meta {
@@ -1818,60 +1896,86 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-.subagent-nested {
-  margin-top: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
+/* 它派出的子代理：同一套胶囊，小一号，横向排开自动换行 */
+.nested-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.nested-head {
-  display: flex;
+.subagent-nested {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
   color: var(--text-secondary);
   font-size: 11px;
+  line-height: 1.6;
+}
+
+.subagent-nested > svg {
+  flex-shrink: 0;
 }
 
 .nested-label {
-  flex: 1;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: 5em;
   overflow: hidden;
   color: var(--text);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.nested-state {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.nested-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-faint);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.subagent-nested.running .nested-state {
-  color: var(--accent, #4d8aff);
-}
-
-.subagent-nested.failed .nested-state {
-  color: var(--danger, #d64545);
-}
-
+.nested-state,
 .nested-time {
   flex-shrink: 0;
   color: var(--text-faint);
+}
+
+.nested-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.nested-time {
   font-family: var(--font-mono, monospace);
 }
 
-.nested-summary {
-  margin: 4px 0 0;
-  color: var(--text-faint);
-  font-size: 11px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.subagent-nested.running {
+  background: var(--accent-soft);
+  color: var(--accent);
+  animation: subagent-breathe 2.4s ease-in-out infinite;
+}
+
+.subagent-nested.background {
+  background: var(--warn-soft);
+  color: var(--warning);
+  animation: subagent-breathe-warn 3.2s ease-in-out infinite;
+}
+
+.subagent-nested.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.subagent-nested.running .nested-label,
+.subagent-nested.background .nested-label,
+.subagent-nested.failed .nested-label {
+  color: inherit;
 }
 
 .run-error {
