@@ -19,17 +19,20 @@ import { enqueuePagePipeline } from '../jobQueue.js';
 import { AGENT_GUIDE, GUIDE_VERSION } from '../content/agentGuide.js';
 import { SKILLS, findSkill } from '../content/skills/index.js';
 import {
-  auditCompanyPages, describeCheckRequest, describeProposal, formatEntityNameAudit,
-  formatEntityNameChecks, listEntityNameChecks, pendingEntityNameCount, proposeEntityName,
-  requestEntityNameCheck, EntityNameError, type EntityNameStatus,
+  answerEntityNameCheck, auditCompanyPages, describeCheckRequest, describeEntityNameAnswer,
+  describeProposal, formatEntityNameAudit, formatEntityNameChecks, listEntityNameChecks,
+  pendingEntityNameCount, proposeEntityName, requestEntityNameCheck, EntityNameError,
+  type EntityNameStatus,
 } from '../lib/entityNameChecks.js';
+import { AgentQuestionError, askUserQuestions, formatAskOutcome } from '../assistant/questions.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
  * 读工具（search/list_pages/read_page/related_pages/page_evidence/list_raw_files/read_raw_file/
  * list_entity_names/entity_name_audit/kb_guide/skill_list/skill_guide）
  * + 写工具（write_page 带证据门禁与自动日志 / rename_page / move_page / delete_page 软删除入回收站 /
- * save_chat 对话沉积 / entity_name_check 登记公司全名核验 / entity_name_propose 回填全名）。
+ * save_chat 对话沉积 / entity_name_check 登记公司全名核验 / entity_name_answer 回填用户答复 /
+ * entity_name_propose 回填全名 / ask_user 内置 Agent 在对话里问用户并等点选）。
  * 全部写操作只允许 Wiki/，原始资料与 AIWorks 对 Agent 是只读区。
  * 作业方法论见 kb_guide；按需作业手法见 skill_list / skill_guide。
  */
@@ -42,7 +45,7 @@ const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，�
 原始资料与 AIWorks 对 Agent 是只读区：写工具只能写 Wiki/。软件本身具备上传/新建/删除原始资料的能力，但那是用户的操作——你没有写权限，也不得走 HTTP 旁路自行写入；作业时需要的资料不在库里就按现有材料推进，把缺口写进页面的「待核实」，不要卡住整批作业。
 对话沉积（save_chat）只在用户明确指示后执行；不要自行判断"这段对话有价值"就沉淀。已沉淀的对话属于原始资料，可被后续提炼引用。
 资料里查不到、又必须有个说法时（同名主体区分、客户身份口径等）：能自查的先自查（search 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据——不编造、不空等。
-公司工商全名是唯一例外：公司类实体页标题要用工商全名，材料与资料库都没有时走名称核验通道请示用户——entity_name_check 登记（服务端先自查资料库：页面标题/证据账本/原始资料里有全名就直接返回，Wiki 正文里的写法只算未核实候选），用户同意后用你自己的联网检索查企查查/天眼查，entity_name_propose 回填全名与出处，用户确认后服务端改名。登记后不要空等，继续下一份；下次作业先 list_entity_names 读答复。
+公司工商全名是唯一例外：公司类实体页标题要用工商全名，材料与资料库都没有时，entity_name_check 登记（服务端先自查资料库：页面标题/证据账本/原始资料里有全名就直接返回，Wiki 正文里的写法只算未核实候选），**随即在对话里问用户**是否允许联网查企查查/天眼查——内置 Agent 用 ask_user（Engram 对话最下侧弹选项，点选即得答复），外部 Agent 用你自己的提问能力问在自己的对话里（不要用 ask_user，它等的是 Engram 界面）。拿到答复用 entity_name_answer 回填；答复允许后用你自己的联网检索查企查查/天眼查，entity_name_propose 回填全名与出处，再问一次是否改用全名，同意后用 entity_name_answer(id, "allow") 由服务端执行改名。问不到（用户不在/不答复）就按现有材料推进并在名称口径标注「全称待确认」，不要卡住整批作业；收尾用 list_entity_names 传 status=unresolved 列出仍未定全名的条目。
 误建的页面用 delete_page 删除：只做软删除入回收站（可恢复），只能删 Wiki/ 下的页面，不提供清空回收站能力。
 页面改名/移动用 rename_page / move_page（保持页面 ID 与图谱边，重命名会重定向引用双链）；写页与页面操作都只允许 Wiki/。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
@@ -442,7 +445,7 @@ export function makeServer(): McpServer {
 
   server.tool(
     'entity_name_check',
-    '公司全名核验（登记待核名称）：公司类实体的名称不是工商全名、资料库里也找不到时，登记一条「是否允许联网用企查查/天眼查查询」的请示给用户——这是全库唯一允许问用户的事。服务端会先自查资料库（页面标题 / 证据账本 / 原始资料提取文本 / 正文里写明全名的提法）：有全名就直接返回，用 rename_page 改用全名即可，不打扰用户；正文里带「待核实/候选」标记的写法只算「疑似候选（未核实）」，仍照常登记请示。登记后不要空等，继续下一份资料；下次作业先 list_entity_names 读用户答复。',
+    '公司全名核验（登记待核名称）：公司类实体的名称不是工商全名、资料库里也找不到时登记一条核验——这是全库唯一允许问用户的事，但**问在对话里**，没有专门的核验页面。服务端会先自查资料库（页面标题 / 证据账本 / 原始资料提取文本 / 正文里写明全名的提法）：有全名就直接返回，用 rename_page 改用全名即可，不问用户；正文里带「待核实/候选」标记的写法只算「疑似候选（未核实）」，仍照常登记。返回文本会告诉你下一步：立刻在对话里问用户是否允许联网查企查查/天眼查（内置 Agent 用 ask_user 弹底部选项；外部 Agent 用你自己的提问能力问在自己的对话里），再用 entity_name_answer 回填答复。',
     {
       entity: z.string().describe('材料里的公司名称写法（通常是简称），如「津亚电子」'),
       titleOrId: z.string().optional().describe('关联页面（标题/ID/路径）；用户同意改用全名时服务端据此自动改名'),
@@ -462,8 +465,29 @@ export function makeServer(): McpServer {
   );
 
   server.tool(
+    'entity_name_answer',
+    '回填用户对名称核验的答复（对话里问到的用户口径）——两轮共用：query_consent 阶段 allow=允许你联网查企查查/天眼查（接着去查、再 entity_name_propose 回填）；rename_consent 阶段 allow=同意把页面标题改用全名（服务端立刻改名：保持页面 ID、引用双链重定向、自动记日志），deny=不同意（标题保持材料写法）。前置：用户不在或没答复时不要替用户决定，按现有材料推进并标注「全称待确认」。',
+    {
+      id: z.string().describe('核验 id（entity_name_check 登记时返回）'),
+      decision: z.enum(['allow', 'deny']).describe('用户的答复：allow=同意 / deny=不同意'),
+      note: z.string().optional().describe('用户的原话或补充（写进核验记录，便于以后追溯）'),
+    },
+    async ({ id, decision, note }) => {
+      try {
+        const check = answerEntityNameCheck(id, decision, note || '');
+        return { content: [{ type: 'text', text: describeEntityNameAnswer(check) }] };
+      } catch (error) {
+        if (error instanceof EntityNameError) {
+          return { content: [{ type: 'text', text: `答复被拒绝：${error.message}` }], isError: true };
+        }
+        throw error;
+      }
+    }
+  );
+
+  server.tool(
     'entity_name_propose',
-    '回填联网查到的工商全名并请示用户是否把页面标题改为该全名（用户同意后由服务端执行改名：保持页面 ID、引用双链重定向、自动记日志）。前置：该核验已被用户允许联网查询。查不到全名时不要传 fullName——本次核验按「未找到全名」办结，收尾列入「最终不是全名」清单。全名的界定是企查查等能否查到该名称，查到的是简称就继续查全称，不得编造或推测。',
+    '回填联网查到的工商全名，然后请你在对话里问用户是否把页面标题改为该全名（同意后由服务端改名：保持页面 ID、引用双链重定向、自动记日志）。前置：该核验已被用户允许联网查询。查不到全名时不要传 fullName——本次核验按「未找到全名」办结，收尾列入「最终不是全名」清单。全名的界定是企查查等能否查到该名称，查到的是简称就继续查全称，不得编造或推测。',
     {
       id: z.string().describe('核验 id（entity_name_check 登记时返回）'),
       fullName: z.string().optional().describe('企查查/天眼查 查到的工商登记全名；查不到就不传'),
@@ -485,10 +509,10 @@ export function makeServer(): McpServer {
 
   server.tool(
     'list_entity_names',
-    '读名称核验清单（默认全部，最新在前）：pending 等用户答复 / open 未办结 / unresolved 最终不是全名。登记后下次作业先看这里拿答复；作业收尾用 status=unresolved 把仍未定全名的条目列给用户（名称、页面、卡在哪、为什么）。',
+    '读名称核验清单（默认全部，最新在前）：pending 已登记还没回填用户答复 / open 未办结 / unresolved 最终不是全名。换一轮作业时先看这里；作业收尾用 status=unresolved 把仍未定全名的条目列给用户（名称、页面、卡在哪、为什么）。',
     {
       status: z.enum(['pending', 'open', 'unresolved', 'all']).optional()
-        .describe('默认 all；pending 只列等用户答复的，unresolved 只列「最终不是全名」的'),
+        .describe('默认 all；pending 只列已登记还没回填答复的，unresolved 只列「最终不是全名」的'),
     },
     async ({ status }) => {
       const key: EntityNameStatus = status || 'all';
@@ -497,7 +521,7 @@ export function makeServer(): McpServer {
         content: [{
           type: 'text',
           text: `${formatEntityNameChecks(checks, key)}\n\n`
-            + `（等用户答复 ${pendingEntityNameCount()} 条。用户答复属用户提供的口径，写进正文时标注「用户确认」，不要为它编造引文。）`,
+            + `（已登记还没回填答复 ${pendingEntityNameCount()} 条。用户答复属用户提供的口径，写进正文时标注「用户确认」，不要为它编造引文。）`,
         }],
       };
     }
@@ -508,6 +532,42 @@ export function makeServer(): McpServer {
     '全库公司页名称盘点：列出公司类实体页（客户/组织）里标题不是工商全名形态的页面及各自核验状态（未核验/待答复/已允许待回填/已办结）。批量核验与收尾汇报「仍未定全名的条目」时用。',
     {},
     async () => ({ content: [{ type: 'text', text: formatEntityNameAudit(auditCompanyPages()) }] })
+  );
+
+  server.tool(
+    'ask_user',
+    '在 Engram 对话里向用户提问并等他点选（内置 Agent 用）：问题会出现在对话最下侧的选项弹窗，用户点选后本工具立刻返回他的选择，你在同一轮继续干活。'
+      + '只问「只有用户能定」的事——既定场景是公司工商全名核验（是否允许联网查企查查/天眼查、是否改用全名）；'
+      + '其他拿不准的信息按证据自己定并标注「待核实」，不要拿这个工具问。'
+      + '外部 Agent（Claude Code / Codex / ZCode 等）不要用：它等的是 Engram 界面，请用你自己的提问能力问在对话里。'
+      + '没有正在跑的 Engram 对话时会立刻失败并说明，那时把问题写进回复正文。',
+    {
+      questions: z.array(z.object({
+        id: z.string().optional().describe('问题标识（答复里回带），不填按 q1、q2 编号'),
+        question: z.string().describe('要问用户的问题（一句话说清，别把背景长篇塞进问题里）'),
+        header: z.string().optional().describe('可选短标题，如「名称核验」'),
+        options: z.array(z.object({
+          label: z.string().describe('选项文字（用户在弹窗里点这个按钮）'),
+          description: z.string().optional().describe('一句话说明这个选项的后果'),
+        })).optional().describe('可点选的选项；推荐项放第一个并在 label 末尾加「（推荐）」'),
+        multiSelect: z.boolean().optional().describe('是否允许多选，默认单选'),
+      })).describe('要问的问题（1-5 个，一次问完）'),
+      timeoutMs: z.number().optional().describe('等用户答复的上限毫秒，默认 10 分钟，最长 25 分钟'),
+    },
+    async ({ questions, timeoutMs }) => {
+      try {
+        const outcome = await askUserQuestions({ questions, timeoutMs });
+        const text = formatAskOutcome(outcome);
+        return outcome.ok
+          ? { content: [{ type: 'text', text }] }
+          : { content: [{ type: 'text', text }], isError: true };
+      } catch (error) {
+        if (error instanceof AgentQuestionError) {
+          return { content: [{ type: 'text', text: `提问被拒绝：${error.message}` }], isError: true };
+        }
+        throw error;
+      }
+    }
   );
 
   server.tool(

@@ -38,18 +38,21 @@ test('skill 正文承载纪律口径：原始资料无写权限、作业不打�
   // 全自动口径：拿不准自己定并标注，不停下来问用户
   assert.match(discipline.body, /不要停下来等用户/);
   assert.match(discipline.body, /待核实/);
-  assert.doesNotMatch(discipline.body, /ask_user|list_questions|先问用户/);
+  // 提问只在公司全名那条例外里出现（工具名 ask_user），不是通用「先问用户」通道
+  assert.doesNotMatch(discipline.body, /list_questions|待确认问题/);
   assert.match(discipline.body, /须用户指示/);
   assert.match(discipline.body, /可以被提炼/);
 });
 
-test('skill 正文写清唯一的例外：公司工商全名走名称核验通道', () => {
+test('skill 正文写清唯一的例外：公司工商全名问在对话里', () => {
   const discipline = findSkill('kb-ingest-discipline');
   assert.ok(discipline, 'kb-ingest-discipline 应存在');
-  // 例外只此一条，且写明触发条件、工具与「不追问」的边界
+  // 例外只此一条，且写明触发条件、问法、工具与「不追问」的边界
   assert.match(discipline.body, /名称核验/);
   assert.match(discipline.body, /entity_name_check/);
+  assert.match(discipline.body, /entity_name_answer/);
   assert.match(discipline.body, /entity_name_propose/);
+  assert.match(discipline.body, /ask_user/);
   assert.match(discipline.body, /企查查/);
   assert.match(discipline.body, /不得编造或推测全名/);
   assert.match(discipline.body, /不追问、不反复请示/);

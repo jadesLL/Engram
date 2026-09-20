@@ -43,6 +43,9 @@ export function engramPatchBlock(url: string, token: string): string {
     `        url: ${url}`,
     '        headers:',
     `          Authorization: 'Bearer ${token}'`,
+    // ask_user 要挂起等用户在对话弹窗里点选，dsh-mcp-client 默认单次工具调用超时只有 60 秒，
+    // 不改的话用户稍一犹豫这次调用就被判超时（服务端那边仍在等，答复就丢了）。
+    '        toolCallTimeoutMs: 1800000',
   ].join('\n');
 }
 

@@ -335,6 +335,52 @@
     </div>
 
     <footer class="chat-composer">
+      <!-- Agent 提问：对话最下侧的选项弹窗（贴着输入区上方，MCP ask_user 正挂起等这次点选） -->
+      <section v-if="chat.pendingQuestions.length" class="ask-pop" role="group" aria-label="Agent 提问">
+        <header class="ask-head">
+          <Icon name="ai" :size="13" />
+          <b>Agent 等你选</b>
+          <span v-if="chat.pendingQuestions.length > 1" class="ask-count">{{ chat.pendingQuestions.length }} 个问题</span>
+          <span class="ask-note">点选即答复，Agent 接着往下做</span>
+        </header>
+        <div v-for="question in chat.pendingQuestions" :key="question.id" class="ask-item">
+          <p class="ask-title">{{ questionTitle(question) }}</p>
+          <p class="ask-question">{{ question.question }}</p>
+          <div v-if="question.options.length" class="ask-options">
+            <button
+              v-for="option in question.options"
+              :key="option.label"
+              class="ask-option"
+              type="button"
+              :class="{ picked: askPicked[question.id]?.includes(option.label) }"
+              :disabled="answering === question.id"
+              @click="pickAskOption(question, option.label)"
+            >
+              <b>{{ option.label }}</b>
+              <span v-if="option.description" class="ask-option-desc">{{ option.description }}</span>
+            </button>
+          </div>
+          <div class="ask-reply">
+            <input
+              v-model="askDrafts[question.id]"
+              class="ask-input"
+              type="text"
+              :placeholder="question.options.length ? '也可以自己填：其他答复 / 补充说明' : '输入答复'"
+              :disabled="answering === question.id"
+              @keydown.enter.prevent="submitAsk(question, askPicked[question.id] || [])"
+            />
+            <button
+              v-if="!submitsOnPick(question)"
+              class="btn small primary"
+              type="button"
+              :disabled="answering === question.id"
+              @click="submitAsk(question, askPicked[question.id] || [])"
+            >{{ answering === question.id ? '提交中…' : '提交' }}</button>
+          </div>
+          <p v-if="askErrors[question.id]" class="ask-error">{{ askErrors[question.id] }}</p>
+        </div>
+      </section>
+
       <!-- 选中片段：紧贴输入框上方单独成块，逐条展开看全文、逐条移除或全部清除 -->
       <section v-if="chat.selections.length" class="selection-panel" aria-label="选中的原文片段">
         <header class="selection-head">
@@ -405,7 +451,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import Icon from './Icon.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import AppSpinner from './ui/AppSpinner.vue';
@@ -420,6 +466,14 @@ import {
   type ChatToolCall,
 } from '../stores/chat';
 import type { SelectionExcerpt } from '../lib/askAgent';
+import {
+  buildAnswer,
+  canAnswer,
+  questionTitle,
+  submitsOnPick,
+  toggleOption,
+  type ChatQuestion,
+} from '../lib/chatQuestions';
 import {
   MIN_DRAWER_WIDTH,
   clampDrawerWidth as clampChatDockWidth,
@@ -453,6 +507,47 @@ const chat = useChatStore();
 const draft = ref('');
 const scrollEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
+
+/* ===== Agent 提问弹窗（对话最下侧）：本地只存「还没提交的点选与草稿」 ===== */
+/** 每个提问已点的选项（多选时是集合；单选点一下立刻提交，这份状态只为高亮） */
+const askPicked = reactive<Record<string, string[]>>({});
+/** 每个提问的「自己填」草稿 */
+const askDrafts = reactive<Record<string, string>>({});
+const askErrors = reactive<Record<string, string>>({});
+/** 正在提交的提问 id（按钮转「提交中…」并禁用，防重复点） */
+const answering = ref('');
+
+/**
+ * 提交一条提问的答复：单选点选、多选「提交」、自己填后回车都走这里。
+ * 空答复不发请求（服务端也会拒），本地先说清楚要用户做什么。
+ */
+async function submitAsk(question: ChatQuestion, selected: string[]) {
+  const payload = buildAnswer(question, selected, askDrafts[question.id] || '');
+  if (!canAnswer(payload)) {
+    askErrors[question.id] = question.options.length ? '先点一个选项，或自己填一句答复' : '填一句答复再提交';
+    return;
+  }
+  answering.value = question.id;
+  delete askErrors[question.id];
+  try {
+    await chat.answerQuestion(question.id, payload.selected, payload.custom);
+    // 答复成功后本地状态随提问一起清掉（快照里那条提问也已经消失）
+    delete askPicked[question.id];
+    delete askDrafts[question.id];
+  } catch (error: any) {
+    askErrors[question.id] = error?.response?.data?.error || error?.message || '答复失败，请重试';
+  } finally {
+    answering.value = '';
+  }
+}
+
+/** 点一个选项：单选直接提交（少一次点击），多选先攒着等「提交」 */
+function pickAskOption(question: ChatQuestion, label: string) {
+  const next = toggleOption(question, label, askPicked[question.id] || []);
+  askPicked[question.id] = next;
+  delete askErrors[question.id];
+  if (submitsOnPick(question)) void submitAsk(question, next);
+}
 
 /** 满窗形态：铺满内容区（形态本身不重建组件，会话/草稿/滚动都保留） */
 const isFull = computed(() => app.chatDrawerMode === 'full');
@@ -927,9 +1022,11 @@ const TOOL_ICONS: Record<string, string> = {
   move_page: 'move',
   delete_page: 'trash',
   entity_name_check: 'clipboard',
+  entity_name_answer: 'clipboard',
   entity_name_propose: 'clipboard',
   list_entity_names: 'clipboard',
   entity_name_audit: 'clipboard',
+  ask_user: 'ai',
 };
 
 function toolIcon(name: string): string {
@@ -1729,6 +1826,131 @@ onUnmounted(() => {
   background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+/* ===== Agent 提问弹窗：贴在输入区上方（对话最下侧），问题 + 可点选选项 ===== */
+.ask-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 长问题/多问题也不把输入区挤没：自身滚动 */
+  max-height: 46vh;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid var(--accent, #4d8aff);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.ask-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ask-head b {
+  color: var(--text);
+}
+
+.ask-count {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--accent, #4d8aff);
+  font-size: 11px;
+}
+
+.ask-note {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.ask-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.ask-title {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.ask-question {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ask-option:hover:not(:disabled) {
+  border-color: var(--accent, #4d8aff);
+}
+
+.ask-option.picked {
+  border-color: var(--accent, #4d8aff);
+  background: var(--accent-soft);
+}
+
+.ask-option:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ask-option-desc {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.ask-reply {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ask-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.ask-error {
+  margin: 0;
+  color: var(--danger, #e5534b);
+  font-size: 11px;
 }
 
 .run-live-title {

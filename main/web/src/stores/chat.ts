@@ -7,6 +7,7 @@ import {
   type SelectionExcerpt,
   type SelectionLocation,
 } from '../lib/askAgent';
+import { buildAnswer, parseQuestion, pendingQuestions as pickPendingQuestions, type ChatQuestion } from '../lib/chatQuestions';
 
 /**
  * 内置 Agent（聊天抽屉）的前端状态：会话列表 + 快照 + SSE 增量。
@@ -106,6 +107,8 @@ export interface ChatSnapshot {
   runs: ChatRun[];
   toolCalls: ChatToolCall[];
   subagents: ChatSubagent[];
+  /** 还在等用户点选的 Agent 提问（对话最下侧弹窗渲染；答复后从快照里消失） */
+  questions?: ChatQuestion[];
 }
 
 /**
@@ -188,6 +191,10 @@ export const useChatStore = defineStore('chat', {
     },
     sessionSubagents(state): ChatSubagent[] {
       return state.snapshot?.subagents || [];
+    },
+    /** 等用户点选的 Agent 提问（对话最下侧弹窗渲染；服务端只把 pending 的放进快照） */
+    pendingQuestions(state): ChatQuestion[] {
+      return pickPendingQuestions(state.snapshot?.questions);
     },
     /** 本轮派出的子代理（快照是唯一来源；本轮不在跑就为空） */
     currentSubagents(state): ChatSubagent[] {
@@ -436,6 +443,17 @@ export const useChatStore = defineStore('chat', {
         }
         message.content += data.text;
       });
+      // Agent 提问（MCP ask_user 挂起等你点选）：立刻弹在对话最下侧，不等下一次快照
+      source.addEventListener('question', (event) => {
+        if (!isActive() || !this.snapshot) return;
+        let incoming: ChatQuestion | null = null;
+        try {
+          incoming = parseQuestion(JSON.parse((event as MessageEvent).data));
+        } catch { /* 坏帧忽略：快照那条路还会再对一次 */ }
+        if (!incoming) return;
+        const rest = (this.snapshot.questions || []).filter((item) => item.id !== incoming!.id);
+        this.snapshot.questions = incoming.status === 'pending' ? [...rest, incoming] : rest;
+      });
       source.addEventListener('completed', () => {
         closeConnection(runId);
         this.forgetRun(runId);
@@ -538,6 +556,24 @@ export const useChatStore = defineStore('chat', {
       const { data } = await api.post(`/api/assistant/runs/${target}/ingest`);
       await this.reload(this.activeSessionId);
       return data.meta as { path: string; title: string };
+    },
+    /**
+     * 答复 Agent 的提问（对话最下侧弹窗点选）。
+     * 服务端据此唤醒挂起的 MCP ask_user 工具调用——Agent 在同一轮里拿到答复继续往下做，
+     * 随后推来的快照会让这条提问从列表里消失。
+     */
+    async answerQuestion(questionId: string, selected: string[], custom = '') {
+      const question = (this.snapshot?.questions || []).find((item) => item.id === questionId);
+      const payload = question ? buildAnswer(question, selected, custom) : { selected, custom };
+      const { data } = await api.post(
+        `/api/assistant/questions/${encodeURIComponent(questionId)}/answer`,
+        payload
+      );
+      // 本地先摘掉：点选即见效，不等下一帧快照
+      if (this.snapshot?.questions) {
+        this.snapshot.questions = this.snapshot.questions.filter((item) => item.id !== questionId);
+      }
+      return data.question as ChatQuestion;
     },
   },
 });

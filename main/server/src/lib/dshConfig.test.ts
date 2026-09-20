@@ -31,7 +31,7 @@ test('dshHome 尊重 DSH_HOME 环境变量，缺省为 ~/.dsh', () => {
   }
 });
 
-test('无文件时注册：生成头注释 + engram 块', () => {
+test('无文件时注册：生成头注释 + engram 块（含 ask_user 需要的长工具调用超时）', () => {
   const file = tmpPatch();
   registerDshMcp('http://127.0.0.1:18180/mcp', 'tok-1', file);
   const text = fs.readFileSync(file, 'utf8');
@@ -39,6 +39,8 @@ test('无文件时注册：生成头注释 + engram 块', () => {
   assert.ok(text.includes("- id: mcp-engram"));
   assert.ok(text.includes("url: http://127.0.0.1:18180/mcp"));
   assert.ok(text.includes("Authorization: 'Bearer tok-1'"));
+  // ask_user 要挂起等用户点选，默认 60 秒的超时会把这次调用判死
+  assert.ok(text.includes('toolCallTimeoutMs: 1800000'));
   assert.ok(dshRegistered(file));
 });
 

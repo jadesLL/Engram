@@ -3,6 +3,7 @@ import { getAgentConfig } from './config.js';
 import { publishRun, clearRun } from './events.js';
 import { buildTask, type InterfaceContext } from './prompts.js';
 import { planReasoningReplay, type ReasoningPart } from './mapping.js';
+import { closeQuestionsForRun } from './questions.js';
 import { generateSessionTitle, heuristicTitle } from './title.js';
 import {
   appendMessageChunk,
@@ -541,6 +542,8 @@ function beginRun(input: {
       // 到了就照常改回 completed/failed（卡片不会一直假装在跑）。
       markSubagentsBackground(run.id);
     }
+    // 还在等用户点选的提问随本轮一起作废：不然挂起的那次 MCP 工具调用会一直等到超时
+    closeQuestionsForRun(run.id, cancelled ? 'cancelled' : 'expired');
     // 收口：本轮最后一段正文（可能压根没有——纯工具轮或起手就失败）
     const lastId = getRun(run.id)?.assistantMessageId;
     const last = lastId ? snapshot(input.sessionId)?.messages.find((m) => m.id === lastId) : undefined;
