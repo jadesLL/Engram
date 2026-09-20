@@ -37,7 +37,7 @@
       />
 
       <!-- 顶部条：Wiki / 分区 / 标题 面包屑 + 常驻保存状态 -->
-      <div v-show="!app.readingMode" class="editor-topbar chrome-float">
+      <div v-show="!app.readingMode" class="editor-topbar chrome-float" data-tip-chrome>
         <nav class="crumb">
           <template v-for="(d, i) in crumbDirs" :key="i">
             <span v-if="i" class="crumb-sep">/</span>
@@ -279,7 +279,7 @@
            放在 editor-body 之外、直接挂 editor-view：它和顶栏一样是悬浮 chrome（绝对定位浮在正文之上），
            不再参与文档流，正文因此多出上下两条白条的高度。
            v-if 而非 v-show：阅读模式不挂载，wordCount 大页面全文字数统计不跑 -->
-      <div v-if="!app.readingMode" class="statusbar chrome-float">
+      <div v-if="!app.readingMode" class="statusbar chrome-float" data-tip-chrome>
         <span class="sb-item">{{ wordCount }} 字</span>
         <span class="sb-item">{{ app.editorMode === 'sv' ? '源码' : '即时渲染' }}</span>
         <div class="spacer"></div>

@@ -54,7 +54,7 @@
       <div class="setting-row">
         <div class="setting-copy">
           <strong>悬停提示严格避让</strong>
-          <span>开启后提示气泡绝不遮挡内容：附近没有空位时移到旁边的空白处，并用虚线指向被说明对象；关闭后优先贴近被说明对象，允许轻微遮挡。</span>
+          <span>提示只贴在被说明对象的四周（不外移、不画引导线）。开启后逐边比较，优先选不压住内容的一边，必要时换边或收窄气泡；关闭后优先贴首选方向显示，允许轻微遮挡。</span>
         </div>
         <label class="switch-control">
           <input type="checkbox" :checked="tipStrict" @change="toggleTipStrict" />

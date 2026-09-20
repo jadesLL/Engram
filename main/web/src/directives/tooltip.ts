@@ -6,12 +6,14 @@
  *   <span v-tooltip.auto="file.name">…</span>                 仅在文本被截断时显示
  *   <button v-tooltip.bottom="'说明'">…</button>              指定首选方向（top/bottom/left/right）
  *   <button v-tooltip.cursor="'节点'">…</button>              光标跟随（图谱 / 画布等大块区域）
- *   <button v-tooltip.near="{ title, body }">…</button>       就近优先（允许轻微遮挡，不外移）
+ *   <button v-tooltip.near="{ title, body }">…</button>       就近优先（首选方向优先，允许轻微遮挡）
  *   <button v-tooltip.strict.spotlight="{…}">…</button>       严格零遮挡 + 聚光
  *   <button v-tooltip="{ title: '保存', body: '写回磁盘', kbd: 'Ctrl+S' }">…</button>
  *
  * 修饰符可组合：v-tooltip.auto.bottom
  * 对象值支持 title / body / kbd / meta / placement / strategy / strict / spotlight / pointer / anchorRect / delay。
+ *
+ * 第三方库自己生成的 DOM（Vditor 工具栏等）拿不到指令，用 bindDelegatedTooltips() 按选择器委托绑定。
  */
 
 import type { Directive, DirectiveBinding } from 'vue';
@@ -124,3 +126,81 @@ export const vTooltip: Directive<TooltipEl, TooltipValue> = {
   updated: attach,
   unmounted: detach,
 };
+
+/**
+ * 委托式绑定：容器内所有匹配选择器的元素自动获得自建提示，之后动态插入的也一并覆盖。
+ *
+ * 给第三方库直接生成 DOM 的界面用（Vditor 工具栏 / 面板按钮），那里挂不上 Vue 指令；
+ * 事件挂在容器上，靠 mouseover/mouseout 的冒泡找出真正命中的元素，因此不必观察 DOM 变化。
+ *
+ * @param root     容器元素
+ * @param selector 命中选择器（应带 aria-label 或 data-tip 之类可取文案的属性）
+ * @param resolve  取提示内容；返回空串/null 表示这个元素不显示提示（默认读 aria-label）
+ * @param resolveOptions 取提示选项（方向、策略等）
+ * @returns 解绑函数
+ */
+export function bindDelegatedTooltips(
+  root: HTMLElement,
+  selector: string,
+  resolve: (el: HTMLElement) => TooltipValue | null = (el) => el.getAttribute('aria-label') || '',
+  resolveOptions: (el: HTMLElement) => TooltipOptions = () => ({}),
+): () => void {
+  let current: HTMLElement | null = null;
+
+  /** 事件目标向上找到容器内的命中元素（svg 里的 path 也算在按钮上） */
+  const hit = (node: EventTarget | null): HTMLElement | null => {
+    if (!(node instanceof Element)) return null;
+    const el = node.closest<HTMLElement>(selector);
+    return el && root.contains(el) ? el : null;
+  };
+
+  const onOver = (event: Event) => {
+    const el = hit(event.target);
+    if (!el || el === current) return;
+    current = el;
+    // 触屏（无 hover）：tap 触发的 mouseover 不弹提示
+    if (window.matchMedia('(hover: none)').matches) return;
+    const value = resolve(el);
+    if (!value) return;
+    showTooltip(el, value, resolveOptions(el));
+  };
+
+  const onOut = (event: MouseEvent) => {
+    const el = hit(event.target);
+    if (!el || el !== current) return;
+    // 元素内部移动（button → svg → path）不算离开
+    if (hit(event.relatedTarget) === el) return;
+    current = null;
+    hideTooltip(el);
+  };
+
+  // 键盘可达：focus 立即显示（不等待延迟），blur 收起
+  const onFocusIn = (event: Event) => {
+    const el = hit(event.target);
+    if (!el) return;
+    current = el;
+    const value = resolve(el);
+    if (value) showTooltip(el, value, resolveOptions(el), true);
+  };
+
+  const onFocusOut = (event: FocusEvent) => {
+    const el = hit(event.target);
+    if (!el || el !== current) return;
+    current = null;
+    hideTooltip(el);
+  };
+
+  root.addEventListener('mouseover', onOver);
+  root.addEventListener('mouseout', onOut);
+  root.addEventListener('focusin', onFocusIn);
+  root.addEventListener('focusout', onFocusOut);
+
+  return () => {
+    root.removeEventListener('mouseover', onOver);
+    root.removeEventListener('mouseout', onOut);
+    root.removeEventListener('focusin', onFocusIn);
+    root.removeEventListener('focusout', onFocusOut);
+    if (current) hideTooltip(current);
+    current = null;
+  };
+}
