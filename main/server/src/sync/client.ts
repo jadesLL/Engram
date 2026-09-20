@@ -33,6 +33,8 @@ export interface ClientStatus {
   connected: boolean;
   /** 首次接入的引导阶段（全量对账 + 从头补拉）尚未走完：面板据此显示「同步中」而不是干等 */
   syncing: boolean;
+  /** 全量对账（首次接入 / 手动触发 / 周期自愈）正在执行：首页状态条据此显示「同步中」 */
+  reconciling: boolean;
   hubUrl: string;
   hubToken: string;
   nodeId: string;
@@ -713,6 +715,7 @@ export function clientStatus(): ClientStatus {
     enabled: syncConfigEnabled(),
     connected,
     syncing,
+    reconciling: reconcileRunning,
     hubUrl: hubUrl(),
     hubToken: hubToken(),
     nodeId: currentNodeId(),
