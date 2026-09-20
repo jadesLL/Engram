@@ -421,6 +421,12 @@ import {
 } from '../stores/chat';
 import type { SelectionExcerpt } from '../lib/askAgent';
 import {
+  MIN_DRAWER_WIDTH,
+  clampDrawerWidth as clampChatDockWidth,
+  defaultDrawerWidth as defaultChatDockWidth,
+  dockMaxWidth as chatDockMaxWidth,
+} from '../lib/chatDrawer';
+import {
   agentActivityText,
   bareToolName,
   subagentDisplayLabel,
@@ -454,26 +460,18 @@ const isFull = computed(() => app.chatDrawerMode === 'full');
 const isDock = computed(() => !props.overlay && !isFull.value);
 
 /* ===== 左缘拖拽调宽：只在「右侧悬浮」形态下有意义（浮层/满窗/手机端都铺满可用宽度） ===== */
-const MIN_DRAWER_WIDTH = 320;
-/**
- * 悬浮档最多占窗口的比例：拖过这条线就不再是「悬浮卡片」——自动转满窗形态
- * （满窗把正文列居中限宽，比一条占满屏幕的卡片好读），因此悬浮宽度本身不设上限。
- */
-const FULL_SNAP_RATIO = 0.7;
 const viewportWidth = ref(window.innerWidth);
 
 /** 悬浮宽度上限 = 窗口宽度的 70%：越过即交棒给满窗 */
-const dockMaxWidth = computed(() =>
-  Math.max(MIN_DRAWER_WIDTH, Math.round(viewportWidth.value * FULL_SNAP_RATIO))
-);
+const dockMaxWidth = computed(() => chatDockMaxWidth(viewportWidth.value));
 
 function clampDrawerWidth(width: number) {
-  return Math.min(dockMaxWidth.value, Math.max(MIN_DRAWER_WIDTH, Math.round(width)));
+  return clampChatDockWidth(width, viewportWidth.value);
 }
 
 /** 用户没拖过时沿用响应式默认宽度（与拖拽上线前的观感一致），同样受上限约束 */
 function defaultDrawerWidth() {
-  return clampDrawerWidth(Math.min(520, Math.max(360, viewportWidth.value * 0.32)));
+  return defaultChatDockWidth(viewportWidth.value);
 }
 
 /** 本地是否已有用户调过的宽度偏好；没有就跟随窗口宽度 */
@@ -484,21 +482,26 @@ const drawerWidth = computed(() =>
   dragWidth.value ?? (hasWidthPreference.value ? clampDrawerWidth(app.chatDrawerWidth) : defaultDrawerWidth())
 );
 /**
- * 宽度落到 CSS 变量上，而不是直接写 width：Home 的开合动画（drawer-slide）
- * 要在收起态把宽度压到 0，好让正文让位跟着一起收，写死的内联 width 会把动画顶掉。
+ * 宽度落到 CSS 变量上，而不是直接写 width：卡片自己用 var(--drawer-w)。
+ *
+ * 卡片是脱流的浮层（与左侧文件树同一套做法），正文的「让位」由首页按
+ * store 里的 chatDockWidth 走 padding-right 过渡——所以这里把宽度同步给 store，
+ * 拖动时也实时同步，正文跟手不落后。
  */
 const drawerStyle = computed(() =>
   isDock.value ? { '--drawer-w': `${drawerWidth.value}px` } : {}
 );
+watch(drawerWidth, (width) => app.setChatDockWidth(width), { immediate: true });
 
 /** 收尾拖拽：清掉跟手值并还原全局光标/选择态（转满窗时手柄会被卸载，必须在这里收干净） */
 function stopResize() {
   dragWidth.value = null;
+  app.chatDragging = false;
   document.body.style.userSelect = '';
   document.body.style.cursor = '';
 }
 
-/** 拖过 70%：形态转满窗，并排宽度偏好保持原样——「收回右侧」时回到原来的并排宽度 */
+/** 拖过 70%：形态转满窗，悬浮宽度偏好保持原样——「收回右侧」时回到原来的宽度 */
 function snapToFull() {
   stopResize();
   app.setChatDrawerMode('full');
@@ -534,6 +537,8 @@ function startResize(event: PointerEvent) {
   resizeStartX = event.clientX;
   resizeStartWidth = drawerWidth.value;
   dragWidth.value = resizeStartWidth;
+  // 拖动中正文让位不做过渡：卡片跟手，正文也跟手，不会落后半拍被卡片压住
+  app.chatDragging = true;
   const handle = event.currentTarget as HTMLElement;
   try {
     handle.setPointerCapture(event.pointerId);
@@ -817,13 +822,13 @@ const renameEl = ref<HTMLInputElement | null>(null);
 async function newSession() {
   await chat.createSession();
   draft.value = '';
-  inputEl.value?.focus();
+  focusComposer();
 }
 
 function openSession(id: string) {
   if (id !== chat.activeSessionId) draft.value = '';
   void chat.selectSession(id).then(() => {
-    inputEl.value?.focus();
+    focusComposer();
     void scrollToBottom();
   });
 }
@@ -890,7 +895,7 @@ async function stopRun() {
     notify.error(error?.response?.data?.error || '停止失败');
   } finally {
     stopping.value = false;
-    inputEl.value?.focus();
+    focusComposer();
   }
 }
 
@@ -943,6 +948,18 @@ async function scrollToBottom() {
   if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
 }
 
+/**
+ * 把光标送进输入框。
+ *
+ * 必须 preventScroll：抽屉是随开关挂载的，卡片挂载瞬间还在播「从右缘滑入」的位移，
+ * 浏览器为了让聚焦的输入框可见，会去滚动最近的可滚动祖先（.layout），
+ * 于是整个界面——左侧图标栏与文件树一起——被横向拽走十几像素再弹回来，
+ * 看着就是「呼出时左侧抖一下」。光标进输入框这件事本身不需要任何滚动。
+ */
+function focusComposer() {
+  inputEl.value?.focus({ preventScroll: true });
+}
+
 /** Esc 只把满窗收回右侧：不关抽屉、不取消正在跑的一轮（弹窗的 Esc 会 stopPropagation，不会误触发） */
 function onKey(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
@@ -958,14 +975,14 @@ watch(() => app.chatDrawerOpen, (open) => {
   if (open) {
     void chat.init().then(() => {
       void scrollToBottom();
-      inputEl.value?.focus();
+      focusComposer();
     });
   }
 });
 /* 选中文字提问：抽屉已经开着时 open 不变，靠计数自增把光标送进输入框 */
 watch(() => app.chatComposerFocus, () => {
   if (!app.chatDrawerOpen) return;
-  void chat.init().then(() => inputEl.value?.focus());
+  void chat.init().then(() => focusComposer());
 });
 
 onMounted(() => {
@@ -976,7 +993,7 @@ onMounted(() => {
   if (app.chatDrawerOpen) {
     void chat.init().then(async () => {
       await scrollToBottom();
-      inputEl.value?.focus();
+      focusComposer();
     });
   }
 });
@@ -1010,11 +1027,17 @@ onUnmounted(() => {
 /*
  * 悬浮档（桌面端默认形态）：与左侧文件树同一套玻璃材质，四周留 8px 露出窗口底色，
  * 于是右侧也是一张浮起来的卡片，而不是贴边的一条并排面板。
- * 高度交给 flex 拉伸（stretch 会把上下 margin 扣掉），所以这里不写 height。
+ *
+ * 卡片脱流（absolute）：开合时正文的「让位」由首页走 padding-right 过渡，
+ * 卡片自己只做位移与淡入淡出——绝不动宽度。宽度一变，卡片里的整条对话流
+ * （几十条消息、几千行文本）每帧都要重排一次，长会话直接卡成几百毫秒的长任务。
  */
 .chat-drawer.dock {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  right: 8px;
   width: var(--drawer-w, clamp(360px, 32vw, 520px));
-  margin: 8px;
   border: 1px solid var(--sidebar-glass-border);
   border-radius: 8px;
   background: var(--sidebar-material);
@@ -1026,27 +1049,18 @@ onUnmounted(() => {
 /*
  * 开合动画（<transition name="drawer-slide"> 在 Home.vue）：与左侧栏同一套节奏——
  * 右缘滑入 + 轻微缩放 + 淡入，160ms 一套走完。
- * 悬浮档额外把宽度从 0 收放到目标值：正文让位跟着动画一起走，
- * 不会出现「卡片还在滑、正文已经跳掉一块」的错位。
+ * 只碰 transform / opacity 这两个合成层属性：全程不触发重排，
+ * 对话再长、正文再重也不掉帧（正文让位的过渡在首页 .content 上）。
  */
 .drawer-slide-enter-active,
 .drawer-slide-leave-active {
-  overflow: hidden;
-  transition: width 160ms ease, margin 160ms ease, opacity 160ms ease, transform 160ms ease;
+  transition: opacity 160ms ease, transform 160ms ease;
 }
 
 .drawer-slide-enter-from,
 .drawer-slide-leave-to {
   opacity: 0;
   transform: translateX(14px) scale(0.985);
-}
-
-.chat-drawer.dock.drawer-slide-enter-from,
-.chat-drawer.dock.drawer-slide-leave-to {
-  /* 两侧留白一起收到 0：收起后不留 16px 空档，正文一次性并回来 */
-  width: 0;
-  margin-right: 0;
-  margin-left: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

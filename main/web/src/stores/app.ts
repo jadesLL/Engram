@@ -6,6 +6,7 @@ import {
   type ReadingPreferences,
 } from '../lib/readingPreview';
 import { clampContentWidthRatio } from '../lib/contentWidth';
+import { defaultDrawerWidth } from '../lib/chatDrawer';
 import {
   pushTrail,
   settleTrail,
@@ -17,7 +18,7 @@ import {
 
 type Theme = 'light' | 'dark' | 'system';
 
-/** 内置 Agent 聊天抽屉的形态：dock=右侧并排，full=满窗铺满内容区 */
+/** 内置 Agent 聊天抽屉的形态：dock=右侧悬浮卡片，full=满窗铺满内容区 */
 export type ChatDrawerMode = 'dock' | 'full';
 
 function resolveDarkTheme(theme: Theme): boolean {
@@ -68,9 +69,16 @@ export const useAppStore = defineStore('app', {
       },
       /** 内置 Agent 聊天抽屉：开合、形态与未读提示 */
       chatDrawerOpen: false,
-      /** 上次使用的抽屉形态（dock 右侧并排 / full 满窗），刷新与重开都沿用 */
+      /** 上次使用的抽屉形态（dock 右侧悬浮卡片 / full 满窗），刷新与重开都沿用 */
       chatDrawerMode: (localStorage.getItem('chatDrawerMode') === 'full' ? 'full' : 'dock') as ChatDrawerMode,
       chatDrawerWidth: Number(localStorage.getItem('chatDrawerWidth')) || 420,
+      /**
+       * 悬浮档当前生效宽度：首页据此给正文右侧留出等宽空间。
+       * 抽屉挂载/窗口变化/拖动时把算好的宽度同步过来，两处不会各算一套。
+       */
+      chatDockWidth: defaultDrawerWidth(window.innerWidth),
+      /** 是否正在拖卡片宽度：拖动中正文让位不做过渡，否则会落后卡片半拍 */
+      chatDragging: false,
       chatUnread: false,
       /**
        * 最近一次「满窗下导航导致 Agent 最小化」的时刻：右下角状态胶囊据此提示 4 秒，
@@ -188,6 +196,14 @@ export const useAppStore = defineStore('app', {
     setChatDrawerMode(mode: ChatDrawerMode) {
       this.chatDrawerMode = mode;
       localStorage.setItem('chatDrawerMode', mode);
+    },
+    /**
+     * 悬浮档生效宽度同步给首页（正文让位按它算）。
+     * 值没变就不写，避免拖动/窗口变化时白白触发一轮渲染。
+     */
+    setChatDockWidth(width: number) {
+      const next = Number.isFinite(width) ? Math.max(0, Math.round(width)) : 0;
+      if (next !== this.chatDockWidth) this.chatDockWidth = next;
     },
     toggleChatDrawerMode() {
       this.setChatDrawerMode(this.chatDrawerMode === 'full' ? 'dock' : 'full');
