@@ -50,6 +50,7 @@ import {
   copyText,
   type SelectionContextMenuRequest,
 } from '../lib/contextMenu';
+import { bindDelegatedTooltips } from '../directives/tooltip';
 import {
   markdownLinksToWiki,
   markdownWikiLink,
@@ -379,6 +380,7 @@ function init() {
       ready = true;
       lastProgrammaticValue = vditor?.getValue() || initialValue;
       overrideToolbarIcons();
+      adoptVditorTooltips();
       observeWikiLinks();
       bindKeys();
       releaseModelSyncSoon();
@@ -389,6 +391,25 @@ function init() {
 
 let wikiTagObserver: MutationObserver | null = null;
 let wikiTagRaf = 0;
+/** Vditor 工具栏/面板提示的自建替换（Vditor 自带提示不避让，长文案会压住旁边按钮） */
+let unbindVditorTooltips: (() => void) | null = null;
+
+/**
+ * Vditor 的提示走自带 tooltipped 类（CSS ::after 读 aria-label，固定贴按钮一侧、不做避让），
+ * 长文案会直接压住旁边的工具栏按钮。这里统一换成自建提示：
+ *  - 文案取按钮上的 aria-label（Vditor 按 tip 写入，全屏按钮的文案随状态更新，取用时现读）；
+ *  - 工具栏按钮贴下边（上方是悬浮顶栏与页头，压住更难看），面板/代码块等其余按钮走默认四边避让；
+ *  - 自带伪元素提示由样式表关掉（见文件末尾），aria-label 保留给读屏。
+ */
+function adoptVditorTooltips() {
+  if (!vditorEl.value || unbindVditorTooltips) return;
+  unbindVditorTooltips = bindDelegatedTooltips(
+    vditorEl.value,
+    '.vditor-tooltipped[aria-label]',
+    (el) => el.getAttribute('aria-label') || '',
+    (el) => (el.closest('.vditor-toolbar') ? { placement: 'bottom' } : {}),
+  );
+}
 
 /** IR 模式下 Vditor 把链接渲染成 span[data-type="a"]（DOM 上无 href 属性），
  * CSS 无法区分双链；通过 marker 文本识别 #wiki/ 目标并打 eg-wikilink class，
@@ -746,6 +767,8 @@ onUnmounted(() => {
   if (wikiTagRaf) cancelAnimationFrame(wikiTagRaf);
   wikiTagObserver?.disconnect();
   modeObserver?.disconnect();
+  unbindVditorTooltips?.();
+  unbindVditorTooltips = null;
   vditor?.destroy();
 });
 
@@ -781,6 +804,14 @@ onMounted(init);
 }
 
 /* ---------- 工具栏换肤：悬浮卡片 + 分组气泡按钮（UI 2.0 mockup 4.3） ---------- */
+/* Vditor 自带 tooltipped 提示（::after/::before 读 aria-label）固定贴按钮一侧、不做避让，
+   长文案会压住旁边的工具栏按钮；提示已换成自建气泡（adoptVditorTooltips），
+   这里只把自带伪元素关掉——类本身保留，它的 position: relative 与 cursor: pointer 还要用 */
+:deep(.vditor-tooltipped)::after,
+:deep(.vditor-tooltipped)::before {
+  content: none !important;
+  display: none !important;
+}
 /* Vditor 对工具栏 svg 预置 fill: currentColor，我们的描边图标必须压回 fill:none */
 :deep(.vditor-toolbar .eg-icon),
 :deep(.vditor-toolbar .eg-icon path) {

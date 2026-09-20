@@ -4,9 +4,9 @@
     :class="{ 'sidebar-open': app.sidebarOpen }"
     :style="{ '--sidebar-width': sidebarWidth + 'px' }"
   >
-    <!-- 窄图标导航栏 -->
+    <!-- 窄图标导航栏：提示一律贴按钮右侧（图标栏只有一列按钮，上/下都会压住相邻图标） -->
     <nav class="rail" aria-label="主导航">
-      <button class="rail-logo" type="button" v-tooltip="'回到首页'" aria-label="回到首页" @click="go('/page')">
+      <button class="rail-logo" type="button" v-tooltip.right="'回到首页'" aria-label="回到首页" @click="go('/page')">
         <svg viewBox="0 0 100 100" width="20" height="20" aria-hidden="true">
           <defs>
             <linearGradient id="engram-orbit-rail" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">
@@ -29,7 +29,7 @@
         class="rail-btn action"
         type="button"
         :class="{ open: app.sidebarOpen }"
-        v-tooltip="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
+        v-tooltip.right="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
         :aria-label="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
         :aria-pressed="app.sidebarOpen"
         @click="app.sidebarOpen = !app.sidebarOpen"
@@ -46,7 +46,7 @@
         class="rail-btn"
         type="button"
         :class="{ active: item.active }"
-        v-tooltip="item.title"
+        v-tooltip.right="item.title"
         :aria-label="item.title"
         :aria-current="item.active ? 'page' : undefined"
         @click="item.action"
@@ -61,7 +61,7 @@
         class="rail-btn"
         type="button"
         :class="{ active: entityNamesOpen }"
-        v-tooltip="'名称核验'"
+        v-tooltip.right="'名称核验'"
         aria-label="名称核验"
         @click="entityNamesOpen = true"
       >
@@ -74,7 +74,7 @@
         class="rail-btn"
         type="button"
         :class="{ active: app.chatDrawerOpen, 'is-running': chat.hasRunning }"
-        v-tooltip="chat.hasRunning ? `内置 Agent 正在回复（${chat.runningCount} 个会话）` : '内置 Agent'"
+        v-tooltip.right="chat.hasRunning ? `内置 Agent 正在回复（${chat.runningCount} 个会话）` : '内置 Agent'"
         :aria-label="chat.hasRunning ? '内置 Agent（正在回复）' : '内置 Agent'"
         @click="app.toggleChat()"
       >
@@ -84,7 +84,7 @@
       </button>
 
       <!-- 动作/面板组 -->
-      <button class="rail-btn action" type="button" v-tooltip="'新建页面 (Ctrl+N)'" aria-label="新建页面" @click="quickNew">
+      <button class="rail-btn action" type="button" v-tooltip.right="'新建页面 (Ctrl+N)'" aria-label="新建页面" @click="quickNew">
         <Icon name="plus" :size="19" />
       </button>
       <div class="rail-divider" />
@@ -94,7 +94,7 @@
         class="rail-btn"
         type="button"
         :class="{ active: isActive('/settings') }"
-        v-tooltip="'设置'"
+        v-tooltip.right="'设置'"
         aria-label="设置"
         :aria-current="isActive('/settings') ? 'page' : undefined"
         @click="go('/settings')"

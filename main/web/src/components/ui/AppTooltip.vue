@@ -7,19 +7,7 @@
       :style="anchorBoxStyle"
       aria-hidden="true"
     />
-    <!-- 引导线：气泡为躲开内容外移到空位时，说明它属于谁 -->
-    <svg
-      v-if="tooltipState.visible && tooltipState.leader"
-      class="app-tooltip-leader"
-      aria-hidden="true"
-    >
-      <line
-        :x1="tooltipState.leader.x1"
-        :y1="tooltipState.leader.y1"
-        :x2="tooltipState.leader.x2"
-        :y2="tooltipState.leader.y2"
-      />
-    </svg>
+    <!-- 提示只在被说明对象四周避让，不做外移，因此不再有虚线引导线 -->
 
     <div
       v-if="tooltipState.visible"
@@ -52,7 +40,7 @@
  * 落位算法在 lib/tooltip.ts；这里负责：
  *  1. 渲染后测量气泡真实尺寸，按 320 / 224 两种宽度各算一次落位，取「零遮挡优先、其次更宽」的那一次；
  *  2. 悬停期间用 rAF 跟踪锚点位移与鼠标位置（侧栏拖宽、列表滚动、图谱跟随都能跟上）；
- *  3. 渲染箭头、引导线、聚光与三段式内容（标题 / 正文 / 快捷键 + 补充说明）。
+ *  3. 渲染箭头、聚光与三段式内容（标题 / 正文 / 快捷键 + 补充说明）。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from 'vue';
 import {
@@ -294,21 +282,5 @@ html.dark .app-tooltip {
 }
 html.dark .app-tooltip-spot {
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--accent);
-}
-
-.app-tooltip-leader {
-  position: fixed;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: calc(var(--z-menu) - 1);
-  pointer-events: none;
-  overflow: visible;
-}
-.app-tooltip-leader line {
-  stroke: var(--accent);
-  stroke-width: 1.4;
-  stroke-dasharray: 4 3;
-  opacity: 0.75;
 }
 </style>
