@@ -33,7 +33,10 @@ export const assetDrawerState = reactive({
   /** 父项在 brain 内的路径（面包屑用） */
   parentPath: '',
   assets: [] as AssetItem[],
+  /** 正文里还没本地化成功的外链图 URL（抓取失败时正文保留外链，这里给用户一个交代） */
+  remoteImages: [] as string[],
   loading: false,
+  retrying: false,
   error: '',
   /** 当前预览的大图 URL（空 = 不显示查看器） */
   previewUrl: '',
@@ -58,10 +61,33 @@ export async function reloadAssetDrawer(): Promise<void> {
     // 请求返回时抽屉可能已经切到别的父项，丢弃过期响应
     if (assetDrawerState.parentId !== parentId) return;
     assetDrawerState.assets = data.assets || [];
+    assetDrawerState.remoteImages = data.remoteImages || [];
   } catch (error: any) {
     assetDrawerState.error = error?.response?.data?.error || '图片资产读取失败';
   } finally {
     if (assetDrawerState.parentId === parentId) assetDrawerState.loading = false;
+  }
+}
+
+/** 手动重试外链图片本地化：正文里还挂着外链时用户能自己再拉一次，失败原因直接显示出来 */
+export async function retryRemoteImages(): Promise<void> {
+  const parentId = assetDrawerState.parentId;
+  if (!parentId || assetDrawerState.retrying) return;
+  assetDrawerState.retrying = true;
+  try {
+    const { data } = await api.post('/api/assets/localize', { parent: parentId });
+    if (data.localized) {
+      notify.success(`已把 ${data.localized} 张外链图存为本地资产`);
+    } else if (data.failed?.length) {
+      notify.error(`仍抓不到：${data.failed[0].reason}`);
+    } else {
+      notify.info('正文里已经没有外链图了');
+    }
+    await reloadAssetDrawer();
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '本地化失败');
+  } finally {
+    assetDrawerState.retrying = false;
   }
 }
 
@@ -77,6 +103,7 @@ export async function openAssetDrawer(parent: {
   assetDrawerState.parentTitle = parent.title || '图片资产';
   assetDrawerState.parentPath = parent.path || '';
   assetDrawerState.assets = [];
+  assetDrawerState.remoteImages = [];
   assetDrawerState.error = '';
   await reloadAssetDrawer();
 }

@@ -13,6 +13,7 @@ import {
   type PageAsset,
 } from '../lib/pageAssets.js';
 import { fetchRemoteImage, ImageFetchError } from '../lib/imageFetch.js';
+import { listRemoteImageUrls, localizeRemoteImages } from '../lib/remoteImages.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { readPage, writePage } from '../lib/vault.js';
 
@@ -62,20 +63,42 @@ export async function assetRoutes(app: FastifyInstance) {
     const { parentId } = req.params as { parentId: string };
     if (!isParentId(parentId)) return reply.code(400).send({ error: '父项无效' });
     let parent: { id: string; title: string } | null = null;
+    let remoteImages: string[] = [];
     if (parentId === UNASSIGNED_PARENT) {
       parent = { id: UNASSIGNED_PARENT, title: '未归属图片' };
     } else {
-      const row = db.prepare(`SELECT id, title FROM pages WHERE id = ? AND deleted = 0`).get(parentId) as
-        | { id: string; title: string }
+      const row = db.prepare(`SELECT id, title, path FROM pages WHERE id = ? AND deleted = 0`).get(parentId) as
+        | { id: string; title: string; path: string }
         | undefined;
       if (!row) return reply.code(404).send({ error: '父项不存在' });
-      parent = row;
+      parent = { id: row.id, title: row.title };
+      const page = readPage(row.path);
+      if (page) remoteImages = listRemoteImageUrls(page.content);
     }
     const assets = listParentAssets(parentId);
     return {
       parent: { id: parent.id, title: parent.title },
       assets: assets.map(publicAsset),
+      // 正文里还没本地化成功的外链图：抓取失败时正文保留外链，不提示的话
+      // 用户只会看到「图没存下来」而不知道为什么
+      remoteImages,
     };
+  });
+
+  /** 手动重试外链图片本地化（抽屉里的「重试」按钮）：同步跑一轮，把失败原因回给用户 */
+  app.post('/api/assets/localize', async (req, reply) => {
+    const { parent } = (req.body || {}) as { parent?: string };
+    let target: { id: string; title: string };
+    try {
+      target = requireParent(parent);
+    } catch (error: any) {
+      return reply.code(400).send({ error: error?.message || '父项无效' });
+    }
+    const result = await localizeRemoteImages(target.id);
+    if (result.localized) {
+      try { appendWikiLog('本地化外链图片', `${result.localized} 张 → [[${target.title}]]`); } catch { /* 忽略 */ }
+    }
+    return { ok: true, localized: result.localized, failed: result.failed };
   });
 
   /**
