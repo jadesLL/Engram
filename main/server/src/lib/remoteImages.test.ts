@@ -176,6 +176,29 @@ test('SSRF 防护：私网/环回地址在抓取前就被拦下，不发出请�
   assert.equal(fetchCalls.length, 0);
 });
 
+test('防盗链两类都覆盖：空 Referer 被 403 拒时，用同源 Referer 重试一次', async () => {
+  const page = createPage('Wiki/概念', '防盗链');
+  const remote = `${PUBLIC_HOST}/hotlink.png`;
+  writePage(page.path, `![图](${remote})\n`);
+
+  fetchCalls = [];
+  globalThis.fetch = (async (input: any, init: any) => {
+    const referer = init?.headers?.Referer || '-';
+    fetchCalls.push(`${String(input)}|${referer}`);
+    // 模拟「必须有同源 Referer 才给图」的图床
+    return referer === '-'
+      ? new Response('denied', { status: 403, headers: { 'content-type': 'text/plain' } })
+      : new Response(PNG, { status: 200, headers: { 'content-type': 'image/png' } });
+  }) as typeof fetch;
+
+  const result = await localizeRemoteImages(page.id);
+  assert.equal(result.localized, 1);
+  assert.equal(result.failed.length, 0);
+  assert.equal(fetchCalls.length, 2);
+  assert.match(fetchCalls[0], /\|-$/);
+  assert.match(fetchCalls[1], /\|https:\/\/93\.184\.216\.34\/$/);
+});
+
 /* ---------------- 触发点 ---------------- */
 
 test('触发点：syncPageFile 是导入/同步路径的收口，导入的正文也会被自动本地化', async () => {

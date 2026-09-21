@@ -120,18 +120,38 @@ export async function fetchRemoteImage(rawUrl: string): Promise<FetchedImage> {
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertPublicTarget(current);
-    let response: Response;
-    try {
-      response = await fetch(current, {
-        redirect: 'manual',
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-        headers: { Accept: 'image/*' },
-      });
-    } catch (error: any) {
-      if (error instanceof ImageFetchError) throw error;
-      const cause = error?.cause?.code || error?.code || error?.name;
-      throw new ImageFetchError(`下载图片失败（${cause || '网络错误'}）：${current.host}`);
+
+    // 防盗链有两类，方向相反，所以要试两次：
+    //  - 「Referer 存在但不在白名单就 403」——空 Referer 能过（CSDN 就是这种；
+    //    也正是它在浏览器里裂图的原因：页面在 http://127.0.0.1:18180，外链图必带
+    //    localhost 的 Referer，被 CDN 判为盗链）；
+    //  - 「必须有同源 Referer 才给」——空 Referer 反而被拒。
+    // 先不带 Referer，被 401/403 拒了再用图片自己 origin 重试一次。
+    const attempts: Array<Record<string, string>> = [
+      { Accept: 'image/*' },
+      { Accept: 'image/*', Referer: `${current.origin}/` },
+    ];
+    let response: Response | null = null;
+    let lastError: ImageFetchError | null = null;
+    for (const headers of attempts) {
+      try {
+        response = await fetch(current, {
+          redirect: 'manual',
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+          headers,
+        });
+      } catch (error: any) {
+        const cause = error?.cause?.code || error?.code || error?.name;
+        throw new ImageFetchError(`下载图片失败（${cause || '网络错误'}）：${current.host}`);
+      }
+      if (response.status !== 401 && response.status !== 403) break;
+      lastError = new ImageFetchError(
+        `下载图片失败（HTTP ${response.status}）：对方图床拒绝抓取（防盗链），已保留外链`
+      );
+      try { await response.body?.cancel(); } catch { /* 忽略 */ }
+      response = null;
     }
+    if (!response) throw lastError ?? new ImageFetchError('下载图片失败');
 
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
