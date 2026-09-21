@@ -36,6 +36,19 @@
         </header>
 
         <div class="asset-body">
+          <!-- 正文里还有外链图没落成本地：抓取失败时正文保留外链，不提示的话用户
+               只会看到「图没存下来」而不知道为什么，也没法重试 -->
+          <div v-if="state.remoteImages.length" class="remote-warn">
+            <Icon name="link" :size="14" />
+            <div class="remote-warn-text">
+              <b>正文里还有 {{ state.remoteImages.length }} 张外链图没有存到本地</b>
+              <span>Engram 会在正文变动和每次启动时自动抓取；抓不到（对方防盗链 / 离线 / 图片已失效）就保留外链。也可以现在重试。</span>
+            </div>
+            <button type="button" :disabled="state.retrying" @click="retryRemoteImages">
+              {{ state.retrying ? '抓取中…' : '重试' }}
+            </button>
+          </div>
+
           <p v-if="state.loading" class="asset-hint">正在读取图片…</p>
           <p v-else-if="state.error" class="asset-hint error">{{ state.error }}</p>
           <AppEmptyState
@@ -107,6 +120,7 @@ import {
   closeAssetPreview,
   deleteAsset,
   formatAssetSize,
+  retryRemoteImages,
   type AssetItem,
 } from '../lib/assetDrawer';
 
@@ -253,6 +267,43 @@ function displayName(name: string): string {
 
 .asset-hint { margin: 6px 0; color: var(--text-faint); font-size: 12.5px; }
 .asset-hint.error { color: var(--danger); }
+
+/* 正文里还有外链图没落本地时的提示条 */
+.remote-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+  color: var(--text-secondary);
+}
+.remote-warn > svg { flex-shrink: 0; margin-top: 2px; color: var(--warn); }
+.remote-warn-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.remote-warn-text b { color: var(--text); font-size: 12px; }
+.remote-warn button {
+  flex-shrink: 0;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+.remote-warn button:hover:not(:disabled) { color: var(--text); background: var(--bg-tertiary); }
+.remote-warn button:disabled { opacity: 0.6; cursor: default; }
 
 .asset-wall {
   display: grid;

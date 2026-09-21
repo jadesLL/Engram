@@ -311,6 +311,12 @@ export function syncPageFile(relPath: string): PageMeta | null {
     ftsSegment(tags.join(' ')),
     meta.id
   );
+  // 外链图片本地化：syncPageFile 是「磁盘上的正文变了」的唯一收口——编辑器保存、REST、
+  // Agent write_page、导入 .md、多端同步拉回、启动扫描、Agent 直接写文件系统全经过它。
+  // 只挂在 writePage 上会漏掉导入与同步（首版就是这么漏的）。异步不阻塞，抓不到就保留外链。
+  import('./remoteImages.js')
+    .then((m) => m.scheduleRemoteImageLocalization(meta.id, parsed.content))
+    .catch(() => { /* 模块不可用时忽略 */ });
   return meta;
 }
 
@@ -381,12 +387,6 @@ export function writePage(
   const meta = syncPageFile(relPath)!;
   emit('page-changed', { path: relPath, id: meta.id });
   if (origin === 'local') notifySyncChange('page', relPath);
-  // 外链图片本地化：写页是所有入口的唯一收口（编辑器保存 / REST / Agent write_page），
-  // 远程图片在这里被抓成本地资产、原 URL 记进图片 title 作为出处。异步不阻塞保存，
-  // 抓不到（离线/防盗链/私网被拦）就保留外链，下次写页再试。
-  import('./remoteImages.js')
-    .then((m) => m.scheduleRemoteImageLocalization(relPath, content))
-    .catch(() => { /* 模块不可用时忽略 */ });
   return meta;
 }
 
