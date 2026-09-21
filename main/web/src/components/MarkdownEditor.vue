@@ -62,6 +62,8 @@ const props = defineProps<{
   modelValue: string;
   dark: boolean;
   mode?: 'ir' | 'sv';
+  /** 当前页面的 id：粘贴/拖入的图片会存成这个页面的私有资产（见 lib/pageAssets.ts） */
+  pageId?: string;
   /** 全屏编辑状态：由父级持有（要连同页头/状态栏一起让位），这里只负责图标与提示 */
   fullscreen?: boolean;
 }>();
@@ -332,6 +334,25 @@ const desktopToolbar = [
   'edit-mode', fullscreenToolbarItem, 'outline', readingToolbarItem,
 ];
 
+/**
+ * 把 data:base64 内联图落成当前页面的图片资产，返回 /media/... 引用。
+ * 失败时原样返回 data URL——宁可正文里留一段 base64，也不要吞掉用户粘贴的图。
+ */
+async function persistDataUrl(dataUrl: string): Promise<string> {
+  if (!dataUrl.startsWith('data:image/') || !props.pageId) return dataUrl;
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+    const fd = new FormData();
+    fd.append('parent', props.pageId);
+    fd.append('files', new File([blob], `粘贴图片.${ext}`, { type: blob.type }));
+    const { data } = await api.post('/api/assets/upload', fd);
+    return data.saved?.[0]?.url || dataUrl;
+  } catch {
+    return dataUrl;
+  }
+}
+
 function init() {
   const initialValue = stripIngestComments(wikiLinksToMarkdown(props.modelValue));
   lastProgrammaticValue = initialValue;
@@ -351,20 +372,34 @@ function init() {
     toolbar: window.matchMedia('(max-width: 768px)').matches ? mobileToolbar : desktopToolbar,
     toolbarConfig: { pin: true },
     upload: {
-      url: '/api/files/upload',
+      // 图片是当前页面的私有资产：上传时必须带父项页面 id（走 setHeaders，每次上传前重新取，
+      // 这样切换页面不用重建编辑器）。裸图上传会被服务端拒绝——图片只能插进某个内容里。
+      url: '/api/assets/upload',
       fieldName: 'files',
       multiple: false,
-      extraData: { dir: 'assets' },
+      accept: 'image/*',
+      setHeaders: () => ({ 'X-Engram-Parent': props.pageId || '' }),
       format(_files, responseText) {
-        const res = JSON.parse(responseText);
+        let res: any;
+        try {
+          res = JSON.parse(responseText);
+        } catch {
+          return JSON.stringify({ msg: '上传失败：服务端返回无法解析', code: 1 });
+        }
         const saved = res.saved?.[0];
-        if (!saved) return JSON.stringify({ msg: '上传失败', code: 1 });
-        const url = `/api/files/raw?path=${encodeURIComponent(saved.path)}`;
+        if (!saved) {
+          return JSON.stringify({ msg: res.error || '上传失败', code: 1 });
+        }
+        // succMap 的键会被 Vditor 当作图注（alt），去掉内容哈希前缀更干净
+        const label = String(saved.name).replace(/^[0-9a-f]{8}-/, '');
         return JSON.stringify({
           msg: '', code: 0,
-          data: { errFiles: [], succMap: { [saved.name]: url } },
+          data: { errFiles: [], succMap: { [label]: saved.url } },
         });
       },
+      // 从 Word / 网页复制的图文里常带 data:base64 内联图：直接落成页面资产，
+      // 否则整段 base64 会写进 .md 正文（体积暴涨且不参与同步的图片链路）
+      base64ToLink: ((src: string) => persistDataUrl(src)) as unknown as (responseText: string) => string,
     },
     input: (v) => {
       // IME 组字期间不 emit，避免 wysiwyg 防抖重渲染打断输入

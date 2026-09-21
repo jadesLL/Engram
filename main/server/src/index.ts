@@ -32,6 +32,8 @@ import { initSync } from './sync/index.js';
 import { migrateConflictBackupDir } from './sync/hub.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { mcpRoutes } from './mcp/server.js';
+import { assetRoutes } from './routes/assets.js';
+import { mediaRoutes } from './routes/media.js';
 import { scanVault, readPage, writePage } from './lib/vault.js';
 import { heartbeat } from './lib/events.js';
 import { ensureSystemFiles, migrateLegacySystemFiles } from './pipeline/indexFile.js';
@@ -79,6 +81,9 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(healthRoutes);
   await app.register(pageRoutes);
   await app.register(fileRoutes);
+  await app.register(assetRoutes);
+  // 图片资产直链：必须早于静态托管的 SPA fallback 注册，否则未命中会返回 index.html
+  await app.register(mediaRoutes);
   await app.register(officeRoutes);
   await app.register(searchRoutes);
   await app.register(graphRoutes);

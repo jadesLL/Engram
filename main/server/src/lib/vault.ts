@@ -40,7 +40,9 @@ const SUB_ORDER: Record<string, string[]> = {
   Wiki: ['概念', '实体', '查询', '归档'],
   AIWorks: ['index', 'log', 'scheme'],
 };
-/** 系统目录不在文件树展示 */
+/** 系统目录不在文件树展示（任意层级都隐藏）。
+ *  原先的判定写成 `HIDDEN.has(name) && orderList === TOP_ORDER`——靠数组引用相等
+ *  表达「只在根层」，嵌套的 assets/ 会漏出来，语义也脆弱；这里直接按名字隐藏。 */
 const HIDDEN = new Set(['.trash', 'assets']);
 
 /** 递归列出 brain 目录树（页面 + 文件） */
@@ -55,7 +57,7 @@ export function listTree() {
     const out: any[] = [];
     for (const e of entries) {
       if (e.name.startsWith('.')) continue;
-      if (HIDDEN.has(e.name) && orderList === TOP_ORDER) continue;
+      if (HIDDEN.has(e.name)) continue;
       const abs = path.join(dir, e.name);
       const rel = toRel(abs);
       if (e.isDirectory()) {
@@ -379,6 +381,12 @@ export function writePage(
   const meta = syncPageFile(relPath)!;
   emit('page-changed', { path: relPath, id: meta.id });
   if (origin === 'local') notifySyncChange('page', relPath);
+  // 外链图片本地化：写页是所有入口的唯一收口（编辑器保存 / REST / Agent write_page），
+  // 远程图片在这里被抓成本地资产、原 URL 记进图片 title 作为出处。异步不阻塞保存，
+  // 抓不到（离线/防盗链/私网被拦）就保留外链，下次写页再试。
+  import('./remoteImages.js')
+    .then((m) => m.scheduleRemoteImageLocalization(relPath, content))
+    .catch(() => { /* 模块不可用时忽略 */ });
   return meta;
 }
 
@@ -512,4 +520,33 @@ export async function scanVault() {
     };
     walkRaw('原始资料');
   } catch { /* 原始资料目录为空或不存在时忽略 */ }
+
+  // 图片资产模型迁移（一次性）：历史正文里的 /api/files/... 内嵌写法归位。
+  // 必须排在页面扫描之后——迁移要按 pages 行的 id 建 assets/<pageId>/ 目录。
+  // 迁移直接改文件而不走 writePage，所以要手动补索引刷新与同步通知。
+  try {
+    const { assetMigrationDone, markAssetMigrationDone, migrateLegacyAssets, sweepLooseAssetsOnly } =
+      await import('./pageAssets.js');
+    if (!assetMigrationDone()) {
+      const result = migrateLegacyAssets();
+      markAssetMigrationDone();
+      for (const rel of result.touchedPaths) {
+        syncPageFile(rel);
+        notifySyncChange('page', rel);
+      }
+      if (result.filesMoved || result.refsRewritten || result.unassigned) {
+        console.log(
+          `[assets] 图片资产迁移完成：搬移 ${result.filesMoved} 个文件，改写 ${result.refsRewritten} 处引用`
+          + `（${result.pagesTouched} 个页面），${result.unassigned} 张无归属图片收进未归属池`
+        );
+      }
+    } else {
+      // 每次都扫：用户可能绕过应用直接把图片拷进 原始资料/，不收容就成了看不见的死文件
+      const parked = sweepLooseAssetsOnly();
+      if (parked) console.log(`[assets] ${parked} 张无归属图片收进未归属池（设置 → 存储空间 可清理）`);
+    }
+  } catch (error: any) {
+    // 不写标记 → 下次启动重试；迁移失败绝不能阻塞启动
+    console.warn(`[assets] 图片资产迁移失败，下次启动重试：${error?.message || error}`);
+  }
 }

@@ -184,6 +184,7 @@
           v-model="content"
           :dark="isDark"
           :mode="app.editorMode"
+          :page-id="page?.id"
           :fullscreen="fullscreen"
           @save="save(true)"
           @open-wikilink="openWikilink"

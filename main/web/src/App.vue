@@ -20,6 +20,7 @@
     <span class="win-titlebar-name">Engram</span>
   </div>
   <router-view />
+  <AssetDrawer />
   <ToastHost />
   <ConfirmHost />
   <UpdateOverlay />
@@ -33,6 +34,7 @@ import ToastHost from './components/ui/ToastHost.vue';
 import ConfirmHost from './components/ui/ConfirmHost.vue';
 import AppTooltip from './components/ui/AppTooltip.vue';
 import UpdateOverlay from './components/UpdateOverlay.vue';
+import AssetDrawer from './components/AssetDrawer.vue';
 import { loadRuntimeCapabilities } from './lib/capabilities';
 
 const app = useAppStore();

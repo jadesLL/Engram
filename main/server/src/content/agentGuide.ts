@@ -32,7 +32,8 @@ Engram 不内置任何 AI——读、写、提炼、综合全部由你（外部 
 
 ## 一、知识库结构
 
-- 原始资料/ —— 用户上传的原始文件与对话沉积（md/docx/xlsx/pptx/pdf/图片…）。非 md 文件由 Engram 提取文本层；图片与无文字层的 PDF 页保留原样，需你具备视觉能力自行阅读。
+- 原始资料/ —— 用户上传的原始文件与对话沉积（md/docx/xlsx/pptx/pdf…）。非 md 文件由 Engram 提取文本层；无文字层的 PDF 页保留原样，需你具备视觉能力自行阅读。
+- 图片 —— 图片**不是**原始资料，而是某个 md 父项（Wiki 页面或原始资料 md）的**私有资产**：没有全局图片清单，也不会出现在 list_raw_files / list_pages / 目录树里。正文中以 \`/media/<父项id>/<文件名>\` 引用；要看原图就把该引用原样传给 read_page_asset（图片以 image 内容返回）。用户不能把图片当独立资料上传，你也不需要为图片建页。
 - Wiki/概念/ —— 概念页（方法论、标准、技术、理念等抽象对象）。
 - Wiki/实体/ —— 实体页（人物 person、客户 customer、组织 org、项目 project、其他 other 五类，目录不分家，类型写在 frontmatter type）。
 - Wiki/归档/ —— 归档区。
@@ -42,7 +43,7 @@ Engram 不内置任何 AI——读、写、提炼、综合全部由你（外部 
 
 CLI（engram，与 MCP 同一服务端，token 相同）——**能跑 shell 的 Agent 优先用 CLI**：命令直出结果、上下文消耗低，加 --json 可得机器可读输出。命令：engram status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / names check|propose|list|audit|answer / chat save / guide / mcp-config。
 
-MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把图片作为图像内容直读（read_raw_file raw=true）时使用：
+MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把图片作为图像内容直读（read_raw_file raw=true / read_page_asset）时使用：
 - search —— 关键词检索知识库（页面 + 原始文件提取文本），返回片段与出处
 - list_pages —— 知识库目录树（可叠加过滤：outdated=true 列规则落后页面；path 路径前缀；tag 标签）
 - read_page —— 按标题或页面 ID 读页面全文
@@ -50,6 +51,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 - page_evidence —— 读页面的证据账本（来源、版本、事实引文）
 - list_raw_files —— 原始资料清单（含提取状态与已提炼标记；pending=true 只返回未提炼文件）
 - read_raw_file —— 读原始资料：有文本层返回提取文本；图片/PDF 返回 base64（供视觉模型自行阅读）
+- read_page_asset —— 读页面/资料正文里引用的图片原图（传正文里的 \`/media/<父项id>/<文件名>\` 引用，图片以 image 内容返回）
 - entity_name_check —— 公司全名核验：登记待核名称（服务端先自查资料库，有候选全名直接返回；没有就让你在对话里问用户是否允许联网查企查查/天眼查）
 - entity_name_answer —— 回填用户在对话里给出的答复（allow/deny）：允许联网查询 / 同意改用全名（同意即由服务端执行改名）
 - entity_name_propose —— 回填联网查到的工商全名，再问用户是否改用全名；查不到就不传 fullName

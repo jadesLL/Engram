@@ -15,6 +15,7 @@ import { relatedPageData } from '../lib/graphCache.js';
 import { pageEvidenceResponse } from '../pipeline/pageEvidence.js';
 import { isValidType } from '../lib/pageTypes.js';
 import { GUIDE_VERSION } from '../content/agentGuide.js';
+import { assetCountsByParent } from '../lib/pageAssets.js';
 
 function comparablePageContent(value: string): string {
   return value
@@ -61,7 +62,16 @@ export async function pageRoutes(app: FastifyInstance) {
         && Number(r.guide_version ?? 0) < GUIDE_VERSION
       );
     }
-    return { guideVersion: GUIDE_VERSION, pages: rows.map((r) => ({ ...r, tags: JSON.parse(r.tags) })) };
+    // 图片资产张数：侧栏右键「查看引用图片」的徽标。一次 readdir 出全部父项，不按页查库
+    const assetCounts = assetCountsByParent();
+    return {
+      guideVersion: GUIDE_VERSION,
+      pages: rows.map((r) => ({
+        ...r,
+        tags: JSON.parse(r.tags),
+        assetCount: assetCounts.get(String(r.id)) || 0,
+      })),
+    };
   });
 
   app.get('/api/pages/tags', async () => {

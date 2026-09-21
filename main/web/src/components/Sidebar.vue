@@ -119,6 +119,10 @@
                     :active="p.id === activeId"
                     :selected="selected.has('p:' + p.id)"
                     :selection-mode="selectionMode"
+                    :class="{ 'asset-drop-hot': assetDropTarget === p.id }"
+                    @dragover="onRowDragOver($event, p)"
+                    @dragleave="onRowDragLeave($event, p)"
+                    @drop="onRowDrop($event, p)"
                     @open="openPage"
                     @archive="archivePage"
                     @unarchive="unarchivePage"
@@ -143,6 +147,10 @@
                 :active="p.id === activeId"
                 :selected="selected.has('p:' + p.id)"
                 :selection-mode="selectionMode"
+                :class="{ 'asset-drop-hot': assetDropTarget === p.id }"
+                @dragover="onRowDragOver($event, p)"
+                @dragleave="onRowDragLeave($event, p)"
+                @drop="onRowDrop($event, p)"
                 @open="openPage"
                 @archive="archivePage"
                 @unarchive="unarchivePage"
@@ -236,6 +244,10 @@
             :selected="selected.has('f:' + f.path)"
             :selection-mode="selectionMode"
             :job="fileJob(f.path)"
+            :class="{ 'asset-drop-hot': !!f.pageId && assetDropTarget === f.pageId }"
+            @dragover="onRowDragOver($event, f)"
+            @dragleave="onRowDragLeave($event, f)"
+            @drop="onRowDrop($event, f)"
             @open="openFile"
             @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
             @remove="removeFile"
@@ -295,6 +307,10 @@
             :selected="selected.has('f:' + f.path)"
             :selection-mode="selectionMode"
             :job="fileJob(f.path)"
+            :class="{ 'asset-drop-hot': !!f.pageId && assetDropTarget === f.pageId }"
+            @dragover="onRowDragOver($event, f)"
+            @dragleave="onRowDragLeave($event, f)"
+            @drop="onRowDrop($event, f)"
             @open="openFile"
             @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
             @remove="removeFile"
@@ -405,6 +421,7 @@ import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { hideTooltip } from '../lib/tooltip';
 import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
+import { openAssetDrawer } from '../lib/assetDrawer';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
 import FileRow from './FileRow.vue';
@@ -777,10 +794,20 @@ async function changePageType(page: any, newType: string) {
   }
 }
 
-/** 右键页面行：归档 / 删除（语义合并交给外部 Agent 处理） */
+/** 右键页面行：查看引用图片 / 归档 / 删除（语义合并交给外部 Agent 处理） */
 function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) {
   const isArchived = page.path.startsWith('Wiki/归档/');
+  const count = Number(page.assetCount || 0);
   const items: ContextMenuItem[] = [
+    {
+      id: 'assets',
+      label: '查看引用图片',
+      icon: 'image',
+      // 图片是这份内容的私有资产，没有全局入口：只有这里能进；没有图片时置灰
+      disabled: count === 0,
+      hint: count ? String(count) : '无',
+      action: () => openAssetDrawer({ id: page.id, title: page.title, path: page.path }),
+    },
     {
       id: 'archive',
       label: isArchived ? '取消归档' : '归档',
@@ -792,8 +819,9 @@ function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) 
   openContextMenu({ x, y, items });
 }
 
-/** 右键/⋯ 资料行：下载 / 删除 */
+/** 右键/⋯ 资料行：下载 / 查看引用图片 / 删除（只有 md 有图片资产，其余置灰） */
 function onFileContextMenu({ x, y, file }: { x: number; y: number; file: any }) {
+  const count = Number(file.assetCount || 0);
   const items: ContextMenuItem[] = [
     {
       id: 'download',
@@ -805,6 +833,15 @@ function onFileContextMenu({ x, y, file }: { x: number; y: number; file: any }) 
         a.download = file.name;
         a.click();
       },
+    },
+    {
+      id: 'assets',
+      label: '查看引用图片',
+      icon: 'image',
+      // 非 md 资料没有图片资产（不抽 docx/pdf/pptx 的内嵌图），同样置灰
+      disabled: count === 0 || !file.pageId,
+      hint: count ? String(count) : '无',
+      action: () => openAssetDrawer({ id: file.pageId, title: file.name, path: file.path }),
     },
     { id: 'delete', label: '删除', icon: 'trash', action: () => removeFile(file) },
   ];
@@ -1095,7 +1132,72 @@ function onFilesDragLeave(e: DragEvent) {
 async function onFilesDrop(e: DragEvent) {
   if (!isFileDrag(e)) return;
   filesDropHot.value = false;
-  await uploadFiles([...(e.dataTransfer?.files || [])]);
+  const list = [...(e.dataTransfer?.files || [])];
+  // 图片不能作为独立资料落进「原始资料」：它必须是某个内容的私有资产。
+  // 引导用户把图片拖到具体条目上（见 onRowDragOver / onRowDrop）。
+  if (list.some((f) => isImageFile(f))) {
+    notify.error('图片不能单独放进原始资料：请把它拖到某个页面或 Markdown 资料上，图片会成为那份内容的资产');
+    return;
+  }
+  await uploadFiles(list);
+}
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i;
+const MD_EXT_RE = /\.(md|markdown)$/i;
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || IMAGE_EXT_RE.test(file.name);
+}
+
+/** 拖拽悬停的条目路径：给行加高亮，告诉用户图片会落到哪份内容上 */
+const assetDropTarget = ref('');
+
+/** 只有 md 条目能接图片（Wiki 页面 / 原始资料里的 md）；非 md 资料没有图片资产 */
+function assetDropParent(item: any): string {
+  if (item?.id && item?.path && MD_EXT_RE.test(String(item.path))) return String(item.id);
+  if (item?.pageId && item?.path && MD_EXT_RE.test(String(item.path))) return String(item.pageId);
+  return '';
+}
+
+function onRowDragOver(e: DragEvent, item: any) {
+  if (!isFileDrag(e)) return;
+  const parent = assetDropParent(item);
+  if (!parent) return;
+  // 不 stopPropagation：「原始资料」分区自己的落点高亮要继续工作，
+  // 文档拖到行上仍然按原路径落进原始资料（只有图片会被行接走）
+  e.preventDefault();
+  e.dataTransfer!.dropEffect = 'copy';
+  assetDropTarget.value = parent;
+}
+
+function onRowDragLeave(e: DragEvent, item: any) {
+  const parent = assetDropParent(item);
+  if (parent && assetDropTarget.value === parent) assetDropTarget.value = '';
+}
+
+/** 把图片拖到某个条目上 = 插进那份内容：存成它的资产并把引用追加到正文末尾。
+ *  不是图片（或目标不是 md）时直接放行，让事件冒泡给分区级处理器。 */
+async function onRowDrop(e: DragEvent, item: any) {
+  if (!isFileDrag(e)) return;
+  const parent = assetDropParent(item);
+  const files = [...(e.dataTransfer?.files || [])].filter(isImageFile);
+  if (!parent || !files.length) return;
+  e.preventDefault();
+  e.stopPropagation();
+  assetDropTarget.value = '';
+  const fd = new FormData();
+  fd.append('parent', parent);
+  fd.append('insert', 'append');
+  for (const file of files) fd.append('files', file);
+  try {
+    const { data } = await api.post('/api/assets/upload', fd);
+    const n = data.saved?.length || 0;
+    notify.success(`已插入 ${n} 张图片到「${item.title || item.name}」${data.appended ? '，引用已加到正文末尾' : ''}`);
+    // 页面正文被服务端改过，SSE 的 page-changed 会让已打开的编辑器自行重载
+    await load();
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || '插入图片失败');
+  }
 }
 
 async function archivePage(p: any) {
@@ -1680,6 +1782,12 @@ onUnmounted(() => {
 
 .page-row.selected {
   background: var(--sidebar-selection-strong);
+}
+
+/* 图片拖到某个 md 条目上：行高亮，表示图片会成为这份内容的资产 */
+.page-row.asset-drop-hot {
+  background: var(--sidebar-selection-strong);
+  box-shadow: inset 0 0 0 1.5px var(--sidebar-accent);
 }
 
 .page-title {

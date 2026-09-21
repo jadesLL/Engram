@@ -68,6 +68,76 @@
     <p v-else class="trash-empty">{{ trashQuery ? '没有匹配的项目' : '回收站为空' }}</p>
     <p v-if="trashMsg" class="setting-message trash-message" :class="trashOk ? 'ok' : 'err'">{{ trashMsg }}</p>
   </section>
+
+  <!-- 图片资产：图片是 md 父项的私有资产，正常入口是右击那个条目 →「查看引用图片」。
+       这里只收没有归属、或父项正文已经不再引用的图片——它们是唯一的清理出口。 -->
+  <section class="settings-panel settings-native trash-section">
+    <div class="panel-head">
+      <div>
+        <h3>图片资产</h3>
+        <p>
+          {{ assetLoading
+            ? '正在读取图片资产...'
+            : `未归属 ${orphanAssets.unassigned.length} 张 · 未被引用 ${orphanAssets.unreferenced.length} 张，共 ${formatBytes(orphanAssets.totalBytes)}` }}
+        </p>
+      </div>
+      <button
+        class="btn danger"
+        type="button"
+        :disabled="assetLoading || assetBusy || !orphanTotal"
+        @click="deleteAllOrphans"
+      >
+        <Icon name="trash" :size="14" />
+        全部清理
+      </button>
+    </div>
+
+    <p class="asset-note">
+      图片不会出现在目录树、知识图谱或搜索结果里。未归属图片是历史遗留的散图（用户已不能单独上传图片）；
+      未被引用图片是正文里已经删掉引用的残留。挂载会把图片移到目标内容名下并把引用追加到正文末尾。
+    </p>
+
+    <div v-if="orphanTotal" class="trash-list">
+      <div v-for="item in orphanList" :key="item.path" class="trash-row">
+        <img class="asset-thumb" :src="item.url" :alt="item.name" loading="lazy" />
+        <div class="trash-main">
+          <div class="trash-name-line">
+            <span class="trash-name" v-tooltip.auto="item.name">{{ item.name }}</span>
+            <span class="legacy-tag">{{ item.unassigned ? '未归属' : '未被引用' }}</span>
+          </div>
+          <div class="trash-meta" v-tooltip="item.path">
+            <span>{{ formatBytes(item.size) }}</span>
+            <span>{{ item.unassigned ? '没有父项' : `原父项 ${item.parentTitle || item.parentId}` }}</span>
+          </div>
+        </div>
+        <div class="trash-actions">
+          <select
+            v-if="item.unassigned"
+            class="asset-attach-select"
+            :disabled="assetBusy"
+            aria-label="挂载到"
+            @change="attachAsset(item, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">挂载到…</option>
+            <option v-for="page in attachTargets" :key="page.id" :value="page.id">{{ page.title }}</option>
+          </select>
+          <button
+            class="icon-btn danger-icon"
+            type="button"
+            v-tooltip="'删除'"
+            aria-label="删除"
+            :disabled="assetBusy"
+            @click="deleteOrphan(item)"
+          >
+            <Icon name="trash" :size="15" />
+          </button>
+        </div>
+      </div>
+    </div>
+    <p v-else-if="assetLoading" class="trash-empty">正在读取图片资产...</p>
+    <p v-else class="trash-empty">没有未归属或未被引用的图片</p>
+    <p v-if="assetMsg" class="setting-message trash-message" :class="assetOk ? 'ok' : 'err'">{{ assetMsg }}</p>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -255,10 +325,171 @@ async function emptyTrash() {
   }
 }
 
-onMounted(loadTrash);
+/* ---------- 图片资产 ---------- */
+
+interface OrphanAsset {
+  parentId: string;
+  name: string;
+  path: string;
+  url: string;
+  size: number;
+  /** true = 没有父项（在 assets/_unassigned/），可挂载到某个页面 */
+  unassigned: boolean;
+  /** 未被引用时：原本挂在哪个页面上 */
+  parentTitle?: string;
+}
+
+const orphanAssets = ref<{ unassigned: OrphanAsset[]; unreferenced: OrphanAsset[]; totalBytes: number }>({
+  unassigned: [],
+  unreferenced: [],
+  totalBytes: 0,
+});
+const assetLoading = ref(false);
+const assetBusy = ref(false);
+const assetMsg = ref('');
+const assetOk = ref(true);
+/** 挂载目标下拉：所有 md 页面（Wiki 页面 + 原始资料 md） */
+const attachTargets = ref<Array<{ id: string; title: string }>>([]);
+
+const orphanTotal = computed(
+  () => orphanAssets.value.unassigned.length + orphanAssets.value.unreferenced.length
+);
+
+const orphanList = computed<OrphanAsset[]>(() => [
+  ...orphanAssets.value.unassigned.map((item) => ({ ...item, unassigned: true })),
+  ...orphanAssets.value.unreferenced.map((item) => ({ ...item, unassigned: false })),
+]);
+
+async function loadAssets() {
+  assetLoading.value = true;
+  try {
+    const [{ data }, pagesRes] = await Promise.all([
+      api.get('/api/assets/orphans/list'),
+      api.get('/api/pages/list'),
+    ]);
+    orphanAssets.value = {
+      unassigned: data.unassigned || [],
+      unreferenced: data.unreferenced || [],
+      totalBytes: data.totalBytes || 0,
+    };
+    const titleById = new Map<string, string>(
+      (pagesRes.data.pages || []).map((p: any) => [String(p.id), String(p.title)])
+    );
+    for (const item of orphanAssets.value.unreferenced) {
+      item.parentTitle = titleById.get(String(item.parentId));
+    }
+    attachTargets.value = (pagesRes.data.pages || [])
+      .filter((p: any) => /\.(md|markdown)$/i.test(String(p.path)))
+      .map((p: any) => ({ id: String(p.id), title: String(p.title) }));
+  } catch (e: any) {
+    assetOk.value = false;
+    assetMsg.value = e.response?.data?.error || '图片资产读取失败';
+  } finally {
+    assetLoading.value = false;
+  }
+}
+
+/** 挂载：把未归属图片移到目标页面名下，并把引用追加到该页正文末尾 */
+async function attachAsset(item: OrphanAsset, parentId: string) {
+  if (!parentId || assetBusy.value) return;
+  assetBusy.value = true;
+  assetMsg.value = '';
+  try {
+    const { data } = await api.post('/api/assets/attach', { name: item.name, parent: parentId });
+    assetOk.value = true;
+    assetMsg.value = `已挂载「${item.name}」→ ${data.parentTitle || '目标页面'}`;
+    app.bumpSidebar();
+    await loadAssets();
+  } catch (e: any) {
+    assetOk.value = false;
+    assetMsg.value = e.response?.data?.error || '挂载失败';
+  } finally {
+    assetBusy.value = false;
+  }
+}
+
+async function deleteOrphan(item: OrphanAsset) {
+  if (assetBusy.value) return;
+  const ok = await confirmDialog({
+    title: '删除图片',
+    message: `将删除「${item.name}」，此操作不可撤销。继续？`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
+  assetBusy.value = true;
+  assetMsg.value = '';
+  try {
+    await api.delete('/api/assets', { data: { parentId: item.parentId, name: item.name } });
+    assetOk.value = true;
+    assetMsg.value = `已删除「${item.name}」`;
+    await loadAssets();
+  } catch (e: any) {
+    assetOk.value = false;
+    assetMsg.value = e.response?.data?.error || '删除失败';
+  } finally {
+    assetBusy.value = false;
+  }
+}
+
+async function deleteAllOrphans() {
+  if (assetBusy.value || !orphanTotal.value) return;
+  const ok = await confirmDialog({
+    title: '清理全部未引用图片',
+    message: `将删除 ${orphanTotal.value} 张图片（未归属 + 未被引用），此操作不可撤销。继续？`,
+    confirmText: '全部清理',
+    danger: true,
+  });
+  if (!ok) return;
+  assetBusy.value = true;
+  assetMsg.value = '';
+  let failed = 0;
+  for (const item of orphanList.value) {
+    try {
+      await api.delete('/api/assets', { data: { parentId: item.parentId, name: item.name } });
+    } catch {
+      failed++;
+    }
+  }
+  assetOk.value = failed === 0;
+  assetMsg.value = failed ? `已删除 ${orphanTotal.value - failed} 张，${failed} 张失败` : `已清理 ${orphanTotal.value} 张图片`;
+  assetBusy.value = false;
+  await loadAssets();
+}
+
+onMounted(() => {
+  loadTrash();
+  loadAssets();
+});
 </script>
 
 <style scoped>
+/* ---------- 图片资产 ---------- */
+.asset-note {
+  margin: 12px 24px 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.asset-thumb {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+  background: var(--bg-tertiary);
+}
+.asset-attach-select {
+  height: 26px;
+  max-width: 150px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
 .trash-tools {
   display: grid;
   grid-template-columns: auto minmax(180px, 1fr) auto auto;
