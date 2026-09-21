@@ -22,6 +22,7 @@ import {
   scheduleFileExtraction,
   supportsFileExtraction,
 } from '../pipeline/fileExtraction.js';
+import { assetCountsByParent, isAssetFile, parseAssetRefs, assetRelPath, safeAssetJoin, MEDIA_PREFIX } from '../lib/pageAssets.js';
 
 /** 可提取文本入索引的 Office 格式 */
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
@@ -57,12 +58,17 @@ export async function fileRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
   /** 原始资料文件列表（供侧栏展示）；md 文件附带 page id（可直接进编辑器）。
-   *  默认只列 原始资料 顶层；?dir=原始资料/对话 时递归该子树（对话分区用，与原始资料同构）。 */
+   *  默认只列 原始资料 顶层；?dir=原始资料/对话 时递归该子树（对话分区用，与原始资料同构）。
+   *  图片不在这里出现：图片是 md 父项的私有资产（见 lib/pageAssets.ts），只能从父项右键菜单进，
+   *  侧栏目录里不占行、不计数、不成组。 */
   app.get('/api/files/list', async (req) => {
     const { dir } = req.query as { dir?: string };
     const sub = dir ? normalizeDir(dir) : '';
     const out: any[] = [];
+    const assetCounts = assetCountsByParent();
     const pushEntry = (name: string, rel: string) => {
+      // 历史遗留的散图（迁移没搬走的）同样不进侧栏
+      if (isAssetFile(name)) return;
       const abs = safeJoin(rel);
       let stat: fs.Stats;
       try { stat = fs.statSync(abs); } catch { return; }
@@ -81,6 +87,8 @@ export async function fileRoutes(app: FastifyInstance) {
         name, path: rel, ext, size: stat.size,
         updated_at: stat.mtime.toISOString(),
         pageId,
+        // 该 md 父项引用的图片张数（侧栏右键「查看引用图片」的徽标）
+        assetCount: pageId ? assetCounts.get(String(pageId)) || 0 : 0,
         extractionStatus: extraction?.status || null,
         extractionMethod: extraction?.method || null,
         extractionPageCount: extraction?.page_count || 0,
@@ -163,6 +171,17 @@ export async function fileRoutes(app: FastifyInstance) {
     const dir = normalizeDir(fields.dir || '') || '原始资料';
     if (!isUploadDir(dir)) {
       return reply.code(403).send({ error: '文件只能上传到「原始资料」目录' });
+    }
+    // 图片不能作为独立资料上传：图片是某个 md 父项的私有资产，只能插进某个内容里
+    // （编辑器内粘贴/拖入，或拖到侧栏某个条目上）。裸图会让侧栏目录、提炼清单、
+    // 图谱全部多出一类没有归属的实体——正是本模型要消灭的形态。
+    const images = incoming.filter((file) => isAssetFile(path.basename(file.filename)));
+    if (images.length) {
+      return reply.code(400).send({
+        error: images.length === incoming.length
+          ? '图片不能单独上传：请把它拖到某个页面或 Markdown 资料上（或直接粘贴进正文），图片会作为该内容的资产保存'
+          : `以下图片不能单独上传，请拖到具体内容里：${images.map((f) => path.basename(f.filename)).join('、')}`,
+      });
     }
     const saved: any[] = [];
     const duplicates: string[] = [];
@@ -372,7 +391,9 @@ export async function fileRoutes(app: FastifyInstance) {
   /** 批量导出原始资料为 zip：接收 path 列表，打包后流式下载。
    *  - 单文件时直接走 /api/files/raw；这里仍支持传入 1 项。
    *  - 路径都经 safeJoin 校验，越界或不存在则跳过并计入 skipped。
-   *  - 同名文件（不同子目录）在 zip 内保留相对路径，不会冲突。 */
+   *  - 同名文件（不同子目录）在 zip 内保留相对路径，不会冲突。
+   *  - md 正文引用的图片资产一并打包（放回 `assets/<parentId>/`），并把正文里的
+   *    `/media/` 重写为 `assets/`——导出的包离开 Engram 也能直接看到图。 */
   app.post('/api/files/export', async (req, reply) => {
     const { paths, name } = (req.body || {}) as { paths?: string[]; name?: string };
     if (!Array.isArray(paths) || !paths.length) {
@@ -380,6 +401,7 @@ export async function fileRoutes(app: FastifyInstance) {
     }
     const zip = new JSZip();
     let added = 0;
+    let assetsAdded = 0;
     const skipped: string[] = [];
     for (const p of paths) {
       if (typeof p !== 'string' || !p.trim()) continue;
@@ -396,7 +418,22 @@ export async function fileRoutes(app: FastifyInstance) {
       }
       // zip 内路径用相对 brain 的正斜杠形式，保留子目录结构
       const rel = p.replace(/^[/\\]+/, '').replace(/\\/g, '/');
-      zip.file(rel, fs.readFileSync(abs));
+      let body: Buffer | string = fs.readFileSync(abs);
+      if (/\.md$/i.test(rel)) {
+        const text = body.toString('utf8');
+        if (text.includes(MEDIA_PREFIX)) {
+          for (const ref of parseAssetRefs(text)) {
+            const assetAbs = safeAssetJoin(`${ref.parentId}/${ref.name}`);
+            if (!fs.existsSync(assetAbs)) continue;
+            const assetRel = assetRelPath(ref.parentId, ref.name);
+            if (zip.file(assetRel)) continue;
+            zip.file(assetRel, fs.readFileSync(assetAbs));
+            assetsAdded++;
+          }
+          body = text.split(MEDIA_PREFIX).join('assets/');
+        }
+      }
+      zip.file(rel, body);
       added++;
     }
     if (added === 0) {
@@ -411,7 +448,12 @@ export async function fileRoutes(app: FastifyInstance) {
       compression: 'DEFLATE',
       compressionOptions: { level: 6 },
     });
-    try { appendWikiLog('导出', `共 ${added} 个文件${skipped.length ? `，跳过 ${skipped.length} 个` : ''}`); } catch { /* 日志失败不阻塞 */ }
+    try {
+      appendWikiLog(
+        '导出',
+        `共 ${added} 个文件${assetsAdded ? `、${assetsAdded} 张图片` : ''}${skipped.length ? `，跳过 ${skipped.length} 个` : ''}`
+      );
+    } catch { /* 日志失败不阻塞 */ }
     reply.header('Content-Type', 'application/zip');
     reply.header(
       'Content-Disposition',

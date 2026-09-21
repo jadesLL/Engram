@@ -25,10 +25,11 @@ import {
   type EntityNameStatus,
 } from '../lib/entityNameChecks.js';
 import { AgentQuestionError, askUserQuestions, formatAskOutcome } from '../assistant/questions.js';
+import { assetMime, isAssetFile, isParentId, parseMediaUrl, safeAssetJoin } from '../lib/pageAssets.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
- * 读工具（search/list_pages/read_page/related_pages/page_evidence/list_raw_files/read_raw_file/
+ * 读工具（search/list_pages/read_page/related_pages/page_evidence/list_raw_files/read_raw_file/read_page_asset/
  * list_entity_names/entity_name_audit/kb_guide/skill_list/skill_guide）
  * + 写工具（write_page 带证据门禁与自动日志 / rename_page / move_page / delete_page 软删除入回收站 /
  * save_chat 对话沉积 / entity_name_check 登记公司全名核验 / entity_name_answer 回填用户答复 /
@@ -43,6 +44,7 @@ const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，�
 任何写操作前先读 AIWorks/log/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
 新建 概念/实体 页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条引文），已有页面增量不受限。
 原始资料与 AIWorks 对 Agent 是只读区：写工具只能写 Wiki/。软件本身具备上传/新建/删除原始资料的能力，但那是用户的操作——你没有写权限，也不得走 HTTP 旁路自行写入；作业时需要的资料不在库里就按现有材料推进，把缺口写进页面的「待核实」，不要卡住整批作业。
+图片是 md 父项的私有资产：没有全局图片清单，图片也不会出现在 list_raw_files / list_pages 里。页面正文里以 \`/media/<父项id>/<文件名>\` 引用，需要看图时把该引用原样传给 read_page_asset（图片以 image 内容返回）。图片不能作为原始资料上传，你也不需要为它建页。
 对话沉积（save_chat）只在用户明确指示后执行；不要自行判断"这段对话有价值"就沉淀。已沉淀的对话属于原始资料，可被后续提炼引用。
 资料里查不到、又必须有个说法时（同名主体区分、客户身份口径等）：能自查的先自查（search 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据——不编造、不空等。
 公司工商全名是唯一例外：公司类实体页标题要用工商全名，材料与资料库都没有时，entity_name_check 登记（服务端先自查资料库：页面标题/证据账本/原始资料里有全名就直接返回，Wiki 正文里的写法只算未核实候选），**随即在对话里问用户**是否允许联网查企查查/天眼查——内置 Agent 用 ask_user（Engram 对话最下侧弹选项，点选即得答复），外部 Agent 用你自己的提问能力问在自己的对话里（不要用 ask_user，它等的是 Engram 界面）。拿到答复用 entity_name_answer 回填；答复允许后用你自己的联网检索查企查查/天眼查，entity_name_propose 回填全名与出处，再问一次是否改用全名，同意后用 entity_name_answer(id, "allow") 由服务端执行改名。问不到（用户不在/不答复）就按现有材料推进并在名称口径标注「全称待确认」，不要卡住整批作业；收尾用 list_entity_names 传 status=unresolved 列出仍未定全名的条目。
@@ -62,7 +64,8 @@ function relExt(rel: string): string {
   return path.posix.extname(rel).slice(1).toLowerCase();
 }
 
-/** 递归列出原始资料（上限 500 条，Agent 按目录分批读取）；pending=true 时只返回未提炼文件 */
+/** 递归列出原始资料（上限 500 条，Agent 按目录分批读取）；pending=true 时只返回未提炼文件。
+ *  图片不算原始资料：它是 md 父项的私有资产（见 lib/pageAssets.ts），不在这里出现。 */
 function listRawFiles(pending = false): Array<{ path: string; ext: string; size: number; extractionStatus: string | null; distilled: boolean }> {
   const out: Array<{ path: string; ext: string; size: number; extractionStatus: string | null; distilled: boolean }> = [];
   const root = safeJoin(RAW_DIR);
@@ -77,6 +80,7 @@ function listRawFiles(pending = false): Array<{ path: string; ext: string; size:
       if (e.isDirectory()) {
         walk(childAbs, childRel);
       } else {
+        if (isAssetFile(e.name)) continue;
         let size = 0;
         try { size = fs.statSync(childAbs).size; } catch { /* ignore */ }
         const ext = relExt(childRel);
@@ -308,6 +312,47 @@ export function makeServer(): McpServer {
         };
       }
       return { content: [{ type: 'text', text: result.text }] };
+    }
+  );
+
+  server.tool(
+    'read_page_asset',
+    '读取页面/资料正文里引用的图片原图（正文中的 `/media/<父项id>/<文件名>` 引用）：图片以 image 内容返回，供视觉模型自行识别。'
+      + '图片是 md 父项的私有资产、没有全局清单——先 read_page 拿到正文里的引用，再把引用原样传进来。',
+    {
+      path: z.string().describe('正文里的图片引用，如 /media/<父项id>/xxx.png；也接受 assets/<父项id>/xxx.png'),
+    },
+    async ({ path: p }) => {
+      const raw = String(p || '').trim();
+      const parsed = parseMediaUrl(raw)
+        || (() => {
+          const match = raw.match(/^assets\/([^/]+)\/([^/]+)$/);
+          if (!match || !isParentId(match[1]) || !isAssetFile(match[2])) return null;
+          return { parentId: match[1], name: match[2] };
+        })();
+      if (!parsed) {
+        return { content: [{ type: 'text', text: `不是本库的图片引用：${raw}` }], isError: true };
+      }
+      const abs = safeAssetJoin(`${parsed.parentId}/${parsed.name}`);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+        return { content: [{ type: 'text', text: `图片不存在：${raw}` }], isError: true };
+      }
+      const mime = assetMime(parsed.name) || 'application/octet-stream';
+      if (mime === 'image/svg+xml') {
+        return {
+          content: [{
+            type: 'text',
+            text: `该图片是 SVG（可携带脚本，不作为图像内容下发）。原始文件位于 assets/${parsed.parentId}/${parsed.name}。`,
+          }],
+        };
+      }
+      const buffer = fs.readFileSync(abs);
+      return {
+        content: [
+          { type: 'text', text: `页面图片（${raw}），请识别其中的文字与信息：` },
+          { type: 'image', data: buffer.toString('base64'), mimeType: mime },
+        ],
+      };
     }
   );
 
