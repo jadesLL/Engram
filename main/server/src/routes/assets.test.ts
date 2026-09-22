@@ -6,6 +6,7 @@ import path from 'node:path';
 import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
+import JSZip from 'jszip';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-assets-routes-'));
 process.env.DATA_DIR = temp;
@@ -241,4 +242,72 @@ test('导出：md 引用的图片一并打包，正文里的 /media 重写为 as
   // zip 里同时含页面与图片（用文件名片段粗验，避免为测试引入解压依赖）
   assert.ok(body.includes(Buffer.from(pageRow.path)));
   assert.ok(body.includes(Buffer.from(`assets/${pageId}/${asset.name}`)));
+
+  // 正文里的链接要相对「这份 md 在包里的位置」：页面在子目录里就得退回相应层数，
+  // 否则解压后链接指到 md 自己那一层，图还是裂的。
+  // 链接里的文件名保持 URL 编码（正文原本就是这么写的），磁盘上的条目才是原名
+  const archive = await JSZip.loadAsync(body);
+  const md = await archive.file(pageRow.path)!.async('string');
+  const depth = pageRow.path.split('/').length - 1;
+  assert.ok(md.includes(`${'../'.repeat(depth)}assets/${pageId}/${encodeURIComponent(asset.name)}`));
+  assert.equal(md.includes('/media/'), false);
+});
+
+test('单文件下载：带图 md 打包成 zip（md 在包根 + assets/），正文链接改相对路径', async () => {
+  const pageId = await newPage('下载带图');
+  const req = form({ parent: pageId, insert: 'append' }, [
+    { filename: '下载配图.png', content: PNG, type: 'image/png' },
+  ]);
+  const up = await app.inject({
+    method: 'POST',
+    url: '/api/assets/upload',
+    headers: { ...auth(), ...req.headers },
+    payload: req.payload,
+  });
+  assert.equal(up.statusCode, 200);
+  const asset = up.json().saved[0];
+
+  const pageRow = db.prepare(`SELECT path FROM pages WHERE id = ?`).get(pageId) as { path: string };
+  const name = pageRow.path.split('/').pop()!;
+  const res = await app.inject({
+    method: 'GET',
+    url: `/api/files/download?path=${encodeURIComponent(pageRow.path)}`,
+    headers: auth(),
+  });
+  assert.equal(res.statusCode, 200);
+  assert.match(String(res.headers['content-type']), /application\/zip/);
+  assert.match(decodeURIComponent(String(res.headers['content-disposition'])), /\.zip/);
+
+  const archive = await JSZip.loadAsync(res.rawPayload);
+  // md 落在包根：解压出来就是「文档 + assets/」，不用再进一层目录找
+  const md = await archive.file(name)!.async('string');
+  assert.ok(md.includes(`assets/${pageId}/${encodeURIComponent(asset.name)}`));
+  assert.equal(md.includes('/media/'), false);
+  assert.ok(archive.file(`assets/${pageId}/${asset.name}`));
+});
+
+test('单文件下载：没有本地图片的文件仍是原样下载（不套一层 zip）', async () => {
+  const rawDir = path.join(temp, 'brain', '原始资料');
+  fs.mkdirSync(rawDir, { recursive: true });
+  fs.writeFileSync(path.join(rawDir, '纯文本.txt'), '纯文本正文');
+  fs.writeFileSync(path.join(rawDir, '无图.md'), '# 无图\n\n正文');
+
+  for (const [file, body] of [['纯文本.txt', '纯文本正文'], ['无图.md', '# 无图\n\n正文']] as const) {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/files/download?path=${encodeURIComponent(`原始资料/${file}`)}`,
+      headers: auth(),
+    });
+    assert.equal(res.statusCode, 200);
+    assert.match(String(res.headers['content-type']), /application\/octet-stream/);
+    assert.match(decodeURIComponent(String(res.headers['content-disposition'])), new RegExp(`${file}$`));
+    assert.equal(res.rawPayload.toString('utf8'), body);
+  }
+
+  const missing = await app.inject({
+    method: 'GET',
+    url: `/api/files/download?path=${encodeURIComponent('原始资料/不存在.txt')}`,
+    headers: auth(),
+  });
+  assert.equal(missing.statusCode, 404);
 });

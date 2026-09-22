@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyReply } from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
@@ -52,6 +52,51 @@ function contentRange(value: string | undefined, size: number): { start: number;
   }
   if (start < 0 || end < start || start >= size) return null;
   return { start, end: Math.min(end, size - 1) };
+}
+
+/**
+ * 把一个 brain 相对路径塞进 zip；md 正文引用的图片资产一并放进包根的 `assets/`，
+ * 并把正文里的 `/media/` 改写成**从该 md 出发**的相对路径（`assets/…`，md 在子目录时按层数退回）。
+ * 返回随包带走的图片张数——0 表示这份文件没有本地图片，调用方可以照原样下载。
+ */
+function addFileToZip(zip: JSZip, rel: string, entryPath: string): number {
+  const abs = safeJoin(rel);
+  let body: Buffer | string = fs.readFileSync(abs);
+  let assetsAdded = 0;
+  if (/\.md$/i.test(rel)) {
+    const text = body.toString('utf8');
+    if (text.includes(MEDIA_PREFIX)) {
+      for (const ref of parseAssetRefs(text)) {
+        const assetAbs = safeAssetJoin(`${ref.parentId}/${ref.name}`);
+        if (!fs.existsSync(assetAbs)) continue;
+        const assetRel = assetRelPath(ref.parentId, ref.name);
+        if (zip.file(assetRel)) continue;
+        zip.file(assetRel, fs.readFileSync(assetAbs));
+        assetsAdded++;
+      }
+      // 图片统一放包根 assets/：md 若在子目录里，链接要退回相应层数才指得中
+      const depth = entryPath.split('/').length - 1;
+      body = text.split(MEDIA_PREFIX).join(`${'../'.repeat(depth)}assets/`);
+    }
+  }
+  zip.file(entryPath, body);
+  return assetsAdded;
+}
+
+/** 打包结果落盘：zip 名用调用方给的标签 + 日期 */
+async function sendZip(reply: FastifyReply, zip: JSZip, label: string): Promise<void> {
+  const buf = await zip.generateAsync({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+  reply.header('Content-Type', 'application/zip');
+  reply.header(
+    'Content-Disposition',
+    `attachment; filename*=UTF-8''${encodeURIComponent(`${label}-${new Date().toISOString().slice(0, 10)}.zip`)}`
+  );
+  reply.header('Content-Length', buf.length);
+  reply.send(buf);
 }
 
 export async function fileRoutes(app: FastifyInstance) {
@@ -388,12 +433,41 @@ export async function fileRoutes(app: FastifyInstance) {
     return reply.send(fs.createReadStream(abs));
   });
 
+  /**
+   * 单文件下载：正文里带本地图片的 md 打包成 zip（md 放包根 + `assets/`，正文链接同步改相对路径），
+   * 没有图片的文件照原样流式下载。前端各处「下载」入口统一走这里，图片不会再被落下。
+   */
+  app.get('/api/files/download', async (req, reply) => {
+    const { path: p } = req.query as { path?: string };
+    if (!p) return reply.code(400).send({ error: '缺少 path' });
+    let abs: string;
+    try {
+      abs = safeJoin(p);
+    } catch {
+      return reply.code(400).send({ error: '路径无效' });
+    }
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+      return reply.code(404).send({ error: '文件不存在' });
+    }
+    const name = path.basename(abs);
+    const rel = p.replace(/^[/\\]+/, '').replace(/\\/g, '/');
+    // 非 md 不读进内存（大文件仍走流式）；md 没有本地图片时同样退回单文件下载
+    const zip = new JSZip();
+    const assetsAdded = /\.md$/i.test(rel) ? addFileToZip(zip, rel, name) : 0;
+    if (!assetsAdded) {
+      reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+      reply.header('Content-Type', 'application/octet-stream');
+      return reply.send(fs.createReadStream(abs));
+    }
+    await sendZip(reply, zip, name.replace(/\.[^.]*$/, '') || name);
+    return;
+  });
+
   /** 批量导出原始资料为 zip：接收 path 列表，打包后流式下载。
-   *  - 单文件时直接走 /api/files/raw；这里仍支持传入 1 项。
    *  - 路径都经 safeJoin 校验，越界或不存在则跳过并计入 skipped。
    *  - 同名文件（不同子目录）在 zip 内保留相对路径，不会冲突。
    *  - md 正文引用的图片资产一并打包（放回 `assets/<parentId>/`），并把正文里的
-   *    `/media/` 重写为 `assets/`——导出的包离开 Engram 也能直接看到图。 */
+   *    `/media/` 重写成相对路径——导出的包离开 Engram 也能直接看到图。 */
   app.post('/api/files/export', async (req, reply) => {
     const { paths, name } = (req.body || {}) as { paths?: string[]; name?: string };
     if (!Array.isArray(paths) || !paths.length) {
@@ -418,49 +492,22 @@ export async function fileRoutes(app: FastifyInstance) {
       }
       // zip 内路径用相对 brain 的正斜杠形式，保留子目录结构
       const rel = p.replace(/^[/\\]+/, '').replace(/\\/g, '/');
-      let body: Buffer | string = fs.readFileSync(abs);
-      if (/\.md$/i.test(rel)) {
-        const text = body.toString('utf8');
-        if (text.includes(MEDIA_PREFIX)) {
-          for (const ref of parseAssetRefs(text)) {
-            const assetAbs = safeAssetJoin(`${ref.parentId}/${ref.name}`);
-            if (!fs.existsSync(assetAbs)) continue;
-            const assetRel = assetRelPath(ref.parentId, ref.name);
-            if (zip.file(assetRel)) continue;
-            zip.file(assetRel, fs.readFileSync(assetAbs));
-            assetsAdded++;
-          }
-          body = text.split(MEDIA_PREFIX).join('assets/');
-        }
-      }
-      zip.file(rel, body);
+      assetsAdded += addFileToZip(zip, rel, rel);
       added++;
     }
     if (added === 0) {
       return reply.code(404).send({ error: '没有可导出的文件', skipped });
     }
-    const stamp = new Date().toISOString().slice(0, 10);
     // zip 名前缀可由调用方指定（如"Wiki导出"/"AI整理日志"），默认"导出"
     const label = name && name.trim() ? name.trim().replace(/[\\/:*?"<>|]/g, '-') : '导出';
-    const zipName = `${label}-${stamp}.zip`;
-    const buf = await zip.generateAsync({
-      type: 'nodebuffer',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 },
-    });
     try {
       appendWikiLog(
         '导出',
         `共 ${added} 个文件${assetsAdded ? `、${assetsAdded} 张图片` : ''}${skipped.length ? `，跳过 ${skipped.length} 个` : ''}`
       );
     } catch { /* 日志失败不阻塞 */ }
-    reply.header('Content-Type', 'application/zip');
-    reply.header(
-      'Content-Disposition',
-      `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`
-    );
-    reply.header('Content-Length', buf.length);
-    return reply.send(buf);
+    await sendZip(reply, zip, label);
+    return;
   });
 
   app.delete('/api/files', async (req, reply) => {

@@ -1,8 +1,16 @@
 <template>
   <Teleport to="body">
-    <template v-if="state.open">
-      <div class="asset-mask" @click="closeAssetDrawer" />
-      <aside class="asset-drawer" role="dialog" aria-label="图片资产">
+    <!-- 悬浮玻璃卡片：与 Agent 卡片同一材质，不再压一层全屏遮罩——正文照常可见可点，
+         换一份内容不用先关卡片（关闭走 ✕ 或 Esc）。
+         v-if 必须挂在 transition 的子节点上，挂外层会让卡片被整块移除、开合动画不播。 -->
+    <transition name="asset-slide">
+      <aside
+        v-if="state.open"
+        class="asset-drawer"
+        role="dialog"
+        aria-label="图片资产"
+        :style="{ right: `${cardRight}px` }"
+      >
         <header class="asset-head">
           <div class="asset-crumb">
             <span>{{ sectionLabel }}</span>
@@ -97,23 +105,24 @@
           <span>这些图片属于「{{ state.parentTitle }}」，不会出现在目录树、知识图谱或搜索结果里。</span>
         </footer>
       </aside>
+    </transition>
 
-      <div v-if="state.previewUrl" class="asset-preview" @click.self="closeAssetPreview">
-        <button class="preview-close" v-tooltip="'关闭预览'" aria-label="关闭预览" @click="closeAssetPreview">
-          <Icon name="x" :size="18" />
-        </button>
-        <ImageViewer :url="state.previewUrl" />
-      </div>
-    </template>
+    <div v-if="state.previewUrl" class="asset-preview" @click.self="closeAssetPreview">
+      <button class="preview-close" v-tooltip="'关闭预览'" aria-label="关闭预览" @click="closeAssetPreview">
+        <Icon name="x" :size="18" />
+      </button>
+      <ImageViewer :url="state.previewUrl" />
+    </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Icon from './Icon.vue';
 import ImageViewer from './ImageViewer.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import { confirmDialog } from '../lib/confirm';
+import { useAppStore } from '../stores/app';
 import {
   assetDrawerState as state,
   closeAssetDrawer,
@@ -126,6 +135,44 @@ import {
 
 type FilterKey = 'all' | 'referenced' | 'orphan';
 const filter = ref<FilterKey>('all');
+
+const app = useAppStore();
+
+/**
+ * 卡片离右缘的距离：Agent 悬浮卡片占着右侧时让开它的宽度，
+ * 否则两张卡片叠在一起，后开的把对话整块盖住。
+ * 桌面壳顶部还有原生标题栏（--win-titlebar-h 在样式里让位）。
+ */
+const viewportWidth = ref(window.innerWidth);
+const cardRight = computed(() => {
+  const docked =
+    app.chatDrawerOpen && app.chatDrawerMode === 'dock' && viewportWidth.value > 1024;
+  if (!docked) return 8;
+  // 让位后卡片仍要留在屏内（窄窗口里宁可叠着，也不要挤出左边缘）
+  const offset = app.chatDockWidth + 8;
+  return viewportWidth.value - offset < 520 ? 8 : offset + 8;
+});
+
+function onViewportResize() {
+  viewportWidth.value = window.innerWidth;
+}
+
+/** Esc 关卡片；大图预览开着时先收预览（弹窗的 Esc 会 stopPropagation，不会误触发） */
+function onKey(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
+  if (!state.open) return;
+  if (state.previewUrl) closeAssetPreview();
+  else closeAssetDrawer();
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('resize', onViewportResize);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey);
+  window.removeEventListener('resize', onViewportResize);
+});
 
 // 换父项时把筛选复位，避免上一份内容的筛选状态串到下一份
 watch(() => state.parentId, () => { filter.value = 'all'; });
@@ -171,28 +218,52 @@ function displayName(name: string): string {
 </script>
 
 <style scoped>
-.asset-mask {
-  position: fixed;
-  inset: 0;
-  /* 必须低于抽屉。用 --z-mask(32) 会盖在抽屉(--z-drawer 25) 上面：
-     抽屉里任何点击都被遮罩接走，表现成「点预览/另存/删除没反应，一点抽屉就关」。
-     低一档同时仍低于侧栏(35)——抽屉开着时侧栏照常可点，换一份内容不用先关抽屉。 */
-  z-index: calc(var(--z-drawer) - 1);
-  background: rgba(0, 0, 0, 0.28);
-}
-
+/*
+ * 悬浮玻璃卡片（UI 2.0 语言）：四周留 8px 露出窗口底色，与 Agent 卡片、左侧文件树同一材质。
+ * 没有遮罩：卡片浮在正文之上而不是压暗整屏，正文照常可见可点，换一份内容不用先关卡片。
+ * 顶部还要避开桌面壳的原生标题栏（--win-titlebar-h 只在 desktop-frame 下有值）。
+ */
 .asset-drawer {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: var(--z-drawer);
-  width: min(430px, 100vw);
+  top: calc(8px + var(--win-titlebar-h, 0px));
+  bottom: 8px;
+  /* 比侧栏(35)高一档：窗口不宽时卡片要给 Agent 卡片让位、会压到文件树上，
+     用 --z-drawer(25) 会被侧栏盖掉半张（卡片是临时浮层，盖住谁都不影响它的关闭按钮） */
+  z-index: var(--z-chrome);
+  width: min(430px, calc(100vw - 16px));
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--border);
-  background: var(--card-bg);
-  box-shadow: var(--shadow-dialog);
+  border: 1px solid var(--sidebar-glass-border);
+  border-radius: 8px;
+  background: var(--sidebar-material);
+  box-shadow: var(--sidebar-glass-shadow);
+  backdrop-filter: saturate(150%) blur(28px);
+  -webkit-backdrop-filter: saturate(150%) blur(28px);
+}
+
+/* 不支持毛玻璃时退回不透明底色（与左侧栏、Agent 卡片同一处理） */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .asset-drawer { background: var(--sidebar-material-solid); }
+}
+
+/* 开合动画：与 Agent 卡片同一套节奏（右缘滑入 + 轻微缩放 + 淡入，160ms），
+   只碰 transform / opacity 两个合成层属性，不触发重排 */
+.asset-slide-enter-active,
+.asset-slide-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.asset-slide-enter-from,
+.asset-slide-leave-to {
+  opacity: 0;
+  transform: translateX(14px) scale(0.985);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .asset-slide-enter-active,
+  .asset-slide-leave-active {
+    transition-duration: 0.01ms;
+  }
 }
 
 .asset-head {
@@ -411,7 +482,7 @@ function displayName(name: string): string {
   gap: 7px;
   padding: 10px 16px;
   border-top: 1px solid var(--border);
-  background: var(--bg-secondary);
+  /* 不铺底色：卡片是毛玻璃，实心底条会在下缘压出一条不透明的带子（与 Agent 卡片同一处理） */
   color: var(--text-faint);
   font-size: 11.5px;
   line-height: 1.5;
@@ -442,7 +513,9 @@ function displayName(name: string): string {
 }
 .preview-close:hover { background: rgba(255, 255, 255, 0.24); }
 
+/* 手机端：卡片仍是浮层，只留一圈 8px 边（宽度已由 min() 收好），
+   但底部导航是 48px 常驻胶囊，卡片要抬到它上面 */
 @media (max-width: 768px) {
-  .asset-drawer { width: 100vw; }
+  .asset-drawer { bottom: calc(64px + env(safe-area-inset-bottom)); }
 }
 </style>

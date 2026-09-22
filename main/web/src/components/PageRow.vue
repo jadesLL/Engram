@@ -25,8 +25,7 @@
       <span class="row-actions" @click.stop>
         <a
           class="row-action-link"
-          :href="rawUrl"
-          :download="page.title + '.md'"
+          :href="downloadUrl"
           v-tooltip="`下载 ${page.title}`"
           :aria-label="`下载 ${page.title}`"
         >
@@ -73,7 +72,9 @@ const props = defineProps<{
 }>();
 const emit = defineEmits(['open', 'archive', 'unarchive', 'remove', 'toggle-select', 'drag-start', 'drag-end', 'context-menu']);
 
-const rawUrl = computed(() => `/api/files/raw?path=${encodeURIComponent(props.page.path)}`);
+/** 下载走 /api/files/download：页面正文引用的图片一并打包成 zip（页面 + assets/）。
+ *  文件名交给 Content-Disposition，加 download 属性会把 zip 存成 .md。 */
+const downloadUrl = computed(() => `/api/files/download?path=${encodeURIComponent(props.page.path)}`);
 
 function onClick() {
   if (props.selectionMode) emit('toggle-select', props.page);
