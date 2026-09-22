@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { now, db } from '../lib/db.js';
 import { emit } from '../lib/events.js';
+import { noteAppWrite } from '../lib/appWrites.js';
 import { safeJoin, syncPageFile, movePage, markPageDeleted, notifySyncChange, PagePathTakenError } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
@@ -66,6 +67,8 @@ function applyPageContent(relPath: string, raw: string): { id: string } | null {
   const temp = `${abs}.${Date.now()}.sync.tmp`;
   fs.writeFileSync(temp, raw);
   fs.renameSync(temp, abs);
+  // 自己写的：文件系统监听据此跳过回声（本函数已经推过 page-changed）
+  noteAppWrite(abs);
   const meta = syncPageFile(relPath);
   if (!meta) return null;
   enqueuePagePipeline(meta.id);

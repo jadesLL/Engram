@@ -35,6 +35,7 @@ import { mcpRoutes } from './mcp/server.js';
 import { assetRoutes } from './routes/assets.js';
 import { mediaRoutes } from './routes/media.js';
 import { scanVault, readPage, writePage } from './lib/vault.js';
+import { startVaultWatch } from './lib/vaultWatch.js';
 import { heartbeat } from './lib/events.js';
 import { ensureSystemFiles, migrateLegacySystemFiles } from './pipeline/indexFile.js';
 import { queueMissingDerivedPages } from './pipeline/sourceLedger.js';
@@ -142,6 +143,9 @@ async function main() {
     `DELETE FROM jobs WHERE status IN ('failed','done','cancelled') AND updated_at < ?`
   ).run(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' '));
   startJobRunner();
+  // 带外文件系统监听：外置 Agent / 用户在服务端之外直接增删改 brain 目录时，立刻对账并推 SSE
+  // （侧栏目录与编辑器不再等到重启扫描才看见；启动扫描先跑完，监听从一致状态接管）
+  startVaultWatch();
   // DDNS 直连域名维护（设置页/env 未配置则完全静默跳过；纯 Node 定时器，无控制台窗口）
   startDdnsScheduler();
   // 多端同步：配置了 hub 连接则启动同步客户端（首次接入自动全量对账）

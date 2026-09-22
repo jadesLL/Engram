@@ -1244,7 +1244,16 @@ function openUpload() {
 }
 
 defineExpose({ load, openUpload });
-watch(() => app.sidebarVersion, () => load());
+/** SSE 事件成串到达时（带外批量改写、整目录导入）攒一拍再刷：否则一秒内会打出几十次列表请求。
+ *  单个事件（保存/改名/删除）延迟 200ms 无感。 */
+let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+watch(() => app.sidebarVersion, () => {
+  if (reloadTimer) clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => {
+    reloadTimer = undefined;
+    void load();
+  }, 200);
+});
 onMounted(() => {
   load();
   chatStopped = false;
@@ -1257,6 +1266,7 @@ onMounted(() => {
 onUnmounted(() => {
   chatStopped = true;
   if (chatTimer) clearTimeout(chatTimer);
+  if (reloadTimer) clearTimeout(reloadTimer);
   document.removeEventListener('pointerdown', onSortMenuPointerDown, true);
   window.removeEventListener('resize', closeSortMenuOnViewportChange);
   window.removeEventListener('blur', closeSortMenuOnViewportChange);

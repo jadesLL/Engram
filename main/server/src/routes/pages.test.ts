@@ -156,3 +156,41 @@ test('带外删除（裸移文件到 .trash）后列表自愈：幽灵页不再�
   const kept = res.json().pages.map((p: any) => p.title);
   assert.ok(kept.includes('显式清空测试'));
 });
+
+test('编辑器改标题：磁盘文件名跟着改（侧栏「目录」不再显示旧名）', async () => {
+  // 现场（2026-09-22 用户反馈）：在编辑器顶部标题框改名字，面包屑/大标题是新的、
+  // 侧栏目录里的文件名还是旧的——因为 PUT 只写了 frontmatter 标题，没动文件。
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/pages',
+    headers: { authorization: `Bearer ${token}` },
+    payload: { title: '2026.08.16京津区人员架构', type: 'concept' },
+  });
+  const id = created.json().meta.id;
+  const before = db.prepare(`SELECT path FROM pages WHERE id = ?`).get(id) as { path: string };
+  assert.equal(before.path, 'Wiki/概念/2026.08.16京津区人员架构.md');
+
+  const res = await app.inject({
+    method: 'PUT',
+    url: `/api/pages/${id}`,
+    headers: { authorization: `Bearer ${token}` },
+    payload: { title: '2026.08.16_京津区人员架构' },
+  });
+  assert.equal(res.statusCode, 200);
+
+  const after = db.prepare(`SELECT path, title FROM pages WHERE id = ?`).get(id) as any;
+  assert.equal(after.title, '2026.08.16_京津区人员架构');
+  assert.equal(
+    after.path,
+    'Wiki/概念/2026.08.16_京津区人员架构.md',
+    '标题改了，文件名必须跟着改（否则侧栏目录与标题两套名字）'
+  );
+  assert.equal(
+    fs.existsSync(path.join(temp, 'brain', before.path)),
+    false,
+    '旧文件名的文件不能留在原地'
+  );
+  const onDisk = fs.readFileSync(path.join(temp, 'brain', after.path), 'utf8');
+  assert.match(onDisk, /标题: 2026\.08\.16_京津区人员架构/);
+  assert.match(onDisk, /^# 2026\.08\.16京津区人员架构$/m, '编辑器改标题不动正文 H1');
+});
