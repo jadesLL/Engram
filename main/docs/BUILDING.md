@@ -287,7 +287,7 @@ docker compose -f docker-compose.nas.yml up -d
 | `DEFAULT_PASSWORD` | 否 | 首次启动预置的登录密码；留空则首次登录页面设置 |
 | `ENGRAM_NETWORK_MTU` | 否 | bridge MTU，默认 1500；NAS 跨公网链路 PMTU 异常时改 1400 |
 
-**NAS 上的应用内一键更新**：模板已挂 `/var/run/docker.sock`，启动后在网页 设置 → 软件更新 → 更新源配置 填一次即可（配置落在 `/data/.env`，容器重建不丢）：
+**NAS 上的应用内一键更新**：模板已挂 `/var/run/docker.sock`，启动后在网页 设置 → 连接与同步 → 软件更新 → 更新源配置 填一次即可（配置落在 `/data/.env`，容器重建不丢）：
 
 | 配置项 | 值 |
 |---|---|
@@ -314,7 +314,7 @@ docker compose -f docker-compose.nas.yml up -d
 
 1. 镜像地址用三层路径 `example/engram/engram`，不要写两层的 `example/engram`（NAS 拉取异常）；
 2. **不要写 `pull_policy: never`**——它禁止拉取，本地无镜像时必报「找不到镜像」，曾多次被误判为 Registry 故障；
-3. `docker-compose.pull.yml` / `docker-compose.nas.yml` 里的 `/var/run/docker.sock` 挂载是**应用内自更新**（设置 → 软件更新，网页一键拉新镜像重建容器）所需；不需要该功能可删掉这行。
+3. `docker-compose.pull.yml` / `docker-compose.nas.yml` 里的 `/var/run/docker.sock` 挂载是**应用内自更新**（设置 → 连接与同步 → 软件更新，网页一键拉新镜像重建容器）所需；不需要该功能可删掉这行。
 
 部署后访问端口按所用 compose 而定：方式一源码构建（`docker-compose.yml`）映射宿主 **18080**，方式二/三（`docker-compose.pull.yml`）映射 **8080**，方式四 NAS（`docker-compose.nas.yml`）默认 **18080** 且可用 `ENGRAM_HOST_PORT` 改。初始密码由 compose 的 `DEFAULT_PASSWORD` 环境变量指定。onlyoffice 协同编辑是独立服务，第三方源拉不动时换官方镜像 `onlyoffice/documentserver:9.4.0`。
 
@@ -324,9 +324,9 @@ docker compose -f docker-compose.nas.yml up -d
 
 ### 6.3 应用内更新
 
-Docker 部署在网页「设置 → 软件更新」一键更新（拉目标 tag 镜像 → switcher 容器接管重建 → 失败自动回滚）；桌面端同页下载新 exe 覆盖安装。更新源与令牌在设置页配置，存数据目录 `.env`。机制与安全说明见 [`GITEA-CI.md`](./GITEA-CI.md) 的「应用内自更新」章节。
+Docker 部署在网页「设置 → 连接与同步 → 软件更新」一键更新（拉目标 tag 镜像 → switcher 容器接管重建 → 失败自动回滚）；桌面端同页下载新 exe 覆盖安装。更新源与令牌在设置页配置，存数据目录 `.env`。机制与安全说明见 [`GITEA-CI.md`](./GITEA-CI.md) 的「应用内自更新」章节。
 
-**更新通道**（设置 → 软件更新 → 高级选项）：`latest`（默认）跟正式发版线；`main` 跟主分支滚动构建，合 main 即更新、不发版即可测试。发版前想提早在 Docker 上验证最新代码，就把测试部署切到 `main`，验证完切回 `latest`。
+**更新通道**（设置 → 连接与同步 → 软件更新）：`latest`（默认）跟正式发版线；`main` 跟主分支滚动构建，合 main 即更新、不发版即可测试。发版前想提早在 Docker 上验证最新代码，就把测试部署切到 `main`，验证完切回 `latest`。
 
 ---
 

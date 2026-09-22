@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <SettingsGroup title="账户" hint="登录密码与当前会话" :default-open="true" flush>
+    <SettingsGroup anchor="account-credentials" title="账户" hint="登录密码与当前会话" :default-open="true" flush>
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
           <strong>修改密码</strong>
@@ -30,7 +30,7 @@
       </div>
     </SettingsGroup>
 
-    <SettingsGroup title="外观" hint="界面显示方式" :default-open="true" flush>
+    <SettingsGroup anchor="account-appearance" title="外观" hint="界面显示方式" :default-open="true" flush>
       <div class="setting-row">
         <div class="setting-copy">
           <strong>主题</strong>
@@ -64,7 +64,14 @@
       </div>
     </SettingsGroup>
 
-    <SettingsGroup title="连接与版本" hint="访问通道与当前版本" :default-open="true" flush>
+    <!-- 连接与版本：日常不需要动手，归入「高级」默认收起（分级强调的一档） -->
+    <SettingsGroup
+      anchor="account-connection"
+      title="连接与版本"
+      hint="访问通道与当前版本"
+      level="advanced"
+      flush
+    >
       <div v-if="capabilities.runtime !== 'android-local' && connState !== 'unconfigured'" class="setting-row">
         <div class="setting-copy">
           <strong>连接通道</strong>

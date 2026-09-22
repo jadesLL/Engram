@@ -1,5 +1,10 @@
 <template>
-  <SettingsGroup title="搜索同义词" hint="补足「用词不同、意思相同」的召回">
+  <SettingsGroup
+    :anchor="anchor"
+    :level="level"
+    title="搜索同义词"
+    hint="补足「用词不同、意思相同」的召回"
+  >
     <p class="synonym-desc">
       每行一组，组内词互为同义词、逗号分隔；查询命中组内任一词时，会一并检索组内其余词。
       搜索本就支持错别字容错（多字词错一个字仍可命中）与单字检索，这里补充的是同义/近义表述。
@@ -29,6 +34,18 @@ import { onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 import SettingsGroup from './SettingsGroup.vue';
+
+/**
+ * anchor / level 由设置页（DataPanel）透传：搜索同义词属于「高级」分组，
+ * 并需要在二级导航里有自己的锚点。
+ */
+withDefaults(
+  defineProps<{
+    anchor?: string;
+    level?: 'primary' | 'normal' | 'advanced' | 'danger';
+  }>(),
+  {},
+);
 
 const synonymsText = ref('');
 const loadedText = ref('');

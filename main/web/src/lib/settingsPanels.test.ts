@@ -5,13 +5,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * 设置页用 v-show 切换分类（面板常驻挂载，切回来不重拉数据）。但 v-show 只能作用在
+ * 设置页用 v-show 切换大类（面板常驻挂载，切回来不重拉数据）。但 v-show 只能作用在
  * **单根**组件上：多根（fragment）组件的 v-show 会被 Vue 忽略——指令没有可作用的那一个
  * 根元素，面板于是漏进每一个分类里。2026-09-22 用户报「存储空间在哪个选项里都有」正是
  * 这个：StoragePanel 的模板是两个 `<section>`（回收站 / 图片资产）。
  *
- * 这里静态扫 SettingsView 里带 v-show 的组件，锁住「模板只有一个根元素」；
- * 多根组件必须改用 v-if（见 SettingsView 里 StoragePanel 的注释）。
+ * 改版后 v-show 一律挂在大类容器（`<section class="settings-domain" v-show>`）上，
+ * 组件自己不带 v-show——容器是普通单根元素，多根面板放在里面天然安全。
+ * 这里锁两条：① 组件上不许再出现 v-show（多根陷阱的老写法）；② 大类容器仍在，
+ * 且多根的 StoragePanel 仍用 v-if 挂载（切走即卸载，避免无谓拉取两个列表）。
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -43,29 +45,17 @@ function templateRoots(body: string): string[] {
   return tops;
 }
 
-test('设置页用 v-show 挂载的面板组件必须是单根模板', () => {
-  const viewFile = path.join(viewsDir, 'SettingsView.vue');
-  const view = fs.readFileSync(viewFile, 'utf8');
-  const problems: string[] = [];
-  let checked = 0;
-
-  for (const m of view.matchAll(/<([A-Z][\w]*)([^>]*?)v-show([^>]*?)\/?>/g)) {
-    const component = m[1];
-    const file = path.join(settingsDir, `${component}.vue`);
-    if (!fs.existsSync(file)) continue;
-    const body = templateBody(file);
-    if (!body) continue;
-    checked += 1;
-    const roots = templateRoots(body);
-    if (roots.length !== 1) {
-      problems.push(
-        `<${component}> 有 ${roots.length} 个根元素（${roots.join(', ')}）：v-show 会被忽略，面板会漏进所有分类；请改用 v-if`,
-      );
-    }
-  }
-
-  assert.ok(checked >= 4, `只检查到 ${checked} 个 v-show 面板，SettingsView 结构可能变了`);
-  assert.deepEqual(problems, []);
+test('设置页不在组件上用 v-show，只在单根的大类容器上切换', () => {
+  const view = fs.readFileSync(path.join(viewsDir, 'SettingsView.vue'), 'utf8');
+  const componentVShow = [...view.matchAll(/<([A-Z][\w]*)([^>]*?)v-show([^>]*?)\/?>/g)].map((m) => m[1]);
+  assert.deepEqual(
+    componentVShow,
+    [],
+    `这些组件直接带了 v-show：${componentVShow.join(', ')}——v-show 只作用在单个根元素上，`
+      + '多根组件（如 StoragePanel）会被忽略而漏进所有分类；请把 v-show 提到大类 <section> 容器上，或改用 v-if',
+  );
+  const sections = [...view.matchAll(/<section[^>]*v-show[^>]*>/g)];
+  assert.ok(sections.length >= 4, `只检查到 ${sections.length} 个大类容器，SettingsView 结构可能变了`);
 });
 
 test('多根的 StoragePanel 用 v-if 挂载（v-show 与多根不兼容）', () => {

@@ -1,5 +1,5 @@
 <template>
-  <section class="settings-panel settings-native trash-section">
+  <section id="storage-trash" class="settings-panel settings-native trash-section">
     <div class="panel-head">
       <div>
         <h3>存储空间</h3>
@@ -71,7 +71,7 @@
 
   <!-- 图片资产：图片是 md 父项的私有资产，正常入口是右击那个条目 →「查看引用图片」。
        这里只收没有归属、或父项正文已经不再引用的图片——它们是唯一的清理出口。 -->
-  <section class="settings-panel settings-native trash-section">
+  <section id="storage-assets" class="settings-panel settings-native trash-section">
     <div class="panel-head">
       <div>
         <h3>图片资产</h3>
@@ -146,6 +146,7 @@ import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
 import Icon from '../Icon.vue';
 import { confirmDialog } from '../../lib/confirm';
+import { useSettingsBadge } from '../../lib/settingsBadges';
 
 interface TrashEntry {
   id: string;
@@ -359,6 +360,10 @@ const orphanList = computed<OrphanAsset[]>(() => [
   ...orphanAssets.value.unassigned.map((item) => ({ ...item, unassigned: true })),
   ...orphanAssets.value.unreferenced.map((item) => ({ ...item, unassigned: false })),
 ]);
+
+// 设置页二级导航的状态徽标：有多少项等着清理，不用进分类就知道
+useSettingsBadge('storage-trash', computed(() => (trashItems.value.length ? `${trashItems.value.length} 项` : '')));
+useSettingsBadge('storage-assets', computed(() => (orphanTotal.value ? `${orphanTotal.value} 张` : '')));
 
 async function loadAssets() {
   assetLoading.value = true;

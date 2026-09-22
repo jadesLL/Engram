@@ -8,6 +8,10 @@
     </div>
 
     <SettingsGroup
+      anchor="agent-builtin"
+      level="primary"
+      :badge="status.hasKey ? '已配置' : '待配置'"
+      :badge-tone="status.hasKey ? 'ok' : 'warn'"
       title="内置 Agent（聊天抽屉）"
       hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉，Agent 只读沙箱 + 仅经 MCP 工具读写知识库"
     >
@@ -80,7 +84,7 @@
       </div>
     </SettingsGroup>
 
-    <div class="harness-picker">
+    <div id="agent-target" class="harness-picker">
       <label for="agent-target">接入目标</label>
       <select id="agent-target" v-model="target" aria-label="接入目标">
         <option value="zcode">ZCode 桌面端（一键接入）</option>
@@ -94,6 +98,8 @@
     <AgentMcpSection v-else />
 
     <SettingsGroup
+      anchor="agent-tools"
+      level="advanced"
       title="查看工具"
       :hint="`接入后 Agent 可用 ${MCP_TOOLS.length} 个 MCP 工具：读 ${readTools.length} 个不改动知识库，写 ${writeTools.length} 个带证据门禁并记入操作日志`"
     >
@@ -153,6 +159,7 @@ import AgentHarnessSection from './AgentHarnessSection.vue';
 import AgentMcpSection from './AgentMcpSection.vue';
 import SecretField from '../SecretField.vue';
 import SettingsGroup from './SettingsGroup.vue';
+import { useSettingsBadge } from '../../lib/settingsBadges';
 
 type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'other';
 
@@ -163,6 +170,8 @@ const guide = ref('');
 
 /* ===== 内置 Agent（聊天抽屉）配置 ===== */
 const status = ref<any>({ bundled: false, hasKey: false, model: '', workspace: '', home: '', baseUrl: '', api: '', custom: false });
+// 设置页二级导航上的状态徽标：没配 Key 时标「待配置」，用户在导航里就能看到
+useSettingsBadge('agent-builtin', computed(() => (status.value.hasKey ? '' : '待配置')));
 const model = ref('');
 const baseUrl = ref('');
 /** 自定义地址的线协议（不要叫 api：会与 api 客户端 import 撞名） */
