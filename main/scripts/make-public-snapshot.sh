@@ -247,19 +247,74 @@ SNAP_MAIN_AFTER="$(g rev-parse "refs/heads/$BRANCH")"
 [ "$SNAP_MAIN_BEFORE" != "$SNAP_MAIN_AFTER" ] || { echo "!! 快照 main 未变化，filter-repo 未生效" >&2; exit 1; }
 echo ">> 快照 $BRANCH: ${SNAP_MAIN_BEFORE:0:7} -> ${SNAP_MAIN_AFTER:0:7}"
 
-# ---------- 校验：逐条规则反查全历史（blob + 提交信息 + 标签信息 + 路径）----------
+# ---------- 校验：逐条规则反查全历史 ----------
+# 校验范围必须与「脱敏实际覆盖到的内容」对齐，否则会把无害的东西判成泄漏：
+#   * filter-repo 的 --replace-text 刻意跳过二进制 blob（git_filter_repo.py：
+#     `not b"\0" in blob.data[0:8192]`）——改二进制会把 PNG/字体这类文件写坏；
+#   * 而截图、图标这类压缩数据里完全可能巧合出现「example」这种 3 字节短串。
+# 曾因此让公开镜像从 2026-09-20 起一直红着：
+#   main/docs/screenshots/验收-提示避让-全屏编辑模式.png 的压缩数据里就有 \blzy\b，
+#   脚本拒推，但那条根本不是泄漏（图中并无该字符串）。
+# 现在分两份语料：
+#   text    —— 文本 blob + 提交/标签对象 + 路径名（脱敏真正覆盖的范围）→ 全部规则都查
+#   binary  —— 二进制 blob → 只查「高信号」规则（域名/密码/项目名/内网 IP 这类长串，
+#              巧合命中概率可忽略）；裸 owner 那种短串不进二进制，避免假阳性
 echo ">> 校验残留（逐条规则反查）..."
-g rev-list --objects --all | awk '{print $1}' | sort -u > "$WORK/blobs.txt"
-g cat-file --batch < "$WORK/blobs.txt" > "$WORK/corpus.bin" 2>/dev/null || true
-g log --all --format='%H %an %ae %cn %ce %s%n%b' >> "$WORK/corpus.bin"
-g for-each-ref refs/tags --format='%(contents)' >> "$WORK/corpus.bin"
+g rev-list --objects --all | awk '{print $1}' | sort -u > "$WORK/objects.txt"
+# 路径名由 --filename-callback 改写，与 blob 二进制与否无关，所以单独成一份语料
+g rev-list --objects --all | awk 'NF>1 {$1=""; sub(/^[[:space:]]+/, ""); print}' > "$WORK/paths.txt"
 
 FAIL=0
-python - "$(nat "$RULES")" "$(nat "$WORK/corpus.bin")" <<'PY' || FAIL=1
-import re, sys
-rules_path, corpus_path = sys.argv[1], sys.argv[2]
-corpus = open(corpus_path, 'rb').read()
+python - "$(nat "$RULES")" "$(nat "$WORK/objects.txt")" "$(nat "$WORK/paths.txt")" "$OWNER_FROM" <<'PY' || FAIL=1
+import re, subprocess, sys
+
+rules_path, objects_path, paths_path, owner = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+owner = owner.encode()
+
+# 与 filter-repo 的二进制判定保持一致（git_filter_repo.py: is_binary）
+def is_binary(data):
+    return b"\0" in data[0:8192]
+
+with open(objects_path, 'rb') as f:
+    objects = f.read().split()
+
+p = subprocess.Popen(['git', 'cat-file', '--batch'],
+                     stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+out = p.communicate(b"\n".join(objects) + b"\n")[0]
+
+text_corpus = bytearray()
+binary_corpus = bytearray()
+binary_blobs = 0
+i = 0
+while i < len(out):
+    nl = out.find(b"\n", i)
+    if nl < 0:
+        break
+    header = out[i:nl].split()
+    if len(header) < 3:
+        # "<name> missing" 之类：跳过这一行
+        i = nl + 1
+        continue
+    typ, size = header[1], int(header[2])
+    body = out[nl + 1:nl + 1 + size]
+    i = nl + 1 + size + 1
+    if typ == b'blob':
+        if is_binary(body):
+            binary_corpus += body
+            binary_blobs += 1
+        else:
+            text_corpus += body
+    elif typ == b'tree':
+        # 树对象是二进制（NUL 分隔的名字 + 原始 sha）；其中的路径名已由 paths 语料覆盖
+        continue
+    else:  # commit / tag
+        text_corpus += body
+
+with open(paths_path, 'rb') as f:
+    text_corpus += f.read()
+
 bad = []
+low_signal = b'\\b' + owner + b'\\b'
 for raw in open(rules_path, 'rb').read().split(b'\n'):
     line = raw.strip()
     if not line or line.startswith(b'#'):
@@ -268,7 +323,12 @@ for raw in open(rules_path, 'rb').read().split(b'\n'):
     if left.startswith(b'regex:'):
         pat = left[6:]
         try:
-            if re.search(pat, corpus):
+            hit = re.search(pat, text_corpus)
+            # 短串规则（裸 owner）不进二进制语料：3 个字符在压缩数据里巧合出现的概率不低，
+            # 而 filter-repo 本来就不改二进制，扫它只会制造假阳性
+            if not hit and pat != low_signal:
+                hit = re.search(pat, binary_corpus)
+            if hit:
                 bad.append(('regex', pat.decode('utf-8', 'replace')))
         except re.error as e:
             bad.append(('bad-regex', f'{pat!r} {e}'))
@@ -277,8 +337,10 @@ for raw in open(rules_path, 'rb').read().split(b'\n'):
     else:
         if left.startswith(b'literal:'):
             left = left[8:]
-        if left and left in corpus:
+        if left and (left in text_corpus or left in binary_corpus):
             bad.append(('literal', left.decode('utf-8', 'replace')))
+
+print(f'   corpus: text blobs + commits/tags + paths; {binary_blobs} binary blob(s) checked against high-signal rules only')
 if bad:
     print(f'   !! residual: {len(bad)} rule(s) still matched')
     for kind, item in bad:
