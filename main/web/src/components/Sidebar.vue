@@ -637,17 +637,23 @@ const selectedFileCount = computed(() =>
 );
 const exporting = ref(false);
 
-/** 把给定路径列表打包成 zip 下载。单文件直接走 /api/files/raw。
+/** 单文件下载：链接直接指服务端，正文带图片的 md 会被打包成 zip（md + assets/，链接改相对路径），
+ *  其余原样下载。文件名交给 Content-Disposition，所以不能加 download 属性——
+ *  否则浏览器会用 .md 这个名字存下一个其实是 zip 的文件。 */
+function downloadOne(filePath: string) {
+  const link = document.createElement('a');
+  link.href = `/api/files/download?path=${encodeURIComponent(filePath)}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+/** 把给定路径列表打包成 zip 下载。单文件走 /api/files/download（带图 md 由服务端打包）。
  *  name 为 zip 文件名前缀（如"原始资料"/"Wiki导出"），默认"导出"。 */
 async function exportFiles(paths: string[], name?: string) {
   if (!paths.length) return;
   if (paths.length === 1) {
-    const link = document.createElement('a');
-    link.href = `/api/files/raw?path=${encodeURIComponent(paths[0])}`;
-    link.download = paths[0].split('/').pop() || 'download';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    downloadOne(paths[0]);
     return;
   }
   exporting.value = true;
@@ -827,12 +833,9 @@ function onFileContextMenu({ x, y, file }: { x: number; y: number; file: any }) 
       id: 'download',
       label: '下载',
       icon: 'download',
-      action: () => {
-        const a = document.createElement('a');
-        a.href = `/api/files/raw?path=${encodeURIComponent(file.path)}`;
-        a.download = file.name;
-        a.click();
-      },
+      // 有图片时服务端会打成 zip（正文里的图一起走），先在这里说清楚，免得用户以为只下了 md
+      hint: count ? `含 ${count} 张图` : undefined,
+      action: () => downloadOne(file.path),
     },
     {
       id: 'assets',

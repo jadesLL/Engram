@@ -23,7 +23,7 @@
           <Icon name="ai" :size="14" />
           {{ extraction?.status === 'partial' ? '继续识别' : '提取文字' }}
         </button>
-        <a class="btn small" :href="rawUrl" :download="fileName">
+        <a class="btn small" :href="downloadUrl">
           <Icon name="download" :size="14" /> 下载
         </a>
         <button v-if="isDesktop" class="btn small" @click="openExternal">
@@ -146,7 +146,7 @@
     <div v-else class="fp-body unsupported">
       <p>该格式（.{{ ext }}）暂不支持在线预览。</p>
       <p class="muted small">请下载后使用系统默认程序打开。</p>
-      <a class="btn primary" :href="rawUrl" :download="fileName">
+      <a class="btn primary" :href="downloadUrl">
         <Icon name="download" :size="14" /> 下载 {{ fileName }}
       </a>
     </div>
@@ -254,6 +254,7 @@ let extractionTimer: ReturnType<typeof setInterval> | undefined;
 
 const fileName = computed(() => props.path.split('/').pop() || props.path);
 const rawUrl = computed(() => `/api/files/raw?path=${encodeURIComponent(props.path)}`);
+const downloadUrl = computed(() => `/api/files/download?path=${encodeURIComponent(props.path)}`);
 const supportsExtraction = computed(() => capabilities.value.runtime === 'android-local'
   ? kind.value === 'pdf'
   : ['pdf', 'image'].includes(kind.value));
@@ -306,10 +307,11 @@ async function openExternal() {
   }
 }
 
+/** 下载入口：正文带图片的 md 由服务端打包成 zip（md + assets/，正文链接改相对路径）。
+ *  文件名以 Content-Disposition 为准，所以不能带 download 属性——否则 zip 会被存成 .md。 */
 function downloadFile() {
   const link = document.createElement('a');
-  link.href = rawUrl.value;
-  link.download = fileName.value;
+  link.href = downloadUrl.value;
   document.body.appendChild(link);
   link.click();
   link.remove();
