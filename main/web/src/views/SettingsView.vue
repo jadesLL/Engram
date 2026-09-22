@@ -38,7 +38,11 @@
         <!-- active 传给 UpdatePanel：面板常驻挂载（v-show），绑定同步发生在别的分区时，
              靠激活态重拉同步状态，否则远程更新块要用旧数据等到下次刷新 -->
         <UpdatePanel v-if="capabilities.features.serverUpdate" v-show="activeSettingsSection === 'update'" :active="activeSettingsSection === 'update'" />
-        <StoragePanel v-show="activeSettingsSection === 'storage'" />
+        <!-- StoragePanel 的模板是两个 <section>（回收站 / 图片资产）。多根组件的 v-show 会被 Vue
+             忽略（指令没有可作用的那一个根元素），面板因此漏进**每一个**设置分类里——2026-09-22
+             用户报「存储空间在哪个选项里都有」即此。多根组件只能用 v-if；代价是切走再回来会重新
+             挂载并重拉两个列表，这个面板没有需要跨分类保留的状态。 -->
+        <StoragePanel v-if="activeSettingsSection === 'storage'" />
         <DataPanel v-show="activeSettingsSection === 'data'" />
       </div>
     </div>
