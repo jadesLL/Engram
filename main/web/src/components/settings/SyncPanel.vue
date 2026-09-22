@@ -173,6 +173,7 @@ import { promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
 import SettingsGroup from './SettingsGroup.vue';
+import { useSettingsBadge } from '../../lib/settingsBadges';
 import SecretField from '../SecretField.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 
@@ -228,6 +229,17 @@ const creating = ref(false);
 const reconciling = ref(false);
 const newPeer = ref<(PeerView & { token: string }) | null>(null);
 let pollTimer: number | null = null;
+
+// 设置页二级导航的状态徽标：一眼看出本机是中枢、成员还是尚未参与同步
+useSettingsBadge(
+  'panel-sync',
+  computed(() => {
+    const role = status.value?.role;
+    if (role === 'hub') return `中枢 · ${peers.value.length} 成员`;
+    if (role === 'member') return '已绑定';
+    return '未配置';
+  }),
+);
 
 function formatTime(iso: string): string {
   try {

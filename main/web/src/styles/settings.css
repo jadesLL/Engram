@@ -34,11 +34,15 @@
 
 .settings-shell {
   display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
+  grid-template-columns: 232px minmax(0, 1fr);
   gap: 24px;
   align-items: start;
 }
 
+/*
+ * 分类导航（两级）：4 个大类 + 当前大类的分组锚点。
+ * 大类是唯一入口，二级项负责定位；滚动时反向高亮当前分组。
+ */
 .settings-nav {
   position: sticky;
   top: 22px;
@@ -47,30 +51,35 @@
   gap: 2px;
   padding: 4px;
 }
-.settings-nav button {
+.settings-nav-domain {
+  display: flex;
+  flex-direction: column;
+}
+.settings-nav-item {
   position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   min-height: 36px;
   padding: 8px 11px;
-  border-radius: 4px;
+  border-radius: 6px;
   color: var(--text-secondary);
   font-size: 13px;
   text-align: left;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.settings-nav button:hover {
+.settings-nav-item:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
-.settings-nav button.active {
+.settings-nav-item.active {
   background: var(--bg-hover);
   color: var(--text);
   font-weight: 600;
 }
 /* Win11 NavigationView 选中指示条 */
-.settings-nav button.active::before {
+.settings-nav-item.active::before {
   content: '';
   position: absolute;
   top: 10px;
@@ -80,9 +89,85 @@
   border-radius: 2px;
   background: var(--accent);
 }
-.settings-nav button:focus-visible {
+.settings-nav-item:focus-visible,
+.settings-nav-subitem:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+.settings-nav-item .nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-nav-item .nav-caret {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.settings-nav-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 6px 19px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.settings-nav-subitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.settings-nav-subitem:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.settings-nav-subitem.active {
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-nav-subitem .nav-dot {
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.settings-nav-subitem.active .nav-dot {
+  background: var(--accent);
+}
+.settings-nav-subitem .nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 分组状态徽标：面板经 lib/settingsBadges 写进来，导航里直接可见 */
+.nav-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.nav-badge.tone-muted {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.nav-badge.tone-warn {
+  background: var(--warn-soft);
+  color: var(--warning);
 }
 
 .settings-mobile-nav {
@@ -91,6 +176,89 @@
 
 .settings-content {
   min-width: 0;
+}
+
+/* ---------- 大类内容（一次显示一整类，组标题吸顶） ---------- */
+.settings-domain {
+  display: flex;
+  flex-direction: column;
+}
+.domain-head {
+  padding: 2px 24px 8px;
+}
+.domain-head h3 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.35;
+}
+.domain-head p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/*
+ * 单个功能域的大类（账户与外观 / Agent 接入）：面板标题与大类标题重复，隐藏面板头；
+ * 多个功能域的大类（连接与同步 / 数据与存储）：面板头降级成「功能域」小标题。
+ */
+.settings-domain.is-single .settings-native > .panel-head {
+  display: none;
+}
+.settings-domain.is-multi .settings-native > .panel-head {
+  align-items: center;
+  padding: 22px 24px 2px;
+  border-bottom: 0;
+}
+.settings-domain.is-multi .settings-native > .panel-head h3 {
+  font-size: 13.5px;
+}
+.settings-domain.is-multi .settings-native > .panel-head p {
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+/* 分组卡片自己就是卡片，面板不再套一层卡（避免卡中卡） */
+.settings-domain .settings-native.settings-panel,
+.settings-domain .settings-native .settings-panel {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* 二级导航定位：给吸顶的组标题让出高度 */
+.settings-content [id] {
+  scroll-margin-top: 10px;
+}
+
+/* 危险区：与普通设置物理隔开（数据与存储底部） */
+.danger-zone {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px dashed color-mix(in srgb, var(--danger) 34%, var(--border));
+}
+.danger-zone-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 24px 2px;
+  color: var(--danger);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+/*
+ * 存储空间的两个 <section>（回收站 / 图片资产）不是 SettingsGroup，去掉面板卡片后
+ * 列表会裸在页面底色上；这里单独把列表补成卡片外观，与新外壳的分组卡片对齐。
+ */
+.settings-domain .trash-section .trash-list {
+  margin: 12px 24px 24px;
+  padding: 2px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
 }
 
 /* ---------- 原生设置面板共享框架（Win11 设置卡片） ---------- */
@@ -340,7 +508,7 @@
 /* ---------- 响应式（壳层与共享框架） ---------- */
 @media (max-width: 1024px) {
   .settings-shell {
-    grid-template-columns: 170px minmax(0, 1fr);
+    grid-template-columns: 200px minmax(0, 1fr);
     gap: 18px;
   }
 }
@@ -370,6 +538,12 @@
   }
   .settings-nav {
     display: none;
+  }
+  .domain-head {
+    padding: 2px 18px 6px;
+  }
+  .settings-domain.is-multi .settings-native > .panel-head {
+    padding: 18px 18px 2px;
   }
   .settings-native .panel-head {
     padding: 18px;
@@ -405,7 +579,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-nav button,
+  .settings-nav-item,
+  .settings-nav-subitem,
   .switch-control > span,
   .switch-control > span::after {
     transition: none;

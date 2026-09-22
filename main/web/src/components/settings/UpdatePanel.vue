@@ -9,7 +9,15 @@
     </div>
 
     <!-- ============ 服务器（Docker）分组 ============ -->
-    <SettingsGroup title="服务器（Docker 部署）" hint="更新通道、检查与一键重建容器" :default-open="true" flush>
+    <SettingsGroup
+      level="primary"
+      :badge="serverBadge.text"
+      :badge-tone="serverBadge.tone"
+      title="服务器（Docker 部署）"
+      hint="更新通道、检查与一键重建容器"
+      :default-open="true"
+      flush
+    >
       <!-- 本地内嵌 server（桌面本地模式 / 浏览器访问桌面本地服务） -->
       <template v-if="state.desktop">
         <!-- 已绑定多端同步：在此直接远程更新同步中枢服务器 -->
@@ -152,7 +160,14 @@
     </SettingsGroup>
 
     <!-- ============ 桌面端分组 ============ -->
-    <SettingsGroup title="桌面端（Windows）" hint="安装包 / 源码模式的检查、下载与更新" :default-open="isDesktop" flush>
+    <SettingsGroup
+      :badge="desktopBadge.text"
+      :badge-tone="desktopBadge.tone"
+      title="桌面端（Windows）"
+      hint="安装包 / 源码模式的检查、下载与更新"
+      :default-open="isDesktop"
+      flush
+    >
 
       <div v-if="!isDesktop" class="integration-note">
         在 Windows 桌面端内可在此下载并安装最新安装包；浏览器访问服务器时此节仅作展示。
@@ -308,6 +323,9 @@
 
     <!-- ============ 更新源配置分组 ============ -->
     <SettingsGroup
+      level="advanced"
+      :badge="state.giteaConfigured ? '' : '未配置'"
+      :badge-tone="state.giteaConfigured ? 'muted' : 'warn'"
       title="更新源配置"
       hint="远端仓库地址与访问凭据，保存在服务器数据目录 .env"
       :default-open="!state.giteaConfigured"
@@ -365,6 +383,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api, ssePost } from '../../api';
 import AppSpinner from '../ui/AppSpinner.vue';
 import SettingsGroup from './SettingsGroup.vue';
+import { useSettingsBadge } from '../../lib/settingsBadges';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import { formatVersionLabel, formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
@@ -489,6 +508,31 @@ const hubCheckError = ref('');
 const hubUpdating = ref(false);
 const hubTimeout = ref(false);
 const hubLog = ref<string[]>([]);
+
+/*
+ * 分组状态徽标（「强调分组」）：把「这个组要不要动手」写在标题行上，
+ * 同时经 lib/settingsBadges 供设置页二级导航显示。检查过才知道的（hasUpdate）
+ * 只在已有检查结果时提示，没检查过就不虚报「已是最新」。
+ */
+const serverBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' }>(() => {
+  const r = checkResult.value;
+  if (r?.ok && r.hasUpdate) return { text: `有新版 v${r.latestVersion}`, tone: 'warn' };
+  if (r?.ok) return { text: '已是最新', tone: 'ok' };
+  return { text: '', tone: 'muted' };
+});
+const desktopBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' }>(() => {
+  if (sourceAuto.value?.phase === 'behind') {
+    return { text: `${sourceAuto.value.behind ?? 0} 个新提交`, tone: 'warn' };
+  }
+  const r = desktopCheck.value;
+  if (r?.ok && r.hasUpdate) return { text: `有新版 v${r.latestVersion}`, tone: 'warn' };
+  if (r?.ok) return { text: '已是最新', tone: 'ok' };
+  return { text: '', tone: 'muted' };
+});
+useSettingsBadge(
+  'panel-update',
+  computed(() => [serverBadge.value, desktopBadge.value].find((b) => b.tone === 'warn')?.text ?? ''),
+);
 
 async function loadSync() {
   try {

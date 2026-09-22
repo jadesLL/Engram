@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <SettingsGroup title="存储位置" hint="数据目录与本地服务端口" :default-open="true">
+    <SettingsGroup anchor="data-location" title="存储位置" hint="数据目录与本地服务端口" :default-open="true">
       <div class="data-location">
         <Icon name="folder" :size="20" />
         <div>
@@ -57,7 +57,16 @@
       </div>
     </SettingsGroup>
 
-    <SettingsGroup title="备份与恢复" hint="整库打包导出，或用备份 zip 整体替换" :default-open="true">
+    <!-- 备份与恢复：全库安全网，归入「主分组」强调（最该先看的一组） -->
+    <SettingsGroup
+      anchor="data-backup"
+      level="primary"
+      badge="建议每周"
+      badge-tone="accent"
+      title="备份与恢复"
+      hint="整库打包导出，或用备份 zip 整体替换"
+      :default-open="true"
+    >
       <div class="backup-section">
         <div class="backup-row">
           <div>
@@ -83,39 +92,7 @@
       </div>
     </SettingsGroup>
 
-    <SearchPanel />
-
-    <SettingsGroup title="危险操作" hint="不可撤销；执行前需要再次确认登录密码" danger flush>
-      <div v-if="capabilities.features.agent" class="danger-row">
-        <div>
-          <strong>清空操作日志与关系库</strong>
-          <p>清空 AIWorks 系统区（操作日志、索引与关系库）；待执行和运行中的任务会先停止，概念、实体和原始资料不受影响。</p>
-        </div>
-        <button
-          class="btn danger"
-          type="button"
-          :disabled="Boolean(wipeBusy)"
-          @click="wipeAiLogs"
-        >
-          {{ wipeBusy === 'ai-logs' ? '清空中...' : '清空日志' }}
-        </button>
-      </div>
-      <div class="danger-row">
-        <div>
-          <strong>一键清除知识数据</strong>
-          <p>先停止待执行和运行中的任务，再删除全部概念、实体、原始资料、归档和查询页面，并清空整理报告、入库记录与索引。</p>
-        </div>
-        <button
-          class="btn danger-solid"
-          type="button"
-          :disabled="Boolean(wipeBusy)"
-          @click="wipe"
-        >
-          {{ wipeBusy === 'knowledge' ? '清除中...' : '一键清除' }}
-        </button>
-      </div>
-    </SettingsGroup>
-    <p v-if="wipeMsg" class="setting-message wipe-message" :class="wipeOk ? 'ok' : 'err'">{{ wipeMsg }}</p>
+    <SearchPanel anchor="data-synonyms" level="advanced" />
   </section>
 </template>
 
@@ -126,14 +103,11 @@ import { useAppStore } from '../../stores/app';
 import Icon from '../Icon.vue';
 import SearchPanel from './SearchPanel.vue';
 import SettingsGroup from './SettingsGroup.vue';
-import { confirmDialog, promptDialog } from '../../lib/confirm';
+import { confirmWithPassword } from '../../lib/dangerConfirm';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 
 const app = useAppStore();
 const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
-const wipeMsg = ref('');
-const wipeOk = ref(false);
-const wipeBusy = ref<'' | 'knowledge' | 'ai-logs'>('');
 
 // ---------- 数据保存位置（桌面端） ----------
 const wikiDesktop = (window as any).wikiDesktop;
@@ -269,13 +243,18 @@ async function onRestoreFile(ev: Event) {
   input.value = '';
   if (!file) return;
   backupMsg.value = '';
-  const password = await confirmWithPassword('用备份替换当前全部数据');
-  if (!password) return;
+  const confirm = await confirmWithPassword('用备份替换当前全部数据');
+  if (!confirm) return;
+  if ('error' in confirm) {
+    backupOk.value = false;
+    backupMsg.value = confirm.error;
+    return;
+  }
   backupBusy.value = 'restore';
   try {
     const form = new FormData();
     form.append('file', file);
-    form.append('password', password);
+    form.append('password', confirm.password);
     await api.post('/api/settings/restore', form);
     if (isDesktopLocal.value && wikiDesktop) {
       backupOk.value = true;
@@ -297,76 +276,8 @@ async function onRestoreFile(ev: Event) {
   }
 }
 
-async function confirmWithPassword(actionLabel: string): Promise<string | null> {
-  const first = await confirmDialog({
-    title: '危险操作确认',
-    message: `即将${actionLabel}，此操作不可撤销。确认继续？`,
-    confirmText: '继续',
-    danger: true,
-  });
-  if (!first) return null;
-  // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog 收密码
-  const password = await promptDialog({
-    title: '身份确认',
-    message: '请输入登录密码以确认：',
-    placeholder: '登录密码',
-    confirmText: '确认',
-    danger: true,
-  });
-  if (password === null) return null;
-  if (!password) {
-    wipeOk.value = false;
-    wipeMsg.value = '密码不能为空';
-    return null;
-  }
-  const second = await confirmDialog({
-    title: '最后一次确认',
-    message: `真的要${actionLabel}吗？`,
-    confirmText: '确认执行',
-    danger: true,
-  });
-  if (!second) return null;
-  return password;
-}
-
-async function wipe() {
-  wipeMsg.value = '';
-  const password = await confirmWithPassword('清除全部知识数据、整理报告和入库记录');
-  if (!password) return;
-  wipeBusy.value = 'knowledge';
-  try {
-    const { data } = await api.post('/api/settings/wipe', { password });
-    wipeOk.value = true;
-    const stopped = data.cancelledJobs ? `，并停止 ${data.cancelledJobs} 个后台处理` : '';
-    wipeMsg.value = `已清除 ${data.fileCount} 个文件、${data.reportCount} 条整理报告${stopped}，索引已重置。`;
-    await app.refreshJobs();
-    app.bumpSidebar();
-  } catch (error: any) {
-    wipeOk.value = false;
-    wipeMsg.value = error.response?.data?.error || '清除失败';
-  } finally {
-    wipeBusy.value = '';
-  }
-}
-
-async function wipeAiLogs() {
-  wipeMsg.value = '';
-  const password = await confirmWithPassword('清空 AI 整理日志、操作日志和关系库');
-  if (!password) return;
-  wipeBusy.value = 'ai-logs';
-  try {
-    const { data } = await api.post('/api/settings/wipe-ai-logs', { password });
-    wipeOk.value = true;
-    const stopped = data.cancelledJobs ? `，并停止 ${data.cancelledJobs} 个后台处理` : '';
-    wipeMsg.value = `已清空 ${data.fileCount} 个 AI 整理日志文件，重置 ${data.relationCount} 条关系记录${stopped}。`;
-    app.bumpSidebar();
-  } catch (error: any) {
-    wipeOk.value = false;
-    wipeMsg.value = error.response?.data?.error || '清空失败';
-  } finally {
-    wipeBusy.value = '';
-  }
-}
+// 危险操作（清库 / 清日志）与它那套三段式确认已移到 DataDangerSection.vue：
+// 改版后「数据与存储」还包含回收站与图片资产，危险操作必须排在整类最后。
 </script>
 
 <style scoped>
@@ -453,37 +364,11 @@ async function wipeAiLogs() {
   padding: 10px 16px;
 }
 
-.danger-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 20px;
-  padding: 16px;
-  border-bottom: 1px solid var(--border);
-}
-.danger-row:last-child {
-  border-bottom: 0;
-}
-.danger-row strong {
-  font-size: 13px;
-}
-.danger-row p {
-  margin: 4px 0 0;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-.wipe-message {
-  margin: 0 24px 22px;
-}
-
 @media (max-width: 640px) {
-  .danger-row,
   .dir-row,
   .backup-row {
     grid-template-columns: 1fr;
   }
-  .danger-row .btn,
   .dir-row .btn,
   .backup-row .btn {
     width: 100%;
