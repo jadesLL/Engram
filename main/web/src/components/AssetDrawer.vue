@@ -174,7 +174,10 @@ function displayName(name: string): string {
 .asset-mask {
   position: fixed;
   inset: 0;
-  z-index: var(--z-mask);
+  /* 必须低于抽屉。用 --z-mask(32) 会盖在抽屉(--z-drawer 25) 上面：
+     抽屉里任何点击都被遮罩接走，表现成「点预览/另存/删除没反应，一点抽屉就关」。
+     低一档同时仍低于侧栏(35)——抽屉开着时侧栏照常可点，换一份内容不用先关抽屉。 */
+  z-index: calc(var(--z-drawer) - 1);
   background: rgba(0, 0, 0, 0.28);
 }
 
@@ -207,8 +210,13 @@ function displayName(name: string): string {
   font-size: 11.5px;
   min-width: 0;
 }
-.asset-crumb .sep { opacity: 0.6; }
+.asset-crumb .sep { opacity: 0.6; flex-shrink: 0; }
+/* 首尾两段（原始资料 / 图片资产）不许换行——窄抽屉里它们会被压成「原始资」+「料」两行；
+   只有中间那段父项名允许省略号收缩 */
+.asset-crumb > span:not(.cur) { flex-shrink: 0; white-space: nowrap; }
 .asset-crumb .cur {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
