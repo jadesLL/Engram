@@ -5,6 +5,8 @@ import matter from 'gray-matter';
 import JSZip from 'jszip';
 import { db } from '../lib/db.js';
 import { safeJoin, notifySyncChange } from '../lib/vault.js';
+import { emit } from '../lib/events.js';
+import { noteAppWrite } from '../lib/appWrites.js';
 import { moveToTrash } from '../lib/trash.js';
 import { requireAuth } from './auth.js';
 import { officeToText } from '../pipeline/office.js';
@@ -186,16 +188,20 @@ export async function fileRoutes(app: FastifyInstance) {
     }
     const abs = safeJoin(rel);
     fs.writeFileSync(abs, ext === 'txt' ? '' : `# ${path.basename(rel, path.extname(rel))}\n\n`);
+    // 自己写的：登记回声抑制，并显式推 SSE（侧栏「资料」目录按磁盘实时列目录，事件到了就刷新）
+    noteAppWrite(abs);
     let pageId: string | undefined;
     if (['md', 'markdown'].includes(ext)) {
       const meta = syncPageFile(rel);
       pageId = meta?.id;
       if (pageId) enqueuePagePipeline(pageId);
       notifySyncChange('page', rel);
+      if (pageId) emit('page-changed', { path: rel, id: pageId });
     } else if (TEXT_EXTS.has(ext)) {
       const fileId = upsertFileRecord(rel, '', 0);
       enqueue('index_file', { fileId });
       notifySyncChange('file', rel);
+      emit('file-changed', { path: rel });
     }
     try { appendWikiLog('新建文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
     return { ok: true, path: rel, pageId };
@@ -242,6 +248,8 @@ export async function fileRoutes(app: FastifyInstance) {
       const abs = safeJoin(rel);
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, buffer);
+      // 自己写的：登记回声抑制；下面每个分支各推一次 SSE，侧栏目录立刻可见
+      noteAppWrite(abs);
 
       const ext = path.posix.extname(safeName).slice(1).toLowerCase();
       let indexed = false;
@@ -256,12 +264,14 @@ export async function fileRoutes(app: FastifyInstance) {
           app.log.warn(`Office 提取失败 ${rel}: ${e.message}`);
         }
         notifySyncChange('file', rel);
+        emit('file-changed', { path: rel });
       } else if (TEXT_EXTS.has(ext)) {
         const text = buffer.toString('utf8').replace(/\r\n/g, '\n');
         const fileId = upsertFileRecord(rel, text, buffer.length);
         enqueue('index_file', { fileId });
         indexed = true;
         notifySyncChange('file', rel);
+        emit('file-changed', { path: rel });
       } else if (['md', 'markdown'].includes(ext)) {
         // 上传的 md 直接登记为可编辑页面并入库索引
         const meta = syncPageFile(rel);
@@ -271,10 +281,12 @@ export async function fileRoutes(app: FastifyInstance) {
           indexed = true;
         }
         notifySyncChange('page', rel);
+        if (pageId) emit('page-changed', { path: rel, id: pageId });
       } else if (dir === '原始资料' && EXTRACTABLE_EXTENSIONS.has(ext)) {
         const fileId = ensureFileRecord(rel, buffer.length);
         const scheduled = scheduleFileExtraction(rel, { mode: 'auto' });
         notifySyncChange('file', rel);
+        emit('file-changed', { path: rel });
         saved.push({
           path: rel,
           name: path.basename(rel),
@@ -286,6 +298,7 @@ export async function fileRoutes(app: FastifyInstance) {
       } else {
         // 其余格式（图片等）仅落盘，不入索引，但同样需要多端同步
         notifySyncChange('file', rel);
+        emit('file-changed', { path: rel });
       }
       try { appendWikiLog('上传文件', `「${safeName}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
       saved.push({
@@ -515,6 +528,8 @@ export async function fileRoutes(app: FastifyInstance) {
     try {
       const item = moveToTrash(p);
       appendWikiLog('删除', `「${item.name}」（${item.originalPath}，已入回收站）`);
+      // md 页面由 moveToTrash 自己推 page-deleted；非 md 资料没有页面事件，补一条让侧栏目录收起这一行
+      if (!item.pageId) emit('file-changed', { path: p });
     } catch (error: any) {
       return reply.code(error?.message === '文件不存在' ? 404 : 400).send({
         error: error?.message || '删除失败',

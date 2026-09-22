@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { emit } from '../lib/events.js';
+import { noteAppWrite } from '../lib/appWrites.js';
 import { getSetting } from '../lib/db.js';
 import { consumeSseStream } from '../lib/sseStream.js';
 import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted, PagePathTakenError } from '../lib/vault.js';
@@ -187,6 +188,8 @@ function writeRemotePage(relPath: string, raw: string): void {
   const temp = `${abs}.${Date.now()}.sync.tmp`;
   fs.writeFileSync(temp, raw);
   fs.renameSync(temp, abs);
+  // 自己写的：文件系统监听据此跳过回声（拉回的页面已经由本函数推过 SSE 了）
+  noteAppWrite(abs);
   const meta = syncPageFile(relPath);
   if (meta) {
     enqueuePagePipeline(meta.id);
@@ -216,6 +219,7 @@ async function pullFile(relPath: string): Promise<void> {
   const temp = `${abs}.${Date.now()}.sync.tmp`;
   fs.writeFileSync(temp, buf);
   fs.renameSync(temp, abs);
+  noteAppWrite(abs);
   // 原始资料文件拉取后补调度文本提取（与启动扫描/上传路径同一套机制）
   try {
     const { supportsFileExtraction, scheduleFileExtraction } = await import('../pipeline/fileExtraction.js');

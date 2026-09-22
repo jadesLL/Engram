@@ -156,14 +156,30 @@ export async function pageRoutes(app: FastifyInstance) {
       (type === undefined || type === page.type) &&
       JSON.stringify(nextTags) === JSON.stringify(currentTags);
     if (unchanged) return { meta: current.meta, unchanged: true };
-    const meta = writePage(page.path, nextContent, { title, type, tags });
+    // 改标题 = 改名：文件名跟随标题，否则侧栏「目录」里还是旧文件名（用户 2026-09 反馈：
+    // 在编辑器里改了标题，面包屑/大标题是新的、目录里的文件名还是旧的）。
+    // 先落正文（不带标题），再交给改名内核挪文件+改标题+重定向双链——正文 H1 不动：
+    // 浏览器里正文由用户掌控，服务端改写 H1 会和未保存内容打架。
+    const nextTitle = title === undefined ? undefined : String(title).trim();
+    let meta: { id: string; path: string };
+    if (nextTitle && nextTitle !== page.title) {
+      writePage(page.path, nextContent, { type, tags });
+      try {
+        meta = renamePageSafely(id, nextTitle, { syncH1: false, allowSamePath: true });
+      } catch (error) {
+        // 改名失败（极端字符归一化等）不能让这次保存丢内容：退化成只改标题
+        meta = writePage(page.path, nextContent, { title: nextTitle, type, tags });
+      }
+    } else {
+      meta = writePage(page.path, nextContent, { title, type, tags });
+    }
     // 类型变化 → 物理移动到映射目录（归档区与 Wiki 树外的页面不自动移动）
-    if (type && type !== page.type && page.path.startsWith('Wiki/') && !page.path.startsWith('Wiki/归档/')) {
+    if (type && type !== page.type && meta.path.startsWith('Wiki/') && !meta.path.startsWith('Wiki/归档/')) {
       const targetDir = typeToDir(type);
-      const filename = path.posix.basename(page.path);
+      const filename = path.posix.basename(meta.path);
       const newRel = path.posix.join(targetDir, filename);
-      if (newRel !== page.path && !pagePathTaken(newRel)) {
-        movePage(page.path, newRel);
+      if (newRel !== meta.path && !pagePathTaken(newRel)) {
+        movePage(meta.path, newRel);
       }
     }
     enqueuePagePipeline(meta.id);

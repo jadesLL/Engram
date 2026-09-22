@@ -5,6 +5,7 @@ import { BRAIN_DIR, normalizeDir, isPageDir } from '../config.js';
 import { db, newId, now } from './db.js';
 import { ftsSegment } from './fts.js';
 import { emit } from './events.js';
+import { noteAppWrite } from './appWrites.js';
 
 export interface PageMeta {
   id: string;
@@ -163,6 +164,8 @@ function atomicWrite(abs: string, content: string | Buffer): void {
   try {
     fs.writeFileSync(temp, content);
     fs.renameSync(temp, abs);
+    // 登记为「应用自己写的」：文件系统监听据此跳过回声（见 lib/appWrites.ts）
+    noteAppWrite(abs);
   } catch (error) {
     try { fs.unlinkSync(temp); } catch { /* already moved or absent */ }
     throw error;
@@ -436,6 +439,7 @@ export function movePage(oldRel: string, newRel: string, origin: WriteOrigin = '
   if (pagePathTaken(newRel)) throw new PagePathTakenError(newRel);
   fs.mkdirSync(path.dirname(newAbs), { recursive: true });
   fs.renameSync(oldAbs, newAbs);
+  noteAppWrite(newAbs);
   // deleted = 0：与 reconcileMissingPages 竞态时自愈（对账可能正好在 rename 之后、
   // 本语句之前看到旧路径已消失，把行标成 deleted；这里复位回来）
   db.prepare(`UPDATE pages SET path = ?, updated_at = ?, deleted = 0 WHERE path = ?`).run(newRel, now(), oldRel);
