@@ -103,7 +103,7 @@ import SettingsGroup from './SettingsGroup.vue';
 import { useAppStore } from '../../stores/app';
 import { useAuthStore } from '../../stores/auth';
 import { APP_VERSION } from '../../version';
-import { formatVersionLabel, type GitIdentity } from '../../lib/buildLabel';
+import { formatVersionHint, formatVersionLabel, type GitIdentity } from '../../lib/buildLabel';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { notify } from '../../lib/notify';
 import { getTooltipStrict, setTooltipStrict } from '../../lib/tooltip';
@@ -136,12 +136,15 @@ const identity = computed<GitIdentity>(() => {
   };
 });
 const versionLabel = computed(() => formatVersionLabel(APP_VERSION, identity.value));
+// 说明文字区分源码模式/服务端构建/安装包三种情况；源码模式却读不到提交号时点明原因
+// （Git 不可用），否则用户只看到一个光秃秃的版本号，既不知新旧也不知哪里坏了
+// （2026-09-22 用户报「版本号只显示 1.2.7」即此，见 lib/buildLabel.ts）。
 const versionHint = computed(() =>
-  desktopEnv.value?.commit
-    ? '源码模式：版本号仅随发版变化，提交号随每次更新变化。'
-    : serverCommit.value
-      ? '当前运行部署的构建版本：版本号随发版变化，提交号随每次构建变化。'
-      : '当前安装的 Engram 版本。',
+  formatVersionHint({
+    sourceMode: desktopEnv.value?.packaged === false,
+    commit: identity.value.commit,
+    fromServer: !desktopEnv.value?.commit && Boolean(serverCommit.value),
+  }),
 );
 
 const pwd = ref({ old: '', next: '' });

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { codeIdentity, readGitHeadSha } from './version.js';
+import { codeIdentity, defaultRepoRoots, readGitHeadSha } from './version.js';
 
 const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 
@@ -105,6 +105,38 @@ test('codeIdentity 全取不到时返回 unknown 而非抛错', () => {
     assert.deepEqual(codeIdentity({ buildShaFile: path.join(tmpDir(), 'missing'), repoRoots: [] }), {
       commit: '',
       source: 'unknown',
+    });
+  });
+});
+
+test('defaultRepoRoots 覆盖桌面源码布局的仓库根', () => {
+  // 桌面源码模式：内嵌 server 跑的是组装副本 main/desktop/server/dist，
+  // 从 dist/lib 往上三级只到 main/desktop，仓库根（.git 所在）在它上一级。
+  // 少了这一层时，主进程拿不到 git（便携 MinGit 不在 PATH / 品牌启动器误判）就彻底丢提交号。
+  const base = path.resolve(os.tmpdir(), 'engram-repo');
+  const here = path.join(base, 'main', 'desktop', 'server', 'dist', 'lib');
+  assert.deepEqual(defaultRepoRoots(here), [
+    path.join(base, 'main', 'desktop'),
+    path.join(base, 'main'),
+    base,
+  ]);
+});
+
+test('defaultRepoRoots 在开发布局下仍先给 main 与仓库根', () => {
+  const base = path.resolve(os.tmpdir(), 'engram-repo-dev');
+  const here = path.join(base, 'main', 'server', 'dist', 'lib');
+  assert.deepEqual(defaultRepoRoots(here).slice(0, 2), [path.join(base, 'main'), base]);
+});
+
+test('defaultRepoRoots 给出的候选能让 codeIdentity 读到桌面布局的 .git', () => {
+  withoutEnv(() => {
+    const base = path.resolve(os.tmpdir(), 'engram-repo-live');
+    const here = path.join(base, 'main', 'desktop', 'server', 'dist', 'lib');
+    write(path.join(base, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    write(path.join(base, '.git', 'refs', 'heads', 'main'), SHA + '\n');
+    assert.deepEqual(codeIdentity({ buildShaFile: path.join(base, 'missing-GIT_SHA'), repoRoots: defaultRepoRoots(here) }), {
+      commit: SHA.slice(0, 7),
+      source: 'git',
     });
   });
 });

@@ -11,6 +11,13 @@ const dataDirLib = require('./lib/data-dir');
 const depsLib = require('./scripts/lib/deps');
 // 桌面快捷方式与品牌化 exe（源码模式的 electron.exe 图标是 Electron 原子，见 lib/shortcut.js）
 const shortcutLib = require('./scripts/lib/shortcut');
+// 运行形态判定与 git 定位：**不要用 Electron 的 app.isPackaged** —— 它按可执行文件名判定，
+// 品牌启动器 Engram.exe（electron.exe 的改名副本）会被判成打包形态，源码版因此丢掉提交号与
+// 源码更新入口。详见 lib/runtime-mode.js 顶部注释。
+const runtimeMode = require('./scripts/lib/runtime-mode');
+
+/** 是否安装包形态（打包产物 app.asar 存在）；源码模式（含品牌启动器）一律 false */
+const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
 
 // 主进程没有全局兜底时，任何未处理的 Promise 拒绝都会让整个应用静默退出
 // （Node ≥15 语义；本应用多处后台任务不 await，必须自己接住）。
@@ -286,7 +293,7 @@ function createWindow() {
 
 // ---------- 托盘 ----------
 function windowIcon() {
-  if (app.isPackaged) return undefined; // 打包版：exe 内嵌图标
+  if (PACKAGED) return undefined; // 打包版：exe 内嵌图标
   const dev = path.join(__dirname, 'build', 'icon.ico'); // 源码运行（electron .）
   return fs.existsSync(dev) ? dev : undefined;
 }
@@ -506,7 +513,7 @@ app.whenReady().then(() => {
   launchByConfig();
   // 自动更新：启动延迟首查 + 每 8 小时复查。打包形态自动下载并静默安装；源码模式只自动检查，
   // 落后时用系统通知 + 设置页提示，更新时机由用户点「更新并重启」确认。
-  if (process.platform === 'win32' && app.isPackaged) {
+  if (process.platform === 'win32' && PACKAGED) {
     autoState.enabled = readConfig().autoUpdate !== false;
     setTimeout(autoUpdateTick, AUTO_UPDATE_STARTUP_DELAY_MS);
     setInterval(autoUpdateTick, AUTO_UPDATE_INTERVAL_MS);
@@ -1001,7 +1008,7 @@ function beginSilentInstall(file, version, source = 'auto update') {
 }
 
 async function autoUpdateTick() {
-  if (process.platform !== 'win32' || autoBusy || !app.isPackaged) return;
+  if (process.platform !== 'win32' || autoBusy || !PACKAGED) return;
   if (process.env.PORTABLE_EXECUTABLE_DIR) return; // 便携版不自动更新
   autoState.enabled = readConfig().autoUpdate !== false;
   if (!autoState.enabled) {
@@ -1122,7 +1129,9 @@ function handOffSourceUpdate() {
 }
 
 function gitArgs(args) {
-  return { cmd: 'git', args: ['-C', appRootDir, ...args] };
+  // 每次解析（而非模块加载时定死）：全新机先装应用、后补 Git 的场景也能自愈；
+  // 便携 MinGit 不在系统 PATH 里，必须显式定位（见 lib/runtime-mode.js）。
+  return { cmd: runtimeMode.resolveGitCommand(), args: ['-C', appRootDir, ...args] };
 }
 
 function runGit(args, timeoutMs = 120_000) {
@@ -1156,7 +1165,7 @@ let gitIdentityCache = null;
 async function gitIdentity() {
   if (gitIdentityCache) return gitIdentityCache;
   const unknown = { commit: '', commitDate: '', dirty: false };
-  if (app.isPackaged) {
+  if (PACKAGED) {
     gitIdentityCache = unknown; // 安装包形态没有 .git，显示退回纯版本号
     return gitIdentityCache;
   }
@@ -1165,18 +1174,21 @@ async function gitIdentity() {
     const commitDate = await runGit(['log', '-1', '--format=%cs'], 15_000);
     const dirty = Boolean((await runGit(['status', '--porcelain'], 15_000)).trim());
     gitIdentityCache = { commit, commitDate, dirty };
-  } catch {
-    // git 不可用（未装 git / 非检出目录）不阻断应用：退回纯版本号显示
+  } catch (e) {
+    // git 不可用（未装 git / 非检出目录）不阻断应用：退回纯版本号显示。
+    // 但必须留痕——2026-09-22 用户报「版本号只显示 1.2.7」时 app.log 里什么都没有，
+    // 只能靠猜（真实原因之一：品牌启动器被判成安装包形态；之二：便携 MinGit 不在 PATH）。
+    log('[identity] 读取 git 身份失败，版本行将只显示版本号：' + describeError(e));
     gitIdentityCache = unknown;
   }
   return gitIdentityCache;
 }
 
 ipcMain.handle('desktop-get-env', async () => ({
-  packaged: app.isPackaged,
+  packaged: PACKAGED,
   platform: process.platform,
   version: app.getVersion(),
-  ...(app.isPackaged ? {} : await gitIdentity()),
+  ...(PACKAGED ? {} : await gitIdentity()),
 }));
 
 // 源码模式自动检查：启动延迟首查 + 每 8 小时复查，落后时只提示（设置页状态 + 系统通知），
@@ -1201,7 +1213,7 @@ function setSourceAutoState(patch) {
 
 /** 比对远端与本地：fetch 后取落后提交数与两侧提交号（手动「检查更新」与自动检查共用） */
 async function sourceCheckCore() {
-  if (app.isPackaged) return { ok: false, error: '安装包形态不使用源码更新' };
+  if (PACKAGED) return { ok: false, error: '安装包形态不使用源码更新' };
   try {
     // branch --show-current 而非 rev-parse --abbrev-ref：仓库里有与分支同名的 tag（如游离 tag main）时
     // abbrev-ref 会消歧成 heads/main，拼 origin/heads/main 直接报 128
@@ -1251,7 +1263,7 @@ function applySourceCheckResult(r) {
 }
 
 async function sourceAutoTick() {
-  if (app.isPackaged || sourceAutoBusy || sourceUpdating) return;
+  if (PACKAGED || sourceAutoBusy || sourceUpdating) return;
   sourceAutoState.enabled = readConfig().autoUpdate !== false;
   if (!sourceAutoState.enabled) {
     setSourceAutoState({ phase: 'idle', error: '' });
@@ -1421,7 +1433,7 @@ function resolveToolEntry(relCandidates) {
 }
 
 ipcMain.handle('desktop-source-update', async () => {
-  if (app.isPackaged) return { ok: false, error: '安装包形态不使用源码更新' };
+  if (PACKAGED) return { ok: false, error: '安装包形态不使用源码更新' };
   if (sourceUpdating) return { ok: false, error: '更新已在进行中，请等待当前更新完成' };
   sourceUpdating = true;
   try {
@@ -1577,7 +1589,7 @@ async function rebuildDesktopShortcut() {
   let distDir = '';
   let exe = 'packaged';
   let exeWarning = '';
-  if (!app.isPackaged) {
+  if (!PACKAGED) {
     distDir = shortcutLib.findElectronDist(desktopDir);
     if (!distDir) return { ok: false, error: '未找到 Electron 运行时（node_modules/electron/dist 缺失），请先同步依赖' };
     const r = await shortcutLib.brandExe({ distDir, iconPath, rcedit: shortcutLib.findRcedit(appRootDir) });
@@ -1586,9 +1598,9 @@ async function rebuildDesktopShortcut() {
     // 运行中的 Engram.exe 被 Windows 锁住：覆盖不了就别写半成品，让用户退出后重试（更新脚本会自动完成）
     if (exe === 'locked') return { ok: false, error: r.error };
   }
-  const useBranded = !app.isPackaged && (exe === 'built' || exe === 'fresh');
+  const useBranded = !PACKAGED && (exe === 'built' || exe === 'fresh');
   const spec = shortcutLib.shortcutSpec({
-    packaged: app.isPackaged,
+    packaged: PACKAGED,
     desktopDir,
     execPath: process.execPath,
     distDir,

@@ -102,13 +102,16 @@ export function readGitHeadSha(repoRoot: string): string {
 }
 
 /**
- * 检出根候选：应用根（`main/`），以及 monorepo 检出里的仓库根（`.git` 在 `main/` 上一级）。
- * 从本文件位置推导，与 cwd 无关。
+ * 检出根候选：应用根（`main/`）、monorepo 检出里的仓库根（`.git` 在 `main/` 上一级），
+ * 以及桌面源码模式再往上一层——内嵌 server 跑的是组装副本 `main/desktop/server/dist`，
+ * 从 `dist/lib` 往上三级只到 `main/desktop`，仓库根（`.git` 所在）在它上一级。
+ * 少了这一层时，主进程一旦拿不到 git（便携 MinGit 不在 PATH、git 报 dubious ownership、
+ * 品牌启动器误判等），服务端也读不到 `.git`，提交号就彻底丢了（2026-09-22 实测）。
+ * 从本文件位置推导，与 cwd 无关；多给的候选目录没有 `.git` 时 readGitHeadSha 返回空串。
  */
-function defaultRepoRoots(): string[] {
-  const here = path.dirname(fileURLToPath(import.meta.url));
+export function defaultRepoRoots(here = path.dirname(fileURLToPath(import.meta.url))): string[] {
   const appRoot = path.resolve(here, '../../..'); // lib -> src -> server -> main
-  return [appRoot, path.dirname(appRoot)];
+  return [appRoot, path.dirname(appRoot), path.dirname(path.dirname(appRoot))];
 }
 
 /**

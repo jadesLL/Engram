@@ -16,6 +16,12 @@ export interface GitIdentity {
   commitDate?: string;
   /** 工作区是否有未提交改动 */
   dirty?: boolean;
+  /**
+   * 主进程判定为安装包形态（打包产物 app.asar 存在）；源码模式为 false。
+   * 判据是产物而不是 Electron 的 `app.isPackaged`——后者按可执行文件名判定，
+   * 品牌启动器 Engram.exe（electron.exe 的改名副本）会被误判成打包形态。
+   */
+  packaged?: boolean;
 }
 
 /** 源码模式「检查更新」结果中与提交号相关的字段 */
@@ -55,4 +61,32 @@ export function formatSourceCheckLabel(result: SourceCheckResult): string {
   if (local && remote) return `${head}：${local} → ${remote}`;
   const branch = (result.branch || '').trim();
   return branch ? `${head}（分支 ${branch}）` : head;
+}
+
+/** 版本行说明文字的输入 */
+export interface VersionHintInput {
+  /** 桌面端非打包形态（源码模式）；浏览器访问与安装包形态为 false */
+  sourceMode?: boolean;
+  /** 已拿到的提交号（桌面主进程 IPC 或服务端 /api/update/state） */
+  commit?: string;
+  /** 提交号来自服务端而非桌面主进程（Docker 镜像 / 浏览器访问） */
+  fromServer?: boolean;
+}
+
+/**
+ * 版本行下面的说明文字。
+ *
+ * 关键一条：源码模式拿不到提交号时必须点明原因，否则用户只看到一个光秃秃的 `1.2.7`，
+ * 既判断不出更新有没有落地，也看不出哪里坏了（2026-09-22 用户报「版本号只显示 1.2.7」
+ * 时，设置页给的是安装包形态的兜底文案「当前安装的 Engram 版本。」，无从下手）。
+ */
+export function formatVersionHint(input: VersionHintInput = {}): string {
+  const commit = (input.commit || '').trim();
+  if (commit) {
+    return input.fromServer
+      ? '当前运行部署的构建版本：版本号随发版变化，提交号随每次构建变化。'
+      : '源码模式：版本号仅随发版变化，提交号随每次更新变化。';
+  }
+  if (input.sourceMode) return '源码模式：未读到提交号（Git 不可用或不在检出目录），版本号仅随发版变化。';
+  return '当前安装的 Engram 版本。';
 }
