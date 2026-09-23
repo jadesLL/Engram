@@ -18,6 +18,9 @@ test('runtime capabilities preserve the complete server feature set', async () =
   const payload = await capabilities();
   assert.deepEqual(payload.syncRoles, ['none', 'hub', 'member']);
   assert.equal(payload.features.agent, true);
+  assert.equal(payload.features.agentAdmin, true);
+  assert.equal(payload.agentMode, 'local');
+  assert.deepEqual(payload.nativeActions, []);
   assert.equal(payload.features.serverUpdate, true);
 });
 

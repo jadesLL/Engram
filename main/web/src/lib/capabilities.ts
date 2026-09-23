@@ -6,9 +6,12 @@ export type RuntimeKind = 'server' | 'desktop' | 'android-local';
 export interface RuntimeCapabilities {
   runtime: RuntimeKind;
   localFirst: boolean;
+  agentMode: 'local' | 'hub' | 'unavailable';
+  nativeActions: string[];
   syncRoles: Array<'none' | 'hub' | 'member'>;
   features: {
     agent: boolean;
+    agentAdmin: boolean;
     mcp: boolean;
     jobs: boolean;
     onlyOffice: boolean;
@@ -22,9 +25,12 @@ export interface RuntimeCapabilities {
 const fullCapabilities: RuntimeCapabilities = {
   runtime: 'server',
   localFirst: false,
+  agentMode: 'local',
+  nativeActions: [],
   syncRoles: ['none', 'hub', 'member'],
   features: {
     agent: true,
+    agentAdmin: true,
     mcp: true,
     jobs: true,
     onlyOffice: true,
@@ -41,14 +47,15 @@ const state = reactive({
   loading: null as Promise<RuntimeCapabilities> | null,
 });
 
-export async function loadRuntimeCapabilities(): Promise<RuntimeCapabilities> {
-  if (state.loaded) return state.value;
+export async function loadRuntimeCapabilities(force = false): Promise<RuntimeCapabilities> {
+  if (!force && state.loaded) return state.value;
   if (state.loading) return state.loading;
   state.loading = api.get('/api/runtime/capabilities')
     .then(({ data }) => {
       state.value = {
         ...fullCapabilities,
         ...data,
+        nativeActions: Array.isArray(data?.nativeActions) ? data.nativeActions : [],
         features: { ...fullCapabilities.features, ...(data?.features || {}) },
       };
       return state.value;

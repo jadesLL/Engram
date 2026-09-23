@@ -12,9 +12,12 @@ export async function runtimeRoutes(app: FastifyInstance) {
     return {
       runtime: desktop ? 'desktop' : 'server',
       localFirst: desktop,
+      agentMode: 'local',
+      nativeActions: [],
       syncRoles: ['none', 'hub', 'member'],
       features: {
         agent: true,
+        agentAdmin: true,
         mcp: true,
         jobs: true,
         onlyOffice: officeConfigured(),

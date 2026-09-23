@@ -10,6 +10,7 @@ import { bundledDshBin, getAgentConfig, setAgentConfig } from '../assistant/conf
 import { AGENT_APIS, agentApi } from '../assistant/agentSettings.js';
 import * as repo from '../assistant/repository.js';
 import type { InterfaceContext } from '../assistant/prompts.js';
+import { requireAssistantAccess } from '../assistant/access.js';
 
 const TERMINAL = ['completed', 'failed', 'cancelled', 'interrupted'];
 
@@ -18,7 +19,8 @@ const TERMINAL = ['completed', 'failed', 'cancelled', 'interrupted'];
  * 与「Agent 接入」（给外部 harness 注册 MCP）不是一回事：这里驱动的是 Engram 随包的 dsh。
  */
 export async function assistantRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', requireAuth);
+  // Android 成员使用同步 token 代理会话；配置路由再叠 owner 鉴权，避免成员读取模型密钥。
+  app.addHook('preHandler', requireAssistantAccess);
 
   // ---------- 配置与状态 ----------
 
@@ -31,7 +33,7 @@ export async function assistantRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get('/api/assistant/config', async () => {
+  app.get('/api/assistant/config', { preHandler: requireAuth }, async () => {
     const config = getAgentConfig();
     return {
       model: config.model || '',
@@ -44,7 +46,7 @@ export async function assistantRoutes(app: FastifyInstance) {
     };
   });
 
-  app.put('/api/assistant/config', async (req, reply) => {
+  app.put('/api/assistant/config', { preHandler: requireAuth }, async (req, reply) => {
     const body = (req.body || {}) as {
       model?: string;
       apiKey?: string | null;

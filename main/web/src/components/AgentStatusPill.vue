@@ -3,12 +3,12 @@
     v-if="visible"
     class="agent-pill"
     type="button"
-    :aria-label="busy ? '内置 Agent 正在回复，打开对话' : '内置 Agent 已最小化，打开对话'"
+    :aria-label="busy ? `${agentName} 正在回复，打开对话` : `${agentName} 已最小化，打开对话`"
     @click="open"
   >
     <AppSpinner v-if="busy" :size="12" />
     <Icon v-else name="ai" :size="14" />
-    <span class="txt">{{ busy ? '内置 Agent 回复中' : '内置 Agent 已最小化' }}</span>
+    <span class="txt">{{ busy ? `${agentName} 回复中` : `${agentName} 已最小化` }}</span>
     <span class="detail">{{ busy ? detail : '点此继续对话' }}</span>
     <span v-if="liveRun" class="time">{{ elapsed }}</span>
     <span v-if="liveRun" class="go">查看</span>
@@ -24,6 +24,7 @@ import { useChatStore } from '../stores/chat';
 import { agentActivityText } from '../lib/agentActivity';
 import { formatDuration } from '../lib/chatTime';
 import { isReasoningMessage, reasoningDurationMs } from '../lib/chatTimeline';
+import { useRuntimeCapabilities } from '../lib/capabilities';
 
 /**
  * 内置 Agent 最小化后的常驻状态胶囊（正文区右下角）。
@@ -41,6 +42,8 @@ const HINT_MS = 4000;
 
 const app = useAppStore();
 const chat = useChatStore();
+const { capabilities } = useRuntimeCapabilities();
+const agentName = computed(() => capabilities.value.agentMode === 'hub' ? '服务器 Agent' : capabilities.value.agentMode === 'unavailable' ? 'Agent' : '内置 Agent');
 
 /** 每秒跳一次的钟：秒表与提示到期都靠它（只在胶囊可见时走） */
 const clock = ref(Date.now());

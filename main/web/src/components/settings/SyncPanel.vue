@@ -313,6 +313,9 @@ async function postConfig(body: Record<string, unknown>, okMsg: string): Promise
     if (res.data?.ok) {
       notify.success(okMsg);
       await loadStatus();
+      // Android 是否可用服务器 Agent 取决于成员绑定；保存后立即刷新能力，
+      // 不要求用户杀进程或重新打开 WebView。
+      await loadCapabilities(true);
       return true;
     }
     return false;

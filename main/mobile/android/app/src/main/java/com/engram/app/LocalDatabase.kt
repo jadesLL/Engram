@@ -24,7 +24,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     context,
     databasePath(context),
     null,
-    2,
+    3,
     DefaultDatabaseErrorHandler(),
 ) {
     val root = File(context.filesDir, "engram")
@@ -85,6 +85,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) db.execSQL("CREATE TABLE IF NOT EXISTS file_extractions(path TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL)")
+        // v3 只新增文件库标准目录，不改表；目录由每次启动的 seedDirectories() 幂等补齐。
     }
 
     fun setting(key: String): String? = synchronized(lock) {
@@ -521,6 +522,39 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         JSONObject().put("ok", true).put("path", rel).put("pageId", if (result.has("title")) result.getString("id") else JSONObject.NULL)
     }
 
+    /** Android 分享面板收到的文字先落本地事实源，再进入普通同步 outbox。 */
+    fun importSharedText(requestedTitle: String?, text: String): String = synchronized(lock) {
+        require(text.isNotBlank()) { "分享内容为空" }
+        val fallback = "手机分享-${Instant.now().toString().replace(Regex("[:.]"), "-")}"
+        // 80 个 UTF-16 字符即使全是中文也能留在常见 255-byte 文件名限制内。
+        val title = sanitizeName(requestedTitle.orEmpty()).take(80).ifBlank { fallback }
+        val rel = uniquePath("原始资料/收集箱", "$title.md")
+        atomicWrite(safe(rel), "# $title\n\n${text.trim()}\n".toByteArray(StandardCharsets.UTF_8))
+        indexPage(rel)
+        enqueue("page", rel)
+        rel
+    }
+
+    /** 分享来的图片/文档通过临时文件原子安装，保留原文件名并自动避让重名。 */
+    fun installSharedFile(requestedName: String, staged: File): String = synchronized(lock) {
+        require(staged.isFile) { "分享文件不存在" }
+        val name = sanitizeName(File(requestedName).name).ifBlank { "手机分享文件" }
+        val rel = uniquePath("原始资料/收集箱", name)
+        installImportedFile(rel, staged)
+        rel
+    }
+
+    private fun uniquePath(dir: String, requestedName: String): String {
+        val clean = sanitizeName(File(requestedName).name).ifBlank { "file" }
+        val dot = clean.lastIndexOf('.')
+        val stem = if (dot > 0) clean.substring(0, dot) else clean
+        val suffix = if (dot > 0) clean.substring(dot) else ""
+        var candidate = "$dir/$clean"
+        var index = 2
+        while (safe(candidate).exists()) candidate = "$dir/$stem-$index${suffix}".also { index++ }
+        return candidate
+    }
+
     fun writeSyncedFile(rel: String, bytes: ByteArray) = synchronized(lock) {
         atomicWrite(safe(rel), bytes)
         indexFile(rel)
@@ -736,7 +770,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
 
     companion object {
         private val STANDARD_DIRECTORIES = listOf(
-            "原始资料", "原始资料/对话", "Wiki", "Wiki/概念", "Wiki/实体", "Wiki/查询", "Wiki/归档", "Wiki/关系",
+            "原始资料", "原始资料/对话", "原始资料/收集箱", "Wiki", "Wiki/概念", "Wiki/实体", "Wiki/查询", "Wiki/归档", "Wiki/关系",
             "AIWorks/index", "AIWorks/log", "AIWorks/scheme", "assets",
         )
         private val PAGE_DIRECTORIES = setOf("Wiki", "Wiki/概念", "Wiki/实体", "Wiki/查询", "Wiki/归档", "Wiki/关系")

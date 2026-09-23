@@ -7,8 +7,10 @@ Engram Android 端不是远程网页壳。APK 打包与桌面/服务器相同的
 - Android 只能作为同步成员，不能签发成员令牌或充当中枢。
 - 同步仅由冷启动/回到前台、本机写入和用户手动全量对账触发；没有同步 SSE、WorkManager、常驻前台服务或通知。应用进入后台时会断开当前请求，SQLite 待推队列保留到下次前台继续。
 - 页面、附件、删除、移动和证据快照沿用 Node 中枢的 `/api/sync/*` 协议；首次绑定同路径以中枢内容为准，本机独有内容上传。页面并发由中枢按现有三方合并与冲突副本规则裁决。
-- 不提供 Agent/MCP/CLI、同步中枢管理、DDNS/TLS、Docker/桌面更新、ONLYOFFICE 在线编辑或 OCR。同步来的 AI 工作区与证据可只读查看。
+- 不在手机上运行 dsh/MCP/CLI，也不下发模型 Key；完成成员绑定后，聊天抽屉通过本机 loopback 服务把 Agent 交互窄代理到 Docker 中枢。会话与长任务留在 24 小时在线的服务器上，手机退后台只断开 SSE，不会取消已经提交的任务，回到前台后按 active run 与快照接续。
+- 不提供同步中枢管理、Agent 模型配置、DDNS/TLS、Docker/桌面更新、ONLYOFFICE 在线编辑或 OCR。同步来的 AI 工作区与证据仍可只读查看。
 - PDF.js 提取 PDF 自带文字层，浏览器兼容组件解析 DOCX/PPTX/XLSX 并把确定性文本写入本地搜索索引；图片和扫描 PDF 不做 OCR。
+- Android 系统分享面板可把文字、单个或多个文件直接收进本地 `原始资料/收集箱`；文件按 64 KiB 分块复制、遵守 200 MB 单文件上限，写入后进入正常同步待推队列。
 
 ## 数据与安全
 
@@ -35,8 +37,9 @@ main/mobile/
 ├── scripts/build-apk-ci.sh     # Web build → 复制资产 → cap sync → Gradle test/assemble
 ├── Dockerfile.ci
 └── android/app/src/main/java/com/engram/app/
-    ├── MainActivity.java       # 生命周期、WebView 与系统下载
+    ├── MainActivity.java       # 生命周期、WebView、系统分享与下载
     ├── EngramLocalServer.kt    # loopback Ktor REST/静态服务
+    ├── AgentBridge.kt          # Docker Agent 交互面窄代理
     ├── LocalDatabase.kt        # Markdown/SQLite/备份/回收站
     ├── SyncEngine.kt           # 前台一次性成员同步
     └── SecretStore.kt          # Android Keystore
