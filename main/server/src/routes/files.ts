@@ -25,6 +25,7 @@ import {
   supportsFileExtraction,
 } from '../pipeline/fileExtraction.js';
 import { assetCountsByParent, isAssetFile, parseAssetRefs, assetRelPath, safeAssetJoin, MEDIA_PREFIX } from '../lib/pageAssets.js';
+import { isInboxPath } from '../lib/brainPaths.js';
 
 /** 可提取文本入索引的 Office 格式 */
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
@@ -103,6 +104,26 @@ async function sendZip(reply: FastifyReply, zip: JSZip, label: string): Promise<
 
 export async function fileRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
+
+  /*
+   * 收集箱内容不支持内置浏览：这些路径只走 /api/inbox/* 专用接口（元数据 + 下载/系统打开），
+   * 不走预览/取内容/导出/删除这一套。在这里统一拦一道，避免以后新增端点时漏掉。
+   * 上传侧不需要额外处理：UPLOAD_DIRS 本来就只有 原始资料 / assets。
+   */
+  app.addHook('preHandler', async (req, reply) => {
+    const candidates: unknown[] = [];
+    const query = (req.query || {}) as Record<string, unknown>;
+    const body = (req.body || {}) as Record<string, unknown>;
+    for (const source of [query, body]) {
+      candidates.push(source.path, source.dir);
+      if (Array.isArray(source.paths)) candidates.push(...(source.paths as unknown[]));
+    }
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && isInboxPath(candidate)) {
+        return reply.code(403).send({ error: '收集箱内容不支持内置浏览，请使用收集箱接口' });
+      }
+    }
+  });
 
   /** 原始资料文件列表（供侧栏展示）；md 文件附带 page id（可直接进编辑器）。
    *  默认只列 原始资料 顶层；?dir=原始资料/对话 时递归该子树（对话分区用，与原始资料同构）。

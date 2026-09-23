@@ -456,6 +456,7 @@ import Icon from './Icon.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 import { useAppStore } from '../stores/app';
+import { useInboxStore } from '../stores/inbox';
 import {
   useChatStore,
   type ChatContext,
@@ -504,6 +505,7 @@ const props = defineProps<{ overlay?: boolean }>();
 
 const app = useAppStore();
 const chat = useChatStore();
+const inbox = useInboxStore();
 const draft = ref('');
 const scrollEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
@@ -669,11 +671,16 @@ function onDrawerViewportResize() {
   viewportWidth.value = window.innerWidth;
 }
 
-const suggestions = [
-  '列出还没有提炼的原始资料',
-  '这个知识库现在有哪些实体页？',
-  '搜索「同步」相关的页面并总结要点',
-];
+const suggestions = computed(() => {
+  const base = [
+    '列出还没有提炼的原始资料',
+    '这个知识库现在有哪些实体页？',
+    '搜索「同步」相关的页面并总结要点',
+  ];
+  // 收集箱里压着待整理的文件时，把「去转换」提到第一项：这是眼下最该做的一步
+  if (inbox.counts.pending > 0) base.unshift('转换收集箱里的内容');
+  return base;
+});
 
 const contextChips = computed(() => {
   const ctx = chat.currentContext as ChatContext;

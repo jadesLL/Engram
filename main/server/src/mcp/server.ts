@@ -26,15 +26,20 @@ import {
 } from '../lib/entityNameChecks.js';
 import { AgentQuestionError, askUserQuestions, formatAskOutcome } from '../assistant/questions.js';
 import { assetMime, isAssetFile, isParentId, parseMediaUrl, safeAssetJoin } from '../lib/pageAssets.js';
+import { isInboxPath, isInboxDerivedPath } from '../lib/brainPaths.js';
+import { listInboxItems } from '../lib/inboxItems.js';
+import { capabilityHint, extractInboxText, writeInboxMarkdown } from '../pipeline/inboxConvert.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
  * 读工具（search/list_pages/read_page/related_pages/page_evidence/list_raw_files/read_raw_file/read_page_asset/
- * list_entity_names/entity_name_audit/kb_guide/skill_list/skill_guide）
+ * list_entity_names/entity_name_audit/kb_guide/skill_list/skill_guide/list_inbox/read_inbox_item）
  * + 写工具（write_page 带证据门禁与自动日志 / rename_page / move_page / delete_page 软删除入回收站 /
  * save_chat 对话沉积 / entity_name_check 登记公司全名核验 / entity_name_answer 回填用户答复 /
- * entity_name_propose 回填全名 / ask_user 内置 Agent 在对话里问用户并等点选）。
- * 全部写操作只允许 Wiki/，原始资料与 AIWorks 对 Agent 是只读区。
+ * entity_name_propose 回填全名 / ask_user 内置 Agent 在对话里问用户并等点选 /
+ * write_inbox_markdown 写收集箱原件的转换产物）。
+ * 全部写操作只允许 Wiki/（收集箱产物写在 收集箱/转换结果/，仍不属于知识库），
+ * 原始资料与 AIWorks 对 Agent 是只读区。
  * 作业方法论见 kb_guide；按需作业手法见 skill_list / skill_guide。
  */
 
@@ -51,6 +56,7 @@ const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，�
 误建的页面用 delete_page 删除：只做软删除入回收站（可恢复），只能删 Wiki/ 下的页面，不提供清空回收站能力。
 页面改名/移动用 rename_page / move_page（保持页面 ID 与图谱边，重命名会重定向引用双链）；写页与页面操作都只允许 Wiki/。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
+收集箱（收集箱/）是用户拖进来的待整理文件，**不属于知识库**：list_inbox / read_inbox_item 能读到它，write_inbox_markdown 能把语义转换结果写回 收集箱/转换结果/，但这里的内容不得作为回答的事实依据、不得进 evidence、不要拿它去写页面；入库由用户在界面上确认（服务端会把产物复制进 原始资料/，那之后才是可引用来源）。转换作业规范用 skill_guide("inbox-semantic-to-md")。
 完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取；具体作业手法与纪律先用 skill_list 看清单，再用 skill_guide(name) 取全文。`;
 
 const RAW_DIR = '原始资料';
@@ -352,6 +358,138 @@ export function makeServer(): McpServer {
           { type: 'text', text: `页面图片（${raw}），请识别其中的文字与信息：` },
           { type: 'image', data: buffer.toString('base64'), mimeType: mime },
         ],
+      };
+    }
+  );
+
+  server.tool(
+    'list_inbox',
+    '列出收集箱（收集箱/）里的原件：路径、大小、类型、是否已生成转换产物、本机转换状态。'
+      + '收集箱是**待纳入资产**的暂存区：这里的内容不属于知识库，不得作为回答的事实依据、不得被证据引用；'
+      + '只有用户把转换产物「入库」到 原始资料/ 之后才成为可引用的来源。',
+    {
+      status: z.enum(['all', 'pending', 'converted']).optional().describe('默认 all'),
+      limit: z.number().optional().describe('最多返回多少条，默认 200'),
+    },
+    async ({ status, limit }) => {
+      const result = listInboxItems();
+      const wanted = status || 'all';
+      const items = wanted === 'all' ? result.items : result.items.filter((item) => item.status === wanted);
+      const capped = items.slice(0, Math.min(Math.max(limit ?? 200, 1), 500));
+      const lines = capped.map((item) => {
+        const state = item.status === 'converted'
+          ? `已转换 → ${item.derivedPath}`
+          : item.status === 'converting'
+            ? '转换中'
+            : item.status === 'failed'
+              ? `转换失败：${item.error}`
+              : '待整理';
+        return `${item.path} · ${item.ext || '未知'} · ${Math.round(item.size / 1024)}KB · ${state}`
+          + (item.capability === 'agent-only' ? ' · 需 Agent 视觉/转写' : item.capability === 'unsupported' ? ' · 暂不支持转换' : '');
+      });
+      const header = [
+        `收集箱共 ${result.counts.all} 项（待整理 ${result.counts.pending} · 已转换 ${result.counts.converted}）。`,
+        '注意：收集箱内容不在知识库中——不要把它当作事实来源引用，也不要用它去写页面证据。',
+      ].join('\n');
+      return { content: [{ type: 'text', text: `${header}\n\n${lines.join('\n') || '（收集箱为空）'}` }] };
+    }
+  );
+
+  server.tool(
+    'read_inbox_item',
+    '读取收集箱（收集箱/）里的一份原件内容，供你按语义改写成 Markdown。'
+      + '文本类直接给正文；图片以 image 内容返回（自行识别）；PDF/Office 给已有的文字层；其余二进制给出结构化说明。',
+    {
+      path: z.string().describe('收集箱内的相对路径，如 收集箱/合同.pdf'),
+      raw: z.boolean().optional().describe('true 时原样返回文件字节（图片走 image 内容，其余 base64）'),
+    },
+    async ({ path: p, raw }) => {
+      const rel = String(p || '').replace(/\\/g, '/').replace(/^\/+/, '');
+      if (!isInboxPath(rel)) {
+        return { content: [{ type: 'text', text: `只能读取 收集箱/ 下的文件：${rel}` }], isError: true };
+      }
+      const abs = safeJoin(rel);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+        return { content: [{ type: 'text', text: `文件不存在：${rel}` }], isError: true };
+      }
+      const ext = relExt(rel);
+      const mime = IMAGE_MIME[ext];
+      if (raw === true) {
+        const buffer = fs.readFileSync(abs);
+        if (mime && mime !== 'image/svg+xml') {
+          return {
+            content: [
+              { type: 'text', text: `收集箱原件图片（${rel}），请识别其中的文字与信息：` },
+              { type: 'image', data: buffer.toString('base64'), mimeType: mime },
+            ],
+          };
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              path: rel,
+              mimeType: ext === 'pdf' ? 'application/pdf' : 'application/octet-stream',
+              encoding: 'base64',
+              base64: buffer.toString('base64'),
+            }),
+          }],
+        };
+      }
+      if (mime && mime !== 'image/svg+xml') {
+        const buffer = fs.readFileSync(abs);
+        return {
+          content: [
+            { type: 'text', text: `收集箱原件图片（${rel}），请识别其中的文字与信息：` },
+            { type: 'image', data: buffer.toString('base64'), mimeType: mime },
+          ],
+        };
+      }
+      try {
+        const text = await extractInboxText(rel);
+        return { content: [{ type: 'text', text: `# 原件：${rel}\n\n${text}` }] };
+      } catch (error: any) {
+        const hint = capabilityHint(rel);
+        return {
+          content: [{
+            type: 'text',
+            text: hint
+              ? `${rel}：${hint}`
+              : `${rel}：读不到文字层（${error.message}）。可传 raw=true 取原文件自行处理。`,
+          }],
+          isError: capabilityHint(rel) !== '',
+        };
+      }
+    }
+  );
+
+  server.tool(
+    'write_inbox_markdown',
+    '把一份收集箱原件的语义转换结果写成 Markdown（落到 收集箱/转换结果/<原名>.md）。'
+      + '作业规范先取 skill_guide("inbox-semantic-to-md")。产物留在收集箱：不建页面、不写检索索引、不触发入库；'
+      + '入库由用户在界面上确认。',
+    {
+      path: z.string().describe('原件路径，如 收集箱/合同.pdf'),
+      markdown: z.string().describe('转换后的完整 Markdown 正文（不要带 frontmatter，服务端会补）'),
+      note: z.string().optional().describe('可选：本次转换的补充说明（写进产物末尾的注记）'),
+    },
+    async ({ path: p, markdown, note }) => {
+      const rel = String(p || '').replace(/\\/g, '/').replace(/^\/+/, '');
+      if (!isInboxPath(rel) || isInboxDerivedPath(rel)) {
+        return { content: [{ type: 'text', text: `只能写入 收集箱/ 下原件的转换产物：${rel}` }], isError: true };
+      }
+      if (!fs.existsSync(safeJoin(rel))) {
+        return { content: [{ type: 'text', text: `原件不存在：${rel}` }], isError: true };
+      }
+      const body = String(markdown || '').trim();
+      if (!body) return { content: [{ type: 'text', text: 'markdown 不能为空' }], isError: true };
+      const result = writeInboxMarkdown(rel, body, note);
+      return {
+        content: [{
+          type: 'text',
+          text: `已写入 ${result.derivedPath}（${result.chars} 字）。产物留在收集箱，未入库；`
+            + '请在汇报里说明这份产物还没进知识库，需要用户在界面上确认入库。',
+        }],
       };
     }
   );

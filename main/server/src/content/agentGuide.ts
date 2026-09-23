@@ -38,6 +38,7 @@ Engram 不内置任何 AI——读、写、提炼、综合全部由你（外部 
 - Wiki/实体/ —— 实体页（人物 person、客户 customer、组织 org、项目 project、其他 other 五类，目录不分家，类型写在 frontmatter type）。
 - Wiki/归档/ —— 归档区。
 - AIWorks/ —— 系统区（服务端自动生成，Agent 只读）：log/log.md 操作日志（时间倒序，新的在上，是知识库状态的唯一索引）、index/index.md 全库索引（概念 / 实体按类型分组）、scheme/relationships.md 关系结构（词表关系 + 双链关联 + 待建页面）。不参与检索。
+- 收集箱/ —— 用户拖进来的**待整理/待转换**文件暂存区（任意格式）。**不属于知识库**：不参与检索、不出现在目录树与原始资料清单里，也不得作为回答的事实依据或页面证据。转换产物写在 收集箱/转换结果/；用户在界面上确认「入库」后，服务端把产物复制进 原始资料/，那之后才是可引用的来源。
 
 ## 二、接入工具
 
@@ -52,6 +53,9 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 - list_raw_files —— 原始资料清单（含提取状态与已提炼标记；pending=true 只返回未提炼文件）
 - read_raw_file —— 读原始资料：有文本层返回提取文本；图片/PDF 返回 base64（供视觉模型自行阅读）
 - read_page_asset —— 读页面/资料正文里引用的图片原图（传正文里的 \`/media/<父项id>/<文件名>\` 引用，图片以 image 内容返回）
+- list_inbox —— 收集箱（收集箱/）清单：用户拖进来的待整理原件与各自的转换状态
+- read_inbox_item —— 读收集箱里的一份原件（图片以 image 内容返回；PDF/Office 给文字层）
+- write_inbox_markdown —— 把原件的语义转换结果写成 Markdown，落到 收集箱/转换结果/（**仍不属于知识库**，入库由用户在界面上确认）
 - entity_name_check —— 公司全名核验：登记待核名称（服务端先自查资料库，有候选全名直接返回；没有就让你在对话里问用户是否允许联网查企查查/天眼查）
 - entity_name_answer —— 回填用户在对话里给出的答复（allow/deny）：允许联网查询 / 同意改用全名（同意即由服务端执行改名）
 - entity_name_propose —— 回填联网查到的工商全名，再问用户是否改用全名；查不到就不传 fullName
@@ -85,6 +89,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
    - **查不到就不要猜**：不传 fullName 即按「未找到全名」办结。多个同名主体、或查到的是简称：把候选写进 note 让用户判断，不要自行选一个当全名。
    - **用户不在 / 不允许 / 查不到 / 不同意改名**：标题保持材料写法，名称口径标注「全称待确认」与候选依据，继续作业——**不追问、不反复请示**（服务端也不会重复登记同一名称；ask_user 超时会明确告诉你用户没答）。
    - **收尾必须列清单**：作业结束前用 list_entity_names 传 status=unresolved（CLI：names list --status unresolved）取出**仍未定全名的条目**，在给你的汇报里逐条列出：名称、页面、卡在哪（用户不同意联网 / 查不到 / 不同意改名）、为什么。需要知道还有哪些公司页没核验过，用 entity_name_audit（CLI：names audit）。
+10. **收集箱不是知识库**：list_inbox / read_inbox_item 读到的是用户还没整理的暂存文件，只能用于「读懂它并按语义转成 Markdown」（write_inbox_markdown，规范见 skill_guide("inbox-semantic-to-md")）。不要把它写进页面、不要拿它当 evidence、不要在回答里当作事实依据——入库是用户在界面上的动作，服务端会把产物复制进 原始资料/，那时它才成为来源。
 
 ## 四、提炼作业流程（自动索引，逐份提炼）
 

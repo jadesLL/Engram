@@ -3,6 +3,7 @@ import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { appendWikiLog } from './pipeline/indexFile.js';
 import { enqueuePagePipeline } from './jobQueue.js';
 import { extractFile } from './pipeline/fileExtraction.js';
+import { convertInboxItem } from './pipeline/inboxConvert.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
@@ -41,6 +42,16 @@ const handlers: Record<string, JobHandler> = {
       update({ stage: '重建索引', progress, detail: message });
     }, context.signal);
     try { appendWikiLog('重建索引', '全量重建完成'); } catch { /* 日志失败不阻塞 */ }
+  },
+  /**
+   * 收集箱语义转换：把一份原件按内容重写成 Markdown，产物写进 收集箱/转换结果/。
+   * payload 用 `path`（vault 相对路径），这样同一份文件天然串行、不同文件可并行。
+   */
+  inbox_convert: async ({ path: relPath }, update, context) => {
+    await convertInboxItem(relPath, {
+      signal: context.signal,
+      onProgress: (stage, detail) => update({ stage, progress: stage === '读取原件' ? 15 : 60, detail }),
+    });
   },
 };
 

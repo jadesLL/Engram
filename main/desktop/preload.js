@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   setLocalPort: (port) => ipcRenderer.invoke('set-local-port', port),
   // 远程文件「用系统程序打开」
   openFileBytes: (name, bytes) => ipcRenderer.invoke('open-file-bytes', name, bytes),
+  // 收集箱原文件：按 vault 相对路径用系统默认应用打开 / 在资源管理器中定位
+  // （只传路径不传字节，GB 级录屏也能秒开；主进程限制在数据目录的 收集箱/ 内）
+  openInboxFile: (relPath) => ipcRenderer.invoke('inbox-open-path', relPath),
+  revealInboxFile: (relPath) => ipcRenderer.invoke('inbox-reveal-path', relPath),
   // 同步窗口控制按钮（标题栏融合条 WCO）配色，主题切换时调用；不支持的平台主进程忽略
   setTitleBarOverlay: (opts) => ipcRenderer.invoke('set-title-bar-overlay', opts),
   // ---------- 桌面端自更新 ----------

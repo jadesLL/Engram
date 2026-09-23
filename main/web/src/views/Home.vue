@@ -56,6 +56,7 @@
         @click="item.action"
       >
         <Icon :name="item.icon" :size="19" />
+        <span v-if="item.dot" class="dot" />
       </button>
 
       <div class="rail-spacer" />
@@ -187,6 +188,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
+import { useInboxStore } from '../stores/inbox';
 import { useUpdateStore } from '../stores/update';
 import { api } from '../api';
 import { openPageStream } from '../lib/events';
@@ -204,6 +206,7 @@ const router = useRouter();
 const app = useAppStore();
 const updateStore = useUpdateStore();
 const chat = useChatStore();
+const inbox = useInboxStore();
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
 
 /* ===== 文件提取进度：只在对应文件旁显示，系统后台处理不提供通用队列界面 ===== */
@@ -301,8 +304,18 @@ function go(path: string) {
 }
 
 const navItems = computed(() => [
-  { key: 'search', icon: 'search', title: '搜索 (Ctrl+K)', active: isActive('/search'), action: () => go('/search') },
-  { key: 'graph', icon: 'graph', title: '知识图谱', active: isActive('/graph'), action: () => go('/graph') },
+  { key: 'search', icon: 'search', title: '搜索 (Ctrl+K)', active: isActive('/search'), dot: false, action: () => go('/search') },
+  { key: 'graph', icon: 'graph', title: '知识图谱', active: isActive('/graph'), dot: false, action: () => go('/graph') },
+  {
+    key: 'inbox',
+    icon: 'inbox',
+    title: inbox.counts.pending
+      ? `收集箱（${inbox.counts.pending} 个待整理）`
+      : '收集箱',
+    active: isActive('/inbox'),
+    dot: inbox.counts.pending > 0,
+    action: () => go('/inbox'),
+  },
 ]);
 
 const bottomItems = computed(() => [
@@ -334,6 +347,13 @@ const moreItems = computed(() => [
     dot: false,
     running: false,
     action: () => runMore(() => go('/graph')),
+  },
+  {
+    label: '收集箱',
+    icon: 'inbox',
+    dot: inbox.counts.pending > 0,
+    running: false,
+    action: () => runMore(() => go('/inbox')),
   },
   {
     label: '设置',
@@ -399,6 +419,10 @@ onMounted(() => {
           notify.info('Agent 在对话里问了一个问题，点选后它接着往下做');
           return;
         }
+        // 收集箱变更（本端拖入、外部拷入或对端同步落地）：刷新图标栏角标与列表
+        if (ev.type === 'file-changed' && String(ev.path || '').startsWith('收集箱/')) {
+          inbox.load();
+        }
         app.applyPageEvent(ev);
       });
     }
@@ -407,6 +431,8 @@ onMounted(() => {
   // 内置 Agent 正在跑的轮次要接上事件流：页面刷新后、或抽屉从没打开过，
   // 图标栏那颗「运行中」指示也得亮着（跑完还会亮小红点）。
   chat.syncRunningRuns().catch(() => {});
+  // 图标栏「收集箱」角标：启动时取一次待整理数量
+  inbox.load();
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);

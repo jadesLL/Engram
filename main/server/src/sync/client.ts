@@ -7,6 +7,7 @@ import { noteAppWrite } from '../lib/appWrites.js';
 import { getSetting } from '../lib/db.js';
 import { consumeSseStream } from '../lib/sseStream.js';
 import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted, PagePathTakenError } from '../lib/vault.js';
+import { classifyBrainEntry } from '../lib/brainPaths.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
@@ -605,7 +606,7 @@ function localSnapshot(): { kind: 'page' | 'file'; path: string; hash: string }[
       const childRel = rel ? toRel(safeJoin(`${rel}/${e.name}`)) : e.name;
       if (e.isDirectory()) {
         walk(childRel);
-      } else if (e.name.toLowerCase().endsWith('.md')) {
+      } else if (classifyBrainEntry(childRel) === 'page') {
         out.push({ kind: 'page', path: childRel, hash: sha256Text(fs.readFileSync(safeJoin(childRel), 'utf8')) });
       } else {
         out.push({ kind: 'file', path: childRel, hash: sha256Buf(fs.readFileSync(safeJoin(childRel))) });

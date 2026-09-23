@@ -6,6 +6,7 @@ import { db, now } from '../lib/db.js';
 import { safeJoin } from '../lib/vault.js';
 import { enqueue } from '../jobQueue.js';
 import { ensureFileRecord, upsertFileRecord } from './indexer.js';
+import { isInboxPath } from '../lib/brainPaths.js';
 
 /**
  * 文件文本层提取（纯确定性，无模型）：
@@ -400,6 +401,7 @@ export async function extractFile(
 ): Promise<FileExtractionDetails> {
   options.signal?.throwIfAborted();
   if (!supportsFileExtraction(relPath)) throw new Error('该格式不支持文字提取');
+  if (isInboxPath(relPath)) throw new Error('收集箱内容不参与知识库文字提取');
   const abs = safeJoin(relPath);
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error('文件不存在');
   const stat = fs.statSync(abs);
@@ -431,6 +433,8 @@ export function scheduleFileExtraction(
   options: ExtractionOptions = {},
 ): { fileId: string; jobId?: number } {
   if (!supportsFileExtraction(relPath)) throw new Error('该格式不支持文字提取');
+  // 收集箱条目不入提取/索引流程：同步拉取与启动扫描都会走到这里，必须在此收敛
+  if (isInboxPath(relPath)) return { fileId: '', jobId: undefined };
   const abs = safeJoin(relPath);
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error('文件不存在');
   const fileId = ensureFileRecord(relPath, fs.statSync(abs).size);

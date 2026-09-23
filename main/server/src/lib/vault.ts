@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
 import { BRAIN_DIR, normalizeDir, isPageDir } from '../config.js';
+import { isInboxPath } from './brainPaths.js';
 import { db, newId, now } from './db.js';
 import { ftsSegment } from './fts.js';
 import { emit } from './events.js';
@@ -61,6 +62,8 @@ export function listTree() {
       if (HIDDEN.has(e.name)) continue;
       const abs = path.join(dir, e.name);
       const rel = toRel(abs);
+      // 收集箱是待纳入资产的暂存区，不是知识库目录树的一部分（入口在图标栏）
+      if (isInboxPath(rel)) continue;
       if (e.isDirectory()) {
         out.push({ kind: 'dir', name: e.name, path: rel, children: walk(abs, SUB_ORDER[e.name]) });
       } else if (e.name.toLowerCase().endsWith('.md')) {
@@ -486,6 +489,8 @@ export async function scanVault() {
       if (e.name.startsWith('.')) continue;
       const abs = path.join(dir, e.name);
       const rel = toRel(abs);
+      // 收集箱里的 .md（原件或转换产物）不是页面：不建 pages 行、不写 FTS
+      if (isInboxPath(rel)) continue;
       if (e.isDirectory()) {
         walk(abs);
       } else if (e.name.toLowerCase().endsWith('.md')) {

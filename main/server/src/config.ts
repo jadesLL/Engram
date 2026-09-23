@@ -73,7 +73,7 @@ function normalizePublicPath(value: string): string {
   return withLeading.endsWith('/') ? withLeading : `${withLeading}/`;
 }
 
-function positiveInt(value: string | undefined, fallback: number): number {
+export function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
 }
@@ -82,6 +82,9 @@ function positiveInt(value: string | undefined, fallback: number): number {
 export const FIXED_DIRS = [
   '原始资料',
   '原始资料/对话',
+  // 收集箱：拖入文件的暂存区，入库前不属于知识库（见 lib/brainPaths.ts）
+  '收集箱',
+  '收集箱/转换结果',
   'Wiki',
   'Wiki/概念',
   'Wiki/实体',

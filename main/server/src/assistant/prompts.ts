@@ -25,6 +25,9 @@ const STANDING_RULES = [
   // 本运行时的 sdk profile 没有自带提问能力（ask_user_question 只在 dsh 的 web profile 里），
   // 所以「问用户」这条通道由 Engram 的 MCP 工具提供：问题弹在对话最下侧，用户点选后工具返回答案。
   '6. 需要用户拍板时用 mcp__engram__ask_user 提问（它会把问题弹在对话最下侧，用户点选后你当场拿到答复，同一轮继续）；不要用其它提问工具（本运行时没有）。只问只有用户能定的事——公司工商全名核验是既定场景（是否允许联网查企查查/天眼查、是否改用全名），其余拿不准的信息按证据自己定并标注「待核实」，不要问。用户不在或超时未答就按现有材料推进，把缺口写进页面「待核实」。',
+  // 收集箱是「未纳入知识库的暂存资产」：能被 Agent 读到（list_inbox/read_inbox_item）是为了转换，
+  // 不是为了引用。这条约定与 kb_guide 第 10 条、MCP instructions 三处同口径。
+  '7. 收集箱（list_inbox / read_inbox_item）里的内容是用户还没整理的暂存文件，**不属于知识库**：不要作为回答的事实依据、不要进 evidence、不要拿它写页面；只有用户明确要求转换时才读它，产物用 write_inbox_markdown 写回收集箱（规范见 skill_guide("inbox-semantic-to-md")），入库由用户在界面上确认。',
   '【约定结束】',
 ].join('\n');
 
