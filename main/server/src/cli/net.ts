@@ -14,18 +14,24 @@ import net from 'node:net';
 /** IP 是否属于 私网/环回/链路本地/保留 段 */
 export function isPrivateAddress(ip: string): boolean {
   if (net.isIPv4(ip)) {
-    const [a, b] = ip.split('.').map(Number);
+    const [a, b, c] = ip.split('.').map(Number);
     if (a === 127 || a === 10 || a === 0) return true;               // 环回 / 私网A / 保留
     if (a === 172 && b >= 16 && b <= 31) return true;                // 私网B
     if (a === 192 && b === 168) return true;                         // 私网C
     if (a === 169 && b === 254) return true;                         // 链路本地（含云元数据）
     if (a === 100 && b >= 64 && b <= 127) return true;               // CGNAT
+    if (a === 192 && ((b === 0 && c === 0) || (b === 0 && c === 2) || (b === 88 && c === 99))) return true;
+    if (a === 198 && ((b === 18 || b === 19) || (b === 51 && c === 100))) return true;
+    if (a === 203 && b === 0 && c === 113) return true;
     if (a >= 224) return true;                                       // 组播/保留
     return false;
   }
+  if (!net.isIPv6(ip)) return true;
   const lower = ip.toLowerCase();
-  if (lower === '::1' || lower === '::') return true;                // 环回 / 未指定
-  if (lower.startsWith('fe') || lower.startsWith('fc') || lower.startsWith('fd')) return true; // 链路本地 / ULA
+  // 仅允许全球单播 2000::/3，也挡住 IPv4 映射、环回、ULA、链路本地、组播与 NAT64。
+  if (!/^[23][0-9a-f]{3}:/.test(lower)) return true;
+  if (lower.startsWith('2001:db8:') || lower === '2001:db8::') return true; // 文档地址
+  if (lower.startsWith('2001:0:') || lower.startsWith('2002:')) return true; // Teredo / 6to4
   return false;
 }
 

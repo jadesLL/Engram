@@ -133,6 +133,13 @@ export const useInboxStore = defineStore('inbox', () => {
     return { saved, skipped };
   }
 
+  /** 直接按网址抓取网页 HTML，保存成收集箱原件。 */
+  async function fetchUrl(url: string): Promise<InboxItem> {
+    const { data } = await api.post('/api/inbox/fetch-url', { url });
+    await load();
+    return data.saved as InboxItem;
+  }
+
   /**
    * 排队转换：paths 指定文件，'all' 交给服务端自己挑可转项。
    * 转换是服务端队列在跑，这里拿到的只是「已受理」的回执，所以立刻刷新一次列表，
@@ -182,6 +189,7 @@ export const useInboxStore = defineStore('inbox', () => {
     pendingItems,
     load,
     upload,
+    fetchUrl,
     remove,
     convert,
     loadDerived,

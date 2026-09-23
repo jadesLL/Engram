@@ -22,6 +22,7 @@ const CATEGORY_BY_EXT: Record<string, string> = {
   png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image',
   bmp: 'image', tif: 'image', tiff: 'image', heic: 'image', avif: 'image',
   txt: 'text', md: 'text', markdown: 'text', json: 'text', log: 'text', yaml: 'text', yml: 'text', xml: 'text',
+  html: 'web', htm: 'web',
   mp3: 'audio', wav: 'audio', m4a: 'audio', aac: 'audio', flac: 'audio', ogg: 'audio', amr: 'audio',
   mp4: 'video', mov: 'video', mkv: 'video', avi: 'video', webm: 'video', flv: 'video', wmv: 'video',
   zip: 'archive', rar: 'archive', '7z': 'archive', tar: 'archive', gz: 'archive', bz2: 'archive', xz: 'archive',

@@ -17,6 +17,7 @@ let db: any;
 let convertInboxItem: typeof import('./inboxConvert.js').convertInboxItem;
 let writeInboxMarkdown: typeof import('./inboxConvert.js').writeInboxMarkdown;
 let adoptInboxItem: typeof import('./inboxConvert.js').adoptInboxItem;
+let migrateLegacyInboxAdoptions: typeof import('./inboxConvert.js').migrateLegacyInboxAdoptions;
 let convertCapability: typeof import('./inboxConvert.js').convertCapability;
 let chunkText: typeof import('./inboxConvert.js').chunkText;
 let extractInboxText: typeof import('./inboxConvert.js').extractInboxText;
@@ -44,7 +45,8 @@ before(async () => {
   db = (await import('../lib/db.js')).db;
   (await import('../lib/db.js')).migrate();
   ({
-    convertInboxItem, writeInboxMarkdown, adoptInboxItem, convertCapability, chunkText, extractInboxText,
+    convertInboxItem, writeInboxMarkdown, adoptInboxItem, migrateLegacyInboxAdoptions,
+    convertCapability, chunkText, extractInboxText,
   } = await import('./inboxConvert.js'));
 });
 
@@ -150,15 +152,15 @@ test('长文本分多块：每块各自的产物在文末合并（不覆盖）',
   assert.equal(written.match(/## 分块正文/g)?.length, calls.length);
 });
 
-test('入库：产物复制进 原始资料/收集箱/ 并登记为页面，原件与产物都留在收集箱', async () => {
+test('入库：产物直接复制进 原始资料/ 并登记为页面，原件与产物都留在收集箱', async () => {
   const rel = plant('合同.txt', '合同金额 12 万，付款周期 30 天。');
   const { fetchImpl } = fakeModel('# 合同要点\n\n- 金额 12 万\n- 付款周期 30 天');
   const converted = await convertInboxItem(rel, { fetchImpl, config });
 
   const adopted = adoptInboxItem(rel);
-  assert.equal(adopted.pagePath, '原始资料/收集箱/合同.md');
+  assert.equal(adopted.pagePath, '原始资料/合同.md');
   assert.match(adopted.pageTitle, /合同/);
-  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '原始资料', '收集箱', '合同.md')), true);
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '原始资料', '合同.md')), true);
   assert.equal(fs.existsSync(path.join(BRAIN_DIR, converted.derivedPath)), true, '产物保留在收集箱');
 
   // 入库这一动作才产生页面行：入库前没有，入库后才有
@@ -183,11 +185,11 @@ test('同名原件入库不覆盖：第二份加序号', async () => {
   const { fetchImpl } = fakeModel('# 周报');
   await convertInboxItem(first, { fetchImpl, config });
   const a = adoptInboxItem(first);
-  assert.equal(a.pagePath, '原始资料/收集箱/周报.md');
+  assert.equal(a.pagePath, '原始资料/周报.md');
   // 产物仍在 → 再入库一次会另存一份，不覆盖上一份
   const b = adoptInboxItem(first);
-  assert.equal(b.pagePath, '原始资料/收集箱/周报 (2).md');
-  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '原始资料', '收集箱', '周报.md')), true);
+  assert.equal(b.pagePath, '原始资料/周报 (2).md');
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '原始资料', '周报.md')), true);
 });
 
 test('Agent 通道写产物：与转换通道落同一位置、同一 frontmatter 口径', () => {
@@ -198,7 +200,21 @@ test('Agent 通道写产物：与转换通道落同一位置、同一 frontmatte
   assert.match(text, /来源: 收集箱\/会议.txt/);
   assert.match(text, /转换版本: semantic-v1/);
   assert.match(text, /由 Agent 通道写入/);
-  assert.equal(adoptInboxItem(rel).pagePath, '原始资料/收集箱/会议.md');
+  assert.equal(adoptInboxItem(rel).pagePath, '原始资料/会议.md');
+});
+
+test('旧版入库目录自动迁到原始资料根，撞名加序号且保留页面 ID', async () => {
+  const legacyDir = path.join(BRAIN_DIR, '原始资料', '收集箱');
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(path.join(legacyDir, '合同.md'), '# 旧合同\n', 'utf8');
+  const { syncPageFile } = await import('../lib/vault.js');
+  const old = syncPageFile('原始资料/收集箱/合同.md');
+  assert.ok(old);
+  assert.equal(migrateLegacyInboxAdoptions(), 1);
+  const moved = db.prepare('SELECT id, path FROM pages WHERE id = ?').get(old.id) as any;
+  assert.equal(moved.path, '原始资料/合同 (2).md');
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '原始资料', '合同 (2).md')), true);
+  assert.equal(fs.existsSync(legacyDir), false);
 });
 
 test('只允许收集箱内的路径：越界一律拒绝', async () => {

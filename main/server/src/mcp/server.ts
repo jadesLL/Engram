@@ -611,7 +611,7 @@ export function makeServer(): McpServer {
     'create_raw_material',
     '把已完成的调研结果新建为 原始资料/ 下的 Markdown 来源文件（只创建，不覆盖；聊天记录请用 save_chat）。',
     {
-      path: z.string().describe('新文件路径，如 原始资料/调研/市场分析.md；不能使用已存在路径、原始资料/对话/ 或 原始资料/收集箱/'),
+      path: z.string().describe('新文件路径，如 原始资料/调研/市场分析.md；不能使用已存在路径或 原始资料/对话/'),
       content: z.string().describe('完整 Markdown 正文，不含 YAML frontmatter；建议在正文中列明调研来源与引用。'),
     },
     async ({ path: target, content }) => {

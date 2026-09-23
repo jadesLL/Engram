@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { pipeline as streamPipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
@@ -9,6 +10,7 @@ import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
 import { enqueue } from '../jobQueue.js';
 import { listInboxItems, inboxCategoryOf, type InboxItem } from '../lib/inboxItems.js';
+import { fetchInboxWebPage, InboxWebFetchError } from '../lib/inboxWebFetch.js';
 import {
   adoptInboxItem,
   capabilityHint,
@@ -136,6 +138,32 @@ export async function inboxRoutes(app: FastifyInstance) {
     return { saved, skipped, total: listInboxItems().counts.all };
   });
 
+  /** 抓取公网页面的 HTML 原件，落入与上传文件相同的收集箱目录。 */
+  app.post('/api/inbox/fetch-url', async (req, reply) => {
+    const { url } = (req.body || {}) as { url?: unknown };
+    if (typeof url !== 'string' || !url.trim()) {
+      return reply.code(400).send({ error: '请输入网页地址' });
+    }
+    fs.mkdirSync(safeJoin(INBOX_DIR), { recursive: true });
+    const tempAbs = safeJoin(`${INBOX_DIR}/.fetch-${crypto.randomUUID()}.tmp`);
+    try {
+      const fetched = await fetchInboxWebPage(url, tempAbs);
+      const name = sanitizeName(`${fetched.title}.html`);
+      const rel = uniqueInboxPath(INBOX_DIR, name);
+      const abs = safeJoin(rel);
+      fs.renameSync(tempAbs, abs);
+      noteAppWrite(abs);
+      notifySyncChange('file', rel);
+      emit('file-changed', { path: rel });
+      const saved = listInboxItems().items.find((item) => item.path === rel);
+      return { saved, sourceUrl: fetched.sourceUrl };
+    } catch (error: any) {
+      fs.rmSync(tempAbs, { force: true });
+      return reply.code(error instanceof InboxWebFetchError ? 400 : 500)
+        .send({ error: error?.message || '保存网页失败' });
+    }
+  });
+
   /** 下载原件（Docker / 浏览器端「打开」= 下载；桌面端走系统默认程序，见 M2） */
   app.get('/api/inbox/download', async (req, reply) => {
     const { path: rel } = req.query as { path?: string };
@@ -231,7 +259,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   });
 
   /**
-   * 入库：把转换产物复制进 原始资料/收集箱/ 并登记为知识库页面。
+   * 入库：把转换产物复制进 原始资料/ 并登记为知识库页面。
    * 这是收集箱内容变成「可检索、可引用」的唯一入口，只由用户显式触发。
    */
   app.post('/api/inbox/adopt', async (req, reply) => {

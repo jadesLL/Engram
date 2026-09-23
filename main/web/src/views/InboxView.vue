@@ -30,6 +30,28 @@
       </div>
     </div>
 
+    <form class="url-import" @submit.prevent="submitUrl">
+      <div class="url-import-main">
+        <label for="inbox-page-url">粘贴网页链接</label>
+        <div class="url-import-controls">
+          <input
+            id="inbox-page-url"
+            v-model="pageUrl"
+            type="url"
+            required
+            placeholder="https://example.com/article"
+            :disabled="fetchingUrl"
+          />
+          <button class="btn inbox" type="submit" :disabled="fetchingUrl || !pageUrl.trim()">
+            <AppSpinner v-if="fetchingUrl" :size="14" />
+            <Icon v-else name="external" :size="14" />
+            {{ fetchingUrl ? '正在抓取…' : '保存网页' }}
+          </button>
+        </div>
+        <small>保存网站返回的 HTML 原文；登录、验证码和依赖脚本的内容可能无法完整保存。</small>
+      </div>
+    </form>
+
     <div
       class="dropzone"
       :class="{ hot: dragOver }"
@@ -66,7 +88,7 @@
       </div>
       <div class="spacer" />
       <span class="hint">
-        按拖入时间倒序 · 共 {{ inbox.counts.all }} 个文件 · 支持多端同步
+        按收纳时间倒序 · 共 {{ inbox.counts.all }} 个文件 · 支持多端同步
         <template v-if="inbox.counts.converting"> · {{ inbox.counts.converting }} 个转换中</template>
       </span>
     </div>
@@ -100,7 +122,7 @@
           <div class="fmeta">
             <span>{{ formatSize(item.size) }}</span>
             <span>·</span>
-            <span>{{ fromNow(item.mtime) }} 拖入</span>
+            <span>{{ fromNow(item.mtime) }} 收纳</span>
             <template v-if="item.rel !== item.name">
               <span>·</span><span class="truncate">{{ item.rel }}</span>
             </template>
@@ -219,6 +241,8 @@ const isDesktop = Boolean((window as any).wikiDesktop);
 
 const inbox = useInboxStore();
 const fileInput = ref<HTMLInputElement>();
+const pageUrl = ref('');
+const fetchingUrl = ref(false);
 const dragOver = ref(false);
 const filter = ref<'all' | 'pending' | 'converted'>('all');
 
@@ -481,7 +505,7 @@ async function adoptFromReview() {
 
 const TYPE_LABELS: Record<string, string> = {
   document: 'DOC', spreadsheet: 'XLS', presentation: 'PPT', pdf: 'PDF',
-  image: 'IMG', text: 'TXT', audio: 'AUD', video: 'VID', archive: 'ZIP', other: 'FILE',
+  image: 'IMG', text: 'TXT', web: 'WEB', audio: 'AUD', video: 'VID', archive: 'ZIP', other: 'FILE',
 };
 
 function typeLabel(item: InboxItem): string {
@@ -548,6 +572,21 @@ async function submit(files: FileList | File[]) {
   const { saved, skipped } = await inbox.upload(files);
   if (saved) notify.success(`已收进收集箱：${saved} 个文件`);
   if (skipped.length) notify.error(`跳过 ${skipped.length} 个文件：${skipped[0]}`);
+}
+
+async function submitUrl() {
+  const url = pageUrl.value.trim();
+  if (!url || fetchingUrl.value) return;
+  fetchingUrl.value = true;
+  try {
+    const saved = await inbox.fetchUrl(url);
+    pageUrl.value = '';
+    notify.success(`已保存网页：${saved.name}`);
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || '抓取网页失败');
+  } finally {
+    fetchingUrl.value = false;
+  }
 }
 
 async function removeItem(item: InboxItem) {
@@ -692,6 +731,30 @@ onBeforeUnmount(() => {
 .notice svg { color: var(--inbox-accent); flex-shrink: 0; margin-top: 2px; }
 .notice b { color: var(--text); font-weight: 600; }
 
+.url-import {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+}
+.url-import-main label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 600; }
+.url-import-controls { display: flex; gap: 8px; }
+.url-import-controls input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font: inherit;
+}
+.url-import-controls input:focus-visible { outline: 2px solid var(--inbox-accent); outline-offset: 1px; }
+.url-import-controls .btn { white-space: nowrap; }
+.url-import-main small { display: block; margin-top: 7px; color: var(--text-faint); font-size: 11.5px; }
+
 .dropzone {
   display: flex;
   flex-direction: column;
@@ -817,6 +880,7 @@ onBeforeUnmount(() => {
 .ftype.pdf { background: var(--file-pdf); }
 .ftype.image { background: #2b8a8f; }
 .ftype.text { background: var(--file-markdown); }
+.ftype.web { background: var(--inbox-accent); }
 .ftype.audio,
 .ftype.video { background: #7a5ea8; }
 
@@ -935,6 +999,8 @@ onBeforeUnmount(() => {
 
 @media (max-width: 768px) {
   .inbox-view { padding: 14px 12px 80px; }
+  .url-import-controls { flex-wrap: wrap; }
+  .url-import-controls input { flex-basis: 100%; }
   .list-head { display: none; }
   .file-row { flex-wrap: wrap; }
   .factions { width: 100%; justify-content: flex-start; }

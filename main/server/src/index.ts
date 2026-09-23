@@ -131,6 +131,9 @@ async function main() {
   // 启动：扫描 vault 同步 DB、迁移历史系统文件进 AIWorks 系统区、清理系统区页面标签、启动任务队列
   // （进程级单例：双监听共享一份，createApp() 只做路由装配不碰数据）
   await scanVault();
+  // 旧版收集箱入库误建子目录：迁到原始资料根，保留页面 ID 和检索引用。
+  const { migrateLegacyInboxAdoptions } = await import('./pipeline/inboxConvert.js');
+  migrateLegacyInboxAdoptions();
   migrateLegacySystemFiles();
   // 旧版冲突备份遗留（AIWorks/同步冲突/ 备份页、记录页、过时说明页）入回收站：须先于
   // ensureSystemFiles，避免新旧说明页撞名。各角色都跑——成员端也有本地遗留（早期接入或
