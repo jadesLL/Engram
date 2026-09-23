@@ -12,7 +12,10 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -21,6 +24,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore) {
     private val executor = Executors.newSingleThreadExecutor()
+    private val fetchExecutor = Executors.newFixedThreadPool(MAX_PARALLEL_FETCHES)
+    private val activeConnections = ConcurrentHashMap.newKeySet<HttpURLConnection>()
     private val running = AtomicBoolean(false)
     private val requestWhileRunning = AtomicBoolean(false)
     private val fullRequestWhileRunning = AtomicBoolean(false)
@@ -29,15 +34,16 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     @Volatile var connected = false; private set
     @Volatile var lastError: String? = null; private set
     @Volatile var lastSyncAt: String? = db.setting("sync_last_at"); private set
+    @Volatile var pendingPulls: Int = 0; private set
+    @Volatile var syncProgress: String = ""; private set
 
     fun onForeground() { foreground = true; cancelled = false; request(false) }
-    @Volatile private var currentConnection: HttpURLConnection? = null
 
     fun onBackground() {
         foreground = false
         cancelled = true
         connected = false
-        currentConnection?.disconnect()
+        activeConnections.forEach { it.disconnect() }
     }
 
     fun request(full: Boolean) {
@@ -51,6 +57,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             var completed = false
             try {
                 db.log("info", "start", if (full) "手动全量对账" else "事件触发同步")
+                syncProgress = "正在连接中枢"
                 if ((db.setting("sync_cursor")?.toLongOrNull() ?: 0L) <= 0L) {
                     // 首次绑定直接按轻量清单逐项对账，避免从游标 0 一次解析数百条内嵌正文的历史 op。
                     // 对账完成后推进到快照水位，再由 converge 补拉其后发生的少量变化。
@@ -62,15 +69,19 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 connected = true
                 lastError = null
                 lastSyncAt = Instant.now().toString().also { db.setSetting("sync_last_at", it) }
+                syncProgress = "同步完成"
                 db.log("info", "sync-done", "同步已收敛")
                 completed = true
             } catch (e: Cancelled) {
+                syncProgress = "已暂停，待下次继续"
                 db.log("info", "sync-paused", "应用已进入后台，待下次继续")
             } catch (e: Exception) {
                 connected = false
                 lastError = e.message ?: e.javaClass.simpleName
+                syncProgress = "同步中断"
                 db.log("warn", "sync-failed", lastError ?: "同步失败")
             } finally {
+                pendingPulls = 0
                 running.set(false)
                 val rerun = requestWhileRunning.getAndSet(false)
                 val rerunFull = fullRequestWhileRunning.getAndSet(false)
@@ -90,6 +101,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     private fun converge() {
         repeat(4) {
             checkActive()
+            syncProgress = "正在补齐改动"
             pushOutbox()
             val changed = pullChanges()
             if (db.outboxCount() == 0 && !changed) return
@@ -146,14 +158,46 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             gap = gap || response.optBoolean("resync")
             val ops = response.optJSONArray("ops") ?: JSONArray()
             val compact = response.optBoolean("compact")
-            for (i in 0 until ops.length()) { applyOp(ops.getJSONObject(i), compact); any = true }
+            val batch = (0 until ops.length()).map { ops.getJSONObject(it) }
+            for (chunk in batch.chunked(MAX_PARALLEL_FETCHES)) {
+                val work = chunk.map { op ->
+                    val kind = op.optString("kind")
+                    val target = op.optString("target")
+                    when {
+                        kind == "page" && compact -> ChangeWork(
+                            op = op,
+                            page = fetchExecutor.submit<PagePayload> {
+                                val content = getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
+                                val evidence = getJson("/api/sync/evidence?path=${encode(target)}").optJSONObject("snapshot")
+                                PagePayload(content, evidence)
+                            },
+                        )
+                        kind == "file" -> ChangeWork(op = op, file = fetchExecutor.submit<File> { stageFile(target) })
+                        else -> ChangeWork(op = op)
+                    }
+                }
+                try {
+                    for (item in work) {
+                        checkActive()
+                        val page = item.page?.let(::await)
+                        val file = item.file?.let(::await)
+                        applyOp(item.op, compact, page, file)
+                        any = true
+                    }
+                } finally {
+                    work.forEach { item ->
+                        item.page?.let(::cancelFetch)
+                        item.file?.let(::discardStagedFile)
+                    }
+                }
+            }
             if (ops.length() < CHANGE_BATCH) break
         }
         if (gap) reconcile()
         return any
     }
 
-    private fun applyOp(op: JSONObject, compact: Boolean = false) {
+    private fun applyOp(op: JSONObject, compact: Boolean = false, page: PagePayload? = null, stagedFile: File? = null) {
         val seq = op.optLong("seq")
         val cursor = db.setting("sync_cursor")?.toLongOrNull() ?: 0L
         if (seq <= cursor) return
@@ -161,15 +205,18 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         when (op.optString("kind")) {
             "page" -> {
                 val content = if (compact) {
-                    getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
+                    page?.content ?: getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
                 } else op.optString("content")
                 db.writeSyncedPage(target, content, op.optInt("revision"))
                 val evidence = if (compact) {
-                    getJson("/api/sync/evidence?path=${encode(target)}").optJSONObject("snapshot")
+                    page?.evidence ?: getJson("/api/sync/evidence?path=${encode(target)}").optJSONObject("snapshot")
                 } else op.optJSONObject("evidence")
                 evidence?.let { db.saveEvidence(target, it) }
             }
-            "file" -> pullFile(target)
+            "file" -> {
+                if (stagedFile == null) pullFile(target)
+                else try { db.installSyncedFile(target, stagedFile) } finally { stagedFile.delete() }
+            }
             "delete" -> db.deleteSyncedPath(target)
             "move" -> db.moveSyncedPath(op.optString("old_path"), target, op.optInt("revision"))
         }
@@ -178,6 +225,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
 
     private fun reconcile(preferHub: Boolean = false, advanceCursor: Boolean = false) {
         checkActive()
+        syncProgress = "正在读取中枢目录"
         db.log("info", "reconcile-start")
         // 大库的 snapshot 可达数十 MiB。先流式落临时文件，再逐项解析，避免 JSONObject
         // 将整份清单及字符串副本同时留在 Android 的 256 MiB 堆里。
@@ -187,6 +235,17 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         var inferredCursor = 0L
         var snapshotCursor = 0L
         var remoteCount = 0
+        val pending = mutableListOf<SnapshotWork>()
+        fun flushPending() {
+            if (pending.isEmpty()) return
+            val batch = pending.toList()
+            pending.clear()
+            try {
+                batch.forEach { work -> checkActive(); work.apply() }
+            } finally {
+                batch.forEach { work -> work.discard() }
+            }
+        }
         try {
             withConnection("GET", "/api/sync/snapshot") { connection ->
                 requireSuccessfulResponse(connection)
@@ -231,6 +290,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                             reader.endObject()
                             require(path.isNotBlank() && (kind == "page" || kind == "file")) { "中枢清单条目无效" }
                             remoteCount++
+                            if (remoteCount % 25 == 0) syncProgress = "正在核对中枢目录（$remoteCount 项）"
                             inferredCursor = maxOf(inferredCursor, revision.toLong())
                             remotePaths += path
                             if (preferHub) db.dropOutboxForTarget(path)
@@ -243,16 +303,51 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                             } else if (kind == "page") {
                                 if (localFile.exists() && db.pageRevision(path) > 0) db.enqueue("page", path)
                                 else {
-                                    val detail = getJson("/api/sync/page-content?path=${encode(path)}")
-                                    db.writeSyncedPage(path, detail.optString("content"), revision)
+                                    val fetchPath = path
+                                    schedulePull()
+                                    val future = fetchExecutor.submit<String> {
+                                        getJson("/api/sync/page-content?path=${encode(fetchPath)}").optString("content")
+                                    }
+                                    pending += SnapshotWork(
+                                        apply = {
+                                            db.writeSyncedPage(fetchPath, await(future), revision)
+                                            completePull()
+                                        },
+                                        discard = { cancelFetch(future) },
+                                    )
                                 }
                             } else {
-                                if (localFile.exists() && !preferHub) db.enqueue("file", path) else pullFile(path)
+                                if (localFile.exists() && !preferHub) db.enqueue("file", path)
+                                else {
+                                    val fetchPath = path
+                                    schedulePull()
+                                    val future = fetchExecutor.submit<File> { stageFile(fetchPath) }
+                                    pending += SnapshotWork(
+                                        apply = {
+                                            val stagedFile = await(future)
+                                            try { db.installSyncedFile(fetchPath, stagedFile) }
+                                            finally { stagedFile.delete() }
+                                            completePull()
+                                        },
+                                        discard = { discardStagedFile(future) },
+                                    )
+                                }
                             }
                             if (distilled && !db.evidenceDistilled(path)) {
-                                val evidence = getJson("/api/sync/evidence?path=${encode(path)}").optJSONObject("snapshot")
-                                if (evidence != null) db.saveEvidence(path, evidence)
+                                val evidencePath = path
+                                schedulePull()
+                                val future = fetchExecutor.submit<JSONObject?> {
+                                    getJson("/api/sync/evidence?path=${encode(evidencePath)}").optJSONObject("snapshot")
+                                }
+                                pending += SnapshotWork(
+                                    apply = {
+                                        await(future)?.let { db.saveEvidence(evidencePath, it) }
+                                        completePull()
+                                    },
+                                    discard = { cancelFetch(future) },
+                                )
                             }
+                            if (pending.size >= SNAPSHOT_FETCH_BATCH) flushPending()
                         }
                         reader.endArray()
                     }
@@ -266,7 +361,10 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 }
                 reader.endObject()
             }
+            flushPending()
         } finally {
+            pending.forEach { it.discard() }
+            pending.clear()
             staged.delete()
         }
         var localCount = 0
@@ -286,9 +384,15 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             if (snapshotCursor > current) db.setSetting("sync_cursor", snapshotCursor.toString())
         }
         db.log("info", "reconcile-done", "中枢 $remoteCount 项，本地 $localCount 项")
+        syncProgress = if (remoteCount == 0) "正在补齐本机改动" else "已核对 $remoteCount 项"
     }
 
     private fun pullFile(path: String) {
+        val staged = stageFile(path)
+        try { db.installSyncedFile(path, staged) } finally { staged.delete() }
+    }
+
+    private fun stageFile(path: String): File {
         val staged = File(db.root, "sync-${UUID.randomUUID()}.tmp")
         try {
             withConnection("GET", "/api/sync/file?path=${encode(path)}") { connection ->
@@ -308,8 +412,44 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                     }
                 }
             }
-            db.installSyncedFile(path, staged)
-        } finally { staged.delete() }
+            return staged
+        } catch (error: Exception) {
+            staged.delete()
+            throw error
+        }
+    }
+
+    private data class SnapshotWork(val apply: () -> Unit, val discard: () -> Unit)
+    private data class PagePayload(val content: String, val evidence: JSONObject?)
+    private data class ChangeWork(val op: JSONObject, val page: Future<PagePayload>? = null, val file: Future<File>? = null)
+
+    private fun schedulePull() {
+        pendingPulls++
+        syncProgress = "正在下载内容（队列 $pendingPulls 项）"
+    }
+
+    private fun completePull() {
+        pendingPulls = (pendingPulls - 1).coerceAtLeast(0)
+        syncProgress = if (pendingPulls > 0) "正在下载内容（还剩 $pendingPulls 项）" else "已下载目录内容"
+    }
+
+    private fun <T> await(future: Future<T>): T = try {
+        future.get()
+    } catch (error: ExecutionException) {
+        throw error.cause ?: error
+    }
+
+    private fun cancelFetch(future: Future<*>) {
+        if (!future.isDone) future.cancel(true)
+    }
+
+    private fun discardStagedFile(future: Future<File>) {
+        if (!future.isDone) {
+            future.cancel(true)
+            return
+        }
+        if (future.isCancelled) return
+        runCatching { await(future).delete() }
     }
 
     private fun nodeId(): String {
@@ -359,7 +499,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         for (base in baseUrls()) {
             checkActive()
             val connection = URL(base + path).openConnection() as HttpURLConnection
-            currentConnection = connection
+            activeConnections.add(connection)
             try {
                 connection.requestMethod = method
                 connection.connectTimeout = 6_000
@@ -379,7 +519,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 if (cancelled || !foreground) throw Cancelled()
                 failure = error
             } finally {
-                currentConnection = null
+                activeConnections.remove(connection)
                 connection.disconnect()
             }
         }
@@ -438,5 +578,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         private const val MAX_JSON_BYTES = 8L * 1024 * 1024
         private const val MAX_SNAPSHOT_BYTES = 256L * 1024 * 1024
         private const val CHANGE_BATCH = 20
+        private const val MAX_PARALLEL_FETCHES = 4
+        private const val SNAPSHOT_FETCH_BATCH = MAX_PARALLEL_FETCHES
     }
 }

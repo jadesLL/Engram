@@ -376,7 +376,8 @@ class EngramLocalServer private constructor(private val context: Context) {
                 .put("directUrls", JSONArray(db.setting("sync_direct_urls") ?: "[]"))
                 .put("hubToken", if (secrets.get("sync_hub_token").isNullOrBlank()) "" else "••••••••")
                 .put("nodeId", db.setting("sync_node_id") ?: "").put("cursor", db.setting("sync_cursor")?.toLongOrNull() ?: 0)
-                .put("pending", db.outboxCount()).put("pendingPulls", 0).put("lastSyncAt", sync.lastSyncAt)
+                .put("pending", db.outboxCount()).put("pendingPulls", sync.pendingPulls).put("syncProgress", sync.syncProgress)
+                .put("running", sync.isRunning()).put("lastSyncAt", sync.lastSyncAt)
                 .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray()))
         }
         post("/api/sync/config") {

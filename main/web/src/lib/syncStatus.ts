@@ -25,6 +25,7 @@ export interface SyncStatusInput {
   running?: boolean;
   pending?: number;
   pendingPulls?: number;
+  syncProgress?: string;
   lastSyncAt?: string | null;
   lastError?: string | null;
   peers?: Array<{ online?: boolean }>;
@@ -143,8 +144,10 @@ export function syncStatusView(
         tone: 'busy',
         icon: 'rotate-right',
         label: '同步中…',
-        detail: '正在与中枢交换改动',
-        hint: '正在与中枢同步，可继续使用本机知识库',
+        detail: status.syncProgress || (pendingPulls > 0 ? `正在下载，剩余 ${pendingPulls} 项` : '正在与中枢交换改动'),
+        hint: status.syncProgress
+          ? `${status.syncProgress}；可继续使用本机知识库`
+          : '正在与中枢同步，可继续使用本机知识库',
       };
     }
     if (!status.connected) {
