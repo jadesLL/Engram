@@ -7,6 +7,7 @@ import {
   fuzzyNeighbors,
 } from '../lib/fts.js';
 import { readPage } from '../lib/vault.js';
+import { isInboxPath } from '../lib/brainPaths.js';
 
 /** 知识库关键词检索（FTS5：页面 + 原始文件提取文本） */
 
@@ -29,6 +30,8 @@ export interface SearchHit {
 /** 系统生成或查询派生页不应挤占用户知识证据。 */
 export function derivedPageWeight(path: string): number {
   const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
+  // 收集箱内容不属于知识库（正常路径下它们不是页面，这里是双保险）
+  if (isInboxPath(normalized)) return 0;
   if (normalized.startsWith('AIWorks/')) return 0;
   if (normalized.startsWith('Wiki/查询/')) return 0;
   if (/^Wiki\/(?:index|索引)(?:\/|\.md$)/i.test(normalized)) return 0;
@@ -138,6 +141,8 @@ export async function hybridSearch(
       .prepare(`SELECT id, path, name, text, updated_at FROM files WHERE id = ? AND deleted = 0`)
       .get(r.id) as any;
     if (!file) continue;
+    // 收集箱内容不参与检索（正常路径下它们没有 files 行，这里是双保险）
+    if (isInboxPath(file.path)) continue;
     hits.push({
       refType: 'file',
       refId: file.id,

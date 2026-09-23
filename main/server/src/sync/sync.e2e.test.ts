@@ -282,6 +282,34 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
       return files.files.some((f) => f.path === '原始资料/同步资料.txt');
     });
 
+    // ---------- 场景 3b：收集箱文件同样跨端同步，但哪一端都不许变成知识库页面 ----------
+    // 收集箱是「待纳入资产」的暂存区：同步层必须把箱内文件（包括 .md）当普通文件传字节，
+    // 一旦某端把它登记成 pages 行，检索/引用会立刻绕过用户确认，需求里的隔离就破了。
+    const inboxForm = new FormData();
+    inboxForm.append('files', new Blob([Buffer.from('# 收集箱里的随手记\n不该出现在知识库')], { type: 'text/markdown' }), '随手记.md');
+    inboxForm.append('files', new Blob([Buffer.from('原始附件内容')], { type: 'application/octet-stream' }), '附件.bin');
+    const inboxUp = await fetch(`http://127.0.0.1:${nodeC.port}/api/inbox/upload`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${nodeC.token}` },
+      body: inboxForm,
+    });
+    assert.ok(inboxUp.ok, `收集箱上传失败: ${await inboxUp.text()}`);
+
+    for (const [label, inst] of [['hub', hub], ['B', nodeB]] as const) {
+      await waitFor(`${label} 收到收集箱文件`, async () => {
+        const res = await api(inst, 'GET', '/api/inbox/items');
+        const body = (await res.json()) as { items: { path: string }[] };
+        return body.items.some((item) => item.path === '收集箱/随手记.md');
+      });
+      const pages = await (await api(inst, 'GET', '/api/pages/list')).text();
+      assert.equal(pages.includes('收集箱'), false, `${label} 不应把收集箱内容登记成页面或列进目录树`);
+    }
+    assert.equal(
+      fs.existsSync(path.join(hub.dataDir, 'brain', '收集箱', '附件.bin')),
+      true,
+      '非文本文件也要真的传过去（走字节通道，不是只传指纹）'
+    );
+
     // hub 删除页面 → 两节点消失（入回收站）
     const pageDel = await createPage(hub, '同步验证删除', '待删除');
     await waitFor('B 收到待删页', async () => (await pageContent(nodeB, pageDel)) !== null);

@@ -4,6 +4,7 @@ import { readPage, writePage, type PageMeta } from '../lib/vault.js';
 import { appendWikiLog } from './indexFile.js';
 import { beginSourceVersion } from './sourceLedger.js';
 import { GUIDE_VERSION } from '../content/agentGuide.js';
+import { isInboxPath } from '../lib/brainPaths.js';
 
 /**
  * 外部 Agent 写入知识页的确定性门禁与证据账本：
@@ -77,6 +78,10 @@ export function validateEvidence(evidence: EvidenceInput[]): ValidatedEvidence[]
       throw new WriteGateError('证据需要 path 与 quote 两个字段');
     }
     if (!sourcePath.startsWith('原始资料/')) {
+      // 收集箱内容在入库前不是知识库来源，单独给一句明确的话
+      if (isInboxPath(sourcePath)) {
+        throw new WriteGateError(`收集箱内容不能作为证据来源（需先入库到 原始资料/）：${sourcePath}`);
+      }
       throw new WriteGateError(`证据来源必须在 原始资料/ 下：${sourcePath}`);
     }
     const text = sourceText(sourcePath);

@@ -5,6 +5,7 @@ import { db } from '../lib/db.js';
 import { sse } from '../lib/sse.js';
 import { requireAuth } from './auth.js';
 import { safeJoin } from '../lib/vault.js';
+import { classifyBrainEntry } from '../lib/brainPaths.js';
 import {
   addNodeSubscriber,
   applyPush,
@@ -295,7 +296,7 @@ function buildSnapshotEntries(): {
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
         walk(childRel);
-      } else if (e.name.toLowerCase().endsWith('.md')) {
+      } else if (classifyBrainEntry(childRel) === 'page') {
         const raw = fs.readFileSync(childAbs, 'utf8');
         const revision = Number(
           (db.prepare(`SELECT sync_revision FROM pages WHERE path = ?`).get(childRel) as

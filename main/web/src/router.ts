@@ -14,6 +14,7 @@ export const router = createRouter({
         { path: 'page/:id?', component: () => import('./views/EditorView.vue') },
         { path: 'search', component: () => import('./views/SearchView.vue') },
         { path: 'graph/:id?', component: () => import('./views/GraphView.vue') },
+        { path: 'inbox', component: () => import('./views/InboxView.vue') },
         { path: 'settings', component: () => import('./views/SettingsView.vue') },
       ],
     },

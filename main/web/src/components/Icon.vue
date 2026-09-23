@@ -115,6 +115,10 @@ const ICONS: Record<string, string[]> = {
   external: ['M15 3h6v6', 'M10 14 21 3', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'],
   send: ['m22 2-7 20-4-9-9-4z', 'M22 2 11 13'],
   archive: ['M21 8v13H3V8', 'M1 3h22v5H1z', 'M10 12h4'],
+  inbox: [
+    'M22 12h-6l-2 3h-4l-2-3H2',
+    'M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z',
+  ],
   activity: ['M22 12h-4l-3 9L9 3l-3 9H2'],
   play: ['m6 3 14 9-14 9z'],
   square: ['M5 5h14v14H5z'],

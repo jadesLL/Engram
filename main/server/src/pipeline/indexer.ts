@@ -3,6 +3,7 @@ import { invalidateGraphCache } from '../lib/graphCache.js';
 import { wirePageEdges, resolveDeadLinks } from './extractor.js';
 import { ftsSegment } from '../lib/fts.js';
 import { readPage, scanVault } from '../lib/vault.js';
+import { isInboxPath } from '../lib/brainPaths.js';
 
 /**
  * 纯 FTS 索引层：向量/embedding 已随模型适配层移除。
@@ -52,8 +53,14 @@ export async function indexFileText(
   signal?: AbortSignal,
 ): Promise<{ indexed: boolean }> {
   signal?.throwIfAborted();
+  if (!fileId) return { indexed: false };
   const file = db.prepare(`SELECT * FROM files WHERE id = ? AND deleted = 0`).get(fileId) as any;
   if (!file) return { indexed: false };
+  // 双保险：即使有人给收集箱条目建了 files 行，也不写检索索引
+  if (isInboxPath(file.path)) {
+    clearFileIndex(fileId);
+    return { indexed: false };
+  }
   if (!file.text) {
     // 提取文本为空（如新版 PDF 全页失败）：必须清掉旧索引，
     // 否则 FTS 继续返回已失效的旧内容，且 rebuildAll 跳过空文本文件、无自愈路径。
@@ -108,8 +115,11 @@ export async function rebuildAll(
   return { pages: pages.length, files: files.length, errors };
 }
 
-/** 注册/更新一个非 md 文件记录 */
+/** 注册/更新一个非 md 文件记录。
+ *  收集箱里的文件不建记录：它们不属于知识库，也就没有可检索的文本索引
+ *  （返回空 id，调用方据此走不到后续提取/索引流程）。 */
 export function ensureFileRecord(relPath: string, size: number): string {
+  if (isInboxPath(relPath)) return '';
   const name = relPath.split('/').pop() || relPath;
   const ext = (name.split('.').pop() || '').toLowerCase();
   const existing = db.prepare(`SELECT id, text FROM files WHERE path = ?`).get(relPath) as any;
