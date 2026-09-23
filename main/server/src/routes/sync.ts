@@ -5,14 +5,14 @@ import { db } from '../lib/db.js';
 import { sse } from '../lib/sse.js';
 import { requireAuth } from './auth.js';
 import { safeJoin } from '../lib/vault.js';
-import { classifyBrainEntry } from '../lib/brainPaths.js';
+import { classifyBrainEntry, isInboxPath } from '../lib/brainPaths.js';
 import {
   addNodeSubscriber,
   applyPush,
   commitFileChange,
   connectedPeerIds,
   readPageRaw,
-  writeRawFile,
+  writeRawFileStream,
   sha256,
   type PushPayload,
 } from '../sync/hub.js';
@@ -178,20 +178,22 @@ export async function syncRoutes(app: FastifyInstance) {
   app.post('/api/sync/file', { preHandler: requireSyncAccess }, async (req, reply) => {
     let relPath = '';
     let saved = false;
-    for await (const part of req.parts()) {
+    let tooLarge = false;
+    for await (const part of req.parts({ limits: { fileSize: Infinity, files: 1 } })) {
       if (part.type === 'field') {
         if (part.fieldname === 'path') relPath = String(part.value ?? '');
       } else if (part.type === 'file' && part.fieldname === 'file') {
         if (!relPath) return reply.code(400).send({ error: '缺少 path 字段' });
-        const buf = await part.toBuffer();
         try {
-          writeRawFile(relPath, buf);
+          const maxBytes = isInboxPath(relPath) ? Infinity : 200 * 1024 * 1024;
+          saved = await writeRawFileStream(relPath, part.file, maxBytes);
+          if (!saved) tooLarge = true;
         } catch (error: any) {
           return reply.code(400).send({ error: error?.message || '文件落盘失败' });
         }
-        saved = true;
       }
     }
+    if (tooLarge) return reply.code(413).send({ error: '同步文件超过 200 MB 上限' });
     if (!saved) return reply.code(400).send({ error: '缺少文件' });
     const actorId = req.syncPeer?.id || 'owner';
     const result = commitFileChange(relPath, actorId);

@@ -7,7 +7,6 @@ import { safeJoin, notifySyncChange } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
-import { positiveInt } from '../config.js';
 import { enqueue } from '../jobQueue.js';
 import { listInboxItems, inboxCategoryOf, type InboxItem } from '../lib/inboxItems.js';
 import {
@@ -33,12 +32,9 @@ import {
  *    以及后续里程碑的语义转换，不提供任何预览/取正文接口。
  *
  * 上传走流式落盘：通用 /api/files/upload 是把整份文件读进内存再写（另有 200MB 硬上限），
- * 收集箱要接几百 MB 到 GB 级的录屏与压缩包，必须边收边写。
+ * 收集箱不设固定单文件大小上限，必须边收边写。
  */
 
-/** 单文件上限（MB），可用 INBOX_MAX_FILE_MB 覆盖 */
-const INBOX_MAX_FILE_MB = positiveInt(process.env.INBOX_MAX_FILE_MB, 2048);
-const INBOX_MAX_FILE_BYTES = INBOX_MAX_FILE_MB * 1024 * 1024;
 /** 单次请求最多文件数 */
 const INBOX_MAX_FILES = 200;
 
@@ -67,7 +63,6 @@ export async function inboxRoutes(app: FastifyInstance) {
     return {
       dir: INBOX_DIR,
       derivedDir: INBOX_DERIVED_DIR,
-      maxFileMb: INBOX_MAX_FILE_MB,
       counts,
       items,
     };
@@ -83,7 +78,8 @@ export async function inboxRoutes(app: FastifyInstance) {
     let subDir = INBOX_DIR;
 
     for await (const part of req.parts({
-      limits: { fileSize: INBOX_MAX_FILE_BYTES, files: INBOX_MAX_FILES },
+      // Fastify 的全局 multipart 默认仍有限制；这里显式覆盖为 Infinity。
+      limits: { fileSize: Infinity, files: INBOX_MAX_FILES },
     })) {
       if (part.type === 'field') {
         if (part.fieldname === 'dir') {
@@ -109,7 +105,7 @@ export async function inboxRoutes(app: FastifyInstance) {
       }
       if (part.file.truncated) {
         fs.rmSync(abs, { force: true });
-        skipped.push({ name, reason: `超过单文件上限 ${INBOX_MAX_FILE_MB} MB` });
+        skipped.push({ name, reason: '上传数据不完整' });
         continue;
       }
       noteAppWrite(abs);

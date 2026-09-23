@@ -44,7 +44,7 @@
     >
       <Icon name="upload" :size="26" />
       <b>把任意文件拖到这里</b>
-      <small>不限格式 · 单文件上限 {{ maxFileLabel }} · 同名不覆盖 · 也可点击选择文件</small>
+      <small>不限格式 · 不限单文件大小 · 同名不覆盖 · 也可点击选择文件</small>
       <input ref="fileInput" class="file-input" type="file" multiple @change="onPicked" />
     </div>
 
@@ -232,10 +232,6 @@ const visibleItems = computed(() => {
   if (filter.value === 'all') return inbox.items;
   return inbox.items.filter((item) => item.status === filter.value);
 });
-
-const maxFileLabel = computed(() =>
-  inbox.maxFileMb >= 1024 ? `${(inbox.maxFileMb / 1024).toFixed(0)} GB` : `${inbox.maxFileMb} MB`
-);
 
 /* ===== 转换：能不能转由服务端的 capability 说了算，界面不自己猜格式 ===== */
 
@@ -584,22 +580,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/*
- * 收集箱的身份色：紫色（与知识库的 Engram Blue 区分开）。
- * 只在本视图内定义，不污染全局令牌。
- */
 .inbox-view {
-  --inbox-accent: #6d4bc4;
-  --inbox-accent-soft: rgba(109, 75, 196, 0.1);
-  --inbox-accent-border: rgba(109, 75, 196, 0.3);
+  --inbox-accent: var(--accent);
+  --inbox-accent-soft: var(--accent-soft);
+  --inbox-accent-border: color-mix(in srgb, var(--accent) 30%, transparent);
   padding: 20px 26px 60px;
   max-width: 1180px;
-}
-
-html.dark .inbox-view {
-  --inbox-accent: #a992f5;
-  --inbox-accent-soft: rgba(169, 146, 245, 0.14);
-  --inbox-accent-border: rgba(169, 146, 245, 0.32);
 }
 
 .page-head {
@@ -663,7 +649,7 @@ html.dark .inbox-view {
 .btn.inbox {
   border-color: transparent;
   background: var(--inbox-accent);
-  color: #fff;
+  color: var(--on-accent);
   box-shadow: none;
 }
 

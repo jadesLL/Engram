@@ -71,7 +71,6 @@ export interface InboxUpload {
 export const useInboxStore = defineStore('inbox', () => {
   const items = ref<InboxItem[]>([]);
   const counts = ref<InboxCounts>({ all: 0, pending: 0, converted: 0, converting: 0, failed: 0 });
-  const maxFileMb = ref(2048);
   const loading = ref(false);
   const loaded = ref(false);
   const error = ref('');
@@ -91,7 +90,6 @@ export const useInboxStore = defineStore('inbox', () => {
       const { data } = await api.get('/api/inbox/items');
       items.value = data.items || [];
       counts.value = data.counts || counts.value;
-      maxFileMb.value = data.maxFileMb || maxFileMb.value;
       error.value = '';
       loaded.value = true;
     } catch (err: any) {
@@ -176,7 +174,6 @@ export const useInboxStore = defineStore('inbox', () => {
   return {
     items,
     counts,
-    maxFileMb,
     loading,
     loaded,
     error,
