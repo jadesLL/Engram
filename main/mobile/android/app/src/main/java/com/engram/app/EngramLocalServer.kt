@@ -425,6 +425,10 @@ class EngramLocalServer private constructor(private val context: Context) {
     private suspend fun ApplicationCall.proxyAgent(method: String, path: String, requestBody: String? = null) {
         if (!authorize()) return
         val remote = agent.request(method, path, requestBody)
+        if (remote.status == 401) return error(
+            "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机 Agent 的版本。",
+            HttpStatusCode.BadGateway,
+        )
         val type = runCatching { ContentType.parse(remote.contentType) }.getOrDefault(ContentType.Application.Json)
         response.header(HttpHeaders.CacheControl, "no-store")
         response.header(HttpHeaders.ContentLength, remote.body.size.toString())
@@ -437,6 +441,10 @@ class EngramLocalServer private constructor(private val context: Context) {
         val connection = remote.connection
         try {
             if (remote.status !in 200..299) {
+                if (remote.status == 401) return error(
+                    "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机 Agent 的版本。",
+                    HttpStatusCode.BadGateway,
+                )
                 val message = connection.errorStream?.bufferedReader()?.use { it.readText().take(16_384) }.orEmpty()
                 return error(message.ifBlank { "Docker Agent 返回 HTTP ${remote.status}" }, HttpStatusCode.fromValue(remote.status))
             }

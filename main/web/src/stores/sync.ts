@@ -41,6 +41,7 @@ export const useSyncStore = defineStore('sync', () => {
       const { data } = await api.get('/api/sync/status');
       status.value = data;
     } catch { /* 保持上次状态 */ }
+    schedule();
   }
 
   const role = computed(() => status.value?.role || 'none');
@@ -65,7 +66,7 @@ export const useSyncStore = defineStore('sync', () => {
     if (subscribers === 0) return;
     timer = setTimeout(() => {
       timer = null;
-      void refresh().then(schedule);
+      void refresh();
     }, busy.value ? BUSY_POLL_MS : IDLE_POLL_MS);
   }
 
@@ -73,7 +74,7 @@ export const useSyncStore = defineStore('sync', () => {
   function subscribe(): void {
     subscribers += 1;
     if (subscribers > 1) return;
-    void refresh().then(schedule);
+    void refresh();
   }
 
   /** 组件卸载：最后一个订阅者离开时停表 */

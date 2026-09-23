@@ -1,5 +1,6 @@
 package com.engram.app
 
+import android.util.JsonReader
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -21,6 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore) {
     private val executor = Executors.newSingleThreadExecutor()
     private val running = AtomicBoolean(false)
+    private val requestWhileRunning = AtomicBoolean(false)
+    private val fullRequestWhileRunning = AtomicBoolean(false)
     @Volatile private var foreground = false
     @Volatile private var cancelled = false
     @Volatile var connected = false; private set
@@ -39,8 +42,13 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
 
     fun request(full: Boolean) {
         if (!foreground || db.setting("sync_role") != "member" || db.setting("sync_enabled") != "1") return
-        if (!running.compareAndSet(false, true)) return
+        if (!running.compareAndSet(false, true)) {
+            requestWhileRunning.set(true)
+            if (full) fullRequestWhileRunning.set(true)
+            return
+        }
         executor.execute {
+            var completed = false
             try {
                 db.log("info", "start", if (full) "手动全量对账" else "事件触发同步")
                 if ((db.setting("sync_cursor")?.toLongOrNull() ?: 0L) <= 0L) {
@@ -55,6 +63,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 lastError = null
                 lastSyncAt = Instant.now().toString().also { db.setSetting("sync_last_at", it) }
                 db.log("info", "sync-done", "同步已收敛")
+                completed = true
             } catch (e: Cancelled) {
                 db.log("info", "sync-paused", "应用已进入后台，待下次继续")
             } catch (e: Exception) {
@@ -63,7 +72,13 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 db.log("warn", "sync-failed", lastError ?: "同步失败")
             } finally {
                 running.set(false)
-                if (foreground && !cancelled && db.outboxCount() > 0) request(false)
+                val rerun = requestWhileRunning.getAndSet(false)
+                val rerunFull = fullRequestWhileRunning.getAndSet(false)
+                // 失败后保留持久化 outbox，等待下次前台/本机修改/手动同步。
+                // 不能因队列仍非空就立即递归重试：离线时这会形成无限请求与日志风暴。
+                if (completed && foreground && !cancelled && (rerun || db.outboxCount() > 0)) {
+                    request(rerunFull)
+                }
             }
         }
     }
@@ -164,48 +179,113 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     private fun reconcile(preferHub: Boolean = false, advanceCursor: Boolean = false) {
         checkActive()
         db.log("info", "reconcile-start")
-        val snapshot = getJson("/api/sync/snapshot")
-        val remote = snapshot.optJSONArray("entries") ?: JSONArray()
+        // 大库的 snapshot 可达数十 MiB。先流式落临时文件，再逐项解析，避免 JSONObject
+        // 将整份清单及字符串副本同时留在 Android 的 256 MiB 堆里。
+        val staged = File(db.root, "snapshot-${UUID.randomUUID()}.json")
         val remotePaths = mutableSetOf<String>()
+        val stalePaths = mutableSetOf<String>()
         var inferredCursor = 0L
-        for (i in 0 until remote.length()) {
-            checkActive()
-            val entry = remote.getJSONObject(i)
-            inferredCursor = maxOf(inferredCursor, entry.optLong("revision"))
-            val path = entry.getString("path")
-            remotePaths += path
-            if (preferHub) db.dropOutboxForTarget(path)
-            val localFile = db.file(path)
-            val localHash = if (localFile.exists()) sha256(localFile) else ""
-            if (localHash == entry.optString("hash")) {
-                if (entry.optString("kind") == "page" && db.pageRevision(path) != entry.optInt("revision")) {
-                    db.rawPage(path)?.let { db.writeSyncedPage(path, it, entry.optInt("revision")) }
+        var snapshotCursor = 0L
+        var remoteCount = 0
+        try {
+            withConnection("GET", "/api/sync/snapshot") { connection ->
+                requireSuccessfulResponse(connection)
+                val declared = connection.contentLengthLong
+                require(declared < 0 || declared <= MAX_SNAPSHOT_BYTES) { "中枢清单超过 256 MB 上限" }
+                connection.inputStream.use { input ->
+                    staged.outputStream().buffered().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var total = 0L
+                        while (true) {
+                            checkActive()
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= MAX_SNAPSHOT_BYTES) { "中枢清单超过 256 MB 上限" }
+                            output.write(buffer, 0, count)
+                        }
+                    }
                 }
-            } else if (entry.optString("kind") == "page") {
-                if (localFile.exists() && db.pageRevision(path) > 0) db.enqueue("page", path)
-                else {
-                    val detail = getJson("/api/sync/page-content?path=${encode(path)}")
-                    db.writeSyncedPage(path, detail.optString("content"), entry.optInt("revision"))
+            }
+            JsonReader(staged.inputStream().bufferedReader(StandardCharsets.UTF_8)).use { reader ->
+                reader.beginObject()
+                while (reader.hasNext()) when (reader.nextName()) {
+                    "entries" -> {
+                        reader.beginArray()
+                        while (reader.hasNext()) {
+                            checkActive()
+                            var kind = ""
+                            var path = ""
+                            var hash = ""
+                            var revision = 0
+                            var distilled = false
+                            reader.beginObject()
+                            while (reader.hasNext()) when (reader.nextName()) {
+                                "kind" -> kind = reader.nextString()
+                                "path" -> path = reader.nextString()
+                                "hash" -> hash = reader.nextString()
+                                "revision" -> revision = reader.nextInt()
+                                "distilled" -> distilled = reader.nextBoolean()
+                                else -> reader.skipValue()
+                            }
+                            reader.endObject()
+                            require(path.isNotBlank() && (kind == "page" || kind == "file")) { "中枢清单条目无效" }
+                            remoteCount++
+                            inferredCursor = maxOf(inferredCursor, revision.toLong())
+                            remotePaths += path
+                            if (preferHub) db.dropOutboxForTarget(path)
+                            val localFile = db.file(path)
+                            val localHash = if (localFile.exists()) sha256(localFile) else ""
+                            if (localHash == hash) {
+                                if (kind == "page" && db.pageRevision(path) != revision) {
+                                    db.rawPage(path)?.let { db.writeSyncedPage(path, it, revision) }
+                                }
+                            } else if (kind == "page") {
+                                if (localFile.exists() && db.pageRevision(path) > 0) db.enqueue("page", path)
+                                else {
+                                    val detail = getJson("/api/sync/page-content?path=${encode(path)}")
+                                    db.writeSyncedPage(path, detail.optString("content"), revision)
+                                }
+                            } else {
+                                if (localFile.exists() && !preferHub) db.enqueue("file", path) else pullFile(path)
+                            }
+                            if (distilled && !db.evidenceDistilled(path)) {
+                                val evidence = getJson("/api/sync/evidence?path=${encode(path)}").optJSONObject("snapshot")
+                                if (evidence != null) db.saveEvidence(path, evidence)
+                            }
+                        }
+                        reader.endArray()
+                    }
+                    "cursor" -> snapshotCursor = reader.nextLong()
+                    "stale" -> {
+                        reader.beginArray()
+                        while (reader.hasNext()) stalePaths += reader.nextString()
+                        reader.endArray()
+                    }
+                    else -> reader.skipValue()
                 }
-            } else {
-                if (localFile.exists() && !preferHub) db.enqueue("file", path) else pullFile(path)
+                reader.endObject()
             }
-            if (entry.optBoolean("distilled") && !db.evidenceDistilled(path)) {
-                val evidence = getJson("/api/sync/evidence?path=${encode(path)}").optJSONObject("snapshot")
-                if (evidence != null) db.saveEvidence(path, evidence)
-            }
+        } finally {
+            staged.delete()
         }
-        val local = db.snapshotEntries()
-        for (i in 0 until local.length()) {
-            val entry = local.getJSONObject(i)
-            if (!remotePaths.contains(entry.getString("path"))) db.enqueue(entry.getString("kind"), entry.getString("path"))
+        var localCount = 0
+        val brainPrefix = db.brain.canonicalPath + File.separator
+        db.brain.walkTopDown().filter { it.isFile && !it.canonicalPath.startsWith(brainPrefix + ".trash" + File.separator) }.forEach { file ->
+            checkActive()
+            localCount++
+            val path = file.canonicalPath.removePrefix(brainPrefix).replace('\\', '/')
+            if (path !in remotePaths && path !in stalePaths) {
+                val kind = if (file.extension.equals("md", true) || file.extension.equals("markdown", true)) "page" else "file"
+                db.enqueue(kind, path)
+            }
         }
         if (advanceCursor) {
-            val snapshotCursor = maxOf(inferredCursor, snapshot.optLong("cursor", inferredCursor))
+            snapshotCursor = maxOf(inferredCursor, snapshotCursor)
             val current = db.setting("sync_cursor")?.toLongOrNull() ?: 0L
             if (snapshotCursor > current) db.setSetting("sync_cursor", snapshotCursor.toString())
         }
-        db.log("info", "reconcile-done", "中枢 ${remote.length()} 项，本地 ${local.length()} 项")
+        db.log("info", "reconcile-done", "中枢 $remoteCount 项，本地 $localCount 项")
     }
 
     private fun pullFile(path: String) {
@@ -259,9 +339,18 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 connection.doOutput = true
                 connection.outputStream.use { it.write(body) }
             }
+            requireSuccessfulResponse(connection)
             val declared = connection.contentLengthLong
             if (declared > MAX_JSON_BYTES) throw JsonResponseTooLarge(declared)
             connection.inputStream.use { readLimited(it, MAX_JSON_BYTES) }
+        }
+    }
+
+    private fun requireSuccessfulResponse(connection: HttpURLConnection) {
+        val status = connection.responseCode
+        if (status !in 200..299) {
+            val error = connection.errorStream?.use { String(readLimited(it, 64 * 1024L), StandardCharsets.UTF_8).take(200) }.orEmpty()
+            throw IllegalStateException("中枢返回 $status：$error")
         }
     }
 
@@ -311,6 +400,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 FileInputStream(file).use { it.copyTo(output, 64 * 1024) }
                 line(""); line("--$boundary--")
             }
+            requireSuccessfulResponse(connection)
             connection.inputStream.use { readLimited(it, MAX_JSON_BYTES) }
         }
     }
@@ -346,6 +436,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     companion object {
         private const val MAX_FILE_BYTES = 200L * 1024 * 1024
         private const val MAX_JSON_BYTES = 8L * 1024 * 1024
+        private const val MAX_SNAPSHOT_BYTES = 256L * 1024 * 1024
         private const val CHANGE_BATCH = 20
     }
 }

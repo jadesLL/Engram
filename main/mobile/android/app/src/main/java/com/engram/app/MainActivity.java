@@ -6,12 +6,18 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
+import android.graphics.Color;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.TextView;
 import android.webkit.CookieManager;
 import android.webkit.URLUtil;
 import android.webkit.WebView;
 import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
+import androidx.core.splashscreen.SplashScreen;
 
 import com.getcapacitor.BridgeActivity;
 
@@ -30,13 +36,20 @@ public class MainActivity extends BridgeActivity {
     private static final int REQUEST_CREATE_DOCUMENT = 18182;
 
     private boolean forceSelectServer = false;
+    private volatile boolean activityForeground = false;
+    private volatile boolean startupSurfaceReady = false;
+    private View startupOverlay;
     private int localNavigationGeneration = 0;
     private String pendingDownloadUrl;
     private String pendingDownloadCookie;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
+        splashScreen.setKeepOnScreenCondition(() -> !startupSurfaceReady);
         super.onCreate(savedInstanceState);
+        showStartupOverlay();
+        startupSurfaceReady = true;
         String previousCrash = CrashReporter.consume(getApplicationContext());
         CrashReporter.install(getApplicationContext());
 
@@ -47,15 +60,6 @@ public class MainActivity extends BridgeActivity {
         }
 
         forceSelectServer = ACTION_SELECT_SERVER.equals(getIntent().getAction());
-        Throwable startupError = null;
-        try {
-            EngramLocalServer localServer = EngramLocalServer.getInstance(getApplicationContext());
-            localServer.start();
-            localServer.migrateLegacyRemoteUrl();
-        } catch (Throwable error) {
-            startupError = error;
-        }
-
         // 注册晚于 App 插件的回调（后加入者优先生效）：
         // 可后退则网页后退，否则退到后台（不销毁 Activity，保留登录态）
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -73,11 +77,11 @@ public class MainActivity extends BridgeActivity {
         setupDownloads();
         handleIncomingShare(getIntent());
 
-        // 不与 Capacitor 首次导航竞争：只有 /health 确认可访问后才切换到本机 HTTP 服务。
+        // 先绘出启动说明；服务启动与文件索引随后在工作线程完成。
         WebView webView = bridge != null ? bridge.getWebView() : null;
+        final int startupGeneration = localNavigationGeneration;
         if (webView != null) {
-            if (startupError == null) loadLocalWhenReady(webView, forceSelectServer);
-            else showStartupError(webView, startupError.getMessage());
+            webView.loadDataWithBaseURL(null, startupHtml("正在启动本地知识库…", false), "text/html", "UTF-8", null);
             if (previousCrash != null) {
                 webView.postDelayed(() -> new AlertDialog.Builder(this)
                         .setTitle("检测到上次闪退")
@@ -86,13 +90,33 @@ public class MainActivity extends BridgeActivity {
                         .show(), 800);
             }
         }
+        // 文件库启动会扫描 Markdown 与附件；大库可能耗时数秒，不能阻塞 Activity 首帧。
+        new Thread(() -> {
+            try {
+                EngramLocalServer localServer = EngramLocalServer.getInstance(getApplicationContext());
+                localServer.start();
+                localServer.migrateLegacyRemoteUrl();
+                if (activityForeground) localServer.onForeground();
+                runOnUiThread(() -> {
+                    if (webView != null && startupGeneration == localNavigationGeneration && !isFinishing()) {
+                        loadLocalWhenReady(webView, forceSelectServer);
+                    }
+                });
+            } catch (Throwable error) {
+                runOnUiThread(() -> {
+                    if (webView != null && !isFinishing()) showStartupError(webView, error.getMessage());
+                });
+            }
+        }, "engram-local-start").start();
     }
 
     @Override
     public void onStart() {
         super.onStart();
+        activityForeground = true;
         try {
-            EngramLocalServer.getInstance(getApplicationContext()).onForeground();
+            EngramLocalServer localServer = EngramLocalServer.peek();
+            if (localServer != null) localServer.onForeground();
         } catch (Throwable error) {
             WebView webView = bridge != null ? bridge.getWebView() : null;
             if (webView != null) showStartupError(webView, error.getMessage());
@@ -101,8 +125,10 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onStop() {
+        activityForeground = false;
         try {
-            EngramLocalServer.getInstance(getApplicationContext()).onBackground();
+            EngramLocalServer localServer = EngramLocalServer.peek();
+            if (localServer != null) localServer.onBackground();
         } catch (Throwable ignored) {
             // 本地服务未完成初始化时没有需要取消的同步请求。
         }
@@ -136,7 +162,10 @@ public class MainActivity extends BridgeActivity {
                     connection.setUseCaches(false);
                     if (connection.getResponseCode() == 200) {
                         runOnUiThread(() -> {
-                            if (generation == localNavigationGeneration && !isFinishing()) webView.loadUrl(target);
+                            if (generation == localNavigationGeneration && !isFinishing()) {
+                                webView.loadUrl(target);
+                                waitForPageSurface(webView, generation, 0);
+                            }
                         });
                         return;
                     }
@@ -160,8 +189,25 @@ public class MainActivity extends BridgeActivity {
         }, "engram-local-health").start();
     }
 
+    /** Vue 首次渲染完成后才收起原生加载层，避免 WebView 的纯白首帧。 */
+    private void waitForPageSurface(WebView webView, int generation, int attempt) {
+        webView.postDelayed(() -> {
+            if (generation != localNavigationGeneration || isFinishing()) return;
+            if (attempt >= 100) {
+                showStartupError(webView, "页面未能显示，请点此重试");
+                return;
+            }
+            webView.evaluateJavascript("(function(){var root=document.getElementById('app');return location.hostname==='127.0.0.1' && !!root && root.childElementCount>0})()", result -> {
+                if (generation != localNavigationGeneration || isFinishing()) return;
+                if ("true".equals(result)) hideStartupOverlay();
+                else waitForPageSurface(webView, generation, attempt + 1);
+            });
+        }, 200);
+    }
+
     private void showStartupError(WebView webView, String detail) {
         ++localNavigationGeneration;
+        hideStartupOverlay();
         String safeDetail = detail == null ? "未知错误" : detail.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
         webView.loadDataWithBaseURL(
                 EngramLocalServer.BASE_URL,
@@ -170,6 +216,33 @@ public class MainActivity extends BridgeActivity {
                 "UTF-8",
                 null
         );
+    }
+
+    private void showStartupOverlay() {
+        FrameLayout root = findViewById(android.R.id.content);
+        if (root == null) return;
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.rgb(248, 250, 252));
+        overlay.setClickable(true);
+        TextView label = new TextView(this);
+        label.setText("Engram Local\n正在启动本地知识库…");
+        label.setTextColor(Color.rgb(71, 85, 105));
+        label.setTextSize(17);
+        label.setGravity(Gravity.CENTER);
+        label.setLineSpacing(8, 1);
+        overlay.addView(label, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        root.addView(overlay, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        startupOverlay = overlay;
+    }
+
+    private void hideStartupOverlay() {
+        if (startupOverlay != null) {
+            View overlay = startupOverlay;
+            startupOverlay = null;
+            if (overlay.getParent() instanceof FrameLayout) ((FrameLayout) overlay.getParent()).removeView(overlay);
+        }
     }
 
     private String startupHtml(String message, boolean isError) {

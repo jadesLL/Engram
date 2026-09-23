@@ -176,6 +176,7 @@ import SettingsGroup from './SettingsGroup.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 import SecretField from '../SecretField.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
+import { useSyncStore } from '../../stores/sync';
 
 interface PeerView {
   id: string;
@@ -313,6 +314,7 @@ async function postConfig(body: Record<string, unknown>, okMsg: string): Promise
     if (res.data?.ok) {
       notify.success(okMsg);
       await loadStatus();
+      await useSyncStore().refresh();
       // Android 是否可用服务器 Agent 取决于成员绑定；保存后立即刷新能力，
       // 不要求用户杀进程或重新打开 WebView。
       await loadCapabilities(true);
