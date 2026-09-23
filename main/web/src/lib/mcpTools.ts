@@ -125,6 +125,14 @@ export const MCP_TOOLS: McpToolDoc[] = [
     cli: 'engram files read <路径> [--raw]',
   },
   {
+    name: 'create_raw_material',
+    group: '写',
+    summary: '把已完成的调研结果新建为 原始资料/ 下的 Markdown 来源文件；已有文件拒绝覆盖。',
+    params: 'path 新文件路径（必填，如 原始资料/调研/市场分析.md）；content 完整 Markdown 正文（必填，不含 YAML frontmatter）。',
+    notes: '仅在用户明确要求保存调研结果时调用；不允许改已有文件，且 原始资料/对话/ 与 原始资料/收集箱/ 保留给各自流程。正文应列出调研来源与引用。',
+    cli: '（CLI 未提供，仅 MCP）',
+  },
+  {
     name: 'kb_guide',
     group: '读',
     summary: '下发《Engram 知识库 Agent 作业指南》全文：知识库结构、八阶段提炼流程、页面契约与证据门禁规则。',

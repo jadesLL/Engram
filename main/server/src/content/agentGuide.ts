@@ -32,7 +32,7 @@ Engram 不内置任何 AI——读、写、提炼、综合全部由你（外部 
 
 ## 一、知识库结构
 
-- 原始资料/ —— 用户上传的原始文件与对话沉积（md/docx/xlsx/pptx/pdf…）。非 md 文件由 Engram 提取文本层；无文字层的 PDF 页保留原样，需你具备视觉能力自行阅读。
+- 原始资料/ —— 用户上传的原始文件、用户明确要求保存的 Agent 调研 Markdown 与对话沉积（md/docx/xlsx/pptx/pdf…）。非 md 文件由 Engram 提取文本层；无文字层的 PDF 页保留原样，需你具备视觉能力自行阅读。
 - 图片 —— 图片**不是**原始资料，而是某个 md 父项（Wiki 页面或原始资料 md）的**私有资产**：没有全局图片清单，也不会出现在 list_raw_files / list_pages / 目录树里。正文中以 \`/media/<父项id>/<文件名>\` 引用；要看原图就把该引用原样传给 read_page_asset（图片以 image 内容返回）。用户不能把图片当独立资料上传，你也不需要为图片建页。
 - Wiki/概念/ —— 概念页（方法论、标准、技术、理念等抽象对象）。
 - Wiki/实体/ —— 实体页（人物 person、客户 customer、组织 org、项目 project、其他 other 五类，目录不分家，类型写在 frontmatter type）。
@@ -52,6 +52,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 - page_evidence —— 读页面的证据账本（来源、版本、事实引文）
 - list_raw_files —— 原始资料清单（含提取状态与已提炼标记；pending=true 只返回未提炼文件）
 - read_raw_file —— 读原始资料：有文本层返回提取文本；图片/PDF 返回 base64（供视觉模型自行阅读）
+- create_raw_material —— 将已完成的调研结果新建为 原始资料/ 下的 Markdown 来源文件；仅在用户明确要求保存调研结果时调用，路径必须是新路径，已有文件拒绝覆盖。正文应保留调研来源与引用；原始资料/对话/ 专供 save_chat，原始资料/收集箱/ 专供用户确认入库。
 - read_page_asset —— 读页面/资料正文里引用的图片原图（传正文里的 \`/media/<父项id>/<文件名>\` 引用，图片以 image 内容返回）
 - list_inbox —— 收集箱（收集箱/）清单：用户拖进来的待整理原件与各自的转换状态
 - read_inbox_item —— 读收集箱里的一份原件（图片以 image 内容返回；PDF/Office 给文字层）
@@ -66,7 +67,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 - rename_page —— 重命名页面：文件随标题移动、[[旧标题]] 双链自动重定向，页面 ID 与图谱边保持不变
 - move_page —— 移动页面到 Wiki 树内其他目录（页面 ID 与图谱边保持不变，可顺带改标题）
 - delete_page —— 把单个 Wiki/ 页面移入回收站（软删除、可恢复；AIWorks 不可删，且无永久删除/清空回收站能力）
-- save_chat —— 把外部对话沉积到 原始资料/对话/（**须用户指示**，见操作纪律 4）
+- save_chat —— 把与 Agent 的聊天记录沉积到 原始资料/对话/（**须用户指示**，见操作纪律 4；它保存聊天记录，不用于保存调研报告）
 - kb_guide —— 输出本指南全文
 - skill_list —— 列出服务端内置的作业 skill 元数据（名称/用途/何时用/版本），不含正文
 - skill_guide —— 按名取一份 skill 的全文（名称见 skill_list）
@@ -74,7 +75,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 ## 三、操作纪律
 
 1. 动手前先 read_page 读 AIWorks/log/log.md 了解最近状态；写操作完成后服务端会自动追加日志（Agent 写入/Agent 更新页面/对话沉积等），你无需重复记录，只在你执行了合并、批量重整等复合动作时才用 write_page 手工补一条动作说明。
-2. **原始资料对 Agent 是只读区——你没有写权限**：write_page / rename_page / move_page / delete_page 只允许 Wiki/ 下的页面。软件本身具备上传、新建、删除原始资料的能力（Web 界面与 REST API），但那属于**用户的操作**：你不得走 HTTP/CLI 旁路自行写入，权限不等于授权。作业时需要的资料不在库里，就按现有材料推进、把缺口写进页面的「待核实」，不要停下来等用户。
+2. **原始资料默认只读，唯一的 Agent 创建入口是 create_raw_material**：只有用户明确要求保存调研结果时，才可用它在 原始资料/ 下新建 Markdown 文件；它拒绝覆盖已有路径，也不能写 原始资料/对话/ 或 原始资料/收集箱/。write_page / rename_page / move_page / delete_page 仍只允许操作 Wiki/ 页面。不得走 HTTP/CLI 旁路写原始资料。用户没要求保存且资料不在库里时，按现有材料推进、把缺口写进页面的「待核实」，不要停下来等用户。
 3. 证据门禁报「来源必须在 原始资料/ 下」时，说明引文来源不在库内：跳过这条事实（或改用库内来源支撑），把缺口记进「待核实」，不要自己找旁路把文件塞进去。
 4. **对话沉积（save_chat）须用户指示**：用户明确说"沉淀"才沉淀，不要自行判断"这段对话有价值"就写。已沉淀的对话属于原始资料，**可以**被后续作业提炼引用。
 5. 误建的页面用 delete_page（CLI：pages delete）删除，只入回收站、可恢复；AIWorks 不可删，也不存在永久删除/清空回收站的入口。删除是纠错手段而非整理手段：已有页面优先增量改写，不要反复删建；确需改名/换目录时用 rename_page / move_page（CLI：pages rename|move），不要「新建+删除」——那会换掉页面 ID 并让引用双链悬空。
