@@ -11,7 +11,7 @@
 ```
 你导入资料 ──► Engram 存储并提取文本层（PDF 文字层 / Office / md）
                     │
-外部 Agent ◄───────┤  MCP 21 工具 或 engram CLI（同一 Bearer Token）
+外部 Agent ◄───────┤  MCP 26 工具 或 engram CLI（同一 Bearer Token）
 （ZCode/Codex/…）   ▼
               按指南作业：Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit
                     │
@@ -58,7 +58,7 @@
 - **API 地址可自定义**：地址留空走 DeepSeek 官方（`api.deepseek.com`）；填中转站或自建网关（`openai-completions` / `openai-responses` / `anthropic-messages` 三种协议）即改用该地址与它自己的模型名——地址与模型清单写进内置 dsh 的 `data/dsh/settings.yaml`（dsh 的 `llm-pi-ai` 自定义 provider 路由，不含 Key），改完下一次对话即生效（池里的旧运行时按旧路由跑，会自动重开）；自动更名的总结请求也走同一条路由
 - **会话与桌面/Docker 一致**：会话、消息、思考段、标题来源存本机库（`assistant_*` 表，`assistant_sessions.title_source` 区分默认 / 自动 / 手动命名），dsh 自身的会话日志随 `data/dsh/` 走持久卷，续聊不丢上下文
 
-### 🧠 面向 Agent 的 MCP 接口（24 工具）
+### 🧠 面向 Agent 的 MCP 接口（26 工具）
 
 在 设置 → Agent 接入 →「其他 Agent（MCP 接入）」生成 Token（`Authorization: Bearer`，MCP/CLI/REST 三用），streamable HTTP 端点 `/mcp`：
 
@@ -69,6 +69,7 @@
 | `related_pages` | 读页面图谱关联（入链/出链邻居与实体关系，与编辑器「相关页面」同一数据） |
 | `page_evidence` | 读页面证据账本（来源、版本、事实与逐字引文） |
 | `list_raw_files` / `read_raw_file` | 原始资料清单（含提取状态与「已提炼」标记；`pending=true` 只列未提炼文件）与读取；图片/PDF 返回原图（image 内容）供视觉 Agent 自行识别 |
+| `create_raw_material` | 用户明确要求保存调研结果时，在 `原始资料/` 下新建 Markdown 来源文件；目标已存在即拒绝，不覆盖；聊天记录仍用 `save_chat` |
 | `read_page_asset` | 读页面/资料正文里引用的图片原图（传正文里的 `/media/<父项id>/<文件名>` 引用，图片以 image 内容返回） |
 | `list_inbox` / `read_inbox_item` | 收集箱清单与读取：用户拖进来的待整理原件（图片以 image 内容返回）。**收集箱不属于知识库**，这些内容不得作为事实依据或证据 |
 | `write_inbox_markdown` | 把原件的语义转换结果写成 Markdown，落到 `收集箱/转换结果/`（仍不进知识库；入库由用户在界面上确认） |
@@ -76,7 +77,7 @@
 | `rename_page` | 重命名页面：文件随标题移动、`[[旧标题]]` 双链自动重定向，页面 ID 与图谱边保持不变 |
 | `move_page` | 移动页面到 `Wiki/` 树内其他目录（页面 ID 与图谱边保持不变，可顺带改标题） |
 | `delete_page` | 单页软删除入回收站（可恢复，按标题 / ID / 路径定位）；只允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 拒删，无永久删除/清空回收站能力 |
-| `save_chat` | 对话沉积到 `原始资料/对话/`（**须用户明确指示**才可调用） |
+| `save_chat` | 与 Agent 的聊天记录沉积到 `原始资料/对话/`（**须用户明确指示**才可调用；不用于保存调研报告） |
 | `entity_name_check` | 公司全名核验：名称不是工商全名、资料库里也查不到时登记——**全库唯一允许问用户的事**，但问在对话里（服务端先在页面标题 / 证据账本 / 原始资料 / 正文写明全名的提法里自查，有全名就直接返回、不问用户；正文里带「待核实/候选」标记的写法只算未核实候选） |
 | `entity_name_answer` | 回填用户在对话里给出的核验答复（`allow` / `deny`）：允许联网查询，或同意改用全名（同意即**由服务端改名**） |
 | `entity_name_propose` | 回填 Agent 联网查到的工商全名（企查查 / 天眼查），随后再问一次是否改用全名（保持页面 ID、双链重定向、自动记日志）；查不到就不传 `fullName` |

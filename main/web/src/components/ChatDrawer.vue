@@ -1018,6 +1018,7 @@ const TOOL_ICONS: Record<string, string> = {
   list_pages: 'pages',
   list_raw_files: 'folder',
   read_raw_file: 'file',
+  create_raw_material: 'file-plus',
   write_page: 'file-plus',
   page_evidence: 'report',
   related_pages: 'graph',

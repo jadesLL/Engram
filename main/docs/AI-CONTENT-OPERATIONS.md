@@ -16,10 +16,10 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
 - **一键接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 接入直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；远程部署仍用 MCP 配置片段或 `engram login`。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
-- **只读区服务端强制**：Agent 的写入（`write_page`）与页面操作（`rename_page` / `move_page` / `delete_page` 及对应 CLI 子命令）只允许 `Wiki/` 下的页面，`原始资料/` 与 `AIWorks/` 是只读区，越界一律 403 拒绝。
-  - 「只读」约束的是 **Agent 的权限**，不等于文件不可改：软件本身（Web 界面与 REST API）具备上传、新建、删除原始资料的能力，那是**用户的操作**。Agent 没有写权限，也不得走 HTTP/CLI 旁路自行写入。权限不等于授权。
-  - 作业时需要的资料不在库里：按现有材料推进，把缺口写进页面的「待核实」，**不要停下来等用户**。证据门禁报「来源必须在 `原始资料/` 下」时同理——跳过这条事实（或改用库内来源支撑）并记进「待核实」，不要自己找旁路把文件塞进去。
+- **原始资料受限新建**：`create_raw_material` 是唯一允许 Agent 新建原始资料的 MCP 工具，只能新建 `原始资料/` 下的 Markdown 文件；路径已存在（含回收站占位）即拒绝，且不能写 `原始资料/对话/`。仅在用户明确要求保存调研结果时调用。Agent 不得更新、改名、删除既有原始资料，也不得走 HTTP/CLI 旁路。`AIWorks/` 只读；`write_page` / `rename_page` / `move_page` / `delete_page` 仍只允许 `Wiki/`。
+  - 作业时需要的资料不在库里且用户没有要求保存调研结果时：按现有材料推进，把缺口写进页面的「待核实」，**不要停下来等用户**。证据门禁报「来源必须在 `原始资料/` 下」时同理——跳过这条事实（或改用库内来源支撑）并记进「待核实」，不要自己找旁路把文件塞进去。
 - **对话沉积须用户指示**：`save_chat`（CLI `chat save`）只在用户明确说「沉淀」后才可执行；Agent 不得自行判断「这段对话有价值」就沉淀。已沉淀的对话属于原始资料，**可以**被后续提炼作业引用——卡的是「谁决定沉淀」，不是「沉淀后能不能用」。
+- **调研资料与对话分开保存**：用户明确要求保存调研成果时，用 `create_raw_material` 创建新 Markdown 文件并在正文列出来源；它不覆盖现有文件。`save_chat` 只保存与 Agent 的聊天记录到 `原始资料/对话/`，两者不能互相替代。
 - **内置 skill 按需下发**：`skill_list`（MCP）列服务端内置的作业 skill 元数据（名称 / 用途 / 何时用 / 版本），`skill_guide` 按名取全文。skill 与《Agent 作业指南》同级、同样由服务端内置经 MCP 下发（Agent 读的是工具返回值，不是安装目录文件）；区别是**按需**——清单只回元数据，需要时才取正文，因此 skill 增多不会一次性灌满上下文。skill 版本独立于 `GUIDE_VERSION`，改 skill 不改抽取口径、**不触发全库「规则落后」**；skill 仅服务端内置，不开放用户自定义。新增 skill 时同步 `web/src/lib/mcpTools.ts`（Agent 接入界面清单）与本文。
 - **删除只入回收站**：`delete_page`（MCP）与 `engram pages delete`（CLI）只做软删除，把单个页面移入回收站（按标题 / 页面 ID / 页面路径定位；用户可在 设置 → 数据与存储 → 回收站 恢复）；也不提供永久删除或清空回收站能力。
 - **改名/移动不换 ID**：`rename_page` / `move_page`（CLI `pages rename|move`）保持页面 ID 与图谱边；重命名会把其他页面引用的 `[[旧标题]]` 双链重定向。不要用「新建+删除」模拟改名——那会产生新页面 ID 并让引用悬空。
@@ -45,8 +45,8 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 ## 操作日志
 
 - **位置**：`data/brain/AIWorks/log/log.md`（frontmatter 标题「操作日志」；历史版本在 `Wiki/log.md`，升级启动时自动迁移），时间倒序，新条目插在 `# 操作日志` 标题正下方：`- YYYY-MM-DD HH:MM:SS 动作：细节`。服务端启动时自动预置该文件，新知识库亦可直接读取。
-- **写操作自动记录**：Agent 经 `write_page` / `/api/agent/page` / `rename_page` / `move_page` / `delete_page` / `save_chat` 的写入由**服务端自动追加**日志，Agent 无需重复记录；只有合并、批量重整等复合动作才用 `write_page` 手工补一条动作说明。
-- **原始不提炼**：`原始资料/` 下的对话、纪要和文件保持原样，Agent 的产出写到 `Wiki/`；日志条目保持一行式，不蒸馏、不汇总。
+- **写操作自动记录**：Agent 经 `write_page` / `/api/agent/page` / `rename_page` / `move_page` / `delete_page` / `create_raw_material` / `save_chat` 的写入由**服务端自动追加**日志，Agent 无需重复记录；只有合并、批量重整等复合动作才用 `write_page` 手工补一条动作说明。
+- **原始不提炼**：`原始资料/` 下的对话、纪要、文件与用户授权保存的调研稿保持原样；提炼后的知识写到 `Wiki/`；日志条目保持一行式，不蒸馏、不汇总。
 
 ## 证据账本与门禁（服务端强制）
 
@@ -76,6 +76,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - 内置 skill 单一来源：`server/src/content/skills/`（注册表 `index.ts`）
 - Agent 接入界面的工具清单：`web/src/lib/mcpTools.ts`（新增/改名工具时三处同步：`server/src/mcp/server.ts` 注册、`web/src/lib/mcpTools.ts` 界面清单、本文）
 - Agent 写入门禁与账本：`server/src/pipeline/agentWrite.ts`
+- Agent 调研原始资料只新建入口：`server/src/pipeline/rawMaterial.ts`
 - 收集箱边界判定与语义转换：`server/src/lib/brainPaths.ts`（唯一判定来源）、`server/src/pipeline/inboxConvert.ts`（转换与入库）、`server/src/routes/inbox.ts`（界面接口）
 - Agent 单页删除内核（只入回收站 + Wiki/ 守卫）：`server/src/pipeline/agentDelete.ts`
 - 公司全名核验通道内核（资料库自查 + 两轮问答状态机 + 服务端改名）：`server/src/lib/entityNameChecks.ts`（表 `entity_name_checks`；CLI/脚本用 REST `server/src/routes/entityNames.ts`；问答在对话里——内置 Agent 经 MCP `ask_user` 弹底部选项，答复经 `entity_name_answer` 回填）

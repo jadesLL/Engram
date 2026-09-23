@@ -1,6 +1,6 @@
 import type { SkillDoc } from './types.js';
 
-export const SKILL_VERSION = 3;
+export const SKILL_VERSION = 4;
 
 /**
  * 知识库入库纪律。
@@ -10,20 +10,21 @@ export const SKILL_VERSION = 3;
  * （内置 Agent 用 ask_user 弹底部选项，外部 Agent 用自己的提问能力）→ entity_name_answer 回填答复
  * → 用户允许后联网查企查查/天眼查 → entity_name_propose 回填 → 再问一次，同意后服务端改名；
  * 其余信息一律不打断用户。
+ * v4：新增 create_raw_material，仅在用户明确要求保存调研结果时创建全新 Markdown 原始资料；不覆盖已有文件，聊天记录仍走 save_chat。
  */
 export const SKILL: SkillDoc = {
   name: 'kb-ingest-discipline',
   title: '知识库入库纪律',
-  description: '沉淀对话、建页删页前的顺序纪律，以及证据门禁被拒、拿不准时的自主处理口径。',
-  whenToUse: '准备向知识库写入任何内容（save_chat、write_page、删除页面）或遇到门禁/资料缺口之前。',
+  description: '保存对话或调研资料、建页删页前的顺序纪律，以及证据门禁被拒、拿不准时的自主处理口径。',
+  whenToUse: '准备使用 create_raw_material、save_chat、write_page 或删除页面，或遇到门禁/资料缺口之前。',
   version: SKILL_VERSION,
   body: `# 知识库入库纪律
 
-## 一、原始资料：Agent 没有写权限
-- \`原始资料/\` 与 \`AIWorks/\` 是只读区：Agent 的 \`write_page\` / \`rename_page\` / \`move_page\` / \`delete_page\` 只允许 \`Wiki/\` 下的页面。
-- 但要注意**软件本身**具备上传、新建、删除原始资料的能力（Web 界面与 REST API）。
-  「只读」约束的是 **Agent 的权限**，不是文件不可改——**不得因此走 HTTP 旁路**。
-- 作业时需要的资料不在库里：按现有材料推进，把缺口写进页面的「待核实」，**不要停下来等用户**，更不得自行写入资料区。
+## 一、原始资料：默认只读，调研写入受限
+- \`AIWorks/\` 对 Agent 只读；\`write_page\` / \`rename_page\` / \`move_page\` / \`delete_page\` 只允许操作 \`Wiki/\`。
+- 用户明确要求保存调研结果时，才可调用 \`create_raw_material\` 在 \`原始资料/\` 下新建 Markdown；已有路径一律拒绝覆盖，也不能写 \`原始资料/对话/\` 或 \`原始资料/收集箱/\`。调研正文应包含来源和引用，方便之后核验。
+- \`save_chat\` 专门保存与 Agent 的聊天记录到 \`原始资料/对话/\`；不要用它保存调研成果，也不要用 \`create_raw_material\` 保存聊天记录。
+- 不得走 HTTP/CLI 旁路写资料区。用户未要求保存、而作业需要的资料不在库里时，按现有材料推进，把缺口写进页面的「待核实」，**不要停下来等用户**。
 - 权限 ≠ 授权：即使运行环境给了完整文件权限，也不代表可以自行写入用户的资料区。
 
 ## 二、证据门禁被拒怎么办

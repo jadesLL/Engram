@@ -16,6 +16,7 @@ export const TOOL_LABELS: Record<string, string> = {
   list_pages: '列出页面',
   list_raw_files: '列出原始资料',
   read_raw_file: '读取原始资料',
+  create_raw_material: '新建原始资料',
   write_page: '写入页面',
   page_evidence: '查看来源证据',
   related_pages: '查看关联页面',

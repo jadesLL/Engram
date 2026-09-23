@@ -29,6 +29,7 @@ import { assetMime, isAssetFile, isParentId, parseMediaUrl, safeAssetJoin } from
 import { isInboxPath, isInboxDerivedPath } from '../lib/brainPaths.js';
 import { listInboxItems } from '../lib/inboxItems.js';
 import { capabilityHint, extractInboxText, writeInboxMarkdown } from '../pipeline/inboxConvert.js';
+import { createRawMaterial, RawMaterialWriteError } from '../pipeline/rawMaterial.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
@@ -37,9 +38,8 @@ import { capabilityHint, extractInboxText, writeInboxMarkdown } from '../pipelin
  * + 写工具（write_page 带证据门禁与自动日志 / rename_page / move_page / delete_page 软删除入回收站 /
  * save_chat 对话沉积 / entity_name_check 登记公司全名核验 / entity_name_answer 回填用户答复 /
  * entity_name_propose 回填全名 / ask_user 内置 Agent 在对话里问用户并等点选 /
- * write_inbox_markdown 写收集箱原件的转换产物）。
- * 全部写操作只允许 Wiki/（收集箱产物写在 收集箱/转换结果/，仍不属于知识库），
- * 原始资料与 AIWorks 对 Agent 是只读区。
+ * write_inbox_markdown 写收集箱原件的转换产物 / create_raw_material 只新建调研原始资料）。
+ * 页面编辑操作只允许 Wiki/；create_raw_material 是唯一新建原始资料的例外，拒绝覆盖已有文件。
  * 作业方法论见 kb_guide；按需作业手法见 skill_list / skill_guide。
  */
 
@@ -48,7 +48,7 @@ const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，�
 提炼作业收到指令后自动索引待提炼清单（CLI engram files list --pending，或 list_raw_files 传 pending=true），然后逐份串行处理：读一份、write_page 提交成功，再处理下一份，不要批量读完统一写页。
 任何写操作前先读 AIWorks/log/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
 新建 概念/实体 页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条引文），已有页面增量不受限。
-原始资料与 AIWorks 对 Agent 是只读区：写工具只能写 Wiki/。软件本身具备上传/新建/删除原始资料的能力，但那是用户的操作——你没有写权限，也不得走 HTTP 旁路自行写入；作业时需要的资料不在库里就按现有材料推进，把缺口写进页面的「待核实」，不要卡住整批作业。
+AIWorks 对 Agent 是只读区；页面写入与改名/移动/删除只允许 Wiki/。用户明确要求保存调研结果时，可调用 create_raw_material 在 原始资料/ 下创建新的 Markdown 来源文件；目标路径已存在、路径无效或写入 原始资料/对话/ 时拒绝，绝不覆盖。不得走 HTTP 旁路写原始资料；需要的资料不在库里且用户没要求保存时，按现有材料推进，把缺口写进页面的「待核实」。
 图片是 md 父项的私有资产：没有全局图片清单，图片也不会出现在 list_raw_files / list_pages 里。页面正文里以 \`/media/<父项id>/<文件名>\` 引用，需要看图时把该引用原样传给 read_page_asset（图片以 image 内容返回）。图片不能作为原始资料上传，你也不需要为它建页。
 对话沉积（save_chat）只在用户明确指示后执行；不要自行判断"这段对话有价值"就沉淀。已沉淀的对话属于原始资料，可被后续提炼引用。
 资料里查不到、又必须有个说法时（同名主体区分、客户身份口径等）：能自查的先自查（search 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据——不编造、不空等。
@@ -601,6 +601,31 @@ export function makeServer(): McpServer {
       } catch (error) {
         if (error instanceof AgentPageError) {
           return { content: [{ type: 'text', text: `移动被拒绝：${error.message}` }], isError: true };
+        }
+        throw error;
+      }
+    }
+  );
+
+  server.tool(
+    'create_raw_material',
+    '把已完成的调研结果新建为 原始资料/ 下的 Markdown 来源文件（只创建，不覆盖；聊天记录请用 save_chat）。',
+    {
+      path: z.string().describe('新文件路径，如 原始资料/调研/市场分析.md；不能使用已存在路径、原始资料/对话/ 或 原始资料/收集箱/'),
+      content: z.string().describe('完整 Markdown 正文，不含 YAML frontmatter；建议在正文中列明调研来源与引用。'),
+    },
+    async ({ path: target, content }) => {
+      try {
+        const result = createRawMaterial({ path: target, content });
+        return {
+          content: [{
+            type: 'text',
+            text: `已新建原始资料：${result.path}（${result.title}，id: ${result.id}）。该文件可用 list_raw_files / read_raw_file 查看；已有文件不会被覆盖。`,
+          }],
+        };
+      } catch (error) {
+        if (error instanceof RawMaterialWriteError) {
+          return { content: [{ type: 'text', text: `新建原始资料失败：${error.message}` }], isError: true };
         }
         throw error;
       }

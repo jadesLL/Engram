@@ -86,10 +86,12 @@ test('MCP instructions 指向 skill 工具并声明对话沉积触发条件', as
   assert.match(instructions, /save_chat/);
 });
 
-test('指南正文：原始资料口径为「Agent 无写权限 + 不停下来等用户」，且沉淀须指示', async () => {
+test('指南正文：原始资料仅允许用户授权的新建调研入口，且对话沉淀须指示', async () => {
   const result = await callTool('kb_guide');
   assert.equal(result.isError, false, result.text);
-  assert.match(result.text, /没有写权限/);
+  assert.match(result.text, /create_raw_material/);
+  assert.match(result.text, /拒绝覆盖已有路径/);
+  assert.match(result.text, /原始资料\/对话\/ 专供 save_chat/);
   assert.match(result.text, /不要停下来等用户/);
   assert.match(result.text, /待核实/);
   assert.match(result.text, /不得走 HTTP\/CLI 旁路/);
