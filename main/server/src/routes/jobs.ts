@@ -10,6 +10,7 @@ const KIND_LABELS: Record<string, string> = {
   extract_file: '文档提取',
   metagen: '索引生成',
   rebuild: '重建全部索引',
+  inbox_convert: '收集箱转换',
 };
 
 function safeJson(value: unknown, fallback: any = null) {

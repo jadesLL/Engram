@@ -19,8 +19,39 @@ export interface InboxItem {
   size: number;
   mtime: number;
   category: string;
-  status: 'pending' | 'converted';
+  status: 'pending' | 'converting' | 'converted' | 'failed';
+  /** 转换产物的 vault 路径；为 null 表示还没有产物 */
   derivedPath: string | null;
+  /** 服务端对这个格式的转换能力：office/pdf/text 能转，agent-only/unsupported 不能 */
+  capability: 'office' | 'pdf' | 'text' | 'agent-only' | 'unsupported';
+  /** 不能转换时的原因（可直接显示给用户）；能转时是空串 */
+  hint: string;
+  /** 最近一次转换失败的原因 */
+  error: string;
+  /** 转换任务 id；null 表示这份文件还没有转换任务 */
+  jobId: number | null;
+}
+
+/** POST /api/inbox/convert 的回执：哪些进了队列、哪些被跳过及原因 */
+export interface InboxConversion {
+  queued: { path: string; jobId: number }[];
+  skipped: { path: string; reason: string }[];
+}
+
+/** GET /api/inbox/derived 的产物：转换出的 Markdown 全文 */
+export interface InboxDerived {
+  path: string;
+  derivedPath: string;
+  markdown: string;
+  chars: number;
+}
+
+/** POST /api/inbox/adopt 的结果：产物在知识库里的落点 */
+export interface InboxAdoption {
+  pageId: string;
+  pagePath: string;
+  pageTitle: string;
+  source: string;
 }
 
 export interface InboxCounts {
@@ -45,6 +76,11 @@ export const useInboxStore = defineStore('inbox', () => {
   const loaded = ref(false);
   const error = ref('');
   const uploading = ref<InboxUpload[]>([]);
+  /**
+   * 本会话内已入库的路径。服务端没有「已入库」这个状态——入库后原件仍在收集箱里，
+   * 重新扫描也看不出区别，所以只在本地记住，用来拦住同一行的重复入库。
+   */
+  const adopted = ref<Set<string>>(new Set());
 
   const pendingItems = computed(() => items.value.filter((item) => item.status === 'pending'));
 
@@ -99,9 +135,41 @@ export const useInboxStore = defineStore('inbox', () => {
     return { saved, skipped };
   }
 
+  /**
+   * 排队转换：paths 指定文件，'all' 交给服务端自己挑可转项。
+   * 转换是服务端队列在跑，这里拿到的只是「已受理」的回执，所以立刻刷新一次列表，
+   * 让界面马上出现 converting 状态（后续进度由视图侧的轮询接手）。
+   */
+  async function convert(paths: string[] | 'all'): Promise<InboxConversion> {
+    const body = paths === 'all' ? { all: true } : { paths };
+    const { data } = await api.post('/api/inbox/convert', body);
+    const result: InboxConversion = {
+      queued: Array.isArray(data?.queued) ? data.queued : [],
+      skipped: Array.isArray(data?.skipped) ? data.skipped : [],
+    };
+    await load();
+    return result;
+  }
+
+  /** 读取转换产物的 Markdown 全文；还没有产物时服务端 404，交给调用方提示 */
+  async function loadDerived(path: string): Promise<InboxDerived> {
+    const { data } = await api.get('/api/inbox/derived', { params: { path } });
+    return data as InboxDerived;
+  }
+
+  /** 入库：把产物收进知识库，成为可检索、可引用的页面（原件仍留在收集箱） */
+  async function adopt(path: string): Promise<InboxAdoption> {
+    const { data } = await api.post('/api/inbox/adopt', { path });
+    adopted.value.add(path);
+    await load();
+    return data as InboxAdoption;
+  }
+
   /** 移除一份文件（进回收站，可恢复） */
   async function remove(path: string): Promise<void> {
     await api.delete('/api/inbox/items', { data: { path } });
+    // 同名文件之后可能被重新拖进来，那一份是新的，不该继承「已入库」的标记
+    adopted.value.delete(path);
     await load();
   }
 
@@ -113,9 +181,13 @@ export const useInboxStore = defineStore('inbox', () => {
     loaded,
     error,
     uploading,
+    adopted,
     pendingItems,
     load,
     upload,
     remove,
+    convert,
+    loadDerived,
+    adopt,
   };
 });

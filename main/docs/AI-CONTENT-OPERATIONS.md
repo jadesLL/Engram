@@ -56,6 +56,14 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - **两来源门禁**：自动新建概念/实体页需 ≥2 个不同 `原始资料/` 路径各 ≥1 条有效引文，或单一来源 ≥2 条有效引文；同一路径新版本仍只算一个来源；已有页面增量更新不受限。
 - **账本可复核**：通过的证据记入 `page_contributions` / `ingest_facts`，编辑器「来源证据」抽屉与 MCP `page_evidence` 工具可逐条查看原文引文与版本时间线。
 
+## 收集箱（未纳入知识库的暂存区）
+
+- **定位**：`收集箱/` 是用户拖进来的待整理文件（任意格式），**不是知识库**——不建 `pages`/`files` 行、不写 FTS、不参与检索、不出现在目录树与原始资料清单里，通用文件接口（预览/取内容/导出）对它一律拒绝（「不支持内置浏览」）。
+- **Agent 能做什么**：`list_inbox` 看清单，`read_inbox_item` 读内容（图片以 image 内容返回），`write_inbox_markdown` 把语义转换结果写回 `收集箱/转换结果/<原名>.md`；作业规范用 `skill_guide("inbox-semantic-to-md")`。
+- **Agent 不能做什么**：不得把收集箱内容写进页面、不得作为 `evidence`、不得在回答里当作事实依据。转换产物同样留在收集箱，**不是**知识库内容。
+- **入库是用户的动作**：用户在收集箱界面点「入库」后，服务端把产物复制进 `原始资料/收集箱/` 并登记为页面——从这一刻起它才是可检索、可引用、可作证据的来源。
+- **同步**：收集箱文件走普通文件通道（含 `.md` 也按文件传字节，绝不在任何一端变成页面）；入库前后的差别只在于是否进 `pages` 表。
+
 ## 动手前 / 动手后
 
 1. 任何写操作前，先 `read_page` 读取 `AIWorks/log/log.md` 了解最近状态。
@@ -68,6 +76,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - 内置 skill 单一来源：`server/src/content/skills/`（注册表 `index.ts`）
 - Agent 接入界面的工具清单：`web/src/lib/mcpTools.ts`（新增/改名工具时三处同步：`server/src/mcp/server.ts` 注册、`web/src/lib/mcpTools.ts` 界面清单、本文）
 - Agent 写入门禁与账本：`server/src/pipeline/agentWrite.ts`
+- 收集箱边界判定与语义转换：`server/src/lib/brainPaths.ts`（唯一判定来源）、`server/src/pipeline/inboxConvert.ts`（转换与入库）、`server/src/routes/inbox.ts`（界面接口）
 - Agent 单页删除内核（只入回收站 + Wiki/ 守卫）：`server/src/pipeline/agentDelete.ts`
 - 公司全名核验通道内核（资料库自查 + 两轮问答状态机 + 服务端改名）：`server/src/lib/entityNameChecks.ts`（表 `entity_name_checks`；CLI/脚本用 REST `server/src/routes/entityNames.ts`；问答在对话里——内置 Agent 经 MCP `ask_user` 弹底部选项，答复经 `entity_name_answer` 回填）
 - 内置 Agent 的提问通道（MCP `ask_user` 挂起等点选 → 对话底部弹窗 → 答复唤醒工具调用）：`server/src/assistant/questions.ts`（表 `assistant_questions`；REST `POST /api/assistant/questions/:id/answer`；界面 `web/src/components/ChatDrawer.vue` 底部弹窗）

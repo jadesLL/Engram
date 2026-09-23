@@ -651,6 +651,47 @@ ipcMain.handle('open-file-bytes', (_e, name, bytes) => {
   return shell.openPath(file); // 空串=成功
 });
 
+/*
+ * 收集箱原文件「用系统默认应用打开」。
+ *
+ * 这里只收 vault 相对路径、不收字节：收集箱接的是几百 MB 到 GB 级的录屏与压缩包，
+ * 走 open-file-bytes 那条链路（渲染进程 fetch → Array.from(buf) → IPC）会把内存和
+ * IPC 通道打爆。本地模式下主进程与服务端同一台机器、同一份数据目录，直接按路径打开即可。
+ *
+ * 安全：只允许 <数据目录>/brain/收集箱 内的文件，不接受任意绝对路径。
+ */
+function resolveInboxPath(relPath) {
+  const rel = String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!rel.startsWith('收集箱/')) throw new Error('只能打开收集箱内的文件');
+  const inboxRoot = path.join(getDataDir(), 'brain', '收集箱');
+  const abs = path.resolve(inboxRoot, rel.slice('收集箱/'.length));
+  if (abs !== inboxRoot && !abs.startsWith(inboxRoot + path.sep)) throw new Error('路径越界');
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error('文件不存在');
+  return abs;
+}
+
+// 用系统默认应用打开收集箱原文件（返回 { ok } 或 { ok:false, error }；空串错误=成功）
+ipcMain.handle('inbox-open-path', async (_e, relPath) => {
+  let abs;
+  try {
+    abs = resolveInboxPath(relPath);
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+  const message = await shell.openPath(abs);
+  return message ? { ok: false, error: message } : { ok: true };
+});
+
+// 在资源管理器中定位收集箱原文件
+ipcMain.handle('inbox-reveal-path', (_e, relPath) => {
+  try {
+    shell.showItemInFolder(resolveInboxPath(relPath));
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
 // ---------- 桌面端自更新（远端仓库 Releases 拉安装包） ----------
 // 更新源配置按优先级解析：
 //  1) 渲染进程传入——设置页「更新源配置」所见即所得
