@@ -187,6 +187,9 @@
 
 .settings-content {
   min-width: 0;
+  /* 容器查询上下文：侧栏可拖拽加宽，「窗口大但内容列窄」视口媒体查询管不到，
+     行内布局的收窄断点改由内容列自身宽度决定（见文件底部 @container 块） */
+  container-type: inline-size;
 }
 
 /* ---------- 大类内容（一次显示一整类，组标题吸顶） ---------- */
@@ -299,6 +302,36 @@
   padding: 0;
 }
 
+/* 分组折叠（2026-09-24）：点色带空白处或右侧箭头收起/展开，状态按锚点持久化 */
+.group-band.collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+.group-caret {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.18s ease;
+}
+.group-caret:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+.group-card.is-collapsed .group-caret {
+  transform: rotate(-90deg);
+}
+.group-card.is-collapsed .group-band {
+  border-bottom-color: transparent;
+}
+
 /* 分组状态徽标：把「这个组有没有事」直接写在色带上 */
 .group-badge {
   flex-shrink: 0;
@@ -402,7 +435,9 @@
 
 .settings-native .setting-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(180px, auto);
+  /* 两列都不设硬下限（2026-09-24 修复窄列裁切）：侧栏可随意拉宽，
+     内容列很窄时左列允许压缩，再窄由下方容器查询转单列 */
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   align-items: center;
   gap: 18px;
   min-height: 76px;
@@ -715,6 +750,34 @@
     border-right: 0;
     border-left: 0;
     border-radius: 0;
+  }
+}
+
+/*
+ * 窄内容列兜底（2026-09-24）：知识库侧栏可随意拉宽，窗口很大时设置内容列也可能只剩三百多像素，
+ * 视口媒体查询（768px）覆盖不到这种场景。以 .settings-content 为容器：
+ * ≤620px 时设置行转单列、控件占满整行；控件组随时允许换行，勾选项/状态文字塞不下就落到
+ * 按钮下一行，任何宽度下都不再被卡片裁切。
+ */
+.settings-native .check-controls {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+@container (max-width: 620px) {
+  .settings-native .setting-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    min-height: 0;
+  }
+  .settings-native .setting-row .setting-message {
+    grid-column: auto;
+  }
+  .settings-native .setting-control {
+    width: 100%;
+  }
+  .settings-native .check-controls {
+    justify-content: flex-start;
   }
 }
 

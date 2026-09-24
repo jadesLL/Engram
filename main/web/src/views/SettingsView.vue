@@ -155,6 +155,7 @@ import DataDangerSection from '../components/settings/DataDangerSection.vue';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { badgeToneOf, settingsBadges } from '../lib/settingsBadges';
 import { resolveSettingsTarget, visibleSettingsDomains, type SettingsDomainId } from '../lib/settingsDomains';
+import { expandGroup } from '../lib/settingsCollapse';
 import { useRoute } from 'vue-router';
 
 /**
@@ -198,11 +199,16 @@ function selectDomain(id: SettingsDomainId, anchor?: string) {
 }
 
 function scrollToAnchor(anchor: string) {
-  const el = document.getElementById(anchor);
-  if (!el) return;
   activeAnchor.value = anchor;
-  // 吸顶的组标题会盖住目标顶部，靠 settings.css 里的 scroll-margin-top 让出这段高度
-  el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  // 目标分组可能被收起：先展开再滚动（展开改 DOM 是异步的，等 nextTick），
+  // 避免「点了锚点只看到一条色带」或按收起时的高度滚错位置
+  expandGroup(anchor);
+  void nextTick(() => {
+    const el = document.getElementById(anchor);
+    if (!el) return;
+    // 吸顶的组标题会盖住目标顶部，靠 settings.css 里的 scroll-margin-top 让出这段高度
+    el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
 }
 
 /** 滚动联动：取最后一个越过吸顶线的锚点作为当前分组 */

@@ -1,15 +1,24 @@
 <template>
   <section class="settings-panel settings-native settings-group level-normal">
-    <div class="group-card">
-      <div class="group-band">
+    <div class="group-card" :class="{ 'is-collapsed': groupCollapsed }">
+      <div class="group-band collapsible" @click="onBandClick">
         <span class="group-ico" aria-hidden="true"><Icon name="download" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">软件更新</span>
           <span class="group-hint">检测新版本并就地更新；服务器拉取镜像重建，桌面端可自动或手动安装</span>
         </span>
         <span v-if="versionBadge" class="group-badge tone-muted">{{ versionBadge }}</span>
+        <button
+          type="button"
+          class="group-caret"
+          :aria-expanded="groupCollapsed ? 'false' : 'true'"
+          :title="groupCollapsed ? '展开「软件更新」' : '收起「软件更新」'"
+          @click.stop="toggleGroup"
+        >
+          <Icon name="chevron-down" :size="14" />
+        </button>
       </div>
-      <div class="group-body flush">
+      <div v-show="!groupCollapsed" class="group-body flush">
 
     <!-- ============ 服务器（Docker）分区 ============ -->
     <div class="sub-block">
@@ -379,6 +388,7 @@ import { api, ssePost } from '../../api';
 import AppSpinner from '../ui/AppSpinner.vue';
 import Icon from '../Icon.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
+import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import { formatVersionLabel, formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
@@ -647,6 +657,18 @@ const versionBadge = computed(() => {
   const base = state.value.currentVersion ? `v${state.value.currentVersion}` : '';
   return base ? formatVersionLabel(base, identity.value) : '';
 });
+
+// 分组折叠：与 SettingsGroup 共用一份持久化状态（锚点 id 在外层包裹 div 上）
+const GROUP_ANCHOR = 'panel-update';
+const groupCollapsed = computed(() => isGroupCollapsed(GROUP_ANCHOR));
+function toggleGroup() {
+  toggleGroupCollapsed(GROUP_ANCHOR);
+}
+function onBandClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('button, a, input, select, textarea, label')) return;
+  toggleGroup();
+}
 
 /** 源码模式检查更新结果：`已是最新（本地 0fbe4e2）` / `落后 3 个提交：0fbe4e2 → a1b2c3d` */
 const sourceCheckText = computed(() => (srcResult.value?.ok ? formatSourceCheckLabel(srcResult.value) : ''));
