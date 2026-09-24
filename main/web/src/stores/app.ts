@@ -178,6 +178,16 @@ export const useAppStore = defineStore('app', {
       this.chatDrawerOpen = false;
       this.chatMinimizedAt = Date.now();
     },
+    /**
+     * 用户主动点抽屉头部的「最小化」：任何形态都收起来，右下角状态胶囊接管——
+     * 空闲时提示 4 秒「已最小化 · 点此继续对话」，有轮次在跑就常驻显示进度。
+     * 与关闭的区别只在「告诉用户它去哪儿了」：会话、草稿与形态偏好全部保留。
+     */
+    minimizeChat() {
+      if (!this.chatDrawerOpen) return;
+      this.chatDrawerOpen = false;
+      this.chatMinimizedAt = Date.now();
+    },
     /** 请聊天抽屉把光标放进输入框（选中文字提问后用户只需敲问题） */
     focusChatComposer() {
       this.chatComposerFocus += 1;
