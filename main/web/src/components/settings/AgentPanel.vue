@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <h3>Agent 接入</h3>
-        <p>把 Engram 知识库接入外部 Agent：ZCode 桌面端、Codex CLI 与 DeepSeek Harness 支持一键注册；WorkBuddy、Qoder、Kimi Work 可按专属指引接入。</p>
+        <p>把 Engram 知识库接入外部 Agent：ZCode、Codex CLI、DeepSeek Harness、WorkBuddy 与 Qoder 支持本机一键注册；Kimi Work 支持一键登记个人插件。</p>
       </div>
     </div>
 
@@ -96,9 +96,9 @@
           <option value="zcode">ZCode 桌面端（一键接入）</option>
           <option value="codex">Codex CLI（一键接入）</option>
           <option value="dsh">DeepSeek Harness / dsh（一键接入）</option>
-          <option value="workbuddy">WorkBuddy（MCP 接入）</option>
-          <option value="qoder">Qoder（MCP 接入）</option>
-          <option value="kimiwork">Kimi Work（插件接入）</option>
+          <option value="workbuddy">WorkBuddy（一键接入）</option>
+          <option value="qoder">Qoder（一键接入）</option>
+          <option value="kimiwork">Kimi Work（一键登记插件）</option>
           <option value="other">其他 Agent（MCP 接入）</option>
         </select>
       </div>
