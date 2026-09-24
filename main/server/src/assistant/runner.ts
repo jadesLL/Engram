@@ -6,6 +6,7 @@ import { planReasoningReplay, type ReasoningPart } from './mapping.js';
 import { closeQuestionsForRun } from './questions.js';
 import { generateSessionTitle, heuristicTitle } from './title.js';
 import {
+  accumulateRunUsage,
   appendMessageChunk,
   appendMessageContent,
   countUserMessages,
@@ -422,6 +423,21 @@ function beginRun(input: {
               finishToolCallById(rowId, { ok: event.ok, text: event.text });
               if (event.callId) toolCallRows.delete(event.callId);
             }
+            publishSnapshot(input.sessionId, run.id);
+          });
+          break;
+        }
+        // ---- 模型用量：一步一次（该步 assistant/message 到达时）。累计后推快照，前端据此刷新命中率 ----
+        case 'usage': {
+          queue.push(async () => {
+            accumulateRunUsage(run.id, 'main', event.usage);
+            publishSnapshot(input.sessionId, run.id);
+          });
+          break;
+        }
+        case 'subagent-usage': {
+          queue.push(async () => {
+            accumulateRunUsage(run.id, 'subagents', event.usage);
             publishSnapshot(input.sessionId, run.id);
           });
           break;

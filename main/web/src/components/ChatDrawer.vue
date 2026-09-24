@@ -339,11 +339,26 @@
         <span v-if="terminalRun.ingestedPath" class="faint small">已沉淀：{{ terminalRun.ingestedPath }}</span>
       </div>
 
+      <!-- 模型用量：本轮缓存命中率 + 会话累计；子代理单独一段标注，不混进主对话的数字。
+           鼠标悬停看各桶明细（未命中输入 / 缓存读取 / 缓存写入 / 输出） -->
+      <div v-if="terminalUsageText || terminalSubagentText" class="usage">
+        <span v-if="terminalUsageText" class="usage-hit" v-tooltip="terminalUsageTip">
+          {{ terminalUsageText }}
+          <em v-if="sessionUsageText" class="usage-session">· {{ sessionUsageText }}</em>
+        </span>
+        <span v-if="terminalSubagentText" class="usage-sub" v-tooltip="terminalUsageTip">
+          {{ terminalSubagentText }}
+        </span>
+      </div>
+
       <!-- 常驻运行状态：只要这一轮还在跑就贴在转录区底部（滚到哪都看得见），收口即消失 -->
       <div v-if="liveRun" class="run-live" role="status" aria-live="polite">
         <AppSpinner :size="13" />
         <b class="run-live-title">内置 Agent 正在回复</b>
         <span class="run-live-detail">{{ liveDetail }}</span>
+        <!-- 缓存命中率：每一步（一次模型请求）结束都会随快照刷新，跑动中就能看到往上走 -->
+        <span v-if="liveUsageText" class="run-live-usage" v-tooltip="liveUsageTip">{{ liveUsageText }}</span>
+        <span v-if="liveSubagentText" class="run-live-usage sub" v-tooltip="liveUsageTip">{{ liveSubagentText }}</span>
         <span v-if="queuedCount" class="run-live-queued">排队 {{ queuedCount }} 条</span>
         <span class="run-live-time">{{ liveElapsed }}</span>
       </div>
@@ -488,6 +503,7 @@ import {
   type ChatSession,
   type ChatSubagent,
   type ChatToolCall,
+  type ChatUsage,
 } from '../stores/chat';
 import type { SelectionExcerpt } from '../lib/askAgent';
 import {
@@ -520,6 +536,7 @@ import {
   toolCallSummary,
 } from '../lib/chatTimeline';
 import { formatDuration, formatSessionTime } from '../lib/chatTime';
+import { cacheHitText, mergeUsage, usageDetail } from '../lib/chatUsage';
 import { confirmDialog } from '../lib/confirm';
 import { renderAssistantMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
@@ -943,6 +960,38 @@ const liveDetail = computed(() => {
     thinking: isThinkingLast(),
   });
 });
+
+/* ===== 模型用量：缓存命中率（服务端从 dsh 的 TokenUsage 逐步累计，口径见 lib/chatUsage） ===== */
+/** 本会话所有轮次的累计用量：会话累计的命中率靠它算（每轮用量随快照到前端） */
+const sessionUsage = computed(() => mergeUsage(chat.runs.map((run) => run.usage)));
+
+/** 命中率文案；这条路由没报缓存字段时返回空串——整块不显示，而不是显示「命中 0%」 */
+function percentText(usage: ChatUsage | undefined, label: string): string {
+  const percent = cacheHitText(usage);
+  return percent ? `${label} ${percent}` : '';
+}
+
+// 跑动中：本轮与子代理各一小段，随每一步快照刷新（挂在贴底状态条上）
+const liveUsageText = computed(() => percentText(liveRun.value?.usage, '本轮命中'));
+const liveSubagentText = computed(() => percentText(liveRun.value?.subagentUsage, '子代理命中'));
+// 收口后：本轮 + 会话累计一行，子代理单独一段（子代理的用量不混进主对话的数字）
+const terminalUsageText = computed(() => percentText(terminalRun.value?.usage, '本轮缓存命中'));
+const sessionUsageText = computed(() => percentText(sessionUsage.value, '会话累计'));
+const terminalSubagentText = computed(() => percentText(terminalRun.value?.subagentUsage, '子代理缓存命中'));
+
+/** 气泡明细：本轮的各桶明细放正文，会话累计与子代理放脚注（气泡正文只支持单段纯文本） */
+function usageTip(usage: ChatUsage | undefined, subagent: ChatUsage | undefined) {
+  if (!usage) return undefined;
+  const foot = [sessionUsageText.value, percentText(subagent, '子代理')].filter(Boolean).join(' · ');
+  return {
+    title: `模型用量（本轮 ${usage.steps} 次请求）`,
+    body: usageDetail(usage),
+    ...(foot ? { meta: foot } : {}),
+  };
+}
+
+const liveUsageTip = computed(() => usageTip(liveRun.value?.usage, liveRun.value?.subagentUsage));
+const terminalUsageTip = computed(() => usageTip(terminalRun.value?.usage, terminalRun.value?.subagentUsage));
 
 /** 最后一条是不是还在长的思考段（状态条据此说「正在思考」而不是「正在生成回复」） */
 function isThinkingLast(): boolean {
@@ -2155,6 +2204,24 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
+/* 状态条上的缓存命中率：每一步（一次模型请求）结束都会刷新，跑动中就能看到往上走 */
+.run-live-usage {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent, #4d8aff) 12%, transparent);
+  color: var(--accent, #4d8aff);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+}
+
+/* 子代理的命中率：与主对话的数字同排但明示归属（虚线框，不混成一个数） */
+.run-live-usage.sub {
+  border: 1px dashed color-mix(in srgb, var(--accent, #4d8aff) 38%, transparent);
+  background: transparent;
+  color: var(--text-faint);
+}
+
 /* 标题右侧的「回复中 用时」：抽屉滚到哪一段都看得见。
    不许换行（窄抽屉里宁可先挤掉左侧品牌文字），否则「回复中 / 12 秒」会拆成两行 */
 .head-live {
@@ -2565,6 +2632,37 @@ onUnmounted(() => {
 
 .completion .btn.small {
   border-radius: 999px;
+}
+
+/* 收口后的模型用量行：本轮命中率 + 会话累计，子代理单独一段（点/悬停看各桶明细） */
+.usage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.usage-hit {
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent, #4d8aff);
+  cursor: default;
+}
+
+.usage-session {
+  color: var(--text-faint);
+  font-style: normal;
+}
+
+.usage-sub {
+  padding: 1px 8px;
+  border: 1px dashed color-mix(in srgb, var(--accent, #4d8aff) 38%, transparent);
+  border-radius: 9px;
+  color: var(--text-faint);
+  cursor: default;
 }
 
 .chat-composer {

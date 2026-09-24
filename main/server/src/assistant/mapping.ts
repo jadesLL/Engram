@@ -23,6 +23,8 @@
  * 所以思考过程可以按真实节奏回放出来（见 planReasoningReplay），观感与逐字流式一致。
  */
 
+import { parseUsage, type UsageStep } from './usage.js';
+
 /** 一段思考增量：text 是原文片段，at 是它在会话时间轴上的毫秒时间戳 */
 export interface ReasoningPart {
   text: string;
@@ -37,6 +39,11 @@ export type AgentEvent =
   | { kind: 'tool-call'; callId: string; name: string; args: string }
   | { kind: 'tool-result'; callId: string; ok: boolean; text: string }
   | { kind: 'turn-end'; reason: string }
+  // ---- 模型用量（每一步一次，随该步的 assistant/message 一起到达）----
+  /** 主对话这一步的用量：runner 累计到本轮命中率上 */
+  | { kind: 'usage'; usage: UsageStep }
+  /** 子代理这一步的用量：单独累计，不混进主对话的命中率 */
+  | { kind: 'subagent-usage'; childSessionId: string; usage: UsageStep }
   // ---- 子代理（dsh subagent / subagent_fork / workflow / ralph 起的子会话）----
   /** 子代理开工：dsh 通知 subagent.started（父会话 → 子会话的谱系边） */
   | { kind: 'subagent-start'; childSessionId: string; parentSessionId: string }
@@ -217,6 +224,9 @@ export function mapSessionEvent(type: string, data: any): AgentEvent[] {
       }
       flushReasoning();
       flushText();
+      // 这一步的模型用量（dsh 的 TokenUsage）随消息一起来：交给 runner 累计成本轮命中率
+      const usage = parseUsage(data?.usage);
+      if (usage) events.push({ kind: 'usage', usage });
       return events;
     }
     case 'tool/call':
@@ -371,7 +381,12 @@ export function mapChildSessionEvent(childSessionId: string, type: string, data:
     }
     case 'assistant/message': {
       const text = textOfContent(data?.message?.content).trim();
-      return text ? [{ kind: 'subagent-text', childSessionId, text }] : [];
+      const usage = parseUsage(data?.usage);
+      return [
+        ...(text ? [{ kind: 'subagent-text' as const, childSessionId, text }] : []),
+        // 子代理自己的用量：单独累计，主对话的命中率不含它
+        ...(usage ? [{ kind: 'subagent-usage' as const, childSessionId, usage }] : []),
+      ];
     }
     default:
       return [];
