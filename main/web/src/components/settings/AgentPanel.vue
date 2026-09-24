@@ -84,18 +84,24 @@
       </div>
     </SettingsGroup>
 
-    <div id="agent-target" class="harness-picker">
-      <label for="agent-target">接入目标</label>
-      <select id="agent-target" v-model="target" aria-label="接入目标">
-        <option value="zcode">ZCode 桌面端（一键接入）</option>
-        <option value="codex">Codex CLI（一键接入）</option>
-        <option value="dsh">DeepSeek Harness / dsh（一键接入）</option>
-        <option value="other">其他 Agent（MCP 接入）</option>
-      </select>
-    </div>
+    <SettingsGroup
+      anchor="agent-target"
+      title="接入目标"
+      hint="ZCode 桌面端、Codex CLI 与 DeepSeek Harness 支持一键注册；其他 Agent 用 MCP 配置片段接入"
+    >
+      <div class="harness-picker">
+        <label for="agent-target-select">接入目标</label>
+        <select id="agent-target-select" v-model="target" aria-label="接入目标">
+          <option value="zcode">ZCode 桌面端（一键接入）</option>
+          <option value="codex">Codex CLI（一键接入）</option>
+          <option value="dsh">DeepSeek Harness / dsh（一键接入）</option>
+          <option value="other">其他 Agent（MCP 接入）</option>
+        </select>
+      </div>
 
-    <AgentHarnessSection v-if="target !== 'other'" :harness="harnessTarget" />
-    <AgentMcpSection v-else />
+      <AgentHarnessSection v-if="target !== 'other'" :harness="harnessTarget" />
+      <AgentMcpSection v-else />
+    </SettingsGroup>
 
     <SettingsGroup
       anchor="agent-tools"
@@ -315,11 +321,10 @@ async function copy(text: string) {
 }
 
 .harness-picker {
-  /* 与 panel-head 分割线留出与其它面板一致的首块间距 */
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 22px 24px 0;
+  margin: 12px 4px 4px;
 }
 .harness-picker label {
   color: var(--text-faint);
@@ -414,13 +419,6 @@ async function copy(text: string) {
   font-size: 11px;
   line-height: 1.6;
   white-space: pre-wrap;
-}
-
-@media (max-width: 768px) {
-  .harness-picker {
-    margin-right: 18px;
-    margin-left: 18px;
-  }
 }
 
 @media (max-width: 640px) {

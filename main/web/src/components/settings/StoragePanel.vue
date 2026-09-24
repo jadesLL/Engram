@@ -1,17 +1,17 @@
 <template>
-  <section id="storage-trash" class="settings-panel settings-native trash-section">
-    <div class="panel-head">
-      <div>
-        <h3>存储空间</h3>
-        <p>
-          {{ trashLoading ? '正在读取回收站...' : `回收站中有 ${trashItems.length} 个项目，共 ${formatBytes(trashTotalSize)}` }}
-        </p>
-      </div>
+  <SettingsGroup
+    anchor="storage-trash"
+    class="settings-native"
+    title="回收站"
+    :hint="trashLoading ? '正在读取回收站...' : `回收站中有 ${trashItems.length} 个项目，共 ${formatBytes(trashTotalSize)}`"
+    flush
+  >
+    <template #actions>
       <button class="btn danger" type="button" :disabled="trashLoading || !trashItems.length" @click="emptyTrash">
         <Icon name="trash" :size="14" />
         清空回收站
       </button>
-    </div>
+    </template>
 
     <div class="trash-tools">
       <label class="trash-select-all">
@@ -67,20 +67,20 @@
     <p v-else-if="trashLoading" class="trash-empty">正在读取回收站...</p>
     <p v-else class="trash-empty">{{ trashQuery ? '没有匹配的项目' : '回收站为空' }}</p>
     <p v-if="trashMsg" class="setting-message trash-message" :class="trashOk ? 'ok' : 'err'">{{ trashMsg }}</p>
-  </section>
+  </SettingsGroup>
 
   <!-- 图片资产：图片是 md 父项的私有资产，正常入口是右击那个条目 →「查看引用图片」。
        这里只收没有归属、或父项正文已经不再引用的图片——它们是唯一的清理出口。 -->
-  <section id="storage-assets" class="settings-panel settings-native trash-section">
-    <div class="panel-head">
-      <div>
-        <h3>图片资产</h3>
-        <p>
-          {{ assetLoading
-            ? '正在读取图片资产...'
-            : `未归属 ${orphanAssets.unassigned.length} 张 · 未被引用 ${orphanAssets.unreferenced.length} 张，共 ${formatBytes(orphanAssets.totalBytes)}` }}
-        </p>
-      </div>
+  <SettingsGroup
+    anchor="storage-assets"
+    class="settings-native"
+    title="图片资产"
+    :hint="assetLoading
+      ? '正在读取图片资产...'
+      : `未归属 ${orphanAssets.unassigned.length} 张 · 未被引用 ${orphanAssets.unreferenced.length} 张，共 ${formatBytes(orphanAssets.totalBytes)}`"
+    flush
+  >
+    <template #actions>
       <button
         class="btn danger"
         type="button"
@@ -90,7 +90,7 @@
         <Icon name="trash" :size="14" />
         全部清理
       </button>
-    </div>
+    </template>
 
     <p class="asset-note">
       图片不会出现在目录树、知识图谱或搜索结果里。未归属图片是历史遗留的散图（用户已不能单独上传图片）；
@@ -137,7 +137,7 @@
     <p v-else-if="assetLoading" class="trash-empty">正在读取图片资产...</p>
     <p v-else class="trash-empty">没有未归属或未被引用的图片</p>
     <p v-if="assetMsg" class="setting-message trash-message" :class="assetOk ? 'ok' : 'err'">{{ assetMsg }}</p>
-  </section>
+  </SettingsGroup>
 </template>
 
 <script setup lang="ts">
@@ -145,6 +145,7 @@ import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
 import Icon from '../Icon.vue';
+import SettingsGroup from './SettingsGroup.vue';
 import { confirmDialog } from '../../lib/confirm';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 
@@ -471,7 +472,7 @@ onMounted(() => {
 <style scoped>
 /* ---------- 图片资产 ---------- */
 .asset-note {
-  margin: 12px 24px 0;
+  margin: 14px 20px 0;
   color: var(--text-faint);
   font-size: 12px;
   line-height: 1.7;
@@ -500,7 +501,7 @@ onMounted(() => {
   grid-template-columns: auto minmax(180px, 1fr) auto auto;
   align-items: center;
   gap: 8px;
-  margin: 18px 24px 0;
+  margin: 14px 20px 0;
 }
 .trash-select-all {
   display: inline-flex;
@@ -517,8 +518,10 @@ onMounted(() => {
 .trash-list {
   max-height: 520px;
   overflow-y: auto;
-  margin: 12px 24px 24px;
-  border-top: 1px solid var(--border);
+  margin: 12px 20px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 12px;
 }
 .trash-row {
   display: grid;
@@ -582,25 +585,25 @@ onMounted(() => {
   gap: 2px;
 }
 .trash-empty {
-  margin: 24px;
+  margin: 20px;
   color: var(--text-faint);
   font-size: 12px;
   text-align: center;
 }
 .trash-message {
-  margin: -12px 24px 22px;
+  margin: -6px 20px 16px;
 }
 
 @media (max-width: 768px) {
   .trash-tools {
     grid-template-columns: auto minmax(0, 1fr);
-    margin: 16px 18px 0;
+    margin: 12px 16px 0;
   }
   .trash-tools .btn {
     width: 100%;
   }
   .trash-list {
-    margin: 12px 18px 20px;
+    margin: 12px 16px 16px;
   }
 }
 

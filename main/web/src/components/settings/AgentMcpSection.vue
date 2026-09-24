@@ -151,7 +151,7 @@ onMounted(async () => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  margin: 22px 24px 0;
+  margin: 22px 4px 0;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
 }
@@ -171,7 +171,7 @@ onMounted(async () => {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  margin: 18px 24px 12px;
+  margin: 18px 4px 12px;
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -197,14 +197,14 @@ onMounted(async () => {
 }
 
 .integration-note {
-  margin: 0 24px 18px;
+  margin: 0 4px 18px;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;
 }
 
 .token-list {
-  margin: 0 24px 24px;
+  margin: 0 4px 4px;
   border-top: 1px solid var(--border);
 }
 .token-row {
@@ -230,7 +230,7 @@ onMounted(async () => {
 }
 
 .snippet-block {
-  margin: 0 24px 24px;
+  margin: 0 4px 4px;
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
