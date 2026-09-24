@@ -30,7 +30,7 @@
     />
 
     <header class="chat-head">
-      <div class="chat-brand"><Icon name="ai" :size="16" /> 内置 Agent</div>
+      <div class="chat-brand"><span class="brand-badge"><Icon name="ai" :size="14" /></span> 内置 Agent</div>
       <!-- 正在跑：贴着标题给一眼状态（用时每秒跳），滚到哪一段都看得见；
            停止就挂在胶囊右边——输入框右下角固定留给「发送」，运行中照样能发消息 -->
       <span v-if="liveRun" class="head-live">
@@ -76,6 +76,15 @@
       </button>
       <button class="btn icon" type="button" v-tooltip="'新建会话'" aria-label="新建会话" @click="newSession">
         <Icon name="plus" :size="15" />
+      </button>
+      <button
+        class="btn icon"
+        type="button"
+        v-tooltip="'最小化：收进右下角胶囊，运行进度照常显示'"
+        aria-label="最小化"
+        @click="app.minimizeChat()"
+      >
+        <Icon name="minus" :size="15" />
       </button>
       <button class="btn icon" type="button" v-tooltip="'关闭'" aria-label="关闭" @click="app.toggleChat(false)">
         <Icon name="x" :size="15" />
@@ -178,7 +187,10 @@
 
           <div v-if="item.kind === 'message'" class="entry" :class="item.role">
             <div class="entry-head" :class="{ 'no-name': !showName(index) }">
-              <span v-if="showName(index)" class="entry-name">{{ item.role === 'user' ? '你' : '内置 Agent' }}</span>
+              <template v-if="showName(index)">
+                <span class="entry-avatar"><Icon :name="item.role === 'user' ? 'user' : 'ai'" :size="11" /></span>
+                <span class="entry-name">{{ item.role === 'user' ? '你' : '内置 Agent' }}</span>
+              </template>
               <button
                 v-if="item.role === 'assistant' && item.message.content"
                 class="text-action"
@@ -227,7 +239,7 @@
               :aria-expanded="isSubagentOpen(item.subagent)"
               @click="toggleSubagent(item.subagent)"
             >
-              <Icon name="subagent" :size="12" />
+              <span class="subagent-icon"><Icon name="subagent" :size="11" /></span>
               <b>子代理</b>
               <span class="subagent-label">{{ subagentLabel(item.subagent) }}</span>
               <!-- 一句「在干什么 / 产出什么」只在收起态塞进胶囊；展开后详情面板里已经有了 -->
@@ -295,7 +307,7 @@
               :aria-expanded="isToolOpen(item.call)"
               @click="toggleTool(item.call)"
             >
-              <Icon :name="toolIcon(item.call.name)" :size="13" />
+              <span class="tool-icon"><Icon :name="toolIcon(item.call.name)" :size="11" /></span>
               <b>{{ toolLabel(item.call.name) }}</b>
               <span class="tool-summary">{{ toolCallSummary(item.call.args) }}</span>
               <span class="tool-state">{{ toolState(item.call.status) }}</span>
@@ -431,6 +443,7 @@
         </div>
       </section>
 
+      <div class="composer-card">
       <textarea
         ref="inputEl"
         v-model="draft"
@@ -454,6 +467,7 @@
         >
           <Icon name="send" :size="13" /> {{ chat.currentRun ? '排队发送' : '发送' }}
         </button>
+      </div>
       </div>
     </footer>
   </aside>
@@ -1302,8 +1316,24 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 12px;
+  padding: 11px 13px;
   border-bottom: 1px solid var(--border);
+}
+
+/* 品牌徽章：渐变圆角块托住 ✨，比裸图标更像一个「产品入口」 */
+.brand-badge {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 52%, #8fc6ff));
+  box-shadow:
+    0 1px 5px color-mix(in srgb, var(--accent) 32%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 
 .chat-brand {
@@ -1402,8 +1432,8 @@ onUnmounted(() => {
 }
 
 .session-row.active {
-  border-color: var(--border);
-  background: var(--bg-secondary);
+  border-color: color-mix(in srgb, var(--accent, #4d8aff) 24%, var(--border));
+  background: var(--accent-soft);
 }
 
 .session-row.running .session-title {
@@ -1478,6 +1508,14 @@ onUnmounted(() => {
   background: none;
   color: var(--text-faint);
   cursor: pointer;
+  /* 桌面端悬停才露出改名/删除，列表一眼看过去更干净；触屏没有悬停，常显（见底部媒体查询） */
+  opacity: 0;
+  transition: opacity 0.13s ease, background 0.13s ease, color 0.13s ease;
+}
+
+.session-row:hover .session-action,
+.session-row:focus-within .session-action {
+  opacity: 1;
 }
 
 .session-action:hover {
@@ -1518,10 +1556,11 @@ onUnmounted(() => {
 .context-chip {
   padding: 2px 8px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 999px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 11px;
+  box-shadow: var(--shadow-raised);
 }
 
 .context-clear {
@@ -1556,19 +1595,23 @@ onUnmounted(() => {
 }
 
 .suggestions button {
-  padding: 6px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .suggestions button:hover {
   border-color: var(--accent, #4d8aff);
+  background: var(--accent-soft);
   color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent, #4d8aff) 12%, transparent);
 }
 
 /* ===== 单列转录：一条流按发生顺序排，轮间一条细分隔 ===== */
@@ -1581,7 +1624,7 @@ onUnmounted(() => {
 .run-sep {
   height: 1px;
   margin: 2px 0;
-  background: var(--border);
+  background: linear-gradient(90deg, transparent, var(--border-strong), transparent);
 }
 
 .entry {
@@ -1593,46 +1636,84 @@ onUnmounted(() => {
 .entry-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 16px;
-  margin-bottom: 2px;
+  gap: 7px;
+  min-height: 22px;
+  margin-bottom: 3px;
   color: var(--text-faint);
   font-size: 11px;
 }
 
+/* 头像：助手是品牌渐变块，用户是素色圆角块；名字跟在旁边 */
+.entry-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.entry.assistant .entry-avatar {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent, #4d8aff), color-mix(in srgb, var(--accent, #4d8aff) 52%, #8fc6ff));
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent, #4d8aff) 30%, transparent);
+}
+
+.entry.user .entry-avatar {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+
+/* 用户消息整条右对齐（头像贴右缘），与左侧的助手流区分开 */
+.entry.user .entry-head {
+  flex-direction: row-reverse;
+}
+
 .entry-name {
   font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* 复制按钮默认收起，悬停消息才出现 */
+.entry .text-action {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+
+.entry:hover .text-action,
+.entry .text-action:focus-visible {
+  opacity: 1;
 }
 
 /* 同一轮的后续正文不再署名，操作按钮仍靠右对齐，避免位置跳动 */
 .entry-head.no-name {
-  justify-content: flex-end;
+  min-height: 16px;
 }
 
-/* 用户消息：纯文本块 + 左缘强调色竖条（不渲染 Markdown，保持原样） */
+/* 用户消息：右侧气泡（淡 accent 渐变底），不渲染 Markdown，保持原样 */
 .entry-plain {
-  padding: 7px 10px;
-  border-left: 2px solid var(--accent, #4d8aff);
-  border-radius: 0 8px 8px 0;
-  background: var(--bg-secondary);
+  max-width: 88%;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 14%, transparent);
+  border-radius: 14px 14px 4px 14px;
+  background: linear-gradient(180deg, var(--accent-soft), color-mix(in srgb, var(--accent-soft) 55%, transparent));
   color: var(--text);
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--accent, #4d8aff) 8%, transparent);
 }
 
 /* 用户消息 + 排队标记：运行中发的那条还没轮到它，标出来免得用户以为卡住了 */
 .entry-user {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: 4px;
-}
-
-.entry-user .entry-plain {
-  align-self: stretch;
 }
 
 .queued-chip {
@@ -1647,6 +1728,8 @@ onUnmounted(() => {
 }
 
 .entry-markdown {
+  /* 与署名行的头像对齐：头像 22px + 间距 7px ≈ 正文缩进 29px */
+  margin-left: 29px;
   font-size: 13px;
   line-height: 1.7;
   color: var(--text);
@@ -1711,10 +1794,11 @@ onUnmounted(() => {
   to { visibility: hidden; }
 }
 
-/* ===== 思考过程：弱化的过程块，进行中左缘强调色，正文等宽换行 ===== */
+/* ===== 思考过程：弱化的过程块，琥珀色左缘（进行中换强调蓝），与正文流对齐缩进 ===== */
 .think {
-  border: 1px dashed var(--border);
-  border-left: 2px solid var(--border);
+  margin-left: 29px;
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--warning, #c97a1e) 70%, var(--border));
   border-radius: 8px;
   background: var(--bg-secondary);
   overflow: hidden;
@@ -1770,13 +1854,20 @@ onUnmounted(() => {
   user-select: text;
 }
 
-/* ===== 执行记录：一行摘要，点开看完整参数与完整结果（靠滚动，不截断） ===== */
+/* ===== 执行记录：图标徽章 + 一行摘要 + 状态胶囊，点开看完整参数与完整结果（靠滚动，不截断） ===== */
 .tool {
+  margin-left: 29px;
   border: 1px solid var(--border);
   border-left: 2px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
+  box-shadow: var(--shadow-raised);
   overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.tool:hover {
+  border-color: var(--border-strong);
 }
 
 .tool.running {
@@ -1784,7 +1875,7 @@ onUnmounted(() => {
 }
 
 .tool.failed {
-  border-left-color: var(--danger, #d64545);
+  border-left: 3px solid var(--danger, #d64545);
 }
 
 .tool-head {
@@ -1792,10 +1883,28 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 7px 11px;
   color: var(--text-secondary);
   font-size: 12px;
   text-align: left;
+}
+
+/* 工具图标徽章：accent 浅底圆角块，失败时换红色 */
+.tool-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--accent-soft);
+  color: var(--accent, #4d8aff);
+}
+
+.tool.failed .tool-icon {
+  background: var(--danger-soft);
+  color: var(--danger, #d64545);
 }
 
 .tool-head b {
@@ -1815,20 +1924,29 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
+/* 状态胶囊：完成绿 / 执行中蓝 / 失败红，一眼扫得出结果 */
 .tool-state {
   flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
   background: var(--bg);
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.tool.completed .tool-state {
+  background: var(--success-soft);
+  color: var(--success);
 }
 
 .tool.running .tool-state {
+  background: var(--accent-soft);
   color: var(--accent, #4d8aff);
 }
 
 .tool.failed .tool-state {
+  background: var(--danger-soft);
   color: var(--danger, #d64545);
 }
 
@@ -1856,7 +1974,8 @@ onUnmounted(() => {
   font-size: 11px;
 }
 
-/* ===== 常驻运行状态条：还在跑就一直贴在转录区底部（sticky），收口即消失 ===== */
+/* ===== 常驻运行状态条：还在跑就一直贴在转录区底部（sticky），收口即消失。
+   sticky 元素底色必须不透明（滚动时盖住下方内容），accent 渐变用 color-mix 调实 ===== */
 .run-live {
   position: sticky;
   bottom: 0;
@@ -1866,15 +1985,14 @@ onUnmounted(() => {
   gap: 8px;
   margin-top: 10px;
   padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-left: 2px solid var(--accent, #4d8aff);
+  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 24%, var(--border));
   border-radius: 8px;
-  background: var(--bg-secondary);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent, #4d8aff) 9%, var(--bg-secondary)), var(--bg-secondary) 78%);
   color: var(--text-secondary);
   font-size: 12px;
 }
 
-/* ===== Agent 提问弹窗：贴在输入区上方（对话最下侧），问题 + 可点选选项 ===== */
+/* ===== Agent 提问弹窗：贴在输入区上方（对话最下侧），顶部色带头 + 可点选选项卡 ===== */
 .ask-pop {
   display: flex;
   flex-direction: column;
@@ -1883,9 +2001,9 @@ onUnmounted(() => {
   max-height: 46vh;
   overflow-y: auto;
   margin-bottom: 8px;
-  padding: 10px;
-  border: 1px solid var(--accent, #4d8aff);
-  border-radius: 10px;
+  padding: 0 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 35%, var(--border));
+  border-radius: 12px;
   background: var(--bg-secondary);
   box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.18);
 }
@@ -1894,7 +2012,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-secondary);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 11px 11px 0 0;
+  background: color-mix(in srgb, var(--accent, #4d8aff) 7%, var(--bg-secondary));
+  color: var(--accent, #4d8aff);
   font-size: 12px;
 }
 
@@ -1920,6 +2042,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin: 0 10px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -2016,9 +2139,10 @@ onUnmounted(() => {
 
 .run-live-time {
   flex-shrink: 0;
-  color: var(--text-faint);
+  color: var(--accent, #4d8aff);
   font-family: var(--font-mono, monospace);
   font-size: 11px;
+  font-weight: 600;
 }
 
 /* 贴底状态条上的排队数：还有几条在等这一轮收口 */
@@ -2039,13 +2163,25 @@ onUnmounted(() => {
   align-items: center;
   gap: 5px;
   margin-left: 8px;
-  padding: 1px 7px;
-  border-radius: 9px;
-  background: var(--bg-secondary);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
   color: var(--accent, #4d8aff);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 550;
   white-space: nowrap;
+  animation: head-live-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes head-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, #4d8aff) 0%, transparent); }
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #4d8aff) 9%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .head-live {
+    animation: none;
+  }
 }
 
 /* 胶囊里的排队数：运行中又发过消息，一眼看得到还有几条在等 */
@@ -2089,6 +2225,20 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
+  margin-left: 29px;
+}
+
+/* 胶囊里的图标徽章：品牌渐变块，区别于普通工具卡 */
+.subagent-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent, #4d8aff), color-mix(in srgb, var(--accent, #4d8aff) 52%, #8fc6ff));
 }
 
 .subagent-pill {
@@ -2413,9 +2563,70 @@ onUnmounted(() => {
   margin-top: 10px;
 }
 
+.completion .btn.small {
+  border-radius: 999px;
+}
+
 .chat-composer {
   border-top: 1px solid var(--border);
   padding: 10px 12px 12px;
+}
+
+/* 输入卡：textarea 与发送按钮装进一张聚焦会亮起描边的卡片里 */
+.composer-card {
+  border: 1px solid var(--control-border-strong);
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-raised);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.composer-card:focus-within {
+  border-color: var(--accent, #4d8aff);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-raised);
+}
+
+/* 卡片内的 textarea 去掉全局控件边框与聚焦光圈（光圈由卡片统一画） */
+.chat-composer textarea {
+  width: 100%;
+  resize: none;
+  padding: 10px 13px 4px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.chat-composer textarea:hover,
+.chat-composer textarea:focus {
+  background: none;
+  box-shadow: none;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 8px 8px;
+}
+
+/* 发送：渐变胶囊按钮，是整张卡片里唯一的高亮色块 */
+.composer-actions .btn.primary {
+  border-radius: 999px;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 72%, #8fc6ff));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.composer-actions .btn.primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--accent-hover), color-mix(in srgb, var(--accent) 80%, #8fc6ff));
+}
+
+.composer-actions .btn.primary:disabled {
+  box-shadow: none;
 }
 
 /* ===== 选中片段面板：贴在输入框上方，长文靠自身滚动，不把输入框顶出视野 ===== */
@@ -2554,21 +2765,6 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.chat-composer textarea {
-  width: 100%;
-  resize: none;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.composer-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
-}
-
 /* 运行中左侧那句说明：为什么按钮写着「排队发送」 */
 .composer-hint {
   flex: 1;
@@ -2602,6 +2798,16 @@ onUnmounted(() => {
   .chat-drawer.full,
   .layout.sidebar-open .chat-drawer.full {
     left: 0;
+  }
+
+  /* 触屏没有悬停：会话行的改名/删除常显，不然手机端够不到 */
+  .session-action {
+    opacity: 1;
+  }
+
+  /* 同理，消息的「复制」按钮在触屏上常显 */
+  .entry .text-action {
+    opacity: 1;
   }
 }
 </style>
