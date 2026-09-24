@@ -2,11 +2,7 @@
   <div class="login-wrap">
     <div class="login-card card">
       <div class="logo">
-        <svg viewBox="0 0 100 100" width="30" height="30" aria-hidden="true">
-          <ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="rgba(255, 255, 255, 0.88)" stroke-width="8.5" transform="rotate(-28 50 50)" />
-          <circle cx="74" cy="28.5" r="5.5" fill="#aee7f8" />
-          <circle cx="50" cy="50" r="11" fill="#ffffff" />
-        </svg>
+        <BrandMark :size="52" />
       </div>
       <h1>Engram</h1>
       <p class="muted">{{ isSetup ? '首次使用，请设置访问密码' : '请输入密码进入知识库' }}</p>
@@ -51,6 +47,7 @@ import { useAuthStore } from '../stores/auth';
 import { api } from '../api';
 import Icon from '../components/Icon.vue';
 import SecretField from '../components/SecretField.vue';
+import BrandMark from '../components/BrandMark.vue';
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -138,17 +135,18 @@ html.dark .login-card {
     0 16px 40px rgba(0, 0, 0, 0.45),
     0 2px 8px rgba(0, 0, 0, 0.3);
 }
-/* 品牌渐变盒：轨道标白色版置于品牌蓝渐变上 */
+/* 品牌图标：盒装贴片由 SVG 自带，这里只负责居中与投影 */
 .logo {
   width: 52px;
   height: 52px;
   margin: 0 auto 4px;
-  border-radius: 13px;
-  background: linear-gradient(140deg, #3a97e2 0%, #0f6cbd 58%, #0a5aa8 100%);
-  box-shadow: 0 6px 16px rgba(15, 108, 189, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
+  filter: drop-shadow(0 6px 16px rgba(15, 108, 189, 0.3));
+}
+html.dark .logo {
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.5));
 }
 h1 { margin: 0; font-size: 20px; text-align: center; font-weight: 600; }
 p { margin: 0; text-align: center; }

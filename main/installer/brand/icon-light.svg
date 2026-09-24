@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 由 main/scripts/gen-brand-icons.cjs 生成，请勿手改；改样式请改生成器后重跑 -->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="Engram">
+  <title>Engram</title>
+  <defs>
+    <linearGradient id="engram-light-orbit" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="24">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="engram-light-core" gradientUnits="userSpaceOnUse" x1="40.25" y1="40.25" x2="59.75" y2="59.75">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="engram-light-plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E9EFF8"/>
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="22" fill="url(#engram-light-plate)"/>
+  <rect x="0.8" y="0.8" width="98.4" height="98.4" rx="21.2" fill="none" stroke="rgba(15, 23, 42, 0.10)" stroke-width="1.6"/>
+  <ellipse cx="50" cy="50" rx="34" ry="13.5" fill="none" stroke="url(#engram-light-orbit)" stroke-width="9" transform="rotate(-28 50 50)"/>
+  <circle cx="71.725" cy="30.121" r="8.2" fill="#0EA5E9"/>
+  <circle cx="50" cy="50" r="13" fill="url(#engram-light-core)"/>
+</svg>

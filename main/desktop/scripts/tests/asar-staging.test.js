@@ -67,6 +67,24 @@ test('asar 打包路径同时出现在 files glob 里（electron-builder 走 fil
   }
 });
 
+/** files glob 是否覆盖某个 staging 目标（只支持 ** 与精确名，够这份清单用） */
+function globCovers(pattern, rel) {
+  const norm = rel.split(path.sep).join('/');
+  if (pattern.endsWith('/**')) return norm === pattern.slice(0, -3) || norm.startsWith(pattern.slice(0, -2));
+  return pattern === norm;
+}
+
+test('staging 清单里每个仓库自带的目标都被 files glob 覆盖（漏了发布版静默缺文件）', () => {
+  // 注意：electron-builder 不打 buildResources 目录（默认 build/），所以清单里的 to 必须在
+  // asar 根（icon.png / mark-dark.svg 都是这么处理的），写 build/xxx 只对手动 pack-asar 生效。
+  const uncovered = plan
+    .filter(({ produced }) => !produced)
+    .map(({ to }) => to)
+    .filter((to) => !pkg.build.files.some((pattern) => globCovers(pattern, to)))
+    .map((to) => to.split(path.sep).join('/'));
+  assert.deepEqual(uncovered, [], 'desktop/package.json 的 build.files 漏了：' + uncovered.join('、'));
+});
+
 (async () => {
   for (const c of cases) {
     try {

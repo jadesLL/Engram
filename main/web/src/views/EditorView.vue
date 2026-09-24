@@ -347,21 +347,7 @@
       <div class="welcome-inner">
         <header class="welcome-head">
           <div class="welcome-logo" aria-hidden="true">
-            <svg viewBox="0 0 100 100" width="40" height="40">
-              <defs>
-                <linearGradient id="engram-orbit-welcome" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">
-                  <stop offset="0" stop-color="#22D3EE" />
-                  <stop offset="1" stop-color="#4D8AFF" />
-                </linearGradient>
-                <linearGradient id="engram-core-welcome" gradientUnits="userSpaceOnUse" x1="39" y1="39" x2="61" y2="61">
-                  <stop offset="0" stop-color="#4D8AFF" />
-                  <stop offset="1" stop-color="#245BDB" />
-                </linearGradient>
-              </defs>
-              <ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="url(#engram-orbit-welcome)" stroke-width="8.5" transform="rotate(-28 50 50)" />
-              <circle cx="74" cy="28.5" r="5" fill="#22D3EE" />
-              <circle cx="50" cy="50" r="11" fill="url(#engram-core-welcome)" />
-            </svg>
+            <BrandMark :size="40" :plated="false" />
           </div>
           <div class="welcome-head-text">
             <h2 class="welcome-greeting">{{ greeting }}</h2>
@@ -437,6 +423,7 @@ import RelatedMenu from '../components/RelatedMenu.vue';
 import Icon from '../components/Icon.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import SyncHomeStatus from '../components/SyncHomeStatus.vue';
+import BrandMark from '../components/BrandMark.vue';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import {

@@ -11,21 +11,7 @@
     <!-- 窄图标导航栏：提示一律贴按钮右侧（图标栏只有一列按钮，上/下都会压住相邻图标） -->
     <nav class="rail" aria-label="主导航">
       <button class="rail-logo" type="button" v-tooltip.right="'回到首页'" aria-label="回到首页" @click="go('/page')">
-        <svg viewBox="0 0 100 100" width="20" height="20" aria-hidden="true">
-          <defs>
-            <linearGradient id="engram-orbit-rail" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">
-              <stop offset="0" stop-color="#22D3EE" />
-              <stop offset="1" stop-color="#4D8AFF" />
-            </linearGradient>
-            <linearGradient id="engram-core-rail" gradientUnits="userSpaceOnUse" x1="39" y1="39" x2="61" y2="61">
-              <stop offset="0" stop-color="#4D8AFF" />
-              <stop offset="1" stop-color="#245BDB" />
-            </linearGradient>
-          </defs>
-          <ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="url(#engram-orbit-rail)" stroke-width="8.5" transform="rotate(-28 50 50)" />
-          <circle cx="74" cy="28.5" r="5" fill="#22D3EE" />
-          <circle cx="50" cy="50" r="11" fill="url(#engram-core-rail)" />
-        </svg>
+        <BrandMark :size="30" />
       </button>
 
       <!-- 侧栏开关 -->
@@ -200,6 +186,7 @@ import ChatDrawer from '../components/ChatDrawer.vue';
 import AgentStatusPill from '../components/AgentStatusPill.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
 import Icon from '../components/Icon.vue';
+import BrandMark from '../components/BrandMark.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -488,15 +475,13 @@ onUnmounted(() => {
   justify-content: center;
   margin-bottom: 9px;
   border-radius: 8px;
-  background: #0f172a;
-  box-shadow: var(--rail-logo-shadow);
+  filter: var(--rail-logo-filter);
   user-select: none;
-  transition: filter 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+  transition: filter 150ms ease, transform 150ms ease;
 }
 
 .rail-logo:hover {
-  filter: brightness(1.06);
-  box-shadow: var(--rail-logo-shadow-hover);
+  filter: var(--rail-logo-filter-hover);
 }
 
 .rail-logo:active {

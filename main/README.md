@@ -1,7 +1,10 @@
 # Engram
 
 <p>
-  <img src="docs/brand/logo-lockup.svg" alt="Engram" width="440" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/engram-lockup-dark.svg" />
+    <img src="docs/brand/engram-lockup-light.svg" alt="Engram" width="440" />
+  </picture>
 </p>
 
 项目 README 已上移至仓库根目录（Gitea 仓库主页展示位）：**[../README.md](../README.md)**——功能总览、快速开始、配置说明、发版与文档索引都在那里。

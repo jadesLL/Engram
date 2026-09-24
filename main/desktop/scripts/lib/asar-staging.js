@@ -21,6 +21,11 @@ function stagingPlan(desktopRoot) {
     { from: at('web', 'dist'), to: path.join('web', 'dist'), produced: true },
     // 托盘图标：main.js 的 trayIcon() 在 asar 内找 __dirname/icon.png
     { from: at('build', 'icon.png'), to: 'icon.png' },
+    // 启动页品牌图形：main.js 的 logoSvg() 在 data: URL 页面里内联它的源码。
+    // 必须放在 asar 根（与 icon.png 同理）：electron-builder 不把 buildResources 目录
+    // （默认就是 build/）打进包里，写 build/mark-dark.svg 只对手动 pack-asar 生效、
+    // 发布版里会静默落空（v1.1.39/1.1.40 托盘空白的同类事故）。
+    { from: at('build', 'mark-dark.svg'), to: 'mark-dark.svg' },
   ];
 }
 

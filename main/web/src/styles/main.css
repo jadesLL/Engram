@@ -73,8 +73,8 @@
   --file-ppt: #b9653e;
   --file-pdf: #bf4b4b;
   /* rail logo 阴影（深色主题下覆盖） */
-  --rail-logo-shadow: 0 1px 3px rgba(15, 108, 189, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.28);
-  --rail-logo-shadow-hover: 0 2px 6px rgba(15, 108, 189, 0.34), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  --rail-logo-filter: drop-shadow(0 1px 3px rgba(15, 108, 189, 0.3));
+  --rail-logo-filter-hover: drop-shadow(0 2px 6px rgba(15, 108, 189, 0.34)) brightness(1.06);
   /* Win11 细滚动条（透明边框 + padding-box 裁剪，hover 时加粗） */
   --scrollbar: rgba(0, 0, 0, 0.3);
   --scrollbar-hover: rgba(0, 0, 0, 0.48);
@@ -158,8 +158,8 @@ html.dark {
   --danger-soft: rgba(255, 153, 164, 0.16);
   --warn-soft: rgba(229, 166, 61, 0.16);
   --success-soft: rgba(108, 203, 95, 0.16);
-  --rail-logo-shadow: 0 1px 3px rgba(90, 169, 230, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.18);
-  --rail-logo-shadow-hover: 0 2px 6px rgba(90, 169, 230, 0.46), inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  --rail-logo-filter: drop-shadow(0 1px 3px rgba(90, 169, 230, 0.4));
+  --rail-logo-filter-hover: drop-shadow(0 2px 6px rgba(90, 169, 230, 0.46)) brightness(1.06);
   --scrollbar: rgba(255, 255, 255, 0.32);
   --scrollbar-hover: rgba(255, 255, 255, 0.5);
 }
@@ -202,16 +202,13 @@ html.desktop-frame #app { padding-top: var(--win-titlebar-h); }
   z-index: var(--z-chrome);
 }
 .win-titlebar svg { flex-shrink: 0; }
-/* 与 rail logo 同款盒装样式（等比缩小：rail 30px 盒/20px 图 → 标题栏 20px 盒/13px 图） */
+/* 与 rail logo 同款盒装图标（盒装贴片由 SVG 自带，这里只是 20px 对齐盒） */
 .win-titlebar-logo {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
-  border-radius: 6px;
-  background: #0f172a;
-  box-shadow: var(--rail-logo-shadow);
 }
 .win-titlebar-name {
   font-size: 13px;

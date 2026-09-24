@@ -1,69 +1,170 @@
 <!DOCTYPE html>
+<!-- 由 main/scripts/gen-brand-icons.cjs 生成，请勿手改；改样式请改生成器后重跑 -->
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8" />
-<title>Engram 品牌落地预览</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: "Microsoft YaHei", "Segoe UI", sans-serif; background: #fafaf9; color: #1f2329; padding: 28px; }
-  h2 { font-size: 18px; margin: 22px 0 12px; }
-  .row { display: flex; align-items: flex-end; gap: 22px; flex-wrap: wrap; }
-  .cell { text-align: center; }
-  .cell .label { font-size: 12px; color: #787774; margin-top: 8px; }
-  .banner-box { background: #fff; border: 1px solid #e3e3e0; border-radius: 12px; padding: 18px 24px; display: inline-block; }
-  .icon { border-radius: 22%; }
-  .round { border-radius: 50%; }
-  .on-light { background: #fff; border: 1px solid #e3e3e0; border-radius: 16px; padding: 14px; }
-  .rail-sim { display: flex; gap: 14px; }
-  .rail-sim .rail { width: 54px; border-radius: 14px; background: #f7f7f5; border: 1px solid #e9e9e7; padding: 12px 0; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-  .rail-logo-sim { width: 30px; height: 30px; border-radius: 8px; background: #0f172a; display: flex; align-items: center; justify-content: center; }
-  .login-sim { width: 240px; border: 1px solid #e9e9e7; border-radius: 12px; background: #fff; padding: 22px; text-align: center; }
-  .login-logo { width: 44px; height: 44px; margin: 0 auto 10px; border-radius: 11px; background: #0f172a; display: flex; align-items: center; justify-content: center; }
-  .login-sim h1 { font-size: 18px; }
-  .login-sim p { font-size: 12px; color: #787774; margin-top: 6px; }
-  .splash { border-radius: 10px; border: 1px solid #e3e3e0; }
-</style>
+  <meta charset="UTF-8">
+  <title>Engram 品牌图标预览</title>
+  <style>
+    body { margin: 0; padding: 32px; font: 14px/1.6 "Segoe UI", system-ui, sans-serif; background: #f7f6f4; color: #1f2329; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 14px; margin: 32px 0 12px; color: #0f6cbd; }
+    .hint { color: #6b7280; margin: 0 0 8px; }
+    .row { display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+    figure { margin: 0; text-align: center; }
+    figcaption { font-size: 11px; color: #6b7280; margin-top: 6px; }
+    .panel { padding: 20px; border-radius: 12px; display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+    .light { background: #f7f6f4; border: 1px solid #e3e0dc; }
+    .dark { background: #1e1d1c; border: 1px solid #33302d; }
+    .dark h2, .dark figcaption { color: #c9c9c9; }
+    .card { background: #fff; border: 1px solid #e3e0dc; border-radius: 12px; padding: 20px; }
+    code { background: #ecebe8; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    table { border-collapse: collapse; margin-top: 8px; }
+    td, th { border: 1px solid #e3e0dc; padding: 6px 12px; text-align: left; font-size: 13px; }
+    th { background: #f0efec; }
+    img { display: block; }
+  </style>
 </head>
 <body>
+  <h1>Engram 品牌图标</h1>
+  <p class="hint">全部产物由 <code>main/scripts/gen-brand-icons.cjs</code> 生成；几何与配色只有这一份定义。</p>
 
-<h2>README banner（lockup）</h2>
-<div class="banner-box">
-  <img src="logo-lockup.svg" width="440" alt="lockup" />
-</div>
+  <h2>小尺寸可读性（亮色版盒装图标）</h2>
+  <div class="panel light">
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="16" height="16" alt="16px">
+        <figcaption>16px</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="24" height="24" alt="24px">
+        <figcaption>24px</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="32" height="32" alt="32px">
+        <figcaption>32px</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="48" height="48" alt="48px">
+        <figcaption>48px</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="64" height="64" alt="64px">
+        <figcaption>64px</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="128" height="128" alt="128px">
+        <figcaption>128px</figcaption>
+      </figure>
+  </div>
 
-<h2>应用图标（Android launcher / 桌面端）</h2>
-<div class="row">
-  <div class="cell"><img class="icon" src="../../desktop/build/icon.png" width="160" height="160" /><div class="label">desktop 512</div></div>
-  <div class="cell"><img class="icon" src="../../mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" height="96" /><div class="label">launcher 192</div></div>
-  <div class="cell"><img class="round" src="../../mobile/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png" width="96" height="96" /><div class="label">round 144</div></div>
-  <div class="cell"><img src="../../mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png" width="96" height="96" /><div class="label">foreground 432</div></div>
-  <div class="cell on-light"><img src="engram-mark.svg" width="96" height="96" /><div class="label">mark（浅底）</div></div>
-  <div class="cell"><img class="icon" src="engram-favicon.svg" width="64" height="64" /><div class="label">favicon 64</div></div>
-  <div class="cell"><img class="icon" src="engram-favicon.svg" width="32" height="32" /><div class="label">32</div></div>
-  <div class="cell"><img class="icon" src="engram-favicon.svg" width="16" height="16" /><div class="label">16</div></div>
-</div>
+  <h2>亮色版 / 暗色版盒装图标</h2>
+  <div class="panel light">
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="64" height="64" alt="light 64">
+        <figcaption>light 64</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="48" height="48" alt="light 48">
+        <figcaption>light 48</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="32" height="32" alt="light 32">
+        <figcaption>light 32</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="16" height="16" alt="light 16">
+        <figcaption>light 16</figcaption>
+      </figure>
+      <figure class="chip-dark">
+        <img src="engram-icon-dark.svg" width="64" height="64" alt="dark 64">
+        <figcaption>dark 64</figcaption>
+      </figure>
+      <figure class="chip-dark">
+        <img src="engram-icon-dark.svg" width="48" height="48" alt="dark 48">
+        <figcaption>dark 48</figcaption>
+      </figure>
+      <figure class="chip-dark">
+        <img src="engram-icon-dark.svg" width="32" height="32" alt="dark 32">
+        <figcaption>dark 32</figcaption>
+      </figure>
+      <figure class="chip-dark">
+        <img src="engram-icon-dark.svg" width="16" height="16" alt="dark 16">
+        <figcaption>dark 16</figcaption>
+      </figure>
+  </div>
+  <div class="panel dark">
+      <figure class="chip-dark">
+        <img src="engram-icon-dark.svg" width="64" height="64" alt="dark 64">
+        <figcaption>dark 64</figcaption>
+      </figure>
+      <figure class="chip-dark">
+        <img src="engram-icon-dark.svg" width="48" height="48" alt="dark 48">
+        <figcaption>dark 48</figcaption>
+      </figure>
+      <figure class="chip-dark">
+        <img src="engram-icon-dark.svg" width="32" height="32" alt="dark 32">
+        <figcaption>dark 32</figcaption>
+      </figure>
+      <figure class="chip-dark">
+        <img src="engram-icon-dark.svg" width="16" height="16" alt="dark 16">
+        <figcaption>dark 16</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="64" height="64" alt="light 64">
+        <figcaption>light 64</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="48" height="48" alt="light 48">
+        <figcaption>light 48</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="32" height="32" alt="light 32">
+        <figcaption>light 32</figcaption>
+      </figure>
+      <figure class="chip-light">
+        <img src="engram-icon-light.svg" width="16" height="16" alt="light 16">
+        <figcaption>light 16</figcaption>
+      </figure>
+  </div>
 
-<h2>UI logo 位模拟</h2>
-<div class="rail-sim">
-  <div class="rail">
-    <div class="rail-logo-sim">
-      <img src="engram-mark.svg" width="20" height="20" />
+  <h2>透明标志（大尺寸装饰位 / 登录页、欢迎页）</h2>
+  <div class="row">
+    <div class="panel light">
+      <img src="engram-mark-light.svg" width="72" height="72" alt="light mark">
     </div>
-    <div style="width:22px;height:22px;border-radius:6px;background:#dcdcd9;"></div>
-    <div style="width:22px;height:22px;border-radius:6px;background:#dcdcd9;"></div>
+    <div class="panel dark">
+      <img src="engram-mark-dark.svg" width="72" height="72" alt="dark mark">
+    </div>
   </div>
-  <div class="login-sim">
-    <div class="login-logo"><img src="engram-mark.svg" width="28" height="28" /></div>
-    <h1>Engram</h1>
-    <p>请输入密码进入知识库</p>
+
+  <h2>软件内 chip 模拟（导航 rail 30px / 标题栏 20px）</h2>
+  <div class="row">
+    <div class="panel light">
+      <img src="engram-icon-light.svg" width="30" height="30" alt="rail">
+      <img src="engram-icon-light.svg" width="20" height="20" alt="titlebar">
+      <img src="engram-mark-light.svg" width="40" height="40" alt="welcome">
+      <img src="engram-icon-light.svg" width="52" height="52" alt="login">
+    </div>
+    <div class="panel dark">
+      <img src="engram-icon-dark.svg" width="30" height="30" alt="rail">
+      <img src="engram-icon-dark.svg" width="20" height="20" alt="titlebar">
+      <img src="engram-mark-dark.svg" width="40" height="40" alt="welcome">
+      <img src="engram-icon-dark.svg" width="52" height="52" alt="login">
+    </div>
   </div>
-</div>
 
-<h2>启动屏（竖屏 960×1600 缩略）</h2>
-<div class="row">
-  <div class="cell"><img class="splash" src="../../mobile/android/app/src/main/res/drawable-port-xxhdpi/splash.png" width="180" height="300" /><div class="label">port xxhdpi</div></div>
-  <div class="cell"><img class="splash" src="../../mobile/android/app/src/main/res/drawable-land-xxhdpi/splash.png" width="300" height="200" /><div class="label">land xxhdpi</div></div>
-</div>
+  <h2>字标横排（README 横幅）</h2>
+  <div class="row">
+    <div class="panel light"><img src="engram-lockup-light.svg" width="440" height="115" alt="Engram"></div>
+    <div class="panel dark"><img src="engram-lockup-dark.svg" width="440" height="115" alt="Engram"></div>
+  </div>
 
+  <h2>落地方位与版本规则</h2>
+  <table>
+    <tr><th>位置</th><th>版本</th></tr>
+    <tr><td>Windows exe / 桌面快捷方式 / 开始菜单 / 托盘 / 安装包</td><td>始终亮色</td></tr>
+    <tr><td>Android 启动图标（含自适应前景、圆形图标）</td><td>始终亮色</td></tr>
+    <tr><td>网页标签 favicon、应用内 logo（标题栏 / rail / 登录 / 欢迎）</td><td>跟随软件主题切换</td></tr>
+    <tr><td>Android 启动屏（白底，当前不随系统暗色）</td><td>亮色图形</td></tr>
+  </table>
 </body>
 </html>
