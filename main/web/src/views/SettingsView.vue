@@ -199,6 +199,13 @@ function selectDomain(id: SettingsDomainId, anchor?: string) {
   else scrollToTop();
 }
 
+function onSettingsTarget(event: Event) {
+  const anchor = (event as CustomEvent<{ anchor?: string }>).detail?.anchor;
+  if (anchor && domains.value.some((domain) => domain.id === 'connect' && domain.groups.some((group) => group.id === anchor))) {
+    selectDomain('connect', anchor);
+  }
+}
+
 function scrollToAnchor(anchor: string) {
   activeAnchor.value = anchor;
   // 目标分组可能被收起：先展开再滚动（展开改 DOM 是异步的，等 nextTick），
@@ -262,6 +269,7 @@ watch(domains, (items) => {
 });
 
 onMounted(async () => {
+  window.addEventListener('engram:settings-target', onSettingsTarget);
   await load();
   const target = resolveSettingsTarget(
     String(route.query.section || ''),
@@ -278,6 +286,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('engram:settings-target', onSettingsTarget);
   if (raf) cancelAnimationFrame(raf);
   scroller().removeEventListener('scroll', onScroll);
   window.removeEventListener('resize', onScroll);

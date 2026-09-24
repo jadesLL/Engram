@@ -162,6 +162,7 @@ export async function updateRoutes(app: FastifyInstance) {
       currentVersion: string;
       latestVersion: string | null;
       releaseTag: string;
+      releaseNotes: string;
       hasUpdate: boolean;
       digestMatch: boolean | null;
       registryChecked: boolean;
@@ -172,6 +173,7 @@ export async function updateRoutes(app: FastifyInstance) {
       currentVersion: ver,
       latestVersion: null,
       releaseTag: '',
+      releaseNotes: '',
       hasUpdate: false,
       digestMatch: null,
       registryChecked: false,
@@ -214,6 +216,7 @@ export async function updateRoutes(app: FastifyInstance) {
       if (release && !giteaError) {
         result.releaseTag = release.tag;
         result.latestVersion = release.version;
+        result.releaseNotes = release.notes;
         result.exeAsset = release.assets.find((a) => a.name.endsWith('.exe')) || null;
         if (release.version) {
           result.hasUpdate = compareVersions(ver, release.version) < 0;
