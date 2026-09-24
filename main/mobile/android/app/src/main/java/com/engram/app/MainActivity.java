@@ -96,7 +96,6 @@ public class MainActivity extends BridgeActivity {
                 EngramLocalServer localServer = EngramLocalServer.getInstance(getApplicationContext());
                 localServer.start();
                 localServer.migrateLegacyRemoteUrl();
-                if (activityForeground) localServer.onForeground();
                 runOnUiThread(() -> {
                     if (webView != null && startupGeneration == localNavigationGeneration && !isFinishing()) {
                         loadLocalWhenReady(webView, forceSelectServer);
@@ -116,7 +115,7 @@ public class MainActivity extends BridgeActivity {
         activityForeground = true;
         try {
             EngramLocalServer localServer = EngramLocalServer.peek();
-            if (localServer != null) localServer.onForeground();
+            if (localServer != null && startupOverlay == null) localServer.onForeground();
         } catch (Throwable error) {
             WebView webView = bridge != null ? bridge.getWebView() : null;
             if (webView != null) showStartupError(webView, error.getMessage());
@@ -199,7 +198,20 @@ public class MainActivity extends BridgeActivity {
             }
             webView.evaluateJavascript("(function(){var root=document.getElementById('app');return location.hostname==='127.0.0.1' && !!root && root.childElementCount>0})()", result -> {
                 if (generation != localNavigationGeneration || isFinishing()) return;
-                if ("true".equals(result)) hideStartupOverlay();
+                if ("true".equals(result)) {
+                    hideStartupOverlay();
+                    // 先显示本地页面，再启动可能需要大量网络和内存的首次同步。
+                    webView.postDelayed(() -> {
+                        if (activityForeground && generation == localNavigationGeneration) {
+                            try {
+                                EngramLocalServer localServer = EngramLocalServer.peek();
+                                if (localServer != null) localServer.onForeground();
+                            } catch (Throwable error) {
+                                android.util.Log.e("EngramStartup", "foreground sync could not start", error);
+                            }
+                        }
+                    }, 250);
+                }
                 else waitForPageSurface(webView, generation, attempt + 1);
             });
         }, 200);

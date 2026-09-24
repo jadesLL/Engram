@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import android.os.Build
 import android.system.Os
 import android.util.Base64
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -24,7 +25,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     context,
     databasePath(context),
     null,
-    3,
+    4,
     DefaultDatabaseErrorHandler(),
 ) {
     val root = File(context.filesDir, "engram")
@@ -81,11 +82,13 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             id INTEGER PRIMARY KEY AUTOINCREMENT,ts TEXT NOT NULL,level TEXT NOT NULL,event TEXT NOT NULL,detail TEXT NOT NULL DEFAULT ''
         )""")
         db.execSQL("CREATE TABLE file_extractions(path TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL)")
+        db.execSQL("CREATE TABLE scan_state(path TEXT PRIMARY KEY,mtime INTEGER NOT NULL,size INTEGER NOT NULL)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) db.execSQL("CREATE TABLE IF NOT EXISTS file_extractions(path TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL)")
         // v3 只新增文件库标准目录，不改表；目录由每次启动的 seedDirectories() 幂等补齐。
+        if (oldVersion < 4) db.execSQL("CREATE TABLE IF NOT EXISTS scan_state(path TEXT PRIMARY KEY,mtime INTEGER NOT NULL,size INTEGER NOT NULL)")
     }
 
     fun setting(key: String): String? = synchronized(lock) {
@@ -128,23 +131,55 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) "PBKDF2WithHmacSHA256" else "PBKDF2WithHmacSHA1"
 
     fun scan() = synchronized(lock) {
-        brain.walkTopDown().filter { it.isFile && !isInTrash(it) }.forEach { file ->
-            val rel = relative(file)
-            if (file.extension.equals("md", true) || file.extension.equals("markdown", true)) indexPage(rel)
-            else indexFile(rel)
+        val startedAt = System.currentTimeMillis()
+        val db = writableDatabase
+        val indexed = HashSet<String>()
+        db.rawQuery("SELECT path FROM pages WHERE deleted=0 UNION SELECT path FROM files WHERE deleted=0", null).use { c ->
+            while (c.moveToNext()) indexed.add(c.getString(0))
         }
-        val existing = brain.walkTopDown().filter { it.isFile }.map(::relative).toSet()
-        writableDatabase.rawQuery("SELECT path FROM pages WHERE deleted=0", null).use { c ->
-            while (c.moveToNext()) if (!existing.contains(c.getString(0))) {
-                writableDatabase.execSQL("UPDATE pages SET deleted=1 WHERE path=?", arrayOf(c.getString(0)))
+        val state = HashMap<String, Pair<Long, Long>>()
+        db.rawQuery("SELECT path,mtime,size FROM scan_state", null).use { c ->
+            while (c.moveToNext()) state[c.getString(0)] = c.getLong(1) to c.getLong(2)
+        }
+        val seen = HashSet<String>()
+        var refreshed = 0
+        var reused = 0
+        db.beginTransaction()
+        try {
+            brain.walkTopDown().onEnter { it != trashRoot }.filter { it.isFile }.forEach { file ->
+                val rel = relative(file)
+                seen.add(rel)
+                val stamp = file.lastModified() to file.length()
+                when {
+                    indexed.contains(rel) && state[rel] == stamp -> reused++
+                    // 旧版已为 App 私有文件建立索引；升级时只登记文件状态，避免整库重复解析。
+                    indexed.contains(rel) && !state.containsKey(rel) -> { recordScanState(rel, file); reused++ }
+                    file.extension.equals("md", true) || file.extension.equals("markdown", true) -> { indexPageInternal(rel, false); refreshed++ }
+                    else -> { indexFileInternal(rel, null, false); refreshed++ }
+                }
             }
-        }
-        writableDatabase.rawQuery("SELECT id,path FROM files WHERE deleted=0", null).use { c ->
-            while (c.moveToNext()) if (!existing.contains(c.getString(1))) {
-                writableDatabase.execSQL("UPDATE files SET deleted=1 WHERE id=?", arrayOf(c.getString(0)))
-                writableDatabase.execSQL("DELETE FROM search_tokens WHERE ref_type='file' AND ref_id=?", arrayOf(c.getString(0)))
+            db.rawQuery("SELECT id,path FROM pages WHERE deleted=0", null).use { c ->
+                while (c.moveToNext()) if (!seen.contains(c.getString(1))) {
+                    db.execSQL("UPDATE pages SET deleted=1 WHERE id=?", arrayOf(c.getString(0)))
+                    db.execSQL("DELETE FROM search_tokens WHERE ref_type='page' AND ref_id=?", arrayOf(c.getString(0)))
+                }
             }
+            db.rawQuery("SELECT id,path FROM files WHERE deleted=0", null).use { c ->
+                while (c.moveToNext()) if (!seen.contains(c.getString(1))) {
+                    db.execSQL("UPDATE files SET deleted=1 WHERE id=?", arrayOf(c.getString(0)))
+                    db.execSQL("DELETE FROM search_tokens WHERE ref_type='file' AND ref_id=?", arrayOf(c.getString(0)))
+                }
+            }
+            for (path in state.keys) if (!seen.contains(path)) db.execSQL("DELETE FROM scan_state WHERE path=?", arrayOf(path))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
+        Log.i("EngramStartup", "scan complete: reused=$reused refreshed=$refreshed elapsedMs=${System.currentTimeMillis() - startedAt}")
+    }
+
+    private fun recordScanState(rel: String, file: File) {
+        writableDatabase.execSQL("INSERT OR REPLACE INTO scan_state(path,mtime,size) VALUES(?,?,?)", arrayOf(rel, file.lastModified(), file.length()))
     }
 
     private fun safe(rel: String): File {
@@ -198,7 +233,9 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         catch (error: Exception) { temp.delete(); throw error }
     }
 
-    private fun indexPage(rel: String): JSONObject {
+    private fun indexPage(rel: String): JSONObject = indexPageInternal(rel, true)!!
+
+    private fun indexPageInternal(rel: String, includeResult: Boolean): JSONObject? {
         val file = safe(rel)
         val parsed = parseMarkdown(file.readText())
         val id = field(parsed.fields, "id") ?: newId()
@@ -221,10 +258,13 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             arrayOf(id, rel, title, type, tags.toString(), field(fields, "摘要", "summary") ?: "", parsed.body, created, updated, wordCount, rel),
         )
         reindex("page", id, "$title ${tags} ${parsed.body}")
-        return pageJson(id)!!
+        recordScanState(rel, file)
+        return if (includeResult) pageJson(id)!! else null
     }
 
-    private fun indexFile(rel: String, extractedText: String? = null): JSONObject {
+    private fun indexFile(rel: String, extractedText: String? = null): JSONObject = indexFileInternal(rel, extractedText, true)!!
+
+    private fun indexFileInternal(rel: String, extractedText: String?, includeResult: Boolean): JSONObject? {
         val file = safe(rel)
         val oldText = readableDatabase.rawQuery("SELECT text FROM files WHERE path=?", arrayOf(rel)).use { if (it.moveToFirst()) it.getString(0) else "" }
         val text = extractedText ?: if (file.extension.lowercase() in setOf("txt", "csv", "json", "html", "xml")) runCatching { file.readText() }.getOrDefault("") else oldText
@@ -234,7 +274,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             arrayOf(id, rel, file.name, file.extension.lowercase(), file.length(), text, Instant.ofEpochMilli(file.lastModified()).toString()),
         )
         reindex("file", id, "${file.name} $text")
-        return fileJson(id)!!
+        recordScanState(rel, file)
+        return if (includeResult) fileJson(id)!! else null
     }
 
     private fun tokens(text: String): Set<String> {
@@ -272,7 +313,15 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
 
     fun pages(): JSONArray = synchronized(lock) {
         val arr = JSONArray()
-        readableDatabase.rawQuery("SELECT id FROM pages WHERE deleted=0 ORDER BY updated_at DESC", null).use { c -> while (c.moveToNext()) pageJson(c.getString(0))?.let(arr::put) }
+        readableDatabase.rawQuery(
+            "SELECT id,path,title,type,tags,summary,created_at,updated_at,word_count,sync_revision FROM pages WHERE deleted=0 ORDER BY updated_at DESC",
+            null,
+        ).use { c -> while (c.moveToNext()) arr.put(JSONObject().apply {
+            put("id", c.getString(0)); put("path", c.getString(1)); put("title", c.getString(2)); put("type", c.getString(3))
+            put("tags", JSONArray(c.getString(4))); put("summary", c.getString(5)); put("created_at", c.getString(6))
+            put("updated_at", c.getString(7)); put("word_count", c.getInt(8)); put("sync_revision", c.getInt(9))
+            put("guide_version", 0); put("assetCount", 0)
+        }) }
         arr
     }
 
@@ -474,10 +523,13 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
 
     fun files(dir: String? = null): JSONArray = synchronized(lock) {
         val out = JSONArray(); val prefix = (dir?.trimEnd('/') ?: "原始资料") + "/"
-        readableDatabase.rawQuery("SELECT id,path FROM files WHERE deleted=0 AND path LIKE ? ORDER BY name", arrayOf("$prefix%")) .use { c ->
+        readableDatabase.rawQuery("SELECT id,path,name,ext,size,updated_at FROM files WHERE deleted=0 AND path LIKE ? ORDER BY name", arrayOf("$prefix%")) .use { c ->
             while (c.moveToNext()) {
                 val path = c.getString(1)
-                if (!dir.isNullOrBlank() || !path.removePrefix(prefix).contains('/')) fileJson(c.getString(0))?.let(out::put)
+                if (!dir.isNullOrBlank() || !path.removePrefix(prefix).contains('/')) out.put(JSONObject().apply {
+                    put("id", c.getString(0)); put("path", path); put("name", c.getString(2)); put("ext", c.getString(3))
+                    put("size", c.getLong(4)); put("updated_at", c.getString(5)); put("distilled", evidenceDistilled(path))
+                })
             }
         }
         readableDatabase.rawQuery("SELECT id,path FROM pages WHERE deleted=0 AND path LIKE ? ORDER BY title", arrayOf("$prefix%")) .use { c ->
@@ -674,7 +726,27 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         JSONObject().put("nodes", nodes).put("edges", edges)
     }
 
-    private fun relatedIds(id: String, depth: Int): Set<String> { val found = linkedSetOf<String>(); var frontier = setOf(id); repeat(depth) { val next = linkedSetOf<String>(); frontier.forEach { source -> pageJson(source)?.let { page -> Regex("\\[\\[([^]#|]+)").findAll(page.getString("content")).forEach { pageByTitle(it.groupValues[1].trim())?.getString("id")?.let(next::add) } } }; pages().let { arr -> for (i in 0 until arr.length()) { val p = arr.getJSONObject(i); if (Regex("\\[\\[${Regex.escape(pageJson(id)?.getString("title") ?: "")}([#|\\]])").containsMatchIn(p.getString("content"))) next += p.getString("id") } }; next.removeAll(found); found.addAll(next); frontier = next }; return found }
+    private fun relatedIds(id: String, depth: Int): Set<String> {
+        val found = linkedSetOf<String>()
+        var frontier = setOf(id)
+        val title = pageJson(id)?.getString("title") ?: return found
+        val backlink = Regex("\\[\\[${Regex.escape(title)}([#|\\]])")
+        repeat(depth) {
+            val next = linkedSetOf<String>()
+            frontier.forEach { source -> pageJson(source)?.let { page ->
+                Regex("\\[\\[([^]#|]+)").findAll(page.getString("content")).forEach { match ->
+                    pageByTitle(match.groupValues[1].trim())?.getString("id")?.let(next::add)
+                }
+            } }
+            readableDatabase.rawQuery("SELECT id,content FROM pages WHERE deleted=0", null).use { c ->
+                while (c.moveToNext()) if (backlink.containsMatchIn(c.getString(1))) next += c.getString(0)
+            }
+            next.removeAll(found)
+            found.addAll(next)
+            frontier = next
+        }
+        return found
+    }
 
     fun related(id: String): JSONObject { val related = JSONArray(); relatedIds(id, 1).forEach { rid -> pageJson(rid)?.let { related.put(it) } }; return JSONObject().put("neighbors", related).put("similar", JSONArray()).put("entities", JSONArray()) }
 
@@ -751,6 +823,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         writableDatabase.execSQL("DELETE FROM page_revisions")
         writableDatabase.execSQL("DELETE FROM evidence_snapshots")
         writableDatabase.execSQL("DELETE FROM file_extractions")
+        writableDatabase.execSQL("DELETE FROM scan_state")
         scan()
         metadata?.let(::importPortableMetadata)
         val entries = snapshotEntries()
@@ -763,7 +836,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun wipe() = synchronized(lock) {
         brain.listFiles()?.filter { it != trashRoot }?.forEach { it.deleteRecursively() }; trashRoot.deleteRecursively()
         seedDirectories()
-        writableDatabase.execSQL("DELETE FROM pages"); writableDatabase.execSQL("DELETE FROM files"); writableDatabase.execSQL("DELETE FROM search_tokens"); writableDatabase.execSQL("DELETE FROM trash"); writableDatabase.execSQL("DELETE FROM sync_outbox"); writableDatabase.execSQL("DELETE FROM page_revisions"); writableDatabase.execSQL("DELETE FROM evidence_snapshots"); writableDatabase.execSQL("DELETE FROM file_extractions")
+        writableDatabase.execSQL("DELETE FROM pages"); writableDatabase.execSQL("DELETE FROM files"); writableDatabase.execSQL("DELETE FROM search_tokens"); writableDatabase.execSQL("DELETE FROM trash"); writableDatabase.execSQL("DELETE FROM sync_outbox"); writableDatabase.execSQL("DELETE FROM page_revisions"); writableDatabase.execSQL("DELETE FROM evidence_snapshots"); writableDatabase.execSQL("DELETE FROM file_extractions"); writableDatabase.execSQL("DELETE FROM scan_state")
     }
 
     private fun sanitizeName(value: String) = value.replace(Regex("[\\\\/:*?\"<>|]"), "-").trim()
