@@ -1,73 +1,73 @@
 <template>
   <div class="inbox-view">
     <div class="page-head">
-      <span class="mark"><Icon name="inbox" :size="16" /></span>
-      <div class="head-text">
-        <h1>收集箱</h1>
-        <p class="sub">临时收纳 · 待整理 · 待转换 —— 内容尚未纳入知识库</p>
-      </div>
+      <h1>收集箱</h1>
+      <span class="sub">临时收纳，确认入库后才进知识库</span>
       <div class="spacer" />
       <div class="head-actions">
-        <button class="btn" type="button" :disabled="inbox.loading" @click="inbox.load()">
-          <Icon name="activity" :size="15" />刷新
+        <button class="btn ghost" type="button" :disabled="inbox.loading" @click="inbox.load()">
+          <Icon name="refresh" :size="14" />刷新
         </button>
         <!-- 提示挂在 span 上：disabled 的按钮收不到鼠标事件，直接挂按钮上等于弹不出来 -->
         <span class="tip-wrap" v-tooltip="convertAllTip">
-          <button class="btn inbox" type="button" :disabled="convertAllDisabled" @click="convertAll">
+          <button class="btn primary" type="button" :disabled="convertAllDisabled" @click="convertAll">
             <Icon name="ai" :size="15" />全部转换为 Markdown
           </button>
         </span>
       </div>
     </div>
 
-    <div class="notice">
-      <Icon name="eye-off" :size="15" />
-      <div>
-        <b>收集箱不进入知识库</b>：这里的文件不参与检索、不被提炼、不会被 Agent 在回答里引用；
-        只有你确认「入库」之后，转换出的 Markdown 才会成为可引用的知识。
-        <template v-if="isDesktop">桌面端会用系统默认应用打开原文件，不在 Engram 内浏览。</template>
-        <template v-else>Docker / 浏览器版直接把原文件下载到你的电脑，不在 Engram 内浏览。</template>
-      </div>
-    </div>
-
-    <form class="url-import" @submit.prevent="submitUrl">
-      <div class="url-import-main">
-        <label for="inbox-page-url">粘贴网页链接</label>
-        <div class="url-import-controls">
-          <input
-            id="inbox-page-url"
-            v-model="pageUrl"
-            type="url"
-            required
-            placeholder="https://example.com/article"
-            :disabled="fetchingUrl"
-          />
-          <button class="btn inbox" type="submit" :disabled="fetchingUrl || !pageUrl.trim()">
-            <AppSpinner v-if="fetchingUrl" :size="14" />
-            <Icon v-else name="external" :size="14" />
-            {{ fetchingUrl ? '正在抓取…' : '保存网页' }}
-          </button>
-        </div>
-        <small>保存网站返回的 HTML 原文；登录、验证码和依赖脚本的内容可能无法完整保存。</small>
-      </div>
-    </form>
-
+    <!-- 收纳区：一个动作面，左拖文件 / 右粘链接；整块区域都是放置目标 -->
     <div
-      class="dropzone"
+      class="intake"
       :class="{ hot: dragOver }"
-      role="button"
-      tabindex="0"
-      @click="pickFiles"
-      @keydown.enter.prevent="pickFiles"
-      @keydown.space.prevent="pickFiles"
       @dragover.prevent="dragOver = true"
       @dragleave.prevent="dragOver = false"
       @drop.prevent="onDrop"
     >
-      <Icon name="upload" :size="26" />
-      <b>把任意文件拖到这里</b>
-      <small>不限格式 · 不限单文件大小 · 同名不覆盖 · 也可点击选择文件</small>
-      <input ref="fileInput" class="file-input" type="file" multiple @change="onPicked" />
+      <div
+        class="drop-half"
+        role="button"
+        tabindex="0"
+        @click="pickFiles"
+        @keydown.enter.prevent="pickFiles"
+        @keydown.space.prevent="pickFiles"
+      >
+        <span class="ic"><Icon name="upload" :size="19" /></span>
+        <div>
+          <b>拖文件到这里，或点击选择</b>
+          <small>不限格式 · 不限单文件大小 · 同名不覆盖</small>
+        </div>
+        <input ref="fileInput" class="file-input" type="file" multiple @change="onPicked" />
+      </div>
+      <div class="divider" />
+      <form class="url-half" @submit.prevent="submitUrl">
+        <input
+          id="inbox-page-url"
+          v-model="pageUrl"
+          type="url"
+          required
+          placeholder="粘贴网页链接，保存 HTML 原文"
+          :disabled="fetchingUrl"
+        />
+        <span class="tip-wrap" v-tooltip="'保存网站返回的 HTML 原文；登录、验证码和依赖脚本的内容可能无法完整保存'">
+          <button class="btn sm url-save" type="submit" :disabled="fetchingUrl || !pageUrl.trim()">
+            <AppSpinner v-if="fetchingUrl" :size="14" />
+            <template v-else>保存</template>
+          </button>
+        </span>
+      </form>
+    </div>
+
+    <!-- 一行可收起的提示；收起状态记在本机，不再每次进来都占一块卡片 -->
+    <div v-if="!noticeDismissed" class="notice">
+      <Icon name="eye-off" :size="13" />
+      <span>
+        <b>收集箱不进入知识库</b>：内容不参与检索、不被提炼，确认「入库」后才成为可引用的知识。
+        <template v-if="isDesktop">桌面端会用系统默认应用打开原文件。</template>
+        <template v-else>Docker / 浏览器版直接把原文件下载到你的电脑。</template>
+      </span>
+      <button class="hide-btn" type="button" @click="dismissNotice">知道了</button>
     </div>
 
     <div v-if="inbox.error" class="error-line">
@@ -84,11 +84,11 @@
           :aria-checked="filter === option.value"
           :class="{ on: filter === option.value }"
           @click="filter = option.value"
-        >{{ option.label }} {{ option.count }}</button>
+        >{{ option.label }}<span class="n">{{ option.count }}</span></button>
       </div>
       <div class="spacer" />
       <span class="hint">
-        按收纳时间倒序 · 共 {{ inbox.counts.all }} 个文件 · 支持多端同步
+        按收纳时间倒序
         <template v-if="inbox.counts.converting"> · {{ inbox.counts.converting }} 个转换中</template>
       </span>
     </div>
@@ -97,25 +97,20 @@
       <AppSpinner :size="14" /> 正在读取收集箱…
     </div>
 
-    <div v-else-if="visibleItems.length || inbox.uploading.length" class="card list">
-      <div class="list-head">
-        <span class="col-name">文件</span>
-        <span class="col-status">状态</span>
-        <span class="col-actions">操作</span>
-      </div>
-
+    <!-- 无边框行式列表：行间只留发丝分隔线，悬停才浮起 -->
+    <div v-else-if="visibleItems.length || inbox.uploading.length" class="list">
       <!-- 上传中的行：边收边写，进度按单个文件走 -->
-      <div v-for="item in inbox.uploading" :key="item.id" class="file-row uploading">
+      <div v-for="item in inbox.uploading" :key="item.id" class="row uploading">
         <div class="ftype other">…</div>
         <div class="fmain">
           <div class="fname truncate">{{ item.name }}</div>
           <div class="progress"><i :style="{ width: progressPercent(item) }" /></div>
         </div>
-        <span class="chip">{{ uploadStatus(item) }}</span>
-        <div class="factions" />
+        <span class="status converting"><i />{{ uploadStatus(item) }}</span>
+        <div class="actions" />
       </div>
 
-      <div v-for="item in visibleItems" :key="item.path" class="file-row">
+      <div v-for="item in visibleItems" :key="item.path" class="row">
         <div class="ftype" :class="item.category">{{ typeLabel(item) }}</div>
         <div class="fmain">
           <div class="fname truncate" v-tooltip="item.rel">{{ item.name }}</div>
@@ -138,59 +133,94 @@
             <Icon name="file" :size="12" /><span class="truncate">{{ rowNote(item) }}</span>
           </div>
         </div>
-        <span class="chip" :class="statusChip(item)" v-tooltip="statusTip(item)">
-          <Icon :name="statusIcon(item)" :size="12" />
-          {{ statusLabel(item) }}
+        <span class="status" :class="statusChip(item)" v-tooltip="statusTip(item)">
+          <i />{{ statusLabel(item) }}
         </span>
-        <div class="factions">
-          <span class="tip-wrap" v-tooltip="convertTip(item)">
-            <button class="btn sm" type="button" :disabled="!canConvert(item)" @click="convertItem(item)">
-              <Icon name="ai" :size="14" />{{ item.status === 'converting' ? '转换中…' : item.derivedPath ? '重新转换' : '转为 Markdown' }}
+        <!-- 每行只留一个主操作（按状态切换），其余收进 ⋯ 菜单 -->
+        <div class="actions">
+          <span v-if="primaryKind(item) === 'convert'" class="tip-wrap" v-tooltip="convertTip(item)">
+            <button class="primary-act" type="button" :disabled="!canConvert(item)" @click="convertItem(item)">
+              <Icon name="ai" :size="13" />转为 Markdown
             </button>
           </span>
-          <button v-if="item.assistantSessionId" class="btn sm ghost" type="button" @click="openConversionChat(item.assistantSessionId)">
-            <Icon name="messages" :size="14" />查看过程
-          </button>
-          <template v-if="item.derivedPath && item.status !== 'converting'">
-            <span class="tip-wrap" v-tooltip="item.derivedPath ? `查看产物：${item.derivedPath}` : '还没有转换产物'">
-              <button class="btn sm" type="button" :disabled="!item.derivedPath" @click="openReview(item)">
-                <Icon name="eye" :size="14" />查看
-              </button>
-            </span>
-            <span
-              class="tip-wrap"
-              v-tooltip="inbox.adopted.has(item.path) ? '本次会话已入库' : '入库后成为知识库里可检索、可引用的内容'"
+          <span v-else-if="primaryKind(item) === 'process'" class="tip-wrap" v-tooltip="'正在按内容语义转换，完成后自动刷新'">
+            <button
+              class="primary-act"
+              type="button"
+              :disabled="!item.assistantSessionId"
+              @click="item.assistantSessionId && openConversionChat(item.assistantSessionId)"
             >
-              <button
-                class="btn sm"
-                type="button"
-                :disabled="inbox.adopted.has(item.path)"
-                @click="adoptItem(item)"
-              >
-                <Icon name="check" :size="14" />入库
-              </button>
-            </span>
-          </template>
-          <a v-if="!isDesktop" class="btn sm ghost" :href="downloadUrl(item)">
-            <Icon name="download" :size="14" />下载原文件
-          </a>
-          <template v-else>
-            <button class="btn sm ghost" type="button" @click="openNatively(item)">
-              <Icon name="external" :size="14" />系统默认应用打开
+              <Icon name="messages" :size="13" />{{ item.assistantSessionId ? '查看过程' : '转换中…' }}
             </button>
-            <a class="btn sm ghost" :href="downloadUrl(item)">
-              <Icon name="download" :size="14" />下载
-            </a>
-          </template>
-          <button
-            class="icon-btn danger"
-            type="button"
-            v-tooltip="'移除（进回收站，可恢复）'"
-            aria-label="移除"
-            @click="removeItem(item)"
+          </span>
+          <span v-else-if="primaryKind(item) === 'retry'" class="tip-wrap" v-tooltip="convertTip(item)">
+            <button class="primary-act" type="button" :disabled="!canConvert(item)" @click="convertItem(item)">
+              <Icon name="refresh" :size="13" />重新转换
+            </button>
+          </span>
+          <span
+            v-else-if="primaryKind(item) === 'adopt'"
+            class="tip-wrap"
+            v-tooltip="'入库后成为知识库里可检索、可引用的内容；原件仍留在收集箱'"
           >
-            <Icon name="trash" :size="15" />
-          </button>
+            <button class="primary-act solid" type="button" @click="adoptItem(item)">
+              <Icon name="check" :size="13" />入库
+            </button>
+          </span>
+          <span v-else-if="primaryKind(item) === 'review'" class="tip-wrap" v-tooltip="item.derivedPath ? `查看产物：${item.derivedPath}` : ''">
+            <button class="primary-act" type="button" :disabled="!item.derivedPath" @click="openReview(item)">
+              <Icon name="eye" :size="13" />查看
+            </button>
+          </span>
+
+          <span class="menu-wrap">
+            <button
+              class="icon-btn"
+              :class="{ open: menuFor === item.path }"
+              type="button"
+              aria-label="更多操作"
+              aria-haspopup="menu"
+              :aria-expanded="menuFor === item.path"
+              @click.stop="toggleMenu(item.path)"
+            >
+              <Icon name="more" :size="15" />
+            </button>
+            <div v-if="menuFor === item.path" class="menu" role="menu" @click.stop>
+              <button
+                v-if="item.assistantSessionId && item.status !== 'converting'"
+                type="button"
+                role="menuitem"
+                @click="runMenu(item, 'process')"
+              ><Icon name="messages" :size="13" />查看过程</button>
+              <button
+                v-if="item.derivedPath && item.status !== 'converting' && primaryKind(item) !== 'review'"
+                type="button"
+                role="menuitem"
+                @click="runMenu(item, 'review')"
+              ><Icon name="eye" :size="13" />查看产物</button>
+              <button
+                v-if="item.derivedPath && item.status !== 'converting' && primaryKind(item) === 'review' && canConvert(item)"
+                type="button"
+                role="menuitem"
+                @click="runMenu(item, 'convert')"
+              ><Icon name="ai" :size="13" />重新转换</button>
+              <a v-if="!isDesktop" class="menu-item" role="menuitem" :href="downloadUrl(item)" @click="closeMenu">
+                <Icon name="download" :size="13" />下载原文件
+              </a>
+              <template v-else>
+                <button type="button" role="menuitem" @click="runMenu(item, 'openNative')">
+                  <Icon name="external" :size="13" />系统默认应用打开
+                </button>
+                <a class="menu-item" role="menuitem" :href="downloadUrl(item)" @click="closeMenu">
+                  <Icon name="download" :size="13" />下载
+                </a>
+              </template>
+              <div class="sep" />
+              <button class="danger" type="button" role="menuitem" @click="runMenu(item, 'remove')">
+                <Icon name="trash" :size="13" />移入回收站
+              </button>
+            </div>
+          </span>
         </div>
       </div>
     </div>
@@ -216,7 +246,7 @@
       <div v-else ref="reviewBody" class="review-md" />
       <template #footer>
         <button class="btn" type="button" @click="closeReview">关闭</button>
-        <button class="btn inbox" type="button" :disabled="adoptDisabled" @click="adoptFromReview">
+        <button class="btn primary" type="button" :disabled="adoptDisabled" @click="adoptFromReview">
           <Icon name="check" :size="14" />{{ adoptLabel }}
         </button>
       </template>
@@ -264,6 +294,58 @@ const visibleItems = computed(() => {
   return inbox.items.filter((item) => item.status === filter.value);
 });
 
+/* ===== 提示条：收起状态记本机，不收服务端管 ===== */
+
+const NOTICE_KEY = 'engram-inbox-notice-dismissed';
+const noticeDismissed = ref(localStorage.getItem(NOTICE_KEY) === '1');
+
+function dismissNotice() {
+  noticeDismissed.value = true;
+  localStorage.setItem(NOTICE_KEY, '1');
+}
+
+/* ===== ⋯ 溢出菜单：同一时刻只开一行，点别处或 Esc 收起 ===== */
+
+const menuFor = ref<string | null>(null);
+
+function toggleMenu(path: string) {
+  menuFor.value = menuFor.value === path ? null : path;
+}
+
+function closeMenu() {
+  menuFor.value = null;
+}
+
+function onDocKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeMenu();
+}
+
+type MenuAction = 'convert' | 'review' | 'process' | 'openNative' | 'remove';
+
+/** 菜单项统一入口：先收菜单再执行，避免弹层残留遮住后续确认框 */
+async function runMenu(item: InboxItem, action: MenuAction) {
+  closeMenu();
+  if (action === 'convert') await convertItem(item);
+  else if (action === 'review') await openReview(item);
+  else if (action === 'process') {
+    if (item.assistantSessionId) await openConversionChat(item.assistantSessionId);
+  } else if (action === 'openNative') await openNatively(item);
+  else if (action === 'remove') await removeItem(item);
+}
+
+/**
+ * 行内唯一主操作按状态切换：
+ * 待整理=转换，转换中=查看过程，失败=重试，已转换未入库=入库，已入库=查看产物，不可转=无。
+ */
+type PrimaryKind = 'convert' | 'process' | 'retry' | 'adopt' | 'review' | 'none';
+
+function primaryKind(item: InboxItem): PrimaryKind {
+  if (item.status === 'converting') return 'process';
+  if (item.status === 'failed') return 'retry';
+  if (item.status === 'converted') return inbox.adopted.has(item.path) ? 'review' : 'adopt';
+  return canConvert(item) ? 'convert' : 'none';
+}
+
 /* ===== 转换：能不能转由服务端的 capability 说了算，界面不自己猜格式 ===== */
 
 /** 服务端能按内容语义转换的三类；agent-only / unsupported 只能等 Agent 通道 */
@@ -278,10 +360,6 @@ const STATUS_STYLE: Record<InboxItem['status'], { label: string; icon: string; c
 
 function statusLabel(item: InboxItem): string {
   return STATUS_STYLE[item.status]?.label || item.status;
-}
-
-function statusIcon(item: InboxItem): string {
-  return STATUS_STYLE[item.status]?.icon || 'file';
 }
 
 function statusChip(item: InboxItem): string {
@@ -633,6 +711,9 @@ async function removeItem(item: InboxItem) {
 }
 
 onMounted(async () => {
+  // ⋯ 菜单点别处收起；Esc 由 keydown 负责
+  document.addEventListener('click', closeMenu);
+  document.addEventListener('keydown', onDocKeydown);
   await inbox.load();
   // store 可能已经被别处（侧栏角标）加载过，watch 不会为初始值补一次，这里对一次表
   syncPolling();
@@ -642,6 +723,8 @@ onBeforeUnmount(() => {
   disposed = true;
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = undefined;
+  document.removeEventListener('click', closeMenu);
+  document.removeEventListener('keydown', onDocKeydown);
 });
 </script>
 
@@ -650,57 +733,38 @@ onBeforeUnmount(() => {
   --inbox-accent: var(--accent);
   --inbox-accent-soft: var(--accent-soft);
   --inbox-accent-border: color-mix(in srgb, var(--accent) 30%, transparent);
-  padding: 20px 26px 60px;
-  max-width: 1180px;
+  padding: 24px 26px 64px;
+  max-width: 1080px;
 }
 
+/* ===== 页头：压扁、让位给内容 ===== */
 .page-head {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 14px;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 18px;
 }
 
-.mark {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: var(--inbox-accent-soft);
-  color: var(--inbox-accent);
-  margin-top: 2px;
-}
-
-.head-text h1 {
+.page-head h1 {
   margin: 0;
-  font-size: 21px;
-  line-height: 30px;
+  font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.2px;
 }
 
-.head-text .sub {
-  margin: 2px 0 0;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
+.page-head .sub { font-size: 12.5px; color: var(--text-faint); }
 
 .spacer { flex: 1; }
 
-.head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+.head-actions { display: flex; align-items: center; gap: 8px; }
 
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   height: 30px;
-  padding: 0 11px;
+  padding: 0 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-control);
   background: var(--card-bg);
@@ -708,105 +772,119 @@ onBeforeUnmount(() => {
   font-size: 13px;
   text-decoration: none;
   box-shadow: var(--shadow-raised);
+  transition: background 120ms ease;
 }
 
 .btn:hover { background: var(--bg-hover); }
 
-.btn.inbox {
+.btn.primary {
   border-color: transparent;
   background: var(--inbox-accent);
   color: var(--on-accent);
   box-shadow: none;
 }
 
-.btn.sm { height: 26px; padding: 0 9px; font-size: 12.5px; }
+.btn.primary:hover { background: var(--accent-hover); }
+
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
 .btn.ghost { border-color: transparent; background: transparent; box-shadow: none; color: var(--text-secondary); }
 .btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
 .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .btn[disabled]:hover { background: var(--card-bg); }
+.btn.primary[disabled]:hover { background: var(--inbox-accent); }
 
 /* 提示的落点：disabled 的按钮收不到鼠标事件，包一层 span 让它照样能弹 */
 .tip-wrap { display: inline-flex; }
 
-.icon-btn {
-  width: 26px;
-  height: 26px;
+/* ===== 收纳区：一个动作面，左拖文件 / 右粘链接 ===== */
+.intake {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 14px;
+  border: 1.5px dashed var(--inbox-accent-border);
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-raised);
+  overflow: hidden;
+  transition: border-color 150ms ease;
+}
+
+.intake:hover,
+.intake.hot { border-color: var(--inbox-accent); }
+
+.drop-half {
+  flex: 1.1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 22px;
+  cursor: pointer;
+  background: linear-gradient(120deg, var(--inbox-accent-soft), transparent 70%);
+}
+
+.drop-half .ic {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-control);
-  color: var(--text-secondary);
+  border-radius: 12px;
+  background: var(--inbox-accent);
+  color: var(--on-accent);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-.icon-btn:hover { background: var(--bg-hover); color: var(--text); }
-.icon-btn.danger:hover { color: var(--danger); }
+.drop-half b { display: block; font-size: 14.5px; font-weight: 600; }
+.drop-half small { font-size: 12px; color: var(--text-faint); }
+.drop-half:focus-visible { outline: 2px solid var(--inbox-accent); outline-offset: -2px; }
 
-.notice {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 10px 12px;
-  margin-bottom: 14px;
-  border: 1px solid var(--inbox-accent-border);
-  border-radius: var(--radius);
-  background: var(--inbox-accent-soft);
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
+.intake .divider { width: 1px; margin: 14px 0; background: var(--border); }
 
-.notice svg { color: var(--inbox-accent); flex-shrink: 0; margin-top: 2px; }
-.notice b { color: var(--text); font-weight: 600; }
+.url-half { flex: 1; display: flex; align-items: center; gap: 8px; padding: 20px 22px; }
 
-.url-import {
-  margin-bottom: 14px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card-bg);
-}
-.url-import-main label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 600; }
-.url-import-controls { display: flex; gap: 8px; }
-.url-import-controls input {
+.url-half input {
   flex: 1;
   min-width: 0;
   height: 34px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text);
   font: inherit;
-}
-.url-import-controls input:focus-visible { outline: 2px solid var(--inbox-accent); outline-offset: 1px; }
-.url-import-controls .btn { white-space: nowrap; }
-.url-import-main small { display: block; margin-top: 7px; color: var(--text-faint); font-size: 11.5px; }
-
-.dropzone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 116px;
-  margin-bottom: 14px;
-  border: 1.5px dashed var(--inbox-accent-border);
-  border-radius: var(--radius);
-  background: linear-gradient(180deg, var(--inbox-accent-soft), transparent 78%);
-  color: var(--text-secondary);
-  text-align: center;
-  cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease;
+  font-size: 13px;
+  transition: border-color 120ms ease;
 }
 
-.dropzone svg { color: var(--inbox-accent); }
-.dropzone b { color: var(--text); font-size: 14px; font-weight: 600; }
-.dropzone small { font-size: 12px; color: var(--text-faint); }
-.dropzone:hover,
-.dropzone.hot { border-color: var(--inbox-accent); }
-.dropzone.hot { background: var(--inbox-accent-soft); }
-.dropzone:focus-visible { outline: 2px solid var(--inbox-accent); outline-offset: 2px; }
+.url-half input:focus { outline: none; border-color: var(--inbox-accent); box-shadow: 0 0 0 3px var(--inbox-accent-soft); }
+.url-save { height: 34px; white-space: nowrap; }
 .file-input { display: none; }
+
+/* ===== 提示：一行可收起的细条 ===== */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.6;
+}
+
+.notice svg { color: var(--inbox-accent); flex-shrink: 0; }
+.notice b { color: var(--text-secondary); font-weight: 600; }
+
+.notice .hide-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.notice .hide-btn:hover { background: var(--bg-hover); color: var(--text-secondary); }
 
 .error-line,
 .loading-line {
@@ -820,99 +898,99 @@ onBeforeUnmount(() => {
 
 .error-line { color: var(--danger); }
 
+/* ===== 工具条：胶囊筛选，选中反色 ===== */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
+  padding: 0 6px;
 }
 
-.seg {
-  display: inline-flex;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--bg-secondary);
-}
+.seg { display: inline-flex; gap: 2px; }
 
 .seg button {
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 4px;
+  height: 27px;
+  padding: 0 12px;
+  border-radius: 999px;
   font-size: 12.5px;
   color: var(--text-secondary);
+  transition: background 120ms ease, color 120ms ease;
 }
+
+.seg button:hover { color: var(--text); }
 
 .seg button.on {
-  background: var(--card-bg);
-  color: var(--text);
-  box-shadow: var(--shadow-raised);
-}
-
-.hint { font-size: 12.5px; color: var(--text-faint); }
-
-.card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card-bg);
-  box-shadow: var(--shadow-raised);
-  overflow: hidden;
-}
-
-.list-head {
-  display: flex;
-  align-items: center;
-  padding: 9px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
-  font-size: 12px;
+  background: var(--text);
+  color: var(--bg);
   font-weight: 600;
-  color: var(--text-faint);
 }
 
-.col-name { flex: 1; }
-.col-status { width: 104px; }
-/* 与 .factions 同宽：已转换的行多出「查看 / 入库」两个动作，窄了会挤到一起 */
-.col-actions { width: 320px; text-align: right; }
+.seg .n { opacity: 0.6; font-size: 11.5px; margin-left: 3px; }
 
-.file-row {
+.hint { font-size: 12px; color: var(--text-faint); }
+
+/* ===== 文件列表：无边框行式，行间发丝分隔线，悬停浮起 ===== */
+.row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+  gap: 13px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  transition: background 100ms ease;
 }
 
-.file-row:last-child { border-bottom: 0; }
-.file-row:hover { background: var(--bg-hover); }
-.file-row.uploading { background: var(--inbox-accent-soft); }
+.row + .row::before {
+  content: '';
+  position: absolute;
+  left: 61px;
+  right: 12px;
+  top: 0;
+  height: 1px;
+  background: var(--border);
+}
 
+.row:hover { background: var(--card-bg); box-shadow: var(--shadow-raised); }
+.row:hover::before,
+.row:hover + .row::before { background: transparent; }
+
+.row.uploading { background: var(--inbox-accent-soft); }
+.row.uploading::before { display: none; }
+
+/* 文件类型：浅色底 + 彩色字，替代实心色块，整列表安静下来 */
 .ftype {
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
-  background: #6b6a68;
-  color: #fff;
+  border-radius: 10px;
   font-size: 10.5px;
   font-weight: 700;
+  letter-spacing: 0.3px;
+  background: var(--bg-tertiary);
+  color: var(--text-faint);
 }
 
-.ftype.document { background: var(--file-word); }
-.ftype.spreadsheet { background: var(--file-excel); }
-.ftype.presentation { background: var(--file-ppt); }
-.ftype.pdf { background: var(--file-pdf); }
-.ftype.image { background: #2b8a8f; }
-.ftype.text { background: var(--file-markdown); }
-.ftype.web { background: var(--inbox-accent); }
+.ftype.document { background: color-mix(in srgb, var(--file-word) 14%, transparent); color: var(--file-word); }
+.ftype.spreadsheet { background: color-mix(in srgb, var(--file-excel) 15%, transparent); color: var(--file-excel); }
+.ftype.presentation { background: color-mix(in srgb, var(--file-ppt) 15%, transparent); color: var(--file-ppt); }
+.ftype.pdf { background: color-mix(in srgb, var(--file-pdf) 14%, transparent); color: var(--file-pdf); }
+.ftype.text { background: color-mix(in srgb, var(--file-markdown) 15%, transparent); color: var(--file-markdown); }
+.ftype.web { background: var(--inbox-accent-soft); color: var(--inbox-accent); }
+.ftype.image { background: rgba(43, 138, 143, 0.13); color: #2b8a8f; }
 .ftype.audio,
-.ftype.video { background: #7a5ea8; }
+.ftype.video { background: rgba(122, 94, 168, 0.13); color: #7a5ea8; }
+
+html.dark .ftype.image { background: rgba(127, 212, 216, 0.14); color: #7fd4d8; }
+html.dark .ftype.audio,
+html.dark .ftype.video { background: rgba(196, 174, 232, 0.14); color: #c4aee8; }
 
 .fmain { flex: 1; min-width: 0; }
-.fname { font-size: 13.5px; font-weight: 500; }
+.fname { font-size: 14px; font-weight: 550; }
+
 .fmeta {
   display: flex;
   align-items: center;
@@ -927,33 +1005,42 @@ onBeforeUnmount(() => {
 
 .progress {
   height: 4px;
-  margin-top: 6px;
+  margin-top: 8px;
   border-radius: 2px;
   background: var(--bg-tertiary);
   overflow: hidden;
 }
 
-.progress i { display: block; height: 100%; background: var(--inbox-accent); }
+.progress i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--inbox-accent), color-mix(in srgb, var(--inbox-accent) 60%, #8b5cf6));
+}
 
-.chip {
-  width: 92px;
-  display: inline-flex;
+/* 状态：右侧一列，状态点 + 文字，比整块色 chip 轻 */
+.status {
+  width: 96px;
+  display: flex;
   align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 11px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11.5px;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 12px;
   font-weight: 600;
   flex-shrink: 0;
 }
 
-.chip.pending { background: var(--warn-soft); color: var(--warn); }
-.chip.done { background: var(--success-soft); color: var(--success); }
-.chip.converting { background: var(--inbox-accent-soft); color: var(--inbox-accent); }
-.chip.failed { background: var(--danger-soft); color: var(--danger); }
+.status i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.status.pending { color: var(--warn); } .status.pending i { background: var(--warn); }
+.status.done { color: var(--success); } .status.done i { background: var(--success); }
+.status.failed { color: var(--danger); } .status.failed i { background: var(--danger); }
+.status.converting { color: var(--inbox-accent); }
+.status.converting i { background: var(--inbox-accent); animation: status-pulse 1.2s ease-in-out infinite; }
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
+}
 
 /* 行内补充说明：失败原因用危险色，其余（不可转换原因 / 产物落点）保持次要文字 */
 .fnote {
@@ -973,7 +1060,8 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 0 6px;
+  padding: 0 7px;
+  height: 17px;
   border-radius: 9px;
   background: var(--success-soft);
   color: var(--success);
@@ -982,15 +1070,85 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.factions {
-  width: 320px;
+/* ===== 行内操作：一个主操作 + ⋯ ===== */
+.actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
   gap: 4px;
   flex-shrink: 0;
+  min-width: 150px;
 }
+
+.primary-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 27px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--inbox-accent);
+  background: var(--inbox-accent-soft);
+  white-space: nowrap;
+  transition: background 120ms ease;
+}
+
+.primary-act:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.primary-act.solid { background: var(--inbox-accent); color: var(--on-accent); }
+.primary-act.solid:hover { background: var(--accent-hover); }
+.primary-act:disabled { opacity: 0.45; cursor: not-allowed; }
+.primary-act:disabled:hover { background: var(--inbox-accent-soft); }
+
+.icon-btn {
+  width: 27px;
+  height: 27px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--text-faint);
+}
+
+.icon-btn:hover,
+.icon-btn.open { background: var(--bg-hover); color: var(--text); }
+
+/* ⋯ 溢出菜单 */
+.menu-wrap { position: relative; display: inline-flex; }
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: 31px;
+  z-index: var(--z-popup);
+  min-width: 160px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+}
+
+.menu button,
+.menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.menu button:hover,
+.menu .menu-item:hover { background: var(--bg-hover); color: var(--text); }
+.menu button.danger { color: var(--danger); }
+.menu .sep { height: 1px; margin: 4px 8px; background: var(--border); }
 
 .review-sub {
   color: var(--text-secondary);
@@ -1026,11 +1184,11 @@ onBeforeUnmount(() => {
 
 @media (max-width: 768px) {
   .inbox-view { padding: 14px 12px 80px; }
-  .url-import-controls { flex-wrap: wrap; }
-  .url-import-controls input { flex-basis: 100%; }
-  .list-head { display: none; }
-  .file-row { flex-wrap: wrap; }
-  .factions { width: 100%; justify-content: flex-start; }
-  .col-actions { display: none; }
+  .intake { flex-direction: column; }
+  .intake .divider { display: none; }
+  .row { flex-wrap: wrap; }
+  .row + .row::before { left: 12px; }
+  .status { margin-left: 49px; justify-content: flex-start; }
+  .actions { width: 100%; justify-content: flex-start; }
 }
 </style>
