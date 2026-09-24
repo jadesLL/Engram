@@ -106,6 +106,6 @@ onUnmounted(() => sync.unsubscribe());
 }
 
 @media (max-width: 640px) {
-  .sync-detail { display: none; }
+  .sync-detail { display: block; max-width: 38vw; font-size: 11px; }
 }
 </style>

@@ -54,8 +54,8 @@
         class="rail-btn"
         type="button"
         :class="{ active: app.chatDrawerOpen, 'is-running': chat.hasRunning }"
-        v-tooltip.right="chat.hasRunning ? `内置 Agent 正在回复（${chat.runningCount} 个会话）` : '内置 Agent'"
-        :aria-label="chat.hasRunning ? '内置 Agent（正在回复）' : '内置 Agent'"
+        v-tooltip.right="chat.hasRunning ? `${agentName} 正在回复（${chat.runningCount} 个会话）` : agentName"
+        :aria-label="chat.hasRunning ? `${agentName}（正在回复）` : agentName"
         @click="app.toggleChat()"
       >
         <Icon name="ai" :size="19" />
@@ -189,7 +189,7 @@ import { api } from '../api';
 import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
-import { loadRuntimeCapabilities } from '../lib/capabilities';
+import { loadRuntimeCapabilities, useRuntimeCapabilities } from '../lib/capabilities';
 import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
 import AgentStatusPill from '../components/AgentStatusPill.vue';
@@ -206,6 +206,8 @@ const updateNoticeVisible = ref(false);
 const sourceHasUpdate = ref(false);
 const chat = useChatStore();
 const inbox = useInboxStore();
+const { capabilities } = useRuntimeCapabilities();
+const agentName = computed(() => capabilities.value.agentMode === 'hub' ? '服务器 Agent' : capabilities.value.agentMode === 'unavailable' ? 'Agent' : '内置 Agent');
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
 
 /* ===== 文件提取进度：只在对应文件旁显示，系统后台处理不提供通用队列界面 ===== */
@@ -334,7 +336,7 @@ function runMore(action: () => void) {
 
 const moreItems = computed(() => [
   {
-    label: '内置 Agent',
+    label: agentName.value,
     icon: 'ai',
     dot: app.chatUnread,
     running: chat.hasRunning,

@@ -8,6 +8,8 @@ import {
   type SelectionLocation,
 } from '../lib/askAgent';
 import { buildAnswer, parseQuestion, pendingQuestions as pickPendingQuestions, type ChatQuestion } from '../lib/chatQuestions';
+import { loadRuntimeCapabilities } from '../lib/capabilities';
+import { notify } from '../lib/notify';
 
 /**
  * 内置 Agent（聊天抽屉）的前端状态：会话列表 + 快照 + SSE 增量。
@@ -133,12 +135,20 @@ export interface ChatSnapshot {
  * 每个运行一条 SSE 连接，放在 store 之外：EventSource 不该进 Vue 响应式代理，
  * 且切换会话时连接要保留（后台会话照常收事件、跑完标未读）。
  */
-const connections = new Map<string, { source: EventSource; sessionId: string }>();
+const connections = new Map<string, {
+  source: EventSource;
+  sessionId: string;
+  pollTimer?: number;
+  polling?: boolean;
+  notifiedQuestionIds: Set<string>;
+}>();
+const ANDROID_AGENT_SNAPSHOT_POLL_MS = 2_000;
 
 function closeConnection(runId: string): void {
   const entry = connections.get(runId);
   if (!entry) return;
   connections.delete(runId);
+  if (entry.pollTimer !== undefined) window.clearInterval(entry.pollTimer);
   entry.source.close();
 }
 
@@ -421,9 +431,26 @@ export const useChatStore = defineStore('chat', {
     connect(runId: string, sessionId: string) {
       if (connections.has(runId)) return; // 同一轮只接一条流，切会话来回不重复叠加
       const source = new EventSource(`/api/assistant/runs/${encodeURIComponent(runId)}/events`);
-      connections.set(runId, { source, sessionId });
+      const connection: {
+        source: EventSource;
+        sessionId: string;
+        pollTimer?: number;
+        polling?: boolean;
+        notifiedQuestionIds: Set<string>;
+      } = { source, sessionId, notifiedQuestionIds: new Set<string>() };
+      connections.set(runId, connection);
       this.activeRuns = { ...this.activeRuns, [runId]: sessionId };
       const isActive = () => this.activeSessionId === sessionId;
+
+      // Android 中枢链路可能经过手机网络 / 反向代理，SSE 偶尔会断流或漏掉增量。
+      // Agent 运行期间用低频快照兜底，只同步待答问题与终态；不覆盖正在流式生成的正文。
+      void loadRuntimeCapabilities().then((caps) => {
+        if (caps.runtime !== 'android-local' || !connections.has(runId)) return;
+        connection.pollTimer = window.setInterval(() => {
+          if (document.visibilityState === 'hidden') return;
+          void this.refreshRunSnapshot(runId, sessionId);
+        }, ANDROID_AGENT_SNAPSHOT_POLL_MS);
+      });
 
       source.addEventListener('snapshot', (event) => {
         const snapshot = JSON.parse((event as MessageEvent).data) as ChatSnapshot;
@@ -434,6 +461,9 @@ export const useChatStore = defineStore('chat', {
         const serverIds = new Set(snapshot.messages.map((m) => m.runId));
         const pending = this.messages.filter((m) => m.id.startsWith('local-') && m.runId && !serverIds.has(m.runId));
         this.snapshot = snapshot;
+        for (const question of pickPendingQuestions(snapshot.questions)) {
+          this.noticeQuestion(runId, sessionId, question);
+        }
         if (pending.length) snapshot.messages.push(...pending);
       });
       source.addEventListener('status', (event) => {
@@ -463,12 +493,18 @@ export const useChatStore = defineStore('chat', {
       });
       // Agent 提问（MCP ask_user 挂起等你点选）：立刻弹在对话最下侧，不等下一次快照
       source.addEventListener('question', (event) => {
-        if (!isActive() || !this.snapshot) return;
         let incoming: ChatQuestion | null = null;
         try {
           incoming = parseQuestion(JSON.parse((event as MessageEvent).data));
         } catch { /* 坏帧忽略：快照那条路还会再对一次 */ }
         if (!incoming) return;
+        if (incoming.status === 'pending') this.noticeQuestion(runId, sessionId, incoming);
+        if (!isActive() || !this.snapshot) {
+          if (isActive()) {
+            void this.reload(sessionId).then(() => this.upsertQuestion(incoming!)).catch(() => {});
+          }
+          return;
+        }
         const rest = (this.snapshot.questions || []).filter((item) => item.id !== incoming!.id);
         this.snapshot.questions = incoming.status === 'pending' ? [...rest, incoming] : rest;
       });
@@ -485,6 +521,53 @@ export const useChatStore = defineStore('chat', {
           } catch { /* 网络抖动会让 EventSource 自动重连 */ }
         }
       });
+    },
+    /** Android SSE 兜底：从持久化会话快照补回待答问题，避免问题卡无声丢失。 */
+    async refreshRunSnapshot(runId: string, sessionId: string) {
+      const connection = connections.get(runId);
+      if (!connection || connection.polling) return;
+      connection.polling = true;
+      try {
+        const { data } = await api.get(`/api/assistant/sessions/${encodeURIComponent(sessionId)}`);
+        if (!connections.has(runId)) return;
+        const remote = data as ChatSnapshot;
+        const pending = pickPendingQuestions(remote.questions);
+        for (const question of pending) this.noticeQuestion(runId, sessionId, question);
+        if (Array.isArray(remote.questions) && this.activeSessionId === sessionId && this.snapshot?.session.id === sessionId) {
+          this.snapshot.questions = remote.questions;
+        }
+        const remoteRun = (remote.runs || []).find((item) => item.id === runId);
+        if (remoteRun && ['completed', 'failed', 'cancelled', 'interrupted'].includes(remoteRun.status)) {
+          closeConnection(runId);
+          this.forgetRun(runId);
+          await this.finishRun(sessionId);
+        }
+      } catch {
+        // 中枢暂时不可达时保留现有事件流与本地状态，下一轮可见时再重试。
+      } finally {
+        const current = connections.get(runId);
+        if (current) current.polling = false;
+      }
+    },
+    /** 把问题提示到合适的会话，并在对话未打开时点亮入口、给出短提示。 */
+    noticeQuestion(runId: string, sessionId: string, question: ChatQuestion) {
+      const connection = connections.get(runId);
+      if (connection?.notifiedQuestionIds.has(question.id)) return;
+      connection?.notifiedQuestionIds.add(question.id);
+      const app = useAppStore();
+      if (this.activeSessionId === sessionId && app.chatDrawerOpen) return;
+      this.unread = { ...this.unread, [sessionId]: true };
+      app.chatUnread = true;
+      if (!app.chatDrawerOpen) {
+        const text = question.question.length > 56 ? `${question.question.slice(0, 56)}…` : question.question;
+        notify.info(`Agent 等你答复：${text}`);
+      }
+    },
+    /** 新快照可能恰好与问题事件交错；合并时以事件里的状态为准。 */
+    upsertQuestion(question: ChatQuestion) {
+      if (!this.snapshot || this.snapshot.session.id !== question.sessionId) return;
+      const rest = (this.snapshot.questions || []).filter((item) => item.id !== question.id);
+      this.snapshot.questions = question.status === 'pending' ? [...rest, question] : rest;
     },
     /** 一轮收口（或流被关掉）：从「正在跑」集合里摘掉，指示器才不会一直亮着 */
     forgetRun(runId: string) {

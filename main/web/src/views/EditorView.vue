@@ -372,7 +372,7 @@
           </button>
           <button class="welcome-card" type="button" @click="app.toggleChat(true)">
             <span class="wc-icon"><Icon name="ai" :size="17" /></span>
-            <span class="wc-text"><strong>问问 Agent</strong><em>内置助手开问</em></span>
+            <span class="wc-text"><strong>问问 Agent</strong><em>{{ agentEntryHint }}</em></span>
           </button>
         </div>
 
@@ -392,7 +392,7 @@
         </div>
 
         <p class="welcome-tip muted">
-          把资料拖进左栏「原始资料」，用外部 Agent（ZCode / Claude Code…）经 MCP 提炼进 Wiki；也可以直接用内置 Agent 开问。
+          把资料拖进左栏「原始资料」，用外部 Agent（ZCode / Claude Code…）经 MCP 提炼进 Wiki；也可以直接用 {{ agentName }} 开问。
         </p>
       </div>
     </div>
@@ -405,6 +405,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
+import { useSyncStore } from '../stores/sync';
 import {
   canReadClipboard,
   copyText,
@@ -423,6 +424,7 @@ import AppSpinner from '../components/ui/AppSpinner.vue';
 import SyncHomeStatus from '../components/SyncHomeStatus.vue';
 import BrandMark from '../components/BrandMark.vue';
 import { confirmDialog } from '../lib/confirm';
+import { useRuntimeCapabilities } from '../lib/capabilities';
 import { notify } from '../lib/notify';
 import {
   CONTENT_WIDTH_RATIO_STEPS,
@@ -434,7 +436,11 @@ import {
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
+const { capabilities } = useRuntimeCapabilities();
+const agentName = computed(() => capabilities.value.agentMode === 'hub' ? '服务器 Agent' : capabilities.value.agentMode === 'unavailable' ? 'Agent' : '内置 Agent');
+const agentEntryHint = computed(() => capabilities.value.agentMode === 'hub' ? 'Docker 中枢继续运行' : capabilities.value.agentMode === 'unavailable' ? '绑定中枢后可用' : '内置助手开问');
 const chat = useChatStore();
+const sync = useSyncStore();
 /* 双链/关联跳转的返回入口：轨迹非空才显示（从侧栏/搜索跳转会清空轨迹） */
 const canGoBack = computed(() => app.pageTrail.length > 0);
 
@@ -1058,6 +1064,11 @@ async function loadWelcome() {
       .slice(0, 5);
   } catch { /* 欢迎页数据静默失败，不影响主流程 */ }
 }
+
+// Android 不维持后台 SSE；同步结束后刷新欢迎页统计，避免初次拉取完成仍显示空库。
+watch(() => sync.status?.lastSyncAt, (current, previous) => {
+  if (current && current !== previous && !route.params.id) void loadWelcome();
+});
 
 watch(
   () => route.params.id,

@@ -23,6 +23,7 @@ import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
@@ -40,12 +41,13 @@ import java.util.zip.ZipOutputStream
 
 /**
  * APK 内嵌的本地优先服务。只监听 loopback，WebView 与桌面版共用 REST 契约。
- * Android 永远是同步成员，不开放成员签发、Agent、MCP、更新或 DDNS 接口。
+ * Android 永远是同步成员，不签发成员、不运行 dsh/MCP；内置 Agent 会话窄代理到绑定的 Docker 中枢。
  */
 class EngramLocalServer private constructor(private val context: Context) {
     private val db = LocalDatabase(context)
     private val secrets = SecretStore(context)
     private val sync = SyncEngine(db, secrets)
+    private val agent = AgentBridge(db, secrets)
     private val sessionToken: String = secrets.get("local_session_token") ?: randomToken().also {
         secrets.put("local_session_token", it)
     }
@@ -80,6 +82,8 @@ class EngramLocalServer private constructor(private val context: Context) {
     fun onForeground() = sync.onForeground()
     fun onBackground() = sync.onBackground()
     fun requestSync(full: Boolean) = sync.request(full)
+    fun importSharedText(title: String?, text: String): String = db.importSharedText(title, text)
+    fun importSharedFile(name: String, staged: File): String = db.installSharedFile(name, staged)
 
     /** 旧远程壳升级：只把旧地址预填为候选中枢，不启用同步、不覆盖本地库。 */
     fun migrateLegacyRemoteUrl() {
@@ -94,11 +98,14 @@ class EngramLocalServer private constructor(private val context: Context) {
     private fun io.ktor.server.routing.Route.routes() {
         get("/health") { call.json(JSONObject().put("ok", true).put("runtime", "android-local")) }
         get("/api/runtime/capabilities") {
+            val remoteAgent = agent.configured()
             call.json(JSONObject()
                 .put("runtime", "android-local").put("localFirst", true)
+                .put("agentMode", if (remoteAgent) "hub" else "unavailable")
+                .put("nativeActions", JSONArray().put("share-text").put("share-file").put("file-picker"))
                 .put("syncRoles", JSONArray().put("none").put("member"))
                 .put("features", JSONObject()
-                    .put("agent", false).put("mcp", false).put("jobs", false)
+                    .put("agent", remoteAgent).put("agentAdmin", false).put("mcp", false).put("jobs", false)
                     .put("onlyOffice", false).put("serverUpdate", false).put("ddns", false)
                     .put("backup", true).put("fileExtraction", true)))
         }
@@ -279,6 +286,42 @@ class EngramLocalServer private constructor(private val context: Context) {
         }
         get("/api/jobs") { if (call.authorize()) call.json(JSONObject().put("active", JSONArray()).put("recent", JSONArray()).put("queue", JSONObject().put("running", false))) }
 
+        // Docker 内置 Agent：Android 只代理交互面，模型配置、dsh 进程和长任务仍留在中枢。
+        get("/api/assistant/status") { call.proxyAgent("GET", "/api/assistant/status") }
+        get("/api/assistant/sessions") { call.proxyAgent("GET", "/api/assistant/sessions") }
+        post("/api/assistant/sessions") { call.proxyAgent("POST", "/api/assistant/sessions", call.receiveText()) }
+        get("/api/assistant/sessions/{id}") {
+            call.proxyAgent("GET", "/api/assistant/sessions/${encoded(call.parameters["id"].orEmpty())}")
+        }
+        patch("/api/assistant/sessions/{id}") {
+            call.proxyAgent("PATCH", "/api/assistant/sessions/${encoded(call.parameters["id"].orEmpty())}", call.receiveText())
+        }
+        delete("/api/assistant/sessions/{id}") {
+            call.proxyAgent("DELETE", "/api/assistant/sessions/${encoded(call.parameters["id"].orEmpty())}")
+        }
+        post("/api/assistant/sessions/{id}/runs") {
+            call.proxyAgent("POST", "/api/assistant/sessions/${encoded(call.parameters["id"].orEmpty())}/runs", call.receiveText())
+        }
+        get("/api/assistant/runs/active") { call.proxyAgent("GET", "/api/assistant/runs/active") }
+        get("/api/assistant/runs/{id}/events") {
+            call.proxyAgentEvents("/api/assistant/runs/${encoded(call.parameters["id"].orEmpty())}/events")
+        }
+        get("/api/assistant/runs/{id}") {
+            call.proxyAgent("GET", "/api/assistant/runs/${encoded(call.parameters["id"].orEmpty())}")
+        }
+        post("/api/assistant/runs/{id}/cancel") {
+            call.proxyAgent("POST", "/api/assistant/runs/${encoded(call.parameters["id"].orEmpty())}/cancel", "{}")
+        }
+        post("/api/assistant/runs/{id}/retry") {
+            call.proxyAgent("POST", "/api/assistant/runs/${encoded(call.parameters["id"].orEmpty())}/retry", "{}")
+        }
+        post("/api/assistant/runs/{id}/ingest") {
+            call.proxyAgent("POST", "/api/assistant/runs/${encoded(call.parameters["id"].orEmpty())}/ingest", "{}")
+        }
+        post("/api/assistant/questions/{id}/answer") {
+            call.proxyAgent("POST", "/api/assistant/questions/${encoded(call.parameters["id"].orEmpty())}/answer", call.receiveText())
+        }
+
         get("/api/trash") { if (call.authorize()) call.json(db.trash()) }
         post("/api/trash/restore") { if (call.authorize()) call.json(db.restoreTrash(call.body().ids())) }
         delete("/api/trash") { if (call.authorize()) call.json(db.deleteTrash(call.body().ids())) }
@@ -333,7 +376,8 @@ class EngramLocalServer private constructor(private val context: Context) {
                 .put("directUrls", JSONArray(db.setting("sync_direct_urls") ?: "[]"))
                 .put("hubToken", if (secrets.get("sync_hub_token").isNullOrBlank()) "" else "••••••••")
                 .put("nodeId", db.setting("sync_node_id") ?: "").put("cursor", db.setting("sync_cursor")?.toLongOrNull() ?: 0)
-                .put("pending", db.outboxCount()).put("pendingPulls", 0).put("lastSyncAt", sync.lastSyncAt)
+                .put("pending", db.outboxCount()).put("pendingPulls", sync.pendingPulls).put("syncProgress", sync.syncProgress)
+                .put("running", sync.isRunning()).put("lastSyncAt", sync.lastSyncAt)
                 .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray()))
         }
         post("/api/sync/config") {
@@ -378,6 +422,50 @@ class EngramLocalServer private constructor(private val context: Context) {
     private suspend fun ApplicationCall.ok() = json(JSONObject().put("ok", true))
     private suspend fun ApplicationCall.error(message: String, status: HttpStatusCode) = json(JSONObject().put("error", message), status)
     private suspend fun ApplicationCall.json(value: Any, status: HttpStatusCode = HttpStatusCode.OK) = respondText(value.toString(), ContentType.Application.Json, status)
+
+    private suspend fun ApplicationCall.proxyAgent(method: String, path: String, requestBody: String? = null) {
+        if (!authorize()) return
+        val remote = agent.request(method, path, requestBody)
+        if (remote.status == 401) return error(
+            "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机 Agent 的版本。",
+            HttpStatusCode.BadGateway,
+        )
+        val type = runCatching { ContentType.parse(remote.contentType) }.getOrDefault(ContentType.Application.Json)
+        response.header(HttpHeaders.CacheControl, "no-store")
+        response.header(HttpHeaders.ContentLength, remote.body.size.toString())
+        respondOutputStream(type, HttpStatusCode.fromValue(remote.status)) { write(remote.body) }
+    }
+
+    private suspend fun ApplicationCall.proxyAgentEvents(path: String) {
+        if (!authorize()) return
+        val remote = agent.stream(path)
+        val connection = remote.connection
+        try {
+            if (remote.status !in 200..299) {
+                if (remote.status == 401) return error(
+                    "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机 Agent 的版本。",
+                    HttpStatusCode.BadGateway,
+                )
+                val message = connection.errorStream?.bufferedReader()?.use { it.readText().take(16_384) }.orEmpty()
+                return error(message.ifBlank { "Docker Agent 返回 HTTP ${remote.status}" }, HttpStatusCode.fromValue(remote.status))
+            }
+            response.header(HttpHeaders.CacheControl, "no-cache")
+            response.header(HttpHeaders.Connection, "keep-alive")
+            respondOutputStream(ContentType.Text.EventStream) {
+                connection.inputStream.use { input ->
+                    val buffer = ByteArray(8 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        write(buffer, 0, count)
+                        flush()
+                    }
+                }
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     private suspend fun ApplicationCall.sendFile(inline: Boolean) {
         val path = request.queryParameters["path"] ?: return error("缺少 path", HttpStatusCode.BadRequest)

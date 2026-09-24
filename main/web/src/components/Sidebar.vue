@@ -417,6 +417,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
+import { useSyncStore } from '../stores/sync';
 import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { hideTooltip } from '../lib/tooltip';
@@ -430,6 +431,7 @@ import SyncButton from './SyncButton.vue';
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
+const sync = useSyncStore();
 const emit = defineEmits(['close', 'new-page']);
 
 const allPages = ref<any[]>([]);
@@ -1253,6 +1255,10 @@ watch(() => app.sidebarVersion, () => {
     reloadTimer = undefined;
     void load();
   }, 200);
+});
+// Android 没有常驻页面 SSE；后台同步落盘后由共享状态轮询通知侧栏重读本地索引。
+watch(() => sync.status?.lastSyncAt, (current, previous) => {
+  if (current && current !== previous) app.bumpSidebar();
 });
 onMounted(() => {
   load();

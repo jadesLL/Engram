@@ -3,7 +3,7 @@
     class="chat-drawer"
     :class="{ dock: !overlay && !isFull, overlay: overlay && !isFull, full: isFull }"
     :style="drawerStyle"
-    aria-label="内置 Agent"
+    :aria-label="agentName"
   >
     <!-- 左缘拖拽手柄：右侧悬浮形态下调整宽度（拖过窗口 70% 自动转满窗，双击还原默认，聚焦后方向键微调） -->
     <div
@@ -12,7 +12,7 @@
       :class="{ dragging: dragWidth !== null }"
       v-tooltip="'拖动调整宽度，双击还原；拖过窗口 70% 自动满窗'"
       role="separator"
-      aria-label="调整内置 Agent 宽度"
+      :aria-label="`调整${agentName}宽度`"
       aria-orientation="vertical"
       :aria-valuemin="MIN_DRAWER_WIDTH"
       :aria-valuemax="dockMaxWidth"
@@ -30,7 +30,10 @@
     />
 
     <header class="chat-head">
-      <div class="chat-brand"><span class="brand-badge"><Icon name="ai" :size="14" /></span> 内置 Agent</div>
+      <div class="chat-brand">
+        <span class="brand-badge"><Icon name="ai" :size="14" /></span> {{ agentName }}
+        <span v-if="isHubAgent" class="agent-origin">Docker</span>
+      </div>
       <!-- 正在跑：贴着标题给一眼状态（用时每秒跳），滚到哪一段都看得见；
            停止就挂在胶囊右边——输入框右下角固定留给「发送」，运行中照样能发消息 -->
       <span v-if="liveRun" class="head-live">
@@ -172,8 +175,8 @@
       <AppEmptyState
         v-else-if="!timeline.length"
         icon="ai"
-        title="内置 Agent"
-        hint="由 Engram 随包的 DeepSeek Harness 驱动：可以直接问知识库，也可以让它检索、提炼与写页（写页走证据门禁）。"
+        :title="agentName"
+        :hint="agentHint"
       >
         <div class="suggestions">
           <button v-for="item in suggestions" :key="item" type="button" @click="send(item)">{{ item }}</button>
@@ -189,7 +192,7 @@
             <div class="entry-head" :class="{ 'no-name': !showName(index) }">
               <template v-if="showName(index)">
                 <span class="entry-avatar"><Icon :name="item.role === 'user' ? 'user' : 'ai'" :size="11" /></span>
-                <span class="entry-name">{{ item.role === 'user' ? '你' : '内置 Agent' }}</span>
+                <span class="entry-name">{{ item.role === 'user' ? '你' : agentName }}</span>
               </template>
               <button
                 v-if="item.role === 'assistant' && item.message.content"
@@ -354,7 +357,7 @@
       <!-- 常驻运行状态：只要这一轮还在跑就贴在转录区底部（滚到哪都看得见），收口即消失 -->
       <div v-if="liveRun" class="run-live" role="status" aria-live="polite">
         <AppSpinner :size="13" />
-        <b class="run-live-title">内置 Agent 正在回复</b>
+        <b class="run-live-title">{{ agentName }} 正在回复</b>
         <span class="run-live-detail">{{ liveDetail }}</span>
         <!-- 缓存命中率：每一步（一次模型请求）结束都会随快照刷新，跑动中就能看到往上走 -->
         <span v-if="liveUsageText" class="run-live-usage" v-tooltip="liveUsageTip">{{ liveUsageText }}</span>
@@ -542,6 +545,7 @@ import { cacheHitText, mergeUsage, usageDetail } from '../lib/chatUsage';
 import { confirmDialog } from '../lib/confirm';
 import { renderMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
+import { useRuntimeCapabilities } from '../lib/capabilities';
 
 const props = defineProps<{ overlay?: boolean }>();
 
@@ -549,6 +553,15 @@ const router = useRouter();
 const app = useAppStore();
 const chat = useChatStore();
 const inbox = useInboxStore();
+const { capabilities } = useRuntimeCapabilities();
+const isHubAgent = computed(() => capabilities.value.agentMode === 'hub');
+const isAgentUnavailable = computed(() => capabilities.value.agentMode === 'unavailable');
+const agentName = computed(() => isHubAgent.value ? '服务器 Agent' : isAgentUnavailable.value ? 'Agent' : '内置 Agent');
+const agentHint = computed(() => {
+  if (isHubAgent.value) return '由已绑定的 Docker 中枢持续运行：手机退到后台后任务仍会继续，回来即可接着查看。';
+  if (isAgentUnavailable.value) return '先在 设置 → 连接与同步 → 多端同步 中绑定 Docker 中枢，即可在手机上使用服务器 Agent。';
+  return '由 Engram 随包的 DeepSeek Harness 驱动：可以直接问知识库，也可以让它检索、提炼与写页（写页走证据门禁）。';
+});
 const draft = ref('');
 const scrollEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
@@ -1441,6 +1454,17 @@ onUnmounted(() => {
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.agent-origin {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 38%, transparent);
+  border-radius: 999px;
+  color: var(--accent, #4d8aff);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
 }
 
 /* 会话按钮把标题挤到左边：品牌 + 弹性空隙 + 按钮组 */

@@ -3,7 +3,7 @@
     <header class="settings-page-head">
       <div>
         <h2>设置</h2>
-        <p>{{ capabilities.features.agent ? '管理账户、Agent 接入与本地数据。' : '管理账户、多端同步与本地数据。' }}</p>
+        <p>{{ capabilities.features.agentAdmin ? '管理账户、Agent 接入与本地数据。' : '管理账户、多端同步与本地数据。' }}</p>
       </div>
     </header>
 
@@ -107,7 +107,7 @@
 
         <!-- Agent 接入 -->
         <section
-          v-if="capabilities.features.agent"
+          v-if="capabilities.features.agentAdmin"
           v-show="activeDomain === 'agent'"
           class="settings-domain is-single"
           data-domain="agent"
@@ -174,7 +174,7 @@ const route = useRoute();
 // 大类里的分组要跟着运行时能力走：Agent 功能关掉时整个大类都不出现，
 // 软件更新不可用时「连接与同步」只剩多端同步
 const domains = computed(() => visibleSettingsDomains({
-  agent: capabilities.value.features.agent,
+  agent: capabilities.value.features.agentAdmin,
   serverUpdate: capabilities.value.features.serverUpdate,
 }));
 
