@@ -111,16 +111,16 @@
           </div>
         </div>
         <div class="trash-actions">
-          <select
+          <AppSelect
             v-if="item.unassigned"
-            class="asset-attach-select"
+            variant="mini"
+            :model-value="attachPick"
             :disabled="assetBusy"
             aria-label="挂载到"
-            @change="attachAsset(item, ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">挂载到…</option>
-            <option v-for="page in attachTargets" :key="page.id" :value="page.id">{{ page.title }}</option>
-          </select>
+            placeholder="挂载到…"
+            :options="attachOptions"
+            @change="attachAsset(item, $event)"
+          />
           <button
             class="icon-btn danger-icon"
             type="button"
@@ -145,6 +145,7 @@ import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
 import Icon from '../Icon.vue';
+import AppSelect from '../ui/AppSelect.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import { confirmDialog } from '../../lib/confirm';
 import { useSettingsBadge } from '../../lib/settingsBadges';
@@ -352,6 +353,11 @@ const assetMsg = ref('');
 const assetOk = ref(true);
 /** 挂载目标下拉：所有 md 页面（Wiki 页面 + 原始资料 md） */
 const attachTargets = ref<Array<{ id: string; title: string }>>([]);
+/** 挂载是「选中即执行」的动作下拉，不必记住选中值，选中后仍显示占位文案 */
+const attachPick = ref('');
+const attachOptions = computed(() =>
+  attachTargets.value.map((page) => ({ value: page.id, label: page.title })),
+);
 
 const orphanTotal = computed(
   () => orphanAssets.value.unassigned.length + orphanAssets.value.unreferenced.length
@@ -486,15 +492,7 @@ onMounted(() => {
   object-fit: cover;
   background: var(--bg-tertiary);
 }
-.asset-attach-select {
-  height: 26px;
-  max-width: 150px;
-  border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  background: var(--card-bg);
-  color: var(--text-secondary);
-  font-size: 11.5px;
-}
+/* 挂载目标下拉的尺寸与配色交给 AppSelect 的 mini 变体（UI 2.0 令牌） */
 
 .trash-tools {
   display: flex;

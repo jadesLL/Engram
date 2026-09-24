@@ -237,9 +237,9 @@ onBeforeUnmount(() => {
   z-index: var(--z-menu);
   width: 226px;
   max-width: calc(100vw - 16px);
-  padding: 4px;
+  padding: 5px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: color-mix(in srgb, var(--card-bg) 88%, transparent);
   box-shadow: var(--shadow);
   backdrop-filter: saturate(150%) blur(20px);
@@ -247,6 +247,7 @@ onBeforeUnmount(() => {
   color: var(--text);
   opacity: 0;
   pointer-events: none;
+  transition: opacity 0.12s ease;
 }
 
 .app-context-menu.ready {
@@ -266,7 +267,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 7px;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   color: var(--text-secondary);
   text-align: left;
 }

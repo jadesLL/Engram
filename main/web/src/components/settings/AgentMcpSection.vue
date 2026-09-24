@@ -79,16 +79,20 @@
     <div class="snippet-block">
       <h4>{{ target === 'other' ? 'Agent 接入配置片段' : `${targetTitle} 配置片段` }}</h4>
       <div class="snippet-controls">
-        <select v-if="target === 'other'" v-model="snippetFormat" aria-label="Agent 类型">
-          <option value="codex">Codex CLI（也可用上方一键接入）</option>
-          <option value="claude">Claude Code</option>
-          <option value="kimi">Kimi Code CLI</option>
-          <option value="zcode">ZCode（也可用上方一键接入）</option>
-          <option value="generic">通用</option>
-        </select>
-        <select v-if="mcpTokens.length" v-model="selectedTokenId" aria-label="使用的 Token">
-          <option v-for="tokenItem in mcpTokens" :key="tokenItem.id" :value="tokenItem.id">{{ tokenItem.name }}（#{{ tokenItem.id }}）</option>
-        </select>
+        <AppSelect
+          v-if="target === 'other'"
+          v-model="snippetFormat"
+          aria-label="Agent 类型"
+          :options="formatOptions"
+        />
+        <AppSelect
+          v-if="mcpTokens.length"
+          :model-value="selectedTokenId === null ? '' : String(selectedTokenId)"
+          aria-label="使用的 Token"
+          placeholder="选择 Token"
+          :options="tokenOptions"
+          @change="pickToken"
+        />
         <button class="btn small" type="button" @click="copy(activeSnippet)">复制片段</button>
       </div>
       <pre class="guide-pre">{{ activeSnippet }}</pre>
@@ -100,6 +104,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../../api';
 import Icon from '../Icon.vue';
+import AppSelect from '../ui/AppSelect.vue';
 import SecretField from '../SecretField.vue';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
@@ -108,7 +113,22 @@ const props = defineProps<{ target: 'workbuddy' | 'qoder' | 'kimiwork' | 'other'
 const mcpTokens = ref<any[]>([]);
 const mcpUrl = computed(() => `${location.origin}/mcp`);
 const snippetFormat = ref('codex');
+const formatOptions: Array<{ value: string; label: string }> = [
+  { value: 'codex', label: 'Codex CLI（也可用上方一键接入）' },
+  { value: 'claude', label: 'Claude Code' },
+  { value: 'kimi', label: 'Kimi Code CLI' },
+  { value: 'zcode', label: 'ZCode（也可用上方一键接入）' },
+  { value: 'generic', label: '通用' },
+];
 const selectedTokenId = ref<number | null>(null);
+/** Token 选项：原生 select 的值是数字，AppSelect 只吃字符串，故统一转换 */
+const tokenOptions = computed(() =>
+  mcpTokens.value.map((item) => ({ value: String(item.id), label: `${item.name}（#${item.id}）` })),
+);
+
+function pickToken(value: string) {
+  selectedTokenId.value = Number(value);
+}
 const localStatus = ref({ installed: false, registered: false, configPath: '', pluginPath: '', installUrl: '' });
 const registering = ref(false);
 
@@ -383,9 +403,12 @@ onMounted(async () => {
   gap: 8px;
   flex-wrap: wrap;
 }
-.snippet-controls select {
-  padding: 5px 8px;
+.snippet-controls .app-select {
   max-width: 100%;
+}
+/* 这一行比设置页常规控件更紧凑：收紧触发条内边距对齐旁边的「复制片段」按钮 */
+.snippet-controls :deep(.app-select-trigger) {
+  padding: 5px 8px;
 }
 .guide-pre {
   max-height: 320px;

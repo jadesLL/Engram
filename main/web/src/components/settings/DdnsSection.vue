@@ -36,11 +36,7 @@
 
       <label class="ddns-field">
         <span>记录类型</span>
-        <select v-model="form.type">
-          <option value="auto">自动（有全局 IPv6 用 AAAA，否则 A）</option>
-          <option value="aaaa">AAAA（IPv6）</option>
-          <option value="a">A（IPv4，经回声服务取公网地址）</option>
-        </select>
+        <AppSelect v-model="form.type" aria-label="记录类型" :options="typeOptions" />
       </label>
 
       <label class="ddns-field">
@@ -64,6 +60,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
+import AppSelect from '../ui/AppSelect.vue';
 import SecretField from '../SecretField.vue';
 
 interface DdnsForm {
@@ -72,6 +69,13 @@ interface DdnsForm {
   type: 'auto' | 'aaaa' | 'a';
   token: string;
 }
+
+/** 记录类型选项：标注成 DdnsForm['type']，AppSelect 的泛型才能推断出联合类型 */
+const typeOptions: Array<{ value: DdnsForm['type']; label: string }> = [
+  { value: 'auto', label: '自动（有全局 IPv6 用 AAAA，否则 A）' },
+  { value: 'aaaa', label: 'AAAA（IPv6）' },
+  { value: 'a', label: 'A（IPv4，经回声服务取公网地址）' },
+];
 
 const form = reactive<DdnsForm>({ enabled: false, record: '', type: 'auto', token: '' });
 const stored = reactive<DdnsForm>({ ...form });
@@ -274,7 +278,7 @@ onUnmounted(() => {
 }
 .ddns-field input[type='text'],
 .ddns-field :deep(input),
-.ddns-field select {
+.ddns-field :deep(.app-select-trigger) {
   padding: 8px 10px;
   font-size: 13px;
 }

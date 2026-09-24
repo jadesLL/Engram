@@ -1,9 +1,11 @@
 <template>
   <div
+    ref="rootEl"
     class="back-trail"
     @mouseenter="onPointerEnter"
     @mouseleave="closeMenuSoon"
     @focusin="onFocusIn"
+    @focusout="onFocusOut"
     @keydown.esc="closeMenu"
   >
     <!-- 触发器由调用方给出（编辑顶部条 / 沉浸阅读工具栏样式不同），这里只负责悬停与面板 -->
@@ -35,10 +37,10 @@
  *
  * - 触发区与面板同属一个 hover 容器，鼠标从按钮移进面板不会中途收起；
  * - 触屏（hover: none）没有悬停语义，不弹面板，点击触发器仍是原来的逐层返回；
- * - 键盘聚焦（:focus-visible）同样弹面板，Esc 收起；
+ * - 键盘聚焦（:focus-visible）同样弹面板，Esc / 焦点移开 / 点别处 / 滚动都收起；
  * - 面板自带文案，触发器因此不再挂 tooltip，避免气泡与面板同时出现。
  */
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import Icon from './Icon.vue';
 import { trailMenuItems, type PageTrailEntry } from '../lib/pageTrail';
 
@@ -53,6 +55,7 @@ const emit = defineEmits<{ (event: 'select', id: string): void }>();
 const CLOSE_DELAY_MS = 140;
 
 const open = ref(false);
+const rootEl = ref<HTMLElement | null>(null);
 const items = computed(() => trailMenuItems(props.trail));
 let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -103,7 +106,47 @@ function clearCloseTimer() {
   }
 }
 
-onBeforeUnmount(clearCloseTimer);
+/* ===== 收起路径：鼠标移开、Esc、焦点移走、点别处、滚动 ===== */
+
+function onFocusOut(event: FocusEvent) {
+  // 焦点在触发区与面板之间移动不算离开；移到别处（含焦点丢失）就收起
+  const next = event.relatedTarget as Node | null;
+  if (next && rootEl.value?.contains(next)) return;
+  closeMenu();
+}
+
+function onDocPointerDown(event: PointerEvent) {
+  const target = event.target as Node | null;
+  if (target && rootEl.value?.contains(target)) return;
+  closeMenu();
+}
+
+function onDocKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeMenu();
+}
+
+/** 面板是 abspos 的，滚一下锚点就跑了；监听只在展开期间挂着 */
+watch(open, (value) => {
+  if (value) {
+    document.addEventListener('pointerdown', onDocPointerDown, true);
+    document.addEventListener('keydown', onDocKeydown);
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('resize', closeMenu);
+  } else {
+    document.removeEventListener('pointerdown', onDocPointerDown, true);
+    document.removeEventListener('keydown', onDocKeydown);
+    window.removeEventListener('scroll', closeMenu, true);
+    window.removeEventListener('resize', closeMenu);
+  }
+});
+
+onBeforeUnmount(() => {
+  clearCloseTimer();
+  document.removeEventListener('pointerdown', onDocPointerDown, true);
+  document.removeEventListener('keydown', onDocKeydown);
+  window.removeEventListener('scroll', closeMenu, true);
+  window.removeEventListener('resize', closeMenu);
+});
 </script>
 
 <style scoped>
@@ -116,16 +159,17 @@ onBeforeUnmount(clearCloseTimer);
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: var(--z-popup);
+  z-index: var(--z-menu);
   width: max-content;
   min-width: 200px;
   max-width: 320px;
   max-height: 300px;
   overflow-y: auto;
-  padding: 4px;
-  border: 1px solid var(--control-border);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
+  overscroll-behavior: contain;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
   box-shadow: var(--shadow);
   text-align: left;
 }
@@ -161,7 +205,7 @@ onBeforeUnmount(clearCloseTimer);
 }
 .back-trail-item:hover,
 .back-trail-item:focus-visible {
-  background: var(--control-bg-hover);
+  background: var(--bg-hover);
   color: var(--text);
 }
 .back-trail-item :deep(svg) {

@@ -63,7 +63,7 @@
         </BackTrailMenu>
         <div class="spacer"></div>
         <!-- 正文宽度：按可用区百分比（默认 70%），阅读视图与编辑视图共用同一份偏好 -->
-        <div ref="widthPickerEl" class="width-picker">
+        <div ref="widthPickerEl" class="width-picker" @keydown.esc="widthMenuOpen = false">
           <button
             class="topbar-width"
             type="button"
@@ -145,16 +145,13 @@
         <div class="page-chrome">
           <div class="head-meta">
           <span class="kind-pill">
-            <select v-model="pageType" class="chip-select" aria-label="页面类型" @change="save(true)">
-              <option value="concept">概念</option>
-              <option value="person">人物</option>
-              <option value="customer">客户</option>
-              <option value="org">组织</option>
-              <option value="project">项目</option>
-              <option value="other">其他</option>
-              <option v-if="!['concept','person','customer','org','project','other'].includes(pageType)" :value="pageType">未分类</option>
-            </select>
-            <Icon class="kind-caret" name="chevron-down" :size="11" />
+            <AppSelect
+              v-model="pageType"
+              variant="chip"
+              aria-label="页面类型"
+              :options="kindOptions"
+              @change="save(true)"
+            />
           </span>
           <div class="tags-chips">
             <span v-for="(t, i) in tags" :key="t" class="chip">
@@ -421,6 +418,7 @@ import FilePreview from '../components/FilePreview.vue';
 import BackTrailMenu from '../components/BackTrailMenu.vue';
 import RelatedMenu from '../components/RelatedMenu.vue';
 import Icon from '../components/Icon.vue';
+import AppSelect from '../components/ui/AppSelect.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import SyncHomeStatus from '../components/SyncHomeStatus.vue';
 import BrandMark from '../components/BrandMark.vue';
@@ -444,6 +442,21 @@ const page = ref<any>(null);
 const content = ref('');
 const title = ref('');
 const pageType = ref('note');
+/* 页面类型下拉：AppSelect 的 chip 变体（原原生 select 的 .chip-select 样式已内置到组件） */
+const PAGE_KINDS = [
+  { value: 'concept', label: '概念' },
+  { value: 'person', label: '人物' },
+  { value: 'customer', label: '客户' },
+  { value: 'org', label: '组织' },
+  { value: 'project', label: '项目' },
+  { value: 'other', label: '其他' },
+];
+/* type 不在已知枚举内的页面（含新建未保存的 note）在末尾补「未分类」，与旧 select 行为一致 */
+const kindOptions = computed(() =>
+  PAGE_KINDS.some((kind) => kind.value === pageType.value)
+    ? PAGE_KINDS
+    : [...PAGE_KINDS, { value: pageType.value, label: '未分类' }]
+);
 const tags = ref<string[]>([]);
 const tagDraft = ref('');
 /* 标签输入按需展开：「+ 标签」是虚线 pill，点开才出现输入框（mockup 4.3） */
@@ -1261,12 +1274,12 @@ onUnmounted(() => {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: var(--z-popup);
+  z-index: var(--z-menu);
   width: 92px;
-  padding: 4px;
+  padding: 5px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
+  border-radius: 10px;
+  background: var(--card-bg);
   box-shadow: var(--shadow);
 }
 .width-menu button {
@@ -1399,31 +1412,11 @@ button.save-state.dirty:hover { color: var(--accent); }
   margin: 14px 0 20px;
   flex-wrap: wrap;
 }
-/* 类型 pill：软色强调 + 自绘下拉箭头（原生箭头在 pill 里位置不对） */
+/* 类型 pill：胶囊尺寸与软色强调由 AppSelect 的 chip 变体负责 */
 .kind-pill {
   display: inline-flex;
   align-items: center;
-  position: relative;
   flex: none;
-}
-.chip-select {
-  appearance: none;
-  border: 1px solid transparent;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-  font-size: 12px;
-  height: 24px;
-  padding: 0 22px 0 10px;
-  border-radius: 12px;
-  cursor: pointer;
-}
-.chip-select:hover { border-color: var(--accent); }
-.kind-caret {
-  position: absolute;
-  right: 8px;
-  color: var(--accent);
-  pointer-events: none;
 }
 .tags-chips {
   display: flex;

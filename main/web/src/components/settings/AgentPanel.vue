@@ -49,11 +49,12 @@
         </label>
         <label>
           <span>接口协议</span>
-          <select v-model="apiProtocol" :disabled="!baseUrl.trim()" aria-label="接口协议">
-            <option value="openai-completions">openai-completions（OpenAI 兼容，多数中转站）</option>
-            <option value="openai-responses">openai-responses（OpenAI Responses）</option>
-            <option value="anthropic-messages">anthropic-messages（Anthropic Messages）</option>
-          </select>
+          <AppSelect
+            v-model="apiProtocol"
+            :disabled="!baseUrl.trim()"
+            aria-label="接口协议"
+            :options="protocolOptions"
+          />
         </label>
         <label>
           <span>模型</span>
@@ -92,15 +93,12 @@
     >
       <div class="harness-picker">
         <label for="agent-target-select">接入目标</label>
-        <select id="agent-target-select" v-model="target" aria-label="接入目标">
-          <option value="zcode">ZCode 桌面端（一键接入）</option>
-          <option value="codex">Codex CLI（一键接入）</option>
-          <option value="dsh">DeepSeek Harness / dsh（一键接入）</option>
-          <option value="workbuddy">WorkBuddy（一键接入）</option>
-          <option value="qoder">Qoder（一键接入）</option>
-          <option value="kimiwork">Kimi Work（一键登记插件）</option>
-          <option value="other">其他 Agent（MCP 接入）</option>
-        </select>
+        <AppSelect
+          id="agent-target-select"
+          v-model="target"
+          aria-label="接入目标"
+          :options="targetOptions"
+        />
       </div>
 
       <AgentHarnessSection v-if="target === 'zcode' || target === 'codex' || target === 'dsh'" :harness="harnessTarget" />
@@ -167,6 +165,7 @@ import { notify } from '../../lib/notify';
 import { MCP_TOOLS, groupedMcpTools } from '../../lib/mcpTools';
 import AgentHarnessSection from './AgentHarnessSection.vue';
 import AgentMcpSection from './AgentMcpSection.vue';
+import AppSelect from '../ui/AppSelect.vue';
 import SecretField from '../SecretField.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
@@ -174,6 +173,16 @@ import { useSettingsBadge } from '../../lib/settingsBadges';
 type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'workbuddy' | 'qoder' | 'kimiwork' | 'other';
 
 const target = ref<AgentTarget>('zcode');
+/** 接入目标选项：显式标注联合类型，AppSelect 的泛型才能推断出 AgentTarget */
+const targetOptions: Array<{ value: AgentTarget; label: string }> = [
+  { value: 'zcode', label: 'ZCode 桌面端（一键接入）' },
+  { value: 'codex', label: 'Codex CLI（一键接入）' },
+  { value: 'dsh', label: 'DeepSeek Harness / dsh（一键接入）' },
+  { value: 'workbuddy', label: 'WorkBuddy（一键接入）' },
+  { value: 'qoder', label: 'Qoder（一键接入）' },
+  { value: 'kimiwork', label: 'Kimi Work（一键登记插件）' },
+  { value: 'other', label: '其他 Agent（MCP 接入）' },
+];
 /** 《Agent 作业指南》较长，默认收起在「查看工具」分组底部 */
 const guideOpen = ref(false);
 const guide = ref('');
@@ -186,6 +195,11 @@ const model = ref('');
 const baseUrl = ref('');
 /** 自定义地址的线协议（不要叫 api：会与 api 客户端 import 撞名） */
 const apiProtocol = ref('openai-completions');
+const protocolOptions: Array<{ value: string; label: string }> = [
+  { value: 'openai-completions', label: 'openai-completions（OpenAI 兼容，多数中转站）' },
+  { value: 'openai-responses', label: 'openai-responses（OpenAI Responses）' },
+  { value: 'anthropic-messages', label: 'anthropic-messages（Anthropic Messages）' },
+];
 const apiKey = ref('');
 const storedKey = ref('');
 const savingBuiltin = ref(false);
@@ -309,13 +323,10 @@ async function copy(text: string) {
 }
 /* 地址/模型名可能很长：输入框铺满可用宽度（面板内最大 720px），不截断 */
 .builtin-form input,
-.builtin-form select {
+.builtin-form .app-select {
   width: 100%;
   max-width: 720px;
   font-size: 12px;
-}
-.builtin-form select:disabled {
-  opacity: 0.55;
 }
 .builtin-actions {
   display: flex;
@@ -334,7 +345,7 @@ async function copy(text: string) {
   color: var(--text-faint);
   font-size: 12px;
 }
-.harness-picker select {
+.harness-picker .app-select {
   min-width: 240px;
   font-size: 13px;
 }
@@ -430,7 +441,7 @@ async function copy(text: string) {
     flex-direction: column;
     align-items: flex-start;
   }
-  .harness-picker select {
+  .harness-picker .app-select {
     width: 100%;
   }
   .tool-meta > div {

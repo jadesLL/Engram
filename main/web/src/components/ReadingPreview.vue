@@ -62,7 +62,7 @@
               v-if="fontMenuOpen"
               ref="fontMenuEl"
               class="font-menu"
-              role="listbox"
+              role="menu"
               aria-label="正文字号选项"
             >
               <button
@@ -71,8 +71,8 @@
                 class="font-menu-item"
                 :class="{ active: size === preferences.fontSize }"
                 type="button"
-                role="option"
-                :aria-selected="size === preferences.fontSize"
+                role="menuitemradio"
+                :aria-checked="size === preferences.fontSize"
                 @click="pickFontSize(size)"
               >{{ size }}px</button>
             </div>
@@ -1011,11 +1011,12 @@ onBeforeUnmount(() => {
   width: 76px;
   max-height: 264px;
   overflow-y: auto;
-  padding: 4px;
+  overscroll-behavior: contain;
+  padding: 5px;
   transform: translateX(-50%);
-  border: 1px solid var(--control-border);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
   box-shadow: var(--shadow);
 }
 .font-menu-item {
@@ -1032,7 +1033,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .font-menu-item:hover {
-  background: var(--control-bg-hover);
+  background: var(--bg-hover);
   color: var(--text);
 }
 .font-menu-item.active {
@@ -1073,11 +1074,11 @@ onBeforeUnmount(() => {
   left: 50%;
   z-index: 20;
   width: 84px;
-  padding: 4px;
+  padding: 5px;
   transform: translateX(-50%);
-  border: 1px solid var(--control-border);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
   box-shadow: var(--shadow);
 }
 .width-menu button {
@@ -1094,7 +1095,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .width-menu button:hover {
-  background: var(--control-bg-hover);
+  background: var(--bg-hover);
   color: var(--text);
 }
 .width-menu button.active {
@@ -1114,9 +1115,9 @@ onBeforeUnmount(() => {
   z-index: 20;
   width: 176px;
   padding: 6px;
-  border: 1px solid var(--control-border);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
   box-shadow: var(--shadow);
 }
 .display-menu-label {
@@ -1170,7 +1171,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
   text-align: left;
 }
-.display-menu > button:hover:not(:disabled) { background: var(--control-bg-hover); color: var(--text); }
+.display-menu > button:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
 .display-menu > button:disabled { opacity: 0.45; cursor: not-allowed; }
 .display-menu .check {
   width: 14px;
