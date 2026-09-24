@@ -109,11 +109,12 @@
             </span>
           </div>
           <div class="channel-control">
-            <select v-model="form.imageTag" aria-label="更新通道" @change="saveChannel">
-              <option value="">自动（按当前镜像判断）</option>
-              <option value="latest">latest（正式发版线）</option>
-              <option value="main">main（主分支滚动，测试用）</option>
-            </select>
+            <AppSelect
+              v-model="form.imageTag"
+              aria-label="更新通道"
+              :options="channelOptions"
+              @change="saveChannel"
+            />
             <span v-if="channelSaved" class="channel-saved">已保存</span>
             <AppSpinner v-else-if="savingChannel" :size="11" />
           </div>
@@ -430,6 +431,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api, ssePost } from '../../api';
 import AppSpinner from '../ui/AppSpinner.vue';
+import AppSelect from '../ui/AppSelect.vue';
 import Icon from '../Icon.vue';
 import SecretField from '../SecretField.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
@@ -519,6 +521,12 @@ const savingConfig = ref(false);
 /** 更新通道单独即时保存（顶部常规行，不随「保存配置」按钮） */
 const savingChannel = ref(false);
 const channelSaved = ref(false);
+/** 更新通道下拉项：空值 = 按当前镜像自动判断 */
+const channelOptions: Array<{ value: string; label: string }> = [
+  { value: '', label: '自动（按当前镜像判断）' },
+  { value: 'latest', label: 'latest（正式发版线）' },
+  { value: 'main', label: 'main（主分支滚动，测试用）' },
+];
 
 // 源码模式（非打包形态）：更新 = 增量拉源码 + 重新构建，不使用安装包
 const sourceMode = ref(false);

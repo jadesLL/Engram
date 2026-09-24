@@ -1473,9 +1473,9 @@ onUnmounted(() => {
   position: fixed;
   z-index: var(--z-menu);
   min-width: 152px;
-  padding: 4px;
+  padding: 5px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: color-mix(in srgb, var(--card-bg) 92%, transparent);
   box-shadow: var(--shadow);
   backdrop-filter: saturate(150%) blur(20px);
@@ -1483,6 +1483,7 @@ onUnmounted(() => {
   color: var(--text);
   opacity: 0;
   pointer-events: none;
+  transition: opacity 0.12s ease;
 }
 
 .sort-menu.ready {
@@ -1499,7 +1500,7 @@ onUnmounted(() => {
   gap: 8px;
   padding: 6px 10px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-secondary);
   font-size: 13px;

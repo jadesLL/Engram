@@ -181,11 +181,17 @@
               aria-label="更多操作"
               aria-haspopup="menu"
               :aria-expanded="menuFor === item.path"
-              @click.stop="toggleMenu(item.path)"
+              @click.stop="toggleMenu(item.path, $event)"
             >
               <Icon name="more" :size="15" />
             </button>
-            <div v-if="menuFor === item.path" class="menu" role="menu" @click.stop>
+            <div
+              v-if="menuFor === item.path"
+              class="menu"
+              :class="{ 'is-up': menuUp }"
+              role="menu"
+              @click.stop
+            >
               <button
                 v-if="item.assistantSessionId && item.status !== 'converting'"
                 type="button"
@@ -304,20 +310,53 @@ function dismissNotice() {
   localStorage.setItem(NOTICE_KEY, '1');
 }
 
-/* ===== ⋯ 溢出菜单：同一时刻只开一行，点别处或 Esc 收起 ===== */
+/* ===== ⋯ 溢出菜单：同一时刻只开一行，点别处/滚动/Esc 收起 ===== */
 
 const menuFor = ref<string | null>(null);
+/** 行贴近滚动容器底部时向上弹：否则菜单会被 Home 的滚动容器裁掉 */
+const menuUp = ref(false);
 
-function toggleMenu(path: string) {
-  menuFor.value = menuFor.value === path ? null : path;
+/** 菜单能被看到多少由最近的滚动容器决定，不是视口 */
+function scrollBox(el: HTMLElement): DOMRect | null {
+  let node = el.parentElement;
+  while (node && node !== document.body) {
+    if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) return node.getBoundingClientRect();
+    node = node.parentElement;
+  }
+  return null;
+}
+
+async function toggleMenu(path: string, event?: MouseEvent) {
+  if (menuFor.value === path) {
+    closeMenu();
+    return;
+  }
+  // 不能用 ref：菜单在 v-for 行内，Vue 会把模板 ref 变成数组。就地取 .menu-wrap 更稳。
+  const wrap = (event?.currentTarget as HTMLElement | null)?.closest<HTMLElement>('.menu-wrap') ?? null;
+  menuFor.value = path;
+  menuUp.value = false;
+  await nextTick();
+  const menu = wrap?.querySelector<HTMLElement>('.menu') ?? null;
+  if (!menu || !wrap) return;
+  const rect = wrap.getBoundingClientRect();
+  const box = scrollBox(wrap);
+  const spaceBelow = (box ? box.bottom : window.innerHeight) - rect.bottom - 4;
+  const spaceAbove = rect.top - (box ? box.top : 0);
+  menuUp.value = menu.offsetHeight > spaceBelow && spaceAbove > spaceBelow;
 }
 
 function closeMenu() {
   menuFor.value = null;
+  menuUp.value = false;
 }
 
 function onDocKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') closeMenu();
+}
+
+/** 菜单随行滚动会飘到别的行上，滚一下就收起（与侧栏排序菜单一致） */
+function onDocScroll() {
+  if (menuFor.value) closeMenu();
 }
 
 type MenuAction = 'convert' | 'review' | 'process' | 'openNative' | 'remove';
@@ -711,9 +750,10 @@ async function removeItem(item: InboxItem) {
 }
 
 onMounted(async () => {
-  // ⋯ 菜单点别处收起；Esc 由 keydown 负责
+  // ⋯ 菜单点别处收起；Esc 由 keydown 负责，滚动由 capture 的 scroll 负责
   document.addEventListener('click', closeMenu);
   document.addEventListener('keydown', onDocKeydown);
+  window.addEventListener('scroll', onDocScroll, true);
   await inbox.load();
   // store 可能已经被别处（侧栏角标）加载过，watch 不会为初始值补一次，这里对一次表
   syncPolling();
@@ -725,6 +765,7 @@ onBeforeUnmount(() => {
   pollTimer = undefined;
   document.removeEventListener('click', closeMenu);
   document.removeEventListener('keydown', onDocKeydown);
+  window.removeEventListener('scroll', onDocScroll, true);
 });
 </script>
 
@@ -1121,13 +1162,18 @@ html.dark .ftype.video { background: rgba(196, 174, 232, 0.14); color: #c4aee8; 
   position: absolute;
   right: 0;
   top: 31px;
-  z-index: var(--z-popup);
+  z-index: var(--z-menu);
   min-width: 160px;
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--card-bg);
   box-shadow: var(--shadow);
+}
+/* 行在列表底部时向上弹（配合 toggleMenu 里的空间测量） */
+.menu.is-up {
+  top: auto;
+  bottom: 31px;
 }
 
 .menu button,
