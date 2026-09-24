@@ -30,7 +30,11 @@
         <strong>{{ localStatus.installed ? (localStatus.registered ? (target === 'kimiwork' ? '已登记个人插件' : '已注册 Engram MCP') : '已检测到，尚未注册') : '未检测到本机客户端' }}</strong>
       </div>
       <div v-if="localStatus.installed" class="auto-register-status">
-        <span>{{ target === 'kimiwork' ? '插件目录' : '配置文件' }}</span><code>{{ target === 'kimiwork' ? localStatus.pluginPath : localStatus.configPath }}</code>
+        <span>{{ target === 'kimiwork' ? '插件目录' : (writtenPaths.length > 1 ? '配置文件（国内版 / 国际版各一份）' : '配置文件') }}</span>
+        <div v-if="target === 'kimiwork'" class="config-paths"><code>{{ localStatus.pluginPath }}</code></div>
+        <div v-else class="config-paths">
+          <code v-for="item in writtenPaths" :key="item">{{ item }}</code>
+        </div>
       </div>
       <div v-if="localStatus.installed" class="auto-register-actions">
         <button class="btn primary" type="button" :disabled="registering" @click="registerLocal">
@@ -45,12 +49,14 @@
 
     <div v-if="target !== 'other'" class="target-guide">
       <ol v-if="target === 'workbuddy'">
-        <li>本机可点「一键接入」写入用户级 MCP 配置；在 WorkBuddy 的「连接器」→「自定义连接器」确认已启用。</li>
+        <li>本机可点「一键接入」写入用户级 MCP 配置：国内版读 <code>~/.workbuddy/mcp.json</code>，海外版读 <code>~/.workbuddy-ai/mcp.json</code>，检测到的都会写上。</li>
+        <li>在 WorkBuddy 的「连接器」→「自定义连接器」确认 Engram 已启用：新写入的服务默认是「待信任」，需要在这里信任一次。</li>
         <li>其他设备可生成 Token，复制下方配置片段手动添加 Engram MCP 服务。</li>
         <li>启用连接器，在对话里检查 Engram 工具是否可用。</li>
       </ol>
       <ol v-else-if="target === 'qoder'">
-        <li>本机 Qoder 可点「一键接入」写入用户级 MCP 配置，重新打开会话后使用。</li>
+        <li>本机 Qoder 可点「一键接入」写入用户级 MCP 配置：国际版读 <code>~/.qoder/settings.json</code>，国内版读 <code>~/.qoder-cn/settings.json</code>，两个都装了会一起写。</li>
+        <li>写入后重新打开 Qoder 会话（或重启客户端）再使用。</li>
         <li>QoderWork：打开「扩展」→「连接器」→「+ 添加」→「粘贴 JSON 配置」。</li>
         <li>Qoder IDE：打开「设置」→「MCP」→「My Servers」→「+ Add」，填入下方地址和 Authorization 请求头。</li>
         <li>导入或保存后，确认 Engram MCP 连接成功。</li>
@@ -109,8 +115,14 @@ const mcpTokens = ref<any[]>([]);
 const mcpUrl = computed(() => `${location.origin}/mcp`);
 const snippetFormat = ref('codex');
 const selectedTokenId = ref<number | null>(null);
-const localStatus = ref({ installed: false, registered: false, configPath: '', pluginPath: '', installUrl: '' });
+const localStatus = ref<any>({ installed: false, registered: false, configPath: '', configPaths: [], pluginPath: '', installUrl: '' });
 const registering = ref(false);
+
+// 客户端国内版 / 海外版读不同目录，后端会把检测到的变体全部登记，这里逐条回显
+const writtenPaths = computed<string[]>(() => {
+  const paths: string[] = Array.isArray(localStatus.value?.configPaths) ? localStatus.value.configPaths : [];
+  return paths.length ? paths : (localStatus.value?.configPath ? [localStatus.value.configPath] : []);
+});
 
 const targetTitle = computed(() => ({
   workbuddy: 'WorkBuddy 接入',
@@ -216,7 +228,7 @@ async function loadLocalStatus() {
   try {
     localStatus.value = (await api.get(`/api/settings/${props.target}-status`)).data;
   } catch {
-    localStatus.value = { installed: false, registered: false, configPath: '', pluginPath: '', installUrl: '' };
+    localStatus.value = { installed: false, registered: false, configPath: '', configPaths: [], pluginPath: '', installUrl: '' };
   }
 }
 
@@ -226,8 +238,11 @@ async function registerLocal() {
     await api.post(`/api/settings/${props.target}-register`);
     await loadLocalStatus();
     notify.success(props.target === 'kimiwork' ? '已登记 Kimi Work 个人插件，请在插件中心安装' : `已注册 Engram MCP 到 ${props.target === 'qoder' ? 'Qoder' : 'WorkBuddy'}`);
-  } catch {
-    notify.error(props.target === 'kimiwork' ? '插件登记失败，请检查 Kimi Work 客户端' : '注册失败，请检查本机配置文件');
+  } catch (error: any) {
+    // 部分变体写入失败时后端会带上具体文件和原因，照原样显示，避免只看到「注册失败」无从排查
+    await loadLocalStatus();
+    const fallback = props.target === 'kimiwork' ? '插件登记失败，请检查 Kimi Work 客户端' : '注册失败，请检查本机配置文件';
+    notify.error(error?.response?.data?.error || fallback);
   } finally {
     registering.value = false;
   }
@@ -239,8 +254,9 @@ async function unregisterLocal() {
     await api.post(`/api/settings/${props.target}-unregister`);
     await loadLocalStatus();
     notify.success('已移除注册');
-  } catch {
-    notify.error('移除失败，请检查本机配置文件');
+  } catch (error: any) {
+    await loadLocalStatus();
+    notify.error(error?.response?.data?.error || '移除失败，请检查本机配置文件');
   } finally {
     registering.value = false;
   }
@@ -272,6 +288,7 @@ onMounted(async () => {
   margin-bottom: 8px;
 }
 .auto-register-status code { overflow-wrap: anywhere; text-align: right; }
+.config-paths { display: grid; gap: 3px; justify-items: end; min-width: 0; }
 .auto-register-actions { display: flex; gap: 10px; margin-top: 12px; }
 .auto-register p { margin: 8px 0 0; color: var(--text-secondary); }
 .sub-head {

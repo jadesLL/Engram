@@ -98,13 +98,13 @@
 | ZCode 桌面端 | `~/.zcode/cli/config.json` | 检测本机安装与登录状态，注册/移除知识库 MCP |
 | Codex CLI | `~/.codex/config.toml`（`[mcp_servers.engram]`） | 只维护 Engram 这一个 TOML 表，其余配置、注释与其他 `[mcp_servers.*]` 条目原样保留；重启 Codex 会话生效 |
 | DeepSeek Harness（dsh） | `$DSH_HOME/cordis.patch.yml` | 对整个 patch 层注册，对所有 dsh profile 生效 |
-| WorkBuddy | `~/.workbuddy-ai/mcp.json` | 只维护 `mcpServers.engram`；在连接器页确认启用 |
-| Qoder | `~/.qoder/settings.json` | 只维护 `mcpServers.engram`；重新打开会话后使用；QoderWork 仍需手动导入 |
+| WorkBuddy | `~/.workbuddy/mcp.json`（海外版 `~/.workbuddy-ai/mcp.json`） | 按客户端自身规则解析配置目录（`WORKBUDDY_CONFIG_DIR` / `CODEBUDDY_CONFIG_DIR` 优先），检测到的变体目录都会写上；只维护 `mcpServers.engram`；新写入的服务在连接器页是「待信任」，需确认启用一次 |
+| Qoder | `~/.qoder/settings.json`（国内版 `~/.qoder-cn/settings.json`） | 国际版与国内版目录都检测、都注册（`QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR` 优先）；只维护 `mcpServers.engram`；重新打开会话后使用；QoderWork 仍需手动导入 |
 | Kimi Work（Windows） | 个人插件市场 | 调用客户端自带命令登记插件，随后在 Kimi Work 中安装 |
 
 一键注册只对本机安装的客户端落地（需与 Engram 桌面版同一台电脑）；Docker/远程部署时让 Agent 用「其他 Agent」的 MCP 片段或 `engram login` 连接。Claude Code 示例：
 
-[WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/Changelog) 一键注册写入用户级自定义 MCP 配置；[Qoder](https://docs.qoder.com/zh/qoder/connectors) 一键注册写入 `~/.qoder/settings.json` 的 `mcpServers.engram`；[Kimi Work](https://www.kimi.com/help/plugins-and-skills/create) 一键登记使用客户端自带的 `kimi-plugin register-personal`，安装仍需用户在「插件 → 个人」完成。QoderWork 与其他远程客户端可手动导入对应片段。客户端须能访问片段中的 `/mcp` 地址。
+[WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/Changelog) 一键注册写入用户级自定义 MCP 配置（国内版 `~/.workbuddy`、海外版 `~/.workbuddy-ai`，按客户端自身规则解析并全部登记）；[Qoder](https://docs.qoder.com/zh/qoder/connectors) 一键注册同时写入国际版 `~/.qoder/settings.json` 与国内版 `~/.qoder-cn/settings.json` 的 `mcpServers.engram`；[Kimi Work](https://www.kimi.com/help/plugins-and-skills/create) 一键登记使用客户端自带的 `kimi-plugin register-personal`，安装仍需用户在「插件 → 个人」完成。QoderWork 与其他远程客户端可手动导入对应片段。客户端须能访问片段中的 `/mcp` 地址。
 
 ```bash
 claude mcp add --transport http engram http://<主机IP>:18080/mcp \
