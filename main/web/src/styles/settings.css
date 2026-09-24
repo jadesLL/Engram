@@ -302,6 +302,36 @@
   padding: 0;
 }
 
+/* 分组折叠（2026-09-24）：点色带空白处或右侧箭头收起/展开，状态按锚点持久化 */
+.group-band.collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+.group-caret {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.18s ease;
+}
+.group-caret:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+.group-card.is-collapsed .group-caret {
+  transform: rotate(-90deg);
+}
+.group-card.is-collapsed .group-band {
+  border-bottom-color: transparent;
+}
+
 /* 分组状态徽标：把「这个组有没有事」直接写在色带上 */
 .group-badge {
   flex-shrink: 0;

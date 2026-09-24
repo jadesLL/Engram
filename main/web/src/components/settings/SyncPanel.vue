@@ -1,15 +1,24 @@
 <template>
   <section class="settings-panel settings-native settings-group level-normal">
-    <div class="group-card">
-      <div class="group-band">
+    <div class="group-card" :class="{ 'is-collapsed': groupCollapsed }">
+      <div class="group-band collapsible" @click="onBandClick">
         <span class="group-ico" aria-hidden="true"><Icon name="refresh" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">多端同步</span>
           <span class="group-hint">把多台设备组成一个同步群组：只要求中枢设备可被其他设备访问，成员设备之间无需互通</span>
         </span>
         <span v-if="roleBadge" class="group-badge" :class="`tone-${roleBadgeTone}`">{{ roleBadge }}</span>
+        <button
+          type="button"
+          class="group-caret"
+          :aria-expanded="groupCollapsed ? 'false' : 'true'"
+          :title="groupCollapsed ? '展开「多端同步」' : '收起「多端同步」'"
+          @click.stop="toggleGroup"
+        >
+          <Icon name="chevron-down" :size="14" />
+        </button>
       </div>
-      <div class="group-body">
+      <div v-show="!groupCollapsed" class="group-body">
 
     <!-- 未配置：选择角色 -->
     <template v-if="status && status.role === 'none'">
@@ -179,6 +188,7 @@ import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
 import Icon from '../Icon.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
+import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 import SecretField from '../SecretField.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 
@@ -259,6 +269,18 @@ const roleBadgeTone = computed<'ok' | 'accent' | 'warn'>(() => {
   if (role === 'member') return 'accent';
   return 'warn';
 });
+
+// 分组折叠：与 SettingsGroup 共用一份持久化状态（锚点 id 在外层包裹 div 上）
+const GROUP_ANCHOR = 'panel-sync';
+const groupCollapsed = computed(() => isGroupCollapsed(GROUP_ANCHOR));
+function toggleGroup() {
+  toggleGroupCollapsed(GROUP_ANCHOR);
+}
+function onBandClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('button, a, input, select, textarea, label')) return;
+  toggleGroup();
+}
 
 function formatTime(iso: string): string {
   try {
