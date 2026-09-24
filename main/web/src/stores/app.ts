@@ -94,6 +94,12 @@ export const useAppStore = defineStore('app', {
       this.dark = resolveDarkTheme(this.theme);
       document.documentElement.classList.toggle('dark', this.dark);
       localStorage.setItem('theme', this.theme);
+      // 标签页图标跟随主题：亮色/暗色两份静态 SVG 由生成器产出，这里只切换引用
+      const favicon = document.getElementById('app-favicon') as HTMLLinkElement | null;
+      if (favicon) {
+        const href = `/brand/icon-${this.dark ? 'dark' : 'light'}.svg`;
+        if (favicon.getAttribute('href') !== href) favicon.setAttribute('href', href);
+      }
       // 桌面端：窗口控制按钮（标题栏融合条 WCO）配色跟随主题，取值直接来自 CSS 变量
       const wd = (window as any).wikiDesktop;
       if (wd?.setTitleBarOverlay) {

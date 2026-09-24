@@ -121,17 +121,19 @@ function dataUrl(html) {
 // ---------- 启动页 / 错误页（品牌化深色主题，替代裸 <h2> 文案页） ----------
 const SPLASH_BG = '#0d1424';
 
+// 品牌图形不再内联：直接读生成器产出的 SVG 源码（本页是 data: URL，相对路径不可用）。
+// 深色启动页固定用暗色版；读不到就退回纯文字标题，不影响启动。
 function logoSvg(cls) {
-  return (
-    `<svg class="${cls}" viewBox="0 0 100 100" aria-hidden="true">` +
-    '<defs><linearGradient id="orbit-g" gradientUnits="userSpaceOnUse" x1="24" y1="76" x2="76" y2="22">' +
-    '<stop offset="0" stop-color="#22D3EE"/><stop offset="1" stop-color="#4D8AFF"/></linearGradient>' +
-    '<linearGradient id="core-g" gradientUnits="userSpaceOnUse" x1="39" y1="39" x2="61" y2="61">' +
-    '<stop offset="0" stop-color="#4D8AFF"/><stop offset="1" stop-color="#245BDB"/></linearGradient></defs>' +
-    '<ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="url(#orbit-g)" stroke-width="8.5" transform="rotate(-28 50 50)"/>' +
-    '<circle cx="74" cy="28.5" r="5" fill="#22D3EE"/>' +
-    '<circle cx="50" cy="50" r="11" fill="url(#core-g)"/></svg>'
-  );
+  const packed = path.join(__dirname, 'mark-dark.svg'); // 打包后：staging 把 build/mark-dark.svg 复制进 asar 根
+  const dev = path.join(__dirname, 'build', 'mark-dark.svg'); // 源码运行（electron .）
+  try {
+    const svg = fs.readFileSync(fs.existsSync(packed) ? packed : dev, 'utf8');
+    return svg
+      .replace('<svg ', `<svg class="${cls}" preserveAspectRatio="xMidYMid meet" `)
+      .replace(/\s(?:width|height)="\d+"/g, '');
+  } catch {
+    return '';
+  }
 }
 
 const SPLASH_STYLE = `
@@ -143,7 +145,7 @@ const SPLASH_STYLE = `
     font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   }
   .wrap { display: flex; flex-direction: column; align-items: center; width: min(520px, 78vw); }
-  .logo { width: 92px; height: 92px; margin-bottom: 30px; animation: breathe 2.4s ease-in-out infinite; }
+  .logo { width: 100px; height: 100px; margin-bottom: 30px; animation: breathe 2.4s ease-in-out infinite; }
   h1 { margin: 0 0 12px; font-size: 30px; font-weight: 700; letter-spacing: 2px; }
   .desc { margin: 0 0 40px; font-size: 14px; color: #8a93a6; text-align: center; }
   .bar { width: 100%; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.10); overflow: hidden; }

@@ -24,6 +24,7 @@
       "lib/**",
       "scripts/lib/**",
       "icon.png",
+      "mark-dark.svg",
       "server/dist/**",
       "server/node_modules/**",
       "server/package.json",
