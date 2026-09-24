@@ -69,6 +69,7 @@
             id="agent-api-key"
             v-model="apiKey"
             :stored="storedKey"
+            copyable
             :placeholder="baseUrl.trim() ? '该网关的 API Key' : 'DeepSeek 平台 API Key'"
           />
         </label>
