@@ -65,12 +65,14 @@ export interface InboxCounts {
 }
 
 export interface InboxUpload {
+  id: number;
   name: string;
   loaded: number;
   total: number;
 }
 
 export const useInboxStore = defineStore('inbox', () => {
+  let nextUploadId = 0;
   const items = ref<InboxItem[]>([]);
   const counts = ref<InboxCounts>({ all: 0, pending: 0, converted: 0, converting: 0, failed: 0 });
   const loading = ref(false);
@@ -110,7 +112,7 @@ export const useInboxStore = defineStore('inbox', () => {
     let saved = 0;
     const skipped: string[] = [];
     for (const file of list) {
-      const progress: InboxUpload = { name: file.name, loaded: 0, total: file.size };
+      const progress: InboxUpload = { id: ++nextUploadId, name: file.name, loaded: 0, total: file.size };
       uploading.value = [...uploading.value, progress];
       const form = new FormData();
       form.append('files', file);
@@ -128,7 +130,8 @@ export const useInboxStore = defineStore('inbox', () => {
       } catch (err: any) {
         skipped.push(`${file.name}：${err?.response?.data?.error || err?.message || '上传失败'}`);
       } finally {
-        uploading.value = uploading.value.filter((entry) => entry !== progress);
+        // ref 数组读出的元素是 Vue 代理，不能拿原始 progress 对象按引用比较。
+        uploading.value = uploading.value.filter((entry) => entry.id !== progress.id);
       }
     }
     await load();
