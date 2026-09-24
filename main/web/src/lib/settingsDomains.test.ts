@@ -25,7 +25,7 @@ test('能力开关关掉时，对应的大类与分组一起消失', () => {
   const noAgent = visibleSettingsDomains({ agent: false, serverUpdate: true });
   assert.equal(noAgent.some((domain) => domain.id === 'agent'), false, 'Agent 接入应整个隐藏');
   assert.equal(
-    noAgent.find((domain) => domain.id === 'connect')?.groups.some((group) => group.id === 'panel-update'),
+    noAgent.find((domain) => domain.id === 'connect')?.groups.some((group) => group.id === 'panel-update-server'),
     true,
   );
 
@@ -37,7 +37,7 @@ test('能力开关关掉时，对应的大类与分组一起消失', () => {
 test('旧分类 id 落到新大类的对应分组（外部链接不失效）', () => {
   const domains = visibleSettingsDomains(FULL);
   assert.deepEqual(resolveSettingsTarget('sync', '', domains), { domain: 'connect', anchor: 'panel-sync' });
-  assert.deepEqual(resolveSettingsTarget('update', '', domains), { domain: 'connect', anchor: 'panel-update' });
+  assert.deepEqual(resolveSettingsTarget('update', '', domains), { domain: 'connect', anchor: 'panel-update-server' });
   assert.deepEqual(resolveSettingsTarget('storage', '', domains), { domain: 'data', anchor: 'storage-trash' });
   assert.deepEqual(resolveSettingsTarget('data', '', domains), { domain: 'data', anchor: 'data-location' });
   assert.deepEqual(resolveSettingsTarget('agent', '', domains), { domain: 'agent', anchor: 'agent-builtin' });

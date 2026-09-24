@@ -1,31 +1,26 @@
 <template>
-  <section class="settings-panel settings-native settings-group level-normal">
-    <div class="group-card" :class="{ 'is-collapsed': groupCollapsed }">
-      <div class="group-band collapsible" @click="onBandClick">
+  <!-- ============ 服务器更新 ============ -->
+  <section id="panel-update-server" class="settings-panel settings-native settings-group level-normal">
+    <div class="group-card" :class="{ 'is-collapsed': serverCollapsed }">
+      <div class="group-band collapsible" @click="onBandClick($event, 'panel-update-server')">
         <span class="group-ico" aria-hidden="true"><Icon name="download" :size="16" /></span>
         <span class="group-text">
-          <span class="group-title">软件更新</span>
-          <span class="group-hint">检测新版本并就地更新；服务器拉取镜像重建，桌面端可自动或手动安装</span>
+          <span class="group-title">服务器更新</span>
+          <span class="group-hint">Docker 部署的服务端：比对 Release 与镜像仓库版本、切换更新通道、拉取镜像就地重建；桌面端绑定多端同步后可在此远程更新同步服务器</span>
         </span>
         <span v-if="versionBadge" class="group-badge tone-muted">{{ versionBadge }}</span>
+        <span v-if="serverBadge.text" class="group-badge" :class="`tone-${serverBadge.tone}`">{{ serverBadge.text }}</span>
         <button
           type="button"
           class="group-caret"
-          :aria-expanded="groupCollapsed ? 'false' : 'true'"
-          :title="groupCollapsed ? '展开「软件更新」' : '收起「软件更新」'"
-          @click.stop="toggleGroup"
+          :aria-expanded="serverCollapsed ? 'false' : 'true'"
+          :title="serverCollapsed ? '展开「服务器更新」' : '收起「服务器更新」'"
+          @click.stop="toggleGroup('panel-update-server')"
         >
           <Icon name="chevron-down" :size="14" />
         </button>
       </div>
-      <div v-show="!groupCollapsed" class="group-body flush">
-
-    <!-- ============ 服务器（Docker）分区 ============ -->
-    <div class="sub-block">
-      <div class="block-caption">
-        服务器（Docker 部署）
-        <span v-if="serverBadge.text" class="group-badge" :class="`tone-${serverBadge.tone}`">{{ serverBadge.text }}</span>
-      </div>
+      <div v-show="!serverCollapsed" class="group-body flush">
       <!-- 本地内嵌 server（桌面本地模式 / 浏览器访问桌面本地服务） -->
       <template v-if="state.desktop">
         <!-- 已绑定多端同步：在此直接远程更新同步中枢服务器 -->
@@ -90,7 +85,7 @@
 
         <!-- 桌面端但未绑定同步 -->
         <div v-else-if="isDesktop" class="integration-note">
-          当前运行在桌面端。在「设置 → 多端同步」绑定服务器后，即可在此直接远程更新服务器，无需登录服务器网页；桌面端自身的更新见下方「桌面端」一节。
+          当前运行在桌面端。在「设置 → 多端同步」绑定服务器后，即可在此直接远程更新服务器，无需登录服务器网页；桌面端自身的更新见下方「桌面端更新」分组。
         </div>
         <!-- 浏览器访问桌面本地服务 -->
         <div v-else class="integration-note">
@@ -165,14 +160,32 @@
           <code>docker start engram-old</code> 手动恢复，然后刷新本页。
         </p>
       </template>
-    </div>
-
-    <!-- ============ 桌面端分区 ============ -->
-    <div class="sub-block">
-      <div class="block-caption">
-        桌面端（Windows）
-        <span v-if="desktopBadge.text" class="group-badge" :class="`tone-${desktopBadge.tone}`">{{ desktopBadge.text }}</span>
       </div>
+    </div>
+  </section>
+
+  <!-- ============ 桌面端更新 ============ -->
+  <section id="panel-update-desktop" class="settings-panel settings-native settings-group level-normal">
+    <div class="group-card" :class="{ 'is-collapsed': desktopCollapsed }">
+      <div class="group-band collapsible" @click="onBandClick($event, 'panel-update-desktop')">
+        <span class="group-ico" aria-hidden="true"><Icon name="monitor" :size="16" /></span>
+        <span class="group-text">
+          <span class="group-title">桌面端更新</span>
+          <span class="group-hint">Windows 桌面端：安装包可自动或手动下载安装；源码模式增量拉取提交并重新构建</span>
+        </span>
+        <span v-if="desktopVersionBadge" class="group-badge tone-muted">{{ desktopVersionBadge }}</span>
+        <span v-if="desktopBadge.text" class="group-badge" :class="`tone-${desktopBadge.tone}`">{{ desktopBadge.text }}</span>
+        <button
+          type="button"
+          class="group-caret"
+          :aria-expanded="desktopCollapsed ? 'false' : 'true'"
+          :title="desktopCollapsed ? '展开「桌面端更新」' : '收起「桌面端更新」'"
+          @click.stop="toggleGroup('panel-update-desktop')"
+        >
+          <Icon name="chevron-down" :size="14" />
+        </button>
+      </div>
+      <div v-show="!desktopCollapsed" class="group-body flush">
 
       <div v-if="!isDesktop" class="integration-note">
         在 Windows 桌面端内可在此下载并安装最新安装包；浏览器访问服务器时此节仅作展示。
@@ -324,14 +337,31 @@
         </div>
         <p v-if="shortcutMessage" class="setting-message" :class="shortcutError ? 'err' : ''">{{ shortcutMessage }}</p>
       </template>
-    </div>
-
-    <!-- ============ 更新源配置分区 ============ -->
-    <div class="sub-block">
-      <div class="block-caption">
-        更新源配置
-        <span v-if="!state.giteaConfigured" class="group-badge tone-warn">未配置</span>
       </div>
+    </div>
+  </section>
+
+  <!-- ============ 更新源配置 ============ -->
+  <section id="panel-update-source" class="settings-panel settings-native settings-group level-normal">
+    <div class="group-card" :class="{ 'is-collapsed': sourceCollapsed }">
+      <div class="group-band collapsible" @click="onBandClick($event, 'panel-update-source')">
+        <span class="group-ico" aria-hidden="true"><Icon name="globe" :size="16" /></span>
+        <span class="group-text">
+          <span class="group-title">更新源配置</span>
+          <span class="group-hint">远端仓库地址与访问凭据：服务器与桌面端检查更新共用这一份配置</span>
+        </span>
+        <span v-if="configLoaded && !state.giteaConfigured" class="group-badge tone-warn">未配置</span>
+        <button
+          type="button"
+          class="group-caret"
+          :aria-expanded="sourceCollapsed ? 'false' : 'true'"
+          :title="sourceCollapsed ? '展开「更新源配置」' : '收起「更新源配置」'"
+          @click.stop="toggleGroup('panel-update-source')"
+        >
+          <Icon name="chevron-down" :size="14" />
+        </button>
+      </div>
+      <div v-show="!sourceCollapsed" class="group-body flush">
       <div class="integration-note">
         只需粘贴仓库地址，服务器和仓库会自动识别；配置保存在服务器数据目录 .env 文件中（随数据卷持久化，不进代码库）。公开仓库无需填凭据。
       </div>
@@ -375,8 +405,6 @@
           {{ savingConfig ? '保存中…' : '保存配置' }}
         </button>
       </div>
-    </div>
-
       </div>
     </div>
   </section>
@@ -434,6 +462,8 @@ const config = ref<ConfigInfo>({
 });
 const form = reactive({ repoUrl: '', authType: 'token', token: '', username: '', password: '', imageTag: '' });
 const repoUrlError = ref('');
+/** 配置是否已加载完成：避免加载前「未配置」徽标闪烁误报 */
+const configLoaded = ref(false);
 
 const checking = ref(false);
 const checkResult = ref<any>(null);
@@ -535,8 +565,16 @@ const desktopBadge = computed<{ text: string; tone: 'ok' | 'warn' | 'muted' }>((
   return { text: '', tone: 'muted' };
 });
 useSettingsBadge(
-  'panel-update',
-  computed(() => [serverBadge.value, desktopBadge.value].find((b) => b.tone === 'warn')?.text ?? ''),
+  'panel-update-server',
+  computed(() => serverBadge.value.text),
+);
+useSettingsBadge(
+  'panel-update-desktop',
+  computed(() => desktopBadge.value.text),
+);
+useSettingsBadge(
+  'panel-update-source',
+  computed(() => (configLoaded.value && !state.value.giteaConfigured ? '未配置' : '')),
 );
 
 async function loadSync() {
@@ -658,16 +696,29 @@ const versionBadge = computed(() => {
   return base ? formatVersionLabel(base, identity.value) : '';
 });
 
-// 分组折叠：与 SettingsGroup 共用一份持久化状态（锚点 id 在外层包裹 div 上）
-const GROUP_ANCHOR = 'panel-update';
-const groupCollapsed = computed(() => isGroupCollapsed(GROUP_ANCHOR));
-function toggleGroup() {
-  toggleGroupCollapsed(GROUP_ANCHOR);
+/**
+ * 桌面端版本徽标：主进程 desktop-get-env 返回 app.getVersion() 与 git 身份；
+ * 仅桌面端形态显示（浏览器访问服务器时桌面端卡片仅作展示，不贴版本号）。
+ */
+const desktopVersionBadge = computed(() => {
+  if (!isDesktop.value) return '';
+  const env = desktopEnv.value as (GitIdentity & { version?: string }) | null;
+  const base = env?.version ? `v${env.version}` : '';
+  if (!base) return '';
+  return formatVersionLabel(base, { commit: env?.commit || '', commitDate: env?.commitDate || '', dirty: env?.dirty });
+});
+
+// 分组折叠：三张分组卡片各自持久化折叠状态（锚点 id 即各卡片的 DOM id）
+const serverCollapsed = computed(() => isGroupCollapsed('panel-update-server'));
+const desktopCollapsed = computed(() => isGroupCollapsed('panel-update-desktop'));
+const sourceCollapsed = computed(() => isGroupCollapsed('panel-update-source'));
+function toggleGroup(anchor: string) {
+  toggleGroupCollapsed(anchor);
 }
-function onBandClick(event: MouseEvent) {
+function onBandClick(event: MouseEvent, anchor: string) {
   const target = event.target as HTMLElement | null;
   if (target?.closest('button, a, input, select, textarea, label')) return;
-  toggleGroup();
+  toggleGroup(anchor);
 }
 
 /** 源码模式检查更新结果：`已是最新（本地 0fbe4e2）` / `落后 3 个提交：0fbe4e2 → a1b2c3d` */
@@ -790,6 +841,7 @@ async function load() {
     form.username = c.data.giteaUsername || '';
     form.password = c.data.giteaPassword || '';
     form.imageTag = c.data.imageTag || '';
+    configLoaded.value = true;
   } catch {
     /* 面板加载失败由 message 区提示 */
   }
