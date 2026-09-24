@@ -3,7 +3,7 @@
     ref="readerEl"
     class="reading-preview"
     :class="{
-      'outline-hidden': !preferences.outline || outline.length === 0,
+      'outline-hidden': !outlineVisible,
       'numbered-headings': preferences.numberedHeadings,
       'mobile-outline-open': mobileOutlineOpen,
     }"
@@ -35,6 +35,19 @@
 
       <button class="reading-tool theme-tool" type="button" v-tooltip="dark ? '切换到浅色' : '切换到深色'" @click="app.toggleResolvedTheme()">
         <Icon :name="dark ? 'sun' : 'moon'" :size="17" />
+      </button>
+
+      <!-- 本页目录：一级开关（原先埋在「显示」二级菜单里，读者翻不到），宽屏切右侧目录列、窄屏把目录摊到正文上方 -->
+      <button
+        class="reading-tool outline-tool"
+        type="button"
+        :disabled="outline.length === 0"
+        :aria-pressed="outlineVisible"
+        v-tooltip="outline.length === 0 ? '本页没有小标题，无法生成目录' : (outlineVisible ? '收起本页目录' : '展开本页目录')"
+        @click="toggleOutline"
+      >
+        <Icon name="list-tree" :size="16" />
+        <span class="outline-tool-label">目录</span>
       </button>
 
       <div class="reading-settings">
@@ -116,14 +129,14 @@
           </div>
         </div>
 
-        <!-- 低频显示项收进「显示」菜单：行距 / 编号 / 目录 -->
+        <!-- 「显示」菜单只留排版低频项（行距 / 编号）；本页目录已提到顶栏一级开关 -->
         <div ref="displayWrapEl" class="display-wrap">
           <button
             class="reading-tool"
             type="button"
             aria-haspopup="menu"
             :aria-expanded="displayMenuOpen"
-            v-tooltip="'显示选项（行距 / 编号 / 目录）'"
+            v-tooltip="'显示选项（行距 / 编号）'"
             @click="toggleDisplayMenu"
           >
             <Icon name="more" :size="17" />
@@ -148,13 +161,6 @@
               :aria-checked="preferences.numberedHeadings"
               @click="toggleNumberingMenu"
             ><span class="check" :class="{ on: preferences.numberedHeadings }"></span>标题编号</button>
-            <button
-              type="button"
-              role="menuitemcheckbox"
-              :aria-checked="outlinePressed"
-              :disabled="outline.length === 0"
-              @click="toggleOutline"
-            ><span class="check" :class="{ on: outlinePressed }"></span>本页目录</button>
           </div>
         </div>
       </div>
@@ -342,9 +348,13 @@ const fontSizeOptions: number[] = Array.from(
 );
 
 const preferences = computed(() => app.readingPreferences);
-const outlinePressed = computed(() =>
+/* 窄屏（≤768px）目录摊在正文上方、展开态只属于本次阅读；宽屏是右侧常驻目录列，跟随持久偏好。
+ * 断点状态必须存成 ref：直接读 media.matches 不是响应式依赖，跨断点缩放后计算属性不会重算，
+ * 会出现「偏好里关过目录，手机上按钮点了也不出目录」的死局 */
+const isMobile = ref(mobileMedia.matches);
+const outlineVisible = computed(() =>
   outline.value.length > 0 &&
-  (mobileMedia.matches ? mobileOutlineOpen.value : preferences.value.outline)
+  (isMobile.value ? mobileOutlineOpen.value : preferences.value.outline)
 );
 const readingStyle = computed(() => ({
   /* 正文列宽 = 可用区 × 百分比（可用区没量到前回落到 100%，不闪成 0） */
@@ -467,7 +477,7 @@ function toggleNumberingMenu() {
 }
 
 function toggleOutline() {
-  if (mobileMedia.matches) {
+  if (isMobile.value) {
     mobileOutlineOpen.value = !mobileOutlineOpen.value;
     return;
   }
@@ -826,6 +836,7 @@ function handleLayoutChange() {
 }
 
 function handleMediaChange() {
+  isMobile.value = mobileMedia.matches;
   mobileOutlineOpen.value = false;
   handleLayoutChange();
 }
@@ -937,6 +948,26 @@ onBeforeUnmount(() => {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
+}
+/* 本页目录一级开关：图标+「目录」，展开态交给既有的 [aria-pressed="true"] 强调样式 */
+.outline-tool {
+  padding: 0 11px;
+  font-weight: 600;
+}
+.outline-tool-label {
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+}
+/* 本页没有小标题时按钮留在原位（不闪不跳），只把它标成不可用 */
+.reading-tool:disabled {
+  color: var(--text-faint);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.reading-tool:disabled:hover {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-faint);
 }
 .font-stepper > button:hover,
 .width-segment button:hover:not([aria-pressed="true"]) {
@@ -1587,6 +1618,13 @@ onBeforeUnmount(() => {
     grid-row: 1;
     width: 36px;
     padding: 0;
+  }
+  /* 窄屏顶栏首行 = 返回编辑 / 目录 / 主题：目录开关居中且常驻，不再藏进「显示」菜单 */
+  .outline-tool {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: center;
+    padding: 0 12px;
   }
   /* 窄屏：返回上一页独占一行（可点区域大），设置组顺延到下一行 */
   .back-page {
