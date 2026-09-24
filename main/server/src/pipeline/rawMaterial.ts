@@ -46,7 +46,7 @@ export function createRawMaterial(input: { path: string; content: string }): { p
     throw new RawMaterialWriteError('原始资料/对话/ 专供 save_chat 保存聊天记录');
   }
   if (rel.startsWith('原始资料/收集箱/')) {
-    throw new RawMaterialWriteError('原始资料/收集箱/ 专供用户确认入库的收集箱产物');
+    throw new RawMaterialWriteError('原始资料/收集箱/ 是已停用的旧版目录，请改用 原始资料/');
   }
   if (path.posix.extname(rel).toLowerCase() !== '.md') {
     throw new RawMaterialWriteError('只支持新建 Markdown（.md）原始资料');

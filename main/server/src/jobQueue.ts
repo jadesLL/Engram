@@ -1,13 +1,13 @@
 import { db, now } from './lib/db.js';
 
-export function enqueue(kind: string, payload: unknown): number | undefined {
+export function enqueue(kind: string, payload: unknown, options: { dedupeRecent?: boolean } = {}): number | undefined {
   const payloadStr = JSON.stringify(payload);
   const duplicate = db
     .prepare(`SELECT id FROM jobs WHERE kind = ? AND payload = ? AND status IN ('pending','running','paused')`)
     .get(kind, payloadStr);
   if (duplicate) return undefined;
 
-  const recent = db
+  const recent = options.dedupeRecent === false ? null : db
     .prepare(
       `SELECT id FROM jobs WHERE kind = ? AND payload = ? AND status = 'done'
        AND julianday(run_at) > julianday('now', '-60 seconds')`

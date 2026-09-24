@@ -2,12 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { Readable } from 'node:stream';
+import { pipeline as streamPipeline } from 'node:stream/promises';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
 import { getSetting } from '../lib/db.js';
 import { consumeSseStream } from '../lib/sseStream.js';
 import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted, PagePathTakenError } from '../lib/vault.js';
-import { classifyBrainEntry } from '../lib/brainPaths.js';
+import { classifyBrainEntry, isInboxPath } from '../lib/brainPaths.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
@@ -214,12 +216,22 @@ async function pullFile(relPath: string): Promise<void> {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`拉取文件失败 ${res.status}: ${relPath}`);
-  const buf = Buffer.from(await res.arrayBuffer());
   const abs = safeJoin(relPath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   const temp = `${abs}.${Date.now()}.sync.tmp`;
-  fs.writeFileSync(temp, buf);
-  fs.renameSync(temp, abs);
+  try {
+    if (isInboxPath(relPath)) {
+      if (!res.body) throw new Error(`拉取文件响应没有内容: ${relPath}`);
+      await streamPipeline(Readable.fromWeb(res.body as any), fs.createWriteStream(temp));
+    } else {
+      const buf = Buffer.from(await res.arrayBuffer());
+      fs.writeFileSync(temp, buf);
+    }
+    fs.renameSync(temp, abs);
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
   noteAppWrite(abs);
   // 原始资料文件拉取后补调度文本提取（与启动扫描/上传路径同一套机制）
   try {
@@ -349,11 +361,14 @@ async function pushOne(item: QueueItem): Promise<void> {
       }
       drainStash(item.target, ackedRevision);
     } else if (item.kind === 'file') {
-      const buf = fs.readFileSync(safeJoin(item.target));
       const form = new FormData();
       form.append('path', item.target);
       form.append('node_id', currentNodeId());
-      form.append('file', new Blob([new Uint8Array(buf)]), path.basename(item.target));
+      const abs = safeJoin(item.target);
+      const fileBody = isInboxPath(item.target)
+        ? await fs.openAsBlob(abs, { type: 'application/octet-stream' })
+        : new Blob([new Uint8Array(fs.readFileSync(abs))]);
+      form.append('file', fileBody, path.basename(item.target));
       const res = await fetch(hubUrl() + '/api/sync/file', {
         method: 'POST',
         headers: authHeaders(),

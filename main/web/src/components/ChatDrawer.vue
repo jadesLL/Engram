@@ -38,6 +38,9 @@
         <span class="head-live-text">回复中 {{ liveElapsed }}</span>
         <span v-if="queuedCount" class="head-live-queued">排队 {{ queuedCount }}</span>
       </span>
+      <span v-else-if="conversionActive" class="head-live">
+        <AppSpinner :size="11" /><span class="head-live-text">转换中</span>
+      </span>
       <button
         v-if="liveRun"
         class="btn small head-stop"
@@ -332,6 +335,11 @@
         <span v-if="queuedCount" class="run-live-queued">排队 {{ queuedCount }} 条</span>
         <span class="run-live-time">{{ liveElapsed }}</span>
       </div>
+      <div v-else-if="conversionActive" class="run-live" role="status" aria-live="polite">
+        <AppSpinner :size="13" />
+        <b class="run-live-title">收集箱正在转换</b>
+        <span class="run-live-detail">{{ conversionDetail }}</span>
+      </div>
     </div>
 
     <footer class="chat-composer">
@@ -426,8 +434,9 @@
       <textarea
         ref="inputEl"
         v-model="draft"
+        :disabled="conversionActive"
         rows="3"
-        :placeholder="chat.currentRun
+        :placeholder="conversionActive ? '转换完成后可继续在此对话' : chat.currentRun
           ? '正在回复…可以继续输入，发送后会排队，等这轮跑完自动接着回复（Enter 发送，Shift+Enter 换行）'
           : '问点什么，或让我整理知识库（Enter 发送，Shift+Enter 换行）'"
         @keydown.enter.exact.prevent="send()"
@@ -440,7 +449,7 @@
         <button
           class="btn primary small"
           type="button"
-          :disabled="!draft.trim()"
+          :disabled="!draft.trim() || conversionActive"
           @click="send()"
         >
           <Icon name="send" :size="13" /> {{ chat.currentRun ? '排队发送' : '发送' }}
@@ -727,6 +736,33 @@ const terminalRun = computed<ChatRun | null>(() => {
   return ['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status) ? run : null;
 });
 
+/** 收集箱转换记录写在 Agent 会话里；转换任务自身由后台队列执行。 */
+const conversionSession = computed(() =>
+  chat.messages.some((message) => Number(message.metadata?.inboxConversionJobId) > 0)
+);
+const conversionActive = computed(() =>
+  conversionSession.value && Boolean(chat.snapshot?.session.running) && !chat.currentRun
+);
+const conversionDetail = computed(() => {
+  const step = [...chat.messages].reverse().find((message) => message.metadata?.inboxConversionStage);
+  return step?.content?.replace(/\*\*/g, '') || '等待处理';
+});
+let conversionPollTimer: number | undefined;
+watch(conversionActive, (active) => {
+  if (conversionPollTimer !== undefined) {
+    window.clearInterval(conversionPollTimer);
+    conversionPollTimer = undefined;
+  }
+  if (!active) return;
+  conversionPollTimer = window.setInterval(() => {
+    const sessionId = chat.activeSessionId;
+    void chat.reload(sessionId).then(() => chat.loadSessions()).catch(() => {
+      if (conversionPollTimer !== undefined) window.clearInterval(conversionPollTimer);
+      conversionPollTimer = undefined;
+    });
+  }, 1500);
+}, { immediate: true });
+
 /** 对话流：按轮分组，轮内消息、工具卡与子代理卡按落库时间排（见 lib/chatTimeline） */
 const timeline = computed(() =>
   buildChatTimeline(chat.messages, chat.sessionToolCalls, chat.runs, chat.sessionSubagents)
@@ -969,6 +1005,7 @@ async function removeSession(session: ChatSession) {
 }
 
 async function send(text?: string) {
+  if (conversionActive.value) return;
   const message = (text ?? draft.value).trim();
   if (!message) return;
   draft.value = '';
@@ -1104,6 +1141,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  if (conversionPollTimer !== undefined) window.clearInterval(conversionPollTimer);
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onDrawerViewportResize);
   // 秒表随抽屉卸载一起停（抽屉是随开关挂载/卸载的，不停会一直空转）

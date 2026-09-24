@@ -30,11 +30,13 @@ export interface InboxItem {
   error: string;
   /** 转换任务 id；null 表示这份文件还没有转换任务 */
   jobId: number | null;
+  /** 最近一次转换的 Agent 对话 */
+  assistantSessionId: string | null;
 }
 
 /** POST /api/inbox/convert 的回执：哪些进了队列、哪些被跳过及原因 */
 export interface InboxConversion {
-  queued: { path: string; jobId: number }[];
+  queued: { path: string; jobId: number; sessionId: string }[];
   skipped: { path: string; reason: string }[];
 }
 
@@ -71,7 +73,6 @@ export interface InboxUpload {
 export const useInboxStore = defineStore('inbox', () => {
   const items = ref<InboxItem[]>([]);
   const counts = ref<InboxCounts>({ all: 0, pending: 0, converted: 0, converting: 0, failed: 0 });
-  const maxFileMb = ref(2048);
   const loading = ref(false);
   const loaded = ref(false);
   const error = ref('');
@@ -91,7 +92,6 @@ export const useInboxStore = defineStore('inbox', () => {
       const { data } = await api.get('/api/inbox/items');
       items.value = data.items || [];
       counts.value = data.counts || counts.value;
-      maxFileMb.value = data.maxFileMb || maxFileMb.value;
       error.value = '';
       loaded.value = true;
     } catch (err: any) {
@@ -135,6 +135,13 @@ export const useInboxStore = defineStore('inbox', () => {
     return { saved, skipped };
   }
 
+  /** 直接按网址抓取网页 HTML，保存成收集箱原件。 */
+  async function fetchUrl(url: string): Promise<InboxItem> {
+    const { data } = await api.post('/api/inbox/fetch-url', { url });
+    await load();
+    return data.saved as InboxItem;
+  }
+
   /**
    * 排队转换：paths 指定文件，'all' 交给服务端自己挑可转项。
    * 转换是服务端队列在跑，这里拿到的只是「已受理」的回执，所以立刻刷新一次列表，
@@ -176,7 +183,6 @@ export const useInboxStore = defineStore('inbox', () => {
   return {
     items,
     counts,
-    maxFileMb,
     loading,
     loaded,
     error,
@@ -185,6 +191,7 @@ export const useInboxStore = defineStore('inbox', () => {
     pendingItems,
     load,
     upload,
+    fetchUrl,
     remove,
     convert,
     loadDerived,

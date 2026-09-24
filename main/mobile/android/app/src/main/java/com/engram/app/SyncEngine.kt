@@ -210,10 +210,11 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
 
     private fun pullFile(path: String) {
         val staged = File(db.root, "sync-${UUID.randomUUID()}.tmp")
+        val maxBytes = if (isInboxFile(path)) Long.MAX_VALUE else MAX_FILE_BYTES
         try {
             withConnection("GET", "/api/sync/file?path=${encode(path)}") { connection ->
                 val declared = connection.contentLengthLong
-                require(declared < 0 || declared <= MAX_FILE_BYTES) { "同步文件超过 200 MB 上限" }
+                require(declared < 0 || declared <= maxBytes) { "同步文件超过 200 MB 上限" }
                 connection.inputStream.use { input ->
                     staged.outputStream().use { output ->
                         val buffer = ByteArray(64 * 1024)
@@ -222,7 +223,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                             val count = input.read(buffer)
                             if (count < 0) break
                             total += count
-                            require(total <= MAX_FILE_BYTES) { "同步文件超过 200 MB 上限" }
+                            require(total <= maxBytes) { "同步文件超过 200 MB 上限" }
                             output.write(buffer, 0, count)
                         }
                     }
@@ -248,6 +249,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     }
     private fun token(): String = secrets.get("sync_hub_token") ?: error("未配置绑定令牌")
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
+    private fun isInboxFile(path: String) = path.startsWith("收集箱/")
 
     private fun getJson(path: String) = JSONObject(String(request("GET", path, null, "application/json"), StandardCharsets.UTF_8))
     private fun postJson(path: String, body: JSONObject) = JSONObject(String(request("POST", path, body.toString().toByteArray(), "application/json"), StandardCharsets.UTF_8))
@@ -298,7 +300,9 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     }
 
     private fun postFile(path: String, file: File) {
-        require(file.length() <= MAX_FILE_BYTES) { "同步文件超过 200 MB 上限" }
+        if (!isInboxFile(path)) {
+            require(file.length() <= MAX_FILE_BYTES) { "同步文件超过 200 MB 上限" }
+        }
         val boundary = "Engram-${UUID.randomUUID()}"
         withConnection("POST", "/api/sync/file", "multipart/form-data; boundary=$boundary") { connection ->
             connection.doOutput = true

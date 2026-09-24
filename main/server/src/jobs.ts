@@ -4,6 +4,7 @@ import { appendWikiLog } from './pipeline/indexFile.js';
 import { enqueuePagePipeline } from './jobQueue.js';
 import { extractFile } from './pipeline/fileExtraction.js';
 import { convertInboxItem } from './pipeline/inboxConvert.js';
+import { finishInboxConversation, recordInboxConversionStep } from './pipeline/inboxConversation.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
@@ -48,10 +49,14 @@ const handlers: Record<string, JobHandler> = {
    * payload 用 `path`（vault 相对路径），这样同一份文件天然串行、不同文件可并行。
    */
   inbox_convert: async ({ path: relPath }, update, context) => {
-    await convertInboxItem(relPath, {
+    const result = await convertInboxItem(relPath, {
       signal: context.signal,
-      onProgress: (stage, detail) => update({ stage, progress: stage === '读取原件' ? 15 : 60, detail }),
+      onProgress: (stage, detail) => {
+        update({ stage, progress: stage === '读取原件' ? 15 : 60, detail });
+        recordInboxConversionStep(context.jobId, stage, detail);
+      },
     });
+    update({ stage: '写入结果', progress: 95, detail: result.derivedPath });
   },
 };
 
@@ -114,6 +119,15 @@ export function recoverStaleJobs() {
        run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'`
   ).run(now());
+  const unfinishedConversations = db.prepare(
+    `SELECT j.id FROM jobs j WHERE j.kind = 'inbox_convert' AND j.status IN ('failed', 'cancelled')
+       AND j.assistant_session_id IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM assistant_messages m WHERE m.session_id = j.assistant_session_id
+           AND m.metadata LIKE '%"inboxConversionFinal":true%'
+       ) LIMIT 500`
+  ).all() as { id: number }[];
+  for (const row of unfinishedConversations) finishInboxConversation(row.id);
   // FTS 兜底：从未进过 pages_fts 的页面（历史向量时代数据）补一次索引任务
   const rows = db.prepare(
     `SELECT p.id FROM pages p
@@ -163,6 +177,7 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
   try {
     const handler = handlers[job.kind];
     updateJob(job.id, { stage: '执行中', progress: 5 }, runToken);
+    if (job.kind === 'inbox_convert') recordInboxConversionStep(job.id, '执行中');
     if (!handler) throw new Error(`未知任务类型：${job.kind}`);
     await handler(
       JSON.parse(job.payload),
@@ -206,6 +221,9 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
       }
     }
   } finally {
+    if (job.kind === 'inbox_convert') {
+      try { finishInboxConversation(job.id); } catch (error) { console.warn('[inbox] 对话记录收口失败', error); }
+    }
     activeExecutions.delete(job.id);
     notifyIdleWaiters();
     if (!maintenanceDepth && getJobQueueState().running) resumePausedJobs();
@@ -254,6 +272,7 @@ export function cancelJob(jobId: number): { status: string } {
        cancel_requested=0,run_token='',updated_at=?
        WHERE id=? AND status IN ('pending','paused')`
     ).run(now(), jobId);
+    if (job.kind === 'inbox_convert') finishInboxConversation(jobId);
     return { status: 'cancelled' };
   }
   if (job.status !== 'running') return { status: job.status };
@@ -263,6 +282,7 @@ export function cancelJob(jobId: number): { status: string } {
       `UPDATE jobs SET status='cancelled',stage='已取消',error=NULL,
        cancel_requested=0,run_token='',updated_at=? WHERE id=? AND status='running'`
     ).run(now(), jobId);
+    if (job.kind === 'inbox_convert') finishInboxConversation(jobId);
     return { status: 'cancelled' };
   }
   db.prepare(
@@ -394,6 +414,7 @@ function abortStaleJobs(): void {
        run_token='',cancel_requested=0,updated_at=?
        WHERE id=? AND status='running'`
     ).run(now(), job.id);
+    if (job.kind === 'inbox_convert') finishInboxConversation(job.id);
   }
 }
 

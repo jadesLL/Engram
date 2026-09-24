@@ -112,6 +112,15 @@ test('同名不覆盖：第二份自动加序号', async () => {
   assert.equal(second, 'v2');
 });
 
+test('网址抓取拒绝本地与非网页地址', async () => {
+  for (const url of ['http://127.0.0.1/', 'file:///tmp/secret', 'http://[::1]/']) {
+    const res = await app.inject({
+      method: 'POST', url: '/api/inbox/fetch-url', headers: auth(), payload: { url },
+    });
+    assert.equal(res.statusCode, 400, url);
+  }
+});
+
 test('列表按状态分组：有转换产物即视为已转换，产物本身不作为条目', async () => {
   const derivedDir = path.join(BRAIN_DIR, INBOX_DIR_REL, '转换结果');
   fs.mkdirSync(derivedDir, { recursive: true });

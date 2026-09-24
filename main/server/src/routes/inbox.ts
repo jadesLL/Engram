@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { pipeline as streamPipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
@@ -7,9 +8,11 @@ import { safeJoin, notifySyncChange } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
-import { positiveInt } from '../config.js';
 import { enqueue } from '../jobQueue.js';
+import { db } from '../lib/db.js';
+import { createInboxConversation } from '../pipeline/inboxConversation.js';
 import { listInboxItems, inboxCategoryOf, type InboxItem } from '../lib/inboxItems.js';
+import { fetchInboxWebPage, InboxWebFetchError } from '../lib/inboxWebFetch.js';
 import {
   adoptInboxItem,
   capabilityHint,
@@ -33,12 +36,9 @@ import {
  *    以及后续里程碑的语义转换，不提供任何预览/取正文接口。
  *
  * 上传走流式落盘：通用 /api/files/upload 是把整份文件读进内存再写（另有 200MB 硬上限），
- * 收集箱要接几百 MB 到 GB 级的录屏与压缩包，必须边收边写。
+ * 收集箱不设固定单文件大小上限，必须边收边写。
  */
 
-/** 单文件上限（MB），可用 INBOX_MAX_FILE_MB 覆盖 */
-const INBOX_MAX_FILE_MB = positiveInt(process.env.INBOX_MAX_FILE_MB, 2048);
-const INBOX_MAX_FILE_BYTES = INBOX_MAX_FILE_MB * 1024 * 1024;
 /** 单次请求最多文件数 */
 const INBOX_MAX_FILES = 200;
 
@@ -67,7 +67,6 @@ export async function inboxRoutes(app: FastifyInstance) {
     return {
       dir: INBOX_DIR,
       derivedDir: INBOX_DERIVED_DIR,
-      maxFileMb: INBOX_MAX_FILE_MB,
       counts,
       items,
     };
@@ -83,7 +82,8 @@ export async function inboxRoutes(app: FastifyInstance) {
     let subDir = INBOX_DIR;
 
     for await (const part of req.parts({
-      limits: { fileSize: INBOX_MAX_FILE_BYTES, files: INBOX_MAX_FILES },
+      // Fastify 的全局 multipart 默认仍有限制；这里显式覆盖为 Infinity。
+      limits: { fileSize: Infinity, files: INBOX_MAX_FILES },
     })) {
       if (part.type === 'field') {
         if (part.fieldname === 'dir') {
@@ -109,7 +109,7 @@ export async function inboxRoutes(app: FastifyInstance) {
       }
       if (part.file.truncated) {
         fs.rmSync(abs, { force: true });
-        skipped.push({ name, reason: `超过单文件上限 ${INBOX_MAX_FILE_MB} MB` });
+        skipped.push({ name, reason: '上传数据不完整' });
         continue;
       }
       noteAppWrite(abs);
@@ -131,6 +131,7 @@ export async function inboxRoutes(app: FastifyInstance) {
         hint: capabilityHint(rel, capability),
         error: '',
         jobId: null,
+        assistantSessionId: null,
       } satisfies InboxItem);
     }
 
@@ -138,6 +139,32 @@ export async function inboxRoutes(app: FastifyInstance) {
       return reply.code(413).send({ error: skipped[0].reason, skipped });
     }
     return { saved, skipped, total: listInboxItems().counts.all };
+  });
+
+  /** 抓取公网页面的 HTML 原件，落入与上传文件相同的收集箱目录。 */
+  app.post('/api/inbox/fetch-url', async (req, reply) => {
+    const { url } = (req.body || {}) as { url?: unknown };
+    if (typeof url !== 'string' || !url.trim()) {
+      return reply.code(400).send({ error: '请输入网页地址' });
+    }
+    fs.mkdirSync(safeJoin(INBOX_DIR), { recursive: true });
+    const tempAbs = safeJoin(`${INBOX_DIR}/.fetch-${crypto.randomUUID()}.tmp`);
+    try {
+      const fetched = await fetchInboxWebPage(url, tempAbs);
+      const name = sanitizeName(`${fetched.title}.html`);
+      const rel = uniqueInboxPath(INBOX_DIR, name);
+      const abs = safeJoin(rel);
+      fs.renameSync(tempAbs, abs);
+      noteAppWrite(abs);
+      notifySyncChange('file', rel);
+      emit('file-changed', { path: rel });
+      const saved = listInboxItems().items.find((item) => item.path === rel);
+      return { saved, sourceUrl: fetched.sourceUrl };
+    } catch (error: any) {
+      fs.rmSync(tempAbs, { force: true });
+      return reply.code(error instanceof InboxWebFetchError ? 400 : 500)
+        .send({ error: error?.message || '保存网页失败' });
+    }
   });
 
   /** 下载原件（Docker / 浏览器端「打开」= 下载；桌面端走系统默认程序，见 M2） */
@@ -189,7 +216,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   /**
    * 语义转换：入队 inbox_convert。按内容重写成 Markdown，产物留在收集箱。
-   * 同一份文件重复点不会排两次（jobQueue 按 kind+payload 去重）。
+   * 同一份文件正在转换时复用任务；完成后再次点会新建任务和 Agent 对话。
    */
   app.post('/api/inbox/convert', async (req, reply) => {
     const body = (req.body || {}) as { paths?: string[]; all?: boolean };
@@ -200,9 +227,9 @@ export async function inboxRoutes(app: FastifyInstance) {
         : [];
     if (!requested.length) return reply.code(400).send({ error: '没有要转换的文件' });
 
-    const queued: { path: string; jobId: number }[] = [];
+    const queued: { path: string; jobId: number; sessionId: string }[] = [];
     const skipped: { path: string; reason: string }[] = [];
-    for (const rel of requested) {
+    for (const rel of new Set(requested)) {
       if (!isInboxPath(rel) || isInboxDerivedPath(rel) || !fs.existsSync(safeJoin(rel))) {
         skipped.push({ path: String(rel), reason: '路径无效' });
         continue;
@@ -212,9 +239,18 @@ export async function inboxRoutes(app: FastifyInstance) {
         skipped.push({ path: rel, reason: capabilityHint(rel, capability) });
         continue;
       }
-      const jobId = enqueue('inbox_convert', { path: rel });
-      if (typeof jobId === 'number') queued.push({ path: rel, jobId });
-      else queued.push({ path: rel, jobId: 0 }); // 已有同样的任务在排队/运行：0 = 复用
+      const result = db.transaction(() => {
+        const created = enqueue('inbox_convert', { path: rel }, { dedupeRecent: false });
+        const jobId = created ?? (db.prepare(
+          `SELECT id FROM jobs WHERE kind = 'inbox_convert' AND payload = ?
+           AND status IN ('pending', 'running', 'paused') ORDER BY id DESC LIMIT 1`
+        ).get(JSON.stringify({ path: rel })) as { id: number }).id;
+        const existing = db.prepare(`SELECT assistant_session_id AS sessionId FROM jobs WHERE id = ?`)
+          .get(jobId) as { sessionId: string | null };
+        const sessionId = existing.sessionId || createInboxConversation(jobId, rel);
+        return { path: rel, jobId, sessionId };
+      })();
+      queued.push(result);
       emit('file-changed', { path: rel });
     }
     return { queued, skipped };
@@ -235,7 +271,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   });
 
   /**
-   * 入库：把转换产物复制进 原始资料/收集箱/ 并登记为知识库页面。
+   * 入库：把转换产物复制进 原始资料/ 并登记为知识库页面。
    * 这是收集箱内容变成「可检索、可引用」的唯一入口，只由用户显式触发。
    */
   app.post('/api/inbox/adopt', async (req, reply) => {

@@ -30,6 +30,28 @@
       </div>
     </div>
 
+    <form class="url-import" @submit.prevent="submitUrl">
+      <div class="url-import-main">
+        <label for="inbox-page-url">粘贴网页链接</label>
+        <div class="url-import-controls">
+          <input
+            id="inbox-page-url"
+            v-model="pageUrl"
+            type="url"
+            required
+            placeholder="https://example.com/article"
+            :disabled="fetchingUrl"
+          />
+          <button class="btn inbox" type="submit" :disabled="fetchingUrl || !pageUrl.trim()">
+            <AppSpinner v-if="fetchingUrl" :size="14" />
+            <Icon v-else name="external" :size="14" />
+            {{ fetchingUrl ? '正在抓取…' : '保存网页' }}
+          </button>
+        </div>
+        <small>保存网站返回的 HTML 原文；登录、验证码和依赖脚本的内容可能无法完整保存。</small>
+      </div>
+    </form>
+
     <div
       class="dropzone"
       :class="{ hot: dragOver }"
@@ -44,7 +66,7 @@
     >
       <Icon name="upload" :size="26" />
       <b>把任意文件拖到这里</b>
-      <small>不限格式 · 单文件上限 {{ maxFileLabel }} · 同名不覆盖 · 也可点击选择文件</small>
+      <small>不限格式 · 不限单文件大小 · 同名不覆盖 · 也可点击选择文件</small>
       <input ref="fileInput" class="file-input" type="file" multiple @change="onPicked" />
     </div>
 
@@ -66,7 +88,7 @@
       </div>
       <div class="spacer" />
       <span class="hint">
-        按拖入时间倒序 · 共 {{ inbox.counts.all }} 个文件 · 支持多端同步
+        按收纳时间倒序 · 共 {{ inbox.counts.all }} 个文件 · 支持多端同步
         <template v-if="inbox.counts.converting"> · {{ inbox.counts.converting }} 个转换中</template>
       </span>
     </div>
@@ -100,7 +122,7 @@
           <div class="fmeta">
             <span>{{ formatSize(item.size) }}</span>
             <span>·</span>
-            <span>{{ fromNow(item.mtime) }} 拖入</span>
+            <span>{{ fromNow(item.mtime) }} 收纳</span>
             <template v-if="item.rel !== item.name">
               <span>·</span><span class="truncate">{{ item.rel }}</span>
             </template>
@@ -126,6 +148,9 @@
               <Icon name="ai" :size="14" />{{ item.status === 'converting' ? '转换中…' : '转为 Markdown' }}
             </button>
           </span>
+          <button v-if="item.assistantSessionId" class="btn sm ghost" type="button" @click="openConversionChat(item.assistantSessionId)">
+            <Icon name="messages" :size="14" />查看过程
+          </button>
           <template v-if="item.status === 'converted'">
             <span class="tip-wrap" v-tooltip="item.derivedPath ? `查看产物：${item.derivedPath}` : '还没有转换产物'">
               <button class="btn sm" type="button" :disabled="!item.derivedPath" @click="openReview(item)">
@@ -207,6 +232,8 @@ import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
 import { useInboxStore, type InboxItem, type InboxUpload } from '../stores/inbox';
+import { useChatStore } from '../stores/chat';
+import { useAppStore } from '../stores/app';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import Icon from '../components/Icon.vue';
@@ -218,7 +245,11 @@ import AppModal from '../components/ui/AppModal.vue';
 const isDesktop = Boolean((window as any).wikiDesktop);
 
 const inbox = useInboxStore();
+const chat = useChatStore();
+const app = useAppStore();
 const fileInput = ref<HTMLInputElement>();
+const pageUrl = ref('');
+const fetchingUrl = ref(false);
 const dragOver = ref(false);
 const filter = ref<'all' | 'pending' | 'converted'>('all');
 
@@ -232,10 +263,6 @@ const visibleItems = computed(() => {
   if (filter.value === 'all') return inbox.items;
   return inbox.items.filter((item) => item.status === filter.value);
 });
-
-const maxFileLabel = computed(() =>
-  inbox.maxFileMb >= 1024 ? `${(inbox.maxFileMb / 1024).toFixed(0)} GB` : `${inbox.maxFileMb} MB`
-);
 
 /* ===== 转换：能不能转由服务端的 capability 说了算，界面不自己猜格式 ===== */
 
@@ -305,6 +332,7 @@ async function convertItem(item: InboxItem) {
     if (result.queued.length) {
       notify.success('已开始转换');
       expectConversion();
+      await openConversionChat(result.queued[0].sessionId);
     } else if (result.skipped.length) {
       notify.error(`无法转换：${result.skipped[0].reason}`);
     }
@@ -320,6 +348,7 @@ async function convertAll() {
     if (result.queued.length) {
       notify.success(`已开始转换 ${result.queued.length} 个文件`);
       expectConversion();
+      await openConversionChat(result.queued[0].sessionId);
     }
     // 服务端会跳过不能转的格式：第一条原因足够说明问题，逐条细节看行内提示
     if (result.skipped.length) {
@@ -328,6 +357,17 @@ async function convertAll() {
     }
   } catch (error: any) {
     notify.error(error?.response?.data?.error || '无法开始转换');
+  }
+}
+
+/** 批量转换时先打开第一条；其余转换各自进入 Agent 会话列表。 */
+async function openConversionChat(sessionId: string) {
+  try {
+    await chat.loadSessions();
+    await chat.selectSession(sessionId);
+    app.toggleChat(true);
+  } catch {
+    notify.error('转换已受理，但暂时无法打开 Agent 对话');
   }
 }
 
@@ -485,7 +525,7 @@ async function adoptFromReview() {
 
 const TYPE_LABELS: Record<string, string> = {
   document: 'DOC', spreadsheet: 'XLS', presentation: 'PPT', pdf: 'PDF',
-  image: 'IMG', text: 'TXT', audio: 'AUD', video: 'VID', archive: 'ZIP', other: 'FILE',
+  image: 'IMG', text: 'TXT', web: 'WEB', audio: 'AUD', video: 'VID', archive: 'ZIP', other: 'FILE',
 };
 
 function typeLabel(item: InboxItem): string {
@@ -554,6 +594,21 @@ async function submit(files: FileList | File[]) {
   if (skipped.length) notify.error(`跳过 ${skipped.length} 个文件：${skipped[0]}`);
 }
 
+async function submitUrl() {
+  const url = pageUrl.value.trim();
+  if (!url || fetchingUrl.value) return;
+  fetchingUrl.value = true;
+  try {
+    const saved = await inbox.fetchUrl(url);
+    pageUrl.value = '';
+    notify.success(`已保存网页：${saved.name}`);
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || '抓取网页失败');
+  } finally {
+    fetchingUrl.value = false;
+  }
+}
+
 async function removeItem(item: InboxItem) {
   const ok = await confirmDialog({
     title: '移出收集箱',
@@ -584,22 +639,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/*
- * 收集箱的身份色：紫色（与知识库的 Engram Blue 区分开）。
- * 只在本视图内定义，不污染全局令牌。
- */
 .inbox-view {
-  --inbox-accent: #6d4bc4;
-  --inbox-accent-soft: rgba(109, 75, 196, 0.1);
-  --inbox-accent-border: rgba(109, 75, 196, 0.3);
+  --inbox-accent: var(--accent);
+  --inbox-accent-soft: var(--accent-soft);
+  --inbox-accent-border: color-mix(in srgb, var(--accent) 30%, transparent);
   padding: 20px 26px 60px;
   max-width: 1180px;
-}
-
-html.dark .inbox-view {
-  --inbox-accent: #a992f5;
-  --inbox-accent-soft: rgba(169, 146, 245, 0.14);
-  --inbox-accent-border: rgba(169, 146, 245, 0.32);
 }
 
 .page-head {
@@ -663,7 +708,7 @@ html.dark .inbox-view {
 .btn.inbox {
   border-color: transparent;
   background: var(--inbox-accent);
-  color: #fff;
+  color: var(--on-accent);
   box-shadow: none;
 }
 
@@ -705,6 +750,30 @@ html.dark .inbox-view {
 
 .notice svg { color: var(--inbox-accent); flex-shrink: 0; margin-top: 2px; }
 .notice b { color: var(--text); font-weight: 600; }
+
+.url-import {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+}
+.url-import-main label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 600; }
+.url-import-controls { display: flex; gap: 8px; }
+.url-import-controls input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font: inherit;
+}
+.url-import-controls input:focus-visible { outline: 2px solid var(--inbox-accent); outline-offset: 1px; }
+.url-import-controls .btn { white-space: nowrap; }
+.url-import-main small { display: block; margin-top: 7px; color: var(--text-faint); font-size: 11.5px; }
 
 .dropzone {
   display: flex;
@@ -831,6 +900,7 @@ html.dark .inbox-view {
 .ftype.pdf { background: var(--file-pdf); }
 .ftype.image { background: #2b8a8f; }
 .ftype.text { background: var(--file-markdown); }
+.ftype.web { background: var(--inbox-accent); }
 .ftype.audio,
 .ftype.video { background: #7a5ea8; }
 
@@ -949,6 +1019,8 @@ html.dark .inbox-view {
 
 @media (max-width: 768px) {
   .inbox-view { padding: 14px 12px 80px; }
+  .url-import-controls { flex-wrap: wrap; }
+  .url-import-controls input { flex-basis: 100%; }
   .list-head { display: none; }
   .file-row { flex-wrap: wrap; }
   .factions { width: 100%; justify-content: flex-start; }

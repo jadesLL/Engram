@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { safeJoin, syncPageFile, notifySyncChange } from '../lib/vault.js';
+import { safeJoin, syncPageFile, pagePathTaken, movePage, notifySyncChange } from '../lib/vault.js';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
 import { completeText, type ChatMessage } from '../lib/modelClient.js';
@@ -293,15 +293,35 @@ export interface InboxAdoptResult {
   pageTitle: string;
 }
 
-/** 入库目录：与既有 `原始资料/对话/` 同一套惯例，避免与真实原件撞名 */
-export const INBOX_ADOPT_DIR = '原始资料/收集箱';
+/** 入库直接落在原始资料根目录，供目录列表与检索扫描。 */
+export const INBOX_ADOPT_DIR = '原始资料';
+const LEGACY_INBOX_ADOPT_DIR = '原始资料/收集箱';
 
 function uniqueRawPath(stem: string): string {
   for (let i = 1; i <= 999; i += 1) {
     const candidate = `${INBOX_ADOPT_DIR}/${i === 1 ? stem : `${stem} (${i})`}.md`;
-    if (!fs.existsSync(safeJoin(candidate))) return candidate;
+    if (!pagePathTaken(candidate)) return candidate;
   }
   return `${INBOX_ADOPT_DIR}/${stem}-${Date.now()}.md`;
+}
+
+/** 启动时把旧版入库文件移出多余的子目录；movePage 保留页面 ID 与检索引用。 */
+export function migrateLegacyInboxAdoptions(): number {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(safeJoin(LEGACY_INBOX_ADOPT_DIR), { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let moved = 0;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
+    const oldRel = `${LEGACY_INBOX_ADOPT_DIR}/${entry.name}`;
+    const target = uniqueRawPath(stemOf(oldRel));
+    if (movePage(oldRel, target)) moved += 1;
+  }
+  try { fs.rmdirSync(safeJoin(LEGACY_INBOX_ADOPT_DIR)); } catch { /* 留有用户其他文件时保留目录 */ }
+  return moved;
 }
 
 /**

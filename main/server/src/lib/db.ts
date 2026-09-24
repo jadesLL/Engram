@@ -621,6 +621,7 @@ export function migrate() {
   ensureColumn('jobs', 'updated_at', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('jobs', 'cancel_requested', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('jobs', 'run_token', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('jobs', 'assistant_session_id', 'TEXT');
   // 多端同步：本端已知的每页 hub 版本号（仅 hub 上必然等于当前版本；节点上是最后已知值）
   ensureColumn('pages', 'sync_revision', 'INTEGER NOT NULL DEFAULT 0');
   // jobs 表 status 索引：job runner 每秒 tick 查 WHERE status='pending'/'running'，

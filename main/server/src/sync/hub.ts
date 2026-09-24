@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { Transform, type Readable } from 'node:stream';
+import { pipeline as streamPipeline } from 'node:stream/promises';
 import { now, db } from '../lib/db.js';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
@@ -92,6 +94,42 @@ function writeRawFile(relPath: string, buf: Buffer): void {
   const temp = `${abs}.${Date.now()}.sync.tmp`;
   fs.writeFileSync(temp, buf);
   fs.renameSync(temp, abs);
+}
+
+/** 原子流式写入同步文件；普通文件保留大小上限，调用方可为收集箱传 Infinity。 */
+async function writeRawFileStream(relPath: string, source: Readable, maxBytes = 200 * 1024 * 1024): Promise<boolean> {
+  const abs = safeJoin(relPath);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const temp = `${abs}.${Date.now()}-${crypto.randomUUID()}.sync.tmp`;
+  let size = 0;
+  let tooLarge = false;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      if (maxBytes === Infinity) {
+        callback(null, chunk);
+        return;
+      }
+      size += chunk.length;
+      if (tooLarge || size > maxBytes) {
+        tooLarge = true;
+        callback();
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+  try {
+    await streamPipeline(source, limiter, fs.createWriteStream(temp));
+    if (tooLarge) {
+      fs.rmSync(temp, { force: true });
+      return false;
+    }
+    fs.renameSync(temp, abs);
+    return true;
+  } catch (error) {
+    fs.rmSync(temp, { force: true });
+    throw error;
+  }
 }
 
 /** 文件修改时间（ms；读取失败按 0 = 最旧） */
@@ -346,4 +384,4 @@ export function commitLocalChange(kind: SyncKind, target: string, oldPath = ''):
   return commit(kind, target, HUB_ACTOR, { oldPath });
 }
 
-export { writeRawFile, sha256, applyPageContent, readPageRaw };
+export { writeRawFile, writeRawFileStream, sha256, applyPageContent, readPageRaw };
