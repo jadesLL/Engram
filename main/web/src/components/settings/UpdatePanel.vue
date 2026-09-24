@@ -391,7 +391,23 @@
           </template>
           <template v-else>
             <input v-model="form.username" type="text" autocomplete="off" spellcheck="false" placeholder="用户名" aria-label="远端仓库用户名" />
-            <input v-model="form.password" type="text" autocomplete="off" spellcheck="false" placeholder="密码" aria-label="远端仓库密码" />
+            <div class="password-control">
+              <SecretField
+                v-model="form.password"
+                :stored="storedPassword"
+                copyable
+                placeholder="密码"
+                aria-label="远端仓库密码"
+                @update:model-value="clearStoredPassword = false"
+              />
+              <button
+                v-if="storedPassword"
+                class="btn small"
+                type="button"
+                @click="clearStoredPassword = !clearStoredPassword"
+              >{{ clearStoredPassword ? '取消清除' : '清除已保存密码' }}</button>
+            </div>
+            <p v-if="clearStoredPassword" class="setting-message hint password-clear-hint">保存时将删除已保存的仓库密码。</p>
           </template>
         </div>
       </div>
@@ -415,6 +431,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api, ssePost } from '../../api';
 import AppSpinner from '../ui/AppSpinner.vue';
 import Icon from '../Icon.vue';
+import SecretField from '../SecretField.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 import { confirmDialog } from '../../lib/confirm';
@@ -461,6 +478,8 @@ const config = ref<ConfigInfo>({
   giteaUrl: '', giteaRepo: '', giteaAuthType: 'token', giteaToken: '', giteaUsername: '', giteaPassword: '',
 });
 const form = reactive({ repoUrl: '', authType: 'token', token: '', username: '', password: '', imageTag: '' });
+const storedPassword = ref('');
+const clearStoredPassword = ref(false);
 const repoUrlError = ref('');
 /** 配置是否已加载完成：避免加载前「未配置」徽标闪烁误报 */
 const configLoaded = ref(false);
@@ -839,7 +858,9 @@ async function load() {
     form.authType = c.data.giteaAuthType === 'password' ? 'password' : 'token';
     form.token = c.data.giteaToken || '';
     form.username = c.data.giteaUsername || '';
-    form.password = c.data.giteaPassword || '';
+    storedPassword.value = c.data.giteaPassword || '';
+    form.password = '';
+    clearStoredPassword.value = false;
     form.imageTag = c.data.imageTag || '';
     configLoaded.value = true;
   } catch {
@@ -1073,7 +1094,9 @@ async function saveConfig() {
       giteaAuthType: form.authType,
       giteaToken: form.authType === 'token' ? form.token : '',
       giteaUsername: form.authType === 'password' ? form.username : '',
-      giteaPassword: form.authType === 'password' ? form.password : '',
+      giteaPassword: form.authType === 'password'
+        ? (clearStoredPassword.value ? '' : (form.password || storedPassword.value))
+        : '',
       imageTag: form.imageTag,
     });
     await load();
@@ -1258,6 +1281,24 @@ onUnmounted(() => {
 .credential-inputs input {
   flex: 1 1 220px;
   max-width: 420px;
+}
+.password-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.password-control :deep(.secret-input-wrap) {
+  flex: 1 1 220px;
+  max-width: 420px;
+  min-width: 0;
+}
+.password-control .btn {
+  white-space: nowrap;
+}
+.password-clear-hint {
+  flex-basis: 100%;
 }
 .credential-inputs .hint {
   flex-basis: 100%;

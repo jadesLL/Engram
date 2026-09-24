@@ -1,5 +1,5 @@
 <template>
-  <!-- 文本展示模式：默认中间带星掩码，点击切换完整/掩码，展开时可复制 -->
+  <!-- 文本展示模式：默认星号掩码，点击切换完整/掩码，展开时可复制 -->
   <span v-if="mode === 'text'" class="secret-text-wrap" v-bind="rootAttrs">
     <code
       class="secret-text"
@@ -15,7 +15,7 @@
   </span>
 
   <!-- 输入模式：新输入值按密码框处理；有已存值时未编辑显示掩码、点眼睛展开 -->
-  <span v-else class="secret-input-wrap" v-bind="rootAttrs">
+  <span v-else class="secret-input-wrap" :class="{ 'has-copy': canCopyInput }" v-bind="rootAttrs">
     <input
       v-bind="{ autocomplete: 'off', ...inputAttrs }"
       :type="inputType"
@@ -44,6 +44,12 @@
         />
       </svg>
     </button>
+    <button
+      v-if="canCopyInput"
+      class="btn small secret-copy"
+      type="button"
+      @click="copyInputValue"
+    >复制</button>
   </span>
 </template>
 
@@ -53,7 +59,7 @@ import { notify } from '../lib/notify';
 
 /**
  * 密码/令牌统一展示组件（全软件所有密文类输入与显示）：
- *  - 未点击时中间带星（首尾可见便于辨认），点击眼睛/文本后显示完整明文
+ *  - 未点击时只显示星号，点击眼睛/文本后显示完整明文
  *  - 输入模式支持「已存值」：未编辑时只显示掩码，聚焦即开始输入新值、留空保持现有
  */
 
@@ -70,7 +76,7 @@ const props = withDefaults(
     modelValue?: string;
     /** input 模式：已保存的密文（提供时未编辑状态显示其掩码/明文） */
     stored?: string;
-    /** text 模式：展开后是否显示复制按钮 */
+    /** 展开后是否显示复制按钮 */
     copyable?: boolean;
     placeholder?: string;
   }>(),
@@ -91,12 +97,9 @@ const revealed = ref(false);
 /** 输入模式：是否处于编辑会话（聚焦过且未以空值失焦） */
 const active = ref(false);
 
-/** 中间带星掩码：首尾保留少量字符便于辨认是哪一个密文 */
+/** 密文默认统一显示为星号，不暴露首尾字符或长度 */
 function mask(v: string): string {
-  if (!v) return '';
-  if (v.length <= 4) return '****';
-  if (v.length <= 12) return `${v.slice(0, 2)}****${v.slice(-2)}`;
-  return `${v.slice(0, 8)}****${v.slice(-4)}`;
+  return v ? '***' : '';
 }
 
 const editing = computed(
@@ -115,6 +118,11 @@ const inputType = computed(() => (editing.value && !revealed.value ? 'password' 
 const displayPlaceholder = computed(() =>
   editing.value || !props.stored ? props.placeholder : (props.placeholder || '点击输入新值，留空保持现有')
 );
+
+const inputCopyValue = computed(() => (editing.value
+  ? String(props.modelValue ?? '')
+  : props.stored));
+const canCopyInput = computed(() => props.copyable && revealed.value && Boolean(inputCopyValue.value));
 
 function onInput(event: Event): void {
   emit('update:modelValue', (event.target as HTMLInputElement).value);
@@ -136,8 +144,16 @@ function toggleEye(): void {
 }
 
 async function copyValue(): Promise<void> {
+  await copyText(props.value);
+}
+
+async function copyInputValue(): Promise<void> {
+  await copyText(inputCopyValue.value);
+}
+
+async function copyText(value: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(props.value);
+    await navigator.clipboard.writeText(value);
     notify.success('已复制');
   } catch {
     notify.error('复制失败，请手动选择复制');
@@ -155,6 +171,9 @@ async function copyValue(): Promise<void> {
   width: 100%;
   padding-right: 34px;
   font-family: inherit;
+}
+.secret-input-wrap.has-copy input {
+  padding-right: 82px;
 }
 .eye {
   position: absolute;
@@ -174,6 +193,12 @@ async function copyValue(): Promise<void> {
 .eye:hover {
   color: var(--text, inherit);
   background: var(--control-bg-hover, rgba(127, 127, 127, 0.15));
+}
+.secret-copy {
+  position: absolute;
+  right: 34px;
+  min-height: 24px;
+  padding: 2px 7px;
 }
 
 .secret-text-wrap {
