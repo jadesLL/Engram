@@ -40,6 +40,7 @@ test('latestReleaseUrl 拼接并容忍末尾斜杠', () => {
 test('parseLatestReleaseResponse 正常响应解析版本号与附件', () => {
   const body = JSON.stringify({
     tag_name: 'v1.2.3',
+    body: '## v1.2.3\n- 改进搜索',
     assets: [
       { name: 'Setup 1.2.3.exe', browser_download_url: 'https://x/Setup.exe', size: 100 },
       { name: '无地址附件', size: 1 },
@@ -48,6 +49,7 @@ test('parseLatestReleaseResponse 正常响应解析版本号与附件', () => {
   const r = parseLatestReleaseResponse(200, body);
   assert.equal(r?.tag, 'v1.2.3');
   assert.equal(r?.version, '1.2.3');
+  assert.equal(r?.notes, '## v1.2.3\n- 改进搜索');
   assert.equal(r?.assets.length, 1);
   assert.equal(r?.assets[0].name, 'Setup 1.2.3.exe');
 });

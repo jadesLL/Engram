@@ -5,6 +5,7 @@
       'sidebar-open': app.sidebarOpen,
       'chat-dock-open': chatDockOpen,
       'chat-dragging': app.chatDragging,
+      'update-notice-visible': updateNoticeVisible,
     }"
     :style="{ '--sidebar-width': sidebarWidth + 'px', '--chat-w': app.chatDockWidth + 'px' }"
   >
@@ -79,7 +80,7 @@
         @click="go('/settings')"
       >
         <Icon name="settings" :size="19" />
-        <span v-if="updateStore.hasNewVersion" class="dot" />
+        <span v-if="updateStore.hasNewVersion || sourceHasUpdate" class="dot" />
       </button>
     </nav>
 
@@ -121,6 +122,8 @@
     <main class="content">
       <router-view />
     </main>
+
+    <UpdateNotice @change="onUpdateNoticeChange" />
 
     <!-- 内置 Agent 聊天抽屉：桌面端是右侧悬浮卡片（正文让出它的宽度，不遮内容），≤1024px 覆盖正文；
          开合动画 drawer-slide 与左侧栏同一套节奏，具体样式在 ChatDrawer 里 -->
@@ -180,11 +183,12 @@ import { api } from '../api';
 import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
-import { loadRuntimeCapabilities, runtimeCapabilitiesSnapshot } from '../lib/capabilities';
+import { loadRuntimeCapabilities } from '../lib/capabilities';
 import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
 import AgentStatusPill from '../components/AgentStatusPill.vue';
 import AppContextMenu from '../components/AppContextMenu.vue';
+import UpdateNotice from '../components/UpdateNotice.vue';
 import Icon from '../components/Icon.vue';
 import BrandMark from '../components/BrandMark.vue';
 
@@ -192,6 +196,8 @@ const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
 const updateStore = useUpdateStore();
+const updateNoticeVisible = ref(false);
+const sourceHasUpdate = ref(false);
 const chat = useChatStore();
 const inbox = useInboxStore();
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
@@ -345,7 +351,7 @@ const moreItems = computed(() => [
   {
     label: '设置',
     icon: 'settings',
-    dot: updateStore.hasNewVersion,
+    dot: updateStore.hasNewVersion || sourceHasUpdate.value,
     running: false,
     action: () => runMore(() => go('/settings')),
   },
@@ -377,17 +383,33 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-/* ===== 软件更新自动检测：进入应用查一次（8 小时节流），有新版本时 toast 提醒 ===== */
+function onUpdateNoticeChange(visible: boolean, sourceUpdate: boolean) {
+  updateNoticeVisible.value = visible;
+  sourceHasUpdate.value = sourceUpdate;
+}
+
+/* ===== 软件更新自动检测：进入应用检查，运行期间每 8 小时复查 ===== */
 async function autoCheckUpdate() {
-  await loadRuntimeCapabilities();
-  if (!runtimeCapabilitiesSnapshot().features.serverUpdate) return;
-  await updateStore.check();
-  if (updateStore.hasNewVersion && updateStore.lastResult) {
-    notify.info(`发现新版本 v${updateStore.lastResult.latestVersion}，可在 设置 → 软件更新 中升级`);
+  const caps = await loadRuntimeCapabilities();
+  if (!caps.features.serverUpdate || caps.runtime === 'android-local') return;
+  const desktop = (window as any).wikiDesktop;
+  if (desktop?.getDesktopEnv) {
+    try {
+      const env = await desktop.getDesktopEnv();
+      // 源码模式由主进程检查 Git 提交；Release 版本号不代表日常源码更新。
+      if (env && !env.packaged && env.platform === 'win32') return;
+    } catch {
+      // 壳信息暂不可用时继续检查服务器更新。
+    }
   }
+  await updateStore.check();
 }
 
 let closeStream: (() => void) | null = null;
+let updateTimer: ReturnType<typeof setInterval> | null = null;
+function onUpdateVisibility() {
+  if (document.visibilityState === 'visible') void autoCheckUpdate().catch(() => {});
+}
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onWindowResize);
@@ -415,6 +437,8 @@ onMounted(() => {
     }
   });
   autoCheckUpdate().catch(() => {});
+  updateTimer = setInterval(() => { void autoCheckUpdate().catch(() => {}); }, 8 * 3600_000);
+  document.addEventListener('visibilitychange', onUpdateVisibility);
   // 内置 Agent 正在跑的轮次要接上事件流：页面刷新后、或抽屉从没打开过，
   // 图标栏那颗「运行中」指示也得亮着（跑完还会亮小红点）。
   chat.syncRunningRuns().catch(() => {});
@@ -424,6 +448,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onWindowResize);
+  document.removeEventListener('visibilitychange', onUpdateVisibility);
+  if (updateTimer) clearInterval(updateTimer);
   jobPollStopped = true;
   if (jobTimer) clearTimeout(jobTimer);
   closeStream?.();
@@ -663,8 +689,11 @@ onUnmounted(() => {
   overflow-y: auto;
   padding-left: 64px;
   background: var(--bg);
-  transition: padding-left 180ms ease, padding-right 180ms ease;
+  transition: padding-left 180ms ease, padding-right 180ms ease, padding-top 180ms ease;
 }
+
+.layout.update-notice-visible .content { padding-top: 52px; }
+.layout.chat-dock-open :deep(.update-notice) { right: calc(var(--chat-w) + 24px); }
 
 .layout.sidebar-open .content {
   padding-left: calc(var(--sidebar-width) + 72px);
@@ -784,6 +813,8 @@ onUnmounted(() => {
     padding-bottom: calc(64px + env(safe-area-inset-bottom));
     padding-left: 0;
   }
+
+  .layout.update-notice-visible .content { padding-top: 46px; }
 
   .layout.sidebar-open .content {
     padding-left: 0;

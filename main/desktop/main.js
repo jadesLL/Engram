@@ -1242,6 +1242,7 @@ const sourceAutoState = {
   behind: 0,
   localCommit: '',
   remoteCommit: '',
+  changes: [],
   error: '',
   checkedAt: null,
 };
@@ -1267,9 +1268,14 @@ async function sourceCheckCore() {
     const local = await gitIdentity();
     let remoteCommit = '';
     let remoteDate = '';
+    let changes = [];
     try {
       remoteCommit = await runGit(['rev-parse', '--short=7', `origin/${branch}`], 15_000);
       remoteDate = await runGit(['log', '-1', '--format=%cs', `origin/${branch}`], 15_000);
+      if (behind > 0) {
+        changes = (await runGit(['log', '-5', '--format=%s', `HEAD..origin/${branch}`], 15_000))
+          .split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      }
     } catch {
       /* 远端分支刚建或无引用时留空，前端退回分支文案 */
     }
@@ -1283,6 +1289,7 @@ async function sourceCheckCore() {
       dirty: local.dirty,
       remoteCommit,
       remoteDate,
+      changes,
     };
   } catch (e) {
     return { ok: false, error: describeError(e) };
@@ -1300,6 +1307,7 @@ function applySourceCheckResult(r) {
     behind: r.behind,
     localCommit: r.localCommit,
     remoteCommit: r.remoteCommit,
+    changes: r.changes,
     error: '',
     checkedAt: Date.now(),
   });

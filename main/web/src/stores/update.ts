@@ -12,6 +12,8 @@ export interface UpdateCheckResult {
   currentVersion: string;
   latestVersion: string | null;
   releaseTag: string;
+  releaseNotes: string;
+  imageTag?: string;
   hasUpdate: boolean;
   digestMatch: boolean | null;
   registryChecked: boolean;

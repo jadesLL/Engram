@@ -12,6 +12,7 @@ export interface ReleaseAsset {
 export interface LatestRelease {
   tag: string;
   version: string | null;
+  notes: string;
   assets: ReleaseAsset[];
 }
 
@@ -57,12 +58,14 @@ export function parseLatestReleaseResponse(status: number, body: string): Latest
   }
   const data = JSON.parse(body) as {
     tag_name?: string;
+    body?: string;
     assets?: Array<{ name?: string; browser_download_url?: string; size?: number }>;
   };
   const tag = data.tag_name || '';
   return {
     tag,
     version: normalizeVersion(tag),
+    notes: typeof data.body === 'string' ? data.body.slice(0, 12_000) : '',
     assets: (data.assets || [])
       .filter((a) => a.browser_download_url)
       .map((a) => ({ name: a.name || '', url: a.browser_download_url!, size: a.size || 0 })),
