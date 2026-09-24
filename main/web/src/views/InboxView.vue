@@ -105,13 +105,13 @@
       </div>
 
       <!-- 上传中的行：边收边写，进度按单个文件走 -->
-      <div v-for="item in inbox.uploading" :key="`up-${item.name}`" class="file-row uploading">
+      <div v-for="item in inbox.uploading" :key="item.id" class="file-row uploading">
         <div class="ftype other">…</div>
         <div class="fmain">
           <div class="fname truncate">{{ item.name }}</div>
           <div class="progress"><i :style="{ width: progressPercent(item) }" /></div>
         </div>
-        <span class="chip">上传中 {{ progressPercent(item) }}</span>
+        <span class="chip">{{ uploadStatus(item) }}</span>
         <div class="factions" />
       </div>
 
@@ -551,6 +551,12 @@ function fromNow(mtime: number): string {
 function progressPercent(item: InboxUpload): string {
   if (!item.total) return '0%';
   return `${Math.min(100, Math.round((item.loaded / item.total) * 100))}%`;
+}
+
+function uploadStatus(item: InboxUpload): string {
+  return item.total > 0 && item.loaded >= item.total
+    ? '正在保存…'
+    : `上传中 ${progressPercent(item)}`;
 }
 
 function downloadUrl(item: InboxItem): string {
