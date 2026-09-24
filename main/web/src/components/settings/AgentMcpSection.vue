@@ -2,8 +2,8 @@
   <div class="mcp-section">
     <div class="sub-head">
       <div>
-        <h4>MCP 接入</h4>
-        <p>其他外部 Agent（Codex / Claude Code / Kimi / Cursor 等）通过 MCP 或 CLI 驱动本知识库。</p>
+        <h4>{{ targetTitle }}</h4>
+        <p>{{ targetIntro }}</p>
       </div>
       <button class="btn primary" type="button" @click="newToken">
         <Icon name="plus" :size="15" />
@@ -24,6 +24,24 @@
       与 REST API（Bearer 方式）。
     </div>
 
+    <div v-if="target !== 'other'" class="target-guide">
+      <ol v-if="target === 'workbuddy'">
+        <li>在 WorkBuddy 打开「连接器」→「自定义连接器」。</li>
+        <li>生成 Token，复制下方配置片段并添加 Engram MCP 服务。</li>
+        <li>启用连接器，在对话里检查 Engram 工具是否可用。</li>
+      </ol>
+      <ol v-else-if="target === 'qoder'">
+        <li>QoderWork：打开「扩展」→「连接器」→「+ 添加」→「粘贴 JSON 配置」。</li>
+        <li>Qoder IDE：打开「设置」→「MCP」→「My Servers」→「+ Add」，填入下方地址和 Authorization 请求头。</li>
+        <li>导入或保存后，确认 Engram MCP 连接成功。</li>
+      </ol>
+      <ol v-else>
+        <li>在 Kimi Work 打开插件中心，选择「自定义插件」并调用 Plugin Builder。</li>
+        <li>让 Plugin Builder 根据下方 <code>kimi.plugin.json</code> 配置创建个人插件。</li>
+        <li>在「插件」→「个人」安装 Engram 插件，再在对话中使用。</li>
+      </ol>
+    </div>
+
     <div v-if="mcpTokens.length" class="token-list">
       <div v-for="tokenItem in mcpTokens" :key="tokenItem.id" class="token-row">
         <div class="token-copy">
@@ -39,14 +57,17 @@
     <div v-else class="empty-panel">尚未生成访问 Token。</div>
 
     <div class="snippet-block">
-      <h4>Agent 接入配置片段</h4>
+      <h4>{{ target === 'other' ? 'Agent 接入配置片段' : `${targetTitle} 配置片段` }}</h4>
       <div class="snippet-controls">
-        <select v-model="snippetFormat" aria-label="Agent 类型">
+        <select v-if="target === 'other'" v-model="snippetFormat" aria-label="Agent 类型">
           <option value="codex">Codex CLI（也可用上方一键接入）</option>
           <option value="claude">Claude Code</option>
-          <option value="kimi">Kimi</option>
+          <option value="kimi">Kimi Code CLI</option>
           <option value="zcode">ZCode（也可用上方一键接入）</option>
           <option value="generic">通用</option>
+        </select>
+        <select v-if="mcpTokens.length" v-model="selectedTokenId" aria-label="使用的 Token">
+          <option v-for="tokenItem in mcpTokens" :key="tokenItem.id" :value="tokenItem.id">{{ tokenItem.name }}（#{{ tokenItem.id }}）</option>
         </select>
         <button class="btn small" type="button" @click="copy(activeSnippet)">复制片段</button>
       </div>
@@ -63,12 +84,27 @@ import SecretField from '../SecretField.vue';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 
+const props = defineProps<{ target: 'workbuddy' | 'qoder' | 'kimiwork' | 'other' }>();
 const mcpTokens = ref<any[]>([]);
 const mcpUrl = computed(() => `${location.origin}/mcp`);
 const snippetFormat = ref('codex');
+const selectedTokenId = ref<number | null>(null);
 
-const firstToken = computed(() => mcpTokens.value[0]?.token || '<token>');
-const activeSnippet = computed(() => buildSnippet(snippetFormat.value, firstToken.value));
+const targetTitle = computed(() => ({
+  workbuddy: 'WorkBuddy 接入',
+  qoder: 'Qoder 接入',
+  kimiwork: 'Kimi Work 接入',
+  other: 'MCP 接入',
+}[props.target]));
+const targetIntro = computed(() => ({
+  workbuddy: '通过 WorkBuddy 自定义连接器接入 Engram 知识库。',
+  qoder: '通过 QoderWork 连接器或 Qoder IDE MCP 设置接入 Engram 知识库。',
+  kimiwork: '通过 Kimi Work 个人插件接入 Engram 知识库。',
+  other: '其他外部 Agent（Claude Code、Cursor 等）通过 MCP 或 CLI 驱动本知识库。',
+}[props.target]));
+
+const selectedToken = computed(() => mcpTokens.value.find((item) => item.id === selectedTokenId.value)?.token || '<token>');
+const activeSnippet = computed(() => buildSnippet(props.target === 'other' ? snippetFormat.value : props.target, selectedToken.value));
 
 function buildSnippet(format: string, token: string): string {
   const auth = `Bearer ${token}`;
@@ -93,9 +129,21 @@ function buildSnippet(format: string, token: string): string {
       ].join('\n');
     case 'kimi':
       return [
-        '# Kimi：写入所用客户端的 mcpServers 配置节点',
-        JSON.stringify({ mcpServers: { engram: { type: 'http', url, headers: { Authorization: auth } } } }, null, 2),
+        '# Kimi Code CLI：写入 ~/.kimi-code/mcp.json 的 mcpServers 节点',
+        JSON.stringify({ mcpServers: { engram: { url, headers: { Authorization: auth } } } }, null, 2),
       ].join('\n');
+    case 'workbuddy':
+      return JSON.stringify({ mcpServers: { engram: { type: 'streamableHttp', url, headers: { Authorization: auth } } } }, null, 2);
+    case 'qoder':
+      return JSON.stringify({ mcpServers: { engram: { type: 'streamable-http', url, headers: { Authorization: auth } } } }, null, 2);
+    case 'kimiwork':
+      return JSON.stringify({
+        name: 'engram',
+        version: '1.0.0',
+        description: '通过 MCP 读写 Engram 知识库',
+        interface: { displayName: 'Engram 知识库', shortDescription: '检索、阅读和整理 Engram 知识库' },
+        mcpServers: { engram: { url, headers: { Authorization: auth } } },
+      }, null, 2);
     default:
       return [
         '# 通用 MCP（streamable HTTP + Bearer）',
@@ -113,9 +161,10 @@ async function newToken() {
     confirmText: '生成',
   });
   if (name === null) return;
-  await api.post('/api/settings/mcp-tokens', { name: name || 'default' });
+  const { data: created } = await api.post('/api/settings/mcp-tokens', { name: name || 'default' });
   const { data } = await api.get('/api/settings/mcp-tokens');
   mcpTokens.value = data.tokens;
+  selectedTokenId.value = created.id;
 }
 
 async function delToken(id: number) {
@@ -128,6 +177,7 @@ async function delToken(id: number) {
   if (!ok) return;
   await api.delete(`/api/settings/mcp-tokens/${id}`);
   mcpTokens.value = mcpTokens.value.filter((tokenItem) => tokenItem.id !== id);
+  if (selectedTokenId.value === id) selectedTokenId.value = mcpTokens.value[0]?.id ?? null;
 }
 
 async function copy(text: string) {
@@ -142,6 +192,7 @@ async function copy(text: string) {
 onMounted(async () => {
   const { data } = await api.get('/api/settings/mcp-tokens');
   mcpTokens.value = data.tokens;
+  selectedTokenId.value = mcpTokens.value[0]?.id ?? null;
 });
 </script>
 
@@ -202,6 +253,16 @@ onMounted(async () => {
   font-size: 12px;
   line-height: 1.6;
 }
+.target-guide {
+  margin: 0 4px 18px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.target-guide ol {
+  margin: 0;
+  padding-left: 22px;
+}
 
 .token-list {
   margin: 0 4px 4px;
@@ -243,9 +304,11 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .snippet-controls select {
   padding: 5px 8px;
+  max-width: 100%;
 }
 .guide-pre {
   max-height: 320px;
@@ -264,6 +327,7 @@ onMounted(async () => {
   .sub-head,
   .endpoint-block,
   .integration-note,
+  .target-guide,
   .token-list,
   .snippet-block {
     margin-right: 18px;
