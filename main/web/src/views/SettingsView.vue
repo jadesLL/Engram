@@ -99,7 +99,8 @@
           </div>
           <!-- active 传给 UpdatePanel：面板常驻挂载（v-show），绑定同步发生在别的分区时，
                靠激活态重拉同步状态，否则远程更新块要用旧数据等到下次刷新 -->
-          <div v-if="capabilities.features.serverUpdate" id="panel-update">
+          <!-- 锚点 id 由 UpdatePanel 内部三张分组卡片（panel-update-server/desktop/source）自带 -->
+          <div v-if="capabilities.features.serverUpdate">
             <UpdatePanel :active="activeDomain === 'connect'" />
           </div>
         </section>

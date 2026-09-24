@@ -57,7 +57,9 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     icon: 'external',
     groups: [
       { id: 'panel-sync', label: '多端同步', icon: 'refresh' },
-      { id: 'panel-update', label: '软件更新', icon: 'download', need: 'serverUpdate' },
+      { id: 'panel-update-server', label: '服务器更新', icon: 'download', need: 'serverUpdate' },
+      { id: 'panel-update-desktop', label: '桌面端更新', icon: 'monitor', need: 'serverUpdate' },
+      { id: 'panel-update-source', label: '更新源配置', icon: 'globe', need: 'serverUpdate' },
     ],
   },
   {
@@ -93,7 +95,7 @@ export const LEGACY_SETTINGS_SECTIONS: Record<string, { domain: SettingsDomainId
   account: { domain: 'account' },
   agent: { domain: 'agent' },
   sync: { domain: 'connect', anchor: 'panel-sync' },
-  update: { domain: 'connect', anchor: 'panel-update' },
+  update: { domain: 'connect', anchor: 'panel-update-server' },
   storage: { domain: 'data', anchor: 'storage-trash' },
   data: { domain: 'data' },
 };
