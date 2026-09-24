@@ -596,6 +596,8 @@ export function migrate() {
   ensureColumn('assistant_sessions', 'dsh_session_id', 'TEXT');
   // 会话标题来源：default（新对话）/ auto（Engram 按内容自动命名）/ user（用户手动改名，自动命名不再覆盖）
   ensureColumn('assistant_sessions', 'title_source', 'TEXT');
+  // 内置 Agent 每轮的模型用量（JSON：{ main, subagents }，见 assistant/usage.ts）：缓存命中率据此显示
+  ensureColumn('assistant_runs', 'usage', 'TEXT');
   ensureColumn('ingest_candidates', 'evidence_eligible', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('semantic_events', 'status', `TEXT NOT NULL DEFAULT 'succeeded'`);
   ensureColumn('semantic_events', 'error', `TEXT NOT NULL DEFAULT ''`);

@@ -49,12 +49,30 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+/**
+ * 一轮的模型用量累计（服务端从 dsh 的 TokenUsage 累加，字段口径见 lib/chatUsage.ts）。
+ * 缓存桶缺省 = 这条路由压根没报缓存字段（不是「命中 0」），此时不显示命中率。
+ */
+export interface ChatUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  totalTokens?: number;
+  /** 累计了几次模型请求（一步一次） */
+  steps: number;
+}
+
 export interface ChatRun {
   id: string;
   sessionId: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   error?: string;
   ingestedPath?: string;
+  /** 本轮主对话的累计用量（缓存命中率据此显示；老轮次没有用量事件时缺省） */
+  usage?: ChatUsage;
+  /** 本轮子代理的累计用量：单独统计，不混进主对话的命中率 */
+  subagentUsage?: ChatUsage;
   createdAt: string;
 }
 

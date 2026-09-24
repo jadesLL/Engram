@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { db, now } from '../lib/db.js';
+import { addUsage, type UsageDto, type UsageStep } from './usage.js';
 
 /**
  * 内置 Agent 的持久层：复用库里既有的 assistant_* 表（v1.1 聊天功能的表结构，
@@ -41,6 +42,10 @@ export interface RunDto {
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
   error?: string;
   ingestedPath?: string;
+  /** 本轮主对话的累计模型用量（含缓存命中）：老轮次没有用量事件时缺省 */
+  usage?: UsageDto;
+  /** 本轮子代理的累计用量：单独统计，不混进主对话的命中率 */
+  subagentUsage?: UsageDto;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -151,6 +156,31 @@ function toMessage(row: any): MessageDto {
   };
 }
 
+/**
+ * assistant_runs.usage 里存的形状（JSON）：主对话与子代理各记一份累计用量。
+ * 单列而不是塞进 context——context 会被 runner 原样当 InterfaceContext 复用（见 runContext）。
+ */
+interface RunUsageBlob {
+  main?: UsageDto;
+  subagents?: UsageDto;
+}
+
+/** 读回一行的用量 JSON；坏 JSON / 老行一律当没有（不显示总比显示错的强） */
+function parseRunUsage(raw: unknown): { usage?: UsageDto; subagentUsage?: UsageDto } {
+  if (typeof raw !== 'string' || !raw) return {};
+  let blob: RunUsageBlob;
+  try {
+    blob = JSON.parse(raw) as RunUsageBlob;
+  } catch {
+    return {};
+  }
+  if (!blob || typeof blob !== 'object') return {};
+  return {
+    ...(blob.main ? { usage: blob.main } : {}),
+    ...(blob.subagents ? { subagentUsage: blob.subagents } : {}),
+  };
+}
+
 function toRun(row: any): RunDto {
   return {
     id: row.id,
@@ -160,6 +190,7 @@ function toRun(row: any): RunDto {
     status: row.status,
     ...(row.error ? { error: row.error } : {}),
     ...(row.ingested_path ? { ingestedPath: row.ingested_path } : {}),
+    ...parseRunUsage(row.usage),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.completed_at ? { completedAt: row.completed_at } : {}),
@@ -437,6 +468,26 @@ export function updateRun(id: string, patch: Partial<Pick<RunDto, 'status' | 'er
   sets.push('updated_at = ?');
   values.push(now(), id);
   db.prepare(`UPDATE assistant_runs SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+}
+
+/**
+ * 累加一轮的模型用量（一步一次）。主对话与子代理分开记，两个命中率互不污染。
+ * 不复用 updateRun：那个只管状态字段，用量是反复合并写。
+ */
+export function accumulateRunUsage(runId: string, target: 'main' | 'subagents', step: UsageStep): void {
+  const row = db.prepare(`SELECT usage FROM assistant_runs WHERE id = ?`).get(runId) as any;
+  if (!row) return;
+  let blob: RunUsageBlob = {};
+  try {
+    const parsed = JSON.parse(row.usage || '{}');
+    if (parsed && typeof parsed === 'object') blob = parsed as RunUsageBlob;
+  } catch {
+    /* 坏 JSON 当空 */
+  }
+  const key: keyof RunUsageBlob = target === 'main' ? 'main' : 'subagents';
+  blob[key] = addUsage(blob[key], step);
+  db.prepare(`UPDATE assistant_runs SET usage = ?, updated_at = ? WHERE id = ?`)
+    .run(JSON.stringify(blob), now(), runId);
 }
 
 /** 该会话正在跑的那一轮（会话单飞位；排队中的不算，它还没送进 dsh） */
