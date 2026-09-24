@@ -93,10 +93,12 @@ test('write_inbox_markdown：产物落到 收集箱/转换结果/，且不建页
     note: 'MCP 通道写入',
   });
   assert.equal(written.isError, false, written.text);
-  assert.match(written.text, /收集箱\/转换结果\/合同\.md/);
+  assert.match(written.text, /收集箱\/转换结果\/\d{4}\.\d{2}\.\d{2}_合同要点\.md/);
   assert.match(written.text, /未入库/);
 
-  const product = fs.readFileSync(path.join(BRAIN_DIR, '收集箱', '转换结果', '合同.md'), 'utf8');
+  const name = /转换结果\/([^（]+\.md)/.exec(written.text)?.[1];
+  assert.ok(name);
+  const product = fs.readFileSync(path.join(BRAIN_DIR, '收集箱', '转换结果', name), 'utf8');
   assert.match(product, /来源: 收集箱\/合同\.txt/);
   assert.match(product, /MCP 通道写入/);
 
@@ -105,6 +107,18 @@ test('write_inbox_markdown：产物落到 收集箱/转换结果/，且不建页
   const { hybridSearch } = await import('../retrieval/hybrid.js');
   const hits = await hybridSearch('付款周期', 10);
   assert.equal(hits.some((hit: any) => String(hit.path).startsWith('收集箱/')), false);
+});
+
+test('write_inbox_markdown：重转按语义标题改名并移除同一原件旧产物', async () => {
+  const written = await callTool('write_inbox_markdown', {
+    path: '收集箱/合同.txt',
+    markdown: '# 合同履约摘要\n\n- 付款周期 30 天',
+    title: '合同履约摘要',
+  });
+  assert.equal(written.isError, false, written.text);
+  const names = fs.readdirSync(path.join(BRAIN_DIR, '收集箱', '转换结果'));
+  assert.equal(names.length, 1);
+  assert.match(names[0], /^\d{4}\.\d{2}\.\d{2}_合同履约摘要\.md$/);
 });
 
 test('知识库工具看不到收集箱：search / list_raw_files / list_pages 都不含它', async () => {

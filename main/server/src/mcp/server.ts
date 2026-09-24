@@ -465,15 +465,16 @@ export function makeServer(): McpServer {
 
   server.tool(
     'write_inbox_markdown',
-    '把一份收集箱原件的语义转换结果写成 Markdown（落到 收集箱/转换结果/<原名>.md）。'
+    '把一份收集箱原件的语义转换结果写成 Markdown（文件名按转换日期_核心内容生成，同一原件只保留最新一份）。'
       + '作业规范先取 skill_guide("inbox-semantic-to-md")。产物留在收集箱：不建页面、不写检索索引、不触发入库；'
       + '入库由用户在界面上确认。',
     {
       path: z.string().describe('原件路径，如 收集箱/合同.pdf'),
       markdown: z.string().describe('转换后的完整 Markdown 正文（不要带 frontmatter，服务端会补）'),
+      title: z.string().optional().describe('从正文语义提炼的核心内容短语；不含日期或扩展名。省略时从 Markdown 一级标题提取'),
       note: z.string().optional().describe('可选：本次转换的补充说明（写进产物末尾的注记）'),
     },
-    async ({ path: p, markdown, note }) => {
+    async ({ path: p, markdown, title, note }) => {
       const rel = String(p || '').replace(/\\/g, '/').replace(/^\/+/, '');
       if (!isInboxPath(rel) || isInboxDerivedPath(rel)) {
         return { content: [{ type: 'text', text: `只能写入 收集箱/ 下原件的转换产物：${rel}` }], isError: true };
@@ -483,7 +484,7 @@ export function makeServer(): McpServer {
       }
       const body = String(markdown || '').trim();
       if (!body) return { content: [{ type: 'text', text: 'markdown 不能为空' }], isError: true };
-      const result = writeInboxMarkdown(rel, body, note);
+      const result = writeInboxMarkdown(rel, body, note, { title });
       return {
         content: [{
           type: 'text',

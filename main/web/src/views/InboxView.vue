@@ -145,13 +145,13 @@
         <div class="factions">
           <span class="tip-wrap" v-tooltip="convertTip(item)">
             <button class="btn sm" type="button" :disabled="!canConvert(item)" @click="convertItem(item)">
-              <Icon name="ai" :size="14" />{{ item.status === 'converting' ? '转换中…' : '转为 Markdown' }}
+              <Icon name="ai" :size="14" />{{ item.status === 'converting' ? '转换中…' : item.derivedPath ? '重新转换' : '转为 Markdown' }}
             </button>
           </span>
           <button v-if="item.assistantSessionId" class="btn sm ghost" type="button" @click="openConversionChat(item.assistantSessionId)">
             <Icon name="messages" :size="14" />查看过程
           </button>
-          <template v-if="item.status === 'converted'">
+          <template v-if="item.derivedPath && item.status !== 'converting'">
             <span class="tip-wrap" v-tooltip="item.derivedPath ? `查看产物：${item.derivedPath}` : '还没有转换产物'">
               <button class="btn sm" type="button" :disabled="!item.derivedPath" @click="openReview(item)">
                 <Icon name="eye" :size="14" />查看
@@ -302,6 +302,7 @@ function canConvert(item: InboxItem): boolean {
 function convertTip(item: InboxItem): string {
   if (item.status === 'converting') return '正在转换，完成后会自动刷新';
   if (!CONVERTIBLE.has(item.capability)) return item.hint || '这个格式暂时不能转换';
+  if (item.derivedPath) return '重新转换成功后会替换这份原件的旧产物；已入库的副本不会自动改动';
   if (item.status === 'failed') return '重新转换';
   return '按内容语义重写成人类可读的 Markdown，不是格式搬运';
 }
@@ -312,7 +313,7 @@ function convertTip(item: InboxItem): string {
  */
 function rowNote(item: InboxItem): string {
   if (!CONVERTIBLE.has(item.capability)) return item.hint;
-  if (item.status === 'converted' && item.derivedPath) return `产物：${item.derivedPath}`;
+  if (item.derivedPath) return `产物：${item.derivedPath}`;
   return '';
 }
 

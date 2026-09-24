@@ -124,14 +124,14 @@ test('网址抓取拒绝本地与非网页地址', async () => {
 test('列表按状态分组：有转换产物即视为已转换，产物本身不作为条目', async () => {
   const derivedDir = path.join(BRAIN_DIR, INBOX_DIR_REL, '转换结果');
   fs.mkdirSync(derivedDir, { recursive: true });
-  fs.writeFileSync(path.join(derivedDir, '合同.md'), '# 合同要点\n');
+  fs.writeFileSync(path.join(derivedDir, '2026.09.24_合同要点.md'), '---\n标题: 合同要点\n来源: 收集箱/合同.pdf\n---\n\n# 合同要点\n');
 
   const res = await app.inject({ method: 'GET', url: '/api/inbox/items', headers: auth() });
   assert.equal(res.statusCode, 200);
   const body = res.json();
   const contract = body.items.find((item: any) => item.name === '合同.pdf');
   assert.equal(contract.status, 'converted');
-  assert.equal(contract.derivedPath, `${INBOX_DIR_REL}/转换结果/合同.md`);
+  assert.equal(contract.derivedPath, `${INBOX_DIR_REL}/转换结果/2026.09.24_合同要点.md`);
   const names = body.items.map((item: any) => item.name);
   assert.equal(names.includes('合同.md'), false, '转换产物不应作为收集箱条目');
   assert.equal(body.counts.converted >= 1, true);

@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db } from './db.js';
 import { safeJoin } from './vault.js';
-import { INBOX_DIR, INBOX_DERIVED_DIR, isInboxDerivedPath, stemOf } from './brainPaths.js';
+import { INBOX_DIR, isInboxDerivedPath } from './brainPaths.js';
+import { derivedPathsBySource, derivedPathForSource } from './inboxDerived.js';
 import { capabilityHint, convertCapability, type ConvertCapability } from '../pipeline/inboxConvert.js';
 
 /**
@@ -63,25 +64,6 @@ export function inboxCategoryOf(name: string): string {
   return CATEGORY_BY_EXT[ext] || 'other';
 }
 
-/** 转换产物目录：stem → 产物文件名（`合同 (2).md` 也归到 `合同`） */
-export function derivedStemMap(): Map<string, string> {
-  const map = new Map<string, string>();
-  let names: string[];
-  try {
-    names = fs.readdirSync(safeJoin(INBOX_DERIVED_DIR));
-  } catch {
-    return map;
-  }
-  for (const name of names) {
-    if (name.startsWith('.') || !name.toLowerCase().endsWith('.md')) continue;
-    const stem = name.replace(/\.md$/i, '');
-    if (!map.has(stem)) map.set(stem, name);
-    const base = stem.replace(/ \(\d+\)$/, '');
-    if (!map.has(base)) map.set(base, name);
-  }
-  return map;
-}
-
 /** 转换任务的本机状态：converting / failed 都来自 jobs 表（产物是否存在由磁盘决定） */
 export function jobStatesByPath(): Map<string, { status: 'converting' | 'failed' | 'done' | 'cancelled'; error: string; jobId: number; assistantSessionId: string | null }> {
   const rows = db
@@ -112,7 +94,7 @@ export function jobStatesByPath(): Map<string, { status: 'converting' | 'failed'
 
 /** 扫描收集箱：原件递归收集；转换产物只用于标记状态，本身不作为条目 */
 export function listInboxItems(): InboxListing {
-  const derived = derivedStemMap();
+  const derived = derivedPathsBySource();
   const jobs = jobStatesByPath();
   const files: string[] = [];
 
@@ -144,11 +126,11 @@ export function listInboxItems(): InboxListing {
       const abs = safeJoin(rel);
       const stat = fs.statSync(abs);
       const name = path.posix.basename(rel);
-      const derivedName = derived.get(stemOf(rel)) || null;
+      const derivedPath = derived.get(rel)?.[0] || null;
       const job = jobs.get(rel);
       const capability = convertCapability(rel);
       const status: InboxItem['status'] = job && (job.status === 'converting' || job.status === 'failed')
-        ? job.status : derivedName ? 'converted' : 'pending';
+        ? job.status : derivedPath ? 'converted' : 'pending';
       return {
         path: rel,
         name,
@@ -158,7 +140,7 @@ export function listInboxItems(): InboxListing {
         mtime: stat.mtimeMs,
         category: inboxCategoryOf(name),
         status,
-        derivedPath: derivedName ? `${INBOX_DERIVED_DIR}/${derivedName}` : null,
+        derivedPath,
         capability,
         hint: capabilityHint(rel, capability),
         error: job?.error || '',
@@ -182,7 +164,5 @@ export function listInboxItems(): InboxListing {
 
 /** 一份收集箱原件的转换产物路径（没有则 null） */
 export function derivedPathFor(relPath: string): string | null {
-  return derivedStemMap().get(stemOf(relPath))
-    ? `${INBOX_DERIVED_DIR}/${derivedStemMap().get(stemOf(relPath))}`
-    : null;
+  return derivedPathForSource(relPath);
 }
