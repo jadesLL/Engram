@@ -230,8 +230,14 @@ export async function settingsRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: `未检测到本机 ${target} 客户端` });
       }
       const token = harnessToken(target);
-      const configPath = registerExternalMcp(target, zcodeMcpUrl, token);
-      return { ok: true, mcpUrl: zcodeMcpUrl, configPath };
+      let configPaths: string[];
+      try {
+        // 客户端国内版 / 海外版读不同目录，这里会把检测到的变体全部写上，返回实际写入的文件
+        configPaths = registerExternalMcp(target, zcodeMcpUrl, token);
+      } catch (e: any) {
+        return reply.code(500).send({ error: `写入 ${target} 配置失败：${e?.message ?? e}` });
+      }
+      return { ok: true, mcpUrl: zcodeMcpUrl, configPath: configPaths[0], configPaths };
     });
 
     app.post(`/api/settings/${target}-unregister`, async () => {
