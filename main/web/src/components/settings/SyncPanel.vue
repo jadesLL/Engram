@@ -453,7 +453,7 @@ onUnmounted(() => {
 <style scoped>
 .role-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: 14px;
   margin: 22px 4px 16px;
 }
@@ -588,7 +588,7 @@ onUnmounted(() => {
 .sync-status h4 { margin: 0 0 8px; }
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
   gap: 10px;
 }
 .status-grid > div {

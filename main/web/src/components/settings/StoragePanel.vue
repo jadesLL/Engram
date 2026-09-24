@@ -497,8 +497,8 @@ onMounted(() => {
 }
 
 .trash-tools {
-  display: grid;
-  grid-template-columns: auto minmax(180px, 1fr) auto auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin: 14px 20px 0;
@@ -512,8 +512,8 @@ onMounted(() => {
   white-space: nowrap;
 }
 .trash-filter {
+  flex: 1 1 200px;
   min-width: 0;
-  width: 100%;
 }
 .trash-list {
   max-height: 520px;
