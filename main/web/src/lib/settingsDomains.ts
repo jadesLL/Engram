@@ -20,6 +20,10 @@ export interface SettingsGroupNav {
   /** 锚点 id：与 SettingsGroup 的 anchor / 包裹元素的 id 一致 */
   id: string;
   label: string;
+  /** 分组卡片头部的识别图标（Icon.vue 中的图标名） */
+  icon?: string;
+  /** 危险分组：导航锚点与分组卡片常驻警示色 */
+  danger?: boolean;
   need?: SettingsDomainNeed;
 }
 
@@ -42,9 +46,9 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     label: '账户与外观',
     icon: 'settings',
     groups: [
-      { id: 'account-credentials', label: '账户' },
-      { id: 'account-appearance', label: '外观' },
-      { id: 'account-connection', label: '连接与版本' },
+      { id: 'account-credentials', label: '账户', icon: 'user' },
+      { id: 'account-appearance', label: '外观', icon: 'sun' },
+      { id: 'account-connection', label: '连接与版本', icon: 'globe' },
     ],
   },
   {
@@ -52,8 +56,8 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     label: '连接与同步',
     icon: 'external',
     groups: [
-      { id: 'panel-sync', label: '多端同步' },
-      { id: 'panel-update', label: '软件更新', need: 'serverUpdate' },
+      { id: 'panel-sync', label: '多端同步', icon: 'refresh' },
+      { id: 'panel-update', label: '软件更新', icon: 'download', need: 'serverUpdate' },
     ],
   },
   {
@@ -61,9 +65,9 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     label: 'Agent 接入',
     icon: 'ai',
     groups: [
-      { id: 'agent-builtin', label: '内置 Agent', need: 'agent' },
-      { id: 'agent-target', label: '接入目标', need: 'agent' },
-      { id: 'agent-tools', label: '查看工具', need: 'agent' },
+      { id: 'agent-builtin', label: '内置 Agent', icon: 'ai', need: 'agent' },
+      { id: 'agent-target', label: '接入目标', icon: 'plug', need: 'agent' },
+      { id: 'agent-tools', label: '查看工具', icon: 'wrench', need: 'agent' },
     ],
   },
   {
@@ -71,12 +75,12 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     label: '数据与存储',
     icon: 'archive',
     groups: [
-      { id: 'data-location', label: '存储位置' },
-      { id: 'data-backup', label: '备份与恢复' },
-      { id: 'data-synonyms', label: '搜索同义词' },
-      { id: 'storage-trash', label: '回收站' },
-      { id: 'storage-assets', label: '图片资产' },
-      { id: 'data-danger', label: '危险操作' },
+      { id: 'data-location', label: '存储位置', icon: 'folder' },
+      { id: 'data-backup', label: '备份与恢复', icon: 'archive' },
+      { id: 'data-synonyms', label: '搜索同义词', icon: 'search' },
+      { id: 'storage-trash', label: '回收站', icon: 'trash' },
+      { id: 'storage-assets', label: '图片资产', icon: 'image' },
+      { id: 'data-danger', label: '危险操作', icon: 'alert', danger: true },
     ],
   },
 ];
@@ -93,6 +97,15 @@ export const LEGACY_SETTINGS_SECTIONS: Record<string, { domain: SettingsDomainId
   storage: { domain: 'data', anchor: 'storage-trash' },
   data: { domain: 'data' },
 };
+
+/** 锚点 id → 分组图标（SettingsGroup 卡片头部用；未配置时返回空串，调用方不渲染图标） */
+export function settingsGroupIcon(anchor: string): string {
+  for (const domain of SETTINGS_DOMAINS) {
+    const hit = domain.groups.find((group) => group.id === anchor);
+    if (hit) return hit.icon || '';
+  }
+  return '';
+}
 
 /** 按运行时能力过滤：不可用的功能域连同它的分组一起从导航里消失 */
 export function visibleSettingsDomains(features: SettingsFeatures): SettingsDomain[] {

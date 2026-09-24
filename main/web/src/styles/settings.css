@@ -40,8 +40,8 @@
 }
 
 /*
- * 分类导航（两级）：4 个大类 + 当前大类的分组锚点。
- * 大类是唯一入口，二级项负责定位；滚动时反向高亮当前分组。
+ * 分类导航（两级）：4 个大类 + 各大类的分组锚点，全部平铺常显（2026-09-24 改版：
+ * 不再有展开/收起状态）。大类切换整页，二级锚点负责滚动定位；滚动时反向高亮当前分组。
  */
 .settings-nav {
   position: sticky;
@@ -54,6 +54,7 @@
 .settings-nav-domain {
   display: flex;
   flex-direction: column;
+  margin-bottom: 8px;
 }
 .settings-nav-item {
   position: relative;
@@ -101,16 +102,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.settings-nav-item .nav-caret {
-  flex-shrink: 0;
-  color: var(--text-faint);
-}
 
 .settings-nav-sub {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin: 2px 0 6px 19px;
+  margin: 2px 0 4px 19px;
   padding-left: 10px;
   border-left: 1px solid var(--border);
 }
@@ -131,8 +128,9 @@
   background: var(--bg-hover);
   color: var(--text);
 }
+/* 滚动联动高亮：文字与定位圆点同时点亮，一眼看出当前 viewport 在哪个分组 */
 .settings-nav-subitem.active {
-  color: var(--text);
+  color: var(--accent);
   font-weight: 600;
 }
 .settings-nav-subitem .nav-dot {
@@ -141,9 +139,22 @@
   height: 5px;
   border-radius: 50%;
   background: var(--border-strong);
+  transition: width 0.12s ease, height 0.12s ease, background 0.12s ease;
 }
 .settings-nav-subitem.active .nav-dot {
+  width: 7px;
+  height: 7px;
   background: var(--accent);
+}
+/* 危险分组锚点常驻警示色 */
+.settings-nav-subitem.danger {
+  color: var(--danger);
+}
+.settings-nav-subitem.danger.active {
+  color: var(--danger);
+}
+.settings-nav-subitem.danger.active .nav-dot {
+  background: var(--danger);
 }
 .settings-nav-subitem .nav-label {
   flex: 1;
@@ -199,23 +210,12 @@
 }
 
 /*
- * 单个功能域的大类（账户与外观 / Agent 接入）：面板标题与大类标题重复，隐藏面板头；
- * 多个功能域的大类（连接与同步 / 数据与存储）：面板头降级成「功能域」小标题。
+ * 面板头全部隐藏（2026-09-24 改版）：分组身份由「分组卡片的头部色带」承担，
+ * 大类标题由 domain-head 承担，面板的 panel-head 是重复的中间层。
+ * SyncPanel / UpdatePanel 的面板头已改造成分组色带（见各自模板）。
  */
-.settings-domain.is-single .settings-native > .panel-head {
+.settings-domain .settings-native > .panel-head {
   display: none;
-}
-.settings-domain.is-multi .settings-native > .panel-head {
-  align-items: center;
-  padding: 22px 24px 2px;
-  border-bottom: 0;
-}
-.settings-domain.is-multi .settings-native > .panel-head h3 {
-  font-size: 13.5px;
-}
-.settings-domain.is-multi .settings-native > .panel-head p {
-  margin-top: 3px;
-  font-size: 12px;
 }
 
 /* 分组卡片自己就是卡片，面板不再套一层卡（避免卡中卡） */
@@ -227,38 +227,143 @@
   background: transparent;
 }
 
-/* 二级导航定位：给吸顶的组标题让出高度 */
+/* 二级导航定位：锚点目标给页面顶部让出高度 */
 .settings-content [id] {
-  scroll-margin-top: 10px;
+  scroll-margin-top: 14px;
 }
 
-/* 危险区：与普通设置物理隔开（数据与存储底部） */
-.danger-zone {
-  margin-top: 4px;
-  padding-top: 12px;
-  border-top: 1px dashed color-mix(in srgb, var(--danger) 34%, var(--border));
-}
-.danger-zone-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 24px 2px;
-  color: var(--danger);
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-}
-
-/*
- * 存储空间的两个 <section>（回收站 / 图片资产）不是 SettingsGroup，去掉面板卡片后
- * 列表会裸在页面底色上；这里单独把列表补成卡片外观，与新外壳的分组卡片对齐。
+/* ---------- 分组卡片（2026-09-24 改版：常开、头部色带、组间大间距） ----------
+ * SettingsGroup.vue 与手写相同结构的 SyncPanel / UpdatePanel 共用这套全局类：
+ *   .settings-group      分组块（定位锚点挂在它或外层包裹元素上）
+ *   .group-card          卡片本体
+ *   .group-band          头部色带：识别图标 + 标题 + 说明 + 操作区 + 状态徽标
+ *   .group-body          内容区；.flush 表示内容是自带边框的 setting-row 列表
+ *   .block-caption       卡内小分区标题（如软件更新的 服务器/桌面端/更新源）
  */
-.settings-domain .trash-section .trash-list {
-  margin: 12px 24px 24px;
-  padding: 2px 14px;
+.settings-group {
+  margin: 0 24px 22px;
+}
+.settings-group:last-child {
+  margin-bottom: 8px;
+}
+.group-card {
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card-bg);
+}
+.group-band {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.group-ico {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.group-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.group-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+.group-hint {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-body {
+  padding: 4px 16px 16px;
+}
+.group-body.flush {
+  padding: 0;
+}
+
+/* 分组状态徽标：把「这个组有没有事」直接写在色带上 */
+.group-badge {
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.group-badge.tone-muted {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.group-badge.tone-accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.group-badge.tone-ok {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.group-badge.tone-warn {
+  background: var(--warn-soft);
+  color: var(--warning);
+}
+.group-badge.tone-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* 卡内小分区：一个分组内含多个功能块时的次级标题（不再各自成卡，避免卡中卡） */
+.sub-block + .sub-block {
+  border-top: 1px solid var(--border);
+}
+.block-caption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 20px 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.sub-hint {
+  margin: 0;
+  padding: 2px 20px 0;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* 危险分组：警示色常驻可见（色带、图标、描边都是红的） */
+.level-danger .group-card {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+.level-danger .group-band {
+  background: linear-gradient(90deg, var(--danger-soft), transparent 70%), var(--bg-secondary);
+}
+.level-danger .group-ico {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.level-danger .group-title {
+  color: var(--danger);
 }
 
 /* ---------- 原生设置面板共享框架（Win11 设置卡片） ---------- */
@@ -520,18 +625,49 @@
   .settings-page-head h2 {
     font-size: 22px;
   }
+  /* 移动端：大类胶囊 + 当前大类的锚点胶囊两行横向滚动（替代原来的下拉框） */
   .settings-mobile-nav {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-    gap: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
-  .settings-mobile-nav label {
+  .settings-mobile-nav .chip-row {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 2px 2px 4px;
+    scrollbar-width: none;
+  }
+  .settings-mobile-nav .chip-row::-webkit-scrollbar {
+    display: none;
+  }
+  .settings-mobile-nav .chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--card-bg);
     color: var(--text-secondary);
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+  .settings-mobile-nav .chip.active {
+    border-color: transparent;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .settings-mobile-nav .chip-row.anchors .chip {
+    min-height: 28px;
+    padding: 4px 10px;
     font-size: 12px;
   }
-  .settings-mobile-nav select {
-    width: 100%;
+  .settings-mobile-nav .chip.danger {
+    color: var(--danger);
   }
   .settings-shell {
     display: block;
@@ -540,10 +676,14 @@
     display: none;
   }
   .domain-head {
-    padding: 2px 18px 6px;
+    padding: 2px 18px 10px;
   }
-  .settings-domain.is-multi .settings-native > .panel-head {
-    padding: 18px 18px 2px;
+  .settings-group {
+    margin-right: 18px;
+    margin-left: 18px;
+  }
+  .group-hint {
+    white-space: normal;
   }
   .settings-native .panel-head {
     padding: 18px;

@@ -1,45 +1,42 @@
 <template>
-  <!-- 危险区：数据与存储大类的最底部，与普通设置物理隔开（红色标题 + 虚线分隔） -->
-  <div class="danger-zone">
-    <p class="danger-zone-label">危险区 · 不可撤销</p>
-    <SettingsGroup
-      anchor="data-danger"
-      title="危险操作"
-      hint="不可撤销；执行前需要再次确认登录密码"
-      danger
-      flush
-    >
-      <div v-if="capabilities.features.agent" class="danger-row">
-        <div>
-          <strong>清空操作日志与关系库</strong>
-          <p>清空 AIWorks 系统区（操作日志、索引与关系库）；待执行和运行中的任务会先停止，概念、实体和原始资料不受影响。</p>
-        </div>
-        <button
-          class="btn danger"
-          type="button"
-          :disabled="Boolean(busy)"
-          @click="wipeAiLogs"
-        >
-          {{ busy === 'ai-logs' ? '清空中...' : '清空日志' }}
-        </button>
+  <!-- 危险操作：数据与存储大类的最后一个分组，level-danger 常驻警示色（2026-09-24 起不再用虚线隔离区） -->
+  <SettingsGroup
+    anchor="data-danger"
+    title="危险操作"
+    hint="不可撤销；执行前需要再次确认登录密码"
+    danger
+    flush
+  >
+    <div v-if="capabilities.features.agent" class="danger-row">
+      <div>
+        <strong>清空操作日志与关系库</strong>
+        <p>清空 AIWorks 系统区（操作日志、索引与关系库）；待执行和运行中的任务会先停止，概念、实体和原始资料不受影响。</p>
       </div>
-      <div class="danger-row">
-        <div>
-          <strong>一键清除知识数据</strong>
-          <p>先停止待执行和运行中的任务，再删除全部概念、实体、原始资料、归档和查询页面，并清空整理报告、入库记录与索引。</p>
-        </div>
-        <button
-          class="btn danger-solid"
-          type="button"
-          :disabled="Boolean(busy)"
-          @click="wipe"
-        >
-          {{ busy === 'knowledge' ? '清除中...' : '一键清除' }}
-        </button>
+      <button
+        class="btn danger"
+        type="button"
+        :disabled="Boolean(busy)"
+        @click="wipeAiLogs"
+      >
+        {{ busy === 'ai-logs' ? '清空中...' : '清空日志' }}
+      </button>
+    </div>
+    <div class="danger-row">
+      <div>
+        <strong>一键清除知识数据</strong>
+        <p>先停止待执行和运行中的任务，再删除全部概念、实体、原始资料、归档和查询页面，并清空整理报告、入库记录与索引。</p>
       </div>
-    </SettingsGroup>
+      <button
+        class="btn danger-solid"
+        type="button"
+        :disabled="Boolean(busy)"
+        @click="wipe"
+      >
+        {{ busy === 'knowledge' ? '清除中...' : '一键清除' }}
+      </button>
+    </div>
     <p v-if="message" class="setting-message wipe-message" :class="ok ? 'ok' : 'err'">{{ message }}</p>
-  </div>
+  </SettingsGroup>
 </template>
 
 <script setup lang="ts">
@@ -135,7 +132,7 @@ async function wipeAiLogs() {
   line-height: 1.5;
 }
 .wipe-message {
-  margin: 0 24px 22px;
+  margin: 4px 20px 14px;
 }
 
 @media (max-width: 640px) {

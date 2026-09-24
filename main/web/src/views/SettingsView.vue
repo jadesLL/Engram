@@ -7,49 +7,58 @@
       </div>
     </header>
 
-    <!-- 移动端：大类作为 optgroup，分组作为可选项，选中即滚动定位 -->
+    <!-- 移动端：大类胶囊 + 当前大类的分组锚点胶囊，两行横向滚动 -->
     <div class="settings-mobile-nav">
-      <label for="settings-section">设置分类</label>
-      <select id="settings-section" :value="mobileValue" @change="onMobileChange">
-        <optgroup v-for="domain in domains" :key="domain.id" :label="domain.label">
-          <option :value="`${domain.id}|`">{{ domain.label }}（全部）</option>
-          <option v-for="group in domain.groups" :key="group.id" :value="`${domain.id}|${group.id}`">
-            {{ group.label }}
-          </option>
-        </optgroup>
-      </select>
+      <div class="chip-row" role="navigation" aria-label="设置大类">
+        <button
+          v-for="domain in domains"
+          :key="domain.id"
+          type="button"
+          class="chip"
+          :class="{ active: activeDomain === domain.id }"
+          @click="selectDomain(domain.id)"
+        >
+          {{ domain.label }}
+        </button>
+      </div>
+      <div v-if="currentDomain" class="chip-row anchors" aria-label="分组定位">
+        <button
+          v-for="group in currentDomain.groups"
+          :key="group.id"
+          type="button"
+          class="chip"
+          :class="{ active: activeAnchor === group.id, danger: group.danger }"
+          @click="scrollToAnchor(group.id)"
+        >
+          {{ group.label }}
+        </button>
+      </div>
     </div>
 
     <div class="settings-shell">
       <nav class="settings-nav" aria-label="设置分类">
+        <!-- 二级锚点全部平铺常显：大类切页，锚点只做滚动定位（2026-09-24 改版，不再展开/收起） -->
         <div v-for="domain in domains" :key="domain.id" class="settings-nav-domain">
           <button
             class="settings-nav-item"
             type="button"
             :class="{ active: activeDomain === domain.id }"
             :aria-current="activeDomain === domain.id ? 'page' : undefined"
-            :aria-expanded="activeDomain === domain.id"
             @click="selectDomain(domain.id)"
           >
             <Icon :name="domain.icon" :size="17" />
             <span class="nav-label">{{ domain.label }}</span>
-            <Icon
-              class="nav-caret"
-              :name="activeDomain === domain.id ? 'chevron-up' : 'chevron-down'"
-              :size="14"
-            />
           </button>
 
-          <!-- 二级锚点：当前大类的全部分组，点击滚动到该分组，滚动时反向高亮 -->
-          <div v-show="activeDomain === domain.id" class="settings-nav-sub">
+          <div class="settings-nav-sub">
             <button
               v-for="group in domain.groups"
               :key="group.id"
               type="button"
               class="settings-nav-subitem"
-              :class="{ active: activeAnchor === group.id }"
-              :aria-current="activeAnchor === group.id ? 'true' : undefined"
-              @click="scrollToAnchor(group.id)"
+              :class="{ active: activeDomain === domain.id && activeAnchor === group.id, danger: group.danger }"
+              :aria-current="activeDomain === domain.id && activeAnchor === group.id ? 'true' : undefined"
+              @click="onAnchorClick(domain.id, group.id)"
             >
               <span class="nav-dot" aria-hidden="true" />
               <span class="nav-label">{{ group.label }}</span>
@@ -149,10 +158,10 @@ import { resolveSettingsTarget, visibleSettingsDomains, type SettingsDomainId } 
 import { useRoute } from 'vue-router';
 
 /**
- * 设置页信息架构（改版）：原 6 个粒度不齐的分类合并为 4 个大类——
- * 「多端同步」与「软件更新」并成「连接与同步」，「存储空间」并入「数据与存储」，
- * 「账户与外观」把凭据/外观/连接三件事拆成独立分组。大类下的每个分组都是二级导航锚点，
- * 点击滚动、滚动反高亮；大类树与旧链接映射都是纯数据，见 lib/settingsDomains.ts。
+ * 设置页信息架构（2026-09-24 改版）：4 个大类各为一整页，页内分组全部平铺常开；
+ * 左侧导航平铺「大类 + 全部分组锚点」，大类切换页面，锚点只做滚动定位，
+ * 滚动时反向高亮当前分组；分组之间靠带头部色带的独立卡片区分（SettingsGroup）。
+ * 大类树与旧链接映射都是纯数据，见 lib/settingsDomains.ts。
  */
 const activeDomain = ref<SettingsDomainId>('account');
 const activeAnchor = ref<string>('');
@@ -168,7 +177,6 @@ const domains = computed(() => visibleSettingsDomains({
 }));
 
 const currentDomain = computed(() => domains.value.find((domain) => domain.id === activeDomain.value));
-const mobileValue = computed(() => `${activeDomain.value}|${activeAnchor.value}`);
 
 /** 滚动容器是 Home.vue 的 .content；找不到时退回窗口滚动 */
 function scroller(): HTMLElement | Window {
@@ -233,9 +241,10 @@ function onScroll() {
   });
 }
 
-function onMobileChange(event: Event) {
-  const [domain, anchor] = (event.target as HTMLSelectElement).value.split('|');
-  selectDomain(domain as SettingsDomainId, anchor || undefined);
+/** 二级锚点现在跨大类常显：点其他大类的锚点先切页，再滚动到目标分组 */
+function onAnchorClick(domainId: SettingsDomainId, anchor: string) {
+  if (domainId !== activeDomain.value) selectDomain(domainId, anchor);
+  else scrollToAnchor(anchor);
 }
 
 watch(domains, (items) => {

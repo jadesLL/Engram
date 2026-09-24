@@ -220,7 +220,7 @@ onMounted(load);
 
 <style scoped>
 .status-rows {
-  margin: 14px 24px 18px;
+  margin: 14px 4px 18px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-secondary);
@@ -255,16 +255,16 @@ onMounted(load);
 .actions-row {
   display: flex;
   gap: 10px;
-  margin: 0 24px 18px;
+  margin: 0 4px 18px;
 }
 .integration-note {
-  margin: 0 24px 18px;
+  margin: 0 4px 18px;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;
 }
 .empty-panel {
-  margin: 14px 24px 18px;
+  margin: 14px 4px 18px;
 }
 .manual-path {
   display: flex;

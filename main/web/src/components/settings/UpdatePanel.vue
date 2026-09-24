@@ -1,23 +1,22 @@
 <template>
-  <section class="settings-panel settings-native">
-    <div class="panel-head">
-      <div>
-        <h3>软件更新</h3>
-        <p>检测新版本并就地更新；服务器（Docker）拉取镜像自动重建，桌面端默认自动下载并静默安装，也可手动下载安装包覆盖安装。</p>
+  <section class="settings-panel settings-native settings-group level-normal">
+    <div class="group-card">
+      <div class="group-band">
+        <span class="group-ico" aria-hidden="true"><Icon name="download" :size="16" /></span>
+        <span class="group-text">
+          <span class="group-title">软件更新</span>
+          <span class="group-hint">检测新版本并就地更新；服务器拉取镜像重建，桌面端可自动或手动安装</span>
+        </span>
+        <span v-if="versionBadge" class="group-badge tone-muted">{{ versionBadge }}</span>
       </div>
-      <span v-if="versionBadge" class="app-version">{{ versionBadge }}</span>
-    </div>
+      <div class="group-body flush">
 
-    <!-- ============ 服务器（Docker）分组 ============ -->
-    <SettingsGroup
-      level="primary"
-      :badge="serverBadge.text"
-      :badge-tone="serverBadge.tone"
-      title="服务器（Docker 部署）"
-      hint="更新通道、检查与一键重建容器"
-      :default-open="true"
-      flush
-    >
+    <!-- ============ 服务器（Docker）分区 ============ -->
+    <div class="sub-block">
+      <div class="block-caption">
+        服务器（Docker 部署）
+        <span v-if="serverBadge.text" class="group-badge" :class="`tone-${serverBadge.tone}`">{{ serverBadge.text }}</span>
+      </div>
       <!-- 本地内嵌 server（桌面本地模式 / 浏览器访问桌面本地服务） -->
       <template v-if="state.desktop">
         <!-- 已绑定多端同步：在此直接远程更新同步中枢服务器 -->
@@ -157,17 +156,14 @@
           <code>docker start engram-old</code> 手动恢复，然后刷新本页。
         </p>
       </template>
-    </SettingsGroup>
+    </div>
 
-    <!-- ============ 桌面端分组 ============ -->
-    <SettingsGroup
-      :badge="desktopBadge.text"
-      :badge-tone="desktopBadge.tone"
-      title="桌面端（Windows）"
-      hint="安装包 / 源码模式的检查、下载与更新"
-      :default-open="isDesktop"
-      flush
-    >
+    <!-- ============ 桌面端分区 ============ -->
+    <div class="sub-block">
+      <div class="block-caption">
+        桌面端（Windows）
+        <span v-if="desktopBadge.text" class="group-badge" :class="`tone-${desktopBadge.tone}`">{{ desktopBadge.text }}</span>
+      </div>
 
       <div v-if="!isDesktop" class="integration-note">
         在 Windows 桌面端内可在此下载并安装最新安装包；浏览器访问服务器时此节仅作展示。
@@ -319,18 +315,14 @@
         </div>
         <p v-if="shortcutMessage" class="setting-message" :class="shortcutError ? 'err' : ''">{{ shortcutMessage }}</p>
       </template>
-    </SettingsGroup>
+    </div>
 
-    <!-- ============ 更新源配置分组 ============ -->
-    <SettingsGroup
-      level="advanced"
-      :badge="state.giteaConfigured ? '' : '未配置'"
-      :badge-tone="state.giteaConfigured ? 'muted' : 'warn'"
-      title="更新源配置"
-      hint="远端仓库地址与访问凭据，保存在服务器数据目录 .env"
-      :default-open="!state.giteaConfigured"
-      flush
-    >
+    <!-- ============ 更新源配置分区 ============ -->
+    <div class="sub-block">
+      <div class="block-caption">
+        更新源配置
+        <span v-if="!state.giteaConfigured" class="group-badge tone-warn">未配置</span>
+      </div>
       <div class="integration-note">
         只需粘贴仓库地址，服务器和仓库会自动识别；配置保存在服务器数据目录 .env 文件中（随数据卷持久化，不进代码库）。公开仓库无需填凭据。
       </div>
@@ -374,7 +366,10 @@
           {{ savingConfig ? '保存中…' : '保存配置' }}
         </button>
       </div>
-    </SettingsGroup>
+    </div>
+
+      </div>
+    </div>
   </section>
 </template>
 
@@ -382,7 +377,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api, ssePost } from '../../api';
 import AppSpinner from '../ui/AppSpinner.vue';
-import SettingsGroup from './SettingsGroup.vue';
+import Icon from '../Icon.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
