@@ -1,6 +1,6 @@
 // Engram 桌面端主进程（Electron）
 // fork 内嵌 server 子进程（ELECTRON_RUN_AS_NODE 纯 Node 模式），探活后加载本地页面。
-const { app, BrowserWindow, ipcMain, shell, Menu, Tray, nativeImage, Notification, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, nativeImage, Notification, dialog, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
@@ -15,6 +15,9 @@ const shortcutLib = require('./scripts/lib/shortcut');
 // 品牌启动器 Engram.exe（electron.exe 的改名副本）会被判成打包形态，源码版因此丢掉提交号与
 // 源码更新入口。详见 lib/runtime-mode.js 顶部注释。
 const runtimeMode = require('./scripts/lib/runtime-mode');
+// 自动检查更新的节奏（启动首查 + 自适应退避 + 回前台补查），与 web 端 main/web/src/lib/updateCadence.ts
+// 同一套策略：没发现更新就 2→5→10→30→60 分钟逐级拉长；发现了（或有更新待处理）保持最短间隔。
+const updateCadence = require('./scripts/lib/update-cadence');
 
 /** 是否安装包形态（打包产物 app.asar 存在）；源码模式（含品牌启动器）一律 false */
 const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
@@ -290,6 +293,8 @@ function createWindow() {
       hideToTray();
     }
   });
+  // 从托盘/后台回到主窗就补查一次更新，不用等下一轮退避（内部去抖）
+  win.on('focus', () => pokeUpdateChecks('window-focus'));
   return win;
 }
 
@@ -329,6 +334,7 @@ function showMainWindow() {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+  pokeUpdateChecks('show-main-window');
 }
 
 function hideToTray() {
@@ -513,16 +519,23 @@ app.whenReady().then(() => {
   app.setAccessibilitySupportEnabled(true);
   Menu.setApplicationMenu(buildAppMenu());
   launchByConfig();
-  // 自动更新：启动延迟首查 + 每 8 小时复查。打包形态自动下载并静默安装；源码模式只自动检查，
-  // 落后时用系统通知 + 设置页提示，更新时机由用户点「更新并重启」确认。
-  if (process.platform === 'win32' && PACKAGED) {
-    autoState.enabled = readConfig().autoUpdate !== false;
-    setTimeout(autoUpdateTick, AUTO_UPDATE_STARTUP_DELAY_MS);
-    setInterval(autoUpdateTick, AUTO_UPDATE_INTERVAL_MS);
-  } else if (process.platform === 'win32') {
-    sourceAutoState.enabled = readConfig().autoUpdate !== false;
-    setTimeout(sourceAutoTick, AUTO_UPDATE_STARTUP_DELAY_MS);
-    setInterval(sourceAutoTick, AUTO_UPDATE_INTERVAL_MS);
+  // 自动更新：启动 4 秒首查，之后自适应退避复查（2→5→10→30→60 分钟封顶，见 updateCadence）。
+  // 打包形态自动下载并静默安装；源码模式只自动检查，落后时提示条红点 + 系统通知，一键更新由提示条触发。
+  if (process.platform === 'win32') {
+    if (PACKAGED) {
+      autoState.enabled = readConfig().autoUpdate !== false;
+      scheduleAutoUpdateCheck(updateCadence.STARTUP_DELAY_MS);
+    } else {
+      sourceAutoState.enabled = readConfig().autoUpdate !== false;
+      scheduleSourceCheck(updateCadence.STARTUP_DELAY_MS);
+    }
+    // 休眠唤醒、解锁屏后立刻补查一次（内部 20 秒去抖）
+    try {
+      powerMonitor.on('resume', () => pokeUpdateChecks('resume'));
+      powerMonitor.on('unlock-screen', () => pokeUpdateChecks('unlock-screen'));
+    } catch {
+      /* 个别平台不支持这些事件时忽略 */
+    }
   }
 });
 
@@ -910,11 +923,10 @@ ipcMain.handle('desktop-update-run-installer', (_e, filePath, version) => {
 });
 
 // ---------- 自动更新（默认开启） ----------
-// 启动延迟首查 + 每 8 小时复查；发现新版本 → 后台下载 → 全屏「正在更新」提示 → /S 静默安装 →
-// 装完自动重启。应用内更新（自动与手动「下载并安装」）均走静默链，无安装向导；
-// 仅双击安装包本身保留向导（可选目录）。便携版（PORTABLE_EXECUTABLE_DIR）不参与自动更新。
-const AUTO_UPDATE_STARTUP_DELAY_MS = 30_000;
-const AUTO_UPDATE_INTERVAL_MS = 8 * 3600 * 1000;
+// 启动 4 秒首查，之后按 updateCadence 的自适应退避复查（2→5→10→30→60 分钟封顶；这一轮发现
+// 新版本就立刻回到最短间隔），休眠唤醒/解锁/窗口回到前台再补一次。发现新版本 → 后台下载 →
+// 全屏「正在更新」提示 → /S 静默安装 → 装完自动重启。应用内更新（自动与手动「下载并安装」）均走
+// 静默链，无安装向导；仅双击安装包本身保留向导（可选目录）。便携版（PORTABLE_EXECUTABLE_DIR）不参与自动更新。
 const INSTALL_NOTICE_MS = 3500; // 「正在更新」提示层展示时长，随后退出并静默安装
 
 const autoState = {
@@ -1050,6 +1062,47 @@ function beginSilentInstall(file, version, source = 'auto update') {
   setTimeout(() => app.quit(), 500);
 }
 
+// 自动检查的调度：单一定时器 + 自适应退避档位（不用 setInterval——固定间隔会把节奏写死，
+// 也没法按「这一轮有没有发现更新」调整）
+let autoTimer = null;
+let autoBackoffIndex = 0;
+
+function scheduleAutoUpdateCheck(delayMs) {
+  if (autoTimer) clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => {
+    autoTimer = null;
+    void autoUpdateTick();
+  }, delayMs);
+}
+
+/** 一轮结束后排下一轮：这轮发现新版本 → 回到最短间隔，否则逐级拉长；关掉开关就停表 */
+function scheduleNextAutoUpdateTick(hasUpdate) {
+  if (process.platform !== 'win32' || !PACKAGED) return;
+  if (readConfig().autoUpdate === false) return;
+  autoBackoffIndex = updateCadence.nextBackoffIndex(autoBackoffIndex, hasUpdate);
+  scheduleAutoUpdateCheck(updateCadence.backoffDelay(autoBackoffIndex));
+}
+
+/** 回到前台/唤醒/解锁：立刻补查一次（20 秒去抖，连续事件不会打满网络），并把节奏拉回最灵敏档 */
+let updatePokedAt = 0;
+function pokeUpdateChecks(reason) {
+  const now = Date.now();
+  if (now - updatePokedAt < updateCadence.POKE_DEBOUNCE_MS) return;
+  updatePokedAt = now;
+  if (process.platform !== 'win32') return;
+  if (readConfig().autoUpdate === false) return;
+  log('update poke: ' + reason);
+  if (PACKAGED) {
+    if (autoBusy || autoState.phase === 'installing') return;
+    autoBackoffIndex = 0;
+    scheduleAutoUpdateCheck(600);
+  } else {
+    if (sourceAutoBusy || sourceUpdating) return;
+    sourceBackoffIndex = 0;
+    scheduleSourceCheck(600);
+  }
+}
+
 async function autoUpdateTick() {
   if (process.platform !== 'win32' || autoBusy || !PACKAGED) return;
   if (process.env.PORTABLE_EXECUTABLE_DIR) return; // 便携版不自动更新
@@ -1060,6 +1113,7 @@ async function autoUpdateTick() {
   }
   autoBusy = true;
   autoAbort = new AbortController();
+  let foundUpdate = false;
   try {
     setAutoPhase('checking');
     const cfg = await resolveUpdateCfg(null);
@@ -1076,6 +1130,7 @@ async function autoUpdateTick() {
       setAutoPhase('up-to-date');
       return;
     }
+    foundUpdate = true;
     autoState.latestVersion = release.version;
     setAutoPhase('downloading');
     const { path: file } = await downloadUpdateFile(cfg, exe.url, (ch, data) => {
@@ -1108,6 +1163,7 @@ async function autoUpdateTick() {
   } finally {
     autoBusy = false;
     autoAbort = null;
+    scheduleNextAutoUpdateTick(foundUpdate);
   }
 }
 
@@ -1120,7 +1176,10 @@ ipcMain.handle('desktop-update-set-auto', (_e, enabled) => {
   autoState.enabled = c.autoUpdate;
   if (!c.autoUpdate && autoAbort) autoAbort.abort(); // 中断进行中的自动下载
   setAutoPhase('idle');
-  if (c.autoUpdate) setTimeout(autoUpdateTick, 1000); // 开启后立即触发一次检查
+  if (c.autoUpdate) {
+    autoBackoffIndex = 0;
+    scheduleAutoUpdateCheck(1000); // 开启后立即触发一次检查
+  }
   return { ...autoState };
 });
 
@@ -1234,8 +1293,10 @@ ipcMain.handle('desktop-get-env', async () => ({
   ...(PACKAGED ? {} : await gitIdentity()),
 }));
 
-// 源码模式自动检查：启动延迟首查 + 每 8 小时复查，落后时只提示（设置页状态 + 系统通知），
-// 不自动升级——源码模式重建会重启应用，时机交给用户点「更新并重启」决定。
+// 源码模式自动检查：启动 4 秒首查 + 自适应退避复查（节奏见 updateCadence）。检查本身走两级探测：
+// 先用一次 ls-remote 问远端分支 SHA，只有它和本地 origin/<branch> 不一致才真的 fetch 增量对象
+// （见 sourceCheckCore）。落后时只提示（更新提示条红点 + 设置页状态 + 系统通知），一键
+// 「立即更新并重启」由用户点提示条触发——源码模式重建会重启应用，不自动执行。
 const sourceAutoState = {
   enabled: true,
   phase: 'idle', // idle | checking | up-to-date | behind | failed
@@ -1250,23 +1311,56 @@ let sourceAutoBusy = false;
 /** 已通知过的远端提交号：同一次落后只弹一次系统通知 */
 let sourceNotifiedCommit = '';
 
+let sourceTimer = null;
+let sourceBackoffIndex = 0;
+
+function scheduleSourceCheck(delayMs) {
+  if (sourceTimer) clearTimeout(sourceTimer);
+  sourceTimer = setTimeout(() => {
+    sourceTimer = null;
+    void sourceAutoTick();
+  }, delayMs);
+}
+
+/** 一轮结束后排下一轮：这轮发现落后 → 保持最短间隔（用户可能正在等这次更新），否则逐级拉长 */
+function scheduleNextSourceCheck(hasUpdate) {
+  if (PACKAGED || process.platform !== 'win32') return;
+  if (readConfig().autoUpdate === false) return;
+  sourceBackoffIndex = updateCadence.nextBackoffIndex(sourceBackoffIndex, hasUpdate);
+  scheduleSourceCheck(updateCadence.backoffDelay(sourceBackoffIndex));
+}
+
 function setSourceAutoState(patch) {
   Object.assign(sourceAutoState, patch);
   broadcast('desktop-source-state', { ...sourceAutoState });
 }
 
-/** 比对远端与本地：fetch 后取落后提交数与两侧提交号（手动「检查更新」与自动检查共用） */
+/** 比对远端与本地（手动「检查更新」与自动检查共用）。两级探测，日常只花一次网络往返：
+ *  1) ls-remote 问远端分支 SHA（轻量，同时验证网络与凭据是否还通）；
+ *  2) 只有它和本地 origin/<branch> 不一致才 fetch 增量对象；behind / 提交列表全在本地算。 */
 async function sourceCheckCore() {
   if (PACKAGED) return { ok: false, error: '安装包形态不使用源码更新' };
   try {
     // branch --show-current 而非 rev-parse --abbrev-ref：仓库里有与分支同名的 tag（如游离 tag main）时
     // abbrev-ref 会消歧成 heads/main，拼 origin/heads/main 直接报 128
     const branch = await runGit(['branch', '--show-current']);
-    await runGit(['fetch', 'origin', '--prune']);
+    if (!branch) return { ok: false, error: '当前不在任何分支上（游离 HEAD），无法比对远端' };
+    const lsRemote = await runGit(['ls-remote', 'origin', `refs/heads/${branch}`], 20_000);
+    const remoteSha = ((lsRemote.split(/\r?\n/)[0] || '').trim().split(/\s+/)[0] || '');
+    if (!remoteSha) return { ok: false, error: `远端没有分支 ${branch}` };
+    let localRemoteSha = '';
+    try {
+      localRemoteSha = await runGit(['rev-parse', `refs/remotes/origin/${branch}`]);
+    } catch {
+      /* 本地还没有该远端跟踪引用（新克隆/新分支）：下面照常 fetch */
+    }
+    // 远端真的动了才 fetch：绝大多数轮次到此为止，只有一次 ls-remote 的网络开销
+    const fetched = localRemoteSha !== remoteSha;
+    if (fetched) await runGit(['fetch', 'origin', '--prune']);
     const behind = Number((await runGit(['rev-list', '--count', `HEAD..origin/${branch}`])) || 0);
     // 本地/远端提交号：让「已是最新」有可核对的依据（版本号日常不变，只有提交号会变）
     const local = await gitIdentity();
-    let remoteCommit = '';
+    let remoteCommit = remoteSha.slice(0, 7);
     let remoteDate = '';
     let changes = [];
     try {
@@ -1290,6 +1384,7 @@ async function sourceCheckCore() {
       remoteCommit,
       remoteDate,
       changes,
+      fetched, // 这一轮是否真的做过 fetch（否则只花了一次 ls-remote）
     };
   } catch (e) {
     return { ok: false, error: describeError(e) };
@@ -1314,7 +1409,11 @@ function applySourceCheckResult(r) {
 }
 
 async function sourceAutoTick() {
-  if (PACKAGED || sourceAutoBusy || sourceUpdating) return;
+  if (PACKAGED || sourceAutoBusy || sourceUpdating) {
+    // 检查/更新正忙：一分钟后重试，别把自动检查这条线彻底停掉
+    if (!PACKAGED && process.platform === 'win32') scheduleSourceCheck(updateCadence.BACKOFF_MS[0]);
+    return;
+  }
   sourceAutoState.enabled = readConfig().autoUpdate !== false;
   if (!sourceAutoState.enabled) {
     setSourceAutoState({ phase: 'idle', error: '' });
@@ -1322,25 +1421,28 @@ async function sourceAutoTick() {
   }
   sourceAutoBusy = true;
   setSourceAutoState({ phase: 'checking', error: '' });
+  let hasUpdate = false;
   try {
     const r = await sourceCheckCore();
     applySourceCheckResult(r);
-    if (r.ok && !r.upToDate && r.remoteCommit && r.remoteCommit !== sourceNotifiedCommit) {
+    hasUpdate = Boolean(r.ok && !r.upToDate);
+    if (hasUpdate && r.remoteCommit && r.remoteCommit !== sourceNotifiedCommit) {
       sourceNotifiedCommit = r.remoteCommit;
       notifySourceUpdate(r);
     }
   } finally {
     sourceAutoBusy = false;
+    scheduleNextSourceCheck(hasUpdate);
   }
 }
 
-/** 落后时的系统通知：点通知唤起主窗，更新仍由用户在设置页确认 */
+/** 落后时的系统通知：点通知唤起主窗（主窗顶部更新提示条的主按钮即「立即更新并重启」，一键直达） */
 function notifySourceUpdate(r) {
   try {
     if (!Notification.isSupported()) return;
     const n = new Notification({
       title: 'Engram 有源码更新可拉取',
-      body: `远端领先 ${r.behind} 个提交（${r.localCommit || '本地'} → ${r.remoteCommit}）。打开「设置 → 软件更新」点「更新并重启」即可，数据不受影响。`,
+      body: `远端领先 ${r.behind} 个提交（${r.localCommit || '本地'} → ${r.remoteCommit}）。点更新提示条的「立即更新并重启」即可，数据不受影响。`,
       icon: windowIcon(),
     });
     n.on('click', () => showMainWindow());
@@ -1364,7 +1466,10 @@ ipcMain.handle('desktop-source-set-auto', (_e, enabled) => {
   writeConfig(c);
   sourceAutoState.enabled = c.autoUpdate;
   setSourceAutoState({ phase: 'idle', error: '' });
-  if (c.autoUpdate) setTimeout(sourceAutoTick, 1000); // 开启后立即触发一次检查
+  if (c.autoUpdate) {
+    sourceBackoffIndex = 0;
+    scheduleSourceCheck(1000); // 开启后立即触发一次检查
+  }
   return { ...sourceAutoState };
 });
 

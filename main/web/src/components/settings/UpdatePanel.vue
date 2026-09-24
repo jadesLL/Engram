@@ -437,6 +437,13 @@ import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollap
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import { formatVersionLabel, formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
+import {
+  applyDesktopInstallerUpdate,
+  applyServerUpdate,
+  applySourceUpdate,
+  friendlyApplyError,
+  type UpdateSourceCfg,
+} from '../../lib/applyUpdate';
 
 interface UpdateStateInfo {
   supported: boolean;
@@ -695,6 +702,16 @@ watch(
 
 const wikiDesktop = () => (window as any).wikiDesktop;
 
+/** 传给主进程的更新源配置：与页面中已保存的值一致（检查与下载必须同源，否则资产 URL 校验不过） */
+const updateSourceCfg = computed<UpdateSourceCfg>(() => ({
+  giteaUrl: config.value.giteaUrl,
+  giteaRepo: config.value.giteaRepo,
+  giteaAuthType: config.value.giteaAuthType,
+  giteaToken: config.value.giteaToken,
+  giteaUsername: config.value.giteaUsername,
+  giteaPassword: config.value.giteaPassword,
+}));
+
 /**
  * 提交身份：桌面源码模式取主进程 IPC（含提交日期/脏标记），Docker 镜像与浏览器
  * 访问取服务端 /api/update/state（镜像内烤入的 /app/GIT_SHA）。
@@ -893,55 +910,20 @@ async function confirmApply() {
   healthWaiting.value = false;
   healthTimeout.value = false;
   updateLog.value = [];
-  let streamEnded = false;
-  try {
-    await ssePost('/api/update/apply', {}, {
-      onEvent: (event, data) => {
-        if (event === 'progress' && data?.text) updateLog.value.push(String(data.text));
-        else if (event === 'done') updateLog.value.push(String(data?.message || '更新流程已移交'));
-        else if (event === 'error') {
-          updateLog.value.push(`更新失败: ${data?.error || '未知错误'}`);
-          updating.value = false;
-        }
-      },
-    });
-    streamEnded = true;
-  } catch (e: any) {
-    updateLog.value.push(`连接中断: ${e?.message || e}`);
-  }
-  if (streamEnded && updating.value) {
-    // 服务即将重启：轮询 /health 等恢复，然后刷新页面加载新版本前端。
-    // done 事件发出时旧容器还活着（switcher 随后才停旧起新），必须先观察到一次
-    // 下线再等回 200，否则会把切换前的旧容器当恢复、reload 到旧版本前端。
-    healthWaiting.value = true;
-    const deadline = Date.now() + 5 * 60_000;
-    await new Promise((res) => setTimeout(res, 8000));
-    let sawDown = false;
-    for (;;) {
-      if (Date.now() > deadline) {
-        healthTimeout.value = true;
-        updating.value = false;
-        return;
-      }
-      try {
-        const r = await fetch('/health', { cache: 'no-store' });
-        if (r.ok) {
-          if (sawDown) {
-            await new Promise((res) => setTimeout(res, 1500));
-            location.reload();
-            return;
-          }
-        } else {
-          sawDown = true;
-        }
-      } catch {
-        sawDown = true;
-      }
-      await new Promise((res) => setTimeout(res, 3000));
-    }
-  } else if (!streamEnded) {
+  // 更新流程本体在 lib/applyUpdate.ts（与首页更新提示条共用一份实现）：
+  // SSE 执行 → 等旧容器下线 → 等新容器 /health 恢复 → 自动刷新页面
+  const r = await applyServerUpdate({
+    log: (line) => updateLog.value.push(line),
+    onWaiting: () => { healthWaiting.value = true; },
+    onTimeout: () => { healthTimeout.value = true; },
+  });
+  if (!r.ok) {
     updating.value = false;
+    healthWaiting.value = false;
+    // 超时由 healthTimeout 单独给提示；其余失败把原因写进日志
+    if (!r.timeout) updateLog.value.push(friendlyApplyError(r.error));
   }
+  // r.ok：applyServerUpdate 已等到服务恢复并刷新页面，这里不用再改状态
 }
 
 async function doDesktopCheck() {
@@ -954,14 +936,7 @@ async function doDesktopCheck() {
   desktopChecking.value = true;
   try {
     // 把设置页当前的更新源配置传给主进程，确保检查使用页面中已保存的值
-    desktopCheck.value = await wd.desktopUpdateCheck({
-      giteaUrl: config.value.giteaUrl,
-      giteaRepo: config.value.giteaRepo,
-      giteaAuthType: config.value.giteaAuthType,
-      giteaToken: config.value.giteaToken,
-      giteaUsername: config.value.giteaUsername,
-      giteaPassword: config.value.giteaPassword,
-    });
+    desktopCheck.value = await wd.desktopUpdateCheck(updateSourceCfg.value);
   } finally {
     desktopChecking.value = false;
   }
@@ -971,24 +946,15 @@ async function downloadAndInstall() {
   const wd = wikiDesktop();
   const exe = desktopCheck.value?.exe;
   if (!wd?.desktopUpdateDownload || !exe) return;
-  // 点击即全自动：下载（进度条）→ 静默安装（应用内全屏提示 + 独立进度窗）→ 自动重启，无需再点任何确认
+  // 点击即全自动：下载（进度条）→ 静默安装（应用内全屏提示 + 独立进度窗）→ 自动重启，无需再点任何确认。
+  // 下载进度由 onMounted 里的 desktop-update-progress 订阅统一喂给 downloadPercent。
   downloading.value = true;
   downloadError.value = '';
-  try {
-    const { path: filePath } = await wd.desktopUpdateDownload(exe.url, {
-      giteaUrl: config.value.giteaUrl,
-      giteaRepo: config.value.giteaRepo,
-      giteaAuthType: config.value.giteaAuthType,
-      giteaToken: config.value.giteaToken,
-      giteaUsername: config.value.giteaUsername,
-      giteaPassword: config.value.giteaPassword,
-    });
+  const r = await applyDesktopInstallerUpdate({ cfg: updateSourceCfg.value, check: desktopCheck.value });
+  if (!r.ok) {
     downloading.value = false;
-    installing.value = true;
-    await wd.desktopUpdateRunInstaller(filePath, desktopCheck.value?.latestVersion);
-  } catch (e: any) {
-    downloading.value = false;
-    downloadError.value = e?.message || '下载失败';
+    installing.value = false;
+    downloadError.value = friendlyApplyError(r.error);
   }
 }
 
@@ -1022,16 +988,11 @@ async function doSourceUpdate() {
   if (!ok) return;
   srcUpdating.value = true;
   srcError.value = '';
-  try {
-    const r = await wd.desktopSourceUpdate();
-    if (!r?.ok) {
-      srcUpdating.value = false;
-      srcError.value = r?.error || '更新失败';
-    }
-    // ok：主进程已拉起构建脚本，约 1.5s 后应用自动退出并由新实例接管
-  } catch (e: any) {
+  // 主进程弹出置顶进度小窗；成功后约 1.5s 应用自动退出并由新实例接管
+  const r = await applySourceUpdate();
+  if (!r.ok) {
     srcUpdating.value = false;
-    srcError.value = e?.message || '更新失败';
+    srcError.value = friendlyApplyError(r.error);
   }
 }
 
