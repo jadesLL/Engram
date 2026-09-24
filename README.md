@@ -50,6 +50,8 @@
 - **最小化：手动随时收 + 满窗切内容自动收**：标题栏有「最小化」按钮（—），任何形态（悬浮 / 满窗）点它都把抽屉收起来；满窗下点「设置」「实体页」「搜索」「图谱」或侧栏任意页面（双链跳转、搜索结果、返回轨迹同样算）也会自动**最小化**——不占右侧、正文立刻占满整屏，不会换一条卡片继续挡着新内容。最小化后由右下角**状态胶囊**接管：空闲时提示 4 秒「已最小化 · 点此继续对话」，有轮次在跑则常驻显示「回复中 + 当前动作 + 用时秒表」；点胶囊或图标栏 ✨ 即回到最小化前的形态，会话、草稿与宽度偏好全部保留（与「关闭」的区别只在它明确告诉你抽屉去了哪儿）
 - **只读沙箱 + 仅经 MCP 工具**：Agent 的工作目录是数据目录下的空壳 `data/dsh/workspace`，不是知识库目录；知识库的读写全部经 `mcp__engram__*` 工具，因此 `write_page` 的证据逐字校验、两来源门禁与操作日志照常生效
 - **单列转录、执行记录可展开**：对话流与 dsh 同构——用户消息、思考过程、Agent 正文、工具调用（检索 / 读页 / 写页…）按发生顺序排成一条单列流；工具调用默认收起为一行摘要（工具名 + 参数 + 状态），点开即看完整参数与完整结果（等宽滚动，不截断），失败自动展开；可把一轮对话「沉淀到原始资料」供后续提炼
+- **正文按 Markdown 成块渲染**：助手正文、你发的消息与子代理产出（含生成中的流式片段）都按 Markdown 渲染，不再是一行行纯文本：标题按转录层级降一级成块，有序 / 无序列表（含嵌套与 `- [x]` 任务项）、表格（识别左中右对齐、超宽自动横向滚动）、引用块、分隔线、行内代码与围栏代码块（带语言标记）、`**粗体**` / `*斜体*` / `~~删除线~~` / 引用角标 `[S1]` 全都正常显示，观感与 Wiki 阅读页对齐；`[[页面]]` 与 `[标题](#wiki/…)` 渲染成**双链胶囊**，点它按标题查页并跳到阅读页（页面不存在时问一句要不要新建，跳转前先收起抽屉）；站外图片自动降级成链接（离线环境不出破图），危险协议的链接只显示文本，原文 HTML 一律转义；渲染器为流式输出做了针对性处理——代码块还没写到收尾围栏时仍按代码块渲染、段落内单个换行保留为换行、单条消息做渲染缓存
+- **过程信息保持等宽原文**：思考过程、工具调用参数与结果、选中片段继续用等宽文本原样显示——这些是排查用的原始日志，渲染成 Markdown 反而看不清
 - **运行中也能接着发消息（排队）**：一轮回复期间输入框照常可用，发出去的消息立刻进对话并标「排队中 · 当前这轮跑完自动接着回复」，当前这轮一收口就自动接着回复它（同一会话仍是一轮一轮跑，先来先服务；想一次说清就 Shift+Enter 换行写完再发）；排队条数在标题胶囊与贴底状态条上都标着
 - **「停止」按下即停**：停止按钮挂在抽屉标题栏「回复中」胶囊右侧（输入框右下角固定留给「发送」，所以运行中也能发消息），按下**立刻**停住当前动作——服务端先把这一轮落成终态并广播，dsh 运行时在后台回收，不必等进程退出（否则界面会挂着「正在回复」好几秒）；同时**排队中的消息一并撤下，原文退回输入框**（它们还没真正发出去，改完可以再发），该轮留下的正文与思考段照旧保留，可「重试」
 - **子代理派活看得见**：Agent 把活派给子代理（dsh 的 `subagent` / `subagent_fork` / `workflow` / `ralph` 子会话）时，对话流里会出现一颗**子代理胶囊**（默认收起，不占屏）——一行装下标签（模型给的 3-5 词任务名）、当前动态、运行状态与用时秒表，运行中 / 后台的胶囊带一圈低强度呼吸光晕，失败 / 完成各自换色；点开在胶囊下方接一块**详情面板**：**委托任务原文**、子代理自己的**过程**（它调了哪些工具、参数摘要、成败与时间点）、以及**产出**（最后一条正文；收工时以 dsh 的 `subagent.finished` 定稿）；子代理再派子代理会以同款小胶囊嵌在父卡里。派它的那次工具调用并进同一张卡，不会重复两行；本轮结束时仍在后台跑的子代理标「后台运行中」。为此内置 Agent 的约定里写明：委派子代理默认同步等结果（`run_in_background: false`），除非用户明确要并行后台作业
@@ -98,13 +100,13 @@
 | ZCode 桌面端 | `~/.zcode/cli/config.json` | 检测本机安装与登录状态，注册/移除知识库 MCP |
 | Codex CLI | `~/.codex/config.toml`（`[mcp_servers.engram]`） | 只维护 Engram 这一个 TOML 表，其余配置、注释与其他 `[mcp_servers.*]` 条目原样保留；重启 Codex 会话生效 |
 | DeepSeek Harness（dsh） | `$DSH_HOME/cordis.patch.yml` | 对整个 patch 层注册，对所有 dsh profile 生效 |
-| WorkBuddy | `~/.workbuddy-ai/mcp.json` | 只维护 `mcpServers.engram`；在连接器页确认启用 |
-| Qoder | `~/.qoder/settings.json` | 只维护 `mcpServers.engram`；重新打开会话后使用；QoderWork 仍需手动导入 |
+| WorkBuddy | `~/.workbuddy/mcp.json`（海外版 `~/.workbuddy-ai/mcp.json`） | 按客户端自身规则解析配置目录（`WORKBUDDY_CONFIG_DIR` / `CODEBUDDY_CONFIG_DIR` 优先），检测到的变体目录都会写上；只维护 `mcpServers.engram`；新写入的服务在连接器页是「待信任」，需确认启用一次 |
+| Qoder | `~/.qoder/settings.json`（国内版 `~/.qoder-cn/settings.json`） | 国际版与国内版目录都检测、都注册（`QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR` 优先）；只维护 `mcpServers.engram`；重新打开会话后使用；QoderWork 仍需手动导入 |
 | Kimi Work（Windows） | 个人插件市场 | 调用客户端自带命令登记插件，随后在 Kimi Work 中安装 |
 
 一键注册只对本机安装的客户端落地（需与 Engram 桌面版同一台电脑）；Docker/远程部署时让 Agent 用「其他 Agent」的 MCP 片段或 `engram login` 连接。Claude Code 示例：
 
-[WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/Changelog) 一键注册写入用户级自定义 MCP 配置；[Qoder](https://docs.qoder.com/zh/qoder/connectors) 一键注册写入 `~/.qoder/settings.json` 的 `mcpServers.engram`；[Kimi Work](https://www.kimi.com/help/plugins-and-skills/create) 一键登记使用客户端自带的 `kimi-plugin register-personal`，安装仍需用户在「插件 → 个人」完成。QoderWork 与其他远程客户端可手动导入对应片段。客户端须能访问片段中的 `/mcp` 地址。
+[WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/Changelog) 一键注册写入用户级自定义 MCP 配置（国内版 `~/.workbuddy`、海外版 `~/.workbuddy-ai`，按客户端自身规则解析并全部登记）；[Qoder](https://docs.qoder.com/zh/qoder/connectors) 一键注册同时写入国际版 `~/.qoder/settings.json` 与国内版 `~/.qoder-cn/settings.json` 的 `mcpServers.engram`；[Kimi Work](https://www.kimi.com/help/plugins-and-skills/create) 一键登记使用客户端自带的 `kimi-plugin register-personal`，安装仍需用户在「插件 → 个人」完成。QoderWork 与其他远程客户端可手动导入对应片段。客户端须能访问片段中的 `/mcp` 地址。
 
 ```bash
 claude mcp add --transport http engram http://<主机IP>:18080/mcp \
