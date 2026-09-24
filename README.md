@@ -90,17 +90,20 @@
 | `kb_guide` | 下发《Agent 作业指南》全文 |
 | `skill_list` / `skill_guide` | 内置作业 skill：先列清单（名称 / 用途 / 何时用 / 版本），需要时再取某份全文。skill 与指南同级但按需获取，版本独立于 `GUIDE_VERSION`，改 skill 不触发全库「规则落后」 |
 
-**各 Agent 接入**：设置 → Agent 接入 →「接入目标」选 ZCode 桌面端 / Codex CLI / DeepSeek Harness（dsh）可一键注册；选 WorkBuddy、Qoder 或 Kimi Work 可查看对应接入步骤并复制专属配置片段；选「其他 Agent」可复制 Codex / Claude Code / Kimi Code CLI / 通用片段。手动接入区显示 MCP Server 地址、Token 管理，可选择具体 Token 生成片段；面板底部「查看工具」逐条列出现有 MCP 工具（功能、参数、要点与 CLI 等价命令）。
+**各 Agent 接入**：设置 → Agent 接入 →「接入目标」选 ZCode 桌面端 / Codex CLI / DeepSeek Harness（dsh）/ WorkBuddy / Qoder 可在本机一键注册；Kimi Work 可一键登记个人插件，然后在 Kimi Work 插件中心点击安装。各目标仍提供专属配置片段供跨设备手动接入；「其他 Agent」可复制 Codex / Claude Code / Kimi Code CLI / 通用片段。手动接入区显示 MCP Server 地址、Token 管理，可选择具体 Token 生成片段；面板底部「查看工具」逐条列出现有 MCP 工具（功能、参数、要点与 CLI 等价命令）。
 
 | 一键接入目标 | 写入位置 | 说明 |
 |---|---|---|
 | ZCode 桌面端 | `~/.zcode/cli/config.json` | 检测本机安装与登录状态，注册/移除知识库 MCP |
 | Codex CLI | `~/.codex/config.toml`（`[mcp_servers.engram]`） | 只维护 Engram 这一个 TOML 表，其余配置、注释与其他 `[mcp_servers.*]` 条目原样保留；重启 Codex 会话生效 |
 | DeepSeek Harness（dsh） | `$DSH_HOME/cordis.patch.yml` | 对整个 patch 层注册，对所有 dsh profile 生效 |
+| WorkBuddy | `~/.workbuddy-ai/mcp.json` | 只维护 `mcpServers.engram`；在连接器页确认启用 |
+| Qoder | `~/.qoder/settings.json` | 只维护 `mcpServers.engram`；重新打开会话后使用；QoderWork 仍需手动导入 |
+| Kimi Work（Windows） | 个人插件市场 | 调用客户端自带命令登记插件，随后在 Kimi Work 中安装 |
 
 一键注册只对本机安装的客户端落地（需与 Engram 桌面版同一台电脑）；Docker/远程部署时让 Agent 用「其他 Agent」的 MCP 片段或 `engram login` 连接。Claude Code 示例：
 
-[WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Connector) 使用「连接器 → 自定义连接器」中的 `streamableHttp` 配置；[QoderWork](https://docs.qoder.com/zh/qoderwork/connectors) 使用「扩展 → 连接器 → 粘贴 JSON 配置」，Qoder IDE 也可在 MCP 设置中填写地址与 Authorization 请求头；[Kimi Work](https://www.kimi.com/help/plugins-and-skills/create) 通过 Plugin Builder 创建并在「插件 → 个人」安装含 Engram MCP 的插件。客户端须能访问片段中的 `/mcp` 地址。
+[WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/Changelog) 一键注册写入用户级自定义 MCP 配置；[Qoder](https://docs.qoder.com/zh/qoder/connectors) 一键注册写入 `~/.qoder/settings.json` 的 `mcpServers.engram`；[Kimi Work](https://www.kimi.com/help/plugins-and-skills/create) 一键登记使用客户端自带的 `kimi-plugin register-personal`，安装仍需用户在「插件 → 个人」完成。QoderWork 与其他远程客户端可手动导入对应片段。客户端须能访问片段中的 `/mcp` 地址。
 
 ```bash
 claude mcp add --transport http engram http://<主机IP>:18080/mcp \

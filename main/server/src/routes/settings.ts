@@ -21,6 +21,13 @@ import {
   registerCodexMcp,
   unregisterCodexMcp,
 } from '../lib/codexConfig.js';
+import {
+  externalMcpStatus,
+  registerExternalMcp,
+  unregisterExternalMcp,
+  type ExternalMcpTarget,
+} from '../lib/externalMcpConfig.js';
+import { getKimiWorkStatus, registerKimiWorkPlugin } from '../lib/kimiWorkConfig.js';
 import { requireAuth } from './auth.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
@@ -211,6 +218,38 @@ export async function settingsRoutes(app: FastifyInstance) {
     unregisterCodexMcp();
     db.prepare(`DELETE FROM mcp_tokens WHERE name = 'codex'`).run();
     return { ok: true };
+  });
+
+  // ---------- WorkBuddy / Qoder 用户级 MCP 配置 ----------
+
+  for (const target of ['workbuddy', 'qoder'] as ExternalMcpTarget[]) {
+    app.get(`/api/settings/${target}-status`, async () => externalMcpStatus(target));
+
+    app.post(`/api/settings/${target}-register`, async (_req, reply) => {
+      if (!externalMcpStatus(target).installed) {
+        return reply.code(400).send({ error: `未检测到本机 ${target} 客户端` });
+      }
+      const token = harnessToken(target);
+      const configPath = registerExternalMcp(target, zcodeMcpUrl, token);
+      return { ok: true, mcpUrl: zcodeMcpUrl, configPath };
+    });
+
+    app.post(`/api/settings/${target}-unregister`, async () => {
+      unregisterExternalMcp(target);
+      db.prepare(`DELETE FROM mcp_tokens WHERE name = ?`).run(target);
+      return { ok: true };
+    });
+  }
+
+  // Kimi Work 的个人插件市场由客户端 CLI 管理；登记后须在 Kimi Work 中点击安装。
+  app.get('/api/settings/kimiwork-status', async () => getKimiWorkStatus());
+  app.post('/api/settings/kimiwork-register', async (_req, reply) => {
+    if (!getKimiWorkStatus().installed) {
+      return reply.code(400).send({ error: '未检测到本机 Kimi Work 桌面端' });
+    }
+    const token = harnessToken('kimiwork');
+    const pluginPath = registerKimiWorkPlugin(zcodeMcpUrl, token);
+    return { ok: true, pluginPath, installUrl: getKimiWorkStatus().installUrl };
   });
 
   /** 一键清除：删除知识正文、整理报告、入库记录与派生索引，保留配置/认证/系统日志。清除后后台全量重建索引，接口快速返回，避免长耗时操作阻塞容器健康探针。 */

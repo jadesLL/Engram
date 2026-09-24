@@ -24,21 +24,41 @@
       与 REST API（Bearer 方式）。
     </div>
 
+    <div v-if="target !== 'other'" class="auto-register">
+      <div class="auto-register-status">
+        <span>{{ targetTitle }}本机状态</span>
+        <strong>{{ localStatus.installed ? (localStatus.registered ? (target === 'kimiwork' ? '已登记个人插件' : '已注册 Engram MCP') : '已检测到，尚未注册') : '未检测到本机客户端' }}</strong>
+      </div>
+      <div v-if="localStatus.installed" class="auto-register-status">
+        <span>{{ target === 'kimiwork' ? '插件目录' : '配置文件' }}</span><code>{{ target === 'kimiwork' ? localStatus.pluginPath : localStatus.configPath }}</code>
+      </div>
+      <div v-if="localStatus.installed" class="auto-register-actions">
+        <button class="btn primary" type="button" :disabled="registering" @click="registerLocal">
+          {{ registering ? '处理中…' : (target === 'kimiwork' ? (localStatus.registered ? '重新登记插件' : '一键登记插件') : (localStatus.registered ? '重新注册' : '一键接入')) }}
+        </button>
+        <button v-if="localStatus.registered && target !== 'kimiwork'" class="btn" type="button" :disabled="registering" @click="unregisterLocal">移除注册</button>
+        <a v-if="target === 'kimiwork' && localStatus.registered" class="btn" :href="localStatus.installUrl">前往 Kimi Work 安装</a>
+      </div>
+      <p v-if="target === 'kimiwork' && localStatus.registered">请在 Kimi Work 的「插件 → 个人」点击安装。</p>
+      <p v-else-if="!localStatus.installed">一键接入需 Engram 桌面版与目标客户端在同一台电脑运行；Docker 或远程客户端请使用下方配置片段。</p>
+    </div>
+
     <div v-if="target !== 'other'" class="target-guide">
       <ol v-if="target === 'workbuddy'">
-        <li>在 WorkBuddy 打开「连接器」→「自定义连接器」。</li>
-        <li>生成 Token，复制下方配置片段并添加 Engram MCP 服务。</li>
+        <li>本机可点「一键接入」写入用户级 MCP 配置；在 WorkBuddy 的「连接器」→「自定义连接器」确认已启用。</li>
+        <li>其他设备可生成 Token，复制下方配置片段手动添加 Engram MCP 服务。</li>
         <li>启用连接器，在对话里检查 Engram 工具是否可用。</li>
       </ol>
       <ol v-else-if="target === 'qoder'">
+        <li>本机 Qoder 可点「一键接入」写入用户级 MCP 配置，重新打开会话后使用。</li>
         <li>QoderWork：打开「扩展」→「连接器」→「+ 添加」→「粘贴 JSON 配置」。</li>
         <li>Qoder IDE：打开「设置」→「MCP」→「My Servers」→「+ Add」，填入下方地址和 Authorization 请求头。</li>
         <li>导入或保存后，确认 Engram MCP 连接成功。</li>
       </ol>
       <ol v-else>
-        <li>在 Kimi Work 打开插件中心，选择「自定义插件」并调用 Plugin Builder。</li>
-        <li>让 Plugin Builder 根据下方 <code>kimi.plugin.json</code> 配置创建个人插件。</li>
+        <li>本机可点「一键登记插件」，Engram 会调用 Kimi Work 自带命令创建个人插件。</li>
         <li>在「插件」→「个人」安装 Engram 插件，再在对话中使用。</li>
+        <li>其他设备可让 Plugin Builder 根据下方 <code>kimi.plugin.json</code> 配置创建插件。</li>
       </ol>
     </div>
 
@@ -77,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../../api';
 import Icon from '../Icon.vue';
 import SecretField from '../SecretField.vue';
@@ -89,6 +109,8 @@ const mcpTokens = ref<any[]>([]);
 const mcpUrl = computed(() => `${location.origin}/mcp`);
 const snippetFormat = ref('codex');
 const selectedTokenId = ref<number | null>(null);
+const localStatus = ref({ installed: false, registered: false, configPath: '', pluginPath: '', installUrl: '' });
+const registering = ref(false);
 
 const targetTitle = computed(() => ({
   workbuddy: 'WorkBuddy 接入',
@@ -189,14 +211,69 @@ async function copy(text: string) {
   }
 }
 
+async function loadLocalStatus() {
+  if (props.target === 'other') return;
+  try {
+    localStatus.value = (await api.get(`/api/settings/${props.target}-status`)).data;
+  } catch {
+    localStatus.value = { installed: false, registered: false, configPath: '', pluginPath: '', installUrl: '' };
+  }
+}
+
+async function registerLocal() {
+  registering.value = true;
+  try {
+    await api.post(`/api/settings/${props.target}-register`);
+    await loadLocalStatus();
+    notify.success(props.target === 'kimiwork' ? '已登记 Kimi Work 个人插件，请在插件中心安装' : `已注册 Engram MCP 到 ${props.target === 'qoder' ? 'Qoder' : 'WorkBuddy'}`);
+  } catch {
+    notify.error(props.target === 'kimiwork' ? '插件登记失败，请检查 Kimi Work 客户端' : '注册失败，请检查本机配置文件');
+  } finally {
+    registering.value = false;
+  }
+}
+
+async function unregisterLocal() {
+  registering.value = true;
+  try {
+    await api.post(`/api/settings/${props.target}-unregister`);
+    await loadLocalStatus();
+    notify.success('已移除注册');
+  } catch {
+    notify.error('移除失败，请检查本机配置文件');
+  } finally {
+    registering.value = false;
+  }
+}
+
+watch(() => props.target, loadLocalStatus);
+
 onMounted(async () => {
   const { data } = await api.get('/api/settings/mcp-tokens');
   mcpTokens.value = data.tokens;
   selectedTokenId.value = mcpTokens.value[0]?.id ?? null;
+  await loadLocalStatus();
 });
 </script>
 
 <style scoped>
+.auto-register {
+  margin: 0 4px 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+}
+.auto-register-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.auto-register-status code { overflow-wrap: anywhere; text-align: right; }
+.auto-register-actions { display: flex; gap: 10px; margin-top: 12px; }
+.auto-register p { margin: 8px 0 0; color: var(--text-secondary); }
 .sub-head {
   display: flex;
   align-items: flex-start;
