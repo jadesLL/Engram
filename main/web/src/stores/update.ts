@@ -26,7 +26,10 @@ interface UpdateState {
   /** null=未检测，undefined=检测失败 */
   lastResult: UpdateCheckResult | null | undefined;
   checking: boolean;
+  /** 最近一次「成功」检测完成的时间（提示条上显示「已自动检查 · X 分钟前」） */
   checkedAt: number;
+  /** 最近一次发起检测的时间（含失败），仅用于 30 秒入口去抖 */
+  lastAttemptAt: number;
   dismissedVersion: string;
 }
 
@@ -37,6 +40,7 @@ export const useUpdateStore = defineStore('update', {
     lastResult: null,
     checking: false,
     checkedAt: 0,
+    lastAttemptAt: 0,
     dismissedVersion: localStorage.getItem(DISMISS_KEY) || '',
   }),
   getters: {
@@ -55,8 +59,10 @@ export const useUpdateStore = defineStore('update', {
   actions: {
     async check(force = false) {
       if (this.checking) return;
-      // 8 小时内不重复自动检测；force 用于设置页手动触发
-      if (!force && Date.now() - this.checkedAt < 8 * 3600_000 && this.lastResult) return;
+      // 30 秒入口去抖：真正的检查节奏由调用方（Home 的自适应退避调度）决定，
+      // 这里只兜住「切前台 + 聚焦 + visibilitychange 同时触发」造成的重复请求。
+      if (!force && Date.now() - this.lastAttemptAt < 30_000) return;
+      this.lastAttemptAt = Date.now();
       this.checking = true;
       try {
         const { data } = await api.post('/api/update/check', {});
