@@ -193,7 +193,14 @@ function runningSessionIds(): Set<string> {
        WHERE status IN (${ACTIVE_STATUSES.map(() => '?').join(', ')})`
     )
     .all(...ACTIVE_STATUSES) as any[];
-  return new Set(rows.map((row) => row.session_id));
+  const ids = new Set<string>(rows.map((row) => row.session_id));
+  const conversions = db.prepare(
+    `SELECT DISTINCT assistant_session_id AS session_id FROM jobs
+     WHERE kind = 'inbox_convert' AND assistant_session_id IS NOT NULL
+       AND status IN ('pending', 'running', 'paused')`
+  ).all() as { session_id: string }[];
+  for (const row of conversions) ids.add(row.session_id);
+  return ids;
 }
 
 function subagentStatusOf(value: unknown): SubagentStatus {
@@ -279,6 +286,7 @@ export function touchSession(id: string): void {
 }
 
 export function deleteSession(id: string): void {
+  db.prepare(`UPDATE jobs SET assistant_session_id = NULL WHERE assistant_session_id = ?`).run(id);
   db.prepare(`DELETE FROM assistant_subagents WHERE session_id = ?`).run(id);
   db.prepare(`DELETE FROM assistant_messages WHERE session_id = ?`).run(id);
   db.prepare(`DELETE FROM assistant_runs WHERE session_id = ?`).run(id);

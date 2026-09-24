@@ -148,6 +148,9 @@
               <Icon name="ai" :size="14" />{{ item.status === 'converting' ? '转换中…' : '转为 Markdown' }}
             </button>
           </span>
+          <button v-if="item.assistantSessionId" class="btn sm ghost" type="button" @click="openConversionChat(item.assistantSessionId)">
+            <Icon name="messages" :size="14" />查看过程
+          </button>
           <template v-if="item.status === 'converted'">
             <span class="tip-wrap" v-tooltip="item.derivedPath ? `查看产物：${item.derivedPath}` : '还没有转换产物'">
               <button class="btn sm" type="button" :disabled="!item.derivedPath" @click="openReview(item)">
@@ -229,6 +232,8 @@ import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
 import { useInboxStore, type InboxItem, type InboxUpload } from '../stores/inbox';
+import { useChatStore } from '../stores/chat';
+import { useAppStore } from '../stores/app';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import Icon from '../components/Icon.vue';
@@ -240,6 +245,8 @@ import AppModal from '../components/ui/AppModal.vue';
 const isDesktop = Boolean((window as any).wikiDesktop);
 
 const inbox = useInboxStore();
+const chat = useChatStore();
+const app = useAppStore();
 const fileInput = ref<HTMLInputElement>();
 const pageUrl = ref('');
 const fetchingUrl = ref(false);
@@ -325,6 +332,7 @@ async function convertItem(item: InboxItem) {
     if (result.queued.length) {
       notify.success('已开始转换');
       expectConversion();
+      await openConversionChat(result.queued[0].sessionId);
     } else if (result.skipped.length) {
       notify.error(`无法转换：${result.skipped[0].reason}`);
     }
@@ -340,6 +348,7 @@ async function convertAll() {
     if (result.queued.length) {
       notify.success(`已开始转换 ${result.queued.length} 个文件`);
       expectConversion();
+      await openConversionChat(result.queued[0].sessionId);
     }
     // 服务端会跳过不能转的格式：第一条原因足够说明问题，逐条细节看行内提示
     if (result.skipped.length) {
@@ -348,6 +357,17 @@ async function convertAll() {
     }
   } catch (error: any) {
     notify.error(error?.response?.data?.error || '无法开始转换');
+  }
+}
+
+/** 批量转换时先打开第一条；其余转换各自进入 Agent 会话列表。 */
+async function openConversionChat(sessionId: string) {
+  try {
+    await chat.loadSessions();
+    await chat.selectSession(sessionId);
+    app.toggleChat(true);
+  } catch {
+    notify.error('转换已受理，但暂时无法打开 Agent 对话');
   }
 }
 

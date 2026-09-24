@@ -9,6 +9,8 @@ import { moveToTrash } from '../lib/trash.js';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
 import { enqueue } from '../jobQueue.js';
+import { db } from '../lib/db.js';
+import { createInboxConversation } from '../pipeline/inboxConversation.js';
 import { listInboxItems, inboxCategoryOf, type InboxItem } from '../lib/inboxItems.js';
 import { fetchInboxWebPage, InboxWebFetchError } from '../lib/inboxWebFetch.js';
 import {
@@ -129,6 +131,7 @@ export async function inboxRoutes(app: FastifyInstance) {
         hint: capabilityHint(rel, capability),
         error: '',
         jobId: null,
+        assistantSessionId: null,
       } satisfies InboxItem);
     }
 
@@ -213,7 +216,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   /**
    * 语义转换：入队 inbox_convert。按内容重写成 Markdown，产物留在收集箱。
-   * 同一份文件重复点不会排两次（jobQueue 按 kind+payload 去重）。
+   * 同一份文件正在转换时复用任务；完成后再次点会新建任务和 Agent 对话。
    */
   app.post('/api/inbox/convert', async (req, reply) => {
     const body = (req.body || {}) as { paths?: string[]; all?: boolean };
@@ -224,9 +227,9 @@ export async function inboxRoutes(app: FastifyInstance) {
         : [];
     if (!requested.length) return reply.code(400).send({ error: '没有要转换的文件' });
 
-    const queued: { path: string; jobId: number }[] = [];
+    const queued: { path: string; jobId: number; sessionId: string }[] = [];
     const skipped: { path: string; reason: string }[] = [];
-    for (const rel of requested) {
+    for (const rel of new Set(requested)) {
       if (!isInboxPath(rel) || isInboxDerivedPath(rel) || !fs.existsSync(safeJoin(rel))) {
         skipped.push({ path: String(rel), reason: '路径无效' });
         continue;
@@ -236,9 +239,18 @@ export async function inboxRoutes(app: FastifyInstance) {
         skipped.push({ path: rel, reason: capabilityHint(rel, capability) });
         continue;
       }
-      const jobId = enqueue('inbox_convert', { path: rel });
-      if (typeof jobId === 'number') queued.push({ path: rel, jobId });
-      else queued.push({ path: rel, jobId: 0 }); // 已有同样的任务在排队/运行：0 = 复用
+      const result = db.transaction(() => {
+        const created = enqueue('inbox_convert', { path: rel }, { dedupeRecent: false });
+        const jobId = created ?? (db.prepare(
+          `SELECT id FROM jobs WHERE kind = 'inbox_convert' AND payload = ?
+           AND status IN ('pending', 'running', 'paused') ORDER BY id DESC LIMIT 1`
+        ).get(JSON.stringify({ path: rel })) as { id: number }).id;
+        const existing = db.prepare(`SELECT assistant_session_id AS sessionId FROM jobs WHERE id = ?`)
+          .get(jobId) as { sessionId: string | null };
+        const sessionId = existing.sessionId || createInboxConversation(jobId, rel);
+        return { path: rel, jobId, sessionId };
+      })();
+      queued.push(result);
       emit('file-changed', { path: rel });
     }
     return { queued, skipped };

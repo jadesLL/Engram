@@ -49,6 +49,8 @@ export interface InboxItem {
   error: string;
   /** 正在跑（或刚失败）的转换任务 id */
   jobId: number | null;
+  /** 最近一次转换对应的 Agent 对话 */
+  assistantSessionId: string | null;
 }
 
 export interface InboxListing {
@@ -81,11 +83,11 @@ export function derivedStemMap(): Map<string, string> {
 }
 
 /** 转换任务的本机状态：converting / failed 都来自 jobs 表（产物是否存在由磁盘决定） */
-export function jobStatesByPath(): Map<string, { status: 'converting' | 'failed'; error: string; jobId: number }> {
+export function jobStatesByPath(): Map<string, { status: 'converting' | 'failed' | 'done' | 'cancelled'; error: string; jobId: number; assistantSessionId: string | null }> {
   const rows = db
-    .prepare(`SELECT id, payload, status, error FROM jobs WHERE kind = 'inbox_convert' ORDER BY id DESC LIMIT 500`)
-    .all() as { id: number; payload: string; status: string; error: string | null }[];
-  const map = new Map<string, { status: 'converting' | 'failed'; error: string; jobId: number }>();
+    .prepare(`SELECT id, payload, status, error, assistant_session_id FROM jobs WHERE kind = 'inbox_convert' ORDER BY id DESC LIMIT 500`)
+    .all() as { id: number; payload: string; status: string; error: string | null; assistant_session_id: string | null }[];
+  const map = new Map<string, { status: 'converting' | 'failed' | 'done' | 'cancelled'; error: string; jobId: number; assistantSessionId: string | null }>();
   for (const row of rows) {
     let payload: any;
     try {
@@ -96,9 +98,13 @@ export function jobStatesByPath(): Map<string, { status: 'converting' | 'failed'
     const target = payload?.path;
     if (typeof target !== 'string' || !target || map.has(target)) continue;
     if (['pending', 'running', 'paused'].includes(row.status)) {
-      map.set(target, { status: 'converting', error: '', jobId: row.id });
+      map.set(target, { status: 'converting', error: '', jobId: row.id, assistantSessionId: row.assistant_session_id });
     } else if (row.status === 'failed') {
-      map.set(target, { status: 'failed', error: row.error || '转换失败', jobId: row.id });
+      map.set(target, { status: 'failed', error: row.error || '转换失败', jobId: row.id, assistantSessionId: row.assistant_session_id });
+    } else if (row.status === 'done') {
+      map.set(target, { status: 'done', error: '', jobId: row.id, assistantSessionId: row.assistant_session_id });
+    } else if (row.status === 'cancelled') {
+      map.set(target, { status: 'cancelled', error: '', jobId: row.id, assistantSessionId: row.assistant_session_id });
     }
   }
   return map;
@@ -141,7 +147,8 @@ export function listInboxItems(): InboxListing {
       const derivedName = derived.get(stemOf(rel)) || null;
       const job = jobs.get(rel);
       const capability = convertCapability(rel);
-      const status: InboxItem['status'] = job ? job.status : derivedName ? 'converted' : 'pending';
+      const status: InboxItem['status'] = job && (job.status === 'converting' || job.status === 'failed')
+        ? job.status : derivedName ? 'converted' : 'pending';
       return {
         path: rel,
         name,
@@ -156,6 +163,7 @@ export function listInboxItems(): InboxListing {
         hint: capabilityHint(rel, capability),
         error: job?.error || '',
         jobId: job?.jobId ?? null,
+        assistantSessionId: job?.assistantSessionId ?? null,
       } satisfies InboxItem;
     })
     .sort((a, b) => b.mtime - a.mtime);

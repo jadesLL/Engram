@@ -30,11 +30,13 @@ export interface InboxItem {
   error: string;
   /** 转换任务 id；null 表示这份文件还没有转换任务 */
   jobId: number | null;
+  /** 最近一次转换的 Agent 对话 */
+  assistantSessionId: string | null;
 }
 
 /** POST /api/inbox/convert 的回执：哪些进了队列、哪些被跳过及原因 */
 export interface InboxConversion {
-  queued: { path: string; jobId: number }[];
+  queued: { path: string; jobId: number; sessionId: string }[];
   skipped: { path: string; reason: string }[];
 }
 
