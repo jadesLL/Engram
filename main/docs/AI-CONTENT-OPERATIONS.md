@@ -14,7 +14,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 
 - **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / names check|propose|list|audit|answer / chat save / guide / mcp-config），`--json` 得机器可读输出。
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
-- **一键接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 接入直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；远程部署仍用 MCP 配置片段或 `engram login`。
+- **Agent 接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 接入直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；WorkBuddy、Qoder 与 Kimi Work 有对应的 MCP/插件配置片段与接入步骤；远程部署也可使用 MCP 配置片段或 `engram login`。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
 - **原始资料受限新建**：`create_raw_material` 是唯一允许 Agent 新建原始资料的 MCP 工具，只能新建 `原始资料/` 下的 Markdown 文件；路径已存在（含回收站占位）即拒绝，且不能写 `原始资料/对话/`。仅在用户明确要求保存调研结果时调用。Agent 不得更新、改名、删除既有原始资料，也不得走 HTTP/CLI 旁路。`AIWorks/` 只读；`write_page` / `rename_page` / `move_page` / `delete_page` 仍只允许 `Wiki/`。
   - 作业时需要的资料不在库里且用户没有要求保存调研结果时：按现有材料推进，把缺口写进页面的「待核实」，**不要停下来等用户**。证据门禁报「来源必须在 `原始资料/` 下」时同理——跳过这条事实（或改用库内来源支撑）并记进「待核实」，不要自己找旁路把文件塞进去。

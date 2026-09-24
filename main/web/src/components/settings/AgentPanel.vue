@@ -3,7 +3,7 @@
     <div class="panel-head">
       <div>
         <h3>Agent 接入</h3>
-        <p>把 Engram 知识库接入外部 Agent：ZCode 桌面端、Codex CLI 与 DeepSeek Harness 支持一键注册；其他 Agent 用 MCP 配置片段接入。</p>
+        <p>把 Engram 知识库接入外部 Agent：ZCode 桌面端、Codex CLI 与 DeepSeek Harness 支持一键注册；WorkBuddy、Qoder、Kimi Work 可按专属指引接入。</p>
       </div>
     </div>
 
@@ -88,7 +88,7 @@
     <SettingsGroup
       anchor="agent-target"
       title="接入目标"
-      hint="ZCode 桌面端、Codex CLI 与 DeepSeek Harness 支持一键注册；其他 Agent 用 MCP 配置片段接入"
+      hint="选择 Agent 后查看一键注册或对应的 MCP 接入指引"
     >
       <div class="harness-picker">
         <label for="agent-target-select">接入目标</label>
@@ -96,12 +96,15 @@
           <option value="zcode">ZCode 桌面端（一键接入）</option>
           <option value="codex">Codex CLI（一键接入）</option>
           <option value="dsh">DeepSeek Harness / dsh（一键接入）</option>
+          <option value="workbuddy">WorkBuddy（MCP 接入）</option>
+          <option value="qoder">Qoder（MCP 接入）</option>
+          <option value="kimiwork">Kimi Work（插件接入）</option>
           <option value="other">其他 Agent（MCP 接入）</option>
         </select>
       </div>
 
-      <AgentHarnessSection v-if="target !== 'other'" :harness="harnessTarget" />
-      <AgentMcpSection v-else />
+      <AgentHarnessSection v-if="target === 'zcode' || target === 'codex' || target === 'dsh'" :harness="harnessTarget" />
+      <AgentMcpSection v-else :target="target" />
     </SettingsGroup>
 
     <SettingsGroup
@@ -168,7 +171,7 @@ import SecretField from '../SecretField.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 
-type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'other';
+type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'workbuddy' | 'qoder' | 'kimiwork' | 'other';
 
 const target = ref<AgentTarget>('zcode');
 /** 《Agent 作业指南》较长，默认收起在「查看工具」分组底部 */
