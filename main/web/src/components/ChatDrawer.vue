@@ -166,7 +166,7 @@
       </div>
     </section>
 
-    <div v-else ref="scrollEl" class="chat-body">
+    <div v-else ref="scrollEl" class="chat-body" @click="onBodyClick">
       <div v-if="chat.loading" class="empty-hint"><AppSpinner :size="14" /> 正在加载会话…</div>
 
       <AppEmptyState
@@ -199,7 +199,7 @@
               >复制</button>
             </div>
             <div v-if="item.role === 'user'" class="entry-user">
-              <div class="entry-plain">{{ item.message.content }}</div>
+              <div class="entry-plain md-body" v-html="renderMarkdown(item.message.content)" />
               <!-- 排队中：这轮还没轮到它（前一轮收口后自动接着回复），标出来免得用户以为卡住了 -->
               <span v-if="isQueuedMessage(item.message)" class="queued-chip">
                 <AppSpinner :size="10" />
@@ -208,8 +208,8 @@
             </div>
             <div
               v-else-if="item.message.content"
-              class="entry-markdown"
-              v-html="renderAssistantMarkdown(item.message.content)"
+              class="entry-markdown md-body"
+              v-html="renderMarkdown(item.message.content)"
             />
             <span v-if="streamingKey === item.key" class="cursor">▍</span>
           </div>
@@ -276,7 +276,7 @@
               </section>
               <section v-if="item.subagent.result" class="subagent-block">
                 <h4>{{ isSubagentLive(item.subagent) ? '当前输出' : '产出' }}</h4>
-                <pre class="subagent-result">{{ item.subagent.result }}</pre>
+                <div class="subagent-result md-body" v-html="renderMarkdown(item.subagent.result)" />
               </section>
               <p v-else-if="isSubagentLive(item.subagent)" class="subagent-pending">子代理正在干活，过程会实时更新…</p>
               <p v-else-if="item.subagent.status === 'failed' && item.subagent.stopReason" class="subagent-pending">
@@ -490,9 +490,11 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import Icon from './Icon.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import AppSpinner from './ui/AppSpinner.vue';
+import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useInboxStore } from '../stores/inbox';
 import {
@@ -538,11 +540,12 @@ import {
 import { formatDuration, formatSessionTime } from '../lib/chatTime';
 import { cacheHitText, mergeUsage, usageDetail } from '../lib/chatUsage';
 import { confirmDialog } from '../lib/confirm';
-import { renderAssistantMarkdown } from '../lib/markdown';
+import { renderMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
 
 const props = defineProps<{ overlay?: boolean }>();
 
+const router = useRouter();
 const app = useAppStore();
 const chat = useChatStore();
 const inbox = useInboxStore();
@@ -1109,6 +1112,49 @@ async function ingest() {
 function copy(text: string) {
   void navigator.clipboard.writeText(text);
   notify.success('已复制');
+}
+
+/* ===== 正文里的双链：点胶囊跳 Wiki 页 ===== */
+/** 正在解析双链（防连点重复请求） */
+const wikiOpening = ref(false);
+
+/** 跳转前收起抽屉：叠层形态（手机/紧凑）整只收起，满窗形态按导航规则最小化，停靠形态本来就不挡内容 */
+function collapseForNavigation() {
+  if (props.overlay) app.minimizeChat();
+  else app.minimizeChatForNavigation();
+}
+
+/**
+ * 正文里的双链胶囊（`[[页面]]` / `[标题](#wiki/页面)`）：按标题查页面 id 再跳 Wiki 阅读页，
+ * 与阅读页的双链一致（页面不存在时问一句要不要建）。外链不拦，交给 target="_blank" 走系统浏览器。
+ */
+async function onBodyClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  const anchor = target?.closest?.('a.md-wikilink') as HTMLAnchorElement | null;
+  if (!anchor) return;
+  event.preventDefault();
+  const title = (anchor.dataset.wiki || '').trim();
+  if (!title || wikiOpening.value) return;
+  wikiOpening.value = true;
+  try {
+    const { data } = await api.get(`/api/pages/by-title/${encodeURIComponent(title)}`);
+    collapseForNavigation();
+    router.push(`/page/${data.id}`);
+  } catch {
+    const ok = await confirmDialog({
+      title: '创建页面',
+      message: `页面「${title}」不存在，是否创建？`,
+      confirmText: '创建',
+    });
+    if (ok) {
+      const { data } = await api.post('/api/pages', { dir: '', title });
+      collapseForNavigation();
+      app.setReadingMode(false);
+      router.push(`/page/${data.meta.id}`);
+    }
+  } finally {
+    wikiOpening.value = false;
+  }
 }
 
 /** 执行记录一行的工具图标（与 lib/agentActivity 的 TOOL_LABELS 同一套键） */
@@ -1742,7 +1788,7 @@ onUnmounted(() => {
   min-height: 16px;
 }
 
-/* 用户消息：右侧气泡（淡 accent 渐变底），不渲染 Markdown，保持原样 */
+/* 用户消息：右侧气泡（淡 accent 渐变底），内容同样走 Markdown 排版（.md-body） */
 .entry-plain {
   max-width: 88%;
   padding: 8px 12px;
@@ -1752,7 +1798,6 @@ onUnmounted(() => {
   color: var(--text);
   font-size: 13px;
   line-height: 1.6;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   box-shadow: 0 1px 3px color-mix(in srgb, var(--accent, #4d8aff) 8%, transparent);
 }
@@ -1785,21 +1830,138 @@ onUnmounted(() => {
   overflow-wrap: anywhere;
 }
 
-/* 助手正文里的 Markdown 子元素全局没有样式，这里按转录排版补齐 */
-.entry-markdown :deep(h2),
-.entry-markdown :deep(h3),
-.entry-markdown :deep(h4) {
-  margin: 12px 0 6px;
-  font-size: 13px;
+/* ===== Markdown 正文排版（助手正文 / 用户消息 / 子代理产出三处共用，观感对齐 Wiki 阅读页） =====
+   内容由 lib/markdown.ts 渲染后 v-html 注入，不在 scoped 作用域内，所以统一走 :deep()。 */
+.md-body :deep(:first-child) {
+  margin-top: 0;
+}
+
+.md-body :deep(:last-child) {
+  margin-bottom: 0;
+}
+
+.md-body :deep(h2),
+.md-body :deep(h3),
+.md-body :deep(h4),
+.md-body :deep(h5),
+.md-body :deep(h6) {
+  margin: 14px 0 6px;
+  font-size: 13.5px;
   font-weight: 650;
   line-height: 1.4;
 }
 
-.entry-markdown :deep(p) {
+.md-body :deep(p) {
   margin: 0 0 8px;
 }
 
-.entry-markdown :deep(pre) {
+.md-body :deep(strong) {
+  font-weight: 650;
+}
+
+.md-body :deep(del) {
+  opacity: 0.62;
+}
+
+.md-body :deep(ul),
+.md-body :deep(ol) {
+  margin: 0 0 8px;
+  padding-left: 1.35em;
+}
+
+.md-body :deep(li) {
+  margin: 2px 0;
+}
+
+.md-body :deep(li::marker) {
+  color: var(--accent, #4d8aff);
+}
+
+/* 任务项：Markdown 的 - [x] 转成方框 + 正文，勾选态用 accent 勾 */
+.md-body :deep(.md-task-item) {
+  list-style: none;
+  margin-left: -1.15em;
+}
+
+.md-body :deep(.md-task) {
+  position: relative;
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  vertical-align: -1px;
+}
+
+.md-body :deep(.md-task.on) {
+  border-color: color-mix(in srgb, var(--accent, #4d8aff) 45%, transparent);
+  background: var(--accent-soft);
+}
+
+.md-body :deep(.md-task.on)::after {
+  position: absolute;
+  top: 3px;
+  left: 2.5px;
+  width: 4px;
+  height: 2px;
+  border-bottom: 1.5px solid var(--accent, #4d8aff);
+  border-left: 1.5px solid var(--accent, #4d8aff);
+  content: '';
+  transform: rotate(-45deg);
+}
+
+.md-body :deep(blockquote.md-quote) {
+  margin: 8px 0;
+  padding: 3px 0 3px 10px;
+  border-left: 3px solid color-mix(in srgb, var(--accent, #4d8aff) 42%, transparent);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+  color: var(--text-secondary);
+}
+
+.md-body :deep(hr.md-hr) {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.md-body :deep(a.md-link),
+.md-body :deep(a.md-wikilink) {
+  color: var(--accent, #4d8aff);
+  text-decoration: none;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+.md-body :deep(a.md-link) {
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent, #4d8aff) 45%, transparent);
+}
+
+.md-body :deep(a.md-link:hover) {
+  border-bottom-style: solid;
+}
+
+/* 双链胶囊：与 Wiki 阅读页的 .reading-wikilink 同一观感 */
+.md-body :deep(a.md-wikilink) {
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+}
+
+.md-body :deep(a.md-wikilink:hover) {
+  background: color-mix(in srgb, var(--accent, #4d8aff) 18%, transparent);
+}
+
+.md-body :deep(code.md-code) {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+
+.md-body :deep(pre.md-pre) {
   margin: 8px 0;
   padding: 8px 10px;
   overflow-x: auto;
@@ -1808,29 +1970,69 @@ onUnmounted(() => {
   background: var(--bg-secondary);
 }
 
-.entry-markdown :deep(code) {
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
-}
-
-.entry-markdown :deep(pre code) {
+.md-body :deep(pre.md-pre code) {
   padding: 0;
+  border: none;
   background: none;
+  font-family: var(--font-mono, monospace);
   font-size: 11.5px;
   line-height: 1.55;
 }
 
-.entry-markdown :deep(sup.cite) {
-  color: var(--accent, #4d8aff);
-  font-size: 10px;
+/* 表格：外层横向滚动，表头底色与阅读页一致 */
+.md-body :deep(.md-table-scroll) {
+  margin: 8px 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
 }
 
-/* 列表项由 Markdown 渲染器转成 span + <br>，这里不再改成块级，避免每项之间多空一行 */
-.entry-markdown :deep(.list-line) {
-  padding-left: 2px;
+.md-body :deep(table.md-table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.md-body :deep(table.md-table th),
+.md-body :deep(table.md-table td) {
+  padding: 5px 8px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-body :deep(table.md-table th) {
+  background: var(--bg-secondary);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.md-body :deep(table.md-table tr:last-child td) {
+  border-bottom: none;
+}
+
+.md-body :deep(table.md-table th:last-child),
+.md-body :deep(table.md-table td:last-child) {
+  border-right: none;
+}
+
+.md-body :deep(table.md-table .md-align-center) {
+  text-align: center;
+}
+
+.md-body :deep(table.md-table .md-align-right) {
+  text-align: right;
+}
+
+.md-body :deep(img.md-img) {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.md-body :deep(sup.cite) {
+  color: var(--accent, #4d8aff);
+  font-size: 10px;
 }
 
 .cursor {
@@ -2468,8 +2670,7 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.subagent-prompt,
-.subagent-result {
+.subagent-prompt {
   margin: 0;
   max-height: 260px;
   overflow: auto;
@@ -2478,6 +2679,16 @@ onUnmounted(() => {
   font-size: 11px;
   line-height: 1.55;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 产出按 Markdown 渲染（.md-body）：这里只管高度与滚动，排版交给共用样式 */
+.subagent-result {
+  max-height: 260px;
+  overflow: auto;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 
