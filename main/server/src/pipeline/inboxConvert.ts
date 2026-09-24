@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { safeJoin, syncPageFile, pagePathTaken, movePage, notifySyncChange } from '../lib/vault.js';
 import { emit } from '../lib/events.js';
@@ -15,8 +16,8 @@ import {
   INBOX_DIR,
   isInboxPath,
   stemOf,
-  uniqueDerivedPath,
 } from '../lib/brainPaths.js';
+import { derivedPathsBySource, derivedPathForSource } from '../lib/inboxDerived.js';
 
 /**
  * 收集箱 → Markdown 的语义转换（服务端通道）。
@@ -30,7 +31,7 @@ import {
  */
 
 /** 转换口径版本：写进 frontmatter，便于以后区分产物是哪一版规范生成的 */
-export const INBOX_CONVERT_VERSION = 'semantic-v1';
+export const INBOX_CONVERT_VERSION = 'semantic-v2';
 
 /** 单次送模型的正文上限；超过就分块 */
 const CHUNK_CHARS = 24_000;
@@ -171,6 +172,7 @@ function buildMessages(input: {
     input.truncated
       ? '- 原件过长，本次只覆盖前面的内容：请在文末「待确认」里写明「原件过长，本文只覆盖前若干段」。'
       : '',
+    '- 一级标题必须从正文语义提炼出具体主题，不照抄无意义的原文件名。文件名会另按「转换日期_核心内容」生成。',
     '',
     '只输出 Markdown 正文本身，不要用代码块包裹，不要输出任何解释性前后缀。',
     '',
@@ -181,6 +183,57 @@ function buildMessages(input: {
     { role: 'system', content: skillBody() },
     { role: 'user', content: head.join('\n') },
   ];
+}
+
+function coreTitle(markdown: string, suggested?: string, fallback?: string): string {
+  const heading = /^#\s+(.+)$/m.exec(markdown)?.[1] || '';
+  for (const candidate of [suggested, heading, fallback]) {
+    const firstLine = candidate?.split(/\r?\n/).find((line) => line.trim() && !line.trim().startsWith('```')) || '';
+    const cleaned = firstLine
+      .replace(/^(?:文件名|标题|核心内容)[:：]\s*/, '')
+      .replace(/^#+\s*/, '')
+      .replace(/^\d{4}[.\-年]\d{1,2}[.\-月]\d{1,2}日?[_\s-]*/, '')
+      .replace(/\.md$/i, '')
+      .replace(/[\\/:*?"<>|\r\n]+/g, '-')
+      .replace(/[\u0000-\u001f]+/g, '')
+      .replace(/^[.`'“”‘’\s_-]+|[.`'“”‘’\s_-]+$/g, '')
+      .slice(0, 60);
+    if (cleaned && !/^(?:转换结果|文档|资料|未命名|Document\d*)$/i.test(cleaned)) return cleaned;
+  }
+  return '待整理资料';
+}
+
+function localDate(date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}.${pad(date.getMonth() + 1)}.${pad(date.getDate())}`;
+}
+
+interface InboxConvertOptions {
+  signal?: AbortSignal;
+  onProgress?: (stage: string, detail?: string) => void;
+  /** 仅供测试注入：模型请求与配置 */
+  fetchImpl?: typeof fetch;
+  config?: AgentConfig;
+}
+
+/** 单独请模型从成稿提炼文件名，避免直接沿用上传时的名称或第一段标题。 */
+async function suggestCoreTitle(
+  name: string,
+  markdown: string,
+  options: InboxConvertOptions
+): Promise<string> {
+  options.onProgress?.('提炼文件名', '根据转换正文提炼核心内容');
+  try {
+    const result = await completeText([
+      { role: 'system', content: '你是资料归档员。只输出一个具体、准确的中文文件名短语，不含日期、扩展名、引号或说明。根据正文核心内容提炼，不照搬原文件名；保留关键对象与主题，不臆造事实，避免“转换结果”“文档”“资料”等空泛名称。' },
+      { role: 'user', content: `原文件名：${name}\n\n转换后的 Markdown 正文：\n${markdown.slice(0, 16_000)}` },
+    ], { maxTokens: 128, signal: options.signal, fetchImpl: options.fetchImpl, config: options.config });
+    return coreTitle(markdown, result.text, name.replace(/\.[^.]+$/, ''));
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    options.onProgress?.('提炼文件名', '命名请求未完成，使用正文的语义标题');
+    return coreTitle(markdown, undefined, name.replace(/\.[^.]+$/, ''));
+  }
 }
 
 export interface InboxConvertResult {
@@ -194,13 +247,7 @@ export interface InboxConvertResult {
 /** 转换一份收集箱原件，产物写进 收集箱/转换结果/ */
 export async function convertInboxItem(
   relPath: string,
-  options: {
-    signal?: AbortSignal;
-    onProgress?: (stage: string, detail?: string) => void;
-    /** 仅供测试注入：模型请求与配置 */
-    fetchImpl?: typeof fetch;
-    config?: AgentConfig;
-  } = {}
+  options: InboxConvertOptions = {}
 ): Promise<InboxConvertResult> {
   if (!isInboxPath(relPath)) throw new InboxConvertError('只能转换收集箱内的文件');
   const capability = convertCapability(relPath);
@@ -239,7 +286,9 @@ export async function convertInboxItem(
   }
 
   const body = outputs.join('\n\n');
-  const written = writeInboxMarkdown(relPath, body, undefined, { model, truncated });
+  const title = await suggestCoreTitle(name, body, options);
+  options.signal?.throwIfAborted();
+  const written = writeInboxMarkdown(relPath, body, undefined, { model, truncated, title });
   return {
     derivedPath: written.derivedPath,
     chars: written.chars,
@@ -258,14 +307,14 @@ export function writeInboxMarkdown(
   relPath: string,
   markdown: string,
   note?: string,
-  extras: { model?: string; truncated?: boolean } = {}
+  extras: { model?: string; truncated?: boolean; title?: string } = {}
 ): { derivedPath: string; chars: number } {
   if (!isInboxPath(relPath)) throw new InboxConvertError('只能写收集箱原件的转换产物');
-  const stem = stemOf(relPath);
+  const title = coreTitle(markdown, extras.title, stemOf(relPath));
   const stamp = new Date().toISOString();
   const frontmatter = [
     '---',
-    `标题: ${stem}`,
+    `标题: ${title}`,
     '类型: note',
     `来源: ${relPath}`,
     `转换日期: ${stamp}`,
@@ -277,13 +326,32 @@ export function writeInboxMarkdown(
   ].join('\n');
   const tail = note?.trim() ? `\n\n> 转换注记：${note.trim()}\n` : '\n';
 
-  const derivedRel = uniqueDerivedPath(relPath, (candidate) => fs.existsSync(safeJoin(candidate)));
+  const oldPaths = derivedPathsBySource().get(relPath) || [];
+  const base = `${INBOX_DERIVED_DIR}/${localDate()}_${title}`;
+  let derivedRel = `${base}.md`;
+  for (let index = 2; fs.existsSync(safeJoin(derivedRel)) && !oldPaths.includes(derivedRel); index += 1) {
+    derivedRel = `${base} (${index}).md`;
+  }
   const derivedAbs = safeJoin(derivedRel);
   fs.mkdirSync(path.dirname(derivedAbs), { recursive: true });
-  fs.writeFileSync(derivedAbs, `${frontmatter}${markdown.trim()}${tail}`, 'utf8');
+  const temporaryAbs = path.join(path.dirname(derivedAbs), `.inbox-convert-${crypto.randomUUID()}.tmp`);
+  fs.writeFileSync(temporaryAbs, `${frontmatter}${markdown.trim()}${tail}`, 'utf8');
+  try {
+    fs.renameSync(temporaryAbs, derivedAbs);
+  } finally {
+    if (fs.existsSync(temporaryAbs)) fs.rmSync(temporaryAbs);
+  }
   noteAppWrite(derivedAbs);
   notifySyncChange('file', derivedRel);
   emit('file-changed', { path: derivedRel });
+  for (const oldRel of oldPaths) {
+    if (oldRel === derivedRel) continue;
+    const oldAbs = safeJoin(oldRel);
+    fs.rmSync(oldAbs, { force: true });
+    noteAppWrite(oldAbs);
+    notifySyncChange('delete', oldRel);
+    emit('file-changed', { path: oldRel });
+  }
   return { derivedPath: derivedRel, chars: markdown.length };
 }
 
@@ -335,7 +403,7 @@ export function adoptInboxItem(relPath: string): InboxAdoptResult {
   if (!isInboxPath(relPath)) throw new InboxConvertError('只能入库收集箱内的文件');
   const derived = uniqueDerivedPathFor(relPath);
   if (!derived) throw new InboxConvertError('这份文件还没有转换产物，请先转换');
-  const target = uniqueRawPath(stemOf(relPath));
+  const target = uniqueRawPath(stemOf(derived));
   const targetAbs = safeJoin(target);
   fs.mkdirSync(path.dirname(targetAbs), { recursive: true });
   fs.copyFileSync(safeJoin(derived), targetAbs);
@@ -352,15 +420,9 @@ export function adoptInboxItem(relPath: string): InboxAdoptResult {
   return { pageId: meta.id, pagePath: target, pageTitle: meta.title };
 }
 
-/** 找到这份原件当前的转换产物（同名序号产物也算） */
+/** 找到这份原件当前的转换产物，以 frontmatter 来源精确关联。 */
 export function uniqueDerivedPathFor(relPath: string): string | null {
-  const base = `${INBOX_DERIVED_DIR}/${stemOf(relPath)}.md`;
-  if (fs.existsSync(safeJoin(base))) return base;
-  for (let i = 2; i <= 99; i += 1) {
-    const candidate = `${INBOX_DERIVED_DIR}/${stemOf(relPath)} (${i}).md`;
-    if (fs.existsSync(safeJoin(candidate))) return candidate;
-  }
-  return null;
+  return derivedPathForSource(relPath);
 }
 
 /** 读取产物正文（供界面审阅；产物不是「收集箱原件」，所以允许在应用内查看） */

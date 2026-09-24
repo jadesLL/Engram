@@ -11,7 +11,7 @@ import { noteAppWrite } from '../lib/appWrites.js';
 import { enqueue } from '../jobQueue.js';
 import { db } from '../lib/db.js';
 import { createInboxConversation } from '../pipeline/inboxConversation.js';
-import { listInboxItems, inboxCategoryOf, type InboxItem } from '../lib/inboxItems.js';
+import { listInboxItems, inboxCategoryOf, derivedPathFor, type InboxItem } from '../lib/inboxItems.js';
 import { fetchInboxWebPage, InboxWebFetchError } from '../lib/inboxWebFetch.js';
 import {
   adoptInboxItem,
@@ -24,7 +24,6 @@ import {
   INBOX_DERIVED_DIR,
   isInboxPath,
   isInboxDerivedPath,
-  uniqueDerivedPath,
 } from '../lib/brainPaths.js';
 
 /**
@@ -204,14 +203,16 @@ export async function inboxRoutes(app: FastifyInstance) {
     }
   });
 
-  /** 转换产物路径（转换流程用；不是浏览接口，返回的只是路径字符串） */
+  /** 已有转换产物路径；语义文件名在模型提炼之前无法预先决定。 */
   app.get('/api/inbox/derived-path', async (req, reply) => {
     const { path: rel } = req.query as { path?: string };
     if (!rel || !isInboxPath(rel) || isInboxDerivedPath(rel)) {
       return reply.code(400).send({ error: '路径无效' });
     }
     if (!fs.existsSync(safeJoin(rel))) return reply.code(404).send({ error: '文件不存在' });
-    return { path: uniqueDerivedPath(rel, (candidate) => fs.existsSync(safeJoin(candidate))) };
+    const derived = derivedPathFor(rel);
+    if (!derived) return reply.code(404).send({ error: '这份文件还没有转换产物' });
+    return { path: derived };
   });
 
   /**

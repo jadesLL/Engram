@@ -52,7 +52,7 @@ const handlers: Record<string, JobHandler> = {
     const result = await convertInboxItem(relPath, {
       signal: context.signal,
       onProgress: (stage, detail) => {
-        update({ stage, progress: stage === '读取原件' ? 15 : 60, detail });
+        update({ stage, progress: stage === '读取原件' ? 15 : stage === '提炼文件名' ? 85 : 60, detail });
         recordInboxConversionStep(context.jobId, stage, detail);
       },
     });

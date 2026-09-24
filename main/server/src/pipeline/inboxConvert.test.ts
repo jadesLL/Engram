@@ -26,11 +26,15 @@ let extractInboxText: typeof import('./inboxConvert.js').extractInboxText;
 function fakeModel(reply = '# 转换结果\n\n这是模型按语义重写的正文。') {
   const calls: any[] = [];
   const fetchImpl = (async (url: string, init: any) => {
-    calls.push({ url, body: JSON.parse(init.body) });
+    const body = JSON.parse(init.body);
+    calls.push({ url, body });
+    const content = String(body.messages?.[0]?.content || '').includes('资料归档员')
+      ? (reply.match(/^#\s+(.+)$/m)?.[1] || '正文核心内容')
+      : reply;
     return {
       ok: true,
       status: 200,
-      text: async () => JSON.stringify({ choices: [{ message: { content: reply } }] }),
+      text: async () => JSON.stringify({ choices: [{ message: { content } }] }),
     };
   }) as unknown as typeof fetch;
   return { fetchImpl, calls };
@@ -99,20 +103,21 @@ test('超过块数上限时明确标记只覆盖前面部分', () => {
 
 test('文本原件：转换写入 收集箱/转换结果/，带来源 frontmatter，且不建页面', async () => {
   const rel = plant('需求草稿.txt', '客户要一套排产系统，预算 80 万。');
-  const { fetchImpl, calls } = fakeModel();
+  const { fetchImpl, calls } = fakeModel('# 客户排产系统需求\n\n这是模型按语义重写的正文。');
   const result = await convertInboxItem(rel, { fetchImpl, config });
 
-  assert.equal(result.derivedPath, '收集箱/转换结果/需求草稿.md');
+  assert.match(result.derivedPath, /^收集箱\/转换结果\/\d{4}\.\d{2}\.\d{2}_客户排产系统需求\.md$/);
   assert.equal(result.chunks, 1);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2, '正文转换后再由模型提炼文件名');
   assert.match(calls[0].url, /\/chat\/completions$/);
   // 提示词里必须带上原件正文与转换规范（不是只发个文件名）
   const userMessage = calls[0].body.messages.at(-1).content;
   assert.match(userMessage, /预算 80 万/);
   assert.match(calls[0].body.messages[0].content, /语义转换/);
+  assert.match(calls[1].body.messages[0].content, /根据正文核心内容提炼/);
 
-  const written = fs.readFileSync(path.join(BRAIN_DIR, '收集箱', '转换结果', '需求草稿.md'), 'utf8');
-  assert.match(written, /^---\n标题: 需求草稿/m);
+  const written = fs.readFileSync(path.join(BRAIN_DIR, result.derivedPath), 'utf8');
+  assert.match(written, /^---\n标题: 客户排产系统需求/m);
   assert.match(written, /来源: 收集箱\/需求草稿.txt/);
   assert.match(written, /这是模型按语义重写的正文/);
 
@@ -133,13 +138,25 @@ test('图片/音视频/压缩包：服务端直接给出可读的拒绝原因', 
   await assert.rejects(() => convertInboxItem(zip, { fetchImpl: fakeModel().fetchImpl, config }), /还转不了/);
 });
 
+test('命名请求失败时沿用正文语义标题，不丢掉已完成的转换', async () => {
+  const rel = plant('导出文件.txt', '现场设备每季度维护一次。');
+  const model = fakeModel('# 现场设备季度维护记录\n\n每季度维护一次。');
+  const fetchImpl = (async (url: string, init: any) => {
+    const body = JSON.parse(init.body);
+    if (String(body.messages?.[0]?.content || '').includes('资料归档员')) throw new Error('命名请求暂不可用');
+    return model.fetchImpl(url, init);
+  }) as typeof fetch;
+  const result = await convertInboxItem(rel, { fetchImpl, config });
+  assert.match(result.derivedPath, /_现场设备季度维护记录\.md$/);
+});
+
 test('未配置模型凭据：明确报错，不静默降级成格式转换', async () => {
   const rel = plant('笔记.txt', '随便写的东西');
   await assert.rejects(
     () => convertInboxItem(rel, { fetchImpl: fakeModel().fetchImpl, config: { apiKey: '' } as any }),
     /未配置模型凭据/
   );
-  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '收集箱', '转换结果', '笔记.md')), false);
+  assert.deepEqual(fs.readdirSync(path.join(BRAIN_DIR, '收集箱', '转换结果')), []);
 });
 
 test('长文本分多块：每块各自的产物在文末合并（不覆盖）', async () => {
@@ -147,9 +164,9 @@ test('长文本分多块：每块各自的产物在文末合并（不覆盖）',
   const { fetchImpl, calls } = fakeModel('## 分块正文');
   const result = await convertInboxItem(rel, { fetchImpl, config });
   assert.ok(calls.length > 1, '长文应分多块');
-  assert.equal(result.chunks, calls.length);
+  assert.equal(result.chunks, calls.length - 1);
   const written = fs.readFileSync(path.join(BRAIN_DIR, result.derivedPath), 'utf8');
-  assert.equal(written.match(/## 分块正文/g)?.length, calls.length);
+  assert.equal(written.match(/## 分块正文/g)?.length, result.chunks);
 });
 
 test('入库：产物直接复制进 原始资料/ 并登记为页面，原件与产物都留在收集箱', async () => {
@@ -158,9 +175,9 @@ test('入库：产物直接复制进 原始资料/ 并登记为页面，原件�
   const converted = await convertInboxItem(rel, { fetchImpl, config });
 
   const adopted = adoptInboxItem(rel);
-  assert.equal(adopted.pagePath, '原始资料/合同.md');
+  assert.equal(adopted.pagePath, `原始资料/${path.posix.basename(converted.derivedPath)}`);
   assert.match(adopted.pageTitle, /合同/);
-  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '原始资料', '合同.md')), true);
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, adopted.pagePath)), true);
   assert.equal(fs.existsSync(path.join(BRAIN_DIR, converted.derivedPath)), true, '产物保留在收集箱');
 
   // 入库这一动作才产生页面行：入库前没有，入库后才有
@@ -185,29 +202,51 @@ test('同名原件入库不覆盖：第二份加序号', async () => {
   const { fetchImpl } = fakeModel('# 周报');
   await convertInboxItem(first, { fetchImpl, config });
   const a = adoptInboxItem(first);
-  assert.equal(a.pagePath, '原始资料/周报.md');
+  assert.match(a.pagePath, /^原始资料\/\d{4}\.\d{2}\.\d{2}_周报\.md$/);
   // 产物仍在 → 再入库一次会另存一份，不覆盖上一份
   const b = adoptInboxItem(first);
-  assert.equal(b.pagePath, '原始资料/周报 (2).md');
-  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '原始资料', '周报.md')), true);
+  assert.equal(b.pagePath, a.pagePath.replace(/\.md$/, ' (2).md'));
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, a.pagePath)), true);
 });
 
 test('Agent 通道写产物：与转换通道落同一位置、同一 frontmatter 口径', () => {
   const rel = plant('会议.txt', '会议内容');
   const written = writeInboxMarkdown(rel, '# 会议纪要\n\n- 决议一', '由 Agent 通道写入');
-  assert.equal(written.derivedPath, '收集箱/转换结果/会议.md');
+  assert.match(written.derivedPath, /^收集箱\/转换结果\/\d{4}\.\d{2}\.\d{2}_会议纪要\.md$/);
   const text = fs.readFileSync(path.join(BRAIN_DIR, written.derivedPath), 'utf8');
   assert.match(text, /来源: 收集箱\/会议.txt/);
-  assert.match(text, /转换版本: semantic-v1/);
+  assert.match(text, /转换版本: semantic-v2/);
   assert.match(text, /由 Agent 通道写入/);
-  assert.equal(adoptInboxItem(rel).pagePath, '原始资料/会议.md');
+  assert.equal(adoptInboxItem(rel).pagePath, `原始资料/${path.posix.basename(written.derivedPath)}`);
+});
+
+test('同一原件重转只保留最新产物，其他同题原件不会被删', async () => {
+  const first = plant('第一份.txt', '第一次内容');
+  const second = plant('第二份.txt', '第二次内容');
+  const old = writeInboxMarkdown(first, '# 旧主题\n\n旧正文');
+  const other = writeInboxMarkdown(second, '# 新主题\n\n其他原件');
+  const updated = writeInboxMarkdown(first, '# 新主题\n\n更新正文');
+  assert.notEqual(updated.derivedPath, old.derivedPath);
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, old.derivedPath)), false);
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, other.derivedPath)), true);
+  assert.match(updated.derivedPath, /新主题 \(2\)\.md$/);
+  const { listInboxItems } = await import('../lib/inboxItems.js');
+  const items = listInboxItems().items;
+  assert.equal(items.find((item) => item.path === first)?.derivedPath, updated.derivedPath);
+  assert.equal(items.find((item) => item.path === second)?.derivedPath, other.derivedPath);
+  const repeated = writeInboxMarkdown(first, '# 新主题\n\n最终正文');
+  assert.equal(repeated.derivedPath, updated.derivedPath, '标题不变时复用同一路径');
+  assert.match(fs.readFileSync(path.join(BRAIN_DIR, repeated.derivedPath), 'utf8'), /最终正文/);
+  assert.equal(fs.readdirSync(path.join(BRAIN_DIR, '收集箱', '转换结果')).length, 2);
 });
 
 test('旧版入库目录自动迁到原始资料根，撞名加序号且保留页面 ID', async () => {
   const legacyDir = path.join(BRAIN_DIR, '原始资料', '收集箱');
   fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(path.join(BRAIN_DIR, '原始资料', '合同.md'), '# 已有合同\n', 'utf8');
   fs.writeFileSync(path.join(legacyDir, '合同.md'), '# 旧合同\n', 'utf8');
   const { syncPageFile } = await import('../lib/vault.js');
+  syncPageFile('原始资料/合同.md');
   const old = syncPageFile('原始资料/收集箱/合同.md');
   assert.ok(old);
   assert.equal(migrateLegacyInboxAdoptions(), 1);

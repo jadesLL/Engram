@@ -103,7 +103,7 @@ export const MCP_TOOLS: McpToolDoc[] = [
   {
     name: 'write_inbox_markdown',
     group: '写',
-    summary: '把一份收集箱原件的语义转换结果写成 Markdown，落到 收集箱/转换结果/<原名>.md。',
+    summary: '把收集箱原件转成 Markdown，按转换日期_语义核心内容命名；重转时替换该原件的旧产物。',
     params: 'path 原件路径（必填）；markdown 转换后的完整正文（必填）；note 本次转换的补充说明（可选）。',
     notes: '作业规范先用 skill_guide("inbox-semantic-to-md") 取；产物仍留在收集箱（不建页面、不写检索索引、不触发入库），入库由用户在界面上确认。',
     cli: '（CLI 未提供）',

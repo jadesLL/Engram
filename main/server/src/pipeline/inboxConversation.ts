@@ -9,7 +9,7 @@ export function createInboxConversation(jobId: number, source: string): string {
   assistant.insertMessage({
     sessionId: session.id,
     role: 'user',
-    content: `转换收集箱文件：${source}`,
+    content: `转换收集箱文件：${source}\n\n请按语义重组正文，保留数字、日期和专有名称；从内容提炼核心标题，产物按“YYYY.MM.DD_核心内容.md”命名。同一原件重新转换时只保留最新产物。`,
     metadata: { inboxConversionJobId: jobId },
   });
   assistant.insertMessage({
