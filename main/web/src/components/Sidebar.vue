@@ -237,20 +237,21 @@
           </div>
         </div>
         <div v-show="!collapsed.files" class="sec-body">
-          <div v-for="g in rawGroups" :key="g.key" class="sub-group">
+          <!-- 三个二级分类的子分组：标记与样式完全沿用「实体」的子类（.sub-group + .sub-head），
+               不自造箭头/缩进，保证原始资料与概念/实体的观感一致 -->
+          <div
+            v-for="g in rawGroups"
+            :key="g.key"
+            class="sub-group"
+            :class="{ expanded: !collapsed['raw:' + g.key] }"
+          >
             <button
-              class="sub-head raw-sub-head"
+              class="sub-head"
               type="button"
               :aria-expanded="!collapsed['raw:' + g.key]"
-              v-tooltip="g.hint"
+              v-tooltip="collapsed['raw:' + g.key] ? `展开${g.label}` : `收起${g.label}`"
               @click="toggle('raw:' + g.key)"
             >
-              <Icon
-                name="chevron-right"
-                :size="11"
-                class="raw-sub-caret"
-                :class="{ open: !collapsed['raw:' + g.key] }"
-              />
               <span class="sub-name">{{ g.label }}</span>
               <span class="sub-count">{{ g.files.length }}</span>
             </button>
@@ -925,15 +926,15 @@ const aiLogs = computed(() =>
 
 /** 原始资料二级分类（与服务端 lib/rawSections.ts 同一套口径）：
  *  文档 = 原始资料/文档/ + 根目录历史资料；对话 = save_chat 沉积；灵感碎片 = 随手记。
- *  下面的 label/hint 只是兜底默认值，挂载时用服务端 /api/files/sections 的定义覆盖，
- *  分类口径只有服务端一处来源。 */
+ *  label 只是兜底默认值，挂载时用服务端 /api/files/sections 的定义覆盖，
+ *  分类口径只有服务端一处来源；子分组的标记与样式与「实体」子类完全一致。 */
 const RAW_GROUPS = [
-  { key: 'doc', label: '文档', hint: '成文的完整文件：会议纪要、调研报告、复盘、年报、教程、攻略…', empty: '暂无文档' },
-  { key: 'chat', label: '对话', hint: '与 Agent 的对话沉积（save_chat 写入，可按项目分目录）', empty: '暂无对话' },
-  { key: 'idea', label: '灵感碎片', hint: '随手记：零散条目、想法、待办', empty: '暂无灵感碎片' },
+  { key: 'doc', label: '文档', empty: '暂无文档' },
+  { key: 'chat', label: '对话', empty: '暂无对话' },
+  { key: 'idea', label: '灵感碎片', empty: '暂无灵感碎片' },
 ] as const;
-/** 服务端下发的分类名与说明（拿不到就用上面的兜底值） */
-const rawSectionMeta = ref<Record<string, { label?: string; hint?: string }>>({});
+/** 服务端下发的分类名（拿不到就用上面的兜底值） */
+const rawSectionMeta = ref<Record<string, { label?: string }>>({});
 /** 对话分组文件（原始资料/对话/，递归） */
 const chatFiles = ref<any[]>([]);
 /** 灵感碎片分组文件（原始资料/灵感碎片/，递归） */
@@ -976,7 +977,6 @@ const rawGroups = computed(() => {
   return RAW_GROUPS.map((g) => ({
     ...g,
     label: rawSectionMeta.value[g.key]?.label || g.label,
-    hint: rawSectionMeta.value[g.key]?.hint || g.hint,
     files: byKey[g.key] || [],
   }));
 });
@@ -1039,12 +1039,12 @@ async function load() {
   files.value = doc.files;
   chatFiles.value = cf.files;
   ideaFiles.value = idea.files;
-  // 分类名与说明以服务端为准（拿不到就沿用内置兜底值，不影响列表）
+  // 分类名以服务端为准（拿不到就沿用内置兜底值，不影响列表；分组说明不进侧栏，保持与实体子类一致的克制）
   try {
     const { data } = await api.get('/api/files/sections');
-    const meta: Record<string, { label?: string; hint?: string }> = {};
+    const meta: Record<string, { label?: string }> = {};
     for (const section of data?.sections || []) {
-      if (section?.key) meta[section.key] = { label: section.label, hint: section.hint };
+      if (section?.key) meta[section.key] = { label: section.label };
     }
     rawSectionMeta.value = meta;
   } catch { /* 旧服务端没有这个接口时保持兜底文案 */ }
@@ -1769,28 +1769,6 @@ onUnmounted(() => {
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-}
-
-/* 原始资料二级分组头：折叠箭头 + 名称 + 计数（沿用实体子类 .sub-head 的观感） */
-.raw-sub-head {
-  justify-content: flex-start;
-  gap: 3px;
-  padding-left: 2px;
-}
-
-.raw-sub-caret {
-  flex-shrink: 0;
-  color: var(--text-faint);
-  transition: transform 150ms ease;
-}
-
-.raw-sub-caret.open {
-  transform: rotate(90deg);
-}
-
-.raw-sub-head .sub-name {
-  flex: 1;
-  text-align: left;
 }
 
 .page-row {
