@@ -20,6 +20,25 @@
       </div>
       <div v-show="!groupCollapsed" class="group-body">
 
+    <!-- 运行状态摘要：一眼看出「正常不正常」，细节在「同步详情」独立窗口里。
+         旧版把状态网格 + 一个 260px 高的可展开日志塞在这张卡片里：日志只有 30 条、
+         没有级别/成员/时间，还把设置页拉得很长。摘要放最上面（角色卡/成员管理之前），
+         中枢与成员都先看到它，再往下看各自的配置。 -->
+    <div v-if="status && status.role !== 'none'" class="sync-summary">
+      <div class="summary-line">
+        <span class="dot" :class="summaryHealthy ? 'on' : 'off'" aria-hidden="true" />
+        <strong :class="summaryHealthy ? 'ok' : 'bad'">{{ connectionLabel }}</strong>
+        <span class="faint small">{{ summaryDetail }}</span>
+      </div>
+      <p v-if="status.lastError" class="sync-error">最近错误：{{ status.lastError }}</p>
+      <div class="sync-actions">
+        <button class="btn" type="button" @click="openSyncLogDrawer">
+          <Icon name="activity" :size="14" />
+          查看同步详情
+        </button>
+      </div>
+    </div>
+
     <!-- 未配置：选择角色 -->
     <template v-if="status && status.role === 'none'">
       <div class="role-cards">
@@ -146,28 +165,9 @@
           <button class="btn" type="button" :disabled="reconciling" @click="reconcileNow">{{ reconciling ? '对账中…' : '立即全量对账' }}</button>
         </div>
       </div>
-      <div class="sync-status">
-        <h4>运行状态</h4>
-        <div class="status-grid">
-          <div><span>{{ capabilities.runtime === 'android-local' ? '最近一轮' : '连接' }}</span><strong :class="status.connected ? 'ok' : 'bad'">{{ connectionLabel }}</strong></div>
-          <div><span>待推送</span><strong>{{ status.pending }}</strong></div>
-          <div v-if="status.pendingPulls"><span>待补拉文件</span><strong>{{ status.pendingPulls }}</strong></div>
-          <div><span>最近同步</span><strong>{{ status.lastSyncAt ? formatTime(status.lastSyncAt) : '—' }}</strong></div>
-          <div><span>同步水位</span><strong>{{ status.cursor }}</strong></div>
-        </div>
-        <p v-if="status.lastError" class="sync-error">最近错误：{{ status.lastError }}</p>
-        <details v-if="status.log && status.log.length" class="sync-log">
-          <summary>同步日志（最近 {{ status.log.length }} 条，排查同步问题用）</summary>
-          <ul>
-            <li v-for="(entry, i) in logView" :key="logKey(entry, i)" :class="entry.level">
-              <span class="log-ts">{{ formatTime(entry.ts) }}</span>
-              <span class="log-event">{{ eventLabel(entry.event) }}</span>
-              <span v-if="entry.detail" class="log-detail">{{ entry.detail }}</span>
-            </li>
-          </ul>
-        </details>
-      </div>
     </template>
+
+    <!-- 运行状态的位置见卡片顶部（中枢与成员共用同一行摘要） -->
 
     <div v-if="status && status.role !== 'none'" class="sync-role-note">
       <p>同步范围：页面、附件图片、原始资料文件与证据账本。各端密码、令牌、助手会话、模型配置保持独立。
@@ -189,6 +189,7 @@ import DdnsSection from './DdnsSection.vue';
 import Icon from '../Icon.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
+import { openSyncLogDrawer } from '../../lib/syncLog';
 import SecretField from '../SecretField.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSyncStore } from '../../stores/sync';
@@ -217,12 +218,16 @@ interface SyncStatus {
   connected: boolean;
   /** 首次接入引导（全量对账 + 补拉）仍在进行 */
   syncing?: boolean;
+  /** 全量对账正在执行（首次接入 / 手动触发 / 周期自愈） */
+  reconciling?: boolean;
   running?: boolean;
   hubUrl: string;
   hubToken: string;
   directUrls?: string[];
   nodeId: string;
   cursor: number;
+  /** 中枢端的权威 revision 序号（成员端为 0） */
+  revision?: number;
   pending: number;
   pendingPulls: number;
   lastSyncAt: string | null;
@@ -291,32 +296,10 @@ function formatTime(iso: string): string {
   }
 }
 
-// 同步事件日志：倒序取最近 30 条，事件名映射为中文说明
-const EVENT_LABELS: Record<string, string> = {
-  start: '客户端启动',
-  connected: '已连接中枢',
-  disconnected: '连接断开，自动重连中',
-  replay: '补拉远端变更',
-  'oplog-trimmed': '落后过多，转全量对账',
-  'push-retry': '推送失败，退避重试',
-  'apply-failed': '应用远端变更失败（将重放）',
-  'move-superseded': '页面已在新路径，旧路径残留入回收站',
-  'file-pull-deferred': '文件拉取失败，待重试',
-  'file-pull-retry-ok': '文件补拉成功',
-  'file-pull-retry-failed': '文件补拉重试失败',
-  'reconcile-start': '全量对账开始',
-  'reconcile-done': '全量对账完成',
-  'reconcile-item-failed': '对账单项失败',
-  'reconcile-failed': '全量对账失败',
-  heal: '周期自愈对账',
-};
-
-function eventLabel(event: string): string {
-  return EVENT_LABELS[event] || event;
-}
-
-const logView = computed<SyncLogEntry[]>(() => (status.value?.log || []).slice(-30).reverse());
 const connectionLabel = computed(() => {
+  // 中枢不主动连别人（members 连它），connected 恒为 false：这里按角色说话，
+  // 否则中枢设置页会顶着一行红字「未连接」，与「中枢运行中」的徽标自相矛盾
+  if (status.value?.role === 'hub') return '中枢运行中';
   if (capabilities.value.runtime !== 'android-local') {
     if (!status.value?.connected) return '未连接';
     // 首次接入要先把整库对账拉全、再从水位补拉，可能持续数分钟：这期间中枢已连上、
@@ -327,9 +310,29 @@ const connectionLabel = computed(() => {
   return status.value?.connected ? '已同步并断开' : '尚未成功';
 });
 
-function logKey(entry: SyncLogEntry, index: number): string {
-  return `${entry.ts}-${entry.event}-${index}`;
-}
+/** 摘要行的绿/红点：中枢只要在跑就是正常；成员看连接状态（对账中不算异常） */
+const summaryHealthy = computed(() => {
+  const current = status.value;
+  if (!current) return false;
+  if (current.role === 'hub') return true;
+  return Boolean(current.connected || current.reconciling || current.syncing);
+});
+
+/** 一行摘要：成员看队列与最近一次同步，中枢看成员在线数与权威水位；细节都在「同步详情」里 */
+const summaryDetail = computed(() => {
+  const current = status.value;
+  if (!current) return '';
+  if (current.role === 'hub') {
+    const online = peers.value.filter((peer) => peer.online).length;
+    // 中枢端 cursor 是成员端的水位（中枢恒为 0），权威发号要看 revision
+    const revision = current.revision ?? current.cursor;
+    return `· 成员 ${peers.value.length}（在线 ${online}）· 权威水位 ${revision}`;
+  }
+  const parts = [`待推送 ${current.pending}`];
+  if (current.pendingPulls) parts.push(`待补拉 ${current.pendingPulls}`);
+  parts.push(current.lastSyncAt ? `最近同步 ${formatTime(current.lastSyncAt)}` : '还没有成功同步过');
+  return `· ${parts.join(' · ')}`;
+});
 
 async function copy(text: string): Promise<void> {
   try {
@@ -611,72 +614,34 @@ onUnmounted(() => {
 }
 .sync-actions { display: flex; gap: 10px; }
 
-.sync-status { margin: 0 4px 4px; }
-.sync-status h4 { margin: 0 0 8px; }
-.status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
-  gap: 10px;
-}
-.status-grid > div {
+/* 运行状态摘要：一眼看出「正常不正常」，细节在「同步详情」独立窗口里（设置页不再被日志拉长） */
+.sync-summary {
+  margin: 20px 4px 16px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 12px;
+  gap: 8px;
 }
-.status-grid span { opacity: 0.7; }
-.status-grid strong.ok { color: var(--success, #2e9e5b); }
-.status-grid strong.bad { color: var(--danger, #d64545); }
+.summary-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.summary-line strong.ok { color: var(--success, #2e9e5b); }
+.summary-line strong.bad { color: var(--danger, #d64545); }
+.summary-line .small { opacity: 0.75; }
+.sync-summary .sync-actions { align-items: center; }
+.sync-summary .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .sync-error {
   color: var(--danger, #d64545);
   font-size: 12px;
-  margin: 8px 0 0;
-}
-.sync-log {
-  margin-top: 10px;
-  font-size: 12px;
-}
-.sync-log summary {
-  cursor: pointer;
-  opacity: 0.75;
-  user-select: none;
-}
-.sync-log ul {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  max-height: 260px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.sync-log li {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
-  border-radius: 6px;
-  padding: 4px 8px;
-  flex-wrap: wrap;
-}
-.sync-log .log-ts {
-  opacity: 0.6;
-  white-space: nowrap;
-}
-.sync-log .log-event {
-  font-weight: 600;
-  white-space: nowrap;
-}
-.sync-log li.warn .log-event { color: var(--warning, #d8a012); }
-.sync-log li.error .log-event { color: var(--danger, #d64545); }
-.sync-log .log-detail {
-  opacity: 0.8;
+  margin: 0;
   word-break: break-all;
-  min-width: 0;
 }
 
 .faint { opacity: 0.65; }
