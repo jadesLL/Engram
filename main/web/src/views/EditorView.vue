@@ -145,7 +145,17 @@
         <div class="page-chrome">
           <div class="head-meta">
           <span class="kind-pill">
+            <!-- 原始资料页没有「类型」概念，改成三个二级分类的「分类」下拉：切换即移动到对应目录 -->
             <AppSelect
+              v-if="isRawPage"
+              v-model="rawSection"
+              variant="chip"
+              aria-label="资料分类"
+              :options="rawSectionOptions"
+              @change="changeRawSection"
+            />
+            <AppSelect
+              v-else
               v-model="pageType"
               variant="chip"
               aria-label="页面类型"
@@ -358,9 +368,13 @@
         <SyncHomeStatus />
 
         <div class="welcome-cards">
+          <button class="welcome-card" type="button" @click="createIdeaFromWelcome">
+            <span class="wc-icon accent"><Icon name="lightbulb" :size="17" /></span>
+            <span class="wc-text"><strong>记一条灵感</strong><em>Ctrl+N</em></span>
+          </button>
           <button class="welcome-card" type="button" @click="createFirst">
-            <span class="wc-icon accent"><Icon name="file-plus" :size="17" /></span>
-            <span class="wc-text"><strong>新建页面</strong><em>Ctrl+N</em></span>
+            <span class="wc-icon"><Icon name="file-plus" :size="17" /></span>
+            <span class="wc-text"><strong>新建页面</strong><em>存到 Wiki</em></span>
           </button>
           <button class="welcome-card" type="button" @click="$router.push('/search')">
             <span class="wc-icon"><Icon name="search" :size="17" /></span>
@@ -424,6 +438,7 @@ import AppSpinner from '../components/ui/AppSpinner.vue';
 import SyncHomeStatus from '../components/SyncHomeStatus.vue';
 import BrandMark from '../components/BrandMark.vue';
 import { confirmDialog } from '../lib/confirm';
+import { createIdeaNote } from '../lib/quickNote';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { notify } from '../lib/notify';
 import {
@@ -463,6 +478,53 @@ const kindOptions = computed(() =>
     ? PAGE_KINDS
     : [...PAGE_KINDS, { value: pageType.value, label: '未分类' }]
 );
+
+/* 原始资料页的「分类」：就是原始资料的三个二级分类（文档 / 对话 / 灵感碎片）。
+   切换时调 /api/pages/:id/move 把文件挪到对应目录，页面 ID 与证据账本跟着走。
+   名称以服务端 /api/files/sections 为准，拿不到就用这里的兜底值。 */
+const RAW_SECTION_OPTIONS = [
+  { value: 'doc', label: '文档' },
+  { value: 'chat', label: '对话' },
+  { value: 'idea', label: '灵感碎片' },
+];
+const rawSectionOptions = ref([...RAW_SECTION_OPTIONS]);
+const rawSection = ref('doc');
+const isRawPage = computed(() => String(page.value?.path || '').startsWith('原始资料/'));
+
+/** 路径 → 分类 key：根目录的历史资料按「文档」对待（与服务端 rawSectionOf 同口径） */
+function rawSectionOfPath(relPath: string): string {
+  const rest = String(relPath || '').replace(/^原始资料\//, '');
+  const head = rest.split('/')[0];
+  if (head === '对话') return 'chat';
+  if (head === '灵感碎片') return 'idea';
+  return 'doc';
+}
+
+async function loadRawSectionOptions() {
+  try {
+    const { data } = await api.get('/api/files/sections');
+    const sections = (data?.sections || []).filter((s: any) => s?.key && s?.label);
+    if (sections.length) rawSectionOptions.value = sections.map((s: any) => ({ value: s.key, label: s.label }));
+  } catch { /* 旧服务端没有这个接口时用兜底文案 */ }
+}
+
+async function changeRawSection(value?: string) {
+  if (!page.value || !isRawPage.value) return;
+  const key = value || rawSection.value;
+  const label = rawSectionOptions.value.find((option) => option.value === key)?.label || '文档';
+  const before = rawSection.value;
+  try {
+    const { data } = await api.post(`/api/pages/${page.value.id}/move`, { dir: `原始资料/${label}` });
+    if (data?.meta) page.value = data.meta;
+    rawSection.value = rawSectionOfPath(page.value.path);
+    app.bumpSidebar(); // 侧栏分组立刻跟着变
+    notify.success(`已移到「${label}」`);
+  } catch (error: any) {
+    // 失败回退到文件实际所在分类，避免下拉显示与磁盘不一致
+    rawSection.value = before === key ? rawSectionOfPath(page.value.path) : before;
+    notify.error(error?.response?.data?.error || '切换分类失败');
+  }
+}
 const tags = ref<string[]>([]);
 const tagDraft = ref('');
 /* 标签输入按需展开：「+ 标签」是虚线 pill，点开才出现输入框（mockup 4.3） */
@@ -670,6 +732,7 @@ async function loadPage(id: string) {
     // 标题为空时回退到文件名（去掉 .md 后缀）
     title.value = data.meta.title || data.meta.path.split('/').pop()?.replace(/\.md$/i, '') || '无标题';
     pageType.value = data.meta.type;
+    rawSection.value = rawSectionOfPath(data.meta.path);
     tags.value = [...(data.meta.tags || [])];
     tagDraft.value = '';
     tagEditing.value = false;
@@ -1026,6 +1089,15 @@ async function createFirst() {
   router.push(`/page/${data.meta.id}`);
 }
 
+/** 欢迎页「记一条灵感」：与左下角「+」同一入口，落到 原始资料/灵感碎片/ */
+async function createIdeaFromWelcome() {
+  const created = await createIdeaNote();
+  if (!created) return;
+  app.bumpSidebar();
+  app.setReadingMode(false);
+  router.push(`/page/${created.id}`);
+}
+
 /* 欢迎页：问候语 + 库统计 + 最近编辑（无页面 id 时加载一次） */
 const greeting = computed(() => {
   const h = new Date().getHours();
@@ -1146,6 +1218,7 @@ function measureAvailableWidth() {
 onMounted(() => {
   if (route.params.id) loadPage(route.params.id as string);
   else if (!welcomeLoaded) { welcomeLoaded = true; loadWelcome(); }
+  loadRawSectionOptions();
   window.addEventListener('beforeunload', beforeUnload);
   window.addEventListener('keydown', onGlobalKey);
   document.addEventListener('pointerdown', onWidthPickerPointerDown);

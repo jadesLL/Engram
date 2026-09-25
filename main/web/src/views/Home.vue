@@ -64,7 +64,7 @@
       </button>
 
       <!-- 动作/面板组 -->
-      <button class="rail-btn action" type="button" v-tooltip.right="'新建页面 (Ctrl+N)'" aria-label="新建页面" @click="quickNew">
+      <button class="rail-btn action" type="button" v-tooltip.right="'记一条灵感 (Ctrl+N)'" aria-label="记一条灵感" @click="quickNote">
         <Icon name="plus" :size="19" />
       </button>
       <div class="rail-divider" />
@@ -189,6 +189,7 @@ import { api } from '../api';
 import { openPageStream } from '../lib/events';
 import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
+import { createIdeaNote } from '../lib/quickNote';
 import { loadRuntimeCapabilities, useRuntimeCapabilities } from '../lib/capabilities';
 import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
@@ -324,7 +325,7 @@ const navItems = computed(() => [
 const bottomItems = computed(() => [
   { label: '页面', icon: 'pages', action: () => { app.sidebarOpen = true; go('/page'); } },
   { label: '搜索', icon: 'search', action: () => go('/search') },
-  { label: '新建', icon: 'plus', action: () => quickNew() },
+  { label: '新建', icon: 'plus', action: () => quickNote() },
   { label: '更多', icon: 'more', action: () => { moreOpen.value = true; } },
 ]);
 
@@ -383,13 +384,22 @@ async function quickNew() {
   router.push(`/page/${data.meta.id}`);
 }
 
+/** 左下角「+」与 Ctrl+N：记一条灵感（建到 原始资料/灵感碎片/），新建 Wiki 页面仍走侧栏顶部「+」 */
+async function quickNote() {
+  const created = await createIdeaNote();
+  if (!created) return;
+  sidebarRef.value?.load();
+  app.setReadingMode(false);
+  router.push(`/page/${created.id}`);
+}
+
 function onKey(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
     e.preventDefault();
     router.push('/search');
   } else if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
     e.preventDefault();
-    quickNew();
+    quickNote();
   }
 }
 
@@ -460,6 +470,7 @@ function onUpdateOnline() {
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onWindowResize);
+  app.loadUiPreferences(); // 侧栏「AI 工作区」默认隐藏，是否显示由服务端设置决定
   loadRuntimeCapabilities().then((caps) => {
     if (caps.features.jobs) {
       jobPollStopped = false;

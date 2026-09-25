@@ -38,6 +38,9 @@ const PUBLIC_SETTINGS = [
   'zcode_config',
   'ddns_config',
   'search_synonyms',
+  // 界面偏好：侧栏是否显示「AI 工作区」（服务端自动生成的日志/索引/关系库）。
+  // 用户日常不需要看这些内容，默认隐藏；'1' 才显示。
+  'show_ai_workspace',
 ];
 
 export async function settingsRoutes(app: FastifyInstance) {
