@@ -172,7 +172,7 @@
         <span class="group-ico" aria-hidden="true"><Icon name="monitor" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">桌面端更新</span>
-          <span class="group-hint">Windows 桌面端：安装包可自动或手动下载安装；源码模式增量拉取提交并重新构建</span>
+          <span class="group-hint">Windows 桌面端：安装包可自动或手动下载安装；源码模式增量拉取提交并重新构建；开机自启与桌面快捷方式维护也在这里</span>
         </span>
         <span v-if="desktopVersionBadge" class="group-badge tone-muted">{{ desktopVersionBadge }}</span>
         <span v-if="desktopBadge.text" class="group-badge" :class="`tone-${desktopBadge.tone}`">{{ desktopBadge.text }}</span>
@@ -318,6 +318,37 @@
           </div>
           <p v-if="uninstallError" class="setting-message err">{{ uninstallError }}</p>
         </template>
+
+        <!-- 开机自启：登录 Windows 后静默启动到系统托盘（旧版壳无此 API 时整行隐藏） -->
+        <div v-if="launchAtLoginSupported" class="setting-row">
+          <div class="setting-copy">
+            <strong>开机自启</strong>
+            <span>
+              登录 Windows 后自动启动 Engram，<strong>静默驻留系统托盘</strong>：不弹主窗口，内嵌服务照常运行；
+              托盘图标双击（或桌面快捷方式）即可打开主界面。托盘右键菜单里也能开关。
+            </span>
+          </div>
+          <div class="check-controls">
+            <span v-if="launchAtLogin.blocked" class="check-status has">已被系统禁用</span>
+            <label class="switch-control">
+              <input
+                type="checkbox"
+                :checked="launchAtLogin.enabled"
+                :disabled="launchAtLoginBusy"
+                @change="toggleLaunchAtLogin"
+              />
+              <span aria-hidden="true"></span>
+              <em>{{ launchAtLogin.enabled ? '已开启' : '已关闭' }}</em>
+            </label>
+          </div>
+        </div>
+        <p v-if="launchAtLoginMessage" class="setting-message" :class="launchAtLoginError ? 'err' : ''">{{ launchAtLoginMessage }}</p>
+        <p v-if="launchAtLoginSupported && launchAtLogin.blocked" class="setting-message warn">
+          启动项被「任务管理器 → 启动」禁用了，开机不会自动运行；在这里重新打开一次开关即可恢复。
+        </p>
+        <p v-if="launchAtLoginSupported && launchAtLogin.stale" class="setting-message warn">
+          检测到启动项命令与当前安装位置不一致（换过安装目录或旧版本写入），开关一次即可修正。
+        </p>
 
         <!-- 桌面快捷方式：图标丢失或显示不对时重建（源码模式同时生成带 Engram 图标的 Engram.exe） -->
         <div v-if="shortcutSupported" class="setting-row">
@@ -552,6 +583,20 @@ const shortcutSupported = ref(false);
 const shortcutBusy = ref(false);
 const shortcutMessage = ref('');
 const shortcutError = ref(false);
+
+// 开机自启（Windows 登录时静默启动到系统托盘）：旧版壳无 getLaunchAtLogin API 时隐藏该行
+const launchAtLoginSupported = ref(false);
+const launchAtLogin = ref<{
+  supported: boolean;
+  enabled: boolean;
+  stale: boolean;
+  blocked: boolean;
+  command: string;
+}>({ supported: false, enabled: false, stale: false, blocked: false, command: '' });
+const launchAtLoginBusy = ref(false);
+const launchAtLoginMessage = ref('');
+const launchAtLoginError = ref(false);
+let offLaunchAtLogin: (() => void) | null = null;
 
 // ---- 同步中枢远程更新（本地模式绑定多端同步后可用，转发走本地内嵌 server） ----
 const syncStatus = ref<{ role: string; enabled: boolean; hubUrl: string } | null>(null);
@@ -1048,6 +1093,50 @@ async function doRebuildShortcut() {
   }
 }
 
+/** 读取开机自启状态（注册表实况）；旧版壳无此 API 时整行隐藏 */
+async function loadLaunchAtLogin() {
+  const wd = wikiDesktop();
+  if (!wd?.getLaunchAtLogin) {
+    launchAtLoginSupported.value = false;
+    return;
+  }
+  try {
+    const s = await wd.getLaunchAtLogin();
+    launchAtLogin.value = s;
+    launchAtLoginSupported.value = Boolean(s?.supported);
+  } catch {
+    launchAtLoginSupported.value = false;
+  }
+}
+
+async function toggleLaunchAtLogin(e: Event) {
+  const wd = wikiDesktop();
+  const enabled = (e.target as HTMLInputElement).checked;
+  if (!wd?.setLaunchAtLogin) return;
+  launchAtLoginBusy.value = true;
+  launchAtLoginMessage.value = '';
+  try {
+    const r = await wd.setLaunchAtLogin(enabled);
+    if (r?.ok === false) {
+      launchAtLoginError.value = true;
+      launchAtLoginMessage.value = r.error || '设置失败';
+      await loadLaunchAtLogin(); // 回读真实状态，避免开关停在用户点的那一侧
+      return;
+    }
+    launchAtLogin.value = r;
+    launchAtLoginError.value = false;
+    launchAtLoginMessage.value = enabled
+      ? '已开启：下次登录 Windows 会静默启动到系统托盘，不弹主窗口。'
+      : '已关闭：登录 Windows 后不再自动启动。';
+  } catch (e: any) {
+    launchAtLoginError.value = true;
+    launchAtLoginMessage.value = e?.message || '设置失败，请重试';
+    await loadLaunchAtLogin();
+  } finally {
+    launchAtLoginBusy.value = false;
+  }
+}
+
 async function saveConfig() {
   const parsed = parseRepoUrl(form.repoUrl);
   if ('error' in parsed) {
@@ -1146,11 +1235,20 @@ onMounted(() => {
   }
   // 桌面快捷方式重建入口：旧版壳无此 API 时该行自动隐藏
   shortcutSupported.value = Boolean(wd?.desktopRebuildShortcut);
+  // 开机自启：旧版壳无此 API 时该行自动隐藏；托盘菜单里改开关时靠订阅同步
+  void loadLaunchAtLogin();
+  if (wd?.onLaunchAtLoginState) {
+    offLaunchAtLogin = wd.onLaunchAtLoginState((s: any) => {
+      launchAtLogin.value = s;
+      launchAtLoginSupported.value = Boolean(s?.supported);
+    });
+  }
 });
 onUnmounted(() => {
   offProgress?.();
   offAutoState?.();
   offSourceState?.();
+  offLaunchAtLogin?.();
 });
 </script>
 

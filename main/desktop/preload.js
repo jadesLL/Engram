@@ -81,4 +81,17 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // 开始菜单里属于本安装的 Engram.lnk 一并同步。
   // 返回 { ok, shortcut, target, exe, startMenu, message } 或 { ok: false, error }
   desktopRebuildShortcut: () => ipcRenderer.invoke('desktop-rebuild-shortcut'),
+  // ---------- 开机自启（设置 → 连接与同步 → 桌面端更新；Windows 登录时静默启动到托盘） ----------
+  // 查询状态：{ supported, name, enabled, stale, blocked, command }
+  //   enabled=注册表 Run 项在（开机会启动）；stale=命令与当前安装形态不一致；
+  //   blocked=项在但被「任务管理器 → 启动」禁用；command=当前/将写入的完整命令行
+  getLaunchAtLogin: () => ipcRenderer.invoke('get-launch-at-login'),
+  // 开关开机自启（写/删注册表 Run 项；失败返回 { ok: false, error }，成功返回 { ok: true, ...状态 }）
+  setLaunchAtLogin: (enabled) => ipcRenderer.invoke('set-launch-at-login', enabled),
+  // 状态订阅：托盘菜单里改了开关时同步到已打开的设置页（返回取消函数）
+  onLaunchAtLoginState: (cb) => {
+    const listener = (_e, data) => cb(data);
+    ipcRenderer.on('desktop-launch-at-login', listener);
+    return () => ipcRenderer.removeListener('desktop-launch-at-login', listener);
+  },
 });

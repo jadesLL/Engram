@@ -9,7 +9,8 @@ Windows 桌面客户端，内嵌完整后端，所有数据保存在本机，无
 1. 首次启动直接初始化本地数据库与数据目录，完成后进入主界面。
 2. 之后启动继续直接进入主界面。
 3. **点 × 驻留系统托盘**：关闭窗口不退出应用，最小化到系统托盘后台继续运行（内嵌后端与任务不中断；首次关闭弹通知说明）；最小化按钮仍进任务栏。托盘单击/双击恢复窗口，右键菜单「打开 Engram / 退出 Engram」真正退出（退出时内嵌后端一并结束）。驻留托盘期间再次启动只唤起已有窗口（单实例锁，避免双实例抢占本地端口）。
-4. 数据仓库位置与本地服务端口可在「设置 → 数据与存储 → 存储位置」中调整。
+4. **开机自启（可选）**：设置 → 连接与同步 → 桌面端更新 →「开机自启」打开后，登录 Windows 会**静默启动到系统托盘**——只拉起内嵌后端与托盘图标，**不弹主窗口**；双击托盘图标（或桌面快捷方式）即打开主界面。托盘右键菜单里也有同一个开关。启动项写在注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Engram` 值（任务管理器「启动」页可见，可在那儿禁用）；便携版不提供该项（运行时目录每次启动都在变）。
+5. 数据仓库位置与本地服务端口可在「设置 → 数据与存储 → 存储位置」中调整。
 
 ## 软件更新
 
@@ -41,7 +42,8 @@ pnpm build:desktop
 ## 技术说明
 
 - `main.js`：主进程。启动时 fork 内嵌 server 子进程（`ELECTRON_RUN_AS_NODE` 纯 Node 模式），探活后加载本地页面。环境变量 `ENGRAM_USER_DATA` 可覆写 userData 目录、`ENGRAM_LOCAL_PORT` 可覆写服务端口（默认 18180），用于隔离测试/便携场景；两者须在启动前设置，前者在单实例锁之前生效。
-- `preload.js`：通过 `window.wikiDesktop` 暴露受控 API（`getDataDir` / `chooseDataDir` / `restartServer` / `getLocalPort` / `setLocalPort` / `openFileBytes` / `desktopUpdateCheck` / `desktopUpdateDownload` / `desktopUpdateRunInstaller` / `desktopUpdateGetState` / `desktopUpdateSetAuto` / `desktopRebuildShortcut`，以及事件订阅 `onUpdateProgress` / `onUpdateState`），`contextIsolation` 开启。
+- `preload.js`：通过 `window.wikiDesktop` 暴露受控 API（`getDataDir` / `chooseDataDir` / `restartServer` / `getLocalPort` / `setLocalPort` / `openFileBytes` / `desktopUpdateCheck` / `desktopUpdateDownload` / `desktopUpdateRunInstaller` / `desktopUpdateGetState` / `desktopUpdateSetAuto` / `desktopRebuildShortcut` / `getLaunchAtLogin` / `setLaunchAtLogin`，以及事件订阅 `onUpdateProgress` / `onUpdateState` / `onLaunchAtLoginState`），`contextIsolation` 开启。
+- `scripts/lib/login-item.js`：开机自启登录项命令与状态判定的纯逻辑（单测 `scripts/tests/login-item.test.js`）。三个实测结论写在文件头：Electron **不替调用方给 path/args 加引号**（路径带空格会让开机启动直接失败，所以这里自己引）；注册表 Run 项**没有工作目录**（源码模式必须传 desktop 绝对路径，快捷方式那套 `args='.'` 用不了）；Windows 上 `wasOpenedAtLogin` 只在 macOS 有效（静默判定只能靠命令行里的 `--silent-start` 标记）。主进程用 `app.setLoginItemSettings`（显式 `name: 'Engram'`，避免落到 Electron 默认的 `electron.app.Electron` 值名上与其他 Electron 应用互踩）写/删注册表，用 `reg.exe query` 读回命令行（36.x 的 `getLoginItemSettings` 没有 `name` 选项，读不回显式命名的项）；**启动时自动对齐**：项在、但命令已过期（换过安装目录 / 旧版没写静默标记）就改写成当前命令，并保留用户在任务管理器里的禁用选择。
 - `scripts/prepare-desktop.js`：打包前复制 server/web 产物并生成 server 运行时依赖清单。
 - `scripts/lib/shortcut.js` + `scripts/ensure-branded-exe.js`：桌面快捷方式与「品牌化 Engram.exe」的共用逻辑（纯 Node，单测 `scripts/tests/shortcut.test.js`）。主进程的「重建桌面快捷方式」走 Electron 的 `shell.writeShortcutLink`（GUI 进程不能 spawn powershell：空句柄会静默秒退），PowerShell 安装/更新脚本则调 `ensure-branded-exe.js` 只做 exe 品牌化，快捷方式由 WScript.Shell 写。
 - `scripts/pack-asar.js` + `scripts/lib/asar-staging.js`：手动生成 `app.asar` / `app.asar.unpacked`（绕过 Defender 锁 electron.exe 导致的 rename EPERM）。staging 清单必须覆盖主进程的相对引入（`lib/`、`scripts/lib/`）——少一个，安装版一启动就报 `Cannot find module`，而源码模式与 Docker 验证都发现不了；由 `scripts/tests/asar-staging.test.js` 锁住，`desktop/package.json` 的 `build.files` 同步含 `scripts/lib/**`。
