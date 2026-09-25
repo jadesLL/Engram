@@ -52,27 +52,36 @@ let localFlushTimer: ReturnType<typeof setTimeout> | null = null;
 function queueLocalBroadcast(summary: SyncOpSummary): void {
   // 内容没变（例如编辑器保存了但正文一致）与 AIWorks 系统页都不进用户记录
   if (!isNoteworthyOp(summary)) return;
+  // 「本机改动已广播给成员」只在中枢成立：未启用同步 / 成员端既没有可广播的成员，也不该为每次
+  // 业务写入挂一个待触发的定时器——进程退出或测试收尾关库之后它才触发，回调里的落库会抛
+  // 「the database connection is not open」，在定时器里就是 uncaughtException。
+  if (currentRole() !== 'hub') return;
   localBatch.push(summary);
   if (localFlushTimer) return;
   localFlushTimer = setTimeout(() => {
     localFlushTimer = null;
-    const items = localBatch.splice(0, localBatch.length);
-    if (!items.length) return;
-    const peers = listPeers();
-    if (!peers.length) return; // 群组里还没有成员：本机改动不进同步链路，不必打扰用户
-    const online = peers.filter((p) => connectedPeerIds().has(p.id)).length;
-    logSyncEvent('info', 'local-broadcast', {
-      detail: `本机${describeOpList(items)}，已广播给 ${online}/${peers.length} 台成员`
-        + (online === 0 ? '（当前没有成员在线，等它们上线后自动补齐）' : ''),
-      scope: 'hub',
-      data: {
-        count: items.length,
-        items: items.slice(0, 10).map(describeOpSummary),
-        paths: items.slice(0, 10).map((item) => item.path),
-        online,
-        total: peers.length,
-      },
-    });
+    try {
+      const items = localBatch.splice(0, localBatch.length);
+      if (!items.length) return;
+      const peers = listPeers();
+      if (!peers.length) return; // 群组里还没有成员：本机改动不进同步链路，不必打扰用户
+      const online = peers.filter((p) => connectedPeerIds().has(p.id)).length;
+      logSyncEvent('info', 'local-broadcast', {
+        detail: `本机${describeOpList(items)}，已广播给 ${online}/${peers.length} 台成员`
+          + (online === 0 ? '（当前没有成员在线，等它们上线后自动补齐）' : ''),
+        scope: 'hub',
+        data: {
+          count: items.length,
+          items: items.slice(0, 10).map(describeOpSummary),
+          paths: items.slice(0, 10).map((item) => item.path),
+          online,
+          total: peers.length,
+        },
+      });
+    } catch (error) {
+      // 同步层故障不阻塞业务写入（同 recordLocalChange）：定时器里的异常不冒成 uncaughtException
+      console.error('[sync] 记录本机广播失败:', error);
+    }
   }, 250);
   localFlushTimer.unref?.();
 }
