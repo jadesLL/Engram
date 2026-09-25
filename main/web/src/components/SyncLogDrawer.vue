@@ -836,6 +836,8 @@ async function askClear(): Promise<void> {
   color: var(--text-secondary);
   word-break: break-all;
   font-family: var(--font-mono, Consolas, monospace);
+  /* 条目清单 / 路径清单按行展示（结构化字段里是多行文本） */
+  white-space: pre-wrap;
 }
 
 .load-more {

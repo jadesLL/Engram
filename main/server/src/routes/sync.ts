@@ -36,13 +36,17 @@ import { distilledSourcePaths } from '../pipeline/sourceLedger.js';
 import { configure, reconcileNow, status } from '../sync/index.js';
 import {
   clearSyncLog,
-  formatBytes,
   logSyncEvent,
   querySyncLog,
   syncLogSummary,
   type SyncLogLevel,
   type SyncLogScope,
 } from '../sync/eventLog.js';
+import {
+  describeOpSummary,
+  isNoteworthyOp,
+  summarizeFileChange,
+} from '../sync/opText.js';
 
 /**
  * 多端同步端点（同步群组模型）：
@@ -65,20 +69,22 @@ function peerLabel(peer?: SyncPeer): string {
   return peer.name || peer.node_label || `成员 ${peer.id.slice(0, 8)}`;
 }
 
-const KIND_LABELS: Record<string, string> = { page: '页面', file: '文件', delete: '删除', move: '改名' };
-
 /**
  * 中枢侧记录一次成员推送。
  *
  * 旧实现中枢根本不记日志（日志只在成员端），而用户多半是在中枢上打开设置看
- * 「多端同步」——看到空列表就以为功能坏了。这里把「谁在什么时候推了什么、
- * 中枢怎么裁决的」逐条写清楚；冲突另记 warn 并带上副本路径，方便直接定位。
+ * 「多端同步」——看到空列表就以为功能坏了。这里把「谁在什么时候推了哪个文件、
+ * 做了什么增量（新增/修改/删除/改名 + 行数 + 体积）、中枢怎么裁决的」逐条写清楚；
+ * 冲突另记 warn 并带上副本路径，方便直接定位。
+ * AIWorks/ 下的系统页（操作日志、索引、关系库）由应用自己高频改写，不进用户记录。
  */
 function logPushResult(peer: SyncPeer | undefined, push: PushPayload, result: PushApplyResult): void {
   const who = peerLabel(peer);
-  const kind = KIND_LABELS[String(push.kind)] || String(push.kind);
   const target = String(push.target || '');
   const from = String(push.old_path || '');
+  const op = result.op;
+  if (!isNoteworthyOp(op)) return;
+  const describe = describeOpSummary(op);
   const data: Record<string, unknown> = {
     peerId: peer?.id || 'owner',
     kind: push.kind,
@@ -87,12 +93,17 @@ function logPushResult(peer: SyncPeer | undefined, push: PushPayload, result: Pu
     seq: result.seq,
     revision: result.revision,
     merge: result.merge || 'direct',
+    title: op.title,
+    added: op.added,
+    removed: op.removed,
+    beforeBytes: op.beforeBytes,
+    afterBytes: op.afterBytes,
   };
   if (result.merge === 'conflict') {
     const winner = result.theirWins ? '推送方（较新）' : '中枢（较新）';
     const loserKept = result.copyPath ? `，另一版本另存为「${result.copyPath}」` : '，另一版本已丢弃（AI 工作区或空内容不留副本）';
     logSyncEvent('warn', 'push-conflict', {
-      detail: `${who}推送的${kind}「${target}」与中枢版本冲突：按修改时间以${winner}为准${loserKept}`,
+      detail: `${who}${describe}，与中枢版本冲突：按修改时间以${winner}为准${loserKept}`,
       scope: 'hub',
       peer: peer?.name,
       data: { ...data, copyPath: result.copyPath || undefined, theirWins: result.theirWins },
@@ -101,19 +112,14 @@ function logPushResult(peer: SyncPeer | undefined, push: PushPayload, result: Pu
   }
   if (result.merge === 'merged') {
     logSyncEvent('info', 'push-merged', {
-      detail: `${who}推送的${kind}「${target}」与中枢版本已自动合并（保留双方改动）`,
+      detail: `${who}${describe}，双方改动已自动合并（各自新增的内容都保留）`,
       scope: 'hub',
       peer: peer?.name,
       data,
     });
     return;
   }
-  const detail = push.kind === 'move'
-    ? `${who}改名：${from ? `「${from}」→` : ''}「${target}」`
-    : push.kind === 'delete'
-      ? `${who}删除「${target}」`
-      : `${who}推送${kind}「${target}」`;
-  logSyncEvent('info', 'push-received', { detail, scope: 'hub', peer: peer?.name, data });
+  logSyncEvent('info', 'push-received', { detail: `${who}${describe}`, scope: 'hub', peer: peer?.name, data });
 }
 
 /** 全量对账清单请求：按成员去抖（同一成员 5 分钟内只记一条），否则每 15 分钟的自愈对账会把日志刷满 */
@@ -322,9 +328,16 @@ export async function syncRoutes(app: FastifyInstance) {
     let relPath = '';
     let saved = false;
     let tooLarge = false;
+    /** 落盘前的旧体积：据此说明这是「新增」还是「覆盖」，以及变大变小 */
+    let beforeBytes = 0;
     for await (const part of req.parts({ limits: { fileSize: Infinity, files: 1 } })) {
       if (part.type === 'field') {
-        if (part.fieldname === 'path') relPath = String(part.value ?? '');
+        if (part.fieldname === 'path') {
+          relPath = String(part.value ?? '');
+          try {
+            beforeBytes = fs.statSync(safeJoin(relPath)).size;
+          } catch { /* 中枢还没有这个文件 → 新增 */ }
+        }
       } else if (part.type === 'file' && part.fieldname === 'file') {
         if (!relPath) return reply.code(400).send({ error: '缺少 path 字段' });
         try {
@@ -351,13 +364,22 @@ export async function syncRoutes(app: FastifyInstance) {
     try {
       bytes = fs.statSync(safeJoin(relPath)).size;
     } catch { /* 极端情况：刚落盘就被移走 */ }
+    // 落盘前先量过旧体积（见上方 beforeBytes）：新增还是覆盖、变大还是变小，用户要看得见
+    const op = summarizeFileChange(relPath, beforeBytes, bytes);
     logSyncEvent('info', 'file-received', {
-      detail: `${peerLabel(req.syncPeer)}推送文件「${relPath}」（${formatBytes(bytes)}）`,
+      detail: `${peerLabel(req.syncPeer)}${describeOpSummary(op)}`,
       scope: 'hub',
       peer: req.syncPeer?.name,
-      data: { path: relPath, bytes, seq: result.seq, revision: result.revision },
+      data: {
+        path: relPath,
+        bytes,
+        beforeBytes,
+        verb: op.verb,
+        seq: result.seq,
+        revision: result.revision,
+      },
     });
-    return { ok: true, seq: result.seq, revision: result.revision };
+    return { ok: true, seq: result.seq, revision: result.revision, op };
   });
 
   /** 成员拉取非页面文件 */
