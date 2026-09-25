@@ -170,7 +170,8 @@
 
       <div class="section-separator" />
 
-      <!-- 原始资料：进料口。上传/新建/拖入；提炼由外部 Agent 处理 -->
+      <!-- 原始资料：进料口（一级目录）。其下固定三个二级分类：文档 / 对话 / 灵感碎片；
+           上传 / 新建 / 拖入都落「文档」，对话留给 save_chat，灵感碎片收随手记。 -->
       <section
         class="section"
         :class="{ 'files-drop': filesDropHot }"
@@ -209,7 +210,7 @@
               type="button"
               v-tooltip="'导出全部资料'"
               aria-label="导出全部资料"
-              :disabled="!visibleFiles.length || exporting"
+              :disabled="!visibleRawTotal || exporting"
               @click="exportAllFiles"
             >
               <Icon name="download" :size="13" />
@@ -217,7 +218,7 @@
             <button
               class="add-btn"
               type="button"
-              v-tooltip="'新建 Markdown 文件'"
+              v-tooltip="'新建 Markdown 文件（落「文档」）'"
               aria-label="新建 Markdown 文件"
               @click="createFile"
             >
@@ -226,36 +227,56 @@
             <button
               class="add-btn"
               type="button"
-              v-tooltip="desktopMdOnly ? '导入 Markdown 文档' : '上传文件'"
+              v-tooltip="desktopMdOnly ? '导入 Markdown 文档（落「文档」）' : '上传文件（落「文档」）'"
               :aria-label="desktopMdOnly ? '导入 Markdown 文档' : '上传文件'"
               @click="uploadInput?.click()"
             >
               <Icon name="upload" :size="13" />
             </button>
-            <span class="sec-count">{{ visibleFiles.length }}</span>
+            <span class="sec-count">{{ visibleRawTotal }}</span>
           </div>
         </div>
         <div v-show="!collapsed.files" class="sec-body">
-          <FileRow
-            v-for="f in sortList(visibleFiles, sortFiles)"
-            :key="f.path"
-            :file="f"
-            :active="isActiveFile(f)"
-            :selected="selected.has('f:' + f.path)"
-            :selection-mode="selectionMode"
-            :job="fileJob(f.path)"
-            :class="{ 'asset-drop-hot': !!f.pageId && assetDropTarget === f.pageId }"
-            @dragover="onRowDragOver($event, f)"
-            @dragleave="onRowDragLeave($event, f)"
-            @drop="onRowDrop($event, f)"
-            @open="openFile"
-            @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
-            @remove="removeFile"
-            @context-menu="onFileContextMenu"
-          />
-          <p v-if="!visibleFiles.length" class="none">
-            {{ filter ? '没有匹配资料' : '暂无资料' }}
-          </p>
+          <div v-for="g in rawGroups" :key="g.key" class="sub-group">
+            <button
+              class="sub-head raw-sub-head"
+              type="button"
+              :aria-expanded="!collapsed['raw:' + g.key]"
+              v-tooltip="g.hint"
+              @click="toggle('raw:' + g.key)"
+            >
+              <Icon
+                name="chevron-right"
+                :size="11"
+                class="raw-sub-caret"
+                :class="{ open: !collapsed['raw:' + g.key] }"
+              />
+              <span class="sub-name">{{ g.label }}</span>
+              <span class="sub-count">{{ g.files.length }}</span>
+            </button>
+            <div v-show="!collapsed['raw:' + g.key]" class="sub-body">
+              <FileRow
+                v-for="f in g.files"
+                :key="f.path"
+                :file="f"
+                :active="isActiveFile(f)"
+                :selected="selected.has('f:' + f.path)"
+                :selection-mode="selectionMode"
+                :job="fileJob(f.path)"
+                :class="{ 'asset-drop-hot': !!f.pageId && assetDropTarget === f.pageId }"
+                @dragover="onRowDragOver($event, f)"
+                @dragleave="onRowDragLeave($event, f)"
+                @drop="onRowDrop($event, f)"
+                @open="openFile"
+                @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
+                @remove="removeFile"
+                @context-menu="onFileContextMenu"
+              />
+              <p v-if="!g.files.length" class="none">
+                {{ filter ? '没有匹配' : g.empty }}
+              </p>
+            </div>
+          </div>
         </div>
         <input
           ref="uploadInput"
@@ -265,61 +286,6 @@
           hidden
           @change="onUpload"
         />
-      </section>
-
-      <!-- 对话：外置 Agent 沉积的对话文件 -->
-      <section class="section">
-        <div
-          class="sec-row"
-          :class="{ expanded: !collapsed.chat }"
-        >
-          <button
-            class="sec-toggle"
-            type="button"
-            :aria-expanded="!collapsed.chat"
-            v-tooltip="collapsed.chat ? '展开对话' : '收起对话'"
-            @click="toggle('chat')"
-          >
-            <span class="sec-name">对话</span>
-          </button>
-          <div class="sec-actions">
-            <button
-              class="sort-control section-sort"
-              type="button"
-              :class="{ 'menu-open': isSortMenuOpen('chat') }"
-              v-tooltip="`对话排序：${sortChatLabel}`"
-              :aria-label="`对话排序，当前 ${sortChatLabel}`"
-              aria-haspopup="menu"
-              :aria-expanded="isSortMenuOpen('chat')"
-              @click="openSortMenu($event, 'chat', '对话')"
-            >
-              <Icon name="sort" :size="12" />
-            </button>
-            <span class="sec-count">{{ visibleChatFiles.length }}</span>
-          </div>
-        </div>
-        <div v-show="!collapsed.chat" class="sec-body">
-          <FileRow
-            v-for="f in sortList(visibleChatFiles, sortChat)"
-            :key="f.path"
-            :file="f"
-            :active="isActiveFile(f)"
-            :selected="selected.has('f:' + f.path)"
-            :selection-mode="selectionMode"
-            :job="fileJob(f.path)"
-            :class="{ 'asset-drop-hot': !!f.pageId && assetDropTarget === f.pageId }"
-            @dragover="onRowDragOver($event, f)"
-            @dragleave="onRowDragLeave($event, f)"
-            @drop="onRowDrop($event, f)"
-            @open="openFile"
-            @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
-            @remove="removeFile"
-            @context-menu="onFileContextMenu"
-          />
-          <p v-if="!visibleChatFiles.length" class="none">
-            {{ filter ? '没有匹配对话' : '暂无对话' }}
-          </p>
-        </div>
       </section>
 
       <!-- AI 工作区：服务端自动生成的系统区（操作日志/索引/关系库），只读 -->
@@ -435,6 +401,7 @@ const sync = useSyncStore();
 const emit = defineEmits(['close', 'new-page']);
 
 const allPages = ref<any[]>([]);
+/** 原始资料「文档」分组：原始资料/文档/ 子树 + 根目录历史资料（服务端 ?section=doc 合并返回） */
 const files = ref<any[]>([]);
 const filter = ref('');
 /** 每个分列独立排序并持久化；AI 整理日志固定按时间倒序。 */
@@ -445,7 +412,6 @@ const groupSort = ref<Record<string, string>>({
   archived: localStorage.getItem('sortArchived') || legacySortWiki,
 });
 const sortFiles = ref(localStorage.getItem('sortFiles') || 'name-asc');
-const sortChat = ref(localStorage.getItem('sortChat') || sortFiles.value);
 const SORT_LABELS: Record<string, string> = {
   'name-asc': '名称 A→Z',
   'name-desc': '名称 Z→A',
@@ -459,7 +425,6 @@ function sortLabel(mode: string) {
 }
 
 const sortFilesLabel = computed(() => SORT_LABELS[sortFiles.value] || '名称 A→Z');
-const sortChatLabel = computed(() => SORT_LABELS[sortChat.value] || '名称 A→Z');
 
 /** 排序下拉：自绘弹层。原生 select 的弹层宽度由控件决定，23px 图标触发器下文字紧贴边缘。 */
 const SORT_OPTIONS = Object.entries(SORT_LABELS).map(([value, label]) => ({ value, label }));
@@ -471,7 +436,6 @@ const sortMenu = ref({ open: false, ready: false, left: 0, top: 0, target: '', l
 
 const sortMenuValue = computed(() => {
   if (sortMenu.value.target === 'files') return sortFiles.value;
-  if (sortMenu.value.target === 'chat') return sortChat.value;
   return groupSort.value[sortMenu.value.target.replace(/^group:/, '')] || 'name-asc';
 });
 
@@ -535,7 +499,6 @@ function closeSortMenu(restoreFocus = false) {
 function chooseSort(value: string) {
   const target = sortMenu.value.target;
   if (target === 'files') sortFiles.value = value;
-  else if (target === 'chat') sortChat.value = value;
   else if (target.startsWith('group:')) groupSort.value[target.slice('group:'.length)] = value;
   closeSortMenu(true);
 }
@@ -584,8 +547,11 @@ const defaultCollapsed: Record<string, boolean> = {
   entity: true,
   archived: true,
   files: true,
-  chat: true,
   ailog: true,
+  // 原始资料的三个二级分组默认展开（与顶层分区默认收起相反：进料口要一眼看见）
+  'raw:doc': false,
+  'raw:chat': false,
+  'raw:idea': false,
 };
 
 function loadCollapsedState() {
@@ -601,9 +567,10 @@ function loadCollapsedState() {
 
 const collapsed = ref<Record<string, boolean>>(loadCollapsedState());
 
-/** 一键全部收起/展开：顶层分区 + 实体子类 */
+/** 一键全部收起/展开：顶层分区 + 原始资料二级分组 + 实体子类 */
 const COLLAPSE_ALL_KEYS = [
-  'concept', 'entity', 'archived', 'files', 'chat', 'ailog',
+  'concept', 'entity', 'archived', 'files', 'ailog',
+  'raw:doc', 'raw:chat', 'raw:idea',
   'entity:person', 'entity:customer', 'entity:org', 'entity:project', 'entity:other',
 ];
 const allCollapsed = computed(() => COLLAPSE_ALL_KEYS.every((k) => collapsed.value[k]));
@@ -614,10 +581,10 @@ function toggleAll() {
 }
 let chatTimer: ReturnType<typeof setTimeout> | undefined;
 let chatStopped = false;
-/** 轻量刷新对话文件列表：外部 Agent 经 save_chat 写入后，对话分区数秒内出现新文件 */
+/** 轻量刷新「对话」分组：外部 Agent 经 save_chat 写入后，数秒内出现新文件 */
 async function refreshChats() {
   try {
-    const { data } = await api.get('/api/files/list?dir=' + encodeURIComponent('原始资料/对话'));
+    const { data } = await api.get('/api/files/list?section=chat');
     chatFiles.value = data.files;
   } catch { /* 保留上次状态 */ }
   if (!chatStopped) chatTimer = setTimeout(refreshChats, 5000);
@@ -693,7 +660,10 @@ async function exportSelected() {
 }
 
 async function exportAllFiles() {
-  const paths = files.value.map((f: any) => f.path).filter(Boolean);
+  // 「导出全部资料」= 原始资料三个二级分组的全部文件
+  const paths = [...files.value, ...chatFiles.value, ...ideaFiles.value]
+    .map((f: any) => f.path)
+    .filter(Boolean);
   if (!paths.length) return;
   await exportFiles(paths, '原始资料');
 }
@@ -952,8 +922,21 @@ const aiLogs = computed(() =>
   )
 );
 
-/** 对话分区文件（原始资料/对话/，递归；与原始资料同构） */
+/** 原始资料二级分类（与服务端 lib/rawSections.ts 同一套口径）：
+ *  文档 = 原始资料/文档/ + 根目录历史资料；对话 = save_chat 沉积；灵感碎片 = 随手记。
+ *  下面的 label/hint 只是兜底默认值，挂载时用服务端 /api/files/sections 的定义覆盖，
+ *  分类口径只有服务端一处来源。 */
+const RAW_GROUPS = [
+  { key: 'doc', label: '文档', hint: '成文的完整文件：会议纪要、调研报告、复盘、年报、教程、攻略…', empty: '暂无文档' },
+  { key: 'chat', label: '对话', hint: '与 Agent 的对话沉积（save_chat 写入，可按项目分目录）', empty: '暂无对话' },
+  { key: 'idea', label: '灵感碎片', hint: '随手记：零散条目、想法、待办', empty: '暂无灵感碎片' },
+] as const;
+/** 服务端下发的分类名与说明（拿不到就用上面的兜底值） */
+const rawSectionMeta = ref<Record<string, { label?: string; hint?: string }>>({});
+/** 对话分组文件（原始资料/对话/，递归） */
 const chatFiles = ref<any[]>([]);
+/** 灵感碎片分组文件（原始资料/灵感碎片/，递归） */
+const ideaFiles = ref<any[]>([]);
 
 const normalizedFilter = computed(() => filter.value.trim().toLocaleLowerCase('zh-CN'));
 
@@ -971,16 +954,34 @@ function filteredPages(pages: any[]) {
   );
 }
 
-const visibleFiles = computed(() =>
-  normalizedFilter.value
-    ? files.value.filter((file) => textMatches(file.name) || textMatches(file.path))
-    : files.value
-);
+function filteredFiles(list: any[]) {
+  if (!normalizedFilter.value) return list;
+  return list.filter((file) => textMatches(file.name) || textMatches(file.path));
+}
 
-const visibleChatFiles = computed(() =>
-  normalizedFilter.value
-    ? chatFiles.value.filter((file) => textMatches(file.name) || textMatches(file.path))
-    : chatFiles.value
+const visibleFiles = computed(() => filteredFiles(files.value));
+
+const visibleChatFiles = computed(() => filteredFiles(chatFiles.value));
+
+const visibleIdeaFiles = computed(() => filteredFiles(ideaFiles.value));
+
+/** 三个二级分组（供模板 v-for）：排序统一走分区级「原始资料排序」 */
+const rawGroups = computed(() => {
+  const byKey: Record<string, any[]> = {
+    doc: sortList(visibleFiles.value, sortFiles.value),
+    chat: sortList(visibleChatFiles.value, sortFiles.value),
+    idea: sortList(visibleIdeaFiles.value, sortFiles.value),
+  };
+  return RAW_GROUPS.map((g) => ({
+    ...g,
+    label: rawSectionMeta.value[g.key]?.label || g.label,
+    hint: rawSectionMeta.value[g.key]?.hint || g.hint,
+    files: byKey[g.key] || [],
+  }));
+});
+
+const visibleRawTotal = computed(
+  () => visibleFiles.value.length + visibleChatFiles.value.length + visibleIdeaFiles.value.length
 );
 const visibleAiLogs = computed(() => filteredPages(aiLogs.value));
 
@@ -1008,9 +1009,8 @@ function sortList(list: any[], mode: string): any[] {
   }
 }
 
-watch([sortFiles, sortChat], () => {
+watch(sortFiles, () => {
   localStorage.setItem('sortFiles', sortFiles.value);
-  localStorage.setItem('sortChat', sortChat.value);
 });
 watch(
   groupSort,
@@ -1028,14 +1028,25 @@ watch(
 );
 
 async function load() {
-  const [{ data: pl }, { data: fl }, { data: cf }] = await Promise.all([
+  const [{ data: pl }, { data: doc }, { data: cf }, { data: idea }] = await Promise.all([
     api.get('/api/pages/list'),
-    api.get('/api/files/list'),
-    api.get('/api/files/list?dir=' + encodeURIComponent('原始资料/对话')),
+    api.get('/api/files/list?section=doc'),
+    api.get('/api/files/list?section=chat'),
+    api.get('/api/files/list?section=idea'),
   ]);
   allPages.value = pl.pages;
-  files.value = fl.files;
+  files.value = doc.files;
   chatFiles.value = cf.files;
+  ideaFiles.value = idea.files;
+  // 分类名与说明以服务端为准（拿不到就沿用内置兜底值，不影响列表）
+  try {
+    const { data } = await api.get('/api/files/sections');
+    const meta: Record<string, { label?: string; hint?: string }> = {};
+    for (const section of data?.sections || []) {
+      if (section?.key) meta[section.key] = { label: section.label, hint: section.hint };
+    }
+    rawSectionMeta.value = meta;
+  } catch { /* 旧服务端没有这个接口时保持兜底文案 */ }
 }
 
 function openPage(p: any) {
@@ -1066,7 +1077,7 @@ async function createFile() {
   });
   if (name === null) return;
   try {
-    const { data } = await api.post('/api/files/create', { name: name || '未命名.md' });
+    const { data } = await api.post('/api/files/create', { name: name || '未命名.md', section: 'doc' });
     await load();
     if (data.pageId) router.push(`/page/${data.pageId}`);
     else router.push({ path: '/page', query: { file: data.path } });
@@ -1093,7 +1104,8 @@ async function uploadFiles(list: File[]) {
   list = gateImport(list);
   if (!list.length) return;
   const fd = new FormData();
-  fd.append('dir', '原始资料');
+  // 上传落「文档」二级目录（原始资料/文档），与服务端默认落点一致
+  fd.append('dir', '原始资料/文档');
   for (const f of list) fd.append('files', f);
   try {
     const { data } = await api.post('/api/files/upload', fd);
@@ -1756,6 +1768,28 @@ onUnmounted(() => {
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+/* 原始资料二级分组头：折叠箭头 + 名称 + 计数（沿用实体子类 .sub-head 的观感） */
+.raw-sub-head {
+  justify-content: flex-start;
+  gap: 3px;
+  padding-left: 2px;
+}
+
+.raw-sub-caret {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  transition: transform 150ms ease;
+}
+
+.raw-sub-caret.open {
+  transform: rotate(90deg);
+}
+
+.raw-sub-head .sub-name {
+  flex: 1;
+  text-align: left;
 }
 
 .page-row {

@@ -26,6 +26,14 @@ import {
 } from '../pipeline/fileExtraction.js';
 import { assetCountsByParent, isAssetFile, parseAssetRefs, assetRelPath, safeAssetJoin, MEDIA_PREFIX } from '../lib/pageAssets.js';
 import { isInboxPath } from '../lib/brainPaths.js';
+import {
+  DEFAULT_RAW_DIR,
+  isRawPath,
+  isRawSectionDir,
+  RAW_SECTIONS,
+  rawSectionByKey,
+  type RawSectionKey,
+} from '../lib/rawSections.js';
 
 /** 可提取文本入索引的 Office 格式 */
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
@@ -125,16 +133,26 @@ export async function fileRoutes(app: FastifyInstance) {
     }
   });
 
+  /** 原始资料二级分类定义（侧栏分组名与说明的唯一来源，见 lib/rawSections.ts） */
+  app.get('/api/files/sections', async () => ({
+    sections: RAW_SECTIONS.map((s) => ({ key: s.key, dir: s.dir, label: s.label, hint: s.hint })),
+    defaultDir: DEFAULT_RAW_DIR,
+  }));
+
   /** 原始资料文件列表（供侧栏展示）；md 文件附带 page id（可直接进编辑器）。
-   *  默认只列 原始资料 顶层；?dir=原始资料/对话 时递归该子树（对话分区用，与原始资料同构）。
+   *  - `?section=doc|chat|idea`：列该二级分类（doc 额外带上根目录的历史资料，标记 legacy）；
+   *  - `?dir=原始资料/xxx`：递归该子树（历史参数，保持兼容）；
+   *  - 不带参数：只列 原始资料 一级目录下的文件。
    *  图片不在这里出现：图片是 md 父项的私有资产（见 lib/pageAssets.ts），只能从父项右键菜单进，
    *  侧栏目录里不占行、不计数、不成组。 */
-  app.get('/api/files/list', async (req) => {
-    const { dir } = req.query as { dir?: string };
+  app.get('/api/files/list', async (req, reply) => {
+    const { dir, section } = req.query as { dir?: string; section?: string };
     const sub = dir ? normalizeDir(dir) : '';
+    const rawSection = section ? rawSectionByKey(section) : undefined;
+    if (section && !rawSection) return reply.code(400).send({ error: `未知的资料分类：${section}` });
     const out: any[] = [];
     const assetCounts = assetCountsByParent();
-    const pushEntry = (name: string, rel: string) => {
+    const pushEntry = (name: string, rel: string, legacy = false) => {
       // 历史遗留的散图（迁移没搬走的）同样不进侧栏
       if (isAssetFile(name)) return;
       const abs = safeJoin(rel);
@@ -164,46 +182,69 @@ export async function fileRoutes(app: FastifyInstance) {
         extractionSkippedPages: extraction?.skipped_pages || 0,
         extractionError: extraction?.error || null,
         distilled: isDistilledPath(rel),
+        // 二级分类上线前留在 原始资料/ 根目录的历史文件：归入「文档」分组展示，磁盘不动
+        legacy,
       });
     };
-    if (sub) {
-      // 递归子树（对话分区：对话/项目/xxx.md）
-      const walk = (abs: string, rel: string) => {
-        let entries: fs.Dirent[] = [];
-        try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
-        for (const e of entries) {
-          if (e.name.startsWith('.')) continue;
-          const childAbs = path.join(abs, e.name);
-          const childRel = `${rel}/${e.name}`;
-          if (e.isDirectory()) walk(childAbs, childRel);
-          else pushEntry(e.name, childRel);
-        }
-      };
-      walk(safeJoin(sub), sub);
-    } else {
-      // 原始资料顶层（保持原样：不递归）
-      const top = safeJoin('原始资料');
+    // 递归子树（对话/灵感碎片：可含项目子目录）
+    const walk = (abs: string, rel: string) => {
       let entries: fs.Dirent[] = [];
-      try { entries = fs.readdirSync(top, { withFileTypes: true }); } catch { /* empty */ }
+      try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const childAbs = path.join(abs, e.name);
+        const childRel = `${rel}/${e.name}`;
+        if (e.isDirectory()) walk(childAbs, childRel);
+        else pushEntry(e.name, childRel);
+      }
+    };
+    // 只列一级目录下的文件（不递归）
+    const listTop = (relDir: string) => {
+      const abs = safeJoin(relDir);
+      let entries: fs.Dirent[] = [];
+      try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch { /* empty */ }
       for (const e of entries) {
         if (e.name.startsWith('.') || e.isDirectory()) continue;
-        pushEntry(e.name, `原始资料/${e.name}`);
+        pushEntry(e.name, `${relDir}/${e.name}`, relDir === '原始资料');
       }
+    };
+    if (rawSection) {
+      if (rawSection.key === 'doc') {
+        // 文档分组 = 原始资料/文档 子树 + 根目录历史资料（不迁移用户文件）
+        walk(safeJoin(rawSection.dir), rawSection.dir);
+        listTop('原始资料');
+      } else {
+        walk(safeJoin(rawSection.dir), rawSection.dir);
+      }
+    } else if (sub) {
+      walk(safeJoin(sub), sub);
+    } else {
+      listTop('原始资料');
     }
     out.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     return { files: out };
   });
 
-  /** 在原始资料中新建空文件（md/txt），md 自动登记为页面可编辑 */
+  /** 在原始资料中新建空文件（md/txt），默认落「文档」二级目录；md 自动登记为页面可编辑 */
   app.post('/api/files/create', async (req, reply) => {
-    const { name } = req.body as { name?: string };
+    const { name, dir, section } = req.body as { name?: string; dir?: string; section?: string };
     if (!name?.trim()) return reply.code(400).send({ error: '文件名为空' });
     const safeName = path.basename(name.trim()).replace(/[\\/:*?"<>|]/g, '-');
     const ext = path.posix.extname(safeName).slice(1).toLowerCase();
     if (!['md', 'markdown', 'txt'].includes(ext)) {
       return reply.code(400).send({ error: '仅支持新建 .md / .txt 文件' });
     }
-    let rel = `原始资料/${safeName}`;
+    // 落点：显式 section / dir 优先，默认「文档」；灵感碎片也能随手新建，对话留给 save_chat
+    const bySection = section ? rawSectionByKey(section) : undefined;
+    if (section && !bySection) return reply.code(400).send({ error: `未知的资料分类：${section}` });
+    if (bySection?.key === 'chat') {
+      return reply.code(403).send({ error: '「对话」目录专供对话沉积（save_chat），请新建到「文档」或「灵感碎片」' });
+    }
+    const targetDir = normalizeDir(dir || bySection?.dir || DEFAULT_RAW_DIR);
+    if (!isUploadDir(targetDir) || !isRawPath(targetDir)) {
+      return reply.code(403).send({ error: '文件只能新建在「原始资料」下' });
+    }
+    let rel = `${targetDir}/${safeName}`;
     if (fs.existsSync(safeJoin(rel))) {
       return reply.code(409).send({ error: `已存在同名文件：${safeName}` });
     }
@@ -240,9 +281,10 @@ export async function fileRoutes(app: FastifyInstance) {
         incoming.push({ filename: part.filename, buffer: await part.toBuffer() });
       }
     }
-    const dir = normalizeDir(fields.dir || '') || '原始资料';
+    // 默认落「文档」二级目录（原始资料/文档）；显式传 dir 时按白名单校验
+    const dir = normalizeDir(fields.dir || '') || DEFAULT_RAW_DIR;
     if (!isUploadDir(dir)) {
-      return reply.code(403).send({ error: '文件只能上传到「原始资料」目录' });
+      return reply.code(403).send({ error: '文件只能上传到「原始资料」的 文档 / 对话 / 灵感碎片 目录' });
     }
     // 图片不能作为独立资料上传：图片是某个 md 父项的私有资产，只能插进某个内容里
     // （编辑器内粘贴/拖入，或拖到侧栏某个条目上）。裸图会让侧栏目录、提炼清单、
@@ -303,7 +345,7 @@ export async function fileRoutes(app: FastifyInstance) {
         }
         notifySyncChange('page', rel);
         if (pageId) emit('page-changed', { path: rel, id: pageId });
-      } else if (dir === '原始资料' && EXTRACTABLE_EXTENSIONS.has(ext)) {
+      } else if (isRawPath(dir) && EXTRACTABLE_EXTENSIONS.has(ext)) {
         const fileId = ensureFileRecord(rel, buffer.length);
         const scheduled = scheduleFileExtraction(rel, { mode: 'auto' });
         notifySyncChange('file', rel);

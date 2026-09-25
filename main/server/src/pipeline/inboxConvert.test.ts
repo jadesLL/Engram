@@ -169,13 +169,13 @@ test('长文本分多块：每块各自的产物在文末合并（不覆盖）',
   assert.equal(written.match(/## 分块正文/g)?.length, result.chunks);
 });
 
-test('入库：产物直接复制进 原始资料/ 并登记为页面，原件与产物都留在收集箱', async () => {
+test('入库：产物直接复制进 原始资料/文档/ 并登记为页面，原件与产物都留在收集箱', async () => {
   const rel = plant('合同.txt', '合同金额 12 万，付款周期 30 天。');
   const { fetchImpl } = fakeModel('# 合同要点\n\n- 金额 12 万\n- 付款周期 30 天');
   const converted = await convertInboxItem(rel, { fetchImpl, config });
 
   const adopted = adoptInboxItem(rel);
-  assert.equal(adopted.pagePath, `原始资料/${path.posix.basename(converted.derivedPath)}`);
+  assert.equal(adopted.pagePath, `原始资料/文档/${path.posix.basename(converted.derivedPath)}`);
   assert.match(adopted.pageTitle, /合同/);
   assert.equal(fs.existsSync(path.join(BRAIN_DIR, adopted.pagePath)), true);
   assert.equal(fs.existsSync(path.join(BRAIN_DIR, converted.derivedPath)), true, '产物保留在收集箱');
@@ -202,7 +202,7 @@ test('同名原件入库不覆盖：第二份加序号', async () => {
   const { fetchImpl } = fakeModel('# 周报');
   await convertInboxItem(first, { fetchImpl, config });
   const a = adoptInboxItem(first);
-  assert.match(a.pagePath, /^原始资料\/\d{4}\.\d{2}\.\d{2}_周报\.md$/);
+  assert.match(a.pagePath, /^原始资料\/文档\/\d{4}\.\d{2}\.\d{2}_周报\.md$/);
   // 产物仍在 → 再入库一次会另存一份，不覆盖上一份
   const b = adoptInboxItem(first);
   assert.equal(b.pagePath, a.pagePath.replace(/\.md$/, ' (2).md'));
@@ -217,7 +217,7 @@ test('Agent 通道写产物：与转换通道落同一位置、同一 frontmatte
   assert.match(text, /来源: 收集箱\/会议.txt/);
   assert.match(text, /转换版本: semantic-v2/);
   assert.match(text, /由 Agent 通道写入/);
-  assert.equal(adoptInboxItem(rel).pagePath, `原始资料/${path.posix.basename(written.derivedPath)}`);
+  assert.equal(adoptInboxItem(rel).pagePath, `原始资料/文档/${path.posix.basename(written.derivedPath)}`);
 });
 
 test('同一原件重转只保留最新产物，其他同题原件不会被删', async () => {
@@ -240,19 +240,20 @@ test('同一原件重转只保留最新产物，其他同题原件不会被删',
   assert.equal(fs.readdirSync(path.join(BRAIN_DIR, '收集箱', '转换结果')).length, 2);
 });
 
-test('旧版入库目录自动迁到原始资料根，撞名加序号且保留页面 ID', async () => {
+test('旧版入库目录自动迁到原始资料/文档，撞名加序号且保留页面 ID', async () => {
   const legacyDir = path.join(BRAIN_DIR, '原始资料', '收集箱');
   fs.mkdirSync(legacyDir, { recursive: true });
-  fs.writeFileSync(path.join(BRAIN_DIR, '原始资料', '合同.md'), '# 已有合同\n', 'utf8');
+  fs.mkdirSync(path.join(BRAIN_DIR, '原始资料', '文档'), { recursive: true });
+  fs.writeFileSync(path.join(BRAIN_DIR, '原始资料', '文档', '合同.md'), '# 已有合同\n', 'utf8');
   fs.writeFileSync(path.join(legacyDir, '合同.md'), '# 旧合同\n', 'utf8');
   const { syncPageFile } = await import('../lib/vault.js');
-  syncPageFile('原始资料/合同.md');
+  syncPageFile('原始资料/文档/合同.md');
   const old = syncPageFile('原始资料/收集箱/合同.md');
   assert.ok(old);
   assert.equal(migrateLegacyInboxAdoptions(), 1);
   const moved = db.prepare('SELECT id, path FROM pages WHERE id = ?').get(old.id) as any;
-  assert.equal(moved.path, '原始资料/合同 (2).md');
-  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '原始资料', '合同 (2).md')), true);
+  assert.equal(moved.path, '原始资料/文档/合同 (2).md');
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '原始资料', '文档', '合同 (2).md')), true);
   assert.equal(fs.existsSync(legacyDir), false);
 });
 

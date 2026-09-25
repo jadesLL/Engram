@@ -188,20 +188,36 @@ class EngramLocalServer private constructor(private val context: Context) {
 
         get("/api/files/list") {
             if (!call.authorize()) return@get
-            call.json(JSONObject().put("files", db.files(call.request.queryParameters["dir"])))
+            val section = call.request.queryParameters["section"]
+            call.json(JSONObject().put("files", db.files(call.request.queryParameters["dir"], section)))
+        }
+        // 原始资料二级分类定义（与 server/src/lib/rawSections.ts 同口径）
+        get("/api/files/sections") {
+            if (!call.authorize()) return@get
+            call.json(JSONObject()
+                .put("sections", JSONArray().apply {
+                    put(JSONObject().put("key", "doc").put("dir", "原始资料/文档").put("label", "文档")
+                        .put("hint", "成文的完整文件：会议纪要、调研报告、复盘、年报、教程、攻略…"))
+                    put(JSONObject().put("key", "chat").put("dir", "原始资料/对话").put("label", "对话")
+                        .put("hint", "与 Agent 的对话沉积（save_chat 写入，可按项目分目录）"))
+                    put(JSONObject().put("key", "idea").put("dir", "原始资料/灵感碎片").put("label", "灵感碎片")
+                        .put("hint", "随手记：零散条目、想法、待办"))
+                })
+                .put("defaultDir", "原始资料/文档"))
         }
         post("/api/files/create") {
             if (!call.authorize()) return@post
-            call.json(db.createRawFile(call.body().optString("name", "未命名.md")))
+            call.json(db.createRawFile(call.body().optString("name", "未命名.md"), call.body().optString("section").ifBlank { null }))
         }
         post("/api/files/upload") {
             if (!call.authorize()) return@post
             val incoming = mutableListOf<Pair<String, File>>()
-            var dir = "原始资料"
+            // 默认落「文档」二级目录（与 server routes/files.ts 同口径）
+            var dir = "原始资料/文档"
             try {
                 call.receiveMultipart(formFieldLimit = MAX_FILE_BYTES).forEachPart { part ->
                     when (part) {
-                        is PartData.FormItem -> if (part.name == "dir") dir = part.value.trim('/').ifBlank { "原始资料" }
+                        is PartData.FormItem -> if (part.name == "dir") dir = part.value.trim('/').ifBlank { "原始资料/文档" }
                         is PartData.FileItem -> {
                             val name = sanitizeFileName(part.originalFileName ?: "file")
                             val staged = File(db.root, "upload-${UUID.randomUUID()}.tmp")
@@ -221,8 +237,10 @@ class EngramLocalServer private constructor(private val context: Context) {
                 incoming.forEach { it.second.delete() }
                 throw error
             }
-            // 与 server config.ts UPLOAD_DIRS 同口径（assets 供编辑器贴图），改一处要同步另一处
-            require(dir == "原始资料" || dir == "assets") { "文件只能上传到「原始资料」或「assets」目录" }
+            // 与 server config.ts UPLOAD_DIRS 同口径（原始资料三个二级目录 + 一级目录 + assets 供编辑器贴图），改一处要同步另一处
+            require(
+                dir == "原始资料" || dir == "原始资料/文档" || dir == "原始资料/对话" || dir == "原始资料/灵感碎片" || dir == "assets"
+            ) { "文件只能上传到「原始资料」的 文档 / 对话 / 灵感碎片 目录" }
             val saved = JSONArray(); val duplicates = JSONArray()
             incoming.forEach { (name, staged) ->
                 try { saved.put(db.installImportedFile("$dir/$name", staged)) }

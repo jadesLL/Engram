@@ -127,8 +127,8 @@ export const MCP_TOOLS: McpToolDoc[] = [
   {
     name: 'create_raw_material',
     group: '写',
-    summary: '把已完成的调研结果新建为 原始资料/ 下的 Markdown 来源文件；已有文件拒绝覆盖。',
-    params: 'path 新文件路径（必填，如 原始资料/调研/市场分析.md）；content 完整 Markdown 正文（必填，不含 YAML frontmatter）。',
+    summary: '把已完成的调研结果新建为原始资料 Markdown 来源文件；已有文件拒绝覆盖。',
+    params: 'path 新文件路径（必填，调研成果用 原始资料/文档/xxx.md，随口记的零散内容用 原始资料/灵感碎片/xxx.md）；content 完整 Markdown 正文（必填，不含 YAML frontmatter）。',
     notes: '仅在用户明确要求保存调研结果时调用；不允许改已有文件，原始资料/对话/ 专供聊天记录，旧版 原始资料/收集箱/ 已停用。正文应列出调研来源与引用。',
     cli: '（CLI 未提供，仅 MCP）',
   },
@@ -223,7 +223,7 @@ export const MCP_TOOLS: McpToolDoc[] = [
   {
     name: 'save_chat',
     group: '写',
-    summary: '把一段与外部 Agent 的对话沉积到 原始资料/对话/，按时间 + 标识命名。',
+    summary: '把一段与外部 Agent 的对话沉积到 原始资料/对话/（原始资料的二级目录之一），按时间 + 标识命名。',
     params: 'content 对话正文 markdown（必填）；identifier 标识（可选，用于文件名与标题）；project 项目维度（可选，归到子目录）；append 追加合并到当日最近一条（可选）。',
     notes: '须用户明确指示才可调用，不得自行判断"这段有价值"就沉淀；已沉淀的对话属原始资料，可被后续提炼作业引用。',
     cli: 'engram chat save [--identifier <标识>] [--project <项目>] [--append]（正文走 stdin）',
