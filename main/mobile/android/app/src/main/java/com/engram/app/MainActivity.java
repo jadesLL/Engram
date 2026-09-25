@@ -355,7 +355,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * 系统分享入口：文字与文件先写进 Android 私有库的「原始资料/收集箱」，写入成功后走
+     * 系统分享入口：文字与文件先写进 Android 私有库的「原始资料/文档」，写入成功后走
      * 普通同步 outbox。这里只接收用户主动分享给 Engram 的 URI，不申请全盘存储权限。
      */
     private void handleIncomingShare(Intent intent) {

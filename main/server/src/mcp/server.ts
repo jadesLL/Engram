@@ -27,6 +27,7 @@ import {
 import { AgentQuestionError, askUserQuestions, formatAskOutcome } from '../assistant/questions.js';
 import { assetMime, isAssetFile, isParentId, parseMediaUrl, safeAssetJoin } from '../lib/pageAssets.js';
 import { isInboxPath, isInboxDerivedPath } from '../lib/brainPaths.js';
+import { DEFAULT_RAW_DIR, RAW_CHAT_DIR, RAW_ROOT } from '../lib/rawSections.js';
 import { listInboxItems } from '../lib/inboxItems.js';
 import { capabilityHint, extractInboxText, writeInboxMarkdown } from '../pipeline/inboxConvert.js';
 import { createRawMaterial, RawMaterialWriteError } from '../pipeline/rawMaterial.js';
@@ -48,7 +49,7 @@ const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，�
 提炼作业收到指令后自动索引待提炼清单（CLI engram files list --pending，或 list_raw_files 传 pending=true），然后逐份串行处理：读一份、write_page 提交成功，再处理下一份，不要批量读完统一写页。
 任何写操作前先读 AIWorks/log/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
 新建 概念/实体 页必须带 evidence（≥2 个不同原始资料路径各 1 条逐字引文，或单一来源 ≥2 条引文），已有页面增量不受限。
-AIWorks 对 Agent 是只读区；页面写入与改名/移动/删除只允许 Wiki/。用户明确要求保存调研结果时，可调用 create_raw_material 在 原始资料/ 下创建新的 Markdown 来源文件；目标路径已存在、路径无效或写入 原始资料/对话/ 时拒绝，绝不覆盖。不得走 HTTP 旁路写原始资料；需要的资料不在库里且用户没要求保存时，按现有材料推进，把缺口写进页面的「待核实」。
+AIWorks 对 Agent 是只读区；页面写入与改名/移动/删除只允许 Wiki/。用户明确要求保存调研结果时，可调用 create_raw_material 新建 Markdown 来源文件——调研成果写 原始资料/文档/，用户随口记的零散内容写 原始资料/灵感碎片/；目标路径已存在、路径无效或写入 原始资料/对话/ 时拒绝，绝不覆盖。不得走 HTTP 旁路写原始资料；需要的资料不在库里且用户没要求保存时，按现有材料推进，把缺口写进页面的「待核实」。
 图片是 md 父项的私有资产：没有全局图片清单，图片也不会出现在 list_raw_files / list_pages 里。页面正文里以 \`/media/<父项id>/<文件名>\` 引用，需要看图时把该引用原样传给 read_page_asset（图片以 image 内容返回）。图片不能作为原始资料上传，你也不需要为它建页。
 对话沉积（save_chat）只在用户明确指示后执行；不要自行判断"这段对话有价值"就沉淀。已沉淀的对话属于原始资料，可被后续提炼引用。
 资料里查不到、又必须有个说法时（同名主体区分、客户身份口径等）：能自查的先自查（search 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据——不编造、不空等。
@@ -56,10 +57,11 @@ AIWorks 对 Agent 是只读区；页面写入与改名/移动/删除只允许 Wi
 误建的页面用 delete_page 删除：只做软删除入回收站（可恢复），只能删 Wiki/ 下的页面，不提供清空回收站能力。
 页面改名/移动用 rename_page / move_page（保持页面 ID 与图谱边，重命名会重定向引用双链）；写页与页面操作都只允许 Wiki/。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
-收集箱（收集箱/）是用户拖进来的待整理文件，**不属于知识库**：list_inbox / read_inbox_item 能读到它，write_inbox_markdown 能把语义转换结果写回 收集箱/转换结果/，但这里的内容不得作为回答的事实依据、不得进 evidence、不要拿它去写页面；入库由用户在界面上确认（服务端会把产物复制进 原始资料/，那之后才是可引用来源）。转换作业规范用 skill_guide("inbox-semantic-to-md")。
+收集箱（收集箱/）是用户拖进来的待整理文件，**不属于知识库**：list_inbox / read_inbox_item 能读到它，write_inbox_markdown 能把语义转换结果写回 收集箱/转换结果/，但这里的内容不得作为回答的事实依据、不得进 evidence、不要拿它去写页面；入库由用户在界面上确认（服务端会把产物复制进 原始资料/文档/，那之后才是可引用来源）。转换作业规范用 skill_guide("inbox-semantic-to-md")。
+原始资料是一级目录，固定三个二级目录：文档（成文的完整文件，新资料默认落这里）、对话（save_chat 专用）、灵感碎片（随手记）；不要自造其他二级目录，历史留在根目录的文件按「文档」对待。
 完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取；具体作业手法与纪律先用 skill_list 看清单，再用 skill_guide(name) 取全文。`;
 
-const RAW_DIR = '原始资料';
+const RAW_DIR = RAW_ROOT;
 const PAGE_TYPE_ENUM = ['concept', 'person', 'customer', 'org', 'project', 'other', 'note'] as const;
 
 const IMAGE_MIME: Record<string, string> = {
@@ -366,7 +368,7 @@ export function makeServer(): McpServer {
     'list_inbox',
     '列出收集箱（收集箱/）里的原件：路径、大小、类型、是否已生成转换产物、本机转换状态。'
       + '收集箱是**待纳入资产**的暂存区：这里的内容不属于知识库，不得作为回答的事实依据、不得被证据引用；'
-      + '只有用户把转换产物「入库」到 原始资料/ 之后才成为可引用的来源。',
+      + '只有用户把转换产物「入库」到 原始资料/文档/ 之后才成为可引用的来源。',
     {
       status: z.enum(['all', 'pending', 'converted']).optional().describe('默认 all'),
       limit: z.number().optional().describe('最多返回多少条，默认 200'),
@@ -610,9 +612,9 @@ export function makeServer(): McpServer {
 
   server.tool(
     'create_raw_material',
-    '把已完成的调研结果新建为 原始资料/ 下的 Markdown 来源文件（只创建，不覆盖；聊天记录请用 save_chat）。',
+    '把已完成的调研结果新建为原始资料 Markdown 来源文件（只创建，不覆盖；聊天记录请用 save_chat）。',
     {
-      path: z.string().describe('新文件路径，如 原始资料/调研/市场分析.md；不能使用已存在路径或 原始资料/对话/'),
+      path: z.string().describe(`新文件路径：调研成果用 ${DEFAULT_RAW_DIR}/xxx.md，用户随口记的零散内容用 原始资料/灵感碎片/xxx.md；不能使用已存在路径或 ${RAW_CHAT_DIR}/`),
       content: z.string().describe('完整 Markdown 正文，不含 YAML frontmatter；建议在正文中列明调研来源与引用。'),
     },
     async ({ path: target, content }) => {
@@ -635,7 +637,7 @@ export function makeServer(): McpServer {
 
   server.tool(
     'save_chat',
-    '把一段与外部 Agent 的对话沉积到 原始资料/对话/（按时间+标识命名；project 归到子目录；append 合并到当日最近一条）',
+    '把一段与外部 Agent 的对话沉积到 原始资料/对话/（原始资料的二级目录之一；按时间+标识命名；project 归到子目录；append 合并到当日最近一条）',
     {
       content: z.string().describe('对话正文 markdown'),
       identifier: z.string().optional().describe('简单标识，用于文件名 slug 与标题'),

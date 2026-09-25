@@ -272,7 +272,7 @@ export async function inboxRoutes(app: FastifyInstance) {
   });
 
   /**
-   * 入库：把转换产物复制进 原始资料/ 并登记为知识库页面。
+   * 入库：把转换产物复制进 原始资料/文档/（原始资料的二级目录之一）并登记为知识库页面。
    * 这是收集箱内容变成「可检索、可引用」的唯一入口，只由用户显式触发。
    */
   app.post('/api/inbox/adopt', async (req, reply) => {

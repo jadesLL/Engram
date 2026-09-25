@@ -3,6 +3,7 @@ import path from 'node:path';
 import matter from 'gray-matter';
 import { BRAIN_DIR, normalizeDir, isPageDir } from '../config.js';
 import { isInboxPath } from './brainPaths.js';
+import { RAW_SECTION_NAMES } from './rawSections.js';
 import { db, newId, now } from './db.js';
 import { ftsSegment } from './fts.js';
 import { emit } from './events.js';
@@ -37,8 +38,9 @@ export function toRel(abs: string): string {
 
 /** 顶层目录固定展示顺序 */
 const TOP_ORDER = ['原始资料', 'Wiki', 'AIWorks', '同步冲突'];
-/** 子目录固定顺序 */
+/** 子目录固定顺序（原始资料的二级分类见 lib/rawSections.ts） */
 const SUB_ORDER: Record<string, string[]> = {
+  原始资料: [...RAW_SECTION_NAMES],
   Wiki: ['概念', '实体', '查询', '归档'],
   AIWorks: ['index', 'log', 'scheme'],
 };

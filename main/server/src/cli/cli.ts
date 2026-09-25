@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { api, buildUrl, httpSend, validateTarget, type SendContext } from './net.js';
+import { DEFAULT_RAW_DIR } from '../lib/rawSections.js';
 
 const CONFIG_PATH = path.join(os.homedir(), '.engram', 'config.json');
 
@@ -247,7 +248,7 @@ async function main(): Promise<number> {
         return 2;
       }
       const form = new FormData();
-      form.append('dir', args.dir || '原始资料');
+      form.append('dir', args.dir || DEFAULT_RAW_DIR);
       for (const file of targets) {
         const buf = fs.readFileSync(file);
         form.append('file', new Blob([new Uint8Array(buf)]), path.basename(file));

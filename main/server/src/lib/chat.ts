@@ -4,9 +4,10 @@ import matter from 'gray-matter';
 import { safeJoin, writePage, type PageMeta } from './vault.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { now } from './db.js';
+import { RAW_CHAT_DIR } from './rawSections.js';
 
 /**
- * 外置 Agent 对话沉积：写入 原始资料/对话/（提炼工作由外部 Agent 按指南后续处理）。
+ * 外置 Agent 对话沉积：写入 原始资料/对话/（原始资料的二级目录之一，见 lib/rawSections.ts）。
  * 作用域受限：只生成 原始资料/对话/... 路径，绝不接受外部 path。
  * 命名以时间为维度 + 简单标识；project 提供项目维度（子目录）。
  */
@@ -16,7 +17,7 @@ export interface SaveChatInput {
   content: string;
   /** 简单标识，用于文件名 slug 与标题；缺省用内容短哈希 */
   identifier?: string;
-  /** 项目维度：建子目录 原始资料/chat/<project>/ 聚合同一项目对话 */
+  /** 项目维度：建子目录 原始资料/对话/<project>/ 聚合同一项目对话 */
   project?: string;
   /** 追加到当日/当 project 最近一条 chat 文件（滚动合并），否则新建 */
   append?: boolean;
@@ -29,7 +30,7 @@ export interface SaveChatResult {
   appended: boolean;
 }
 
-const CHAT_DIR = '原始资料/对话';
+const CHAT_DIR = RAW_CHAT_DIR;
 
 function pad(n: number): string {
   return String(n).padStart(2, '0');

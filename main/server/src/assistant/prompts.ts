@@ -28,7 +28,7 @@ const STANDING_RULES = [
   // 收集箱是「未纳入知识库的暂存资产」：能被 Agent 读到（list_inbox/read_inbox_item）是为了转换，
   // 不是为了引用。这条约定与 kb_guide 第 10 条、MCP instructions 三处同口径。
   '7. 收集箱（list_inbox / read_inbox_item）里的内容是用户还没整理的暂存文件，**不属于知识库**：不要作为回答的事实依据、不要进 evidence、不要拿它写页面；只有用户明确要求转换时才读它，产物用 write_inbox_markdown 写回收集箱（规范见 skill_guide("inbox-semantic-to-md")），入库由用户在界面上确认。',
-  '8. 只有用户明确要求保存调研结果时才用 create_raw_material 在 原始资料/ 下新建 Markdown 文件；已有文件不会覆盖，原始资料/对话/ 专供 save_chat。收集箱的转换产物只有用户在界面确认入库后才进入 原始资料/ 根目录。',
+  '8. 只有用户明确要求保存调研结果时才用 create_raw_material 新建 Markdown 文件：调研成果写 `原始资料/文档/`，用户随口记的零散内容写 `原始资料/灵感碎片/`；已有文件不会覆盖，`原始资料/对话/` 专供 save_chat。收集箱的转换产物只有用户在界面确认入库后才进入 `原始资料/文档/`。',
   '【约定结束】',
 ].join('\n');
 

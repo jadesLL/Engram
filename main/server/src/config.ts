@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { applyStagedRestore } from './lib/stagedRestore.js';
+import { RAW_ROOT, RAW_SECTION_DIRS } from './lib/rawSections.js';
 
 const cwd = process.cwd();
 
@@ -80,8 +81,8 @@ export function positiveInt(value: string | undefined, fallback: number): number
 
 /** 固定目录结构（用户不可增删文件夹） */
 export const FIXED_DIRS = [
-  '原始资料',
-  '原始资料/对话',
+  // 一级：原始资料；二级固定三类（文档 / 对话 / 灵感碎片），见 lib/rawSections.ts
+  ...RAW_SECTION_DIRS,
   // 收集箱：拖入文件的暂存区，入库前不属于知识库（见 lib/brainPaths.ts）
   '收集箱',
   '收集箱/转换结果',
@@ -100,8 +101,8 @@ export const FIXED_DIRS = [
 /** 允许新建/移入页面的目录（Wiki 树内） */
 export const PAGE_DIRS = ['Wiki', 'Wiki/概念', 'Wiki/实体', 'Wiki/查询', 'Wiki/归档', 'Wiki/关系'] as const;
 
-/** 允许上传文件的目录（原始资料 + 编辑器资源目录） */
-export const UPLOAD_DIRS = ['原始资料', 'assets'] as const;
+/** 允许上传文件的目录（原始资料的三个二级目录 + 一级目录本身作历史兼容 + 编辑器资源目录） */
+export const UPLOAD_DIRS = [RAW_ROOT, ...RAW_SECTION_DIRS, 'assets'] as const;
 
 export function normalizeDir(dir: string): string {
   return dir.replace(/^[/\\]+/, '').replace(/[/\\]+$/, '').split('\\').join('/');

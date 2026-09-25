@@ -521,29 +521,49 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         val ids = mutableListOf<String>(); readableDatabase.rawQuery("SELECT id FROM trash", null).use { while (it.moveToNext()) ids += it.getString(0) }; deleteTrash(ids)
     }
 
-    fun files(dir: String? = null): JSONArray = synchronized(lock) {
-        val out = JSONArray(); val prefix = (dir?.trimEnd('/') ?: "原始资料") + "/"
+    /**
+     * 原始资料文件列表（与 server/src/lib/rawSections.ts 同口径，改一处要同步另一处）。
+     *
+     * - `section` = doc / chat / idea：列对应二级目录；doc 额外带上根目录的历史资料（legacy=true），
+     *   因为二级分类上线前留在 `原始资料/` 根目录的文件在界面上按「文档」展示（磁盘不动）。
+     * - `dir`：列指定目录；不传时只列 `原始资料/` 一级目录下的文件。
+     */
+    fun files(dir: String? = null, section: String? = null): JSONArray = synchronized(lock) {
+        val out = JSONArray()
+        if (section != null) {
+            val sectionDir = RAW_SECTIONS[section] ?: throw IllegalArgumentException("未知的资料分类：$section")
+            collectFiles(out, "$sectionDir/", recursive = true, legacy = false)
+            if (section == "doc") collectFiles(out, "$RAW_ROOT/", recursive = false, legacy = true)
+        } else {
+            val prefix = (dir?.trimEnd('/') ?: RAW_ROOT) + "/"
+            collectFiles(out, prefix, recursive = !dir.isNullOrBlank(), legacy = false)
+        }
+        out
+    }
+
+    private fun collectFiles(out: JSONArray, prefix: String, recursive: Boolean, legacy: Boolean) {
         readableDatabase.rawQuery("SELECT id,path,name,ext,size,updated_at FROM files WHERE deleted=0 AND path LIKE ? ORDER BY name", arrayOf("$prefix%")) .use { c ->
             while (c.moveToNext()) {
                 val path = c.getString(1)
-                if (!dir.isNullOrBlank() || !path.removePrefix(prefix).contains('/')) out.put(JSONObject().apply {
+                if (recursive || !path.removePrefix(prefix).contains('/')) out.put(JSONObject().apply {
                     put("id", c.getString(0)); put("path", path); put("name", c.getString(2)); put("ext", c.getString(3))
                     put("size", c.getLong(4)); put("updated_at", c.getString(5)); put("distilled", evidenceDistilled(path))
+                    put("legacy", legacy)
                 })
             }
         }
         readableDatabase.rawQuery("SELECT id,path FROM pages WHERE deleted=0 AND path LIKE ? ORDER BY title", arrayOf("$prefix%")) .use { c ->
             while (c.moveToNext()) {
                 val path = c.getString(1)
-                if (!dir.isNullOrBlank() || !path.removePrefix(prefix).contains('/')) {
+                if (recursive || !path.removePrefix(prefix).contains('/')) {
                     val file = safe(path)
                     out.put(JSONObject().put("id", c.getString(0)).put("pageId", c.getString(0)).put("path", path)
                         .put("name", file.name).put("ext", file.extension.lowercase()).put("size", file.length())
-                        .put("updated_at", Instant.ofEpochMilli(file.lastModified()).toString()).put("distilled", evidenceDistilled(path)))
+                        .put("updated_at", Instant.ofEpochMilli(file.lastModified()).toString()).put("distilled", evidenceDistilled(path))
+                        .put("legacy", legacy))
                 }
             }
         }
-        out
     }
 
     fun registerFile(rel: String, text: String? = null, fromSync: Boolean = false): JSONObject = synchronized(lock) {
@@ -562,10 +582,15 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun createRawFile(name: String): JSONObject = synchronized(lock) {
+    fun createRawFile(name: String, section: String? = null): JSONObject = synchronized(lock) {
         val clean = sanitizeName(File(name).name)
         require(clean.substringAfterLast('.', "").lowercase() in setOf("md", "markdown", "txt")) { "仅支持新建 .md / .txt 文件" }
-        val rel = "原始资料/$clean"
+        // 落点：显式 section 优先，默认「文档」；「对话」留给对话沉积，不接受普通新建
+        require(section == null || section == "doc" || section == "idea") {
+            if (section == "chat") "「对话」目录专供对话沉积，请新建到「文档」或「灵感碎片」" else "未知的资料分类：$section"
+        }
+        val dir = if (section == "idea") RAW_SECTIONS["idea"]!! else DEFAULT_RAW_DIR
+        val rel = "$dir/$clean"
         require(!safe(rel).exists()) { "已存在同名文件：$clean" }
         val content = if (clean.endsWith(".txt", true)) "" else "# ${clean.substringBeforeLast('.')}\n\n"
         atomicWrite(safe(rel), content.toByteArray())
@@ -580,7 +605,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         val fallback = "手机分享-${Instant.now().toString().replace(Regex("[:.]"), "-")}"
         // 80 个 UTF-16 字符即使全是中文也能留在常见 255-byte 文件名限制内。
         val title = sanitizeName(requestedTitle.orEmpty()).take(80).ifBlank { fallback }
-        val rel = uniquePath("原始资料/收集箱", "$title.md")
+        val rel = uniquePath(DEFAULT_RAW_DIR, "$title.md")
         atomicWrite(safe(rel), "# $title\n\n${text.trim()}\n".toByteArray(StandardCharsets.UTF_8))
         indexPage(rel)
         enqueue("page", rel)
@@ -591,7 +616,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun installSharedFile(requestedName: String, staged: File): String = synchronized(lock) {
         require(staged.isFile) { "分享文件不存在" }
         val name = sanitizeName(File(requestedName).name).ifBlank { "手机分享文件" }
-        val rel = uniquePath("原始资料/收集箱", name)
+        val rel = uniquePath(DEFAULT_RAW_DIR, name)
         installImportedFile(rel, staged)
         rel
     }
@@ -842,8 +867,16 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     private fun sanitizeName(value: String) = value.replace(Regex("[\\\\/:*?\"<>|]"), "-").trim()
 
     companion object {
+        /** 原始资料一级目录与固定三个二级目录（与 server/src/lib/rawSections.ts 同口径，改一处要同步另一处） */
+        private const val RAW_ROOT = "原始资料"
+        private const val DEFAULT_RAW_DIR = "原始资料/文档"
+        private val RAW_SECTIONS = mapOf(
+            "doc" to "原始资料/文档",
+            "chat" to "原始资料/对话",
+            "idea" to "原始资料/灵感碎片",
+        )
         private val STANDARD_DIRECTORIES = listOf(
-            "原始资料", "原始资料/对话", "原始资料/收集箱", "Wiki", "Wiki/概念", "Wiki/实体", "Wiki/查询", "Wiki/归档", "Wiki/关系",
+            RAW_ROOT, "原始资料/文档", "原始资料/对话", "原始资料/灵感碎片", "Wiki", "Wiki/概念", "Wiki/实体", "Wiki/查询", "Wiki/归档", "Wiki/关系",
             "AIWorks/index", "AIWorks/log", "AIWorks/scheme", "assets",
         )
         private val PAGE_DIRECTORIES = setOf("Wiki", "Wiki/概念", "Wiki/实体", "Wiki/查询", "Wiki/归档", "Wiki/关系")

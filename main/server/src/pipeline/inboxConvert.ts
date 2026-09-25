@@ -18,6 +18,7 @@ import {
   stemOf,
 } from '../lib/brainPaths.js';
 import { derivedPathsBySource, derivedPathForSource } from '../lib/inboxDerived.js';
+import { RAW_DOC_DIR } from '../lib/rawSections.js';
 
 /**
  * 收集箱 → Markdown 的语义转换（服务端通道）。
@@ -27,7 +28,7 @@ import { derivedPathsBySource, derivedPathForSource } from '../lib/inboxDerived.
  * 两条通道产出必须落在同一位置、同一套结构，用户看不出差别。
  *
  * 产物写在 `收集箱/转换结果/`：仍然属于收集箱，所以不建 pages 行、不写 FTS、检索不到；
- * 用户点「入库」把它复制进 `原始资料/` 之后才成为可引用的知识。
+ * 用户点「入库」把它复制进 `原始资料/文档/` 之后才成为可引用的知识。
  */
 
 /** 转换口径版本：写进 frontmatter，便于以后区分产物是哪一版规范生成的 */
@@ -361,8 +362,8 @@ export interface InboxAdoptResult {
   pageTitle: string;
 }
 
-/** 入库直接落在原始资料根目录，供目录列表与检索扫描。 */
-export const INBOX_ADOPT_DIR = '原始资料';
+/** 入库直接落在原始资料的「文档」二级目录，供目录列表与检索扫描（见 lib/rawSections.ts）。 */
+export const INBOX_ADOPT_DIR = RAW_DOC_DIR;
 const LEGACY_INBOX_ADOPT_DIR = '原始资料/收集箱';
 
 function uniqueRawPath(stem: string): string {
@@ -393,7 +394,7 @@ export function migrateLegacyInboxAdoptions(): number {
 }
 
 /**
- * 入库 = 把转换产物复制进 原始资料/，并登记成知识库页面。
+ * 入库 = 把转换产物复制进 `原始资料/文档/`，并登记成知识库页面。
  *
  * 这是「未纳入知识库的资产」变成可引用知识的唯一动作：
  * 入库后它会被 list_raw_files 列出、可作为 write_page 的逐字证据来源、也能被检索到。
