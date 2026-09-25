@@ -12,6 +12,13 @@ import { enqueuePagePipeline } from '../jobs.js';
 import { merge3 } from './merge.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
 import {
+  summarizeDelete,
+  summarizeFileChange,
+  summarizeMove,
+  summarizePageChange,
+  type SyncOpSummary,
+} from './opText.js';
+import {
   appendOplog,
   getPageRevision,
   getPageSyncRevision,
@@ -296,6 +303,29 @@ export interface PushApplyResult {
   copyPath?: string | null;
   /** conflict 时是否由推送方内容胜出（false=中枢版本更新，推送方改动被另存） */
   theirWins?: boolean;
+  /**
+   * 本次推送的「哪个文件 + 什么增量」摘要（新增/修改/删除/改名 + 行数 + 体积）。
+   * 随 ack 一起回给成员端：两端记录用同一句人话，成员端不用自己再算一遍。
+   */
+  op?: SyncOpSummary;
+}
+
+/** 页面在本次推送前的版本（共同的同步基准）：拿它算「这一轮改了多少行」 */
+function previousPageContent(target: string, baseRevision: number, fallback: string | null): string | null {
+  if (baseRevision > 0) {
+    const snapshot = getPageRevision(target, baseRevision);
+    if (snapshot !== null) return snapshot;
+  }
+  return fallback;
+}
+
+/** 删除前的体积：页面算正文字节，其他文件按磁盘大小（取不到就记 0） */
+function sizeBefore(target: string): number {
+  try {
+    return fs.statSync(safeJoin(target)).size;
+  } catch {
+    return 0;
+  }
 }
 
 export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
@@ -307,6 +337,7 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     const cur = getPageSyncRevision(target);
     if (base >= cur || cur === 0) {
       // 基准未落后（或双方都不知道该页）：直接应用
+      const before = previousPageContent(target, base, cur > 0 ? readPageRaw(target) : null);
       applyPageContent(target, raw);
       const result = commit('page', target, actorId, {});
       return {
@@ -315,6 +346,7 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
         revision: Number(result.revision),
         content: String(result.content),
         merge: 'direct',
+        op: summarizePageChange(target, before, String(result.content ?? raw)),
       };
     }
     // 基准落后：先做字符级三方合并；无法融合的冲突按修改时间最新者胜整页裁决
@@ -333,6 +365,7 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
         merge: 'conflict',
         copyPath: resolved.copyPath,
         theirWins: resolved.theirsWins,
+        op: summarizePageChange(target, hubRaw, raw),
       };
     }
     const merged = merge3(ancestor, hubRaw, raw);
@@ -347,6 +380,7 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
         merge: 'conflict',
         copyPath: resolved.copyPath,
         theirWins: resolved.theirsWins,
+        op: summarizePageChange(target, ancestor, raw),
       };
     }
     applyPageContent(target, merged.content);
@@ -357,17 +391,28 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
       revision: Number(result.revision),
       content: String(result.content),
       merge: 'merged',
+      op: summarizePageChange(target, ancestor, raw),
     };
   }
 
   if (push.kind === 'file') {
     // 文件内容经 /api/sync/file 已落盘，这里只发号广播
-    const result = commit('file', String(push.target || ''), actorId);
-    return { ok: true, seq: Number(result.seq), revision: Number(result.revision), merge: 'direct' };
+    const target = String(push.target || '');
+    const result = commit('file', target, actorId);
+    return {
+      ok: true,
+      seq: Number(result.seq),
+      revision: Number(result.revision),
+      merge: 'direct',
+      op: summarizeFileChange(target, 0, sizeBefore(target)),
+    };
   }
 
   if (push.kind === 'delete') {
     const target = String(push.target || '');
+    // 页面/文件在日志里的说法不同：先按扩展名判类型，再在删除前量体积
+    const isPage = /\.(md|markdown)$/i.test(target);
+    const bytes = sizeBefore(target);
     try {
       moveToTrash(target, 'sync');
     } catch {
@@ -375,7 +420,13 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
       return { ok: true, seq: 0, revision: getPageSyncRevision(target), merge: 'direct' };
     }
     const result = commit('delete', target, actorId);
-    return { ok: true, seq: Number(result.seq), revision: Number(result.revision), merge: 'direct' };
+    return {
+      ok: true,
+      seq: Number(result.seq),
+      revision: Number(result.revision),
+      merge: 'direct',
+      op: summarizeDelete(target, bytes, isPage),
+    };
   }
 
   if (push.kind === 'move') {
@@ -400,10 +451,17 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
         revision: Number(removed.revision),
         merge: 'direct',
         copyPath: null,
+        op: summarizeDelete(oldRel, 0, true),
       };
     }
     const result = commit('move', newRel, actorId, { oldPath: oldRel });
-    return { ok: true, seq: Number(result.seq), revision: Number(result.revision), merge: 'direct' };
+    return {
+      ok: true,
+      seq: Number(result.seq),
+      revision: Number(result.revision),
+      merge: 'direct',
+      op: summarizeMove(oldRel, newRel),
+    };
   }
 
   throw new Error(`未知同步类型: ${push.kind}`);

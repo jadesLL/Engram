@@ -1,6 +1,18 @@
+import fs from 'node:fs';
 import { getSetting, setSetting } from '../lib/db.js';
 import { commitLocalChange, connectedPeerIds } from './hub.js';
 import { logSyncEvent } from './eventLog.js';
+import {
+  describeOpList,
+  describeOpSummary,
+  isNoteworthyOp,
+  summarizeDelete,
+  summarizeFileChange,
+  summarizeMove,
+  summarizePageChange,
+  type SyncOpSummary,
+} from './opText.js';
+import { safeJoin } from '../lib/vault.js';
 import {
   beginBootstrap,
   clientStatus,
@@ -11,7 +23,7 @@ import {
   stopClientAndWait,
   syncConfigEnabled,
 } from './client.js';
-import { currentNodeId, currentRevision, listPeers, type SyncKind } from './store.js';
+import { currentNodeId, currentRevision, getPageRevision, getPageSyncRevision, listPeers, type SyncKind } from './store.js';
 
 /**
  * 多端同步门面（同步群组模型）：业务代码只调 recordLocalChange()，本模块按角色分流——
@@ -26,13 +38,75 @@ export interface LocalChangeExtra {
   oldPath?: string;
 }
 
+/**
+ * 中枢本机改动的「广播记录」缓冲。
+ *
+ * 中枢自己改的东西以前一条都不记：用户在常开的中枢上编辑，打开同步详情却是空的，
+ * 自然觉得「记录很垃圾」。这里按 250ms 合并成一条，并**逐项写清文件名与增量**：
+ *  本机新增页面「会议纪要」（+18 行，1.2 KB）；修改页面「周报」（+3 −1 行），已广播给 1/2 台成员
+ * AIWorks/ 系统页由应用自身高频改写，不进用户记录。
+ */
+const localBatch: SyncOpSummary[] = [];
+let localFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueLocalBroadcast(summary: SyncOpSummary): void {
+  // 内容没变（例如编辑器保存了但正文一致）与 AIWorks 系统页都不进用户记录
+  if (!isNoteworthyOp(summary)) return;
+  localBatch.push(summary);
+  if (localFlushTimer) return;
+  localFlushTimer = setTimeout(() => {
+    localFlushTimer = null;
+    const items = localBatch.splice(0, localBatch.length);
+    if (!items.length) return;
+    const peers = listPeers();
+    if (!peers.length) return; // 群组里还没有成员：本机改动不进同步链路，不必打扰用户
+    const online = peers.filter((p) => connectedPeerIds().has(p.id)).length;
+    logSyncEvent('info', 'local-broadcast', {
+      detail: `本机${describeOpList(items)}，已广播给 ${online}/${peers.length} 台成员`
+        + (online === 0 ? '（当前没有成员在线，等它们上线后自动补齐）' : ''),
+      scope: 'hub',
+      data: {
+        count: items.length,
+        items: items.slice(0, 10).map(describeOpSummary),
+        paths: items.slice(0, 10).map((item) => item.path),
+        online,
+        total: peers.length,
+      },
+    });
+  }, 250);
+  localFlushTimer.unref?.();
+}
+
+/** 中枢本机改动前的旧正文：发号前 sync_revision 仍指向上一次同步的版本，取它算增量 */
+function hubLocalSummary(kind: SyncKind, target: string, oldPath?: string): SyncOpSummary | null {
+  if (kind === 'page') {
+    const after = (() => {
+      try { return fs.readFileSync(safeJoin(target), 'utf8'); } catch { return ''; }
+    })();
+    const previous = getPageRevision(target, getPageSyncRevision(target) || 0);
+    return summarizePageChange(target, previous, after);
+  }
+  if (kind === 'file') {
+    const size = (() => {
+      try { return fs.statSync(safeJoin(target)).size; } catch { return 0; }
+    })();
+    return summarizeFileChange(target, 0, size);
+  }
+  if (kind === 'delete') return summarizeDelete(target, 0, /\.(md|markdown)$/i.test(target));
+  if (kind === 'move') return summarizeMove(oldPath || target, target);
+  return null;
+}
+
 export function recordLocalChange(kind: SyncKind, target: string, extra: LocalChangeExtra = {}): void {
   try {
     if (hubConfigured()) {
       if (syncConfigEnabled()) enqueueLocalChange(kind, target, extra.oldPath);
       return;
     }
+    // 摘要必须在 commit 之前算：commit 会把 sync_revision 推到新版本，之后就取不到旧正文了
+    const summary = hubLocalSummary(kind, target, extra.oldPath);
     commitLocalChange(kind, target, extra.oldPath || '');
+    if (summary) queueLocalBroadcast(summary);
   } catch (error) {
     // 同步层故障不阻塞业务写入
     console.error('[sync] 记录本地变更失败:', error);

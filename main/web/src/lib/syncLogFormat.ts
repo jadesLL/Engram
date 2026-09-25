@@ -88,6 +88,7 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   start: { label: '同步客户端启动', category: '连接' },
   stopped: { label: '同步客户端停止', category: '连接' },
   connected: { label: '已连接中枢', category: '连接' },
+  reconnected: { label: '断线后已恢复', category: '连接' },
   disconnected: { label: '连接断开，自动重连', category: '连接' },
   // 推送
   'push-ok': { label: '推送完成', category: '推送' },
@@ -97,6 +98,7 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'push-merged': { label: '自动合并', category: '推送' },
   'apply-failed': { label: '应用远端变更失败', category: '推送' },
   'move-superseded': { label: '改名收敛', category: '推送' },
+  'local-broadcast': { label: '本机改动已广播', category: '推送' },
   // 文件与补拉
   'file-pull-ok': { label: '拉取文件', category: '拉取' },
   'file-pull-deferred': { label: '文件待补拉', category: '拉取' },
@@ -185,6 +187,20 @@ const DATA_LABELS: Record<string, string> = {
   total: '总数',
   remaining: '剩余成员',
   kind: '类型',
+  // 条目级字段（哪个文件、什么增量）
+  items: '涉及的条目',
+  verb: '动作',
+  title: '页面标题',
+  added: '新增行',
+  removed: '删除行',
+  beforeBytes: '原大小',
+  afterBytes: '新大小',
+  attempts: '重试次数',
+  source: '恢复方式',
+  downMs: '断开时长',
+  online: '在线成员',
+  pulledSamples: '拉取示例',
+  queuedSamples: '补推示例',
   // 导出文件头部的筛选说明（与抽屉筛选栏同名）
   level: '级别',
   scope: '视角',
@@ -199,9 +215,15 @@ export function dataLabel(key: string): string {
 export function formatDataValue(key: string, value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'boolean') return value ? '是' : '否';
+  // 数组：字符串数组（条目清单 / 路径清单）逐行展示，用户一眼看完改了哪些文件
+  if (Array.isArray(value)) {
+    return value.some((item) => typeof item === 'object') ? JSON.stringify(value) : value.map(String).join('\n');
+  }
   if (typeof value === 'object') return JSON.stringify(value);
-  if (key === 'bytes' || key === 'pulledBytes') return `${formatBytes(Number(value))}（${value} B）`;
-  if (key === 'ms' || key === 'sessionMs') return `${formatDuration(Number(value))}（${value} ms）`;
+  if (key === 'bytes' || key === 'pulledBytes' || key === 'beforeBytes' || key === 'afterBytes') {
+    return `${formatBytes(Number(value))}（${value} B）`;
+  }
+  if (key === 'ms' || key === 'sessionMs' || key === 'downMs') return `${formatDuration(Number(value))}（${value} ms）`;
   if (key === 'retryInMs') return `${Math.round(Number(value) / 1000)} 秒`;
   return String(value);
 }

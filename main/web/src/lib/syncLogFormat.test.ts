@@ -47,8 +47,9 @@ test('事件标签：已知事件给中文，未知事件原样透出', () => {
 
 test('事件标签表覆盖服务端全部事件（前端漏标签会导致抽屉里只剩英文 id）', () => {
   const serverEvents = [
-    'start', 'stopped', 'connected', 'disconnected',
+    'start', 'stopped', 'connected', 'reconnected', 'disconnected',
     'push-ok', 'push-retry', 'push-received', 'push-rejected', 'push-merged', 'apply-failed', 'move-superseded',
+    'local-broadcast',
     'file-pull-ok', 'file-pull-deferred', 'file-pull-retry-ok', 'file-pull-retry-failed', 'file-received', 'file-rejected',
     'replay', 'pull-applied', 'oplog-trimmed',
     'reconcile-start', 'reconcile-done', 'reconcile-item-failed', 'reconcile-failed', 'ledger-repair-failed', 'heal', 'snapshot-served',
@@ -72,6 +73,16 @@ test('结构化字段：中文名 + 人话格式', () => {
   assert.equal(formatDataValue('theirWins', true), '是');
   assert.equal(formatDataValue('kinds', { page: 1 }), '{"page":1}');
   assert.equal(formatDataValue('path', 'Wiki/概念/测试.md'), 'Wiki/概念/测试.md');
+});
+
+test('结构化字段：条目清单与体积按行 / 人话展示', () => {
+  const items = ['新增页面「会议纪要」（+6 行，1.2 KB）', '修改页面「周报」（+2 −1 行）'];
+  assert.equal(formatDataValue('items', items), items.join('\n'), '条目清单逐行展示');
+  assert.equal(formatDataValue('paths', ['Wiki/概念/a.md', '原始资料/b.bin']), 'Wiki/概念/a.md\n原始资料/b.bin');
+  assert.equal(formatDataValue('beforeBytes', 2048), '2.0 KB（2048 B）');
+  assert.equal(formatDataValue('downMs', 42_000), '42.0 秒（42000 ms）');
+  assert.equal(dataLabel('items'), '涉及的条目');
+  assert.equal(dataLabel('added'), '新增行');
 });
 
 test('时间与体量格式化：毫秒精度、相对时间分档', () => {
