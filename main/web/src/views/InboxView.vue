@@ -770,12 +770,16 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/*
+ * 工作台视图铺满可用宽度：收纳区和文件列表都是两端对齐的行式结构，宽度越多一趟看到的信息越多。
+ * 这里不设 max-width——高分辨率/超宽屏下硬上限会把收纳区、列表和空态一起缩在左上角，右侧留一大片空白。
+ * 只有纯文本行（提示条）需要按阅读宽度收敛，见下方 .notice。
+ */
 .inbox-view {
   --inbox-accent: var(--accent);
   --inbox-accent-soft: var(--accent-soft);
   --inbox-accent-border: color-mix(in srgb, var(--accent) 30%, transparent);
   padding: 24px 26px 64px;
-  max-width: 1080px;
 }
 
 /* ===== 页头：压扁、让位给内容 ===== */
@@ -903,10 +907,15 @@ onBeforeUnmount(() => {
 .file-input { display: none; }
 
 /* ===== 提示：一行可收起的细条 ===== */
+/*
+ * 整行是纯文本 + 一个「知道了」，说明文字超过一屏宽就难读，右侧按钮也会被推出视线；
+ * 这里按阅读宽度收敛（比旧版页宽略宽，主流窗口下仍是单行）。
+ */
 .notice {
   display: flex;
   align-items: center;
   gap: 8px;
+  max-width: 1180px;
   margin-bottom: 16px;
   font-size: 12px;
   color: var(--text-faint);
