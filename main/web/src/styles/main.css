@@ -216,6 +216,11 @@ html.desktop-frame #app { padding-top: var(--win-titlebar-h); }
   color: var(--text);
   user-select: none;
 }
+/* 「更新」入口挂载点（UpdateNotice Teleport 目标）：本身不占位，按钮出现时会成为标题栏里的一个 flex 项 */
+.win-titlebar-slot {
+  display: flex;
+  align-items: center;
+}
 /* 顶部右侧 toast 落在拖拽区内会点不到关闭按钮，整体下移到融合条之下 */
 html.desktop-frame .toast-stack {
   top: calc(var(--win-titlebar-h) + 18px);
