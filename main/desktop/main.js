@@ -4,13 +4,15 @@ const { app, BrowserWindow, ipcMain, shell, Menu, Tray, nativeImage, Notificatio
 const path = require('node:path');
 const fs = require('node:fs');
 const { fork } = require('node:child_process');
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
 const net = require('node:net');
 const dataDirLib = require('./lib/data-dir');
 // 注意：deps.js 在 desktop/scripts/lib/ 下（构建期脚本与主进程共用的判定），不是 desktop/lib/
 const depsLib = require('./scripts/lib/deps');
 // 桌面快捷方式与品牌化 exe（源码模式的 electron.exe 图标是 Electron 原子，见 lib/shortcut.js）
 const shortcutLib = require('./scripts/lib/shortcut');
+// 开机自启（Windows 登录项）的命令推导与状态整理；注册表读写在本文件里（见「开机自启」段）
+const loginItemLib = require('./scripts/lib/login-item');
 // 运行形态判定与 git 定位：**不要用 Electron 的 app.isPackaged** —— 它按可执行文件名判定，
 // 品牌启动器 Engram.exe（electron.exe 的改名副本）会被判成打包形态，源码版因此丢掉提交号与
 // 源码更新入口。详见 lib/runtime-mode.js 顶部注释。
@@ -21,6 +23,10 @@ const updateCadence = require('./scripts/lib/update-cadence');
 
 /** 是否安装包形态（打包产物 app.asar 存在）；源码模式（含品牌启动器）一律 false */
 const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
+
+// 本次启动是否来自开机自启（登录项命令里带 --silent-start）：是则只驻留托盘、不显示主窗。
+// Windows 上 Electron 的 wasOpenedAtLogin / openAsHidden 只在 macOS 有效，只能靠显式标记判定。
+const SILENT_START = loginItemLib.isSilentStart(process.argv);
 
 // 主进程没有全局兜底时，任何未处理的 Promise 拒绝都会让整个应用静默退出
 // （Node ≥15 语义；本应用多处后台任务不 await，必须自己接住）。
@@ -254,8 +260,10 @@ function openExternally(url) {
   if (/^https?:/i.test(url)) void shell.openExternal(url);
 }
 
-function createWindow() {
+function createWindow({ silent = false } = {}) {
   win = new BrowserWindow({
+    // 开机自启：窗口照常创建并加载（托盘图标可直接唤起），但先不显示 —— 静默驻留托盘
+    show: !silent,
     width: 1280,
     height: 800,
     minWidth: 860,
@@ -311,17 +319,43 @@ function trayIcon() {
   return nativeImage.createFromPath(fs.existsSync(packed) ? packed : dev);
 }
 
+/** 托盘右键菜单：开机自启做成勾选项，后台驻留时不用回主界面也能开关 */
+function trayMenuTemplate() {
+  const state = launchAtLoginCache;
+  return [
+    { label: '打开 Engram', click: () => showMainWindow() },
+    { type: 'separator' },
+    {
+      label: '开机自启（静默到托盘）',
+      type: 'checkbox',
+      checked: Boolean(state && state.enabled),
+      // 便携版/非 Windows 不支持时置灰，避免点了没反应
+      enabled: Boolean(state && state.supported),
+      click: (item) => {
+        void setLaunchAtLogin(item.checked);
+      },
+    },
+    { type: 'separator' },
+    { label: '退出 Engram', click: () => app.quit() },
+  ];
+}
+
+function refreshTrayMenu() {
+  if (!tray) return;
+  try {
+    tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate()));
+  } catch (e) {
+    log('[tray] 刷新托盘菜单失败：' + describeError(e));
+  }
+}
+
 function ensureTray() {
   if (tray) return;
   const icon = trayIcon();
   if (icon.isEmpty()) log('警告：托盘图标为空（asar 内缺少 icon.png），托盘将显示空白槽位');
   tray = new Tray(icon);
   tray.setToolTip('Engram');
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开 Engram', click: () => showMainWindow() },
-    { type: 'separator' },
-    { label: '退出 Engram', click: () => app.quit() },
-  ]));
+  refreshTrayMenu();
   tray.on('click', () => showMainWindow());
   tray.on('double-click', () => showMainWindow());
 }
@@ -489,10 +523,15 @@ function stopLocalChild() {
 }
 
 // ---------- 启动调度 ----------
-function launchByConfig() {
+function launchByConfig({ silent = false } = {}) {
   pruneLegacyConnectionConfig();
-  createWindow();
+  createWindow({ silent });
   startLocalMode();
+  if (silent) {
+    // 开机自启：主窗不显示，只把托盘图标挂上；点托盘图标（或再双击桌面快捷方式）才出主界面
+    ensureTray();
+    log('[main] 开机自启：已静默启动，主窗隐藏，驻留系统托盘');
+  }
 }
 
 function buildAppMenu() {
@@ -518,7 +557,10 @@ app.whenReady().then(() => {
   // 常开渲染进程辅助功能：读屏器/自动化可直接访问页面 DOM 树（须在 ready 后调用）
   app.setAccessibilitySupportEnabled(true);
   Menu.setApplicationMenu(buildAppMenu());
-  launchByConfig();
+  launchByConfig({ silent: SILENT_START });
+  // 登录项与当前安装形态对齐（换过安装目录、旧版没写静默标记时改写命令），并把状态读进托盘菜单缓存；
+  // 不 await：注册表读取失败也不能挡住启动
+  void reconcileLaunchAtLogin();
   // 自动更新：启动 4 秒首查，之后自适应退避复查（2→5→10→30→60 分钟封顶，见 updateCadence）。
   // 打包形态自动下载并静默安装；源码模式只自动检查，落后时提示条红点 + 系统通知，一键更新由提示条触发。
   if (process.platform === 'win32') {
@@ -566,6 +608,129 @@ app.on('before-quit', () => {
     serverChild = null;
   }
 });
+
+// ---------- 开机自启（Windows 登录时静默启动到系统托盘） ----------
+// 注册表 Run 项是唯一事实来源：Electron 的 getLoginItemSettings 读不回带显式 name 的项
+// （36.x 的 options 只有 path/args，没有 name），所以这里自己用 reg.exe 读命令行 ——
+// 顺带能发现「项还在、但命令已经过期」（换过安装目录 / 旧版没写静默标记），
+// 这是 get 的 openAtLogin 布尔量给不出的信息。
+const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const STARTUP_APPROVED_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
+
+/** 最近一次读到的开机自启状态：托盘菜单勾选项与设置页共用这一份 */
+let launchAtLoginCache = null;
+
+/** 读注册表某个值（REG_SZ 返回原串，REG_BINARY 返回 reg.exe 打印的十六进制串）；不存在返回空串 */
+function queryRegistryValue(name, key = RUN_KEY) {
+  return new Promise((resolve) => {
+    // reg.exe 是普通控制台程序：同 runGit 的 spawn 方式，windowsHide 不弹黑框
+    execFile('reg.exe', ['query', key, '/v', name], { windowsHide: true }, (err, stdout) => {
+      if (err) return resolve('');
+      const line = String(stdout || '').split(/\r?\n/).find((l) => /REG_(SZ|EXPAND_SZ|BINARY)/i.test(l));
+      const m = line && line.match(/REG_(?:SZ|EXPAND_SZ|BINARY)\s+(.*)$/i);
+      resolve(m ? m[1].trim() : '');
+    });
+  });
+}
+
+/** 登录项命令：安装包形态指自身 exe；源码模式指品牌 Engram.exe（没生成过就回退 electron.exe） */
+function loginItemSpec() {
+  const desktopDir = __dirname;
+  let distDir = '';
+  let useBranded = false;
+  if (!PACKAGED) {
+    distDir = shortcutLib.findElectronDist(desktopDir);
+    // 品牌 exe 还没生成过就不能写进注册表：指向不存在的文件，开机之后什么都不会发生
+    useBranded = Boolean(distDir && fs.existsSync(path.join(distDir, shortcutLib.BRANDED_EXE)));
+  }
+  return loginItemLib.loginItemSpec({
+    packaged: PACKAGED,
+    execPath: process.execPath,
+    desktopDir,
+    distDir,
+    useBranded,
+  });
+}
+
+function launchAtLoginSupported() {
+  return loginItemLib.loginSupported({ portableDir: process.env.PORTABLE_EXECUTABLE_DIR || '' });
+}
+
+async function readLaunchAtLogin() {
+  const spec = loginItemSpec();
+  if (!launchAtLoginSupported()) return loginItemLib.loginState({ supported: false, spec });
+  const [stored, approved] = await Promise.all([
+    queryRegistryValue(spec.name),
+    queryRegistryValue(spec.name, STARTUP_APPROVED_KEY),
+  ]);
+  return loginItemLib.loginState({
+    supported: true,
+    storedCommand: stored,
+    disabled: loginItemLib.startupApprovedDisabled(approved),
+    spec,
+  });
+}
+
+/** 开关开机自启（设置页与托盘菜单共用）：写/删注册表 Run 项，广播新状态并刷新托盘菜单 */
+async function setLaunchAtLogin(enabled) {
+  if (!launchAtLoginSupported()) {
+    return { ok: false, error: '便携版不支持开机自启（运行目录每次启动都会变）' };
+  }
+  const spec = loginItemSpec();
+  try {
+    // enabled: true 显式传：用户曾在「任务管理器 → 启动」里禁用过这一项时，这里要一并恢复启用
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(enabled),
+      enabled: true,
+      name: spec.name,
+      path: spec.path,
+      args: spec.args,
+    });
+  } catch (e) {
+    log('[login-item] 写入开机自启失败：' + describeError(e));
+    return { ok: false, error: describeError(e) };
+  }
+  log(`[login-item] 开机自启已${enabled ? '开启' : '关闭'}：${loginItemLib.loginCommandLine(spec)}`);
+  const state = await readLaunchAtLogin();
+  launchAtLoginCache = state;
+  refreshTrayMenu();
+  broadcast('desktop-launch-at-login', state);
+  return { ok: true, ...state };
+}
+
+/** 启动时对齐登录项：项在、但命令与当前形态不一致就改写成当前命令（换过安装目录 / 旧版没写静默标记），
+ *  否则开机要么起不来、要么弹主窗而不是静默进托盘。项不存在（用户没开自启）时一律不碰注册表。 */
+async function reconcileLaunchAtLogin() {
+  try {
+    const state = await readLaunchAtLogin();
+    launchAtLoginCache = state;
+    refreshTrayMenu();
+    if (!state.enabled || !state.stale) return;
+    const spec = loginItemSpec();
+    app.setLoginItemSettings({
+      openAtLogin: true,
+      // 保持用户在任务管理器里的禁用选择，不擅自恢复
+      enabled: !state.blocked,
+      name: spec.name,
+      path: spec.path,
+      args: spec.args,
+    });
+    log('[login-item] 登录项命令已更新为当前形态：' + loginItemLib.loginCommandLine(spec));
+    launchAtLoginCache = await readLaunchAtLogin();
+    refreshTrayMenu();
+  } catch (e) {
+    log('[login-item] 启动时对齐登录项失败（不影响使用）：' + describeError(e));
+  }
+}
+
+ipcMain.handle('get-launch-at-login', async () => {
+  const state = await readLaunchAtLogin();
+  launchAtLoginCache = state;
+  refreshTrayMenu();
+  return state;
+});
+
+ipcMain.handle('set-launch-at-login', (_e, enabled) => setLaunchAtLogin(enabled));
 
 // ---------- IPC ----------
 // 主题切换时同步窗口控制按钮（WCO）配色；未启用 overlay 或平台不支持时静默忽略
