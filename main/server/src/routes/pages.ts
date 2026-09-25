@@ -16,6 +16,8 @@ import { pageEvidenceResponse } from '../pipeline/pageEvidence.js';
 import { isValidType } from '../lib/pageTypes.js';
 import { GUIDE_VERSION } from '../content/agentGuide.js';
 import { assetCountsByParent } from '../lib/pageAssets.js';
+import { isRawPath, isRawSectionDir, rawSectionOf } from '../lib/rawSections.js';
+import { remapRawSourcePaths } from '../pipeline/rawSourceRemap.js';
 
 function comparablePageContent(value: string): string {
   return value
@@ -242,26 +244,36 @@ export async function pageRoutes(app: FastifyInstance) {
     const { dir, newTitle } = req.body as { dir?: string; newTitle?: string };
     const page = db.prepare(`SELECT path, title FROM pages WHERE id = ? AND deleted = 0`).get(id) as any;
     if (!page) return reply.code(404).send({ error: '页面不存在' });
-    // 固定目录约束：只允许在 Wiki 树内移动
-    const targetDir = dir !== undefined ? (normalizeDir(dir) || 'Wiki') : path.posix.dirname(page.path);
-    if (!isPageDir(targetDir)) {
+    // 固定目录约束：Wiki 页只在 Wiki 树内移动；原始资料页只在三个二级分类之间移动
+    const pageIsRaw = isRawPath(page.path);
+    const targetDir = dir !== undefined
+      ? (normalizeDir(dir) || (pageIsRaw ? '原始资料/文档' : 'Wiki'))
+      : path.posix.dirname(page.path);
+    if (pageIsRaw) {
+      if (!isRawSectionDir(targetDir)) {
+        return reply.code(400).send({ error: '原始资料只能移动到 文档 / 对话 / 灵感碎片 目录内' });
+      }
+    } else if (!isPageDir(targetDir)) {
       return reply.code(400).send({ error: '页面只能移动到 Wiki 目录内' });
     }
     const filename = (newTitle || page.title).replace(/[\\/:*?"<>|]/g, '-') + '.md';
     const newRel = path.posix.join(targetDir, filename);
-    if (newRel === page.path) return { ok: true };
+    if (newRel === page.path) return { ok: true, section: pageIsRaw ? rawSectionOf(page.path) : null };
     // 撞名（文件或 pages 行，含回收站软删行）必须先拦下：movePage 撞名直接拒绝
     if (pagePathTaken(newRel)) {
       return reply.code(400).send({ error: '目标位置已有同名页面，请换个标题或目录' });
     }
-    const meta = movePage(page.path, newRel);
+    const oldRel = page.path;
+    const meta = movePage(oldRel, newRel);
     if (!meta) return reply.code(500).send({ error: '移动失败' });
+    // 原始资料换分类：把按路径存的账本一起挪过去（否则「已提炼」标记与证据来源会变死链）
+    if (pageIsRaw) remapRawSourcePaths(oldRel, newRel);
     if (newTitle && newTitle !== page.title) {
       const rd = readPage(newRel);
       if (rd) writePage(newRel, rd.content, { title: newTitle });
     }
     try { appendWikiLog('移动', `[[${page.title}]] → ${newRel}`); } catch { /* 日志失败不阻塞 */ }
-    return { ok: true, meta };
+    return { ok: true, meta, section: pageIsRaw ? rawSectionOf(newRel) : null };
   });
 
   app.delete('/api/pages/:id', async (req, reply) => {

@@ -87,6 +87,12 @@ export const useAppStore = defineStore('app', {
       chatMinimizedAt: 0,
       /** 聚焦输入框的请求计数：抽屉已开着时也能把光标送到输入框（自增即触发一次） */
       chatComposerFocus: 0,
+      /**
+       * 侧栏是否显示「AI 工作区」（服务端自动生成的操作日志/索引/关系库）。
+       * 默认隐藏：用户日常不需要看这些内容，在 设置 → 账户与外观 → 外观 里打开，
+       * 开关存服务端设置（show_ai_workspace），多端一致。
+       */
+      showAiWorkspace: false,
     };
   },
   actions: {
@@ -117,6 +123,26 @@ export const useAppStore = defineStore('app', {
     setEditorMode(mode: 'ir' | 'sv') {
       this.editorMode = mode;
       localStorage.setItem('editorMode', mode);
+    },
+    /** 读一次界面偏好（服务端设置 show_ai_workspace：'1' 才显示 AI 工作区） */
+    async loadUiPreferences() {
+      try {
+        const { data } = await api.get('/api/settings');
+        this.showAiWorkspace = data?.settings?.show_ai_workspace === '1';
+      } catch {
+        /* 未登录或旧服务端：保持默认隐藏 */
+      }
+    },
+    /** 切换「AI 工作区」显示：先本地生效再写服务端，失败回滚（界面与设置项不会各说各话） */
+    async setShowAiWorkspace(on: boolean) {
+      const before = this.showAiWorkspace;
+      this.showAiWorkspace = on;
+      try {
+        await api.put('/api/settings', { show_ai_workspace: on ? '1' : '0' });
+      } catch (error) {
+        this.showAiWorkspace = before;
+        throw error;
+      }
     },
     setReadingMode(on: boolean) {
       this.readingMode = on;

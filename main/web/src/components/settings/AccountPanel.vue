@@ -62,6 +62,18 @@
           <em>{{ tipStrict ? '已开启' : '已关闭' }}</em>
         </label>
       </div>
+
+      <div class="setting-row">
+        <div class="setting-copy">
+          <strong>显示 AI 工作区</strong>
+          <span>侧栏里的「AI 工作区」是服务端自动生成的操作日志、全库索引与关系库，日常不需要看，默认隐藏。打开后它出现在侧栏底部（只读）。</span>
+        </div>
+        <label class="switch-control">
+          <input type="checkbox" :checked="app.showAiWorkspace" @change="toggleAiWorkspace" />
+          <span aria-hidden="true"></span>
+          <em>{{ app.showAiWorkspace ? '已显示' : '已隐藏' }}</em>
+        </label>
+      </div>
     </SettingsGroup>
 
     <!-- 连接与版本：日常不需要动手，归入「高级」默认收起（分级强调的一档） -->
@@ -126,6 +138,17 @@ function toggleTipStrict(event: Event): void {
   tipStrict.value = on;
   setTooltipStrict(on);
   notify.success(on ? '悬停提示：严格避让（不遮挡内容）' : '悬停提示：就近优先');
+}
+
+/** 侧栏「AI 工作区」显示开关：默认隐藏，打开后写服务端设置（多端一致，失败回滚） */
+async function toggleAiWorkspace(event: Event): Promise<void> {
+  const on = (event.target as HTMLInputElement).checked;
+  try {
+    await app.setShowAiWorkspace(on);
+    notify.success(on ? 'AI 工作区：已显示在侧栏底部' : 'AI 工作区：已隐藏');
+  } catch {
+    notify.error('保存失败，请重试');
+  }
 }
 
 // 提交身份两个来源：桌面源码模式由主进程经 IPC 给出（含提交日期/脏标记），

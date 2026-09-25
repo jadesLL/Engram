@@ -288,8 +288,9 @@
         />
       </section>
 
-      <!-- AI 工作区：服务端自动生成的系统区（操作日志/索引/关系库），只读 -->
-      <section class="section">
+      <!-- AI 工作区：服务端自动生成的系统区（操作日志/索引/关系库），只读。
+           默认隐藏——用户日常不需要看这些；在 设置 → 账户与外观 → 外观 里可打开。 -->
+      <section v-if="app.showAiWorkspace" class="section">
         <div
           class="sec-row"
           :class="{ expanded: !collapsed.ailog }"

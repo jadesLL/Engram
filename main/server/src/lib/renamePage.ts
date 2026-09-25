@@ -3,6 +3,8 @@ import { db } from './db.js';
 import { readPage, writePage, movePage, pagePathTaken } from './vault.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
+import { remapRawSourcePaths } from '../pipeline/rawSourceRemap.js';
+import { isRawPath } from './rawSections.js';
 
 export class RenameError extends Error {
   constructor(message: string, public status = 400) {
@@ -113,6 +115,8 @@ export function renamePageSafely(
   movePage(page.path, newRel);
   writePage(newRel, nextBody, { title });
   redirectWikiLinks(pageId, oldTitle, title);
+  // 原始资料改名同样要挪账本：否则「已提炼」标记与证据来源路径会指向旧路径
+  if (isRawPath(page.path)) remapRawSourcePaths(page.path, newRel);
 
   appendWikiLog('重命名', `[[${oldTitle}]] → [[${title}]]（双链已重定向）`);
   enqueuePagePipeline(pageId);
