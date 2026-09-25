@@ -57,6 +57,10 @@ test('登录项命令：安装包形态指自身 exe，参数只有静默标记'
 
 test('登录项命令：源码模式指品牌 Engram.exe（未生成时回退 electron.exe），带 desktop 绝对路径', () => {
   const desktopDir = path.join('C:', 'app', 'main', 'desktop');
+  // 实现里 Run 项的 desktop 参数是 path.resolve(desktopDir)，期望值必须用同一套平台规则算：
+  // Linux（verify 镜像 / CI）下 'C:/app/...' 是相对路径，会被解析成 <cwd>/C:/app/...，
+  // 写死 Windows 形态会让这条用例在容器里必然误报。
+  const desktopAbs = path.resolve(desktopDir);
   const rt = fakeRuntime();
 
   const branded = loginItem.loginItemSpec({
@@ -68,7 +72,8 @@ test('登录项命令：源码模式指品牌 Engram.exe（未生成时回退 el
   });
   assert.equal(branded.path, rt.branded);
   // Run 项没有工作目录：必须传 desktop 的绝对路径（快捷方式那套 args='.' 在这里不可用）
-  assert.deepEqual(branded.args, [desktopDir, loginItem.SILENT_START_FLAG]);
+  assert.deepEqual(branded.args, [desktopAbs, loginItem.SILENT_START_FLAG]);
+  assert.equal(path.isAbsolute(branded.args[0]), true);
 
   const fallback = loginItem.loginItemSpec({
     packaged: false,
@@ -87,11 +92,13 @@ test('登录项命令：源码模式指品牌 Engram.exe（未生成时回退 el
     distDir: '',
   });
   assert.equal(noDist.path, rt.electron);
-  assert.deepEqual(noDist.args, [desktopDir, loginItem.SILENT_START_FLAG]);
+  assert.deepEqual(noDist.args, [desktopAbs, loginItem.SILENT_START_FLAG]);
 });
 
 test('登录项命令：路径带空格时 exe 与 desktop 目录都加引号', () => {
   const desktopDir = path.join('C:', 'Users', 'example', 'my app', 'main', 'desktop');
+  // 同上：加引号的判定作用于 path.resolve 之后的值（带空格的相对路径在容器里解析后仍带空格）
+  const desktopAbs = path.resolve(desktopDir);
   const rt = fakeRuntime();
   const spec = loginItem.loginItemSpec({
     packaged: true,
@@ -106,11 +113,11 @@ test('登录项命令：路径带空格时 exe 与 desktop 目录都加引号', 
     desktopDir,
     distDir: '',
   });
-  assert.deepEqual(source.args, ['"' + desktopDir + '"', loginItem.SILENT_START_FLAG]);
+  assert.deepEqual(source.args, ['"' + desktopAbs + '"', loginItem.SILENT_START_FLAG]);
   // 运行时路径本身没有空格 → 不加引号；desktop 目录带空格 → 必须加
   assert.equal(
     loginItem.loginCommandLine(source),
-    `${rt.branded} "${desktopDir}" --silent-start`,
+    `${rt.branded} "${desktopAbs}" --silent-start`,
   );
 });
 
