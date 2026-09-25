@@ -84,12 +84,12 @@ if ($LASTEXITCODE -ne 0) { throw 'desktop/server 运行时依赖同步失败' }
 # 5.5) 品牌化启动器：源码模式跑的是 Electron 官方 electron.exe（资源管理器/任务栏显示的是
 #      Electron 原子图标）。复制一份带 Engram 图标的 Engram.exe 作为快捷方式与启动目标；
 #      Electron 运行时刚被换过（pnpm 重装/升级）时这里按 mtime 自动重做。失败不阻断更新——
-#      图标退化成 Electron 默认图标，应用照常可用，设置→软件更新→「重建桌面快捷方式」可重试。
+#      图标退化成 Electron 默认图标，应用照常可用，设置→连接与同步→桌面端应用→「重建桌面快捷方式」可重试。
 Step '生成 Engram 图标启动器（Engram.exe）'
 Push-Location $appRoot
 try { node desktop/scripts/ensure-branded-exe.js } finally { Pop-Location }
 if ($LASTEXITCODE -ne 0) {
-  Write-Host '（品牌启动器未生成：图标仍是 Electron 默认图标，可在 设置→软件更新 里重建）' -ForegroundColor Yellow
+  Write-Host '（品牌启动器未生成：图标仍是 Electron 默认图标，可在 设置→连接与同步→桌面端应用 里重建）' -ForegroundColor Yellow
 }
 
 if ($NoLaunch) {

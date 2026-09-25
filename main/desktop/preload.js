@@ -58,7 +58,7 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // 增量拉取源码并重建：主进程 pull 后拉起构建脚本，应用自动退出并由新实例接管
   // （依赖清单真变化时自动装依赖，不再要求去终端跑脚本）
   desktopSourceUpdate: () => ipcRenderer.invoke('desktop-source-update'),
-  // ---------- 源码模式卸载（设置 → 软件更新；仅源码安装形态显示） ----------
+  // ---------- 源码模式卸载（设置 → 数据与存储 → 危险操作；仅源码安装形态显示） ----------
   // 查询卸载可用性：{ available }，进程位于源码版安装根（%LOCALAPPDATA%\engram）下才可用
   desktopSourceUninstallState: () => ipcRenderer.invoke('desktop-source-uninstall-state'),
   // 卸载应用：deleteData 为 true 时连知识库数据一起删（默认保留）。
@@ -76,12 +76,12 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
     ipcRenderer.on('desktop-source-state', listener);
     return () => ipcRenderer.removeListener('desktop-source-state', listener);
   },
-  // ---------- 桌面快捷方式（设置 → 软件更新 → 桌面端） ----------
+  // ---------- 桌面快捷方式（设置 → 连接与同步 → 桌面端应用） ----------
   // 重建桌面快捷方式：源码模式同时生成/刷新带 Engram 图标的 Engram.exe 作为启动目标，
   // 开始菜单里属于本安装的 Engram.lnk 一并同步。
   // 返回 { ok, shortcut, target, exe, startMenu, message } 或 { ok: false, error }
   desktopRebuildShortcut: () => ipcRenderer.invoke('desktop-rebuild-shortcut'),
-  // ---------- 开机自启（设置 → 连接与同步 → 桌面端更新；Windows 登录时静默启动到托盘） ----------
+  // ---------- 开机自启（设置 → 连接与同步 → 桌面端应用；Windows 登录时静默启动到托盘） ----------
   // 查询状态：{ supported, name, enabled, stale, blocked, command }
   //   enabled=注册表 Run 项在（开机会启动）；stale=命令与当前安装形态不一致；
   //   blocked=项在但被「任务管理器 → 启动」禁用；command=当前/将写入的完整命令行

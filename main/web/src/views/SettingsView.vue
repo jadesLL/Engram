@@ -86,12 +86,12 @@
           <AccountPanel />
         </section>
 
-        <!-- 连接与同步：多端同步 + 软件更新（两个功能域，各自保留小标题） -->
+        <!-- 连接与同步：多端同步 + 软件更新 + 桌面端应用（三个功能域，各自保留小标题） -->
         <section v-show="activeDomain === 'connect'" class="settings-domain is-multi" data-domain="connect">
           <header class="domain-head">
             <div>
               <h3>连接与同步</h3>
-              <p>多台设备组成同步群组，并保持服务端与桌面端是最新版本。</p>
+              <p>多台设备组成同步群组，保持服务端与桌面端是最新版本，并管理桌面端在本机的启动方式。</p>
             </div>
           </header>
           <div id="panel-sync">
@@ -121,12 +121,12 @@
           <AgentPanel />
         </section>
 
-        <!-- 数据与存储：数据管理 + 存储空间（回收站 / 图片资产） -->
+        <!-- 数据与存储：数据管理 + 存储空间（回收站 / 图片资产）+ 危险操作（含卸载应用） -->
         <section v-show="activeDomain === 'data'" class="settings-domain is-multi" data-domain="data">
           <header class="domain-head">
             <div>
               <h3>数据与存储</h3>
-              <p>数据放在哪、怎么备份，以及回收站与图片资产的清理出口。</p>
+              <p>数据放在哪、怎么备份，以及回收站、图片资产与不可撤销操作（清库 / 卸载应用）的出口。</p>
             </div>
           </header>
           <DataPanel />
@@ -172,10 +172,12 @@ const { capabilities, load } = useRuntimeCapabilities();
 const route = useRoute();
 
 // 大类里的分组要跟着运行时能力走：Agent 功能关掉时整个大类都不出现，
-// 软件更新不可用时「连接与同步」只剩多端同步
+// 软件更新不可用时「连接与同步」只剩多端同步；「桌面端应用」只在桌面端运行时出现
+// （它的两张卡片渲染在 <section v-if="isDesktop"> 里，登记了却渲染不出来就是点不动的死锚点）
 const domains = computed(() => visibleSettingsDomains({
   agent: capabilities.value.features.agentAdmin,
   serverUpdate: capabilities.value.features.serverUpdate,
+  desktop: capabilities.value.runtime === 'desktop',
 }));
 
 const currentDomain = computed(() => domains.value.find((domain) => domain.id === activeDomain.value));

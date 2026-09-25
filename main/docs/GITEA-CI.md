@@ -96,7 +96,7 @@ docker compose -f docker-compose.pull.yml up -d
 - **不要写 `pull_policy: never`**——它禁止从 Registry 拉取，本地无镜像时必报"找不到镜像"（NAS 首次部署曾因此误判为拉取失败）。
 - onlyoffice 若第三方镜像源拉不动，换官方 `onlyoffice/documentserver:9.4.0`。
 
-## 应用内自更新（设置 → 连接与同步 → 软件更新）
+## 应用内自更新（设置 → 连接与同步 → 服务器更新）
 
 1.1.6 起支持网页内一键更新，服务器与桌面端共用「Gitea Releases」作为版本信号源。
 
@@ -110,9 +110,9 @@ docker compose -f docker-compose.pull.yml up -d
       - /var/run/docker.sock:/var/run/docker.sock   # 应用内更新所需
 ```
 
-然后 `docker compose -f docker-compose.pull.yml up -d` 重建容器一次。之后所有更新都可以在网页 设置 → 连接与同步 → 软件更新 中完成，无需再登录部署机。
+然后 `docker compose -f docker-compose.pull.yml up -d` 重建容器一次。之后所有更新都可以在网页 设置 → 连接与同步 → 服务器更新 中完成，无需再登录部署机。
 
-### 仓库与更新通道配置（设置 → 连接与同步 → 软件更新）
+### 仓库与更新通道配置（设置 → 连接与同步 → 更新源配置）
 
 所有配置保存在**服务器数据目录的 `.env` 文件**（Docker 内 `/data/.env`，随数据卷持久化，不进数据库不进代码库）：
 
@@ -131,7 +131,7 @@ docker compose -f docker-compose.pull.yml up -d
 
 不想为每个小修复发版、只想到手验证时，把部署机切到 `:main` 通道：
 
-1. 设置 → 连接与同步 → 软件更新 → 「更新通道」选 `main`（顶部常规设置行，改动即存）。
+1. 设置 → 连接与同步 → 服务器更新 → 「更新通道」选 `main`（顶部常规设置行，改动即存）。
 2. 之后每次 main 推送，ci.yml 都会重推 `:main` 镜像；页面点「立即更新」即拉到主分支最新代码。
 3. 版本号在这条通道上**不变**（版本号只在发版时 bump），判断更新是否落地看 设置 → 账户与外观 → 连接与版本（高级，默认收起）→「应用版本」的**提交号**，与「检查更新」结果一致。
 
