@@ -5,7 +5,7 @@
       'sidebar-open': app.sidebarOpen,
       'chat-dock-open': chatDockOpen,
       'chat-dragging': app.chatDragging,
-      'update-notice-visible': updateNoticeVisible,
+      'update-notice-visible': updateNoticeVisible && !desktopShell,
     }"
     :style="{ '--sidebar-width': sidebarWidth + 'px', '--chat-w': app.chatDockWidth + 'px' }"
   >
@@ -204,6 +204,8 @@ const app = useAppStore();
 const updateStore = useUpdateStore();
 const updateNoticeVisible = ref(false);
 const sourceHasUpdate = ref(false);
+/* 桌面端（有 wikiDesktop 桥）：更新入口渲染进融合标题栏，不再浮在正文上方，正文也就无需为它让出顶部间距 */
+const desktopShell = Boolean((window as any).wikiDesktop);
 const chat = useChatStore();
 const inbox = useInboxStore();
 const { capabilities } = useRuntimeCapabilities();

@@ -1,61 +1,76 @@
 <template>
-  <div v-if="visible" ref="noticeEl" class="update-notice">
-    <button
-      type="button"
-      class="update-notice-trigger"
-      :aria-expanded="panelOpen"
-      aria-controls="update-notice-panel"
-      @click="panelOpen = !panelOpen"
+  <!-- 桌面端（有 wikiDesktop 桥）：入口整块 Teleport 进标题栏「Engram」右侧的挂载点，跟着窗口左上角走，
+       任何分辨率都不会压住正文或对话抽屉按钮；Docker/浏览器端没有融合标题栏，disabled 后原地渲染（沿用右上角入口） -->
+  <Teleport to="#win-titlebar-slot" :disabled="!inTitlebar">
+    <div
+      v-if="visible"
+      ref="noticeEl"
+      class="update-notice"
+      :class="{ 'update-notice-titlebar': inTitlebar }"
+      @mouseenter="onNoticeEnter"
+      @mouseleave="onNoticeLeave"
     >
-      <Icon name="ai" :size="16" />
-      <span>{{ triggerLabel }}</span>
-      <span class="update-notice-dot" aria-hidden="true" />
-      <Icon name="chevron-down" :size="13" class="update-notice-chevron" />
-    </button>
+      <button
+        type="button"
+        class="update-notice-trigger"
+        :aria-expanded="panelOpen"
+        aria-controls="update-notice-panel"
+        @click="panelOpen = !panelOpen"
+      >
+        <!-- 标题栏里只写「更新」两个字：按钮本身就是「有更新」的提示，不再堆图标/圆点/箭头 -->
+        <span v-if="inTitlebar">更新</span>
+        <template v-else>
+          <Icon name="ai" :size="16" />
+          <span>{{ triggerLabel }}</span>
+          <span class="update-notice-dot" aria-hidden="true" />
+          <Icon name="chevron-down" :size="13" class="update-notice-chevron" />
+        </template>
+      </button>
 
-    <section v-if="panelOpen" id="update-notice-panel" class="update-notice-panel" aria-label="更新内容">
-      <div class="update-notice-head">
-        <span class="update-notice-symbol"><Icon name="ai" :size="19" /></span>
-        <div class="update-notice-heading">
-          <strong>{{ title }}</strong>
-          <span>{{ subtitle }}</span>
+      <section v-if="panelOpen" id="update-notice-panel" class="update-notice-panel" aria-label="更新内容">
+        <div class="update-notice-head">
+          <span class="update-notice-symbol"><Icon name="ai" :size="19" /></span>
+          <div class="update-notice-heading">
+            <strong>{{ title }}</strong>
+            <span>{{ subtitle }}</span>
+          </div>
+          <button type="button" class="update-notice-close" aria-label="关闭更新内容" @click="panelOpen = false">
+            <Icon name="x" :size="15" />
+          </button>
         </div>
-        <button type="button" class="update-notice-close" aria-label="关闭更新内容" @click="panelOpen = false">
-          <Icon name="x" :size="15" />
-        </button>
-      </div>
-      <div class="update-notice-checked"><span class="update-notice-ok" />已自动检查 · {{ checkedLabel }}</div>
-      <div class="update-notice-body">
-        <div class="update-notice-caption">本次更新内容</div>
-        <ul>
-          <li v-for="(change, index) in changes" :key="index">
-            <span class="update-notice-check"><Icon name="check" :size="11" :stroke-width="2" /></span>
-            <span>{{ change }}</span>
-          </li>
-        </ul>
-      </div>
-      <!-- 一键更新按下后就地显示进度：源码/安装包形态会随即重启应用，服务端形态会等服务恢复后自动刷新 -->
-      <div v-if="applyPhase !== 'idle'" class="update-notice-progress" :class="{ failed: applyPhase === 'error' }">
-        <div class="update-notice-progress-head">
-          <span class="update-notice-progress-label">{{ progressLabel }}</span>
-          <span v-if="applyPercent !== null" class="update-notice-progress-pct">{{ applyPercent }}%</span>
+        <div class="update-notice-checked"><span class="update-notice-ok" />已自动检查 · {{ checkedLabel }}</div>
+        <div class="update-notice-body">
+          <div class="update-notice-caption">本次更新内容</div>
+          <ul>
+            <li v-for="(change, index) in changes" :key="index">
+              <span class="update-notice-check"><Icon name="check" :size="11" :stroke-width="2" /></span>
+              <span>{{ change }}</span>
+            </li>
+          </ul>
         </div>
-        <div v-if="applyPercent !== null" class="update-notice-progress-bar">
-          <i :style="{ width: applyPercent + '%' }" />
+        <!-- 一键更新按下后就地显示进度：源码/安装包形态会随即重启应用，服务端形态会等服务恢复后自动刷新 -->
+        <div v-if="applyPhase !== 'idle'" class="update-notice-progress" :class="{ failed: applyPhase === 'error' }">
+          <div class="update-notice-progress-head">
+            <span class="update-notice-progress-label">{{ progressLabel }}</span>
+            <span v-if="applyPercent !== null" class="update-notice-progress-pct">{{ applyPercent }}%</span>
+          </div>
+          <div v-if="applyPercent !== null" class="update-notice-progress-bar">
+            <i :style="{ width: applyPercent + '%' }" />
+          </div>
+          <div v-if="progressLines.length" class="update-notice-progress-log">
+            <div v-for="(line, index) in progressLines" :key="index">{{ line }}</div>
+          </div>
         </div>
-        <div v-if="progressLines.length" class="update-notice-progress-log">
-          <div v-for="(line, index) in progressLines" :key="index">{{ line }}</div>
+        <div class="update-notice-foot">
+          <div class="update-notice-foot-left">
+            <button type="button" class="update-notice-later" :disabled="applying" @click="snooze">稍后提醒</button>
+            <button type="button" class="update-notice-link" @click="goToUpdate">查看详情</button>
+          </div>
+          <button type="button" class="update-notice-go" :disabled="applying" @click="runUpdate">{{ applyLabel }}</button>
         </div>
-      </div>
-      <div class="update-notice-foot">
-        <div class="update-notice-foot-left">
-          <button type="button" class="update-notice-later" :disabled="applying" @click="snooze">稍后提醒</button>
-          <button type="button" class="update-notice-link" @click="goToUpdate">查看详情</button>
-        </div>
-        <button type="button" class="update-notice-go" :disabled="applying" @click="runUpdate">{{ applyLabel }}</button>
-      </div>
-    </section>
-  </div>
+      </section>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -91,6 +106,11 @@ type ApplyPhase = 'idle' | 'running' | 'waiting' | 'done' | 'skipped' | 'error';
 const emit = defineEmits<{ change: [visible: boolean, sourceHasUpdate: boolean] }>();
 const router = useRouter();
 const updateStore = useUpdateStore();
+/**
+ * 桌面端（App.vue 同款判定：有 wikiDesktop 桥就有融合标题栏）：入口渲染进标题栏 #win-titlebar-slot，
+ * 变成「Engram」右侧一枚只写「更新」的小按钮；鼠标扫过即展开，点一下也能开合。
+ */
+const inTitlebar = Boolean((window as any).wikiDesktop);
 const noticeEl = ref<HTMLElement | null>(null);
 const panelOpen = ref(false);
 const desktopEnv = ref<DesktopEnv | null>(null);
@@ -102,6 +122,7 @@ const applyPercent = ref<number | null>(null);
 const snoozedKey = ref(sessionStorage.getItem('updateNoticeSnoozedKey') || '');
 let openedKey = '';
 let offSourceState: (() => void) | null = null;
+let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * 当前运行形态决定「立即更新」到底做什么：
@@ -260,6 +281,26 @@ function snooze() {
   panelOpen.value = false;
 }
 
+/**
+ * 标题栏入口：鼠标扫到按钮上就展开（移开约 0.26 秒后收起，给鼠标从按钮移进面板留出余量），
+ * 点一下仍是开/关切换——触屏和「鼠标不悬停」的场景都能用。
+ * 只在标题栏形态生效：Docker/浏览器端维持原来的「点开」行为，不改成扫一下就弹。
+ */
+function onNoticeEnter() {
+  if (!inTitlebar) return;
+  if (hoverCloseTimer) { clearTimeout(hoverCloseTimer); hoverCloseTimer = null; }
+  panelOpen.value = true;
+}
+function onNoticeLeave() {
+  if (!inTitlebar) return;
+  if (hoverCloseTimer) clearTimeout(hoverCloseTimer);
+  hoverCloseTimer = setTimeout(() => {
+    hoverCloseTimer = null;
+    // 更新进行中面板必须留着（进度/失败原因都在这里）
+    if (!applying.value) panelOpen.value = false;
+  }, 260);
+}
+
 /** 次级入口：跳设置页看完整更新信息（提交列表 / 更新日志 / 手动检查） */
 async function goToUpdate() {
   panelOpen.value = false;
@@ -294,6 +335,7 @@ onMounted(async () => {
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onPointerDown);
   document.removeEventListener('keydown', onKeyDown);
+  if (hoverCloseTimer) clearTimeout(hoverCloseTimer);
   offSourceState?.();
 });
 </script>
@@ -307,6 +349,14 @@ onUnmounted(() => {
 .update-notice-chevron { transition: transform 150ms ease; }
 .update-notice-trigger[aria-expanded="true"] .update-notice-chevron { transform: rotate(180deg); }
 .update-notice-panel { position: absolute; top: 44px; right: 0; width: 364px; max-width: calc(100vw - 28px); border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--card-bg); box-shadow: var(--shadow-dialog); overflow: hidden; }
+/*
+ * 桌面端标题栏形态：入口不再是浮在正文上的固定层，而是标题栏里紧跟应用名的一枚小按钮。
+ * 面板锚在按钮下方（左对齐），层级随标题栏（--z-chrome）盖住正文与抽屉；no-drag 保证整条拖拽区里按钮和面板仍可点。
+ */
+.update-notice-titlebar { position: relative; top: auto; right: auto; z-index: auto; display: flex; align-items: center; -webkit-app-region: no-drag; }
+.update-notice-titlebar .update-notice-trigger { height: 22px; gap: 0; padding: 0 9px; border-color: transparent; border-radius: var(--radius-control); font-size: 11.5px; box-shadow: none; -webkit-app-region: no-drag; }
+.update-notice-titlebar .update-notice-trigger:hover { border-color: var(--accent); }
+.update-notice-titlebar .update-notice-panel { top: calc(100% + 6px); left: 0; right: auto; -webkit-app-region: no-drag; }
 .update-notice-head { display: flex; gap: 11px; align-items: flex-start; padding: 18px 18px 12px; }
 .update-notice-symbol { flex: none; width: 34px; height: 34px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); border-radius: 9px; }
 .update-notice-heading { flex: 1; min-width: 0; display: grid; gap: 3px; }

@@ -4,6 +4,8 @@
       <BrandMark :size="20" />
     </span>
     <span class="win-titlebar-name">Engram</span>
+    <!-- 更新入口挂载点：桌面端「更新」小按钮由 UpdateNotice Teleport 到这里（应用名右侧，永不与正文/抽屉重叠） -->
+    <span id="win-titlebar-slot" class="win-titlebar-slot"></span>
   </div>
   <router-view />
   <AssetDrawer />
