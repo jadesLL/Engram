@@ -37,7 +37,7 @@ export interface ApplyResult {
   timeout?: boolean;
 }
 
-export const UPDATE_SOURCE_HINT = '还没有配置更新源：打开「设置 → 软件更新 → 更新源配置」填写远端仓库地址后重试。';
+export const UPDATE_SOURCE_HINT = '还没有配置更新源：打开「设置 → 连接与同步 → 更新源配置」填写远端仓库地址后重试。';
 
 /** 把主进程/服务端的错误码翻成人话（未配置更新源是最常见的一种） */
 export function friendlyApplyError(error?: string): string {
@@ -155,7 +155,7 @@ export async function applyDesktopInstallerUpdate(h: InstallerUpdateHandlers = {
   const wd = desktopApi();
   const log = h.log || (() => {});
   if (!wd?.desktopUpdateCheck || !wd.desktopUpdateDownload || !wd.desktopUpdateRunInstaller) {
-    return { ok: false, error: '当前桌面端壳不支持自动安装更新，请到「设置 → 软件更新」手动更新。' };
+    return { ok: false, error: '当前桌面端壳不支持自动安装更新，请到「设置 → 连接与同步 → 桌面端更新」手动更新。' };
   }
   let check = h.check || null;
   if (!check) {

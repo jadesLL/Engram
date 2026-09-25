@@ -172,7 +172,7 @@
         <span class="group-ico" aria-hidden="true"><Icon name="monitor" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">桌面端更新</span>
-          <span class="group-hint">Windows 桌面端：安装包可自动或手动下载安装；源码模式增量拉取提交并重新构建；开机自启与桌面快捷方式维护也在这里</span>
+          <span class="group-hint">Windows 桌面端的版本：安装包自动或手动下载安装，源码模式增量拉取提交并重新构建（开机自启、桌面快捷方式与卸载见「桌面端应用」与「数据与存储 → 危险操作」）</span>
         </span>
         <span v-if="desktopVersionBadge" class="group-badge tone-muted">{{ desktopVersionBadge }}</span>
         <span v-if="desktopBadge.text" class="group-badge" :class="`tone-${desktopBadge.tone}`">{{ desktopBadge.text }}</span>
@@ -301,23 +301,38 @@
             </button>
           </div>
           <p v-if="srcUpdating" class="setting-message warn">正在增量拉取源码并重新构建，请看置顶的更新进度窗口；构建完成后应用自动重启，数据不受影响。</p>
-
-          <!-- 卸载：调起卸载脚本停止应用并删除安装目录；旧版壳无此 API 时自动隐藏 -->
-          <div v-if="uninstallAvailable" class="setting-row">
-            <div class="setting-copy">
-              <strong>卸载 Engram</strong>
-              <span>停止应用并删除桌面快捷方式与整个安装目录（源码、便携环境、Electron）。知识库数据默认保留，可勾选一并删除。<strong>操作不可撤销。</strong></span>
-            </div>
-            <div class="check-controls">
-              <label class="uninstall-data-opt">
-                <input v-model="uninstallData" type="checkbox" />
-                <span>同时删除知识库数据</span>
-              </label>
-              <button class="btn danger" type="button" :disabled="uninstalling" @click="doUninstall">卸载…</button>
-            </div>
-          </div>
-          <p v-if="uninstallError" class="setting-message err">{{ uninstallError }}</p>
         </template>
+      </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 桌面端应用（这台机器上怎么跑 Engram：开机自启 / 快捷方式） ============
+       2026-09-24 从「桌面端更新」拆出：更新分组只谈版本，这两项是桌面端运行时行为。
+       卸载 Engram 与之同源（都是桌面端本机动作），但因为它不可撤销，移到「数据与存储 → 危险操作」，
+       与清库 / 清日志并列，不再留在本组件里。 -->
+  <section v-if="isDesktop" id="panel-app" class="settings-panel settings-native settings-group level-normal">
+    <div class="group-card" :class="{ 'is-collapsed': appCollapsed }">
+      <div class="group-band collapsible" @click="onBandClick($event, 'panel-app')">
+        <span class="group-ico" aria-hidden="true"><Icon name="monitor" :size="16" /></span>
+        <span class="group-text">
+          <span class="group-title">桌面端应用</span>
+          <span class="group-hint">Windows 桌面端本机行为：登录后是否自动启动、桌面快捷方式重建</span>
+        </span>
+        <span v-if="launchAtLoginSupported" class="group-badge" :class="launchAtLogin.enabled ? 'tone-ok' : 'tone-muted'">
+          {{ launchAtLogin.enabled ? '开机自启已开启' : '开机自启已关闭' }}
+        </span>
+        <button
+          type="button"
+          class="group-caret"
+          :aria-expanded="appCollapsed ? 'false' : 'true'"
+          :title="appCollapsed ? '展开「桌面端应用」' : '收起「桌面端应用」'"
+          @click.stop="toggleGroup('panel-app')"
+        >
+          <Icon name="chevron-down" :size="14" />
+        </button>
+      </div>
+      <div v-show="!appCollapsed" class="group-body flush">
 
         <!-- 开机自启：登录 Windows 后静默启动到系统托盘（旧版壳无此 API 时整行隐藏） -->
         <div v-if="launchAtLoginSupported" class="setting-row">
@@ -368,7 +383,6 @@
           </div>
         </div>
         <p v-if="shortcutMessage" class="setting-message" :class="shortcutError ? 'err' : ''">{{ shortcutMessage }}</p>
-      </template>
       </div>
     </div>
   </section>
@@ -506,7 +520,20 @@ interface ConfigInfo {
   giteaPassword: string;
 }
 
-const isDesktop = computed(() => typeof window !== 'undefined' && Boolean((window as any).wikiDesktop));
+import { useRuntimeCapabilities } from '../../lib/capabilities';
+
+/**
+ * 是否桌面端运行时：优先看服务端能力协商（runtime 为 desktop），它覆盖「用浏览器打开
+ * 桌面本地服务」这种没有 window.wikiDesktop 的场景；协商尚未回来（首页仍按 full 兜底）
+ * 时才看 preload 注入的 wikiDesktop。
+ * 用它门控「桌面端应用」分组：导航条目按同一能力位（need: 'desktop'）显示，两边必须一致，
+ * 否则会出现点不动的死锚点。
+ */
+const { capabilities: runtimeCapabilities } = useRuntimeCapabilities();
+const isDesktop = computed(() =>
+  typeof window !== 'undefined'
+  && (runtimeCapabilities.value.runtime === 'desktop' || Boolean((window as any).wikiDesktop))
+);
 
 const state = ref<UpdateStateInfo>({
   supported: false, reason: '', desktop: false, currentVersion: '', commit: '', commitSource: 'unknown',
@@ -572,13 +599,7 @@ const sourceAutoSupported = ref(false);
 const sourceAuto = ref<any>({ enabled: true, phase: 'idle', behind: 0, localCommit: '', remoteCommit: '', error: '', checkedAt: null });
 let offSourceState: (() => void) | null = null;
 
-// 源码模式卸载：旧版壳无 desktopSourceUninstallState API 时隐藏该行
-const uninstallAvailable = ref(false);
-const uninstallData = ref(false);
-const uninstalling = ref(false);
-const uninstallError = ref('');
-
-// 桌面快捷方式重建：旧版壳无 desktopRebuildShortcut API 时隐藏该行
+// 桌面快捷方式重建：旧版壳无 desktopRebuildShortcut API 时隐藏该行（见「桌面端应用」分组）
 const shortcutSupported = ref(false);
 const shortcutBusy = ref(false);
 const shortcutMessage = ref('');
@@ -650,6 +671,11 @@ useSettingsBadge(
 useSettingsBadge(
   'panel-update-desktop',
   computed(() => desktopBadge.value.text),
+);
+// 开机自启是「离开设置页也在后台生效」的状态：二级导航上直接写出开关，免得用户为看一眼跑一趟
+useSettingsBadge(
+  'panel-app',
+  computed(() => (launchAtLoginSupported.value ? (launchAtLogin.value.enabled ? '开机自启已开' : '开机自启已关') : '')),
 );
 useSettingsBadge(
   'panel-update-source',
@@ -743,13 +769,17 @@ async function confirmHubApply() {
   }
 }
 
-// 设置分区激活态（面板 v-show 常驻挂载）：切回本分区时重拉同步状态——
-// 用户可能刚在「多端同步」分区完成绑定/解绑，不重拉会一直显示挂载时的旧快照
+// 设置分区激活态：本面板随大类切换只做 v-show（不卸载），但可能在隐藏期间被别的入口改过状态，
+// 切入本大类时兜底重拉一次。多端同步：用户可能刚在「多端同步」分组完成绑定/解绑，
+// 不重拉会一直显示挂载时的旧快照。开机自启：托盘右键菜单是同一个开关的另一个入口
+// （改动本身有 desktop-launch-at-login 广播会即时回写，这里是第二道保险，防止广播漏到时显示旧状态）。
 const props = defineProps<{ active?: boolean }>();
 watch(
   () => props.active,
   (now) => {
-    if (now) loadSync();
+    if (!now) return;
+    loadSync();
+    void loadLaunchAtLogin();
   }
 );
 
@@ -797,9 +827,10 @@ const desktopVersionBadge = computed(() => {
   return formatVersionLabel(base, { commit: env?.commit || '', commitDate: env?.commitDate || '', dirty: env?.dirty });
 });
 
-// 分组折叠：三张分组卡片各自持久化折叠状态（锚点 id 即各卡片的 DOM id）
+// 分组折叠：四张分组卡片各自持久化折叠状态（锚点 id 即各卡片的 DOM id）
 const serverCollapsed = computed(() => isGroupCollapsed('panel-update-server'));
 const desktopCollapsed = computed(() => isGroupCollapsed('panel-update-desktop'));
+const appCollapsed = computed(() => isGroupCollapsed('panel-app'));
 const sourceCollapsed = computed(() => isGroupCollapsed('panel-update-source'));
 function toggleGroup(anchor: string) {
   toggleGroupCollapsed(anchor);
@@ -1049,30 +1080,8 @@ async function doSourceUpdate() {
   }
 }
 
-async function doUninstall() {
-  const wd = wikiDesktop();
-  if (!wd?.desktopSourceUninstall) return;
-  const ok = await confirmDialog({
-    title: '卸载 Engram',
-    message: `将停止应用、删除桌面快捷方式与整个安装目录。知识库数据${uninstallData.value ? '将一并删除' : '保留在 %APPDATA%\\@engram\\desktop'}。操作不可撤销，确定卸载？`,
-    confirmText: '卸载',
-    danger: true,
-  });
-  if (!ok) return;
-  uninstalling.value = true;
-  uninstallError.value = '';
-  try {
-    const r = await wd.desktopSourceUninstall(uninstallData.value);
-    if (!r?.ok) {
-      uninstalling.value = false;
-      uninstallError.value = r?.error || '卸载失败';
-    }
-    // ok：主进程已拉起独立卸载脚本并退出应用；卸载脚本随后删除安装目录
-  } catch (e: any) {
-    uninstalling.value = false;
-    uninstallError.value = e?.message || '卸载失败';
-  }
-}
+// 卸载 Engram 不在这里：2026-09-24 起移到「数据与存储 → 危险操作」（DataDangerSection.vue），
+// 与清库 / 清日志并列——都是不可撤销的本机动作，不放版本更新分组里
 
 async function doRebuildShortcut() {
   const wd = wikiDesktop();
@@ -1227,15 +1236,9 @@ onMounted(() => {
       });
     }
   }
-  // 卸载入口：仅源码安装形态显示（安装包形态走系统「添加或删除程序」）
-  if (wd?.desktopSourceUninstallState) {
-    wd.desktopSourceUninstallState().then((s: any) => {
-      uninstallAvailable.value = Boolean(s?.available);
-    });
-  }
-  // 桌面快捷方式重建入口：旧版壳无此 API 时该行自动隐藏
+  // 桌面快捷方式重建入口：旧版壳无此 API 时该行自动隐藏（「桌面端应用」分组）
   shortcutSupported.value = Boolean(wd?.desktopRebuildShortcut);
-  // 开机自启：旧版壳无此 API 时该行自动隐藏；托盘菜单里改开关时靠订阅同步
+  // 开机自启：旧版壳无此 API 时该行自动隐藏（「桌面端应用」分组）；托盘菜单里改开关时靠订阅同步
   void loadLaunchAtLogin();
   if (wd?.onLaunchAtLoginState) {
     offLaunchAtLogin = wd.onLaunchAtLoginState((s: any) => {
@@ -1279,16 +1282,6 @@ onUnmounted(() => {
 .check-status {
   font-size: 12px;
   color: var(--text-faint);
-}
-/* 卸载行：数据勾选框 + 危险按钮 */
-.uninstall-data-opt {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  white-space: nowrap;
 }
 .check-status.has {
   color: var(--accent, #3b82f6);

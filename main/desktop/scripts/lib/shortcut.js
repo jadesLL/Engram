@@ -155,7 +155,7 @@ function shortcutSpec({ packaged, desktopDir, execPath, distDir = '', useBranded
       args: '',
       icon: '',
       iconIndex: 0,
-      description: description || 'Engram：双击直接启动；更新请在应用内 设置→软件更新→检查更新',
+      description: description || 'Engram：双击直接启动；更新请在应用内 设置→连接与同步→桌面端更新→检查更新',
     };
   }
   const electron = distDir ? path.join(distDir, ELECTRON_EXE) : execPath;
@@ -167,7 +167,7 @@ function shortcutSpec({ packaged, desktopDir, execPath, distDir = '', useBranded
     args: '.',
     icon: path.join(desktopDir, ICON_REL),
     iconIndex: 0,
-    description: description || 'Engram（源码版）：双击直接启动；更新请在应用内 设置→软件更新→检查更新',
+    description: description || 'Engram（源码版）：双击直接启动；更新请在应用内 设置→连接与同步→桌面端更新→检查更新',
   };
 }
 

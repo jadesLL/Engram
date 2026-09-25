@@ -6,6 +6,13 @@
  *  - 「存储空间」（回收站 / 图片资产）并入「数据与存储」；
  *  - 「账户与外观」内部拆成账户 / 外观 / 连接与版本三个分组。
  *
+ * 2026-09-24 二次细分（用户反馈「卸载软件、设置开机自启放进更新分组不太合适」）：
+ *  - 「桌面端更新」回归版本语义：自动更新 / 检查更新 / 下载安装 / 源码增量更新；
+ *  - 开机自启、桌面快捷方式独立成「桌面端应用」（panel-app）——说的是"这台机器上怎么跑 Engram"，
+ *    与"是不是最新版本"不是一回事；
+ *  - 卸载 Engram 移入「数据与存储 → 危险操作」（data-danger），与清库 / 清日志并列：
+ *    都是不可撤销、做错了没法回退的操作，统一放整页最后一组。
+ *
  * 大类下的每个分组都是二级导航锚点：点击滚动到该分组、滚动时反向高亮。
  * 锚点 id 必须与渲染出的 DOM id 一一对应（SettingsGroup 的 anchor 或包裹元素的 id），
  * 且全局唯一——settingsDomains.test.ts 会锁住这两条。
@@ -13,8 +20,10 @@
 
 export type SettingsDomainId = 'account' | 'connect' | 'agent' | 'data';
 
-/** 分组依赖的能力开关（缺省表示始终可见） */
-export type SettingsDomainNeed = 'agent' | 'serverUpdate';
+/** 分组依赖的能力开关（缺省表示始终可见）。
+ *  `desktop` = 桌面端运行时（服务端回报 runtime==='desktop'，含用浏览器打开桌面本地服务的情形）：
+ *  比只看 window.wikiDesktop 准——本地服务被浏览器打开时后者为假，但本机确实有安装目录 / 开机自启 / 快捷方式可管 */
+export type SettingsDomainNeed = 'agent' | 'serverUpdate' | 'desktop';
 
 export interface SettingsGroupNav {
   /** 锚点 id：与 SettingsGroup 的 anchor / 包裹元素的 id 一致 */
@@ -38,6 +47,8 @@ export interface SettingsDomain {
 export interface SettingsFeatures {
   agent: boolean;
   serverUpdate: boolean;
+  /** 桌面端运行时；缺省按「不是桌面端」处理——只有显式 true 才放行桌面端专属分组，避免登记了却渲染不出来的死锚点 */
+  desktop?: boolean;
 }
 
 export const SETTINGS_DOMAINS: SettingsDomain[] = [
@@ -59,6 +70,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
       { id: 'panel-sync', label: '多端同步', icon: 'refresh' },
       { id: 'panel-update-server', label: '服务器更新', icon: 'download', need: 'serverUpdate' },
       { id: 'panel-update-desktop', label: '桌面端更新', icon: 'monitor', need: 'serverUpdate' },
+      { id: 'panel-app', label: '桌面端应用', icon: 'monitor', need: 'desktop' },
       { id: 'panel-update-source', label: '更新源配置', icon: 'globe', need: 'serverUpdate' },
     ],
   },
@@ -117,6 +129,7 @@ export function visibleSettingsDomains(features: SettingsFeatures): SettingsDoma
       groups: domain.groups.filter((group) => {
         if (group.need === 'agent') return features.agent;
         if (group.need === 'serverUpdate') return features.serverUpdate;
+        if (group.need === 'desktop') return Boolean(features.desktop);
         return true;
       }),
     }))

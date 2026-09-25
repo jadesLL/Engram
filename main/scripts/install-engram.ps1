@@ -13,7 +13,7 @@
 #   逐个回退，产物按 ZIP 头校验，可用 ENGRAM_MINGIT_URL / ENGRAM_NODE_URL 覆盖为单一地址）
 #   → 克隆/更新 Engram 源码到 %LOCALAPPDATA%\engram\Engram
 #   → 安装依赖、构建桌面端、创建桌面快捷方式、启动
-# 数据与安装包版共用 %APPDATA%\@engram\desktop；卸载走应用内 设置→软件更新→「卸载」，或运行 uninstall-engram.ps1。
+# 数据与安装包版共用 %APPDATA%\@engram\desktop；卸载走应用内 设置→数据与存储→危险操作→「卸载 Engram」，或运行 uninstall-engram.ps1。
 param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'engram'),
   [string]$RepoUrl = 'https://github.com/jadesLL/Engram.git',
@@ -410,11 +410,11 @@ $lnk.Arguments = '.'
 $lnk.IconLocation = (Join-Path $mainDir 'desktop\build\icon.ico') + ',0'
 $lnk.WorkingDirectory = (Join-Path $mainDir 'desktop')
 $lnk.WindowStyle = 1
-$lnk.Description = 'Engram（源码版）：双击直接启动；更新请在应用内 设置→软件更新→检查更新'
+$lnk.Description = 'Engram（源码版）：双击直接启动；更新请在应用内 设置→连接与同步→桌面端更新→检查更新'
 $lnk.Save()
 StepDone 'shortcut' "$desktop\Engram.lnk"
 
 # ---------- 8) 完成（应用已由 build 步的脚本启动） ----------
 Step 'launch' '启动 Engram'
-StepDone 'launch' '数据在 %APPDATA%\@engram\desktop；卸载走应用内 设置→软件更新→「卸载」'
+StepDone 'launch' '数据在 %APPDATA%\@engram\desktop；卸载走应用内 设置→数据与存储→危险操作→「卸载 Engram」'
 Out-Line '##ALLDONE'
