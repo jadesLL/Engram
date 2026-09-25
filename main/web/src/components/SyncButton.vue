@@ -22,6 +22,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import { notify } from '../lib/notify';
+import { openSyncLogDrawer } from '../lib/syncLog';
 import { useSyncStore, type SyncLogEntry } from '../stores/sync';
 import Icon from './Icon.vue';
 
@@ -60,8 +61,11 @@ async function syncNow(): Promise<void> {
     await api.post('/api/sync/reconcile');
     const result = await waitReconcile(before);
     if (result === 'ok') notify.success('同步完成');
-    else if (result === 'failed') notify.error('同步失败，详见 设置 → 多端同步 的日志');
-    else notify.info('同步仍在进行，稍后可在 设置 → 多端同步 查看');
+    // 失败不再只丢一句「详见设置里的日志」：直接把同步详情抽屉打开，用户当场看到失败原因
+    else if (result === 'failed') {
+      notify.error('同步失败，已为你打开同步详情');
+      openSyncLogDrawer();
+    } else notify.info('同步仍在进行，稍后可在「同步详情」里查看进度');
   } catch (error: any) {
     notify.error(error?.response?.data?.error || '触发同步失败');
   } finally {

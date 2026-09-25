@@ -153,14 +153,20 @@ function conflictStamp(): string {
  *  - 其他页面：败者以「原名-时间戳」重命名保存在原目录，供人工核对后删除。
  * 返回需要写入的副本路径（无副本时为 null）。副本写失败不阻塞正本。
  */
-function applyConflictResolution(target: string, hubRaw: string, theirsRaw: string, theirsMs: number, actorId: string): void {
+function applyConflictResolution(
+  target: string,
+  hubRaw: string,
+  theirsRaw: string,
+  theirsMs: number,
+  actorId: string,
+): { copyPath: string | null; theirsWins: boolean } {
   const hubMs = mtimeMsOf(target);
   const theirsWins = theirsMs > hubMs;
   const winner = theirsWins ? theirsRaw : hubRaw;
   const loser = theirsWins ? hubRaw : theirsRaw;
   applyPageContent(target, winner);
   const isSystemArea = target.startsWith('AIWorks/');
-  if (isSystemArea || !loser.trim()) return;
+  if (isSystemArea || !loser.trim()) return { copyPath: null, theirsWins };
   const dir = path.posix.dirname(target);
   const base = path.basename(target).replace(/\.md$/i, '');
   let copyRel = `${dir === '.' ? '' : dir + '/'}${base}-${conflictStamp()}.md`;
@@ -170,8 +176,10 @@ function applyConflictResolution(target: string, hubRaw: string, theirsRaw: stri
   try {
     applyPageContent(copyRel, loser);
     commit('page', copyRel, actorId, { evidence: null });
+    return { copyPath: copyRel, theirsWins };
   } catch {
     // 副本写失败不阻塞主流程（败者内容仍在原持有方本地）
+    return { copyPath: null, theirsWins };
   }
 }
 
@@ -282,6 +290,12 @@ export interface PushApplyResult {
   revision: number;
   /** hub 侧最终内容（可能与推送内容不同：合并/规范化）；非页面操作为空 */
   content?: string;
+  /** 页面写入方式：direct=直接应用；merged=字符级三方合并；conflict=无法融合按修改时间最新者胜 */
+  merge?: 'direct' | 'merged' | 'conflict';
+  /** conflict 时败者内容的另存副本路径（AIWorks 系统区或空内容不产生副本） */
+  copyPath?: string | null;
+  /** conflict 时是否由推送方内容胜出（false=中枢版本更新，推送方改动被另存） */
+  theirWins?: boolean;
 }
 
 export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
@@ -300,6 +314,7 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
         seq: Number(result.seq),
         revision: Number(result.revision),
         content: String(result.content),
+        merge: 'direct',
       };
     }
     // 基准落后：先做字符级三方合并；无法融合的冲突按修改时间最新者胜整页裁决
@@ -308,34 +323,47 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     const theirsMs = Number(push.mtime || 0);
     if (ancestor === null) {
       // 祖先缺失（离线太久/快照被裁剪/双方各自创建）：无法融合，整页按最新裁决
-      applyConflictResolution(target, hubRaw, raw, theirsMs, actorId);
+      const resolved = applyConflictResolution(target, hubRaw, raw, theirsMs, actorId);
       const result = commit('page', target, actorId, {});
       return {
         ok: true,
         seq: Number(result.seq),
         revision: Number(result.revision),
         content: String(result.content),
+        merge: 'conflict',
+        copyPath: resolved.copyPath,
+        theirWins: resolved.theirsWins,
       };
     }
     const merged = merge3(ancestor, hubRaw, raw);
     if (merged.conflicts.length > 0) {
-      applyConflictResolution(target, hubRaw, raw, theirsMs, actorId);
-    } else {
-      applyPageContent(target, merged.content);
+      const resolved = applyConflictResolution(target, hubRaw, raw, theirsMs, actorId);
+      const result = commit('page', target, actorId, {});
+      return {
+        ok: true,
+        seq: Number(result.seq),
+        revision: Number(result.revision),
+        content: String(result.content),
+        merge: 'conflict',
+        copyPath: resolved.copyPath,
+        theirWins: resolved.theirsWins,
+      };
     }
+    applyPageContent(target, merged.content);
     const result = commit('page', target, actorId, {});
     return {
       ok: true,
       seq: Number(result.seq),
       revision: Number(result.revision),
       content: String(result.content),
+      merge: 'merged',
     };
   }
 
   if (push.kind === 'file') {
     // 文件内容经 /api/sync/file 已落盘，这里只发号广播
     const result = commit('file', String(push.target || ''), actorId);
-    return { ok: true, seq: Number(result.seq), revision: Number(result.revision) };
+    return { ok: true, seq: Number(result.seq), revision: Number(result.revision), merge: 'direct' };
   }
 
   if (push.kind === 'delete') {
@@ -343,10 +371,11 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     try {
       moveToTrash(target, 'sync');
     } catch {
-      return { ok: true, seq: 0, revision: getPageSyncRevision(target) };
+      // 中枢本就没有这个路径（成员删的是他本地的副本）：不发号，但也不能算失败
+      return { ok: true, seq: 0, revision: getPageSyncRevision(target), merge: 'direct' };
     }
     const result = commit('delete', target, actorId);
-    return { ok: true, seq: Number(result.seq), revision: Number(result.revision) };
+    return { ok: true, seq: Number(result.seq), revision: Number(result.revision), merge: 'direct' };
   }
 
   if (push.kind === 'move') {
@@ -365,10 +394,16 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
         markPageDeleted(oldRel);
       }
       const removed = commit('delete', oldRel, actorId);
-      return { ok: true, seq: Number(removed.seq), revision: Number(removed.revision) };
+      return {
+        ok: true,
+        seq: Number(removed.seq),
+        revision: Number(removed.revision),
+        merge: 'direct',
+        copyPath: null,
+      };
     }
     const result = commit('move', newRel, actorId, { oldPath: oldRel });
-    return { ok: true, seq: Number(result.seq), revision: Number(result.revision) };
+    return { ok: true, seq: Number(result.seq), revision: Number(result.revision), merge: 'direct' };
   }
 
   throw new Error(`未知同步类型: ${push.kind}`);

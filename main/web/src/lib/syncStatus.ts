@@ -72,7 +72,7 @@ export function formatSyncTime(iso: string | null | undefined, now: number = Dat
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-/** 错误信息一行内展示：过长时截断（完整内容仍可在 设置 → 多端同步 的日志里看） */
+/** 错误信息一行内展示：过长时截断（完整内容仍可在「同步详情」抽屉的日志里看） */
 function shortError(message: string | null | undefined): string {
   const text = (message || '').trim().replace(/\s+/g, ' ');
   if (!text) return '';

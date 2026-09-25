@@ -13,6 +13,7 @@ import { classifyBrainEntry, isInboxPath } from '../lib/brainPaths.js';
 import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
+import { formatBytes, formatDuration, logSyncEvent, recentSyncLog, type SyncLogEntry } from './eventLog.js';
 import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import {
   currentNodeId,
@@ -49,6 +50,16 @@ export interface ClientStatus {
   lastError: string | null;
   log: SyncLogEntry[];
 }
+
+/** 全量对账的触发原因：日志里必须能看出「这一轮是谁触发的」，否则只有一条「对账完成」看不出因果 */
+export type ReconcileReason = 'bootstrap' | 'manual' | 'heal' | 'oplog-gap';
+
+const REASON_LABELS: Record<ReconcileReason, string> = {
+  bootstrap: '接入/配置变更',
+  manual: '手动触发',
+  heal: '周期自愈',
+  'oplog-gap': '落后超过保留窗口',
+};
 
 export function syncConfigEnabled(): boolean {
   return getSetting('sync_enabled') === '1' && Boolean(getSetting('sync_hub_url')) && Boolean(getSetting('sync_hub_token'));
@@ -94,21 +105,30 @@ let pullRetryTimer: ReturnType<typeof setInterval> | null = null;
 let healTimer: ReturnType<typeof setInterval> | null = null;
 let reconcileRunning = false;
 
-// ---------- 同步事件日志（内存环形缓冲，/api/sync/status 暴露给前端排查） ----------
+// ---------- 同步事件日志 ----------
+// 统一走 sync/eventLog：落盘留存、结构化字段，中枢/成员两条链路共用一份。
+// 这里只保留成员端视角的薄封装；老事件名（connected/reconcile-done/oplog-trimmed…）全部保留——
+// 端到端测试与前端事件标签都按事件名对照。
 
-export interface SyncLogEntry {
-  ts: string;
-  level: 'info' | 'warn' | 'error';
-  event: string;
-  detail?: string;
+export type { SyncLogEntry };
+
+/** 成员端事件入口（结构化字段进 eventLog，前端可展开/筛选/导出） */
+function logEvent(
+  level: SyncLogEntry['level'],
+  event: string,
+  detail?: string,
+  data?: Record<string, unknown>,
+): SyncLogEntry {
+  return logSyncEvent(level, event, { detail, data, scope: 'member' });
 }
 
-const SYNC_LOG_KEEP = 200;
-const syncLog: SyncLogEntry[] = [];
-
-function logEvent(level: SyncLogEntry['level'], event: string, detail?: string): void {
-  syncLog.push({ ts: new Date().toISOString(), level, event, detail: detail?.slice(0, 500) });
-  if (syncLog.length > SYNC_LOG_KEEP) syncLog.splice(0, syncLog.length - SYNC_LOG_KEEP);
+/** { page: 2, file: 1 } → 「页面 2 · 文件 1」，用于推送/补拉的批次摘要 */
+function kindSummary(counts: Partial<Record<SyncKind, number>>): string {
+  const labels: Record<SyncKind, string> = { page: '页面', file: '文件', delete: '删除', move: '移动' };
+  const parts = (Object.keys(labels) as SyncKind[])
+    .filter((kind) => Number(counts[kind] || 0) > 0)
+    .map((kind) => `${labels[kind]} ${counts[kind]}`);
+  return parts.length ? parts.join(' · ') : '无内容变更';
 }
 
 export function hubUrl(): string {
@@ -211,7 +231,8 @@ function applyRemotePage(relPath: string, raw: string, revision: number): void {
   setPageSyncRevision(relPath, revision);
 }
 
-async function pullFile(relPath: string): Promise<void> {
+async function pullFile(relPath: string): Promise<number> {
+  const startedAt = Date.now();
   const res = await fetch(hubUrl() + `/api/sync/file?path=${encodeURIComponent(relPath)}`, {
     headers: authHeaders(),
   });
@@ -233,12 +254,27 @@ async function pullFile(relPath: string): Promise<void> {
     throw error;
   }
   noteAppWrite(abs);
+  // 单个文件拉取只在「值得看一眼」时单独成条（≥ 512 KB 的大附件）：
+  // 首次接入可能有成百上千个小文件，逐条记会把日志刷满、把真正有用的记录挤出去；
+  // 数量与总字节数由所在批次（reconcile-done / replay）汇总。
+  let size = 0;
+  try {
+    size = fs.statSync(abs).size;
+    if (size >= 512 * 1024) {
+      logEvent('info', 'file-pull-ok', `拉取文件 ${relPath}（${formatBytes(size)}）`, {
+        path: relPath,
+        bytes: size,
+        ms: Date.now() - startedAt,
+      });
+    }
+  } catch { /* 文件刚被移走时忽略 */ }
   // 原始资料文件拉取后补调度文本提取（与启动扫描/上传路径同一套机制）
   try {
     const { supportsFileExtraction, scheduleFileExtraction } = await import('../pipeline/fileExtraction.js');
     if (supportsFileExtraction(relPath)) scheduleFileExtraction(relPath, { mode: 'auto' });
   } catch { /* 非原始资料目录或提取模块不可用时忽略 */ }
   lastSyncAt = new Date().toISOString();
+  return size;
 }
 
 /**
@@ -263,18 +299,49 @@ function applyRemoteMove(oldPath: string, target: string, revision: number): voi
     } catch {
       markPageDeleted(oldPath);
     }
-    logEvent('info', 'move-superseded', `${oldPath} → ${target}：目标已就位，旧路径入回收站`);
+    logEvent('info', 'move-superseded', `${oldPath} → ${target}：目标已就位，旧路径入回收站`, {
+      from: oldPath,
+      to: target,
+    });
   }
   setPageSyncRevision(target, revision);
+}
+
+/**
+ * 远端变更应用批次：SSE 是一条条推来的，逐条记日志会在别人批量改动时刷屏，
+ * 这里按 200ms 合并成一条「应用中枢变更 N 项」。只记实时 SSE 来的变更——
+ * 重连补拉（replay）已经有自己的汇总记录，不必再重复一遍。
+ */
+const appliedBatch: { kind: SyncKind; target: string }[] = [];
+let appliedTimer: ReturnType<typeof setTimeout> | null = null;
+
+function noteAppliedOp(kind: SyncKind, target: string): void {
+  appliedBatch.push({ kind, target });
+  if (appliedTimer) return;
+  appliedTimer = setTimeout(() => {
+    appliedTimer = null;
+    const batch = appliedBatch.splice(0, appliedBatch.length);
+    if (!batch.length) return;
+    const counts: Partial<Record<SyncKind, number>> = {};
+    for (const item of batch) counts[item.kind] = Number(counts[item.kind] || 0) + 1;
+    logEvent('info', 'pull-applied', `应用中枢变更 ${batch.length} 项：${kindSummary(counts)}`, {
+      count: batch.length,
+      kinds: { ...counts },
+      paths: batch.map((item) => item.target).slice(0, 10),
+    });
+  }, 200);
+  appliedTimer.unref?.();
 }
 
 /** 应用一条 hub 广播/补拉 op（seq 单调 guard 防重复应用）。
  *  cursor 只在应用成功后推进：page 应用失败向上抛断开事件流，重连后从 cursor 重放，
  *  避免「失败也前推水位」造成静默丢更新（对齐 fast-note-sync 的未确认不算完成语义） */
-function applyRemoteOp(op: any): void {
+function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
   const seq = Number(op.seq || 0);
   if (seq <= getCursor()) return;
   const target = String(op.target || '');
+  /** 本端是否真的落盘应用了这条变更（页面被暂存、文件改走异步拉取时不算） */
+  let applied = false;
   try {
     if (op.kind === 'page') {
       if (pendingTargets.has(target)) {
@@ -286,12 +353,18 @@ function applyRemoteOp(op: any): void {
       } else {
         applyRemotePage(target, String(op.content ?? ''), Number(op.revision || 0));
         if (op.evidence) applyEvidenceSnapshot(op.evidence);
+        applied = true;
       }
     } else if (op.kind === 'file') {
       // 文件不进内存队列：hash 不同才拉取；失败记入待补拉集合周期重试（水位照常推进）
-      void pullFileIfChanged(target, String(op.hash || '')).catch(() => {
+      // 单个文件拉取的记录由 pullFile 自己写（≥512 KB），这里不计入批次
+      void pullFileIfChanged(target, String(op.hash || '')).catch((error: any) => {
         pendingFilePulls.set(target, String(op.hash || ''));
-        logEvent('warn', 'file-pull-deferred', target);
+        logEvent('warn', 'file-pull-deferred', `文件 ${target} 拉取失败，已加入待补拉队列（每分钟自动重试）`, {
+          path: target,
+          error: error?.message || String(error),
+          pending: pendingFilePulls.size,
+        });
       });
     } else if (op.kind === 'delete') {
       try {
@@ -301,26 +374,37 @@ function applyRemoteOp(op: any): void {
         // 否则行停在 deleted = 0，侧栏留下点开报「文件不存在」的幽灵页
         markPageDeleted(target);
       }
+      applied = true;
     } else if (op.kind === 'move') {
       applyRemoteMove(String(op.old_path || ''), target, Number(op.revision || 0));
+      applied = true;
     }
   } catch (error: any) {
-    logEvent('error', 'apply-failed', `${op.kind} ${target}: ${error?.message || error}`);
+    logEvent('error', 'apply-failed', `应用远端${op.kind}失败 ${target}：${error?.message || error}`, {
+      kind: op.kind,
+      path: target,
+      seq,
+      error: error?.message || String(error),
+    });
     throw error;
   }
   if (seq > 0) setCursor(seq);
   lastSyncAt = new Date().toISOString();
+  // 只记实时 SSE 来的变更：重连补拉已有 replay 汇总，逐条再记一遍是重复噪声
+  if (applied && source === 'live' && (op.kind === 'page' || op.kind === 'delete' || op.kind === 'move')) {
+    noteAppliedOp(op.kind as SyncKind, target);
+  }
 }
 
-async function pullFileIfChanged(relPath: string, remoteHash: string): Promise<void> {
+async function pullFileIfChanged(relPath: string, remoteHash: string): Promise<number> {
   try {
     const buf = fs.readFileSync(safeJoin(relPath));
-    if (remoteHash && sha256Buf(buf) === remoteHash) return;
+    if (remoteHash && sha256Buf(buf) === remoteHash) return 0;
   } catch {
     // 本端没有该文件 → 拉取
   }
-  if (!remoteHash) return;
-  await pullFile(relPath);
+  if (!remoteHash) return 0;
+  return pullFile(relPath);
 }
 
 /** 推送在途结束后的收尾：应用暂存的同页广播（仅当其版本比 ack 结果新） */
@@ -334,12 +418,19 @@ function drainStash(target: string, ackedRevision: number): void {
   }
 }
 
-async function pushOne(item: QueueItem): Promise<void> {
+interface PushOutcome {
+  /** 本次真正上行的字节数（页面正文 / 文件字节；delete、move 为 0） */
+  bytes: number;
+  /** hub 做过合并或规范化，返回内容与本端不同（已按 hub 结果写回本端） */
+  merged: boolean;
+}
+
+async function pushOne(item: QueueItem): Promise<PushOutcome> {
   pendingTargets.add(item.target);
   try {
     if (item.kind === 'page') {
       const raw = readPageRaw(item.target);
-      if (raw === null) return; // 本地文件已消失（如已被删除入队）→ 丢弃
+      if (raw === null) return { bytes: 0, merged: false }; // 本地文件已消失（如已被删除入队）→ 丢弃
       const payload: Record<string, unknown> = {
         node_id: currentNodeId(),
         kind: 'page',
@@ -354,13 +445,25 @@ async function pushOne(item: QueueItem): Promise<void> {
       const res = await postJson('/api/sync/push', payload);
       const ackedRevision = Number(res.revision || 0);
       // ack 内容与本端不同 → hub 做过合并/规范化，以 hub 为准写回
-      if (res.content !== undefined && res.content !== raw) {
+      const merged = res.content !== undefined && res.content !== raw;
+      if (merged) {
         applyRemotePage(item.target, String(res.content), ackedRevision);
+        // 合并是「本端内容被别人改过」的唯一信号，旧版只在界面看板里体现为内容变了，
+        // 日志里连一行都没有——排查「我的改动去哪了」时缺的正是这一条
+        logEvent('info', 'push-merged', `「${item.target}」两端都有改动，已按中枢合并结果写回本端`, {
+          path: item.target,
+          revision: ackedRevision,
+          localBytes: Buffer.byteLength(raw, 'utf8'),
+          mergedBytes: Buffer.byteLength(String(res.content), 'utf8'),
+        });
       } else {
         setPageSyncRevision(item.target, ackedRevision);
       }
       drainStash(item.target, ackedRevision);
-    } else if (item.kind === 'file') {
+      lastSyncAt = new Date().toISOString();
+      return { bytes: Buffer.byteLength(raw, 'utf8'), merged };
+    }
+    if (item.kind === 'file') {
       const form = new FormData();
       form.append('path', item.target);
       form.append('node_id', currentNodeId());
@@ -375,9 +478,12 @@ async function pushOne(item: QueueItem): Promise<void> {
         body: form,
       });
       if (!res.ok) throw new Error(`文件推送失败 ${res.status}: ${item.target}`);
-    } else if (item.kind === 'delete') {
+      lastSyncAt = new Date().toISOString();
+      return { bytes: fileBody.size, merged: false };
+    }
+    if (item.kind === 'delete') {
       await postJson('/api/sync/push', { node_id: currentNodeId(), kind: 'delete', target: item.target });
-    } else if (item.kind === 'move') {
+    } else {
       await postJson('/api/sync/push', {
         node_id: currentNodeId(),
         kind: 'move',
@@ -386,6 +492,7 @@ async function pushOne(item: QueueItem): Promise<void> {
       });
     }
     lastSyncAt = new Date().toISOString();
+    return { bytes: 0, merged: false };
   } finally {
     pendingTargets.delete(item.target);
   }
@@ -394,13 +501,43 @@ async function pushOne(item: QueueItem): Promise<void> {
 async function pushLoop(): Promise<void> {
   if (pushing) return;
   pushing = true;
+  const startedAt = Date.now();
+  const counts: Partial<Record<SyncKind, number>> = {};
+  const paths: string[] = [];
+  let bytes = 0;
+  let merged = 0;
+  /**
+   * 批次摘要落日志：成功的推送以前一条记录都没有（只有失败才写 push-retry），
+   * 用户看到的「记录」自然只有报错和空列表。这里按批次聚合，避免一次对账把日志刷满。
+   */
+  const flush = (): void => {
+    const total = (Object.keys(counts) as SyncKind[]).reduce((sum, kind) => sum + Number(counts[kind] || 0), 0);
+    if (!total) return;
+    logEvent('info', 'push-ok', `推送 ${total} 项变更：${kindSummary(counts)}${bytes ? ` · ${formatBytes(bytes)}` : ''}`, {
+      count: total,
+      kinds: { ...counts },
+      bytes,
+      merged,
+      ms: Date.now() - startedAt,
+      paths: paths.slice(0, 20),
+    });
+    for (const kind of Object.keys(counts) as SyncKind[]) counts[kind] = 0;
+    paths.length = 0;
+    bytes = 0;
+    merged = 0;
+  };
   try {
     while (queue.length > 0) {
       // 先出队再推送：推送在途时同目标的新写入仍可入队（否则最新内容会被去重吞掉）
       const item = queue.shift()!;
       try {
-        await pushOne(item);
+        const outcome = await pushOne(item);
+        counts[item.kind] = Number(counts[item.kind] || 0) + 1;
+        bytes += outcome.bytes;
+        if (outcome.merged) merged += 1;
+        paths.push(item.target);
       } catch (error: any) {
+        flush(); // 已经推上去的部分先留痕，否则「推了一半又失败」在日志里看不出来
         if (item.kind === 'page' && readPageRaw(item.target) === null) {
           continue;
         }
@@ -410,7 +547,13 @@ async function pushLoop(): Promise<void> {
         // 网络/hub 错误：塞回队首保序，指数退避后自动重试（3s→30s，成功复位）
         queue.unshift(item);
         lastError = String(error?.message || error);
-        logEvent('warn', 'push-retry', `${item.kind} ${item.target}: ${lastError}（${Math.round(pushRetryMs / 1000)}s 后重试，队列 ${queue.length} 项）`);
+        logEvent('warn', 'push-retry', `${item.kind} ${item.target}: ${lastError}（${Math.round(pushRetryMs / 1000)}s 后重试，队列 ${queue.length} 项）`, {
+          kind: item.kind,
+          path: item.target,
+          error: lastError,
+          retryInMs: pushRetryMs,
+          queued: queue.length,
+        });
         if (!retryTimer) {
           retryTimer = setTimeout(() => {
             retryTimer = null;
@@ -422,6 +565,7 @@ async function pushLoop(): Promise<void> {
       }
     }
     pushRetryMs = 3000;
+    flush();
   } finally {
     pushing = false;
   }
@@ -449,13 +593,23 @@ async function syncMissedChanges(): Promise<void> {
     connected = true;
     if (res?.resync) gap = true;
     const ops: any[] = res?.ops || [];
-    if (ops.length > 0) logEvent('info', 'replay', `补拉 ${ops.length} 条远端变更（自水位 ${getCursor()}）`);
-    for (const op of ops) applyRemoteOp(op);
+    if (ops.length > 0) {
+      const kinds: Record<string, number> = {};
+      for (const op of ops) kinds[String(op.kind)] = (kinds[String(op.kind)] || 0) + 1;
+      logEvent('info', 'replay', `补拉 ${ops.length} 条远端变更（自水位 ${getCursor()}）`, {
+        count: ops.length,
+        from: getCursor(),
+        kinds,
+      });
+    }
+    for (const op of ops) applyRemoteOp(op, 'replay');
     if (ops.length < 500) break;
   }
   if (gap) {
-    logEvent('info', 'oplog-trimmed', `落后超过保留窗口，补一次全量对账补齐内容与提炼账本（cursor=${getCursor()}）`);
-    await reconcile();
+    logEvent('info', 'oplog-trimmed', `落后超过保留窗口，补一次全量对账补齐内容与提炼账本（cursor=${getCursor()}）`, {
+      cursor: getCursor(),
+    });
+    await reconcile('oplog-gap');
   }
 }
 
@@ -476,7 +630,10 @@ async function consumeStream(): Promise<void> {
   syncing = false;
   backoffMs = 1000;
   lastError = null;
-  logEvent('info', 'connected', `中枢事件流已连接`);
+  logEvent('info', 'connected', '中枢事件流已连接', {
+    hub: hubUrl(),
+    device: deviceName,
+  });
   try {
     // 应用失败（含写盘异常）由回调经共享解析器向外抛：断开本条流，重连后从 cursor 重放
     await consumeSseStream(res.body, (_event, data) => {
@@ -489,11 +646,12 @@ async function consumeStream(): Promise<void> {
 }
 
 /** 全量对账：首次接入、手动触发、oplog 落后过多、周期自愈时使用（并发触发时仅跑一轮） */
-export async function reconcile(): Promise<void> {
+export async function reconcile(reason: ReconcileReason = 'manual'): Promise<void> {
   if (reconcileRunning) return;
   reconcileRunning = true;
+  const startedAt = Date.now();
   try {
-    logEvent('info', 'reconcile-start');
+    logEvent('info', 'reconcile-start', `开始全量对账（${REASON_LABELS[reason]}）`, { reason, label: REASON_LABELS[reason] });
     const snap = await getJson('/api/sync/snapshot');
     // 中枢已应答即视为已连接：首次接入的全量对账可能持续数分钟，此前不能显示「未连接」
     connected = true;
@@ -514,7 +672,10 @@ export async function reconcile(): Promise<void> {
      */
     const hubStale = new Set<string>(Array.isArray(snap?.stale) ? snap.stale.map(String) : []);
     let pulled = 0;
+    /** 本端补拉/补推的字节数（文件大小求和），对账摘要里显示，省得用户去猜同步了多少东西 */
+    let pulledBytes = 0;
     let queued = 0;
+    let itemFailed = 0;
     /** 中枢已提炼、本端账本缺失的来源路径：页面全部落位后统一补拉账本 */
     const ledgerRepairs: string[] = [];
 
@@ -555,13 +716,18 @@ export async function reconcile(): Promise<void> {
             enqueueLocalChange('file', entry.path);
             continue;
           }
-          await pullFile(entry.path);
+          pulledBytes += await pullFile(entry.path);
           pendingFilePulls.delete(entry.path);
           pulled++;
         }
       } catch (error: any) {
         lastError = String(error?.message || error);
-        logEvent('warn', 'reconcile-item-failed', `${entry.kind} ${entry.path}: ${lastError}`);
+        itemFailed++;
+        logEvent('warn', 'reconcile-item-failed', `对账单项失败：${entry.kind} ${entry.path}（${lastError}）`, {
+          kind: entry.kind,
+          path: entry.path,
+          error: lastError,
+        });
       }
     }
 
@@ -587,18 +753,39 @@ export async function reconcile(): Promise<void> {
           if (isDistilledPath(sourcePath)) repaired++;
         }
       } catch (error: any) {
-        logEvent('warn', 'ledger-repair-failed', `${sourcePath}: ${error?.message || error}`);
+        logEvent('warn', 'ledger-repair-failed', `补齐提炼账本失败 ${sourcePath}：${error?.message || error}`, {
+          path: sourcePath,
+          error: error?.message || String(error),
+        });
       }
     }
+    const ms = Date.now() - startedAt;
     lastSyncAt = new Date().toISOString();
     logEvent(
       'info',
       'reconcile-done',
-      `hub ${entries.length} 项：拉取 ${pulled}、入队补推 ${queued}、待补拉文件 ${pendingFilePulls.size}、补齐提炼账本 ${repaired}/${ledgerRepairs.length}`
+      `全量对账完成（${REASON_LABELS[reason]}，${formatDuration(ms)}）：中枢 ${entries.length} 项 · 拉取 ${pulled}${pulledBytes ? `（${formatBytes(pulledBytes)}）` : ''} · 补推 ${queued} · 失败 ${itemFailed} · 待补拉文件 ${pendingFilePulls.size} · 补齐提炼账本 ${repaired}/${ledgerRepairs.length}`,
+      {
+        reason,
+        ms,
+        hubEntries: entries.length,
+        pulled,
+        pulledBytes,
+        queued,
+        failed: itemFailed,
+        pendingPulls: pendingFilePulls.size,
+        ledgerRepaired: repaired,
+        ledgerTotal: ledgerRepairs.length,
+        localEntries: localEntries.length,
+      }
     );
     await pushLoop();
   } catch (error: any) {
-    logEvent('error', 'reconcile-failed', String(error?.message || error));
+    logEvent('error', 'reconcile-failed', `全量对账失败（${REASON_LABELS[reason]}）：${error?.message || error}`, {
+      reason,
+      error: error?.message || String(error),
+      ms: Date.now() - startedAt,
+    });
     throw error;
   } finally {
     reconcileRunning = false;
@@ -637,11 +824,19 @@ async function retryPendingFilePulls(): Promise<void> {
   if (pendingFilePulls.size === 0) return;
   for (const [relPath, hash] of Array.from(pendingFilePulls)) {
     try {
-      await pullFileIfChanged(relPath, hash);
+      const bytes = await pullFileIfChanged(relPath, hash);
       pendingFilePulls.delete(relPath);
-      logEvent('info', 'file-pull-retry-ok', relPath);
-    } catch {
-      logEvent('warn', 'file-pull-retry-failed', relPath);
+      logEvent('info', 'file-pull-retry-ok', `补拉文件成功 ${relPath}${bytes ? `（${formatBytes(bytes)}）` : ''}`, {
+        path: relPath,
+        bytes,
+        pending: pendingFilePulls.size,
+      });
+    } catch (error: any) {
+      logEvent('warn', 'file-pull-retry-failed', `补拉文件仍失败 ${relPath}：${error?.message || error}`, {
+        path: relPath,
+        error: error?.message || String(error),
+        pending: pendingFilePulls.size,
+      });
     }
   }
 }
@@ -666,7 +861,10 @@ async function runLoop(): Promise<void> {
       if (!isSelfAbort(error)) {
         connected = false;
         lastError = String(error?.message || error);
-        logEvent('warn', 'disconnected', `${lastError}（${Math.round(backoffMs / 1000)}s 后重连）`);
+        logEvent('warn', 'disconnected', `与中枢的连接断开：${lastError}（${Math.round(backoffMs / 1000)} 秒后自动重连）`, {
+          error: lastError,
+          backoffMs,
+        });
       }
     }
     if (!running) break;
@@ -682,7 +880,10 @@ export function startClient(): void {
   syncing = true;
   backoffMs = 1000;
   pushRetryMs = 3000;
-  logEvent('info', 'start', `同步客户端启动（节点 ${currentNodeId().slice(0, 8)}）`);
+  logEvent('info', 'start', `同步客户端启动（节点 ${currentNodeId().slice(0, 8)}）`, {
+    node: currentNodeId(),
+    hub: hubUrl(),
+  });
   loopPromise = runLoop();
   loopPromise.catch(() => {
     running = false;
@@ -695,16 +896,17 @@ export function startClient(): void {
   if (healTimer) clearInterval(healTimer);
   healTimer = setInterval(() => {
     if (!running) return;
-    logEvent('info', 'heal', '周期自愈对账触发');
-    void reconcile().catch(() => { /* reconcile 内部已记日志 */ });
+    void reconcile('heal').catch(() => { /* reconcile 内部已记日志 */ });
   }, HEAL_INTERVAL_MS);
   healTimer.unref();
 }
 
 export function stopClient(): void {
+  const wasRunning = running;
   running = false;
   connected = false;
   syncing = false;
+  if (wasRunning) logEvent('info', 'stopped', '同步客户端已停止', { pending: queue.length, pendingPulls: pendingFilePulls.size });
   if (pullRetryTimer) {
     clearInterval(pullRetryTimer);
     pullRetryTimer = null;
@@ -744,7 +946,8 @@ export function clientStatus(): ClientStatus {
     pendingPulls: pendingFilePulls.size,
     lastSyncAt,
     lastError,
-    log: syncLog.slice(),
+    // 兼容旧口径：/api/sync/status 仍带最近 200 条；完整分页/筛选走 /api/sync/log
+    log: recentSyncLog(200),
   };
 }
 

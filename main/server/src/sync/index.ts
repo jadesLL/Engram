@@ -1,5 +1,6 @@
 import { getSetting, setSetting } from '../lib/db.js';
 import { commitLocalChange, connectedPeerIds } from './hub.js';
+import { logSyncEvent } from './eventLog.js';
 import {
   beginBootstrap,
   clientStatus,
@@ -10,7 +11,7 @@ import {
   stopClientAndWait,
   syncConfigEnabled,
 } from './client.js';
-import { currentNodeId, listPeers, type SyncKind } from './store.js';
+import { currentNodeId, currentRevision, listPeers, type SyncKind } from './store.js';
 
 /**
  * 多端同步门面（同步群组模型）：业务代码只调 recordLocalChange()，本模块按角色分流——
@@ -58,12 +59,15 @@ export interface SyncStatus {
   hubUrl: string;
   hubToken: string;
   nodeId: string;
+  /** 成员端：本端已应用到的中枢 oplog 水位；中枢端这个值恒为 0（见 revision） */
   cursor: number;
+  /** 中枢端：本机权威 revision 序号（中枢每次发号都自增）；成员端为 0 */
+  revision: number;
   pending: number;
   pendingPulls: number;
   lastSyncAt: string | null;
   lastError: string | null;
-  log: Array<{ ts: string; level: string; event: string; detail?: string }>;
+  log: Array<{ id?: number; ts: string; level: string; event: string; detail?: string; scope?: string; peer?: string; data?: Record<string, unknown> }>;
   peers: Array<{
     id: string;
     name: string;
@@ -90,6 +94,7 @@ export function status(): SyncStatus {
     hubToken: s.hubToken,
     nodeId: s.nodeId,
     cursor: s.cursor,
+    revision: role === 'hub' ? currentRevision() : 0,
     pending: s.pending,
     pendingPulls: s.pendingPulls,
     lastSyncAt: s.lastSyncAt,
@@ -124,6 +129,13 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
   if (input.role === 'hub' || input.role === 'none') {
     setSetting('sync_role', input.role);
     setSetting('sync_enabled', '0');
+    // 角色本身就是排查同步问题的第一现场：换角色必须留痕，否则日志里会出现
+    // 「上一次同步是三天前」而看不出中间把角色改过
+    logSyncEvent('info', 'role-changed', {
+      detail: input.role === 'hub' ? '已把本设备设为同步中枢' : '已退出多端同步（本设备不再参与同步群组）',
+      scope: 'app',
+      data: { role: input.role, hub: getSetting('sync_hub_url') || '' },
+    });
     await reinitClient();
     return null;
   }
@@ -143,9 +155,25 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
     }
     if (!String(input.hub_token || '').trim()) return '缺少中枢访问令牌';
   }
+  const before = { enabled: getSetting('sync_enabled') === '1', url: getSetting('sync_hub_url') || '' };
   setSetting('sync_enabled', input.enabled ? '1' : '0');
   if (input.hub_url !== undefined) setSetting('sync_hub_url', url.replace(/\/+$/, ''));
   if (input.hub_token !== undefined) setSetting('sync_hub_token', String(input.hub_token).trim());
+  const after = { enabled: input.enabled ? '1' : '0', url: url.replace(/\/+$/, '') };
+  // 只记「变了什么」，不记令牌：绑定/解绑/换地址都是用户能感知的大动作，值得单独一条
+  logSyncEvent('info', 'config-changed', {
+    detail: input.enabled
+      ? `同步绑定已更新：中枢 ${after.url}${before.enabled ? '' : '（本次启用）'}`
+      : '已停用多端同步（保留绑定信息，可随时重新启用）',
+    scope: 'app',
+    data: {
+      enabled: after.enabled,
+      hub: after.url,
+      previousHub: before.url,
+      tokenUpdated: Boolean(input.hub_token),
+      role: currentRole(),
+    },
+  });
   await reinitClient();
   return null;
 }
@@ -163,7 +191,7 @@ export async function reinitClient(): Promise<void> {
     // 此前 SSE 还没建立，旧口径会让用户以为没连上（重启后水位已推进才显示正常）。
     beginBootstrap();
     try {
-      await reconcile();
+      await reconcile('bootstrap');
     } catch (error) {
       console.error('[sync] 初始对账失败（将随重连重试）:', error);
     }
@@ -182,7 +210,7 @@ export async function initSync(): Promise<void> {
 
 /** 手动触发全量对账（异步执行，状态经 /api/sync/status 轮询） */
 export function reconcileNow(): void {
-  void reconcile().catch((error) => console.error('[sync] 手动对账失败:', error));
+  void reconcile('manual').catch((error) => console.error('[sync] 手动对账失败:', error));
 }
 
 export { hubConfigured, syncConfigEnabled };

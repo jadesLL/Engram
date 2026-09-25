@@ -7,6 +7,8 @@
   </div>
   <router-view />
   <AssetDrawer />
+  <!-- 同步详情抽屉：与图片资产抽屉同一挂载方式（Teleport 到 body），设置页只留一个入口按钮 -->
+  <SyncLogDrawer />
   <ToastHost />
   <ConfirmHost />
   <UpdateOverlay />
@@ -21,6 +23,7 @@ import ConfirmHost from './components/ui/ConfirmHost.vue';
 import AppTooltip from './components/ui/AppTooltip.vue';
 import UpdateOverlay from './components/UpdateOverlay.vue';
 import AssetDrawer from './components/AssetDrawer.vue';
+import SyncLogDrawer from './components/SyncLogDrawer.vue';
 import BrandMark from './components/BrandMark.vue';
 import { loadRuntimeCapabilities } from './lib/capabilities';
 
