@@ -320,6 +320,8 @@ const navItems = computed(() => [
     dot: inbox.counts.pending > 0,
     action: () => go('/inbox'),
   },
+  // 任务看板：点一下就去那一页，进页自动让内置 Agent 从知识库提炼（不在页面上弹 Agent 抽屉）
+  { key: 'tasks', icon: 'board', title: '任务看板', active: isActive('/tasks'), dot: false, action: () => go('/tasks') },
 ]);
 
 const bottomItems = computed(() => [
@@ -358,6 +360,13 @@ const moreItems = computed(() => [
     dot: inbox.counts.pending > 0,
     running: false,
     action: () => runMore(() => go('/inbox')),
+  },
+  {
+    label: '任务看板',
+    icon: 'board',
+    dot: false,
+    running: false,
+    action: () => runMore(() => go('/tasks')),
   },
   {
     label: '设置',

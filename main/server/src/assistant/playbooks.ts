@@ -71,19 +71,62 @@ export function isWeeklyTasksQuestion(message: string): boolean {
   return NEXT_WEEK.test(text) && WORK_WORD.test(text);
 }
 
-/** 下周工作任务：作业手册（今天 + 时间窗 + 翻库次序 + 收口格式） */
-function weeklyTasksPlaybook(now: Date): string {
+/** 时间窗抬头（两份手册共用：同一个「下周」口径） */
+function taskWindowLines(now: Date): string[] {
   const { start, end } = nextWeekRange(now);
+  return [`今天是 ${formatDay(startOfDay(now))}；「下周」= ${formatDay(start)} 至 ${formatDay(end)}。`];
+}
+
+/**
+ * 翻库次序与收录口径：常驻问题与任务看板共用。
+ * 两份手册必须用同一套取数口径——同一个问题在聊天里和看板里给出不同的活就砸了。
+ */
+function taskScanSteps(): string[] {
   return [
-    '【常驻问题：下周的工作任务有哪些】',
-    `今天是 ${formatDay(startOfDay(now))}；「下周」= ${formatDay(start)} 至 ${formatDay(end)}。`,
-    '按下面的次序从知识库里提炼，只写读到的内容，不要凭印象补：',
     '1. 先看最近的原始资料（list_raw_files；文件名以 `YYYY.MM.DD_` 开头，按名字就能看出时间先后，重点最近 3-4 周）：日课三条复盘、双周工作复盘、专题会与客户会见纪要里的「待办事项」、行程安排、行动计划、SP/BP。',
     '2. 再用 search 搜「待办」「下周」「本周内」「下一步」「跟进」「截止」「安排」等词，把有明确时间点或明确在办的片段捞全。',
     '3. 读相关实体页的时间线（Wiki/实体/ 里的客户、区域、团队页常写明「拟下周…」「已约定…」这类下一步安排）。',
     '4. 收进清单的只限三类：①时间明确落在下周窗口内的事；②按资料写的周期一定会发生的例行事项（周会、周报、周重点提交、月度碰头等，用周期推算到下周）；③资料里写明「未完成 / 停滞 / 待推进」但没有新时间的——这类单独成节，不要假装它就在下周。',
+  ];
+}
+
+/** 下周工作任务：作业手册（今天 + 时间窗 + 翻库次序 + 收口格式） */
+function weeklyTasksPlaybook(now: Date): string {
+  return [
+    '【常驻问题：下周的工作任务有哪些】',
+    ...taskWindowLines(now),
+    '按下面的次序从知识库里提炼，只写读到的内容，不要凭印象补：',
+    ...taskScanSteps(),
     '5. 输出：先用一句话概览（几条、集中在哪）；再分「客户与项目」「团队与例行」「时间待定或逾期」三节，每条写成 `- [ ] 事项 —— 责任人/时间（依据：原始资料/xxx.md 或《页面标题》）`；最后写「资料缺口」：哪些环节库里没有记录、要你自己补。',
     '6. 每条都要能指回原文，指不回去的不要列；没有依据就直说库里没写，不要编。',
+  ].join('\n');
+}
+
+/** 任务看板：界面按显式 id 指定（同一个问题在聊天里走常驻手册，看板走这份带机器可读清单的） */
+export const TASK_BOARD_PLAYBOOK = 'task-board';
+
+/** 看板渲染要的机器可读清单：字段名与 web/src/lib/taskBoard.ts 的解析器一一对应 */
+function boardJsonLines(): string[] {
+  return [
+    '6. 正文之后必须再给一个 ```json 代码块（界面用它渲染看板，字段名逐字照抄，不要改名、不要加注释）：',
+    '```json',
+    '{"summary":"一句话概览","groups":[{"title":"客户与项目","cards":[{"text":"事项","owner":"责任人","when":"时间","source":"原始资料/xxx.md 或《页面标题》"}]},{"title":"团队与例行","cards":[]},{"title":"时间待定或逾期","cards":[]}],"gaps":["资料缺口"]}',
+    '```',
+    '   规则：groups 就这三节、title 逐字用「客户与项目」「团队与例行」「时间待定或逾期」（没有内容就给空数组）；每张卡只写一件事，text 一句话说清做什么；owner / when / source 拿不到就写空串；source 必须能在你读到的原文里指出来；gaps 写库里没记录、要用户自己补的缺口。',
+    '   每节最多 8 张卡（看板要一眼扫得完）：超出就按「时间明确 > 影响大」挑，同类的合并成一张（如「其余中风险客户推进」），不要为了凑数把细碎条目塞满一列。',
+  ];
+}
+
+/** 任务看板：作业手册（取数口径与常驻问题共用，只多一段机器可读清单的约定） */
+function taskBoardPlaybook(now: Date): string {
+  return [
+    '【任务看板：下周的工作任务】',
+    ...taskWindowLines(now),
+    '按下面的次序从知识库里提炼，只写读到的内容，不要凭印象补：',
+    ...taskScanSteps(),
+    '5. 正文照常写成给人看的三节（客户与项目 / 团队与例行 / 时间待定或逾期），每条注明依据。',
+    ...boardJsonLines(),
+    '7. 每条都要能指回原文，指不回去的不要列；没有依据就直说库里没写，不要编。',
   ].join('\n');
 }
 
@@ -91,6 +134,15 @@ function weeklyTasksPlaybook(now: Date): string {
 export const PLAYBOOKS: Playbook[] = [
   { id: 'weekly-tasks', match: isWeeklyTasksQuestion, build: weeklyTasksPlaybook },
 ];
+
+/** 按 id 取手册（界面显式指定：任务看板不靠关键词命中）；未知 id 返回 null */
+export function findPlaybookById(id?: string): Playbook | null {
+  const key = String(id || '').trim();
+  if (key === TASK_BOARD_PLAYBOOK) {
+    return { id: key, match: () => false, build: taskBoardPlaybook };
+  }
+  return PLAYBOOKS.find((playbook) => playbook.id === key) ?? null;
+}
 
 /** 命中当前消息的作业手册；没有命中返回 null */
 export function findPlaybook(message: string): Playbook | null {
