@@ -6,16 +6,25 @@
  *                    （如 RefinementHistoryPanel）。
  */
 
+/*
+ * 双栏各自滚动（2026-09-28 修用户报的「最下边那几个目录看不到」）：
+ * 设置页撑满内容区高度，左侧目录列与右侧内容列是两个独立滚动容器，各滚各的。
+ * 目录项再多也不会被视口截断——目录自己有滚动条，内容区滚动不再拖着目录走。
+ * 窄屏（≤768px）没有左栏，退回整页滚动（见文件底部媒体查询）。
+ */
 .settings-view {
   width: min(1220px, 100%);
+  height: 100%;
+  min-height: 0;
   margin: 0 auto;
-  padding: 30px 28px 72px;
+  padding: 30px 28px 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
 .settings-page-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -33,23 +42,36 @@
 }
 
 .settings-shell {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
+  /* 单行必须占满壳层高度，两个滚动列才各有确定高度（否则列跟着内容长高，又溢到视口外） */
+  grid-template-rows: minmax(0, 1fr);
   gap: 24px;
-  align-items: start;
 }
 
 /*
- * 分类导航（两级）：4 个大类 + 各大类的分组锚点，全部平铺常显（2026-09-24 改版：
+ * 分类导航（两级）：7 个大类 + 各大类的分组锚点，全部平铺常显（2026-09-24 改版：
  * 不再有展开/收起状态）。大类切换整页，二级锚点负责滚动定位；滚动时反向高亮当前分组。
+ * 分组多、竖着放不下，所以这一列自己是滚动容器——不能再靠 position: sticky：
+ * sticky 只在壳层滚动时才有意义，视口外面那几项永远钉不出来（就是这次的 bug）。
  */
 .settings-nav {
-  position: sticky;
-  top: 22px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 4px;
+  padding: 4px 10px 20px 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 目录列比正文窄：滚动条收细一档（8px 轨道 + 2px 透明描边 = 4px 可见滑块） */
+.settings-nav::-webkit-scrollbar {
+  width: 8px;
+}
+.settings-nav::-webkit-scrollbar-thumb {
+  border-width: 2px;
 }
 .settings-nav-domain {
   display: flex;
@@ -187,6 +209,12 @@
 
 .settings-content {
   min-width: 0;
+  min-height: 0;
+  /* 内容列是第二个滚动容器：目录与正文各一个滚动条，互不牵扯（底部 72px 从 .settings-view 挪到这里，
+     保证最后一张卡片能滚到舒服的位置，也承接原来的页面底部留白） */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 72px;
   /* 容器查询上下文：侧栏可拖拽加宽，「窗口大但内容列窄」视口媒体查询管不到，
      行内布局的收窄断点改由内容列自身宽度决定（见文件底部 @container 块） */
   container-type: inline-size;
@@ -654,8 +682,14 @@
 }
 
 @media (max-width: 768px) {
+  /* 窄屏没有左栏目录：退回「整页滚动」，内容列不再自己滚（滚动权交回 Home 的 .content） */
   .settings-view {
+    height: auto;
     padding: 20px 14px 72px;
+  }
+  .settings-content {
+    overflow: visible;
+    padding-bottom: 0;
   }
   .settings-page-head h2 {
     font-size: 22px;
