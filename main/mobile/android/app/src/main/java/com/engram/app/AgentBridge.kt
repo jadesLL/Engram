@@ -57,12 +57,12 @@ class AgentBridge(private val db: LocalDatabase, private val secrets: SecretStor
     }
 
     /** 调用方在把 inputStream 转发完成后必须 disconnect。 */
-    fun stream(path: String): Stream {
+    fun stream(path: String, accept: String = "text/event-stream"): Stream {
         require(configured()) { "请先在多端同步中绑定 Docker 中枢" }
         var failure: Exception? = null
         val urls = baseUrls()
         for ((index, base) in urls.withIndex()) {
-            val connection = open(base, "GET", path, "text/event-stream")
+            val connection = open(base, "GET", path, accept)
             try {
                 connection.readTimeout = 0
                 val status = connection.responseCode
@@ -79,6 +79,18 @@ class AgentBridge(private val db: LocalDatabase, private val secrets: SecretStor
             }
         }
         throw failure ?: IllegalStateException("无法连接 Docker 中枢 Agent")
+    }
+
+    /**
+     * multipart 上传转发（收集箱上传）：调用方写完 body 后自行 disconnect。
+     * 只走第一个地址——上传带 body，自动重试会重复传输，失败交给用户重试。
+     */
+    fun openMultipart(path: String, boundary: String): HttpURLConnection {
+        require(configured()) { "请先在多端同步中绑定 Docker 中枢" }
+        val base = baseUrls().firstOrNull() ?: error("未配置中枢地址")
+        val connection = open(base, "POST", path, "application/json")
+        connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        return connection
     }
 
     private fun open(base: String, method: String, path: String, accept: String): HttpURLConnection {

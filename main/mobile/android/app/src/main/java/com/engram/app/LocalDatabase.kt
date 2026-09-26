@@ -320,7 +320,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             put("id", c.getString(0)); put("path", c.getString(1)); put("title", c.getString(2)); put("type", c.getString(3))
             put("tags", JSONArray(c.getString(4))); put("summary", c.getString(5)); put("created_at", c.getString(6))
             put("updated_at", c.getString(7)); put("word_count", c.getInt(8)); put("sync_revision", c.getInt(9))
-            put("guide_version", 0); put("assetCount", 0)
+            put("guide_version", 0); put("assetCount", assetCount(c.getString(0)))
         }) }
         arr
     }
@@ -788,6 +788,57 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun log(level: String, event: String, detail: String = "") = synchronized(lock) { writableDatabase.execSQL("INSERT INTO sync_log(ts,level,event,detail) VALUES(?,?,?,?)", arrayOf(now(), level, event, detail)); writableDatabase.execSQL("DELETE FROM sync_log WHERE id NOT IN (SELECT id FROM sync_log ORDER BY id DESC LIMIT 100)") }
     fun logs(): JSONArray { val out = JSONArray(); readableDatabase.rawQuery("SELECT ts,level,event,detail FROM sync_log ORDER BY id", null).use { c -> while (c.moveToNext()) out.put(JSONObject().put("ts", c.getString(0)).put("level", c.getString(1)).put("event", c.getString(2)).put("detail", c.getString(3))) }; return out }
 
+    /**
+     * 同步日志分页：形状对齐 server 的 /api/sync/log（entries 新→旧 + total/hasMore/summary），
+     * 翻页用上一页最旧一条的 id 作为 before。
+     */
+    fun syncLogs(limit: Int = 200, before: Long? = null, level: String? = null, q: String? = null): JSONObject {
+        val where = mutableListOf<String>(); val args = mutableListOf<String>()
+        if (before != null) { where += "id < ?"; args += before.toString() }
+        if (!level.isNullOrBlank()) { where += "level = ?"; args += level }
+        if (!q.isNullOrBlank()) { where += "(event LIKE ? OR detail LIKE ?)"; args += "%$q%"; args += "%$q%" }
+        val clause = if (where.isEmpty()) "" else "WHERE ${where.joinToString(" AND ")}"
+        val rows = readableDatabase.rawQuery(
+            "SELECT id,ts,level,event,detail FROM sync_log $clause ORDER BY id DESC LIMIT ?",
+            (args + (limit + 1).toString()).toTypedArray(),
+        ).use { c ->
+            val list = mutableListOf<JSONObject>()
+            while (c.moveToNext()) list += JSONObject()
+                .put("id", c.getLong(0)).put("ts", c.getString(1)).put("level", c.getString(2))
+                .put("event", c.getString(3)).put("detail", c.getString(4)).put("scope", "member")
+            list
+        }
+        val entries = JSONArray(); rows.take(limit).forEach(entries::put)
+        val total = readableDatabase.rawQuery("SELECT COUNT(*) FROM sync_log", null).use { it.moveToFirst(); it.getInt(0) }
+        val byLevel = JSONObject().put("info", 0).put("warn", 0).put("error", 0)
+        readableDatabase.rawQuery("SELECT level, COUNT(*) FROM sync_log GROUP BY level", null).use { c ->
+            while (c.moveToNext()) if (byLevel.has(c.getString(0))) byLevel.put(c.getString(0), c.getInt(1))
+        }
+        val byEvent = JSONArray()
+        readableDatabase.rawQuery("SELECT event, COUNT(*) c FROM sync_log GROUP BY event ORDER BY c DESC LIMIT 8", null).use { c ->
+            while (c.moveToNext()) byEvent.put(JSONObject().put("event", c.getString(0)).put("count", c.getInt(1)))
+        }
+        val bounds = readableDatabase.rawQuery("SELECT MIN(id), MAX(id), MIN(ts), MAX(ts) FROM sync_log", null).use {
+            if (it.moveToFirst()) listOf(it.getLong(0), it.getLong(1), it.getString(2) ?: "", it.getString(3) ?: "") else listOf(0L, 0L, "", "")
+        }
+        return JSONObject()
+            .put("entries", entries).put("total", total).put("hasMore", rows.size > limit)
+            .put("newestId", bounds[1]).put("oldestId", bounds[0])
+            .put("summary", JSONObject()
+                .put("total", total).put("byLevel", byLevel)
+                .put("byScope", JSONObject().put("hub", 0).put("member", total).put("app", 0))
+                .put("byEvent", byEvent)
+                .put("oldest", bounds[2]).put("newest", bounds[3])
+                .put("retentionDays", 7).put("maxEntries", 2000)
+                .put("filePath", "wiki.db#sync_log").put("fileSize", 0))
+    }
+
+    fun clearSyncLog(): Int = synchronized(lock) {
+        val count = readableDatabase.rawQuery("SELECT COUNT(*) FROM sync_log", null).use { it.moveToFirst(); it.getInt(0) }
+        writableDatabase.execSQL("DELETE FROM sync_log")
+        count
+    }
+
     fun evidenceDistilled(path: String): Boolean = readableDatabase.rawQuery("SELECT distilled FROM evidence_snapshots WHERE path=?", arrayOf(path)).use { it.moveToFirst() && it.getInt(0) == 1 }
     fun saveEvidence(path: String, payload: JSONObject, distilled: Boolean = true) = synchronized(lock) { writableDatabase.execSQL("INSERT OR REPLACE INTO evidence_snapshots(path,payload,distilled,updated_at) VALUES(?,?,?,?)", arrayOf(path, payload.toString(), if (distilled) 1 else 0, now())) }
     fun evidence(path: String): JSONObject? = readableDatabase.rawQuery("SELECT payload FROM evidence_snapshots WHERE path=?", arrayOf(path)).use { if (it.moveToFirst()) JSONObject(it.getString(0)) else null }
@@ -801,7 +852,110 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             .put("contributions", JSONArray())
     }
 
-    fun publicSettings(): JSONObject = JSONObject().put("search_synonyms", setting("search_synonyms") ?: "")
+    /** 与 server PUBLIC_SETTINGS 对齐的界面偏好：Android 上只有这两项有意义（DDNS / 一键接入 token 不适用） */
+    fun publicSettings(): JSONObject = JSONObject()
+        .put("search_synonyms", setting("search_synonyms") ?: "")
+        .put("show_ai_workspace", setting("show_ai_workspace") ?: "")
+
+    /** 页面图片资产数（assets/<pageId>/ 下的文件数）：侧栏「查看引用图片」按它决定入口是否可点 */
+    fun assetCount(pageId: String): Int = File(brain, "assets/$pageId").listFiles()?.count { it.isFile } ?: 0
+
+    /** 图片资产的 MIME（与 server lib/pageAssets.ts 同一张表） */
+    private fun assetMime(ext: String): String = when (ext) {
+        "png" -> "image/png"; "jpg", "jpeg" -> "image/jpeg"; "gif" -> "image/gif"
+        "webp" -> "image/webp"; "svg" -> "image/svg+xml"; "avif" -> "image/avif"; "bmp" -> "image/bmp"
+        else -> "application/octet-stream"
+    }
+
+    private fun mediaUrl(pageId: String, name: String) =
+        "/media/$pageId/${java.net.URLEncoder.encode(name, "UTF-8").replace("+", "%20")}"
+
+    /** 父项的图片资产清单（扫描 assets/<pageId>/），形状对齐 server publicAsset */
+    fun listPageAssets(pageId: String): JSONArray {
+        val out = JSONArray()
+        File(brain, "assets/$pageId").listFiles()?.filter { it.isFile }?.sortedBy { it.name }?.forEach { file ->
+            val ext = file.extension.lowercase()
+            out.put(JSONObject().put("parentId", pageId).put("name", file.name).put("url", mediaUrl(pageId, file.name))
+                .put("path", "assets/$pageId/${file.name}").put("ext", ext).put("mime", assetMime(ext))
+                .put("size", file.length()).put("updatedAt", Instant.ofEpochMilli(file.lastModified()).toString())
+                .put("referenced", false))
+        }
+        return out
+    }
+
+    /** 删除单个图片资产：只允许 assets/<pageId>/<文件名> 一层，挡掉子路径与穿越 */
+    fun deletePageAsset(pageId: String, name: String) {
+        val dir = File(brain, "assets/$pageId").canonicalFile
+        val target = File(dir, File(name).name).canonicalFile
+        require(target.parentFile == dir) { "路径无效" }
+        target.delete()
+    }
+
+    /** 未归属图片池（assets/_unassigned/）：设置 → 存储空间可查看，形状对齐 server /api/assets/orphans/list */
+    fun orphanAssets(): JSONObject {
+        val unassigned = JSONArray()
+        var total = 0L
+        File(brain, "assets/_unassigned").listFiles()?.filter { it.isFile }?.sortedBy { it.name }?.forEach { file ->
+            val ext = file.extension.lowercase()
+            unassigned.put(JSONObject().put("parentId", "_unassigned").put("name", file.name)
+                .put("url", mediaUrl("_unassigned", file.name)).put("path", "assets/_unassigned/${file.name}")
+                .put("ext", ext).put("mime", assetMime(ext)).put("size", file.length())
+                .put("updatedAt", Instant.ofEpochMilli(file.lastModified()).toString()).put("referenced", false))
+            total += file.length()
+        }
+        // Android 不做「正文里没引用但已归属」的自动扫描（父项少、目录浅，用户能在抽屉里直接删）
+        return JSONObject().put("unassigned", unassigned).put("unreferenced", JSONArray()).put("totalBytes", total)
+    }
+
+    /**
+     * 保存页面图片资产：内容寻址命名（<sha1 前 8>-<slug>.<ext>）落进 assets/<pageId>/，
+     * 与 server lib/pageAssets.ts 的磁盘布局一一对应（`/media/<pageId>/<name>` 直出）。
+     */
+    fun savePageAsset(pageId: String, originalName: String, bytes: ByteArray): JSONObject = synchronized(lock) {
+        val ext = originalName.substringAfterLast('.', "").lowercase()
+        val base = originalName.substringBeforeLast('.', originalName)
+        val slug = base.replace(Regex("[^A-Za-z0-9\\u4e00-\\u9fa5_-]"), "-").trim('-').take(40).ifBlank { "image" }
+        val hash = java.security.MessageDigest.getInstance("SHA-1").digest(bytes).joinToString("") { "%02x".format(it) }.take(8)
+        val name = "$hash-$slug.$ext"
+        val dir = File(brain, "assets/$pageId").also { it.mkdirs() }
+        File(dir, name).outputStream().use { it.write(bytes) }
+        JSONObject().put("parentId", pageId).put("name", name).put("url", mediaUrl(pageId, name))
+            .put("path", "assets/$pageId/$name").put("ext", ext).put("mime", assetMime(ext))
+            .put("size", bytes.size).put("updatedAt", now()).put("referenced", false)
+    }
+
+    /** 把图片以 Markdown 追加到父项正文末尾（服务端 `insert=append` 的等价物），并正常入同步队列 */
+    fun appendPageMedia(pageId: String, name: String, alt: String): Boolean = synchronized(lock) {
+        val page = pageJson(pageId) ?: return false
+        val appended = page.optString("content").trimEnd() + "\n\n![$alt](${mediaUrl(pageId, name)})\n"
+        updatePage(pageId, JSONObject().put("content", appended))
+        true
+    }
+
+    /**
+     * 清空 AI 整理日志（brain 下 AIWorks/log 目录里的全部文件）与它们的索引行，知识正文一个字节不动。
+     * 与 server lib/dataCleanup.ts 同语义；Android 没有关系表，relationCount 恒 0，也不广播同步。
+     */
+    fun wipeAiLogs(): Int = synchronized(lock) {
+        val logDir = File(brain, "AIWorks/log")
+        var files = 0
+        if (logDir.isDirectory) logDir.walkTopDown().filter { it.isFile }.forEach { if (it.delete()) files++ }
+        val ids = mutableListOf<String>()
+        readableDatabase.rawQuery("SELECT id FROM pages WHERE path LIKE 'AIWorks/log/%'", null).use { c ->
+            while (c.moveToNext()) ids += c.getString(0)
+        }
+        if (ids.isNotEmpty()) {
+            writableDatabase.execSQL(
+                "DELETE FROM search_tokens WHERE ref_type='page' AND ref_id IN (${ids.joinToString(",") { "?" }})",
+                ids.toTypedArray(),
+            )
+        }
+        for (table in listOf("pages", "evidence_snapshots", "file_extractions", "page_revisions")) {
+            writableDatabase.execSQL("DELETE FROM $table WHERE path LIKE 'AIWorks/log/%'")
+        }
+        logDir.mkdirs()
+        files
+    }
 
     fun portableMetadata(): JSONObject = synchronized(lock) {
         val evidence = JSONArray()
