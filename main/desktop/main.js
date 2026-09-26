@@ -562,7 +562,8 @@ app.whenReady().then(() => {
   // 不 await：注册表读取失败也不能挡住启动
   void reconcileLaunchAtLogin();
   // 自动更新：启动 4 秒首查，之后自适应退避复查（2→5→10→30→60 分钟封顶，见 updateCadence）。
-  // 打包形态自动下载并静默安装；源码模式只自动检查，落后时提示条红点 + 系统通知，一键更新由提示条触发。
+  // 打包形态自动下载并静默安装；源码模式只自动检查，落后时在标题栏留一枚绿色更新图标（不弹系统通知、
+  // 不自动展开面板），一键更新由用户扫到图标后点面板主按钮触发。
   if (process.platform === 'win32') {
     if (PACKAGED) {
       autoState.enabled = readConfig().autoUpdate !== false;
@@ -1460,8 +1461,8 @@ ipcMain.handle('desktop-get-env', async () => ({
 
 // 源码模式自动检查：启动 4 秒首查 + 自适应退避复查（节奏见 updateCadence）。检查本身走两级探测：
 // 先用一次 ls-remote 问远端分支 SHA，只有它和本地 origin/<branch> 不一致才真的 fetch 增量对象
-// （见 sourceCheckCore）。落后时只提示（更新提示条红点 + 设置页状态 + 系统通知），一键
-// 「立即更新并重启」由用户点提示条触发——源码模式重建会重启应用，不自动执行。
+// （见 sourceCheckCore）。落后时只提示（标题栏绿色更新图标 + 设置页状态），不弹系统通知、不自动弹面板，
+// 一键「立即更新并重启」由用户扫到图标后点面板主按钮触发——源码模式重建会重启应用，不自动执行。
 const sourceAutoState = {
   enabled: true,
   phase: 'idle', // idle | checking | up-to-date | behind | failed
@@ -1473,8 +1474,6 @@ const sourceAutoState = {
   checkedAt: null,
 };
 let sourceAutoBusy = false;
-/** 已通知过的远端提交号：同一次落后只弹一次系统通知 */
-let sourceNotifiedCommit = '';
 
 let sourceTimer = null;
 let sourceBackoffIndex = 0;
@@ -1591,29 +1590,9 @@ async function sourceAutoTick() {
     const r = await sourceCheckCore();
     applySourceCheckResult(r);
     hasUpdate = Boolean(r.ok && !r.upToDate);
-    if (hasUpdate && r.remoteCommit && r.remoteCommit !== sourceNotifiedCommit) {
-      sourceNotifiedCommit = r.remoteCommit;
-      notifySourceUpdate(r);
-    }
   } finally {
     sourceAutoBusy = false;
     scheduleNextSourceCheck(hasUpdate);
-  }
-}
-
-/** 落后时的系统通知：点通知唤起主窗（主窗顶部更新提示条的主按钮即「立即更新并重启」，一键直达） */
-function notifySourceUpdate(r) {
-  try {
-    if (!Notification.isSupported()) return;
-    const n = new Notification({
-      title: 'Engram 有源码更新可拉取',
-      body: `远端领先 ${r.behind} 个提交（${r.localCommit || '本地'} → ${r.remoteCommit}）。点更新提示条的「立即更新并重启」即可，数据不受影响。`,
-      icon: windowIcon(),
-    });
-    n.on('click', () => showMainWindow());
-    n.show();
-  } catch (e) {
-    log('source update notify failed: ' + describeError(e));
   }
 }
 
