@@ -1,5 +1,5 @@
 import { getSetting, setSetting } from '../lib/db.js';
-import { TASK_BOARD_PLAYBOOK, WEEKLY_TASKS_QUESTION } from './playbooks.js';
+import { nextWeekRange, TASK_BOARD_PLAYBOOK, WEEKLY_TASKS_QUESTION } from './playbooks.js';
 import * as repo from './repository.js';
 import { submitMessage } from './runner.js';
 
@@ -37,9 +37,22 @@ export interface TaskBoardState {
   runStartedAt: string;
   /** 最近一轮的失败原因（有的话） */
   error: string;
+  /**
+   * 这份看板对应的「下周」窗口（YYYY-MM-DD）：按答案生成时刻算，前端据此铺「按天」视图的每一天。
+   * 由服务端算，客户端不再自己推一遍自然周（口径只此一处）。
+   */
+  windowStart: string;
+  windowEnd: string;
 }
 
-function emptyState(): TaskBoardState {
+/** YYYY-MM-DD（本地日，不用 UTC 加减） */
+function isoDay(at: Date): string {
+  const month = String(at.getMonth() + 1).padStart(2, '0');
+  const day = String(at.getDate()).padStart(2, '0');
+  return `${at.getFullYear()}-${month}-${day}`;
+}
+
+function emptyState(now: Date): TaskBoardState {
   return {
     sessionId: '',
     status: 'empty',
@@ -50,7 +63,17 @@ function emptyState(): TaskBoardState {
     runStatus: '',
     runStartedAt: '',
     error: '',
+    ...windowOf(now),
   };
+}
+
+/**
+ * 这份看板是哪一周的：按生成时刻算自然周（答案里的「下周」就是按那一刻推的）。
+ * 没有答案时按当前时刻算，前端照样能铺出空的每一天。
+ */
+function windowOf(anchor: Date): { windowStart: string; windowEnd: string } {
+  const range = nextWeekRange(anchor);
+  return { windowStart: isoDay(range.start), windowEnd: isoDay(range.end) };
 }
 
 /** 看板会话（设置里记着 id，但会话可能已被删掉）；不创建 */
@@ -75,10 +98,10 @@ export function ensureBoardSession(): repo.SessionDto {
  */
 export function boardState(now: Date = new Date()): TaskBoardState {
   const session = boardSession();
-  if (!session) return emptyState();
+  if (!session) return emptyState(now);
 
   const runs = repo.listRuns(session.id);
-  if (!runs.length) return { ...emptyState(), sessionId: session.id };
+  if (!runs.length) return { ...emptyState(now), sessionId: session.id };
 
   const latest = runs[runs.length - 1];
   const live = [...runs].reverse().find((run) => run.status === 'running' || run.status === 'queued') || null;
@@ -106,6 +129,8 @@ export function boardState(now: Date = new Date()): TaskBoardState {
     runStatus: live?.status || latest.status,
     runStartedAt: live?.createdAt || latest.createdAt,
     error: NO_ANSWER_STATUS.includes(latest.status) ? latest.error || '' : '',
+    // 窗口按答案生成那一刻算（答案里的「下周」就是那一刻推的），没答案就按现在算
+    ...windowOf(generatedAt ? new Date(generatedAt) : now),
   };
 }
 
