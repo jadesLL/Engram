@@ -339,6 +339,9 @@ class EngramLocalServer private constructor(private val context: Context) {
         post("/api/assistant/questions/{id}/answer") {
             call.proxyAgent("POST", "/api/assistant/questions/${encoded(call.parameters["id"].orEmpty())}/answer", call.receiveText())
         }
+        // 任务看板：状态与重新生成都落中枢（本机不跑 dsh），与上面几条一样窄代理
+        get("/api/tasks/board") { call.proxyAgent("GET", "/api/tasks/board") }
+        post("/api/tasks/board/refresh") { call.proxyAgent("POST", "/api/tasks/board/refresh", "{}") }
 
         get("/api/trash") { if (call.authorize()) call.json(db.trash()) }
         post("/api/trash/restore") { if (call.authorize()) call.json(db.restoreTrash(call.body().ids())) }

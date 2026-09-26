@@ -15,6 +15,7 @@ export const router = createRouter({
         { path: 'search', component: () => import('./views/SearchView.vue') },
         { path: 'graph/:id?', component: () => import('./views/GraphView.vue') },
         { path: 'inbox', component: () => import('./views/InboxView.vue') },
+        { path: 'tasks', component: () => import('./views/TasksView.vue') },
         { path: 'settings', component: () => import('./views/SettingsView.vue') },
       ],
     },

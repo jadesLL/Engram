@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   findPlaybook,
+  findPlaybookById,
   isWeeklyTasksQuestion,
   nextWeekRange,
   PLAYBOOKS,
+  TASK_BOARD_PLAYBOOK,
   WEEKLY_TASKS_QUESTION,
 } from './playbooks.js';
 import { buildTask } from './prompts.js';
@@ -92,6 +94,47 @@ test('手册文本：给出今天、下周窗口、翻库次序与逐条出处�
   assert.match(text, /时间待定或逾期/);
   assert.match(text, /资料缺口/);
   assert.match(text, /不要编/);
+});
+
+test('看板手册：显式 id 取到、共用同一套取数口径、多一段机器可读清单', () => {
+  const board = findPlaybookById(TASK_BOARD_PLAYBOOK);
+  assert.equal(board?.id, 'task-board');
+  assert.equal(findPlaybookById('  task-board  ')?.id, 'task-board', '容错空白');
+  assert.equal(findPlaybookById('不存在的 id'), null);
+  assert.equal(findPlaybookById('weekly-tasks')?.id, 'weekly-tasks', '常驻问题也能按 id 取');
+
+  const text = board!.build(SATURDAY);
+  assert.match(text, /【任务看板：下周的工作任务】/);
+  assert.match(text, /今天是 2026-09-26（周六）/);
+  assert.match(text, /「下周」= 2026-09-28（周一） 至 2026-10-04（周日）/);
+  // 取数口径与常驻问题共用同几行原文（同一个问题在聊天和看板里必须是同一份答案口径）
+  const weekly = findPlaybook(WEEKLY_TASKS_QUESTION)!.build(SATURDAY);
+  for (const line of weekly.split('\n').filter((item) => /^(1|2|3|4)\. /.test(item))) {
+    assert.ok(text.includes(line), `看板手册应包含同一行取数口径：${line.slice(0, 24)}…`);
+  }
+  // 机器可读清单：三节标题与字段名逐字固定，客户端解析器认的就是这些
+  assert.match(text, /```json/);
+  assert.match(text, /"groups"/);
+  assert.match(text, /"客户与项目"/);
+  assert.match(text, /"团队与例行"/);
+  assert.match(text, /"时间待定或逾期"/);
+  assert.match(text, /"owner"/);
+  assert.match(text, /"when"/);
+  assert.match(text, /"source"/);
+  assert.match(text, /"gaps"/);
+  // 看板要一眼扫得完：每列有张数上限，防止把细碎条目塞满一列
+  assert.match(text, /每节最多 8 张卡/);
+});
+
+test('buildTask：context.playbook 显式指定时压过关键词命中（同一个问题两种手册）', () => {
+  const board = buildTask(WEEKLY_TASKS_QUESTION, { playbook: TASK_BOARD_PLAYBOOK }, [], SATURDAY);
+  assert.match(board, /【任务看板：下周的工作任务】/);
+  assert.doesNotMatch(board, /【常驻问题/);
+  assert.ok(board.endsWith(WEEKLY_TASKS_QUESTION));
+
+  // 未知 id 当成没指定：退回按消息命中常驻手册，不会把请求打空
+  const fallback = buildTask(WEEKLY_TASKS_QUESTION, { playbook: '没这个 id' }, [], SATURDAY);
+  assert.match(fallback, /【常驻问题：下周的工作任务有哪些】/);
 });
 
 test('buildTask：命中常驻问题时在约定之后补手册，用户消息仍在最后', () => {
