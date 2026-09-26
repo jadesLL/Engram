@@ -71,6 +71,21 @@ test('编辑器改标题（syncH1=false）：文件名跟随标题、正文 H1 �
   assert.match(refBody, /\[\[改名之后\|别名\]\]/);
 });
 
+test('原始资料改名：不在正文里补一级标题（标题由文件名与 frontmatter 承载）', async () => {
+  const { writePage, readPage } = await import('../lib/vault.js');
+  const { renamePageSafely } = await import('./renamePage.js');
+
+  const meta = writePage('原始资料/文档/2026.09.25_旧名.md', '正文第一行\n\n正文第二行\n', {
+    title: '2026.09.25_旧名',
+  });
+  const result = renamePageSafely(meta.id, '2026.09.25_新名', { allowSamePath: true });
+
+  assert.match(result.path, /2026\.09\.25_新名\.md$/);
+  const content = readPage(result.path)?.content || '';
+  assert.equal(content.startsWith('#'), false, '原始资料正文不该被补上一级标题');
+  assert.match(content, /正文第一行/);
+});
+
 test('编辑器改标题只差非法字符（allowSamePath）：只改标题不报错', async () => {
   const { createPage, writePage, readPage } = await import('../lib/vault.js');
   const { renamePageSafely } = await import('./renamePage.js');

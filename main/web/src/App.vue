@@ -13,6 +13,8 @@
   <SyncLogDrawer />
   <ToastHost />
   <ConfirmHost />
+  <!-- 记灵感撰写框：正文进、标题由 Engram 拟（左下角「+」/Ctrl+N/欢迎页卡片共用） -->
+  <IdeaComposer />
   <UpdateOverlay />
   <AppTooltip />
 </template>
@@ -22,6 +24,7 @@ import { onMounted } from 'vue';
 import { useAppStore } from './stores/app';
 import ToastHost from './components/ui/ToastHost.vue';
 import ConfirmHost from './components/ui/ConfirmHost.vue';
+import IdeaComposer from './components/ui/IdeaComposer.vue';
 import AppTooltip from './components/ui/AppTooltip.vue';
 import UpdateOverlay from './components/UpdateOverlay.vue';
 import AssetDrawer from './components/AssetDrawer.vue';

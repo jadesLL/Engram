@@ -62,6 +62,8 @@ test('官方路由：默认走 api.deepseek.com 的 chat/completions', () => {
     assert.equal(request.url, 'https://api.deepseek.com/chat/completions');
     assert.equal(request.headers.authorization, 'Bearer sk-1');
     assert.equal(request.body.model, 'deepseek-v4-flash');
+    // 预算不能压到几十：推理型模型会把 64 全花在 reasoning 上，content 为空（2026-09 实测）
+    assert.ok(Number(request.body.max_tokens) >= 256, `max_tokens 应为推理留量，实际 ${request.body.max_tokens}`);
     assert.deepEqual(request.pick({ choices: [{ message: { content: '同步设计' } }] }), '同步设计');
   } finally {
     if (previous !== undefined) process.env.DEEPSEEK_BASE_URL = previous;

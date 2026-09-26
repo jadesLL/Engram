@@ -105,12 +105,15 @@ export function renamePageSafely(
   const body = readPage(page.path);
   if (!body) throw new RenameError('文件读取失败', 404);
 
-  // 正文 H1 同步为新标题（无 H1 时在开头补一行）；syncH1=false 时正文原样带走
-  const nextBody = options.syncH1 === false
-    ? body.content
-    : /^#\s+[^\n]*/m.test(body.content)
+  // 正文 H1 同步为新标题（无 H1 时在开头补一行）；syncH1=false 时正文原样带走。
+  // 原始资料例外：那里的标题由文件名与 frontmatter 承载，正文本来就不写一级标题
+  // （见 lib/rawBody.ts），改名时更不能补一行回去——否则每次重命名都会退回重复标题。
+  const syncH1 = options.syncH1 !== false && !isRawPath(page.path);
+  const nextBody = syncH1
+    ? /^#\s+[^\n]*/m.test(body.content)
       ? body.content.replace(/^#\s+[^\n]*/m, () => `# ${title}`)
-      : `# ${title}\n\n${body.content}`;
+      : `# ${title}\n\n${body.content}`
+    : body.content;
 
   movePage(page.path, newRel);
   writePage(newRel, nextBody, { title });

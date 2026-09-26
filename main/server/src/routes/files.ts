@@ -249,7 +249,9 @@ export async function fileRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: `已存在同名文件：${safeName}` });
     }
     const abs = safeJoin(rel);
-    fs.writeFileSync(abs, ext === 'txt' ? '' : `# ${path.basename(rel, path.extname(rel))}\n\n`);
+    // 空正文：原始资料不再往正文里写一级标题。标题由文件名与 frontmatter 承载（lib/rawBody.ts），
+    // 页头本来就显示它，正文再来一行 `# 标题` 只是重复
+    fs.writeFileSync(abs, '');
     // 自己写的：登记回声抑制，并显式推 SSE（侧栏「资料」目录按磁盘实时列目录，事件到了就刷新）
     noteAppWrite(abs);
     let pageId: string | undefined;

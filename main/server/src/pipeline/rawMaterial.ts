@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
 import { safeJoin, syncPageFile, pagePathTaken, notifySyncChange } from '../lib/vault.js';
+import { stripLeadingHeading } from '../lib/rawBody.js';
 import { noteAppWrite } from '../lib/appWrites.js';
 import { emit } from '../lib/events.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
@@ -52,8 +53,10 @@ export function createRawMaterial(input: { path: string; content: string }): { p
   if (path.posix.extname(rel).toLowerCase() !== '.md') {
     throw new RawMaterialWriteError('只支持新建 Markdown（.md）原始资料');
   }
-  const content = String(input.content ?? '');
-  if (!content.trim()) throw new RawMaterialWriteError('content 不能为空');
+  const content = stripLeadingHeading(String(input.content ?? ''));
+  if (!content.trim()) {
+    throw new RawMaterialWriteError('content 不能为空（标题由文件名与 frontmatter 承载，正文不要只写一级标题）');
+  }
   if (/^---\s*(?:\r?\n|$)/.test(content.trimStart())) {
     throw new RawMaterialWriteError('content 请传 Markdown 正文，不要包含 YAML frontmatter');
   }

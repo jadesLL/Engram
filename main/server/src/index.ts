@@ -12,6 +12,7 @@ import { ensureJwtSecret, ensureDefaultPassword, authRoutes } from './routes/aut
 import { healthRoutes } from './routes/health.js';
 import { pageRoutes } from './routes/pages.js';
 import { fileRoutes } from './routes/files.js';
+import { ideaRoutes } from './routes/ideas.js';
 import { inboxRoutes } from './routes/inbox.js';
 import { searchRoutes } from './routes/search.js';
 import { graphRoutes } from './routes/graph.js';
@@ -83,6 +84,7 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(healthRoutes);
   await app.register(pageRoutes);
   await app.register(fileRoutes);
+  await app.register(ideaRoutes);
   await app.register(inboxRoutes);
   await app.register(assetRoutes);
   // 图片资产直链：必须早于静态托管的 SPA fallback 注册，否则未命中会返回 index.html
