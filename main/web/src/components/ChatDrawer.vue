@@ -540,6 +540,7 @@ import {
   startsNewRun,
   toolCallSummary,
 } from '../lib/chatTimeline';
+import { chatSuggestions } from '../lib/chatSuggestions';
 import { formatDuration, formatSessionTime } from '../lib/chatTime';
 import { cacheHitText, mergeUsage, usageDetail } from '../lib/chatUsage';
 import { confirmDialog } from '../lib/confirm';
@@ -727,16 +728,8 @@ function onDrawerViewportResize() {
   viewportWidth.value = window.innerWidth;
 }
 
-const suggestions = computed(() => {
-  const base = [
-    '列出还没有提炼的原始资料',
-    '这个知识库现在有哪些实体页？',
-    '搜索「同步」相关的页面并总结要点',
-  ];
-  // 收集箱里压着待整理的文件时，把「去转换」提到第一项：这是眼下最该做的一步
-  if (inbox.counts.pending > 0) base.unshift('转换收集箱里的内容');
-  return base;
-});
+// 推荐问题：常驻项（含「下周的工作任务有哪些」）＋ 收集箱有货时提前的转换项
+const suggestions = computed(() => chatSuggestions({ pendingInbox: inbox.counts.pending }));
 
 const contextChips = computed(() => {
   const ctx = chat.currentContext as ChatContext;
