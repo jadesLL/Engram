@@ -21,10 +21,10 @@ export const OFFICIAL_MODEL = 'deepseek-v4-flash';
 export const TITLE_MAX_CHARS = 24;
 /**
  * 命名请求的 token 预算。**不能压到几十**：推理型模型（官方路由的 deepseek-flash 实测如此）
- * 会先花 reasoning token，只给 64 时 finish_reason=length、content 为空，标题只能退化成
- * 规则标题（2026-09 预览验收实测）。命名本身很短，给足余量即可。
+ * 会先花 reasoning token，只给 64 时 finish_reason=length、content 为空；512 仍会偶发吃光
+ * （2026-09-26 用户库里一条灵感就是这么退化成规则标题的）。命名本身只用几个 token，给足余量。
  */
-export const TITLE_MAX_TOKENS = 512;
+export const TITLE_MAX_TOKENS = 2048;
 /** 送进提示词的对话正文上限 */
 const PROMPT_INPUT_CHARS = 1200;
 
