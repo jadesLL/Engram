@@ -120,6 +120,9 @@
         </header>
 
         <div class="log-body">
+          <p v-if="syncingNow" class="log-hint live">
+            同步进行中：{{ state.status?.syncProgress || '正在处理' }}；下面会逐条出现刚落地的改动。
+          </p>
           <p v-if="state.status && state.status.role === 'none'" class="log-hint">
             本机还没有参与同步群组：先在设置里把它设为中枢，或绑定到已有的中枢，之后这里会记录每一次推送、拉取与对账。
           </p>
@@ -220,8 +223,13 @@ import {
  */
 
 const app = useAppStore();
+/** 空闲时 5 秒一跳；同步进行中收到 2 秒——用户正盯着「这轮又改了什么」，5 秒太钝 */
 const AUTO_REFRESH_MS = 5000;
+const AUTO_REFRESH_BUSY_MS = 2000;
 let refreshTimer: number | null = null;
+
+/** 同步正在跑（含等待补拉的文件）：抽屉与状态行都按「实时」口径展示 */
+const syncingNow = computed(() => Boolean(state.status?.syncing || state.status?.reconciling || state.status?.pendingPulls));
 
 const isFull = computed(() => state.mode === 'full');
 
@@ -249,15 +257,23 @@ function onKey(event: KeyboardEvent): void {
 function startAutoRefresh(): void {
   stopAutoRefresh();
   if (!state.autoRefresh) return;
-  refreshTimer = window.setInterval(() => {
-    if (!state.open || !state.autoRefresh || state.loading) return;
-    void refreshSyncLog();
-  }, AUTO_REFRESH_MS);
+  scheduleAutoRefresh();
+}
+
+/** 自排下一拍：同步中比空闲跳得更勤（单一计时器，节奏随状态变） */
+function scheduleAutoRefresh(): void {
+  if (!state.autoRefresh || !state.open) return;
+  refreshTimer = window.setTimeout(async () => {
+    refreshTimer = null;
+    if (!state.open || !state.autoRefresh) return;
+    if (!state.loading) await refreshSyncLog();
+    scheduleAutoRefresh();
+  }, syncingNow.value ? AUTO_REFRESH_BUSY_MS : AUTO_REFRESH_MS);
 }
 
 function stopAutoRefresh(): void {
   if (refreshTimer !== null) {
-    window.clearInterval(refreshTimer);
+    window.clearTimeout(refreshTimer);
     refreshTimer = null;
   }
 }
@@ -314,9 +330,11 @@ const stateText = computed(() => {
     const online = peers.filter((peer) => peer.online).length;
     return `中枢运行中 · ${online}/${peers.length} 成员在线`;
   }
-  if (status.reconciling) return '全量对账中';
+  // 把「正在做什么」写进状态行：首次全量对账可能跑上几分钟，只写「同步中」等于没说
+  if (status.reconciling) return status.syncProgress ? `全量对账中 · ${status.syncProgress}` : '全量对账中';
   if (!status.connected) return '未连接中枢';
-  return status.syncing ? '已连接 · 首次同步中' : '已连接';
+  if (status.syncing) return status.syncProgress ? `已连接 · 同步中：${status.syncProgress}` : '已连接 · 同步中';
+  return '已连接';
 });
 
 const stateTone = computed<'ok' | 'warn' | 'bad'>(() => {
@@ -436,7 +454,9 @@ const emptyHint = computed(() => {
 
 const refreshHint = computed(() => {
   const base = state.lastLoadedAt ? `上次读取 ${formatRelative(state.lastLoadedAt)}` : '';
-  const mode = state.autoRefresh ? '每 5 秒自动刷新' : '自动刷新已暂停';
+  const mode = state.autoRefresh
+    ? (syncingNow.value ? '同步中每 2 秒自动刷新' : '每 5 秒自动刷新')
+    : '自动刷新已暂停';
   return [base, mode].filter(Boolean).join(' · ');
 });
 
@@ -735,6 +755,8 @@ async function askClear(): Promise<void> {
 
 .log-hint { margin: 8px 0; color: var(--text-faint); font-size: 12.5px; line-height: 1.7; }
 .log-hint.error { color: var(--danger); }
+/* 同步进行中的实时提示：不是错误也不是空状态，用品牌色点一下存在感 */
+.log-hint.live { color: var(--accent, var(--brand, var(--text-faint))); }
 
 .log-list {
   list-style: none;

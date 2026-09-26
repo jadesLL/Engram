@@ -1273,6 +1273,11 @@ watch(() => app.sidebarVersion, () => {
 watch(() => sync.status?.lastSyncAt, (current, previous) => {
   if (current && current !== previous) app.bumpSidebar();
 });
+// 首次全量对账可能跑几分钟，期间内容是一批批落盘的：按内容版本号逐步重读，
+// 用户能看着文件一个个出现，而不是整轮结束后才一起冒出来（bumpSidebar 自带 200ms 攒批）。
+watch(() => sync.status?.contentRevision, (current, previous) => {
+  if (current !== undefined && current !== previous) app.bumpSidebar();
+});
 onMounted(() => {
   load();
   chatStopped = false;

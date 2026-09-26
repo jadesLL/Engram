@@ -597,6 +597,9 @@ class EngramLocalServer private constructor(private val context: Context) {
         .put("nodeId", db.setting("sync_node_id") ?: "").put("cursor", db.setting("sync_cursor")?.toLongOrNull() ?: 0)
         .put("pending", db.outboxCount()).put("pendingPulls", sync.pendingPulls).put("syncProgress", sync.syncProgress)
         .put("lastSyncAt", sync.lastSyncAt)
+        // 本机内容版本号：每落地一项同步改动 +1。前端靠它在对账进行中就逐步刷新文件树/首页，
+        // 而不是等整轮跑完（旧行为：首次全量对账期间侧栏与首页一直是空的）。
+        .put("contentRevision", db.contentRevision())
         .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray())
 
     /**
