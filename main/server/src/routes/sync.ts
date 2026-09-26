@@ -278,7 +278,8 @@ export async function syncRoutes(app: FastifyInstance) {
     const device = String(query.name || '');
     const connectedAt = Date.now();
     if (peer) {
-      touchPeer(peer.id, { nodeLabel: device });
+      // 节点 id 也要记：会话行的来源端记的是它（广播里记的是成员 id），补设备名时两种都得认
+      touchPeer(peer.id, { nodeLabel: device, nodeId: String(query.node_id || '') });
       logSyncEvent('info', 'peer-online', {
         detail: `成员「${peer.name}」已连接${device ? `（设备 ${device}）` : ''}`,
         scope: 'hub',

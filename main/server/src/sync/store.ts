@@ -136,6 +136,8 @@ export interface SyncPeer {
   name: string;
   token: string;
   node_label: string;
+  /** 成员设备上报的节点 id（会话行的 origin_node_id 记的是它，不是这里的 id） */
+  node_id: string;
   last_seen_at: string | null;
   last_seq: number;
   revoked: number;
@@ -168,12 +170,34 @@ export function revokePeer(id: string): void {
   db.prepare(`UPDATE sync_peers SET revoked = 1 WHERE id = ?`).run(id);
 }
 
-/** 成员活动上报：在线标记、节点设备名、已应用水位 */
-export function touchPeer(id: string, opts: { nodeLabel?: string; seq?: number } = {}): void {
+/** 成员活动上报：在线标记、节点设备名与节点 id、已应用水位 */
+export function touchPeer(
+  id: string,
+  opts: { nodeLabel?: string; nodeId?: string; seq?: number } = {}
+): void {
   const peer = getPeer(id);
   if (!peer) return;
   db.prepare(
-    `UPDATE sync_peers SET last_seen_at = ?, last_seq = MAX(last_seq, ?), node_label = COALESCE(NULLIF(?, ''), node_label)
+    `UPDATE sync_peers SET last_seen_at = ?, last_seq = MAX(last_seq, ?),
+       node_label = COALESCE(NULLIF(?, ''), node_label),
+       node_id = COALESCE(NULLIF(?, ''), node_id)
      WHERE id = ?`
-  ).run(now(), opts.seq ?? peer.last_seq, opts.nodeLabel ?? '', id);
+  ).run(now(), opts.seq ?? peer.last_seq, opts.nodeLabel ?? '', opts.nodeId ?? '', id);
+}
+
+/**
+ * 按来源 id 找成员设备名：老会话行的来源记的是设备**节点 id**，广播里记的是**成员 id**，
+ * 两种都认。找不到（成员已被移除、从没上报过设备名）返回空串，由上层退化成「其他设备」。
+ */
+export function peerDeviceLabel(originId: string): string {
+  const id = String(originId || '');
+  if (!id) return '';
+  const row = db
+    .prepare(
+      `SELECT node_label FROM sync_peers
+       WHERE node_label <> '' AND (id = ? OR (node_id <> '' AND node_id = ?))
+       LIMIT 1`
+    )
+    .get(id, id) as { node_label: string } | undefined;
+  return String(row?.node_label || '');
 }

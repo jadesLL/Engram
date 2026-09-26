@@ -588,6 +588,23 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     };
     assert.ok(hubSessionList.sessions.some((s) => s.id === 'e2e-session'), '中枢的会话列表里能看到成员端的会话');
 
+    // 第三端（C 电脑）：同一条会话由中枢广播下来，来源设备名必须一路带到——丢在中途的后果
+    // 就是会话列表里只剩光秃秃的「来自」。这一例是照着那个 bug 立的桩：C 端要同时记住
+    // 来源节点（≠ 本机，界面才标徽标）和来源设备名（界面才写得出「来自 <设备>」）。
+    await waitFor('C 电脑收到这条会话并记住来源设备', async () => withDb(nodeC.dataDir, (conn) =>
+      Boolean(conn.prepare(
+        `SELECT 1 FROM assistant_sessions WHERE id = 'e2e-session'
+           AND COALESCE(origin_node_id, '') <> '' AND COALESCE(origin_node_label, '') <> ''`
+      ).get())
+    ), 60_000);
+    const cOrigin = withDb(nodeC.dataDir, (conn) => conn.prepare(
+      `SELECT origin_node_id AS originId, origin_node_label AS originLabel,
+              (SELECT value FROM settings WHERE key = 'sync_node_id') AS localNode
+       FROM assistant_sessions WHERE id = 'e2e-session'`
+    ).get());
+    assert.equal(cOrigin.originLabel, os.hostname().slice(0, 60), 'C 电脑记住的是 B 电脑的设备名');
+    assert.notEqual(cOrigin.originId, cOrigin.localNode, '来源端不能记成本机，否则界面不标「来自」');
+
     // 看板：成员端这份先推上去（全端唯一一份，键恒为 default）
     withDb(nodeB.dataDir, (conn) => {
       const stamp = new Date().toISOString();

@@ -7,7 +7,7 @@ import path from 'node:path';
 /**
  * 会话与任务看板的跨端同步（仅完成态）。
  *
- * 覆盖：只带终态轮次与消息、推理段不上车、并集合并幂等、别端会话标来源、
+ * 覆盖：只带终态轮次与消息、推理段不上车、并集合并幂等、别端会话标来源（含来源设备名）、
  * 删除留墓碑不被旧快照复活、清单排除系统会话、看板「最新者胜」与中枢侧的推送合并。
  */
 
@@ -21,6 +21,7 @@ const at = (n: number) => `2026-01-01T00:00:${String(n).padStart(2, '0')}.000Z`;
 let db: any;
 let sessions: typeof import('./sessions.js');
 let hub: typeof import('./hub.js');
+let store: typeof import('./store.js');
 let setSetting: (key: string, value: string) => void;
 
 before(async () => {
@@ -30,6 +31,7 @@ before(async () => {
   setSetting = dbModule.setSetting;
   sessions = await import('./sessions.js');
   hub = await import('./hub.js');
+  store = await import('./store.js');
 });
 
 after(() => {
@@ -305,4 +307,99 @@ test('本地看板载荷：带设备身份与生成时刻（界面显示「上�
   assert.ok(payload.nodeId, '带本机节点 id');
   assert.ok(payload.nodeLabel, '带本机设备名');
   assert.equal(payload.id, 'default');
+});
+
+// ---------------------------------------------------------------------------
+// 来源设备名（会话列表里的「来自 <设备>」）
+// 早先的广播只带来源节点 id、不带设备名，成员端的会话列表就成了光秃秃的「来自」——
+// 下面几例把「广播要带名字」「清单要能补名字」「已有名字不覆盖」三件事钉住。
+// ---------------------------------------------------------------------------
+
+test('成员推送没带设备名：按成员注册的设备名补，广播也要把它带给其余成员端', () => {
+  newSession('s-plain', { title: '成员端聊的' });
+  newMessage('m-pl-u', 's-plain', 'r-pl', 'user', '手机问的');
+  newMessage('m-pl-a', 's-plain', 'r-pl', 'assistant', '手机答的');
+  newRun('r-pl', 's-plain', 'm-pl-u', 'completed', { assistantMessageId: 'm-pl-a' });
+  const snapshot = sessions.collectSessionSnapshot('s-plain')!;
+  db.prepare('DELETE FROM assistant_messages WHERE session_id = ?').run('s-plain');
+  db.prepare('DELETE FROM assistant_runs WHERE session_id = ?').run('s-plain');
+
+  // 成员连上事件流时会上报设备名与节点 id（routes/sync.ts）
+  const peer = store.createPeer('手机', 'lsync-test-plain');
+  store.touchPeer(peer.id, { nodeLabel: '客厅 NAS', nodeId: 'node-plain' });
+
+  const broadcasts: any[] = [];
+  const off = hub.addNodeSubscriber({ peerId: 'watcher', send: (_event, data) => broadcasts.push(data) });
+  try {
+    // 推送里没有 node_label：旧客户端就是这么推的
+    const result = hub.applyPush(
+      { node_id: 'node-plain', kind: 'session', target: 's-plain', session: snapshot },
+      peer.id
+    );
+    assert.ok(Number(result.seq) > 0);
+  } finally {
+    off();
+  }
+
+  assert.equal(
+    db.prepare('SELECT origin_node_label FROM assistant_sessions WHERE id = ?').get('s-plain').origin_node_label,
+    '客厅 NAS',
+    '中枢这一行要记住设备名'
+  );
+  const pushed = broadcasts.find((item) => item.kind === 'session' && item.target === 's-plain');
+  assert.ok(pushed, '会话变更要广播出去');
+  assert.equal(pushed.node_label, '客厅 NAS', '广播要带上来源设备名，否则成员端只能记成「来自某个节点」');
+
+  const entry = sessions.sessionManifest().find((item: any) => item.id === 's-plain')!;
+  assert.equal(entry.originNodeId, 'node-plain');
+  assert.equal(entry.originNodeLabel, '客厅 NAS', '对账清单要能直接补上设备名');
+});
+
+test('补设备名：只补「已知别端来、但没有名字」的会话，本端会话与已有名字都不动', () => {
+  newSession('s-label');
+  // ① 本端原生会话：origin 为空，补名字等于把它错标成「来自别端」
+  assert.equal(sessions.repairSessionOriginLabel('s-label', 'node-x', '书房电脑'), false);
+  assert.equal(
+    db.prepare('SELECT origin_node_label FROM assistant_sessions WHERE id = ?').get('s-label').origin_node_label,
+    ''
+  );
+  // ② 已知别端来的、名字空着：补上
+  db.prepare(`UPDATE assistant_sessions SET origin_node_id = 'node-x' WHERE id = 's-label'`).run();
+  assert.equal(sessions.repairSessionOriginLabel('s-label', 'node-x', '书房电脑'), true);
+  assert.equal(
+    db.prepare('SELECT origin_node_label FROM assistant_sessions WHERE id = ?').get('s-label').origin_node_label,
+    '书房电脑'
+  );
+  // ③ 已有名字：不覆盖，重复调用也不改
+  assert.equal(sessions.repairSessionOriginLabel('s-label', 'node-x', '别的名字'), false);
+  assert.equal(
+    db.prepare('SELECT origin_node_label FROM assistant_sessions WHERE id = ?').get('s-label').origin_node_label,
+    '书房电脑'
+  );
+  // ④ 名字补不回来（旧中枢不带这字段）时什么都不做
+  assert.equal(sessions.repairSessionOriginLabel('s-label', 'node-x', ''), false);
+  assert.equal(sessions.repairSessionOriginLabel('s-missing', 'node-x', '书房电脑'), false);
+});
+
+test('空着的设备名会被后来的合并补上，已有的名字不会被改名覆盖', () => {
+  newSession('s-late');
+  newMessage('m-lt', 's-late', null, 'user', '一条内容');
+  const snapshot = sessions.collectSessionSnapshot('s-late')!;
+
+  // 第一次合并只拿到来源 id（旧广播）：名字空着
+  sessions.mergeSessionSnapshot(snapshot, 'node-plain', '');
+  let row = db.prepare('SELECT origin_node_id, origin_node_label FROM assistant_sessions WHERE id = ?').get('s-late');
+  assert.equal(row.origin_node_id, 'node-plain');
+  assert.equal(row.origin_node_label, '');
+
+  // 第二次合并带上了设备名：补上（否则「来自 」会一直空着，再没有第二次机会）
+  sessions.mergeSessionSnapshot(snapshot, 'node-plain', '客厅 NAS');
+  row = db.prepare('SELECT origin_node_label FROM assistant_sessions WHERE id = ?').get('s-late');
+  assert.equal(row.origin_node_label, '客厅 NAS');
+
+  // 来源端已定：后来的合并不得把名字改成另一个（同一会话只有第一个来源端算数）
+  sessions.mergeSessionSnapshot(snapshot, 'node-other', '别的设备');
+  row = db.prepare('SELECT origin_node_id, origin_node_label FROM assistant_sessions WHERE id = ?').get('s-late');
+  assert.equal(row.origin_node_id, 'node-plain');
+  assert.equal(row.origin_node_label, '客厅 NAS');
 });

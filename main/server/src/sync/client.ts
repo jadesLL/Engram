@@ -25,6 +25,7 @@ import {
   deviceLabel,
   mergeBoardPayload,
   mergeSessionSnapshot,
+  repairSessionOriginLabel,
   sessionContentHash,
   sessionFingerprint,
   sessionManifest,
@@ -120,8 +121,9 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let pushRetryMs = 3000;
 /** 拉取失败待补拉文件（path → 远端 hash），成功后移除 */
 const pendingFilePulls = new Map<string, string>();
-/** 会话快照待补拉（sessionId → 远端 hash），成功后移除（会话正文比文件大，失败必须留待重试） */
-const pendingSessionPulls = new Map<string, string>();
+/** 会话快照待补拉（远端 hash + 来源端），成功后移除（会话正文比文件大，失败必须留待重试；
+ *  来源端一并留着——补拉同样要能标出「来自哪台设备」，不能因为是重试就把来源丢了） */
+const pendingSessionPulls = new Map<string, { hash: string; nodeId: string; nodeLabel: string }>();
 let pullRetryTimer: ReturnType<typeof setInterval> | null = null;
 let healTimer: ReturnType<typeof setInterval> | null = null;
 let reconcileRunning = false;
@@ -498,10 +500,12 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
       } else {
         // 快照正文不进广播（可能很大）：按 hash 判断要不要拉；失败进待补拉队列周期重试（水位照常推进）
         const remoteHash = String(op.hash || '');
+        const originNodeId = String(op.node_id || '');
+        const originNodeLabel = String(op.node_label || '');
         if (!remoteHash || remoteHash !== sessionContentHash(target)) {
-          void pullSessionIfChanged(target, remoteHash, String(op.node_id || ''), String(op.node_label || '')).catch(
+          void pullSessionIfChanged(target, remoteHash, originNodeId, originNodeLabel).catch(
             (error: any) => {
-              pendingSessionPulls.set(target, remoteHash);
+              pendingSessionPulls.set(target, { hash: remoteHash, nodeId: originNodeId, nodeLabel: originNodeLabel });
               logEvent('warn', 'session-pull-deferred', `会话「${target}」没能从中枢取回：${error?.message || error}；已加入待补拉队列，每分钟自动重试`, {
                 session: target,
                 error: error?.message || String(error),
@@ -957,24 +961,38 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
     //  - 中枢已删的会话（墓碑）：本端副本更旧就删掉，否则下面的补推会把它复活
     //  - 本端有、中枢没有的会话：补推（首次接入、中枢重装时的追赶）
     //  - 看板：全端唯一一份，谁的最新用谁
-    const hubSessions: Array<{ id: string; title?: string; hash?: string }> = Array.isArray(snap?.sessions)
-      ? snap.sessions
-      : [];
+    const hubSessions: Array<{
+      id: string;
+      title?: string;
+      hash?: string;
+      originNodeId?: string;
+      originNodeLabel?: string;
+    }> = Array.isArray(snap?.sessions) ? snap.sessions : [];
     const hubSessionIds = new Set(hubSessions.map((item) => String(item.id)));
     const hubTombstones: Array<{ sessionId: string; deletedAt: string }> = Array.isArray(snap?.tombstones)
       ? snap.tombstones
       : [];
     const hubTombstoneIds = new Set(hubTombstones.map((item) => String(item.sessionId)));
     let sessionsPulled = 0;
+    let labelsRepaired = 0;
     for (const entry of hubSessions) {
       const id = String(entry.id || '');
       if (!id || hubTombstoneIds.has(id)) continue;
       try {
+        const originNodeId = String(entry.originNodeId || '');
+        const originNodeLabel = String(entry.originNodeLabel || '');
+        // 早先的广播把设备名丢了：本端已经知道是别端会话、只差名字时，用清单里的名字补一行——
+        // 不必为一行标签再拉整份会话正文（旧中枢不带这两个字段，补不了就留给界面显示「其他设备」）
+        if (repairSessionOriginLabel(id, originNodeId, originNodeLabel)) {
+          labelsRepaired++;
+          emit('session-changed', { id });
+          continue;
+        }
         if (sessionFingerprint(id) === String(entry.hash || '')) continue;
         const detail = await getJson(`/api/sync/session?id=${encodeURIComponent(id)}`);
         const snapshot = detail?.snapshot as SessionSnapshot | undefined;
         if (!snapshot) continue;
-        mergeSessionSnapshot(snapshot, '', '');
+        mergeSessionSnapshot(snapshot, originNodeId, originNodeLabel);
         pendingSessionPulls.delete(id);
         sessionsPulled++;
       } catch (error: any) {
@@ -1046,7 +1064,7 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
     logEvent(
       'info',
       'reconcile-done',
-      `全量对账完成（${REASON_LABELS[reason]}，${formatDuration(ms)}）：中枢共 ${entries.length} 项 · 从中枢拉取 ${pulled} 项${pulledBytes ? `（${formatBytes(pulledBytes)}）` : ''}${sampleText(pulledSamples)} · 本机补推 ${queued} 项${sampleText(queuedSamples)} · 失败 ${itemFailed} 项 · 待补拉文件 ${pendingFilePulls.size} · 补齐提炼账本 ${repaired}/${ledgerRepairs.length}`,
+      `全量对账完成（${REASON_LABELS[reason]}，${formatDuration(ms)}）：中枢共 ${entries.length} 项 · 从中枢拉取 ${pulled} 项${pulledBytes ? `（${formatBytes(pulledBytes)}）` : ''}${sampleText(pulledSamples)} · 本机补推 ${queued} 项${sampleText(queuedSamples)} · 失败 ${itemFailed} 项 · 待补拉文件 ${pendingFilePulls.size} · 补齐提炼账本 ${repaired}/${ledgerRepairs.length}${sessionsPulled ? ` · 补拉会话 ${sessionsPulled} 条` : ''}${labelsRepaired ? ` · 补会话来源设备名 ${labelsRepaired} 条` : ''}`,
       {
         reason,
         ms,
@@ -1058,6 +1076,8 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
         pendingPulls: pendingFilePulls.size,
         ledgerRepaired: repaired,
         ledgerTotal: ledgerRepairs.length,
+        sessionsPulled,
+        sessionLabelsRepaired: labelsRepaired,
         localEntries: localEntries.length,
         pulledSamples,
         queuedSamples,
@@ -1155,9 +1175,9 @@ async function retryPendingFilePulls(): Promise<void> {
     }
   }
   // 会话快照与文件同一节拍补拉：会话正文更大，一次失败不该让它永远停在「历史不全」的状态
-  for (const [sessionId, hash] of Array.from(pendingSessionPulls)) {
+  for (const [sessionId, pending] of Array.from(pendingSessionPulls)) {
     try {
-      await pullSessionIfChanged(sessionId, hash, '', '');
+      await pullSessionIfChanged(sessionId, pending.hash, pending.nodeId, pending.nodeLabel);
       pendingSessionPulls.delete(sessionId);
       logEvent('info', 'session-pull-retry-ok', `补拉会话成功「${sessionId}」`, {
         session: sessionId,
