@@ -1,9 +1,11 @@
 /**
- * 内置 Agent 的任务文本构造：固定约定 + 界面上下文（不可信输入）+ 用户消息。
+ * 内置 Agent 的任务文本构造：固定约定 + 常驻问题手册 + 界面上下文（不可信输入）+ 用户消息。
  *
  * dsh 的 sdk profile 自带系统提示与工具集，这里不带 system 角色——约定随任务文本一起
  * 送进会话，等价于用户在聊天里先说一段规矩。
  */
+
+import { findPlaybook } from './playbooks.js';
 
 export interface InterfaceContext {
   route?: string;
@@ -32,13 +34,17 @@ const STANDING_RULES = [
   '【约定结束】',
 ].join('\n');
 
-/** 拼接本次任务文本；没有界面上下文时只送约定 + 用户消息 */
+/** 拼接本次任务文本；没有界面上下文时只送约定（+ 命中的常驻问题手册）+ 用户消息 */
 export function buildTask(
   message: string,
   context?: InterfaceContext,
-  history: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+  now: Date = new Date()
 ): string {
   const parts = [STANDING_RULES];
+  // 常驻问题（空会话推荐项）自带作业手册：今天几号、下周是哪几天、去哪翻、按什么格式回
+  const playbook = findPlaybook(message);
+  if (playbook) parts.push(playbook.build(now));
   const lines: string[] = [];
   if (context?.currentPage?.title || context?.currentPage?.id) {
     const title = context.currentPage.title || '(无标题)';
