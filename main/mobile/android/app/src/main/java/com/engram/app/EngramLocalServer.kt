@@ -250,8 +250,84 @@ class EngramLocalServer private constructor(private val context: Context) {
             if (saved.length() == 0 && duplicates.length() > 0) return@post call.error("已存在同名文件，未重复导入", HttpStatusCode.Conflict)
             call.json(JSONObject().put("saved", saved).put("duplicates", duplicates))
         }
-        get("/api/files/preview") {
+        // 编辑器贴图 / 侧栏拖图：图片是 md 父项的私有资产，落 brain/assets/<父项id>/（与 server routes/assets.ts 同规则）。
+        // 父项 = 表单 parent 字段或 X-Engram-Parent 头，必须是已有页面；insert=append 时顺手写进正文。
+        post("/api/assets/upload") {
+            if (!call.authorize()) return@post
+            var parent = call.request.header("X-Engram-Parent").orEmpty()
+            var insert = ""
+            val incoming = mutableListOf<Pair<String, ByteArray>>()
+            call.receiveMultipart(formFieldLimit = MAX_ASSET_BYTES).forEachPart { part ->
+                when (part) {
+                    is PartData.FormItem -> when (part.name.orEmpty()) {
+                        "parent" -> parent = part.value.trim()
+                        "insert" -> insert = part.value.trim()
+                    }
+                    is PartData.FileItem -> {
+                        val name = sanitizeFileName(part.originalFileName ?: "image")
+                        val bytes = part.provider().toInputStream().use { input ->
+                            val data = input.readBytes()
+                            require(data.size <= MAX_ASSET_BYTES) { "单张图片超过 12 MB 上限" }
+                            data
+                        }
+                        incoming += name to bytes
+                    }
+                    else -> Unit
+                }
+                part.dispose()
+            }
+            if (incoming.isEmpty()) return@post call.error("没有收到图片", HttpStatusCode.BadRequest)
+            val pageId = parent.trim()
+            if (!PARENT_ID_REGEX.matches(pageId) || pageId == "_unassigned" || db.page(pageId) == null) {
+                return@post call.error("父项无效：图片只能插进已有页面", HttpStatusCode.BadRequest)
+            }
+            val saved = JSONArray(); val errors = JSONArray(); var appended = false
+            for ((name, bytes) in incoming) {
+                val extension = name.substringAfterLast('.', "").lowercase()
+                if (extension !in ASSET_EXTENSIONS) { errors.put(name); continue }
+                val asset = db.savePageAsset(pageId, name, bytes)
+                saved.put(asset)
+                if (insert == "append") {
+                    val assetName = asset.getString("name")
+                    val alt = assetName.substringAfter('-').substringBeforeLast('.', assetName)
+                    if (db.appendPageMedia(pageId, assetName, alt.ifBlank { "图片" })) appended = true
+                }
+            }
+            call.json(JSONObject().put("saved", saved).put("errors", errors).put("appended", appended))
+        }
+
+        // 「查看引用图片」抽屉：列某个父项的本地图片资产 / 删除单张 / 外链图本地化（Android 不外链抓图）
+        get("/api/assets/orphans/list") {
             if (!call.authorize()) return@get
+            call.json(db.orphanAssets())
+        }
+        get("/api/assets/{parentId}") {
+            if (!call.authorize()) return@get
+            val parentId = call.parameters["parentId"].orEmpty()
+            if (!PARENT_ID_REGEX.matches(parentId)) return@get call.error("父项无效", HttpStatusCode.BadRequest)
+            val title = if (parentId == "_unassigned") "未归属图片"
+            else db.page(parentId)?.optString("title")?.takeIf { it.isNotBlank() }
+                ?: return@get call.error("父项不存在", HttpStatusCode.NotFound)
+            call.json(JSONObject()
+                .put("parent", JSONObject().put("id", parentId).put("title", title))
+                .put("assets", db.listPageAssets(parentId))
+                .put("remoteImages", JSONArray()))
+        }
+        delete("/api/assets") {
+            if (!call.authorize()) return@delete
+            val body = call.body()
+            val parentId = body.optString("parentId"); val name = body.optString("name")
+            if (!PARENT_ID_REGEX.matches(parentId) || name.isBlank()) return@delete call.error("参数无效", HttpStatusCode.BadRequest)
+            runCatching { db.deletePageAsset(parentId, name) }.onFailure { return@delete call.error("路径无效", HttpStatusCode.BadRequest) }
+            call.ok()
+        }
+        post("/api/assets/localize") {
+            if (!call.authorize()) return@post
+            // Android 不外链抓图（没有服务端的抓取链路），正文里的外链图保持原样
+            call.json(JSONObject().put("localized", 0).put("failed", JSONArray()))
+        }
+
+        get("/api/files/preview") {            if (!call.authorize()) return@get
             val path = call.request.queryParameters["path"] ?: return@get call.error("缺少 path", HttpStatusCode.BadRequest)
             val file = db.file(path); if (!file.isFile) return@get call.error("文件不存在", HttpStatusCode.NotFound)
             val ext = file.extension.lowercase()
@@ -268,6 +344,8 @@ class EngramLocalServer private constructor(private val context: Context) {
         get("/api/files/content") { if (call.authorize()) call.sendFile(inline = true) }
         get("/api/files/raw") { if (call.authorize()) call.sendFile(inline = false) }
         get("/api/files/open") { if (call.authorize()) call.sendFile(inline = false) }
+        // 侧栏/预览页的「下载」别名（与 content/raw 同一实现，只是下载语义更明确）
+        get("/api/files/download") { if (call.authorize()) call.sendFile(inline = false) }
         get("/api/files/extraction") {
             if (!call.authorize()) return@get
             val path = call.request.queryParameters["path"] ?: return@get call.error("缺少 path", HttpStatusCode.BadRequest)
@@ -292,6 +370,29 @@ class EngramLocalServer private constructor(private val context: Context) {
         delete("/api/files") {
             if (!call.authorize()) return@delete
             db.deleteFile(call.body().optString("path")); call.ok()
+        }
+
+        // 页面图片资产直链：/media/<父项id>/<文件名> → brain/assets/<父项id>/<文件名>。
+        // 正文里存的是根相对路径，图片在阅读视图与编辑器预览里由浏览器直接解析（与 server routes/media.ts 同规则）。
+        get("/media/{parentId}/{name}") {
+            if (!call.authorize()) return@get
+            val parentId = call.parameters["parentId"].orEmpty()
+            val name = call.parameters["name"].orEmpty()
+            val extension = name.substringAfterLast('.', "").lowercase()
+            if (!PARENT_ID_REGEX.matches(parentId) || extension !in ASSET_EXTENSIONS) {
+                return@get call.error("图片不存在", HttpStatusCode.NotFound)
+            }
+            val assets = File(db.brain, "assets").canonicalFile
+            val file = File(assets, "$parentId/$name").canonicalFile
+            if (!file.path.startsWith(assets.path + File.separator) || !file.isFile) {
+                return@get call.error("图片不存在", HttpStatusCode.NotFound)
+            }
+            // 文件名是内容寻址的（<sha1-8>-<原名>），可以安全长缓存
+            call.response.header(HttpHeaders.CacheControl, "private, max-age=31536000, immutable")
+            call.response.header("X-Content-Type-Options", "nosniff")
+            if (extension == "svg") call.response.header("Content-Security-Policy", "sandbox")
+            call.response.header(HttpHeaders.ContentLength, file.length().toString())
+            call.respondOutputStream(mime(extension)) { file.inputStream().use { it.copyTo(this, 64 * 1024) } }
         }
 
         get("/api/search") {
@@ -343,6 +444,25 @@ class EngramLocalServer private constructor(private val context: Context) {
         get("/api/tasks/board") { call.proxyAgent("GET", "/api/tasks/board") }
         post("/api/tasks/board/refresh") { call.proxyAgent("POST", "/api/tasks/board/refresh", "{}") }
 
+        // 收集箱：语义转换要中枢的内置 Agent，本机不跑模型也不跑任务队列，整条交互面按同一模式窄代理。
+        // 收集箱原件走同步落在两端同一目录，所以中枢看到的文件与手机上是同一份。
+        get("/api/inbox/items") { call.proxyHub("GET", "/api/inbox/items") }
+        post("/api/inbox/upload") { call.proxyHubUpload() }
+        post("/api/inbox/fetch-url") { call.proxyHub("POST", "/api/inbox/fetch-url", call.receiveText()) }
+        get("/api/inbox/download") { call.proxyHubDownload() }
+        delete("/api/inbox/items") { call.proxyHub("DELETE", "/api/inbox/items", call.receiveText()) }
+        get("/api/inbox/derived-path") {
+            call.proxyHub("GET", "/api/inbox/derived-path?path=${encoded(call.request.queryParameters["path"].orEmpty())}")
+        }
+        get("/api/inbox/derived") {
+            call.proxyHub("GET", "/api/inbox/derived?path=${encoded(call.request.queryParameters["path"].orEmpty())}")
+        }
+        post("/api/inbox/adopt") { call.proxyHub("POST", "/api/inbox/adopt", call.receiveText()) }
+        post("/api/inbox/convert") { call.proxyHub("POST", "/api/inbox/convert", call.receiveText()) }
+
+        // 记一条灵感：标题由中枢的模型拟、落盘前再按知识库既有写法勘误一遍，本机没有模型，同样窄代理
+        post("/api/ideas") { call.proxyHub("POST", "/api/ideas", call.receiveText()) }
+
         get("/api/trash") { if (call.authorize()) call.json(db.trash()) }
         post("/api/trash/restore") { if (call.authorize()) call.json(db.restoreTrash(call.body().ids())) }
         delete("/api/trash") { if (call.authorize()) call.json(db.deleteTrash(call.body().ids())) }
@@ -351,7 +471,10 @@ class EngramLocalServer private constructor(private val context: Context) {
         get("/api/settings") { if (call.authorize()) call.json(JSONObject().put("settings", db.publicSettings())) }
         put("/api/settings") {
             if (!call.authorize()) return@put
-            val body = call.body(); if (body.has("search_synonyms")) db.setSetting("search_synonyms", body.optString("search_synonyms")); call.ok()
+            val body = call.body()
+            // 白名单与 server PUBLIC_SETTINGS 对齐；DDNS / 一键接入 token 在 Android 上没有意义，显式忽略
+            for (key in listOf("search_synonyms", "show_ai_workspace")) if (body.has(key)) db.setSetting(key, body.optString(key))
+            call.ok()
         }
         get("/api/settings/backup") {
             if (!call.authorize()) return@get
@@ -387,19 +510,35 @@ class EngramLocalServer private constructor(private val context: Context) {
             val count = db.knowledgeFileCount(); db.wipe()
             call.json(JSONObject().put("ok", true).put("fileCount", count).put("reportCount", 0).put("cancelledJobs", 0))
         }
+        // 清空 AI 整理日志（保留知识正文）：与 server 同语义，Android 无关系表故 relationCount 恒 0
+        post("/api/settings/wipe-ai-logs") {
+            if (!call.authorize()) return@post
+            if (!db.checkPassword(call.body().optString("password"))) return@post call.error("密码错误", HttpStatusCode.Unauthorized)
+            call.json(JSONObject().put("ok", true).put("fileCount", db.wipeAiLogs()).put("relationCount", 0).put("cancelledJobs", 0))
+        }
 
         get("/api/sync/status") {
             if (!call.authorize()) return@get
-            call.json(JSONObject()
-                .put("role", db.setting("sync_role") ?: "none")
-                .put("enabled", db.setting("sync_enabled") == "1")
-                .put("connected", sync.connected).put("running", sync.isRunning()).put("hubUrl", db.setting("sync_hub_url") ?: "")
-                .put("directUrls", JSONArray(db.setting("sync_direct_urls") ?: "[]"))
-                .put("hubToken", if (secrets.get("sync_hub_token").isNullOrBlank()) "" else "••••••••")
-                .put("nodeId", db.setting("sync_node_id") ?: "").put("cursor", db.setting("sync_cursor")?.toLongOrNull() ?: 0)
-                .put("pending", db.outboxCount()).put("pendingPulls", sync.pendingPulls).put("syncProgress", sync.syncProgress)
-                .put("running", sync.isRunning()).put("lastSyncAt", sync.lastSyncAt)
-                .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray()))
+            call.json(syncStatus())
+        }
+        // 同步详情抽屉：分页 / 筛选 / 清空都落在本机 sync_log 上。
+        // 中枢的 /api/sync/log 只对 owner 开放，成员端（手机只有成员令牌）拿不到，所以本地实现。
+        get("/api/sync/log") {
+            if (!call.authorize()) return@get
+            val params = call.request.queryParameters
+            val limit = (params["limit"]?.toIntOrNull() ?: 200).coerceIn(1, 2000)
+            val page = db.syncLogs(
+                limit = limit,
+                before = params["before"]?.toLongOrNull(),
+                level = params["level"]?.takeIf { it == "info" || it == "warn" || it == "error" },
+                q = params["q"]?.takeIf { it.isNotBlank() },
+            )
+            page.put("status", syncStatus())
+            call.json(page)
+        }
+        delete("/api/sync/log") {
+            if (!call.authorize()) return@delete
+            call.json(JSONObject().put("ok", true).put("cleared", db.clearSyncLog()))
         }
         post("/api/sync/config") {
             if (!call.authorize()) return@post
@@ -429,6 +568,8 @@ class EngramLocalServer private constructor(private val context: Context) {
         get("/{path...}") {
             val requested = call.parameters.getAll("path")?.joinToString("/").orEmpty().ifBlank { "index.html" }
             if (requested.startsWith("api/")) return@get call.error("接口不存在", HttpStatusCode.NotFound)
+            // 段数不对或文件不存在的图片请求不能回落成 index.html，否则 <img> 拿到一页 HTML 只会显示破图
+            if (requested.startsWith("media/")) return@get call.error("图片不存在", HttpStatusCode.NotFound)
             call.serveAsset(requested)
         }
     }
@@ -443,6 +584,103 @@ class EngramLocalServer private constructor(private val context: Context) {
     private suspend fun ApplicationCall.ok() = json(JSONObject().put("ok", true))
     private suspend fun ApplicationCall.error(message: String, status: HttpStatusCode) = json(JSONObject().put("error", message), status)
     private suspend fun ApplicationCall.json(value: Any, status: HttpStatusCode = HttpStatusCode.OK) = respondText(value.toString(), ContentType.Application.Json, status)
+
+    /** /api/sync/status 与同步详情抽屉共用的状态对象（字段名对齐 server，web 两处都按这套读） */
+    private fun syncStatus(): JSONObject = JSONObject()
+        .put("role", db.setting("sync_role") ?: "none")
+        .put("enabled", db.setting("sync_enabled") == "1")
+        .put("connected", sync.connected).put("running", sync.isRunning()).put("syncing", sync.isRunning())
+        .put("reconciling", false).put("revision", 0)
+        .put("hubUrl", db.setting("sync_hub_url") ?: "")
+        .put("directUrls", JSONArray(db.setting("sync_direct_urls") ?: "[]"))
+        .put("hubToken", if (secrets.get("sync_hub_token").isNullOrBlank()) "" else "••••••••")
+        .put("nodeId", db.setting("sync_node_id") ?: "").put("cursor", db.setting("sync_cursor")?.toLongOrNull() ?: 0)
+        .put("pending", db.outboxCount()).put("pendingPulls", sync.pendingPulls).put("syncProgress", sync.syncProgress)
+        .put("lastSyncAt", sync.lastSyncAt)
+        .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray())
+
+    /**
+     * 收集箱与记灵感的窄代理：真正干活的是中枢（模型拟标题、语义转换、任务队列）。
+     * 未绑定中枢时返回 409 + 一句能看懂的话，而不是让前端撞上兜底 404「接口不存在」。
+     */
+    private suspend fun ApplicationCall.proxyHub(method: String, path: String, requestBody: String? = null) {
+        if (!authorize()) return
+        if (!agent.configured()) return error(HUB_REQUIRED, HttpStatusCode.Conflict)
+        val remote = agent.request(method, path, requestBody)
+        if (remote.status == 401) return error(HUB_TOKEN_REJECTED, HttpStatusCode.BadGateway)
+        val type = runCatching { ContentType.parse(remote.contentType) }.getOrDefault(ContentType.Application.Json)
+        response.header(HttpHeaders.CacheControl, "no-store")
+        response.header(HttpHeaders.ContentLength, remote.body.size.toString())
+        respondOutputStream(type, HttpStatusCode.fromValue(remote.status)) { write(remote.body) }
+    }
+
+    /** 收集箱上传：把 WebView 发来的 multipart 原样流式转发到中枢，文件不整块进内存、不限单文件大小。 */
+    private suspend fun ApplicationCall.proxyHubUpload() {
+        if (!authorize()) return
+        if (!agent.configured()) return error(HUB_REQUIRED, HttpStatusCode.Conflict)
+        val boundary = "----EngramAndroid${UUID.randomUUID().toString().replace("-", "")}"
+        val remote = agent.openMultipart("/api/inbox/upload", boundary)
+        try {
+            remote.doOutput = true
+            remote.setChunkedStreamingMode(64 * 1024)
+            remote.outputStream.buffered(64 * 1024).use { output ->
+                receiveMultipart(formFieldLimit = MAX_HUB_FIELD_BYTES).forEachPart { part ->
+                    when (part) {
+                        is PartData.FormItem -> {
+                            writeMultipartHeader(output, boundary, part.name.orEmpty().ifBlank { "dir" }, null, null)
+                            output.write(part.value.toByteArray(Charsets.UTF_8))
+                            output.write(MULTIPART_CRLF)
+                        }
+                        is PartData.FileItem -> {
+                            writeMultipartHeader(
+                                output,
+                                boundary,
+                                part.name.orEmpty().ifBlank { "file" },
+                                sanitizeFileName(part.originalFileName ?: "file"),
+                                part.contentType?.toString(),
+                            )
+                            part.provider().toInputStream().use { input -> input.copyTo(output, 64 * 1024) }
+                            output.write(MULTIPART_CRLF)
+                        }
+                        else -> Unit
+                    }
+                    part.dispose()
+                }
+                output.write("--$boundary--\r\n".toByteArray(Charsets.UTF_8))
+            }
+            val status = remote.responseCode
+            val source = if (status in 200..299) remote.inputStream else remote.errorStream
+            val bytes = source?.use { it.readBytesLimited(MAX_HUB_JSON_BYTES) } ?: ByteArray(0)
+            response.header(HttpHeaders.CacheControl, "no-store")
+            response.header(HttpHeaders.ContentLength, bytes.size.toString())
+            respondOutputStream(ContentType.Application.Json, HttpStatusCode.fromValue(status)) { write(bytes) }
+        } finally {
+            remote.disconnect()
+        }
+    }
+
+    /** 收集箱原件下载：流式转发中枢响应（原件可能远大于 JSON 代理的响应上限）。 */
+    private suspend fun ApplicationCall.proxyHubDownload() {
+        if (!authorize()) return
+        if (!agent.configured()) return error(HUB_REQUIRED, HttpStatusCode.Conflict)
+        val path = request.queryParameters["path"].orEmpty()
+        if (path.isBlank()) return error("缺少 path", HttpStatusCode.BadRequest)
+        val remote = agent.stream("/api/inbox/download?path=${encoded(path)}", "application/octet-stream")
+        val connection = remote.connection
+        try {
+            if (remote.status !in 200..299) {
+                val message = connection.errorStream?.bufferedReader()?.use { it.readText().take(16_384) }.orEmpty()
+                return error(message.ifBlank { "中枢返回 HTTP ${remote.status}" }, HttpStatusCode.fromValue(remote.status))
+            }
+            response.header(HttpHeaders.ContentDisposition, connection.getHeaderField(HttpHeaders.ContentDisposition) ?: "attachment")
+            response.header(HttpHeaders.CacheControl, "no-store")
+            respondOutputStream(ContentType.Application.OctetStream) {
+                connection.inputStream.use { input -> input.copyTo(this, 64 * 1024) }
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     private suspend fun ApplicationCall.proxyAgent(method: String, path: String, requestBody: String? = null) {
         if (!authorize()) return
@@ -587,6 +825,16 @@ class EngramLocalServer private constructor(private val context: Context) {
         private const val SESSION_COOKIE = "engram_local_session"
         private const val MAX_FILE_BYTES = 200L * 1024 * 1024
         private const val MAX_BACKUP_BYTES = 1024L * 1024 * 1024
+        private const val MAX_HUB_FIELD_BYTES = 1024L * 1024
+        private const val MAX_HUB_JSON_BYTES = 4L * 1024 * 1024
+        /** 单张图片资产上限（与 server routes/assets.ts 的 MAX_ASSET_BYTES 一致） */
+        private const val MAX_ASSET_BYTES = 12L * 1024 * 1024
+        private const val HUB_REQUIRED = "请先在多端同步中绑定 Docker 中枢：收集箱与记灵感都用中枢的模型和任务队列"
+        private const val HUB_TOKEN_REJECTED = "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机端的版本。"
+        /** 图片资产目录名白名单：页面 id（UUID）或未归属池，同时挡掉 `..`、绝对路径等穿越写法（与 server lib/pageAssets.ts 同规则） */
+        private val PARENT_ID_REGEX = Regex("^[A-Za-z0-9_-]{1,64}$")
+        private val ASSET_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp")
+        private val MULTIPART_CRLF = "\r\n".toByteArray(Charsets.UTF_8)
         @Volatile private var instance: EngramLocalServer? = null
 
         @JvmStatic fun getInstance(context: Context): EngramLocalServer = instance ?: synchronized(this) {
@@ -595,6 +843,18 @@ class EngramLocalServer private constructor(private val context: Context) {
         @JvmStatic fun peek(): EngramLocalServer? = instance
 
         private fun randomToken(): String = ByteArray(32).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it) }
+        /** 转发 multipart 时手写分段头：文件名按 UTF-8 写出，与中枢 `defParamCharset: 'utf8'` 对齐（中文名不乱码）。 */
+        private fun writeMultipartHeader(output: java.io.OutputStream, boundary: String, field: String, fileName: String?, contentType: String?) {
+            val header = buildString {
+                append("--").append(boundary).append("\r\n")
+                append("Content-Disposition: form-data; name=\"").append(field.replace("\"", "")).append('"')
+                if (fileName != null) append("; filename=\"").append(fileName.replace("\"", "")).append('"')
+                append("\r\n")
+                if (contentType != null) append("Content-Type: ").append(contentType).append("\r\n")
+                append("\r\n")
+            }
+            output.write(header.toByteArray(Charsets.UTF_8))
+        }
         private fun JSONObject.optStringOrNull(key: String) = if (!has(key) || isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
         private fun JSONObject.ids(): List<String> = (optJSONArray("ids") ?: JSONArray()).let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it).takeIf(String::isNotBlank) } }
         private fun JSONArray.contains(value: String) = (0 until length()).any { optString(it) == value }
@@ -606,7 +866,7 @@ class EngramLocalServer private constructor(private val context: Context) {
             "html" -> ContentType.Text.Html; "js", "mjs" -> ContentType("application", "javascript"); "css" -> ContentType.Text.CSS
             "json" -> ContentType.Application.Json; "pdf" -> ContentType.Application.Pdf
             "png" -> ContentType.Image.PNG; "jpg", "jpeg" -> ContentType.Image.JPEG; "gif" -> ContentType.Image.GIF
-            "svg" -> ContentType("image", "svg+xml"); "txt", "md", "markdown" -> ContentType.Text.Plain
+            "svg" -> ContentType("image", "svg+xml"); "avif" -> ContentType("image", "avif"); "bmp" -> ContentType("image", "bmp"); "txt", "md", "markdown" -> ContentType.Text.Plain
             "woff" -> ContentType("font", "woff"); "woff2" -> ContentType("font", "woff2")
             "ico" -> ContentType("image", "x-icon"); "webmanifest" -> ContentType.Application.Json
             else -> ContentType.Application.OctetStream
