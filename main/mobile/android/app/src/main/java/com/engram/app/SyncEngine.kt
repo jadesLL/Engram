@@ -31,6 +31,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     private val fullRequestWhileRunning = AtomicBoolean(false)
     @Volatile private var foreground = false
     @Volatile private var cancelled = false
+    /** 上一次写「对账进度」日志的时刻（只从同步线程读写，对齐 logReconcileProgress） */
+    private var lastProgressLogAt = 0L
     @Volatile var connected = false; private set
     @Volatile var lastError: String? = null; private set
     @Volatile var lastSyncAt: String? = db.setting("sync_last_at"); private set
@@ -291,6 +293,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                             require(path.isNotBlank() && (kind == "page" || kind == "file")) { "中枢清单条目无效" }
                             remoteCount++
                             if (remoteCount % 25 == 0) syncProgress = "正在核对中枢目录（$remoteCount 项）"
+                            logReconcileProgress(remoteCount)
                             inferredCursor = maxOf(inferredCursor, revision.toLong())
                             remotePaths += path
                             if (preferHub) db.dropOutboxForTarget(path)
@@ -385,6 +388,20 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         }
         db.log("info", "reconcile-done", "中枢 $remoteCount 项，本地 $localCount 项")
         syncProgress = if (remoteCount == 0) "正在补齐本机改动" else "已核对 $remoteCount 项"
+    }
+
+    /**
+     * 对账进度写进同步日志（每 10 秒最多一条）。
+     *
+     * 首轮全量对账可能持续数分钟：只记「开始/完成」两条的话，「同步详情」里整段时间一动不动，
+     * 看起来像卡住（2026-09-27 用户反馈）。按时间而不是按条数记，10 分钟的对账也只多 60 条，
+     * 不会把日志挤爆（本地只保留最近 100 条）。
+     */
+    private fun logReconcileProgress(itemCount: Int) {
+        val now = System.currentTimeMillis()
+        if (now - lastProgressLogAt < RECONCILE_PROGRESS_LOG_MS) return
+        lastProgressLogAt = now
+        db.log("info", "reconcile-progress", "已核对 $itemCount 项")
     }
 
     private fun pullFile(path: String) {
@@ -584,5 +601,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         private const val CHANGE_BATCH = 20
         private const val MAX_PARALLEL_FETCHES = 4
         private const val SNAPSHOT_FETCH_BATCH = MAX_PARALLEL_FETCHES
+        /** 对账进度日志的最小间隔：既要"看得到在动"，又不能把只留 100 条的日志挤爆 */
+        private const val RECONCILE_PROGRESS_LOG_MS = 10_000L
     }
 }

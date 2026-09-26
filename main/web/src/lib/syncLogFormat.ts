@@ -111,6 +111,8 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'oplog-trimmed': { label: '落后过多，转全量对账', category: '拉取' },
   // 对账
   'reconcile-start': { label: '全量对账开始', category: '对账' },
+  // Android 成员端：整库对账可能持续数分钟，每 10 秒记一条进度，用户能看到"还在动"
+  'reconcile-progress': { label: '全量对账进度', category: '对账' },
   'reconcile-done': { label: '全量对账完成', category: '对账' },
   'reconcile-item-failed': { label: '对账单项失败', category: '对账' },
   'reconcile-failed': { label: '全量对账失败', category: '对账' },

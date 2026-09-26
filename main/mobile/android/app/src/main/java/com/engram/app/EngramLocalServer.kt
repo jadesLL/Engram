@@ -597,7 +597,7 @@ class EngramLocalServer private constructor(private val context: Context) {
         .put("nodeId", db.setting("sync_node_id") ?: "").put("cursor", db.setting("sync_cursor")?.toLongOrNull() ?: 0)
         .put("pending", db.outboxCount()).put("pendingPulls", sync.pendingPulls).put("syncProgress", sync.syncProgress)
         .put("lastSyncAt", sync.lastSyncAt)
-        .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray())
+        .put("lastError", sync.lastError).put("log", db.logs(STATUS_LOG_TAIL)).put("peers", JSONArray())
 
     /**
      * 收集箱与记灵感的窄代理：真正干活的是中枢（模型拟标题、语义转换、任务队列）。
@@ -829,6 +829,8 @@ class EngramLocalServer private constructor(private val context: Context) {
         private const val MAX_HUB_JSON_BYTES = 4L * 1024 * 1024
         /** 单张图片资产上限（与 server routes/assets.ts 的 MAX_ASSET_BYTES 一致） */
         private const val MAX_ASSET_BYTES = 12L * 1024 * 1024
+        /** /api/sync/status 里带的同步日志尾巴条数：状态条与「立即同步」只认最新事件时间 */
+        private const val STATUS_LOG_TAIL = 30
         private const val HUB_REQUIRED = "请先在多端同步中绑定 Docker 中枢：收集箱与记灵感都用中枢的模型和任务队列"
         private const val HUB_TOKEN_REJECTED = "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机端的版本。"
         /** 图片资产目录名白名单：页面 id（UUID）或未归属池，同时挡掉 `..`、绝对路径等穿越写法（与 server lib/pageAssets.ts 同规则） */

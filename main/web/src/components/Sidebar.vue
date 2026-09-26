@@ -385,7 +385,8 @@ import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
-import { useSyncStore } from '../stores/sync';
+import { SYNC_INDEX_REFRESH_MS, useSyncStore } from '../stores/sync';
+import { createThrottledReload } from '../lib/refreshThrottle';
 import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { hideTooltip } from '../lib/tooltip';
@@ -1269,10 +1270,11 @@ watch(() => app.sidebarVersion, () => {
     void load();
   }, 200);
 });
-// Android 没有常驻页面 SSE；后台同步落盘后由共享状态轮询通知侧栏重读本地索引。
-watch(() => sync.status?.lastSyncAt, (current, previous) => {
-  if (current && current !== previous) app.bumpSidebar();
-});
+// Android 没有常驻页面 SSE；共享状态轮询既通知「同步结束」，也通知「一轮同步进行中」：
+// 首轮全量对账要几分钟，只在结束时刷新会让侧栏全程空白、结束时一次性冒出来。
+// 重读一次要打 4 个列表接口，对账期间本地服务正忙着写库，所以节流到每 5 秒最多一次。
+const reloadDuringSync = createThrottledReload(() => app.bumpSidebar(), SYNC_INDEX_REFRESH_MS);
+watch(() => sync.indexRevision, () => reloadDuringSync());
 onMounted(() => {
   load();
   chatStopped = false;

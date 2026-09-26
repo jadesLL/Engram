@@ -786,7 +786,22 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun outboxCount(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM sync_outbox", null).use { it.moveToFirst(); it.getInt(0) }
 
     fun log(level: String, event: String, detail: String = "") = synchronized(lock) { writableDatabase.execSQL("INSERT INTO sync_log(ts,level,event,detail) VALUES(?,?,?,?)", arrayOf(now(), level, event, detail)); writableDatabase.execSQL("DELETE FROM sync_log WHERE id NOT IN (SELECT id FROM sync_log ORDER BY id DESC LIMIT 100)") }
-    fun logs(): JSONArray { val out = JSONArray(); readableDatabase.rawQuery("SELECT ts,level,event,detail FROM sync_log ORDER BY id", null).use { c -> while (c.moveToNext()) out.put(JSONObject().put("ts", c.getString(0)).put("level", c.getString(1)).put("event", c.getString(2)).put("detail", c.getString(3))) }; return out }
+
+    /**
+     * 同步日志尾巴（旧 → 新，最多 limit 条）。
+     *
+     * `/api/sync/status` 每次轮询都带一份，只服务首页状态条与「立即同步」的收尾判断
+     * （两者都只认最新的一条事件时间）；完整日志走 /api/sync/log 分页。整表下发在
+     * 首轮全量对账期间（每 5 秒一次轮询）纯属白搬 JSON。
+     */
+    fun logs(limit: Int = 30): JSONArray {
+        val out = JSONArray()
+        readableDatabase.rawQuery(
+            "SELECT ts,level,event,detail FROM (SELECT id,ts,level,event,detail FROM sync_log ORDER BY id DESC LIMIT ?) ORDER BY id",
+            arrayOf(limit.toString()),
+        ).use { c -> while (c.moveToNext()) out.put(JSONObject().put("ts", c.getString(0)).put("level", c.getString(1)).put("event", c.getString(2)).put("detail", c.getString(3))) }
+        return out
+    }
 
     /**
      * 同步日志分页：形状对齐 server 的 /api/sync/log（entries 新→旧 + total/hasMore/summary），
