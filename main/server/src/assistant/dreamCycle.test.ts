@@ -86,11 +86,17 @@ function fakeAudit(overrides: Partial<import('./dreamAudit.js').DreamAudit> = {}
 
 const deps = () => ({ submit: fakeSubmit, audit: () => fakeAudit() });
 
-/** 把一轮标成完成并补上助手正文（收口后的状态长这样） */
-function completeRun(runId: string, text: string): void {
+/**
+ * 把一轮标成完成并补上助手正文（收口后的状态长这样）。
+ * `at` 用来钉住完成时刻：结算写的 lastRunAt 取的是轮次真实完成时刻（repo 用系统时钟），
+ * 而排期用例注入的是合成时钟（今天 09:00）——不钉住的话，本地 00:00–03:00 之间跑，
+ * 「每天 03:00」的下一次就会落在当天 03:00（早于注入的 09:00），第二条断言必失败。
+ */
+function completeRun(runId: string, text: string, at?: Date): void {
   const run = repo.getRun(runId)!;
   const assistant = repo.insertMessage({ sessionId: run.sessionId, runId, role: 'assistant', content: text });
   repo.updateRun(runId, { status: 'completed', assistantMessageId: assistant.id });
+  if (at) db.prepare('UPDATE assistant_runs SET completed_at = ? WHERE id = ?').run(at.toISOString(), runId);
 }
 
 test('ensureDreamSession：建一次并复用，带系统标记（不参与会话同步）', () => {
@@ -251,7 +257,7 @@ test('dreamTick：到点且有事可做就起轮；跑完结算后按实际完�
   assert.equal(submitted.length, 1);
   assert.equal(configKernel.readDreamState().lastTrigger, 'schedule');
 
-  completeRun(result.runId, '夜间整理完成：处理 2 份资料。');
+  completeRun(result.runId, '夜间整理完成：处理 2 份资料。', new Date(now.getTime() + 60_000));
   // 下一次 tick 先结算上一轮；结算后当天不再重复起轮（下一个计划在明天 03:00）
   const after = kernel.dreamTick(now, deps());
   assert.equal(after.started, false);
