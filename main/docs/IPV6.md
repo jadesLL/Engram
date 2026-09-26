@@ -10,7 +10,7 @@ Engram 的远程访问支持双通道自动择优：客户端启动时按「直�
       例：https://engram.xxx.com
 ```
 
-仓库代码零域名硬编码：直连地址由**服务端通告**——部署侧在 `main/.env`（不入库）配置 `DIRECT_ACCESS_URL`，经 `/health` 下发给已登录客户端；Android 本地优先版可在 设置 → 连接与同步 → 多端同步 为中枢额外填写局域网 / IPv6 直连地址，主地址不可达时按顺序尝试。
+仓库代码零域名硬编码：直连地址由**服务端通告**——部署侧在 `main/.env`（不入库）配置 `DIRECT_ACCESS_URL`，经 `/health` 下发给已登录客户端；Android 本地优先版可在 设置 → 多端同步 → 同步群组 为中枢额外填写局域网 / IPv6 直连地址，主地址不可达时按顺序尝试。
 
 ## 服务端配置（部署侧）
 
@@ -41,7 +41,7 @@ Engram 的远程访问支持双通道自动择优：客户端启动时按「直�
 
 家宽 IPv6 前缀会不定期变化（运营商重拨），需要 DDNS 定期把稳定 IPv6 写入 DNS AAAA 记录。
 
-**优先用应用内置 DDNS**（v1.1.37+，设置 → 连接与同步 → 多端同步 → 「DDNS 直连域名」）：填 Cloudflare API Token（Zone.DNS Edit 权限）与记录域名即可，服务端默认每 5 分钟探测本机公网 IP、与 Cloudflare 记录比对、变化才写（自动甄别排除 IPv6 隐私临时地址，IPv4 经回声服务取公网地址），无需在宿主机另装 DDNS 客户端或计划任务；Docker 部署也可用 `DDNS_TOKEN`/`DDNS_RECORD` 等环境变量配置。
+**优先用应用内置 DDNS**（v1.1.37+，设置 → 多端同步 → 同步群组 → 「DDNS 直连域名」）：填 Cloudflare API Token（Zone.DNS Edit 权限）与记录域名即可，服务端默认每 5 分钟探测本机公网 IP、与 Cloudflare 记录比对、变化才写（自动甄别排除 IPv6 隐私临时地址，IPv4 经回声服务取公网地址），无需在宿主机另装 DDNS 客户端或计划任务；Docker 部署也可用 `DDNS_TOKEN`/`DDNS_RECORD` 等环境变量配置。
 
 **宿主机手动方案**（兜底——容器内看不到宿主网卡、宿主网络复杂的场景仍建议在宿主侧维护解析）以 Cloudflare DNS 为例（PowerShell，计划任务每 5 分钟）：
 

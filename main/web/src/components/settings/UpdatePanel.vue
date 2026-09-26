@@ -172,7 +172,7 @@
         <span class="group-ico" aria-hidden="true"><Icon name="monitor" :size="16" /></span>
         <span class="group-text">
           <span class="group-title">桌面端更新</span>
-          <span class="group-hint">Windows 桌面端的版本：安装包自动或手动下载安装，源码模式增量拉取提交并重新构建（开机自启、桌面快捷方式与卸载见「桌面端应用」与「数据与存储 → 危险操作」）</span>
+          <span class="group-hint">Windows 桌面端的版本：安装包自动或手动下载安装，源码模式增量拉取提交并重新构建（开机自启与桌面快捷方式见「本机应用 → 桌面端应用」，卸载见「本机应用 → 卸载 Engram」）</span>
         </span>
         <span v-if="desktopVersionBadge" class="group-badge tone-muted">{{ desktopVersionBadge }}</span>
         <span v-if="desktopBadge.text" class="group-badge" :class="`tone-${desktopBadge.tone}`">{{ desktopBadge.text }}</span>
@@ -307,85 +307,8 @@
     </div>
   </section>
 
-  <!-- ============ 桌面端应用（这台机器上怎么跑 Engram：开机自启 / 快捷方式） ============
-       2026-09-24 从「桌面端更新」拆出：更新分组只谈版本，这两项是桌面端运行时行为。
-       卸载 Engram 与之同源（都是桌面端本机动作），但因为它不可撤销，移到「数据与存储 → 危险操作」，
-       与清库 / 清日志并列，不再留在本组件里。 -->
-  <section v-if="isDesktop" id="panel-app" class="settings-panel settings-native settings-group level-normal">
-    <div class="group-card" :class="{ 'is-collapsed': appCollapsed }">
-      <div class="group-band collapsible" @click="onBandClick($event, 'panel-app')">
-        <span class="group-ico" aria-hidden="true"><Icon name="monitor" :size="16" /></span>
-        <span class="group-text">
-          <span class="group-title">桌面端应用</span>
-          <span class="group-hint">Windows 桌面端本机行为：登录后是否自动启动、桌面快捷方式重建</span>
-        </span>
-        <span v-if="launchAtLoginSupported" class="group-badge" :class="launchAtLogin.enabled ? 'tone-ok' : 'tone-muted'">
-          {{ launchAtLogin.enabled ? '开机自启已开启' : '开机自启已关闭' }}
-        </span>
-        <button
-          type="button"
-          class="group-caret"
-          :aria-expanded="appCollapsed ? 'false' : 'true'"
-          :title="appCollapsed ? '展开「桌面端应用」' : '收起「桌面端应用」'"
-          @click.stop="toggleGroup('panel-app')"
-        >
-          <Icon name="chevron-down" :size="14" />
-        </button>
-      </div>
-      <div v-show="!appCollapsed" class="group-body flush">
-
-        <!-- 开机自启：登录 Windows 后静默启动到系统托盘（旧版壳无此 API 时整行隐藏） -->
-        <div v-if="launchAtLoginSupported" class="setting-row">
-          <div class="setting-copy">
-            <strong>开机自启</strong>
-            <span>
-              登录 Windows 后自动启动 Engram，<strong>静默驻留系统托盘</strong>：不弹主窗口，内嵌服务照常运行；
-              托盘图标双击（或桌面快捷方式）即可打开主界面。托盘右键菜单里也能开关。
-            </span>
-          </div>
-          <div class="check-controls">
-            <span v-if="launchAtLogin.blocked" class="check-status has">已被系统禁用</span>
-            <label class="switch-control">
-              <input
-                type="checkbox"
-                :checked="launchAtLogin.enabled"
-                :disabled="launchAtLoginBusy"
-                @change="toggleLaunchAtLogin"
-              />
-              <span aria-hidden="true"></span>
-              <em>{{ launchAtLogin.enabled ? '已开启' : '已关闭' }}</em>
-            </label>
-          </div>
-        </div>
-        <p v-if="launchAtLoginMessage" class="setting-message" :class="launchAtLoginError ? 'err' : ''">{{ launchAtLoginMessage }}</p>
-        <p v-if="launchAtLoginSupported && launchAtLogin.blocked" class="setting-message warn">
-          启动项被「任务管理器 → 启动」禁用了，开机不会自动运行；在这里重新打开一次开关即可恢复。
-        </p>
-        <p v-if="launchAtLoginSupported && launchAtLogin.stale" class="setting-message warn">
-          检测到启动项命令与当前安装位置不一致（换过安装目录或旧版本写入），开关一次即可修正。
-        </p>
-
-        <!-- 桌面快捷方式：图标丢失或显示不对时重建（源码模式同时生成带 Engram 图标的 Engram.exe） -->
-        <div v-if="shortcutSupported" class="setting-row">
-          <div class="setting-copy">
-            <strong>桌面快捷方式</strong>
-            <span>
-              桌面上的 Engram 图标丢失或显示不对时在此重建。
-              <template v-if="sourceMode">源码模式的启动程序是 Electron 官方运行时（图标是 Electron 的原子），重建会在同目录生成一份带 Engram 图标的 Engram.exe 作为启动目标，资源管理器与任务栏图标随之统一。</template>
-              <template v-else>重建指向当前安装目录 Engram.exe 的桌面快捷方式。</template>
-            </span>
-          </div>
-          <div class="check-controls">
-            <button class="btn" type="button" :disabled="shortcutBusy" @click="doRebuildShortcut">
-              <AppSpinner v-if="shortcutBusy" :size="11" />
-              <template v-else>重建桌面快捷方式</template>
-            </button>
-          </div>
-        </div>
-        <p v-if="shortcutMessage" class="setting-message" :class="shortcutError ? 'err' : ''">{{ shortcutMessage }}</p>
-      </div>
-    </div>
-  </section>
+  <!-- 桌面端应用（开机自启 / 桌面快捷方式）：2026-09-28 起拆到 DesktopAppSection.vue，
+       归属「本机应用」大类（方案 A）。更新分组只谈版本，本机应用行为不在这里。 -->
 
   <!-- ============ 更新源配置 ============ -->
   <section id="panel-update-source" class="settings-panel settings-native settings-group level-normal">
@@ -599,25 +522,8 @@ const sourceAutoSupported = ref(false);
 const sourceAuto = ref<any>({ enabled: true, phase: 'idle', behind: 0, localCommit: '', remoteCommit: '', error: '', checkedAt: null });
 let offSourceState: (() => void) | null = null;
 
-// 桌面快捷方式重建：旧版壳无 desktopRebuildShortcut API 时隐藏该行（见「桌面端应用」分组）
-const shortcutSupported = ref(false);
-const shortcutBusy = ref(false);
-const shortcutMessage = ref('');
-const shortcutError = ref(false);
-
-// 开机自启（Windows 登录时静默启动到系统托盘）：旧版壳无 getLaunchAtLogin API 时隐藏该行
-const launchAtLoginSupported = ref(false);
-const launchAtLogin = ref<{
-  supported: boolean;
-  enabled: boolean;
-  stale: boolean;
-  blocked: boolean;
-  command: string;
-}>({ supported: false, enabled: false, stale: false, blocked: false, command: '' });
-const launchAtLoginBusy = ref(false);
-const launchAtLoginMessage = ref('');
-const launchAtLoginError = ref(false);
-let offLaunchAtLogin: (() => void) | null = null;
+// 桌面快捷方式重建与开机自启不在这里：2026-09-28 起随「桌面端应用」分组拆到 DesktopAppSection.vue
+// （归属「本机应用」大类），本组件只剩版本相关的分组。
 
 // ---- 同步中枢远程更新（本地模式绑定多端同步后可用，转发走本地内嵌 server） ----
 const syncStatus = ref<{ role: string; enabled: boolean; hubUrl: string } | null>(null);
@@ -672,11 +578,7 @@ useSettingsBadge(
   'panel-update-desktop',
   computed(() => desktopBadge.value.text),
 );
-// 开机自启是「离开设置页也在后台生效」的状态：二级导航上直接写出开关，免得用户为看一眼跑一趟
-useSettingsBadge(
-  'panel-app',
-  computed(() => (launchAtLoginSupported.value ? (launchAtLogin.value.enabled ? '开机自启已开' : '开机自启已关') : '')),
-);
+// 开机自启徽标（panel-app）不在这里：随「桌面端应用」分组拆到 DesktopAppSection.vue
 useSettingsBadge(
   'panel-update-source',
   computed(() => (configLoaded.value && !state.value.giteaConfigured ? '未配置' : '')),
@@ -779,7 +681,6 @@ watch(
   (now) => {
     if (!now) return;
     loadSync();
-    void loadLaunchAtLogin();
   }
 );
 
@@ -827,10 +728,9 @@ const desktopVersionBadge = computed(() => {
   return formatVersionLabel(base, { commit: env?.commit || '', commitDate: env?.commitDate || '', dirty: env?.dirty });
 });
 
-// 分组折叠：四张分组卡片各自持久化折叠状态（锚点 id 即各卡片的 DOM id）
+// 分组折叠：本组件三张分组卡片各自持久化折叠状态（锚点 id 即各卡片的 DOM id）
 const serverCollapsed = computed(() => isGroupCollapsed('panel-update-server'));
 const desktopCollapsed = computed(() => isGroupCollapsed('panel-update-desktop'));
-const appCollapsed = computed(() => isGroupCollapsed('panel-app'));
 const sourceCollapsed = computed(() => isGroupCollapsed('panel-update-source'));
 function toggleGroup(anchor: string) {
   toggleGroupCollapsed(anchor);
@@ -1080,71 +980,9 @@ async function doSourceUpdate() {
   }
 }
 
-// 卸载 Engram 不在这里：2026-09-24 起移到「数据与存储 → 危险操作」（DataDangerSection.vue），
-// 与清库 / 清日志并列——都是不可撤销的本机动作，不放版本更新分组里
-
-async function doRebuildShortcut() {
-  const wd = wikiDesktop();
-  if (!wd?.desktopRebuildShortcut) return;
-  shortcutBusy.value = true;
-  shortcutMessage.value = '';
-  shortcutError.value = false;
-  try {
-    const r = await wd.desktopRebuildShortcut();
-    shortcutError.value = !r?.ok;
-    shortcutMessage.value = r?.ok ? r.message || '已重建桌面快捷方式' : r?.error || '重建失败';
-    if (r?.ok) notify.success('桌面快捷方式已重建');
-  } catch (e: any) {
-    shortcutError.value = true;
-    shortcutMessage.value = e?.message || '重建失败';
-  } finally {
-    shortcutBusy.value = false;
-  }
-}
-
-/** 读取开机自启状态（注册表实况）；旧版壳无此 API 时整行隐藏 */
-async function loadLaunchAtLogin() {
-  const wd = wikiDesktop();
-  if (!wd?.getLaunchAtLogin) {
-    launchAtLoginSupported.value = false;
-    return;
-  }
-  try {
-    const s = await wd.getLaunchAtLogin();
-    launchAtLogin.value = s;
-    launchAtLoginSupported.value = Boolean(s?.supported);
-  } catch {
-    launchAtLoginSupported.value = false;
-  }
-}
-
-async function toggleLaunchAtLogin(e: Event) {
-  const wd = wikiDesktop();
-  const enabled = (e.target as HTMLInputElement).checked;
-  if (!wd?.setLaunchAtLogin) return;
-  launchAtLoginBusy.value = true;
-  launchAtLoginMessage.value = '';
-  try {
-    const r = await wd.setLaunchAtLogin(enabled);
-    if (r?.ok === false) {
-      launchAtLoginError.value = true;
-      launchAtLoginMessage.value = r.error || '设置失败';
-      await loadLaunchAtLogin(); // 回读真实状态，避免开关停在用户点的那一侧
-      return;
-    }
-    launchAtLogin.value = r;
-    launchAtLoginError.value = false;
-    launchAtLoginMessage.value = enabled
-      ? '已开启：下次登录 Windows 会静默启动到系统托盘，不弹主窗口。'
-      : '已关闭：登录 Windows 后不再自动启动。';
-  } catch (e: any) {
-    launchAtLoginError.value = true;
-    launchAtLoginMessage.value = e?.message || '设置失败，请重试';
-    await loadLaunchAtLogin();
-  } finally {
-    launchAtLoginBusy.value = false;
-  }
-}
+// 卸载 Engram 与桌面端应用（开机自启 / 快捷方式）都不在这里：
+// 2026-09-28 起归「本机应用」大类——开机自启与快捷方式在 DesktopAppSection.vue，
+// 卸载在 UninstallSection.vue；本组件只负责版本相关的三张卡片。
 
 async function saveConfig() {
   const parsed = parseRepoUrl(form.repoUrl);
@@ -1236,22 +1074,12 @@ onMounted(() => {
       });
     }
   }
-  // 桌面快捷方式重建入口：旧版壳无此 API 时该行自动隐藏（「桌面端应用」分组）
-  shortcutSupported.value = Boolean(wd?.desktopRebuildShortcut);
-  // 开机自启：旧版壳无此 API 时该行自动隐藏（「桌面端应用」分组）；托盘菜单里改开关时靠订阅同步
-  void loadLaunchAtLogin();
-  if (wd?.onLaunchAtLoginState) {
-    offLaunchAtLogin = wd.onLaunchAtLoginState((s: any) => {
-      launchAtLogin.value = s;
-      launchAtLoginSupported.value = Boolean(s?.supported);
-    });
-  }
+  // 桌面快捷方式重建 / 开机自启的初始化已随「桌面端应用」分组移到 DesktopAppSection.vue
 });
 onUnmounted(() => {
   offProgress?.();
   offAutoState?.();
   offSourceState?.();
-  offLaunchAtLogin?.();
 });
 </script>
 

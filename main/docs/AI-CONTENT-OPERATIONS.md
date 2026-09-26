@@ -10,13 +10,13 @@
 
 Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）、FTS5 关键词检索、来源版本与证据账本、写入门禁由 Engram 确定性完成；总结、提炼、消歧、综合、问答、图片识别全部由 Agent 负责——外部 Agent（ZCode / Codex / Claude Code / DeepSeek Harness 等）经 MCP 或 CLI 接入，或使用 Engram 随包内置的 Agent（设置页填自己的模型 Key 后，左栏 ✨ 聊天抽屉即用；它同样只经 MCP 工具读写知识库）。
 
-内置 Agent 还能**按计划无人值守地跑一轮**（设置 → Agent 接入 → 梦境思考）：到点自动把待提炼的原始资料逐份整理入库，再做一次全库纠错（死链 / 疑似重复 / 规则落后 / 页面契约）。这一轮跑在专用系统会话「梦境思考」里（同一条 runner：工具卡、思考段、用量、停止与事件流都在），一轮只跑一个会话、配置按设备保存。服务端在开跑前用确定性口径算好待办信号（`list_raw_files pending=true` / `edges` 的未解析双链 / `guide_version` 落后），随任务文本下发；**这一轮不调用 `ask_user`**（用户不在场），公司全名核验照常登记、等用户下次在对话里答复，其余按证据自定并标注「待核实」。
+内置 Agent 还能**按计划无人值守地跑一轮**（设置 → Agent 与自动化 → 自动整理（梦境思考））：到点自动把待提炼的原始资料逐份整理入库，再做一次全库纠错（死链 / 疑似重复 / 规则落后 / 页面契约）。这一轮跑在专用系统会话「梦境思考」里（同一条 runner：工具卡、思考段、用量、停止与事件流都在），一轮只跑一个会话、配置按设备保存。服务端在开跑前用确定性口径算好待办信号（`list_raw_files pending=true` / `edges` 的未解析双链 / `guide_version` 落后），随任务文本下发；**这一轮不调用 `ask_user`**（用户不在场），公司全名核验照常登记、等用户下次在对话里答复，其余按证据自定并标注「待核实」。
 
 ## 接入方式与优先级
 
 - **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / names check|propose|list|audit|answer / chat save / guide / mcp-config），`--json` 得机器可读输出。
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
-- **Agent 接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 接入直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；WorkBuddy、Qoder 与 Kimi Work 有对应的 MCP/插件配置片段与接入步骤；远程部署也可使用 MCP 配置片段或 `engram login`。
+- **Agent 接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 与自动化直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；WorkBuddy、Qoder 与 Kimi Work 有对应的 MCP/插件配置片段与接入步骤；远程部署也可使用 MCP 配置片段或 `engram login`。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
 - **原始资料受限新建**：`create_raw_material` 是唯一允许 Agent 新建原始资料的 MCP 工具，只能新建 `原始资料/` 下的 Markdown 文件；路径已存在（含回收站占位）即拒绝，且不能写 `原始资料/对话/`。调研成果写 `原始资料/文档/`，用户随口记的零散内容写 `原始资料/灵感碎片/`。仅在用户明确要求保存调研结果时调用。Agent 不得更新、改名、删除既有原始资料，也不得走 HTTP/CLI 旁路。`AIWorks/` 只读；`write_page` / `rename_page` / `move_page` / `delete_page` 仍只允许 `Wiki/`。
   - 作业时需要的资料不在库里且用户没有要求保存调研结果时：按现有材料推进，把缺口写进页面的「待核实」，**不要停下来等用户**。证据门禁报「来源必须在 `原始资料/` 下」时同理——跳过这条事实（或改用库内来源支撑）并记进「待核实」，不要自己找旁路把文件塞进去。
@@ -24,7 +24,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - **原始资料二级分类（固定三个）**：一级目录是 `原始资料/`，其下固定 **`文档/`**（成文的完整文件：会议纪要、调研报告、复盘、年报、教程、攻略…，新资料默认落这里）、**`对话/`**（`save_chat` 专用）、**`灵感碎片/`**（随手记：零散条目、想法、待办）。Agent 不要自造其他二级目录；二级分类上线前留在 `原始资料/` 根目录的历史文件按「文档」对待（侧栏「文档」分组会把根目录文件一并列出，磁盘不动）。证据门禁、提炼清单、检索都按 `原始资料/` 前缀判定，二级目录不影响。用户在编辑页的「分类」下拉里换分类会移动文件，服务端同步把按路径存的账本（`source_versions` / `ingest_runs` / `page_revisions`）改挂新路径——所以**你按 `list_raw_files` 看到的路径始终是当前路径**，「已提炼」标记与证据来源不会因为用户换分类而失效。
 - **调研资料与对话分开保存**：用户明确要求保存调研成果时，用 `create_raw_material` 创建新 Markdown 文件并在正文列出来源；它不覆盖现有文件。`save_chat` 只保存与 Agent 的聊天记录到 `原始资料/对话/`，两者不能互相替代。
 - **内置 skill 按需下发**：`skill_list`（MCP）列服务端内置的作业 skill 元数据（名称 / 用途 / 何时用 / 版本），`skill_guide` 按名取全文。skill 与《Agent 作业指南》同级、同样由服务端内置经 MCP 下发（Agent 读的是工具返回值，不是安装目录文件）；区别是**按需**——清单只回元数据，需要时才取正文，因此 skill 增多不会一次性灌满上下文。skill 版本独立于 `GUIDE_VERSION`，改 skill 不改抽取口径、**不触发全库「规则落后」**；skill 仅服务端内置，不开放用户自定义。新增 skill 时同步 `web/src/lib/mcpTools.ts`（Agent 接入界面清单）与本文。
-- **删除只入回收站**：`delete_page`（MCP）与 `engram pages delete`（CLI）只做软删除，把单个页面移入回收站（按标题 / 页面 ID / 页面路径定位；用户可在 设置 → 数据与存储 → 回收站 恢复）；也不提供永久删除或清空回收站能力。
+- **删除只入回收站**：`delete_page`（MCP）与 `engram pages delete`（CLI）只做软删除，把单个页面移入回收站（按标题 / 页面 ID / 页面路径定位；用户可在 设置 → 知识库数据 → 回收站 恢复）；也不提供永久删除或清空回收站能力。
 - **改名/移动不换 ID**：`rename_page` / `move_page`（CLI `pages rename|move`）保持页面 ID 与图谱边；重命名会把其他页面引用的 `[[旧标题]]` 双链重定向。不要用「新建+删除」模拟改名——那会产生新页面 ID 并让引用悬空。
 - **图谱关联可查询**：`related_pages`（MCP）返回页面的入链/出链邻居与实体关系（与编辑器「相关页面」同一数据），供写「相关页面」章节、验证 `[[双链]]` 目标与排查反向引用。
 - **全自动、不打断（拿不准就自己定）**：作业全流程不问用户、不空等。只有用户才知道、资料里又查不到的信息（同名主体区分、客户身份口径等），先自查（`search` 全库、读原文比对），仍无定论就按证据取最可信的写法落页，并在正文标注「待核实」与依据（候选、出处、为什么这么取）；**不得编造**。事实冲突、对象身份不清同理：不建页，把冲突与候选记进相关页面的「待核实」，继续处理下一份，不要卡住整批作业。**唯一例外是公司工商全名**，见下一条（内置 Agent 的对话提问工具 `ask_user` 只服务这条例外——问题弹在 Engram 对话最下侧，用户点选后工具当场返回，Agent 同一轮继续）。

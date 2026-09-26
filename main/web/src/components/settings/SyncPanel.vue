@@ -4,7 +4,7 @@
       <div class="group-band collapsible" @click="onBandClick">
         <span class="group-ico" aria-hidden="true"><Icon name="refresh" :size="16" /></span>
         <span class="group-text">
-          <span class="group-title">多端同步</span>
+          <span class="group-title">同步群组</span>
           <span class="group-hint">把多台设备组成一个同步群组：只要求中枢设备可被其他设备访问，成员设备之间无需互通</span>
         </span>
         <span v-if="roleBadge" class="group-badge" :class="`tone-${roleBadgeTone}`">{{ roleBadge }}</span>
@@ -12,7 +12,7 @@
           type="button"
           class="group-caret"
           :aria-expanded="groupCollapsed ? 'false' : 'true'"
-          :title="groupCollapsed ? '展开「多端同步」' : '收起「多端同步」'"
+          :title="groupCollapsed ? '展开「同步群组」' : '收起「同步群组」'"
           @click.stop="toggleGroup"
         >
           <Icon name="chevron-down" :size="14" />
@@ -130,12 +130,7 @@
         <button class="btn small" type="button" @click="newPeer = null">我已保存，关闭</button>
       </div>
 
-      <!-- DDNS 是中枢的进阶子项：卡片内的小分区，不再单独成组（避免卡中卡） -->
-      <div v-if="status.role === 'hub' && capabilities.features.ddns" class="sub-block ddns-block">
-        <div class="block-caption">DDNS 直连域名</div>
-        <p class="sub-hint">只有中枢可开启：把一条域名指向中枢公网 IP，成员绑定中枢时可直接填这个域名</p>
-        <DdnsSection />
-      </div>
+      <!-- DDNS 2026-09-28 起独立成组（方案 A）：它只在担任中枢时存在，卡片见本文件末尾的第二个根节点 -->
     </template>
 
     <!-- 成员：绑定与状态 -->
@@ -180,6 +175,19 @@
       </div>
     </div>
   </section>
+
+  <!-- DDNS 直连域名：2026-09-28 起独立成组（方案 A）——它只在「这台设备担任中枢」时才有内容，
+       因此除了这里的 v-if，还把同一条件登记进导航（useSettingsAnchorVisible），
+       避免非中枢设备留下一个点不动的死锚点。 -->
+  <SettingsGroup
+    v-if="showDdns"
+    class="settings-native"
+    anchor="sync-ddns"
+    title="DDNS 直连域名"
+    hint="只有中枢可开启：把一条域名指向中枢公网 IP，成员绑定中枢时可直接填这个域名"
+  >
+    <DdnsSection />
+  </SettingsGroup>
 </template>
 
 <script setup lang="ts">
@@ -189,7 +197,9 @@ import { promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
 import Icon from '../Icon.vue';
+import SettingsGroup from './SettingsGroup.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
+import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 import { openSyncLogDrawer } from '../../lib/syncLog';
 import SecretField from '../SecretField.vue';
@@ -263,6 +273,11 @@ useSettingsBadge(
     return '未配置';
   }),
 );
+
+/** DDNS 直连域名：中枢专属（只有中枢能把自己的公网 IP 写进域名），且服务端要开着 DDNS 能力 */
+const showDdns = computed(() => status.value?.role === 'hub' && capabilities.value.features.ddns);
+// 与上面的渲染条件同源：非中枢设备不该在导航里看到「DDNS 直连域名」
+useSettingsAnchorVisible('sync-ddns', showDdns);
 
 // 分组卡片色带上的角色徽标（与导航徽标同源）
 const roleBadge = computed(() => {

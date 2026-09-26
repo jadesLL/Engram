@@ -1,12 +1,5 @@
 <template>
   <section class="settings-panel settings-native">
-    <div class="panel-head">
-      <div>
-        <h3>账户与外观</h3>
-        <p>调整登录凭据和界面显示方式。</p>
-      </div>
-    </div>
-
     <SettingsGroup anchor="account-credentials" title="账户" hint="登录密码与当前会话" :default-open="true" flush>
       <div class="setting-row setting-row-form">
         <div class="setting-copy">
@@ -30,61 +23,16 @@
       </div>
     </SettingsGroup>
 
-    <SettingsGroup anchor="account-appearance" title="外观" hint="界面显示方式" :default-open="true" flush>
-      <div class="setting-row">
-        <div class="setting-copy">
-          <strong>主题</strong>
-          <span>选择浅色、深色或跟随系统。</span>
-        </div>
-        <div class="segmented" role="radiogroup" aria-label="主题">
-          <button
-            v-for="opt in themeOptions"
-            :key="opt.value"
-            type="button"
-            role="radio"
-            :aria-checked="app.theme === opt.value"
-            :class="{ active: app.theme === opt.value }"
-            @click="app.setTheme(opt.value as any)"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-copy">
-          <strong>悬停提示严格避让</strong>
-          <span>提示只贴在被说明对象的四周（不外移、不画引导线）。开启后逐边比较，优先选不压住内容的一边，必要时换边或收窄气泡；关闭后优先贴首选方向显示，允许轻微遮挡。</span>
-        </div>
-        <label class="switch-control">
-          <input type="checkbox" :checked="tipStrict" @change="toggleTipStrict" />
-          <span aria-hidden="true"></span>
-          <em>{{ tipStrict ? '已开启' : '已关闭' }}</em>
-        </label>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-copy">
-          <strong>显示 AI 工作区</strong>
-          <span>侧栏里的「AI 工作区」是服务端自动生成的操作日志、全库索引与关系库，日常不需要看，默认隐藏。打开后它出现在侧栏底部（只读）。</span>
-        </div>
-        <label class="switch-control">
-          <input type="checkbox" :checked="app.showAiWorkspace" @change="toggleAiWorkspace" />
-          <span aria-hidden="true"></span>
-          <em>{{ app.showAiWorkspace ? '已显示' : '已隐藏' }}</em>
-        </label>
-      </div>
-    </SettingsGroup>
-
-    <!-- 连接与版本：日常不需要动手，归入「高级」默认收起（分级强调的一档） -->
+    <!-- 连接通道：服务器经 /health 通告直连地址时才存在（Android 本地版没有这条链路）；
+         整组只有这一行，所以显隐必须与导航登记用同一个条件，否则会留下点不动的死锚点 -->
     <SettingsGroup
+      v-if="connectionVisible"
       anchor="account-connection"
-      title="连接与版本"
-      hint="访问通道与当前版本"
-      level="advanced"
+      title="连接通道"
+      hint="当前访问路径与直连可用性"
       flush
     >
-      <div v-if="capabilities.runtime !== 'android-local' && connState !== 'unconfigured'" class="setting-row">
+      <div class="setting-row">
         <div class="setting-copy">
           <strong>连接通道</strong>
           <span>当前访问路径与直连可用性。</span>
@@ -102,14 +50,6 @@
           <button class="btn" type="button" @click="copyDirect">{{ directCopied ? '已复制' : '复制' }}</button>
         </p>
       </div>
-
-      <div class="setting-row">
-        <div class="setting-copy">
-          <strong>应用版本</strong>
-          <span>{{ versionHint }}</span>
-        </div>
-        <code class="app-version">{{ versionLabel }}</code>
-      </div>
     </SettingsGroup>
   </section>
 </template>
@@ -119,79 +59,59 @@ import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import SecretField from '../SecretField.vue';
 import SettingsGroup from './SettingsGroup.vue';
-import { useAppStore } from '../../stores/app';
 import { useAuthStore } from '../../stores/auth';
-import { APP_VERSION } from '../../version';
-import { formatVersionHint, formatVersionLabel, type GitIdentity } from '../../lib/buildLabel';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
-import { notify } from '../../lib/notify';
-import { getTooltipStrict, setTooltipStrict } from '../../lib/tooltip';
+import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
 
-const app = useAppStore();
+/**
+ * 「账户与访问」大类：账户凭据 + 连接通道。
+ *
+ * 2026-09-28 改版（方案 A「一事一类」）：
+ *  - 「外观」拆到 AppearanceSection.vue，归「界面与检索」；
+ *  - 「应用版本」拆到 AppVersionSection.vue，归「本机应用」；
+ *  - 原来混装的「连接与版本」只剩连接通道，改名为「连接通道」，留在本大类。
+ */
 const auth = useAuthStore();
 const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
-
-// 悬停提示避让强度（全局偏好，存 localStorage；提示引擎每次显示时读取）
-const tipStrict = ref(getTooltipStrict());
-function toggleTipStrict(event: Event): void {
-  const on = (event.target as HTMLInputElement).checked;
-  tipStrict.value = on;
-  setTooltipStrict(on);
-  notify.success(on ? '悬停提示：严格避让（不遮挡内容）' : '悬停提示：就近优先');
-}
-
-/** 侧栏「AI 工作区」显示开关：默认隐藏，打开后写服务端设置（多端一致，失败回滚） */
-async function toggleAiWorkspace(event: Event): Promise<void> {
-  const on = (event.target as HTMLInputElement).checked;
-  try {
-    await app.setShowAiWorkspace(on);
-    notify.success(on ? 'AI 工作区：已显示在侧栏底部' : 'AI 工作区：已隐藏');
-  } catch {
-    notify.error('保存失败，请重试');
-  }
-}
-
-// 提交身份两个来源：桌面源码模式由主进程经 IPC 给出（含提交日期/脏标记），
-// Docker 镜像与浏览器访问由服务端 /api/update/state 给出（镜像内烤入 /app/GIT_SHA）。
-// 都拿不到时（安装包形态、无 git 的部署）退回纯版本号。
-const desktopEnv = ref<GitIdentity | null>(null);
-const serverCommit = ref('');
-const identity = computed<GitIdentity>(() => {
-  const commit = desktopEnv.value?.commit || serverCommit.value;
-  if (!commit) return { commit: '' };
-  return {
-    commit,
-    commitDate: desktopEnv.value?.commitDate || '',
-    dirty: desktopEnv.value?.dirty,
-  };
-});
-const versionLabel = computed(() => formatVersionLabel(APP_VERSION, identity.value));
-// 说明文字区分源码模式/服务端构建/安装包三种情况；源码模式却读不到提交号时点明原因
-// （Git 不可用），否则用户只看到一个光秃秃的版本号，既不知新旧也不知哪里坏了
-// （2026-09-22 用户报「版本号只显示 1.2.7」即此，见 lib/buildLabel.ts）。
-const versionHint = computed(() =>
-  formatVersionHint({
-    sourceMode: desktopEnv.value?.packaged === false,
-    commit: identity.value.commit,
-    fromServer: !desktopEnv.value?.commit && Boolean(serverCommit.value),
-  }),
-);
 
 const pwd = ref({ old: '', next: '' });
 const pwdMsg = ref('');
 const pwdOk = ref(false);
 
-const themeOptions = [
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
-  { value: 'system', label: '跟随系统' },
-];
+async function changePwd() {
+  pwdMsg.value = '';
+  try {
+    await api.post('/api/auth/password', {
+      oldPassword: pwd.value.old,
+      newPassword: pwd.value.next,
+    });
+    pwdOk.value = true;
+    pwdMsg.value = '密码已修改';
+    pwd.value = { old: '', next: '' };
+  } catch (error: any) {
+    pwdOk.value = false;
+    pwdMsg.value = error.response?.data?.error || '修改失败';
+  }
+}
 
-// ---------- 连接通道状态（服务器经 /health 通告直连地址；未通告则整块隐藏） ----------
+function logout() {
+  auth.logout();
+}
+
+// ---------- 连接通道状态（服务器经 /health 通告直连地址；未通告则整组隐藏） ----------
 const connState = ref<'loading' | 'unconfigured' | 'direct' | 'tunnel-ok' | 'tunnel'>('loading');
 const directUrl = ref('');
 const directLatency = ref<number | null>(null);
 const directCopied = ref(false);
+
+/** 组是否存在：Android 本地版没有直连/隧道这条链路；服务端没通告直连地址时也没有可讲的内容。
+ *  探测中（loading）也按不存在算——否则隧道部署下导航里会先闪出一条「连接通道」再消失。 */
+const connectionVisible = computed(
+  () => capabilities.value.runtime !== 'android-local'
+    && (connState.value === 'direct' || connState.value === 'tunnel-ok' || connState.value === 'tunnel'),
+);
+// 导航里的「连接通道」与上面的渲染条件同源（隐藏时二级项一起消失）
+useSettingsAnchorVisible('account-connection', connectionVisible);
 
 const connBadgeText = computed(() => {
   switch (connState.value) {
@@ -262,49 +182,7 @@ function switchToDirect() {
 onMounted(async () => {
   await loadCapabilities();
   if (capabilities.value.runtime !== 'android-local') probeConn();
-  // 桌面端源码模式：主进程经 IPC 给提交身份
-  const wd = (window as any).wikiDesktop;
-  if (wd?.getDesktopEnv) {
-    wd.getDesktopEnv()
-      .then((env: GitIdentity | null) => {
-        desktopEnv.value = env;
-      })
-      .catch(() => {
-        /* 主进程未就绪时忽略，版本号照常显示 */
-      });
-  }
-  // Docker 镜像 / 浏览器访问：服务端读 /app/GIT_SHA 或源码检出的 .git
-  if (capabilities.value.features.serverUpdate) {
-    api
-      .get('/api/update/state')
-      .then((res) => {
-        serverCommit.value = String(res.data?.commit || '');
-      })
-      .catch(() => {
-        /* 未登录或接口不可用时保持纯版本号 */
-      });
-  }
 });
-
-async function changePwd() {
-  pwdMsg.value = '';
-  try {
-    await api.post('/api/auth/password', {
-      oldPassword: pwd.value.old,
-      newPassword: pwd.value.next,
-    });
-    pwdOk.value = true;
-    pwdMsg.value = '密码已修改';
-    pwd.value = { old: '', next: '' };
-  } catch (error: any) {
-    pwdOk.value = false;
-    pwdMsg.value = error.response?.data?.error || '修改失败';
-  }
-}
-
-function logout() {
-  auth.logout();
-}
 </script>
 
 <style scoped>

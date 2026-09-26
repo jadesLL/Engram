@@ -25,7 +25,7 @@
 - **`:main` 滚动镜像由 ci.yml 在 main 推送时构建推送**（2026-09-11 起生效，与 verify 同一 job、verify 通过后执行）：供测试部署跟踪主分支最新代码，不带版本语义（身份看烤入的 `/app/GIT_SHA`）。它是独立 tag，不触碰版本 tag 与 `:latest`，故不与「版本 tag 只在发版构建」冲突。
 - **二进制产物不随发版构建**（2026-09-08 起生效，对齐 Hermes 式发版）：推 v* 标签只构建推送镜像 + 创建 Release；exe/APK/离线 tar.gz 需要分发他人时手动 dispatch release.yml 按需构建补挂（输入标签+勾选产物），日常自用全部走源码模式与 Registry 镜像，无二进制消费方。
 - **功能合并 main 时同步整合进根 `README.md`**；**发版时必须写 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落**（距上次发布以来的全部新功能），release.yml 校验缺失即失败，段落会自动发布为 Release 正文。
-- **镜像烤入提交号**（2026-09-09 起，对齐 hermes-agent 的 build-file 路线）：release.yml 构建镜像时传 `--build-arg ENGRAM_GIT_SHA=<提交>`，写入镜像内 `/app/GIT_SHA`；镜像里没有 `.git`，应用内 设置 → 账户与外观 → 连接与版本（高级，默认收起）→「应用版本」靠它显示 `版本号 · 提交号`。本地 `docker compose up -d --build` 想显示提交号，先 `export ENGRAM_GIT_SHA=$(git rev-parse HEAD)`（不传则只显示版本号）。
+- **镜像烤入提交号**（2026-09-09 起，对齐 hermes-agent 的 build-file 路线）：release.yml 构建镜像时传 `--build-arg ENGRAM_GIT_SHA=<提交>`，写入镜像内 `/app/GIT_SHA`；镜像里没有 `.git`，应用内 设置 → 本机应用 → 版本信息（高级，默认收起）→「应用版本」靠它显示 `版本号 · 提交号`。本地 `docker compose up -d --build` 想显示提交号，先 `export ENGRAM_GIT_SHA=$(git rev-parse HEAD)`（不传则只显示版本号）。
 - **发版必须过 verify 门禁**（2026-09-04 起）：release.yml 在构建任何产物前先跑完整 verify（build+typecheck+test），main 测试不红才能带标签发版——堵住 2026-08-27~08-30 main 连红期间 v1.1.22~v1.1.28 照常发版的缺口。
 
 | 环节 | 命令/动作 | 自动发生什么 |
@@ -96,7 +96,7 @@ docker compose -f docker-compose.pull.yml up -d
 - **不要写 `pull_policy: never`**——它禁止从 Registry 拉取，本地无镜像时必报"找不到镜像"（NAS 首次部署曾因此误判为拉取失败）。
 - onlyoffice 若第三方镜像源拉不动，换官方 `onlyoffice/documentserver:9.4.0`。
 
-## 应用内自更新（设置 → 连接与同步 → 服务器更新）
+## 应用内自更新（设置 → 版本与更新 → 服务器更新）
 
 1.1.6 起支持网页内一键更新，服务器与桌面端共用「Gitea Releases」作为版本信号源。
 
@@ -110,9 +110,9 @@ docker compose -f docker-compose.pull.yml up -d
       - /var/run/docker.sock:/var/run/docker.sock   # 应用内更新所需
 ```
 
-然后 `docker compose -f docker-compose.pull.yml up -d` 重建容器一次。之后所有更新都可以在网页 设置 → 连接与同步 → 服务器更新 中完成，无需再登录部署机。
+然后 `docker compose -f docker-compose.pull.yml up -d` 重建容器一次。之后所有更新都可以在网页 设置 → 版本与更新 → 服务器更新 中完成，无需再登录部署机。
 
-### 仓库与更新通道配置（设置 → 连接与同步 → 更新源配置）
+### 仓库与更新通道配置（设置 → 版本与更新 → 更新源配置）
 
 所有配置保存在**服务器数据目录的 `.env` 文件**（Docker 内 `/data/.env`，随数据卷持久化，不进数据库不进代码库）：
 
@@ -131,9 +131,9 @@ docker compose -f docker-compose.pull.yml up -d
 
 不想为每个小修复发版、只想到手验证时，把部署机切到 `:main` 通道：
 
-1. 设置 → 连接与同步 → 服务器更新 → 「更新通道」选 `main`（顶部常规设置行，改动即存）。
+1. 设置 → 版本与更新 → 服务器更新 → 「更新通道」选 `main`（顶部常规设置行，改动即存）。
 2. 之后每次 main 推送，ci.yml 都会重推 `:main` 镜像；页面点「立即更新」即拉到主分支最新代码。
-3. 版本号在这条通道上**不变**（版本号只在发版时 bump），判断更新是否落地看 设置 → 账户与外观 → 连接与版本（高级，默认收起）→「应用版本」的**提交号**，与「检查更新」结果一致。
+3. 版本号在这条通道上**不变**（版本号只在发版时 bump），判断更新是否落地看 设置 → 本机应用 → 版本信息（高级，默认收起）→「应用版本」的**提交号**，与「检查更新」结果一致。
 
 切回正式发版线：更新通道选 `latest`（或留空自动），保存后重新点「立即更新」把容器换成 `:latest` 镜像。
 

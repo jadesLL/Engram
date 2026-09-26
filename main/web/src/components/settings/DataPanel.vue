@@ -2,8 +2,8 @@
   <section class="settings-panel settings-native">
     <div class="panel-head">
       <div>
-        <h3>数据管理</h3>
-        <p>存储方式、搜索同义词与不可撤销的数据操作。</p>
+        <h3>知识库数据</h3>
+        <p>知识数据放在哪、怎么备份；清理与危险操作见本类后面的分组。</p>
       </div>
     </div>
 
@@ -91,8 +91,7 @@
         <p v-if="backupMsg" class="setting-message backup-message" :class="backupOk ? 'ok' : 'err'">{{ backupMsg }}</p>
       </div>
     </SettingsGroup>
-
-    <SearchPanel anchor="data-synonyms" level="advanced" />
+    <!-- 「搜索同义词」2026-09-28 起归「界面与检索」（它不是数据存储）：由 SettingsView 直接挂载 -->
   </section>
 </template>
 
@@ -101,7 +100,6 @@ import { ref, onMounted } from 'vue';
 import { api } from '../../api';
 import { useAppStore } from '../../stores/app';
 import Icon from '../Icon.vue';
-import SearchPanel from './SearchPanel.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import { confirmWithPassword } from '../../lib/dangerConfirm';
 import { useRuntimeCapabilities } from '../../lib/capabilities';

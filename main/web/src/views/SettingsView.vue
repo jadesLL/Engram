@@ -3,7 +3,7 @@
     <header class="settings-page-head">
       <div>
         <h2>设置</h2>
-        <p>{{ capabilities.features.agentAdmin ? '管理账户、Agent 接入与本地数据。' : '管理账户、多端同步与本地数据。' }}</p>
+        <p>七个单一职责的分类：账户与访问、界面与检索、知识库数据、多端同步、版本与更新、本机应用、Agent 与自动化。</p>
       </div>
     </header>
 
@@ -75,70 +75,71 @@
       </nav>
 
       <div class="settings-content">
-        <!-- 账户与外观 -->
-        <section v-show="activeDomain === 'account'" class="settings-domain is-single" data-domain="account">
-          <header class="domain-head">
-            <div>
-              <h3>账户与外观</h3>
-              <p>登录凭据、界面显示方式与访问通道。</p>
-            </div>
-          </header>
+        <!-- 账户与访问：账户凭据 + 连接通道。以下每个大类里的分组顺序都与 settingsDomains 的登记顺序一致，
+             页面上第 N 块 = 导航里第 N 项（改分类时两边一起改）。 -->
+        <section v-show="activeDomain === 'account'" class="settings-domain is-multi" data-domain="account">
+          <DomainHead :domain="domainOf('account')" />
           <AccountPanel />
         </section>
 
-        <!-- 连接与同步：多端同步 + 软件更新 + 桌面端应用（三个功能域，各自保留小标题） -->
-        <section v-show="activeDomain === 'connect'" class="settings-domain is-multi" data-domain="connect">
-          <header class="domain-head">
-            <div>
-              <h3>连接与同步</h3>
-              <p>多台设备组成同步群组，保持服务端与桌面端是最新版本，并管理桌面端在本机的启动方式。</p>
-            </div>
-          </header>
-          <div id="panel-sync">
-            <SyncPanel />
-          </div>
-          <!-- active 传给 UpdatePanel：面板常驻挂载（v-show），绑定同步发生在别的分区时，
-               靠激活态重拉同步状态，否则远程更新块要用旧数据等到下次刷新 -->
-          <!-- 锚点 id 由 UpdatePanel 内部三张分组卡片（panel-update-server/desktop/source）自带 -->
-          <div v-if="capabilities.features.serverUpdate">
-            <UpdatePanel :active="activeDomain === 'connect'" />
-          </div>
+        <!-- 界面与检索：外观 + 搜索同义词 -->
+        <section v-show="activeDomain === 'interface'" class="settings-domain is-multi" data-domain="interface">
+          <DomainHead :domain="domainOf('interface')" />
+          <AppearanceSection />
+          <SearchPanel anchor="data-synonyms" />
         </section>
 
-        <!-- Agent 接入 -->
-        <section
-          v-if="capabilities.features.agentAdmin"
-          v-show="activeDomain === 'agent'"
-          class="settings-domain is-single"
-          data-domain="agent"
-        >
-          <header class="domain-head">
-            <div>
-              <h3>Agent 接入</h3>
-              <p>配置随包内置的 Agent（含按计划自动整理的「梦境思考」），把知识库接入外部 Agent。</p>
-            </div>
-          </header>
-          <AgentPanel />
-          <!-- 梦境思考：跑的是内置 Agent，按计划自动整理 + 纠错；单根 section，跟着大类 v-show 一起显隐 -->
-          <DreamSection />
-        </section>
-
-        <!-- 数据与存储：数据管理 + 存储空间（回收站 / 图片资产）+ 危险操作（含卸载应用） -->
+        <!-- 知识库数据：存储位置 / 备份与恢复 / 回收站 / 图片资产 / 危险操作 -->
         <section v-show="activeDomain === 'data'" class="settings-domain is-multi" data-domain="data">
-          <header class="domain-head">
-            <div>
-              <h3>数据与存储</h3>
-              <p>数据放在哪、怎么备份，以及回收站、图片资产与不可撤销操作（清库 / 卸载应用）的出口。</p>
-            </div>
-          </header>
+          <DomainHead :domain="domainOf('data')" />
           <DataPanel />
           <!-- StoragePanel 的模板是两个 <section>（回收站 / 图片资产）：多根组件的 v-show 会被 Vue
                忽略（指令没有可作用的那一个根元素），2026-09-22 用户报「存储空间在哪个选项里都有」即此。
                现在显隐由外层大类容器统一负责，这里用 v-if 只是「进这个大类才拉两个列表」——
                代价是切走再回来会重新挂载并重拉，这个面板没有需要跨分类保留的状态。 -->
           <StoragePanel v-if="activeDomain === 'data'" />
-          <!-- 危险区排在整类最后：清库 / 清日志不能夹在备份恢复和回收站之间 -->
           <DataDangerSection />
+        </section>
+
+        <!-- 多端同步：同步群组 + DDNS 直连域名（后者只在担任中枢时渲染并登记） -->
+        <section v-show="activeDomain === 'sync'" class="settings-domain is-multi" data-domain="sync">
+          <DomainHead :domain="domainOf('sync')" />
+          <div id="panel-sync">
+            <SyncPanel />
+          </div>
+        </section>
+
+        <!-- 版本与更新：服务器更新 / 桌面端更新 / 更新源配置（三张卡片都在 UpdatePanel 内，
+             active 传给面板：面板常驻挂载（v-show），绑定同步发生在别的分区时靠激活态重拉状态） -->
+        <section v-show="activeDomain === 'update'" class="settings-domain is-multi" data-domain="update">
+          <DomainHead :domain="domainOf('update')" />
+          <div v-if="capabilities.features.serverUpdate">
+            <UpdatePanel :active="activeDomain === 'update'" />
+          </div>
+        </section>
+
+        <!-- 本机应用：桌面端应用 / 版本信息 / 卸载 Engram -->
+        <section v-show="activeDomain === 'app'" class="settings-domain is-multi" data-domain="app">
+          <DomainHead :domain="domainOf('app')" />
+          <DesktopAppSection />
+          <AppVersionSection />
+          <UninstallSection />
+        </section>
+
+        <!-- Agent 与自动化：内置 Agent / 自动整理（梦境思考）/ 外部接入 / 工具与手册。
+             自动整理经具名插槽插在「内置 Agent」之后，顺序与导航一致。 -->
+        <section
+          v-if="capabilities.features.agentAdmin"
+          v-show="activeDomain === 'agent'"
+          class="settings-domain is-multi"
+          data-domain="agent"
+        >
+          <DomainHead :domain="domainOf('agent')" />
+          <AgentPanel>
+            <template #after-builtin>
+              <DreamSection />
+            </template>
+          </AgentPanel>
         </section>
       </div>
     </div>
@@ -148,7 +149,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Icon from '../components/Icon.vue';
+import DomainHead from '../components/settings/DomainHead.vue';
 import AccountPanel from '../components/settings/AccountPanel.vue';
+import AppearanceSection from '../components/settings/AppearanceSection.vue';
+import AppVersionSection from '../components/settings/AppVersionSection.vue';
+import UninstallSection from '../components/settings/UninstallSection.vue';
+import DesktopAppSection from '../components/settings/DesktopAppSection.vue';
 import AgentPanel from '../components/settings/AgentPanel.vue';
 import DreamSection from '../components/settings/DreamSection.vue';
 import SyncPanel from '../components/settings/SyncPanel.vue';
@@ -156,17 +162,29 @@ import UpdatePanel from '../components/settings/UpdatePanel.vue';
 import StoragePanel from '../components/settings/StoragePanel.vue';
 import DataPanel from '../components/settings/DataPanel.vue';
 import DataDangerSection from '../components/settings/DataDangerSection.vue';
+import SearchPanel from '../components/settings/SearchPanel.vue';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { badgeToneOf, settingsBadges } from '../lib/settingsBadges';
-import { resolveSettingsTarget, visibleSettingsDomains, type SettingsDomainId } from '../lib/settingsDomains';
+import { hiddenSettingsAnchors } from '../lib/settingsNavVisibility';
+import {
+  domainOfAnchor,
+  resolveSettingsTarget,
+  visibleSettingsDomains,
+  type SettingsDomain,
+  type SettingsDomainId,
+} from '../lib/settingsDomains';
 import { expandGroup } from '../lib/settingsCollapse';
 import { useRoute } from 'vue-router';
 
 /**
- * 设置页信息架构（2026-09-24 改版）：4 个大类各为一整页，页内分组全部平铺常开；
- * 左侧导航平铺「大类 + 全部分组锚点」，大类切换页面，锚点只做滚动定位，
- * 滚动时反向高亮当前分组；分组之间靠带头部色带的独立卡片区分（SettingsGroup）。
- * 大类树与旧链接映射都是纯数据，见 lib/settingsDomains.ts。
+ * 设置页信息架构（2026-09-28 方案 A「一事一类」）：7 个单职责大类各为一整页，
+ * 页内分组按 settingsDomains 的登记顺序平铺常开；左侧导航平铺「大类 + 全部分组锚点」，
+ * 大类切换页面，锚点只做滚动定位，滚动时反向高亮。
+ *
+ * **导航顺序 = 页面渲染顺序**：下面每个 <section> 里挂载的面板顺序必须与
+ * lib/settingsDomains.ts 里登记的 groups 顺序一致——用户在导航里点的第 N 项，就是页面上第 N 块。
+ * 2026-09-27 报的「导航里第 2 项、页面上第 4 块」正是这条被破坏（彼时「梦境思考」登记在
+ * 两个 Agent 分组之间，却渲染在最后）。settingsDomains.test.ts 会锁住这条不变量。
  */
 const activeDomain = ref<SettingsDomainId>('account');
 const activeAnchor = ref<string>('');
@@ -174,16 +192,24 @@ const viewEl = ref<HTMLElement | null>(null);
 const { capabilities, load } = useRuntimeCapabilities();
 const route = useRoute();
 
-// 大类里的分组要跟着运行时能力走：Agent 功能关掉时整个大类都不出现，
-// 软件更新不可用时「连接与同步」只剩多端同步；「桌面端应用」只在桌面端运行时出现
-// （它的两张卡片渲染在 <section v-if="isDesktop"> 里，登记了却渲染不出来就是点不动的死锚点）
+/**
+ * 大类里的分组要跟着运行时能力走：Agent 功能关掉时整个大类都不出现；
+ * 运行期才知道的显隐（DDNS 只在担任中枢、卸载只在源码安装形态、连接通道没通告时）
+ * 由各面板经 settingsNavVisibility 登记到 hiddenSettingsAnchors，这里一并过滤，
+ * 保证「导航里有的都能渲染出来」。
+ */
 const domains = computed(() => visibleSettingsDomains({
   agent: capabilities.value.features.agentAdmin,
   serverUpdate: capabilities.value.features.serverUpdate,
   desktop: capabilities.value.runtime === 'desktop',
-}));
+}, hiddenSettingsAnchors));
 
 const currentDomain = computed(() => domains.value.find((domain) => domain.id === activeDomain.value));
+
+/** 大类页头文案：取自 settingsDomains（改分类只改一处），能力过滤后可能不存在 */
+function domainOf(id: SettingsDomainId): SettingsDomain | undefined {
+  return domains.value.find((domain) => domain.id === id);
+}
 
 /** 滚动容器是 Home.vue 的 .content；找不到时退回窗口滚动 */
 function scroller(): HTMLElement | Window {
@@ -204,11 +230,12 @@ function selectDomain(id: SettingsDomainId, anchor?: string) {
   else scrollToTop();
 }
 
+/** 别处（更新提醒、首页状态条）要求跳到某个分组：锚点属于哪个大类由数据决定，不再由调用方写死 */
 function onSettingsTarget(event: Event) {
   const anchor = (event as CustomEvent<{ anchor?: string }>).detail?.anchor;
-  if (anchor && domains.value.some((domain) => domain.id === 'connect' && domain.groups.some((group) => group.id === anchor))) {
-    selectDomain('connect', anchor);
-  }
+  if (!anchor) return;
+  const domain = domainOfAnchor(anchor, domains.value);
+  if (domain) selectDomain(domain, anchor);
 }
 
 function scrollToAnchor(anchor: string) {
@@ -240,7 +267,7 @@ function onScroll() {
     }
     // 滚到底时最后一组可能仍未越过吸顶线，此时按「已到页面底部」兜底。
     // 前提是这一页真的能滚：短分类（内容不足一屏）三组都在视野里，
-    // 不加这个判断会把高亮永远钉在最后一组（账户与外观一进来就高亮「连接与版本」）。
+    // 不加这个判断会把高亮永远钉在最后一组。
     const target = scroller();
     const metrics = target === window
       ? {

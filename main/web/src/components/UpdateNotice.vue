@@ -290,7 +290,8 @@ async function goToUpdate() {
   panelOpen.value = false;
   const anchor = sourceMode.value || Boolean((window as any).wikiDesktop) ? 'panel-update-desktop' : 'panel-update-server';
   const alreadyInSettings = router.currentRoute.value.path === '/settings';
-  await router.push({ path: '/settings', query: { section: 'connect', anchor } });
+  // 2026-09-28 起「服务器更新 / 桌面端更新 / 更新源配置」属「版本与更新」大类（旧值 connect 已退役）
+  await router.push({ path: '/settings', query: { section: 'update', anchor } });
   if (alreadyInSettings) window.dispatchEvent(new CustomEvent('engram:settings-target', { detail: { anchor } }));
 }
 
