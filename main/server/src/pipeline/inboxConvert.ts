@@ -19,6 +19,7 @@ import {
 } from '../lib/brainPaths.js';
 import { derivedPathsBySource, derivedPathForSource } from '../lib/inboxDerived.js';
 import { RAW_DOC_DIR } from '../lib/rawSections.js';
+import { stripLeadingHeading, splitFrontmatter } from '../lib/rawBody.js';
 
 /**
  * 收集箱 → Markdown 的语义转换（服务端通道）。
@@ -228,7 +229,9 @@ async function suggestCoreTitle(
     const result = await completeText([
       { role: 'system', content: '你是资料归档员。只输出一个具体、准确的中文文件名短语，不含日期、扩展名、引号或说明。根据正文核心内容提炼，不照搬原文件名；保留关键对象与主题，不臆造事实，避免“转换结果”“文档”“资料”等空泛名称。' },
       { role: 'user', content: `原文件名：${name}\n\n转换后的 Markdown 正文：\n${markdown.slice(0, 16_000)}` },
-    ], { maxTokens: 128, signal: options.signal, fetchImpl: options.fetchImpl, config: options.config });
+      // 预算不能压到几十：推理型模型会把 128 全花在 reasoning 上、content 为空，文件名只能退回正文标题
+      // （2026-09 官方路由实测：completion_tokens=128、reasoning_tokens=128、finish_reason=length）
+    ], { maxTokens: 512, signal: options.signal, fetchImpl: options.fetchImpl, config: options.config });
     return coreTitle(markdown, result.text, name.replace(/\.[^.]+$/, ''));
   } catch (error) {
     options.signal?.throwIfAborted();
@@ -407,7 +410,10 @@ export function adoptInboxItem(relPath: string): InboxAdoptResult {
   const target = uniqueRawPath(stemOf(derived));
   const targetAbs = safeJoin(target);
   fs.mkdirSync(path.dirname(targetAbs), { recursive: true });
-  fs.copyFileSync(safeJoin(derived), targetAbs);
+  // 入库后它就是原始资料：正文不再重复一级标题（标题已在文件名与 frontmatter 里，见 lib/rawBody.ts）。
+  // 产物留在收集箱时保持原样；这里只改正文，frontmatter 头逐字节保留，不重新序列化 YAML。
+  const { head, body } = splitFrontmatter(fs.readFileSync(safeJoin(derived), 'utf8'));
+  fs.writeFileSync(targetAbs, `${head}${stripLeadingHeading(body).replace(/^\n+/, '')}`, 'utf8');
   noteAppWrite(targetAbs);
 
   const meta = syncPageFile(target);

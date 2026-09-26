@@ -137,6 +137,12 @@ test('新建默认落「文档」，可指定「灵感碎片」，但「对话�
   })).json();
   assert.equal(created.path, '原始资料/文档/随手记.md');
   assert.equal(fs.existsSync(path.join(BRAIN_DIR, created.path)), true);
+  // 正文不带一级标题：标题由文件名与 frontmatter 承载，正文再写一遍是重复
+  assert.equal(
+    fs.readFileSync(path.join(BRAIN_DIR, created.path), 'utf8').startsWith('#'),
+    false,
+    '新建的原始资料不该在正文里写一级标题'
+  );
 
   const idea = (await app.inject({
     method: 'POST',

@@ -19,6 +19,12 @@ export const OFFICIAL_BASE_URL = 'https://api.deepseek.com';
 export const OFFICIAL_MODEL = 'deepseek-v4-flash';
 /** 标题长度上限（字符数，中文按字算） */
 export const TITLE_MAX_CHARS = 24;
+/**
+ * 命名请求的 token 预算。**不能压到几十**：推理型模型（官方路由的 deepseek-flash 实测如此）
+ * 会先花 reasoning token，只给 64 时 finish_reason=length、content 为空，标题只能退化成
+ * 规则标题（2026-09 预览验收实测）。命名本身很短，给足余量即可。
+ */
+export const TITLE_MAX_TOKENS = 512;
 /** 送进提示词的对话正文上限 */
 const PROMPT_INPUT_CHARS = 1200;
 
@@ -144,7 +150,7 @@ export function titleRequest(config: AgentConfig, prompt: string): TitleRequest 
       body: {
         model: (config.model || '').trim() || OFFICIAL_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 64,
+        max_tokens: TITLE_MAX_TOKENS,
         temperature: 0.2,
         stream: false,
       },
@@ -161,7 +167,7 @@ export function titleRequest(config: AgentConfig, prompt: string): TitleRequest 
       },
       body: {
         model: route.model,
-        max_tokens: 64,
+        max_tokens: TITLE_MAX_TOKENS,
         messages: [{ role: 'user', content: prompt }],
       },
       pick: pickAnthropic,
@@ -171,7 +177,7 @@ export function titleRequest(config: AgentConfig, prompt: string): TitleRequest 
     return {
       url: joinUrl(route.baseUrl, '/responses'),
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-      body: { model: route.model, input: prompt, max_output_tokens: 64 },
+      body: { model: route.model, input: prompt, max_output_tokens: TITLE_MAX_TOKENS },
       pick: pickResponses,
     };
   }
@@ -181,7 +187,7 @@ export function titleRequest(config: AgentConfig, prompt: string): TitleRequest 
     body: {
       model: route.model,
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 64,
+      max_tokens: TITLE_MAX_TOKENS,
       temperature: 0.2,
       stream: false,
     },

@@ -123,8 +123,8 @@ export async function saveChat(input: SaveChatInput): Promise<SaveChatResult> {
   while (fs.existsSync(safeJoin(rel))) rel = `${dir}/${base}-${i++}.md`;
 
   const title = input.identifier?.trim() ? input.identifier.trim() : `${date} Agent 对话`;
-  const body = `# ${title}\n\n${content.trim()}\n`;
-  const meta: PageMeta = writePage(rel, body, { title, sources, tags, retrieved: now() });
+  // 原始资料正文不带一级标题：标题在 frontmatter 与文件名里（见 lib/rawBody.ts）
+  const meta: PageMeta = writePage(rel, `${content.trim()}\n`, { title, sources, tags, retrieved: now() });
   try { appendWikiLog('对话沉积', `「${title}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
   return { id: meta.id, path: meta.path, title: meta.title, appended: false };
 }

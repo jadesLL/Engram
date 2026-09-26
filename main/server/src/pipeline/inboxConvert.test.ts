@@ -179,6 +179,11 @@ test('入库：产物直接复制进 原始资料/文档/ 并登记为页面，�
   assert.match(adopted.pageTitle, /合同/);
   assert.equal(fs.existsSync(path.join(BRAIN_DIR, adopted.pagePath)), true);
   assert.equal(fs.existsSync(path.join(BRAIN_DIR, converted.derivedPath)), true, '产物保留在收集箱');
+  // 入库后就是原始资料：正文开头的一级标题被去掉（标题已进文件名与 frontmatter），其余正文原样
+  const adoptedText = fs.readFileSync(path.join(BRAIN_DIR, adopted.pagePath), 'utf8');
+  const adoptedBody = adoptedText.slice(adoptedText.indexOf('---', 3) + 4);
+  assert.equal(adoptedBody.trimStart().startsWith('#'), false);
+  assert.match(adoptedBody, /金额 12 万/);
 
   // 入库这一动作才产生页面行：入库前没有，入库后才有
   const row = db.prepare(`SELECT path, deleted FROM pages WHERE path = ?`).get(adopted.pagePath) as any;

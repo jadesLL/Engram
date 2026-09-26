@@ -58,7 +58,7 @@ AIWorks 对 Agent 是只读区；页面写入与改名/移动/删除只允许 Wi
 页面改名/移动用 rename_page / move_page（保持页面 ID 与图谱边，重命名会重定向引用双链）；写页与页面操作都只允许 Wiki/。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
 收集箱（收集箱/）是用户拖进来的待整理文件，**不属于知识库**：list_inbox / read_inbox_item 能读到它，write_inbox_markdown 能把语义转换结果写回 收集箱/转换结果/，但这里的内容不得作为回答的事实依据、不得进 evidence、不要拿它去写页面；入库由用户在界面上确认（服务端会把产物复制进 原始资料/文档/，那之后才是可引用来源）。转换作业规范用 skill_guide("inbox-semantic-to-md")。
-原始资料是一级目录，固定三个二级目录：文档（成文的完整文件，新资料默认落这里）、对话（save_chat 专用）、灵感碎片（随手记）；不要自造其他二级目录，历史留在根目录的文件按「文档」对待。
+原始资料是一级目录，固定三个二级目录：文档（成文的完整文件，新资料默认落这里）、对话（save_chat 专用）、灵感碎片（随手记）；不要自造其他二级目录，历史留在根目录的文件按「文档」对待。原始资料的正文不写一级标题——标题由文件名（YYYY.MM.DD_标题.md）与 frontmatter 标题承载，正文开头再写一行 \`# 标题\` 是重复，服务端也会去掉。
 完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取；具体作业手法与纪律先用 skill_list 看清单，再用 skill_guide(name) 取全文。`;
 
 const RAW_DIR = RAW_ROOT;
@@ -615,7 +615,7 @@ export function makeServer(): McpServer {
     '把已完成的调研结果新建为原始资料 Markdown 来源文件（只创建，不覆盖；聊天记录请用 save_chat）。',
     {
       path: z.string().describe(`新文件路径：调研成果用 ${DEFAULT_RAW_DIR}/xxx.md，用户随口记的零散内容用 原始资料/灵感碎片/xxx.md；不能使用已存在路径或 ${RAW_CHAT_DIR}/`),
-      content: z.string().describe('完整 Markdown 正文，不含 YAML frontmatter；建议在正文中列明调研来源与引用。'),
+      content: z.string().describe('完整 Markdown 正文，不含 YAML frontmatter；建议在正文中列明调研来源与引用。不要以一级标题开头——标题由文件名与 frontmatter 承载，开头的一级标题会被去掉。'),
     },
     async ({ path: target, content }) => {
       try {
