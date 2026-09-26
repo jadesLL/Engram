@@ -114,6 +114,7 @@ test('看板手册：显式 id 取到、共用同一套取数口径、多一段�
   }
   // 机器可读清单：三节标题与字段名逐字固定，客户端解析器认的就是这些
   assert.match(text, /```json/);
+  assert.match(text, /"version":2/);
   assert.match(text, /"groups"/);
   assert.match(text, /"客户与项目"/);
   assert.match(text, /"团队与例行"/);
@@ -122,6 +123,14 @@ test('看板手册：显式 id 取到、共用同一套取数口径、多一段�
   assert.match(text, /"when"/);
   assert.match(text, /"source"/);
   assert.match(text, /"gaps"/);
+  // 排序与筛选用得到的结构化字段（日期/客户/端组），以及逾期靠的「过去也照实填」
+  assert.match(text, /"date":"2026-09-30"/);
+  assert.match(text, /"kind":"fixed"/);
+  assert.match(text, /"repeat"/);
+  assert.match(text, /"customer"/);
+  assert.match(text, /"team"/);
+  assert.match(text, /「北京组」「天津组」「大区」/);
+  assert.match(text, /已逾期/);
   // 看板要一眼扫得完：每列有张数上限，防止把细碎条目塞满一列
   assert.match(text, /每节最多 8 张卡/);
 });

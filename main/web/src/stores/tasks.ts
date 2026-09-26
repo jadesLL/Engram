@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { api } from '../api';
-import { parseTaskBoard, type TaskBoard } from '../lib/taskBoard';
+import { parseTaskBoard, TASK_BOARD_VERSION, type TaskBoard } from '../lib/taskBoard';
 
 /**
  * 任务看板的前端状态：读服务端的看板现状 → 需要时起一轮 → 接事件流看进度 → 完成后重读取答案。
@@ -22,6 +22,9 @@ interface BoardPayload {
   runStatus: string;
   runStartedAt: string;
   error: string;
+  /** 这份看板对应的下周窗口（按天视图铺每一天用） */
+  windowStart: string;
+  windowEnd: string;
 }
 
 interface BoardConnection {
@@ -61,6 +64,9 @@ export const useTasksStore = defineStore('tasks', {
     error: '',
     /** 运行中的当前动作（服务端 status 事件里的人话，如正在读哪份资料） */
     activity: '',
+    /** 这份看板对应的下周窗口（服务端按生成时刻算好给的） */
+    windowStart: '',
+    windowEnd: '',
   }),
   getters: {
     /** 解析好的看板（解析不出来为 null，页面据此显示空状态） */
@@ -86,10 +92,16 @@ export const useTasksStore = defineStore('tasks', {
       this.runStatus = payload.runStatus || '';
       this.runStartedAt = payload.runStartedAt || '';
       this.error = payload.error || '';
+      this.windowStart = payload.windowStart || '';
+      this.windowEnd = payload.windowEnd || '';
       if (this.status !== 'running') this.activity = '';
     },
 
-    /** 拉一次现状；返回是否需要（按新鲜度）重新生成 */
+    /**
+     * 拉一次现状；返回是否需要重新生成。
+     * 三种情况都要重跑：没有答案、超过 6 小时、或者答案是老契约的（v1 没有日期/客户/端组，
+     * 按天视图与筛选都摊不开）——老答案也照样先显示着，跑完自动换版。
+     */
     async load(): Promise<boolean> {
       this.loading = true;
       try {
@@ -97,7 +109,9 @@ export const useTasksStore = defineStore('tasks', {
         this.apply(data);
         this.loaded = true;
         if (this.status === 'running' && this.runId) this.attach(this.runId);
-        return !this.answer || this.stale;
+        if (!this.answer || this.stale) return true;
+        const parsed = parseTaskBoard(this.answer);
+        return !parsed || parsed.version < TASK_BOARD_VERSION;
       } catch (error) {
         this.error = errorText(error);
         this.loaded = true;

@@ -39,34 +39,97 @@
     </div>
 
     <template v-else-if="board">
-      <div class="board">
-        <section v-for="column in columns" :key="column.title" class="column">
+      <!-- 工具条：视图切换（按天 / 分列）＋ 三档筛选（同一档内是「或」，档之间是「且」） -->
+      <div class="toolbar">
+        <div class="seg" role="tablist" aria-label="看板视图">
+          <button
+            v-for="item in VIEWS"
+            :key="item.key"
+            class="seg-btn"
+            type="button"
+            role="tab"
+            :aria-selected="view === item.key"
+            :class="{ on: view === item.key }"
+            @click="setView(item.key)"
+          >{{ item.label }}</button>
+        </div>
+        <span class="toolbar-count">
+          共 {{ totalCards }} 条<template v-if="hasFilter"> · 筛后 {{ filteredCards.length }} 条</template>
+        </span>
+        <div class="spacer" />
+        <button v-if="hasFilter" class="btn ghost" type="button" @click="clearFilter">
+          <Icon name="x" :size="13" />清除筛选
+        </button>
+      </div>
+
+      <div class="filters">
+        <div v-for="facet in FACET_ROWS" :key="facet.key" class="filter-row">
+          <span class="filter-label">{{ facet.label }}</span>
+          <div class="filter-chips">
+            <button
+              v-for="option in facets[facet.key]"
+              :key="option.value"
+              class="fchip"
+              type="button"
+              :class="{ on: filter[facet.key].includes(option.value) }"
+              :aria-pressed="filter[facet.key].includes(option.value)"
+              @click="toggleFacet(facet.key, option.value)"
+            >{{ option.value }}<span class="fchip-count">{{ option.count }}</span></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="board" :class="`view-${view}`">
+        <section
+          v-for="section in sections"
+          :key="section.key"
+          class="column"
+          :class="[`bucket-${section.bucket}`, { 'is-empty': !section.cards.length }]"
+        >
           <header class="column-head">
-            <span class="column-title">{{ column.title }}</span>
-            <span class="column-count">{{ column.cards.length }}</span>
+            <span class="column-title">{{ section.title }}</span>
+            <span class="column-count">{{ section.cards.length }}</span>
+            <span v-if="section.bucket === 'overdue' && section.cards.length" class="column-alert">先补</span>
           </header>
           <div class="cards">
-            <article v-for="(card, index) in column.cards" :key="`${column.title}-${index}`" class="card">
-              <p class="card-text">{{ card.text }}</p>
-              <div v-if="card.owner || card.when" class="meta">
-                <span v-if="card.owner" class="chip owner" v-tooltip="'责任人'">{{ card.owner }}</span>
-                <span v-if="card.when" class="chip when" v-tooltip="'时间'">{{ card.when }}</span>
+            <article v-for="card in section.cards" :key="card.key" class="card" :class="{ overdue: card.overdue }">
+              <p class="card-text">{{ card.card.text }}</p>
+              <div class="meta">
+                <span v-if="card.card.owner" class="chip owner" v-tooltip="'责任人'">{{ card.card.owner }}</span>
+                <span
+                  v-if="card.card.when || card.card.repeat"
+                  class="chip when"
+                  v-tooltip="card.card.repeat ? `周期：${card.card.repeat}` : '材料里的时间写法'"
+                >{{ card.card.when || card.card.repeat }}</span>
+                <span
+                  class="chip customer"
+                  v-tooltip="card.card.customer ? '客户' : '没有客户，按端组归到内部工作'"
+                >{{ customerOf(card.card) }}</span>
+                <!-- 有客户时才单列端组：内部工作的客户胶囊已经写着「X 组内部工作」，再来一个端组就是重复 -->
+                <span v-if="card.card.customer" class="chip team" v-tooltip="'端组'">{{ card.card.team }}</span>
+                <span v-if="card.overdue" class="chip overdue-days">逾期 {{ card.overdueDays }} 天</span>
               </div>
               <button
-                v-if="targetOf(card).kind !== 'none'"
+                v-if="targetOf(card.card).kind !== 'none'"
                 class="source"
                 type="button"
                 v-tooltip="'跳到依据的原文'"
-                @click="openSource(card)"
+                @click="openSource(card.card)"
               >
-                <Icon name="link" :size="12" />{{ targetOf(card).label }}
+                <Icon name="link" :size="12" />{{ targetOf(card.card).label }}
               </button>
-              <span v-else-if="card.source" class="source plain">{{ card.source }}</span>
+              <span v-else-if="card.card.source" class="source plain">{{ card.card.source }}</span>
             </article>
-            <p v-if="!column.cards.length" class="column-empty">本列暂无</p>
+            <p v-if="!section.cards.length" class="column-empty">
+              {{ section.bucket === 'day' ? '本日暂无' : '本列暂无' }}
+            </p>
           </div>
         </section>
       </div>
+
+      <p v-if="hasFilter && !filteredCards.length" class="filter-empty">
+        当前筛选下没有任务——点「清除筛选」看全部。
+      </p>
 
       <section v-if="board.gaps.length" class="gaps">
         <h2><Icon name="alert" :size="14" />资料缺口</h2>
@@ -101,26 +164,111 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import Icon from '../components/Icon.vue';
 import { api } from '../api';
 import { useTasksStore } from '../stores/tasks';
-import { boardColumns, cardToMarkdown, taskCardTarget, type TaskCard } from '../lib/taskBoard';
+import {
+  boardCardCount,
+  boardFacets,
+  boardView,
+  cardCustomer,
+  cardToMarkdown,
+  filterCards,
+  isOverdue,
+  isoToday,
+  overdueDays,
+  taskCardTarget,
+  type BoardFilter,
+  type TaskBoardColumn,
+  type TaskCard,
+} from '../lib/taskBoard';
 import { formatSessionTime } from '../lib/chatTime';
 import { notify } from '../lib/notify';
 
 /**
  * 任务看板页：进来先看缓存（六小时内的直接显示），过期或没有就自动让 Agent 重新提炼，
  * 提炼期间不挡旧看板；跑完自动换成新的。整页只读，不写知识库。
+ *
+ * 视图与筛选都在客户端做（数据已经是结构化的）：按天＝1、2、3… 每天要干什么；
+ * 分列＝按来源三节。三档筛选共用，逾期单独一块放最前。
  */
 const router = useRouter();
 const tasks = useTasksStore();
 
 const board = computed(() => tasks.board);
-const columns = computed(() => boardColumns(board.value));
+
+/* ===== 视图：按天 / 分列，选择记在本机 ===== */
+type ViewKey = 'day' | 'column';
+const VIEWS: Array<{ key: ViewKey; label: string }> = [
+  { key: 'day', label: '按天' },
+  { key: 'column', label: '分列' },
+];
+const VIEW_STORAGE = 'taskBoardView';
+function storedView(): ViewKey {
+  return localStorage.getItem(VIEW_STORAGE) === 'column' ? 'column' : 'day';
+}
+const view = ref<ViewKey>(storedView());
+function setView(next: ViewKey) {
+  view.value = next;
+  localStorage.setItem(VIEW_STORAGE, next);
+}
+
+/* ===== 筛选：人物 / 客户 / 端组，同一档内「或」、档之间「且」 ===== */
+const FACET_ROWS: Array<{ key: keyof BoardFilter; label: string }> = [
+  { key: 'owners', label: '人物' },
+  { key: 'customers', label: '客户' },
+  { key: 'teams', label: '端组' },
+];
+const filter = reactive<BoardFilter>({ owners: [], customers: [], teams: [] });
+
+const facets = computed(() => boardFacets(board.value));
+const totalCards = computed(() => boardCardCount(board.value));
+const filteredCards = computed(() => filterCards(board.value, filter));
+const hasFilter = computed(
+  () => filter.owners.length + filter.customers.length + filter.teams.length > 0
+);
+
+function toggleFacet(key: keyof BoardFilter, value: string) {
+  const picked = filter[key];
+  const at = picked.indexOf(value);
+  if (at >= 0) picked.splice(at, 1);
+  else picked.push(value);
+}
+
+function clearFilter() {
+  filter.owners = [];
+  filter.customers = [];
+  filter.teams = [];
+}
+
+function customerOf(card: TaskCard) {
+  return cardCustomer(card);
+}
+
+/* ===== 分组：筛过的卡片 → 当前视图的每一块 ===== */
+const rawSections = computed<TaskBoardColumn[]>(() => {
+  const model = boardView(filteredCards.value, { start: tasks.windowStart, end: tasks.windowEnd });
+  return view.value === 'day' ? model.day : model.column;
+});
+
+const sections = computed(() => {
+  const today = isoToday();
+  return rawSections.value.map((section) => ({
+    key: `${section.bucket}-${section.date}-${section.title}`,
+    title: section.title,
+    bucket: section.bucket,
+    cards: section.cards.map((card, index) => ({
+      key: `${section.title}-${index}-${card.text.slice(0, 12)}`,
+      card,
+      overdue: isOverdue(card, today),
+      overdueDays: overdueDays(card, today),
+    })),
+  }));
+});
 
 /** 顶部副标题：一眼看清这份看板是什么时候生成的 */
 const headSub = computed(() => {
@@ -209,7 +357,8 @@ async function copyBoard() {
   const current = board.value;
   if (!current) return;
   try {
-    await navigator.clipboard.writeText(cardToMarkdown(current));
+    // 复制的是「我正在看的这一版」：视图与筛选都带上
+    await navigator.clipboard.writeText(cardToMarkdown(current, rawSections.value));
     notify.success('清单已复制');
   } catch {
     notify.error('复制失败');
@@ -325,12 +474,107 @@ onBeforeUnmount(() => {
 .first-run-title { margin: 6px 0 0; color: var(--text-secondary); font-size: 13.5px; }
 .first-run-hint { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.8; }
 
+/* ===== 工具条：视图切换 + 条数 + 清除筛选 ===== */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-tertiary);
+}
+
+.seg-btn {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.seg-btn.on {
+  background: var(--card-bg);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-raised);
+}
+
+.toolbar-count { color: var(--text-faint); font-size: 12px; }
+
+/* ===== 筛选：三档可点的小胶囊（同一档内多选＝或） ===== */
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.filter-row { display: flex; align-items: flex-start; gap: 8px; }
+
+.filter-label {
+  flex: 0 0 auto;
+  padding-top: 3px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.fchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.fchip:hover { border-color: var(--border-strong); color: var(--text); }
+
+.fchip.on {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.fchip-count { opacity: 0.6; font-size: 11px; }
+
+.filter-empty {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--warn-soft);
+  color: var(--warning);
+  font-size: 12.5px;
+}
+
 .board {
   display: grid;
-  grid-template-columns: repeat(3, minmax(240px, 1fr));
   gap: 14px;
   align-items: start;
 }
+
+/* 分列：三列（＋已逾期等）并排；按天：每天一块，宽屏并排铺开 */
+.board.view-column { grid-template-columns: repeat(4, minmax(220px, 1fr)); }
+.board.view-day { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
 
 .column {
   display: flex;
@@ -390,6 +634,29 @@ onBeforeUnmount(() => {
 }
 
 .chip.owner { background: var(--accent-soft); color: var(--accent); }
+.chip.customer { background: rgba(117, 106, 166, 0.12); color: var(--file-markdown); }
+.chip.team { background: var(--bg-tertiary); }
+.chip.overdue-days { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
+
+/* 逾期：整块与卡片都压一档红，扫一眼就知道先干这个 */
+.column.bucket-overdue { border-color: rgba(196, 43, 28, 0.28); background: var(--danger-soft); }
+.column.bucket-overdue .column-title { color: var(--danger); }
+.column.bucket-periodic { border-style: dashed; }
+.column.bucket-day.is-empty { opacity: 0.65; }
+.column.bucket-day.is-empty .cards { padding: 0; }
+
+.column-alert {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10.5px;
+  line-height: 16px;
+}
+
+.card.overdue { border-color: rgba(196, 43, 28, 0.3); }
+.card.overdue .card-text { color: var(--danger); }
 
 .source {
   display: inline-flex;
@@ -442,12 +709,15 @@ onBeforeUnmount(() => {
 .gaps ul { margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.8; }
 .gaps-hint { margin: 8px 0 0; color: var(--text-faint); font-size: 11.5px; }
 
-/* 窄屏：三列竖着排（手机与窄窗口） */
+/* 窄屏：所有列竖着排（手机与窄窗口）；工具条与筛选折行 */
 @media (max-width: 900px) {
   .tasks-view { padding: 16px 14px 32px; }
-  .board { grid-template-columns: 1fr; }
+  .board.view-column,
+  .board.view-day { grid-template-columns: 1fr; }
   .page-head { flex-wrap: wrap; }
   .running-bar { flex-wrap: wrap; }
   .running-bar .hint { margin-left: 0; }
+  .toolbar { flex-wrap: wrap; }
+  .filter-row { flex-direction: column; gap: 4px; }
 }
 </style>

@@ -122,6 +122,25 @@ test('正在跑：status=running，runId 指向在跑的那一轮', () => {
   assert.equal(state.runStatus, 'running');
 });
 
+test('窗口：按答案生成时刻算自然周（前端按天视图铺每一天），没有答案时按现在算', () => {
+  const saturday = new Date(2026, 8, 26, 15, 30);
+  const blank = board.boardState(saturday);
+  assert.equal(blank.windowStart, '2026-09-28');
+  assert.equal(blank.windowEnd, '2026-10-04');
+
+  // 答案生成于周六：窗口就是那一刻的「下周」
+  seedRun({ status: 'completed', answer: '看板', at: new Date(2026, 8, 26, 9, 0) });
+  const ready = board.boardState(saturday);
+  assert.equal(ready.windowStart, '2026-09-28');
+  assert.equal(ready.windowEnd, '2026-10-04');
+
+  // 生成于周一：窗口顺延到下一个自然周（前端别把旧答案套在新一周上）
+  seedRun({ status: 'completed', answer: '看板', at: new Date(2026, 8, 28, 9, 0) });
+  const next = board.boardState(saturday);
+  assert.equal(next.windowStart, '2026-10-05');
+  assert.equal(next.windowEnd, '2026-10-11');
+});
+
 test('没配 Agent：refreshBoard 原样把配置错误抛出来（路由回 400 给前端提示去配 Key）', () => {
   assert.throws(() => board.refreshBoard(), /还没配模型凭据/);
 });
