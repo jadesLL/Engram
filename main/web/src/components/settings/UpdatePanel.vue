@@ -994,7 +994,7 @@ async function confirmApply() {
   healthWaiting.value = false;
   healthTimeout.value = false;
   updateLog.value = [];
-  // 更新流程本体在 lib/applyUpdate.ts（与首页更新提示条共用一份实现）：
+  // 更新流程本体在 lib/applyUpdate.ts（与首页更新图标展开的面板共用一份实现）：
   // SSE 执行 → 等旧容器下线 → 等新容器 /health 恢复 → 自动刷新页面
   const r = await applyServerUpdate({
     log: (line) => updateLog.value.push(line),
