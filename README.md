@@ -232,7 +232,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 Docker 版同样支持**跟主分支不发版更新**：设置 → 版本与更新 → 服务器更新 → 「更新通道」选 `main`，之后每次 main 推送 CI 都会重推 `:main` 镜像，点「立即更新」即拿到主分支最新代码（版本号不变，看提交号判断）；发版前的测试就靠这条通道，验证完切回 `latest`。默认通道 `latest` 只跟正式发版。网页打开约 3 秒后自动检查更新，之后按同样的自适应退避复查（连续没发现更新时 2→5→10→30→60 分钟封顶，有更新待处理时每分钟复查；切回前台/网络恢复立刻补查）；发现新版本时右上角亮起一枚绿色更新图标（不再自动弹出面板，鼠标扫到才展开），展开可看 Release 更新说明，主按钮「立即更新」直接拉镜像重建并在新容器起来后自动刷新页面。
 
-**Android 本地优先版**：APK 内置同一套 Vue 界面、仅监听 `127.0.0.1` 的本地服务、Markdown 文件库和 SQLite 索引。首次启动可直接建立空库离线使用，之后在 设置 → 多端同步 → 同步群组 填中枢地址和成员令牌；冷启动、回到前台、本机修改或手动对账时执行一轮同步，进入后台即取消网络请求并保留待推队列。Android 只作为成员端，不运行本机 dsh/MCP、ONLYOFFICE、中枢管理、DDNS/TLS 或服务器更新；绑定后可在原生聊天抽屉使用 Docker 中枢的 Agent，会话与长任务留在 24 小时在线的服务器上；**收集箱与「记一条灵感」同样由中枢执行**（语义转换、模型拟标题与落盘前勘误都在中枢，手机只代理交互面；未绑定中枢时给出明确提示而不是报错）。页面正文里的图片资产在手机本地直出（`/media/<父项id>/<文件名>`），编辑器可直接贴图或拖图插入并追加正文引用，侧栏「查看引用图片」可查看与删除。系统「分享」里的文字和文件可直接收进 `原始资料/文档`，文件选择器继续支持手机相册与系统文档源。APK 为按需发版产物，详见 [Android 文档](main/docs/ANDROID.md)。
+**Android 本地优先版**：APK 内置同一套 Vue 界面、仅监听 `127.0.0.1` 的本地服务、Markdown 文件库和 SQLite 索引。首次启动可直接建立空库离线使用，之后在 设置 → 多端同步 → 同步群组 填中枢地址和成员令牌；冷启动、回到前台、本机修改或手动对账时执行一轮同步，进入后台即取消网络请求并保留待推队列。Android 只作为成员端，不运行本机 dsh/MCP、ONLYOFFICE、中枢管理、DDNS/TLS 或服务器更新；绑定后可在原生聊天抽屉使用 Docker 中枢的 Agent，会话与长任务留在 24 小时在线的服务器上；**收集箱与「记一条灵感」同样由中枢执行**（语义转换、模型拟标题与落盘前勘误都在中枢，手机只代理交互面；未绑定中枢时给出明确提示而不是报错）。页面正文里的图片资产在手机本地直出（`/media/<父项id>/<文件名>`），编辑器可直接贴图或拖图插入并追加正文引用，侧栏「查看引用图片」可查看与删除。系统「分享」里的文字和文件可直接收进 `原始资料/文档`，文件选择器继续支持手机相册与系统文档源。APK 是每次发版必备的三件套之一（用发版 dispatch 构建，随 Release 下载），详见 [Android 文档](main/docs/ANDROID.md)。
 
 ## 快速开始（Docker 部署）
 
@@ -319,7 +319,7 @@ Fastify + better-sqlite3（FTS5）· Vue 3 + Vditor + vis-network · Electron（
 ## 版本与发布
 
 - **更新日志**：[`CHANGELOG.md`](./CHANGELOG.md)——每个版本的全部新功能与变更；发版时由 CI 自动发布到 GitHub Release 正文
-- **GitHub Release**：`v*` 标签自动构建，附 Windows 安装包（exe）、Android 安装包（apk）、Docker 镜像包（tar.gz）与 sha256 校验；Release 挂在本仓库 [Releases](https://github.com/jadesLL/Engram/releases)，发版是显式动作，仅按需执行
+- **GitHub Release**：推 `v*` 标签构建 Docker 镜像（`:<版本>` + `:latest`）并创建 Release（正文=CHANGELOG 段落）；**每次发版固定三件套——Android 安装包（apk）、Windows 安装包（exe）、Docker 镜像**，其中 apk/exe 由 release.yml 手动 dispatch（勾选 `binaries`）构建后补挂到该 Release，离线 tar.gz 与 sha256 校验按需；Release 挂在本仓库 [Releases](https://github.com/jadesLL/Engram/releases)。发版是显式动作，仅在你明确提出时执行，但一旦发版三件缺一不算完成
 - **源码模式通道**：自用机器不依赖发版——合 main 后即可通过桌面快捷方式或应用内「检查更新」增量拉源码更新（见「下载与安装」）；Docker 部署可切「更新通道 → main」用镜像形式达到同样效果（合 main 即更新）
 - **镜像**：`gitea.example.com/example/engram/engram:<版本>`（未公开发布；需要请自行构建）
 - **发版流程**：详见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)；CI/CD 维护见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)

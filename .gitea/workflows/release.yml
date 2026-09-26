@@ -1,7 +1,8 @@
-# Engram 发布流程（2026-09-08 瘦身，对齐 Hermes 式发版：tag+changelog 即发版，二进制不随 tag 打包）：
-#   推送 v* 标签 = 发版：CHANGELOG 校验 → verify 门禁 → 构建推送 Docker 镜像（:<版本> + :latest）→ 创建 Release（正文=CHANGELOG 段落，无二进制附件）
-#   手动 workflow_dispatch = 按需补产：verify 门禁 → 勾选构建 Windows exe / Android APK / docker tar.gz，补挂到对应版本 Release
-# 版本 tag 的 Docker 镜像仍是唯一默认发版产物（NAS 部署 + 应用内一键更新的版本信号源）
+# Engram 发布流程（2026-09-27 起：发版固定三件套 = Android APK + Windows exe + Docker 镜像，三件缺一不算发版完成）：
+#   推送 v* 标签 = 发版第一步：CHANGELOG 校验 → verify 门禁 → 构建推送 Docker 镜像（:<版本> + :latest）→ 创建 Release（正文=CHANGELOG 段落，无二进制附件）
+#   手动 workflow_dispatch = 发版第二步（必做，不是按需）：verify 门禁 → 勾选 binaries 构建 Windows exe + Android APK → 补挂到对应版本 Release（offline_image 离线 tar.gz 按需）
+#   安卓端：APK 必须基于本次发版提交构建、版本号与发版一致，发版说明要补齐自上一个 Android 版本以来累积的全部更新内容
+# 版本 tag 的 Docker 镜像仍是发版线（NAS 部署 + 应用内一键更新的版本信号源）
 # 注意：标签名必须与 main/desktop/package.json 的 version 一致（v<version>），否则校验失败
 # Runner：Windows 宿主机模式（label: windows），Docker 命令经 Docker Desktop 跑 Linux 容器
 name: Release
@@ -12,15 +13,15 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '要补产物的已发版标签（如 v1.2.4，须与该提交的 package.json 版本一致）'
+        description: '本次发版的标签（如 v1.2.4，须与该提交的 package.json 版本一致）'
         required: true
         type: string
       binaries:
-        description: '构建 Windows exe + Android APK 并补挂 Release'
+        description: '构建 Windows exe + Android APK 并补挂 Release（每次发版必勾，三件套之一）'
         type: boolean
         default: false
       offline_image:
-        description: '构建 docker tar.gz 离线镜像包并补挂 Release'
+        description: '构建 docker tar.gz 离线镜像包并补挂 Release（按需）'
         type: boolean
         default: false
 
@@ -71,7 +72,7 @@ jobs:
         shell: bash
         run: |
           if [ "$INPUT_BINARIES" != "true" ] && [ "$INPUT_OFFLINE" != "true" ]; then
-            echo "dispatch 必须至少勾选 binaries 或 offline_image 之一；正式发版请推 v* 标签"
+            echo "dispatch 必须至少勾选 binaries 或 offline_image 之一；发版补齐三件套请勾选 binaries（Windows exe + Android APK）"
             exit 1
           fi
         env:
@@ -237,7 +238,8 @@ jobs:
             ---
 
             - Docker 镜像: ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}（私有，需先 docker login）
-            - Windows exe / Android APK / 离线 tar.gz 不随发版构建；需要分发时到 Actions → Release → Run workflow 输入本标签按需构建，产物自动补挂到本 Release
+            - Windows exe / Android APK 是本次发版必备产物（三件套之一）：到 Actions → Release → Run workflow 输入本标签、勾选 binaries 构建，产物自动补挂到本 Release；三件缺一不算发版完成
+            - 离线 tar.gz（offline_image）与 sha256 校验文件按需构建
 
       - name: 补挂产物到已发布 Release（dispatch）
         if: github.event_name == 'workflow_dispatch'
