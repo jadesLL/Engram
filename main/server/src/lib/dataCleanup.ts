@@ -191,7 +191,7 @@ export async function wipeKnowledgeData(options: WipeOptions = {}): Promise<Know
   await yieldEventLoop();
   db.prepare(
     `DELETE FROM settings WHERE key IN (
-       'dream_last_run','ingest_ledger_v2_migrated','ingest_candidate_ledger_migrated'
+       'dream_last_run','dream_state','ingest_ledger_v2_migrated','ingest_candidate_ledger_migrated'
      )`
   ).run();
 

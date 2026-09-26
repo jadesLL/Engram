@@ -10,6 +10,8 @@
 
 Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）、FTS5 关键词检索、来源版本与证据账本、写入门禁由 Engram 确定性完成；总结、提炼、消歧、综合、问答、图片识别全部由 Agent 负责——外部 Agent（ZCode / Codex / Claude Code / DeepSeek Harness 等）经 MCP 或 CLI 接入，或使用 Engram 随包内置的 Agent（设置页填自己的模型 Key 后，左栏 ✨ 聊天抽屉即用；它同样只经 MCP 工具读写知识库）。
 
+内置 Agent 还能**按计划无人值守地跑一轮**（设置 → Agent 接入 → 梦境思考）：到点自动把待提炼的原始资料逐份整理入库，再做一次全库纠错（死链 / 疑似重复 / 规则落后 / 页面契约）。这一轮跑在专用系统会话「梦境思考」里（同一条 runner：工具卡、思考段、用量、停止与事件流都在），一轮只跑一个会话、配置按设备保存。服务端在开跑前用确定性口径算好待办信号（`list_raw_files pending=true` / `edges` 的未解析双链 / `guide_version` 落后），随任务文本下发；**这一轮不调用 `ask_user`**（用户不在场），公司全名核验照常登记、等用户下次在对话里答复，其余按证据自定并标注「待核实」。
+
 ## 接入方式与优先级
 
 - **CLI 优先**：能跑 shell 的 Agent 优先用 `engram` CLI（status / import / files list|read / search / pages list|read|write|rename|move|delete|evidence / names check|propose|list|audit|answer / chat save / guide / mcp-config），`--json` 得机器可读输出。
@@ -82,6 +84,8 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - Agent 单页删除内核（只入回收站 + Wiki/ 守卫）：`server/src/pipeline/agentDelete.ts`
 - 公司全名核验通道内核（资料库自查 + 两轮问答状态机 + 服务端改名）：`server/src/lib/entityNameChecks.ts`（表 `entity_name_checks`；CLI/脚本用 REST `server/src/routes/entityNames.ts`；问答在对话里——内置 Agent 经 MCP `ask_user` 弹底部选项，答复经 `entity_name_answer` 回填）
 - 内置 Agent 的提问通道（MCP `ask_user` 挂起等点选 → 对话底部弹窗 → 答复唤醒工具调用）：`server/src/assistant/questions.ts`（表 `assistant_questions`；REST `POST /api/assistant/questions/:id/answer`；界面 `web/src/components/ChatDrawer.vue` 底部弹窗）
+- 梦境思考（按计划无人值守跑一轮）：`server/src/assistant/dreamConfig.ts`（配置与排期数学，键 `dream_config` / `dream_state`）、`dreamAudit.ts`（待办信号：待提炼 / 死链 / 疑似重复 / 规则落后）、`dreamCycle.ts`（专用会话、起轮、结算、30s tick）、`playbooks.ts`（`dream-cycle` 作业手册）、`routes/assistant.ts`（`GET/PUT /api/assistant/dream` + `run` / `stop`）、界面 `web/src/components/settings/DreamSection.vue`
+- 原始资料清单唯一实现：`server/src/pipeline/rawFiles.ts`（MCP `list_raw_files` 与梦境思考的待办统计共用同一份口径）
 - MCP 端点（streamable HTTP + Bearer）：`server/src/mcp/server.ts`
 - CLI：`server/src/cli/`（`engram` bin）
 - 操作日志写入：`server/src/pipeline/indexFile.ts`（`appendWikiLog`）

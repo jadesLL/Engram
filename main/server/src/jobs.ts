@@ -342,6 +342,14 @@ export async function withJobsStopped<T>(
   }
 }
 
+/**
+ * 是否正在做数据维护（清库 / 恢复等 withJobsStopped 区间）。
+ * 维护期间不要起新的后台作业（例如「梦境思考」的一轮 Agent）：清理完成后它会把内容又写回来。
+ */
+export function isMaintenanceActive(): boolean {
+  return maintenanceDepth > 0;
+}
+
 function resumePausedJobs(): { started: number; failed: number; errors: string[] } {
   const paused = db.prepare(`SELECT * FROM jobs WHERE status='paused' ORDER BY id`).all() as any[];
   let started = 0;

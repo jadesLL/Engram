@@ -8,12 +8,24 @@ import { agentRuntimeStatus } from '../assistant/dshRuntime.js';
 import { AgentQuestionError, answerAgentQuestion } from '../assistant/questions.js';
 import { bundledDshBin, getAgentConfig, setAgentConfig } from '../assistant/config.js';
 import { AGENT_APIS, agentApi } from '../assistant/agentSettings.js';
+import { clampDreamIntervalDays, parseClock, writeDreamConfig } from '../assistant/dreamConfig.js';
+import { dreamStatus, settleDreamRun, startDreamRun } from '../assistant/dreamCycle.js';
 import * as repo from '../assistant/repository.js';
 import type { InterfaceContext } from '../assistant/prompts.js';
 import { requireAssistantAccess } from '../assistant/access.js';
 import { recordSessionDelete } from '../sync/index.js';
 
 const TERMINAL = ['completed', 'failed', 'cancelled', 'interrupted'];
+
+/** 起不了轮时给用户的一句人话（按原因查表，界面直接显示） */
+const DREAM_REASON_TEXT: Record<string, string> = {
+  disabled: '梦境思考没有启用',
+  running: '已经有一轮在跑了：等它结束，或者先停止',
+  unconfigured: '内置 Agent 还没配模型凭据：到 设置 → Agent 接入 → 内置 Agent 填 Key',
+  idle: '当前没有待整理的资料，也没有待核查问题',
+  'not-due': '还没到计划时间',
+  maintenance: '正在进行数据维护（清库 / 恢复），等它结束再跑',
+};
 
 /**
  * 内置 Agent（聊天抽屉）的 HTTP 面：会话 CRUD + 运行 + SSE 事件流 + 停止/重试/沉淀。
@@ -83,6 +95,69 @@ export async function assistantRoutes(app: FastifyInstance) {
     else if (body.apiKey !== undefined && body.apiKey !== '') patch.apiKey = body.apiKey.trim();
     setAgentConfig(patch);
     return { ok: true };
+  });
+
+  // ---------- 梦境思考（按计划自动整理 + 纠错） ----------
+
+  /**
+   * 状态：配置、下次运行时刻、上次运行结果与当前待办快照。
+   * 走 owner 鉴权（与配置同档）：它会顺带扫一遍原始资料清单，成员端不需要这个面板。
+   */
+  app.get('/api/assistant/dream', { preHandler: requireAuth }, async () => dreamStatus());
+
+  /** 保存配置：每天 / 每隔 N 天 + 本地时间点；计划变化时排期锚点重置为此刻 */
+  app.put('/api/assistant/dream', { preHandler: requireAuth }, async (req, reply) => {
+    const body = (req.body || {}) as {
+      enabled?: unknown;
+      frequency?: unknown;
+      time?: unknown;
+      intervalDays?: unknown;
+    };
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      return reply.code(400).send({ error: 'enabled 必须是 true / false' });
+    }
+    if (body.frequency !== undefined && body.frequency !== 'daily' && body.frequency !== 'interval') {
+      return reply.code(400).send({ error: '频率只能是 daily（每天）或 interval（每隔 N 天）' });
+    }
+    const time = body.time === undefined ? undefined : parseClock(body.time);
+    if (body.time !== undefined && !time) {
+      return reply.code(400).send({ error: '时间要是 HH:MM（例如 03:00）' });
+    }
+    if (body.intervalDays !== undefined && !Number.isFinite(Number(body.intervalDays))) {
+      return reply.code(400).send({ error: '间隔天数要是数字' });
+    }
+    writeDreamConfig({
+      ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+      ...(body.frequency !== undefined ? { frequency: body.frequency } : {}),
+      ...(time ? { time } : {}),
+      ...(body.intervalDays !== undefined ? { intervalDays: clampDreamIntervalDays(body.intervalDays) } : {}),
+    });
+    return { ok: true, ...dreamStatus() };
+  });
+
+  /** 立即执行一次：不看计划（用户点了就是想现在跑），但同一时间只允许一轮 */
+  app.post('/api/assistant/dream/run', { preHandler: requireAuth }, async (_req, reply) => {
+    const result = startDreamRun({ trigger: 'manual' });
+    if (!result.started) {
+      return reply
+        .code(result.reason === 'running' ? 409 : 400)
+        .send({
+          error: DREAM_REASON_TEXT[result.reason || ''] || '暂时不能开始运行',
+          reason: result.reason,
+          ...dreamStatus(),
+        });
+    }
+    return reply.code(202).send({ ok: true, runId: result.runId, sessionId: result.sessionId });
+  });
+
+  /** 停止正在跑的那一轮（与聊天里停止一轮同一内核；进程外残留直接落终态） */
+  app.post('/api/assistant/dream/stop', { preHandler: requireAuth }, async () => {
+    const status = dreamStatus();
+    if (!status.running || !status.runId) return { ok: true, stopped: false, ...status };
+    const stopped = await cancelRun(status.runId);
+    if (!stopped) repo.updateRun(status.runId, { status: 'cancelled' });
+    settleDreamRun();
+    return { ok: true, stopped: true, ...dreamStatus() };
   });
 
   // ---------- 会话 ----------
