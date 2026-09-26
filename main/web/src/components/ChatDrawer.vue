@@ -142,8 +142,8 @@
                 <span
                   v-else-if="foreignSource(session)"
                   class="session-state foreign"
-                  v-tooltip="`这个会话是「${session.originNodeLabel}」上产生的，内容已同步到本机`"
-                >来自 {{ session.originNodeLabel }}</span>
+                  v-tooltip="`这个会话是「${originLabel(session)}」上产生的，内容已同步到本机`"
+                >来自 {{ originLabel(session) }}</span>
                 <span v-else-if="session.titleSource === 'auto'" class="session-state auto" v-tooltip="'标题由内置 Agent 按内容自动生成'">自动命名</span>
                 <span class="session-time">{{ formatSessionTime(session.updatedAt) }}</span>
               </span>
@@ -1259,6 +1259,14 @@ watch(() => app.chatComposerFocus, () => {
 function foreignSource(session: { originNodeId?: string; originNodeLabel?: string }): boolean {
   const localNode = sync.status?.nodeId;
   return Boolean(session.originNodeId && localNode && session.originNodeId !== localNode);
+}
+
+/**
+ * 来源设备名。旧版中枢的广播只带了来源节点 id、没带设备名（历史行里就是空的），
+ * 这时退化成「其他设备」——宁可说不知道，也不要渲染出一个光秃秃的「来自」。
+ */
+function originLabel(session: { originNodeLabel?: string }): string {
+  return String(session.originNodeLabel || '').trim() || '其他设备';
 }
 
 onMounted(() => {

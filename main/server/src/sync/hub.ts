@@ -24,8 +24,10 @@ import {
   collectBoardPayload,
   collectSessionSnapshot,
   deleteSessionWithTombstone,
+  deviceLabel,
   mergeBoardPayload,
   mergeSessionSnapshot,
+  resolveOriginLabel,
   sessionContentHash,
   snapshotHash,
   stampSessionOrigin,
@@ -252,6 +254,11 @@ interface CommitOptions {
   evidence?: EvidenceSnapshot | null;
   /** 会话删除：广播里带同一个标记，对端据此删掉本地副本并记墓碑 */
   deleted?: boolean;
+  /**
+   * 这条变更的来源设备名（会话/看板广播给成员端，界面据此显示「来自 <哪台设备>」）。
+   * 中枢本端写入留空 = 用本机设备名；成员推来的由 applyPush 传原推送方的名字。
+   */
+  nodeLabel?: string;
 }
 
 /** 中枢本端操作的 actor 标识（成员以 sync_peers.id 作为 actor） */
@@ -268,6 +275,9 @@ function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOpt
     old_path: opts.oldPath || '',
     revision,
     node_id: actorId,
+    // 来源设备名随广播下发：只给 node_id 的话，成员端只能记成「来自某个节点」，
+    // 会话列表里就成了光秃秃的「来自」。中枢自己的写入用本机设备名，转发成员推送用原设备名
+    node_label: opts.nodeLabel ?? (actorId === HUB_ACTOR ? deviceLabel() : ''),
   };
   if (kind === 'page') {
     const raw = readPageRaw(target) ?? '';
@@ -499,9 +509,12 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     // 会话同步：完成态快照按 id 并集合并；删除走墓碑。两者都不做字符级合并。
     const sessionId = String(push.target || '');
     if (!sessionId) throw new Error('会话推送缺少 target');
+    // 来源设备名：推送方自己报的优先，没带就按成员注册的设备名补（广播要把它带给别的成员端，
+    // 否则它们只记得「来自某个节点」，会话列表里就成了光秃秃的「来自」）
+    const originLabel = String(push.node_label || resolveOriginLabel(actorId, ''));
     if (push.deleted) {
       deleteSessionWithTombstone(sessionId, actorId);
-      const result = commit('session', sessionId, actorId, { deleted: true });
+      const result = commit('session', sessionId, actorId, { deleted: true, nodeLabel: originLabel });
       // 中枢自己的浏览器也要刷会话列表（广播只发给成员端，不发本机 SSE）
       emit('session-changed', { id: sessionId, deleted: true, from: push.node_id || '' });
       return {
@@ -516,11 +529,11 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     // 合并前后比一次内容 hash：没有新内容（本端已是同一份、或被墓碑挡住）就不发号、不广播，
     // 否则两端会把同一份快照反复推来推去
     const hashBefore = sessionContentHash(sessionId);
-    const merged = mergeSessionSnapshot(snapshot, push.node_id || actorId, push.node_label || '');
+    const merged = mergeSessionSnapshot(snapshot, push.node_id || actorId, originLabel);
     if (sessionContentHash(sessionId) === hashBefore) {
       return { ok: true, seq: 0, revision: 0, op: summarizeSessionChange(sessionId, snapshot.session.title) };
     }
-    const result = commit('session', sessionId, actorId, {});
+    const result = commit('session', sessionId, actorId, { nodeLabel: originLabel });
     emit('session-changed', { id: sessionId, from: push.node_id || '' });
     return {
       ok: true,

@@ -9,7 +9,7 @@ import {
   readSyncedBoard,
   type SyncedBoardPayload,
 } from '../assistant/boardCore.js';
-import { currentNodeId } from './store.js';
+import { currentNodeId, peerDeviceLabel } from './store.js';
 
 /**
  * 会话与任务看板的跨端同步（**仅完成态**）。
@@ -120,6 +120,40 @@ export function stampSessionOrigin(sessionId: string): void {
     `UPDATE assistant_sessions SET origin_node_id = ?, origin_node_label = ?
      WHERE id = ? AND COALESCE(origin_node_id, '') = ''`
   ).run(currentNodeId(), deviceLabel(), sessionId);
+}
+
+/**
+ * 来源设备名：行里存下来的优先，缺了按来源端补。
+ *
+ * 早先的广播只带来源节点 id、不带设备名，成员端因此只记住「来自某个节点」——界面就成了
+ * 光秃秃的「来自」。这里兜底：中枢本端的写入记成设备名，成员推来的按 sync_peers 里注册的
+ * 设备名（SSE 连接时上报）补；两头都没有就返回空串，界面退化成「其他设备」。
+ */
+export function resolveOriginLabel(nodeId: string, storedLabel: string): string {
+  const id = str(nodeId);
+  if (str(storedLabel)) return str(storedLabel);
+  if (!id) return '';
+  // 中枢本端写入的来源是 'hub'（hub.ts 的 HUB_ACTOR）；历史行里也可能是中枢自己的节点 id
+  if (id === 'hub' || id === currentNodeId()) return deviceLabel();
+  return peerDeviceLabel(id);
+}
+
+/**
+ * 给「已知是别端来的、但没记住设备名」的会话补上名字（旧版中枢的广播只有 id 没有 node_label）。
+ * 只改一行标签、不搬会话正文；本端原生会话（origin 为空）一概不碰，已有名字不覆盖。
+ */
+export function repairSessionOriginLabel(sessionId: string, nodeId: string, label: string): boolean {
+  const id = str(nodeId);
+  const name = str(label);
+  if (!id || !name) return false;
+  const row = db
+    .prepare(`SELECT origin_node_id, origin_node_label FROM assistant_sessions WHERE id = ?`)
+    .get(sessionId) as { origin_node_id: string | null; origin_node_label: string | null } | undefined;
+  if (!row) return false;
+  // origin 为空 = 本端自己聊出来的会话：补名字等于把它错标成「来自别端」，宁可不标
+  if (!str(row.origin_node_id) || str(row.origin_node_label)) return false;
+  db.prepare(`UPDATE assistant_sessions SET origin_node_label = ? WHERE id = ?`).run(name, sessionId);
+  return true;
 }
 
 /** 该会话是否是本端的系统会话（任务看板）：是则不参与会话同步 */
@@ -349,7 +383,9 @@ export function mergeSessionSnapshot(
          title_source = CASE WHEN excluded.updated_at >= assistant_sessions.updated_at THEN excluded.title_source ELSE assistant_sessions.title_source END,
          updated_at = MAX(assistant_sessions.updated_at, excluded.updated_at),
          origin_node_id = CASE WHEN COALESCE(assistant_sessions.origin_node_id, '') = '' THEN excluded.origin_node_id ELSE assistant_sessions.origin_node_id END,
-         origin_node_label = CASE WHEN COALESCE(assistant_sessions.origin_node_id, '') = '' THEN excluded.origin_node_label ELSE assistant_sessions.origin_node_label END`
+         -- 设备名可以被后来的合并补上（早先的广播只带 id）：已记住的名字不覆盖，
+         -- 空着的就用这次带的补——否则「来自 」会一直空着，再没有第二次机会
+         origin_node_label = CASE WHEN COALESCE(assistant_sessions.origin_node_label, '') <> '' THEN assistant_sessions.origin_node_label ELSE excluded.origin_node_label END`
     ).run({
       id: session.id,
       title: session.title || '未命名会话',
@@ -424,6 +460,9 @@ export interface SessionManifestEntry {
   messageCount: number;
   /** 清单指纹（廉价）；对不上就拉这个会话的完整快照 */
   hash: string;
+  /** 来源端节点 id 与设备名（成员端据此显示「来自 <设备>」；空 = 本端原生会话） */
+  originNodeId: string;
+  originNodeLabel: string;
 }
 
 /** 本端任务看板会话 id（参与同步时要排除） */
@@ -434,11 +473,16 @@ function localBoardSessionId(): string {
   return str(row?.id);
 }
 
-/** 参与同步的会话清单（排除看板这类系统会话），按最近更新倒序、最多 SESSION_MANIFEST_LIMIT 条 */
+/**
+ * 参与同步的会话清单（排除看板这类系统会话），按最近更新倒序、最多 SESSION_MANIFEST_LIMIT 条。
+ *
+ * 来源端与设备名随清单一并给出：成员端拿到「本端记的是别端会话、却没有设备名」时，
+ * 不必为一行标签再拉整份会话正文，直接补名即可（旧版广播丢下 label 的历史行靠这里自愈）。
+ */
 export function sessionManifest(): SessionManifestEntry[] {
   const rows = db
     .prepare(
-      `SELECT s.id, s.title, s.updated_at, s.archived, s.title_source,
+      `SELECT s.id, s.title, s.updated_at, s.archived, s.title_source, s.origin_node_id, s.origin_node_label,
               (SELECT COUNT(*) FROM assistant_messages m WHERE m.session_id = s.id) AS n,
               (SELECT COALESCE(SUM(LENGTH(m.content)), 0) FROM assistant_messages m WHERE m.session_id = s.id) AS bytes,
               (SELECT COALESCE(MAX(m.created_at), '') FROM assistant_messages m WHERE m.session_id = s.id) AS last_at
@@ -454,6 +498,8 @@ export function sessionManifest(): SessionManifestEntry[] {
     updatedAt: str(row.updated_at),
     messageCount: Number(row.n || 0),
     hash: fingerprintOf(row),
+    originNodeId: str(row.origin_node_id),
+    originNodeLabel: resolveOriginLabel(str(row.origin_node_id), str(row.origin_node_label)),
   }));
 }
 

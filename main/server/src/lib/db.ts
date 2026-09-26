@@ -756,6 +756,9 @@ export function migrate() {
     revoked INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`).run();
+  // 成员设备上报的节点 id（连上事件流时带上）：老会话行的来源记的是这个节点 id，
+  // 而广播里记的是成员 id——补设备名时两种 id 都要能认出来
+  ensureColumn('sync_peers', 'node_id', `TEXT NOT NULL DEFAULT ''`);
 
   ensureVecTable(getVecDim());
 
