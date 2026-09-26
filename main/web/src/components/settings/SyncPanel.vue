@@ -160,6 +160,45 @@
           <button class="btn" type="button" :disabled="reconciling" @click="reconcileNow">{{ reconciling ? '对账中…' : '立即全量对账' }}</button>
         </div>
       </div>
+
+      <!-- 双栈连接：中枢域名同时有 A/AAAA 时优先 IPv6，连不上自动改用 IPv4，用稳后定期回探 IPv6。
+           协议族只在建连那一刻选定，传输途中不切换——大文件传完一次才轮到下一次回探。 -->
+      <div class="dualstack-block">
+        <label class="dualstack-toggle">
+          <input v-model="dualStack.enabled" type="checkbox" @change="saveDualStack(true)" />
+          <span>
+            <strong>双栈连接（IPv6 优先）</strong>
+            <span class="faint small">
+              域名同时有 IPv4/IPv6 时先走 IPv6；IPv6 连不上自动改用 IPv4，IPv4 用稳后定期回探一次 IPv6，
+              恢复即自动切回。切换只发生在两次传输之间，不会打断正在上传／下载的文件。
+            </span>
+          </span>
+        </label>
+        <p class="dualstack-state faint small">{{ dualStackStateText }}</p>
+        <div v-show="dualStack.enabled" class="dualstack-fields">
+          <div class="field-row">
+            <label for="ds-failures">判定 IPv6 不通：连续失败</label>
+            <div class="ds-inputs">
+              <input id="ds-failures" v-model.number="dualStack.failureThreshold" type="number" min="1" max="20" />
+              <span class="faint small">次，或累计卡住</span>
+              <input id="ds-window" v-model.number="dualStack.windowSeconds" type="number" min="1" max="120" />
+              <span class="faint small">秒（任一满足即改用 IPv4）</span>
+            </div>
+          </div>
+          <div class="field-row">
+            <label for="ds-probe">回探节奏：IPv4 每成功</label>
+            <div class="ds-inputs">
+              <input id="ds-probe" v-model.number="dualStack.probeAfterSuccesses" type="number" min="1" max="1000" />
+              <span class="faint small">次回探一次 IPv6；单次连接超时</span>
+              <input id="ds-timeout" v-model.number="dualStack.connectTimeoutMs" type="number" min="500" max="30000" step="500" />
+              <span class="faint small">毫秒</span>
+            </div>
+          </div>
+          <div class="sync-actions">
+            <button class="btn" type="button" :disabled="saving" @click="saveDualStack()">保存双栈设置</button>
+          </div>
+        </div>
+      </div>
     </template>
 
     <!-- 运行状态的位置见卡片顶部（中枢与成员共用同一行摘要） -->
@@ -244,8 +283,31 @@ interface SyncStatus {
   pendingPulls: number;
   lastSyncAt: string | null;
   lastError: string | null;
+  /** 双栈连接：当前配置 + 每个中枢域名的实时协议族（服务端与 Android 本地版同一套字段） */
+  dualStack?: DualStackStatus;
   log: SyncLogEntry[];
   peers: PeerView[];
+}
+
+interface DualStackHost {
+  host: string;
+  family: number;
+  familyLabel: string;
+  consecutiveFailures: number;
+  failureMs: number;
+  ipv4Successes: number;
+  probePending: boolean;
+  switchedAt: string | null;
+  reason: string | null;
+}
+
+interface DualStackStatus {
+  enabled: boolean;
+  failureThreshold: number;
+  failureWindowMs: number;
+  probeAfterSuccesses: number;
+  connectTimeoutMs: number;
+  hosts: DualStackHost[];
 }
 
 const location = window.location;
@@ -261,6 +323,9 @@ const saving = ref(false);
 const creating = ref(false);
 const reconciling = ref(false);
 const newPeer = ref<(PeerView & { token: string }) | null>(null);
+const dualStack = ref({ enabled: true, failureThreshold: 3, windowSeconds: 15, probeAfterSuccesses: 10, connectTimeoutMs: 5000 });
+/** 表单只在首次拿到状态（或保存后）回填：状态每 5 秒轮询，不能把用户正在改的数字冲掉 */
+const dualStackLoaded = ref(false);
 let pollTimer: number | null = null;
 
 // 设置页二级导航的状态徽标：一眼看出本机是中枢、成员还是尚未参与同步
@@ -365,7 +430,53 @@ async function loadStatus(): Promise<void> {
     const res = await api.get('/api/sync/status');
     status.value = res.data;
     peers.value = res.data.peers || [];
+    syncDualStackForm();
   } catch { /* 服务未就绪时忽略 */ }
+}
+
+/** 回填双栈表单（force=true 用于保存成功后按服务端归一化结果刷新） */
+function syncDualStackForm(force = false): void {
+  const ds = status.value?.dualStack;
+  if (!ds || (dualStackLoaded.value && !force)) return;
+  dualStack.value = {
+    enabled: ds.enabled !== false,
+    failureThreshold: ds.failureThreshold,
+    windowSeconds: Math.max(1, Math.round(ds.failureWindowMs / 1000)),
+    probeAfterSuccesses: ds.probeAfterSuccesses,
+    connectTimeoutMs: ds.connectTimeoutMs,
+  };
+  dualStackLoaded.value = true;
+}
+
+/** 双栈现状一句话：当前走哪一族、还差几次回探 */
+const dualStackStateText = computed(() => {
+  const ds = status.value?.dualStack;
+  if (!ds) return '';
+  if (!ds.enabled) return '已关闭：域名连接交回系统默认（由操作系统排序 IPv6/IPv4）。';
+  if (!ds.hosts.length) return '还没有连过中枢域名：下一个请求会先试 IPv6，连不上会自动改用 IPv4。';
+  return ds.hosts.map((host) => {
+    if (host.family === 6) {
+      const pending = host.consecutiveFailures > 0 ? `（IPv6 已连续失败 ${host.consecutiveFailures} 次，达 ${ds.failureThreshold} 次改用 IPv4）` : '';
+      return `${host.host}：正在用 IPv6${pending}`;
+    }
+    const remaining = Math.max(0, ds.probeAfterSuccesses - host.ipv4Successes);
+    return `${host.host}：正在用 IPv4（${host.reason || 'IPv6 连不上'}；IPv4 已成功 ${host.ipv4Successes} 次，`
+      + `${host.probePending ? '下一次请求回探 IPv6' : `再成功 ${remaining} 次回探一次 IPv6`}）`;
+  }).join('；');
+});
+
+async function saveDualStack(auto = false): Promise<void> {
+  const payload = {
+    enabled: dualStack.value.enabled,
+    failureThreshold: Number(dualStack.value.failureThreshold) || 3,
+    failureWindowMs: Math.round((Number(dualStack.value.windowSeconds) || 15) * 1000),
+    probeAfterSuccesses: Number(dualStack.value.probeAfterSuccesses) || 10,
+    connectTimeoutMs: Number(dualStack.value.connectTimeoutMs) || 5000,
+  };
+  const message = auto
+    ? (payload.enabled ? '双栈连接已开启：优先 IPv6，连不上自动用 IPv4' : '双栈连接已关闭：域名连接交回系统默认')
+    : '双栈设置已保存';
+  if (await postConfig({ dual_stack: payload }, message)) syncDualStackForm(true);
 }
 
 async function postConfig(body: Record<string, unknown>, okMsg: string): Promise<boolean> {
@@ -664,6 +775,29 @@ onUnmounted(() => {
 .faint { opacity: 0.65; }
 .small { font-size: 12px; }
 .empty-panel { font-size: 13px; opacity: 0.7; }
+
+/* 双栈连接：开关 + 阈值 + 当前协议族 */
+.dualstack-block {
+  margin: 4px 4px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dualstack-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.dualstack-toggle input { margin-top: 3px; }
+.dualstack-toggle > span { display: flex; flex-direction: column; gap: 4px; }
+.dualstack-state { margin: 0; line-height: 1.6; word-break: break-all; }
+.dualstack-fields { display: flex; flex-direction: column; gap: 12px; }
+.ds-inputs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ds-inputs input { width: 92px; }
 
 @media (max-width: 768px) {
   /* 分组卡片在移动端已由 settings.css 收窄，内部块只需跟随 4px 内边距 */

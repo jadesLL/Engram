@@ -40,7 +40,8 @@ import {
   snapshotHash,
 } from '../sync/sessions.js';
 import { distilledSourcePaths } from '../pipeline/sourceLedger.js';
-import { configure, reconcileNow, status } from '../sync/index.js';
+import { configure, configureDualStack, reconcileNow, status } from '../sync/index.js';
+import type { DualStackConfig } from '../sync/dualStack.js';
 import {
   clearSyncLog,
   logSyncEvent,
@@ -202,7 +203,18 @@ export async function syncRoutes(app: FastifyInstance) {
   app.delete('/api/sync/log', { preHandler: requireAuth }, async () => ({ ok: true, cleared: clearSyncLog() }));
 
   app.post('/api/sync/config', { preHandler: requireAuth }, async (req, reply) => {
-    const body = req.body as { enabled?: boolean; hub_url?: string; hub_token?: string; role?: 'hub' | 'member' | 'none' };
+    const body = req.body as {
+      enabled?: boolean;
+      hub_url?: string;
+      hub_token?: string;
+      role?: 'hub' | 'member' | 'none';
+      dual_stack?: Partial<DualStackConfig>;
+    };
+    // 双栈参数独立于绑定信息：设置页只改阈值时不能把 enabled 当 false 处理（会误停同步）
+    if (body.dual_stack !== undefined) configureDualStack(body.dual_stack || {});
+    const touchesBinding = body.enabled !== undefined || body.hub_url !== undefined
+      || body.hub_token !== undefined || body.role !== undefined;
+    if (!touchesBinding) return { ok: true };
     const error = await configure({
       enabled: Boolean(body.enabled),
       hub_url: body.hub_url,

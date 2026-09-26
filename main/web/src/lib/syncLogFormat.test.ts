@@ -56,6 +56,7 @@ test('事件标签表覆盖服务端全部事件（前端漏标签会导致抽�
     'push-conflict',
     'peer-online', 'peer-offline', 'peer-added', 'peer-removed', 'peer-token-reset',
     'role-changed', 'config-changed',
+    'dualstack-ipv4-fallback', 'dualstack-probe-failed', 'dualstack-ipv6-recovered', 'dualstack-config',
   ];
   for (const event of serverEvents) {
     assert.ok(SYNC_EVENT_META[event], `事件 ${event} 缺少中文标签`);

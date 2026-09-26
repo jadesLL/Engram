@@ -1,13 +1,23 @@
 package com.engram.app
 
 import android.util.JsonReader
+import okhttp3.Call
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
-import java.net.HttpURLConnection
-import java.net.URL
+import java.net.InetAddress
 import java.net.URLEncoder
+import java.net.UnknownHostException
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
@@ -16,16 +26,31 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Android 成员端一次性同步器。无 SSE、无后台调度：前台事件触发一轮收敛，完成后线程空闲。
  * 本地写入先落 SQLite outbox，网络失败或进程退出均可在下次前台继续。
+ * 连中枢走 OkHttp + 双栈策略（见 DualStack.kt）：域名同时有 A/AAAA 时先 IPv6，连不上改 IPv4，
+ * IPv4 用稳后定期回探一次 IPv6——协议族只在建连时选定，传输途中不换。
  */
 class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore) {
     private val executor = Executors.newSingleThreadExecutor()
     private val fetchExecutor = Executors.newFixedThreadPool(MAX_PARALLEL_FETCHES)
-    private val activeConnections = ConcurrentHashMap.newKeySet<HttpURLConnection>()
+    private val activeCalls = ConcurrentHashMap.newKeySet<Call>()
+    /**
+     * 三个客户端共用一套超时，只有 DNS 解析不同：
+     *  - clientV6/clientV4 各自只解析出选定协议族的地址 → 两套独立连接池，切族不打断在途传输；
+     *  - httpClient 用于「策略关闭 / 解析不出地址」的场景，保持历史行为（系统默认排序）。
+     */
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(0, TimeUnit.SECONDS)
+        .build()
+    private val clientV6 = httpClient.newBuilder().dns(FamilyDns(6)).build()
+    private val clientV4 = httpClient.newBuilder().dns(FamilyDns(4)).build()
     private val running = AtomicBoolean(false)
     private val requestWhileRunning = AtomicBoolean(false)
     private val fullRequestWhileRunning = AtomicBoolean(false)
@@ -43,7 +68,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         foreground = false
         cancelled = true
         connected = false
-        activeConnections.forEach { it.disconnect() }
+        activeCalls.forEach { it.cancel() }
     }
 
     fun request(full: Boolean) {
@@ -247,11 +272,11 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             }
         }
         try {
-            withConnection("GET", "/api/sync/snapshot") { connection ->
-                requireSuccessfulResponse(connection)
-                val declared = connection.contentLengthLong
+            withConnection("GET", "/api/sync/snapshot") { response ->
+                val stream = response.body?.byteStream() ?: throw IllegalStateException("中枢未返回清单内容")
+                val declared = response.body?.contentLength() ?: -1L
                 require(declared < 0 || declared <= MAX_SNAPSHOT_BYTES) { "中枢清单超过 256 MB 上限" }
-                connection.inputStream.use { input ->
+                stream.use { input ->
                     staged.outputStream().buffered().use { output ->
                         val buffer = ByteArray(64 * 1024)
                         var total = 0L
@@ -396,10 +421,11 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         val staged = File(db.root, "sync-${UUID.randomUUID()}.tmp")
         val maxBytes = if (isInboxFile(path)) Long.MAX_VALUE else MAX_FILE_BYTES
         try {
-            withConnection("GET", "/api/sync/file?path=${encode(path)}") { connection ->
-                val declared = connection.contentLengthLong
+            withConnection("GET", "/api/sync/file?path=${encode(path)}") { response ->
+                val stream = response.body?.byteStream() ?: throw IllegalStateException("中枢未返回文件内容")
+                val declared = response.body?.contentLength() ?: -1L
                 require(declared < 0 || declared <= maxBytes) { "同步文件超过 200 MB 上限" }
-                connection.inputStream.use { input ->
+                stream.use { input ->
                     staged.outputStream().use { output ->
                         val buffer = ByteArray(64 * 1024)
                         var total = 0L
@@ -476,76 +502,143 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
 
     private fun request(method: String, path: String, body: ByteArray?, contentType: String): ByteArray {
         checkActive()
-        return withConnection(method, path, contentType) { connection ->
-            if (body != null) {
-                connection.doOutput = true
-                connection.outputStream.use { it.write(body) }
-            }
-            requireSuccessfulResponse(connection)
-            val declared = connection.contentLengthLong
+        val requestBody = body?.toRequestBody(contentType.toMediaType())
+        return withConnection(method, path, contentType, requestBody) { response ->
+            val stream = response.body?.byteStream() ?: throw IllegalStateException("中枢未返回内容")
+            val declared = response.body?.contentLength() ?: -1L
             if (declared > MAX_JSON_BYTES) throw JsonResponseTooLarge(declared)
-            connection.inputStream.use { readLimited(it, MAX_JSON_BYTES) }
+            stream.use { readLimited(it, MAX_JSON_BYTES) }
         }
     }
 
-    private fun requireSuccessfulResponse(connection: HttpURLConnection) {
-        val status = connection.responseCode
-        if (status !in 200..299) {
-            val error = connection.errorStream?.use { String(readLimited(it, 64 * 1024L), StandardCharsets.UTF_8).take(200) }.orEmpty()
-            throw IllegalStateException("中枢返回 $status：$error")
-        }
-    }
+    /** 当前生效的双栈配置（设置页可改；默认 IPv6 优先 + 标准阈值） */
+    private fun dualStackConfig(): DualStackConfig = DualStackConfig.fromSettings { key -> db.setting(key) }
 
-    private fun <T> withConnection(method: String, path: String, contentType: String? = null, block: (HttpURLConnection) -> T): T {
+    /**
+     * 发一次请求并按双栈策略轮换协议族（IPv6 优先 → 失败用 IPv4；IPv4 用稳后定期回探）。
+     *
+     * 关键约束：一次请求（含大文件上传／下载）只在**建连那一刻**选定协议族，成功后全程同一条
+     * 连接；只有「连都没连上」（isConnectFailure）才换族重试，传输途中出错一律不换。
+     */
+    private fun <T> withConnection(
+        method: String,
+        path: String,
+        contentType: String? = null,
+        body: RequestBody? = null,
+        block: (Response) -> T,
+    ): T {
         var failure: Exception? = null
         for (base in baseUrls()) {
             checkActive()
-            val connection = URL(base + path).openConnection() as HttpURLConnection
-            activeConnections.add(connection)
-            try {
-                connection.requestMethod = method
-                connection.connectTimeout = 6_000
-                connection.readTimeout = 30_000
-                connection.setRequestProperty("Authorization", "Bearer ${token()}")
-                connection.setRequestProperty("Accept", "application/json, application/octet-stream")
-                contentType?.let { connection.setRequestProperty("Content-Type", it) }
-                val result = block(connection)
-                val status = connection.responseCode
-                if (status !in 200..299) {
-                    val error = connection.errorStream?.use { String(readLimited(it, 64 * 1024L)).take(200) }.orEmpty()
-                    throw IllegalStateException("中枢返回 $status：$error")
+            val url = (base + path).toHttpUrlOrNull()
+            if (url == null) {
+                failure = IllegalArgumentException("中枢地址无效: $base")
+                continue
+            }
+            val config = dualStackConfig()
+            // 解析不出地址或策略关闭时不介入：交给系统默认连接器，行为与历史版本一致
+            val availability = if (config.enabled) addressAvailability(url.host) else null
+            if (availability == null) {
+                try {
+                    val result = attempt(method, url, contentType, body, httpClient, block)
+                    connected = true
+                    return result
+                } catch (error: Exception) {
+                    if (cancelled || !foreground) throw Cancelled()
+                    failure = error
+                    continue
                 }
-                connected = true
-                return result
-            } catch (error: Exception) {
-                if (cancelled || !foreground) throw Cancelled()
-                failure = error
-            } finally {
-                activeConnections.remove(connection)
-                connection.disconnect()
+            }
+            val state = DualStack.state(url.host)
+            // 单栈域名先把状态校准到实际那一族（界面显示的「当前用哪一族」必须是真的）
+            DualStack.alignSingleStack(state, availability.first, availability.second)
+            val plan = DualStack.plan(state, availability.first, availability.second, body == null)
+            for ((index, planned) in plan.withIndex()) {
+                checkActive()
+                val startedAt = System.currentTimeMillis()
+                val client = if (planned.family == 6) clientV6 else clientV4
+                try {
+                    val result = attempt(method, url, contentType, body, client, block)
+                    logDualStackEvent(
+                        DualStack.record(config, state, planned.family, true, System.currentTimeMillis() - startedAt)
+                    )
+                    connected = true
+                    return result
+                } catch (error: Exception) {
+                    if (cancelled || !foreground) throw Cancelled()
+                    logDualStackEvent(
+                        DualStack.record(config, state, planned.family, false, System.currentTimeMillis() - startedAt)
+                    )
+                    failure = error
+                    if (!isConnectFailure(error) || index == plan.lastIndex) break
+                }
             }
         }
         throw failure ?: IllegalStateException("无法连接同步中枢")
+    }
+
+    /** 单次尝试：一发请求一条连接；错误信息（含中枢返回的非 2xx 正文）与历史版本保持一致 */
+    private fun <T> attempt(
+        method: String,
+        url: okhttp3.HttpUrl,
+        contentType: String?,
+        body: RequestBody?,
+        client: OkHttpClient,
+        block: (Response) -> T,
+    ): T {
+        val builder = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer ${token()}")
+            .header("Accept", "application/json, application/octet-stream")
+        contentType?.let { builder.header("Content-Type", it) }
+        builder.method(method, body)
+        val call = client.newCall(builder.build())
+        activeCalls.add(call)
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    val error = response.body?.string()?.take(200).orEmpty()
+                    throw IllegalStateException("中枢返回 ${response.code}：$error")
+                }
+                return block(response)
+            }
+        } finally {
+            activeCalls.remove(call)
+        }
+    }
+
+    /** 域名解析出的协议族清单；解析失败返回 null（让请求自己报 DNS 错，不当作双栈问题记账） */
+    private fun addressAvailability(host: String): Pair<Boolean, Boolean>? = try {
+        val addresses = InetAddress.getAllByName(host)
+        Pair(
+            addresses.any { FamilyDns.isFamily(it, 6) },
+            addresses.any { FamilyDns.isFamily(it, 4) },
+        )
+    } catch (_: UnknownHostException) {
+        null
+    }
+
+    private fun logDualStackEvent(event: DualStackEvent?) {
+        if (event == null) return
+        db.log(event.level, event.event, event.detail)
     }
 
     private fun postFile(path: String, file: File) {
         if (!isInboxFile(path)) {
             require(file.length() <= MAX_FILE_BYTES) { "同步文件超过 200 MB 上限" }
         }
-        val boundary = "Engram-${UUID.randomUUID()}"
-        withConnection("POST", "/api/sync/file", "multipart/form-data; boundary=$boundary") { connection ->
-            connection.doOutput = true
-            connection.setChunkedStreamingMode(64 * 1024)
-            connection.outputStream.buffered(64 * 1024).use { output ->
-                fun line(value: String) { output.write(value.toByteArray()); output.write("\r\n".toByteArray()) }
-                line("--$boundary"); line("Content-Disposition: form-data; name=\"path\""); line(""); line(path)
-                line("--$boundary"); line("Content-Disposition: form-data; name=\"file\"; filename=\"${path.substringAfterLast('/')}\"")
-                line("Content-Type: application/octet-stream"); line("")
-                FileInputStream(file).use { it.copyTo(output, 64 * 1024) }
-                line(""); line("--$boundary--")
-            }
-            requireSuccessfulResponse(connection)
-            connection.inputStream.use { readLimited(it, MAX_JSON_BYTES) }
+        // multipart 从文件流式读，不整块进内存；文件名与字段名与中枢接口一致
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("path", path)
+            .addFormDataPart(
+                "file",
+                path.substringAfterLast('/'),
+                file.asRequestBody("application/octet-stream".toMediaType()),
+            )
+            .build()
+        withConnection("POST", "/api/sync/file", null, body) { response ->
+            response.body?.byteStream()?.use { readLimited(it, MAX_JSON_BYTES) }
         }
     }
 

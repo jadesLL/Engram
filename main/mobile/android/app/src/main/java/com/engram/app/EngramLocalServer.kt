@@ -542,7 +542,12 @@ class EngramLocalServer private constructor(private val context: Context) {
         }
         post("/api/sync/config") {
             if (!call.authorize()) return@post
-            val body = call.body(); val role = body.optString("role", "member")
+            val body = call.body()
+            // 双栈参数独立于绑定信息：设置页只改阈值时不能把 role/enabled 当默认值处理（会误改角色）
+            if (body.has("dual_stack")) saveDualStackConfig(body.optJSONObject("dual_stack") ?: JSONObject())
+            val touchesBinding = body.has("role") || body.has("hub_url") || body.has("hub_token") || body.has("enabled")
+            if (!touchesBinding) return@post call.ok()
+            val role = body.optString("role", "member")
             require(role == "none" || role == "member") { "Android 只能作为同步成员" }
             if (role == "member") {
                 val url = body.optString("hub_url", db.setting("sync_hub_url").orEmpty()).trimEnd('/')
@@ -586,18 +591,72 @@ class EngramLocalServer private constructor(private val context: Context) {
     private suspend fun ApplicationCall.json(value: Any, status: HttpStatusCode = HttpStatusCode.OK) = respondText(value.toString(), ContentType.Application.Json, status)
 
     /** /api/sync/status 与同步详情抽屉共用的状态对象（字段名对齐 server，web 两处都按这套读） */
-    private fun syncStatus(): JSONObject = JSONObject()
-        .put("role", db.setting("sync_role") ?: "none")
-        .put("enabled", db.setting("sync_enabled") == "1")
-        .put("connected", sync.connected).put("running", sync.isRunning()).put("syncing", sync.isRunning())
-        .put("reconciling", false).put("revision", 0)
-        .put("hubUrl", db.setting("sync_hub_url") ?: "")
-        .put("directUrls", JSONArray(db.setting("sync_direct_urls") ?: "[]"))
-        .put("hubToken", if (secrets.get("sync_hub_token").isNullOrBlank()) "" else "••••••••")
-        .put("nodeId", db.setting("sync_node_id") ?: "").put("cursor", db.setting("sync_cursor")?.toLongOrNull() ?: 0)
-        .put("pending", db.outboxCount()).put("pendingPulls", sync.pendingPulls).put("syncProgress", sync.syncProgress)
-        .put("lastSyncAt", sync.lastSyncAt)
-        .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray())
+    private fun syncStatus(): JSONObject {
+        val dualStack = currentDualStackConfig()
+        return JSONObject()
+            .put("role", db.setting("sync_role") ?: "none")
+            .put("enabled", db.setting("sync_enabled") == "1")
+            .put("connected", sync.connected).put("running", sync.isRunning()).put("syncing", sync.isRunning())
+            .put("reconciling", false).put("revision", 0)
+            .put("hubUrl", db.setting("sync_hub_url") ?: "")
+            .put("directUrls", JSONArray(db.setting("sync_direct_urls") ?: "[]"))
+            .put("hubToken", if (secrets.get("sync_hub_token").isNullOrBlank()) "" else "••••••••")
+            .put("nodeId", db.setting("sync_node_id") ?: "").put("cursor", db.setting("sync_cursor")?.toLongOrNull() ?: 0)
+            .put("pending", db.outboxCount()).put("pendingPulls", sync.pendingPulls).put("syncProgress", sync.syncProgress)
+            .put("lastSyncAt", sync.lastSyncAt)
+            .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray())
+            // 双栈连接：配置 + 每个中枢域名的实时协议族（设置页「双栈连接」按 server 同一套字段读）
+            .put(
+                "dualStack",
+                JSONObject()
+                    .put("enabled", dualStack.enabled)
+                    .put("failureThreshold", dualStack.failureThreshold)
+                    .put("failureWindowMs", dualStack.failureWindowMs)
+                    .put("probeAfterSuccesses", dualStack.probeAfterSuccesses)
+                    .put("connectTimeoutMs", dualStack.connectTimeoutMs)
+                    .put(
+                        "hosts",
+                        JSONArray().apply {
+                            DualStack.status().forEach { host ->
+                                put(
+                                    JSONObject()
+                                        .put("host", host.host)
+                                        .put("family", host.family)
+                                        .put("familyLabel", host.familyLabel)
+                                        .put("consecutiveFailures", host.consecutiveFailures)
+                                        .put("failureMs", host.failureMs)
+                                        .put("ipv4Successes", host.ipv4Successes)
+                                        .put("probePending", host.probePending)
+                                        .put("switchedAt", host.switchedAt?.let { Instant.ofEpochMilli(it).toString() } ?: JSONObject.NULL)
+                                        .put("reason", host.reason ?: JSONObject.NULL)
+                                )
+                            }
+                        }
+                    )
+            )
+    }
+
+    private fun currentDualStackConfig(): DualStackConfig = DualStackConfig.fromSettings { key -> db.setting(key) }
+
+    /** 保存双栈参数：缺省字段沿用当前值；越界值由 DualStackConfig.fromSettings 统一收敛 */
+    private fun saveDualStackConfig(incoming: JSONObject) {
+        val current = currentDualStackConfig()
+        db.setSetting(DualStackConfig.KEY_ENABLED, if (incoming.optBoolean("enabled", current.enabled)) "1" else "0")
+        if (incoming.has("failureThreshold")) {
+            db.setSetting(DualStackConfig.KEY_FAILURES, incoming.optInt("failureThreshold", current.failureThreshold).toString())
+        }
+        if (incoming.has("failureWindowMs")) {
+            db.setSetting(DualStackConfig.KEY_WINDOW_MS, incoming.optLong("failureWindowMs", current.failureWindowMs).toString())
+        }
+        if (incoming.has("probeAfterSuccesses")) {
+            db.setSetting(DualStackConfig.KEY_PROBE_AFTER, incoming.optInt("probeAfterSuccesses", current.probeAfterSuccesses).toString())
+        }
+        if (incoming.has("connectTimeoutMs")) {
+            db.setSetting(DualStackConfig.KEY_CONNECT_TIMEOUT_MS, incoming.optInt("connectTimeoutMs", current.connectTimeoutMs).toString())
+        }
+        // 从「关闭」重新打开：清掉学到的状态，让域名重新按 IPv6 优先试一遍
+        if (!current.enabled && currentDualStackConfig().enabled) DualStack.reset()
+    }
 
     /**
      * 收集箱与记灵感的窄代理：真正干活的是中枢（模型拟标题、语义转换、任务队列）。
