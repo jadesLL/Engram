@@ -576,6 +576,24 @@ export function migrate() {
   CREATE INDEX IF NOT EXISTS idx_assistant_questions_run
     ON assistant_questions(run_id, status);
 
+  -- 任务看板的跨端副本：全端唯一一份（id 恒为 default），按答案生成时刻「最新者胜」整体替换。
+  -- 为什么不像页面那样做字符级合并：看板是模型一次提炼的整份产物，逐字融合会产生没有人写过的第 N 版。
+  CREATE TABLE IF NOT EXISTS task_board_sync(
+    id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    node_id TEXT NOT NULL DEFAULT '',
+    node_label TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+  );
+
+  -- 会话墓碑：本端删过的会话记一行，避免对端还留着的旧副本在全量对账时把已删会话「复活」回来
+  CREATE TABLE IF NOT EXISTS assistant_session_tombstones(
+    session_id TEXT PRIMARY KEY,
+    deleted_at TEXT NOT NULL,
+    node_id TEXT NOT NULL DEFAULT ''
+  );
+
   -- 桌面端远端免密接入已移除，清理旧版本留下的连接令牌
   DROP TABLE IF EXISTS desktop_tokens;
   `);
@@ -598,6 +616,11 @@ export function migrate() {
   ensureColumn('assistant_sessions', 'title_source', 'TEXT');
   // 内置 Agent 每轮的模型用量（JSON：{ main, subagents }，见 assistant/usage.ts）：缓存命中率据此显示
   ensureColumn('assistant_runs', 'usage', 'TEXT');
+  // 多端同步：该会话首次产生的设备（镜像来的会话照常落同一张表，这里用于界面标注「来自哪台设备」）
+  ensureColumn('assistant_sessions', 'origin_node_id', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('assistant_sessions', 'origin_node_label', `TEXT NOT NULL DEFAULT ''`);
+  // 系统会话标记（当前只有 task_board）：这类会话不参与会话同步，否则每台设备各留一份「任务看板」会话
+  ensureColumn('assistant_sessions', 'system_key', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('ingest_candidates', 'evidence_eligible', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn('semantic_events', 'status', `TEXT NOT NULL DEFAULT 'succeeded'`);
   ensureColumn('semantic_events', 'error', `TEXT NOT NULL DEFAULT ''`);

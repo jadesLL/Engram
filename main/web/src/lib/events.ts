@@ -7,7 +7,7 @@
 import { notify } from './notify';
 
 export interface PageEvent {
-  type: string; // page-changed | page-deleted | page-moved | file-changed | agent-question
+  type: string; // page-changed | page-deleted | page-moved | file-changed | agent-question | session-changed | board-changed
   path?: string;
   id?: string;
   oldPath?: string;
@@ -45,7 +45,16 @@ export function openPageStream(onEvent: (ev: PageEvent) => void): () => void {
       /* ignore malformed */
     }
   };
-  for (const type of ['page-changed', 'page-deleted', 'page-moved', 'file-changed', 'agent-question']) {
+  // session-changed / board-changed：多端同步把别端的会话或任务看板同步过来时推送
+  for (const type of [
+    'page-changed',
+    'page-deleted',
+    'page-moved',
+    'file-changed',
+    'agent-question',
+    'session-changed',
+    'board-changed',
+  ]) {
     es.addEventListener(type, handle(type));
   }
   es.onerror = () => {

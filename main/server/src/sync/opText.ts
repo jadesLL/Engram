@@ -12,7 +12,7 @@ import path from 'node:path';
  * 纯函数、无 IO，方便单测钉住措辞与计数口径。
  */
 
-export type SyncItemKind = 'page' | 'file' | 'delete' | 'move';
+export type SyncItemKind = 'page' | 'file' | 'delete' | 'move' | 'session' | 'board';
 /** add=本端新增；update=覆盖已有；delete=删除；move=改名/移动；same=内容一致 */
 export type SyncItemVerb = 'add' | 'update' | 'delete' | 'move' | 'same';
 
@@ -159,15 +159,44 @@ export function summarizeMove(oldPath: string, newPath: string): SyncOpSummary {
   };
 }
 
+/**
+ * 会话同步条目：path 是会话 id（不是 brain 路径），title 供界面显示；
+ * added 记本次带上路的消息条数（用「N 条消息」说明这次动了多少）。
+ */
+export function summarizeSessionChange(sessionId: string, title: string, messages = 0, deleted = false): SyncOpSummary {
+  return {
+    kind: 'session',
+    verb: deleted ? 'delete' : 'update',
+    path: sessionId,
+    title: title || '',
+    added: messages,
+  };
+}
+
+/** 看板同步条目：全端唯一一份，不分路径 */
+export function summarizeBoardChange(): SyncOpSummary {
+  return { kind: 'board', verb: 'update', path: 'default', title: '任务看板' };
+}
+
 /** 条目的「主体」写法：页面用标题、文件用路径（用户认标题，不认 hash 路径） */
 function subjectOf(item: SyncOpSummary): string {
   if (item.kind === 'file') return `文件「${item.path}」`;
   if (item.kind === 'delete' && !item.title) return `文件「${item.path}」`;
+  if (item.kind === 'session') return `会话「${item.title || item.path}」`;
+  if (item.kind === 'board') return '任务看板';
   return `页面「${item.title || pageTitle(item.path)}」`;
 }
 
 /** 条目 → 一行中文（列表里直接展示，用户不用展开也能看懂） */
 export function describeOpSummary(item: SyncOpSummary): string {
+  // 会话与看板不在 brain 目录里，措辞也要自成一套（不套用「页面/文件」）
+  if (item.kind === 'session') {
+    if (item.verb === 'delete') return `删除会话「${item.title || item.path}」`;
+    const count = Number(item.added || 0);
+    return `同步会话「${item.title || item.path}」${count > 0 ? `（${count} 条消息）` : ''}`;
+  }
+  if (item.kind === 'board') return '同步任务看板（全端取最新一版）';
+
   const name = subjectOf(item);
   switch (item.verb) {
     case 'add': {

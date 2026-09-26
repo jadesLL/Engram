@@ -6,13 +6,24 @@ import {
   describeOpList,
   describeOpSummary,
   isNoteworthyOp,
+  summarizeBoardChange,
   summarizeDelete,
   summarizeFileChange,
   summarizeMove,
   summarizePageChange,
+  summarizeSessionChange,
   type SyncOpSummary,
 } from './opText.js';
 import { safeJoin } from '../lib/vault.js';
+import {
+  boardWins,
+  collectBoardPayload,
+  deleteSessionWithTombstone,
+  isSystemSession,
+  readSyncedBoard,
+} from './sessions.js';
+import { BOARD_SESSION_SETTING, BOARD_SYNC_ID } from '../assistant/boardCore.js';
+import { getSession, runningRunForSession } from '../assistant/repository.js';
 import {
   beginBootstrap,
   clientStatus,
@@ -123,6 +134,71 @@ export function recordLocalChange(kind: SyncKind, target: string, extra: LocalCh
 }
 
 export type SyncRole = 'hub' | 'member' | 'none';
+
+/**
+ * 会话与看板的同步挂点（内置 Agent 一轮收口后调用）。
+ *
+ * 「只同步完成态」在这里落地：会话里还有正在跑/排队中的轮次时**什么都不做**——
+ * 那一轮收口时会再调一次，那时才推。看板只推本机这一份，且必须比已同步的那份更新。
+ */
+export function recordSessionChange(sessionId: string): void {
+  try {
+    if (!sessionId) return;
+    // 还有在跑的轮次：等它收口再推（「正在对话」不同步）
+    if (runningRunForSession(sessionId)) return;
+
+    const boardSessionId = String(getSetting(BOARD_SESSION_SETTING) || '');
+    if (boardSessionId && sessionId === boardSessionId) {
+      recordBoardChange();
+      return;
+    }
+    if (isSystemSession(sessionId)) return;
+
+    if (hubConfigured()) {
+      if (syncConfigEnabled()) enqueueLocalChange('session', sessionId);
+      return;
+    }
+    commitLocalChange('session', sessionId);
+    queueLocalBroadcast(summarizeSessionChange(sessionId, getSession(sessionId)?.title || ''));
+  } catch (error) {
+    // 同步层故障不阻塞业务写入（同 recordLocalChange）
+    console.error('[sync] 记录会话变更失败:', error);
+  }
+}
+
+/** 看板刷新收口后调用：本机这份更新才推（否则会把别端更新的看板顶回去） */
+export function recordBoardChange(): void {
+  try {
+    const board = collectBoardPayload();
+    if (!board) return;
+    const synced = readSyncedBoard();
+    if (synced && !boardWins(board, synced)) return;
+    if (hubConfigured()) {
+      if (syncConfigEnabled()) enqueueLocalChange('board', BOARD_SYNC_ID);
+      return;
+    }
+    commitLocalChange('board', BOARD_SYNC_ID);
+    queueLocalBroadcast(summarizeBoardChange());
+  } catch (error) {
+    console.error('[sync] 记录看板变更失败:', error);
+  }
+}
+
+/** 会话被删除：删本地副本 + 记墓碑 + 广播删除（否则对端手里的旧副本会在对账时把它复活） */
+export function recordSessionDelete(sessionId: string): void {
+  try {
+    if (!sessionId || isSystemSession(sessionId)) return;
+    deleteSessionWithTombstone(sessionId, currentNodeId());
+    if (hubConfigured()) {
+      if (syncConfigEnabled()) enqueueLocalChange('session', sessionId, undefined, true);
+      return;
+    }
+    commitLocalChange('session', sessionId, '', true);
+    queueLocalBroadcast(summarizeSessionChange(sessionId, '', 0, true));
+  } catch (error) {
+    console.error('[sync] 记录会话删除失败:', error);
+  }
+}
 
 export function currentRole(): SyncRole {
   const role = getSetting('sync_role');

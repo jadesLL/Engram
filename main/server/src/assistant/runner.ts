@@ -37,6 +37,7 @@ import {
   type MessageDto,
   type RunDto,
 } from './repository.js';
+import { recordSessionChange } from '../sync/index.js';
 
 /**
  * 一轮对话的编排：落库 + 事件透传 + 终态收口。
@@ -598,6 +599,9 @@ function beginRun(input: {
     if (ok || cancelled) publishRun(run.id, 'completed', {});
     else publishRun(run.id, 'error', { message: error || '运行失败' });
     touchSession(input.sessionId);
+    // 一轮收口（完成/失败/取消）后把「完成态」会话推给其他端：会话里若还有排队转正的下一轮，
+    // recordSessionChange 会自己跳过，等那一轮收口再推——「正在对话」的内容不出本机。
+    recordSessionChange(input.sessionId);
     clearRun(run.id);
   }
 

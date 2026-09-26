@@ -139,6 +139,11 @@
                   <AppSpinner :size="11" /> 回复中
                 </span>
                 <span v-else-if="chat.unread[session.id]" class="session-state unread">新回复</span>
+                <span
+                  v-else-if="foreignSource(session)"
+                  class="session-state foreign"
+                  v-tooltip="`这个会话是「${session.originNodeLabel}」上产生的，内容已同步到本机`"
+                >来自 {{ session.originNodeLabel }}</span>
                 <span v-else-if="session.titleSource === 'auto'" class="session-state auto" v-tooltip="'标题由内置 Agent 按内容自动生成'">自动命名</span>
                 <span class="session-time">{{ formatSessionTime(session.updatedAt) }}</span>
               </span>
@@ -546,6 +551,8 @@ import { cacheHitText, mergeUsage, usageDetail } from '../lib/chatUsage';
 import { confirmDialog } from '../lib/confirm';
 import { renderMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
+import { openPageStream } from '../lib/events';
+import { useSyncStore } from '../stores/sync';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 
 const props = defineProps<{ overlay?: boolean }>();
@@ -554,6 +561,9 @@ const router = useRouter();
 const app = useAppStore();
 const chat = useChatStore();
 const inbox = useInboxStore();
+const sync = useSyncStore();
+/** 会话被别端同步更新时的 SSE 订阅（抽屉卸载即断开） */
+let closeSessionStream: (() => void) | undefined;
 const { capabilities } = useRuntimeCapabilities();
 const isHubAgent = computed(() => capabilities.value.agentMode === 'hub');
 const isAgentUnavailable = computed(() => capabilities.value.agentMode === 'unavailable');
@@ -1242,10 +1252,25 @@ watch(() => app.chatComposerFocus, () => {
   void chat.init().then(() => focusComposer());
 });
 
+/**
+ * 这个会话是不是「别的设备上产生的」（多端同步下来的）。
+ * 本机节点 id 还没取到时一律不标（宁可少标一个徽标，也不要误标）。
+ */
+function foreignSource(session: { originNodeId?: string; originNodeLabel?: string }): boolean {
+  const localNode = sync.status?.nodeId;
+  return Boolean(session.originNodeId && localNode && session.originNodeId !== localNode);
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   // 窗口变窄时收窄到上限内（只收敛显示，用户偏好留着，回到大窗口即恢复）
   window.addEventListener('resize', onDrawerViewportResize);
+  // 其他端聊完一轮同步过来（或对端删了会话）：刷一次列表，别等用户重开抽屉才看见
+  closeSessionStream = openPageStream((ev) => {
+    if (ev.type === 'session-changed') void chat.loadSessions();
+  });
+  // 会话列表要标「来自 <设备名>」：需要本机节点 id（同步状态），抽屉自己订阅一份
+  sync.subscribe();
   // 首次打开时抽屉是随开关一起挂载的，上面那个 watch 不会触发，这里补一次初始化 + 聚焦
   if (app.chatDrawerOpen) {
     void chat.init().then(async () => {
@@ -1259,6 +1284,9 @@ onUnmounted(() => {
   if (conversionPollTimer !== undefined) window.clearInterval(conversionPollTimer);
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onDrawerViewportResize);
+  closeSessionStream?.();
+  closeSessionStream = undefined;
+  sync.unsubscribe();
   // 秒表随抽屉卸载一起停（抽屉是随开关挂载/卸载的，不停会一直空转）
   if (clockTimer !== undefined) {
     window.clearInterval(clockTimer);
@@ -1603,6 +1631,12 @@ onUnmounted(() => {
 
 .session-state.auto {
   color: var(--text-faint);
+}
+
+/* 同步来的会话：标出「来自哪台设备」，一眼看出不是本机聊出来的 */
+.session-state.foreign {
+  color: var(--text-faint);
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
 }
 
 .session-time {

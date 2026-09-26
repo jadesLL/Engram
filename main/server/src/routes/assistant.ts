@@ -11,6 +11,7 @@ import { AGENT_APIS, agentApi } from '../assistant/agentSettings.js';
 import * as repo from '../assistant/repository.js';
 import type { InterfaceContext } from '../assistant/prompts.js';
 import { requireAssistantAccess } from '../assistant/access.js';
+import { recordSessionDelete } from '../sync/index.js';
 
 const TERMINAL = ['completed', 'failed', 'cancelled', 'interrupted'];
 
@@ -111,7 +112,8 @@ export async function assistantRoutes(app: FastifyInstance) {
     const id = (req.params as any).id;
     const active = repo.activeRunForSession(id);
     if (active) await cancelRun(active.id);
-    repo.deleteSession(id);
+    // 走同步门面删除：删本地副本 + 记墓碑 + 广播（否则对端手里的旧副本会在对账时把它复活）
+    recordSessionDelete(id);
     return { ok: true };
   });
 

@@ -12,12 +12,27 @@ import { enqueuePagePipeline } from '../jobs.js';
 import { merge3 } from './merge.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
 import {
+  summarizeBoardChange,
   summarizeDelete,
   summarizeFileChange,
   summarizeMove,
   summarizePageChange,
+  summarizeSessionChange,
   type SyncOpSummary,
 } from './opText.js';
+import {
+  collectBoardPayload,
+  collectSessionSnapshot,
+  deleteSessionWithTombstone,
+  mergeBoardPayload,
+  mergeSessionSnapshot,
+  sessionContentHash,
+  snapshotHash,
+  stampSessionOrigin,
+  type BoardPayload,
+  type SessionSnapshot,
+} from './sessions.js';
+import { BOARD_SYNC_ID } from '../assistant/boardCore.js';
 import {
   appendOplog,
   getPageRevision,
@@ -235,15 +250,12 @@ export function migrateConflictBackupDir(): void {
 interface CommitOptions {
   oldPath?: string;
   evidence?: EvidenceSnapshot | null;
+  /** 会话删除：广播里带同一个标记，对端据此删掉本地副本并记墓碑 */
+  deleted?: boolean;
 }
 
 /** 中枢本端操作的 actor 标识（成员以 sync_peers.id 作为 actor） */
 export const HUB_ACTOR = 'hub';
-
-interface CommitOptions {
-  oldPath?: string;
-  evidence?: EvidenceSnapshot | null;
-}
 
 /** 中枢变更统一提交：发号 → 页面快照 → oplog → 广播 */
 function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOptions = {}): Record<string, unknown> {
@@ -273,6 +285,17 @@ function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOpt
       payload.hash = '';
       payload.size = 0;
     }
+  } else if (kind === 'session') {
+    // 会话/看板都不在 brain 目录里，载荷只带 hash 等元信息；正文与看板内容由成员按需拉取
+    stampSessionOrigin(target);
+    const snapshot = collectSessionSnapshot(target);
+    payload.hash = snapshot ? snapshotHash(snapshot) : '';
+    payload.messages = snapshot?.messages.length || 0;
+    if (opts.deleted) payload.deleted = true;
+  } else if (kind === 'board') {
+    // 看板内容本身很小（一份 markdown），直接随广播下发，成员不再多一趟请求
+    const board = collectBoardPayload();
+    if (board) payload.board = board;
   }
   // 中枢自身写入广播给全部成员；成员推送来的变更排除来源成员（其结果经 push ack 返回）
   broadcast(payload, actorId === HUB_ACTOR ? undefined : actorId);
@@ -289,6 +312,14 @@ export interface PushPayload {
   mtime?: number;
   evidence?: EvidenceSnapshot | null;
   old_path?: string;
+  /** 推送方的设备名（会话/看板广播给其他成员时，界面要能标出「来自哪台设备」） */
+  node_label?: string;
+  /** kind=session：完成态会话快照（只含终态轮次） */
+  session?: SessionSnapshot;
+  /** kind=session：删除标记（对端删副本并记墓碑） */
+  deleted?: boolean;
+  /** kind=board：全端唯一一份的任务看板 */
+  board?: BoardPayload;
 }
 
 export interface PushApplyResult {
@@ -464,6 +495,60 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     };
   }
 
+  if (push.kind === 'session') {
+    // 会话同步：完成态快照按 id 并集合并；删除走墓碑。两者都不做字符级合并。
+    const sessionId = String(push.target || '');
+    if (!sessionId) throw new Error('会话推送缺少 target');
+    if (push.deleted) {
+      deleteSessionWithTombstone(sessionId, actorId);
+      const result = commit('session', sessionId, actorId, { deleted: true });
+      // 中枢自己的浏览器也要刷会话列表（广播只发给成员端，不发本机 SSE）
+      emit('session-changed', { id: sessionId, deleted: true, from: push.node_id || '' });
+      return {
+        ok: true,
+        seq: Number(result.seq),
+        revision: Number(result.revision),
+        op: summarizeSessionChange(sessionId, ''),
+      };
+    }
+    const snapshot = push.session;
+    if (!snapshot?.session?.id) throw new Error('会话推送缺少快照');
+    // 合并前后比一次内容 hash：没有新内容（本端已是同一份、或被墓碑挡住）就不发号、不广播，
+    // 否则两端会把同一份快照反复推来推去
+    const hashBefore = sessionContentHash(sessionId);
+    const merged = mergeSessionSnapshot(snapshot, push.node_id || actorId, push.node_label || '');
+    if (sessionContentHash(sessionId) === hashBefore) {
+      return { ok: true, seq: 0, revision: 0, op: summarizeSessionChange(sessionId, snapshot.session.title) };
+    }
+    const result = commit('session', sessionId, actorId, {});
+    emit('session-changed', { id: sessionId, from: push.node_id || '' });
+    return {
+      ok: true,
+      seq: Number(result.seq),
+      revision: Number(result.revision),
+      op: summarizeSessionChange(sessionId, snapshot.session.title, merged.messages),
+    };
+  }
+
+  if (push.kind === 'board') {
+    const board = push.board;
+    if (!board) throw new Error('看板推送缺少内容');
+    const changed = mergeBoardPayload(board);
+    if (!changed) {
+      // 本端这份同样新或更新：不回发号（否则两端会互相把旧看板推来推去）
+      return { ok: true, seq: 0, revision: 0, op: summarizeBoardChange() };
+    }
+    const result = commit('board', BOARD_SYNC_ID, actorId, {});
+    // 中枢自己的页面也要换成最新那版看板（本机 SSE 不在成员广播里）
+    emit('board-changed', { from: String(board.nodeId || '') });
+    return {
+      ok: true,
+      seq: Number(result.seq),
+      revision: Number(result.revision),
+      op: summarizeBoardChange(),
+    };
+  }
+
   throw new Error(`未知同步类型: ${push.kind}`);
 }
 
@@ -472,9 +557,9 @@ export function commitFileChange(relPath: string, actorId: string): Record<strin
   return commit('file', relPath, actorId);
 }
 
-/** 中枢本端产生变更后的提交入口（由 sync/index.ts 的 recordLocalChange 调用） */
-export function commitLocalChange(kind: SyncKind, target: string, oldPath = ''): Record<string, unknown> {
-  return commit(kind, target, HUB_ACTOR, { oldPath });
+/** 中枢本端产生变更后的提交入口（由 sync/index.ts 的 recordLocalChange / recordSessionChange 调用） */
+export function commitLocalChange(kind: SyncKind, target: string, oldPath = '', deleted = false): Record<string, unknown> {
+  return commit(kind, target, HUB_ACTOR, { oldPath, deleted });
 }
 
 export { writeRawFile, writeRawFileStream, sha256, applyPageContent, readPageRaw };
