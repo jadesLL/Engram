@@ -556,11 +556,7 @@ export function boardView(
   }
   column.push({ title: OVERDUE_BUCKET, cards: sortByDate(overdue), bucket: 'overdue', date: '', extra: false });
 
-  // 按天：已逾期 → 每天例行 → 窗口里每一天 → 下周之外·待定
-  const day: TaskBoardColumn[] = [
-    { title: OVERDUE_BUCKET, cards: sortByDate(overdue), bucket: 'overdue', date: '', extra: false },
-    { title: PERIODIC_BUCKET, cards: periodic, bucket: 'periodic', date: '', extra: false },
-  ];
+  // 按天：先周一到周五（按顺序），再周末，最后周期性 / 逾期 / 窗口之外
   const inWindow = new Map<string, TaskCard[]>();
   const later: TaskCard[] = [];
   for (const card of cards) {
@@ -573,11 +569,38 @@ export function boardView(
       later.push(card);
     }
   }
-  for (const date of windowDays(window.start, window.end)) {
-    day.push({ title: dayLabel(date), cards: inWindow.get(date) || [], bucket: 'day', date, extra: false });
-  }
+  // 周一到周五按顺序成列，周六周日收在它们后面（工作周是主线，周末是尾巴）
+  const days = windowDays(window.start, window.end);
+  const ordered = [...days.filter((date) => !isWeekend(date)), ...days.filter((date) => isWeekend(date))];
+  const day: TaskBoardColumn[] = ordered.map((date) => ({
+    title: dayLabel(date),
+    cards: inWindow.get(date) || [],
+    bucket: 'day' as const,
+    date,
+    extra: false,
+  }));
+  day.push({ title: PERIODIC_BUCKET, cards: periodic, bucket: 'periodic', date: '', extra: false });
+  day.push({ title: OVERDUE_BUCKET, cards: sortByDate(overdue), bucket: 'overdue', date: '', extra: false });
   day.push({ title: LATER_BUCKET, cards: sortByDate(later), bucket: 'later', date: '', extra: false });
   return { day, column };
+}
+
+/** 周六 / 周日 */
+export function isWeekend(date: string): boolean {
+  const at = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(at.getTime())) return false;
+  const day = at.getDay();
+  return day === 0 || day === 6;
+}
+
+/** 收起状态的稳定标识：日期会一周一周变，按「星期几 / 固定块」存才不会每周丢偏好 */
+export function sectionKey(section: TaskBoardColumn): string {
+  if (section.bucket === 'day' && section.date) {
+    const at = new Date(`${section.date}T00:00:00`);
+    const weekday = Number.isNaN(at.getTime()) ? 0 : at.getDay();
+    return `day-${weekday}`;
+  }
+  return section.bucket === 'source' ? `source-${section.title}` : `${section.bucket}-${section.title}`;
 }
 
 /** 分列视图（没有窗口信息时也能用：分列不依赖窗口） */

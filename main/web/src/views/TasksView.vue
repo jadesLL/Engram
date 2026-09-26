@@ -57,6 +57,9 @@
           共 {{ totalCards }} 条<template v-if="hasFilter"> · 筛后 {{ filteredCards.length }} 条</template>
         </span>
         <div class="spacer" />
+        <button class="btn ghost" type="button" @click="toggleAllCollapsed">
+          <Icon :name="allCollapsed ? 'unfold' : 'fold'" :size="13" />{{ allCollapsed ? '全部展开' : '全部收起' }}
+        </button>
         <button v-if="hasFilter" class="btn ghost" type="button" @click="clearFilter">
           <Icon name="x" :size="13" />清除筛选
         </button>
@@ -84,14 +87,22 @@
           v-for="section in sections"
           :key="section.key"
           class="column"
-          :class="[`bucket-${section.bucket}`, { 'is-empty': !section.cards.length }]"
+          :class="[`bucket-${section.bucket}`, { 'is-empty': !section.cards.length, collapsed: isCollapsed(section.collapseKey) }]"
         >
-          <header class="column-head">
+          <!-- 整条标题就是收放开关：收起后只留标题与条数，10 多块也能一眼扫完 -->
+          <button
+            class="column-head"
+            type="button"
+            :aria-expanded="!isCollapsed(section.collapseKey)"
+            :aria-label="`${isCollapsed(section.collapseKey) ? '展开' : '收起'}${section.title}`"
+            @click="toggleSection(section.collapseKey)"
+          >
+            <Icon class="column-caret" name="chevron-right" :size="13" />
             <span class="column-title">{{ section.title }}</span>
             <span class="column-count">{{ section.cards.length }}</span>
             <span v-if="section.bucket === 'overdue' && section.cards.length" class="column-alert">先补</span>
-          </header>
-          <div class="cards">
+          </button>
+          <div v-show="!isCollapsed(section.collapseKey)" class="cards">
             <article v-for="card in section.cards" :key="card.key" class="card" :class="{ overdue: card.overdue }">
               <p class="card-text">{{ card.card.text }}</p>
               <div class="meta">
@@ -181,6 +192,7 @@ import {
   isOverdue,
   isoToday,
   overdueDays,
+  sectionKey,
   taskCardTarget,
   type BoardFilter,
   type TaskBoardColumn,
@@ -249,6 +261,46 @@ function customerOf(card: TaskCard) {
   return cardCustomer(card);
 }
 
+/* ===== 收放：按「星期几 / 固定块」记在本机（日期一周一周变，存日期等于每周丢偏好） ===== */
+const COLLAPSE_STORAGE = 'taskBoardCollapsed';
+function storedCollapsed(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(COLLAPSE_STORAGE) || '[]');
+    return Array.isArray(raw) ? raw.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+const collapsed = ref<Set<string>>(new Set(storedCollapsed()));
+
+function isCollapsed(key: string) {
+  return collapsed.value.has(key);
+}
+
+function persistCollapsed() {
+  localStorage.setItem(COLLAPSE_STORAGE, JSON.stringify([...collapsed.value]));
+}
+
+function toggleSection(key: string) {
+  const next = new Set(collapsed.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsed.value = next;
+  persistCollapsed();
+}
+
+const allCollapsed = computed(
+  () => sections.value.length > 0 && sections.value.every((section) => collapsed.value.has(section.collapseKey))
+);
+
+/** 全部收起 / 全部展开：一次改完，别让人一块一块点 */
+function toggleAllCollapsed() {
+  collapsed.value = allCollapsed.value
+    ? new Set()
+    : new Set(sections.value.map((section) => section.collapseKey));
+  persistCollapsed();
+}
+
 /* ===== 分组：筛过的卡片 → 当前视图的每一块 ===== */
 const rawSections = computed<TaskBoardColumn[]>(() => {
   const model = boardView(filteredCards.value, { start: tasks.windowStart, end: tasks.windowEnd });
@@ -259,6 +311,8 @@ const sections = computed(() => {
   const today = isoToday();
   return rawSections.value.map((section) => ({
     key: `${section.bucket}-${section.date}-${section.title}`,
+    /** 收放偏好的稳定标识：按星期几 / 固定块，不随日期变 */
+    collapseKey: sectionKey(section),
     title: section.title,
     bucket: section.bucket,
     cards: section.cards.map((card, index) => ({
@@ -572,9 +626,48 @@ onBeforeUnmount(() => {
   align-items: start;
 }
 
-/* 分列：三列（＋已逾期等）并排；按天：每天一块，宽屏并排铺开 */
+/* 按天：一块一行、自上而下严格按顺序（周一到周五 → 周末 → 周期 / 逾期 / 待定）；
+   分列：四列并排。两块视图里卡片都在块内自动铺列 */
+.board.view-day { grid-template-columns: 1fr; }
 .board.view-column { grid-template-columns: repeat(4, minmax(220px, 1fr)); }
-.board.view-day { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+
+.board.view-day .cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
+  align-items: start;
+}
+
+.column.collapsed { padding-bottom: 6px; }
+.column.collapsed .column-head { margin-bottom: 0; }
+
+/* 没安排的整天压成一行，别让「本日暂无」占掉半屏 */
+.column.is-empty { padding: 6px 12px; }
+.column.is-empty .column-empty { padding: 0; text-align: left; }
+.column.is-empty .column-title { color: var(--text-secondary); }
+
+/* 标题整条是开关：hover 给一点反馈，箭头收起时指右、展开时指下 */
+.column-head {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin: -2px -4px 2px;
+  border-radius: var(--radius-control);
+  text-align: left;
+}
+
+.column-head:hover { background: var(--bg-hover); }
+
+.column-caret {
+  color: var(--text-faint);
+  transition: transform 140ms ease;
+}
+
+.column:not(.collapsed) .column-caret { transform: rotate(90deg); }
 
 .column {
   display: flex;

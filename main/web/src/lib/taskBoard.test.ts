@@ -17,6 +17,7 @@ import {
   matchFilter,
   overdueDays,
   parseTaskBoard,
+  sectionKey,
   taskCardTarget,
   TASK_BOARD_COLUMNS,
   TASK_BOARD_VERSION,
@@ -270,13 +271,11 @@ test('逾期：日期已经过去才算（今天不算），天数从今天倒�
   assert.equal(overdueDays({ ...cards[0], date: '2026-09-20' }, TODAY), 6);
 });
 
-test('按天视图：已逾期 → 每天例行 → 窗口里每一天（空天也留着）→ 下周之外·待定', () => {
+test('按天视图：周一到周五按顺序 → 周末 → 周期·例行 → 已逾期 → 下周之外·待定', () => {
   const view = boardView(boardCards(board), WINDOW, TODAY);
   assert.deepEqual(
     view.day.map((section) => section.title),
     [
-      '已逾期',
-      '周期 · 例行',
       '9/28 周一',
       '9/29 周二',
       '9/30 周三',
@@ -284,8 +283,11 @@ test('按天视图：已逾期 → 每天例行 → 窗口里每一天（空天�
       '10/2 周五',
       '10/3 周六',
       '10/4 周日',
+      '周期 · 例行',
+      '已逾期',
       '下周之外 · 待定',
-    ]
+    ],
+    '工作日是主线排最前，周期性与逾期收在最后'
   );
   const buckets = Object.fromEntries(view.day.map((section) => [section.title, section.cards.map((card) => card.text)]));
   assert.deepEqual(buckets['已逾期'], ['锐洁确认货期（9/25 已到期）']);
@@ -299,6 +301,23 @@ test('按天视图：已逾期 → 每天例行 → 窗口里每一天（空天�
     '北矿机电中空电机送样测试',
     '双周复盘两条区域级待办仍在挂账',
   ]);
+});
+
+test('收放标识：按星期几 / 固定块，跨周稳定（日期变、偏好不丢）', () => {
+  const view = boardView(boardCards(board), WINDOW, TODAY);
+  const keys = Object.fromEntries(view.day.map((section) => [section.title, sectionKey(section)]));
+  assert.equal(keys['9/28 周一'], 'day-1');
+  assert.equal(keys['10/3 周六'], 'day-6');
+  assert.equal(keys['10/4 周日'], 'day-0');
+  assert.equal(keys['周期 · 例行'], 'periodic-周期 · 例行');
+  assert.equal(keys['已逾期'], 'overdue-已逾期');
+  assert.equal(keys['下周之外 · 待定'], 'later-下周之外 · 待定');
+
+  // 下一周的同一天拿到同一个 key：收起状态不用每周重设
+  const nextWeek = boardView(boardCards(board), { start: '2026-10-05', end: '2026-10-11' }, TODAY);
+  const nextKeys = Object.fromEntries(nextWeek.day.map((section) => [section.title, sectionKey(section)]));
+  assert.equal(nextKeys['10/5 周一'], 'day-1');
+  assert.equal(nextKeys['10/11 周日'], 'day-0');
 });
 
 test('分列视图：三节原样（第三节改名「时间待定」）＋ 逾期独立一列，逾期不再在来源列里重复', () => {
