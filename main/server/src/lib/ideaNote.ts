@@ -9,34 +9,39 @@ import { RAW_IDEA_DIR } from './rawSections.js';
 /**
  * 记一条灵感：**正文进、标题出**。
  *
- * 交互约定（用户 2026-09 要求）：对话框里写的是正文，不填标题；标题由 Engram 读完整段正文后
- * 拟一个简短的（模型优先；没配凭据 / 超时 / 返回空 → 退化成规则标题，绝不让这条灵感记不下来）。
- * 落盘沿用原始资料那套命名与形态：`原始资料/灵感碎片/YYYY.MM.DD_标题.md`，正文不带一级标题
- * （见 lib/rawBody.ts）——标题由文件名与 frontmatter 承载，不进正文。
+ * 交互约定（用户 2026-09 要求）：对话框里写的是正文，不填标题；标题由 Engram 在后台调模型，
+ * 读完整段正文后拟一个**精简**的短标题（不配凭据 / 超时 / 返回空 → 退化成规则标题，
+ * 绝不让这条灵感记不下来）。落盘沿用原始资料那套命名与形态：
+ * `原始资料/灵感碎片/YYYY.MM.DD_标题.md`，正文不带一级标题（见 lib/rawBody.ts）。
  */
 
-/** 标题长度上限（字符数，中文按字算）：短到能一眼扫过，又够说清一件事 */
-export const IDEA_TITLE_MAX_CHARS = 20;
+/** 提示词里要求的目标字数：宁可短一点，一眼能扫过 */
+export const IDEA_TITLE_HINT_CHARS = 12;
+/** 标题硬上限（字符数）：比提示词宽 2 个字，模型偶尔超一点不至于当场被截出省略号 */
+export const IDEA_TITLE_MAX_CHARS = 14;
 /** 送进提示词的正文上限 */
 const PROMPT_CONTENT_CHARS = 1500;
 /**
  * 标题请求的 token 预算。
- * 推理型模型（如官方路由的 deepseek-flash）会先花掉一段 reasoning token：只给 64 时
- * 实测 finish_reason=length、reasoning_tokens=64、content 为空，标题只能退化成规则标题
- * （2026-09 预览验收发现）。标题本身很短，给足余量即可。
+ * 推理型模型（官方路由的 deepseek-flash）会先花 reasoning token：给 64 必定返回空 content；
+ * 给 512 仍会偶发被推理吃光——用户库里 2026-09-26 那条「邹臣峰离职交接」的灵感就是这么退化成
+ * 规则标题的。实测 2048 下多次调用都稳定给出标题，而标题本身只用 6–10 个 token。
  */
-const TITLE_MAX_TOKENS = 512;
+const TITLE_MAX_TOKENS = 2048;
 /** 拟标题请求超时：超时就退回规则标题，不让用户对着「正在拟标题」等下去 */
 const TITLE_TIMEOUT_MS = 20_000;
 /** 文件名里标题段的长度上限（另有日期前缀与 .md，远低于各文件系统的 255 上限） */
 const FILE_TITLE_MAX_CHARS = 60;
+
+/** 开头的列表/标题标记（`- `、`* `、`1. `、`# `…）：只吃掉标记本身，不碰正文首字 */
+const LEADING_MARKER = /^\s*(?:#{1,6}[ \t]+|[-*+•][ \t]+|\d{1,3}[.、)）][ \t]*)/;
 
 /** 压成一行：换行与连续空白折成单个空格 */
 export function flattenLine(text: string): string {
   return String(text ?? '').replace(/\s+/g, ' ').trim();
 }
 
-/** 去首尾装饰：Markdown 强调符、引号、书名号、括号、列表符号（跑两轮，`**标题**。` 这类嵌套也吃得掉） */
+/** 去首尾装饰：Markdown 强调符、引号、书名号、括号（跑两轮，`**标题**。` 这类嵌套也吃得掉） */
 function stripDecorations(value: string): string {
   return value
     .replace(/^[#>*_\-\s"'“”‘’`《「【[(]+/, '')
@@ -44,12 +49,12 @@ function stripDecorations(value: string): string {
     .replace(/[。.!！?？,，、;；:：]+$/, '');
 }
 
-/** 规则标题：首行（没有就用整段）压平、去列表符号、断在第一个句读、超长截断 */
+/** 规则标题（兜底用）：首行（没有就用整段）压平、去列表标记、断在第一个句读、超长截断 */
 export function heuristicIdeaTitle(content: string, limit = IDEA_TITLE_MAX_CHARS): string {
   const text = String(content ?? '');
   const firstLine = text.split(/\r?\n/).map(flattenLine).find(Boolean) || '';
-  let title = stripDecorations(firstLine.replace(/^[#>\-*\d.、)）\s]+/, ''));
-  if (!title) title = stripDecorations(flattenLine(text));
+  let title = stripDecorations(firstLine.replace(LEADING_MARKER, ''));
+  if (!title) title = stripDecorations(flattenLine(text).replace(LEADING_MARKER, ''));
   // 有句读时优先断在第一个句子，避免标题里塞进整段话
   const stop = title.search(/[。！？!?；;]/);
   if (stop > 0 && stop <= limit) title = title.slice(0, stop);
@@ -70,9 +75,9 @@ export function buildIdeaTitlePrompt(content: string): string {
   return `灵感正文：\n${String(content ?? '').trim().slice(0, PROMPT_CONTENT_CHARS)}`;
 }
 
-/** 拟标题的系统提示词 */
+/** 拟标题的系统提示词：后台调模型，要的就是一个精简的短标题 */
 export const IDEA_TITLE_SYSTEM_PROMPT =
-  `你是速记归档员。给用户刚记下的一条灵感正文拟一个简短标题：不超过 ${IDEA_TITLE_MAX_CHARS} 个字，`
+  `你是速记归档员。给用户刚记下的灵感正文拟一个简短标题：不超过 ${IDEA_TITLE_HINT_CHARS} 个字，`
   + '用名词短语说清核心对象与这件事，不要标点结尾，不要引号，不要解释，直接输出标题。';
 
 export type IdeaTitleSource = 'model' | 'heuristic';

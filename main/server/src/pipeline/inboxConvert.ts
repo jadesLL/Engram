@@ -229,9 +229,9 @@ async function suggestCoreTitle(
     const result = await completeText([
       { role: 'system', content: '你是资料归档员。只输出一个具体、准确的中文文件名短语，不含日期、扩展名、引号或说明。根据正文核心内容提炼，不照搬原文件名；保留关键对象与主题，不臆造事实，避免“转换结果”“文档”“资料”等空泛名称。' },
       { role: 'user', content: `原文件名：${name}\n\n转换后的 Markdown 正文：\n${markdown.slice(0, 16_000)}` },
-      // 预算不能压到几十：推理型模型会把 128 全花在 reasoning 上、content 为空，文件名只能退回正文标题
-      // （2026-09 官方路由实测：completion_tokens=128、reasoning_tokens=128、finish_reason=length）
-    ], { maxTokens: 512, signal: options.signal, fetchImpl: options.fetchImpl, config: options.config });
+      // 预算不能压到几十：推理型模型会把 128 全花在 reasoning 上、content 为空（官方路由实测：
+      // completion_tokens=128、reasoning_tokens=128、finish_reason=length），512 仍会偶发吃光
+    ], { maxTokens: 2048, signal: options.signal, fetchImpl: options.fetchImpl, config: options.config });
     return coreTitle(markdown, result.text, name.replace(/\.[^.]+$/, ''));
   } catch (error) {
     options.signal?.throwIfAborted();

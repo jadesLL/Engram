@@ -41,14 +41,17 @@ function fakeCompletion(text: string): typeof fetch {
   }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
 }
 
-test('规则标题：首行、去列表符号与装饰、断在第一个句读、超长截断', () => {
+test('规则标题：首行、去列表标记与装饰、断在第一个句读、超长截断', () => {
   const { heuristicIdeaTitle } = ideaNote;
-  assert.equal(heuristicIdeaTitle('北自所那边想确认一下样车尺寸，下周二之前要给回复'), '北自所那边想确认一下样车尺寸，下周二之前…');
+  assert.equal(heuristicIdeaTitle('北自所那边想确认一下样车尺寸，下周二之前要给回复'), '北自所那边想确认一下样车尺寸…');
   assert.equal(heuristicIdeaTitle('- 京东发货流程要补一张流程图。后面还有很多话'), '京东发货流程要补一张流程图');
+  assert.equal(heuristicIdeaTitle('1. 北自所样车尺寸待确认。细节另说'), '北自所样车尺寸待确认');
   assert.equal(heuristicIdeaTitle('**回炉心得**\n\n正文'), '回炉心得');
   assert.equal(heuristicIdeaTitle('第一条\n第二条'), '第一条');
   assert.equal(heuristicIdeaTitle('   \n  '), '随手记');
   assert.equal(heuristicIdeaTitle('短标题'), '短标题');
+  // 阿拉伯数字开头的正文不能被当成「1. 」列表标记啃掉首字（2026-09-26 实机踩到）
+  assert.equal(heuristicIdeaTitle('8月30日邹臣峰离职了，交接给杨怀驰'), '8月30日邹臣峰离职了，交接…');
 });
 
 test('模型输出归一化：只取第一行、去「标题：」前缀与引号句末标点', () => {
@@ -56,15 +59,19 @@ test('模型输出归一化：只取第一行、去「标题：」前缀与引�
   assert.equal(normalizeIdeaTitle('标题：样车尺寸确认。'), '样车尺寸确认');
   assert.equal(normalizeIdeaTitle('「北自所样车尺寸确认」\n（理由：略）'), '北自所样车尺寸确认');
   assert.equal(normalizeIdeaTitle('**北自所样车尺寸待确认**。'), '北自所样车尺寸待确认');
-  assert.equal(normalizeIdeaTitle('一二三四五六七八九十一二三四五六七八九十一二三四'), '一二三四五六七八九十一二三四五六七八九十…');
+  // 超过硬上限（14 字）才截断
+  assert.equal(normalizeIdeaTitle('一二三四五六七八九十一二三四五六七八九十'), '一二三四五六七八九十一二三四…');
   assert.equal(normalizeIdeaTitle('   '), '');
 });
 
-test('提示词带上正文，超长正文截断', () => {
-  const { buildIdeaTitlePrompt, IDEA_TITLE_SYSTEM_PROMPT } = ideaNote;
+test('提示词带上正文，超长正文截断，并要求精简标题', () => {
+  const { buildIdeaTitlePrompt, IDEA_TITLE_SYSTEM_PROMPT, IDEA_TITLE_HINT_CHARS, IDEA_TITLE_MAX_CHARS } = ideaNote;
   assert.match(buildIdeaTitlePrompt('买台四向车做样机验证'), /买台四向车做样机验证/);
   assert.ok(buildIdeaTitlePrompt('あ'.repeat(3000)).length <= 1600);
-  assert.match(IDEA_TITLE_SYSTEM_PROMPT, /不超过 20 个字/);
+  assert.match(IDEA_TITLE_SYSTEM_PROMPT, /不超过 12 个字/);
+  assert.equal(IDEA_TITLE_HINT_CHARS, 12);
+  // 硬上限比提示词宽两字，模型偶尔超一点不至于被截出省略号
+  assert.equal(IDEA_TITLE_MAX_CHARS, 14);
 });
 
 test('拟标题：有模型用模型的，没凭据退化成规则标题（不抛错）', async () => {
@@ -101,8 +108,8 @@ test('标题请求给足 token 预算：推理型模型会先花 reasoning token
     fetchImpl,
   });
   assert.equal(result.source, 'model');
-  // 实测 64 时推理模型会返回空 content（finish_reason=length），标题只能退化
-  assert.ok(sent.max_tokens >= 256, `max_tokens 应与推理型模型匹配，实际 ${sent.max_tokens}`);
+  // 64 必定空 content；512 仍会偶发被推理吃光（用户库里 2026-09-26 那条就是），2048 实测稳定
+  assert.ok(sent.max_tokens >= 1024, `max_tokens 应给推理留足余量，实际 ${sent.max_tokens}`);
 });
 
 test('模型返回空 content 时退化成规则标题（不让这条灵感记不下来）', async () => {
