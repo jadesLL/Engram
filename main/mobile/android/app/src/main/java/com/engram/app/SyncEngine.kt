@@ -36,6 +36,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     @Volatile var lastSyncAt: String? = db.setting("sync_last_at"); private set
     @Volatile var pendingPulls: Int = 0; private set
     @Volatile var syncProgress: String = ""; private set
+    /** 本轮同步真正落地/送出的改动条数（推 + 拉），只用于结尾那条汇总 */
+    private var roundChanges = 0
 
     fun onForeground() { foreground = true; cancelled = false; request(false) }
 
@@ -55,6 +57,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         }
         executor.execute {
             var completed = false
+            roundChanges = 0
             try {
                 db.log("info", "start", if (full) "手动全量对账" else "事件触发同步")
                 syncProgress = "正在连接中枢"
@@ -70,7 +73,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 lastError = null
                 lastSyncAt = Instant.now().toString().also { db.setSetting("sync_last_at", it) }
                 syncProgress = "同步完成"
-                db.log("info", "sync-done", "同步已收敛")
+                // 结尾这条要说清「这轮到底动了什么」：没改动也明说，别让用户对着空白记录猜
+                db.log("info", "sync-done", if (roundChanges > 0) "同步已收敛（本轮落地 $roundChanges 项改动）" else "同步已收敛（本轮无改动）")
                 completed = true
             } catch (e: Cancelled) {
                 syncProgress = "已暂停，待下次继续"
@@ -126,14 +130,23 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                     val revision = ack.optInt("revision")
                     val authoritative = ack.optString("content", raw)
                     db.writeSyncedPage(target, authoritative, revision)
+                    recordPush("push-page", SyncOpText.KIND_PAGE, target, null, authoritative.toByteArray(Charsets.UTF_8).size.toLong(), revision)
                 }
                 "file" -> {
                     val file = db.file(target)
                     if (!file.exists()) { db.ackOutbox(item.getLong("id")); continue }
-                    postFile(target, file)
+                    val ack = postFile(target, file)
+                    recordPush("push-file", SyncOpText.KIND_FILE, target, null, file.length(), ack.optInt("revision"))
                 }
-                "delete" -> postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "delete").put("target", target))
-                "move" -> postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "move").put("target", target).put("old_path", item.optString("old_path")))
+                "delete" -> {
+                    val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "delete").put("target", target))
+                    recordPush("push-delete", SyncOpText.KIND_DELETE, target, null, 0L, ack.optInt("revision"))
+                }
+                "move" -> {
+                    val oldPath = item.optString("old_path")
+                    val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "move").put("target", target).put("old_path", oldPath))
+                    recordPush("push-move", SyncOpText.KIND_MOVE, target, oldPath, 0L, ack.optInt("revision"))
+                }
             }
             db.ackOutbox(item.getLong("id"))
         }
@@ -207,18 +220,33 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 val content = if (compact) {
                     page?.content ?: getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
                 } else op.optString("content")
+                // 先取旧正文，才写得清「改了多少行」——同步记录里这句就是用户要的「具体改了什么」
+                val before = db.rawPage(target)
                 db.writeSyncedPage(target, content, op.optInt("revision"))
                 val evidence = if (compact) {
                     page?.evidence ?: getJson("/api/sync/evidence?path=${encode(target)}").optJSONObject("snapshot")
                 } else op.optJSONObject("evidence")
                 evidence?.let { db.saveEvidence(target, it) }
+                recordApplied("pull-page", SyncOpText.summarizePage(target, before, content))
             }
             "file" -> {
-                if (stagedFile == null) pullFile(target)
-                else try { db.installSyncedFile(target, stagedFile) } finally { stagedFile.delete() }
+                val beforeBytes = db.file(target).let { if (it.exists()) it.length() else 0L }
+                val staged = stagedFile ?: stageFile(target)
+                val afterBytes = staged.length()
+                try { db.installSyncedFile(target, staged) } finally { staged.delete() }
+                recordApplied("pull-file", SyncOpText.summarizeFile(target, beforeBytes, afterBytes))
             }
-            "delete" -> db.deleteSyncedPath(target)
-            "move" -> db.moveSyncedPath(op.optString("old_path"), target, op.optInt("revision"))
+            "delete" -> {
+                val existing = db.file(target)
+                val beforeBytes = if (existing.exists()) existing.length() else 0L
+                db.deleteSyncedPath(target)
+                recordApplied("pull-delete", SyncOpText.summarizeDelete(target, beforeBytes, target.endsWith(".md", true)))
+            }
+            "move" -> {
+                val oldPath = op.optString("old_path")
+                db.moveSyncedPath(oldPath, target, op.optInt("revision"))
+                recordApplied("pull-move", SyncOpText.summarizeMove(oldPath, target))
+            }
         }
         db.setSetting("sync_cursor", seq.toString())
     }
@@ -235,6 +263,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         var inferredCursor = 0L
         var snapshotCursor = 0L
         var remoteCount = 0
+        val tally = ChangeTally()
         val pending = mutableListOf<SnapshotWork>()
         fun flushPending() {
             if (pending.isEmpty()) return
@@ -301,8 +330,10 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                                     db.rawPage(path)?.let { db.writeSyncedPage(path, it, revision) }
                                 }
                             } else if (kind == "page") {
-                                if (localFile.exists() && db.pageRevision(path) > 0) db.enqueue("page", path)
-                                else {
+                                if (localFile.exists() && db.pageRevision(path) > 0) {
+                                    db.enqueue("page", path)
+                                    recordLocalNewer("page", path)
+                                } else {
                                     val fetchPath = path
                                     schedulePull()
                                     val future = fetchExecutor.submit<String> {
@@ -310,24 +341,33 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                                     }
                                     pending += SnapshotWork(
                                         apply = {
-                                            db.writeSyncedPage(fetchPath, await(future), revision)
+                                            val content = await(future)
+                                            // 旧正文先读出来：这条同步记录要写清「新增还是修改、动了多少行」
+                                            val before = db.rawPage(fetchPath)
+                                            db.writeSyncedPage(fetchPath, content, revision)
                                             completePull()
+                                            recordApplied("pull-page", SyncOpText.summarizePage(fetchPath, before, content), tally)
                                         },
                                         discard = { cancelFetch(future) },
                                     )
                                 }
                             } else {
-                                if (localFile.exists() && !preferHub) db.enqueue("file", path)
-                                else {
+                                if (localFile.exists() && !preferHub) {
+                                    db.enqueue("file", path)
+                                    recordLocalNewer("file", path)
+                                } else {
                                     val fetchPath = path
+                                    val beforeBytes = if (localFile.exists()) localFile.length() else 0L
                                     schedulePull()
                                     val future = fetchExecutor.submit<File> { stageFile(fetchPath) }
                                     pending += SnapshotWork(
                                         apply = {
                                             val stagedFile = await(future)
+                                            val afterBytes = stagedFile.length()
                                             try { db.installSyncedFile(fetchPath, stagedFile) }
                                             finally { stagedFile.delete() }
                                             completePull()
+                                            recordApplied("pull-file", SyncOpText.summarizeFile(fetchPath, beforeBytes, afterBytes), tally)
                                         },
                                         discard = { discardStagedFile(future) },
                                     )
@@ -383,13 +423,71 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             val current = db.setting("sync_cursor")?.toLongOrNull() ?: 0L
             if (snapshotCursor > current) db.setSetting("sync_cursor", snapshotCursor.toString())
         }
-        db.log("info", "reconcile-done", "中枢 $remoteCount 项，本地 $localCount 项")
+        db.log("info", "reconcile-done", "中枢 $remoteCount 项，本地 $localCount 项${tally.describe()}")
         syncProgress = if (remoteCount == 0) "正在补齐本机改动" else "已核对 $remoteCount 项"
     }
 
-    private fun pullFile(path: String) {
-        val staged = stageFile(path)
-        try { db.installSyncedFile(path, staged) } finally { staged.delete() }
+    /**
+     * 记一条「具体改了什么」（拉取方向）：列表展示 describe() 的中文，展开看 data 的结构化字段，
+     * 与 desktop 端 eventLog 的 data 键名同口径。落到本地内容才 +1 内容版本，前端据此渐进刷新文件树。
+     */
+    private fun recordApplied(event: String, item: SyncOpText.SyncOpSummary, tally: ChangeTally? = null) {
+        if (!SyncOpText.isNoteworthy(item)) return
+        tally?.note(item)
+        roundChanges += 1
+        db.log("info", event, SyncOpText.describe(item), toJson(SyncOpText.data(item)))
+        db.bumpContentRevision()
+    }
+
+    /** 记一条推送（本机 → 中枢）：方向写清楚，别和拉取混成一句「同步了 N 项」 */
+    private fun recordPush(event: String, kind: String, path: String, oldPath: String?, bytes: Long, revision: Int) {
+        // AIWorks/ 下的系统页由应用自身写入（首次启动就会种下 index/log/scheme），不进用户记录
+        if (!SyncOpText.isNoteworthyPush(path, oldPath)) return
+        roundChanges += 1
+        db.log("info", event, SyncOpText.describePush(kind, path, oldPath, bytes, revision), toJson(SyncOpText.pushData(kind, path, oldPath, bytes, revision)))
+    }
+
+    /** 本机版本较新、没被中枢覆盖：说明白为什么这项没落地，而不是静默跳过 */
+    private fun recordLocalNewer(kind: String, path: String) {
+        val subject = if (kind == "page") "页面「${SyncOpText.pageTitle(path)}」" else "文件「$path」"
+        db.log("info", "pull-local-newer", "本机改动较新，保留本机版本并排队推送：$subject", toJson(mapOf("kind" to kind, "path" to path)))
+    }
+
+    private fun toJson(fields: Map<String, Any>): JSONObject {
+        val out = JSONObject()
+        for ((key, value) in fields) out.put(key, value)
+        return out
+    }
+
+    /** 对账过程中的改动计数（只服务结尾那条汇总） */
+    private class ChangeTally {
+        private var addedPages = 0
+        private var updatedPages = 0
+        private var addedFiles = 0
+        private var updatedFiles = 0
+        private var removed = 0
+        private var moved = 0
+
+        fun note(item: SyncOpText.SyncOpSummary) {
+            when (item.kind) {
+                SyncOpText.KIND_PAGE -> if (item.verb == SyncOpText.VERB_ADD) addedPages++ else updatedPages++
+                SyncOpText.KIND_FILE -> if (item.verb == SyncOpText.VERB_ADD) addedFiles++ else updatedFiles++
+                SyncOpText.KIND_DELETE -> removed++
+                SyncOpText.KIND_MOVE -> moved++
+            }
+        }
+
+        fun describe(): String {
+            val parts = mutableListOf<String>()
+            if (addedPages > 0) parts += "新增页面 $addedPages"
+            if (updatedPages > 0) parts += "修改页面 $updatedPages"
+            if (addedFiles > 0) parts += "新增文件 $addedFiles"
+            if (updatedFiles > 0) parts += "更新文件 $updatedFiles"
+            if (removed > 0) parts += "删除 $removed"
+            if (moved > 0) parts += "改名 $moved"
+            if (parts.isEmpty()) return ""
+            return "；本次落地：" + parts.joinToString("、")
+        }
     }
 
     private fun stageFile(path: String): File {
@@ -528,12 +626,13 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         throw failure ?: IllegalStateException("无法连接同步中枢")
     }
 
-    private fun postFile(path: String, file: File) {
+    /** 上传一个文件；返回中枢应答（含 revision），推送记录要写「送到了中枢哪一版」 */
+    private fun postFile(path: String, file: File): JSONObject {
         if (!isInboxFile(path)) {
             require(file.length() <= MAX_FILE_BYTES) { "同步文件超过 200 MB 上限" }
         }
         val boundary = "Engram-${UUID.randomUUID()}"
-        withConnection("POST", "/api/sync/file", "multipart/form-data; boundary=$boundary") { connection ->
+        return withConnection("POST", "/api/sync/file", "multipart/form-data; boundary=$boundary") { connection ->
             connection.doOutput = true
             connection.setChunkedStreamingMode(64 * 1024)
             connection.outputStream.buffered(64 * 1024).use { output ->
@@ -545,7 +644,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 line(""); line("--$boundary--")
             }
             requireSuccessfulResponse(connection)
-            connection.inputStream.use { readLimited(it, MAX_JSON_BYTES) }
+            val body = connection.inputStream.use { readLimited(it, MAX_JSON_BYTES) }
+            runCatching { JSONObject(String(body, StandardCharsets.UTF_8)) }.getOrDefault(JSONObject())
         }
     }
 

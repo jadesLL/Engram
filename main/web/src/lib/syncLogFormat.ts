@@ -56,6 +56,10 @@ export interface SyncLogStatus {
   revision?: number;
   pending: number;
   pendingPulls: number;
+  /** 成员端同步进行中的一句话进度（「正在下载内容（队列 4 项）」）；中枢端可能不给 */
+  syncProgress?: string;
+  /** 成员端本机内容版本号：每落地一项同步改动 +1，前端据此在对账进行中渐进刷新文件树 */
+  contentRevision?: number;
   lastSyncAt: string | null;
   lastError: string | null;
   peers: SyncLogPeer[];
@@ -90,8 +94,15 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   connected: { label: '已连接中枢', category: '连接' },
   reconnected: { label: '断线后已恢复', category: '连接' },
   disconnected: { label: '连接断开，自动重连', category: '连接' },
+  'sync-done': { label: '一轮同步完成', category: '连接' },
+  'sync-paused': { label: '同步已暂停', category: '连接' },
+  'sync-failed': { label: '同步失败', category: '连接' },
   // 推送
   'push-ok': { label: '推送完成', category: '推送' },
+  'push-page': { label: '推送页面', category: '推送' },
+  'push-file': { label: '推送文件', category: '推送' },
+  'push-delete': { label: '推送删除', category: '推送' },
+  'push-move': { label: '推送改名', category: '推送' },
   'push-retry': { label: '推送失败，退避重试', category: '推送' },
   'push-received': { label: '收到成员推送', category: '推送' },
   'push-rejected': { label: '推送被拒绝', category: '推送' },
@@ -108,10 +119,17 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'file-rejected': { label: '文件落盘失败', category: '拉取' },
   replay: { label: '补拉远端变更', category: '拉取' },
   'pull-applied': { label: '应用中枢变更', category: '拉取' },
+  // 成员端逐条记录：每条就是一个「哪个文件 + 什么增量」（手机端首次全量对账也走这几条）
+  'pull-page': { label: '拉取页面', category: '拉取' },
+  'pull-file': { label: '拉取文件', category: '拉取' },
+  'pull-delete': { label: '应用远端删除', category: '拉取' },
+  'pull-move': { label: '应用远端改名', category: '拉取' },
+  'pull-local-newer': { label: '本机版本较新，未覆盖', category: '拉取' },
   'oplog-trimmed': { label: '落后过多，转全量对账', category: '拉取' },
   // 对账
   'reconcile-start': { label: '全量对账开始', category: '对账' },
   'reconcile-done': { label: '全量对账完成', category: '对账' },
+  'changes-too-large': { label: '批次过大，已转全量对账', category: '对账' },
   'reconcile-item-failed': { label: '对账单项失败', category: '对账' },
   'reconcile-failed': { label: '全量对账失败', category: '对账' },
   'ledger-repair-failed': { label: '提炼账本补齐失败', category: '对账' },
@@ -191,6 +209,7 @@ const DATA_LABELS: Record<string, string> = {
   items: '涉及的条目',
   verb: '动作',
   title: '页面标题',
+  oldPath: '改名原路径',
   added: '新增行',
   removed: '删除行',
   beforeBytes: '原大小',
@@ -212,9 +231,30 @@ export function dataLabel(key: string): string {
   return DATA_LABELS[key] || key;
 }
 
+/** 动作/类型的取值也翻成中文：抽屉展开详情时不至于冒出一个光秃秃的 add / page */
+const VERB_LABELS: Record<string, string> = {
+  add: '新增',
+  update: '修改',
+  delete: '删除',
+  move: '改名',
+  same: '内容无变化',
+  push: '推送本机改动',
+};
+
+const KIND_LABELS: Record<string, string> = {
+  page: '页面',
+  file: '文件',
+  delete: '删除条目',
+  move: '改名条目',
+  session: '会话',
+  board: '任务看板',
+};
+
 export function formatDataValue(key: string, value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'boolean') return value ? '是' : '否';
+  if (key === 'verb') return VERB_LABELS[String(value)] || String(value);
+  if (key === 'kind') return KIND_LABELS[String(value)] || String(value);
   // 数组：字符串数组（条目清单 / 路径清单）逐行展示，用户一眼看完改了哪些文件
   if (Array.isArray(value)) {
     return value.some((item) => typeof item === 'object') ? JSON.stringify(value) : value.map(String).join('\n');

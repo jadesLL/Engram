@@ -56,7 +56,7 @@ export const syncLogState = reactive({
   scope: 'all' as SyncLogScope | 'all',
   event: '',
   query: '',
-  /** 自动刷新：默认 5 秒（同步中的人正盯着看），可暂停下来慢慢读 */
+  /** 自动刷新：默认开——空闲 5 秒一跳、同步进行中 2 秒一跳（同步中的人正盯着看），可暂停慢慢读 */
   autoRefresh: initialAutoRefresh(),
   /** 展开详情的条目 id 集合 */
   expanded: [] as number[],
