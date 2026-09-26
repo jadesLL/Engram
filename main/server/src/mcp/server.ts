@@ -14,7 +14,6 @@ import {
   deletePageAsAgent, renamePageAsAgent, movePageAsAgent, resolvePageRef, AgentPageError,
 } from '../pipeline/agentDelete.js';
 import { relatedPageData } from '../lib/graphCache.js';
-import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
 import { AGENT_GUIDE, GUIDE_VERSION } from '../content/agentGuide.js';
 import { SKILLS, findSkill } from '../content/skills/index.js';
@@ -27,10 +26,11 @@ import {
 import { AgentQuestionError, askUserQuestions, formatAskOutcome } from '../assistant/questions.js';
 import { assetMime, isAssetFile, isParentId, parseMediaUrl, safeAssetJoin } from '../lib/pageAssets.js';
 import { isInboxPath, isInboxDerivedPath } from '../lib/brainPaths.js';
-import { DEFAULT_RAW_DIR, RAW_CHAT_DIR, RAW_ROOT } from '../lib/rawSections.js';
+import { DEFAULT_RAW_DIR, RAW_CHAT_DIR } from '../lib/rawSections.js';
 import { listInboxItems } from '../lib/inboxItems.js';
 import { capabilityHint, extractInboxText, writeInboxMarkdown } from '../pipeline/inboxConvert.js';
 import { createRawMaterial, RawMaterialWriteError } from '../pipeline/rawMaterial.js';
+import { listRawMaterialFiles } from '../pipeline/rawFiles.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
@@ -61,7 +61,6 @@ AIWorks 对 Agent 是只读区；页面写入与改名/移动/删除只允许 Wi
 原始资料是一级目录，固定三个二级目录：文档（成文的完整文件，新资料默认落这里）、对话（save_chat 专用）、灵感碎片（随手记）；不要自造其他二级目录，历史留在根目录的文件按「文档」对待。原始资料的正文不写一级标题——标题由文件名（YYYY.MM.DD_标题.md）与 frontmatter 标题承载，正文开头再写一行 \`# 标题\` 是重复，服务端也会去掉。
 完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取；具体作业手法与纪律先用 skill_list 看清单，再用 skill_guide(name) 取全文。`;
 
-const RAW_DIR = RAW_ROOT;
 const PAGE_TYPE_ENUM = ['concept', 'person', 'customer', 'org', 'project', 'other', 'note'] as const;
 
 const IMAGE_MIME: Record<string, string> = {
@@ -73,50 +72,9 @@ function relExt(rel: string): string {
 }
 
 /** 递归列出原始资料（上限 500 条，Agent 按目录分批读取）；pending=true 时只返回未提炼文件。
- *  图片不算原始资料：它是 md 父项的私有资产（见 lib/pageAssets.ts），不在这里出现。 */
-function listRawFiles(pending = false): Array<{ path: string; ext: string; size: number; extractionStatus: string | null; distilled: boolean }> {
-  const out: Array<{ path: string; ext: string; size: number; extractionStatus: string | null; distilled: boolean }> = [];
-  const root = safeJoin(RAW_DIR);
-  const walk = (abs: string, rel: string) => {
-    let entries: fs.Dirent[];
-    try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (out.length >= 500) return;
-      if (e.name.startsWith('.')) continue;
-      const childAbs = path.join(abs, e.name);
-      const childRel = `${rel}/${e.name}`;
-      if (e.isDirectory()) {
-        walk(childAbs, childRel);
-      } else {
-        if (isAssetFile(e.name)) continue;
-        let size = 0;
-        try { size = fs.statSync(childAbs).size; } catch { /* ignore */ }
-        const ext = relExt(childRel);
-        let extractionStatus: string | null = null;
-        if (['md', 'markdown'].includes(ext)) {
-          extractionStatus = 'md页面';
-        } else {
-          const row = db.prepare(
-            `SELECT fe.status FROM file_extractions fe JOIN files f ON f.id=fe.file_id
-             WHERE f.path=? AND f.deleted=0`
-          ).get(childRel) as { status: string } | undefined;
-          if (row?.status) {
-            extractionStatus = row.status;
-          } else {
-            const file = db.prepare(`SELECT text FROM files WHERE path=? AND deleted=0`).get(childRel) as
-              | { text: string }
-              | undefined;
-            extractionStatus = file?.text?.trim() ? '已索引' : null;
-          }
-        }
-        const distilled = isDistilledPath(childRel);
-        if (pending && distilled) continue;
-        out.push({ path: childRel, ext, size, extractionStatus, distilled });
-      }
-    }
-  };
-  walk(root, RAW_DIR);
-  return out;
+ *  实现抽在 pipeline/rawFiles.ts：「梦境思考」的待办统计与 MCP 共用同一份清单口径。 */
+function listRawFiles(pending = false) {
+  return listRawMaterialFiles({ pending });
 }
 
 /** 读一份原始资料：优先提取文本；raw=true 时返回原文件（图片走 MCP image 内容） */

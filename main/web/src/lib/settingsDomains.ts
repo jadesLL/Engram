@@ -13,6 +13,9 @@
  *  - 卸载 Engram 移入「数据与存储 → 危险操作」（data-danger），与清库 / 清日志并列：
  *    都是不可撤销、做错了没法回退的操作，统一放整页最后一组。
  *
+ * 2026-09-27：「梦境思考」（agent-dream）进「Agent 接入」——它跑的是内置 Agent，放在
+ * 「内置 Agent」后面、与「接入目标」（外部 harness）分开，语义是"让内置 Agent 按计划自动干活"。
+ *
  * 大类下的每个分组都是二级导航锚点：点击滚动到该分组、滚动时反向高亮。
  * 锚点 id 必须与渲染出的 DOM id 一一对应（SettingsGroup 的 anchor 或包裹元素的 id），
  * 且全局唯一——settingsDomains.test.ts 会锁住这两条。
@@ -80,6 +83,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     icon: 'ai',
     groups: [
       { id: 'agent-builtin', label: '内置 Agent', icon: 'ai', need: 'agent' },
+      { id: 'agent-dream', label: '梦境思考', icon: 'moon', need: 'agent' },
       { id: 'agent-target', label: '接入目标', icon: 'plug', need: 'agent' },
       { id: 'agent-tools', label: '查看工具', icon: 'wrench', need: 'agent' },
     ],

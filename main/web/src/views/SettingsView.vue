@@ -115,10 +115,12 @@
           <header class="domain-head">
             <div>
               <h3>Agent 接入</h3>
-              <p>把 Engram 知识库接入外部 Agent：一键注册或 MCP 配置片段。</p>
+              <p>配置随包内置的 Agent（含按计划自动整理的「梦境思考」），把知识库接入外部 Agent。</p>
             </div>
           </header>
           <AgentPanel />
+          <!-- 梦境思考：跑的是内置 Agent，按计划自动整理 + 纠错；单根 section，跟着大类 v-show 一起显隐 -->
+          <DreamSection />
         </section>
 
         <!-- 数据与存储：数据管理 + 存储空间（回收站 / 图片资产）+ 危险操作（含卸载应用） -->
@@ -148,6 +150,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from '../components/Icon.vue';
 import AccountPanel from '../components/settings/AccountPanel.vue';
 import AgentPanel from '../components/settings/AgentPanel.vue';
+import DreamSection from '../components/settings/DreamSection.vue';
 import SyncPanel from '../components/settings/SyncPanel.vue';
 import UpdatePanel from '../components/settings/UpdatePanel.vue';
 import StoragePanel from '../components/settings/StoragePanel.vue';

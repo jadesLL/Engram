@@ -141,11 +141,50 @@ export const PLAYBOOKS: Playbook[] = [
   { id: 'weekly-tasks', match: isWeeklyTasksQuestion, build: weeklyTasksPlaybook },
 ];
 
-/** 按 id 取手册（界面显式指定：任务看板不靠关键词命中）；未知 id 返回 null */
+/** 梦境思考：定时后台作业（不是常驻问题，由调度器显式指定 id） */
+export const DREAM_PLAYBOOK = 'dream-cycle';
+
+/**
+ * 梦境思考的作业手册：一轮里做两件事——把没提炼的资料提炼掉，再做一次全库纠错。
+ *
+ * 与聊天里的手册不同，这份是**无人值守**的：没有用户在场，所以明确禁止 ask_user
+ * （问了只会白等到超时），公司全名核验改成登记后留给用户下次答复。
+ * 待办信号由任务正文带进来（见 dreamCycle.buildDreamMessage），这里只写做法与收口口径。
+ */
+function dreamCyclePlaybook(now: Date): string {
+  return [
+    '【梦境思考：自动整理 + 纠错（无人值守后台作业）】',
+    `今天是 ${formatDay(startOfDay(now))}。这一轮由 Engram 按计划自动发起，用户不在场；请自己做完，不要停下来等待提问。`,
+    '',
+    '一、提炼未整理的原始资料（逐份串行）',
+    '1. 待提炼清单：`list_raw_files` 传 `pending=true`（返回里没标「已提炼」的就是要整理的）。任务末尾的「本轮待办信号」已给出一份样例，以清单工具的实时结果为准。',
+    '2. 一次只处理一份：读一份（`read_raw_file`；图片或无文字层的扫描件传 `raw=true` 自己识别）→ 按 `kb_guide` 的作业流程与页面契约提炼 → `write_page` 提交成功后，再读下一份。不要批量读完统一写页。',
+    '3. 提取状态还没完成的文件先跳过（服务端会自动提取，下一轮再处理）；单份失败记下原因继续下一份，不要卡住整批。',
+    '4. 证据引文必须逐字来自原文；新建概念/实体页遵守两来源门禁；已有页面增量更新不受限；资料里查不到又必须有说法的，按证据取最可信的写法并在正文标注「待核实」，不要编造。',
+    '',
+    '二、全库纠错（这一轮做一次）',
+    '5. 按任务末尾的待办信号逐类核查，需要时自己用 `list_pages` / `search` / `related_pages` / `page_evidence` 再查一遍：',
+    '   - 死链：`[[双链]]` 指向的标题没有页面。该建页的按契约建页；写错标题的改成正确标题；拿不准的不要硬建。',
+    '   - 疑似重复：标题撞名的页面组（信号里给出路径）。读原文确认是不是同一个对象：是就合并——把内容并进保留页、`write_page` 覆盖，再用 `delete_page` 把多余页移入回收站（只软删除）；不是就在页面里写清区分口径。',
+    '   - 规则落后：`guide_version` 低于当前《Agent 作业指南》的概念/实体页，按最新契约重写（用户手写章节永远保留）。',
+    '   - 页面契约：实体页固定 `## 当前理解 / ## 相关页面 / ## 时间线`，概念页 `概述 / 核心要点 / 实践应用`；`[[双链]]` 只指已有或本次新建的页面；标题口径按指南（公司类实体用工商全名，查不到就标注「全称待确认」）。',
+    '6. 只做有据可依的修改；拿不准的把依据与候选写进相关页面的「待核实」，不要为了「修完」而硬改或删页。',
+    '7. 无人值守：不要用 `mcp__engram__ask_user` 提问（用户不在，提问只会白等到超时）。公司全名核验照常 `entity_name_check` 登记，等用户下次在对话里答复；其余按证据自己定并标注「待核实」。',
+    '',
+    '三、收尾',
+    '8. 一轮时间有限（通常 10~30 分钟）：按「先做最该做的」排序，做不完的把剩余清单写进小结。',
+    '9. 最后一段正文写成给用户看的小结（不要复述逐条日志、不要贴工具输出）：本次处理了几份资料、新建/更新了哪些页面、纠错改了什么、哪些遗留要用户自己补。写短，一眼看完。',
+  ].join('\n');
+}
+
+/** 按 id 取手册（界面/调度器显式指定：任务看板、梦境思考都不靠关键词命中）；未知 id 返回 null */
 export function findPlaybookById(id?: string): Playbook | null {
   const key = String(id || '').trim();
   if (key === TASK_BOARD_PLAYBOOK) {
     return { id: key, match: () => false, build: taskBoardPlaybook };
+  }
+  if (key === DREAM_PLAYBOOK) {
+    return { id: key, match: () => false, build: dreamCyclePlaybook };
   }
   return PLAYBOOKS.find((playbook) => playbook.id === key) ?? null;
 }
