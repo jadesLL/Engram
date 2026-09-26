@@ -8,7 +8,8 @@
     @close="onCancel"
   >
     <p class="idea-hint">
-      正文随便写，标题不用起——Engram 会读完这段正文替你拟一个。
+      正文随便写，标题不用起——Engram 会读完这段正文替你拟一个，
+      顺手把写错的人名、公司名对齐到知识库里已有的写法。
     </p>
     <textarea
       ref="inputRef"
@@ -27,7 +28,7 @@
       <button class="btn" :disabled="ideaComposerState.busy" @click="onCancel">取消</button>
       <button class="btn primary" :disabled="!submittable" @click="submit()">
         <AppSpinner v-if="ideaComposerState.busy" :size="12" />
-        {{ ideaComposerState.busy ? '正在拟标题…' : '记下来' }}
+        {{ ideaComposerState.busy ? '正在校对并拟标题…' : '记下来' }}
       </button>
     </template>
   </AppModal>
@@ -48,14 +49,24 @@ import {
   type SubmittedIdea,
 } from '../../lib/ideaComposer';
 
-/** 提交通道：POST /api/ideas（正文进、Engram 拟标题、落 原始资料/灵感碎片/） */
+/**
+ * 提交通道：POST /api/ideas（正文进、落盘前勘误 + Engram 拟标题、落 原始资料/灵感碎片/）。
+ * 响应里的 fixes / pending 只用于提示：改了哪几处、有几处疑似写法没敢动。
+ */
 async function postIdea(content: string): Promise<SubmittedIdea> {
   const { data } = await api.post('/api/ideas', { content });
+  const fixes = Array.isArray(data.fixes) ? data.fixes : [];
   return {
     id: String(data.id),
     path: String(data.path),
     title: String(data.title || ''),
     titleSource: data.titleSource === 'model' ? 'model' : 'heuristic',
+    fixes: fixes.map((fix: any) => ({
+      wrong: String(fix?.wrong ?? ''),
+      right: String(fix?.right ?? ''),
+      kind: fix?.kind ? String(fix.kind) : null,
+    })),
+    pending: Array.isArray(data.pending) ? data.pending.map((item: any) => String(item)) : [],
   };
 }
 

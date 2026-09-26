@@ -5,7 +5,10 @@ import { reactive } from 'vue';
  *
  * 与 lib/confirm.ts 的 promptDialog 的区别：那个是单行输入（问标题），这个要的是**正文**——
  * 标题不用户填，由服务端读完整段正文拟（见 server/src/lib/ideaNote.ts）。所以对话框还有一个
- * 「正在拟标题…」的等待态和失败态：拟标题/落盘失败时正文留在框里，不让用户白写一遍。
+ * 「正在校对并拟标题…」的等待态和失败态：勘误/拟标题/落盘失败时正文留在框里，不让用户白写一遍。
+ *
+ * 落盘前服务端会自动勘误（见 server/src/lib/textFix.ts）：错名（人名、公司名）对齐到知识库
+ * 既有写法，改在录入那一刻——已有原始资料一个字节都不动。这里只负责把「改了哪几处」带回界面。
  *
  * 状态放模块级单例：同一时间只开一个（与 ConfirmHost 同一套约定）。
  * 本模块只碰状态，不引 api——发请求由组件把提交函数传进来，这样纯逻辑可被 node --test 直接跑。
@@ -14,6 +17,14 @@ import { reactive } from 'vue';
 /** 与服务端 MAX_IDEA_CHARS 一致：到这个量级该走「新建资料」而不是速记 */
 export const IDEA_MAX_CHARS = 20_000;
 
+/** 落盘前自动应用的一处勘误 */
+export interface IdeaFix {
+  wrong: string;
+  right: string;
+  /** 四类判据之一；勘误表条目由用户直接指定映射，故可能为 null */
+  kind: string | null;
+}
+
 export interface SubmittedIdea {
   id: string;
   path: string;
@@ -21,13 +32,17 @@ export interface SubmittedIdea {
   title: string;
   /** model = 模型拟的；heuristic = 规则兜底（未配模型凭据或调用失败） */
   titleSource: 'model' | 'heuristic';
+  /** 落盘前自动勘误的结果：空数组 = 一个字没改 */
+  fixes: IdeaFix[];
+  /** 检出但没动的疑似写法（歧义、或没接模型，见服务端 pending） */
+  pending: string[];
 }
 
 export interface IdeaComposerState {
   open: boolean;
   /** 正文草稿：取消后保留，下次打开还在 */
   content: string;
-  /** 提交中：正在拟标题并落盘，按钮转圈、输入框只读 */
+  /** 提交中：正在勘误并拟标题，按钮转圈、输入框只读 */
   busy: boolean;
   /** 上一次提交失败的原因，显示在正文下方 */
   error: string;
@@ -52,6 +67,20 @@ export function canSubmitIdea(content: string): boolean {
 /** Ctrl/Cmd + Enter 提交：多行输入框里回车要留给换行 */
 export function isIdeaSubmitKey(event: { key: string; ctrlKey: boolean; metaKey: boolean }): boolean {
   return event.key === 'Enter' && (event.ctrlKey || event.metaKey);
+}
+
+/**
+ * toast 上的一句话勘误说明（纯函数，便于单测）：
+ * 改了就说改了哪几处（最多列 limit 条），只检出没改的报个数。
+ */
+export function summarizeIdeaFixes(fixes: IdeaFix[], pending: string[] = [], limit = 2): string {
+  const parts: string[] = [];
+  if (fixes.length) {
+    const shown = fixes.slice(0, limit).map((fix) => `${fix.wrong}→${fix.right}`).join('、');
+    parts.push(`已勘误 ${fixes.length} 处：${shown}${fixes.length > limit ? ' 等' : ''}`);
+  }
+  if (pending.length) parts.push(`另有 ${pending.length} 处疑似写法没动`);
+  return parts.join('；');
 }
 
 /** 提交函数：正文 → 落盘结果（组件里包 POST /api/ideas） */
