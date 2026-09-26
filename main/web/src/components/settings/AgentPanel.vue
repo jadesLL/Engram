@@ -2,8 +2,8 @@
   <section class="settings-panel settings-native">
     <div class="panel-head">
       <div>
-        <h3>Agent 接入</h3>
-        <p>把 Engram 知识库接入外部 Agent：ZCode、Codex CLI、DeepSeek Harness、WorkBuddy 与 Qoder 支持本机一键注册；Kimi Work 支持一键登记个人插件。</p>
+        <h3>Agent 与自动化</h3>
+        <p>内置 Agent 与外部 Agent 的接入：ZCode、Codex CLI、DeepSeek Harness、WorkBuddy 与 Qoder 支持本机一键注册；Kimi Work 支持一键登记个人插件。</p>
       </div>
     </div>
 
@@ -86,10 +86,15 @@
       </div>
     </SettingsGroup>
 
+    <!-- 「自动整理（梦境思考）」由设置页经具名插槽插在这里：它必须紧跟在「内置 Agent」后面，
+         排在「外部接入」之前——导航顺序 = 页面顺序，插槽是唯一能保住这个顺序又不拆组件的办法
+         （2026-09-27 的「导航第 2 项、页面第 4 块」就是这里顺序错位造成的）。 -->
+    <slot name="after-builtin" />
+
     <SettingsGroup
       anchor="agent-target"
-      title="接入目标"
-      hint="选择 Agent 后查看一键注册或对应的 MCP 接入指引"
+      title="外部接入"
+      hint="选择要接入的 Agent 后，查看一键注册或对应的 MCP 接入指引"
     >
       <div class="harness-picker">
         <label for="agent-target-select">接入目标</label>
@@ -107,9 +112,8 @@
 
     <SettingsGroup
       anchor="agent-tools"
-      level="advanced"
-      title="查看工具"
-      :hint="`接入后 Agent 可用 ${MCP_TOOLS.length} 个 MCP 工具：读 ${readTools.length} 个不改动知识库，写 ${writeTools.length} 个带证据门禁并记入操作日志`"
+      title="工具与手册"
+      :hint="`只读参考：接入后 Agent 可用 ${MCP_TOOLS.length} 个 MCP 工具——读 ${readTools.length} 个不改动知识库，写 ${writeTools.length} 个带证据门禁并记入操作日志`"
     >
       <p class="faint small tools-intro">
         模型侧工具名为 <code>mcp__engram__&lt;工具名&gt;</code>；每个工具附参数、要点与 CLI 用法。

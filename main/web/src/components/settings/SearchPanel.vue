@@ -1,5 +1,6 @@
 <template>
   <SettingsGroup
+    class="settings-native"
     :anchor="anchor"
     :level="level"
     title="搜索同义词"
@@ -36,8 +37,9 @@ import { notify } from '../../lib/notify';
 import SettingsGroup from './SettingsGroup.vue';
 
 /**
- * anchor / level 由设置页（DataPanel）透传：搜索同义词属于「高级」分组，
- * 并需要在二级导航里有自己的锚点。
+ * anchor / level 由设置页透传：搜索同义词有自己的二级锚点（data-synonyms）。
+ * 2026-09-28 起它归「界面与检索」大类，由 SettingsView 直接挂载（不再挂在 DataPanel 里）——
+ * 它不是数据存储，放在「知识库数据」里是旧版的混装。
  */
 withDefaults(
   defineProps<{

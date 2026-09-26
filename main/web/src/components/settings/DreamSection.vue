@@ -2,14 +2,14 @@
   <section class="settings-panel settings-native">
     <div class="panel-head">
       <div>
-        <h3>梦境思考</h3>
+        <h3>自动整理（梦境思考）</h3>
         <p>到点让内置 Agent 在后台把没提炼的原始资料整理进知识库，并做一次全库纠错；过程就是「梦境思考」这个对话，随时可点开看。</p>
       </div>
     </div>
 
     <SettingsGroup
       anchor="agent-dream"
-      title="梦境思考"
+      title="自动整理（梦境思考）"
       :hint="`按计划自动跑一轮：整理未提炼的资料 + 一次纠错（${status?.scheduleLabel || '未启用'}）`"
     >
       <div v-if="loaded" class="dream-status" :class="{ ok: statusOk, bad: statusBad, busy: Boolean(status?.running) }">
