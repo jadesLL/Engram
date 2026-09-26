@@ -36,7 +36,7 @@
     </div>
 
     <div class="settings-shell">
-      <nav class="settings-nav" aria-label="设置分类">
+      <nav ref="navEl" class="settings-nav" aria-label="设置分类">
         <!-- 二级锚点全部平铺常显：大类切页，锚点只做滚动定位（2026-09-24 改版，不再展开/收起） -->
         <div v-for="domain in domains" :key="domain.id" class="settings-nav-domain">
           <button
@@ -56,6 +56,7 @@
               :key="group.id"
               type="button"
               class="settings-nav-subitem"
+              :data-anchor="group.id"
               :class="{ active: activeDomain === domain.id && activeAnchor === group.id, danger: group.danger }"
               :aria-current="activeDomain === domain.id && activeAnchor === group.id ? 'true' : undefined"
               @click="onAnchorClick(domain.id, group.id)"
@@ -74,7 +75,7 @@
         </div>
       </nav>
 
-      <div class="settings-content">
+      <div ref="contentEl" class="settings-content">
         <!-- 账户与访问：账户凭据 + 连接通道。以下每个大类里的分组顺序都与 settingsDomains 的登记顺序一致，
              页面上第 N 块 = 导航里第 N 项（改分类时两边一起改）。 -->
         <section v-show="activeDomain === 'account'" class="settings-domain is-multi" data-domain="account">
@@ -189,6 +190,10 @@ import { useRoute } from 'vue-router';
 const activeDomain = ref<SettingsDomainId>('account');
 const activeAnchor = ref<string>('');
 const viewEl = ref<HTMLElement | null>(null);
+/** 左侧目录列：自己是一个滚动容器（分组多，放不下） */
+const navEl = ref<HTMLElement | null>(null);
+/** 右侧内容列：桌面端真正在滚的就是它（与目录各滚各的） */
+const contentEl = ref<HTMLElement | null>(null);
 const { capabilities, load } = useRuntimeCapabilities();
 const route = useRoute();
 
@@ -211,9 +216,47 @@ function domainOf(id: SettingsDomainId): SettingsDomain | undefined {
   return domains.value.find((domain) => domain.id === id);
 }
 
-/** 滚动容器是 Home.vue 的 .content；找不到时退回窗口滚动 */
-function scroller(): HTMLElement | Window {
+/**
+ * 设置页有**两层**滚动，谁在滚取谁（2026-09-28 起目录列与内容列各滚各的）：
+ * 桌面端内容列 .settings-content 是限高的独立滚动容器；窄屏（≤768px）内容列不限高，
+ * 整页仍由 Home 的 .content 滚。用「能不能滚」判断，比记断点稳（侧栏拉宽、内容变长都不影响）。
+ */
+function pageScroller(): HTMLElement | Window {
   return (viewEl.value?.closest('.content') as HTMLElement | null) ?? window;
+}
+
+function scrollablePane(): HTMLElement | null {
+  const pane = contentEl.value;
+  if (pane && pane.scrollHeight - pane.clientHeight > 4) return pane;
+  return null;
+}
+
+function scroller(): HTMLElement | Window {
+  return scrollablePane() ?? pageScroller();
+}
+
+/**
+ * 滚动联动高亮的判定线：分组顶边越过它就算「当前分组」。
+ * 内容列自己滚时，判定线得跟着内容列的顶边走（原来写死的 96px 是给「整页滚、导航吸顶」那版用的，
+ * 会晚半屏才点亮）；整页滚（窄屏）时保持原值。取 32px 是为了压过锚点定位的 scroll-margin-top。
+ */
+function activeEdge(): number {
+  const pane = scrollablePane();
+  return pane ? pane.getBoundingClientRect().top + 32 : 96;
+}
+
+/** 目录里把当前分组带回视野：内容滚动时高亮项可能滚出目录可视区（只动目录列，不碰内容列） */
+function revealActiveNavItem(anchor: string) {
+  const nav = navEl.value;
+  if (!nav || !anchor) return;
+  const item = Array.from(nav.querySelectorAll<HTMLElement>('.settings-nav-subitem'))
+    .find((el) => el.dataset.anchor === anchor);
+  if (!item) return;
+  const gap = 10;
+  const navBox = nav.getBoundingClientRect();
+  const itemBox = item.getBoundingClientRect();
+  if (itemBox.top < navBox.top + gap) nav.scrollTop -= navBox.top + gap - itemBox.top;
+  else if (itemBox.bottom > navBox.bottom - gap) nav.scrollTop += itemBox.bottom - (navBox.bottom - gap);
 }
 
 function scrollToTop() {
@@ -251,7 +294,7 @@ function scrollToAnchor(anchor: string) {
   });
 }
 
-/** 滚动联动：取最后一个越过吸顶线的锚点作为当前分组 */
+/** 滚动联动：取最后一个越过「当前分组判定线」的锚点作为当前分组 */
 let raf = 0;
 function onScroll() {
   if (raf) return;
@@ -259,13 +302,14 @@ function onScroll() {
     raf = 0;
     const domain = currentDomain.value;
     if (!domain) return;
+    const edge = activeEdge();
     let current = '';
     for (const group of domain.groups) {
       const el = document.getElementById(group.id);
       if (!el || el.offsetParent === null) continue;
-      if (el.getBoundingClientRect().top <= 96) current = group.id;
+      if (el.getBoundingClientRect().top <= edge) current = group.id;
     }
-    // 滚到底时最后一组可能仍未越过吸顶线，此时按「已到页面底部」兜底。
+    // 滚到底时最后一组可能仍未越过判定线，此时按「已到页面底部」兜底。
     // 前提是这一页真的能滚：短分类（内容不足一屏）三组都在视野里，
     // 不加这个判断会把高亮永远钉在最后一组。
     const target = scroller();
@@ -300,6 +344,18 @@ watch(domains, (items) => {
   }
 });
 
+/** 当前分组变了就把目录里那一项带回视野（内容列滚动驱动的高亮不会跑出目录） */
+watch(activeAnchor, (anchor) => {
+  if (anchor) void nextTick(() => revealActiveNavItem(anchor));
+});
+
+/**
+ * 两个滚动容器都挂监听：桌面端滚内容列（scroller() 会挑它），窄屏滚整页 .content。
+ * 滚动事件不冒泡，所以必须两边各挂一次，不能只挂外层。
+ */
+let paneEl: HTMLElement | null = null;
+let pageEl: HTMLElement | Window = window;
+
 onMounted(async () => {
   window.addEventListener('engram:settings-target', onSettingsTarget);
   await load();
@@ -311,8 +367,10 @@ onMounted(async () => {
   activeDomain.value = target.domain;
   activeAnchor.value = target.anchor;
 
-  const scrollerEl = scroller();
-  scrollerEl.addEventListener('scroll', onScroll, { passive: true });
+  paneEl = contentEl.value;
+  pageEl = pageScroller();
+  paneEl?.addEventListener('scroll', onScroll, { passive: true });
+  pageEl.addEventListener('scroll', onScroll, { passive: true });
   window.addEventListener('resize', onScroll, { passive: true });
   onScroll();
 });
@@ -320,7 +378,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('engram:settings-target', onSettingsTarget);
   if (raf) cancelAnimationFrame(raf);
-  scroller().removeEventListener('scroll', onScroll);
+  paneEl?.removeEventListener('scroll', onScroll);
+  pageEl.removeEventListener('scroll', onScroll);
+  paneEl = null;
   window.removeEventListener('resize', onScroll);
 });
 </script>
