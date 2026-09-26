@@ -200,6 +200,7 @@ import {
 } from '../lib/taskBoard';
 import { formatSessionTime } from '../lib/chatTime';
 import { notify } from '../lib/notify';
+import { openPageStream } from '../lib/events';
 
 /**
  * 任务看板页：进来先看缓存（六小时内的直接显示），过期或没有就自动让 Agent 重新提炼，
@@ -210,6 +211,8 @@ import { notify } from '../lib/notify';
  */
 const router = useRouter();
 const tasks = useTasksStore();
+/** 看板被别端同步更新时的 SSE 订阅（离开页面即断开） */
+let closeBoardStream: (() => void) | undefined;
 
 const board = computed(() => tasks.board);
 
@@ -324,11 +327,12 @@ const sections = computed(() => {
   }));
 });
 
-/** 顶部副标题：一眼看清这份看板是什么时候生成的 */
+/** 顶部副标题：一眼看清这份看板「上次更新时间」、以及是不是别端同步过来的 */
 const headSub = computed(() => {
   if (tasks.running) return tasks.answer ? '正在重新提炼，下面是上一版' : '正在从知识库提炼';
   if (!tasks.generatedAt) return '点一下就按知识库生成下周的活';
-  return `${formatSessionTime(tasks.generatedAt)}生成${tasks.stale ? '（已超过 6 小时）' : ''}`;
+  const from = !tasks.local && tasks.sourceNodeLabel ? `（来自 ${tasks.sourceNodeLabel}）` : '';
+  return `上次更新：${formatSessionTime(tasks.generatedAt)}${from}${tasks.stale ? ' · 已超过 6 小时' : ''}`;
 });
 
 const emptyHint = computed(() =>
@@ -423,11 +427,17 @@ onMounted(async () => {
   const needsRefresh = await tasks.load();
   // 没有答案或已过期就自动重跑；正在跑的那一轮由 store 接上事件流，不重复触发
   if (needsRefresh && !tasks.running) await tasks.refresh();
+  // 别端刷新了看板（多端同步把最新的那份推过来）：重拉一次，界面直接换成最新那版
+  closeBoardStream = openPageStream((ev) => {
+    if (ev.type === 'board-changed') void tasks.load();
+  });
 });
 
 onBeforeUnmount(() => {
   if (timer !== undefined) window.clearInterval(timer);
   timer = undefined;
+  closeBoardStream?.();
+  closeBoardStream = undefined;
   tasks.detach();
 });
 </script>

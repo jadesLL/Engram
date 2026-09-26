@@ -546,6 +546,116 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     });
     // 缺口期的页面内容同样要补到位（内容与账本都靠这次全量对账收敛）
     await waitFor('B 补到缺口期的页面', async () => (await pageContent(nodeB, gapPageA))?.includes('缺口甲内容') === true);
+    // ---------- 场景 9：内置 Agent 会话与任务看板随同步走（会话只同步完成态） ----------
+    // 真实路径下会话由「一轮回复收尾」触发推送；这里跑不了模型，于是在成员库里直接造
+    // 「已完成一轮 + 正在跑一轮」的会话，再用成员端的对账入口把它推上去——走的正是
+    // 「对账发现本端独有会话 → 补推」这条链路。正在跑的那一轮与其消息一条都不该出去。
+    withDb(nodeB.dataDir, (conn) => {
+      const stamp = new Date().toISOString();
+      conn.prepare(
+        `INSERT INTO assistant_sessions(id, title, summary, archived, title_source, created_at, updated_at)
+         VALUES('e2e-session', '端到端会话', '', 0, 'user', ?, ?)`
+      ).run(stamp, stamp);
+      const insMsg = conn.prepare(
+        `INSERT INTO assistant_messages(id, session_id, run_id, role, content, metadata, created_at) VALUES(?,?,?,?,?,?,?)`
+      );
+      insMsg.run('e2e-m1', 'e2e-session', 'e2e-run', 'user', 'E2E 问一句', '{}', stamp);
+      insMsg.run('e2e-m2', 'e2e-session', 'e2e-run', 'assistant', 'E2E 答一句', '{}', stamp);
+      insMsg.run('e2e-live-u', 'e2e-session', 'e2e-live', 'user', '还在对话中', '{}', stamp);
+      insMsg.run('e2e-live-a', 'e2e-session', 'e2e-live', 'assistant', '半截回答', '{}', stamp);
+      const insRun = conn.prepare(
+        `INSERT INTO assistant_runs(id, session_id, user_message_id, assistant_message_id, status, context, step_count, created_at, updated_at, completed_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)`
+      );
+      insRun.run('e2e-run', 'e2e-session', 'e2e-m1', 'e2e-m2', 'completed', '{}', 1, stamp, stamp, stamp);
+      insRun.run('e2e-live', 'e2e-session', 'e2e-live-u', 'e2e-live-a', 'running', '{}', 1, stamp, stamp, null);
+    });
+    await api(nodeB, 'POST', '/api/sync/reconcile');
+    await waitFor('中枢收到成员端的会话', async () => withDb(hub.dataDir, (conn) =>
+      Boolean(conn.prepare(`SELECT 1 FROM assistant_sessions WHERE id = 'e2e-session'`).get())
+    ), 60_000);
+    const hubSession = withDb(hub.dataDir, (conn) => conn.prepare(
+      `SELECT (SELECT COUNT(*) FROM assistant_messages WHERE session_id = 'e2e-session') AS messages,
+              (SELECT COUNT(*) FROM assistant_runs WHERE session_id = 'e2e-session') AS runs,
+              origin_node_label AS label
+       FROM assistant_sessions WHERE id = 'e2e-session'`
+    ).get());
+    assert.equal(hubSession.messages, 2, '只同步已完成那一轮的两条消息');
+    assert.equal(hubSession.runs, 1, '正在跑的那一轮不进中枢（只同步完成态）');
+    assert.ok(hubSession.label, '中枢要记住这条会话来自哪台设备');
+    const hubSessionList = (await (await api(hub, 'GET', '/api/assistant/sessions')).json()) as {
+      sessions: { id: string; title: string }[];
+    };
+    assert.ok(hubSessionList.sessions.some((s) => s.id === 'e2e-session'), '中枢的会话列表里能看到成员端的会话');
+
+    // 看板：成员端这份先推上去（全端唯一一份，键恒为 default）
+    withDb(nodeB.dataDir, (conn) => {
+      const stamp = new Date().toISOString();
+      conn.prepare(
+        `INSERT INTO settings(key, value) VALUES('task_board_session_id', 'e2e-board')
+         ON CONFLICT(key) DO UPDATE SET value = 'e2e-board'`
+      ).run();
+      conn.prepare(
+        `INSERT INTO assistant_sessions(id, title, summary, archived, title_source, system_key, created_at, updated_at)
+         VALUES('e2e-board', '任务看板', '', 0, 'user', 'task_board', ?, ?)`
+      ).run(stamp, stamp);
+      const insMsg = conn.prepare(
+        `INSERT INTO assistant_messages(id, session_id, run_id, role, content, metadata, created_at) VALUES(?,?,?,?,?,?,?)`
+      );
+      insMsg.run('e2e-board-u', 'e2e-board', 'e2e-board-run', 'user', '生成下周的活', '{}', stamp);
+      insMsg.run('e2e-board-a', 'e2e-board', 'e2e-board-run', 'assistant', '成员端看板内容', '{}', stamp);
+      conn.prepare(
+        `INSERT INTO assistant_runs(id, session_id, user_message_id, assistant_message_id, status, context, step_count, created_at, updated_at, completed_at)
+         VALUES('e2e-board-run', 'e2e-board', 'e2e-board-u', 'e2e-board-a', 'completed', '{}', 1, ?, ?, ?)`
+      ).run(stamp, stamp, stamp);
+    });
+    await api(nodeB, 'POST', '/api/sync/reconcile');
+    await waitFor('中枢收到成员端的看板', async () => withDb(hub.dataDir, (conn) =>
+      String(conn.prepare(`SELECT payload FROM task_board_sync WHERE id = 'default'`).get()?.payload || '')
+        .includes('成员端看板内容')
+    ), 60_000);
+    // 看板会话带系统标记，不参与会话同步：中枢不该多出一条「任务看板」会话
+    assert.equal(
+      withDb(hub.dataDir, (conn) =>
+        conn.prepare(`SELECT COUNT(*) AS n FROM assistant_sessions WHERE id = 'e2e-board'`).get().n
+      ),
+      0,
+      '系统会话（任务看板）不跨端复制'
+    );
+
+    // 反向：中枢那份更新（时间更晚）→ 成员端对账后换成中枢那版，
+    // 且接口口径带「上次更新时间」与来源设备（页面顶部就是显示这两样）
+    const hubBoardAt = new Date(Date.now() + 60_000).toISOString();
+    withDb(hub.dataDir, (conn) => {
+      conn.prepare(
+        `UPDATE task_board_sync SET payload = ?, generated_at = ?, node_id = 'hub-node', node_label = '中枢' WHERE id = 'default'`
+      ).run(
+        JSON.stringify({
+          id: 'default',
+          answer: '中枢端看板内容',
+          generatedAt: hubBoardAt,
+          windowStart: '2026-01-05',
+          windowEnd: '2026-01-11',
+          nodeId: 'hub-node',
+          nodeLabel: '中枢',
+          updatedAt: hubBoardAt,
+        }),
+        hubBoardAt
+      );
+    });
+    await api(nodeB, 'POST', '/api/sync/reconcile');
+    await waitFor('成员端换成中枢那版看板', async () => {
+      const body = (await (await api(nodeB, 'GET', '/api/tasks/board')).json()) as {
+        answer: string;
+        local: boolean;
+        updatedAt: string;
+        sourceNodeLabel: string;
+      };
+      return body.answer === '中枢端看板内容'
+        && body.local === false
+        && body.updatedAt === hubBoardAt
+        && body.sourceNodeLabel === '中枢';
+    }, 60_000);
   } catch (error) {
     failed = true;
     await cleanup();

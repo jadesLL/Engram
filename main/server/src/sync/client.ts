@@ -14,8 +14,24 @@ import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
 import { formatBytes, formatDuration, logSyncEvent, recentSyncLog, type SyncLogEntry } from './eventLog.js';
-import { describeOpList, describeOpSummary, formatLineDelta, isNoteworthyOp, summarizeDelete, summarizeMove, summarizePageChange, type SyncOpSummary } from './opText.js';
+import { describeOpList, describeOpSummary, formatLineDelta, isNoteworthyOp, summarizeBoardChange, summarizeDelete, summarizeMove, summarizePageChange, summarizeSessionChange, type SyncOpSummary } from './opText.js';
 import { isDistilledPath } from '../pipeline/sourceLedger.js';
+import { BOARD_SYNC_ID } from '../assistant/boardCore.js';
+import {
+  boardWins,
+  collectBoardPayload,
+  collectSessionSnapshot,
+  deleteSessionWithTombstone,
+  deviceLabel,
+  mergeBoardPayload,
+  mergeSessionSnapshot,
+  sessionContentHash,
+  sessionFingerprint,
+  sessionManifest,
+  sessionUpdatedAt,
+  type BoardPayload,
+  type SessionSnapshot,
+} from './sessions.js';
 import {
   currentNodeId,
   getCursor,
@@ -75,6 +91,8 @@ interface QueueItem {
   kind: SyncKind;
   target: string;
   oldPath?: string;
+  /** 会话删除：本地已经删了，推的是「删除」而不是快照 */
+  deleted?: boolean;
 }
 
 const queue: QueueItem[] = [];
@@ -102,6 +120,8 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let pushRetryMs = 3000;
 /** 拉取失败待补拉文件（path → 远端 hash），成功后移除 */
 const pendingFilePulls = new Map<string, string>();
+/** 会话快照待补拉（sessionId → 远端 hash），成功后移除（会话正文比文件大，失败必须留待重试） */
+const pendingSessionPulls = new Map<string, string>();
 let pullRetryTimer: ReturnType<typeof setInterval> | null = null;
 let healTimer: ReturnType<typeof setInterval> | null = null;
 let reconcileRunning = false;
@@ -192,7 +212,14 @@ function logEvent(
 
 /** { page: 2, file: 1 } → 「页面 2 · 文件 1」，用于推送/补拉的批次摘要 */
 function kindSummary(counts: Partial<Record<SyncKind, number>>): string {
-  const labels: Record<SyncKind, string> = { page: '页面', file: '文件', delete: '删除', move: '移动' };
+  const labels: Record<SyncKind, string> = {
+    page: '页面',
+    file: '文件',
+    delete: '删除',
+    move: '移动',
+    session: '会话',
+    board: '任务看板',
+  };
   const parts = (Object.keys(labels) as SyncKind[])
     .filter((kind) => Number(counts[kind] || 0) > 0)
     .map((kind) => `${labels[kind]} ${counts[kind]}`);
@@ -461,6 +488,36 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
       applyRemoteMove(String(op.old_path || ''), target, Number(op.revision || 0));
       applied = true;
       appliedSummary = summarizeMove(String(op.old_path || ''), target);
+    } else if (op.kind === 'session') {
+      if (op.deleted) {
+        // 别端删了会话：本端删副本并记墓碑（否则对账会把本地副本推回去，把已删会话复活）
+        deleteSessionWithTombstone(target, String(op.node_id || ''));
+        applied = true;
+        appliedSummary = summarizeSessionChange(target, '', 0, true);
+        emit('session-changed', { id: target, deleted: true });
+      } else {
+        // 快照正文不进广播（可能很大）：按 hash 判断要不要拉；失败进待补拉队列周期重试（水位照常推进）
+        const remoteHash = String(op.hash || '');
+        if (!remoteHash || remoteHash !== sessionContentHash(target)) {
+          void pullSessionIfChanged(target, remoteHash, String(op.node_id || ''), String(op.node_label || '')).catch(
+            (error: any) => {
+              pendingSessionPulls.set(target, remoteHash);
+              logEvent('warn', 'session-pull-deferred', `会话「${target}」没能从中枢取回：${error?.message || error}；已加入待补拉队列，每分钟自动重试`, {
+                session: target,
+                error: error?.message || String(error),
+                pending: pendingSessionPulls.size,
+              });
+            }
+          );
+        }
+      }
+    } else if (op.kind === 'board') {
+      // 看板内容很小，直接随广播下发，不需要再拉一趟
+      if (op.board && mergeBoardPayload(op.board)) {
+        applied = true;
+        appliedSummary = summarizeBoardChange();
+        emit('board-changed', { from: String(op.node_id || '') });
+      }
     }
   } catch (error: any) {
     logEvent('error', 'apply-failed', `中枢对「${target}」的改动没能写到本端：${error?.message || error}（将断开重连并重放这条变更，本端内容未被破坏）`, {
@@ -574,6 +631,46 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
       lastSyncAt = new Date().toISOString();
       return { bytes: fileBody.size, merged: false, op: ack?.op };
     }
+    if (item.kind === 'session') {
+      // 删除：本地已经没有快照可推，推的是墓碑标记
+      if (item.deleted) {
+        const res = await postJson('/api/sync/push', {
+          node_id: currentNodeId(),
+          node_label: deviceLabel(),
+          kind: 'session',
+          target: item.target,
+          deleted: true,
+        });
+        lastSyncAt = new Date().toISOString();
+        return { bytes: 0, merged: false, op: res.op as SyncOpSummary | undefined };
+      }
+      // 只推「完成态」快照：正在跑的轮次与那一轮的消息都不在快照里（见 sync/sessions.ts）
+      const snapshot = collectSessionSnapshot(item.target);
+      if (!snapshot) return { bytes: 0, merged: false };
+      const res = await postJson('/api/sync/push', {
+        node_id: currentNodeId(),
+        node_label: deviceLabel(),
+        kind: 'session',
+        target: item.target,
+        session: snapshot,
+      });
+      lastSyncAt = new Date().toISOString();
+      return { bytes: 0, merged: false, op: res.op as SyncOpSummary | undefined };
+    }
+    if (item.kind === 'board') {
+      // 看板只推本机那一份（不是同步下来的那份）：本机没生成过就看板会话为空，直接跳过
+      const board = collectBoardPayload();
+      if (!board) return { bytes: 0, merged: false };
+      const res = await postJson('/api/sync/push', {
+        node_id: currentNodeId(),
+        node_label: deviceLabel(),
+        kind: 'board',
+        target: BOARD_SYNC_ID,
+        board,
+      });
+      lastSyncAt = new Date().toISOString();
+      return { bytes: 0, merged: false, op: res.op as SyncOpSummary | undefined };
+    }
     const res = item.kind === 'delete'
       ? await postJson('/api/sync/push', { node_id: currentNodeId(), kind: 'delete', target: item.target })
       : await postJson('/api/sync/push', {
@@ -678,13 +775,13 @@ async function pushLoop(): Promise<void> {
 }
 
 /** 本端变更入队（sync/index.ts 调用）：同类内容操作按 target 去重（后写为准），move/delete 不合并保序 */
-export function enqueueLocalChange(kind: SyncKind, target: string, oldPath?: string): void {
-  if (kind === 'page' || kind === 'file') {
+export function enqueueLocalChange(kind: SyncKind, target: string, oldPath?: string, deleted = false): void {
+  if (kind === 'page' || kind === 'file' || kind === 'session' || kind === 'board') {
     if (!queue.some((item) => item.kind === kind && item.target === target)) {
-      queue.push({ kind, target, oldPath });
+      queue.push({ kind, target, oldPath, deleted });
     }
   } else {
-    queue.push({ kind, target, oldPath });
+    queue.push({ kind, target, oldPath, deleted });
   }
   void pushLoop();
 }
@@ -855,6 +952,66 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
       }
     }
 
+    // 会话与看板：与页面/文件同一轮对账
+    //  - 中枢清单里的会话：指纹不一致才拉完整快照合并（指纹是一条 SQL 聚合，不搬正文）
+    //  - 中枢已删的会话（墓碑）：本端副本更旧就删掉，否则下面的补推会把它复活
+    //  - 本端有、中枢没有的会话：补推（首次接入、中枢重装时的追赶）
+    //  - 看板：全端唯一一份，谁的最新用谁
+    const hubSessions: Array<{ id: string; title?: string; hash?: string }> = Array.isArray(snap?.sessions)
+      ? snap.sessions
+      : [];
+    const hubSessionIds = new Set(hubSessions.map((item) => String(item.id)));
+    const hubTombstones: Array<{ sessionId: string; deletedAt: string }> = Array.isArray(snap?.tombstones)
+      ? snap.tombstones
+      : [];
+    const hubTombstoneIds = new Set(hubTombstones.map((item) => String(item.sessionId)));
+    let sessionsPulled = 0;
+    for (const entry of hubSessions) {
+      const id = String(entry.id || '');
+      if (!id || hubTombstoneIds.has(id)) continue;
+      try {
+        if (sessionFingerprint(id) === String(entry.hash || '')) continue;
+        const detail = await getJson(`/api/sync/session?id=${encodeURIComponent(id)}`);
+        const snapshot = detail?.snapshot as SessionSnapshot | undefined;
+        if (!snapshot) continue;
+        mergeSessionSnapshot(snapshot, '', '');
+        pendingSessionPulls.delete(id);
+        sessionsPulled++;
+      } catch (error: any) {
+        itemFailed++;
+        logEvent('warn', 'reconcile-item-failed', `会话「${entry.title || id}」对账没对上：${error?.message || error}（已跳过，下一轮对账会再试一次）`, {
+          kind: 'session',
+          path: id,
+          error: String(error?.message || error),
+        });
+      }
+    }
+    for (const item of hubTombstones) {
+      const id = String(item.sessionId || '');
+      if (!id) continue;
+      const localUpdatedAt = sessionUpdatedAt(id);
+      if (!localUpdatedAt || !item.deletedAt || localUpdatedAt > item.deletedAt) continue;
+      deleteSessionWithTombstone(id, '');
+      emit('session-changed', { id, deleted: true });
+    }
+    for (const entry of sessionManifest()) {
+      if (hubSessionIds.has(entry.id) || hubTombstoneIds.has(entry.id)) continue;
+      queued++;
+      pushSample(queuedSamples, entry.title || entry.id);
+      enqueueLocalChange('session', entry.id);
+    }
+    {
+      const localBoard = collectBoardPayload();
+      const hubBoard = snap?.board as BoardPayload | undefined;
+      if (localBoard && (!hubBoard || boardWins(localBoard, hubBoard))) {
+        queued++;
+        pushSample(queuedSamples, '任务看板');
+        enqueueLocalChange('board', BOARD_SYNC_ID);
+      } else if (hubBoard && mergeBoardPayload(hubBoard)) {
+        emit('board-changed', { from: String(hubBoard.nodeId || '') });
+      }
+    }
+
     // 本端 → hub：只补推 hub「从没见过」的页面/文件。hub 报过的已删/已改名旧路径不推，
     // 否则等于把中枢已删页面复活并广播给所有端（成员停用期间中枢删页 → 重新接入即复活）。
     const localEntries = localSnapshot();
@@ -946,9 +1103,40 @@ function localSnapshot(): { kind: 'page' | 'file'; path: string; hash: string }[
   return out;
 }
 
-/** 重试此前拉取失败的文件（成功移出集合；失败留待下一轮） */
+/**
+ * 拉一个会话的完整快照并合并；远端 hash 与本端一致时直接跳过（省一趟请求）。
+ * 与文件拉取同构：失败由调用方记入 pendingSessionPulls，由 retryPendingPulls 周期重试。
+ */
+async function pullSessionIfChanged(
+  sessionId: string,
+  remoteHash: string,
+  nodeId: string,
+  nodeLabel: string
+): Promise<boolean> {
+  if (!sessionId) return false;
+  if (remoteHash && remoteHash === sessionContentHash(sessionId)) return false;
+  let snapshot: SessionSnapshot | undefined;
+  try {
+    const res = await getJson(`/api/sync/session?id=${encodeURIComponent(sessionId)}`);
+    snapshot = res?.snapshot as SessionSnapshot | undefined;
+  } catch (error: any) {
+    // 中枢已经删掉这个会话（清单是拉取前取的）：没有可拉的内容，不算失败、不进待补拉
+    if (String(error?.message || '').includes('404')) {
+      pendingSessionPulls.delete(sessionId);
+      return false;
+    }
+    throw error;
+  }
+  if (!snapshot) return false;
+  const merged = mergeSessionSnapshot(snapshot, nodeId, nodeLabel);
+  pendingSessionPulls.delete(sessionId);
+  emit('session-changed', { id: sessionId, created: merged.created, messages: merged.messages });
+  return true;
+}
+
+/** 重试此前拉取失败的文件与会话（成功移出集合；失败留待下一轮） */
 async function retryPendingFilePulls(): Promise<void> {
-  if (pendingFilePulls.size === 0) return;
+  if (pendingFilePulls.size === 0 && pendingSessionPulls.size === 0) return;
   for (const [relPath, hash] of Array.from(pendingFilePulls)) {
     try {
       const bytes = await pullFileIfChanged(relPath, hash);
@@ -963,6 +1151,23 @@ async function retryPendingFilePulls(): Promise<void> {
         path: relPath,
         error: error?.message || String(error),
         pending: pendingFilePulls.size,
+      });
+    }
+  }
+  // 会话快照与文件同一节拍补拉：会话正文更大，一次失败不该让它永远停在「历史不全」的状态
+  for (const [sessionId, hash] of Array.from(pendingSessionPulls)) {
+    try {
+      await pullSessionIfChanged(sessionId, hash, '', '');
+      pendingSessionPulls.delete(sessionId);
+      logEvent('info', 'session-pull-retry-ok', `补拉会话成功「${sessionId}」`, {
+        session: sessionId,
+        pending: pendingSessionPulls.size,
+      });
+    } catch (error: any) {
+      logEvent('warn', 'session-pull-retry-failed', `补拉会话仍失败「${sessionId}」：${error?.message || error}`, {
+        session: sessionId,
+        error: error?.message || String(error),
+        pending: pendingSessionPulls.size,
       });
     }
   }

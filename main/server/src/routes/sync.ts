@@ -32,6 +32,13 @@ import {
   type SyncPeer,
 } from '../sync/store.js';
 import { collectEvidenceForPage, collectEvidenceForPath } from '../sync/rows.js';
+import {
+  collectSessionSnapshot,
+  listSessionTombstones,
+  readSyncedBoard,
+  sessionManifest,
+  snapshotHash,
+} from '../sync/sessions.js';
 import { distilledSourcePaths } from '../pipeline/sourceLedger.js';
 import { configure, reconcileNow, status } from '../sync/index.js';
 import {
@@ -438,7 +445,28 @@ export async function syncRoutes(app: FastifyInstance) {
         });
       }
     }
-    return { entries, cursor: currentRevision(), stale: buildStalePaths() };
+    // 会话与看板也在同一份清单里：sessions 只带指纹（不搬正文），tombstones 防复活，board 是全端唯一那份
+    return {
+      entries,
+      cursor: currentRevision(),
+      stale: buildStalePaths(),
+      sessions: sessionManifest(),
+      tombstones: listSessionTombstones(),
+      board: readSyncedBoard(),
+    };
+  });
+
+  /**
+   * 会话快照拉取（对账/按需拉取用）：只含**完成态**内容——
+   * 正在跑的轮次与那一轮的消息都不在里面（「正在对话」不同步）。
+   */
+  app.get('/api/sync/session', { preHandler: requireSyncAccess }, async (req, reply) => {
+    const query = req.query as { id?: string };
+    const id = String(query.id || '');
+    if (!id) return reply.code(400).send({ error: '缺少 id' });
+    const snapshot = collectSessionSnapshot(id);
+    if (!snapshot) return reply.code(404).send({ error: '会话不存在' });
+    return { snapshot, hash: snapshotHash(snapshot) };
   });
 
   /** 页面内容拉取（对账用） */

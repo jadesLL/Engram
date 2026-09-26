@@ -17,6 +17,13 @@ interface BoardPayload {
   status: 'empty' | 'running' | 'ready' | 'failed';
   answer: string;
   generatedAt: string;
+  /** 「上次更新时间」：当前这份看板答案的生成时刻 */
+  updatedAt: string;
+  /** 这份看板是不是本机生成的（false = 从其他端同步来的） */
+  local: boolean;
+  /** 生成这份看板的设备（local=false 时显示「来自 X」） */
+  sourceNodeId: string;
+  sourceNodeLabel: string;
   stale: boolean;
   runId: string;
   runStatus: string;
@@ -55,6 +62,12 @@ export const useTasksStore = defineStore('tasks', {
     status: 'empty' as BoardPayload['status'],
     answer: '',
     generatedAt: '',
+    /** 「上次更新时间」（服务端给：当前这份看板答案的生成时刻） */
+    updatedAt: '',
+    /** 这份看板是否由本机生成（false = 其他端同步来的） */
+    local: true,
+    sourceNodeId: '',
+    sourceNodeLabel: '',
     stale: false,
     sessionId: '',
     runId: '',
@@ -87,6 +100,10 @@ export const useTasksStore = defineStore('tasks', {
       this.status = payload.status;
       this.answer = payload.answer || '';
       this.generatedAt = payload.generatedAt || '';
+      this.updatedAt = payload.updatedAt || payload.generatedAt || '';
+      this.local = payload.local !== false;
+      this.sourceNodeId = payload.sourceNodeId || '';
+      this.sourceNodeLabel = payload.sourceNodeLabel || '';
       this.stale = Boolean(payload.stale);
       this.runId = payload.runId || '';
       this.runStatus = payload.runStatus || '';

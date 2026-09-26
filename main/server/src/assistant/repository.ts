@@ -22,6 +22,11 @@ export interface SessionDto {
   dshSessionId: string;
   createdAt: string;
   updatedAt: string;
+  /** 多端同步：产生该会话的设备（界面据此标「来自哪台设备」；同步关闭时为空） */
+  originNodeId: string;
+  originNodeLabel: string;
+  /** 系统会话标记（当前只有 task_board）：看板自己的会话，不参与会话同步 */
+  systemKey: string;
 }
 
 export interface MessageDto {
@@ -135,6 +140,9 @@ function toSession(row: any, running = false): SessionDto {
     dshSessionId: row.dsh_session_id || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    originNodeId: row.origin_node_id || '',
+    originNodeLabel: row.origin_node_label || '',
+    systemKey: row.system_key || '',
   };
 }
 
@@ -279,15 +287,22 @@ export function getSession(id: string): SessionDto | null {
   return toSession(row, runningSessionIds().has(id));
 }
 
-export function createSession(title?: string): SessionDto {
+/** systemKey 非空 = 系统会话（当前只有任务看板），不参与会话同步 */
+export function createSession(title?: string, systemKey = ''): SessionDto {
   const stamp = now();
   const id = uuid();
   const named = (title || '').trim();
   db.prepare(
-    `INSERT INTO assistant_sessions(id, title, summary, archived, dsh_session_id, title_source, created_at, updated_at)
-     VALUES(?, ?, '', 0, ?, ?, ?, ?)`
-  ).run(id, named || '新对话', `session-${uuid()}`, named ? 'user' : 'default', stamp, stamp);
+    `INSERT INTO assistant_sessions(id, title, summary, archived, dsh_session_id, title_source, system_key, created_at, updated_at)
+     VALUES(?, ?, '', 0, ?, ?, ?, ?, ?)`
+  ).run(id, named || '新对话', `session-${uuid()}`, named ? 'user' : 'default', systemKey, stamp, stamp);
   return getSession(id)!;
+}
+
+/** 把已有会话标成系统会话（老库里的任务看板会话在升级后补标） */
+export function markSessionSystem(id: string, systemKey: string): void {
+  db.prepare(`UPDATE assistant_sessions SET system_key = ? WHERE id = ? AND COALESCE(system_key, '') = ''`)
+    .run(systemKey, id);
 }
 
 /** 手动改名：钉住标题，自动命名不再覆盖 */

@@ -39,6 +39,11 @@ export interface ChatSession {
   running?: boolean;
   createdAt: string;
   updatedAt: string;
+  /** 多端同步：产生该会话的设备（与本机节点 id 不同即「来自其他端」） */
+  originNodeId?: string;
+  originNodeLabel?: string;
+  /** 系统会话标记（task_board）：看板自己的会话，不参与会话同步 */
+  systemKey?: string;
 }
 
 export interface ChatMessage {
