@@ -38,6 +38,9 @@ const PUBLIC_SETTINGS = [
   'zcode_config',
   'ddns_config',
   'search_synonyms',
+  // 专名勘误表（每行 `错写=正写`）：记灵感的落盘前勘误无条件照它改。
+  // 编辑界面属 P3，先支持接口写入（见 lib/textFix.ts 的 parseFixTable）。
+  'name_fixes',
   // 界面偏好：侧栏是否显示「AI 工作区」（服务端自动生成的日志/索引/关系库）。
   // 用户日常不需要看这些内容，默认隐藏；'1' 才显示。
   'show_ai_workspace',

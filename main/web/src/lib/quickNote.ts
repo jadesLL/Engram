@@ -5,8 +5,11 @@
  * server/src/lib/ideaNote.ts）——用户不必先想标题，也不会再把输入的第一句话当标题。
  * 落点仍是 `原始资料/灵感碎片/`，文件名沿用全库命名约定 `YYYY.MM.DD_标题.md`；
  * 建完由调用方决定跳转（一般直接进编辑器接着写）。
+ *
+ * 落盘前服务端会自动勘误：人名、公司名这类写法对齐到知识库既有写法（见 lib/textFix.ts），
+ * 改了哪几处在 toast 里说清，明细同时进 AI 工作区的操作日志。
  */
-import { openIdeaComposer } from './ideaComposer';
+import { openIdeaComposer, summarizeIdeaFixes } from './ideaComposer';
 import { notify } from './notify';
 
 export interface IdeaNoteResult {
@@ -21,7 +24,11 @@ export interface IdeaNoteResult {
 export async function createIdeaNote(): Promise<IdeaNoteResult | null> {
   const created = await openIdeaComposer();
   if (!created) return null;
-  const suffix = created.titleSource === 'heuristic' ? '（未接模型，标题按正文首句取的）' : '';
-  notify.success(created.title ? `已记到「灵感碎片」：${created.title}${suffix}` : '已记到「灵感碎片」');
+  const parts: string[] = [];
+  if (created.titleSource === 'heuristic') parts.push('未接模型，标题按正文首句取的');
+  const fixNote = summarizeIdeaFixes(created.fixes, created.pending);
+  if (fixNote) parts.push(fixNote);
+  const suffix = parts.length ? `（${parts.join('；')}）` : '';
+  notify.success(created.title ? `已记到「灵感碎片」：${created.title}${suffix}` : `已记到「灵感碎片」${suffix}`);
   return { id: created.id, path: created.path };
 }

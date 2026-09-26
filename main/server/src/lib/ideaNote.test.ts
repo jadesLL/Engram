@@ -1,10 +1,11 @@
 /**
- * 记一条灵感：正文进、标题出。
+ * 记一条灵感：正文进、标题出，落盘前先勘误。
  *
- * 覆盖三层：
+ * 覆盖四层：
  *  1. 标题规则：规则标题（模型不可用时的兜底）与模型输出归一化；
- *  2. 模型调用：拿到标题用模型的，没凭据/失败退化成规则标题，都不抛错；
- *  3. 落盘：`原始资料/灵感碎片/YYYY.MM.DD_标题.md`，正文不带一级标题，同名加序号。
+ *  2. 模型调用：JSON（标题 + 勘误）与纯文本标题都吃得下；没凭据/失败退化成规则标题，都不抛错；
+ *  3. 勘误编排：勘误表无条件改；近形候选只在模型确认后改；模型乱报一律拒绝；没接模型只登记不改；
+ *  4. 落盘：`原始资料/灵感碎片/YYYY.MM.DD_标题.md`，正文不带一级标题，同名加序号，勘误明细进操作日志。
  */
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,6 +15,9 @@ import path from 'node:path';
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-idea-note-'));
 process.env.DATA_DIR = temp;
+
+/** 操作日志落点（见 pipeline/indexFile.ts 的 LOG_PAGE） */
+const LOG_REL = 'AIWorks/log/log.md';
 
 let db: any;
 let BRAIN_DIR = '';
@@ -34,7 +38,7 @@ after(async () => {
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
-/** 假的 chat/completions 响应：只喂标题文本 */
+/** 假的 chat/completions 响应：只喂一段文本（JSON 或纯标题都行） */
 function fakeCompletion(text: string): typeof fetch {
   return (async () => new Response(JSON.stringify({
     choices: [{ message: { content: text } }],
@@ -64,36 +68,79 @@ test('模型输出归一化：只取第一行、去「标题：」前缀与引�
   assert.equal(normalizeIdeaTitle('   '), '');
 });
 
-test('提示词带上正文，超长正文截断，并要求精简标题', () => {
-  const { buildIdeaTitlePrompt, IDEA_TITLE_SYSTEM_PROMPT, IDEA_TITLE_HINT_CHARS, IDEA_TITLE_MAX_CHARS } = ideaNote;
-  assert.match(buildIdeaTitlePrompt('买台四向车做样机验证'), /买台四向车做样机验证/);
-  assert.ok(buildIdeaTitlePrompt('あ'.repeat(3000)).length <= 1600);
-  assert.match(IDEA_TITLE_SYSTEM_PROMPT, /不超过 12 个字/);
+test('提示词带上正文与勘误线索，超长正文截断，并要求精简标题', () => {
+  const { buildIdeaDraftPrompt, IDEA_DRAFT_SYSTEM_PROMPT, IDEA_TITLE_HINT_CHARS, IDEA_TITLE_MAX_CHARS } = ideaNote;
+  assert.match(buildIdeaDraftPrompt('买台四向车做样机验证'), /买台四向车做样机验证/);
+  assert.ok(buildIdeaDraftPrompt('あ'.repeat(3000)).length <= 1600);
+  assert.match(IDEA_DRAFT_SYSTEM_PROMPT, /不超过 12 个字/);
   assert.equal(IDEA_TITLE_HINT_CHARS, 12);
   // 硬上限比提示词宽两字，模型偶尔超一点不至于被截出省略号
   assert.equal(IDEA_TITLE_MAX_CHARS, 14);
+  // 判据与 skill 同源（content/fixRules.ts）：四类都在，且明确「只能改成清单里的写法」
+  for (const kind of ['形近误录', '同音误录', '称谓误录', '外部规范']) {
+    assert.match(IDEA_DRAFT_SYSTEM_PROMPT, new RegExp(kind));
+  }
+  assert.match(IDEA_DRAFT_SYSTEM_PROMPT, /只能把写法改成「知识库既有写法」清单里的写法/);
+
+  const prompt = buildIdeaDraftPrompt('北子所想确认样车尺寸', {
+    names: ['北自所'],
+    candidates: [{ wrong: '北子所', right: '北自所' }],
+  });
+  assert.match(prompt, /知识库既有写法/);
+  assert.match(prompt, /- 北自所/);
+  assert.match(prompt, /- 北子所 → 北自所/);
 });
 
-test('拟标题：有模型用模型的，没凭据退化成规则标题（不抛错）', async () => {
-  const model = await ideaNote.generateIdeaTitle('北自所想确认样车尺寸，下周二之前要给回复', {
+test('模型回复解析：JSON（标题 + 勘误）优先，纯文本退化成标题', () => {
+  const { parseIdeaDraft } = ideaNote;
+  const json = parseIdeaDraft('```json\n{"title":"北自所样车尺寸待确认","fixes":[{"wrong":"北子所","right":"北自所","kind":"形近误录"}]}\n```');
+  assert.equal(json.title, '北自所样车尺寸待确认');
+  assert.deepEqual(json.fixes, [{ wrong: '北子所', right: '北自所', kind: '形近误录' }]);
+
+  // 模型先解释一句再给 JSON 也吃得下
+  const chatty = parseIdeaDraft('好的：{"title":"样车尺寸确认","fixes":[]}');
+  assert.equal(chatty.title, '样车尺寸确认');
+
+  const plain = parseIdeaDraft('标题：北自所样车尺寸待确认');
+  assert.equal(plain.title, '北自所样车尺寸待确认');
+  assert.deepEqual(plain.fixes, []);
+  assert.deepEqual(parseIdeaDraft('   ').fixes, []);
+});
+
+test('拟标题+勘误：有模型用模型的，没凭据退化成规则标题（不抛错）', async () => {
+  const model = await ideaNote.generateIdeaDraft('北自所想确认样车尺寸，下周二之前要给回复', {}, {
     config: { apiKey: 'test-key', model: 'stub-model' },
     fetchImpl: fakeCompletion('标题：北自所样车尺寸待确认'),
   });
-  assert.deepEqual(model, { title: '北自所样车尺寸待确认', source: 'model' });
+  assert.deepEqual(model, { title: '北自所样车尺寸待确认', source: 'model', fixes: [] });
 
   // 没配凭据：ModelUnavailableError 被吞掉，退化成规则标题
-  const fallback = await ideaNote.generateIdeaTitle('北自所想确认样车尺寸，下周二之前要给回复', {
+  const fallback = await ideaNote.generateIdeaDraft('北自所想确认样车尺寸，下周二之前要给回复', {}, {
     config: {},
   });
   assert.equal(fallback.source, 'heuristic');
   assert.equal(fallback.title, ideaNote.heuristicIdeaTitle('北自所想确认样车尺寸，下周二之前要给回复'));
+  assert.deepEqual(fallback.fixes, []);
 
   // 请求失败同样退化
-  const failed = await ideaNote.generateIdeaTitle('样车尺寸待确认', {
+  const failed = await ideaNote.generateIdeaDraft('样车尺寸待确认', {}, {
     config: { apiKey: 'test-key', model: 'stub-model' },
     fetchImpl: (async () => new Response('boom', { status: 500 })) as unknown as typeof fetch,
   });
   assert.equal(failed.source, 'heuristic');
+});
+
+test('一次调用同时返回标题与勘误', async () => {
+  const result = await ideaNote.generateIdeaDraft('北子所想确认样车尺寸', {
+    names: ['北自所'],
+    candidates: [{ wrong: '北子所', right: '北自所' }],
+  }, {
+    config: { apiKey: 'test-key', model: 'stub-model' },
+    fetchImpl: fakeCompletion('{"title":"北自所样车尺寸待确认","fixes":[{"wrong":"北子所","right":"北自所","kind":"形近误录"}]}'),
+  });
+  assert.equal(result.title, '北自所样车尺寸待确认');
+  assert.equal(result.source, 'model');
+  assert.deepEqual(result.fixes, [{ wrong: '北子所', right: '北自所', kind: '形近误录' }]);
 });
 
 test('标题请求给足 token 预算：推理型模型会先花 reasoning token', async () => {
@@ -103,7 +150,7 @@ test('标题请求给足 token 预算：推理型模型会先花 reasoning token
     return new Response(JSON.stringify({ choices: [{ message: { content: '样车尺寸待确认' } }] }), { status: 200 });
   }) as unknown as typeof fetch;
 
-  const result = await ideaNote.generateIdeaTitle('北自所想确认样车尺寸', {
+  const result = await ideaNote.generateIdeaDraft('北自所想确认样车尺寸', {}, {
     config: { apiKey: 'test-key', model: 'stub-model' },
     fetchImpl,
   });
@@ -117,12 +164,75 @@ test('模型返回空 content 时退化成规则标题（不让这条灵感记�
     choices: [{ message: { content: '' }, finish_reason: 'length' }],
   }), { status: 200 })) as unknown as typeof fetch;
 
-  const result = await ideaNote.generateIdeaTitle('北自所想确认样车尺寸，下周二之前要给回复', {
+  const result = await ideaNote.generateIdeaDraft('北自所想确认样车尺寸，下周二之前要给回复', {}, {
     config: { apiKey: 'test-key', model: 'stub-model' },
     fetchImpl: empty,
   });
   assert.equal(result.source, 'heuristic');
   assert.equal(result.title, ideaNote.heuristicIdeaTitle('北自所想确认样车尺寸，下周二之前要给回复'));
+});
+
+test('勘误编排：勘误表无条件改（不依赖模型）', async () => {
+  const drafted = await ideaNote.draftIdeaNote('北子所想确认样车尺寸，下周二之前要给回复', {
+    lexicon: [],
+    fixTable: '北子所=北自所\n',
+    draft: async () => ({ title: '北自所样车尺寸待确认', source: 'model', fixes: [] }),
+  });
+  assert.equal(drafted.text, '北自所想确认样车尺寸，下周二之前要给回复');
+  assert.deepEqual(drafted.fixes.map((fix) => `${fix.wrong}→${fix.right}/${fix.basis}`), ['北子所→北自所/勘误表']);
+  assert.deepEqual(drafted.pending, []);
+});
+
+test('勘误编排：近形候选经模型确认后才改，依据是「知识库既有写法」', async () => {
+  const seen: any = {};
+  const drafted = await ideaNote.draftIdeaNote('北子所想确认样车尺寸，下周二之前要给回复', {
+    lexicon: ['北自所'],
+    fixTable: '',
+    draft: async (text, hints) => {
+      seen.text = text;
+      seen.hints = hints;
+      return {
+        title: '北自所样车尺寸待确认',
+        source: 'model',
+        fixes: [{ wrong: '北子所', right: '北自所', kind: '形近误录' }],
+      };
+    },
+  });
+  assert.equal(drafted.text, '北自所想确认样车尺寸，下周二之前要给回复');
+  assert.deepEqual(drafted.fixes.map((fix) => `${fix.wrong}→${fix.right}/${fix.kind}/${fix.basis}`), [
+    '北子所→北自所/形近误录/知识库既有写法',
+  ]);
+  assert.deepEqual(drafted.pending, []);
+  assert.equal(seen.text, '北子所想确认样车尺寸，下周二之前要给回复');
+  assert.deepEqual(seen.hints.candidates, [{ wrong: '北子所', right: '北自所' }]);
+  assert.ok(seen.hints.names.includes('北自所'));
+});
+
+test('勘误编排：模型没确认（或没接模型）→ 一个字不改，只登记 pending', async () => {
+  const drafted = await ideaNote.draftIdeaNote('北子所想确认样车尺寸', {
+    lexicon: ['北自所'],
+    fixTable: '',
+    draft: async (text) => ({ title: ideaNote.heuristicIdeaTitle(text), source: 'heuristic', fixes: [] }),
+  });
+  assert.equal(drafted.text, '北子所想确认样车尺寸');
+  assert.deepEqual(drafted.fixes, []);
+  assert.deepEqual(drafted.pending, ['北子所']);
+  assert.equal(drafted.titleSource, 'heuristic');
+});
+
+test('勘误编排：模型自己发明的候选（不在检出清单里）→ 拒绝', async () => {
+  const drafted = await ideaNote.draftIdeaNote('北子所想确认样车尺寸', {
+    lexicon: ['北自所', '样车尺寸确认'],
+    fixTable: '',
+    draft: async () => ({
+      title: '北自所样车尺寸待确认',
+      source: 'model',
+      fixes: [{ wrong: '样车尺寸', right: '样车尺寸确认', kind: '形近误录' }],
+    }),
+  });
+  assert.equal(drafted.text, '北子所想确认样车尺寸', '模型没被检出的写法一律不动');
+  assert.deepEqual(drafted.fixes, []);
+  assert.deepEqual(drafted.pending, ['北子所']);
 });
 
 test('落盘：原始资料/灵感碎片/日期_标题.md，正文不带一级标题', () => {
@@ -142,6 +252,39 @@ test('落盘：原始资料/灵感碎片/日期_标题.md，正文不带一级�
   assert.equal(row?.deleted, 0);
   assert.equal(row?.title, '2026.09.25_北自所样车尺寸待确认');
   assert.equal(created.pageTitle, '2026.09.25_北自所样车尺寸待确认');
+});
+
+test('落盘：勘误明细进操作日志（事后能复核当时改了什么、什么没敢动）', () => {
+  const created = ideaNote.writeIdeaNote({
+    title: '样车尺寸',
+    content: '北自所想确认样车尺寸',
+    date: new Date(2026, 9, 2),
+    fixes: [{ wrong: '北子所', right: '北自所', kind: '形近误录', basis: '知识库既有写法' }],
+    pending: ['候成程'],
+  });
+  const log = fs.readFileSync(path.join(BRAIN_DIR, LOG_REL), 'utf8');
+  assert.match(log, /记一条灵感/);
+  assert.match(log, /样车尺寸/);
+  assert.match(log, /勘误 1 处：北子所→北自所/);
+  assert.match(log, /未改动 1 处疑似写法/);
+  assert.ok(created.id.length > 0);
+});
+
+test('勘误摘要：没有勘误也没有存疑项时为空串', () => {
+  const { summarizeFixes } = ideaNote;
+  assert.equal(summarizeFixes([], []), '');
+  assert.equal(
+    summarizeFixes([{ wrong: '北子所', right: '北自所', kind: '形近误录', basis: '知识库既有写法' }]),
+    '（勘误 1 处：北子所→北自所）'
+  );
+  assert.equal(summarizeFixes([], ['北子所']), '（未改动 1 处疑似写法）');
+  const many = summarizeFixes([
+    { wrong: '甲', right: '乙', basis: '勘误表' },
+    { wrong: '丙', right: '丁', basis: '勘误表' },
+    { wrong: '戊', right: '己', basis: '勘误表' },
+    { wrong: '庚', right: '辛', basis: '勘误表' },
+  ]);
+  assert.match(many, /勘误 4 处：甲→乙、丙→丁、戊→己 等/);
 });
 
 test('用户正文里若自己写了一级标题，落盘时也会被去掉（标题只由文件名与 frontmatter 承载）', () => {
