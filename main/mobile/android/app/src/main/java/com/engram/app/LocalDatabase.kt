@@ -25,13 +25,15 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     context,
     databasePath(context),
     null,
-    4,
+    5,
     DefaultDatabaseErrorHandler(),
 ) {
     val root = File(context.filesDir, "engram")
     val brain = File(root, "brain")
     private val trashRoot = File(brain, ".trash")
     private val lock = Any()
+    /** sync_log 当前行数（-1 = 还没数过）；只为「攒满上限再删一次」服务，不要求绝对精确 */
+    private var logRows = -1
 
     init {
         root.mkdirs()
@@ -79,7 +81,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             path TEXT PRIMARY KEY,payload TEXT NOT NULL,distilled INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL
         )""")
         db.execSQL("""CREATE TABLE sync_log(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,ts TEXT NOT NULL,level TEXT NOT NULL,event TEXT NOT NULL,detail TEXT NOT NULL DEFAULT ''
+            id INTEGER PRIMARY KEY AUTOINCREMENT,ts TEXT NOT NULL,level TEXT NOT NULL,event TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',data TEXT NOT NULL DEFAULT ''
         )""")
         db.execSQL("CREATE TABLE file_extractions(path TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL)")
         db.execSQL("CREATE TABLE scan_state(path TEXT PRIMARY KEY,mtime INTEGER NOT NULL,size INTEGER NOT NULL)")
@@ -89,6 +92,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         if (oldVersion < 2) db.execSQL("CREATE TABLE IF NOT EXISTS file_extractions(path TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL)")
         // v3 只新增文件库标准目录，不改表；目录由每次启动的 seedDirectories() 幂等补齐。
         if (oldVersion < 4) db.execSQL("CREATE TABLE IF NOT EXISTS scan_state(path TEXT PRIMARY KEY,mtime INTEGER NOT NULL,size INTEGER NOT NULL)")
+        // v5：同步记录补结构化字段（抽屉展开详情 / 导出用），与 desktop 端 sync.jsonl 的 data 对齐
+        if (oldVersion < 5) db.execSQL("ALTER TABLE sync_log ADD COLUMN data TEXT NOT NULL DEFAULT ''")
     }
 
     fun setting(key: String): String? = synchronized(lock) {
@@ -785,8 +790,46 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun dropOutboxForTarget(target: String) = synchronized(lock) { writableDatabase.execSQL("DELETE FROM sync_outbox WHERE target=?", arrayOf(target)) }
     fun outboxCount(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM sync_outbox", null).use { it.moveToFirst(); it.getInt(0) }
 
-    fun log(level: String, event: String, detail: String = "") = synchronized(lock) { writableDatabase.execSQL("INSERT INTO sync_log(ts,level,event,detail) VALUES(?,?,?,?)", arrayOf(now(), level, event, detail)); writableDatabase.execSQL("DELETE FROM sync_log WHERE id NOT IN (SELECT id FROM sync_log ORDER BY id DESC LIMIT 100)") }
+    /**
+     * 记一条同步事件（唯一写入口）。
+     *
+     * 保留量与 desktop 端一致（[MAX_SYNC_LOG_ROWS] 条）：首次全量对账会逐项记「哪个文件 +
+     * 什么增量」，旧实现的 100 条上限会把这一轮开头几条直接挤掉，用户回看只剩尾巴。
+     * 淘汰按条数做、且攒满上限才删一次，省掉每条一次的 DELETE 子查询。
+     */
+    fun log(level: String, event: String, detail: String = "", data: JSONObject? = null) = synchronized(lock) {
+        writableDatabase.execSQL(
+            "INSERT INTO sync_log(ts,level,event,detail,data) VALUES(?,?,?,?,?)",
+            arrayOf(now(), level, event, detail, data?.toString() ?: ""),
+        )
+        if (logRows < 0) logRows = syncLogRowCount()
+        logRows += 1
+        if (logRows > MAX_SYNC_LOG_ROWS) {
+            writableDatabase.execSQL(
+                "DELETE FROM sync_log WHERE id <= (SELECT id FROM sync_log ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                arrayOf(MAX_SYNC_LOG_ROWS),
+            )
+            logRows = MAX_SYNC_LOG_ROWS
+        }
+    }
+
+    private fun syncLogRowCount(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM sync_log", null).use { it.moveToFirst(); it.getInt(0) }
+
     fun logs(): JSONArray { val out = JSONArray(); readableDatabase.rawQuery("SELECT ts,level,event,detail FROM sync_log ORDER BY id", null).use { c -> while (c.moveToNext()) out.put(JSONObject().put("ts", c.getString(0)).put("level", c.getString(1)).put("event", c.getString(2)).put("detail", c.getString(3))) }; return out }
+
+    /**
+     * 本机内容版本号：每次「同步真的落到本地」就 +1。
+     *
+     * 前端靠它判断「这轮同步是否已经动过本地内容」，从而在对账进行中就能逐步刷新文件树，
+     * 而不是等整轮结束（旧实现只认 lastSyncAt，首次全量对账期间侧栏一直是空的）。
+     */
+    fun bumpContentRevision(): Long = synchronized(lock) {
+        val next = (setting("sync_content_rev")?.toLongOrNull() ?: 0L) + 1
+        setSetting("sync_content_rev", next.toString())
+        next
+    }
+
+    fun contentRevision(): Long = setting("sync_content_rev")?.toLongOrNull() ?: 0L
 
     /**
      * 同步日志分页：形状对齐 server 的 /api/sync/log（entries 新→旧 + total/hasMore/summary），
@@ -796,16 +839,18 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         val where = mutableListOf<String>(); val args = mutableListOf<String>()
         if (before != null) { where += "id < ?"; args += before.toString() }
         if (!level.isNullOrBlank()) { where += "level = ?"; args += level }
-        if (!q.isNullOrBlank()) { where += "(event LIKE ? OR detail LIKE ?)"; args += "%$q%"; args += "%$q%" }
+        if (!q.isNullOrBlank()) { where += "(event LIKE ? OR detail LIKE ? OR data LIKE ?)"; args += "%$q%"; args += "%$q%"; args += "%$q%" }
         val clause = if (where.isEmpty()) "" else "WHERE ${where.joinToString(" AND ")}"
         val rows = readableDatabase.rawQuery(
-            "SELECT id,ts,level,event,detail FROM sync_log $clause ORDER BY id DESC LIMIT ?",
+            "SELECT id,ts,level,event,detail,data FROM sync_log $clause ORDER BY id DESC LIMIT ?",
             (args + (limit + 1).toString()).toTypedArray(),
         ).use { c ->
             val list = mutableListOf<JSONObject>()
             while (c.moveToNext()) list += JSONObject()
                 .put("id", c.getLong(0)).put("ts", c.getString(1)).put("level", c.getString(2))
                 .put("event", c.getString(3)).put("detail", c.getString(4)).put("scope", "member")
+                // 结构化字段（哪个文件、增删行数、字节）——抽屉展开详情与导出都读它
+                .also { entry -> c.getString(5)?.takeIf { it.isNotBlank() }?.let { raw -> runCatching { entry.put("data", JSONObject(raw)) } } }
             list
         }
         val entries = JSONArray(); rows.take(limit).forEach(entries::put)
@@ -829,13 +874,14 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
                 .put("byScope", JSONObject().put("hub", 0).put("member", total).put("app", 0))
                 .put("byEvent", byEvent)
                 .put("oldest", bounds[2]).put("newest", bounds[3])
-                .put("retentionDays", 7).put("maxEntries", 2000)
+                .put("retentionDays", 7).put("maxEntries", MAX_SYNC_LOG_ROWS)
                 .put("filePath", "wiki.db#sync_log").put("fileSize", 0))
     }
 
     fun clearSyncLog(): Int = synchronized(lock) {
         val count = readableDatabase.rawQuery("SELECT COUNT(*) FROM sync_log", null).use { it.moveToFirst(); it.getInt(0) }
         writableDatabase.execSQL("DELETE FROM sync_log")
+        logRows = 0
         count
     }
 
@@ -1021,6 +1067,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     private fun sanitizeName(value: String) = value.replace(Regex("[\\\\/:*?\"<>|]"), "-").trim()
 
     companion object {
+        /** 同步记录保留条数（与 desktop 端 SYNC_LOG_MAX_ENTRIES 默认值同口径） */
+        const val MAX_SYNC_LOG_ROWS = 2000
         /** 原始资料一级目录与固定三个二级目录（与 server/src/lib/rawSections.ts 同口径，改一处要同步另一处） */
         private const val RAW_ROOT = "原始资料"
         private const val DEFAULT_RAW_DIR = "原始资料/文档"

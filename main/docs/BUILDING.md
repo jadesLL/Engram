@@ -21,17 +21,17 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 │ gitea v1.1.7│         │ workflows/     │        │  └ Docker Desktop         │         │ :<版本> + :latest│
 └────────────┘         │ release.yml 触发│        │    └ Linux 容器内构建：     │         │ + Release 页面  │
                        └────────────────┘        │      · 服务端 Docker 镜像  │         │ (正文=CHANGELOG)│
-                       （dispatch 按需补产：      │      · wine 交叉打 exe*   │         └────────────────┘
-                        exe/APK/tar.gz 勾选构建， │      · docker save tar.gz*│
-                        补挂对应 Release）        └──────────────────────────┘
-                                                 * 仅 dispatch 勾选时构建
+                       （发版补产：exe/APK        │      · wine 交叉打 exe*   │         └────────────────┘
+                        必须勾选构建；tar.gz      │      · docker save tar.gz*│
+                        按需；补挂对应 Release）  └──────────────────────────┘
+                                                 * 不随 tag 自动构建：exe/APK 每次发版必产，tar.gz 按需
 ```
 
 要点：
 
 - **Gitea 与 Runner 分离**：Gitea（含镜像 Registry 和 Release 页面）在 NAS 上；构建执行发生在开发本机。runner 离线时 workflow 会排队等待。
 - **Windows 宿主机 runner + Docker Desktop**：workflow 的 `runs-on: windows` 命中本机 runner，所有构建命令经本机 Docker Desktop 跑 **Linux 容器**——服务端镜像直接 `docker build`，Windows 安装包则在 `electronuserland/builder:wine` 容器里用 **wine 交叉编译**。
-- **产物统一回推 NAS**：发版时镜像推到 Gitea 内置 Registry、Release 正文=CHANGELOG 段落；exe/APK/tar.gz 仅 dispatch 按需构建并补挂 Release，本地不留依赖残留。
+- **产物统一回推 NAS**：发版时镜像推到 Gitea 内置 Registry、Release 正文=CHANGELOG 段落；**exe/APK 每次发版必经 dispatch 构建并补挂 Release（三件套）**，tar.gz 按需，本地不留依赖残留。
 
 ### 三条构建路径总览
 
@@ -47,7 +47,7 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 
 ## 1. 产物一览
 
-发版（`v*` 标签）默认只产出以下两类（2026-09-08 瘦身，对齐 Hermes 式发版：tag + changelog 即发版，二进制不随 tag 打包）：
+发版（`v*` 标签）触发后自动产出下面的镜像与 Release——tag 本身不含二进制附件：
 
 | 产物 | 名称 / 地址 | 用途 |
 |---|---|---|
@@ -55,7 +55,7 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 | Docker 滚动镜像 | `.../engram:main` | 每次 main 推送由 ci.yml 构建；发版前测试通道，合 main 即更新、无需发版本号（应用内「更新通道」选 `main`） |
 | Gitea Release | `v<版本>`，正文=CHANGELOG 版本段落 | 版本记录与更新检测信号源 |
 
-以下二进制产物**不随发版构建**，需要分发给他人时按需构建（CI dispatch：Actions → Release → Run workflow，输入标签+勾选产物，自动补挂 Release；或走路径 B/C 本地构建）：
+**每次发版必须补齐 exe/APK**（发版三件套 = Android 端 + Windows 桌面版 + Docker 镜像，2026-09-27 起，取代 2026-09-08 的「二进制不随发版」口径）：tag 不会自动构建二进制，推完标签后**立刻**经 CI dispatch（Actions → Release → Run workflow，输入本次标签 + 勾选 `binaries`）构建并自动补挂 Release，或走路径 B/C 本地构建；离线 tar.gz 等额外产物仍按需：
 
 | 产物 | 名称 / 地址 | 用途 |
 |---|---|---|
@@ -75,7 +75,7 @@ CI 流水线的维护细节（Runner 搭建、Secrets、历史踩坑）见 [`GIT
 workflow 会在构建前自动校验以下内容，**任何一条不满足直接失败**，不会产出半成品：
 
 1. **tag 与版本号一致**：`v<版本>` 标签必须等于 `main/desktop/package.json` 的 `version`（如 tag `v1.1.7` ↔ version `1.1.7`）。
-2. **CHANGELOG 段落存在**：仓库根 `CHANGELOG.md` 必须有 `## v<版本>（YYYY-MM-DD）` 格式的段落（标题到下一个 `## ` 之前），记录距上次发布以来的全部新功能。该段落会被自动提取为 Gitea Release 正文。
+2. **CHANGELOG 段落存在**：仓库根 `CHANGELOG.md` 必须有 `## v<版本>（YYYY-MM-DD）` 格式的段落（标题到下一个 `## ` 之前），记录距上次发布以来的全部新功能。该段落会被自动提取为 Gitea Release 正文。**安卓端要补齐自上一个 Android 版本以来累积的全部改动**（安卓端不能源码自更新、可能一次跨过多个版本，不能只写本版增量）。
 
 版本号需在**三处同步 bump**（同一提交）：
 
@@ -100,8 +100,8 @@ workflow 会在构建前自动校验以下内容，**任何一条不满足直接
 
 | 触发 | 行为 |
 |---|---|
-| 推送 `v*` 标签（如 `v1.1.7`） | **发版**：构建推送镜像（`:<版本>` + `:latest`）→ 创建 Gitea Release（正文=CHANGELOG 段落，无二进制附件） |
-| 网页手动触发（workflow_dispatch） | **按需补产**：输入已发版标签 + 勾选 binaries（exe+APK）/ offline_image（tar.gz）→ verify 门禁 → 构建所选产物 → 上传 Artifact（保留 7 天）并自动补挂到对应版本 Release；不推镜像 |
+| 推送 `v*` 标签（如 `v1.1.7`） | **发版第一步**：构建推送镜像（`:<版本>` + `:latest`）→ 创建 Gitea Release（正文=CHANGELOG 段落，tag 本身无二进制附件） |
+| 网页手动触发（workflow_dispatch） | **发版第二步（必做）**：输入本次标签 + 勾选 binaries（Android APK + Windows exe）→ verify 门禁 → 构建所选产物 → 上传 Artifact（保留 7 天）并自动补挂到对应版本 Release；不推镜像。离线包 offline_image（tar.gz）仍按需 |
 
 日常推送 main 分支只触发 `ci.yml` 做 verify（build + typecheck + test），**不构建镜像**——Registry 里的版本 tag 永远只对应发版产物。
 
@@ -118,9 +118,11 @@ git push gitea v<版本>              # release.yml 启动
 # 4. 到 Gitea 网页 Actions 页盯 release.yml 直到全绿
 # 5. 校验产物：Release 页面出现 v<版本>，正文=CHANGELOG 段落；
 #    镜像可 docker pull（:<版本> 与 :latest）
-# 6. 需要分发 exe/APK/离线包时（按需，不随发版）：
-#    Actions → Release → Run workflow → 输入 v<版本>、勾选产物 → 运行，
-#    产物自动补挂 Release；下载归档到 releases/<版本>/（记录提交 ID、构建时间、sha256）
+# 6. 补齐三件套（每次发版必做，不是按需）：
+#    Actions → Release → Run workflow → 输入 v<版本>、勾选 binaries → 运行，
+#    APK/exe 自动补挂 Release；下载归档到 releases/<版本>/（记录提交 ID、构建时间、sha256）
+#    APK 必须来自本次发版提交、版本号与发版一致，发版说明要补齐自上次安卓更新以来的全部内容
+#    离线包（offline_image）与 sha256 校验文件仍按需
 ```
 
 **铁律**：bump 版本号的提交必须**立即推送** gitea——版本号是镜像 tag 和 Release 标签的来源，留在本地会导致远端镜像与版本号脱节。
@@ -138,6 +140,8 @@ git push gitea v<版本>              # release.yml 启动
 9. **构建 Android APK**（仅 dispatch + 勾选 binaries）：`docker build -f mobile/Dockerfile.ci -t engram-android-builder .`（Node + JDK 21 + Android SDK 容器内跑 `mobile/scripts/build-apk-ci.sh`，签名密钥经 secrets 注入），`docker cp` 拷出 APK（详见 [`ANDROID.md`](./ANDROID.md)）；
 10. **整理产物**（dispatch）：按勾选收集 exe/APK/tar.gz → `sha256sum` 生成校验文件 → 上传 Artifact；
 11. **发布**：tag 触发则用 gitea-release-action 创建 Release（正文 = CHANGELOG 段落 + 镜像地址说明，无附件）；dispatch 则把产物补挂到对应版本 Release（正文重传 CHANGELOG 段落，防被覆盖为空）。
+
+> **发版是两步、缺一不算完成**：推 `v*` 标签只跑第 1–6 与 11 步（镜像 + Release）；第 8/9 步的 exe/APK 只能由 workflow_dispatch 触发，所以**推完标签必须紧接着 dispatch 勾选 `binaries`**，把这两件补挂到本次 Release。三件套齐了才是发版完成（2026-09-27 起）。
 
 ### 3.4 一次性环境前置（已配置，复现细节见 GITEA-CI.md）
 
@@ -340,7 +344,7 @@ Docker 部署在网页「设置 → 版本与更新 → 服务器更新」一键
 前置检查：
   · git status 干净，main 已与 gitea/main 同步，待发功能已全部合并
   · Gitea 网页 Actions 页面 runner 显示在线（离线则 workflow 排队）
-  · 距上次发布的新功能已盘点（CHANGELOG 段落要写全）
+  · 距上次发布的新功能已盘点（CHANGELOG 段落要写全；安卓端要补齐自上一个 Android 版本以来的全部改动）
 命令序列：
   1. 同步 bump 三处版本号：
      main/desktop/package.json 的 "version"
@@ -349,11 +353,14 @@ Docker 部署在网页「设置 → 版本与更新 → 服务器更新」一键
   2. CHANGELOG.md 顶部新增 "## v<版本>（YYYY-MM-DD）" 段落，写入全部新功能
   3. git commit + git push gitea main → 等 ci.yml（verify）全绿
   4. git tag v<版本> && git push gitea v<版本>
-  5. 盯 release.yml 至全绿
+  5. 盯 release.yml 至全绿（这一步只出镜像 + Release）
+  6. 补齐三件套（必做，不是按需）：Actions → Release → Run workflow → 输入 v<版本> 勾选 binaries → 运行，
+     构建 APK + exe 并补挂本次 Release（离线包 offline_image 按需）
 结果验证：
-  · Release 页面出现 v<版本>，正文 = CHANGELOG 段落（默认无二进制附件）
+  · Release 页面出现 v<版本>，正文 = CHANGELOG 段落
   · docker pull 镜像 :<版本> 成功
-  · 需要分发 exe/APK/离线包时：Actions → Release → Run workflow，输入 v<版本> 勾选产物运行，产物补挂 Release 后归档 releases/<版本>/
+  · APK 与 exe 已补挂同一 Release，下载归档到 releases/<版本>/（记录提交 ID、构建时间、sha256）
+  · 三件缺一（镜像 / exe / APK）视为本次发版未完成
 常见失败对照：
   · 校验步失败 "标签与版本号不一致"     → tag 必须严格等于 v + desktop/package.json version
   · 校验步失败 "缺少 v<版本> 版本段落"  → CHANGELOG 段落标题格式必须是 ## v<版本>（YYYY-MM-DD）

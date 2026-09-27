@@ -26,6 +26,8 @@ export interface SyncStatusPayload extends SyncStatusInput {
   hubToken?: string;
   nodeId?: string;
   cursor?: number;
+  /** 成员端本机内容版本号：每落地一项同步改动 +1（对账进行中也能拿到，用于渐进刷新文件树） */
+  contentRevision?: number;
   log?: SyncLogEntry[];
   peers?: Array<{ id: string; name: string; online?: boolean; last_seen_at?: string | null }>;
 }

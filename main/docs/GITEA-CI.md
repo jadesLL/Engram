@@ -1,6 +1,6 @@
 # Gitea CI 与镜像分发指南
 
-本项目通过 Gitea Actions（`https://github.com/jadesLL/Engram`）实现持续集成、Docker 镜像分发和按需二进制产物（exe/APK/离线包）构建。
+本项目通过 Gitea Actions（`https://github.com/jadesLL/Engram`）实现持续集成、Docker 镜像分发和发版必备二进制产物（exe/APK，离线包按需）构建。
 
 > 从源码构建安装包的完整指南（含不依赖 CI 的本地 Docker 构建路径、部署方式与 AI 操作清单）见 [`BUILDING.md`](./BUILDING.md)；本文聚焦 CI/CD 流水线本身的维护与历史踩坑。
 
@@ -12,7 +12,7 @@
 →（推送）git push gitea main：CI verify（build+typecheck+test）+ 构建推送主分支滚动镜像 :main
 →（发版）bump 三处版本号 + CHANGELOG.md 写 v<版本> 段落 → 提交并立即推送 → git tag v<版本> && git push gitea v<版本>
 → release.yml 自动：校验并提取 CHANGELOG 段落（缺失即失败）→ verify 门禁（build+typecheck+test）→ 构建并推送镜像（版本 tag + latest）→ 创建 Gitea Release（正文=CHANGELOG 版本段落，无二进制附件）
-→（按需分发）Actions → Release → Run workflow：输入标签+勾选 exe/APK/离线包 → verify 门禁 → 构建并补挂到对应 Release → 归档 releases/<版本>/
+→（发版必做）补齐三件套：Actions → Release → Run workflow：输入本次标签 + 勾选 binaries → verify 门禁 → 构建并补挂 APK/exe 到对应 Release → 归档 releases/<版本>/（离线包 offline_image 按需）
 → 部署机 docker login + docker pull 新版本镜像
 ```
 
@@ -23,7 +23,7 @@
 - **只要更新版本号，提交后必须立即推送 gitea**（版本号 = 镜像 tag = Release 标签，留在本地会造成远端镜像与版本号脱节），并确认 Actions 运行成功。
 - **版本 tag 与 :latest 只在发版时构建**（2026-08-20 起生效）：Registry 里的版本 tag 永远只对应发版产物，不会被日常推送覆盖。
 - **`:main` 滚动镜像由 ci.yml 在 main 推送时构建推送**（2026-09-11 起生效，与 verify 同一 job、verify 通过后执行）：供测试部署跟踪主分支最新代码，不带版本语义（身份看烤入的 `/app/GIT_SHA`）。它是独立 tag，不触碰版本 tag 与 `:latest`，故不与「版本 tag 只在发版构建」冲突。
-- **二进制产物不随发版构建**（2026-09-08 起生效，对齐 Hermes 式发版）：推 v* 标签只构建推送镜像 + 创建 Release；exe/APK/离线 tar.gz 需要分发他人时手动 dispatch release.yml 按需构建补挂（输入标签+勾选产物），日常自用全部走源码模式与 Registry 镜像，无二进制消费方。
+- **发版固定三件套：Android APK + Windows exe + Docker 镜像**（2026-09-27 起，取代 2026-09-08 的「二进制不随发版、按需分发」口径）：推 v* 标签先构建推送镜像 + 创建 Release（正文=CHANGELOG 段落，tag 本身不带二进制附件）；随后**必须**手动 dispatch release.yml 勾选 `binaries` 构建 APK/exe 并补挂到本次 Release——三件缺一视为该次发版未完成（离线 tar.gz 仍按需）。日常自用仍走源码模式与 Registry 镜像，只有用户明确提出才发版。**安卓端要补齐「距上次更新之间的全部更新内容」**：APK 必须基于本次发版提交构建、版本号与发版一致，发版说明里安卓部分要写全自上一个 Android 版本以来累积的改动（安卓端不能源码自更新，可能一次跨过多个版本）。
 - **功能合并 main 时同步整合进根 `README.md`**；**发版时必须写 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落**（距上次发布以来的全部新功能），release.yml 校验缺失即失败，段落会自动发布为 Release 正文。
 - **镜像烤入提交号**（2026-09-09 起，对齐 hermes-agent 的 build-file 路线）：release.yml 构建镜像时传 `--build-arg ENGRAM_GIT_SHA=<提交>`，写入镜像内 `/app/GIT_SHA`；镜像里没有 `.git`，应用内 设置 → 本机应用 → 版本信息（高级，默认收起）→「应用版本」靠它显示 `版本号 · 提交号`。本地 `docker compose up -d --build` 想显示提交号，先 `export ENGRAM_GIT_SHA=$(git rev-parse HEAD)`（不传则只显示版本号）。
 - **发版必须过 verify 门禁**（2026-09-04 起）：release.yml 在构建任何产物前先跑完整 verify（build+typecheck+test），main 测试不红才能带标签发版——堵住 2026-08-27~08-30 main 连红期间 v1.1.22~v1.1.28 照常发版的缺口。
@@ -31,14 +31,14 @@
 | 环节 | 命令/动作 | 自动发生什么 |
 |---|---|---|
 | 日常推送 | `git push gitea main` | ci.yml：verify（build+typecheck+test）+ 构建推送滚动镜像 `:main` |
-| 发版 | bump 版本号 + CHANGELOG 段落 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：校验提取 CHANGELOG 段落（缺失失败）→ verify 门禁（build+typecheck+test）→ 构建推送镜像（`:<版本>` + `:latest`）→ 创建 Release（正文=CHANGELOG 段落，无二进制附件） |
-| 按需分发 | Gitea 网页手动触发 release.yml（workflow_dispatch）：输入已发版标签 + 勾选 binaries（exe+APK）/ offline_image（docker tar.gz） | verify 门禁 → 构建所选产物 → 产物上传 Artifact（保留 7 天）并自动补挂到对应版本 Release；不推镜像。提前验证 main 最新代码用 `:main` 通道（应用内一键更新）或 BUILDING.md 本地构建 |
+| 发版 | bump 版本号 + CHANGELOG 段落 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：校验提取 CHANGELOG 段落（缺失失败）→ verify 门禁（build+typecheck+test）→ 构建推送镜像（`:<版本>` + `:latest`）→ 创建 Release（正文=CHANGELOG 段落，tag 本身无二进制附件） |
+| 发版补齐（必做） | 推完 tag 后由人/AI 手动触发 release.yml（workflow_dispatch）：输入本次标签 + 勾选 binaries（Android APK + Windows exe） | verify 门禁 → 构建所选产物 → 产物上传 Artifact（保留 7 天）并自动补挂到对应版本 Release；不推镜像。三件套缺一不算发版完成。离线包 offline_image 仍按需；提前验证 main 最新代码用 `:main` 通道（应用内一键更新）或 BUILDING.md 本地构建 |
 | 部署 | `docker login` → `docker compose -f docker-compose.pull.yml up -d` | — |
 
 **版本号一致性（发版门禁，release.yml 有校验）**：
 - tag 必须等于 `v<desktop/package.json 的 version>`（如 v1.1.6），不一致直接失败。
 - bump 时三处同步：`main/desktop/package.json` 的 `version`、`main/web/src/version.ts`（软件内版本显示）、`main/docker-compose.yml` 镜像 tag。
-- 仓库根 `CHANGELOG.md` 必须有 `## v<版本>（YYYY-MM-DD）` 段落（距上次发布以来的全部新功能），release.yml 用 awk 提取该段落（段落标题行到下一个 `## ` 标题前），缺失直接失败；段落内容自动作为 Gitea Release 正文发布。
+- 仓库根 `CHANGELOG.md` 必须有 `## v<版本>（YYYY-MM-DD）` 段落（距上次发布以来的全部新功能；**安卓端要补齐自上一个 Android 版本以来累积的全部改动**），release.yml 用 awk 提取该段落（段落标题行到下一个 `## ` 标题前），缺失直接失败；段落内容自动作为 Gitea Release 正文发布。
 
 ## 源码版安装器发布（generic 包，独立于发版）
 
@@ -195,7 +195,7 @@ Linux 容器里交叉打 Windows exe 的三个必踩坑，脚本已内置修复�
 2. **`prebuild-install --platform win32`**：prebuild-install 默认按当前平台拉预编译，必须显式指定 win32。脚本内有 **MZ 头断言**（PE32 检查），非 Windows 二进制直接 fail，防止回归。
 3. **打包前删 `server/node_modules` 的 `.bin` 目录与悬空 symlink**：`--prod` 安装后 `.bin` 里残留指向 devDeps 的悬空链接，NSIS 的 7za 扫描到会报 exit 1。
 
-打包端到端验证标准（每次构建 exe 时必做，dispatch 按需构建与本地打包同标准）：
+打包端到端验证标准（每次构建 exe 时必做，发版 dispatch 构建与本地打包同标准）：
 ```bash
 # 1. 产物二进制平台正确
 file desktop-dist/win-unpacked/resources/app.asar.unpacked/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node
@@ -213,7 +213,7 @@ grep -c '<版本号>' app.asar 二进制内容（或查 staging package.json 的
 - **镜像只随发版更新**：main 日常推送不构建镜像（2026-08-20 起）；Registry 版本 tag 只对应发版产物。发版前想提前验证 main 最新代码需本地构建（BUILDING.md 路径 B/C），dispatch release.yml 不推镜像、只补二进制产物。
 - **本地开发 compose**（`docker-compose.yml`）仍用本地构建镜像；生产 pull 部署用 `docker-compose.pull.yml`。
 - **Gitea secrets API** 字段名是 `data` 不是 `value`（PUT `/api/v1/repos/{owner}/{repo}/actions/secrets/{name}`，`{"data":"..."}`），用错报 422 "[Data]: Required"。
-- **按需产物模式**（手动 dispatch）：产物同时上传 Artifact 页（保留 7 天）并补挂到对应版本 Release；正式发版（镜像+Release）必须走 `v*` 标签。
+- **发版补产模式**（手动 dispatch）：产物同时上传 Artifact 页（保留 7 天）并补挂到对应版本 Release；镜像与 Release 必须走 `v*` 标签，而 **APK/exe 只能由 dispatch 产出（tag 不会自动构建）**，所以每次发版推完标签必须紧接着 dispatch 勾选 `binaries`，否则发版只有镜像一件。
 - **APK 依赖烘焙**（2026-09-04 起）：`mobile/Dockerfile.ci` 构建期预热 gradle 发行版、maven 依赖与 `build-tools;34.0.0`（AGP 8.7 默认版本，镜像只装 35 时 run 期会现下载）到 `/opt/gradle-home`，消除发版时对 services.gradle.org / maven 中央仓库的运行时网络依赖。`build-apk-ci.sh` 检测到预热标记（`.warm-ok`）优先 `--offline` 构建，失败自动回退在线构建；预热层失败不阻塞镜像构建（行为与旧版一致）。
 
 ## 历史版本与镜像路径变更记录
