@@ -94,3 +94,28 @@ test('设置页 JS 认的是内容列这根滚动条，且两个滚动容器都�
   assert.match(view, /paneEl\?\.addEventListener\('scroll'/, '内容列的滚动没被监听：滚动高亮不跟着动');
   assert.match(view, /pageEl\.addEventListener\('scroll'/, '整页滚动（窄屏）没被监听：窄屏下滚动高亮失效');
 });
+
+/**
+ * 2026-09-27 用户报「最外边这根滑动条没用」：桌面档设置页本该只有目录列 / 内容列两根滚动条，
+ * 但只要有一个绝对定位元素漏出设置页壳层（浮层残留、第三方库节点……），Home 的内容区
+ * .content 就会被顶高 264px，多出一根「拖了也看不到任何东西」的外层滚动条。
+ * 修法是宽屏下让内容区对设置页交出滚动权；窄屏（≤768px）设置页本来就靠整页滚动，不能动。
+ */
+test('宽屏设置页让内容区交出滚动权，不再多出第三根没用的滚动条', () => {
+  const home = fs.readFileSync(path.resolve(here, '..', 'views', 'Home.vue'), 'utf8');
+  assert.match(
+    home,
+    /'settings-open': isActive\('\/settings'\)/,
+    '布局上没有按设置路由打标记：内容区不知道该在设置页交出滚动权',
+  );
+  assert.match(
+    home,
+    /@media \(min-width: 769px\) \{\s*\.layout\.settings-open \.content \{\s*overflow: hidden;/,
+    '宽屏下没有对设置页关掉内容区滚动：那根多余的外层滚动条会回来',
+  );
+  assert.match(
+    ruleBody(mediaBody(css, '(max-width: 768px)'), '.settings-view'),
+    /height:\s*auto/,
+    '窄屏设置页被钉住了高度：那边靠整页滚动，守卫不能越界',
+  );
+});

@@ -6,6 +6,7 @@
       'chat-dock-open': chatDockOpen,
       'chat-dragging': app.chatDragging,
       'update-notice-visible': updateNoticeVisible && !desktopShell,
+      'settings-open': isActive('/settings'),
     }"
     :style="{ '--sidebar-width': sidebarWidth + 'px', '--chat-w': app.chatDockWidth + 'px' }"
   >
@@ -795,6 +796,20 @@ onUnmounted(() => {
 
 .layout.update-notice-visible .content { padding-top: calc(52px + var(--safe-top)); }
 .layout.chat-dock-open :deep(.update-notice) { right: calc(var(--chat-w) + 24px); }
+
+/*
+ * 宽屏设置页自己管两根滚动条（左侧目录列 / 右侧内容列，见 styles/settings.css），内容区
+ * .content 不参与滚动：它是 Home 的整页滚动容器，一旦被顶高就多出第三根滚动条——而设置页里
+ * 只要有一个绝对定位元素漏出壳层（浮层残留、第三方库节点……），.content 就会被顶高 264px
+ * （2026-09-27 用户报「最外边这根滑动条没用」：拖它什么都看不到，只把整页推歪）。
+ * 选择器带上 .layout 提高权重，压过上面 .content[data-v-*] 的 overflow-y: auto。
+ * 窄屏（≤768px）设置页退回整页滚动，滚动权就在 .content 手上，这里不能管。
+ */
+@media (min-width: 769px) {
+  .layout.settings-open .content {
+    overflow: hidden;
+  }
+}
 
 .layout.sidebar-open .content {
   padding-left: calc(var(--sidebar-width) + 72px);
