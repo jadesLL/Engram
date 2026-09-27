@@ -102,7 +102,14 @@ jobs:
           echo "$BODY" >> "$GITHUB_OUTPUT"
           echo "CHANGELOG_EOF" >> "$GITHUB_OUTPUT"
           echo ">> 已提取 v${VER} 段落："
-          echo "$BODY" | head -5
+          # 逐行回显前 5 行——不能写 `echo "$BODY" | head -5`：段落超过管道缓冲（64 KiB）时
+          # head 提前退出会让写端收到 SIGPIPE，整个步骤以 141 失败（v1.3.0 的 72 KiB 段落实测踩到）
+          shown=0
+          while IFS= read -r line; do
+            echo "$line"
+            shown=$((shown + 1))
+            if [ "$shown" -ge 5 ]; then break; fi
+          done <<< "$BODY"
 
       - name: verify 门禁（build + typecheck + test，与 ci.yml 同标准）
         shell: bash
