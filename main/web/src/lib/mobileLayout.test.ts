@@ -218,3 +218,47 @@ test('「上一页」由网页走 router.back()：安卓 WebView 的 canGoBack()
     '路由回退层注册得太晚：会抢在抽屉/弹层之前把页面退掉',
   );
 });
+
+test('安卓端不订阅 Android 上不存在的 /api/events（SSE）', () => {
+  // 本机服务没有 /api/events 路由：EventSource 会一直 404 重连，还会弹「实时同步连接断开，正在自动重连」。
+  // Home.vue 早已按 android-local 让路，看板页与对话抽屉是后加的、当时漏了。
+  const tasks = readSrc('views/TasksView.vue');
+  assert.match(
+    tasks,
+    /runtimeCapabilitiesSnapshot\(\)\.runtime !== 'android-local'[\s\S]{0,240}?openPageStream/,
+    '看板页又无条件订阅 /api/events 了：手机上会 404 重连并弹「实时同步连接断开」',
+  );
+  const chat = readSrc('components/ChatDrawer.vue');
+  assert.match(
+    chat,
+    /capabilities\.value\.runtime !== 'android-local'[\s\S]{0,240}?openPageStream/,
+    '对话抽屉又无条件订阅 /api/events 了：手机上会 404 重连并弹「实时同步连接断开」',
+  );
+});
+
+test('安卓端接线：连接通道 / 优先局域网 / 挂载散图 / 日志筛选 / 设备名 / 收集箱成员鉴权', () => {
+  // 手机端只有同步成员令牌，功能面全靠本地服务实现或窄代理——这几条断了就是「点了报错/功能消失」
+  const server = read('mobile/android/app/src/main/java/com/engram/app/EngramLocalServer.kt');
+  assert.match(server, /put\("link",\s*sync\.linkStatus\(\)/, '状态接口没下发 link：侧栏通道胶囊与设置页「局域网优先」会一起消失');
+  assert.match(server, /put\("deviceLabel",\s*sync\.deviceLabel\(\)\)/, '状态接口没下发本机设备名：设置页「本机名称」与对话来源标不出名字');
+  assert.match(server, /body\.has\("prefer_lan"\)/, '同步配置不认 prefer_lan：设置页那个开关会变成点了没用');
+  assert.match(server, /post\("\/api\/assets\/attach"\)/, '缺 /api/assets/attach：设置页「挂载到…」会报挂载失败');
+  assert.match(server, /scope = params\["scope"\]/, '同步日志不认 scope/event 筛选：手机上「视角」「事件」点了不生效');
+  const engine = read('mobile/android/app/src/main/java/com/engram/app/SyncEngine.kt');
+  assert.match(engine, /api\/sync\/announce/, '同步引擎没探测中枢的连接通告：局域网优先无从落地');
+  assert.match(engine, /linkPreferLanSetting/, '同步引擎没读「优先局域网」开关');
+  assert.doesNotMatch(
+    server,
+    /call\.body\(\)\.optString\("name"[\s\S]{0,200}?call\.body\(\)/,
+    '/api/files/create 把请求体读了两遍：Ktor 会抛「body has already been consumed」，手机上新建资料必 500',
+  );
+  assert.match(
+    engine,
+    /if \(value is Collection<\*>\) JSONArray\(value\)/,
+    '结构化字段没把集合转成 JSONArray：JSONObject.put 会把 List 序列化成字符串数组的样子，前端读不到',
+  );
+  const inbox = read('server/src/routes/inbox.ts');
+  assert.match(inbox, /requireAssistantAccess/, '收集箱退回仅 owner 鉴权：手机（只有成员令牌）上收集箱会全部 401');
+  const ideas = read('server/src/routes/ideas.ts');
+  assert.match(ideas, /requireAssistantAccess/, '记灵感退回仅 owner 鉴权：手机上的「记一条灵感」会必失败');
+});

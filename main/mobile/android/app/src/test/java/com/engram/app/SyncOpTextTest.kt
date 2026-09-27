@@ -96,4 +96,61 @@ class SyncOpTextTest {
         assertTrue(SyncOpText.isNoteworthyPush("Wiki/概念/A.md"))
         assertTrue(SyncOpText.isNoteworthyPush("原始资料/文档/附件-1.bin"))
     }
+
+    @Test fun samplesChangedLinesWithGitDiffOrder() {
+        // 同一处先删后增；前缀 `+ ` / `- `（与 server opText.ts 的采样格式一致）
+        val (lines, omitted) = SyncOpText.diffSample("a\n旧\nc", "a\n新\nc")
+        assertEquals(listOf("- 旧", "+ 新"), lines)
+        assertEquals(0, omitted)
+    }
+
+    @Test fun sampleSkipsBlankLinesAndTruncatesLongOnes() {
+        val long = "x".repeat(200)
+        val (lines, omitted) = SyncOpText.diffSample("a\n", "a\n\n$long\n")
+        // 空白行不占一行记录、也不算「没记下的改动」
+        assertEquals(0, omitted)
+        assertEquals(1, lines.size)
+        assertTrue(lines[0].startsWith("+ x"))
+        assertTrue(lines[0].endsWith("…"))
+        assertEquals(SyncOpText.CHANGE_LINE_MAX + 3, lines[0].length)
+    }
+
+    @Test fun sampleIgnoresAppWrittenFrontmatter() {
+        val before = "---\nid: abc\n创建日期: 2026-09-01\n标题: A\n---\n\n第一行\n"
+        val after = before.replace("第一行", "第一行改了")
+        val (lines, _) = SyncOpText.diffSample(SyncOpText.stripLeadingFrontmatter(before), SyncOpText.stripLeadingFrontmatter(after))
+        assertEquals(listOf("- 第一行", "+ 第一行改了"), lines)
+        // 正文逐字没变、只动了文件头时回退看整篇，不能让条目「+1 行」却一行改动都不显示
+        val headerOnly = SyncOpText.summarizePage("Wiki/概念/A.md", before, before.replace("id: abc", "id: xyz"))
+        assertTrue((headerOnly.changes ?: emptyList()).isNotEmpty())
+    }
+
+    @Test fun summarizePageCarriesChangesAndDataKey() {
+        val item = SyncOpText.summarizePage("Wiki/概念/A.md", "# A\n\nx\n", "# A\n\nx\ny\n")
+        assertEquals(listOf("+ y"), item.changes)
+        val data = SyncOpText.data(item)
+        assertEquals(listOf("+ y"), data["changes"])
+    }
+
+    @Test fun flattensChangeLinesWithPathHeaderAndBudget() {
+        val first = SyncOpText.summarizePage("Wiki/概念/A.md", "# A\n", "# A\nx\n")
+        val second = SyncOpText.summarizePage("Wiki/概念/B.md", "# B\n", "# B\ny\n")
+        val flat = SyncOpText.flattenChangeLines(listOf(first, second))!!
+        // 多于一个文件时先写文件路径，再写该文件的改动行
+        assertEquals(listOf("Wiki/概念/A.md", "+ x", "Wiki/概念/B.md", "+ y"), flat)
+
+        val many = (1..40).map { SyncOpText.summarizePage("Wiki/概念/N$it.md", "# N\n", "# N\n第 $it 行\n") }
+        val capped = SyncOpText.flattenChangeLines(many)!!
+        assertTrue(capped.size <= SyncOpText.CHANGE_LOG_MAX_LINES)
+        assertTrue(capped.last().startsWith("…（还有"))
+        assertTrue(capped.joinToString("\n").length <= SyncOpText.CHANGE_LOG_MAX_CHARS + 40)
+    }
+
+    @Test fun describesMergedPushAndUnknownKind() {
+        assertEquals(
+            "页面「A」本端与中枢都有改动，已按中枢合并结果写回本端（合并后 +2 −1 行）",
+            SyncOpText.describePushMerged("Wiki/概念/A.md", "A", 2, 1, 7, 9),
+        )
+        assertTrue(SyncOpText.describeUnknownKind("future-op").contains("future-op"))
+    }
 }

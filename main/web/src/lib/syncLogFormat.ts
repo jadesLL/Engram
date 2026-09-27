@@ -125,6 +125,10 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'pull-delete': { label: '应用远端删除', category: '拉取' },
   'pull-move': { label: '应用远端改名', category: '拉取' },
   'pull-local-newer': { label: '本机版本较新，未覆盖', category: '拉取' },
+  // 本机已改名/改分类/删除但还没推给中枢：中枢清单里的旧路径不拉回来（否则手机上新旧两份并存）
+  'pull-pending-local': { label: '本机待推送，旧路径未拉回', category: '拉取' },
+  // 中枢已经没有这份（清单/oplog 滞后于改名或删除）：跳过这一项并推进水位，不让整轮同步卡死
+  'pull-missing': { label: '中枢已无此内容，已跳过', category: '拉取' },
   'oplog-trimmed': { label: '落后过多，转全量对账', category: '拉取' },
   // 对账
   'reconcile-start': { label: '全量对账开始', category: '对账' },
@@ -152,6 +156,15 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'dualstack-probe-failed': { label: '回探 IPv6 未成功', category: '连接' },
   'dualstack-ipv6-recovered': { label: 'IPv6 已恢复，切回优先', category: '连接' },
   'dualstack-config': { label: '双栈连接设置变更', category: '配置' },
+  // 连接通道择优（局域网 → IPv6 → IPv4 → 已断开）：桌面 / Docker 与安卓端共用同一套事件名
+  'link-changed': { label: '连接通道切换', category: '连接' },
+  'link-config': { label: '「优先局域网」变更', category: '配置' },
+  'link-probe-failed': { label: '连接通道探测失败', category: '连接' },
+  'link-announce-unavailable': { label: '中枢未提供连接通告', category: '连接' },
+  // 手机端事件名：本机名称从快照学回（与 server 的 device-named 同义，名字不同）
+  'device-label': { label: '本机名称（按中枢配置）', category: '配置' },
+  // 中枢下发了本端不认识的同步类型（协议比本端新）：跳过并留痕，升级后自动补齐
+  'sync-unknown-kind': { label: '不认识的同步类型，已跳过', category: '拉取' },
 };
 
 export function eventLabel(event: string): string {

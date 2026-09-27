@@ -23,6 +23,9 @@ services:
       OFFICE_EDITOR_ENABLED: "false"
       # 直连地址通告（预览验证用；主 compose 同款透传）
       DIRECT_ACCESS_URL: "${DIRECT_ACCESS_URL:-}"
+      # 局域网直连地址通告（成员端「局域网优先」择选用）+ 端口覆盖；主 compose 同款透传
+      LAN_ACCESS_URL: "${LAN_ACCESS_URL:-}"
+      LAN_PORT: "${LAN_PORT:-}"
       # 一键直连域名（预览验证用；主 compose 同款透传）
       SYNC_ROLE: "${SYNC_ROLE:-}"
       DDNS_TOKEN: "${DDNS_TOKEN:-}"
