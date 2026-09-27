@@ -462,8 +462,12 @@ useSettingsAnchorVisible('sync-dualstack', showDualStack);
  * 局域网优先：与双栈连接回答同一个问题的两半（先走哪条路），同样只在成员端有内容。
  * 单独一个 computed（而不是复用 showDualStack）是因为渲染条件必须能被显隐登记读走，
  * 而且将来两边条件要是分岔了（比如只在服务端通告了内网地址时才显示），改这里不影响双栈。
+ *
+ * 还要求 status.link 存在：Android 本地端的引擎（Kotlin）还没实现这个开关，
+ * 它只认自己的 direct_urls 兜底——那边渲染出来会是一个点了没用的开关，
+ * 不如整组不出现（导航项由 useSettingsAnchorVisible 一起收起，不留死锚点）。
  */
-const showLanGroup = computed(() => status.value?.role === 'member');
+const showLanGroup = computed(() => Boolean(status.value?.role === 'member' && status.value?.link));
 useSettingsAnchorVisible('sync-lan', showLanGroup);
 
 /** 「优先局域网」开关：初值取服务端，改动即落盘 */
