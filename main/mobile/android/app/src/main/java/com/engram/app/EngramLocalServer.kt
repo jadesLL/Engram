@@ -607,7 +607,8 @@ class EngramLocalServer private constructor(private val context: Context) {
             // 本机内容版本号：每落地一项同步改动 +1。前端靠它在对账进行中就逐步刷新文件树/首页，
             // 而不是等整轮跑完（旧行为：首次全量对账期间侧栏与首页一直是空的）。
             .put("contentRevision", db.contentRevision())
-            .put("lastError", sync.lastError).put("log", db.logs()).put("peers", JSONArray())
+            // 日志只带尾巴：状态条与「立即同步」只认最新一条事件时间，完整逐项记录走 /api/sync/log
+            .put("lastError", sync.lastError).put("log", db.logs(STATUS_LOG_TAIL)).put("peers", JSONArray())
             // 双栈连接：配置 + 每个中枢域名的实时协议族（设置页「双栈连接」按 server 同一套字段读）
             .put(
                 "dualStack",
@@ -891,6 +892,8 @@ class EngramLocalServer private constructor(private val context: Context) {
         private const val MAX_HUB_JSON_BYTES = 4L * 1024 * 1024
         /** 单张图片资产上限（与 server routes/assets.ts 的 MAX_ASSET_BYTES 一致） */
         private const val MAX_ASSET_BYTES = 12L * 1024 * 1024
+        /** /api/sync/status 里带的同步日志尾巴条数：状态条与「立即同步」只认最新事件时间 */
+        private const val STATUS_LOG_TAIL = 30
         private const val HUB_REQUIRED = "请先在多端同步中绑定 Docker 中枢：收集箱与记灵感都用中枢的模型和任务队列"
         private const val HUB_TOKEN_REJECTED = "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机端的版本。"
         /** 图片资产目录名白名单：页面 id（UUID）或未归属池，同时挡掉 `..`、绝对路径等穿越写法（与 server lib/pageAssets.ts 同规则） */

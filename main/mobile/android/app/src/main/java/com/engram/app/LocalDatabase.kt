@@ -815,7 +815,21 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
 
     private fun syncLogRowCount(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM sync_log", null).use { it.moveToFirst(); it.getInt(0) }
 
-    fun logs(): JSONArray { val out = JSONArray(); readableDatabase.rawQuery("SELECT ts,level,event,detail FROM sync_log ORDER BY id", null).use { c -> while (c.moveToNext()) out.put(JSONObject().put("ts", c.getString(0)).put("level", c.getString(1)).put("event", c.getString(2)).put("detail", c.getString(3))) }; return out }
+    /**
+     * 同步日志尾巴（旧 → 新，最多 limit 条）。
+     *
+     * `/api/sync/status` 每次轮询都带一份，只服务首页状态条与「立即同步」的收尾判断
+     * （两者都只认最新的一条事件时间）；完整日志（逐项记录、分页、筛选）走 /api/sync/log。
+     * 保留量升到 2000 条后，整表下发在首轮全量对账期间（每 5 秒一次轮询）纯属白搬 JSON。
+     */
+    fun logs(limit: Int = 30): JSONArray {
+        val out = JSONArray()
+        readableDatabase.rawQuery(
+            "SELECT ts,level,event,detail FROM (SELECT id,ts,level,event,detail FROM sync_log ORDER BY id DESC LIMIT ?) ORDER BY id",
+            arrayOf(limit.toString()),
+        ).use { c -> while (c.moveToNext()) out.put(JSONObject().put("ts", c.getString(0)).put("level", c.getString(1)).put("event", c.getString(2)).put("detail", c.getString(3))) }
+        return out
+    }
 
     /**
      * 本机内容版本号：每次「同步真的落到本地」就 +1。

@@ -419,7 +419,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
-import { useSyncStore } from '../stores/sync';
+import { SYNC_INDEX_REFRESH_MS, useSyncStore } from '../stores/sync';
 import {
   canReadClipboard,
   copyText,
@@ -440,6 +440,7 @@ import BrandMark from '../components/BrandMark.vue';
 import { confirmDialog } from '../lib/confirm';
 import { createIdeaNote } from '../lib/quickNote';
 import { useRuntimeCapabilities } from '../lib/capabilities';
+import { createThrottledReload } from '../lib/refreshThrottle';
 import { notify } from '../lib/notify';
 import {
   CONTENT_WIDTH_RATIO_STEPS,
@@ -1137,10 +1138,12 @@ async function loadWelcome() {
   } catch { /* 欢迎页数据静默失败，不影响主流程 */ }
 }
 
-// Android 不维持后台 SSE；同步结束后刷新欢迎页统计，避免初次拉取完成仍显示空库。
-watch(() => sync.status?.lastSyncAt, (current, previous) => {
-  if (current && current !== previous && !route.params.id) void loadWelcome();
-});
+// Android 不维持后台 SSE；首轮全量对账期间本地库在逐项写入，欢迎页统计与「最近编辑」要跟着长，
+// 否则整轮对账都写着「库中已有 0 个页面」，结束时才一次性跳变。节流到每 5 秒最多一次。
+const reloadWelcomeDuringSync = createThrottledReload(() => {
+  if (!route.params.id) void loadWelcome();
+}, SYNC_INDEX_REFRESH_MS);
+watch(() => sync.indexRevision, () => reloadWelcomeDuringSync());
 
 watch(
   () => route.params.id,

@@ -1317,6 +1317,9 @@ export function beginBootstrap(): void {
   syncing = true;
 }
 
+/** /api/sync/status 里带的日志尾巴条数（见 clientStatus 注释） */
+const STATUS_LOG_TAIL = 60;
+
 export function clientStatus(): ClientStatus {
   return {
     enabled: syncConfigEnabled(),
@@ -1331,8 +1334,10 @@ export function clientStatus(): ClientStatus {
     pendingPulls: pendingFilePulls.size,
     lastSyncAt,
     lastError,
-    // 兼容旧口径：/api/sync/status 仍带最近 200 条；完整分页/筛选走 /api/sync/log
-    log: recentSyncLog(200),
+    // 兼容旧口径：/api/sync/status 仍带一段日志尾巴（首页状态条与「立即同步」只认最新事件时间，
+    // 状态日志尾巴 60 条足够）；完整分页/筛选走 /api/sync/log。首轮全量对账期间界面每 5 秒轮询一次
+    // 这个接口，不再白搬 200 条。
+    log: recentSyncLog(STATUS_LOG_TAIL),
   };
 }
 
