@@ -201,3 +201,23 @@ export function peerDeviceLabel(originId: string): string {
     .get(id, id) as { node_label: string } | undefined;
   return String(row?.node_label || '');
 }
+
+/**
+ * 按来源 id 找**用户在同步中枢上给这台设备起的成员名**（设置 → 多端同步 → 群组成员）。
+ *
+ * 界面上的「来自 <设备>」用这个而不是设备上报的主机名：Docker 上主机名是容器 ID，
+ * 桌面端上是机器名，都不是用户认得的那台设备。来源记的可能是成员 id（广播）或节点 id（会话行），
+ * 两种都认；找不到（成员已被移除）返回空串，由上层退化成设备名 / 「其他设备」。
+ */
+export function peerDisplayName(originId: string): string {
+  const id = String(originId || '');
+  if (!id) return '';
+  const row = db
+    .prepare(
+      `SELECT name FROM sync_peers
+       WHERE revoked = 0 AND (id = ? OR (node_id <> '' AND node_id = ?))
+       LIMIT 1`
+    )
+    .get(id, id) as { name: string } | undefined;
+  return String(row?.name || '').trim();
+}

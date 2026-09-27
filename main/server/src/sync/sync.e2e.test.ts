@@ -582,7 +582,7 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     ).get());
     assert.equal(hubSession.messages, 2, '只同步已完成那一轮的两条消息');
     assert.equal(hubSession.runs, 1, '正在跑的那一轮不进中枢（只同步完成态）');
-    assert.ok(hubSession.label, '中枢要记住这条会话来自哪台设备');
+    assert.equal(hubSession.label, 'B 电脑', '中枢按配置里的成员名记来源，不记设备主机名');
     const hubSessionList = (await (await api(hub, 'GET', '/api/assistant/sessions')).json()) as {
       sessions: { id: string; title: string }[];
     };
@@ -602,8 +602,14 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
               (SELECT value FROM settings WHERE key = 'sync_node_id') AS localNode
        FROM assistant_sessions WHERE id = 'e2e-session'`
     ).get());
-    assert.equal(cOrigin.originLabel, os.hostname().slice(0, 60), 'C 电脑记住的是 B 电脑的设备名');
+    assert.equal(cOrigin.originLabel, 'B 电脑', 'C 电脑记住的是中枢配置里那台设备的成员名，不是它的主机名');
     assert.notEqual(cOrigin.originId, cOrigin.localNode, '来源端不能记成本机，否则界面不标「来自」');
+
+    // 成员端学回「在中枢配置里我叫什么」：界面上的本机名称与别的端看到的来源名同一个口径
+    const cDeviceName = withDb(nodeC.dataDir, (conn) =>
+      conn.prepare(`SELECT value FROM settings WHERE key = 'sync_device_label'`).get()
+    ) as { value: string } | undefined;
+    assert.equal(cDeviceName?.value, 'C 电脑', '成员端要对齐中枢配置里的成员名');
 
     // 看板：成员端这份先推上去（全端唯一一份，键恒为 default）
     withDb(nodeB.dataDir, (conn) => {

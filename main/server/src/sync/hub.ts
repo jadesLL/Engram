@@ -509,9 +509,9 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     // 会话同步：完成态快照按 id 并集合并；删除走墓碑。两者都不做字符级合并。
     const sessionId = String(push.target || '');
     if (!sessionId) throw new Error('会话推送缺少 target');
-    // 来源设备名：推送方自己报的优先，没带就按成员注册的设备名补（广播要把它带给别的成员端，
-    // 否则它们只记得「来自某个节点」，会话列表里就成了光秃秃的「来自」）
-    const originLabel = String(push.node_label || resolveOriginLabel(actorId, ''));
+    // 来源设备名：**以中枢配置里的成员名为准**（resolveOriginLabel 先查 sync_peers.name），
+    // 成员端上报的主机名只在没有成员记录时才用——用户在中枢给设备起的名字才是他认得的那个
+    const originLabel = resolveOriginLabel(actorId, String(push.node_label || ''));
     if (push.deleted) {
       deleteSessionWithTombstone(sessionId, actorId);
       const result = commit('session', sessionId, actorId, { deleted: true, nodeLabel: originLabel });
