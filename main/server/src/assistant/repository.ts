@@ -614,6 +614,48 @@ export function listRuns(sessionId: string): RunDto[] {
 }
 
 /**
+ * 跨会话找轮次：按**系统会话标记**（任务看板 / 梦境思考）查，而不是按某一个会话 id。
+ *
+ * 任务看板每次提炼都新开一个会话（避免上下文越滚越长），所以「刚才那轮跑完了没」「答案是哪一版」
+ * 都必须跨会话看。live=true 只找在跑的（running / queued）：看板据此复用正在跑的那一轮，不重复烧 token。
+ */
+export function latestRunBySystemKey(systemKey: string, options: { live?: boolean } = {}): RunDto | null {
+  const live = options.live ? `AND r.status IN ('running', 'queued')` : '';
+  const row = db
+    .prepare(
+      `SELECT r.* FROM assistant_runs r
+         JOIN assistant_sessions s ON s.id = r.session_id
+        WHERE s.system_key = ? ${live}
+        ORDER BY r.created_at DESC, r.rowid DESC
+        LIMIT 1`
+    )
+    .get(systemKey) as any;
+  return row ? toRun(row) : null;
+}
+
+/**
+ * 跨会话取「最近一条有正文的答案」：同上的原因，答案不能只看最新那个会话——
+ * 新会话一开，上一版看板就从界面上消失了（提炼期间与失败时都要继续显示上一版）。
+ * 按答案生成时刻（completed_at，缺省退 updated_at）倒序，取第一条真正有内容的助手消息。
+ */
+export function latestAnswerBySystemKey(systemKey: string): { run: RunDto; content: string } | null {
+  const row = db
+    .prepare(
+      `SELECT r.*, m.content AS answer FROM assistant_runs r
+         JOIN assistant_sessions s ON s.id = r.session_id
+         JOIN assistant_messages m ON m.id = r.assistant_message_id
+        WHERE s.system_key = ?
+          AND r.assistant_message_id IS NOT NULL
+          AND TRIM(m.content) <> ''
+        ORDER BY COALESCE(NULLIF(r.completed_at, ''), r.updated_at) DESC, r.rowid DESC
+        LIMIT 1`
+    )
+    .get(systemKey) as any;
+  if (!row) return null;
+  return { run: toRun(row), content: String(row.answer || '') };
+}
+
+/**
  * 全库正在跑的轮次（跨会话）。
  * 前端启动时靠它接上事件流：抽屉没打开过、或页面刚刷新，也要能显示「还在跑」。
  * 排队中的轮次没有事件流可接（还没送进 dsh），不收在这里。

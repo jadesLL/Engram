@@ -440,9 +440,13 @@ class EngramLocalServer private constructor(private val context: Context) {
         post("/api/assistant/questions/{id}/answer") {
             call.proxyAgent("POST", "/api/assistant/questions/${encoded(call.parameters["id"].orEmpty())}/answer", call.receiveText())
         }
-        // 任务看板：状态与重新生成都落中枢（本机不跑 dsh），与上面几条一样窄代理
+        // 任务看板：状态、重新生成与「自动提炼间隔」都落中枢（本机不跑 dsh），与上面几条一样窄代理。
+        // 间隔也代理的原因：手机上看到的看板本来就来自中枢，到没到期由中枢按它自己的设置算，
+        // 这个开关不代理就会出现「设置页能看不能改」。
         get("/api/tasks/board") { call.proxyAgent("GET", "/api/tasks/board") }
         post("/api/tasks/board/refresh") { call.proxyAgent("POST", "/api/tasks/board/refresh", "{}") }
+        get("/api/tasks/board/config") { call.proxyAgent("GET", "/api/tasks/board/config") }
+        put("/api/tasks/board/config") { call.proxyAgent("PUT", "/api/tasks/board/config", call.receiveText()) }
 
         // 收集箱：语义转换要中枢的内置 Agent，本机不跑模型也不跑任务队列，整条交互面按同一模式窄代理。
         // 收集箱原件走同步落在两端同一目录，所以中枢看到的文件与手机上是同一份。

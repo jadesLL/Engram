@@ -68,7 +68,7 @@ test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', 
       sync: ['panel-sync', 'sync-ddns'],
       update: ['panel-update-server', 'panel-update-desktop', 'panel-update-source'],
       app: ['panel-app', 'app-version', 'app-uninstall'],
-      agent: ['agent-builtin', 'agent-dream', 'agent-target', 'agent-tools'],
+      agent: ['agent-builtin', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
     },
   );
   // 混装桶拆开后的归位：外观不在账户里、搜索同义词不在数据里、版本与卸载不在更新里
@@ -215,13 +215,18 @@ test('导航顺序 = 页面渲染顺序（每个大类的分组顺序两边一�
   }
 });
 
-test('「自动整理（梦境思考）」插在「内置 Agent」与「外部接入」之间（插槽位置守卫）', () => {
+test('「自动整理（梦境思考）」与「任务看板提炼」插在「内置 Agent」与「外部接入」之间（插槽位置守卫）', () => {
   const view = fs.readFileSync(path.join(viewsDir, 'SettingsView.vue'), 'utf8');
   const agentSection = domainSection(view, 'agent');
-  // 页面侧：AgentPanel 里有个 #after-builtin 插槽，DreamSection 从设置页插进去
+  // 页面侧：AgentPanel 里有个 #after-builtin 插槽，两块自动化分组从设置页插进去
   assert.match(agentSection, /<AgentPanel>/, 'AgentPanel 不再是带插槽的写法');
-  assert.match(agentSection, /#after-builtin/, '设置页没有把 DreamSection 插进 #after-builtin');
+  assert.match(agentSection, /#after-builtin/, '设置页没有把自动化分组插进 #after-builtin');
   assert.match(agentSection, /<\s*DreamSection\s*\/>/, '插槽里没有 DreamSection');
+  assert.match(agentSection, /<\s*BoardSection\s*\/>/, '插槽里没有 BoardSection（任务看板提炼）');
+  assert.ok(
+    agentSection.indexOf('<DreamSection') < agentSection.indexOf('<BoardSection'),
+    '「任务看板提炼」要排在「自动整理（梦境思考）」之后——顺序与导航登记不一致就会点错锚点',
+  );
   // 组件侧：插槽必须夹在「内置 Agent」与「外部接入」两个分组之间
   const panel = templateBodyOf(path.join(settingsDir, 'AgentPanel.vue'));
   const slotAt = panel.indexOf('<slot name="after-builtin"');
@@ -230,12 +235,12 @@ test('「自动整理（梦境思考）」插在「内置 Agent」与「外部�
   assert.ok(slotAt > 0 && builtinAt > 0 && targetAt > 0, 'AgentPanel 的分组或插槽找不到了');
   assert.ok(
     builtinAt < slotAt && slotAt < targetAt,
-    '「自动整理（梦境思考）」插槽不在「内置 Agent」与「外部接入」之间——导航顺序会与页面顺序错位',
+    '自动化分组的插槽不在「内置 Agent」与「外部接入」之间——导航顺序会与页面顺序错位',
   );
-  // 数据侧：顺序也必须是 builtin → dream → target → tools
+  // 数据侧：顺序也必须是 builtin → dream → board → target → tools
   assert.deepEqual(
     SETTINGS_DOMAINS.find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
-    ['agent-builtin', 'agent-dream', 'agent-target', 'agent-tools'],
+    ['agent-builtin', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
   );
 });
 
