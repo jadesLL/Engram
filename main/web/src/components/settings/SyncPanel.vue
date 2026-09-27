@@ -168,48 +168,9 @@
         </div>
       </div>
 
-      <!-- 双栈连接：中枢域名同时有 A/AAAA 时优先 IPv6，连不上自动改用 IPv4，用稳后定期回探 IPv6。
-           协议族只在建连那一刻选定，传输途中不切换——大文件传完一次才轮到下一次回探。 -->
-      <div class="dualstack-block">
-        <label class="dualstack-toggle">
-          <input v-model="dualStack.enabled" type="checkbox" @change="saveDualStack(true)" />
-          <span>
-            <strong>双栈连接（IPv6 优先）</strong>
-            <span class="faint small">
-              域名同时有 IPv4/IPv6 时先走 IPv6；IPv6 连不上自动改用 IPv4，IPv4 用稳后定期回探一次 IPv6，
-              恢复即自动切回。切换只发生在两次传输之间，不会打断正在上传／下载的文件。
-            </span>
-          </span>
-        </label>
-        <!-- 实时状态（会变）走状态条：底框 + 状态点，与上面的灰色说明文字区分开（2026-09-27） -->
-        <p v-if="dualStackStateText" class="dualstack-state state-strip" :class="dualStackTone">
-          <span class="state-dot" aria-hidden="true" />
-          <span>{{ dualStackStateText }}</span>
-        </p>
-        <div v-show="dualStack.enabled" class="dualstack-fields">
-          <div class="field-row">
-            <label for="ds-failures">判定 IPv6 不通：连续失败</label>
-            <div class="ds-inputs">
-              <input id="ds-failures" v-model.number="dualStack.failureThreshold" type="number" min="1" max="20" />
-              <span class="faint small">次，或累计卡住</span>
-              <input id="ds-window" v-model.number="dualStack.windowSeconds" type="number" min="1" max="120" />
-              <span class="faint small">秒（任一满足即改用 IPv4）</span>
-            </div>
-          </div>
-          <div class="field-row">
-            <label for="ds-probe">回探节奏：IPv4 每成功</label>
-            <div class="ds-inputs">
-              <input id="ds-probe" v-model.number="dualStack.probeAfterSuccesses" type="number" min="1" max="1000" />
-              <span class="faint small">次回探一次 IPv6；单次连接超时</span>
-              <input id="ds-timeout" v-model.number="dualStack.connectTimeoutMs" type="number" min="500" max="30000" step="500" />
-              <span class="faint small">毫秒</span>
-            </div>
-          </div>
-          <div class="sync-actions">
-            <button class="btn" type="button" :disabled="saving" @click="saveDualStack()">保存双栈设置</button>
-          </div>
-        </div>
-      </div>
+      <!-- 双栈连接：2026-09-29 起独立成组（多端同步 → 双栈连接），内容见本文件末尾的第二个根节点。
+           它只在本机作为成员连接中枢域名时才有内容，因此除了那里的 v-if，
+           还把同一条件登记进导航（useSettingsAnchorVisible），避免中枢设备留下一个点不动的死锚点。 -->
     </template>
 
     <!-- 运行状态的位置见卡片顶部（中枢与成员共用同一行摘要） -->
@@ -226,6 +187,63 @@
       </div>
     </div>
   </section>
+
+  <!-- 双栈连接：2026-09-29 起独立成组（多端同步 → 双栈连接，与「同步群组」「DDNS 直连域名」同级）。
+       在此之前它是成员端绑定表单下面的一块平铺内容：与上面的表单只剩 4px（相邻 margin 折叠），
+       既贴得近、又不能收起；提成独立分组后既有自己的目录项与色带折叠，间距也和别的分组一致。
+       只在本机作为成员连中枢域名时才有内容：条件同样登记进导航（见 setup 里的
+       useSettingsAnchorVisible），非成员设备不会留下点不动的死锚点。
+       分组顺序 = 页面顺序：它在 DDNS 分组之前登记，见 settingsDomains.test.ts 的顺序守卫。 -->
+  <SettingsGroup
+    v-if="showDualStack"
+    class="settings-native"
+    anchor="sync-dualstack"
+    title="双栈连接（IPv6 优先）"
+    hint="中枢域名同时有 IPv4/IPv6 时先走 IPv6，连不上自动改用 IPv4；协议族只在两次传输之间切换"
+    :badge="dualStackBadge"
+    :badge-tone="dualStackBadgeTone"
+  >
+    <div class="dualstack-config">
+      <label class="dualstack-toggle">
+        <input v-model="dualStack.enabled" type="checkbox" @change="saveDualStack(true)" />
+        <span>
+          <strong>启用双栈策略</strong>
+          <span class="faint small">
+            关掉后域名连接交回系统默认（IPv6/IPv4 由操作系统排序）。恢复即自动切回；
+            切换只发生在两次传输之间，不会打断正在上传／下载的文件。
+          </span>
+        </span>
+      </label>
+      <!-- 实时状态（会变）走状态条：底框 + 状态点，与上面的灰色说明文字区分开（2026-09-27） -->
+      <p v-if="dualStackStateText" class="dualstack-state state-strip" :class="dualStackTone">
+        <span class="state-dot" aria-hidden="true" />
+        <span>{{ dualStackStateText }}</span>
+      </p>
+      <div v-show="dualStack.enabled" class="dualstack-fields">
+        <div class="field-row">
+          <label for="ds-failures">判定 IPv6 不通：连续失败</label>
+          <div class="ds-inputs">
+            <input id="ds-failures" v-model.number="dualStack.failureThreshold" type="number" min="1" max="20" />
+            <span class="faint small">次，或累计卡住</span>
+            <input id="ds-window" v-model.number="dualStack.windowSeconds" type="number" min="1" max="120" />
+            <span class="faint small">秒（任一满足即改用 IPv4）</span>
+          </div>
+        </div>
+        <div class="field-row">
+          <label for="ds-probe">回探节奏：IPv4 每成功</label>
+          <div class="ds-inputs">
+            <input id="ds-probe" v-model.number="dualStack.probeAfterSuccesses" type="number" min="1" max="1000" />
+            <span class="faint small">次回探一次 IPv6；单次连接超时</span>
+            <input id="ds-timeout" v-model.number="dualStack.connectTimeoutMs" type="number" min="500" max="30000" step="500" />
+            <span class="faint small">毫秒</span>
+          </div>
+        </div>
+        <div class="sync-actions">
+          <button class="btn" type="button" :disabled="saving" @click="saveDualStack()">保存双栈设置</button>
+        </div>
+      </div>
+    </div>
+  </SettingsGroup>
 
   <!-- DDNS 直连域名：2026-09-28 起独立成组（方案 A）——它只在「这台设备担任中枢」时才有内容，
        因此除了这里的 v-if，还把同一条件登记进导航（useSettingsAnchorVisible），
@@ -376,6 +394,14 @@ const showDdns = computed(() => status.value?.role === 'hub' && capabilities.val
 // 与上面的渲染条件同源：非中枢设备不该在导航里看到「DDNS 直连域名」
 useSettingsAnchorVisible('sync-ddns', showDdns);
 
+/**
+ * 双栈连接：单独一个分组，只在本机作为成员连中枢域名时才有内容（协议族策略用在这条链路上），
+ * 中枢与尚未绑定的设备都不显示——与 DDNS 分组刚好互补，两边同屏只会出现一个。
+ */
+const showDualStack = computed(() => status.value?.role === 'member');
+// 与上面的渲染条件同源：非成员设备不该在导航里看到「双栈连接」
+useSettingsAnchorVisible('sync-dualstack', showDualStack);
+
 // 分组卡片色带上的角色徽标（与导航徽标同源）
 const roleBadge = computed(() => {
   const role = status.value?.role;
@@ -505,6 +531,25 @@ const dualStackTone = computed(() => {
   const ds = status.value?.dualStack;
   if (!ds || !ds.enabled || !ds.hosts.length) return 'tone-muted';
   return ds.hosts.some((host) => host.family === 4) ? 'tone-warn' : 'tone-ok';
+});
+
+/**
+ * 色带上的协议族徽标：收起后正文整段藏起来，靠它一眼看出现在走哪一族、策略有没有关
+ * （语气与状态条同源，复用全局 .group-badge 的 tone-* 配色）。
+ */
+const dualStackBadge = computed(() => {
+  const ds = status.value?.dualStack;
+  if (!ds) return '';
+  if (!ds.enabled) return '已关闭';
+  if (!ds.hosts.length) return '待首次连接';
+  return ds.hosts.some((host) => host.family === 4) ? '当前 IPv4' : '当前 IPv6';
+});
+
+/** 分组徽标的语气：与状态条同源，只是换成 SettingsGroup 的 badgeTone 取值（没有 tone- 前缀） */
+const dualStackBadgeTone = computed<'muted' | 'ok' | 'warn'>(() => {
+  if (dualStackTone.value === 'tone-warn') return 'warn';
+  if (dualStackTone.value === 'tone-ok') return 'ok';
+  return 'muted';
 });
 
 async function saveDualStack(auto = false): Promise<void> {
@@ -815,12 +860,11 @@ onUnmounted(() => {
 .small { font-size: 12px; }
 .empty-panel { font-size: 13px; opacity: 0.7; }
 
-/* 双栈连接：开关 + 阈值 + 当前协议族 */
-.dualstack-block {
-  margin: 4px 4px 16px;
-  padding: 12px 14px;
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
-  border-radius: 8px;
+/* 双栈连接：2026-09-29 起是独立分组（多端同步 → 双栈连接），卡片外框、色带、折叠箭头
+   与间距都由 SettingsGroup / settings.css 统一给，这里只排卡内内容。
+   在此之前它是成员端绑定表单下面的一块平铺内容：与表单只剩 4px（相邻 margin 折叠）、
+   又不能收起——用户报「和上面的贴得太近，而且不能收缩」。 */
+.dualstack-config {
   display: flex;
   flex-direction: column;
   gap: 12px;

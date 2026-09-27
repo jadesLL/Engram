@@ -107,6 +107,9 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     icon: 'refresh',
     groups: [
       { id: 'panel-sync', label: '同步群组', icon: 'refresh' },
+      // 双栈连接：2026-09-29 从「同步群组」卡内提成独立分组（成员端专属，DDNS 是中枢端专属，
+      // 两者互补）。顺序 = 页面顺序，见 settingsDomains.test.ts 的顺序守卫。
+      { id: 'sync-dualstack', label: '双栈连接', icon: 'globe' },
       { id: 'sync-ddns', label: 'DDNS 直连域名', icon: 'link' },
     ],
   },
