@@ -188,6 +188,27 @@ async function countSyncEvents(inst: Instance, event: string): Promise<number> {
   return st.log.filter((l) => l.event === event).length;
 }
 
+interface LoggedEntry {
+  event: string;
+  detail?: string;
+  data?: Record<string, unknown>;
+}
+
+/** 同步详情分页接口：断言记录里真的写下了「这个文件改了什么内容」（data.changes） */
+async function syncLogEntries(inst: Instance, event: string): Promise<LoggedEntry[]> {
+  const res = await api(inst, 'GET', `/api/sync/log?event=${encodeURIComponent(event)}&limit=50`);
+  const body = (await res.json()) as { entries?: LoggedEntry[] };
+  return body.entries || [];
+}
+
+/** 记录里有没有带上这行改动正文（`+ 新增行` / `- 删除行`） */
+function loggedChangeContains(entries: LoggedEntry[], needle: string): boolean {
+  return entries.some((entry) => {
+    const changes = entry.data?.changes;
+    return Array.isArray(changes) && changes.some((line) => String(line).includes(needle));
+  });
+}
+
 test('三端同步端到端：实时传播、三方合并、冲突最新者胜裁决、文件与删除同步、提炼账本补齐', { timeout: 300_000 }, async () => {
   const instances: Instance[] = [];
   const cleanup = async () => {
@@ -260,6 +281,17 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     const pageB = await createPage(nodeB, '同步验证乙', '# 同步验证乙\n\nB 电脑写入');
     await waitFor('hub 收到 B 新页', async () => (await pageContent(hub, pageB))?.includes('B 电脑写入') === true);
     await waitFor('C 收到 B 新页', async () => (await pageContent(nodeC, pageB))?.includes('B 电脑写入') === true);
+
+    // 三条链路都要能看出「这一页写了什么」：中枢收到推送、B 推送成功、C 应用中枢变更
+    await waitFor('中枢的收到推送记录带上改动正文', async () =>
+      loggedChangeContains(await syncLogEntries(hub, 'push-received'), 'B 电脑写入'), 30_000,
+    async () => `push-received=${JSON.stringify(await syncLogEntries(hub, 'push-received'))}`);
+    await waitFor('B 的推送记录带上改动正文', async () =>
+      loggedChangeContains(await syncLogEntries(nodeB, 'push-ok'), 'B 电脑写入'), 30_000,
+    async () => `push-ok=${JSON.stringify(await syncLogEntries(nodeB, 'push-ok'))}`);
+    await waitFor('C 的应用中枢变更记录带上改动正文', async () =>
+      loggedChangeContains(await syncLogEntries(nodeC, 'pull-applied'), 'B 电脑写入'), 30_000,
+    async () => `pull-applied=${JSON.stringify(await syncLogEntries(nodeC, 'pull-applied'))}`);
 
     // ---------- 场景 3：非页面文件同步（上传 → 其他端）+ 删除传播 ----------
     const form = new FormData();

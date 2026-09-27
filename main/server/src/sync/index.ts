@@ -6,6 +6,7 @@ import { logSyncEvent } from './eventLog.js';
 import {
   describeOpList,
   describeOpSummary,
+  flattenChangeLines,
   isNoteworthyOp,
   summarizeBoardChange,
   summarizeDelete,
@@ -97,6 +98,7 @@ function queueLocalBroadcast(summary: SyncOpSummary): void {
           paths: items.slice(0, 10).map((item) => item.path),
           online,
           total: peers.length,
+          changes: flattenChangeLines(items),
         },
       });
     } catch (error) {

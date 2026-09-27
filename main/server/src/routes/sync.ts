@@ -52,6 +52,7 @@ import {
 } from '../sync/eventLog.js';
 import {
   describeOpSummary,
+  flattenChangeLines,
   isNoteworthyOp,
   summarizeFileChange,
 } from '../sync/opText.js';
@@ -87,7 +88,9 @@ function peerLabel(peer?: SyncPeer): string {
  * AIWorks/ 下的系统页（操作日志、索引、关系库）由应用自己高频改写，不进用户记录。
  */
 function logPushResult(peer: SyncPeer | undefined, push: PushPayload, result: PushApplyResult): void {
-  const who = peerLabel(peer);
+  // 成员名后面直接接动作会连读成「客厅 NAS修改页面…」：带上「成员」前缀并用书名号括起来，
+  // 与 opText/文档里的措辞一致；owner 通道保留「本机（owner 通道）」原样
+  const who = peer ? `成员「${peerLabel(peer)}」` : peerLabel(peer);
   const target = String(push.target || '');
   const from = String(push.old_path || '');
   const op = result.op;
@@ -106,6 +109,8 @@ function logPushResult(peer: SyncPeer | undefined, push: PushPayload, result: Pu
     removed: op.removed,
     beforeBytes: op.beforeBytes,
     afterBytes: op.afterBytes,
+    // 「+3 −1 行」之外还要能看出改了哪几行：中枢收到的推送逐条记下改动正文
+    changes: flattenChangeLines([op]),
   };
   if (result.merge === 'conflict') {
     const winner = result.theirWins ? '推送方（较新）' : '中枢（较新）';

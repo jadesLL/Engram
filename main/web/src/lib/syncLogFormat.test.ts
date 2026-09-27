@@ -5,6 +5,7 @@ import {
   buildSyncLogJson,
   buildSyncLogMarkdown,
   dataLabel,
+  entryChangeLines,
   eventCategory,
   eventLabel,
   formatBytes,
@@ -13,6 +14,7 @@ import {
   formatLogClock,
   formatLogTime,
   formatRelative,
+  parseChangeLines,
   type SyncLogEntry,
 } from './syncLogFormat.ts';
 
@@ -138,6 +140,39 @@ test('导出 JSON：条目与筛选说明都带上，且能被 JSON.parse 回来
   assert.equal(parsed.filters.level, 'warn');
   assert.equal(parsed.entries[0].event, 'push-ok');
   assert.equal(parsed.entries[0].data?.bytes, 2048);
+});
+
+test('改动正文：+ / − 行、文件路径与省略提示分别成行，能在条目下方直接渲染', () => {
+  const lines = parseChangeLines([
+    'Wiki/概念/供应商准入.md',
+    '- 旧条款：随到随审',
+    '+ 新条款：2026-10-01 前完成复审',
+    '…（还有 2 行改动未记录）',
+  ]);
+  assert.deepEqual(lines, [
+    { kind: 'file', sign: '', text: 'Wiki/概念/供应商准入.md' },
+    { kind: 'del', sign: '−', text: '旧条款：随到随审' },
+    { kind: 'add', sign: '+', text: '新条款：2026-10-01 前完成复审' },
+    { kind: 'note', sign: '', text: '…（还有 2 行改动未记录）' },
+  ]);
+
+  // 老记录没有 changes（或值不是数组）时：抽屉照旧只显示那一行摘要，不报错
+  assert.deepEqual(entryChangeLines(entry()), []);
+  assert.deepEqual(parseChangeLines(undefined), []);
+  assert.deepEqual(parseChangeLines('+ 单行改动'), [{ kind: 'add', sign: '+', text: '单行改动' }]);
+
+  // 改动正文里的「+ 」「− 」本身是内容的一部分，别被当成前缀吃掉两次
+  assert.deepEqual(parseChangeLines(['+ + 增加了一行加号']), [{ kind: 'add', sign: '+', text: '+ 增加了一行加号' }]);
+  assert.equal(dataLabel('changes'), '改动内容');
+});
+
+test('导出 Markdown：改动正文按 diff 代码块导出', () => {
+  const text = buildSyncLogMarkdown([
+    entry({ data: { ...entry().data, changes: ['- 旧条款', '+ 新条款'] } }),
+  ]);
+  assert.ok(text.includes('- 改动内容：'), '字段中文名照旧');
+  assert.ok(text.includes('```diff'), '改动正文用 diff 代码块，读的人能看出增删');
+  assert.ok(text.includes('- 旧条款') && text.includes('+ 新条款'), '增删行都带出来');
 });
 
 test('导出 Markdown：表格 + 结构化字段清单，管道符转义', () => {
