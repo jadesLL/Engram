@@ -145,6 +145,11 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'peer-token-reset': { label: '重置成员令牌', category: '成员' },
   'role-changed': { label: '角色变更', category: '配置' },
   'config-changed': { label: '同步配置变更', category: '配置' },
+  // 双栈连接（IPv6 优先 → 失败切 IPv4 → IPv4 期间定期回探）
+  'dualstack-ipv4-fallback': { label: 'IPv6 连不上，改用 IPv4', category: '连接' },
+  'dualstack-probe-failed': { label: '回探 IPv6 未成功', category: '连接' },
+  'dualstack-ipv6-recovered': { label: 'IPv6 已恢复，切回优先', category: '连接' },
+  'dualstack-config': { label: '双栈连接设置变更', category: '配置' },
 };
 
 export function eventLabel(event: string): string {
@@ -168,6 +173,11 @@ const DATA_LABELS: Record<string, string> = {
   bytes: '字节数',
   pulledBytes: '拉取字节',
   ms: '耗时',
+  host: '域名',
+  family: '使用的协议族',
+  failures: '连续失败次数',
+  wastedMs: 'IPv6 卡住耗时',
+  probeAfterSuccesses: '回探间隔（次）',
   path: '路径',
   paths: '路径列表',
   from: '原路径',

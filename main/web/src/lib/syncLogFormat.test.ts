@@ -56,6 +56,7 @@ test('事件标签表覆盖服务端全部事件（前端漏标签会导致抽�
     'push-conflict',
     'peer-online', 'peer-offline', 'peer-added', 'peer-removed', 'peer-token-reset',
     'role-changed', 'config-changed',
+    'dualstack-ipv4-fallback', 'dualstack-probe-failed', 'dualstack-ipv6-recovered', 'dualstack-config',
   ];
   // Android 成员端逐条记录：手机上的「同步详情」全靠这些事件名翻译成人话
   const androidEvents = [

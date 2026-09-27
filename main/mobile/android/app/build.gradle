@@ -93,9 +93,17 @@ repositories {
     }
 }
 
+// kotlin-stdlib-common 自 Kotlin 1.9 起已并入 kotlin-stdlib（该构件对 Android/JVM 已无内容），
+// 但 okhttp → okio 的 POM 仍会把它拖进依赖图，一旦离线缓存里没有对应版本就整包解析失败。
+configurations.configureEach {
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-common'
+}
+
 dependencies {
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
     implementation fileTree(include: ['*.jar'], dir: 'libs')
+    // 成员端连中枢走 OkHttp：它的 Dns 接口能按协议族给出地址列表，是「IPv6 优先→失败用 IPv4」的实现基础
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"

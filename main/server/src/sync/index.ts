@@ -27,6 +27,7 @@ import { getSession, runningRunForSession } from '../assistant/repository.js';
 import {
   beginBootstrap,
   clientStatus,
+  dualStackHosts,
   enqueueLocalChange,
   hubConfigured,
   reconcile,
@@ -34,6 +35,13 @@ import {
   stopClientAndWait,
   syncConfigEnabled,
 } from './client.js';
+import {
+  dualStackConfig,
+  resetDualStackState,
+  saveDualStackConfig,
+  type DualStackConfig,
+  type HostFamilyStatus,
+} from './dualStack.js';
 import { currentNodeId, currentRevision, getPageRevision, getPageSyncRevision, listPeers, type SyncKind } from './store.js';
 
 /**
@@ -226,6 +234,11 @@ export interface SyncStatus {
   pendingPulls: number;
   lastSyncAt: string | null;
   lastError: string | null;
+  /**
+   * 双栈连接策略与当前生效的协议族（成员端连中枢域名时用得上）。
+   * hosts 为每个中枢域名的实时记账：走过 IPv6 还是已切 IPv4、还差几次回探。
+   */
+  dualStack: SyncDualStackStatus;
   log: Array<{ id?: number; ts: string; level: string; event: string; detail?: string; scope?: string; peer?: string; data?: Record<string, unknown> }>;
   peers: Array<{
     id: string;
@@ -237,6 +250,10 @@ export interface SyncStatus {
     created_at: string;
     token: string;
   }>;
+}
+
+export interface SyncDualStackStatus extends DualStackConfig {
+  hosts: HostFamilyStatus[];
 }
 
 export function status(): SyncStatus {
@@ -258,6 +275,7 @@ export function status(): SyncStatus {
     pendingPulls: s.pendingPulls,
     lastSyncAt: s.lastSyncAt,
     lastError: s.lastError,
+    dualStack: { ...dualStackConfig(), hosts: dualStackHosts() },
     log: s.log,
     peers:
       role === 'hub'
@@ -335,6 +353,29 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
   });
   await reinitClient();
   return null;
+}
+
+/**
+ * 保存双栈连接策略（设置页「双栈连接」）。
+ * 只影响后续请求的建连选择，不需要重启同步客户端；从「关闭」重新打开时清掉学到的状态，
+ * 让域名重新按 IPv6 优先试一遍（用户往往是修好了 IPv6 才回来打开这个开关的）。
+ */
+export function configureDualStack(input: Partial<DualStackConfig>): DualStackConfig {
+  const before = dualStackConfig();
+  const next = saveDualStackConfig(input);
+  if (!before.enabled && next.enabled) resetDualStackState();
+  const changed = (Object.keys(next) as (keyof DualStackConfig)[]).some((key) => next[key] !== before[key]);
+  if (changed) {
+    logSyncEvent('info', 'dualstack-config', {
+      detail: next.enabled
+        ? `双栈连接已更新：IPv6 连续失败 ${next.failureThreshold} 次或累计 ${Math.round(next.failureWindowMs / 1000)} 秒后改用 IPv4，`
+          + `IPv4 每成功 ${next.probeAfterSuccesses} 次回探一次 IPv6（单次连接超时 ${Math.round(next.connectTimeoutMs / 1000)} 秒）`
+        : '已关闭双栈连接策略：域名连接交回系统默认（IPv6/IPv4 由操作系统排序）',
+      scope: 'app',
+      data: { ...next, previous: { ...before } },
+    });
+  }
+  return next;
 }
 
 /** 按序执行的重初始化锁：快速连续禁用/启用时避免两轮 stop/reconcile/start 交错竞态 */

@@ -4,10 +4,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline as streamPipeline } from 'node:stream/promises';
+import { FormData as UndiciFormData } from 'undici';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
 import { getSetting } from '../lib/db.js';
 import { consumeSseStream } from '../lib/sseStream.js';
+import { dualStackConfig, dualStackFetch, dualStackStatus, type HostFamilyStatus } from './dualStack.js';
 import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted, PagePathTakenError } from '../lib/vault.js';
 import { classifyBrainEntry, isInboxPath } from '../lib/brainPaths.js';
 import { moveToTrash } from '../lib/trash.js';
@@ -282,14 +284,33 @@ function sleep(ms: number): Promise<void> {
 /** 中断在途退避 sleep：stopClient 时让后台循环立即退出，避免配置变更等待最长 30s */
 let sleepAbort: (() => void) | null = null;
 
+/**
+ * 连接中枢的唯一出口（含 SSE 长连接、文件上传下载）：
+ * 域名同时有 A/AAAA 时按双栈策略选协议族——默认 IPv6 优先，IPv6 连不上改用 IPv4，
+ * IPv4 用稳后定期回探一次 IPv6（策略见 sync/dualStack.ts）。
+ * 协议族只在建连那一刻选定：一次传输全程用同一条连接，中途不会被换走。
+ */
+async function hubRequest(pathname: string, init: RequestInit = {}): Promise<Response> {
+  return dualStackFetch(hubUrl() + pathname, init, dualStackConfig(), {
+    onEvent: (event) => {
+      logEvent(event.level, event.event, event.detail, event.data);
+    },
+  });
+}
+
+/** 协议族现状（设置页「双栈连接」直接展示；IP 直连的中枢不产生条目） */
+export function dualStackHosts(): HostFamilyStatus[] {
+  return dualStackStatus();
+}
+
 async function getJson(pathname: string): Promise<any> {
-  const res = await fetch(hubUrl() + pathname, { headers: authHeaders() });
+  const res = await hubRequest(pathname, { headers: authHeaders() });
   if (!res.ok) throw new Error(`hub 返回 ${res.status}: ${pathname}`);
   return res.json();
 }
 
 async function postJson(pathname: string, body: unknown): Promise<any> {
-  const res = await fetch(hubUrl() + pathname, {
+  const res = await hubRequest(pathname, {
     method: 'POST',
     headers: { ...authHeaders(), 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -330,7 +351,7 @@ function applyRemotePage(relPath: string, raw: string, revision: number): void {
 
 async function pullFile(relPath: string): Promise<number> {
   const startedAt = Date.now();
-  const res = await fetch(hubUrl() + `/api/sync/file?path=${encodeURIComponent(relPath)}`, {
+  const res = await hubRequest(`/api/sync/file?path=${encodeURIComponent(relPath)}`, {
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`拉取文件失败 ${res.status}: ${relPath}`);
@@ -616,15 +637,20 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
       return { bytes: Buffer.byteLength(raw, 'utf8'), merged, op: res.op as SyncOpSummary | undefined };
     }
     if (item.kind === 'file') {
-      const form = new FormData();
+      // 必须用 undici 自己的 FormData：hubRequest 走包内 fetch（要按协议族选连接），
+      // 而它只认自己的 FormData 实例——传 Node 全局 FormData 会把 "[object FormData]" 当纯文本发出去，
+      // 中枢 @fastify/multipart 直接 406「the request is not multipart」。
+      const form = new UndiciFormData();
       form.append('path', item.target);
       form.append('node_id', currentNodeId());
       const abs = safeJoin(item.target);
       const fileBody = isInboxPath(item.target)
         ? await fs.openAsBlob(abs, { type: 'application/octet-stream' })
         : new Blob([new Uint8Array(fs.readFileSync(abs))]);
-      form.append('file', fileBody, path.basename(item.target));
-      const res = await fetch(hubUrl() + '/api/sync/file', {
+      // Node 的 Blob 与 undici 的类型同名不同源，运行时按鸭子类型（stream/arrayBuffer/type/size）识别
+      type UndiciFormValue = Parameters<UndiciFormData['append']>[1];
+      form.append('file', fileBody as unknown as UndiciFormValue, path.basename(item.target));
+      const res = await hubRequest('/api/sync/file', {
         method: 'POST',
         headers: authHeaders(),
         body: form,
@@ -839,8 +865,8 @@ async function consumeStream(): Promise<void> {
   if (!running) return;
   streamAbort = new AbortController();
   const deviceName = os.hostname().slice(0, 60);
-  const url = `${hubUrl()}/api/sync/events?node_id=${encodeURIComponent(currentNodeId())}&name=${encodeURIComponent(deviceName)}`;
-  const res = await fetch(url, { headers: authHeaders(), signal: streamAbort.signal });
+  const url = `/api/sync/events?node_id=${encodeURIComponent(currentNodeId())}&name=${encodeURIComponent(deviceName)}`;
+  const res = await hubRequest(url, { headers: authHeaders(), signal: streamAbort.signal });
   if (!res.ok || !res.body) throw new Error(`事件流连接失败: ${res.status}`);
   connected = true;
   syncing = false;
