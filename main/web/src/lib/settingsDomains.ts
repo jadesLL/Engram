@@ -140,11 +140,14 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'agent',
     label: 'Agent 与自动化',
-    desc: '内置 Agent、定时自动整理，以及把知识库接入外部 Agent。',
+    desc: '内置 Agent、定时自动整理与看板提炼节奏，以及把知识库接入外部 Agent。',
     icon: 'ai',
     groups: [
       { id: 'agent-builtin', label: '内置 Agent', icon: 'ai', need: 'agent' },
       { id: 'agent-dream', label: '自动整理（梦境思考）', icon: 'moon', need: 'agent' },
+      // 任务看板提炼：看板不在后台定时跑，间隔（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天）
+      // 只决定「打开看板页时要不要自动重新提炼一次」。与梦境思考同属「按计划的自动化」，排在它后面。
+      { id: 'agent-board', label: '任务看板提炼', icon: 'board', need: 'agent' },
       { id: 'agent-target', label: '外部接入', icon: 'plug', need: 'agent' },
       { id: 'agent-tools', label: '工具与手册', icon: 'wrench', need: 'agent' },
     ],

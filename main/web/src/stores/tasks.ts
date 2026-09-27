@@ -25,6 +25,10 @@ interface BoardPayload {
   sourceNodeId: string;
   sourceNodeLabel: string;
   stale: boolean;
+  /** 自动重新提炼的间隔（天）；0 = 关闭自动，只能手动刷新 */
+  autoDays: number;
+  /** 下一次到期时刻（关闭自动或还没有答案时为空串） */
+  dueAt: string;
   runId: string;
   runStatus: string;
   runStartedAt: string;
@@ -69,6 +73,10 @@ export const useTasksStore = defineStore('tasks', {
     sourceNodeId: '',
     sourceNodeLabel: '',
     stale: false,
+    /** 自动重新提炼的间隔（天）；0 = 关闭自动（页头那个按钮读它显示档位） */
+    autoDays: 0,
+    /** 下一次到期时刻（关闭自动或还没有答案时为空串） */
+    dueAt: '',
     sessionId: '',
     runId: '',
     runStatus: '',
@@ -105,6 +113,8 @@ export const useTasksStore = defineStore('tasks', {
       this.sourceNodeId = payload.sourceNodeId || '';
       this.sourceNodeLabel = payload.sourceNodeLabel || '';
       this.stale = Boolean(payload.stale);
+      this.autoDays = Number(payload.autoDays) || 0;
+      this.dueAt = payload.dueAt || '';
       this.runId = payload.runId || '';
       this.runStatus = payload.runStatus || '';
       this.runStartedAt = payload.runStartedAt || '';
@@ -116,8 +126,9 @@ export const useTasksStore = defineStore('tasks', {
 
     /**
      * 拉一次现状；返回是否需要重新生成。
-     * 三种情况都要重跑：没有答案、超过 6 小时、或者答案是老契约的（v1 没有日期/客户/端组，
-     * 按天视图与筛选都摊不开）——老答案也照样先显示着，跑完自动换版。
+     * 三种情况都要重跑：没有答案、已到自动提炼的间隔（服务端按用户配的天数算 stale）、
+     * 或者答案是老契约的（v1 没有日期/客户/端组，按天视图与筛选都摊不开）——
+     * 老答案也照样先显示着，跑完自动换版；关闭自动时不看 stale，只有手动刷新才重跑。
      */
     async load(): Promise<boolean> {
       this.loading = true;

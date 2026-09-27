@@ -128,8 +128,8 @@
           <UninstallSection />
         </section>
 
-        <!-- Agent 与自动化：内置 Agent / 自动整理（梦境思考）/ 外部接入 / 工具与手册。
-             自动整理经具名插槽插在「内置 Agent」之后，顺序与导航一致。 -->
+        <!-- Agent 与自动化：内置 Agent / 自动整理（梦境思考）/ 任务看板提炼 / 外部接入 / 工具与手册。
+             两块自动化都经具名插槽插在「内置 Agent」之后（梦境思考在前、看板提炼紧跟），顺序与导航一致。 -->
         <section
           v-if="capabilities.features.agentAdmin"
           v-show="activeDomain === 'agent'"
@@ -140,6 +140,7 @@
           <AgentPanel>
             <template #after-builtin>
               <DreamSection />
+              <BoardSection />
             </template>
           </AgentPanel>
         </section>
@@ -159,6 +160,7 @@ import UninstallSection from '../components/settings/UninstallSection.vue';
 import DesktopAppSection from '../components/settings/DesktopAppSection.vue';
 import AgentPanel from '../components/settings/AgentPanel.vue';
 import DreamSection from '../components/settings/DreamSection.vue';
+import BoardSection from '../components/settings/BoardSection.vue';
 import SyncPanel from '../components/settings/SyncPanel.vue';
 import UpdatePanel from '../components/settings/UpdatePanel.vue';
 import StoragePanel from '../components/settings/StoragePanel.vue';

@@ -5,6 +5,15 @@
       <span class="sub">{{ headSub }}</span>
       <div class="spacer" />
       <div class="head-actions">
+        <button
+          v-if="canConfigureAuto"
+          class="btn ghost"
+          type="button"
+          v-tooltip="'自动提炼的间隔（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天）在设置里调'"
+          @click="openAutoSettings"
+        >
+          <Icon name="settings" :size="14" />自动提炼：{{ autoLabel }}
+        </button>
         <button v-if="board" class="btn ghost" type="button" @click="copyBoard">
           <Icon name="clipboard" :size="14" />复制清单
         </button>
@@ -182,6 +191,7 @@ import AppSpinner from '../components/ui/AppSpinner.vue';
 import Icon from '../components/Icon.vue';
 import { api } from '../api';
 import { useTasksStore } from '../stores/tasks';
+import { useRuntimeCapabilities } from '../lib/capabilities';
 import {
   boardCardCount,
   boardFacets,
@@ -199,18 +209,28 @@ import {
   type TaskCard,
 } from '../lib/taskBoard';
 import { formatSessionTime } from '../lib/chatTime';
+import { boardAutoLabel } from '../lib/boardAuto';
 import { notify } from '../lib/notify';
 import { openPageStream } from '../lib/events';
 
 /**
- * 任务看板页：进来先看缓存（六小时内的直接显示），过期或没有就自动让 Agent 重新提炼，
- * 提炼期间不挡旧看板；跑完自动换成新的。整页只读，不写知识库。
+ * 任务看板页：进来先看缓存——距上次提炼没超过「自动提炼」配的间隔就直接显示，
+ * 到点了（或还没有答案）才自动让 Agent 重新提炼，提炼期间不挡旧看板，跑完自动换成新的。
+ * 间隔在设置里调（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天），页头那个按钮只负责跳过去。
+ * 整页只读，不写知识库。
  *
  * 视图与筛选都在客户端做（数据已经是结构化的）：按天＝1、2、3… 每天要干什么；
  * 分列＝按来源三节。三档筛选共用，逾期单独一块放最前。
  */
 const router = useRouter();
 const tasks = useTasksStore();
+const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
+/**
+ * 能不能在这儿跳去改档位：档位是「Agent 与自动化」大类里的分组，那一类只在能管 Agent 的端
+ * （桌面端 / Docker）出现——手机端 agentAdmin=false，按钮就藏起来（副标题仍显示当前档位），
+ * 免得点进去落在设置页第一个大类上，像是点坏了。
+ */
+const canConfigureAuto = computed(() => capabilities.value.features.agentAdmin);
 /** 看板被别端同步更新时的 SSE 订阅（离开页面即断开） */
 let closeBoardStream: (() => void) | undefined;
 
@@ -327,12 +347,16 @@ const sections = computed(() => {
   }));
 });
 
-/** 顶部副标题：一眼看清这份看板「上次更新时间」、以及是不是别端同步过来的 */
+/** 页头「自动提炼」按钮上的档位文案（0 = 关闭自动；口径与设置页同一处：lib/boardAuto） */
+const autoLabel = computed(() => boardAutoLabel(tasks.autoDays));
+
+/** 顶部副标题：一眼看清这份看板「上次更新时间」、自动提炼档位，以及是不是别端同步过来的 */
 const headSub = computed(() => {
   if (tasks.running) return tasks.answer ? '正在重新提炼，下面是上一版' : '正在从知识库提炼';
   if (!tasks.generatedAt) return '点一下就按知识库生成下周的活';
   const from = !tasks.local && tasks.sourceNodeLabel ? `（来自 ${tasks.sourceNodeLabel}）` : '';
-  return `上次更新：${formatSessionTime(tasks.generatedAt)}${from}${tasks.stale ? ' · 已超过 6 小时' : ''}`;
+  const auto = tasks.autoDays > 0 ? `自动提炼：${autoLabel.value}` : '自动提炼已关闭';
+  return `上次更新：${formatSessionTime(tasks.generatedAt)}${from} · ${auto}`;
 });
 
 const emptyHint = computed(() =>
@@ -353,7 +377,7 @@ const notice = computed<{ tone: 'danger' | 'warn'; text: string; action?: { labe
     };
   }
   if (!tasks.running && tasks.stale && tasks.answer) {
-    return { tone: 'warn', text: '这份看板超过 6 小时了，建议刷新一次。' };
+    return { tone: 'warn', text: `这份看板已超过「${autoLabel.value}」，建议刷新一次。` };
   }
   return null;
 });
@@ -390,6 +414,19 @@ async function refresh() {
   await tasks.refresh();
 }
 
+/**
+ * 跳设置页的「任务看板提炼」分组（档位只有一个编辑入口，就放设置里，看板页只显示当前档位）。
+ * 用 ?section=agent&anchor=agent-board 深链：设置页按这两个参数直接落在大类与分组上。
+ * 端上没法管 Agent 时（锚点所在大类不渲染）不跳，直接说清楚去哪儿调。
+ */
+function openAutoSettings() {
+  if (!canConfigureAuto.value) {
+    notify.info('自动提炼的档位在桌面端 / Docker 端的「设置 → Agent 与自动化 → 任务看板提炼」里调');
+    return;
+  }
+  void router.push({ path: '/settings', query: { section: 'agent', anchor: 'agent-board' } });
+}
+
 /** 依据 → 落点：文件直接进预览/编辑器，页面按标题查 id 再跳 */
 async function openSource(card: TaskCard) {
   const target = taskCardTarget(card);
@@ -424,6 +461,8 @@ async function copyBoard() {
 }
 
 onMounted(async () => {
+  // 能力位（能否就地跳设置改档位）与看板数据并行取，不互相等
+  void loadCapabilities();
   const needsRefresh = await tasks.load();
   // 没有答案或已过期就自动重跑；正在跑的那一轮由 store 接上事件流，不重复触发
   if (needsRefresh && !tasks.running) await tasks.refresh();
