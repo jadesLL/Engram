@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cssPath = path.resolve(here, '..', 'styles', 'settings.css');
 const viewPath = path.resolve(here, '..', 'views', 'SettingsView.vue');
+const syncPanelPath = path.resolve(here, '..', 'components', 'settings', 'SyncPanel.vue');
 const css = fs.readFileSync(cssPath, 'utf8');
 
 /** 取选择器的声明块（这里的目标规则都没有嵌套，`[^}]` 够用） */
@@ -93,4 +94,59 @@ test('设置页 JS 认的是内容列这根滚动条，且两个滚动容器都�
   );
   assert.match(view, /paneEl\?\.addEventListener\('scroll'/, '内容列的滚动没被监听：滚动高亮不跟着动');
   assert.match(view, /pageEl\.addEventListener\('scroll'/, '整页滚动（窄屏）没被监听：窄屏下滚动高亮失效');
+});
+
+/**
+ * 2026-09-27 用户报：「每一个子分支的距离不一样，折叠起来它们的间距都不一样——页面 A 里有 a1、a2、a3，
+ * 全折叠后 a1 和 a2、a2 和 a3 的间距不一样」。
+ *
+ * 根因是分组间距里带着一条 :last-child 特例（最后一组只留 8px）：分组经常被包在面板容器里
+ * （DataPanel、DreamSection、UpdatePanel 都会多套一层），于是「页面中间的某一组」也会被当成最后一组——
+ * 知识库数据页「备份与恢复 ↔ 回收站」和 Agent 页「自动整理 ↔ 外部接入」实测只有 8px，别处都是 22px。
+ * 版式没法用单测跑，所以按源码锁住这条不变量：谁再按 DOM 位置给分组单独调间距，折叠后的节奏就重新参差。
+ */
+test('分组间距唯一：折叠后相邻分组的间距必须处处一样', () => {
+  assert.match(
+    ruleBody(css, '.settings-group'),
+    /margin:\s*0 24px 22px/,
+    '分组底部间距不再是统一的 22px：折叠后 a1↔a2 与 a2↔a3 的节奏会不一致',
+  );
+  assert.doesNotMatch(
+    css,
+    /\.settings-group:last-child/,
+    '又按 :last-child 给「最后一组」单独调间距了：被面板容器包住的最后一组会拿到另一个间距（2026-09-27 用户报的）',
+  );
+  assert.match(
+    ruleBody(css, '.settings-content'),
+    /padding-bottom:\s*72px/,
+    '页面底部留白不再由内容列承担：取消最后一组的特例后，最后一张卡片会贴着底边',
+  );
+});
+
+/**
+ * 2026-09-27 用户提的两条界面口径：
+ *  ①「在整个系统里，灰色的字一般都代表设置的说明。那如果不是说明的话，就加一个底框或者改一个颜色」——
+ *    会变的实时状态（双栈连接走哪一族、同步摘要）统一走 .state-strip：浅底 + 细描边 + 状态点；
+ *  ②「很多提示性的文字和上面的设置挨得太近」——卡内顶部留白与设置项说明的间距都要留够。
+ */
+test('实时状态走状态条：不再是灰色小字，说明也不贴住上方设置', () => {
+  const strip = ruleBody(css, '.state-strip');
+  assert.match(strip, /border:\s*1px solid var\(--border\)/, '状态条没有底框：它和灰色说明文字又会混在一起');
+  assert.match(strip, /background:\s*var\(--bg-secondary\)/, '状态条没有底色：看不出这是「查出来的状态」');
+  const sync = fs.readFileSync(syncPanelPath, 'utf8');
+  assert.match(
+    sync,
+    /class="dualstack-state state-strip"/,
+    '双栈连接的实时状态行不再走状态条：又变回灰色小字了',
+  );
+  assert.match(
+    ruleBody(css, '.group-body'),
+    /padding:\s*12px 16px 16px/,
+    '分组内容区顶部留白被压回 4px：卡内第一段提示会重新贴住色带',
+  );
+  assert.match(
+    ruleBody(css, '.settings-native .setting-copy span'),
+    /margin-top:\s*6px/,
+    '设置项说明与标题的间距被压回去：又变成「提示和上面的设置挨太近」',
+  );
 });

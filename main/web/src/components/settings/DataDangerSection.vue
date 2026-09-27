@@ -135,7 +135,7 @@ async function wipeAiLogs() {
   font-size: 13px;
 }
 .danger-row p {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.5;
