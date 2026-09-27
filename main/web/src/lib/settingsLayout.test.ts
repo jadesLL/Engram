@@ -152,6 +152,38 @@ test('实时状态走状态条：不再是灰色小字，说明也不贴住上�
 });
 
 /**
+ * 2026-09-29 用户报：「双栈连接那个 UI……和上面的贴得太近，而且不能收缩，你应该让它能收缩」，
+ * 随后追加：「把它做成一个独立的吧，就是独立的一个算是三级菜单」。
+ * 版式没法用单测跑，按源码锁住这次定下来的两条口径：
+ *  ① 它是「多端同步」下自己的分组（SettingsGroup + anchor），不再嵌在同步群组卡里——
+ *    分组间距、色带折叠、折叠态持久化都由 settings.css / SettingsGroup 统一给，
+ *    「贴着上面的绑定表单」和「不能收缩」这两个毛病从结构上就不会回来；
+ *  ② 只在本机作为成员时才渲染，且把同一条件登记进导航（否则中枢设备上是个点不动的死锚点）。
+ * 分组顺序与导航登记另有守卫：settingsDomains.test.ts「导航顺序 = 页面渲染顺序」。
+ */
+test('双栈连接：独立成组，不再是同步群组卡内贴着表单的内容块', () => {
+  const sync = fs.readFileSync(syncPanelPath, 'utf8');
+  assert.match(sync, /anchor="sync-dualstack"/, '双栈连接不再是独立分组：多端同步的导航里没有它自己的目录项');
+  assert.match(sync, /class="dualstack-config"/, '独立分组里没有双栈内容区：内容可能又挪回同步群组卡里了');
+  assert.match(sync, /:badge="dualStackBadge"/, '色带上没有协议族徽标：收起后看不出现在走哪一族');
+  assert.match(
+    sync,
+    /const showDualStack = computed\(\(\) => status\.value\?\.role === 'member'\)/,
+    '显隐条件变了：双栈策略只用在「成员连中枢域名」这条链路上',
+  );
+  assert.match(
+    sync,
+    /useSettingsAnchorVisible\('sync-dualstack', showDualStack\)/,
+    '渲染条件没登记进导航：中枢设备会留下一个点不动的死锚点',
+  );
+  assert.doesNotMatch(
+    sync,
+    /class="dualstack-block"/,
+    '双栈连接又变回同步群组卡内的平铺内容块了：它会重新贴住上面的绑定表单（2026-09-29 用户报的）',
+  );
+});
+
+/**
  * 2026-09-27 用户报「最外边这根滑动条没用」：桌面档设置页本该只有目录列 / 内容列两根滚动条，
  * 但只要有一个绝对定位元素漏出设置页壳层（浮层残留、第三方库节点……），Home 的内容区
  * .content 就会被顶高 264px，多出一根「拖了也看不到任何东西」的外层滚动条。

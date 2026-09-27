@@ -102,7 +102,8 @@
           <DataDangerSection />
         </section>
 
-        <!-- 多端同步：同步群组 + DDNS 直连域名（后者只在担任中枢时渲染并登记） -->
+        <!-- 多端同步：同步群组 + 双栈连接（成员端专属）+ DDNS 直连域名（中枢端专属；
+             后两个分组按角色渲染并登记，见 SyncPanel 里的 useSettingsAnchorVisible） -->
         <section v-show="activeDomain === 'sync'" class="settings-domain is-multi" data-domain="sync">
           <DomainHead :domain="domainOf('sync')" />
           <div id="panel-sync">
