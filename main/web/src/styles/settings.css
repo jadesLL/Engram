@@ -274,8 +274,17 @@
 .settings-group {
   margin: 0 24px 22px;
 }
-.settings-group:last-child {
-  margin-bottom: 8px;
+/*
+ * 2026-09-27 起：所有分组统一 22px，删掉了原来的「最后一组少留一点」（那条用的是 :last-child 特例）。
+ * 原因是分组经常被包在面板容器里（DataPanel、DreamSection、UpdatePanel 都会多套一层 <section>），
+ * 于是「页面中间的某一组」也会被当成最后一组：知识库数据页的「备份与恢复」、Agent 页的「自动整理」
+ * 之后只剩 8px，别处都是 22px——全部折叠时 a1↔a2 与 a2↔a3 肉眼可见不一样（用户报的就是这个）。
+ * 页面底部留白由 .settings-content 的 padding-bottom 承担，不再靠最后一组少留。
+ */
+/* 组里再套组（如中枢角色的「DDNS 直连域名」）：缩进由外层卡片给，内层不再叠加左右边距 */
+.settings-group .settings-group {
+  margin-left: 0;
+  margin-right: 0;
 }
 .group-card {
   overflow: hidden;
@@ -324,7 +333,10 @@
   white-space: nowrap;
 }
 .group-body {
-  padding: 4px 16px 16px;
+  /* 2026-09-27：顶部留白从 4px 提到 12px。以前卡内第一段内容（说明、状态、表单）紧贴色带下沿，
+     和「设置项之间」的留白不成比例，看着像没写完。.flush 仍是 0：那种内容自带边框与内边距的
+     setting-row 列表要贴着色带才连成一张卡。 */
+  padding: 12px 16px 16px;
 }
 .group-body.flush {
   padding: 0;
@@ -398,7 +410,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 13px 20px 2px;
+  padding: 14px 20px 4px;
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -406,11 +418,45 @@
 }
 .sub-hint {
   margin: 0;
-  padding: 2px 20px 0;
+  /* 小分区标题下面那行说明：与标题拉开 6px，别贴在一起（2026-09-27） */
+  padding: 6px 20px 0;
   color: var(--text-faint);
   font-size: 11.5px;
   line-height: 1.5;
 }
+
+/* ---------- 状态条：会变的实时状态，不是说明文字（2026-09-27） ----------
+ * 约定：灰色小字只写「说明」——长期不变、不随运行状态变化（.group-hint、.setting-copy span、
+ * .integration-note 都是这一类）；会变的值（现在走 IPv6 还是 IPv4、上次／下次运行时间、指向哪个地址）
+ * 一律用状态条：浅底 + 细描边 + 前置状态点，正文用次级色而不是 faint。
+ * 用户反馈：「灰色的字一般都代表设置的说明，那如果不是说明的话，就加一个底框或者改一个颜色」。
+ */
+.state-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.state-strip .state-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  /* 首行文字 19.2px 高：状态点压在首行的光学中线上 */
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.state-strip.tone-ok .state-dot { background: var(--success); }
+.state-strip.tone-warn .state-dot { background: var(--warning); }
+.state-strip.tone-busy .state-dot { background: var(--accent); }
 
 /* 危险分组：警示色常驻可见（色带、图标、描边都是红的） */
 .level-danger .group-card {
@@ -488,7 +534,8 @@
 }
 .settings-native .setting-copy span {
   display: block;
-  margin-top: 4px;
+  /* 行标题下面的说明：4px 太挤，给到 6px（2026-09-27 用户报「提示性的文字和上面的设置挨得太近」） */
+  margin-top: 6px;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;

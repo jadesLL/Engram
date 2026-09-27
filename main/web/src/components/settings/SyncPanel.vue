@@ -25,10 +25,11 @@
          没有级别/成员/时间，还把设置页拉得很长。摘要放最上面（角色卡/成员管理之前），
          中枢与成员都先看到它，再往下看各自的配置。 -->
     <div v-if="status && status.role !== 'none'" class="sync-summary">
-      <div class="summary-line">
-        <span class="dot" :class="summaryHealthy ? 'on' : 'off'" aria-hidden="true" />
+      <!-- 运行状态摘要：实时状态同样走状态条（底框 + 状态点），别和灰色说明文字混在一起 -->
+      <div class="summary-line state-strip" :class="summaryHealthy ? 'tone-ok' : 'tone-warn'">
+        <span class="state-dot" aria-hidden="true" />
         <strong :class="summaryHealthy ? 'ok' : 'bad'">{{ connectionLabel }}</strong>
-        <span class="faint small">{{ summaryDetail }}</span>
+        <span class="summary-detail">{{ summaryDetail }}</span>
       </div>
       <p v-if="status.lastError" class="sync-error">最近错误：{{ status.lastError }}</p>
       <div class="sync-actions">
@@ -174,7 +175,11 @@
             </span>
           </span>
         </label>
-        <p class="dualstack-state faint small">{{ dualStackStateText }}</p>
+        <!-- 实时状态（会变）走状态条：底框 + 状态点，与上面的灰色说明文字区分开（2026-09-27） -->
+        <p v-if="dualStackStateText" class="dualstack-state state-strip" :class="dualStackTone">
+          <span class="state-dot" aria-hidden="true" />
+          <span>{{ dualStackStateText }}</span>
+        </p>
         <div v-show="dualStack.enabled" class="dualstack-fields">
           <div class="field-row">
             <label for="ds-failures">判定 IPv6 不通：连续失败</label>
@@ -465,6 +470,16 @@ const dualStackStateText = computed(() => {
   }).join('；');
 });
 
+/**
+ * 双栈状态条的语气：正在走 IPv6 = 正常；已切到 IPv4 = 需要留意（回探会自己切回来）；
+ * 关掉策略、或还没连过中枢域名 = 中性（不是故障）。
+ */
+const dualStackTone = computed(() => {
+  const ds = status.value?.dualStack;
+  if (!ds || !ds.enabled || !ds.hosts.length) return 'tone-muted';
+  return ds.hosts.some((host) => host.family === 4) ? 'tone-warn' : 'tone-ok';
+});
+
 async function saveDualStack(auto = false): Promise<void> {
   const payload = {
     enabled: dualStack.value.enabled,
@@ -742,23 +757,20 @@ onUnmounted(() => {
 }
 .sync-actions { display: flex; gap: 10px; }
 
-/* 运行状态摘要：一眼看出「正常不正常」，细节在「同步详情」独立窗口里（设置页不再被日志拉长） */
+/* 运行状态摘要：一眼看出「正常不正常」，细节在「同步详情」独立窗口里（设置页不再被日志拉长）。
+   实时状态用全局 .state-strip（底框 + 状态点），这里只留摘要自己的排版 */
 .sync-summary {
-  margin: 20px 4px 16px;
+  margin: 8px 4px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .summary-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
   font-size: 13px;
 }
 .summary-line strong.ok { color: var(--success, #2e9e5b); }
 .summary-line strong.bad { color: var(--danger, #d64545); }
-.summary-line .small { opacity: 0.75; }
 .sync-summary .sync-actions { align-items: center; }
 .sync-summary .btn {
   display: inline-flex;
@@ -784,7 +796,7 @@ onUnmounted(() => {
   border-radius: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 .dualstack-toggle {
   display: flex;
@@ -793,8 +805,8 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .dualstack-toggle input { margin-top: 3px; }
-.dualstack-toggle > span { display: flex; flex-direction: column; gap: 4px; }
-.dualstack-state { margin: 0; line-height: 1.6; word-break: break-all; }
+.dualstack-toggle > span { display: flex; flex-direction: column; gap: 6px; }
+.dualstack-state { margin: 0; word-break: break-all; }
 .dualstack-fields { display: flex; flex-direction: column; gap: 12px; }
 .ds-inputs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ds-inputs input { width: 92px; }
