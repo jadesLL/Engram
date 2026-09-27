@@ -39,10 +39,12 @@
       <!-- 本页目录：一级开关（原先埋在「显示」二级菜单里，读者翻不到）。
            宽屏切右侧常驻目录列（跟随持久偏好），≤1024px 开合贴底浮层面板（只属于本次阅读） -->
       <button
+        ref="outlineToolRef"
         class="reading-tool outline-tool"
         type="button"
         :disabled="outline.length === 0"
         :aria-pressed="outlineVisible"
+        aria-haspopup="dialog"
         v-tooltip="outline.length === 0 ? '本页没有小标题，无法生成目录' : (outlineVisible ? '收起本页目录' : '展开本页目录')"
         @click="toggleOutline"
       >
@@ -62,9 +64,13 @@
         >
           <div v-if="compactToolbar" class="settings-mask" @click="closeMore" />
           <div
+            ref="settingsSheetRef"
             class="reading-settings"
             :role="compactToolbar ? 'dialog' : undefined"
+            :aria-modal="compactToolbar ? 'true' : undefined"
+            :tabindex="compactToolbar ? -1 : undefined"
             :aria-label="compactToolbar ? '阅读设置' : undefined"
+            @keydown="onSheetKeydown($event, settingsSheetRef)"
           >
             <header v-if="compactToolbar" class="settings-sheet-head">
               <h4>阅读设置</h4>
@@ -193,6 +199,7 @@
       <!-- 手机档顶栏常驻「更多」：低频设置收进浮层，第一行只留返回编辑 / 目录 / 主题 / 更多 -->
       <button
         v-if="compactToolbar"
+        ref="moreToolRef"
         class="reading-tool more-tool"
         type="button"
         aria-haspopup="dialog"
@@ -246,9 +253,13 @@
           <!-- 点遮罩关面板（与 RelatedMenu 同一套面板语言） -->
           <div v-if="outlineIsPanel" class="outline-mask" @click="closeOutlinePanel" />
           <aside
+            ref="outlineSheetRef"
             class="reading-outline"
             :role="outlineIsPanel ? 'dialog' : undefined"
+            :aria-modal="outlineIsPanel ? 'true' : undefined"
+            :tabindex="outlineIsPanel ? -1 : undefined"
             aria-label="本页目录"
+            @keydown="onSheetKeydown($event, outlineSheetRef)"
           >
             <h2>
               <Icon name="list-tree" :size="15" /> 本页目录
@@ -380,6 +391,13 @@ const toolbarEl = ref<HTMLElement>();
 const mainEl = ref<HTMLElement>();
 const contentEl = ref<HTMLDivElement>();
 const outlineNavEl = ref<HTMLElement>();
+/** ≤1024px 目录浮层容器（Teleport 到 body）：焦点管理用，见 focusSheet */
+const outlineSheetRef = ref<HTMLElement>();
+/** ≤640px 阅读设置浮层容器（Teleport 到 body）：同上 */
+const settingsSheetRef = ref<HTMLElement>();
+/** 触发浮层的顶栏按钮：关闭面板时把焦点还回去（触屏点按不留焦点，必须有兜底） */
+const outlineToolRef = ref<HTMLButtonElement>();
+const moreToolRef = ref<HTMLButtonElement>();
 const fontPickerEl = ref<HTMLElement>();
 const fontMenuEl = ref<HTMLElement>();
 const fontMenuOpen = ref(false);
@@ -564,13 +582,69 @@ function toggleNumberingMenu() {
 
 /* ---------- 浮层面板（≤1024px 目录 / ≤640px 阅读设置） ---------- */
 
+/**
+ * 浮层面板的焦点管理。
+ *
+ * 两个面板都 Teleport 到 body：打开后焦点还留在顶栏按钮上，键盘用户 Tab 一下就跑回正文
+ * （面板在组件的 DOM 树外，Shift+Tab 也回不来），读屏软件也不会念「对话框已打开」。
+ * 所以打开时把焦点送进面板、Tab 在面板内循环，关闭时还给触发它的那个按钮。
+ */
+let sheetReturnFocus: HTMLElement | null = null;
+
+async function focusSheet(root: HTMLElement | null | undefined, trigger: HTMLElement | null | undefined) {
+  if (!root) return;
+  const active = document.activeElement as HTMLElement | null;
+  // 触屏点按钮不会留下焦点（activeElement 还是 body），所以再给一个明确的回焦兜底
+  sheetReturnFocus = active && active !== document.body ? active : (trigger ?? null);
+  await nextTick();
+  root.focus({ preventScroll: true });
+}
+
+function restoreSheetFocus() {
+  const target = sheetReturnFocus;
+  sheetReturnFocus = null;
+  if (target?.isConnected) target.focus({ preventScroll: true });
+}
+
+/** 面板内 Tab 循环：到末尾再 Tab 回到第一个，Shift+Tab 反之 */
+function onSheetKeydown(event: KeyboardEvent, root: HTMLElement | null | undefined) {
+  if (event.key !== 'Tab' || !root) return;
+  const focusables = Array.from(
+    root.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  );
+  if (focusables.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  const inside = active ? root.contains(active) : false;
+  if (event.shiftKey) {
+    if (!inside || active === first || active === root) {
+      event.preventDefault();
+      last.focus();
+    }
+  } else if (!inside || active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function closeOutlinePanel() {
   mobileOutlineOpen.value = false;
+  restoreSheetFocus();
 }
 
 function toggleMore() {
-  if (moreOpen.value) closeMore();
-  else moreOpen.value = true;
+  if (moreOpen.value) {
+    closeMore();
+    return;
+  }
+  moreOpen.value = true;
+  void focusSheet(settingsSheetRef.value, moreToolRef.value);
 }
 
 function closeMore() {
@@ -579,12 +653,13 @@ function closeMore() {
   fontMenuOpen.value = false;
   widthMenuOpen.value = false;
   displayMenuOpen.value = false;
+  restoreSheetFocus();
 }
 
 /** 收掉本组件自己的浮层面板；收了任意一层返回 true（Esc 与安卓返回键共用一套判断） */
 function closeTransientPanels(): boolean {
   if (mobileOutlineOpen.value) {
-    mobileOutlineOpen.value = false;
+    closeOutlinePanel();
     return true;
   }
   if (moreOpen.value) {
@@ -598,7 +673,12 @@ function toggleOutline() {
   /* ≤1024px 目录是浮层面板：开合是本次阅读的临时状态，不写 localStorage
      （桌面常驻列才跟随持久偏好，桌面行为保持原样） */
   if (outlineIsPanel.value) {
-    mobileOutlineOpen.value = !mobileOutlineOpen.value;
+    if (mobileOutlineOpen.value) {
+      closeOutlinePanel();
+      return;
+    }
+    mobileOutlineOpen.value = true;
+    void focusSheet(outlineSheetRef.value, outlineToolRef.value);
     return;
   }
   updatePreferences({ outline: !preferences.value.outline });
@@ -875,7 +955,8 @@ async function scrollToHeading(id: string) {
   const heading = contentEl.value?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
   if (!heading) return;
   if (outlineIsPanel.value && mobileOutlineOpen.value) {
-    mobileOutlineOpen.value = false;
+    // 走 closeOutlinePanel：顺手把焦点还给顶栏「目录」按钮（面板一收，焦点原本会掉到 body）
+    closeOutlinePanel();
     await nextTick();
   }
   const reader = readerEl.value;

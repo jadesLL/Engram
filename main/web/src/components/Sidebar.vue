@@ -781,6 +781,14 @@ function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) 
   const count = Number(page.assetCount || 0);
   const items: ContextMenuItem[] = [
     {
+      id: 'download',
+      label: '下载',
+      icon: 'download',
+      // 与资料行同一套动作：正文带图片时服务端打成 zip（md + assets/），这里先说清楚
+      hint: count ? `含 ${count} 张图` : undefined,
+      action: () => downloadOne(page.path),
+    },
+    {
       id: 'assets',
       label: '查看引用图片',
       icon: 'image',

@@ -694,27 +694,41 @@ function nudgeDrawerWidth(delta: number) {
 
 let resizeStartX = 0;
 let resizeStartWidth = 0;
+/**
+ * 拖动阈值（px）：触屏上为了好点，手柄热区被放大到 44px（见文件末尾的 hover:none 块），
+ * 手指落上去必然有几像素抖动——没有阈值就会「一点手柄宽度就变」，用户以为点坏了。
+ * 越过阈值才进入真正的拖动：这之前不动宽度、不给正文关过渡。
+ */
+const RESIZE_START_THRESHOLD = 6;
+let resizePending = false;
 
 function startResize(event: PointerEvent) {
   if (event.button !== 0) return;
   event.preventDefault();
   resizeStartX = event.clientX;
   resizeStartWidth = drawerWidth.value;
-  dragWidth.value = resizeStartWidth;
-  // 拖动中正文让位不做过渡：卡片跟手，正文也跟手，不会落后半拍被卡片压住
-  app.chatDragging = true;
+  resizePending = true;
+  dragWidth.value = null;
   const handle = event.currentTarget as HTMLElement;
   try {
     handle.setPointerCapture(event.pointerId);
   } catch { /* 拿不到指针捕获也能靠元素自身的 pointermove 跟手 */ }
-  document.body.style.userSelect = 'none';
-  document.body.style.cursor = 'col-resize';
 }
 
 /** 手柄贴在抽屉左缘：向左拖是加宽，位移取反；越过 70% 直接交棒给满窗 */
 function onResizeMove(event: PointerEvent) {
+  const dx = event.clientX - resizeStartX;
+  if (resizePending) {
+    if (Math.abs(dx) < RESIZE_START_THRESHOLD) return;
+    resizePending = false;
+    dragWidth.value = resizeStartWidth;
+    // 真正开始拖了才对正文关过渡：卡片跟手，正文也跟手，不会落后半拍被卡片压住
+    app.chatDragging = true;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+  }
   if (dragWidth.value === null) return;
-  const next = Math.round(resizeStartWidth - (event.clientX - resizeStartX));
+  const next = Math.round(resizeStartWidth - dx);
   if (next > dockMaxWidth.value) {
     snapToFull();
     return;
@@ -723,14 +737,16 @@ function onResizeMove(event: PointerEvent) {
 }
 
 function endResize(event: PointerEvent) {
-  if (dragWidth.value === null) return;
-  const width = dragWidth.value;
+  const wasDragging = dragWidth.value !== null;
+  resizePending = false;
   const handle = event.currentTarget as HTMLElement;
   try {
     handle.releasePointerCapture(event.pointerId);
   } catch { /* 已经释放过 */ }
+  // 只是点/碰了一下手柄、没越过阈值：不动宽度也不写偏好（免得把「跟随窗口」意外钉成固定值）
+  if (!wasDragging) return;
+  const width = dragWidth.value as number;
   stopResize();
-  // 只是点了一下手柄、宽度没变：不动偏好（免得把「跟随窗口」意外钉成固定值）
   if (width !== resizeStartWidth) setDrawerWidth(width);
 }
 
@@ -3249,6 +3265,17 @@ onUnmounted(() => {
     content: '';
     position: absolute;
     inset: -9px -6px;
+  }
+
+  /* 拖宽手柄：8px 命中区在手指上太窄，触屏放大到 44px。细线位置保持不变——
+     left 跟着平移（-22 + 21 = 原 -4 + 3），视觉上还是卡片左缘那一条。
+     放大命中区不会变成「一碰就改宽」：脚本里有 6px 拖动阈值（RESIZE_START_THRESHOLD） */
+  .drawer-resizer {
+    left: -22px;
+    width: 44px;
+  }
+  .drawer-resizer::before {
+    left: 21px;
   }
 }
 </style>
