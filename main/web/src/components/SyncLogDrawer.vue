@@ -145,6 +145,27 @@
                 <span class="detail">{{ entry.detail || '—' }}</span>
                 <Icon class="caret" :class="{ open: isSyncLogExpanded(entry.id) }" name="chevron-down" :size="13" />
               </button>
+              <!-- 「这个文件改了什么」：条目下方直接列出改动正文（+ 新增 / − 删除），
+                   折叠时只看前几行，点开条目看全部；没有改动正文的记录不占地方 -->
+              <div v-if="entryChangeLines(entry).length" class="log-diff" :class="{ 'is-open': isSyncLogExpanded(entry.id) }">
+                <div
+                  v-for="(line, index) in visibleChangeLines(entry)"
+                  :key="index"
+                  class="diff-line"
+                  :class="line.kind"
+                >
+                  <span class="sign">{{ line.sign }}</span>
+                  <span class="text">{{ line.text }}</span>
+                </div>
+                <button
+                  v-if="hiddenChangeCount(entry)"
+                  class="diff-more"
+                  type="button"
+                  @click="toggleSyncLogEntry(entry.id)"
+                >
+                  还有 {{ hiddenChangeCount(entry) }} 行改动，点开看全部
+                </button>
+              </div>
               <div v-if="isSyncLogExpanded(entry.id)" class="log-data">
                 <div class="data-grid">
                   <template v-for="item in dataEntries(entry)" :key="item.key">
@@ -194,6 +215,7 @@ import {
   clearSyncLog,
   closeSyncLogDrawer,
   dataLabel,
+  entryChangeLines,
   eventLabel,
   exportSyncLog,
   formatDataValue,
@@ -208,6 +230,7 @@ import {
   toggleSyncLogAutoRefresh,
   toggleSyncLogEntry,
   toggleSyncLogMode,
+  type SyncChangeLine,
   type SyncEventCategory,
   type SyncLogEntry,
   type SyncLogLevel,
@@ -467,14 +490,30 @@ function levelText(level: SyncLogLevel): string {
 function dataEntries(entry: SyncLogEntry): { key: string; label: string; value: string }[] {
   if (!entry.data) return [];
   return Object.entries(entry.data)
-    .filter(([, value]) => value !== null && value !== undefined && value !== '')
+    // 改动正文由条目下方的差异块单独渲染（带 + / − 配色），不再在字段表里重复一遍
+    .filter(([key, value]) => key !== 'changes' && value !== null && value !== undefined && value !== '')
     .map(([key, value]) => ({ key, label: dataLabel(key), value: formatDataValue(key, value) }));
 }
 
+/** 折叠时先看几行改动：够判断「这次动的是不是我想的那处」，看全部点开条目 */
+const CHANGE_PREVIEW_LINES = 3;
+
+function visibleChangeLines(entry: SyncLogEntry): SyncChangeLine[] {
+  const lines = entryChangeLines(entry);
+  return isSyncLogExpanded(entry.id) ? lines : lines.slice(0, CHANGE_PREVIEW_LINES);
+}
+
+function hiddenChangeCount(entry: SyncLogEntry): number {
+  if (isSyncLogExpanded(entry.id)) return 0;
+  return Math.max(0, entryChangeLines(entry).length - CHANGE_PREVIEW_LINES);
+}
+
 async function copyEntry(entry: SyncLogEntry): Promise<void> {
+  const changeLines = entryChangeLines(entry).map((line) => (line.sign ? `${line.sign} ${line.text}` : line.text));
   const lines = [
     `[${formatLogTime(entry.ts)}] ${entry.level.toUpperCase()} ${entry.event}${entry.scope ? ` (${entry.scope})` : ''}${entry.peer ? ` @${entry.peer}` : ''}`,
     entry.detail || '',
+    changeLines.length ? `改动内容：\n${changeLines.join('\n')}` : '',
     entry.data ? JSON.stringify(entry.data, null, 2) : '',
   ].filter(Boolean);
   try {
@@ -846,6 +885,60 @@ async function askClear(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/*
+ * 改动正文：条目下方直接列出「这个文件改了什么」。
+ * 等宽字体 + 每行一条 −/+ 着色，和 git diff 的读法一致；折叠时给固定高度上限，
+ * 免得一条大改动把整列日志挤没（展开那一条时看全）。
+ */
+.log-diff {
+  margin: 0 9px 6px;
+  padding: 4px 8px 5px;
+  border-left: 2px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  font-family: var(--font-mono, Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.65;
+}
+.log-item.warn .log-diff { border-left-color: rgba(216, 160, 18, 0.5); }
+.log-item.error .log-diff { border-left-color: rgba(214, 69, 69, 0.5); }
+.diff-line { display: flex; gap: 6px; }
+.diff-line .sign {
+  flex-shrink: 0;
+  width: 8px;
+  text-align: center;
+  color: var(--text-faint);
+}
+.diff-line .text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+}
+.diff-line.add .sign { color: var(--success); font-weight: 600; }
+.diff-line.add .text { color: var(--success); }
+.diff-line.del .sign { color: var(--danger); font-weight: 600; }
+.diff-line.del .text { color: var(--danger); }
+.diff-line.file .text { color: var(--text-faint); }
+.diff-line.note .text { color: var(--text-faint); font-style: italic; }
+.diff-more {
+  margin-top: 1px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.diff-more:hover { text-decoration: underline; }
+
+@media (max-width: 768px) {
+  /* 手机端一条改动就可能很长：折叠时限高滚动看预览，点开后完整展开 */
+  .log-diff:not(.is-open) { max-height: 96px; overflow: auto; }
 }
 .data-grid {
   display: grid;

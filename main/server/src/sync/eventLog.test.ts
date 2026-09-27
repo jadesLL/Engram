@@ -120,6 +120,28 @@ test('落盘可跨进程读取：文件是 JSONL，每行一条完整记录', ()
   }
 });
 
+test('改动正文能穿过结构化字段清洗：条数有上限，其他字段不被挤掉', () => {
+  const changes = [
+    'Wiki/概念/供应商准入.md',
+    '- 旧条款：随到随审',
+    '+ 新条款：2026-10-01 前完成复审',
+    ...Array.from({ length: 40 }, (_, i) => `+ 第 ${i} 行`),
+  ];
+  const wrote = log.logSyncEvent('info', 'local-broadcast', {
+    detail: '本机修改页面「供应商准入」（+1 −1 行）',
+    scope: 'hub',
+    data: { count: 1, paths: ['Wiki/概念/供应商准入.md'], changes },
+  });
+  const stored = log.querySyncLog({ after: wrote.id - 1 }).entries[0];
+  assert.ok(Array.isArray(stored.data?.changes), '改动正文要留在结构化字段里');
+  const lines = stored.data?.changes as string[];
+  assert.equal(lines.length, 20, '数组按 eventLog 的清洗上限截断');
+  assert.equal(lines[1], '- 旧条款：随到随审');
+  assert.equal(stored.data?.count, 1, '改动正文不会把其他字段挤成「字段过大已省略」');
+  assert.deepEqual(stored.data?.paths, ['Wiki/概念/供应商准入.md']);
+  assert.equal(log.querySyncLog({ q: '随到随审' }).total, 1, '关键词能搜到改动正文');
+});
+
 test('清空后内存与文件都归零', () => {
   const cleared = log.clearSyncLog();
   assert.ok(cleared >= 5);

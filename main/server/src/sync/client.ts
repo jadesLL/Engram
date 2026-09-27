@@ -15,7 +15,7 @@ import { moveToTrash } from '../lib/trash.js';
 import { enqueuePagePipeline } from '../jobs.js';
 import { applyEvidenceSnapshot, collectEvidenceForPage, type EvidenceSnapshot } from './rows.js';
 import { formatBytes, formatDuration, logSyncEvent, recentSyncLog, type SyncLogEntry } from './eventLog.js';
-import { describeOpList, describeOpSummary, formatLineDelta, isNoteworthyOp, summarizeBoardChange, summarizeDelete, summarizeMove, summarizePageChange, summarizeSessionChange, type SyncOpSummary } from './opText.js';
+import { describeOpList, describeOpSummary, flattenChangeLines, formatLineDelta, isNoteworthyOp, pickReplaySamples, summarizeBoardChange, summarizeDelete, summarizeMove, summarizePageChange, summarizeSessionChange, type SyncOpSummary } from './opText.js';
 import { isDistilledPath } from '../pipeline/sourceLedger.js';
 import { BOARD_SYNC_ID } from '../assistant/boardCore.js';
 import {
@@ -161,21 +161,27 @@ function markDisconnected(error: unknown): void {
   void error;
 }
 
-/** 补拉条目的人话描述：拿本端当前内容当基准，说清「中枢把哪个文件改成了什么样」 */
-function describeReplayOp(op: any): string {
+/**
+ * 补拉条目的人话描述：拿本端当前内容当基准，说清「中枢把哪个文件改成了什么样」。
+ * 页面条目同时把改动正文采样带出来（返回的 summary），补拉记录才能列出「改了什么」。
+ */
+function describeReplayOp(op: any): { text: string; summary: SyncOpSummary | null } {
   const target = String(op.target || '');
   const kind = String(op.kind || '');
   if (kind === 'page') {
     const before = readPageRaw(target);
     const after = String(op.content ?? '');
     const summary = summarizePageChange(target, before, after);
-    if (summary.verb === 'same') return `页面「${summary.title}」正文与中枢一致（只推进版本号）`;
-    return `中枢${summary.verb === 'add' ? '新增' : '修改'}页面「${summary.title}」（${formatLineDelta(summary.added, summary.removed)}）`;
+    if (summary.verb === 'same') return { text: `页面「${summary.title}」正文与中枢一致（只推进版本号）`, summary: null };
+    return {
+      text: `中枢${summary.verb === 'add' ? '新增' : '修改'}页面「${summary.title}」（${formatLineDelta(summary.added, summary.removed)}）`,
+      summary,
+    };
   }
-  if (kind === 'delete') return `中枢删除「${target}」`;
-  if (kind === 'move') return `中枢改名「${String(op.old_path || '')}」→「${target}」`;
-  if (kind === 'file') return `中枢更新文件「${target}」`;
-  return `${kind} ${target}`;
+  if (kind === 'delete') return { text: `中枢删除「${target}」`, summary: null };
+  if (kind === 'move') return { text: `中枢改名「${String(op.old_path || '')}」→「${target}」`, summary: null };
+  if (kind === 'file') return { text: `中枢更新文件「${target}」`, summary: null };
+  return { text: `${kind} ${target}`, summary: null };
 }
 
 /** 只留前 3 个文件名做例子，避免大库对账把一行撑成几千字 */
@@ -451,6 +457,7 @@ function noteAppliedOp(summary: SyncOpSummary): void {
       kinds: { ...counts },
       items: visible.slice(0, 10).map(describeOpSummary),
       paths: visible.slice(0, 10).map((item) => item.path),
+      changes: flattenChangeLines(visible),
     });
   }, 200);
   appliedTimer.unref?.();
@@ -747,6 +754,7 @@ async function pushLoop(): Promise<void> {
         ms: Date.now() - startedAt,
         items: visible.slice(0, 10).map(describeOpSummary),
         paths: visible.slice(0, 10).map((op) => op.path),
+        changes: flattenChangeLines(visible),
       });
     }
     for (const kind of Object.keys(counts) as SyncKind[]) counts[kind] = 0;
@@ -828,20 +836,25 @@ async function syncMissedChanges(): Promise<void> {
     if (res?.resync) gap = true;
     const ops: any[] = res?.ops || [];
     if (ops.length > 0) {
-      // 补拉回来的变更逐条写清文件名与类型：只写「N 条」用户看不出同步了什么
+      // 补拉回来的变更逐条写清文件名与类型：只写「N 条」用户看不出同步了什么；
+      // 页面条目再带上改动正文，用户直接看到「中枢把这一页改成了什么」。
+      // oplog 里同一个页面有多个版本，采样规则见 pickReplaySamples（只取最后一条，避免
+      // 把稍后又被加回来的内容显示成删除）。
       const items: string[] = [];
+      const changedOps: SyncOpSummary[] = [];
       const kinds: Record<string, number> = {};
-      for (const op of ops) {
-        kinds[String(op.kind)] = (kinds[String(op.kind)] || 0) + 1;
-        if (items.length < 5 && !String(op.target || '').startsWith('AIWorks/')) {
-          items.push(describeReplayOp(op));
-        }
+      for (const op of ops) kinds[String(op.kind)] = (kinds[String(op.kind)] || 0) + 1;
+      for (const op of pickReplaySamples(ops)) {
+        const described = describeReplayOp(op);
+        items.push(described.text);
+        if (described.summary) changedOps.push(described.summary);
       }
       logEvent('info', 'replay', `补拉 ${ops.length} 条远端变更（自水位 ${getCursor()}）：${items.length ? items.join('；') : kindSummary(kinds as Partial<Record<SyncKind, number>>)}${ops.length > items.length ? `；等 ${ops.length - items.length} 条` : ''}`, {
         count: ops.length,
         from: getCursor(),
         kinds,
         items,
+        changes: flattenChangeLines(changedOps),
       });
     }
     for (const op of ops) applyRemoteOp(op, 'replay');

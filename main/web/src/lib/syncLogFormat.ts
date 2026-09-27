@@ -226,6 +226,9 @@ const DATA_LABELS: Record<string, string> = {
   removed: '删除行',
   beforeBytes: '原大小',
   afterBytes: '新大小',
+  // 改动正文：条目的「改了什么」（+ 新增行 / − 删除行），抽屉直接列在条目下方
+  changes: '改动内容',
+  changesOmitted: '未记录的改动行',
   attempts: '重试次数',
   source: '恢复方式',
   downMs: '断开时长',
@@ -278,6 +281,38 @@ export function formatDataValue(key: string, value: unknown): string {
   if (key === 'ms' || key === 'sessionMs' || key === 'downMs') return `${formatDuration(Number(value))}（${value} ms）`;
   if (key === 'retryInMs') return `${Math.round(Number(value) / 1000)} 秒`;
   return String(value);
+}
+
+/** 改动正文的一行：+ 新增 / − 删除 / 文件路径 / 「还有 N 行未记录」提示 */
+export type SyncChangeKind = 'add' | 'del' | 'file' | 'note';
+
+export interface SyncChangeLine {
+  kind: SyncChangeKind;
+  /** 行首符号（新增 + / 删除 −）；文件路径与提示行为空 */
+  sign: string;
+  text: string;
+}
+
+/**
+ * data.changes（服务端按行存：`+ 新增行` / `- 删除行` / 文件路径 / 省略提示）→ 可渲染的行。
+ * 老记录没有这个字段时返回空数组，界面照旧只显示那一行摘要。
+ */
+export function parseChangeLines(value: unknown): SyncChangeLine[] {
+  const raw = Array.isArray(value) ? value.map((item) => String(item ?? '')) : typeof value === 'string' ? value.split('\n') : [];
+  const lines: SyncChangeLine[] = [];
+  for (const line of raw) {
+    if (!line) continue;
+    if (line.startsWith('+ ')) lines.push({ kind: 'add', sign: '+', text: line.slice(2) });
+    else if (line.startsWith('- ')) lines.push({ kind: 'del', sign: '−', text: line.slice(2) });
+    else if (line.startsWith('…')) lines.push({ kind: 'note', sign: '', text: line });
+    else lines.push({ kind: 'file', sign: '', text: line });
+  }
+  return lines;
+}
+
+/** 这条记录里的「改了什么」；列表里直接列在条目下方，展开看全部 */
+export function entryChangeLines(entry: SyncLogEntry): SyncChangeLine[] {
+  return parseChangeLines(entry.data?.changes);
 }
 
 function pad(value: number, size = 2): string {
@@ -367,6 +402,20 @@ export function buildSyncLogMarkdown(entries: SyncLogEntry[], extra: Record<stri
     lines.push(`### ${formatLogTime(entry.ts)} · ${eventLabel(entry.event)}`);
     lines.push('');
     for (const [key, value] of Object.entries(entry.data)) {
+      // 改动正文按 diff 代码块导出：别人拿到导出文件也能看清「这一页改了什么」
+      if (key === 'changes') {
+        const changeLines = parseChangeLines(value);
+        if (!changeLines.length) continue;
+        lines.push(`- ${dataLabel(key)}：`);
+        lines.push('');
+        lines.push('```diff');
+        for (const line of changeLines) {
+          lines.push(line.kind === 'add' ? `+ ${line.text}` : line.kind === 'del' ? `- ${line.text}` : line.text);
+        }
+        lines.push('```');
+        lines.push('');
+        continue;
+      }
       lines.push(`- ${dataLabel(key)}：${formatDataValue(key, value)}`);
     }
     lines.push('');
