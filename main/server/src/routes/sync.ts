@@ -292,8 +292,10 @@ export async function syncRoutes(app: FastifyInstance) {
     if (peer) {
       // 节点 id 也要记：会话行的来源端记的是它（广播里记的是成员 id），补设备名时两种都得认
       touchPeer(peer.id, { nodeLabel: device, nodeId: String(query.node_id || '') });
+      // 成员上报的就是它自己在中枢配置里的名字（deviceLabel.ts）：名字一致时不再重复标一遍
+      const different = device && device !== peer.name ? `（设备名 ${device}）` : '';
       logSyncEvent('info', 'peer-online', {
-        detail: `成员「${peer.name}」已连接${device ? `（设备 ${device}）` : ''}`,
+        detail: `成员「${peer.name}」已连接${different}`,
         scope: 'hub',
         peer: peer.name,
         data: { peerId: peer.id, device, nodeId: String(query.node_id || '') },
@@ -466,6 +468,9 @@ export async function syncRoutes(app: FastifyInstance) {
       sessions: sessionManifest(),
       tombstones: listSessionTombstones(),
       board: readSyncedBoard(),
+      // 成员端据此把「本机叫什么」对齐成中枢配置里的成员名（deviceLabel.ts）；
+      // owner 通道（浏览器/MCP）没有成员身份，返回 null，调用方按「不知道」处理
+      device: peer ? { id: peer.id, name: peer.name } : null,
     };
   });
 

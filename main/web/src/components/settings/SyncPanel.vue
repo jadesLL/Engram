@@ -80,6 +80,7 @@
         <div>
           <strong>本设备是同步群组的中枢</strong>
           <span class="faint">成员绑定地址：{{ location.origin }}</span>
+          <span v-if="deviceNameLine" class="faint small">{{ deviceNameLine }}</span>
         </div>
         <button class="text-action danger" type="button" @click="leaveRole('none')">退出中枢角色</button>
       </div>
@@ -89,7 +90,10 @@
           <h4>群组成员（{{ peers.length }}）</h4>
           <button class="btn small" type="button" :disabled="creating" @click="addPeer">添加成员</button>
         </div>
-        <p class="faint small">为每台成员设备命名并生成绑定令牌；令牌与中枢地址一起填到对应设备的「多端同步」设置里。点击令牌可展开查看完整值。</p>
+        <p class="faint small">
+          为每台成员设备命名并生成绑定令牌；这个名字就是各端看到的「来自 &lt;名字&gt;」（不再用设备主机名）。
+          令牌与中枢地址一起填到对应设备的「多端同步」设置里。点击令牌可展开查看完整值。
+        </p>
         <ul v-if="peers.length" class="peer-list">
           <li v-for="p in peers" :key="p.id" class="peer-row">
             <div class="peer-info">
@@ -98,7 +102,8 @@
               </strong>
               <span class="faint small">
                 {{ p.online ? '在线' : '离线' }}
-                <template v-if="p.node_label"> · {{ p.node_label }}</template>
+                <!-- 上报的设备名与成员名一致时不重复显示；旧客户端报的是主机名，留着方便排查 -->
+                <template v-if="p.node_label && p.node_label !== p.name"> · 设备名 {{ p.node_label }}</template>
                 <template v-if="p.last_seen_at"> · 最近同步 {{ formatTime(p.last_seen_at) }}</template>
               </span>
               <span class="token-line faint small">
@@ -140,6 +145,7 @@
         <div>
           <strong>已绑定同步中枢</strong>
           <span class="faint">{{ status.hubUrl || '—' }}</span>
+          <span v-if="deviceNameLine" class="faint small">{{ deviceNameLine }}</span>
         </div>
         <button class="text-action danger" type="button" @click="leaveRole('none')">解除绑定</button>
       </div>
@@ -213,7 +219,8 @@
         两端同时修改同一页面时按字符级智能合并；无法自动合并的冲突以修改时间最新的一方为准：
         普通页面中被取代的旧版本以「原名-时间」重命名保留在原目录（可删除），AI 工作区直接以最新为准覆盖，不产生新文件。</p>
       <p>会话只在一轮回复结束后同步（正在对话中的内容留在本机），消息按条合并、各端看到的历史一致；
-        任务看板全端只有一份，任意端刷新后各端都换成最新那一版（标注「上次更新时间」与来源设备）。</p>
+        任务看板全端只有一份，任意端刷新后各端都换成最新那一版（标注「上次更新时间」与来源设备）。
+        会话列表里本机产生的会话标「本机」，别端来的标「来自 &lt;成员名&gt;」——名字取这里给设备起的成员名，不是设备主机名。</p>
     </div>
 
       </div>
@@ -281,6 +288,12 @@ interface SyncStatus {
   hubToken: string;
   directUrls?: string[];
   nodeId: string;
+  /**
+   * 本机在同步群组里的显示名：成员端取**中枢配置里的成员名**（对账时学回来），中枢端是「中枢」；
+   * source 说明这个值是哪来的，界面据此注明「按中枢配置」还是「还没连上中枢，暂时显示电脑名」。
+   */
+  deviceLabel?: string;
+  deviceLabelSource?: 'member-config' | 'hub' | 'hostname';
   cursor: number;
   /** 中枢端的权威 revision 序号（成员端为 0） */
   revision?: number;
@@ -332,6 +345,20 @@ const dualStack = ref({ enabled: true, failureThreshold: 3, windowSeconds: 15, p
 /** 表单只在首次拿到状态（或保存后）回填：状态每 5 秒轮询，不能把用户正在改的数字冲掉 */
 const dualStackLoaded = ref(false);
 let pollTimer: number | null = null;
+
+/**
+ * 「本机名称」一行：显示名不取电脑主机名——成员端用中枢在「添加成员」时给这台设备起的
+ * 成员名，中枢端固定是「中枢」。还没连上中枢（学不到名字）时说明这一行暂时是电脑名，
+ * 免得用户以为「我改了成员名怎么没生效」。
+ */
+const deviceNameLine = computed(() => {
+  const name = status.value?.deviceLabel;
+  if (!name) return '';
+  const source = status.value?.deviceLabelSource;
+  if (source === 'member-config') return `本机名称：${name}（按中枢配置的成员名）`;
+  if (source === 'hub') return `本机名称：${name}（本设备就是中枢）`;
+  return `本机名称：${name}（还没连上中枢：先显示电脑名）`;
+});
 
 // 设置页二级导航的状态徽标：一眼看出本机是中枢、成员还是尚未参与同步
 useSettingsBadge(

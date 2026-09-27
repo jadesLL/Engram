@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
@@ -35,6 +34,7 @@ import {
   type BoardPayload,
   type SessionSnapshot,
 } from './sessions.js';
+import { HUB_DEVICE_LABEL, learnDeviceLabelFromHub } from './deviceLabel.js';
 import {
   currentNodeId,
   getCursor,
@@ -864,8 +864,11 @@ async function consumeStream(): Promise<void> {
   // controller，二者必居其一，窗口确定闭合。
   if (!running) return;
   streamAbort = new AbortController();
-  const deviceName = os.hostname().slice(0, 60);
-  const url = `/api/sync/events?node_id=${encodeURIComponent(currentNodeId())}&name=${encodeURIComponent(deviceName)}`;
+  // 上报给中枢的「本机名称」是**中枢配置里的成员名**（见 deviceLabel.ts）：中枢把它显示在
+  // 成员列表与同步日志里，用户要看到的是「书房电脑」而不是这台机器的主机名
+  const deviceName = deviceLabel();
+  const url = `/api/sync/events?node_id=${encodeURIComponent(currentNodeId())}`
+    + `&name=${encodeURIComponent(deviceName)}`;
   const res = await hubRequest(url, { headers: authHeaders(), signal: streamAbort.signal });
   if (!res.ok || !res.body) throw new Error(`事件流连接失败: ${res.status}`);
   connected = true;
@@ -873,9 +876,9 @@ async function consumeStream(): Promise<void> {
   backoffMs = 1000;
   lastError = null;
   markConnected('事件流已建立');
-  logEvent('info', 'connected', `已与中枢建立实时连接（本机设备名 ${deviceName}）`, {
+  logEvent('info', 'connected', `已与中枢建立实时连接${deviceName ? `（本机名称 ${deviceName}）` : ''}`, {
     hub: hubUrl(),
-    device: deviceName,
+    device: deviceName || undefined,
   });
   try {
     // 应用失败（含写盘异常）由回调经共享解析器向外抛：断开本条流，重连后从 cursor 重放
@@ -899,6 +902,14 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
     // 中枢已应答即视为已连接：首次接入的全量对账可能持续数分钟，此前不能显示「未连接」
     connected = true;
     markConnected('全量对账');
+    // 本机叫什么由中枢说了算：用户在中枢给这台设备起的成员名随清单回来（旧中枢不给这个字段，
+    // 那就不动——设备名继续用主机名兜底，别的什么都不受影响）
+    const named = learnDeviceLabelFromHub(snap?.device);
+    if (named.changed) {
+      logEvent('info', 'device-named', `本机名称已按中枢配置更新为「${named.label}」（会话列表里其他设备看到的就是这个名字）`, {
+        device: named.label,
+      });
+    }
     const entries: {
       kind: 'page' | 'file';
       path: string;
@@ -1007,9 +1018,10 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
       try {
         const originNodeId = String(entry.originNodeId || '');
         const originNodeLabel = String(entry.originNodeLabel || '');
-        // 早先的广播把设备名丢了：本端已经知道是别端会话、只差名字时，用清单里的名字补一行——
-        // 不必为一行标签再拉整份会话正文（旧中枢不带这两个字段，补不了就留给界面显示「其他设备」）
-        if (repairSessionOriginLabel(id, originNodeId, originNodeLabel)) {
+        // 名字以中枢为准：本端记的是别端会话、名字却还是空着或那台设备的主机名时，就地刷成
+        // 用户在中枢给设备起的名字——不必为一行名字再拉整份会话正文（旧中枢不带这两个字段，
+        // 补不了就留给界面显示「其他设备」）
+        if (repairSessionOriginLabel(id, originNodeLabel)) {
           labelsRepaired++;
           emit('session-changed', { id });
           continue;
@@ -1018,7 +1030,13 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
         const detail = await getJson(`/api/sync/session?id=${encodeURIComponent(id)}`);
         const snapshot = detail?.snapshot as SessionSnapshot | undefined;
         if (!snapshot) continue;
-        mergeSessionSnapshot(snapshot, originNodeId, originNodeLabel);
+        // 清单里没有来源 id 的会话（旧版中枢上「建好但还没产生过变更」的行）：它只可能是中枢那边的
+        // ——按中枢记来源，否则成员端会把它当成自己聊出来的，聊天列表里错标「本机」
+        mergeSessionSnapshot(
+          snapshot,
+          originNodeId || 'hub',
+          originNodeLabel || (originNodeId ? '' : HUB_DEVICE_LABEL),
+        );
         pendingSessionPulls.delete(id);
         sessionsPulled++;
       } catch (error: any) {
@@ -1090,7 +1108,7 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
     logEvent(
       'info',
       'reconcile-done',
-      `全量对账完成（${REASON_LABELS[reason]}，${formatDuration(ms)}）：中枢共 ${entries.length} 项 · 从中枢拉取 ${pulled} 项${pulledBytes ? `（${formatBytes(pulledBytes)}）` : ''}${sampleText(pulledSamples)} · 本机补推 ${queued} 项${sampleText(queuedSamples)} · 失败 ${itemFailed} 项 · 待补拉文件 ${pendingFilePulls.size} · 补齐提炼账本 ${repaired}/${ledgerRepairs.length}${sessionsPulled ? ` · 补拉会话 ${sessionsPulled} 条` : ''}${labelsRepaired ? ` · 补会话来源设备名 ${labelsRepaired} 条` : ''}`,
+      `全量对账完成（${REASON_LABELS[reason]}，${formatDuration(ms)}）：中枢共 ${entries.length} 项 · 从中枢拉取 ${pulled} 项${pulledBytes ? `（${formatBytes(pulledBytes)}）` : ''}${sampleText(pulledSamples)} · 本机补推 ${queued} 项${sampleText(queuedSamples)} · 失败 ${itemFailed} 项 · 待补拉文件 ${pendingFilePulls.size} · 补齐提炼账本 ${repaired}/${ledgerRepairs.length}${sessionsPulled ? ` · 补拉会话 ${sessionsPulled} 条` : ''}${labelsRepaired ? ` · 对齐会话来源名 ${labelsRepaired} 条` : ''}`,
       {
         reason,
         ms,

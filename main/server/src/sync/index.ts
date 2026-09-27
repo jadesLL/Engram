@@ -44,6 +44,7 @@ import {
   type HostFamilyStatus,
 } from './dualStack.js';
 import { currentNodeId, currentRevision, getPageRevision, getPageSyncRevision, listPeers, type SyncKind } from './store.js';
+import { clearLearnedDeviceLabel, deviceLabel, deviceLabelSource, type DeviceLabelSource } from './deviceLabel.js';
 
 /**
  * 多端同步门面（同步群组模型）：业务代码只调 recordLocalChange()，本模块按角色分流——
@@ -247,6 +248,13 @@ export interface SyncStatus {
   hubUrl: string;
   hubToken: string;
   nodeId: string;
+  /**
+   * 本机在同步群组里的显示名：成员端是**中枢配置里的成员名**（对账时学回来），
+   * 中枢端是「中枢」。界面用它说明「本机叫什么」，不再拿电脑主机名当设备名。
+   */
+  deviceLabel: string;
+  /** 上面这个显示名的来源（设置页据此说明「按中枢配置」还是「暂时显示电脑名」） */
+  deviceLabelSource: DeviceLabelSource;
   /** 成员端：本端已应用到的中枢 oplog 水位；中枢端这个值恒为 0（见 revision） */
   cursor: number;
   /** 中枢端：本机权威 revision 序号（中枢每次发号都自增）；成员端为 0 */
@@ -290,6 +298,8 @@ export function status(): SyncStatus {
     hubUrl: s.hubUrl,
     hubToken: s.hubToken,
     nodeId: s.nodeId,
+    deviceLabel: deviceLabel(),
+    deviceLabelSource: deviceLabelSource(),
     cursor: s.cursor,
     revision: role === 'hub' ? currentRevision() : 0,
     pending: s.pending,
@@ -327,6 +337,9 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
   if (input.role === 'hub' || input.role === 'none') {
     setSetting('sync_role', input.role);
     setSetting('sync_enabled', '0');
+    // 换角色就丢掉上一段关系里学来的成员名：否则以中枢身份运行时，本机会一直顶着
+    // 「某个成员设备的名字」当自己的名字（中枢应该显示为「中枢」）
+    clearLearnedDeviceLabel();
     // 角色本身就是排查同步问题的第一现场：换角色必须留痕，否则日志里会出现
     // 「上一次同步是三天前」而看不出中间把角色改过
     logSyncEvent('info', 'role-changed', {
@@ -353,7 +366,16 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
     }
     if (!String(input.hub_token || '').trim()) return '缺少中枢访问令牌';
   }
-  const before = { enabled: getSetting('sync_enabled') === '1', url: getSetting('sync_hub_url') || '' };
+  const before = {
+    enabled: getSetting('sync_enabled') === '1',
+    url: getSetting('sync_hub_url') || '',
+    token: getSetting('sync_hub_token') || '',
+  };
+  // 换绑定（地址或令牌真的变了）作废学来的成员名：新中枢配的成员名由新中枢重新下发。
+  // 值没变时不动作——设置页「保存修改」会把原值再发一遍，清掉会让本机名短暂退回主机名
+  const rebinding = (input.hub_url !== undefined && url.replace(/\/+$/, '') !== before.url)
+    || (input.hub_token !== undefined && String(input.hub_token).trim() !== before.token);
+  if (rebinding) clearLearnedDeviceLabel();
   setSetting('sync_enabled', input.enabled ? '1' : '0');
   if (input.hub_url !== undefined) setSetting('sync_hub_url', url.replace(/\/+$/, ''));
   if (input.hub_token !== undefined) setSetting('sync_hub_token', String(input.hub_token).trim());

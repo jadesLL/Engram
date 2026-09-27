@@ -20,6 +20,10 @@ COPY desktop desktop
 # 其用例校验 scripts/install-engram.ps1 与 update-from-source.ps1 的 BOM/内容
 COPY installer installer
 COPY scripts scripts
+# mobile：web 端的安卓接线护栏单测（web/src/lib/mobileLayout.test.ts）要读
+# mobile/capacitor.config.json 与 android 源码，缺了它 verify 目标直接红。
+# 构建产物（web-dist、assets/public）已由 .dockerignore 挡掉，只进源码。
+COPY mobile mobile
 # /app/VERSION：应用内自更新的版本比对依据（server /api/update 读取）
 RUN pnpm --filter @engram/web build && pnpm --filter @engram/server build \
   && node -p "require('./desktop/package.json').version" > /app/VERSION

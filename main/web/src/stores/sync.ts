@@ -33,6 +33,11 @@ export interface SyncStatusPayload extends SyncStatusInput {
   hubUrl?: string;
   hubToken?: string;
   nodeId?: string;
+  /**
+   * 本机在同步群组里的显示名：成员端是**中枢配置里的成员名**（对账时学回来），中枢端是「中枢」。
+   * 会话来源徽标（lib/sessionSource）用它说明「本机」，不再拿电脑主机名当设备名。
+   */
+  deviceLabel?: string;
   cursor?: number;
   /** 中枢端：本机权威 revision 序号（成员端为 0），面板显示权威水位 */
   revision?: number;

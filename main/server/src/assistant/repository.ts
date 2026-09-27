@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { db, now } from '../lib/db.js';
+import { resolveOriginLabel, stampSessionOrigin } from '../sync/deviceLabel.js';
 import { addUsage, type UsageDto, type UsageStep } from './usage.js';
 
 /**
@@ -22,8 +23,9 @@ export interface SessionDto {
   dshSessionId: string;
   createdAt: string;
   updatedAt: string;
-  /** 多端同步：产生该会话的设备（界面据此标「来自哪台设备」；同步关闭时为空） */
+  /** 多端同步：产生该会话的设备（界面据此标「本机 / 来自哪台设备」；同步关闭时为空） */
   originNodeId: string;
+  /** 来源设备名：**中枢配置里的成员名**（中枢本端的会话记「中枢」），不是设备主机名 */
   originNodeLabel: string;
   /** 系统会话标记（当前只有 task_board）：看板自己的会话，不参与会话同步 */
   systemKey: string;
@@ -141,7 +143,9 @@ function toSession(row: any, running = false): SessionDto {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     originNodeId: row.origin_node_id || '',
-    originNodeLabel: row.origin_node_label || '',
+    // 名字按现在的中枢配置解析，而不是照搬行里存的那份：老行存的是设备主机名（Docker 上还是
+    // 容器 ID），成员在中枢改名也不会回头改历史行——界面要显示的始终是用户认得的那个名字
+    originNodeLabel: resolveOriginLabel(row.origin_node_id || '', row.origin_node_label || ''),
     systemKey: row.system_key || '',
   };
 }
@@ -296,6 +300,9 @@ export function createSession(title?: string, systemKey = ''): SessionDto {
     `INSERT INTO assistant_sessions(id, title, summary, archived, dsh_session_id, title_source, system_key, created_at, updated_at)
      VALUES(?, ?, '', 0, ?, ?, ?, ?, ?)`
   ).run(id, named || '新对话', `session-${uuid()}`, named ? 'user' : 'default', systemKey, stamp, stamp);
+  // 出生就记来源：否则「刚建好、还没产生过变更」的会话在同步链路里是一条来源为空的记录，
+  // 对端拉下来会当成自己聊出来的（界面标「本机」）。系统会话不参与同步，不必标。
+  if (!systemKey) stampSessionOrigin(id);
   return getSession(id)!;
 }
 
