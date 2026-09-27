@@ -12,3 +12,7 @@ mobile/android/build
 mobile/android/app/build
 mobile/android/local.properties
 mobile/android/key.properties
+# 安卓侧的 Web 构建产物（prepare-mobile-web / cap sync 生成，不入 Git）：
+# verify 镜像只需要 mobile 的源码（web 端护栏单测要读 capacitor.config.json 与 android 源码）
+mobile/web-dist
+mobile/android/app/src/main/assets/public
