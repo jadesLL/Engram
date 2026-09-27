@@ -140,10 +140,11 @@
                 </span>
                 <span v-else-if="chat.unread[session.id]" class="session-state unread">新回复</span>
                 <span
-                  v-else-if="foreignSource(session)"
-                  class="session-state foreign"
-                  v-tooltip="`这个会话是「${originLabel(session)}」上产生的，内容已同步到本机`"
-                >来自 {{ originLabel(session) }}</span>
+                  v-else-if="badge(session)"
+                  class="session-state"
+                  :class="badgeKind(session)"
+                  v-tooltip="badgeTooltip(session)"
+                >{{ badgeText(session) }}</span>
                 <span v-else-if="session.titleSource === 'auto'" class="session-state auto" v-tooltip="'标题由内置 Agent 按内容自动生成'">自动命名</span>
                 <span class="session-time">{{ formatSessionTime(session.updatedAt) }}</span>
               </span>
@@ -552,6 +553,7 @@ import { confirmDialog } from '../lib/confirm';
 import { renderMarkdown } from '../lib/markdown';
 import { notify } from '../lib/notify';
 import { openPageStream } from '../lib/events';
+import { sessionSourceBadge, type SessionSourceBadge } from '../lib/sessionSource';
 import { useSyncStore } from '../stores/sync';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 
@@ -1269,20 +1271,38 @@ watch(() => app.chatComposerFocus, () => {
 });
 
 /**
- * 这个会话是不是「别的设备上产生的」（多端同步下来的）。
- * 本机节点 id 还没取到时一律不标（宁可少标一个徽标，也不要误标）。
+ * 每个会话的来源徽标：**本机产生的会话也标出来**（「本机」），别端来的标「来自 <设备>」。
+ * 名字是服务端按中枢配置解析好的成员名（不是电脑主机名），全部逻辑在 lib/sessionSource。
+ *
+ * 未参与同步（role=none）时不标：那种情况下每个会话都是本机的，标满一列「本机」只是噪音；
+ * 本机节点 id 还没取到时也不标（宁可少一个徽标，也不要误标成别端的）。
  */
-function foreignSource(session: { originNodeId?: string; originNodeLabel?: string }): boolean {
-  const localNode = sync.status?.nodeId;
-  return Boolean(session.originNodeId && localNode && session.originNodeId !== localNode);
+const sourceBadges = computed(() => {
+  const map = new Map<string, SessionSourceBadge>();
+  const localNodeId = sync.configured ? sync.status?.nodeId : '';
+  const localName = sync.status?.deviceLabel;
+  for (const session of chat.filteredSessions) {
+    const badge = sessionSourceBadge(session, localNodeId, localName);
+    if (badge) map.set(session.id, badge);
+  }
+  return map;
+});
+
+function badge(session: { id: string }): SessionSourceBadge | null {
+  return sourceBadges.value.get(session.id) || null;
 }
 
-/**
- * 来源设备名。旧版中枢的广播只带了来源节点 id、没带设备名（历史行里就是空的），
- * 这时退化成「其他设备」——宁可说不知道，也不要渲染出一个光秃秃的「来自」。
- */
-function originLabel(session: { originNodeLabel?: string }): string {
-  return String(session.originNodeLabel || '').trim() || '其他设备';
+/** 徽标配色：本机（中性）/ 别端（描边），取值直接当 class 用 */
+function badgeKind(session: { id: string }): 'local' | 'foreign' {
+  return badge(session)?.kind || 'local';
+}
+
+function badgeText(session: { id: string }): string {
+  return badge(session)?.text || '';
+}
+
+function badgeTooltip(session: { id: string }): string {
+  return badge(session)?.tooltip || '';
 }
 
 onMounted(() => {
@@ -1657,7 +1677,11 @@ onUnmounted(() => {
   color: var(--text-faint);
 }
 
-/* 同步来的会话：标出「来自哪台设备」，一眼看出不是本机聊出来的 */
+/* 来源徽标：本机（中性灰）与别端（描边）——一眼看出这个会话是在哪台设备上产生的 */
+.session-state.local {
+  color: var(--text-faint);
+}
+
 .session-state.foreign {
   color: var(--text-faint);
   border: 1px solid var(--border, rgba(128, 128, 128, 0.3));

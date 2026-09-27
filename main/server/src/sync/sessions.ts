@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import os from 'node:os';
 import { db, now } from '../lib/db.js';
 import * as repo from '../assistant/repository.js';
 import {
@@ -9,7 +8,12 @@ import {
   readSyncedBoard,
   type SyncedBoardPayload,
 } from '../assistant/boardCore.js';
-import { currentNodeId, peerDeviceLabel } from './store.js';
+import { currentNodeId } from './store.js';
+import { deviceLabel, resolveOriginLabel, stampSessionOrigin } from './deviceLabel.js';
+
+// 设备名与来源名的实现在 deviceLabel.ts（叶子模块：assistant/repository 也要用它，
+// 反向依赖这里会成环）。这里转出，保持同步层既有调用方的导入路径不变。
+export { deviceLabel, resolveOriginLabel, stampSessionOrigin } from './deviceLabel.js';
 
 /**
  * 会话与任务看板的跨端同步（**仅完成态**）。
@@ -42,11 +46,6 @@ const TITLE_LIMIT = 120;
 
 /** 非终态轮次：这些轮次的内容不参与同步（「正在对话」不同步） */
 const ACTIVE_RUN_STATUSES = ['running', 'queued'];
-
-/** 本机设备名：与成员注册上报的口径一致（client.ts 用同一写法） */
-export function deviceLabel(): string {
-  return os.hostname().slice(0, 60);
-}
 
 export interface SessionSnapshotSession {
   id: string;
@@ -114,44 +113,26 @@ function sha256(text: string): string {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
 
-/** 本端会话首次进入同步链路时补上来源标记（界面据此显示「来自哪台设备」） */
-export function stampSessionOrigin(sessionId: string): void {
-  db.prepare(
-    `UPDATE assistant_sessions SET origin_node_id = ?, origin_node_label = ?
-     WHERE id = ? AND COALESCE(origin_node_id, '') = ''`
-  ).run(currentNodeId(), deviceLabel(), sessionId);
-}
-
 /**
- * 来源设备名：行里存下来的优先，缺了按来源端补。
+ * 给会话的来源设备名对齐成**中枢配置里的成员名**。
  *
- * 早先的广播只带来源节点 id、不带设备名，成员端因此只记住「来自某个节点」——界面就成了
- * 光秃秃的「来自」。这里兜底：中枢本端的写入记成设备名，成员推来的按 sync_peers 里注册的
- * 设备名（SSE 连接时上报）补；两头都没有就返回空串，界面退化成「其他设备」。
+ * 两种情况都走这里：
+ *  - 旧版中枢的广播只带来源节点 id、没带设备名（历史行里名字是空的）→ 补上；
+ *  - 行里存的是**设备主机名**（早先的口径：谁推的就用谁的 os.hostname，Docker 上还是容器 ID）
+ *    → 以清单为准刷新成用户在中枢给这台设备起的名字（中枢改名后同样靠它在一个对账周期内生效）。
+ *
+ * 只改一行标签、不搬会话正文；本端原生会话（origin 为空）一概不碰——补名字等于把本机聊出来的
+ * 会话错标成「来自别端」。
  */
-export function resolveOriginLabel(nodeId: string, storedLabel: string): string {
-  const id = str(nodeId);
-  if (str(storedLabel)) return str(storedLabel);
-  if (!id) return '';
-  // 中枢本端写入的来源是 'hub'（hub.ts 的 HUB_ACTOR）；历史行里也可能是中枢自己的节点 id
-  if (id === 'hub' || id === currentNodeId()) return deviceLabel();
-  return peerDeviceLabel(id);
-}
-
-/**
- * 给「已知是别端来的、但没记住设备名」的会话补上名字（旧版中枢的广播只有 id 没有 node_label）。
- * 只改一行标签、不搬会话正文；本端原生会话（origin 为空）一概不碰，已有名字不覆盖。
- */
-export function repairSessionOriginLabel(sessionId: string, nodeId: string, label: string): boolean {
-  const id = str(nodeId);
+export function repairSessionOriginLabel(sessionId: string, label: string): boolean {
   const name = str(label);
-  if (!id || !name) return false;
+  if (!name) return false;
   const row = db
     .prepare(`SELECT origin_node_id, origin_node_label FROM assistant_sessions WHERE id = ?`)
     .get(sessionId) as { origin_node_id: string | null; origin_node_label: string | null } | undefined;
   if (!row) return false;
-  // origin 为空 = 本端自己聊出来的会话：补名字等于把它错标成「来自别端」，宁可不标
-  if (!str(row.origin_node_id) || str(row.origin_node_label)) return false;
+  if (!str(row.origin_node_id)) return false;
+  if (str(row.origin_node_label) === name) return false;
   db.prepare(`UPDATE assistant_sessions SET origin_node_label = ? WHERE id = ?`).run(name, sessionId);
   return true;
 }
@@ -383,9 +364,9 @@ export function mergeSessionSnapshot(
          title_source = CASE WHEN excluded.updated_at >= assistant_sessions.updated_at THEN excluded.title_source ELSE assistant_sessions.title_source END,
          updated_at = MAX(assistant_sessions.updated_at, excluded.updated_at),
          origin_node_id = CASE WHEN COALESCE(assistant_sessions.origin_node_id, '') = '' THEN excluded.origin_node_id ELSE assistant_sessions.origin_node_id END,
-         -- 设备名可以被后来的合并补上（早先的广播只带 id）：已记住的名字不覆盖，
-         -- 空着的就用这次带的补——否则「来自 」会一直空着，再没有第二次机会
-         origin_node_label = CASE WHEN COALESCE(assistant_sessions.origin_node_label, '') <> '' THEN assistant_sessions.origin_node_label ELSE excluded.origin_node_label END`
+         -- 设备名以**推来的那份**为准（中枢给的是「中枢配置里的成员名」，成员端给的是它学到的同一个名字）：
+         -- 空的不覆盖（旧端不带名字），旧行里存的主机名会被后续广播/清单刷成用户认得的名字
+         origin_node_label = CASE WHEN COALESCE(excluded.origin_node_label, '') <> '' THEN excluded.origin_node_label ELSE assistant_sessions.origin_node_label END`
     ).run({
       id: session.id,
       title: session.title || '未命名会话',
@@ -460,7 +441,7 @@ export interface SessionManifestEntry {
   messageCount: number;
   /** 清单指纹（廉价）；对不上就拉这个会话的完整快照 */
   hash: string;
-  /** 来源端节点 id 与设备名（成员端据此显示「来自 <设备>」；空 = 本端原生会话） */
+  /** 来源端节点 id 与**中枢配置里的成员名**（成员端据此显示「来自 <设备>」；空 = 本端原生会话） */
   originNodeId: string;
   originNodeLabel: string;
 }
@@ -476,8 +457,8 @@ function localBoardSessionId(): string {
 /**
  * 参与同步的会话清单（排除看板这类系统会话），按最近更新倒序、最多 SESSION_MANIFEST_LIMIT 条。
  *
- * 来源端与设备名随清单一并给出：成员端拿到「本端记的是别端会话、却没有设备名」时，
- * 不必为一行标签再拉整份会话正文，直接补名即可（旧版广播丢下 label 的历史行靠这里自愈）。
+ * 来源端与成员名随清单一并给出：成员端拿到「本端记的是别端会话、名字却是主机名或空着」时，
+ * 不必为一行名字再拉整份会话正文，就地刷成你给这台设备起的名字（旧行与中枢改名都靠这里自愈）。
  */
 export function sessionManifest(): SessionManifestEntry[] {
   const rows = db

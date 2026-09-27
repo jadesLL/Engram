@@ -145,6 +145,8 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'peer-token-reset': { label: '重置成员令牌', category: '成员' },
   'role-changed': { label: '角色变更', category: '配置' },
   'config-changed': { label: '同步配置变更', category: '配置' },
+  // 本机名称：对账时从「中枢配置的成员名」学回来（不再用电脑主机名当设备名）
+  'device-named': { label: '本机名称（按中枢配置）', category: '配置' },
   // 双栈连接（IPv6 优先 → 失败切 IPv4 → IPv4 期间定期回探）
   'dualstack-ipv4-fallback': { label: 'IPv6 连不上，改用 IPv4', category: '连接' },
   'dualstack-probe-failed': { label: '回探 IPv6 未成功', category: '连接' },
