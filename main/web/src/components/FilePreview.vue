@@ -179,6 +179,7 @@ import Vditor from 'vditor';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
+import { wrapTables } from '../lib/markdownTableWrap';
 import {
   selectionInside,
   type SelectionContextMenuRequest,
@@ -687,6 +688,8 @@ async function loadFile() {
         data.text,
         vditorPreviewOptions(document.documentElement.classList.contains('dark')),
       );
+      // Vditor 直出原生 table：宽表会连整个预览区一起撑宽（触屏上正文被推出视野，只能整页横拖）
+      if (mdEl.value) wrapTables(mdEl.value, 'fp-table-scroll');
     } else ext.value = data.ext;
   } catch (error) {
     console.error('文件预览失败', error);
@@ -776,6 +779,14 @@ defineExpose({ downloadFile, openExternal });
 .fp-body.docx :deep(h1) { font-size: 1.8em; }
 .fp-body.docx :deep(table) { border-collapse: collapse; }
 .fp-body.docx :deep(td), .fp-body.docx :deep(th) { border: 1px solid var(--border-strong); padding: 4px 10px; }
+/* Markdown 预览的宽表：滚动关进表格自己的容器（lib/markdownTableWrap 包出来），
+   外层 .fp-body 不再被撑宽；横滑到边缘时不把动作传给 WebView 的返回手势 */
+.fp-body.docx :deep(.fp-table-scroll) {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
 .pre { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px; }
 .office-online { flex: 1; min-height: 0; width: 100%; background: var(--bg); overflow: hidden; }
 .office-fallback-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }

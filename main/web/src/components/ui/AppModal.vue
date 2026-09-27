@@ -40,8 +40,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, useId, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, useId, watch } from 'vue';
 import Icon from '../Icon.vue';
+import { registerBackHandler } from '../../lib/androidBack';
 
 const props = withDefaults(
   defineProps<{
@@ -63,6 +64,8 @@ const emit = defineEmits<{ close: [] }>();
 const titleId = `app-modal-title-${useId()}`;
 const dialogRef = ref<HTMLElement>();
 let previousActive: HTMLElement | null = null;
+/** 安卓返回键接管层的注销函数（弹窗打开时注册、关闭/卸载时注销） */
+let stopBackHandler: (() => void) | null = null;
 
 const resolvedWidth = computed(
   () => props.width || (props.placement === 'right' ? 'min(420px, 92vw)' : 'min(560px, 94vw)')
@@ -75,12 +78,30 @@ watch(
       previousActive = document.activeElement as HTMLElement | null;
       await nextTick();
       if (props.autoFocus) dialogRef.value?.focus();
+      /*
+       * 安卓返回键/侧滑返回：与点遮罩同语义——可点遮罩关闭的弹窗，返回键也能关；
+       * closeOnMask=false 的强制确认（如危险操作二次确认）不给这条逃逸路径。
+       */
+      stopBackHandler = registerBackHandler(() => {
+        if (!props.closeOnMask) return false;
+        emit('close');
+        return true;
+      });
     } else if (previousActive?.isConnected) {
       previousActive.focus();
       previousActive = null;
     }
+    if (!open) {
+      stopBackHandler?.();
+      stopBackHandler = null;
+    }
   }
 );
+
+onUnmounted(() => {
+  stopBackHandler?.();
+  stopBackHandler = null;
+});
 
 function onMaskClick() {
   if (props.closeOnMask) emit('close');

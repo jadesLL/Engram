@@ -267,6 +267,7 @@ import Vditor from 'vditor';
 // 产物预览要用到 .vditor-reset 的基础排版，所以自己引一次（与文件预览的呈现保持一致）
 import 'vditor/dist/index.css';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
+import { wrapTables } from '../lib/markdownTableWrap';
 import { useInboxStore, type InboxItem, type InboxUpload } from '../stores/inbox';
 import { useChatStore } from '../stores/chat';
 import { useAppStore } from '../stores/app';
@@ -592,6 +593,8 @@ async function renderMarkdown(markdown: string) {
   const host = reviewBody.value;
   if (!host) return;
   await Vditor.preview(host, markdown, vditorPreviewOptions(document.documentElement.classList.contains('dark')));
+  // Vditor 直出原生 table：不包滚动容器，宽表会把弹窗（手机上是 94vw）连正文一起撑破
+  wrapTables(host, 'review-table-scroll');
 }
 
 async function openReview(item: InboxItem) {
@@ -1232,6 +1235,15 @@ html.dark .ftype.video { background: rgba(196, 174, 232, 0.14); color: #c4aee8; 
 
 .review-md :deep(> :first-child) { margin-top: 0; }
 .review-md :deep(h1) { font-size: 1.7em; }
+/* 宽表在触屏上撑破弹窗：滚动关进表格自己的容器（由 lib/markdownTableWrap 包出来），
+   overscroll-behavior-x 挡住横滑到边缘时传给 WebView 的返回手势 */
+.review-md :deep(.review-table-scroll) {
+  margin: 0.65em 0;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
 .review-md :deep(table) { border-collapse: collapse; }
 .review-md :deep(td),
 .review-md :deep(th) { border: 1px solid var(--border-strong); padding: 4px 10px; }

@@ -516,6 +516,6 @@ function displayName(name: string): string {
 /* 手机端：卡片仍是浮层，只留一圈 8px 边（宽度已由 min() 收好），
    但底部导航是 48px 常驻胶囊，卡片要抬到它上面 */
 @media (max-width: 768px) {
-  .asset-drawer { bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .asset-drawer { bottom: calc(64px + var(--safe-bottom)); }
 }
 </style>

@@ -1909,8 +1909,10 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
+  /* 安全区由 .sidebar 容器负责（Home.vue：手机档 top: calc(8px + var(--safe-top))），
+     这里再加一次会让抽屉头部凭空多出一条状态栏高度的空白 */
   .sidebar-header {
-    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-top: 12px;
   }
 
   .sidebar-close {
@@ -1936,6 +1938,64 @@ onUnmounted(() => {
   .sort-control.section-sort {
     opacity: 0.72;
     pointer-events: auto;
+  }
+
+  /* 以下是热区补足（桌面 hover 完全不受影响，这个媒体查询在鼠标设备上不匹配）。
+     触屏目标按 44px 起步：抽屉在手机档最宽 320px（Home.vue），下面每处都留了余量说明。 */
+
+  /* 标题栏三个 26px 图标按钮：彼此只隔 2px，热区各伸 1px 没有意义；
+     更左还是 SyncButton（不归本文件管，不能伸过去抢它的点击），所以只能连视觉一起放大到 44px。
+     代价是标题栏高 12px、actions 组宽 54px——320px 抽屉里「知识库」标题仍然放得下 */
+  .sidebar-fold,
+  .sidebar-new,
+  .sidebar-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* 搜索框里的清除键 22px：热区补到 44×36（纵向借搜索框上下的内边距，不会被裁切），
+     横向往输入框的 padding-right(28px) 里伸，不会盖到已输入的文字 */
+  .search-clear::after {
+    content: '';
+    position: absolute;
+    inset: -7px -11px;
+  }
+
+  /* 分区行只有 32px，放不下 44px 的按钮：触屏撑到 44px。
+     只影响 4 个分区标题行，不会把下面的页面/资料行撑高 */
+  .sec-row {
+    height: 44px;
+  }
+
+  /* 分区排序键与导出/新建/上传键都是 23px 的方块：同一行最多并排 4 个（原始资料），
+     彼此只隔 1px，热区没法互相借位，只能各自长到 44px。
+     4×44+3 + 计数 25 = 204px，320px 抽屉里仍留得下分区名（「原始资料」约 54px） */
+  .sort-control.section-sort,
+  .add-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* 子分组标题（人物/标记…）是整行按钮，但只有 ~20px 高、两行之间只隔 2px：
+     撑到 44px 才不至于点「文档」结果展开「标记」 */
+  .sub-head {
+    min-height: 44px;
+  }
+
+  /* 排序弹层是纯手指操作（点一下选一种排序），选项从 30px 撑到 44px */
+  .sort-menu-item {
+    min-height: 44px;
+  }
+
+  /* 多选操作栏在侧栏底部，26px 高偏小；热区补到 44px 而不撑高整条栏
+     （栏高直接吃掉内容可视区，底部栏尤其明显） */
+  .batch-btn {
+    position: relative;
+  }
+  .batch-btn::after {
+    content: '';
+    position: absolute;
+    inset: -9px -2px;
   }
 }
 

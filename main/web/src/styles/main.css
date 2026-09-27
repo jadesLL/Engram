@@ -2,7 +2,15 @@
  * 响应式断点规范：@media 无法引用 CSS 变量，全库统一为三档，新增断点必须选用——
  *   640px  紧凑布局（窄窗口/平板竖屏）
  *   768px  移动端切换（隐藏 rail、抽屉式侧栏、底部导航）
- *   1024px 宽屏容器上限
+ *   1024px 宽屏容器上限（折叠屏内屏/平板用浮层侧栏，> 1024 才是桌面双栏）
+ * 对应的 JS 常量在 src/lib/layoutBreakpoints.ts；两边数值不一致会出「CSS 换了形态、
+ * JS 还在按另一档判断」的错配（沉浸阅读目录踩过），由 src/lib/mobileLayout.test.ts 锁住。
+ *
+ * 触屏能力用 @media (hover: none) and (pointer: coarse)，不要用宽度代替触屏判断：
+ * 折叠屏内屏/平板/手机横屏都超过 768px，用宽度判断会让这些设备的 hover-only 入口永远点不到。
+ *
+ * 安全区只用 --safe-top/right/bottom/left（见下方 :root），禁止直接写 env(safe-area-inset-*)：
+ * Android WebView 里 env() 恒为 0，真实值由原生经 --inset-* 注入（src/lib/systemInsets.ts）。
  */
 :root {
   /* Windows 11 Fluent 浅色主题（默认）：Mica 基底 + 分层卡片 */
@@ -96,6 +104,25 @@
   --font-sm: 12.5px;
   --font-md: 13px;
   font-size: 15px;
+
+  /*
+   * 系统栏安全区。Android 本地端由原生注入 --inset-*（WebView 里 env(safe-area-inset-*)
+   * 不可靠，实测恒为 0）；桌面端与 Docker 网页端不注入，两个值都是 0px，
+   * max() 结果与改动前完全一致。组件一律引用 --safe-*，不要再直接写裸 env()。
+   */
+  --inset-top: 0px;
+  --inset-right: 0px;
+  --inset-bottom: 0px;
+  --inset-left: 0px;
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--inset-top));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--inset-right));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--inset-bottom));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--inset-left));
+  /*
+   * 编辑态与沉浸阅读共用同一颗底部状态胶囊，留白必须同一个来源：
+   * 桌面 24px；手机档 8px（正文区已经为底部导航让出 64px，再加 8px 即导航条上方 16px）。
+   */
+  --statusbar-gap: 24px;
 }
 
 html.dark {
@@ -444,7 +471,7 @@ html .vditor-reset table tbody tr:nth-child(2n) {
 /* 移动端通用 */
 @media (max-width: 768px) {
   /* 0.875rem（默认等效 14px）而非固定 px：root 用相对单位，浏览器/系统字体设置调大时全局 rem 元素跟随放大 */
-  :root { font-size: 0.875rem; }
+  :root { font-size: 0.875rem; --statusbar-gap: 8px; }
 
   /* 正文字号跟随浏览器/系统字体设置：直接作用于 .vditor-reset（库样式对其固定 16px，
    * 只改容器 .vditor-ir 会被子的显式 16px 盖住）。1.14rem 在 root 14px 基准下仍为 16px，
@@ -458,6 +485,21 @@ html .vditor-reset table tbody tr:nth-child(2n) {
     border-color: transparent !important;
     background: var(--bg) !important;
   }
+}
+
+/*
+ * 软键盘弹起时（Android 原生把 ime 高度报给网页，见 lib/systemInsets.ts）：底部常驻栏统一收起。
+ * 它们会跟着收缩后的视口抬到键盘上方，白占写字的地方、还容易压住光标行。
+ * 桌面端与没有原生 insets 的浏览器永远不会出现 html.kb-open，行为不变。
+ */
+html.kb-open .bottom-nav,
+html.kb-open .agent-pill {
+  display: none !important;
+}
+
+/* 底部常驻栏收起后，正文底部为它让出的 64px 也该还给正文：键盘期间写字的地方多一行 */
+html.kb-open .content {
+  padding-bottom: var(--safe-bottom);
 }
 
 /* 全局减弱动效偏好：所有过渡/动画瞬时完成（各组件无需再单独处理） */

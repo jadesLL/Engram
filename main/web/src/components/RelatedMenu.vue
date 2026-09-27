@@ -337,7 +337,7 @@ defineExpose({ open, close, toggle });
   border-top: 1px solid var(--border);
   border-radius: 14px 14px 0 0;
   box-shadow: 0 -14px 40px -18px rgba(0, 0, 0, 0.45);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: var(--safe-bottom);
 }
 /* 抓手：提示这是一张可以点遮罩关掉的下侧弹窗 */
 .rel-overlay.mobile .rel-panel::before {

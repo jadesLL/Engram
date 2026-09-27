@@ -32,12 +32,15 @@ engram/
 
 ```text
 main/mobile/
-├── capacitor.config.json       # appId=com.engram.app，webDir=web-dist
+├── capacitor.config.json       # appId=com.engram.app，webDir=web-dist，adjustMarginsForEdgeToEdge=disable
 ├── scripts/prepare-mobile-web.cjs
 ├── scripts/build-apk-ci.sh     # Web build → 复制资产 → cap sync → Gradle test/assemble
 ├── Dockerfile.ci
 └── android/app/src/main/java/com/engram/app/
-    ├── MainActivity.java       # 生命周期、WebView、系统分享与下载
+    ├── MainActivity.java       # 生命周期、WebView、系统分享与下载、返回键与启动层
+    ├── SystemBars.java         # 透明系统栏 + insets 交给网页 + 系统栏图标明暗跟随应用主题
+    ├── SystemBarPolicy.java    # 系统栏策略纯逻辑（JVM 单测：insets JSON 契约、API 版本差异）
+    ├── BackPolicy.java         # 返回键判定纯逻辑：网页 → 历史 → 退后台
     ├── EngramLocalServer.kt    # loopback Ktor REST/静态服务
     ├── AgentBridge.kt          # Docker Agent 交互面窄代理
     ├── LocalDatabase.kt        # Markdown/SQLite/备份/回收站
@@ -46,6 +49,17 @@ main/mobile/
 ```
 
 `mobile/web-dist/` 是构建产物，不入 Git。每次打包必须先构建 `@engram/web`，再运行 `prepare:web` 和 `cap sync android`。
+
+## 系统栏与返回手势
+
+安卓系统栏是完全边到边（edge-to-edge）的，网页背景一直铺到屏幕边缘，状态栏/导航栏区域不会再出现一条独立色带：
+
+- **透明系统栏**：`SystemBars.install()` 关掉 `windowOptOutEdgeToEdgeEnforcement` 时代的 opt-out，改用 `WindowCompat.setDecorFitsSystemWindows(false)` + 透明 `statusBarColor`/`navigationBarColor` + 关掉系统蒙层（API 29+ `setNavigationBarContrastEnforced(false)`）。
+- **图标明暗跟随应用主题**（不是系统深色开关）：网页在 `applyTheme()` 之后调 `window.EngramSystemBars.setDark(dark)`，原生据此设置 `setAppearanceLightStatusBars/NavigationBars`，并把选择记进 SharedPreferences 供下次冷启动使用。
+- **安全区由原生注入**：WebView 里 `env(safe-area-inset-*)` 不可靠（恒为 0），所以原生把 `systemBars()`/`ime()`/挖孔的尺寸经 JS 接口 `EngramSystemBars.insets()` + `window.__engramSystemBars(json)` 交给网页；网页在 `web/src/lib/systemInsets.ts` 写进 `--inset-*`，样式层统一用 `--safe-top/right/bottom/left`（`max(env(...), var(--inset-*))`）。软键盘只用来加 `html.kb-open`（底部常驻栏收起），不加进底部安全区——布局视口本来就随键盘收缩。
+- **`adjustMarginsForEdgeToEdge` 必须保持 `disable`**：Capacitor 的 `auto/force` 会给 WebView 自己加 margin，网页视口被内缩、安全区仍然算不出来，正好把上面这套废掉。
+- **返回键/侧滑返回**：`MainActivity` 的 `OnBackPressedCallback` 先 `evaluateJavascript("window.__engramHandleBack()")` 问网页是否消费（关确认框、长按菜单、资产/同步日志抽屉、对话抽屉、文件树、阅读目录面板……注册入口是 `web/src/lib/androidBack.ts`），网页不要才 `webView.goBack()`，历史到头才 `moveTaskToBack`。启动期 `loadDataWithBaseURL` 的占位页在首帧就绪时用 `clearHistory()` 清掉，避免根页面按返回退到空白页。`@capacitor/app` 的 `backButton` 在这个壳里不可用（页面来自 `http://127.0.0.1:18182`，Capacitor 桥没有注入该 origin），不要改回去用它。
+
 
 ## 本地开发与验证
 

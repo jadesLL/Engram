@@ -191,6 +191,7 @@ import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
 import { createIdeaNote } from '../lib/quickNote';
 import { loadRuntimeCapabilities, useRuntimeCapabilities } from '../lib/capabilities';
+import { registerBackHandler } from '../lib/androidBack';
 import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
 import AgentStatusPill from '../components/AgentStatusPill.vue';
@@ -212,6 +213,8 @@ const inbox = useInboxStore();
 const { capabilities } = useRuntimeCapabilities();
 const agentName = computed(() => capabilities.value.agentMode === 'hub' ? '服务器 Agent' : capabilities.value.agentMode === 'unavailable' ? 'Agent' : '内置 Agent');
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
+/** 安卓返回键接管层的注销函数（组件卸载时注销，避免路由重进后残留旧闭包） */
+let stopBackHandler: (() => void) | null = null;
 
 /* ===== 文件提取进度：只在对应文件旁显示，系统后台处理不提供通用队列界面 ===== */
 let jobPollStopped = true;
@@ -479,6 +482,23 @@ function onUpdateOnline() {
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onWindowResize);
+  // Android 返回键/侧滑返回：先收掉应用级浮层（更多面板 → 对话抽屉 → 文件树），
+  // 都关着才交回原生（历史后退或退到后台）。桌面端没有原生调用，注册了也不会触发。
+  stopBackHandler = registerBackHandler(() => {
+    if (moreOpen.value) {
+      moreOpen.value = false;
+      return true;
+    }
+    if (app.chatDrawerOpen) {
+      app.toggleChat(false);
+      return true;
+    }
+    if (app.sidebarOpen) {
+      app.sidebarOpen = false;
+      return true;
+    }
+    return false;
+  });
   app.loadUiPreferences(); // 侧栏「AI 工作区」默认隐藏，是否显示由服务端设置决定
   loadRuntimeCapabilities().then((caps) => {
     if (caps.features.jobs) {
@@ -516,6 +536,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onWindowResize);
+  stopBackHandler?.();
+  stopBackHandler = null;
   document.removeEventListener('visibilitychange', onUpdateVisibility);
   window.removeEventListener('focus', pokeUpdateCheck);
   window.removeEventListener('online', onUpdateOnline);
@@ -545,9 +567,10 @@ onUnmounted(() => {
 
 .rail {
   position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: 8px;
+  /* 安卓边到边：整条图标栏让开状态栏/导航栏（--safe-* 桌面端恒为 0，观感不变） */
+  top: calc(8px + var(--safe-top));
+  bottom: calc(8px + var(--safe-bottom));
+  left: calc(8px + var(--safe-left));
   width: 44px;
   display: flex;
   flex-direction: column;
@@ -704,9 +727,9 @@ onUnmounted(() => {
 
 .sidebar {
   position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: 60px;
+  top: calc(8px + var(--safe-top));
+  bottom: calc(8px + var(--safe-bottom));
+  left: calc(60px + var(--safe-left));
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--sidebar-glass-border);
@@ -758,11 +781,19 @@ onUnmounted(() => {
   min-width: 0;
   overflow-y: auto;
   padding-left: 64px;
+  /*
+   * 上下各让开系统栏：安卓边到边后 WebView 顶边就是屏幕顶边，正文不能顶到状态栏/导航栏
+   * 底下（视图自己的 absolute 顶栏也挂在 .content 内，会一并被抬到状态栏下方）。
+   */
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+  /* 横屏时系统导航栏会跑到右侧（inset-right>0）：正文右侧也要让开，否则末列被导航键压住 */
+  padding-right: var(--safe-right);
   background: var(--bg);
   transition: padding-left 180ms ease, padding-right 180ms ease, padding-top 180ms ease;
 }
 
-.layout.update-notice-visible .content { padding-top: 52px; }
+.layout.update-notice-visible .content { padding-top: calc(52px + var(--safe-top)); }
 .layout.chat-dock-open :deep(.update-notice) { right: calc(var(--chat-w) + 24px); }
 
 .layout.sidebar-open .content {
@@ -774,7 +805,7 @@ onUnmounted(() => {
  * 与左侧文件树让位同一套节奏——两边都是「浮层出现、正文平移让位」，不是压住正文。
  */
 .layout.chat-dock-open .content {
-  padding-right: calc(var(--chat-w, 0px) + 20px);
+  padding-right: calc(var(--chat-w, 0px) + 20px + var(--safe-right));
 }
 
 /* 拖卡片宽度时正文跟手：过渡会把让位拖后 180ms，卡片就压到字上了 */
@@ -814,9 +845,9 @@ onUnmounted(() => {
   .sidebar {
     position: fixed;
     /* fixed 相对视口定位：桌面端须避开顶部拖拽融合条（非桌面端变量回退 0px） */
-    top: calc(8px + var(--win-titlebar-h, 0px));
-    bottom: 8px;
-    left: 60px;
+    top: calc(8px + var(--win-titlebar-h, 0px) + var(--safe-top));
+    bottom: calc(8px + var(--safe-bottom));
+    left: calc(60px + var(--safe-left));
     width: min(var(--sidebar-width), calc(100vw - 80px)) !important;
     max-width: 400px;
     box-shadow: var(--sidebar-mobile-shadow);
@@ -836,13 +867,21 @@ onUnmounted(() => {
 
   .content,
   .layout.sidebar-open .content {
-    padding-left: 64px;
+    padding-left: calc(64px + var(--safe-left));
   }
 
-  /* 触屏紧凑档：放大 rail 触控目标 */
+  /* 触屏紧凑档（折叠屏内屏/平板竖屏）：rail 图标按钮用不可见热区补到 44px，
+     视觉尺寸不变——36px 的方块在手指上仍然偏小 */
   @media (hover: none) and (pointer: coarse) {
     .rail-btn { width: 36px; height: 36px; }
     .rail { padding: 6px 4px; }
+    .rail-btn::after,
+    .rail-logo::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 10px;
+    }
   }
 }
 
@@ -856,9 +895,9 @@ onUnmounted(() => {
 
   .sidebar {
     position: fixed;
-    top: 8px;
-    bottom: calc(64px + env(safe-area-inset-bottom));
-    left: 8px;
+    top: calc(8px + var(--safe-top));
+    bottom: calc(64px + var(--safe-bottom));
+    left: calc(8px + var(--safe-left));
     width: calc(100vw - 16px) !important;
     max-width: 320px;
     box-shadow: var(--sidebar-mobile-shadow);
@@ -880,11 +919,11 @@ onUnmounted(() => {
   }
 
   .content {
-    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+    padding-bottom: calc(64px + var(--safe-bottom));
     padding-left: 0;
   }
 
-  .layout.update-notice-visible .content { padding-top: 46px; }
+  .layout.update-notice-visible .content { padding-top: calc(46px + var(--safe-top)); }
 
   .layout.sidebar-open .content {
     padding-left: 0;
@@ -892,10 +931,10 @@ onUnmounted(() => {
 
   .bottom-nav {
     position: fixed;
-    right: 8px;
+    right: calc(8px + var(--safe-right));
     /* 手势条设备上整栏抬到手势条上方，内容在 48px 内垂直居中（border-box 下 padding 会压缩内容区导致偏移） */
-    bottom: calc(8px + env(safe-area-inset-bottom));
-    left: 8px;
+    bottom: calc(8px + var(--safe-bottom));
+    left: calc(8px + var(--safe-left));
     display: flex;
     height: 48px;
     overflow: hidden;
@@ -936,9 +975,9 @@ onUnmounted(() => {
 
   .more-sheet {
     position: fixed;
-    right: 8px;
-    bottom: calc(64px + env(safe-area-inset-bottom));
-    left: 8px;
+    right: calc(8px + var(--safe-right));
+    bottom: calc(64px + var(--safe-bottom));
+    left: calc(8px + var(--safe-left));
     display: block;
     padding: 10px 14px 14px;
     border: 1px solid var(--sidebar-glass-border);
@@ -947,6 +986,9 @@ onUnmounted(() => {
     box-shadow: var(--sidebar-mobile-shadow);
     backdrop-filter: saturate(150%) blur(24px);
     -webkit-backdrop-filter: saturate(150%) blur(24px);
+    /* 矮视口（手机横屏/分屏）时面板会顶出屏幕：限定高度并允许内部滚动 */
+    max-height: calc(100dvh - 72px - var(--safe-top) - var(--safe-bottom));
+    overflow-y: auto;
     z-index: calc(var(--z-chrome) + 1);
   }
 
@@ -1013,6 +1055,23 @@ onUnmounted(() => {
   }
 
   .more-label { font-size: 11px; }
+
+  /*
+   * 触屏手机：底部导航整格 48px 已经够高，但 10px 标签在小屏上读不清；
+   * 这里只加字号，不抬整条栏（抬高会连带改 .content 的让位高度）。
+   */
+  @media (hover: none) and (pointer: coarse) {
+    .bottom-nav button span { font-size: 11px; }
+  }
+}
+
+/*
+ * 矮视口（手机横屏、分屏、折叠屏半开）：可视高度只有 320-400px。
+ * 「更多」面板原来没有高度上限，5 列图标会顶出屏幕；底部导航也让位过多了。
+ */
+@media (max-height: 480px) {
+  .more-sheet { max-height: calc(100dvh - 24px - var(--safe-top) - var(--safe-bottom)); }
+  .more-grid button { min-height: 52px; }
 }
 
 .more-sheet-enter-active,

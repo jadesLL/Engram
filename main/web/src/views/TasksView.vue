@@ -812,8 +812,10 @@ onBeforeUnmount(() => {
 .gaps ul { margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.8; }
 .gaps-hint { margin: 8px 0 0; color: var(--text-faint); font-size: 11.5px; }
 
-/* 窄屏：所有列竖着排（手机与窄窗口）；工具条与筛选折行 */
-@media (max-width: 900px) {
+/* 窄屏：所有列竖着排（手机、折叠屏内屏与窄窗口）；工具条与筛选折行。
+   断点收敛到规范三档里的 1024（原来写 900 是规范外的越档值）：900-1024 这段双列看板
+   本来就已经挤到放不下卡片，跟着紧凑档一起竖排，折叠屏/平板竖屏也不用再单独维护一档 */
+@media (max-width: 1024px) {
   .tasks-view { padding: 16px 14px 32px; }
   .board.view-column,
   .board.view-day { grid-template-columns: 1fr; }

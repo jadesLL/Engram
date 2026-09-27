@@ -42,12 +42,19 @@ public class MainActivity extends BridgeActivity {
     private int localNavigationGeneration = 0;
     private String pendingDownloadUrl;
     private String pendingDownloadCookie;
+    /** 系统栏（状态栏/导航栏/大屏任务栏）：透明 + 尺寸交给网页，见 SystemBars。 */
+    private SystemBars systemBars;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
         splashScreen.setKeepOnScreenCondition(() -> !startupSurfaceReady);
         super.onCreate(savedInstanceState);
+        WebView shellWebView = bridge != null ? bridge.getWebView() : null;
+        if (shellWebView != null) {
+            systemBars = new SystemBars(this, shellWebView);
+            systemBars.install();
+        }
         showStartupOverlay();
         startupSurfaceReady = true;
         String previousCrash = CrashReporter.consume(getApplicationContext());
@@ -60,17 +67,31 @@ public class MainActivity extends BridgeActivity {
         }
 
         forceSelectServer = ACTION_SELECT_SERVER.equals(getIntent().getAction());
-        // 注册晚于 App 插件的回调（后加入者优先生效）：
-        // 可后退则网页后退，否则退到后台（不销毁 Activity，保留登录态）
+        // 注册晚于 App 插件的回调（后加入者优先生效）：物理返回键与屏幕侧滑手势都走这里。
+        // 顺序：先让网页处理「它自己叠出来的那一层」（抽屉/弹层/阅读态/子视图），
+        // 网页不要才交给 WebView 历史，历史也到头才退到后台（不销毁 Activity，保留登录态）。
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
                 WebView webView = bridge != null ? bridge.getWebView() : null;
-                if (webView != null && webView.canGoBack()) {
-                    webView.goBack();
-                } else {
+                if (webView == null) {
                     moveTaskToBack(true);
+                    return;
                 }
+                webView.evaluateJavascript(
+                        "(function(){try{return window.__engramHandleBack?window.__engramHandleBack()===true:false}catch(e){return false}})()",
+                        handled -> {
+                            switch (BackPolicy.decide("true".equals(handled), webView.canGoBack())) {
+                                case WEB:
+                                    break;
+                                case HISTORY:
+                                    webView.goBack();
+                                    break;
+                                default:
+                                    moveTaskToBack(true);
+                                    break;
+                            }
+                        });
             }
         });
 
@@ -200,6 +221,10 @@ public class MainActivity extends BridgeActivity {
                 if (generation != localNavigationGeneration || isFinishing()) return;
                 if ("true".equals(result)) {
                     hideStartupOverlay();
+                    // 页面已就绪：清掉「正在启动」占位页那一格历史，否则根页面按返回会退回空白页；
+                    // 并把系统栏尺寸推给网页（WebView 里 env(safe-area-inset-*) 不可靠）。
+                    webView.clearHistory();
+                    if (systemBars != null) systemBars.push();
                     // 先显示本地页面，再启动可能需要大量网络和内存的首次同步。
                     webView.postDelayed(() -> {
                         if (activityForeground && generation == localNavigationGeneration) {
@@ -233,12 +258,14 @@ public class MainActivity extends BridgeActivity {
     private void showStartupOverlay() {
         FrameLayout root = findViewById(android.R.id.content);
         if (root == null) return;
+        // 启动说明的底色跟随应用主题：深色模式下不再闪一块白屏（主题由 SystemBars 记住上次选择）
+        boolean dark = systemBars != null && systemBars.isDark();
         FrameLayout overlay = new FrameLayout(this);
-        overlay.setBackgroundColor(Color.rgb(248, 250, 252));
+        overlay.setBackgroundColor(dark ? Color.rgb(30, 29, 28) : Color.rgb(247, 246, 244));
         overlay.setClickable(true);
         TextView label = new TextView(this);
         label.setText("Engram Local\n正在启动本地知识库…");
-        label.setTextColor(Color.rgb(71, 85, 105));
+        label.setTextColor(dark ? Color.rgb(201, 201, 201) : Color.rgb(71, 85, 105));
         label.setTextSize(17);
         label.setGravity(Gravity.CENTER);
         label.setLineSpacing(8, 1);
@@ -258,9 +285,11 @@ public class MainActivity extends BridgeActivity {
     }
 
     private String startupHtml(String message, boolean isError) {
-        String color = isError ? "#c2410c" : "#475569";
-        return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>"
-                + "<body style=\"margin:0;background:#f8fafc;color:" + color + ";font:16px system-ui;display:grid;place-items:center;height:100vh\">"
+        boolean dark = systemBars != null && systemBars.isDark();
+        String color = isError ? "#f0a56b" : (dark ? "#c9c9c9" : "#475569");
+        String background = dark ? "#1e1d1c" : "#f7f6f4";
+        return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\"></head>"
+                + "<body style=\"margin:0;background:" + background + ";color:" + color + ";font:16px system-ui;display:grid;place-items:center;height:100vh\">"
                 + "<div style=\"max-width:320px;text-align:center;line-height:1.7\"><b>Engram Local</b><br>" + message + "</div></body></html>";
     }
 

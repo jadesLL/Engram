@@ -13,6 +13,14 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!--
+          系统栏改为「透明 + 内容铺满」：具体明暗与图标色由 SystemBars 在运行时按应用主题设置
+          （网页通过 EngramSystemBars.setDark 报告当前是浅色还是深色）。这里先声明透明，
+          避免启动瞬间走主题默认的黑色系统栏。
+        -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 
 
@@ -20,5 +28,7 @@
         <item name="windowSplashScreenBackground">#f8fafc</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>

@@ -34,7 +34,8 @@ function iconFor(kind: ToastKind): string {
  */
 .toast-stack {
   position: fixed;
-  top: max(18px, env(safe-area-inset-top));
+  /* 安卓边到边后固定定位的顶部元素要自己让开状态栏（桌面端 --safe-top 为 0，仍是 18px） */
+  top: calc(18px + var(--safe-top));
   right: 22px;
   z-index: var(--z-toast);
   display: flex;
