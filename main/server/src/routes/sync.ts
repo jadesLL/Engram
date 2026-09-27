@@ -19,6 +19,7 @@ import {
 } from '../sync/hub.js';
 import {
   createPeer,
+  currentNodeId,
   currentRevision,
   findPeerByToken,
   getPeer,
@@ -40,7 +41,9 @@ import {
   snapshotHash,
 } from '../sync/sessions.js';
 import { distilledSourcePaths } from '../pipeline/sourceLedger.js';
-import { configure, configureDualStack, reconcileNow, status } from '../sync/index.js';
+import { configure, configureDualStack, configureLinkPreferLan, reconcileNow, status } from '../sync/index.js';
+import { deviceLabel } from '../sync/deviceLabel.js';
+import { localLanUrls } from '../sync/linkAnnounce.js';
 import type { DualStackConfig } from '../sync/dualStack.js';
 import {
   clearSyncLog,
@@ -214,9 +217,12 @@ export async function syncRoutes(app: FastifyInstance) {
       hub_token?: string;
       role?: 'hub' | 'member' | 'none';
       dual_stack?: Partial<DualStackConfig>;
+      prefer_lan?: boolean;
     };
     // 双栈参数独立于绑定信息：设置页只改阈值时不能把 enabled 当 false 处理（会误停同步）
     if (body.dual_stack !== undefined) configureDualStack(body.dual_stack || {});
+    // 「优先局域网」同理：与绑定信息独立，只改它不会重新绑定、也不会重连
+    if (body.prefer_lan !== undefined) configureLinkPreferLan(Boolean(body.prefer_lan));
     const touchesBinding = body.enabled !== undefined || body.hub_url !== undefined
       || body.hub_token !== undefined || body.role !== undefined;
     if (!touchesBinding) return { ok: true };
@@ -287,6 +293,20 @@ export async function syncRoutes(app: FastifyInstance) {
   });
 
   // ---------- 数据面（成员 token / owner）：逐路由声明 requireSyncAccess ----------
+
+  /**
+   * 连接通道通告（成员端择优用）：中枢告诉成员「我在这几个内网地址上也能连到」。
+   * 成员端拿它当首选候选（局域网优先），探不到就回落到配置的中枢地址。
+   *
+   * 为什么放在带鉴权的数据面而不是无鉴权的 /health：内网地址清单等于本机网络拓扑，
+   * 只该给已经绑定过令牌的成员看，不能播给任何访问者。
+   */
+  app.get('/api/sync/announce', { preHandler: requireSyncAccess }, async () => ({
+    ok: true,
+    nodeId: currentNodeId(),
+    deviceLabel: deviceLabel(),
+    lan: localLanUrls(),
+  }));
 
   /** 成员 SSE 下行：实时广播；断开由 req close 触发反注册 */
   app.get('/api/sync/events', { preHandler: requireSyncAccess }, async (req, reply) => {

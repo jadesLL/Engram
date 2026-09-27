@@ -29,14 +29,18 @@ import { getSession, runningRunForSession } from '../assistant/repository.js';
 import {
   beginBootstrap,
   clientStatus,
+  configureLinkPreferLan,
   dualStackHosts,
   enqueueLocalChange,
   hubConfigured,
+  probeLinkChannel,
   reconcile,
+  resetLinkBinding,
   startClient,
   stopClientAndWait,
   syncConfigEnabled,
 } from './client.js';
+import type { SyncLinkStatus } from './link.js';
 import {
   dualStackConfig,
   resetDualStackState,
@@ -270,6 +274,11 @@ export interface SyncStatus {
    * hosts 为每个中枢域名的实时记账：走过 IPv6 还是已切 IPv4、还差几次回探。
    */
   dualStack: SyncDualStackStatus;
+  /**
+   * 当前连接通道（局域网 / IPv6 / IPv4 / 断开）与候选探测明细。
+   * 成员端才有值；中枢端与未配置同步时为 null，界面据此整块隐藏。
+   */
+  link: SyncLinkStatus | null;
   log: Array<{ id?: number; ts: string; level: string; event: string; detail?: string; scope?: string; peer?: string; data?: Record<string, unknown> }>;
   peers: Array<{
     id: string;
@@ -309,6 +318,7 @@ export function status(): SyncStatus {
     lastSyncAt: s.lastSyncAt,
     lastError: s.lastError,
     dualStack: { ...dualStackConfig(), hosts: dualStackHosts() },
+    link: s.link,
     log: s.log,
     peers:
       role === 'hub'
@@ -331,10 +341,14 @@ export interface SyncConfigInput {
   enabled?: boolean;
   hub_url?: string;
   hub_token?: string;
+  /** 「优先局域网」开关（设置页「局域网优先」）；与绑定信息独立，只改它不会重连 */
+  prefer_lan?: boolean;
 }
 
 /** 校验并保存同步配置；返回错误消息（null=成功） */
 export async function configure(input: SyncConfigInput): Promise<string | null> {
+  // 「优先局域网」与绑定信息彼此独立：只改它既不重新绑定、也不重连，下一轮探测即生效
+  if (input.prefer_lan !== undefined) configureLinkPreferLan(Boolean(input.prefer_lan));
   // 角色切换：hub=本设备作为中枢（停止成员客户端）；none=不参与同步；member=绑定中枢
   if (input.role === 'hub' || input.role === 'none') {
     setSetting('sync_role', input.role);
@@ -378,6 +392,8 @@ export async function configure(input: SyncConfigInput): Promise<string | null> 
   const rebinding = (input.hub_url !== undefined && url.replace(/\/+$/, '') !== before.url)
     || (input.hub_token !== undefined && String(input.hub_token).trim() !== before.token);
   if (rebinding) clearLearnedDeviceLabel();
+  // 换中枢了：上一个中枢通告的内网地址必须丢掉，否则会拿旧网段去探新中枢
+  if (rebinding) resetLinkBinding();
   setSetting('sync_enabled', input.enabled ? '1' : '0');
   if (input.hub_url !== undefined) setSetting('sync_hub_url', url.replace(/\/+$/, ''));
   if (input.hub_token !== undefined) setSetting('sync_hub_token', String(input.hub_token).trim());
@@ -435,6 +451,10 @@ export async function reinitClient(): Promise<void> {
     // 引导期间状态面板显示「已连接 · 首次同步中」：整库对账 + 从头补拉可能持续数分钟，
     // 此前 SSE 还没建立，旧口径会让用户以为没连上（重启后水位已推进才显示正常）。
     beginBootstrap();
+    // 先择优一次：上次用过的内网地址若能连上，首轮对账就直接走局域网，不必先绕一次公网
+    try {
+      await probeLinkChannel(true);
+    } catch { /* 选路失败不影响对账：请求会回落到配置的中枢地址 */ }
     try {
       await reconcile('bootstrap');
     } catch (error) {
@@ -458,4 +478,4 @@ export function reconcileNow(): void {
   void reconcile('manual').catch((error) => console.error('[sync] 手动对账失败:', error));
 }
 
-export { hubConfigured, syncConfigEnabled };
+export { configureLinkPreferLan, hubConfigured, syncConfigEnabled };

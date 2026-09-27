@@ -24,6 +24,11 @@ services:
       # 直连地址通告（IPv6 直连优先的客户端发现入口）。真实值写在部署侧同目录 .env（不入库），
       # 例：DIRECT_ACCESS_URL=http://direct.xxx.com:18080；未配置时 /health 保持纯文本
       - DIRECT_ACCESS_URL=${DIRECT_ACCESS_URL:-}
+      # 局域网直连地址通告（成员端「局域网优先」择选用）。容器里 os.networkInterfaces() 看到的
+      # 172.x 是 Docker 网段、PORT 也不是宿主映射端口，宿主机内网地址只有部署侧知道：
+      # 例：LAN_ACCESS_URL=http://192.168.31.100:18080（多个用逗号分隔）；LAN_PORT 覆盖端口
+      - LAN_ACCESS_URL=${LAN_ACCESS_URL:-}
+      - LAN_PORT=${LAN_PORT:-}
       # HTTPS 直连（内置 ACME；TLS_DOMAIN 为空则完全关闭）。真实值在部署侧 .env（不入库）：
       # TLS_DOMAIN=direct.xxx.com、TLS_DNS_API_TOKEN=<CF token 需 Zone.DNS Edit 权限>
       - TLS_DOMAIN=${TLS_DOMAIN:-}

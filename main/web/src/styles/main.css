@@ -42,6 +42,23 @@
   --danger-soft: rgba(196, 43, 28, 0.08);
   --warn-soft: rgba(157, 93, 0, 0.1);
   --success-soft: rgba(15, 123, 15, 0.1);
+  /*
+   * 连接通道四色：绿 = IPv6 / 黄 = IPv4 / 蓝 = 局域网 / 红 = 断开。
+   * 这个应用里绿色本来是「同步已完成」、黄色本来是「警告」，通道色借用后靠两件事兜住：
+   *  ① 颜色永远和文字标签（局域网 / IPv6 / IPv4 / 已断开）一起出现，不让颜色单独表意；
+   *  ② 黄色特意取偏金黄的琥珀，避开警告用的深棕黄（--warn #9d5d00 / --warning #8a5200）——
+   *     否则「黄色 + 一切正常（降级在用）」和「黄色 + 出事了」同屏分不开。
+   * 具体色值只在这里出现一次，组件一律引用令牌或 .link-<key> 类。
+   */
+  --link-lan: #0f6cbd;
+  --link-v6: #0f7b0f;
+  --link-v4: #a86800;
+  --link-off: #c42b1c;
+  /* 通道底色：与现有 soft 令牌同值就复用，不重复定义一份新色 */
+  --link-lan-soft: var(--accent-soft);
+  --link-v6-soft: var(--success-soft);
+  --link-v4-soft: var(--warn-soft);
+  --link-off-soft: var(--danger-soft);
   /* Fluent 标准控件：白底 + 底缘深色描边（ControlElevationBorder） */
   --control-bg: #fdfcfb;
   --control-bg-hover: #f5f3f1;
@@ -185,6 +202,11 @@ html.dark {
   --danger-soft: rgba(255, 153, 164, 0.16);
   --warn-soft: rgba(229, 166, 61, 0.16);
   --success-soft: rgba(108, 203, 95, 0.16);
+  /* 连接通道四色（深色主题：提亮一档保证深底上的对比度；语义与浅色一致，见 :root 注释） */
+  --link-lan: #5aa9e6;
+  --link-v6: #6ccb5f;
+  --link-v4: #e5b545;
+  --link-off: #ff99a4;
   --rail-logo-filter: drop-shadow(0 1px 3px rgba(90, 169, 230, 0.4));
   --rail-logo-filter-hover: drop-shadow(0 2px 6px rgba(90, 169, 230, 0.46)) brightness(1.06);
   --scrollbar: rgba(255, 255, 255, 0.32);
@@ -326,6 +348,20 @@ select option {
 .btn.icon:hover { background: var(--bg-hover); color: var(--text); }
 .btn.small { padding: 4px 10px; font-size: 13px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------- 连接通道：key → 颜色变量 ----------
+ * TS 侧（lib/syncChannel.ts）只给 key，组件只加一个 `link-<key>` 类，
+ * 颜色一律从 --channel / --channel-soft 取：侧栏胶囊、首页状态条、连接详情浮层、
+ * 设置页「局域网优先」四处共用同一套映射，不会各写一份 hex 各调各的色。
+ * hub / connected（通道已知性不足的中性档）与 muted（已停用）不占四色语义。
+ */
+.link-lan { --channel: var(--link-lan); --channel-soft: var(--link-lan-soft); }
+.link-ipv6 { --channel: var(--link-v6); --channel-soft: var(--link-v6-soft); }
+.link-ipv4 { --channel: var(--link-v4); --channel-soft: var(--link-v4-soft); }
+.link-offline { --channel: var(--link-off); --channel-soft: var(--link-off-soft); }
+.link-hub,
+.link-connected { --channel: var(--text-secondary); --channel-soft: var(--bg-tertiary); }
+.link-muted { --channel: var(--text-faint); --channel-soft: var(--bg-tertiary); }
 
 .card {
   background: var(--card-bg);

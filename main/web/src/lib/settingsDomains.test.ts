@@ -65,7 +65,7 @@ test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', 
       account: ['account-credentials', 'account-connection'],
       interface: ['account-appearance', 'data-synonyms'],
       data: ['data-location', 'data-backup', 'storage-trash', 'storage-assets', 'data-danger'],
-      sync: ['panel-sync', 'sync-dualstack', 'sync-ddns'],
+      sync: ['panel-sync', 'sync-lan', 'sync-dualstack', 'sync-ddns'],
       update: ['panel-update-server', 'panel-update-desktop', 'panel-update-source'],
       app: ['panel-app', 'app-version', 'app-uninstall'],
       agent: ['agent-builtin', 'agent-dream', 'agent-target', 'agent-tools'],
@@ -102,7 +102,7 @@ test('能力开关关掉时，对应的大类与分组一起消失', () => {
 });
 
 test('运行期才能判断的锚点：隐藏后导航里不登记（否则就是点不动的死锚点）', () => {
-  const hidden = new Set(['sync-dualstack', 'sync-ddns', 'app-uninstall', 'account-connection']);
+  const hidden = new Set(['sync-lan', 'sync-dualstack', 'sync-ddns', 'app-uninstall', 'account-connection']);
   const domains = visibleSettingsDomains(FULL, hidden);
   const ids = domains.flatMap((domain) => domain.groups.map((group) => group.id));
   for (const id of hidden) assert.equal(ids.includes(id), false, `隐藏的锚点 ${id} 仍出现在导航里`);
@@ -112,6 +112,7 @@ test('运行期才能判断的锚点：隐藏后导航里不登记（否则就�
 
   // 运行期条件都必须由渲染它的组件登记（不登记 = 导航里留下永远渲染不出来的死锚点）
   for (const [anchor, file] of [
+    ['sync-lan', 'SyncPanel.vue'],
     ['sync-dualstack', 'SyncPanel.vue'],
     ['sync-ddns', 'SyncPanel.vue'],
     ['app-uninstall', 'UninstallSection.vue'],
