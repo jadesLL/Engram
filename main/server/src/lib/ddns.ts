@@ -44,9 +44,37 @@ export const DEFAULT_INTERVAL_MIN = 5;
 /** 调度 tick 粒度：tick 内按 intervalMin 判断是否到期（保存配置后 kickDdns 立即生效） */
 const DDNS_TICK_MS = 30_000;
 
+/**
+ * Cloudflare 交互使用的 fetch：opts 显式传入 > 测试注入 > 全局 fetch。
+ * 设置页「一键配置」的接口层不传 fetchImpl（生产走真实网络），测试用 setDdnsFetchForTest 接管。
+ */
+let fetchOverride: FetchLike | null = null;
+
+/** 测试注入：接管本模块所有外部请求；传 null 恢复真实 fetch */
+export function setDdnsFetchForTest(next: FetchLike | null): void {
+  fetchOverride = next;
+}
+
+export function resolveFetch(fetchImpl?: FetchLike): FetchLike {
+  return fetchImpl || fetchOverride || ((u, i) => fetch(u, i));
+}
+
 export function clampInterval(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_INTERVAL_MIN;
+}
+
+/**
+ * 归一化记录名：用户经常直接粘浏览器地址（`https://home.xxx.com/`）或在域名后带端口，
+ * 这里统一成纯 FQDN——去协议、去路径/查询/端口、去尾部点、小写。
+ */
+export function normalizeRecord(input: unknown): string {
+  let s = String(input ?? '').trim().toLowerCase();
+  s = s.replace(/^https?:\/\//, '');
+  s = s.split('/')[0].split('?')[0].split('#')[0];
+  s = s.replace(/:\d+$/, '');
+  s = s.replace(/\.+$/, '');
+  return s;
 }
 
 /** 从 DB settings 读取配置，空字段逐项回退环境变量（与设置页其他配置的运行时读取方式一致） */
@@ -58,11 +86,7 @@ export function getDdnsConfig(): DdnsConfig {
     raw = {};
   }
   const token = String(raw.token ?? DDNS_TOKEN).trim();
-  const record = String(raw.record ?? DDNS_RECORD)
-    .trim()
-    .replace(/^https?:\/\//i, '')
-    .replace(/\.$/, '')
-    .toLowerCase();
+  const record = normalizeRecord(raw.record ?? DDNS_RECORD);
   const typeRaw = String(raw.type ?? DDNS_TYPE).trim().toLowerCase();
   const type: DdnsConfig['type'] = typeRaw === 'a' ? 'A' : typeRaw === 'aaaa' ? 'AAAA' : 'auto';
   return {
@@ -265,6 +289,64 @@ function cfHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
+// ---------- Cloudflare 账号探测（「一键配置」：粘一个 Token 就能选域名） ----------
+
+export interface CloudflareZone {
+  id: string;
+  name: string;
+}
+
+function cfErrorMessage(data: { errors?: Array<{ message?: string }> }, fallback: string): string {
+  return data.errors?.[0]?.message || fallback;
+}
+
+/**
+ * 校验 Token 有效性（/user/tokens/verify）。
+ * 目的：把「Token 填错/权限不足」与「token 没权限管这个域名」区分开——用户才知道该改哪里。
+ */
+export async function verifyCloudflareToken(
+  token: string,
+  fetchImpl?: FetchLike,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await resolveFetch(fetchImpl)('https://api.cloudflare.com/client/v4/user/tokens/verify', {
+      headers: cfHeaders(token),
+    });
+    if (!res.ok) return { ok: false, error: `Cloudflare Token 校验失败: HTTP ${res.status}` };
+    const data = (await res.json()) as { success?: boolean; errors?: Array<{ message?: string }> };
+    if (data.success === false) {
+      return { ok: false, error: `Cloudflare Token 校验失败: ${cfErrorMessage(data, 'API success=false')}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 列出该 Token 能管理的全部域名（zone）：用户从列表里选，不必自己拼 FQDN，也不用手工确认 zone */
+export async function listCloudflareZones(
+  token: string,
+  fetchImpl?: FetchLike,
+): Promise<{ ok: true; zones: CloudflareZone[] } | { ok: false; error: string }> {
+  try {
+    const res = await resolveFetch(fetchImpl)('https://api.cloudflare.com/client/v4/zones?per_page=50', {
+      headers: cfHeaders(token),
+    });
+    if (!res.ok) return { ok: false, error: `域名列表获取失败: HTTP ${res.status}` };
+    const data = (await res.json()) as {
+      success?: boolean;
+      errors?: Array<{ message?: string }>;
+      result?: Array<{ id: string; name: string }>;
+    };
+    if (!data.success) return { ok: false, error: `域名列表获取失败: ${cfErrorMessage(data, 'API success=false')}` };
+    const zones = (data.result || []).map((z) => ({ id: z.id, name: z.name }));
+    if (!zones.length) return { ok: false, error: '该 Token 名下没有可管理的域名（需要 Zone → DNS → Edit 权限）' };
+    return { ok: true, zones };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export interface DdnsSyncOptions {
   fetchImpl?: FetchLike;
   /** 测试注入：按记录类型返回候选 IP（默认真实探测） */
@@ -278,7 +360,7 @@ export interface DdnsSyncOptions {
  * 不抛错，结果全在返回值里（outcome=error + error 消息）。
  */
 export async function syncDdnsRecord(cfg: DdnsConfig, opts: DdnsSyncOptions = {}): Promise<DdnsSyncResult> {
-  const fetchImpl: FetchLike = opts.fetchImpl || ((u, i) => fetch(u, i));
+  const fetchImpl: FetchLike = resolveFetch(opts.fetchImpl);
   const detect = opts.detectCandidates || ((t) => defaultDetectCandidates(t, fetchImpl));
   const result: DdnsSyncResult = {
     ok: false,

@@ -289,7 +289,26 @@ docker compose -f docker-compose.nas.yml up -d
 | `ENGRAM_HOST_PORT` | 否 | 宿主映射端口，默认 18080 |
 | `ENGRAM_DATA_DIR` | 否 | 数据目录的宿主路径（`wiki.db` + `brain/` 全在此），默认 compose 同目录 `./data` |
 | `DEFAULT_PASSWORD` | 否 | 首次启动预置的登录密码；留空则首次登录页面设置 |
+| `SYNC_ROLE` | 否 | 无头部署的角色初值：`hub` = 首次启动即成为同步中枢（DDNS 只在中枢上运行）。只在本机还没有角色设置时生效，之后以界面选择为准 |
+| `DDNS_TOKEN` | 否 | Cloudflare API Token（权限 Zone → DNS → Edit）。与 `DDNS_RECORD` 一起配好即首次启动自动维护解析，等价于设置页 多端同步 → DDNS 直连域名 里填表保存 |
+| `DDNS_RECORD` | 否 | 要维护的记录（如 `home.xxx.com`）；服务端每 5 分钟探测本机公网 IP，变化才写（不存在则创建，TTL 60、仅 DNS） |
+| `DDNS_TYPE` | 否 | `auto`（默认：有全局 IPv6 用 AAAA，否则 A）/ `aaaa` / `a` |
+| `DDNS_INTERVAL_MIN` | 否 | 同步间隔分钟数，默认 5 |
 | `ENGRAM_NETWORK_MTU` | 否 | bridge MTU，默认 1500；NAS 跨公网链路 PMTU 异常时改 1400 |
+
+**一条命令配好直连域名（可选，零点击）**：把「本机设为同步中枢 + 自动维护一条指向本机公网 IP 的域名」一次做完：
+
+```dotenv
+# .env（NAS 图形界面的 Compose 项目则在「环境变量」里逐项填）
+DEFAULT_PASSWORD=<你的密码>
+SYNC_ROLE=hub
+DDNS_TOKEN=<Cloudflare API Token，Zone → DNS → Edit>
+DDNS_RECORD=home.xxx.com
+```
+
+`docker compose -f docker-compose.nas.yml up -d` 之后容器启动即成为中枢并开始维护该域名（IP 变化才写，记录不存在自动创建）。
+宿主端口需在路由器放行，成员设备把中枢地址填成 `http://home.xxx.com:<端口>`；想上 HTTPS 再加
+`TLS_DOMAIN=home.xxx.com` + `TLS_DNS_API_TOKEN=<同一个 Token>`（内置 ACME 自动签证书，无需开 80 端口）。
 
 **NAS 上的应用内一键更新**：模板已挂 `/var/run/docker.sock`，启动后在网页 设置 → 版本与更新 → 更新源配置 填一次即可（配置落在 `/data/.env`，容器重建不丢）：
 

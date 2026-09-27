@@ -22,6 +22,12 @@ services:
       - TZ=Asia/Shanghai
       # 初始登录密码（仅首次启动生效；留空则首次登录时在页面设置）
       - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-}
+      # 一键直连域名（可选）：SYNC_ROLE=hub + DDNS_TOKEN/DDNS_RECORD 即首次启动自动成为中枢并维护解析
+      - SYNC_ROLE=${SYNC_ROLE:-}
+      - DDNS_TOKEN=${DDNS_TOKEN:-}
+      - DDNS_RECORD=${DDNS_RECORD:-}
+      - DDNS_TYPE=${DDNS_TYPE:-}
+      - DDNS_INTERVAL_MIN=${DDNS_INTERVAL_MIN:-}
       - OFFICE_EDITOR_ENABLED=true
       - OFFICE_INTERNAL_URL=http://onlyoffice
       - OFFICE_INTERNAL_APP_URL=http://engram:8080

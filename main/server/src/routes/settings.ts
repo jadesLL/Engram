@@ -32,7 +32,18 @@ import { requireAuth } from './auth.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
 import { withJobsStopped } from '../jobs.js';
-import { getDdnsConfig, getDdnsStatus, kickDdns, syncDdnsRecord } from '../lib/ddns.js';
+import {
+  DDNS_SETTINGS_KEY,
+  clampInterval,
+  getDdnsConfig,
+  getDdnsStatus,
+  kickDdns,
+  listCloudflareZones,
+  normalizeRecord,
+  syncDdnsRecord,
+  verifyCloudflareToken,
+  type DdnsConfig,
+} from '../lib/ddns.js';
 
 const PUBLIC_SETTINGS = [
   'zcode_config',
@@ -48,6 +59,11 @@ const PUBLIC_SETTINGS = [
 
 export async function settingsRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
+
+  /** DDNS 只在中枢设备上有意义（只有中枢能把自己的公网 IP 写进域名）：UI 已按角色隐藏，这里兜底拦 API 直调 */
+  function isHubDevice(): boolean {
+    return getSetting('sync_role') === 'hub';
+  }
 
   /** 一键接入用的专属 Token：按 Agent 名取用，缺失则生成并入库 */
   function harnessToken(name: string): string {
@@ -73,7 +89,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       try {
         incoming = JSON.parse(String(body['ddns_config'])) as Record<string, unknown>;
       } catch { /* 非法 JSON 交由原样保存 */ }
-      if (incoming.enabled === true && getSetting('sync_role') !== 'hub') {
+      if (incoming.enabled === true && !isHubDevice()) {
         return reply.code(400).send({ error: '仅中枢设备可开启 DDNS' });
       }
     }
@@ -111,7 +127,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       ...stored,
       enabled: true,
       token: !body.token || body.token.includes('*') ? stored.token : body.token.trim(),
-      record: (body.record || stored.record).trim().toLowerCase(),
+      record: normalizeRecord(body.record || stored.record),
       type: typeRaw === 'a' ? ('A' as const) : typeRaw === 'aaaa' ? ('AAAA' as const) : typeRaw === 'auto' ? ('auto' as const) : stored.type,
     };
     if (!cfg.token) return { ok: false, error: '缺少 Cloudflare API Token' };
@@ -119,6 +135,83 @@ export async function settingsRoutes(app: FastifyInstance) {
     const r = await syncDdnsRecord(cfg, { dryRun: true });
     if (!r.ok) return { ok: false, error: r.error };
     return { ok: true, record: r.record, type: r.type, detectedIp: r.ip, dnsIp: r.dnsIp, outcome: r.outcome };
+  });
+
+  /**
+   * 一键配置·第一步：校验 Token 并列出它名下可维护的域名（zone）。
+   * 用户不必知道 FQDN / zone 这些概念——粘一个 Token，从列表里选一个域名就行。
+   */
+  app.post('/api/settings/ddns/discover', async (req, reply) => {
+    if (!isHubDevice()) return reply.code(400).send({ error: '仅中枢设备可配置 DDNS', code: 'not-hub' });
+    const { token } = (req.body || {}) as { token?: string };
+    const value = String(token || '').trim();
+    if (!value) return reply.code(400).send({ error: '请先填入 Cloudflare API Token' });
+    const verified = await verifyCloudflareToken(value);
+    if (!verified.ok) return { ok: false, error: verified.error };
+    const listed = await listCloudflareZones(value);
+    if (!listed.ok) return { ok: false, error: listed.error };
+    const current = getDdnsConfig();
+    return { ok: true, zones: listed.zones, record: current.record, type: current.type };
+  });
+
+  /**
+   * 一键配置·第二步：一次调用完成「探测本机公网 IP → 与 Cloudflare 现值比对 → 保存 → 立即执行」。
+   * 先 dryRun（不写 DNS）；失败默认不落库（避免把写错的 Token / 域名留在设置里反复重试），
+   * 确认要继续时传 force=true。等价于设置页里勾启用 + 填四个字段 + 保存 + 等一轮。
+   */
+  app.post('/api/settings/ddns/setup', async (req, reply) => {
+    if (!isHubDevice()) return reply.code(400).send({ error: '仅中枢设备可配置 DDNS', code: 'not-hub' });
+    const body = (req.body || {}) as {
+      token?: string;
+      record?: string;
+      type?: string;
+      intervalMin?: number;
+      force?: boolean;
+    };
+    const stored = getDdnsConfig();
+    const token = String(body.token || '').trim() || stored.token;
+    // 用户常直接粘浏览器地址或带端口：统一归一化成纯 FQDN 再比对/落库
+    const record = normalizeRecord(body.record);
+    const typeRaw = String(body.type || 'auto').trim().toLowerCase();
+    const type: DdnsConfig['type'] = typeRaw === 'a' ? 'A' : typeRaw === 'aaaa' ? 'AAAA' : 'auto';
+    if (!token) return reply.code(400).send({ error: '缺少 Cloudflare API Token' });
+    if (!record) return reply.code(400).send({ error: '缺少记录域名' });
+
+    const cfg: DdnsConfig = {
+      enabled: true,
+      token,
+      record,
+      type,
+      intervalMin: clampInterval(body.intervalMin ?? stored.intervalMin),
+    };
+    const probe = await syncDdnsRecord(cfg, { dryRun: true });
+    if (!probe.ok && !body.force) {
+      return reply.code(400).send({
+        error: probe.error || '检测失败',
+        record,
+        detectedIp: probe.ip,
+        dnsIp: probe.dnsIp,
+      });
+    }
+    setSetting(DDNS_SETTINGS_KEY, JSON.stringify({
+      enabled: true,
+      token,
+      record,
+      type: type.toLowerCase(),
+      intervalMin: cfg.intervalMin,
+    }));
+    // 保存后立刻到期：下个 30 秒 tick 内按新配置执行，用户不用等一个完整周期
+    kickDdns();
+    return {
+      ok: true,
+      saved: true,
+      record,
+      type: probe.type,
+      detectedIp: probe.ip,
+      dnsIp: probe.dnsIp,
+      outcome: probe.outcome,
+      error: probe.error,
+    };
   });
 
   // ---------- MCP tokens（同时授权 /mcp 端点与 REST API Bearer）----------

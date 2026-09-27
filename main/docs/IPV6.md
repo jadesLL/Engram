@@ -41,7 +41,22 @@ Engram 的远程访问支持双通道自动择优：客户端启动时按「直�
 
 家宽 IPv6 前缀会不定期变化（运营商重拨），需要 DDNS 定期把稳定 IPv6 写入 DNS AAAA 记录。
 
-**优先用应用内置 DDNS**（v1.1.37+，设置 → 多端同步 → 同步群组 → 「DDNS 直连域名」）：填 Cloudflare API Token（Zone.DNS Edit 权限）与记录域名即可，服务端默认每 5 分钟探测本机公网 IP、与 Cloudflare 记录比对、变化才写（自动甄别排除 IPv6 隐私临时地址，IPv4 经回声服务取公网地址），无需在宿主机另装 DDNS 客户端或计划任务；Docker 部署也可用 `DDNS_TOKEN`/`DDNS_RECORD` 等环境变量配置。
+**优先用应用内置 DDNS**（设置 → 多端同步 → 「DDNS 直连域名」，且这台必须是同步中枢）：
+
+- **一键配置（推荐）**：点卡片里的「创建 Cloudflare Token（权限已预选）」跳到 Cloudflare 建 Token 页——权限已按官方模板 URL 预选好（**Zone → DNS → Edit** 写解析记录 + **Zone → Zone → Read** 列出域名），照着旁边的中英双语三步说明复制 Token，粘回输入框 → 点「① 检查 Token 并列出域名」→ 选一个域名（账号下只有一个时自动选中）→ 点「② 一键启用并立即同步」。服务端自动探测本机公网 IP、与 Cloudflare 现有记录比对、变化才写（记录不存在自动创建，TTL 60、仅 DNS），并自动甄别排除 IPv6 隐私临时地址（IPv4 经回声服务取公网地址）；记录类型默认按「有全局 IPv6 用 AAAA，否则 A」自适应。卡片上就地显示当前指向、上次/下次同步时间与最近错误。
+- **手动配置（高级）**：同一卡片底部，需要精确指定记录类型、或只想检测不写入（`立即检测（不写入）`）时用。
+
+**无头部署（Docker / NAS）一条命令**：compose 已透传 `SYNC_ROLE` 与 `DDNS_*`，配好下面几项后容器启动即成为中枢并开始维护解析，全程不用登录界面：
+
+```dotenv
+SYNC_ROLE=hub
+DDNS_TOKEN=<Cloudflare API Token，Zone → DNS → Edit>
+DDNS_RECORD=home.xxx.com
+DDNS_TYPE=auto            # 可选：auto（默认）/ aaaa / a
+DDNS_INTERVAL_MIN=5       # 可选：同步间隔分钟数
+```
+
+两种方式的配置都落在该设备自己的 `settings` 表（`ddns_config`），不随同步群组传播。
 
 **宿主机手动方案**（兜底——容器内看不到宿主网卡、宿主网络复杂的场景仍建议在宿主侧维护解析）以 Cloudflare DNS 为例（PowerShell，计划任务每 5 分钟）：
 

@@ -23,36 +23,112 @@
       </div>
     </div>
 
-    <div class="ddns-form">
-      <label class="ddns-field ddns-switch-row">
-        <span>启用自动同步</span>
-        <input type="checkbox" v-model="form.enabled" />
-      </label>
+    <!-- 一键配置：粘 Token → 选域名 → 启用。三下点完，不用理解 FQDN / zone / 记录类型这些概念。 -->
+    <div class="onestep-block">
+      <div class="onestep-head">
+        <strong>一键配置</strong>
+        <span class="faint small">粘一个 Cloudflare API Token，选一个域名，剩下的交给服务端</span>
+      </div>
+
+      <!-- 拿 Token 的全过程写在这里：点外链按钮 → 在 Cloudflare 建好 → 回来粘进输入框，不用再翻文档。
+           中英双文：这张卡片是给中枢管理员看的，不假设读者只读中文。 -->
+      <div class="onestep-help">
+        <p class="help-lead">获取 API Token（3 步，权限已预填，不用自己勾）：</p>
+        <ol>
+          <li>点下面「创建 Cloudflare Token」→ 登录 Cloudflare（域名需已托管在 Cloudflare）；</li>
+          <li>
+            页面已预选 <strong>Zone → DNS → Edit</strong>（读写解析记录）与 <strong>Zone → Zone → Read</strong>（列出你的域名）；
+            名字保持默认，点 <em>Continue to summary</em> → <em>Create Token</em>；
+          </li>
+          <li>复制生成的那串 Token，回到本页粘进下面的输入框，点「① 检查 Token 并列出域名」。</li>
+        </ol>
+        <p class="help-en">
+          Get an API token (3 steps, permissions pre-filled):
+          ① Click “Create Cloudflare Token” and sign in — your domain must already be hosted on Cloudflare.
+          ② The form comes pre-filled with <strong>Zone → DNS → Edit</strong> and <strong>Zone → Zone → Read</strong>;
+          keep the name, then <em>Continue to summary</em> → <em>Create Token</em>.
+          ③ Copy the token, paste it into the field below, then click “Check token &amp; list domains”.
+        </p>
+        <a class="btn small help-link" :href="tokenTemplateUrl" target="_blank" rel="noopener noreferrer">
+          <Icon name="external" :size="14" />
+          创建 Cloudflare Token（权限已预选）/ Create Cloudflare Token
+        </a>
+        <p class="faint small">
+          Token 只保存在这台中枢的本地设置里，不会上传给任何第三方；不需要时在 Cloudflare 删掉它即可撤销。
+          <br />
+          The token is stored only in this hub’s local settings and is never uploaded anywhere; delete it in Cloudflare to revoke access.
+        </p>
+      </div>
 
       <label class="ddns-field">
-        <span>记录域名（FQDN）</span>
-        <input type="text" v-model="form.record" placeholder="home.xxx.com" autocomplete="off" spellcheck="false" />
+        <span>Cloudflare API Token（Zone → DNS → Edit）</span>
+        <SecretField v-model="quickToken" :stored="stored.token" placeholder="Zone.DNS Edit 权限的 API Token" />
       </label>
 
-      <label class="ddns-field">
-        <span>记录类型</span>
-        <AppSelect v-model="form.type" aria-label="记录类型" :options="typeOptions" />
-      </label>
+      <div class="ddns-actions">
+        <button class="btn" type="button" :disabled="discovering" @click="discover">
+          {{ discovering ? '查询中…' : '① 检查 Token 并列出域名' }}
+        </button>
+      </div>
 
-      <label class="ddns-field">
-        <span>Cloudflare API Token</span>
-        <SecretField v-model="editedToken" :stored="stored.token" placeholder="Zone.DNS Edit 权限的 API Token" />
-      </label>
+      <template v-if="zones.length">
+        <label class="ddns-field">
+          <span>维护哪个域名{{ zones.length === 1 ? '（只有一个，已自动选中）' : '' }}</span>
+          <AppSelect v-model="zone" aria-label="选择域名" :options="zoneOptions" />
+        </label>
+        <label class="ddns-field">
+          <span>子域名前缀（留空＝直接用主域名）</span>
+          <input v-model="subdomain" type="text" placeholder="hub" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="onestep-preview">
+          将维护：<code>{{ quickRecord || '—' }}</code>
+          <span class="faint small">记录类型自动：有全局 IPv6 用 AAAA，否则用 A</span>
+        </p>
+        <div class="ddns-actions">
+          <button class="btn primary" type="button" :disabled="settingUp || !quickRecord" @click="setupNow">
+            {{ settingUp ? '配置中…' : '② 一键启用并立即同步' }}
+          </button>
+        </div>
+      </template>
+
+      <p v-if="quickResult" class="onestep-result">{{ quickResult }}</p>
+      <p v-if="quickHint" class="onestep-hint">{{ quickHint }}</p>
     </div>
 
-    <div class="ddns-actions">
-      <button class="btn primary" type="button" :disabled="saving" @click="save">
-        {{ saving ? '保存中…' : '保存' }}
-      </button>
-      <button class="btn" type="button" :disabled="testing || !form.record" @click="testNow">
-        {{ testing ? '检测中…' : '立即检测（不写入）' }}
-      </button>
-    </div>
+    <!-- 手动配置：老表单原样保留，需要精确指定记录类型 / 只检测不写入时用 -->
+    <details class="manual-block">
+      <summary>手动配置（高级：指定记录类型、只检测不写入）</summary>
+      <div class="ddns-form">
+        <label class="ddns-field ddns-switch-row">
+          <span>启用自动同步</span>
+          <input type="checkbox" v-model="form.enabled" />
+        </label>
+
+        <label class="ddns-field">
+          <span>记录域名（FQDN）</span>
+          <input type="text" v-model="form.record" placeholder="home.xxx.com" autocomplete="off" spellcheck="false" />
+        </label>
+
+        <label class="ddns-field">
+          <span>记录类型</span>
+          <AppSelect v-model="form.type" aria-label="记录类型" :options="typeOptions" />
+        </label>
+
+        <label class="ddns-field">
+          <span>Cloudflare API Token</span>
+          <SecretField v-model="editedToken" :stored="stored.token" placeholder="Zone.DNS Edit 权限的 API Token" />
+        </label>
+      </div>
+
+      <div class="ddns-actions">
+        <button class="btn primary" type="button" :disabled="saving" @click="save">
+          {{ saving ? '保存中…' : '保存' }}
+        </button>
+        <button class="btn" type="button" :disabled="testing || !form.record" @click="testNow">
+          {{ testing ? '检测中…' : '立即检测（不写入）' }}
+        </button>
+      </div>
+    </details>
   </div>
 </template>
 
@@ -61,13 +137,30 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 import AppSelect from '../ui/AppSelect.vue';
+import Icon from '../Icon.vue';
 import SecretField from '../SecretField.vue';
+
+/**
+ * Cloudflare「建 Token 页」的预填链接（官方支持，见 Cloudflare 文档
+ * fundamentals/api/how-to/account-owned-token-template）：permissionGroupKeys 里放 URL 编码后的权限 JSON。
+ * 预选 dns:edit（读写解析记录）与 zone:read（列出账号下的域名——「列域名」这一步需要它；
+ * 只想写记录、不要列域名的用户可以在页面上把它去掉）。
+ */
+const tokenTemplateUrl = 'https://dash.cloudflare.com/profile/api-tokens'
+  + '?permissionGroupKeys=%5B%7B%22key%22%3A%22dns%22%2C%22type%22%3A%22edit%22%7D%2C'
+  + '%7B%22key%22%3A%22zone%22%2C%22type%22%3A%22read%22%7D%5D'
+  + '&accountId=%2A&zoneId=all&name=Engram%20DDNS';
 
 interface DdnsForm {
   enabled: boolean;
   record: string;
   type: 'auto' | 'aaaa' | 'a';
   token: string;
+}
+
+interface ZoneOption {
+  id: string;
+  name: string;
 }
 
 /** 记录类型选项：标注成 DdnsForm['type']，AppSelect 的泛型才能推断出联合类型 */
@@ -82,6 +175,16 @@ const stored = reactive<DdnsForm>({ ...form });
 const editedToken = ref('');
 const saving = ref(false);
 const testing = ref(false);
+
+/** 一键配置用的状态：Token、可选域名、子域前缀、结果与提示 */
+const quickToken = ref('');
+const zones = ref<ZoneOption[]>([]);
+const zone = ref('');
+const subdomain = ref('hub');
+const discovering = ref(false);
+const settingUp = ref(false);
+const quickResult = ref('');
+const quickHint = ref('');
 
 interface DdnsStatusResp {
   configured: boolean;
@@ -134,6 +237,17 @@ const statusLabel = computed(() => {
   return OUTCOME_LABEL[s.status?.lastOutcome || ''] || '已启用';
 });
 
+/** 域名下拉选项（AppSelect 需要 { value, label } 形态） */
+const zoneOptions = computed(() => zones.value.map((z) => ({ value: z.name, label: z.name })));
+
+/** 一键配置最终要维护的记录名：子域前缀 + 所选域名 */
+const quickRecord = computed(() => {
+  const base = zone.value.trim().toLowerCase();
+  if (!base) return '';
+  const sub = subdomain.value.trim().toLowerCase().replace(/^\.+/, '').replace(/\.+$/, '');
+  return sub ? `${sub}.${base}` : base;
+});
+
 function formatTime(iso: string): string {
   const d = new Date(iso);
   return Number.isFinite(d.getTime()) ? d.toLocaleString() : iso;
@@ -156,6 +270,92 @@ async function loadStatus(): Promise<void> {
     console.error('加载 DDNS 状态失败', e);
   } finally {
     statusLoaded.value = true;
+  }
+}
+
+/** 读取已存配置回填表单（一键块与手动块共用；Token 原值只在内存里存一份，展示走掩码组件） */
+async function loadConfig(): Promise<void> {
+  try {
+    const { data } = await api.get('/api/settings');
+    const raw = data.settings?.ddns_config;
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<DdnsForm>;
+      Object.assign(form, { type: 'auto', ...parsed, enabled: parsed.enabled === true });
+      Object.assign(stored, form);
+      // 已配置过就把记录拆回「子域前缀」，重新点一键时不用重敲
+      const record = String(parsed.record || '');
+      const dot = record.indexOf('.');
+      if (dot > 0) subdomain.value = record.slice(0, dot);
+      else if (record) subdomain.value = '';
+    }
+  } catch (e) {
+    console.error('加载 DDNS 配置失败', e);
+  }
+}
+
+/** 一键配置·第一步：校验 Token 并列出可维护的域名 */
+async function discover(): Promise<void> {
+  const token = quickToken.value.trim() || stored.token;
+  if (!token) {
+    notify.error('请先填入 Cloudflare API Token');
+    return;
+  }
+  discovering.value = true;
+  quickResult.value = '';
+  quickHint.value = '';
+  try {
+    const { data } = await api.post('/api/settings/ddns/discover', { token });
+    if (!data?.ok) {
+      notify.error(data?.error || '查询失败');
+      return;
+    }
+    zones.value = (data.zones || []) as ZoneOption[];
+    zone.value = zones.value[0]?.name || '';
+    const existing = String(data.record || '');
+    if (existing && zone.value && existing.endsWith(`.${zone.value}`)) {
+      subdomain.value = existing.slice(0, -(zone.value.length + 1));
+    } else if (existing && zone.value === existing) {
+      subdomain.value = '';
+    }
+    notify.success(zones.value.length === 1
+      ? `已找到 ${zone.value}，直接点第 ② 步即可`
+      : `找到 ${zones.value.length} 个可维护的域名`);
+  } catch (e: any) {
+    notify.error(e?.response?.data?.error || '查询失败');
+  } finally {
+    discovering.value = false;
+  }
+}
+
+/** 一键配置·第二步：探测 → 比对 → 保存 → 立即执行（服务端一次调用完成） */
+async function setupNow(): Promise<void> {
+  const token = quickToken.value.trim() || stored.token;
+  const record = quickRecord.value;
+  if (!record) {
+    notify.error('请先选择域名');
+    return;
+  }
+  settingUp.value = true;
+  try {
+    const { data } = await api.post('/api/settings/ddns/setup', { token, record, type: 'auto' });
+    if (!data?.ok) {
+      notify.error(data?.error || '配置失败');
+      return;
+    }
+    const family = data.type === 'AAAA' ? 'IPv6' : data.type === 'A' ? 'IPv4' : '本机';
+    const outcomeLabel = OUTCOME_LABEL[data.outcome || ''] || '已启用';
+    quickResult.value = data.detectedIp
+      ? `已启用：${data.record}（${family} ${data.detectedIp}）· ${outcomeLabel}`
+      : `已启用：${data.record} · ${outcomeLabel}`;
+    quickHint.value = `成员设备把中枢地址填成 http://${data.record}:${location.port || '18080'} 即可；`
+      + '要让外网设备也能连，需在路由器放行该端口，或用 Cloudflare 隧道把这个地址发布到公网。';
+    notify.success('DDNS 已启用，稍候自动同步');
+    await loadStatus();
+    await loadConfig();
+  } catch (e: any) {
+    notify.error(e?.response?.data?.error || '配置失败');
+  } finally {
+    settingUp.value = false;
   }
 }
 
@@ -201,17 +401,7 @@ async function testNow(): Promise<void> {
 }
 
 onMounted(async () => {
-  try {
-    const { data } = await api.get('/api/settings');
-    const raw = data.settings?.ddns_config;
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<DdnsForm>;
-      Object.assign(form, { type: 'auto', ...parsed, enabled: parsed.enabled === true });
-      Object.assign(stored, form);
-    }
-  } catch (e) {
-    console.error('加载 DDNS 配置失败', e);
-  }
+  await loadConfig();
   void loadStatus();
   pollTimer = setInterval(() => void loadStatus(), 30_000);
 });
@@ -261,6 +451,77 @@ onUnmounted(() => {
   padding: 2px 8px;
   font-size: 12px;
 }
+/* 一键配置块：与下方手动配置用一条细分隔线隔开，视觉上「主路径在上、高级在下」 */
+.onestep-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 14px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.onestep-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+/* 拿 Token 的三步说明：底框 + 内缩序号，和下面的表单控件区分开（读者先看说明再动手） */
+.onestep-help {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.07));
+  font-size: 12px;
+  line-height: 1.7;
+}
+.onestep-help p { margin: 0; }
+.onestep-help ol { margin: 0; padding-left: 18px; }
+.onestep-help .help-lead { font-weight: 600; }
+.onestep-help .help-en { color: var(--text-secondary); }
+.onestep-help .help-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+.onestep-preview {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.onestep-preview code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.12));
+  font-size: 12px;
+}
+.onestep-result {
+  margin: 0;
+  font-size: 12px;
+  color: var(--success, #3fb27f);
+  line-height: 1.6;
+}
+.onestep-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.6;
+}
+.manual-block summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 4px 0;
+}
+.manual-block[open] summary { margin-bottom: 10px; }
 .ddns-form {
   display: flex;
   flex-direction: column;

@@ -27,6 +27,13 @@ services:
       - TZ=Asia/Shanghai
       # 初始登录密码（仅首次启动生效；留空则首次登录时在页面设置）
       - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-}
+      # 一键直连域名（可选）：SYNC_ROLE=hub + DDNS_TOKEN/DDNS_RECORD 即首次启动自动成为中枢并维护解析，
+      # 无需登录界面配置（也可留空，之后在 设置 → 多端同步 → DDNS 直连域名 里配）
+      - SYNC_ROLE=${SYNC_ROLE:-}
+      - DDNS_TOKEN=${DDNS_TOKEN:-}
+      - DDNS_RECORD=${DDNS_RECORD:-}
+      - DDNS_TYPE=${DDNS_TYPE:-}
+      - DDNS_INTERVAL_MIN=${DDNS_INTERVAL_MIN:-}
       # ONLYOFFICE 编辑器的 JWT 密钥，与 onlyoffice 服务的 JWT_SECRET 必须同值。
       # 默认值为公开占位，仅在容器内网 engram↔onlyoffice 间使用（onlyoffice 不对外暴露端口）；
       # 想改成自选随机值（openssl rand -hex 32），在 NAS 项目的环境变量里覆盖同名键即可。
