@@ -58,8 +58,14 @@ beforeEach(() => {
   db.prepare('DELETE FROM assistant_runs').run();
   db.prepare('DELETE FROM assistant_messages').run();
   db.prepare('DELETE FROM assistant_sessions').run();
-  db.prepare('DELETE FROM settings WHERE key IN (?, ?, ?, ?)')
-    .run(configKernel.DREAM_SETTINGS_KEY, configKernel.DREAM_STATE_KEY, kernel.DREAM_SESSION_SETTING, 'agent_config');
+  db.prepare('DELETE FROM settings WHERE key IN (?, ?, ?, ?, ?)')
+    .run(
+      configKernel.DREAM_SETTINGS_KEY,
+      configKernel.DREAM_STATE_KEY,
+      configKernel.DREAM_HISTORY_KEY,
+      kernel.DREAM_SESSION_SETTING,
+      'agent_config',
+    );
   agentConfig.setAgentConfig({ apiKey: 'test-key' });
 });
 
@@ -180,8 +186,22 @@ test('settleDreamRun：完成后写状态、存小结、记一行操作日志', 
   assert.equal(state.lastStatus, 'completed');
   assert.equal(state.lastRunId, started.runId);
   assert.match(state.lastSummary, /本次处理 2 份资料/);
+  assert.match(state.lastSummary, /\n\n/, '小结保留换行（原文交给界面按 Markdown 渲染，不再压平成一行）');
   assert.equal(state.lastError, '');
   assert.ok(state.lastRunAt);
+
+  // 看板靠这条快照显示「整合前 → 整合后」：跑完那一刻的计数事后算不出来
+  const history = configKernel.readDreamHistory();
+  assert.equal(history.length, 1);
+  assert.equal(history[0].runId, started.runId);
+  assert.deepEqual(history[0].before, { pendingFiles: 2, issues: 1 });
+  assert.deepEqual(
+    history[0].after,
+    { pendingFiles: 0, issues: 0, deadLinks: 0, duplicates: 0, outdatedPages: 0 },
+    'after 用结算那一刻的 audit（本例传的是空库）',
+  );
+  assert.equal(history[0].trigger, 'manual');
+  assert.equal(history[0].status, 'completed');
 
   const log = vault.readPage(indexFile.LOG_PAGE);
   assert.ok(log);

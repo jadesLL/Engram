@@ -679,6 +679,35 @@ export function listToolCalls(sessionId: string): ToolCallDto[] {
   return rows.map(toToolCall);
 }
 
+/**
+ * 看板用的精简行：只取「这轮做过哪些动作」需要的列。
+ * preview / result 里可能是几十 KB 的正文与文件内容，看板不需要，别把它们读进内存。
+ */
+export interface ToolCallBriefDto {
+  runId: string;
+  name: string;
+  args: string;
+  /** 收口失败（status='failed'）为 false；还在跑的当「未失败」处理 */
+  ok: boolean;
+}
+
+export function listToolCallBriefs(runIds: string[]): ToolCallBriefDto[] {
+  const ids = runIds.filter((id) => Boolean(id));
+  if (!ids.length) return [];
+  const rows = db
+    .prepare(
+      `SELECT run_id, name, arguments, status FROM assistant_tool_calls
+       WHERE run_id IN (${ids.map(() => '?').join(', ')}) ORDER BY created_at, rowid`
+    )
+    .all(...ids) as any[];
+  return rows.map((row) => ({
+    runId: String(row.run_id),
+    name: String(row.name || ''),
+    args: String(row.arguments || ''),
+    ok: String(row.status) !== 'failed',
+  }));
+}
+
 /* ---------- Agent 提问（MCP ask_user：对话最下侧弹选项，点选后那次工具调用才返回） ---------- */
 
 /** 提问状态：pending 等用户点选 / answered 已答复 / expired 超时作废 / cancelled 本轮被停 */
