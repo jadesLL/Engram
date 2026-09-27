@@ -326,7 +326,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.update-notice { position: fixed; z-index: var(--z-popup); top: calc(var(--win-titlebar-h, 0px) + 11px); right: 22px; }
+.update-notice { position: fixed; z-index: var(--z-popup); top: calc(var(--win-titlebar-h, 0px) + 11px + var(--safe-top)); right: calc(22px + var(--safe-right)); }
 /* 入口就是一枚绿色小图标：底色用主题的成功色（亮色 #0f7b0f / 暗色 #6ccb5f），图标取对比色 */
 .update-notice-trigger { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 1px solid var(--success); border-radius: 8px; background: var(--success); color: var(--on-accent); box-shadow: var(--shadow-raised); }
 .update-notice-trigger:hover { filter: brightness(1.08); }
@@ -375,7 +375,8 @@ onUnmounted(() => {
 .update-notice-go { color: var(--on-accent); background: var(--accent); border: 1px solid var(--accent); white-space: nowrap; }
 .update-notice-go:hover:not(:disabled) { background: var(--accent-hover); }
 @media (max-width: 768px) {
-  .update-notice { top: calc(var(--win-titlebar-h, 0px) + 8px); right: 10px; }
+  /* 安卓边到边：fixed 顶栏元素要让开状态栏（桌面/网页端 --safe-top 为 0，观感不变） */
+  .update-notice { top: calc(var(--win-titlebar-h, 0px) + 8px + var(--safe-top)); right: calc(10px + var(--safe-right)); }
   .update-notice-trigger { width: 32px; height: 32px; }
   .update-notice-panel { top: 41px; width: min(350px, calc(100vw - 20px)); }
   .update-notice-foot { flex-direction: column; align-items: stretch; }

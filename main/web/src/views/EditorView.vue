@@ -2012,9 +2012,10 @@ button.save-state.dirty:hover { color: var(--accent); }
   .meta-date { display: none; }
   .evidence-drawer { width: 100%; border-left: 0; }
   .statusbar { padding: 0 4px 0 10px; gap: 10px; left: 10px; }
-  /* 手机端底部导航（Home.vue .bottom-nav）是 fixed 8px + 48px 高：状态栏要抬到它上面，
-     否则两颗胶囊在同一层叠区域里打架 */
-  .statusbar { bottom: calc(24px + env(safe-area-inset-bottom, 0px)); }
+  /* 手机端底部导航（Home.vue .bottom-nav）是 fixed 8px+48px 高，正文区（.content）已为它
+     让出 64px + 系统手势条，这里只补 --statusbar-gap（手机档 8px）这一个留白来源：改一个变量，
+     编辑态与沉浸阅读态一起对齐，不再一个 24px 一个 64px 地各算各的（安全区别再加第二次） */
+  .statusbar { bottom: var(--statusbar-gap); }
 
   /* 页头操作区折叠：摘要行显示、折叠区随状态隐藏 */
   .head-summary {

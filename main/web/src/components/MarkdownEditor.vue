@@ -1008,4 +1008,31 @@ onMounted(init);
   font-family: inherit;
   font-size: 10.5px;
 }
+
+/* 触屏（无 hover + 粗指针）：工具栏按钮 28px、双链候选行 ~32px，手指都按不准。
+   刻意不写成 `max-width: 768px`——那是宽度不是触屏：折叠屏内屏、平板、手机横屏都在 769px 以上，
+   按宽度写它们就还是 28px。反过来，鼠标设备不匹配这个查询，桌面工具栏一点不变。
+   为什么不用「不可见热区」：按钮之间只隔 2px，热区各伸 1px 等于没伸，伸多了就压住隔壁按钮
+   （那正是这次要修的误触）；vditor 给按钮带的 tooltipped::after 又被上面那条 !important 关掉了，
+   所以只能把按钮本体撑到 44×44。390px 视口放不下 10 个 44px 按钮，工具栏会折成两行——
+   为了让每个按钮都点得准，这一行高度值得付。放在文件最后，确保盖住前面所有工具栏规则。 */
+@media (hover: none) and (pointer: coarse) {
+  :deep(.vditor-toolbar button) {
+    width: 44px;
+    height: 44px;
+  }
+  :deep(.vditor-toolbar .vditor-toolbar__divider) {
+    height: 24px;
+  }
+  /* edit-mode 下拉挂在工具栏 DOM 里，选项原来只有 26px 高 */
+  :deep(.vditor-toolbar .vditor-hint button) {
+    min-height: 44px;
+    padding: 0 12px;
+  }
+  /* [[ 双链候选弹窗：每行都是纯手指操作，原来约 32px */
+  .link-item {
+    min-height: 44px;
+    align-items: center;
+  }
+}
 </style>

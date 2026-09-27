@@ -887,7 +887,7 @@ async function askClear(): Promise<void> {
 
 /* 手机端：卡片仍是浮层，底部导航是 48px 常驻胶囊，卡片要抬到它上面 */
 @media (max-width: 768px) {
-  .sync-log-drawer { bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .sync-log-drawer { bottom: calc(64px + var(--safe-bottom)); }
   .log-stats { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
 }
 </style>

@@ -168,11 +168,11 @@ function open() {
   white-space: nowrap;
 }
 
-/* 移动端：让开底部导航，也别在窄屏上把一整行文字铺满 */
+/* 移动端：让开底部导航与系统手势条，也别在窄屏上把一整行文字铺满 */
 @media (max-width: 768px) {
   .agent-pill {
     right: 12px;
-    bottom: 74px;
+    bottom: calc(74px + var(--safe-bottom));
     max-width: calc(100% - 24px);
   }
 

@@ -5,7 +5,6 @@
     :class="{
       'outline-hidden': !outlineVisible,
       'numbered-headings': preferences.numberedHeadings,
-      'mobile-outline-open': mobileOutlineOpen,
     }"
     :style="readingStyle"
     tabindex="-1"
@@ -37,7 +36,8 @@
         <Icon :name="dark ? 'sun' : 'moon'" :size="17" />
       </button>
 
-      <!-- 本页目录：一级开关（原先埋在「显示」二级菜单里，读者翻不到），宽屏切右侧目录列、窄屏把目录摊到正文上方 -->
+      <!-- 本页目录：一级开关（原先埋在「显示」二级菜单里，读者翻不到）。
+           宽屏切右侧常驻目录列（跟随持久偏好），≤1024px 开合贴底浮层面板（只属于本次阅读） -->
       <button
         class="reading-tool outline-tool"
         type="button"
@@ -47,123 +47,161 @@
         @click="toggleOutline"
       >
         <Icon name="list-tree" :size="16" />
-        <span class="outline-tool-label">目录</span>
+        <!-- 触屏上 tooltip 不显示（directives/tooltip.ts 对 hover:none 直接短路），
+             置灰的原因必须自己写在按钮上，不能只留在 tooltip 里 -->
+        <span class="outline-tool-label">{{ outline.length === 0 ? '无目录' : '目录' }}</span>
       </button>
 
-      <div class="reading-settings">
-        <div class="font-stepper" aria-label="正文字号">
-          <button
-            type="button"
-            aria-label="减小字号"
-            :disabled="preferences.fontSize <= READING_FONT_SIZE_MIN"
-            @click="stepFont(-1)"
-          >A−</button>
-          <div ref="fontPickerEl" class="font-picker">
-            <button
-              class="font-size-trigger"
-              type="button"
-              aria-haspopup="listbox"
-              :aria-expanded="fontMenuOpen"
-              aria-label="选择正文字号"
-              v-tooltip="'点这里直接选字号'"
-              @click="toggleFontMenu"
-            >
-              <span>{{ preferences.fontSize }}px</span>
-              <Icon name="chevron-down" :size="12" />
-            </button>
-            <div
-              v-if="fontMenuOpen"
-              ref="fontMenuEl"
-              class="font-menu"
-              role="menu"
-              aria-label="正文字号选项"
-            >
-              <button
-                v-for="size in fontSizeOptions"
-                :key="size"
-                class="font-menu-item"
-                :class="{ active: size === preferences.fontSize }"
-                type="button"
-                role="menuitemradio"
-                :aria-checked="size === preferences.fontSize"
-                @click="pickFontSize(size)"
-              >{{ size }}px</button>
-            </div>
-          </div>
-          <button
-            type="button"
-            aria-label="增大字号"
-            :disabled="preferences.fontSize >= READING_FONT_SIZE_MAX"
-            @click="stepFont(1)"
-          >A+</button>
-        </div>
-
-        <div ref="widthPickerEl" class="width-picker">
-          <button
-            class="width-trigger"
-            type="button"
-            aria-haspopup="menu"
-            :aria-expanded="widthMenuOpen"
-            aria-label="选择正文宽度"
-            v-tooltip="'正文宽度：按可用区百分比'"
-            @click="toggleWidthMenu"
-          >
-            <span>{{ formatContentWidthRatio(preferences.widthRatio) }}</span>
-            <Icon name="chevron-down" :size="12" />
-          </button>
+      <!-- 手机档（≤640px）顶栏放不下这一组低频设置：整组 Teleport 进贴底面板。
+           同一份 DOM 只换挂载位置，不复制控件——复制会多出一套字号步进和重复的 aria-label；
+           桌面/平板档 Teleport 关闭，这一组仍原地留在顶栏（:disabled 的 Teleport 保留原位渲染） -->
+      <Teleport to="body" :disabled="!compactToolbar">
+        <div
+          class="settings-slot"
+          :class="{ 'settings-sheet': compactToolbar, 'settings-sheet-open': compactToolbar && moreOpen }"
+        >
+          <div v-if="compactToolbar" class="settings-mask" @click="closeMore" />
           <div
-            v-if="widthMenuOpen"
-            class="width-menu"
-            role="menu"
-            aria-label="正文宽度选项"
+            class="reading-settings"
+            :role="compactToolbar ? 'dialog' : undefined"
+            :aria-label="compactToolbar ? '阅读设置' : undefined"
           >
-            <button
-              v-for="ratio in CONTENT_WIDTH_RATIO_STEPS"
-              :key="ratio"
-              type="button"
-              role="menuitemradio"
-              :aria-checked="preferences.widthRatio === ratio"
-              :class="{ active: preferences.widthRatio === ratio }"
-              @click="pickWidthRatio(ratio)"
-            >{{ formatContentWidthRatio(ratio) }}</button>
-          </div>
-        </div>
+            <header v-if="compactToolbar" class="settings-sheet-head">
+              <h4>阅读设置</h4>
+              <button type="button" class="settings-sheet-x" aria-label="关闭阅读设置" @click="closeMore">
+                <Icon name="x" :size="14" />
+              </button>
+            </header>
 
-        <!-- 「显示」菜单只留排版低频项（行距 / 编号）；本页目录已提到顶栏一级开关 -->
-        <div ref="displayWrapEl" class="display-wrap">
-          <button
-            class="reading-tool"
-            type="button"
-            aria-haspopup="menu"
-            :aria-expanded="displayMenuOpen"
-            v-tooltip="'显示选项（行距 / 编号）'"
-            @click="toggleDisplayMenu"
-          >
-            <Icon name="more" :size="17" />
-          </button>
-          <div v-if="displayMenuOpen" class="display-menu" role="menu" aria-label="显示选项">
-            <div class="display-menu-label">行距</div>
-            <div class="display-menu-seg" role="radiogroup" aria-label="正文行距">
+            <div class="font-stepper" aria-label="正文字号">
               <button
-                v-for="option in lineHeightOptions"
-                :key="option.value"
                 type="button"
-                role="radio"
-                :aria-checked="preferences.lineHeight === option.value"
-                :class="{ active: preferences.lineHeight === option.value }"
-                @click="pickLineHeight(option.value)"
-              >{{ option.label }}</button>
+                aria-label="减小字号"
+                :disabled="preferences.fontSize <= READING_FONT_SIZE_MIN"
+                @click="stepFont(-1)"
+              >A−</button>
+              <div ref="fontPickerEl" class="font-picker">
+                <button
+                  class="font-size-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  :aria-expanded="fontMenuOpen"
+                  aria-label="选择正文字号"
+                  v-tooltip="'点这里直接选字号'"
+                  @click="toggleFontMenu"
+                >
+                  <span>{{ preferences.fontSize }}px</span>
+                  <Icon name="chevron-down" :size="12" />
+                </button>
+                <div
+                  v-if="fontMenuOpen"
+                  ref="fontMenuEl"
+                  class="font-menu"
+                  role="menu"
+                  aria-label="正文字号选项"
+                >
+                  <button
+                    v-for="size in fontSizeOptions"
+                    :key="size"
+                    class="font-menu-item"
+                    :class="{ active: size === preferences.fontSize }"
+                    type="button"
+                    role="menuitemradio"
+                    :aria-checked="size === preferences.fontSize"
+                    @click="pickFontSize(size)"
+                  >{{ size }}px</button>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="增大字号"
+                :disabled="preferences.fontSize >= READING_FONT_SIZE_MAX"
+                @click="stepFont(1)"
+              >A+</button>
             </div>
-            <div class="display-menu-sep"></div>
-            <button
-              type="button"
-              role="menuitemcheckbox"
-              :aria-checked="preferences.numberedHeadings"
-              @click="toggleNumberingMenu"
-            ><span class="check" :class="{ on: preferences.numberedHeadings }"></span>标题编号</button>
+
+            <div ref="widthPickerEl" class="width-picker">
+              <button
+                class="width-trigger"
+                type="button"
+                aria-haspopup="menu"
+                :aria-expanded="widthMenuOpen"
+                aria-label="选择正文宽度"
+                v-tooltip="'正文宽度：按可用区百分比'"
+                @click="toggleWidthMenu"
+              >
+                <span>{{ formatContentWidthRatio(preferences.widthRatio) }}</span>
+                <Icon name="chevron-down" :size="12" />
+              </button>
+              <div
+                v-if="widthMenuOpen"
+                class="width-menu"
+                role="menu"
+                aria-label="正文宽度选项"
+              >
+                <button
+                  v-for="ratio in CONTENT_WIDTH_RATIO_STEPS"
+                  :key="ratio"
+                  type="button"
+                  role="menuitemradio"
+                  :aria-checked="preferences.widthRatio === ratio"
+                  :class="{ active: preferences.widthRatio === ratio }"
+                  @click="pickWidthRatio(ratio)"
+                >{{ formatContentWidthRatio(ratio) }}</button>
+              </div>
+            </div>
+
+            <!-- 「显示」菜单只留排版低频项（行距 / 编号）；本页目录已提到顶栏一级开关 -->
+            <div ref="displayWrapEl" class="display-wrap">
+              <button
+                class="reading-tool"
+                type="button"
+                aria-haspopup="menu"
+                :aria-expanded="displayMenuOpen"
+                v-tooltip="'显示选项（行距 / 编号）'"
+                @click="toggleDisplayMenu"
+              >
+                <Icon name="more" :size="17" />
+                <span class="display-tool-label">行距 / 编号</span>
+              </button>
+              <div v-if="displayMenuOpen" class="display-menu" role="menu" aria-label="显示选项">
+                <div class="display-menu-label">行距</div>
+                <div class="display-menu-seg" role="radiogroup" aria-label="正文行距">
+                  <button
+                    v-for="option in lineHeightOptions"
+                    :key="option.value"
+                    type="button"
+                    role="radio"
+                    :aria-checked="preferences.lineHeight === option.value"
+                    :class="{ active: preferences.lineHeight === option.value }"
+                    @click="pickLineHeight(option.value)"
+                  >{{ option.label }}</button>
+                </div>
+                <div class="display-menu-sep"></div>
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  :aria-checked="preferences.numberedHeadings"
+                  @click="toggleNumberingMenu"
+                ><span class="check" :class="{ on: preferences.numberedHeadings }"></span>标题编号</button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </Teleport>
+
+      <!-- 手机档顶栏常驻「更多」：低频设置收进浮层，第一行只留返回编辑 / 目录 / 主题 / 更多 -->
+      <button
+        v-if="compactToolbar"
+        class="reading-tool more-tool"
+        type="button"
+        aria-haspopup="dialog"
+        :aria-expanded="moreOpen"
+        @click="toggleMore"
+      >
+        <Icon name="more" :size="17" />
+        <span class="more-label">更多</span>
+      </button>
     </header>
 
     <div class="reading-grid">
@@ -195,19 +233,46 @@
         <div class="reading-tail-space" :style="{ height: `${tailSpace}px` }" aria-hidden="true" />
       </div>
 
-      <aside class="reading-outline" aria-label="本页目录">
-        <h2><Icon name="list-tree" :size="15" /> 本页目录</h2>
-        <nav ref="outlineNavEl">
-          <a
-            v-for="heading in outline"
-            :key="heading.id"
-            :href="`#${heading.id}`"
-            :class="{ current: currentHeading === heading.id }"
-            :data-level="heading.level"
-            @click.prevent="scrollToHeading(heading.id)"
-          >{{ heading.text }}</a>
-        </nav>
-      </aside>
+      <!-- 本页目录：> 1024px 是右侧 220px 常驻列（跟随持久偏好 preferences.outline）；
+           ≤1024px 改成贴屏幕底部的浮层面板——旧形态把目录摊在正文流最顶部，正文中部点顶栏
+           「目录」时它渲染在屏幕外上方（看着像点了没反应）。浮层不参与正文流，位置与正文无关；
+           同一份 DOM 只换挂载位置（Teleport），不复制目录内容，也就不会有两个 aria-label
+           与两份滚动状态 -->
+      <Teleport to="body" :disabled="!outlineIsPanel">
+        <div
+          class="outline-slot"
+          :class="{ 'outline-sheet': outlineIsPanel, 'outline-sheet-open': outlineIsPanel && mobileOutlineOpen }"
+        >
+          <!-- 点遮罩关面板（与 RelatedMenu 同一套面板语言） -->
+          <div v-if="outlineIsPanel" class="outline-mask" @click="closeOutlinePanel" />
+          <aside
+            class="reading-outline"
+            :role="outlineIsPanel ? 'dialog' : undefined"
+            aria-label="本页目录"
+          >
+            <h2>
+              <Icon name="list-tree" :size="15" /> 本页目录
+              <button
+                v-if="outlineIsPanel"
+                type="button"
+                class="outline-x"
+                aria-label="关闭目录"
+                @click="closeOutlinePanel"
+              ><Icon name="x" :size="14" /></button>
+            </h2>
+            <nav ref="outlineNavEl">
+              <a
+                v-for="heading in outline"
+                :key="heading.id"
+                :href="`#${heading.id}`"
+                :class="{ current: currentHeading === heading.id }"
+                :data-level="heading.level"
+                @click.prevent="scrollToHeading(heading.id)"
+              >{{ heading.text }}</a>
+            </nav>
+          </aside>
+        </div>
+      </Teleport>
     </div>
 
     <!-- 底部悬浮胶囊：字数 / 阅读时长在左，本页关联在右。
@@ -265,6 +330,8 @@ import {
 } from '../lib/contentWidth';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
 import { headingFoldRanges } from '../lib/readingFold';
+import { BP_COMPACT, BP_MOBILE, BP_WIDE } from '../lib/layoutBreakpoints';
+import { registerBackHandler } from '../lib/androidBack';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
 import {
   selectionInside,
@@ -324,17 +391,27 @@ const outline = ref<OutlineItem[]>([]);
 const currentHeading = ref('');
 const rendering = ref(false);
 const mobileOutlineOpen = ref(false);
+const moreOpen = ref(false);
 const metrics = ref({ units: 0, minutes: 1 });
 const toolbarHeight = ref(56);
 const viewportHeight = ref(0);
 const tailSpace = ref(0);
 /* 正文可用区宽度：--reading-width 按它的百分比算（响应式，随窗口与侧栏变化） */
 const availableWidth = ref(0);
-const mobileMedia = window.matchMedia('(max-width: 768px)');
+/* 手机档 .reading-preview 为底部导航让出的高度（Home.vue .bottom-nav：48px 高 + 8px 下边距）。
+   只在脚本量不到容器高度时用来兜底，量到就以容器为准（见 measureLayout） */
+const BOTTOM_NAV_RESERVE = 64;
+/* 断点状态一律来自 lib/layoutBreakpoints：CSS 媒体查询里的字面量由护栏测试断言与常量一致，
+   脚本里不再出现裸 640/768/1024——错配过一次（CSS 按 1024 换目录形态、JS 按 768 判断） */
+const wideMedia = window.matchMedia(`(max-width: ${BP_WIDE}px)`);
+const compactMedia = window.matchMedia(`(max-width: ${BP_COMPACT}px)`);
+const mobileMedia = window.matchMedia(`(max-width: ${BP_MOBILE}px)`);
 let renderVersion = 0;
 let scrollFrame = 0;
 let tailFrame = 0;
 let layoutObserver: ResizeObserver | null = null;
+/* 安卓返回键那一层的注销函数（面板开着才认领，见 onMounted） */
+let unregisterBack: (() => void) | null = null;
 
 const lineHeightOptions: Array<{ value: ReadingLineHeight; label: string }> = [
   { value: 1.6, label: '紧凑' },
@@ -348,13 +425,15 @@ const fontSizeOptions: number[] = Array.from(
 );
 
 const preferences = computed(() => app.readingPreferences);
-/* 窄屏（≤768px）目录摊在正文上方、展开态只属于本次阅读；宽屏是右侧常驻目录列，跟随持久偏好。
+/* > 1024px：右侧常驻目录列，跟随持久偏好；≤ 1024px：目录是贴底浮层面板，开合只属于本次阅读。
  * 断点状态必须存成 ref：直接读 media.matches 不是响应式依赖，跨断点缩放后计算属性不会重算，
  * 会出现「偏好里关过目录，手机上按钮点了也不出目录」的死局 */
-const isMobile = ref(mobileMedia.matches);
+const outlineIsPanel = ref(wideMedia.matches);
+/* 手机档（≤640px）顶栏最多两行：低频设置整组进「更多」浮层，不再挤成三行吃掉正文 */
+const compactToolbar = ref(compactMedia.matches);
 const outlineVisible = computed(() =>
   outline.value.length > 0 &&
-  (isMobile.value ? mobileOutlineOpen.value : preferences.value.outline)
+  (outlineIsPanel.value ? mobileOutlineOpen.value : preferences.value.outline)
 );
 const readingStyle = computed(() => ({
   /* 正文列宽 = 可用区 × 百分比（可用区没量到前回落到 100%，不闪成 0） */
@@ -365,7 +444,9 @@ const readingStyle = computed(() => ({
   '--reading-line-height': String(preferences.value.lineHeight),
   '--reading-toolbar-height': `${toolbarHeight.value}px`,
   '--reading-anchor-offset': `${toolbarHeight.value + 28}px`,
-  '--reading-viewport-height': `${viewportHeight.value}px`,
+  /* 还没量到阅读容器高度时写 100%（与 CSS 兜底同义：解析不出具体高度就等于不限高）。
+     写 0 会让目录列 max-height 的 calc() 变负、整列塌成 0 高；量到之后就是真实的可视高度 */
+  '--reading-viewport-height': viewportHeight.value > 0 ? `${viewportHeight.value}px` : '100%',
 }));
 const typeLabel = computed(() => ({
   concept: '概念',
@@ -437,6 +518,9 @@ function onDocumentPointerDown(event: MouseEvent) {
 
 function onDocumentKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape') return;
+  /* 面板里的按钮 Teleport 到 body 之后不再是本组件的 DOM 后代，根节点上的 @keydown.esc
+     收不到；所以 Esc 关面板也挂到 document（非捕获：RelatedMenu 的捕获监听先关自己那层） */
+  if (closeTransientPanels()) return;
   if (fontMenuOpen.value) fontMenuOpen.value = false;
   if (widthMenuOpen.value) widthMenuOpen.value = false;
   if (displayMenuOpen.value) displayMenuOpen.value = false;
@@ -448,6 +532,8 @@ function onEsc() {
     relatedMenuRef.value.close();
     return;
   }
+  /* 浮层面板（目录 / 阅读设置）同样只属于本次阅读：Esc 先收面板，别顺手把人踢出阅读态 */
+  if (closeTransientPanels()) return;
   if (fontMenuOpen.value) {
     fontMenuOpen.value = false;
     return;
@@ -476,8 +562,42 @@ function toggleNumberingMenu() {
   updatePreferences({ numberedHeadings: !preferences.value.numberedHeadings });
 }
 
+/* ---------- 浮层面板（≤1024px 目录 / ≤640px 阅读设置） ---------- */
+
+function closeOutlinePanel() {
+  mobileOutlineOpen.value = false;
+}
+
+function toggleMore() {
+  if (moreOpen.value) closeMore();
+  else moreOpen.value = true;
+}
+
+function closeMore() {
+  moreOpen.value = false;
+  /* 面板里可能还开着字号/宽度/显示下拉：跟着一起收，下次打开是干净状态 */
+  fontMenuOpen.value = false;
+  widthMenuOpen.value = false;
+  displayMenuOpen.value = false;
+}
+
+/** 收掉本组件自己的浮层面板；收了任意一层返回 true（Esc 与安卓返回键共用一套判断） */
+function closeTransientPanels(): boolean {
+  if (mobileOutlineOpen.value) {
+    mobileOutlineOpen.value = false;
+    return true;
+  }
+  if (moreOpen.value) {
+    closeMore();
+    return true;
+  }
+  return false;
+}
+
 function toggleOutline() {
-  if (isMobile.value) {
+  /* ≤1024px 目录是浮层面板：开合是本次阅读的临时状态，不写 localStorage
+     （桌面常驻列才跟随持久偏好，桌面行为保持原样） */
+  if (outlineIsPanel.value) {
     mobileOutlineOpen.value = !mobileOutlineOpen.value;
     return;
   }
@@ -748,19 +868,28 @@ function handleContextMenu(event: MouseEvent) {
   });
 }
 
-function scrollToHeading(id: string) {
-  const reader = readerEl.value;
+/* 点目录项跳转。这里锁死两步顺序：先收面板、等布局稳定，再量标题位置定位。
+   反过来（先 scrollTo 再收面板）时面板还在参与布局，收起动作会在平滑滚动动画中抽走高度，
+   落点偏移约等于目录那块的高度——手机上就是「跳到的地方不是点的那个标题」。 */
+async function scrollToHeading(id: string) {
   const heading = contentEl.value?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
-  if (!reader || !heading) return;
+  if (!heading) return;
+  if (outlineIsPanel.value && mobileOutlineOpen.value) {
+    mobileOutlineOpen.value = false;
+    await nextTick();
+  }
+  const reader = readerEl.value;
+  if (!reader) return;
   // 目录里点到被收起的小节时，先把包含它的折叠节逐层展开再定位
   if (expandAncestors(heading)) scheduleTailSpace();
+  /* 停靠位置 = sticky 顶栏实测高度（--reading-toolbar-height 由 measureLayout 量、ResizeObserver
+     跟着顶栏换行重算）+ 28px 呼吸位，与 .reading-heading 的 scroll-margin-top 同一个算式 */
   const readerRect = reader.getBoundingClientRect();
   const headingY = reader.scrollTop + heading.getBoundingClientRect().top - readerRect.top;
   reader.scrollTo({
     top: Math.max(0, headingY - toolbarHeight.value - 28),
     behavior: 'smooth',
   });
-  mobileOutlineOpen.value = false;
 }
 
 function keepCurrentOutlineVisible() {
@@ -802,7 +931,13 @@ function updateCurrentHeading() {
 
 function measureLayout() {
   toolbarHeight.value = Math.ceil(toolbarEl.value?.getBoundingClientRect().height || 56);
-  viewportHeight.value = readerEl.value?.clientHeight || window.innerHeight;
+  /* 可视高度取阅读容器自己的 clientHeight：.reading-preview 才是滚动容器，它比整个视口小
+   * （手机档为底部导航让出 64px），拿 100dvh / window.innerHeight 会把目录列的 max-height
+   * 算大、底部被系统导航栏裁掉。只有量不到容器时才兜底，并按断点扣掉那 64px */
+  const measured = readerEl.value?.clientHeight || 0;
+  viewportHeight.value = measured > 0
+    ? measured
+    : Math.max(0, window.innerHeight - (mobileMedia.matches ? BOTTOM_NAV_RESERVE : 0));
   /* 正文可用区 = 阅读栅格里正文那一列的宽度（已扣掉工具栏留白与右侧目录列），
    * --reading-width 取它的百分比；量不到（首帧）时保持 0，样式回落 100% */
   const main = mainEl.value;
@@ -835,9 +970,21 @@ function handleLayoutChange() {
   scheduleTailSpace();
 }
 
-function handleMediaChange() {
-  isMobile.value = mobileMedia.matches;
+/* 跨断点换形态：目录从常驻列变浮层（或反过来）时收起面板状态，
+   否则「桌面档偏好里关过目录」的浮层状态会带到另一边，按钮看着还是死的 */
+function onWideChange(event: MediaQueryListEvent) {
+  outlineIsPanel.value = event.matches;
   mobileOutlineOpen.value = false;
+  handleLayoutChange();
+}
+
+function onCompactChange(event: MediaQueryListEvent) {
+  compactToolbar.value = event.matches;
+  if (!event.matches) moreOpen.value = false;
+}
+
+/* 手机档容器高度与兜底留白都跟着这一档变，重新量一次 */
+function onMobileChange() {
   handleLayoutChange();
 }
 
@@ -864,7 +1011,15 @@ onMounted(() => {
   if (readerEl.value) layoutObserver.observe(readerEl.value);
   if (toolbarEl.value) layoutObserver.observe(toolbarEl.value);
   measureLayout();
-  mobileMedia.addEventListener('change', handleMediaChange);
+  wideMedia.addEventListener('change', onWideChange);
+  compactMedia.addEventListener('change', onCompactChange);
+  mobileMedia.addEventListener('change', onMobileChange);
+  /* 安卓返回键：面板开着就吃掉这一层（关面板、返回 true），都没开就交回上层。
+     只认领本组件自己的浮层，不抢别的层（后注册的先处理，见 lib/androidBack） */
+  unregisterBack = registerBackHandler(() => {
+    if (closeTransientPanels()) return true;
+    return false;
+  });
   // pointerdown 覆盖真实点击，click 兜底程序化点击（自动化/辅助工具）
   document.addEventListener('pointerdown', onDocumentPointerDown);
   document.addEventListener('click', onDocumentPointerDown);
@@ -877,7 +1032,10 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(tailFrame);
   layoutObserver?.disconnect();
   readerEl.value?.removeEventListener('scroll', updateCurrentHeading);
-  mobileMedia.removeEventListener('change', handleMediaChange);
+  wideMedia.removeEventListener('change', onWideChange);
+  compactMedia.removeEventListener('change', onCompactChange);
+  mobileMedia.removeEventListener('change', onMobileChange);
+  unregisterBack?.();
   document.removeEventListener('pointerdown', onDocumentPointerDown);
   document.removeEventListener('click', onDocumentPointerDown);
   document.removeEventListener('keydown', onDocumentKeydown);
@@ -891,7 +1049,11 @@ onBeforeUnmount(() => {
   --reading-line-height: 1.8;
   --reading-toolbar-height: 56px;
   --reading-anchor-offset: 84px;
-  --reading-viewport-height: 100dvh;
+  /* 目录列的高度基准。真实值由 measureLayout() 量 .reading-preview 的 clientHeight 写进内联样式；
+     这里的兜底不写 100dvh —— 那是整个视口，比阅读容器高（手机档还给底部导航让出 64px），
+     照它算 max-height 只会把目录列算大、底部被裁；100% 在本容器里解析不出具体高度时等于不限高，
+     宁可不限高也不能裁掉目录（首帧就会被脚本量到的值覆盖） */
+  --reading-viewport-height: 100%;
   position: absolute;
   inset: 0;
   z-index: 20;
@@ -955,6 +1117,18 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 .outline-tool-label {
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+}
+/* 「显示」触发钮在桌面是图标+tooltip；手机档它落在设置面板里、触屏又没有 tooltip，
+   所以窄屏/触屏下补一行可见文案（见文末的触屏块） */
+.display-tool-label { display: none; }
+/* 手机档顶栏的「更多」：低频设置整组收进浮层（只在 ≤640px 渲染，见模板 v-if） */
+.more-tool {
+  gap: 6px;
+  font-weight: 600;
+}
+.more-label {
   font-size: 12.5px;
   letter-spacing: 0.02em;
 }
@@ -1511,7 +1685,9 @@ onBeforeUnmount(() => {
   color: var(--accent);
 }
 /* ---------- 底部悬浮胶囊：字数 / 阅读时长 + 本页关联入口 ----------
-   sticky 贴可视区底部（见模板注释）；与编辑视图 .statusbar 同一套毛玻璃语言 */
+   sticky 贴可视区底部（见模板注释）；与编辑视图 .statusbar 同一套毛玻璃语言，
+   留白也同一套来源：正文区（.content）已经让开系统手势条，这里桌面 12px、
+   手机档换 --statusbar-gap（8px），安全区不再加第二次 */
 .reading-statusbar {
   position: sticky;
   bottom: 12px;
@@ -1565,88 +1741,273 @@ onBeforeUnmount(() => {
   background: rgba(15, 108, 189, 0.16);
   color: var(--accent);
 }
+/* ---------- ≤1024px：目录改成贴屏幕底部的浮层面板（照 RelatedMenu 那套面板语言） ----------
+   旧的「摊在正文流最顶部」形态有两个毛病：正文中部点顶栏「目录」时目录渲染在屏幕外上方，
+   看着像点了没反应；点条目跳转时收起目录又会抽走一整块布局，落点偏移约等于目录高度。
+   浮层不参与正文流，两个问题一起消失；开合只属于本次阅读，不写偏好。
+   注意 Teleport 到 body 之后不再继承 .reading-preview 上的 --reading-* 局部变量
+   （全局变量在 :root 上，照常可用），面板尺寸一律用视口单位与全局变量 */
+.outline-slot { display: contents; }
+.outline-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-popup);
+  display: none;
+  align-items: flex-end;
+}
+.outline-sheet-open { display: flex; }
+.outline-mask,
+.settings-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 15, 15, 0.26);
+}
+.outline-sheet .reading-outline {
+  position: relative;
+  /* 基准样式里的 sticky top 对 relative 仍然生效，必须显式清掉（值里的局部变量已失效） */
+  top: auto;
+  width: 100%;
+  max-height: 62vh;
+  padding: 0 6px calc(var(--statusbar-gap) + var(--safe-bottom));
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 14px 14px 0 0;
+  background: var(--card-bg);
+  box-shadow: 0 -14px 40px -18px rgba(0, 0, 0, 0.45);
+}
+/* 抓手：提示这是一张可以点遮罩关掉的下侧弹窗 */
+.outline-sheet .reading-outline::before {
+  content: '';
+  flex: none;
+  display: block;
+  width: 34px;
+  height: 4px;
+  margin: 8px auto 0;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+.outline-sheet .reading-outline h2 {
+  margin-bottom: 0;
+  padding: 4px 8px 9px 7px;
+  border-bottom: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.outline-sheet .reading-outline nav {
+  display: flex;
+  padding: 4px 0 6px;
+}
+.outline-sheet .reading-outline a,
+.outline-sheet .reading-outline a[data-level="3"],
+.outline-sheet .reading-outline a[data-level="4"] {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+/* 面板右上角的关闭按钮（遮罩之外的第二条明确出路） */
+.outline-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.outline-x:hover { background: var(--bg-hover); color: var(--text); }
+
+/* ---------- ≤640px：低频设置整组进贴底面板 ----------
+   Teleport 到 body 是必须的：顶栏自己有 backdrop-filter，会成为 fixed 后代的包含块 */
+.settings-slot { display: contents; }
+.settings-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-popup);
+  display: none;
+  align-items: flex-end;
+}
+.settings-sheet-open { display: flex; }
+.settings-sheet .reading-settings {
+  position: relative;
+  width: 100%;
+  max-height: 62vh;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 0 14px calc(var(--statusbar-gap) + var(--safe-bottom));
+  border-top: 1px solid var(--border);
+  border-radius: 14px 14px 0 0;
+  background: var(--card-bg);
+  box-shadow: 0 -14px 40px -18px rgba(0, 0, 0, 0.45);
+}
+.settings-sheet .reading-settings::before {
+  content: '';
+  flex: none;
+  display: block;
+  width: 34px;
+  height: 4px;
+  margin: 8px auto 0;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+.settings-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-bottom: 2px;
+}
+.settings-sheet-head h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.settings-sheet-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.settings-sheet-x:hover { background: var(--bg-hover); color: var(--text); }
+.settings-sheet .font-stepper,
+.settings-sheet .width-picker,
+.settings-sheet .display-wrap { width: 100%; }
+.settings-sheet .font-stepper { justify-content: center; }
+.settings-sheet .width-trigger { flex: 1; }
+.settings-sheet .display-wrap {
+  display: flex;
+  flex-direction: column;
+}
+/* 「显示」下拉在面板里就地铺开：可滚动容器里的绝对定位浮层会被裁在滚动区外 */
+.settings-sheet .display-menu {
+  position: static;
+  width: 100%;
+  margin-top: 6px;
+  box-shadow: none;
+}
+
 @media (max-width: 1024px) {
   .reading-toolbar { flex-wrap: wrap; }
+  /* 目录已经 Teleport 进浮层：阅读栅格只剩正文一列 */
   .reading-grid { grid-template-columns: minmax(0, 1fr); }
-  .reading-outline {
-    position: static;
-    order: -1;
-    width: min(100%, var(--reading-width));
-    max-height: min(42dvh, calc(var(--reading-viewport-height) - var(--reading-toolbar-height) - 32px));
-    margin-inline: auto;
-    padding: 10px 0 14px;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .reading-outline nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .reading-outline a,
-  .reading-outline a[data-level="3"],
-  .reading-outline a[data-level="4"] { padding-left: 8px; }
 }
 @media (max-width: 768px) {
   .reading-grid { padding: 24px 20px 54px; }
-  .reading-outline { display: none; }
-  .mobile-outline-open:not(.outline-hidden) .reading-outline { display: block; }
   /* 窄屏没有左槽：箭头改内联，标题文字右移而不是溢出到屏幕外 */
   .reading-content { margin-left: 0; padding-left: 0; }
   .reading-content :deep(.reading-fold) { margin-left: 0; }
-  /* 手机端底部导航（Home.vue .bottom-nav）是 fixed 8px + 48px 高：胶囊要抬到它上面 */
+  /* 与编辑态 .statusbar 同一个留白来源：正文区已经为底部导航（Home.vue .bottom-nav）让出
+     64px + 系统手势条，胶囊只再加 --statusbar-gap（手机档 8px）。
+     安全区只在正文区算一次——这里再加一次会让胶囊比底部导航高出整整一条系统栏 */
   .reading-statusbar {
-    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-    margin: 0 10px calc(64px + env(safe-area-inset-bottom, 0px));
+    bottom: var(--statusbar-gap);
+    margin: 0 10px var(--statusbar-gap);
     max-width: calc(100% - 20px);
   }
 }
 @media (max-width: 640px) {
+  /* 手机顶栏压到两行内：第一行＝返回编辑（带文案）/ 目录 / 主题 / 更多；
+     第二行只有「返回上一页」存在时才出现（没有轨迹时不留空行）。低频设置整组进了「更多」浮层 */
   .reading-toolbar {
-    display: grid;
-    grid-template-columns: 36px minmax(0, 1fr) 36px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 7px 8px;
     padding: 8px 10px;
   }
+  /* 手机档的「返回编辑」必须带文案并提一档强调：只给一个 36×34 的无标签箭头，
+     读者认不出这是唯一的退出入口（对照编辑态那个带文案的「沉浸阅读」入口） */
   .back {
-    grid-column: 1;
-    grid-row: 1;
-    width: 36px;
-    padding: 0;
-  }
-  .back-label { display: none; }
-  .theme-tool {
-    grid-column: 3;
-    grid-row: 1;
-    width: 36px;
-    padding: 0;
-  }
-  /* 窄屏顶栏首行 = 返回编辑 / 目录 / 主题：目录开关居中且常驻，不再藏进「显示」菜单 */
-  .outline-tool {
-    grid-column: 2;
-    grid-row: 1;
-    justify-self: center;
+    order: 1;
+    width: auto;
     padding: 0 12px;
+    border-color: var(--control-border);
+    background: var(--control-bg);
+    color: var(--text);
+    font-weight: 600;
   }
-  /* 窄屏：返回上一页独占一行（可点区域大），设置组顺延到下一行 */
-  .back-page {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-content: center;
+  .outline-tool { order: 2; padding: 0 12px; }
+  .theme-tool {
+    order: 3;
+    width: 36px;
+    padding: 0;
   }
-  /* 返回入口外面包着悬停下拉容器：栅格项是容器，按钮撑满整行 */
+  .more-tool { order: 4; margin-left: auto; padding: 0 12px; }
+  /* 返回入口外面包着悬停下拉容器：让它独占第二行，里面的按钮撑满整行 */
   .reading-toolbar :deep(.back-trail) {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    order: 5;
+    flex: 1 1 100%;
     display: flex;
   }
-  .reading-toolbar :deep(.back-trail) .back-page { width: 100%; }
-  .reading-settings {
-    grid-column: 1 / -1;
-    grid-row: 3;
-    flex-wrap: wrap;
-    gap: 7px;
+  .reading-toolbar :deep(.back-trail) .back-page {
+    width: 100%;
+    justify-content: center;
   }
+  .display-tool-label { display: inline; }
   .reading-grid { padding: 20px 16px 46px; }
-  .reading-outline nav { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 触屏（无 hover、指针粗）：本组件原有热区只有 22–34px，手机上点不准。
+   顶栏按钮的视觉尺寸不能动——顶栏每高一行就吃一行正文，所以只用 ::after 向外扩命中区
+   （视觉不变，命中区到 44px）；面板与清单里的行没有顶栏那种高度约束，直接给 44px 行高。
+   触屏上 tooltip 一律不显示（directives/tooltip.ts 对 hover:none 直接短路），
+   所以纯图标的按钮在这里必须有可见文案，不能只靠 tooltip 解释 */
+@media (hover: none) and (pointer: coarse) {
+  .reading-tool,
+  .font-stepper > button,
+  .font-size-trigger,
+  .width-trigger { position: relative; }
+  .reading-tool::after,
+  .font-stepper > button::after,
+  .font-size-trigger::after,
+  .width-trigger::after {
+    content: '';
+    position: absolute;
+    /* 34px 的按钮/32px 的触发器各向外 6px，都够 44px 命中区 */
+    inset: -6px;
+  }
+  /* 折叠箭头只有 22px，且它旁边没有任何文案：同样只扩命中区，视觉仍是那个小箭头，
+     收起状态照旧靠箭头旋转与整节隐藏表达 */
+  .reading-content :deep(.reading-fold) { position: relative; }
+  .reading-content :deep(.reading-fold)::after {
+    content: '';
+    position: absolute;
+    inset: -11px;
+  }
+  .reading-outline a,
+  .reading-outline a[data-level="3"],
+  .reading-outline a[data-level="4"],
+  .display-menu > button,
+  .display-menu-seg button,
+  .font-menu-item,
+  .width-menu button,
+  .outline-x,
+  .settings-sheet-x { min-height: 44px; }
+  /* 底部胶囊整条抬到 44px：里面那个「关联」入口才有真实的 44px 可点高度（30px 胶囊塞不下） */
+  .reading-statusbar {
+    height: auto;
+    min-height: 44px;
+    padding-right: 10px;
+    border-radius: 22px;
+  }
+  .reading-rel {
+    min-height: 44px;
+    padding: 0 10px;
+    border-radius: 22px;
+  }
+  /* 触屏同样看不到「显示选项」的 tooltip */
+  .display-tool-label { display: inline; }
 }
 </style>

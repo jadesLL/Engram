@@ -325,9 +325,35 @@ function fileIconClass(ext: string): string {
   display: none;
 }
 
+/* 触屏（无 hover + 粗指针）：把手指点得到的控件补到 44px，并让勾选框与 ⋯ 各占一端、互不重叠。
+   桌面 hover 体验不受影响——这个媒体查询在鼠标设备上不匹配。 */
 @media (hover: none) and (pointer: coarse) {
+  /* 下载/删除两个 22px 图标按钮：触屏够不到，已由 ⋯ 菜单原样提供（见 onFileContextMenu） */
   .row-actions { display: none; }
+
+  /* 勾选框：桌面靠 hover 露出，触屏没有 hover，不常显就永远看不见——
+     而它是进入多选（Sidebar 的 selectionMode 由「已选中集合非空」推导）的唯一入口。
+     14px 方块按不准，热区用透明伪元素铺到行首 44px；纵向只吃满 30px 行高：
+     行与行紧贴，再往外扩就会盖住上下相邻行，点勾选变成勾隔壁那条。 */
+  .check {
+    position: relative;
+    opacity: 1;
+  }
+  .check::after {
+    content: '';
+    position: absolute;
+    top: -8px;
+    bottom: -8px;
+    left: -6px;
+    right: -24px;
+  }
+  /* 文件图标与标题一起让开勾选热区（只推图标即可，标题跟在图标后面） */
+  .file-icon { margin-left: 24px; }
+
+  /* 状态标签左移，给右侧 ⋯ 让位 */
   .row-status { right: 28px; max-width: 48px; }
+
+  /* ⋯ 菜单：26px 偏小，热区补到 44×30（横向往内容侧伸，视觉图标位置不变） */
   .row-kebab {
     position: absolute;
     top: 50%;
@@ -341,6 +367,14 @@ function fileIconClass(ext: string): string {
     border-radius: 6px;
     color: var(--text-faint);
     transform: translateY(-50%);
+  }
+  .row-kebab::after {
+    content: '';
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    left: -12px;
+    right: -6px;
   }
   .row-kebab:active {
     color: var(--text);

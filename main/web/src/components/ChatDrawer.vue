@@ -3167,15 +3167,88 @@ onUnmounted(() => {
   .layout.sidebar-open .chat-drawer.full {
     left: 0;
   }
+}
 
-  /* 触屏没有悬停：会话行的改名/删除常显，不然手机端够不到 */
+/* 触屏（无 hover + 粗指针）：桌面靠悬停才露出来的按钮必须常显，热区还要补到 44px。
+   这一块以前写在上面那个 `max-width: 768px` 里，那是宽度不是触屏：
+   769px 以上的触屏（折叠屏内屏、平板、手机横屏）两个规则都不匹配，
+   .session-action / .entry .text-action 永远是 opacity: 0——按钮在、但手指点不到。
+   宽度归宽度、指针归指针，两者别再互相冒充。 */
+@media (hover: none) and (pointer: coarse) {
+  /* 会话行的改名/删除：触屏没有悬停可用，不常显就等于没有这两个功能 */
   .session-action {
     opacity: 1;
+    /* 21px 的图标按钮在手指上太窄；会话行够宽，直接给足 44×44（两个并排约占 88px） */
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
   }
 
-  /* 同理，消息的「复制」按钮在触屏上常显 */
+  /* 消息的「复制」同理常显；热区用透明伪元素补到 44×44，
+     不撑高 .entry-head——每条消息头上多 22px 空白比按钮小一号更难用。
+     纵向往上借的是转录流 12px 的条间距（下探只吃正文首行顶部几像素） */
   .entry .text-action {
+    position: relative;
     opacity: 1;
+  }
+  .entry .text-action::after {
+    content: '';
+    position: absolute;
+    inset: -11px -6px;
+  }
+
+  /* 抽屉头部图标按钮 28px：横向彼此只隔 6px，热区各伸 3px 就到顶了
+     （再宽就是压住隔壁按钮，那正是这次要修的误触），纵向借头部 11px 内边距铺满 44px */
+  .chat-head .btn.icon {
+    position: relative;
+  }
+  .chat-head .btn.icon::after {
+    content: '';
+    position: absolute;
+    inset: -8px -3px;
+  }
+
+  /* 运行中的「停止」（.btn.small，26px 高）也在头部，同样补到 44px 高：
+     左边是状态胶囊（纯展示），右边是弹性空隙，横向可以放心伸 */
+  .chat-head .btn.small {
+    position: relative;
+  }
+  .chat-head .btn.small::after {
+    content: '';
+    position: absolute;
+    inset: -9px -6px;
+  }
+
+  /* 上下文条上的清除键：只有 14px，附近没有别的可点控件，
+     直接连视觉一起给到 44×44（这条只在有上下文时出现，多占的高度不常驻） */
+  .context-clear {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  /* 选中片段面板：整行的「全部清除」和每条右端的移除键都只有十几像素。
+     两者都在 .selection-panel（overflow-y: auto）或 .selection-item（overflow: hidden）里，
+     伪元素热区会被裁掉，所以直接撑到 44px；面板自身可滚动，不担心顶高 */
+  .selection-head .text-action {
+    min-height: 44px;
+  }
+  .selection-remove {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  /* 触屏上最高频的动作就是发送：热区补到 44px 高，胶囊视觉不动
+     （按钮下面是输入卡自身的内边距，扩出来不会盖到别的控件）。
+     输入框本身 3 行起步，高度远超 44px，不用处理 */
+  .composer-actions .btn.primary {
+    position: relative;
+  }
+  .composer-actions .btn.primary::after {
+    content: '';
+    position: absolute;
+    inset: -9px -6px;
   }
 }
 </style>

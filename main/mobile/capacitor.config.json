@@ -6,6 +6,7 @@
     "allowNavigation": ["127.0.0.1", "localhost"]
   },
   "android": {
-    "allowMixedContent": true
+    "allowMixedContent": true,
+    "adjustMarginsForEdgeToEdge": "disable"
   }
 }

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { api } from '../api';
+import { reportThemeToNative } from '../lib/systemInsets';
 import {
   clampReadingFontSize,
   parseReadingPreferences,
@@ -115,6 +116,8 @@ export const useAppStore = defineStore('app', {
           symbolColor: cs.getPropertyValue('--text').trim(),
         });
       }
+      // Android 本地端：状态栏/导航栏图标明暗也跟着应用主题（系统深色而应用浅色时不能反色）
+      reportThemeToNative(this.dark);
     },
     setTheme(t: Theme) {
       this.theme = t;
