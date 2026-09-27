@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { api } from '../api';
 import type { SyncStatusInput } from '../lib/syncStatus';
+import type { SyncLinkStatus } from '../lib/syncChannel';
 
 /**
  * 同步状态共享源。
@@ -45,6 +46,11 @@ export interface SyncStatusPayload extends SyncStatusInput {
   contentRevision?: number;
   log?: SyncLogEntry[];
   peers?: Array<{ id: string; name: string; online?: boolean; last_seen_at?: string | null }>;
+  /**
+   * 连接通道明细：成员端才有（局域网 / IPv6 / IPv4 / 已断开 + 候选探测结果）；
+   * 中枢端、未配置时为 null，Android 本地端的服务端暂时不返回这个字段——三处都要能降级。
+   */
+  link?: SyncLinkStatus | null;
 }
 
 /** 一轮同步是否在跑（含"刚拉完还在落盘"的补拉期） */
@@ -143,6 +149,8 @@ export const useSyncStore = defineStore('sync', () => {
   const connected = computed(() => Boolean(status.value?.connected));
   const pending = computed(() => Number(status.value?.pending || 0));
   const pendingPulls = computed(() => Number(status.value?.pendingPulls || 0));
+  /** 连接通道明细（没有时给 null：界面按「推断通道」降级，见 lib/syncChannel.ts） */
+  const link = computed(() => status.value?.link ?? null);
   /** 状态正在变化：这段时间用快节奏轮询，让「同步中 → 同步已完成」及时翻面 */
   const busy = computed(() => roundRunning(status.value)
     || pending.value > 0
@@ -202,5 +210,6 @@ export const useSyncStore = defineStore('sync', () => {
     pending,
     pendingPulls,
     busy,
+    link,
   };
 });

@@ -6,9 +6,21 @@ import { pipeline as streamPipeline } from 'node:stream/promises';
 import { FormData as UndiciFormData } from 'undici';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
-import { getSetting } from '../lib/db.js';
+import { getSetting, setSetting } from '../lib/db.js';
+import { lookup } from 'node:dns/promises';
 import { consumeSseStream } from '../lib/sseStream.js';
 import { dualStackConfig, dualStackFetch, dualStackStatus, type HostFamilyStatus } from './dualStack.js';
+import {
+  classifyBase,
+  hostOf,
+  hostnameOf,
+  normalizeAnnouncedLan,
+  pickWinner,
+  planProbes,
+  type SyncChannelKind,
+  type SyncLinkCandidate,
+  type SyncLinkStatus,
+} from './link.js';
 import { safeJoin, syncPageFile, movePage, toRel, markPageDeleted, PagePathTakenError } from '../lib/vault.js';
 import { classifyBrainEntry, isInboxPath } from '../lib/brainPaths.js';
 import { moveToTrash } from '../lib/trash.js';
@@ -68,6 +80,8 @@ export interface ClientStatus {
   pendingPulls: number;
   lastSyncAt: string | null;
   lastError: string | null;
+  /** 当前连接通道（局域网 / IPv6 / IPv4 / 断开）与候选探测明细；未启用同步时为 null */
+  link: SyncLinkStatus | null;
   log: SyncLogEntry[];
 }
 
@@ -140,6 +154,10 @@ let disconnectAttempts = 0;
 
 /** 与中枢通信成功：若此前处于断联状态，补一条「已恢复」记录（含断开时长与积压队列） */
 function markConnected(source: string): void {
+  // 通道记账可能还停在上一次失败上（比如中枢刚重启：数据面已经通了，但最近一轮探测还是「都不通」）：
+  // 这时补一次探测把状态追上，否则界面会显示「已断开」而同步其实正常。
+  // 探测自带 20 秒节流，不会因为这里被高频调用而变吵。
+  if (linkChannel === 'offline') void probeLinkChannel();
   if (disconnectedSince === null) return;
   const ms = Date.now() - disconnectedSince;
   disconnectedSince = null;
@@ -248,6 +266,299 @@ function authHeaders(): Record<string, string> {
   return { authorization: `Bearer ${hubToken()}` };
 }
 
+/**
+ * ── 连接通道择优：局域网 → IPv6 → IPv4（都不通即「已断开」） ─────────────────────────
+ *
+ * 中枢在 /api/sync/announce 里通告自己的内网地址；成员端把「内网地址 + 中枢主地址」排成
+ * 候选逐个探测（1.5 秒超时），第一个通的作为当前通道。于是家里/公司这类同网段场景自动走
+ * 局域网直连（低延迟、不占公网、不绕隧道），出门（蜂窝/别处 Wi-Fi）自动回到主地址，再由
+ * 双栈策略选 IPv6/IPv4。**探不到局域网时行为与历史版本完全一致**——跨网段、容器网络、
+ * VPN、蜂窝网络都会自然落到这条路上。
+ *
+ * 通道判定的来源要诚实，界面才不说谎：
+ *  - 局域网：候选本身是内网字面量，连上即局域网；
+ *  - IPv6/IPv4：走主地址时取双栈记账（设置页「双栈连接」显示的就是它）；
+ *    双栈策略被显式关掉时没有记账，退回按域名解析出的协议族判断；
+ *  - 断开：候选全部探测失败（保留原地址继续重试，本机改动照常排队）。
+ *
+ * 探测只打中枢自己的通告端点（带令牌），不做网段扫描、不多播发现——Android 权限与
+ * Docker 容器多播都不好搞，而「中枢通告 + 成员探测」已经够用且代价可控。
+ */
+
+/** 探测节流：断线重连循环每轮都重探一遍会让退避失去意义 */
+const LINK_PROBE_MIN_INTERVAL_MS = 20_000;
+/** 局域网候选的探测超时：不可路由地址通常毫秒级失败，1.5 秒足够 */
+const LINK_PROBE_LAN_TIMEOUT_MS = 1500;
+/** 健康期间的定期复探：从公司回到家、或局域网恢复后要能自动升回局域网 */
+const LINK_REPROBE_INTERVAL_MS = 10 * 60_000;
+/** 中枢通告的内网地址在这里落一份：重启后第一轮就能走局域网，不必先绕一次公网 */
+const LINK_LAN_URLS_SETTING = 'sync_lan_urls';
+/** 「优先局域网」开关（设置页「局域网优先」）：只有显式存过 '0' 才算关，老库默认开 */
+const LINK_PREFER_LAN_SETTING = 'sync_prefer_lan';
+
+const CHANNEL_LABELS: Record<SyncChannelKind, string> = {
+  lan: '局域网直连',
+  ipv6: 'IPv6 直连',
+  ipv4: 'IPv4 直连',
+  offline: '未连接',
+};
+
+/** 当前实际在用的基地址；null = 还没择优过，按配置的中枢地址走 */
+let activeBase: string | null = null;
+/** 中枢通告过的内网地址（懒加载：模块求值时数据库可能还没建表） */
+let announcedLanCache: string[] | null = null;
+let linkCandidates: SyncLinkCandidate[] = [];
+let linkChannel: SyncChannelKind = 'offline';
+let linkLatencyMs: number | null = null;
+let linkSince: string | null = null;
+let linkProbedAt: string | null = null;
+let lastProbeRoundAt = 0;
+let probeInflight: Promise<void> | null = null;
+let linkTimer: ReturnType<typeof setInterval> | null = null;
+
+function loadAnnouncedLan(): string[] {
+  try {
+    const raw = getSetting(LINK_LAN_URLS_SETTING);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 中枢通告的内网地址（首次用到时才读设置） */
+function announcedLanUrls(): string[] {
+  if (announcedLanCache === null) announcedLanCache = loadAnnouncedLan();
+  return announcedLanCache;
+}
+
+export function linkPreferLan(): boolean {
+  return getSetting(LINK_PREFER_LAN_SETTING) !== '0';
+}
+
+export function setLinkPreferLan(value: boolean): void {
+  setSetting(LINK_PREFER_LAN_SETTING, value ? '1' : '0');
+}
+
+/** 当前实际使用的基地址：择优命中就用命中的那条，否则回落到配置的中枢地址 */
+export function activeHubBase(): string {
+  return activeBase || hubUrl();
+}
+
+/** 忘掉上一个中枢学到的东西：改绑定/解绑后不能拿旧中枢的内网地址去连新中枢 */
+export function resetLinkBinding(): void {
+  activeBase = null;
+  linkCandidates = [];
+  linkChannel = 'offline';
+  linkLatencyMs = null;
+  linkSince = null;
+  linkProbedAt = null;
+  lastProbeRoundAt = 0;
+  try {
+    setSetting(LINK_LAN_URLS_SETTING, '[]');
+  } catch { /* 设置写失败不影响同步本身 */ }
+  announcedLanCache = [];
+}
+
+/** 记住中枢通告的内网地址：本轮与下次启动都用它先试局域网 */
+function rememberAnnouncedLan(urls: string[]): void {
+  announcedLanCache = urls;
+  try {
+    setSetting(LINK_LAN_URLS_SETTING, JSON.stringify(urls));
+  } catch { /* 同上 */ }
+}
+
+/** 探测失败原因：超时/连不上给一句人话，其余截断保留（完整信息在同步详情里） */
+function describeLinkError(error: unknown, timeoutMs: number): string {
+  const text = error instanceof Error ? error.message : String(error || '');
+  if (/abort/i.test(text) || (error instanceof Error && error.name === 'AbortError')) {
+    return `探测超时（${timeoutMs} 毫秒）`;
+  }
+  if (/fetch failed|econnrefused|etimedout|ehostunreach|enetunreach|socket hang up|other side closed|network/i.test(text)) {
+    return '连不上';
+  }
+  return text.slice(0, 60) || '连不上';
+}
+
+/**
+ * 每个候选的探测超时。
+ *
+ * 局域网候选是 IP 字面量，双栈策略本来就不介入（不记账），1.5 秒硬超时随便打断都没副作用；
+ * 中枢主地址走域名，探测用的就是真实请求那条双栈路径——**超时必须比真实请求更宽松**，
+ * 否则「探测超时」会被记进双栈的失败次数（那是真实请求的账本），把界面上的 IPv6/IPv4
+ * 判定带偏，还会出现「探测说断开、同步其实正常」。
+ */
+function probeTimeoutMs(kind: 'lan' | 'hub'): number {
+  if (kind === 'lan') return LINK_PROBE_LAN_TIMEOUT_MS;
+  return Math.max(LINK_PROBE_LAN_TIMEOUT_MS, dualStackConfig().connectTimeoutMs + 1000);
+}
+
+interface AnnounceProbe {
+  ok: boolean;
+  latencyMs: number | null;
+  error?: string;
+  lan: string[];
+}
+
+/**
+ * 一次候选探测：打中枢的连接通告端点（带令牌）。
+ * 既证明这个地址可达，又顺手取回中枢的内网地址清单——一举两得，所以不另设 ping 端点。
+ */
+async function probeAnnounce(base: string, timeoutMs: number): Promise<AnnounceProbe> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const startedAt = Date.now();
+  try {
+    const res = await dualStackFetch(`${base}/api/sync/announce`, {
+      headers: authHeaders(),
+      signal: ctrl.signal,
+    }, dualStackConfig(), {
+      onEvent: (event) => logEvent(event.level, event.event, event.detail, event.data),
+    });
+    if (!res.ok) return { ok: false, latencyMs: null, error: `中枢返回 ${res.status}`, lan: [] };
+    const data: any = await res.json().catch(() => null);
+    if (!data || data.ok !== true) return { ok: false, latencyMs: null, error: '中枢应答异常', lan: [] };
+    return { ok: true, latencyMs: Date.now() - startedAt, lan: normalizeAnnouncedLan(data.lan, hubUrl()) };
+  } catch (error) {
+    return { ok: false, latencyMs: null, error: describeLinkError(error, timeoutMs), lan: [] };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 走中枢主地址（域名）时到底是 IPv6 还是 IPv4 */
+async function detectHubChannel(base: string): Promise<SyncChannelKind> {
+  const literal = classifyBase(base);
+  if (literal) return literal;
+  const host = hostnameOf(base);
+  const entry = dualStackStatus().find((item) => item.host === host);
+  // 双栈记账是「实际在用的协议族」的唯一可信来源（与设置页显示同一份）
+  if (entry) return entry.family === 4 ? 'ipv4' : 'ipv6';
+  // 双栈策略被显式关掉时没有记账：按域名解析出的协议族判断（两族齐全时系统默认 IPv6 优先）
+  try {
+    const records = await lookup(host, { all: true });
+    if (records.some((record) => record.family === 6)) return 'ipv6';
+    if (records.some((record) => record.family === 4)) return 'ipv4';
+  } catch { /* 解析失败不属于通道问题：交给正常请求报错 */ }
+  return 'ipv4';
+}
+
+/**
+ * 跑一轮择优探测并切换基地址。
+ * @param force 忽略节流（进程启动、配置变更、定期复探）
+ */
+export async function probeLinkChannel(force = false): Promise<void> {
+  if (!syncConfigEnabled()) return;
+  if (probeInflight) return probeInflight;
+  const now = Date.now();
+  if (!force && now - lastProbeRoundAt < LINK_PROBE_MIN_INTERVAL_MS) return;
+  probeInflight = runProbeRound().finally(() => {
+    probeInflight = null;
+  });
+  return probeInflight;
+}
+
+async function runProbeRound(): Promise<void> {
+  const preferLan = linkPreferLan();
+  const hubBase = hubUrl();
+  if (!hubBase) return;
+  const results: SyncLinkCandidate[] = [];
+  let learned: string[] | null = null;
+
+  // 最多两轮：第一轮从中枢取回内网地址清单，第二轮把它们探掉
+  // （清单会随家宽前缀/网段变化，所以每次进程启动都要重新学一遍）
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const target of planProbes({ hubBase, announcedLan: announcedLanUrls(), preferLan })) {
+      if (results.some((item) => item.url === target.url)) continue;
+      const probe = await probeAnnounce(target.url, probeTimeoutMs(target.kind));
+      results.push({
+        kind: target.kind,
+        label: target.label,
+        url: target.url,
+        ok: probe.ok,
+        latencyMs: probe.latencyMs,
+        error: probe.error,
+      });
+      if (target.kind === 'hub' && probe.ok && probe.lan.length) learned = probe.lan;
+      // 局域网已经通了就不必再探剩下的：这一轮的目的就是找到最快那条路
+      if (target.kind === 'lan' && probe.ok && preferLan) break;
+    }
+    if (learned) {
+      const changed = learned.join('|') !== announcedLanUrls().join('|');
+      rememberAnnouncedLan(learned);
+      learned = null;
+      // 刚学到（或清单变了）的地址要立刻探一轮，否则这一轮仍然只走了公网
+      if (changed) continue;
+    }
+    break;
+  }
+
+  linkCandidates = results;
+  linkProbedAt = new Date().toISOString();
+  lastProbeRoundAt = Date.now();
+
+  const winner = pickWinner(results, preferLan);
+  if (!winner) {
+    // 全部不可达：保留原基地址继续重试，状态置「已断开」（本机改动照常排队）
+    linkChannel = 'offline';
+    linkLatencyMs = null;
+    return;
+  }
+
+  const nextBase = winner.url;
+  const nextChannel: SyncChannelKind = winner.kind === 'lan' ? 'lan' : await detectHubChannel(nextBase);
+  const previousBase = activeBase;
+  const baseChanged = nextBase !== previousBase;
+  const channelChanged = nextChannel !== linkChannel;
+  activeBase = nextBase;
+  linkLatencyMs = winner.latencyMs;
+  linkChannel = nextChannel;
+
+  if (baseChanged || channelChanged) {
+    linkSince = new Date().toISOString();
+    logEvent('info', 'link-changed',
+      `连接通道：${CHANNEL_LABELS[nextChannel]}（${hostOf(nextBase)}，延迟 ${winner.latencyMs ?? '?'} 毫秒）`,
+      { channel: nextChannel, base: nextBase, latencyMs: winner.latencyMs, previous: previousBase || hubUrl() });
+    // 基地址换了一条链路：中断当前 SSE，让常驻循环用新地址重连。
+    // 进行中的文件传输各自持有自己的连接，不受影响；只有长连接需要重建。
+    if (baseChanged && streamAbort) {
+      try {
+        streamAbort.abort();
+      } catch { /* 已结束 */ }
+    }
+  }
+}
+
+/** 通道现状（`/api/sync/status` 的 link 字段）；未启用同步时为 null，界面据此整块隐藏 */
+export function linkStatus(): SyncLinkStatus | null {
+  if (!syncConfigEnabled()) return null;
+  const base = activeBase || '';
+  return {
+    channel: linkChannel,
+    url: linkChannel === 'offline' ? '' : base,
+    host: base ? hostOf(base) : '',
+    latencyMs: linkLatencyMs,
+    since: linkSince,
+    probedAt: linkProbedAt,
+    preferLan: linkPreferLan(),
+    candidates: linkCandidates,
+  };
+}
+
+/**
+ * 「优先局域网」开关变更：记一条日志并立刻按新策略重选一次，用户不必等下一轮探测。
+ * 与双栈连接一样只影响后续建连，不需要重启同步客户端。
+ */
+export function configureLinkPreferLan(value: boolean): void {
+  const before = linkPreferLan();
+  setLinkPreferLan(value);
+  if (before === value) return;
+  logEvent('info', 'link-config', value
+    ? '已启用「优先局域网」：同一局域网内优先走内网直连，探不到时按 IPv6 → IPv4 自动降级'
+    : '已关闭「优先局域网」：只按配置的中枢地址连接', { preferLan: value });
+  void probeLinkChannel(true).catch(() => { /* 探测失败由下一轮重试 */ });
+}
+
 function sha256Text(text: string): string {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
@@ -292,12 +603,12 @@ let sleepAbort: (() => void) | null = null;
 
 /**
  * 连接中枢的唯一出口（含 SSE 长连接、文件上传下载）：
- * 域名同时有 A/AAAA 时按双栈策略选协议族——默认 IPv6 优先，IPv6 连不上改用 IPv4，
- * IPv4 用稳后定期回探一次 IPv6（策略见 sync/dualStack.ts）。
+ * 基地址取「连接通道择优」的结果（局域网优先，探不到才用配置的中枢地址）；
+ * 走域名时按双栈策略选协议族——默认 IPv6 优先，IPv6 连不上改用 IPv4，IPv4 用稳后定期回探。
  * 协议族只在建连那一刻选定：一次传输全程用同一条连接，中途不会被换走。
  */
 async function hubRequest(pathname: string, init: RequestInit = {}): Promise<Response> {
-  return dualStackFetch(hubUrl() + pathname, init, dualStackConfig(), {
+  return dualStackFetch(activeHubBase() + pathname, init, dualStackConfig(), {
     onEvent: (event) => {
       logEvent(event.level, event.event, event.detail, event.data);
     },
@@ -1261,6 +1572,8 @@ function isSelfAbort(error: any): boolean {
 async function runLoop(): Promise<void> {
   while (running) {
     try {
+      // 每轮连接前先择优一次（内部有 20 秒节流）：刚开机/刚换网络时第一轮就试对地址
+      await probeLinkChannel();
       await syncMissedChanges();
       await pushLoop();
       await retryPendingFilePulls();
@@ -1315,6 +1628,13 @@ export function startClient(): void {
     void reconcile('heal').catch(() => { /* reconcile 内部已记日志 */ });
   }, HEAL_INTERVAL_MS);
   healTimer.unref();
+  // 定期复探：从公司回到家、或局域网恢复后自动升回局域网直连
+  if (linkTimer) clearInterval(linkTimer);
+  linkTimer = setInterval(() => {
+    if (!running) return;
+    void probeLinkChannel(true).catch(() => { /* 探测失败由下一轮重试 */ });
+  }, LINK_REPROBE_INTERVAL_MS);
+  linkTimer.unref();
 }
 
 export function stopClient(): void {
@@ -1322,6 +1642,8 @@ export function stopClient(): void {
   running = false;
   connected = false;
   syncing = false;
+  // 下次启动重新择优：回落到配置的中枢地址，避免拿着上一段会话选中的地址直接连
+  activeBase = null;
   if (wasRunning) logEvent('info', 'stopped', '同步客户端已停止', { pending: queue.length, pendingPulls: pendingFilePulls.size });
   if (pullRetryTimer) {
     clearInterval(pullRetryTimer);
@@ -1330,6 +1652,10 @@ export function stopClient(): void {
   if (healTimer) {
     clearInterval(healTimer);
     healTimer = null;
+  }
+  if (linkTimer) {
+    clearInterval(linkTimer);
+    linkTimer = null;
   }
   // 唤醒可能在退避 sleep 中的后台循环，让它立即观察到 running=false
   try {
@@ -1365,6 +1691,7 @@ export function clientStatus(): ClientStatus {
     pendingPulls: pendingFilePulls.size,
     lastSyncAt,
     lastError,
+    link: linkStatus(),
     // 兼容旧口径：/api/sync/status 仍带一段日志尾巴（首页状态条与「立即同步」只认最新事件时间，
     // 状态日志尾巴 60 条足够）；完整分页/筛选走 /api/sync/log。首轮全量对账期间界面每 5 秒轮询一次
     // 这个接口，不再白搬 200 条。

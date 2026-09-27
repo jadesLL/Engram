@@ -188,6 +188,59 @@
     </div>
   </section>
 
+  <!-- 局域网优先：2026-09-28 起是「多端同步」下自己的分组（与「双栈连接」「DDNS 直连域名」同级）。
+       它和双栈连接回答的是同一个问题的两半——「先走哪条路」（局域网 → IPv6 → IPv4），
+       因此同样只在本机作为成员时才有内容，条件与 showDualStack 一致并登记进导航。
+       分组顺序 = 页面顺序：它在双栈连接之前登记，见 settingsDomains.test.ts 的顺序守卫。 -->
+  <SettingsGroup
+    v-if="showLanGroup"
+    class="settings-native"
+    anchor="sync-lan"
+    title="局域网优先"
+    hint="中枢与本机同网段时优先直连内网地址：延迟最低，不占公网、不绕隧道"
+    :badge="lanBadge"
+    :badge-tone="lanBadgeTone"
+  >
+    <div class="lan-config">
+      <label class="lan-toggle">
+        <input v-model="preferLan" type="checkbox" :disabled="saving" @change="savePreferLan" />
+        <span>
+          <strong>优先局域网</strong>
+          <span class="faint small">
+            同网段时先试中枢通告的内网地址，探不到再按中枢地址本身的顺序连（跨网段、容器网络、VPN、
+            手机蜂窝这些场景探不到内网地址，此时行为与不开这个开关完全一样）。
+          </span>
+        </span>
+      </label>
+
+      <!-- 实时状态（会变）走状态条：底框 + 状态点，与上面的灰色说明文字区分开 -->
+      <p class="lan-state state-strip" :class="lanChannelClass">
+        <span class="state-dot" aria-hidden="true" />
+        <span>{{ lanStateText }}</span>
+      </p>
+
+      <div class="lan-probes">
+        <p class="lan-probes-title">候选地址探测记录</p>
+        <ul v-if="lanCandidates.length" class="lan-probe-list">
+          <li v-for="(item, index) in lanCandidates" :key="`${item.kind}-${item.url}-${index}`">
+            <span class="lan-probe-kind">{{ item.label }}</span>
+            <code class="lan-probe-url">{{ item.url }}</code>
+            <span v-if="item.ok" class="lan-probe-ok">
+              ✓ {{ typeof item.latencyMs === 'number' ? `${item.latencyMs}ms` : '可达' }}
+            </span>
+            <span v-else class="lan-probe-bad">✗ {{ item.error || '不可达' }}</span>
+          </li>
+        </ul>
+        <p v-else class="faint small">还没有探测记录：下一轮连接会先试局域网，再按中枢地址逐级降级。</p>
+      </div>
+
+      <p class="lan-note faint small">
+        优先级固定为 局域网 → IPv6 → IPv4，三个都不通才算断开（断开时本机照常读写，改动排队等恢复）。
+        命中后地址会被缓存，网络切换或定期重探一轮，恢复了自动升回上一级。
+      </p>
+    </div>
+  </SettingsGroup>
+
   <!-- 双栈连接：2026-09-29 起独立成组（多端同步 → 双栈连接，与「同步群组」「DDNS 直连域名」同级）。
        在此之前它是成员端绑定表单下面的一块平铺内容：与上面的表单只剩 4px（相邻 margin 折叠），
        既贴得近、又不能收起；提成独立分组后既有自己的目录项与色带折叠，间距也和别的分组一致。
@@ -271,6 +324,7 @@ import { useSettingsBadge } from '../../lib/settingsBadges';
 import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 import { openSyncLogDrawer } from '../../lib/syncLog';
+import { syncChannelView, type SyncLinkStatus } from '../../lib/syncChannel';
 import SecretField from '../SecretField.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSyncStore } from '../../stores/sync';
@@ -321,6 +375,8 @@ interface SyncStatus {
   lastError: string | null;
   /** 双栈连接：当前配置 + 每个中枢域名的实时协议族（服务端与 Android 本地版同一套字段） */
   dualStack?: DualStackStatus;
+  /** 连接通道明细（局域网 / IPv6 / IPv4 / 已断开 + 候选探测结果）：成员端才有 */
+  link?: SyncLinkStatus | null;
   log: SyncLogEntry[];
   peers: PeerView[];
 }
@@ -401,6 +457,61 @@ useSettingsAnchorVisible('sync-ddns', showDdns);
 const showDualStack = computed(() => status.value?.role === 'member');
 // 与上面的渲染条件同源：非成员设备不该在导航里看到「双栈连接」
 useSettingsAnchorVisible('sync-dualstack', showDualStack);
+
+/**
+ * 局域网优先：与双栈连接回答同一个问题的两半（先走哪条路），同样只在成员端有内容。
+ * 单独一个 computed（而不是复用 showDualStack）是因为渲染条件必须能被显隐登记读走，
+ * 而且将来两边条件要是分岔了（比如只在服务端通告了内网地址时才显示），改这里不影响双栈。
+ *
+ * 还要求 status.link 存在：Android 本地端的引擎（Kotlin）还没实现这个开关，
+ * 它只认自己的 direct_urls 兜底——那边渲染出来会是一个点了没用的开关，
+ * 不如整组不出现（导航项由 useSettingsAnchorVisible 一起收起，不留死锚点）。
+ */
+const showLanGroup = computed(() => Boolean(status.value?.role === 'member' && status.value?.link));
+useSettingsAnchorVisible('sync-lan', showLanGroup);
+
+/** 「优先局域网」开关：初值取服务端，改动即落盘 */
+const preferLan = ref(true);
+/** 开关只在首次拿到状态（或保存后）回填：状态每 5 秒轮询，不能把用户刚点的值冲回去 */
+const preferLanLoaded = ref(false);
+
+/**
+ * 当前通道（`lib/syncChannel` 与侧栏胶囊、首页状态条同一份翻译）：
+ * 徽标与状态条都读它，避免「设置页说 IPv4、侧栏说局域网」这种自相矛盾。
+ */
+const lanChannel = computed(() => syncChannelView(status.value));
+
+const lanBadge = computed(() => lanChannel.value?.label || '待探测');
+
+/** 徽标语气沿用现有 badgeTone 约定：局域网=强调色、IPv6=好、IPv4=留意、断开=危险，未知=中性 */
+const lanBadgeTone = computed<'accent' | 'ok' | 'warn' | 'danger' | 'muted'>(() => {
+  switch (lanChannel.value?.key) {
+    case 'lan': return 'accent';
+    case 'ipv6': return 'ok';
+    case 'ipv4': return 'warn';
+    case 'offline': return 'danger';
+    default: return 'muted';
+  }
+});
+
+/** 状态条的状态点跟着通道走（.link-<key> 给的 --channel，与胶囊同一颗颜色） */
+const lanChannelClass = computed(() => `link-${lanChannel.value?.key || 'connected'}`);
+
+const lanCandidates = computed(() => status.value?.link?.candidates || []);
+
+/** 状态条一句话：现在走哪条路、走的是哪个地址、延迟多少；断开与还没探测各有说法 */
+const lanStateText = computed(() => {
+  const link = status.value?.link;
+  if (!link) return '这台设备还没有连接通道明细（本机直连模式），按最近一轮是否跑完判定同步状态。';
+  const current = lanChannel.value;
+  if (link.channel === 'offline' || !current) {
+    return '当前所有候选地址都不可达，正在自动重连；本机改动照常保存，恢复后自动补齐。';
+  }
+  const bits = [`当前走 ${current.label}`];
+  if (link.host) bits.push(link.host);
+  if (typeof link.latencyMs === 'number') bits.push(`延迟 ${link.latencyMs}ms`);
+  return bits.join(' · ');
+});
 
 // 分组卡片色带上的角色徽标（与导航徽标同源）
 const roleBadge = computed(() => {
@@ -489,7 +600,28 @@ async function loadStatus(): Promise<void> {
     status.value = res.data;
     peers.value = res.data.peers || [];
     syncDualStackForm();
+    syncLanForm();
   } catch { /* 服务未就绪时忽略 */ }
+}
+
+/** 回填「优先局域网」（force=true 用于保存成功后按服务端结果刷新） */
+function syncLanForm(force = false): void {
+  const link = status.value?.link;
+  if (!link || (preferLanLoaded.value && !force)) return;
+  preferLan.value = link.preferLan !== false;
+  preferLanLoaded.value = true;
+}
+
+/** 开关改动即落盘：这是「换一条路」的偏好，不是要填完一屏再保存的表单 */
+async function savePreferLan(): Promise<void> {
+  const next = preferLan.value;
+  const ok = await postConfig(
+    { prefer_lan: next },
+    next ? '已开启：优先用局域网地址' : '已关闭：局域网地址不再优先',
+  );
+  if (ok) syncLanForm(true);
+  // 失败要滚回服务端的值：开关停在用户点的那一侧会与实际配置不一致（loadStatus 失败时状态仍是旧的）
+  else preferLan.value = status.value?.link?.preferLan !== false;
 }
 
 /** 回填双栈表单（force=true 用于保存成功后按服务端归一化结果刷新） */
@@ -881,6 +1013,63 @@ onUnmounted(() => {
 .dualstack-fields { display: flex; flex-direction: column; gap: 12px; }
 .ds-inputs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ds-inputs input { width: 92px; }
+
+/* 局域网优先：与「双栈连接」同一套卡内排版（卡片外框与色带由 SettingsGroup / settings.css 给） */
+.lan-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lan-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.lan-toggle input { margin-top: 3px; }
+.lan-toggle > span { display: flex; flex-direction: column; gap: 6px; }
+
+/* 状态点跟着通道走：颜色来自 .link-<key> 的 --channel（与侧栏胶囊同一颗颜色），
+   这里只提高优先级盖过 settings.css 里 .state-strip .state-dot 的中性底色 */
+.lan-state .state-dot { background: var(--channel); }
+.lan-state { margin: 0; word-break: break-all; }
+
+.lan-probes { display: flex; flex-direction: column; gap: 6px; }
+.lan-probes-title {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.lan-probe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lan-probe-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+.lan-probe-kind { flex: none; color: var(--text-secondary); }
+.lan-probe-url {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lan-probe-ok { flex: none; margin-left: auto; color: var(--success); }
+.lan-probe-bad { flex: none; margin-left: auto; color: var(--danger); }
+.lan-note { margin: 0; line-height: 1.6; }
 
 @media (max-width: 768px) {
   /* 分组卡片在移动端已由 settings.css 收窄，内部块只需跟随 4px 内边距 */
