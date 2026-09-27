@@ -11,10 +11,14 @@ process.env.DATA_DIR = temp;
 const {
   clampInterval,
   getDdnsConfig,
+  listCloudflareZones,
   normIp,
+  normalizeRecord,
   parseLinuxIfInet6,
   parseWindowsIpconfig,
+  setDdnsFetchForTest,
   syncDdnsRecord,
+  verifyCloudflareToken,
 } = await import('./ddns.js');
 const dbModule = await import('../lib/db.js');
 const { migrate, db, setSetting } = dbModule as typeof import('../lib/db.js');
@@ -286,5 +290,65 @@ describe('getDdnsConfig', () => {
     assert.equal(clampInterval(-3), 5);
     assert.equal(clampInterval('abc'), 5);
     assert.equal(clampInterval(2.9), 2);
+  });
+
+  test('normalizeRecord：粘浏览器地址 / 带端口 / 尾点都能归一化成纯 FQDN', () => {
+    assert.equal(normalizeRecord('  HTTPS://Home.xxx.com/  '), 'home.xxx.com');
+    assert.equal(normalizeRecord('https://home.xxx.com/path?x=1#y'), 'home.xxx.com');
+    assert.equal(normalizeRecord('home.xxx.com:18080'), 'home.xxx.com');
+    assert.equal(normalizeRecord('a.b.xxx.com...'), 'a.b.xxx.com');
+    assert.equal(normalizeRecord(''), '');
+  });
+});
+
+// ---------- 一键配置的第一步：Token 校验与域名列举 ----------
+
+describe('verifyCloudflareToken / listCloudflareZones', () => {
+  test('Token 有效 → ok；无效 → 带 Cloudflare 给的原因；网络失败 → 带原始错误', async () => {
+    const okFetch = async () => jsonResponse({ success: true, result: { status: 'active' } });
+    assert.deepEqual(await verifyCloudflareToken('t', okFetch), { ok: true });
+
+    const badFetch = async () => jsonResponse({ success: false, errors: [{ message: 'Invalid API Token' }] });
+    const bad = await verifyCloudflareToken('t', badFetch);
+    assert.equal(bad.ok, false);
+    assert.match(bad.ok ? '' : bad.error, /Invalid API Token/);
+
+    const http500 = async () => jsonResponse({}, 500);
+    const http = await verifyCloudflareToken('t', http500);
+    assert.equal(http.ok, false);
+    assert.match(http.ok ? '' : http.error, /HTTP 500/);
+
+    const netErr = async () => { throw new Error('fetch failed'); };
+    const net = await verifyCloudflareToken('t', netErr);
+    assert.equal(net.ok, false);
+    assert.match(net.ok ? '' : net.error, /fetch failed/);
+  });
+
+  test('域名列举：返回 {id,name}；空列表与 API 拒绝都给人话原因', async () => {
+    const zonesFetch = async () =>
+      jsonResponse({ success: true, result: [{ id: 'z1', name: 'xxx.com' }, { id: 'z2', name: 'yyy.net' }] });
+    const ok = await listCloudflareZones('t', zonesFetch);
+    assert.equal(ok.ok, true);
+    assert.deepEqual(ok.ok ? ok.zones : [], [{ id: 'z1', name: 'xxx.com' }, { id: 'z2', name: 'yyy.net' }]);
+
+    const empty = await listCloudflareZones('t', async () => jsonResponse({ success: true, result: [] }));
+    assert.equal(empty.ok, false);
+    assert.match(empty.ok ? '' : empty.error, /没有可管理的域名/);
+
+    const denied = await listCloudflareZones('t', async () =>
+      jsonResponse({ success: false, errors: [{ message: 'Authentication error' }] }));
+    assert.equal(denied.ok, false);
+    assert.match(denied.ok ? '' : denied.error, /Authentication error/);
+  });
+
+  test('setDdnsFetchForTest 接管「没显式传 fetchImpl」的调用（接口层就是这么调的）', async () => {
+    setDdnsFetchForTest(async () => jsonResponse({ success: true, result: [{ id: 'z9', name: 'probe.dev' }] }));
+    try {
+      const r = await listCloudflareZones('t');
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.ok ? r.zones : [], [{ id: 'z9', name: 'probe.dev' }]);
+    } finally {
+      setDdnsFetchForTest(null);
+    }
   });
 });

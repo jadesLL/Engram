@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { getSetting, setSetting } from '../lib/db.js';
+import { SYNC_ROLE_ENV } from '../config.js';
 import { commitLocalChange, connectedPeerIds } from './hub.js';
 import { logSyncEvent } from './eventLog.js';
 import {
@@ -207,6 +208,26 @@ export function recordSessionDelete(sessionId: string): void {
   } catch (error) {
     console.error('[sync] 记录会话删除失败:', error);
   }
+}
+
+/**
+ * 无头部署的角色初值：SYNC_ROLE=hub/none 且本机还没有角色设置时写入一次。
+ * 与设置页点「作为中枢启用 / 退出同步」等价，只是不需要人点——配合 DDNS_TOKEN/DDNS_RECORD
+ * 环境变量，Docker/NAS 上一次 compose 启动就能把直连域名维护起来。
+ * 已经设置过角色的设备不再受环境变量影响（界面上改过的选择优先）。
+ */
+export function applyEnvSyncRole(): void {
+  if (!SYNC_ROLE_ENV) return;
+  if (getSetting('sync_role')) return;
+  setSetting('sync_role', SYNC_ROLE_ENV);
+  setSetting('sync_enabled', '0');
+  logSyncEvent('info', 'role-changed', {
+    detail: SYNC_ROLE_ENV === 'hub'
+      ? '环境变量 SYNC_ROLE=hub：本机已设为同步中枢'
+      : '环境变量 SYNC_ROLE=none：本机不参与多端同步',
+    scope: 'app',
+    data: { role: SYNC_ROLE_ENV, source: 'env' },
+  });
 }
 
 export function currentRole(): SyncRole {

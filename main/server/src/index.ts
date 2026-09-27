@@ -31,7 +31,7 @@ import { officeRoutes } from './routes/office.js';
 import { syncRoutes } from './routes/sync.js';
 import { hubUpdateRoutes } from './routes/syncHubUpdate.js';
 import { runtimeRoutes } from './routes/runtime.js';
-import { initSync } from './sync/index.js';
+import { applyEnvSyncRole, initSync } from './sync/index.js';
 import { migrateConflictBackupDir } from './sync/hub.js';
 import { registerOfficeProxy } from './office/proxy.js';
 import { mcpRoutes } from './mcp/server.js';
@@ -158,6 +158,9 @@ async function main() {
   startVaultWatch();
   // DDNS 直连域名维护（设置页/env 未配置则完全静默跳过；纯 Node 定时器，无控制台窗口）
   startDdnsScheduler();
+  // 无头部署的角色初值（SYNC_ROLE=hub|none，仅首次生效）：必须在 initSync 之前写入，
+  // 否则首个 tick 会按旧角色起客户端
+  applyEnvSyncRole();
   // 多端同步：配置了 hub 连接则启动同步客户端（首次接入自动全量对账）
   await initSync();
   // SSE 心跳：保活长连接、探活死连接（断线 EventSource 自动重连）

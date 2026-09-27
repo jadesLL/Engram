@@ -69,6 +69,16 @@ export const DDNS_RECORD = (process.env.DDNS_RECORD || '').trim();
 export const DDNS_TYPE = DDNS_TYPE_RAW === 'a' || DDNS_TYPE_RAW === 'aaaa' ? DDNS_TYPE_RAW : 'auto';
 export const DDNS_INTERVAL_MIN = positiveInt(process.env.DDNS_INTERVAL_MIN, 5);
 
+/**
+ * 无头部署的角色初值（Docker / NAS 一条命令配好直连域名）：
+ * - SYNC_ROLE=hub：首次启动即把本机设为同步中枢（DDNS 只在中枢上运行）；
+ * - SYNC_ROLE=none：明确不参与多端同步；
+ * 只在本机还没有角色设置时写入一次，之后以界面上的选择为准（不覆盖用户手动改过的角色）。
+ * member 不在这里支持——绑定中枢需要地址与令牌，走界面或 API。
+ */
+const SYNC_ROLE_RAW = (process.env.SYNC_ROLE || '').trim().toLowerCase();
+export const SYNC_ROLE_ENV = SYNC_ROLE_RAW === 'hub' || SYNC_ROLE_RAW === 'none' ? SYNC_ROLE_RAW : '';
+
 function normalizePublicPath(value: string): string {
   const withLeading = value.startsWith('/') ? value : `/${value}`;
   return withLeading.endsWith('/') ? withLeading : `${withLeading}/`;

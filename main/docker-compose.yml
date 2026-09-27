@@ -30,6 +30,14 @@ services:
       - TLS_DNS_API_TOKEN=${TLS_DNS_API_TOKEN:-}
       - TLS_EMAIL=${TLS_EMAIL:-}
       - TLS_ACME_DIRECTORY=${TLS_ACME_DIRECTORY:-}
+      # 一键直连域名（可选，都不填则完全不启用）：SYNC_ROLE=hub 让本机首次启动即成为同步中枢，
+      # DDNS_TOKEN（Zone.DNS Edit）+ DDNS_RECORD（如 home.xxx.com）配好后自动维护该域名的解析——
+      # 等价于设置页 多端同步 → DDNS 直连域名 里填表保存，但不需要登录界面。
+      - SYNC_ROLE=${SYNC_ROLE:-}
+      - DDNS_TOKEN=${DDNS_TOKEN:-}
+      - DDNS_RECORD=${DDNS_RECORD:-}
+      - DDNS_TYPE=${DDNS_TYPE:-}
+      - DDNS_INTERVAL_MIN=${DDNS_INTERVAL_MIN:-}
       # 会话 Cookie 父域（跨子域共享登录态：隧道域/直连域免重登）。例：COOKIE_DOMAIN=.xxx.com
       - COOKIE_DOMAIN=${COOKIE_DOMAIN:-}
       # 初始登录密码（仅首次启动生效；留空则首次登录时在页面设置，仓库不再内置默认值）
