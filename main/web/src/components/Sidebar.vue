@@ -1272,6 +1272,7 @@ watch(() => app.sidebarVersion, () => {
 });
 // Android 没有常驻页面 SSE；共享状态轮询既通知「同步结束」，也通知「一轮同步进行中」：
 // 首轮全量对账要几分钟，只在结束时刷新会让侧栏全程空白、结束时一次性冒出来。
+// 指纹里含本机内容版本号（每落地一项 +1），所以对账期间文件是一个个出现的；
 // 重读一次要打 4 个列表接口，对账期间本地服务正忙着写库，所以节流到每 5 秒最多一次。
 const reloadDuringSync = createThrottledReload(() => app.bumpSidebar(), SYNC_INDEX_REFRESH_MS);
 watch(() => sync.indexRevision, () => reloadDuringSync());

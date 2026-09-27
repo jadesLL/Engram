@@ -57,10 +57,32 @@ test('事件标签表覆盖服务端全部事件（前端漏标签会导致抽�
     'peer-online', 'peer-offline', 'peer-added', 'peer-removed', 'peer-token-reset',
     'role-changed', 'config-changed',
   ];
-  for (const event of serverEvents) {
+  // Android 成员端逐条记录：手机上的「同步详情」全靠这些事件名翻译成人话
+  const androidEvents = [
+    'sync-done', 'sync-paused', 'sync-failed', 'changes-too-large',
+    'pull-page', 'pull-file', 'pull-delete', 'pull-move', 'pull-local-newer',
+    'push-page', 'push-file', 'push-delete', 'push-move',
+  ];
+  for (const event of [...serverEvents, ...androidEvents]) {
     assert.ok(SYNC_EVENT_META[event], `事件 ${event} 缺少中文标签`);
     assert.ok(eventLabel(event) !== event, `事件 ${event} 的标签不能还是 id 本身`);
   }
+});
+
+test('逐条改动条目：动作与类型翻成中文，改名带原路径', () => {
+  assert.equal(eventLabel('pull-page'), '拉取页面');
+  assert.equal(eventCategory('pull-page'), '拉取');
+  assert.equal(eventLabel('push-file'), '推送文件');
+  assert.equal(eventCategory('push-file'), '推送');
+  assert.equal(eventLabel('pull-local-newer'), '本机版本较新，未覆盖');
+  assert.equal(eventLabel('sync-done'), '一轮同步完成');
+
+  assert.equal(dataLabel('oldPath'), '改名原路径');
+  assert.equal(dataLabel('verb'), '动作');
+  assert.equal(formatDataValue('verb', 'push'), '推送本机改动');
+  assert.equal(formatDataValue('verb', 'update'), '修改');
+  assert.equal(formatDataValue('kind', 'page'), '页面');
+  assert.equal(formatDataValue('revision', 42), '42', '版本号原样展示');
 });
 
 test('结构化字段：中文名 + 人话格式', () => {

@@ -36,6 +36,8 @@ export interface SyncStatusPayload extends SyncStatusInput {
   cursor?: number;
   /** 中枢端：本机权威 revision 序号（成员端为 0），面板显示权威水位 */
   revision?: number;
+  /** 成员端本机内容版本号：每落地一项同步改动 +1（对账进行中也能拿到，用于渐进刷新文件树） */
+  contentRevision?: number;
   log?: SyncLogEntry[];
   peers?: Array<{ id: string; name: string; online?: boolean; last_seen_at?: string | null }>;
 }
@@ -49,12 +51,16 @@ function roundRunning(value: SyncStatusPayload | null): boolean {
 
 /**
  * 索引指纹：这些字段一变，「侧栏/欢迎页重读本地索引会看到不同结果」。
- * 首轮全量对账期间 syncProgress 与 pendingPulls 持续变化，正好当过程中的刷新信号。
+ *
+ * contentRevision 是 Android 成员端每落地一项就 +1 的本机内容版本（粒度最细，逐项刷新）；
+ * cursor / pendingPulls / syncProgress / 运行态则覆盖 desktop 与 Docker 成员端——它们没有
+ * contentRevision，但首轮/自愈全量对账期间这些字段一直在动，同样能当过程中的刷新信号。
  */
 function indexSignature(value: SyncStatusPayload | null): string {
   if (!value) return '';
   return [
     value.lastSyncAt || '',
+    value.contentRevision ?? 0,
     value.cursor ?? 0,
     value.revision ?? 0,
     value.pendingPulls ?? 0,
