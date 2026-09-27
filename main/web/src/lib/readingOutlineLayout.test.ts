@@ -152,7 +152,8 @@ test('断点统一来自 lib/layoutBreakpoints，脚本里不再写裸 640/768/1
 
 test('点目录项跳转：先收面板、等布局稳定，再定位', () => {
   const body = functionBody(source, 'async function scrollToHeading');
-  const closeAt = body.indexOf('mobileOutlineOpen.value = false');
+  // 收面板走 closeOutlinePanel()（它内部还会把焦点还给顶栏「目录」按钮，见 androidUxGaps.test.ts）
+  const closeAt = body.search(/closeOutlinePanel\(\)|mobileOutlineOpen\.value = false/);
   const scrollAt = body.indexOf('reader.scrollTo(');
   assert.ok(closeAt >= 0, '跳转里没有先收面板：面板还开着就定位，落点会随它收起而变化');
   assert.ok(scrollAt >= 0, '跳转里找不到 reader.scrollTo：定位逻辑被搬走了？');

@@ -54,6 +54,7 @@
     </template>
     <div
       v-else-if="kind === 'html'"
+      ref="htmlEl"
       class="fp-body docx"
       v-html="html"
       @contextmenu="handleTextContextMenu"
@@ -241,6 +242,8 @@ const officeMode = ref<OfficeMode>('');
 const officeStatus = ref('连接中');
 const officeError = ref('');
 const mdEl = ref<HTMLDivElement>();
+/** html 类型预览容器：v-html 渲染后要把宽表包进横滚容器（与 md 分支同一处理） */
+const htmlEl = ref<HTMLDivElement>();
 const officeEl = ref<HTMLDivElement>();
 const pdfViewer = ref<InstanceType<typeof PdfViewer>>();
 const versionsOpen = ref(false);
@@ -671,7 +674,12 @@ async function loadFile() {
     if (version !== loadVersion) return;
     kind.value = data.kind;
     if (data.kind === 'office') await renderOffice(data.url, data.ext, version);
-    else if (data.kind === 'html') html.value = data.html;
+    else if (data.kind === 'html') {
+      html.value = data.html;
+      // html 类型（服务端直出的 html）同样会带原生 table：不包容器的话宽表会把预览区一起撑宽
+      await nextTick();
+      if (htmlEl.value) wrapTables(htmlEl.value, 'fp-table-scroll');
+    }
     else if (data.kind === 'pdf') {
       pdfUrl.value = data.url;
       extraction.value = data.extraction || null;
