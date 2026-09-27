@@ -14,6 +14,17 @@
         >
           <Icon name="settings" :size="14" />自动提炼：{{ autoLabel }}
         </button>
+        <!-- 手机端（设置页「Agent 与自动化」不渲染）：就地改档位，接口已由本机服务代理到中枢 -->
+        <AppSelect
+          v-if="boardAutoEditable"
+          v-model="autoDaysDraft"
+          class="head-auto-select"
+          aria-label="自动提炼间隔"
+          :options="autoChoices"
+          :disabled="autoSaving"
+          v-tooltip="'看板自动重新提炼的间隔；改完立即生效（打开看板页时才判一次到期）'"
+          @change="saveAutoDays"
+        />
         <button v-if="board" class="btn ghost" type="button" @click="copyBoard">
           <Icon name="clipboard" :size="14" />复制清单
         </button>
@@ -187,6 +198,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
+import AppSelect from '../components/ui/AppSelect.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import Icon from '../components/Icon.vue';
 import { api } from '../api';
@@ -209,7 +221,8 @@ import {
   type TaskCard,
 } from '../lib/taskBoard';
 import { formatSessionTime } from '../lib/chatTime';
-import { boardAutoLabel } from '../lib/boardAuto';
+import { boardAutoChoices, boardAutoLabel } from '../lib/boardAuto';
+import { runtimeCapabilitiesSnapshot } from '../lib/capabilities';
 import { notify } from '../lib/notify';
 import { openPageStream } from '../lib/events';
 
@@ -231,6 +244,17 @@ const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
  * 免得点进去落在设置页第一个大类上，像是点坏了。
  */
 const canConfigureAuto = computed(() => capabilities.value.features.agentAdmin);
+/**
+ * 手机上就地改档位：设置页「Agent 与自动化」那一大类不渲染（agentAdmin=false，手机改不了模型 Key
+ * 那类中枢配置），但**看板档位本身是通的**——Android 本机服务把 `/api/tasks/board/config` 窄代理到
+ * 已绑定的中枢。所以这里给一个档位下拉就地改，免得「能看不能改」（此前只能去设置页，而那一类不出现）。
+ */
+const boardAutoEditable = computed(() => !canConfigureAuto.value && capabilities.value.agentMode === 'hub');
+/** 档位选项由服务端给（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天），拿不到时用同一份兜底 */
+const autoOptions = ref<number[]>([0, 1, 2, 3, 7]);
+const autoDaysDraft = ref('0');
+const autoSaving = ref(false);
+const autoChoices = computed(() => boardAutoChoices(autoOptions.value));
 /** 看板被别端同步更新时的 SSE 订阅（离开页面即断开） */
 let closeBoardStream: (() => void) | undefined;
 
@@ -427,6 +451,46 @@ function openAutoSettings() {
   void router.push({ path: '/settings', query: { section: 'agent', anchor: 'agent-board' } });
 }
 
+/** 手机端：档位下拉的初始化（选项由服务端给，拿不到就用与服务端一致的兜底档位） */
+async function loadAutoOptions() {
+  if (!boardAutoEditable.value) return;
+  autoDaysDraft.value = String(tasks.autoDays || 0);
+  try {
+    const { data } = await api.get<{ options?: number[] }>('/api/tasks/board/config');
+    if (Array.isArray(data?.options) && data.options.length) autoOptions.value = data.options;
+  } catch {
+    /* 拿不到选项不影响改档位：兜底档位与服务端 BOARD_AUTO_OPTIONS 一致 */
+  }
+}
+
+/** 手机端：就地保存档位（走本机服务窄代理到中枢；改完界面与副标题立刻跟着变） */
+async function saveAutoDays() {
+  if (autoSaving.value) return;
+  const next = Number(autoDaysDraft.value) || 0;
+  if (next === (tasks.autoDays || 0)) return;
+  autoSaving.value = true;
+  try {
+    const { data } = await api.put<{ autoDays?: number }>('/api/tasks/board/config', { autoDays: next });
+    const saved = Number(data?.autoDays);
+    tasks.autoDays = Number.isFinite(saved) ? saved : next;
+    autoDaysDraft.value = String(tasks.autoDays);
+    notify.success(tasks.autoDays > 0 ? `已保存：${boardAutoLabel(tasks.autoDays)}重新提炼一次` : '已保存：自动提炼已关闭');
+  } catch (error: any) {
+    autoDaysDraft.value = String(tasks.autoDays || 0);
+    notify.error(error?.response?.data?.error || '档位没保存成功');
+  } finally {
+    autoSaving.value = false;
+  }
+}
+
+/** 别端同步/服务端回包改了档位时，下拉跟着走（自己正在保存时不打断输入） */
+watch(
+  () => tasks.autoDays,
+  (value) => {
+    if (!autoSaving.value) autoDaysDraft.value = String(value || 0);
+  },
+);
+
 /** 依据 → 落点：文件直接进预览/编辑器，页面按标题查 id 再跳 */
 async function openSource(card: TaskCard) {
   const target = taskCardTarget(card);
@@ -466,10 +530,16 @@ onMounted(async () => {
   const needsRefresh = await tasks.load();
   // 没有答案或已过期就自动重跑；正在跑的那一轮由 store 接上事件流，不重复触发
   if (needsRefresh && !tasks.running) await tasks.refresh();
-  // 别端刷新了看板（多端同步把最新的那份推过来）：重拉一次，界面直接换成最新那版
-  closeBoardStream = openPageStream((ev) => {
-    if (ev.type === 'board-changed') void tasks.load();
-  });
+  // 手机端：档位下拉的选项与初值（设置页那一类不渲染，只能就地改）
+  void loadAutoOptions();
+  // Android 本地端没有 /api/events（本机服务不提供该路由）：开 EventSource 只会 404 重连，
+  // 还会弹「实时同步连接断开，正在自动重连」——看板换版靠进入页面与手动刷新（同 Home.vue 的门禁）
+  if (runtimeCapabilitiesSnapshot().runtime !== 'android-local') {
+    // 别端刷新了看板（多端同步把最新的那份推过来）：重拉一次，界面直接换成最新那版
+    closeBoardStream = openPageStream((ev) => {
+      if (ev.type === 'board-changed') void tasks.load();
+    });
+  }
 });
 
 onBeforeUnmount(() => {

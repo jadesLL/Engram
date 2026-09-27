@@ -207,7 +207,9 @@ class EngramLocalServer private constructor(private val context: Context) {
         }
         post("/api/files/create") {
             if (!call.authorize()) return@post
-            call.json(db.createRawFile(call.body().optString("name", "未命名.md"), call.body().optString("section").ifBlank { null }))
+            // 请求体只能读一次：读两遍会抛「Request body has already been consumed」，新建资料必 500
+            val body = call.body()
+            call.json(db.createRawFile(body.optString("name", "未命名.md"), body.optString("section").ifBlank { null }))
         }
         post("/api/files/upload") {
             if (!call.authorize()) return@post
@@ -325,6 +327,31 @@ class EngramLocalServer private constructor(private val context: Context) {
             if (!call.authorize()) return@post
             // Android 不外链抓图（没有服务端的抓取链路），正文里的外链图保持原样
             call.json(JSONObject().put("localized", 0).put("failed", JSONArray()))
+        }
+        // 「挂载到…」：把未归属散图移进目标页面的资产目录，并把引用追加到该页正文末尾。
+        // 与 server routes/assets.ts 的 POST /api/assets/attach 同语义（移动 + 追加引用 + 返回 parentTitle）。
+        post("/api/assets/attach") {
+            if (!call.authorize()) return@post
+            val body = call.body()
+            val name = body.optString("name")
+            val parentId = body.optString("parent")
+            if (name.isBlank() || !PARENT_ID_REGEX.matches(parentId) || parentId == "_unassigned") {
+                return@post call.error("目标父项无效", HttpStatusCode.BadRequest)
+            }
+            val page = db.page(parentId) ?: return@post call.error("目标父项无效", HttpStatusCode.BadRequest)
+            val asset = try {
+                db.attachOrphanAsset(name, parentId)
+            } catch (error: Exception) {
+                return@post call.error(error.message ?: "挂载失败", HttpStatusCode.BadRequest)
+            }
+            // 挂载后把引用补进正文，否则它立刻又变成「未被引用」的孤儿
+            val assetName = asset.optString("name")
+            val alt = assetName.substringAfter('-').substringBeforeLast('.', assetName).ifBlank { "图片" }
+            val appended = runCatching { db.appendPageMedia(parentId, assetName, alt) }.getOrDefault(false)
+            call.json(
+                JSONObject().put("ok", true).put("asset", asset)
+                    .put("parentTitle", page.optString("title")).put("appended", appended),
+            )
         }
 
         get("/api/files/preview") {            if (!call.authorize()) return@get
@@ -536,6 +563,9 @@ class EngramLocalServer private constructor(private val context: Context) {
                 before = params["before"]?.toLongOrNull(),
                 level = params["level"]?.takeIf { it == "info" || it == "warn" || it == "error" },
                 q = params["q"]?.takeIf { it.isNotBlank() },
+                // 「视角」「事件」筛选与桌面端同一套参数（此前被静默丢掉，点了不生效）
+                scope = params["scope"]?.takeIf { it == "hub" || it == "member" || it == "app" },
+                event = params["event"]?.takeIf { it.isNotBlank() },
             )
             page.put("status", syncStatus())
             call.json(page)
@@ -549,6 +579,8 @@ class EngramLocalServer private constructor(private val context: Context) {
             val body = call.body()
             // 双栈参数独立于绑定信息：设置页只改阈值时不能把 role/enabled 当默认值处理（会误改角色）
             if (body.has("dual_stack")) saveDualStackConfig(body.optJSONObject("dual_stack") ?: JSONObject())
+            // 「优先局域网」开关同理独立于绑定：设置页 / 侧栏胶囊只改它一个字段
+            if (body.has("prefer_lan")) sync.setPreferLan(body.optBoolean("prefer_lan"))
             val touchesBinding = body.has("role") || body.has("hub_url") || body.has("hub_token") || body.has("enabled")
             if (!touchesBinding) return@post call.ok()
             val role = body.optString("role", "member")
@@ -642,6 +674,11 @@ class EngramLocalServer private constructor(private val context: Context) {
                         }
                     )
             )
+            // 本机在同步群组里的显示名（中枢配置的成员名，对账时学回）：设置页与对话抽屉都读它
+            .put("deviceLabel", sync.deviceLabel()).put("deviceLabelSource", sync.deviceLabelSource())
+            // 连接通道四态（局域网 / IPv6 / IPv4 / 已断开）与候选探测明细：侧栏状态胶囊、
+            // 设置页「局域网优先」开关都按这套字段渲染（server sync/index.ts 的 link 同口径）
+            .put("link", sync.linkStatus() ?: JSONObject.NULL)
     }
 
     private fun currentDualStackConfig(): DualStackConfig = DualStackConfig.fromSettings { key -> db.setting(key) }

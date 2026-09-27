@@ -407,7 +407,12 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         val current = pageJson(id) ?: error("页面不存在")
         val old = current.getString("path")
         val targetDir = (directory ?: old.substringBeforeLast('/', "Wiki")).replace('\\', '/').trim('/')
-        require(PAGE_DIRECTORIES.contains(targetDir)) { "页面只能移动到固定的 Wiki 目录内" }
+        // 「页面只能在 Wiki 树内移动、原始资料只能在三个二级分类之间移动」——与 server routes/pages.ts 同一条约束
+        if (old.startsWith("$RAW_ROOT/")) {
+            require(targetDir in RAW_SECTIONS.values) { "原始资料只能移动到 文档 / 对话 / 灵感碎片 目录内" }
+        } else {
+            require(PAGE_DIRECTORIES.contains(targetDir)) { "页面只能移动到 Wiki 目录内" }
+        }
         val title = sanitizeName(newTitle ?: current.getString("title")).ifBlank { "未命名页面" }
         val next = "$targetDir/$title.md"
         if (next != old) {
@@ -737,8 +742,28 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         }; return out
     }
 
+    /**
+     * 同义词扩展（与 server lib/fts.ts 同口径）：设置里 `search_synonyms` 每行一组、
+     * 用逗号/、分隔；查询**子串命中**组内任一词就把该组其余词一并并入检索词。
+     * 旧实现把这个设置有 UI 却从不读，手机上「同义词存得下、不生效」。
+     */
+    private fun synonymExtras(query: String): List<String> {
+        val raw = setting("search_synonyms") ?: return emptyList()
+        val extras = linkedSetOf<String>()
+        for (line in raw.split(Regex("\\r?\\n"))) {
+            val words = line.split(Regex("[,，、]")).map { it.trim() }.filter { it.isNotEmpty() }
+            if (words.size < 2) continue
+            val hit = words.firstOrNull { query.contains(it) } ?: continue
+            words.filter { it != hit }.forEach(extras::add)
+        }
+        return extras.toList()
+    }
+
     fun search(query: String): JSONArray = synchronized(lock) {
-        val terms = tokens(query).ifEmpty { setOf(query.lowercase()) }.toList(); if (terms.isEmpty()) return@synchronized JSONArray()
+        val base = tokens(query).ifEmpty { setOf(query.lowercase()) }
+        // 同义词扩展：只在查询命中词表时并入，正常查询零额外开销
+        val terms = (base + synonymExtras(query).flatMap { tokens(it) }).toList()
+        if (terms.isEmpty()) return@synchronized JSONArray()
         val marks = terms.joinToString(",") { "?" }; val args = terms.toTypedArray(); val hits = JSONArray()
         readableDatabase.rawQuery("SELECT ref_type,ref_id,COUNT(*) score FROM search_tokens WHERE term IN ($marks) GROUP BY ref_type,ref_id ORDER BY score DESC LIMIT 24", args).use { c -> while (c.moveToNext()) {
             val type = c.getString(0); val id = c.getString(1); val score = c.getInt(2)
@@ -849,11 +874,22 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
      * 同步日志分页：形状对齐 server 的 /api/sync/log（entries 新→旧 + total/hasMore/summary），
      * 翻页用上一页最旧一条的 id 作为 before。
      */
-    fun syncLogs(limit: Int = 200, before: Long? = null, level: String? = null, q: String? = null): JSONObject {
+    fun syncLogs(
+        limit: Int = 200,
+        before: Long? = null,
+        level: String? = null,
+        q: String? = null,
+        scope: String? = null,
+        event: String? = null,
+    ): JSONObject {
         val where = mutableListOf<String>(); val args = mutableListOf<String>()
         if (before != null) { where += "id < ?"; args += before.toString() }
         if (!level.isNullOrBlank()) { where += "level = ?"; args += level }
         if (!q.isNullOrBlank()) { where += "(event LIKE ? OR detail LIKE ? OR data LIKE ?)"; args += "%$q%"; args += "%$q%"; args += "%$q%" }
+        // 视角：手机端每一条都是成员视角（hub/app 的账在中枢那边，本机没有）——
+        // 按别的视角筛选要真的筛没，而不是把参数丢掉当没点过（旧实现就是后者）
+        if (!scope.isNullOrBlank() && scope != "member") where += "0 = 1"
+        if (!event.isNullOrBlank()) { where += "event = ?"; args += event }
         val clause = if (where.isEmpty()) "" else "WHERE ${where.joinToString(" AND ")}"
         val rows = readableDatabase.rawQuery(
             "SELECT id,ts,level,event,detail,data FROM sync_log $clause ORDER BY id DESC LIMIT ?",
@@ -993,6 +1029,26 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     }
 
     /**
+     * 把未归属散图挂到某个父项下：内容寻址重命名后落进 `assets/<parentId>/`，原散图删除
+     * （与 server lib/pageAssets.ts 的 attachUnassignedAsset 同语义：移动 + 按新父项重新命名）。
+     * 调用方拿到资产后要把引用追加进正文（[appendPageMedia]），否则它立刻又变成孤儿。
+     */
+    fun attachOrphanAsset(name: String, parentId: String): JSONObject = synchronized(lock) {
+        require(ASSET_PARENT_ID.matches(parentId) && parentId != UNASSIGNED_PARENT) { "目标父项无效" }
+        val fileName = File(name).name
+        require(fileName.isNotBlank() && fileName == name) { "图片路径无效" }
+        require(fileName.substringAfterLast('.', "").lowercase() in ASSET_EXTENSIONS) { "图片路径无效" }
+        val source = File(brain, "assets/$UNASSIGNED_PARENT/$fileName")
+        require(source.isFile) { "图片不存在" }
+        val asset = savePageAsset(parentId, fileName, source.readBytes())
+        source.delete()
+        // 池子空了就连目录一起收掉，别在设置页留一个永远为 0 的「未归属图片」
+        val pool = File(brain, "assets/$UNASSIGNED_PARENT")
+        if (pool.listFiles()?.isEmpty() == true) pool.delete()
+        asset
+    }
+
+    /**
      * 清空 AI 整理日志（brain 下 AIWorks/log 目录里的全部文件）与它们的索引行，知识正文一个字节不动。
      * 与 server lib/dataCleanup.ts 同语义；Android 没有关系表，relationCount 恒 0，也不广播同步。
      */
@@ -1096,6 +1152,12 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             "AIWorks/index", "AIWorks/log", "AIWorks/scheme", "assets",
         )
         private val PAGE_DIRECTORIES = setOf("Wiki", "Wiki/概念", "Wiki/实体", "Wiki/查询", "Wiki/归档", "Wiki/关系")
+        /** 图片后缀白名单（与 server lib/pageAssets.ts 的 isAssetFile 同一张表） */
+        private val ASSET_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp")
+        /** 图片资产目录名：页面 id 或未归属池（与 server lib/pageAssets.ts 的 isParentId 同口径） */
+        private val ASSET_PARENT_ID = Regex("^[A-Za-z0-9_-]{1,64}$")
+        /** 未归属图片池的目录名（与 server lib/pageAssets.ts 的 UNASSIGNED_PARENT 一致） */
+        private const val UNASSIGNED_PARENT = "_unassigned"
         private val PAGE_TYPES = setOf("concept", "person", "customer", "org", "project", "other", "doc", "note")
 
         private fun typeDirectory(type: String) = when (type) {

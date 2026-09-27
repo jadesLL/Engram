@@ -154,3 +154,17 @@ test('未登录被拒', async () => {
   });
   assert.equal(res.statusCode, 401);
 });
+
+test('同步成员令牌也能记一条灵感（手机端唯一凭据）', async () => {
+  // 手机端只持 lsync_ 成员令牌，它把「记一条灵感」窄代理到中枢；挂 requireAuth 会让手机必失败
+  const { createPeer } = await import('../sync/store.js');
+  const peer = createPeer('手机', `lsync_${'i'.repeat(24)}`);
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/ideas',
+    headers: { authorization: `Bearer ${peer.token}` },
+    payload: { content: '北子所的样车尺寸待确认' },
+  });
+  assert.equal(res.statusCode, 200, '成员令牌应能记灵感');
+  assert.equal(res.json().ok, true);
+});

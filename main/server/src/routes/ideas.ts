@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { requireAuth } from './auth.js';
+import { requireAssistantAccess } from '../assistant/access.js';
 import { draftIdeaNote, writeIdeaNote, type IdeaNoteDraft } from '../lib/ideaNote.js';
 
 /** 单条灵感正文上限：对话框里随手写；到这个量级该走「新建资料」而不是速记 */
@@ -21,7 +21,9 @@ export interface IdeaRouteDeps {
  * （动它会牵动 source_versions 与证据投影）。响应带上改了哪几处，前端提示、日志留痕。
  */
 export async function ideaRoutes(app: FastifyInstance, deps: IdeaRouteDeps = {}) {
-  app.addHook('preHandler', requireAuth);
+  // 手机端（Android 本地服务）只有同步成员令牌，却要能用「记一条灵感」——它与收集箱同属内容面，
+  // 走 requireAssistantAccess（成员 token 或 owner / MCP token），不再是仅 owner 的 requireAuth。
+  app.addHook('preHandler', requireAssistantAccess);
 
   app.post('/api/ideas', async (req, reply) => {
     const { content } = (req.body ?? {}) as { content?: unknown };

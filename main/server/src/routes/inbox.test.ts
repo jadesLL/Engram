@@ -231,3 +231,37 @@ test('移除收集箱条目：进回收站而不是直接删掉', async () => {
   const trash = fs.readdirSync(path.join(BRAIN_DIR, '.trash'));
   assert.equal(trash.some((name) => name.endsWith('待移除.zip')), true, '应能在回收站里找到');
 });
+
+/**
+ * 手机端（Android 本地优先版）只持同步成员令牌，收集箱由它整套窄代理到中枢：
+ * 这一道门必须认成员 token，否则真机上「收集箱」全部 401（此前只挂 requireAuth 就是这样）。
+ * 同时钉住「没有松开」：未鉴权的请求仍然 401。
+ */
+test('同步成员令牌也能用收集箱（手机端唯一凭据）', async () => {
+  const { createPeer } = await import('../sync/store.js');
+  const peer = createPeer('手机', `lsync_${'m'.repeat(24)}`);
+  const memberAuth = { authorization: `Bearer ${peer.token}` };
+
+  const list = await app.inject({ method: 'GET', url: '/api/inbox/items', headers: memberAuth });
+  assert.equal(list.statusCode, 200, '成员令牌应能列收集箱');
+
+  const req = form({}, [{ filename: '手机传的.pdf', content: Buffer.from('pdf') }]);
+  const uploaded = await app.inject({
+    method: 'POST',
+    url: '/api/inbox/upload',
+    headers: { ...memberAuth, ...req.headers },
+    payload: req.payload,
+  });
+  assert.equal(uploaded.statusCode, 200, '成员令牌应能往收集箱传文件');
+
+  const removed = await app.inject({
+    method: 'DELETE',
+    url: '/api/inbox/items',
+    headers: memberAuth,
+    payload: { path: `${INBOX_DIR_REL}/手机传的.pdf` },
+  });
+  assert.equal(removed.statusCode, 200, '成员令牌应能移除收集箱条目');
+
+  const anonymous = await app.inject({ method: 'GET', url: '/api/inbox/items' });
+  assert.equal(anonymous.statusCode, 401, '未鉴权仍然拒绝');
+});

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pipeline as streamPipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
 import { requireAuth } from './auth.js';
+import { requireAssistantAccess } from '../assistant/access.js';
 import { safeJoin, notifySyncChange } from '../lib/vault.js';
 import { moveToTrash } from '../lib/trash.js';
 import { emit } from '../lib/events.js';
@@ -58,7 +59,10 @@ function uniqueInboxPath(dirRel: string, name: string): string {
 }
 
 export async function inboxRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', requireAuth);
+  // 收集箱是「知识库的内容面」，不是中枢的配置面：Android 本地服务只持同步成员令牌（lsync_），
+  // 它把收集箱整套窄代理到中枢，挂在 requireAuth 上会让手机端全部 401。这里与 /api/assistant/**
+  // 同一道门（成员 token 或 owner / MCP token）；中枢的配置面仍然只有 owner 能进。
+  app.addHook('preHandler', requireAssistantAccess);
 
   /** 收集箱列表：目录实时扫描（同步落地、外部拷入都会立刻反映），不额外维护状态表 */
   app.get('/api/inbox/items', async () => {

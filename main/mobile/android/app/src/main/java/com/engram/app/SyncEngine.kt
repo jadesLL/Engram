@@ -1,6 +1,7 @@
 package com.engram.app
 
 import android.util.JsonReader
+import android.util.JsonToken
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -64,6 +65,41 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     /** 本轮同步真正落地/送出的改动条数（推 + 拉），只用于结尾那条汇总 */
     private var roundChanges = 0
 
+    /**
+     * ── 连接通道择优：局域网 → IPv6 → IPv4（都不通即「已断开」）────────────────────
+     *
+     * 与 desktop / Docker 端 server/src/sync/client.ts 同一套口径：中枢在 /api/sync/announce 里
+     * 通告自己的内网地址，成员端把「内网地址 + 中枢主地址」排成候选逐个探测，第一个通的作为当前
+     * 通道。家里/公司同网段自动走内网直连（低延迟、不占公网），出门自动回到主地址再按双栈选族；
+     * **探不到局域网时行为与历史版本完全一致**。通道现状经 /api/sync/status 的 link 字段给界面，
+     * 侧栏状态胶囊与设置页「局域网优先」都读它。
+     */
+    private val linkProbeMinIntervalMs = 20_000L
+    /** 健康期间的定期复探：从公司回到家、或局域网恢复后要能自动升回局域网 */
+    private val linkReprobeIntervalMs = 10 * 60_000L
+    /** 局域网候选是 IP 字面量，不可路由地址通常毫秒级失败，1.5 秒硬超时足够 */
+    private val linkProbeLanTimeoutMs = 1500L
+    private val linkLanUrlsSetting = "sync_lan_urls"
+    private val linkPreferLanSetting = "sync_prefer_lan"
+    private val deviceLabelSetting = "sync_device_label"
+
+    /** 当前实际在用的基地址；null = 还没择优过，按配置的中枢地址走 */
+    @Volatile private var activeBase: String? = null
+    @Volatile private var linkCandidates: List<SyncLink.Candidate> = emptyList()
+    @Volatile private var linkChannel: String = SyncLink.CHANNEL_OFFLINE
+    @Volatile private var linkLatencyMs: Long? = null
+    @Volatile private var linkSince: String? = null
+    @Volatile private var linkProbedAt: String? = null
+    private var lastProbeRoundAt = 0L
+    private var forceProbe = false
+    /** 上一轮探测绑定的中枢地址：改绑定后不能拿旧中枢的内网地址去连新中枢 */
+    private var probeBoundHub: String? = null
+    private var announcedLanCache: List<String>? = null
+    /** 本端不认识的同步类型（每种只记一条，避免刷屏） */
+    private val unknownKinds = mutableSetOf<String>()
+    /** 中枢还没有连接通告端点时只提醒一条，别每轮刷屏 */
+    private var announceMissingLogged = false
+
     fun onForeground() { foreground = true; cancelled = false; request(false) }
 
     fun onBackground() {
@@ -86,6 +122,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             try {
                 db.log("info", "start", if (full) "手动全量对账" else "事件触发同步")
                 syncProgress = "正在连接中枢"
+                // 先择优一条路（局域网优先），再开始同步：否则首轮会先绕一次公网才发现内网可直连
+                maybeProbeLink()
                 if ((db.setting("sync_cursor")?.toLongOrNull() ?: 0L) <= 0L) {
                     // 首次绑定直接按轻量清单逐项对账，避免从游标 0 一次解析数百条内嵌正文的历史 op。
                     // 对账完成后推进到快照水位，再由 converge 补拉其后发生的少量变化。
@@ -156,6 +194,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                     val authoritative = ack.optString("content", raw)
                     db.writeSyncedPage(target, authoritative, revision)
                     recordPush("push-page", SyncOpText.KIND_PAGE, target, null, authoritative.toByteArray(Charsets.UTF_8).size.toLong(), revision)
+                    // 本端内容与中枢回执不同 = 中枢做过合并：本端已被写回，日志里必须有一句解释
+                    if (authoritative != raw) recordPushMerged(target, ack, raw, authoritative, revision)
                 }
                 "file" -> {
                     val file = db.file(target)
@@ -204,13 +244,16 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                     when {
                         kind == "page" && compact -> ChangeWork(
                             op = op,
-                            page = fetchExecutor.submit<PagePayload> {
-                                val content = getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
-                                val evidence = getJson("/api/sync/evidence?path=${encode(target)}").optJSONObject("snapshot")
-                                PagePayload(content, evidence)
+                            page = fetchExecutor.submit<PagePayload?> {
+                                // 中枢已经没有这份（oplog 里的旧 op 滞后于改名/删除）：null，绝不拖死整轮
+                                tolerateMissing {
+                                    val content = getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
+                                    val evidence = getJson("/api/sync/evidence?path=${encode(target)}").optJSONObject("snapshot")
+                                    PagePayload(content, evidence)
+                                }
                             },
                         )
-                        kind == "file" -> ChangeWork(op = op, file = fetchExecutor.submit<File> { stageFile(target) })
+                        kind == "file" -> ChangeWork(op = op, file = fetchExecutor.submit<File?> { tolerateMissing { stageFile(target) } })
                         else -> ChangeWork(op = op)
                     }
                 }
@@ -219,6 +262,13 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                         checkActive()
                         val page = item.page?.let(::await)
                         val file = item.file?.let(::await)
+                        // 取不回来（中枢 404）说明这份已经被改名/删除：跳过它、推进水位，
+                        // 否则这条永远取不回的 op 会让每一轮同步都在这里失败（实测卡死过）
+                        if ((item.page != null && page == null) || (item.file != null && file == null)) {
+                            skipMissingOp(item.op)
+                            any = true
+                            continue
+                        }
                         applyOp(item.op, compact, page, file)
                         any = true
                     }
@@ -240,7 +290,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         val cursor = db.setting("sync_cursor")?.toLongOrNull() ?: 0L
         if (seq <= cursor) return
         val target = op.optString("target")
-        when (op.optString("kind")) {
+        val kind = op.optString("kind")
+        when (kind) {
             "page" -> {
                 val content = if (compact) {
                     page?.content ?: getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
@@ -272,6 +323,16 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 db.moveSyncedPath(oldPath, target, op.optInt("revision"))
                 recordApplied("pull-move", SyncOpText.summarizeMove(oldPath, target))
             }
+            // 会话 / 看板：手机端不存本地副本，读写都经窄代理走已绑定的中枢（见 AgentBridge），
+            // 所以这里是「已知但不镜像」——跳过内容，水位照常推进，别让水位卡在这两类 op 上。
+            "session", "board" -> Unit
+            else -> {
+                // 协议比本端新：既不能瞎套页面逻辑，也不能吞得无声无息。
+                // 水位仍然推进（否则后续 op 永远卡在它后面），但同步详情里留下一条 warn 可查。
+                if (unknownKinds.add(kind)) {
+                    db.log("warn", "sync-unknown-kind", SyncOpText.describeUnknownKind(kind), JSONObject().put("kind", kind))
+                }
+            }
         }
         db.setSetting("sync_cursor", seq.toString())
     }
@@ -285,6 +346,23 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         val staged = File(db.root, "snapshot-${UUID.randomUUID()}.json")
         val remotePaths = mutableSetOf<String>()
         val stalePaths = mutableSetOf<String>()
+        /**
+         * 本机已经改名/改分类/删除、但还没推给中枢的路径。
+         *
+         * 对账是「按中枢清单逐项核对本机有没有」：本机把文件推到新路径后，中枢的旧路径在本机
+         * 已经不存在，会被当成「本机缺这份」拉回来——手机上于是新旧两份并存（实测：改分类后
+         * 手动全量对账把旧路径复活）。待推送的旧路径要跳过，等这一轮 converge() 把改动推上去。
+         */
+        val pendingMoves = mutableSetOf<String>()
+        val pendingDeletes = mutableSetOf<String>()
+        runCatching {
+            for (item in db.outbox()) {
+                when (item.getString("kind")) {
+                    "move" -> item.optString("old_path").takeIf { it.isNotBlank() }?.let(pendingMoves::add)
+                    "delete" -> pendingDeletes += item.getString("target")
+                }
+            }
+        }
         var inferredCursor = 0L
         var snapshotCursor = 0L
         var remoteCount = 0
@@ -348,6 +426,12 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                             inferredCursor = maxOf(inferredCursor, revision.toLong())
                             remotePaths += path
                             if (preferHub) db.dropOutboxForTarget(path)
+                            // 本机已经把这份改名/改分类（或删掉了）但还没推上去：中枢的旧路径不拉回来，
+                            // 否则手机上会同时出现新旧两份，等这一轮 converge() 推完改动自然收敛
+                            if (path in pendingMoves || path in pendingDeletes) {
+                                recordPendingLocal(kind, path)
+                                continue
+                            }
                             val localFile = db.file(path)
                             val localHash = if (localFile.exists()) sha256(localFile) else ""
                             if (localHash == hash) {
@@ -361,17 +445,23 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                                 } else {
                                     val fetchPath = path
                                     schedulePull()
-                                    val future = fetchExecutor.submit<String> {
-                                        getJson("/api/sync/page-content?path=${encode(fetchPath)}").optString("content")
+                                    val future = fetchExecutor.submit<String?> {
+                                        tolerateMissing { getJson("/api/sync/page-content?path=${encode(fetchPath)}").optString("content") }
                                     }
                                     pending += SnapshotWork(
                                         apply = {
                                             val content = await(future)
-                                            // 旧正文先读出来：这条同步记录要写清「新增还是修改、动了多少行」
-                                            val before = db.rawPage(fetchPath)
-                                            db.writeSyncedPage(fetchPath, content, revision)
-                                            completePull()
-                                            recordApplied("pull-page", SyncOpText.summarizePage(fetchPath, before, content), tally)
+                                            if (content == null) {
+                                                // 中枢在清单生成后把它改名/删掉了：跳过，别把整轮对账拖死
+                                                completePull()
+                                                recordMissingAtHub("page", fetchPath)
+                                            } else {
+                                                // 旧正文先读出来：这条同步记录要写清「新增还是修改、动了多少行」
+                                                val before = db.rawPage(fetchPath)
+                                                db.writeSyncedPage(fetchPath, content, revision)
+                                                completePull()
+                                                recordApplied("pull-page", SyncOpText.summarizePage(fetchPath, before, content), tally)
+                                            }
                                         },
                                         discard = { cancelFetch(future) },
                                     )
@@ -384,15 +474,20 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                                     val fetchPath = path
                                     val beforeBytes = if (localFile.exists()) localFile.length() else 0L
                                     schedulePull()
-                                    val future = fetchExecutor.submit<File> { stageFile(fetchPath) }
+                                    val future = fetchExecutor.submit<File?> { tolerateMissing { stageFile(fetchPath) } }
                                     pending += SnapshotWork(
                                         apply = {
                                             val stagedFile = await(future)
-                                            val afterBytes = stagedFile.length()
-                                            try { db.installSyncedFile(fetchPath, stagedFile) }
-                                            finally { stagedFile.delete() }
-                                            completePull()
-                                            recordApplied("pull-file", SyncOpText.summarizeFile(fetchPath, beforeBytes, afterBytes), tally)
+                                            if (stagedFile == null) {
+                                                completePull()
+                                                recordMissingAtHub("file", fetchPath)
+                                            } else {
+                                                val afterBytes = stagedFile.length()
+                                                try { db.installSyncedFile(fetchPath, stagedFile) }
+                                                finally { stagedFile.delete() }
+                                                completePull()
+                                                recordApplied("pull-file", SyncOpText.summarizeFile(fetchPath, beforeBytes, afterBytes), tally)
+                                            }
                                         },
                                         discard = { discardStagedFile(future) },
                                     )
@@ -402,7 +497,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                                 val evidencePath = path
                                 schedulePull()
                                 val future = fetchExecutor.submit<JSONObject?> {
-                                    getJson("/api/sync/evidence?path=${encode(evidencePath)}").optJSONObject("snapshot")
+                                    tolerateMissing { getJson("/api/sync/evidence?path=${encode(evidencePath)}").optJSONObject("snapshot") }
                                 }
                                 pending += SnapshotWork(
                                     apply = {
@@ -421,6 +516,21 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                         reader.beginArray()
                         while (reader.hasNext()) stalePaths += reader.nextString()
                         reader.endArray()
+                    }
+                    // 中枢随清单下发「本机在中枢配置里的成员名」：学回来，设置页与对话抽屉才有名字可显示
+                    "device" -> {
+                        if (reader.peek() == JsonToken.BEGIN_OBJECT) {
+                            var name = ""
+                            reader.beginObject()
+                            while (reader.hasNext()) when (reader.nextName()) {
+                                "name" -> name = reader.nextString()
+                                else -> reader.skipValue()
+                            }
+                            reader.endObject()
+                            learnDeviceLabel(name)
+                        } else {
+                            reader.skipValue()
+                        }
                     }
                     else -> reader.skipValue()
                 }
@@ -478,9 +588,49 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         db.log("info", "pull-local-newer", "本机改动较新，保留本机版本并排队推送：$subject", toJson(mapOf("kind" to kind, "path" to path)))
     }
 
+    /** 本机已改名/改分类/删除但还没推上去：中枢的旧路径不拉回（否则手机上新旧两份并存） */
+    private fun recordPendingLocal(kind: String, path: String) {
+        val subject = if (kind == "page") "页面「${SyncOpText.pageTitle(path)}」" else "文件「$path」"
+        db.log(
+            "info",
+            "pull-pending-local",
+            "$subject 本机已改名/移动或删除、尚未推送，中枢里的旧路径不再拉回本机",
+            toJson(mapOf("kind" to kind, "path" to path)),
+        )
+    }
+
+    /**
+     * 中枢对本端推送做了合并/规范化（本端内容已被写回）：这是「我的改动怎么变了」的唯一解释，
+     * 与 desktop / Docker 端 client.ts 的 push-merged 同措辞、同 data 键名。
+     */
+    private fun recordPushMerged(path: String, ack: JSONObject, localRaw: String, mergedRaw: String, revision: Int) {
+        if (!SyncOpText.isNoteworthyPush(path)) return
+        val op = ack.optJSONObject("op")
+        val title = op?.optString("title")
+        val added = op?.optInt("added") ?: 0
+        val removed = op?.optInt("removed") ?: 0
+        val localBytes = localRaw.toByteArray(Charsets.UTF_8).size.toLong()
+        val mergedBytes = mergedRaw.toByteArray(Charsets.UTF_8).size.toLong()
+        roundChanges += 1
+        val data = JSONObject()
+            .put("kind", SyncOpText.KIND_PAGE).put("verb", "merged").put("path", path)
+            .put("revision", revision).put("added", added).put("removed", removed)
+            .put("localBytes", localBytes).put("mergedBytes", mergedBytes)
+        title?.takeIf { it.isNotBlank() }?.let { data.put("title", it) }
+        db.log("info", "push-merged", SyncOpText.describePushMerged(path, title, added, removed, localBytes, mergedBytes), data)
+    }
+
+    /**
+     * 结构化字段 → JSONObject：集合要显式转 JSONArray。
+     *
+     * Android 的 `JSONObject.put` 不包装集合——直接塞 List，序列化时会被当成普通对象调 `toString()`，
+     * 于是 `data.changes` 落库成了字符串 `"[+ 某一行]"`，前端按数组读就一行都渲染不出来（实测踩到）。
+     */
     private fun toJson(fields: Map<String, Any>): JSONObject {
         val out = JSONObject()
-        for ((key, value) in fields) out.put(key, value)
+        for ((key, value) in fields) {
+            out.put(key, if (value is Collection<*>) JSONArray(value) else value)
+        }
         return out
     }
 
@@ -546,7 +696,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
 
     private data class SnapshotWork(val apply: () -> Unit, val discard: () -> Unit)
     private data class PagePayload(val content: String, val evidence: JSONObject?)
-    private data class ChangeWork(val op: JSONObject, val page: Future<PagePayload>? = null, val file: Future<File>? = null)
+    private data class ChangeWork(val op: JSONObject, val page: Future<PagePayload?>? = null, val file: Future<File?>? = null)
 
     private fun schedulePull() {
         pendingPulls++
@@ -568,13 +718,46 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         if (!future.isDone) future.cancel(true)
     }
 
-    private fun discardStagedFile(future: Future<File>) {
+    private fun discardStagedFile(future: Future<File?>) {
         if (!future.isDone) {
             future.cancel(true)
             return
         }
         if (future.isCancelled) return
-        runCatching { await(future).delete() }
+        runCatching { await(future)?.delete() }
+    }
+
+    /**
+     * 中枢已经没有这份内容（404：清单/oplog 里的旧条目滞后于改名或删除）时返回 null。
+     *
+     * 不能让它升级成整轮失败：水位推不过去，下一轮还会撞同一条，同步就永久卡死了（实测卡过）。
+     * 其余错误（网络、鉴权、5xx）照旧抛出，交给上层的退避重试。
+     */
+    private fun <T> tolerateMissing(block: () -> T): T? = try {
+        block()
+    } catch (error: Exception) {
+        if (error.message?.contains("404") == true) null else throw error
+    }
+
+    /** 取不回来的 op：推进水位并留一条记录，别静默跳过 */
+    private fun skipMissingOp(op: JSONObject) {
+        val kind = op.optString("kind")
+        val target = op.optString("target")
+        recordMissingAtHub(kind, target)
+        val seq = op.optLong("seq")
+        if (seq > 0) db.setSetting("sync_cursor", seq.toString())
+    }
+
+    /** 中枢已经没有这份内容（多半是被改名或删除）：记一条，说清为什么这一项没落地 */
+    private fun recordMissingAtHub(kind: String, path: String) {
+        if (!SyncOpText.isNoteworthyPush(path)) return
+        val subject = if (kind == "page") "页面「${SyncOpText.pageTitle(path)}」" else "文件「$path」"
+        db.log(
+            "info",
+            "pull-missing",
+            "中枢已经没有这份内容（可能已被改名或删除），本次跳过：$subject",
+            toJson(mapOf("kind" to kind, "path" to path)),
+        )
     }
 
     private fun nodeId(): String {
@@ -587,9 +770,291 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         val primary = (db.setting("sync_hub_url") ?: error("未配置中枢地址")).trimEnd('/')
         val fallbacks = runCatching { JSONArray(db.setting("sync_direct_urls") ?: "[]") }.getOrDefault(JSONArray())
         return buildList {
+            // 择优命中的那条排最前（局域网直连优先）；探不到时自然回到配置的中枢地址，行为与历史一致
+            activeBase?.takeIf { it.isNotBlank() }?.let(::add)
             add(primary)
             for (i in 0 until fallbacks.length()) fallbacks.optString(i).trimEnd('/').takeIf { it.startsWith("http") }?.let(::add)
         }.distinct()
+    }
+
+    // ── 连接通道择优（局域网 → IPv6 → IPv4 → 断开）────────────────────────────────
+
+    /** 「优先局域网」开关：只有显式存过 '0' 才算关，老库默认开（与 server 同口径） */
+    fun preferLan(): Boolean = db.setting(linkPreferLanSetting) != "0"
+
+    /** 设置页改开关：记一条日志并立刻按新策略重选一次，用户不必等下一轮同步 */
+    fun setPreferLan(value: Boolean) {
+        val before = preferLan()
+        db.setSetting(linkPreferLanSetting, if (value) "1" else "0")
+        if (before == value) return
+        db.log(
+            "info",
+            "link-config",
+            if (value) "已启用「优先局域网」：同一局域网内优先走内网直连，探不到时按 IPv6 → IPv4 自动降级"
+            else "已关闭「优先局域网」：只按配置的中枢地址连接",
+            JSONObject().put("preferLan", value),
+        )
+        forceProbe = true
+        request(false)
+    }
+
+    /** 本机在同步群组里的显示名：中枢配置里的成员名（对账时学回），没学到时退回手机型号 */
+    fun deviceLabel(): String {
+        val learned = db.setting(deviceLabelSetting)?.trim().orEmpty()
+        if (learned.isNotEmpty()) return learned
+        val model = android.os.Build.MODEL?.trim().orEmpty()
+        return if (model.isEmpty()) "手机" else "手机 $model"
+    }
+
+    /** 学回中枢配置里的成员名；名字变了记一条日志让用户看得见（与 server deviceLabel.ts 同口径） */
+    private fun learnDeviceLabel(name: String) {
+        val trimmed = name.trim().take(40)
+        if (trimmed.isEmpty()) return
+        val before = db.setting(deviceLabelSetting)?.trim().orEmpty()
+        if (before == trimmed) return
+        db.setSetting(deviceLabelSetting, trimmed)
+        db.log(
+            "info",
+            "device-label",
+            "本机名称已按中枢配置对齐为「$trimmed」",
+            JSONObject().put("label", trimmed).put("previous", before),
+        )
+    }
+
+    /** 显示名是哪来的：设置页据此说明「按中枢配置」还是「暂时显示手机名」 */
+    fun deviceLabelSource(): String =
+        if (db.setting(deviceLabelSetting)?.trim().isNullOrEmpty()) "hostname" else "member-config"
+
+    /** 通道现状（`/api/sync/status` 的 link 字段）；未启用同步时为 null，界面据此整块隐藏 */
+    fun linkStatus(): JSONObject? {
+        if (db.setting("sync_role") != "member" || db.setting("sync_enabled") != "1") return null
+        val base = activeBase.orEmpty()
+        val candidates = JSONArray()
+        for (item in linkCandidates) {
+            candidates.put(
+                JSONObject()
+                    .put("kind", item.kind).put("label", item.label).put("url", item.url).put("ok", item.ok)
+                    .put("latencyMs", item.latencyMs ?: JSONObject.NULL)
+                    .put("error", item.error ?: JSONObject.NULL),
+            )
+        }
+        return JSONObject()
+            .put("channel", linkChannel)
+            .put("url", if (linkChannel == SyncLink.CHANNEL_OFFLINE) "" else base)
+            .put("host", SyncLink.hostPortOf(base))
+            .put("latencyMs", linkLatencyMs ?: JSONObject.NULL)
+            .put("since", linkSince ?: JSONObject.NULL)
+            .put("probedAt", linkProbedAt ?: JSONObject.NULL)
+            .put("preferLan", preferLan())
+            .put("candidates", candidates)
+    }
+
+    private fun announcedLanUrls(): List<String> {
+        announcedLanCache?.let { return it }
+        val parsed = runCatching {
+            val raw = JSONArray(db.setting(linkLanUrlsSetting) ?: "[]")
+            (0 until raw.length()).map { raw.getString(it) }
+        }.getOrDefault(emptyList())
+        announcedLanCache = parsed
+        return parsed
+    }
+
+    /** 记住中枢通告的内网地址：本轮与下次启动都先用它试局域网 */
+    private fun rememberAnnouncedLan(urls: List<String>) {
+        announcedLanCache = urls
+        runCatching { db.setSetting(linkLanUrlsSetting, JSONArray(urls).toString()) }
+    }
+
+    /** 改绑定/解绑后清掉上一个中枢学到的东西（不能拿旧中枢的内网地址去连新中枢） */
+    private fun resetLinkBinding() {
+        activeBase = null
+        linkCandidates = emptyList()
+        linkChannel = SyncLink.CHANNEL_OFFLINE
+        linkLatencyMs = null
+        linkSince = null
+        linkProbedAt = null
+        lastProbeRoundAt = 0L
+        probeBoundHub = null
+        announcedLanCache = emptyList()
+        runCatching { db.setSetting(linkLanUrlsSetting, "[]") }
+    }
+
+    /**
+     * 一轮同步开头调一次：首次、到期（10 分钟）或显式要求（改档位）才真探。
+     * 节流不是可选项——离线时每轮同步都先探一遍会把「同步中」白白拖长几秒。
+     */
+    private fun maybeProbeLink() {
+        if (db.setting("sync_role") != "member" || db.setting("sync_enabled") != "1") return
+        val hubBase = (db.setting("sync_hub_url") ?: "").trimEnd('/')
+        // 绑定换了一个中枢：上一个中枢学到的内网地址与通道判定一律作废，且**必须立刻重探**——
+        // 否则节流会让我们拿着旧中枢的候选继续显示「已断开」（实测：刚绑定完仍探旧地址）。
+        if (hubBase != probeBoundHub) {
+            resetLinkBinding()
+            forceProbe = true
+        }
+        val now = System.currentTimeMillis()
+        val firstRound = lastProbeRoundAt == 0L
+        val due = firstRound || now - lastProbeRoundAt >= linkReprobeIntervalMs
+        if (!forceProbe && !due) return
+        if (!firstRound && forceProbe && now - lastProbeRoundAt < linkProbeMinIntervalMs) return
+        forceProbe = false
+        try {
+            runProbeRound()
+        } catch (error: Cancelled) {
+            throw error
+        } catch (error: Exception) {
+            db.log("warn", "link-probe-failed", "连接通道探测失败：${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    private fun runProbeRound() {
+        val hubBase = (db.setting("sync_hub_url") ?: "").trimEnd('/')
+        if (hubBase.isBlank()) return
+        if (probeBoundHub != null && probeBoundHub != hubBase) resetLinkBinding()
+        probeBoundHub = hubBase
+        val prefer = preferLan()
+        val results = mutableListOf<SyncLink.Candidate>()
+        var learned: List<String>? = null
+        // 最多两轮：第一轮从中枢取回内网地址清单，第二轮把它们探掉（清单会随网段变化，每次启动重学一遍）
+        for (pass in 0..1) {
+            for (target in SyncLink.planProbes(hubBase, announcedLanUrls(), prefer)) {
+                checkActive()
+                if (results.any { it.url == target.url }) continue
+                val probe = probeAnnounce(target.url, probeTimeoutMs(target.kind))
+                results += SyncLink.Candidate(target.kind, target.label, target.url, probe.ok, probe.latencyMs, probe.error)
+                if (target.kind == SyncLink.KIND_HUB && probe.ok && probe.lan.isNotEmpty()) learned = probe.lan
+                // 局域网已经通了就不必再探剩下的：这一轮的目的就是找到最快那条路
+                if (target.kind == SyncLink.KIND_LAN && probe.ok && prefer) break
+            }
+            val pending = learned
+            if (pending != null) {
+                val changed = pending != announcedLanUrls()
+                rememberAnnouncedLan(pending)
+                learned = null
+                // 刚学到（或清单变了）的地址要立刻探一轮，否则这一轮仍然只走了公网
+                if (changed) continue
+            }
+            break
+        }
+        linkCandidates = results
+        linkProbedAt = Instant.now().toString()
+        lastProbeRoundAt = System.currentTimeMillis()
+
+        val winner = SyncLink.pickWinner(results, prefer)
+        if (winner == null) {
+            // 全部候选失败：可能是真断网，也可能是中枢版本还没有这个通告端点（404）。
+            // 后者不能显示「已断开」——同步其实正常，只是猜不出走的哪条路，退回按中枢地址归类。
+            val hubProbe = results.firstOrNull { it.kind == SyncLink.KIND_HUB }
+            if (hubProbe != null && !hubProbe.ok && hubProbe.error?.contains("404") == true) {
+                activeBase = hubBase
+                linkChannel = detectHubChannel(hubBase)
+                linkLatencyMs = null
+                linkSince = null
+                if (!announceMissingLogged) {
+                    announceMissingLogged = true
+                    db.log("info", "link-announce-unavailable", "中枢尚未提供连接通告端点，连接通道按中枢地址判定：${SyncLink.channelLabel(linkChannel)}")
+                }
+                return
+            }
+            linkChannel = SyncLink.CHANNEL_OFFLINE
+            linkLatencyMs = null
+            return
+        }
+
+        val nextBase = winner.url
+        val nextChannel = if (winner.kind == SyncLink.KIND_LAN) SyncLink.CHANNEL_LAN else detectHubChannel(nextBase)
+        val previousBase = activeBase
+        val changed = nextBase != previousBase || nextChannel != linkChannel
+        activeBase = nextBase
+        linkLatencyMs = winner.latencyMs
+        linkChannel = nextChannel
+        if (changed) {
+            linkSince = Instant.now().toString()
+            db.log(
+                "info",
+                "link-changed",
+                "连接通道：${SyncLink.channelLabel(nextChannel)}（${SyncLink.hostPortOf(nextBase)}，延迟 ${winner.latencyMs ?: "?"} 毫秒）",
+                JSONObject()
+                    .put("channel", nextChannel).put("base", nextBase)
+                    .put("latencyMs", winner.latencyMs ?: JSONObject.NULL)
+                    .put("previous", previousBase ?: hubBase),
+            )
+        }
+    }
+
+    private data class AnnounceProbe(val ok: Boolean, val latencyMs: Long?, val error: String?, val lan: List<String>)
+
+    /**
+     * 一次候选探测：打中枢的连接通告端点（带令牌）。既证明这个地址可达，又顺手取回中枢的内网地址清单。
+     * 逐候选设超时（不写进双栈记账）——探测超时被记成真实请求的失败会把界面的协议族判定带偏。
+     */
+    private fun probeAnnounce(base: String, timeoutMs: Long): AnnounceProbe {
+        val url = "$base/api/sync/announce".toHttpUrlOrNull()
+            ?: return AnnounceProbe(false, null, "地址无效", emptyList())
+        val call = httpClient.newCall(
+            Request.Builder().url(url)
+                .header("Authorization", "Bearer ${token()}")
+                .header("Accept", "application/json")
+                .build(),
+        )
+        call.timeout().timeout(timeoutMs, TimeUnit.MILLISECONDS)
+        activeCalls.add(call)
+        val startedAt = System.currentTimeMillis()
+        return try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) return AnnounceProbe(false, null, "中枢返回 ${response.code}", emptyList())
+                val data = runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrNull()
+                    ?: return AnnounceProbe(false, null, "中枢应答异常", emptyList())
+                if (!data.optBoolean("ok")) return AnnounceProbe(false, null, "中枢应答异常", emptyList())
+                val lan = mutableListOf<String>()
+                data.optJSONArray("lan")?.let { arr -> for (i in 0 until arr.length()) lan += arr.optString(i) }
+                AnnounceProbe(
+                    true,
+                    System.currentTimeMillis() - startedAt,
+                    null,
+                    SyncLink.normalizeAnnouncedLan(lan, db.setting("sync_hub_url")),
+                )
+            }
+        } catch (error: Exception) {
+            if (cancelled || !foreground) throw Cancelled()
+            AnnounceProbe(false, null, describeLinkError(error, timeoutMs), emptyList())
+        } finally {
+            activeCalls.remove(call)
+        }
+    }
+
+    private fun probeTimeoutMs(kind: String): Long =
+        if (kind == SyncLink.KIND_LAN) linkProbeLanTimeoutMs
+        else maxOf(linkProbeLanTimeoutMs, dualStackConfig().connectTimeoutMs + 1000L)
+
+    /** 走中枢主地址（域名）时到底是 IPv6 还是 IPv4：优先信双栈记账，其次看域名解析出的协议族 */
+    private fun detectHubChannel(base: String): String {
+        SyncLink.classifyBase(base)?.let { return it }
+        val host = SyncLink.hostnameOf(base)
+        val entry = DualStack.status().firstOrNull { it.host == host }
+        if (entry != null) return if (entry.family == 4) SyncLink.CHANNEL_IPV4 else SyncLink.CHANNEL_IPV6
+        return try {
+            val addresses = InetAddress.getAllByName(host)
+            when {
+                addresses.any { FamilyDns.isFamily(it, 6) } -> SyncLink.CHANNEL_IPV6
+                addresses.any { FamilyDns.isFamily(it, 4) } -> SyncLink.CHANNEL_IPV4
+                else -> SyncLink.CHANNEL_IPV4
+            }
+        } catch (_: UnknownHostException) {
+            SyncLink.CHANNEL_IPV4
+        }
+    }
+
+    /** 探测失败原因：超时/连不上给一句人话，其余截断保留（完整信息在同步详情里） */
+    private fun describeLinkError(error: Exception, timeoutMs: Long): String {
+        val text = error.message.orEmpty()
+        return when {
+            error is java.io.InterruptedIOException || text.contains("timeout", true) || text.contains("Canceled", true) ->
+                "探测超时（$timeoutMs 毫秒）"
+            error is java.net.ConnectException || error is java.net.SocketException || error is UnknownHostException ||
+                text.contains("failed", true) || text.contains("refused", true) || text.contains("unreachable", true) -> "连不上"
+            else -> text.take(60).ifBlank { "连不上" }
+        }
     }
     private fun token(): String = secrets.get("sync_hub_token") ?: error("未配置绑定令牌")
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")

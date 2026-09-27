@@ -1309,10 +1309,14 @@ onMounted(() => {
   window.addEventListener('keydown', onKey);
   // 窗口变窄时收窄到上限内（只收敛显示，用户偏好留着，回到大窗口即恢复）
   window.addEventListener('resize', onDrawerViewportResize);
-  // 其他端聊完一轮同步过来（或对端删了会话）：刷一次列表，别等用户重开抽屉才看见
-  closeSessionStream = openPageStream((ev) => {
-    if (ev.type === 'session-changed') void chat.loadSessions();
-  });
+  // 其他端聊完一轮同步过来（或对端删了会话）：刷一次列表，别等用户重开抽屉才看见。
+  // Android 本地端没有 /api/events（本机服务不提供该路由），开了只会 404 重连并弹
+  // 「实时同步连接断开」——手机上的会话列表靠打开抽屉与手动刷新（同 Home.vue 的门禁）
+  if (capabilities.value.runtime !== 'android-local') {
+    closeSessionStream = openPageStream((ev) => {
+      if (ev.type === 'session-changed') void chat.loadSessions();
+    });
+  }
   // 会话列表要标「来自 <设备名>」：需要本机节点 id（同步状态），抽屉自己订阅一份
   sync.subscribe();
   // 首次打开时抽屉是随开关一起挂载的，上面那个 watch 不会触发，这里补一次初始化 + 聚焦
