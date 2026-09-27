@@ -26,6 +26,10 @@ export interface DreamConfig {
 /** 配置与状态的 settings 键（清库时状态会被重置，配置保留） */
 export const DREAM_SETTINGS_KEY = 'dream_config';
 export const DREAM_STATE_KEY = 'dream_state';
+/** 每轮运行留下的计数快照（提炼看板的历史来源，最新在前） */
+export const DREAM_HISTORY_KEY = 'dream_history';
+/** 快照最多留多少轮：看板只看最近几轮，更早的明细交给「梦境思考」对话 */
+export const DREAM_HISTORY_LIMIT = 30;
 
 /** 调度 tick 粒度：到期判断按分钟级精度，30 秒一次足够（与 DDNS 同档） */
 export const DREAM_TICK_MS = 30_000;
@@ -52,7 +56,7 @@ export interface DreamState {
   lastTrigger: '' | 'schedule' | 'manual';
   lastStatus: DreamRunStatus;
   lastError: string;
-  /** 最近一次运行的收尾小结（助手最后一段正文，截断后的单行） */
+  /** 最近一次运行的收尾小结（助手最后一段正文原文，含换行；界面按 Markdown 渲染） */
   lastSummary: string;
   lastRunId: string;
   /** 正在跑的那一轮：tick 据此等它收口，不重复起轮 */
@@ -172,6 +176,90 @@ export function readDreamState(): DreamState {
 export function writeDreamState(patch: Partial<DreamState>): DreamState {
   const next = { ...readDreamState(), ...patch };
   setSetting(DREAM_STATE_KEY, JSON.stringify(next));
+  return next;
+}
+
+/** 一轮跑完时的待办计数：整改前 → 整改后（看板靠它显示「这次真的清掉了多少」） */
+export interface DreamRunCounts {
+  pendingFiles: number;
+  issues: number;
+}
+
+/** 每轮运行留下的计数快照：轮次级的信息只在这里，页面级明细由 dreamBoard 现算 */
+export interface DreamRunSnapshot {
+  runId: string;
+  /** 起轮时刻（ISO） */
+  startedAt: string;
+  /** 收口时刻（ISO） */
+  finishedAt: string;
+  trigger: '' | 'schedule' | 'manual';
+  status: DreamRunStatus;
+  before: DreamRunCounts;
+  after: DreamRunCounts & {
+    deadLinks: number;
+    duplicates: number;
+    outdatedPages: number;
+  };
+}
+
+function countOf(value: unknown): number {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? Math.floor(num) : 0;
+}
+
+/** 归一化一条历史快照；缺 runId 的（坏数据）丢掉 */
+function normalizeSnapshot(raw: unknown): DreamRunSnapshot | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const source = raw as Record<string, unknown>;
+  const runId = String(source.runId ?? '').trim();
+  if (!runId) return null;
+  const before = (source.before && typeof source.before === 'object' ? source.before : {}) as Record<string, unknown>;
+  const after = (source.after && typeof source.after === 'object' ? source.after : {}) as Record<string, unknown>;
+  const trigger = String(source.trigger ?? '');
+  const status = String(source.status ?? '');
+  return {
+    runId,
+    startedAt: String(source.startedAt ?? ''),
+    finishedAt: String(source.finishedAt ?? ''),
+    trigger: trigger === 'schedule' || trigger === 'manual' ? trigger : '',
+    status: (['completed', 'failed', 'cancelled', 'skipped'] as string[]).includes(status)
+      ? (status as DreamRunStatus)
+      : '',
+    before: { pendingFiles: countOf(before.pendingFiles), issues: countOf(before.issues) },
+    after: {
+      pendingFiles: countOf(after.pendingFiles),
+      issues: countOf(after.issues),
+      deadLinks: countOf(after.deadLinks),
+      duplicates: countOf(after.duplicates),
+      outdatedPages: countOf(after.outdatedPages),
+    },
+  };
+}
+
+/** 历史快照（最新在前）；坏 JSON / 坏条目一律当没有，不抛错 */
+export function readDreamHistory(): DreamRunSnapshot[] {
+  try {
+    const raw = getSetting(DREAM_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(normalizeSnapshot)
+      .filter((item): item is DreamRunSnapshot => Boolean(item))
+      .slice(0, DREAM_HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 记一轮：同一 runId 已存在就覆盖（结算幂等，重复结算不会写出两条），最新在前。
+ * 超过上限的旧快照直接丢弃——更早的明细本来就只能去「梦境思考」对话里翻。
+ */
+export function recordDreamRun(snapshot: DreamRunSnapshot): DreamRunSnapshot[] {
+  const next = [snapshot, ...readDreamHistory().filter((item) => item.runId !== snapshot.runId)]
+    .slice(0, DREAM_HISTORY_LIMIT);
+  setSetting(DREAM_HISTORY_KEY, JSON.stringify(next));
   return next;
 }
 

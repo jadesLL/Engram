@@ -16,11 +16,13 @@ import {
   nextDueAt,
   readDreamConfig,
   readDreamState,
+  recordDreamRun,
   writeDreamState,
   type DreamConfig,
   type DreamRunStatus,
   type DreamState,
 } from './dreamConfig.js';
+import { dreamBoard, type DreamBoard } from './dreamBoard.js';
 import { DREAM_PLAYBOOK } from './playbooks.js';
 import * as repo from './repository.js';
 import { submitMessage } from './runner.js';
@@ -94,10 +96,13 @@ function stamp(at: Date): string {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
-/** 小结：助手最后一段正文压成一行（界面一行显示，完整内容在会话里看） */
-function shortSummary(text: string, limit = 400): string {
-  const flat = String(text || '').replace(/\s+/g, ' ').trim();
-  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
+/**
+ * 小结：助手最后一段正文的**原文**（保留换行与 Markdown 记号）——设置页按 Markdown 渲染，
+ * 压成一行会让标题、列表全挤成一条长句，看起来就是一坨。过长才截断（全文仍在对话里）。
+ */
+function clipSummary(text: string, limit = 4000): string {
+  const clean = String(text || '').replace(/\r\n?/g, '\n').trim();
+  return clean.length > limit ? `${clean.slice(0, limit)}\n\n……（完整内容在「梦境思考」对话里）` : clean;
 }
 
 /**
@@ -167,23 +172,41 @@ export function settleDreamRun(now: Date = new Date(), deps: DreamDeps = {}): bo
         ? 'cancelled'
         : 'failed';
   const summary = run?.assistantMessageId
-    ? shortSummary(repo.getMessage(run.assistantMessageId)?.content || '')
+    ? clipSummary(repo.getMessage(run.assistantMessageId)?.content || '')
     : '';
   const error = status === 'failed' ? run?.error || (run ? '本轮没有产出' : '运行记录已不存在') : '';
+  const finishedAt = run?.completedAt || run?.updatedAt || now.toISOString();
   writeDreamState({
     currentRunId: '',
     runningSince: '',
     lastRunId: runId,
-    lastRunAt: run?.completedAt || run?.updatedAt || now.toISOString(),
+    lastRunAt: finishedAt,
     lastStatus: status,
     lastError: error,
     lastSummary: summary,
+  });
+  // 「跑完那一刻的待办数」事后算不出来（audit 反映的永远是当下），结算时记一笔给看板用
+  const after = (deps.audit ?? dreamAudit)();
+  recordDreamRun({
+    runId,
+    startedAt: run?.createdAt || state.runningSince,
+    finishedAt,
+    trigger: state.lastTrigger,
+    status,
+    before: { pendingFiles: state.beforePendingFiles, issues: state.beforeIssues },
+    after: {
+      pendingFiles: after.pendingFiles,
+      issues: dreamIssueTotal(after),
+      deadLinks: after.deadLinks,
+      duplicates: after.duplicates,
+      outdatedPages: after.outdatedPages,
+    },
   });
   logDreamResult(
     status,
     error,
     { pendingFiles: state.beforePendingFiles, issues: state.beforeIssues },
-    (deps.audit ?? dreamAudit)(),
+    after,
   );
   return true;
 }
@@ -314,6 +337,8 @@ export interface DreamStatus {
   audit: DreamAudit;
   /** 起跑前的计数（界面显示「整理前 → 整理后」） */
   before: { pendingFiles: number; issues: number };
+  /** 提炼看板：最近几轮的成果明细（最新在前；没跑过时为空列表） */
+  board: DreamBoard;
   last: {
     at: string;
     trigger: DreamState['lastTrigger'];
@@ -330,6 +355,7 @@ export function dreamStatus(now: Date = new Date()): DreamStatus {
   const state = readDreamState();
   const due = nextDueAt(config, state, now);
   const lastRun = state.lastRunId ? repo.getRun(state.lastRunId) : null;
+  const sessionId = dreamSession()?.id || '';
   return {
     config,
     scheduleLabel: describeSchedule(config),
@@ -337,10 +363,11 @@ export function dreamStatus(now: Date = new Date()): DreamStatus {
     due: isDreamDue(config, state, now),
     running: Boolean(state.currentRunId),
     runId: state.currentRunId || lastRun?.id || '',
-    sessionId: dreamSession()?.id || '',
+    sessionId,
     agentReady: Boolean(getAgentConfig().apiKey),
     audit: dreamAudit(),
     before: { pendingFiles: state.beforePendingFiles, issues: state.beforeIssues },
+    board: dreamBoard(sessionId),
     last: {
       at: state.lastRunAt,
       trigger: state.lastTrigger,
