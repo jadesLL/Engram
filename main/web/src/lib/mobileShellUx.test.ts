@@ -143,3 +143,97 @@ test('安卓系统解锁接线齐全：原生桥 + 权限 + 登录页入口', ()
   const manifest = read('mobile/android/app/src/main/AndroidManifest.xml');
   assert.match(manifest, /android\.permission\.USE_BIOMETRIC/, '清单缺 USE_BIOMETRIC：BiometricPrompt 会直接报错');
 });
+
+// ---------------------------------------------------------------- 手机端交互巡检（2026-09-29 第二轮）
+
+test('指针判断只有一份：lib/pointer.ts 与 CSS 的触屏查询同口径', () => {
+  const pointer = readSrc('lib/pointer.ts');
+  assert.match(
+    pointer,
+    /const QUERY = '\(hover: none\) and \(pointer: coarse\)'/,
+    '触屏查询写歪了：文案与样式会各判一套（CSS 一套、JS 另一套）',
+  );
+  assert.match(pointer, /matchMedia\(QUERY\)/, '没有真正读媒体查询');
+});
+
+test('行的长按/⋯ 菜单在手机上是贴底动作面板，不是贴着手指的小浮层', () => {
+  const menu = readSrc('components/AppContextMenu.vue');
+  assert.match(menu, /touchMode/, '菜单没有区分触屏');
+  assert.match(menu, /matchMedia\('\(hover: none\) and \(pointer: coarse\)'\)/, '触屏判断与别处不一致');
+  assert.match(menu, /class="context-menu-mask"/, '动作面板没有遮罩：点空白收不掉');
+  assert.match(menu, /class="context-menu-grabber"/, '动作面板没有抓手，看不出是能往下推的面板');
+  assert.match(menu, /context-menu-cancel/, '动作面板没有底部取消键');
+  assert.match(
+    menu,
+    /\.app-context-menu\.sheet \{[\s\S]{0,400}bottom: calc\(8px \+ var\(--safe-bottom\)\)/,
+    '动作面板没有贴底并让开安全区',
+  );
+  assert.match(
+    menu,
+    /\.app-context-menu\.sheet \.context-menu-button \{[\s\S]{0,200}min-height: 48px/,
+    '动作面板条目不到 48px：手机上手指标不准',
+  );
+  assert.match(menu, /\.app-context-menu\.sheet \.context-menu-shortcut \{\s*display: none;/, '手机上还显示键盘快捷键');
+  assert.match(menu, /registerBackHandler/, '动作面板没接返回键：按返回会直接退出这一页');
+});
+
+test('触屏上的键盘提示全部换掉：欢迎页卡片、对话输入框、搜索空状态', () => {
+  const editor = readSrc('views/EditorView.vue');
+  assert.match(editor, /useTouchPointer/, '欢迎页没做触屏判断');
+  assert.match(editor, /touchPointer \? '随手记一条' : 'Ctrl\+N'/, '欢迎页仍在手机上显示 Ctrl+N');
+  assert.match(editor, /touchPointer \? '搜页面与资料' : 'Ctrl\+K'/, '欢迎页仍在手机上显示 Ctrl+K');
+
+  const chat = readSrc('components/ChatDrawer.vue');
+  assert.match(chat, /composerPlaceholder/, '对话输入框占位文案没有收口');
+  assert.match(
+    chat,
+    /const keys = touchPointer\.value \? '' : '（Enter 发送，Shift\+Enter 换行）'/,
+    '对话输入框在手机上仍写 Enter / Shift+Enter',
+  );
+
+  const search = readSrc('views/SearchView.vue');
+  assert.match(search, /touchPointer \? '输入关键词搜索 Wiki 页面与原始资料提取文本'/, '搜索空状态在手机上仍提「回车即搜」');
+});
+
+test('手机上的小控件热区：搜索范围胶囊、收集箱筛选、图谱开关与顶栏按钮', () => {
+  assert.match(
+    readSrc('views/SearchView.vue'),
+    /@media \(hover: none\) and \(pointer: coarse\)[\s\S]{0,220}\.filter-chips button \{\s*height: 40px/,
+    '搜索范围胶囊在触屏上仍是 26px',
+  );
+
+  const inbox = readSrc('views/InboxView.vue');
+  assert.match(inbox, /\.seg button \{ flex: 1; height: 38px; padding: 0 10px; \}/, '收集箱筛选在手机上仍偏矮');
+  assert.match(inbox, /\.page-head \.sub \{ order: 2; flex: 1 1 100%/, '收集箱页头在手机上不换行：标题会被压成竖排');
+
+  const graph = readSrc('views/GraphView.vue');
+  assert.match(graph, /const panelOpen = ref\(window\.innerWidth > 768\)/, '图谱设置面板在手机上默认展开：一进来就盖住图');
+  assert.match(
+    graph,
+    /@media \(hover: none\) and \(pointer: coarse\)[\s\S]{0,700}\.g-sw \{ width: 46px; height: 26px; \}/,
+    '图谱开关在触屏上仍是 32×18',
+  );
+  assert.match(
+    graph,
+    /\.g-panel \{[\s\S]{0,320}bottom: calc\(72px \+ var\(--safe-bottom\)\)/,
+    '图谱面板没有抬到底部导航之上：底部会被导航压住',
+  );
+});
+
+test('手机 App 的操作习惯：抽屉横滑关闭 + 底部标签栏有选中态', () => {
+  const home = readSrc('views/Home.vue');
+  assert.match(home, /function installSidebarSwipe/, '没有抽屉横滑手势');
+  assert.match(home, /addEventListener\('touchmove', onMove, \{ passive: false \}\)/, '横滑手势没有拿到 touchmove：无法阻止整页跟着滚');
+  assert.match(home, /Math\.abs\(moveX\) > Math\.abs\(moveY\) \* 1\.4/, '没有区分横滑与纵向滚动：抽屉里会滑不动列表');
+  assert.match(home, /dx < -72/, '横滑关闭没有阈值：轻轻一碰就收起');
+  assert.match(home, /moreSectionActive/, '底部标签栏没有「更多」分区的选中态');
+  assert.match(home, /\.bottom-nav button\.active \{/, '底部标签栏没有选中态样式');
+
+  const editor = readSrc('views/EditorView.vue');
+  assert.match(
+    editor,
+    /\.crumb-root,\s*\.crumb-item,\s*\.crumb-sep \{ display: none; \}/,
+    '手机编辑顶栏还塞着面包屑目录段：标题被挤成省略号',
+  );
+  assert.match(editor, /\.save-state \{ white-space: nowrap; flex: none; \}/, '保存态在手机上还会折成两行');
+});

@@ -764,13 +764,14 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    min-height: 32px;
-    padding: 6px 12px;
+    /* 触屏上的分类胶囊是主要导航：32px 偏矮，撑到 40px（手指按得准） */
+    min-height: 40px;
+    padding: 6px 14px;
     border: 1px solid var(--border);
     border-radius: 999px;
     background: var(--card-bg);
     color: var(--text-secondary);
-    font-size: 12.5px;
+    font-size: 13px;
     white-space: nowrap;
   }
   .settings-mobile-nav .chip.active {

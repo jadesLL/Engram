@@ -370,7 +370,8 @@
         <div class="welcome-cards">
           <button class="welcome-card" type="button" @click="createIdeaFromWelcome">
             <span class="wc-icon accent"><Icon name="lightbulb" :size="17" /></span>
-            <span class="wc-text"><strong>记一条灵感</strong><em>Ctrl+N</em></span>
+            <!-- 手机上不写键盘快捷键（没有键盘）：换成动作本身的说明 -->
+            <span class="wc-text"><strong>记一条灵感</strong><em>{{ touchPointer ? '随手记一条' : 'Ctrl+N' }}</em></span>
           </button>
           <button class="welcome-card" type="button" @click="createFirst">
             <span class="wc-icon"><Icon name="file-plus" :size="17" /></span>
@@ -378,7 +379,7 @@
           </button>
           <button class="welcome-card" type="button" @click="$router.push('/search')">
             <span class="wc-icon"><Icon name="search" :size="17" /></span>
-            <span class="wc-text"><strong>搜索知识库</strong><em>Ctrl+K</em></span>
+            <span class="wc-text"><strong>搜索知识库</strong><em>{{ touchPointer ? '搜页面与资料' : 'Ctrl+K' }}</em></span>
           </button>
           <button class="welcome-card" type="button" @click="$router.push('/graph')">
             <span class="wc-icon"><Icon name="graph" :size="17" /></span>
@@ -442,6 +443,7 @@ import { createIdeaNote } from '../lib/quickNote';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { createThrottledReload } from '../lib/refreshThrottle';
 import { notify } from '../lib/notify';
+import { useTouchPointer } from '../lib/pointer';
 import {
   CONTENT_WIDTH_RATIO_STEPS,
   contentColumnWidth,
@@ -453,6 +455,8 @@ const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
 const { capabilities } = useRuntimeCapabilities();
+/** 触屏（手机/平板）：欢迎页的卡片说明换成动作文案，不展示键盘快捷键 */
+const touchPointer = useTouchPointer();
 const agentName = computed(() => capabilities.value.agentMode === 'hub' ? '服务器 Agent' : capabilities.value.agentMode === 'unavailable' ? 'Agent' : '内置 Agent');
 const agentEntryHint = computed(() => capabilities.value.agentMode === 'hub' ? 'Docker 中枢继续运行' : capabilities.value.agentMode === 'unavailable' ? '绑定中枢后可用' : '内置助手开问');
 const chat = useChatStore();
@@ -2004,6 +2008,17 @@ button.save-state.dirty:hover { color: var(--accent); }
 
 @media (max-width: 768px) {
   .editor-topbar { height: 40px; padding: 0 6px 0 10px; left: 10px; right: 10px; }
+  /*
+   * 手机顶栏空间只够三样东西：标题、宽度、保存态。面包屑的目录段（Wiki / 实体 / 项目…）
+   * 在手机上全是省略号，既读不出来又挤掉标题——只留当前标题（2026-09-29 巡检）。
+   * 「已保存」也不再允许折行（旧版被挤成「已保 / 存」两行）。
+   */
+  .crumb-root,
+  .crumb-item,
+  .crumb-sep { display: none; }
+  .crumb { flex: 1 1 auto; }
+  .crumb-current { font-size: 13px; }
+  .save-state { white-space: nowrap; flex: none; }
   /* 手机上可用区本就窄，正文列铺满（百分比在这里没有意义） */
   .editor-view { --doc-col: 100%; --doc-pad: 0px; }
   .page-head { padding: 20px 20px 0; }

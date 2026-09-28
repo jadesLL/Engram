@@ -1,20 +1,29 @@
 <template>
   <Teleport to="body">
+    <!-- 触屏：先铺一层遮罩（点它就收），菜单本体是贴底的动作面板（action sheet）——
+         手机上没有「右键」，把菜单画成贴着手指的小浮层既难点到、也挡着内容（2026-09-29 巡检） -->
+    <div
+      v-if="contextMenuState.open && touchMode"
+      class="context-menu-mask"
+      @click="closeContextMenu"
+    />
     <div
       v-if="contextMenuState.open"
       ref="menuEl"
       class="app-context-menu"
-      :class="{ ready, 'submenu-left': submenuLeft }"
-      :style="{ left: `${left}px`, top: `${top}px` }"
+      :class="{ ready, 'submenu-left': submenuLeft, sheet: touchMode }"
+      :style="touchMode ? undefined : { left: `${left}px`, top: `${top}px` }"
       role="menu"
       aria-label="Engram 操作菜单"
       @contextmenu.prevent
       @keydown="handleKeydown"
     >
+      <div v-if="touchMode" class="context-menu-grabber" aria-hidden="true" />
       <template v-for="item in contextMenuState.items" :key="item.id">
         <div v-if="item.separatorBefore" class="context-menu-separator" role="separator" />
         <div
           class="context-menu-entry"
+          :class="{ expanded: activeSubmenu === item.id }"
           @mouseenter="item.children?.length ? openSubmenu(item.id) : closeSubmenu()"
         >
           <button
@@ -71,6 +80,10 @@
           </div>
         </div>
       </template>
+      <!-- 动作面板底部留一个明确的取消键：比只用「点遮罩」更好按（手指够得到屏幕底部） -->
+      <button v-if="touchMode" class="context-menu-cancel" type="button" @click="closeContextMenu">
+        取消
+      </button>
     </div>
   </Teleport>
 </template>
@@ -82,6 +95,7 @@ import {
   contextMenuState,
   type ContextMenuItem,
 } from '../lib/contextMenu';
+import { registerBackHandler } from '../lib/androidBack';
 import Icon from './Icon.vue';
 
 const menuEl = ref<HTMLElement>();
@@ -90,6 +104,19 @@ const top = ref(0);
 const ready = ref(false);
 const activeSubmenu = ref('');
 const submenuLeft = ref(false);
+
+/**
+ * 触屏（无 hover + 粗指针）：菜单换成贴底的**动作面板**。手机上没有右键，
+ * 贴着手指弹出的小浮层既难点中、又正好挡住要看的那一行；贴底面板是移动端惯例，
+ * 条目高度也放到 48px。子菜单在面板里改成就地展开（不再是飞出到侧面的第二层）。
+ */
+const touchMode = ref(false);
+let touchQuery: MediaQueryList | null = null;
+let stopBack: (() => void) | null = null;
+
+function onTouchQueryChange(event: MediaQueryListEvent) {
+  touchMode.value = event.matches;
+}
 
 const topLevelItems = computed(() => contextMenuState.items);
 
@@ -188,6 +215,11 @@ async function positionMenu() {
   await nextTick();
   const menu = menuEl.value;
   if (!menu) return;
+  // 动作面板是贴底的整宽面板：位置交给 CSS，不再按触点定位/夹取
+  if (touchMode.value) {
+    ready.value = true;
+    return;
+  }
   const margin = 8;
   const rect = menu.getBoundingClientRect();
   left.value = Math.max(margin, Math.min(contextMenuState.x, window.innerWidth - rect.width - margin));
@@ -214,12 +246,30 @@ function closeForViewportChange() {
 
 watch(() => contextMenuState.version, positionMenu);
 
+/** 打开时接管 Android 返回键：返回先收面板，不会顺手把用户退出这一页（面板注册得最晚，所以最先被问到） */
+watch(
+  () => contextMenuState.open,
+  (open) => {
+    if (open && !stopBack) stopBack = registerBackHandler(() => {
+      closeContextMenu();
+      return true;
+    });
+    if (!open && stopBack) {
+      stopBack();
+      stopBack = null;
+    }
+  }
+);
+
 onMounted(() => {
   document.addEventListener('pointerdown', closeForPointer, true);
   window.addEventListener('contextmenu', closeForNativeMenu);
   window.addEventListener('resize', closeForViewportChange);
   window.addEventListener('blur', closeForViewportChange);
   window.addEventListener('scroll', closeForViewportChange, true);
+  touchQuery = window.matchMedia('(hover: none) and (pointer: coarse)');
+  touchMode.value = touchQuery.matches;
+  touchQuery.addEventListener('change', onTouchQueryChange);
 });
 
 onBeforeUnmount(() => {
@@ -228,6 +278,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', closeForViewportChange);
   window.removeEventListener('blur', closeForViewportChange);
   window.removeEventListener('scroll', closeForViewportChange, true);
+  touchQuery?.removeEventListener('change', onTouchQueryChange);
+  touchQuery = null;
+  stopBack?.();
+  stopBack = null;
 });
 </script>
 
@@ -341,5 +395,104 @@ onBeforeUnmount(() => {
   .context-submenu {
     width: min(210px, calc(100vw - 24px));
   }
+}
+
+/* ---------- 触屏：贴底动作面板（action sheet） ---------- */
+.context-menu-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 15, 15, 0.32);
+  z-index: calc(var(--z-menu) - 1);
+}
+
+.app-context-menu.sheet {
+  left: 8px;
+  right: 8px;
+  top: auto;
+  bottom: calc(8px + var(--safe-bottom));
+  width: auto;
+  max-width: none;
+  max-height: min(70dvh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 8px 8px;
+  border-radius: 16px;
+  box-shadow: var(--shadow-dialog);
+  animation: context-sheet-in 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-context-menu.sheet {
+    animation: none;
+  }
+}
+
+@keyframes context-sheet-in {
+  from { transform: translateY(18px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* 顶部抓手：一眼看出这是可以往下推走的面板 */
+.context-menu-grabber {
+  width: 36px;
+  height: 4px;
+  margin: 2px auto 6px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.app-context-menu.sheet .context-menu-button {
+  min-height: 48px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 0 10px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+
+/* 手机上不展示键盘快捷键（没有键盘，写了只是噪声） */
+.app-context-menu.sheet .context-menu-shortcut {
+  display: none;
+}
+
+.app-context-menu.sheet .context-menu-button:active {
+  background: var(--press-bg);
+}
+
+/* 二级菜单就地展开：不再飞出到面板侧面 */
+.app-context-menu.sheet .context-submenu {
+  position: static;
+  width: auto;
+  margin: 2px 0 4px 18px;
+  padding: 0 0 0 8px;
+  border: 0;
+  border-left: 1px solid var(--sidebar-hairline);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.app-context-menu.sheet .context-menu-entry.expanded .context-menu-chevron {
+  transform: rotate(90deg);
+}
+
+.app-context-menu.sheet .context-menu-separator {
+  margin: 6px 8px;
+}
+
+.context-menu-cancel {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.context-menu-cancel:active {
+  background: var(--press-bg);
 }
 </style>
