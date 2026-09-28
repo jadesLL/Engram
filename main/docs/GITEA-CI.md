@@ -162,6 +162,11 @@ docker compose -f docker-compose.pull.yml up -d
 | `RELEASE_TOKEN` | 创建 Release / 上传附件 | repository 写权限 token |
 | `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` | APK release 签名（见 [`ANDROID.md`](./ANDROID.md)）；未配置时 CI 回退未签名包 | 本机 keystore，不入库 |
 
+### 发版踩坑（2026-09-28 v1.3.0 实测，两条都会让「镜像已推、Release 没建」）
+
+1. **`RELEASE_TOKEN` 失效 = Release 步骤 401**：症状是 `release.yml` 走到「创建 Release」时 `ApiError: Unauthorized`（`invalid username, password or token`），而镜像**已经推成功**（推镜像用 `REGISTRY_TOKEN`，是另一把 token）——于是 registry 里 `:<版本>` 与 `:latest` 都到位、Release 却是空的、APK/exe 也没构建。修法：仓库 Settings → Actions → Secrets 重新生成 `RELEASE_TOKEN`（需 **write:repository**；`REGISTRY_TOKEN` 是 package 写权限，两把不能混用），然后 Actions → Release → Run workflow（tag=本次标签 + 勾 `binaries`）补发。
+2. **CHANGELOG 段落不能撑爆提取步骤的管道**：提取段落那步末尾曾用 `echo "$BODY" | head -5` 预览，段落超过管道缓冲（64 KiB）时 `head` 提前退出、写端收到 SIGPIPE，整个 release 任务以 **exit 141** 失败（v1.3.0 的 72 KiB 段落首次触发；此前各版本段落只有几 KiB 所以从未暴露）。已改为逐行读到第 5 行即停、全程不经管道——段落再长也不会再踩。
+
 ## Runner 环境约束（Windows 宿主机模式）
 
 act_runner 以 Windows 宿主机模式运行（label `windows`），Docker 命令经 Docker Desktop 跑 Linux 容器。由此产生的四条硬约束（都踩过，详见下文踩坑记录）：
