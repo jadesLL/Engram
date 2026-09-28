@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from '../config.js';
+import { contentTypesOf, outcomeOf, type SyncLogContent, type SyncLogOutcome } from './logClassify.js';
+
+// 分类口径与取值由 logClassify 定义，这里再导出一次：路由/前端只认 eventLog 一个入口
+export type { SyncLogContent, SyncLogOutcome };
 
 /**
  * 多端同步事件日志（跨重启留存、可按维度筛选）。
@@ -40,6 +44,13 @@ export interface SyncLogEntry extends SyncLogFields {
   ts: string;
   level: SyncLogLevel;
   event: string;
+  /**
+   * 分类结果（查询时按 event/level/data 现算，不落盘）：
+   * outcome = 有改动 / 没改动 / 失败；contents = 原始资料 / 概念 / 实体 / 内置 Agent / 其他。
+   * 老记录、磁盘上读回来的记录同样能算出来。
+   */
+  outcome?: SyncLogOutcome;
+  contents?: SyncLogContent[];
 }
 
 export interface SyncLogQuery {
@@ -54,6 +65,12 @@ export interface SyncLogQuery {
   level?: SyncLogLevel | 'all';
   scope?: SyncLogScope | 'all';
   event?: string;
+  /** 结果维度：有改动 / 没改动 / 失败（界面第一排筛选） */
+  outcome?: SyncLogOutcome | 'all';
+  /** 内容维度：原始资料 / 概念 / 实体 / 内置 Agent / 其他（界面第二排筛选） */
+  content?: SyncLogContent | 'all';
+  /** 成员名（设备名）：只看某台设备参与的事 */
+  peer?: string;
   /** 关键词：在 detail / peer / 结构化字段里模糊匹配 */
   q?: string;
 }
@@ -72,6 +89,10 @@ export interface SyncLogSummary {
   total: number;
   byLevel: Record<SyncLogLevel, number>;
   byScope: Record<SyncLogScope, number>;
+  /** 结果维度统计：筛选栏「有改动 / 没改动 / 失败」右上角的数字 */
+  byOutcome: Record<SyncLogOutcome, number>;
+  /** 内容维度统计：按文件归属，一条记录可能同时属于多类 */
+  byContent: Record<SyncLogContent, number>;
   /** 出现最多的事件类型（最多 8 个） */
   byEvent: { event: string; count: number }[];
   oldest: string | null;
@@ -112,7 +133,11 @@ const RETENTION_MS = RETENTION_DAYS * 24 * 60 * 60 * 1000;
 /** 最多比内存多攒多少条淘汰记录就整体重写压缩文件（按上限的 10%、至少 20 条） */
 const COMPACT_SLACK = Math.max(20, Math.ceil(MAX_ENTRIES / 10));
 const DETAIL_MAX = 500;
-const DATA_JSON_MAX = 4000;
+/** data 整体上限：改动正文改成「带上下文的 hunk」后单条更长了（见 opText 的预算），留够位置 */
+const DATA_JSON_MAX = 8000;
+/** 数组字段（changes / items / paths）最多保留多少项、单项多长 */
+const ARRAY_MAX = 60;
+const ARRAY_ITEM_MAX = 320;
 
 const LOG_DIR = path.join(DATA_DIR, 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'sync.jsonl');
@@ -140,7 +165,7 @@ function sanitizeData(data: Record<string, unknown> | undefined): Record<string,
     if (value === undefined || value === null) continue;
     if (typeof value === 'string') clean[key] = truncate(value, DETAIL_MAX);
     else if (typeof value === 'number' || typeof value === 'boolean') clean[key] = value;
-    else if (Array.isArray(value)) clean[key] = value.slice(0, 20).map((item) => (typeof item === 'object' ? JSON.stringify(item).slice(0, 200) : String(item).slice(0, 200)));
+    else if (Array.isArray(value)) clean[key] = value.slice(0, ARRAY_MAX).map((item) => (typeof item === 'object' ? JSON.stringify(item).slice(0, ARRAY_ITEM_MAX) : String(item).slice(0, ARRAY_ITEM_MAX)));
     else clean[key] = truncate(JSON.stringify(value), 400);
   }
   if (!Object.keys(clean).length) return undefined;
@@ -265,12 +290,21 @@ function matchFilters(item: SyncLogEntry, query: SyncLogQuery, needle: string): 
   if (query.level && query.level !== 'all' && item.level !== query.level) return false;
   if (query.scope && query.scope !== 'all' && item.scope !== query.scope) return false;
   if (query.event && item.event !== query.event) return false;
+  // 结果 / 内容两排筛选：分类现算，历史记录同样适用
+  if (query.outcome && query.outcome !== 'all' && outcomeOf(item) !== query.outcome) return false;
+  if (query.content && query.content !== 'all' && !contentTypesOf(item.event, item.data || {}).includes(query.content)) return false;
+  if (query.peer && item.peer !== query.peer) return false;
   if (query.since && Date.parse(item.ts) < query.since) return false;
   if (needle) {
     const haystack = `${item.detail || ''} ${item.peer || ''} ${item.event} ${item.data ? JSON.stringify(item.data) : ''}`.toLowerCase();
     if (!haystack.includes(needle)) return false;
   }
   return true;
+}
+
+/** 查询结果里带上分类：列表据此出「有改动 / 概念」这类标签，前端不再重复实现一套口径 */
+function classified(item: SyncLogEntry): SyncLogEntry {
+  return { ...item, outcome: outcomeOf(item), contents: contentTypesOf(item.event, item.data || {}) };
 }
 
 /** 按条件查询（新 → 旧）；before/after 与其余过滤条件是 AND 关系 */
@@ -287,7 +321,7 @@ export function querySyncLog(query: SyncLogQuery = {}): SyncLogQueryResult {
     matched.push(item);
   }
   return {
-    entries: matched.slice(0, limit),
+    entries: matched.slice(0, limit).map(classified),
     total: matched.length,
     hasMore: matched.length > limit,
     newestId: entries.length ? entries[entries.length - 1].id : 0,
@@ -305,10 +339,14 @@ export function syncLogSummary(): SyncLogSummary {
   ensureLoaded();
   const byLevel: Record<SyncLogLevel, number> = { info: 0, warn: 0, error: 0 };
   const byScope: Record<SyncLogScope, number> = { hub: 0, member: 0, app: 0 };
+  const byOutcome: Record<SyncLogOutcome, number> = { changed: 0, none: 0, failed: 0 };
+  const byContent: Record<SyncLogContent, number> = { 原始资料: 0, 概念: 0, 实体: 0, '内置 Agent': 0, 其他: 0 };
   const eventCounts = new Map<string, number>();
   for (const item of entries) {
     byLevel[item.level] += 1;
     if (item.scope) byScope[item.scope] += 1;
+    byOutcome[outcomeOf(item)] += 1;
+    for (const type of contentTypesOf(item.event, item.data || {})) byContent[type] += 1;
     eventCounts.set(item.event, (eventCounts.get(item.event) || 0) + 1);
   }
   const byEvent = [...eventCounts.entries()]
@@ -325,6 +363,8 @@ export function syncLogSummary(): SyncLogSummary {
     total: entries.length,
     byLevel,
     byScope,
+    byOutcome,
+    byContent,
     byEvent,
     oldest: entries.length ? entries[0].ts : null,
     newest: entries.length ? entries[entries.length - 1].ts : null,

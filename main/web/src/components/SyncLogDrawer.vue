@@ -37,11 +37,11 @@
             </button>
           </div>
 
-          <!-- 概览：一眼看出「连没连上、还差多少、最近一次是什么时候」 -->
+          <!-- 概览：一眼看出「改了多少、对账多少次、有没有要处理的」 -->
           <div class="log-stats">
             <div v-for="card in statCards" :key="card.label" class="stat" :class="card.tone">
               <span>{{ card.label }}</span>
-              <strong :title="card.hint || ''">{{ card.value }}</strong>
+              <strong :title="card.value">{{ card.value }}</strong>
               <em v-if="card.hint">{{ card.hint }}</em>
             </div>
           </div>
@@ -52,51 +52,53 @@
           </p>
 
           <div class="log-filters">
-            <div class="chip-row" role="group" aria-label="按级别筛选">
+            <!-- 第一排：这条记录到底干了什么（用户唯一必须先看懂的一层） -->
+            <div class="chip-row" role="group" aria-label="按结果筛选">
+              <span class="chip-label">结果</span>
               <button
-                v-for="chip in levelChips"
+                v-for="chip in outcomeChips"
                 :key="chip.key"
                 class="chip"
-                :class="{ on: state.level === chip.key, warn: chip.key === 'warn', error: chip.key === 'error' }"
+                :class="[{ on: state.outcome === chip.key }, `out-${chip.key}`]"
                 type="button"
-                @click="setLevel(chip.key)"
+                :title="chip.hint"
+                @click="setOutcome(chip.key)"
               >
                 {{ chip.label }}<span v-if="chip.count !== null" class="cnt">{{ chip.count }}</span>
               </button>
             </div>
-            <div class="chip-row" role="group" aria-label="按视角筛选">
+            <!-- 第二排：有改动的那几条，动的是哪类内容（没改动/失败没有内容可筛，置灰） -->
+            <div class="chip-row" role="group" aria-label="按内容类型筛选">
+              <span class="chip-label">改了哪类</span>
               <button
-                v-for="chip in scopeChips"
+                v-for="chip in contentChips"
                 :key="chip.key"
                 class="chip"
-                :class="{ on: state.scope === chip.key }"
+                :class="[{ on: state.content === chip.key, dim: contentDisabled }, `type-${chip.tone}`]"
                 type="button"
-                @click="setScope(chip.key)"
+                :disabled="contentDisabled"
+                @click="setContent(chip.key)"
               >
-                {{ chip.label }}
+                {{ chip.label }}<span v-if="chip.count !== null" class="cnt">{{ chip.count }}</span>
               </button>
             </div>
             <div class="filter-row">
-              <label class="select-host">
-                <Icon name="activity" :size="13" />
-                <select v-model="state.event" aria-label="按事件筛选" @change="reload">
-                  <option value="">全部事件</option>
-                  <optgroup v-for="group in eventGroups" :key="group.category" :label="group.category">
-                    <option v-for="item in group.items" :key="item.event" :value="item.event">
-                      {{ item.label }}<template v-if="item.count">（{{ item.count }}）</template>
-                    </option>
-                  </optgroup>
-                </select>
-              </label>
               <label class="search-host">
                 <Icon name="search" :size="13" />
                 <input
                   v-model="state.query"
                   type="search"
-                  placeholder="搜索说明 / 路径 / 成员"
+                  placeholder="搜索标题 / 路径 / 成员 / 摘要"
                   spellcheck="false"
                   @input="scheduleSyncLogReload()"
                 />
+              </label>
+              <label class="select-host">
+                <Icon name="activity" :size="13" />
+                <select v-model="state.peer" aria-label="按成员筛选" @change="reload">
+                  <option value="">成员：全部</option>
+                  <option v-for="name in peerOptions" :key="name" :value="name">{{ name }}</option>
+                </select>
               </label>
               <button class="chip action" type="button" :class="{ on: !state.autoRefresh }" @click="toggleSyncLogAutoRefresh">
                 {{ state.autoRefresh ? '自动刷新：开' : '自动刷新：暂停' }}
@@ -110,7 +112,7 @@
                 </button>
                 <div class="menu">
                   <button type="button" @click="exportSyncLog('json')">导出 JSON（含结构化字段）</button>
-                  <button type="button" @click="exportSyncLog('md')">导出 Markdown（表格 + 字段）</button>
+                  <button type="button" @click="exportSyncLog('md')">导出 Markdown（表格 + 改动）</button>
                 </div>
               </div>
               <button class="chip action danger" type="button" @click="askClear">清空日志</button>
@@ -135,38 +137,60 @@
             :hint="emptyHint"
           />
           <ul v-else class="log-list">
-            <li v-for="entry in state.entries" :key="entry.id" class="log-item" :class="entry.level">
+            <!-- 一条记录一行：时间 · 结果 · 事件 · 成员 · 一句话摘要 …… 内容类型 · N 处改动。
+                 改动的正文一律收起来，点开这一行才铺开（带上下文的行级 diff + 全部字段）。 -->
+            <li v-for="entry in state.entries" :key="entry.id" class="log-item" :class="entryOutcome(entry)">
               <button class="log-row" type="button" :aria-expanded="isSyncLogExpanded(entry.id)" @click="toggleSyncLogEntry(entry.id)">
                 <span class="ts" :title="formatLogTime(entry.ts)">{{ formatLogClock(entry.ts) }}</span>
-                <span class="lvl">{{ levelText(entry.level) }}</span>
-                <span v-if="entry.scope" class="scope" :class="entry.scope">{{ SCOPE_LABELS[entry.scope] }}</span>
-                <span class="ev">{{ eventLabel(entry.event) }}</span>
-                <span v-if="entry.peer" class="peer">{{ entry.peer }}</span>
-                <span class="detail">{{ entry.detail || '—' }}</span>
+                <span class="badge" :class="entryOutcome(entry)">{{ entryOutcomeLabel(entry) }}</span>
+                <span class="sum">
+                  <span class="ev">{{ eventLabel(entry.event) }}</span>
+                  <span v-if="entry.peer" class="peer">{{ entry.peer }}</span>
+                  <span class="detail">{{ entry.detail || '—' }}</span>
+                </span>
+                <span v-if="entryContents(entry).length" class="tags">
+                  <span v-for="type in entryContents(entry)" :key="type" class="tag" :data-type="type">
+                    <i class="dot" />{{ type }}
+                  </span>
+                </span>
+                <span v-if="changeCount(entry)" class="count">{{ changeCount(entry) }} 处改动</span>
                 <Icon class="caret" :class="{ open: isSyncLogExpanded(entry.id) }" name="chevron-down" :size="13" />
               </button>
-              <!-- 「这个文件改了什么」：条目下方直接列出改动正文（+ 新增 / − 删除），
-                   折叠时只看前几行，点开条目看全部；没有改动正文的记录不占地方 -->
-              <div v-if="entryChangeLines(entry).length" class="log-diff" :class="{ 'is-open': isSyncLogExpanded(entry.id) }">
-                <div
-                  v-for="(line, index) in visibleChangeLines(entry)"
-                  :key="index"
-                  class="diff-line"
-                  :class="line.kind"
-                >
-                  <span class="sign">{{ line.sign }}</span>
-                  <span class="text">{{ line.text }}</span>
-                </div>
-                <button
-                  v-if="hiddenChangeCount(entry)"
-                  class="diff-more"
-                  type="button"
-                  @click="toggleSyncLogEntry(entry.id)"
-                >
-                  还有 {{ hiddenChangeCount(entry) }} 行改动，点开看全部
-                </button>
-              </div>
+
               <div v-if="isSyncLogExpanded(entry.id)" class="log-data">
+                <template v-if="changeFiles(entry).length">
+                  <div class="sec-title">
+                    <span>这次改了什么（{{ changeFiles(entry).length }} 个文件{{ changeTypeSummary(entry) ? `：${changeTypeSummary(entry)}` : '' }}）</span>
+                    <span class="rule" />
+                  </div>
+                  <div v-for="group in changeGroups(entry)" :key="group.type" class="group">
+                    <div class="group-head">
+                      <i class="dot" :data-type="group.type" />{{ group.type }}
+                      <span class="n">{{ group.files.length }} 个文件</span>
+                    </div>
+                    <div v-for="(file, index) in group.files" :key="`${group.type}-${index}`" class="file">
+                      <div class="file-path">{{ file.path || entry.detail || '（未标注文件）' }}</div>
+                      <div class="diff">
+                        <template v-for="(line, lineIndex) in file.lines" :key="lineIndex">
+                          <div v-if="line.kind === 'hunk'" class="hunk-head">
+                            <span class="hh">{{ hunkTitle(line) }}</span>
+                            <span class="raw-head">{{ line.text }}</span>
+                          </div>
+                          <div v-else-if="line.kind === 'note'" class="dl note">
+                            <span class="ln" /><span class="sign" /><span class="text">{{ line.text }}</span>
+                          </div>
+                          <div v-else class="dl" :class="line.kind">
+                            <span class="ln">{{ line.lineNo ?? '' }}</span>
+                            <span class="sign">{{ line.sign }}</span>
+                            <span class="text">{{ line.text }}</span>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <div class="sec-title"><span>全部同步信息</span><span class="rule" /></div>
                 <div class="data-grid">
                   <template v-for="item in dataEntries(entry)" :key="item.key">
                     <span class="dk">{{ item.label }}</span>
@@ -177,9 +201,15 @@
                   <span class="dk">事件 ID</span>
                   <span class="dv">{{ entry.event }}（#{{ entry.id }}）</span>
                 </div>
-                <button class="chip action" type="button" @click="copyEntry(entry)">
-                  <Icon name="copy" :size="12" />复制这条记录
-                </button>
+                <div class="expand-actions">
+                  <button class="chip action" type="button" @click="copyEntry(entry)">
+                    <Icon name="copy" :size="12" />复制这条记录
+                  </button>
+                  <button class="chip action" type="button" @click="toggleRaw(entry.id)">
+                    {{ rawOpen(entry.id) ? '收起原始记录' : '查看原始记录（JSON）' }}
+                  </button>
+                </div>
+                <pre v-if="rawOpen(entry.id)" class="raw">{{ rawJson(entry) }}</pre>
               </div>
             </li>
           </ul>
@@ -210,18 +240,25 @@ import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { useAppStore } from '../stores/app';
 import {
-  SCOPE_LABELS,
-  SYNC_EVENT_META,
+  OUTCOME_HINTS,
+  OUTCOME_LABELS,
+  SYNC_LOG_CONTENTS,
   clearSyncLog,
   closeSyncLogDrawer,
+  contentTypeOfPath,
   dataLabel,
   entryChangeLines,
+  entryContents,
+  entryOutcome,
+  entryOutcomeLabel,
   eventLabel,
   exportSyncLog,
   formatDataValue,
   formatLogClock,
   formatLogTime,
   formatRelative,
+  groupChangeFiles,
+  hunkTitle,
   isSyncLogExpanded,
   loadOlderSyncLog,
   refreshSyncLog,
@@ -230,19 +267,20 @@ import {
   toggleSyncLogAutoRefresh,
   toggleSyncLogEntry,
   toggleSyncLogMode,
-  type SyncChangeLine,
-  type SyncEventCategory,
+  type SyncChangeFile,
+  type SyncLogContent,
   type SyncLogEntry,
-  type SyncLogLevel,
-  type SyncLogScope,
+  type SyncLogOutcome,
 } from '../lib/syncLog';
 
 /**
  * 同步详情抽屉（独立窗口）：设置页的「查看同步详情」打开它。
  *
- * 旧版把运行状态网格 + 一个 260px 高的可展开日志塞在设置卡片里：
- * 日志只有最近 30 条、没有级别/成员/时间信息，设置页还被撑得很长。
- * 现在详情独立成一张卡片（可选满窗），支持按级别/视角/事件/关键词筛选、翻页、导出、清空。
+ * UI 2.0 的两层分类（用户反馈旧版「信息 / 警告 / 错误 + 全部视角 + 事件下拉」看不懂）：
+ *  - 结果：有改动（同步成功且内容真的变了）/ 没改动（对账、检查、连接，跑完两边一致）/ 失败（警告 + 错误）；
+ *  - 内容：有改动的那几条动的是哪类内容——原始资料 / 概念 / 实体 / 内置 Agent / 其他。
+ * 列表一条记录一行，改动正文默认收起，点开才铺开「带上下各 5 行上下文的行级 diff」与全部结构化字段。
+ * 筛选与分页都在服务端（分类由 server/sync/logClassify.ts 现算），前端只维护条件与已加载页。
  */
 
 const app = useAppStore();
@@ -333,13 +371,16 @@ function reload(): void {
   void refreshSyncLog();
 }
 
-function setLevel(level: SyncLogLevel | 'all'): void {
-  state.level = level;
+function setOutcome(outcome: SyncLogOutcome | 'all'): void {
+  state.outcome = outcome;
+  // 没改动 / 失败这一类本来就没有内容类型，切过去时把内容筛选一起清掉，免得出现「筛了却一条都没有」
+  if (outcome !== 'all' && outcome !== 'changed' && state.content !== 'all') state.content = 'all';
   reload();
 }
 
-function setScope(scope: SyncLogScope | 'all'): void {
-  state.scope = scope;
+function setContent(content: SyncLogContent | 'all'): void {
+  if (contentDisabled.value) return;
+  state.content = content;
   reload();
 }
 
@@ -375,103 +416,94 @@ interface StatCard {
   tone?: string;
 }
 
+/** 概览卡片：按新口径给数，不再摆「信息 / 警告 / 错误」 */
 const statCards = computed<StatCard[]>(() => {
   const status = state.status;
   const summary = state.summary;
   if (!status) return [];
-  const cards: StatCard[] = [];
+  const byOutcome = summary?.byOutcome;
+  const byContent = summary?.byContent || {};
+  const contentLine = SYNC_LOG_CONTENTS
+    .map((type) => [type, Number(byContent[type] || 0)] as const)
+    .filter(([, count]) => count > 0)
+    .map(([type, count]) => `${type} ${count}`)
+    .join(' · ');
+  const cards: StatCard[] = [
+    { label: '有改动', value: `${byOutcome?.changed ?? 0} 条`, hint: OUTCOME_HINTS.changed, tone: 'ok' },
+    { label: '没改动（对账 / 检查）', value: `${byOutcome?.none ?? 0} 条`, hint: OUTCOME_HINTS.none },
+    {
+      label: '失败',
+      value: `${byOutcome?.failed ?? 0} 条`,
+      hint: OUTCOME_HINTS.failed,
+      tone: (byOutcome?.failed ?? 0) > 0 ? 'bad' : '',
+    },
+    { label: '改了哪类内容', value: contentLine || '—', hint: '按文件归类，一条记录可能算多类' },
+  ];
   if (status.role === 'member') {
     cards.push({ label: '待推送', value: String(status.pending), hint: status.pending ? '本地改动排队中' : '已全部推送' });
     cards.push({ label: '待补拉文件', value: String(status.pendingPulls), hint: status.pendingPulls ? '每分钟自动重试' : '无' });
-    cards.push({ label: '同步水位', value: String(status.cursor) });
-    cards.push({ label: '中枢', value: status.hubUrl || '—' });
   } else if (status.role === 'hub') {
     const peers = status.peers || [];
     const online = peers.filter((peer) => peer.online).length;
     cards.push({ label: '成员', value: `${online} / ${peers.length}`, hint: '在线 / 总数' });
-    // 中枢端 cursor 恒为 0（那是成员端的水位），权威发号看 revision
-    cards.push({ label: '权威水位', value: String(status.revision ?? status.cursor), hint: '本机 revision 序号' });
-    cards.push({ label: '成员绑定地址', value: status.hubUrl || window.location.origin });
   }
-  cards.push(
-    status.role === 'hub'
-      // 中枢不主动连别人（成员连它），没有「最近同步」这种客户端概念：用最近一条记录的
-      // 时间当「最近活动」，否则中枢上永远挂着一行「还没有成功同步过」，与在线成员矛盾
-      ? {
-        label: '最近活动',
-        value: summary?.newest ? formatRelative(summary.newest) : '—',
-        hint: summary?.newest ? formatLogTime(summary.newest) : '暂无同步记录',
-      }
-      : {
-        label: '最近同步',
-        value: status.lastSyncAt ? formatRelative(status.lastSyncAt) : '—',
-        hint: status.lastSyncAt ? formatLogTime(status.lastSyncAt) : '还没有成功同步过',
-        tone: status.lastSyncAt ? '' : 'warn',
-      },
-  );
   cards.push({
-    label: '保留记录',
-    value: `${summary?.total ?? 0} 条`,
-    hint: summary?.oldest ? `最早 ${formatRelative(summary.oldest)}` : '暂无记录',
+    label: '最近活动',
+    value: summary?.newest ? formatRelative(summary.newest) : '—',
+    hint: summary?.newest ? formatLogTime(summary.newest) : '暂无同步记录',
   });
-  if (summary && (summary.byLevel.warn || summary.byLevel.error)) {
-    cards.push({
-      label: '待处理',
-      value: `${summary.byLevel.warn} 警告 / ${summary.byLevel.error} 错误`,
-      tone: summary.byLevel.error ? 'bad' : 'warn',
-      hint: '点上方「警告 / 错误」筛选查看',
-    });
-  }
   return cards;
 });
 
-const levelChips = computed(() => {
-  const byLevel = state.summary?.byLevel;
+const outcomeChips = computed(() => {
+  const byOutcome = state.summary?.byOutcome;
+  return ([
+    { key: 'all' as const, label: '全部', count: state.summary ? state.summary.total : null, hint: '所有记录' },
+    { key: 'changed' as const, label: OUTCOME_LABELS.changed, count: byOutcome ? byOutcome.changed : null, hint: OUTCOME_HINTS.changed },
+    { key: 'none' as const, label: OUTCOME_LABELS.none, count: byOutcome ? byOutcome.none : null, hint: OUTCOME_HINTS.none },
+    { key: 'failed' as const, label: OUTCOME_LABELS.failed, count: byOutcome ? byOutcome.failed : null, hint: OUTCOME_HINTS.failed },
+  ]);
+});
+
+const contentChips = computed(() => {
+  const byContent = state.summary?.byContent || {};
+  const total = SYNC_LOG_CONTENTS.reduce((sum, type) => sum + Number(byContent[type] || 0), 0);
   return [
-    { key: 'all' as const, label: '全部', count: state.summary ? state.summary.total : null },
-    { key: 'info' as const, label: '信息', count: byLevel ? byLevel.info : null },
-    { key: 'warn' as const, label: '警告', count: byLevel ? byLevel.warn : null },
-    { key: 'error' as const, label: '错误', count: byLevel ? byLevel.error : null },
+    { key: 'all' as const, label: '全部内容', count: state.summary ? total : null, tone: 'all' },
+    ...SYNC_LOG_CONTENTS.map((type) => ({ key: type, label: type, count: state.summary ? Number(byContent[type] || 0) : null, tone: contentTone(type) })),
   ];
 });
 
-const scopeChips = computed(() => {
-  const byScope = state.summary?.byScope;
-  return [
-    { key: 'all' as const, label: '全部视角' },
-    { key: 'hub' as const, label: `中枢${byScope ? ` ${byScope.hub}` : ''}` },
-    { key: 'member' as const, label: `成员${byScope ? ` ${byScope.member}` : ''}` },
-    { key: 'app' as const, label: `配置${byScope ? ` ${byScope.app}` : ''}` },
-  ];
-});
+/** 没改动 / 失败这两类记录不含内容改动，内容筛选对它们没意义 */
+const contentDisabled = computed(() => state.outcome === 'none' || state.outcome === 'failed');
 
-/** 事件下拉按分类分组：先按「我想看哪类事」缩小范围，再挑具体事件 */
-const eventGroups = computed(() => {
-  const counts = new Map((state.summary?.byEvent || []).map((item) => [item.event, item.count]));
-  const groups = new Map<SyncEventCategory, { event: string; label: string; count: number }[]>();
-  for (const [event, meta] of Object.entries(SYNC_EVENT_META)) {
-    const list = groups.get(meta.category) || [];
-    list.push({ event, label: meta.label, count: counts.get(event) || 0 });
-    groups.set(meta.category, list);
-  }
-  return [...groups.entries()].map(([category, items]) => ({
-    category,
-    items: items.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'zh-Hans-CN')),
-  }));
+function contentTone(type: SyncLogContent): string {
+  return ({ '原始资料': 'raw', '概念': 'concept', '实体': 'entity', '内置 Agent': 'agent', '其他': 'other' })[type] || 'other';
+}
+
+/** 成员下拉：中枢配置里的成员 + 已加载记录里出现过的名字（改过名/已移除的成员也要能筛） */
+const peerOptions = computed(() => {
+  const names = new Set<string>();
+  for (const peer of state.status?.peers || []) if (peer.name) names.add(peer.name);
+  for (const entry of state.entries) if (entry.peer) names.add(entry.peer);
+  return [...names].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
 });
 
 const filterSummary = computed(() => {
   const parts: string[] = [];
-  if (state.level !== 'all') parts.push(`级别=${levelText(state.level)}`);
-  if (state.scope !== 'all') parts.push(`视角=${SCOPE_LABELS[state.scope]}`);
-  if (state.event) parts.push(`事件=${eventLabel(state.event)}`);
+  if (state.outcome !== 'all') parts.push(`结果=${OUTCOME_LABELS[state.outcome]}`);
+  if (state.content !== 'all') parts.push(`内容=${state.content}`);
+  if (state.peer) parts.push(`成员=${state.peer}`);
   if (state.query.trim()) parts.push(`关键词=“${state.query.trim()}”`);
-  if (!parts.length) return '';
-  return `当前筛选：${parts.join(' · ')}，命中 ${state.total} 条${state.hasMore ? '（可继续加载更早的记录）' : ''}`;
+  if (!parts.length) {
+    return `共 ${state.total} 条记录；默认一条一行，点开才铺开改动正文（带上下文）与全部字段。`;
+  }
+  const suffix = contentDisabled.value ? '；这一类没有内容改动，内容分类不参与筛选' : '';
+  return `当前筛选：${parts.join(' · ')}，命中 ${state.total} 条${state.hasMore ? '（可继续加载更早的记录）' : ''}${suffix}`;
 });
 
 const emptyHint = computed(() => {
-  if (state.summary && state.summary.total > 0) return '换个筛选条件或清空关键词再看看。';
+  if (state.summary && state.summary.total > 0) return '换个结果 / 内容分类或清空关键词再看看。';
   return '同步有动作时（推送、拉取、对账、成员上下线）这里会逐条记下来。';
 });
 
@@ -483,35 +515,79 @@ const refreshHint = computed(() => {
   return [base, mode].filter(Boolean).join(' · ');
 });
 
-function levelText(level: SyncLogLevel): string {
-  return level === 'error' ? '错误' : level === 'warn' ? '警告' : '信息';
-}
-
 function dataEntries(entry: SyncLogEntry): { key: string; label: string; value: string }[] {
   if (!entry.data) return [];
-  return Object.entries(entry.data)
-    // 改动正文由条目下方的差异块单独渲染（带 + / − 配色），不再在字段表里重复一遍
-    .filter(([key, value]) => key !== 'changes' && value !== null && value !== undefined && value !== '')
-    .map(([key, value]) => ({ key, label: dataLabel(key), value: formatDataValue(key, value) }));
+  const rows: { key: string; label: string; value: string }[] = [
+    // 结果 / 内容分类写在最前面：用户展开时先看到「这是什么、动了哪类东西」
+    { key: 'outcome', label: '结果', value: `${entryOutcomeLabel(entry)}（${OUTCOME_HINTS[entryOutcome(entry)]}）` },
+    { key: 'contents', label: '内容类型', value: entryContents(entry).join(' · ') || '—' },
+  ];
+  for (const [key, value] of Object.entries(entry.data)) {
+    // 改动正文由上方按文件 + 改动块渲染（带 + / − 配色与上下文），不再在字段表里重复一遍
+    if (key === 'changes') continue;
+    if (value === null || value === undefined || value === '') continue;
+    rows.push({ key, label: dataLabel(key), value: formatDataValue(key, value) });
+  }
+  return rows;
 }
 
-/** 折叠时先看几行改动：够判断「这次动的是不是我想的那处」，看全部点开条目 */
-const CHANGE_PREVIEW_LINES = 3;
-
-function visibleChangeLines(entry: SyncLogEntry): SyncChangeLine[] {
-  const lines = entryChangeLines(entry);
-  return isSyncLogExpanded(entry.id) ? lines : lines.slice(0, CHANGE_PREVIEW_LINES);
+/** 这条记录改了哪些文件（从改动正文里按文件路径行切开） */
+function changeFiles(entry: SyncLogEntry): SyncChangeFile[] {
+  return groupChangeFiles(entryChangeLines(entry)).filter((file) => file.lines.length > 0);
 }
 
-function hiddenChangeCount(entry: SyncLogEntry): number {
-  if (isSyncLogExpanded(entry.id)) return 0;
-  return Math.max(0, entryChangeLines(entry).length - CHANGE_PREVIEW_LINES);
+/** 改了哪些文件 → 按内容类型分组（原始资料 / 概念 / 实体 / 内置 Agent / 其他） */
+function changeGroups(entry: SyncLogEntry): { type: SyncLogContent; files: SyncChangeFile[] }[] {
+  const groups = new Map<SyncLogContent, SyncChangeFile[]>();
+  for (const file of changeFiles(entry)) {
+    const type = contentTypeOfPath(file.path);
+    const list = groups.get(type) || [];
+    list.push(file);
+    groups.set(type, list);
+  }
+  return SYNC_LOG_CONTENTS
+    .filter((type) => groups.has(type))
+    .map((type) => ({ type, files: groups.get(type) as SyncChangeFile[] }));
+}
+
+/** 「概念 1 · 实体 1」：展开标题里说明这条记录的改动分布（用条目自带的内容类型，最准） */
+function changeTypeSummary(entry: SyncLogEntry): string {
+  const types = entryContents(entry);
+  if (types.length <= 1) return '';
+  return types.map((type) => `${type}`).join(' · ');
+}
+
+/** 折叠态右侧的「N 处改动」：按文件数算，没有路径信息时退回 paths 数组长度 */
+function changeCount(entry: SyncLogEntry): number {
+  if (entryOutcome(entry) !== 'changed') return 0;
+  const files = changeFiles(entry);
+  if (files.length) return files.length;
+  const paths = entry.data?.paths;
+  return Array.isArray(paths) ? paths.length : 0;
+}
+
+const rawOpenIds = ref<number[]>([]);
+function toggleRaw(id: number): void {
+  const index = rawOpenIds.value.indexOf(id);
+  if (index >= 0) rawOpenIds.value.splice(index, 1);
+  else rawOpenIds.value.push(id);
+}
+function rawOpen(id: number): boolean {
+  return rawOpenIds.value.includes(id);
+}
+function rawJson(entry: SyncLogEntry): string {
+  return JSON.stringify(entry, null, 2);
 }
 
 async function copyEntry(entry: SyncLogEntry): Promise<void> {
-  const changeLines = entryChangeLines(entry).map((line) => (line.sign ? `${line.sign} ${line.text}` : line.text));
+  const changeLines = entryChangeLines(entry).map((line) => {
+    if (line.kind === 'add' || line.kind === 'del') return `${line.sign}${line.lineNo ?? ''} ${line.text}`;
+    if (line.kind === 'ctx') return ` ${line.lineNo ?? ''} ${line.text}`;
+    return line.text;
+  });
   const lines = [
-    `[${formatLogTime(entry.ts)}] ${entry.level.toUpperCase()} ${entry.event}${entry.scope ? ` (${entry.scope})` : ''}${entry.peer ? ` @${entry.peer}` : ''}`,
+    `[${formatLogTime(entry.ts)}] ${entryOutcomeLabel(entry)} ${entry.event}${entry.scope ? ` (${entry.scope})` : ''}${entry.peer ? ` @${entry.peer}` : ''}`,
+    entryContents(entry).length ? `涉及内容：${entryContents(entry).join(' · ')}` : '',
     entry.detail || '',
     changeLines.length ? `改动内容：\n${changeLines.join('\n')}` : '',
     entry.data ? JSON.stringify(entry.data, null, 2) : '',
@@ -547,7 +623,7 @@ async function askClear(): Promise<void> {
   bottom: 8px;
   right: 8px;
   z-index: var(--z-chrome);
-  width: min(760px, calc(100vw - 16px));
+  width: min(880px, calc(100vw - 16px));
   display: flex;
   flex-direction: column;
   border: 1px solid var(--sidebar-glass-border);
@@ -667,7 +743,7 @@ async function askClear(): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.stat.warn strong { color: var(--warn, #b8860b); }
+.stat.ok strong { color: var(--success, #2e9e5b); }
 .stat.bad strong { color: var(--danger, #d64545); }
 
 .log-error {
@@ -696,6 +772,13 @@ async function askClear(): Promise<void> {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
+}
+.chip-label {
+  flex-shrink: 0;
+  min-width: 52px;
+  color: var(--text-faint);
+  font-size: 10.5px;
 }
 .chip {
   height: 25px;
@@ -717,7 +800,18 @@ async function askClear(): Promise<void> {
   color: var(--accent);
   font-weight: 600;
 }
+/* 结果三档各自上色：有改动=强调色、没改动=中性、失败=危险色（颜色永远配文字） */
+.chip.on.out-changed { color: var(--accent); background: var(--accent-soft); }
+.chip.on.out-none { color: var(--text-secondary); background: var(--bg-tertiary); }
+.chip.on.out-failed { color: var(--danger, #d64545); background: var(--danger-soft, rgba(214, 69, 69, 0.12)); }
+/* 内容类型：与列表里的标签同一套色，点到哪一类一眼看得出来 */
+.chip.on.type-raw { color: var(--t-raw, #a86800); background: var(--t-raw-soft, rgba(168, 104, 0, 0.12)); }
+.chip.on.type-concept { color: var(--t-concept, #6b4fa8); background: var(--t-concept-soft, rgba(107, 79, 168, 0.12)); }
+.chip.on.type-entity { color: var(--t-entity, #0f6cbd); background: var(--t-entity-soft, rgba(15, 108, 189, 0.12)); }
+.chip.on.type-agent { color: var(--t-agent, #0f7b0f); background: var(--t-agent-soft, rgba(15, 123, 15, 0.12)); }
+.chip.on.type-other { color: var(--text-secondary); background: var(--bg-tertiary); }
 .chip .cnt { opacity: 0.75; font-size: 10.5px; }
+.chip.dim { opacity: 0.45; cursor: not-allowed; }
 .chip.action { height: 26px; }
 .chip.action:disabled { opacity: 0.6; cursor: default; }
 .chip.danger:hover { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
@@ -751,6 +845,7 @@ async function askClear(): Promise<void> {
 }
 .search-host { flex: 1; min-width: 150px; }
 .search-host input { width: 100%; }
+.select-host select { max-width: 200px; }
 
 /* 导出菜单：默认收起，hover / 聚焦时展开（不引入额外的浮层组件） */
 .menu-host { position: relative; }
@@ -803,7 +898,7 @@ async function askClear(): Promise<void> {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .log-item {
@@ -811,46 +906,67 @@ async function askClear(): Promise<void> {
   border-radius: 6px;
   background: var(--bg-secondary);
 }
-.log-item.warn { border-color: rgba(216, 160, 18, 0.35); }
-.log-item.error { border-color: rgba(214, 69, 69, 0.35); }
+/* 失败那一档整行带一条红底渐晕：扫一眼列表就知道哪几条要处理 */
+.log-item.failed {
+  border-color: rgba(214, 69, 69, 0.28);
+  background: linear-gradient(90deg, var(--danger-soft, rgba(214, 69, 69, 0.1)), var(--bg-secondary) 60%);
+}
 
+/*
+ * 一条记录一行：时间 · 结果 · 事件+成员+摘要 …… 内容类型 · N 处改动 · 展开箭头。
+ * 全部格子垂直居中放在同一 grid 行里——用 baseline 会把摘要推到下一行（行高翻倍）。
+ * 老内核不支持 grid 时退回单行 flex，也不会散成几行。
+ */
 .log-row {
   width: 100%;
   display: flex;
-  align-items: baseline;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 8px;
   padding: 6px 9px;
   text-align: left;
   font-size: 11.5px;
   color: var(--text-secondary);
   border-radius: 6px;
-  flex-wrap: wrap;
 }
+.log-row { display: grid; grid-template-columns: 96px auto minmax(0, 1fr) auto auto auto; }
+.log-row > * { grid-row: 1; }
+/* 每格显式定位：没有内容类型标签 / 没有「N 处改动」时，箭头仍要留在最右边 */
+.log-row .ts { grid-column: 1; }
+.log-row .badge { grid-column: 2; }
+.log-row .sum { grid-column: 3; }
+.log-row .tags { grid-column: 4; }
+.log-row .count { grid-column: 5; }
+.log-row .caret { grid-column: 6; }
 .log-row:hover { background: var(--bg-hover); }
 .log-row .ts {
   font-family: var(--font-mono, Consolas, monospace);
   color: var(--text-faint);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
-.log-row .lvl {
+.log-row .badge {
   flex-shrink: 0;
-  padding: 0 6px;
-  border-radius: 9px;
+  padding: 0 7px;
+  border-radius: 5px;
   font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
-.log-item.warn .lvl { background: rgba(216, 160, 18, 0.16); color: var(--warn, #b8860b); }
-.log-item.error .lvl { background: rgba(214, 69, 69, 0.14); color: var(--danger, #d64545); }
-.log-row .scope {
-  flex-shrink: 0;
-  padding: 0 6px;
-  border-radius: 9px;
-  font-size: 10.5px;
-  border: 1px solid var(--border-strong);
-  color: var(--text-faint);
+.log-row .badge.changed { background: var(--accent-soft); color: var(--accent); }
+.log-row .badge.none { background: var(--bg-tertiary); color: var(--text-faint); }
+.log-row .badge.failed { background: var(--danger-soft, rgba(214, 69, 69, 0.12)); color: var(--danger, #d64545); }
+
+.log-row .sum {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 7px;
 }
-.log-row .scope.hub { color: var(--accent); border-color: var(--accent-soft); }
 .log-row .ev {
   flex-shrink: 0;
   font-weight: 600;
@@ -866,10 +982,51 @@ async function askClear(): Promise<void> {
   color: var(--accent);
 }
 .log-row .detail {
-  flex: 1;
-  min-width: 160px;
-  word-break: break-word;
-  line-height: 1.6;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-row .tags {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.log-row .tag {
+  min-width: 52px;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.log-row .tag .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.log-row .tag[data-type="原始资料"] { color: var(--t-raw, #a86800); background: var(--t-raw-soft, rgba(168, 104, 0, 0.12)); }
+.log-row .tag[data-type="原始资料"] .dot { background: var(--t-raw, #a86800); }
+.log-row .tag[data-type="概念"] { color: var(--t-concept, #6b4fa8); background: var(--t-concept-soft, rgba(107, 79, 168, 0.12)); }
+.log-row .tag[data-type="概念"] .dot { background: var(--t-concept, #6b4fa8); }
+.log-row .tag[data-type="实体"] { color: var(--t-entity, #0f6cbd); background: var(--t-entity-soft, rgba(15, 108, 189, 0.12)); }
+.log-row .tag[data-type="实体"] .dot { background: var(--t-entity, #0f6cbd); }
+.log-row .tag[data-type="内置 Agent"] { color: var(--t-agent, #0f7b0f); background: var(--t-agent-soft, rgba(15, 123, 15, 0.12)); }
+.log-row .tag[data-type="内置 Agent"] .dot { background: var(--t-agent, #0f7b0f); }
+.log-row .tag[data-type="其他"] { color: var(--text-secondary); background: var(--bg-tertiary); }
+.log-row .tag[data-type="其他"] .dot { background: var(--text-faint); }
+
+.log-row .count {
+  flex-shrink: 0;
+  padding: 0 8px;
+  border-radius: 20px;
+  font-size: 10.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  white-space: nowrap;
 }
 .log-row .caret {
   flex-shrink: 0;
@@ -880,66 +1037,96 @@ async function askClear(): Promise<void> {
 .log-row .caret.open { transform: rotate(180deg); }
 
 .log-data {
-  padding: 4px 9px 10px 9px;
+  padding: 8px 9px 10px 9px;
   border-top: 1px dashed var(--border);
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-/*
- * 改动正文：条目下方直接列出「这个文件改了什么」。
- * 等宽字体 + 每行一条 −/+ 着色，和 git diff 的读法一致；折叠时给固定高度上限，
- * 免得一条大改动把整列日志挤没（展开那一条时看全）。
- */
-.log-diff {
-  margin: 0 9px 6px;
-  padding: 4px 8px 5px;
-  border-left: 2px solid var(--border-strong);
-  border-radius: 4px;
-  background: var(--bg-tertiary);
-  font-family: var(--font-mono, Consolas, monospace);
-  font-size: 11px;
-  line-height: 1.65;
-}
-.log-item.warn .log-diff { border-left-color: rgba(216, 160, 18, 0.5); }
-.log-item.error .log-diff { border-left-color: rgba(214, 69, 69, 0.5); }
-.diff-line { display: flex; gap: 6px; }
-.diff-line .sign {
-  flex-shrink: 0;
-  width: 8px;
-  text-align: center;
+.sec-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--text-faint);
+  font-size: 10.5px;
 }
-.diff-line .text {
-  flex: 1;
-  min-width: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
+.sec-title .rule { flex: 1; height: 1px; background: var(--border); }
+
+/* 改动清单：按内容类型分组 → 文件 → 改动块（带上下文的行级 diff） */
+.group { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  background: var(--bg-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
   color: var(--text-secondary);
 }
-.diff-line.add .sign { color: var(--success); font-weight: 600; }
-.diff-line.add .text { color: var(--success); }
-.diff-line.del .sign { color: var(--danger); font-weight: 600; }
-.diff-line.del .text { color: var(--danger); }
-.diff-line.file .text { color: var(--text-faint); }
-.diff-line.note .text { color: var(--text-faint); font-style: italic; }
-.diff-more {
-  margin-top: 1px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  font-size: 10.5px;
-  cursor: pointer;
-}
-.diff-more:hover { text-decoration: underline; }
+.group-head .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-faint); }
+.group-head .dot[data-type="原始资料"] { background: var(--t-raw, #a86800); }
+.group-head .dot[data-type="概念"] { background: var(--t-concept, #6b4fa8); }
+.group-head .dot[data-type="实体"] { background: var(--t-entity, #0f6cbd); }
+.group-head .dot[data-type="内置 Agent"] { background: var(--t-agent, #0f7b0f); }
+.group-head .n { margin-left: auto; font-weight: 400; color: var(--text-faint); font-size: 10.5px; }
 
-@media (max-width: 768px) {
-  /* 手机端一条改动就可能很长：折叠时限高滚动看预览，点开后完整展开 */
-  .log-diff:not(.is-open) { max-height: 96px; overflow: auto; }
+.file { padding: 5px 9px 7px; border-top: 1px solid var(--border); }
+.file-path {
+  font-family: var(--font-mono, Consolas, monospace);
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-all;
 }
+
+.diff {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  font-family: var(--font-mono, Consolas, monospace);
+  font-size: 11px;
+}
+.diff .dl {
+  display: flex;
+  gap: 8px;
+  padding: 1px 8px;
+  line-height: 1.62;
+}
+.diff .dl .ln {
+  flex: none;
+  width: 34px;
+  text-align: right;
+  color: var(--text-faint);
+  opacity: 0.72;
+  font-variant-numeric: tabular-nums;
+}
+.diff .dl .sign { flex: none; width: 9px; opacity: 0.85; }
+.diff .dl .text { min-width: 0; white-space: pre-wrap; word-break: break-word; }
+/* 上下文行：灰底/灰字，让「改在哪一行」有参照；新增绿、删除红（和 git diff 读法一致） */
+.diff .dl.ctx .text { color: var(--text-secondary); }
+.diff .dl.add { background: var(--diff-add-bg, rgba(15, 123, 15, 0.07)); }
+.diff .dl.add .sign { color: var(--success, #0f7b0f); font-weight: 600; }
+.diff .dl.add .text { color: var(--success, #0f7b0f); }
+.diff .dl.del { background: var(--diff-del-bg, rgba(196, 43, 28, 0.06)); }
+.diff .dl.del .sign { color: var(--danger, #c42b1c); font-weight: 600; }
+.diff .dl.del .text { color: var(--danger, #c42b1c); }
+.diff .dl.note .text { color: var(--text-faint); font-style: italic; }
+.diff .hunk-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  border-top: 1px solid var(--border);
+}
+.diff .hunk-head:first-child { border-top: 0; }
+.diff .hunk-head .hh { color: var(--text-secondary); }
+.diff .hunk-head .raw-head { margin-left: auto; opacity: 0.7; }
+
 .data-grid {
   display: grid;
   grid-template-columns: minmax(90px, max-content) 1fr;
@@ -953,6 +1140,22 @@ async function askClear(): Promise<void> {
   font-family: var(--font-mono, Consolas, monospace);
   /* 条目清单 / 路径清单按行展示（结构化字段里是多行文本） */
   white-space: pre-wrap;
+}
+
+.expand-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.raw {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, Consolas, monospace);
+  font-size: 10.5px;
+  line-height: 1.6;
+  white-space: pre;
 }
 
 .load-more {
@@ -982,5 +1185,15 @@ async function askClear(): Promise<void> {
 @media (max-width: 768px) {
   .sync-log-drawer { bottom: calc(64px + var(--safe-bottom)); }
   .log-stats { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
+  /* 窄屏放不下「时间 | 结果 | 摘要 | 标签 | 处数 | 箭头」六列：改成两行，仍是一条记录一块 */
+  .log-row { grid-template-columns: 84px auto minmax(0, 1fr) auto; row-gap: 2px; }
+  .log-row .ts { grid-column: 1; }
+  .log-row .badge { grid-column: 2; }
+  .log-row .count { grid-column: 3; justify-self: end; }
+  .log-row .caret { grid-column: 4; }
+  .log-row .sum { grid-column: 1 / -1; grid-row: 2; flex-wrap: wrap; }
+  .log-row .detail { flex-basis: 100%; white-space: normal; }
+  .log-row .tags { grid-column: 1 / -1; grid-row: 3; }
+  .diff .dl .ln { width: 26px; }
 }
 </style>

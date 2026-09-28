@@ -5,7 +5,11 @@ import {
   buildSyncLogJson,
   buildSyncLogMarkdown,
   dataLabel,
+  entryChangeCount,
   entryChangeLines,
+  entryContents,
+  entryOutcome,
+  entryOutcomeLabel,
   eventCategory,
   eventLabel,
   formatBytes,
@@ -14,6 +18,8 @@ import {
   formatLogClock,
   formatLogTime,
   formatRelative,
+  groupChangeFiles,
+  hunkTitle,
   parseChangeLines,
   type SyncLogEntry,
 } from './syncLogFormat.ts';
@@ -142,18 +148,28 @@ test('导出 JSON：条目与筛选说明都带上，且能被 JSON.parse 回来
   assert.equal(parsed.entries[0].data?.bytes, 2048);
 });
 
-test('改动正文：+ / − 行、文件路径与省略提示分别成行，能在条目下方直接渲染', () => {
+test('改动正文：块头 / 上下文 / 增删行 / 文件路径 / 省略提示分别成行，行号带出来', () => {
   const lines = parseChangeLines([
     'Wiki/概念/供应商准入.md',
-    '- 旧条款：随到随审',
-    '+ 新条款：2026-10-01 前完成复审',
+    '@@ -12,5 +12,5 @@',
+    ' 12 上文一行（未改动）',
+    '-13 旧条款：随到随审',
+    '+13 新条款：2026-10-01 前完成复审',
     '…（还有 2 行改动未记录）',
   ]);
   assert.deepEqual(lines, [
     { kind: 'file', sign: '', text: 'Wiki/概念/供应商准入.md' },
+    { kind: 'hunk', sign: '', text: '@@ -12,5 +12,5 @@' },
+    { kind: 'ctx', sign: ' ', text: '上文一行（未改动）', lineNo: 12 },
+    { kind: 'del', sign: '−', text: '旧条款：随到随审', lineNo: 13 },
+    { kind: 'add', sign: '+', text: '新条款：2026-10-01 前完成复审', lineNo: 13 },
+    { kind: 'note', sign: '', text: '…（还有 2 行改动未记录）' },
+  ]);
+
+  // 老格式（只有 + / −，没有行号）照旧渲染，不做转换
+  assert.deepEqual(parseChangeLines(['- 旧条款：随到随审', '+ 新条款：2026-10-01 前完成复审']), [
     { kind: 'del', sign: '−', text: '旧条款：随到随审' },
     { kind: 'add', sign: '+', text: '新条款：2026-10-01 前完成复审' },
-    { kind: 'note', sign: '', text: '…（还有 2 行改动未记录）' },
   ]);
 
   // 老记录没有 changes（或值不是数组）时：抽屉照旧只显示那一行摘要，不报错
@@ -161,9 +177,44 @@ test('改动正文：+ / − 行、文件路径与省略提示分别成行，能
   assert.deepEqual(parseChangeLines(undefined), []);
   assert.deepEqual(parseChangeLines('+ 单行改动'), [{ kind: 'add', sign: '+', text: '单行改动' }]);
 
-  // 改动正文里的「+ 」「− 」本身是内容的一部分，别被当成前缀吃掉两次
+  // 改动正文里的「+ 」本身是内容的一部分，别被当成前缀吃掉两次
   assert.deepEqual(parseChangeLines(['+ + 增加了一行加号']), [{ kind: 'add', sign: '+', text: '+ 增加了一行加号' }]);
   assert.equal(dataLabel('changes'), '改动内容');
+});
+
+test('改动块头翻成中文行号；按文件切开；折叠态的「N 处改动」按文件数算', () => {
+  assert.equal(hunkTitle({ kind: 'hunk', sign: '', text: '@@ -12,5 +12,5 @@' }), '第 12～16 行');
+  assert.equal(hunkTitle({ kind: 'hunk', sign: '', text: '@@ -12,1 +12,1 @@' }), '第 12 行');
+  assert.equal(hunkTitle({ kind: 'hunk', sign: '', text: '@@ -12,3 +12,0 @@' }), '第 12 行起');
+  assert.equal(hunkTitle({ kind: 'hunk', sign: '', text: '（不是块头）' }), '（不是块头）');
+
+  const files = groupChangeFiles(parseChangeLines([
+    'Wiki/概念/A.md', '@@ -1,2 +1,2 @@', ' 1 # A', '-2 旧', '+2 新',
+    '原始资料/文档/B.md', '@@ -1,0 +1,1 @@', '+1 正文',
+  ]));
+  assert.equal(files.length, 2);
+  assert.equal(files[0].path, 'Wiki/概念/A.md');
+  assert.equal(files[1].path, '原始资料/文档/B.md');
+  assert.equal(files[0].lines.length, 4);
+  // 没有路径头的老记录：整段归到一个空路径小节，由界面用条目摘要兜底显示
+  assert.deepEqual(groupChangeFiles(parseChangeLines(['- 旧', '+ 新'])), [{ path: '', lines: [{ kind: 'del', sign: '−', text: '旧' }, { kind: 'add', sign: '+', text: '新' }] }]);
+
+  const changed = entry({ outcome: 'changed', data: { paths: ['Wiki/概念/A.md'], changes: ['Wiki/概念/A.md', '-2 旧', '+2 新'] } });
+  assert.equal(entryChangeCount(changed), 1);
+  assert.equal(entryChangeCount(entry({ outcome: 'none' })), 0, '没改动的条目不给「N 处改动」');
+});
+
+test('结果 / 内容分类：服务端下发的直接用，缺了按级别兜底', () => {
+  assert.equal(entryOutcome(entry({ level: 'error', event: 'apply-failed' })), 'failed', '老服务端不给 outcome 时按级别兜底');
+  assert.equal(entryOutcomeLabel(entry({ level: 'error', event: 'apply-failed' })), '失败');
+  assert.equal(entryOutcomeLabel(entry({ level: 'warn', event: 'push-retry' })), '失败');
+  assert.equal(entryOutcome(entry({ outcome: 'changed', data: { paths: ['Wiki/概念/a.md'] } })), 'changed');
+  assert.deepEqual(entryContents(entry({ contents: ['概念', '实体'] })), ['概念', '实体']);
+  // 服务端不给 contents 时（手机端本地日志）在前端按同一套口径现算
+  assert.deepEqual(entryContents(entry()), ['其他'], '有改动但没有任何路径信息：落「其他」，不空着');
+  assert.deepEqual(entryContents(entry({ event: 'connected', data: {} })), [], '没改动的事件不凭空挂类型');
+  assert.deepEqual(entryContents(entry({ data: { count: 1, paths: ['Wiki/实体/津亚电子.md'] } })), ['实体']);
+  assert.deepEqual(entryContents(entry({ event: 'push-ok', level: 'warn', data: { paths: ['AIWorks/log/log.md'] } })), ['内置 Agent'], '失败记录里的路径同样归类');
 });
 
 test('导出 Markdown：改动正文按 diff 代码块导出', () => {

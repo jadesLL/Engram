@@ -1165,6 +1165,8 @@ async function syncMissedChanges(): Promise<void> {
         from: getCursor(),
         kinds,
         items,
+        // 路径列表：同步详情按「原始资料 / 概念 / 实体 / 内置 Agent」归类要靠它（补拉同样要能归类）
+        paths: changedOps.slice(0, 10).map((op) => op.path),
         changes: flattenChangeLines(changedOps),
       });
     }

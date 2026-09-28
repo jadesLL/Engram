@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CHANGE_CONTEXT_LINES,
   CHANGE_LINE_MAX,
+  CHANGE_LOG_MAX_CHARS,
+  CHANGE_LOG_MAX_LINES,
   CHANGE_SAMPLE_LINES,
   describeOpList,
   describeOpSummary,
@@ -100,27 +103,67 @@ test('批次描述：最多列 3 条，其余折叠成「等 N 项」', () => {
   assert.equal(describeOpList(items, 4).includes('等 1 项'), false, 'limit 传大时不折叠');
 });
 
-test('改动正文采样：写清「改了什么」（+ 新增行 / - 删除行，同一处先删后增）', () => {
+test('改动正文采样：块头给行号、改动行先删后增、上下带未改动上下文', () => {
   const diff = diffContent('# 供应商准入\n\n旧条款：随到随审\n', '# 供应商准入\n\n新条款：2026-10-01 前完成复审\n');
   assert.equal(diff.added, 1);
   assert.equal(diff.removed, 1);
-  assert.deepEqual(diff.lines, ['- 旧条款：随到随审', '+ 新条款：2026-10-01 前完成复审']);
+  assert.deepEqual(diff.lines, [
+    '@@ -1,2 +1,2 @@',
+    ' 1 # 供应商准入',
+    '-3 旧条款：随到随审',
+    '+3 新条款：2026-10-01 前完成复审',
+  ]);
   assert.equal(diff.omitted, 0);
 
-  // 页面条目把采样一并带出来：抽屉据此在条目下方直接列出改了什么
+  // 页面条目把采样一并带出来：抽屉据此在条目下方直接列出改了什么（带上下文）
   const summary = summarizePageChange('Wiki/概念/供应商准入.md', '# 供应商准入\n\n旧条款：随到随审\n', '# 供应商准入\n\n新条款：2026-10-01 前完成复审\n');
   assert.equal(summary.verb, 'update');
-  assert.deepEqual(summary.changes, ['- 旧条款：随到随审', '+ 新条款：2026-10-01 前完成复审']);
+  assert.deepEqual(summary.changes, diff.lines);
   // 内容没变的占位条目不写改动正文（本来就不进记录）
   assert.equal(summarizePageChange('Wiki/概念/A.md', '# A\n', '# A\n').changes, undefined);
+});
+
+test('改动正文采样：长文件中间改一行时，上下各留 5 行上下文', () => {
+  const before = Array.from({ length: 30 }, (_, i) => `第 ${i + 1} 行`).join('\n');
+  const after = Array.from({ length: 30 }, (_, i) => (i === 14 ? '第 15 行（改过）' : `第 ${i + 1} 行`)).join('\n');
+  const diff = diffContent(before, after);
+  assert.equal(diff.added, 1);
+  assert.equal(diff.removed, 1);
+  assert.equal(diff.lines[0], '@@ -10,11 +10,11 @@', '块头从改动点上方第 5 行开始');
+  assert.deepEqual(diff.lines.slice(1, 6), [' 10 第 10 行', ' 11 第 11 行', ' 12 第 12 行', ' 13 第 13 行', ' 14 第 14 行']);
+  assert.deepEqual(diff.lines.slice(6), [
+    '-15 第 15 行', '+15 第 15 行（改过）',
+    ' 16 第 16 行', ' 17 第 17 行', ' 18 第 18 行', ' 19 第 19 行', ' 20 第 20 行',
+  ]);
+  assert.equal(diff.lines.filter((line) => line.startsWith(' ')).length, CHANGE_CONTEXT_LINES * 2);
+});
+
+test('改动正文采样：改在文件开头/结尾时上下文在边界截断，不越界', () => {
+  const before = Array.from({ length: 12 }, (_, i) => `第 ${i + 1} 行`).join('\n');
+  const head = diffContent(before, [`第 1 行（改）`, ...before.split('\n').slice(1)].join('\n'));
+  assert.equal(head.lines[0], '@@ -1,6 +1,6 @@', '改动在第 1 行：上文没有，块头从第 1 行起');
+  assert.equal(head.lines.filter((line) => line.startsWith(' ')).length, CHANGE_CONTEXT_LINES);
+
+  const tail = diffContent(before, [...before.split('\n').slice(0, 11), '第 12 行（改）'].join('\n'));
+  assert.equal(tail.lines.filter((line) => line.startsWith(' ')).length, CHANGE_CONTEXT_LINES, '改动在末行：下文没有');
+});
+
+test('改动正文采样：改动块相隔很远时切成两块', () => {
+  const before = Array.from({ length: 40 }, (_, i) => `第 ${i + 1} 行`).join('\n');
+  const after = Array.from({ length: 40 }, (_, i) => (i === 2 || i === 30 ? `第 ${i + 1} 行（改过）` : `第 ${i + 1} 行`)).join('\n');
+  const diff = diffContent(before, after);
+  const heads = diff.lines.filter((line) => line.startsWith('@@'));
+  assert.equal(heads.length, 2, '两处改动各成一个块');
+  assert.equal(heads[0], '@@ -1,8 +1,8 @@');
+  assert.equal(heads[1], '@@ -26,11 +26,11 @@');
 });
 
 test('改动正文采样：新建页整页都算新增，空行不占一行记录也不虚报省略', () => {
   const page = summarizePageChange('Wiki/概念/新建页.md', null, '# 新建页\n\n第一行\n第二行\n');
   assert.equal(page.verb, 'add');
-  assert.deepEqual(page.changes, ['+ # 新建页', '+ 第一行', '+ 第二行']);
+  assert.deepEqual(page.changes, ['@@ -1,0 +1,3 @@', '+1 # 新建页', '+3 第一行', '+4 第二行']);
   assert.equal(page.changesOmitted, 0);
-  // 只改空行：计数有、采样没有（空行不值得占一行「改动内容」）
+  // 只改空行：计数有、采样没有（空行不值得占一行「改动内容」，更不该给一个没有改动的空块）
   const blank = diffContent('a\n', 'a\n\n');
   assert.equal(blank.added, 1);
   assert.deepEqual(blank.lines, []);
@@ -132,32 +175,42 @@ test('改动正文采样：过多只留前几行、过长只留开头，并给�
   const diff = diffContent(before, after);
   assert.equal(diff.added, 20);
   assert.equal(diff.removed, 20);
-  assert.equal(diff.lines.length, CHANGE_SAMPLE_LINES);
-  assert.equal(diff.lines[0], '- 第 0 行');
+  assert.equal(diff.lines.length, 1 + CHANGE_SAMPLE_LINES, '一个块头 + 采样行数');
+  assert.match(diff.lines[0], /^@@ -\d+,\d+ \+\d+,\d+ @@$/);
+  assert.equal(diff.lines[1], '-1 第 0 行');
   assert.equal(diff.omitted, 40 - CHANGE_SAMPLE_LINES);
 
   const long = `${'长'.repeat(400)}\n`;
   const longDiff = diffContent(long, `${'长'.repeat(400)}改\n`);
-  assert.ok(longDiff.lines[0].length <= CHANGE_LINE_MAX + 3, '单行不得超过上限（含前缀与省略号）');
-  assert.ok(longDiff.lines.every((line) => line.endsWith('…')), '截断要有省略号');
+  const changeRows = longDiff.lines.filter((line) => line.startsWith('+') || line.startsWith('-'));
+  assert.ok(changeRows.length > 0);
+  assert.ok(changeRows.every((line) => line.length <= CHANGE_LINE_MAX + 5), '单行不得超过上限（含行号、符号与省略号）');
+  assert.ok(changeRows.every((line) => line.endsWith('…')), '截断要有省略号');
 });
 
-test('日志展平：单文件不写路径头，多文件先写路径；超预算收尾给省略提示', () => {
+test('日志展平：每个文件先写路径头（界面按它归类到原始资料/概念/实体/内置 Agent）', () => {
   const one = summarizePageChange('Wiki/概念/A.md', '# A\n旧\n', '# A\n新\n');
-  assert.deepEqual(flattenChangeLines([one]), ['- 旧', '+ 新']);
+  assert.deepEqual(flattenChangeLines([one]), ['Wiki/概念/A.md', '@@ -1,2 +1,2 @@', ' 1 # A', '-2 旧', '+2 新']);
 
   const two = [
     summarizePageChange('Wiki/概念/A.md', '# A\n旧\n', '# A\n新\n'),
     summarizePageChange('Wiki/概念/B.md', null, '# B\n正文\n'),
   ];
-  assert.deepEqual(flattenChangeLines(two), ['Wiki/概念/A.md', '- 旧', '+ 新', 'Wiki/概念/B.md', '+ # B', '+ 正文']);
+  assert.deepEqual(flattenChangeLines(two), [
+    'Wiki/概念/A.md', '@@ -1,2 +1,2 @@', ' 1 # A', '-2 旧', '+2 新',
+    'Wiki/概念/B.md', '@@ -1,0 +1,2 @@', '+1 # B', '+2 正文',
+  ]);
 
   // 同一批里同一个文件出现两次（新建后紧接着编辑）：路径只写一次，别把改动行挤掉
   const sameFileTwice = [
     summarizePageChange('Wiki/概念/A.md', null, '# A\n正文\n'),
     summarizePageChange('Wiki/概念/A.md', '# A\n正文\n', '# A\n正文\n新增\n'),
   ];
-  assert.deepEqual(flattenChangeLines(sameFileTwice), ['Wiki/概念/A.md', '+ # A', '+ 正文', '+ 新增']);
+  assert.deepEqual(flattenChangeLines(sameFileTwice), [
+    'Wiki/概念/A.md',
+    '@@ -1,0 +1,2 @@', '+1 # A', '+2 正文',
+    '@@ -1,2 +1,3 @@', ' 1 # A', ' 2 正文', '+3 新增',
+  ]);
 
   // 结构化字段没法承载：没有改动正文的批次返回 undefined，不往日志里塞空数组
   assert.equal(flattenChangeLines([summarizeFileChange('原始资料/a.bin', 0, 10)]), undefined);
@@ -169,8 +222,8 @@ test('日志展平：单文件不写路径头，多文件先写路径；超预�
     Array.from({ length: 60 }, (_, i) => `第 ${i} 行内容稍微长一点，用来把字符预算吃满`).join('\n'),
   );
   const flat = flattenChangeLines([big]) || [];
-  assert.ok(flat.length <= 20, '行数不超过日志数组上限');
-  assert.ok(flat.reduce((sum, line) => sum + line.length, 0) <= 1600, '字符预算内');
+  assert.ok(flat.length <= CHANGE_LOG_MAX_LINES, '行数不超过日志数组上限');
+  assert.ok(flat.reduce((sum, line) => sum + line.length, 0) <= CHANGE_LOG_MAX_CHARS, '字符预算内');
   assert.match(flat[flat.length - 1], /^…（还有 \d+ 行改动未记录）$/);
 });
 
@@ -179,15 +232,17 @@ test('改动正文采样：跳过文件头部的 frontmatter（那是应用写�
   const before = `${fm}# 供应商准入\n\n复审周期：每年一次。\n`;
   const after = `${fm}# 供应商准入\n\n复审周期：每半年一次。\n`;
   const page = summarizePageChange('Wiki/概念/供应商准入.md', before, after);
-  assert.deepEqual(page.changes, ['- 复审周期：每年一次。', '+ 复审周期：每半年一次。'], '只列正文改动');
+  assert.deepEqual(page.changes, [
+    '@@ -1,2 +1,2 @@', ' 1 # 供应商准入', '-3 复审周期：每年一次。', '+3 复审周期：每半年一次。',
+  ], '采样只看正文——上下文也必须是正文，不能把 frontmatter 带进来');
 
-  // 新建页面：采样从正文开始，不被 frontmatter 把 6 行预算吃光
+  // 新建页面：采样从正文开始，不被 frontmatter 把行数预算吃光
   const created = summarizePageChange('Wiki/概念/新页.md', null, `${fm}# 新页\n\n第一行\n`);
-  assert.deepEqual(created.changes, ['+ # 新页', '+ 第一行']);
+  assert.deepEqual(created.changes, ['@@ -1,0 +1,2 @@', '+1 # 新页', '+3 第一行']);
 
   // 只改了 frontmatter（补标签）：正文采样为空时回退看整篇，不出现「写了 +1 行却一行不显示」
   const meta = summarizePageChange('Wiki/概念/新页.md', '---\nid: 9\n---\n正文\n', '---\nid: 9\ntags: [a]\n---\n正文\n');
-  assert.deepEqual(meta.changes, ['+ tags: [a]']);
+  assert.deepEqual(meta.changes, ['@@ -1,4 +1,5 @@', ' 1 ---', ' 2 id: 9', '+3 tags: [a]', ' 4 ---', ' 5 正文']);
 
   // 正文里以 --- 开头的内容（分隔线）不算 frontmatter，不能被吃掉
   assert.equal(stripLeadingFrontmatter('# 标题\n\n---\n\n正文\n'), '# 标题\n\n---\n\n正文\n');
