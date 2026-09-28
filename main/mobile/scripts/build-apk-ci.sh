@@ -32,7 +32,10 @@ cd android
 cat >> gradle.properties <<'EOF'
 
 # build-apk-ci.sh 注入的 CI 内存上限（覆盖上方默认值；仅发版容器内生效，不入库覆盖本地配置）
-org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m
+# 编码三个 JVM（Gradle 守护进程 / Kotlin 守护进程 / 测试 JVM）都钉成 UTF-8：中文测试方法名会进
+# class 文件路径，locale 不是 UTF-8 时 Kotlin 增量编译直接 InvalidPathException（见 Dockerfile.ci 注释）
+org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=384m -Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8
+kotlin.daemon.jvmargs=-Xmx768m -Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8
 org.gradle.workers.max=1
 EOF
 

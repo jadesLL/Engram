@@ -20,6 +20,14 @@ ENV ANDROID_HOME=/opt/android-sdk \
     GRADLE_USER_HOME=/opt/gradle-home \
     npm_config_registry=https://registry.npmmirror.com
 
+# 容器 locale 必须是 UTF-8：默认是 C（ASCII），JDK 的 sun.jnu.encoding 随之变成 ANSI_X3.4-1968，
+# 而 Kotlin 增量编译会把「中文测试方法名」写进 class 文件路径（如 DualStackTest$OkHttp 真的按协议族建连…
+# $port$1.class）——ASCII 编不出这些字节，直接 java.nio.file.InvalidPathException 把
+# :app:compileDebugUnitTestKotlin 打挂（本机 Windows JVM 用 UTF-16 路径，所以只有 CI 容器会踩到；
+# 2026-09-28 v1.3.0 首次真正在 CI 跑安卓构建时暴露）。C.UTF-8 是 Debian 自带 locale，无需 locale-gen。
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
 # JDK 21（Capacitor 7.6 / AGP 8.7 要求）
 # deb.debian.org 直连不稳（大索引下载频繁断连），换阿里云镜像源
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
