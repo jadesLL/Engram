@@ -1,6 +1,6 @@
 {
   "name": "@engram/desktop",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "description": "Engram Windows 桌面端（本地内嵌后端）",
   "main": "main.js",
