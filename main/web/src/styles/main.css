@@ -140,6 +140,11 @@
    * 桌面 24px；手机档 8px（正文区已经为底部导航让出 64px，再加 8px 即导航条上方 16px）。
    */
   --statusbar-gap: 24px;
+  /*
+   * 按压态（:active）底色。触屏上没有 hover，按下必须立刻有反馈，否则会像「点不动」；
+   * 桌面端 hover 已经给了反馈，按下再深一档。深色主题另给一套（见 html.dark）。
+   */
+  --press-bg: rgba(0, 0, 0, 0.075);
 }
 
 html.dark {
@@ -211,9 +216,36 @@ html.dark {
   --rail-logo-filter-hover: drop-shadow(0 2px 6px rgba(90, 169, 230, 0.46)) brightness(1.06);
   --scrollbar: rgba(255, 255, 255, 0.32);
   --scrollbar-hover: rgba(255, 255, 255, 0.5);
+  --press-bg: rgba(255, 255, 255, 0.1);
 }
 
 * { box-sizing: border-box; }
+
+/*
+ * 触屏反馈的两条底线（2026-09-29 用户报障「图标是圆的，一点就变方」）：
+ *  1. 安卓 WebView / iOS Safari 默认的点击高亮是一块**矩形**半透明色块，圆角控件（圆形图标按钮、
+ *     胶囊、圆形徽标）按下去会凭空多出一个方角——正是「圆变方」的观感。全局关掉，
+ *     按压反馈交给各组件自己的 :active 规则，它们的底色跟着 border-radius 走，形状不会变。
+ *  2. 触屏上没有 hover，只写 :hover 的控件按下去等于没反馈。统一兜一层 :active 底色；
+ *     组件里更精确的 :active（.btn / .row-kebab / .rail-logo 等）优先级更高，不受影响。
+ */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+@media (hover: none) and (pointer: coarse) {
+  button:active,
+  a:active,
+  [role='button']:active,
+  label:active {
+    background-color: var(--press-bg);
+  }
+  /* 触屏去掉 300ms 双击缩放等待：点按要立刻响应，手感才「跟手」 */
+  button,
+  a,
+  [role='button'] {
+    touch-action: manipulation;
+  }
+}
 
 html, body, #app {
   margin: 0;
@@ -222,8 +254,15 @@ html, body, #app {
 }
 
 body {
-  /* Win11 优先 Segoe UI Variable，中文回落雅黑 */
-  font-family: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont,
+  /*
+   * 字体跟随系统（2026-09-29 用户要求「系统是什么字体就用什么字体」）：
+   *   system-ui 在各平台解析为**系统默认 UI 字体**——Windows 11 → Segoe UI Variable（旧版 Segoe UI），
+   *   Android → 设备/ROM 的默认字体（小米 MiSans、华为 HarmonyOS Sans、原生 Roboto + Noto Sans CJK，
+   *   OEM 换主题字体时这里跟着换），macOS/iOS → SF Pro / 苹方，Linux → 发行版默认。
+   * 中文不再靠回落表里自己挑字体（旧写法把 'Noto Sans CJK SC' 排得很靠前，安卓上会把 OEM
+   * 默认中文字形顶掉，只有 web 字体观感）；显式字体名保留为老系统/无 system-ui 时的兜底。
+   */
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI',
     'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   background: var(--bg);
   color: var(--text);

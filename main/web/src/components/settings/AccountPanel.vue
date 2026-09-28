@@ -21,6 +21,16 @@
         </div>
         <button class="btn danger" type="button" @click="logout">退出登录</button>
       </div>
+
+      <!-- 系统解锁（只有装了 Android 壳的手机端有这条桥；桌面/网页端整行不出现） -->
+      <div v-if="biometricVisible" class="setting-row">
+        <div class="setting-copy">
+          <strong>指纹 / 人脸解锁</strong>
+          <span v-if="biometricSaved">已开启：登录页可调用系统解锁直接进入。密码由系统钥匙串（Android Keystore）保管。</span>
+          <span v-else>未开启：在登录页输入一次密码时勾选「记住密码」即可开启。</span>
+        </div>
+        <button v-if="biometricSaved" class="btn" type="button" @click="disableBiometric">关闭</button>
+      </div>
     </SettingsGroup>
 
     <!-- 连接通道：服务器经 /health 通告直连地址时才存在（Android 本地版没有这条链路）；
@@ -61,6 +71,7 @@ import SecretField from '../SecretField.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import { useAuthStore } from '../../stores/auth';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
+import { biometricStatus, forgetPassword } from '../../lib/biometric';
 import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
 
 /**
@@ -78,6 +89,20 @@ const pwd = ref({ old: '', next: '' });
 const pwdMsg = ref('');
 const pwdOk = ref(false);
 
+/**
+ * 系统解锁（指纹 / 人脸）的开关状态。
+ * 只有 Android 壳里有原生桥；网页端 / 桌面端读到 null，整行不渲染。
+ * 开启动作只能在登录页做（那里才有明文密码），这里只负责查看与关闭。
+ */
+const biometricStatusInfo = ref(biometricStatus());
+const biometricVisible = computed(() => biometricStatusInfo.value !== null);
+const biometricSaved = computed(() => Boolean(biometricStatusInfo.value?.saved));
+
+function disableBiometric() {
+  forgetPassword();
+  biometricStatusInfo.value = biometricStatus();
+}
+
 async function changePwd() {
   pwdMsg.value = '';
   try {
@@ -88,6 +113,11 @@ async function changePwd() {
     pwdOk.value = true;
     pwdMsg.value = '密码已修改';
     pwd.value = { old: '', next: '' };
+    // 记住的旧密码立刻作废：留着它只会让下次指纹解锁撞 401
+    if (biometricSaved.value) {
+      disableBiometric();
+      pwdMsg.value = '密码已修改，指纹 / 人脸解锁已重新关闭（可在登录页重新开启）';
+    }
   } catch (error: any) {
     pwdOk.value = false;
     pwdMsg.value = error.response?.data?.error || '修改失败';

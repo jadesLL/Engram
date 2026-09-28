@@ -47,6 +47,7 @@ main/mobile/
     ├── SystemBars.java         # 透明系统栏 + insets 交给网页 + 系统栏图标明暗跟随应用主题
     ├── SystemBarPolicy.java    # 系统栏策略纯逻辑（JVM 单测：insets JSON 契约、API 版本差异）
     ├── BackPolicy.java         # 返回键判定纯逻辑：网页 → 历史 → 退后台
+    ├── BiometricUnlock.java    # 系统解锁桥（指纹/人脸/锁屏密码 + Keystore 密封的登录密码）
     ├── EngramLocalServer.kt    # loopback Ktor REST/静态服务
     ├── AgentBridge.kt          # Docker Agent 交互面窄代理
     ├── LocalDatabase.kt        # Markdown/SQLite/备份/回收站
@@ -65,6 +66,16 @@ main/mobile/
 - **安全区由原生注入**：WebView 里 `env(safe-area-inset-*)` 不可靠（恒为 0），所以原生把 `systemBars()`/`ime()`/挖孔的尺寸经 JS 接口 `EngramSystemBars.insets()` + `window.__engramSystemBars(json)` 交给网页；网页在 `web/src/lib/systemInsets.ts` 写进 `--inset-*`，样式层统一用 `--safe-top/right/bottom/left`（`max(env(...), var(--inset-*))`）。软键盘只用来加 `html.kb-open`（底部常驻栏收起），不加进底部安全区——布局视口本来就随键盘收缩。
 - **`adjustMarginsForEdgeToEdge` 必须保持 `disable`**：Capacitor 的 `auto/force` 会给 WebView 自己加 margin，网页视口被内缩、安全区仍然算不出来，正好把上面这套废掉。
 - **返回键/侧滑返回**：`MainActivity` 的 `OnBackPressedCallback` 先 `evaluateJavascript("window.__engramHandleBack()")` 问网页是否消费（关确认框、长按菜单、资产/同步日志抽屉、对话抽屉、文件树、阅读目录面板……注册入口是 `web/src/lib/androidBack.ts`），网页不要才 `webView.goBack()`，历史到头才 `moveTaskToBack`。启动期 `loadDataWithBaseURL` 的占位页在首帧就绪时用 `clearHistory()` 清掉，避免根页面按返回退到空白页。`@capacitor/app` 的 `backButton` 在这个壳里不可用（页面来自 `http://127.0.0.1:18182`，Capacitor 桥没有注入该 origin），不要改回去用它。
+
+## 系统解锁（指纹 / 人脸 / 锁屏密码）
+
+本地库的会话 cookie 最长 30 天，过期或退出登录后仍会回到登录页。登录页的「指纹 / 人脸解锁」调用的是**系统自己的解锁界面**，应用不自绘图案锁，也不引入 `androidx.biometric`（全部走框架 API，离线构建不需要新依赖）：
+
+- **Android 11+（API 30）**：`BiometricPrompt` + `setAllowedAuthenticators(BIOMETRIC_WEAK | DEVICE_CREDENTIAL)`——录了指纹/人脸就走生物识别，没录就落到锁屏密码，弹窗长什么样由系统决定；
+- **Android 9/10（API 28-29）**：同一个 `BiometricPrompt`，用 `setDeviceCredentialAllowed(true)`（该 API 在 30 起被 allowed authenticators 取代，但这两档没有等价写法；它与「取消」按钮互斥，所以这两档不设取消按钮，返回键 / 点空白仍可取消）；
+- **Android 6-8（API 23-27）**：`KeyguardManager.createConfirmDeviceCredentialIntent()`，由系统出示锁屏验证界面（框架版 `BiometricPrompt` 要求 API 28+）。结果经 `MainActivity.onActivityResult` 转回桥。
+
+网页侧契约在 `web/src/lib/biometric.ts`：`status()`（能力 + 是否已开启）、`remember(password)`、`unlock(requestId)`、`forget()`；解锁结果由原生回调 `window.__engramBiometricResult(requestId, json)` 送回（按 requestId 对号，带 3 分钟超时兜底）。**凭据只有登录密码这一份**：开启后由 `SecretStore` 用 Android Keystore 的 AES-GCM 密钥密封存盘（密钥不可导出、不进备份），只有系统解锁成功之后才会取出交给网页去换会话 cookie；解锁失败、取消或从未开启都不会有凭据离开进程。改密码（设置 → 账户）自动关闭它，避免拿旧密码撞 401；开启只能在登录页做（那里才有明文密码）。桌面端 / Docker 网页端没有这条桥，登录页自动隐藏整块（`biometricStatus()` 返回 null）。
 
 
 ## 本地开发与验证

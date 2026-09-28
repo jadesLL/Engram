@@ -44,6 +44,8 @@ public class MainActivity extends BridgeActivity {
     private String pendingDownloadCookie;
     /** 系统栏（状态栏/导航栏/大屏任务栏）：透明 + 尺寸交给网页，见 SystemBars。 */
     private SystemBars systemBars;
+    /** 系统解锁（指纹/人脸/锁屏密码）：登录页用，见 BiometricUnlock。 */
+    private BiometricUnlock biometricUnlock;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -54,6 +56,9 @@ public class MainActivity extends BridgeActivity {
         if (shellWebView != null) {
             systemBars = new SystemBars(this, shellWebView);
             systemBars.install();
+            // 与系统栏同一个时机装桥：页面加载后登录页就要能问「有没有指纹解锁」
+            biometricUnlock = new BiometricUnlock(this, shellWebView);
+            biometricUnlock.install();
         }
         showStartupOverlay();
         startupSurfaceReady = true;
@@ -349,6 +354,8 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        // 系统凭据验证（API 23-27 的锁屏验证）由 BiometricUnlock 自己收口，别落到下载逻辑里
+        if (biometricUnlock != null && biometricUnlock.onActivityResult(requestCode, resultCode, data)) return;
         if (requestCode != REQUEST_CREATE_DOCUMENT) return;
         final String url = pendingDownloadUrl;
         final String cookie = pendingDownloadCookie;

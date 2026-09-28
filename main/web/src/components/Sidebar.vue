@@ -4,7 +4,10 @@
       <div class="sidebar-titlebar">
         <h2>知识库</h2>
         <div class="sidebar-title-actions">
-          <SyncButton />
+          <!-- 抽屉档（≤1024px，浮层盖住正文）不在这里塞通道胶囊：320px 宽的抽屉里
+               它是被挤到没文字的一条空胶囊（用户报障「看不到文字还很宽」），
+               改为独立一行「通道条」，见下方 .sidebar-channel-row -->
+          <SyncButton v-if="!drawerMode" />
           <button
             class="sidebar-fold"
             type="button"
@@ -21,6 +24,10 @@
             <Icon name="x" :size="16" />
           </button>
         </div>
+      </div>
+
+      <div v-if="drawerMode" class="sidebar-channel-row">
+        <SyncButton variant="strip" />
       </div>
 
       <div class="search-toolbar">
@@ -60,6 +67,7 @@
               @dragleave="g.key === 'concept' && onDragLeave('concept')"
               @drop.prevent="g.key === 'concept' && onDropToType('concept')"
             >
+              <Icon name="chevron-right" :size="14" class="toggle-chevron" />
               <span class="sec-name">{{ g.label }}</span>
             </button>
             <div class="sec-actions">
@@ -88,82 +96,90 @@
               <span class="sec-count">{{ groupPageCount(g) }}</span>
             </div>
           </div>
-          <div v-show="!collapsed[g.key]" class="sec-body">
-            <!-- 实体：按子类（人物/客户/项目）分组，子类可折叠 -->
-            <template v-if="g.subGroups">
-              <div
-                v-for="sub in visibleSubGroups(g)"
-                :key="sub.key"
-                class="sub-group"
-                :class="{ expanded: !collapsed[`${g.key}:${sub.key}`] }"
-              >
-                <button
-                  class="sub-head"
-                  :class="{ 'drop-target': dragOverKey === sub.key && canDropTo(sub.key) }"
-                  type="button"
-                  :aria-expanded="!collapsed[`${g.key}:${sub.key}`]"
-                  v-tooltip="collapsed[`${g.key}:${sub.key}`] ? `展开${sub.label}` : `收起${sub.label}`"
-                  @click="toggle(`${g.key}:${sub.key}`)"
-                  @dragover="onDragOverSub($event, sub.key)"
-                  @dragleave="onDragLeave(sub.key)"
-                  @drop.prevent="onDropToType(sub.key)"
+          <!-- 展开/收起用外层 grid 容器做高度过渡：v-show 只能整块 display:none，
+               展开时是「啪」地跳出来（用户报障「下拉很突兀」）。grid-template-rows 0fr↔1fr
+               能让高度动画起来，收起完成后再靠 visibility 把内容移出 Tab 序列。 -->
+          <div class="collapse" :class="{ collapsed: collapsed[g.key] }">
+            <div class="sec-body collapse-inner">
+              <!-- 实体：按子类（人物/客户/项目）分组，子类可折叠 -->
+              <template v-if="g.subGroups">
+                <div
+                  v-for="sub in visibleSubGroups(g)"
+                  :key="sub.key"
+                  class="sub-group"
+                  :class="{ expanded: !collapsed[`${g.key}:${sub.key}`] }"
                 >
-                  <span class="sub-name">{{ sub.label }}</span>
-                  <span class="sub-count">{{ filteredPages(sub.pages).length }}</span>
-                </button>
-                <div v-show="!collapsed[`${g.key}:${sub.key}`]" class="sub-body">
-                  <PageRow
-                    v-for="p in sortList(filteredPages(sub.pages), groupSort[g.key])"
-                    :key="p.id"
-                    :page="p"
-                    :active="p.id === activeId"
-                    :selected="selected.has('p:' + p.id)"
-                    :selection-mode="selectionMode"
-                    :class="{ 'asset-drop-hot': assetDropTarget === p.id }"
-                    @dragover="onRowDragOver($event, p)"
-                    @dragleave="onRowDragLeave($event, p)"
-                    @drop="onRowDrop($event, p)"
-                    @open="openPage"
-                    @archive="archivePage"
-                    @unarchive="unarchivePage"
-                    @remove="removePage"
-                    @toggle-select="toggleSelect"
-                    @context-menu="onPageContextMenu"
-                    @drag-start="onDragStart"
-                    @drag-end="onDragEnd"
-                  />
+                  <button
+                    class="sub-head"
+                    :class="{ 'drop-target': dragOverKey === sub.key && canDropTo(sub.key) }"
+                    type="button"
+                    :aria-expanded="!collapsed[`${g.key}:${sub.key}`]"
+                    v-tooltip="collapsed[`${g.key}:${sub.key}`] ? `展开${sub.label}` : `收起${sub.label}`"
+                    @click="toggle(`${g.key}:${sub.key}`)"
+                    @dragover="onDragOverSub($event, sub.key)"
+                    @dragleave="onDragLeave(sub.key)"
+                    @drop.prevent="onDropToType(sub.key)"
+                  >
+                    <Icon name="chevron-right" :size="12" class="toggle-chevron" />
+                    <span class="sub-name">{{ sub.label }}</span>
+                    <span class="sub-count">{{ filteredPages(sub.pages).length }}</span>
+                  </button>
+                  <div class="collapse" :class="{ collapsed: collapsed[`${g.key}:${sub.key}`] }">
+                    <div class="sub-body collapse-inner">
+                      <PageRow
+                        v-for="p in sortList(filteredPages(sub.pages), groupSort[g.key])"
+                        :key="p.id"
+                        :page="p"
+                        :active="p.id === activeId"
+                        :selected="selected.has('p:' + p.id)"
+                        :selection-mode="selectionMode"
+                        :class="{ 'asset-drop-hot': assetDropTarget === p.id }"
+                        @dragover="onRowDragOver($event, p)"
+                        @dragleave="onRowDragLeave($event, p)"
+                        @drop="onRowDrop($event, p)"
+                        @open="openPage"
+                        @archive="archivePage"
+                        @unarchive="unarchivePage"
+                        @remove="removePage"
+                        @toggle-select="toggleSelect"
+                        @context-menu="onPageContextMenu"
+                        @drag-start="onDragStart"
+                        @drag-end="onDragEnd"
+                      />
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <p v-if="!groupPageCount(g)" class="none">
-                {{ filter ? '没有匹配页面' : '暂无页面' }}
-              </p>
-            </template>
-            <!-- 概念 / 归档：直接平铺 -->
-            <template v-else>
-              <PageRow
-                v-for="p in sortList(filteredPages(g.pages), groupSort[g.key])"
-                :key="p.id"
-                :page="p"
-                :active="p.id === activeId"
-                :selected="selected.has('p:' + p.id)"
-                :selection-mode="selectionMode"
-                :class="{ 'asset-drop-hot': assetDropTarget === p.id }"
-                @dragover="onRowDragOver($event, p)"
-                @dragleave="onRowDragLeave($event, p)"
-                @drop="onRowDrop($event, p)"
-                @open="openPage"
-                @archive="archivePage"
-                @unarchive="unarchivePage"
-                @remove="removePage"
-                @toggle-select="toggleSelect"
-                @context-menu="onPageContextMenu"
-                @drag-start="onDragStart"
-                @drag-end="onDragEnd"
-              />
-              <p v-if="!filteredPages(g.pages).length" class="none">
-                {{ filter ? '没有匹配页面' : '暂无页面' }}
-              </p>
-            </template>
+                <p v-if="!groupPageCount(g)" class="none">
+                  {{ filter ? '没有匹配页面' : '暂无页面' }}
+                </p>
+              </template>
+              <!-- 概念 / 归档：直接平铺 -->
+              <template v-else>
+                <PageRow
+                  v-for="p in sortList(filteredPages(g.pages), groupSort[g.key])"
+                  :key="p.id"
+                  :page="p"
+                  :active="p.id === activeId"
+                  :selected="selected.has('p:' + p.id)"
+                  :selection-mode="selectionMode"
+                  :class="{ 'asset-drop-hot': assetDropTarget === p.id }"
+                  @dragover="onRowDragOver($event, p)"
+                  @dragleave="onRowDragLeave($event, p)"
+                  @drop="onRowDrop($event, p)"
+                  @open="openPage"
+                  @archive="archivePage"
+                  @unarchive="unarchivePage"
+                  @remove="removePage"
+                  @toggle-select="toggleSelect"
+                  @context-menu="onPageContextMenu"
+                  @drag-start="onDragStart"
+                  @drag-end="onDragEnd"
+                />
+                <p v-if="!filteredPages(g.pages).length" class="none">
+                  {{ filter ? '没有匹配页面' : '暂无页面' }}
+                </p>
+              </template>
+            </div>
           </div>
         </section>
       </div>
@@ -190,6 +206,7 @@
             v-tooltip="collapsed.files ? '展开原始资料' : '收起原始资料'"
             @click="toggle('files')"
           >
+            <Icon name="chevron-right" :size="14" class="toggle-chevron" />
             <span class="sec-name">原始资料</span>
           </button>
           <div class="sec-actions">
@@ -236,46 +253,51 @@
             <span class="sec-count">{{ visibleRawTotal }}</span>
           </div>
         </div>
-        <div v-show="!collapsed.files" class="sec-body">
-          <!-- 三个二级分类的子分组：标记与样式完全沿用「实体」的子类（.sub-group + .sub-head），
-               不自造箭头/缩进，保证原始资料与概念/实体的观感一致 -->
-          <div
-            v-for="g in rawGroups"
-            :key="g.key"
-            class="sub-group"
-            :class="{ expanded: !collapsed['raw:' + g.key] }"
-          >
-            <button
-              class="sub-head"
-              type="button"
-              :aria-expanded="!collapsed['raw:' + g.key]"
-              v-tooltip="collapsed['raw:' + g.key] ? `展开${g.label}` : `收起${g.label}`"
-              @click="toggle('raw:' + g.key)"
+        <div class="collapse" :class="{ collapsed: collapsed.files }">
+          <div class="sec-body collapse-inner">
+            <!-- 三个二级分类的子分组：标记与样式完全沿用「实体」的子类（.sub-group + .sub-head），
+                 不自造箭头/缩进，保证原始资料与概念/实体的观感一致 -->
+            <div
+              v-for="g in rawGroups"
+              :key="g.key"
+              class="sub-group"
+              :class="{ expanded: !collapsed['raw:' + g.key] }"
             >
-              <span class="sub-name">{{ g.label }}</span>
-              <span class="sub-count">{{ g.files.length }}</span>
-            </button>
-            <div v-show="!collapsed['raw:' + g.key]" class="sub-body">
-              <FileRow
-                v-for="f in g.files"
-                :key="f.path"
-                :file="f"
-                :active="isActiveFile(f)"
-                :selected="selected.has('f:' + f.path)"
-                :selection-mode="selectionMode"
-                :job="fileJob(f.path)"
-                :class="{ 'asset-drop-hot': !!f.pageId && assetDropTarget === f.pageId }"
-                @dragover="onRowDragOver($event, f)"
-                @dragleave="onRowDragLeave($event, f)"
-                @drop="onRowDrop($event, f)"
-                @open="openFile"
-                @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
-                @remove="removeFile"
-                @context-menu="onFileContextMenu"
-              />
-              <p v-if="!g.files.length" class="none">
-                {{ filter ? '没有匹配' : g.empty }}
-              </p>
+              <button
+                class="sub-head"
+                type="button"
+                :aria-expanded="!collapsed['raw:' + g.key]"
+                v-tooltip="collapsed['raw:' + g.key] ? `展开${g.label}` : `收起${g.label}`"
+                @click="toggle('raw:' + g.key)"
+              >
+                <Icon name="chevron-right" :size="12" class="toggle-chevron" />
+                <span class="sub-name">{{ g.label }}</span>
+                <span class="sub-count">{{ g.files.length }}</span>
+              </button>
+              <div class="collapse" :class="{ collapsed: collapsed['raw:' + g.key] }">
+                <div class="sub-body collapse-inner">
+                  <FileRow
+                    v-for="f in g.files"
+                    :key="f.path"
+                    :file="f"
+                    :active="isActiveFile(f)"
+                    :selected="selected.has('f:' + f.path)"
+                    :selection-mode="selectionMode"
+                    :job="fileJob(f.path)"
+                    :class="{ 'asset-drop-hot': !!f.pageId && assetDropTarget === f.pageId }"
+                    @dragover="onRowDragOver($event, f)"
+                    @dragleave="onRowDragLeave($event, f)"
+                    @drop="onRowDrop($event, f)"
+                    @open="openFile"
+                    @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
+                    @remove="removeFile"
+                    @context-menu="onFileContextMenu"
+                  />
+                  <p v-if="!g.files.length" class="none">
+                    {{ filter ? '没有匹配' : g.empty }}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -303,28 +325,31 @@
             v-tooltip="collapsed.ailog ? '展开 AI 工作区' : '收起 AI 工作区'"
             @click="toggle('ailog')"
           >
+            <Icon name="chevron-right" :size="14" class="toggle-chevron" />
             <span class="sec-name">AI 工作区</span>
           </button>
           <span class="sec-count">{{ visibleAiLogs.length }}</span>
         </div>
-        <div v-show="!collapsed.ailog" class="sec-body">
-          <div
-            v-for="p in sortList(visibleAiLogs, 'updated-desc')"
-            :key="p.id"
-            class="page-row log-row"
-            :class="{ active: p.id === activeId }"
-            role="button"
-            tabindex="0"
-            @click="openPage(p)"
-            @keydown.enter.self="openPage(p)"
-            @keydown.space.self.prevent="openPage(p)"
-          >
-            <Icon name="report" :size="13" class="log-file-icon" />
-            <span class="page-title" v-tooltip="p.title">{{ p.title }}</span>
+        <div class="collapse" :class="{ collapsed: collapsed.ailog }">
+          <div class="sec-body collapse-inner">
+            <div
+              v-for="p in sortList(visibleAiLogs, 'updated-desc')"
+              :key="p.id"
+              class="page-row log-row"
+              :class="{ active: p.id === activeId }"
+              role="button"
+              tabindex="0"
+              @click="openPage(p)"
+              @keydown.enter.self="openPage(p)"
+              @keydown.space.self.prevent="openPage(p)"
+            >
+              <Icon name="report" :size="13" class="log-file-icon" />
+              <span class="page-title" v-tooltip="p.title">{{ p.title }}</span>
+            </div>
+            <p v-if="!visibleAiLogs.length" class="none">
+              {{ filter ? '没有匹配页面' : '服务端自动生成' }}
+            </p>
           </div>
-          <p v-if="!visibleAiLogs.length" class="none">
-            {{ filter ? '没有匹配页面' : '服务端自动生成' }}
-          </p>
         </div>
       </section>
 
@@ -392,6 +417,7 @@ import { notify } from '../lib/notify';
 import { hideTooltip } from '../lib/tooltip';
 import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
 import { openAssetDrawer } from '../lib/assetDrawer';
+import { BP_WIDE } from '../lib/layoutBreakpoints';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
 import FileRow from './FileRow.vue';
@@ -402,6 +428,23 @@ const router = useRouter();
 const app = useAppStore();
 const sync = useSyncStore();
 const emit = defineEmits(['close', 'new-page']);
+
+/**
+ * 抽屉档（≤1024px）：侧栏是浮层，盖在正文上。手机竖屏里它几乎占满整屏，
+ * 打开一个页面后不收起抽屉 = 用户看不到刚点开的正文（用户报障 2026-09-29）。
+ * 与 Home.vue 的 sidebarOverlay 同一个断点（isMobile || isCompact），数值取自
+ * lib/layoutBreakpoints.ts，不在组件里再写一遍字面量。
+ */
+const drawerMode = ref(false);
+let drawerQuery: MediaQueryList | null = null;
+function onDrawerQueryChange(event: MediaQueryListEvent) {
+  drawerMode.value = event.matches;
+}
+
+/** 抽屉档下打开内容后收起自己；桌面栏（>1024px）保持展开不动 */
+function closeDrawerIfOverlay() {
+  if (drawerMode.value) emit('close');
+}
 
 const allPages = ref<any[]>([]);
 /** 原始资料「文档」分组：原始资料/文档/ 子树 + 根目录历史资料（服务端 ?section=doc 合并返回） */
@@ -1061,6 +1104,7 @@ async function load() {
 
 function openPage(p: any) {
   router.push(`/page/${p.id}`);
+  closeDrawerIfOverlay();
 }
 
 function openFile(f: any) {
@@ -1070,6 +1114,7 @@ function openFile(f: any) {
   } else {
     router.push({ path: '/page', query: { file: f.path } });
   }
+  closeDrawerIfOverlay();
 }
 
 function isActiveFile(file: any) {
@@ -1292,6 +1337,10 @@ onMounted(() => {
   window.addEventListener('resize', closeSortMenuOnViewportChange);
   window.addEventListener('blur', closeSortMenuOnViewportChange);
   window.addEventListener('scroll', closeSortMenuOnViewportChange, true);
+  // 断点变化时抽屉/桌面栏互换形态：通道条与「点开就收起」的行为都要跟着切
+  drawerQuery = window.matchMedia(`(max-width: ${BP_WIDE}px)`);
+  drawerMode.value = drawerQuery.matches;
+  drawerQuery.addEventListener('change', onDrawerQueryChange);
 });
 onUnmounted(() => {
   chatStopped = true;
@@ -1301,6 +1350,8 @@ onUnmounted(() => {
   window.removeEventListener('resize', closeSortMenuOnViewportChange);
   window.removeEventListener('blur', closeSortMenuOnViewportChange);
   window.removeEventListener('scroll', closeSortMenuOnViewportChange, true);
+  drawerQuery?.removeEventListener('change', onDrawerQueryChange);
+  drawerQuery = null;
 });
 </script>
 <style scoped>
@@ -1363,6 +1414,20 @@ onUnmounted(() => {
 .sidebar-close:hover {
   color: var(--text);
   background: var(--sidebar-hover);
+}
+
+/* 按下时再深一档（桌面与触屏统一）：圆角跟着按钮自己的 4px 走，不会有方角 */
+.sidebar-fold:active,
+.sidebar-new:active,
+.sidebar-close:active,
+.search-clear:active {
+  background: var(--press-bg);
+}
+
+/* 抽屉档那一行通道条（SyncButton variant="strip"）：只负责给它一行位置与下间距，
+   条本身的长相在 SyncButton 里（两处不重复定义颜色和圆角） */
+.sidebar-channel-row {
+  margin: 0 0 8px;
 }
 
 .search-toolbar {
@@ -1593,26 +1658,14 @@ onUnmounted(() => {
 .sec-row {
   position: relative;
   min-width: 0;
-  height: 32px;
+  height: 34px;
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 0 8px;
-  border-radius: 4px;
+  padding: 0 8px 0 6px;
+  border-radius: 6px;
   user-select: none;
   transition: background 150ms ease;
-}
-
-.sec-row.expanded::before {
-  content: '';
-  position: absolute;
-  top: 9px;
-  bottom: 9px;
-  left: 3px;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--text-faint);
-  opacity: 0.55;
 }
 
 .sec-row:hover {
@@ -1625,9 +1678,10 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   align-items: center;
-  padding: 0 0 0 3px;
-  border-radius: 4px;
-  color: var(--text-secondary);
+  gap: 6px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--text);
   text-align: left;
 }
 
@@ -1640,11 +1694,29 @@ onUnmounted(() => {
   outline-offset: 1px;
 }
 
+/*
+ * 折叠箭头（2026-09-29）：旧版用「左侧一条 2px 灰竖线」表示展开状态，用户报障看不懂
+ * （「也不叫分支吧，很突兀」）。改成所有人都认识的 ▸/▾：同一个 chevron-right 图标，
+ * 展开时旋转 90°，既说明「这里能下拉」，也说明「现在展开着」。
+ */
+.toggle-chevron {
+  flex: none;
+  color: var(--text-faint);
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1), color 150ms ease;
+}
+
+.sec-row.expanded .toggle-chevron,
+.sub-group.expanded > .sub-head .toggle-chevron {
+  transform: rotate(90deg);
+  color: var(--text-secondary);
+}
+
 .sec-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
   font-size: 13.5px;
   font-weight: 600;
   letter-spacing: 0;
@@ -1661,7 +1733,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   padding: 0 3px;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -1691,8 +1763,36 @@ onUnmounted(() => {
   background: var(--sidebar-active);
 }
 
+/*
+ * 展开/收起的高度过渡。v-show 只能整块 display:none，展开是硬跳变（用户报障「下拉框拉下来
+ * 很突兀」）；这里用 grid 的 0fr↔1fr 让高度真的动起来，收起动画结束后再靠 visibility 把内容
+ * 移出 Tab 序列（否则键盘会 Tab 进看不见的行）。浏览器不支持 fr 插值时退化为原来的瞬间切换。
+ */
+.collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.collapse.collapsed {
+  grid-template-rows: 0fr;
+}
+
+.collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.collapse.collapsed > .collapse-inner {
+  visibility: hidden;
+  transition: visibility 0s linear 200ms;
+}
+
+/* 缩进导轨：一级分区内容缩进一格并带一条细分隔线，层级一眼看得出来 */
 .sec-body {
-  padding: 2px 0 5px 14px;
+  margin-left: 5px;
+  padding: 2px 0 6px 13px;
+  border-left: 1px solid var(--sidebar-hairline);
 }
 
 .sub-group {
@@ -1707,16 +1807,16 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   width: 100%;
+  min-height: 30px;
   align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  padding: 4px 8px 2px 4px;
+  gap: 6px;
+  padding: 0 8px 0 6px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
-  color: var(--text-faint);
-  font-size: 11px;
-  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
   letter-spacing: 0;
   text-align: left;
   cursor: pointer;
@@ -1724,7 +1824,7 @@ onUnmounted(() => {
 }
 
 .sub-head:hover {
-  color: var(--text-secondary);
+  color: var(--text);
   background: var(--sidebar-hover);
 }
 
@@ -1748,20 +1848,8 @@ onUnmounted(() => {
   outline-offset: 1px;
 }
 
-.sub-group.expanded > .sub-head::before {
-  content: '';
-  position: absolute;
-  top: 6px;
-  bottom: 4px;
-  left: 0;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--text-faint);
-  opacity: 0.5;
-}
-
 .sub-body {
-  padding: 1px 0 2px;
+  padding: 1px 0 4px 8px;
 }
 
 .sub-name {
@@ -1773,16 +1861,23 @@ onUnmounted(() => {
 
 .sub-count {
   min-width: 19px;
+  margin-left: auto;
   flex-shrink: 0;
   padding: 0 3px;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 18px;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
-.page-row {
+/*
+ * AI 工作区那几行（本文件自己的 .page-row.log-row 标记）。
+ * 选择器一律带上 .log-row：不这么写，父组件的 scoped 规则会连子组件（PageRow / FileRow）的
+ * 根元素一起命中——子组件根元素同时带父作用域标记，两边规则同权重，最后就看谁先注入，
+ * 结果是子组件的行高/圆角被这里悄悄盖掉（2026-09-29 手机版行高改不动就是这个原因）。
+ */
+.page-row.log-row {
   position: relative;
   height: 30px;
   min-width: 0;
@@ -1790,22 +1885,26 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   padding: 0 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   font-size: 12.5px;
   outline: none;
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
 }
 
-.page-row:hover {
+.page-row.log-row:hover {
   background: var(--sidebar-hover);
 }
 
-.page-row:focus-visible {
+.page-row.log-row:active {
+  background: var(--press-bg);
+}
+
+.page-row.log-row:focus-visible {
   box-shadow: inset 0 0 0 2px var(--sidebar-accent);
 }
 
-.page-row.active {
+.page-row.log-row.active {
   color: var(--text);
   background: var(--sidebar-selection);
   box-shadow: inset 0 0 0 1px var(--sidebar-selection-border);
@@ -1813,7 +1912,7 @@ onUnmounted(() => {
 }
 
 /* Win11 NavigationView 选中指示条：行左缘 3px 圆角强调色 pill */
-.page-row.active::before {
+.page-row.log-row.active::before {
   content: '';
   position: absolute;
   top: 7px;
@@ -1824,12 +1923,12 @@ onUnmounted(() => {
   background: var(--sidebar-accent);
 }
 
-.page-row.selected {
+.page-row.log-row.selected {
   background: var(--sidebar-selection-strong);
 }
 
 /* 图片拖到某个 md 条目上：行高亮，表示图片会成为这份内容的资产 */
-.page-row.asset-drop-hot {
+.page-row.log-row.asset-drop-hot {
   background: var(--sidebar-selection-strong);
   box-shadow: inset 0 0 0 1.5px var(--sidebar-accent);
 }
@@ -1990,6 +2089,22 @@ onUnmounted(() => {
     min-height: 44px;
   }
 
+  /* 触屏字号：抽屉里默认字号偏小（12.5px），手指点按的目标也偏扁。
+     分区名与子分组名各上调一档，和系统字体的实际观感对齐（安卓系统字体多数比 Segoe UI 大一号）。 */
+  .sec-name {
+    font-size: 14px;
+  }
+
+  .sub-head {
+    font-size: 13px;
+  }
+
+  /* 按住时的反馈：触屏没有 hover，只有 :active 这一层（形状跟着各自圆角走，不会变方） */
+  .sec-toggle:active,
+  .sub-head:active {
+    background: var(--press-bg);
+  }
+
   /* 排序弹层是纯手指操作（点一下选一种排序），选项从 30px 撑到 44px */
   .sort-menu-item {
     min-height: 44px;
@@ -2012,6 +2127,8 @@ onUnmounted(() => {
   .sec-row,
   .add-btn,
   .page-row,
+  .toggle-chevron,
+  .collapse,
   .rise-enter-active,
   .rise-leave-active {
     transition-duration: 0.01ms;

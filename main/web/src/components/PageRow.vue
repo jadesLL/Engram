@@ -120,7 +120,7 @@ const timeText = computed(() => {
   align-items: center;
   gap: 6px;
   padding: 0 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   font-size: 12.5px;
   outline: none;
@@ -245,17 +245,37 @@ const timeText = computed(() => {
 /* 触屏（无 hover + 粗指针）：把手指点得到的控件补到 44px，并让勾选框与 ⋯ 各占一端、互不重叠。
    桌面 hover 体验不受影响——这个媒体查询在鼠标设备上根本不匹配。 */
 @media (hover: none) and (pointer: coarse) {
+  /* 行高 30px → 40px、字号 12.5px → 13.5px：手机上原来又扁又小，点按容易点错、标题也读不清 */
+  .page-row {
+    height: 40px;
+    font-size: 13.5px;
+  }
+
+  /* 按住反馈：触屏没有 hover，只有 :active 这一层（底色跟着行的 6px 圆角，不会出现方角） */
+  .page-row:active {
+    background: var(--press-bg);
+  }
+
   /* 下载/归档/删除三个 22px 图标按钮：触屏上够不到，已由 ⋯ 菜单原样提供（见 onContextMenu） */
   .row-actions { display: none; }
+
+  /* 每行「几分钟前」的小字在手机上纯属噪声：标题被挤成省略号，信息量却几乎为零。
+     触屏不显示，把 34px 让给标题；桌面 hover 照旧。 */
+  .page-time { display: none; }
+
+  /* 行尾只剩一颗 ⋯：trailing 占位从 64px 收到 30px */
+  .row-trailing { width: 30px; }
 
   /* 勾选框：桌面靠 hover 才露出来，触屏没有 hover，不常显就永远看不见——
      而它是进入多选（Sidebar 的 selectionMode 由「已选中集合非空」推导）的唯一入口，
      所以触屏必须常显。14px 的方块手指按不准，热区靠透明伪元素铺到行首 44px；
-     纵向只吃满 30px 行高：行与行是紧贴的，再往外扩就会盖住上下相邻行，
+     纵向吃满整行（行高已抬到 40px），再往外扩就会盖住上下相邻行，
      在密集列表里点勾选会变成勾隔壁那条。 */
   .check {
     position: relative;
     opacity: 1;
+    /* 常显的勾选框用最浅一档描边：一列 10 个空方块很容易抢走标题的注意力 */
+    border-color: var(--border);
   }
   .check::after {
     content: '';
@@ -268,10 +288,7 @@ const timeText = computed(() => {
   /* 标题让开热区：44px 已经盖到标题原来的起点，不让开就成了「点标题变成勾选」 */
   .page-title { margin-left: 24px; }
 
-  /* 时间标签左移，给右侧 ⋯ 让位 */
-  .page-time { right: 28px; }
-
-  /* ⋯ 菜单：26px 同样偏小，热区补到 44×30（横向往标题侧伸，视觉图标位置不变） */
+  /* ⋯ 菜单：26px 同样偏小，热区补到 44×40（横向往标题侧伸，视觉图标位置不变） */
   .row-kebab {
     position: absolute;
     top: 50%;
@@ -289,8 +306,8 @@ const timeText = computed(() => {
   .row-kebab::after {
     content: '';
     position: absolute;
-    top: -2px;
-    bottom: -2px;
+    top: -7px;
+    bottom: -7px;
     left: -12px;
     right: -6px;
   }

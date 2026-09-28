@@ -626,6 +626,11 @@ onUnmounted(() => {
   background: var(--sidebar-hover);
 }
 
+/* 按下反馈：鼠标与触屏共用同一个令牌（触屏没有 hover，全靠这一层） */
+.rail-btn:active {
+  background: var(--press-bg);
+}
+
 .rail-btn:focus-visible,
 .rail-logo:focus-visible {
   outline: 2px solid var(--sidebar-accent);
@@ -970,6 +975,11 @@ onUnmounted(() => {
     justify-content: center;
     gap: 2px;
     color: var(--text-secondary);
+  }
+
+  /* 按下反馈：整栏是 12px 圆角的外壳，按钮自己只填底色、圆角交给外壳的 overflow 裁 */
+  .bottom-nav button:active {
+    background: var(--sidebar-active);
   }
 
   .bottom-nav button span { font-size: 10px; }
