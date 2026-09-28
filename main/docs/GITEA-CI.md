@@ -199,12 +199,15 @@ Linux 容器里交叉打 Windows exe 的三个必踩坑，脚本已内置修复�
 1. **`electron-builder --config.npmRebuild=false`**：EB 内置 @electron/rebuild 会按**当前平台（Linux）**重编原生模块，覆盖预放的 win32 二进制——打出的 `better_sqlite3.node` 是 Linux ELF，exe 能装但本地模式 dlopen 必崩。
 2. **`prebuild-install --platform win32`**：prebuild-install 默认按当前平台拉预编译，必须显式指定 win32。脚本内有 **MZ 头断言**（PE32 检查），非 Windows 二进制直接 fail，防止回归。
 3. **打包前删 `server/node_modules` 的 `.bin` 目录与悬空 symlink**：`--prod` 安装后 `.bin` 里残留指向 devDeps 的悬空链接，NSIS 的 7za 扫描到会报 exit 1。
+4. **预编译 ABI 必须由「本次实际打包的 Electron 版本」推导**（2026-09-28 v1.3.0 事故根因）：脚本原先写死 `electron-v133`（写死时的 Electron 是 35），而 9-16 已升到 Electron 36（需要 ABI 135）。CI 一路全绿，发布出去的 1.3.0 exe 里 `better_sqlite3.node` 却是 ABI 133 —— 内嵌 server 一启动就 `ERR_DLOPEN_FAILED`（`NODE_MODULE_VERSION 133 vs 135`）退出，桌面端只显示「本地服务启动失败：启动超时或内嵌服务异常」，**所有装了 1.3.0 的机器都进不去主界面**（1.2.5 及更早是 Electron 35 + ABI 133，同款预编译恰好正确）。现在：版本取 `desktop/node_modules/electron/package.json` → `desktop/scripts/lib/electron-abi.js` 推 ABI（内置表兜底、node-abi 可用时以它为准，未知主版本直接 fail）→ 下载对应 `electron-v<ABI>` 预编译 → `desktop/scripts/verify-packaged-abi.js` 静态校验（读 `.node` 里的 `node_register_module_v<ABI>` 符号，不运行它）预编译本身与 `dist/win-unpacked` 收包后的 binding。**教训：构建期「没报错」不等于产物可用**——原生模块 ABI 失配在打包阶段完全静默，只能靠产物断言兜住。
 
 打包端到端验证标准（每次构建 exe 时必做，发版 dispatch 构建与本地打包同标准）：
 ```bash
 # 1. 产物二进制平台正确
 file desktop-dist/win-unpacked/resources/app.asar.unpacked/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node
 # → 必须是 PE32+ executable for MS Windows
+# 1.5 原生模块 ABI 与打包的 Electron 一致（静态读符号；CI 与 pack-asar 已内置，这里是独立复核）
+node desktop/scripts/verify-packaged-abi.js --app-dir desktop-dist/win-unpacked
 # 2. fork server 起服务
 cd desktop-dist/win-unpacked && ELECTRON_RUN_AS_NODE=1 "./Engram.exe" resources/app.asar/server/dist/index.js &
 curl http://localhost:18080/health   # → 200

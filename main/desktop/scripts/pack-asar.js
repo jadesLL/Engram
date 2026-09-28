@@ -103,4 +103,20 @@ if (fs.existsSync(exeSrc) && !fs.existsSync(exeDst)) {
     bins.forEach((b) => console.log('  ' + path.relative(unpackedDir, b)));
     if (bins.length === 0) console.log('  (无，asarUnpack 可能未生效)');
   }
+
+  // 4. ABI 校验：解包出来的 better_sqlite3.node 必须与 dist/win-unpacked 里那份 Electron 的 ABI 一致。
+  //    手动打包同样会踩 v1.3.0 那个坑（binding 的 ABI 与 Electron 版本脱节 → 内嵌 server 一启动就
+  //    ERR_DLOPEN_FAILED，桌面端只显示「本地服务启动失败」），这里直接拦死，不产出装上去打不开的 exe。
+  try {
+    const verify = require('./verify-packaged-abi');
+    const abiLib = require('./lib/electron-abi');
+    const electronPkg = path.join(desktopRoot, 'node_modules', 'electron', 'package.json');
+    const electronVersion = JSON.parse(fs.readFileSync(electronPkg, 'utf8')).version;
+    const binding = verify.resolveBinding({ appDir: winUnpacked, binding: '' });
+    const result = abiLib.assertBindingAbi({ bindingFile: binding, electronVersion });
+    console.log(`[pack-asar] ✓ better-sqlite3 ABI ${result.abi} 与 Electron ${electronVersion} 一致`);
+  } catch (e) {
+    console.error('[pack-asar] ✗ 原生模块 ABI 校验失败：' + (e && e.message ? e.message : e));
+    process.exitCode = 1;
+  }
 })();

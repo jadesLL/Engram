@@ -50,14 +50,15 @@
 
 1. **组装 win-unpacked**：
    * `pnpm -C desktop/server install --prod --node-linker=hoisted --ignore-workspace --no-frozen-lockfile`（ignored builds 的 exit 1 用 `|| true` 容忍）。
-   * 手动补 better-sqlite3 native：从 `main/node_modules/better-sqlite3/build/Release/better_sqlite3.node` 复制到 `desktop/server/node_modules/better-sqlite3/build/Release/`（缺失则 server 启动报 `Could not locate the bindings file`）。
+   * better-sqlite3 native 的 ABI 必须匹配打包进去的 Electron：用 `node desktop/scripts/sync-deps.js server` 取对应 ABI 的 prebuild（它直接问 Electron 运行时要 `process.versions.modules`）；**不要**直接从 `main/node_modules/better-sqlite3/build/Release/` 拷——那是系统 Node 的 ABI，装进 exe 会 `ERR_DLOPEN_FAILED`（v1.3.0 事故同类）。
    * 完整解压 electron 运行时：`powershell -Command "Expand-Archive electron-v36.9.5-win32-x64.zip dist/win-unpacked"`——必须得到含 `electron.exe` 的完整目录，否则 pack-asar 仍会跑但产出的 exe 无法启动。
    * `node desktop/scripts/pack-asar.js` 生成 `resources/app.asar` + `app.asar.unpacked/`，三个原生模块（better-sqlite3/sqlite-vec/@napi-rs/canvas）解包（`desktop/package.json` 已设 `asar: true` + `asarUnpack`）。
-2. **打 NSIS 安装包**：`cd desktop && pnpm exec electron-builder --prepackaged dist/win-unpacked --win nsis`，产出 `Engram Setup <version>.exe`，复制到 `releases/<version>/` 并记录提交 ID、构建时间、sha256。
+2. **打 NSIS 安装包**：先 `node desktop/scripts/verify-packaged-abi.js --app-dir dist/win-unpacked` 确认原生模块 ABI 与 Electron 一致，再 `cd desktop && pnpm exec electron-builder --prepackaged dist/win-unpacked --win nsis`，产出 `Engram Setup <version>.exe`，复制到 `releases/<version>/` 并记录提交 ID、构建时间、sha256。
 
 **关键坑**：
 
 * `node-linker=hoisted` 必须带：否则原生模块是 symlink，asar 解包重建因非管理员无 symlink 权限失败。
+* **原生模块 ABI 必须与打包进去的 Electron 一致**（2026-09-28 v1.3.0 事故根因）：CI 打包脚本把 better-sqlite3 预编译写死成 `electron-v133`，而 Electron 已于 9-16 升到 36（ABI 135），发布出去的 1.3.0 exe 内嵌 server 一启动就 `NODE_MODULE_VERSION 133 vs 135` 退出，**所有装了 1.3.0 的机器都停在「本地服务启动失败」**。现在 ABI 一律由**实际打包的 Electron 版本**推导（`desktop/scripts/lib/electron-abi.js`，表兜底 + node-abi 权威），打包后静态校验 `.node` 里的 `node_register_module_v<ABI>` 符号（`desktop/scripts/verify-packaged-abi.js`）；CI（`scripts/build-desktop-ci.sh`）与手动 `pack-asar.js` 都已接上这一步，校验失败即打包失败。
 * `zod` 必须 3.25.76（旧版无 `zod/v3` exports 致 MCP SDK ESM 崩，`prepare-desktop.js` 已固定）。
 * `Engram.exe` 测试后不退出会锁 `@napi-rs/canvas` 的 `skia.node`，再跑 pack-asar 报 EBUSY：`taskkill /F /IM "Engram.exe"` 强杀 + 删 `app.asar`/`app.asar.unpacked` 后重跑。
 * sqlite-vec 在 asar 下 `loadExtension` 需真实路径：`server/src/lib/db.ts` 已把路径转成 `app.asar.unpacked`；**改了 db.ts 必须重 build server**，否则本地模式必崩。
