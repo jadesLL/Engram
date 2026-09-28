@@ -42,14 +42,20 @@ pnpm -C desktop/server install --prod \
   --config.os=win32 --config.cpu=x64 --config.arch=x64
 
 echo ">> 拉取 better-sqlite3 的 Electron win32-x64 预编译"
+# ABI 必须由**本次实际打包的 Electron 版本**推导，绝不写死：写死会在 Electron 升版后失配，而 CI 照样
+# 全绿 —— v1.3.0 的 exe 就是这么坏的（9-16 升到 Electron 36 需要 ABI 135，脚本却仍下 ABI 133 的
+# 预编译；内嵌 server 一启动就 ERR_DLOPEN_FAILED，所有装了 1.3.0 的机器都卡在「本地服务启动失败」）。
+BETTER_SQLITE3_VERSION="$(node -p "require('./desktop/server/node_modules/better-sqlite3/package.json').version")"
+ELECTRON_VERSION="$(node -p "require('./desktop/node_modules/electron/package.json').version")"
+ELECTRON_ABI="$(node -e "process.stdout.write(String(require('./desktop/scripts/lib/electron-abi.js').abiForElectronVersion(process.argv[1])))" "$ELECTRON_VERSION")"
+BETTER_SQLITE3_TARBALL="better-sqlite3-v${BETTER_SQLITE3_VERSION}-electron-v${ELECTRON_ABI}-win32-x64.tar.gz"
+echo "   better-sqlite3 v${BETTER_SQLITE3_VERSION} · Electron ${ELECTRON_VERSION} → ABI ${ELECTRON_ABI}"
 cd desktop/server/node_modules/better-sqlite3
 # GitHub releases 在受限网络不可达。prebuild-install 的镜像拼接路径不可控
-#（会拼出软 404 HTML 页报 incorrect header check），直接取精确文件解压：
-# Electron 35 → ABI v133，npmmirror binaries 按该名存放
-BETTER_SQLITE3_TARBALL="better-sqlite3-v12.11.1-electron-v133-win32-x64.tar.gz"
+#（会拼出软 404 HTML 页报 incorrect header check），直接取精确文件解压
 # --retry-all-errors：npmmirror 偶发断连/5xx 在默认 --retry 下不算可重试错误（09-06 发版三连失败根因）
 if curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$BETTER_SQLITE3_TARBALL" \
-  "https://registry.npmmirror.com/-/binary/better-sqlite3/v12.11.1/$BETTER_SQLITE3_TARBALL"; then
+  "https://registry.npmmirror.com/-/binary/better-sqlite3/v${BETTER_SQLITE3_VERSION}/$BETTER_SQLITE3_TARBALL"; then
   tar -xzf "$BETTER_SQLITE3_TARBALL"
   rm -f "$BETTER_SQLITE3_TARBALL"
 else
@@ -65,6 +71,10 @@ if ! head -c 2 build/Release/better_sqlite3.node | grep -q MZ; then
   exit 1
 fi
 cd -
+# 断言预编译的 ABI 就是上面推导出来的那个（静态读 .node 里的 node_register_module_v<ABI> 符号）
+node desktop/scripts/verify-packaged-abi.js \
+  --binding desktop/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
+  --electron-version "$ELECTRON_VERSION"
 
 echo ">> 打包 NSIS（electron-builder 完整流程，wine）"
 cd desktop
@@ -86,6 +96,12 @@ find server/node_modules -xtype l -delete 2>/dev/null || true
 cp build/icon.png icon.png
 cp build/mark-dark.svg mark-dark.svg
 npx electron-builder --win nsis --config.npmRebuild=false
+
+# 收包后校验：asar 解包出来的 better_sqlite3.node 必须与 electron-builder 实际打包进去的 Electron
+# 版本 ABI 一致（EB 写在 dist/builder-effective-config.yaml 里）。这一条是 v1.3.0 事故的兜底护栏：
+# 上面推导错了、或者 EB 换了 Electron 版本，这里立刻失败，绝不产出「装上去打不开」的 exe。
+echo ">> 校验安装包内原生模块 ABI"
+node scripts/verify-packaged-abi.js --app-dir dist/win-unpacked
 
 echo ">> 产物清单"
 ls -la dist/*.exe

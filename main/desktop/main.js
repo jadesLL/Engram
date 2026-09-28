@@ -403,8 +403,28 @@ async function startLocalMode(notice) {
   } catch (e) {
     // 调用方都不 await，异常若逃逸即 unhandledRejection → 主进程静默退出
     log('[local] 启动本地服务异常：' + describeError(e));
-    loadWin(dataUrl(errorPage('本地服务启动失败', ['启动过程出错：', describeError(e)])));
+    loadWin(dataUrl(errorPage('本地服务启动失败', failureLines(['启动过程出错：', describeError(e)]))));
   }
+}
+
+// 内嵌 server 最近输出（stdout/stderr 合并，只留尾部几行）。启动失败时把这几行直接显示在错误页上：
+// 只写「详见日志」用户定位不了问题——%APPDATA% 下的 app.log 动辄几百 MB，报错行早被请求日志淹没
+// （v1.3.0 就是这样：所有人只看到「启动超时或内嵌服务异常」，真正的 ERR_DLOPEN_FAILED 在日志里）。
+const SERVER_TAIL_LINES = 6;
+let serverTail = [];
+
+function pushServerTail(chunk) {
+  for (const raw of String(chunk).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    serverTail.push(line.length > 240 ? line.slice(0, 240) + '…' : line);
+  }
+  if (serverTail.length > SERVER_TAIL_LINES) serverTail = serverTail.slice(-SERVER_TAIL_LINES);
+}
+
+/** 启动失败页的内容：固定线索 + 内嵌服务最后输出（有就附带） */
+function failureLines(lines) {
+  return serverTail.length ? [...lines, '内嵌服务最后输出（排查线索）：', ...serverTail] : lines;
 }
 
 async function startLocalModeInner(notice) {
@@ -445,9 +465,19 @@ async function startLocalModeInner(notice) {
   // 命门：必须 fork（默认 execPath=electron.exe）+ ELECTRON_RUN_AS_NODE，子进程才以 Electron 纯
   // Node 模式运行、能读 app.asar 内的 node_modules；改 spawn('node') 会让 server 读不了 asar。
   serverChild = fork(entry, [], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
-  serverChild.stdout.on('data', (d) => log('[server] ' + d.toString().trim()));
-  serverChild.stderr.on('data', (d) => log('[server!] ' + d.toString().trim()));
-  serverChild.on('exit', (code) => log(`[server] exited code=${code}`));
+  serverTail = []; // 新的一轮启动：清掉上一次的尾部输出，错误页只显示本次线索
+  serverChild.stdout.on('data', (d) => {
+    pushServerTail(d);
+    log('[server] ' + d.toString().trim());
+  });
+  serverChild.stderr.on('data', (d) => {
+    pushServerTail(d);
+    log('[server!] ' + d.toString().trim());
+  });
+  serverChild.on('exit', (code) => {
+    pushServerTail(`内嵌服务进程已退出（code=${code}）`);
+    log(`[server] exited code=${code}`);
+  });
   // 子进程 spawn 失败只发 'error' 事件；无监听者会变成 uncaughtException 直接带走主进程
   serverChild.on('error', (e) => log('[server] spawn 失败：' + describeError(e)));
 
@@ -461,13 +491,13 @@ async function startLocalModeInner(notice) {
         setSplashStatus('启动完成，正在进入界面…');
         loadWin(base);
       } else {
-        loadWin(dataUrl(errorPage('本地服务启动失败', ['启动超时或内嵌服务异常，详见日志：', logFile()])));
+        loadWin(dataUrl(errorPage('本地服务启动失败', failureLines(['启动超时或内嵌服务异常，详见日志：', logFile()]))));
       }
     })
     .catch((e) => {
       clearTimeout(slowHint);
       log('[local] 探活异常：' + describeError(e));
-      loadWin(dataUrl(errorPage('本地服务启动失败', ['探活过程出错：', describeError(e)])));
+      loadWin(dataUrl(errorPage('本地服务启动失败', failureLines(['探活过程出错：', describeError(e)]))));
     });
 }
 
