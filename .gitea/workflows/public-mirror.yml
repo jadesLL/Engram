@@ -45,6 +45,10 @@ jobs:
         uses: https://gitea.com/actions/checkout@v4
         with:
           fetch-depth: 0
+          # 显式检出分支：标签推送时 checkout 只带那个标签的引用，而快照脚本按分支推送
+          # refs/heads/main（2026-09-28 v1.3.0 标签推送实测：没有 refs/heads/main 直接
+          # fatal: ambiguous argument，标签触发的镜像从未成功过）。标签本身仍随 fetch-depth: 0 取到。
+          ref: main
 
       - name: 安装 git-filter-repo
         shell: bash

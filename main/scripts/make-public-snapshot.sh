@@ -209,7 +209,11 @@ fi
 echo ">> 克隆临时裸副本..."
 git clone --bare --no-local --quiet "$SRC_REPO_NAT" "$(nat "$SNAP")"
 g remote remove origin >/dev/null 2>&1 || true
-SNAP_MAIN_BEFORE="$(g rev-parse "refs/heads/$BRANCH")"
+# 快照 refs 指纹：标签推送时 CI 检出的是 detached tag，裸副本里**没有** refs/heads/main
+# （旧写法 rev-parse refs/heads/main 直接 fatal: ambiguous argument，标签触发的镜像必挂）；
+# 用「全部 refs 的指纹」判 filter-repo 有没有真的改写，两种情况都成立。
+snap_fp() { g for-each-ref --format='%(refname) %(objectname)' | sort | sha256sum; }
+SNAP_FP_BEFORE="$(snap_fp)"
 
 # ---------- 护栏 2 ----------
 cd "$SNAP"
@@ -243,9 +247,9 @@ if [ "$SRC_FP_BEFORE" != "$SRC_FP_AFTER" ]; then
 fi
 echo ">> 护栏 3 通过：源仓库 refs 指纹未变"
 
-SNAP_MAIN_AFTER="$(g rev-parse "refs/heads/$BRANCH")"
-[ "$SNAP_MAIN_BEFORE" != "$SNAP_MAIN_AFTER" ] || { echo "!! 快照 main 未变化，filter-repo 未生效" >&2; exit 1; }
-echo ">> 快照 $BRANCH: ${SNAP_MAIN_BEFORE:0:7} -> ${SNAP_MAIN_AFTER:0:7}"
+SNAP_FP_AFTER="$(snap_fp)"
+[ "$SNAP_FP_BEFORE" != "$SNAP_FP_AFTER" ] || { echo "!! 快照 refs 未变化，filter-repo 未生效" >&2; exit 1; }
+echo ">> 快照 refs 指纹: ${SNAP_FP_BEFORE:0:12} -> ${SNAP_FP_AFTER:0:12}"
 
 # ---------- 校验：逐条规则反查全历史 ----------
 # 校验范围必须与「脱敏实际覆盖到的内容」对齐，否则会把无害的东西判成泄漏：
