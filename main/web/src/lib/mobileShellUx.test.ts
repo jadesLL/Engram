@@ -207,16 +207,21 @@ test('手机上的小控件热区：搜索范围胶囊、收集箱筛选、图�
   assert.match(inbox, /\.page-head \.sub \{ order: 2; flex: 1 1 100%/, '收集箱页头在手机上不换行：标题会被压成竖排');
 
   const graph = readSrc('views/GraphView.vue');
-  assert.match(graph, /const panelOpen = ref\(window\.innerWidth > 768\)/, '图谱设置面板在手机上默认展开：一进来就盖住图');
+  assert.match(graph, /const facetsOpen = ref\(window\.innerWidth > 768\)/, '图谱筛选面板在手机上默认展开：一进来就盖住图');
   assert.match(
     graph,
-    /@media \(hover: none\) and \(pointer: coarse\)[\s\S]{0,700}\.g-sw \{ width: 46px; height: 26px; \}/,
+    /@media \(hover: none\) and \(pointer: coarse\)[\s\S]{0,700}\.gv-sw \{ width: 46px; height: 26px; \}/,
     '图谱开关在触屏上仍是 32×18',
   );
   assert.match(
     graph,
-    /\.g-panel \{[\s\S]{0,320}bottom: calc\(72px \+ var\(--safe-bottom\)\)/,
-    '图谱面板没有抬到底部导航之上：底部会被导航压住',
+    /\.gv-facets \{[\s\S]{0,320}bottom: calc\(72px \+ var\(--safe-bottom\)\)/,
+    '图谱筛选面板没有抬到底部导航之上：底部会被导航压住',
+  );
+  assert.match(
+    graph,
+    /\.gv-detail \{[\s\S]{0,320}bottom: calc\(72px \+ var\(--safe-bottom\)\)/,
+    '图谱详情面板没有抬到底部导航之上：底部会被导航压住',
   );
 });
 

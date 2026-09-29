@@ -3,13 +3,34 @@ import { db } from '../lib/db.js';
 import { requireAuth } from './auth.js';
 import { getGraphCache, setGraphCache } from '../lib/graphCache.js';
 
+/**
+ * pages.tags 正常是 JSON 数组字符串（如 ["客户","天津"]），历史数据里也可能是逗号分隔的纯文本，
+ * 两种都容忍；解析失败一律当无标签，不让图谱接口因为一行脏数据 500。
+ */
+function parseTags(raw: unknown): string[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  const text = String(raw).trim();
+  if (!text) return [];
+  if (text.startsWith('[')) {
+    try {
+      const arr = JSON.parse(text);
+      return Array.isArray(arr) ? arr.map(String).filter(Boolean) : [];
+    } catch {
+      /* 落到下面的分隔符解析 */
+    }
+  }
+  return text.split(/[,，;；\s]+/).map((t) => t.trim()).filter(Boolean);
+}
+
 export async function graphRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
   /**
    * 图谱数据：全局（?scope=global）或单页局部（?scope=page&id=xxx&depth=2）
    * 返回精简 nodes/edges，渲染样式（颜色/大小/虚线）由前端统一负责。
-   * 节点字段：id/label/group/raw/words；边字段：from/to（实体边额外带 label）。
+   * 节点字段：id/label/group/raw/words/tags/updatedAt；边字段：from/to（实体边额外带 label）。
+   * tags 与 updatedAt 供「业务视图」做筛选与聚合（按区域/等级/分组/行业、按更新时间）。
    */
   app.get('/api/graph', async (req) => {
     const { scope, id, depth } = req.query as { scope?: string; id?: string; depth?: string };
@@ -70,7 +91,7 @@ export async function graphRoutes(app: FastifyInstance) {
     const ph = ids.map(() => '?').join(',');
 
     const pages = db
-      .prepare(`SELECT id, title, type, path, word_count FROM pages WHERE deleted = 0 AND id IN (${ph})`)
+      .prepare(`SELECT id, title, type, path, word_count, tags, updated_at FROM pages WHERE deleted = 0 AND id IN (${ph})`)
       .all(...ids) as any[];
 
     const edges = db
@@ -86,6 +107,9 @@ export async function graphRoutes(app: FastifyInstance) {
       group: p.type,
       raw: p.path.startsWith('原始资料/'),
       words: p.word_count || 0,
+      // 业务视图用：标签（区域/客户等级/分组/行业）与最后更新时间
+      tags: parseTags(p.tags),
+      updatedAt: (p.updated_at || '').slice(0, 10),
     }));
 
     const vEdges: any[] = [];
@@ -98,7 +122,7 @@ export async function graphRoutes(app: FastifyInstance) {
         const deadId = `dead:${e.dst_title}`;
         if (!deadSet.has(deadId)) {
           deadSet.add(deadId);
-          nodes.push({ id: deadId, label: e.dst_title, group: 'dead', raw: false, words: 0 });
+          nodes.push({ id: deadId, label: e.dst_title, group: 'dead', raw: false, words: 0, tags: [], updatedAt: '' });
         }
         vEdges.push({ from: e.src_page, to: deadId });
       }
@@ -118,7 +142,7 @@ export async function graphRoutes(app: FastifyInstance) {
         const nid = `ent:${e.entity_id}`;
         if (!entSet.has(e.entity_id)) {
           entSet.add(e.entity_id);
-          nodes.push({ id: nid, label: e.name, group: `entity-${e.type}`, raw: false, words: 0 });
+          nodes.push({ id: nid, label: e.name, group: `entity-${e.type}`, raw: false, words: 0, tags: [], updatedAt: '' });
         }
         vEdges.push({ from: e.src_page, to: nid, label: e.rel });
       }
