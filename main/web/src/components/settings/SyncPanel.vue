@@ -50,12 +50,36 @@
         </div>
         <div class="role-card">
           <h4>加入同步群组</h4>
-          <p>绑定到已有的中枢：填写中枢地址与在中枢上为这台设备生成的绑定令牌。绑定后本机照常离线工作，联网时自动双向同步。</p>
+          <p>绑定到已有的中枢：在中枢上「添加成员」后会给出二维码与邀请链接——手机扫一下、或把链接发过来粘贴，中枢地址与绑定令牌就自动填好了；也可以按老办法手填。绑定后本机照常离线工作，联网时自动双向同步。</p>
           <button class="btn" type="button" @click="pickJoin = true">绑定中枢</button>
         </div>
       </div>
 
       <div v-if="pickJoin" class="sync-config">
+        <!-- 邀请链接导入：中枢那头的「复制邀请链接 / 二维码」就是喂给这两条路的——
+             粘贴导入是「一键复制链接」的对端，扫码是手机对着中枢屏幕。两者二选一，都不用再手抄。 -->
+        <div class="field-row invite-import">
+          <label for="sync-invite">邀请链接（可选）</label>
+          <div class="invite-import-row">
+            <input
+              id="sync-invite"
+              v-model="inviteText"
+              type="text"
+              placeholder="engram://join?hub=…&token=…"
+              spellcheck="false"
+              @input="applyInviteText()"
+            />
+            <button class="btn small" type="button" @click="pasteInvite">粘贴</button>
+            <button v-if="scanSupported" class="btn small" type="button" @click="scanning = true">
+              <Icon name="scan" :size="14" />
+              扫码
+            </button>
+          </div>
+          <p v-if="inviteNotice" class="invite-notice" :class="inviteNoticeTone">{{ inviteNotice }}</p>
+          <p v-else class="faint small">
+            在中枢那台设备的「同步群组 → 添加成员」里点「复制邀请链接」发过来粘贴；手机端也可以直接扫中枢屏幕上的二维码。
+          </p>
+        </div>
         <div class="field-row">
           <label for="sync-hub-url">中枢地址</label>
           <input id="sync-hub-url" v-model="hubUrl" type="text" placeholder="http://192.168.x.x:18080 或 https://engram.xxx.com" spellcheck="false" />
@@ -122,7 +146,8 @@
         </div>
         <p class="faint small">
           为每台成员设备命名并生成绑定令牌；这个名字就是各端看到的「来自 &lt;名字&gt;」（不再用设备主机名）。
-          令牌与中枢地址一起填到对应设备的「多端同步」设置里。点击令牌可展开查看完整值。
+          点成员右侧的「邀请」会给出二维码与邀请链接——手机扫码、其他端粘贴链接即可绑定，不必手抄；
+          也可以照旧把令牌与中枢地址填到对应设备的「多端同步」设置里。点击令牌可展开查看完整值。
         </p>
         <ul v-if="peers.length" class="peer-list">
           <li v-for="p in peers" :key="p.id" class="peer-row">
@@ -142,6 +167,7 @@
               </span>
             </div>
             <div class="peer-actions">
+              <button class="btn small" type="button" @click="showPeerInvite(p)">邀请</button>
               <button class="btn small" type="button" @click="regenPeer(p)">重置令牌</button>
               <button class="text-action danger" type="button" @click="revokePeer(p)">移除</button>
             </div>
@@ -172,6 +198,36 @@
             <button class="btn small" type="button" @click="copy(newPeer.token)">复制</button>
           </div>
         </div>
+
+        <!-- 二维码 + 邀请链接：手机扫一下、其他端粘贴一下，省掉手抄地址与 54 位令牌。
+             中枢有多条可达地址时（局域网 + 域名）先选一条，链接与二维码都按它生成。 -->
+        <div v-if="hubAddresses.length > 1" class="field-row invite-address-row">
+          <label for="sync-invite-address">邀请链接用的地址</label>
+          <AppSelect id="sync-invite-address" v-model="inviteAddressUrl" :options="inviteAddressOptions" />
+        </div>
+        <div v-if="inviteLink" class="invite-card">
+          <QrCode :text="inviteLink" :size="260" :alt="`邀请「${newPeer.name}」加入同步群组的二维码`" />
+          <div class="invite-card-body">
+            <strong>让「{{ newPeer.name }}」扫码或粘贴链接</strong>
+            <p class="faint small">
+              手机端：设置 → 多端同步 → 绑定中枢 → 扫码，对准左边这个二维码；
+              其他端：点下面的「复制邀请链接」发到那台设备，在「绑定中枢」里粘贴导入。两种方式二选一。
+            </p>
+            <div class="invite-actions">
+              <button class="btn small primary" type="button" @click="copyInviteLink">
+                <Icon name="link" :size="14" />
+                复制邀请链接
+              </button>
+            </div>
+            <p class="faint small">
+              链接里含这枚绑定令牌，只发给这一台设备；绑定成功后可在成员列表里重置令牌。
+            </p>
+          </div>
+        </div>
+        <p v-else class="faint small">
+          这条邀请暂时只能手抄：没有可用的成员绑定地址（见上方说明）——先在部署侧声明对外地址，
+          或打开「允许局域网访问」后回到这里，二维码会自动出现。
+        </p>
         <button class="btn small" type="button" @click="newPeer = null">我已保存，关闭</button>
       </div>
 
@@ -349,16 +405,28 @@
   >
     <DdnsSection />
   </SettingsGroup>
+
+  <!-- 扫码浮层（挂到 body）：只在本机「绑定中枢」时出现，扫到内容后由 onScanResult 解析并回填 -->
+  <QrScannerOverlay
+    :open="scanning"
+    title="扫码绑定中枢"
+    hint="把中枢屏幕上「添加成员 / 邀请」里的二维码放进取景框，识别后会自动填好中枢地址与绑定令牌"
+    @close="scanning = false"
+    @result="onScanResult"
+  />
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api } from '../../api';
 import { promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import DdnsSection from './DdnsSection.vue';
 import Icon from '../Icon.vue';
 import SettingsGroup from './SettingsGroup.vue';
+import AppSelect from '../ui/AppSelect.vue';
+import QrCode from '../ui/QrCode.vue';
+import QrScannerOverlay from '../ui/QrScannerOverlay.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
@@ -371,6 +439,9 @@ import {
   hubSkippedNotice as hubSkippedNoticeText,
   type HubAddressReport,
 } from '../../lib/hubAddress';
+import { buildInviteLink, describeInvite, parseInviteLink } from '../../lib/syncInvite';
+import { cameraScanSupport } from '../../lib/qrScan';
+import { pendingJoinLink, takePendingJoinLink } from '../../lib/joinLink';
 import SecretField from '../SecretField.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSyncStore } from '../../stores/sync';
@@ -500,6 +571,38 @@ const primaryHubAddress = computed(() => primaryBindingAddress(hubAddress.value)
 const hubAddressNotice = computed(() => hubAddressNoticeText(hubAddress.value, { desktop: lanAccessSupported.value }));
 /** 回环地址被剔除时的说明：让用户明白「为什么这里不再是 127.0.0.1」 */
 const hubSkippedNotice = computed(() => hubSkippedNoticeText(hubAddress.value));
+
+// ---------------------------------------------------------------- 邀请链接（二维码 / 复制 / 粘贴 / 扫码）
+//
+// 绑定要填「中枢地址 + 54 位绑定令牌」，手抄最容易错。中枢把两者拼成一条 engram://join?… 链接：
+// 手机扫二维码、其他端复制链接发过去粘贴，两种方式二选一（见 lib/syncInvite 的格式说明）。
+
+/** 邀请链接里用的中枢地址：默认主地址，中枢有多条可达地址（局域网 + 域名）时才让用户挑 */
+const inviteAddressUrl = ref('');
+const inviteAddressOptions = computed(() => hubAddresses.value.map((item) => ({
+  value: item.url,
+  label: `${item.label} · ${item.url}`,
+})));
+const inviteHubUrl = computed(() => {
+  const chosen = inviteAddressUrl.value;
+  // 地址清单会随网络变化刷新：选过的那条不在了就回退到主地址，不拼一条已经不存在的地址
+  if (chosen && hubAddresses.value.some((item) => item.url === chosen)) return chosen;
+  return primaryHubAddress.value;
+});
+/** 当前展示中的成员邀请链接；没有可用地址时为 ''，界面据此说明原因而不是画一张空码 */
+const inviteLink = computed(() => {
+  const peer = newPeer.value;
+  if (!peer || !inviteHubUrl.value) return '';
+  return buildInviteLink({ hubUrl: inviteHubUrl.value, token: peer.token, name: peer.name });
+});
+
+/** 成员端：粘贴/扫码拿到的链接原文，以及解析结果提示 */
+const inviteText = ref('');
+const inviteNotice = ref('');
+const inviteNoticeTone = ref<'ok' | 'bad'>('ok');
+const scanning = ref(false);
+/** 当前打开方式能不能调摄像头：浏览器只允许 https / localhost 用摄像头（局域网 http 页面调不了） */
+const scanSupported = cameraScanSupport().supported;
 
 // 设置页二级导航的状态徽标：一眼看出本机是中枢、成员还是尚未参与同步
 useSettingsBadge(
@@ -659,6 +762,89 @@ async function copy(text: string): Promise<void> {
   } catch {
     notify.error('复制失败，请手动选择复制');
   }
+}
+
+/** 复制邀请链接：一句话说清「这条链接拿去干什么」（与上面通用复制的提示区分开） */
+async function copyInviteLink(): Promise<void> {
+  const link = inviteLink.value;
+  if (!link) return;
+  try {
+    await navigator.clipboard.writeText(link);
+    notify.success('邀请链接已复制：发到那台设备上粘贴导入，或用手机扫二维码');
+  } catch {
+    notify.error('复制失败：请在成员列表里复制令牌，手动填到那台设备上');
+  }
+}
+
+/** 成员端：解析输入框里的邀请链接并回填中枢地址与令牌；返回是否解析成功 */
+function applyInviteText(): boolean {
+  const raw = inviteText.value.trim();
+  if (!raw) {
+    inviteNotice.value = '';
+    return false;
+  }
+  const invite = parseInviteLink(raw);
+  if (!invite) {
+    // 手输过程中的半截内容不算错误（本来就不像链接）；只有「看着像链接却解析不出来」才报错
+    if (/engram|:\/\//i.test(raw)) {
+      inviteNoticeTone.value = 'bad';
+      inviteNotice.value = '这看起来不是 Engram 邀请链接：正确的以 engram://join? 开头，在中枢那台设备上点「复制邀请链接」再发过来。';
+    } else {
+      inviteNotice.value = '';
+    }
+    return false;
+  }
+  hubUrl.value = invite.hubUrl;
+  hubToken.value = invite.token;
+  inviteNoticeTone.value = 'ok';
+  inviteNotice.value = `已识别：${describeInvite(invite)}。确认无误后点下面的「保存并绑定」。`;
+  return true;
+}
+
+/** 粘贴按钮：读剪贴板（浏览器可能要求用户授权，失败时提示手动长按粘贴） */
+async function pasteInvite(): Promise<void> {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text.trim()) {
+      notify.info('剪贴板里没有内容');
+      return;
+    }
+    inviteText.value = text.trim();
+    applyInviteText();
+  } catch {
+    notify.error('读不到剪贴板：请长按上面的输入框手动粘贴');
+  }
+}
+
+/** 扫码结果：扫到的可能不是 Engram 的邀请链接（对着别的二维码扫了），两种结果分开提示 */
+function onScanResult(text: string): void {
+  scanning.value = false;
+  inviteText.value = String(text || '').trim();
+  if (applyInviteText()) notify.success('已从二维码读出中枢地址与绑定令牌');
+  else notify.error('扫到的内容不是 Engram 邀请链接');
+}
+
+/** 成员列表的「邀请」按钮：把这台设备的绑定信息（含二维码）重新摊开 */
+function showPeerInvite(peer: PeerView): void {
+  newPeer.value = { ...peer, token: peer.token };
+}
+
+/**
+ * 安卓「点链接打开应用」进来的邀请链接：填进「绑定中枢」表单并展开它。
+ * 已经参与同步的设备不静默改写配置——换中枢要先解除绑定/退出中枢角色，这里只给一句明确提示。
+ */
+function applyPendingJoinLink(): void {
+  const raw = takePendingJoinLink();
+  if (!raw) return;
+  const role = status.value?.role;
+  if (role && role !== 'none') {
+    notify.info('收到邀请链接：这台设备已参与同步群组，需先「解除绑定」/「退出中枢角色」再绑定新中枢');
+    return;
+  }
+  pickJoin.value = true;
+  inviteText.value = raw;
+  if (applyInviteText()) notify.success('已从邀请链接填好中枢地址与绑定令牌');
+  else notify.error('这条链接不是有效的 Engram 邀请链接');
 }
 
 async function loadStatus(): Promise<void> {
@@ -955,9 +1141,14 @@ onMounted(async () => {
     hubUrl.value = status.value.hubUrl || '';
     directUrlsText.value = (status.value.directUrls || []).join('\n');
   }
+  // 安卓点邀请链接进来时，链接可能比这个面板先到（见 lib/joinLink）
+  applyPendingJoinLink();
   await loadLanAccess();
   pollTimer = window.setInterval(loadStatus, 5000);
 });
+
+// 面板已经在设置页开着、用户又点了一条邀请链接（如从聊天软件切回来）：同样就地填表
+watch(pendingJoinLink, () => applyPendingJoinLink());
 
 onUnmounted(() => {
   if (pollTimer !== null) window.clearInterval(pollTimer);
@@ -1119,6 +1310,51 @@ onUnmounted(() => {
   gap: 10px;
 }
 .new-peer-card h4 { margin: 0; font-size: 14px; }
+
+/* ---- 邀请：二维码 + 复制链接（中枢）/ 粘贴 + 扫码（成员） ---- */
+/* 二维码与说明左右排：窄屏（手机看中枢设置页）自动换行，二维码不会被压小 */
+.invite-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+  border-radius: 8px;
+  padding: 12px;
+}
+.invite-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: min(240px, 100%);
+}
+.invite-card-body strong { font-size: 13px; }
+.invite-card-body p { margin: 0; }
+.invite-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.invite-address-row { max-width: 520px; }
+
+.invite-import-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.invite-import-row input { flex: 1; min-width: min(220px, 100%); }
+.invite-import-row .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.invite-notice {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  word-break: break-all;
+}
+.invite-notice.ok { color: var(--success, #2e9e5b); }
+.invite-notice.bad { color: var(--danger, #d64545); }
 .copy-row {
   display: flex;
   align-items: center;

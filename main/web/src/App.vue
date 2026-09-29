@@ -32,6 +32,7 @@ import SyncLogDrawer from './components/SyncLogDrawer.vue';
 import BrandMark from './components/BrandMark.vue';
 import { loadRuntimeCapabilities } from './lib/capabilities';
 import { registerGlobalBackLayers } from './lib/globalBackLayers';
+import { installJoinLinkReceiver } from './lib/joinLink';
 
 const app = useAppStore();
 // 桌面端壳（有 wikiDesktop 桥）：启用标题栏融合条（logo + 应用名 + 系统窗口按钮）；
@@ -41,6 +42,8 @@ const isDesktop = Boolean((window as any).wikiDesktop);
 let stopBackLayers: (() => void) | null = null;
 onMounted(() => {
   loadRuntimeCapabilities().catch(() => {});
+  // 安卓：点别人发来的邀请链接（engram://join?…）打开应用时，把链接交给设置页的同步表单
+  installJoinLinkReceiver();
   if (isDesktop) document.documentElement.classList.add('desktop-frame');
   app.applyTheme();
   // 安卓侧滑返回：先关全局浮层（确认框/长按菜单/资产抽屉/同步日志/记灵感），
