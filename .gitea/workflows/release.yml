@@ -88,6 +88,29 @@ jobs:
           INPUT_OFFLINE: ${{ inputs.offline_image }}
           INPUT_BACKFILL: ${{ inputs.github_backfill }}
 
+      - name: 公开同步脚本就位（回填/补传可能针对早于脚本的历史标签）
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          MSYS_NO_PATHCONV: '1'
+          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          # 本 workflow 按 inputs.tag 检出**历史标签**，而公开同步脚本是 2026-09-30 才进仓库的：
+          # 旧标签的树里没有它，直接跑会 "No such file or directory"（v1.3.3 回填实测踩到）。
+          # 兜底规则：标签树里有就用标签自带的（发版路径可复现），没有就从 main 取一份。
+          TARGET="main/scripts/sync-public-release-assets.py"
+          if [ -f "$TARGET" ]; then
+            echo "本次检出的树里已有同步脚本（$(wc -c < "$TARGET") 字节）"
+          else
+            echo "本次检出的树里没有同步脚本，从 main 取：$TARGET"
+            mkdir -p "$(dirname "$TARGET")"
+            curl -fsSL -H "Authorization: token ${GITEA_TOKEN}" \
+              "${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}/raw/main/scripts/sync-public-release-assets.py?ref=main" \
+              -o "$TARGET"
+            PY=python; command -v python >/dev/null 2>&1 || PY="py -3"
+            $PY -c "src = open('$TARGET', encoding='utf-8').read(); import ast; ast.parse(src); print('已从 main 取得脚本并校验语法：', len(src), '字符')"
+          fi
+
       - name: 提取 CHANGELOG 版本段落
         id: changelog
         shell: bash
