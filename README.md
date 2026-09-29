@@ -223,7 +223,7 @@ claude mcp add --transport http engram http://<主机IP>:18080/mcp \
 
 **Windows 桌面端 · 安装包**（给非开发机器）
 
-1. 从 [Engram Releases](https://github.com/jadesLL/Engram/releases) 下载 `Engram Setup <版本>.exe`
+1. 从 [Engram Releases](https://github.com/jadesLL/Engram/releases) 下载 `Engram Setup <版本>.exe`；公开仓库的同一版本 Release 也同步挂有 exe / APK（无需账号，见 [`main/docs/GITEA-CI.md`](main/docs/GITEA-CI.md) 的「公开仓库产物同步」）
 2. 双击安装；数据在 `%APPDATA%\@engram\desktop`，与源码版互通
 3. 更新：点标题栏 `Engram` 右侧「更新」小按钮展开面板，再点「立即下载并安装」一键完成（下载 → 静默安装 → 自动重启）；也可以走 设置 → 版本与更新 → 桌面端更新 → 「检查更新」作为兜底
 
@@ -277,7 +277,7 @@ docker compose -f docker-compose.pull.yml up -d
 
 **NAS 部署**（极空间 / 群晖 / 威联通等）用 `main/docker-compose.nas.yml`：宿主端口可调（默认 18080）、JWT 密钥走同目录 `.env`、卷名固定，只需 compose + `.env` 两个文件，无需克隆仓库。完整步骤与坑位见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md) 的「方式四：NAS 部署」。
 
-Windows 桌面端安装包从 [Engram Releases](https://github.com/jadesLL/Engram/releases) 下载（`Engram Setup <版本>.exe`），更多安装方式见上文「下载与安装」。
+Windows 桌面端安装包从 [Engram Releases](https://github.com/jadesLL/Engram/releases) 下载（`Engram Setup <版本>.exe`），公开仓库同一版本的 Release 也挂有同样的安装包（无需账号），更多安装方式见上文「下载与安装」。
 
 > 想从源码自行构建，见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)。
 
@@ -342,7 +342,7 @@ Fastify + better-sqlite3（FTS5）· Vue 3 + Vditor + vis-network · Electron（
 ## 版本与发布
 
 - **更新日志**：[`CHANGELOG.md`](./CHANGELOG.md)——每个版本的全部新功能与变更；发版时由 CI 自动发布到 GitHub Release 正文
-- **GitHub Release**：推 `v*` 标签构建 Docker 镜像（`:<版本>` + `:latest`）并创建 Release（正文=CHANGELOG 段落）；**每次发版固定三件套——Android 安装包（apk）、Windows 安装包（exe）、Docker 镜像**，其中 apk/exe 由 release.yml 手动 dispatch（勾选 `binaries`）构建后补挂到该 Release，离线 tar.gz 与 sha256 校验按需；Release 挂在本仓库 [Releases](https://github.com/jadesLL/Engram/releases)。发版是显式动作，仅在你明确提出时执行，但一旦发版三件缺一不算完成
+- **GitHub Release**：推 `v*` 标签构建 Docker 镜像（`:<版本>` + `:latest`）并创建 Release（正文=CHANGELOG 段落）；**每次发版固定三件套——Android 安装包（apk）、Windows 安装包（exe）、Docker 镜像**，其中 apk/exe 由 release.yml 手动 dispatch（勾选 `binaries`）构建后补挂到该 Release，**并同步挂到公开仓库（GitHub）同名 Release 作为公开下载入口**（历史版本可用 `github_backfill` 回填），离线 tar.gz 与 sha256 校验按需；Release 挂在本仓库 [Releases](https://github.com/jadesLL/Engram/releases)。发版是显式动作，仅在你明确提出时执行，但一旦发版三件缺一不算完成
 - **源码模式通道**：自用机器不依赖发版——合 main 后即可通过桌面快捷方式或应用内「检查更新」增量拉源码更新（见「下载与安装」）；Docker 部署可切「更新通道 → main」用镜像形式达到同样效果（合 main 即更新）
 - **镜像**：`gitea.example.com/example/engram/engram:<版本>`（未公开发布；需要请自行构建）
 - **发版流程**：详见 [`main/docs/BUILDING.md`](./main/docs/BUILDING.md)；CI/CD 维护见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)

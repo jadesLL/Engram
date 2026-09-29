@@ -2,6 +2,9 @@
 #   推送 v* 标签 = 发版第一步：CHANGELOG 校验 → verify 门禁 → 构建推送 Docker 镜像（:<版本> + :latest）→ 创建 Release（正文=CHANGELOG 段落，无二进制附件）
 #   手动 workflow_dispatch = 发版第二步（必做，不是按需）：verify 门禁 → 勾选 binaries 构建 Windows exe + Android APK → 补挂到对应版本 Release（offline_image 离线 tar.gz 按需）
 #   安卓端：APK 必须基于本次发版提交构建、版本号与发版一致，发版说明要补齐自上一个 Android 版本以来累积的全部更新内容
+#   公开下载入口（2026-09-30 起）：勾选 binaries 时，产物同时同步到公开仓库（GitHub）同名 Release，
+#     外部用户不必访问私有 Gitea；历史版本用 github_backfill 输入回填（从 Gitea Release 拉已有附件再传到 GitHub）。
+#     公开仓库的 Release 正文仍由 public-mirror 用脱敏后的 CHANGELOG 填写，这里只补附件、不碰正文。
 # 版本 tag 的 Docker 镜像仍是发版线（NAS 部署 + 应用内一键更新的版本信号源）
 # 注意：标签名必须与 main/desktop/package.json 的 version 一致（v<version>），否则校验失败
 # Runner：Windows 宿主机模式（label: windows），Docker 命令经 Docker Desktop 跑 Linux 容器
@@ -24,6 +27,11 @@ on:
         description: '构建 docker tar.gz 离线镜像包并补挂 Release（按需）'
         type: boolean
         default: false
+      github_backfill:
+        description: '回填历史版本产物到公开仓库 Release：版本号列表（如 1.2.0,1.3.0）或 all（从 Gitea Release 拉已有附件）；留空不回填'
+        required: false
+        type: string
+        default: ''
 
 env:
   # Registry 与镜像地址直接写真实值（仓库私有，脱敏只会让产物指向不存在的域名）；
@@ -71,13 +79,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          if [ "$INPUT_BINARIES" != "true" ] && [ "$INPUT_OFFLINE" != "true" ]; then
-            echo "dispatch 必须至少勾选 binaries 或 offline_image 之一；发版补齐三件套请勾选 binaries（Windows exe + Android APK）"
+          if [ "$INPUT_BINARIES" != "true" ] && [ "$INPUT_OFFLINE" != "true" ] && [ -z "$INPUT_BACKFILL" ]; then
+            echo "dispatch 必须至少勾选 binaries / offline_image 之一，或填写 github_backfill；发版补齐三件套请勾选 binaries（Windows exe + Android APK）"
             exit 1
           fi
         env:
           INPUT_BINARIES: ${{ inputs.binaries }}
           INPUT_OFFLINE: ${{ inputs.offline_image }}
+          INPUT_BACKFILL: ${{ inputs.github_backfill }}
 
       - name: 提取 CHANGELOG 版本段落
         id: changelog
@@ -264,3 +273,33 @@ jobs:
           # 正文重新传 CHANGELOG 段落，避免 action 把已发布正文覆盖为空
           body: |
             ${{ steps.changelog.outputs.body }}
+
+      - name: 同步产物到公开仓库 Release（GitHub 公开下载入口）
+        if: github.event_name == 'workflow_dispatch' && inputs.binaries == true
+        shell: bash
+        env:
+          MSYS_NO_PATHCONV: '1'
+          PUBLIC_REPO_URL: ${{ vars.PUBLIC_MIRROR_REPO_URL }}
+          PUBLIC_TOKEN: ${{ secrets.PUBLIC_MIRROR_TOKEN }}
+        run: |
+          # GitHub 上的仓库是脱敏公开快照，Release 正文由 public-mirror 写，附件必须有人补挂——
+          # 这一步把本次构建的 exe/APK/sha256 复制过去（幂等：同名同大小跳过）。
+          PY=python; command -v python >/dev/null 2>&1 || PY="py -3"
+          $PY main/scripts/sync-public-release-assets.py upload \
+            --tag "v${{ steps.ver.outputs.version }}" --dir release-out
+
+      - name: 回填历史版产物到公开仓库 Release（GitHub）
+        if: github.event_name == 'workflow_dispatch' && inputs.github_backfill != ''
+        shell: bash
+        env:
+          MSYS_NO_PATHCONV: '1'
+          PUBLIC_REPO_URL: ${{ vars.PUBLIC_MIRROR_REPO_URL }}
+          PUBLIC_TOKEN: ${{ secrets.PUBLIC_MIRROR_TOKEN }}
+          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          BACKFILL: ${{ inputs.github_backfill }}
+        run: |
+          # 从 Gitea Release 拉已有附件再传到 GitHub：不需要本机产物文件，凭据全在 repository secrets 里。
+          export GITEA_API_URL="${GITHUB_SERVER_URL}"
+          export GITEA_REPO="${GITHUB_REPOSITORY}"
+          PY=python; command -v python >/dev/null 2>&1 || PY="py -3"
+          $PY main/scripts/sync-public-release-assets.py backfill --versions "$BACKFILL"

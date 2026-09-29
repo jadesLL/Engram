@@ -66,7 +66,7 @@
         </div>
         <div v-if="capabilities.runtime === 'android-local'" class="field-row">
           <label for="sync-direct-urls">局域网 / IPv6 直连地址（可选，每行一个）</label>
-          <textarea id="sync-direct-urls" v-model="directUrlsText" rows="2" placeholder="http://192.168.1.101:18080" spellcheck="false" />
+          <textarea id="sync-direct-urls" v-model="directUrlsText" rows="2" placeholder="http://192.168.x.x:18080" spellcheck="false" />
         </div>
         <div class="sync-actions">
           <button class="btn primary" type="button" :disabled="saving" @click="joinHub">保存并绑定</button>
@@ -160,7 +160,7 @@
         </div>
         <div v-if="capabilities.runtime === 'android-local'" class="field-row">
           <label for="sync-direct-urls-member">局域网 / IPv6 直连地址（可选，每行一个）</label>
-          <textarea id="sync-direct-urls-member" v-model="directUrlsText" rows="2" placeholder="http://192.168.1.101:18080" spellcheck="false" />
+          <textarea id="sync-direct-urls-member" v-model="directUrlsText" rows="2" placeholder="http://192.168.x.x:18080" spellcheck="false" />
         </div>
         <div class="sync-actions">
           <button class="btn" type="button" :disabled="saving" @click="saveBinding">保存修改</button>

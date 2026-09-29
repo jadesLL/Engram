@@ -35,7 +35,7 @@ export interface SyncLinkStatus {
   channel: SyncChannelKind;
   /** 当前通道基地址（offline 时为空串） */
   url: string;
-  /** 展示用主机，如 192.168.1.101:18080 或 hub.xxx.com */
+  /** 展示用主机，如 192.168.x.x:18080 或 hub.xxx.com */
   host: string;
   latencyMs: number | null;
   /** 当前通道从何时开始在用（ISO） */

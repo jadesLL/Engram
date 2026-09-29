@@ -84,7 +84,7 @@ README 里有些文案描述的是私有仓库，在公开仓库里不成立，�
 - 刻意读 `HEAD` 的 CHANGELOG 而不是 `<tag>:CHANGELOG.md`：早期标签当时仓库根还没有这份文件，只有当前这份覆盖全部版本段落
 - **幂等**：先 `GET` 该标签的 Release，正文一致就不动；缺了才 `POST`，变了才 `PATCH`
 - `SNAPSHOT_SYNC_RELEASES=0` 可关闭；目标不是 github.com 时自动跳过
-- 不附带任何二进制附件（与 Gitea 侧现状一致）
+- **本脚本不搬附件**（Git 里也没有安装包）：`v*` Release 的 exe/APK/sha256 由 Gitea 侧 `release.yml` 的「同步产物到公开仓库 Release」步骤补挂，见 [`GITEA-CI.md`](./GITEA-CI.md) 的「公开仓库产物同步」。两者分工：本脚本管**正文与标签**，release.yml 管**附件**，都幂等，互不覆盖。
 
 ## 发布公开安装器
 
@@ -200,7 +200,7 @@ bash main/scripts/make-public-snapshot.sh
 ## 已知限制
 
 * **只推 `main` + 标签**，进行中的 `feat/*` 分支不会公开。要改范围用 `SNAPSHOT_BRANCH` / `SNAPSHOT_PUSH_TAGS`。
-* **不同步 Issue / PR / Release / Wiki**。GitHub 上不会有 Release 页面；发版仍走 Gitea Actions 与 `CHANGELOG.md`。
+* **Issue / PR / Wiki 不同步**：Release 页会同名建出来（正文=脱敏后的 CHANGELOG 段落，附件由 release.yml 同步，见 [`GITEA-CI.md`](./GITEA-CI.md) 的「公开仓库产物同步」），Issue/PR/Wiki 仍留在 Gitea。
 * **force push 覆盖目标仓库**：不要在 GitHub 上直接提交，会被下次同步覆盖。
 * **只支持 HTTPS**：推送目标必须是 `https://` 地址，PAT 当密码用。
 * 脱敏是**字符串替换**，不是语义重写：被替换的标识符（如 Android `applicationId`、Java 包名）在快照里会变成占位值。公开快照因此与原私有构建的包名不同，这是有意为之。

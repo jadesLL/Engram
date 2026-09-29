@@ -1813,7 +1813,9 @@ async function runSourceUpdate() {
     await forkStep(resolveToolEntry([
       path.join('server', 'node_modules', 'typescript', 'bin', 'tsc'),
       path.join('node_modules', 'typescript', 'bin', 'tsc'),
-    ]), ['-p', 'tsconfig.json'], path.join(appRootDir, 'server'), appendUpdateLog);
+      // 构建走 tsconfig.build.json：排除 src/**/*.test.ts，测试文件不进入 dist
+      // （发布产物不携带测试与其中的内网地址 fixture；typecheck 仍用 tsconfig.json 覆盖测试）
+    ]), ['-p', 'tsconfig.build.json'], path.join(appRootDir, 'server'), appendUpdateLog);
     setUpdateStep('构建 web（vite）…');
     await forkStep(resolveToolEntry([
       path.join('web', 'node_modules', 'vite', 'bin', 'vite.js'),
