@@ -6,10 +6,12 @@
  * 落点仍是 `原始资料/灵感碎片/`，文件名沿用全库命名约定 `YYYY.MM.DD_标题.md`；
  * 建完由调用方决定跳转（一般直接进编辑器接着写）。
  *
- * 落盘前服务端会自动勘误：人名、公司名这类写法对齐到知识库既有写法（见 lib/textFix.ts），
- * 改了哪几处在 toast 里说清，明细同时进 AI 工作区的操作日志。
+ * 落盘前服务端会自动勘误与精炼：人名、公司名这类写法对齐到知识库既有写法（见 lib/textFix.ts），
+ * 正文再整理精炼一遍（改错别字、理通顺、删啰嗦，见 server/src/lib/ideaPolish.ts 的验收门禁）。
+ * 因为精炼是改写用户原文，对话框会先给用户看一眼定稿（见 components/ui/IdeaComposer.vue），
+ * 确认后才落盘；改了哪几处、精炼了多少字在 toast 里说清，明细同时进 AI 工作区的操作日志。
  */
-import { openIdeaComposer, summarizeIdeaFixes } from './ideaComposer';
+import { openIdeaComposer, summarizeIdeaChange } from './ideaComposer';
 import { notify } from './notify';
 
 export interface IdeaNoteResult {
@@ -26,7 +28,7 @@ export async function createIdeaNote(): Promise<IdeaNoteResult | null> {
   if (!created) return null;
   const parts: string[] = [];
   if (created.titleSource === 'heuristic') parts.push('未接模型，标题按正文首句取的');
-  const fixNote = summarizeIdeaFixes(created.fixes, created.pending);
+  const fixNote = summarizeIdeaChange(created.fixes, created.pending, created.refined);
   if (fixNote) parts.push(fixNote);
   const suffix = parts.length ? `（${parts.join('；')}）` : '';
   notify.success(created.title ? `已记到「灵感碎片」：${created.title}${suffix}` : `已记到「灵感碎片」${suffix}`);

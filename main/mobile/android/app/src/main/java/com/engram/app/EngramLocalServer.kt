@@ -491,7 +491,9 @@ class EngramLocalServer private constructor(private val context: Context) {
         post("/api/inbox/adopt") { call.proxyHub("POST", "/api/inbox/adopt", call.receiveText()) }
         post("/api/inbox/convert") { call.proxyHub("POST", "/api/inbox/convert", call.receiveText()) }
 
-        // 记一条灵感：标题由中枢的模型拟、落盘前再按知识库既有写法勘误一遍，本机没有模型，同样窄代理
+        // 记一条灵感：标题由中枢的模型拟、落盘前再按知识库既有写法勘误并把正文整理精炼一遍，
+        // 本机没有模型，预览与落盘两步都窄代理到中枢
+        post("/api/ideas/preview") { call.proxyHub("POST", "/api/ideas/preview", call.receiveText()) }
         post("/api/ideas") { call.proxyHub("POST", "/api/ideas", call.receiveText()) }
 
         get("/api/trash") { if (call.authorize()) call.json(db.trash()) }
