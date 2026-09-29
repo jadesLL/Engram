@@ -8,6 +8,29 @@
 export type SyncLogLevel = 'info' | 'warn' | 'error';
 export type SyncLogScope = 'hub' | 'member' | 'app';
 
+/**
+ * 结果维度（服务端 sync/logClassify.ts 现算，随条目下发）：
+ * 有改动 = 同步成功且内容真的变了；没改动 = 对账/检查/连接跑完两边一致；失败 = 警告与错误。
+ */
+export type SyncLogOutcome = 'changed' | 'none' | 'failed';
+/** 内容维度：按改动的文件归属分（原始资料 / 概念 / 实体 / 内置 Agent / 其他） */
+export type SyncLogContent = '原始资料' | '概念' | '实体' | '内置 Agent' | '其他';
+
+export const SYNC_LOG_OUTCOMES: SyncLogOutcome[] = ['changed', 'none', 'failed'];
+export const SYNC_LOG_CONTENTS: SyncLogContent[] = ['原始资料', '概念', '实体', '内置 Agent', '其他'];
+
+export const OUTCOME_LABELS: Record<SyncLogOutcome, string> = {
+  changed: '有改动',
+  none: '没改动',
+  failed: '失败',
+};
+
+export const OUTCOME_HINTS: Record<SyncLogOutcome, string> = {
+  changed: '同步成功，而且内容真的变了',
+  none: '对账 / 检查 / 连接这类，跑完了两边一致，什么都没动',
+  failed: '警告与错误，需要处理',
+};
+
 export interface SyncLogEntry {
   id: number;
   ts: string;
@@ -17,12 +40,98 @@ export interface SyncLogEntry {
   peer?: string;
   detail?: string;
   data?: Record<string, unknown>;
+  /** 结果分类（服务端算好下发；老服务端可能不给，界面按 info/warn/error 兜底） */
+  outcome?: SyncLogOutcome;
+  /** 内容分类（同上，一条记录可能同时属于多类） */
+  contents?: SyncLogContent[];
+}
+
+/** 条目的结果分类：优先用服务端给的，缺了按级别兜底（失败=警告与错误） */
+export function entryOutcome(entry: SyncLogEntry): SyncLogOutcome {
+  if (entry.outcome) return entry.outcome;
+  return classifyLogEntry(entry).outcome;
+}
+
+export function entryOutcomeLabel(entry: SyncLogEntry): string {
+  return OUTCOME_LABELS[entryOutcome(entry)];
+}
+
+/** 条目的内容分类：服务端不给时（手机端本地日志）在前端按同一套目录口径现算 */
+export function entryContents(entry: SyncLogEntry): SyncLogContent[] {
+  if (Array.isArray(entry.contents)) return entry.contents;
+  return classifyLogEntry(entry).contents;
+}
+
+/**
+ * 与 server/sync/logClassify.ts 同口径的前端实现。
+ *
+ * 桌面 / Docker 端的日志接口直接把 outcome / contents 随条目下发，这里不会走到；
+ * 手机端（Android 本地 /api/sync/log 由 Kotlin 实现）暂时还没有这两个字段，
+ * 前端按同一套规则现算，保证两端看到的分类一致——安卓端补上后可只留服务端口径。
+ */
+const CHANGED_EVENTS = new Set([
+  'local-broadcast', 'push-ok', 'push-received', 'push-page', 'push-file', 'push-delete', 'push-move',
+  'push-merged', 'move-superseded', 'pull-applied', 'pull-page', 'pull-file', 'pull-delete', 'pull-move',
+  'file-pull-ok', 'file-received', 'file-pull-retry-ok', 'session-pull-retry-ok', 'replay', 'reconcile-done',
+]);
+
+function arrayLength(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+export function classifyLogEntry(entry: SyncLogEntry): { outcome: SyncLogOutcome; contents: SyncLogContent[] } {
+  const data = entry.data || {};
+  const contents: SyncLogContent[] = [];
+  const push = (type: SyncLogContent) => { if (!contents.includes(type)) contents.push(type); };
+  const paths = [
+    ...(Array.isArray(data.paths) ? data.paths.filter((item): item is string => typeof item === 'string') : []),
+    ...(typeof data.path === 'string' ? [data.path] : []),
+  ];
+  let unclassified = false;
+  for (const path of paths) {
+    if (!(path.startsWith('原始资料/') || path.startsWith('Wiki/') || path.startsWith('AIWorks/'))) { unclassified = true; continue; }
+    push(contentTypeOfPath(path));
+  }
+  const kinds = [
+    ...(typeof data.kind === 'string' ? [data.kind] : []),
+    ...(data.kinds && typeof data.kinds === 'object' ? Object.keys(data.kinds as Record<string, unknown>) : []),
+  ];
+  if (kinds.some((kind) => kind === 'session' || kind === 'board')) push('内置 Agent');
+  if (!contents.length && (unclassified || CHANGED_EVENTS.has(entry.event))) push('其他');
+  contents.sort((a, b) => SYNC_LOG_CONTENTS.indexOf(a) - SYNC_LOG_CONTENTS.indexOf(b));
+
+  if (entry.level === 'warn' || entry.level === 'error') return { outcome: 'failed', contents };
+  if (!CHANGED_EVENTS.has(entry.event)) return { outcome: 'none', contents };
+  if (entry.event === 'pull-applied') {
+    return { outcome: arrayLength(data.items) + arrayLength(data.paths) + arrayLength(data.changes) > 0 ? 'changed' : 'none', contents };
+  }
+  if (entry.event === 'reconcile-done') {
+    return { outcome: Number(data.pulled) > 0 || Number(data.ledgerRepaired) > 0 ? 'changed' : 'none', contents };
+  }
+  if (entry.event === 'replay') {
+    return { outcome: Number(data.count) > 0 && arrayLength(data.items) + arrayLength(data.changes) > 0 ? 'changed' : 'none', contents };
+  }
+  return { outcome: 'changed', contents };
+}
+
+/** 路径 → 内容类型（与 server/sync/logClassify.ts 同一套目录口径） */
+export function contentTypeOfPath(relPath: string): SyncLogContent {
+  const path = String(relPath || '').replace(/^\.\//, '');
+  if (path.startsWith('原始资料/')) return '原始资料';
+  if (path.startsWith('Wiki/概念/')) return '概念';
+  if (path.startsWith('Wiki/实体/')) return '实体';
+  if (path.startsWith('AIWorks/')) return '内置 Agent';
+  return '其他';
 }
 
 export interface SyncLogSummary {
   total: number;
   byLevel: Record<SyncLogLevel, number>;
   byScope: Record<SyncLogScope, number>;
+  /** 结果维度统计（筛选栏数字） */
+  byOutcome?: Record<SyncLogOutcome, number>;
+  /** 内容维度统计（一条记录可能同时计入多类） */
+  byContent?: Partial<Record<SyncLogContent, number>>;
   byEvent: { event: string; count: number }[];
   oldest: string | null;
   newest: string | null;
@@ -296,18 +405,35 @@ export function formatDataValue(key: string, value: unknown): string {
   return String(value);
 }
 
-/** 改动正文的一行：+ 新增 / − 删除 / 文件路径 / 「还有 N 行未记录」提示 */
-export type SyncChangeKind = 'add' | 'del' | 'file' | 'note';
+/**
+ * 改动正文的一行：
+ *  add/del = 新增 / 删除（带行号）；
+ *  ctx     = 未改动的上下文行（灰底，让用户看出改在哪儿）；
+ *  hunk    = 改动块头（`@@ -18,11 +18,12 @@`）；
+ *  file    = 文件路径行；note = 「还有 N 行改动未记录」这类提示。
+ */
+export type SyncChangeKind = 'add' | 'del' | 'ctx' | 'hunk' | 'file' | 'note';
 
 export interface SyncChangeLine {
   kind: SyncChangeKind;
-  /** 行首符号（新增 + / 删除 −）；文件路径与提示行为空 */
+  /** 行首符号（新增 + / 删除 − / 上下文一个空格）；其余为空 */
   sign: string;
   text: string;
+  /** 行号（改动行与上下文行有；老的日志格式没有） */
+  lineNo?: number;
 }
 
+/** 新格式：`@@ -18,11 +18,12 @@`（原文件/新文件的起始行与行数） */
+const HUNK_HEAD = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+/** 新格式：` 21 上下文` / `+23 新增` / `-23 删除`（符号/空格 + 行号 + 空格 + 原文） */
+const NUMBERED_LINE = /^([ +-])(\d+) (.*)$/;
+
 /**
- * data.changes（服务端按行存：`+ 新增行` / `- 删除行` / 文件路径 / 省略提示）→ 可渲染的行。
+ * data.changes → 可渲染的行。
+ *
+ * 认两种写法：
+ *  ① 新版（桌面 / Docker / 安卓新包）：`@@ 块头` + ` 上下文` + `+新增` / `-删除`，都带行号，界面画行级 diff；
+ *  ② 老版：只有 `+ 行` / `- 行` 与文件路径行——直接照原样渲染，不做转换。
  * 老记录没有这个字段时返回空数组，界面照旧只显示那一行摘要。
  */
 export function parseChangeLines(value: unknown): SyncChangeLine[] {
@@ -315,6 +441,17 @@ export function parseChangeLines(value: unknown): SyncChangeLine[] {
   const lines: SyncChangeLine[] = [];
   for (const line of raw) {
     if (!line) continue;
+    if (HUNK_HEAD.test(line)) {
+      lines.push({ kind: 'hunk', sign: '', text: line });
+      continue;
+    }
+    const numbered = NUMBERED_LINE.exec(line);
+    if (numbered) {
+      const [, marker, lineNo, text] = numbered;
+      const kind: SyncChangeKind = marker === '+' ? 'add' : marker === '-' ? 'del' : 'ctx';
+      lines.push({ kind, sign: marker === '+' ? '+' : marker === '-' ? '−' : ' ', text, lineNo: Number(lineNo) });
+      continue;
+    }
     if (line.startsWith('+ ')) lines.push({ kind: 'add', sign: '+', text: line.slice(2) });
     else if (line.startsWith('- ')) lines.push({ kind: 'del', sign: '−', text: line.slice(2) });
     else if (line.startsWith('…')) lines.push({ kind: 'note', sign: '', text: line });
@@ -323,9 +460,54 @@ export function parseChangeLines(value: unknown): SyncChangeLine[] {
   return lines;
 }
 
-/** 这条记录里的「改了什么」；列表里直接列在条目下方，展开看全部 */
+/** 改动块头 `@@ -18,11 +18,12 @@` → 中文标题「第 18～28 行」（给界面上的块头用） */
+export function hunkTitle(line: SyncChangeLine): string {
+  const match = HUNK_HEAD.exec(line.text);
+  if (!match) return line.text;
+  const newStart = Number(match[3]);
+  const newCount = Number(match[4] || 1);
+  if (newCount > 1) return `第 ${newStart}～${newStart + newCount - 1} 行`;
+  // 整块都是删除时新文件侧没有行数（`+18,0`）：写成「第 N 行起」，不显示「第 N～N−1 行」
+  if (newCount === 0) return `第 ${newStart} 行起`;
+  return `第 ${newStart} 行`;
+}
+
+/** 改动清单里的一个文件小节：文件路径 + 它的改动块（界面上按内容类型分组渲染） */
+export interface SyncChangeFile {
+  path: string;
+  lines: SyncChangeLine[];
+}
+
+/**
+ * 按文件切开改动正文：新格式每批开头都会写文件路径行；老记录只在多于一个文件时才写。
+ * 没有路径行时（单文件老记录）整段归到一个「未标注文件」小节，由调用方用条目摘要补标题。
+ */
+export function groupChangeFiles(lines: SyncChangeLine[]): SyncChangeFile[] {
+  const files: SyncChangeFile[] = [];
+  for (const line of lines) {
+    if (line.kind === 'file') {
+      files.push({ path: line.text, lines: [] });
+      continue;
+    }
+    if (!files.length) files.push({ path: '', lines: [] });
+    files[files.length - 1].lines.push(line);
+  }
+  return files;
+}
+
+/** 这条记录里的「改了什么」；列表里一条一行，展开后按文件分组渲染 */
 export function entryChangeLines(entry: SyncLogEntry): SyncChangeLine[] {
   return parseChangeLines(entry.data?.changes);
+}
+
+/** 条目改了几个文件（折叠态右侧的「N 处改动」） */
+export function entryChangeCount(entry: SyncLogEntry): number {
+  const lines = entryChangeLines(entry);
+  if (!lines.length) return 0;
+  const files = groupChangeFiles(lines).filter((file) => file.lines.some((line) => line.kind === 'add' || line.kind === 'del'));
+  if (files.length) return files.length;
+  const paths = entry.data?.paths;
+  return Array.isArray(paths) ? paths.length : 1;
 }
 
 function pad(value: number, size = 2): string {
@@ -400,12 +582,13 @@ export function buildSyncLogMarkdown(entries: SyncLogEntry[], extra: Record<stri
     lines.push(`- ${dataLabel(key)}：${String(value)}`);
   }
   lines.push('');
-  lines.push('| 时间 | 级别 | 视角 | 事件 | 成员 | 说明 |');
+  lines.push('| 时间 | 结果 | 内容类型 | 事件 | 成员 | 说明 |');
   lines.push('| --- | --- | --- | --- | --- | --- |');
   for (const entry of entries) {
-    const scope = entry.scope ? SCOPE_LABELS[entry.scope] : '';
+    const outcome = OUTCOME_LABELS[entryOutcome(entry)];
+    const contents = entryContents(entry).join(' · ') || '—';
     const detail = (entry.detail || '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
-    lines.push(`| ${formatLogTime(entry.ts)} | ${entry.level} | ${scope} | ${eventLabel(entry.event)} | ${entry.peer || ''} | ${detail} |`);
+    lines.push(`| ${formatLogTime(entry.ts)} | ${outcome} | ${contents} | ${eventLabel(entry.event)} | ${entry.peer || ''} | ${detail} |`);
   }
   lines.push('');
   lines.push('## 结构化字段');
@@ -423,7 +606,7 @@ export function buildSyncLogMarkdown(entries: SyncLogEntry[], extra: Record<stri
         lines.push('');
         lines.push('```diff');
         for (const line of changeLines) {
-          lines.push(line.kind === 'add' ? `+ ${line.text}` : line.kind === 'del' ? `- ${line.text}` : line.text);
+          lines.push(line.kind === 'add' ? `+ ${line.text}` : line.kind === 'del' ? `- ${line.text}` : line.kind === 'ctx' ? `  ${line.text}` : line.text);
         }
         lines.push('```');
         lines.push('');

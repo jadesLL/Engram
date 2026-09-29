@@ -1,8 +1,8 @@
 import { reactive } from 'vue';
 import { api } from '../api';
 import { notify } from './notify';
-import { SCOPE_LABELS, eventLabel, buildSyncLogJson, buildSyncLogMarkdown } from './syncLogFormat';
-import type { SyncLogEntry, SyncLogLevel, SyncLogPage, SyncLogScope, SyncLogStatus, SyncLogSummary } from './syncLogFormat';
+import { OUTCOME_LABELS, buildSyncLogJson, buildSyncLogMarkdown, entryContents, entryOutcome } from './syncLogFormat';
+import type { SyncLogContent, SyncLogEntry, SyncLogOutcome, SyncLogPage, SyncLogStatus, SyncLogSummary } from './syncLogFormat';
 
 /**
  * 同步详情（「多端同步」的独立窗口）状态与请求逻辑。
@@ -51,10 +51,10 @@ export const syncLogState = reactive({
   loading: false,
   loadingMore: false,
   error: '',
-  /** 筛选条件（改任一条件都重新从服务端第一页拉） */
-  level: 'all' as SyncLogLevel | 'all',
-  scope: 'all' as SyncLogScope | 'all',
-  event: '',
+  /** 筛选条件（改任一条件都重新从服务端第一页拉）：结果 + 内容类型 + 成员 + 关键词 */
+  outcome: 'all' as SyncLogOutcome | 'all',
+  content: 'all' as SyncLogContent | 'all',
+  peer: '',
   query: '',
   /** 自动刷新：默认开——空闲 5 秒一跳、同步进行中 2 秒一跳（同步中的人正盯着看），可暂停慢慢读 */
   autoRefresh: initialAutoRefresh(),
@@ -97,11 +97,45 @@ export function isSyncLogExpanded(id: number): boolean {
 
 function queryParams(extra: Record<string, string | number> = {}): Record<string, string | number> {
   const params: Record<string, string | number> = { limit: PAGE_SIZE, ...extra };
-  if (syncLogState.level !== 'all') params.level = syncLogState.level;
-  if (syncLogState.scope !== 'all') params.scope = syncLogState.scope;
-  if (syncLogState.event) params.event = syncLogState.event;
+  if (syncLogState.outcome !== 'all') params.outcome = syncLogState.outcome;
+  if (syncLogState.content !== 'all') params.content = syncLogState.content;
+  if (syncLogState.peer) params.peer = syncLogState.peer;
   if (syncLogState.query.trim()) params.q = syncLogState.query.trim();
   return params;
+}
+
+/**
+ * 手机端兜底：Android 本地 /api/sync/log 由 Kotlin 实现，暂时没有 outcome / contents 字段，
+ * 也不认「结果」「内容」两个筛选参数。检测到这种情况就把整段日志取回来，在前端按同一套口径
+ * 分类、筛选与计数，保证抽屉在桌面 / Docker / 手机三端表现一致。桌面端走不到这里。
+ */
+async function withFallbackFilters(page: SyncLogPage): Promise<SyncLogPage> {
+  if (page.summary?.byOutcome) return page;
+  const wideLimit = Math.max(Number(page.summary?.maxEntries || 0), PAGE_SIZE);
+  const params: Record<string, string | number> = { limit: wideLimit };
+  if (syncLogState.query.trim()) params.q = syncLogState.query.trim();
+  const { data } = await api.get('/api/sync/log', { params });
+  const wide = data as SyncLogPage;
+  const all = wide.entries || [];
+  const matched = all.filter((entry) => {
+    if (syncLogState.outcome !== 'all' && entryOutcome(entry) !== syncLogState.outcome) return false;
+    if (syncLogState.content !== 'all' && !entryContents(entry).includes(syncLogState.content)) return false;
+    if (syncLogState.peer && entry.peer !== syncLogState.peer) return false;
+    return true;
+  });
+  const byOutcome: Record<SyncLogOutcome, number> = { changed: 0, none: 0, failed: 0 };
+  const byContent: Partial<Record<SyncLogContent, number>> = {};
+  for (const entry of all) {
+    byOutcome[entryOutcome(entry)] += 1;
+    for (const type of entryContents(entry)) byContent[type] = Number(byContent[type] || 0) + 1;
+  }
+  return {
+    ...wide,
+    entries: matched.slice(0, PAGE_SIZE),
+    total: matched.length,
+    hasMore: matched.length > PAGE_SIZE,
+    summary: wide.summary ? { ...wide.summary, byOutcome, byContent } : wide.summary,
+  };
 }
 
 /** 拉第一页（筛选变化、手动刷新、自动刷新、打开抽屉都走这里） */
@@ -110,7 +144,7 @@ export async function refreshSyncLog(): Promise<void> {
   syncLogState.loading = true;
   try {
     const { data } = await api.get('/api/sync/log', { params: queryParams() });
-    const page = data as SyncLogPage;
+    const page = await withFallbackFilters(data as SyncLogPage);
     syncLogState.entries = page.entries || [];
     syncLogState.total = Number(page.total || 0);
     syncLogState.hasMore = Boolean(page.hasMore);
@@ -158,9 +192,9 @@ export function scheduleSyncLogReload(delay = 250): void {
 }
 
 export function resetSyncLogFilters(): void {
-  syncLogState.level = 'all';
-  syncLogState.scope = 'all';
-  syncLogState.event = '';
+  syncLogState.outcome = 'all';
+  syncLogState.content = 'all';
+  syncLogState.peer = '';
   syncLogState.query = '';
   void refreshSyncLog();
 }
@@ -197,9 +231,9 @@ export async function exportSyncLog(format: 'json' | 'md'): Promise<void> {
     }
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const filters = {
-      level: syncLogState.level === 'all' ? '全部' : syncLogState.level,
-      scope: syncLogState.scope === 'all' ? '全部' : SCOPE_LABELS[syncLogState.scope],
-      event: syncLogState.event ? eventLabel(syncLogState.event) : '全部',
+      outcome: syncLogState.outcome === 'all' ? '全部' : OUTCOME_LABELS[syncLogState.outcome],
+      content: syncLogState.content === 'all' ? '全部' : syncLogState.content,
+      peer: syncLogState.peer || '全部',
       q: syncLogState.query.trim() || '',
     };
     if (format === 'json') {

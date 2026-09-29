@@ -135,7 +135,7 @@ test('改动正文能穿过结构化字段清洗：条数有上限，其他字�
   const stored = log.querySyncLog({ after: wrote.id - 1 }).entries[0];
   assert.ok(Array.isArray(stored.data?.changes), '改动正文要留在结构化字段里');
   const lines = stored.data?.changes as string[];
-  assert.equal(lines.length, 20, '数组按 eventLog 的清洗上限截断');
+  assert.equal(lines.length, 43, '数组按 eventLog 的清洗上限截断（未到上限就原样保留）');
   assert.equal(lines[1], '- 旧条款：随到随审');
   assert.equal(stored.data?.count, 1, '改动正文不会把其他字段挤成「字段过大已省略」');
   assert.deepEqual(stored.data?.paths, ['Wiki/概念/供应商准入.md']);
@@ -152,4 +152,42 @@ test('清空后内存与文件都归零', () => {
   const next = log.logSyncEvent('error', 'reconcile-failed', { detail: '全量对账失败：连接超时' });
   assert.equal(next.id, 1);
   assert.equal(log.querySyncLog({}).entries[0].level, 'error');
+});
+
+test('分类查询：按结果（有改动 / 没改动 / 失败）与内容类型筛，统计数一并给全', () => {
+  log.clearSyncLog();
+  // 上限 5：这一轮正好写 5 条，覆盖三类结果与三类内容
+  log.logSyncEvent('info', 'unknown-event', { detail: '没登记过的事件名：不属于任何有改动事件' });
+  log.logSyncEvent('info', 'snapshot-served', { detail: '成员拉取全量清单对账', scope: 'hub', peer: '客厅 NAS', data: { entries: 128 } });
+  log.logSyncEvent('info', 'local-broadcast', {
+    detail: '本机修改页面「供应商准入」',
+    scope: 'hub',
+    data: { count: 1, paths: ['Wiki/概念/供应商准入.md'] },
+  });
+  log.logSyncEvent('info', 'file-pull-ok', { detail: '拉取文件 原始资料/文档/报价单.xlsx', scope: 'member', data: { path: '原始资料/文档/报价单.xlsx', bytes: 88_473 } });
+  log.logSyncEvent('warn', 'push-retry', { detail: '推送失败，退避重试', scope: 'member', peer: '客厅 NAS', data: { path: 'AIWorks/index/index.md' } });
+
+  assert.equal(log.querySyncLog({ outcome: 'changed' }).total, 2, '有改动 = local-broadcast + file-pull-ok');
+  assert.equal(log.querySyncLog({ outcome: 'none' }).total, 2, '没改动 = 连接/对账这类');
+  assert.equal(log.querySyncLog({ outcome: 'failed' }).total, 1, '警告也算失败（会自动重试也要能看到）');
+
+  assert.equal(log.querySyncLog({ content: '概念' }).total, 1);
+  assert.equal(log.querySyncLog({ content: '原始资料' }).total, 1);
+  assert.equal(log.querySyncLog({ content: '内置 Agent' }).total, 1, 'AIWorks/ 归内置 Agent');
+  assert.equal(log.querySyncLog({ content: '实体' }).total, 0);
+
+  assert.equal(log.querySyncLog({ peer: '客厅 NAS' }).total, 2);
+  assert.equal(log.querySyncLog({ outcome: 'changed', content: '概念' }).total, 1, '两排筛选是 AND');
+
+  // 分类随条目下发：前端不再自己实现一套口径
+  const changed = log.querySyncLog({ outcome: 'changed' }).entries;
+  assert.equal(changed[0].outcome, 'changed');
+  assert.deepEqual(changed[0].contents, ['原始资料']);
+
+  const summary = log.syncLogSummary();
+  assert.deepEqual(summary.byOutcome, { changed: 2, none: 2, failed: 1 });
+  assert.equal(summary.byContent['概念'], 1);
+  assert.equal(summary.byContent['原始资料'], 1);
+  assert.equal(summary.byContent['内置 Agent'], 1, '失败记录里的 AIWorks 路径同样计入内容统计');
+  assert.equal(summary.byContent['其他'], 0);
 });

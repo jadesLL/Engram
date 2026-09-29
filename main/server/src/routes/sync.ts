@@ -50,9 +50,12 @@ import {
   logSyncEvent,
   querySyncLog,
   syncLogSummary,
+  type SyncLogContent,
   type SyncLogLevel,
+  type SyncLogOutcome,
   type SyncLogScope,
 } from '../sync/eventLog.js';
+import { SYNC_LOG_CONTENTS, SYNC_LOG_OUTCOMES } from '../sync/logClassify.js';
 import {
   describeOpSummary,
   flattenChangeLines,
@@ -181,13 +184,17 @@ export async function syncRoutes(app: FastifyInstance) {
 
   /**
    * 同步详情（设置页「查看同步详情」打开的抽屉用它）：
-   * 分页 / 按级别·视角·事件·关键词筛选，外加汇总统计与当前运行状态。
+   * 分页 + 按结果（有改动/没改动/失败）· 内容类型（原始资料/概念/实体/内置 Agent/其他）·
+   * 成员 · 关键词筛选，外加汇总统计与当前运行状态。
    * 状态与日志一次返回：抽屉挂的是自己的轮询节奏（可暂停自动刷新），不必再打一次 /status。
    */
   app.get('/api/sync/log', { preHandler: requireAuth }, async (req) => {
     const q = (req.query || {}) as Record<string, string | undefined>;
     const level = q.level === 'info' || q.level === 'warn' || q.level === 'error' ? (q.level as SyncLogLevel) : undefined;
     const scope = q.scope === 'hub' || q.scope === 'member' || q.scope === 'app' ? (q.scope as SyncLogScope) : undefined;
+    // 分类筛选：只接受已知取值，写错的值当没筛（不让前端一个拼写错误变成空列表）
+    const outcome = (SYNC_LOG_OUTCOMES as string[]).includes(String(q.outcome)) ? (q.outcome as SyncLogOutcome) : undefined;
+    const content = (SYNC_LOG_CONTENTS as string[]).includes(String(q.content)) ? (q.content as SyncLogContent) : undefined;
     const result = querySyncLog({
       limit: Number(q.limit || 200),
       before: q.before ? Number(q.before) : undefined,
@@ -196,6 +203,9 @@ export async function syncRoutes(app: FastifyInstance) {
       level,
       scope,
       event: q.event || undefined,
+      outcome,
+      content,
+      peer: q.peer || undefined,
       q: q.q || undefined,
     });
     const current = status();

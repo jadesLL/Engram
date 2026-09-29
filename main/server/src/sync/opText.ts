@@ -83,49 +83,65 @@ export function lineDiffCounts(before: string, after: string): { added: number; 
 
 /** 「这个文件改了什么」采样：一行改动正文最多留多少字符（日志不是 diff 工具） */
 export const CHANGE_LINE_MAX = 160;
-/** 单个条目最多采样几行改动正文 */
+/** 单个改动块最多采样几行改动（+ / − 行）；超出的计入「还有 N 行改动未记录」 */
 export const CHANGE_SAMPLE_LINES = 6;
-/** 一条同步记录最多带几行（含文件路径与省略提示）：eventLog 的 data 数组上限 20 条 */
-export const CHANGE_LOG_MAX_LINES = 20;
-/** 一条同步记录里改动正文的总字符预算：data 上限 4000 字节，得给其他字段留位置 */
-export const CHANGE_LOG_MAX_CHARS = 1400;
+/** 改动行上下各留几行「未改动」正文当上下文：灰底那几行，用户才看得出改在哪儿 */
+export const CHANGE_CONTEXT_LINES = 5;
+/** 单个文件最多采样几个改动块（改动散在一篇长文里时只挑最靠前的几处） */
+export const CHANGE_MAX_HUNKS = 3;
+/** 两个改动块相隔多少行未改动就切成两块；挨得近的合成一块，省行数 */
+const CHANGE_HUNK_GAP = CHANGE_CONTEXT_LINES * 2;
+/** 一条同步记录最多带几行（含文件路径、上下文与省略提示）：日志 data 的体积预算 */
+export const CHANGE_LOG_MAX_LINES = 48;
+/** 一条同步记录里改动正文的总字符预算：装不下的只写「还有 N 行改动未记录」 */
+export const CHANGE_LOG_MAX_CHARS = 3600;
 
 export interface ContentDiff {
   added: number;
   removed: number;
-  /** 采样出来的改动行，前缀 `+ `（新增）/ `- `（删除） */
+  /**
+   * 采样出来的改动块，逐行形如：
+   *   `@@ -18,11 +18,12 @@`  改动块头（原文件/新文件的起始行与行数）
+   *   ` 21 上文（未改动）`    上下文行：行号 + 原文，行首一个空格
+   *   `-23 被删掉的一行`      删除行：原文件行号
+   *   `+23 新增的一行`        新增行：新文件行号
+   * 老解析器会把 `@@` 与上下文行当成「文件路径行」显示（灰色一行），不会崩，只是不认得行号。
+   */
   lines: string[];
   /** 采样省略掉的改动行数（空行改动也算在内） */
   omitted: number;
 }
 
-interface LineEdit {
-  op: '+' | '-';
+/** 行级编辑：下标是「剪掉公共前后缀后的中段」下标，格式化时再加全文偏移 */
+interface NumberedEdit {
+  op: '+' | '-' | '=';
   text: string;
+  oldNo: number;
+  newNo: number;
 }
 
-/** 改动行 → 日志里的一行：空白行不值得占一行记录（也不算「没记下的改动」），过长只留开头 */
-function describeEditLines(edits: LineEdit[], maxLines: number): { lines: string[]; omitted: number } {
-  const lines: string[] = [];
-  let omitted = 0;
-  for (const edit of edits) {
-    const text = edit.text.trim();
-    if (!text) continue;
-    if (lines.length >= maxLines) {
-      omitted += 1;
-      continue;
-    }
-    lines.push(`${edit.op} ${text.length > CHANGE_LINE_MAX ? `${text.slice(0, CHANGE_LINE_MAX)}…` : text}`);
-  }
-  return { lines, omitted };
+/** 一行改动正文 → 日志里的一行：去掉首尾空白，过长只留开头 */
+function changeLine(op: '+' | '-', lineNo: number, text: string): string {
+  const trimmed = text.trim();
+  const body = trimmed.length > CHANGE_LINE_MAX ? `${trimmed.slice(0, CHANGE_LINE_MAX)}…` : trimmed;
+  return `${op}${lineNo} ${body}`;
+}
+
+/** 上下文行：行首一个空格 + 行号，解析端与「文件路径行」区分得开 */
+function contextLine(lineNo: number, text: string): string {
+  const trimmed = text.trim();
+  const body = trimmed.length > CHANGE_LINE_MAX ? `${trimmed.slice(0, CHANGE_LINE_MAX)}…` : trimmed;
+  return ` ${lineNo} ${body}`;
 }
 
 /**
- * 逐行比对出改动正文（LCS 回溯），顺序按文件从前到后、同一处先删后增（git diff 的口径）。
+ * 逐行比对出「带行号的编辑序列」（LCS 回溯），顺序按文件从前到后、同一处先删后增（git diff 口径）。
  * 只在剪掉公共前后缀后的中段上做，中段 ≤ 25 万格才走回溯；再大就退回多重集：
- * 计数仍然准，采样只给「新增的行 / 删掉的行」。
+ * 计数仍然准，采样只给「新增的行 / 删掉的行」，不给上下文（几万行的整页重写没有上下文价值）。
+ *
+ * 与旧实现的区别：相同的行也进序列（op='='），上下文才拿得到；每行带原/新两个行号。
  */
-function diffEdits(midA: string[], midB: string[]): LineEdit[] {
+function diffEdits(midA: string[], midB: string[]): NumberedEdit[] {
   if (midA.length * midB.length <= 250_000) {
     const n = midA.length;
     const m = midB.length;
@@ -141,16 +157,16 @@ function diffEdits(midA: string[], midB: string[]): LineEdit[] {
           : Math.max(dp[next + j], dp[row + j + 1]);
       }
     }
-    const edits: LineEdit[] = [];
+    const edits: NumberedEdit[] = [];
     let i = 0;
     let j = 0;
     while (i < n && j < m) {
-      if (midA[i] === midB[j]) { i += 1; j += 1; continue; }
-      if (dp[(i + 1) * width + j] >= dp[i * width + j + 1]) { edits.push({ op: '-', text: midA[i] }); i += 1; }
-      else { edits.push({ op: '+', text: midB[j] }); j += 1; }
+      if (midA[i] === midB[j]) { edits.push({ op: '=', text: midA[i], oldNo: i, newNo: j }); i += 1; j += 1; continue; }
+      if (dp[(i + 1) * width + j] >= dp[i * width + j + 1]) { edits.push({ op: '-', text: midA[i], oldNo: i, newNo: j }); i += 1; }
+      else { edits.push({ op: '+', text: midB[j], oldNo: i, newNo: j }); j += 1; }
     }
-    while (i < n) { edits.push({ op: '-', text: midA[i] }); i += 1; }
-    while (j < m) { edits.push({ op: '+', text: midB[j] }); j += 1; }
+    while (i < n) { edits.push({ op: '-', text: midA[i], oldNo: i, newNo: j }); i += 1; }
+    while (j < m) { edits.push({ op: '+', text: midB[j], oldNo: i, newNo: j }); j += 1; }
     return edits;
   }
   // 中段太大（整页重写/超大文件）：多重集口径，只挑「一边有一边没有」的行
@@ -167,16 +183,97 @@ function diffEdits(midA: string[], midB: string[]): LineEdit[] {
     for (let k = 0; k < left; k += 1) removedLines.push(line);
   }
   return [
-    ...removedLines.map((text) => ({ op: '-' as const, text })),
-    ...addedLines.map((text) => ({ op: '+' as const, text })),
+    ...removedLines.map((text, index) => ({ op: '-' as const, text, oldNo: index, newNo: 0 })),
+    ...addedLines.map((text, index) => ({ op: '+' as const, text, oldNo: 0, newNo: index })),
   ];
 }
 
+interface HunkBuild {
+  lines: string[];
+  omitted: number;
+}
+
 /**
- * 内容 → 「改了几行」+「改了哪几行」。
+ * 编辑序列 → 改动块文本（带上下文）。
+ *
+ * 相邻改动块之间隔得远（超过 CHANGE_HUNK_GAP 行未改动）就切成两块；每块上下各带
+ * CHANGE_CONTEXT_LINES 行未改动正文。空白行不占行数（也不计入「没记下的改动」）；
+ * 超出块数 / 行数的改动只计数，最后由调用方写成「还有 N 行改动未记录」。
+ * 传入的行号都是「全文行号」（0 基），不再需要偏移。
+ */
+function buildHunks(edits: NumberedEdit[]): HunkBuild {
+  const changedIndexes: number[] = [];
+  for (let index = 0; index < edits.length; index += 1) if (edits[index].op !== '=') changedIndexes.push(index);
+  if (!changedIndexes.length) return { lines: [], omitted: 0 };
+
+  // 把改动按「相隔多远」分组
+  const groups: { from: number; to: number }[] = [];
+  let from = changedIndexes[0];
+  let to = changedIndexes[0];
+  for (const index of changedIndexes.slice(1)) {
+    if (index - to > CHANGE_HUNK_GAP) {
+      groups.push({ from, to });
+      from = index;
+    }
+    to = index;
+  }
+  groups.push({ from, to });
+
+  const lines: string[] = [];
+  let omitted = 0;
+  let emittedChanges = 0;
+  let hunks = 0;
+  for (const group of groups) {
+    if (hunks >= CHANGE_MAX_HUNKS) {
+      // 这个块整块不采样：里面的改动行都算「没记下」
+      for (let index = group.from; index <= group.to; index += 1) if (edits[index].op !== '=') omitted += 1;
+      continue;
+    }
+    const head = Math.max(0, group.from - CHANGE_CONTEXT_LINES);
+    const tail = Math.min(edits.length - 1, group.to + CHANGE_CONTEXT_LINES);
+    const slice = edits.slice(head, tail + 1);
+    const body: string[] = [];
+    let changesInHunk = 0;
+    // 块头里的行数按「真正写进 body 的行」算：空行被跳过，不能算进去
+    let oldCount = 0;
+    let newCount = 0;
+    let firstLineNo: { oldNo: number; newNo: number } | null = null;
+    for (const edit of slice) {
+      if (!edit.text.trim()) continue; // 空行不占预算
+      if (!firstLineNo) firstLineNo = { oldNo: edit.oldNo, newNo: edit.newNo };
+      if (edit.op === '=') {
+        body.push(contextLine(edit.newNo + 1, edit.text));
+        oldCount += 1;
+        newCount += 1;
+        continue;
+      }
+      if (changesInHunk >= CHANGE_SAMPLE_LINES || emittedChanges >= CHANGE_LOG_MAX_LINES) {
+        omitted += 1;
+        continue;
+      }
+      changesInHunk += 1;
+      emittedChanges += 1;
+      body.push(changeLine(edit.op, (edit.op === '-' ? edit.oldNo : edit.newNo) + 1, edit.text));
+      if (edit.op === '-') oldCount += 1;
+      else newCount += 1;
+    }
+    // 一行改动都没留下的块不写（只改了空行、或全局预算已用尽）：光给上下文等于没记录改动
+    if (!body.length || !firstLineNo || !changesInHunk) continue;
+    lines.push(`@@ -${firstLineNo.oldNo + 1},${oldCount} +${firstLineNo.newNo + 1},${newCount} @@`);
+    lines.push(...body);
+    hunks += 1;
+  }
+  return { lines, omitted };
+}
+
+/**
+ * 内容 → 「改了几行」+「改了哪几行（带上下文）」。
  *
  * before 传 '' 表示整页都是新增（新建页面）；maxLines=0 时只算计数、不采样
  * （lineDiffCounts 走这条路径，回溯与多重集两种口径都只算不改）。
+ *
+ * 公共前后缀先剪掉再跑 LCS（长文件里改动往往只在中段），但会各自留回最多
+ * CHANGE_CONTEXT_LINES 行当上下文——否则「只改了一行」的小改动在界面上没有参照系。
  */
 export function diffContent(before: string, after: string, maxLines = CHANGE_SAMPLE_LINES): ContentDiff {
   if (before === after) return { added: 0, removed: 0, lines: [], omitted: 0 };
@@ -192,25 +289,40 @@ export function diffContent(before: string, after: string, maxLines = CHANGE_SAM
   }
   const midA = a.slice(start, endA + 1);
   const midB = b.slice(start, endB + 1);
+
+  const edits: NumberedEdit[] = [];
+  // 上文：改动点之前最多 CHANGE_CONTEXT_LINES 行未改动正文
+  if (start > 0) {
+    for (let index = Math.max(0, start - CHANGE_CONTEXT_LINES); index < start; index += 1) {
+      edits.push({ op: '=', text: a[index], oldNo: index, newNo: index });
+    }
+  }
   if (!midA.length) {
-    // 纯新增（末尾追加 / 新建页）：added 按「新增了几行」算
-    const added = midB.length;
-    const sample = maxLines > 0 ? describeEditLines(midB.map((text) => ({ op: '+' as const, text })), maxLines) : { lines: [], omitted: 0 };
-    return { added, removed: 0, ...sample };
+    // 纯新增（末尾追加）：整块都是 + 行
+    midB.forEach((text, index) => edits.push({ op: '+', text, oldNo: start + index, newNo: start + index }));
+  } else if (!midB.length) {
+    // 纯删除：整块都是 − 行
+    midA.forEach((text, index) => edits.push({ op: '-', text, oldNo: start + index, newNo: start + index }));
+  } else {
+    for (const edit of diffEdits(midA, midB)) {
+      edits.push({ ...edit, oldNo: start + edit.oldNo, newNo: start + edit.newNo });
+    }
   }
-  if (!midB.length) {
-    const removed = midA.length;
-    const sample = maxLines > 0 ? describeEditLines(midA.map((text) => ({ op: '-' as const, text })), maxLines) : { lines: [], omitted: 0 };
-    return { added: 0, removed, ...sample };
+  // 下文：改动点之后最多 CHANGE_CONTEXT_LINES 行未改动正文
+  const suffixA = endA + 1;
+  const suffixB = endB + 1;
+  const suffixLen = a.length - suffixA;
+  for (let k = 0; k < Math.min(CHANGE_CONTEXT_LINES, suffixLen); k += 1) {
+    edits.push({ op: '=', text: a[suffixA + k], oldNo: suffixA + k, newNo: suffixB + k });
   }
-  const edits = diffEdits(midA, midB);
+
   let added = 0;
   let removed = 0;
   for (const edit of edits) {
     if (edit.op === '+') added += 1;
-    else removed += 1;
+    else if (edit.op === '-') removed += 1;
   }
-  const sample = maxLines > 0 ? describeEditLines(edits, maxLines) : { lines: [], omitted: 0 };
+  const sample = maxLines > 0 ? buildHunks(edits) : { lines: [], omitted: 0 };
   return { added, removed, ...sample };
 }
 
@@ -358,21 +470,19 @@ export function describeOpList(items: SyncOpSummary[], limit = 3): string {
 /**
  * 一批条目 → 写进同步日志的改动正文（`data.changes`）。
  *
- * 单条记录里可能涉及多个文件（推送批次、本机广播），所以多于一个文件时先写一行
- * 文件路径，再写它的 `+ / -` 改动行。日志有预算：超过条数或字符上限就收尾写
- * 「还有 N 行改动未记录」，绝不为了记全改动把日志文件撑爆。
+ * 每个文件先写一行文件路径，再写它的改动块（`@@ 行号 @@` + 上下文行 + `+ / −` 改动行）：
+ * 界面据此按「原始资料 / 概念 / 实体 / 内置 Agent」分组，并画出带上下文的行级 diff。
+ * 日志有预算：超过条数或字符上限就收尾写「还有 N 行改动未记录」，绝不为了记全改动把日志文件撑爆。
  */
 export function flattenChangeLines(ops: SyncOpSummary[]): string[] | undefined {
   const withChanges = ops.filter((op) => op.changes?.length);
   if (!withChanges.length) return undefined;
-  const withHeader = withChanges.length > 1;
   const candidates: string[] = [];
   let omittedBySample = 0;
   let lastHeader = '';
   for (const op of withChanges) {
-    // 同一批里同一个文件可能有多条（新建后紧接着编辑）：文件路径只写一次，
-    // 否则折叠预览里前几行全是同一个路径，反而看不到改动
-    if (withHeader && lastHeader !== op.path) {
+    // 同一批里同一个文件可能有多条（新建后紧接着编辑）：文件路径只写一次
+    if (lastHeader !== op.path) {
       candidates.push(op.path);
       lastHeader = op.path;
     }
@@ -387,6 +497,8 @@ export function flattenChangeLines(ops: SyncOpSummary[]): string[] | undefined {
     kept.push(line);
     chars += line.length + 1;
   }
+  // 截断只截在块的边界上：留着孤零零一行 `@@` 头的改动块没法渲染
+  while (kept.length && kept[kept.length - 1].startsWith('@@')) kept.pop();
   const omitted = candidates.length - kept.length + omittedBySample;
   if (omitted > 0) {
     if (kept.length >= CHANGE_LOG_MAX_LINES) kept.pop();
