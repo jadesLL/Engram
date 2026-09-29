@@ -195,8 +195,10 @@ jobs:
           echo ">> 构建产物："
           ls -la mobile-apk-dist
 
-      - name: 整理产物并计算校验值（dispatch）
-        if: github.event_name == 'workflow_dispatch'
+      - name: 整理产物并计算校验值（dispatch，构造产物时）
+        # 只回填（github_backfill 且不勾 binaries/offline_image）时没有任何产物：
+        # 这一步跑下去会对空目录 sha256sum 直接失败，后面的回填步骤也就永远到不了。
+        if: github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true)
         shell: bash
         env:
           INPUT_BINARIES: ${{ inputs.binaries }}
@@ -232,7 +234,7 @@ jobs:
           cat "sha256-${VER}.txt"
 
       - name: 上传产物到 Artifact（dispatch，保底下载入口）
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true)
         uses: https://gitea.com/actions/upload-artifact@v4
         with:
           name: engram-release-${{ steps.ver.outputs.version }}
@@ -257,8 +259,9 @@ jobs:
             - Windows exe / Android APK 是本次发版必备产物（三件套之一）：到 Actions → Release → Run workflow 输入本标签、勾选 binaries 构建，产物自动补挂到本 Release；三件缺一不算发版完成
             - 离线 tar.gz（offline_image）与 sha256 校验文件按需构建
 
-      - name: 补挂产物到已发布 Release（dispatch）
-        if: github.event_name == 'workflow_dispatch'
+      - name: 补挂产物到已发布 Release（dispatch，构造产物时）
+        # 同上：只回填时 release-out 是空的，这一步没有产物可挂（否则会把空校验文件挂上 Release）
+        if: github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true)
         uses: https://gitea.com/actions/gitea-release-action@v1
         env:
           NODE_OPTIONS: --experimental-fetch
