@@ -2,10 +2,14 @@ package com.engram.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
@@ -17,6 +21,9 @@ import android.webkit.WebView;
 import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import androidx.core.splashscreen.SplashScreen;
 
 import com.getcapacitor.BridgeActivity;
@@ -34,6 +41,7 @@ public class MainActivity extends BridgeActivity {
     /** 长按桌面图标快捷方式的 action：保留旧名称以兼容升级，实际打开本地库同步设置。 */
     private static final String ACTION_SELECT_SERVER = "com.engram.app.SELECT_SERVER";
     private static final int REQUEST_CREATE_DOCUMENT = 18182;
+    private static final int REQUEST_NOTIFICATIONS = 18183;
 
     private boolean forceSelectServer = false;
     private volatile boolean activityForeground = false;
@@ -46,6 +54,8 @@ public class MainActivity extends BridgeActivity {
     private SystemBars systemBars;
     /** 系统解锁（指纹/人脸/锁屏密码）：登录页用，见 BiometricUnlock。 */
     private BiometricUnlock biometricUnlock;
+    /** 应用内在线更新的宿主（安装器/权限页/通知都离不开 Activity），见 AppUpdater。 */
+    private UpdateHost updateHost;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -64,6 +74,10 @@ public class MainActivity extends BridgeActivity {
         startupSurfaceReady = true;
         String previousCrash = CrashReporter.consume(getApplicationContext());
         CrashReporter.install(getApplicationContext());
+        // 应用内在线更新的宿主：本地服务（AppUpdater）在后台线程里跑下载，需要 Activity 才能
+        // 调起系统安装器 / 跳「安装未知应用」授权页 / 发通知。实例还没建好也先挂上（静态持有）。
+        updateHost = new UpdateHost();
+        AppUpdater.setHost(updateHost);
 
         // Ktor/kotlinx-io 在 Android 上跨线程写 socket 时若不启用二级段池，会持续产生大量
         // 短命 Segment，部分设备可在几秒内耗尽应用堆。必须在首次加载 Ktor 类之前设置。
@@ -158,6 +172,85 @@ public class MainActivity extends BridgeActivity {
             // 本地服务未完成初始化时没有需要取消的同步请求。
         }
         super.onStop();
+    }
+
+    @Override
+    public void onDestroy() {
+        // 摘掉宿主：更新引擎静态持有 Activity 会造成泄漏；应用不在前台时安装/权限页会明确报错
+        if (AppUpdater.getHost() == updateHost) AppUpdater.setHost(null);
+        updateHost = null;
+        super.onDestroy();
+    }
+
+    /**
+     * 在线更新的宿主实现：把需要 Activity 的三件事接起来——系统安装器、授权页、下载完成通知。
+     * 这些动作都由本地服务（后台线程）发起，所以统一切回主线程再做。
+     */
+    private final class UpdateHost implements AppUpdater.Host {
+
+        @Override
+        public boolean launchInstaller(File apk) {
+            runOnUiThread(() -> {
+                try {
+                    Uri uri = FileProvider.getUriForFile(
+                            MainActivity.this,
+                            getPackageName() + ".fileprovider",
+                            apk
+                    );
+                    Intent intent = new Intent(Intent.ACTION_VIEW)
+                            .setDataAndType(uri, "application/vnd.android.package-archive")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                } catch (Exception error) {
+                    Toast.makeText(
+                            MainActivity.this,
+                            "无法调起系统安装器：" + error.getMessage(),
+                            Toast.LENGTH_LONG
+                    ).show();
+                }
+            });
+            return true;
+        }
+
+        @Override
+        public void openInstallPermissionSettings() {
+            runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                            .setData(Uri.parse("package:" + getPackageName()))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                } catch (Exception error) {
+                    Toast.makeText(
+                            MainActivity.this,
+                            "无法打开系统设置：" + error.getMessage(),
+                            Toast.LENGTH_LONG
+                    ).show();
+                }
+            });
+        }
+
+        @Override
+        public void notifyReady(String version, File apk) {
+            // 前台有绿色更新图标与设置页提示，不重复发系统通知；退到后台才用通知兜住
+            if (activityForeground) return;
+            UpdateNotifier.notifyReady(MainActivity.this, version, apk);
+        }
+
+        @Override
+        public boolean requestNotificationPermission() {
+            if (Build.VERSION.SDK_INT < 33) return true;
+            if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.POST_NOTIFICATIONS)
+                    == PackageManager.PERMISSION_GRANTED) {
+                return true;
+            }
+            runOnUiThread(() -> ActivityCompat.requestPermissions(
+                    MainActivity.this,
+                    new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQUEST_NOTIFICATIONS
+            ));
+            return false;
+        }
     }
 
     @Override

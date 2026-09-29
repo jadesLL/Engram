@@ -48,6 +48,8 @@ class EngramLocalServer private constructor(private val context: Context) {
     private val secrets = SecretStore(context)
     private val sync = SyncEngine(db, secrets)
     private val agent = AgentBridge(db, secrets)
+    /** 安卓端 OTA（APK 在线升级）：检查/下载在本地服务内跑，安装交给宿主的 Activity（见 AppUpdater） */
+    private val appUpdate = AppUpdater(context, db, secrets)
     private val sessionToken: String = secrets.get("local_session_token") ?: randomToken().also {
         secrets.put("local_session_token", it)
     }
@@ -79,7 +81,11 @@ class EngramLocalServer private constructor(private val context: Context) {
         }.start(wait = false)
     }
 
-    fun onForeground() = sync.onForeground()
+    fun onForeground() {
+        sync.onForeground()
+        // 启动/回前台自动检查更新（自动更新开着时发现新版直接后台下载），与网页侧的退避调度互补
+        runCatching { appUpdate.onForeground() }
+    }
     fun onBackground() = sync.onBackground()
     fun requestSync(full: Boolean) = sync.request(full)
     fun importSharedText(title: String?, text: String): String = db.importSharedText(title, text)
@@ -107,6 +113,9 @@ class EngramLocalServer private constructor(private val context: Context) {
                 .put("features", JSONObject()
                     .put("agent", remoteAgent).put("agentAdmin", false).put("mcp", false).put("jobs", false)
                     .put("onlyOffice", false).put("serverUpdate", false).put("ddns", false)
+                    // apkUpdate：手机端专属的「应用内在线更新」能力位（桌面/服务端形态为 false），
+                    // 设置页「版本与更新 → 安卓端更新」与更新提示条都按它显隐
+                    .put("apkUpdate", true)
                     .put("backup", true).put("fileExtraction", true)))
         }
 
@@ -508,6 +517,38 @@ class EngramLocalServer private constructor(private val context: Context) {
             // 白名单与 server PUBLIC_SETTINGS 对齐；DDNS / 一键接入 token 在 Android 上没有意义，显式忽略
             for (key in listOf("search_synonyms", "show_ai_workspace")) if (body.has(key)) db.setSetting(key, body.optString(key))
             call.ok()
+        }
+
+        /*
+         * 安卓端 OTA（APK 在线升级）：检查与下载都在后台线程跑，这些端点只负责触发 + 读状态，
+         * 界面按固定间隔轮询 state（下载几十 MB 不能占着请求线程）；安装交给宿主的 Activity。
+         */
+        get("/api/app-update/state") { if (call.authorize()) call.json(appUpdate.stateJson()) }
+        put("/api/app-update/config") {
+            if (!call.authorize()) return@put
+            appUpdate.saveConfig(call.body()); call.json(appUpdate.stateJson())
+        }
+        post("/api/app-update/check") {
+            if (!call.authorize()) return@post
+            appUpdate.requestCheck(); call.json(appUpdate.stateJson())
+        }
+        post("/api/app-update/download") {
+            if (!call.authorize()) return@post
+            appUpdate.requestDownload(); call.json(appUpdate.stateJson())
+        }
+        post("/api/app-update/install") {
+            if (!call.authorize()) return@post
+            // 权限没开 / 包没下完 / 不在前台：AppUpdater 抛 IllegalArgumentException，
+            // 由 StatusPages 统一变成 400 + {error}，界面直接显示这句人话
+            call.json(appUpdate.install())
+        }
+        post("/api/app-update/install-permission") {
+            if (!call.authorize()) return@post
+            appUpdate.openInstallSettings(); call.ok()
+        }
+        post("/api/app-update/notifications") {
+            if (!call.authorize()) return@post
+            call.json(JSONObject().put("ok", true).put("notificationsEnabled", appUpdate.requestNotifications()))
         }
         get("/api/settings/backup") {
             if (!call.authorize()) return@get

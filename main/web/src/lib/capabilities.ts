@@ -16,6 +16,8 @@ export interface RuntimeCapabilities {
     jobs: boolean;
     onlyOffice: boolean;
     serverUpdate: boolean;
+    /** 手机端专属：应用内在线更新（下载 APK 并调起系统安装器）。桌面/服务端形态为 false */
+    apkUpdate: boolean;
     ddns: boolean;
     backup: boolean;
     fileExtraction: boolean;
@@ -35,6 +37,7 @@ const fullCapabilities: RuntimeCapabilities = {
     jobs: true,
     onlyOffice: true,
     serverUpdate: true,
+    apkUpdate: false,
     ddns: true,
     backup: true,
     fileExtraction: true,

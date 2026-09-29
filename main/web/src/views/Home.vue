@@ -81,7 +81,7 @@
         @click="go('/settings')"
       >
         <Icon name="settings" :size="19" />
-        <span v-if="updateStore.hasNewVersion || sourceHasUpdate" class="dot" />
+        <span v-if="updateStore.hasNewVersion || sourceHasUpdate || appUpdateStore.hasUpdate" class="dot" />
       </button>
     </nav>
 
@@ -189,6 +189,7 @@ import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
 import { useInboxStore } from '../stores/inbox';
 import { useUpdateStore } from '../stores/update';
+import { useAppUpdateStore } from '../stores/appUpdate';
 import {
   UPDATE_CHECK_POKE_DEBOUNCE_MS,
   UPDATE_CHECK_STARTUP_MS,
@@ -214,6 +215,7 @@ const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
 const updateStore = useUpdateStore();
+const appUpdateStore = useAppUpdateStore();
 const updateNoticeVisible = ref(false);
 const sourceHasUpdate = ref(false);
 /* 桌面端（有 wikiDesktop 桥）：更新入口渲染进融合标题栏，不再浮在正文上方，正文也就无需为它让出顶部间距 */
@@ -472,7 +474,7 @@ const moreItems = computed(() => [
   {
     label: '设置',
     icon: 'settings',
-    dot: updateStore.hasNewVersion || sourceHasUpdate.value,
+    dot: updateStore.hasNewVersion || sourceHasUpdate.value || appUpdateStore.hasUpdate,
     running: false,
     action: () => runMore(() => go('/settings')),
   },
@@ -521,10 +523,17 @@ function onUpdateNoticeChange(visible: boolean, sourceUpdate: boolean) {
 /* ===== 软件更新自动检测：两级探测 + 自适应退避 =====
    进入应用 3 秒首查；之后按「这轮有没有发现更新」自适应：没发现就 2→5→10→30→60 分钟逐级拉长（有更新待处理时每分钟复查），
    发现了立刻回到最短间隔。切回前台 / 窗口聚焦 / 网络恢复再补查一次（20 秒去抖）。
-   节奏策略与桌面主进程同源：lib/updateCadence.ts ↔ desktop/scripts/lib/update-cadence.js。 */
+   节奏策略与桌面主进程同源：lib/updateCadence.ts ↔ desktop/scripts/lib/update-cadence.js。
+   手机端（Android App）走同一套节奏，只是把「检查」换成 App 内的 APK 更新检查：
+   App 自己也会在启动/回前台时检查一次（MainActivity → AppUpdater.onForeground），两边互补。 */
 async function autoCheckUpdate(): Promise<boolean> {
   const caps = await loadRuntimeCapabilities();
-  if (!caps.features.serverUpdate || caps.runtime === 'android-local') return false;
+  if (caps.runtime === 'android-local') {
+    if (!caps.features.apkUpdate) return false;
+    await appUpdateStore.check();
+    return true;
+  }
+  if (!caps.features.serverUpdate) return false;
   const desktop = (window as any).wikiDesktop;
   if (desktop?.getDesktopEnv) {
     try {
@@ -558,7 +567,7 @@ async function runUpdateCheck() {
     // 网络抖动不当作「发现更新」，按未发现继续退避
   }
   if (!ran) return;
-  updateBackoffIndex = nextBackoffIndex(updateBackoffIndex, updateStore.hasNewVersion);
+  updateBackoffIndex = nextBackoffIndex(updateBackoffIndex, updateStore.hasNewVersion || appUpdateStore.hasUpdate);
   scheduleUpdateCheck(backoffDelay(updateBackoffIndex));
 }
 

@@ -532,6 +532,24 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                             reader.skipValue()
                         }
                     }
+                    // 中枢随清单下发「同步群组共用的更新源」（服务器/桌面端「更新源配置」那一份）：
+                    // 手机没手填地址时直接用它检查更新，免得多端各填一遍
+                    "updateSource" -> {
+                        if (reader.peek() == JsonToken.BEGIN_OBJECT) {
+                            var url = ""
+                            var repo = ""
+                            reader.beginObject()
+                            while (reader.hasNext()) when (reader.nextName()) {
+                                "url" -> url = reader.nextString()
+                                "repo" -> repo = reader.nextString()
+                                else -> reader.skipValue()
+                            }
+                            reader.endObject()
+                            learnUpdateSource(url, repo)
+                        } else {
+                            reader.skipValue()
+                        }
+                    }
                     else -> reader.skipValue()
                 }
                 reader.endObject()
@@ -824,6 +842,26 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     /** 显示名是哪来的：设置页据此说明「按中枢配置」还是「暂时显示手机名」 */
     fun deviceLabelSource(): String =
         if (db.setting(deviceLabelSetting)?.trim().isNullOrEmpty()) "hostname" else "member-config"
+
+    /**
+     * 学回中枢的更新源（多端同步共用一份，见 server/routes/sync.ts 的 updateSource 字段）：
+     * 只写「中枢下发」那两个键，本机手填的地址不被覆盖——检查更新时本机手填优先。
+     */
+    private fun learnUpdateSource(url: String, repo: String) {
+        val trimmedUrl = url.trim().trimEnd('/')
+        val trimmedRepo = repo.trim().trim('/')
+        if (trimmedUrl.isEmpty() || trimmedRepo.isEmpty()) return
+        val before = "${db.setting(AppUpdateConfig.KEY_HUB_URL).orEmpty()}/${db.setting(AppUpdateConfig.KEY_HUB_REPO).orEmpty()}"
+        if (before == "$trimmedUrl/$trimmedRepo") return
+        db.setSetting(AppUpdateConfig.KEY_HUB_URL, trimmedUrl)
+        db.setSetting(AppUpdateConfig.KEY_HUB_REPO, trimmedRepo)
+        db.log(
+            "info",
+            "update-source",
+            "更新源已按中枢配置对齐为「$trimmedRepo」",
+            JSONObject().put("repo", trimmedRepo).put("url", trimmedUrl),
+        )
+    }
 
     /** 通道现状（`/api/sync/status` 的 link 字段）；未启用同步时为 null，界面据此整块隐藏 */
     fun linkStatus(): JSONObject? {

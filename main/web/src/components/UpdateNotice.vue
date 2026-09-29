@@ -72,6 +72,9 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUpdateStore } from '../stores/update';
+import { useAppUpdateStore } from '../stores/appUpdate';
+import { useRuntimeCapabilities } from '../lib/capabilities';
+import { appUpdateCheckedLabel, appUpdateStatusText, releaseHighlights } from '../lib/appUpdate';
 import {
   applyDesktopInstallerUpdate,
   applyServerUpdate,
@@ -101,6 +104,9 @@ type ApplyPhase = 'idle' | 'running' | 'waiting' | 'done' | 'skipped' | 'error';
 const emit = defineEmits<{ change: [visible: boolean, sourceHasUpdate: boolean] }>();
 const router = useRouter();
 const updateStore = useUpdateStore();
+/** 手机端（Android App）的应用内更新：下载 APK → 调起系统安装器，见 stores/appUpdate.ts */
+const appUpdate = useAppUpdateStore();
+const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
 /**
  * 桌面端（App.vue 同款判定：有 wikiDesktop 桥就有融合标题栏）：入口渲染进标题栏 #win-titlebar-slot，
  * 变成「Engram」右侧一枚绿色更新图标；Docker/浏览器端没有融合标题栏，就地渲染在右上角。
@@ -122,29 +128,44 @@ let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
  * 当前运行形态决定「立即更新」到底做什么：
  *   web = 浏览器访问（含 Docker 服务端）→ 请求服务端更新并等它重启；
  *   source = 桌面源码模式 → 主进程增量拉源码重建；
- *   installer = 桌面安装包形态 → 下载新 exe 静默安装。
+ *   installer = 桌面安装包形态 → 下载新 exe 静默安装；
+ *   apk = 手机 App（Android）→ 下载 APK 后调起系统安装器，装完由系统替换应用。
  */
-const shellKind = computed<'web' | 'source' | 'installer'>(() => {
+const shellKind = computed<'web' | 'source' | 'installer' | 'apk'>(() => {
+  if (apkMode.value) return 'apk';
   const env = desktopEnv.value;
   if (!env) return 'web';
   return env.packaged ? 'installer' : 'source';
 });
+/** 手机端形态：能力位由 App 内的 Kotlin 本地服务报 true（桌面/服务端永远是 false） */
+const apkMode = computed(() => Boolean(capabilities.value.features.apkUpdate));
 /** 源码模式的检测由主进程做（git 提交号才有意义），且仅 Windows 桌面源码版走这条路 */
 const sourceMode = computed(() => Boolean(desktopEnv.value && !desktopEnv.value.packaged && desktopEnv.value.platform === 'win32'));
 
 const sourceHasUpdate = computed(() => sourceMode.value && sourceState.value.phase === 'behind' && Number(sourceState.value.behind) > 0);
-const releaseHasUpdate = computed(() => !sourceMode.value && updateStore.hasNewVersion);
+/** 手机端：有新版本或安装包已下好（待安装）都要挂着绿色图标提示 */
+const apkHasUpdate = computed(() => apkMode.value && (appUpdate.hasUpdate || appUpdate.installPending));
+const releaseHasUpdate = computed(() => !sourceMode.value && !apkMode.value && updateStore.hasNewVersion);
 /** 有更新就一直挂着这枚绿色图标：不再自动弹面板，也没有「把入口藏起来」的忽略态 */
-const hasUpdate = computed(() => sourceHasUpdate.value || releaseHasUpdate.value);
-const mainImageUpdate = computed(() => !sourceMode.value && updateStore.lastResult?.imageTag === 'main' && updateStore.lastResult?.digestMatch === false);
+const hasUpdate = computed(() => sourceHasUpdate.value || apkHasUpdate.value || releaseHasUpdate.value);
+const mainImageUpdate = computed(() => !sourceMode.value && !apkMode.value && updateStore.lastResult?.imageTag === 'main' && updateStore.lastResult?.digestMatch === false);
 
 /** 图标按钮的读屏文案：图标本身不写字，用 aria-label 说清「有什么更新」 */
 const triggerHint = computed(() => {
+  if (apkMode.value) return appUpdate.installPending ? '新版本已下载，可以去安装' : '有新版本可下载';
   if (sourceMode.value) return `有更新：远端领先 ${Number(sourceState.value.behind) || 0} 个新提交`;
   return mainImageUpdate.value ? '主分支镜像有更新' : '有可用新版本';
 });
-const title = computed(() => sourceMode.value ? '源码有新更新' : mainImageUpdate.value ? '主分支镜像有更新' : 'Engram 有新版本');
+const title = computed(() => {
+  if (apkMode.value) return appUpdate.installPending ? '新版本已下载' : 'Engram 有新版本';
+  return sourceMode.value ? '源码有新更新' : mainImageUpdate.value ? '主分支镜像有更新' : 'Engram 有新版本';
+});
 const subtitle = computed(() => {
+  if (apkMode.value) {
+    return appUpdate.info.latestVersion
+      ? `v${appUpdate.info.latestVersion} 已可更新 · 当前 v${appUpdate.info.currentVersion}`
+      : appUpdateStatusText(appUpdate.info);
+  }
   if (sourceMode.value) {
     const from = sourceState.value.localCommit;
     const to = sourceState.value.remoteCommit;
@@ -164,10 +185,12 @@ const applying = computed(() => applyPhase.value === 'running' || applyPhase.val
 const applyLabel = computed(() => {
   if (applyPhase.value === 'running') {
     if (shellKind.value === 'installer') return applyPercent.value === null ? '正在准备下载…' : `下载中 ${applyPercent.value}%`;
+    if (shellKind.value === 'apk') return applyPercent.value === null ? '正在下载安装包…' : `下载中 ${applyPercent.value}%`;
     return shellKind.value === 'source' ? '正在更新并重启…' : '正在更新…';
   }
   if (applyPhase.value === 'waiting') return '等待服务恢复…';
   if (applyPhase.value === 'done') return '更新进行中…';
+  if (shellKind.value === 'apk') return appUpdate.installPending ? '立即安装' : '立即下载并安装';
   if (shellKind.value === 'source') return '立即更新并重启';
   if (shellKind.value === 'installer') return '立即下载并安装';
   return '立即更新';
@@ -177,6 +200,7 @@ const progressLabel = computed(() => {
   if (applyPhase.value === 'skipped') return '已是最新版本';
   if (applyPhase.value === 'waiting') return '更新已提交，服务正在重启…';
   if (applyPhase.value === 'done') {
+    if (shellKind.value === 'apk') return '已调起系统安装器：请在系统弹窗点「安装」';
     return shellKind.value === 'web' ? '更新完成，页面即将自动刷新…' : '更新中，应用即将自动重启…';
   }
   return '正在更新…';
@@ -189,8 +213,8 @@ const progressLines = computed(() => {
 
 /**
  * 点一下就更新，不再二次确认（用户 2026-09-24 明确要求）：
- * 三种形态各自接手（源码重建重启 / 下载 exe 静默安装 / 服务端换镜像并重启），
- * 这里只负责把进度与失败原因显示出来。
+ * 四种形态各自接手（源码重建重启 / 下载 exe 静默安装 / 服务端换镜像并重启 /
+ * 手机端下载 APK 再调起系统安装器），这里只负责把进度与失败原因显示出来。
  */
 async function runUpdate() {
   if (applying.value) return;
@@ -199,6 +223,10 @@ async function runUpdate() {
   applyError.value = '';
   applyPercent.value = null;
   const log = (line: string) => { applyLog.value = [...applyLog.value, line]; };
+  if (shellKind.value === 'apk') {
+    await runApkUpdate(log);
+    return;
+  }
   let result: ApplyResult;
   if (shellKind.value === 'source') {
     log('增量拉取源码并重建（会弹出置顶进度窗口显示构建步骤）…');
@@ -226,6 +254,49 @@ async function runUpdate() {
   log(applyError.value);
 }
 
+/**
+ * 手机端一键更新：没下好就先下载（几 MB～几十 MB，走本地服务的后台下载），
+ * 下载完成再调起系统安装器。安装确认由 Android 系统弹窗把关，所以这里不做二次确认。
+ */
+async function runApkUpdate(log: (line: string) => void) {
+  if (!appUpdate.info.configured) {
+    applyPhase.value = 'error';
+    applyError.value = '还没有可用的更新源：到「设置 → 版本与更新 → 安卓端更新」填写仓库地址，或在同步中枢的「更新源配置」里配好（会随多端同步下发到手机）。';
+    log(applyError.value);
+    return;
+  }
+  if (!appUpdate.installPending) {
+    if (!appUpdate.hasUpdate) {
+      log('正在检查远端版本…');
+      await appUpdate.check(true);
+    }
+    log('开始下载安装包…');
+    await appUpdate.download();
+    const info = await appUpdate.waitForSettle(20 * 60_000, (state) => {
+      applyPercent.value = state.percent;
+    });
+    applyPercent.value = info.percent;
+    if (!info.ready) {
+      applyPhase.value = 'error';
+      applyError.value = info.error || '下载未完成，请稍后重试。';
+      log(applyError.value);
+      return;
+    }
+    log('安装包下载完成，正在调起系统安装器…');
+  } else {
+    applyPercent.value = 100;
+  }
+  const result = await appUpdate.install();
+  if (!result.ok) {
+    applyPhase.value = 'error';
+    applyError.value = result.error || '无法调起系统安装器';
+    log(applyError.value);
+    return;
+  }
+  applyPhase.value = 'done';
+  log('已调起系统安装器：请在系统弹窗点「安装」，完成后 Engram 会自动重启，数据不受影响。');
+}
+
 /** Release 正文只作为纯文本显示，提取前几条内容；不渲染远端 Markdown/HTML。 */
 function releaseSummary(notes: string): string[] {
   return notes.split(/\r?\n/)
@@ -238,6 +309,10 @@ function releaseSummary(notes: string): string[] {
 }
 
 const changes = computed(() => {
+  if (apkMode.value) {
+    const items = releaseHighlights(appUpdate.info.releaseNotes);
+    return items.length ? items : ['新版本已可下载：点「立即下载并安装」，装完 Engram 自动重启。'];
+  }
   if (sourceMode.value) {
     const items = Array.isArray(sourceState.value.changes) ? sourceState.value.changes : [];
     return items.length ? items.slice(0, 5).map((item) => String(item).slice(0, 160)) : ['远端已有新提交，可前往软件更新查看提交号并更新。'];
@@ -248,6 +323,7 @@ const changes = computed(() => {
 });
 
 const checkedLabel = computed(() => {
+  if (apkMode.value) return appUpdate.info.checkedAt ? appUpdateCheckedLabel(appUpdate.info.checkedAt) : '刚刚';
   const at = sourceMode.value ? sourceState.value.checkedAt : updateStore.checkedAt;
   if (!at || Date.now() - at < 60_000) return '刚刚';
   return new Date(at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -288,7 +364,9 @@ function onNoticeLeave() {
 /** 次级入口：跳设置页看完整更新信息（提交列表 / 更新日志 / 手动检查） */
 async function goToUpdate() {
   panelOpen.value = false;
-  const anchor = sourceMode.value || Boolean((window as any).wikiDesktop) ? 'panel-update-desktop' : 'panel-update-server';
+  const anchor = apkMode.value
+    ? 'panel-update-android'
+    : sourceMode.value || Boolean((window as any).wikiDesktop) ? 'panel-update-desktop' : 'panel-update-server';
   const alreadyInSettings = router.currentRoute.value.path === '/settings';
   // 2026-09-28 起「服务器更新 / 桌面端更新 / 更新源配置」属「版本与更新」大类（旧值 connect 已退役）
   await router.push({ path: '/settings', query: { section: 'update', anchor } });
@@ -305,6 +383,9 @@ function onKeyDown(event: KeyboardEvent) {
 onMounted(async () => {
   document.addEventListener('pointerdown', onPointerDown);
   document.addEventListener('keydown', onKeyDown);
+  await loadCapabilities();
+  // 手机端形态：拉一次状态，绿色图标按「有新版本 / 待安装」亮起来（桌面/服务端走各自的检测）
+  if (apkMode.value) await appUpdate.refresh();
   const desktop = (window as any).wikiDesktop;
   if (!desktop?.getDesktopEnv) return;
   try {

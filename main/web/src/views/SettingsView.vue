@@ -112,12 +112,14 @@
         </section>
 
         <!-- 版本与更新：服务器更新 / 桌面端更新 / 更新源配置（三张卡片都在 UpdatePanel 内，
-             active 传给面板：面板常驻挂载（v-show），绑定同步发生在别的分区时靠激活态重拉状态） -->
+             安卓端更新只在手机 App 里出现（能力位 apkUpdate），active 传给面板：面板常驻挂载
+             （v-show），切回本大类时靠激活态重拉状态） -->
         <section v-show="activeDomain === 'update'" class="settings-domain is-multi" data-domain="update">
           <DomainHead :domain="domainOf('update')" />
           <div v-if="capabilities.features.serverUpdate">
             <UpdatePanel :active="activeDomain === 'update'" />
           </div>
+          <AndroidUpdatePanel v-if="capabilities.features.apkUpdate" :active="activeDomain === 'update'" />
         </section>
 
         <!-- 本机应用：桌面端应用 / 版本信息 / 卸载 Engram -->
@@ -163,6 +165,7 @@ import DreamSection from '../components/settings/DreamSection.vue';
 import BoardSection from '../components/settings/BoardSection.vue';
 import SyncPanel from '../components/settings/SyncPanel.vue';
 import UpdatePanel from '../components/settings/UpdatePanel.vue';
+import AndroidUpdatePanel from '../components/settings/AndroidUpdatePanel.vue';
 import StoragePanel from '../components/settings/StoragePanel.vue';
 import DataPanel from '../components/settings/DataPanel.vue';
 import DataDangerSection from '../components/settings/DataDangerSection.vue';
@@ -209,6 +212,7 @@ const route = useRoute();
 const domains = computed(() => visibleSettingsDomains({
   agent: capabilities.value.features.agentAdmin,
   serverUpdate: capabilities.value.features.serverUpdate,
+  apkUpdate: capabilities.value.features.apkUpdate,
   desktop: capabilities.value.runtime === 'desktop',
 }, hiddenSettingsAnchors));
 

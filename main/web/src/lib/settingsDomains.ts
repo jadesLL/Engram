@@ -36,7 +36,7 @@ export type SettingsDomainId =
  *  比只看 window.wikiDesktop 准——本地服务被浏览器打开时后者为假，但本机确实有安装目录 / 开机自启 / 快捷方式可管。
  *  运行期才能判断的显隐（DDNS 只在担任中枢时、卸载只在源码安装形态）不进这里，
  *  由渲染该分组的组件经 lib/settingsNavVisibility.ts 登记。 */
-export type SettingsDomainNeed = 'agent' | 'serverUpdate' | 'desktop';
+export type SettingsDomainNeed = 'agent' | 'serverUpdate' | 'apkUpdate' | 'desktop';
 
 export interface SettingsGroupNav {
   /** 锚点 id：与 SettingsGroup 的 anchor / 包裹元素的 id 一致 */
@@ -62,6 +62,8 @@ export interface SettingsDomain {
 export interface SettingsFeatures {
   agent: boolean;
   serverUpdate: boolean;
+  /** 手机端（Android App）的应用内在线更新；缺省按没有处理，桌面/服务端形态不会出现该分组 */
+  apkUpdate?: boolean;
   /** 桌面端运行时；缺省按「不是桌面端」处理——只有显式 true 才放行桌面端专属分组，避免登记了却渲染不出来的死锚点 */
   desktop?: boolean;
 }
@@ -120,7 +122,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
   {
     id: 'update',
     label: '版本与更新',
-    desc: '服务端与桌面端各自的版本更新通道。',
+    desc: '三端各自的版本更新通道：服务器、桌面端、安卓端。',
     icon: 'download',
     groups: [
       // 桌面端更新在浏览器访问时只作展示（组件里有说明），因此与服务器更新同一能力位，
@@ -128,6 +130,9 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
       { id: 'panel-update-server', label: '服务器更新', icon: 'download', need: 'serverUpdate' },
       { id: 'panel-update-desktop', label: '桌面端更新', icon: 'monitor', need: 'serverUpdate' },
       { id: 'panel-update-source', label: '更新源配置', icon: 'globe', need: 'serverUpdate' },
+      // 安卓端专属：手机只能靠安装包升级（不能源码自更新），更新源与进度都在这一组里。
+      // 能力位 apkUpdate 只有 App 内的 Kotlin 本地服务会报 true，桌面/服务端形态整组不出现。
+      { id: 'panel-update-android', label: '安卓端更新', icon: 'download', need: 'apkUpdate' },
     ],
   },
   {
@@ -202,6 +207,7 @@ export function visibleSettingsDomains(
         if (hidden.has(group.id)) return false;
         if (group.need === 'agent') return features.agent;
         if (group.need === 'serverUpdate') return features.serverUpdate;
+        if (group.need === 'apkUpdate') return Boolean(features.apkUpdate);
         if (group.need === 'desktop') return Boolean(features.desktop);
         return true;
       }),

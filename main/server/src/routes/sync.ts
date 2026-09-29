@@ -43,6 +43,7 @@ import {
 import { distilledSourcePaths } from '../pipeline/sourceLedger.js';
 import { configure, configureDualStack, configureLinkPreferLan, reconcileNow, status } from '../sync/index.js';
 import { deviceLabel } from '../sync/deviceLabel.js';
+import { updateSourceForSync } from '../lib/updateConfig.js';
 import { localLanUrls } from '../sync/linkAnnounce.js';
 import type { DualStackConfig } from '../sync/dualStack.js';
 import {
@@ -506,6 +507,9 @@ export async function syncRoutes(app: FastifyInstance) {
       // 成员端据此把「本机叫什么」对齐成中枢配置里的成员名（deviceLabel.ts）；
       // owner 通道（浏览器/MCP）没有成员身份，返回 null，调用方按「不知道」处理
       device: peer ? { id: peer.id, name: peer.name } : null,
+      // 同步群组共用的更新源（中枢「更新源配置」里的仓库地址，不带凭据）：手机端没手填地址时
+      // 就用这一份检查 APK 更新，免得多端各填一遍；成员端手填的地址优先（见 AppUpdateConfig）
+      updateSource: updateSourceForSync(),
     };
   });
 
