@@ -93,13 +93,45 @@ export function hostnameOf(base: string): string {
 }
 
 /** IPv4 私网段（10/8、172.16/12、192.168/16）——判定「这是内网地址」的唯一依据 */
-function isPrivateIpv4(addr: string): boolean {
+export function isPrivateIpv4(addr: string): boolean {
   const parts = addr.split('.').map((part) => Number(part));
   if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
   if (parts[0] === 10) return true;
   if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
   if (parts[0] === 192 && parts[1] === 168) return true;
   return false;
+}
+
+/**
+ * 回环地址：127.0.0.0/8、::1、localhost。
+ *
+ * 跨设备场景里它是**毒地址**：中枢把 127.0.0.1 通告/展示给成员，成员填了会连回它自己
+ * （本机若正好也跑着一套 Engram，探测还会假成功，同步就此卡死在「连上了却不走数据」）。
+ * 因此通告与展示前都要过这一道闸门。
+ */
+export function isLoopbackHost(host: string): boolean {
+  const addr = String(host || '').trim().toLowerCase().split('%')[0].replace(/^\[|\]$/g, '');
+  if (!addr) return false;
+  if (addr === 'localhost' || addr.endsWith('.localhost')) return true;
+  if (addr === '::1') return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(addr);
+}
+
+/** 整条 URL 是否指向本机（回环）：通告与展示前的统一闸门 */
+export function isLoopbackUrl(url: string): boolean {
+  const base = normalizeBase(url);
+  if (!base) return false;
+  try {
+    return isLoopbackHost(new URL(base).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** 通配监听地址（0.0.0.0 / ::）：那是「监听面」，不是能填给别的设备的地址 */
+export function isWildcardHost(host: string): boolean {
+  const addr = String(host || '').trim().split('%')[0];
+  return addr === '0.0.0.0' || addr === '::' || addr === '[::]';
 }
 
 /** 链路本地地址：169.254/16 与 fe80::/10——能互访但需要 scope id，不作为局域网候选通告 */
@@ -187,44 +219,103 @@ function urlHost(addr: string): string {
 }
 
 /**
+ * 明显不是「同一局域网」的网卡名：VPN / 虚拟机 / 容器 / 隧道 / 蓝牙。
+ *
+ * 这些网卡也会给出私网地址（WSL 的 172.20.x、VirtualBox 的 192.168.56.x、Docker Desktop 的
+ * 172.28.x、VPN 的 172.30.x），但别的设备连不上——列出来只会让人在多条地址里猜错，
+ * 探测时也是白等一轮超时。名字判定是启发式（各系统命名不统一），因此只用来**排序与取舍**，
+ * 不用来否定地址本身。
+ */
+const VIRTUAL_IFACE = /(vethernet|hyper-v|virtualbox|vmware|docker|wsl|loopback|tun\b|tap\b|vpn|zerotier|tailscale|hamachi|bluetooth|wintun|openvpn|wireguard|radmin|parallels|qemu|vgate|virtual|tunnel|warp|clash|mihomo|sing-?box|v2ray|xray|nordlynx|proton|surge|wg\d)/i;
+
+/** 网卡名看着像一张真实局域网网卡（名字为空时按真实处理，宁多勿漏） */
+export function looksLikeRealLanIface(name: string): boolean {
+  return !VIRTUAL_IFACE.test(String(name || ''));
+}
+
+/** 网卡上挑出来的一个局域网候选：带网卡名，界面据此告诉用户「该用哪张网卡」 */
+export interface LanIfaceCandidate {
+  url: string;
+  /** 网卡名（如「WLAN」「以太网」「eth0」；取不到时为空串） */
+  iface: string;
+  /** 名字看着像真实局域网网卡（VPN / 虚拟机 / 容器网卡为 false） */
+  real: boolean;
+}
+
+/**
+ * 私网 IPv4 的「像不像家庭/办公局域网」评分：越小越可能被别的设备连上。
+ *
+ *  - 192.168/16：家用与小型办公路由器出厂就是这个网段，命中率最高；
+ *  - 10/8：公司网络常见；
+ *  - 172.16/12：VPN 与容器最爱用（172.17 Docker、172.20 WSL、172.30 各类隧道），最不像局域网。
+ * 有了这一档，中枢面板给成员的首选地址就不会是 VPN/虚拟网卡那条。
+ */
+function privateV4Score(addr: string): number {
+  const parts = addr.split('.').map((part) => Number(part));
+  if (parts[0] === 192 && parts[1] === 168) return 0;
+  if (parts[0] === 10) return 1;
+  return 2;
+}
+
+/**
  * 中枢端：从网卡里挑出「同一局域网内可达」的地址，配上端口。
  *
- *  - 私网 IPv4（10/172.16-31/192.168）优先：家宽与公司网络里最常见，路由器也一定放行；
+ *  - 私网 IPv4（192.168 → 10 → 172.16-31）优先：家宽与公司网络里最常见，路由器也一定放行；
  *  - 其次唯一本地 IPv6（fc00::/7）；链路本地（fe80::）需要 scope id，不作为候选；
- *  - `extra` 是部署侧的显式声明（LAN_ACCESS_URL），排在最前：容器里 os.networkInterfaces()
- *    看到的是 172.x 容器网段，不是宿主机的局域网地址，只有部署侧知道真实地址。
+ *  - 真实网卡排在同族的 VPN / 虚拟机 / 容器网卡之前：后者给出的地址成员多半连不上。
+ */
+export function lanIfaceCandidates(ifaces: NetworkInterfaces, port: number): LanIfaceCandidate[] {
+  const ipv4: LanIfaceCandidate[] = [];
+  const ipv6: LanIfaceCandidate[] = [];
+  for (const [name, list] of Object.entries(ifaces || {})) {
+    for (const info of list || []) {
+      if (!info || info.internal) continue;
+      const addr = String(info.address || '').split('%')[0].trim();
+      if (!addr) continue;
+      const family = ipFamilyOf(addr);
+      const real = looksLikeRealLanIface(name);
+      const url = `http://${urlHost(addr)}:${port}`;
+      // 只收内网地址：公网 IPv6 是「IPv6 直连」那一档的通道，不属于局域网候选
+      if (family === 4 && isPrivateIpv4(addr)) ipv4.push({ url, iface: name, real });
+      else if (family === 6 && isPrivateHost(addr) && !isLinkLocal(addr)) ipv6.push({ url, iface: name, real });
+    }
+  }
+  // 同族内：真实网卡优先 → 网段像不像局域网（192.168 最像）→ 保持网卡原顺序（稳定排序）
+  const ranked = (list: LanIfaceCandidate[]): LanIfaceCandidate[] => list
+    .map((item, index) => ({ item, index, score: privateV4Score(hostnameOf(item.url)) }))
+    .sort((a, b) => Number(b.item.real) - Number(a.item.real) || a.score - b.score || a.index - b.index)
+    .map((x) => x.item);
+  return [...ranked(ipv4), ...ranked(ipv6)];
+}
+
+/**
+ * 中枢通告给成员的局域网地址（`/api/sync/announce`）。
+ *
+ * `extra` 是部署侧的显式声明（LAN_ACCESS_URL），排在最前：容器里 os.networkInterfaces()
+ * 看到的是 172.x 容器网段，不是宿主机的局域网地址，只有部署侧知道真实地址。
+ * 回环地址一律丢弃：误配的 127.0.0.1 会让成员探测回它自己（见 isLoopbackHost）。
  */
 export function pickLanUrls(ifaces: NetworkInterfaces, port: number, extra: string[] = []): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   const push = (url: string): void => {
     const normalized = normalizeBase(url);
-    if (!normalized || seen.has(normalized)) return;
+    if (!normalized || seen.has(normalized) || !/^https?:\/\//i.test(normalized)) return;
+    if (isLoopbackUrl(normalized)) return;
     seen.add(normalized);
     out.push(normalized);
   };
   for (const raw of extra || []) {
-    if (/^https?:\/\//i.test(String(raw || '').trim())) push(String(raw));
+    push(String(raw || '').trim());
   }
-
-  const ipv4: string[] = [];
-  const ipv6: string[] = [];
-  for (const list of Object.values(ifaces || {})) {
-    for (const info of list || []) {
-      if (!info || info.internal) continue;
-      const addr = String(info.address || '').split('%')[0].trim();
-      if (!addr) continue;
-      const family = ipFamilyOf(addr);
-      // 只收内网地址：公网 IPv6 是「IPv6 直连」那一档的通道，不属于局域网候选
-      if (family === 4 && isPrivateIpv4(addr)) ipv4.push(addr);
-      else if (family === 6 && isPrivateHost(addr) && !isLinkLocal(addr)) ipv6.push(addr);
-    }
-  }
-  for (const addr of [...ipv4, ...ipv6]) push(`http://${urlHost(addr)}:${port}`);
+  for (const item of lanIfaceCandidates(ifaces, port)) push(item.url);
   return out;
 }
 
-/** 中枢通告的地址归一化：只留 http(s)、去重、去掉与主地址重复的（成员端收到后先过这一道） */
+/**
+ * 中枢通告收到的地址归一化：成员端收到后先过这一道——只留 http(s)、去重、去掉与主地址重复的，
+ * 并丢弃回环：旧版中枢可能把 127.0.0.1 通告出来，成员填了会探测到自己，同步静默失效。
+ */
 export function normalizeAnnouncedLan(urls: unknown, hubBase: string): string[] {
   const hub = normalizeBase(hubBase);
   const out: string[] = [];
@@ -232,6 +323,7 @@ export function normalizeAnnouncedLan(urls: unknown, hubBase: string): string[] 
   for (const raw of Array.isArray(urls) ? urls : []) {
     const url = normalizeBase(String(raw || ''));
     if (!url || !/^https?:\/\//i.test(url) || url === hub || seen.has(url)) continue;
+    if (isLoopbackUrl(url)) continue;
     seen.add(url);
     out.push(url);
   }

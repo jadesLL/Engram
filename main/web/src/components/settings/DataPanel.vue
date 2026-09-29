@@ -35,7 +35,8 @@
         <div class="dir-row">
           <div class="dir-info">
             <strong>本地服务端口</strong>
-            <p>内嵌服务监听 127.0.0.1:{{ portCurrent }}，默认 18180，与 Docker 版（18080）互不冲突；端口被其他程序占用时可修改，改动后本地服务自动以新端口重启。</p>
+            <p>内嵌服务监听 {{ lanAccess ? '0.0.0.0' : '127.0.0.1' }}:{{ portCurrent }}{{ lanAccess ? '（局域网设备也能访问）' : '（仅本机）' }}，默认 18180，与 Docker 版（18080）互不冲突；端口被其他程序占用时可修改，改动后本地服务自动以新端口重启。</p>
+            <p v-if="lanAccess">局域网访问是为「把这台电脑当同步中枢」开的（设置 → 多端同步 → 同步群组 里可关闭，退出中枢角色时也会自动关闭）。</p>
             <p v-if="portEnvOverridden">检测到环境变量 ENGRAM_LOCAL_PORT 指定端口，此处修改不生效。</p>
           </div>
           <div class="port-controls">
@@ -114,6 +115,8 @@ const dataDir = ref('');
 const dirBusy = ref(false);
 const dirMsg = ref('');
 const dirOk = ref(false);
+/** 局域网访问：桌面端默认关闭（只监听 127.0.0.1），当中枢时在「同步群组」里开启 */
+const lanAccess = ref(false);
 
 onMounted(async () => {
   await loadCapabilities();
@@ -126,6 +129,11 @@ onMounted(async () => {
     portInput.value = String(p.port);
     portCurrent.value = p.port;
     portEnvOverridden.value = Boolean(p.envOverridden);
+    // 旧版主进程没有这个 IPC：拿不到就按关闭显示（不进 catch，端口信息照常展示）
+    if (typeof wikiDesktop.getLanAccess === 'function') {
+      const lan = await wikiDesktop.getLanAccess();
+      lanAccess.value = Boolean(lan?.enabled);
+    }
   } catch {
     /* 桥不可用时按非桌面端处理 */
   }
