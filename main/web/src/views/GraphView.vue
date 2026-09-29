@@ -1171,7 +1171,12 @@ onUnmounted(() => {
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--card-bg);
+  overflow-x: auto;      /* 窄屏用横向滚动，避免按钮折行被压成竖排 */
+  white-space: nowrap;
+  scrollbar-width: none;
 }
+.gv-top::-webkit-scrollbar { display: none; }
+.gv-top > * { flex: none; }
 .gv-brand { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--text-secondary); }
 .gv-brand b { color: var(--text); font-weight: 600; }
 .gv-brand em { font-style: normal; font-size: 12px; color: var(--text-faint); }
@@ -1304,6 +1309,8 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .gv-search { min-width: 130px; }
   .gv-chips { display: none; }
+  .gv-brand em { display: none; }   /* 窄屏省掉「业务视图」小字，给分段控件留位置 */
+  .gv-seg button { padding: 5px 9px; }
   /* 筛选面板改成左侧浮层；底部让出底部导航 + 安全区，否则最后一组筛选被导航压住 */
   .gv-facets {
     position: absolute; top: 46px; bottom: calc(72px + var(--safe-bottom)); left: 0; z-index: 9;
@@ -1313,7 +1320,7 @@ onUnmounted(() => {
   /* 详情 / 聚合面板改成底部抽屉，同样抬到底部导航之上 */
   .gv-detail {
     position: absolute; left: 0; right: 0; bottom: calc(72px + var(--safe-bottom)); z-index: 10;
-    width: auto; max-height: 46%; border-left: 0; border-top: 1px solid var(--border);
+    width: auto; max-height: 38%; border-left: 0; border-top: 1px solid var(--border);
     border-radius: 14px 14px 0 0; box-shadow: var(--shadow);
   }
 }
