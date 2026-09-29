@@ -473,9 +473,7 @@
         v-model="draft"
         :disabled="conversionActive"
         rows="3"
-        :placeholder="conversionActive ? '转换完成后可继续在此对话' : chat.currentRun
-          ? '正在回复…可以继续输入，发送后会排队，等这轮跑完自动接着回复（Enter 发送，Shift+Enter 换行）'
-          : '问点什么，或让我整理知识库（Enter 发送，Shift+Enter 换行）'"
+        :placeholder="composerPlaceholder"
         @keydown.enter.exact.prevent="send()"
       />
       <div class="composer-actions">
@@ -556,6 +554,7 @@ import { openPageStream } from '../lib/events';
 import { sessionSourceBadge, type SessionSourceBadge } from '../lib/sessionSource';
 import { useSyncStore } from '../stores/sync';
 import { useRuntimeCapabilities } from '../lib/capabilities';
+import { useTouchPointer } from '../lib/pointer';
 
 const props = defineProps<{ overlay?: boolean }>();
 
@@ -578,6 +577,8 @@ const agentHint = computed(() => {
 const draft = ref('');
 const scrollEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
+/** 触屏（手机）：输入框提示不再写「Enter 发送，Shift+Enter 换行」——手机上那是噪声 */
+const touchPointer = useTouchPointer();
 
 /* ===== Agent 提问弹窗（对话最下侧）：本地只存「还没提交的点选与草稿」 ===== */
 /** 每个提问已点的选项（多选时是集合；单选点一下立刻提交，这份状态只为高亮） */
@@ -811,6 +812,14 @@ const conversionSession = computed(() =>
 const conversionActive = computed(() =>
   conversionSession.value && Boolean(chat.snapshot?.session.running) && !chat.currentRun
 );
+
+/** 输入框占位文案：触屏设备不写键盘提示（Enter 发送 / Shift+Enter 换行是桌面语境） */
+const composerPlaceholder = computed(() => {
+  if (conversionActive.value) return '转换完成后可继续在此对话';
+  const keys = touchPointer.value ? '' : '（Enter 发送，Shift+Enter 换行）';
+  if (chat.currentRun) return `正在回复…可以继续输入，发送后会排队，等这轮跑完自动接着回复${keys}`;
+  return `问点什么，或让我整理知识库${keys}`;
+});
 const conversionDetail = computed(() => {
   const step = [...chat.messages].reverse().find((message) => message.metadata?.inboxConversionStage);
   return step?.content?.replace(/\*\*/g, '') || '等待处理';

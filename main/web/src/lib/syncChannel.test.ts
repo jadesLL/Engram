@@ -217,6 +217,10 @@ test('inferChannelFromUrl 只认字面量能定死的地址', () => {
 test('channelErrorText / formatChannelSince 的边界', () => {
   assert.equal(channelErrorText('fetch failed'), '');
   assert.equal(channelErrorText('ECONNREFUSED 127.0.0.1:18080'), '');
+  // 手机端（OkHttp）的整句英文报错同样不该出现在通道条上（2026-09-29：侧栏通道条上挂过英文）
+  assert.equal(channelErrorText('failed to connect to /10.0.0.9 (port 18080) from /192.168.1.5'), '');
+  assert.equal(channelErrorText('connect timed out'), '');
+  assert.equal(channelErrorText('Unable to resolve host "hub.example.com"'), '');
   assert.equal(channelErrorText(''), '');
   assert.equal(channelErrorText('中枢没有启动'), '中枢没有启动');
   assert.equal(channelErrorText('x'.repeat(80)).endsWith('…'), true);

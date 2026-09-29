@@ -88,6 +88,7 @@
     <!-- 文件树侧栏 -->
     <transition name="sidebar-slide">
       <aside
+        ref="sidebarEl"
         v-show="app.sidebarOpen"
         class="sidebar"
         :style="{ width: sidebarWidth + 'px' }"
@@ -139,7 +140,15 @@
 
     <!-- 移动端底部导航（聊天抽屉打开时让位，避免盖住输入区） -->
     <nav class="bottom-nav" :class="{ 'chat-open': app.chatDrawerOpen }">
-      <button v-for="item in bottomItems" :key="item.label" type="button" @click="item.action">
+      <!-- 当前所在的分区要看得出来（手机 App 的底部标签栏惯例）：选中项图标与文字用强调色 -->
+      <button
+        v-for="item in bottomItems"
+        :key="item.label"
+        type="button"
+        :class="{ active: item.active }"
+        :aria-current="item.active ? 'page' : undefined"
+        @click="item.action"
+      >
         <Icon :name="item.icon" :size="20" /><span>{{ item.label }}</span>
       </button>
     </nav>
@@ -214,6 +223,83 @@ const inbox = useInboxStore();
 const { capabilities } = useRuntimeCapabilities();
 const agentName = computed(() => capabilities.value.agentMode === 'hub' ? '服务器 Agent' : capabilities.value.agentMode === 'unavailable' ? 'Agent' : '内置 Agent');
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
+const sidebarEl = ref<HTMLElement>();
+
+/**
+ * 抽屉「往左一推就收」的手势（2026-09-29）：手机 App 里从左侧拉出来的抽屉，习惯是横滑推回去。
+ * 只认浮层档（桌面栏不参与），并且**纵向优先**——手指明显在上下走就交回列表滚动，
+ * 否则整列页面会滑不动。判定通过后由我们接管这次触摸（preventDefault），松手过阈值才真的收起。
+ */
+let detachSidebarSwipe: (() => void) | null = null;
+
+function installSidebarSwipe(el: HTMLElement) {
+  let startX = 0;
+  let startY = 0;
+  let dx = 0;
+  let intent: 'none' | 'swipe' | 'scroll' = 'none';
+
+  const reset = () => {
+    intent = 'none';
+    dx = 0;
+    el.style.transition = '';
+    el.style.transform = '';
+  };
+
+  const onStart = (event: TouchEvent) => {
+    if (!sidebarOverlay.value || !app.sidebarOpen || event.touches.length !== 1) return;
+    startX = event.touches[0].clientX;
+    startY = event.touches[0].clientY;
+    intent = 'none';
+    dx = 0;
+  };
+
+  const onMove = (event: TouchEvent) => {
+    if (intent === 'scroll' || event.touches.length !== 1) return;
+    if (!sidebarOverlay.value || !app.sidebarOpen) return;
+    const moveX = event.touches[0].clientX - startX;
+    const moveY = event.touches[0].clientY - startY;
+    if (intent === 'none') {
+      if (Math.abs(moveX) < 10 && Math.abs(moveY) < 10) return;
+      // 横向位移明显大于纵向才算「横滑」，否则让列表自己滚
+      intent = Math.abs(moveX) > Math.abs(moveY) * 1.4 ? 'swipe' : 'scroll';
+      if (intent === 'scroll') return;
+    }
+    dx = Math.min(0, moveX);
+    if (dx < 0) event.preventDefault();
+    el.style.transition = 'none';
+    el.style.transform = `translateX(${dx}px)`;
+    // 滑到一半就已经看不清了：顺带把抽屉压淡，收起的意图更明确
+    el.style.opacity = String(Math.max(0.55, 1 + dx / 320));
+  };
+
+  const onEnd = () => {
+    if (intent !== 'swipe') {
+      reset();
+      return;
+    }
+    const shouldClose = dx < -72;
+    el.style.transition = 'transform 180ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
+    el.style.transform = '';
+    el.style.opacity = '';
+    if (shouldClose) app.sidebarOpen = false;
+    window.setTimeout(() => {
+      el.style.transition = '';
+    }, 220);
+    intent = 'none';
+    dx = 0;
+  };
+
+  el.addEventListener('touchstart', onStart, { passive: true });
+  el.addEventListener('touchmove', onMove, { passive: false });
+  el.addEventListener('touchend', onEnd);
+  el.addEventListener('touchcancel', onEnd);
+  return () => {
+    el.removeEventListener('touchstart', onStart);
+    el.removeEventListener('touchmove', onMove);
+    el.removeEventListener('touchend', onEnd);
+    el.removeEventListener('touchcancel', onEnd);
+  };
+}
 /** 安卓返回键接管层的注销函数（组件卸载时注销，避免路由重进后残留旧闭包） */
 let stopBackHandler: (() => void) | null = null;
 
@@ -329,14 +415,25 @@ const navItems = computed(() => [
 ]);
 
 const bottomItems = computed(() => [
-  { label: '页面', icon: 'pages', action: () => { app.sidebarOpen = true; go('/page'); } },
-  { label: '搜索', icon: 'search', action: () => go('/search') },
-  { label: '新建', icon: 'plus', action: () => quickNote() },
-  { label: '更多', icon: 'more', action: () => { moreOpen.value = true; } },
+  { label: '页面', icon: 'pages', active: isActive('/page'), action: () => { app.sidebarOpen = true; go('/page'); } },
+  { label: '搜索', icon: 'search', active: isActive('/search'), action: () => go('/search') },
+  { label: '新建', icon: 'plus', active: false, action: () => quickNote() },
+  // 「更多」收纳的是图谱/收集箱/看板/设置与内置 Agent：停在其中任意一处都算「更多」这一格
+  {
+    label: '更多',
+    icon: 'more',
+    active: moreSectionActive.value,
+    action: () => { moreOpen.value = true; },
+  },
 ]);
 
 /* 「更多」面板：rail 在 ≤768px 隐藏后，这些入口仅在此处可达 */
 const moreOpen = ref(false);
+
+/** 底部标签栏「更多」是否属于当前所在分区（图谱/收集箱/看板/设置/内置 Agent） */
+const moreSectionActive = computed(() =>
+  isActive('/graph') || isActive('/inbox') || isActive('/tasks') || isActive('/settings') || app.chatDrawerOpen
+);
 
 function runMore(action: () => void) {
   moreOpen.value = false;
@@ -500,6 +597,8 @@ onMounted(() => {
     }
     return false;
   });
+  // 抽屉横滑手势：aside 一直挂在 DOM 里（v-show 切换），挂载时装一次即可
+  if (sidebarEl.value) detachSidebarSwipe = installSidebarSwipe(sidebarEl.value);
   app.loadUiPreferences(); // 侧栏「AI 工作区」默认隐藏，是否显示由服务端设置决定
   loadRuntimeCapabilities().then((caps) => {
     if (caps.features.jobs) {
@@ -539,6 +638,8 @@ onUnmounted(() => {
   window.removeEventListener('resize', onWindowResize);
   stopBackHandler?.();
   stopBackHandler = null;
+  detachSidebarSwipe?.();
+  detachSidebarSwipe = null;
   document.removeEventListener('visibilitychange', onUpdateVisibility);
   window.removeEventListener('focus', pokeUpdateCheck);
   window.removeEventListener('online', onUpdateOnline);
@@ -624,6 +725,11 @@ onUnmounted(() => {
 .rail-btn:hover {
   color: var(--text);
   background: var(--sidebar-hover);
+}
+
+/* 按下反馈：鼠标与触屏共用同一个令牌（触屏没有 hover，全靠这一层） */
+.rail-btn:active {
+  background: var(--press-bg);
 }
 
 .rail-btn:focus-visible,
@@ -970,6 +1076,16 @@ onUnmounted(() => {
     justify-content: center;
     gap: 2px;
     color: var(--text-secondary);
+  }
+
+  /* 按下反馈：整栏是 12px 圆角的外壳，按钮自己只填底色、圆角交给外壳的 overflow 裁 */
+  .bottom-nav button:active {
+    background: var(--sidebar-active);
+  }
+
+  /* 当前分区：图标与文字一起用强调色（底部标签栏的选中态） */
+  .bottom-nav button.active {
+    color: var(--sidebar-accent);
   }
 
   .bottom-nav button span { font-size: 10px; }

@@ -1257,5 +1257,42 @@ html.dark .ftype.video { background: rgba(196, 174, 232, 0.14); color: #c4aee8; 
   .row + .row::before { left: 12px; }
   .status { margin-left: 49px; justify-content: flex-start; }
   .actions { width: 100%; justify-content: flex-start; }
+
+  /*
+   * 页头在手机上必须换行：标题 + 说明 + 两个动作全挤在一行时，「收集箱」被压成竖排、
+   * 说明文字和按钮互相叠（2026-09-29 巡检）。排成三段：标题一行、说明一行、动作一行。
+   */
+  .page-head {
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 8px;
+    margin-bottom: 14px;
+  }
+  .page-head h1 { flex: 1 1 auto; font-size: 21px; }
+  .page-head .sub { order: 2; flex: 1 1 100%; font-size: 12px; }
+  .spacer { display: none; }
+  .head-actions { order: 3; flex: 1 1 100%; gap: 8px; }
+  .head-actions .btn { flex: 1; height: 40px; }
+
+  /* 提示条：图标 + 正文一行，按钮另起一行（原来按钮被 flex 挤到正文换行处，看着像压字） */
+  .notice {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .notice .hide-btn {
+    order: 2;
+    margin-left: 21px;
+    min-height: 32px;
+    padding: 4px 10px;
+  }
+
+  /* 状态筛选（全部 / 待整理 / 已转换）是纯手指操作：27px 的胶囊太矮，撑到 38px，
+     「按收纳时间倒序」这类说明在手机上让位（排序不是这一屏的重点） */
+  .toolbar { flex-wrap: wrap; row-gap: 6px; }
+  .seg { flex: 1 1 100%; }
+  .seg button { flex: 1; height: 38px; padding: 0 10px; }
+  .toolbar .spacer { display: none; }
+  .toolbar .hint { font-size: 11px; }
 }
 </style>

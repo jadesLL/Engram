@@ -144,7 +144,8 @@ const DEFAULTS = {
   cF: 40, rF: 55, lF: 60, lD: 55,
 };
 const opt = reactive(loadSettings());
-const panelOpen = ref(true);
+/** 手机档默认收着设置面板：面板一开就盖住大半张图，而这一页要看的本来就是图 */
+const panelOpen = ref(window.innerWidth > 768);
 const search = ref('');
 
 function loadSettings() {
@@ -796,6 +797,43 @@ onUnmounted(() => {
 .graph-state {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 3;
+}
+
+/*
+ * 手机档（≤768px）：设置面板从右上角小卡片改成**贴底面板**——270px 宽的浮层在 390px 屏上
+ * 基本盖满整张图，而图谱本身要看的就是图。另外：
+ *  - 开关 32×18 太小，手指按不准，撑到 46×26、行高加到 40px；
+ *  - 顶栏按钮（全局/铺满/重排/⚙）撑到 40px；
+ *  - 图例与计数抬到底部导航之上（原来被导航条压住）。
+ */
+@media (max-width: 768px) {
+  .g-panel {
+    top: auto;
+    right: 8px;
+    left: 8px;
+    /* 抬到底部导航之上：这一层在 .content 里，导航的层级比它高，贴到底会被导航压住 */
+    bottom: calc(72px + var(--safe-bottom));
+    width: auto;
+    max-height: min(60dvh, 480px);
+    border-radius: 16px;
+    box-shadow: var(--shadow-dialog);
+  }
+  .g-legend { bottom: calc(72px + var(--safe-bottom)); max-width: calc(100vw - 32px); }
+  .g-count { bottom: calc(78px + var(--safe-bottom)); }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .g-topbar { gap: 8px; }
+  .g-title, .g-btn, .g-seg span { min-height: 40px; display: inline-flex; align-items: center; }
+  .g-gear { width: 44px; height: 44px; }
+  .g-row { min-height: 40px; padding: 4px 0; }
+  .g-grow { min-height: 40px; padding: 4px 0; }
+  .g-sw { width: 46px; height: 26px; }
+  .g-sw i:after { width: 22px; height: 22px; }
+  .g-sw input:checked + i:after { transform: translateX(20px); }
+  .g-panel input[type='range'] { height: 32px; }
+  .g-reset { min-height: 44px; display: flex; align-items: center; justify-content: center; }
+  .g-btn:active, .g-reset:active, .g-gear:active { background: var(--press-bg); }
 }
 .graph-state:has(.app-spinner) { flex-direction: row; }
 .graph-state.muted { color: var(--g-muted); }

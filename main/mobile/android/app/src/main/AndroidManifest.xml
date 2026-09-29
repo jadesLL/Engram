@@ -57,4 +57,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 登录页的「指纹/人脸解锁」走系统 BiometricPrompt（见 BiometricUnlock.java）：
+         API 28+ 要 USE_BIOMETRIC，API 23-27 的旧指纹接口要 USE_FINGERPRINT（判能力用，不采集）。
+         两个都是普通权限，安装即授予，不会弹权限对话框。 -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
 </manifest>

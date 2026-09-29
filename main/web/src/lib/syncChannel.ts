@@ -150,8 +150,13 @@ function knownChannel(value: unknown): SyncChannelKind | null {
  * 底层网络错误（Node 的 `fetch failed`、`socket hang up`、`ECONNREFUSED`）对用户没有信息量：
  * 界面只给通用文案，原始错误留给「同步详情」的日志（与 lib/syncStatus.ts 的 displayError 同口径，
  * 那边没有导出，这里保留一份供浮层使用）。
+ *
+ * 2026-09-29 补上手机端的说法：Android 走 OkHttp，连不上时给的是
+ * `failed to connect to /10.0.0.9 (port 18080): ...`、`connect timed out`、
+ * `Unable to resolve host "…"` 这类整句英文。以前没过这一层，侧栏通道条上会直接挂一句英文报错
+ * （用户报障的那个位置），现在回落到「未连接中枢，正在自动重连」。
  */
-const OPAQUE_ERROR = /^(fetch failed|terminated|socket hang up|other side closed|(connect )?econnrefused\b.*|(connect )?etimedout\b.*|network ?error.*)$/i;
+const OPAQUE_ERROR = /^(fetch failed|terminated|socket hang up|other side closed|failed to connect\b.*|connect(ion)? timed out\b.*|unable to resolve host\b.*|(connect )?econnrefused\b.*|(connect )?etimedout\b.*|network ?error.*)$/i;
 
 export function channelErrorText(message: string | null | undefined): string {
   const text = (message || '').trim().replace(/\s+/g, ' ');

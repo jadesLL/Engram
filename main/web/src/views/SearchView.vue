@@ -59,7 +59,7 @@
       v-else-if="!searching"
       icon="search"
       title="搜索知识库"
-      hint="输入关键词搜索 Wiki 页面与原始资料提取文本，回车即搜"
+      :hint="touchPointer ? '输入关键词搜索 Wiki 页面与原始资料提取文本' : '输入关键词搜索 Wiki 页面与原始资料提取文本，回车即搜'"
     />
   </div>
 </template>
@@ -72,9 +72,12 @@ import AppSpinner from '../components/ui/AppSpinner.vue';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import Icon from '../components/Icon.vue';
 import { notify } from '../lib/notify';
+import { useTouchPointer } from '../lib/pointer';
 
 const route = useRoute();
 const router = useRouter();
+/** 触屏：空状态提示不提「回车即搜」（手机上是在键盘上点搜索） */
+const touchPointer = useTouchPointer();
 
 const q = ref('');
 const hits = ref<any[]>([]);
@@ -289,5 +292,15 @@ html.dark .hit-snippet :deep(mark) { background: rgba(255, 213, 79, 0.3); }
 @media (max-width: 768px) {
   .search-view { padding: 24px 14px; }
   .hit-time { display: none; }
+}
+
+/* 触屏：范围筛选是纯手指操作，26px 的胶囊按不准，撑到 40px（视觉风格不变） */
+@media (hover: none) and (pointer: coarse) {
+  .filter-chips { gap: 10px; }
+  .filter-chips button {
+    height: 40px;
+    padding: 0 16px;
+    border-radius: 20px;
+  }
 }
 </style>

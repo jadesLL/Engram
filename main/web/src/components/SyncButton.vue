@@ -1,12 +1,18 @@
 <template>
   <!-- 侧栏标题栏里的连接通道胶囊：左边「点 + 通道名」看详情，右边 ⟳ 立即同步（与今天同一个动作）。
-       未配置同步、或本机是中枢时不渲染（今天就是这样：不参与同步就看不到同步入口） -->
+       未配置同步、或本机是中枢时不渲染（今天就是这样：不参与同步就看不到同步入口）。
+
+       两种形态（2026-09-29 手机版整改）：
+         pill  桌面侧栏标题栏里的窄胶囊（默认）
+         strip 抽屉档（≤1024px 浮层侧栏）里的整行「通道条」——320px 宽的抽屉放不下带字胶囊，
+               旧版只会显示一条没有文字的宽胶囊（用户报障「看不到文字还很宽，很诡异」）；
+               现在占满一行：通道名 + 状态说明 + ⟳，文字常显、宽度有来由。 -->
   <div
     v-if="view"
     ref="chipEl"
     class="sync-chip"
-    :class="[`link-${view.key}`, { syncing }]"
-    v-tooltip="chipTip"
+    :class="[`link-${view.key}`, { syncing, strip: isStrip }]"
+    v-tooltip="isStrip ? '' : chipTip"
   >
     <button
       ref="mainEl"
@@ -19,9 +25,11 @@
     >
       <span class="chip-dot" aria-hidden="true" />
       <span v-if="showLabel" class="chip-label">{{ view.label }}</span>
-      <span v-if="view.busy && view.pending > 0" class="chip-pending">{{ view.pending }}</span>
+      <span v-if="isStrip && showLabel && view.detail" class="chip-detail">{{ view.detail }}</span>
+      <!-- 通道条上的详情句里已经写了「待推送 N 项 / 改动已排队 N 项」，角标只在胶囊形态补位 -->
+      <span v-if="!isStrip && view.busy && view.pending > 0" class="chip-pending">{{ view.pending }}</span>
     </button>
-    <span v-if="showLabel" class="chip-sep" aria-hidden="true" />
+    <span v-if="showLabel && !isStrip" class="chip-sep" aria-hidden="true" />
     <button
       class="chip-sync"
       type="button"
@@ -65,6 +73,11 @@ import { useSyncStore, type SyncLogEntry } from '../stores/sync';
 import Icon from './Icon.vue';
 import SyncChannelPopover from './SyncChannelPopover.vue';
 
+const props = withDefaults(defineProps<{ variant?: 'pill' | 'strip' }>(), { variant: 'pill' });
+
+/** 抽屉档的整行通道条：文字常显，不做「放不下就把通道名藏起来」那套宽度测量 */
+const isStrip = computed(() => props.variant === 'strip');
+
 const sync = useSyncStore();
 const syncing = ref(false);
 const popoverOpen = ref(false);
@@ -77,6 +90,8 @@ const mainEl = ref<HTMLButtonElement>();
  * 再让开「知识库」标题（约 48px）与右边三个 26px 图标按钮（约 84px）——留给胶囊的不到 72px，
  * 而带字的胶囊约 92px。264px 起才够，低于此值只留「点 + ⟳」，通道名靠悬停提示。
  * 触屏档那三个图标按钮是 44px（见 Sidebar 里的 44px 热区约定），门槛跟着抬到 304px。
+ *
+ * 只在 pill 形态（桌面标题栏）适用：抽屉档走 strip 形态，通道名永远显示。
  */
 const LABEL_MIN_WIDTH = 264;
 const LABEL_MIN_WIDTH_TOUCH = 304;
@@ -115,6 +130,11 @@ const syncAria = computed(() => syncTip.value);
  * 宁可偶尔挤一点，也不无缘无故把通道名藏起来。
  */
 function measure(): void {
+  // 抽屉档的通道条是整行，文字一律显示（不参与「放不下就藏名字」的测量）
+  if (isStrip.value) {
+    showLabel.value = true;
+    return;
+  }
   const el = chipEl.value;
   if (!el) return;
   const declared = Number.parseFloat(getComputedStyle(el).getPropertyValue('--sidebar-width'));
@@ -285,6 +305,53 @@ onUnmounted(() => {
 .chip-sync:disabled {
   cursor: default;
   color: var(--sidebar-accent);
+}
+
+/* ---------- strip：抽屉档的整行通道条（手机/浮层侧栏） ----------
+   一行读完当前通道：色点 + 通道名 + 状态说明，右侧 ⟳ 立即同步。
+   整行 44px 高，左半边（chip-main）点开连接详情，右半边 ⟳ 触发同步——与 pill 形态同一套动作。 */
+.sync-chip.strip {
+  width: 100%;
+  height: 44px;
+  padding: 0 4px 0 12px;
+  gap: 8px;
+  border-radius: 12px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.sync-chip.strip .chip-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  gap: 8px;
+  padding: 0;
+}
+
+.sync-chip.strip .chip-label {
+  flex: none;
+}
+
+/* 第二段说明（延迟 / 最近同步 / 未连接的兜底文案）：放不下就省略号，不换行 */
+.sync-chip.strip .chip-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-chip.strip .chip-sync {
+  width: 36px;
+  height: 36px;
+}
+
+/* 抽屉里没有 hover（悬停提示也不适用），按压反馈靠一行底色，形状跟着 12px 圆角走 */
+.sync-chip.strip .chip-main:active,
+.sync-chip.strip .chip-sync:active:not(:disabled) {
+  background: var(--press-bg);
 }
 
 /* 待推送项数角标：通道色与文案都不变，排队深度挂在这里（同步中那颗点还会呼吸） */
