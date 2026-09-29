@@ -28,6 +28,9 @@ import java.util.concurrent.TimeUnit
  *    由 MainActivity 在 onCreate 时挂上；应用不在前台时安装会明确报错，而不是静默失败。
  *
  * 安装那一步 Android 强制用户点一次系统确认（侧载没有静默安装），本引擎只把包准备好并调起界面。
+ *
+ * 私有仓库凭据：与桌面/服务端「更新源配置」同一口径——访问令牌或用户名密码二选一，
+ * 凭据只存本机（SecretStore，Android Keystore 密封），**不随多端同步下发**（中枢只给地址）。
  */
 class AppUpdater(
     private val context: Context,
@@ -107,7 +110,12 @@ class AppUpdater(
                 "hasLocalSource",
                 !db.setting(AppUpdateConfig.KEY_URL).isNullOrBlank() && !db.setting(AppUpdateConfig.KEY_REPO).isNullOrBlank(),
             )
+            // 私有库凭据：界面按 authType 渲染「访问令牌 / 用户名密码」二选一；用户名不是秘密，
+            // 令牌与密码都不回显，只给「已保存」标记（输入框留空 = 不修改）
+            .put("authType", cfg.authType)
+            .put("username", cfg.username)
             .put("tokenSaved", !secrets.get(TOKEN_KEY).isNullOrBlank())
+            .put("passwordSaved", !secrets.get(PASSWORD_KEY).isNullOrBlank())
             .put("autoUpdate", cfg.autoUpdate)
             .put("checkedAt", if (checkedAtMs > 0) Instant.ofEpochMilli(checkedAtMs).toString() else "")
             .put("ready", ready != null)
@@ -121,7 +129,9 @@ class AppUpdater(
      * 保存更新源配置：
      *  - `giteaUrl` / `giteaRepo`：本机手填（空串即清掉，改回「跟随同步中枢」）；
      *  - `useHub: true`：显式改回跟随中枢（清掉本机手填的地址）；
-     *  - `token`：空串即清除（令牌存 Keystore 密封的 SecretStore，不进设置表）；
+     *  - `authType`：私有库凭据方式（`token` / `password`，与桌面/服务端同一口径）；
+     *  - `username`：用户名密码方式的用户名（非秘密，进设置表）；
+     *  - `token` / `password`：空串即清除（分别存 Keystore 密封的 SecretStore，不进设置表）；
      *  - `autoUpdate`：自动检查 + 后台下载开关。
      */
     fun saveConfig(body: JSONObject) {
@@ -134,9 +144,24 @@ class AppUpdater(
         if (body.has("autoUpdate")) {
             db.setSetting(AppUpdateConfig.KEY_AUTO, if (body.optBoolean("autoUpdate", true)) "1" else "0")
         }
+        if (body.has("username")) db.setSetting(AppUpdateConfig.KEY_USERNAME, body.optString("username").trim())
         if (body.has("token")) secrets.put(TOKEN_KEY, body.optString("token").trim().ifBlank { null })
-        if (body.has("giteaUrl") || body.has("giteaRepo") || body.optBoolean("useHub", false)) {
-            // 换源后旧检查结果不再成立：清掉版本与包，避免拿旧仓库的包去装
+        if (body.has("password")) secrets.put(PASSWORD_KEY, body.optString("password").trim().ifBlank { null })
+        if (body.has("authType")) {
+            val mode = if (body.optString("authType").trim() == AppUpdateConfig.AUTH_PASSWORD) {
+                AppUpdateConfig.AUTH_PASSWORD
+            } else {
+                AppUpdateConfig.AUTH_TOKEN
+            }
+            db.setSetting(AppUpdateConfig.KEY_AUTH_TYPE, mode)
+            // 只保留当前方式的凭据（与桌面/服务端「更新源配置」同一口径）：换方式后另一种不再需要
+            if (mode == AppUpdateConfig.AUTH_PASSWORD) secrets.put(TOKEN_KEY, null) else secrets.put(PASSWORD_KEY, null)
+        }
+        if (
+            body.has("giteaUrl") || body.has("giteaRepo") || body.has("authType") ||
+            body.has("username") || body.optBoolean("useHub", false)
+        ) {
+            // 换源/换凭据后旧检查结果不再成立：清掉版本与包，避免拿旧仓库的包去装
             synchronized(lock) {
                 latestVersion = null; releaseTag = ""; releaseNotes = ""; assetName = ""; assetUrl = ""
                 totalBytes = 0; doneBytes = 0; percentValue = null; checkedAtMs = 0
@@ -251,7 +276,8 @@ class AppUpdater(
             val builder = Request.Builder()
                 .url("${cfg.giteaUrl}/api/v1/repos/${cfg.giteaRepo}/releases/latest")
                 .header("Accept", "application/json")
-            token()?.let { builder.header("Authorization", "token $it") }
+            // 私有库凭据二选一（访问令牌 / 用户名密码），公开库没有凭据就不带 Authorization
+            authHeader()?.let { builder.header("Authorization", it) }
             http.newCall(builder.get().build()).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (response.code == 404) throw IOException("远端仓库上还没有 Release")
@@ -324,7 +350,7 @@ class AppUpdater(
             val builder = Request.Builder()
                 .url(assetUrl)
                 .header("Accept", "application/octet-stream")
-            token()?.let { builder.header("Authorization", "token $it") }
+            authHeader()?.let { builder.header("Authorization", it) }
             // 断点续传：上次切后台/进程被杀留下的半截包从断点接着下（服务端支持 Range 才行）
             if (existing > 0) builder.header("Range", "bytes=$existing-")
             http.newCall(builder.get().build()).execute().use { response ->
@@ -410,7 +436,16 @@ class AppUpdater(
 
     private fun updatesDir(): File = File(context.getExternalFilesDir(null) ?: context.filesDir, "updates")
 
-    private fun token(): String? = secrets.get(TOKEN_KEY)?.takeIf { it.isNotBlank() }
+    /** 生效的私有库凭据头；无凭据返回 null（公开仓库匿名访问），口径见 AppUpdatePolicy.authHeader */
+    private fun authHeader(): String? {
+        val cfg = config()
+        return AppUpdatePolicy.authHeader(
+            authType = cfg.authType,
+            token = secrets.get(TOKEN_KEY),
+            username = cfg.username,
+            password = secrets.get(PASSWORD_KEY),
+        )
+    }
 
     private fun fail(message: String) {
         synchronized(lock) {
@@ -423,8 +458,11 @@ class AppUpdater(
         error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
 
     companion object {
-        /** 令牌存 SecretStore（Android Keystore 密封），与同步令牌同一套保管口径 */
+        /** 凭据存 SecretStore（Android Keystore 密封），与同步令牌同一套保管口径 */
         const val TOKEN_KEY = "app_update_gitea_token"
+
+        /** 用户名密码方式的密码：同样只进 Keystore，不进设置表 */
+        const val PASSWORD_KEY = "app_update_gitea_password"
 
         const val PHASE_IDLE = "idle"
         const val PHASE_CHECKING = "checking"

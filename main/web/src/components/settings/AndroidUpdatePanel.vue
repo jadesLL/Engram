@@ -91,7 +91,8 @@
     <div class="integration-note">
       更新源与服务器/桌面端同一套，但这里<strong>不预置任何仓库地址</strong>：可以本机自己填，也可以留空
       <strong>跟随多端同步的中枢</strong>（中枢「更新源配置」里填的那一份会随同步下发到手机，免得多台设备各填一遍）。
-      本机填写的地址优先；令牌只保存在本机，由 Android Keystore 密封保管。
+      本机填写的地址优先。<strong>凭据不随同步下发</strong>：私有仓库在这台手机上按「访问令牌 / 用户名密码」
+      二选一自己填，只保存在本机（Android Keystore 密封保管）。
     </div>
     <div class="setting-row setting-row-form">
       <div class="setting-copy">
@@ -109,6 +110,57 @@
       />
       <p v-if="repoUrlError" class="setting-message err">{{ repoUrlError }}</p>
     </div>
+
+    <!-- 私有库凭据：访问令牌 / 用户名密码二选一（与服务器/桌面端「更新源配置」同一套口径） -->
+    <div class="setting-row setting-row-form credential-row">
+      <div class="setting-copy">
+        <strong>私有库凭据</strong>
+        <span v-if="credentialSaved">
+          已在本机保存{{ info.authType === 'password' ? '用户名密码' : '访问令牌' }}凭据：输入框留空保存 = 不修改，换方式保存会清掉另一种。
+        </span>
+        <span v-else>私有仓库才需要，公开仓库留空即可。两种方式任选一种，凭据只存本机、不随同步下发。</span>
+        <div class="auth-type-toggle">
+          <button type="button" :class="['seg-btn', form.authType === 'token' ? 'active' : '']" @click="setAuthType('token')">访问令牌</button>
+          <button type="button" :class="['seg-btn', form.authType === 'password' ? 'active' : '']" @click="setAuthType('password')">用户名密码</button>
+        </div>
+      </div>
+      <div class="credential-inputs">
+        <template v-if="form.authType === 'token'">
+          <input
+            v-model="form.token"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            :placeholder="info.tokenSaved ? '已保存令牌（留空表示不修改）' : '粘贴访问令牌'"
+            aria-label="远端仓库访问令牌"
+          />
+          <button v-if="info.tokenSaved" class="btn small" type="button" @click="clearCredential('token')">清除已保存令牌</button>
+          <p class="setting-message hint">在仓库站点「设置 → 应用 → 生成新令牌」建一个只读令牌粘贴到这里。</p>
+        </template>
+        <template v-else>
+          <input
+            v-model="form.username"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="用户名"
+            aria-label="远端仓库用户名"
+          />
+          <input
+            v-model="form.password"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            :placeholder="info.passwordSaved ? '已保存密码（留空表示不修改）' : '密码'"
+            aria-label="远端仓库密码"
+          />
+          <button v-if="info.passwordSaved" class="btn small" type="button" @click="clearCredential('password')">清除已保存密码</button>
+          <p class="setting-message hint">与服务器/桌面端「用户名密码」同一套 Basic 认证口径；用户名随设置存，密码存 Android Keystore。</p>
+        </template>
+      </div>
+      <p v-if="credentialError" class="setting-message err">{{ credentialError }}</p>
+    </div>
+
     <div v-if="info.hasLocalSource" class="setting-row">
       <div class="setting-copy">
         <strong>改回跟随同步中枢</strong>
@@ -116,27 +168,10 @@
       </div>
       <button class="btn" type="button" @click="useHubSource">改回跟随中枢</button>
     </div>
-    <div class="setting-row setting-row-form">
-      <div class="setting-copy">
-        <strong>访问令牌</strong>
-        <span>{{ info.tokenSaved ? '已保存令牌（留空表示不修改）。' : '私有仓库才需要，公开仓库留空。' }}</span>
-      </div>
-      <div class="token-control">
-        <input
-          v-model="form.token"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          :placeholder="info.tokenSaved ? '已保存（留空表示不修改）' : '粘贴访问令牌'"
-          aria-label="远端仓库访问令牌"
-        />
-        <button v-if="info.tokenSaved" class="btn small" type="button" @click="clearToken">清除已保存令牌</button>
-      </div>
-    </div>
     <div class="setting-row">
       <div class="setting-copy">
         <strong>保存配置</strong>
-        <span>保存后立即按新地址检查一次。</span>
+        <span>保存后立即按新地址与凭据检查一次。</span>
       </div>
       <button class="btn primary" type="button" :disabled="saving" @click="save">
         {{ saving ? '保存中…' : '保存配置' }}
@@ -158,9 +193,12 @@ import {
   appUpdateActionLabel,
   appUpdateBlockedHint,
   appUpdateCheckedLabel,
+  appUpdateCredentialProblem,
+  appUpdateCredentialSaved,
   appUpdateStatusText,
   needsNotificationPermission,
   releaseHighlights,
+  type AppUpdateAuthType,
 } from '../../lib/appUpdate';
 
 /**
@@ -174,14 +212,24 @@ const props = defineProps<{ active?: boolean }>();
 const store = useAppUpdateStore();
 const info = computed(() => store.info);
 
-const form = reactive({ repoUrl: '', token: '' });
+const form = reactive({
+  repoUrl: '',
+  /** 私有库凭据方式：访问令牌 / 用户名密码二选一（与服务器/桌面端同一套口径） */
+  authType: 'token' as AppUpdateAuthType,
+  username: '',
+  token: '',
+  password: '',
+});
 const repoUrlError = ref('');
+const credentialError = ref('');
 const saving = ref(false);
 const busy = ref(false);
 const message = ref('');
 const messageTone = ref<'ok' | 'warn' | 'err'>('ok');
 
 const statusText = computed(() => appUpdateStatusText(info.value));
+/** 当前方式在本机是否已存过凭据（面板据此说明「留空 = 不修改」） */
+const credentialSaved = computed(() => appUpdateCredentialSaved(info.value));
 const actionLabel = computed(() => appUpdateActionLabel(info.value));
 /** 阻塞提示：下面有独立的「安装权限」整行 + 按钮时不再重复同一句话，只留调试包那类说明 */
 const blockedHint = computed(() => {
@@ -256,8 +304,17 @@ async function toggleAuto(event: Event) {
 
 async function save() {
   repoUrlError.value = '';
+  credentialError.value = '';
   const raw = form.repoUrl.trim();
-  const patch: { giteaUrl?: string; giteaRepo?: string; token?: string; useHub?: boolean } = {};
+  const patch: {
+    giteaUrl?: string;
+    giteaRepo?: string;
+    authType?: string;
+    username?: string;
+    token?: string;
+    password?: string;
+    useHub?: boolean;
+  } = { authType: form.authType };
   if (!raw) {
     // 留空 = 跟随同步中枢下发的地址（中枢也没配时就是「未配置」，界面会继续引导填）
     patch.useHub = true;
@@ -270,9 +327,16 @@ async function save() {
     patch.giteaUrl = parsed.url;
     patch.giteaRepo = parsed.repo;
   }
-  // 令牌留空表示不修改（已保存的令牌不回显，避免明文进出页面）
-  const token = form.token.trim();
-  if (token) patch.token = token;
+  // 用户名密码方式缺一项就发不出 Basic 头（私有库会静默退化成匿名访问），先拦下来
+  const problem = appUpdateCredentialProblem(form.authType, form.username, form.password, info.value.passwordSaved);
+  if (problem) {
+    credentialError.value = problem;
+    return;
+  }
+  // 凭据留空表示不修改（令牌与密码都不回显，避免明文进出页面）；用户名不是秘密，随保存一起写
+  patch.username = form.username.trim();
+  if (form.authType === 'token' && form.token.trim()) patch.token = form.token.trim();
+  if (form.authType === 'password' && form.password) patch.password = form.password;
   saving.value = true;
   const result = await store.saveConfig(patch);
   saving.value = false;
@@ -282,6 +346,7 @@ async function save() {
     return;
   }
   form.token = '';
+  form.password = '';
   messageTone.value = 'ok';
   message.value = raw ? '更新源已保存（本机地址优先），正在检查远端版本…' : '已改为跟随同步中枢的更新源，正在检查远端版本…';
   notify.success(raw ? '更新源已保存' : '已改为跟随同步中枢');
@@ -304,14 +369,22 @@ async function useHubSource() {
   if (info.value.repoUrl) await store.check(true);
 }
 
-async function clearToken() {
-  const result = await store.saveConfig({ token: '' });
+/** 切换凭据方式：只改本机选择，保存时才写回；换方式后另一种已保存的凭据由本地服务在保存时清掉 */
+function setAuthType(mode: AppUpdateAuthType) {
+  form.authType = mode;
+  credentialError.value = '';
+}
+
+/** 清除已保存的凭据（令牌 / 密码都在 Android Keystore 里；留空提交 = 不修改，所以要清除得显式点） */
+async function clearCredential(kind: 'token' | 'password') {
+  const result = await store.saveConfig(kind === 'token' ? { token: '' } : { password: '' });
   if (!result.ok) {
     notify.error(result.error || '清除失败');
     return;
   }
-  form.token = '';
-  notify.success('已清除保存的令牌');
+  if (kind === 'token') form.token = '';
+  else form.password = '';
+  notify.success(kind === 'token' ? '已清除保存的令牌' : '已清除保存的密码');
 }
 
 async function openInstallSettings() {
@@ -328,9 +401,14 @@ async function requestNotifications() {
     : '还没有通知权限：可在系统设置里允许 Engram 发送通知。';
 }
 
-/** 把本地设置读进表单：跟随中枢时输入框留空（占位符显示中枢地址），避免「一保存就把中枢地址写成本机地址」 */
+/**
+ * 把本地设置读进表单：跟随中枢时地址框留空（占位符显示中枢地址），避免「一保存就把中枢地址写成本机地址」；
+ * 凭据不回显，只回凭据方式与用户名（非秘密）——令牌 / 密码留空即表示不修改。
+ */
 function syncForm() {
   form.repoUrl = info.value.hasLocalSource ? info.value.repoUrl : '';
+  form.authType = info.value.authType;
+  form.username = info.value.username;
 }
 
 watch(
@@ -344,7 +422,7 @@ onMounted(async () => {
   await store.refresh();
   syncForm();
 });
-watch(() => info.value.repoUrl, syncForm);
+watch(() => [info.value.repoUrl, info.value.authType, info.value.username], syncForm);
 </script>
 
 <style scoped>
@@ -358,13 +436,52 @@ watch(() => info.value.repoUrl, syncForm);
   font-size: 12px;
   white-space: nowrap;
 }
-.token-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* 凭据方式二选一分段按钮（与服务器/桌面端「更新源配置」同一套观感） */
+.auth-type-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
 }
-.token-control input {
-  min-width: 220px;
+.seg-btn {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg-btn.active {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+}
+/* 凭据行：说明与切换按钮在上，输入框统一排在下方（长用户名 / 密码在窄屏也不会挤成一条） */
+.setting-row.credential-row {
+  grid-template-columns: 1fr;
+}
+.credential-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.credential-inputs input {
+  flex: 1 1 220px;
+  max-width: 420px;
+}
+.credential-inputs .hint {
+  flex-basis: 100%;
+}
+.setting-message.hint {
+  margin: 6px 0 0;
+  color: var(--text-faint);
 }
 .update-notes {
   margin: 0 24px 14px;

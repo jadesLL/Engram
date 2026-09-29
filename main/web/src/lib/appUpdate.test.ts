@@ -4,6 +4,8 @@ import {
   appUpdateActionLabel,
   appUpdateBlockedHint,
   appUpdateCheckedLabel,
+  appUpdateCredentialProblem,
+  appUpdateCredentialSaved,
   appUpdateStatusText,
   emptyAppUpdateInfo,
   formatBytes,
@@ -45,9 +47,40 @@ test('normalizeAppUpdateInfo 把服务端返回体收敛成完整状态', () => 
   assert.equal(parsed.releaseTag, '');
   assert.equal(parsed.error, '');
   assert.equal(parsed.tokenSaved, false);
+  assert.equal(parsed.passwordSaved, false);
+  assert.equal(parsed.authType, 'token');
+  assert.equal(parsed.username, '');
   // 未知 phase 收敛到 idle（引擎只会有这五种）
   assert.equal(normalizeAppUpdateInfo({ phase: 'weird' }).phase, 'idle');
   assert.equal(normalizeAppUpdateInfo(null).runtime, 'android');
+});
+
+test('归一化私有库凭据：只认 token/password 两种方式，用户名回传、密码/令牌只给「已保存」标记', () => {
+  const passwordMode = normalizeAppUpdateInfo({
+    configured: true,
+    authType: 'password',
+    username: 'example',
+    passwordSaved: true,
+    tokenSaved: false,
+  });
+  assert.equal(passwordMode.authType, 'password');
+  assert.equal(passwordMode.username, 'example');
+  assert.equal(passwordMode.passwordSaved, true);
+  assert.equal(appUpdateCredentialSaved(passwordMode), true);
+
+  const tokenMode = normalizeAppUpdateInfo({ configured: true, authType: 'token', tokenSaved: true });
+  assert.equal(tokenMode.authType, 'token');
+  assert.equal(appUpdateCredentialSaved(tokenMode), true);
+  // 认不出的方式（脏数据 / 旧服务端）按访问令牌处理，界面不会卡在发不出凭据的状态
+  assert.equal(normalizeAppUpdateInfo({ authType: 'basic' }).authType, 'token');
+});
+
+test('凭据校验：用户名密码方式必须凑齐，访问令牌方式放行', () => {
+  assert.equal(appUpdateCredentialProblem('password', 'example', 'p@ss', false), null);
+  assert.equal(appUpdateCredentialProblem('password', 'example', '', true), null);
+  assert.match(appUpdateCredentialProblem('password', '  ', 'p@ss', false)!, /用户名/);
+  assert.match(appUpdateCredentialProblem('password', 'example', '', false)!, /密码/);
+  assert.equal(appUpdateCredentialProblem('token', '', '', false), null);
 });
 
 test('归一化保留「地址来自同步中枢」与「本机手填过」两个来源标记', () => {

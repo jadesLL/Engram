@@ -100,10 +100,21 @@ export const useAppUpdateStore = defineStore('appUpdate', {
      * 保存更新源：
      *  - `giteaUrl` / `giteaRepo`：本机手填（优先于中枢下发的）；
      *  - `useHub: true`：清掉本机手填，改回跟随多端同步中枢下发的那一份；
-     *  - `token`：访问令牌（空串即清除）；
+     *  - `authType`：私有库凭据方式（`token` / `password`）；换方式时服务端只保留当前方式的凭据；
+     *  - `username`：用户名密码方式的用户名（非秘密）；
+     *  - `token` / `password`：凭据（空串即清除；留空不传 = 不修改）；
      *  - `autoUpdate`：自动检查 + 后台下载开关。
      */
-    async saveConfig(patch: { giteaUrl?: string; giteaRepo?: string; token?: string; autoUpdate?: boolean; useHub?: boolean }) {
+    async saveConfig(patch: {
+      giteaUrl?: string;
+      giteaRepo?: string;
+      authType?: string;
+      username?: string;
+      token?: string;
+      password?: string;
+      autoUpdate?: boolean;
+      useHub?: boolean;
+    }) {
       try {
         const { data } = await api.put('/api/app-update/config', patch);
         this.apply(data);
