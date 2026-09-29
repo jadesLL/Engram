@@ -291,8 +291,8 @@ docker compose -f docker-compose.nas.yml up -d
 | `DEFAULT_PASSWORD` | 否 | 首次启动预置的登录密码；留空则首次登录页面设置 |
 | `SYNC_ROLE` | 否 | 无头部署的角色初值：`hub` = 首次启动即成为同步中枢（DDNS 只在中枢上运行）。只在本机还没有角色设置时生效，之后以界面选择为准 |
 | `DDNS_TOKEN` | 否 | Cloudflare API Token（权限 Zone → DNS → Edit）。与 `DDNS_RECORD` 一起配好即首次启动自动维护解析，等价于设置页 多端同步 → DDNS 直连域名 里填表保存 |
-| `DDNS_RECORD` | 否 | 要维护的记录（如 `home.xxx.com`）；服务端每 5 分钟探测本机公网 IP，变化才写（不存在则创建，TTL 60、仅 DNS） |
-| `DDNS_TYPE` | 否 | `auto`（默认：有全局 IPv6 用 AAAA，否则 A）/ `aaaa` / `a` |
+| `DDNS_RECORD` | 否 | 要维护的记录（如 `home.xxx.com`）；服务端每 5 分钟探测本机公网地址，变化才写（不存在则创建，TTL 60、仅 DNS），并用公共解析器核验外网能否解析到本机 |
+| `DDNS_TYPE` | 否 | `auto`（默认：A + AAAA 双栈一起维护，探不到哪一族就只维护另一族）/ `aaaa` / `a` |
 | `DDNS_INTERVAL_MIN` | 否 | 同步间隔分钟数，默认 5 |
 | `ENGRAM_NETWORK_MTU` | 否 | bridge MTU，默认 1500；NAS 跨公网链路 PMTU 异常时改 1400 |
 

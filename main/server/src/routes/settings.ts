@@ -105,7 +105,10 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  /** DDNS 同步状态：配置是否完整、上次执行结果与下次执行时间。 */
+  /**
+   * DDNS 状态：配置是否完整、上次执行结果、下次执行时间，
+   * 外加「到底能不能用」的判据——zone 生效状态、公共解析核验（live）、每族明细与处置建议。
+   */
   app.get('/api/settings/ddns-status', async () => {
     const cfg = getDdnsConfig();
     return {
@@ -133,8 +136,24 @@ export async function settingsRoutes(app: FastifyInstance) {
     if (!cfg.token) return { ok: false, error: '缺少 Cloudflare API Token' };
     if (!cfg.record) return { ok: false, error: '缺少记录域名' };
     const r = await syncDdnsRecord(cfg, { dryRun: true });
-    if (!r.ok) return { ok: false, error: r.error };
-    return { ok: true, record: r.record, type: r.type, detectedIp: r.ip, dnsIp: r.dnsIp, outcome: r.outcome };
+    // 检测结果带上 zone 状态与公共解析核验：界面据此说清「记录对上了但外网查不到」这类情况
+    if (!r.ok) {
+      return { ok: false, error: r.error, outcome: r.outcome, zone: r.zone, hint: r.hint, families: r.families };
+    }
+    return {
+      ok: true,
+      record: r.record,
+      type: r.type,
+      types: r.types,
+      detectedIp: r.ip,
+      dnsIp: r.dnsIp,
+      outcome: r.outcome,
+      live: r.live,
+      resolver: r.resolver,
+      zone: r.zone,
+      families: r.families,
+      hint: r.hint,
+    };
   });
 
   /**
@@ -191,6 +210,9 @@ export async function settingsRoutes(app: FastifyInstance) {
         record,
         detectedIp: probe.ip,
         dnsIp: probe.dnsIp,
+        outcome: probe.outcome,
+        zone: probe.zone,
+        hint: probe.hint,
       });
     }
     setSetting(DDNS_SETTINGS_KEY, JSON.stringify({
@@ -202,14 +224,22 @@ export async function settingsRoutes(app: FastifyInstance) {
     }));
     // 保存后立刻到期：下个 30 秒 tick 内按新配置执行，用户不用等一个完整周期
     kickDdns();
+    // 域名没生效（NS 未切到 Cloudflare）也算配置成功：记录先写好，zone 一变 active 就自动发布；
+    // 界面据 outcome=zone-pending + hint 告诉用户该去注册商把 NS 换成哪两条。
     return {
       ok: true,
       saved: true,
       record,
       type: probe.type,
+      types: probe.types,
       detectedIp: probe.ip,
       dnsIp: probe.dnsIp,
       outcome: probe.outcome,
+      live: probe.live,
+      resolver: probe.resolver,
+      zone: probe.zone,
+      families: probe.families,
+      hint: probe.hint,
       error: probe.error,
     };
   });

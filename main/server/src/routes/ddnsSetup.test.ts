@@ -44,6 +44,19 @@ function happyFetch(): (url: string, init?: RequestInit) => Promise<Response> {
       const name = decodeURIComponent(u.split('name=')[1]);
       return jsonResponse({ success: true, result: name === 'xxx.com' ? [{ id: 'zone-1' }] : [] });
     }
+    // zone 详情（status / NS）：同步流程用它判断「域名到底生效没有」
+    if (u.includes('/zones/') && !u.includes('/dns_records')) {
+      return jsonResponse({
+        success: true,
+        result: {
+          id: 'zone-1',
+          name: 'xxx.com',
+          status: 'active',
+          name_servers: ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
+          original_name_servers: [],
+        },
+      });
+    }
     if (u.includes('/dns_records') && method === 'GET') return jsonResponse({ success: true, result: [] });
     if (u.includes('/dns_records') && method === 'POST') return jsonResponse({ success: true, result: { id: 'new-1' } });
     return jsonResponse({ success: false, errors: [{ message: `unexpected ${method} ${u}` }] }, 500);
@@ -59,6 +72,27 @@ function deniedFetch(): (url: string, init?: RequestInit) => Promise<Response> {
     if (u.includes('/zones?per_page=')) return jsonResponse({ success: false, errors: [{ message: 'Authentication error' }] });
     if (u.includes('/zones')) return jsonResponse({ success: false, errors: [{ message: 'Authentication error' }] }, 403);
     return jsonResponse({ success: false, errors: [{ message: 'unexpected' }] }, 500);
+  };
+}
+
+/** 域名还没生效（注册局 NS 没切到 Cloudflare）的 stub：zone 详情报 pending，并给出双方 NS */
+function pendingZoneFetch(): (url: string, init?: RequestInit) => Promise<Response> {
+  const base = happyFetch();
+  return async (url, init) => {
+    const u = String(url);
+    if (u.includes('/zones/') && !u.includes('/dns_records')) {
+      return jsonResponse({
+        success: true,
+        result: {
+          id: 'zone-1',
+          name: 'xxx.com',
+          status: 'pending',
+          name_servers: ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
+          original_name_servers: ['launch1.spaceship.net', 'launch2.spaceship.net'],
+        },
+      });
+    }
+    return base(url, init);
   };
 }
 
@@ -172,6 +206,7 @@ test('setup：一次调用完成探测并落库（记录不存在 → 待创建�
     saved: boolean;
     record: string;
     type: string;
+    types: string[];
     detectedIp: string;
     outcome: string;
   };
@@ -179,6 +214,7 @@ test('setup：一次调用完成探测并落库（记录不存在 → 待创建�
   assert.equal(body.saved, true);
   assert.equal(body.record, 'home.xxx.com', '域名应归一化（去协议、去尾点、小写）');
   assert.equal(body.type, 'A');
+  assert.deepEqual(body.types, ['A'], '只指定 A 时就只维护 A');
   assert.equal(body.detectedIp, '1.2.3.4');
   assert.equal(body.outcome, 'needs-update');
 
@@ -187,4 +223,49 @@ test('setup：一次调用完成探测并落库（记录不存在 → 待创建�
   assert.equal(raw.type, 'a');
   assert.equal(raw.enabled, true);
   assert.equal(raw.intervalMin, 5);
+});
+
+test('域名未生效（NS 没切到 Cloudflare）→ 配置照样保存，但状态是 zone-pending 并附处置建议', async () => {
+  dbModule.setSetting('sync_role', 'hub');
+  dbModule.setSetting('ddns_config', '');
+  setDdnsFetchForTest(pendingZoneFetch());
+
+  const res = await post('/api/settings/ddns/setup', { token: 'cf-token', record: 'home.xxx.com', type: 'a' });
+  assert.equal(res.statusCode, 200, '域名没生效不该拦住「先配好」这件事');
+  const body = res.json() as {
+    ok: boolean;
+    saved: boolean;
+    outcome: string;
+    live: boolean | null;
+    zone: { status: string } | null;
+    hint: string;
+    types: string[];
+  };
+  assert.equal(body.saved, true);
+  assert.equal(body.outcome, 'zone-pending');
+  assert.equal(body.live, false);
+  assert.equal(body.zone?.status, 'pending');
+  assert.match(body.hint, /launch1\.spaceship\.net/, '要告诉用户注册局现在用的是哪两条 NS');
+  assert.match(body.hint, /ada\.ns\.cloudflare\.com/, '也要给出该换成哪两条');
+  assert.deepEqual(body.types, ['A'], '显式指定 A 时就只维护 A');
+
+  const raw = JSON.parse(dbModule.getSetting('ddns_config') || '{}') as Record<string, unknown>;
+  assert.equal(raw.enabled, true);
+  assert.equal(raw.record, 'home.xxx.com');
+});
+
+test('ddns-status：状态里带上「到底能不能用」的字段（live / zone / 逐族明细 / 建议）', async () => {
+  setDdnsFetchForTest(happyFetch());
+  const res = await app.inject({
+    method: 'GET',
+    url: '/api/settings/ddns-status',
+    headers: { authorization: `Bearer ${API_TOKEN}` },
+  });
+  assert.equal(res.statusCode, 200);
+  const body = res.json() as { status: Record<string, unknown> };
+  assert.ok('live' in body.status, '界面要靠 live 判断是否亮绿灯');
+  assert.ok('zone' in body.status);
+  assert.ok(Array.isArray(body.status.families));
+  assert.ok('hint' in body.status);
+  assert.deepEqual(body.status.lastTypes, []);
 });
