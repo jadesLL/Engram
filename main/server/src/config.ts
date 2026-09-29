@@ -60,7 +60,7 @@ export const OFFICE_MAX_FILE_SIZE = positiveInt(
  * DDNS 直连域名维护（设置页 ddns_config 可配，env 为 Docker/无 GUI 部署的逐字段回退）：
  * - DDNS_TOKEN：Cloudflare API Token（需 Zone.DNS Edit 权限）
  * - DDNS_RECORD：维护的记录 FQDN（如 home.xxx.com）
- * - DDNS_TYPE：A / AAAA / auto（默认 auto，有全局 IPv6 用 AAAA，否则 A）
+ * - DDNS_TYPE：A / AAAA / auto（默认 auto = A + AAAA 双栈一起维护，IPv6 优先、IPv4 兜底）
  * - DDNS_INTERVAL_MIN：同步间隔分钟数（默认 5）
  */
 const DDNS_TYPE_RAW = (process.env.DDNS_TYPE || '').trim().toLowerCase();

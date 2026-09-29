@@ -1,12 +1,16 @@
 <template>
   <div class="ddns-section">
     <div class="integration-note">
-      DDNS 维护一条指向本机公网 IP 的 Cloudflare DNS 记录，给成员设备提供稳定的中枢访问地址；每 5
-      分钟自动比对，IP 变化才写入。需要一个 Cloudflare API Token（权限 <strong>Zone → DNS → Edit</strong>），记录不存在时自动创建（TTL
-      60、仅 DNS）。桌面端直接读取本机网卡，IPv6 会自动排除隐私临时地址；Docker 部署为容器内尽力探测。
+      DDNS 维护指向本机公网地址的 Cloudflare 记录，给成员设备提供稳定的中枢访问地址；每 5
+      分钟自动比对，地址变化才写入。<strong>绿灯只在真的可用时才亮</strong>：服务端会先确认域名在 Cloudflare
+      里已经生效，再问公共解析器（1.1.1.1、223.5.5.5）「外网到底能不能解析到本机」，查不到就如实报出来，
+      不把「API 写入成功」当成「用户能连上」。需要一个 Cloudflare API Token（权限
+      <strong>Zone → DNS → Edit</strong>），记录不存在时自动创建（TTL 60、仅 DNS）。自动模式同时维护
+      <strong>A + AAAA</strong> 两条记录（IPv6 优先、IPv4 兜底）——只留 AAAA 时，纯 IPv4 的访客连解析都拿不到地址。
+      桌面端直接读取本机网卡，IPv6 会自动排除隐私临时地址；Docker 部署为容器内尽力探测。
     </div>
 
-    <div v-if="statusLoaded" class="conn-status" :class="{ ok: statusOk, bad: statusBad }">
+    <div v-if="statusLoaded" class="conn-status" :class="tone">
       <div class="conn-row">
         <span class="conn-dot" aria-hidden="true"></span>
         <span class="conn-label">{{ statusLabel }}</span>
@@ -15,12 +19,25 @@
       <div v-if="status?.record" class="conn-meta">
         记录：{{ status.record }}（{{ typeLabel }}，间隔 {{ status.intervalMin }} 分钟）
       </div>
-      <div v-if="status?.status?.lastIp" class="conn-meta">当前指向：{{ status.status.lastIp }}</div>
+      <!-- 每族一行：这一族指向谁、公共解析器查到什么；✓/✗ 一眼看出「外网能不能解析到」 -->
+      <div
+        v-for="f in families"
+        :key="f.type"
+        class="conn-family"
+        :class="familyTone(f)"
+      >
+        <span class="fam-type">{{ f.type }}</span>
+        <span class="fam-addr">{{ f.ip || f.dnsIp || '—' }}</span>
+        <span class="fam-note">{{ familyNote(f) }}</span>
+      </div>
+      <div v-if="zoneLine" class="conn-meta">域名：{{ zoneLine }}</div>
       <div v-if="status?.status?.lastRunAt" class="conn-meta">上次同步：{{ formatTime(status.status.lastRunAt) }}</div>
       <div v-if="status?.status?.nextRunAt" class="conn-meta">下次同步：{{ formatTime(status.status.nextRunAt) }}</div>
       <div v-if="status?.status?.lastError" class="conn-error">
         最近错误：{{ status.status.lastError }}
       </div>
+      <!-- 处置建议：不写「同步失败」就完事，直接告诉用户该去哪儿改什么 -->
+      <div v-if="status?.status?.hint" class="conn-hint">{{ status.status.hint }}</div>
     </div>
 
     <!-- 一键配置：粘 Token → 选域名 → 启用。三下点完，不用理解 FQDN / zone / 记录类型这些概念。 -->
@@ -76,13 +93,20 @@
           <span>维护哪个域名{{ zones.length === 1 ? '（只有一个，已自动选中）' : '' }}</span>
           <AppSelect v-model="zone" aria-label="选择域名" :options="zoneOptions" />
         </label>
+        <!-- 选中一个还没生效的域名时先说清楚：这种状态下记录写进去也不会对外发布 -->
+        <p v-if="zonePendingZone" class="onestep-warn">
+          这个域名在 Cloudflare 里还是「{{ zonePendingZone.status }}」：<strong>记录写进去也不会对外发布</strong>。
+          需要去域名注册商，把注册局的 NS 改成 Cloudflare 分配的
+          {{ zonePendingZone.nameServers?.length ? zonePendingZone.nameServers.join('、') : '两条 NS（见 Cloudflare Overview 页）' }}；
+          状态变成 Active 后才会生效。现在照样可以先配置好——域名一生效，记录自动就发布了。
+        </p>
         <label class="ddns-field">
           <span>子域名前缀（留空＝直接用主域名）</span>
           <input v-model="subdomain" type="text" placeholder="hub" autocomplete="off" spellcheck="false" />
         </label>
         <p class="onestep-preview">
           将维护：<code>{{ quickRecord || '—' }}</code>
-          <span class="faint small">记录类型自动：有全局 IPv6 用 AAAA，否则用 A</span>
+          <span class="faint small">记录类型自动：A + AAAA 双栈（IPv6 优先；探不到哪一族就只维护另一族）</span>
         </p>
         <div class="ddns-actions">
           <button class="btn primary" type="button" :disabled="settingUp || !quickRecord" @click="setupNow">
@@ -128,6 +152,8 @@
           {{ testing ? '检测中…' : '立即检测（不写入）' }}
         </button>
       </div>
+
+      <p v-if="testHint" class="onestep-hint">{{ testHint }}</p>
     </details>
   </div>
 </template>
@@ -161,13 +187,17 @@ interface DdnsForm {
 interface ZoneOption {
   id: string;
   name: string;
+  /** zone 状态：pending 时记录写进去也不会对外发布（第一步就提醒） */
+  status?: string;
+  /** Cloudflare 分配的 NS（pending 时用户要拿它去注册商替换） */
+  nameServers?: string[];
 }
 
 /** 记录类型选项：标注成 DdnsForm['type']，AppSelect 的泛型才能推断出联合类型 */
 const typeOptions: Array<{ value: DdnsForm['type']; label: string }> = [
-  { value: 'auto', label: '自动（有全局 IPv6 用 AAAA，否则 A）' },
-  { value: 'aaaa', label: 'AAAA（IPv6）' },
-  { value: 'a', label: 'A（IPv4，经回声服务取公网地址）' },
+  { value: 'auto', label: '自动（A + AAAA 双栈，IPv6 优先）' },
+  { value: 'aaaa', label: 'AAAA（只维护 IPv6，纯 IPv4 访客无法解析）' },
+  { value: 'a', label: 'A（只维护 IPv4，经回声服务取公网地址）' },
 ];
 
 const form = reactive<DdnsForm>({ enabled: false, record: '', type: 'auto', token: '' });
@@ -175,6 +205,8 @@ const stored = reactive<DdnsForm>({ ...form });
 const editedToken = ref('');
 const saving = ref(false);
 const testing = ref(false);
+/** 「立即检测」的结论（含未写入的原因与核验结果），就地展示在手动配置块下方 */
+const testHint = ref('');
 
 /** 一键配置用的状态：Token、可选域名、子域前缀、结果与提示 */
 const quickToken = ref('');
@@ -186,21 +218,52 @@ const settingUp = ref(false);
 const quickResult = ref('');
 const quickHint = ref('');
 
+/** 单族明细：服务端每轮同步后逐族记账（探不到的族也记一条，说明为什么没维护） */
+interface DdnsFamilyView {
+  type: string;
+  outcome: string;
+  ip: string | null;
+  dnsIp: string | null;
+  resolved: string[] | null;
+  live: boolean | null;
+  error: string | null;
+}
+
+interface DdnsZoneView {
+  id: string;
+  name: string;
+  status: string | null;
+  nameServers: string[];
+  registrarNameServers: string[];
+}
+
+interface DdnsStatusView {
+  running: boolean;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastOutcome: string | null;
+  lastTypes: string[];
+  lastType: string | null;
+  lastIp: string | null;
+  lastError: string | null;
+  /** 外网能否解析到本机（null=未能核验） */
+  live: boolean | null;
+  /** 核验用的公共解析器 */
+  resolver: string | null;
+  /** Cloudflare 域名状态 */
+  zone: DdnsZoneView | null;
+  families: DdnsFamilyView[];
+  /** 处置建议 */
+  hint: string | null;
+}
+
 interface DdnsStatusResp {
   configured: boolean;
   enabled: boolean;
   record: string;
   type: string;
   intervalMin: number;
-  status: {
-    running: boolean;
-    lastRunAt: string | null;
-    nextRunAt: string | null;
-    lastOutcome: string | null;
-    lastType: string | null;
-    lastIp: string | null;
-    lastError: string | null;
-  } | null;
+  status: DdnsStatusView | null;
 }
 
 const status = ref<DdnsStatusResp | null>(null);
@@ -208,37 +271,89 @@ const statusLoaded = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const OUTCOME_LABEL: Record<string, string> = {
-  unchanged: '运行中，指向无变化',
+  unchanged: '运行中，外网可解析',
   updated: '运行中，已更新指向',
   created: '运行中，记录已创建',
+  propagating: '记录刚写入，等待公网解析传播',
   'needs-update': '待写入（等待下个周期）',
+  'zone-pending': '域名未生效，外部设备解析不到',
+  'not-published': '记录已写入，但外网解析不到',
   error: '同步失败',
 };
 
-const typeLabel = computed(() => {
-  const t = status.value?.status?.lastType || status.value?.type;
-  return t === 'AAAA' ? 'AAAA / IPv6' : t === 'A' ? 'A / IPv4' : '自动';
+/** 卡片语气：绿灯只在「域名已生效 + 公共解析器确认可解析」时才亮 */
+const tone = computed<'ok' | 'warn' | 'bad' | 'idle'>(() => {
+  const s = status.value;
+  if (!s?.configured || !s.enabled || !s.status?.lastOutcome) return 'idle';
+  const outcome = s.status.lastOutcome;
+  if (outcome === 'error' || outcome === 'zone-pending' || outcome === 'not-published') return 'bad';
+  if (outcome === 'propagating' || outcome === 'needs-update') return 'warn';
+  if (['unchanged', 'updated', 'created'].includes(outcome)) {
+    return s.status.live === true ? 'ok' : 'warn';
+  }
+  return 'idle';
 });
 
-const statusOk = computed(() => {
-  const s = status.value;
-  return Boolean(s?.enabled && s.status && ['unchanged', 'updated', 'created'].includes(s.status.lastOutcome || ''));
+const typeLabel = computed(() => {
+  const types = status.value?.status?.lastTypes || [];
+  if (types.length) return types.join(' + ');
+  const t = status.value?.type;
+  return t === 'AAAA' ? 'AAAA / IPv6' : t === 'A' ? 'A / IPv4' : 'A + AAAA 双栈自动';
 });
-const statusBad = computed(() => {
-  const s = status.value;
-  return Boolean(s?.configured && s.status?.lastOutcome === 'error');
+
+const families = computed(() => status.value?.status?.families || []);
+
+const zoneLine = computed(() => {
+  const z = status.value?.status?.zone;
+  if (!z) return '';
+  const text = z.status === 'active' ? 'active（已生效）' : z.status ? `${z.status}（未生效）` : '状态未知';
+  return `${z.name || status.value?.record}：Cloudflare ${text}`;
 });
+
 const statusLabel = computed(() => {
   const s = status.value;
   if (!s) return '';
   if (!s.configured) return 'DDNS 未配置';
   if (!s.enabled) return '已暂停（未启用自动同步）';
   if (s.status?.running) return '正在同步…';
-  return OUTCOME_LABEL[s.status?.lastOutcome || ''] || '已启用';
+  const outcome = s.status?.lastOutcome || '';
+  if (['unchanged', 'updated', 'created'].includes(outcome)) {
+    if (s.status?.live === true) {
+      return `${OUTCOME_LABEL[outcome]}（${s.status.resolver || '公共解析器'} 已确认）`;
+    }
+    return '运行中，但外网解析未能核验';
+  }
+  return OUTCOME_LABEL[outcome] || '已启用';
 });
+
+/** 每族一行的人话：这一族现在是什么状态、外网查到的是什么 */
+function familyNote(f: DdnsFamilyView): string {
+  const resolver = status.value?.status?.resolver || '公共解析器';
+  if (f.outcome === 'skipped') return '本机没有该族的公网地址，未维护这条记录';
+  if (f.outcome === 'error') return f.error || '同步失败';
+  if (f.outcome === 'needs-update') return `待写入 ${f.ip}`;
+  if (f.live === true) return `${resolver} 已确认能解析到`;
+  if (f.live === false) {
+    const got = f.resolved?.length ? f.resolved.join('、') : 'NXDOMAIN（查无此域名）';
+    return `${resolver} 查到的不是这个地址：${got}`;
+  }
+  return '未能核验外网解析（解析器不可达）';
+}
+
+function familyTone(f: DdnsFamilyView): string {
+  if (f.outcome === 'error' || f.live === false) return 'bad';
+  if (f.live === true) return 'ok';
+  return 'idle';
+}
 
 /** 域名下拉选项（AppSelect 需要 { value, label } 形态） */
 const zoneOptions = computed(() => zones.value.map((z) => ({ value: z.name, label: z.name })));
+
+/** 选中的域名在 Cloudflare 里还没生效时，先把这点讲清楚 */
+const zonePendingZone = computed(() => {
+  const z = zones.value.find((item) => item.name === zone.value) || null;
+  return z && z.status && z.status !== 'active' ? z : null;
+});
 
 /** 一键配置最终要维护的记录名：子域前缀 + 所选域名 */
 const quickRecord = computed(() => {
@@ -251,6 +366,14 @@ const quickRecord = computed(() => {
 function formatTime(iso: string): string {
   const d = new Date(iso);
   return Number.isFinite(d.getTime()) ? d.toLocaleString() : iso;
+}
+
+/** 成员设备该填什么地址：局域网走内网地址，出门走这个域名；顺带说清外网还差哪两件事 */
+function memberHint(record: string): string {
+  const port = location.port || '18080';
+  return `成员设备的中枢地址：同一局域网用「同步群组」里列出的内网地址（如 http://192.168.x.x:${port}）；`
+    + `出门或跨网段用 http://${record}:${port}。外网要连得通还差两件事——域名在 Cloudflare 已生效（见上方状态），`
+    + '以及路由器/运营商放行这个端口；不想动路由器就用 Cloudflare 隧道把中枢发布到 443。';
 }
 
 function collectForm(): DdnsForm {
@@ -342,14 +465,17 @@ async function setupNow(): Promise<void> {
       notify.error(data?.error || '配置失败');
       return;
     }
-    const family = data.type === 'AAAA' ? 'IPv6' : data.type === 'A' ? 'IPv4' : '本机';
+    const families = (data.types?.length ? data.types : [data.type]).filter(Boolean).join(' + ');
     const outcomeLabel = OUTCOME_LABEL[data.outcome || ''] || '已启用';
     quickResult.value = data.detectedIp
-      ? `已启用：${data.record}（${family} ${data.detectedIp}）· ${outcomeLabel}`
+      ? `已启用：${data.record}（${families} ${data.detectedIp}）· ${outcomeLabel}`
       : `已启用：${data.record} · ${outcomeLabel}`;
-    quickHint.value = `成员设备把中枢地址填成 http://${data.record}:${location.port || '18080'} 即可；`
-      + '要让外网设备也能连，需在路由器放行该端口，或用 Cloudflare 隧道把这个地址发布到公网。';
-    notify.success('DDNS 已启用，稍候自动同步');
+    quickHint.value = data.hint || memberHint(data.record);
+    if (data.outcome === 'zone-pending' || data.outcome === 'not-published') {
+      notify.info('DDNS 已保存；域名还没生效，外网暂时解析不到，详见上方状态');
+    } else {
+      notify.success('DDNS 已启用，稍候自动同步');
+    }
     await loadStatus();
     await loadConfig();
   } catch (e: any) {
@@ -379,17 +505,27 @@ async function save(): Promise<void> {
 
 async function testNow(): Promise<void> {
   testing.value = true;
+  testHint.value = '';
   try {
     const collected = collectForm();
     const { data } = await api.post('/api/settings/test-ddns', collected);
     if (data.ok) {
-      const detail =
-        data.outcome === 'unchanged'
-          ? `指向一致（${data.detectedIp}）`
-          : `探测到 ${data.detectedIp}，当前 DNS 为 ${data.dnsIp || '空'}，保存后待写入`;
-      notify.success(`检测成功：${detail}`);
+      const liveText = data.live === true
+        ? '公共解析器已确认能解析到'
+        : data.live === false
+          ? '公共解析器查不到这条记录'
+          : '未能核验外网解析（解析器不可达）';
+      const detail = data.outcome === 'needs-update'
+        ? `探测到 ${data.detectedIp}，当前 DNS 为 ${data.dnsIp || '空'}，保存后待写入`
+        : data.outcome === 'zone-pending'
+          ? '域名未生效（NS 未切到 Cloudflare），记录不会对外发布'
+          : `指向一致（${data.detectedIp}）`;
+      testHint.value = `${detail}；${liveText}。${data.hint || ''}`.trim();
+      if (data.live === true) notify.success('检测完成：公网可解析');
+      else notify.info('检测完成：结论见下方说明');
     } else {
       notify.error(`检测失败：${data.error}`);
+      testHint.value = data.hint || data.error || '';
     }
     void loadStatus();
   } catch (e) {
@@ -428,6 +564,7 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 .conn-status.ok { border-color: var(--success, #3fb27f); }
+.conn-status.warn { border-color: var(--warning, #e5a63d); }
 .conn-status.bad { border-color: var(--danger, #d95757); }
 .conn-row {
   display: flex;
@@ -442,10 +579,32 @@ onUnmounted(() => {
   flex: none;
 }
 .conn-status.ok .conn-dot { background: var(--success, #3fb27f); }
+.conn-status.warn .conn-dot { background: var(--warning, #e5a63d); }
 .conn-status.bad .conn-dot { background: var(--danger, #d95757); }
 .conn-label { font-weight: 600; }
 .conn-meta { color: var(--text-faint); }
 .conn-error { color: var(--danger, #d95757); word-break: break-all; }
+/* 每族一行：族名固定宽度，地址可折行，结论跟着语气变色 */
+.conn-family {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.conn-family .fam-type { font-weight: 600; color: var(--text-secondary); min-width: 40px; flex: none; }
+.conn-family .fam-addr { word-break: break-all; }
+.conn-family.ok .fam-note { color: var(--success, #3fb27f); }
+.conn-family.bad .fam-note { color: var(--danger, #d95757); }
+/* 处置建议：这一块的正文就是「现在该干什么」，值得单独上底色 */
+.conn-hint {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--warn-soft, rgba(217, 164, 65, 0.12));
+  color: var(--warning, #8a5200);
+  line-height: 1.7;
+}
 .btn.mini {
   margin-left: auto;
   padding: 2px 8px;
@@ -514,6 +673,16 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-faint);
   line-height: 1.6;
+}
+/* 域名未生效的提醒：这是「配好了却连不上」最常见的原因，值得用警示色 */
+.onestep-warn {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--warn-soft, rgba(217, 164, 65, 0.12));
+  color: var(--warning, #8a5200);
+  font-size: 12px;
+  line-height: 1.7;
 }
 .manual-block summary {
   cursor: pointer;
