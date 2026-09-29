@@ -11,6 +11,9 @@
 
 export type AppUpdatePhase = 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
 
+/** 私有库凭据方式：访问令牌 / 用户名密码（与服务器/桌面端「更新源配置」同一套口径） */
+export type AppUpdateAuthType = 'token' | 'password';
+
 export interface AppUpdateInfo {
   runtime: string;
   /** 本机 APK 的 versionName */
@@ -33,7 +36,14 @@ export interface AppUpdateInfo {
   fromHub: boolean;
   /** 本机是否手填过地址（手填优先于中枢下发的） */
   hasLocalSource: boolean;
+  /** 私有库凭据方式（公开仓库留空凭据即可） */
+  authType: AppUpdateAuthType;
+  /** 用户名密码方式的用户名：不是秘密，随状态回传；令牌与密码不回显，只给「已保存」标记 */
+  username: string;
+  /** 已保存访问令牌（留空提交 = 不修改） */
   tokenSaved: boolean;
+  /** 已保存用户名密码的密码（留空提交 = 不修改） */
+  passwordSaved: boolean;
   autoUpdate: boolean;
   checkedAt: string;
   /** 安装包已下载完整、可以点「立即安装」 */
@@ -63,7 +73,10 @@ export function emptyAppUpdateInfo(): AppUpdateInfo {
     repoUrl: '',
     fromHub: false,
     hasLocalSource: false,
+    authType: 'token',
+    username: '',
     tokenSaved: false,
+    passwordSaved: false,
     autoUpdate: true,
     checkedAt: '',
     ready: false,
@@ -99,7 +112,11 @@ export function normalizeAppUpdateInfo(raw: any): AppUpdateInfo {
     repoUrl: String(raw.repoUrl || ''),
     fromHub: Boolean(raw.fromHub),
     hasLocalSource: Boolean(raw.hasLocalSource),
+    // 只认 'password' 一种写法，其余（含旧版本服务端没这个字段）按访问令牌
+    authType: raw.authType === 'password' ? 'password' : 'token',
+    username: String(raw.username || ''),
     tokenSaved: Boolean(raw.tokenSaved),
+    passwordSaved: Boolean(raw.passwordSaved),
     autoUpdate: raw.autoUpdate !== false,
     checkedAt: String(raw.checkedAt || ''),
     ready: Boolean(raw.ready),
@@ -108,6 +125,29 @@ export function normalizeAppUpdateInfo(raw: any): AppUpdateInfo {
     notificationsEnabled: raw.notificationsEnabled !== false,
     installLaunched: Boolean(raw.installLaunched),
   };
+}
+
+/** 当前方式在本机是否已存过凭据（面板据此显示「已保存」占位与「清除」按钮） */
+export function appUpdateCredentialSaved(info: AppUpdateInfo): boolean {
+  return info.authType === 'password' ? info.passwordSaved : info.tokenSaved;
+}
+
+/**
+ * 保存前的凭据校验（与 Kotlin 端 AppUpdatePolicy.credentialProblem 同一套判定）：
+ * 用户名密码方式必须凑齐用户名与密码——缺一项就发不出 Basic 头，私有库会静默退化成匿名访问
+ * （表现为 401/404，而不是「凭据没填全」）；访问令牌方式允许留空，公开仓库不需要凭据。
+ * 返回 null 表示没问题，否则是给用户看的一句话。
+ */
+export function appUpdateCredentialProblem(
+  authType: AppUpdateAuthType,
+  username: string,
+  passwordInput: string,
+  hasSavedPassword: boolean,
+): string | null {
+  if (authType !== 'password') return null;
+  if (!username.trim()) return '选了「用户名密码」就得填用户名';
+  if (!passwordInput && !hasSavedPassword) return '选了「用户名密码」还得填密码';
+  return null;
 }
 
 /** 字节数 → 人话（下载进度里显示「已下载 12 MB / 48 MB」） */
