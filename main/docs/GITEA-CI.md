@@ -180,6 +180,7 @@ GitHub 上的仓库是私有仓库的**脱敏快照**（见 [`PUBLIC-MIRROR.md`]
 
 - **发版即同步**：dispatch 勾选 `binaries` 时，`release-out/` 里的 exe / APK / sha256 会传到 GitHub 同名 Release（`v<版本>`）。
 - **历史回填**：dispatch 时填 `github_backfill`（如 `1.2.0,1.3.0` 或 `all`），从 Gitea Release 拉已有附件再传过去；Gitea 侧没有附件的版本会被跳过并在日志里列出（当初「二进制按需分发」的窗口内发版的版本就是这种情况）。
+- **脚本从哪来**：workflow 按 `inputs.tag` 检出的是**历史标签**，而本脚本 2026-09-30 才进仓库——旧标签的树里没有它。所以 dispatch 时先跑一步「公开同步脚本就位」：标签树里有就用标签自带的（发版路径可复现），没有就用 API 从 `main` 取一份（v1.3.3 回填时踩到过 `No such file or directory`）。
 - **幂等**：同名附件大小一致就跳过，大小不同才删旧重传；重复触发不会重复上传 170MB 的 exe。
 - **不碰正文**：公开 Release 正文由 public-mirror 用**已脱敏的 CHANGELOG** 填写；CI 只在 Release 不存在时建一个空正文的壳，绝不把私有 CHANGELOG 正文带过去。
 - **目标非 github.com 时自动跳过并返回 0**（与 make-public-snapshot.sh 的判定一致），本地验证可用 `SYNC_DRY_RUN=1`。
