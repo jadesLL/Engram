@@ -383,21 +383,36 @@ describe('verifyCloudflareToken / listCloudflareZones', () => {
     assert.match(net.ok ? '' : net.error, /fetch failed/);
   });
 
-  test('域名列举：返回 {id,name}；空列表与 API 拒绝都给人话原因', async () => {
+  test('域名列举：返回 {id,name}；空列表=「还没域名」、API 拒绝=「权限」——两种要分得开', async () => {
     const zonesFetch = async () =>
       jsonResponse({ success: true, result: [{ id: 'z1', name: 'xxx.com' }, { id: 'z2', name: 'yyy.net' }] });
     const ok = await listCloudflareZones('t', zonesFetch);
     assert.equal(ok.ok, true);
     assert.deepEqual(ok.ok ? ok.zones : [], [{ id: 'z1', name: 'xxx.com' }, { id: 'z2', name: 'yyy.net' }]);
 
+    // 空列表：Token 是好的、请求也成功，只是账号下没有域名——客户还没买域名
     const empty = await listCloudflareZones('t', async () => jsonResponse({ success: true, result: [] }));
     assert.equal(empty.ok, false);
-    assert.match(empty.ok ? '' : empty.error, /没有可管理的域名/);
+    assert.equal(empty.ok ? '' : empty.code, 'no-domain');
+    assert.match(empty.ok ? '' : empty.error, /还没有任何域名/);
+    assert.match(empty.ok ? '' : empty.error, /购买|买一个/, '要明确告诉客户域名得自己买');
+    assert.doesNotMatch(empty.ok ? '' : empty.error, /权限/, '没域名不能报成权限问题');
 
     const denied = await listCloudflareZones('t', async () =>
       jsonResponse({ success: false, errors: [{ message: 'Authentication error' }] }));
     assert.equal(denied.ok, false);
+    assert.equal(denied.ok ? '' : denied.code, 'permission');
     assert.match(denied.ok ? '' : denied.error, /Authentication error/);
+    assert.match(denied.ok ? '' : denied.error, /Zone → Zone → Read/, '指出该补哪个权限');
+
+    const forbidden = await listCloudflareZones('t', async () => jsonResponse({}, 403));
+    assert.equal(forbidden.ok ? '' : (forbidden as { code?: string }).code, 'permission');
+
+    const broken = await listCloudflareZones('t', async () => jsonResponse({}, 500));
+    assert.equal(broken.ok ? '' : (broken as { code?: string }).code, 'network');
+
+    const offline = await listCloudflareZones('t', async () => { throw new Error('fetch failed'); });
+    assert.equal(offline.ok ? '' : (offline as { code?: string }).code, 'network');
   });
 
   test('setDdnsFetchForTest 接管「没显式传 fetchImpl」的调用（接口层就是这么调的）', async () => {

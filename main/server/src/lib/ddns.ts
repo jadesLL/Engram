@@ -402,22 +402,60 @@ export async function verifyCloudflareToken(
   }
 }
 
-/** 列出该 Token 能管理的全部域名（zone）：用户从列表里选，不必自己拼 FQDN，也不用手工确认 zone */
+/**
+ * 域名列表失败的归类，界面要按它决定「让客户去干什么」：
+ *  - no-domain：Token 有效、请求也成功，但账号下一个域名都没有——客户还没买域名（最常见），
+ *    绝不能报成「权限不足」，那样客户会一直在 Token 上打转；
+ *  - permission：Token 权限不够或被 Cloudflare 拒绝；
+ *  - network：网络不通 / Cloudflare 侧故障。
+ */
+export type CloudflareZoneListErrorCode = 'no-domain' | 'permission' | 'network';
+
+export type CloudflareZoneListResult =
+  | { ok: true; zones: CloudflareZone[] }
+  | { ok: false; code: CloudflareZoneListErrorCode; error: string };
+
+/** 没有域名时给客户看的下一步（产品口径：域名要客户自己买、自己绑定） */
+export const NO_DOMAIN_MESSAGE =
+  '这个 Cloudflare 账号下还没有任何域名。DDNS 只负责把域名指向本机，域名本身要你自己购买并绑定到 Cloudflare：'
+  + '先去注册商买一个（Spaceship / Namecheap / 阿里云 等），在 Cloudflare 里「添加站点」，'
+  + '再到注册商处把 NS 改成 Cloudflare 给的两条；绑定好之后回来重新检查。';
+
+/**
+ * 列出该 Token 能管理的全部域名（zone）：用户从列表里选，不必自己拼 FQDN，也不用手工确认 zone。
+ * 空列表单独归类成 no-domain：这正是「客户还没买域名」的样子，不能和权限问题混在一起报。
+ */
 export async function listCloudflareZones(
   token: string,
   fetchImpl?: FetchLike,
-): Promise<{ ok: true; zones: CloudflareZone[] } | { ok: false; error: string }> {
+): Promise<CloudflareZoneListResult> {
   try {
     const res = await resolveFetch(fetchImpl)('https://api.cloudflare.com/client/v4/zones?per_page=50', {
       headers: cfHeaders(token),
     });
-    if (!res.ok) return { ok: false, error: `域名列表获取失败: HTTP ${res.status}` };
+    if (!res.ok) {
+      const permission = res.status === 401 || res.status === 403;
+      return {
+        ok: false,
+        code: permission ? 'permission' : 'network',
+        error: permission
+          ? `Cloudflare 拒绝了域名列表请求（HTTP ${res.status}）：Token 少了 Zone → Zone → Read 权限，或它无权查看这个账号。`
+          : `域名列表获取失败: HTTP ${res.status}`,
+      };
+    }
     const data = (await res.json()) as {
       success?: boolean;
       errors?: Array<{ message?: string }>;
       result?: Array<{ id: string; name: string; status?: string; name_servers?: string[] }>;
     };
-    if (!data.success) return { ok: false, error: `域名列表获取失败: ${cfErrorMessage(data, 'API success=false')}` };
+    if (!data.success) {
+      return {
+        ok: false,
+        code: 'permission',
+        error: `域名列表获取失败: ${cfErrorMessage(data, 'API success=false')}`
+          + '（Token 需 Zone → Zone → Read 才能列出账号下的域名）',
+      };
+    }
     const zones: CloudflareZone[] = (data.result || []).map((z) => {
       const zone: CloudflareZone = { id: z.id, name: z.name };
       // 可选项只在真有值时挂上去：老调用方按 {id,name} 严判等，多两个 undefined 键会平白炸掉
@@ -426,10 +464,10 @@ export async function listCloudflareZones(
       if (Array.isArray(z.name_servers) && z.name_servers.length) zone.nameServers = z.name_servers;
       return zone;
     });
-    if (!zones.length) return { ok: false, error: '该 Token 名下没有可管理的域名（需要 Zone → DNS → Edit 权限）' };
+    if (!zones.length) return { ok: false, code: 'no-domain', error: NO_DOMAIN_MESSAGE };
     return { ok: true, zones };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, code: 'network', error: e instanceof Error ? e.message : String(e) };
   }
 }
 

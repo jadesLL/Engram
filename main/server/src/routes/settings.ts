@@ -159,16 +159,18 @@ export async function settingsRoutes(app: FastifyInstance) {
   /**
    * 一键配置·第一步：校验 Token 并列出它名下可维护的域名（zone）。
    * 用户不必知道 FQDN / zone 这些概念——粘一个 Token，从列表里选一个域名就行。
+   * 失败要带 code：`token`=Token 本身有问题，`no-domain`=客户还没买域名（界面据此醒目引导购买与绑定），
+   * `permission`=权限不足，`network`=网络/Cloudflare 侧问题——不能都含糊成一句「失败」。
    */
   app.post('/api/settings/ddns/discover', async (req, reply) => {
     if (!isHubDevice()) return reply.code(400).send({ error: '仅中枢设备可配置 DDNS', code: 'not-hub' });
     const { token } = (req.body || {}) as { token?: string };
     const value = String(token || '').trim();
-    if (!value) return reply.code(400).send({ error: '请先填入 Cloudflare API Token' });
+    if (!value) return reply.code(400).send({ error: '请先填入 Cloudflare API Token', code: 'no-token' });
     const verified = await verifyCloudflareToken(value);
-    if (!verified.ok) return { ok: false, error: verified.error };
+    if (!verified.ok) return { ok: false, code: 'token', error: verified.error };
     const listed = await listCloudflareZones(value);
-    if (!listed.ok) return { ok: false, error: listed.error };
+    if (!listed.ok) return { ok: false, code: listed.code, error: listed.error };
     const current = getDdnsConfig();
     return { ok: true, zones: listed.zones, record: current.record, type: current.type };
   });
