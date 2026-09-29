@@ -98,7 +98,9 @@ function api(inst: Instance, method: string, pathname: string, body?: unknown, e
   });
 }
 
-async function waitFor(label: string, fn: () => Promise<boolean>, timeoutMs = 30_000, debug?: () => Promise<string>): Promise<void> {
+// 默认等待窗口 60s：跨节点传播类断言在构建机高负载时会明显拉长（SSE 重连退避最长 30s、
+// 文件补拉兜底一轮 60s，见 client.ts 的 PULL_RETRY_MS）。断言本身不放松，只给足等待。
+async function waitFor(label: string, fn: () => Promise<boolean>, timeoutMs = 60_000, debug?: () => Promise<string>): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
@@ -209,7 +211,9 @@ function loggedChangeContains(entries: LoggedEntry[], needle: string): boolean {
   });
 }
 
-test('三端同步端到端：实时传播、三方合并、冲突最新者胜裁决、文件与删除同步、提炼账本补齐', { timeout: 300_000 }, async () => {
+// 整测上限 8 分钟：单个等待窗口放宽到 60s（个别步骤 90/120s）后，多个步骤在高负载下累积等待
+// 需要对应的预算，否则会从「某步超时并打印诊断」退化成「整测超时、看不到卡在哪一步」。
+test('三端同步端到端：实时传播、三方合并、冲突最新者胜裁决、文件与删除同步、提炼账本补齐', { timeout: 480_000 }, async () => {
   const instances: Instance[] = [];
   const cleanup = async () => {
     for (const inst of instances) {
@@ -367,7 +371,7 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     await waitFor('hub 融合两侧改动', async () => {
       const c = await pageContent(hub, pageM);
       return c?.includes('第一行：hub 修订') === true && c?.includes('第三行：B 修订') === true;
-    }, 40_000, async () => {
+    }, 90_000, async () => {
       const dumpHub = await pageContent(hub, pageM);
       const stB = await (await api(nodeB, 'GET', '/api/sync/status')).json();
       const stC = await (await api(nodeC, 'GET', '/api/sync/status')).json();
@@ -377,7 +381,7 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     await waitFor('C 收到融合结果', async () => {
       const c = await pageContent(nodeC, pageM);
       return c?.includes('第一行：hub 修订') === true && c?.includes('第三行：B 修订') === true;
-    }, 40_000);
+    }, 90_000);
     // 合并无冲突 → 不产生任何重命名副本
     const listRes0 = await api(hub, 'GET', '/api/pages/list');
     const pages0 = (await listRes0.json()) as { pages: { path: string }[] };
@@ -404,7 +408,7 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     await waitFor('冲突裁决完成', async () => {
       const c = await pageContent(hub, pageK);
       return c?.includes('方案 B') === true;
-    }, 40_000);
+    }, 90_000);
     const hubContent = await pageContent(hub, pageK);
     assert.ok(!hubContent?.includes('方案 A'), '正本不应保留较旧的 hub 版本内容');
     // 被取代的 hub 旧版本以「原名-时间戳」重命名保留在同一目录
@@ -432,18 +436,34 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
       '冲突记录页已废弃，不应存在'
     );
     // 重命名副本同步到节点 B
+    // 等待窗口按「构建机高负载时的传播时延」给足：B 刚重连，SSE 可能还在建立/重连退避（最长 30s），
+    // 文件补拉兜底是 60s 一轮（client.ts 的 PULL_RETRY_MS）；45s 曾三次（v1.3.1 run 731、v1.3.2 run 745、
+    // v1.3.3 run 753）在 CI 主机有负载时踩线超时，这里放宽到 120s——断言本身不变，只放宽等待。
     await waitFor('重命名副本同步到 B', async () => {
       const res = await api(nodeB, 'GET', '/api/pages/list');
       const list = (await res.json()) as { pages: { path: string }[] };
       return list.pages.some((p) => /^同步验证冲突-\d{8}T\d{6}\.md$/.test(p.path.slice(kDir.length)) && p.path.startsWith(kDir));
-    }, 45_000);
+    }, 120_000, async () => {
+      // 超时时把两侧现状打出来，下次失败能直接看出是「没到 B」还是「压根没生成副本」
+      const bList = (await (await api(nodeB, 'GET', '/api/pages/list')).json()) as { pages: { path: string }[] };
+      const bStatus = (await (await api(nodeB, 'GET', '/api/sync/status')).json()) as {
+        connected: boolean;
+        cursor: number;
+        log: { event: string }[];
+      };
+      return [
+        `B 上 ${kDir} 下的页面: ${JSON.stringify(bList.pages.filter((p) => p.path.startsWith(kDir)).map((p) => p.path))}`,
+        `中枢上的页面: ${JSON.stringify(allPages.pages.map((p) => p.path))}`,
+        `B 状态: connected=${bStatus.connected} cursor=${bStatus.cursor} 最近事件=${JSON.stringify(bStatus.log.slice(-6).map((l) => l.event))}`,
+      ].join('\n');
+    });
 
     // ---------- 场景 6：状态端点 ----------
     // 场景 5 刚重连：内容可经补拉到达，SSE 长连接可能还在建立中，等它就绪再断言
     await waitFor('B 重连后恢复在线', async () => {
       const s = (await (await api(nodeB, 'GET', '/api/sync/status')).json()) as { connected: boolean };
       return s.connected;
-    });
+    }, 60_000);
     const statusB = await api(nodeB, 'GET', '/api/sync/status');
     const stB = (await statusB.json()) as {
       role: string;
