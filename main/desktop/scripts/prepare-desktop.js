@@ -7,17 +7,32 @@ const path = require('node:path');
 const mainRoot = path.resolve(__dirname, '..', '..'); // main/
 const desktopRoot = path.resolve(__dirname, '..');    // desktop/
 
-function copyDir(src, dst) {
+// 发布产物不携带测试文件：server/dist 里 *.test.js 是编译 src/**/*.test.ts 的副产物
+// （构建已改用 tsconfig.build.json 不产出它们；这里再过滤一次，避免本地残留的旧 dist 混进安装包——
+//  测试 fixture 里带真实内网地址，随 app.asar 发出去既不必要也属于泄漏面）。
+const TEST_FILE = /\.test\.js(\.map)?$/;
+let skippedTests = 0;
+
+function copyDir(src, dst, { skipTests = false } = {}) {
   if (!fs.existsSync(src)) {
     throw new Error(`源目录不存在：${src}（请先 build server 与 web）`);
   }
   fs.rmSync(dst, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(dst), { recursive: true });
-  fs.cpSync(src, dst, { recursive: true });
+  const filter = skipTests
+    ? (p) => {
+        if (TEST_FILE.test(p)) {
+          skippedTests += 1;
+          return false;
+        }
+        return true;
+      }
+    : undefined;
+  fs.cpSync(src, dst, filter ? { recursive: true, filter } : { recursive: true });
 }
 
-// 1. 复制 server 构建产物
-copyDir(path.join(mainRoot, 'server', 'dist'), path.join(desktopRoot, 'server', 'dist'));
+// 1. 复制 server 构建产物（跳过测试文件）
+copyDir(path.join(mainRoot, 'server', 'dist'), path.join(desktopRoot, 'server', 'dist'), { skipTests: true });
 // 2. 复制 web 构建产物
 copyDir(path.join(mainRoot, 'web', 'dist'), path.join(desktopRoot, 'web', 'dist'));
 // 3. 生成 desktop/server/package.json：仅运行时依赖，--prod 安装可得到精简 node_modules
@@ -49,5 +64,7 @@ fs.writeFileSync(
   'nodeLinker: hoisted\nonlyBuiltDependencies:\n  - better-sqlite3\n'
 );
 
-console.log('[prepare-desktop] 已复制 server/dist、web/dist，并生成 desktop/server/package.json');
+console.log(
+  `[prepare-desktop] 已复制 server/dist（跳过 ${skippedTests} 个测试文件）、web/dist，并生成 desktop/server/package.json`
+);
 console.log('[prepare-desktop] 下一步：pnpm -C desktop/server install --prod --ignore-workspace --no-frozen-lockfile（nodeLinker 已在 workspace.yaml 设 hoisted；需联网下载时申请 --allow-downloads）');

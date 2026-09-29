@@ -12,13 +12,13 @@
 
 官方远端为 `gitea`（`https://github.com/jadesLL/Engram.git`，私有）。开发、合并、发版均在本地完成后按用户明确指示推送 gitea；不经批准不推其他远端，不强推或改写远端历史。
 
-推送 main 或 `v*` 标签触发 Gitea Actions（详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送跑 verify（build+typecheck+test）并构建推送**主分支滚动镜像 `:main`**（发版前的测试通道，合 main 即更新）；版本 tag 与 `:latest` 只在 `v*` 发版时由 release.yml 构建推送并创建 Release（正文=CHANGELOG 段落）；exe/APK 是每次发版的固定交付，推完 tag 后必须 dispatch release.yml（输入本次标签+勾选 binaries）构建并补挂到对应 Release（2026-09-27 起，取代 2026-09-08 的「二进制不随发版、按需分发」口径，见项目规则 9）；离线 tar.gz 等额外产物仍按需分发。CI runner 的联网下载属既定流程，本地开发机的下载限制不因此放宽。
+推送 main 或 `v*` 标签触发 Gitea Actions（详见 [`main/docs/GITEA-CI.md`](./main/docs/GITEA-CI.md)）：main 推送跑 verify（build+typecheck+test）并构建推送**主分支滚动镜像 `:main`**（发版前的测试通道，合 main 即更新）；版本 tag 与 `:latest` 只在 `v*` 发版时由 release.yml 构建推送并创建 Release（正文=CHANGELOG 段落）；exe/APK 是每次发版的固定交付，推完 tag 后必须 dispatch release.yml（输入本次标签+勾选 binaries）构建并补挂到对应 Release（2026-09-27 起，取代 2026-09-08 的「二进制不随发版、按需分发」口径，见项目规则 9）；同一趟 dispatch 还会把产物同步到**公开仓库（GitHub）同名 Release** 作为公开下载入口（2026-09-30 起，历史版本用 `github_backfill` 回填，见 GITEA-CI.md 的「公开仓库产物同步」）；离线 tar.gz 等额外产物仍按需分发。CI runner 的联网下载属既定流程，本地开发机的下载限制不因此放宽。
 
 发版流程（细则见 main/docs/GITEA-CI.md）。发版是显式动作：仅当用户要求发版时执行，日常迭代不发版；一旦发版就必须按项目规则 9 交付三件套（Android 端 + Windows 桌面版 + Docker 镜像）：
 
 1. 功能合并 main 后推送：`git push gitea main` → ci.yml 跑 verify 并推送滚动镜像 `:main`（测试部署可切「更新通道 → main」跟主分支）。
 2. 发版：同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 把距上次发布的**全部新功能**写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落（缺失则 release.yml 直接失败）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像并发布 Gitea Release（正文=CHANGELOG 段落）。
-3. **补齐三件套的另外两件（每次发版必做，不是按需）**：Actions → Release → Run workflow，输入本次标签 + 勾选 `binaries`（Windows exe + Android APK，构建后自动补挂到对应 Release）；Windows exe 也可按下方「Windows 桌面端打包」本地打包。APK 必须基于本次发版提交构建、版本号与发版一致（禁止复用旧包），并发版说明要按项目规则 9 补齐安卓端自上次更新以来的全部内容。产物归档到 `releases/<版本>/`（含 release.json）。离线 tar.gz（`offline_image`）属额外产物，仍按需 dispatch。
+3. **补齐三件套的另外两件（每次发版必做，不是按需）**：Actions → Release → Run workflow，输入本次标签 + 勾选 `binaries`（Windows exe + Android APK，构建后自动补挂到对应 Release，并同步到公开仓库 GitHub 同名 Release）；Windows exe 也可按下方「Windows 桌面端打包」本地打包。APK 必须基于本次发版提交构建、版本号与发版一致（禁止复用旧包），并发版说明要按项目规则 9 补齐安卓端自上次更新以来的全部内容。产物归档到 `releases/<版本>/`（含 release.json）。离线 tar.gz（`offline_image`）属额外产物，仍按需 dispatch。
 4. 镜像地址固定三层路径 `gitea.example.com/example/engram/engram:<版本>`（两层 `owner/image` 形式 NAS 拉取异常，勿改回）。
 5. 部署 compose 不得写 `pull_policy: never`。
 
@@ -46,7 +46,7 @@
 
 安装包版本号与发布版本对齐（`desktop/package.json`），产物写入 `releases/<version>/`。因 Windows Defender 实时扫描锁定 `electron.exe` 导致 `EPERM rename`，不走 `pnpm build:desktop`，分两步手动打包：
 
-**前置**（每次改了 server/web 源码都必做，否则 asar 里是旧代码）：`cd main/server && node ../node_modules/typescript/bin/tsc -p tsconfig.json` → `cd main/web && node ../node_modules/vite/bin/vite.js build` → `node desktop/scripts/prepare-desktop.js` 复制产物。
+**前置**（每次改了 server/web 源码都必做，否则 asar 里是旧代码）：`cd main/server && node ../node_modules/typescript/bin/tsc -p tsconfig.build.json` → `cd main/web && node ../node_modules/vite/bin/vite.js build` → `node desktop/scripts/prepare-desktop.js` 复制产物（构建走 `tsconfig.build.json`：不产出 `*.test.js`，测试文件不进安装包）。
 
 1. **组装 win-unpacked**：
    * `pnpm -C desktop/server install --prod --node-linker=hoisted --ignore-workspace --no-frozen-lockfile`（ignored builds 的 exit 1 用 `|| true` 容忍）。

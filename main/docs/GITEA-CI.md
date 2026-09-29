@@ -1,6 +1,6 @@
 # Gitea CI 与镜像分发指南
 
-本项目通过 Gitea Actions（`https://github.com/jadesLL/Engram`）实现持续集成、Docker 镜像分发和发版必备二进制产物（exe/APK，离线包按需）构建。
+本项目通过 Gitea Actions（`https://github.com/jadesLL/Engram`）实现持续集成、Docker 镜像分发、发版必备二进制产物（exe/APK，离线包按需）构建，并把发版产物同步到公开仓库（GitHub）的 Release 作为公开下载入口。
 
 > 从源码构建安装包的完整指南（含不依赖 CI 的本地 Docker 构建路径、部署方式与 AI 操作清单）见 [`BUILDING.md`](./BUILDING.md)；本文聚焦 CI/CD 流水线本身的维护与历史踩坑。
 
@@ -13,6 +13,7 @@
 →（发版）bump 三处版本号 + CHANGELOG.md 写 v<版本> 段落 → 提交并立即推送 → git tag v<版本> && git push gitea v<版本>
 → release.yml 自动：校验并提取 CHANGELOG 段落（缺失即失败）→ verify 门禁（build+typecheck+test）→ 构建并推送镜像（版本 tag + latest）→ 创建 Gitea Release（正文=CHANGELOG 版本段落，无二进制附件）
 →（发版必做）补齐三件套：Actions → Release → Run workflow：输入本次标签 + 勾选 binaries → verify 门禁 → 构建并补挂 APK/exe 到对应 Release → 归档 releases/<版本>/（离线包 offline_image 按需）
+→（公开下载）同一趟 dispatch 把 exe/APK/sha256 同步到公开仓库 GitHub 的同名 Release（幂等，见「公开仓库产物同步」；历史版本用 github_backfill 输入回填）
 → 部署机 docker login + docker pull 新版本镜像
 ```
 
@@ -32,7 +33,8 @@
 |---|---|---|
 | 日常推送 | `git push gitea main` | ci.yml：verify（build+typecheck+test）+ 构建推送滚动镜像 `:main` |
 | 发版 | bump 版本号 + CHANGELOG 段落 → push main → `git tag v<版本>` → `git push gitea v<版本>` | release.yml：校验提取 CHANGELOG 段落（缺失失败）→ verify 门禁（build+typecheck+test）→ 构建推送镜像（`:<版本>` + `:latest`）→ 创建 Release（正文=CHANGELOG 段落，tag 本身无二进制附件） |
-| 发版补齐（必做） | 推完 tag 后由人/AI 手动触发 release.yml（workflow_dispatch）：输入本次标签 + 勾选 binaries（Android APK + Windows exe） | verify 门禁 → 构建所选产物 → 产物上传 Artifact（保留 7 天）并自动补挂到对应版本 Release；不推镜像。三件套缺一不算发版完成。离线包 offline_image 仍按需；提前验证 main 最新代码用 `:main` 通道（应用内一键更新）或 BUILDING.md 本地构建 |
+| 发版补齐（必做） | 推完 tag 后由人/AI 手动触发 release.yml（workflow_dispatch）：输入本次标签 + 勾选 binaries（Android APK + Windows exe） | verify 门禁 → 构建所选产物 → 产物上传 Artifact（保留 7 天）并自动补挂到对应版本 Release，**同时同步到公开仓库 GitHub 同名 Release**；不推镜像。三件套缺一不算发版完成。离线包 offline_image 仍按需；提前验证 main 最新代码用 `:main` 通道（应用内一键更新）或 BUILDING.md 本地构建 |
+| 历史版本回填（按需） | 手动触发 release.yml，`github_backfill` 填版本号列表（如 `1.2.0,1.3.0`）或 `all` | 从 Gitea Release 拉已有附件再传到公开仓库 GitHub 同名 Release；不构建产物、不碰 Release 正文 |
 | 部署 | `docker login` → `docker compose -f docker-compose.pull.yml up -d` | — |
 
 **版本号一致性（发版门禁，release.yml 有校验）**：
@@ -161,11 +163,28 @@ docker compose -f docker-compose.pull.yml up -d
 | `REGISTRY_TOKEN` | 同上 | **package 写权限** token（repository-only 权限的 token 过不了 Registry 认证） |
 | `RELEASE_TOKEN` | 创建 Release / 上传附件 | repository 写权限 token |
 | `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` | APK release 签名（见 [`ANDROID.md`](./ANDROID.md)）；未配置时 CI 回退未签名包 | 本机 keystore，不入库 |
+| `PUBLIC_MIRROR_TOKEN` | 同步产物到公开仓库（GitHub）Release（也是 Public Mirror 推送用的那把） | GitHub fine-grained PAT，**Contents: Read and write** |
+
+对应 Variable（Public Mirror 已在用同一份）：`PUBLIC_MIRROR_REPO_URL` = `https://github.com/<账号>/Engram.git`。
 
 ### 发版踩坑（2026-09-28 v1.3.0 实测，两条都会让「镜像已推、Release 没建」）
 
 1. **`RELEASE_TOKEN` 失效 = Release 步骤 401**：症状是 `release.yml` 走到「创建 Release」时 `ApiError: Unauthorized`（`invalid username, password or token`），而镜像**已经推成功**（推镜像用 `REGISTRY_TOKEN`，是另一把 token）——于是 registry 里 `:<版本>` 与 `:latest` 都到位、Release 却是空的、APK/exe 也没构建。修法：仓库 Settings → Actions → Secrets 重新生成 `RELEASE_TOKEN`（需 **write:repository**；`REGISTRY_TOKEN` 是 package 写权限，两把不能混用），然后 Actions → Release → Run workflow（tag=本次标签 + 勾 `binaries`）补发。
 2. **CHANGELOG 段落不能撑爆提取步骤的管道**：提取段落那步末尾曾用 `echo "$BODY" | head -5` 预览，段落超过管道缓冲（64 KiB）时 `head` 提前退出、写端收到 SIGPIPE，整个 release 任务以 **exit 141** 失败（v1.3.0 的 72 KiB 段落首次触发；此前各版本段落只有几 KiB 所以从未暴露）。已改为逐行读到第 5 行即停、全程不经管道——段落再长也不会再踩。
+
+## 公开仓库产物同步（GitHub，2026-09-30 起）
+
+GitHub 上的仓库是私有仓库的**脱敏快照**（见 [`PUBLIC-MIRROR.md`](./PUBLIC-MIRROR.md)）：正文与标签由 public-mirror 同步，但**附件没人搬**——所以此前每个公开 Release 只有 GitHub 自动附带的源码包（`Source code (zip/tar.gz)` 是 git 快照，不是安装包）。
+
+现在由 release.yml 补上这一步，脚本 `main/scripts/sync-public-release-assets.py`：
+
+- **发版即同步**：dispatch 勾选 `binaries` 时，`release-out/` 里的 exe / APK / sha256 会传到 GitHub 同名 Release（`v<版本>`）。
+- **历史回填**：dispatch 时填 `github_backfill`（如 `1.2.0,1.3.0` 或 `all`），从 Gitea Release 拉已有附件再传过去；Gitea 侧没有附件的版本会被跳过并在日志里列出（当初「二进制按需分发」的窗口内发版的版本就是这种情况）。
+- **幂等**：同名附件大小一致就跳过，大小不同才删旧重传；重复触发不会重复上传 170MB 的 exe。
+- **不碰正文**：公开 Release 正文由 public-mirror 用**已脱敏的 CHANGELOG** 填写；CI 只在 Release 不存在时建一个空正文的壳，绝不把私有 CHANGELOG 正文带过去。
+- **目标非 github.com 时自动跳过并返回 0**（与 make-public-snapshot.sh 的判定一致），本地验证可用 `SYNC_DRY_RUN=1`。
+
+> 这些二进制是**公开发布**的：发版前必须确认产物里没有私有信息（内网地址、域名、凭据）。构建侧现有两手防护——`server/dist` 不再产出 `*.test.js`（`tsconfig.build.json`），`prepare-desktop.js` 复制时再过滤一次测试文件；设置页的示例地址一律用 `192.168.x.x` 这类文档式写法。
 
 ## Runner 环境约束（Windows 宿主机模式）
 
