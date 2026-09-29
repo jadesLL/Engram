@@ -45,6 +45,9 @@ import { configure, configureDualStack, configureLinkPreferLan, reconcileNow, st
 import { deviceLabel } from '../sync/deviceLabel.js';
 import { updateSourceForSync } from '../lib/updateConfig.js';
 import { localLanUrls } from '../sync/linkAnnounce.js';
+import { memberHubAddresses } from '../sync/hubAddress.js';
+import { getDdnsConfig } from '../lib/ddns.js';
+import { HOST, PORT } from '../config.js';
 import type { DualStackConfig } from '../sync/dualStack.js';
 import {
   clearSyncLog,
@@ -318,6 +321,36 @@ export async function syncRoutes(app: FastifyInstance) {
     deviceLabel: deviceLabel(),
     lan: localLanUrls(),
   }));
+
+  /**
+   * 成员绑定地址（中枢设置页「同步群组」里的那一列）：告诉用户「别的设备该填哪个地址」。
+   *
+   * 旧实现直接拿浏览器 `location.origin` 展示与复制，桌面版（内嵌服务只监听 127.0.0.1）
+   * 于是永远给出 http://127.0.0.1:18180，填到别的设备上必然连不上。现在由服务端算：
+   * 剔除回环、只列真正可达的地址（部署侧声明 / 网卡探测 / DDNS / 当前访问地址），
+   * 并且只监听回环时一条都不给（界面据此引导开启「允许局域网访问」）。
+   *
+   * origin 由设置页把 `location.origin` 传上来：Docker 版常常就是局域网 IP，
+   * 是自动探测之外最有价值的一条候选。owner 鉴权：地址清单同样是本机网络拓扑。
+   */
+  app.get('/api/sync/hub-addresses', { preHandler: requireAuth }, async (req) => {
+    const query = (req.query || {}) as { origin?: string };
+    const ddns = getDdnsConfig();
+    return {
+      ok: true,
+      ...memberHubAddresses({
+        bindHost: HOST,
+        port: PORT,
+        origin: query.origin,
+        ddnsHost: ddns.enabled ? ddns.record : '',
+        env: {
+          LAN_ACCESS_URL: process.env.LAN_ACCESS_URL,
+          LAN_PORT: process.env.LAN_PORT,
+          DIRECT_ACCESS_URL: process.env.DIRECT_ACCESS_URL,
+        },
+      }),
+    };
+  });
 
   /** 成员 SSE 下行：实时广播；断开由 req close 触发反注册 */
   app.get('/api/sync/events', { preHandler: requireSyncAccess }, async (req, reply) => {

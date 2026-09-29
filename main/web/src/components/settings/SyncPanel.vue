@@ -79,10 +79,40 @@
       <div class="role-banner">
         <div>
           <strong>本设备是同步群组的中枢</strong>
-          <span class="faint">成员绑定地址：{{ location.origin }}</span>
+          <span class="faint">成员绑定地址：{{ primaryHubAddress || '暂无可用地址（见下方说明）' }}</span>
           <span v-if="deviceNameLine" class="faint small">{{ deviceNameLine }}</span>
         </div>
         <button class="text-action danger" type="button" @click="leaveRole('none')">退出中枢角色</button>
+      </div>
+
+      <!-- 成员绑定地址：**不能用 location.origin**。桌面版（内嵌服务只监听 127.0.0.1）打开设置页
+           时它永远是 http://127.0.0.1:18180，用户照着填到手机上必然连不上——真机上就是这么
+           报回来的。地址清单由服务端算（/api/sync/hub-addresses）：剔除回环、只留真正可达的
+           地址；一条都给不出时说清原因，并在桌面端给出「允许局域网访问」的一键开关。 -->
+      <div class="member-addresses">
+        <div class="address-head">
+          <strong>成员绑定地址</strong>
+          <span class="faint small">别的设备在「多端同步 → 绑定中枢」里填这里的地址，配上下面生成的绑定令牌</span>
+        </div>
+        <ul v-if="hubAddresses.length" class="address-list">
+          <li v-for="item in hubAddresses" :key="item.url" class="address-row">
+            <span class="address-kind">{{ item.label }}</span>
+            <code class="address-url">{{ item.url }}</code>
+            <button class="btn small" type="button" @click="copy(item.url)">复制</button>
+          </li>
+        </ul>
+        <p v-if="hubAddressNotice" class="address-warn">{{ hubAddressNotice }}</p>
+        <p v-if="hubSkippedNotice" class="faint small">{{ hubSkippedNotice }}</p>
+        <label v-if="lanAccessSupported" class="lan-access-toggle">
+          <input v-model="lanAccess" type="checkbox" :disabled="lanBusy" @change="toggleLanAccess" />
+          <span>
+            <strong>允许局域网访问</strong>
+            <span class="faint small">
+              开启后本地服务监听 0.0.0.0（随即自动重启，窗口会重新加载），局域网里的手机 / 其他电脑才连得上这台中枢；
+              关闭则只有这台电脑能访问（默认）。首次开启时 Windows 可能弹出防火墙询问，选「专用网络」允许。
+            </span>
+          </span>
+        </label>
       </div>
 
       <div class="peers-block">
@@ -124,8 +154,17 @@
         <h4>「{{ newPeer.name }}」绑定信息</h4>
         <div class="field-row">
           <label>中枢地址</label>
-          <div class="copy-row"><code>{{ location.origin }}</code><button class="btn small" type="button" @click="copy(location.origin)">复制</button></div>
+          <div class="copy-row">
+            <template v-if="primaryHubAddress">
+              <code>{{ primaryHubAddress }}</code>
+              <button class="btn small" type="button" @click="copy(primaryHubAddress)">复制</button>
+            </template>
+            <span v-else class="faint small">暂无可用地址，见上方「成员绑定地址」的说明</span>
+          </div>
         </div>
+        <p v-if="hubAddresses.length > 1" class="faint small">
+          这台中枢共 {{ hubAddresses.length }} 条可用地址（见上方），选与这台设备同网络的那条。
+        </p>
         <div class="field-row">
           <label>绑定令牌</label>
           <div class="copy-row">
@@ -325,6 +364,13 @@ import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
 import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
 import { openSyncLogDrawer } from '../../lib/syncLog';
 import { syncChannelView, type SyncLinkStatus } from '../../lib/syncChannel';
+import {
+  bindingAddresses,
+  primaryBindingAddress,
+  hubAddressNotice as hubAddressNoticeText,
+  hubSkippedNotice as hubSkippedNoticeText,
+  type HubAddressReport,
+} from '../../lib/hubAddress';
 import SecretField from '../SecretField.vue';
 import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSyncStore } from '../../stores/sync';
@@ -415,6 +461,19 @@ const saving = ref(false);
 const creating = ref(false);
 const reconciling = ref(false);
 const newPeer = ref<(PeerView & { token: string }) | null>(null);
+
+/**
+ * 成员绑定地址（`/api/sync/hub-addresses` 算好的可达地址清单）：中枢面板的显示与复制都用它。
+ *
+ * 旧实现直接显示 `location.origin`：桌面版的内嵌服务只监听 127.0.0.1、页面永远开在
+ * http://127.0.0.1:18180 上，于是中枢给出去的地址就是 127.0.0.1——别的设备填了必然连不上。
+ */
+const hubAddress = ref<HubAddressReport | null>(null);
+/** 桌面端壳的桥：只有它有「允许局域网访问」开关（浏览器打开的页面没有这个桥） */
+const lanBridge = (window as any).wikiDesktop;
+const lanAccessSupported = computed(() => Boolean(lanBridge && typeof lanBridge.getLanAccess === 'function'));
+const lanAccess = ref(false);
+const lanBusy = ref(false);
 const dualStack = ref({ enabled: true, failureThreshold: 3, windowSeconds: 15, probeAfterSuccesses: 10, connectTimeoutMs: 5000 });
 /** 表单只在首次拿到状态（或保存后）回填：状态每 5 秒轮询，不能把用户正在改的数字冲掉 */
 const dualStackLoaded = ref(false);
@@ -433,6 +492,14 @@ const deviceNameLine = computed(() => {
   if (source === 'hub') return `本机名称：${name}（本设备就是中枢）`;
   return `本机名称：${name}（还没连上中枢：先显示电脑名）`;
 });
+
+/** 可用的成员绑定地址（服务端已排序：局域网在前、公网在后）与主地址 */
+const hubAddresses = computed(() => bindingAddresses(hubAddress.value));
+const primaryHubAddress = computed(() => primaryBindingAddress(hubAddress.value));
+/** 一条地址都没有时的说明（桌面端提示怎么开局域网访问）；有地址时为空 */
+const hubAddressNotice = computed(() => hubAddressNoticeText(hubAddress.value, { desktop: lanAccessSupported.value }));
+/** 回环地址被剔除时的说明：让用户明白「为什么这里不再是 127.0.0.1」 */
+const hubSkippedNotice = computed(() => hubSkippedNoticeText(hubAddress.value));
 
 // 设置页二级导航的状态徽标：一眼看出本机是中枢、成员还是尚未参与同步
 useSettingsBadge(
@@ -601,7 +668,61 @@ async function loadStatus(): Promise<void> {
     peers.value = res.data.peers || [];
     syncDualStackForm();
     syncLanForm();
+    await loadHubAddresses();
   } catch { /* 服务未就绪时忽略 */ }
+}
+
+/**
+ * 拉取成员绑定地址（只有当中枢时才需要）。
+ *
+ * 带上设置页自己的 origin：Docker 版常用局域网 IP 打开，那条地址本身就是成员能用的；
+ * 桌面版的 origin 是 127.0.0.1，服务端会剔除并在 skippedLoopback 里说明。
+ * 取不到（老服务端没有这个接口）时保持 null：界面显示「暂无可用地址 + 说明」，
+ * 绝不退回 location.origin——那正是这个 bug 的来源。
+ */
+async function loadHubAddresses(): Promise<void> {
+  if (status.value?.role !== 'hub') {
+    hubAddress.value = null;
+    return;
+  }
+  try {
+    const res = await api.get('/api/sync/hub-addresses', { params: { origin: location.origin } });
+    hubAddress.value = res.data?.ok ? (res.data as HubAddressReport) : null;
+  } catch {
+    hubAddress.value = null;
+  }
+}
+
+/** 读桌面端「允许局域网访问」开关（浏览器打开的页面没有这个桥，什么都不做） */
+async function loadLanAccess(): Promise<void> {
+  if (!lanAccessSupported.value) return;
+  try {
+    const r = await lanBridge.getLanAccess();
+    lanAccess.value = Boolean(r?.enabled);
+  } catch { /* 桥异常时按关闭显示 */ }
+}
+
+/** 开关局域网访问：config.json 落盘后本地服务以新监听地址重启（窗口会重新加载） */
+async function toggleLanAccess(): Promise<void> {
+  if (!lanAccessSupported.value) return;
+  const want = lanAccess.value;
+  lanBusy.value = true;
+  try {
+    const r = await lanBridge.setLanAccess(want);
+    if (r?.error) {
+      lanAccess.value = !want;
+      notify.error(r.error);
+      return;
+    }
+    notify.success(want
+      ? '已开启局域网访问：本地服务正在以 0.0.0.0 重启，随后这里会列出局域网地址'
+      : '已关闭局域网访问：本地服务回到 127.0.0.1（只有本机能连）');
+  } catch (e: any) {
+    lanAccess.value = !want;
+    notify.error('切换失败：' + (e?.message || e));
+  } finally {
+    lanBusy.value = false;
+  }
 }
 
 /** 回填「优先局域网」（force=true 用于保存成功后按服务端结果刷新） */
@@ -750,8 +871,23 @@ function parsedDirectUrls(): string[] {
 }
 
 async function leaveRole(target: 'none'): Promise<void> {
+  const wasHub = status.value?.role === 'hub';
   if (await postConfig({ role: target }, target === 'none' ? '已退出，不再参与多端同步' : '已更新')) {
     hubToken.value = '';
+    // 退出中枢就顺手关掉局域网访问：那扇门只为「这台电脑当中枢」而开，留在 0.0.0.0 上没人会记得关。
+    // 关掉会重启内嵌服务，页面随即重新加载（角色已落盘，回来就是「未配置」）。
+    if (wasHub && lanAccessSupported.value && lanAccess.value) {
+      lanBusy.value = true;
+      try {
+        const r = await lanBridge.setLanAccess(false);
+        if (r?.error) notify.error(`已退出中枢，但局域网访问没能关闭：${r.error}`);
+        else lanAccess.value = false;
+      } catch (e: any) {
+        notify.error('已退出中枢，但局域网访问没能关闭：' + (e?.message || e));
+      } finally {
+        lanBusy.value = false;
+      }
+    }
   }
 }
 
@@ -819,6 +955,7 @@ onMounted(async () => {
     hubUrl.value = status.value.hubUrl || '';
     directUrlsText.value = (status.value.directUrls || []).join('\n');
   }
+  await loadLanAccess();
   pollTimer = window.setInterval(loadStatus, 5000);
 });
 
@@ -903,6 +1040,61 @@ onUnmounted(() => {
 .dot.on { background: var(--success, #2e9e5b); }
 .dot.off { background: var(--border, rgba(127, 127, 127, 0.4)); }
 .peer-actions { display: flex; align-items: center; gap: 10px; }
+
+/* 成员绑定地址：一条地址一行（标签 + 地址 + 复制），没有地址时给一句可执行的说明 */
+.member-addresses {
+  margin: 0 4px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.address-head { display: flex; flex-direction: column; gap: 2px; }
+.address-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.address-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+  border-radius: 8px;
+  padding: 8px 12px;
+  flex-wrap: wrap;
+}
+.address-kind {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.address-url {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.address-warn {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--warning-text, #b8860b);
+  background: var(--bg-soft, rgba(127, 127, 127, 0.08));
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.lan-access-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.lan-access-toggle > span { display: flex; flex-direction: column; gap: 2px; }
+.lan-access-toggle input { margin-top: 3px; }
+
 .token-line {
   display: flex;
   align-items: center;

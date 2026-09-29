@@ -7,6 +7,8 @@ const { fork } = require('node:child_process');
 const { spawn, execFile } = require('node:child_process');
 const net = require('node:net');
 const dataDirLib = require('./lib/data-dir');
+// 局域网访问开关与监听地址（设置 → 多端同步 → 同步群组 里把本机当中枢时用）
+const localAccess = require('./lib/local-access');
 // 注意：deps.js 在 desktop/scripts/lib/ 下（构建期脚本与主进程共用的判定），不是 desktop/lib/
 const depsLib = require('./scripts/lib/deps');
 // 桌面快捷方式与品牌化 exe（源码模式的 electron.exe 图标是 Electron 原子，见 lib/shortcut.js）
@@ -90,6 +92,23 @@ function getLocalPort() {
   const cfg = Number(readConfig().localPort);
   if (validPort(cfg)) return cfg;
   return DEFAULT_LOCAL_PORT;
+}
+
+/**
+ * 局域网访问（设置 → 多端同步 → 同步群组：把本机当同步中枢时用）。
+ *
+ * 桌面版默认只监听 127.0.0.1：这是个装在个人电脑上的应用，没必要让整个局域网都能打开它。
+ * 但要拿这台电脑当中枢，别的设备必须连得到——那时页面上的「成员绑定地址」才可能给出
+ * 局域网 IP（否则只能给出 127.0.0.1，填到手机上永远连不上，就是用户报的那个 bug）。
+ * 开启后内嵌服务以 0.0.0.0 重启（窗口自动重载，仍可用 127.0.0.1 打开），状态存 config.json。
+ */
+function getLanAccess() {
+  return localAccess.lanAccessEnabled(readConfig());
+}
+
+/** 内嵌服务的监听地址：开了局域网访问就 0.0.0.0，否则回环专用 */
+function localHost() {
+  return localAccess.localHost(readConfig());
 }
 
 // 旧版本曾把远端连接信息写入 config.json；远端模式移除后一次性清理，避免令牌继续留在本机。
@@ -456,7 +475,7 @@ async function startLocalModeInner(notice) {
     TZ: 'Asia/Shanghai',
     DATA_DIR: getDataDir(),
     PORT: String(port),
-    HOST: '127.0.0.1',
+    HOST: localHost(),
     OFFICE_EDITOR_ENABLED: 'false',
     ENGRAM_WEB_DIST: webDistPath(),
     ENGRAM_APP_VERSION: app.getVersion(),
@@ -850,6 +869,24 @@ ipcMain.handle('set-local-port', async (_e, raw) => {
   await stopLocalChild();
   startLocalMode(); // 健康检查通过后窗口自动加载新端口的 server
   return { port };
+});
+
+// 局域网访问查询（设置页「同步群组」里把本机当同步中枢时要用；enabled=内嵌服务监听 0.0.0.0）
+ipcMain.handle('get-lan-access', () => ({ enabled: getLanAccess() }));
+
+/**
+ * 开关局域网访问：写 config.json 后以新监听地址重启内嵌服务（窗口会重新加载）。
+ * 关掉时回到 127.0.0.1——电脑不再对局域网暴露，作为中枢时成员也就连不上（同步面板会提示）。
+ */
+ipcMain.handle('set-lan-access', async (_e, enabled) => {
+  const next = Boolean(enabled);
+  if (next === getLanAccess()) return { enabled: next, same: true };
+  writeConfig({ ...readConfig(), lanAccess: next });
+  await stopLocalChild();
+  startLocalMode(next
+    ? '已开启局域网访问，正在以新监听地址重启本地服务…'
+    : '已关闭局域网访问，正在以回环地址重启本地服务…');
+  return { enabled: next };
 });
 
 // 远程文件「用系统程序打开」：渲染进程把文件字节传过来，写临时目录后调系统默认程序

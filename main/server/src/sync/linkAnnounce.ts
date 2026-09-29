@@ -7,12 +7,16 @@
  * Docker 注意：容器里 os.networkInterfaces() 看到的是 172.x 容器网段，不是宿主机的
  * 192.168.x，而容器内 PORT（8080）往往也不是宿主映射端口（常见 18080）。所以部署侧
  * 可以用 LAN_ACCESS_URL 显式声明（多个用逗号/空格分隔）与 LAN_PORT 覆盖端口。
+ *
+ * 只监听回环时不通告任何地址：桌面版默认只开 127.0.0.1（见 desktop/main.js 的 HOST），
+ * 那种情况下这些局域网地址成员一个都连不上，通告出去只会让成员白等一轮探测超时。
  */
 import os from 'node:os';
-import { PORT } from '../config.js';
-import { pickLanUrls, type NetworkInterfaces } from './link.js';
+import { HOST, PORT } from '../config.js';
+import { isLoopbackHost, pickLanUrls, type NetworkInterfaces } from './link.js';
 
 export function localLanUrls(): string[] {
+  if (isLoopbackHost(HOST)) return [];
   const extra = (process.env.LAN_ACCESS_URL || '').split(/[\s,;]+/);
   const port = Number(process.env.LAN_PORT || '') || PORT;
   return pickLanUrls(os.networkInterfaces() as NetworkInterfaces, port, extra);

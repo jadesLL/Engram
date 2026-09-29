@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   getLocalPort: () => ipcRenderer.invoke('get-local-port'),
   // 更改本地服务端口（占用预检通过后写入 config.json 并重启内嵌后端；未变化返回 { same }，失败返回 { error }）
   setLocalPort: (port) => ipcRenderer.invoke('set-local-port', port),
+  // ---------- 局域网访问（设置 → 同步群组：把本机当同步中枢时用） ----------
+  // 查询开关状态（{ enabled }）：enabled=true 时内嵌服务监听 0.0.0.0，局域网设备可连
+  getLanAccess: () => ipcRenderer.invoke('get-lan-access'),
+  // 开关局域网访问（写 config.json 并以新监听地址重启内嵌服务，窗口自动重载；未变化返回 { same }）
+  setLanAccess: (enabled) => ipcRenderer.invoke('set-lan-access', enabled),
   // 远程文件「用系统程序打开」
   openFileBytes: (name, bytes) => ipcRenderer.invoke('open-file-bytes', name, bytes),
   // 收集箱原文件：按 vault 相对路径用系统默认应用打开 / 在资源管理器中定位
