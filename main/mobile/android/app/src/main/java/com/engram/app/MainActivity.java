@@ -28,6 +28,8 @@ import androidx.core.splashscreen.SplashScreen;
 
 import com.getcapacitor.BridgeActivity;
 
+import org.json.JSONObject;
+
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.File;
@@ -50,6 +52,10 @@ public class MainActivity extends BridgeActivity {
     private int localNavigationGeneration = 0;
     private String pendingDownloadUrl;
     private String pendingDownloadCookie;
+    /** 待投递给网页的邀请链接（`engram://join?…`）：页面还没就绪时先存着，首帧出来后补投 */
+    private volatile String pendingJoinLink;
+    /** 邀请链接投递重试次数：页面还在启动/登录页时每 300ms 重试一次，避免链接被吞掉 */
+    private int joinLinkAttempts;
     /** 系统栏（状态栏/导航栏/大屏任务栏）：透明 + 尺寸交给网页，见 SystemBars。 */
     private SystemBars systemBars;
     /** 系统解锁（指纹/人脸/锁屏密码）：登录页用，见 BiometricUnlock。 */
@@ -116,6 +122,7 @@ public class MainActivity extends BridgeActivity {
 
         setupDownloads();
         handleIncomingShare(getIntent());
+        handleJoinLink(getIntent());
 
         // 先绘出启动说明；服务启动与文件索引随后在工作线程完成。
         WebView webView = bridge != null ? bridge.getWebView() : null;
@@ -263,6 +270,7 @@ public class MainActivity extends BridgeActivity {
             loadLocalWhenReady(bridge.getWebView(), true);
         }
         handleIncomingShare(intent);
+        handleJoinLink(intent);
     }
 
     private void loadLocalWhenReady(WebView webView, boolean syncSettings) {
@@ -319,6 +327,9 @@ public class MainActivity extends BridgeActivity {
                 if (generation != localNavigationGeneration || isFinishing()) return;
                 if ("true".equals(result)) {
                     hideStartupOverlay();
+                    // 页面已就绪：如果手上还攥着一条邀请链接（冷启动时点的），现在投递最稳
+                    joinLinkAttempts = 0;
+                    deliverPendingJoinLink();
                     // 页面已就绪：清掉「正在启动」占位页那一格历史，否则根页面按返回会退回空白页；
                     // 并把系统栏尺寸推给网页（WebView 里 env(safe-area-inset-*) 不可靠）。
                     webView.clearHistory();
@@ -544,6 +555,58 @@ public class MainActivity extends BridgeActivity {
                 runOnUiThread(() -> Toast.makeText(this, "接收分享失败：" + error.getMessage(), Toast.LENGTH_LONG).show());
             }
         }, "engram-share-import").start();
+    }
+
+    /**
+     * 邀请链接直达（多端同步）：别人把 `engram://join?hub=…&token=…` 发到手机，点一下打开 Engram
+     * 并填好中枢地址与绑定令牌——省掉手抄 54 位令牌。只在 action 是 VIEW 且 scheme/host 对得上时接管，
+     * 其余 intent（分享、快捷方式）原样不管。
+     */
+    private void handleJoinLink(Intent intent) {
+        if (intent == null) return;
+        if (!Intent.ACTION_VIEW.equals(intent.getAction())) return;
+        Uri data = intent.getData();
+        if (data == null
+                || !"engram".equalsIgnoreCase(data.getScheme())
+                || !"join".equalsIgnoreCase(data.getHost())) {
+            return;
+        }
+        // singleTask 的 onNewIntent 可能重复交付同一个 intent：清掉 action，避免配置变更时再投一次
+        intent.setAction(null);
+        pendingJoinLink = data.toString();
+        joinLinkAttempts = 0;
+        deliverPendingJoinLink();
+    }
+
+    /**
+     * 把邀请链接交给网页（网页侧的接收函数见 web/src/lib/joinLink.ts）。
+     *
+     * 网页函数返回 true 才算送达：冷启动时页面还没起来（本地服务先要拉起、可能还要登录），
+     * 这时每 300ms 重试一次；另外页面首帧就绪时 {@code waitForPageSurface} 会重置计数再补投一次。
+     * 超过上限就放弃——链接仍然留在字段里，用户手动进 设置 → 多端同步 也能照常粘贴。
+     */
+    private void deliverPendingJoinLink() {
+        final String link = pendingJoinLink;
+        final WebView webView = bridge != null ? bridge.getWebView() : null;
+        if (link == null || webView == null) return;
+        if (joinLinkAttempts++ > 100) return;
+        final String script = "(function(){try{return typeof window.__engramJoinLink==='function'"
+                + "&&window.__engramJoinLink(" + JSONObject.quote(link) + ")===true}catch(e){return false}})()";
+        webView.post(() -> {
+            try {
+                webView.evaluateJavascript(script, handled -> {
+                    if ("true".equals(handled)) {
+                        pendingJoinLink = null;
+                        joinLinkAttempts = 0;
+                    } else {
+                        webView.postDelayed(this::deliverPendingJoinLink, 300);
+                    }
+                });
+            } catch (Throwable error) {
+                // WebView 正在重载（如切换局域网访问会重启本地服务）：等下一轮
+                webView.postDelayed(this::deliverPendingJoinLink, 300);
+            }
+        });
     }
 
     private String sharedDisplayName(Uri uri) {

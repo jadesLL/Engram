@@ -43,7 +43,7 @@ main/mobile/
 ├── scripts/build-apk-ci.sh     # Web build → 复制资产 → cap sync → Gradle test/assemble
 ├── Dockerfile.ci
 └── android/app/src/main/java/com/engram/app/
-    ├── MainActivity.java       # 生命周期、WebView、系统分享与下载、返回键与启动层
+    ├── MainActivity.java       # 生命周期、WebView、系统分享与下载、邀请链接直达、返回键与启动层
     ├── SystemBars.java         # 透明系统栏 + insets 交给网页 + 系统栏图标明暗跟随应用主题
     ├── SystemBarPolicy.java    # 系统栏策略纯逻辑（JVM 单测：insets JSON 契约、API 版本差异）
     ├── BackPolicy.java         # 返回键判定纯逻辑：网页 → 历史 → 退后台
@@ -79,6 +79,16 @@ main/mobile/
 - **Android 6-8（API 23-27）**：`KeyguardManager.createConfirmDeviceCredentialIntent()`，由系统出示锁屏验证界面（框架版 `BiometricPrompt` 要求 API 28+）。结果经 `MainActivity.onActivityResult` 转回桥。
 
 网页侧契约在 `web/src/lib/biometric.ts`：`status()`（能力 + 是否已开启）、`remember(password)`、`unlock(requestId)`、`forget()`；解锁结果由原生回调 `window.__engramBiometricResult(requestId, json)` 送回（按 requestId 对号，带 3 分钟超时兜底）。**凭据只有登录密码这一份**：开启后由 `SecretStore` 用 Android Keystore 的 AES-GCM 密钥密封存盘（密钥不可导出、不进备份），只有系统解锁成功之后才会取出交给网页去换会话 cookie；解锁失败、取消或从未开启都不会有凭据离开进程。改密码（设置 → 账户）自动关闭它，避免拿旧密码撞 401；开启只能在登录页做（那里才有明文密码）。桌面端 / Docker 网页端没有这条桥，登录页自动隐藏整块（`biometricStatus()` 返回 null）。
+
+
+## 扫码绑定与邀请链接直达
+
+绑定同步中枢要填「中枢地址 + 54 位绑定令牌」，手抄容易错。中枢（Docker/桌面端）在 设置 → 多端同步 → 同步群组 的「添加成员 / 成员行 → 邀请」里给出**二维码 + 邀请链接**（`engram://join?hub=…&token=…&name=…&v=1`），手机端有两条免手抄的路：
+
+- **应用内扫码**：设置 → 多端同步 → 绑定中枢 → **扫码**，取景框直接用系统摄像头（`getUserMedia`），识别到链接后自动填好中枢地址与令牌，仍由用户点「保存并绑定」确认；识别逻辑在 `web/src/lib/qrScan.ts`（抽帧 → `jsqr` 解码，解码器动态 import，不进主包）。**权限**：Manifest 声明 `android.permission.CAMERA`（配 `uses-feature android.hardware.camera required="false"`，没有摄像头的设备照样能装），取流时由 Capacitor 的 `BridgeWebChromeClient.onPermissionRequest` 向系统申请运行时权限——所以**不需要** `androidx.camera` 或任何原生扫码库，安卓侧只多了一条权限声明。WebView 在 `https://localhost`（Capacitor 默认）下是安全上下文，浏览器自身的摄像头限制在此不构成问题；被拒绝/没有摄像头/被占用都会在取景框里给出中文原因。
+- **邀请链接直达**：`AndroidManifest` 为 `MainActivity` 注册 `engram://join` 的 VIEW intent-filter；`MainActivity.handleJoinLink(intent)` 认下链接后交给网页的 `window.__engramJoinLink(raw)`（网页侧 `web/src/lib/joinLink.ts`：存进 `pendingJoinLink`、跳到 设置 → 多端同步，由 `SyncPanel` 消费并回填表单）。**投递要确认**：网页函数返回 `true` 才算送达，冷启动时页面还没起来就每 300ms 重试（上限 100 次），首帧就绪时（`waitForPageSurface`）会重置计数再补投一次；已参与同步的设备收到链接只提示「需先解除绑定 / 退出中枢角色」，不静默改写配置。
+
+同一条链接也可以直接粘贴：成员端「绑定中枢」表单里的邀请链接输入框会即时解析并回填（解析规则与严进宽出的口径见 `web/src/lib/syncInvite.ts`：只认 http/https 中枢地址 + 不含空白的令牌，链接被夹在聊天文字里也能认出来）。
 
 
 ## 应用内在线更新（OTA）

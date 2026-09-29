@@ -41,6 +41,16 @@
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
 
+            <!-- 邀请链接直达：别人把 engram://join?hub=…&token=… 发到手机，点一下直接打开
+                 Engram 并填好中枢地址与绑定令牌（网页侧的接收函数见 web/src/lib/joinLink.ts，
+                 投递见 MainActivity.handleJoinLink）。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="engram" android:host="join" />
+            </intent-filter>
+
         </activity>
 
         <provider
@@ -57,6 +67,12 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 多端同步「扫码绑定」：应用内摄像头预览扫码走 WebView 的 getUserMedia，
+         Capacitor 的 WebChromeClient 会在网页请求摄像头时向系统申请这条运行时权限
+         （见 mobile/node_modules/@capacitor/android 的 BridgeWebChromeClient.onPermissionRequest）。
+         uses-feature required="false"：扫码只是可选功能，别让没有摄像头的设备装不上。 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!-- 登录页的「指纹/人脸解锁」走系统 BiometricPrompt（见 BiometricUnlock.java）：
          API 28+ 要 USE_BIOMETRIC，API 23-27 的旧指纹接口要 USE_FINGERPRINT（判能力用，不采集）。
          两个都是普通权限，安装即授予，不会弹权限对话框。 -->
