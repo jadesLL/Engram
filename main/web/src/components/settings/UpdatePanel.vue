@@ -407,6 +407,8 @@ import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollap
 import { confirmDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 import { formatVersionLabel, formatSourceCheckLabel, type GitIdentity } from '../../lib/buildLabel';
+// 仓库地址解析与安卓端「安卓端更新」分组共用一份（lib/repoSourceUrl.ts），避免两处慢慢跑偏
+import { parseRepoUrl } from '../../lib/repoSourceUrl';
 import {
   applyDesktopInstallerUpdate,
   applyServerUpdate,
@@ -820,31 +822,6 @@ async function toggleSourceAuto(e: Event) {
   } catch {
     notify.error('设置失败，请重试');
   }
-}
-
-/**
- * 解析用户粘贴的远端仓库地址 → { url: 服务地址, repo: owner/name }。
- * 容忍 Release/分支页后缀、缺协议、.git 后缀、末尾斜杠；只给服务首页地址时返回 error 提示。
- */
-function parseRepoUrl(input: string): { url: string; repo: string } | { error: string } {
-  const raw = input.trim();
-  if (!raw) return { url: '', repo: '' };
-  let u: URL;
-  try {
-    u = new URL(raw.includes('://') ? raw : `https://${raw}`);
-  } catch {
-    return { error: '地址格式无法识别，请粘贴浏览器地址栏的完整仓库地址' };
-  }
-  const segs = u.pathname.split('/').filter(Boolean);
-  if (segs.length < 2) {
-    return { error: '这是站点首页地址，缺少仓库路径；请先打开仓库页面再复制，例如 https://gitea.xxx.com/username/Engram' };
-  }
-  const owner = decodeURIComponent(segs[0]);
-  const name = decodeURIComponent(segs[1]).replace(/\.git$/, '');
-  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(name)) {
-    return { error: '仓库路径包含无法识别的字符，请确认复制的是仓库首页地址' };
-  }
-  return { url: u.origin, repo: `${owner}/${name}` };
 }
 
 async function load() {

@@ -11,7 +11,7 @@ process.env.DATA_DIR = temp;
 const { SWITCHER_SCRIPT, buildCreateBody, buildSwitcherCreateBody } = await import(
   '../lib/updateSwitcher.js'
 );
-const { deriveDefaultImageRef, deriveDefaultImageTag, parseEnv, writeUpdateEnv, readUpdateEnv } = await import(
+const { deriveDefaultImageRef, deriveDefaultImageTag, parseEnv, writeUpdateEnv, readUpdateEnv, updateSourceForSync } = await import(
   '../lib/updateConfig.js'
 );
 const { compareVersions, currentVersion } = await import('../lib/version.js');
@@ -137,6 +137,24 @@ test('parseEnv 容忍引号与注释', () => {
   assert.equal(parsed.B, 'two words');
   assert.equal(parsed.D, 'sq');
   assert.equal(parsed['# c'], undefined);
+});
+
+test('updateSourceForSync：把中枢的更新源给成员设备，且不带任何凭据', () => {
+  const base = {
+    imageTag: '',
+    giteaUrl: 'https://gitea.example.com/',
+    giteaRepo: '/example/Engram/',
+    giteaAuthType: 'token',
+    giteaToken: 'secret-token',
+    giteaUsername: '',
+    giteaPassword: '',
+  };
+  assert.deepEqual(updateSourceForSync(base), { url: 'https://gitea.example.com', repo: 'example/Engram' });
+  // 凭据绝不出现在同步字段里（成员端各自保存自己的令牌）
+  assert.deepEqual(Object.keys(updateSourceForSync(base) || {}), ['url', 'repo']);
+  // 只填一半等于没配：成员端按「中枢没配」处理，回退本机手填的地址
+  assert.equal(updateSourceForSync({ ...base, giteaRepo: '' }), null);
+  assert.equal(updateSourceForSync({ ...base, giteaUrl: '' }), null);
 });
 
 test('compareVersions 语义化比较', () => {

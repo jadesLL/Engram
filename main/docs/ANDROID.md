@@ -14,7 +14,7 @@ Engram Android 端不是远程网页壳。APK 打包与桌面/服务器相同的
 - **收集箱与「记一条灵感」走中枢**（语义转换、模型拟标题、落盘前勘误与正文精炼都在中枢）：中枢这几条内容面接口与 `/api/assistant/**` 同一道门（成员 token 或 owner / MCP token），手机只持同步成员令牌即可用；「记一条灵感」的「预览 → 确认落盘」两步（`POST /api/ideas/preview` 与 `POST /api/ideas`）都窄代理到中枢，未绑定中枢时给出明确提示而不是报错。图片资产「挂载到…」（`POST /api/assets/attach`）在手机上本地实现：把未归属散图移进目标页面目录并把引用追加进正文。
 - 原始资料 md 改「分类」与桌面端同口径：可移动到 `原始资料/文档`、`原始资料/对话`、`原始资料/灵感碎片`（不再是「只能留在 Wiki 目录」）。
 - 不在手机上运行 dsh/MCP/CLI，也不下发模型 Key；完成成员绑定后，聊天抽屉通过本机 loopback 服务把 Agent 交互窄代理到 Docker 中枢。会话与长任务留在 24 小时在线的服务器上，手机退后台只断开 SSE，不会取消已经提交的任务，回到前台后按 active run 与快照接续。
-- 不提供同步中枢管理、Agent 模型配置、DDNS/TLS、Docker/桌面更新、ONLYOFFICE 在线编辑或 OCR。同步来的 AI 工作区与证据仍可只读查看。
+- 不提供同步中枢管理、Agent 模型配置、DDNS/TLS、Docker/桌面端更新（拉镜像换容器、装 exe）、ONLYOFFICE 在线编辑或 OCR。**手机端有自己的应用内在线更新**（下载新 APK 并调起系统安装器，见下方「应用内在线更新（OTA）」）。同步来的 AI 工作区与证据仍可只读查看。
 - PDF.js 提取 PDF 自带文字层，浏览器兼容组件解析 DOCX/PPTX/XLSX 并把确定性文本写入本地搜索索引；图片和扫描 PDF 不做 OCR。
 - Android 系统分享面板可把文字、单个或多个文件直接收进本地 `原始资料/文档`（原始资料的三个二级目录之一）；文件按 64 KiB 分块复制、遵守 200 MB 单文件上限，写入后进入正常同步待推队列。
 
@@ -49,6 +49,9 @@ main/mobile/
     ├── BackPolicy.java         # 返回键判定纯逻辑：网页 → 历史 → 退后台
     ├── BiometricUnlock.java    # 系统解锁桥（指纹/人脸/锁屏密码 + Keystore 密封的登录密码）
     ├── EngramLocalServer.kt    # loopback Ktor REST/静态服务
+    ├── AppUpdater.kt           # 应用内在线更新引擎：检查 Release / 后台下载（含断点续传）/ 调起安装器
+    ├── AppUpdatePolicy.kt      # OTA 纯逻辑与配置（版本比较、附件挑选、进度、更新源优先级）
+    ├── UpdateNotifier.java     # 「新版本已下载」系统通知
     ├── AgentBridge.kt          # Docker Agent 交互面窄代理
     ├── LocalDatabase.kt        # Markdown/SQLite/备份/回收站
     ├── SyncEngine.kt           # 前台一次性成员同步
@@ -77,6 +80,18 @@ main/mobile/
 
 网页侧契约在 `web/src/lib/biometric.ts`：`status()`（能力 + 是否已开启）、`remember(password)`、`unlock(requestId)`、`forget()`；解锁结果由原生回调 `window.__engramBiometricResult(requestId, json)` 送回（按 requestId 对号，带 3 分钟超时兜底）。**凭据只有登录密码这一份**：开启后由 `SecretStore` 用 Android Keystore 的 AES-GCM 密钥密封存盘（密钥不可导出、不进备份），只有系统解锁成功之后才会取出交给网页去换会话 cookie；解锁失败、取消或从未开启都不会有凭据离开进程。改密码（设置 → 账户）自动关闭它，避免拿旧密码撞 401；开启只能在登录页做（那里才有明文密码）。桌面端 / Docker 网页端没有这条桥，登录页自动隐藏整块（`biometricStatus()` 返回 null）。
 
+
+## 应用内在线更新（OTA）
+
+手机端不能像桌面端那样增量拉源码重建，也不能像 Docker 端那样换容器，**唯一的升级通道是安装包**；所以这里做了一套自己的 OTA：信号源沿用服务器/桌面端同一份 **Gitea Release**（附件名 `Engram <版本>.apk`），三端「有没有新版」的口径完全一致。
+
+- **入口**：设置 → 版本与更新 → 安卓端更新（能力位 `features.apkUpdate`，只有 App 内的 Kotlin 服务会报 true，桌面/服务端形态整组不出现）；检测到新版本时右上角还会亮起那枚绿色更新图标，展开面板点一下就是「下载并安装」。
+- **动作链**：`POST /api/app-update/check` 比对 `/api/v1/repos/<owner>/<repo>/releases/latest` 的 `tag_name` 与本机 `versionName` → `POST /api/app-update/download` 在后台线程流式下载到应用私有目录 `getExternalFilesDir(null)/updates/`（带 `Range` 断点续传，切后台/进程被杀后回前台接着下）→ `POST /api/app-update/install` 用 FileProvider 把 APK 交给系统安装器。检查与下载都是异步的，界面按 1.2 秒轮询 `GET /api/app-update/state` 看 `phase` / `percent`。
+- **装机确认**：Android 从 8.0 起侧载必须由用户确认，应用只负责把包备好并调起安装界面（不做也无法做静默安装）。未授权时面板给「去开启安装权限」按钮跳 `ACTION_MANAGE_UNKNOWN_APP_SOURCES`；装完系统替换应用、进程重启，本机知识库数据不受影响。
+- **自动更新**：默认开启——启动 / 回前台（`MainActivity.onStart` → `EngramLocalServer.onForeground`）距上次检查超过 6 小时就查一次，发现新版直接后台下好；网页侧的退避调度（`lib/updateCadence.ts`）在同一套状态上再补一轮。「发现」自动，「安装」永远要用户点一次。
+- **更新源不预置**：代码里没有任何默认仓库地址。地址有两个来源，**本机手填优先**，其次**多端同步中枢**——中枢（Docker/桌面端）在「更新源配置」里填过的仓库地址会随 `/api/sync/snapshot` 的 `updateSource` 字段下发（见 `server/src/lib/updateConfig.ts` 的 `updateSourceForSync`，**只带地址不带凭据**），手机没手填时直接用它，不必每台设备各填一遍；面板上会写明「当前用的是同步中枢下发的地址」，点「改回跟随中枢」可清掉本机手填的地址。私有仓库的访问令牌仍由各端自己保存（手机端走 `SecretStore`，Android Keystore 密封）。
+- **提醒**：应用内是那枚绿色更新图标 + 设置页徽标；退到后台时下载完成会发一条系统通知（Android 13+ 需通知权限，面板上给「允许通知」按钮按需申请）。
+- **边界**：调试包（`versionName` 带 `-local-first-debug` 后缀）不参与覆盖安装——它与正式包 `applicationId` 不同，装正式包会变成两个 App 并存，面板会说明原因；远端 Release 必须有 `.apk` 附件（发版 dispatch 勾选 `binaries` 才会上传）；签名必须与已装版本一致才能覆盖升级，keystore 丢失只能卸载重装。
 
 ## 本地开发与验证
 

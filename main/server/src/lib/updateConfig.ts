@@ -83,6 +83,19 @@ export function readUpdateEnv(): UpdateEnv {
 }
 
 /**
+ * 同步给成员设备的更新源（多端同步用，见 routes/sync.ts 的 snapshot.updateSource）：
+ * 只带仓库地址，**不带任何凭据**——手机端拿这份地址检查更新，不必每台设备各填一遍；
+ * 私有仓库的令牌仍由各端自己填（手机端存在 Android Keystore 里）。
+ * 地址或仓库名缺失时返回 null（成员端按「中枢没配」处理，回退到本机手填的地址）。
+ */
+export function updateSourceForSync(cfg: UpdateEnv = readUpdateEnv()): { url: string; repo: string } | null {
+  const url = (cfg.giteaUrl || '').trim().replace(/\/+$/, '');
+  const repo = (cfg.giteaRepo || '').trim().replace(/^\/+|\/+$/g, '');
+  if (!url || !repo) return null;
+  return { url, repo };
+}
+
+/**
  * 保留式写入：只替换本模块的键，其余行原样保留。
  * patch 中 undefined 表示保持不变，空串表示清除该键。
  */
