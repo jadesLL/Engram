@@ -45,6 +45,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 让开系统栏：卡片是居中的，但小屏 + 大字体会把它顶到状态栏/导航栏下（桌面端 --safe-* 为 0） */
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
   background: rgb(0 0 0 / 45%);
   backdrop-filter: blur(2px);
 }

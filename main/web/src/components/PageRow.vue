@@ -247,7 +247,11 @@ const timeText = computed(() => {
 @media (hover: none) and (pointer: coarse) {
   /* 行高 30px → 40px、字号 12.5px → 13.5px：手机上原来又扁又小，点按容易点错、标题也读不清 */
   .page-row {
-    height: 40px;
+    /* 高度改由内容撑：标题允许折到两行（见 .page-title 的 line-clamp），
+       写死 40px 会把第二行裁掉 */
+    height: auto;
+    min-height: 44px;
+    padding-block: 6px;
     font-size: 13.5px;
   }
 
@@ -287,6 +291,20 @@ const timeText = computed(() => {
   }
   /* 标题让开热区：44px 已经盖到标题原来的起点，不让开就成了「点标题变成勾选」 */
   .page-title { margin-left: 24px; }
+
+  /* 目录栏文字显示不全（用户报障）：单行省略号把 20 个字的页面名截成
+     「华北区域经销商年度对账与返…」，一排页面看着一模一样，根本选不出要开哪一篇。
+     触屏上放开到两行：常见的中文长标题能整句读完；真超长再折两行后省略。
+     行本身是 flex 容器（勾选框 / 标题 / ⋯ 三段），标题用 -webkit-box 才能在行内多行截断。 */
+  .page-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
 
   /* ⋯ 菜单：26px 同样偏小，热区补到 44×40（横向往标题侧伸，视觉图标位置不变） */
   .row-kebab {

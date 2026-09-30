@@ -221,12 +221,14 @@ function displayName(name: string): string {
 /*
  * 悬浮玻璃卡片（UI 2.0 语言）：四周留 8px 露出窗口底色，与 Agent 卡片、左侧文件树同一材质。
  * 没有遮罩：卡片浮在正文之上而不是压暗整屏，正文照常可见可点，换一份内容不用先关卡片。
- * 顶部还要避开桌面壳的原生标题栏（--win-titlebar-h 只在 desktop-frame 下有值）。
+ * 顶部还要避开桌面壳的原生标题栏（--win-titlebar-h 只在 desktop-frame 下有值），
+ * 以及安卓的状态栏：卡片是 fixed 定位、直接用视口坐标，不加 --safe-top 时头部那排按钮
+ * （含右上角 ✕）会落进状态栏里点不动（桌面/网页端 --safe-* 为 0，观感不变）。
  */
 .asset-drawer {
   position: fixed;
-  top: calc(8px + var(--win-titlebar-h, 0px));
-  bottom: 8px;
+  top: calc(8px + var(--win-titlebar-h, 0px) + var(--safe-top));
+  bottom: calc(8px + var(--safe-bottom));
   /* 比侧栏(35)高一档：窗口不宽时卡片要给 Agent 卡片让位、会压到文件树上，
      用 --z-drawer(25) 会被侧栏盖掉半张（卡片是临时浮层，盖住谁都不影响它的关闭按钮） */
   z-index: var(--z-chrome);
@@ -498,10 +500,12 @@ function displayName(name: string): string {
   background: rgba(0, 0, 0, 0.72);
 }
 .asset-preview :deep(.image-viewer) { width: min(1100px, 92vw); height: min(760px, 88vh); }
+/* 全屏看图是 inset:0 的浮层（视口坐标）：关闭键原来钉在 18px 处，正好落在安卓状态栏里，
+   手指按下去被系统状态栏吃掉——这就是「上边栏关闭按钮和状态栏冲突，点不了」的一种形态 */
 .preview-close {
   position: absolute;
-  top: 18px;
-  right: 20px;
+  top: calc(18px + var(--safe-top));
+  right: calc(20px + var(--safe-right));
   width: 34px;
   height: 34px;
   display: flex;

@@ -135,7 +135,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  /* 居中的扫码卡片同样要避开安卓系统栏：小屏 + 大字体会把卡片顶进状态栏（桌面端 --safe-* 为 0） */
+  padding: calc(20px + var(--safe-top)) calc(20px + var(--safe-right))
+    calc(20px + var(--safe-bottom)) calc(20px + var(--safe-left));
   background: rgb(0 0 0 / 55%);
 }
 
