@@ -121,12 +121,39 @@
         </div>
 
         <div class="gv-hud">
+          <button
+            class="gv-icon gv-tweaks-toggle"
+            :class="{ on: tweaksOpen }"
+            v-tooltip="{ body: '布局参数', meta: '节点大小、连线粗细、斥力与引力' }"
+            @click="tweaksOpen = !tweaksOpen"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M15 4.5v5M9 14.5v5" /></svg>
+          </button>
           <button class="gv-icon" v-tooltip="{ body: '铺满', meta: '把全部节点缩放到可见范围' }" @click="fit()">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15" /></svg>
           </button>
           <button class="gv-icon" :class="{ on: pinned }" v-tooltip="{ body: pinned ? '取消固定' : '固定布局', meta: '停住力导向计算' }" @click="togglePin()">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v8M8 7l4-4 4 4M6 21h12" /></svg>
           </button>
+        </div>
+
+        <!-- 布局参数（旧图谱设置面板的那几档：显示 + 力） -->
+        <div v-if="tweaksOpen" ref="tweakRef" class="gv-tweaks">
+          <h4>显示</h4>
+          <div class="gv-trow"><span>节点大小</span><output>{{ opt.nodeScale }}%</output></div>
+          <input v-model.number="opt.nodeScale" aria-label="节点大小" type="range" min="40" max="180" />
+          <div class="gv-trow"><span>连线粗细</span><output>{{ opt.linkScale }}%</output></div>
+          <input v-model.number="opt.linkScale" aria-label="连线粗细" type="range" min="40" max="260" />
+          <h4>力</h4>
+          <div class="gv-trow"><span>中心力</span><output>{{ opt.cF }}</output></div>
+          <input v-model.number="opt.cF" aria-label="中心力" type="range" min="0" max="100" />
+          <div class="gv-trow"><span>斥力</span><output>{{ opt.rF }}</output></div>
+          <input v-model.number="opt.rF" aria-label="斥力" type="range" min="0" max="100" />
+          <div class="gv-trow"><span>连线力</span><output>{{ opt.lF }}</output></div>
+          <input v-model.number="opt.lF" aria-label="连线力" type="range" min="0" max="100" />
+          <div class="gv-trow"><span>连线距离</span><output>{{ opt.lD }}</output></div>
+          <input v-model.number="opt.lD" aria-label="连线距离" type="range" min="0" max="100" />
+          <button class="gv-treset" @click="resetTweaks()">恢复默认</button>
         </div>
 
         <div v-if="loading" class="gv-state"><AppSpinner :size="16" /> 正在加载图谱…</div>
@@ -235,12 +262,14 @@ const TAG_GROUPS: { name: string; tags: string[] }[] = [
 const BUSINESS_TYPES = ['customer', 'person', 'org', 'project'];
 const FILTER_KEY = 'engram.graph.filters';
 
-/** 力导向参数：有冷却计划 + 碰撞松弛，收敛即停（这是「不 Q 弹」的关键） */
+/** 力导向参数：有冷却计划 + 碰撞松弛，收敛即停（这是「不 Q 弹」的关键）；斥力/引力/距离走面板档位 */
 const P = {
-  linkDist: 104, repulsion: 1500, gravity: 0.026, spring: 0.18,
   damping: 0.62, maxV: 6, collide: 12, alphaDecay: 1 - Math.pow(0.001, 1 / 200),
   settleAlpha: 0.008, settleSpeed: 0.15,
 };
+/** 外观与力学档位（旧图谱设置面板的那几档）；默认档正好还原调好的手感 */
+const OPT_KEY = 'engram.graph.options';
+const OPT_DEFAULTS = { nodeScale: 100, linkScale: 100, cF: 65, rF: 50, lF: 60, lD: 40 };
 
 /* ────────────────────────── 状态 ────────────────────────── */
 
@@ -264,7 +293,9 @@ const pinned = ref(false);
 const modes = computed(() => [
   { key: 'business' as const, name: '业务视图', meta: '只看客户 / 人物 / 组织 / 项目' },
   { key: 'all' as const, name: '全库', meta: '包含概念、笔记、文档' },
-  ...(pageId.value ? [{ key: 'local' as const, name: '本页关联', meta: '以当前页面为中心的邻居图' }] : []),
+  ...(pageId.value || selected.value || mode.value === 'local'
+    ? [{ key: 'local' as const, name: '本页关联', meta: '以当前页面（或选中节点）为中心的邻居图' }]
+    : []),
 ]);
 const modeLabel = computed(() => (mode.value === 'local' ? '本页关联' : mode.value === 'all' ? '全库' : '业务视图'));
 
@@ -277,6 +308,32 @@ const rangeFrom = ref(0);
 const rangeTo = ref(100);
 const wordSlider = ref(0);
 const degSlider = ref(0);
+
+/** 图谱外观与力学档位（localStorage 记忆，沿用旧设置面板的档位与文案） */
+const opt = reactive({ ...OPT_DEFAULTS });
+const tweaksOpen = ref(false);
+const tweakRef = ref<HTMLElement>();
+function saveOptions() {
+  try { localStorage.setItem(OPT_KEY, JSON.stringify({ ...opt })); } catch { /* 隐私模式忽略 */ }
+}
+function loadOptions() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(OPT_KEY) || '{}') as Record<string, unknown>;
+    for (const key of Object.keys(OPT_DEFAULTS) as (keyof typeof OPT_DEFAULTS)[]) {
+      const v = Number(raw[key]);
+      if (Number.isFinite(v)) opt[key] = v;
+    }
+  } catch { /* 忽略坏数据 */ }
+}
+function resetTweaks() { Object.assign(opt, OPT_DEFAULTS); }
+/** 点面板/按钮之外的地方收起参数面板（浮层不该一直挂着挡图） */
+function onDocPointerDown(ev: PointerEvent) {
+  if (!tweaksOpen.value) return;
+  const target = ev.target as HTMLElement | null;
+  if (tweakRef.value?.contains(ev.target as Node)) return;
+  if (target?.closest?.('.gv-tweaks-toggle')) return;
+  tweaksOpen.value = false;
+}
 
 const selected = ref<GNode | null>(null);
 const tip = ref<{ x: number; y: number; title: string; kind: string; color: string; deg: number; words: number; tags: string[]; updatedAt: string } | null>(null);
@@ -297,11 +354,15 @@ function dateNum(d: string) { return d ? Number(d.replace(/-/g, '')) : 0; }
 const colorOf = (n: GNode) => (TYPE_COLOR[n.group] || TYPE_COLOR.other)[app.dark ? 1 : 0];
 const typeName = (g: string) => TYPE_NAME[g] || TYPE_NAME[g.replace(/^entity-/, '')] || '节点';
 
+/** 「本页关联」的中心：优先路由里的页面，其次当前选中的节点 */
+function localId() { return pageId.value || selected.value?.id || ''; }
+
 async function load() {
   loading.value = true;
   loadError.value = '';
-  const params: Record<string, unknown> = { scope: mode.value === 'local' && pageId.value ? 'page' : 'global' };
-  if (params.scope === 'page') { params.id = pageId.value; params.depth = 2; }
+  const center = mode.value === 'local' ? localId() : '';
+  const params: Record<string, unknown> = { scope: center ? 'page' : 'global' };
+  if (center) { params.id = center; params.depth = 2; }
   let data: { nodes: ApiNode[]; edges: ApiEdge[] };
   try {
     ({ data } = await api.get('/api/graph', { params }));
@@ -467,7 +528,8 @@ const selectedRels = computed<RelItem[]>(() => {
     .sort((p, q) => q.node.deg - p.node.deg)
     .map((m) => ({ ...m.node, rel: m.rels.join(' · ') }));
 });
-const canFocusSelected = computed(() => !!selected.value && !selected.value.id.includes(':'));
+/** 「以它为中心」只管挪视图，跟节点是不是知识库页面无关（死链/实体节点也能居中看） */
+const canFocusSelected = computed(() => !!selected.value);
 
 function toggleFacet(kind: 'types' | 'tags', value: string) {
   const arr = kind === 'types' ? filters.types : filters.tags;
@@ -550,6 +612,21 @@ function setLayoutHint() {
   layoutHint.value = settled ? '· 已收敛' : '· 计算中';
 }
 
+/**
+ * 面板档位 → 力学参数：默认档（斥力 50 / 连线力 60 / 连线距离 40 / 中心力 65）
+ * 正好等于重写时调好的那套参数（1500 / 0.18 / 104 / 0.026），滑块不会一上来就改变手感。
+ */
+function derivePhysics() {
+  return {
+    repulsion: 300 + opt.rF * 24,
+    linkDist: 40 + opt.lD * 1.6,
+    spring: opt.lF * 0.003,
+    gravity: opt.cF * 0.0004,
+  };
+}
+let PH = derivePhysics();
+function syncPhysics() { PH = derivePhysics(); }
+
 function applyFilter() {
   saveFilters();
   const keep = rawNodes.filter(passFilter);
@@ -602,7 +679,7 @@ function tick() {
     const arr = buckets.get(k);
     if (arr) arr.push(n); else buckets.set(k, [n]);
   }
-  const rep = P.repulsion * alpha;
+  const rep = PH.repulsion * alpha;
   for (const n of nodes) {
     const gx = Math.floor(n.x / cell);
     const gy = Math.floor(n.y / cell);
@@ -632,14 +709,14 @@ function tick() {
     const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
     // 度数归一化：hub 页有几十条边，不做归一化会把整图拉成一坨
     const bias = Math.min(1, 14 / (1 + Math.max(a.deg, b.deg)));
-    const f = (d - P.linkDist) * P.spring * alpha * bias;
+    const f = (d - PH.linkDist) * PH.spring * alpha * bias;
     a.vx += (dx / d) * f; a.vy += (dy / d) * f;
     b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
   }
   let maxSpeed = 0;
   for (const n of nodes) {
-    n.vx -= n.x * P.gravity * alpha;
-    n.vy -= n.y * P.gravity * alpha;
+    n.vx -= n.x * PH.gravity * alpha;
+    n.vy -= n.y * PH.gravity * alpha;
     n.vx *= P.damping; n.vy *= P.damping;
     const sp = Math.hypot(n.vx, n.vy);
     if (sp > P.maxV) { n.vx = (n.vx / sp) * P.maxV; n.vy = (n.vy / sp) * P.maxV; }
@@ -749,7 +826,9 @@ function cssVar(el: HTMLElement | undefined, name: string, fallback: string) {
 }
 let palette = {
   bg: '#ffffff', edge: 'rgba(20,20,25,.10)', edgeHot: '#0f6cbd',
-  label: 'rgba(23,24,27,.66)', labelHot: '#17181B', ring: '#0f6cbd',
+  label: 'rgba(23,24,27,.66)', labelHot: '#17181B',
+  /** 选中/悬停：亮色实心（focus）与关联节点提亮（tint），不再用描边圈 */
+  focus: '#0f6cbd', tint: 'rgba(255,255,255,.42)',
 };
 function refreshPalette() {
   const dark = app.dark;
@@ -759,7 +838,8 @@ function refreshPalette() {
     edgeHot: dark ? '#6FA5E8' : '#0f6cbd',
     label: dark ? 'rgba(241,242,244,.72)' : 'rgba(23,24,27,.66)',
     labelHot: dark ? '#FFFFFF' : '#17181B',
-    ring: dark ? '#6FA5E8' : '#0f6cbd',
+    focus: dark ? '#6FA5E8' : '#0f6cbd',
+    tint: dark ? 'rgba(255,255,255,.24)' : 'rgba(255,255,255,.42)',
   };
 }
 const theme = () => palette;
@@ -802,7 +882,7 @@ function planLabels() {
     const th = fs + 3;
     const sx = n.x * view.s + view.x;
     const sy = n.y * view.s + view.y;
-    const rp = Math.max(2.5, Math.min(18, n.r * view.s));
+    const rp = nodeScreenR(n.r);
     const cands = [
       { x: sx - tw / 2, y: sy + rp + 4 },
       { x: sx - tw / 2, y: sy - rp - th - 4 },
@@ -840,13 +920,13 @@ function drawBase() {
     bctx.moveTo(a.x, a.y);
     bctx.lineTo(b.x, b.y);
   }
-  bctx.lineWidth = 1 / view.s;
+  bctx.lineWidth = linkScale() / view.s;
   bctx.strokeStyle = T.edge;
   bctx.stroke();
 
   // 节点：屏幕半径钳制在 2.5–18px，放大时不会变成巨球
   for (const n of visible) {
-    const rr = Math.max(2.5, Math.min(18, n.r * view.s));
+    const rr = nodeScreenR(n.r);
     bctx.beginPath();
     bctx.arc(n.x, n.y, rr / view.s, 0, Math.PI * 2);
     bctx.fillStyle = colorOf(n);
@@ -874,6 +954,17 @@ function drawBase() {
   }
 }
 
+/** 节点在屏幕上的实际绘制半径（含面板「节点大小」倍率与 2.5–18px 钳制）：画布、标签、高亮共用一套 */
+function nodeScreenR(r: number) {
+  return Math.max(2.5, Math.min(18, r * (opt.nodeScale / 100) * view.s));
+}
+/** 同一半径的世界坐标版本——高亮必须紧贴节点本身 */
+function nodeRadius(r: number) {
+  return nodeScreenR(r) / view.s;
+}
+/** 连线粗细倍率（面板档位，默认 100%） */
+const linkScale = () => opt.linkScale / 100;
+
 function drawOver() {
   if (!octx || !W) return;
   const T = theme();
@@ -893,29 +984,34 @@ function drawOver() {
     octx.moveTo(focus.x, focus.y);
     octx.lineTo(m.x, m.y);
   }
-  octx.lineWidth = 1.6 / view.s;
+  octx.lineWidth = (1.6 * linkScale()) / view.s;
   octx.strokeStyle = T.edgeHot;
   octx.stroke();
+  // 关联节点：只叠一层亮色（不再是描边圈——圈在缩放后常常比节点本身还大，太抢眼）
+  octx.fillStyle = T.tint;
   for (const a of adj[idx]) {
     const m = rawNodes[a.i];
     if (!passFilter(m)) continue;
     octx.beginPath();
-    octx.arc(m.x, m.y, m.r + 2, 0, Math.PI * 2);
-    octx.lineWidth = 1.4 / view.s;
-    octx.strokeStyle = T.ring;
-    octx.stroke();
+    octx.arc(m.x, m.y, nodeRadius(m.r), 0, Math.PI * 2);
+    octx.fill();
   }
+  // 焦点：亮色实心 + 柔和外发光，尺寸只比原节点大半像素，不做圈
+  const fr = nodeRadius(focus.r) + 1.5 / view.s;
+  octx.save();
+  octx.shadowColor = T.focus;
+  octx.shadowBlur = Math.min(10, 3 + fr * view.s * 0.8);
   octx.beginPath();
-  octx.arc(focus.x, focus.y, focus.r + 5 / view.s, 0, Math.PI * 2);
-  octx.lineWidth = 2 / view.s;
-  octx.strokeStyle = T.ring;
-  octx.stroke();
+  octx.arc(focus.x, focus.y, fr, 0, Math.PI * 2);
+  octx.fillStyle = T.focus;
+  octx.fill();
+  octx.restore();
   octx.restore();
 
   // 焦点标签强制显示
   const px = focus.x * view.s + view.x;
   const py = focus.y * view.s + view.y;
-  const rp = Math.max(2.5, Math.min(18, focus.r * view.s));
+  const rp = nodeScreenR(focus.r);
   octx.font = '600 12.5px "Segoe UI","Microsoft YaHei",system-ui,sans-serif';
   octx.textAlign = 'center';
   octx.textBaseline = 'middle';
@@ -954,10 +1050,35 @@ function hitTest(mx: number, my: number): GNode | null {
   let bd = Infinity;
   for (const n of visible) {
     const d = Math.hypot(n.x - w.x, n.y - w.y);
-    const tol = n.r + 6 / view.s;
+    const tol = nodeRadius(n.r) + 6 / view.s;
     if (d < tol && d < bd) { bd = d; best = n; }
   }
   return best;
+}
+
+/** 以某个节点为中心：只平移（缩得太小时拉到可读档），不重载数据、不重跑布局，所以不会乱跳 */
+let camRaf = 0;
+function centerOn(node: GNode) {
+  if (!W) return;
+  const s = view.s < 0.85 ? 1 : view.s;
+  const from = { x: view.x, y: view.y, s: view.s };
+  const to = { x: W / 2 - node.x * s, y: H / 2 - node.y * s, s };
+  const t0 = performance.now();
+  const dur = 240;
+  cancelAnimationFrame(camRaf);
+  userAdjusted = true; // 用户主动对焦：收敛后不再自动带动视图
+  const step = () => {
+    const k = Math.min(1, (performance.now() - t0) / dur);
+    const e = k < 0.5 ? 2 * k * k : 1 - ((-2 * k + 2) ** 2) / 2; // easeInOutQuad
+    view.s = from.s + (to.s - from.s) * e;
+    view.x = from.x + (to.x - from.x) * e;
+    view.y = from.y + (to.y - from.y) * e;
+    planLabels();
+    drawBase();
+    drawOver();
+    if (k < 1) camRaf = requestAnimationFrame(step);
+  };
+  step();
 }
 
 /* ────────────────────────── 交互 ────────────────────────── */
@@ -1030,12 +1151,12 @@ function onPointerUp() {
   if (node) { node.fixed = false; alpha = Math.max(alpha, 0.2); settled = false; if (!simActive) run(); }
   if (wasDrag || !node) return;
 
-  // 单击 = 选中（打开页面走右栏按钮）；300ms 内的第二次点击 = 以它为中心看关联
+  // 单击 = 选中（打开页面走右栏按钮）；300ms 内的第二次点击 = 以它为中心（只挪视图，不重排）
   const now = Date.now();
   if (now - lastClickAt < 300) {
     clearTimeout(clickTimer);
     lastClickAt = 0;
-    focusNode(node);
+    centerOn(node);
     return;
   }
   lastClickAt = now;
@@ -1071,12 +1192,11 @@ function onWheel(ev: WheelEvent) {
 
 function switchMode(next: 'business' | 'all' | 'local') {
   if (mode.value === next) return;
-  mode.value = next;
-  if (next === 'local' && !pageId.value) {
-    notify.info('从某个页面点「本页关联」进来才能看局部图');
-    mode.value = 'business';
+  if (next === 'local' && !localId()) {
+    notify.info('先选中一个节点，或从某个页面点「本页关联」进来');
     return;
   }
+  mode.value = next;
   if (next === 'local') {
     load();
     return;
@@ -1085,13 +1205,9 @@ function switchMode(next: 'business' | 'all' | 'local') {
   applyFilter();
 }
 
-function focusNode(node: GNode) {
-  if (node.id.includes(':')) return; // 死链/实体节点没有页面
-  pageId.value = node.id;
-  mode.value = 'local';
-  selected.value = node;
-  posCache.clear();
-  load();
+/** 「以它为中心」：把视图平移到该节点（缩得太小时拉到可读档），不再重载局部图、不再重排 */
+function focusSelected() {
+  if (selected.value) centerOn(selected.value);
 }
 
 function openSelected() {
@@ -1100,9 +1216,26 @@ function openSelected() {
   if (n.id.includes(':')) { notify.info('该节点不是知识库页面，无法打开'); return; }
   router.push(`/page/${n.id}`);
 }
-function focusSelected() {
-  if (selected.value) focusNode(selected.value);
-}
+
+/**
+ * 面板档位变化：外观（节点大小 / 连线粗细）立即重绘；力学参数防抖后再重新收敛，
+ * 拖滑块时不会每帧重启布局；固定布局状态下不打扰用户已经摆好的位置。
+ */
+let optTimer = 0;
+watch(opt, () => {
+  syncPhysics();
+  saveOptions();
+  planLabels();
+  drawBase();
+  drawOver();
+  clearTimeout(optTimer);
+  optTimer = window.setTimeout(() => {
+    if (pinned.value || !visible.length) return;
+    alpha = Math.max(alpha, 0.6);
+    settled = false;
+    run();
+  }, 140);
+});
 
 watch(() => app.dark, () => {
   refreshPalette();
@@ -1124,8 +1257,11 @@ let ro: ResizeObserver | null = null;
 
 onMounted(async () => {
   restoreFilters();
+  loadOptions();
+  syncPhysics();
   resize();
   refreshPalette();
+  document.addEventListener('pointerdown', onDocPointerDown);
   const cv = baseRef.value!;
   cv.addEventListener('pointerdown', onPointerDown);
   cv.addEventListener('pointermove', onPointerMove);
@@ -1143,9 +1279,12 @@ onMounted(async () => {
 
 onUnmounted(() => {
   cancelAnimationFrame(raf);
+  cancelAnimationFrame(camRaf);
   clearTimeout(clickTimer);
   clearTimeout(filterTimer);
   clearTimeout(searchTimer);
+  clearTimeout(optTimer);
+  document.removeEventListener('pointerdown', onDocPointerDown);
   ro?.disconnect();
 });
 </script>
@@ -1256,6 +1395,29 @@ onUnmounted(() => {
 }
 .gv-stats b { color: var(--text-secondary); font-weight: 500; }
 .gv-hud { position: absolute; right: 12px; bottom: 12px; z-index: 5; display: flex; gap: 6px; }
+
+/* ---------- 布局参数浮层（节点大小 / 连线粗细 / 力） ---------- */
+.gv-tweaks {
+  position: absolute; right: 12px; bottom: 52px; z-index: 8; width: 236px; padding: 10px 12px 12px;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+}
+.gv-tweaks h4 {
+  margin: 8px 0 2px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-faint); font-weight: 600;
+}
+.gv-tweaks h4:first-child { margin-top: 0; }
+.gv-trow {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 4px; font-size: 12px; color: var(--text-secondary);
+}
+.gv-trow output { color: var(--text); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.gv-tweaks input[type='range'] { width: 100%; margin: 0; accent-color: var(--accent); }
+.gv-treset {
+  appearance: none; width: 100%; height: 28px; margin-top: 10px; cursor: pointer;
+  font: inherit; font-size: 12px; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--bg); color: var(--text-secondary); transition: 0.15s;
+}
+.gv-treset:hover { background: var(--bg-hover); color: var(--text); }
 .gv-tip {
   position: absolute; z-index: 6; pointer-events: none; max-width: 220px; padding: 8px 10px;
   background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
@@ -1323,6 +1485,11 @@ onUnmounted(() => {
     width: auto; max-height: 38%; border-left: 0; border-top: 1px solid var(--border);
     border-radius: 14px 14px 0 0; box-shadow: var(--shadow);
   }
+  /* 参数浮层在手机上同样抬到底部导航之上，铺满可用宽度 */
+  .gv-tweaks {
+    left: 12px; right: 12px; bottom: calc(72px + var(--safe-bottom)); width: auto;
+    max-height: 46%; overflow-y: auto; z-index: 11;
+  }
 }
 
 /* 触屏上开关与小控件加大热区（手指点不准 32×18 的开关） */
@@ -1333,5 +1500,6 @@ onUnmounted(() => {
   .gv-frow { height: 34px; }
   .gv-icon { width: 38px; height: 38px; }
   .gv-seg button { padding: 8px 14px; }
+  .gv-tweaks input[type='range'] { height: 30px; }
 }
 </style>
