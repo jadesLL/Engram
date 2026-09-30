@@ -1,11 +1,43 @@
 <template>
   <div class="ddns-section">
+    <!-- 使用前提：这是客户最容易踩空的地方——Engram 只负责「让域名指向本机」，
+         域名本身要客户自己买、自己绑定到 Cloudflare。没有域名时整件事都做不了，
+         所以放在最前面、用带勾选的清单讲清楚，而不是藏在括号里。 -->
+    <section class="prereq" :class="{ blocked: setupReport.needsDomain }">
+      <div class="prereq-head">
+        <strong>{{ setupReport.needsDomain ? '⚠ 你还没有域名，现在配好也用不了' : '使用前提（5 步，缺一不可）' }}</strong>
+        <span class="prereq-count">{{ setupReport.doneCount }}/5 已完成</span>
+      </div>
+      <p class="prereq-lead">
+        Engram <strong>只负责把域名指向你这台机器</strong>（自动维护 A / AAAA 记录）；
+        <strong>域名要你自己买、自己绑定到 Cloudflare</strong>——没有域名，填了 Token 也解析不到，成员设备连不上。
+      </p>
+      <ol class="prereq-steps">
+        <li v-for="step in setupReport.steps" :key="step.id" :class="step.state">
+          <span class="prereq-mark" aria-hidden="true">{{ stepMark(step.state) }}</span>
+          <div class="prereq-body">
+            <span class="prereq-title">{{ step.title }}</span>
+            <span class="prereq-detail">{{ step.detail }}</span>
+            <a
+              v-if="step.action"
+              class="btn mini prereq-action"
+              :href="step.action.href"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Icon name="external" :size="13" />
+              {{ step.action.label }}
+            </a>
+          </div>
+        </li>
+      </ol>
+    </section>
+
     <div class="integration-note">
       DDNS 维护指向本机公网地址的 Cloudflare 记录，给成员设备提供稳定的中枢访问地址；每 5
       分钟自动比对，地址变化才写入。<strong>绿灯只在真的可用时才亮</strong>：服务端会先确认域名在 Cloudflare
       里已经生效，再问公共解析器（1.1.1.1、223.5.5.5）「外网到底能不能解析到本机」，查不到就如实报出来，
-      不把「API 写入成功」当成「用户能连上」。需要一个 Cloudflare API Token（权限
-      <strong>Zone → DNS → Edit</strong>），记录不存在时自动创建（TTL 60、仅 DNS）。自动模式同时维护
+      不把「API 写入成功」当成「用户能连上」。自动模式同时维护
       <strong>A + AAAA</strong> 两条记录（IPv6 优先、IPv4 兜底）——只留 AAAA 时，纯 IPv4 的访客连解析都拿不到地址。
       桌面端直接读取本机网卡，IPv6 会自动排除隐私临时地址；Docker 部署为容器内尽力探测。
     </div>
@@ -40,11 +72,24 @@
       <div v-if="status?.status?.hint" class="conn-hint">{{ status.status.hint }}</div>
     </div>
 
-    <!-- 一键配置：粘 Token → 选域名 → 启用。三下点完，不用理解 FQDN / zone / 记录类型这些概念。 -->
+      <!-- 一键配置：粘 Token → 选域名 → 启用。三下点完，不用理解 FQDN / zone / 记录类型这些概念。 -->
     <div class="onestep-block">
       <div class="onestep-head">
         <strong>一键配置</strong>
         <span class="faint small">粘一个 Cloudflare API Token，选一个域名，剩下的交给服务端</span>
+      </div>
+
+      <!-- 客户没域名时，这里要把话说死：不是权限问题，是你还没买域名（Engram 不代购） -->
+      <div v-if="setupReport.needsDomain" class="onestep-blocked">
+        <strong>先别急着填 Token：你还没有域名。</strong>
+        Engram 不会替你买域名，也没有内置域名。请先做两件事：
+        <br />
+        ① <a :href="DOMAIN_SHOP_URL" target="_blank" rel="noopener noreferrer">去注册商买一个域名</a>
+        （Spaceship / Namecheap / 阿里云 等都可以，几十块一年）；
+        ② 在 Cloudflare 里
+        <a :href="CLOUDFLARE_ADD_SITE_URL" target="_blank" rel="noopener noreferrer">添加这个站点</a>
+        ，再到注册商处把 NS 改成 Cloudflare 给的两条（这一步就是「绑定」）。
+        绑定好、等 Cloudflare 显示 Active，再回来粘 Token 就能用。
       </div>
 
       <!-- 拿 Token 的全过程写在这里：点外链按钮 → 在 Cloudflare 建好 → 回来粘进输入框，不用再翻文档。
@@ -52,7 +97,11 @@
       <div class="onestep-help">
         <p class="help-lead">获取 API Token（3 步，权限已预填，不用自己勾）：</p>
         <ol>
-          <li>点下面「创建 Cloudflare Token」→ 登录 Cloudflare（域名需已托管在 Cloudflare）；</li>
+          <li>
+            <strong>前提：你已经有一个域名，并且已经绑定到 Cloudflare</strong>（域名要自己买、自己在 Cloudflare
+            「添加站点」、再去注册商改 NS）——没域名的话这一步之后的都做不了；
+          </li>
+          <li>点下面「创建 Cloudflare Token」→ 登录 Cloudflare；</li>
           <li>
             页面已预选 <strong>Zone → DNS → Edit</strong>（读写解析记录）与 <strong>Zone → Zone → Read</strong>（列出你的域名）；
             名字保持默认，点 <em>Continue to summary</em> → <em>Create Token</em>；
@@ -61,12 +110,14 @@
         </ol>
         <p class="help-en">
           Get an API token (3 steps, permissions pre-filled):
-          ① Click “Create Cloudflare Token” and sign in — your domain must already be hosted on Cloudflare.
+          ⓪ Prerequisite: you already own a domain <em>and</em> it is already added to Cloudflare
+          (buy it yourself, add the site in Cloudflare, then switch the nameservers at your registrar).
+          ① Click “Create Cloudflare Token” and sign in.
           ② The form comes pre-filled with <strong>Zone → DNS → Edit</strong> and <strong>Zone → Zone → Read</strong>;
           keep the name, then <em>Continue to summary</em> → <em>Create Token</em>.
           ③ Copy the token, paste it into the field below, then click “Check token &amp; list domains”.
         </p>
-        <a class="btn small help-link" :href="tokenTemplateUrl" target="_blank" rel="noopener noreferrer">
+        <a class="btn small help-link" :href="DDNS_TOKEN_TEMPLATE_URL" target="_blank" rel="noopener noreferrer">
           <Icon name="external" :size="14" />
           创建 Cloudflare Token（权限已预选）/ Create Cloudflare Token
         </a>
@@ -165,17 +216,13 @@ import { notify } from '../../lib/notify';
 import AppSelect from '../ui/AppSelect.vue';
 import Icon from '../Icon.vue';
 import SecretField from '../SecretField.vue';
-
-/**
- * Cloudflare「建 Token 页」的预填链接（官方支持，见 Cloudflare 文档
- * fundamentals/api/how-to/account-owned-token-template）：permissionGroupKeys 里放 URL 编码后的权限 JSON。
- * 预选 dns:edit（读写解析记录）与 zone:read（列出账号下的域名——「列域名」这一步需要它；
- * 只想写记录、不要列域名的用户可以在页面上把它去掉）。
- */
-const tokenTemplateUrl = 'https://dash.cloudflare.com/profile/api-tokens'
-  + '?permissionGroupKeys=%5B%7B%22key%22%3A%22dns%22%2C%22type%22%3A%22edit%22%7D%2C'
-  + '%7B%22key%22%3A%22zone%22%2C%22type%22%3A%22read%22%7D%5D'
-  + '&accountId=%2A&zoneId=all&name=Engram%20DDNS';
+import {
+  CLOUDFLARE_ADD_SITE_URL,
+  DDNS_TOKEN_TEMPLATE_URL,
+  DOMAIN_SHOP_URL,
+  ddnsSetupSteps,
+  stepMark,
+} from '../../lib/ddnsSetupSteps.ts';
 
 interface DdnsForm {
   enabled: boolean;
@@ -217,6 +264,9 @@ const discovering = ref(false);
 const settingUp = ref(false);
 const quickResult = ref('');
 const quickHint = ref('');
+/** 「检查 Token 并列出域名」这一步的结果：界面据此判断前提清单走到哪一步了 */
+const tokenChecked = ref(false);
+const tokenErrorCode = ref<string | null>(null);
 
 /** 单族明细：服务端每轮同步后逐族记账（探不到的族也记一条，说明为什么没维护） */
 interface DdnsFamilyView {
@@ -355,6 +405,28 @@ const zonePendingZone = computed(() => {
   return z && z.status && z.status !== 'active' ? z : null;
 });
 
+/** 前提清单：状态全部来自服务端已有事实（Token 校验、zone 列表、zone 状态、同步结果），不额外发请求 */
+const zoneCount = computed<number | null>(() => {
+  if (zones.value.length) return zones.value.length;
+  // 已经配置好的设备，说明当初就选到了域名（本次会话没再列过而已）
+  return status.value?.configured ? 1 : null;
+});
+
+const selectedZoneStatus = computed<string | null>(() => {
+  const z = zones.value.find((item) => item.name === zone.value) || null;
+  return z?.status || status.value?.status?.zone?.status || null;
+});
+
+const setupReport = computed(() => ddnsSetupSteps({
+  checked: tokenChecked.value || Boolean(status.value?.configured),
+  zoneCount: zoneCount.value,
+  errorCode: tokenErrorCode.value,
+  zoneStatus: selectedZoneStatus.value,
+  configured: Boolean(status.value?.configured),
+  outcome: status.value?.status?.lastOutcome ?? null,
+  live: status.value?.status?.live ?? null,
+}));
+
 /** 一键配置最终要维护的记录名：子域前缀 + 所选域名 */
 const quickRecord = computed(() => {
   const base = zone.value.trim().toLowerCase();
@@ -428,8 +500,15 @@ async function discover(): Promise<void> {
   quickHint.value = '';
   try {
     const { data } = await api.post('/api/settings/ddns/discover', { token });
+    tokenChecked.value = true;
+    tokenErrorCode.value = data?.ok ? null : (data?.code || 'unknown');
     if (!data?.ok) {
-      notify.error(data?.error || '查询失败');
+      // 没域名是最常见的一种：别用一句长错误盖过去，上方清单会就地给出「买域名 / 添加站点」的入口
+      if (data?.code === 'no-domain') {
+        notify.info('这个 Cloudflare 账号下还没有域名：先买一个域名并绑定到 Cloudflare（见上方前提清单）');
+      } else {
+        notify.error(data?.error || '查询失败');
+      }
       return;
     }
     zones.value = (data.zones || []) as ZoneOption[];
@@ -444,6 +523,8 @@ async function discover(): Promise<void> {
       ? `已找到 ${zone.value}，直接点第 ② 步即可`
       : `找到 ${zones.value.length} 个可维护的域名`);
   } catch (e: any) {
+    tokenChecked.value = true;
+    tokenErrorCode.value = 'network';
     notify.error(e?.response?.data?.error || '查询失败');
   } finally {
     discovering.value = false;
@@ -549,6 +630,93 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 使用前提清单：整块蓝灰底 + 左侧色带，位置在卡片最上面——客户第一眼看到的是「要先有域名」 */
+.prereq {
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.07));
+}
+.prereq.blocked {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-left-color: var(--warning);
+  background: var(--warn-soft, rgba(217, 164, 65, 0.12));
+}
+.prereq-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+.prereq-count {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.prereq-lead {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+.prereq-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+.prereq-steps li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.prereq-mark {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--text-faint);
+}
+.prereq-steps li.done .prereq-mark { color: var(--success, #3fb27f); }
+.prereq-steps li.doing .prereq-mark { color: var(--accent); }
+.prereq-steps li.blocked .prereq-mark { color: var(--warning); }
+.prereq-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.prereq-title { font-weight: 600; color: var(--text-primary, inherit); }
+.prereq-steps li.done .prereq-title { color: var(--text-secondary); }
+.prereq-steps li.blocked .prereq-detail { color: var(--warning); }
+.prereq-action {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  text-decoration: none;
+  margin-top: 2px;
+}
+/* 客户还没域名时的醒目块：放在「一键配置」标题下面，先于 Token 输入框 */
+.onestep-blocked {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-left: 3px solid var(--warning);
+  border-radius: 6px;
+  background: var(--warn-soft, rgba(217, 164, 65, 0.12));
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.75;
+}
+.onestep-blocked a { color: var(--accent); }
 .integration-note {
   margin: 10px 0 14px;
   color: var(--text-secondary);

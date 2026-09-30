@@ -161,9 +161,44 @@ test('中枢 + Token 无权限：discover 返回 ok=false 与原因', async () =
   setDdnsFetchForTest(deniedFetch());
   const res = await post('/api/settings/ddns/discover', { token: 'cf-token' });
   assert.equal(res.statusCode, 200);
-  const body = res.json() as { ok: boolean; error: string };
+  const body = res.json() as { ok: boolean; code: string; error: string };
   assert.equal(body.ok, false);
+  assert.equal(body.code, 'permission');
   assert.match(body.error, /Authentication error/);
+});
+
+test('Token 有效但账号下没有域名：discover 报「还没有域名」，不能报成权限不足', async () => {
+  dbModule.setSetting('sync_role', 'hub');
+  setDdnsFetchForTest(async (url) => {
+    const u = String(url);
+    if (u.includes('/user/tokens/verify')) return jsonResponse({ success: true, result: { status: 'active' } });
+    if (u.includes('/zones?per_page=')) return jsonResponse({ success: true, result: [] });
+    return jsonResponse({ success: false, errors: [{ message: `unexpected ${u}` }] }, 500);
+  });
+  const res = await post('/api/settings/ddns/discover', { token: 'cf-token' });
+  assert.equal(res.statusCode, 200);
+  const body = res.json() as { ok: boolean; code: string; error: string };
+  assert.equal(body.ok, false);
+  assert.equal(body.code, 'no-domain', '界面靠这个 code 醒目标出「先去买域名」');
+  assert.match(body.error, /还没有任何域名/);
+  assert.doesNotMatch(body.error, /权限/, '别把没域名说成权限问题');
+});
+
+test('Token 本身无效：discover 用 code=token 区分于「没域名」', async () => {
+  dbModule.setSetting('sync_role', 'hub');
+  setDdnsFetchForTest(async (url) => {
+    const u = String(url);
+    if (u.includes('/user/tokens/verify')) {
+      return jsonResponse({ success: false, errors: [{ message: 'Invalid API Token' }] });
+    }
+    return jsonResponse({ success: false, errors: [{ message: `unexpected ${u}` }] }, 500);
+  });
+  const res = await post('/api/settings/ddns/discover', { token: 'bad-token' });
+  assert.equal(res.statusCode, 200);
+  const body = res.json() as { ok: boolean; code: string; error: string };
+  assert.equal(body.ok, false);
+  assert.equal(body.code, 'token');
+  assert.match(body.error, /Invalid API Token/);
 });
 
 test('setup：检测失败默认不落库，force 才保存', async () => {
