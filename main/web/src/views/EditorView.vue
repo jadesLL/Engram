@@ -575,9 +575,13 @@ const relatedCount = computed(() =>
  * 这些是低频操作，手机上铺开占上半屏，正文反而看不到。默认收起，桌面始终展开。 */
 const chromeMobile = window.matchMedia('(max-width: 768px)');
 const chromeCollapsed = ref(chromeMobile.matches);
+/* 窄屏档（≤768px）：正文列同样占满可用宽度，不再按偏好压到 70%。
+   412px 屏上 70% 只剩 258px，编辑正文一屏放不下十来个字（与沉浸阅读同一口径，见 ReadingPreview） */
+const narrowEditor = ref(chromeMobile.matches);
 let chromeUserTouched = false;
 chromeMobile.addEventListener('change', (e) => {
   if (!chromeUserTouched) chromeCollapsed.value = e.matches;
+  narrowEditor.value = e.matches;
 });
 function toggleChrome() {
   chromeUserTouched = true;
@@ -599,7 +603,9 @@ const widthLabel = computed(() => formatContentWidthRatio(app.readingPreferences
 const availableWidth = ref(0);
 const contentColumnStyle = computed(() => {
   if (availableWidth.value <= 0) return {};
-  const column = contentColumnWidth(app.readingPreferences.widthRatio, availableWidth.value);
+  /* 窄屏档恒取 100%：手机上一行放不下几个字，再乘 70% 就是「正文显示不全」 */
+  const ratio = narrowEditor.value ? 1 : app.readingPreferences.widthRatio;
+  const column = contentColumnWidth(ratio, availableWidth.value);
   return { '--doc-col': `${column}px` };
 });
 function toggleWidthMenu() {

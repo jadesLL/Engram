@@ -615,12 +615,14 @@ async function askClear(): Promise<void> {
 /*
  * 悬浮玻璃卡片（UI 2.0 语言）：四周留 8px 露出窗口底色，与 Agent 卡片、图片资产卡片同材质。
  * 没有遮罩：卡片浮在正文之上，用户边看日志边操作页面。
- * 顶部避开桌面壳的原生标题栏（--win-titlebar-h 只在 desktop-frame 下有值）。
+ * 顶部避开桌面壳的原生标题栏（--win-titlebar-h 只在 desktop-frame 下有值）与安卓状态栏：
+ * fixed 定位直接用视口坐标，不加 --safe-top 时头部那排按钮会落进状态栏里点不动
+ * （桌面/网页端 --safe-* 为 0，观感不变）。
  */
 .sync-log-drawer {
   position: fixed;
-  top: calc(8px + var(--win-titlebar-h, 0px));
-  bottom: 8px;
+  top: calc(8px + var(--win-titlebar-h, 0px) + var(--safe-top));
+  bottom: calc(8px + var(--safe-bottom));
   right: 8px;
   z-index: var(--z-chrome);
   width: min(880px, calc(100vw - 16px));

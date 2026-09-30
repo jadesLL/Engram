@@ -147,7 +147,10 @@ function onKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  /* 20px 是桌面档的呼吸位；安卓上再加系统栏安全区，否则高一点的对话框会顶进状态栏、
+     头部那排按钮（含右上角 ✕）点不动（桌面/网页端 --safe-* 为 0，观感不变） */
+  padding: calc(20px + var(--safe-top)) calc(20px + var(--safe-right))
+    calc(20px + var(--safe-bottom)) calc(20px + var(--safe-left));
   background: rgba(15, 15, 15, 0.38);
 }
 :global(html.dark) .app-modal-mask {
@@ -155,7 +158,8 @@ function onKeydown(event: KeyboardEvent) {
 }
 .app-modal-mask.right {
   justify-content: flex-end;
-  padding: 0;
+  /* 右侧贴边档在安卓上同样是视口坐标：上下让开系统栏，否则对话框头部（含关闭键）落在状态栏里 */
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) 0;
 }
 
 .app-modal {

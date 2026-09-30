@@ -449,14 +449,26 @@ const preferences = computed(() => app.readingPreferences);
 const outlineIsPanel = ref(wideMedia.matches);
 /* 手机档（≤640px）顶栏最多两行：低频设置整组进「更多」浮层，不再挤成三行吃掉正文 */
 const compactToolbar = ref(compactMedia.matches);
+/* 窄屏档（≤768px）：正文列一律占满可用宽度，不再按持久偏好（默认 70%）压窄。
+   412px 宽的安卓屏上 70% 只剩 258px：一行放不下十来个字，表格 / 代码块一进来就横向溢出，
+   读者看到的是「正文显示不全、要左右拖」。偏好照旧保存，宽屏档仍按它收敛 */
+const narrowReader = ref(mobileMedia.matches);
+/* 宽块（表格）按比例缩放的下限：缩到这一档还放不下就保持横向滚动，不再继续缩到读不清 */
+const WIDE_BLOCK_MIN_ZOOM = 0.6;
+/* 窄屏档表格的「舒适列宽」：每列这个宽度大致放得下三四个字，再窄就要一行一两个字地折。
+   列数 × 舒适列宽 = 表格该有的宽度，超过正文列的部分由 fitWideBlocks 按比例缩回来 */
+const WIDE_TABLE_COL_MIN = 56;
+/* 舒适宽度上限＝桌面档的 620px：再宽的表也只是照桌面排版等比缩小，不额外拉宽 */
+const WIDE_TABLE_MIN_WIDTH_MAX = 620;
 const outlineVisible = computed(() =>
   outline.value.length > 0 &&
   (outlineIsPanel.value ? mobileOutlineOpen.value : preferences.value.outline)
 );
 const readingStyle = computed(() => ({
-  /* 正文列宽 = 可用区 × 百分比（可用区没量到前回落到 100%，不闪成 0） */
+  /* 正文列宽 = 可用区 × 百分比（可用区没量到前回落到 100%，不闪成 0）；
+     窄屏档恒取 100%：手机上一行能放几个字本来就紧张，再乘 70% 就是「正文显示不全」 */
   '--reading-width': availableWidth.value > 0
-    ? `${contentColumnWidth(preferences.value.widthRatio, availableWidth.value)}px`
+    ? `${contentColumnWidth(narrowReader.value ? 1 : preferences.value.widthRatio, availableWidth.value)}px`
     : '100%',
   '--reading-font-size': `${preferences.value.fontSize}px`,
   '--reading-line-height': String(preferences.value.lineHeight),
@@ -705,6 +717,49 @@ function wrapTables(root: HTMLElement) {
     wrapper.className = 'reading-table-scroll';
     table.replaceWith(wrapper);
     wrapper.appendChild(table);
+  }
+}
+
+/* 宽块（表格）按比例缩放：正文列容不下整表时，把表缩到列宽内，整幅可见。
+   起因（用户报障）：手机上八列表格只看得见前四列，右侧被裁掉，要靠表内横向滚动才看得到——
+   「正文页显示不全，要按比例缩放」。这里按「自然宽度 / 可用宽度」算缩放比，只缩不放；
+   缩到 WIDE_BLOCK_MIN_ZOOM 还放不下就维持横向滚动（宁可能滚，也不缩到读不清）。
+   用 zoom 而不是 transform: scale：zoom 参与布局，容器高度与 scrollWidth 会跟着变，
+   不会出现「视觉缩了、布局还是原来那么高」的空档，也不会让 sticky 定位错位。 */
+function fitWideBlocks(root: HTMLElement) {
+  for (const wrapper of Array.from(root.querySelectorAll<HTMLElement>('.reading-table-scroll'))) {
+    const table = wrapper.querySelector<HTMLElement>('table');
+    if (!table) continue;
+    const available = wrapper.clientWidth;
+    if (available <= 0) continue;
+    /* 先给表格一个「每列放得下三四个字」的舒适宽度：列数决定它有多宽。
+       三列表自然比正文列窄，照旧 100% 铺满、不缩放；八列表撑到 8×56px，再由下面按比例缩回来。
+       只缩不裁——这比把八列硬挤进 368px（每格折成四行）和横向拖着看都更接近「整幅可见」。 */
+    const columnCount = table.querySelector('tr')?.children.length || 0;
+    const comfortMin = Math.min(WIDE_TABLE_COL_MIN * columnCount, WIDE_TABLE_MIN_WIDTH_MAX);
+    if (table.style.getPropertyValue('--reading-table-min') !== `${comfortMin}px`) {
+      table.style.setProperty('--reading-table-min', `${comfortMin}px`);
+      // 最小宽度变了要立刻拿到新布局，否则这一帧量到的还是旧宽度
+      void table.offsetWidth;
+    }
+    const applied = table.style.zoom;
+    /* 量自然宽度前先把缩放摘掉：Chromium 的 zoom 不体现在 clientWidth / scrollWidth /
+       getBoundingClientRect 上（实测三者都报缩放前的布局尺寸），Firefox / Safari 又各报各的——
+       与其按引擎猜，不如摘掉量完再决定，结果可复现、也不会随引擎或量测时机抖动。 */
+    if (applied) {
+      table.style.zoom = '';
+      void table.offsetWidth;
+    }
+    /* 自然宽度取 scrollWidth：Vditor 把 table 写成 display:block + overflow:auto，
+       表格盒子会停在列宽（100%），真正撑出去的是单元格内容——只看 rect 宽度会以为它「刚好放下」 */
+    const natural = Math.max(table.scrollWidth, table.getBoundingClientRect().width);
+    if (natural <= 0) continue;
+    const fitted = natural <= available + 1
+      ? 1
+      : Math.max(WIDE_BLOCK_MIN_ZOOM, available / natural);
+    const next = fitted === 1 ? '' : String(fitted);
+    // 值没变就原样放回（刚才为量测摘过一次），变了才写新值
+    table.style.zoom = next === applied ? applied : next;
   }
 }
 
@@ -1023,6 +1078,10 @@ function measureLayout() {
    * --reading-width 取它的百分比；量不到（首帧）时保持 0，样式回落 100% */
   const main = mainEl.value;
   if (main) availableWidth.value = Math.round(main.clientWidth);
+  /* 正文列宽刚变过（跨断点、旋屏、侧栏让位）就要重算一次宽块缩放：
+     列窄了表要跟着缩，列宽了要把它放回去 */
+  const host = contentEl.value;
+  if (host) fitWideBlocks(host);
 }
 
 function scheduleTailSpace() {
@@ -1064,8 +1123,9 @@ function onCompactChange(event: MediaQueryListEvent) {
   if (!event.matches) moreOpen.value = false;
 }
 
-/* 手机档容器高度与兜底留白都跟着这一档变，重新量一次 */
-function onMobileChange() {
+/* 手机档容器高度、兜底留白与正文列宽口径都跟着这一档变，重新量一次 */
+function onMobileChange(event: MediaQueryListEvent) {
+  narrowReader.value = event.matches;
   handleLayoutChange();
 }
 
@@ -1683,7 +1743,9 @@ onBeforeUnmount(() => {
 }
 .reading-content :deep(table) {
   width: 100%;
-  min-width: 620px;
+  /* 桌面档的正文列 780px，620px 是「一行七八列还能读」的下限；低于它的列宽由
+     fitWideBlocks() 按比例缩放整表（见脚本注释），不再让表格溢出后被裁掉 */
+  min-width: min(620px, 100%);
   border-collapse: collapse;
   font-size: 0.92em;
 }
@@ -1989,6 +2051,27 @@ onBeforeUnmount(() => {
   /* 窄屏没有左槽：箭头改内联，标题文字右移而不是溢出到屏幕外 */
   .reading-content { margin-left: 0; padding-left: 0; }
   .reading-content :deep(.reading-fold) { margin-left: 0; }
+  /* 手机上表格列多：10×12px 的内边距在 368px 正文列里要吃掉近一半宽度。
+     收紧到 7×8px，让每列多留两个字的位置（桌面档不受影响） */
+  .reading-content :deep(th),
+  .reading-content :deep(td) {
+    padding: 7px 8px;
+    /* 表格「显示不全」的真正根因：Vditor 的 .vditor-reset 给每个单元格钉了
+       white-space: nowrap、给 table 钉了 word-break: keep-all，于是列的固有宽度 = 该列最长一行的
+       整宽（八列合计 613px），窄屏上永远放不下——表格只能横向滚动，读者看到的是被裁掉的后几列。
+       窄屏档把换行权还给浏览器：中文按字断行、长英文词按词断行，整表缩进正文宽度内。
+       桌面档保持 Vditor 原样（列宽 620px 起，横向滚动是合理交互） */
+    white-space: normal;
+  }
+  .reading-content :deep(table) {
+    font-size: 0.86em;
+    /* Vditor 默认 display: block（表格变成自己的滚动容器）+ keep-all，一并还原成真正的表格语义 */
+    display: table;
+    word-break: normal;
+    /* 舒适宽度由脚本按列数写进 --reading-table-min（见 fitWideBlocks）：
+       列少 → 比正文列窄，照旧 100% 铺满；列多 → 先撑到舒适宽度，再按比例缩到正文列里，整幅可见 */
+    min-width: var(--reading-table-min, 0px);
+  }
   /* 与编辑态 .statusbar 同一个留白来源：正文区已经为底部导航（Home.vue .bottom-nav）让出
      64px + 系统手势条，胶囊只再加 --statusbar-gap（手机档 8px）。
      安全区只在正文区算一次——这里再加一次会让胶囊比底部导航高出整整一条系统栏 */

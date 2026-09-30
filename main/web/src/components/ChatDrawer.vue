@@ -1455,10 +1455,17 @@ onUnmounted(() => {
   box-shadow: 0 0 0 2px var(--sidebar-focus-ring);
 }
 
+/*
+ * 浮层/满窗档的上下边一律让开系统栏：
+ * 起因（用户报障）——安卓边到边后抽屉从视口顶边（y=0）起画，头部那排按钮落在状态栏里
+ * （412px 屏上 ✕ 的 y 是 11–39px，而状态栏高 24px），点下去被系统状态栏吃掉，
+ * 「上边栏关闭按钮和状态栏冲突，点不了」。底部同理：输入区的发送键原来被系统导航栏压住。
+ * 桌面端 --safe-* 为 0，观感不变。
+ */
 .chat-drawer.overlay {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: var(--safe-top);
+  bottom: var(--safe-bottom);
   left: 60px;
   right: 0;
   width: auto;
@@ -1473,8 +1480,8 @@ onUnmounted(() => {
  */
 .chat-drawer.full {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: var(--safe-top);
+  bottom: var(--safe-bottom);
   left: 64px;
   right: 0;
   width: auto;

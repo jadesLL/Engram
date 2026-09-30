@@ -330,8 +330,23 @@ function fileIconClass(ext: string): string {
 @media (hover: none) and (pointer: coarse) {
   /* 行高与字号与 PageRow 同一档：列表里两种行混排，尺寸不一致会显得毛糙 */
   .page-row {
-    height: 40px;
+    /* 高度交给内容：标题可以折到两行（与 PageRow 同步），写死 40px 会把第二行裁掉 */
+    height: auto;
+    min-height: 44px;
+    padding-block: 6px;
     font-size: 13.5px;
+  }
+
+  /* 目录栏文字显示不全（与 PageRow 同一条报障）：原始资料的文件名同样被单行省略号截断，
+     长文件名（日期前缀 + 标题）在手机上几乎认不出来。触屏放开到两行。 */
+  .page-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
   }
 
   /* 按住反馈：触屏没有 hover，只有 :active 这一层 */
