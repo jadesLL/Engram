@@ -284,6 +284,7 @@
                     :selected="selected.has('f:' + f.path)"
                     :selection-mode="selectionMode"
                     :job="fileJob(f.path)"
+                    :distill="ideaDistillStatus(f.path)"
                     :class="{ 'asset-drop-hot': !!f.pageId && assetDropTarget === f.pageId }"
                     @dragover="onRowDragOver($event, f)"
                     @dragleave="onRowDragLeave($event, f)"
@@ -417,6 +418,7 @@ import { notify } from '../lib/notify';
 import { hideTooltip } from '../lib/tooltip';
 import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
 import { openAssetDrawer } from '../lib/assetDrawer';
+import { ideaDistillRowStatus } from '../lib/ideaDistill';
 import { BP_WIDE } from '../lib/layoutBreakpoints';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
@@ -641,6 +643,14 @@ function fileJob(path: string) {
   return app.fileJob(path);
 }
 
+/**
+ * 灵感碎片行的提炼状态：数据源是 app.jobs（Home 外壳在轮询 /api/jobs），
+ * 按 payload.path 精确匹配、取最新一条任务；映射口径全在 lib/ideaDistill.ts 的纯函数里。
+ * 三个原始资料分组的行共用这一个入口——非灵感文件永远匹配不到 idea_distill 任务，不会误标。
+ */
+function ideaDistillStatus(path: string) {
+  return ideaDistillRowStatus(path, app.jobs);
+}
 /** 多选状态：'p:<pageId>' 或 'f:<path>' */
 const selected = ref(new Set<string>());
 const selectionMode = computed(() => selected.value.size > 0);

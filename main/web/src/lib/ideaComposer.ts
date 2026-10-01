@@ -3,15 +3,13 @@ import { reactive } from 'vue';
 /**
  * 「记一条灵感」撰写对话框的状态与提交（左下角「+」、Ctrl+N、欢迎页卡片共用）。
  *
- * 两段式（2026-09 用户要求）：
- *   1. **编辑态**写正文 → `POST /api/ideas/preview`：服务端勘误专名、把正文整理精炼一遍、拟标题，
- *      **不落盘**；
- *   2. **预览态**给用户看一眼（标题与正文都能直接改）→ `POST /api/ideas`：确认过的定稿才写进
- *      `原始资料/灵感碎片/`。
+ * 单态直落盘（2026-10 改，见 docs/IDEA-DISTILL-SPEC.md 4.3）：写完按「记下来」立即把**原文**
+ * 写进 `原始资料/灵感碎片/`，勘误专名、精炼正文、拟标题改由后台任务 `idea_distill` 异步做，
+ * 做完再由 `lib/ideaDistillFeed.ts` 弹一条可点通知。**不再有「看一眼再记」的预览态**。
  *
- * 为什么要多这一步：精炼是把用户的原文换成另一段文字，改错一处就固化进知识库（原始资料是
- * 证据账本的唯一来源），所以不静默替换——预览这步是用户否决定稿的唯一机会。服务端另有一道
- * 事实门禁（见 server/src/lib/ideaPolish.ts），两道都过才写得进去。
+ * 为什么去掉预览：预览是「先让模型改、用户再点头」——用户其实只想记下来，多这一步就多一次
+ * 丢失机会（页面被关、转发前先被改错）。原文先落盘，改稿失败也不丢证据；模型那一步退化成
+ * 可重放的后台任务，服务端另有事实门禁与「提炼期间正文被改过就跳过改写」的保护（见 SPEC 3）。
  *
  * 状态放模块级单例：同一时间只开一个（与 ConfirmHost 同一套约定）。
  * 本模块只碰状态，不引 api——发请求由组件把提交函数传进来，这样纯逻辑可被 node --test 直接跑。
@@ -19,96 +17,74 @@ import { reactive } from 'vue';
 
 /** 与服务端 MAX_IDEA_CHARS 一致：到这个量级该走「新建资料」而不是速记 */
 export const IDEA_MAX_CHARS = 20_000;
-/** 预览态标题输入框的上限（服务端另按文件名段 60 字截断） */
-export const IDEA_TITLE_INPUT_MAX = 40;
 
-/** 落盘前自动应用的一处勘误 */
-export interface IdeaFix {
-  wrong: string;
-  right: string;
-  /** 四类判据之一；勘误表条目由用户直接指定映射，故可能为 null */
-  kind: string | null;
-}
-
-/** 服务端精炼情况（见 server/src/lib/ideaNote.ts 的 IdeaRefineInfo） */
-export interface IdeaRefine {
-  applied: boolean;
-  before: number;
-  after: number;
-  /** 没精炼的原因：没接模型 / 正文过长 / 一个字没改 / 改写像扩写 / 改写没过验收门禁 */
-  reason?: 'no-model' | 'too-long' | 'same' | 'too-verbose' | 'rejected';
-}
-
-/** 预览稿：服务端算好的定稿候选（还没落盘） */
-export interface IdeaDraft {
-  /** Engram 拟的标题（预览态可改） */
-  title: string;
-  /** model = 模型拟的；heuristic = 规则兜底（未配模型凭据或调用失败） */
-  titleSource: 'model' | 'heuristic';
-  /** 勘误并精炼后的正文（预览态可改） */
-  text: string;
-  fixes: IdeaFix[];
-  pending: string[];
-  refined: IdeaRefine;
-}
-
-/** 落盘结果（toast 用它说清「记到哪、改了哪些」） */
+/**
+ * 落盘结果：只留跳转与跟踪要用的字段。
+ * 勘误/精炼明细不再从这里回传——那是后台任务的事，由 `/api/ideas/:id/distill` 回报
+ * （见 lib/ideaDistillFeed.ts）。
+ */
 export interface SubmittedIdea {
   id: string;
   path: string;
+  /** 落盘时实际用的标题（还没提炼前是兜底标题「随手记」或正文首句） */
   title: string;
-  titleSource: 'model' | 'heuristic';
-  fixes: IdeaFix[];
-  pending: string[];
-  refined: IdeaRefine;
+  /** 后台提炼任务 id；服务端去重返回 undefined 或没有任务时为 null，前端靠状态接口兜底 */
+  jobId: number | null;
 }
 
-/** edit = 写正文；preview = 看一眼 Engram 整理好的定稿 */
-export type IdeaStep = 'edit' | 'preview';
+/**
+ * 三拍：
+ *   `writing` 记下来 → `saving`（busy）正在记下… → `queued` 已记下，正在后台提炼。
+ * `queued` 只是**短暂确认**：组件停 `IDEA_QUEUED_AUTO_CLOSE_MS` 后自动关框，结果随关框
+ * 回传给调用方；用户想立刻走开（点「好，去做别的」/✕/Esc/遮罩/安卓返回）也一样立刻关框，
+ * 结果同样不丢（见 closeIdeaComposer）。
+ */
+export type IdeaComposerPhase = 'writing' | 'saving' | 'queued';
 
 export interface IdeaComposerState {
   open: boolean;
-  step: IdeaStep;
-  /** 原稿：取消 / 返回重写后都保留，下次打开还在 */
+  /** 原稿：取消 / 关闭后都保留，下次打开还在（落盘成功的那条除外，见 closeIdeaComposer） */
   content: string;
-  /** 预览态：标题（可改） */
-  draftTitle: string;
-  /** 预览态：正文（可改） */
-  draftText: string;
-  /** 预览态的其余信息：标题来源、勘误明细、精炼情况 */
-  draft: IdeaDraft | null;
-  /** 请求中：编辑态是「正在校对并精炼」，预览态是「正在落盘」 */
+  /** 正在落盘：这期间不允许取消（文件可能已经写下，关框会让结果投不回调用方） */
   busy: boolean;
-  /** 上一次请求失败的原因，显示在正文下方 */
+  /** 上一次落盘失败的原因，显示在正文下方 */
   error: string;
+  phase: IdeaComposerPhase;
 }
 
 export const ideaComposerState = reactive<IdeaComposerState>({
   open: false,
-  step: 'edit',
   content: '',
-  draftTitle: '',
-  draftText: '',
-  draft: null,
   busy: false,
   error: '',
+  phase: 'writing',
 });
 
 type Resolver = (value: SubmittedIdea | null) => void;
 let resolver: Resolver | null = null;
-/** 当前这次对话框会话的 promise：请求在途时重复打开要复用它，不能把结果投给新会话 */
+/** 当前这次对话框会话的 promise：落盘在途时重复打开要复用它，不能把结果投给新会话 */
 let pending: Promise<SubmittedIdea | null> | null = null;
+/** 已落盘、但用户还没关框的结果：关框时随会话回传（不能丢） */
+let queued: SubmittedIdea | null = null;
 
-/** 原稿是否可提交预览（纯函数，便于单测）：空白不算内容 */
+/**
+ * `queued` 第三拍在框里停留多久（毫秒）：只作**短暂确认**，到点自动关框并把结果回传。
+ * 计时放在组件里（状态机保持无定时器，单测才确定），见 components/ui/IdeaComposer.vue。
+ * 为什么这么短：这次改版要的就是「别让用户多点一次」——停久了等于又把决定权交回用户。
+ */
+export const IDEA_QUEUED_AUTO_CLOSE_MS = 1200;
+
+/** 原稿是否可提交（纯函数，便于单测）：空白不算内容，超长不提交 */
 export function canSubmitIdea(content: string): boolean {
   const text = content.trim();
   return text.length > 0 && text.length <= IDEA_MAX_CHARS;
 }
 
-/** 预览稿是否可落盘（纯函数）：正文不能空；标题空着由服务端退化成「随手记」 */
-export function canConfirmIdea(text: string): boolean {
-  const body = text.trim();
-  return body.length > 0 && body.length <= IDEA_MAX_CHARS;
+/** 主按钮文案：三拍的唯一来源（纯函数，便于把文案锁死在单测里） */
+export function ideaSubmitLabel(state: Pick<IdeaComposerState, 'phase' | 'busy'>): string {
+  if (state.busy || state.phase === 'saving') return '正在记下…';
+  if (state.phase === 'queued') return '已记下，正在后台提炼';
+  return '记下来';
 }
 
 /** Ctrl/Cmd + Enter 提交：多行输入框里回车要留给换行 */
@@ -117,89 +93,44 @@ export function isIdeaSubmitKey(event: { key: string; ctrlKey: boolean; metaKey:
 }
 
 /**
- * toast 上的一句话勘误说明（纯函数，便于单测）：
- * 改了就说改了哪几处（最多列 limit 条），只检出没改的报个数。
+ * 关闭对话框；`busy`（落盘在途）时**拒绝关闭**——文件可能已经写下，关掉会让结果投不回调用方
+ * （用户看不到提示、也没跳转，以为没记上，往往再记一遍）。安卓返回键走的就是这条路径
+ * （见 lib/globalBackLayers.ts，它传的是 null）。
+ * `queued`（已落盘）后关闭 = 正常关闭，并把已落盘的结果回调给等待方（不能丢结果）。
  */
-export function summarizeIdeaFixes(fixes: IdeaFix[], pending: string[] = [], limit = 2): string {
-  const parts: string[] = [];
-  if (fixes.length) {
-    const shown = fixes.slice(0, limit).map((fix) => `${fix.wrong}→${fix.right}`).join('、');
-    parts.push(`已勘误 ${fixes.length} 处：${shown}${fixes.length > limit ? ' 等' : ''}`);
-  }
-  if (pending.length) parts.push(`另有 ${pending.length} 处疑似写法没动`);
-  return parts.join('；');
-}
-
-/** 精炼那一句（口径与服务端 summarizeRefine 一致）：改了报字数，没改只在原因有意义时说 */
-export function summarizeIdeaRefine(refined?: IdeaRefine): string {
-  if (!refined) return '';
-  if (!refined.applied) {
-    if (refined.reason === 'too-long') return '正文较长，这次没精炼';
-    if (refined.reason === 'too-verbose') return '改写像扩写没采纳，按勘误稿记';
-    if (refined.reason === 'rejected') return '精炼改写没通过校验，按勘误稿记';
-    return '';
-  }
-  return refined.before === refined.after ? '已精炼' : `精炼 ${refined.before}→${refined.after} 字`;
-}
-
-/** 勘误 + 存疑 + 精炼合成一句（toast 与操作日志同源） */
-export function summarizeIdeaChange(
-  fixes: IdeaFix[],
-  pending: string[] = [],
-  refined?: IdeaRefine,
-  limit = 2
-): string {
-  return [summarizeIdeaFixes(fixes, pending, limit), summarizeIdeaRefine(refined)].filter(Boolean).join('；');
-}
-
-/** 预览函数：原稿 → 预览稿（组件里包 POST /api/ideas/preview） */
-export type IdeaPreviewer = (content: string) => Promise<IdeaDraft>;
-
-/** 落盘函数：定稿 → 落盘结果（组件里包 POST /api/ideas） */
-export type IdeaSaver = (input: { content: string; title: string; note: string }) => Promise<{
-  id: string;
-  path: string;
-  title: string;
-}>;
-
-/**
- * 关闭对话框；成功时带上结果，取消传 null。
- * 请求在途（busy）时**拒绝取消**：那时文件可能已经落盘，关掉对话框会让结果投不回调用方
- * （用户看不到 toast、也没跳转，以为没记上，往往再记一遍）。安卓返回键走的就是这条路径。
- */
-export function closeIdeaComposer(result: SubmittedIdea | null): void {
+export function closeIdeaComposer(result: SubmittedIdea | null = null): void {
   if (!ideaComposerState.open) return;
-  if (result === null && ideaComposerState.busy) return;
+  if (ideaComposerState.busy) return;
+  // 已落盘的那条以会话里记着的结果为准：调用方（安卓返回、点 ✕）传 null 也不能把结果弄丢
+  const settled = ideaComposerState.phase === 'queued' ? queued ?? result : result;
   ideaComposerState.open = false;
-  ideaComposerState.step = 'edit';
+  ideaComposerState.phase = 'writing';
   ideaComposerState.busy = false;
   ideaComposerState.error = '';
-  ideaComposerState.draft = null;
-  ideaComposerState.draftTitle = '';
-  ideaComposerState.draftText = '';
+  // 落盘成功的那条不再当草稿留着；取消时正文保留，下次打开接着写
+  if (settled) ideaComposerState.content = '';
+  queued = null;
   const done = resolver;
   resolver = null;
   pending = null;
-  done?.(result);
+  done?.(settled);
 }
 
 /**
- * 打开对话框；取消返回 null，成功返回落盘结果。
- * 请求在途时（Ctrl+N 连按、安卓返回后重开）复用当前这次会话，否则第二次打开会把第一次的
+ * 打开对话框；取消返回 null，落盘成功后（关框时）返回落盘结果。
+ * 落盘在途时（Ctrl+N 连按、安卓返回后重开）复用当前这次会话，否则第二次打开会把第一次的
  * 结果顶掉，还会让两个响应互相覆盖 state。
  */
 export function openIdeaComposer(): Promise<SubmittedIdea | null> {
   if (ideaComposerState.open && ideaComposerState.busy && pending) return pending;
+  // 已经开着（写一半 / 已落盘等关框）：先把上一次会话正常收尾，再开新的
   if (ideaComposerState.open) closeIdeaComposer(null);
   pending = new Promise((resolve) => {
     resolver = resolve;
     ideaComposerState.open = true;
-    ideaComposerState.step = 'edit';
+    ideaComposerState.phase = 'writing';
     ideaComposerState.busy = false;
     ideaComposerState.error = '';
-    ideaComposerState.draft = null;
-    ideaComposerState.draftTitle = '';
-    ideaComposerState.draftText = '';
   });
   return pending;
 }
@@ -208,69 +139,29 @@ function ideaErrorText(error: any): string {
   return error?.response?.data?.error || error?.message || '记灵感失败，请重试';
 }
 
+/** 落盘函数：正文原文 → 落盘结果（组件里包 `POST /api/ideas`） */
+export type IdeaSaver = (content: string) => Promise<SubmittedIdea>;
+
 /**
- * 编辑态提交：原稿 → 预览稿。失败把原因留在对话框里（正文不动），用户可以改了重试或取消。
- * 成功进预览态：标题与正文都落到 state 上供双向绑定（用户能直接改）。
+ * 落盘：正文原样送服务端（标题交给后台任务拟），成功进 `queued`（第三拍），等用户关框；
+ * 失败把原因留在对话框里（正文不动），用户可以改了重试或取消。
+ * 这里不等后台提炼——落盘即结束，提炼结果由 ideaDistillFeed 跟踪。
  */
-export async function previewIdeaComposer(preview: IdeaPreviewer): Promise<void> {
-  if (ideaComposerState.busy) return;
+export async function submitIdeaComposer(save: IdeaSaver): Promise<void> {
+  if (ideaComposerState.busy || ideaComposerState.phase !== 'writing') return;
   const content = ideaComposerState.content.trim();
   if (!canSubmitIdea(content)) return;
   ideaComposerState.busy = true;
+  ideaComposerState.phase = 'saving';
   ideaComposerState.error = '';
   try {
-    const draft = await preview(content);
-    ideaComposerState.content = content;
-    ideaComposerState.draft = draft;
-    ideaComposerState.draftTitle = draft.title;
-    ideaComposerState.draftText = draft.text;
-    ideaComposerState.step = 'preview';
+    const saved = await save(content);
+    // 服务端契约保证有 id/path；真缺了就当失败，不能让第三拍骗用户「已记下」
+    if (!saved?.id) throw new Error('服务端没有返回页面 id，这次可能没记上');
+    queued = saved;
+    ideaComposerState.phase = 'queued';
   } catch (error: any) {
-    ideaComposerState.error = ideaErrorText(error);
-  } finally {
-    ideaComposerState.busy = false;
-  }
-}
-
-/** 预览态「返回重写」：回到编辑态，原稿不丢 */
-export function backToEdit(): void {
-  if (ideaComposerState.busy) return;
-  ideaComposerState.step = 'edit';
-  ideaComposerState.draft = null;
-  ideaComposerState.draftTitle = '';
-  ideaComposerState.draftText = '';
-  ideaComposerState.error = '';
-}
-
-/**
- * 预览态确认：定稿（用户可能改过）→ 落盘；成功即关闭并回传结果（含勘误/精炼明细，toast 用它）。
- * 失败把原因留在预览态，用户可以继续改或返回重写。
- */
-export async function confirmIdeaComposer(save: IdeaSaver): Promise<void> {
-  if (ideaComposerState.busy) return;
-  const draft = ideaComposerState.draft;
-  const text = ideaComposerState.draftText.trim();
-  if (!draft || !canConfirmIdea(text)) return;
-  const title = ideaComposerState.draftTitle.trim();
-  ideaComposerState.busy = true;
-  ideaComposerState.error = '';
-  try {
-    const saved = await save({
-      content: text,
-      title,
-      note: summarizeIdeaChange(draft.fixes, draft.pending, draft.refined),
-    });
-    ideaComposerState.content = '';
-    closeIdeaComposer({
-      id: saved.id,
-      path: saved.path,
-      title: saved.title || title,
-      titleSource: draft.titleSource,
-      fixes: draft.fixes,
-      pending: draft.pending,
-      refined: draft.refined,
-    });
-  } catch (error: any) {
+    ideaComposerState.phase = 'writing';
     ideaComposerState.error = ideaErrorText(error);
   } finally {
     ideaComposerState.busy = false;

@@ -1,11 +1,12 @@
 import { db, getSetting, newId, now, setSetting } from './lib/db.js';
 import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { appendWikiLog } from './pipeline/indexFile.js';
-import { enqueuePagePipeline } from './jobQueue.js';
+import { enqueuePagePipeline, saveIdeaDistillResult } from './jobQueue.js';
 import { extractFile } from './pipeline/fileExtraction.js';
 import { convertInboxItem } from './pipeline/inboxConvert.js';
 import { finishInboxConversation, recordInboxConversionStep } from './pipeline/inboxConversation.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
+import { distillIdeaNote, ideaDistillProgress } from './lib/ideaDistill.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -35,6 +36,29 @@ const handlers: Record<string, JobHandler> = {
   /** 页面处理：FTS 兜底 + 图谱边重建 */
   process: async ({ pageId }, _update, context) => {
     await indexPage(pageId, context.signal);
+  },
+  /**
+   * 灵感后台提炼：原文在 `POST /api/ideas` 里就已经落盘，这里只做勘误/精炼/拟标题/改名/写成品。
+   * 结果必须回填到任务行（saveIdeaDistillResult）——`GET /api/ideas/:id/distill` 的
+   * staged/fixes/refined 都从那里读；失败靠抛错让执行器把任务标成 failed，
+   * 侧栏据此显示「提炼失败」，而原文一个字都没动。
+   */
+  idea_distill: async ({ id, path: relPath, hash }, update, context) => {
+    const result = await distillIdeaNote(
+      { id, path: relPath, hash },
+      {
+        // 取消信号要透进去：模型跑完发现任务已被取消（数据维护/手动取消）就不再落笔
+        signal: context.signal,
+        onProgress: (stage, detail) => update({ stage, progress: ideaDistillProgress(stage), detail }),
+      }
+    );
+    saveIdeaDistillResult(context.jobId, result);
+    if (result.staged === 'failed') throw new Error(result.error || '提炼没有完成');
+    update({
+      stage: '已完成',
+      progress: 100,
+      detail: result.staged === 'skipped-edit' ? '正文已被改动，跳过了改写' : `「${result.title}」`,
+    });
   },
   rebuild: async (_payload, update, context) => {
     let progress = 10;

@@ -11,6 +11,7 @@ const KIND_LABELS: Record<string, string> = {
   metagen: '索引生成',
   rebuild: '重建全部索引',
   inbox_convert: '收集箱转换',
+  idea_distill: '灵感提炼',
 };
 
 function safeJson(value: unknown, fallback: any = null) {

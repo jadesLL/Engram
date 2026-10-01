@@ -16,7 +16,7 @@
     <!-- 页面编辑模式 -->
     <template v-else-if="page">
       <ReadingPreview
-        v-if="app.readingMode"
+        v-if="app.readingMode && !quiet"
         :markdown="content"
         :title="title"
         :page-type="pageType"
@@ -36,8 +36,109 @@
         @context-menu="(request) => showContextMenu(request, 'reading')"
       />
 
+      <!-- 纯净模式（灵感碎片成品页，SPEC 第 5 节）：页头控件区 / 工具条 / 底部状态栏与右下三个入口
+           一律不渲染，只留返回 + 面包屑细字 + 标题 + 元信息 + 正文 + 提炼明细 + 底部动作。
+           它是叠在既有形态之上的一层判断（不是「另一种 readingMode」）：Wiki 页面与其它原始资料
+           的沉浸阅读/完整编辑器形态都不受影响。 -->
+      <div v-if="quiet" class="quiet">
+        <header class="quiet-top">
+          <button class="quiet-back" type="button" @click="leaveQuiet">
+            <Icon name="chevron-left" :size="14" />
+            返回
+          </button>
+          <nav class="quiet-crumb" :title="page.path">{{ quietCrumb }}</nav>
+        </header>
+
+        <div class="quiet-scroll">
+          <p v-if="quietDistilling" class="quiet-banner">
+            <AppSpinner :size="12" />
+            正在后台提炼…正文先按当前文件显示，提炼完成就地更新
+          </p>
+
+          <h1 class="quiet-title">{{ quietTitle }}</h1>
+          <p class="quiet-meta">
+            <span v-if="quietRecordTime">记录时间 {{ quietRecordTime }}</span>
+            <span v-if="quietRecordTime" class="quiet-sep">·</span>
+            <span>{{ quietSectionLabel }}</span>
+            <span class="quiet-sep">·</span>
+            <span>{{ wordCount }} 字</span>
+            <span class="quiet-sep">·</span>
+            <span class="quiet-stage" :class="{ failed: quietStageFailed, manual: quietManualEdited }">
+              {{ quietStageText }}
+            </span>
+          </p>
+
+          <!-- 编辑动作在原地展开（标题 input + 正文 textarea），不走 app.readingMode 的整页阅读视图；
+               保存后回只读，提炼状态标成「已手动修改」 -->
+          <div v-if="quietEditing" class="quiet-edit">
+            <input v-model="title" class="quiet-edit-title" placeholder="无标题" />
+            <textarea
+              ref="quietEditBodyEl"
+              v-model="content"
+              class="quiet-edit-body"
+              spellcheck="false"
+              placeholder="写点什么…"
+            ></textarea>
+            <div class="quiet-edit-actions">
+              <button class="btn primary small" type="button" :disabled="quietSaving" @click="saveQuietEdit">
+                {{ quietSaving ? '保存中…' : '保存' }}
+              </button>
+              <button class="btn small" type="button" :disabled="quietSaving" @click="cancelQuietEdit">取消</button>
+            </div>
+          </div>
+
+          <template v-else>
+            <!-- 只读正文：复用阅读视图那套 Vditor 预览（排版一致），不挂编辑器实例。
+                 `vditor-reset` 是 Vditor.preview 的排版类（标题/列表/引用/代码的样式都来自它），
+                 与 ReadingPreview 的用法一致 -->
+            <div
+              ref="quietBodyEl"
+              class="quiet-body vditor-reset"
+              @click="onQuietBodyClick"
+              @contextmenu="onQuietBodyContextMenu"
+            ></div>
+
+            <p v-if="distillState.staged === 'skipped-edit'" class="quiet-note">
+              你手改的版本已保留，没有覆盖。提炼结果见下方明细。
+            </p>
+            <p v-else-if="distillState.staged === 'failed'" class="quiet-note failed">
+              {{ distillState.error || '这条灵感没能提炼，原文已经记下了。' }}
+            </p>
+
+            <details v-if="quietDetail" class="quiet-detail">
+              <summary>提炼明细</summary>
+              <ul>
+                <li v-for="(fix, i) in quietDetail.fixes" :key="`${fix.wrong}-${i}`">
+                  勘误：{{ fix.wrong }} → {{ fix.right }}<span v-if="fix.kind" class="quiet-fix-kind">（{{ fix.kind }}）</span>
+                </li>
+                <li v-if="quietDetail.refined?.applied">
+                  精炼：{{ quietDetail.refined.before }} → {{ quietDetail.refined.after }} 字
+                </li>
+                <li v-for="(item, i) in quietDetail.pending" :key="`p-${i}`">待确认：{{ item }}</li>
+              </ul>
+            </details>
+          </template>
+        </div>
+
+        <!-- 底部动作：窄屏一行横向可滚（.quiet-actions 自带 overflow-x），不换行、不撑破页面 -->
+        <footer class="quiet-actions">
+          <button class="btn small" type="button" @click="startQuietEdit">
+            <Icon name="pencil" :size="13" />编辑改一改
+          </button>
+          <button class="btn small" type="button" @click="retryQuietDistill">
+            <Icon name="refresh" :size="13" />重新提炼
+          </button>
+          <button class="btn small" type="button" @click="copyQuietBody">
+            <Icon name="copy" :size="13" />复制正文
+          </button>
+          <button class="btn small" type="button" @click="openFullEditor">
+            <Icon name="external" :size="13" />在完整编辑器里打开
+          </button>
+        </footer>
+      </div>
+
       <!-- 顶部条：Wiki / 分区 / 标题 面包屑 + 常驻保存状态 -->
-      <div v-show="!app.readingMode" class="editor-topbar chrome-float" data-tip-chrome>
+      <div v-show="!app.readingMode && !quiet" class="editor-topbar chrome-float" data-tip-chrome>
         <nav class="crumb">
           <template v-for="(d, i) in crumbDirs" :key="i">
             <span v-if="i" class="crumb-sep">/</span>
@@ -126,7 +227,7 @@
 
       <!-- 扁平编辑区：页头 / 工具栏 / 正文 / 状态栏直接铺在灰底上（UI 2.0 mockup 4.3，
            不再用悬浮纸面卡片；evidence-drawer 为绝对定位浮层，不参与文档流） -->
-      <div v-show="!app.readingMode" class="editor-body">
+      <div v-show="!app.readingMode && !quiet" class="editor-body">
       <div class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
         <input v-model="title" class="title-input" placeholder="无标题" @change="save(true)" />
         <!-- 手机端摘要行：折叠时仅此一行（选项切换），桌面隐藏 -->
@@ -185,7 +286,7 @@
         </div>
       </div>
 
-      <div v-show="!app.readingMode" class="editor-area">
+      <div v-show="!app.readingMode && !quiet" class="editor-area">
         <MarkdownEditor
           ref="editorRef"
           v-model="content"
@@ -287,7 +388,7 @@
            放在 editor-body 之外、直接挂 editor-view：它和顶栏一样是悬浮 chrome（绝对定位浮在正文之上），
            不再参与文档流，正文因此多出上下两条白条的高度。
            v-if 而非 v-show：阅读模式不挂载，wordCount 大页面全文字数统计不跑 -->
-      <div v-if="!app.readingMode" class="statusbar chrome-float" data-tip-chrome>
+      <div v-if="!app.readingMode && !quiet" class="statusbar chrome-float" data-tip-chrome>
         <span class="sb-item">{{ wordCount }} 字</span>
         <span class="sb-item">{{ app.editorMode === 'sv' ? '源码' : '即时渲染' }}</span>
         <div class="spacer"></div>
@@ -425,6 +526,7 @@ import {
   canReadClipboard,
   copyText,
   openContextMenu,
+  selectionInside,
   type ContextMenuItem,
   type SelectionContextMenuRequest,
 } from '../lib/contextMenu';
@@ -444,6 +546,16 @@ import { useRuntimeCapabilities } from '../lib/capabilities';
 import { createThrottledReload } from '../lib/refreshThrottle';
 import { notify } from '../lib/notify';
 import { useTouchPointer } from '../lib/pointer';
+import {
+  IDEA_MANUAL_EDITED_LABEL,
+  ideaDisplayTitle,
+  ideaStageLabel,
+  retryIdeaDistill,
+} from '../lib/ideaDistill';
+import { emptyDistillState, useIdeaDistill } from '../lib/ideaDistillFeed';
+import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
+import { vditorPreviewOptions } from '../lib/vditorPreview';
+import Vditor from 'vditor';
 import {
   CONTENT_WIDTH_RATIO_STEPS,
   contentColumnWidth,
@@ -675,6 +787,222 @@ function formatDate(value: string | number | undefined): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/* ===== 灵感碎片「纯净模式」（只读成品页，SPEC 第 5 节） =====
+   判定只看页面路径：`原始资料/灵感碎片/**` 一律进纯净形态；Wiki 页面与别的原始资料
+   完全不受影响（沉浸阅读、chrome-collapsed 折叠、页头控件区都保持原样）。 */
+const isIdeaPage = computed(() => String(page.value?.path || '').startsWith('原始资料/灵感碎片/'));
+/** 「在完整编辑器里打开」的一次性开关：只在本会话有效，刷新（或换页）即回到纯净模式 */
+const quietOverride = ref(false);
+const quiet = computed(() => isIdeaPage.value && !quietOverride.value);
+
+/**
+ * 提炼状态：按当前页面 id 订阅（Lead 的 ideaDistillFeed 内部轮询，这里不另开一套）。
+ * 页面切换时 computed 会用新 id 重取，旧页的轮询结果不会串到新页；
+ * 非灵感页不订阅（也就不会往状态表里塞无关条目）。
+ */
+const distillState = computed(() => (
+  quiet.value && page.value?.id
+    ? useIdeaDistill(String(page.value.id)).current
+    : emptyDistillState()
+));
+
+/** 用户在纯净模式里手改并保存过：提炼状态改标「已手动修改」（服务端 staged 没有这一档） */
+const quietManualEdited = ref(false);
+/** 刚点过「重新提炼」：提交到服务端把任务跑起来之前，状态先就地标成「重新提炼中」 */
+const quietRetrying = ref(false);
+let quietRetryTimer: ReturnType<typeof setTimeout> | null = null;
+const quietEditing = ref(false);
+const quietSaving = ref(false);
+const quietBodyEl = ref<HTMLElement>();
+const quietEditBodyEl = ref<HTMLTextAreaElement>();
+/** 进编辑前的快照：「取消」要干净退回，不能留下半截改动 */
+let quietEditSnapshot: { title: string; content: string } | null = null;
+let quietRenderSeq = 0;
+
+/** 展示标题去掉 `YYYY.MM.DD_` 前缀；编辑态 input 仍绑真实标题（title），保存回去的也是它 */
+const quietTitle = computed(() => ideaDisplayTitle(title.value) || '无标题');
+/** 面包屑只到目录：完整编辑器的「Wiki / …」口径在成品页不适用 */
+const quietCrumb = computed(() =>
+  String(page.value?.path || '').split('/').slice(0, -1).filter(Boolean).join(' / ')
+);
+/** 记录时间：灵感是「什么时候记下的」，优先 created_at（老数据缺字段时退回 updated_at） */
+const quietRecordTime = computed(() => formatDate(page.value?.created_at || page.value?.updated_at));
+const quietSectionLabel = computed(() =>
+  rawSectionOptions.value.find((option) => option.value === 'idea')?.label || '灵感碎片'
+);
+const quietStageText = computed(() => {
+  if (quietRetrying.value) return '重新提炼中';
+  if (quietManualEdited.value) return IDEA_MANUAL_EDITED_LABEL;
+  return ideaStageLabel(distillState.value?.staged);
+});
+const quietStageFailed = computed(() => distillState.value?.staged === 'failed');
+const quietDistilling = computed(() =>
+  distillState.value?.staged === 'pending' || distillState.value?.staged === 'running'
+);
+const quietDetail = computed(() => {
+  const state = distillState.value;
+  if (!state) return null;
+  const fixes = state.fixes || [];
+  const pending = state.pending || [];
+  // refined.applied=false（没接模型/被拒/太啰嗦）不算「精炼过」，否则会渲染出一个空壳明细
+  const refined = state.refined?.applied ? state.refined : null;
+  // 一条都没提炼出东西时整块折叠区不渲染：空壳「提炼明细」比没有更让人困惑
+  if (!fixes.length && !pending.length && !refined) return null;
+  return { fixes, pending, refined };
+});
+
+/**
+ * 只读正文渲染：复用阅读视图那套 Vditor 预览（排版与沉浸阅读一致），不挂编辑器实例。
+ * 正文 / 主题 / 退出编辑都会重渲；序号对不上就丢弃结果——连点重试或切页时，
+ * 慢的那次渲染不许把新内容盖回去。
+ */
+async function renderQuietBody() {
+  const host = quietBodyEl.value;
+  if (!host || quietEditing.value) return;
+  const seq = ++quietRenderSeq;
+  try {
+    const next = document.createElement('div');
+    await Vditor.preview(next, wikiLinksToMarkdown(content.value), vditorPreviewOptions(isDark.value));
+    if (seq !== quietRenderSeq) return;
+    host.replaceChildren(...Array.from(next.childNodes));
+  } catch {
+    if (seq !== quietRenderSeq) return;
+    // 渲染器异常时退回纯文本：成品页宁可朴素，也不能白屏
+    host.textContent = content.value;
+  }
+}
+
+watch(
+  () => [quiet.value, quietEditing.value, content.value, isDark.value],
+  () => {
+    if (!quiet.value || quietEditing.value) return;
+    void renderQuietBody();
+  },
+  // post：等 DOM 打完补丁再渲染，quietBodyEl 才是新挂上的那个（pre 阶段拿到的还是旧引用/空引用）
+  { flush: 'post' }
+);
+
+/**
+ * 提炼完成就地热更新：桌面端 SSE 的 page-changed 已经会触发重载，
+ * 但安卓本地端不订阅 SSE，靠这里补一次——两边都不必再自己轮询文件内容。
+ */
+watch(
+  () => distillState.value?.staged,
+  (staged, prev) => {
+    // 服务端状态已经往前走了（排队/提炼中/完成）：本地的「重新提炼中」提示收工
+    if (quietRetrying.value && (staged === 'pending' || staged === 'running' || staged === 'done')) {
+      quietRetrying.value = false;
+      if (quietRetryTimer) {
+        clearTimeout(quietRetryTimer);
+        quietRetryTimer = null;
+      }
+    }
+    if (staged === prev || staged !== 'done') return;
+    if (!quiet.value || !page.value) return;
+    if (dirty) return; // 正在编辑就不覆盖（与 SSE 重载同一口径）
+    loadPage(page.value.id);
+  }
+);
+
+/** 顶部返回：优先回双链来源页；否则按浏览器历史退；历史到头（直接打开链接/刷新）就回首页 */
+function leaveQuiet() {
+  if (canGoBack.value) {
+    goBackToSource();
+    return;
+  }
+  const state = window.history.state as { back?: string | null } | null;
+  if (state?.back) {
+    router.back();
+    return;
+  }
+  router.push('/page');
+}
+
+async function startQuietEdit() {
+  // 清掉遗留的自动保存：纯净模式的手改走显式「保存 / 取消」，见 content watcher 里的同款判断
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  quietEditSnapshot = { title: title.value, content: content.value };
+  quietEditing.value = true;
+  await nextTick();
+  quietEditBodyEl.value?.focus();
+}
+
+function cancelQuietEdit() {
+  if (quietEditSnapshot) {
+    title.value = quietEditSnapshot.title;
+    content.value = quietEditSnapshot.content;
+  }
+  quietEditSnapshot = null;
+  quietEditing.value = false;
+}
+
+async function saveQuietEdit() {
+  quietSaving.value = true;
+  const ok = await save(true);
+  quietSaving.value = false;
+  // 保存失败留在编辑态：内容还在用户手里，不能假装成功把改动收走
+  if (!ok) return;
+  quietEditSnapshot = null;
+  quietEditing.value = false;
+  quietManualEdited.value = true;
+}
+
+/** 重新提炼：服务端不接（旧版本/离线/文件已删）就降级成「继续跟踪」，原文早已落盘，不打扰用户 */
+async function retryQuietDistill() {
+  const target = page.value;
+  if (!target) return;
+  quietRetrying.value = true;
+  // 重新提炼会覆盖手改版（服务端按新快照改写），手动修改标签到此失效
+  quietManualEdited.value = false;
+  const result = await retryIdeaDistill(String(target.id), String(target.path || ''));
+  if (!result.ok) {
+    quietRetrying.value = false;
+    // 服务端给了人话（如「这条灵感已经不在了」）就原样转达；否则只说降级结果，不弹错误窗
+    notify.info(result.error || '暂时没法重新提交，已继续跟踪这条灵感');
+    return;
+  }
+  notify.info('已重新提交提炼，稍后提醒你结果');
+  // 兜底：万一状态一直没离开旧值（比如服务端复用了已完成的任务），别让「重新提炼中」永远挂着
+  if (quietRetryTimer) clearTimeout(quietRetryTimer);
+  quietRetryTimer = setTimeout(() => { quietRetrying.value = false; }, 20_000);
+}
+
+async function copyQuietBody() {
+  const ok = await copyText(content.value);
+  if (ok) notify.success('正文已复制');
+  else notify.error('复制失败，请手动选择正文');
+}
+
+/** 完整编辑器形态：会话内开关 + 关掉沉浸阅读，页头控件区 / 工具条 / 状态栏一起回来 */
+function openFullEditor() {
+  quietOverride.value = true;
+  app.setReadingMode(false);
+  // 纯净期间正文可能在隐藏状态更新过（提炼完成/手改），补一次编辑器同步
+  nextTick(() => editorRef.value?.syncIfPending());
+}
+
+function onQuietBodyClick(event: MouseEvent) {
+  const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
+  if (!link) return;
+  const target = wikiTargetFromHref(link.getAttribute('href') || '');
+  if (!target) return;
+  event.preventDefault();
+  openWikilink(target);
+}
+
+function onQuietBodyContextMenu(event: MouseEvent) {
+  event.preventDefault();
+  // 与沉浸阅读同一套菜单（选中就给「复制/提问/搜索」，没选中给页面级动作）
+  showContextMenu({
+    x: event.clientX,
+    y: event.clientY,
+    selection: selectionInside(quietBodyEl.value || document.body),
+  }, 'reading');
+}
+
 async function startTagEdit() {
   tagEditing.value = true;
   await nextTick();
@@ -747,6 +1075,8 @@ async function loadPage(id: string) {
     tags.value = [...(data.meta.tags || [])];
     tagDraft.value = '';
     tagEditing.value = false;
+    // 重新读了磁盘内容：「已手动修改」这个本地标签不再描述当前正文（提炼写完/别处改过都算）
+    quietManualEdited.value = false;
     saveState.value = SAVED_IDLE;
     dirty = false;
     dirtyUi.value = false;
@@ -858,9 +1188,10 @@ function goBackToTrail(id: string) {
   router.push(`/page/${from}`);
 }
 
-async function save(manual = false) {
-  if (!page.value) return;
-  const contentToSave = editorRef.value?.getValue() ?? content.value;
+async function save(manual = false): Promise<boolean> {
+  if (!page.value) return false;
+  // 纯净模式的正文只存在于 content（隐藏的 vditor 实例不会同步到 textarea 的改动，读它会拿到进编辑前的旧内容）
+  const contentToSave = quiet.value ? content.value : editorRef.value?.getValue() ?? content.value;
   try {
     const { data } = await api.put(`/api/pages/${page.value.id}`, {
       content: contentToSave,
@@ -878,10 +1209,12 @@ async function save(manual = false) {
     setTimeout(() => (saveState.value = SAVED_IDLE), 2000);
     loadRelated();
     loadEvidence();
+    return true;
   } catch (error: any) {
     // dirty 保持 true：beforeunload 会继续提醒，下次编辑/手动保存可重试
     saveState.value = '保存失败';
     notify.error(error?.response?.data?.error || '保存失败，请稍后重试');
+    return false;
   }
 }
 
@@ -897,6 +1230,9 @@ watch(content, () => {
   saveState.value = '编辑中…';
   if (saveTimer) clearTimeout(saveTimer);
   if (!autosave.value) return; // 本文件关闭自动保存：只标脏，等手动保存/Ctrl+S
+  // 纯净模式的原地编辑有显式「保存 / 取消」：这里再自动落盘会让「取消」变成假动作
+  // （取消要还原进编辑前的内容，而磁盘上已经是自动保存过的半成品）
+  if (quiet.value && quietEditing.value) return;
   const scheduledPageId = page.value.id;
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -1163,6 +1499,16 @@ watch(
     related.value = null;
     evidence.value = null;
     evidenceOpen.value = false;
+    // 换页就退出纯净模式的一次性开关与本地状态：别把上一页的「完整编辑器」「重新提炼中」带进下一条灵感
+    quietOverride.value = false;
+    quietEditing.value = false;
+    quietEditSnapshot = null;
+    quietManualEdited.value = false;
+    quietRetrying.value = false;
+    if (quietRetryTimer) {
+      clearTimeout(quietRetryTimer);
+      quietRetryTimer = null;
+    }
     // 双链轨迹结算：非轨迹跳转（侧栏/搜索/图谱）视为离开链路，清空返回入口
     if (id) app.settlePageTrail(id as string);
     if (id && id !== oldId) loadPage(id as string);
@@ -1248,6 +1594,7 @@ onUnmounted(() => {
   viewObserver?.disconnect();
   viewObserver = null;
   if (saveTimer) clearTimeout(saveTimer);
+  if (quietRetryTimer) clearTimeout(quietRetryTimer);
 });
 </script>
 
@@ -1470,6 +1817,11 @@ button.save-state.dirty:hover { color: var(--accent); }
   /* 窄屏悬浮条贴边：18px 外边距在手机上太浪费 */
   .editor-topbar { left: 10px; right: 10px; padding: 0 6px 0 10px; }
   .statusbar { left: 10px; }
+  /* 纯净模式：手机上左右留白收成与页头一致的 20px，标题降一档，动作条仍是一行横向可滚 */
+  .quiet-top { padding: 12px 20px 8px; }
+  .quiet-scroll { padding: 0 20px 16px; }
+  .quiet-title { font-size: 25px; }
+  .quiet-actions { padding: 10px 20px; }
 }
 
 /* ---------- 页头：标题 + 元信息 chips，与正文列对齐 ---------- */
@@ -1890,6 +2242,170 @@ button.save-state.dirty:hover { color: var(--accent); }
   background: rgba(15, 108, 189, 0.16);
   color: var(--accent);
 }
+
+/* ---------- 纯净模式：灵感碎片的只读成品页（SPEC 第 5 节） ----------
+   整屏只有一条纵向流：返回 + 面包屑细字 / 标题 + 元信息 / 正文 / 提炼明细 / 底部动作。
+   页头控件区、工具条、底部状态栏与右下入口在这一形态下**根本不渲染**（不是藏起来），
+   所以窄屏上也没有任何悬浮 chrome 压正文；正文列沿用同一套 --col-inset 与正文对齐。 */
+.quiet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* 窄屏兜底：任何子元素都不许把页面撑出横向滚动条（正文里的宽表格/代码走自身滚动） */
+  max-width: 100%;
+  overflow-x: hidden;
+}
+.quiet-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px var(--col-inset) 10px;
+}
+.quiet-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.quiet-back:hover { border-color: var(--accent); color: var(--accent); }
+.quiet-crumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.quiet-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 var(--col-inset) 20px;
+}
+/* 提炼中：一条细提示，不挡正文（正文仍显示当前文件内容） */
+.quiet-banner {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 14px;
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.quiet-title {
+  margin: 4px 0 0;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  /* 中文长标题/文件名没有空格：必须允许任意位置断行，430px 上才不会被撑宽 */
+  overflow-wrap: anywhere;
+}
+.quiet-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 18px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.quiet-sep { color: var(--border-strong); }
+.quiet-stage { color: var(--text-secondary); }
+.quiet-stage.manual { color: var(--accent); }
+.quiet-stage.failed { color: var(--danger); }
+/* 只读正文：Vditor.preview 的产物直接挂在这个 .vditor-reset 容器里（与沉浸阅读同一套排版） */
+.quiet-body {
+  font-size: 1rem;
+  line-height: 1.8;
+  color: var(--text);
+}
+.quiet-body :deep(> :first-child) { margin-top: 0; }
+.quiet-body :deep(pre) { max-width: 100%; overflow-x: auto; }
+.quiet-body :deep(img) { max-width: 100%; }
+.quiet-note {
+  margin: 16px 0 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.quiet-note.failed { border-left-color: var(--danger); color: var(--text); }
+.quiet-detail {
+  margin: 18px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.quiet-detail summary { cursor: pointer; font-weight: 600; }
+.quiet-detail ul { margin: 8px 0 0; padding-left: 18px; line-height: 1.7; }
+.quiet-fix-kind { color: var(--text-faint); }
+/* 原地编辑：标题 input + 正文 textarea（不进 app.readingMode 的整页阅读视图） */
+.quiet-edit { display: flex; flex-direction: column; gap: 10px; }
+.quiet-edit-title {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 700;
+}
+.quiet-edit-body {
+  width: 100%;
+  min-height: 48vh;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 1rem;
+  line-height: 1.75;
+  resize: vertical;
+}
+.quiet-edit-actions { display: flex; gap: 8px; }
+/* 底部动作条：固定在视口底部（外层 flex 布局，正文单独滚）。
+   窄屏一行横向可滚——四个按钮在 430px 放不下时不会换行、更不会撑破页面。
+   这里不补安全区：Home.vue 的 .content 已经为底部导航让出了 64px + 手势条，
+   再加一次就是双计（与状态栏胶囊同一条口径）。 */
+.quiet-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 10px var(--col-inset);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.quiet-actions::-webkit-scrollbar { display: none; }
+.quiet-actions > * { flex: none; }
 
 /*
  * 首页（欢迎页）：内容比一屏高时必须「从顶上开始、一路往下可滚」。
