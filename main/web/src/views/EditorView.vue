@@ -1891,14 +1891,20 @@ button.save-state.dirty:hover { color: var(--accent); }
   color: var(--accent);
 }
 
+/*
+ * 首页（欢迎页）：内容比一屏高时必须「从顶上开始、一路往下可滚」。
+ * 居中只能用 auto 外边距（见 .welcome-inner）——flex 的 align-items / justify-content: center
+ * 在内容溢出时会把两端平分：顶部那截落到滚动原点之外，滚到最顶也回不来。
+ * 2026-10-01 报障（安卓「首页显示不全」）：360×640 实测 inner 顶部 -155px、minScrollTop 恒为 0，
+ * logo、问候语、库统计与第一张快捷卡全看不见也够不着；412×851 上问候头同样被状态栏吃掉 22px。
+ * auto 外边距在空间不足时自动归零：放得下就居中，放不下就顶部对齐、溢出全部落在下方可滚区。
+ */
 .welcome {
   height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: center;
   overflow-y: auto;
 }
-.welcome-inner { width: 100%; max-width: 520px; padding: 32px 24px; }
+.welcome-inner { margin: auto; width: 100%; max-width: 520px; padding: 32px 24px; }
 
 /* 问候头：小 logo + 时间问候 + 库概览一行 */
 .welcome-head {
