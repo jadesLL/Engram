@@ -53,6 +53,11 @@ export interface AppUpdateInfo {
   canInstall: boolean;
   notificationsEnabled: boolean;
   installLaunched: boolean;
+  /**
+   * 用户点过安装、正卡在系统「安装未知应用」授权页：允许后返回会自动继续调起安装器
+   * （见 mobile/.../AppUpdater.kt 的 resumePendingInstall）。
+   */
+  awaitingInstallPermission: boolean;
 }
 
 export function emptyAppUpdateInfo(): AppUpdateInfo {
@@ -84,6 +89,7 @@ export function emptyAppUpdateInfo(): AppUpdateInfo {
     canInstall: true,
     notificationsEnabled: true,
     installLaunched: false,
+    awaitingInstallPermission: false,
   };
 }
 
@@ -124,6 +130,7 @@ export function normalizeAppUpdateInfo(raw: any): AppUpdateInfo {
     canInstall: raw.canInstall !== false,
     notificationsEnabled: raw.notificationsEnabled !== false,
     installLaunched: Boolean(raw.installLaunched),
+    awaitingInstallPermission: Boolean(raw.awaitingInstallPermission),
   };
 }
 
@@ -173,7 +180,14 @@ export function appUpdateStatusText(info: AppUpdateInfo): string {
     return `正在后台下载 ${version}安装包（已下载 ${formatBytes(info.downloadedBytes)}）…`;
   }
   if (info.phase === 'error') return `更新失败：${info.error || '未知原因'}`;
-  if (info.ready) return `v${info.latestVersion || ''} 安装包已下载完成，点「立即安装」调起系统安装器。`;
+  if (info.ready) {
+    if (info.awaitingInstallPermission) {
+      return '正在等系统的「安装未知应用」授权：在系统页面允许 Engram 安装应用，返回后会自动接着装。';
+    }
+    // 权限没开也照样让用户点「立即安装」——点下去会自动拉起系统授权页，不用自己去翻设置
+    if (!info.canInstall) return `v${info.latestVersion || ''} 安装包已就绪：点「立即安装」会自动打开系统授权页，允许后自动继续。`;
+    return `v${info.latestVersion || ''} 安装包已下载完成，点「立即安装」调起系统安装器。`;
+  }
   if (info.hasUpdate) return `有新版本 v${info.latestVersion}（当前 v${info.currentVersion}）。`;
   if (info.checkedAt) return '已是最新版本。';
   return '还没有检查过更新；开启自动更新后会在回前台时自动检查。';
@@ -193,10 +207,12 @@ export function appUpdateActionLabel(info: AppUpdateInfo): string {
  * 阻塞提示：调试包、未授权「安装未知应用」。返回空串表示没有阻塞。
  * 调试包不参与自动安装是有意为之——debug 包的 applicationId 带 .debug 后缀，
  * 装正式包会变成两个 App 并存，不如让用户知道原因。
+ * 「安装未知应用」不再算阻塞：点「立即安装」会自动拉起系统授权页（旧版要求用户
+ * 自己去找「去开启安装权限」按钮，用户报障找不到入口）。
  */
 export function appUpdateBlockedHint(info: AppUpdateInfo): string {
   if (info.debugBuild) return '当前是调试包（版本号带后缀）：装正式版会与它并存成两个 App，请手动安装发布版 APK。';
-  if (info.ready && !info.canInstall) return '系统还没允许 Engram 安装应用：点「去开启安装权限」授权后再安装。';
+  if (info.ready && !info.canInstall) return '系统还没允许 Engram 安装应用：点「立即安装」会自动打开系统授权页，允许后返回会自动继续。';
   return '';
 }
 

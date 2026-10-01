@@ -13,7 +13,7 @@
       <stop offset="1" stop-color="#245BDB"/>
     </linearGradient>
   </defs>
-  <ellipse cx="50" cy="50" rx="34" ry="13.5" fill="none" stroke="url(#engram-dark-orbit)" stroke-width="9" transform="rotate(-28 50 50)"/>
-  <circle cx="71.725" cy="30.121" r="8.2" fill="#22D3EE"/>
-  <circle cx="50" cy="50" r="13" fill="url(#engram-dark-core)"/>
+  <ellipse cx="50" cy="50" rx="36" ry="15.5" fill="none" stroke="url(#engram-dark-orbit)" stroke-width="8.5" transform="rotate(-28 50 50)"/>
+  <circle cx="72.695" cy="28.372" r="6" fill="#22D3EE"/>
+  <circle cx="50" cy="50" r="11" fill="url(#engram-dark-core)"/>
 </svg>

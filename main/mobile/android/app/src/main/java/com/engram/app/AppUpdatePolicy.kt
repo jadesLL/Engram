@@ -130,6 +130,14 @@ object AppUpdatePolicy {
     fun isDebugVersion(versionName: String?): Boolean = versionName?.contains('-') == true
 
     /**
+     * 从系统「安装未知应用」授权页回来时，要不要自动接着调起安装器：
+     * 用户此前点过安装（pendingInstall）、系统现在允许了（canInstall）、安装包仍就绪（ready）三条都成立才装。
+     * 用户没授权就回来 → pendingInstall 被清掉，不会每次回前台都重放；应用重启后同样归于平静。
+     */
+    fun shouldResumeInstall(pendingInstall: Boolean, canInstall: Boolean, ready: Boolean): Boolean =
+        pendingInstall && canInstall && ready
+
+    /**
      * 私有仓库的 Authorization 头，与 server/src/lib/giteaRelease.ts 的 `repoAuthHeaders` 同一口径：
      *  - 用户名密码方式且用户名、密码都齐 → `Basic base64(用户名:密码)`（UTF-8，与 Node 端一致）；
      *  - 否则有访问令牌 → `token <令牌>`；

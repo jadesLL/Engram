@@ -50,13 +50,15 @@
     <p v-else-if="blockedHint" class="setting-message warn">{{ blockedHint }}</p>
     <p v-if="message" class="setting-message" :class="messageTone">{{ message }}</p>
 
-    <!-- 权限兜底：安装未知应用 / 通知（下载完成提醒） -->
+    <!-- 权限兜底：安装未知应用 / 通知（下载完成提醒）。
+         权限没开不再是「用户自己去找开关」——点「立即安装」会自动拉起系统授权页，这一行只是提前开的入口 -->
     <div v-if="info.ready && !info.canInstall" class="setting-row">
       <div class="setting-copy">
         <strong>安装权限</strong>
-        <span>系统还没允许 Engram 安装应用（Android 8.0 起侧载都需要这一步）。</span>
+        <span v-if="info.awaitingInstallPermission">已打开系统的「安装未知应用」授权页：允许 Engram 安装应用后返回，会自动接着安装。</span>
+        <span v-else>系统还没允许 Engram 安装应用（Android 8.0 起侧载都需要这一步）。点「立即安装」会自动打开系统授权页并继续安装，也可以现在就先开。</span>
       </div>
-      <button class="btn primary" type="button" @click="openInstallSettings">去开启安装权限</button>
+      <button class="btn primary" type="button" @click="openInstallSettings">现在去开启</button>
     </div>
     <div v-else-if="showNotificationRow" class="setting-row">
       <div class="setting-copy">
@@ -267,9 +269,12 @@ async function runPrimary() {
   message.value = '';
   repoUrlError.value = '';
   if (info.value.ready) {
+    const needPermission = !info.value.canInstall;
     const ok = await confirmDialog({
       title: '安装更新',
-      message: `将调起系统安装器安装 v${info.value.latestVersion || ''}。系统会再问一次是否安装，装完 Engram 会自动重启，本机知识库数据不受影响。继续？`,
+      message: needPermission
+        ? `将安装 v${info.value.latestVersion || ''}。系统还没允许 Engram 安装应用：确认后会先打开系统的「安装未知应用」授权页，允许后返回 Engram 会自动接着装。本机知识库数据不受影响。继续？`
+        : `将调起系统安装器安装 v${info.value.latestVersion || ''}。系统会再问一次是否安装，装完 Engram 会自动重启，本机知识库数据不受影响。继续？`,
       confirmText: '立即安装',
     });
     if (!ok) return;
@@ -280,6 +285,10 @@ async function runPrimary() {
       messageTone.value = 'ok';
       message.value = '已调起系统安装器：请在系统弹窗里点「安装」，完成后 Engram 会自动重启。';
       notify.success('已调起系统安装器');
+    } else if (result.needPermission) {
+      messageTone.value = 'warn';
+      message.value = result.error || '已打开系统的「安装未知应用」授权页：允许后返回会自动继续安装。';
+      notify.info('已打开系统授权页：允许 Engram 安装应用后返回即可');
     } else {
       messageTone.value = 'err';
       message.value = result.error || '安装失败';

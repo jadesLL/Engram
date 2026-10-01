@@ -200,7 +200,11 @@ const progressLabel = computed(() => {
   if (applyPhase.value === 'skipped') return '已是最新版本';
   if (applyPhase.value === 'waiting') return '更新已提交，服务正在重启…';
   if (applyPhase.value === 'done') {
-    if (shellKind.value === 'apk') return '已调起系统安装器：请在系统弹窗点「安装」';
+    if (shellKind.value === 'apk') {
+      return appUpdate.info.awaitingInstallPermission
+        ? '已打开系统授权页：允许 Engram 安装应用后返回会自动继续'
+        : '已调起系统安装器：请在系统弹窗点「安装」';
+    }
     return shellKind.value === 'web' ? '更新完成，页面即将自动刷新…' : '更新中，应用即将自动重启…';
   }
   return '正在更新…';
@@ -288,6 +292,13 @@ async function runApkUpdate(log: (line: string) => void) {
   }
   const result = await appUpdate.install();
   if (!result.ok) {
+    if (result.needPermission) {
+      // 授权页刚被自动打开：不是失败，等用户允许后返回，引擎会自动接着调起安装器
+      applyPhase.value = 'done';
+      applyError.value = '';
+      log('系统还没允许 Engram 安装应用：已打开「安装未知应用」授权页，允许后返回会自动继续安装。');
+      return;
+    }
     applyPhase.value = 'error';
     applyError.value = result.error || '无法调起系统安装器';
     log(applyError.value);

@@ -233,4 +233,15 @@ class AppUpdatePolicyTest {
         }
         assertEquals(AppUpdateConfig.AUTH_TOKEN, dirty.authType)
     }
+
+    /**
+     * 授权页返回后的续装判定（用户报障「装外部来源应用要自己去翻设置」→ 自动引导的收口逻辑）：
+     * 三条都成立才自动装；用户没授权 / 包没了 / 从没点过安装，都不许自动弹系统安装器。
+     */
+    @Test fun resumesInstallOnlyWhenUserAskedAndPermissionGranted() {
+        assertTrue(AppUpdatePolicy.shouldResumeInstall(pendingInstall = true, canInstall = true, ready = true))
+        assertFalse("没授权就回来：不许自动装", AppUpdatePolicy.shouldResumeInstall(true, false, true))
+        assertFalse("包不在（换源/装完清理）：不许自动装", AppUpdatePolicy.shouldResumeInstall(true, true, false))
+        assertFalse("用户没点过安装：不许自动装", AppUpdatePolicy.shouldResumeInstall(false, true, true))
+    }
 }

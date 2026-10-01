@@ -37,13 +37,12 @@
             </button>
           </div>
 
-          <!-- 概览：一眼看出「改了多少、对账多少次、有没有要处理的」 -->
-          <div class="log-stats">
-            <div v-for="card in statCards" :key="card.label" class="stat" :class="card.tone">
-              <span>{{ card.label }}</span>
-              <strong :title="card.value">{{ card.value }}</strong>
-              <em v-if="card.hint">{{ card.hint }}</em>
-            </div>
+          <!-- 概览：一行紧凑摘要（旧版是多张卡片，手机上吃掉半屏——用户报障「有改动/没改动占地方、
+               下面的详情反而看不见」）。数值口径与筛选项完全一致，hover 有 explain hint。 -->
+          <div class="log-summary">
+            <span v-for="card in statCards" :key="card.label" class="sum-item" :class="card.tone" :title="card.hint || card.label">
+              {{ card.label }}<strong>{{ card.value }}</strong>
+            </span>
           </div>
 
           <p v-if="state.status?.lastError" class="log-error">
@@ -416,36 +415,33 @@ interface StatCard {
   tone?: string;
 }
 
-/** 概览卡片：按新口径给数，不再摆「信息 / 警告 / 错误」 */
+/**
+ * 概览一行：条数按结果口径给（与上面的筛选 chip 完全一致，点了哪颗就等于筛哪一档）。
+ * 旧版这里摆了 4–7 张卡片（含「改了哪类内容」的明细），手机上占掉半屏还挤掉列表；
+ * 内容分类的计数已经在「改了哪类」筛选 chip 上，概览只留一眼要看的数与状态。
+ */
 const statCards = computed<StatCard[]>(() => {
   const status = state.status;
   const summary = state.summary;
   if (!status) return [];
   const byOutcome = summary?.byOutcome;
-  const byContent = summary?.byContent || {};
-  const contentLine = SYNC_LOG_CONTENTS
-    .map((type) => [type, Number(byContent[type] || 0)] as const)
-    .filter(([, count]) => count > 0)
-    .map(([type, count]) => `${type} ${count}`)
-    .join(' · ');
   const cards: StatCard[] = [
-    { label: '有改动', value: `${byOutcome?.changed ?? 0} 条`, hint: OUTCOME_HINTS.changed, tone: 'ok' },
-    { label: '没改动（对账 / 检查）', value: `${byOutcome?.none ?? 0} 条`, hint: OUTCOME_HINTS.none },
+    { label: '有改动', value: `${byOutcome?.changed ?? 0}`, hint: OUTCOME_HINTS.changed, tone: 'ok' },
+    { label: '没改动', value: `${byOutcome?.none ?? 0}`, hint: OUTCOME_HINTS.none },
     {
       label: '失败',
-      value: `${byOutcome?.failed ?? 0} 条`,
+      value: `${byOutcome?.failed ?? 0}`,
       hint: OUTCOME_HINTS.failed,
       tone: (byOutcome?.failed ?? 0) > 0 ? 'bad' : '',
     },
-    { label: '改了哪类内容', value: contentLine || '—', hint: '按文件归类，一条记录可能算多类' },
   ];
   if (status.role === 'member') {
     cards.push({ label: '待推送', value: String(status.pending), hint: status.pending ? '本地改动排队中' : '已全部推送' });
-    cards.push({ label: '待补拉文件', value: String(status.pendingPulls), hint: status.pendingPulls ? '每分钟自动重试' : '无' });
+    cards.push({ label: '待补拉', value: String(status.pendingPulls), hint: status.pendingPulls ? '每分钟自动重试' : '无' });
   } else if (status.role === 'hub') {
     const peers = status.peers || [];
     const online = peers.filter((peer) => peer.online).length;
-    cards.push({ label: '成员', value: `${online} / ${peers.length}`, hint: '在线 / 总数' });
+    cards.push({ label: '成员', value: `${online}/${peers.length}`, hint: '在线 / 总数' });
   }
   cards.push({
     label: '最近活动',
@@ -713,40 +709,26 @@ async function askClear(): Promise<void> {
 }
 .icon-btn:hover { color: var(--text); background: var(--bg-hover); }
 
-.log-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 8px;
-  margin-top: 10px;
-}
-.stat {
+/* 概览一行：小号 chips，换行也只占一两行（旧版卡片网格在手机上占掉半屏） */
+.log-summary {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 7px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
-  min-width: 0;
-}
-.stat span { color: var(--text-faint); font-size: 10.5px; }
-.stat strong {
-  font-size: 12.5px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.stat em {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: 11px;
   color: var(--text-faint);
-  font-size: 10.5px;
-  font-style: normal;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.stat.ok strong { color: var(--success, #2e9e5b); }
-.stat.bad strong { color: var(--danger, #d64545); }
+.sum-item { white-space: nowrap; }
+.sum-item strong {
+  margin-left: 4px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.sum-item.ok strong { color: var(--success, #2e9e5b); }
+.sum-item.bad strong { color: var(--danger, #d64545); }
 
 .log-error {
   display: flex;
@@ -1183,10 +1165,30 @@ async function askClear(): Promise<void> {
 }
 .log-foot > svg { flex-shrink: 0; margin-top: 2px; }
 
-/* 手机端：卡片仍是浮层，底部导航是 48px 常驻胶囊，卡片要抬到它上面 */
+/* 手机端：卡片仍是浮层，底部导航是 48px 常驻胶囊，卡片要抬到它上面。
+   手机上头部一度吃掉大半个屏（概览卡片 3 行 + 筛选 3 行），详情列表只剩一条半——
+   这里把头部压扁：概览是一行 chip、筛选每排横向滚动（不换行）、面包屑与说明段收起。 */
 @media (max-width: 768px) {
   .sync-log-drawer { bottom: calc(64px + var(--safe-bottom)); }
-  .log-stats { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
+  .log-head { padding: 10px 12px 8px; }
+  .log-crumb { display: none; }
+  .log-summary { margin-top: 6px; gap: 3px 9px; }
+  .log-filters { margin-top: 7px; gap: 6px; }
+  /* 一行里横向滚动：饼不换行，也不把搜索框挤到第二屏 */
+  .chip-row,
+  .filter-row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .chip-row::-webkit-scrollbar,
+  .filter-row::-webkit-scrollbar { display: none; }
+  .chip-row .chip-label { display: none; }
+  /* 不换行的行里 chip 不许被压扁：文字折成两行就认不出来了（"原始 资料"） */
+  .chip-row .chip,
+  .filter-row .chip { flex: 0 0 auto; white-space: nowrap; }
+  .search-host { flex: 1 0 100%; }
+  /* 筛选说明是给桌面看的长句，手机上它自己就占两行 */
+  .filter-hint { display: none; }
+  /* 页脚讲日志文件位置与保留期——手机上让位给列表（桌面端保留） */
+  .log-foot { display: none; }
+  .log-body { padding: 8px 12px 12px; }
   /* 窄屏放不下「时间 | 结果 | 摘要 | 标签 | 处数 | 箭头」六列：改成两行，仍是一条记录一块 */
   .log-row { grid-template-columns: 84px auto minmax(0, 1fr) auto; row-gap: 2px; }
   .log-row .ts { grid-column: 1; }
