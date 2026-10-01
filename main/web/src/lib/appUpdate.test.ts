@@ -142,9 +142,28 @@ test('主按钮三态：检查 / 下载安装包 / 立即安装', () => {
 test('阻塞提示：调试包与「安装未知应用」权限', () => {
   assert.equal(appUpdateBlockedHint(info()), '');
   assert.match(appUpdateBlockedHint(info({ debugBuild: true })), /调试包/);
-  assert.match(appUpdateBlockedHint(info({ ready: true, canInstall: false })), /去开启安装权限/);
+  // 权限缺失不再是「去找按钮」：点立即安装会自动拉起系统授权页
+  assert.match(appUpdateBlockedHint(info({ ready: true, canInstall: false })), /自动打开系统授权页/);
   // 没下载完时不提权限（先下完再说）
   assert.equal(appUpdateBlockedHint(info({ ready: false, canInstall: false })), '');
+});
+
+test('状态行讲清「授权页等着你」与「点安装会自动去授权页」两种权限口径', () => {
+  assert.match(
+    appUpdateStatusText(info({ configured: true, ready: true, latestVersion: '1.3.6', canInstall: false })),
+    /自动打开系统授权页/,
+  );
+  assert.match(
+    appUpdateStatusText(info({ configured: true, ready: true, latestVersion: '1.3.6', canInstall: true, awaitingInstallPermission: true })),
+    /允许 Engram 安装应用/,
+  );
+  // 正常已授权：还是原来那句「点立即安装调起系统安装器」
+  assert.match(appUpdateStatusText(info({ configured: true, ready: true, latestVersion: '1.3.6' })), /调起系统安装器/);
+});
+
+test('状态归一化带出 awaitingInstallPermission（授权页等待态）', () => {
+  assert.equal(normalizeAppUpdateInfo({ awaitingInstallPermission: true }).awaitingInstallPermission, true);
+  assert.equal(normalizeAppUpdateInfo({}).awaitingInstallPermission, false);
 });
 
 test('通知权限只在「已下载完成 + 未授权」时提示申请', () => {

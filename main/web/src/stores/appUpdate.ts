@@ -84,11 +84,18 @@ export const useAppUpdateStore = defineStore('appUpdate', {
         await this.refresh();
       }
     },
-    /** 调起系统安装器；失败时返回原因（权限没开 / 包没下完 / 不在前台）给界面显示 */
-    async install(): Promise<{ ok: boolean; error?: string }> {
+    /**
+     * 调起系统安装器；失败时返回原因（包没下完 / 不在前台 / 调试包）给界面显示。
+     * 「安装未知应用」没授权不算失败：本地服务会自动拉起系统授权页并回
+     * `needPermission`，界面按提示语气说明「允许后返回会自动继续安装」。
+     */
+    async install(): Promise<{ ok: boolean; error?: string; needPermission?: boolean }> {
       try {
-        await api.post('/api/app-update/install', {});
+        const { data } = await api.post('/api/app-update/install', {});
         await this.refresh();
+        if (data?.needPermission) {
+          return { ok: false, needPermission: true, error: data.message || '已打开系统的「安装未知应用」授权页，允许后返回会自动继续安装' };
+        }
         return { ok: true };
       } catch (e: any) {
         const error = e?.response?.data?.error || e?.message || '无法调起系统安装器';

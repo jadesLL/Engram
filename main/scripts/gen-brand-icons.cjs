@@ -44,17 +44,39 @@ const REPO = path.resolve(MAIN, '..');
 
 // ---------------------------------------------------------------- 几何（唯一定义）
 // 设计坐标系 100 × 100，中心 (50, 50)。所有产物都由这些常量推导。
+//
+// 硬约束（曾经踩过，2026-10-01 用户报障「首页 logo 显示不全」）：知识核必须完整落在
+// 轨道环的内孔里（coreR ≤ orbitRy − orbitStroke/2），电子也必须压在环带上而不是吃掉它
+// （electronR ≲ orbitStroke/2 + 环带宽度的可见余量）。核心一旦比内孔大，就会把环带
+// 遮断：UI 尺寸（24–52px）下环看起来是断的 / 只剩半个 C 形——大尺寸（512px 图标）反而
+// 看不出来，所以只在手机与桌面界面暴露。改几何前先跑 assertGeometry()。
 const G = {
-  orbitRx: 34, // 轨道椭圆长半轴
-  orbitRy: 13.5, // 轨道椭圆短半轴
-  orbitStroke: 9, // 轨道环线宽
+  orbitRx: 36, // 轨道椭圆长半轴
+  orbitRy: 15.5, // 轨道椭圆短半轴
+  orbitStroke: 8.5, // 轨道环线宽
   orbitAngle: -28, // 轨道倾角（度）
-  coreR: 13, // 知识核半径
-  electronR: 8.2, // 电子半径（明显大于环线宽，小尺寸下也看得出是「环上的珠子」）
+  coreR: 11, // 知识核半径（必须 ≤ orbitRy − orbitStroke/2 = 11.25）
+  electronR: 6, // 电子半径：珠子直径略大于环宽，落在环上、不遮断环带
   electronAngle: -33, // 电子在椭圆上的参数角（度）——保证严格落在环上
   plateR: 22, // 盒装底圆角半径（占 100 的比例）
   plateStroke: 1.6, // 盒装底描边宽
 };
+
+/** 几何自检：环必须完整可见（核心不越出内孔、电子不吃掉整条环带） */
+function assertGeometry() {
+  const holeMinor = G.orbitRy - G.orbitStroke / 2;
+  if (G.coreR > holeMinor) {
+    throw new Error(
+      `知识核 r=${G.coreR} 大于环内孔短半轴 ${holeMinor}：核心会遮断环带，UI 尺寸下 logo 显示不全`,
+    );
+  }
+  if (G.electronR > G.orbitStroke) {
+    throw new Error(
+      `电子 r=${G.electronR} 超过环宽 ${G.orbitStroke}：珠子会吃掉整个环带`,
+    );
+  }
+}
+assertGeometry();
 
 // 轨道渐变沿椭圆主轴方向（局部坐标）
 const ORBIT_GRAD = { x1: -26, y1: 26, x2: 26, y2: -26 };

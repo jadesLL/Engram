@@ -74,6 +74,9 @@ class AppUpdater(
     @Volatile private var checkedAtMs = 0L
     @Volatile private var installLaunched = false
 
+    /** 用户点过安装但卡在系统「安装未知应用」授权页：回前台自动续装（见 resumePendingInstall） */
+    @Volatile private var pendingInstallAfterPermission = false
+
     fun config(): AppUpdateConfig = AppUpdateConfig.fromSettings { key -> db.setting(key) }
 
     /**
@@ -123,6 +126,8 @@ class AppUpdater(
             .put("canInstall", canInstallPackages())
             .put("notificationsEnabled", notificationsEnabled())
             .put("installLaunched", installLaunched)
+            // 正等着用户去系统授权页点「允许」：界面据此提示「返回后会自动继续安装」
+            .put("awaitingInstallPermission", pendingInstallAfterPermission)
     }
 
     /**
@@ -166,6 +171,7 @@ class AppUpdater(
                 latestVersion = null; releaseTag = ""; releaseNotes = ""; assetName = ""; assetUrl = ""
                 totalBytes = 0; doneBytes = 0; percentValue = null; checkedAtMs = 0
                 if (phase != PHASE_DOWNLOADING) phase = PHASE_IDLE
+                pendingInstallAfterPermission = false
                 errorText = ""
             }
             updatesDir().listFiles()?.forEach { it.delete() }
@@ -186,10 +192,12 @@ class AppUpdater(
 
     /**
      * 回前台、启动时自动跑一次（MainActivity.onStart 走 EngramLocalServer.onForeground）：
-     * 距上次检查没超过 [AppUpdateConfig.CHECK_INTERVAL_MS] 就不重复问远端；上次下载被打断则接着下。
+     * 先看有没有「用户点过安装、但卡在系统授权页」的续装要接着走；再距上次检查没超过
+     * [AppUpdateConfig.CHECK_INTERVAL_MS] 就不重复问远端；上次下载被打断则接着下。
      */
     fun onForeground() {
         cleanupInstalledApks()
+        resumePendingInstall()
         val cfg = config()
         if (!cfg.configured || !cfg.autoUpdate) return
         if (phase == PHASE_CHECKING || phase == PHASE_DOWNLOADING) return
@@ -226,7 +234,14 @@ class AppUpdater(
         Thread({ runDownload() }, "engram-app-update-download").start()
     }
 
-    /** 调起系统安装器；返回 ok/原因（权限缺失、包没下完、不在前台都走这里说清） */
+    /**
+     * 调起系统安装器；返回 ok/原因（权限缺失、包没下完、不在前台都走这里说清）。
+     *
+     * 「安装未知应用」权限缺失时不再让用户自己去找设置入口：直接拉起系统的授权页
+     * （ACTION_MANAGE_UNKNOWN_APP_SOURCES，侧载没有别的授权途径），并记下待续装标记——
+     * 用户允许后回到应用，[onForeground] 里的 [resumePendingInstall] 会自动接着调起安装器。
+     * 这条路径返回 ok=false + needPermission=true，界面按「已打开授权页」提示，不当失败报错。
+     */
     fun install(): JSONObject {
         val apk = readyApk()
         if (apk == null) {
@@ -239,10 +254,15 @@ class AppUpdater(
         if (AppUpdatePolicy.isDebugVersion(currentVersion())) {
             throw IllegalArgumentException("当前是调试包，装正式包会与它并存成两个 App：请手动安装发布版 APK")
         }
-        if (!canInstallPackages()) {
-            throw IllegalArgumentException("系统还没允许 Engram 安装应用，请先点「去开启安装权限」")
-        }
         val uiHost = host ?: throw IllegalArgumentException("请回到 Engram 应用内再点安装")
+        if (!canInstallPackages()) {
+            synchronized(lock) { pendingInstallAfterPermission = true }
+            uiHost.openInstallPermissionSettings()
+            return JSONObject()
+                .put("ok", false)
+                .put("needPermission", true)
+                .put("message", "系统还没允许 Engram 安装应用：已打开「安装未知应用」授权页，允许后返回会自动继续安装")
+        }
         if (!uiHost.launchInstaller(apk)) throw IllegalStateException("无法调起系统安装器")
         installLaunched = true
         return JSONObject().put("ok", true).put("apkName", apk.name)
@@ -252,6 +272,27 @@ class AppUpdater(
     fun openInstallSettings() {
         val uiHost = host ?: throw IllegalArgumentException("请回到 Engram 应用内再点这个按钮")
         uiHost.openInstallPermissionSettings()
+    }
+
+    /**
+     * 从「安装未知应用」授权页回来后的续装：用户此前点过安装、权限已开、包仍就绪才自动调起
+     * 系统安装器（[AppUpdatePolicy.shouldResumeInstall] 是同一判定的纯函数版）。
+     * 用户没授权（又退回来了）就清掉待续装标记——避免每次回前台都重放，等他下次点安装再引导。
+     */
+    private fun resumePendingInstall() {
+        if (!pendingInstallAfterPermission) return
+        val allowed = canInstallPackages()
+        val apk = if (allowed) readyApk() else null
+        if (!AppUpdatePolicy.shouldResumeInstall(pendingInstallAfterPermission, allowed, apk != null)) {
+            synchronized(lock) { pendingInstallAfterPermission = false }
+            return
+        }
+        val uiHost = host ?: return
+        if (!uiHost.launchInstaller(apk!!)) return
+        synchronized(lock) {
+            installLaunched = true
+            pendingInstallAfterPermission = false
+        }
     }
 
     /** 申请通知权限（Android 13+）：下载完成的提醒要靠它，没授权也不影响应用内提示 */
