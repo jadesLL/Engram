@@ -5,10 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * 安卓端三处「手机上不好用」报障的接线护栏（2026-09-30）。
+ * 安卓端「手机上不好用 / 显示不全」报障的接线护栏（2026-09-30 起，2026-10-01 补首页一条）。
  *
  * 用户原话：①上边栏关闭按钮和状态栏冲突，点不了；②正文页显示不全，要按比例缩放；
- * ③目录栏文字显示不全。三条各对应一组可断言的声明，断掉任何一条就会退回去：
+ * ③目录栏文字显示不全；④（10-01）首页显示不全。四条各对应一组可断言的声明，断掉任何一条就会退回去：
  *
  *   ① fixed / absolute 定到视口边的浮层（抽屉、全屏看图、对话框）用视口坐标，
  *      安卓边到边后 y=0 就是屏幕顶边——412px 屏上状态栏高 24px，Agent 抽屉的 ✕ 在
@@ -19,6 +19,9 @@ import { fileURLToPath } from 'node:url';
  *      强制 620px，放不下时按比例缩放整表（fitWideBlocks）。
  *   ③ 目录栏（左侧栏）的页面名/文件名是单行省略号，20 字的中文标题被截成
  *      「华北区域经销商年度对账与返…」。修法：触屏档放开到两行。
+ *   ④ 首页（欢迎页）是「居中 + 可滚」的 flex 容器：内容比一屏高时（手机上必超一屏），
+ *      align-items / justify-content: center 会把溢出平分到两端，顶部那截落在滚动原点之外、
+ *      scrollTop 归零也够不着。修法：居中改用 auto 外边距，空间不足时自动顶部对齐。
  *
  * 版式与真机观感没法单测，沿用 mobileShellUx.test.ts 的写法：读源码断言关键声明。
  */
@@ -181,4 +184,72 @@ test('目录栏文字显示不全：触屏档页面名/文件名放开到两行'
     );
     assert.match(touch, /height:\s*auto;\s*min-height:\s*44px;/, `${file} 行高写死：折成两行的标题会被裁掉`);
   }
+});
+
+// ---------------------------------------------------------------- ④ 首页（欢迎页）
+
+/** 递归列出 src 下的 .vue / .css，供「全库扫描」类断言使用 */
+function listStyleSources(dir = srcRoot, acc: string[] = []): string[] {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) listStyleSources(full, acc);
+    else if (/\.(vue|css)$/.test(entry.name)) acc.push(full);
+  }
+  return acc;
+}
+
+/** 取一个文件里的 CSS（.vue 取全部 <style> 块），并剥掉注释 */
+function styleBlock(file: string): string {
+  const text = fs.readFileSync(file, 'utf8');
+  const css = file.endsWith('.css')
+    ? text
+    : [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n');
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+test('首页（欢迎页）的居中改成 auto 外边距：内容超一屏时顶部不再被截掉', () => {
+  // 用户报障原话「首页显示不全」：手机上 360×640 实测 inner 顶部 -155px，
+  // 滚到最顶（scrollTop=0）仍然是 -155px —— 日志/问候/库统计/第一张卡永远看不见。
+  const editor = readSrc('views/EditorView.vue');
+  const welcome = ruleBody(editor, '.welcome');
+  assert.match(welcome, /overflow-y:\s*auto/, '首页不再是可滚容器：超一屏的内容彻底够不着');
+  assert.doesNotMatch(
+    welcome,
+    /align-items:\s*center/,
+    '首页又用 align-items: center 居中：内容高于容器时顶部会溢到滚动原点之外，滚不回来',
+  );
+  assert.doesNotMatch(
+    welcome,
+    /justify-content:\s*center/,
+    '首页又用 justify-content: center 居中：与 align-items 同一个坑（溢出部分够不着）',
+  );
+  assert.match(
+    ruleBody(editor, '.welcome-inner'),
+    /margin:\s*auto/,
+    '首页内容块没有用 auto 外边距兜底居中：空间不足时不会自动回到顶部对齐',
+  );
+});
+
+test('全库不再出现「可滚动的 flex 容器在会溢出的方向上居中」', () => {
+  // 这是一整类 bug 的通用护栏：row 容器看 align-items、column 容器看 justify-content，
+  // 只要同时是滚动容器，溢出的那一端就会落在滚动原点之外（首页那次就是 row + align-items: center）。
+  const offenders: string[] = [];
+  for (const file of listStyleSources()) {
+    for (const rule of styleBlock(file).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = rule[1].trim().replace(/\s+/g, ' ');
+      const body = rule[2];
+      if (!/display:\s*flex/.test(body)) continue;
+      if (!/overflow(-y)?:\s*(auto|scroll)/.test(body)) continue;
+      const column = /flex-direction:\s*column/.test(body);
+      const hazard = column
+        ? /justify-content:\s*center/.test(body)
+        : /align-items:\s*center/.test(body);
+      if (hazard) offenders.push(`${path.relative(srcRoot, file)}: ${selector}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `这些滚动容器会在内容溢出时把内容推出滚动范围（顶部/左侧够不着）：\n${offenders.join('\n')}`,
+  );
 });
