@@ -1,15 +1,14 @@
 /**
- * 「记一条灵感」对话框的单态状态机：写（writing）→ 落盘（saving）→ 已记下待关框（queued），
- * 外加按钮三拍文案。
+ * 「记一条灵感」对话框的单态状态机：写（writing）→ 落盘（saving）→ **成功即关框**。
  *
- * 口径变化（2026-10，见 docs/IDEA-DISTILL-SPEC.md 4.3）：**删掉了「看一眼再记」的预览态**
- * 与随之而来的 `previewIdeaComposer / confirmIdeaComposer / backToEdit / canConfirmIdea /
- * draft / draftTitle / draftText`，以及只服务于预览的勘误/精炼摘要（`summarizeIdeaFixes /
- * summarizeIdeaRefine / summarizeIdeaChange`）——那些文案现在由后台提炼的通知统一说
- * （lib/ideaDistillFeed.ts）。所以旧文件里针对预览态与摘要的用例整体删除，不在这里保留。
+ * 口径变化（2026-10-02，用户回调）：原先落盘成功后还会在框里停一拍「已记下，正在后台提炼」，
+ * 1.2 秒后自动关；用户要求「点记下来就自动隐藏，记录完了通知一下」——所以这一拍连同
+ * `IDEA_QUEUED_AUTO_CLOSE_MS` 与 `queued` 状态一起删除：落盘一成功立刻关框、把结果回传给调用方
+ * （调用方跳转到这份灵感），后台提炼跑完由 lib/ideaDistillFeed.ts 弹通知。
  *
- * 本文件只测纯逻辑：落盘请求由测试注入的假 saver 代替，状态机保持无定时器——`queued` 那 1.2 秒
- * 的自动关框计时放在组件里（components/ui/IdeaComposer.vue），这里只锁「关框必须回传结果」。
+ * 更早一轮（2026-10）已删掉「看一眼再记」的预览态与勘误/精炼摘要（见 docs/IDEA-DISTILL-SPEC.md 4.3）。
+ *
+ * 本文件只测纯逻辑：落盘请求由测试注入的假 saver 代替，状态机没有定时器。
  * 组件本身没法在 node 里挂载，所以最后两条用例沿用 androidUiFit.test.ts 的写法：读源码断言
  * 关键声明（只剩一个输入框、窄屏按钮不换行、正文框自己滚）。
  * 测试由 node 内置类型擦除直接跑（web 包无额外测试框架），相对导入要带真实扩展名。
@@ -21,7 +20,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   IDEA_MAX_CHARS,
-  IDEA_QUEUED_AUTO_CLOSE_MS,
   canSubmitIdea,
   closeIdeaComposer,
   ideaComposerState,
@@ -71,22 +69,14 @@ test('Ctrl/Cmd + Enter 才提交：多行输入框里回车要留给换行', () 
   assert.equal(isIdeaSubmitKey({ key: 'Escape', ctrlKey: true, metaKey: false }), false);
 });
 
-test('按钮三拍文案：记下来 → 正在记下… → 已记下，正在后台提炼', () => {
+test('按钮两拍文案：记下来 → 正在记下…（没有第三拍）', () => {
   assert.equal(ideaSubmitLabel({ phase: 'writing', busy: false }), '记下来');
   assert.equal(ideaSubmitLabel({ phase: 'saving', busy: true }), '正在记下…');
   // busy 与 phase 理论上同步；任一个说「在落盘」就显示第二拍，不给用户再点一次的机会
   assert.equal(ideaSubmitLabel({ phase: 'saving', busy: false }), '正在记下…');
-  assert.equal(ideaSubmitLabel({ phase: 'queued', busy: false }), '已记下，正在后台提炼');
 });
 
-test('第三拍只作短暂确认：自动关框时长在 1~1.5 秒之间（停久了等于又让用户多等一次）', () => {
-  assert.ok(
-    IDEA_QUEUED_AUTO_CLOSE_MS >= 1000 && IDEA_QUEUED_AUTO_CLOSE_MS <= 1500,
-    `自动关框时长 ${IDEA_QUEUED_AUTO_CLOSE_MS}ms 不在「短暂确认」区间内`
-  );
-});
-
-test('落盘：正文 trim 后原样送服务端，在途是第二拍、成功后进第三拍（框还开着等自动关）', async () => {
+test('落盘：正文 trim 后原样送服务端，成功那一刻框就关了、结果回传调用方', async () => {
   resetComposer();
   const pending = openIdeaComposer();
   ideaComposerState.content = '  就是那个啊，北子所想确认样车尺寸。  ';
@@ -106,31 +96,13 @@ test('落盘：正文 trim 后原样送服务端，在途是第二拍、成功�
 
   release();
   await submit;
-  assert.equal(ideaComposerState.phase, 'queued');
-  assert.equal(ideaComposerState.busy, false);
-  assert.equal(ideaSubmitLabel(ideaComposerState), '已记下，正在后台提炼');
-  assert.equal(ideaComposerState.open, true, '第三拍还停在框里，等自动关或用户点「好，去做别的」');
-
-  closeIdeaComposer(null);
-  assert.deepEqual(await pending, saved);
-});
-
-test('已落盘后关框（点 ✕ / Esc / 遮罩 / 安卓返回都传 null）：结果照旧回调，不丢', async () => {
-  resetComposer();
-  const pending = openIdeaComposer();
-  ideaComposerState.content = '北子所想确认样车尺寸';
-  await submitIdeaComposer(async () => saved);
-  assert.equal(ideaComposerState.content, '北子所想确认样车尺寸', '第三拍还看得见刚记的原文');
-
-  // 安卓返回键走的正是 closeIdeaComposer(null)（lib/globalBackLayers.ts）：不能把结果弄丢
-  closeIdeaComposer(null);
-  assert.deepEqual(await pending, saved);
-  assert.equal(ideaComposerState.open, false);
-  assert.equal(ideaComposerState.phase, 'writing');
+  assert.equal(ideaComposerState.open, false, '落盘成功必须立刻关框（用户要求：点记下来就自动隐藏）');
+  assert.equal(ideaComposerState.phase, 'writing', '框关掉后状态复位，下次打开是干净的一拍');
   assert.equal(ideaComposerState.content, '', '已落盘的那条不再当草稿留着');
+  assert.deepEqual(await pending, saved, '结果要投给调用方，它才跳得过去');
 });
 
-test('落盘失败：留在第一拍、正文不丢、显示服务端原因；重试成功可进第三拍', async () => {
+test('落盘失败：留在第一拍、正文不丢、显示服务端原因；重试成功即关框', async () => {
   resetComposer();
   const pending = openIdeaComposer();
   ideaComposerState.content = '写了一半就失败的灵感';
@@ -141,23 +113,22 @@ test('落盘失败：留在第一拍、正文不丢、显示服务端原因；�
   assert.equal(ideaComposerState.busy, false);
   assert.equal(ideaComposerState.error, '磁盘写满了');
   assert.equal(ideaComposerState.content, '写了一半就失败的灵感');
+  assert.equal(ideaComposerState.open, true, '失败时框留着，让用户改一改再试');
 
   await submitIdeaComposer(async () => saved);
-  assert.equal(ideaComposerState.phase, 'queued');
   assert.equal(ideaComposerState.error, '', '重试成功后上一轮错误清掉');
-
-  closeIdeaComposer(null);
+  assert.equal(ideaComposerState.open, false);
   assert.deepEqual(await pending, saved);
 });
 
-test('服务端没回 id：当失败处理，不能停在第三拍骗用户「已记下」', async () => {
+test('服务端没回 id：当失败处理，不能装作「已记下」把框关掉', async () => {
   resetComposer();
   const pending = openIdeaComposer();
   ideaComposerState.content = '没有 id 的响应';
   await submitIdeaComposer(async () => ({ ...saved, id: '' }));
   assert.equal(ideaComposerState.phase, 'writing');
   assert.match(ideaComposerState.error, /没有返回页面 id/);
-  assert.equal(ideaComposerState.open, true);
+  assert.equal(ideaComposerState.open, true, '没真落盘就不能关框（关了就以为记上了）');
 
   closeIdeaComposer(null);
   assert.equal(await pending, null, '没落盘就不能回传结果，调用方不该跳转');
@@ -196,8 +167,7 @@ test('落盘在途不许取消：迟到的结果仍能投回调用方（安卓�
 
   release();
   await submit;
-  assert.equal(ideaComposerState.phase, 'queued');
-  closeIdeaComposer(null);
+  assert.equal(ideaComposerState.open, false, '成功即关框，不需要用户再点一次');
   assert.deepEqual(await pending, saved);
 });
 
@@ -214,10 +184,7 @@ test('落盘在途时再开一次（Ctrl+N 连按）：复用同一次会话，�
   const again = openIdeaComposer();
   release();
   await submit;
-  assert.equal(ideaComposerState.phase, 'queued', '在途时的第二次打开不该重置状态');
   assert.equal(again, pending, '复用同一个会话 promise');
-
-  closeIdeaComposer(null);
   assert.deepEqual(await pending, saved);
 });
 
@@ -237,7 +204,6 @@ test('落盘成功后重新打开：新会话是干净的一拍，上一条的�
   const first = openIdeaComposer();
   ideaComposerState.content = '第一条';
   await submitIdeaComposer(async () => saved);
-  closeIdeaComposer(null);
   assert.equal((await first)?.id, 'p1');
 
   const second = openIdeaComposer();
@@ -248,22 +214,16 @@ test('落盘成功后重新打开：新会话是干净的一拍，上一条的�
   assert.equal(await second, null, '新会话没落盘就是 null，不该拿到上一条的结果');
 });
 
-test('已落盘（第三拍）时又按 Ctrl+N：先把上一个结果投递掉，再开新会话，两次结果不混', async () => {
+test('连续记两条：第一条的跳转结果不被第二条顶掉', async () => {
   resetComposer();
   const first = openIdeaComposer();
   ideaComposerState.content = '第一条';
   await submitIdeaComposer(async () => saved);
-  assert.equal(ideaComposerState.phase, 'queued');
+  assert.deepEqual(await first, saved, '第一条成功即回传，调用方拿到就跳转');
 
   const second = openIdeaComposer();
-  assert.deepEqual(await first, saved, '第一次记的结果不能因为重开而丢');
-  assert.equal(ideaComposerState.open, true);
-  assert.equal(ideaComposerState.phase, 'writing');
-  assert.equal(ideaComposerState.content, '');
-
   ideaComposerState.content = '第二条';
   await submitIdeaComposer(async () => ({ ...saved, id: 'p2' }));
-  closeIdeaComposer(null);
   assert.equal((await second)?.id, 'p2');
 });
 
@@ -273,11 +233,14 @@ test('已落盘（第三拍）时又按 Ctrl+N：先把上一个结果投递掉�
 const composerVue = () =>
   fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'components', 'ui', 'IdeaComposer.vue'), 'utf8');
 
-test('对话框只剩一个正文输入框：预览态的字段与入口全删了', () => {
+test('对话框只剩一个正文输入框，且不再有「第三拍」的残留', () => {
   const src = composerVue();
   assert.equal((src.match(/<textarea/g) ?? []).length, 1, '预览态那个正文框还在：用户又得先看一眼再记');
   assert.doesNotMatch(src, /draftText|draftTitle|isPreview|previewIdeaComposer|confirmIdeaComposer/);
   assert.match(src, /随手写，标题不用起/, '提示语没换成「不预览、后台整理」的口径');
+  // 第三拍删干净：没有自动关框计时器、没有「好，去做别的」按钮
+  assert.doesNotMatch(src, /IDEA_QUEUED_AUTO_CLOSE_MS|autoCloseTimer|好，去做别的/, '「已记下」那一拍的残留还在');
+  assert.doesNotMatch(src, /onUnmounted/, '自动关框的计时器清理还留着（已经没有计时器了）');
 });
 
 test('窄屏（430px）可用：按钮排一行、键盘提示让位、正文框自己滚', () => {

@@ -33,13 +33,12 @@ export interface SubmittedIdea {
 }
 
 /**
- * 三拍：
- *   `writing` 记下来 → `saving`（busy）正在记下… → `queued` 已记下，正在后台提炼。
- * `queued` 只是**短暂确认**：组件停 `IDEA_QUEUED_AUTO_CLOSE_MS` 后自动关框，结果随关框
- * 回传给调用方；用户想立刻走开（点「好，去做别的」/✕/Esc/遮罩/安卓返回）也一样立刻关框，
- * 结果同样不丢（见 closeIdeaComposer）。
+ * 两拍：
+ *   `writing` 记下来 → `saving`（busy）正在记下… → 落盘成功**立刻关框**，结果回传调用方。
+ * 为什么不留「已记下，正在后台提炼」那一拍（2026-10-02 用户回调）：按下就该走人，
+ * 记录本身已经完成——提炼是后台的事，跑完由 lib/ideaDistillFeed.ts 弹通知，不必占着框等。
  */
-export type IdeaComposerPhase = 'writing' | 'saving' | 'queued';
+export type IdeaComposerPhase = 'writing' | 'saving';
 
 export interface IdeaComposerState {
   open: boolean;
@@ -64,15 +63,6 @@ type Resolver = (value: SubmittedIdea | null) => void;
 let resolver: Resolver | null = null;
 /** 当前这次对话框会话的 promise：落盘在途时重复打开要复用它，不能把结果投给新会话 */
 let pending: Promise<SubmittedIdea | null> | null = null;
-/** 已落盘、但用户还没关框的结果：关框时随会话回传（不能丢） */
-let queued: SubmittedIdea | null = null;
-
-/**
- * `queued` 第三拍在框里停留多久（毫秒）：只作**短暂确认**，到点自动关框并把结果回传。
- * 计时放在组件里（状态机保持无定时器，单测才确定），见 components/ui/IdeaComposer.vue。
- * 为什么这么短：这次改版要的就是「别让用户多点一次」——停久了等于又把决定权交回用户。
- */
-export const IDEA_QUEUED_AUTO_CLOSE_MS = 1200;
 
 /** 原稿是否可提交（纯函数，便于单测）：空白不算内容，超长不提交 */
 export function canSubmitIdea(content: string): boolean {
@@ -80,10 +70,9 @@ export function canSubmitIdea(content: string): boolean {
   return text.length > 0 && text.length <= IDEA_MAX_CHARS;
 }
 
-/** 主按钮文案：三拍的唯一来源（纯函数，便于把文案锁死在单测里） */
+/** 主按钮文案：两拍的唯一来源（纯函数，便于把文案锁死在单测里） */
 export function ideaSubmitLabel(state: Pick<IdeaComposerState, 'phase' | 'busy'>): string {
   if (state.busy || state.phase === 'saving') return '正在记下…';
-  if (state.phase === 'queued') return '已记下，正在后台提炼';
   return '记下来';
 }
 
@@ -96,34 +85,30 @@ export function isIdeaSubmitKey(event: { key: string; ctrlKey: boolean; metaKey:
  * 关闭对话框；`busy`（落盘在途）时**拒绝关闭**——文件可能已经写下，关掉会让结果投不回调用方
  * （用户看不到提示、也没跳转，以为没记上，往往再记一遍）。安卓返回键走的就是这条路径
  * （见 lib/globalBackLayers.ts，它传的是 null）。
- * `queued`（已落盘）后关闭 = 正常关闭，并把已落盘的结果回调给等待方（不能丢结果）。
  */
 export function closeIdeaComposer(result: SubmittedIdea | null = null): void {
   if (!ideaComposerState.open) return;
   if (ideaComposerState.busy) return;
-  // 已落盘的那条以会话里记着的结果为准：调用方（安卓返回、点 ✕）传 null 也不能把结果弄丢
-  const settled = ideaComposerState.phase === 'queued' ? queued ?? result : result;
   ideaComposerState.open = false;
   ideaComposerState.phase = 'writing';
   ideaComposerState.busy = false;
   ideaComposerState.error = '';
   // 落盘成功的那条不再当草稿留着；取消时正文保留，下次打开接着写
-  if (settled) ideaComposerState.content = '';
-  queued = null;
+  if (result) ideaComposerState.content = '';
   const done = resolver;
   resolver = null;
   pending = null;
-  done?.(settled);
+  done?.(result);
 }
 
 /**
- * 打开对话框；取消返回 null，落盘成功后（关框时）返回落盘结果。
+ * 打开对话框；取消返回 null，落盘成功后返回落盘结果（成功那一刻框已经自己关了）。
  * 落盘在途时（Ctrl+N 连按、安卓返回后重开）复用当前这次会话，否则第二次打开会把第一次的
  * 结果顶掉，还会让两个响应互相覆盖 state。
  */
 export function openIdeaComposer(): Promise<SubmittedIdea | null> {
   if (ideaComposerState.open && ideaComposerState.busy && pending) return pending;
-  // 已经开着（写一半 / 已落盘等关框）：先把上一次会话正常收尾，再开新的
+  // 已经开着（写一半）：先把上一次会话正常收尾，再开新的
   if (ideaComposerState.open) closeIdeaComposer(null);
   pending = new Promise((resolve) => {
     resolver = resolve;
@@ -143,9 +128,9 @@ function ideaErrorText(error: any): string {
 export type IdeaSaver = (content: string) => Promise<SubmittedIdea>;
 
 /**
- * 落盘：正文原样送服务端（标题交给后台任务拟），成功进 `queued`（第三拍），等用户关框；
- * 失败把原因留在对话框里（正文不动），用户可以改了重试或取消。
- * 这里不等后台提炼——落盘即结束，提炼结果由 ideaDistillFeed 跟踪。
+ * 落盘：正文原样送服务端（标题交给后台任务拟），**成功即关框**并把结果回传给调用方
+ * （调用方通常立刻跳转到这份灵感）；失败把原因留在对话框里（正文不动），用户可以改了重试或取消。
+ * 这里不等后台提炼——落盘即结束，提炼结果由 ideaDistillFeed 跟踪并弹通知。
  */
 export async function submitIdeaComposer(save: IdeaSaver): Promise<void> {
   if (ideaComposerState.busy || ideaComposerState.phase !== 'writing') return;
@@ -156,14 +141,16 @@ export async function submitIdeaComposer(save: IdeaSaver): Promise<void> {
   ideaComposerState.error = '';
   try {
     const saved = await save(content);
-    // 服务端契约保证有 id/path；真缺了就当失败，不能让第三拍骗用户「已记下」
+    // 服务端契约保证有 id/path；真缺了就当失败，不能装作「已记下」
     if (!saved?.id) throw new Error('服务端没有返回页面 id，这次可能没记上');
-    queued = saved;
-    ideaComposerState.phase = 'queued';
+    // 关框前先复位，否则 busy 会拒绝这次关闭（closeIdeaComposer 对 busy 直接 return）
+    ideaComposerState.busy = false;
+    closeIdeaComposer(saved);
   } catch (error: any) {
     ideaComposerState.phase = 'writing';
     ideaComposerState.error = ideaErrorText(error);
   } finally {
+    ideaComposerState.phase = 'writing';
     ideaComposerState.busy = false;
   }
 }
