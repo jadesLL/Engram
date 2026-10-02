@@ -1,5 +1,11 @@
 # 灵感自动提炼（idea-distill）· 接口契约（冻结稿）
 
+> **口径变更（2026-10-02，用户回调）**：第 5 节原先设计的「灵感纯净模式（只读成品页）」**已作废**。
+> 用户要求灵感页**与其它页面完全一致**：落页走沉浸阅读、抬头「返回编辑」进完整编辑器、
+> 页头 / 工具条 / 底部状态栏照常。现在只保留一行「后台提炼状态行」（ReadingPreview 的 `#status` 插槽：
+> 提炼中 / 失败 + 重新提炼），提炼完成就地换稿。实现见 `EditorView.vue` 的 `ideaDistillBanner`
+> 与 `components/ReadingPreview.vue` 的状态插槽；第 5 节其余内容只作历史记录保留。
+
 本文件是并行开发的**唯一接口来源**。改这里必须同步通知 Lead；实现细节可以自行决定，但下面这些签名、字段名、状态值、文件归属不能各写一套。
 
 工作目录：`C:\WorkSpace\Engram\worktrees\idea-distill\main`
@@ -7,7 +13,7 @@
 
 ## 0. 产品行为（一句话）
 
-写完灵感按下「记下来」→ **立即落盘**（原文、标题兜底）→ 后台任务勘误/精炼/拟标题/改名 → 完成后前端弹**可点通知** → 点开进**只读成品页**（灵感碎片的「纯净模式」）。不再有「看一眼再记」的二次确认。
+写完灵感按下「记下来」→ **立即落盘**（原文、标题兜底）→ 后台任务勘误/精炼/拟标题/改名 → 完成后前端弹**可点通知** → 点开这份灵感页（普通页面：沉浸阅读 + 完整编辑器；提炼未完成时文档头挂一行状态）。不再有「看一眼再记」的二次确认。
 
 ## 1. 文件归属（写作用域，勿越界）
 
@@ -26,7 +32,7 @@
 3. 状态推导的唯一纯函数：`routes/ideas.ts` 的 `ideaDistillState(page, job)`——`pending/paused→pending`、`running→running`、`done + result.staged=skipped-edit → skipped-edit`、`done→done`、`failed/cancelled→failed`、无页面/无任务→`unknown`（unknown 时字段全空且**不** 404）。
 4. 「重新提炼」= `POST /api/ideas/:id/distill/retry`：读当前磁盘内容 → sha256 → 入队；未知 id/文件不存在 404 `{error:'这条灵感已经不在了'}`；复用现有任务时返回 `reused: true`。
 5. 撰写对话框：落盘成功进 `queued`（按钮「已记下，正在后台提炼」），**约 1.2s 后自动关框**并把结果回传给调用方（用户在这段时间内点 ✕/Esc/遮罩也立即回传）；不做「等用户点关闭」。
-6. 纯净模式只作用于 `原始资料/灵感碎片/**`，**不依赖** `app.readingMode`（那是整页阅读视图，其他页面照旧）。
+6. （已作废）原「纯净模式」只作用于 `原始资料/灵感碎片/**` 且与 `app.readingMode` 解耦；现在**不再有专属形态**，灵感页跟着 `app.readingMode` 走（默认沉浸阅读）。
 
 
 ## 2. 服务端接口
@@ -187,7 +193,7 @@ export const notify: {
 ```ts
 /** 开始跟踪一条刚记下的灵感（落盘返回后调用）。内部轮询 /api/ideas/:id/distill，最多约 5 分钟。 */
 export function trackIdeaDistill(input: { id: string; path: string; jobId?: number | null; title?: string }): void;
-/** 成品页读「提炼中 → 完成」状态用；返回 reactive 的当前状态（无数据时 staged='unknown'） */
+/** 页面读「提炼中 → 完成」状态用；返回 reactive 的当前状态（无数据时 staged='unknown'） */
 export function useIdeaDistill(id: string): { current: IdeaDistillState };
 export interface IdeaDistillState {
   staged: 'unknown' | 'pending' | 'running' | 'done' | 'skipped-edit' | 'failed';
@@ -204,9 +210,9 @@ export interface IdeaDistillState {
 - 通知文案（Lead 定稿，前端不用另写）：
   - `running`：info，标题「正在后台提炼这条灵感」，正文「勘误专名 · 精炼正文 · 拟标题，做完会再提醒你一次。」，非 sticky。
   - `done`：success，**sticky + clickable**，标题「灵感已提炼完成」，正文 `《标题》· 精炼 96→72 字 · 勘误 2 处`（没有的段落省略）；动作：主「查看成品 →」（打开 `原始资料/灵感碎片` 里那份文件的纯净模式），次「稍后再看」（关掉通知）。
-  - `skipped-edit`：info，sticky，标题「灵感已提炼，但你改过正文」，正文「已保留你手改的版本，没有覆盖。」+ 主「查看」（同样进成品页）。
+  - `skipped-edit`：info，sticky，标题「灵感已提炼，但你改过正文」，正文「已保留你手改的版本，没有覆盖。」+ 主「查看」（同样进这份灵感页）。
   - `failed`：error，标题「这条灵感没能提炼」，正文用 `error`；动作：主「再试一次」（重新 `POST /api/ideas/:id/distill/retry` 暂不做 → 改成重新跟踪并提示「请在成品页点重新提炼」），次「知道了」。
-- 打开成品页的方式：`router.push('/page/' + id)`（灵感页会自动进纯净模式）。
+- 打开的方式：`router.push('/page/' + id)`——就是普通页面（默认沉浸阅读，抬头「返回编辑」进编辑器）。
 
 ### 4.3 `main/web/src/lib/ideaComposer.ts`（前端-撰写）
 
@@ -234,11 +240,11 @@ export interface SubmittedIdea {
 2. 调 `trackIdeaDistill(...)` 开始跟踪：**「正在后台提炼」与「提炼完成」两条通知都由跟踪层发**，本层不再自己弹 toast（真机验收里「已记下」与「正在后台提炼」曾同时挂在右上角）；
 3. 返回值保持 `{ id, path }` 兼容调用方（Home.vue / EditorView.vue 的跳转逻辑不改）。
 
-## 5. 前端阅读（纯净模式）
+## 5. 前端阅读（历史设计，已作废）
 
-- 「纯净模式」= `原始资料/灵感碎片/**` 的页面：**隐藏**页头控件区（分类下拉/标签/更新于）、工具条、底部状态栏与右下三个入口；只留：顶部返回 + 一行面包屑细字、标题（**展示时去掉 `YYYY.MM.DD_` 前缀**）、元信息行（记录时间 · 分类 · 字数 · 提炼状态）、正文、折叠「提炼明细」、底部动作（编辑改一改 / 重新提炼 / 复制正文 / 在完整编辑器里打开）。
+- ~~「纯净模式」= `原始资料/灵感碎片/**` 的页面~~（**已作废**，2026-10-02 用户要求灵感页与其它页面一致）：**隐藏**页头控件区（分类下拉/标签/更新于）、工具条、底部状态栏与右下三个入口；只留：顶部返回 + 一行面包屑细字、标题（**展示时去掉 `YYYY.MM.DD_` 前缀**）、元信息行（记录时间 · 分类 · 字数 · 提炼状态）、正文、折叠「提炼明细」、底部动作（编辑改一改 / 重新提炼 / 复制正文 / 在完整编辑器里打开）。
 - 编辑动作在**原地展开**（标题 input + 正文 textarea），不走 `app.readingMode` 的整页阅读视图；退出编辑回只读。
-- 「在完整编辑器里打开」= 走现有编辑器形态（`chrome` 恢复完整），本次用一次会话内的开关实现（`quietOverride` ref），刷新即回到纯净模式。
+- 「在完整编辑器里打开」不再需要：灵感页本来就是完整编辑器形态，抬头「返回编辑」即可。
 - 提炼中打开：顶部一条细提示「正在后台提炼…」，正文显示当前文件内容；状态变 `done` 后就地热更新（用 4.2 的 `useIdeaDistill`，内容更新走现有 `app.pageVersion` 触发的重载）。
 - 移动端（≤640px）同一套：动作收成一行横向可滚，不新增页面。
 
@@ -250,7 +256,7 @@ export interface SubmittedIdea {
 ## 7. 验收口径（Lead 最终跑）
 
 - `bash main/scripts/verify-feature.sh idea-distill`：build + typecheck + test 全绿。
-- 真实路径：写灵感 → 立刻见到成功提示 → 通知出现（可点）→ 点开成品页 → 改一改保存 → 状态变「已手动修改」。
+- 真实路径：写灵感 → 立刻见到成功提示 → 通知出现（可点）→ 点开就是普通灵感页（沉浸阅读，可返回编辑）。
 - 提炼期间改正文 → 状态 `skipped-edit`（手改版保住）。
 - 断模型凭据 → `failed` + 「再试一次」入口可见（不丢原文）。
 - 明暗两套 + 430/900/1440 三档无横向溢出。
