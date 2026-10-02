@@ -2,12 +2,31 @@
   <Teleport to="body">
     <div class="toast-stack" role="status" aria-live="polite">
       <TransitionGroup name="toast">
-        <div v-for="item in toastState.items" :key="item.id" class="app-toast" :class="item.kind">
+        <div
+          v-for="item in toastState.items"
+          :key="item.id"
+          class="app-toast"
+          :class="[item.kind, { clickable: item.clickable, rich: item.title || item.actions?.length }]"
+          @click="item.clickable && onCardClick(item)"
+        >
           <span class="toast-icon">
             <Icon :name="iconFor(item.kind)" :size="15" />
           </span>
-          <span class="toast-text">{{ item.text }}</span>
-          <button class="btn icon toast-close" aria-label="关闭通知" @click="dismissToast(item.id)">
+          <div class="toast-body">
+            <p v-if="item.title" class="toast-title">{{ item.title }}</p>
+            <p class="toast-text">{{ item.text }}</p>
+            <div v-if="item.actions?.length" class="toast-actions">
+              <button
+                v-for="(action, i) in item.actions"
+                :key="i"
+                type="button"
+                class="toast-action"
+                :class="{ primary: action.primary }"
+                @click.stop="runAction(item.id, action)"
+              >{{ action.label }}</button>
+            </div>
+          </div>
+          <button class="btn icon toast-close" aria-label="关闭通知" @click.stop="dismissToast(item.id)">
             <Icon name="x" :size="13" />
           </button>
         </div>
@@ -18,12 +37,27 @@
 
 <script setup lang="ts">
 import Icon from '../Icon.vue';
-import { dismissToast, toastState, type ToastKind } from '../../lib/notify';
+import { dismissToast, toastState, type ToastAction, type ToastItem, type ToastKind } from '../../lib/notify';
 
 function iconFor(kind: ToastKind): string {
   if (kind === 'success') return 'check';
   if (kind === 'error') return 'x';
   return 'activity';
+}
+
+/**
+ * 动作执行完就把这条收走：动作本身就是「我处理过了」（去查看 / 知道了），
+ * 留着会挡住下一张通知——用户已经点过一次的提示不该再要求他点第二次。
+ */
+function runAction(id: number, action: ToastAction) {
+  dismissToast(id);
+  action.onClick();
+}
+
+/** 整卡可点 = 触发第一个动作；没有动作时不响应（纯提示不该看起来能点） */
+function onCardClick(item: ToastItem) {
+  const first = item.actions?.[0];
+  if (first) runAction(item.id, first);
 }
 </script>
 
@@ -55,6 +89,12 @@ function iconFor(kind: ToastKind): string {
   background: var(--card-bg);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px -12px rgba(0, 0, 0, 0.14);
 }
+/* 带标题/动作的通知：图标与关闭按钮对齐第一行，不再垂直居中整块 */
+.app-toast.rich { align-items: flex-start; }
+.app-toast.rich .toast-icon { margin-top: 2px; }
+.app-toast.rich .toast-close { margin-top: 1px; }
+.app-toast.clickable { cursor: pointer; }
+.app-toast.clickable:hover { border-color: var(--border-strong); background: var(--bg-hover); }
 :global(html.dark) .app-toast {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -10px rgba(0, 0, 0, 0.6);
 }
@@ -69,13 +109,42 @@ function iconFor(kind: ToastKind): string {
 .app-toast.error .toast-icon { color: var(--danger); }
 .app-toast.info .toast-icon { color: var(--accent); }
 
-.toast-text {
+.toast-body {
   min-width: 0;
   flex: 1;
+}
+.toast-title {
+  margin: 0;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.toast-text {
+  margin: 0;
   font-size: var(--font-sm);
   line-height: 1.45;
   word-break: break-word;
 }
+.toast-title + .toast-text { margin-top: 3px; }
+
+.toast-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  flex-wrap: wrap;
+}
+.toast-action {
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.toast-action:hover { background: var(--bg-hover); color: var(--text); }
+.toast-action.primary { color: var(--accent); font-weight: 600; }
+.toast-action.primary:hover { background: var(--accent-soft, var(--bg-hover)); color: var(--accent); }
+
 .toast-close {
   flex: none;
   width: 20px;

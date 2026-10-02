@@ -1,189 +1,124 @@
 <template>
   <AppModal
     :open="ideaComposerState.open"
-    :title="isPreview ? '看一眼再记' : '记一条灵感'"
+    title="记一条灵感"
     width="min(560px, 94vw)"
     :auto-focus="false"
     :close-on-mask="!ideaComposerState.busy"
-    @close="onCancel"
+    @close="onClose"
   >
-    <!-- 第一步：写正文（标题不用起，Engram 读完整段再拟） -->
-    <template v-if="!isPreview">
-      <p class="idea-hint">
-        正文随便写，标题不用起——Engram 会读完这段正文替你拟标题，顺手把错别字改掉、
-        理通顺、把啰嗦的地方精简掉；落盘前先给你看一眼。
-      </p>
-      <textarea
-        ref="inputRef"
-        v-model="ideaComposerState.content"
-        class="idea-input"
-        rows="7"
-        :maxlength="IDEA_MAX_CHARS"
-        :disabled="ideaComposerState.busy"
-        placeholder="例如：北自所那边想确认一下样车尺寸，下周二之前要给回复"
-        spellcheck="false"
-        @keydown="onKeydown"
-      />
-    </template>
-
-    <!-- 第二步：预览定稿（标题与正文都能直接改，确认才落盘） -->
-    <template v-else>
-      <p class="idea-hint">
-        Engram 把这段整理成下面这样{{ hintSuffix }}，标题和正文都能直接改；
-        不满意点「返回重写」，原稿还在。
-      </p>
-      <label class="idea-label" for="idea-draft-title">标题</label>
-      <input
-        id="idea-draft-title"
-        v-model="ideaComposerState.draftTitle"
-        class="idea-title"
-        type="text"
-        :maxlength="IDEA_TITLE_INPUT_MAX"
-        :disabled="ideaComposerState.busy"
-        placeholder="随手记"
-      />
-      <label class="idea-label" for="idea-draft-text">正文</label>
-      <textarea
-        id="idea-draft-text"
-        ref="draftRef"
-        v-model="ideaComposerState.draftText"
-        class="idea-input idea-draft"
-        rows="9"
-        :maxlength="IDEA_MAX_CHARS"
-        :disabled="ideaComposerState.busy"
-        spellcheck="false"
-        @keydown="onKeydown"
-      />
-    </template>
+    <!-- 单态：只有一个正文输入框（预览态已删，见 docs/IDEA-DISTILL-SPEC.md 4.3） -->
+    <p class="idea-hint">
+      随手写，标题不用起——记下来之后 Engram 会在后台整理，整理完提醒你。
+    </p>
+    <textarea
+      ref="inputRef"
+      v-model="ideaComposerState.content"
+      class="idea-input"
+      rows="7"
+      :maxlength="IDEA_MAX_CHARS"
+      :disabled="!writable"
+      placeholder="例如：北自所那边想确认一下样车尺寸，下周二之前要给回复"
+      spellcheck="false"
+      @keydown="onKeydown"
+    />
     <p v-if="ideaComposerState.error" class="idea-error">{{ ideaComposerState.error }}</p>
     <template #footer>
-      <template v-if="isPreview">
-        <span class="idea-keys">Ctrl + Enter 确认</span>
-        <button class="btn" :disabled="ideaComposerState.busy" @click="back">返回重写</button>
-        <button class="btn primary" :disabled="!confirmable" @click="confirm()">
-          <AppSpinner v-if="ideaComposerState.busy" :size="12" />
-          {{ ideaComposerState.busy ? '正在落盘…' : '确认记下来' }}
-        </button>
-      </template>
-      <template v-else>
-        <span class="idea-keys">Ctrl + Enter 记下来</span>
-        <button class="btn" :disabled="ideaComposerState.busy" @click="onCancel">取消</button>
-        <button class="btn primary" :disabled="!submittable" @click="submit()">
-          <AppSpinner v-if="ideaComposerState.busy" :size="12" />
-          {{ ideaComposerState.busy ? '正在校对并精炼…' : '记下来' }}
-        </button>
-      </template>
+      <!-- 键盘提示只在真有 Ctrl 键的设备上显示（口径与 lib/pointer.ts / 编辑器欢迎页一致）：
+           手机横屏（>640px）也够不着 Ctrl，提示只是噪声 -->
+      <span v-if="!touchPointer" class="idea-keys">Ctrl + Enter 记下来</span>
+      <button v-if="queued" class="btn" @click="onClose">好，去做别的</button>
+      <button v-else class="btn" :disabled="ideaComposerState.busy" @click="onClose">取消</button>
+      <button class="btn primary" :disabled="!submittable" @click="submit()">
+        <AppSpinner v-if="ideaComposerState.busy" :size="12" />
+        {{ label }}
+      </button>
     </template>
   </AppModal>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import AppModal from './AppModal.vue';
 import AppSpinner from './AppSpinner.vue';
 import { api } from '../../api';
+import { useTouchPointer } from '../../lib/pointer';
 import {
   IDEA_MAX_CHARS,
-  IDEA_TITLE_INPUT_MAX,
-  backToEdit,
-  canConfirmIdea,
+  IDEA_QUEUED_AUTO_CLOSE_MS,
   canSubmitIdea,
   closeIdeaComposer,
-  confirmIdeaComposer,
   ideaComposerState,
+  ideaSubmitLabel,
   isIdeaSubmitKey,
-  previewIdeaComposer,
-  summarizeIdeaChange,
-  type IdeaDraft,
-  type IdeaRefine,
+  submitIdeaComposer,
+  type SubmittedIdea,
 } from '../../lib/ideaComposer';
 
 /**
- * 提交通道两段：`POST /api/ideas/preview`（勘误 + 精炼 + 拟标题，不落盘）→ 用户看一眼并确认 →
- * `POST /api/ideas`（落盘，带用户改过的标题与正文）。勘误/精炼明细只在预览那一步拿得到，
- * 确认时随 note 回传，进 AI 工作区的操作日志。
+ * 落盘：**只送正文**。标题交给后台任务 `idea_distill` 拟——服务端见到 `title` 字段会走
+ * 「即所见即所得、不入队提炼」的老路（手机端老版本/脚本还在用那条），新客户端不再走。
  */
-async function postPreview(content: string): Promise<IdeaDraft> {
-  const { data } = await api.post('/api/ideas/preview', { content });
-  const reason = data?.refined?.reason;
+async function postSave(content: string): Promise<SubmittedIdea> {
+  const { data } = await api.post('/api/ideas', { content });
+  const jobId = Number(data?.jobId);
   return {
-    title: String(data?.title || ''),
-    titleSource: data?.titleSource === 'model' ? 'model' : 'heuristic',
-    text: String(data?.text || ''),
-    fixes: (Array.isArray(data?.fixes) ? data.fixes : []).map((fix: any) => ({
-      wrong: String(fix?.wrong ?? ''),
-      right: String(fix?.right ?? ''),
-      kind: fix?.kind ? String(fix.kind) : null,
-    })),
-    pending: Array.isArray(data?.pending) ? data.pending.map((item: any) => String(item)) : [],
-    refined: {
-      applied: Boolean(data?.refined?.applied),
-      before: Number(data?.refined?.before ?? 0),
-      after: Number(data?.refined?.after ?? 0),
-      reason: reason ? (String(reason) as IdeaRefine['reason']) : undefined,
-    },
-  };
-}
-
-async function postSave(input: { content: string; title: string; note: string }) {
-  const { data } = await api.post('/api/ideas', input);
-  return {
-    id: String(data.id),
-    path: String(data.path),
-    title: String(data.title || input.title),
+    id: String(data?.id ?? ''),
+    path: String(data?.path ?? ''),
+    title: String(data?.title || '随手记'),
+    // 服务端去重或没有任务时回 null/undefined：状态查询接口会兜底，不在这里造 id
+    jobId: Number.isFinite(jobId) && jobId > 0 ? jobId : null,
   };
 }
 
 const inputRef = ref<HTMLTextAreaElement>();
-const draftRef = ref<HTMLTextAreaElement>();
-
-const isPreview = computed(() => ideaComposerState.step === 'preview');
-/** 提交中也要禁用，避免重复提交 */
+const touchPointer = useTouchPointer();
+const queued = computed(() => ideaComposerState.phase === 'queued');
+/** 落盘中与已落盘都不给改：前者别让用户改到一半被写走，后者是「已经记下了」 */
+const writable = computed(() => !ideaComposerState.busy && !queued.value);
 const submittable = computed(
-  () => canSubmitIdea(ideaComposerState.content) && !ideaComposerState.busy
+  () => canSubmitIdea(ideaComposerState.content) && !ideaComposerState.busy && !queued.value
 );
-const confirmable = computed(
-  () => canConfirmIdea(ideaComposerState.draftText) && !ideaComposerState.busy
+const label = computed(() => ideaSubmitLabel(ideaComposerState));
+
+let autoCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearAutoClose() {
+  if (!autoCloseTimer) return;
+  clearTimeout(autoCloseTimer);
+  autoCloseTimer = null;
+}
+
+/**
+ * 第三拍（queued）只作短暂确认：到点自动关框，结果随关框回传给调用方（quickNote 拿到就提示
+ * 并跳转）。用户想立刻走开，点「好，去做别的」/✕/Esc/遮罩/安卓返回都走同一条 close 路径。
+ */
+watch(
+  () => ideaComposerState.phase,
+  (phase) => {
+    clearAutoClose();
+    if (phase !== 'queued') return;
+    autoCloseTimer = setTimeout(() => {
+      autoCloseTimer = null;
+      closeIdeaComposer(null);
+    }, IDEA_QUEUED_AUTO_CLOSE_MS);
+  }
 );
 
-/** 预览提示：改了什么（勘误/精炼）与为什么没精炼，让用户知道 Engram 动过哪里 */
-const hintSuffix = computed(() => {
-  const draft = ideaComposerState.draft;
-  if (!draft) return '';
-  const parts: string[] = [];
-  if (draft.titleSource === 'heuristic') parts.push('未接模型，标题按正文首句取的');
-  const change = summarizeIdeaChange(draft.fixes, draft.pending, draft.refined);
-  if (change) parts.push(change);
-  return parts.length ? `（${parts.join('；')}）` : '';
-});
+onUnmounted(clearAutoClose);
 
-/** 取消 = 关框；原稿留在状态里，下次打开继续写 */
-function onCancel() {
-  if (ideaComposerState.busy) return;
+/** 关闭：落盘在途时 closeIdeaComposer 自己会拒绝；已落盘时它把结果回传给调用方（不能丢） */
+function onClose() {
   closeIdeaComposer(null);
 }
 
-/** 预览态返回重写：回编辑态，原稿不丢 */
-function back() {
-  backToEdit();
-  void nextTick(() => inputRef.value?.focus());
-}
-
 function submit() {
-  void previewIdeaComposer(postPreview);
-}
-
-function confirm() {
-  void confirmIdeaComposer(postSave);
+  void submitIdeaComposer(postSave);
 }
 
 function onKeydown(event: KeyboardEvent) {
   if (!isIdeaSubmitKey(event)) return;
   event.preventDefault();
-  if (isPreview.value) {
-    if (confirmable.value) confirm();
-    return;
-  }
   if (submittable.value) submit();
 }
 
@@ -196,16 +131,6 @@ watch(
     // 光标落在末尾（接着上次没写完的草稿写）
     const end = inputRef.value?.value.length ?? 0;
     inputRef.value?.setSelectionRange(end, end);
-  }
-);
-
-watch(
-  () => ideaComposerState.step,
-  async (step) => {
-    if (step !== 'preview') return;
-    // 聚焦正文，键盘用户可以直接 Ctrl + Enter 确认
-    await nextTick();
-    draftRef.value?.focus();
   }
 );
 </script>
@@ -232,6 +157,8 @@ watch(
   font-size: var(--font-sm);
   line-height: 1.7;
   resize: vertical;
+  /* 窄屏（手机 430px）下正文比框高：框内自己滚，别把按钮挤出视野 */
+  overflow-y: auto;
   outline: none;
 }
 
@@ -246,36 +173,6 @@ watch(
   cursor: default;
 }
 
-.idea-label {
-  display: block;
-  margin: 10px 0 4px;
-  font-size: var(--font-sm);
-  color: var(--text-secondary);
-}
-
-.idea-title {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--control-border);
-  border-bottom-color: var(--control-border-strong);
-  border-radius: 8px;
-  background: var(--control-bg);
-  color: var(--text);
-  font-family: inherit;
-  font-size: var(--font-sm);
-  outline: none;
-}
-
-.idea-title:focus {
-  background: var(--control-bg-hover);
-  border-bottom-color: var(--accent);
-  box-shadow: inset 0 -1px 0 var(--accent);
-}
-
-.idea-draft {
-  min-height: 176px;
-}
-
 .idea-error {
   margin: 8px 0 0;
   font-size: var(--font-sm);
@@ -287,11 +184,35 @@ watch(
   align-self: center;
   font-size: var(--font-sm);
   color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* 底部按钮排一行不换行（AppModal 的 footer 是 flex 容器，选择器穿透用 :deep） */
+:deep(.app-modal-foot) {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.btn {
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .btn.primary {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  justify-content: center;
+}
+
+/* 手机上（<=640px 手机档）藏掉键盘提示：那档没有 Ctrl 键，腾出的位置留给按钮，
+   保证「好，去做别的」+「已记下，正在后台提炼」在 430px 屏上一行放得下。
+   断点只用仓库规范的 640/768/1024 三档（见 styles/main.css 与 lib/mobileLayout.test.ts）。 */
+@media (max-width: 640px) {
+  .idea-keys {
+    display: none;
+  }
 }
 </style>

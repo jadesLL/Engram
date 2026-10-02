@@ -24,8 +24,19 @@
     />
     <span class="page-title" v-tooltip.auto="file.name">{{ file.name }}</span>
     <span class="row-trailing">
+      <!-- 灵感提炼状态（kind=idea_distill）优先占行尾这一格：它是文件「当前正在发生」的事，
+           与提取进度互斥（同一行只有一个 76px 状态位），排在前面才不会被打断 -->
       <span
-        v-if="job"
+        v-if="distill"
+        class="row-status distill-flag"
+        :class="distill.kind"
+        v-tooltip="distill.kind === 'running' ? '正在后台提炼这条灵感' : '提炼失败：原文已保存，进成品页可重新提炼'"
+      >
+        <AppSpinner v-if="distill.kind === 'running'" :size="10" />
+        {{ distill.label }}
+      </span>
+      <span
+        v-else-if="job"
         class="row-status ingest-progress"
         v-tooltip="job.detail || job.stage"
       >
@@ -85,6 +96,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import Icon from './Icon.vue';
+import AppSpinner from './ui/AppSpinner.vue';
 import { humanError } from '../lib/ingestError';
 
 const props = defineProps<{
@@ -94,6 +106,13 @@ const props = defineProps<{
   selectionMode?: boolean;
   /** 该文件当前正在进行的提取任务进度，无则 null */
   job?: any;
+  /**
+   * 灵感提炼状态（Sidebar 按 payload.path 精确匹配后传入），无则 null。
+   * 与 `job` 分开传而不是塞进 job：两者文案口径不同（提炼是「提炼中」，提取是阶段 + 百分比），
+   * 且 done/pending 按 SPEC 第 6 节不在行上加徽标——判断留在纯函数里（lib/ideaDistill.ts），
+   * 组件只负责画出来。
+   */
+  distill?: { label: string; kind: 'running' | 'failed' } | null;
 }>();
 const emit = defineEmits(['open', 'toggle-select', 'remove', 'context-menu']);
 
@@ -257,6 +276,17 @@ function fileIconClass(ext: string): string {
 .ingested-flag.warning { color: var(--warning); }
 .ingested-flag.extracted { color: var(--accent); }
 .ingested-flag.distilled { color: var(--success); }
+
+/* 灵感提炼状态：running 带小转圈（AppSpinner 自转），failed 用告警色。
+   位置/悬停让位沿用 .row-status（悬停时状态让给行内操作按钮），不另起一套定位 */
+.distill-flag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+.distill-flag.running { color: var(--accent); }
+.distill-flag.failed { color: var(--danger); }
 
 .ingest-progress {
   padding: 1px 5px;
