@@ -501,7 +501,7 @@ async function quickNote() {
   const created = await createIdeaNote();
   if (!created) return;
   sidebarRef.value?.load();
-  app.setReadingMode(false);
+  // 不开「强制编辑器」：灵感页现在就是普通页面，跟着全站形态走（默认沉浸阅读，抬头「返回编辑」进编辑器）
   router.push(`/page/${created.id}`);
 }
 

@@ -30,7 +30,7 @@
         v-if="distill"
         class="row-status distill-flag"
         :class="distill.kind"
-        v-tooltip="distill.kind === 'running' ? '正在后台提炼这条灵感' : '提炼失败：原文已保存，进成品页可重新提炼'"
+        v-tooltip="distill.kind === 'running' ? '正在后台提炼这条灵感' : '提炼失败：原文已保存，进灵感页可重新提炼'"
       >
         <AppSpinner v-if="distill.kind === 'running'" :size="10" />
         {{ distill.label }}

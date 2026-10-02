@@ -80,7 +80,7 @@ test('服务端去重命中、没有 jobId：照样开始跟踪，jobId 传 null
   assert.deepEqual(tracks, [{ id: 'p1', path: saved.path, jobId: null, title: '随手记' }]);
 });
 
-test('默认实现真的接上了 tracker：成品页立刻能读到这条标签与路径', async () => {
+test('默认实现真的接上了 tracker：灵感页立刻能读到这条标签与路径', async () => {
   resetComposer();
   resetIdeaDistill();
   try {
@@ -90,7 +90,7 @@ test('默认实现真的接上了 tracker：成品页立刻能读到这条标签
     closeIdeaComposer(null);
     assert.deepEqual(await note, { id: 'p1', path: saved.path });
 
-    // trackIdeaDistill 起跟踪时先按「排队中」占位（随后由轮询纠正），成品页因此立刻能读到标题与路径
+    // trackIdeaDistill 起跟踪时先按「排队中」占位（随后由轮询纠正），灵感页因此立刻能读到标题与路径
     const current = useIdeaDistill(saved.id).current;
     assert.equal(current.staged, 'pending');
     assert.equal(current.path, saved.path);

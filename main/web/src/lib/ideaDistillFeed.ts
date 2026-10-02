@@ -4,11 +4,11 @@
  * 为什么要有这一层：提炼是异步的（用户按下「记下来」时服务端只落了盘），完成那一刻没有任何
  * 请求停在页面上等结果。要么每个调用点各写一套轮询，要么收拢成一个模块——这里收拢：
  *   - 落盘返回后 `trackIdeaDistill()` 起一条跟踪；
- *   - 成品页用 `useIdeaDistill(id)` 读同一份状态（提炼中 → 完成就地换稿）；
+ *   - 页面用 `useIdeaDistill(id)` 读同一份状态（灵感页头上的状态行、提炼完成就地换稿）；
  *   - 「成没成」由服务端 `/api/ideas/:id/distill` 说了算，前端只做展示与通知。
  *
  * 轮询节奏：12s 之前每 1.5s 一次（多数灵感十几秒内完成，早拿到早提醒），之后退到 5s；
- * 上限 5 分钟（模型慢到超过这个量级的，用户回来看成品页时状态会被重新拉一次）。
+ * 上限 5 分钟（模型慢到超过这个量级的，用户回来打开这页时状态会被重新拉一次）。
  */
 import { reactive, readonly } from 'vue';
 // 相对导入必须带真实扩展名：web 包用 node 内置类型擦除直接跑 *.test.ts（Vite 侧 tsconfig 开了
@@ -97,7 +97,7 @@ export interface DistillToast {
   kind: 'success' | 'error' | 'info';
   title: string;
   text: string;
-  /** 主动作：打开成品页 */
+  /** 主动作：打开灵感页 */
   view?: 'done' | 'skipped-edit';
   /** 失败时才给的重试动作 */
   retry?: boolean;
@@ -147,7 +147,7 @@ export function distillToastFor(state: IdeaDistillState): DistillToast | null {
 }
 
 /**
- * 「打开成品页」的跳转实现由调用方注册（quickNote 里包一层 vue-router）。
+ * 「打开灵感页」的跳转实现由调用方注册（quickNote 里包一层 vue-router）。
  * 本模块不 import router：router.ts → stores/app.ts 与 lib 层存在引用链，
  * 反向 import 容易绕成环；一个显式注册点比隐式循环依赖好读也好测。
  */
@@ -217,7 +217,7 @@ function notifyOnce(id: string, state: IdeaDistillState, tracker: Tracker) {
   const actions = [] as { label: string; onClick: () => void; primary?: boolean }[];
   if (spec.view) {
     actions.push({
-      label: spec.view === 'skipped-edit' ? '查看' : '查看成品 →',
+      label: '查看',
       primary: true,
       onClick: () => openIdeaPage(id),
     });
@@ -295,7 +295,7 @@ export function trackIdeaDistill(input: { id: string; path: string; jobId?: numb
 /**
  * 通知里那张「再试一次」：重新入队一次提炼并**重启跟踪**（失败时跟踪链已经收工，
  * 不重新起链就再也不会弹完成通知）。
- * 这里直接打接口而不复用成品页的 retryIdeaDistill：那是阅读层的按钮（失败要静默降级），
+ * 这里直接打接口而不复用灵感页的 retryIdeaDistill：那是阅读层的按钮（失败要静默降级），
  * 通知层需要的是「成了继续跟、没成告诉用户」——两件事的失败口径不同，各写各的更清楚。
  */
 async function retryFromToast(id: string, path: string): Promise<void> {
@@ -318,7 +318,7 @@ export function stopTrack(id: string): void {
   trackers.delete(id);
 }
 
-/** 成品页用：读一条灵感的提炼状态；面板打开时补一次拉取（跨页面回来能看到最新） */
+/** 灵感页用：读一条灵感的提炼状态；面板打开时补一次拉取（跨页面回来能看到最新） */
 export function useIdeaDistill(id: string): { current: IdeaDistillState } {
   const current = stateOf(id);
   if (current.staged === 'unknown') void fetchDistill(id).then((state) => state && applyState(id, state));
