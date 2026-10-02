@@ -82,6 +82,10 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     private val linkLanUrlsSetting = "sync_lan_urls"
     private val linkPreferLanSetting = "sync_prefer_lan"
     private val deviceLabelSetting = "sync_device_label"
+    /** 上次核对「已提炼」标记的时刻（节流用；与内容同步的 lastSyncAt 分开记） */
+    private val ledgerMarksAtSetting = "sync_ledger_marks_at"
+    /** 前台同步很频繁，标记核对默认每 5 分钟一次（手动全量对账不受此限） */
+    private val ledgerMarksIntervalMs = 5 * 60_000L
 
     /** 当前实际在用的基地址；null = 还没择优过，按配置的中枢地址走 */
     @Volatile private var activeBase: String? = null
@@ -99,6 +103,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     private val unknownKinds = mutableSetOf<String>()
     /** 中枢还没有连接通告端点时只提醒一条，别每轮刷屏 */
     private var announceMissingLogged = false
+    /** 中枢还没有「已提炼标记」端点（旧中枢）时只记一条 */
+    private val marksEndpointMissing = AtomicBoolean(false)
 
     fun onForeground() { foreground = true; cancelled = false; request(false) }
 
@@ -132,6 +138,14 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                     reconcile()
                 }
                 converge()
+                try {
+                    refreshLedgerMarks(force = full)
+                } catch (e: Cancelled) {
+                    throw e
+                } catch (e: Exception) {
+                    // 标记没对齐不该把整轮同步判失败：内容已经落地，下一轮再试
+                    db.log("warn", "ledger-marks-failed", "已提炼标记没能对齐：${e.message ?: e.javaClass.simpleName}（下一轮再试）")
+                }
                 connected = true
                 lastError = null
                 lastSyncAt = Instant.now().toString().also { db.setSetting("sync_last_at", it) }
@@ -173,6 +187,72 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             val changed = pullChanges()
             if (db.outboxCount() == 0 && !changed) return
         }
+    }
+
+    /**
+     * 把中枢的「已提炼」标记对齐到本机。
+     *
+     * 标记只存在于账本（source_versions / page_contributions）里，**没有对应的同步 op**：
+     * 不走一次全量对账就永远学不到。桌面 / Docker 成员端有周期自愈对账兜底，手机端只有前台
+     * 事件触发的一轮同步——首轮绑定时的全量对账只覆盖「那一刻」的标记，中枢之后新提炼的资料
+     * 在手机上就一直不带「已提炼」（用户看到：电脑上标了，手机没标）。
+     *
+     * 这里按中枢的轻量标记清单（`/api/sync/distilled`，只回路径）比一次差集，只对差异项拉
+     * `/api/sync/evidence`：既不必为几个标记把整份清单（每条路径 + hash）拉下来，也能把标记
+     * 取消（中枢那边来源版本不再是 active）照样收回来。
+     *
+     * 节流：前台同步很频繁，默认每 5 分钟最多查一次；手动全量对账（force）强制查。
+     */
+    private fun refreshLedgerMarks(force: Boolean) {
+        val now = System.currentTimeMillis()
+        val last = db.setting(ledgerMarksAtSetting)?.toLongOrNull() ?: 0L
+        if (!force && now - last < ledgerMarksIntervalMs) return
+        checkActive()
+        syncProgress = "正在核对已提炼标记"
+        val response = try {
+            getJson("/api/sync/distilled")
+        } catch (error: Exception) {
+            // 中枢比本端旧（没有这个端点）：不必每轮重试，记一条并说明兜底路径
+            if (error.message?.contains("404") == true) {
+                if (marksEndpointMissing.compareAndSet(false, true)) {
+                    db.log(
+                        "info",
+                        "ledger-marks-unsupported",
+                        "中枢还没有「已提炼标记」接口，标记要等下一次全量对账才能补齐",
+                    )
+                }
+                db.setSetting(ledgerMarksAtSetting, now.toString())
+                return
+            }
+            throw error
+        }
+        db.setSetting(ledgerMarksAtSetting, now.toString())
+        val raw = response.optJSONArray("paths") ?: return
+        val hub = LinkedHashSet<String>()
+        for (i in 0 until raw.length()) raw.optString(i).takeIf { it.isNotBlank() }?.let(hub::add)
+        val plan = LedgerMarks.plan(hub, db.distilledPaths())
+        if (!plan.changed) return
+        for (path in plan.add) {
+            checkActive()
+            // 账本能就近补上就一起补（证据抽屉要能复核）；取不回来时只打标记，不假装有账本
+            val snapshot = try {
+                getJson("/api/sync/evidence?path=${encode(path)}").optJSONObject("snapshot")
+            } catch (error: Cancelled) {
+                throw error
+            } catch (_: Exception) {
+                null
+            }
+            if (snapshot != null) db.saveEvidence(path, snapshot) else db.markDistilled(path, true)
+        }
+        for (path in plan.clear) db.markDistilled(path, false)
+        roundChanges += plan.add.size + plan.clear.size
+        db.bumpContentRevision()
+        db.log(
+            "info",
+            "ledger-marks",
+            "已提炼标记已对齐：新增 ${plan.add.size} 项、取消 ${plan.clear.size} 项",
+            toJson(mapOf("paths" to (plan.add + plan.clear).take(20), "added" to plan.add.size, "cleared" to plan.clear.size)),
+        )
     }
 
     private fun pushOutbox() {

@@ -71,11 +71,31 @@ test('事件标签表覆盖服务端全部事件（前端漏标签会导致抽�
     'sync-done', 'sync-paused', 'sync-failed', 'changes-too-large',
     'pull-page', 'pull-file', 'pull-delete', 'pull-move', 'pull-local-newer',
     'push-page', 'push-file', 'push-delete', 'push-move',
+    'ledger-marks', 'ledger-marks-failed', 'ledger-marks-unsupported',
   ];
   for (const event of [...serverEvents, ...androidEvents]) {
     assert.ok(SYNC_EVENT_META[event], `事件 ${event} 缺少中文标签`);
     assert.ok(eventLabel(event) !== event, `事件 ${event} 的标签不能还是 id 本身`);
   }
+});
+
+test('「已提炼」标记条目：算有改动，且按路径归到原始资料；旧中枢的提示不算改动', () => {
+  const marks = entry({
+    event: 'ledger-marks',
+    data: { paths: ['原始资料/文档/乙-报价单.md'], added: 1, cleared: 0 },
+  });
+  assert.equal(entryOutcome(marks), 'changed', '标记变了就是有改动');
+  assert.equal(entryOutcomeLabel(marks), '有改动');
+  assert.deepEqual(entryContents(marks), ['原始资料']);
+  assert.equal(eventLabel('ledger-marks'), '对齐已提炼标记');
+  assert.equal(eventCategory('ledger-marks'), '对账');
+
+  const unsupported = entry({ event: 'ledger-marks-unsupported', data: undefined, detail: '中枢还没有这个接口' });
+  assert.equal(entryOutcome(unsupported), 'none', '只是提示，不算改动');
+  assert.equal(eventLabel('ledger-marks-unsupported'), '中枢暂无已提炼标记接口');
+
+  const failed = entry({ event: 'ledger-marks-failed', level: 'warn', detail: '超时' });
+  assert.equal(entryOutcome(failed), 'failed');
 });
 
 test('逐条改动条目：动作与类型翻成中文，改名带原路径', () => {
