@@ -73,6 +73,8 @@ const CHANGED_EVENTS = new Set([
   'local-broadcast', 'push-ok', 'push-received', 'push-page', 'push-file', 'push-delete', 'push-move',
   'push-merged', 'move-superseded', 'pull-applied', 'pull-page', 'pull-file', 'pull-delete', 'pull-move',
   'file-pull-ok', 'file-received', 'file-pull-retry-ok', 'session-pull-retry-ok', 'replay', 'reconcile-done',
+  // 手机端只补「已提炼」标记的那一步（条目只在标记真的变了时才写）
+  'ledger-marks',
 ]);
 
 function arrayLength(value: unknown): number {
@@ -246,6 +248,10 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'reconcile-item-failed': { label: '对账单项失败', category: '对账' },
   'reconcile-failed': { label: '全量对账失败', category: '对账' },
   'ledger-repair-failed': { label: '提炼账本补齐失败', category: '对账' },
+  // 手机端补「已提炼」标记（标记没有同步 op，只能靠这一趟对齐；见 Android SyncEngine.refreshLedgerMarks）
+  'ledger-marks': { label: '对齐已提炼标记', category: '对账' },
+  'ledger-marks-failed': { label: '已提炼标记对齐失败', category: '对账' },
+  'ledger-marks-unsupported': { label: '中枢暂无已提炼标记接口', category: '对账' },
   heal: { label: '周期自愈对账', category: '对账' },
   'snapshot-served': { label: '成员拉取全量清单', category: '对账' },
   // 冲突

@@ -939,6 +939,31 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun saveEvidence(path: String, payload: JSONObject, distilled: Boolean = true) = synchronized(lock) { writableDatabase.execSQL("INSERT OR REPLACE INTO evidence_snapshots(path,payload,distilled,updated_at) VALUES(?,?,?,?)", arrayOf(path, payload.toString(), if (distilled) 1 else 0, now())) }
     fun evidence(path: String): JSONObject? = readableDatabase.rawQuery("SELECT payload FROM evidence_snapshots WHERE path=?", arrayOf(path)).use { if (it.moveToFirst()) JSONObject(it.getString(0)) else null }
 
+    /** 本机标着「已提炼」的来源路径（侧栏徽标与账本对齐共用；与 evidenceDistilled 同一张表） */
+    fun distilledPaths(): Set<String> = synchronized(lock) {
+        val out = linkedSetOf<String>()
+        readableDatabase.rawQuery("SELECT path FROM evidence_snapshots WHERE distilled=1", null).use { cursor ->
+            while (cursor.moveToNext()) out += cursor.getString(0)
+        }
+        out
+    }
+
+    /**
+     * 只改「已提炼」标记、不碰已存的账本正文（同路径已有快照时保留 payload）：
+     * 中枢那边标记变了而本地还没来得及拉账本（或账本本来就取不回来）时用它，
+     * 免得为了一个徽标把证据抽屉里的内容抹成空对象。
+     */
+    fun markDistilled(path: String, distilled: Boolean) = synchronized(lock) {
+        writableDatabase.execSQL(
+            "INSERT OR IGNORE INTO evidence_snapshots(path,payload,distilled,updated_at) VALUES(?,?,0,?)",
+            arrayOf(path, "{}", now()),
+        )
+        writableDatabase.execSQL(
+            "UPDATE evidence_snapshots SET distilled=?, updated_at=? WHERE path=?",
+            arrayOf(if (distilled) 1 else 0, now(), path),
+        )
+    }
+
     fun pageEvidence(id: String): JSONObject = synchronized(lock) {
         val page = pageJson(id) ?: error("页面不存在")
         evidence(page.getString("path")) ?: JSONObject()

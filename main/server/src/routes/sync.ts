@@ -579,6 +579,20 @@ export async function syncRoutes(app: FastifyInstance) {
     if (!sourcePath) return { snapshot: null };
     return { snapshot: collectEvidenceForPath(sourcePath) };
   });
+
+  /**
+   * 「已提炼」标记清单（轻量，只回路径，不带 hash 也不带正文）。
+   *
+   * 标记只存在于账本（source_versions / page_contributions）里，**没有对应的同步 op**：
+   * 页面与文件同步带不动它，只有全量清单的 distilled 字段能表达。桌面 / Docker 成员端靠
+   * 周期自愈对账顺带补齐，但手机端只有前台事件触发的一轮同步、没有自愈对账——中枢在绑定
+   * 之后新提炼的资料，在手机上会一直不带「已提炼」（用户看到：电脑上标了，手机没标）。
+   * 这里给成员端一条只补标记的轻路：按这份清单与本地比对，只对差异项拉
+   * /api/sync/evidence，不必为几个标记把整份清单（每条路径 + hash）拉下来。
+   */
+  app.get('/api/sync/distilled', { preHandler: requireSyncAccess }, async () => ({
+    paths: [...distilledSourcePaths()].sort(),
+  }));
 }
 
 /** brain 目录全量清单（页面取 raw 文本 hash，文件取字节 hash；
