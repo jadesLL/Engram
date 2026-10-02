@@ -217,8 +217,7 @@
           <header class="reading-document-head">
             <h1>{{ title }}</h1>
             <div class="reading-meta">
-              <span class="reading-type">{{ typeLabel }}</span>
-              <template v-if="updatedAt">
+              <span class="reading-type">{{ typeLabel }}</span>              <template v-if="updatedAt">
                 <span class="reading-meta-sep">·</span>
                 <span>更新于 {{ formatDate(updatedAt) }}</span>
               </template>
@@ -226,6 +225,11 @@
                 <span class="reading-meta-sep">·</span>
                 <span v-for="tag in tags" :key="tag" class="reading-tag">{{ tag }}</span>
               </template>
+            </div>
+            <!-- 页面级状态行：调用方按需给（例如灵感页的「正在后台提炼…」）。
+                 阅读视图本身不认识任何业务语义，槽里给什么就画什么 -->
+            <div v-if="$slots.status" class="reading-status">
+              <slot name="status" />
             </div>
           </header>
 
@@ -363,6 +367,8 @@ const props = defineProps<{
   markdown: string;
   title?: string;
   pageType: string;
+  /** 直接指定类型标签（原始资料没有 Wiki 类型概念，传「灵感碎片」「文档」这类分类名） */
+  typeLabel?: string;
   tags: string[];
   updatedAt?: string;
   dark: boolean;
@@ -478,15 +484,20 @@ const readingStyle = computed(() => ({
      写 0 会让目录列 max-height 的 calc() 变负、整列塌成 0 高；量到之后就是真实的可视高度 */
   '--reading-viewport-height': viewportHeight.value > 0 ? `${viewportHeight.value}px` : '100%',
 }));
-const typeLabel = computed(() => ({
-  concept: '概念',
-  person: '人物',
-  customer: '客户',
-  org: '组织',
-  project: '项目',
-  other: '其他',
-  note: '知识页面',
-}[props.pageType] || '知识页面'));
+const typeLabel = computed(() => {
+  // 原始资料（灵感碎片等）没有 Wiki 的类型概念，调用方直接给标签（如「灵感碎片」）；
+  // 没给就按 Wiki 的页面类型文案（'note' 是「知识页面」的原口径，不带类型信息的旧页面用）
+  if (props.typeLabel) return props.typeLabel;
+  return ({
+    concept: '概念',
+    person: '人物',
+    customer: '客户',
+    org: '组织',
+    project: '项目',
+    other: '其他',
+    note: '知识页面',
+  }[props.pageType] || '知识页面');
+});
 /* 本页关联：展示交给底部胶囊里的 RelatedMenu（原先正文尾部有一行折叠摘要，
  * 展开态记在 localStorage；本次连同那一行一起去掉，面板开合不再跨会话记忆） */
 const relatedMenuRef = ref<InstanceType<typeof RelatedMenu>>();
@@ -1598,6 +1609,24 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-control);
   background: var(--bg-secondary);
   color: var(--text-secondary);
+}
+/* 状态行：一行细字 + 细边框，压在文档头下面，不抢正文（默认调用方不传就没有） */
+.reading-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* 失败态由调用方在槽内容上加 class（这里用 :deep 是为了能命中槽里的元素） */
+.reading-status :deep(.failed) {
+  color: var(--danger);
 }
 .reading-content {
   min-height: 240px;

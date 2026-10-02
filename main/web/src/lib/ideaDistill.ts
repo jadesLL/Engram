@@ -1,5 +1,5 @@
 /**
- * 「前端-阅读」这一侧的灵感提炼纯函数层：侧栏文件行状态映射 + 成品页文案与重试调用。
+ * 「前端-阅读」这一侧的灵感提炼纯函数层：侧栏文件行状态映射 + 灵感页文案与重试调用。
  *
  * 与 Lead 的 `ideaDistillFeed.ts` 分工（见 `docs/IDEA-DISTILL-SPEC.md` 4.2 与第 6 节）：
  * 那边负责订阅提炼结果、弹可点通知；这里只做零副作用的映射，
@@ -85,7 +85,7 @@ export type IdeaDistillStage =
   | 'skipped-edit'
   | 'failed';
 
-/** 成品页元信息行里的「提炼状态」文案；键与 staged 一一对应，未知值兜底成「未提炼」 */
+/** 灵感页元信息行里的「提炼状态」文案；键与 staged 一一对应，未知值兜底成「未提炼」 */
 export const IDEA_STAGE_LABELS: Record<IdeaDistillStage, string> = {
   unknown: '未提炼',
   pending: '等待提炼',
@@ -95,7 +95,7 @@ export const IDEA_STAGE_LABELS: Record<IdeaDistillStage, string> = {
   failed: '提炼失败',
 };
 
-/** 成品页里用户手改并保存后顶掉服务端状态的文案（SPEC 第 5 节验收：改一改保存 →「已手动修改」） */
+/** 灵感页里用户手改并保存后顶掉服务端状态的文案（SPEC 第 5 节验收：改一改保存 →「已手动修改」） */
 export const IDEA_MANUAL_EDITED_LABEL = '已手动修改';
 
 export function ideaStageLabel(staged: string | null | undefined): string {
@@ -115,12 +115,12 @@ export function ideaDisplayTitle(title: string | null | undefined): string {
 }
 
 /**
- * 成品页「重新提炼」：请服务端把这条灵感重新入队（`POST /api/ideas/:id/distill/retry`）。
+ * 灵感页「重新提炼」：请服务端把这条灵感重新入队（`POST /api/ideas/:id/distill/retry`）。
  *
  * - 成功：`{ ok: true, jobId, reused? }` → 立刻用返回的 jobId 续跟这条灵感的提炼进度；
  * - 未知 id / 文件已不在（404）、旧服务端没有该路由（405）、离线或网络错误：
  *   一律不抛错，降级成「继续跟踪这条灵感」（jobId 用 null，跟踪链由 id 幂等去重），
- *   原文早已落盘，重试只是锦上添花，不能因为一次失败把成品页搅乱。
+ *   原文早已落盘，重试只是锦上添花，不能因为一次失败把灵感页搅乱。
  *
  * `api` 与 `trackIdeaDistill` 都用动态 import：本模块要被 `node --test` 直接加载
  * （见文件头注释），静态 import 会把 axios / vue 一起拉进来，映射用例就得先装依赖才能跑。

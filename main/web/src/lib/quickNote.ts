@@ -34,10 +34,13 @@ const defaultIo: IdeaNoteIo = {
 };
 
 /**
- * 「查看成品 →」的跳转注册给 ideaDistillFeed：那一层刻意不 import router（router.ts 会拉
+ * 「查看」的跳转注册给 ideaDistillFeed：那一层刻意不 import router（router.ts 会拉
  * stores/app.ts，容易绕成环），由调用方包一层（见 ideaDistillFeed 的 setIdeaDistillOpenHandler）。
  * 这里用动态 import 而不是模块顶层 import：router.ts 顶层要 createWebHistory（需要 DOM），
  * 静态引入会让本模块在 `node --test` 里直接加载失败。
+ *
+ * 跳过去就是**普通页面**：默认进沉浸阅读（app.readingMode 默认开），抬头「返回编辑」可进完整编辑器——
+ * 与从侧栏点开一份灵感完全同路，不再有「灵感页」这种专属形态。
  */
 setIdeaDistillOpenHandler((id) => {
   void import('../router').then(({ router }) => router.push(`/page/${id}`));
