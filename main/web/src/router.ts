@@ -34,8 +34,13 @@ router.beforeEach(async (to) => {
  * 满窗形态下导航到别的内容（设置、侧栏实体页、搜索、图谱、双链跳转……）：
  * 把内置 Agent 最小化，正文立刻占满整屏。挂在路由上而不是逐个按钮上，
  * 这样侧栏、搜索结果、双链、返回轨迹这些入口一个都不漏；非满窗形态不受影响。
+ *
+ * 知识库侧栏满窗同一条规则：满窗目录里点开一篇、或从别处跳走，目录自动收回窄栏
+ * （满窗是「找那一篇」的临时形态，找到了就该让位给正文）。
  */
 router.afterEach((to, from) => {
   if (to.fullPath === from.fullPath) return;
-  useAppStore().minimizeChatForNavigation();
+  const app = useAppStore();
+  app.minimizeChatForNavigation();
+  app.exitSidebarFullForNavigation();
 });

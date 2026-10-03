@@ -1,5 +1,5 @@
 <template>
-  <div class="sidebar-inner">
+  <div class="sidebar-inner" :class="{ 'is-full': app.sidebarFull }">
     <header class="sidebar-header">
       <div class="sidebar-titlebar">
         <h2>知识库</h2>
@@ -19,6 +19,17 @@
           </button>
           <button class="sidebar-new" type="button" v-tooltip="'新建页面'" aria-label="新建页面" @click="emit('new-page')">
             <Icon name="plus" :size="16" />
+          </button>
+          <!-- 满窗：窄栏 232–420px 里长标题一律省略号，点一下把目录铺满正文区（Esc 或「收回侧栏」回来） -->
+          <button
+            class="sidebar-full"
+            type="button"
+            v-tooltip="'满窗：目录铺满窗口，标题不再被截断'"
+            aria-label="满窗"
+            :aria-pressed="app.sidebarFull"
+            @click="enterFull"
+          >
+            <Icon name="maximize" :size="16" />
           </button>
           <button class="sidebar-close" type="button" v-tooltip="'关闭侧边栏'" aria-label="关闭侧边栏" @click="emit('close')">
             <Icon name="x" :size="16" />
@@ -404,6 +415,115 @@
       </div>
     </Teleport>
   </div>
+
+  <!-- 满窗目录（V2 分栏扫描，2026-10-03）：与左边窄栏是同一份数据（typeGroups / rawGroups /
+       过滤 / 排序全复用），只换排布——概念 | 实体 | 原始资料 | 归档 各占一列，列内自己滚、
+       子类吸顶、长标题折两行读完。几何（铺满正文区、图标栏保留）在 Home.vue 的 .layout.sidebar-full。
+       第二根节点不需要额外类名/属性，父级 <Sidebar> 没传 attrs，不会触发属性透传告警。 -->
+  <div v-if="app.sidebarFull" class="kb-panel">
+    <div class="kb-head">
+      <h2>知识库</h2>
+      <span class="kb-hint">分栏扫描：一个分区一列，一眼扫完整个知识库</span>
+      <span class="kb-head-spacer" />
+      <span class="kb-hint">Esc 收回</span>
+      <button
+        class="icon-btn"
+        type="button"
+        :aria-label="allCollapsed ? '全部展开' : '全部收起'"
+        v-tooltip="allCollapsed ? '全部展开' : '全部收起'"
+        @click="toggleAll"
+      >
+        <Icon :name="allCollapsed ? 'unfold' : 'fold'" :size="16" />
+      </button>
+      <button class="icon-btn" type="button" v-tooltip="'新建页面'" aria-label="新建页面" @click="emit('new-page')">
+        <Icon name="plus" :size="16" />
+      </button>
+      <button class="icon-btn" type="button" v-tooltip="'收回侧栏'" aria-label="收回侧栏" @click="exitFull">
+        <Icon name="minimize" :size="16" />
+      </button>
+    </div>
+
+    <div class="kb-toolbar">
+      <div class="search-field kb-search">
+        <Icon name="search" :size="14" class="search-icon" />
+        <input v-model="filter" aria-label="搜索页面与资料" placeholder="搜索页面与资料" />
+        <button
+          v-if="filter"
+          class="search-clear"
+          type="button"
+          v-tooltip="'清除搜索'"
+          aria-label="清除搜索"
+          @click="filter = ''"
+        >
+          <Icon name="x" :size="12" />
+        </button>
+      </div>
+      <div class="kb-chips">
+        <button
+          v-for="chip in fullChips"
+          :key="chip.key"
+          class="kb-chip"
+          :class="{ on: fullTypeFilter === chip.key }"
+          type="button"
+          :aria-pressed="fullTypeFilter === chip.key"
+          @click="fullTypeFilter = chip.key"
+        >
+          {{ chip.label }}<span class="kb-chip-n">{{ chip.count }}</span>
+        </button>
+      </div>
+      <span class="kb-head-spacer" />
+      <span class="kb-hint">共 {{ fullVisibleTotal }} 篇 · 最近更新 {{ fullLatestText }}</span>
+    </div>
+
+    <div class="kb-cols" :class="{ single: fullTypeFilter !== 'all' }">
+      <section
+        v-for="col in fullColumns"
+        v-show="fullTypeFilter === 'all' || fullTypeFilter === col.key"
+        :key="col.key"
+        class="kb-col"
+      >
+        <div class="kb-col-head">
+          <span class="kb-col-name" :class="col.badge">{{ col.label }}</span>
+          <span class="kb-col-count">{{ col.count }}</span>
+          <span class="kb-head-spacer" />
+          <button
+            class="add-btn kb-col-sort"
+            type="button"
+            :class="{ 'menu-open': isSortMenuOpen(col.sortTarget) }"
+            v-tooltip="`${col.label}排序：${sortLabelOrFiles(col)}`"
+            :aria-label="`${col.label}排序`"
+            aria-haspopup="menu"
+            :aria-expanded="isSortMenuOpen(col.sortTarget)"
+            @click="openSortMenu($event, col.sortTarget, col.label)"
+          >
+            <Icon name="sort" :size="13" />
+          </button>
+        </div>
+        <div class="kb-col-body">
+          <template v-for="group in col.groups" :key="group.key">
+            <div v-if="col.groups.length > 1" class="kb-sub-head">
+              <span class="kb-sub-name">{{ group.label }}</span>
+              <span class="kb-col-count">{{ group.items.length }}</span>
+            </div>
+            <button
+              v-for="item in group.items"
+              :key="item.id || item.path"
+              class="kb-row"
+              type="button"
+              :class="{ active: col.key === 'raw' ? isActiveFile(item) : item.id === activeId }"
+              @click="col.key === 'raw' ? openFile(item) : openPage(item)"
+            >
+              <span class="kb-row-title" v-tooltip.auto="col.key === 'raw' ? item.name : item.title">
+                {{ col.key === 'raw' ? item.name : item.title }}
+              </span>
+              <span class="kb-row-time">{{ relativeTimeText(item.updated_at) }}</span>
+            </button>
+          </template>
+          <p v-if="!col.count" class="none">{{ filter ? '没有匹配' : '暂无内容' }}</p>
+        </div>
+      </section>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -420,6 +540,15 @@ import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
 import { openAssetDrawer } from '../lib/assetDrawer';
 import { ideaDistillRowStatus } from '../lib/ideaDistill';
 import { BP_WIDE } from '../lib/layoutBreakpoints';
+import { relativeTimeText, latestUpdatedAt } from '../lib/pageTime';
+import {
+  SIDEBAR_FULL_COLUMNS,
+  SIDEBAR_FULL_LABELS,
+  SIDEBAR_FULL_BADGES,
+  sidebarFullChips,
+  sidebarFullVisibleTotal,
+  type SidebarFullColumnKey,
+} from '../lib/sidebarFull';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
 import FileRow from './FileRow.vue';
@@ -1048,6 +1177,92 @@ const visibleRawTotal = computed(
 );
 const visibleAiLogs = computed(() => filteredPages(aiLogs.value));
 
+/* ===================== 满窗目录（V2 分栏扫描） ===================== */
+/*
+ * 入口在标题栏（.sidebar-full），几何在 Home.vue 的 .layout.sidebar-full：
+ * 贴边铺满正文区、保留左侧图标栏、Esc 或「收回侧栏」回去；满窗里点开一篇由
+ * router.afterEach 统一收回窄栏（与内置 Agent 满窗导航即最小化同一处规则）。
+ * 这里只负责「满窗后用哪套排布」——四列分栏，数据和窄栏完全同源。
+ */
+
+/** 满窗顶部的类型筛选：全部 / 概念 / 实体 / 资料 / 归档 */
+const fullTypeFilter = ref<SidebarFullColumnKey | 'all'>('all');
+
+function enterFull() {
+  app.setSidebarFull(true);
+}
+
+function exitFull() {
+  app.setSidebarFull(false);
+}
+
+/** 列头排序按钮的提示文案（原始资料跟着「原始资料排序」走，其余跟着各自分区排序） */
+function sortLabelOrFiles(col: { key: SidebarFullColumnKey }) {
+  return col.key === 'raw' ? sortFilesLabel.value : sortLabel(groupSort.value[col.key]);
+}
+
+/**
+ * 四列：概念 | 实体 | 原始资料 | 归档。
+ * - 概念 / 归档：单组平铺（groups 只有一个，模板据此不渲染子类标题）
+ * - 实体：人物 / 客户 / 组织 / 项目 / 其他，空子类不占位
+ * - 原始资料：文档 / 对话 / 灵感碎片（分类名以服务端下发为准）
+ * 排序沿用各自分区已有的排序偏好，不在满窗里另立一套。
+ */
+const fullColumns = computed(() => {
+  return SIDEBAR_FULL_COLUMNS.map((key) => {
+    if (key === 'raw') {
+      const groups = rawGroups.value.map((g: any) => ({ key: g.key, label: g.label, items: g.files }));
+      return {
+        key,
+        label: SIDEBAR_FULL_LABELS[key],
+        badge: SIDEBAR_FULL_BADGES[key],
+        sortTarget: 'files',
+        groups,
+        count: groups.reduce((n: number, g: any) => n + g.items.length, 0),
+      };
+    }
+    const group: any = typeGroups.value.find((g: any) => g.key === key);
+    const groups =
+      key === 'entity'
+        ? (group?.subGroups || []).map((sub: any) => ({
+            key: sub.key,
+            label: sub.label,
+            items: sortList(filteredPages(sub.pages), groupSort.value[key]),
+          }))
+        : [
+            {
+              key,
+              label: group?.label || SIDEBAR_FULL_LABELS[key],
+              items: sortList(filteredPages(group?.pages || []), groupSort.value[key]),
+            },
+          ];
+    return {
+      key,
+      label: group?.label || SIDEBAR_FULL_LABELS[key],
+      badge: SIDEBAR_FULL_BADGES[key],
+      sortTarget: `group:${key}`,
+      groups,
+      count: groups.reduce((n: number, g: any) => n + g.items.length, 0),
+    };
+  });
+});
+
+const fullCounts = computed(() => {
+  const counts: Partial<Record<SidebarFullColumnKey, number>> = {};
+  for (const col of fullColumns.value) counts[col.key as SidebarFullColumnKey] = col.count;
+  return counts;
+});
+
+const fullChips = computed(() => sidebarFullChips(fullCounts.value));
+const fullVisibleTotal = computed(() => sidebarFullVisibleTotal(fullCounts.value, fullTypeFilter.value));
+
+/** 顶部「最近更新」：四个分区里最新的那一条（没有资料时给个占位符，不留空） */
+const fullLatestText = computed(() => {
+  const items = fullColumns.value.flatMap((col: any) => col.groups.flatMap((g: any) => g.items));
+  const latest = latestUpdatedAt(items);
+  return latest ? relativeTimeText(latest) : '—';
+});
+
 function toggle(key: string) {
   collapsed.value[key] = !collapsed.value[key];
 }
@@ -1372,6 +1587,10 @@ onUnmounted(() => {
   min-width: 0;
   color: var(--text);
 }
+/* 满窗：窄栏那套（含滚动位置）留在 DOM 里不出声，回来时还是原样 */
+.sidebar-inner.is-full {
+  display: none;
+}
 .sidebar-header {
   flex-shrink: 0;
   padding: 12px 11px 7px;
@@ -1401,6 +1620,7 @@ onUnmounted(() => {
 
 .sidebar-fold,
 .sidebar-new,
+.sidebar-full,
 .sidebar-close {
   width: 26px;
   height: 26px;
@@ -1411,7 +1631,8 @@ onUnmounted(() => {
 }
 
 .sidebar-fold,
-.sidebar-new {
+.sidebar-new,
+.sidebar-full {
   display: flex;
 }
 
@@ -1421,6 +1642,7 @@ onUnmounted(() => {
 
 .sidebar-fold:hover,
 .sidebar-new:hover,
+.sidebar-full:hover,
 .sidebar-close:hover {
   color: var(--text);
   background: var(--sidebar-hover);
@@ -1429,6 +1651,7 @@ onUnmounted(() => {
 /* 按下时再深一档（桌面与触屏统一）：圆角跟着按钮自己的 4px 走，不会有方角 */
 .sidebar-fold:active,
 .sidebar-new:active,
+.sidebar-full:active,
 .sidebar-close:active,
 .search-clear:active {
   background: var(--press-bg);
@@ -2142,6 +2365,300 @@ onUnmounted(() => {
   .rise-enter-active,
   .rise-leave-active {
     transition-duration: 0.01ms;
+  }
+}
+
+/* ===================== 满窗目录（V2 分栏扫描，2026-10-03） =====================
+   点标题栏那颗满窗按钮后，.sidebar 在 Home.vue 里铺满正文区（.layout.sidebar-full）；
+   这里只负责面板内部的排布：一条头部 + 一条工具行 + 四列分栏，列内自己滚、子类吸顶。
+   窄栏 232–420px 里长标题只能省略号（「一排页面看着一模一样，选不出要开哪一篇」），
+   满窗给的正是宽度：标题折两行读完，右边留出更新时间。 */
+.kb-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.kb-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 max(16px, calc((100% - 1080px) / 2));
+  border-bottom: 1px solid var(--border);
+}
+
+.kb-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.kb-head-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.kb-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.kb-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px max(16px, calc((100% - 1080px) / 2)) 8px;
+}
+
+.kb-search {
+  flex: 0 1 340px;
+  min-width: 120px;
+  height: 32px;
+  background: var(--card-bg);
+}
+
+.kb-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 14px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.kb-chip:hover {
+  background: var(--sidebar-active);
+}
+
+.kb-chip.on {
+  background: var(--accent-soft);
+  color: var(--sidebar-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 32%, transparent);
+}
+
+.kb-chip-n {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-chip.on .kb-chip-n {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.kb-cols {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--border);
+}
+
+/* 选了某个类型：只剩一列，让它占满（grid 的轨道数是固定的，不这么写会留三条空轨） */
+.kb-cols.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.kb-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+
+.kb-col:last-child {
+  border-right: 0;
+}
+
+.kb-col-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 42px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.kb-col-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+/* 列头跟着类型色走（与首页「最近更新」的类型徽章同一套令牌） */
+.kb-col-name.concept { color: var(--badge-concept); }
+.kb-col-name.entity { color: var(--badge-entity); }
+.kb-col-name.note { color: var(--badge-note); }
+.kb-col-name.idea { color: var(--badge-idea); }
+.kb-col-name.archived { color: var(--text-faint); }
+
+.kb-col-count {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 列头排序按钮：满窗里鼠标不悬停也要看得见（列头是「这一列怎么排」的入口） */
+.kb-col-sort {
+  opacity: 1;
+}
+
+.kb-col-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 18px;
+}
+
+.kb-sub-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 4px 0 1px;
+  padding: 0 6px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.kb-sub-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-sub-head .kb-col-count {
+  margin-left: auto;
+}
+
+.kb-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.kb-row:hover {
+  background: var(--sidebar-hover);
+}
+
+.kb-row:active {
+  background: var(--press-bg);
+}
+
+.kb-row.active {
+  background: var(--sidebar-selection);
+  box-shadow: inset 0 0 0 1px var(--sidebar-selection-border);
+}
+
+/* 满窗里标题折两行读完（窄栏那一行的省略号正是本次要解决的问题） */
+.kb-row-title {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.kb-row-time {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-row:focus-visible {
+  outline: 2px solid var(--sidebar-accent);
+  outline-offset: -2px;
+}
+
+/* 769–1024px（折叠屏内屏/平板竖屏）：四列变两行两列，头部那句说明先让位 */
+@media (max-width: 1024px) {
+  .kb-cols {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
+  }
+
+  .kb-head,
+  .kb-toolbar {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .kb-head h2 + .kb-hint {
+    display: none;
+  }
+}
+
+/* ≤768px（手机）：分栏在这么窄的屏上没有意义，退回「一条竖列 + 分区标题」，
+   仍是满窗铺满，只是排布从分栏回到列表。 */
+@media (max-width: 768px) {
+  .kb-cols {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .kb-col {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .kb-col:last-child {
+    border-bottom: 0;
+  }
+
+  .kb-col-body {
+    overflow: visible;
+  }
+
+  .kb-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .kb-chips {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .kb-toolbar > .kb-hint {
+    display: none;
   }
 }
 </style>

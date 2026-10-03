@@ -3,6 +3,8 @@
     class="layout"
     :class="{
       'sidebar-open': app.sidebarOpen,
+      'sidebar-full': app.sidebarFull,
+      'sidebar-resizing': sidebarResizing,
       'chat-dock-open': chatDockOpen,
       'chat-dragging': app.chatDragging,
       'update-notice-visible': updateNoticeVisible && !desktopShell,
@@ -85,21 +87,22 @@
       </button>
     </nav>
 
-    <!-- 文件树侧栏 -->
+    <!-- 文件树侧栏：满窗时同一颗元素变「目录页」（几何在样式里，见 .layout.sidebar-full） -->
     <transition name="sidebar-slide">
       <aside
         ref="sidebarEl"
         v-show="app.sidebarOpen"
         class="sidebar"
+        :class="{ 'is-full': app.sidebarFull }"
         :style="{ width: sidebarWidth + 'px' }"
         aria-label="知识库侧边栏"
       >
         <Sidebar ref="sidebarRef" @close="app.sidebarOpen = false" @new-page="quickNew" />
       </aside>
     </transition>
-    <!-- 拖动分隔条：桌面端 232–420px，且不超过窗口宽度的 40% -->
+    <!-- 拖动分隔条：桌面端 232–420px，且不超过窗口宽度的 40%（满窗时目录已铺满，分隔条让位） -->
     <div
-      v-if="app.sidebarOpen && !sidebarOverlay"
+      v-if="app.sidebarOpen && !sidebarOverlay && !app.sidebarFull"
       class="resizer"
       v-tooltip="'拖动调整宽度，双击还原'"
       role="separator"
@@ -117,7 +120,7 @@
       @keydown.end.prevent="setSidebarWidth(sidebarMaxWidth)"
     />
     <transition name="fade">
-      <div v-if="app.sidebarOpen && sidebarOverlay" class="mask" @click="app.sidebarOpen = false" />
+      <div v-if="app.sidebarOpen && sidebarOverlay && !app.sidebarFull" class="mask" @click="app.sidebarOpen = false" />
     </transition>
 
     <!-- 主内容区 -->
@@ -341,15 +344,21 @@ const sidebarWidth = ref(
     ? storedSidebarWidth
     : DEFAULT_SIDEBAR)
 );
+/** 是否正在拖侧栏宽度：拖动中不做几何过渡，见 startResize */
+const sidebarResizing = ref(false);
 
 function startResize(e: MouseEvent) {
   e.preventDefault();
   const startX = e.clientX;
   const startW = sidebarWidth.value;
+  // 拖动期间关掉侧栏的几何过渡：否则宽度每帧都在追 180ms 前的值，手感是「拖不动」
+  // （与内置 Agent 拖卡片宽度同一处理：.layout.chat-dragging）
+  sidebarResizing.value = true;
   const move = (ev: MouseEvent) => {
     sidebarWidth.value = clampSidebarWidth(startW + (ev.clientX - startX));
   };
   const up = () => {
+    sidebarResizing.value = false;
     localStorage.setItem('sidebarWidth', String(sidebarWidth.value));
     window.removeEventListener('mousemove', move);
     window.removeEventListener('mouseup', up);
@@ -512,6 +521,10 @@ function onKey(e: KeyboardEvent) {
   } else if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
     e.preventDefault();
     quickNote();
+  } else if (e.key === 'Escape' && app.sidebarFull && !e.defaultPrevented) {
+    // 满窗目录的退出键：与内置 Agent 满窗（ChatDrawer 的 Esc）同一套手感。
+    // 弹窗/确认框自己会 preventDefault，编辑器全屏的 Esc 也会先处理，这里不抢。
+    app.setSidebarFull(false);
   }
 }
 
@@ -928,6 +941,50 @@ onUnmounted(() => {
 
 .layout.sidebar-open .content {
   padding-left: calc(var(--sidebar-width) + 72px);
+}
+
+/*
+ * 知识库目录满窗（2026-10-03）：与内置 Agent 满窗（.chat-drawer.full）同一套落位，
+ * 方向相反——贴边铺满正文区、保留左侧图标栏、不再留玻璃边距与圆角。
+ * 几何写成具体长度（left / width / top / bottom 都可插值），点一下才是「拉过去」而不是跳过去。
+ * width / max-width 带 !important：紧凑档（≤1024px）把侧栏当浮层写死了 min() 与 400px 上限，
+ * 「满窗」必须盖过它，否则只铺到 400px（原型里就踩过这一条）。
+ */
+.sidebar {
+  transition: left 180ms cubic-bezier(0.2, 0, 0, 1), top 180ms cubic-bezier(0.2, 0, 0, 1),
+    bottom 180ms cubic-bezier(0.2, 0, 0, 1), width 180ms cubic-bezier(0.2, 0, 0, 1),
+    border-radius 180ms ease, box-shadow 180ms ease;
+}
+
+/* 拖动宽度时不做过渡（否则每帧都在追上一帧的值） */
+.layout.sidebar-resizing .sidebar {
+  transition: none;
+}
+
+.layout.sidebar-full .sidebar {
+  position: absolute;
+  top: var(--safe-top);
+  bottom: var(--safe-bottom);
+  left: calc(64px + var(--safe-left));
+  width: calc(100% - 64px - var(--safe-left)) !important;
+  max-width: none !important;
+  border-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  z-index: var(--z-subpanel);
+}
+
+/* 满窗是「看目录」的形态：正文被盖住，且不该被误点（点目录行才是唯一动作） */
+.layout.sidebar-full .content {
+  pointer-events: none;
+}
+
+/* 满窗下目录就是主角：分隔条让位（目录已经铺满，拖动宽度没有意义） */
+.layout.sidebar-full .resizer {
+  display: none;
 }
 
 /*

@@ -41,6 +41,12 @@ export const useAppStore = defineStore('app', {
     return {
       // ≤1024px（手机/折叠屏外屏/紧凑档）侧栏为浮层，默认收起
       sidebarOpen: window.innerWidth > 1024,
+      /**
+       * 知识库侧栏是否满窗（目录铺满正文区、左侧图标栏保留）。
+       * 不写本地偏好——与「沉浸阅读」同口径：目录是参考物，不该一开机就占满屏，
+       * 每次启动都是窄栏，需要时点一下展开。
+       */
+      sidebarFull: false,
       theme,
       dark: resolveDarkTheme(theme),
       /** 当前编辑模式（ir/sv），切换页面时保持不重置 */
@@ -192,6 +198,25 @@ export const useAppStore = defineStore('app', {
     },
     bumpSidebar() {
       this.sidebarVersion++;
+    },
+    /**
+     * 切换侧栏满窗。开之前把侧栏本身打开（满窗的前提是它本来就是展开的），
+     * 收回时宽度偏好、分区折叠状态、搜索词都照旧，下次展开还是原样。
+     */
+    setSidebarFull(on: boolean) {
+      if (on) this.sidebarOpen = true;
+      this.sidebarFull = on;
+    },
+    toggleSidebarFull() {
+      this.setSidebarFull(!this.sidebarFull);
+    },
+    /**
+     * 满窗形态下导航到别的内容（打开页面、双链跳转、搜索结果、侧栏点击……）：
+     * 目录直接收回窄栏——满窗是「找那一篇」的临时形态，找到了就该让位给正文。
+     * 挂在 router.afterEach 上而不是逐个入口，和内置 Agent 满窗的最小化规则同一处。
+     */
+    exitSidebarFullForNavigation() {
+      if (this.sidebarFull) this.sidebarFull = false;
     },
     /** 开合聊天抽屉：打开即清未读 */
     toggleChat(open?: boolean) {
