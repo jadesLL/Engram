@@ -63,6 +63,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import Icon from './Icon.vue';
+import { relativeTimeText } from '../lib/pageTime';
 
 const props = defineProps<{
   page: any;
@@ -97,18 +98,8 @@ function onKebab(e: MouseEvent) {
   emit('context-menu', { x: rect.right, y: rect.bottom, page: props.page });
 }
 
-const timeText = computed(() => {
-  const iso = props.page.updated_at;
-  if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '刚刚';
-  if (mins < 60) return `${mins}分钟前`;
-  const days = Math.floor(diff / 86400000);
-  if (days < 1) return '今天';
-  if (days < 30) return `${days}天前`;
-  return `${Math.floor(days / 30)}个月前`;
-});
+/** 行尾「多久以前」：口径只有 lib/pageTime 一处（满窗目录行用的是同一个函数） */
+const timeText = computed(() => relativeTimeText(props.page.updated_at));
 </script>
 
 <style scoped>
