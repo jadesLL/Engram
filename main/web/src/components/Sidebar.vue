@@ -418,7 +418,9 @@
 
   <!-- 满窗目录（V2 分栏扫描，2026-10-03）：与左边窄栏是同一份数据（typeGroups / rawGroups /
        过滤 / 排序全复用），只换排布——概念 | 实体 | 原始资料 | 归档 各占一列，列内自己滚、
-       子类吸顶、长标题折两行读完。几何（铺满正文区、图标栏保留）在 Home.vue 的 .layout.sidebar-full。
+       类目吸顶、长标题折两行读完。折叠有两级：列内的二级类目（人物/客户/…、文档/对话/灵感碎片）
+       与窄栏共用同一份折叠状态；整片分区（列）自己收起，收起后只留列头、宽度让给其他列。
+       几何（铺满正文区、图标栏保留）在 Home.vue 的 .layout.sidebar-full。
        第二根节点不需要额外类名/属性，父级 <Sidebar> 没传 attrs，不会触发属性透传告警。 -->
   <div v-if="app.sidebarFull" class="kb-panel">
     <div class="kb-head">
@@ -429,11 +431,11 @@
       <button
         class="icon-btn"
         type="button"
-        :aria-label="allCollapsed ? '全部展开' : '全部收起'"
-        v-tooltip="allCollapsed ? '全部展开' : '全部收起'"
-        @click="toggleAll"
+        :aria-label="fullGroupsCollapsed ? '展开全部类目' : '收起全部类目'"
+        v-tooltip="fullGroupsCollapsed ? '展开全部类目' : '收起全部类目'"
+        @click="toggleFullGroups"
       >
-        <Icon :name="allCollapsed ? 'unfold' : 'fold'" :size="16" />
+        <Icon :name="fullGroupsCollapsed ? 'unfold' : 'fold'" :size="16" />
       </button>
       <button class="icon-btn" type="button" v-tooltip="'新建页面'" aria-label="新建页面" @click="emit('new-page')">
         <Icon name="plus" :size="16" />
@@ -475,17 +477,26 @@
       <span class="kb-hint">共 {{ fullVisibleTotal }} 篇 · 最近更新 {{ fullLatestText }}</span>
     </div>
 
-    <div class="kb-cols" :class="{ single: fullTypeFilter !== 'all' }">
+    <div class="kb-cols" :class="{ single: fullTypeFilter !== 'all' }" :style="fullColsStyle">
       <section
         v-for="col in fullColumns"
         v-show="fullTypeFilter === 'all' || fullTypeFilter === col.key"
         :key="col.key"
         class="kb-col"
+        :class="{ folded: isFullColFolded(col.key) }"
       >
         <div class="kb-col-head">
-          <span class="kb-col-name" :class="col.badge">{{ col.label }}</span>
-          <span class="kb-col-count">{{ col.count }}</span>
-          <span class="kb-head-spacer" />
+          <button
+            class="kb-col-toggle"
+            type="button"
+            :aria-expanded="!isFullColFolded(col.key)"
+            v-tooltip="isFullColFolded(col.key) ? `展开${col.label}（${col.count}）` : `收起${col.label}（${col.count}）`"
+            @click="toggleFullColumn(col.key)"
+          >
+            <Icon name="chevron-right" :size="13" class="toggle-chevron" />
+            <span class="kb-col-name" :class="col.badge">{{ col.label }}</span>
+            <span class="kb-col-count">{{ col.count }}</span>
+          </button>
           <button
             class="add-btn kb-col-sort"
             type="button"
@@ -499,25 +510,48 @@
             <Icon name="sort" :size="13" />
           </button>
         </div>
-        <div class="kb-col-body">
+        <div v-show="!isFullColFolded(col.key)" class="kb-col-body">
           <template v-for="group in col.groups" :key="group.key">
-            <div v-if="col.groups.length > 1" class="kb-sub-head">
+            <!-- 列内二级类目：人物/客户/组织/项目/其他、文档/对话/灵感碎片。
+                 折叠键与窄栏完全一致（'entity:person' / 'raw:doc'），两边是同一个开关 -->
+            <button
+              v-if="col.groups.length > 1"
+              class="kb-sub-head"
+              type="button"
+              :aria-expanded="!collapsed[groupCollapseKey(col.key, group.key)]"
+              v-tooltip="
+                collapsed[groupCollapseKey(col.key, group.key)]
+                  ? `展开${group.label}（${group.items.length}）`
+                  : `收起${group.label}（${group.items.length}）`
+              "
+              @click="toggle(groupCollapseKey(col.key, group.key))"
+            >
+              <Icon name="chevron-right" :size="12" class="toggle-chevron" />
               <span class="kb-sub-name">{{ group.label }}</span>
               <span class="kb-col-count">{{ group.items.length }}</span>
-            </div>
-            <button
-              v-for="item in group.items"
-              :key="item.id || item.path"
-              class="kb-row"
-              type="button"
-              :class="{ active: col.key === 'raw' ? isActiveFile(item) : item.id === activeId }"
-              @click="col.key === 'raw' ? openFile(item) : openPage(item)"
-            >
-              <span class="kb-row-title" v-tooltip.auto="col.key === 'raw' ? item.name : item.title">
-                {{ col.key === 'raw' ? item.name : item.title }}
-              </span>
-              <span class="kb-row-time">{{ relativeTimeText(item.updated_at) }}</span>
             </button>
+            <template v-if="!collapsed[groupCollapseKey(col.key, group.key)]">
+              <button
+                v-for="item in group.items"
+                :key="item.id || item.path"
+                class="kb-row"
+                type="button"
+                :class="{ active: col.key === 'raw' ? isActiveFile(item) : item.id === activeId }"
+                @click="col.key === 'raw' ? openFile(item) : openPage(item)"
+              >
+                <span class="kb-row-title" v-tooltip.auto="col.key === 'raw' ? item.name : item.title">
+                  {{ col.key === 'raw' ? item.name : item.title }}
+                </span>
+                <!-- 原始资料行的状态标：与窄栏 FileRow 同一套口径（已提炼 / 提炼中 / 提取失败…） -->
+                <span
+                  v-if="col.key === 'raw' && fullRawMarks[item.path]"
+                  class="kb-row-mark"
+                  :class="fullRawMarks[item.path].tone"
+                  v-tooltip="fullRawMarks[item.path].tip"
+                >{{ fullRawMarks[item.path].label }}</span>
+                <span class="kb-row-time">{{ relativeTimeText(item.updated_at) }}</span>
+              </button>
+            </template>
           </template>
           <p v-if="!col.count" class="none">{{ filter ? '没有匹配' : '暂无内容' }}</p>
         </div>
@@ -546,8 +580,10 @@ import {
   SIDEBAR_FULL_LABELS,
   SIDEBAR_FULL_BADGES,
   sidebarFullChips,
+  sidebarFullFileMark,
   sidebarFullVisibleTotal,
   type SidebarFullColumnKey,
+  type SidebarFullFileMark,
 } from '../lib/sidebarFull';
 import Icon from './Icon.vue';
 import PageRow from './PageRow.vue';
@@ -1188,6 +1224,51 @@ const visibleAiLogs = computed(() => filteredPages(aiLogs.value));
 /** 满窗顶部的类型筛选：全部 / 概念 / 实体 / 资料 / 归档 */
 const fullTypeFilter = ref<SidebarFullColumnKey | 'all'>('all');
 
+/*
+ * 分区（列）折叠：收起的分区只留列头，让出的宽度平分给其他列。
+ * 状态**不**复用窄栏的 collapsed：窄栏四个分区默认就是收起的（defaultCollapsed 里
+ * concept/entity/archived/files 都是 true），满窗一进来跟着它就会四列全空壳——
+ * 满窗本来就该是一眼全看。这里存的是「哪几列不想看」，与「满窗开不开」无关，
+ * 所以写 localStorage 记下来（满窗形态本身仍是会话态，见 stores/app.ts 的 setSidebarFull）。
+ */
+const FULL_FOLDED_KEY = 'kbColsFolded';
+
+function loadFullFolded(): Record<string, boolean> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FULL_FOLDED_KEY) || 'null');
+    return saved && typeof saved === 'object' ? (saved as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const fullFolded = ref<Record<string, boolean>>(loadFullFolded());
+
+function isFullColFolded(key: string) {
+  return Boolean(fullFolded.value[key]);
+}
+
+function toggleFullColumn(key: string) {
+  fullFolded.value = { ...fullFolded.value, [key]: !fullFolded.value[key] };
+  try {
+    localStorage.setItem(FULL_FOLDED_KEY, JSON.stringify(fullFolded.value));
+  } catch { /* 隐私模式/配额满：折叠只在本次会话生效，别让它拖垮点击 */ }
+}
+
+/**
+ * 四列的轨道：展开的平分（minmax(0, 1fr)），收起的按列头内容宽度（auto）。
+ * 单选筛选（chips 只留一列）时不写内联模板：那条路走 .kb-cols.single 的整列占满，
+ * 否则被筛选的那列要是恰好收起着，会缩成一小条。
+ */
+const fullColsStyle = computed(() => {
+  if (fullTypeFilter.value !== 'all') return undefined;
+  return {
+    gridTemplateColumns: SIDEBAR_FULL_COLUMNS.map((key) =>
+      fullFolded.value[key] ? 'auto' : 'minmax(0, 1fr)'
+    ).join(' '),
+  };
+});
+
 function enterFull() {
   app.setSidebarFull(true);
 }
@@ -1262,6 +1343,38 @@ const fullLatestText = computed(() => {
   const latest = latestUpdatedAt(items);
   return latest ? relativeTimeText(latest) : '—';
 });
+
+/**
+ * 原始资料列的状态标（已提炼 / 提炼中 / 提炼失败 / 提取失败…）：与窄栏 FileRow 同一套优先级，
+ * 口径全在 lib/sidebarFull.ts 的纯函数里。按 path 先算一遍，模板里每行只查表，不在渲染里重算。
+ */
+const fullRawMarks = computed(() => {
+  const marks: Record<string, SidebarFullFileMark> = {};
+  for (const group of rawGroups.value) {
+    for (const file of group.files) {
+      const mark = sidebarFullFileMark(file, fileJob(file.path), ideaDistillStatus(file.path));
+      if (mark) marks[file.path] = mark;
+    }
+  }
+  return marks;
+});
+
+/**
+ * 列内二级类目的折叠键：与窄栏写的是同一批键（窄栏是 `${g.key}:${sub.key}` / `raw:${g.key}`），
+ * 于是两边是同一个开关——在满窗里收起的「文档」，回到窄栏也是收起的，反之亦然。
+ */
+function groupCollapseKey(colKey: string, groupKey: string) {
+  return `${colKey}:${groupKey}`;
+}
+
+/** 满窗里能被「全部收起」收起的东西：列内的二级类目（分区本身另有各列的折叠） */
+const FULL_GROUP_KEYS = COLLAPSE_ALL_KEYS.filter((key) => key.includes(':'));
+const fullGroupsCollapsed = computed(() => FULL_GROUP_KEYS.every((key) => collapsed.value[key]));
+
+function toggleFullGroups() {
+  const target = !fullGroupsCollapsed.value;
+  for (const key of FULL_GROUP_KEYS) collapsed.value[key] = target;
+}
 
 function toggle(key: string) {
   collapsed.value[key] = !collapsed.value[key];
@@ -2469,6 +2582,13 @@ onUnmounted(() => {
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  /*
+   * 行高必须钉死在容器里（minmax(0, 1fr)），不能留给 auto：auto 行会被列内容撑到内容高度，
+   * 60 行的列能把行撑成 1875px，整块溢出后被 .sidebar 的 overflow:hidden 剪掉——列内的
+   * overflow-y:auto 永远等不到「内容比自身高」，滚动条也就永远不出现，看着就是「满窗不能下拉」
+   * （2026-10-03 用户报障，根因在这一条）。≤1024px 的两行两列同样是隐式行，base 规则一并覆盖。
+   */
+  grid-auto-rows: minmax(0, 1fr);
   border-top: 1px solid var(--border);
 }
 
@@ -2480,6 +2600,8 @@ onUnmounted(() => {
 .kb-col {
   display: flex;
   flex-direction: column;
+  /* 网格项默认 min-height:auto，不给 0 的话列仍会被内容顶高，把滚动条挤没（同上） */
+  min-height: 0;
   min-width: 0;
   border-right: 1px solid var(--border);
 }
@@ -2497,6 +2619,43 @@ onUnmounted(() => {
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
+}
+
+/* 列头主体（chevron + 列名 + 数量）整块可点：点一下收起/展开这一片分区 */
+.kb-col-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 100%;
+  color: inherit;
+  text-align: left;
+}
+
+.kb-col-toggle:focus-visible {
+  outline: 2px solid var(--sidebar-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* 与窄栏同一套 ▸/▾ 语言：展开时旋转 90°（.toggle-chevron 本体在窄栏那段定义） */
+.kb-col:not(.folded) .kb-col-toggle .toggle-chevron,
+.kb-sub-head[aria-expanded='true'] .toggle-chevron {
+  transform: rotate(90deg);
+  color: var(--text-secondary);
+}
+
+/* 收起的分区：只留列头（列名 + 数量 + 排序），正文让位——轨道宽度在 fullColsStyle 里给 auto */
+.kb-col.folded .kb-col-head {
+  padding: 0 8px;
+}
+
+.kb-col.folded .kb-col-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kb-col-name {
@@ -2537,13 +2696,28 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   height: 28px;
   margin: 4px 0 1px;
   padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
   background: var(--bg);
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kb-sub-head:hover {
+  background: var(--sidebar-hover);
+  color: var(--text);
+}
+
+.kb-sub-head:focus-visible {
+  outline: 2px solid var(--sidebar-accent);
+  outline-offset: -2px;
 }
 
 .kb-sub-name {
@@ -2604,16 +2778,35 @@ onUnmounted(() => {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * 原始资料行的状态标（已提炼 / 提炼中 / 提炼失败 / 提取失败…）：配色沿用窄栏 FileRow 的行尾状态位
+ * （成功色 = 已提炼、强调色 = 提炼中、告警色 = 失败），只把文字留在标题与时间之间，不占圆点。
+ */
+.kb-row-mark {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.kb-row-mark.success { color: var(--success); }
+.kb-row-mark.running,
+.kb-row-mark.extracted { color: var(--accent); }
+.kb-row-mark.failed { color: var(--danger); }
+.kb-row-mark.warning { color: var(--warning); }
+.kb-row-mark.muted { color: var(--text-faint); }
+
 .kb-row:focus-visible {
   outline: 2px solid var(--sidebar-accent);
   outline-offset: -2px;
 }
 
-/* 769–1024px（折叠屏内屏/平板竖屏）：四列变两行两列，头部那句说明先让位 */
+/* 769–1024px（折叠屏内屏/平板竖屏）：四列变两行两列，头部那句说明先让位。
+   行高不用在这里再写一遍：上面 base 的 grid-auto-rows 管的就是隐式行 */
 @media (max-width: 1024px) {
   .kb-cols {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-rows: minmax(0, 1fr);
   }
 
   .kb-head,

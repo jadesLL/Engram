@@ -100,3 +100,53 @@ test('抽屉档（≤1024px）与手机档也成立：遮罩让位、分栏退�
   // 手机档用规范断点 768（lib/layoutBreakpoints.ts 的 BP_MOBILE），不自己发明档位
   assert.match(sidebar, /@media \(max-width: 768px\)[\s\S]*?\.kb-cols\s*\{[\s\S]*?display:\s*block/, '手机档没有退回竖列');
 });
+
+/**
+ * 2026-10-03 用户报障「知识库目录，最大化了不能下拉」。
+ *
+ * 根因不在「有没有写 overflow-y」，而在网格的行高：.kb-cols 的行是 auto 时会被列内容撑到
+ * 内容高度（60 行的列能撑成 1875px），整块溢出后被 .sidebar 的 overflow:hidden 剪掉，
+ * 列内的 overflow-y:auto 永远等不到「内容比自身高」，滚动条也就不出现。
+ * 修的是两条：行的尺寸钉死在容器里 + 网格项不参与内容高度。
+ */
+test('满窗列能真的滚起来：行高钉在容器里，列不被内容顶高', () => {
+  const cols = ruleBody(sidebar, '.kb-cols');
+  assert.match(cols, /grid-auto-rows:\s*minmax\(0,\s*1fr\)/, '.kb-cols 的行高又被交回 auto——列会被内容撑高，满窗就滚不动了');
+  assert.match(cols, /min-height:\s*0/, '.kb-cols 没有 min-height:0，flex 子项撑高后行高约束失效');
+  assert.match(ruleBody(sidebar, '.kb-col'), /min-height:\s*0/, '.kb-col 少了 min-height:0，网格项会被内容顶高');
+  // 列体自己滚这条不能丢（真正承载滚动的是它）
+  assert.match(ruleBody(sidebar, '.kb-col-body'), /overflow-y:\s*auto/, '.kb-col-body 不是滚动容器了');
+  // 手机档整块滚（分栏退成竖列），那条路也别被行高规则带歪
+  assert.match(sidebar, /@media \(max-width: 768px\)[\s\S]*?\.kb-col-body\s*\{\s*overflow:\s*visible/, '手机档没把列体交还给整块滚动');
+});
+
+test('原始资料在满窗列里也带状态标（已提炼等），口径与窄栏同一份纯函数', () => {
+  // 行里真的画了这一格，并且只画在原始资料列上
+  assert.match(panel, /class="kb-row-mark"/, '满窗行没有状态标这一格');
+  assert.match(panel, /v-if="col\.key === 'raw' && fullRawMarks\[item\.path\]"/, '状态标没有限定在原始资料列 / 没走预计算的表');
+  assert.match(sidebar, /sidebarFullFileMark\(file, fileJob\(file\.path\), ideaDistillStatus\(file\.path\)\)/, '满窗没有复用 lib/sidebarFull.ts 的状态标纯函数');
+  // 窄栏那颗绿「已提炼」还在（FileRow），不能为了满窗把它挪走
+  const fileRow = read('components/FileRow.vue');
+  assert.match(fileRow, /v-else-if="file\.distilled"/, '窄栏 FileRow 的「已提炼」被改掉了');
+});
+
+test('满窗支持折叠类目：列内二级类目与窄栏共用开关，整片分区也能收成一条窄列', () => {
+  // 二级类目：列头是按钮，键由 `${列}:${类目}` 拼出，与窄栏写的是同一批键
+  assert.match(panel, /class="kb-sub-head"[\s\S]*?@click="toggle\(groupCollapseKey\(col\.key, group\.key\)\)"/, '满窗列内的二级类目不能折叠，或没接 toggle');
+  assert.match(sidebar, /function groupCollapseKey\(colKey: string, groupKey: string\)\s*\{\s*return `\$\{colKey\}:\$\{groupKey\}`;/, '折叠键的形状变了，会与窄栏的 entity:xxx / raw:xxx 脱节');
+  assert.match(sidebar, /collapsed\[`\$\{g\.key\}:\$\{sub\.key\}`\]/, '窄栏实体的子类折叠键不再是 `${分区}:${子类}`');
+  assert.match(sidebar, /collapsed\['raw:' \+ g\.key\]/, '窄栏原始资料的二级分组折叠键不再是 `raw:xxx`');
+  // 顶栏那颗折叠按钮在满窗里收的是「全部类目」（分区本身另有各列的收起）
+  assert.match(panel, /@click="toggleFullGroups"/, '满窗顶栏的折叠按钮没接「全部类目」');
+  assert.match(sidebar, /const FULL_GROUP_KEYS = COLLAPSE_ALL_KEYS\.filter\(\(key\) => key\.includes\(':'\)\)/, '满窗的「全部类目」没跟窄栏共用同一批键');
+
+  // 整片分区：列头可点，收起后只留列头、轨道宽度交给 auto
+  assert.match(panel, /class="kb-col-toggle"[\s\S]*?:aria-expanded="!isFullColFolded\(col\.key\)"[\s\S]*?@click="toggleFullColumn\(col\.key\)"/, '列头不是折叠开关（缺少 aria-expanded / toggleFullColumn）');
+  assert.match(panel, /:class="\{ folded: isFullColFolded\(col\.key\) \}"/, '列没有 folded 态');
+  assert.match(panel, /:style="fullColsStyle"/, '列宽模板没接 fullColsStyle');
+  assert.match(sidebar, /gridTemplateColumns: SIDEBAR_FULL_COLUMNS\.map\(\(key\) =>[\s\S]*?\? 'auto' : 'minmax\(0, 1fr\)'/, '收起的分区没有把宽度让给其他列');
+  assert.match(panel, /v-show="!isFullColFolded\(col\.key\)" class="kb-col-body"/, '收起的分区没有隐藏列体（v-show 保住滚动位置）');
+  // 分区折叠与「满窗开不开」不是一回事：分区折叠是偏好，满窗本身仍是会话态
+  assert.match(sidebar, /localStorage\.setItem\(FULL_FOLDED_KEY/, '分区折叠没有记下来');
+  assert.doesNotMatch(store, /localStorage\.setItem\('sidebarFull'/, '满窗本身被记成了持久偏好');
+});
