@@ -180,7 +180,7 @@ test('行的长按/⋯ 菜单在手机上是贴底动作面板，不是贴着手
 test('触屏上的键盘提示全部换掉：欢迎页卡片、对话输入框、搜索空状态', () => {
   const editor = readSrc('views/EditorView.vue');
   assert.match(editor, /useTouchPointer/, '欢迎页没做触屏判断');
-  assert.match(editor, /touchPointer \? '随手记一条' : 'Ctrl\+N'/, '欢迎页仍在手机上显示 Ctrl+N');
+  assert.match(editor, /touchPointer \? '记下后后台自动提炼' : 'Ctrl\+N 随时唤起/, '欢迎页仍在手机上显示 Ctrl+N');
   assert.match(editor, /touchPointer \? '搜页面与资料' : 'Ctrl\+K'/, '欢迎页仍在手机上显示 Ctrl+K');
 
   const chat = readSrc('components/ChatDrawer.vue');

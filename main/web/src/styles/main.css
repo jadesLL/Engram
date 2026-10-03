@@ -16,23 +16,23 @@
   /* Windows 11 Fluent 浅色主题（默认）：Mica 基底 + 分层卡片 */
   /* color-scheme 必须显式声明：否则系统深色时原生控件（select 弹层/滚动条）会跟系统而非应用主题 */
   color-scheme: light;
-  /* UI 2.0 令牌收敛：中性色由冷灰改暖灰，强调色统一为 Engram Blue */
-  --bg: #f7f6f4;
+  /* UI 2.0 令牌收敛：中性色由冷灰改暖灰，强调色统一为 Engram Blue（2026-10 方案 A 精修：纸色更暖、蓝色更自信） */
+  --bg: #f6f4f0;
   --bg-secondary: #faf9f7;
   --bg-tertiary: #f0eeeb;
   --card-bg: #ffffff;
   --glass-bg: rgba(255, 255, 255, 0.72);
   --glass-blur: saturate(160%) blur(24px);
   --bg-hover: rgba(0, 0, 0, 0.045);
-  --text: #1f1e1d;
+  --text: #1d1b17;
   --text-secondary: #5f5d5b;
   --text-faint: #91908e;
   --border: rgba(31, 30, 29, 0.08);
   --border-strong: rgba(31, 30, 29, 0.14);
-  --accent: #0f6cbd;
-  --accent-hover: #115ea3;
-  --accent-pressed: #0c5390;
-  --accent-soft: rgba(15, 108, 189, 0.09);
+  --accent: #2b5ce6;
+  --accent-hover: #2450cf;
+  --accent-pressed: #1e46bd;
+  --accent-soft: rgba(43, 92, 230, 0.09);
   --on-accent: #ffffff;
   --danger: #c42b1c;
   --warn: #9d5d00;
@@ -50,7 +50,7 @@
    *     否则「黄色 + 一切正常（降级在用）」和「黄色 + 出事了」同屏分不开。
    * 具体色值只在这里出现一次，组件一律引用令牌或 .link-<key> 类。
    */
-  --link-lan: #0f6cbd;
+  --link-lan: #2b5ce6;
   --link-v6: #0f7b0f;
   --link-v4: #a86800;
   --link-off: #c42b1c;
@@ -65,12 +65,22 @@
   --control-bg-pressed: #edeae7;
   --control-border: rgba(0, 0, 0, 0.06);
   --control-border-strong: rgba(0, 0, 0, 0.17);
-  /* 浮层阴影：flyout 常规 / dialog 加深 / raised 小卡片（编辑器工具栏） */
+  /* 浮层阴影：flyout 常规 / dialog 加深 / raised 小卡片（编辑器工具栏） / card 内容卡（方案 A：软投影取代硬边框感） */
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 12px rgba(0, 0, 0, 0.1);
   --shadow-raised: 0 1px 2px rgba(31, 30, 29, 0.05), 0 2px 8px -2px rgba(31, 30, 29, 0.06);
-  --radius: 11px;
-  --radius-control: 6px;
+  --shadow-card: 0 1px 2px rgba(29, 27, 23, 0.05), 0 10px 28px -12px rgba(29, 27, 23, 0.12);
+  --radius: 14px;
+  --radius-control: 9px;
+  /* 类型徽章四色（方案 A：灵感=琥珀 / 概念=蓝 / 实体=紫 / 资料=青），首页「最近更新」与看板标签共用 */
+  --badge-idea: #a15c07;
+  --badge-idea-soft: #fbf0dd;
+  --badge-concept: #1e46bd;
+  --badge-concept-soft: #e9efff;
+  --badge-entity: #6a54c9;
+  --badge-entity-soft: #efeafc;
+  --badge-note: #0f7b6c;
+  --badge-note-soft: #e3f3f0;
   --content-max: 720px;
   /* 侧栏 Acrylic（Win11 NavigationView 窗格材质） */
   --sidebar-material: rgba(250, 249, 247, 0.86);
@@ -83,10 +93,10 @@
   --sidebar-hairline: rgba(0, 0, 0, 0.08);
   --sidebar-hover: rgba(0, 0, 0, 0.045);
   --sidebar-active: rgba(0, 0, 0, 0.075);
-  --sidebar-accent: #0f6cbd;
-  --sidebar-focus-ring: rgba(15, 108, 189, 0.24);
+  --sidebar-accent: #2b5ce6;
+  --sidebar-focus-ring: rgba(43, 92, 230, 0.24);
   --sidebar-selection: rgba(0, 0, 0, 0.055);
-  --sidebar-selection-strong: rgba(15, 108, 189, 0.13);
+  --sidebar-selection-strong: rgba(43, 92, 230, 0.13);
   --sidebar-selection-border: rgba(0, 0, 0, 0.04);
   --sidebar-control: rgba(255, 255, 255, 0.7);
   --sidebar-control-focus: #ffffff;
@@ -98,8 +108,8 @@
   --file-ppt: #b9653e;
   --file-pdf: #bf4b4b;
   /* rail logo 阴影（深色主题下覆盖） */
-  --rail-logo-filter: drop-shadow(0 1px 3px rgba(15, 108, 189, 0.3));
-  --rail-logo-filter-hover: drop-shadow(0 2px 6px rgba(15, 108, 189, 0.34)) brightness(1.06);
+  --rail-logo-filter: drop-shadow(0 1px 3px rgba(43, 92, 230, 0.3));
+  --rail-logo-filter-hover: drop-shadow(0 2px 6px rgba(43, 92, 230, 0.34)) brightness(1.06);
   /* Win11 细滚动条（透明边框 + padding-box 裁剪，hover 时加粗） */
   --scrollbar: rgba(0, 0, 0, 0.3);
   --scrollbar-hover: rgba(0, 0, 0, 0.48);
@@ -171,6 +181,16 @@ html.dark {
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.5), 0 2px 12px rgba(0, 0, 0, 0.32);
   --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px -2px rgba(0, 0, 0, 0.36);
+  /* 2026-10 方案 A 精修：暗色卡片投影与徽章配色 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -12px rgba(0, 0, 0, 0.5);
+  --badge-idea: #e5b545;
+  --badge-idea-soft: rgba(229, 181, 69, 0.15);
+  --badge-concept: #7c9cf5;
+  --badge-concept-soft: rgba(124, 156, 245, 0.15);
+  --badge-entity: #a79bd5;
+  --badge-entity-soft: rgba(167, 155, 213, 0.15);
+  --badge-note: #5ec4b6;
+  --badge-note-soft: rgba(94, 196, 182, 0.14);
   --control-bg: rgba(255, 255, 255, 0.06);
   --control-bg-hover: rgba(255, 255, 255, 0.084);
   --control-bg-pressed: rgba(255, 255, 255, 0.042);
@@ -386,6 +406,9 @@ select option {
 }
 .btn.icon:hover { background: var(--bg-hover); color: var(--text); }
 .btn.small { padding: 4px 10px; font-size: 13px; }
+/* 2026-10 方案 A 精修：ghost 从 InboxView 提升为全局变体（内联速记等处复用） */
+.btn.ghost { border-color: transparent; background: transparent; box-shadow: none; color: var(--text-secondary); }
+.btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ---------- 连接通道：key → 颜色变量 ----------
@@ -407,6 +430,8 @@ select option {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
+  /* 2026-10 方案 A 精修：柔和投影取代细边框感 */
+  box-shadow: var(--shadow-card);
 }
 
 .muted { color: var(--text-secondary); }

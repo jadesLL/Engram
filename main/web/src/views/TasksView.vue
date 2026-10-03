@@ -566,8 +566,8 @@ onBeforeUnmount(() => {
 
 .page-head h1 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 700;
   letter-spacing: -0.2px;
 }
 
@@ -615,12 +615,12 @@ onBeforeUnmount(() => {
   text-decoration: underline;
 }
 
+/* 2026-10 方案 A：概览条改成四角圆角 + accent 渐隐底色，不再是左边条卡片 */
 .summary {
   margin: 0 0 14px;
-  padding: 10px 12px;
-  border-left: 3px solid var(--accent);
-  border-radius: 0 var(--radius-control) var(--radius-control) 0;
-  background: var(--bg-secondary);
+  padding: 10px 14px;
+  border-radius: var(--radius-control);
+  background: linear-gradient(90deg, var(--accent-soft), transparent 75%), var(--bg-secondary);
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.7;
@@ -709,14 +709,15 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 9px;
+  padding: 2px 10px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 999px;
   background: var(--card-bg);
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 18px;
   cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
 
 .fchip:hover { border-color: var(--border-strong); color: var(--text); }
@@ -819,12 +820,19 @@ onBeforeUnmount(() => {
 
 .cards { display: flex; flex-direction: column; gap: 8px; }
 
+/* 2026-10 方案 A：更大圆角 + hover 轻浮起 */
 .card {
   padding: 10px 11px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  border-radius: 12px;
   background: var(--card-bg);
   box-shadow: var(--shadow-raised);
+  transition: box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
+}
+
+.card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-card);
 }
 
 .card-text {
@@ -845,9 +853,11 @@ onBeforeUnmount(() => {
   line-height: 18px;
 }
 
+/* 2026-10 方案 A：四类胶囊统一走徽章色板（与首页类型徽章同一套 token） */
 .chip.owner { background: var(--accent-soft); color: var(--accent); }
-.chip.customer { background: rgba(117, 106, 166, 0.12); color: var(--file-markdown); }
-.chip.team { background: var(--bg-tertiary); }
+.chip.when { background: var(--badge-idea-soft); color: var(--badge-idea); }
+.chip.customer { background: var(--badge-entity-soft); color: var(--badge-entity); }
+.chip.team { background: var(--badge-note-soft); color: var(--badge-note); }
 .chip.overdue-days { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
 
 /* 逾期：整块与卡片都压一档红，扫一眼就知道先干这个 */
