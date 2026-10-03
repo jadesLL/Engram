@@ -835,8 +835,6 @@ onBeforeUnmount(() => {
 .btn.primary:hover { background: var(--accent-hover); }
 
 .btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
-.btn.ghost { border-color: transparent; background: transparent; box-shadow: none; color: var(--text-secondary); }
-.btn.ghost:hover { background: var(--bg-hover); color: var(--text); }
 .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 .btn[disabled]:hover { background: var(--card-bg); }
 .btn.primary[disabled]:hover { background: var(--inbox-accent); }
