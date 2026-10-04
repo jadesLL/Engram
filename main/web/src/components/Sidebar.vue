@@ -511,7 +511,10 @@
           </button>
         </div>
         <div v-show="!isFullColFolded(col.key)" class="kb-col-body">
-          <template v-for="group in col.groups" :key="group.key">
+          <!-- 每个二级类目自成一块（.kb-group）：吸顶抬头只在自己这一块里粘，滚到下一块就被顶走。
+               平铺成兄弟节点时，抬头的 sticky 包含块是整列列体，会全部粘在顶上叠字
+               （2026-10-04 用户报障：「人物会重叠到客户那个标题上」「副标题都看不清了」）。 -->
+          <section v-for="group in col.groups" :key="group.key" class="kb-group">
             <!-- 列内二级类目：人物/客户/组织/项目/其他、文档/对话/灵感碎片。
                  折叠键与窄栏完全一致（'entity:person' / 'raw:doc'），两边是同一个开关 -->
             <button
@@ -552,7 +555,7 @@
                 <span class="kb-row-time">{{ relativeTimeText(item.updated_at) }}</span>
               </button>
             </template>
-          </template>
+          </section>
           <p v-if="!col.count" class="none">{{ filter ? '没有匹配' : '暂无内容' }}</p>
         </div>
       </section>
@@ -2689,6 +2692,19 @@ onUnmounted(() => {
   padding: 6px 8px 18px;
 }
 
+/*
+ * 二级类目自己的块：吸顶抬头（.kb-sub-head）的 sticky 包含块就是它，
+ * 于是滚出这一块时抬头被下一块顶走——同一时刻只有一个抬头停在列体顶部。
+ * 平铺（不给包裹层）时包含块变成整列列体，所有抬头会一起粘在顶上叠字：
+ * 2026-10-04 用户报障「人物会重叠到客户那个标题上」「副标题都看不清了」。
+ * flow-root 建 BFC 只为两点：挡住外边距塌陷（抬头的 4px 上边距不会漏到块外），
+ * 且不引入 overflow——sticky 遇到 overflow:hidden 祖先会直接失效。
+ */
+.kb-group {
+  display: flow-root;
+  min-width: 0;
+}
+
 .kb-sub-head {
   position: sticky;
   top: 0;
@@ -2710,8 +2726,12 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
+/*
+ * 悬停底色必须不透明：抬头底下正滚着这一组的行（sticky 就是干这个的），
+ * 半透明底色会让行文字透上来，标题立刻看不清。--bg-secondary 与列头同一档灰，是实色。
+ */
 .kb-sub-head:hover {
-  background: var(--sidebar-hover);
+  background: var(--bg-secondary);
   color: var(--text);
 }
 

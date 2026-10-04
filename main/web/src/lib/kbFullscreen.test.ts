@@ -150,3 +150,25 @@ test('满窗支持折叠类目：列内二级类目与窄栏共用开关，整�
   assert.match(sidebar, /localStorage\.setItem\(FULL_FOLDED_KEY/, '分区折叠没有记下来');
   assert.doesNotMatch(store, /localStorage\.setItem\('sidebarFull'/, '满窗本身被记成了持久偏好');
 });
+
+/**
+ * 2026-10-04 用户报障：「实体里边人物和客户这两栏往上滑的时候，人物会重叠到客户那个标题上」
+ * 「文档、灵感碎片也有这个问题，而且做了这个透明，副标题都看不清了」。
+ *
+ * 根因是 sticky 的包含块：抬头们平铺在整列列体里，包含块就是整列，于是每个抬头都一直粘在
+ * 列体顶部，滚起来全叠在一起（实测人物/客户两个抬头的 top 都是 152）。给每个类目一个自己的
+ * 包裹块后，抬头只在自己那块里粘，滚到下一块就被顶走——同一时刻只有一个抬头在列体顶部。
+ */
+test('吸顶抬头只在自己类目块里粘：抬头必须包在 .kb-group 里，且包裹块不能有 overflow', () => {
+  assert.match(panel, /<section v-for="group in col\.groups" :key="group\.key" class="kb-group">/, '满窗列内的类目没有自己的包裹块——抬头会全部粘在列体顶部叠字');
+  assert.match(panel, /class="kb-group"[\s\S]*?class="kb-sub-head"[\s\S]*?class="kb-row"/, '抬头与行没有同处一个类目块（sticky 包含块会是整列）');
+  const group = ruleBody(sidebar, '.kb-group');
+  assert.match(group, /display:\s*flow-root/, '.kb-group 没有建 BFC（抬头的 4px 上边距会漏到块外）');
+  assert.doesNotMatch(group, /overflow/, '.kb-group 上出现 overflow——sticky 祖先一旦裁剪，吸顶直接失效');
+  // 抬头底色必须实色：底下正滚着这一组的行，半透明就叠字看不清
+  const hover = ruleBody(sidebar, '.kb-sub-head:hover');
+  assert.doesNotMatch(hover, /--sidebar-hover/, '吸顶抬头用回了半透明悬停底色，行文字会透上来');
+  assert.match(hover, /background:\s*var\(--bg-secondary\)/, '吸顶抬头悬停底色不是实色');
+  // 窄栏那套不变：窄栏的子分组本来就有包裹层（.sub-group），不需要跟着改
+  assert.match(sidebar, /class="sub-group"/, '窄栏子分组的包裹层被删了');
+});
