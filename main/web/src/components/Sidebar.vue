@@ -2685,11 +2685,27 @@ onUnmounted(() => {
   opacity: 1;
 }
 
+/*
+ * 列体不给上内边距：吸顶抬头（.kb-sub-head）只能粘到「内容区上沿」，列体一旦有 padding-top，
+ * 抬头吸住后与列头之间就会留出那几像素，滚动的行正好从缝里穿过去（2026-10-05 用户报障：
+ * 「副标题被拉上去之后跟上面的一级标题中间有个缝」）。静止时那点呼吸位改由第一个类目自己给
+ * （见下面的 .kb-group:first-child 两条），观感不变、吸顶时无缝。
+ */
 .kb-col-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px 8px 18px;
+  padding: 0 8px 18px;
+}
+
+/* 静止时列体顶部原本是「6px 内边距 + 4px 抬头外边距」＝10px 呼吸位，挪到这里原样保留 */
+.kb-group:first-child > .kb-sub-head {
+  margin-top: 10px;
+}
+
+/* 单组平铺的列（概念 / 归档）没有副标题，呼吸位就落在第一行自己身上 */
+.kb-group:first-child > .kb-row:first-child {
+  margin-top: 6px;
 }
 
 /*
