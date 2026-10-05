@@ -172,3 +172,18 @@ test('吸顶抬头只在自己类目块里粘：抬头必须包在 .kb-group 里
   // 窄栏那套不变：窄栏的子分组本来就有包裹层（.sub-group），不需要跟着改
   assert.match(sidebar, /class="sub-group"/, '窄栏子分组的包裹层被删了');
 });
+
+/**
+ * 2026-10-05 用户报障：「下滑之后副标题被拉上去了，跟上面的一级标题中间有个缝」。
+ *
+ * sticky 的 top: 0 只能把元素粘到**内容区上沿**：列体带 padding-top 时，抬头吸住后与列头之间
+ * 就固定留着那 6px，滚动的行正从缝里穿过去。所以上内边距必须从列体上拿掉，静止时的那点呼吸位
+ * 改由第一个类目（或单组列的第一行）给。
+ */
+test('吸顶抬头贴住列头：列体不吃上内边距，呼吸位挪到第一个类目上', () => {
+  const body = ruleBody(sidebar, '.kb-col-body');
+  assert.match(body, /padding:\s*0 8px 18px/, '列体又吃了上内边距——抬头吸住后与列头之间的缝会回来');
+  assert.doesNotMatch(body, /padding-top/, '列体不该再单独写 padding-top');
+  assert.match(ruleBody(sidebar, '.kb-group:first-child > .kb-sub-head'), /margin-top:\s*10px/, '第一个类目的呼吸位（原 6px 内边距 + 4px 外边距）丢了');
+  assert.match(ruleBody(sidebar, '.kb-group:first-child > .kb-row:first-child'), /margin-top:\s*6px/, '单组平铺列（概念/归档）第一行的呼吸位丢了');
+});
