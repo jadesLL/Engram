@@ -364,136 +364,21 @@
       </template>
     </div>
 
-    <!-- 欢迎页（2026-10 方案 A）：日期 + 问候 + 内联灵感速记 + 快捷入口 + 最近更新 / 近期待办 + 知识库概览 -->
-    <div v-else class="welcome">
-      <div class="welcome-inner">
-        <div class="welcome-date">{{ dateLine }}</div>
-        <header class="welcome-hero">
-          <div class="welcome-hero-text">
-            <h2 class="welcome-greeting">{{ greeting }}</h2>
-            <p class="muted welcome-sub">
-              库中已有 <strong>{{ welcomeStats.pages }}</strong> 个页面、<strong>{{ welcomeStats.files }}</strong> 份原始资料
-            </p>
-          </div>
-          <!-- 配置过多端同步时，首页直接给出「同步中 / 同步已完成」状态（未配置则整块不渲染） -->
-          <SyncHomeStatus class="welcome-sync" />
-        </header>
-
-        <!-- 内联灵感速记：写完 Ctrl+Enter 或点「记下」直接落盘（与「+」/Ctrl+N 同一接口），后台自动提炼 -->
-        <div class="capture">
-          <div class="capture-input">
-            <span class="capture-bulb" aria-hidden="true"><Icon name="lightbulb" :size="18" /></span>
-            <textarea
-              v-model="ideaDraft"
-              rows="2"
-              placeholder="记一条灵感……写完自动提炼进知识库"
-              :disabled="ideaSaving"
-              @keydown="onIdeaKey"
-            ></textarea>
-          </div>
-          <div class="capture-foot">
-            <span class="capture-hint">{{ touchPointer ? '记下后后台自动提炼' : 'Ctrl+N 随时唤起 · 提交后后台自动提炼' }}</span>
-            <span v-if="ideaError" class="capture-error">{{ ideaError }}</span>
-            <span class="capture-spacer"></span>
-            <button
-              class="btn primary small"
-              type="button"
-              :disabled="!canSubmitIdea(ideaDraft) || ideaSaving"
-              @click="submitInlineIdea"
-            >{{ ideaSaving ? '正在记下…' : '记下' }}</button>
-          </div>
-        </div>
-
-        <div class="welcome-cards">
-          <button class="welcome-card" type="button" @click="createFirst">
-            <span class="wc-icon"><Icon name="file-plus" :size="17" /></span>
-            <span class="wc-text"><strong>新建页面</strong><em>存到 Wiki</em></span>
-          </button>
-          <button class="welcome-card" type="button" @click="$router.push('/search')">
-            <span class="wc-icon"><Icon name="search" :size="17" /></span>
-            <span class="wc-text"><strong>搜索知识库</strong><em>{{ touchPointer ? '搜页面与资料' : 'Ctrl+K' }}</em></span>
-          </button>
-          <button class="welcome-card" type="button" @click="$router.push('/graph')">
-            <span class="wc-icon"><Icon name="graph" :size="17" /></span>
-            <span class="wc-text"><strong>知识图谱</strong><em>总览关系结构</em></span>
-          </button>
-          <button class="welcome-card" type="button" @click="app.toggleChat(true)">
-            <span class="wc-icon"><Icon name="ai" :size="17" /></span>
-            <span class="wc-text"><strong>问问 Agent</strong><em>{{ agentEntryHint }}</em></span>
-          </button>
-        </div>
-
-        <div class="welcome-grid">
-          <section v-if="recentPages.length" class="wg">
-            <h3 class="wg-title">最近更新<button class="wg-more" type="button" @click="$router.push('/search')">全部页面 →</button></h3>
-            <div class="recent2-list">
-              <button
-                v-for="p in recentPages"
-                :key="p.id"
-                class="recent2-row"
-                type="button"
-                @click="$router.push(`/page/${p.id}`)"
-              >
-                <span class="type-badge" :class="pageBadge(p).cls">{{ pageBadge(p).label }}</span>
-                <span class="recent2-main">
-                  <span class="recent2-title">{{ p.title }}</span>
-                  <span class="recent2-meta">{{ pageBadge(p).meta }}</span>
-                </span>
-                <span class="recent2-time">{{ fromNow(p.updated_at) }}</span>
-              </button>
-            </div>
-          </section>
-
-          <section class="wg">
-            <template v-if="upcomingTasks.length">
-              <h3 class="wg-title">近期待办<button class="wg-more" type="button" @click="$router.push('/tasks')">看板 →</button></h3>
-              <div class="mini-card">
-                <button
-                  v-for="(t, i) in upcomingTasks"
-                  :key="i"
-                  class="mini-task"
-                  type="button"
-                  @click="$router.push('/tasks')"
-                >
-                  <span class="mini-check" aria-hidden="true"></span>
-                  <span class="mini-main">
-                    <span class="mini-text">{{ t.text }}</span>
-                    <span v-if="taskMeta(t)" class="mini-meta">{{ taskMeta(t) }}</span>
-                  </span>
-                  <span class="mini-due" :class="{ over: isOverdue(t) }">{{ dueLabel(t) }}</span>
-                </button>
-              </div>
-            </template>
-
-            <h3 class="wg-title" :class="{ 'wg-title-gap': upcomingTasks.length }">知识库概览</h3>
-            <div class="mini-card">
-              <div class="stat-row">
-                <span class="stat-ic" style="background: var(--badge-concept-soft); color: var(--badge-concept);"><Icon name="graph" :size="14" /></span>
-                <span class="stat-lb">概念</span>
-                <span class="stat-bar"><i :style="{ width: kbBar(kbStats.concepts) }"></i></span>
-                <span class="stat-vl">{{ kbStats.concepts }}</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-ic" style="background: var(--badge-entity-soft); color: var(--badge-entity);"><Icon name="user" :size="14" /></span>
-                <span class="stat-lb">实体</span>
-                <span class="stat-bar"><i :style="{ width: kbBar(kbStats.entities), background: 'var(--badge-entity)' }"></i></span>
-                <span class="stat-vl">{{ kbStats.entities }}</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-ic" style="background: var(--badge-idea-soft); color: var(--badge-idea);"><Icon name="archive" :size="14" /></span>
-                <span class="stat-lb">原始资料</span>
-                <span class="stat-bar"><i :style="{ width: kbBar(kbStats.files), background: 'var(--badge-idea)' }"></i></span>
-                <span class="stat-vl">{{ kbStats.files }}</span>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <p class="welcome-tip muted">
-          把资料拖进左栏「原始资料」，用外部 Agent（ZCode / Claude Code…）经 MCP 提炼进 Wiki；也可以直接用 {{ agentName }} 开问。
-        </p>
-      </div>
-    </div>
+    <!-- 首页看板（2026-10-05）：模块可编辑、可拖动——加 / 删 / 改 / 排序都由用户自己定。
+         布局读写与默认布局见 stores/homeBoard.ts、lib/homeBoard.ts；模块皮肤见 components/HomeBoardModules/。 -->
+    <HomeBoard
+      v-else
+      :pages="allPages"
+      :file-count="rawFilesCount"
+      :raw-paths="rawFilePaths"
+      :recent-items="recentPages"
+      :idea-items="ideaPages"
+      :agent-name="agentName"
+      :on-idea="submitIdea"
+      @go="go"
+      @chat="app.toggleChat(true)"
+      @note="quickNoteFromBoard"
+    />
   </div>
 </template>
 
@@ -518,19 +403,19 @@ import FilePreview from '../components/FilePreview.vue';
 import BackTrailMenu from '../components/BackTrailMenu.vue';
 import RelatedMenu from '../components/RelatedMenu.vue';
 import Icon from '../components/Icon.vue';
+import HomeBoard from '../components/HomeBoard.vue';
 import AppSelect from '../components/ui/AppSelect.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
-import SyncHomeStatus from '../components/SyncHomeStatus.vue';
 import { confirmDialog } from '../lib/confirm';
+import { createIdeaNote } from '../lib/quickNote';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { createThrottledReload } from '../lib/refreshThrottle';
 import { notify } from '../lib/notify';
-import { useTouchPointer } from '../lib/pointer';
 import { retryIdeaDistill } from '../lib/ideaDistill';
 import { emptyDistillState, useIdeaDistill } from '../lib/ideaDistillFeed';
 import { useTasksStore } from '../stores/tasks';
-import { boardView, EMPTY_FILTER, filterCards, isOverdue, type TaskCard } from '../lib/taskBoard';
-import { canSubmitIdea, isIdeaSubmitKey } from '../lib/ideaComposer';
+import { useHomeBoardStore } from '../stores/homeBoard';
+import { ideaPagesOf, recentPagesOf } from '../lib/homeBoard.ts';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
 import Vditor from 'vditor';
@@ -545,10 +430,7 @@ const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
 const { capabilities } = useRuntimeCapabilities();
-/** 触屏（手机/平板）：欢迎页的卡片说明换成动作文案，不展示键盘快捷键 */
-const touchPointer = useTouchPointer();
 const agentName = computed(() => capabilities.value.agentMode === 'hub' ? '服务器 Agent' : capabilities.value.agentMode === 'unavailable' ? 'Agent' : '内置 Agent');
-const agentEntryHint = computed(() => capabilities.value.agentMode === 'hub' ? 'Docker 中枢继续运行' : capabilities.value.agentMode === 'unavailable' ? '绑定中枢后可用' : '内置助手开问');
 const chat = useChatStore();
 const sync = useSyncStore();
 /* 双链/关联跳转的返回入口：轨迹非空才显示（从侧栏/搜索跳转会清空轨迹） */
@@ -1288,127 +1170,51 @@ function showContextMenu(
   openContextMenu({ x: request.x, y: request.y, items });
 }
 
-async function createFirst() {
-  const { data } = await api.post('/api/pages', { dir: '', title: '欢迎使用 Engram' });
-  // 新建的空页面没有可读内容，直接进编辑器
-  app.setReadingMode(false);
-  router.push(`/page/${data.meta.id}`);
-}
-
-/* 欢迎页（2026-10 方案 A）：日期行 + 问候语 + 内联灵感速记 + 库统计 + 最近更新 + 近期待办 */
-const greeting = computed(() => {
-  const h = new Date().getHours();
-  if (h < 6) return '夜深了，适合沉淀想法';
-  if (h < 12) return '早上好';
-  if (h < 18) return '下午好';
-  return '晚上好';
-});
-
-/** 日期行（如「2026年10月3日 · 周五」）：进欢迎页时算一次即可 */
-const dateLine = computed(() => {
-  const now = new Date();
-  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
-  return `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 · ${week}`;
-});
-
+/* ===== 首页看板的数据源（2026-10-05）=====
+   看板本身（布局、拖拽、增删改）在 components/HomeBoard.vue；这里只负责把数据准备好、
+   把「新建页面 / 灵感落盘」这类动作接上，保持编辑页与看板各管一段。 */
 const tasks = useTasksStore();
 const allPages = ref<any[]>([]);
+/** 原始资料份数（「库中已有 N 份」与概览条用） */
 const rawFilesCount = ref(0);
+/** 原始资料整棵树的文件路径（分区导航按前缀计数用；接口不带参数时只数根目录一层） */
+const rawFilePaths = ref<string[]>([]);
 let welcomeLoaded = false;
 
-const welcomeStats = computed(() => ({ pages: allPages.value.length, files: rawFilesCount.value }));
+/** 最近更新：Wiki 非归档页 + 灵感碎片（接口已按更新时间倒序，条数由模块自己截） */
+const recentPages = computed(() => recentPagesOf(allPages.value));
+/** 近期灵感：只取灵感碎片 */
+const ideaPages = computed(() => ideaPagesOf(allPages.value));
 
-/** 最近更新：Wiki 非归档页 + 灵感碎片，列表接口已按更新时间倒序，取前 6 */
-const recentPages = computed(() =>
-  allPages.value
-    .filter((p) => (p.path.startsWith('Wiki/') && !p.path.startsWith('Wiki/归档/')) || p.path.startsWith('原始资料/灵感碎片/'))
-    .slice(0, 6)
-);
-
-/** 知识库概览：概念 / 实体 / 原始资料三类计数（条按最大值归一） */
-const kbStats = computed(() => ({
-  concepts: allPages.value.filter((p) => p.path.startsWith('Wiki/概念/')).length,
-  entities: allPages.value.filter((p) => p.path.startsWith('Wiki/实体/')).length,
-  files: rawFilesCount.value,
-}));
-const kbMax = computed(() => Math.max(kbStats.value.concepts, kbStats.value.entities, kbStats.value.files, 1));
-function kbBar(n: number) {
-  return `${Math.max(6, Math.round((n / kbMax.value) * 100))}%`;
+/** 看板「快捷入口」的跳转：与左栏图标同一套（内置 Agent 满窗时先收起来，再跳） */
+function go(path: string) {
+  app.minimizeChatForNavigation();
+  void router.push(path);
 }
 
-/** 近期待办：逾期最优先，再按看板窗口内日期顺序，周期与待定垫后，取前 3 */
-const upcomingTasks = computed<TaskCard[]>(() => {
-  if (!tasks.board) return [];
-  const cards = filterCards(tasks.board, EMPTY_FILTER);
-  const view = boardView(cards, { start: tasks.windowStart, end: tasks.windowEnd });
-  const pick = (bucket: string) => view.day.filter((c) => c.bucket === bucket).flatMap((c) => c.cards);
-  return [...pick('overdue'), ...pick('day'), ...pick('periodic'), ...pick('later')].slice(0, 3);
-});
-
-/** 行的彩色类型徽章：按路径分 概念 / 实体 / 灵感 / 页面，meta 给去掉文件名的目录段 */
-function pageBadge(p: any): { cls: string; label: string; meta: string } {
-  const path = String(p.path || '');
-  const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')).split('/').join(' / ') : path;
-  if (path.startsWith('原始资料/灵感碎片/')) return { cls: 'tb-idea', label: '灵感', meta: dir };
-  if (path.startsWith('Wiki/概念/')) return { cls: 'tb-concept', label: '概念', meta: dir };
-  if (path.startsWith('Wiki/实体/')) return { cls: 'tb-entity', label: '实体', meta: dir };
-  return { cls: 'tb-note', label: path.startsWith('原始资料/') ? '资料' : '页面', meta: dir };
-}
-
-/** 待办 meta：责任人 · 客户（内部工作落端组） */
-function taskMeta(t: TaskCard): string {
-  return [t.owner, t.customer || t.team].filter(Boolean).join(' · ');
-}
-
-/** 到期胶囊：有日期给 M/D，否则给周期或时间原文 */
-function dueLabel(t: TaskCard): string {
-  if (t.date) {
-    const [, m, d] = t.date.split('-');
-    return `${Number(m)}/${Number(d)}`;
-  }
-  return t.repeat || t.when || '待定';
-}
-
-/* 内联灵感速记：与 IdeaComposer 对话框同一个 POST /api/ideas，落盘即走，提炼在后台 */
-const ideaDraft = ref('');
-const ideaSaving = ref(false);
-const ideaError = ref('');
-
-async function submitInlineIdea() {
-  const content = ideaDraft.value.trim();
-  if (!canSubmitIdea(content) || ideaSaving.value) return;
-  ideaSaving.value = true;
-  ideaError.value = '';
+/**
+ * 快速记灵感模块的落盘回调：模块自己发请求、自己显示错误（正文不丢），
+ * 这里只做「成功之后的收尾」——刷新统计与最近列表、更新侧栏角标。
+ * 返回 true 让模块知道可以清了；失败返回 false（错误文案已经在卡片里）。
+ */
+async function submitIdea(content: string): Promise<boolean> {
   try {
     const { data } = await api.post('/api/ideas', { content });
-    if (!data?.id) throw new Error('服务端没有返回页面 id，这次可能没记上');
-    ideaDraft.value = '';
+    if (!data?.id) return false;
     app.bumpSidebar();
-    notify.success('已记下，后台提炼中…');
     void loadWelcome();
-  } catch (error: any) {
-    ideaError.value = error?.response?.data?.error || error?.message || '记灵感失败，请重试';
-  } finally {
-    ideaSaving.value = false;
+    return true;
+  } catch {
+    return false;
   }
 }
 
-function onIdeaKey(event: KeyboardEvent) {
-  if (!isIdeaSubmitKey(event)) return;
-  event.preventDefault();
-  void submitInlineIdea();
-}
-
-function fromNow(iso: string) {
-  if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '刚刚';
-  if (mins < 60) return `${mins} 分钟前`;
-  const days = Math.floor(diff / 86400000);
-  if (days < 1) return '今天';
-  if (days < 30) return `${days} 天前`;
-  return `${Math.floor(days / 30)} 个月前`;
+/** 看板「近期灵感」空态的「记一条」：走全局快捷键那条入口（Ctrl+N 同一个对话框） */
+async function quickNoteFromBoard() {
+  const created = await createIdeaNote();
+  if (!created) return;
+  app.bumpSidebar();
+  void router.push(`/page/${created.id}`);
 }
 
 async function loadWelcome() {
@@ -1419,19 +1225,21 @@ async function loadWelcome() {
       api.get(`/api/files/list?dir=${encodeURIComponent('原始资料')}`),
     ]);
     allPages.value = (pl.pages || []) as any[];
-    rawFilesCount.value = (fl.files || []).length;
-  } catch { /* 欢迎页数据静默失败，不影响主流程 */ }
+    rawFilePaths.value = ((fl.files || []) as any[]).map((f: any) => String(f?.path || ''));
+    rawFilesCount.value = rawFilePaths.value.filter(Boolean).length;
+  } catch { /* 首页数据静默失败，不影响主流程 */ }
 }
 
-/** 首次进欢迎页：页面/资料统计 + 看板现状（轻量 GET，不触发重新生成）各拉一次 */
+/** 首次进首页：页面/资料统计 + 看板现状（轻量 GET，不触发重新生成）各拉一次 */
 function loadWelcomeOnce() {
   if (welcomeLoaded) return;
   welcomeLoaded = true;
-  loadWelcome();
-  void tasks.load();
+  void loadWelcome();
+  // 看板里可能没有「近期待办」模块：那种情况不必拉任务看板（列表接口本身就便宜，但没必要）
+  if (useHomeBoardStore().board.modules.some((module) => module.kind === 'tasks')) void tasks.load();
 }
 
-// Android 不维持后台 SSE；首轮全量对账期间本地库在逐项写入，欢迎页统计与「最近编辑」要跟着长，
+// Android 不维持后台 SSE；首轮全量对账期间本地库在逐项写入，首页统计与「最近编辑」要跟着长，
 // 否则整轮对账都写着「库中已有 0 个页面」，结束时才一次性跳变。节流到每 5 秒最多一次。
 const reloadWelcomeDuringSync = createThrottledReload(() => {
   if (!route.params.id) void loadWelcome();
@@ -2183,309 +1991,10 @@ button.save-state.dirty:hover { color: var(--accent); }
 
 
 /*
- * 首页（欢迎页）：内容比一屏高时必须「从顶上开始、一路往下可滚」。
- * 居中只能用 auto 外边距（见 .welcome-inner）——flex 的 align-items / justify-content: center
- * 在内容溢出时会把两端平分：顶部那截落到滚动原点之外，滚到最顶也回不来。
- * 2026-10-01 报障（安卓「首页显示不全」）：360×640 实测 inner 顶部 -155px、minScrollTop 恒为 0，
- * logo、问候语、库统计与第一张快捷卡全看不见也够不着；412×851 上问候头同样被状态栏吃掉 22px。
- * auto 外边距在空间不足时自动归零：放得下就居中，放不下就顶部对齐、溢出全部落在下方可滚区。
+ * 首页看板的样式已随组件搬走（见 components/HomeBoard.vue 与 styles/homeBoard.css）。
+ * 这里保留一句说明，避免后来的人回 EditorView 里找 .welcome-* 而扑空。
  */
-.welcome {
-  height: 100%;
-  display: flex;
-  overflow-y: auto;
-}
-.welcome-inner { margin: auto; width: 100%; max-width: 920px; padding: 44px 48px 64px; }
 
-/* 日期行 + 问候头：大问候居左，同步状态条居右 */
-.welcome-date {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: var(--text-faint);
-}
-.welcome-hero {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  margin: 6px 0 24px;
-}
-.welcome-hero-text { min-width: 0; }
-.welcome-greeting { font-size: 30px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
-.welcome-sub { margin-top: 6px; font-size: 13.5px; }
-.welcome-sub strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-.welcome-sync { flex-shrink: 0; margin-bottom: 3px; }
-
-/* 内联灵感速记：灯泡 + 无边框输入 + 底部操作行（聚焦时整卡一圈 accent） */
-.capture {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
-  padding: 16px 16px 12px;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-.capture:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-card), 0 0 0 3px var(--sidebar-focus-ring);
-}
-.capture-input { display: flex; gap: 12px; align-items: flex-start; }
-.capture-bulb {
-  width: 34px;
-  height: 34px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  background: var(--badge-idea-soft);
-  color: var(--badge-idea);
-}
-.capture textarea {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  resize: none;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 14.5px;
-  line-height: 1.6;
-  padding: 5px 0 0;
-}
-.capture textarea::placeholder { color: var(--text-faint); }
-.capture-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-.capture-hint { font-size: 11.5px; color: var(--text-faint); }
-.capture-error { font-size: 11.5px; color: var(--danger); }
-.capture-spacer { flex: 1; }
-
-/* 快捷入口：行内芯片卡，空间不足自动折行 */
-.welcome-cards {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 14px 0 30px;
-}
-.welcome-card {
-  flex: 1 1 150px;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 10px 13px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 11px);
-  background: var(--bg-secondary);
-  text-align: left;
-  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
-}
-.welcome-card:hover {
-  border-color: transparent;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-card);
-}
-.welcome-card:active { transform: translateY(1px); }
-.welcome-card:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 1px var(--accent);
-}
-.wc-icon {
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: var(--bg-tertiary, var(--bg));
-  color: var(--text-secondary);
-}
-.welcome-card:hover .wc-icon { background: var(--accent-soft); color: var(--accent); }
-.wc-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.wc-text strong { font-size: 13px; font-weight: 600; color: var(--text); }
-.wc-text em { font-style: normal; font-size: 11px; color: var(--text-faint); }
-
-/* 两栏：左「最近更新」宽，右「近期待办 + 知识库概览」窄 */
-.welcome-grid {
-  display: grid;
-  grid-template-columns: 1.65fr 1fr;
-  gap: 28px;
-  align-items: start;
-}
-.wg-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-.wg-title-gap { margin-top: 22px; }
-.wg-more {
-  margin-left: auto;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  font-weight: 500;
-  letter-spacing: 0;
-  transition: color 150ms ease;
-}
-.wg-more:hover { color: var(--accent); }
-.wg-more:focus-visible { outline: none; color: var(--accent); }
-
-/* 最近更新：彩色类型徽章 + 标题 + 目录段 + 相对时间 */
-.recent2-list { display: flex; flex-direction: column; gap: 2px; }
-.recent2-row {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 12px;
-  border-radius: 12px;
-  text-align: left;
-  transition: background 150ms ease, box-shadow 150ms ease;
-}
-.recent2-row:hover { background: var(--card-bg); box-shadow: var(--shadow-card); }
-.recent2-row:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--accent);
-}
-.type-badge {
-  flex: none;
-  min-width: 34px;
-  text-align: center;
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 6px;
-  padding: 3px 7px;
-}
-.tb-idea { background: var(--badge-idea-soft); color: var(--badge-idea); }
-.tb-concept { background: var(--badge-concept-soft); color: var(--badge-concept); }
-.tb-entity { background: var(--badge-entity-soft); color: var(--badge-entity); }
-.tb-note { background: var(--badge-note-soft); color: var(--badge-note); }
-.recent2-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.recent2-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13.5px;
-  font-weight: 550;
-  color: var(--text);
-}
-.recent2-meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11.5px;
-  color: var(--text-faint);
-}
-.recent2-time {
-  flex-shrink: 0;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 近期待办 / 知识库概览的小卡 */
-.mini-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
-  padding: 8px 14px;
-}
-.mini-task {
-  width: 100%;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 0;
-  text-align: left;
-}
-.mini-task + .mini-task { border-top: 1px solid var(--border); }
-.mini-check {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  margin-top: 2px;
-  border: 1.5px solid var(--border-strong, var(--border));
-  border-radius: 6px;
-  transition: border-color 150ms ease;
-}
-.mini-task:hover .mini-check { border-color: var(--accent); }
-.mini-task:focus-visible { outline: none; }
-.mini-task:focus-visible .mini-check { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-.mini-main { flex: 1; min-width: 0; }
-.mini-text { display: block; font-size: 13px; font-weight: 500; line-height: 1.45; color: var(--text); }
-.mini-meta {
-  display: block;
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mini-due {
-  flex: none;
-  margin-left: auto;
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--badge-idea);
-  background: var(--badge-idea-soft);
-  padding: 3px 7px;
-  border-radius: 6px;
-  font-variant-numeric: tabular-nums;
-}
-.mini-due.over { color: var(--danger); background: var(--danger-soft); }
-
-.stat-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 12.5px; }
-.stat-row + .stat-row { border-top: 1px solid var(--border); }
-.stat-ic {
-  width: 26px;
-  height: 26px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-}
-.stat-lb { color: var(--text-secondary); }
-.stat-bar {
-  width: 56px;
-  flex: none;
-  height: 4px;
-  margin-left: auto;
-  border-radius: 2px;
-  background: var(--bg-tertiary);
-  overflow: hidden;
-}
-.stat-bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
-.stat-vl { flex: none; min-width: 22px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
-
-.welcome-tip {
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-  font-size: 11.5px;
-  line-height: 1.7;
-}
-
-@media (max-width: 1024px) {
-  .welcome-inner { padding: 32px 24px 56px; }
-  .welcome-grid { grid-template-columns: 1fr; }
-  .welcome-hero { align-items: flex-start; flex-direction: column; gap: 12px; }
-  .welcome-sync { margin-bottom: 0; }
-}
 
 @media (max-width: 768px) {
   .editor-topbar { height: 40px; padding: 0 6px 0 10px; left: 10px; right: 10px; }

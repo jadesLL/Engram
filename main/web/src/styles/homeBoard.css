@@ -1,0 +1,116 @@
+/*
+ * 首页看板的公共样式（2026-10-05）。
+ *
+ * 这些是「模块之间要长得一样」的部分：区块抬头、卡片壳、行、空状态、类型徽章。
+ * 写在全局表里而不是某个组件里，是因为首页模块是一堆兄弟组件（HomeBoardModules/*），
+ * scoped 样式跨不过组件边界；重复抄一份才是真正会漂的地方。
+ * 各模块**独有**的东西仍留在自己的 scoped 块里。
+ */
+
+/* 区块抬头：小号字距展开 + 右侧「全部 →」这类动作 */
+.hb-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.hb-title-gap { margin-top: 22px; }
+.hb-more {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: color 150ms ease;
+}
+.hb-more:hover { color: var(--accent); }
+.hb-more:focus-visible { outline: none; color: var(--accent); }
+
+/* 卡片壳：首页各模块统一用同一层底色 + 一像素描边 */
+.hb-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 8px 14px;
+}
+.hb-card.pad { padding: 16px; }
+
+/* 行：列表类模块（最近更新 / 灵感 / 待办）共用，hover 才浮起来 */
+.hb-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  text-align: left;
+  transition: background 150ms ease, box-shadow 150ms ease;
+}
+.hb-row:hover { background: var(--card-bg); box-shadow: var(--shadow-card); }
+.hb-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.hb-row + .hb-row { border-top: 1px solid var(--border); }
+.hb-row-stack { align-items: flex-start; }
+.hb-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.hb-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--text);
+}
+.hb-row-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.hb-row-time {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 类型徽章（概念 / 实体 / 灵感 / 资料 / 页面） */
+.hb-badge {
+  flex: none;
+  min-width: 34px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 3px 7px;
+}
+.hb-badge.tb-idea { background: var(--badge-idea-soft); color: var(--badge-idea); }
+.hb-badge.tb-concept { background: var(--badge-concept-soft); color: var(--badge-concept); }
+.hb-badge.tb-entity { background: var(--badge-entity-soft); color: var(--badge-entity); }
+.hb-badge.tb-note { background: var(--badge-note-soft); color: var(--badge-note); }
+
+/* 空状态：模块没数据时也占住位置，不塌成一条线 */
+.hb-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* 数量 / 状态胶囊（到期日、计数） */
+.hb-pill {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--badge-idea-soft);
+  color: var(--badge-idea);
+  font-variant-numeric: tabular-nums;
+}
+.hb-pill.over { background: var(--danger-soft); color: var(--danger); }
+.hb-pill.plain { background: var(--bg-tertiary); color: var(--text-secondary); }

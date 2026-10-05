@@ -177,11 +177,14 @@ test('行的长按/⋯ 菜单在手机上是贴底动作面板，不是贴着手
   assert.match(menu, /registerBackHandler/, '动作面板没接返回键：按返回会直接退出这一页');
 });
 
-test('触屏上的键盘提示全部换掉：欢迎页卡片、对话输入框、搜索空状态', () => {
-  const editor = readSrc('views/EditorView.vue');
-  assert.match(editor, /useTouchPointer/, '欢迎页没做触屏判断');
-  assert.match(editor, /touchPointer \? '记下后后台自动提炼' : 'Ctrl\+N 随时唤起/, '欢迎页仍在手机上显示 Ctrl+N');
-  assert.match(editor, /touchPointer \? '搜页面与资料' : 'Ctrl\+K'/, '欢迎页仍在手机上显示 Ctrl+K');
+test('触屏上的键盘提示全部换掉：首页模块、对话输入框、搜索空状态', () => {
+  // 2026-10-05 首页改成可编辑看板：这两句提示随模块搬到 HomeBoardModules 下
+  const capture = readSrc('components/HomeBoardModules/HomeCapture.vue');
+  assert.match(capture, /useTouchPointer/, '首页速记模块没做触屏判断');
+  assert.match(capture, /touchPointer \? '记下后后台自动提炼' : 'Ctrl\+N 随时唤起/, '首页速记仍在手机上显示 Ctrl+N');
+
+  const shortcuts = readSrc('components/HomeBoardModules/HomeShortcuts.vue');
+  assert.match(shortcuts, /touchPointer \? '搜页面与资料' : 'Ctrl\+K'/, '首页快捷入口仍在手机上显示 Ctrl+K');
 
   const chat = readSrc('components/ChatDrawer.vue');
   assert.match(chat, /composerPlaceholder/, '对话输入框占位文案没有收口');

@@ -973,10 +973,11 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             .put("contributions", JSONArray())
     }
 
-    /** 与 server PUBLIC_SETTINGS 对齐的界面偏好：Android 上只有这两项有意义（DDNS / 一键接入 token 不适用） */
+    /** 与 server PUBLIC_SETTINGS 对齐的界面偏好（DDNS / 一键接入 token 不适用）；home_layout 是首页看板布局 */
     fun publicSettings(): JSONObject = JSONObject()
         .put("search_synonyms", setting("search_synonyms") ?: "")
         .put("show_ai_workspace", setting("show_ai_workspace") ?: "")
+        .put("home_layout", setting("home_layout") ?: "")
 
     /** 页面图片资产数（assets/<pageId>/ 下的文件数）：侧栏「查看引用图片」按它决定入口是否可点 */
     fun assetCount(pageId: String): Int = File(brain, "assets/$pageId").listFiles()?.count { it.isFile } ?: 0

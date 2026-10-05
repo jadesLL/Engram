@@ -55,6 +55,10 @@ const PUBLIC_SETTINGS = [
   // 界面偏好：侧栏是否显示「AI 工作区」（服务端自动生成的日志/索引/关系库）。
   // 用户日常不需要看这些内容，默认隐藏；'1' 才显示。
   'show_ai_workspace',
+  // 界面偏好：首页自定义看板布局（JSON 字符串，形如 {"version":1,"modules":[...]}）。
+  // 服务端只按白名单原样存取、不校验 JSON：前端 lib/homeBoard.ts 负责解析与归一化，
+  // 缺省（''）或写坏的内容一律由前端回退默认布局，因此这里不做特判。
+  'home_layout',
 ];
 
 export async function settingsRoutes(app: FastifyInstance) {
