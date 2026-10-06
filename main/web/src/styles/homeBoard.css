@@ -1,10 +1,14 @@
 /*
- * 首页看板的公共样式（2026-10-05）。
+ * 首页看板的公共样式（2026-10-05，2026-10-06 统一卡片外框）。
  *
- * 这些是「模块之间要长得一样」的部分：区块抬头、卡片壳、行、空状态、类型徽章。
+ * 这些是「模块之间要长得一样」的部分：区块抬头、内嵌面板、行、空状态、类型徽章。
  * 写在全局表里而不是某个组件里，是因为首页模块是一堆兄弟组件（HomeBoardModules/*），
  * scoped 样式跨不过组件边界；重复抄一份才是真正会漂的地方。
  * 各模块**独有**的东西仍留在自己的 scoped 块里。
+ *
+ * 外框只有一层：由模块外壳 HomeModuleShell.vue 的 .shell 统一画（描边 + 圆角 + 底色 + 阴影）。
+ * 早期版本把外框画在内容层（.hb-card），结果「自带框的模块」和「不带框的模块」混在一页里，
+ * 看着有的有框有的没有——2026-10-06 用户报障的原因，所以这里只留内嵌面板的样式。
  */
 
 /* 区块抬头：小号字距展开 + 右侧「全部 →」这类动作 */
@@ -30,13 +34,12 @@
 .hb-more:hover { color: var(--accent); }
 .hb-more:focus-visible { outline: none; color: var(--accent); }
 
-/* 卡片壳：首页各模块统一用同一层底色 + 一像素描边 */
+/* 内嵌面板：模块内部的二级容器（例如待办列表、看板三列），不画外框——外框由 .shell 统一给 */
 .hb-card {
-  background: var(--card-bg);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
-  padding: 8px 14px;
+  border-radius: 10px;
+  padding: 8px 12px;
 }
 .hb-card.pad { padding: 16px; }
 
@@ -51,7 +54,8 @@
   text-align: left;
   transition: background 150ms ease, box-shadow 150ms ease;
 }
-.hb-row:hover { background: var(--card-bg); box-shadow: var(--shadow-card); }
+/* 卡片底色就是页面底色：hover 用次级底色才看得出，别用 --card-bg（那样等于没变） */
+.hb-row:hover { background: var(--bg-secondary); }
 .hb-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
 .hb-row + .hb-row { border-top: 1px solid var(--border); }
 .hb-row-stack { align-items: flex-start; }

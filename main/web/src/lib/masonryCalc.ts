@@ -34,3 +34,74 @@ export function maxSpan(spans: ArrayLike<number>): number {
   }
   return top;
 }
+
+/** 一张已放好的卡片（左上角坐标 + 尺寸，单位 px） */
+export interface PackedRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 两张卡片是否真的重叠（x 与 y 的区间同时交叠才算） */
+export function overlaps(a: PackedRect, b: PackedRect): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+/**
+ * 依次给每张卡找位置（瀑布流：往上补空档，同时保持前后视觉顺序）。
+ *
+ * 早先用的是「贪心放当前最矮的那条车道」，会在窄屏上留出肉眼可见的空档
+ * （桌面 1/4 宽的小卡旁边空一大片 —— 2026-10-06 用户问「占位对不对」就是这个）：
+ * 因为整行卡会把所有车道一起推下去，落单的小卡旁边那格就空着。这里改成碰撞检测：
+ *  - 候选位只有 0 与其它卡的下沿，所以卡片一定紧贴已有卡片，不会悬在半空；
+ *  - 候选位按「先矮后左」打分（y 优先、其次取 x 更小的），既补空档又不会往右乱飘；
+ *  - 整行卡（span ≥ 车道数）的落点不允许早于 frontier（已经排到的位置）：
+ *    否则它会「插到前面的卡上边」，视觉顺序会乱（1 号卡看起来排在 2 号卡后面）。
+ */
+export function placeCards(
+  spans: ArrayLike<number>,
+  heights: ArrayLike<number>,
+  width: number,
+  lanes: number,
+  gap: number = GAP
+): PackedRect[] {
+  const laneWidth = (width - gap * (lanes - 1)) / lanes;
+  const placed: PackedRect[] = [];
+  /** 已经排到的纵向位置：整行卡的落点不能早于它 */
+  let frontier = 0;
+
+  for (let index = 0; index < (spans?.length || 0); index++) {
+    const span = Math.max(1, Math.min(lanes, Math.round(Number(spans[index]) || 1)));
+    const height = Math.max(0, Number(heights[index]) || 0);
+    const cardWidth = span * laneWidth + (span - 1) * gap;
+
+    // 候选落点：0 与其它卡的下沿
+    const offsets = new Set<number>([0]);
+    for (const rect of placed) offsets.add(rect.y + rect.height + gap);
+    const sorted = [...offsets].sort((left, right) => left - right);
+
+    let best: PackedRect | null = null;
+    let bestScore = Infinity;
+    let fallback: PackedRect | null = null;
+    for (const y of sorted) {
+      for (let lane = 0; lane + span <= lanes; lane++) {
+        const rect: PackedRect = { x: lane * (laneWidth + gap), y, width: cardWidth, height };
+        if (placed.some((other) => overlaps(rect, other))) continue;
+        if (!fallback) fallback = rect;
+        if (span >= lanes && y < frontier - 0.5) continue;
+        // 打分：位置越靠上越好；同样高时取更左的那条 —— x 的权重远小于 y，只为打破并列
+        const score = y * 1000 + rect.x;
+        if (score < bestScore) {
+          bestScore = score;
+          best = rect;
+        }
+      }
+    }
+
+    const chosen = best || fallback || { x: 0, y: frontier, width: cardWidth, height };
+    placed.push(chosen);
+    frontier = Math.max(frontier, chosen.y + height + gap);
+  }
+  return placed;
+}

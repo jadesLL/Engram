@@ -12,7 +12,7 @@
  *  - 减动效：`prefers-reduced-motion` 时不播位移过渡（样式侧处理）。
  */
 import { nextTick, onBeforeUnmount, onMounted, watch, type Ref } from 'vue';
-import { GAP, laneCount, maxSpan } from './masonryCalc.ts';
+import { GAP, laneCount, maxSpan, placeCards } from './masonryCalc.ts';
 
 /** 每个元素进入时最多等多少帧（正常 1–2 帧就量到高度了） */
 const MAX_ENTER_FRAMES = 3;
@@ -68,45 +68,30 @@ export function useMasonryLayout(options: MasonryOptions) {
     host.dataset.masonrySingle = '0';
 
     const laneWidth = (width - GAP * (lanes - 1)) / lanes;
-    const filled = new Array(lanes).fill(0) as number[];
+    const clamped = spans.map((span) => Math.max(1, Math.min(lanes, span)));
 
     // 先定宽再量高：顺序不能反（宽度会改变换行后的高度）
     for (const el of items) {
       el.style.position = 'absolute';
       el.style.left = '0px';
     }
-
     items.forEach((el, index) => {
-      const span = Math.max(1, Math.min(lanes, spans[index]));
+      const span = clamped[index];
       el.style.width = `${span * laneWidth + (span - 1) * GAP}px`;
-
-      let lane = 0;
-      let y = 0;
-      if (span >= lanes) {
-        // 整行：铺满当前已经填到的最高处
-        lane = 0;
-        y = Math.max(...filled);
-      } else {
-        // 窄卡：在所有能放下的车道里挑当前最矮的那条（并列取最左）
-        let best = Infinity;
-        for (let at = 0; at + span <= lanes; at++) {
-          const bottom = Math.max(...filled.slice(at, at + span));
-          if (bottom < best - 0.5) {
-            best = bottom;
-            lane = at;
-            y = bottom;
-          }
-        }
-      }
-
-      el.style.top = `${y}px`;
-      el.style.transform = `translateX(${lane * (laneWidth + GAP)}px)`;
-      // 高度这一刻才准（宽度已定）：用它推进车道
-      const bottom = y + el.offsetHeight + GAP;
-      for (let at = lane; at < lane + span; at++) filled[at] = bottom;
     });
 
-    host.style.height = `${Math.max(...filled)}px`;
+    // 量完高度交给纯计算排布（碰撞检测补空档，见 masonryCalc.placeCards）
+    const heights = items.map((el) => el.offsetHeight);
+    const rects = placeCards(clamped, heights, width, lanes, GAP);
+    items.forEach((el, index) => {
+      const rect = rects[index];
+      el.style.top = `${rect.y}px`;
+      el.style.transform = `translateX(${rect.x}px)`;
+    });
+
+    let bottom = 0;
+    for (const rect of rects) bottom = Math.max(bottom, rect.y + rect.height);
+    host.style.height = `${bottom ? bottom + GAP : 0}px`;
   }
 
   function schedule() {
