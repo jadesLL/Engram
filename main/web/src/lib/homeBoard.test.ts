@@ -128,19 +128,20 @@ test('换列数：各模块格数一起夹住，列数没变时返回原对象',
   assert.deepEqual(five.modules.map((m) => m.span), board.modules.map((m) => m.span));
 });
 
-test('宽度档标签随列数变：4 列给 1/4 · 1/2 · 整行，5 列给 1/5 · 2/5 · 3/5', () => {
+test('宽度档标签随列数变：4 列给 1/4 · 1/2 · 75% · 整行，2 列只给两档', () => {
   const four = Object.fromEntries(spanOptionsFor(4).map((option) => [option.value, option.label]));
-  assert.deepEqual(four, { 1: '1/4', 2: '1/2', 3: '整行' });
-  assert.deepEqual(Object.keys(four).map(Number), [1, 2, 3]);
-  // 2 列：1 格=一半、2 格=整行，没有第三档
+  assert.deepEqual(four, { 1: '1/4', 2: '1/2', 3: '75%', 4: '整行' });
+  assert.deepEqual(Object.keys(four).map(Number), [1, 2, 3, 4]);
+  // 2 列：1 格 = 一半、2 格 = 整行，没有第三档
   assert.deepEqual(spanOptionsFor(2).map((option) => option.value), [1, 2]);
   assert.equal(spanOptionsFor(2).find((option) => option.value === 1)!.label, '1/2');
-  // 5 列：1/2/3 格都在，没有「整行」（那要 5 格）；除不尽的百分比档照实写
-  assert.deepEqual(spanOptionsFor(5).map((option) => option.value), [1, 2, 3]);
+  assert.equal(spanOptionsFor(2).find((option) => option.value === 2)!.label, '整行');
+  // 5 列：五档齐全，最后一档是整行
+  assert.deepEqual(spanOptionsFor(5).map((option) => option.value), [1, 2, 3, 4, 5]);
   assert.equal(spanOptionsFor(5).find((option) => option.value === 1)!.label, '1/5');
   assert.equal(spanOptionsFor(5).find((option) => option.value === 2)!.label, '40%');
-  assert.equal(spanOptionsFor(5).find((option) => option.value === 3)!.label, '60%');
-  for (const option of spanOptionsFor(5)) assert.ok(option.hint.includes('5 列'));
+  assert.equal(spanOptionsFor(5).find((option) => option.value === 5)!.label, '整行');
+  for (const option of spanOptionsFor(5)) assert.ok(option.hint.length > 0);
 });
 
 test('设置键与本地回退键固定，避免前后端各写一套', () => {
@@ -255,8 +256,8 @@ test('addModule / removeModule / updateModule 都不改原对象', () => {
   assert.equal(updated.modules[0].span, 2);
   assert.equal(updated.modules[0].title, '换个名字');
   assert.equal(board.modules[0].span, moduleMeta('capture').span);
-  // 超过列数的格数被夹住（4 列的页面上没有 5 格）
-  assert.equal(updateModule(board, board.modules[0].id, { span: 9 as any }).modules[0].span, 3);
+  // 超过列数的格数被夹到列数（4 列的页面上没有 5 格）
+  assert.equal(updateModule(board, board.modules[0].id, { span: 9 as any }).modules[0].span, 4);
 });
 
 test('addModule 到达上限后不再添加', () => {

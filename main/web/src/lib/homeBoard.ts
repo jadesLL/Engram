@@ -19,10 +19,22 @@ export const HOME_BOARD_COLUMNS = [2, 3, 4, 5] as const;
 export type BoardColumns = (typeof HOME_BOARD_COLUMNS)[number];
 export const DEFAULT_BOARD_COLUMNS: BoardColumns = 4;
 
-/** 模块占的**相对格数**：1 / 2 / 3 格，换列数时相对宽窄不变。
- *  列数为 N 时的实际宽度 = span / N；span 超过 N 时按整行算（normalize 会把 span 夹到 ≤ N）。 */
-export const MODULE_SPANS = [1, 2, 3] as const;
+/**
+ * 模块占的**格数**：1 格 = 页宽的 1/列数。瀑布流里的实际含义分两档（见 lib/masonry.ts）：
+ *  - 窄道：span 1–2 → 在「半宽车道」里并排（1 格 = 1/4 页、2 格 = 1/2 页）；
+ *  - 整行：span = 整页列数 → 单独占一整行（看板快照、Agent 摘要这类要宽）；
+ * 中间那些（3 格 / 4 格）在窄屏不会真的按 3/4 宽渲染，而是落进「最矮的那条车道」——瀑布流的本意。
+ */
+export const MODULE_SPANS = [1, 2, 3, 4, 5] as const;
 export type ModuleSpan = (typeof MODULE_SPANS)[number];
+/** 格数上限（= MODULE_SPANS 的最大值）：归一化与夹取都用它 */
+const MAX_SPAN: ModuleSpan = 5;
+
+/**
+ * 「整行」在默认 4 列页面上的格数。登记表要在 defaultHomeBoard() 之前用到它，
+ * 所以定为常量：换默认列数时只改这里与 DEFAULT_BOARD_COLUMNS 两处。
+ */
+const FULL_SPAN: ModuleSpan = 4;
 
 export const MODULE_KINDS = [
   'capture',
@@ -88,10 +100,12 @@ export interface ModuleMeta {
 /**
  * 模块类型登记表：顺序即「添加模块」面板里的顺序。
  * hint 是给用户看的一句话——说明这块会显示什么，而不是复述标题。
+ * span 默认值按「新增时的观感」给：宽卡（速记 / 快捷入口 / 看板快照 / 摘要）给整行，
+ * 半宽卡给 2，其余小卡给 1——加到页面上就能直接用，不用先调宽度。
  */
 export const MODULE_META: ModuleMeta[] = [
-  { kind: 'capture', title: '快速记灵感', hint: '三行输入框，写完直接落进灵感碎片', icon: 'lightbulb', span: 3 },
-  { kind: 'shortcuts', title: '快捷入口', hint: '新建页面、搜索、图谱、Agent 等常用动作', icon: 'play', span: 3 },
+  { kind: 'capture', title: '快速记灵感', hint: '三行输入框，写完直接落进灵感碎片', icon: 'lightbulb', span: FULL_SPAN },
+  { kind: 'shortcuts', title: '快捷入口', hint: '新建页面、搜索、图谱、Agent 等常用动作', icon: 'play', span: FULL_SPAN },
   { kind: 'recent', title: '最近更新', hint: '最近改动过的页面与灵感', icon: 'refresh', span: 2 },
   { kind: 'notes', title: '近期灵感', hint: '原始资料里最新记下的几条', icon: 'lightbulb', span: 1 },
   { kind: 'fresh', title: '本周新增', hint: '最近 7 天新写出来的页面', icon: 'plus', span: 1 },
@@ -107,9 +121,9 @@ export const MODULE_META: ModuleMeta[] = [
   { kind: 'heat', title: '近 8 周', hint: '按天统计改动热度，一眼看出最近勤不勤', icon: 'activity', span: 1 },
   { kind: 'inbox', title: '收集箱', hint: '待整理的原始件与转换进度', icon: 'inbox', span: 1 },
   { kind: 'queue', title: '等待提炼', hint: '刚落盘还没进 Wiki 的资料与灵感', icon: 'merge', span: 1 },
-  { kind: 'board', title: '看板快照', hint: '任务看板三列各几条，点开进看板', icon: 'board', span: 2 },
+  { kind: 'board', title: '看板快照', hint: '任务看板三列各几条，点开进看板', icon: 'board', span: FULL_SPAN },
   { kind: 'activity', title: '最近改动', hint: '最近动过的页面，按时间倒着排', icon: 'restore', span: 1 },
-  { kind: 'digest', title: 'Agent 摘要', hint: '用一句话说清最近值得看什么', icon: 'ai', span: 2 },
+  { kind: 'digest', title: 'Agent 摘要', hint: '用一句话说清最近值得看什么', icon: 'ai', span: FULL_SPAN },
 ];
 
 
@@ -141,40 +155,29 @@ function isSpan(value: unknown): value is ModuleSpan {
   return typeof value === 'number' && (MODULE_SPANS as readonly number[]).includes(value);
 }
 
-/** 把格数夹到「不超过整页列数」：4 列的页面上不存在占 5 格的东西 */
-export function clampSpan(span: ModuleSpan, columns: BoardColumns): ModuleSpan {
-  return Math.min(span, columns) as ModuleSpan;
+/** 把格数夹到「1..不超过整页列数」：4 列的页面上不存在占 5 格的东西 */
+export function clampSpan(span: number, columns: BoardColumns): ModuleSpan {
+  const max = Math.max(1, Math.min(MAX_SPAN, columns));
+  const raw = Number.isFinite(span) ? Math.round(span) : 1;
+  return Math.max(1, Math.min(max, raw)) as ModuleSpan;
 }
 
 /**
- * 某一列数下可选的宽度档：1 格叫「1/4」、2 格叫「1/2」，整页宽单独叫「整行」。
- * 只给「至少两格」的档位（1 格的东西在 5 列页面上只有 1/5 宽，给不给都一样）；
- * 列数是 2 时只有一个并排档，直接把 options 收成一档，界面不至于画一排没区别的按钮。
+ * 某一列数下可选的宽度档：1 格 = 1/列数，到列数那一档叫「整行」。
+ * 标签按**页宽比例**给（4 列给 1/4 · 1/2 · 3/4 · 整行），所以用户看到的和实际宽度对得上；
+ * 列数是 2 时只有两档（1 格 / 整行），不会画一排没区别的按钮。
  */
 export function spanOptionsFor(columns: BoardColumns): Array<{ value: ModuleSpan; label: string; hint: string }> {
-  const width = (span: number) => `${Math.round((span / columns) * 100)}%`;
-  const named = (span: number): { label: string; hint: string } => {
-    if (span >= columns) return { label: '整行', hint: '占满一整行' };
-    if (span * 2 === columns) return { label: '1/2', hint: '占一半（页宽的 50%）' };
-    if (span * 3 === columns) return { label: '1/3', hint: '占三分之一（三块并排）' };
-    if (span * 4 === columns) return { label: '1/4', hint: '占四分之一（四块并排）' };
-    if (span === 1) return { label: `1/${columns}`, hint: `占 ${width(span)} 宽（${columns} 块并排）` };
-    return { label: width(span), hint: `占 ${width(span)} 宽` };
-  };
   const out: Array<{ value: ModuleSpan; label: string; hint: string }> = [];
   for (const span of MODULE_SPANS) {
     if (span > columns) continue;
-    const meta = named(span);
-    out.push({ value: span, label: meta.label, hint: `${meta.hint}（${columns} 列栅格里的 ${span} 格）` });
-  }
-  // 4 列 / 5 列里 span 到不了「整行」（那要 N 格），但 maxSpan 就封在 3：
-  // 与其让满行档消失，不如把最大档改称「整行」——它虽然不是 100% 宽，却是这张页面上最宽的一档。
-  if (columns === 4) {
-    const widest = out.find((option) => option.value === 3);
-    if (widest) {
-      widest.label = '整行';
-      widest.hint = `最宽的一档（4 列里的 3 格 = 75%；窄屏自动整行）`;
+    if (span >= columns) {
+      out.push({ value: span, label: '整行', hint: '单独占一整行（宽卡用这档）' });
+      continue;
     }
+    // 1/2 与 1/4 直接写成分数（比 50% / 25% 好读），其余照百分比
+    const label = span === 1 ? `1/${columns}` : span * 2 === columns ? '1/2' : `${Math.round((span / columns) * 100)}%`;
+    out.push({ value: span, label, hint: `占页宽的 ${Math.round((span / columns) * 100)}%（${columns} 列里的 ${span} 格）` });
   }
   return out;
 }
@@ -185,8 +188,9 @@ export function defaultHomeBoard(): HomeBoard {
     version: HOME_BOARD_VERSION,
     columns: DEFAULT_BOARD_COLUMNS,
     modules: [
-      { id: 'default-capture', kind: 'capture', title: '', span: 3, opts: {} },
-      { id: 'default-shortcuts', kind: 'shortcuts', title: '', span: 3, opts: {} },
+      // 两张宽卡占整行（4 格），其余半宽：瀑布流里就是「整行 + 两两并排」的观感
+      { id: 'default-capture', kind: 'capture', title: '', span: FULL_SPAN, opts: {} },
+      { id: 'default-shortcuts', kind: 'shortcuts', title: '', span: FULL_SPAN, opts: {} },
       { id: 'default-recent', kind: 'recent', title: '', span: 2, opts: { limit: 6 } },
       { id: 'default-tasks', kind: 'tasks', title: '', span: 2, opts: { limit: 3 } },
       { id: 'default-stats', kind: 'stats', title: '', span: 2, opts: {} },
@@ -359,7 +363,8 @@ export function updateModule(board: HomeBoard, id: string, patch: Partial<Omit<H
         ? {
             ...module,
             title: patch.title === undefined ? module.title : String(patch.title).trim().slice(0, 24),
-            span: patch.span && isSpan(patch.span) ? clampSpan(patch.span, board.columns) : module.span,
+            // 先夹再判：patch.span 可能是任意数（手改的 JSON），交给 clampSpan 收敛到 1..列数
+            span: patch.span === undefined ? module.span : clampSpan(Number(patch.span), board.columns),
             opts: patch.opts === undefined ? module.opts : normalizeOpts(patch.opts, module.kind),
           }
         : module

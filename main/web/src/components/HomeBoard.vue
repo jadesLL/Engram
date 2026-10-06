@@ -62,7 +62,8 @@
       </button>
     </div>
 
-    <div v-if="store.board.modules.length" class="board-grid">
+    <!-- 瀑布流（方案 E）：顺序由数组决定，每张卡放进「当前最矮的列」（见 lib/masonry.ts） -->
+    <div v-if="store.board.modules.length" ref="gridEl" class="board-grid">
       <div
         v-for="entry in boardModules"
         :key="entry.module.id"
@@ -171,6 +172,7 @@ import {
   type ModuleKind,
 } from '../lib/homeBoard.ts';
 import { homeDateLine, homeGreeting } from '../lib/homeBoardData.ts';
+import { useMasonryLayout } from '../lib/masonry.ts';
 import { boardView, filterCards, EMPTY_FILTER } from '../lib/taskBoard.ts';
 
 /** 各列表类模块的条数上限（与 lib/homeBoard.ts 的归一口径一致；heat 的「条数」是周数） */
@@ -206,6 +208,7 @@ const tasks = useTasksStore();
 const inbox = useInboxStore();
 
 const boardEl = ref<HTMLElement>();
+const gridEl = ref<HTMLElement>();
 const dateLine = computed(() => homeDateLine());
 const greeting = computed(() => homeGreeting());
 const stats = computed(() => ({ pages: (props.pages || []).length, files: props.fileCount || 0 }));
@@ -266,6 +269,19 @@ const boardModules = computed(() =>
     };
   })
 );
+
+/**
+ * 瀑布流（方案 E）：卡片按顺序放进「当前最矮的车道」，宽度按格数算。
+ * 车道模型与宽窄屏降级在 lib/masonry.ts / masonryCalc.ts（后者可单测），这里只接线。
+ * 注意：必须在 boardModules 声明**之后**调用——它读 boardModules.value，
+ * 写在前面会撞上暂时性死区（computed 抛错被 Vue 吞掉，车道数会静静回落成 1）。
+ */
+useMasonryLayout({
+  container: gridEl,
+  items: computed(() => store.board.modules.map((module) => ({ span: module.span }))),
+  columns: computed(() => store.board.columns),
+  editing: computed(() => store.editing),
+});
 
 /* ===== 加模块 ===== */
 const addOpen = ref(false);
@@ -680,39 +696,24 @@ onUnmounted(() => {
  *
  * 窄屏按容器宽度降级：并排两块塞不下时不再并排（每档都先保证「两格」放得下）。
  */
+/*
+ * 瀑布流容器（方案 E）：不再用 grid，而是「块级容器 + 绝对定位的子项」——
+ * 顺序 = 数组顺序，位置由 lib/masonry.ts 计算（每张卡放进当前最矮的列，跨列的卡按份数算宽）。
+ * 这里只留容器与子项的基础样式：文字流（单列）时 .widget 会被脚本还原成 static。
+ */
 .board-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-auto-flow: row;
-  grid-auto-rows: min-content;
-  gap: 18px;
-  align-items: start;
+  position: relative;
+  display: block;
 }
-.widget { min-width: 0; }
-.widget.span-1 { grid-column: span 1; }
-.widget.span-2 { grid-column: span 2; }
-.widget.span-3 { grid-column: 1 / -1; }
-/* 手改 JSON 时可能出现 span 4/5：一律整行，别让浏览器自己猜 */
-.widget.span-4,
-.widget.span-5 { grid-column: 1 / -1; }
-
-/* 3 列档（约 740-990px 正文）：span-2 还是半行，span-3 仍是整行 */
-@container (max-width: 990px) {
-  .board-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .widget.span-2 { grid-column: span 2; }
+.widget {
+  min-width: 0;
+  /* 拖拽与重排都靠 transform 移动，位移做成过渡才有「滑过去」的观感 */
+  transition: transform 180ms cubic-bezier(0.2, 0, 0, 1), width 180ms ease;
 }
-/* 2 列档（约 430-740px）：半行 = 1 格，整行不并排 */
-@container (max-width: 740px) {
-  .board-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .widget.span-2 { grid-column: span 1; }
-  .widget.span-3 { grid-column: 1 / -1; }
-}
-/* 单列档（手机 / 极窄正文） */
-@container (max-width: 430px) {
-  .board-grid { grid-template-columns: minmax(0, 1fr); }
-  .widget.span-1,
-  .widget.span-2,
-  .widget.span-3 { grid-column: 1 / -1; }
+/* 单列（手机）：脚本把子项还原成普通流，过渡也就不需要了 */
+.board-grid[data-masonry-single='1'] .widget { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .widget { transition: none; }
 }
 
 .board-empty { padding: 28px 24px; text-align: center; }
