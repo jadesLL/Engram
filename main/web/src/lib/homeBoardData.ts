@@ -54,6 +54,34 @@ export function homeDateLine(now: Date = new Date()): string {
   return `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 · ${week}`;
 }
 
+/** 大数字压缩：1234 → 1.2k、1234567 → 1.2M（首页卡片里的字数统计用） */
+export function formatCount(value: number, unit = ''): string {
+  const n = Math.max(0, Math.round(Number(value) || 0));
+  if (n < 1000) return `${n}${unit}`;
+  if (n < 1_000_000) {
+    const k = n / 1000;
+    return `${k < 10 ? k.toFixed(1) : Math.round(k)}k${unit}`;
+  }
+  const m = n / 1_000_000;
+  return `${m < 10 ? m.toFixed(1) : Math.round(m)}M${unit}`;
+}
+
+/** 短版相对时间：卡片里位置窄，只说「今天 / N 小时前 / N 天前」 */
+export function sinceShort(iso: string, now: number = Date.now()): string {
+  if (!iso) return '';
+  const diff = now - new Date(iso).getTime();
+  if (!Number.isFinite(diff) || diff < 0) return '刚刚';
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return '刚刚';
+  if (mins < 60) return `${mins} 分钟前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  return `${Math.floor(days / 30)} 个月前`;
+}
+
+
 /** 问候语：按小时分档（深夜 / 早上 / 下午 / 晚上） */
 export function homeGreeting(now: Date = new Date()): string {
   const hour = now.getHours();
