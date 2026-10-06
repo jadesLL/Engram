@@ -207,24 +207,25 @@ function styleBlock(file: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
-test('首页（欢迎页）的居中改成 auto 外边距：内容超一屏时顶部不再被截掉', () => {
+test('首页看板的居中用 auto 外边距：内容超一屏时顶部不再被截掉', () => {
   // 用户报障原话「首页显示不全」：手机上 360×640 实测 inner 顶部 -155px，
   // 滚到最顶（scrollTop=0）仍然是 -155px —— 日志/问候/库统计/第一张卡永远看不见。
-  const editor = readSrc('views/EditorView.vue');
-  const welcome = ruleBody(editor, '.welcome');
-  assert.match(welcome, /overflow-y:\s*auto/, '首页不再是可滚容器：超一屏的内容彻底够不着');
+  // 2026-10-05 首页改成可编辑看板后，这段几何搬到 components/HomeBoard.vue（.board / .board-inner）。
+  const board = readSrc('components/HomeBoard.vue');
+  const shell = ruleBody(board, '.board');
+  assert.match(shell, /overflow-y:\s*auto/, '首页不再是可滚容器：超一屏的内容彻底够不着');
   assert.doesNotMatch(
-    welcome,
+    shell,
     /align-items:\s*center/,
     '首页又用 align-items: center 居中：内容高于容器时顶部会溢到滚动原点之外，滚不回来',
   );
   assert.doesNotMatch(
-    welcome,
+    shell,
     /justify-content:\s*center/,
     '首页又用 justify-content: center 居中：与 align-items 同一个坑（溢出部分够不着）',
   );
   assert.match(
-    ruleBody(editor, '.welcome-inner'),
+    ruleBody(board, '.board-inner'),
     /margin:\s*auto/,
     '首页内容块没有用 auto 外边距兜底居中：空间不足时不会自动回到顶部对齐',
   );

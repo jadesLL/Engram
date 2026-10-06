@@ -7,6 +7,8 @@ import { installSystemInsets } from './lib/systemInsets';
 import { installBackHandler, installRouterBack } from './lib/androidBack';
 import './styles/main.css';
 import './styles/settings.css';
+// 首页看板模块之间的公共皮肤（抬头 / 卡片 / 行 / 徽章）：跨组件复用，写在全局表里
+import './styles/homeBoard.css';
 
 // Android 本地端：接管系统栏安全区与系统返回（侧滑）手势；桌面/网页端是空实现
 installSystemInsets();

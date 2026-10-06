@@ -186,13 +186,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
 import { useInboxStore } from '../stores/inbox';
 import { useUpdateStore } from '../stores/update';
 import { useAppUpdateStore } from '../stores/appUpdate';
+import { useHomeBoardStore, flushHomeBoardWrite } from '../stores/homeBoard';
+import { useTasksStore } from '../stores/tasks';
 import {
   UPDATE_CHECK_POKE_DEBOUNCE_MS,
   UPDATE_CHECK_STARTUP_MS,
@@ -225,6 +227,13 @@ const sourceHasUpdate = ref(false);
 const desktopShell = Boolean((window as any).wikiDesktop);
 const chat = useChatStore();
 const inbox = useInboxStore();
+const homeBoard = useHomeBoardStore();
+const homeTasks = useTasksStore();
+
+/** 退到后台 / 关页面前把去抖中的布局写补上（同步 store 的 flush，见 stores/homeBoard.ts） */
+function flushHomeBoardOnHide() {
+  if (document.visibilityState === 'hidden') void flushHomeBoardWrite();
+}
 const { capabilities } = useRuntimeCapabilities();
 const agentName = computed(() => capabilities.value.agentMode === 'hub' ? '服务器 Agent' : capabilities.value.agentMode === 'unavailable' ? 'Agent' : '内置 Agent');
 const sidebarRef = ref<InstanceType<typeof Sidebar>>();
@@ -622,6 +631,19 @@ onMounted(() => {
   // 抽屉横滑手势：aside 一直挂在 DOM 里（v-show 切换），挂载时装一次即可
   if (sidebarEl.value) detachSidebarSwipe = installSidebarSwipe(sidebarEl.value);
   app.loadUiPreferences(); // 侧栏「AI 工作区」默认隐藏，是否显示由服务端设置决定
+  // 首页看板布局：先按本地那份画出来（进页面就有内容），服务端答复到了再校正（多端一致）
+  void homeBoard.load();
+  // 布局改动是去抖写服务端的（600ms）：页面隐藏/卸载前补一次，免得「刚拖完就关掉」只留在本地
+  document.addEventListener('visibilitychange', flushHomeBoardOnHide);
+  window.addEventListener('pagehide', flushHomeBoardWrite);
+  // 看板里任何模块加进来时「补拉」：近期待办在首页首次渲染时可能没有这个模块，
+  // 之后用户在编辑态加上，任务看板数据得跟着到（数据源在 EditorView，见 loadWelcomeOnce）
+  watch(
+    () => homeBoard.board.modules.some((module) => module.kind === 'tasks'),
+    (hasTasks) => {
+      if (hasTasks && !homeTasks.board) void homeTasks.load();
+    }
+  );
   loadRuntimeCapabilities().then((caps) => {
     if (caps.features.jobs) {
       jobPollStopped = false;
@@ -663,6 +685,9 @@ onUnmounted(() => {
   detachSidebarSwipe?.();
   detachSidebarSwipe = null;
   document.removeEventListener('visibilitychange', onUpdateVisibility);
+  document.removeEventListener('visibilitychange', flushHomeBoardOnHide);
+  window.removeEventListener('pagehide', flushHomeBoardWrite);
+  void flushHomeBoardWrite(); // 卸载时也补一次（视图被整体换掉时不一定收到 pagehide）
   window.removeEventListener('focus', pokeUpdateCheck);
   window.removeEventListener('online', onUpdateOnline);
   if (updateTimer) clearTimeout(updateTimer);

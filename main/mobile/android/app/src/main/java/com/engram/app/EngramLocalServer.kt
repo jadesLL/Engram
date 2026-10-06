@@ -514,8 +514,10 @@ class EngramLocalServer private constructor(private val context: Context) {
         put("/api/settings") {
             if (!call.authorize()) return@put
             val body = call.body()
-            // 白名单与 server PUBLIC_SETTINGS 对齐；DDNS / 一键接入 token 在 Android 上没有意义，显式忽略
-            for (key in listOf("search_synonyms", "show_ai_workspace")) if (body.has(key)) db.setSetting(key, body.optString(key))
+            // 白名单与 server PUBLIC_SETTINGS 对齐；DDNS / 一键接入 token 在 Android 上没有意义，显式忽略。
+            // home_layout = 首页自定义看板布局（JSON 字符串，前端 store 归一化）——手机端也要能存住，
+            // 否则拖完模块一刷新就回默认布局。
+            for (key in listOf("search_synonyms", "show_ai_workspace", "home_layout")) if (body.has(key)) db.setSetting(key, body.optString(key))
             call.ok()
         }
 
