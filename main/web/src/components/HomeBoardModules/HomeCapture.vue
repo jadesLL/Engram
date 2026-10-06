@@ -81,18 +81,16 @@ function onKey(event: KeyboardEvent) {
 </script>
 
 <style scoped>
+/*
+ * 外框由模块外壳（.shell）统一给，这里只做「输入区自己的一圈聚焦提示」：
+ * 聚焦时整块套一圈 accent 光圈——比再画一层卡片边框更像「正在输入」。
+ */
 .capture {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
-  padding: 16px 16px 12px;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
+  padding: 2px 0 0;
+  border-radius: 10px;
+  transition: box-shadow 150ms ease;
 }
-.capture.focused {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-card), 0 0 0 3px var(--sidebar-focus-ring);
-}
+.capture.focused { box-shadow: 0 0 0 3px var(--sidebar-focus-ring); }
 .capture-input { display: flex; gap: 12px; align-items: flex-start; }
 .capture-bulb {
   width: 34px;

@@ -150,19 +150,31 @@ const spanOptions = computed(() => spanOptionsFor(props.columns));
 </script>
 
 <style scoped>
-/* 模块外壳：抬头 + 内容 + 编辑态底栏。宽度由外层的栅格决定（见 HomeBoard.vue 的 .board-grid） */
+/*
+ * 模块外壳：**首页上唯一的卡片外框**（描边 + 圆角 + 卡片底色 + 阴影）+ 抬头 + 内容 + 编辑态底栏。
+ * 内容层（HomeBoardModules/*）不再自带外框，否则一页里会出现「有的有框有的没有」。
+ * 宽度由瀑布流决定（见 lib/masonry.ts）：.widget 上的绝对定位 + 宽度由脚本写。
+ */
 .shell {
   position: relative;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 13px 15px 14px;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  transition: opacity 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+  transition: opacity 150ms ease, box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
 }
+.shell:hover { box-shadow: var(--shadow-card-hover, var(--shadow-card)); }
 
-/* 编辑态：整块加一层虚线，边界看得见才敢拖 */
+/* 编辑态：虚线框 + 浅底色，边界看得见才敢拖 */
 .shell.managing {
-  padding: 10px 10px 8px;
-  border: 1px dashed var(--border-strong, var(--border));
-  background: color-mix(in srgb, var(--bg-secondary) 60%, transparent);
+  border-style: dashed;
+  border-color: var(--border-strong, var(--border));
+  background: color-mix(in srgb, var(--bg-secondary) 60%, var(--card-bg));
+  padding: 11px 12px 9px;
 }
 .shell.managing:hover { border-color: var(--accent); }
 
