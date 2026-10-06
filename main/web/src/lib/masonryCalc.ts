@@ -1,11 +1,13 @@
 /**
  * 瀑布流的纯计算（不 import vue，`node --test` 可直接跑）。
- * 组件侧的组合式函数在 lib/masonry.ts，它从这里取「宽 → 车道数」的口径。
+ * 组件侧的组合式函数在 lib/masonry.ts，它从这里取「宽 → 车道数 / 单元宽」的口径。
  *
- * 车道（lane）模型：页宽按车道均分，每张卡按自己的格数跨几条车道。
- *  - 车道数由「页面上需要的最大格数」决定：默认布局里速记是 4 格（整行），就开 4 条车道，
- *    于是 1 格 = 1/4 页、2 格 = 1/2 页、4 格 = 整行，和用户选列数时的预期一致；
- *  - 中途格数（例 5 列页面的 3 格）会落进「最矮的那条车道」，不会强行按 3/4 宽 —— 瀑布流的本意。
+ * 车道（lane）模型：页宽按车道均分，每张卡按自己的格数跨几条车道（1 格 = 单元宽）。
+ *  - **单元宽有上限**：DEFAULT_GAP 口径下 1 格最大 240px。
+ *    没有上限时「1 格」会等于「可用宽度 ÷ 列数」，于是窗口越宽卡片越胖：
+ *    2 列时 1 格 430px、4 列 252px，同一个模块换个列数就变形（2026-10-06 用户报「占页宽度不对」）。
+ *  - **车道数 = 整页列数**（宽不够时少开几条）：整行卡就跨满全部车道 = 页宽。
+ *  - 中途格数（例 5 列页面的 3 格）会落进最矮的空档，不会强行按 3/5 宽 —— 瀑布流的本意。
  */
 
 /** 一条车道的最小宽度：低于它就不开这条车道（窄屏宁可少开几条） */
@@ -16,6 +18,12 @@ export const GAP = 12;
 export const SINGLE_COLUMN_WIDTH = 360;
 /** 一条车道的最大条数：与 MODULE_SPANS 的上限一致 */
 export const MAX_LANES = 5;
+/** 1 格的最大宽度：与 .board-inner 的页宽预算同源（5 列刚好排满 1372px 的页宽上限） */
+export const MAX_UNIT = 240;
+/** 页宽预算里「两侧留白」的总和：.board-inner 的左右 padding（32×2） */
+export const PAGE_CHROME = 64;
+/** 页宽上限：5 列 × 240 + 4 × 12 + 64 = 1312 —— 上限之内页面铺满可用宽度，超出就居中留白 */
+export const MAX_PAGE_WIDTH = MAX_LANES * MAX_UNIT + (MAX_LANES - 1) * GAP + PAGE_CHROME;
 
 /** 宽 W 的容器能开几条车道（不超过 wanted） */
 export function laneCount(width: number, wanted: number): number {
@@ -25,14 +33,22 @@ export function laneCount(width: number, wanted: number): number {
   return Math.max(1, Math.min(MAX_LANES, want, fits));
 }
 
-/** 页面上模块需要的最大格数（决定要开几条车道）：给一串 span，返回夹在 1..MAX_LANES 的值 */
-export function maxSpan(spans: ArrayLike<number>): number {
-  let top = 1;
-  for (let i = 0; i < (spans?.length || 0); i++) {
-    const value = Number(spans[i]);
-    if (Number.isFinite(value)) top = Math.max(top, Math.min(MAX_LANES, Math.round(value)));
-  }
-  return top;
+/** 1 格的宽度：可用宽度均分后夹在 0..MAX_UNIT（宽屏有上限，窄屏跟着缩） */
+export function unitWidth(width: number, lanes: number): number {
+  const count = Math.max(1, Math.min(MAX_LANES, Math.floor(lanes) || 1));
+  if (!Number.isFinite(width) || width <= 0) return 0;
+  return Math.max(0, Math.min(MAX_UNIT, (width - GAP * (count - 1)) / count));
+}
+
+/**
+ * 排布用的栅格宽：优先「单元 × 列数 + 间距」，单元到顶后仍放不下时才退回均分。
+ * 返回的栅格宽就是 placeCards 的宽度口径 —— 卡片宽度由它推出来，所以它必须与 unitWidth 算的一致。
+ */
+export function gridWidth(width: number, lanes: number): number {
+  const count = Math.max(1, Math.min(MAX_LANES, Math.floor(lanes) || 1));
+  if (!Number.isFinite(width) || width <= 0) return 0;
+  const capped = MAX_UNIT * count + GAP * (count - 1);
+  return Math.min(width, capped);
 }
 
 /** 一张已放好的卡片（左上角坐标 + 尺寸，单位 px） */
@@ -58,15 +74,18 @@ export function overlaps(a: PackedRect, b: PackedRect): boolean {
  *  - 候选位按「先矮后左」打分（y 优先、其次取 x 更小的），既补空档又不会往右乱飘；
  *  - 整行卡（span ≥ 车道数）的落点不允许早于 frontier（已经排到的位置）：
  *    否则它会「插到前面的卡上边」，视觉顺序会乱（1 号卡看起来排在 2 号卡后面）。
+ *
+ * @param gridWidth 排布用的栅格宽（= 单元宽 × 车道数 + 间距，可能小于容器宽度）
+ * @param gap 车道间距，必须与算 gridWidth 时用的一致（不一致会算错单元宽）
  */
 export function placeCards(
   spans: ArrayLike<number>,
   heights: ArrayLike<number>,
-  width: number,
+  gridWidth: number,
   lanes: number,
-  gap: number = GAP
+  gap: number
 ): PackedRect[] {
-  const laneWidth = (width - gap * (lanes - 1)) / lanes;
+  const laneWidth = (gridWidth - gap * (lanes - 1)) / lanes;
   const placed: PackedRect[] = [];
   /** 已经排到的纵向位置：整行卡的落点不能早于它 */
   let frontier = 0;

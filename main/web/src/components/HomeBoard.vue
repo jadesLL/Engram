@@ -536,14 +536,20 @@ onUnmounted(() => {
 /* 上下 auto 之外，.board-inner 原有的 margin: auto 也把左右留白一起管了 */
 .board-cq > .board-inner { margin-top: auto; margin-bottom: auto; }
 /*
- * 内容宽度跟着整页列数走：与栅格的 248px 列宽同源（见 .board-grid 的注释），
- * 5 列时页宽上限 = 5×248 + 4×18 + 88 = 1400px，4 列 1134px，下不低 960px。
+ * 内容宽度：**固定页宽上限**，不再按列数缩放。
+ *
+ * 早先是 max(960px, cols × 248 + (cols-1) × 18 + 88)——列数一变页宽就变，
+ * 于是「1 格」等于可用宽度均分，窗口越宽卡片越胖（2 列时 1 格 430px、4 列 252px，
+ * 2026-10-06 用户报「占页宽度不对」）。现在：
+ *  - 页面宽度只受窗口影响（上限 1372px = 5 列 × 240 + 4 × 12 + 64，够 5 列排满）；
+ *  - **卡片单元宽的上限由瀑布流保证**（masonryCalc.MAX_UNIT = 240px），
+ *    宽屏时栅格比容器窄，整块由 .board-grid 的 auto 外边距居中 —— 页宽与列数解耦。
  */
 .board-inner {
   margin: auto;
   width: 100%;
-  max-width: max(960px, calc(var(--board-cols, 4) * 248px + (var(--board-cols, 4) - 1) * 18px + 88px));
-  padding: 40px 44px 64px;
+  max-width: 1372px;
+  padding: 40px 32px 64px;
 }
 
 .board-date {
@@ -685,25 +691,22 @@ onUnmounted(() => {
 }
 
 /*
- * 模块栅格：基准 4 列，三档宽度就是 1/4 · 1/2 · 整行（span 1 / 2 / 3）。
- *
- * 为什么不用 `repeat(auto-fit, minmax(248px, 1fr))`（2026-10-06 浏览器实测）：
- * auto-fit 的列数由「所有条目里最大的 span」决定，span-2 占 4 份时 1046px 只放得下 2 列，
- * 列宽被拉到 514px，span-2 反而撑满整行——「半行」与「整行」看起来一模一样。
- * 固定列 + span 1/2/全行（下表 B 方案）实测：1046px 里 4 列各 248px，
- * span-1 = 248px（1/4）、span-2 = 514px（1/2）、span-3 = 1046px（整行），三档都成立。
- * 页宽上限与 248px 同源（见 .board-inner），所以「整页列数」改的就是这一页的栏位预算。
- *
- * 窄屏按容器宽度降级：并排两块塞不下时不再并排（每档都先保证「两格」放得下）。
+ * 模块栅格：基准 4 列，宽度档是 1/列数 到「整行」（span 1..列数）。
+ * 列宽口径在 masonryCalc：1 格最大 240px（MAX_UNIT），页宽上限 1372px（MAX_PAGE_WIDTH）。
+ * 早先试过 `repeat(auto-fit, minmax(248px, 1fr))`：auto-fit 的列数由「所有条目里最大的 span」
+ * 决定，span-2 占 4 份时只放得下 2 列、列宽被拉到 514px，「半行」与「整行」看起来一样，
+ * 所以固定车道 + 按格数跨车道（现在的瀑布流就是这个模型）。
  */
 /*
  * 瀑布流容器（方案 E）：不再用 grid，而是「块级容器 + 绝对定位的子项」——
- * 顺序 = 数组顺序，位置由 lib/masonry.ts 计算（每张卡放进当前最矮的列，跨列的卡按份数算宽）。
- * 这里只留容器与子项的基础样式：文字流（单列）时 .widget 会被脚本还原成 static。
+ * 顺序 = 数组顺序，位置由 lib/masonry.ts 计算（碰撞检测补空档，跨列的卡按格数算宽）。
+ * 栅格比正文窄时（宽屏 / 少列）整块居中：脚本会把 maxWidth 设成「单元宽 × 列数 + 间距」。
+ * 这里只留容器与子项的基础样式：单列（手机）时 .widget 会被脚本还原成 static。
  */
 .board-grid {
   position: relative;
   display: block;
+  margin-inline: auto;
 }
 .widget {
   min-width: 0;

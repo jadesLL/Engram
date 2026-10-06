@@ -12,7 +12,7 @@
  *  - 减动效：`prefers-reduced-motion` 时不播位移过渡（样式侧处理）。
  */
 import { nextTick, onBeforeUnmount, onMounted, watch, type Ref } from 'vue';
-import { GAP, laneCount, maxSpan, placeCards } from './masonryCalc.ts';
+import { GAP, gridWidth, laneCount, placeCards, unitWidth } from './masonryCalc.ts';
 
 /** 每个元素进入时最多等多少帧（正常 1–2 帧就量到高度了） */
 const MAX_ENTER_FRAMES = 3;
@@ -47,9 +47,9 @@ export function useMasonryLayout(options: MasonryOptions) {
       const raw = Number(options.items.value?.[index]?.span);
       return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : 1;
     });
-    const width = host.clientWidth;
-    // 车道数：「页面需要的最大格数」与「宽能排下几条」取小的那个
-    const lanes = laneCount(width, Math.min(options.columns.value, maxSpan(spans)));
+    const available = host.clientWidth;
+    // 车道数 = 用户选的整页列数（宽度不够时少开几条）
+    const lanes = laneCount(available, options.columns.value);
     host.dataset.masonryLanes = String(lanes);
 
     // 一条车道：普通文档流（手机 / 极窄正文不需要瀑布流）
@@ -67,7 +67,11 @@ export function useMasonryLayout(options: MasonryOptions) {
     }
     host.dataset.masonrySingle = '0';
 
-    const laneWidth = (width - GAP * (lanes - 1)) / lanes;
+    // 单元宽有上限（MAX_UNIT）：栅格宽可能小于容器宽，这时整块由页面居中
+    const unit = unitWidth(available, lanes);
+    const grid = gridWidth(available, lanes);
+    host.dataset.masonryUnit = String(Math.round(unit));
+    host.style.maxWidth = `${grid}px`;
     const clamped = spans.map((span) => Math.max(1, Math.min(lanes, span)));
 
     // 先定宽再量高：顺序不能反（宽度会改变换行后的高度）
@@ -77,12 +81,12 @@ export function useMasonryLayout(options: MasonryOptions) {
     }
     items.forEach((el, index) => {
       const span = clamped[index];
-      el.style.width = `${span * laneWidth + (span - 1) * GAP}px`;
+      el.style.width = `${span * unit + (span - 1) * GAP}px`;
     });
 
     // 量完高度交给纯计算排布（碰撞检测补空档，见 masonryCalc.placeCards）
     const heights = items.map((el) => el.offsetHeight);
-    const rects = placeCards(clamped, heights, width, lanes, GAP);
+    const rects = placeCards(clamped, heights, grid, lanes, GAP);
     items.forEach((el, index) => {
       const rect = rects[index];
       el.style.top = `${rect.y}px`;
