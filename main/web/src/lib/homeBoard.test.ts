@@ -7,15 +7,16 @@ import {
   HOME_BOARD_VERSION,
   HOME_LAYOUT_SETTING,
   HOME_LAYOUT_STORAGE_KEY,
+  HEIGHT_STEPS,
   MAX_MODULES,
   MODULE_KINDS,
   MODULE_META,
   MODULE_SPANS,
   addModule,
+  autoArrangeBoard,
   busiestSection,
-  clampSpan,
+  compactBoard,
   defaultHomeBoard,
-  dropTargetIndex,
   freshPagesOf,
   heatmapDayCounts,
   homeDigest,
@@ -24,6 +25,7 @@ import {
   limitOf,
   moduleMeta,
   moveModuleBy,
+  moveModuleTo,
   normalizeColumns,
   normalizeHomeBoard,
   pageTime,
@@ -32,8 +34,7 @@ import {
   ratioRows,
   recentPagesOf,
   removeModule,
-  reorderModuleById,
-  reorderModules,
+  resizeModuleBy,
   roamPool,
   sectionEntries,
   serializeHomeBoard,
@@ -46,6 +47,7 @@ import {
   weeklyStats,
   type HomeBoard,
 } from './homeBoard.ts';
+import { GRID_COLS, GRID_MAX_W, isSane } from './homeGrid.ts';
 import type { TaskCard } from './taskBoard.ts';
 
 /** 造一篇页面：只填用得到的字段 */
@@ -78,22 +80,28 @@ function card(text: string, date = ''): TaskCard {
   };
 }
 
-test('默认布局：非空、模块类型合法、id 唯一、列数合法', () => {
+test('默认布局：非空、模块类型合法、id 唯一、列数固定 6、占位干净', () => {
   const board = defaultHomeBoard();
   assert.equal(board.version, HOME_BOARD_VERSION);
   assert.equal(board.columns, DEFAULT_BOARD_COLUMNS);
-  assert.ok((HOME_BOARD_COLUMNS as readonly number[]).includes(board.columns));
+  assert.deepEqual([...HOME_BOARD_COLUMNS], [GRID_COLS]);
+  assert.equal(GRID_COLS, 6);
   assert.ok(board.modules.length >= 4);
   const ids = board.modules.map((m) => m.id);
   assert.equal(new Set(ids).size, ids.length);
   for (const m of board.modules) {
     assert.ok(MODULE_KINDS.includes(m.kind));
-    // 默认布局里每块的格数都不超过列数
-    assert.ok(m.span >= 1 && m.span <= board.columns, `${m.kind} span=${m.span}`);
+    assert.ok(m.w >= 2 && m.w <= GRID_COLS, `${m.kind} w=${m.w}`);
+    assert.ok(m.h >= 1);
   }
+  // 默认布局本身必须是干净的：不重叠、不越界
+  assert.ok(isSane(board.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+  // 数组顺序 = 从上到下、从左到右（拖动落位与键盘微调都依赖这一点）
+  const rows = board.modules.map((m) => m.row);
+  assert.deepEqual(rows, [...rows].sort((left, right) => left - right));
 });
 
-test('登记表的每个类型都有标题、说明、图标与合法默认格数', () => {
+test('登记表的每个类型都有标题、说明、图标与合法默认宽高', () => {
   assert.equal(MODULE_META.length, MODULE_KINDS.length);
   for (const kind of MODULE_KINDS) {
     const meta = moduleMeta(kind);
@@ -101,47 +109,29 @@ test('登记表的每个类型都有标题、说明、图标与合法默认格�
     assert.ok(meta.title.length > 0);
     assert.ok(meta.hint.length > 0);
     assert.ok(meta.icon.length > 0);
-    assert.ok((MODULE_SPANS as readonly number[]).includes(meta.span));
+    assert.ok((MODULE_SPANS as readonly number[]).includes(meta.w), `${kind} 默认宽度不在档位里`);
+    assert.ok(meta.h >= 1 && meta.h <= 12, `${kind} 默认高度越界`);
   }
+  assert.ok(HEIGHT_STEPS.every((step) => step >= 2 && step <= 12));
 });
 
-test('列数：2–5 合法，其余回落默认；格数夹到不超过列数', () => {
-  assert.deepEqual([...HOME_BOARD_COLUMNS], [2, 3, 4, 5]);
-  for (const ok of HOME_BOARD_COLUMNS) assert.equal(normalizeColumns(ok), ok);
-  for (const bad of [0, 1, 6, 9, -3, '4列', null, undefined, Number.NaN, {}]) {
-    assert.equal(normalizeColumns(bad), DEFAULT_BOARD_COLUMNS, `输入 ${String(bad)}`);
+test('列数：v3 固定 6 列，任何输入都归一成 6', () => {
+  assert.deepEqual([...HOME_BOARD_COLUMNS], [6]);
+  for (const input of [6, 4, 2, 'x', null, undefined, Number.NaN, {}]) {
+    assert.equal(normalizeColumns(input), DEFAULT_BOARD_COLUMNS, `输入 ${String(input)}`);
   }
-  assert.equal(clampSpan(3, 2), 2);
-  assert.equal(clampSpan(1, 5), 1);
-  assert.equal(clampSpan(3, 5), 3);
-});
-
-test('换列数：各模块格数一起夹住，列数没变时返回原对象', () => {
+  // setColumns 现在恒等（栅格固定），保留调用点但不产生新对象
   const board = defaultHomeBoard();
-  assert.equal(setColumns(board, board.columns), board);
-  const two = setColumns(board, 2);
-  assert.equal(two.columns, 2);
-  // 3 格的速记在 2 列页面上最多占满整行
-  assert.ok(two.modules.every((m) => m.span <= 2));
-  const five = setColumns(board, 5);
-  assert.equal(five.columns, 5);
-  assert.deepEqual(five.modules.map((m) => m.span), board.modules.map((m) => m.span));
+  assert.equal(setColumns(board, 4 as any), board);
 });
 
-test('宽度档标签随列数变：4 列给 1/4 · 1/2 · 75% · 整行，2 列只给两档', () => {
-  const four = Object.fromEntries(spanOptionsFor(4).map((option) => [option.value, option.label]));
-  assert.deepEqual(four, { 1: '1/4', 2: '1/2', 3: '75%', 4: '整行' });
-  assert.deepEqual(Object.keys(four).map(Number), [1, 2, 3, 4]);
-  // 2 列：1 格 = 一半、2 格 = 整行，没有第三档
-  assert.deepEqual(spanOptionsFor(2).map((option) => option.value), [1, 2]);
-  assert.equal(spanOptionsFor(2).find((option) => option.value === 1)!.label, '1/2');
-  assert.equal(spanOptionsFor(2).find((option) => option.value === 2)!.label, '整行');
-  // 5 列：五档齐全，最后一档是整行
-  assert.deepEqual(spanOptionsFor(5).map((option) => option.value), [1, 2, 3, 4, 5]);
-  assert.equal(spanOptionsFor(5).find((option) => option.value === 1)!.label, '1/5');
-  assert.equal(spanOptionsFor(5).find((option) => option.value === 2)!.label, '40%');
-  assert.equal(spanOptionsFor(5).find((option) => option.value === 5)!.label, '整行');
-  for (const option of spanOptionsFor(5)) assert.ok(option.hint.length > 0);
+test('宽度档：6 列栅格给 1/3 · 1/2 · 4/6 · 整行', () => {
+  const labels = Object.fromEntries(spanOptionsFor().map((option) => [option.value, option.label]));
+  assert.deepEqual(labels, { 2: '1/3', 3: '1/2', 4: '4/6', 6: '整行' });
+  for (const option of spanOptionsFor()) {
+    assert.ok(option.hint.length > 0);
+    assert.ok(option.value <= GRID_COLS);
+  }
 });
 
 test('设置键与本地回退键固定，避免前后端各写一套', () => {
@@ -161,30 +151,31 @@ test('normalizeHomeBoard：合法的空看板保持为空（用户删光了不�
   assert.deepEqual(normalizeHomeBoard({ modules: [] }).modules, []);
 });
 
-test('normalizeHomeBoard：过滤非法模块，保留合法模块并补默认格数', () => {
+test('normalizeHomeBoard：过滤非法模块，保留合法模块并补默认尺寸', () => {
   const board = normalizeHomeBoard(
     JSON.stringify({
-      version: 2,
-      columns: 4,
+      version: 3,
       modules: [
         { id: 'a', kind: 'capture' },
         { id: 'b', kind: '不存在' },
         { id: 'c' },
         'string',
         null,
-        { id: 'd', kind: 'recent', span: 3, title: '  我的更新  ', opts: { limit: 999 } },
+        { id: 'd', kind: 'recent', w: 4, h: 5, title: '  我的更新  ', opts: { limit: 999 } },
       ],
     })
   );
   assert.deepEqual(board.modules.map((m) => m.id), ['a', 'd']);
-  assert.equal(board.modules[0].span, moduleMeta('capture').span);
-  // 越界格数按「新列数」夹：span 上限 3、列数 4 → 3 格；标题 trim、limit 收敛到该类型上限（recent 为 12）
-  assert.equal(board.modules[1].span, 3);
+  assert.equal(board.modules[0].w, moduleMeta('capture').w);
+  assert.equal(board.modules[0].h, moduleMeta('capture').h);
+  assert.equal(board.modules[1].w, 4);
+  assert.equal(board.modules[1].h, 5);
   assert.equal(board.modules[1].title, '我的更新');
   assert.equal(board.modules[1].opts.limit, 12);
+  assert.ok(isSane(board.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
 });
 
-test('normalizeHomeBoard：v1 的字符串 span 迁移成相对格数', () => {
+test('normalizeHomeBoard：v1 的字符串 span 按页宽比例迁成栅格宽度', () => {
   const board = normalizeHomeBoard({
     version: 1,
     modules: [
@@ -194,21 +185,40 @@ test('normalizeHomeBoard：v1 的字符串 span 迁移成相对格数', () => {
       { id: 'd', kind: 'recent' },
     ],
   });
-  const spans = Object.fromEntries(board.modules.map((m) => [m.id, m.span]));
-  assert.deepEqual(spans, { a: 3, b: 2, c: 1, d: moduleMeta('recent').span });
-  // v1 没有 columns 字段：按默认 4 列补齐
+  const widths = Object.fromEntries(board.modules.map((m) => [m.id, m.w]));
+  // full = 整行 6、half = 半页 3、third = 三分之一 2；没写宽度的取该类型默认
+  assert.deepEqual(widths, { a: 6, b: 3, c: 2, d: moduleMeta('recent').w });
   assert.equal(board.columns, DEFAULT_BOARD_COLUMNS);
+  assert.ok(isSane(board.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
 });
 
-test('normalizeHomeBoard：columns 写坏 / 越界回落默认，模块格数不会超过列数', () => {
-  const board = normalizeHomeBoard({ columns: 9, modules: [{ id: 'a', kind: 'capture', span: 3 }] });
-  assert.equal(board.columns, DEFAULT_BOARD_COLUMNS);
-  const twoCol = normalizeHomeBoard({ columns: 2, modules: [{ id: 'a', kind: 'capture', span: 3 }] });
-  assert.equal(twoCol.columns, 2);
-  assert.equal(twoCol.modules[0].span, 2);
-  // 格数超出合法档位（最大 3）时回落该类型默认值，不是硬夹成 3
-  const wild = normalizeHomeBoard({ columns: 4, modules: [{ id: 'a', kind: 'recent', span: 99 }] });
-  assert.equal(wild.modules[0].span, moduleMeta('recent').span);
+test('normalizeHomeBoard：v2 的数字格数按 4 列语义折算成 6 列', () => {
+  const board = normalizeHomeBoard({
+    version: 2,
+    columns: 4,
+    modules: [
+      { id: 'a', kind: 'recent', span: 1 },
+      { id: 'b', kind: 'recent', span: 2 },
+      { id: 'c', kind: 'recent', span: 4 },
+      { id: 'd', kind: 'recent', span: 99 },
+    ],
+  });
+  const widths = Object.fromEntries(board.modules.map((m) => [m.id, m.w]));
+  assert.deepEqual(widths, { a: 2, b: 3, c: 6, d: moduleMeta('recent').w });
+});
+
+test('normalizeHomeBoard：坐标越界 / 重叠都会被修正到干净布局', () => {
+  // 越界：col=5 + w=6 明显放不下；重叠：两张卡都占 (0,0)
+  const board = normalizeHomeBoard({
+    modules: [
+      { id: 'a', kind: 'recent', col: 5, row: 0, w: 6, h: 4 },
+      { id: 'b', kind: 'tasks', col: 0, row: 0, w: 6, h: 4 },
+    ],
+  });
+  assert.ok(isSane(board.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+  for (const module of board.modules) {
+    assert.ok(module.col >= 0 && module.col + module.w <= GRID_COLS);
+  }
 });
 
 test('normalizeHomeBoard：重复 id 与超量模块都被收住', () => {
@@ -240,24 +250,31 @@ test('normalizeHomeBoard：选项只留字符串 / 有限数字 / 布尔', () =>
   assert.deepEqual(Object.keys(board.modules[0].opts).sort(), ['folded', 'limit', 'note']);
 });
 
-test('addModule / removeModule / updateModule 都不改原对象', () => {
+test('addModule：放进第一个空位，不改原对象', () => {
   const board = defaultHomeBoard();
   const added = addModule(board, 'notes', 'n1');
   assert.equal(board.modules.length + 1, added.modules.length);
-  assert.equal(added.modules.at(-1)!.kind, 'notes');
-  assert.equal(added.modules.at(-1)!.span, moduleMeta('notes').span);
+  const created = added.modules.find((m) => m.id === 'n1')!;
+  assert.equal(created.kind, 'notes');
+  assert.equal(created.w, moduleMeta('notes').w);
+  assert.ok(isSane(added.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+  // 新卡不能被放在别人身上
+  assert.equal(board.modules.some((m) => m.id === 'n1'), false);
 
   const removed = removeModule(added, 'n1');
   assert.equal(removed.modules.length, board.modules.length);
   assert.ok(!removed.modules.some((m) => m.id === 'n1'));
   assert.ok(added.modules.some((m) => m.id === 'n1'));
+});
 
-  const updated = updateModule(board, board.modules[0].id, { span: 2, title: ' 换个名字 ' });
-  assert.equal(updated.modules[0].span, 2);
+test('updateModule：只改标题与选项，位置不受影响', () => {
+  const board = defaultHomeBoard();
+  const target = board.modules[0];
+  const updated = updateModule(board, target.id, { title: ' 换个名字 ' });
   assert.equal(updated.modules[0].title, '换个名字');
-  assert.equal(board.modules[0].span, moduleMeta('capture').span);
-  // 超过列数的格数被夹到列数（4 列的页面上没有 5 格）
-  assert.equal(updateModule(board, board.modules[0].id, { span: 9 as any }).modules[0].span, 4);
+  assert.equal(updated.modules[0].col, target.col);
+  assert.equal(updated.modules[0].row, target.row);
+  assert.equal(board.modules[0].title, '');
 });
 
 test('addModule 到达上限后不再添加', () => {
@@ -268,55 +285,106 @@ test('addModule 到达上限后不再添加', () => {
       id: `m${i}`,
       kind: 'stats' as const,
       title: '',
-      span: 1 as const,
+      col: (i % GRID_COLS) * 1,
+      row: Math.floor(i / GRID_COLS),
+      w: 2 as const,
+      h: 2,
       opts: {},
     })),
   };
   assert.equal(addModule(full, 'capture').modules.length, MAX_MODULES);
 });
 
-test('reorderModules：夹取越界索引，原位不动时返回同一对象', () => {
+test('moveModuleTo：占位冲突时让位，且布局始终干净', () => {
   const board = defaultHomeBoard();
-  const ids = board.modules.map((m) => m.id);
-  assert.equal(reorderModules(board, 1, 1), board);
-  const moved = reorderModules(board, 0, 99);
-  assert.equal(moved.modules.at(-1)!.id, ids[0]);
-  assert.deepEqual(moved.modules.slice(0, -1).map((m) => m.id), ids.slice(1));
-  // 单块看板没有可排的余地：删到只剩一块后，任何 from/to 都原样返回
-  const ids2 = ids.slice(0, 1);
-  const one = { ...board, modules: board.modules.filter((m) => ids2.includes(m.id)) };
-  assert.equal(reorderModules(one, 0, 1), one);
-  assert.equal(reorderModules(one, 0, 0), one);
+  const capture = board.modules.find((m) => m.kind === 'capture')!;
+  const recent = board.modules.find((m) => m.kind === 'recent')!;
+  // 把速记拖到「最近更新」头上：它要么落在附近，要么把对方挤开，总之不能叠
+  const moved = moveModuleTo(board, capture.id, { ...recent, w: capture.w, h: capture.h });
+  assert.ok(isSane(moved.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+  const placed = moved.modules.find((m) => m.id === capture.id)!;
+  assert.equal(placed.w, capture.w);
+  assert.equal(placed.h, capture.h);
+  // 位置没变时返回原对象（拖动每帧都会调它，不该产生无意义写盘）
+  assert.equal(moveModuleTo(board, capture.id, capture), board);
+  assert.equal(moveModuleTo(board, '不存在', capture), board);
 });
 
-test('reorderModuleById：按 id 移动，未知 id 原样返回', () => {
+test('moveModuleTo：越界坐标被夹回栅格（卡片不会飞出页面）', () => {
   const board = defaultHomeBoard();
-  const last = board.modules.at(-1)!.id;
-  assert.equal(reorderModuleById(board, last, 0).modules[0].id, last);
-  assert.equal(reorderModuleById(board, '不存在', 0), board);
+  const id = board.modules[0].id;
+  for (const wanted of [
+    { col: 99, row: 99, w: 6, h: 3 },
+    { col: -5, row: -5, w: 2, h: 2 },
+    { col: 4, row: 0, w: 6, h: 2 },
+  ]) {
+    const moved = moveModuleTo(board, id, wanted);
+    const placed = moved.modules.find((m) => m.id === id)!;
+    assert.ok(placed.col >= 0 && placed.col + placed.w <= GRID_COLS, `col 越界：${JSON.stringify(placed)}`);
+    assert.ok(placed.row >= 0, `row 越界：${JSON.stringify(placed)}`);
+    assert.ok(isSane(moved.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+  }
 });
 
-test('moveModuleBy：首尾不再越界平移', () => {
+test('moveModuleTo：宽高被夹在 1..6 / 1..12', () => {
   const board = defaultHomeBoard();
-  const ids = board.modules.map((m) => m.id);
-  assert.equal(moveModuleBy(board, 0, -1), board);
-  assert.equal(moveModuleBy(board, ids.length - 1, 1), board);
-  assert.equal(moveModuleBy(board, 0, 1).modules[1].id, ids[0]);
+  const id = board.modules[0].id;
+  const tooBig = moveModuleTo(board, id, { col: 0, row: 0, w: 99 as any, h: 99 });
+  const wide = tooBig.modules.find((m) => m.id === id)!;
+  assert.equal(wide.w, GRID_MAX_W);
+  assert.equal(wide.h, 12);
 });
 
-test('dropTargetIndex：上拖 / 下拖分别给出 splice 用的最终下标', () => {
-  // 往下拖：源 0 落到「第 2 块之后」→ 下标 2；落到「第 2 块之前」→ 下标 1
-  assert.equal(dropTargetIndex(0, 2, false), 2);
-  assert.equal(dropTargetIndex(0, 2, true), 1);
-  // 往上拖：源 3 落到「第 1 块之前」→ 下标 1；「第 1 块之后」→ 下标 2
-  assert.equal(dropTargetIndex(3, 1, true), 1);
-  assert.equal(dropTargetIndex(3, 1, false), 2);
+test('moveModuleBy / resizeModuleBy：方向键微调同样受栅格约束', () => {
+  const board = defaultHomeBoard();
+  const index = board.modules.findIndex((m) => m.kind === 'recent');
+  const before = board.modules[index];
+  const moved = moveModuleBy(board, index, 1, 1);
+  const after = moved.modules.find((m) => m.id === before.id)!;
+  assert.ok(after.col >= before.col || after.row > before.row);
+  assert.ok(isSane(moved.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+
+  const bigger = resizeModuleBy(board, index, 1, 1);
+  const resized = bigger.modules.find((m) => m.id === before.id)!;
+  assert.ok(resized.w >= before.w);
+  assert.ok(resized.h > before.h);
+  assert.ok(isSane(bigger.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+  // 越界平移不抛错，也不产生越界坐标
+  const edge = moveModuleBy(board, index, -99, -99);
+  assert.ok(isSane(edge.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+});
+
+test('compactBoard：往上收掉空洞；已经紧凑时返回原对象', () => {
+  const board = defaultHomeBoard();
+  assert.equal(compactBoard(board), board);
+  const gapped: HomeBoard = {
+    ...board,
+    modules: board.modules.map((m, i) => ({ ...m, row: m.row + i * 3 })),
+  };
+  const packed = compactBoard(gapped);
+  assert.ok(isSane(packed.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+  assert.ok(Math.max(...packed.modules.map((m) => m.row + m.h)) < Math.max(...gapped.modules.map((m) => m.row + m.h)));
+});
+
+test('autoArrangeBoard：顺次铺满，宽度保留、位置重排、不重叠', () => {
+  const board = defaultHomeBoard();
+  const arranged = autoArrangeBoard(board);
+  assert.equal(arranged.modules.length, board.modules.length);
+  assert.deepEqual(arranged.modules.map((m) => m.w), board.modules.map((m) => m.w));
+  assert.ok(isSane(arranged.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+  // 第一张从左上角开始
+  assert.equal(arranged.modules[0].col, 0);
+  assert.equal(arranged.modules[0].row, 0);
 });
 
 test('serializeHomeBoard 能被 normalizeHomeBoard 原样读回', () => {
-  const board = addModule(defaultHomeBoard(), 'sections', 'sec');
-  const back = normalizeHomeBoard(serializeHomeBoard(board));
-  assert.deepEqual(back.modules, board.modules);
+  const board = defaultHomeBoard();
+  const roundTrip = normalizeHomeBoard(serializeHomeBoard(board));
+  assert.deepEqual(
+    roundTrip.modules.map((m) => ({ id: m.id, kind: m.kind, col: m.col, row: m.row, w: m.w, h: m.h })),
+    board.modules.map((m) => ({ id: m.id, kind: m.kind, col: m.col, row: m.row, w: m.w, h: m.h }))
+  );
+  assert.equal(roundTrip.version, HOME_BOARD_VERSION);
 });
 
 test('uid 连续生成不重复', () => {

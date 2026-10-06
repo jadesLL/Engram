@@ -1,13 +1,13 @@
 <template>
+  <!--
+    整张卡就是拖拽把手：编辑态按在卡片任意空白处都能拖（手机桌面的手感）。
+    缩放走右下角的把手（见文件末尾），键盘用户用页眉里的「拖动」按钮聚焦后按方向键。
+  -->
   <section
     class="shell"
-    :class="{
-      managing,
-      dragging,
-      'drop-before': dropBefore,
-      'drop-after': dropAfter,
-      locked: managing,
-    }"
+    :class="{ managing, dragging, target, locked: managing }"
+    tabindex="-1"
+    @pointerdown="onShellPointerDown"
   >
     <header class="shell-head">
       <!-- 编辑态的标题改成可点击重命名：比另开一个「重命名」按钮少一层入口 -->
@@ -49,19 +49,31 @@
       <slot />
     </div>
 
-    <!-- 编辑态底栏：占几格（对齐关系一眼可见）+ 上移/下移/删除，全都能键盘操作 -->
+    <!-- 编辑态底栏：宽度/高度快捷档 + 条数 + 删除，全都能键盘操作 -->
     <footer v-if="managing" class="shell-foot">
       <div class="spans" role="group" aria-label="模块宽度">
         <button
-          v-for="option in spanOptions"
+          v-for="option in widthOptions"
           :key="option.value"
           class="span-btn"
           type="button"
-          :class="{ on: option.value === span }"
-          :aria-pressed="option.value === span"
+          :class="{ on: option.value === width }"
+          :aria-pressed="option.value === width"
           v-tooltip="option.hint"
-          @click="$emit('set-span', option.value)"
+          @click="$emit('set-width', option.value)"
         >{{ option.label }}</button>
+      </div>
+      <div class="spans" role="group" aria-label="模块高度">
+        <button
+          v-for="heightOption in heightOptions"
+          :key="heightOption"
+          class="span-btn"
+          type="button"
+          :class="{ on: heightOption === height }"
+          :aria-pressed="heightOption === height"
+          v-tooltip="`占 ${heightOption} 行高`"
+          @click="$emit('set-height', heightOption)"
+        >{{ heightOption }}</button>
       </div>
       <!-- 条数档：列表类模块才给（速记 / 快捷入口这类没有「显示几条」这回事） -->
       <div v-if="limitSetting" class="stepper" role="group" aria-label="显示条数">
@@ -84,56 +96,79 @@
       </div>
       <slot name="settings" />
       <span class="foot-spacer" />
-      <button class="foot-btn" type="button" v-tooltip="'上移一位'" aria-label="上移一位" @click="$emit('move', -1)">
-        <Icon name="unfold" :size="13" />
-      </button>
-      <button class="foot-btn" type="button" v-tooltip="'下移一位'" aria-label="下移一位" @click="$emit('move', 1)">
-        <Icon name="fold" :size="13" />
-      </button>
+      <span class="foot-size" :class="{ over: crowded }">{{ width }}×{{ height }}</span>
       <button class="foot-btn danger" type="button" v-tooltip="'从首页删除这块'" aria-label="删除模块" @click="$emit('remove')">
         <Icon name="trash" :size="13" />
       </button>
     </footer>
 
-    <span v-if="dropBefore" class="drop-line before" aria-hidden="true" />
-    <span v-if="dropAfter" class="drop-line after" aria-hidden="true" />
+    <!-- 缩放把手：拖它改宽高（编辑态才出现；右下角是「拉伸」的通用位置） -->
+    <button
+      v-if="managing"
+      class="resize-handle"
+      type="button"
+      aria-label="拖动改变模块大小"
+      v-tooltip="'拖动改大小（也可用 Shift+方向键）'"
+      @pointerdown="$emit('resize-request', $event)"
+    >
+      <span class="rh-corner" aria-hidden="true" />
+    </button>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
 import Icon from './Icon.vue';
-import { moduleMeta, spanOptionsFor, type BoardColumns, type ModuleKind, type ModuleSpan } from '../lib/homeBoard.ts';
+import {
+  HEIGHT_STEPS,
+  moduleMeta,
+  spanOptionsFor,
+  type ModuleKind,
+  type ModuleSpan,
+} from '../lib/homeBoard.ts';
+import { GRID_MAX_H, GRID_MAX_W, GRID_ROWS_VISIBLE } from '../lib/homeGrid.ts';
 
 const props = withDefaults(
   defineProps<{
     kind: ModuleKind;
     /** 已生效标题（自定义标题或类型默认标题，由外层算好） */
     title: string;
-    /** 占几格（相对格数，1–3） */
-    span: ModuleSpan;
-    /** 整页列数：决定底栏给哪几档宽度 */
-    columns: BoardColumns;
+    /** 宽度：6 列栅格上占几格（1–6，可以是拖出来的中间值） */
+    width: number;
+    /** 高度：占几行 */
+    height: number;
     /** 该模块已生效的条数（列表类模块用；没有这项时为 undefined） */
     limit?: number;
     managing?: boolean;
     dragging?: boolean;
-    dropBefore?: boolean;
-    dropAfter?: boolean;
+    /** 拖动高亮正落在这张卡上（松手后它就落这儿） */
+    target?: boolean;
   }>(),
-  { managing: false, dragging: false, dropBefore: false, dropAfter: false }
+  { managing: false, dragging: false, target: false }
 );
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'remove'): void;
-  (e: 'set-span', span: ModuleSpan): void;
-  (e: 'move', delta: number): void;
+  (e: 'set-width', width: number): void;
+  (e: 'set-height', height: number): void;
   (e: 'rename'): void;
   (e: 'drag-request', event: PointerEvent): void;
+  (e: 'resize-request', event: PointerEvent): void;
   (e: 'set-opt', key: string, value: string | number | boolean): void;
 }>();
 
 const meta = computed(() => moduleMeta(props.kind));
+
+/**
+ * 卡片上按下：编辑态时把「开始拖动」报给外层的看板组件。
+ * 只在**空白处 / 页眉**按下才算拖，否则点标题改名、点底栏按钮、点内容里的链接都会被吞掉。
+ */
+function onShellPointerDown(event: PointerEvent) {
+  if (!props.managing) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('button, a, input, textarea, select, .resize-handle')) return;
+  emit('drag-request', event);
+}
 
 /**
  * 条数档位：只有列表类模块有这一项（最近更新 / 近期灵感 / 本周新增 / 近期待办）。
@@ -145,19 +180,27 @@ const limitSetting = computed(() => {
   return { value: Math.min(max, Math.max(1, props.limit)), min: 1, max };
 });
 
-/** 宽度档随整页列数变：4 列时给「1/4 · 1/2 · 3/4 · 整行」这类标签（见 spanOptionsFor） */
-const spanOptions = computed(() => spanOptionsFor(props.columns));
+/** 宽度档：6 列栅格上的 1/3 · 1/2 · 2/3 · 整行（拖动把手可以调到任意格，这里是快捷档） */
+const widthOptions = computed(() => spanOptionsFor());
+/** 高度档：常用几档；拖把手可以调到 1–12 行 */
+const heightOptions = computed(() => HEIGHT_STEPS.filter((value) => value <= GRID_MAX_H));
+
+/** 宽高都到极限时给个提示色：用户会看到「怎么拖都不动了」的边界 */
+const crowded = computed(() => props.width >= GRID_MAX_W && props.height >= GRID_MAX_H);
+void GRID_ROWS_VISIBLE;
 </script>
 
 <style scoped>
 /*
  * 模块外壳：**首页上唯一的卡片外框**（描边 + 圆角 + 卡片底色 + 阴影）+ 抬头 + 内容 + 编辑态底栏。
  * 内容层（HomeBoardModules/*）不再自带外框，否则一页里会出现「有的有框有的没有」。
- * 宽度由瀑布流决定（见 lib/masonry.ts）：.widget 上的绝对定位 + 宽度由脚本写。
+ * 大小由栅格决定（见 lib/homeGrid.ts）：.widget 上的 grid-column / grid-row 由数据直接写成，
+ * 这里只管「填满自己的格子」并把超出部分收在内部滚动。
  */
 .shell {
   position: relative;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 13px 15px 14px;
@@ -165,9 +208,13 @@ const spanOptions = computed(() => spanOptionsFor(props.columns));
   border-radius: var(--radius);
   background: var(--card-bg);
   box-shadow: var(--shadow-card);
+  cursor: grab;
   transition: opacity 150ms ease, box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
 }
 .shell:hover { box-shadow: var(--shadow-card-hover, var(--shadow-card)); }
+/* 非编辑态：卡片内容自己可点，别显示抓手 */
+.shell:not(.managing) { cursor: default; }
+.shell:not(.managing) .shell-body { flex: 1; min-height: 0; overflow: auto; }
 
 /* 编辑态：虚线框 + 浅底色，边界看得见才敢拖 */
 .shell.managing {
@@ -251,6 +298,7 @@ const spanOptions = computed(() => spanOptionsFor(props.columns));
 
 .shell-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin-top: 8px;
@@ -258,6 +306,45 @@ const spanOptions = computed(() => spanOptionsFor(props.columns));
   border-top: 1px dashed var(--border);
 }
 .foot-spacer { flex: 1; }
+
+/* 当前尺寸（几列 × 几行）：拖把手时数字会跟着变，边界一眼可见 */
+.foot-size {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--bg-tertiary, var(--bg));
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.foot-size.over { background: var(--accent-soft); color: var(--accent); }
+
+/* 缩放把手：右下角的斜纹角，拖它改宽高 */
+.resize-handle {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 3px;
+  border-radius: 6px;
+  cursor: nwse-resize;
+  color: var(--text-faint);
+  transition: background 150ms ease, color 150ms ease;
+  /* 手指按下时不要触发页面滚动：拖动靠 pointermove */
+  touch-action: none;
+}
+.resize-handle:hover { background: var(--accent-soft); color: var(--accent); }
+.resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rh-corner {
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  border-bottom-right-radius: 3px;
+}
 
 .spans {
   display: flex;
