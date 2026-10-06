@@ -1,6 +1,6 @@
 <template>
   <!-- 首页看板：日期 + 问候 + 可编辑模块列表（加 / 删 / 改 / 拖都由用户自己定） -->
-  <div ref="boardEl" class="board">
+  <div ref="boardEl" class="board" :style="{ '--board-cols': store.board.columns }">
     <div class="board-cq">
       <div class="board-inner">
         <div class="board-date">{{ dateLine }}</div>
@@ -23,93 +23,104 @@
             <span>{{ store.editing ? '完成' : '编辑首页' }}</span>
           </button>
         </header>
-  
-        <!-- 编辑态工具条：说明能做什么 + 加模块 / 恢复默认 -->
-        <div v-if="store.editing" class="manage-bar">
-          <span class="manage-hint">
-            拖动 ✋ 手柄（或用左右方向键）调整顺序，底栏可改宽度、改名、删除
-          </span>
-          <div class="manage-spacer" />
-          <button class="manage-btn primary" type="button" :disabled="store.board.modules.length >= MAX_MODULES" @click="toggleAdd">
-            <Icon name="plus" :size="14" /><span>添加模块</span>
-          </button>
-          <button class="manage-btn" type="button" @click="onReset">恢复默认</button>
-        </div>
-  
-        <!-- 模块面板：选类型 → 追加到末尾（已有面板点一下即加，可连续加） -->
-        <div v-if="store.editing && addOpen" class="add-panel">
-          <button
-            v-for="meta in MODULE_META"
-            :key="meta.kind"
-            class="add-item"
-            type="button"
-            :disabled="store.board.modules.length >= MAX_MODULES"
-            @click="onAdd(meta.kind)"
-          >
-            <span class="add-icon"><Icon :name="meta.icon" :size="16" /></span>
-            <span class="add-text"><strong>{{ meta.title }}</strong><em>{{ meta.hint }}</em></span>
-          </button>
-        </div>
-  
-        <div v-if="store.board.modules.length" class="board-grid">
-          <div
-            v-for="entry in boardModules"
-            :key="entry.module.id"
-            class="widget"
-            :class="`span-${entry.module.span}`"
-            :data-module-id="entry.module.id"
-            tabindex="-1"
-          >
-            <HomeModuleShell
-              :kind="entry.module.kind"
-              :title="entry.title"
-              :span="entry.module.span"
-              :limit="entry.hasLimit ? entry.limit : undefined"
-              :managing="store.editing"
-              :dragging="dragId === entry.module.id"
-              :drop-before="dropAnchor?.id === entry.module.id && dropAnchor.before"
-              :drop-after="dropAnchor?.id === entry.module.id && !dropAnchor.before"
-              @remove="onRemove(entry.module)"
-              @rename="onRename(entry.module)"
-              @set-span="(span) => store.update(entry.module.id, { span })"
-              @set-opt="(key, value) => store.update(entry.module.id, { opts: { ...entry.module.opts, [key]: value } })"
-              @move="(delta) => onMove(entry.module, delta)"
-              @drag-request="startDragFromGrip($event, entry.module.id, entry.index)"
-            >
-              <HomeCapture v-if="entry.module.kind === 'capture'" :submit="onIdea" />
-              <HomeShortcuts v-else-if="entry.module.kind === 'shortcuts'" :agent-name="agentName" @go="go" @chat="onChat" />
-              <HomeRecent v-else-if="entry.module.kind === 'recent'" :items="recentItems" :limit="entry.limit" @go="go" />
-              <HomeNotes v-else-if="entry.module.kind === 'notes'" :items="ideaItems" :limit="entry.limit" @go="go" @capture="quickNote" />
-              <HomeTasks
-                v-else-if="entry.module.kind === 'tasks'"
-                :cards="taskCards"
-                :limit="entry.limit"
-                :loading="tasksLoading"
-                @go="go"
-              />
-              <HomeStats v-else-if="entry.module.kind === 'stats'" :pages="stats.pages" :counts="counts" @go="go" />
-              <HomeSections v-else-if="entry.module.kind === 'sections'" :entries="sections" @go="go" />
-              <HomeSync v-else />
-            </HomeModuleShell>
-          </div>
-        </div>
-  
-        <!-- 删光了：空看板是合法状态，给一个恢复到默认布局的出口 -->
-        <div v-else class="board-empty card">
-          <p class="board-empty-title">首页模块都收起来了</p>
-          <p class="muted board-empty-sub">加一块常用模块（速记、最近更新、待办……），或直接恢复默认布局。</p>
-          <div class="board-empty-actions">
-            <button class="btn primary small" type="button" @click="openAdd()">添加模块</button>
-            <button class="btn small" type="button" @click="onReset">恢复默认</button>
-          </div>
-        </div>
-  
-        <p class="board-tip muted">
-          把资料拖进左栏「原始资料」，用外部 Agent（ZCode / Claude Code…）经 MCP 提炼进 Wiki；也可以直接用 {{ agentName }} 开问。
-        </p>
+
+    <!-- 编辑态工具条：整页列数 + 加模块 / 恢复默认 -->
+    <div v-if="store.editing" class="manage-bar">
+      <div class="cols" role="group" aria-label="整页列数">
+        <span class="cols-label">整页列数</span>
+        <button
+          v-for="count in HOME_BOARD_COLUMNS"
+          :key="count"
+          class="cols-btn"
+          type="button"
+          :class="{ on: count === store.board.columns }"
+          :aria-pressed="count === store.board.columns"
+          v-tooltip="`${count} 列栅格：模块按自己的格数占位（窄屏会自动少排几列）`"
+          @click="store.setBoardColumns(count)"
+        >{{ count }}</button>
+      </div>
+      <span class="manage-hint">拖手柄或按左右方向键排序；底栏可改宽度、改名、删除</span>
+      <div class="manage-spacer" />
+      <button class="manage-btn primary" type="button" :disabled="store.board.modules.length >= MAX_MODULES" @click="toggleAdd">
+        <Icon name="plus" :size="14" /><span>添加模块</span>
+      </button>
+      <button class="manage-btn" type="button" @click="onReset">恢复默认</button>
+    </div>
+
+    <!-- 模块面板：选类型 → 追加到末尾（面板留着，可连续加） -->
+    <div v-if="store.editing && addOpen" class="add-panel">
+      <button
+        v-for="meta in MODULE_META"
+        :key="meta.kind"
+        class="add-item"
+        type="button"
+        :disabled="store.board.modules.length >= MAX_MODULES"
+        @click="onAdd(meta.kind)"
+      >
+        <span class="add-icon"><Icon :name="meta.icon" :size="16" /></span>
+        <span class="add-text"><strong>{{ meta.title }}</strong><em>{{ meta.hint }}</em></span>
+      </button>
+    </div>
+
+    <!-- 瀑布流（方案 E）：顺序由数组决定，每张卡放进「当前最矮的列」（见 lib/masonry.ts） -->
+    <div v-if="store.board.modules.length" ref="gridEl" class="board-grid">
+      <div
+        v-for="entry in boardModules"
+        :key="entry.module.id"
+        class="widget"
+        :class="`span-${entry.module.span}`"
+        :data-module-id="entry.module.id"
+        tabindex="-1"
+      >
+        <HomeModuleShell
+          :kind="entry.module.kind"
+          :title="entry.title"
+          :span="entry.module.span"
+          :columns="store.board.columns"
+          :limit="entry.hasLimit ? entry.limit : undefined"
+          :managing="store.editing"
+          :dragging="dragId === entry.module.id"
+          :drop-before="dropAnchor?.id === entry.module.id && dropAnchor.before"
+          :drop-after="dropAnchor?.id === entry.module.id && !dropAnchor.before"
+          @remove="onRemove(entry.module)"
+          @rename="onRename(entry.module)"
+          @set-span="(span) => store.update(entry.module.id, { span })"
+          @set-opt="(key, value) => store.update(entry.module.id, { opts: { ...entry.module.opts, [key]: value } })"
+          @move="(delta) => onMove(entry.module, delta)"
+          @drag-request="startDragFromGrip($event, entry.module.id, entry.index)"
+        >
+          <HomeCapture v-if="entry.module.kind === 'capture'" :submit="onIdea" />
+          <HomeShortcuts v-else-if="entry.module.kind === 'shortcuts'" :agent-name="agentName" @go="go" @chat="onChat" />
+          <HomeRecent v-else-if="entry.module.kind === 'recent'" :items="recentItems" :limit="entry.limit" @go="go" />
+          <HomeNotes v-else-if="entry.module.kind === 'notes'" :items="ideaItems" :limit="entry.limit" @go="go" @capture="quickNote" />
+          <HomeTasks
+            v-else-if="entry.module.kind === 'tasks'"
+            :cards="taskCards"
+            :limit="entry.limit"
+            :loading="tasksLoading"
+            @go="go"
+          />
+          <HomeFresh v-else-if="entry.module.kind === 'fresh'" :items="freshItems" :limit="entry.limit" @go="go" />
+          <HomeStats v-else-if="entry.module.kind === 'stats'" :pages="stats.pages" :counts="counts" :words="words" @go="go" />
+          <HomeWeekly v-else-if="entry.module.kind === 'weekly'" :rows="weeklyRows" :days="7" @go="go" />
+          <HomeTags v-else-if="entry.module.kind === 'tags'" :tags="tagList" @go="go" />
+          <HomeSections v-else-if="entry.module.kind === 'sections'" :entries="sections" @go="go" />
+          <HomeRoam v-else-if="entry.module.kind === 'roam'" :pages="roamCandidates" @go="go" @capture="quickNote" />
+          <HomeSystem v-else-if="entry.module.kind === 'system'" :counts="counts" :agent-name="agentName" @go="go" />
+          <HomeRing v-else-if="entry.module.kind === 'ring'" :pages="props.pages" :files="props.fileCount" @go="go" />
+          <HomeHeat v-else-if="entry.module.kind === 'heat'" :pages="props.pages" :weeks="entry.limit" />
+          <HomeInbox v-else-if="entry.module.kind === 'inbox'" @go="go" />
+          <HomeQueue v-else-if="entry.module.kind === 'queue'" :pages="props.pages" :limit="4" @go="go" />
+          <HomeBoardCard v-else-if="entry.module.kind === 'board'" :board="tasks.board" :loading="tasksLoading" @go="go" />
+          <HomeActivity v-else-if="entry.module.kind === 'activity'" :items="changeLogItems" :limit="entry.limit" @go="go" />
+          <HomeDigest v-else-if="entry.module.kind === 'digest'" :lines="digestLines" :agent-name="agentName" @go="go" @chat="onChat" />
+          <HomeSync v-else />
+        </HomeModuleShell>
       </div>
     </div>
+    </div>
   </div>
+</div>
 </template>
 
 <script setup lang="ts">
@@ -123,24 +134,49 @@ import HomeShortcuts from './HomeBoardModules/HomeShortcuts.vue';
 import HomeRecent from './HomeBoardModules/HomeRecent.vue';
 import HomeNotes from './HomeBoardModules/HomeNotes.vue';
 import HomeTasks from './HomeBoardModules/HomeTasks.vue';
+import HomeFresh from './HomeBoardModules/HomeFresh.vue';
 import HomeStats from './HomeBoardModules/HomeStats.vue';
+import HomeWeekly from './HomeBoardModules/HomeWeekly.vue';
+import HomeTags from './HomeBoardModules/HomeTags.vue';
 import HomeSections from './HomeBoardModules/HomeSections.vue';
+import HomeRoam from './HomeBoardModules/HomeRoam.vue';
+import HomeSystem from './HomeBoardModules/HomeSystem.vue';
+import HomeRing from './HomeBoardModules/HomeRing.vue';
+import HomeHeat from './HomeBoardModules/HomeHeat.vue';
+import HomeInbox from './HomeBoardModules/HomeInbox.vue';
+import HomeQueue from './HomeBoardModules/HomeQueue.vue';
+import HomeBoardCard from './HomeBoardModules/HomeBoardSnapshot.vue';
+import HomeActivity from './HomeBoardModules/HomeActivity.vue';
+import HomeDigest from './HomeBoardModules/HomeDigest.vue';
 import HomeSync from './HomeBoardModules/HomeSync.vue';
 import { useHomeBoardStore } from '../stores/homeBoard';
 import { useTasksStore } from '../stores/tasks';
+import { useInboxStore } from '../stores/inbox';
 import {
+  DEFAULT_LIMIT,
+  HOME_BOARD_COLUMNS,
   MAX_MODULES,
   MODULE_META,
+  freshPagesOf,
+  homeDigest,
   kbCounts,
   limitOf,
   moduleMeta,
+  recentPagesOf,
+  roamPool,
   sectionEntries,
+  tagCounts,
   upcomingTasks,
+  weeklyStats,
   type HomeModule,
   type ModuleKind,
 } from '../lib/homeBoard.ts';
 import { homeDateLine, homeGreeting } from '../lib/homeBoardData.ts';
+import { useMasonryLayout } from '../lib/masonry.ts';
 import { boardView, filterCards, EMPTY_FILTER } from '../lib/taskBoard.ts';
+
+/** 各列表类模块的条数上限（与 lib/homeBoard.ts 的归一口径一致；heat 的「条数」是周数） */
+const LIMIT_MAX: Record<string, number> = { recent: 12, notes: 12, fresh: 12, tasks: 20, heat: 12 };
 
 const props = defineProps<{
   /** 全部页面（已按更新时间倒序） */
@@ -169,14 +205,39 @@ const emit = defineEmits<{
 
 const store = useHomeBoardStore();
 const tasks = useTasksStore();
+const inbox = useInboxStore();
 
 const boardEl = ref<HTMLElement>();
+const gridEl = ref<HTMLElement>();
 const dateLine = computed(() => homeDateLine());
 const greeting = computed(() => homeGreeting());
 const stats = computed(() => ({ pages: (props.pages || []).length, files: props.fileCount || 0 }));
 const counts = computed(() => kbCounts(props.pages, props.fileCount));
 const sections = computed(() => sectionEntries(props.pages, props.rawPaths));
 const tasksLoading = computed(() => !tasks.board);
+/** 全库字数（「知识库概览」与「运行状态」共用） */
+const words = computed(() =>
+  (props.pages || []).reduce((sum, page) => sum + Math.max(0, Number(page?.word_count) || 0), 0)
+);
+/** 本周新增（最近 7 天创建的页面） */
+const freshItems = computed(() => freshPagesOf(props.pages, 7));
+/** 本周动态：最近 7 天的新增 / 改动 / 字数，按分区归类（空的分类不画） */
+const weeklyRows = computed(() => weeklyStats(props.pages, 7));
+/** 随机漫游的候选池（组件自己从里面挑一篇，「换一个」不重渲染整页） */
+const roamCandidates = computed(() => roamPool(props.pages));
+/** 常用标签：库里出现最多的前 12 个 */
+const tagList = computed(() => tagCounts(props.pages, 12));
+/** 「最近改动」用同一批数据，观感是时间线（点 + 竖线） */
+const changeLogItems = computed(() => recentPagesOf(props.pages));
+/** 「Agent 摘要」：库存量 + 近 7 天动静 + 待办与收集箱，本地拼句，不调模型 */
+const digestLines = computed(() =>
+  homeDigest({
+    pages: props.pages,
+    files: props.fileCount,
+    taskCount: taskCards.value.length,
+    inboxPending: Number(inbox.counts.pending || 0),
+  })
+);
 
 /** 近期待办：与旧欢迎页同一口径（逾期 → 窗口内日期 → 周期 → 待定），条数由模块选项决定 */
 const taskCards = computed(() => {
@@ -196,9 +257,9 @@ function titleOf(module: HomeModule): string {
  */
 const boardModules = computed(() =>
   store.board.modules.map((module, index) => {
-    const hasLimit = module.kind === 'recent' || module.kind === 'notes' || module.kind === 'tasks';
-    const fallback = module.kind === 'notes' ? 4 : module.kind === 'tasks' ? 3 : 6;
-    const max = module.kind === 'tasks' ? 20 : 12;
+    const max = LIMIT_MAX[module.kind] || 0;
+    const hasLimit = max > 0;
+    const fallback = DEFAULT_LIMIT[module.kind] || 6;
     return {
       module,
       index,
@@ -208,6 +269,19 @@ const boardModules = computed(() =>
     };
   })
 );
+
+/**
+ * 瀑布流（方案 E）：卡片按顺序放进「当前最矮的车道」，宽度按格数算。
+ * 车道模型与宽窄屏降级在 lib/masonry.ts / masonryCalc.ts（后者可单测），这里只接线。
+ * 注意：必须在 boardModules 声明**之后**调用——它读 boardModules.value，
+ * 写在前面会撞上暂时性死区（computed 抛错被 Vue 吞掉，车道数会静静回落成 1）。
+ */
+useMasonryLayout({
+  container: gridEl,
+  items: computed(() => store.board.modules.map((module) => ({ span: module.span }))),
+  columns: computed(() => store.board.columns),
+  editing: computed(() => store.editing),
+});
 
 /* ===== 加模块 ===== */
 const addOpen = ref(false);
@@ -461,7 +535,16 @@ onUnmounted(() => {
 }
 /* 上下 auto 之外，.board-inner 原有的 margin: auto 也把左右留白一起管了 */
 .board-cq > .board-inner { margin-top: auto; margin-bottom: auto; }
-.board-inner { margin: auto; width: 100%; max-width: 1000px; padding: 40px 44px 64px; }
+/*
+ * 内容宽度跟着整页列数走：与栅格的 248px 列宽同源（见 .board-grid 的注释），
+ * 5 列时页宽上限 = 5×248 + 4×18 + 88 = 1400px，4 列 1134px，下不低 960px。
+ */
+.board-inner {
+  margin: auto;
+  width: 100%;
+  max-width: max(960px, calc(var(--board-cols, 4) * 248px + (var(--board-cols, 4) - 1) * 18px + 88px));
+  padding: 40px 44px 64px;
+}
 
 .board-date {
   font-size: 12px;
@@ -511,6 +594,31 @@ onUnmounted(() => {
 }
 .manage-hint { font-size: 12px; color: var(--text-faint); }
 .manage-spacer { flex: 1; }
+
+/* 整页列数：2–5，当前档高亮（与底栏的宽度档同一套观感） */
+.cols {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+}
+.cols-label { margin-right: 6px; font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+.cols-btn {
+  min-width: 24px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  transition: background 150ms ease, color 150ms ease;
+}
+.cols-btn:hover { color: var(--text-secondary); background: var(--sidebar-hover); }
+.cols-btn.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.cols-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .manage-btn {
   display: flex;
   align-items: center;
@@ -577,37 +685,35 @@ onUnmounted(() => {
 }
 
 /*
- * 模块栅格：auto-fit + 每格至少 328px。这个下限不是拍脑袋定的——
- * 912px 可用宽时它正好给出 2 列，于是三档宽度各自成立：
- *   full  = 占满整行（1 / -1）
- *   half  = 占 1 列 → 并排两块，各一半
- *   third = 占 2 列（2 列栅格里就是整行）；可用宽再宽时才可能三块并排
- * 下限调小（例 260px）会让 912px 变成 3 列：half 占 2/3、third 占满，两档看起来一样，
- * 「三分之一」就成了空话（2026-10-05 预览实测）。
- * grid-auto-rows: min-content 让同一行里高度不同的模块各自按内容高，不互相拉平。
+ * 模块栅格：基准 4 列，三档宽度就是 1/4 · 1/2 · 整行（span 1 / 2 / 3）。
+ *
+ * 为什么不用 `repeat(auto-fit, minmax(248px, 1fr))`（2026-10-06 浏览器实测）：
+ * auto-fit 的列数由「所有条目里最大的 span」决定，span-2 占 4 份时 1046px 只放得下 2 列，
+ * 列宽被拉到 514px，span-2 反而撑满整行——「半行」与「整行」看起来一模一样。
+ * 固定列 + span 1/2/全行（下表 B 方案）实测：1046px 里 4 列各 248px，
+ * span-1 = 248px（1/4）、span-2 = 514px（1/2）、span-3 = 1046px（整行），三档都成立。
+ * 页宽上限与 248px 同源（见 .board-inner），所以「整页列数」改的就是这一页的栏位预算。
+ *
+ * 窄屏按容器宽度降级：并排两块塞不下时不再并排（每档都先保证「两格」放得下）。
+ */
+/*
+ * 瀑布流容器（方案 E）：不再用 grid，而是「块级容器 + 绝对定位的子项」——
+ * 顺序 = 数组顺序，位置由 lib/masonry.ts 计算（每张卡放进当前最矮的列，跨列的卡按份数算宽）。
+ * 这里只留容器与子项的基础样式：文字流（单列）时 .widget 会被脚本还原成 static。
  */
 .board-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(328px, 1fr));
-  grid-auto-flow: row;
-  grid-auto-rows: min-content;
-  gap: 18px;
-  align-items: start;
+  position: relative;
+  display: block;
 }
-.widget { min-width: 0; }
-.widget.span-full { grid-column: 1 / -1; }
-.widget.span-half { grid-column: span 1; }
-.widget.span-third { grid-column: span 2; }
-
-/* 手机：并排两块会挤成竖条，一律整行（三档一起降级） */
-@media (max-width: 768px) {
-  .widget.span-half,
-  .widget.span-third { grid-column: 1 / -1 !important; }
+.widget {
+  min-width: 0;
+  /* 拖拽与重排都靠 transform 移动，位移做成过渡才有「滑过去」的观感 */
+  transition: transform 180ms cubic-bezier(0.2, 0, 0, 1), width 180ms ease;
 }
-/* 窄容器（侧栏展开 / Agent 悬浮卡打开后的正文）：同样是「一列放不下并排」 */
-@container (max-width: 700px) {
-  .widget.span-half,
-  .widget.span-third { grid-column: 1 / -1 !important; }
+/* 单列（手机）：脚本把子项还原成普通流，过渡也就不需要了 */
+.board-grid[data-masonry-single='1'] .widget { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .widget { transition: none; }
 }
 
 .board-empty { padding: 28px 24px; text-align: center; }

@@ -49,11 +49,11 @@
       <slot />
     </div>
 
-    <!-- 编辑态底栏：占几列（对齐关系一眼可见）+ 上移/下移/删除，全都能键盘操作 -->
+    <!-- 编辑态底栏：占几格（对齐关系一眼可见）+ 上移/下移/删除，全都能键盘操作 -->
     <footer v-if="managing" class="shell-foot">
       <div class="spans" role="group" aria-label="模块宽度">
         <button
-          v-for="option in SPAN_OPTIONS"
+          v-for="option in spanOptions"
           :key="option.value"
           class="span-btn"
           type="button"
@@ -103,14 +103,17 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import Icon from './Icon.vue';
-import { MODULE_SPANS, moduleMeta, type ModuleKind, type ModuleSpan } from '../lib/homeBoard.ts';
+import { moduleMeta, spanOptionsFor, type BoardColumns, type ModuleKind, type ModuleSpan } from '../lib/homeBoard.ts';
 
 const props = withDefaults(
   defineProps<{
     kind: ModuleKind;
     /** 已生效标题（自定义标题或类型默认标题，由外层算好） */
     title: string;
+    /** 占几格（相对格数，1–3） */
     span: ModuleSpan;
+    /** 整页列数：决定底栏给哪几档宽度 */
+    columns: BoardColumns;
     /** 该模块已生效的条数（列表类模块用；没有这项时为 undefined） */
     limit?: number;
     managing?: boolean;
@@ -133,7 +136,7 @@ defineEmits<{
 const meta = computed(() => moduleMeta(props.kind));
 
 /**
- * 条数档位：只有列表类模块有这一项（最近更新 / 近期灵感 / 近期待办）。
+ * 条数档位：只有列表类模块有这一项（最近更新 / 近期灵感 / 本周新增 / 近期待办）。
  * 上下限与 lib/homeBoard.ts 的归一化保持一致，界面不会给出存不下的值。
  */
 const limitSetting = computed(() => {
@@ -142,13 +145,8 @@ const limitSetting = computed(() => {
   return { value: Math.min(max, Math.max(1, props.limit)), min: 1, max };
 });
 
-const SPAN_OPTIONS: Array<{ value: ModuleSpan; label: string; hint: string }> = [
-  { value: 'full', label: '整行', hint: '占满一整行' },
-  { value: 'half', label: '半行', hint: '与相邻模块并排，各占一半' },
-  { value: 'third', label: '三分之一', hint: '宽屏上与另外两块并排，各占三分之一；窄屏自动整行' },
-];
-// 档位顺序的来源是 lib/homeBoard.ts，这里只做一次存在性自检，避免两边漏改
-void MODULE_SPANS;
+/** 宽度档随整页列数变：4 列时给「1/4 · 1/2 · 3/4 · 整行」这类标签（见 spanOptionsFor） */
+const spanOptions = computed(() => spanOptionsFor(props.columns));
 </script>
 
 <style scoped>

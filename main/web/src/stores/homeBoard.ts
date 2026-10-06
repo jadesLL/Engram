@@ -23,7 +23,9 @@ import {
   removeModule,
   reorderModuleById,
   serializeHomeBoard,
+  setColumns,
   updateModule,
+  type BoardColumns,
   type HomeBoard,
   type HomeModule,
   type ModuleKind,
@@ -161,6 +163,13 @@ export const useHomeBoardStore = defineStore('homeBoard', {
       const before = this.board.modules.map((m) => m.id).join(',');
       this.board = reorderModuleById(this.board, id, toIndex);
       if (this.board.modules.map((m) => m.id).join(',') === before) return;
+      this.persist();
+    },
+    /** 换整页列数（2–5）：各模块的格数会一起夹到新列数以内 */
+    setBoardColumns(columns: BoardColumns) {
+      const next = setColumns(this.board, columns);
+      if (next === this.board) return;
+      this.board = next;
       this.persist();
     },
     /** 编辑态开关：退出编辑时结束拖拽高亮（避免残留落点线） */

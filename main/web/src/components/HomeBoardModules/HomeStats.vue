@@ -9,17 +9,22 @@
       <span class="stat-bar"><i :style="{ width: bar(row.value), background: `var(--${row.badge})` }" /></span>
       <span class="stat-vl">{{ row.value }}</span>
     </button>
-    <p class="stats-foot muted">共 {{ pages }} 个页面 · 资料份数 {{ counts.files }}</p>
+    <p class="stats-foot muted">
+      共 {{ pages }} 个页面<template v-if="words"> · {{ formatCount(words, ' 字') }}</template> · 资料份数 {{ counts.files }}
+    </p>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
 import Icon from '../Icon.vue';
+import { formatCount } from '../../lib/homeBoardData.ts';
 
 const props = defineProps<{
   pages: number;
   counts: { concepts: number; entities: number; files: number };
+  /** 全库字数（可选：老调用方不传也能用） */
+  words?: number;
 }>();
 defineEmits<{ (e: 'go', path: string): void }>();
 
