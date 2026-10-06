@@ -38,6 +38,14 @@ export const MODULE_KINDS = [
   'roam',
   'system',
   'sync',
+  // 2026-10-06 卡片库第二批（客户端就能算的那些）
+  'ring',
+  'heat',
+  'inbox',
+  'queue',
+  'board',
+  'activity',
+  'digest',
 ] as const;
 export type ModuleKind = (typeof MODULE_KINDS)[number];
 
@@ -95,6 +103,13 @@ export const MODULE_META: ModuleMeta[] = [
   { kind: 'roam', title: '随机漫游', hint: '随手翻到一篇，看看以前写过什么', icon: 'compass', span: 1 },
   { kind: 'system', title: '运行状态', hint: '版本、运行形态、队列与同步一句话说完', icon: 'server', span: 1 },
   { kind: 'sync', title: '多端同步状态', hint: '同步中 / 已完成的通道与进度', icon: 'plug', span: 1 },
+  { kind: 'ring', title: '库占比', hint: '概念 / 实体 / 资料 的占比环 + 总数', icon: 'graph', span: 1 },
+  { kind: 'heat', title: '近 8 周', hint: '按天统计改动热度，一眼看出最近勤不勤', icon: 'activity', span: 1 },
+  { kind: 'inbox', title: '收集箱', hint: '待整理的原始件与转换进度', icon: 'inbox', span: 1 },
+  { kind: 'queue', title: '等待提炼', hint: '刚落盘还没进 Wiki 的资料与灵感', icon: 'merge', span: 1 },
+  { kind: 'board', title: '看板快照', hint: '任务看板三列各几条，点开进看板', icon: 'board', span: 2 },
+  { kind: 'activity', title: '最近改动', hint: '最近动过的页面，按时间倒着排', icon: 'restore', span: 1 },
+  { kind: 'digest', title: 'Agent 摘要', hint: '用一句话说清最近值得看什么', icon: 'ai', span: 2 },
 ];
 
 
@@ -194,6 +209,8 @@ const LIMIT_KINDS: Partial<Record<ModuleKind, number>> = {
   notes: 12,
   fresh: 12,
   tasks: 20,
+  // 「近 8 周」的 stepper 调的是周数：4–12 周
+  heat: 12,
 };
 /** 列表类模块的默认条数 */
 export const DEFAULT_LIMIT: Partial<Record<ModuleKind, number>> = {
@@ -201,6 +218,11 @@ export const DEFAULT_LIMIT: Partial<Record<ModuleKind, number>> = {
   notes: 4,
   fresh: 5,
   tasks: 3,
+  heat: 8,
+};
+/** 条数下限（heat 的周数至少要 4 周，少于 4 周看不出节奏） */
+export const MIN_LIMIT: Partial<Record<ModuleKind, number>> = {
+  heat: 4,
 };
 
 /** 选项值只留字符串 / 有限数字 / 布尔：对象与数组直接丢掉，避免把任意结构带进渲染层 */
@@ -224,7 +246,8 @@ function normalizeOpts(raw: unknown, kind: ModuleKind): Record<string, string | 
   // 条数类选项收敛到 1..上限：界面上的选择器只给几个档位，手改出的 999 不该真的渲染 999 行
   if (limit && (out.limit !== undefined || DEFAULT_LIMIT[kind] !== undefined)) {
     const raw = Number(out.limit);
-    out.limit = Number.isFinite(raw) ? Math.min(limit, Math.max(1, Math.round(raw))) : (DEFAULT_LIMIT[kind] || 6);
+    const min = MIN_LIMIT[kind] || 1;
+    out.limit = Number.isFinite(raw) ? Math.min(limit, Math.max(min, Math.round(raw))) : (DEFAULT_LIMIT[kind] || 6);
   }
   return out;
 }
@@ -558,5 +581,135 @@ export function tagCounts(pages: any[], limit = 12): Array<{ tag: string; count:
     .map(([tag, count]) => ({ tag, count }))
     .sort((left, right) => right.count - left.count || left.tag.localeCompare(right.tag, 'zh-Hans-CN'))
     .slice(0, Math.max(1, limit));
+}
+
+/* ===== 2026-10-06 卡片库第二批（客户端就能算） ===== */
+
+/** 「库占比」：三类页面的数量与占比（环里放最多的那一类） */
+export interface RatioRow {
+  key: string;
+  label: string;
+  value: number;
+  ratio: number;
+}
+
+export function ratioRows(pages: any[], files: number): { rows: RatioRow[]; total: number } {
+  const counts = kbCounts(pages, files);
+  const rows: RatioRow[] = [
+    { key: 'concept', label: '概念', value: counts.concepts, ratio: 0 },
+    { key: 'entity', label: '实体', value: counts.entities, ratio: 0 },
+    { key: 'file', label: '资料', value: counts.files, ratio: 0 },
+  ];
+  const total = rows.reduce((sum, row) => sum + row.value, 0);
+  for (const row of rows) row.ratio = total > 0 ? row.value / total : 0;
+  return { rows, total };
+}
+
+/** 「近 8 周」热力格：按天统计「有改动的页面数」，返回 weeks×7 的格子（周日开头，与日历观感一致） */
+export interface HeatCell {
+  /** YYYY-MM-DD（本地日） */
+  date: string;
+  count: number;
+  /** 0–4 档，供组件上色 */
+  level: 0 | 1 | 2 | 3 | 4;
+  /** 今天以后的格子：不画（未来没有「改动」这回事） */
+  future: boolean;
+}
+
+export function heatmapDayCounts(pages: any[], weeks = 8, now: number = Date.now()): HeatCell[] {
+  const span = Math.min(12, Math.max(4, Math.round(weeks) || 8));
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  // 对齐到本周日：最后一格是「本周日」，往前铺 7×weeks 天
+  const end = new Date(today);
+  end.setDate(end.getDate() + (6 - today.getDay()));
+  const start = new Date(end);
+  start.setDate(start.getDate() - (span * 7 - 1));
+
+  const byDay = new Map<string, number>();
+  for (const page of pages || []) {
+    const at = pageTime(page, 'updated_at');
+    if (!at) continue;
+    const day = new Date(at);
+    day.setHours(0, 0, 0, 0);
+    if (day < start || day > end) continue;
+    const key = isoDay(day);
+    byDay.set(key, (byDay.get(key) || 0) + 1);
+  }
+
+  const counts = [...byDay.values()];
+  const max = counts.length ? Math.max(...counts) : 0;
+  const levelOf = (value: number): 0 | 1 | 2 | 3 | 4 => {
+    if (!value || !max) return 0;
+    const ratio = value / max;
+    if (ratio > 0.75) return 4;
+    if (ratio > 0.5) return 3;
+    if (ratio > 0.25) return 2;
+    return 1;
+  };
+
+  const cells: HeatCell[] = [];
+  for (let at = new Date(start); at <= end; at.setDate(at.getDate() + 1)) {
+    const key = isoDay(at);
+    const count = byDay.get(key) || 0;
+    cells.push({ date: key, count, level: levelOf(count), future: at > today });
+  }
+  return cells;
+}
+
+/** 本地日的 YYYY-MM-DD */
+function isoDay(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/** 「等待提炼」：最近改动过、但还没被引用的原始资料与灵感（数据口径与旧版「最近更新」一致） */
+export function pendingDistillOf(pages: any[], limit = 4): any[] {
+  return (pages || [])
+    .filter((page) => String(page?.path || '').startsWith('原始资料/'))
+    .filter((page) => !String(page?.path || '').startsWith('原始资料/对话/'))
+    .slice(0, Math.max(1, limit));
+}
+
+/** 「Agent 摘要」里的一句人话：近 7 天哪块动得最多 */
+export function busiestSection(pages: any[], days = 7, now: number = Date.now()): { label: string; count: number } | null {
+  const rows = weeklyStats(pages, days, now);
+  if (!rows.length) return null;
+  const top = [...rows].sort((left, right) => right.updated + right.created - (left.updated + left.created))[0];
+  return { label: top.label, count: top.updated + top.created };
+}
+
+/** 「Agent 摘要」：把库存量、近 7 天动静与待办拼成一句话（不调模型，纯本地拼） */
+export function homeDigest(input: {
+  pages: any[];
+  files: number;
+  taskCount: number;
+  inboxPending: number;
+  days?: number;
+  now?: number;
+}): string[] {
+  const days = input.days ?? 7;
+  const now = input.now ?? Date.now();
+  const pages = input.pages || [];
+  const fresh = freshPagesOf(pages, days, now).length;
+  const weekly = weeklyStats(pages, days, now);
+  const changed = weekly.reduce((sum, row) => sum + row.updated, 0);
+  const busiest = busiestSection(pages, days, now);
+  const lines: string[] = [];
+
+  if (fresh || changed) {
+    const parts: string[] = [];
+    if (fresh) parts.push(`新增 ${fresh} 篇`);
+    if (changed) parts.push(`改动 ${changed} 篇`);
+    lines.push(`近 ${days} 天${parts.join('、')}${busiest ? `，${busiest.label}动得最多（${busiest.count} 次）` : ''}。`);
+  } else {
+    lines.push(`近 ${days} 天库里没有新的改动。`);
+  }
+
+  if (input.taskCount) lines.push(`看板上还有 ${input.taskCount} 件待办，逾期与最近要做的排在前面。`);
+  if (input.inboxPending) lines.push(`收集箱里 ${input.inboxPending} 份原件还没整理。`);
+  if (!input.taskCount && !input.inboxPending) lines.push(`待办与收集箱都清空了。`);
+  return lines;
 }
 

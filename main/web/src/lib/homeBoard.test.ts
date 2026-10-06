@@ -12,10 +12,13 @@ import {
   MODULE_META,
   MODULE_SPANS,
   addModule,
+  busiestSection,
   clampSpan,
   defaultHomeBoard,
   dropTargetIndex,
   freshPagesOf,
+  heatmapDayCounts,
+  homeDigest,
   ideaPagesOf,
   kbCounts,
   limitOf,
@@ -24,7 +27,9 @@ import {
   normalizeColumns,
   normalizeHomeBoard,
   pageTime,
+  pendingDistillOf,
   pickRoamPage,
+  ratioRows,
   recentPagesOf,
   removeModule,
   reorderModuleById,
@@ -474,4 +479,114 @@ test('tagCounts：按出现次数排序，坏 tags 不算，归档页不算，�
   ]);
   assert.deepEqual(tagCounts(pages, 1), [{ tag: '客户', count: 3 }]);
   assert.deepEqual(tagCounts([]), []);
+});
+
+/* ===== 卡片库第二批（占比环 / 热力格 / 待提炼 / 摘要） ===== */
+
+test('ratioRows：三类计数、占比按合计算，空库不除零', () => {
+  const pages = [
+    page({ path: 'Wiki/概念/甲' }),
+    page({ path: 'Wiki/概念/乙' }),
+    page({ path: 'Wiki/实体/丙' }),
+  ];
+  const { rows, total } = ratioRows(pages, 1);
+  assert.equal(total, 4);
+  assert.deepEqual(rows.map((row) => [row.key, row.value]), [['concept', 2], ['entity', 1], ['file', 1]]);
+  assert.equal(Math.round(rows[0].ratio * 100), 50);
+  assert.equal(Math.round(rows[1].ratio * 100), 25);
+  const empty = ratioRows([], 0);
+  assert.equal(empty.total, 0);
+  assert.deepEqual(empty.rows.map((row) => row.ratio), [0, 0, 0]);
+});
+
+test('heatmapDayCounts：格子数 = 周数×7、最后一格是本周六、未来格子标出来', () => {
+  // 2026-10-06 是周二 → 本周六是 10-10，最后一格就是它
+  const now = Date.parse('2026-10-06T12:00:00+08:00');
+  const cells = heatmapDayCounts([], 8, now);
+  assert.equal(cells.length, 56);
+  assert.equal(cells[cells.length - 1].date, '2026-10-10');
+  // 今天之后的格子算未来（10-07…10-10 共 4 格）
+  assert.equal(cells.filter((cell) => cell.future).length, 4);
+  assert.equal(cells.find((cell) => cell.date === '2026-10-06')!.future, false);
+  // 周数收敛到 4–12
+  assert.equal(heatmapDayCounts([], 99, now).length, 12 * 7);
+  assert.equal(heatmapDayCounts([], 1, now).length, 4 * 7);
+});
+
+test('heatmapDayCounts：按 updated_at 归到当天，热档按最大值归一', () => {
+  const now = Date.parse('2026-10-06T12:00:00+08:00');
+  // 用「本地日」构造时间戳（不写死 UTC 偏移）：热力格按本地日归档，
+  // 写死偏移的写法在 UTC 容器里会跨天甚至跨出 8 周窗口（2026-10-06 就在 Docker 里挂过一次）
+  const localDayStart = (offsetDays: number) => {
+    const day = new Date(now - offsetDays * 86_400_000);
+    day.setHours(3, 0, 0, 0);
+    return day.toISOString();
+  };
+  const pages = [
+    page({ id: 'a', updated_at: localDayStart(0) }),
+    page({ id: 'b', updated_at: localDayStart(0) }),
+    page({ id: 'c', updated_at: localDayStart(1) }),
+    page({ id: 'd', updated_at: localDayStart(200) }), // 远超 8 周，不进格子
+  ];
+  const cells = heatmapDayCounts(pages, 8, now);
+  const todayKey = cells[cells.length - 1 - 4]?.date; // 最后一格是本周六，往回 4 格是周二
+  assert.equal(todayKey, '2026-10-06');
+  const today = cells.find((cell) => cell.date === todayKey)!;
+  assert.equal(today.count, 2);
+  assert.equal(today.level, 4);
+  const yesterday = cells.find((cell) => cell.date === '2026-10-05')!;
+  assert.equal(yesterday.count, 1);
+  // 热档按「当天最大值」归一：1/2 = 0.5 → 第 2 档
+  assert.equal(yesterday.level, 2);
+  assert.equal(cells.reduce((sum, cell) => sum + cell.count, 0), 3);
+});
+
+test('pendingDistillOf：只取原始资料、跳过对话、按上限截断', () => {
+  const pages = [
+    page({ id: '1', path: '原始资料/灵感碎片/甲' }),
+    page({ id: '2', path: '原始资料/文档/乙' }),
+    page({ id: '3', path: '原始资料/对话/丙' }),
+    page({ id: '4', path: 'Wiki/概念/丁' }),
+  ];
+  assert.deepEqual(pendingDistillOf(pages, 4).map((item) => item.id), ['1', '2']);
+  assert.deepEqual(pendingDistillOf(pages, 1).map((item) => item.id), ['1']);
+});
+
+test('homeDigest：有改动时给一句统计，没改动时给安静版；待办与收集箱各自成句', () => {
+  const now = Date.parse('2026-10-06T12:00:00+08:00');
+  const pages = [
+    page({ id: 'a', path: 'Wiki/概念/甲', created_at: new Date(now - 86_400_000).toISOString(), updated_at: new Date(now - 86_400_000).toISOString() }),
+    page({ id: 'b', path: 'Wiki/实体/乙', created_at: new Date(now - 30 * 86_400_000).toISOString(), updated_at: new Date(now - 2 * 86_400_000).toISOString() }),
+  ];
+  const busy = homeDigest({ pages, files: 0, taskCount: 3, inboxPending: 2, now });
+  assert.match(busy[0], /近 7 天新增 1 篇、改动 2 篇/);
+  assert.match(busy.join(' '), /还有 3 件待办/);
+  assert.match(busy.join(' '), /收集箱里 2 份原件/);
+
+  const quiet = homeDigest({ pages: [], files: 0, taskCount: 0, inboxPending: 0, now });
+  assert.equal(quiet.length, 2);
+  assert.match(quiet[0], /没有新的改动/);
+  assert.match(quiet[1], /都清空了/);
+});
+
+test('busiestSection：取「新增 + 改动」最多的那一类，空数据返回 null', () => {
+  const now = Date.parse('2026-10-06T12:00:00+08:00');
+  const iso = (d: number) => new Date(now - d * 86_400_000).toISOString();
+  const pages = [
+    page({ id: 'c1', path: 'Wiki/概念/甲', created_at: iso(1), updated_at: iso(1) }),
+    page({ id: 'c2', path: 'Wiki/概念/乙', created_at: iso(2), updated_at: iso(2) }),
+    page({ id: 'e1', path: 'Wiki/实体/丙', created_at: iso(1), updated_at: iso(1) }),
+  ];
+  // 概念：2 篇各自「新增 1 + 改动 1」= 4；实体同理 = 2
+  assert.deepEqual(busiestSection(pages, 7, now), { label: '概念', count: 4 });
+  assert.equal(busiestSection([], 7, now), null);
+});
+
+test('heat 的条数档是周数：4–12，缺省 8', () => {
+  const board = normalizeHomeBoard({ modules: [{ id: 'h', kind: 'heat', opts: {} }] });
+  assert.equal(board.modules[0].opts.limit, 8);
+  const tooSmall = normalizeHomeBoard({ modules: [{ id: 'h', kind: 'heat', opts: { limit: 1 } }] });
+  assert.equal(tooSmall.modules[0].opts.limit, 4);
+  const tooBig = normalizeHomeBoard({ modules: [{ id: 'h', kind: 'heat', opts: { limit: 99 } }] });
+  assert.equal(tooBig.modules[0].opts.limit, 12);
 });

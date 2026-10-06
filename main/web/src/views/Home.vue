@@ -676,6 +676,13 @@ onMounted(() => {
   chat.syncRunningRuns().catch(() => {});
   // 图标栏「收集箱」角标：启动时取一次待整理数量
   inbox.load();
+  // 首页若有「收集箱」卡片：同一份 store，进页面时补一次，卡片里的待整理数与角标一致
+  watch(
+    () => homeBoard.board.modules.some((module) => module.kind === 'inbox'),
+    (hasInbox) => {
+      if (hasInbox) void inbox.load();
+    }
+  );
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey);

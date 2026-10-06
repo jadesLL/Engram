@@ -106,6 +106,13 @@
           <HomeSections v-else-if="entry.module.kind === 'sections'" :entries="sections" @go="go" />
           <HomeRoam v-else-if="entry.module.kind === 'roam'" :pages="roamCandidates" @go="go" @capture="quickNote" />
           <HomeSystem v-else-if="entry.module.kind === 'system'" :counts="counts" :agent-name="agentName" @go="go" />
+          <HomeRing v-else-if="entry.module.kind === 'ring'" :pages="props.pages" :files="props.fileCount" @go="go" />
+          <HomeHeat v-else-if="entry.module.kind === 'heat'" :pages="props.pages" :weeks="entry.limit" />
+          <HomeInbox v-else-if="entry.module.kind === 'inbox'" @go="go" />
+          <HomeQueue v-else-if="entry.module.kind === 'queue'" :pages="props.pages" :limit="4" @go="go" />
+          <HomeBoardCard v-else-if="entry.module.kind === 'board'" :board="tasks.board" :loading="tasksLoading" @go="go" />
+          <HomeActivity v-else-if="entry.module.kind === 'activity'" :items="changeLogItems" :limit="entry.limit" @go="go" />
+          <HomeDigest v-else-if="entry.module.kind === 'digest'" :lines="digestLines" :agent-name="agentName" @go="go" @chat="onChat" />
           <HomeSync v-else />
         </HomeModuleShell>
       </div>
@@ -133,18 +140,28 @@ import HomeTags from './HomeBoardModules/HomeTags.vue';
 import HomeSections from './HomeBoardModules/HomeSections.vue';
 import HomeRoam from './HomeBoardModules/HomeRoam.vue';
 import HomeSystem from './HomeBoardModules/HomeSystem.vue';
+import HomeRing from './HomeBoardModules/HomeRing.vue';
+import HomeHeat from './HomeBoardModules/HomeHeat.vue';
+import HomeInbox from './HomeBoardModules/HomeInbox.vue';
+import HomeQueue from './HomeBoardModules/HomeQueue.vue';
+import HomeBoardCard from './HomeBoardModules/HomeBoardSnapshot.vue';
+import HomeActivity from './HomeBoardModules/HomeActivity.vue';
+import HomeDigest from './HomeBoardModules/HomeDigest.vue';
 import HomeSync from './HomeBoardModules/HomeSync.vue';
 import { useHomeBoardStore } from '../stores/homeBoard';
 import { useTasksStore } from '../stores/tasks';
+import { useInboxStore } from '../stores/inbox';
 import {
   DEFAULT_LIMIT,
   HOME_BOARD_COLUMNS,
   MAX_MODULES,
   MODULE_META,
   freshPagesOf,
+  homeDigest,
   kbCounts,
   limitOf,
   moduleMeta,
+  recentPagesOf,
   roamPool,
   sectionEntries,
   tagCounts,
@@ -156,8 +173,8 @@ import {
 import { homeDateLine, homeGreeting } from '../lib/homeBoardData.ts';
 import { boardView, filterCards, EMPTY_FILTER } from '../lib/taskBoard.ts';
 
-/** 各列表类模块的条数上限（与 lib/homeBoard.ts 的归一口径一致） */
-const LIMIT_MAX: Record<string, number> = { recent: 12, notes: 12, fresh: 12, tasks: 20 };
+/** 各列表类模块的条数上限（与 lib/homeBoard.ts 的归一口径一致；heat 的「条数」是周数） */
+const LIMIT_MAX: Record<string, number> = { recent: 12, notes: 12, fresh: 12, tasks: 20, heat: 12 };
 
 const props = defineProps<{
   /** 全部页面（已按更新时间倒序） */
@@ -186,6 +203,7 @@ const emit = defineEmits<{
 
 const store = useHomeBoardStore();
 const tasks = useTasksStore();
+const inbox = useInboxStore();
 
 const boardEl = ref<HTMLElement>();
 const dateLine = computed(() => homeDateLine());
@@ -206,6 +224,17 @@ const weeklyRows = computed(() => weeklyStats(props.pages, 7));
 const roamCandidates = computed(() => roamPool(props.pages));
 /** 常用标签：库里出现最多的前 12 个 */
 const tagList = computed(() => tagCounts(props.pages, 12));
+/** 「最近改动」用同一批数据，观感是时间线（点 + 竖线） */
+const changeLogItems = computed(() => recentPagesOf(props.pages));
+/** 「Agent 摘要」：库存量 + 近 7 天动静 + 待办与收集箱，本地拼句，不调模型 */
+const digestLines = computed(() =>
+  homeDigest({
+    pages: props.pages,
+    files: props.fileCount,
+    taskCount: taskCards.value.length,
+    inboxPending: Number(inbox.counts.pending || 0),
+  })
+);
 
 /** 近期待办：与旧欢迎页同一口径（逾期 → 窗口内日期 → 周期 → 待定），条数由模块选项决定 */
 const taskCards = computed(() => {
