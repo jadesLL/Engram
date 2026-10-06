@@ -18,10 +18,12 @@ import {
   HOME_LAYOUT_SETTING,
   HOME_LAYOUT_STORAGE_KEY,
   addModule,
+  autoArrangeBoard,
+  compactBoard,
   defaultHomeBoard,
+  moveModuleTo,
   normalizeHomeBoard,
   removeModule,
-  reorderModuleById,
   serializeHomeBoard,
   setColumns,
   updateModule,
@@ -30,6 +32,7 @@ import {
   type HomeModule,
   type ModuleKind,
 } from '../lib/homeBoard.ts';
+import type { GridPlace } from '../lib/homeGrid.ts';
 
 /** 写服务端的去抖窗口：拖拽排序会连续触发，攒一下再发 */
 const SERVER_WRITE_DEBOUNCE_MS = 600;
@@ -158,14 +161,29 @@ export const useHomeBoardStore = defineStore('homeBoard', {
       this.board = updateModule(this.board, id, patch);
       this.persist();
     },
-    /** 拖拽落点：调用方已经算好最终下标（见 lib/homeBoard.ts 的 dropTargetIndex） */
-    move(id: string, toIndex: number) {
-      const before = this.board.modules.map((m) => m.id).join(',');
-      this.board = reorderModuleById(this.board, id, toIndex);
-      if (this.board.modules.map((m) => m.id).join(',') === before) return;
+    /**
+     * 拖动 / 缩放：把某张卡挪到栅格位置（homeGrid.placeItem 保证不叠、不越界）。
+     * 位置没变就不写盘——拖动时每帧都会调它。
+     */
+    place(id: string, place: GridPlace) {
+      const next = moveModuleTo(this.board, id, place);
+      if (next === this.board) return;
+      this.board = next;
       this.persist();
     },
-    /** 换整页列数（2–5）：各模块的格数会一起夹到新列数以内 */
+    /** 紧凑：所有卡片往上收（拖动结束、删卡之后用） */
+    compact() {
+      const next = compactBoard(this.board);
+      if (next === this.board) return;
+      this.board = next;
+      this.persist();
+    },
+    /** 一键排整齐：按当前顺序顺次铺满 */
+    autoArrange() {
+      this.board = autoArrangeBoard(this.board);
+      this.persist();
+    },
+    /** 换整页列数：v3 起栅格固定 6 列，这个入口保留成空操作（旧调用点不用改） */
     setBoardColumns(columns: BoardColumns) {
       const next = setColumns(this.board, columns);
       if (next === this.board) return;

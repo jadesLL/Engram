@@ -1,6 +1,10 @@
 <template>
   <!-- 首页看板：日期 + 问候 + 可编辑模块列表（加 / 删 / 改 / 拖都由用户自己定） -->
-  <div ref="boardEl" class="board" :style="{ '--board-cols': store.board.columns }">
+  <div
+    ref="boardEl"
+    class="board"
+    :style="{ '--board-cols': GRID_COLS, '--grid-row-h': `${GRID_ROW_HEIGHT}px` }"
+  >
     <div class="board-cq">
       <div class="board-inner">
         <div class="board-date">{{ dateLine }}</div>
@@ -24,30 +28,25 @@
           </button>
         </header>
 
-    <!-- 编辑态工具条：整页列数 + 加模块 / 恢复默认 -->
+    <!-- 编辑态工具条：加模块 / 排整齐 / 紧凑 / 恢复默认 -->
     <div v-if="store.editing" class="manage-bar">
-      <div class="cols" role="group" aria-label="整页列数">
-        <span class="cols-label">整页列数</span>
-        <button
-          v-for="count in HOME_BOARD_COLUMNS"
-          :key="count"
-          class="cols-btn"
-          type="button"
-          :class="{ on: count === store.board.columns }"
-          :aria-pressed="count === store.board.columns"
-          v-tooltip="`${count} 列栅格：模块按自己的格数占位（窄屏会自动少排几列）`"
-          @click="store.setBoardColumns(count)"
-        >{{ count }}</button>
-      </div>
-      <span class="manage-hint">拖手柄或按左右方向键排序；底栏可改宽度、改名、删除</span>
+      <span class="manage-hint">
+        拖动卡片 = 换位置（自动吸附到栅格）；拖右下角 = 改大小；方向键微调、Shift+方向键改尺寸
+      </span>
       <div class="manage-spacer" />
+      <button class="manage-btn" type="button" title="把卡片往上收，消掉中间的空洞" @click="store.compact()">
+        <Icon name="merge" :size="14" /><span>紧凑</span>
+      </button>
+      <button class="manage-btn" type="button" title="按当前顺序从左到右、从上到下重排一遍" @click="store.autoArrange()">
+        <Icon name="refresh" :size="14" /><span>排整齐</span>
+      </button>
       <button class="manage-btn primary" type="button" :disabled="store.board.modules.length >= MAX_MODULES" @click="toggleAdd">
         <Icon name="plus" :size="14" /><span>添加模块</span>
       </button>
       <button class="manage-btn" type="button" @click="onReset">恢复默认</button>
     </div>
 
-    <!-- 模块面板：选类型 → 追加到末尾（面板留着，可连续加） -->
+    <!-- 模块面板：选类型 → 放进第一个空位（面板留着，可连续加） -->
     <div v-if="store.editing && addOpen" class="add-panel">
       <button
         v-for="meta in MODULE_META"
@@ -62,32 +61,46 @@
       </button>
     </div>
 
-    <!-- 瀑布流（方案 E）：顺序由数组决定，每张卡放进「当前最矮的列」（见 lib/masonry.ts） -->
-    <div v-if="store.board.modules.length" ref="gridEl" class="board-grid">
+    <!--
+      栅格看板（2026-10-07「手机桌面」模式）：固定 6 列 × N 行的 CSS Grid，
+      每张卡用自己的 col/row/w/h 直接落在格子上（位置数据在 lib/homeBoard.ts + lib/homeGrid.ts）。
+      拖动 = 改起点、拖右下角 = 改宽高，两者都吸附到格；碰撞由 placeItem 让位，所以不会叠、不会飞出页面。
+    -->
+    <div
+      v-if="store.board.modules.length"
+      ref="gridEl"
+      class="board-grid"
+      :class="{ editing: store.editing }"
+      :style="{ '--grid-rows': gridRows }"
+    >
       <div
         v-for="entry in boardModules"
         :key="entry.module.id"
         class="widget"
-        :class="`span-${entry.module.span}`"
+        :class="[{ dragging: dragId === entry.module.id }, entry.module.w >= 6 ? 'wide' : '']"
+        :style="{
+          gridColumn: `${entry.module.col + 1} / span ${entry.module.w}`,
+          gridRow: `${entry.module.row + 1} / span ${entry.module.h}`,
+        }"
         :data-module-id="entry.module.id"
         tabindex="-1"
       >
         <HomeModuleShell
           :kind="entry.module.kind"
           :title="entry.title"
-          :span="entry.module.span"
-          :columns="store.board.columns"
+          :width="entry.module.w"
+          :height="entry.module.h"
           :limit="entry.hasLimit ? entry.limit : undefined"
           :managing="store.editing"
           :dragging="dragId === entry.module.id"
-          :drop-before="dropAnchor?.id === entry.module.id && dropAnchor.before"
-          :drop-after="dropAnchor?.id === entry.module.id && !dropAnchor.before"
+          :target="dragId === entry.module.id"
           @remove="onRemove(entry.module)"
           @rename="onRename(entry.module)"
-          @set-span="(span) => store.update(entry.module.id, { span })"
+          @set-width="(width) => store.place(entry.module.id, { ...entry.module, w: width })"
+          @set-height="(height) => store.place(entry.module.id, { ...entry.module, h: height })"
           @set-opt="(key, value) => store.update(entry.module.id, { opts: { ...entry.module.opts, [key]: value } })"
-          @move="(delta) => onMove(entry.module, delta)"
-          @drag-request="startDragFromGrip($event, entry.module.id, entry.index)"
+          @drag-request="startDrag($event, entry.module.id)"
+          @resize-request="startResize($event, entry.module.id)"
         >
           <HomeCapture v-if="entry.module.kind === 'capture'" :submit="onIdea" />
           <HomeShortcuts v-else-if="entry.module.kind === 'shortcuts'" :agent-name="agentName" @go="go" @chat="onChat" />
@@ -117,6 +130,17 @@
           <HomeSync v-else />
         </HomeModuleShell>
       </div>
+
+      <!-- 拖动时的高亮落点：直接画在栅格上（用户看到的就是松手后卡片的位置） -->
+      <div
+        v-if="targetPreview"
+        class="drop-cell"
+        :style="{
+          gridColumn: `${targetPreview.col + 1} / span ${targetPreview.w}`,
+          gridRow: `${targetPreview.row + 1} / span ${targetPreview.h}`,
+        }"
+        aria-hidden="true"
+      />
     </div>
     </div>
   </div>
@@ -162,7 +186,9 @@ import {
   kbCounts,
   limitOf,
   moduleMeta,
+  moveModuleBy,
   recentPagesOf,
+  resizeModuleBy,
   roamPool,
   sectionEntries,
   tagCounts,
@@ -172,7 +198,14 @@ import {
   type ModuleKind,
 } from '../lib/homeBoard.ts';
 import { homeDateLine, homeGreeting } from '../lib/homeBoardData.ts';
-import { useMasonryLayout } from '../lib/masonry.ts';
+import {
+  GRID_COLS,
+  GRID_ROW_HEIGHT,
+  normalizePlace,
+  placeItem,
+  usedRows,
+  type GridPlace,
+} from '../lib/homeGrid.ts';
 import { boardView, filterCards, EMPTY_FILTER } from '../lib/taskBoard.ts';
 
 /** 各列表类模块的条数上限（与 lib/homeBoard.ts 的归一口径一致；heat 的「条数」是周数） */
@@ -270,19 +303,6 @@ const boardModules = computed(() =>
   })
 );
 
-/**
- * 瀑布流（方案 E）：卡片按顺序放进「当前最矮的车道」，宽度按格数算。
- * 车道模型与宽窄屏降级在 lib/masonry.ts / masonryCalc.ts（后者可单测），这里只接线。
- * 注意：必须在 boardModules 声明**之后**调用——它读 boardModules.value，
- * 写在前面会撞上暂时性死区（computed 抛错被 Vue 吞掉，车道数会静静回落成 1）。
- */
-useMasonryLayout({
-  container: gridEl,
-  items: computed(() => store.board.modules.map((module) => ({ span: module.span }))),
-  columns: computed(() => store.board.columns),
-  editing: computed(() => store.editing),
-});
-
 /* ===== 加模块 ===== */
 const addOpen = ref(false);
 function openAdd() {
@@ -358,153 +378,184 @@ function quickNote() {
   emit('note');
 }
 
-/* ===== 拖动排序（指针事件：鼠标与手指同一套，HTML5 拖放触屏不可用） ===== */
+/* ===== 拖动 / 缩放（指针事件：鼠标与手指同一套；落点吸附到栅格） ===== */
 const dragId = ref('');
-/** 落点线画在哪一格、哪一侧（用它而不是下标：下标是「拔掉源之后」的最终位置，与格子对不上） */
-const dropAnchor = ref<{ id: string; before: boolean } | null>(null);
-/** 拖拽当下的落位下标（-1 = 不在任何格子上，松手不写盘） */
-const dropIndex = ref(-1);
+/** 拖动时的高亮落点（松手后卡片就落在这里），直接画在栅格上 */
+const targetPreview = ref<GridPlace | null>(null);
+/** 栅格用了多少行：容器高度按它算，别留一大片空白 */
+const gridRows = computed(() => Math.max(2, usedRows(store.board.modules.map(modulePlace))));
 
-const DRAG_THRESHOLD = 5;
-let pending: { id: string; index: number; x: number; y: number } | null = null;
-let dragging = false;
+const DRAG_THRESHOLD = 4;
+/** 拖动中每帧最多写一次 store（指针事件比帧还密） */
+let pendingPlace: { id: string; place: GridPlace } | null = null;
+let placeFrame = 0;
+let gesture: {
+  mode: 'move' | 'resize';
+  id: string;
+  startX: number;
+  startY: number;
+  origin: GridPlace;
+  cell: { w: number; h: number };
+  active: boolean;
+} | null = null;
 
-/** 手柄按下：先只记位置，越过阈值才算拖（避免点一下手柄就进拖拽态） */
-function startDragFromGrip(event: PointerEvent, id: string, index: number) {
-  if (!store.editing || event.button !== 0) return;
-  pending = { id, index, x: event.clientX, y: event.clientY };
-  dragging = false;
-  window.addEventListener('pointermove', onDragMove);
-  window.addEventListener('pointerup', onDragEnd);
-  window.addEventListener('pointercancel', onDragEnd);
+function modulePlace(module: HomeModule): GridPlace {
+  return { col: module.col, row: module.row, w: module.w, h: module.h };
 }
 
-function onDragMove(event: PointerEvent) {
-  if (!pending) return;
-  if (!dragging) {
-    if (Math.hypot(event.clientX - pending.x, event.clientY - pending.y) < DRAG_THRESHOLD) return;
-    dragging = true;
-    dragId.value = pending.id;
-    // 起手时先显示原位落点，指针一动就有反馈
-    dropAnchor.value = { id: pending.id, before: true };
+/** 栅格一格有多大（含间距）：指针位移 → 格数要用它换算 */
+function cellSize() {
+  const host = gridEl.value;
+  const width = host?.clientWidth || 900;
+  const gap = 10;
+  return { w: (width + gap) / GRID_COLS, h: GRID_ROW_HEIGHT + gap };
+}
+
+/** 按下卡片（编辑态）：越过阈值才开始拖，避免点一下就位移 */
+function startDrag(event: PointerEvent, id: string) {
+  beginGesture(event, id, 'move');
+}
+
+/** 按下右下角的缩放把手 */
+function startResize(event: PointerEvent, id: string) {
+  beginGesture(event, id, 'resize');
+}
+
+function beginGesture(event: PointerEvent, id: string, mode: 'move' | 'resize') {
+  if (!store.editing) return;
+  if (mode === 'move' && event.pointerType === 'mouse' && event.button !== 0) return;
+  const module = store.board.modules.find((item) => item.id === id);
+  if (!module) return;
+  gesture = {
+    mode,
+    id,
+    startX: event.clientX,
+    startY: event.clientY,
+    origin: modulePlace(module),
+    cell: cellSize(),
+    active: false,
+  };
+  window.addEventListener('pointermove', onGestureMove);
+  window.addEventListener('pointerup', onGestureEnd);
+  window.addEventListener('pointercancel', onGestureEnd);
+  // 触摸拖动时别让页面跟着一起滚
+  event.preventDefault();
+}
+
+function onGestureMove(event: PointerEvent) {
+  if (!gesture) return;
+  const dx = event.clientX - gesture.startX;
+  const dy = event.clientY - gesture.startY;
+  if (!gesture.active) {
+    if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    gesture.active = true;
+    dragId.value = gesture.id;
     document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'grabbing';
+    document.body.style.cursor = gesture.mode === 'resize' ? 'nwse-resize' : 'grabbing';
+    targetPreview.value = { ...gesture.origin };
   }
   event.preventDefault();
-  computeDrop(event.clientX, event.clientY);
-}
 
-/**
- * 指针落在哪一格上：取「最近的一格」，以它的横向中线为界——左边插到它前面、右边插到它后面。
- * 同时算出最终落位下标（见 targetToIndex）与**落点线该画在哪一格**（dropAnchor）。
- * 两者分开：落位下标是「拔掉源之后」的数组位置，拿它去和「拔掉之前的格子下标」比会偏一格。
- */
-function computeDrop(x: number, y: number) {
-  const root = boardEl.value;
-  const modules = store.board.modules;
-  const fromIndex = modules.findIndex((m) => m.id === dragId.value);
-  if (!root || fromIndex < 0) return;
-  let best: { index: number; id: string; before: boolean; distance: number } | null = null;
-  for (const [index, module] of modules.entries()) {
-    if (index === fromIndex) continue;
-    const el = root.querySelector(`[data-module-id="${module.id}"]`) as HTMLElement | null;
-    if (!el) continue;
-    const box = el.getBoundingClientRect();
-    const cx = box.left + box.width / 2;
-    const cy = box.top + box.height / 2;
-    // 距离用平方值比（纵向压 0.6 的权重：一行一行往下拖时更容易落在正下方那一格）
-    const distance = (x - cx) ** 2 + (y - cy) ** 2 * 0.6;
-    if (!best || distance < best.distance) {
-      best = { index, id: module.id, before: x < cx, distance };
-    }
+  const stepsX = Math.round(dx / gesture.cell.w);
+  const stepsY = Math.round(dy / gesture.cell.h);
+  const wanted: GridPlace =
+    gesture.mode === 'move'
+      ? { ...gesture.origin, col: gesture.origin.col + stepsX, row: Math.max(0, gesture.origin.row + stepsY) }
+      : { ...gesture.origin, w: gesture.origin.w + stepsX, h: Math.max(1, gesture.origin.h + stepsY) };
+  const clamped = normalizePlace(wanted);
+
+  // 落点先算出来立刻更新高亮：用户看到的格子就是松手后卡片的位置
+  const index = store.board.modules.findIndex((item) => item.id === gesture!.id);
+  const settled = placeItem(store.board.modules.map(modulePlace), index, clamped);
+  const spot = settled[index] || clamped;
+  targetPreview.value = spot;
+  pendingPlace = { id: gesture.id, place: spot };
+  if (!placeFrame) {
+    placeFrame = requestAnimationFrame(() => {
+      placeFrame = 0;
+      const next = pendingPlace;
+      pendingPlace = null;
+      if (next) store.place(next.id, next.place);
+    });
   }
-  if (!best) {
-    // 指针离开所有格子（拖到看板外面）：线收在自己原位，松手等于没动
-    dropIndex.value = -1;
-    dropAnchor.value = pending ? { id: pending.id, before: true } : null;
-    return;
-  }
-  dropIndex.value = targetToIndex(fromIndex, best.index, best.before);
-  dropAnchor.value = { id: best.id, before: best.before };
 }
 
-/**
- * 落点 → 最终数组下标。
- * 与 lib/homeBoard.ts 的 dropTargetIndex 同一口径，但界面上多一层「落点是某一格」的语义，
- * 所以这里把「插到该格前 / 后」先翻译成指针位置，再交给同一个函数，保证拖动结果可整体推理。
- */
-function targetToIndex(fromIndex: number, targetIndex: number, before: boolean): number {
-  if (before) return fromIndex < targetIndex ? targetIndex - 1 : targetIndex;
-  return fromIndex < targetIndex ? targetIndex : targetIndex + 1;
-}
-
-function onDragEnd() {
-  window.removeEventListener('pointermove', onDragMove);
-  window.removeEventListener('pointerup', onDragEnd);
-  window.removeEventListener('pointercancel', onDragEnd);
+function onGestureEnd() {
+  window.removeEventListener('pointermove', onGestureMove);
+  window.removeEventListener('pointerup', onGestureEnd);
+  window.removeEventListener('pointercancel', onGestureEnd);
   document.body.style.userSelect = '';
   document.body.style.cursor = '';
-  const id = dragId.value;
-  const at = dropIndex.value;
-  pending = null;
-  if (dragging && id && at >= 0) {
-    const from = store.board.modules.findIndex((m) => m.id === id);
-    if (from !== at) {
-      store.move(id, at);
-      // 焦点跟着模块走：拖完还想微调时，手柄上按左右键就能继续（别让焦点留在被移动的那个节点上）
-      void nextTick(() => {
-        (boardEl.value?.querySelector(`[data-module-id="${id}"] .tool`) as HTMLElement | null)?.focus?.();
-      });
-    }
+  if (placeFrame) {
+    cancelAnimationFrame(placeFrame);
+    placeFrame = 0;
   }
-  dragging = false;
+  if (gesture?.active) {
+    const next = pendingPlace;
+    pendingPlace = null;
+    if (next) store.place(next.id, next.place);
+    // 松手后顺手紧凑一次：手机上「拖动完自动补洞」的那套手感
+    store.compact();
+    // 焦点回到刚拖过的那张卡：键盘用户能接着用方向键微调
+    const id = gesture.id;
+    void nextTick(() => {
+      (boardEl.value?.querySelector(`[data-module-id="${id}"] .shell`) as HTMLElement | null)?.focus?.();
+    });
+  }
+  gesture = null;
   dragId.value = '';
-  dropIndex.value = -1;
-  dropAnchor.value = null;
+  targetPreview.value = null;
 }
 
-/** 键盘排序：底栏 ▲▼ 或手柄上的左右方向键（触屏与视障用户的等价入口） */
-function onMove(module: HomeModule, delta: number) {
-  const index = store.board.modules.findIndex((m) => m.id === module.id);
+/** 键盘微调：方向键挪位、Shift+方向键改尺寸（触屏与键盘用户的等价入口） */
+function onModuleKey(module: HomeModule, dx: number, dy: number, resize: boolean) {
+  if (!store.editing) return;
+  const index = store.board.modules.findIndex((item) => item.id === module.id);
   if (index < 0) return;
-  const at = index + delta;
-  if (at < 0 || at >= store.board.modules.length) return;
-  store.move(module.id, at);
-  // 焦点还给手柄自己：键盘用户按完一次还能接着按（焦点跑到容器上就断了）
-  void nextTick(() => {
-    (boardEl.value?.querySelector(`[data-module-id="${module.id}"] .tool`) as HTMLElement | null)?.focus?.();
-  });
+  const next = resize ? resizeModuleBy(store.board, index, dx, dy) : moveModuleBy(store.board, index, dx, dy);
+  const after = next.modules[index];
+  if (!after) return;
+  const before = JSON.stringify(modulePlace(module));
+  if (before === JSON.stringify(modulePlace(after))) return;
+  store.place(module.id, modulePlace(after));
 }
 
-/* ===== 键盘：Esc 退出编辑态；←/→ 给「当前聚焦的手柄」换位 =====
+/* ===== 键盘：Esc 退出编辑态；方向键挪格子 / Shift+方向键改尺寸 =====
    Esc 在应用里已经有多处用途（弹窗、侧栏满窗、编辑器全屏），这里只认「编辑态 + 没被上层拦掉」，
    别的场景一律放行；退出编辑时顺手把添加面板收掉，避免下一次进来还挂着。
-   方向键只在焦点真的落在某个手柄上时才接管（判 data-module-id 的祖先），否则放行给别的组件。 */
+   方向键只在焦点真的落在某张卡上时才接管（判 data-module-id 的祖先），否则放行给别的组件。 */
 function onBoardKey(event: KeyboardEvent) {
   if (event.key === 'Escape' && !event.defaultPrevented && store.editing) {
     addOpen.value = false;
     store.setEditing(false);
     return;
   }
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  const arrows: Record<string, [number, number]> = {
+    ArrowLeft: [-1, 0],
+    ArrowRight: [1, 0],
+    ArrowUp: [0, -1],
+    ArrowDown: [0, 1],
+  };
+  const step = arrows[event.key];
+  if (!step) return;
   if (event.defaultPrevented || !store.editing) return;
-  // 只认落在手柄上的那一次：别处在用方向键的组件（编辑器、下拉选择…）不受影响
+  // 只认落在卡片上的那一次：别处在用方向键的组件（编辑器、下拉选择…）不受影响
   const target = event.target as HTMLElement | null;
-  if (!target?.classList?.contains('tool')) return;
+  if (!target?.closest?.('.shell')) return;
   const id = target.closest('[data-module-id]')?.getAttribute('data-module-id');
   if (!id) return;
   const module = store.board.modules.find((m) => m.id === id);
   if (!module) return;
   event.preventDefault();
-  onMove(module, event.key === 'ArrowLeft' ? -1 : 1);
+  onModuleKey(module, step[0], step[1], event.shiftKey);
 }
 onMounted(() => window.addEventListener('keydown', onBoardKey));
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onBoardKey);
-  window.removeEventListener('pointermove', onDragMove);
-  window.removeEventListener('pointerup', onDragEnd);
-  window.removeEventListener('pointercancel', onDragEnd);
+  window.removeEventListener('pointermove', onGestureMove);
+  window.removeEventListener('pointerup', onGestureEnd);
+  window.removeEventListener('pointercancel', onGestureEnd);
   document.body.style.userSelect = '';
   document.body.style.cursor = '';
 });
@@ -536,14 +587,12 @@ onUnmounted(() => {
 /* 上下 auto 之外，.board-inner 原有的 margin: auto 也把左右留白一起管了 */
 .board-cq > .board-inner { margin-top: auto; margin-bottom: auto; }
 /*
- * 内容宽度：**固定页宽上限**，不再按列数缩放。
+ * 内容宽度：固定页宽上限，不随窗口或列数缩放。
  *
- * 早先是 max(960px, cols × 248 + (cols-1) × 18 + 88)——列数一变页宽就变，
- * 于是「1 格」等于可用宽度均分，窗口越宽卡片越胖（2 列时 1 格 430px、4 列 252px，
- * 2026-10-06 用户报「占页宽度不对」）。现在：
- *  - 页面宽度只受窗口影响（上限 1372px = 5 列 × 240 + 4 × 12 + 64，够 5 列排满）；
- *  - **卡片单元宽的上限由瀑布流保证**（masonryCalc.MAX_UNIT = 240px），
- *    宽屏时栅格比容器窄，整块由 .board-grid 的 auto 外边距居中 —— 页宽与列数解耦。
+ * 历史坑：曾经按「列数 × 单元宽 + 间距 + 页边距」算页宽，于是列数一变页宽也变；
+ * 又曾经让 1 格 = 可用宽度 ÷ 列数，于是窗口越宽卡片越胖（2 列时 1 格 430px）。
+ * 现在两条都定死：页宽上限 1372px（窗口更宽就居中留白），栅格固定 6 列、格子等分页宽 ——
+ * 「一格多大」只由页宽决定，用户改的是「一张卡占几格」。
  */
 .board-inner {
   margin: auto;
@@ -691,30 +740,53 @@ onUnmounted(() => {
 }
 
 /*
- * 模块栅格：基准 4 列，宽度档是 1/列数 到「整行」（span 1..列数）。
- * 列宽口径在 masonryCalc：1 格最大 240px（MAX_UNIT），页宽上限 1372px（MAX_PAGE_WIDTH）。
- * 早先试过 `repeat(auto-fit, minmax(248px, 1fr))`：auto-fit 的列数由「所有条目里最大的 span」
- * 决定，span-2 占 4 份时只放得下 2 列、列宽被拉到 514px，「半行」与「整行」看起来一样，
- * 所以固定车道 + 按格数跨车道（现在的瀑布流就是这个模型）。
- */
-/*
- * 瀑布流容器（方案 E）：不再用 grid，而是「块级容器 + 绝对定位的子项」——
- * 顺序 = 数组顺序，位置由 lib/masonry.ts 计算（碰撞检测补空档，跨列的卡按格数算宽）。
- * 栅格比正文窄时（宽屏 / 少列）整块居中：脚本会把 maxWidth 设成「单元宽 × 列数 + 间距」。
- * 这里只留容器与子项的基础样式：单列（手机）时 .widget 会被脚本还原成 static。
+ * 栅格看板（2026-10-07「手机桌面」模式）：固定 6 列 × N 行的 CSS Grid。
+ * 每张卡的 grid-column / grid-row 由数据（col/row/w/h）直接写成内联样式，
+ * 所以拖动 = 改数字、缩放 = 改数字，浏览器负责摆位——不会出现「卡片飞出页面」这种事
+ * （2026-10-06 的瀑布流用绝对定位 + 脚本算像素，拖动时确实会跑到容器外）。
+ * 行高用 --grid-row-h，间距用 gap；两者合起来就是「一格」的大小（拖动换算用同一组常量）。
  */
 .board-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-auto-rows: var(--grid-row-h);
+  /* 只画用到的行数（--grid-rows 由脚本按内容算），避免底部留一大片空白 */
+  grid-template-rows: repeat(var(--grid-rows, 4), var(--grid-row-h));
+  gap: 10px;
+  align-items: stretch;
   position: relative;
-  display: block;
-  margin-inline: auto;
+}
+/* 编辑态：把栅格线画出来（手机桌面那种「看得见的格子」） */
+.board-grid.editing {
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size:
+    calc((100% + 10px) / 6) 100%,
+    100% calc(var(--grid-row-h) + 10px);
+  background-position: -1px -1px;
+  border-radius: 12px;
 }
 .widget {
   min-width: 0;
-  /* 拖拽与重排都靠 transform 移动，位移做成过渡才有「滑过去」的观感 */
-  transition: transform 180ms cubic-bezier(0.2, 0, 0, 1), width 180ms ease;
+  min-height: 0;
+  /* 卡片大小由栅格决定：内容超出时内部滚动，别把栅格撑变形 */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-/* 单列（手机）：脚本把子项还原成普通流，过渡也就不需要了 */
-.board-grid[data-masonry-single='1'] .widget { transition: none; }
+.widget > .shell { flex: 1; min-height: 0; overflow: auto; }
+.widget.dragging { z-index: 3; }
+
+/* 拖动时的落点高亮：直接占在栅格的格里 */
+.drop-cell {
+  grid-area: auto;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
 @media (prefers-reduced-motion: reduce) {
   .widget { transition: none; }
 }
