@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { api } from '../api';
-import { parseTaskBoard, TASK_BOARD_VERSION, type TaskBoard } from '../lib/taskBoard';
+import { parseTaskBoard, taskCardKey, TASK_BOARD_VERSION, type TaskBoard } from '../lib/taskBoard';
 
 /**
  * 任务看板的前端状态：读服务端的看板现状 → 需要时起一轮 → 接事件流看进度 → 完成后重读取答案。
@@ -13,6 +13,7 @@ import { parseTaskBoard, TASK_BOARD_VERSION, type TaskBoard } from '../lib/taskB
 
 /** 服务端给的看板状态（与 server/src/assistant/taskBoard.ts 的 TaskBoardState 对应） */
 interface BoardPayload {
+  completedTaskKeys?: string[];
   sessionId: string;
   status: 'empty' | 'running' | 'ready' | 'failed';
   answer: string;
@@ -65,6 +66,7 @@ export const useTasksStore = defineStore('tasks', {
     starting: false,
     status: 'empty' as BoardPayload['status'],
     answer: '',
+    completedTaskKeys: [] as string[],
     generatedAt: '',
     /** 「上次更新时间」（服务端给：当前这份看板答案的生成时刻） */
     updatedAt: '',
@@ -92,7 +94,11 @@ export const useTasksStore = defineStore('tasks', {
   getters: {
     /** 解析好的看板（解析不出来为 null，页面据此显示空状态） */
     board(state): TaskBoard | null {
-      return state.answer ? parseTaskBoard(state.answer) : null;
+      const board = state.answer ? parseTaskBoard(state.answer) : null;
+      if (!board) return null;
+      const completed = new Set(state.completedTaskKeys);
+      for (const group of board.groups) group.cards = group.cards.filter((card) => !completed.has(taskCardKey(card)));
+      return board;
     },
     running(state): boolean {
       return state.status === 'running' || state.starting;
@@ -107,6 +113,7 @@ export const useTasksStore = defineStore('tasks', {
       this.sessionId = payload.sessionId || '';
       this.status = payload.status;
       this.answer = payload.answer || '';
+      this.completedTaskKeys = payload.completedTaskKeys || [];
       this.generatedAt = payload.generatedAt || '';
       this.updatedAt = payload.updatedAt || payload.generatedAt || '';
       this.local = payload.local !== false;

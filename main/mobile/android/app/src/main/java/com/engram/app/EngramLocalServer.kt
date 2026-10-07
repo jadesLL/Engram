@@ -481,6 +481,7 @@ class EngramLocalServer private constructor(private val context: Context) {
         // 这个开关不代理就会出现「设置页能看不能改」。
         get("/api/tasks/board") { call.proxyAgent("GET", "/api/tasks/board") }
         post("/api/tasks/board/refresh") { call.proxyAgent("POST", "/api/tasks/board/refresh", "{}") }
+        post("/api/tasks/board/complete") { call.proxyAgent("POST", "/api/tasks/board/complete", call.receiveText()) }
         get("/api/tasks/board/config") { call.proxyAgent("GET", "/api/tasks/board/config") }
         put("/api/tasks/board/config") { call.proxyAgent("PUT", "/api/tasks/board/config", call.receiveText()) }
 

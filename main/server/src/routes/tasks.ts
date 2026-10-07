@@ -3,6 +3,7 @@ import { requireAssistantAccess } from '../assistant/access.js';
 import { writeBoardAutoDays } from '../assistant/boardCore.js';
 import { AgentNotConfiguredError } from '../assistant/runner.js';
 import { boardConfig, boardState, refreshBoard } from '../assistant/taskBoard.js';
+import { completeTask, TaskCompletionError } from '../assistant/taskCompletion.js';
 
 /**
  * 任务看板的 HTTP 面：读当前看板 + 触发一次重新生成 + 自动重新提炼的间隔设置。
@@ -20,6 +21,16 @@ export async function taskRoutes(app: FastifyInstance) {
 
   /** 看板现状：会话、最近一次成功答案、正在跑的那一轮、自动提炼档位 */
   app.get('/api/tasks/board', async () => boardState());
+
+  app.post('/api/tasks/board/complete', async (req, reply) => {
+    const body = (req.body || {}) as { key?: unknown; timeZone?: unknown };
+    try {
+      return completeTask(boardState().answer, body.key, body.timeZone);
+    } catch (error) {
+      if (error instanceof TaskCompletionError) return reply.code(error.status).send({ error: error.message });
+      throw error;
+    }
+  });
 
   /** 重新生成：已经在跑就复用（不重复烧 token），否则**新开一个会话**起一轮；202 立刻返回，进度接事件流 */
   app.post('/api/tasks/board/refresh', async (_req, reply) => {
