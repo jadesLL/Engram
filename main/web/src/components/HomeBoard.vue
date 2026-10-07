@@ -291,6 +291,13 @@ const taskCards = computed(() => {
   const view = boardView(cards, { start: tasks.windowStart, end: tasks.windowEnd });
   return upcomingTasks(view.day, 20);
 });
+/** 逾期件数：待办卡的角标（「2 逾期」），没有逾期不显示 */
+const overdueCount = computed(() => {
+  if (!tasks.board) return 0;
+  const cards = filterCards(tasks.board, EMPTY_FILTER);
+  const view = boardView(cards, { start: tasks.windowStart, end: tasks.windowEnd });
+  return view.day.filter((b) => b.bucket === 'overdue').reduce((n, b) => n + b.cards.length, 0);
+});
 
 function titleOf(module: HomeModule): string {
   return module.title || moduleMeta(module.kind).title;
@@ -328,10 +335,10 @@ function summaryOf(module: HomeModule): HomeCardSummary {
     {text:'资料',detail:counts.value.files,amount:counts.value.files,path:'/search?q=原始资料'},
   ];
   switch (module.kind) {
-    case 'capture': return {value:'＋',label:'随手记下一个想法',rows:rowsOf(props.ideaItems),empty:'记一条灵感，稍后整理'};
+    case 'capture': return {value:'记灵感',label:'随手一句，稍后整理',action:true,rows:rowsOf(props.ideaItems),empty:'记一条灵感，稍后整理'};
     case 'stats': return {value:stats.value.pages,label:'知识页面',rows:[...facts,{text:'字数',detail:words.value.toLocaleString()}],chart:'bars'};
     case 'ring': { const ratios=ratioRows(props.pages,props.fileCount);return {value:ratios.total,label:'项知识与资料',rows:ratios.rows.map((r,i)=>({...facts[i],detail:`${r.value} · ${Math.round(r.ratio*100)}%`})),chart:'ring'}; }
-    case 'tasks': return {value:taskCards.value.length,label:'件待办',rows:taskCards.value.slice(0,limitOf(module.opts,5,20)).map(c=>({text:c.text,detail:c.date || c.when || '待定',path:'/tasks'})),empty:tasksLoading.value?'正在读取任务…':'近期没有待办，打开看板查看'};
+    case 'tasks': return {value:taskCards.value.length,label:'件待办',badge:overdueCount.value?{tone:'danger',text:`${overdueCount.value} 逾期`}:undefined,rows:taskCards.value.slice(0,limitOf(module.opts,5,20)).map(c=>({text:c.text,detail:c.date || c.when || '待定',path:'/tasks'})),empty:tasksLoading.value?'正在读取任务…':'近期没有待办，打开看板查看'};
     case 'notes': return pageSummary(props.ideaItems,'还没有灵感，记下一条想法');
     case 'recent': return pageSummary(props.recentItems,'还没有最近更新的页面');
     case 'activity': return pageSummary(changeLogItems.value,'近期没有页面改动');
@@ -340,14 +347,14 @@ function summaryOf(module: HomeModule): HomeCardSummary {
     case 'weekly': return {value:weeklyRows.value.reduce((n,r)=>n+r.created,0),label:'本周新增',rows:weeklyRows.value.map(r=>({text:r.label,detail:`${r.updated} 更新 · ${r.created} 新增`,amount:r.updated,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'trend',empty:'本周还没有更新记录'};
     case 'tags': return {value:tagList.value.length,label:'个常用标签',rows:tagList.value.map(r=>({text:r.tag,detail:r.count,path:`/search?q=${encodeURIComponent(r.tag)}`})),empty:'给页面加一个标签，这里就会显示'};
     case 'sections': return {value:sections.value.length,label:'个分区',rows:sections.value.map(r=>({text:r.label,detail:r.count,amount:r.count,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'bars'};
-    case 'shortcuts': return {value:'→',label:'常用动作',rows:[{text:'搜索',detail:'知识库',path:'/search'},{text:'新建',detail:'Wiki',path:'/page'},{text:'图谱',detail:'关系',path:'/graph'},{text:'Agent',detail:'对话',action:'chat'},{text:'看板',detail:'任务',path:'/tasks'},{text:'收集',detail:'资料',path:'/inbox'}]};
-    case 'roam': return {value:'↗',label:`${roamCandidates.value.length} 篇可以漫游`,rows:rowsOf(roamCandidates.value,8),empty:'知识库还没有可漫游的页面'};
+    case 'shortcuts': return {value:'快捷入口',label:'搜索 · 新建 · 图谱 · Agent',action:true,rows:[{text:'搜索',detail:'知识库',path:'/search'},{text:'新建',detail:'Wiki',path:'/page'},{text:'图谱',detail:'关系',path:'/graph'},{text:'Agent',detail:'对话',action:'chat'},{text:'看板',detail:'任务',path:'/tasks'},{text:'收集',detail:'资料',path:'/inbox'}]};
+    case 'roam': return {value:'换一篇',label:`${roamCandidates.value.length} 篇可漫游`,action:true,rows:rowsOf(roamCandidates.value,8),empty:'知识库还没有可漫游的页面'};
     case 'inbox': return {value:Number(inbox.counts.pending || 0),label:'份待整理资料',rows:(inbox.pendingItems || []).slice(0,12).map((item:any)=>({text:String(item.path || '').split('/').pop() || '未命名资料',detail:'待整理',path:'/inbox'})),empty:'收集箱是空的，拖文件进来开始整理'};
     case 'queue': { const candidates=pendingDistillOf(props.pages,props.pages.length);return {value:candidates.length,label:'份原始资料候选',rows:rowsOf(candidates),empty:'没有最近落盘的原始资料'}; }
     case 'board': return {value:tasks.board ? filterCards(tasks.board,EMPTY_FILTER).length : 0,label:'件任务',rows:(tasks.board?.groups || []).map(g=>({text:g.title,detail:g.cards.length,amount:g.cards.length,path:'/tasks'})),chart:'bars',empty:tasksLoading.value?'正在读取看板…':'暂无看板，打开任务页面生成'};
     case 'digest': return {value:digestLines.value.length,label:props.agentName || 'Agent 摘要',rows:digestLines.value.map(text=>({text,action:'chat'}))};
-    case 'system': { const jobs=app.jobs;return {value:'●',label:capabilities.value.runtime==='desktop'?'桌面端本地服务':capabilities.value.runtime==='android-local'?'手机本地服务':'服务器 / Docker',rows:[{text:'版本',detail:APP_VERSION,path:'/settings?section=update'},{text:'模式',detail:capabilities.value.runtime,path:'/settings'},{text:'Agent',detail:props.agentName || '未配置',action:'chat'},{text:'执行',detail:Number(jobs?.running || 0),path:'/settings'},{text:'排队',detail:Number(jobs?.pending || 0),path:'/settings'},{text:'失败',detail:Number(jobs?.failed || 0),path:'/settings'}]}; }
-    case 'sync': { const view=syncStatusView(sync.status,{androidLocal:capabilities.value.runtime==='android-local'});return {value:view?.phase==='done'?'✓':sync.configured?'●':'○',label:view?.label || '待配置同步',rows:[{text:'状态',detail:view?.label || '未配置',path:'/settings?section=sync'},{text:'详情',detail:view?.detail || '添加成员设备后开始同步',path:'/settings?section=sync'},...(sync.status?.peers || []).map(p=>({text:p.name,detail:p.online?'在线':'离线',path:'/settings?section=sync'})),{text:'排队',detail:Number(sync.status?.pending || 0),path:'/settings?section=sync'}]}; }
+    case 'system': { const jobs=app.jobs;const failed=Number(jobs?.failed || 0);const runtime=capabilities.value.runtime==='desktop'?'桌面端本地服务':capabilities.value.runtime==='android-local'?'手机本地服务':'服务器 / Docker';return {value:'运行中',label:runtime,status:{tone:failed?'warn':'ok',text:'运行中'},rows:[{text:'版本',detail:APP_VERSION,path:'/settings?section=update'},{text:'模式',detail:capabilities.value.runtime,path:'/settings'},{text:'Agent',detail:props.agentName || '未配置',action:'chat'},{text:'执行',detail:Number(jobs?.running || 0),path:'/settings'},{text:'排队',detail:Number(jobs?.pending || 0),path:'/settings'},{text:'失败',detail:failed,path:'/settings'}]}; }
+    case 'sync': { const view=syncStatusView(sync.status,{androidLocal:capabilities.value.runtime==='android-local'});const tone=view?.tone==='warn'?'warn':view?.tone==='muted'||!view?'muted':'ok';return {value:view?.label || '待配置同步',label:view?.detail || '添加成员设备后开始同步',status:{tone,text:view?.label || '待配置同步'},rows:[{text:'状态',detail:view?.label || '未配置',path:'/settings?section=sync'},{text:'详情',detail:view?.detail || '添加成员设备后开始同步',path:'/settings?section=sync'},...(sync.status?.peers || []).map(p=>({text:p.name,detail:p.online?'在线':'离线',path:'/settings?section=sync'})),{text:'排队',detail:Number(sync.status?.pending || 0),path:'/settings?section=sync'}]}; }
   }
 }
 
