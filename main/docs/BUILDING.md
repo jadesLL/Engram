@@ -266,7 +266,7 @@ docker compose -f docker-compose.pull.yml up -d
 
 **方式四：NAS 部署**（极空间 / 群晖 / 威联通等，模板 `main/docker-compose.nas.yml`）
 
-与方式二同源，但按 NAS 环境做了四处适配：宿主端口可调（默认 18080，避开 NAS 上常被占用的 8080）、镜像地址与 JWT 密钥走 compose 变量而不依赖仓库里的 bash 脚本生成的 `.env.onlyoffice`、三个 onlyoffice 数据卷显式固定卷名、网络 MTU 默认 1500。**只需 `docker-compose.nas.yml` 一个文件**（不必克隆整个仓库）。
+与方式二同源，按 NAS 环境适配：宿主端口可调（默认 18080，避开 NAS 上常被占用的 8080）、镜像地址与数据目录使用 compose 变量、网络 MTU 默认 1500。**只需 `docker-compose.nas.yml` 一个文件**（不必克隆整个仓库），仅启动 Engram 单容器，无需 Office 服务或 JWT 配置。
 
 > **`ENGRAM_IMAGE` 默认就是本仓库真实地址**（`gitea.example.com/example/engram/engram:latest`），照原样可直接启动。只有换 Registry 或改镜像路径时才需要覆盖：在项目「环境变量」里设 `ENGRAM_IMAGE=<三层路径>:latest`，或直接改 compose 字面值。
 
@@ -285,7 +285,6 @@ docker compose -f docker-compose.nas.yml up -d
 | 键 | 必填 | 说明 |
 |---|---|---|
 | `ENGRAM_IMAGE` | 否 | 镜像地址，三层路径 `registry/owner/repo/imagename:latest`。默认已是本仓库真实地址，可直接用；换 Registry 时覆盖 |
-| `ONLYOFFICE_JWT_SECRET` | 否 | ONLYOFFICE 编辑器 JWT 密钥，engram 与 onlyoffice 两容器共用。有内置默认值，不填也能启动；默认值是公开占位，建议在 NAS 项目的环境变量里覆盖为自选随机值（`openssl rand -hex 32`） |
 | `ENGRAM_HOST_PORT` | 否 | 宿主映射端口，默认 18080 |
 | `ENGRAM_DATA_DIR` | 否 | 数据目录的宿主路径（`wiki.db` + `brain/` 全在此），默认 compose 同目录 `./data` |
 | `DEFAULT_PASSWORD` | 否 | 首次启动预置的登录密码；留空则首次登录页面设置 |
@@ -330,8 +329,7 @@ DDNS_RECORD=home.xxx.com
 3. Registry 只有 AAAA 记录（IPv6-only）时，NAS 必须有可用的 IPv6 出口才能 `docker login` / `docker pull`；纯 IPv4 环境下改用局域网 IP 形式的 Registry 地址，或先在别的机器 `docker save` 后离线导入。
 4. 图形界面不读 `.env`：极空间 / 群晖的 Compose 项目界面只解析 compose 文件本身，`${VAR}` 未在项目环境变量里设置时会用模板默认值。变量要在项目设置里填，或直接改 compose 字面值。
 5. 极空间 / 群晖的 Docker 管理界面若不允许挂 `/var/run/docker.sock`，删掉该行（只损失网页内更新，其他功能不受影响）。
-6. `onlyoffice/documentserver:9.4.0` 走 Docker Hub，拉不动时配镜像加速器或离线 `docker load` 导入。
-7. 私有 Registry 用自签证书时，需在 NAS 的 Docker 配置里加 `insecure-registries` 或导入 CA，否则 `docker login` 报 `x509`。
+6. 私有 Registry 用自签证书时，需在 NAS 的 Docker 配置里加 `insecure-registries` 或导入 CA，否则 `docker login` 报 `x509`。
 
 **部署三条铁律**：
 
@@ -339,7 +337,7 @@ DDNS_RECORD=home.xxx.com
 2. **不要写 `pull_policy: never`**——它禁止拉取，本地无镜像时必报「找不到镜像」，曾多次被误判为 Registry 故障；
 3. `docker-compose.pull.yml` / `docker-compose.nas.yml` 里的 `/var/run/docker.sock` 挂载是**应用内自更新**（设置 → 版本与更新 → 服务器更新，网页一键拉新镜像重建容器）所需；不需要该功能可删掉这行。
 
-部署后访问端口按所用 compose 而定：方式一源码构建（`docker-compose.yml`）映射宿主 **18080**，方式二/三（`docker-compose.pull.yml`）映射 **8080**，方式四 NAS（`docker-compose.nas.yml`）默认 **18080** 且可用 `ENGRAM_HOST_PORT` 改。初始密码由 compose 的 `DEFAULT_PASSWORD` 环境变量指定。onlyoffice 协同编辑是独立服务，第三方源拉不动时换官方镜像 `onlyoffice/documentserver:9.4.0`。
+部署后访问端口按所用 compose 而定：方式一源码构建（`docker-compose.yml`）映射宿主 **18080**，方式二/三（`docker-compose.pull.yml`）映射 **8080**，方式四 NAS（`docker-compose.nas.yml`）默认 **18080** 且可用 `ENGRAM_HOST_PORT` 改。初始密码由 compose 的 `DEFAULT_PASSWORD` 环境变量指定。Docker 版取消 Office 在线编辑，文档导入、文本提取与预览照常可用。旧部署更新镜像后同样禁用在线编辑；挂载 Docker socket 且属于同一 Compose 项目的旧 Office 容器会自动移除，历史数据卷保留。手动更新新版 Compose 时可使用 `up -d --remove-orphans` 清理旧服务容器，勿删除 Office 数据卷。
 
 ### 6.2 Windows 桌面端
 
@@ -427,7 +425,6 @@ Docker 部署在网页「设置 → 版本与更新 → 服务器更新」一键
   · 浏览器打开出现登录页，登录后设置页版本号 = <版本>
 常见失败对照：
   · "pull access denied / 找不到镜像" → 检查三层路径写法 + 是否误加 pull_policy: never + 是否 docker login
-  · onlyoffice 起不来                → 换官方镜像 onlyoffice/documentserver:9.4.0
   · 页面慢                           → 先看 /health 是否快，区分网络/磁盘问题与版本问题
 ```
 

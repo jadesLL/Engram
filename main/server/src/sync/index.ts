@@ -1,3 +1,4 @@
+import { syncAllowed, syncCategories } from './categories.js';
 import fs from 'node:fs';
 import { getSetting, setSetting } from '../lib/db.js';
 import { SYNC_ROLE_ENV } from '../config.js';
@@ -135,6 +136,7 @@ function hubLocalSummary(kind: SyncKind, target: string, oldPath?: string): Sync
 
 export function recordLocalChange(kind: SyncKind, target: string, extra: LocalChangeExtra = {}): void {
   try {
+    if (!syncAllowed(kind, target, extra.oldPath)) return;
     if (hubConfigured()) {
       if (syncConfigEnabled()) enqueueLocalChange(kind, target, extra.oldPath);
       return;
@@ -168,7 +170,7 @@ export function recordSessionChange(sessionId: string): void {
       recordBoardChange();
       return;
     }
-    if (isSystemSession(sessionId)) return;
+    if (isSystemSession(sessionId) || !syncAllowed('session', sessionId)) return;
 
     if (hubConfigured()) {
       if (syncConfigEnabled()) enqueueLocalChange('session', sessionId);
@@ -185,6 +187,7 @@ export function recordSessionChange(sessionId: string): void {
 /** 看板刷新收口后调用：本机这份更新才推（否则会把别端更新的看板顶回去） */
 export function recordBoardChange(): void {
   try {
+    if (!syncAllowed('board', BOARD_SYNC_ID)) return;
     const board = collectBoardPayload();
     if (!board) return;
     const synced = readSyncedBoard();
@@ -205,6 +208,7 @@ export function recordSessionDelete(sessionId: string): void {
   try {
     if (!sessionId || isSystemSession(sessionId)) return;
     deleteSessionWithTombstone(sessionId, currentNodeId());
+    if (!syncAllowed('session', sessionId)) return;
     if (hubConfigured()) {
       if (syncConfigEnabled()) enqueueLocalChange('session', sessionId, undefined, true);
       return;
@@ -244,6 +248,7 @@ export function currentRole(): SyncRole {
 }
 
 export interface SyncStatus {
+  categories: ReturnType<typeof syncCategories>;
   role: SyncRole;
   enabled: boolean;
   connected: boolean;
@@ -302,6 +307,7 @@ export function status(): SyncStatus {
   const role = currentRole();
   return {
     role,
+    categories: syncCategories(),
     enabled: s.enabled,
     connected: s.connected,
     syncing: s.syncing,

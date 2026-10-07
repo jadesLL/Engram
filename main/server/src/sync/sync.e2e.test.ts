@@ -263,6 +263,10 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     instances.push(nodeB);
     nodeC = await mkInstance('node-c');
     instances.push(nodeC);
+    for (const inst of instances) {
+      const status = await (await api(inst, 'GET', '/api/sync/status')).json() as any;
+      assert.deepEqual(status.categories, { knowledge: true, materials: true, assets: true, aiWorkspace: true, sessions: true, board: true, homeCards: false, settings: false });
+    }
     // 中枢切换为 hub 角色 + 为两台成员设备各签发绑定令牌
     assert.ok((await api(hub, 'POST', '/api/sync/config', { role: 'hub' })).ok);
     const tokenB = await createPeer(hub, 'B 电脑');
@@ -731,6 +735,36 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
         && body.updatedAt === hubBoardAt
         && body.sourceNodeLabel === '中枢';
     }, 60_000);
+    // 独立开关：默认不传布局/设置；开启后双向同步；关掉会跳过实时变更和全量对账。
+    const settingsOf = async (inst: Instance) => (await (await api(inst, 'GET', '/api/settings')).json() as any).settings;
+    const flags = async (inst: Instance, categories: Record<string, boolean>) => {
+      assert.ok((await api(inst, 'POST', '/api/sync/config', { categories })).ok);
+    };
+    const originalB = await settingsOf(nodeB);
+    await api(hub, 'PUT', '/api/settings', { home_layout: '{"version":4,"modules":[]}', search_synonyms: '甲=乙', theme: 'dark' });
+    await api(nodeB, 'POST', '/api/sync/reconcile');
+    await waitFor('默认关闭的分类仍不接收', async () => !(await (await api(nodeB, 'GET', '/api/sync/status')).json() as any).reconciling);
+    assert.equal((await settingsOf(nodeB)).home_layout, originalB.home_layout);
+    assert.equal((await settingsOf(nodeB)).search_synonyms, originalB.search_synonyms);
+    await flags(hub, { homeCards: true, settings: true });
+    await flags(nodeB, { homeCards: true, settings: true });
+    await waitFor('开启后布局与设置补齐', async () => (await settingsOf(nodeB)).search_synonyms === '甲=乙' && (await settingsOf(nodeB)).home_layout === '{"version":4,"modules":[]}');
+    await api(nodeB, 'PUT', '/api/settings', { search_synonyms: '丙=丁', theme: 'light' });
+    await waitFor('成员设置推回中枢', async () => (await settingsOf(hub)).search_synonyms === '丙=丁' && (await settingsOf(hub)).theme === 'light');
+    await flags(nodeB, { settings: false, knowledge: false });
+    await api(hub, 'PUT', '/api/settings', { search_synonyms: '不接收=远端', home_layout: '{"version":4,"modules":[],"columns":12}' });
+    const isolatedPage = await createPage(hub, '分类关闭验证', '这份页面暂不同步');
+    await waitFor('主页卡片独立于设置仍接收', async () => (await settingsOf(nodeB)).home_layout.includes('columns'));
+    await api(nodeB, 'POST', '/api/sync/reconcile');
+    await waitFor('关闭分类对账结束', async () => !(await (await api(nodeB, 'GET', '/api/sync/status')).json() as any).reconciling);
+    assert.equal((await settingsOf(nodeB)).search_synonyms, '丙=丁');
+    assert.equal(await pageContent(nodeB, isolatedPage), null);
+    await api(nodeB, 'PUT', '/api/settings', { search_synonyms: '本机独立=保留' });
+    assert.equal((await settingsOf(hub)).search_synonyms, '不接收=远端');
+    await flags(nodeB, { settings: true, knowledge: true });
+    await waitFor('重新开启补齐知识库并保留较新的本机设置', async () => (await pageContent(nodeB, isolatedPage)) === '这份页面暂不同步' && (await settingsOf(hub)).search_synonyms === '本机独立=保留');
+    const finalStatus = await (await api(nodeB, 'GET', '/api/sync/status')).json() as any;
+    assert.equal(finalStatus.enabled, true, '只改分类不能误停同步绑定');
   } catch (error) {
     failed = true;
     await cleanup();

@@ -283,6 +283,17 @@
     </div>
   </section>
 
+  <SettingsGroup class="settings-native" anchor="sync-content" title="同步内容" hint="每类内容独立控制；主页卡片和设置默认关闭，其余默认开启">
+    <p class="faint small">开关仅保存在本机，关闭后不上传也不接收该类内容，已同步的数据会保留。主页卡片和设置需在中枢及成员端分别开启。</p>
+    <div class="sync-category-list">
+      <label v-for="item in syncCategoryItems" :key="item.key" class="sync-category-row">
+        <input type="checkbox" :checked="categoryEnabled(item.key)" :disabled="saving || !status?.categories" @change="saveCategory(item.key, $event)" />
+        <span><strong>{{ item.label }}</strong><span class="faint small">{{ item.hint }}</span></span>
+        <span class="faint small">{{ categoryEnabled(item.key) ? '已开启' : '已关闭' }}</span>
+      </label>
+    </div>
+  </SettingsGroup>
+
   <!-- 局域网优先：2026-09-28 起是「多端同步」下自己的分组（与「双栈连接」「DDNS 直连域名」同级）。
        它和双栈连接回答的是同一个问题的两半——「先走哪条路」（局域网 → IPv6 → IPv4），
        因此同样只在本机作为成员时才有内容，条件与 showDualStack 一致并登记进导航。
@@ -465,6 +476,7 @@ interface SyncLogEntry {
 }
 
 interface SyncStatus {
+  categories?: Record<string, boolean>;
   role: 'hub' | 'member' | 'none';
   enabled: boolean;
   connected: boolean;
@@ -523,6 +535,24 @@ const location = window.location;
 const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
 const canBeHub = computed(() => capabilities.value.syncRoles.includes('hub'));
 const status = ref<SyncStatus | null>(null);
+const syncCategoryItems = [
+  { key: 'homeCards', label: '主页卡片多端同步', hint: '卡片种类、顺序、尺寸和布局；默认关闭' },
+  { key: 'settings', label: '设置多端同步', hint: '主题、编辑模式、搜索同义词、专名勘误、AI 工作区显示偏好；默认关闭。账户凭据、绑定和本机配置不参与' },
+  { key: 'knowledge', label: '知识库多端同步', hint: '知识页面、普通附件和收集箱' },
+  { key: 'materials', label: '原始资料多端同步', hint: '文档、对话、灵感碎片及提炼状态' },
+  { key: 'assets', label: '图片资产多端同步', hint: '页面引用的图片文件' },
+  { key: 'aiWorkspace', label: 'AI 工作区多端同步', hint: '自动生成的日志、索引和关系库' },
+  { key: 'sessions', label: '会话多端同步', hint: '已完成的 Agent 会话（手机端直接访问中枢会话）' },
+  { key: 'board', label: '任务看板多端同步', hint: '最新提炼的任务看板（手机端直接访问中枢看板）' },
+];
+function categoryEnabled(key: string): boolean {
+  return status.value?.categories?.[key] ?? !['homeCards', 'settings'].includes(key);
+}
+async function saveCategory(key: string, event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  await postConfig({ categories: { [key]: input.checked } }, '已保存同步内容开关');
+  input.checked = categoryEnabled(key);
+}
 const peers = ref<PeerView[]>([]);
 const pickJoin = ref(false);
 const hubUrl = ref('');
@@ -1156,6 +1186,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.sync-category-list { display: grid; gap: 8px; }
+.sync-category-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.sync-category-row > span:first-of-type { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.sync-category-row > input { flex-shrink: 0; }
+.sync-category-row > span:last-child { white-space: nowrap; }
 .role-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));

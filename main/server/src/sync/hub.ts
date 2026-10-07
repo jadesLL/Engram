@@ -1,3 +1,5 @@
+import { syncAllowed } from './categories.js';
+import { preferenceValue, mergePreference, type PreferenceValue } from './preferences.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -65,6 +67,12 @@ const nodeSubs = new Set<NodeSubscriber>();
 export function addNodeSubscriber(sub: NodeSubscriber): () => void {
   nodeSubs.add(sub);
   return () => nodeSubs.delete(sub);
+}
+
+export function notifyCategoriesChanged(): void {
+  for (const sub of nodeSubs) {
+    try { sub.send('sync-scope-changed', {}); } catch { nodeSubs.delete(sub); }
+  }
 }
 
 export function connectedPeerIds(): Set<string> {
@@ -144,7 +152,7 @@ async function writeRawFileStream(relPath: string, source: Readable, maxBytes = 
   });
   try {
     await streamPipeline(source, limiter, fs.createWriteStream(temp));
-    if (tooLarge) {
+    if (tooLarge || !syncAllowed('file', relPath)) {
       fs.rmSync(temp, { force: true });
       return false;
     }
@@ -279,7 +287,9 @@ function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOpt
     // 会话列表里就成了光秃秃的「来自」。中枢自己的写入用本机设备名，转发成员推送用原设备名
     node_label: opts.nodeLabel ?? (actorId === HUB_ACTOR ? deviceLabel() : ''),
   };
-  if (kind === 'page') {
+  if (kind === 'preference') {
+    payload.preference = preferenceValue(target);
+  } else if (kind === 'page') {
     const raw = readPageRaw(target) ?? '';
     savePageRevision(target, revision, raw, actorId);
     setPageSyncRevision(target, revision);
@@ -330,9 +340,11 @@ export interface PushPayload {
   deleted?: boolean;
   /** kind=board：全端唯一一份的任务看板 */
   board?: BoardPayload;
+  preference?: PreferenceValue;
 }
 
 export interface PushApplyResult {
+  preference?: PreferenceValue | null;
   ok: true;
   seq: number;
   revision: number;
@@ -370,6 +382,7 @@ function sizeBefore(target: string): number {
 }
 
 export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
+  if (!syncAllowed(push.kind, push.target, push.old_path)) return { ok: true, seq: 0, revision: 0 };
   if (push.kind === 'page') {
     const target = String(push.target || '');
     const raw = String(push.content ?? '');
@@ -543,6 +556,12 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
     };
   }
 
+  if (push.kind === 'preference') {
+    const changed = mergePreference(push.target, push.preference);
+    const result = changed ? commit('preference', push.target, actorId) : {};
+    return { ok: true, seq: Number(result.seq || 0), revision: Number(result.revision || 0), preference: preferenceValue(push.target) };
+  }
+
   if (push.kind === 'board') {
     const board = push.board;
     if (!board) throw new Error('看板推送缺少内容');
@@ -572,6 +591,7 @@ export function commitFileChange(relPath: string, actorId: string): Record<strin
 
 /** 中枢本端产生变更后的提交入口（由 sync/index.ts 的 recordLocalChange / recordSessionChange 调用） */
 export function commitLocalChange(kind: SyncKind, target: string, oldPath = '', deleted = false): Record<string, unknown> {
+  if (!syncAllowed(kind, target, oldPath)) return {};
   return commit(kind, target, HUB_ACTOR, { oldPath, deleted });
 }
 

@@ -337,10 +337,10 @@ export const docker = {
   },
 
   /** 删除容器 */
-  async removeContainer(id: string, force = false): Promise<void> {
+  async removeContainer(id: string, force = false, removeVolumes = true): Promise<void> {
     const { statusCode, data } = await json<{ message?: string }>({
       method: 'DELETE',
-      path: `/containers/${encodeURIComponent(id)}?force=${force ? '1' : '0'}&v=1`,
+      path: `/containers/${encodeURIComponent(id)}?force=${force ? '1' : '0'}&v=${removeVolumes ? 1 : 0}`,
     });
     if (statusCode >= 400 && statusCode !== 404) throw new Error(`删除容器失败: ${data.message || statusCode}`);
   },

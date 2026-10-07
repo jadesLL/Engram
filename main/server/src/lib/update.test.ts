@@ -40,7 +40,7 @@ test('buildCreateBody 复制容器配置并替换镜像', () => {
     Image: 'sha256:oldimage',
     Config: {
       Image: 'registry.xxx.com/engram:1.1.5',
-      Env: ['TZ=Asia/Shanghai', 'DEFAULT_PASSWORD=x'],
+      Env: ['TZ=Asia/Shanghai', 'DEFAULT_PASSWORD=x', 'OFFICE_EDITOR_ENABLED=true', 'ONLYOFFICE_JWT_SECRET=old-secret'],
       Cmd: null,
       Labels: { 'com.docker.compose.project': 'engram' },
       Healthcheck: { Test: ['CMD', 'node', '-e', '...'] },
@@ -60,7 +60,7 @@ test('buildCreateBody 复制容器配置并替换镜像', () => {
   };
   const body = buildCreateBody(inspect as any, 'registry.xxx.com/engram:latest');
   assert.equal((body as any).Image, 'registry.xxx.com/engram:latest');
-  assert.deepEqual((body as any).Env, ['TZ=Asia/Shanghai', 'DEFAULT_PASSWORD=x']);
+  assert.deepEqual((body as any).Env, ['TZ=Asia/Shanghai', 'DEFAULT_PASSWORD=x', 'OFFICE_EDITOR_ENABLED=false']);
   assert.deepEqual((body as any).HostConfig.Binds, ['./data:/data']);
   assert.deepEqual((body as any).HostConfig.PortBindings, { '8080/tcp': [{ HostPort: '8080' }] });
   assert.equal((body as any).HostConfig.RestartPolicy.Name, 'unless-stopped');

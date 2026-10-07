@@ -128,16 +128,22 @@ export const useAppStore = defineStore('app', {
     setTheme(t: Theme) {
       this.theme = t;
       this.applyTheme();
+      void api.put('/api/settings', { theme: t }).catch(() => {});
     },
     setEditorMode(mode: 'ir' | 'sv') {
       this.editorMode = mode;
       localStorage.setItem('editorMode', mode);
+      void api.put('/api/settings', { editor_mode: mode }).catch(() => {});
     },
     /** 读一次界面偏好（服务端设置 show_ai_workspace：'1' 才显示 AI 工作区） */
     async loadUiPreferences() {
       try {
         const { data } = await api.get('/api/settings');
         this.showAiWorkspace = data?.settings?.show_ai_workspace === '1';
+        const theme = data?.settings?.theme;
+        if (['system', 'light', 'dark'].includes(theme)) { this.theme = theme; this.applyTheme(); }
+        const mode = data?.settings?.editor_mode;
+        if (mode === 'ir' || mode === 'sv') { this.editorMode = mode; localStorage.setItem('editorMode', mode); }
       } catch {
         /* 未登录或旧服务端：保持默认隐藏 */
       }

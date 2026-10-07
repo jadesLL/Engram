@@ -1,3 +1,5 @@
+import { syncAllowed, PREFERENCE_KEYS } from './categories.js';
+import { preferenceValue, mergePreference, preferenceWins } from './preferences.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -143,6 +145,7 @@ const pendingSessionPulls = new Map<string, { hash: string; nodeId: string; node
 let pullRetryTimer: ReturnType<typeof setInterval> | null = null;
 let healTimer: ReturnType<typeof setInterval> | null = null;
 let reconcileRunning = false;
+let reconcileRequested = false;
 
 /**
  * 断联台账：记录「什么时候开始连不上、连续失败几次」，连上后补一条恢复记录。
@@ -247,6 +250,7 @@ function kindSummary(counts: Partial<Record<SyncKind, number>>): string {
     move: '移动',
     session: '会话',
     board: '任务看板',
+    preference: '界面偏好',
   };
   const parts = (Object.keys(labels) as SyncKind[])
     .filter((kind) => Number(counts[kind] || 0) > 0)
@@ -657,6 +661,7 @@ function writeRemotePage(relPath: string, raw: string): void {
 
 /** 应用远端页面内容：内容相同只推进版本号（回声抑制），不同则落盘 */
 function applyRemotePage(relPath: string, raw: string, revision: number): void {
+  if (!syncAllowed('page', relPath)) return;
   const localRaw = readPageRaw(relPath);
   if (localRaw === raw) {
     setPageSyncRevision(relPath, revision);
@@ -667,6 +672,7 @@ function applyRemotePage(relPath: string, raw: string, revision: number): void {
 }
 
 async function pullFile(relPath: string): Promise<number> {
+  if (!syncAllowed('file', relPath)) return 0;
   const startedAt = Date.now();
   const res = await hubRequest(`/api/sync/file?path=${encodeURIComponent(relPath)}`, {
     headers: authHeaders(),
@@ -683,6 +689,7 @@ async function pullFile(relPath: string): Promise<number> {
       const buf = Buffer.from(await res.arrayBuffer());
       fs.writeFileSync(temp, buf);
     }
+    if (!syncAllowed('file', relPath)) { fs.rmSync(temp, { force: true }); return 0; }
     fs.renameSync(temp, abs);
   } catch (error) {
     fs.rmSync(temp, { force: true });
@@ -781,6 +788,7 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
   const seq = Number(op.seq || 0);
   if (seq <= getCursor()) return;
   const target = String(op.target || '');
+  if (!syncAllowed(String(op.kind), target, String(op.old_path || ''))) { setCursor(seq); return; }
   /** 本端是否真的落盘应用了这条变更（页面被暂存、文件改走异步拉取时不算） */
   let applied = false;
   /** 应用了什么（文件名 + 增量），批次记录逐项展示用 */
@@ -854,6 +862,8 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
           );
         }
       }
+    } else if (op.kind === 'preference') {
+      mergePreference(target, op.preference);
     } else if (op.kind === 'board') {
       // 看板内容很小，直接随广播下发，不需要再拉一趟
       if (op.board && mergeBoardPayload(op.board)) {
@@ -890,6 +900,7 @@ async function pullFileIfChanged(relPath: string, remoteHash: string): Promise<n
 
 /** 推送在途结束后的收尾：应用暂存的同页广播（仅当其版本比 ack 结果新） */
 function drainStash(target: string, ackedRevision: number): void {
+  if (!syncAllowed('page', target)) { stashed.delete(target); return; }
   const op = stashed.get(target);
   stashed.delete(target);
   if (!op) return;
@@ -909,6 +920,7 @@ interface PushOutcome {
 }
 
 async function pushOne(item: QueueItem): Promise<PushOutcome> {
+  if (!syncAllowed(item.kind, item.target, item.oldPath)) return { bytes: 0, merged: false };
   pendingTargets.add(item.target);
   try {
     if (item.kind === 'page') {
@@ -1004,6 +1016,14 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
       });
       lastSyncAt = new Date().toISOString();
       return { bytes: 0, merged: false, op: res.op as SyncOpSummary | undefined };
+    }
+    if (item.kind === 'preference') {
+      const preference = preferenceValue(item.target);
+      if (preference) {
+        const ack = await postJson('/api/sync/push', { node_id: currentNodeId(), kind: 'preference', target: item.target, preference });
+        mergePreference(item.target, ack.preference);
+      }
+      return { bytes: 0, merged: false };
     }
     if (item.kind === 'board') {
       // 看板只推本机那一份（不是同步下来的那份）：本机没生成过就看板会话为空，直接跳过
@@ -1125,7 +1145,8 @@ async function pushLoop(): Promise<void> {
 
 /** 本端变更入队（sync/index.ts 调用）：同类内容操作按 target 去重（后写为准），move/delete 不合并保序 */
 export function enqueueLocalChange(kind: SyncKind, target: string, oldPath?: string, deleted = false): void {
-  if (kind === 'page' || kind === 'file' || kind === 'session' || kind === 'board') {
+  if (!syncAllowed(kind, target, oldPath)) return;
+  if (kind === 'page' || kind === 'file' || kind === 'session' || kind === 'board' || kind === 'preference') {
     if (!queue.some((item) => item.kind === kind && item.target === target)) {
       queue.push({ kind, target, oldPath, deleted });
     }
@@ -1209,6 +1230,7 @@ async function consumeStream(): Promise<void> {
   try {
     // 应用失败（含写盘异常）由回调经共享解析器向外抛：断开本条流，重连后从 cursor 重放
     await consumeSseStream(res.body, (_event, data) => {
+      if (_event === 'sync-scope-changed') { void reconcile('manual'); return; }
       if (data && typeof data === 'object') applyRemoteOp(data);
     });
   } finally {
@@ -1219,7 +1241,7 @@ async function consumeStream(): Promise<void> {
 
 /** 全量对账：首次接入、手动触发、oplog 落后过多、周期自愈时使用（并发触发时仅跑一轮） */
 export async function reconcile(reason: ReconcileReason = 'manual'): Promise<void> {
-  if (reconcileRunning) return;
+  if (reconcileRunning) { reconcileRequested = true; return; }
   reconcileRunning = true;
   const startedAt = Date.now();
   try {
@@ -1265,6 +1287,7 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
 
     // hub → 本端
     for (const entry of entries) {
+      if (!syncAllowed(entry.kind, entry.path)) continue;
       try {
         // 「已提炼」标记不在页面/文件正文里，内容 hash 一致≠账本一致：
         // 本端账本为空就记下来，循环结束后按来源路径补（页面先到位，账本才挂得上）
@@ -1330,9 +1353,9 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
       hash?: string;
       originNodeId?: string;
       originNodeLabel?: string;
-    }> = Array.isArray(snap?.sessions) ? snap.sessions : [];
+    }> = syncAllowed('session', '') && Array.isArray(snap?.sessions) ? snap.sessions : [];
     const hubSessionIds = new Set(hubSessions.map((item) => String(item.id)));
-    const hubTombstones: Array<{ sessionId: string; deletedAt: string }> = Array.isArray(snap?.tombstones)
+    const hubTombstones: Array<{ sessionId: string; deletedAt: string }> = syncAllowed('session', '') && Array.isArray(snap?.tombstones)
       ? snap.tombstones
       : [];
     const hubTombstoneIds = new Set(hubTombstones.map((item) => String(item.sessionId)));
@@ -1382,13 +1405,13 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
       deleteSessionWithTombstone(id, '');
       emit('session-changed', { id, deleted: true });
     }
-    for (const entry of sessionManifest()) {
+    for (const entry of syncAllowed('session', '') ? sessionManifest() : []) {
       if (hubSessionIds.has(entry.id) || hubTombstoneIds.has(entry.id)) continue;
       queued++;
       pushSample(queuedSamples, entry.title || entry.id);
       enqueueLocalChange('session', entry.id);
     }
-    {
+    if (syncAllowed('board', BOARD_SYNC_ID)) {
       const localBoard = collectBoardPayload();
       const hubBoard = snap?.board as BoardPayload | undefined;
       if (localBoard && (!hubBoard || boardWins(localBoard, hubBoard))) {
@@ -1402,9 +1425,16 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
 
     // 本端 → hub：只补推 hub「从没见过」的页面/文件。hub 报过的已删/已改名旧路径不推，
     // 否则等于把中枢已删页面复活并广播给所有端（成员停用期间中枢删页 → 重新接入即复活）。
+    for (const key of PREFERENCE_KEYS) {
+      if (!syncAllowed('preference', key)) continue;
+      const remote = snap?.preferences?.[key];
+      const local = preferenceValue(key);
+      if (remote) mergePreference(key, remote);
+      if (local && preferenceWins(local, remote || null)) enqueueLocalChange('preference', key);
+    }
     const localEntries = localSnapshot();
     for (const entry of localEntries) {
-      if (hubTargets.has(entry.path) || hubStale.has(entry.path)) continue;
+      if (!syncAllowed(entry.kind, entry.path) || hubTargets.has(entry.path) || hubStale.has(entry.path)) continue;
       queued++;
       pushSample(queuedSamples, entry.path);
       enqueueLocalChange(entry.kind, entry.path);
@@ -1463,6 +1493,10 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
     throw error;
   } finally {
     reconcileRunning = false;
+    if (reconcileRequested) {
+      reconcileRequested = false;
+      if (syncConfigEnabled()) void reconcile('manual');
+    }
   }
 }
 
@@ -1503,7 +1537,7 @@ async function pullSessionIfChanged(
   nodeId: string,
   nodeLabel: string
 ): Promise<boolean> {
-  if (!sessionId) return false;
+  if (!sessionId || !syncAllowed('session', sessionId)) return false;
   if (remoteHash && remoteHash === sessionContentHash(sessionId)) return false;
   let snapshot: SessionSnapshot | undefined;
   try {
@@ -1517,7 +1551,7 @@ async function pullSessionIfChanged(
     }
     throw error;
   }
-  if (!snapshot) return false;
+  if (!snapshot || !syncAllowed('session', sessionId)) return false;
   const merged = mergeSessionSnapshot(snapshot, nodeId, nodeLabel);
   pendingSessionPulls.delete(sessionId);
   emit('session-changed', { id: sessionId, created: merged.created, messages: merged.messages });
@@ -1546,6 +1580,7 @@ async function retryPendingFilePulls(): Promise<void> {
   }
   // 会话快照与文件同一节拍补拉：会话正文更大，一次失败不该让它永远停在「历史不全」的状态
   for (const [sessionId, pending] of Array.from(pendingSessionPulls)) {
+    if (!syncAllowed('session', sessionId)) { pendingSessionPulls.delete(sessionId); continue; }
     try {
       await pullSessionIfChanged(sessionId, pending.hash, pending.nodeId, pending.nodeLabel);
       pendingSessionPulls.delete(sessionId);

@@ -65,7 +65,7 @@ test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', 
       account: ['account-credentials', 'account-connection'],
       interface: ['account-appearance', 'data-synonyms'],
       data: ['data-location', 'data-backup', 'storage-trash', 'storage-assets', 'data-danger'],
-      sync: ['panel-sync', 'sync-lan', 'sync-dualstack', 'sync-ddns'],
+      sync: ['panel-sync', 'sync-content', 'sync-lan', 'sync-dualstack', 'sync-ddns'],
       update: ['panel-update-server', 'panel-update-desktop', 'panel-update-source', 'panel-update-android'],
       app: ['panel-app', 'app-version', 'app-uninstall'],
       agent: ['agent-builtin', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
@@ -107,7 +107,7 @@ test('运行期才能判断的锚点：隐藏后导航里不登记（否则就�
   const ids = domains.flatMap((domain) => domain.groups.map((group) => group.id));
   for (const id of hidden) assert.equal(ids.includes(id), false, `隐藏的锚点 ${id} 仍出现在导航里`);
   // 隐藏后仍留下分组的类不能整类消失（面板里还有别的内容）
-  assert.deepEqual(domains.find((domain) => domain.id === 'sync')?.groups.map((g) => g.id), ['panel-sync']);
+  assert.deepEqual(domains.find((domain) => domain.id === 'sync')?.groups.map((g) => g.id), ['panel-sync', 'sync-content']);
   assert.deepEqual(domains.find((domain) => domain.id === 'account')?.groups.map((g) => g.id), ['account-credentials']);
 
   // 运行期条件都必须由渲染它的组件登记（不登记 = 导航里留下永远渲染不出来的死锚点）

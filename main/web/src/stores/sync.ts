@@ -1,3 +1,5 @@
+import { useAppStore } from './app';
+import { useHomeBoardStore } from './homeBoard';
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { api } from '../api';
@@ -108,7 +110,11 @@ export const useSyncStore = defineStore('sync', () => {
         const wasRunning = roundRunning(status.value);
         status.value = next;
         // 首次拿到状态不算变化：组件挂载时本来就会各自读一次索引
-        if (before !== '' && indexSignature(next) !== before) indexRevision.value += 1;
+        if (before !== '' && indexSignature(next) !== before) {
+          indexRevision.value += 1;
+          if (!useHomeBoardStore().editing) void useHomeBoardStore().load();
+          void useAppStore().loadUiPreferences();
+        }
         // 一轮刚结束：补一次快照，让「同步中 → 同步已完成」与文件树尽快翻面
         if (wasRunning && !roundRunning(next)) settle();
       } catch { /* 保持上次状态 */ }

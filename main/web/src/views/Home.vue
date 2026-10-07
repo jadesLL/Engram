@@ -653,6 +653,11 @@ onMounted(() => {
     if (caps.runtime !== 'android-local') {
       // 服务端 SSE 实时推送：页面增删改/移动刷新正文与侧栏；Agent 提问弹在对话里，这里只提醒一句
       closeStream = openPageStream((ev) => {
+        if (ev.type === 'settings-changed') {
+          if (!homeBoard.editing) void homeBoard.load();
+          void app.loadUiPreferences();
+          return;
+        }
         if (ev.type === 'agent-question') {
           if (app.chatDrawerOpen) return;
           app.chatUnread = true;

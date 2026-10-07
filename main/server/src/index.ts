@@ -1,3 +1,4 @@
+import { retireLegacyDockerOffice } from './lib/officeRuntime.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -172,6 +173,9 @@ async function main() {
   // 梦境思考调度（按计划用内置 Agent 整理未提炼资料 + 纠错）：
   // 必须在 listen 之后启动——Agent 的知识库工具要回调本机 /mcp，服务还没监听时首跑必失败。
   startDreamScheduler();
+  void retireLegacyDockerOffice().then((removed) => {
+    if (removed) app.log.info('Docker Office 已停用，旧服务容器已移除，数据卷保留');
+  }).catch((error) => app.log.warn({ err: error }, '旧 Office 容器停用失败；Docker Office 功能仍保持关闭'));
 
   // HTTPS 直连入口（TLS_DOMAIN 未配置则完全关闭，行为与历史一致）：
   // 证书就绪前 HTTP 照常服务（healthcheck 不受影响），就绪后再起 8443 监听。
