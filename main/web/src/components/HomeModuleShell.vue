@@ -1,14 +1,8 @@
 <template>
-  <section ref="root" class="shell" :class="{ managing, dragging, compact, short: size.h < 180, capture: kind === 'capture', ribbon: size.w > 310 && height === 1, micro: size.w < 150 || size.h < 90, heatMini: kind === 'heat' && size.w > 65 && size.h > 90 }"
+  <section ref="root" class="shell" :class="{ managing, dragging, compact, short: size.h < 180, capture: kind === 'capture', micro: size.w < 100 || size.h < 90 }" :style="{ padding: `${padding}px` }"
     :tabindex="managing ? 0 : -1" :aria-label="title" @pointerdown="onPointerDown" @click.capture="suppressClick">
-    <header v-show="!compact" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail">↗</button></header>
-    <button v-if="compact" type="button" class="shell-summary" :aria-label="`打开${title}完整内容`" @click="openDetail">
-      <Icon :name="meta.icon" :size="18" /><strong class="summary-value">{{ summary.value }}</strong><span class="summary-label">{{ size.w < 150 ? tinyTitle : title }}</span>
-      <small class="summary-caption">{{ summary.label }}</small>
-      <span v-if="kind === 'heat' && size.w > 65 && size.h > 90" class="mini-heat" :style="{ maxWidth: `${Math.min(250, Math.max(50, (size.h - (size.h < 180 ? 55 : 90)) * (summary.heat?.length || 56) / 49))}px` }" aria-hidden="true"><i v-for="(level,i) in summary.heat" :key="i" :style="{ background: level ? `color-mix(in srgb,var(--accent) ${[0,22,42,66,100][level]}%,var(--card-bg))` : 'var(--bg-tertiary)' }" /></span>
-      <ul v-if="size.h > 180 && summary.lines?.length"><li v-for="(line, i) in summary.lines" :key="i">{{ line }}</li></ul>
-      <span v-if="size.w > 110 && size.h > 160" class="summary-open">查看完整内容 ↗</span>
-    </button>
+    <header v-if="size.h >= 90 && size.w >= 100" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ size.w < 180 ? tinyTitle : title }}</h3><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail">↗</button></header>
+    <HomeAdaptiveSummary v-if="compact" :summary="summary" :title="title" :short-title="tinyTitle" @open="openDetail" @activate="$emit('activate', $event)" />
     <!-- 始终保留同一个模块实例；打开详情、改变尺寸不会丢失速记草稿。 -->
     <Teleport to="body" :disabled="!expanded">
       <div class="shell-content" :class="{ 'detail-overlay': expanded, 'content-hidden': compact && !expanded }" :role="expanded ? 'dialog' : undefined" :aria-modal="expanded ? true : undefined" :aria-label="expanded ? title : undefined" @keydown="onDetailKey">
@@ -33,16 +27,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import Icon from './Icon.vue';
+import HomeAdaptiveSummary from './HomeAdaptiveSummary.vue';
+import type { HomeCardSummary, HomeCardRow } from '../lib/homeCardPresentation.ts';
 import { registerBackHandler } from '../lib/androidBack';
 import { moduleMeta, type ModuleKind } from '../lib/homeBoard.ts';
-const props = defineProps<{ kind: ModuleKind; title: string; width: number; height: number; limit?: number; managing: boolean; dragging: boolean; target?: boolean; summary: { value: string | number; label?: string; lines?: string[]; heat?: number[] } }>();
-const emit = defineEmits<{ (e: 'remove' | 'rename'): void; (e: 'set-size', w: number, h: number): void; (e: 'set-opt', key: string, value: number): void; (e: 'drag-request' | 'resize-request', event: PointerEvent): void }>();
+const props = defineProps<{ kind: ModuleKind; title: string; width: number; height: number; limit?: number; managing: boolean; dragging: boolean; target?: boolean; summary: HomeCardSummary }>();
+const emit = defineEmits<{ (e: 'remove' | 'rename'): void; (e: 'set-size', w: number, h: number): void; (e: 'set-opt', key: string, value: number): void; (e: 'drag-request' | 'resize-request', event: PointerEvent): void; (e: 'activate', row: HomeCardRow): void }>();
 const root = ref<HTMLElement | null>(null), settings = ref<HTMLDialogElement | null>(null), closeButton = ref<HTMLButtonElement | null>(null);
 const size = ref({ w: 300, h: 300 });
 const meta = computed(() => moduleMeta(props.kind));
 const shortTitles: Record<ModuleKind, string> = { capture: '速记', shortcuts: '入口', recent: '更新', notes: '灵感', fresh: '新增', tasks: '待办', stats: '概览', weekly: '动态', tags: '标签', sections: '分区', roam: '漫游', system: '状态', sync: '同步', ring: '占比', heat: '热力', inbox: '收集', queue: '提炼', board: '看板', activity: '改动', digest: '摘要' };
 const tinyTitle = computed(() => props.title === meta.value.title ? shortTitles[props.kind] : props.title);
-const compact = computed(() => size.value.w < 230 || size.value.h < 170);
+const compact = computed(() => props.kind === 'heat' ? false : props.kind === 'capture' ? size.value.w < 120 || size.value.h < (size.value.w < 200 ? 240 : 190) : true);
+const padding = computed(() => size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 20);
 const expanded = ref(false), hoverSize = ref('');
 let previousFocus: HTMLElement | null = null;
 let stopDetailBack: (() => void) | null = null, stopSettingsBack: (() => void) | null = null;
@@ -52,6 +49,7 @@ async function openDetail() { if (props.managing) return; previousFocus = docume
 function closeDetail() { expanded.value = false; previousFocus?.focus(); }
 function onDetailKey(event: KeyboardEvent) {
   if (!expanded.value) return;
+  if ((event.target as HTMLElement)?.closest('dialog')) return;
   if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeDetail(); }
   if (event.key !== 'Tab') return;
   const controls = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('button, input, textarea, select, a[href], [tabindex="0"]')).filter((el) => el.getClientRects().length && !(el as HTMLButtonElement).disabled && !el.classList.contains('detail-backdrop'));
@@ -106,7 +104,7 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   display:flex;
   gap:8px;
   align-items:center;
-  margin-bottom:18px;
+  margin-bottom:10px;
   flex:none;
 }
 .shell-head h3 {
@@ -154,109 +152,7 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 .content-hidden {
   display:none;
 }
-.shell-summary {
-  display:flex;
-  flex:1;
-  min-height:0;
-  min-width:0;
-  flex-direction:column;
-  align-items:flex-start;
-  text-align:left;
-  justify-content:center;
-  gap:8px;
-  color:var(--text);
-  width:100%;
-}
-.shell-summary :deep(svg) {
-  color:var(--accent);
-}
-.summary-value {
-  font-size:clamp(24px,24cqw,40px);
-  font-weight:700;
-  letter-spacing:-.05em;
-  line-height:1.1;
-  max-width:100%;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
-.summary-label {
-  font-size:12px;
-  line-height:1.2;
-  max-width:100%;
-  overflow:hidden;
-  white-space:nowrap;
-  text-overflow:ellipsis;
-}
-.summary-caption,.summary-open {
-  font-size:10px;
-  line-height:1.2;
-  color:var(--text-faint);
-  overflow:hidden;
-  max-width:100%;
-  white-space:nowrap;
-  text-overflow:ellipsis;
-}
-.shell-summary ul {
-  list-style:none;
-  padding:0;
-  margin:4px 0;
-  width:100%;
-  overflow:hidden;
-}
-.shell-summary li {
-  font-size:12px;
-  padding:8px 0;
-  border-top:1px solid var(--border);
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.compact {
-  padding:16px;
-}
-.short {
-  padding:12px;
-}
-.short .shell-summary {
-  gap:4px;
-}
-.short .shell-summary :deep(svg) {
-  display:none;
-}
-.summary-value,.summary-label,.summary-caption,.summary-open {
-  flex-shrink:0;
-}
-.micro {
-  padding:7px;
-  border-radius:12px;
-}
-.micro .shell-summary {
-  gap:2px;
-  align-items:center;
-  text-align:center;
-}
-.micro .shell-summary :deep(svg),.micro .summary-caption {
-  display:none;
-}
-.micro .summary-value {
-  font-size:clamp(14px,20cqh,18px);
-}
-.micro .summary-label {
-  font-size:9px;
-  line-height:1.1;
-}
-.capture {
-  background:var(--accent);
-  border-color:transparent;
-  --text:#fff;
-  --text-secondary:rgba(255,255,255,.85);
-  --text-faint:rgba(255,255,255,.7);
-  --border:rgba(255,255,255,.22);
-  color:#fff;
-}
-.capture .shell-head h3,.capture .shell-head h3 :deep(svg),.capture .shell-summary :deep(svg) {
-  color:#fff;
-}
+.micro { border-radius:12px; }
 .managing {
   border:1px dashed var(--accent);
   touch-action:none;
@@ -423,39 +319,6 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   padding:8px 16px;
   border-radius:8px;
 }
-.ribbon .shell-summary {
-  display:grid;
-  grid-template-columns:auto auto 1fr;
-  align-content:center;
-  align-items:center;
-  column-gap:16px;
-}
-.ribbon .summary-value {
-  font-size:28px;
-  grid-row:1/3;
-}
-.ribbon .summary-label {
-  grid-column:3;
-}
-.ribbon .summary-caption {
-  grid-column:3;
-}
-.ribbon .summary-open {
-  display:none;
-}
-.mini-heat {
-  display:grid;
-  grid-template-rows:repeat(7,1fr);
-  grid-auto-flow:column;
-  grid-auto-columns:1fr;
-  gap:3px;
-  width:100%;
-  max-height:100px;
-}
-.mini-heat i {
-  aspect-ratio:1;
-  border-radius:2px;
-}
 .module-content :deep(.hb-card) {
   background:transparent;
   border:0;
@@ -476,21 +339,8 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   background:var(--accent-soft);
   color:var(--accent);
 }
-.heatMini .shell-summary {
-  gap:8px;
-}
-.heatMini .shell-summary :deep(svg),.heatMini .summary-value,.heatMini .summary-caption,.heatMini .summary-open {
-  display:none;
-}
-.heatMini .mini-heat {
-  gap:2px;
-  max-width:250px;
-  max-height:none;
-}
-.capture .module-content :deep(.btn.primary) {
-  background:#fff;
-  color:var(--accent);
-}
+.capture .module-content { display:flex;overflow:hidden; }
+.capture .module-content :deep(.capture) { width:100%; }
 @container (max-width:260px) {
   .shell-head {
     margin-bottom:10px;
