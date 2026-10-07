@@ -101,6 +101,8 @@ export const useHomeBoardStore = defineStore('homeBoard', {
     editing: false,
     /** 服务端布局是否已对齐过一次：控制「加载中」提示与是否用远端覆盖本地 */
     loaded: false,
+    history: [] as HomeBoard[],
+    revision: 0,
   }),
   actions: {
     /**
@@ -109,13 +111,15 @@ export const useHomeBoardStore = defineStore('homeBoard', {
      * 把本地这份好布局换成默认布局（那才是真的丢用户设置）。
      */
     async load() {
+      const revision = this.revision;
       try {
         const { data } = await api.get('/api/settings');
         const raw = data?.settings?.[HOME_LAYOUT_SETTING];
-        if (isUsableLayout(raw)) {
+        if (isUsableLayout(raw) && revision === this.revision) {
           const remote = normalizeHomeBoard(raw);
           this.board = remote;
           writeLocal(remote);
+          if (JSON.parse(raw).version === 3) this.persist();
         }
         this.loaded = true;
       } catch {
@@ -125,6 +129,7 @@ export const useHomeBoardStore = defineStore('homeBoard', {
     },
     /** 本地与服务端各写一份（写操作统一走这里） */
     persist() {
+      this.revision += 1;
       const text = serializeHomeBoard(this.board);
       writeLocal(this.board);
       this.scheduleServerWrite(text);
@@ -147,41 +152,36 @@ export const useHomeBoardStore = defineStore('homeBoard', {
     },
     add(kind: ModuleKind) {
       const before = this.board.modules.length;
-      this.board = addModule(this.board, kind);
-      if (this.board.modules.length === before) return false; // 到上限
-      this.persist();
+      const next = addModule(this.board, kind);
+      if (next.modules.length === before) return false;
+      this.commit(next);
       // 新模块还没设置过：把它所在的那一格滚进视野，否则用户以为「点了没反应」
       return true;
     },
     remove(id: string) {
-      this.board = removeModule(this.board, id);
-      this.persist();
+      this.commit(removeModule(this.board, id));
     },
     update(id: string, patch: Partial<Omit<HomeModule, 'id' | 'kind'>>) {
-      this.board = updateModule(this.board, id, patch);
-      this.persist();
+      this.commit(updateModule(this.board, id, patch));
     },
     /**
      * 拖动 / 缩放：把某张卡挪到栅格位置（homeGrid.placeItem 保证不叠、不越界）。
-     * 位置没变就不写盘——拖动时每帧都会调它。
+     * 位置没变就不写盘；指针拖动仅在松手时提交整份预览。
      */
     place(id: string, place: GridPlace) {
       const next = moveModuleTo(this.board, id, place);
       if (next === this.board) return;
-      this.board = next;
-      this.persist();
+      this.commit(next);
     },
-    /** 紧凑：所有卡片往上收（拖动结束、删卡之后用） */
+    /** 手动紧凑：所有卡片往上收，平时保留用户留白。 */
     compact() {
       const next = compactBoard(this.board);
       if (next === this.board) return;
-      this.board = next;
-      this.persist();
+      this.commit(next);
     },
     /** 一键排整齐：按当前顺序顺次铺满 */
     autoArrange() {
-      this.board = autoArrangeBoard(this.board);
-      this.persist();
+      this.commit(autoArrangeBoard(this.board));
     },
     /** 换整页列数：v3 起栅格固定 6 列，这个入口保留成空操作（旧调用点不用改） */
     setBoardColumns(columns: BoardColumns) {
@@ -196,7 +196,19 @@ export const useHomeBoardStore = defineStore('homeBoard', {
     },
     /** 恢复默认布局（编辑态的「重置」按钮） */
     resetToDefault() {
-      this.board = defaultHomeBoard();
+      this.commit(defaultHomeBoard());
+    },
+    commit(next: HomeBoard) {
+      if (serializeHomeBoard(next) === serializeHomeBoard(this.board)) return;
+      this.history.push(JSON.parse(serializeHomeBoard(this.board)) as HomeBoard);
+      if (this.history.length > 30) this.history.shift();
+      this.board = next;
+      this.persist();
+    },
+    undo() {
+      const previous = this.history.pop();
+      if (!previous) return;
+      this.board = previous;
       this.persist();
     },
   },

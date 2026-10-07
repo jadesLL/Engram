@@ -6,16 +6,16 @@
  * 与上一版瀑布流的区别：位置是**用户明确指定**的、不再由算法推导，所以：
  *  - 拖动后卡片一定落在栅格上，不会「飞出」页面（越界会被夹进栅格）；
  *  - 缩放改的是同一套坐标，宽高都能拖；
- *  - 两张卡绝不重叠：占位冲突时后来者让位（findFreeSpot / 拖动后重排）。
+ *  - 两张卡绝不重叠：占位冲突时当前卡片保持落点，其余卡片向下让位。
  *
  * 纯计算，不 import vue，`node --test` 直接跑。
  */
 
 /** 页面横向格数：手机桌面那种「一行 N 个格子」的 N。固定值——它就是「1 格」的定义 */
 export const GRID_COLS = 6;
-/** 最大行数：够摆 40 张卡，同时给「防止无限往下堆」一个边界 */
+/** 默认查找范围；密集布局按实际底边扩展，不能截断造成重叠 */
 export const GRID_MAX_ROWS = 48;
-/** 行高（px）：一格的高度；与 .board-grid 的 --grid-row-h 必须一致 */
+/** 旧版行高（兼容旧引用）；正式看板按可用宽度渲染正方形格子 */
 export const GRID_ROW_HEIGHT = 76;
 /** 默认渲染出来的行数（空看板的高度下限：别只剩一条缝） */
 export const GRID_ROWS_VISIBLE = 6;
@@ -41,7 +41,7 @@ export function clampCol(value: number, w: number): number {
 
 export function clampRow(value: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(GRID_MAX_ROWS, Math.round(value)));
+  return Math.max(0, Math.min(4096, Math.round(value)));
 }
 
 export function clampW(value: number): number {
@@ -67,7 +67,7 @@ export function intersects(a: GridPlace, b: GridPlace): boolean {
 }
 
 /** 在已有占位里找第一个能放下 w×h 的空位（按行优先 = 从上到下、从左到右） */
-export function findFreeSpot(occupied: GridPlace[], w: number, h: number, maxRows = GRID_MAX_ROWS, fromRow = 0): GridPlace | null {
+export function findFreeSpot(occupied: GridPlace[], w: number, h: number, maxRows = Math.max(GRID_MAX_ROWS, usedRows(occupied)), fromRow = 0): GridPlace | null {
   const startRow = Math.max(0, Math.round(fromRow) || 0);
   const width = clampW(w);
   const height = clampH(h);
@@ -80,66 +80,35 @@ export function findFreeSpot(occupied: GridPlace[], w: number, h: number, maxRow
   return null;
 }
 
-/** 整体下移量：把 row ≥ from 的卡片往下推 delta 行（给「插入」腾地方） */
-function shiftDown(items: GridPlace[], from: number, delta: number): GridPlace[] {
-  return items.map((item) => (item.row >= from ? { ...item, row: item.row + delta } : item));
-}
-
 /**
- * 把一张卡**放回栅格**：优先放在目标位置；那里被占了就试附近（先右后下，再整体下推）。
+ * 把一张卡**放回栅格**：优先放在目标位置；那里被占了就把挡路的卡片下推。
  * 返回新的位置数组（与输入等长、顺序一致）。拖动 / 缩放 / 新增 / 尺寸变化都走这里，
  * 所以「卡片不会重叠、也不会飞出栅格」这条性质只需在这一处保证。
  */
 export function placeItem(items: GridPlace[], index: number, wanted: GridPlace): GridPlace[] {
   if (index < 0 || index >= items.length) return items;
   const target = normalizePlace(wanted);
-  const out = items.map((item) => ({ ...item }));
-  const others = out.filter((_item, at) => at !== index);
-  if (!others.some((other) => intersects(target, other))) {
-    out[index] = target;
-    return out;
+  const out = items.map(normalizePlace);
+  out[index] = target;
+  // 当前卡片固定在用户选择的落点。其余卡按原有视觉顺序向下让位；
+  // 每张只与已经安置的矩形比较，最多 N² 次碰撞，不受 48 行截断影响。
+  const placed = [target];
+  const order = out.map((_, at) => at).filter((at) => at !== index)
+    .sort((a, b) => items[a].row - items[b].row || items[a].col - items[b].col || a - b);
+  for (const at of order) {
+    const candidate = out[at];
+    let hits = placed.filter((other) => intersects(candidate, other));
+    while (hits.length) {
+      candidate.row = Math.max(...hits.map((other) => other.row + other.h));
+      hits = placed.filter((other) => intersects(candidate, other));
+    }
+    placed.push(candidate);
   }
-
-  // 先算「最低可放行」minRow：
-  //  - 与目标直接相撞的卡，其下沿是硬底线（不能压在它身上）；
-  //  - 从目标前面开始、在竖直方向与目标相交的卡，也必须整体让开
-  //    （否则「整行卡插到前一张窄卡上边」——视觉顺序会乱）。
-  let minRow = 0;
-  for (const other of others) {
-    if (intersects(target, other)) minRow = Math.max(minRow, other.row + other.h);
-    else if (other.row <= target.row && other.row + other.h > target.row) minRow = Math.max(minRow, other.row + other.h);
-  }
-
-  // 1) 先试正下方：这是手机上拖动卡片后最符合直觉的落位
-  const direct = normalizePlace({ ...target, row: minRow });
-  if (!others.some((other) => intersects(direct, other))) {
-    out[index] = direct;
-    return out;
-  }
-
-  // 2) 再找栅格上任意一个空位（放在最低可放行的位置之后）
-  const spot = findFreeSpot(others, direct.w, direct.h, GRID_MAX_ROWS, minRow);
-  if (spot) {
-    out[index] = { ...spot, w: direct.w, h: direct.h };
-    return out;
-  }
-
-  // 3) 页面被塞满：把挡路的整体下推，再把这张放进目标位置
-  const pushed = shiftDown(
-    out.filter((_item, at) => at !== index),
-    minRow,
-    1
-  );
-  const merged: GridPlace[] = [];
-  let cursor = 0;
-  for (let at = 0; at < out.length; at++) {
-    merged.push(at === index ? direct : pushed[cursor++]);
-  }
-  return merged;
+  return out;
 }
 
 /**
- * 紧凑：所有卡片在**保持横向位置**的前提下往上收（手机桌面上长按拖动后自动补洞的行为）。
+ * 紧凑：所有卡片在**保持横向位置**的前提下往上收（只在用户明确点击「紧凑」时执行）。
  * 不改变先后顺序，也不改变宽高，只消掉竖直方向的空洞。
  */
 export function compact(items: GridPlace[]): GridPlace[] {
@@ -157,10 +126,6 @@ export function compact(items: GridPlace[]): GridPlace[] {
         break;
       }
       row = hit.row + hit.h;
-      if (row > GRID_MAX_ROWS) {
-        out.push({ col: clampCol(item.col, width), row: GRID_MAX_ROWS, w: width, h: height });
-        break;
-      }
     }
   }
   return out;
@@ -196,6 +161,7 @@ export function usedRows(items: GridPlace[]): number {
 export function isSane(items: GridPlace[]): boolean {
   for (let i = 0; i < items.length; i++) {
     const a = items[i];
+    if (![a.col, a.row, a.w, a.h].every(Number.isInteger) || a.w > GRID_MAX_W || a.h > GRID_MAX_H) return false;
     if (a.col < 0 || a.row < 0 || a.w < GRID_MIN_W || a.h < GRID_MIN_H) return false;
     if (a.col + a.w > GRID_COLS) return false;
     for (let j = i + 1; j < items.length; j++) {

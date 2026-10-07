@@ -22,7 +22,7 @@ import {
 
 const rect = (col: number, row: number, w = 2, h = 2): GridPlace => ({ col, row, w, h });
 
-test('栅格口径：6 列、宽 1..6、高 1..12、最大 48 行', () => {
+test('栅格口径：6 列、宽 1..6、高 1..12、默认查找 48 行', () => {
   assert.equal(GRID_COLS, 6);
   assert.equal(GRID_MAX_W, 6);
   assert.equal(GRID_MAX_H, 12);
@@ -73,22 +73,22 @@ test('placeItem：目标空着就放目标位置；没变时内容等价', () =>
   assert.ok(isSane(placed));
 });
 
-test('placeItem：目标被占 → 先试正下方，再找空位，绝不重叠', () => {
+test('placeItem：目标被占 → 当前卡片落点不变，其他卡片向下让位', () => {
   const items = [rect(0, 0, 2, 2), rect(2, 0, 2, 2)];
-  // 把第二张拖到第一张头上：应落到被占卡的正下方
+  // 当前卡片占据目标，原卡片向下让位
   const stacked = placeItem(items, 1, rect(0, 0, 2, 2));
   assert.ok(isSane(stacked));
-  assert.deepEqual(stacked[1], rect(0, 2, 2, 2));
-  assert.deepEqual(stacked[0], rect(0, 0, 2, 2), '没被点名的那张不该动');
+  assert.deepEqual(stacked[1], rect(0, 0, 2, 2));
+  assert.deepEqual(stacked[0], rect(0, 2, 2, 2), '冲突卡片向下让位');
 });
 
-test('placeItem：整行卡落在下面已经排到的位置之下，且不重叠', () => {
-  // 两张 3 格卡占满第一行，把一张 6 格卡放到第一行 → 它只能整行落到它们下面
+test('placeItem：整行卡扩宽后保持目标位置，冲突卡片下移', () => {
+  // 两张 3 格卡占满第一行，将第一张扩宽后推开第二张
   const items = [rect(0, 0, 3, 2), rect(3, 0, 3, 2)];
   const placed = placeItem(items, 0, rect(0, 0, 6, 2));
   assert.ok(isSane(placed));
-  assert.deepEqual(placed[0], rect(0, 2, 6, 2), '整行卡应在两卡下面，而不是压在他们身上');
-  assert.deepEqual(placed[1], rect(3, 0, 3, 2), '原来那张不该被无谓地改动');
+  assert.deepEqual(placed[0], rect(0, 0, 6, 2), '选定落点不变');
+  assert.deepEqual(placed[1], rect(3, 2, 3, 2), '重叠卡片下移');
 });
 
 test('placeItem：页面塞满时也能放下（不许把卡片丢出栅格外）', () => {
@@ -118,7 +118,7 @@ test('placeItem：越界请求被夹进栅格（这就是「卡片不会飞出�
 });
 
 test('placeItem：反复随机放置 200 次，布局始终干净', () => {
-  let items: GridPlace[] = [];
+  let items: GridPlace[] = autoArrange(Array.from({ length: 32 }, (_, i) => ({ w: (i % 6) + 1, h: (i % 12) + 1 })));
   let seed = 7;
   const next = () => {
     seed = (seed * 1103515245 + 12345) % 2147483648;
@@ -127,7 +127,7 @@ test('placeItem：反复随机放置 200 次，布局始终干净', () => {
   for (let i = 0; i < 200; i++) {
     const w = clampW(Math.round(next() * GRID_COLS));
     const h = clampH(Math.round(next() * 6));
-    items = placeItem(items, Math.min(items.length, Math.floor(next() * (items.length + 1))), {
+    items = placeItem(items, Math.floor(next() * items.length), {
       col: Math.round(next() * 8) - 2,
       row: Math.round(next() * 20) - 2,
       w,
@@ -177,4 +177,14 @@ test('isSane：能识别越界与重叠', () => {
   assert.equal(isSane([rect(0, -1, 2, 2)]), false, '负行');
   assert.equal(isSane([rect(0, 0, 2, 2), rect(1, 1, 2, 2)]), false, '重叠');
   assert.equal(isSane([{ col: 0, row: 0, w: 0, h: 2 }]), false, '宽为 0');
+});
+
+
+test('32 张最大卡片超过 48 行，拖动、紧凑、新增仍不重叠', () => {
+  const items = autoArrange(Array.from({ length: 32 }, () => ({ w: 6, h: 12 })));
+  const placed = placeItem(items, 31, rect(0, 0, 6, 12));
+  assert.deepEqual(placed[31], rect(0, 0, 6, 12));
+  assert.ok(isSane(placed));
+  assert.ok(isSane(compact(placed)));
+  assert.deepEqual(findFreeSpot(placed, 6, 12), rect(0, 384, 6, 12));
 });

@@ -1,12 +1,13 @@
 <template>
   <!-- 知识库概览：概念 / 实体 / 原始资料三类计数，条按最大值归一 -->
-  <div class="hb-card stats-card">
+  <div class="stats-card">
+    <div class="stats-hero"><strong>{{ pages }}</strong><span>篇知识页面</span></div>
     <button v-for="row in rows" :key="row.key" class="stat-row" type="button" @click="$emit('go', row.path)">
-      <span class="stat-ic" :style="{ background: `var(--${row.badge}-soft)`, color: `var(--${row.badge})` }">
+      <span class="stat-ic" :style="{ background: 'var(--accent-soft)', color: 'var(--accent)' }">
         <Icon :name="row.icon" :size="14" />
       </span>
       <span class="stat-lb">{{ row.label }}</span>
-      <span class="stat-bar"><i :style="{ width: bar(row.value), background: `var(--${row.badge})` }" /></span>
+      <span class="stat-bar"><i :style="{ width: bar(row.value), background: 'var(--accent)' }" /></span>
       <span class="stat-vl">{{ row.value }}</span>
     </button>
     <p class="stats-foot muted">
@@ -42,7 +43,10 @@ function bar(value: number) {
 </script>
 
 <style scoped>
-.stats-card { padding: 8px 14px 6px; }
+.stats-card { padding: 0; }
+.stats-hero { display:flex; align-items:baseline; gap:10px; margin-bottom:18px; }
+.stats-hero strong { font-size:44px; letter-spacing:-.05em; line-height:1; }
+.stats-hero span { font-size:11px; color:var(--text-faint); }
 .stat-row {
   width: 100%;
   display: flex;
@@ -67,7 +71,7 @@ function bar(value: number) {
 }
 .stat-lb { color: var(--text-secondary); }
 .stat-bar {
-  width: 56px;
+  width: clamp(20px, 20%, 90px);
   flex: none;
   height: 4px;
   margin-left: auto;

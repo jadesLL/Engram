@@ -1,425 +1,508 @@
 <template>
-  <!--
-    整张卡就是拖拽把手：编辑态按在卡片任意空白处都能拖（手机桌面的手感）。
-    缩放走右下角的把手（见文件末尾），键盘用户用页眉里的「拖动」按钮聚焦后按方向键。
-  -->
-  <section
-    class="shell"
-    :class="{ managing, dragging, target, locked: managing }"
-    tabindex="-1"
-    @pointerdown="onShellPointerDown"
-  >
-    <header class="shell-head">
-      <!-- 编辑态的标题改成可点击重命名：比另开一个「重命名」按钮少一层入口 -->
-      <button
-        v-if="managing"
-        class="shell-title as-button"
-        type="button"
-        :title="`重命名「${title}」`"
-        @click="$emit('rename')"
-      >
-        <Icon :name="meta.icon" :size="13" />
-        <span class="shell-title-text">{{ title }}</span>
-        <Icon class="shell-title-pencil" name="pencil" :size="12" />
-      </button>
-      <h3 v-else class="shell-title" v-tooltip="meta.hint">
-        <Icon :name="meta.icon" :size="13" />
-        <span class="shell-title-text">{{ title }}</span>
-      </h3>
-
-      <div v-if="managing" class="shell-tools">
-        <!-- 手柄同时是「键盘排序」的落点：Tab 到它，左右方向键换位（拖动是鼠标/手指的等价入口）。
-             按键不在这里处理——HomeBoard 统一监听 keydown 并按 data-module-id 找回是哪个模块。 -->
-        <button
-          class="tool"
-          type="button"
-          :aria-label="`拖动「${title}」排序，或用左右方向键移动`"
-          v-tooltip="'拖动排序（也可聚焦后按左右方向键）'"
-          @pointerdown="$emit('drag-request', $event)"
-        >
-          <span class="grip" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>
-          <span class="tool-text">拖动</span>
-        </button>
-      </div>
-
-      <slot name="actions" />
-    </header>
-
-    <div class="shell-body">
-      <slot />
-    </div>
-
-    <!-- 编辑态底栏：宽度/高度快捷档 + 条数 + 删除，全都能键盘操作 -->
-    <footer v-if="managing" class="shell-foot">
-      <div class="spans" role="group" aria-label="模块宽度">
-        <button
-          v-for="option in widthOptions"
-          :key="option.value"
-          class="span-btn"
-          type="button"
-          :class="{ on: option.value === width }"
-          :aria-pressed="option.value === width"
-          v-tooltip="option.hint"
-          @click="$emit('set-width', option.value)"
-        >{{ option.label }}</button>
-      </div>
-      <div class="spans" role="group" aria-label="模块高度">
-        <button
-          v-for="heightOption in heightOptions"
-          :key="heightOption"
-          class="span-btn"
-          type="button"
-          :class="{ on: heightOption === height }"
-          :aria-pressed="heightOption === height"
-          v-tooltip="`占 ${heightOption} 行高`"
-          @click="$emit('set-height', heightOption)"
-        >{{ heightOption }}</button>
-      </div>
-      <!-- 条数档：列表类模块才给（速记 / 快捷入口这类没有「显示几条」这回事） -->
-      <div v-if="limitSetting" class="stepper" role="group" aria-label="显示条数">
-        <span class="stepper-label">显示</span>
-        <button
-          class="step-btn"
-          type="button"
-          :disabled="limitSetting.value <= limitSetting.min"
-          aria-label="减少显示条数"
-          @click="$emit('set-opt', 'limit', limitSetting.value - 1)"
-        >−</button>
-        <span class="stepper-value">{{ limitSetting.value }}</span>
-        <button
-          class="step-btn"
-          type="button"
-          :disabled="limitSetting.value >= limitSetting.max"
-          aria-label="增加显示条数"
-          @click="$emit('set-opt', 'limit', limitSetting.value + 1)"
-        >+</button>
-      </div>
-      <slot name="settings" />
-      <span class="foot-spacer" />
-      <span class="foot-size" :class="{ over: crowded }">{{ width }}×{{ height }}</span>
-      <button class="foot-btn danger" type="button" v-tooltip="'从首页删除这块'" aria-label="删除模块" @click="$emit('remove')">
-        <Icon name="trash" :size="13" />
-      </button>
-    </footer>
-
-    <!-- 缩放把手：拖它改宽高（编辑态才出现；右下角是「拉伸」的通用位置） -->
-    <button
-      v-if="managing"
-      class="resize-handle"
-      type="button"
-      aria-label="拖动改变模块大小"
-      v-tooltip="'拖动改大小（也可用 Shift+方向键）'"
-      @pointerdown="$emit('resize-request', $event)"
-    >
-      <span class="rh-corner" aria-hidden="true" />
+  <section ref="root" class="shell" :class="{ managing, dragging, compact, short: size.h < 180, capture: kind === 'capture', ribbon: size.w > 310 && height === 1, micro: size.w < 150 || size.h < 90, heatMini: kind === 'heat' && size.w > 65 && size.h > 90 }"
+    :tabindex="managing ? 0 : -1" :aria-label="title" @pointerdown="onPointerDown" @click.capture="suppressClick">
+    <header v-show="!compact" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail">↗</button></header>
+    <button v-if="compact" type="button" class="shell-summary" :aria-label="`打开${title}完整内容`" @click="openDetail">
+      <Icon :name="meta.icon" :size="18" /><strong class="summary-value">{{ summary.value }}</strong><span class="summary-label">{{ size.w < 150 ? tinyTitle : title }}</span>
+      <small class="summary-caption">{{ summary.label }}</small>
+      <span v-if="kind === 'heat' && size.w > 65 && size.h > 90" class="mini-heat" :style="{ maxWidth: `${Math.min(250, Math.max(50, (size.h - (size.h < 180 ? 55 : 90)) * (summary.heat?.length || 56) / 49))}px` }" aria-hidden="true"><i v-for="(level,i) in summary.heat" :key="i" :style="{ background: level ? `color-mix(in srgb,var(--accent) ${[0,22,42,66,100][level]}%,var(--card-bg))` : 'var(--bg-tertiary)' }" /></span>
+      <ul v-if="size.h > 180 && summary.lines?.length"><li v-for="(line, i) in summary.lines" :key="i">{{ line }}</li></ul>
+      <span v-if="size.w > 110 && size.h > 160" class="summary-open">查看完整内容 ↗</span>
     </button>
+    <!-- 始终保留同一个模块实例；打开详情、改变尺寸不会丢失速记草稿。 -->
+    <Teleport to="body" :disabled="!expanded">
+      <div class="shell-content" :class="{ 'detail-overlay': expanded, 'content-hidden': compact && !expanded }" :role="expanded ? 'dialog' : undefined" :aria-modal="expanded ? true : undefined" :aria-label="expanded ? title : undefined" @keydown="onDetailKey">
+        <button v-if="expanded" class="detail-backdrop" type="button" aria-label="关闭详情" @click="closeDetail" />
+        <div class="shell-body" :class="{ 'detail-panel': expanded }">
+          <header v-if="expanded" class="detail-head"><h2>{{ title }}</h2><button ref="closeButton" class="detail-close" type="button" aria-label="关闭详情" @click="closeDetail">×</button></header>
+          <div class="module-content"><slot /></div>
+        </div>
+      </div>
+    </Teleport>
+    <button v-if="managing" class="card-settings" type="button" :aria-label="`设置${title}尺寸`" @click="openSettings">⋯</button>
+    <button v-if="managing" class="resize-handle" type="button" aria-label="拖动调整宽高" @pointerdown.stop.prevent="$emit('resize-request', $event)" />
+    <Teleport to="body"><dialog ref="settings" class="size-dialog" @click="onDialogClick" @close="stopSettingsBack?.()">
+      <header class="detail-head"><h2>调整「{{ title }}」</h2><button type="button" class="detail-close" aria-label="关闭尺寸设置" @click="settings?.close()">×</button></header>
+      <p class="size-hint">{{ hoverSize || `${width} × ${height}` }} · 宽 × 高（格）</p>
+      <div class="size-matrix" @mouseleave="hoverSize = ''"><template v-for="h in 5" :key="h"><button v-for="w in 6" :key="w" type="button" :class="{ selected: w <= width && h <= height }" :aria-label="`${w} × ${h}`" @mouseenter="hoverSize = `${w} × ${h}`" @focus="hoverSize = `${w} × ${h}`" @click="$emit('set-size', w, h)" /></template></div>
+      <div class="size-fields"><label>宽度 <input type="number" min="1" max="6" :value="width" @change="$emit('set-size', Number(($event.target as HTMLInputElement).value), height)" /></label><label>高度 <input type="number" min="1" max="12" :value="height" @change="$emit('set-size', width, Number(($event.target as HTMLInputElement).value))" /></label><label v-if="limit !== undefined">{{ kind === 'heat' ? '周数' : '条数' }} <input type="number" :min="kind === 'heat' ? 4 : 1" :max="kind === 'tasks' ? 20 : 12" :value="limit" @change="$emit('set-opt', 'limit', Number(($event.target as HTMLInputElement).value))" /></label></div>
+      <footer class="settings-actions"><button type="button" @click="$emit('rename')">修改标题</button><button type="button" class="danger" @click="settings?.close(); $emit('remove')">移除卡片</button><button type="button" class="done" @click="settings?.close()">完成</button></footer>
+    </dialog></Teleport>
   </section>
 </template>
-
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import Icon from './Icon.vue';
-import {
-  HEIGHT_STEPS,
-  moduleMeta,
-  spanOptionsFor,
-  type ModuleKind,
-  type ModuleSpan,
-} from '../lib/homeBoard.ts';
-import { GRID_MAX_H, GRID_MAX_W, GRID_ROWS_VISIBLE } from '../lib/homeGrid.ts';
-
-const props = withDefaults(
-  defineProps<{
-    kind: ModuleKind;
-    /** 已生效标题（自定义标题或类型默认标题，由外层算好） */
-    title: string;
-    /** 宽度：6 列栅格上占几格（1–6，可以是拖出来的中间值） */
-    width: number;
-    /** 高度：占几行 */
-    height: number;
-    /** 该模块已生效的条数（列表类模块用；没有这项时为 undefined） */
-    limit?: number;
-    managing?: boolean;
-    dragging?: boolean;
-    /** 拖动高亮正落在这张卡上（松手后它就落这儿） */
-    target?: boolean;
-  }>(),
-  { managing: false, dragging: false, target: false }
-);
-
-const emit = defineEmits<{
-  (e: 'remove'): void;
-  (e: 'set-width', width: number): void;
-  (e: 'set-height', height: number): void;
-  (e: 'rename'): void;
-  (e: 'drag-request', event: PointerEvent): void;
-  (e: 'resize-request', event: PointerEvent): void;
-  (e: 'set-opt', key: string, value: string | number | boolean): void;
-}>();
-
+import { registerBackHandler } from '../lib/androidBack';
+import { moduleMeta, type ModuleKind } from '../lib/homeBoard.ts';
+const props = defineProps<{ kind: ModuleKind; title: string; width: number; height: number; limit?: number; managing: boolean; dragging: boolean; target?: boolean; summary: { value: string | number; label?: string; lines?: string[]; heat?: number[] } }>();
+const emit = defineEmits<{ (e: 'remove' | 'rename'): void; (e: 'set-size', w: number, h: number): void; (e: 'set-opt', key: string, value: number): void; (e: 'drag-request' | 'resize-request', event: PointerEvent): void }>();
+const root = ref<HTMLElement | null>(null), settings = ref<HTMLDialogElement | null>(null), closeButton = ref<HTMLButtonElement | null>(null);
+const size = ref({ w: 300, h: 300 });
 const meta = computed(() => moduleMeta(props.kind));
-
-/**
- * 卡片上按下：编辑态时把「开始拖动」报给外层的看板组件。
- * 只在**空白处 / 页眉**按下才算拖，否则点标题改名、点底栏按钮、点内容里的链接都会被吞掉。
- */
-function onShellPointerDown(event: PointerEvent) {
-  if (!props.managing) return;
-  const target = event.target as HTMLElement | null;
-  if (target?.closest('button, a, input, textarea, select, .resize-handle')) return;
-  emit('drag-request', event);
+const shortTitles: Record<ModuleKind, string> = { capture: '速记', shortcuts: '入口', recent: '更新', notes: '灵感', fresh: '新增', tasks: '待办', stats: '概览', weekly: '动态', tags: '标签', sections: '分区', roam: '漫游', system: '状态', sync: '同步', ring: '占比', heat: '热力', inbox: '收集', queue: '提炼', board: '看板', activity: '改动', digest: '摘要' };
+const tinyTitle = computed(() => props.title === meta.value.title ? shortTitles[props.kind] : props.title);
+const compact = computed(() => size.value.w < 230 || size.value.h < 170);
+const expanded = ref(false), hoverSize = ref('');
+let previousFocus: HTMLElement | null = null;
+let stopDetailBack: (() => void) | null = null, stopSettingsBack: (() => void) | null = null;
+watch(expanded, (open) => { stopDetailBack?.(); stopDetailBack = open ? registerBackHandler(() => { closeDetail(); return true; }) : null; });
+function openSettings() { settings.value?.showModal(); stopSettingsBack?.(); stopSettingsBack = registerBackHandler(() => { settings.value?.close(); return true; }); }
+async function openDetail() { if (props.managing) return; previousFocus = document.activeElement as HTMLElement; expanded.value = true; await nextTick(); closeButton.value?.focus(); }
+function closeDetail() { expanded.value = false; previousFocus?.focus(); }
+function onDetailKey(event: KeyboardEvent) {
+  if (!expanded.value) return;
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeDetail(); }
+  if (event.key !== 'Tab') return;
+  const controls = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('button, input, textarea, select, a[href], [tabindex="0"]')).filter((el) => el.getClientRects().length && !(el as HTMLButtonElement).disabled && !el.classList.contains('detail-backdrop'));
+  const first = controls[0], last = controls.at(-1);
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
 }
-
-/**
- * 条数档位：只有列表类模块有这一项（最近更新 / 近期灵感 / 本周新增 / 近期待办）。
- * 上下限与 lib/homeBoard.ts 的归一化保持一致，界面不会给出存不下的值。
- */
-const limitSetting = computed(() => {
-  if (props.limit === undefined) return null;
-  const max = props.kind === 'tasks' ? 20 : 12;
-  return { value: Math.min(max, Math.max(1, props.limit)), min: 1, max };
-});
-
-/** 宽度档：6 列栅格上的 1/3 · 1/2 · 2/3 · 整行（拖动把手可以调到任意格，这里是快捷档） */
-const widthOptions = computed(() => spanOptionsFor());
-/** 高度档：常用几档；拖把手可以调到 1–12 行 */
-const heightOptions = computed(() => HEIGHT_STEPS.filter((value) => value <= GRID_MAX_H));
-
-/** 宽高都到极限时给个提示色：用户会看到「怎么拖都不动了」的边界 */
-const crowded = computed(() => props.width >= GRID_MAX_W && props.height >= GRID_MAX_H);
-void GRID_ROWS_VISIBLE;
+function onDialogClick(event: MouseEvent) { if (event.target === settings.value) settings.value?.close(); }
+let observer: ResizeObserver | null = null;
+let hold: ReturnType<typeof setTimeout> | null = null;
+let down: { x: number; y: number } | null = null;
+let held = false;
+function clearHold() { if (hold) clearTimeout(hold); hold = null; down = null; if (held) setTimeout(() => { held = false; }, 0); }
+function onPointerDown(event: PointerEvent) {
+  if (event.button !== 0 || (event.target as HTMLElement).closest('input,textarea,a,select,.card-settings,.resize-handle,.shell-expand')) return;
+  if (props.managing) { emit('drag-request', event); return; }
+  if (event.pointerType !== 'touch') return;
+  down = { x: event.clientX, y: event.clientY };
+  hold = setTimeout(() => { hold = null; held = true; emit('drag-request', event); }, 450);
+}
+function moveHold(event: PointerEvent) { if (hold && down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 8) clearHold(); }
+function suppressClick(event: MouseEvent) { if (held) { event.preventDefault(); event.stopPropagation(); held = false; } }
+onMounted(() => { observer = new ResizeObserver(([entry]) => { const box = root.value?.getBoundingClientRect(); size.value = { w: box?.width || entry.contentRect.width, h: box?.height || entry.contentRect.height }; }); if (root.value) observer.observe(root.value); window.addEventListener('pointermove', moveHold); window.addEventListener('pointerup', clearHold); window.addEventListener('pointercancel', clearHold); });
+onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconnect(); clearHold(); window.removeEventListener('pointermove', moveHold); window.removeEventListener('pointerup', clearHold); window.removeEventListener('pointercancel', clearHold); });
 </script>
-
 <style scoped>
-/*
- * 模块外壳：**首页上唯一的卡片外框**（描边 + 圆角 + 卡片底色 + 阴影）+ 抬头 + 内容 + 编辑态底栏。
- * 内容层（HomeBoardModules/*）不再自带外框，否则一页里会出现「有的有框有的没有」。
- * 大小由栅格决定（见 lib/homeGrid.ts）：.widget 上的 grid-column / grid-row 由数据直接写成，
- * 这里只管「填满自己的格子」并把超出部分收在内部滚动。
- */
 .shell {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 13px 15px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--card-bg);
-  box-shadow: var(--shadow-card);
-  cursor: grab;
-  transition: opacity 150ms ease, box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
+  position:relative;
+  width:100%;
+  height:100%;
+  min-width:0;
+  min-height:0;
+  padding:22px;
+  border:1px solid var(--border);
+  border-radius:22px;
+  background:var(--card-bg);
+  box-shadow:0 3px 14px color-mix(in srgb,var(--text) 3%,transparent);
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  container-type:size;
+  transition:box-shadow .2s,border-color .2s;
 }
-.shell:hover { box-shadow: var(--shadow-card-hover, var(--shadow-card)); }
-/* 非编辑态：卡片内容自己可点，别显示抓手 */
-.shell:not(.managing) { cursor: default; }
-.shell:not(.managing) .shell-body { flex: 1; min-height: 0; overflow: auto; }
-
-/* 编辑态：虚线框 + 浅底色，边界看得见才敢拖 */
-.shell.managing {
-  border-style: dashed;
-  border-color: var(--border-strong, var(--border));
-  background: color-mix(in srgb, var(--bg-secondary) 60%, var(--card-bg));
-  padding: 11px 12px 9px;
+.shell:hover {
+  box-shadow:0 8px 24px color-mix(in srgb,var(--text) 7%,transparent);
 }
-.shell.managing:hover { border-color: var(--accent); }
-
-/* 被拖起来的那一块：半透明跟着指针，原位保持占位 */
-.shell.dragging {
-  opacity: 0.55;
-  box-shadow: var(--shadow-card);
-  transform: scale(0.99);
-  cursor: grabbing;
+.shell:focus-visible {
+  outline:2px solid var(--accent);
+  outline-offset:-3px;
 }
-
-/* 编辑态下模块内容不可点：拖动与点开页面不能共用一根手指 */
-.shell.locked .shell-body { pointer-events: none; }
-.shell.locked .shell-body :deep(button) { cursor: default; }
-
 .shell-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  display:flex;
+  gap:8px;
+  align-items:center;
+  margin-bottom:18px;
+  flex:none;
 }
-
-.shell-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+.shell-head h3 {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex:1;
+  min-width:0;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  font-size:13px;
+  font-weight:600;
+  color:var(--text-secondary);
 }
-.shell-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.shell-title.as-button {
-  padding: 3px 7px;
-  margin-left: -7px;
-  border-radius: 7px;
-  transition: background 150ms ease, color 150ms ease;
+.shell-head h3 :deep(svg) {
+  color:var(--accent);
+  flex:none;
 }
-.shell-title.as-button:hover { background: var(--sidebar-hover); color: var(--text-secondary); }
-.shell-title.as-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.shell-title-pencil { opacity: 0.7; }
-
-.shell-tools { display: flex; align-items: center; gap: 4px; }
-
-.tool {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px 3px 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg);
-  color: var(--text-secondary);
-  font-size: 11px;
-  cursor: grab;
-  /* 手指按在手柄上时不要触发页面滚动：拖动靠 pointermove，交给浏览器滚就断了 */
-  touch-action: none;
+.shell-expand {
+  font-size:20px;
+  color:var(--text-faint);
+  width:26px;
+  height:26px;
+  flex:none;
 }
-.tool:hover { border-color: var(--accent); color: var(--text); }
-.tool:active { cursor: grabbing; }
-
-/* 六点手柄：纯装饰，用两列三点画出来（不引图标资源） */
-.grip {
-  display: grid;
-  grid-template-columns: repeat(2, 2px);
-  gap: 2px;
-  width: 6px;
+.shell-content,.shell-body,.module-content {
+  min-width:0;
+  min-height:0;
+  flex:1;
 }
-.grip i { display: block; width: 2px; height: 2px; border-radius: 50%; background: currentColor; opacity: 0.75; }
-.tool-text { letter-spacing: 0; }
-
-.shell-body { min-width: 0; }
-
-.shell-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 7px;
-  border-top: 1px dashed var(--border);
+.shell-content {
+  display:flex;
+  overflow:hidden;
 }
-.foot-spacer { flex: 1; }
-
-/* 当前尺寸（几列 × 几行）：拖把手时数字会跟着变，边界一眼可见 */
-.foot-size {
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: var(--bg-tertiary, var(--bg));
-  color: var(--text-faint);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
+.shell-body {
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
 }
-.foot-size.over { background: var(--accent-soft); color: var(--accent); }
-
-/* 缩放把手：右下角的斜纹角，拖它改宽高 */
+.module-content {
+  overflow:auto;
+  scrollbar-width:thin;
+}
+.content-hidden {
+  display:none;
+}
+.shell-summary {
+  display:flex;
+  flex:1;
+  min-height:0;
+  min-width:0;
+  flex-direction:column;
+  align-items:flex-start;
+  text-align:left;
+  justify-content:center;
+  gap:8px;
+  color:var(--text);
+  width:100%;
+}
+.shell-summary :deep(svg) {
+  color:var(--accent);
+}
+.summary-value {
+  font-size:clamp(24px,24cqw,40px);
+  font-weight:700;
+  letter-spacing:-.05em;
+  line-height:1.1;
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.summary-label {
+  font-size:12px;
+  line-height:1.2;
+  max-width:100%;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.summary-caption,.summary-open {
+  font-size:10px;
+  line-height:1.2;
+  color:var(--text-faint);
+  overflow:hidden;
+  max-width:100%;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+}
+.shell-summary ul {
+  list-style:none;
+  padding:0;
+  margin:4px 0;
+  width:100%;
+  overflow:hidden;
+}
+.shell-summary li {
+  font-size:12px;
+  padding:8px 0;
+  border-top:1px solid var(--border);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.compact {
+  padding:16px;
+}
+.short {
+  padding:12px;
+}
+.short .shell-summary {
+  gap:4px;
+}
+.short .shell-summary :deep(svg) {
+  display:none;
+}
+.summary-value,.summary-label,.summary-caption,.summary-open {
+  flex-shrink:0;
+}
+.micro {
+  padding:7px;
+  border-radius:12px;
+}
+.micro .shell-summary {
+  gap:2px;
+  align-items:center;
+  text-align:center;
+}
+.micro .shell-summary :deep(svg),.micro .summary-caption {
+  display:none;
+}
+.micro .summary-value {
+  font-size:clamp(14px,20cqh,18px);
+}
+.micro .summary-label {
+  font-size:9px;
+  line-height:1.1;
+}
+.capture {
+  background:var(--accent);
+  border-color:transparent;
+  --text:#fff;
+  --text-secondary:rgba(255,255,255,.85);
+  --text-faint:rgba(255,255,255,.7);
+  --border:rgba(255,255,255,.22);
+  color:#fff;
+}
+.capture .shell-head h3,.capture .shell-head h3 :deep(svg),.capture .shell-summary :deep(svg) {
+  color:#fff;
+}
+.managing {
+  border:1px dashed var(--accent);
+  touch-action:none;
+}
+.managing .shell-summary,.managing .module-content {
+  pointer-events:none;
+}
+.dragging {
+  opacity:.75;
+  box-shadow:0 12px 30px color-mix(in srgb,var(--accent) 22%,transparent);
+}
+.card-settings {
+  position:absolute;
+  top:5px;
+  right:5px;
+  width:28px;
+  height:24px;
+  border-radius:8px;
+  background:var(--card-bg);
+  color:var(--accent);
+  border:1px solid var(--border);
+  font-weight:700;
+  z-index:3;
+}
 .resize-handle {
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
-  padding: 3px;
-  border-radius: 6px;
-  cursor: nwse-resize;
-  color: var(--text-faint);
-  transition: background 150ms ease, color 150ms ease;
-  /* 手指按下时不要触发页面滚动：拖动靠 pointermove */
-  touch-action: none;
+  position:absolute;
+  width:24px;
+  height:24px;
+  bottom:1px;
+  right:1px;
+  touch-action:none;
+  cursor:nwse-resize;
+  z-index:3;
 }
-.resize-handle:hover { background: var(--accent-soft); color: var(--accent); }
-.resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.rh-corner {
-  width: 9px;
-  height: 9px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  border-bottom-right-radius: 3px;
+.resize-handle::after {
+  content:'';
+  position:absolute;
+  bottom:6px;
+  right:6px;
+  width:9px;
+  height:9px;
+  border-right:2px solid var(--accent);
+  border-bottom:2px solid var(--accent);
 }
-
-.spans {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg);
+.detail-overlay {
+  position:fixed;
+  inset:0;
+  z-index:1200;
+  display:grid;
+  place-items:center;
+  padding:24px;
 }
-.span-btn {
-  padding: 2px 9px;
-  border-radius: 999px;
-  color: var(--text-faint);
-  font-size: 11px;
-  transition: background 150ms ease, color 150ms ease;
+.detail-backdrop {
+  position:absolute;
+  inset:0;
+  background:rgba(0,0,0,.38);
+  backdrop-filter:blur(5px);
 }
-.span-btn:hover { color: var(--text-secondary); }
-.span-btn.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.span-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-/* 条数档：显示 N 条的加减步进器 */
-.stepper {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px 2px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg);
+.detail-panel {
+  position:relative;
+  width:min(680px,100%);
+  max-height:85dvh;
+  padding:28px;
+  border:1px solid var(--border);
+  border-radius:24px;
+  background:var(--card-bg);
+  color:var(--text);
+  box-shadow:var(--shadow-card);
 }
-.stepper-label { font-size: 11px; color: var(--text-faint); }
-.stepper-value { min-width: 14px; text-align: center; font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.step-btn {
-  width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1;
-  transition: background 150ms ease, color 150ms ease;
+.detail-panel .module-content {
+  overflow:auto;
 }
-.step-btn:hover:not(:disabled) { background: var(--sidebar-hover); color: var(--text); }
-.step-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-.step-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.foot-btn {
-  width: 26px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--bg);
-  color: var(--text-secondary);
-  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+.detail-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  margin-bottom:22px;
 }
-.foot-btn:hover { border-color: var(--accent); color: var(--accent); }
-.foot-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.foot-btn.danger:hover { border-color: var(--danger); color: var(--danger); background: var(--danger-soft); }
-
-/* 落点线：拖到哪儿就画在那一侧的边缘（贴着自己的左右边，不越出 .board 的裁剪区） */
-.drop-line {
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-  pointer-events: none;
+.detail-head h2 {
+  font-size:18px;
+  color:var(--text);
 }
-.drop-line.before { left: 0; }
-.drop-line.after { right: 0; }
+.detail-close {
+  width:32px;
+  height:32px;
+  border-radius:50%;
+  background:var(--bg-secondary);
+  color:var(--text-secondary);
+  font-size:24px;
+}
+.size-dialog {
+  position:fixed;
+  inset:0;
+  margin:auto;
+  width:min(420px,calc(100% - 32px));
+  padding:24px;
+  border:1px solid var(--border);
+  border-radius:22px;
+  background:var(--card-bg);
+  color:var(--text);
+}
+.size-dialog::backdrop {
+  background:rgba(0,0,0,.38);
+  backdrop-filter:blur(4px);
+}
+.size-hint {
+  color:var(--text-secondary);
+  font-size:13px;
+  margin-bottom:16px;
+}
+.size-matrix {
+  display:grid;
+  grid-template-columns:repeat(6,1fr);
+  gap:6px;
+}
+.size-matrix button {
+  aspect-ratio:1;
+  background:var(--bg-tertiary);
+  border:1px solid var(--border);
+  border-radius:7px;
+}
+.size-matrix button.selected {
+  background:var(--accent-soft);
+  border-color:var(--accent);
+}
+.size-matrix button:hover,.size-matrix button:focus-visible {
+  background:var(--accent);
+}
+.size-fields {
+  display:flex;
+  flex-wrap:wrap;
+  gap:14px;
+  margin:22px 0;
+}
+.size-fields label {
+  font-size:12px;
+  color:var(--text-secondary);
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.size-fields input {
+  width:55px;
+  padding:7px;
+  border:1px solid var(--border);
+  background:var(--bg);
+  color:var(--text);
+  border-radius:6px;
+}
+.settings-actions {
+  display:flex;
+  gap:12px;
+  font-size:12px;
+  align-items:center;
+}
+.settings-actions .danger {
+  color:var(--danger);
+}
+.settings-actions .done {
+  margin-left:auto;
+  background:var(--accent);
+  color:#fff;
+  padding:8px 16px;
+  border-radius:8px;
+}
+.ribbon .shell-summary {
+  display:grid;
+  grid-template-columns:auto auto 1fr;
+  align-content:center;
+  align-items:center;
+  column-gap:16px;
+}
+.ribbon .summary-value {
+  font-size:28px;
+  grid-row:1/3;
+}
+.ribbon .summary-label {
+  grid-column:3;
+}
+.ribbon .summary-caption {
+  grid-column:3;
+}
+.ribbon .summary-open {
+  display:none;
+}
+.mini-heat {
+  display:grid;
+  grid-template-rows:repeat(7,1fr);
+  grid-auto-flow:column;
+  grid-auto-columns:1fr;
+  gap:3px;
+  width:100%;
+  max-height:100px;
+}
+.mini-heat i {
+  aspect-ratio:1;
+  border-radius:2px;
+}
+.module-content :deep(.hb-card) {
+  background:transparent;
+  border:0;
+  box-shadow:none;
+}
+.module-content :deep(.hb-row) {
+  padding-left:0;
+  padding-right:0;
+}
+.module-content :deep(.notes-bulb) {
+  background:var(--accent-soft);
+  color:var(--accent);
+}
+.module-content :deep(.activity-dot) {
+  background:var(--accent)!important;
+}
+.module-content :deep(.hb-badge) {
+  background:var(--accent-soft);
+  color:var(--accent);
+}
+.heatMini .shell-summary {
+  gap:8px;
+}
+.heatMini .shell-summary :deep(svg),.heatMini .summary-value,.heatMini .summary-caption,.heatMini .summary-open {
+  display:none;
+}
+.heatMini .mini-heat {
+  gap:2px;
+  max-width:250px;
+  max-height:none;
+}
+.capture .module-content :deep(.btn.primary) {
+  background:#fff;
+  color:var(--accent);
+}
+@container (max-width:260px) {
+  .shell-head {
+    margin-bottom:10px;
+  }
+  .shell-head h3 {
+    font-size:11px;
+    gap:5px;
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  .shell {
+    transition:none;
+  }
+}
 </style>
