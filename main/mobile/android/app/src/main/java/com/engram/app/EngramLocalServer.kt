@@ -518,7 +518,14 @@ class EngramLocalServer private constructor(private val context: Context) {
             // 白名单与 server PUBLIC_SETTINGS 对齐；DDNS / 一键接入 token 在 Android 上没有意义，显式忽略。
             // home_layout = 首页自定义看板布局（JSON 字符串，前端 store 归一化）——手机端也要能存住，
             // 否则拖完模块一刷新就回默认布局。
-            for (key in listOf("search_synonyms", "show_ai_workspace", "home_layout")) if (body.has(key)) db.setSetting(key, body.optString(key))
+            for (key in SyncPreferences.keys) if (body.has(key)) {
+                val value = body.optString(key)
+                if (db.setting(key) != value) {
+                    db.setSetting(key, value)
+                    SyncPreferences(db).stamp(key)
+                    db.enqueue("preference", key)
+                }
+            }
             call.ok()
         }
 
@@ -627,6 +634,10 @@ class EngramLocalServer private constructor(private val context: Context) {
             if (body.has("dual_stack")) saveDualStackConfig(body.optJSONObject("dual_stack") ?: JSONObject())
             // 「优先局域网」开关同理独立于绑定：设置页 / 侧栏胶囊只改它一个字段
             if (body.has("prefer_lan")) sync.setPreferLan(body.optBoolean("prefer_lan"))
+            if (body.has("categories")) {
+                SyncPreferences(db).saveCategories(body.optJSONObject("categories") ?: error("同步分类配置无效"))
+                requestSync(true)
+            }
             val touchesBinding = body.has("role") || body.has("hub_url") || body.has("hub_token") || body.has("enabled")
             if (!touchesBinding) return@post call.ok()
             val role = body.optString("role", "member")
@@ -676,6 +687,7 @@ class EngramLocalServer private constructor(private val context: Context) {
     private fun syncStatus(): JSONObject {
         val dualStack = currentDualStackConfig()
         return JSONObject()
+            .put("categories", SyncPreferences(db).categories())
             .put("role", db.setting("sync_role") ?: "none")
             .put("enabled", db.setting("sync_enabled") == "1")
             .put("connected", sync.connected).put("running", sync.isRunning()).put("syncing", sync.isRunning())

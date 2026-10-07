@@ -137,6 +137,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 } else if (full) {
                     reconcile()
                 }
+                syncPreferences()
                 converge()
                 try {
                     refreshLedgerMarks(force = full)
@@ -233,6 +234,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         val plan = LedgerMarks.plan(hub, db.distilledPaths())
         if (!plan.changed) return
         for (path in plan.add) {
+            if (!SyncPreferences(db).allowed("file", path)) continue
             checkActive()
             // 账本能就近补上就一起补（证据抽屉要能复核）；取不回来时只打标记，不假装有账本
             val snapshot = try {
@@ -244,7 +246,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             }
             if (snapshot != null) db.saveEvidence(path, snapshot) else db.markDistilled(path, true)
         }
-        for (path in plan.clear) db.markDistilled(path, false)
+        for (path in plan.clear) if (SyncPreferences(db).allowed("file", path)) db.markDistilled(path, false)
         roundChanges += plan.add.size + plan.clear.size
         db.bumpContentRevision()
         db.log(
@@ -255,12 +257,35 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         )
     }
 
+    private fun syncPreferences() {
+        val prefs = SyncPreferences(db)
+        if (!prefs.allowed("preference", "home_layout") && !prefs.allowed("preference", "search_synonyms")) return
+        val remote = tolerateMissing { getJson("/api/sync/preferences").optJSONObject("preferences") } ?: return
+        for (key in SyncPreferences.keys) {
+            if (!prefs.allowed("preference", key)) continue
+            val local = prefs.value(key)
+            val incoming = remote.optJSONObject(key)
+            prefs.merge(key, incoming)
+            if (local != null && prefs.wins(local, incoming)) db.enqueue("preference", key)
+        }
+    }
+
     private fun pushOutbox() {
         for (item in db.outbox()) {
             checkActive()
             val kind = item.getString("kind")
             val target = item.getString("target")
+            if (!SyncPreferences(db).allowed(kind, target, item.optString("old_path"))) {
+                db.ackOutbox(item.getLong("id")); continue
+            }
             when (kind) {
+                "preference" -> {
+                    val prefs = SyncPreferences(db)
+                    prefs.value(target)?.let { value ->
+                        val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", kind).put("target", target).put("preference", value))
+                        prefs.merge(target, ack.optJSONObject("preference"))
+                    }
+                }
                 "page" -> {
                     val raw = db.rawPage(target)
                     if (raw == null) { db.ackOutbox(item.getLong("id")); continue }
@@ -322,6 +347,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                     val kind = op.optString("kind")
                     val target = op.optString("target")
                     when {
+                        !SyncPreferences(db).allowed(kind, target, op.optString("old_path")) -> ChangeWork(op = op)
                         kind == "page" && compact -> ChangeWork(
                             op = op,
                             page = fetchExecutor.submit<PagePayload?> {
@@ -371,7 +397,12 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         if (seq <= cursor) return
         val target = op.optString("target")
         val kind = op.optString("kind")
+        if (!SyncPreferences(db).allowed(kind, target, op.optString("old_path"))) {
+            stagedFile?.delete()
+            db.setSetting("sync_cursor", seq.toString()); return
+        }
         when (kind) {
+            "preference" -> SyncPreferences(db).merge(target, op.optJSONObject("preference"))
             "page" -> {
                 val content = if (compact) {
                     page?.content ?: getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
@@ -505,6 +536,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                             if (remoteCount % 25 == 0) syncProgress = "正在核对中枢目录（$remoteCount 项）"
                             inferredCursor = maxOf(inferredCursor, revision.toLong())
                             remotePaths += path
+                            if (!SyncPreferences(db).allowed(kind, path)) continue
                             if (preferHub) db.dropOutboxForTarget(path)
                             // 本机已经把这份改名/改分类（或删掉了）但还没推上去：中枢的旧路径不拉回来，
                             // 否则手机上会同时出现新旧两份，等这一轮 converge() 推完改动自然收敛
@@ -538,7 +570,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                                             } else {
                                                 // 旧正文先读出来：这条同步记录要写清「新增还是修改、动了多少行」
                                                 val before = db.rawPage(fetchPath)
-                                                db.writeSyncedPage(fetchPath, content, revision)
+                                                if (SyncPreferences(db).allowed("page", fetchPath)) db.writeSyncedPage(fetchPath, content, revision)
                                                 completePull()
                                                 recordApplied("pull-page", SyncOpText.summarizePage(fetchPath, before, content), tally)
                                             }
@@ -563,7 +595,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                                                 recordMissingAtHub("file", fetchPath)
                                             } else {
                                                 val afterBytes = stagedFile.length()
-                                                try { db.installSyncedFile(fetchPath, stagedFile) }
+                                                try { if (SyncPreferences(db).allowed("file", fetchPath)) db.installSyncedFile(fetchPath, stagedFile) }
                                                 finally { stagedFile.delete() }
                                                 completePull()
                                                 recordApplied("pull-file", SyncOpText.summarizeFile(fetchPath, beforeBytes, afterBytes), tally)
@@ -581,7 +613,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                                 }
                                 pending += SnapshotWork(
                                     apply = {
-                                        await(future)?.let { db.saveEvidence(evidencePath, it) }
+                                        await(future)?.let { if (SyncPreferences(db).allowed("file", evidencePath)) db.saveEvidence(evidencePath, it) }
                                         completePull()
                                     },
                                     discard = { cancelFetch(future) },

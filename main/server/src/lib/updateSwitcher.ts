@@ -106,7 +106,7 @@ export function buildCreateBody(
 
   const config: Record<string, unknown> = {
     Image: imageRef,
-    Env: c.Env || [],
+    Env: [...(c.Env || []).filter(value => !/^(OFFICE_|ONLYOFFICE_|JWT_SECRET=)/.test(value)), 'OFFICE_EDITOR_ENABLED=false'],
     Labels: c.Labels || {},
   };
   // Cmd/Entrypoint/WorkingDir/Healthcheck 不复制：让新镜像自己的定义生效，

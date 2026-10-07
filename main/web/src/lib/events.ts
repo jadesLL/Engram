@@ -54,6 +54,7 @@ export function openPageStream(onEvent: (ev: PageEvent) => void): () => void {
     'agent-question',
     'session-changed',
     'board-changed',
+    'settings-changed',
   ]) {
     es.addEventListener(type, handle(type));
   }

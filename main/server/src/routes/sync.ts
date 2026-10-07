@@ -1,3 +1,6 @@
+import { notifyCategoriesChanged } from '../sync/hub.js';
+import { syncAllowed, saveSyncCategories } from '../sync/categories.js';
+import { preferenceSnapshot, preferenceValue } from '../sync/preferences.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -232,7 +235,13 @@ export async function syncRoutes(app: FastifyInstance) {
       role?: 'hub' | 'member' | 'none';
       dual_stack?: Partial<DualStackConfig>;
       prefer_lan?: boolean;
+      categories?: unknown;
     };
+    if (body.categories !== undefined) {
+      try { saveSyncCategories(body.categories); } catch (error: any) { return reply.code(400).send({ error: error.message }); }
+      if (status().role === 'hub') notifyCategoriesChanged();
+      else if (status().enabled) reconcileNow();
+    }
     // 双栈参数独立于绑定信息：设置页只改阈值时不能把 enabled 当 false 处理（会误停同步）
     if (body.dual_stack !== undefined) configureDualStack(body.dual_stack || {});
     // 「优先局域网」同理：与绑定信息独立，只改它不会重新绑定、也不会重连
@@ -431,6 +440,7 @@ export async function syncRoutes(app: FastifyInstance) {
         }
       } else if (part.type === 'file' && part.fieldname === 'file') {
         if (!relPath) return reply.code(400).send({ error: '缺少 path 字段' });
+        if (!syncAllowed('file', relPath)) { part.file.resume(); continue; }
         try {
           const maxBytes = isInboxPath(relPath) ? Infinity : 200 * 1024 * 1024;
           saved = await writeRawFileStream(relPath, part.file, maxBytes);
@@ -446,6 +456,7 @@ export async function syncRoutes(app: FastifyInstance) {
         }
       }
     }
+    if (relPath && !syncAllowed('file', relPath)) return { ok: true, skipped: true };
     if (tooLarge) return reply.code(413).send({ error: '同步文件超过 200 MB 上限' });
     if (!saved) return reply.code(400).send({ error: '缺少文件' });
     const actorId = req.syncPeer?.id || 'owner';
@@ -495,6 +506,8 @@ export async function syncRoutes(app: FastifyInstance) {
     const compact = query.compact === '1' || query.compact === 'true';
     const ops = getOpsSince(since, limit) as SyncOp[];
     const enriched = ops.map((op) => {
+      if (!syncAllowed(op.kind, op.target, op.old_path)) return { seq: op.seq, kind: 'disabled', target: '' };
+      if (op.kind === 'preference') return { ...op, preference: preferenceValue(op.target) };
       if (compact) return op;
       if (op.kind !== 'page') return op;
       const content = getPageRevision(op.target, op.revision) ?? readPageRaw(op.target) ?? '';
@@ -512,8 +525,10 @@ export async function syncRoutes(app: FastifyInstance) {
    * 全量对账清单（页面/文件带内容 hash 与 revision；条目另带 distilled 供对端比对本端账本；
    * stale 为本端「见过但当前不持有」的路径：对端据此不再把已删/已改名旧路径补推回来）。
    */
+  app.get('/api/sync/preferences', { preHandler: requireSyncAccess }, async () => ({ preferences: preferenceSnapshot() }));
+
   app.get('/api/sync/snapshot', { preHandler: requireSyncAccess }, async (req) => {
-    const entries = buildSnapshotEntries();
+    const entries = buildSnapshotEntries().filter(entry => syncAllowed(entry.kind, entry.path));
     const peer = req.syncPeer;
     if (peer) {
       const key = peer.id;
@@ -532,11 +547,12 @@ export async function syncRoutes(app: FastifyInstance) {
     // 会话与看板也在同一份清单里：sessions 只带指纹（不搬正文），tombstones 防复活，board 是全端唯一那份
     return {
       entries,
+      preferences: preferenceSnapshot(),
       cursor: currentRevision(),
       stale: buildStalePaths(),
-      sessions: sessionManifest(),
-      tombstones: listSessionTombstones(),
-      board: readSyncedBoard(),
+      sessions: syncAllowed('session', '') ? sessionManifest() : [],
+      tombstones: syncAllowed('session', '') ? listSessionTombstones() : [],
+      board: syncAllowed('board', '') ? readSyncedBoard() : null,
       // 成员端据此把「本机叫什么」对齐成中枢配置里的成员名（deviceLabel.ts）；
       // owner 通道（浏览器/MCP）没有成员身份，返回 null，调用方按「不知道」处理
       device: peer ? { id: peer.id, name: peer.name } : null,
@@ -591,7 +607,7 @@ export async function syncRoutes(app: FastifyInstance) {
    * /api/sync/evidence，不必为几个标记把整份清单（每条路径 + hash）拉下来。
    */
   app.get('/api/sync/distilled', { preHandler: requireSyncAccess }, async () => ({
-    paths: [...distilledSourcePaths()].sort(),
+    paths: [...distilledSourcePaths()].filter(path => syncAllowed('file', path)).sort(),
   }));
 }
 

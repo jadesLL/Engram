@@ -109,6 +109,7 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     icon: 'refresh',
     groups: [
       { id: 'panel-sync', label: '同步群组', icon: 'refresh' },
+      { id: 'sync-content', label: '同步内容', icon: 'refresh' },
       // 局域网优先：2026-09-28 新增，成员端专属（与「双栈连接」回答同一个问题的两半：
       // 先走哪条路 → 局域网 / IPv6 / IPv4）。顺序 = 页面顺序，
       // 见 settingsDomains.test.ts 的顺序守卫。

@@ -1,3 +1,4 @@
+import { dockerOfficeRetired } from './lib/officeRuntime.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { applyStagedRestore } from './lib/stagedRestore.js';
@@ -44,7 +45,7 @@ export const TLS_DNS_API_TOKEN = (process.env.TLS_DNS_API_TOKEN || '').trim();
 export const TLS_EMAIL = (process.env.TLS_EMAIL || '').trim();
 export const TLS_ACME_DIRECTORY = (process.env.TLS_ACME_DIRECTORY || '').trim();
 export const TLS_PORT = Number(process.env.TLS_PORT || 8443);
-export const OFFICE_EDITOR_ENABLED = process.env.OFFICE_EDITOR_ENABLED !== 'false';
+export const OFFICE_EDITOR_ENABLED = !dockerOfficeRetired() && process.env.OFFICE_EDITOR_ENABLED !== 'false';
 export const OFFICE_INTERNAL_URL = process.env.OFFICE_INTERNAL_URL || 'http://onlyoffice';
 export const OFFICE_INTERNAL_APP_URL = process.env.OFFICE_INTERNAL_APP_URL || 'http://engram:8080';
 export const OFFICE_PUBLIC_PATH = normalizePublicPath(process.env.OFFICE_PUBLIC_PATH || '/onlyoffice/');

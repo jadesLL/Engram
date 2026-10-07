@@ -16,9 +16,8 @@ services:
       # 应用内自更新（设置 → 软件更新）需要 Docker API：拉镜像 + 重建本容器。
       # 不需要网页内更新可以删掉这一行。
       - /var/run/docker.sock:/var/run/docker.sock
-    env_file:
-      - .env.onlyoffice
     environment:
+      - OFFICE_EDITOR_ENABLED=false
       - TZ=Asia/Shanghai
       # 初始登录密码（仅首次启动生效；留空则首次登录时在页面设置）
       - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-}
@@ -28,11 +27,6 @@ services:
       - DDNS_RECORD=${DDNS_RECORD:-}
       - DDNS_TYPE=${DDNS_TYPE:-}
       - DDNS_INTERVAL_MIN=${DDNS_INTERVAL_MIN:-}
-      - OFFICE_EDITOR_ENABLED=true
-      - OFFICE_INTERNAL_URL=http://onlyoffice
-      - OFFICE_INTERNAL_APP_URL=http://engram:8080
-      - OFFICE_PUBLIC_PATH=/onlyoffice/
-      - OFFICE_INSTANCE_ID=main
     restart: unless-stopped
     sysctls:
       net.ipv4.tcp_mtu_probing: "1"
@@ -42,39 +36,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    depends_on:
-      - onlyoffice
-
-  onlyoffice:
-    image: onlyoffice/documentserver:9.4.0
-    container_name: engram-onlyoffice
-    expose:
-      - "80"
-    env_file:
-      - .env.onlyoffice
-    environment:
-      - JWT_ENABLED=true
-      - JWT_HEADER=AuthorizationJwt
-      - JWT_IN_BODY=true
-      - ALLOW_PRIVATE_IP_ADDRESS=true
-      - ALLOW_META_IP_ADDRESS=false
-      - EXAMPLE_ENABLED=false
-    volumes:
-      - engram-onlyoffice-data:/var/www/onlyoffice/Data
-      - engram-onlyoffice-lib:/var/lib/onlyoffice
-      - engram-onlyoffice-logs:/var/log/onlyoffice
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost/healthcheck"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 90s
-    restart: unless-stopped
-
-volumes:
-  engram-onlyoffice-data:
-  engram-onlyoffice-lib:
-  engram-onlyoffice-logs:
 
 networks:
   default:

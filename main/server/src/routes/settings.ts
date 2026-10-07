@@ -1,3 +1,6 @@
+import { stampPreference } from '../sync/preferences.js';
+import { currentNodeId } from '../sync/store.js';
+import { recordLocalChange } from '../sync/index.js';
 import { FastifyInstance } from 'fastify';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -59,6 +62,8 @@ const PUBLIC_SETTINGS = [
   // 服务端只按白名单原样存取、不校验 JSON：前端 lib/homeBoard.ts 负责解析与归一化，
   // 缺省（''）或写坏的内容一律由前端回退默认布局，因此这里不做特判。
   'home_layout',
+  'theme',
+  'editor_mode',
 ];
 
 export async function settingsRoutes(app: FastifyInstance) {
@@ -100,7 +105,11 @@ export async function settingsRoutes(app: FastifyInstance) {
     for (const k of PUBLIC_SETTINGS) {
       const v = body[k];
       if (v === undefined) continue;
-      setSetting(k, typeof v === 'string' ? v : JSON.stringify(v));
+      const text = typeof v === 'string' ? v : JSON.stringify(v);
+      if (getSetting(k) === text) continue;
+      setSetting(k, text);
+      stampPreference(k, currentNodeId());
+      recordLocalChange('preference', k);
     }
     // DDNS 配置变更后立即到期，下个 30s tick 内按新配置执行
     if (body['ddns_config'] !== undefined) {

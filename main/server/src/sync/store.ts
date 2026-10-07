@@ -19,7 +19,7 @@ const PAGE_REVISION_KEEP = 10;
  *  - board：任务看板（target 恒为 default，全端唯一一份）
  * 会话与看板在 DATA_DIR/wiki.db 里，safeJoin 到不了，所以单独两类而不是复用 file。
  */
-export type SyncKind = 'page' | 'file' | 'delete' | 'move' | 'session' | 'board';
+export type SyncKind = 'page' | 'file' | 'delete' | 'move' | 'session' | 'board' | 'preference';
 
 export interface SyncOp {
   seq: number;

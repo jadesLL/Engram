@@ -185,7 +185,6 @@ deploy_main() {
   )
 
   engram_log ">> 构建主镜像 $image"
-  bash "$SCRIPT_DIR/ensure-office-env.sh" "$ENGRAM_MAIN_DIR"
   if ! docker build \
     --pull=false \
     --network "$ENGRAM_BUILD_NETWORK" \
@@ -213,7 +212,7 @@ deploy_main() {
   if docker ps --format '{{.Names}}' | grep -Fx engram-onlyoffice >/dev/null; then
     docker exec engram-onlyoffice documentserver-prepare4shutdown.sh >/dev/null 2>&1 || \
       engram_log "   WARN: ONLYOFFICE 未响应优雅关闭请求，继续由 Compose 重启"
-    docker compose "${compose_args[@]}" stop onlyoffice
+    docker container stop engram-onlyoffice >/dev/null
   fi
   if docker container inspect engram >/dev/null 2>&1 &&
     [ -n "$app_project" ] &&
@@ -228,8 +227,7 @@ deploy_main() {
 
   local ready=0
   for _ in $(seq 1 90); do
-    if curl -fsS -o /dev/null http://localhost:8080/ &&
-      curl -fsS -o /dev/null http://localhost:8080/onlyoffice/healthcheck
+    if curl -fsS -o /dev/null http://localhost:8080/health
     then
       ready=1
       break
@@ -239,7 +237,7 @@ deploy_main() {
   if [ "$ready" -ne 1 ]; then
     engram_die "主环境未通过健康检查；保留功能资源用于回退"
   fi
-  engram_log "   主环境与 ONLYOFFICE 健康检查通过"
+  engram_log "   主环境健康检查通过"
   engram_cleanup_old_main_images
 }
 

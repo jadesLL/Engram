@@ -17,7 +17,7 @@ import path from 'node:path';
  * 纯函数、无 IO，方便单测钉住措辞、采样与计数口径。
  */
 
-export type SyncItemKind = 'page' | 'file' | 'delete' | 'move' | 'session' | 'board';
+export type SyncItemKind = 'page' | 'file' | 'delete' | 'move' | 'session' | 'board' | 'preference';
 /** add=本端新增；update=覆盖已有；delete=删除；move=改名/移动；same=内容一致 */
 export type SyncItemVerb = 'add' | 'update' | 'delete' | 'move' | 'same';
 
@@ -423,6 +423,7 @@ function subjectOf(item: SyncOpSummary): string {
   if (item.kind === 'file') return `文件「${item.path}」`;
   if (item.kind === 'delete' && !item.title) return `文件「${item.path}」`;
   if (item.kind === 'session') return `会话「${item.title || item.path}」`;
+  if (item.kind === 'preference') return item.path === 'home_layout' ? '主页卡片' : '设置';
   if (item.kind === 'board') return '任务看板';
   return `页面「${item.title || pageTitle(item.path)}」`;
 }
@@ -435,6 +436,7 @@ export function describeOpSummary(item: SyncOpSummary): string {
     const count = Number(item.added || 0);
     return `同步会话「${item.title || item.path}」${count > 0 ? `（${count} 条消息）` : ''}`;
   }
+  if (item.kind === 'preference') return `同步${item.path === 'home_layout' ? '主页卡片' : '设置'}「${item.path}」`;
   if (item.kind === 'board') return '同步任务看板（全端取最新一版）';
 
   const name = subjectOf(item);
