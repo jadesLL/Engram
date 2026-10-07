@@ -108,6 +108,7 @@ export async function startCameraScan(options: QrCameraOptions): Promise<QrCamer
 
   const attach = async (want: QrCameraFacing): Promise<void> => {
     const next = await openStream(want);
+    if (stopped) { next.getTracks().forEach((track) => track.stop()); return; }
     stream = next;
     facing = want;
     video.srcObject = next;

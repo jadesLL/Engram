@@ -70,11 +70,13 @@
               @input="applyInviteText()"
             />
             <button class="btn small" type="button" @click="pasteInvite">粘贴</button>
-            <button v-if="scanSupported" class="btn small" type="button" @click="scanning = true">
+            <button class="btn small primary" type="button" :disabled="saving || !parseInviteLink(inviteText)" @click="pairInvite">{{ saving ? '配对中…' : '一键配对' }}</button>
+            <button class="btn small" type="button" :disabled="saving" @click="scanning = true">
               <Icon name="scan" :size="14" />
               扫码
             </button>
           </div>
+          <p v-if="!scanSupported" class="faint small">{{ cameraScanSupport().reason }}</p>
           <p v-if="inviteNotice" class="invite-notice" :class="inviteNoticeTone">{{ inviteNotice }}</p>
           <p v-else class="faint small">
             在中枢那台设备的「同步群组 → 添加成员」里点「复制邀请链接」发过来粘贴；手机端也可以直接扫中枢屏幕上的二维码。
@@ -214,7 +216,7 @@
               其他端：点下面的「复制邀请链接」发到那台设备，在「绑定中枢」里粘贴导入。两种方式二选一。
             </p>
             <div class="invite-actions">
-              <button class="btn small primary" type="button" @click="copyInviteLink">
+            <button class="btn small primary" type="button" :disabled="inviteLoading" @click="copyInviteLink">
                 <Icon name="link" :size="14" />
                 复制邀请链接
               </button>
@@ -224,6 +226,8 @@
             </p>
           </div>
         </div>
+        <p v-else-if="inviteLoading" class="faint small">正在生成配对链接与二维码…</p>
+        <p v-else-if="inviteError" class="invite-notice bad">{{ inviteError }}</p>
         <p v-else class="faint small">
           这条邀请暂时只能手抄：没有可用的成员绑定地址（见上方说明）——先在部署侧声明对外地址，
           或打开「允许局域网访问」后回到这里，二维码会自动出现。
@@ -429,7 +433,8 @@ import QrCode from '../ui/QrCode.vue';
 import QrScannerOverlay from '../ui/QrScannerOverlay.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 import { useSettingsAnchorVisible } from '../../lib/settingsNavVisibility';
-import { isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
+import { expandGroup, isGroupCollapsed, toggleGroupCollapsed } from '../../lib/settingsCollapse';
+import { copyText } from '../../lib/contextMenu';
 import { openSyncLogDrawer } from '../../lib/syncLog';
 import { syncChannelView, type SyncLinkStatus } from '../../lib/syncChannel';
 import {
@@ -590,10 +595,27 @@ const inviteHubUrl = computed(() => {
   return primaryHubAddress.value;
 });
 /** 当前展示中的成员邀请链接；没有可用地址时为 ''，界面据此说明原因而不是画一张空码 */
-const inviteLink = computed(() => {
-  const peer = newPeer.value;
-  if (!peer || !inviteHubUrl.value) return '';
-  return buildInviteLink({ hubUrl: inviteHubUrl.value, token: peer.token, name: peer.name });
+const inviteLink = ref('');
+const inviteLoading = ref(false);
+const inviteError = ref('');
+let inviteRequest = 0;
+watch([newPeer, inviteHubUrl], async () => {
+  const request = ++inviteRequest;
+  inviteLink.value = '';
+  inviteError.value = '';
+  inviteLoading.value = false;
+  if (!newPeer.value || !inviteHubUrl.value) return;
+  inviteLoading.value = true;
+  try {
+    const { data } = await api.post(`/api/sync/peers/${newPeer.value.id}/invite`, {
+      hub_url: inviteHubUrl.value, origin: location.origin,
+    });
+    if (request === inviteRequest) inviteLink.value = data.link || '';
+  } catch (error: any) {
+    if (request === inviteRequest) inviteError.value = error?.response?.data?.error || '生成邀请失败，请重试';
+  } finally {
+    if (request === inviteRequest) inviteLoading.value = false;
+  }
 });
 
 /** 成员端：粘贴/扫码拿到的链接原文，以及解析结果提示 */
@@ -756,12 +778,8 @@ const summaryDetail = computed(() => {
 });
 
 async function copy(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-    notify.success('已复制');
-  } catch {
-    notify.error('复制失败，请手动选择复制');
-  }
+  if (await copyText(text)) notify.success('已复制');
+  else notify.error('复制失败，请手动选择复制');
 }
 
 /** 复制邀请链接：一句话说清「这条链接拿去干什么」（与上面通用复制的提示区分开） */
@@ -769,8 +787,8 @@ async function copyInviteLink(): Promise<void> {
   const link = inviteLink.value;
   if (!link) return;
   try {
-    await navigator.clipboard.writeText(link);
-    notify.success('邀请链接已复制：发到那台设备上粘贴导入，或用手机扫二维码');
+    if (!await copyText(link)) throw new Error('copy failed');
+    notify.success('配对链接已复制：在子端点「一键配对」，或点击链接打开 Engram');
   } catch {
     notify.error('复制失败：请在成员列表里复制令牌，手动填到那台设备上');
   }
@@ -797,7 +815,7 @@ function applyInviteText(): boolean {
   hubUrl.value = invite.hubUrl;
   hubToken.value = invite.token;
   inviteNoticeTone.value = 'ok';
-  inviteNotice.value = `已识别：${describeInvite(invite)}。确认无误后点下面的「保存并绑定」。`;
+  inviteNotice.value = `已识别：${describeInvite(invite)}。点击「一键配对」即可验证并绑定。`;
   return true;
 }
 
@@ -820,7 +838,7 @@ async function pasteInvite(): Promise<void> {
 function onScanResult(text: string): void {
   scanning.value = false;
   inviteText.value = String(text || '').trim();
-  if (applyInviteText()) notify.success('已从二维码读出中枢地址与绑定令牌');
+  if (applyInviteText()) void pairInvite();
   else notify.error('扫到的内容不是 Engram 邀请链接');
 }
 
@@ -842,8 +860,9 @@ function applyPendingJoinLink(): void {
     return;
   }
   pickJoin.value = true;
+  expandGroup(GROUP_ANCHOR);
   inviteText.value = raw;
-  if (applyInviteText()) notify.success('已从邀请链接填好中枢地址与绑定令牌');
+  if (applyInviteText()) void pairInvite();
   else notify.error('这条链接不是有效的 Engram 邀请链接');
 }
 
@@ -1042,6 +1061,31 @@ async function joinHub(): Promise<void> {
   if (await postConfig({ role: 'member', enabled: true, hub_url: hubUrl.value.trim(), hub_token: hubToken.value.trim(), direct_urls: parsedDirectUrls() }, '绑定成功，正在连接中枢并同步')) {
     pickJoin.value = false;
   }
+}
+
+/** 输入链接点一次配对；扫码/系统链接共用此接口，远端验证成功后才保存。 */
+async function pairInvite(): Promise<void> {
+  if (saving.value) return;
+  const invite = parseInviteLink(inviteText.value);
+  if (!invite) { notify.error('请输入有效的 Engram 邀请链接'); return; }
+  saving.value = true;
+  try {
+    const { data } = await api.post('/api/sync/pairing/join', { link: buildInviteLink(invite) });
+    if (!data?.ok) throw new Error('中枢未确认配对');
+    inviteText.value = '';
+    hubToken.value = '';
+    inviteNotice.value = '';
+    pickJoin.value = false;
+    hubUrl.value = data.hubUrl;
+    await loadStatus();
+    await useSyncStore().refresh();
+    await loadCapabilities(true);
+    notify.success(`已与中枢配对${data.name ? `，本机为「${data.name}」` : ''}，正在同步`);
+  } catch (error: any) {
+    inviteNoticeTone.value = 'bad';
+    inviteNotice.value = error?.response?.data?.error || '配对失败，请检查网络后重试';
+    notify.error(inviteNotice.value);
+  } finally { saving.value = false; }
 }
 
 async function saveBinding(): Promise<void> {

@@ -41,7 +41,7 @@ const props = withDefaults(defineProps<{
   hint?: string;
 }>(), {
   title: '扫码绑定',
-  hint: '把中枢屏幕上的二维码放进取景框，识别后会自动填好中枢地址与绑定令牌',
+  hint: '把中枢屏幕上的二维码放进取景框，识别有效邀请后会验证并配对',
 });
 
 const emit = defineEmits<{ (event: 'result', text: string): void; (event: 'close'): void }>();

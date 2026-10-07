@@ -2,6 +2,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('wikiDesktop', {
+  revealBrainPath: (relative) => ipcRenderer.invoke('brain-reveal-path', relative),
+  takeJoinLink: () => ipcRenderer.invoke('take-join-link'),
+  onJoinLink: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('join-link-ready', listener);
+    return () => ipcRenderer.removeListener('join-link-ready', listener);
+  },
   // ---------- 数据仓库位置与整库恢复（本地模式） ----------
   // 查询当前数据仓库位置（{ dataDir, isDefault }）
   getDataDir: () => ipcRenderer.invoke('get-data-dir'),

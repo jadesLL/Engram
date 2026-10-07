@@ -199,7 +199,8 @@ function applyConflictResolution(
   }
   try {
     applyPageContent(copyRel, loser);
-    commit('page', copyRel, actorId, { evidence: null });
+    // 副本由中枢新建，发起冲突的成员也没有这份文件，必须一并广播给它。
+    commit('page', copyRel, actorId, { evidence: null, includeSource: true });
     return { copyPath: copyRel, theirsWins };
   } catch {
     // 副本写失败不阻塞主流程（败者内容仍在原持有方本地）
@@ -250,6 +251,7 @@ export function migrateConflictBackupDir(): void {
 }
 
 interface CommitOptions {
+  includeSource?: boolean;
   oldPath?: string;
   evidence?: EvidenceSnapshot | null;
   /** 会话删除：广播里带同一个标记，对端据此删掉本地副本并记墓碑 */
@@ -308,7 +310,7 @@ function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOpt
     if (board) payload.board = board;
   }
   // 中枢自身写入广播给全部成员；成员推送来的变更排除来源成员（其结果经 push ack 返回）
-  broadcast(payload, actorId === HUB_ACTOR ? undefined : actorId);
+  broadcast(payload, actorId === HUB_ACTOR || opts.includeSource ? undefined : actorId);
   return payload;
 }
 

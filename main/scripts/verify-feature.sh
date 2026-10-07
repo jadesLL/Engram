@@ -77,6 +77,12 @@ if ! docker build \
 then
   engram_explain_offline_build_failure
   if [ "$ENGRAM_BUILD_NETWORK" = "none" ] &&
+    engram_run_cached_offline_verification "$ENGRAM_WORKTREE/main"
+  then
+    engram_log "DONE: $FEATURE 已在缓存 Linux 环境通过离线 build、typecheck 和 test"
+    exit 0
+  fi
+  if [ "$ENGRAM_BUILD_NETWORK" = "none" ] &&
     engram_run_local_offline_verification "$ENGRAM_WORKTREE/main"
   then
     docker image rm "$ENGRAM_VERIFY_IMAGE" >/dev/null 2>&1 || true

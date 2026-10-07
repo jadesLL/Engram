@@ -41,7 +41,8 @@ import {
   snapshotHash,
 } from '../sync/sessions.js';
 import { distilledSourcePaths } from '../pipeline/sourceLedger.js';
-import { configure, configureDualStack, configureLinkPreferLan, reconcileNow, status } from '../sync/index.js';
+import { configure, configureDualStack, configureLinkPreferLan, currentRole, reconcileNow, status } from '../sync/index.js';
+import { pairingLink, parsePairingLink } from '../sync/pairing.js';
 import { deviceLabel } from '../sync/deviceLabel.js';
 import { updateSourceForSync } from '../lib/updateConfig.js';
 import { localLanUrls } from '../sync/linkAnnounce.js';
@@ -256,6 +257,56 @@ export async function syncRoutes(app: FastifyInstance) {
   });
 
   // ---------- 群组成员管理（中枢，owner） ----------
+  // 链接与二维码使用相同内容；前端本地绘制二维码，避免把凭据交给外部服务。
+  app.post('/api/sync/peers/:id/invite', { preHandler: requireAuth }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (currentRole() !== 'hub') return reply.code(409).send({ error: '请先将本设备设为中枢' });
+    const peer = getPeer((req.params as { id: string }).id);
+    if (!peer) return reply.code(404).send({ error: '成员不存在' });
+    const body = (req.body || {}) as { hub_url?: string; origin?: string };
+    const ddns = getDdnsConfig();
+    const report = memberHubAddresses({ bindHost: HOST, port: PORT, origin: body.origin,
+      ddnsHost: ddns.enabled ? ddns.record : '', env: process.env });
+    const address = body.hub_url || report.addresses[0]?.url;
+    if (!address || !report.addresses.some((entry) => entry.url === address)) {
+      return reply.code(400).send({ error: '没有可用的成员绑定地址，请开启局域网访问或选择已公布的中枢地址' });
+    }
+    const link = pairingLink({ hubUrl: address, token: peer.token, name: peer.name });
+    return { ok: true, link, qrText: link, hubUrl: address, name: peer.name };
+  });
+
+  // 中枢校验成员凭据；不能用 owner token 冒充成员配对。
+  app.get('/api/sync/pairing/verify', { preHandler: requireSyncAccess }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (currentRole() !== 'hub') return reply.code(409).send({ error: '目标设备当前不是同步中枢' });
+    if (!req.syncPeer) return reply.code(403).send({ error: '请使用中枢生成的成员邀请链接' });
+    return { ok: true, name: req.syncPeer.name };
+  });
+
+  app.post('/api/sync/pairing/join', { preHandler: requireAuth }, async (req, reply) => {
+    const invite = parsePairingLink((req.body as { link?: string } | null)?.link);
+    if (!invite) return reply.code(400).send({ error: '邀请链接无效，请从中枢重新复制或扫码' });
+    if (currentRole() !== 'none') return reply.code(409).send({ error: '本设备已参与同步，请先解除绑定或退出中枢角色' });
+    let name = '';
+    try {
+      const response = await fetch(`${invite.hubUrl}/api/sync/pairing/verify`, {
+        headers: { authorization: `Bearer ${invite.token}` }, redirect: 'error', signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) return reply.code(400).send({ error: response.status === 401 || response.status === 403
+        ? '邀请令牌已失效，请在中枢重新生成邀请' : '中枢无法确认配对，请检查中枢角色及版本' });
+      const result = await response.json() as { ok?: boolean; name?: string };
+      if (result.ok !== true || typeof result.name !== 'string') throw new Error('invalid response');
+      name = result.name;
+    } catch {
+      return reply.code(502).send({ error: '无法连接配对中枢，请检查网络和邀请链接中的地址后重试' });
+    }
+    // 远端检查期间角色可能被另一请求修改，写入前再次检查。
+    if (currentRole() !== 'none') return reply.code(409).send({ error: '本设备的同步角色已改变，请刷新后重试' });
+    const error = await configure({ role: 'member', enabled: true, hub_url: invite.hubUrl, hub_token: invite.token });
+    if (error) return reply.code(400).send({ error });
+    return { ok: true, name, hubUrl: invite.hubUrl };
+  });
+
   app.get('/api/sync/peers', { preHandler: requireAuth }, async () => {
     return { peers: listPeers().map(peerView) };
   });
