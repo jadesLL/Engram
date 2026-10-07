@@ -10,7 +10,7 @@
         <button v-if="expanded" class="detail-backdrop" type="button" aria-label="关闭详情" @click="closeDetail" />
         <div class="shell-body" :class="{ 'detail-panel': expanded }">
           <header v-if="expanded" class="detail-head"><h2>{{ title }}</h2><button ref="closeButton" class="detail-close" type="button" aria-label="关闭详情" @click="closeDetail">×</button></header>
-          <div class="module-content"><slot /></div>
+          <div class="module-content"><slot :expanded="expanded" /></div>
         </div>
       </div>
     </Teleport>
@@ -21,6 +21,7 @@
       <p class="size-hint">{{ hoverSize || `${width} × ${height}` }} · 宽 × 高（格）</p>
       <div class="size-matrix" @mouseleave="hoverSize = ''"><template v-for="h in 5" :key="h"><button v-for="w in 6" :key="w" type="button" :class="{ selected: w <= width && h <= height }" :aria-label="`${w} × ${h}`" @mouseenter="hoverSize = `${w} × ${h}`" @focus="hoverSize = `${w} × ${h}`" @click="$emit('set-size', w, h)" /></template></div>
       <div class="size-fields"><label>宽度 <input type="number" min="1" max="6" :value="width" @change="$emit('set-size', Number(($event.target as HTMLInputElement).value), height)" /></label><label>高度 <input type="number" min="1" max="12" :value="height" @change="$emit('set-size', width, Number(($event.target as HTMLInputElement).value))" /></label><label v-if="limit !== undefined">{{ kind === 'heat' ? '周数' : '条数' }} <input type="number" :min="kind === 'heat' ? 4 : 1" :max="kind === 'tasks' ? 20 : 12" :value="limit" @change="$emit('set-opt', 'limit', Number(($event.target as HTMLInputElement).value))" /></label></div>
+      <fieldset v-if="kind === 'capture'" class="capture-styles"><legend>输入样式</legend><label><input type="radio" :name="`capture-style-${$.uid}`" :checked="captureStyle === 1" @change="$emit('set-opt', 'captureStyle', 1)" /> A · 紧凑单行</label><label><input type="radio" :name="`capture-style-${$.uid}`" :checked="captureStyle !== 1" @change="$emit('set-opt', 'captureStyle', 2)" /> B · 多行书写</label><p>一格高时自动紧凑；切换样式保留草稿。</p></fieldset>
       <footer class="settings-actions"><button type="button" @click="$emit('rename')">修改标题</button><button type="button" class="danger" @click="settings?.close(); $emit('remove')">移除卡片</button><button type="button" class="done" @click="settings?.close()">完成</button></footer>
     </dialog></Teleport>
   </section>
@@ -33,7 +34,7 @@ import type { HomeCardSummary, HomeCardRow } from '../lib/homeCardPresentation.t
 import { registerBackHandler } from '../lib/androidBack';
 import { moduleMeta, type ModuleKind } from '../lib/homeBoard.ts';
 import { cardTier } from '../lib/homeCardPresentation.ts';
-const props = defineProps<{ kind: ModuleKind; title: string; width: number; height: number; limit?: number; managing: boolean; dragging: boolean; target?: boolean; summary: HomeCardSummary }>();
+const props = defineProps<{ kind: ModuleKind; title: string; width: number; height: number; limit?: number; captureStyle?: number; managing: boolean; dragging: boolean; target?: boolean; summary: HomeCardSummary }>();
 const emit = defineEmits<{ (e: 'remove' | 'rename'): void; (e: 'set-size', w: number, h: number): void; (e: 'set-opt', key: string, value: number): void; (e: 'drag-request' | 'resize-request', event: PointerEvent): void; (e: 'activate', row: HomeCardRow): void }>();
 const root = ref<HTMLElement | null>(null), settings = ref<HTMLDialogElement | null>(null), closeButton = ref<HTMLButtonElement | null>(null);
 const size = ref({ w: 300, h: 300 });
@@ -42,8 +43,8 @@ const meta = computed(() => moduleMeta(props.kind));
 const tier = computed(() => cardTier(props.width, props.height));
 const shortTitles: Record<ModuleKind, string> = { capture: '速记', shortcuts: '入口', recent: '更新', notes: '灵感', fresh: '新增', tasks: '待办', stats: '概览', weekly: '动态', tags: '标签', sections: '分区', roam: '漫游', system: '状态', sync: '同步', ring: '占比', heat: '热力', inbox: '收集', queue: '提炼', board: '看板', activity: '改动', digest: '摘要' };
 const tinyTitle = computed(() => props.title === meta.value.title ? shortTitles[props.kind] : props.title);
-// 热力图本体就是内容；快捷入口在横条档直接显示真实按钮排；速记太小时退回摘要
-const compact = computed(() => props.kind === 'heat' ? false : props.kind === 'shortcuts' && tier.value === 'bar' ? false : props.kind === 'capture' ? size.value.w < 120 || size.value.h < (size.value.w < 200 ? 240 : 190) : true);
+// 热力图与速记始终显示真实内容；速记的紧凑排版由输入组件负责。
+const compact = computed(() => ['heat', 'capture'].includes(props.kind) ? false : props.kind === 'shortcuts' && tier.value === 'bar' ? false : true);
 const padding = computed(() => size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 20);
 const expanded = ref(false), hoverSize = ref('');
 let previousFocus: HTMLElement | null = null;
@@ -69,7 +70,7 @@ let down: { x: number; y: number } | null = null;
 let held = false;
 function clearHold() { if (hold) clearTimeout(hold); hold = null; down = null; if (held) setTimeout(() => { held = false; }, 0); }
 function onPointerDown(event: PointerEvent) {
-  if (event.button !== 0 || (event.target as HTMLElement).closest('input,textarea,a,select,.card-settings,.resize-handle,.shell-expand')) return;
+  if (event.button !== 0 || (event.target as HTMLElement).closest('input,textarea,a,select,.capture button,.card-settings,.resize-handle,.shell-expand')) return;
   if (props.managing) { emit('drag-request', event); return; }
   if (event.pointerType !== 'touch') return;
   down = { x: event.clientX, y: event.clientY };
@@ -356,6 +357,10 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 }
 .capture .module-content { display:flex;overflow:hidden; }
 .capture .module-content :deep(.capture) { width:100%; }
+.capture-styles { border:0;padding:0;margin:0 0 22px;display:grid;gap:10px;font-size:13px; }
+.capture-styles legend { margin-bottom:10px;color:var(--text-secondary); }
+.capture-styles label { display:flex;align-items:center;gap:8px; }
+.capture-styles p { color:var(--text-faint);font-size:11px; }
 @container (max-width:260px) {
   .shell-head {
     margin-bottom:10px;

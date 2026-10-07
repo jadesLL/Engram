@@ -122,7 +122,7 @@ export interface ModuleMeta {
  * 默认 w/h 按「加到页面上就能直接用」给：宽卡整行、统计卡三分之一、列表卡半页 + 高一点。
  */
 export const MODULE_META: ModuleMeta[] = [
-  { kind: 'capture', title: '快速记灵感', hint: '三行输入框，写完直接落进灵感碎片', icon: 'lightbulb', w: DEFAULT_THIRD, h: 2 },
+  { kind: 'capture', title: '快速记灵感', hint: 'A 紧凑单行 / B 多行书写，一格高也能直接输入', icon: 'lightbulb', w: DEFAULT_THIRD, h: 2 },
   { kind: 'shortcuts', title: '快捷入口', hint: '新建页面、搜索、图谱、Agent 等常用动作', icon: 'play', w: DEFAULT_HALF, h: 1 },
   { kind: 'recent', title: '最近更新', hint: '最近改动过的页面与灵感', icon: 'refresh', w: DEFAULT_HALF, h: 5 },
   { kind: 'notes', title: '近期灵感', hint: '原始资料里最新记下的几条', icon: 'lightbulb', w: DEFAULT_HALF, h: 4 },
@@ -138,7 +138,7 @@ export const MODULE_META: ModuleMeta[] = [
   { kind: 'ring', title: '库占比', hint: '概念 / 实体 / 资料 的占比环 + 总数', icon: 'graph', w: DEFAULT_THIRD, h: 4 },
   { kind: 'heat', title: '知识热力', hint: '近 4–12 周页面最近改动的日期分布', icon: 'activity', w: DEFAULT_THIRD, h: 2 },
   { kind: 'inbox', title: '收集箱', hint: '待整理的原始件与转换进度', icon: 'inbox', w: DEFAULT_THIRD, h: 3 },
-  { kind: 'queue', title: '等待提炼', hint: '刚落盘还没进 Wiki 的资料与灵感', icon: 'merge', w: DEFAULT_HALF, h: 3 },
+  { kind: 'queue', title: '等待提炼', hint: '尚未提炼的真实资料清单，包含文档、对话与灵感', icon: 'merge', w: DEFAULT_HALF, h: 3 },
   { kind: 'board', title: '看板快照', hint: '任务看板三列各几条，点开进看板', icon: 'board', w: FULL_SPAN, h: 3 },
   { kind: 'activity', title: '最近改动', hint: '最近动过的页面，按时间倒着排', icon: 'restore', w: DEFAULT_HALF, h: 4 },
   { kind: 'digest', title: 'Agent 摘要', hint: '用一句话说清最近值得看什么', icon: 'ai', w: DEFAULT_HALF, h: 3 },
@@ -768,12 +768,23 @@ function isoDay(date: Date): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-/** 「等待提炼」：最近改动过、但还没被引用的原始资料与灵感（数据口径与旧版「最近更新」一致） */
-export function pendingDistillOf(pages: any[], limit = 4): any[] {
-  return (pages || [])
-    .filter((page) => String(page?.path || '').startsWith('原始资料/'))
-    .filter((page) => !String(page?.path || '').startsWith('原始资料/对话/'))
+/** 「等待提炼」只接收 /api/files/list 返回的真实账本标记；未查询状态的页面不能充当待办。 */
+export function pendingDistillOf(files: any[], limit = 4): any[] {
+  return (files || [])
+    .filter((file) => String(file?.path || '').startsWith('原始资料/') && file.distilled === false)
     .slice(0, Math.max(1, limit));
+}
+
+/** Markdown 可直接读；其余文件等自动提取文本就绪后再提炼。 */
+export function pendingDistillLabel(file: any): string {
+  if (typeof file?.readable === 'boolean') return file.readable ? '等待提炼' : '等待文本提取';
+  const ext = String(file?.ext || String(file?.path || '').split('.').pop() || '').toLowerCase();
+  return ['md', 'markdown'].includes(ext) || ['completed', 'partial', '已索引'].includes(file?.extractionStatus)
+    ? '等待提炼' : '等待文本提取';
+}
+
+export function rawMaterialRoute(file: any): string {
+  return file?.pageId ? `/page/${encodeURIComponent(file.pageId)}` : `/page?file=${encodeURIComponent(file?.path || '')}`;
 }
 
 /** 「Agent 摘要」里的一句人话：近 7 天哪块动得最多 */

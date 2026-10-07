@@ -17,10 +17,29 @@ import {
   normalizePlace,
   placeItem,
   usedRows,
+  viewportColumns,
+  viewportPlaces,
   type GridPlace,
 } from './homeGrid.ts';
 
 const rect = (col: number, row: number, w = 2, h = 2): GridPlace => ({ col, row, w, h });
+
+test('缩小窗口减少显示列数，保持可读格宽，恢复大窗口时回到原布局', () => {
+  const original = [rect(4, 0, 2, 1), rect(0, 0, 2, 2), rect(2, 0, 2, 3), rect(0, 3, 6, 2)];
+  const snapshot = JSON.stringify(original);
+  for (const width of [180, 280, 390, 560, 760, 1000]) {
+    const cols = viewportColumns(width);
+    const shown = viewportPlaces(original, cols);
+    if (cols > 1) assert.ok((width - 14 * (cols - 1)) / cols >= 130);
+    for (const [index, item] of shown.entries()) {
+      assert.ok(item.col >= 0 && item.col + item.w <= cols);
+      assert.equal(item.h, original[index].h);
+      assert.ok(shown.every((other, at) => at === index || !intersects(item, other)));
+    }
+    assert.equal(JSON.stringify(original), snapshot);
+  }
+  assert.deepEqual(viewportPlaces(original, 6), original);
+});
 
 test('栅格口径：6 列、宽 1..6、高 1..12、默认查找 48 行', () => {
   assert.equal(GRID_COLS, 6);

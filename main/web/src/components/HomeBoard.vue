@@ -3,7 +3,8 @@
   <div
     ref="boardEl"
     class="board"
-    :style="{ '--board-cols': GRID_COLS, '--grid-row-h': `${unit}px` }"
+    :class="{ 'editing-board': store.editing }"
+    :style="{ '--board-cols': displayColumns, '--grid-row-h': `${unit}px` }"
   >
     <div class="board-cq">
       <div class="board-inner">
@@ -31,7 +32,7 @@
     <!-- 编辑态工具条：加模块 / 排整齐 / 紧凑 / 恢复默认 -->
     <div v-if="store.editing" class="manage-bar">
       <span class="manage-hint">
-        拖动卡片 = 换位置（自动吸附到栅格）；拖右下角 = 改大小；方向键微调、Shift+方向键改尺寸
+        拖动卡片 = 换位置；拖右下角 = 改大小；方向键微调、Shift+方向键改尺寸。窄窗口编辑时可横向滚动。
       </span>
       <div class="manage-spacer" />
       <button class="manage-btn" type="button" :disabled="!store.history.length" @click="store.undo()">撤销</button>
@@ -80,8 +81,8 @@
         class="widget"
         :class="[{ dragging: dragId === entry.module.id }, entry.module.w >= 6 ? 'wide' : '']"
         :style="{
-          gridColumn: `${entry.module.col + 1} / span ${entry.module.w}`,
-          gridRow: `${entry.module.row + 1} / span ${entry.module.h}`,
+          gridColumn: `${entry.place.col + 1} / span ${entry.place.w}`,
+          gridRow: `${entry.place.row + 1} / span ${entry.place.h}`,
           transform: dragId === entry.module.id && gestureMode === 'move' ? `translate(${ghost.x}px, ${ghost.y}px)` : undefined,
         }"
         :data-module-id="entry.module.id"
@@ -90,8 +91,9 @@
         <HomeModuleShell
           :kind="entry.module.kind"
           :title="entry.title"
-          :width="entry.module.w"
-          :height="entry.module.h"
+          :width="entry.place.w"
+          :height="entry.place.h"
+          :capture-style="Number(entry.module.opts.captureStyle) || 2"
           :limit="entry.hasLimit ? entry.limit : undefined"
           :managing="store.editing"
           :dragging="dragId === entry.module.id"
@@ -104,8 +106,9 @@
           @set-opt="(key, value) => store.update(entry.module.id, { opts: { ...entry.module.opts, [key]: value } })"
           @drag-request="startDrag($event, entry.module.id)"
           @resize-request="startResize($event, entry.module.id)"
+          v-slot="{ expanded }"
         >
-          <HomeCapture v-if="entry.module.kind === 'capture'" :submit="onIdea" />
+          <HomeCapture v-if="entry.module.kind === 'capture'" :submit="onIdea" :variant="Number(entry.module.opts.captureStyle) || 2" :single-row="entry.module.h === 1 && !expanded" />
           <HomeShortcuts v-else-if="entry.module.kind === 'shortcuts'" :agent-name="agentName" @go="go" @chat="onChat" />
           <HomeRecent v-else-if="entry.module.kind === 'recent'" :items="recentItems" :limit="entry.limit" @go="go" />
           <HomeNotes v-else-if="entry.module.kind === 'notes'" :items="ideaItems" :limit="entry.limit" @go="go" @capture="quickNote" />
@@ -126,7 +129,7 @@
           <HomeRing v-else-if="entry.module.kind === 'ring'" :pages="props.pages" :files="props.fileCount" @go="go" />
           <HomeHeat v-else-if="entry.module.kind === 'heat'" :pages="props.pages" :weeks="entry.limit" />
           <HomeInbox v-else-if="entry.module.kind === 'inbox'" @go="go" />
-          <HomeQueue v-else-if="entry.module.kind === 'queue'" :pages="props.pages" :limit="4" @go="go" />
+          <HomeQueue v-else-if="entry.module.kind === 'queue'" :files="rawFiles" :loading="queueLoading" :error="queueError" :limit="12" @go="go" />
           <HomeBoardCard v-else-if="entry.module.kind === 'board'" :board="tasks.board" :loading="tasksLoading" @go="go" />
           <HomeActivity v-else-if="entry.module.kind === 'activity'" :items="changeLogItems" :limit="entry.limit" @go="go" />
           <HomeDigest v-else-if="entry.module.kind === 'digest'" :lines="digestLines" :agent-name="agentName" @go="go" @chat="onChat" />
@@ -210,13 +213,16 @@ import {
   normalizePlace,
   placeItem,
   usedRows,
+  viewportColumns,
+  viewportPlaces,
   type GridPlace,
 } from '../lib/homeGrid.ts';
 import { boardView, filterCards, EMPTY_FILTER } from '../lib/taskBoard.ts';
-import { pendingDistillOf, ratioRows } from '../lib/homeBoard.ts';
+import { pendingDistillOf, pendingDistillLabel, rawMaterialRoute, ratioRows } from '../lib/homeBoard.ts';
 import type { HomeCardSummary, HomeCardRow } from '../lib/homeCardPresentation.ts';
 import { useAppStore } from '../stores/app';
 import { useRuntimeCapabilities } from '../lib/capabilities';
+import { api } from '../api';
 import { syncStatusView, formatSyncTime } from '../lib/syncStatus.ts';
 import { APP_VERSION } from '../version.ts';
 
@@ -251,6 +257,27 @@ const emit = defineEmits<{
 const store = useHomeBoardStore();
 const tasks = useTasksStore();
 const inbox = useInboxStore();
+
+/** 侧栏接口已经携带真实账本状态；只在首页放了待提炼卡时读取，所有实例共用一份。 */
+const rawFiles = ref<any[]>([]);
+const queueLoading = ref(false);
+const queueError = ref('');
+const hasQueue = computed(() => store.board.modules.some((module) => module.kind === 'queue'));
+async function refreshQueue() {
+  if (!hasQueue.value || queueLoading.value || document.hidden) return;
+  queueLoading.value = true;
+  try {
+    const { data } = await api.get('/api/files/list', { params: { dir: '原始资料' } });
+    rawFiles.value = Array.isArray(data.files) ? data.files : [];
+    queueError.value = '';
+  } catch {
+    queueError.value = rawFiles.value.length ? '刷新失败，显示上次清单' : '待提炼清单读取失败，稍后重试';
+  } finally {
+    queueLoading.value = false;
+  }
+}
+watch([hasQueue, () => props.pages, () => props.fileCount], () => { void refreshQueue(); }, { immediate: true });
+let queueTimer: ReturnType<typeof setInterval> | undefined;
 
 const boardEl = ref<HTMLElement>();
 const gridEl = ref<HTMLElement>();
@@ -314,6 +341,7 @@ const boardModules = computed(() =>
     const fallback = DEFAULT_LIMIT[module.kind] || 6;
     return {
       module: dragId.value === module.id && gestureMode.value === 'move' ? { ...module, ...gesture!.origin } : module,
+      place: dragId.value === module.id && gestureMode.value === 'move' ? gesture!.origin : displayPlaces.value[index],
       index,
       title: titleOf(module),
       hasLimit,
@@ -350,7 +378,7 @@ function summaryOf(module: HomeModule): HomeCardSummary {
     case 'shortcuts': return {value:'快捷入口',label:'搜索 · 新建 · 图谱 · Agent',action:true,rows:[{text:'搜索',detail:'知识库',path:'/search'},{text:'新建',detail:'Wiki',path:'/page'},{text:'图谱',detail:'关系',path:'/graph'},{text:'Agent',detail:'对话',action:'chat'},{text:'看板',detail:'任务',path:'/tasks'},{text:'收集',detail:'资料',path:'/inbox'}]};
     case 'roam': return {value:'换一篇',label:`${roamCandidates.value.length} 篇可漫游`,action:true,rows:rowsOf(roamCandidates.value,8),empty:'知识库还没有可漫游的页面'};
     case 'inbox': return {value:Number(inbox.counts.pending || 0),label:'份待整理资料',rows:(inbox.pendingItems || []).slice(0,12).map((item:any)=>({text:String(item.path || '').split('/').pop() || '未命名资料',detail:'待整理',path:'/inbox'})),empty:'收集箱是空的，拖文件进来开始整理'};
-    case 'queue': { const candidates=pendingDistillOf(props.pages,props.pages.length);return {value:candidates.length,label:'份原始资料候选',rows:rowsOf(candidates),empty:'没有最近落盘的原始资料'}; }
+    case 'queue': { const candidates=pendingDistillOf(rawFiles.value,rawFiles.value.length);return {value:queueError.value && !rawFiles.value.length ? '—' : queueLoading.value && !rawFiles.value.length ? '…' : candidates.length,label:queueError.value || '份资料等待提炼',rows:candidates.map(file=>({text:file.name,detail:pendingDistillLabel(file),path:rawMaterialRoute(file)})),empty:queueError.value || (queueLoading.value ? '正在读取待提炼资料…' : '没有等待提炼的资料')}; }
     case 'board': return {value:tasks.board ? filterCards(tasks.board,EMPTY_FILTER).length : 0,label:'件任务',rows:(tasks.board?.groups || []).map(g=>({text:g.title,detail:g.cards.length,amount:g.cards.length,path:'/tasks'})),chart:'bars',empty:tasksLoading.value?'正在读取看板…':'暂无看板，打开任务页面生成'};
     case 'digest': return {value:digestLines.value.length,label:props.agentName || 'Agent 摘要',rows:digestLines.value.map(text=>({text,action:'chat'}))};
     case 'system': { const jobs=app.jobs;const failed=Number(jobs?.failed || 0);const runtime=capabilities.value.runtime==='desktop'?'桌面端本地服务':capabilities.value.runtime==='android-local'?'手机本地服务':'服务器 / Docker';return {value:'运行中',label:runtime,status:{tone:failed?'warn':'ok',text:'运行中'},rows:[{text:'版本',detail:APP_VERSION,path:'/settings?section=update'},{text:'模式',detail:capabilities.value.runtime,path:'/settings'},{text:'Agent',detail:props.agentName || '未配置',action:'chat'},{text:'执行',detail:Number(jobs?.running || 0),path:'/settings'},{text:'排队',detail:Number(jobs?.pending || 0),path:'/settings'},{text:'失败',detail:failed,path:'/settings'}]}; }
@@ -421,7 +449,9 @@ async function onReset() {
 /* ===== 模块内容回调 ===== */
 /** 速记模块把内容递上来（它自己发请求与显示错误）；落盘由上层回调完成 */
 async function onIdea(content: string): Promise<boolean> {
-  return (await props.onIdea?.(content)) ?? false;
+  const ok = (await props.onIdea?.(content)) ?? false;
+  if (ok) void refreshQueue();
+  return ok;
 }
 function go(path: string) {
   emit('go', path);
@@ -439,13 +469,16 @@ const targetPreview = ref<GridPlace | null>(null);
 const previewBoard = ref<HomeBoard | null>(null);
 const ghost = ref({ x: 0, y: 0 });
 const gestureMode = ref<'move' | 'resize'>('move');
-const unit = ref(140);
-const gridRows = computed(() => Math.max(2, usedRows((previewBoard.value || store.board).modules)));
+const gridWidth = ref(1000);
+const displayColumns = computed(() => store.editing ? GRID_COLS : viewportColumns(gridWidth.value));
+const displayPlaces = computed(() => viewportPlaces((previewBoard.value || store.board).modules, displayColumns.value));
+const unit = computed(() => Math.max(1, (gridWidth.value - 14 * (displayColumns.value - 1)) / displayColumns.value));
+const gridRows = computed(() => Math.max(2, usedRows(displayPlaces.value)));
 let gridObserver: ResizeObserver | null = null;
 watch(gridEl, (el) => {
   gridObserver?.disconnect();
   if (!el) return;
-  gridObserver = new ResizeObserver(([entry]) => { unit.value = Math.max(1, (entry.contentRect.width - 14 * (GRID_COLS - 1)) / GRID_COLS); });
+  gridObserver = new ResizeObserver(([entry]) => { gridWidth.value = entry.contentRect.width; });
   gridObserver.observe(el);
 });
 let frame = 0;
@@ -461,6 +494,8 @@ function preventTouchScroll(event: TouchEvent) { if (gesture) event.preventDefau
 function beginGesture(event: PointerEvent, id: string, mode: 'move' | 'resize') {
   if (gesture || event.button !== 0) return;
   if (!store.editing && event.pointerType !== 'touch') return;
+  // 窄窗口先切回可横向滚动的六列编辑画布，下一次拖动再使用稳定坐标。
+  if (!store.editing && displayColumns.value < GRID_COLS) { store.setEditing(true); return; }
   const module = store.board.modules.find((m) => m.id === id);
   if (!module) return;
   store.setEditing(true);
@@ -565,9 +600,17 @@ function onBoardKey(event: KeyboardEvent) {
   event.preventDefault();
   onModuleKey(module, step[0], step[1], event.shiftKey);
 }
-onMounted(() => window.addEventListener('keydown', onBoardKey));
+onMounted(() => {
+  window.addEventListener('keydown', onBoardKey);
+  window.addEventListener('focus', refreshQueue);
+  document.addEventListener('visibilitychange', refreshQueue);
+  queueTimer = setInterval(refreshQueue, 10_000);
+});
 
 onUnmounted(() => {
+  clearInterval(queueTimer);
+  window.removeEventListener('focus', refreshQueue);
+  document.removeEventListener('visibilitychange', refreshQueue);
   onGestureEnd(); gridObserver?.disconnect();
   window.removeEventListener('keydown', onBoardKey);
   window.removeEventListener('pointermove', onGestureMove);
@@ -590,6 +633,8 @@ onUnmounted(() => {
   overflow-x: hidden;
   overflow-y: auto;
 }
+.board.editing-board { overflow-x:auto; }
+.editing-board .board-inner { min-width:930px; }
 /*
  * 容器查询的宿主：整页可滚容器是 .board，居中则由 .board-inner 的 auto 外边距负责，
  * 所以中间再垫一层。它只做一件事——把「正文实际有多宽」暴露给下面的 @container 规则
@@ -766,7 +811,7 @@ onUnmounted(() => {
  */
 .board-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--board-cols), minmax(0, 1fr));
   grid-auto-rows: var(--grid-row-h);
   /* 只画用到的行数（--grid-rows 由脚本按内容算），避免底部留一大片空白 */
   grid-template-rows: repeat(var(--grid-rows, 4), var(--grid-row-h));
