@@ -3,44 +3,36 @@
   <div v-if="shown.length" class="queue-list">
     <button
       v-for="page in shown"
-      :key="page.id"
+      :key="page.path"
       class="hb-row queue-row"
       type="button"
-      @click="$emit('go', `/page/${page.id}`)"
+      @click="$emit('go', rawMaterialRoute(page))"
     >
       <span class="queue-icon"><Icon :name="isIdea(page) ? 'lightbulb' : 'file'" :size="14" /></span>
       <span class="hb-row-main">
-        <span class="hb-row-title">{{ page.title }}</span>
-        <span class="hb-row-meta">{{ isIdea(page) ? '灵感碎片 · 已落盘' : '原始资料 · 待提炼' }}</span>
+        <span class="hb-row-title">{{ page.name }}</span>
+        <span class="hb-row-meta">{{ page.path }}</span>
       </span>
-      <span class="hb-pill" :class="{ plain: !newest(page) }">{{ newest(page) ? '排队' : '等待' }}</span>
+      <span class="hb-pill plain">{{ pendingDistillLabel(page) }}</span>
     </button>
   </div>
-  <p v-else class="hb-empty">没有等待提炼的资料。记一条灵感，或把文件拖进收集箱。</p>
+  <p v-if="error" class="hb-empty" role="status">{{ error }}</p>
+  <p v-else-if="loading && !shown.length" class="hb-empty">正在读取待提炼资料…</p>
+  <p v-else-if="!shown.length" class="hb-empty">没有等待提炼的资料。记一条灵感，或把文件拖进收集箱。</p>
 </template>
 
 <script setup lang="ts">
-/**
- * 「等待提炼」近似口径：原始资料/ 下最近改动、且不在「对话/」里的几篇。
- *
- * 真·提炼状态在 Agent 侧（提炼完成后会写回 Wiki 并给来源打「已提炼」标记），
- * 首页这里不引入新的状态源：按「刚刚落盘的原始资料」展示，落盘后本来就要等提炼。
- * 若要精确状态，接口侧需要新增一个「未提炼来源」的只读端点（这次不做）。
- */
+/** 与侧栏共用文件接口的账本标记，展示全部资料类型；不推断任务是否在排队。 */
 import { computed } from 'vue';
 import Icon from '../Icon.vue';
-import { pendingDistillOf } from '../../lib/homeBoard.ts';
+import { pendingDistillOf, pendingDistillLabel, rawMaterialRoute } from '../../lib/homeBoard.ts';
 
-const props = defineProps<{ pages: any[]; limit: number }>();
+const props = defineProps<{ files: any[]; limit: number; loading: boolean; error: string }>();
 defineEmits<{ (e: 'go', path: string): void }>();
 
-const shown = computed(() => pendingDistillOf(props.pages, Math.max(1, props.limit || 4)));
+const shown = computed(() => pendingDistillOf(props.files, Math.max(1, props.limit || 4)));
 function isIdea(page: any): boolean {
   return String(page?.path || '').startsWith('原始资料/灵感碎片/');
-}
-/** 最近一条打「排队」，其余打「等待」：避免每行都是同一个胶囊 */
-function newest(page: any): boolean {
-  return shown.value[0]?.id === page?.id;
 }
 </script>
 

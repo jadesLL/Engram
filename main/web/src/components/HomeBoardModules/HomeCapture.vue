@@ -1,12 +1,12 @@
 <template>
   <!-- 内联灵感速记：写完 Ctrl+Enter 或点「记下」直接落盘，后台自动提炼（与「+」/Ctrl+N 同一接口） -->
-  <div class="capture">
+  <div class="capture" :class="{ 'capture-inline': variant === 1 || singleRow }">
     <h4 class="capture-title">先记下来，慢慢想。</h4>
     <div class="capture-input">
       <textarea
         v-model="draft"
-        rows="2"
-        placeholder="此刻想到什么？&#10;先记下来，稍后整理。"
+        :rows="variant === 1 || singleRow ? 1 : 2"
+        :placeholder="variant === 1 || singleRow ? '记一条灵感…' : '此刻想到什么？\n先记下来，稍后整理。'"
         :disabled="busy"
         aria-label="记一条灵感"
         @keydown="onKey"
@@ -39,6 +39,8 @@ import { canSubmitIdea, isIdeaSubmitKey } from '../../lib/ideaComposer';
 const props = defineProps<{
   /** 落盘回调：返回是否成功（请求与刷新统计都在上层） */
   submit: (content: string) => Promise<boolean>;
+  variant?: number;
+  singleRow?: boolean;
 }>();
 
 const draft = ref('');
@@ -129,4 +131,16 @@ function onKey(event: KeyboardEvent) {
   .capture-foot .btn {grid-column:1;grid-row:auto;width:100%;min-height:32px}
 }
 :global(.detail-panel .capture) {min-height:280px;}
+.capture-inline { display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:42px auto;gap:6px 8px;align-items:center;align-content:center; }
+.capture-inline .capture-title,.capture-inline .capture-hint { display:none; }
+.capture-inline .capture-input { grid-column:1;grid-row:1;align-self:stretch;min-height:0;border-radius:9px; }
+.capture-inline textarea { padding:8px 10px; }
+.capture-inline .capture-foot { display:contents; }
+.capture-inline .capture-foot .btn { grid-column:2;grid-row:1;align-self:center;padding:6px 10px; }
+.capture-inline .capture-error { grid-column:1 / -1;grid-row:2; }
+@container (max-width:140px) {
+  .capture-inline { grid-template-columns:minmax(0,1fr);grid-template-rows:36px auto auto;gap:4px; }
+  .capture-inline .capture-foot .btn { grid-column:1;grid-row:2;min-height:26px;padding:3px 6px; }
+  .capture-inline .capture-error { grid-row:3; }
+}
 </style>

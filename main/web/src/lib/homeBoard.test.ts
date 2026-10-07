@@ -30,6 +30,8 @@ import {
   normalizeHomeBoard,
   pageTime,
   pendingDistillOf,
+  pendingDistillLabel,
+  rawMaterialRoute,
   pickRoamPage,
   ratioRows,
   recentPagesOf,
@@ -610,15 +612,31 @@ test('heatmapDayCounts：按 updated_at 归到当天，热档按最大值归一'
   assert.equal(cells.reduce((sum, cell) => sum + cell.count, 0), 3);
 });
 
-test('pendingDistillOf：只取原始资料、跳过对话、按上限截断', () => {
+test('待提炼使用账本状态，包含对话和二进制，已提炼与未知状态不能混入', () => {
   const pages = [
-    page({ id: '1', path: '原始资料/灵感碎片/甲' }),
-    page({ id: '2', path: '原始资料/文档/乙' }),
-    page({ id: '3', path: '原始资料/对话/丙' }),
-    page({ id: '4', path: 'Wiki/概念/丁' }),
+    { path: '原始资料/灵感碎片/甲.md', distilled: false },
+    { path: '原始资料/文档/乙.md', distilled: true },
+    { path: '原始资料/对话/丙.md', distilled: false },
+    { path: 'Wiki/概念/丁.md', distilled: false },
+    { path: '原始资料/文档/未知.md' },
+    { path: '原始资料/文档/扫描件.pdf', distilled: false },
   ];
-  assert.deepEqual(pendingDistillOf(pages, 4).map((item) => item.id), ['1', '2']);
-  assert.deepEqual(pendingDistillOf(pages, 1).map((item) => item.id), ['1']);
+  assert.deepEqual(pendingDistillOf(pages, 4).map(item => item.path), [pages[0].path, pages[2].path, pages[5].path]);
+  assert.deepEqual(pendingDistillOf(pages, 1), [pages[0]]);
+  assert.equal(pendingDistillLabel(pages[0]), '等待提炼');
+  assert.equal(pendingDistillLabel(pages[5]), '等待文本提取');
+  assert.equal(pendingDistillLabel({ ext: 'pdf', extractionStatus: 'completed' }), '等待提炼');
+  assert.equal(pendingDistillLabel({ ext: 'txt', extractionStatus: null, readable: true }), '等待提炼');
+  assert.equal(rawMaterialRoute({ pageId: 'abc', path: pages[0].path }), '/page/abc');
+  assert.equal(rawMaterialRoute(pages[5]), `/page?file=${encodeURIComponent(pages[5].path)}`);
+});
+
+test('速记 A/B 样式随布局保存，不改变卡片坐标', () => {
+  const board = defaultHomeBoard();
+  const capture = board.modules.find(module => module.kind === 'capture')!;
+  const changed = updateModule(board, capture.id, { opts: { captureStyle: 1 } });
+  assert.deepEqual(normalizeHomeBoard(serializeHomeBoard(changed)), changed);
+  assert.deepEqual(changed.modules.map(({ opts, ...module }) => module), board.modules.map(({ opts, ...module }) => module));
 });
 
 test('homeDigest：有改动时给一句统计，没改动时给安静版；待办与收集箱各自成句', () => {

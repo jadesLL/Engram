@@ -34,6 +34,37 @@ export interface GridPlace {
   h: number;
 }
 
+/** 浏览窗口变窄时减少显示列数，让一格至少约 130px；逻辑布局仍保存六列。 */
+export function viewportColumns(width: number): number {
+  const capacity = Math.floor((Math.max(0, width) + 14) / 144);
+  return capacity >= 6 ? 6 : capacity >= 4 ? 4 : capacity >= 2 ? 2 : 1;
+}
+
+/** 窄窗口的只读排布，按原视觉顺序填空；不会修改保存的坐标、尺寸或顺序。 */
+export function viewportPlaces(items: GridPlace[], columns: number): GridPlace[] {
+  if (columns >= GRID_COLS) return items.map(item => ({ ...item }));
+  const cols = Math.max(1, Math.floor(columns));
+  const out = items.map(item => ({ ...item }));
+  const occupied: GridPlace[] = [];
+  const order = items.map((_, index) => index).sort((a, b) => items[a].row - items[b].row || items[a].col - items[b].col || a - b);
+  for (const index of order) {
+    const item = items[index];
+    const w = Math.min(cols, item.w);
+    let placed: GridPlace | undefined;
+    for (let row = 0; !placed; row++) {
+      for (let col = 0; col + w <= cols; col++) {
+        const candidate = { col, row, w, h: item.h };
+        if (occupied.some(other => intersects(candidate, other))) continue;
+        placed = candidate;
+        break;
+      }
+    }
+    out[index] = placed;
+    occupied.push(placed);
+  }
+  return out;
+}
+
 export function clampCol(value: number, w: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(GRID_COLS - w, Math.round(value)));

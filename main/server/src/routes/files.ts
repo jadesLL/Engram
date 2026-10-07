@@ -169,6 +169,12 @@ export async function fileRoutes(app: FastifyInstance) {
          JOIN files f ON f.id=fe.file_id
          WHERE f.path=? AND f.deleted=0`
       ).get(rel) as any;
+      const indexed = extraction?.status ? undefined : db.prepare(
+        'SELECT text FROM files WHERE path=? AND deleted=0'
+      ).get(rel) as { text?: string } | undefined;
+      const readable = ['md', 'markdown'].includes(ext)
+        || ['completed', 'partial'].includes(extraction?.status)
+        || (!extraction?.status && Boolean(indexed?.text?.trim()));
       out.push({
         name, path: rel, ext, size: stat.size,
         updated_at: stat.mtime.toISOString(),
@@ -182,6 +188,7 @@ export async function fileRoutes(app: FastifyInstance) {
         extractionSkippedPages: extraction?.skipped_pages || 0,
         extractionError: extraction?.error || null,
         distilled: isDistilledPath(rel),
+        readable,
         // 二级分类上线前留在 原始资料/ 根目录的历史文件：归入「文档」分组展示，磁盘不动
         legacy,
       });
