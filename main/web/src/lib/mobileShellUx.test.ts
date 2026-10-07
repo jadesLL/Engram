@@ -180,8 +180,9 @@ test('行的长按/⋯ 菜单在手机上是贴底动作面板，不是贴着手
 test('触屏上的键盘提示全部换掉：首页模块、对话输入框、搜索空状态', () => {
   // 2026-10-05 首页改成可编辑看板：这两句提示随模块搬到 HomeBoardModules 下
   const capture = readSrc('components/HomeBoardModules/HomeCapture.vue');
-  assert.match(capture, /useTouchPointer/, '首页速记模块没做触屏判断');
-  assert.match(capture, /touchPointer \? '记下后后台自动提炼' : 'Ctrl\+N 随时唤起/, '首页速记仍在手机上显示 Ctrl+N');
+  const captureTemplate = capture.split('</template>')[0].replace(/<!--[\s\S]*?-->/g, '');
+  assert.doesNotMatch(captureTemplate, /Ctrl\+N|Ctrl\+Enter/, '速记可见文案不应在手机上显示键盘提示');
+  assert.match(capture, /随手记录 · 稍后整理/, '速记应给出适用于触屏的整理说明');
 
   const shortcuts = readSrc('components/HomeBoardModules/HomeShortcuts.vue');
   assert.match(shortcuts, /touchPointer \? '搜页面与资料' : 'Ctrl\+K'/, '首页快捷入口仍在手机上显示 Ctrl+K');

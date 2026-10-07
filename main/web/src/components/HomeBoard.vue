@@ -97,6 +97,7 @@
           :dragging="dragId === entry.module.id"
           :target="dragId === entry.module.id"
           :summary="summaryOf(entry.module)"
+          @activate="activateSummary"
           @remove="onRemove(entry.module)"
           @rename="onRename(entry.module)"
           @set-size="(width, height) => store.place(entry.module.id, { ...entry.module, w: width, h: height })"
@@ -187,7 +188,6 @@ import {
   MODULE_META,
   freshPagesOf,
   homeDigest,
-  heatmapDayCounts,
   moveModuleTo,
   kbCounts,
   limitOf,
@@ -213,6 +213,12 @@ import {
   type GridPlace,
 } from '../lib/homeGrid.ts';
 import { boardView, filterCards, EMPTY_FILTER } from '../lib/taskBoard.ts';
+import { pendingDistillOf, ratioRows } from '../lib/homeBoard.ts';
+import type { HomeCardSummary, HomeCardRow } from '../lib/homeCardPresentation.ts';
+import { useAppStore } from '../stores/app';
+import { useRuntimeCapabilities } from '../lib/capabilities';
+import { syncStatusView, formatSyncTime } from '../lib/syncStatus.ts';
+import { APP_VERSION } from '../version.ts';
 
 /** 各列表类模块的条数上限（与 lib/homeBoard.ts 的归一口径一致；heat 的「条数」是周数） */
 const LIMIT_MAX: Record<string, number> = { recent: 12, notes: 12, fresh: 12, tasks: 20, heat: 12 };
@@ -310,28 +316,38 @@ const boardModules = computed(() =>
 );
 
 const sync = useSyncStore();
-function summaryOf(module: HomeModule): { value: string | number; label: string; lines?: string[]; heat?: number[] } {
-  const pages = (list: any[]) => ({ value: list.length, label: '篇页面', lines: list.slice(0, 8).map((p) => p.title || String(p.path || '').split('/').pop() || '未命名') });
+const app = useAppStore();
+const { capabilities } = useRuntimeCapabilities();
+function activateSummary(row: HomeCardRow) { if (row.action === 'chat') onChat(); else if (row.action === 'capture') quickNote(); else if (row.path) go(row.path); }
+function summaryOf(module: HomeModule): HomeCardSummary {
+  const rowsOf = (list: any[], max = 12): HomeCardRow[] => list.slice(0,max).map(p=>({ text:p.title || String(p.path || '').split('/').pop() || '未命名', detail:p.updated_at ? formatSyncTime(p.updated_at) : '', path:p.id ? `/page/${p.id}` : undefined }));
+  const pageSummary = (list: any[], empty: string): HomeCardSummary => ({ value:list.length,label:'篇页面',rows:rowsOf(list,limitOf(module.opts,12,20)),empty });
+  const facts: HomeCardRow[] = [
+    {text:'概念',detail:counts.value.concepts,amount:counts.value.concepts,path:'/search?q=概念'},
+    {text:'实体',detail:counts.value.entities,amount:counts.value.entities,path:'/search?q=实体'},
+    {text:'资料',detail:counts.value.files,amount:counts.value.files,path:'/search?q=原始资料'},
+  ];
   switch (module.kind) {
-    case 'capture': return { value: '＋', label: '随手记下一个想法' };
-    case 'stats': case 'ring': return { value: stats.value.pages, label: `${counts.value.concepts} 概念 · ${counts.value.entities} 实体`, lines: [`${counts.value.files} 份资料`, `${words.value.toLocaleString()} 字`] };
-    case 'tasks': return { value: taskCards.value.length, label: '件待办', lines: taskCards.value.slice(0, 8).map((c) => c.text) };
-    case 'notes': return pages(props.ideaItems);
-    case 'recent': return pages(props.recentItems);
-    case 'activity': return pages(changeLogItems.value);
-    case 'fresh': return pages(freshItems.value);
-    case 'heat': { const cells = heatmapDayCounts(props.pages, limitOf(module.opts, 8, 12)); return { value: cells.filter((c) => !c.future && c.count > 0).length, label: '个活跃日 · 页面最近改动', heat: cells.map((c) => c.future ? 0 : c.level) }; }
-    case 'weekly': return { value: weeklyRows.value.reduce((n, r) => n + r.created, 0), label: '本周新增', lines: weeklyRows.value.map((r) => `${r.label} · ${r.updated} 篇更新`) };
-    case 'tags': return { value: tagList.value.length, label: '个常用标签', lines: tagList.value.map((r) => `${r.tag} · ${r.count}`) };
-    case 'sections': return { value: sections.value.length, label: '个分区', lines: sections.value.map((r) => `${r.label} · ${r.count}`) };
-    case 'shortcuts': return { value: '→', label: '搜索 · 新建 · Agent', lines: ['搜索知识库', '新建页面', '打开 Agent'] };
-    case 'roam': return { value: '↗', label: `${roamCandidates.value.length} 篇可以漫游` };
-    case 'inbox': return { value: Number(inbox.counts.pending || 0), label: '份待整理资料' };
-    case 'queue': return { value: props.pages.filter((p) => String(p.path || '').startsWith('原始资料/')).length, label: '份原始资料候选' };
-    case 'board': return { value: taskCards.value.length, label: '件近期任务 · 打开看板' };
-    case 'digest': return { value: '✦', label: props.agentName || 'Agent 摘要', lines: digestLines.value };
-    case 'system': return { value: '●', label: '查看运行状态' };
-    case 'sync': return { value: sync.configured ? '●' : '○', label: sync.configured ? '查看同步状态' : '待配置同步' };
+    case 'capture': return {value:'＋',label:'随手记下一个想法',rows:rowsOf(props.ideaItems),empty:'记一条灵感，稍后整理'};
+    case 'stats': return {value:stats.value.pages,label:'知识页面',rows:[...facts,{text:'字数',detail:words.value.toLocaleString()}],chart:'bars'};
+    case 'ring': { const ratios=ratioRows(props.pages,props.fileCount);return {value:ratios.total,label:'项知识与资料',rows:ratios.rows.map((r,i)=>({...facts[i],detail:`${r.value} · ${Math.round(r.ratio*100)}%`})),chart:'ring'}; }
+    case 'tasks': return {value:taskCards.value.length,label:'件待办',rows:taskCards.value.slice(0,limitOf(module.opts,5,20)).map(c=>({text:c.text,detail:c.date || c.when || '待定',path:'/tasks'})),empty:tasksLoading.value?'正在读取任务…':'近期没有待办，打开看板查看'};
+    case 'notes': return pageSummary(props.ideaItems,'还没有灵感，记下一条想法');
+    case 'recent': return pageSummary(props.recentItems,'还没有最近更新的页面');
+    case 'activity': return pageSummary(changeLogItems.value,'近期没有页面改动');
+    case 'fresh': return pageSummary(freshItems.value,'最近七天还没有新增页面');
+    case 'heat': return {value:0,label:'页面最近改动'};
+    case 'weekly': return {value:weeklyRows.value.reduce((n,r)=>n+r.created,0),label:'本周新增',rows:weeklyRows.value.map(r=>({text:r.label,detail:`${r.updated} 更新 · ${r.created} 新增`,amount:r.updated,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'trend',empty:'本周还没有更新记录'};
+    case 'tags': return {value:tagList.value.length,label:'个常用标签',rows:tagList.value.map(r=>({text:r.tag,detail:r.count,path:`/search?q=${encodeURIComponent(r.tag)}`})),empty:'给页面加一个标签，这里就会显示'};
+    case 'sections': return {value:sections.value.length,label:'个分区',rows:sections.value.map(r=>({text:r.label,detail:r.count,amount:r.count,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'bars'};
+    case 'shortcuts': return {value:'→',label:'常用动作',rows:[{text:'搜索',detail:'知识库',path:'/search'},{text:'新建',detail:'Wiki',path:'/page'},{text:'图谱',detail:'关系',path:'/graph'},{text:'Agent',detail:'对话',action:'chat'},{text:'看板',detail:'任务',path:'/tasks'},{text:'收集',detail:'资料',path:'/inbox'}]};
+    case 'roam': return {value:'↗',label:`${roamCandidates.value.length} 篇可以漫游`,rows:rowsOf(roamCandidates.value,8),empty:'知识库还没有可漫游的页面'};
+    case 'inbox': return {value:Number(inbox.counts.pending || 0),label:'份待整理资料',rows:(inbox.pendingItems || []).slice(0,12).map((item:any)=>({text:String(item.path || '').split('/').pop() || '未命名资料',detail:'待整理',path:'/inbox'})),empty:'收集箱是空的，拖文件进来开始整理'};
+    case 'queue': { const candidates=pendingDistillOf(props.pages,props.pages.length);return {value:candidates.length,label:'份原始资料候选',rows:rowsOf(candidates),empty:'没有最近落盘的原始资料'}; }
+    case 'board': return {value:tasks.board ? filterCards(tasks.board,EMPTY_FILTER).length : 0,label:'件任务',rows:(tasks.board?.groups || []).map(g=>({text:g.title,detail:g.cards.length,amount:g.cards.length,path:'/tasks'})),chart:'bars',empty:tasksLoading.value?'正在读取看板…':'暂无看板，打开任务页面生成'};
+    case 'digest': return {value:digestLines.value.length,label:props.agentName || 'Agent 摘要',rows:digestLines.value.map(text=>({text,action:'chat'}))};
+    case 'system': { const jobs=app.jobs;return {value:'●',label:capabilities.value.runtime==='desktop'?'桌面端本地服务':capabilities.value.runtime==='android-local'?'手机本地服务':'服务器 / Docker',rows:[{text:'版本',detail:APP_VERSION,path:'/settings?section=update'},{text:'模式',detail:capabilities.value.runtime,path:'/settings'},{text:'Agent',detail:props.agentName || '未配置',action:'chat'},{text:'执行',detail:Number(jobs?.running || 0),path:'/settings'},{text:'排队',detail:Number(jobs?.pending || 0),path:'/settings'},{text:'失败',detail:Number(jobs?.failed || 0),path:'/settings'}]}; }
+    case 'sync': { const view=syncStatusView(sync.status,{androidLocal:capabilities.value.runtime==='android-local'});return {value:view?.phase==='done'?'✓':sync.configured?'●':'○',label:view?.label || '待配置同步',rows:[{text:'状态',detail:view?.label || '未配置',path:'/settings?section=sync'},{text:'详情',detail:view?.detail || '添加成员设备后开始同步',path:'/settings?section=sync'},...(sync.status?.peers || []).map(p=>({text:p.name,detail:p.online?'在线':'离线',path:'/settings?section=sync'})),{text:'排队',detail:Number(sync.status?.pending || 0),path:'/settings?section=sync'}]}; }
   }
 }
 

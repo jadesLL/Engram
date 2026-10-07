@@ -1,24 +1,20 @@
 <template>
   <!-- 内联灵感速记：写完 Ctrl+Enter 或点「记下」直接落盘，后台自动提炼（与「+」/Ctrl+N 同一接口） -->
-  <div class="capture" :class="{ focused }">
-    <h4 class="capture-title">随手记下，<br />下一次灵光。</h4>
+  <div class="capture">
+    <h4 class="capture-title">先记下来，慢慢想。</h4>
     <div class="capture-input">
-      <span class="capture-bulb" aria-hidden="true"><Icon name="lightbulb" :size="18" /></span>
       <textarea
         v-model="draft"
         rows="2"
-        placeholder="此刻，你在想什么？"
+        placeholder="此刻想到什么？&#10;先记下来，稍后整理。"
         :disabled="busy"
         aria-label="记一条灵感"
-        @focus="focused = true"
-        @blur="focused = false"
         @keydown="onKey"
       ></textarea>
     </div>
     <div class="capture-foot">
-      <span class="capture-hint">{{ touchPointer ? '记下后后台自动提炼' : 'Ctrl+N 随时唤起 · 提交后后台自动提炼' }}</span>
+      <span class="capture-hint">{{ draft.length ? `${draft.length} 字 · 提交后自动提炼` : '随手记录 · 稍后整理' }}</span>
       <span v-if="error" class="capture-error">{{ error }}</span>
-      <span class="capture-spacer" />
       <button
         class="btn primary small"
         type="button"
@@ -38,9 +34,7 @@
  * 布局是「一块模块一个实例」，所以同一时刻只会有一次提交在跑。
  */
 import { computed, ref } from 'vue';
-import Icon from '../Icon.vue';
 import { canSubmitIdea, isIdeaSubmitKey } from '../../lib/ideaComposer';
-import { useTouchPointer } from '../../lib/pointer';
 
 const props = defineProps<{
   /** 落盘回调：返回是否成功（请求与刷新统计都在上层） */
@@ -50,8 +44,6 @@ const props = defineProps<{
 const draft = ref('');
 const error = ref('');
 const busy = ref(false);
-const focused = ref(false);
-const touchPointer = useTouchPointer();
 
 const canSubmit = computed(() => canSubmitIdea(draft.value));
 
@@ -75,7 +67,7 @@ async function submit() {
 }
 
 function onKey(event: KeyboardEvent) {
-  if (!isIdeaSubmitKey(event)) return;
+  if (event.isComposing || event.keyCode === 229 || !isIdeaSubmitKey(event)) return;
   event.preventDefault();
   void submit();
 }
@@ -87,25 +79,17 @@ function onKey(event: KeyboardEvent) {
  * 聚焦时整块套一圈 accent 光圈——比再画一层卡片边框更像「正在输入」。
  */
 .capture {
-  padding: 2px 0 0;
-  border-radius: 10px;
-  transition: box-shadow 150ms ease;
+  display:flex;
+  flex:1;
+  min-width:0;
+  min-height:0;
+  flex-direction:column;
+  gap:14px;
+  container-type:size;
 }
-.capture.focused { box-shadow: 0 0 0 3px var(--sidebar-focus-ring); }
-.capture-title { font-size:25px; line-height:1.3; margin-bottom:20px; letter-spacing:-.03em; }
-.capture-input { display: flex; gap: 12px; align-items: flex-start; }
-.capture-bulb {
-  width: 34px;
-  height: 34px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 10px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.capture-bulb { display:none; }
+.capture-title { font-size:18px; line-height:1.5; font-weight:500; margin:0; letter-spacing:-.02em;flex:none; }
+.capture-input { display:flex;flex:1;min-height:42px;min-width:0;background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;overflow:hidden; }
+.capture-input:focus-within { border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent); }
 .capture textarea {
   flex: 1;
   min-width: 0;
@@ -115,20 +99,34 @@ function onKey(event: KeyboardEvent) {
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 14.5px;
   line-height: 1.6;
-  padding: 5px 0 0;
+  padding:12px 14px;
+  width:100%;
+  height:100%;
+  min-height:0;
+  font-size:13px;
 }
 .capture textarea::placeholder { color: var(--text-faint); }
 .capture-foot {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
   align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+  gap: 6px 10px;
+  flex:none;
+  min-width:0;
 }
-.capture-hint { font-size: 10px; color: var(--text-faint); }
-.capture-error { font-size: 11.5px; color: var(--danger); }
-.capture-spacer { flex: 1; }
+.capture-hint { font-size:11px;color:var(--text-faint);min-width:0;overflow-wrap:anywhere;grid-column:1; }
+.capture-error { font-size:11.5px;color:var(--danger);width:100%;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;grid-column:1;grid-row:2; }
+.capture-foot .btn {grid-column:2;grid-row:1 / span 2;align-self:end;min-height:34px;border-radius:9px;padding:7px 13px;}
+.capture-foot .btn:disabled {background:var(--bg-tertiary);color:var(--text-faint);opacity:1;}
+@container (max-height:170px) { .capture-title {display:none} }
+@container (max-width:170px) {
+  .capture-title {font-size:15px}
+  .capture textarea {font-size:12px;padding:10px}
+  .capture-foot {grid-template-columns:minmax(0,1fr);gap:7px}
+  .capture-hint {font-size:10px}
+  .capture-error {grid-row:auto}
+  .capture-foot .btn {grid-column:1;grid-row:auto;width:100%;min-height:32px}
+}
+:global(.detail-panel .capture) {min-height:280px;}
 </style>
