@@ -1,8 +1,9 @@
 <template>
   <div
     class="page-row file-row"
-    :class="{ active, selected }"
+    :class="{ active, selected, 'has-document-date': documentName.date }"
     role="button"
+    :aria-label="[documentName.dateLabel, documentName.name].filter(Boolean).join(' ')"
     tabindex="0"
     @click="onClick"
     @keydown.enter.self="onClick"
@@ -22,7 +23,10 @@
       :stroke-width="1.7"
       :class="['file-icon', fileIconClass(file.ext)]"
     />
-    <span class="page-title" v-tooltip.auto="file.name">{{ file.name }}</span>
+    <span class="file-copy">
+      <span class="page-title" v-tooltip.auto="file.name">{{ documentName.name }}</span>
+      <time v-if="documentName.date" class="file-date" :datetime="documentName.date">{{ documentName.date.replace(/-/g, '.') }}</time>
+    </span>
     <span class="row-trailing">
       <!-- 灵感提炼状态（kind=idea_distill）优先占行尾这一格：它是文件「当前正在发生」的事，
            与提取进度互斥（同一行只有一个 76px 状态位），排在前面才不会被打断 -->
@@ -98,6 +102,7 @@ import { computed } from 'vue';
 import Icon from './Icon.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 import { humanError } from '../lib/ingestError';
+import { documentTitleParts } from '../lib/documentTitle';
 
 const props = defineProps<{
   file: any;
@@ -115,6 +120,9 @@ const props = defineProps<{
   distill?: { label: string; kind: 'running' | 'failed' } | null;
 }>();
 const emit = defineEmits(['open', 'toggle-select', 'remove', 'context-menu']);
+const documentName = computed(() => ['md', 'markdown'].includes(String(props.file.ext).toLowerCase())
+  ? documentTitleParts(props.file.name)
+  : { name: props.file.name, date: '', dateLabel: '' });
 
 /** 下载走 /api/files/download：正文带图片的 md 由服务端打包成 zip（md + assets/）。
  *  文件名交给 Content-Disposition，加 download 属性会把 zip 存成 .md。 */
@@ -228,13 +236,18 @@ function fileIconClass(ext: string): string {
 .file-icon-ppt { color: var(--file-ppt); opacity: 0.94; }
 .file-icon-pdf { color: var(--file-pdf); opacity: 0.94; }
 
-.page-title {
+.file-copy {
   flex: 1;
   min-width: 0;
+}
+.page-title {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.has-document-date { height: 52px; }
+.file-date { display: block; margin-top: 2px; color: var(--text-secondary); font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; }
 
 .row-trailing {
   position: relative;
@@ -366,6 +379,7 @@ function fileIconClass(ext: string): string {
     padding-block: 6px;
     font-size: 13.5px;
   }
+  .has-document-date { height: auto; min-height: 60px; }
 
   /* 目录栏文字显示不全（与 PageRow 同一条报障）：原始资料的文件名同样被单行省略号截断，
      长文件名（日期前缀 + 标题）在手机上几乎认不出来。触屏放开到两行。 */

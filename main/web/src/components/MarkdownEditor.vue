@@ -46,6 +46,7 @@ import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import { api } from '../api';
 import { VDITOR_CDN } from '../lib/vditorPreview';
+import { createEditorModelSync } from '../lib/editorModelSync';
 import {
   copyText,
   type SelectionContextMenuRequest,
@@ -414,6 +415,8 @@ function init() {
     after: () => {
       ready = true;
       lastProgrammaticValue = vditor?.getValue() || initialValue;
+      // Vditor 初始化是异步的：这期间切过页，不能继续显示构造时抓到的旧正文。
+      modelSync.setEnvironment(true, !editorHidden());
       overrideToolbarIcons();
       adoptVditorTooltips();
       observeWikiLinks();
@@ -676,6 +679,8 @@ function insertText(text: string) {
   vditor?.focus();
 }
 function getValue(): string {
+  // 阅读时/初始化时尚未同步的编辑器不是当前正文的来源，保存用父级最新值。
+  if (!modelSync.isCurrent()) return props.modelValue;
   return restoreIngestComments(markdownLinksToWiki(vditor?.getValue() || ''));
 }
 function getCurrentMode(): 'sv' | 'wysiwyg' | 'ir' {
@@ -729,19 +734,26 @@ function selectAll(): boolean {
   return document.execCommand('selectAll');
 }
 
-let pendingHiddenSync = false;
+const modelSync = createEditorModelSync(applyModelValue);
 
 /** 阅读模式下编辑器被 v-show 隐藏：跳过整页重渲染（大页面可省约一半卡顿），恢复显示时由 syncIfPending 补一次。 */
 function editorHidden(): boolean {
-  return (wrapEl.value?.offsetParent ?? 1) === null;
+  return !wrapEl.value || wrapEl.value.offsetParent === null;
 }
 
-function applyModelValue(v: string) {
+function applyModelValue(v: string, pageChanged = false) {
   if (!ready || !vditor) return;
   const editorValue = stripIngestComments(wikiLinksToMarkdown(v));
-  if (editorValue !== vditor.getValue()) {
+  if (pageChanged) {
+    userInputPending = false;
+    composing = false;
+    savedSelectionRange = null;
+    savedSelectionText = '';
+    linkPopup.value = false;
+  }
+  if (pageChanged || editorValue !== vditor.getValue()) {
     syncingModelValue = true;
-    vditor.setValue(editorValue);
+    vditor.setValue(editorValue, pageChanged);
     lastProgrammaticValue = vditor.getValue();
     releaseModelSyncSoon();
     scheduleHideManagedPlaceholders();
@@ -751,22 +763,16 @@ function applyModelValue(v: string) {
 }
 
 watch(
-  () => props.modelValue,
-  (v) => {
-    if (!ready || !vditor) return;
-    if (editorHidden()) {
-      pendingHiddenSync = true;
-      return;
-    }
-    pendingHiddenSync = false;
-    applyModelValue(v);
-  }
+  () => [props.pageId, props.modelValue] as const,
+  ([pageId, value]) => {
+    modelSync.setEnvironment(ready, !editorHidden());
+    modelSync.update(pageId || '', value);
+  },
+  { immediate: true }
 );
 
 function syncIfPending() {
-  if (!pendingHiddenSync || editorHidden()) return;
-  pendingHiddenSync = false;
-  applyModelValue(props.modelValue);
+  modelSync.setEnvironment(ready, !editorHidden());
 }
 watch(
   () => props.dark,
