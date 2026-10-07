@@ -145,6 +145,7 @@ const ICONS: Record<string, string[]> = {
   ],
   download: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4', 'M7 10l5 5 5-5', 'M12 15V3'],
   external: ['M15 3h6v6', 'M10 14 21 3', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'],
+  'arrow-up-right': ['M7 7h10v10', 'M7 17 17 7'],
   send: ['m22 2-7 20-4-9-9-4z', 'M22 2 11 13'],
   archive: ['M21 8v13H3V8', 'M1 3h22v5H1z', 'M10 12h4'],
   inbox: [

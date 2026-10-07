@@ -90,4 +90,33 @@ function go(path: string) {
 .wc-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .wc-text strong { font-size: 13px; font-weight: 600; color: var(--text); }
 .wc-text em { font-style: normal; font-size: 11px; color: var(--text-faint); }
+
+/* 横条档（h=1, w≥2）：按钮排铺成一整行，图标在上去掉副文案，高度填满 */
+@container (max-height: 140px) {
+  .welcome-cards {
+    flex-wrap: nowrap;
+    gap: 8px;
+    height: 100%;
+    align-items: stretch;
+  }
+  .welcome-card {
+    flex: 1 1 0;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    padding: 4px;
+    text-align: center;
+  }
+  .wc-icon { width: 22px; height: 22px; border-radius: 6px; }
+  .wc-text { align-items: center; gap: 0; }
+  .wc-text strong {
+    font-size: 11px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wc-text em { display: none; }
+}
 </style>

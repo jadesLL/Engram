@@ -1,8 +1,9 @@
 <template>
   <section ref="root" class="shell" :class="{ managing, dragging, compact, short: size.h < 180, capture: kind === 'capture', micro: size.w < 100 || size.h < 90 }" :style="{ padding: `${padding}px` }"
     :tabindex="managing ? 0 : -1" :aria-label="title" @pointerdown="onPointerDown" @click.capture="suppressClick">
-    <header v-if="size.h >= 90 && size.w >= 100" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ size.w < 180 ? tinyTitle : title }}</h3><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail">↗</button></header>
-    <HomeAdaptiveSummary v-if="compact" :summary="summary" :title="title" :short-title="tinyTitle" @open="openDetail" @activate="$emit('activate', $event)" />
+    <!-- 标题栏只有标准档（w≥2 且 h≥2）才画：磁贴 / 横条 / 竖条把空间全部留给内容 -->
+    <header v-if="tier === 'standard'" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
+    <HomeAdaptiveSummary v-if="compact" :summary="summary" :title="title" :short-title="tinyTitle" :tier="tier" :icon="meta.icon" @open="openDetail" @activate="$emit('activate', $event)" />
     <!-- 始终保留同一个模块实例；打开详情、改变尺寸不会丢失速记草稿。 -->
     <Teleport to="body" :disabled="!expanded">
       <div class="shell-content" :class="{ 'detail-overlay': expanded, 'content-hidden': compact && !expanded }" :role="expanded ? 'dialog' : undefined" :aria-modal="expanded ? true : undefined" :aria-label="expanded ? title : undefined" @keydown="onDetailKey">
@@ -31,14 +32,18 @@ import HomeAdaptiveSummary from './HomeAdaptiveSummary.vue';
 import type { HomeCardSummary, HomeCardRow } from '../lib/homeCardPresentation.ts';
 import { registerBackHandler } from '../lib/androidBack';
 import { moduleMeta, type ModuleKind } from '../lib/homeBoard.ts';
+import { cardTier } from '../lib/homeCardPresentation.ts';
 const props = defineProps<{ kind: ModuleKind; title: string; width: number; height: number; limit?: number; managing: boolean; dragging: boolean; target?: boolean; summary: HomeCardSummary }>();
 const emit = defineEmits<{ (e: 'remove' | 'rename'): void; (e: 'set-size', w: number, h: number): void; (e: 'set-opt', key: string, value: number): void; (e: 'drag-request' | 'resize-request', event: PointerEvent): void; (e: 'activate', row: HomeCardRow): void }>();
 const root = ref<HTMLElement | null>(null), settings = ref<HTMLDialogElement | null>(null), closeButton = ref<HTMLButtonElement | null>(null);
 const size = ref({ w: 300, h: 300 });
 const meta = computed(() => moduleMeta(props.kind));
+/** 内容档位由栅格格数决定（用户在尺寸菜单看到的 w × h），与像素无关 */
+const tier = computed(() => cardTier(props.width, props.height));
 const shortTitles: Record<ModuleKind, string> = { capture: '速记', shortcuts: '入口', recent: '更新', notes: '灵感', fresh: '新增', tasks: '待办', stats: '概览', weekly: '动态', tags: '标签', sections: '分区', roam: '漫游', system: '状态', sync: '同步', ring: '占比', heat: '热力', inbox: '收集', queue: '提炼', board: '看板', activity: '改动', digest: '摘要' };
 const tinyTitle = computed(() => props.title === meta.value.title ? shortTitles[props.kind] : props.title);
-const compact = computed(() => props.kind === 'heat' ? false : props.kind === 'capture' ? size.value.w < 120 || size.value.h < (size.value.w < 200 ? 240 : 190) : true);
+// 热力图本体就是内容；快捷入口在横条档直接显示真实按钮排；速记太小时退回摘要
+const compact = computed(() => props.kind === 'heat' ? false : props.kind === 'shortcuts' && tier.value === 'bar' ? false : props.kind === 'capture' ? size.value.w < 120 || size.value.h < (size.value.w < 200 ? 240 : 190) : true);
 const padding = computed(() => size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 20);
 const expanded = ref(false), hoverSize = ref('');
 let previousFocus: HTMLElement | null = null;
@@ -125,11 +130,21 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   flex:none;
 }
 .shell-expand {
-  font-size:20px;
-  color:var(--text-faint);
   width:26px;
   height:26px;
   flex:none;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:8px;
+  background:var(--bg-secondary);
+  border:1px solid var(--border);
+  color:var(--text-faint);
+}
+.shell:hover .shell-expand {
+  color:var(--accent);
+  background:var(--accent-soft);
+  border-color:transparent;
 }
 .shell-content,.shell-body,.module-content {
   min-width:0;
