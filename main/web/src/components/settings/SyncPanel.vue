@@ -1189,8 +1189,9 @@ onUnmounted(() => {
 .sync-category-list { display: grid; gap: 8px; }
 .sync-category-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .sync-category-row > span:first-of-type { flex: 1; min-width: 0; display: grid; gap: 4px; }
-.sync-category-row > input { flex-shrink: 0; }
-.sync-category-row > span:last-child { white-space: nowrap; }
+.sync-category-row > input { flex-shrink: 0; accent-color: var(--success); }
+.sync-category-row > span:last-child { white-space: nowrap; color: var(--text-faint); }
+.sync-category-row > input:checked ~ span:last-child { color: var(--success); }
 .role-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
