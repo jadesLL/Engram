@@ -108,6 +108,21 @@ EOF
   fi
 }
 
+# Windows 宿主机离线构建的临时目录：esbuild 服务进程与 JS 主进程通过 os.tmpdir()
+# 里的临时文件交换输入，Windows Defender 实时扫描恰好在服务进程 Remove 前握住
+# %TEMP% 下的新文件，报 "remove ... Access is denied"（2026-10-08 capture-card-fresh
+# 实查，%TEMP% 下必现、C:\WorkSpace 下正常）。把 TEMP/TMP 指到仓库根的 .tmp-host-build
+# （.gitignore 的 .tmp-* 已覆盖）绕开扫描路径；文件名是随机 32 位十六进制，并发安全。
+engram_setup_host_build_tmp() {
+  local tmp_dir="$ENGRAM_REPO_ROOT/.tmp-host-build"
+  local win_tmp
+  mkdir -p "$tmp_dir" || return 1
+  win_tmp="$(cygpath -w "$tmp_dir")" || return 1
+  export TEMP="$win_tmp"
+  export TMP="$win_tmp"
+  export TMPDIR="$win_tmp"
+}
+
 engram_cleanup_local_verification() {
   local verify_dir="$1"
   local verify_dir_windows=""
@@ -195,6 +210,8 @@ engram_run_local_offline_verification() {
 
   engram_log ">> Docker 离线缓存缺失，改用本机临时目录离线验证"
   engram_log "   shared_pnpm=$ENGRAM_SHARED_PNPM ($(engram_shared_pnpm --version))"
+  # esbuild 的临时输入文件不能落在 %TEMP%（见 engram_setup_host_build_tmp 注释）
+  engram_setup_host_build_tmp || return 1
   # 本函数通常在 if 条件中被调用：调用期间 bash 会压制函数体内的 set -e，
   # 因此每一步都必须显式检查状态（依赖 errexit 会让 test 失败被后续 build 成功掩盖）。
   (
@@ -291,6 +308,8 @@ engram_build_local_offline_overlay_image() {
   engram_log ">> 使用共享 pnpm 构建$description"
   engram_log "   shared_pnpm=$ENGRAM_SHARED_PNPM ($(engram_shared_pnpm --version))"
   engram_log "   base_image=$base_image"
+  # esbuild 的临时输入文件不能落在 %TEMP%（见 engram_setup_host_build_tmp 注释）
+  engram_setup_host_build_tmp || return 1
   set +e
   (
     set -euo pipefail

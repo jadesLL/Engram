@@ -108,7 +108,7 @@
           @resize-request="startResize($event, entry.module.id)"
           v-slot="{ expanded }"
         >
-          <HomeCapture v-if="entry.module.kind === 'capture'" :submit="onIdea" :variant="Number(entry.module.opts.captureStyle) || 2" :single-row="entry.module.h === 1 && !expanded" />
+          <HomeCapture v-if="entry.module.kind === 'capture'" :submit="onIdea" :variant="Number(entry.module.opts.captureStyle) || 2" :single-row="entry.module.h === 1 && !expanded" :ideas="ideaItems" />
           <HomeShortcuts v-else-if="entry.module.kind === 'shortcuts'" :agent-name="agentName" @go="go" @chat="onChat" />
           <HomeRecent v-else-if="entry.module.kind === 'recent'" :items="recentItems" :limit="entry.limit" @go="go" />
           <HomeNotes v-else-if="entry.module.kind === 'notes'" :items="ideaItems" :limit="entry.limit" @go="go" @capture="quickNote" />
