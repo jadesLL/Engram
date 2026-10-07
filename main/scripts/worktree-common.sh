@@ -156,6 +156,29 @@ engram_cleanup_local_verification() {
   return "$failed"
 }
 
+engram_run_cached_offline_verification() {
+  local source_dir="$1" context result=0
+  docker image inspect engram:ci-verify >/dev/null 2>&1 || return 1
+  context="$(mktemp -d -t engram-verify.XXXXXX)"
+  cat > "$context/Dockerfile" <<'EOF'
+FROM engram:ci-verify
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /engram-manifests/
+COPY server/package.json /engram-manifests/server/
+COPY web/package.json /engram-manifests/web/
+COPY desktop/package.json /engram-manifests/desktop/
+RUN for file in package.json pnpm-lock.yaml pnpm-workspace.yaml server/package.json web/package.json desktop/package.json; do cmp "$file" "/engram-manifests/$file" || exit 1; done
+COPY . /app
+RUN rm -rf server/dist web/dist && pnpm build && pnpm typecheck && pnpm test
+EOF
+  engram_log ">> 复用已缓存的 Linux 验证依赖（先逐一校验依赖清单，全程断网）"
+  docker build --pull=false --network none \
+    --label com.engram.scope=feature --label "com.engram.feature=$ENGRAM_FEATURE" \
+    --tag "$ENGRAM_VERIFY_IMAGE" -f "$context/Dockerfile" "$source_dir" || result=$?
+  engram_cleanup_local_verification "$context" || return 1
+  [ "$result" -eq 0 ]
+}
+
 engram_run_local_offline_verification() {
   local source_dir="$1"
   local resolved_source verify_dir local_app_data native_cache native_source="" candidate
@@ -332,7 +355,7 @@ engram_build_local_offline_overlay_image() {
     ) | tar -xf - -C "$build_dir"
     cd "$build_dir"
     engram_shared_pnpm install --offline --frozen-lockfile --ignore-scripts
-    engram_shared_pnpm build
+    engram_shared_pnpm build || exit 1
     runtime_id="$(
       node - "$build_dir/server/dist" "$build_dir/web/dist" <<'NODE'
 const crypto = require('node:crypto');
@@ -425,6 +448,27 @@ engram_build_local_offline_preview_image() {
   if ! base_image="$(engram_current_main_image)"; then
     printf '!! 缺少可复用的主运行镜像，无法创建离线预览\n' >&2
     return 1
+  fi
+
+  if [ "$(docker image inspect "$ENGRAM_VERIFY_IMAGE" --format '{{index .Config.Labels "com.engram.feature"}}' 2>/dev/null)" = "$ENGRAM_FEATURE" ]; then
+    local context result=0
+    context="$(mktemp -d -t engram-preview.XXXXXX)"
+    cat > "$context/Dockerfile" <<EOF
+FROM $base_image
+ARG ENGRAM_GIT_SHA=""
+COPY --from=$ENGRAM_VERIFY_IMAGE /app/server/dist /app/server/dist
+COPY --from=$ENGRAM_VERIFY_IMAGE /app/web/dist /app/.engram-runtime/$ENGRAM_FEATURE/web
+RUN printf '%s' "\$ENGRAM_GIT_SHA" > /app/GIT_SHA
+ENV ENGRAM_WEB_DIST=/app/.engram-runtime/$ENGRAM_FEATURE/web
+EOF
+    engram_log ">> 复用本次已验证的 Linux 构建产物生成预览镜像"
+    docker build --pull=false --network none \
+      --label com.engram.scope=feature --label "com.engram.feature=$ENGRAM_FEATURE" \
+      --build-arg "ENGRAM_GIT_SHA=$(git -C "$resolved_source" rev-parse HEAD)" \
+      --tag "$ENGRAM_IMAGE" "$context" || result=$?
+    engram_cleanup_local_verification "$context" || return 1
+    [ "$result" -eq 0 ]
+    return
   fi
 
   engram_build_local_offline_overlay_image \

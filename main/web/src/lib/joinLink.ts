@@ -45,4 +45,13 @@ export function installJoinLinkReceiver(): void {
     void router.push({ path: '/settings', query: { section: 'sync' } }).catch(() => {});
     return true;
   };
+  const desktop = (window as any).wikiDesktop;
+  if (desktop?.takeJoinLink) {
+    const receive = async () => {
+      const raw = await desktop.takeJoinLink();
+      if (raw) window.__engramJoinLink?.(raw);
+    };
+    desktop.onJoinLink?.(() => { void receive(); });
+    void receive();
+  }
 }

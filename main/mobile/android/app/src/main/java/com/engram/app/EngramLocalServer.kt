@@ -30,8 +30,12 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URLDecoder
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.SecureRandom
 import java.time.Instant
 import java.util.UUID
@@ -659,6 +663,45 @@ class EngramLocalServer private constructor(private val context: Context) {
                 db.setSetting("sync_enabled", "0"); secrets.put("sync_hub_token", null)
             }
             db.setSetting("sync_role", role); call.ok(); if (role == "member") sync.request(false)
+        }
+        post("/api/sync/pairing/join") {
+            if (!call.authorize()) return@post
+            val invite = PairingInvite.parse(call.body().optString("link"))
+                ?: return@post call.error("邀请链接无效，请从中枢重新复制或扫码", HttpStatusCode.BadRequest)
+            if ((db.setting("sync_role") ?: "none") != "none") {
+                return@post call.error("本设备已参与同步，请先解除绑定", HttpStatusCode.Conflict)
+            }
+            val name = try {
+                withContext(Dispatchers.IO) {
+                    val connection = URL("${invite.hubUrl}/api/sync/pairing/verify").openConnection() as HttpURLConnection
+                    connection.connectTimeout = 8000; connection.readTimeout = 8000
+                    connection.instanceFollowRedirects = false
+                    connection.setRequestProperty("Authorization", "Bearer ${invite.token}")
+                    try {
+                        val status = connection.responseCode
+                        if (status == 401 || status == 403) throw IllegalArgumentException("邀请令牌已失效，请在中枢重新生成邀请")
+                        require(status == 200) { "中枢无法确认配对，请检查中枢角色及版本" }
+                        val bytes = connection.inputStream.use { it.readBytesLimited(16384) }
+                        val result = JSONObject(String(bytes, Charsets.UTF_8))
+                        require(result.optBoolean("ok") && result.has("name")) { "中枢未确认配对" }
+                        result.getString("name")
+                    } finally { connection.disconnect() }
+                }
+            } catch (error: IllegalArgumentException) {
+                return@post call.error(error.message ?: "配对失败", HttpStatusCode.BadRequest)
+            } catch (_: Exception) {
+                return@post call.error("无法连接配对中枢，请检查网络和邀请地址后重试", HttpStatusCode.BadGateway)
+            }
+            if ((db.setting("sync_role") ?: "none") != "none") {
+                return@post call.error("本设备的同步角色已改变，请刷新后重试", HttpStatusCode.Conflict)
+            }
+            secrets.put("sync_hub_token", invite.token)
+            db.setSetting("sync_hub_url", invite.hubUrl)
+            db.setSetting("sync_direct_urls", "[]")
+            db.setSetting("sync_device_label", name)
+            db.setSetting("sync_role", "member"); db.setSetting("sync_enabled", "1")
+            call.json(JSONObject().put("ok", true).put("name", name).put("hubUrl", invite.hubUrl))
+            sync.request(false)
         }
         post("/api/sync/reconcile") { if (call.authorize()) { sync.request(true); call.ok() } }
 

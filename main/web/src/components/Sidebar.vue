@@ -74,6 +74,7 @@
               :aria-expanded="!collapsed[g.key]"
               v-tooltip="collapsed[g.key] ? `展开${g.label}` : `收起${g.label}`"
               @click="toggle(g.key)"
+              @contextmenu="onDirectoryContextMenu($event, directoryPath(g.key))"
               @dragover="g.key === 'concept' && onDragOverSub($event, 'concept')"
               @dragleave="g.key === 'concept' && onDragLeave('concept')"
               @drop.prevent="g.key === 'concept' && onDropToType('concept')"
@@ -127,6 +128,7 @@
                     :aria-expanded="!collapsed[`${g.key}:${sub.key}`]"
                     v-tooltip="collapsed[`${g.key}:${sub.key}`] ? `展开${sub.label}` : `收起${sub.label}`"
                     @click="toggle(`${g.key}:${sub.key}`)"
+                    @contextmenu="onDirectoryContextMenu($event, 'Wiki/实体')"
                     @dragover="onDragOverSub($event, sub.key)"
                     @dragleave="onDragLeave(sub.key)"
                     @drop.prevent="onDropToType(sub.key)"
@@ -216,6 +218,7 @@
             :aria-expanded="!collapsed.files"
             v-tooltip="collapsed.files ? '展开原始资料' : '收起原始资料'"
             @click="toggle('files')"
+            @contextmenu="onDirectoryContextMenu($event, '原始资料')"
           >
             <Icon name="chevron-right" :size="14" class="toggle-chevron" />
             <span class="sec-name">原始资料</span>
@@ -280,6 +283,7 @@
                 :aria-expanded="!collapsed['raw:' + g.key]"
                 v-tooltip="collapsed['raw:' + g.key] ? `展开${g.label}` : `收起${g.label}`"
                 @click="toggle('raw:' + g.key)"
+                @contextmenu="onDirectoryContextMenu($event, rawDirectoryPath(g.key))"
               >
                 <Icon name="chevron-right" :size="12" class="toggle-chevron" />
                 <span class="sub-name">{{ g.label }}</span>
@@ -336,6 +340,7 @@
             :aria-expanded="!collapsed.ailog"
             v-tooltip="collapsed.ailog ? '展开 AI 工作区' : '收起 AI 工作区'"
             @click="toggle('ailog')"
+            @contextmenu="onDirectoryContextMenu($event, 'AIWorks')"
           >
             <Icon name="chevron-right" :size="14" class="toggle-chevron" />
             <span class="sec-name">AI 工作区</span>
@@ -492,6 +497,7 @@
             :aria-expanded="!isFullColFolded(col.key)"
             v-tooltip="isFullColFolded(col.key) ? `展开${col.label}（${col.count}）` : `收起${col.label}（${col.count}）`"
             @click="toggleFullColumn(col.key)"
+            @contextmenu="onDirectoryContextMenu($event, directoryPath(col.key))"
           >
             <Icon name="chevron-right" :size="13" class="toggle-chevron" />
             <span class="kb-col-name" :class="col.badge">{{ col.label }}</span>
@@ -528,6 +534,7 @@
                   : `收起${group.label}（${group.items.length}）`
               "
               @click="toggle(groupCollapseKey(col.key, group.key))"
+              @contextmenu="onDirectoryContextMenu($event, col.key === 'raw' ? rawDirectoryPath(group.key) : directoryPath(col.key))"
             >
               <Icon name="chevron-right" :size="12" class="toggle-chevron" />
               <span class="kb-sub-name">{{ group.label }}</span>
@@ -541,6 +548,7 @@
                 type="button"
                 :class="{ active: col.key === 'raw' ? isActiveFile(item) : item.id === activeId }"
                 @click="col.key === 'raw' ? openFile(item) : openPage(item)"
+                @contextmenu.prevent="col.key === 'raw' ? onFileContextMenu({ x: $event.clientX, y: $event.clientY, file: item }) : onPageContextMenu({ x: $event.clientX, y: $event.clientY, page: item })"
               >
                 <span class="kb-row-title" v-tooltip.auto="col.key === 'raw' ? item.name : item.title">
                   {{ col.key === 'raw' ? item.name : item.title }}
@@ -997,10 +1005,35 @@ async function changePageType(page: any, newType: string) {
 }
 
 /** 右键页面行：查看引用图片 / 归档 / 删除（语义合并交给外部 Agent 处理） */
+const desktopFiles = (window as any).wikiDesktop;
+function directoryPath(key: string): string {
+  return ({ concept: 'Wiki/概念', entity: 'Wiki/实体', archived: 'Wiki/归档', raw: '原始资料' } as Record<string, string>)[key] || 'AIWorks/log';
+}
+function rawDirectoryPath(key: string): string {
+  const label = rawSectionMeta.value[key]?.label || ({ doc: '文档', chat: '对话', idea: '灵感碎片' } as Record<string, string>)[key];
+  return `原始资料/${label}`;
+}
+function explorerItems(path: string): ContextMenuItem[] {
+  if (!desktopFiles?.revealBrainPath) return [];
+  return [{ id: 'explorer', label: '在资源管理器中打开', icon: 'folder', action: async () => {
+    try {
+      const result = await desktopFiles.revealBrainPath(path);
+      if (!result?.ok) notify.error(result?.error || '打开本地路径失败');
+    } catch { notify.error('打开本地路径失败'); }
+  } }];
+}
+function onDirectoryContextMenu(event: MouseEvent, path: string) {
+  const items = explorerItems(path);
+  if (!items.length) return;
+  event.preventDefault();
+  openContextMenu({ x: event.clientX, y: event.clientY, items });
+}
+
 function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) {
   const isArchived = page.path.startsWith('Wiki/归档/');
   const count = Number(page.assetCount || 0);
   const items: ContextMenuItem[] = [
+    ...explorerItems(page.path),
     {
       id: 'download',
       label: '下载',
@@ -1033,6 +1066,7 @@ function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) 
 function onFileContextMenu({ x, y, file }: { x: number; y: number; file: any }) {
   const count = Number(file.assetCount || 0);
   const items: ContextMenuItem[] = [
+    ...explorerItems(file.path),
     {
       id: 'download',
       label: '下载',

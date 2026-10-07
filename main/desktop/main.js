@@ -9,6 +9,17 @@ const net = require('node:net');
 const dataDirLib = require('./lib/data-dir');
 // 局域网访问开关与监听地址（设置 → 多端同步 → 同步群组 里把本机当中枢时用）
 const localAccess = require('./lib/local-access');
+const { resolveBrainPath } = require('./lib/brain-path');
+const { joinLinkFromArgs, protocolRegistration } = require('./lib/join-link');
+let pendingJoinLink = joinLinkFromArgs(process.argv);
+function receiveJoinLink(raw) {
+  const link = joinLinkFromArgs([raw]);
+  if (!link) return;
+  pendingJoinLink = link;
+  showMainWindow();
+  if (win && !win.isDestroyed()) win.webContents.send('join-link-ready');
+}
+app.on('open-url', (event, url) => { event.preventDefault(); receiveJoinLink(url); });
 // 注意：deps.js 在 desktop/scripts/lib/ 下（构建期脚本与主进程共用的判定），不是 desktop/lib/
 const depsLib = require('./scripts/lib/deps');
 // 桌面快捷方式与品牌化 exe（源码模式的 electron.exe 图标是 Electron 原子，见 lib/shortcut.js）
@@ -43,7 +54,10 @@ if (process.env.ENGRAM_USER_DATA) app.setPath('userData', path.resolve(process.e
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => showMainWindow());
+  app.on('second-instance', (_event, argv) => {
+    showMainWindow();
+    receiveJoinLink(joinLinkFromArgs(argv));
+  });
 }
 
 // productName 变化会让 Electron 默认 userData 目录
@@ -603,13 +617,17 @@ function buildAppMenu() {
 }
 
 app.whenReady().then(() => {
+  // 隔离验收实例不能接管用户已安装应用的协议关联。
+  if (!process.env.ENGRAM_USER_DATA) {
+    app.setAsDefaultProtocolClient(...protocolRegistration(process.execPath, app.getAppPath(), !PACKAGED));
+  }
   // 常开渲染进程辅助功能：读屏器/自动化可直接访问页面 DOM 树（须在 ready 后调用）
   app.setAccessibilitySupportEnabled(true);
   Menu.setApplicationMenu(buildAppMenu());
   launchByConfig({ silent: SILENT_START });
   // 登录项与当前安装形态对齐（换过安装目录、旧版没写静默标记时改写命令），并把状态读进托盘菜单缓存；
   // 不 await：注册表读取失败也不能挡住启动
-  void reconcileLaunchAtLogin();
+  if (!process.env.ENGRAM_USER_DATA) void reconcileLaunchAtLogin();
   // 自动更新：启动 4 秒首查，之后自适应退避复查（2→5→10→30→60 分钟封顶，见 updateCadence）。
   // 打包形态自动下载并静默安装；源码模式只自动检查，落后时在标题栏留一枚绿色更新图标（不弹系统通知、
   // 不自动展开面板），一键更新由用户扫到图标后点面板主按钮触发。
@@ -938,6 +956,25 @@ ipcMain.handle('inbox-reveal-path', (_e, relPath) => {
   } catch (error) {
     return { ok: false, error: error.message };
   }
+});
+
+ipcMain.handle('take-join-link', () => {
+  const link = pendingJoinLink;
+  pendingJoinLink = '';
+  return link;
+});
+
+// 文件定位到选中项，目录直接打开；Docker/Android 没有此本机 IPC 桥。
+ipcMain.handle('brain-reveal-path', async (_e, relative) => {
+  try {
+    const abs = resolveBrainPath(getDataDir(), relative);
+    if (fs.statSync(abs).isDirectory()) {
+      const error = await shell.openPath(abs);
+      return error ? { ok: false, error } : { ok: true };
+    }
+    shell.showItemInFolder(abs);
+    return { ok: true };
+  } catch (error) { return { ok: false, error: error.message }; }
 });
 
 // ---------- 桌面端自更新（远端仓库 Releases 拉安装包） ----------
