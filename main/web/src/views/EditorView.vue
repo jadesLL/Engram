@@ -2,6 +2,7 @@
   <div
     ref="viewEl"
     class="editor-view"
+    :aria-busy="pageLoading"
     :class="{ 'editor-fullscreen': fullscreen }"
     :style="contentColumnStyle"
   >
@@ -15,10 +16,16 @@
 
     <!-- 页面编辑模式 -->
     <template v-else-if="page">
+      <div v-if="pageLoading || pageError" class="page-state page-transition" role="status">
+        <template v-if="pageLoading"><AppSpinner :size="18" /><span>正在加载页面…</span></template>
+        <template v-else><p class="page-error-text">{{ pageError }}</p><button class="btn" type="button" @click="retryLoad">重试</button></template>
+      </div>
       <ReadingPreview
         v-if="app.readingMode"
+        v-show="!pageLoading && !pageError"
         :markdown="content"
         :title="title"
+        :format-document-title="isRawPage"
         :page-type="pageType"
         :type-label="rawReadingLabel"
         :tags="tags"
@@ -52,14 +59,14 @@
       </ReadingPreview>
 
       <!-- 顶部条：Wiki / 分区 / 标题 面包屑 + 常驻保存状态 -->
-      <div v-show="!app.readingMode" class="editor-topbar chrome-float" data-tip-chrome>
+      <div v-show="!app.readingMode && !pageLoading && !pageError" class="editor-topbar chrome-float" data-tip-chrome>
         <nav class="crumb">
           <template v-for="(d, i) in crumbDirs" :key="i">
             <span v-if="i" class="crumb-sep">/</span>
             <span :class="i ? 'crumb-item' : 'crumb-root'">{{ d }}</span>
           </template>
           <span class="crumb-sep">/</span>
-          <b class="crumb-current">{{ title || '无标题' }}</b>
+          <b class="crumb-current">{{ displayTitle }}</b>
         </nav>
         <BackTrailMenu v-if="canGoBack" :trail="app.pageTrail" @select="goBackToTrail">
           <template #default="{ open }">
@@ -141,9 +148,10 @@
 
       <!-- 扁平编辑区：页头 / 工具栏 / 正文 / 状态栏直接铺在灰底上（UI 2.0 mockup 4.3，
            不再用悬浮纸面卡片；evidence-drawer 为绝对定位浮层，不参与文档流） -->
-      <div v-show="!app.readingMode" class="editor-body">
+      <div v-show="!app.readingMode && !pageLoading && !pageError" class="editor-body">
       <div class="page-head" :class="{ 'chrome-collapsed': chromeCollapsed }">
-        <input v-model="title" class="title-input" placeholder="无标题" @change="save(true)" />
+        <DocumentTitle v-if="isRawPage" :title="title" :page-id="String(page.id)" :disabled="pageLoading" @save="saveDocumentTitle" />
+        <input v-else v-model="title" class="title-input" placeholder="无标题" aria-label="页面标题" @change="save(true)" />
         <!-- 手机端摘要行：折叠时仅此一行（选项切换），桌面隐藏 -->
         <div class="head-summary">
           <button
@@ -158,7 +166,7 @@
           </button>
         </div>
         <div class="page-chrome">
-          <div class="head-meta">
+          <div class="head-meta" :class="{ 'document-meta': isRawPage }">
           <span class="kind-pill">
             <!-- 原始资料页没有「类型」概念，改成三个二级分类的「分类」下拉：切换即移动到对应目录 -->
             <AppSelect
@@ -196,6 +204,10 @@
             <button v-else type="button" class="chip chip-add" @click="startTagEdit">+ 标签</button>
           </div>
           <span class="meta-date faint">更新于 {{ formatDate(page.updated_at) }}</span>
+          <details v-if="isRawPage" :key="page.id" class="document-file-info">
+            <summary>文件信息</summary>
+            <div><span>原始文件名</span><code>{{ page.path.split('/').pop() }}</code></div>
+          </details>
           </div>
         </div>
       </div>
@@ -217,7 +229,7 @@
         />
       </div>
 
-      <aside v-if="!app.readingMode && evidenceOpen && evidence" class="evidence-drawer">
+      <aside v-if="!app.readingMode && !pageLoading && !pageError && evidenceOpen && evidence" class="evidence-drawer">
         <div class="evidence-head">
           <div>
             <h3>来源证据</h3>
@@ -302,7 +314,7 @@
            放在 editor-body 之外、直接挂 editor-view：它和顶栏一样是悬浮 chrome（绝对定位浮在正文之上），
            不再参与文档流，正文因此多出上下两条白条的高度。
            v-if 而非 v-show：阅读模式不挂载，wordCount 大页面全文字数统计不跑 -->
-      <div v-if="!app.readingMode" class="statusbar chrome-float" data-tip-chrome>
+      <div v-if="!app.readingMode" v-show="!pageLoading && !pageError" class="statusbar chrome-float" data-tip-chrome>
         <span class="sb-item">{{ wordCount }} 字</span>
         <span class="sb-item">{{ app.editorMode === 'sv' ? '源码' : '即时渲染' }}</span>
         <div class="spacer"></div>
@@ -384,7 +396,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute, useRouter, onBeforeRouteUpdate, onBeforeRouteLeave } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
@@ -398,6 +410,8 @@ import {
   type SelectionContextMenuRequest,
 } from '../lib/contextMenu';
 import MarkdownEditor from '../components/MarkdownEditor.vue';
+import DocumentTitle from '../components/DocumentTitle.vue';
+import { documentTitleParts } from '../lib/documentTitle';
 import ReadingPreview from '../components/ReadingPreview.vue';
 import FilePreview from '../components/FilePreview.vue';
 import BackTrailMenu from '../components/BackTrailMenu.vue';
@@ -548,6 +562,7 @@ const RAW_SECTION_OPTIONS = [
 const rawSectionOptions = ref([...RAW_SECTION_OPTIONS]);
 const rawSection = ref('doc');
 const isRawPage = computed(() => String(page.value?.path || '').startsWith('原始资料/'));
+const displayTitle = computed(() => isRawPage.value ? documentTitleParts(title.value).name : title.value || '无标题');
 
 /** 路径 → 分类 key：根目录的历史资料按「文档」对待（与服务端 rawSectionOf 同口径） */
 function rawSectionOfPath(relPath: string): string {
@@ -805,6 +820,7 @@ let loadSeq = 0;
 
 async function loadPage(id: string) {
   const seq = ++loadSeq;
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   pageLoading.value = true;
   pageError.value = '';
   loading = true; // 抑制 watch
@@ -836,6 +852,9 @@ async function loadPage(id: string) {
     if (seq === loadSeq) {
       loading = false;
       pageLoading.value = false;
+      // 换页期间编辑器仍存活但不可见，DOM 恢复后补齐最新正文。
+      await nextTick();
+      if (seq === loadSeq) editorRef.value?.syncIfPending();
     }
   }
 }
@@ -933,39 +952,75 @@ function goBackToTrail(id: string) {
   router.push(`/page/${from}`);
 }
 
+let saveInFlight: Promise<boolean> | null = null;
 async function save(manual = false): Promise<boolean> {
-  if (!page.value) return false;
+  while (saveInFlight) {
+    const ok = await saveInFlight;
+    if (!ok || !dirty) return ok;
+  }
+  const request = saveCurrentPage(manual);
+  saveInFlight = request;
+  try { return await request; }
+  finally { if (saveInFlight === request) saveInFlight = null; }
+}
+
+async function saveCurrentPage(manual: boolean): Promise<boolean> {
+  if (!page.value || pageLoading.value || pageError.value || String(page.value.id) !== String(route.params.id || '')) return false;
+  const id = page.value.id;
+  const modelAtStart = content.value;
   const contentToSave = editorRef.value?.getValue() ?? content.value;
+  const snapshot = { content: contentToSave, title: title.value, type: pageType.value, tags: [...tags.value] };
   try {
-    const { data } = await api.put(`/api/pages/${page.value.id}`, {
-      content: contentToSave,
-      title: title.value,
-      type: pageType.value,
-      tags: tags.value,
-    });
+    const { data } = await api.put(`/api/pages/${id}`, snapshot);
+    app.bumpSidebar();
+    // 旧页保存回包不能覆盖已经切换的新页。
+    if (page.value?.id !== id || String(route.params.id || '') !== String(id)) return true;
     page.value = data.meta;
     loadedContentKey = visibleContentKey(contentToSave);
-    dirty = false;
-    dirtyUi.value = false;
+    const changedDuringSave = visibleContentKey(content.value) !== visibleContentKey(modelAtStart);
+    // Vditor 会规范化列表等 Markdown；没有新输入时把模型对齐已保存文本，避免反复标脏。
+    if (!changedDuringSave) content.value = contentToSave;
+    dirty = changedDuringSave || title.value !== snapshot.title || pageType.value !== snapshot.type || JSON.stringify(tags.value) !== JSON.stringify(snapshot.tags);
+    dirtyUi.value = dirty;
     justSavedAt = Date.now(); // 抑制本次保存触发的 SSE 回声
-    saveState.value = manual ? '已保存 ✓' : '已自动保存';
-    app.bumpSidebar(); // 类型/标题变化后立刻刷新侧栏分区
-    setTimeout(() => (saveState.value = SAVED_IDLE), 2000);
+    saveState.value = dirty ? '编辑中…' : manual ? '已保存 ✓' : '已自动保存';
+    setTimeout(() => { if (page.value?.id === id && !dirty && !pageLoading.value) saveState.value = SAVED_IDLE; }, 2000);
     loadRelated();
     loadEvidence();
     return true;
   } catch (error: any) {
     // dirty 保持 true：beforeunload 会继续提醒，下次编辑/手动保存可重试
-    saveState.value = '保存失败';
+    if (page.value?.id === id) saveState.value = '保存失败';
     notify.error(error?.response?.data?.error || '保存失败，请稍后重试');
     return false;
   }
 }
 
+async function saveDocumentTitle(value: string) {
+  title.value = value;
+  dirty = true;
+  dirtyUi.value = true;
+  await save(true);
+}
+
+async function preserveBeforeNavigation(): Promise<boolean> {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  if (saveInFlight && !await saveInFlight) return false;
+  if (!dirty) return true;
+  if (!autosave.value && !await confirmDialog({ title: '有未保存的修改', message: '保存当前页面的修改后再离开？', confirmText: '保存并离开', cancelText: '继续编辑' })) return false;
+  while (dirty) { if (!await save(true)) return false; }
+  return true;
+}
+onBeforeRouteUpdate((to, from) => (to.params.id !== from.params.id || to.query.file !== from.query.file) ? preserveBeforeNavigation() : true);
+onBeforeRouteLeave(preserveBeforeNavigation);
+
 watch(content, () => {
   if (loading || !page.value) return; // 加载阶段不触发
-  if (visibleContentKey(content.value) === loadedContentKey) {
+  const storedTitle = page.value.title || page.value.path.split('/').pop()?.replace(/\.md$/i, '') || '无标题';
+  const metadataChanged = title.value !== storedTitle || pageType.value !== page.value.type || JSON.stringify(tags.value) !== JSON.stringify(page.value.tags || []);
+  if (visibleContentKey(content.value) === loadedContentKey && !metadataChanged) {
     dirty = false;
+    dirtyUi.value = false;
     saveState.value = SAVED_IDLE;
     return;
   }
@@ -1264,6 +1319,9 @@ watch(
     if (id) app.settlePageTrail(id as string);
     if (id && id !== oldId) loadPage(id as string);
     else if (!id) {
+      ++loadSeq; // 离开页面也要作废尚未完成的请求。
+      loading = false;
+      pageLoading.value = false;
       page.value = null; // 无 id 才回欢迎页
       pageError.value = '';
       loadWelcome(); // 回到欢迎页时刷新统计与最近编辑
@@ -1586,6 +1644,11 @@ button.save-state.dirty:hover { color: var(--accent); }
   background: transparent;
 }
 .title-input::placeholder { color: var(--text-faint); }
+.document-meta .tags-chips { flex: none; min-width: 0; }
+.document-file-info { color: var(--text-secondary); font-size: 12px; }
+.document-file-info summary { cursor: pointer; }
+.document-file-info > div { display: flex; flex-direction: column; gap: 5px; padding: 12px; margin-top: 8px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; }
+.document-file-info code { color: var(--text); font: inherit; overflow-wrap: anywhere; }
 /* 手机端摘要行：桌面隐藏；折叠区 page-chrome 桌面始终显示 */
 .head-summary { display: none; }
 .chrome-toggle {

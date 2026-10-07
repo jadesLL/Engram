@@ -215,7 +215,8 @@
       <div ref="mainEl" class="reading-main">
         <article class="reading-article" @contextmenu="handleContextMenu">
           <header class="reading-document-head">
-            <h1>{{ title }}</h1>
+            <time v-if="documentTitle.date" class="reading-document-date" :datetime="documentTitle.date">{{ documentTitle.dateLabel }}</time>
+            <h1>{{ documentTitle.name }}</h1>
             <div class="reading-meta">
               <span class="reading-type">{{ typeLabel }}</span>              <template v-if="updatedAt">
                 <span class="reading-meta-sep">·</span>
@@ -344,6 +345,7 @@ import {
   type ContentWidthRatio,
 } from '../lib/contentWidth';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
+import { documentTitleParts } from '../lib/documentTitle';
 import { headingFoldRanges } from '../lib/readingFold';
 import { BP_COMPACT, BP_MOBILE, BP_WIDE } from '../lib/layoutBreakpoints';
 import { registerBackHandler } from '../lib/androidBack';
@@ -366,6 +368,8 @@ type OutlineItem = {
 const props = defineProps<{
   markdown: string;
   title?: string;
+  /** 原始资料标题按「资料日期 + 名称」显示，Wiki 页面保留完整标题。 */
+  formatDocumentTitle?: boolean;
   pageType: string;
   /** 直接指定类型标签（原始资料没有 Wiki 类型概念，传「灵感碎片」「文档」这类分类名） */
   typeLabel?: string;
@@ -392,6 +396,9 @@ const emit = defineEmits<{
 }>();
 
 const app = useAppStore();
+const documentTitle = computed(() => props.formatDocumentTitle
+  ? documentTitleParts(props.title || '')
+  : { name: props.title || '无标题', date: '', dateLabel: '' });
 const readerEl = ref<HTMLElement>();
 const toolbarEl = ref<HTMLElement>();
 const mainEl = ref<HTMLElement>();
@@ -1588,6 +1595,7 @@ onBeforeUnmount(() => {
   line-height: 1.28;
   letter-spacing: 0;
 }
+.reading-document-date { display: block; margin-bottom: 10px; color: var(--text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
 .reading-meta {
   display: flex;
   flex-wrap: wrap;
