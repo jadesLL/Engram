@@ -91,7 +91,7 @@ test('默认布局：非空、模块类型合法、id 唯一、列数固定 6、
   assert.equal(new Set(ids).size, ids.length);
   for (const m of board.modules) {
     assert.ok(MODULE_KINDS.includes(m.kind));
-    assert.ok(m.w >= 2 && m.w <= GRID_COLS, `${m.kind} w=${m.w}`);
+    assert.ok(m.w >= 1 && m.w <= GRID_COLS, `${m.kind} w=${m.w}`);
     assert.ok(m.h >= 1);
   }
   // 默认布局本身必须是干净的：不重叠、不越界
@@ -154,7 +154,7 @@ test('normalizeHomeBoard：合法的空看板保持为空（用户删光了不�
 test('normalizeHomeBoard：过滤非法模块，保留合法模块并补默认尺寸', () => {
   const board = normalizeHomeBoard(
     JSON.stringify({
-      version: 3,
+      version: HOME_BOARD_VERSION,
       modules: [
         { id: 'a', kind: 'capture' },
         { id: 'b', kind: '不存在' },
@@ -658,4 +658,19 @@ test('heat 的条数档是周数：4–12，缺省 8', () => {
   assert.equal(tooSmall.modules[0].opts.limit, 4);
   const tooBig = normalizeHomeBoard({ modules: [{ id: 'h', kind: 'heat', opts: { limit: 99 } }] });
   assert.equal(tooBig.modules[0].opts.limit, 12);
+});
+
+
+test('v4 留白布局读写与删除保持坐标，v3 只补一次热力卡', () => {
+  const board = defaultHomeBoard();
+  const moved = moveModuleTo(board, board.modules[0].id, { col: 0, row: 20, w: 1, h: 4 });
+  assert.deepEqual(normalizeHomeBoard(serializeHomeBoard(moved)), moved);
+  const removed = removeModule(moved, moved.modules[1].id);
+  assert.deepEqual(removed.modules, moved.modules.filter((m) => m.id !== moved.modules[1].id));
+  const old = { ...removed, version: 3, modules: removed.modules.filter((m) => m.kind !== 'heat') };
+  const migrated = normalizeHomeBoard(old);
+  assert.equal(migrated.modules.filter((m) => m.kind === 'heat').length, 1);
+  assert.deepEqual(migrated.modules.slice(0, old.modules.length), old.modules);
+  const noHeat = removeModule(migrated, migrated.modules.find((m) => m.kind === 'heat')!.id);
+  assert.equal(normalizeHomeBoard(serializeHomeBoard(noHeat)).modules.some((m) => m.kind === 'heat'), false);
 });

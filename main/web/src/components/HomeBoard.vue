@@ -3,11 +3,11 @@
   <div
     ref="boardEl"
     class="board"
-    :style="{ '--board-cols': GRID_COLS, '--grid-row-h': `${GRID_ROW_HEIGHT}px` }"
+    :style="{ '--board-cols': GRID_COLS, '--grid-row-h': `${unit}px` }"
   >
     <div class="board-cq">
       <div class="board-inner">
-        <div class="board-date">{{ dateLine }}</div>
+        <div class="board-date">{{ dateLine }} · ENGRAM</div>
         <header class="board-hero">
           <div class="board-hero-text">
             <h2 class="board-greeting">{{ greeting }}</h2>
@@ -34,6 +34,7 @@
         拖动卡片 = 换位置（自动吸附到栅格）；拖右下角 = 改大小；方向键微调、Shift+方向键改尺寸
       </span>
       <div class="manage-spacer" />
+      <button class="manage-btn" type="button" :disabled="!store.history.length" @click="store.undo()">撤销</button>
       <button class="manage-btn" type="button" title="把卡片往上收，消掉中间的空洞" @click="store.compact()">
         <Icon name="merge" :size="14" /><span>紧凑</span>
       </button>
@@ -81,6 +82,7 @@
         :style="{
           gridColumn: `${entry.module.col + 1} / span ${entry.module.w}`,
           gridRow: `${entry.module.row + 1} / span ${entry.module.h}`,
+          transform: dragId === entry.module.id && gestureMode === 'move' ? `translate(${ghost.x}px, ${ghost.y}px)` : undefined,
         }"
         :data-module-id="entry.module.id"
         tabindex="-1"
@@ -94,10 +96,10 @@
           :managing="store.editing"
           :dragging="dragId === entry.module.id"
           :target="dragId === entry.module.id"
+          :summary="summaryOf(entry.module)"
           @remove="onRemove(entry.module)"
           @rename="onRename(entry.module)"
-          @set-width="(width) => store.place(entry.module.id, { ...entry.module, w: width })"
-          @set-height="(height) => store.place(entry.module.id, { ...entry.module, h: height })"
+          @set-size="(width, height) => store.place(entry.module.id, { ...entry.module, w: width, h: height })"
           @set-opt="(key, value) => store.update(entry.module.id, { opts: { ...entry.module.opts, [key]: value } })"
           @drag-request="startDrag($event, entry.module.id)"
           @resize-request="startResize($event, entry.module.id)"
@@ -142,13 +144,14 @@
         aria-hidden="true"
       />
     </div>
+    <div v-else class="board-empty"><p class="board-empty-title">把首页变成你的工作台</p><p class="board-empty-sub">添加常用卡片，从一条灵感开始。</p><button class="manage-btn primary" type="button" @click="openAdd">添加卡片</button></div>
     </div>
   </div>
 </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import Icon from './Icon.vue';
@@ -176,6 +179,7 @@ import HomeSync from './HomeBoardModules/HomeSync.vue';
 import { useHomeBoardStore } from '../stores/homeBoard';
 import { useTasksStore } from '../stores/tasks';
 import { useInboxStore } from '../stores/inbox';
+import { useSyncStore } from '../stores/sync';
 import {
   DEFAULT_LIMIT,
   HOME_BOARD_COLUMNS,
@@ -183,6 +187,8 @@ import {
   MODULE_META,
   freshPagesOf,
   homeDigest,
+  heatmapDayCounts,
+  moveModuleTo,
   kbCounts,
   limitOf,
   moduleMeta,
@@ -195,12 +201,12 @@ import {
   upcomingTasks,
   weeklyStats,
   type HomeModule,
+  type HomeBoard,
   type ModuleKind,
 } from '../lib/homeBoard.ts';
 import { homeDateLine, homeGreeting } from '../lib/homeBoardData.ts';
 import {
   GRID_COLS,
-  GRID_ROW_HEIGHT,
   normalizePlace,
   placeItem,
   usedRows,
@@ -247,7 +253,7 @@ const greeting = computed(() => homeGreeting());
 const stats = computed(() => ({ pages: (props.pages || []).length, files: props.fileCount || 0 }));
 const counts = computed(() => kbCounts(props.pages, props.fileCount));
 const sections = computed(() => sectionEntries(props.pages, props.rawPaths));
-const tasksLoading = computed(() => !tasks.board);
+const tasksLoading = computed(() => tasks.loading && !tasks.board);
 /** 全库字数（「知识库概览」与「运行状态」共用） */
 const words = computed(() =>
   (props.pages || []).reduce((sum, page) => sum + Math.max(0, Number(page?.word_count) || 0), 0)
@@ -289,12 +295,12 @@ function titleOf(module: HomeModule): string {
  * hasLimit 说明这块模块有没有「显示 N 条」这一项（没有就不画步进器）。
  */
 const boardModules = computed(() =>
-  store.board.modules.map((module, index) => {
+  (previewBoard.value || store.board).modules.map((module, index) => {
     const max = LIMIT_MAX[module.kind] || 0;
     const hasLimit = max > 0;
     const fallback = DEFAULT_LIMIT[module.kind] || 6;
     return {
-      module,
+      module: dragId.value === module.id && gestureMode.value === 'move' ? { ...module, ...gesture!.origin } : module,
       index,
       title: titleOf(module),
       hasLimit,
@@ -302,6 +308,32 @@ const boardModules = computed(() =>
     };
   })
 );
+
+const sync = useSyncStore();
+function summaryOf(module: HomeModule): { value: string | number; label: string; lines?: string[]; heat?: number[] } {
+  const pages = (list: any[]) => ({ value: list.length, label: '篇页面', lines: list.slice(0, 8).map((p) => p.title || String(p.path || '').split('/').pop() || '未命名') });
+  switch (module.kind) {
+    case 'capture': return { value: '＋', label: '随手记下一个想法' };
+    case 'stats': case 'ring': return { value: stats.value.pages, label: `${counts.value.concepts} 概念 · ${counts.value.entities} 实体`, lines: [`${counts.value.files} 份资料`, `${words.value.toLocaleString()} 字`] };
+    case 'tasks': return { value: taskCards.value.length, label: '件待办', lines: taskCards.value.slice(0, 8).map((c) => c.text) };
+    case 'notes': return pages(props.ideaItems);
+    case 'recent': return pages(props.recentItems);
+    case 'activity': return pages(changeLogItems.value);
+    case 'fresh': return pages(freshItems.value);
+    case 'heat': { const cells = heatmapDayCounts(props.pages, limitOf(module.opts, 8, 12)); return { value: cells.filter((c) => !c.future && c.count > 0).length, label: '个活跃日 · 页面最近改动', heat: cells.map((c) => c.future ? 0 : c.level) }; }
+    case 'weekly': return { value: weeklyRows.value.reduce((n, r) => n + r.created, 0), label: '本周新增', lines: weeklyRows.value.map((r) => `${r.label} · ${r.updated} 篇更新`) };
+    case 'tags': return { value: tagList.value.length, label: '个常用标签', lines: tagList.value.map((r) => `${r.tag} · ${r.count}`) };
+    case 'sections': return { value: sections.value.length, label: '个分区', lines: sections.value.map((r) => `${r.label} · ${r.count}`) };
+    case 'shortcuts': return { value: '→', label: '搜索 · 新建 · Agent', lines: ['搜索知识库', '新建页面', '打开 Agent'] };
+    case 'roam': return { value: '↗', label: `${roamCandidates.value.length} 篇可以漫游` };
+    case 'inbox': return { value: Number(inbox.counts.pending || 0), label: '份待整理资料' };
+    case 'queue': return { value: props.pages.filter((p) => String(p.path || '').startsWith('原始资料/')).length, label: '份原始资料候选' };
+    case 'board': return { value: taskCards.value.length, label: '件近期任务 · 打开看板' };
+    case 'digest': return { value: '✦', label: props.agentName || 'Agent 摘要', lines: digestLines.value };
+    case 'system': return { value: '●', label: '查看运行状态' };
+    case 'sync': return { value: sync.configured ? '●' : '○', label: sync.configured ? '查看同步状态' : '待配置同步' };
+  }
+}
 
 /* ===== 加模块 ===== */
 const addOpen = ref(false);
@@ -378,134 +410,93 @@ function quickNote() {
   emit('note');
 }
 
-/* ===== 拖动 / 缩放（指针事件：鼠标与手指同一套；落点吸附到栅格） ===== */
+/* ===== 手势预览只在内存里计算；松手保存一次，取消不改变布局 ===== */
 const dragId = ref('');
-/** 拖动时的高亮落点（松手后卡片就落在这里），直接画在栅格上 */
 const targetPreview = ref<GridPlace | null>(null);
-/** 栅格用了多少行：容器高度按它算，别留一大片空白 */
-const gridRows = computed(() => Math.max(2, usedRows(store.board.modules.map(modulePlace))));
-
-const DRAG_THRESHOLD = 4;
-/** 拖动中每帧最多写一次 store（指针事件比帧还密） */
-let pendingPlace: { id: string; place: GridPlace } | null = null;
-let placeFrame = 0;
+const previewBoard = ref<HomeBoard | null>(null);
+const ghost = ref({ x: 0, y: 0 });
+const gestureMode = ref<'move' | 'resize'>('move');
+const unit = ref(140);
+const gridRows = computed(() => Math.max(2, usedRows((previewBoard.value || store.board).modules)));
+let gridObserver: ResizeObserver | null = null;
+watch(gridEl, (el) => {
+  gridObserver?.disconnect();
+  if (!el) return;
+  gridObserver = new ResizeObserver(([entry]) => { unit.value = Math.max(1, (entry.contentRect.width - 14 * (GRID_COLS - 1)) / GRID_COLS); });
+  gridObserver.observe(el);
+});
+let frame = 0;
 let gesture: {
-  mode: 'move' | 'resize';
-  id: string;
-  startX: number;
-  startY: number;
-  origin: GridPlace;
-  cell: { w: number; h: number };
-  active: boolean;
+  mode: 'move' | 'resize'; id: string; pointer: number;
+  startX: number; startY: number; x: number; y: number; scroll: number;
+  origin: GridPlace; snapshot: HomeBoard; cell: number; active: boolean;
 } | null = null;
-
-function modulePlace(module: HomeModule): GridPlace {
-  return { col: module.col, row: module.row, w: module.w, h: module.h };
-}
-
-/** 栅格一格有多大（含间距）：指针位移 → 格数要用它换算 */
-function cellSize() {
-  const host = gridEl.value;
-  const width = host?.clientWidth || 900;
-  const gap = 10;
-  return { w: (width + gap) / GRID_COLS, h: GRID_ROW_HEIGHT + gap };
-}
-
-/** 按下卡片（编辑态）：越过阈值才开始拖，避免点一下就位移 */
-function startDrag(event: PointerEvent, id: string) {
-  beginGesture(event, id, 'move');
-}
-
-/** 按下右下角的缩放把手 */
-function startResize(event: PointerEvent, id: string) {
-  beginGesture(event, id, 'resize');
-}
-
+function modulePlace(module: HomeModule): GridPlace { return { col: module.col, row: module.row, w: module.w, h: module.h }; }
+function startDrag(event: PointerEvent, id: string) { beginGesture(event, id, 'move'); }
+function startResize(event: PointerEvent, id: string) { beginGesture(event, id, 'resize'); }
+function preventTouchScroll(event: TouchEvent) { if (gesture) event.preventDefault(); }
 function beginGesture(event: PointerEvent, id: string, mode: 'move' | 'resize') {
-  if (!store.editing) return;
-  if (mode === 'move' && event.pointerType === 'mouse' && event.button !== 0) return;
-  const module = store.board.modules.find((item) => item.id === id);
+  if (gesture || event.button !== 0) return;
+  if (!store.editing && event.pointerType !== 'touch') return;
+  const module = store.board.modules.find((m) => m.id === id);
   if (!module) return;
-  gesture = {
-    mode,
-    id,
-    startX: event.clientX,
-    startY: event.clientY,
-    origin: modulePlace(module),
-    cell: cellSize(),
-    active: false,
-  };
-  window.addEventListener('pointermove', onGestureMove);
+  store.setEditing(true);
+  gestureMode.value = mode;
+  gesture = { mode, id, pointer: event.pointerId, startX: event.clientX, startY: event.clientY,
+    x: event.clientX, y: event.clientY, scroll: boardEl.value?.scrollTop || 0,
+    origin: modulePlace(module), snapshot: JSON.parse(JSON.stringify(store.board)), cell: unit.value + 14, active: false };
+  window.addEventListener('pointermove', onGestureMove, { passive: false });
   window.addEventListener('pointerup', onGestureEnd);
   window.addEventListener('pointercancel', onGestureEnd);
-  // 触摸拖动时别让页面跟着一起滚
+  window.addEventListener('touchmove', preventTouchScroll, { passive: false });
   event.preventDefault();
 }
-
+function updateGesture() {
+  frame = 0;
+  if (!gesture?.active) return;
+  const g = gesture, host = boardEl.value;
+  if (host) {
+    const box = host.getBoundingClientRect();
+    const edge = 54;
+    const delta = g.y < box.top + edge ? -Math.min(14, (box.top + edge - g.y) / 4) : g.y > box.bottom - edge ? Math.min(14, (g.y - box.bottom + edge) / 4) : 0;
+    if (delta) host.scrollTop += delta;
+  }
+  const dx = g.x - g.startX, dy = g.y - g.startY + (host?.scrollTop || 0) - g.scroll;
+  ghost.value = { x: dx, y: dy };
+  const wanted = normalizePlace(g.mode === 'move'
+    ? { ...g.origin, col: g.origin.col + Math.round(dx / g.cell), row: g.origin.row + Math.round(dy / g.cell) }
+    : { ...g.origin, w: g.origin.w + Math.round(dx / g.cell), h: g.origin.h + Math.round(dy / g.cell) });
+  targetPreview.value = wanted;
+  previewBoard.value = moveModuleTo(g.snapshot, g.id, wanted);
+  frame = requestAnimationFrame(updateGesture);
+}
 function onGestureMove(event: PointerEvent) {
-  if (!gesture) return;
-  const dx = event.clientX - gesture.startX;
-  const dy = event.clientY - gesture.startY;
-  if (!gesture.active) {
-    if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
-    gesture.active = true;
-    dragId.value = gesture.id;
-    document.body.style.userSelect = 'none';
-    document.body.style.cursor = gesture.mode === 'resize' ? 'nwse-resize' : 'grabbing';
-    targetPreview.value = { ...gesture.origin };
-  }
+  if (!gesture || event.pointerId !== gesture.pointer) return;
+  gesture.x = event.clientX; gesture.y = event.clientY;
+  if (!gesture.active && Math.hypot(gesture.x - gesture.startX, gesture.y - gesture.startY) < 4) return;
+  gesture.active = true; dragId.value = gesture.id;
+  document.body.style.userSelect = 'none';
+  document.body.style.cursor = gesture.mode === 'resize' ? 'nwse-resize' : 'grabbing';
   event.preventDefault();
-
-  const stepsX = Math.round(dx / gesture.cell.w);
-  const stepsY = Math.round(dy / gesture.cell.h);
-  const wanted: GridPlace =
-    gesture.mode === 'move'
-      ? { ...gesture.origin, col: gesture.origin.col + stepsX, row: Math.max(0, gesture.origin.row + stepsY) }
-      : { ...gesture.origin, w: gesture.origin.w + stepsX, h: Math.max(1, gesture.origin.h + stepsY) };
-  const clamped = normalizePlace(wanted);
-
-  // 落点先算出来立刻更新高亮：用户看到的格子就是松手后卡片的位置
-  const index = store.board.modules.findIndex((item) => item.id === gesture!.id);
-  const settled = placeItem(store.board.modules.map(modulePlace), index, clamped);
-  const spot = settled[index] || clamped;
-  targetPreview.value = spot;
-  pendingPlace = { id: gesture.id, place: spot };
-  if (!placeFrame) {
-    placeFrame = requestAnimationFrame(() => {
-      placeFrame = 0;
-      const next = pendingPlace;
-      pendingPlace = null;
-      if (next) store.place(next.id, next.place);
-    });
-  }
+  if (!frame) frame = requestAnimationFrame(updateGesture);
 }
-
-function onGestureEnd() {
-  window.removeEventListener('pointermove', onGestureMove);
-  window.removeEventListener('pointerup', onGestureEnd);
-  window.removeEventListener('pointercancel', onGestureEnd);
-  document.body.style.userSelect = '';
-  document.body.style.cursor = '';
-  if (placeFrame) {
-    cancelAnimationFrame(placeFrame);
-    placeFrame = 0;
+function onGestureEnd(event?: PointerEvent) {
+  if (event && gesture && event.pointerId !== gesture.pointer) return;
+  if (gesture?.active && event?.type === 'pointerup') {
+    if (frame) cancelAnimationFrame(frame);
+    updateGesture();
+    if (previewBoard.value) store.commit(previewBoard.value);
   }
-  if (gesture?.active) {
-    const next = pendingPlace;
-    pendingPlace = null;
-    if (next) store.place(next.id, next.place);
-    // 松手后顺手紧凑一次：手机上「拖动完自动补洞」的那套手感
-    store.compact();
-    // 焦点回到刚拖过的那张卡：键盘用户能接着用方向键微调
-    const id = gesture.id;
-    void nextTick(() => {
-      (boardEl.value?.querySelector(`[data-module-id="${id}"] .shell`) as HTMLElement | null)?.focus?.();
-    });
-  }
-  gesture = null;
-  dragId.value = '';
-  targetPreview.value = null;
+  if (frame) cancelAnimationFrame(frame);
+  frame = 0;
+  const id = gesture?.id;
+  gesture = null; previewBoard.value = null; targetPreview.value = null; dragId.value = ''; ghost.value = { x: 0, y: 0 };
+  document.body.style.userSelect = ''; document.body.style.cursor = '';
+  window.removeEventListener('pointermove', onGestureMove); window.removeEventListener('pointerup', onGestureEnd);
+  window.removeEventListener('pointercancel', onGestureEnd); window.removeEventListener('touchmove', preventTouchScroll);
+  if (id) void nextTick(() => (boardEl.value?.querySelector(`[data-module-id="${id}"] .shell`) as HTMLElement)?.focus());
 }
+watch(() => store.editing, (editing) => { if (!editing) onGestureEnd(); });
 
 /** 键盘微调：方向键挪位、Shift+方向键改尺寸（触屏与键盘用户的等价入口） */
 function onModuleKey(module: HomeModule, dx: number, dy: number, resize: boolean) {
@@ -525,7 +516,9 @@ function onModuleKey(module: HomeModule, dx: number, dy: number, resize: boolean
    别的场景一律放行；退出编辑时顺手把添加面板收掉，避免下一次进来还挂着。
    方向键只在焦点真的落在某张卡上时才接管（判 data-module-id 的祖先），否则放行给别的组件。 */
 function onBoardKey(event: KeyboardEvent) {
+  if ((event.target as HTMLElement)?.closest('dialog')) return;
   if (event.key === 'Escape' && !event.defaultPrevented && store.editing) {
+    if (gesture) { event.preventDefault(); onGestureEnd(); return; }
     addOpen.value = false;
     store.setEditing(false);
     return;
@@ -541,7 +534,7 @@ function onBoardKey(event: KeyboardEvent) {
   if (event.defaultPrevented || !store.editing) return;
   // 只认落在卡片上的那一次：别处在用方向键的组件（编辑器、下拉选择…）不受影响
   const target = event.target as HTMLElement | null;
-  if (!target?.closest?.('.shell')) return;
+  if (!target?.closest?.('.shell') || target.closest('input,textarea,select,button,a')) return;
   const id = target.closest('[data-module-id]')?.getAttribute('data-module-id');
   if (!id) return;
   const module = store.board.modules.find((m) => m.id === id);
@@ -552,6 +545,7 @@ function onBoardKey(event: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onBoardKey));
 
 onUnmounted(() => {
+  onGestureEnd(); gridObserver?.disconnect();
   window.removeEventListener('keydown', onBoardKey);
   window.removeEventListener('pointermove', onGestureMove);
   window.removeEventListener('pointerup', onGestureEnd);
@@ -570,6 +564,7 @@ onUnmounted(() => {
 .board {
   height: 100%;
   display: flex;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 /*
@@ -585,19 +580,19 @@ onUnmounted(() => {
   justify-content: flex-start;
 }
 /* 上下 auto 之外，.board-inner 原有的 margin: auto 也把左右留白一起管了 */
-.board-cq > .board-inner { margin-top: auto; margin-bottom: auto; }
+.board-cq > .board-inner { margin-top: 0; margin-bottom: 0; }
 /*
  * 内容宽度：固定页宽上限，不随窗口或列数缩放。
  *
  * 历史坑：曾经按「列数 × 单元宽 + 间距 + 页边距」算页宽，于是列数一变页宽也变；
  * 又曾经让 1 格 = 可用宽度 ÷ 列数，于是窗口越宽卡片越胖（2 列时 1 格 430px）。
- * 现在两条都定死：页宽上限 1372px（窗口更宽就居中留白），栅格固定 6 列、格子等分页宽 ——
+ * 现在两条都定死：页宽上限 1120px（窗口更宽就居中留白），栅格固定 6 列、正方形格子等分页宽 ——
  * 「一格多大」只由页宽决定，用户改的是「一张卡占几格」。
  */
 .board-inner {
   margin: auto;
   width: 100%;
-  max-width: 1372px;
+  max-width: 1120px;
   padding: 40px 32px 64px;
 }
 
@@ -744,7 +739,7 @@ onUnmounted(() => {
  * 每张卡的 grid-column / grid-row 由数据（col/row/w/h）直接写成内联样式，
  * 所以拖动 = 改数字、缩放 = 改数字，浏览器负责摆位——不会出现「卡片飞出页面」这种事
  * （2026-10-06 的瀑布流用绝对定位 + 脚本算像素，拖动时确实会跑到容器外）。
- * 行高用 --grid-row-h，间距用 gap；两者合起来就是「一格」的大小（拖动换算用同一组常量）。
+ * ResizeObserver 按可用宽度计算正方形行高；手势使用相同的格子尺寸与 14px 间距。
  */
 .board-grid {
   display: grid;
@@ -752,7 +747,7 @@ onUnmounted(() => {
   grid-auto-rows: var(--grid-row-h);
   /* 只画用到的行数（--grid-rows 由脚本按内容算），避免底部留一大片空白 */
   grid-template-rows: repeat(var(--grid-rows, 4), var(--grid-row-h));
-  gap: 10px;
+  gap: 14px;
   align-items: stretch;
   position: relative;
 }
@@ -762,20 +757,20 @@ onUnmounted(() => {
     linear-gradient(to right, var(--border) 1px, transparent 1px),
     linear-gradient(to bottom, var(--border) 1px, transparent 1px);
   background-size:
-    calc((100% + 10px) / 6) 100%,
-    100% calc(var(--grid-row-h) + 10px);
+    calc((100% + 14px) / 6) 100%,
+    100% calc(var(--grid-row-h) + 14px);
   background-position: -1px -1px;
   border-radius: 12px;
 }
 .widget {
   min-width: 0;
   min-height: 0;
-  /* 卡片大小由栅格决定：内容超出时内部滚动，别把栅格撑变形 */
-  overflow: hidden;
+  /* 卡片大小由栅格决定；小卡摘要与完整详情由外壳按实际空间切换。 */
+  overflow: visible;
   display: flex;
   flex-direction: column;
 }
-.widget > .shell { flex: 1; min-height: 0; overflow: auto; }
+.widget > .shell { flex: 1; min-height: 0; }
 .widget.dragging { z-index: 3; }
 
 /* 拖动时的落点高亮：直接占在栅格的格里 */
@@ -806,10 +801,11 @@ onUnmounted(() => {
 
 @media (max-width: 1024px) {
   .board-inner { padding: 32px 24px 56px; max-width: 100%; }
-  .board-hero { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .board-hero { align-items: center; gap: 12px; }
 }
 @media (max-width: 768px) {
   .board-greeting { font-size: 24px; }
+  .board-inner { padding: 24px 14px 40px; }
   .add-panel { grid-template-columns: 1fr; }
   .manage-bar { flex-wrap: wrap; }
   .manage-hint { width: 100%; }

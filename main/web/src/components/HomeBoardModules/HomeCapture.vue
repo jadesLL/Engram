@@ -1,12 +1,13 @@
 <template>
   <!-- 内联灵感速记：写完 Ctrl+Enter 或点「记下」直接落盘，后台自动提炼（与「+」/Ctrl+N 同一接口） -->
   <div class="capture" :class="{ focused }">
+    <h4 class="capture-title">随手记下，<br />下一次灵光。</h4>
     <div class="capture-input">
       <span class="capture-bulb" aria-hidden="true"><Icon name="lightbulb" :size="18" /></span>
       <textarea
         v-model="draft"
         rows="2"
-        placeholder="记一条灵感……写完自动提炼进知识库"
+        placeholder="此刻，你在想什么？"
         :disabled="busy"
         aria-label="记一条灵感"
         @focus="focused = true"
@@ -91,6 +92,7 @@ function onKey(event: KeyboardEvent) {
   transition: box-shadow 150ms ease;
 }
 .capture.focused { box-shadow: 0 0 0 3px var(--sidebar-focus-ring); }
+.capture-title { font-size:25px; line-height:1.3; margin-bottom:20px; letter-spacing:-.03em; }
 .capture-input { display: flex; gap: 12px; align-items: flex-start; }
 .capture-bulb {
   width: 34px;
@@ -100,9 +102,10 @@ function onKey(event: KeyboardEvent) {
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  background: var(--badge-idea-soft);
-  color: var(--badge-idea);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
+.capture-bulb { display:none; }
 .capture textarea {
   flex: 1;
   min-width: 0;
@@ -125,7 +128,7 @@ function onKey(event: KeyboardEvent) {
   padding-top: 10px;
   border-top: 1px solid var(--border);
 }
-.capture-hint { font-size: 11.5px; color: var(--text-faint); }
+.capture-hint { font-size: 10px; color: var(--text-faint); }
 .capture-error { font-size: 11.5px; color: var(--danger); }
 .capture-spacer { flex: 1; }
 </style>

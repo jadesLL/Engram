@@ -1,15 +1,7 @@
 /**
- * 首页自定义看板：模块清单 + 布局的纯逻辑（本地可跑单测，不碰 DOM / 网络 / 存储）。
- *
- * 契约（2026-10-05 首页改造，2026-10-06 加「可调列数 + 更多模块」）：
- *  - 首页 = 一串**模块**（module）的顺序列表，每块有自己的 kind（类型）、id（实例标识）、
- *    span（占几格）与 opts（类型自己的少量选项，如条数 / 折叠状态）；
- *  - 整页栅格是**可配置列数**（HOME_BOARD_COLUMNS，2–5 列）：用户在编辑态里改，
- *    span 是**相对格数**，所以换列数时每块的相对宽窄不变（1 格 = 页宽的 1/N，4 列里 2 格 = 一半）；
- *  - 用户可以加、删、改、拖：拖拽只动顺序，其余都由 store 落盘重排（见 stores/homeBoard.ts）；
- *  - 归一化是**容错入口**：localStorage 可能被手改、服务端设置可能来自旧版本或被写坏，
- *    任何解析不出来或名字不认识的东西都在这里被丢掉，绝不把脏数据渲染进界面；
- *  - 布局为空（用户删光了）与「数据坏了」必须区分：前者是合法的空看板，后者回默认布局。
+ * 首页看板的纯逻辑：模块注册、坐标布局、旧数据迁移及真实数据统计。
+ * 固定六列，位置由用户选择；拖动碰撞让位，只有手动整理才消除留白。
+ * 合法的空看板保持为空，读取时只修复坏值、重复 id 和重叠。
  */
 
 import type { TaskCard } from './taskBoard.ts';
@@ -21,6 +13,7 @@ import {
   clampW,
   compact,
   findFreeSpot,
+  intersects,
   normalizePlace,
   placeItem,
   type GridPlace,
@@ -103,8 +96,8 @@ export interface HomeBoard {
   modules: HomeModule[];
 }
 
-/** 布局结构版本：v2 = 相对格数 span + 可调列数；v3 = 手机桌面式栅格坐标（col/row/w/h） */
-export const HOME_BOARD_VERSION = 3;
+/** v2：相对宽度；v3：坐标；v4：保留留白、首次补热力卡。应用版本号不变。 */
+export const HOME_BOARD_VERSION = 4;
 /** 布局落盘用的设置键（服务端 /api/settings 的 PUBLIC_SETTINGS 白名单同名） */
 export const HOME_LAYOUT_SETTING = 'home_layout';
 /** 断网 / 旧服务端时的本地回退键 */
@@ -129,8 +122,8 @@ export interface ModuleMeta {
  * 默认 w/h 按「加到页面上就能直接用」给：宽卡整行、统计卡三分之一、列表卡半页 + 高一点。
  */
 export const MODULE_META: ModuleMeta[] = [
-  { kind: 'capture', title: '快速记灵感', hint: '三行输入框，写完直接落进灵感碎片', icon: 'lightbulb', w: FULL_SPAN, h: 3 },
-  { kind: 'shortcuts', title: '快捷入口', hint: '新建页面、搜索、图谱、Agent 等常用动作', icon: 'play', w: FULL_SPAN, h: 2 },
+  { kind: 'capture', title: '快速记灵感', hint: '三行输入框，写完直接落进灵感碎片', icon: 'lightbulb', w: DEFAULT_THIRD, h: 2 },
+  { kind: 'shortcuts', title: '快捷入口', hint: '新建页面、搜索、图谱、Agent 等常用动作', icon: 'play', w: DEFAULT_HALF, h: 1 },
   { kind: 'recent', title: '最近更新', hint: '最近改动过的页面与灵感', icon: 'refresh', w: DEFAULT_HALF, h: 5 },
   { kind: 'notes', title: '近期灵感', hint: '原始资料里最新记下的几条', icon: 'lightbulb', w: DEFAULT_HALF, h: 4 },
   { kind: 'fresh', title: '本周新增', hint: '最近 7 天新写出来的页面', icon: 'plus', w: DEFAULT_HALF, h: 4 },
@@ -143,7 +136,7 @@ export const MODULE_META: ModuleMeta[] = [
   { kind: 'system', title: '运行状态', hint: '版本、运行形态、队列与同步一句话说完', icon: 'server', w: DEFAULT_HALF, h: 3 },
   { kind: 'sync', title: '多端同步状态', hint: '同步中 / 已完成的通道与进度', icon: 'plug', w: DEFAULT_HALF, h: 3 },
   { kind: 'ring', title: '库占比', hint: '概念 / 实体 / 资料 的占比环 + 总数', icon: 'graph', w: DEFAULT_THIRD, h: 4 },
-  { kind: 'heat', title: '近 8 周', hint: '按天统计改动热度，一眼看出最近勤不勤', icon: 'activity', w: DEFAULT_HALF, h: 4 },
+  { kind: 'heat', title: '知识热力', hint: '近 4–12 周页面最近改动的日期分布', icon: 'activity', w: DEFAULT_THIRD, h: 2 },
   { kind: 'inbox', title: '收集箱', hint: '待整理的原始件与转换进度', icon: 'inbox', w: DEFAULT_THIRD, h: 3 },
   { kind: 'queue', title: '等待提炼', hint: '刚落盘还没进 Wiki 的资料与灵感', icon: 'merge', w: DEFAULT_HALF, h: 3 },
   { kind: 'board', title: '看板快照', hint: '任务看板三列各几条，点开进看板', icon: 'board', w: FULL_SPAN, h: 3 },
@@ -193,18 +186,20 @@ export function spanOptionsFor(_columns: BoardColumns = DEFAULT_BOARD_COLUMNS): 
 export const HEIGHT_STEPS = [2, 3, 4, 5, 6, 8] as const;
 
 /**
- * 默认布局：手机桌面的摆法——第一行整宽速记，第二行整宽快捷入口，
- * 第三行起左边「最近更新」占半页高一点、右边三个三分之一小卡，最后底部两张状态卡。
+ * 默认工作台：概览、速记、待办分列；灵感和热力格居中，快捷入口与状态使用短卡。
  */
 export function defaultHomeBoard(): HomeBoard {
   const items: Array<{ id: string; kind: ModuleKind; place: GridPlace; opts?: Record<string, number> }> = [
-    { id: 'default-capture', kind: 'capture', place: { col: 0, row: 0, w: 6, h: 3 } },
-    { id: 'default-shortcuts', kind: 'shortcuts', place: { col: 0, row: 3, w: 6, h: 2 } },
-    { id: 'default-recent', kind: 'recent', place: { col: 0, row: 5, w: 3, h: 5 }, opts: { limit: 6 } },
-    { id: 'default-tasks', kind: 'tasks', place: { col: 3, row: 5, w: 3, h: 3 }, opts: { limit: 3 } },
-    { id: 'default-stats', kind: 'stats', place: { col: 3, row: 8, w: 3, h: 3 } },
-    { id: 'default-sync', kind: 'sync', place: { col: 0, row: 10, w: 3, h: 2 } },
-    { id: 'default-digest', kind: 'digest', place: { col: 3, row: 11, w: 3, h: 2 } },
+    { id: 'default-stats', kind: 'stats', place: { col: 0, row: 0, w: 2, h: 2 } },
+    { id: 'default-capture', kind: 'capture', place: { col: 2, row: 0, w: 2, h: 2 } },
+    { id: 'default-tasks', kind: 'tasks', place: { col: 4, row: 0, w: 2, h: 3 }, opts: { limit: 5 } },
+    { id: 'default-notes', kind: 'notes', place: { col: 0, row: 2, w: 2, h: 2 }, opts: { limit: 4 } },
+    { id: 'default-heat', kind: 'heat', place: { col: 2, row: 2, w: 2, h: 2 }, opts: { limit: 8 } },
+    { id: 'default-recent', kind: 'recent', place: { col: 4, row: 3, w: 2, h: 2 }, opts: { limit: 6 } },
+    { id: 'default-shortcuts', kind: 'shortcuts', place: { col: 0, row: 4, w: 3, h: 1 } },
+    { id: 'default-sync', kind: 'sync', place: { col: 3, row: 4, w: 1, h: 1 } },
+    { id: 'default-activity', kind: 'activity', place: { col: 0, row: 5, w: 3, h: 2 } },
+    { id: 'default-digest', kind: 'digest', place: { col: 3, row: 5, w: 3, h: 2 } },
   ];
   return {
     version: HOME_BOARD_VERSION,
@@ -306,7 +301,7 @@ function normalizeModule(raw: unknown, others: HomeModule[]): HomeModule | null 
   const w = clampW(Number.isFinite(Number(item.w)) ? Number(item.w) : Number(asString ?? asNumber ?? meta.w));
   const h = clampH(Number.isFinite(Number(item.h)) ? Number(item.h) : meta.h);
 
-  // 位置：v3 读 col/row（会被夹进栅格）；旧数据没坐标 → 放到第一个空位
+  // 位置：保留坐标和留白；无坐标的旧数据放到第一个空位。
   let place: GridPlace;
   if (typeof item.col === 'number' || typeof item.row === 'number') {
     place = normalizePlace({ col: Number(item.col), row: Number(item.row), w, h });
@@ -356,20 +351,28 @@ export function normalizeHomeBoard(raw: unknown): HomeBoard {
     // 重复 id 会让拖拽定位错位：后一个改成新 id，宁可丢「它是谁」也不丢「它存在」
     if (seen.has(module.id)) module.id = uid();
     seen.add(module.id);
+    // 仅修复重叠，合法位置（包括用户刻意留白）必须原样保留。
+    while (modules.some((other) => intersects(module, other))) {
+      module.row = Math.max(...modules.filter((other) => intersects(module, other)).map((other) => other.row + other.h));
+    }
     modules.push(module);
     if (modules.length >= MAX_MODULES) break;
   }
-  // 最后统一紧凑一次：消掉空洞，并保证数组顺序与「从上到下、从左到右」的视觉顺序一致
+  // v3 首次升级时补一张热力卡，不改已有坐标；v4 删除后不会再次补回。
+  if (source.version === 3 && modules.length && modules.length < MAX_MODULES && !modules.some((m) => m.kind === 'heat')) {
+    const spot = findFreeSpot(modules, 2, 2)!;
+    modules.push({ id: uid('heat'), kind: 'heat', title: '', ...spot, opts: { limit: 8 } });
+  }
   return {
     version: HOME_BOARD_VERSION,
     columns,
-    modules: packModules(modules),
+    modules,
   };
 }
 
 /**
  * 整理一版布局：先按行序排（保证数组顺序与视觉顺序一致），再紧凑收拢空洞。
- * 读取旧数据、删除卡片、缩过尺寸之后都调它 —— 「卡片不会叠、不会飞出去」由此兜底。
+ * 仅供用户主动点击「紧凑」使用；读盘、删除、缩放不自动执行。
  */
 export function packModules(modules: HomeModule[]): HomeModule[] {
   const ordered = [...modules].sort((left, right) => left.row - right.row || left.col - right.col);
@@ -414,7 +417,7 @@ export function addModule(board: HomeBoard, kind: ModuleKind, id: string = uid()
 
 export function removeModule(board: HomeBoard, id: string): HomeBoard {
   const left = board.modules.filter((module) => module.id !== id);
-  return { ...board, modules: packModules(left) };
+  return { ...board, modules: left };
 }
 
 export function updateModule(board: HomeBoard, id: string, patch: Partial<Omit<HomeModule, 'id' | 'kind'>>): HomeBoard {
@@ -461,7 +464,7 @@ export function moveModuleTo(board: HomeBoard, id: string, place: GridPlace): Ho
   };
 }
 
-/** 紧凑：所有卡片往上收，消掉空洞（手机桌面上长按拖动后的自动补洞行为） */
+/** 手动紧凑：所有卡片往上收，消掉空洞。日常拖动、删除、读盘不自动执行。 */
 export function compactBoard(board: HomeBoard): HomeBoard {
   const packed = packModules(board.modules);
   const changed = packed.some((module, index) => module.row !== board.modules[index]?.row || module.col !== board.modules[index]?.col);
@@ -813,4 +816,3 @@ export function homeDigest(input: {
   if (!input.taskCount && !input.inboxPending) lines.push(`待办与收集箱都清空了。`);
   return lines;
 }
-
