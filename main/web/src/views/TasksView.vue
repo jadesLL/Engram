@@ -124,20 +124,22 @@
           </button>
           <div v-show="!isCollapsed(section.collapseKey)" class="cards">
             <article v-for="card in section.cards" :key="card.key" class="card" :class="{ overdue: card.overdue }">
-              <button
-                v-if="card.overdue"
-                class="complete-task btn ghost"
-                type="button"
-                :disabled="completingKeys.has(taskCardKey(card.card))"
-                :aria-label="`标记已完成：${card.card.text}`"
-                v-tooltip="'手动完成，并把点击日期写入 Markdown 文档'"
-                @click="completeCard(card.card)"
-              >
-                <AppSpinner v-if="completingKeys.has(taskCardKey(card.card))" :size="13" />
-                <Icon v-else name="check" :size="13" />
-                {{ completingKeys.has(taskCardKey(card.card)) ? '保存中…' : '已完成' }}
-              </button>
-              <p class="card-text">{{ card.card.text }}</p>
+              <div class="card-head">
+                <p class="card-text">{{ card.card.text }}</p>
+                <button
+                  v-if="card.overdue"
+                  class="complete-task"
+                  type="button"
+                  :disabled="completingKeys.has(taskCardKey(card.card))"
+                  :aria-label="`标记已完成：${card.card.text}`"
+                  v-tooltip="'手动完成，并把点击日期写入 Markdown 文档'"
+                  @click="completeCard(card.card)"
+                >
+                  <AppSpinner v-if="completingKeys.has(taskCardKey(card.card))" :size="13" />
+                  <Icon v-else name="check" :size="13" />
+                  {{ completingKeys.has(taskCardKey(card.card)) ? '保存中…' : '完成' }}
+                </button>
+              </div>
               <div class="meta">
                 <span v-if="card.card.owner" class="chip owner" v-tooltip="'责任人'">{{ card.card.owner }}</span>
                 <span
@@ -912,21 +914,45 @@ onBeforeUnmount(() => {
 
 .card.overdue { border-color: rgba(196, 43, 28, 0.3); }
 .card.overdue .card-text { color: var(--danger); }
-.card.overdue { position: relative; padding-right: 105px; }
+.card-head { display: flex; align-items: flex-start; gap: 12px; }
+.card-head .card-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* 轻描边方案：完成操作常显，正文与按钮各占一格，不再给整张卡预留右侧空白。 */
 .complete-task {
-  position: absolute;
-  right: 11px;
-  top: 50%;
-  transform: translateY(-50%);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 150ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
-.card:hover .complete-task,
-.card:focus-within .complete-task,
-.complete-task:disabled { opacity: 1; pointer-events: auto; }
-@media (hover: none) {
-  .complete-task { opacity: 1; pointer-events: auto; }
+.complete-task:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.complete-task:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.complete-task:disabled { opacity: 0.65; cursor: wait; }
+@media (hover: none) and (pointer: coarse) {
+  .complete-task { min-height: 44px; min-width: 72px; }
+}
+@media (max-width: 640px) {
+  .card-head { flex-wrap: wrap; gap: 6px; }
+  .card-head .card-text { flex-basis: 100%; }
+  .complete-task { margin-left: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .complete-task { transition: none; }
 }
 
 .source {
