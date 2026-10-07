@@ -43,6 +43,7 @@ import {
   setColumns,
   spanOptionsFor,
   tagCounts,
+  todayIdeasCount,
   upcomingTasks,
   uid,
   updateModule,
@@ -404,6 +405,20 @@ test('recentPagesOf / ideaPagesOf：归档页不算最近更新，灵感单独�
   assert.deepEqual(recentPagesOf(pages).map((p) => p.id), ['1', '3']);
   assert.deepEqual(ideaPagesOf(pages).map((p) => p.id), ['3']);
   assert.deepEqual(recentPagesOf(undefined as any), []);
+});
+
+test('todayIdeasCount：只数本地时区今天创建的灵感碎片，缺 created_at 回看 updated_at', () => {
+  const now = new Date('2026-10-08T15:00:00').getTime();
+  const today9 = new Date('2026-10-08T09:00:00').toISOString();
+  const yesterday = new Date('2026-10-07T20:00:00').toISOString();
+  const pages = [
+    { id: 'a', path: '原始资料/灵感碎片/甲', created_at: today9 },
+    { id: 'b', path: '原始资料/灵感碎片/乙', created_at: yesterday },
+    { id: 'c', path: '原始资料/灵感碎片/丙', updated_at: today9 },
+    { id: 'd', path: 'Wiki/概念/丁', created_at: today9 },
+  ];
+  assert.equal(todayIdeasCount(pages, now), 2);
+  assert.equal(todayIdeasCount(undefined as any, now), 0);
 });
 
 test('kbCounts：按路径前缀分类，资料数取传入计数', () => {

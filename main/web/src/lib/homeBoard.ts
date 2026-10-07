@@ -524,6 +524,17 @@ export function ideaPagesOf(pages: any[]): any[] {
   return (pages || []).filter((p) => String(p?.path || '').startsWith('原始资料/灵感碎片/'));
 }
 
+/** 「今日已记」：本地时区今天创建的灵感碎片条数（速记卡片头部计数用；缺 created_at 回看 updated_at） */
+export function todayIdeasCount(pages: any[], now: number = Date.now()): number {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const from = start.getTime();
+  return ideaPagesOf(pages).filter((p) => {
+    const at = pageTime(p, 'created_at') || pageTime(p, 'updated_at');
+    return at >= from && at <= now;
+  }).length;
+}
+
 /** 知识库概览的三类计数 */
 export function kbCounts(pages: any[], files: number): { concepts: number; entities: number; files: number } {
   const list = pages || [];
