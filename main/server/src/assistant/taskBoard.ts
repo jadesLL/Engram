@@ -2,6 +2,7 @@ import { getSetting, setSetting } from '../lib/db.js';
 import { TASK_BOARD_PLAYBOOK, WEEKLY_TASKS_QUESTION } from './playbooks.js';
 import * as repo from './repository.js';
 import { submitMessage } from './runner.js';
+import { completedTaskKeys } from './taskCompletion.js';
 import {
   BOARD_AUTO_OPTIONS,
   BOARD_SESSION_SETTING,
@@ -45,6 +46,7 @@ export { BOARD_SESSION_SETTING, BOARD_SESSION_TITLE };
 const NO_ANSWER_STATUS = ['failed', 'cancelled', 'interrupted'];
 
 export interface TaskBoardState {
+  completedTaskKeys: string[];
   sessionId: string;
   /** empty=从没生成过；running=正在提炼；ready=有答案；failed=最近一轮失败（answer 可能仍是上一次的） */
   status: 'empty' | 'running' | 'ready' | 'failed';
@@ -157,6 +159,7 @@ export function boardState(now: Date = new Date()): TaskBoardState {
 
   return {
     sessionId: session?.id || '',
+    completedTaskKeys: completedTaskKeys(shown.answer),
     status,
     answer: shown.answer,
     generatedAt: shown.generatedAt,

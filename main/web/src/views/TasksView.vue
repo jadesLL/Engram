@@ -124,6 +124,19 @@
           </button>
           <div v-show="!isCollapsed(section.collapseKey)" class="cards">
             <article v-for="card in section.cards" :key="card.key" class="card" :class="{ overdue: card.overdue }">
+              <button
+                v-if="card.overdue"
+                class="complete-task btn ghost"
+                type="button"
+                :disabled="completingKeys.has(taskCardKey(card.card))"
+                :aria-label="`标记已完成：${card.card.text}`"
+                v-tooltip="'手动完成，并把点击日期写入 Markdown 文档'"
+                @click="completeCard(card.card)"
+              >
+                <AppSpinner v-if="completingKeys.has(taskCardKey(card.card))" :size="13" />
+                <Icon v-else name="check" :size="13" />
+                {{ completingKeys.has(taskCardKey(card.card)) ? '保存中…' : '已完成' }}
+              </button>
               <p class="card-text">{{ card.card.text }}</p>
               <div class="meta">
                 <span v-if="card.card.owner" class="chip owner" v-tooltip="'责任人'">{{ card.card.owner }}</span>
@@ -216,6 +229,7 @@ import {
   overdueDays,
   sectionKey,
   taskCardTarget,
+  taskCardKey,
   type BoardFilter,
   type TaskBoardColumn,
   type TaskCard,
@@ -230,7 +244,7 @@ import { openPageStream } from '../lib/events';
  * 任务看板页：进来先看缓存——距上次提炼没超过「自动提炼」配的间隔就直接显示，
  * 到点了（或还没有答案）才自动让 Agent 重新提炼，提炼期间不挡旧看板，跑完自动换成新的。
  * 间隔在设置里调（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天），页头那个按钮只负责跳过去。
- * 整页只读，不写知识库。
+ * 逾期任务支持手动完成，将完成日期写回 Markdown 依据。
  *
  * 视图与筛选都在客户端做（数据已经是结构化的）：按天＝1、2、3… 每天要干什么；
  * 分列＝按来源三节。三档筛选共用，逾期单独一块放最前。
@@ -259,6 +273,25 @@ const autoChoices = computed(() => boardAutoChoices(autoOptions.value));
 let closeBoardStream: (() => void) | undefined;
 
 const board = computed(() => tasks.board);
+const completingKeys = ref(new Set<string>());
+
+async function completeCard(card: TaskCard) {
+  const key = taskCardKey(card);
+  if (completingKeys.value.has(key)) return;
+  completingKeys.value.add(key);
+  try {
+    const { data } = await api.post<{ key: string; date: string; path: string }>('/api/tasks/board/complete', {
+      key,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    tasks.completedTaskKeys = [...new Set([...tasks.completedTaskKeys, data.key])];
+    notify.success(`已手动完成：${data.date}，已写入 ${data.path}`);
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || '完成记录保存失败，请重试');
+  } finally {
+    completingKeys.value.delete(key);
+  }
+}
 
 /* ===== 视图：按天 / 分列，选择记在本机 ===== */
 type ViewKey = 'day' | 'column';
@@ -537,7 +570,7 @@ onMounted(async () => {
   if (runtimeCapabilitiesSnapshot().runtime !== 'android-local') {
     // 别端刷新了看板（多端同步把最新的那份推过来）：重拉一次，界面直接换成最新那版
     closeBoardStream = openPageStream((ev) => {
-      if (ev.type === 'board-changed') void tasks.load();
+      if (ev.type === 'board-changed' || ev.type === 'page-changed' || ev.type === 'page-deleted' || ev.type === 'page-moved') void tasks.load();
     });
   }
 });
@@ -879,6 +912,22 @@ onBeforeUnmount(() => {
 
 .card.overdue { border-color: rgba(196, 43, 28, 0.3); }
 .card.overdue .card-text { color: var(--danger); }
+.card.overdue { position: relative; padding-right: 105px; }
+.complete-task {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+.card:hover .complete-task,
+.card:focus-within .complete-task,
+.complete-task:disabled { opacity: 1; pointer-events: auto; }
+@media (hover: none) {
+  .complete-task { opacity: 1; pointer-events: auto; }
+}
 
 .source {
   display: inline-flex;
