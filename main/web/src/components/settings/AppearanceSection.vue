@@ -22,6 +22,28 @@
 
     <div class="setting-row">
       <div class="setting-copy">
+        <strong>软件图标</strong>
+        <span>默认跟随主题；也可只在这台设备上指定浅色或深色。桌面端的窗口、任务栏、托盘和快捷方式同步更新。</span>
+      </div>
+      <div class="segmented" role="radiogroup" aria-label="软件图标">
+        <button
+          v-for="opt in iconOptions"
+          :key="opt.value"
+          type="button"
+          role="radio"
+          class="icon-choice"
+          :aria-checked="app.iconAppearance === opt.value"
+          :class="{ active: app.iconAppearance === opt.value }"
+          @click="changeIconAppearance(opt.value)"
+        >
+          <img :src="`/brand/icon-${opt.value === 'auto' ? (app.dark ? 'dark' : 'light') : opt.value}.svg`" alt="" aria-hidden="true" width="18" height="18" />
+          {{ opt.label }}
+        </button>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <div class="setting-copy">
         <strong>悬停提示严格避让</strong>
         <span>提示只贴在被说明对象的四周（不外移、不画引导线）。开启后逐边比较，优先选不压住内容的一边，必要时换边或收窄气泡；关闭后优先贴首选方向显示，允许轻微遮挡。</span>
       </div>
@@ -49,7 +71,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import SettingsGroup from './SettingsGroup.vue';
-import { useAppStore } from '../../stores/app';
+import { useAppStore, type IconAppearance } from '../../stores/app';
 import { notify } from '../../lib/notify';
 import { getTooltipStrict, setTooltipStrict } from '../../lib/tooltip';
 
@@ -85,4 +107,23 @@ const themeOptions = [
   { value: 'dark', label: '深色' },
   { value: 'system', label: '跟随系统' },
 ];
+const iconOptions: { value: IconAppearance; label: string }[] = [
+  { value: 'auto', label: '跟随主题' },
+  { value: 'light', label: '浅色图标' },
+  { value: 'dark', label: '深色图标' },
+];
+
+async function changeIconAppearance(value: IconAppearance): Promise<void> {
+  try {
+    const result = await app.setIconAppearance(value);
+    if (result?.ok === false) notify.error(`软件图标已在界面内切换；Windows 快捷方式更新失败：${result.error || '请重试'}`);
+  } catch (error: any) {
+    notify.error(`软件图标已在界面内切换；Windows 图标更新失败：${error?.message || '请重试'}`);
+  }
+}
 </script>
+
+<style scoped>
+.icon-choice { display: inline-flex; align-items: center; gap: 5px; }
+.icon-choice img { display: block; flex: none; }
+</style>

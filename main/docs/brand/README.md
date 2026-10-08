@@ -28,9 +28,9 @@ node main/scripts/gen-brand-icons.cjs    # 工作目录：main/
 
 ## 亮暗规则
 
-**桌面永远用亮色版**：exe 图标、桌面快捷方式、开始菜单、托盘、安装包、Android 启动图标——这些出现在用户的桌面/任务栏上，不受应用主题控制，浅色贴片在任何壁纸上都看得清。
+**安装包与 Android 启动图标固定亮色版**：exe 内嵌图标和安装包资源在构建时确定。Windows 窗口/任务栏、托盘、桌面与开始菜单快捷方式按本机「设置 → 界面与检索 → 外观 → 软件图标」切换，默认跟随界面主题。源码模式的 `Engram.exe` 文件自身仍内嵌亮色版；快捷方式使用独立的 `.ico` 文件显示所选图标。
 
-**软件内部跟随主题**：网页标签页 favicon、标题栏 logo、导航 rail、登录页、欢迎页——由 `web/src/components/BrandMark.vue` 按 `app.dark` 在两份 SVG 之间切换（标签页图标由 `stores/app.ts` 的 `applyTheme()` 换 `href`）。
+**软件内部可单独选择**：网页标签页 favicon、标题栏 logo、导航 rail、登录页、欢迎页使用相同的本机图标偏好；默认跟随主题，也可固定亮色或暗色。选择保存在当前设备浏览器的本地存储中，不跨端同步。
 
 例外：桌面端启动页/错误页底色是固定深色 `#0d1424`，固定用 `mark-dark.svg`；安装器 GUI 是蓝色渐变底，固定用亮色盒装图标。
 
@@ -42,7 +42,8 @@ node main/scripts/gen-brand-icons.cjs    # 工作目录：main/
 | `web/public/brand/icon-{light,dark}.svg` | 应用内所有 logo 位（`BrandMark.vue` 按主题选） |
 | `web/public/brand/mark-{light,dark}.svg` | 欢迎页透明 logo |
 | `web/public/favicon.ico` | 亮色 5 尺寸兜底（老浏览器自动请求 `/favicon.ico`） |
-| `desktop/build/icon.png`、`icon.ico` | 托盘、exe、桌面/开始菜单快捷方式、electron-builder / 安装包 |
+| `desktop/build/icon.png`、`icon.ico` | exe 与安装包使用的亮色构建图标 |
+| `web/public/brand/icon-{light,dark}.png`、`icon-{light,dark}.ico` | 桌面运行时窗口、托盘与快捷方式图标；构建后随 `web/dist/brand` 一起进入桌面包 |
 | `desktop/build/mark-dark.svg` | 桌面启动页（data: URL 页面，`main.js` 直接读源码内联） |
 | `installer/brand/icon-light.svg` | 安装器 GUI（`installer/ui.html`） |
 | `mobile/android/app/src/main/res/**` | Android 启动图标（含自适应前景）、启动屏 |

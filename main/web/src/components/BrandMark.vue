@@ -13,7 +13,7 @@
 <script setup lang="ts">
 // 品牌标志在界面内的唯一渲染入口。
 // 几何与配色全部来自 main/scripts/gen-brand-icons.cjs 生成的两份静态 SVG（亮色/暗色），
-// 本组件只按当前主题切换文件，界面里不再内联任何轨道图形——避免同一图形被再写一遍、各写各的。
+// 本组件按本机图标偏好切换文件（默认跟随主题）。
 import { computed } from 'vue';
 import { useAppStore } from '../stores/app';
 
@@ -30,7 +30,7 @@ const props = withDefaults(
 );
 
 const app = useAppStore();
-const src = computed(() => `/brand/${props.plated ? 'icon' : 'mark'}-${app.dark ? 'dark' : 'light'}.svg`);
+const src = computed(() => `/brand/${props.plated ? 'icon' : 'mark'}-${app.iconIsDark() ? 'dark' : 'light'}.svg`);
 </script>
 
 <style scoped>
