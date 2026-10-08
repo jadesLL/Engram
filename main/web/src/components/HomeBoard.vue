@@ -106,9 +106,10 @@
           @set-opt="(key, value) => store.update(entry.module.id, { opts: { ...entry.module.opts, [key]: value } })"
           @drag-request="startDrag($event, entry.module.id)"
           @resize-request="startResize($event, entry.module.id)"
-          v-slot="{ expanded }"
+          v-slot="{ expanded, open, close }"
         >
-          <HomeCapture v-if="entry.module.kind === 'capture'" :submit="onIdea" :variant="Number(entry.module.opts.captureStyle) || 2" :single-row="entry.module.h === 1 && !expanded" :ideas="ideaItems" />
+          <HomeAsk v-if="entry.module.kind === 'ask'" :title="entry.title" :width="entry.place.w" :height="entry.place.h" :expanded="expanded" @open="open" @close="close" />
+          <HomeCapture v-else-if="entry.module.kind === 'capture'" :title="entry.title" :width="entry.place.w" :height="entry.place.h" :expanded="expanded" :submit="onIdea" :variant="Number(entry.module.opts.captureStyle) || 2" :ideas="ideaItems" @new="quickNote" @open="open" @go="go" />
           <HomeShortcuts v-else-if="entry.module.kind === 'shortcuts'" :agent-name="agentName" @go="go" @chat="onChat" />
           <HomeRecent v-else-if="entry.module.kind === 'recent'" :items="recentItems" :limit="entry.limit" @go="go" />
           <HomeNotes v-else-if="entry.module.kind === 'notes'" :items="ideaItems" :limit="entry.limit" @go="go" @capture="quickNote" />
@@ -160,6 +161,7 @@ import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import Icon from './Icon.vue';
 import HomeModuleShell from './HomeModuleShell.vue';
+import HomeAsk from './HomeBoardModules/HomeAsk.vue';
 import HomeCapture from './HomeBoardModules/HomeCapture.vue';
 import HomeShortcuts from './HomeBoardModules/HomeShortcuts.vue';
 import HomeRecent from './HomeBoardModules/HomeRecent.vue';
@@ -363,6 +365,7 @@ function summaryOf(module: HomeModule): HomeCardSummary {
     {text:'资料',detail:counts.value.files,amount:counts.value.files,path:'/search?q=原始资料'},
   ];
   switch (module.kind) {
+    case 'ask': return { value:'问答', label:'向 Agent 提问', action:true };
     case 'capture': return {value:'记灵感',label:'随手一句，稍后整理',action:true,rows:rowsOf(props.ideaItems),empty:'记一条灵感，稍后整理'};
     case 'stats': return {value:stats.value.pages,label:'知识页面',rows:[...facts,{text:'字数',detail:words.value.toLocaleString()}],chart:'bars'};
     case 'ring': { const ratios=ratioRows(props.pages,props.fileCount);return {value:ratios.total,label:'项知识与资料',rows:ratios.rows.map((r,i)=>({...facts[i],detail:`${r.value} · ${Math.round(r.ratio*100)}%`})),chart:'ring'}; }

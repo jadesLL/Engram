@@ -178,8 +178,8 @@ test('行的长按/⋯ 菜单在手机上是贴底动作面板，不是贴着手
 });
 
 test('触屏上的键盘提示全部换掉：首页模块、对话输入框、搜索空状态', () => {
-  // 2026-10-05 首页改成可编辑看板：这两句提示随模块搬到 HomeBoardModules 下
-  const capture = readSrc('components/HomeBoardModules/HomeCapture.vue');
+  // 功能卡共用撰写组件；触屏提示应检查实际渲染组件。
+  const capture = readSrc('components/HomeBoardModules/HomeActionComposer.vue');
   const captureTemplate = capture.split('</template>')[0].replace(/<!--[\s\S]*?-->/g, '');
   assert.doesNotMatch(captureTemplate, /Ctrl\+N|Ctrl\+Enter/, '速记可见文案不应在手机上显示键盘提示');
   assert.match(capture, /随手记录 · 稍后整理/, '速记应给出适用于触屏的整理说明');

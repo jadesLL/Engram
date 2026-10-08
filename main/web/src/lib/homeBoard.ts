@@ -49,6 +49,7 @@ const DEFAULT_THIRD = 4;
 const FULL_SPAN: ModuleSpan = DEFAULT_WIDE;
 
 export const MODULE_KINDS = [
+  'ask',
   'capture',
   'shortcuts',
   'recent',
@@ -130,7 +131,8 @@ export interface ModuleMeta {
  * 12 列栅格下一格约 75px（板宽上限 1120px 时），所以这里的 h 是「1 格 = 一行 75px」的行数。
  */
 export const MODULE_META: ModuleMeta[] = [
-  { kind: 'capture', title: '快速记灵感', hint: 'A 紧凑单行 / B 多行书写，一格高也能直接输入', icon: 'lightbulb', w: DEFAULT_THIRD, h: 4 },
+  { kind: 'ask', title: '快速问答', hint: '小格提问、竖卡概括与查资料、横卡输入，接入当前 Agent 会话', icon: 'messages', w: 3, h: 1 },
+  { kind: 'capture', title: '快速灵感机', hint: '小格入口、竖卡续写与最近灵感、横卡直接记下', icon: 'lightbulb', w: DEFAULT_THIRD, h: 4 },
   { kind: 'shortcuts', title: '快捷入口', hint: '新建页面、搜索、图谱、Agent 等常用动作', icon: 'play', w: DEFAULT_HALF, h: 2 },
   { kind: 'recent', title: '最近更新', hint: '最近改动过的页面与灵感', icon: 'refresh', w: DEFAULT_HALF, h: 10 },
   { kind: 'notes', title: '近期灵感', hint: '原始资料里最新记下的几条', icon: 'lightbulb', w: DEFAULT_HALF, h: 8 },
