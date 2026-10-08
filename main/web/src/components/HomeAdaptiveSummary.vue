@@ -1,7 +1,8 @@
 <template>
   <!--
-    尺寸档位 → 内容档位（2026-10-07 按尺寸重排内容）：
-    tile 磁贴 = 图标 + 核心数值（状态类 = 圆点 + 结论），整卡即按钮；
+    尺寸档位 → 内容档位（2026-10-07 按尺寸重排内容，2026-10-08 12 列栅格下按 75px 小格重调）：
+    tile 磁贴（1×1，约 75px）**只承担一件事**：
+         状态类 = 圆点 + 结论，动作类 = 图标 + 2 字短名，数据类 = 数值 + 2 字短名——不画图标、不排列表；
     bar  横条 = 左边数值、右边「一条最重要的信息」；
     column 竖条 = 数值 + 只有标题的精简列表；
     standard 标准 = 数值行（+ 角标）+ 图表 + 列表。
@@ -9,13 +10,12 @@
   -->
   <div ref="root" class="shell-summary adaptive-summary" :class="[`tier-${tier}`, { narrow: plan.narrow }]">
 
-    <!-- 磁贴（1×1）：整卡即按钮，没有标题栏也没有列表 -->
-    <button v-if="tier === 'tile'" type="button" class="tile" :aria-label="`打开${title}完整内容`" @click="$emit('open')">
-      <span class="tile-icon" :class="summary.status ? `tone-${summary.status.tone}` : ''"><Icon :name="icon" :size="19" /></span>
+    <!-- 磁贴（1×1）：整卡即按钮，一格只放一件事；状态类只留「圆点 + 结论」，其余用 2 字短名 -->
+    <button v-if="tier === 'tile'" type="button" class="tile" :aria-label="tileAria" @click="$emit('open')">
       <span v-if="summary.status" class="tile-status"><i class="sdot" :class="summary.status.tone" />{{ summary.status.text }}</span>
-      <span v-else-if="summary.action" class="tile-action">{{ summary.value }}</span>
-      <strong v-else class="tile-value">{{ displayValue }}</strong>
-      <span class="tile-label">{{ summary.label }}<template v-if="summary.badge"> · <b :class="summary.badge.tone">{{ summary.badge.text }}</b></template></span>
+      <span v-else-if="summary.action" class="tile-icon"><Icon :name="icon" :size="20" /></span>
+      <strong v-else class="tile-value" :class="{ danger: summary.badge?.tone === 'danger' }">{{ displayValue }}</strong>
+      <span v-if="!summary.status" class="tile-label">{{ shortTitle }}</span>
     </button>
 
     <!-- 横条（h=1）：左数值 + 分隔线 + 右边一条最重要的信息 -->
@@ -70,6 +70,12 @@ const root = ref<HTMLElement | null>(null);
 const size = ref({ w: 250, h: 250 });
 const plan = computed(() => cardContentPlan(size.value.w,size.value.h,props.summary.rows?.length || 0,props.summary.chart));
 const displayValue = computed(() => typeof props.summary.value === 'number' && plan.value.narrow ? formatCount(props.summary.value) : props.summary.value);
+/** 磁贴只有 2 字标签，说明全交给无障碍名称（屏幕阅读器与 tooltip 都读得到） */
+const tileAria = computed(() => {
+  const main = props.summary.status?.text ?? props.summary.value;
+  const badge = props.summary.badge?.text ? `，${props.summary.badge.text}` : '';
+  return `${props.title}：${main}${badge}，打开完整内容`;
+});
 const metricFontSize = computed(() => {
   const base = plan.value.narrow ? 22 : 30;
   const available = size.value.w - (plan.value.narrow ? 0 : 70);
@@ -105,19 +111,27 @@ onUnmounted(()=>observer?.disconnect());
 .badge.danger {background:var(--danger-soft,rgba(214,69,69,.1));color:var(--danger)}
 .badge.ok {background:rgba(46,158,91,.12);color:var(--ok,#2e9e5b)}
 
-/* ===== 磁贴（1×1）===== */
-.tile {flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:8px;text-align:center;color:var(--text)}
-.tile-icon {width:40px;height:40px;flex:none;border-radius:12px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center}
+/* ===== 磁贴（1×1，约 75px）：一格只放一件事 ===== */
+.tile {flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:4px;text-align:center;color:var(--text)}
+.tile-icon {width:26px;height:26px;flex:none;border-radius:8px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center}
 .tile-icon.tone-ok {background:rgba(46,158,91,.12);color:var(--ok,#2e9e5b)}
 .tile-icon.tone-warn {background:rgba(217,119,6,.12);color:var(--warning,#d97706)}
 .tile-icon.tone-muted {background:var(--bg-tertiary);color:var(--text-faint)}
-.tile-value {font-size:23px;font-weight:650;letter-spacing:-.02em;line-height:1.1;font-variant-numeric:tabular-nums}
-.tile-status {display:flex;align-items:center;gap:6px;font-size:15px;font-weight:600;color:var(--text)}
-.tile-action {font-size:16px;font-weight:600;color:var(--accent)}
-.tile-label {font-size:11px;line-height:1.3;color:var(--text-faint);max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.tile-label b {font-weight:600}
-.tile-label b.danger {color:var(--danger)}
-.tile-label b.ok {color:var(--ok,#2e9e5b)}
+.tile-value {font-size:19px;font-weight:650;letter-spacing:-.02em;line-height:1.1;font-variant-numeric:tabular-nums;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile-value.danger {color:var(--danger)}
+.tile-status {display:flex;align-items:flex-start;justify-content:center;gap:4px;font-size:11.5px;font-weight:600;line-height:1.3;max-width:100%;color:var(--text);text-align:center;overflow-wrap:anywhere}
+.tile-status .sdot {margin-top:4px}
+.tile-status i {flex:none}
+.tile-label {font-size:10.5px;line-height:1.2;color:var(--text-faint);max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* 更小的格子（< 70px）再收一档：只剩图标 / 数值 + 标签 */
+@container (max-width:74px) {
+  .tile {gap:3px;padding:2px}
+  .tile-icon {width:22px;height:22px;border-radius:7px}
+  .tile-value {font-size:17px}
+  .tile-status {font-size:10.5px}
+  .tile-label {font-size:9.5px}
+  .sdot {width:6px;height:6px}
+}
 
 /* ===== 横条（h=1, w≥2）===== */
 .tier-bar {flex-direction:row;align-items:stretch}
@@ -168,6 +182,11 @@ onUnmounted(()=>observer?.disconnect());
 .narrow .summary-stat {font-size:16px}
 .narrow .summary-act {font-size:16px}
 .narrow .summary-label {font-size:10px}
+/* 竖条档只有约 69px 宽：空状态收成小图标 + 最多 3 行字，别把整卡撑成一团乱码 */
+.narrow .summary-empty {gap:6px;padding:6px 2px}
+.narrow .summary-empty .e-icon {width:30px;height:30px;border-radius:9px}
+.narrow .summary-empty :deep(svg) {width:16px;height:16px}
+.narrow .summary-empty .e-text {font-size:11px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 
 button:focus-visible {outline:2px solid var(--accent);outline-offset:-2px;border-radius:4px}
 </style>

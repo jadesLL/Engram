@@ -18,9 +18,9 @@
     <button v-if="managing" class="resize-handle" type="button" aria-label="拖动调整宽高" @pointerdown.stop.prevent="$emit('resize-request', $event)" />
     <Teleport to="body"><dialog ref="settings" class="size-dialog" @click="onDialogClick" @close="stopSettingsBack?.()">
       <header class="detail-head"><h2>调整「{{ title }}」</h2><button type="button" class="detail-close" aria-label="关闭尺寸设置" @click="settings?.close()">×</button></header>
-      <p class="size-hint">{{ hoverSize || `${width} × ${height}` }} · 宽 × 高（格）</p>
-      <div class="size-matrix" @mouseleave="hoverSize = ''"><template v-for="h in 5" :key="h"><button v-for="w in 6" :key="w" type="button" :class="{ selected: w <= width && h <= height }" :aria-label="`${w} × ${h}`" @mouseenter="hoverSize = `${w} × ${h}`" @focus="hoverSize = `${w} × ${h}`" @click="$emit('set-size', w, h)" /></template></div>
-      <div class="size-fields"><label>宽度 <input type="number" min="1" max="6" :value="width" @change="$emit('set-size', Number(($event.target as HTMLInputElement).value), height)" /></label><label>高度 <input type="number" min="1" max="12" :value="height" @change="$emit('set-size', width, Number(($event.target as HTMLInputElement).value))" /></label><label v-if="limit !== undefined">{{ kind === 'heat' ? '周数' : '条数' }} <input type="number" :min="kind === 'heat' ? 4 : 1" :max="kind === 'tasks' ? 20 : 12" :value="limit" @change="$emit('set-opt', 'limit', Number(($event.target as HTMLInputElement).value))" /></label></div>
+      <p class="size-hint">{{ hoverSize || `${width} × ${height}` }} · 宽 × 高（格）<span class="size-unit">1 格 ≈ {{ Math.round(cellPx) }}px</span></p>
+      <div class="size-matrix" :style="{ '--size-cols': GRID_COLS }" @mouseleave="hoverSize = ''"><template v-for="h in sizeMatrixRows" :key="h"><button v-for="w in GRID_COLS" :key="w" type="button" :class="{ selected: w <= width && h <= height }" :aria-label="`${w} × ${h}`" @mouseenter="hoverSize = `${w} × ${h}`" @focus="hoverSize = `${w} × ${h}`" @click="$emit('set-size', w, h)" /></template></div>
+      <div class="size-fields"><label>宽度 <input type="number" min="1" :max="GRID_COLS" :value="width" @change="$emit('set-size', Number(($event.target as HTMLInputElement).value), height)" /></label><label>高度 <input type="number" min="1" :max="GRID_MAX_H" :value="height" @change="$emit('set-size', width, Number(($event.target as HTMLInputElement).value))" /></label><label v-if="limit !== undefined">{{ kind === 'heat' ? '周数' : '条数' }} <input type="number" :min="kind === 'heat' ? 4 : 1" :max="kind === 'tasks' ? 20 : 12" :value="limit" @change="$emit('set-opt', 'limit', Number(($event.target as HTMLInputElement).value))" /></label></div>
       <fieldset v-if="kind === 'capture'" class="capture-styles"><legend>输入样式</legend><label><input type="radio" :name="`capture-style-${$.uid}`" :checked="captureStyle === 1" @change="$emit('set-opt', 'captureStyle', 1)" /> A · 紧凑单行</label><label><input type="radio" :name="`capture-style-${$.uid}`" :checked="captureStyle !== 1" @change="$emit('set-opt', 'captureStyle', 2)" /> B · 多行书写</label><p>一格高时自动紧凑；切换样式保留草稿。</p></fieldset>
       <footer class="settings-actions"><button type="button" @click="$emit('rename')">修改标题</button><button type="button" class="danger" @click="settings?.close(); $emit('remove')">移除卡片</button><button type="button" class="done" @click="settings?.close()">完成</button></footer>
     </dialog></Teleport>
@@ -33,18 +33,38 @@ import HomeAdaptiveSummary from './HomeAdaptiveSummary.vue';
 import type { HomeCardSummary, HomeCardRow } from '../lib/homeCardPresentation.ts';
 import { registerBackHandler } from '../lib/androidBack';
 import { moduleMeta, type ModuleKind } from '../lib/homeBoard.ts';
+import { GRID_COLS, GRID_MAX_H } from '../lib/homeGrid.ts';
 import { cardTier } from '../lib/homeCardPresentation.ts';
 const props = defineProps<{ kind: ModuleKind; title: string; width: number; height: number; limit?: number; captureStyle?: number; managing: boolean; dragging: boolean; target?: boolean; summary: HomeCardSummary }>();
 const emit = defineEmits<{ (e: 'remove' | 'rename'): void; (e: 'set-size', w: number, h: number): void; (e: 'set-opt', key: string, value: number): void; (e: 'drag-request' | 'resize-request', event: PointerEvent): void; (e: 'activate', row: HomeCardRow): void }>();
 const root = ref<HTMLElement | null>(null), settings = ref<HTMLDialogElement | null>(null), closeButton = ref<HTMLButtonElement | null>(null);
 const size = ref({ w: 300, h: 300 });
+/** 尺寸菜单里的格子边长：卡片宽度减去格间 14px 留白后均分，让「1 格多大」看得见 */
+const cellPx = computed(() => {
+  const columns = Math.max(1, props.width);
+  return Math.max(24, Math.round((size.value.w + 14) / columns - 14));
+});
+/** 尺寸矩阵画几行高度：常用高度只到 6 行，再高就用下面的数字框 */
+const sizeMatrixRows = 6;
 const meta = computed(() => moduleMeta(props.kind));
 /** 内容档位由栅格格数决定（用户在尺寸菜单看到的 w × h），与像素无关 */
 const tier = computed(() => cardTier(props.width, props.height));
 const shortTitles: Record<ModuleKind, string> = { capture: '速记', shortcuts: '入口', recent: '更新', notes: '灵感', fresh: '新增', tasks: '待办', stats: '概览', weekly: '动态', tags: '标签', sections: '分区', roam: '漫游', system: '状态', sync: '同步', ring: '占比', heat: '热力', inbox: '收集', queue: '提炼', board: '看板', activity: '改动', digest: '摘要' };
 const tinyTitle = computed(() => props.title === meta.value.title ? shortTitles[props.kind] : props.title);
-// 热力图与速记始终显示真实内容；速记的紧凑排版由输入组件负责。
-const compact = computed(() => ['heat', 'capture'].includes(props.kind) ? false : props.kind === 'shortcuts' && tier.value === 'bar' ? false : true);
+/**
+ * 什么时候用「按尺寸分档的摘要」而不是模块真实内容（12 列栅格下一格约 75px）：
+ *  - 1×1 磁贴一律用摘要：一格只放一件事，75px 塞不下输入框、图表和列表；
+ *  - 速记窄于一格（w=1，约 75px 宽）时用摘要，横条档（h=1、w≥2）保留 A 紧凑单行输入；
+ *  - 热力要至少 2×2 才画真实格子，否则格子会小到看不清；
+ *  - 快捷入口只在横条档保留真实按钮排。
+ */
+const compact = computed(() => {
+  if (tier.value === 'tile') return true;
+  if (props.kind === 'capture') return props.width < 2;
+  if (props.kind === 'heat') return !(props.width >= 2 && props.height >= 2);
+  if (props.kind === 'shortcuts') return tier.value !== 'bar';
+  return true;
+});
 const padding = computed(() => size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 20);
 const expanded = ref(false), hoverSize = ref('');
 let previousFocus: HTMLElement | null = null;
@@ -282,14 +302,20 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 }
 .size-matrix {
   display:grid;
-  grid-template-columns:repeat(6,1fr);
-  gap:6px;
+  /* 列数跟着栅格走：12 列栅格就画 12 个小格，点哪个就是几格宽 */
+  grid-template-columns:repeat(var(--size-cols, 12),1fr);
+  gap:4px;
 }
 .size-matrix button {
   aspect-ratio:1;
   background:var(--bg-tertiary);
   border:1px solid var(--border);
-  border-radius:7px;
+  border-radius:5px;
+}
+.size-unit {
+  margin-left:8px;
+  color:var(--text-faint);
+  font-size:12px;
 }
 .size-matrix button.selected {
   background:var(--accent-soft);
@@ -368,6 +394,27 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   .shell-head h3 {
     font-size:11px;
     gap:5px;
+  }
+}
+/* 小格（1×1/横条）里「⋯」和缩放手柄按比例收小，别把一格占掉一半 */
+@container (max-width:170px) {
+  .card-settings {
+    width:24px;
+    height:20px;
+    top:3px;
+    right:3px;
+    border-radius:6px;
+    font-size:12px;
+  }
+  .resize-handle {
+    width:20px;
+    height:20px;
+  }
+  .resize-handle::after {
+    bottom:5px;
+    right:5px;
+    width:8px;
+    height:8px;
   }
 }
 @media(prefers-reduced-motion:reduce) {

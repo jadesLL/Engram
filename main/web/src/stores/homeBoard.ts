@@ -183,7 +183,7 @@ export const useHomeBoardStore = defineStore('homeBoard', {
     autoArrange() {
       this.commit(autoArrangeBoard(this.board));
     },
-    /** 换整页列数：v3 起栅格固定 6 列，这个入口保留成空操作（旧调用点不用改） */
+    /** 换整页列数：v3 起栅格列数固定（见 homeGrid.GRID_COLS），这个入口保留成空操作（旧调用点不用改） */
     setBoardColumns(columns: BoardColumns) {
       const next = setColumns(this.board, columns);
       if (next === this.board) return;

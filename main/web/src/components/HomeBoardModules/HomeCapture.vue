@@ -37,6 +37,7 @@
         <textarea
           v-model="draft"
           rows="1"
+          wrap="off"
           placeholder="记一条灵感…"
           :disabled="busy"
           aria-label="记一条灵感"
@@ -264,6 +265,10 @@ function onKey(event: KeyboardEvent) {
   line-height:1.5;
   padding:6px 0;
   height:auto;
+  /* wrap=off：横条档（约 150px 宽）里永远只占一行，长句横向滚动而不换行撑破胶囊 */
+  white-space:pre;
+  overflow:hidden;
+  text-overflow:ellipsis;
 }
 .capture-capsule textarea::placeholder { color:var(--text-faint); }
 .capture-send {
