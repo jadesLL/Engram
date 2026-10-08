@@ -51,6 +51,8 @@ docker compose up -d --build
 2. **连接 Agent**：在「设置 → Agent 与自动化」配置内置 Agent 的模型与 Key；使用外部 Agent 时，在「外部接入」生成 Token 并复制 MCP / CLI 配置。
 3. **整理与查找**：让 Agent 提炼资料、回答问题；通过搜索、双链和图谱回到原文，或打开任务看板查看待办。
 
+首页可添加快速问答与灵感卡片；输入框保留文字内边距，横卡长文字在框内滚动，缩放与展开保留草稿。详见[首页快捷卡片](./main/docs/USER-GUIDE.md#首页快捷卡片)。
+
 Android 的 Agent 与收集箱转换等能力由已绑定的中枢执行，详见 [Android 指南](./main/docs/ANDROID.md)。
 
 知识正文与原始资料保存在 `brain/`，SQLite 保存索引、配置与证据等元数据。完整迁移请使用「设置 → 知识库数据 → 备份与恢复」。

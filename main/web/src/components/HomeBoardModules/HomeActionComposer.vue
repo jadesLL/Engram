@@ -104,9 +104,11 @@ function onKey(event: KeyboardEvent) {
 .column-draft { position:absolute;top:0;right:0;width:5px;height:5px;overflow:hidden;font-size:0;background:var(--accent);border-radius:50%; }
 .bar { flex-direction:row;align-items:center; }
 .action-writing { display:flex;flex:1;gap:6px;min-width:0;min-height:0;align-items:center; }
-.action-writing textarea { flex:1;width:100%;min-width:0;min-height:0;padding:3px 0;border:0;outline:0;resize:none;background:transparent;color:var(--text);font:inherit;font-size:13px;line-height:1.6; }
+.action-writing textarea { flex:1;width:100%;min-width:0;min-height:0;box-sizing:border-box;padding:4px 8px;border:1px solid transparent;outline:0;resize:none;background:transparent;color:var(--text);font:inherit;font-size:13px;line-height:1.6; }
 .action-writing textarea::placeholder { color:var(--text-faint); }
-.bar .action-writing textarea { height:30px;white-space:pre;overflow:auto;scrollbar-width:none; }
+/* Keep text clear of rounded corners and the focus border inside compact cards. */
+.action-writing textarea:focus { border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent-soft); }
+.bar .action-writing textarea { height:32px;white-space:pre;overflow:auto;scrollbar-width:none; }
 .action-send { display:flex;align-items:center;justify-content:center;width:32px;height:32px;flex:none;border-radius:10px;background:var(--accent);color:var(--on-accent); }
 .action-send:disabled,.action-submit:disabled { background:var(--bg-tertiary);color:var(--text-faint);opacity:1!important; }
 .bar-helper,.bar-error,.action-expand { display:flex;align-items:center;justify-content:center;width:28px;height:32px;flex:none;color:var(--text-faint);background:transparent; }
