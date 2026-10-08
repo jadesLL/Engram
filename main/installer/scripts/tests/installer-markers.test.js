@@ -69,3 +69,10 @@ for (const c of cases) {
 }
 console.log(`\n${cases.length - failed}/${cases.length} 通过`);
 if (failed) process.exit(1);
+
+// 预构建环境包（安装器自带环境、免构建安装）的两组回归也挂在这里跑，不新增根 package.json 的
+// test 清单项：那份清单同时是 Docker 依赖层的「清单一致性」校验对象（包内清单与缓存层不一致时
+// 构建直接判失败），新增一项就要求重建依赖层、本地断网时跑不动验证。
+// 两个文件都能单独 `node installer/scripts/tests/<名字>.test.js` 直跑。
+require('./bundle-zip.test.js');
+require('./installer-bundle-mode.test.js');

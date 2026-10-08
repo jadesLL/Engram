@@ -6,6 +6,7 @@
   "main": "main.js",
   "scripts": {
     "dist": "electron-builder --win portable",
+    "pack-prebuilt": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/pack-prebuilt-bundle.ps1",
     "publish": "node scripts/publish-installer.js"
   },
   "devDependencies": {
@@ -27,6 +28,10 @@
       {
         "from": "../scripts/install-engram.ps1",
         "to": "install-engram.ps1"
+      },
+      {
+        "from": "resources/prebuilt",
+        "to": "prebuilt"
       }
     ],
     "win": {

@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const { probeRepo } = require('./scripts/lib/repo-probe.js');
+const { findBundleZip, bundleInfo: bundleInfoOf } = require('./scripts/lib/bundle-zip.js');
 
 let win = null;
 let child = null;
@@ -102,12 +103,31 @@ function pollLog(logFile) {
   });
 }
 
+/**
+ * 随安装器一起打包的预构建环境包（resources\prebuilt\*.zip）。
+ *
+ * 有它就走「免构建安装」：引擎直接解压覆盖客户机的旧环境，不联网、不克隆、不装依赖、不构建。
+ * 定位逻辑见 scripts/lib/bundle-zip.js（纯函数，单测见 scripts/tests/bundle-zip.test.js）。
+ */
+function resolveBundleZip() {
+  return findBundleZip({ resourcesPath: process.resourcesPath || '', dirname: __dirname });
+}
+
+/** 内置包信息：界面据此跳过「填仓库地址 + 凭据」直接开装 */
+function bundleInfo() {
+  return bundleInfoOf({ resourcesPath: process.resourcesPath || '', dirname: __dirname });
+}
+
 function startInstall({ user, pass, repoUrl } = {}) {
   if (child) return;
   const env = { ...process.env };
-  // 通用名（GitHub 也走这套：令牌当密码用）；引擎同时认旧的 ENGRAM_GITEA_* 名字
-  if (user) env.ENGRAM_REPO_USER = user;
-  if (pass) env.ENGRAM_REPO_PASS = pass;
+  const bundle = resolveBundleZip();
+  // 预构建模式不需要仓库凭据，也就不要把它们塞进环境变量/日志
+  if (!bundle) {
+    // 通用名（GitHub 也走这套：令牌当密码用）；引擎同时认旧的 ENGRAM_GITEA_* 名字
+    if (user) env.ENGRAM_REPO_USER = user;
+    if (pass) env.ENGRAM_REPO_PASS = pass;
+  }
   const logFile = path.join(app.getPath('temp'), 'engram-install.log');
   try {
     fs.writeFileSync(logFile, '');
@@ -122,12 +142,20 @@ function startInstall({ user, pass, repoUrl } = {}) {
   // 「无法识别的参数」——按脚本里有没有该开关决定传不传。
   const engine = scriptPath();
   const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', engine];
+  let engineText = '';
   try {
-    if (fs.readFileSync(engine, 'utf8').includes('$NoPrompt')) args.push('-NoPrompt');
+    engineText = fs.readFileSync(engine, 'utf8');
   } catch {
     /* 读不到就按旧版处理 */
   }
-  if (repoUrl) args.push('-RepoUrl', repoUrl);
+  if (engineText.includes('$NoPrompt')) args.push('-NoPrompt');
+  // 内置环境包只有新引擎（带 -BundleZip）才认得：老引擎直接报「无法识别的参数」，
+  // 故按脚本里有没有该参数决定用预构建模式还是退回源码模式
+  if (bundle && engineText.includes('BundleZip')) {
+    args.push('-BundleZip', bundle);
+  } else if (repoUrl) {
+    args.push('-RepoUrl', repoUrl);
+  }
   const ps = spawn('powershell.exe', args, { env, windowsHide: true });
   child = ps;
   pollTimer = setInterval(() => pollLog(logFile), 400);
@@ -195,6 +223,8 @@ app.whenReady().then(() => {
     }
   });
   ipcMain.handle('probe-repo', (_e, url) => probe(url));
+  // 内置环境包：界面拿到 available=true 就直接进入「一键安装」，不再问仓库地址与凭据
+  ipcMain.handle('bundle-info', () => bundleInfo());
 });
 
 app.on('window-all-closed', () => {

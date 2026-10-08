@@ -8,7 +8,14 @@
 #       （兼容旧名 ENGRAM_GITEA_USER/ENGRAM_GITEA_PASS），或交互输入；
 #       -NoPrompt（GUI 驱动）时不交互，缺凭据改发 ##AUTH:clone 让界面再问一次。
 #
-# 做的事（全自动，无需管理员权限，不污染系统）：
+# 两种安装模式：
+#   源码模式（默认）：便携 Git/Node/pnpm → 克隆/更新源码 → 装依赖 → 构建 → 快捷方式 → 启动。
+#   预构建模式（-BundleZip，或安装器自带 prebuilt\*.zip 时自动启用）：直接解压覆盖客户机上的
+#     旧环境（源码 + 运行时依赖 + 已构建产物都在包里），不联网、不装依赖、不构建。面向客户机
+#     没法构建的场景（2026-10-08 客户机实测：vite build 渲染阶段整棵进程树被外部终止，零输出、
+#     非零退出，装几次都过不去）。包由 scripts/pack-prebuilt-bundle.ps1 生成。
+#
+# 做的事（源码模式，全自动，无需管理员权限，不污染系统）：
 #   便携 Git(MinGit)/Node.js/pnpm（缺失才下载；地址内置在脚本里，npmmirror → 华为云 → 官方源
 #   逐个回退，产物按 ZIP 头校验，可用 ENGRAM_MINGIT_URL / ENGRAM_NODE_URL 覆盖为单一地址）
 #   → 克隆/更新 Engram 源码到 %LOCALAPPDATA%\engram\Engram
@@ -19,6 +26,7 @@ param(
   [string]$RepoUrl = 'https://github.com/jadesLL/Engram.git',
   [string]$GiteaUser = $(if ($env:ENGRAM_REPO_USER) { $env:ENGRAM_REPO_USER } elseif ($env:ENGRAM_GITEA_USER) { $env:ENGRAM_GITEA_USER } else { '' }),
   [string]$GiteaPass = $(if ($env:ENGRAM_REPO_PASS) { $env:ENGRAM_REPO_PASS } elseif ($env:ENGRAM_GITEA_PASS) { $env:ENGRAM_GITEA_PASS } else { '' }),
+  [string]$BundleZip = '',
   [switch]$NoPrompt
 )
 
@@ -223,12 +231,162 @@ function Test-DownloadedArchive([string]$path) {
   }
 }
 
+# ---------- 预构建环境包（免构建安装） ----------
+# 安装器自带一份「源码 + 运行时依赖 + 已构建产物」的 zip 时，客户机不再 git 拉取、装依赖、构建，
+# 直接解压覆盖旧环境。判定顺序：-BundleZip 显式指定 → 脚本旁 prebuilt\*.zip（打进安装器 exe 后
+# 即 resources\prebuilt）→ 仓库开发态的 ..\installer\resources\prebuilt\*.zip。包由
+# scripts/pack-prebuilt-bundle.ps1 生成。
+function Find-BundleZip([string]$scriptDir, [string]$explicit) {
+  if ($explicit) {
+    if (Test-Path -LiteralPath $explicit -PathType Leaf) { return (Resolve-Path -LiteralPath $explicit).Path }
+    return ''   # 显式指定却找不到：由调用方报错，不静默退回源码模式
+  }
+  foreach ($dir in @(
+      (Join-Path $scriptDir 'prebuilt'),
+      (Join-Path $scriptDir '..\prebuilt'),
+      (Join-Path $scriptDir '..\installer\resources\prebuilt'))) {
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+    $zip = Get-ChildItem -LiteralPath $dir -Filter '*.zip' -File -ErrorAction SilentlyContinue |
+      Sort-Object Name -Descending | Select-Object -First 1
+    if ($zip) { return $zip.FullName }
+  }
+  return ''
+}
+
+# 包体校验：必须是能打开、含 main/package.json 的完整 zip。覆盖安装是破坏性动作，坏包必须在动手
+# 之前挡住（镜像错误页、下载半截、手工放错文件都会在这里被拦下）。
+function Test-BundleArchive([string]$path) {
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+  try {
+    $fi = Get-Item -LiteralPath $path
+    if ($fi.Length -lt 1MB) { return $false }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($fi.FullName)
+    try {
+      foreach ($entry in $archive.Entries) {
+        if ($entry.FullName -eq 'main/package.json') { return $true }
+      }
+      return $false
+    } finally { $archive.Dispose() }
+  } catch { return $false }
+}
+
+# 覆盖安装目录前必须让出文件：Windows 不允许覆盖正在运行的 exe、被映射的 .node/.dll，不停进程
+# 解压会报一堆权限错误（update-from-source.ps1 同样先停本安装目录下的实例）。
+function Stop-EngramInstances([string]$installDir) {
+  $prefix = Join-Path $installDir 'Engram'
+  $stopped = 0
+  try {
+    Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='Engram.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) } |
+      ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        $stopped++
+      }
+  } catch { }
+  if ($stopped -gt 0) { Start-Sleep -Seconds 2 }
+  return $stopped
+}
+
+# 预构建安装：解压 → 覆盖 main/ → 补 electron.exe → 写安装标记。数据目录（%APPDATA%\@engram\desktop）
+# 与安装根下的便携 Git/Node/pnpm 一律不动。
+function Install-FromBundle([string]$zipPath, [string]$installDir, [string]$repoDir, [string]$mainDir) {
+  Step 'bundle' '解压预构建环境'
+  if (-not (Test-BundleArchive $zipPath)) {
+    StepFail 'bundle' "预构建环境包无效（不是完整 zip 或缺少 main/package.json）：$zipPath"
+  }
+  StepLog "包：$(Split-Path $zipPath -Leaf)（$([math]::Round((Get-Item -LiteralPath $zipPath).Length / 1MB)) MB）"
+  $stopped = Stop-EngramInstances $installDir
+  if ($stopped -gt 0) { StepLog "已停止本安装目录下的 $stopped 个 Engram 进程（覆盖前先让出文件）" }
+
+  $stageRoot = Join-Path $installDir ("Engram.bundle-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+  if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+  StepLog '解压中（约 1GB，视磁盘速度需要一两分钟）'
+  $code = Invoke-Logged 'tar.exe' @('-xf', $zipPath, '-C', $stageRoot)
+  if ($code -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $stageRoot 'main'))) {
+    StepLog '（tar.exe 解压不可用，改用 Expand-Archive）'
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $stageRoot -Force
+  }
+  $newMain = Join-Path $stageRoot 'main'
+  if (-not (Test-Path -LiteralPath (Join-Path $newMain 'package.json'))) {
+    StepFail 'bundle' '解压结果里没有 main/package.json：包结构不对'
+  }
+
+  # 覆盖：旧 main 先改名让位（Windows 上删 1GB 目录很慢，改名是瞬时的），装完再清理
+  if (Test-Path -LiteralPath $mainDir) {
+    $old = $mainDir + '.old'
+    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue }
+    Rename-Item -LiteralPath $mainDir -NewName 'main.old' -ErrorAction Stop
+  }
+  New-Item -ItemType Directory -Force -Path $repoDir | Out-Null
+  Move-Item -LiteralPath $newMain -Destination $mainDir
+
+  # 预构建安装不再走 git：留着旧 .git 会让「检查更新」把整份新目录当成待提交改动，越pull越乱
+  $gitDir = Join-Path $repoDir '.git'
+  if (Test-Path -LiteralPath $gitDir) {
+    Remove-Item -LiteralPath $gitDir -Recurse -Force -ErrorAction SilentlyContinue
+    StepLog '已移除旧 .git（预构建安装不使用 git 更新）'
+  }
+
+  # 包内只带品牌启动器 Engram.exe（省掉一份 190MB 的重复运行时）：运行时检查认 electron.exe，这里补一份
+  $electronDist = Join-Path $mainDir 'desktop\node_modules\electron\dist'
+  $branded = Join-Path $electronDist 'Engram.exe'
+  $plain = Join-Path $electronDist 'electron.exe'
+  if ((Test-Path -LiteralPath $branded) -and -not (Test-Path -LiteralPath $plain)) {
+    Copy-Item -LiteralPath $branded -Destination $plain -Force
+    (Get-Item -LiteralPath $plain).LastWriteTime = (Get-Item -LiteralPath $branded).LastWriteTime
+    StepLog '已由 Engram.exe 复制出 electron.exe'
+  }
+
+  # 安装标记：记录来自哪个包、什么时候装的（排查与「用安装器更新」提示都靠它）
+  $manifest = Join-Path $mainDir '.engram-prebuilt.json'
+  try {
+    $obj = [ordered]@{
+      mode        = 'prebuilt'
+      bundle      = (Split-Path $zipPath -Leaf)
+      installedAt = (Get-Date).ToString('o')
+      installDir  = $installDir
+    }
+    if (Test-Path -LiteralPath $manifest) {
+      $prev = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+      foreach ($prop in $prev.PSObject.Properties) { $obj[$prop.Name] = $prop.Value }
+      $obj['mode'] = 'prebuilt'
+    }
+    ($obj | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $manifest -Encoding UTF8
+  } catch {
+    StepLog "（安装标记写入失败，忽略：$($_.Exception.Message)）"
+  }
+
+  Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath ($mainDir + '.old') -Recurse -Force -ErrorAction SilentlyContinue
+  StepDone 'bundle'
+}
+
+# 步骤表先发源码模式那一行（它同时是 installer-download-sources.test.js 切分辅助函数的结束标记，
+# 位置与写法别动：被切出来的那段会被单独跑，里面不能有依赖上下文变量的可执行语句）。
 Out-Line '##STEPS:git=检测 Git 环境;node=准备便携 Node.js;pnpm=安装 pnpm;clone=克隆 Engram 源码;deps=安装依赖;build=构建桌面端;shortcut=创建桌面快捷方式;launch=启动 Engram'
+# 模式判定：GUI 的步骤表按模式发，走哪条路不再问用户；预构建模式补一行覆盖上面的步骤表
+# （GUI 的 steps 处理是整体替换，不会串台）
+$bundleZip = Find-BundleZip $PSScriptRoot $BundleZip
+$repoDir = Join-Path $InstallDir 'Engram'
+$mainDir = Join-Path $repoDir 'main'
+if ($bundleZip) { Out-Line '##STEPS:bundle=解压预构建环境;shortcut=创建桌面快捷方式;launch=启动 Engram' }
 Out-Line '=============================='
 Out-Line ' Engram 源码版安装器'
 Out-Line " 安装位置：$InstallDir"
+if ($bundleZip) { Out-Line ' 模式：预构建环境包（免联网、免构建）' }
 Out-Line '=============================='
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+if ($BundleZip -and -not $bundleZip) {
+  Out-Line "##FAIL:bundle|指定的预构建环境包不存在：$BundleZip"
+  throw "指定的预构建环境包不存在：$BundleZip"
+}
+
+if ($bundleZip) {
+  Install-FromBundle $bundleZip $InstallDir $repoDir $mainDir
+} else {
 
 # ---------- 1) Git：系统有就用，没有装便携 MinGit（免管理员） ----------
 Step 'git' '检测 Git 环境'
@@ -390,6 +548,7 @@ Step 'build' '构建桌面端'
 $code = Invoke-Logged (Join-Path $mainDir 'scripts\update-from-source.ps1') @('-SkipPull')
 if ($code -ne 0) { StepFail 'build' "构建/启动失败（退出码 $code）：$(Hint '构建脚本无错误输出')" }
 StepDone 'build'
+}
 
 # ---------- 7) 桌面快捷方式（双击直接启动，不拉取不构建；更新走应用内「检查更新」） ----------
 # 目标优先取品牌化的 Engram.exe（build 步已用 Engram 图标生成，资源管理器/任务栏图标即为
@@ -414,7 +573,20 @@ $lnk.Description = 'Engram（源码版）：双击直接启动；更新请在应
 $lnk.Save()
 StepDone 'shortcut' "$desktop\Engram.lnk"
 
-# ---------- 8) 完成（应用已由 build 步的脚本启动） ----------
+# ---------- 8) 启动（源码模式由 build 步的脚本启动；预构建模式在这里显式启动） ----------
 Step 'launch' '启动 Engram'
+if ($bundleZip) {
+  # 从「Electron 宿主里跑命令」的环境（dsh/Codex 等壳层、被 sync-deps 改过 env 的会话）启动时，
+  # ELECTRON_RUN_AS_NODE=1 会让 Electron 退化成纯 Node 跑 main.js（app 未定义，秒退）。启动前摘掉。
+  Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+  Start-Process -FilePath $electronExe -ArgumentList '.' -WorkingDirectory (Join-Path $mainDir 'desktop')
+  Start-Sleep -Seconds 5
+  $prefix = Join-Path $InstallDir 'Engram'
+  $alive = Get-CimInstance Win32_Process -Filter "Name='electron.exe' OR Name='Engram.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) }
+  if (-not $alive) {
+    StepFail 'launch' '启动失败：实例立即退出。最常见原因是单实例锁——打包版 Engram.exe 正在运行（两者共用数据目录，同时只能跑一个），请先退出它再试'
+  }
+}
 StepDone 'launch' '数据在 %APPDATA%\@engram\desktop；卸载走应用内 设置→数据与存储→危险操作→「卸载 Engram」'
 Out-Line '##ALLDONE'
