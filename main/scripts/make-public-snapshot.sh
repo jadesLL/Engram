@@ -28,6 +28,7 @@
 #   SNAPSHOT_KEEP               1 = 保留快照目录供排查
 #   SNAPSHOT_EXPORT_INSTALLER   目录；把脱敏后的安装器源码导出到此处（供发布公开安装器）
 #   SNAPSHOT_BRANCH / SNAPSHOT_PUSH_TAGS / SNAPSHOT_SYNC_RELEASES
+#   SNAPSHOT_RELEASE_SYNC_FATAL  Release 正文同步失败是否让退出码非零（默认 1；CI 传 0 只告警）
 #   SNAPSHOT_SRC_REPO / SNAPSHOT_FILTER_REPO
 #   SNAPSHOT_HOST_FROM / SNAPSHOT_OWNER_FROM / SNAPSHOT_HOST_TO / SNAPSHOT_OWNER_TO
 set -euo pipefail
@@ -54,6 +55,8 @@ nat() {
 SRC_REPO="${SNAPSHOT_SRC_REPO:-$(git rev-parse --show-toplevel)}"
 SRC_REPO="$(cd "$SRC_REPO" && pwd -P)"
 SRC_REPO_NAT="$(nat "$SRC_REPO")"
+# 本脚本所在目录：同目录的辅助脚本（public-release-sync.py）按绝对路径调用，不受 cwd 影响
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # ---------- 从 origin 推导真实主机与 owner ----------
 REMOTE_URL="$(git -C "$SRC_REPO_NAT" remote get-url origin 2>/dev/null || true)"
@@ -82,9 +85,23 @@ g() { git -C "$(nat "$SNAP")" "$@"; }
 case "$SNAP" in "$WORK"/*) ;; *) echo "护栏 1 失败：快照不在临时目录内：$SNAP" >&2; exit 1 ;; esac
 
 # ---------- 护栏 3（前）----------
-src_fp() { git -C "$SRC_REPO_NAT" for-each-ref --format='%(refname) %(objectname)' | sort | sha256sum; }
-SRC_FP_BEFORE="$(src_fp)"
-echo ">> 源仓库 refs 指纹（前）: ${SRC_FP_BEFORE%% *}"
+# 判据有两条，都指向同一个事故：filter-repo 把**源仓库**当成了 target。
+#   ① 精确证据：filter-repo 会在它操作的仓库里建 <gitdir>/filter-repo/（already_ran、commit-map 等），
+#      源仓库出现或变动这个目录基本就等于出事了；
+#   ② 广谱证据：全量改写会把几乎所有已有 ref 换成新对象。反过来，个别 ref 变动是多 worktree/多
+#      Agent 并行提交或改分支的常态（2026-10-08 本地实测：一次干跑被别的 worktree 同时改分支
+#      误判成「源仓库被改写」），所以只把「接近全量」的变动判失败，零星的只告警并列出来。
+SRC_REFS_BEFORE="$WORK/src-refs-before.txt"
+src_refs_dump() { git -C "$SRC_REPO_NAT" for-each-ref --format='%(refname) %(objectname)' | sort > "$1"; }
+src_refs_dump "$SRC_REFS_BEFORE"
+SRC_REFS_COUNT_BEFORE="$(wc -l < "$SRC_REFS_BEFORE" | tr -d ' ')"
+SRC_GITDIR="$(git -C "$SRC_REPO_NAT" rev-parse --absolute-git-dir)"
+SRC_FR_BEFORE="$WORK/src-filter-repo-before.txt"
+src_fr_dump() {
+  find "$(nat "$SRC_GITDIR")/filter-repo" -maxdepth 1 -printf '%f %T@ %s\n' 2>/dev/null | sort > "$1" || true
+}
+src_fr_dump "$SRC_FR_BEFORE"
+echo ">> 源仓库 refs 指纹（前）: $(sha256sum < "$SRC_REFS_BEFORE" | cut -d' ' -f1)（$SRC_REFS_COUNT_BEFORE 条）"
 
 # ---------- 公开仓库基址：把指向本仓库的 Gitea 链接改写成公开仓库对应链接 ----------
 # 全部由已有信息推导，不需要额外配置：公开仓库地址 + 从 origin 解析出的主机/owner/仓库名。
@@ -239,13 +256,29 @@ return b'$SNAPSHOT_EMAIL'
 echo ">> 重写耗时: $(( $(date +%s) - START )) 秒"
 
 # ---------- 护栏 3（后）----------
-SRC_FP_AFTER="$(src_fp)"
-if [ "$SRC_FP_BEFORE" != "$SRC_FP_AFTER" ]; then
-  echo "!! 护栏 3 失败：源仓库 refs 被改动了！" >&2
-  echo "   before=${SRC_FP_BEFORE%% *}  after=${SRC_FP_AFTER%% *}" >&2
+SRC_FR_AFTER="$WORK/src-filter-repo-after.txt"
+src_fr_dump "$SRC_FR_AFTER"
+# 比对的是两个 dump **文件的内容**（不是路径）：
+if ! cmp -s "$SRC_FR_BEFORE" "$SRC_FR_AFTER"; then
+  echo "!! 护栏 3 失败：源仓库里出现了 filter-repo 的痕迹（它被当成了 target）！" >&2
+  diff -u "$SRC_FR_BEFORE" "$SRC_FR_AFTER" | sed 's/^/   /' >&2 || true
   exit 1
 fi
-echo ">> 护栏 3 通过：源仓库 refs 指纹未变"
+SRC_REFS_AFTER="$WORK/src-refs-after.txt"
+src_refs_dump "$SRC_REFS_AFTER"
+awk 'NR==FNR { before[$1]=$2; next } { if (($1 in before) && before[$1] != $2) { print $1 } }' \
+  "$SRC_REFS_BEFORE" "$SRC_REFS_AFTER" > "$WORK/src-changed-refs.txt"
+SRC_REFS_CHANGED="$(wc -l < "$WORK/src-changed-refs.txt" | tr -d ' ')"
+SRC_REFS_COUNT_AFTER="$(wc -l < "$SRC_REFS_AFTER" | tr -d ' ')"
+if [ "$SRC_REFS_CHANGED" -ge 5 ] && [ $(( SRC_REFS_CHANGED * 2 )) -ge "$SRC_REFS_COUNT_BEFORE" ]; then
+  echo "!! 护栏 3 失败：源仓库几乎全部 ref 都被改写了（filter-repo 的签名）！" >&2
+  sed 's/^/   /' "$WORK/src-changed-refs.txt" >&2
+  exit 1
+fi
+if [ "$SRC_REFS_CHANGED" -gt 0 ]; then
+  echo ">> 提示：本次运行期间源仓库有 $SRC_REFS_CHANGED 个 ref 变了（其他 worktree/Agent 并行提交，不判失败）：$(tr '\n' ' ' < "$WORK/src-changed-refs.txt")"
+fi
+echo ">> 护栏 3 通过：源仓库无 filter-repo 痕迹、无全量 ref 改写（前 $SRC_REFS_COUNT_BEFORE 条 → 后 $SRC_REFS_COUNT_AFTER 条）"
 
 SNAP_FP_AFTER="$(snap_fp)"
 [ "$SNAP_FP_BEFORE" != "$SNAP_FP_AFTER" ] || { echo "!! 快照 refs 未变化，filter-repo 未生效" >&2; exit 1; }
@@ -353,8 +386,10 @@ if bad:
 print('   ok no residual for any rule')
 PY
 
-# 作者身份
-BADMAIL=$(g log --all --format='%ae%n%ce' | sort -u | grep -v -e '@users.noreply.github.com' -e 'agent@' || true)
+# 作者身份：快照作者邮箱（SNAPSHOT_EMAIL）是「有意公开」的，不算泄漏 —— 重写会把所有提交
+# 都归到它上面，CI 用的是 <账号>@users.noreply.github.com；除此之外出现任何邮箱都算残留。
+mail_re() { printf '%s' "$1" | sed 's/[][\\.*^$~]/\\&/g'; }
+BADMAIL=$(g log --all --format='%ae%n%ce' | sort -u | grep -v -e '@users.noreply.github.com' -e 'agent@' -e "$(mail_re "${SNAPSHOT_EMAIL:-}")" || true)
 if [ -n "$BADMAIL" ]; then echo "   !! 提交头仍有非预期邮箱:"; printf '%s\n' "$BADMAIL"; FAIL=1; else echo "   ok 提交头邮箱已归一"; fi
 BADNAME=$(g log --all --format='%an%n%cn' | sort -u | grep -x -- "$OWNER_FROM" || true)
 if [ -n "$BADNAME" ]; then echo "   !! 作者名仍有 $OWNER_FROM"; FAIL=1; else echo "   ok 作者名已归一"; fi
@@ -400,6 +435,14 @@ fi
 # 正文来源是快照内（已脱敏）的 CHANGELOG.md，与 Gitea 侧 release.yml 同一约定，
 # 因此不需要调 Gitea API、也不需要额外凭据（复用推送用的那把 PAT）。
 # 幂等：正文一致就不动，缺了才建、变了才改。
+#
+# 抖动隔离（2026-10-08 实测）：这段是「尽力而为」——连接被掐/超时/5xx 只记「待补」并打警告，
+# 不再把整个镜像任务拖红：那次失败时「代码/标签推送」其实已经成功，公开仓库代码是最新的，
+# 红的只是 Release 正文同步（61 个标签各建一次 TLS 连接，断一次就整体失败）。
+# 是否让失败影响退出码由 SNAPSHOT_RELEASE_SYNC_FATAL 决定：
+#   1（默认，本地/手动跑）= 有待补即非零退出；
+#   0（CI 的 mirror 任务）= 只告警并返回 0 —— 镜像任务成败只由「代码/标签推送」决定。
+# 逻辑与离线自检都在 scripts/public-release-sync.py（python scripts/public-release-sync.py --self-test）。
 if [ "$SYNC_RELEASES" = "1" ] && { [ "$DRY_RUN" != "1" ] || [ -n "${SNAPSHOT_TOKEN:-}" ]; }; then
   GH_API_BASE=""
   case "$PUBLIC_BASE" in
@@ -409,104 +452,10 @@ if [ "$SYNC_RELEASES" = "1" ] && { [ "$DRY_RUN" != "1" ] || [ -n "${SNAPSHOT_TOK
     echo ">> 跳过发布同步：目标不是 github.com（当前 ${PUBLIC_BASE:-<未设置>}）" >&2
   else
     echo ">> 同步发布（CHANGELOG 段落 → Release）..."
-    GH_API_BASE="$GH_API_BASE" GH_TOKEN="${SNAPSHOT_TOKEN:-}" SNAP_REPO="$(nat "$SNAP")" \
-      GH_DRY_RUN="$DRY_RUN" python - <<'PY'
-import json, os, re, subprocess, time, urllib.error, urllib.request
-
-api = os.environ['GH_API_BASE'].rstrip('/')
-token = os.environ.get('GH_TOKEN', '')
-snap = os.environ['SNAP_REPO']
-dry = os.environ.get('GH_DRY_RUN') == '1'
-
-
-def git(*args):
-    return subprocess.run(['git', '-C', snap, *args], capture_output=True, check=True).stdout
-
-
-CHANGELOG = git('show', 'HEAD:CHANGELOG.md').decode('utf-8', 'replace')
-
-
-def changelog_section(tag):
-    """取当前 CHANGELOG.md 里 '## <tag>' 到下一个 '## ' 之间的段落。
-
-    刻意读 HEAD 而不是 '<tag>:CHANGELOG.md'：早期标签当时仓库根还没有这份文件
-    （根 CHANGELOG 是后来才加的），只有当前这份才覆盖全部 77 个版本段落。
-    """
-    want = re.compile(r'^## ' + re.escape(tag) + r'(?![0-9.])')
-    out, found = [], False
-    for line in CHANGELOG.splitlines():
-        if line.startswith('## '):
-            if found:
-                break
-            if want.match(line):
-                found = True
-        if found:
-            out.append(line)
-    return '\n'.join(out).strip()
-
-
-def call(method, url, payload=None):
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    if token:
-        req.add_header('Authorization', f'Bearer {token}')
-    req.add_header('Accept', 'application/vnd.github+json')
-    req.add_header('User-Agent', 'engram-public-mirror')
-    if data:
-        req.add_header('Content-Type', 'application/json')
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.loads(r.read().decode() or '{}')
-    except urllib.error.HTTPError as e:
-        return e.code, {}
-
-
-tags = [t.decode() for t in git('tag', '--list', 'v*').splitlines() if t.strip()]
-created = updated = unchanged = skipped = failed = 0
-for tag in tags:
-    body = changelog_section(tag)
-    if not body:
-        print(f'   skip {tag}（CHANGELOG 无对应段落）')
-        skipped += 1
-        continue
-    status, rel = call('GET', f'{api}/releases/tags/{tag}')
-    if status == 200:
-        if rel.get('body', '').strip() == body:
-            unchanged += 1
-            continue
-        if dry:
-            print(f'   would update {tag}')
-            updated += 1
-            continue
-        st, _ = call('PATCH', f"{api}/releases/{rel['id']}", {'body': body})
-        if st == 200:
-            updated += 1
-        else:
-            print(f'   !! update {tag} HTTP {st}')
-            failed += 1
-    elif status == 404:
-        if dry:
-            print(f'   would create {tag}')
-            created += 1
-            continue
-        st, _ = call('POST', f'{api}/releases', {
-            'tag_name': tag, 'name': tag, 'body': body,
-            'draft': False, 'prerelease': False,
-        })
-        if st in (200, 201):
-            created += 1
-        else:
-            print(f'   !! create {tag} HTTP {st}')
-            failed += 1
-    else:
-        print(f'   !! {tag} 查询失败 HTTP {status}')
-        failed += 1
-    time.sleep(0.2)
-
-print(f'>> 发布同步：新建 {created}，更新 {updated}，未变 {unchanged}，跳过 {skipped}，失败 {failed}')
-if failed:
-    raise SystemExit(1)
-PY
+    # 退出码：本地/手动默认非零（失败要看得见）；CI 传 0，让镜像任务的成败只看代码/标签推送
+    RELEASE_SYNC_FATAL="${SNAPSHOT_RELEASE_SYNC_FATAL:-1}" \
+      GH_API_BASE="$GH_API_BASE" GH_TOKEN="${SNAPSHOT_TOKEN:-}" SNAP_REPO="$(nat "$SNAP")" \
+      GH_DRY_RUN="$DRY_RUN" python "$(nat "$SCRIPT_DIR/public-release-sync.py")"
   fi
 fi
 echo ">> 完成。"
