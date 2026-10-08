@@ -5,7 +5,6 @@
       <div class="gv-brand">
         <Icon name="graph" :size="16" />
         <b>知识图谱</b>
-        <em>{{ modeLabel }}</em>
       </div>
       <div class="gv-seg">
         <button
@@ -18,7 +17,7 @@
       </div>
       <div class="gv-search">
         <Icon name="search" :size="15" />
-        <input v-model="filters.q" placeholder="搜索页面 / 标签…" spellcheck="false" @input="onSearchInput" />
+        <input v-model="filters.q" aria-label="搜索页面或标签" placeholder="搜索页面 / 标签…" spellcheck="false" @input="onSearchInput" />
       </div>
       <div class="gv-chips">
         <span v-for="c in activeChips" :key="c.key" class="gv-chip">
@@ -27,18 +26,21 @@
         </span>
       </div>
       <div class="gv-actions">
-        <button class="gv-icon" :class="{ on: facetsOpen }" v-tooltip="{ body: '筛选面板', meta: '按类型、标签、更新时间、规模筛选' }" @click="facetsOpen = !facetsOpen">
+        <button class="gv-tool" :class="{ on: facetsOpen }" aria-label="筛选面板" :aria-expanded="facetsOpen" v-tooltip="{ body: '筛选面板', meta: '按类型、标签、更新时间、规模筛选' }" @click="facetsOpen = !facetsOpen">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
+          筛选
         </button>
-        <button class="gv-icon" v-tooltip="{ body: '重排', meta: '换一个随机种子重新跑布局' }" @click="relayout">
+        <button class="gv-icon" aria-label="重新布局" v-tooltip="{ body: '重排', meta: '换一个随机种子重新跑布局' }" @click="relayout">
           <Icon name="refresh" :size="15" />
         </button>
+        <button class="gv-tool" :class="{ on: detailOpen }" :aria-expanded="detailOpen" @click="detailOpen = !detailOpen">概览</button>
       </div>
     </div>
 
     <div class="gv-main">
       <!-- 左：业务维度筛选 -->
       <aside class="gv-facets" :class="{ hidden: !facetsOpen }">
+        <div class="gv-panel-head"><b>筛选页面</b><button @click="resetFilters">重置</button></div>
         <div class="gv-fgroup">
           <h4>类型 <button @click="clearFacet('types')">清空</button></h4>
           <button
@@ -101,7 +103,7 @@
 
       <!-- 中：画布（双层 canvas：底层静态图，上层只画 hover/选中） -->
       <div ref="stageRef" class="gv-stage">
-        <canvas ref="baseRef" class="gv-canvas" :style="{ cursor }" />
+        <canvas ref="baseRef" class="gv-canvas" aria-label="知识图谱画布：拖动平移或移动节点，滚轮缩放" :style="{ cursor }" />
         <canvas ref="overRef" class="gv-canvas over" />
 
         <div class="gv-tip" v-if="tip" :style="{ left: tip.x + 'px', top: tip.y + 'px' }">
@@ -116,23 +118,29 @@
         </div>
 
         <div class="gv-stats">
-          <b>{{ visibleNodes.length }}</b> 页 · <b>{{ visibleEdges.length }}</b> 关系
-          <span v-if="layoutHint">{{ layoutHint }}</span>
+          <span class="gv-status-dot" :class="{ busy: layoutHint === '布局中' }" />
+          <span><b>{{ visibleNodes.length }}</b> 页 · <b>{{ visibleEdges.length }}</b> 关系</span>
+          <span v-if="layoutHint" class="gv-layout-state">{{ layoutHint }}</span>
         </div>
+        <div class="gv-help">拖动平移 · 滚轮缩放 · 点击查看关联</div>
 
         <div class="gv-hud">
           <button
             class="gv-icon gv-tweaks-toggle"
             :class="{ on: tweaksOpen }"
+            aria-label="布局参数" :aria-expanded="tweaksOpen"
             v-tooltip="{ body: '布局参数', meta: '节点大小、连线粗细、斥力与引力' }"
             @click="tweaksOpen = !tweaksOpen"
           >
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M15 4.5v5M9 14.5v5" /></svg>
           </button>
-          <button class="gv-icon" v-tooltip="{ body: '铺满', meta: '把全部节点缩放到可见范围' }" @click="fit()">
+          <button class="gv-icon" aria-label="缩小图谱" @click="zoomBy(1 / 1.25)">−</button>
+          <output class="gv-zoom">{{ zoomPercent }}%</output>
+          <button class="gv-icon" aria-label="放大图谱" @click="zoomBy(1.25)">+</button>
+          <button class="gv-icon" aria-label="适应画布" v-tooltip="{ body: '铺满', meta: '把全部节点缩放到可见范围' }" @click="fit()">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15" /></svg>
           </button>
-          <button class="gv-icon" :class="{ on: pinned }" v-tooltip="{ body: pinned ? '取消固定' : '固定布局', meta: '停住力导向计算' }" @click="togglePin()">
+          <button class="gv-icon" :class="{ on: pinned }" :aria-label="pinned ? '取消固定布局' : '固定布局'" :aria-pressed="pinned" v-tooltip="{ body: pinned ? '取消固定' : '固定布局', meta: '停住力导向计算' }" @click="togglePin()">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v8M8 7l4-4 4 4M6 21h12" /></svg>
           </button>
         </div>
@@ -162,11 +170,17 @@
           <button class="gv-btn" @click="load">重试</button>
         </div>
         <p v-else-if="!rawNodes.length" class="gv-state faint">还没有图谱数据。写几篇带 [[双链]] 的页面后，图谱会自动生长。</p>
-        <p v-else-if="!visibleNodes.length" class="gv-state faint">当前筛选条件下没有页面，试试清空左侧筛选。</p>
+        <div v-else-if="!visibleNodes.length" class="gv-state empty">
+          <Icon name="graph" :size="32" />
+          <strong>没有符合条件的页面</strong>
+          <span>{{ mode === 'business' ? '业务视图只显示客户、人物、组织与项目。' : '试试减少筛选条件，继续探索页面之间的联系。' }}</span>
+          <button class="gv-btn" @click="mode === 'business' ? switchMode('all') : resetFilters()">{{ mode === 'business' ? '查看全库图谱' : '清空筛选' }}</button>
+        </div>
       </div>
 
       <!-- 右：聚合 / 选中详情 -->
-      <aside class="gv-detail">
+      <aside class="gv-detail" :class="{ hidden: !detailOpen }">
+        <div class="gv-panel-head"><b>{{ selected ? '页面详情' : '图谱概览' }}</b><button v-if="selected" aria-label="返回图谱概览" @click="selected = null">返回概览</button><button v-else aria-label="收起图谱概览" @click="detailOpen = false">收起</button></div>
         <template v-if="selected">
           <div class="gv-kind">{{ typeName(selected.group) }}<span v-if="selected.updatedAt"> · 更新于 {{ selected.updatedAt }}</span></div>
           <h3>{{ selected.label }}</h3>
@@ -176,7 +190,7 @@
             <div><b>{{ selected.inDeg }}</b>被引用</div>
           </div>
           <div v-if="selected.tags.length" class="gv-tagbox">
-            <span v-for="t in selected.tags" :key="t" class="gv-tag" @click="toggleFacet('tags', t)">{{ t }}</span>
+            <button v-for="t in selected.tags" :key="t" class="gv-tag" @click="toggleFacet('tags', t)">{{ t }}</button>
           </div>
           <div class="gv-btnrow">
             <button class="gv-btn" @click="openSelected">打开页面</button>
@@ -184,9 +198,9 @@
           </div>
           <h5>关联页面（{{ selectedRels.length }}）</h5>
           <div class="gv-rel">
-            <a v-for="r in selectedRels.slice(0, 30)" :key="r.id" @click="selected = r">
-              <i :style="{ background: colorOf(r) }" />{{ r.label }}<em>{{ r.rel }}</em>
-            </a>
+            <button v-for="r in selectedRels.slice(0, 30)" :key="r.id" @click="selectNode(r)">
+              <i :style="{ background: colorOf(r) }" /><span>{{ r.label }}</span><em>{{ r.rel }}</em>
+            </button>
           </div>
         </template>
 
@@ -194,20 +208,20 @@
           <div class="gv-kind">当前筛选</div>
           <h3>{{ visibleNodes.length }} 页 · {{ visibleEdges.length }} 关系</h3>
           <div class="gv-nums">
-            <div v-for="t in ['customer', 'person', 'org', 'project']" :key="t">
-              <b>{{ typeCount[t] || 0 }}</b>{{ typeName(t) }}
+            <div v-for="t in overviewTypes" :key="t.key">
+              <b>{{ t.count }}</b><span><i :style="{ background: t.color }" />{{ t.name }}</span>
             </div>
           </div>
           <h5>标签分布</h5>
           <div class="gv-tagbox">
-            <span v-for="t in topTags" :key="t.name" class="gv-tag" @click="toggleFacet('tags', t.name)">{{ t.name }} {{ t.count }}</span>
-            <span v-if="!topTags.length" class="faint">（无）</span>
+            <button v-for="t in topTags" :key="t.name" class="gv-tag" @click="toggleFacet('tags', t.name)">{{ t.name }} <b>{{ t.count }}</b></button>
+            <span v-if="!topTags.length" class="faint">暂无标签</span>
           </div>
           <h5>最近更新</h5>
           <div class="gv-rel">
-            <a v-for="n in recentNodes" :key="n.id" @click="selected = n">
-              <i :style="{ background: colorOf(n) }" />{{ n.label }}<em>{{ n.updatedAt }}</em>
-            </a>
+            <button v-for="n in recentNodes" :key="n.id" @click="selectNode(n)">
+              <i :style="{ background: colorOf(n) }" /><span>{{ n.label }}</span><em>{{ n.updatedAt }}</em>
+            </button>
           </div>
         </template>
       </aside>
@@ -216,13 +230,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { ref, shallowRef, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import Icon from '../components/Icon.vue';
 import { notify } from '../lib/notify';
+import { createGraphFrame } from '../lib/graphFrame';
 
 /* ────────────────────────── 常量 ────────────────────────── */
 
@@ -288,6 +303,8 @@ const pageId = ref((route.params.id as string) || '');
 const mode = ref<'business' | 'all' | 'local'>('business');
 /** 手机上筛选面板默认收起：一进来就盖住图（原 GraphView 的移动端守护，重写后继续保持） */
 const facetsOpen = ref(window.innerWidth > 768);
+const detailOpen = ref(window.innerWidth > 768);
+const zoomPercent = ref(100);
 const pinned = ref(false);
 
 const modes = computed(() => [
@@ -297,7 +314,6 @@ const modes = computed(() => [
     ? [{ key: 'local' as const, name: '本页关联', meta: '以当前页面（或选中节点）为中心的邻居图' }]
     : []),
 ]);
-const modeLabel = computed(() => (mode.value === 'local' ? '本页关联' : mode.value === 'all' ? '全库' : '业务视图'));
 
 const filters = reactive({
   q: '', types: [] as string[], tags: [] as string[],
@@ -335,7 +351,7 @@ function onDocPointerDown(ev: PointerEvent) {
   tweaksOpen.value = false;
 }
 
-const selected = ref<GNode | null>(null);
+const selected = shallowRef<GNode | null>(null);
 const tip = ref<{ x: number; y: number; title: string; kind: string; color: string; deg: number; words: number; tags: string[]; updatedAt: string } | null>(null);
 const cursor = ref('grab');
 const layoutHint = ref('');
@@ -435,6 +451,7 @@ function passFilter(n: GNode) {
 }
 
 let visible: GNode[] = [];
+let visibleIds = new Set<string>();
 let visibleLinks: { a: number; b: number; rel: string }[] = [];
 const visibleNodes = computed(() => { void version.value; return visible; });
 const visibleEdges = computed(() => { void version.value; return visibleLinks; });
@@ -477,6 +494,7 @@ const tagFacets = computed(() => {
 });
 
 const dateLabels = computed(() => {
+  void version.value;
   const fmt = (num: number) => (num ? `${String(num).slice(0, 4)}-${String(num).slice(4, 6)}-${String(num).slice(6, 8)}` : '—');
   const lo = dateMinNum + (dateMaxNum - dateMinNum) * filters.from;
   const hi = dateMinNum + (dateMaxNum - dateMinNum) * filters.to;
@@ -500,6 +518,9 @@ const typeCount = computed(() => {
   for (const n of visible) c[n.group] = (c[n.group] || 0) + 1;
   return c;
 });
+const overviewTypes = computed(() => Object.entries(typeCount.value)
+  .sort((a, b) => b[1] - a[1])
+  .map(([key, count]) => ({ key, count, name: typeName(key), color: (TYPE_COLOR[key] || TYPE_COLOR.other)[app.dark ? 1 : 0] })));
 const topTags = computed(() => {
   void version.value;
   const c = new Map<string, number>();
@@ -542,6 +563,11 @@ function clearFacet(kind: 'types' | 'tags' | 'time' | 'size') {
   if (kind === 'tags') filters.tags = [];
   if (kind === 'time') { filters.from = 0; filters.to = 1; rangeFrom.value = 0; rangeTo.value = 100; }
   if (kind === 'size') { filters.minWords = 0; filters.minDeg = 0; wordSlider.value = 0; degSlider.value = 0; }
+  applyFilter();
+}
+function resetFilters() {
+  Object.assign(filters, { q: '', types: [], tags: [], from: 0, to: 1, minWords: 0, minDeg: 0, showRaw: false, showDead: false });
+  rangeFrom.value = 0; rangeTo.value = 100; wordSlider.value = 0; degSlider.value = 0;
   applyFilter();
 }
 function onRange(which: 'from' | 'to') {
@@ -601,7 +627,6 @@ const posCache = new Map<string, { x: number; y: number }>();
 let alpha = 1;
 let settled = true;
 let simActive = false;
-let raf = 0;
 let seed = 20260929;
 const rnd = () => {
   seed = (seed * 1664525 + 1013904223) % 4294967296;
@@ -609,7 +634,7 @@ const rnd = () => {
 };
 
 function setLayoutHint() {
-  layoutHint.value = settled ? '· 已收敛' : '· 计算中';
+  layoutHint.value = pinned.value ? '已固定' : settled ? '布局稳定' : '布局中';
 }
 
 /**
@@ -632,6 +657,8 @@ function applyFilter() {
   const keep = rawNodes.filter(passFilter);
   visible = keep;
   const visSet = new Set(keep.map((n) => n.id));
+  visibleIds = visSet;
+  labelPlan = [];
   visibleLinks = rawEdges.filter((e) => visSet.has(rawNodes[e.a].id) && visSet.has(rawNodes[e.b].id));
 
   // 半径：字数 + 关联数，开方压缩（避免大小差异被拉成极端）
@@ -662,11 +689,11 @@ function applyFilter() {
   }
 
   selected.value = selected.value && visSet.has(selected.value.id) ? rawNodes[nodeIndex.get(selected.value.id)!] : null;
-  alpha = 1; settled = false;
+  alpha = pinned.value ? 0 : 1; settled = pinned.value;
   userAdjusted = false; // 换了筛选条件：让视图重新居中
   version.value++;
   run();
-  window.setTimeout(() => fit(), 320);
+  scheduleFit();
 }
 
 function tick() {
@@ -715,6 +742,7 @@ function tick() {
   }
   let maxSpeed = 0;
   for (const n of nodes) {
+    if (n.fixed) { n.vx = 0; n.vy = 0; continue; }
     n.vx -= n.x * PH.gravity * alpha;
     n.vy -= n.y * PH.gravity * alpha;
     n.vx *= P.damping; n.vy *= P.damping;
@@ -757,35 +785,19 @@ function collide(nodes: GNode[]) {
 }
 
 function run() {
-  cancelAnimationFrame(raf);
-  simActive = true;
+  simActive = !pinned.value && !settled;
   setLayoutHint();
-  const loop = () => {
-    tick();
-    drawBase();
-    drawOver();
-    if (!settled) {
-      raf = requestAnimationFrame(loop);
-    } else {
-      simActive = false;
-      planLabels();
-      // 收敛后自动重新居一次（用户手动拖过/缩放过就不再打扰）
-      if (!userAdjusted) fit();
-      drawBase();
-      drawOver();
-      setLayoutHint();
-    }
-  };
-  raf = requestAnimationFrame(loop);
+  paintFrame.schedule(settled);
 }
 
 function relayout() {
+  pinned.value = false;
   seed = Math.floor(Math.random() * 4294967296);
   posCache.clear();
   for (const n of visible) { n.x = 0; n.y = 0; n.vx = 0; n.vy = 0; }
-  alpha = 1; settled = false;
+  alpha = pinned.value ? 0 : 1; settled = pinned.value;
   run();
-  window.setTimeout(() => fit(), 320);
+  scheduleFit();
 }
 
 function togglePin() {
@@ -793,13 +805,10 @@ function togglePin() {
   if (pinned.value) {
     for (const n of visible) { n.vx = 0; n.vy = 0; }
     alpha = 0;
-    cancelAnimationFrame(raf);
     simActive = false;
     settled = true;
     setLayoutHint();
-    planLabels();
-    drawBase();
-    drawOver();
+    paintFrame.schedule(true);
   } else {
     alpha = 0.4;
     settled = false;
@@ -818,6 +827,33 @@ const view = { x: 0, y: 0, s: 1 };
 let bctx: CanvasRenderingContext2D | null = null;
 let octx: CanvasRenderingContext2D | null = null;
 let hover: GNode | null = null;
+const paintFrame = createGraphFrame((labels) => {
+  // Physics and paint share the same frame so hit testing sees exactly the positions on screen.
+  if (simActive) {
+    tick();
+    if (settled) {
+      simActive = false;
+      labels = true;
+      if (!userAdjusted) fit();
+      setLayoutHint();
+    }
+  }
+  if (labels) planLabels();
+  zoomPercent.value = Math.round(view.s * 100);
+  drawBase();
+  drawOver();
+  if (simActive) paintFrame.schedule();
+});
+let fitTimer = 0;
+let labelTimer = 0;
+function scheduleFit() {
+  clearTimeout(fitTimer);
+  fitTimer = window.setTimeout(() => { if (!userAdjusted) fit(); }, 320);
+}
+function scheduleLabels() {
+  clearTimeout(labelTimer);
+  labelTimer = window.setTimeout(() => paintFrame.schedule(true), 100);
+}
 
 /** 画布需要具体颜色，不能直接用 CSS 变量；从根元素的令牌读，主题切换时刷新（画布底色与 App 背景保持一致） */
 function cssVar(el: HTMLElement | undefined, name: string, fallback: string) {
@@ -834,11 +870,11 @@ function refreshPalette() {
   const dark = app.dark;
   palette = {
     bg: cssVar(rootRef.value, '--bg', dark ? '#0e0f12' : '#ffffff'),
-    edge: dark ? 'rgba(255,255,255,.10)' : 'rgba(20,20,25,.10)',
-    edgeHot: dark ? '#6FA5E8' : '#0f6cbd',
+    edge: dark ? 'rgba(255,255,255,.15)' : 'rgba(31,30,29,.14)',
+    edgeHot: cssVar(rootRef.value, '--accent', '#2b5ce6'),
     label: dark ? 'rgba(241,242,244,.72)' : 'rgba(23,24,27,.66)',
     labelHot: dark ? '#FFFFFF' : '#17181B',
-    focus: dark ? '#6FA5E8' : '#0f6cbd',
+    focus: cssVar(rootRef.value, '--accent', '#2b5ce6'),
     tint: dark ? 'rgba(255,255,255,.24)' : 'rgba(255,255,255,.42)',
   };
 }
@@ -868,6 +904,10 @@ function planLabels() {
   if (!bctx) return;
   labelPlan = [];
   const placed: { x: number; y: number; w: number; h: number }[] = [];
+  const nodeBoxes = visible.map((n) => {
+    const r = nodeScreenR(n.r) + 2;
+    return { n, x: n.x * view.s + view.x - r, y: n.y * view.s + view.y - r, w: r * 2, h: r * 2 };
+  });
   const intersect = (a: typeof placed[0], b: typeof placed[0]) =>
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   const order = visible.slice().sort((a, b) => b.deg - a.deg || b.words - a.words);
@@ -875,7 +915,7 @@ function planLabels() {
   for (const n of order) {
     if (labelPlan.length >= budget) break;
     const text = n.label.length > 18 ? `${n.label.slice(0, 17)}…` : n.label;
-    const fs = n.deg > 12 ? 12.5 : 11.5;
+    const fs = n.deg > 12 ? 13 : 12;
     const bold = n.deg > 12;
     bctx.font = `${bold ? 600 : 400} ${fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
     const tw = bctx.measureText(text).width;
@@ -893,7 +933,7 @@ function planLabels() {
     for (const c of cands) {
       const b = { x: Math.round(c.x), y: Math.round(c.y), w: tw + 4, h: th + 2 };
       if (b.x < 6 || b.x + b.w > W - 6 || b.y < 4 || b.y + b.h > H - 4) continue;
-      if (!placed.some((p) => intersect(b, p))) { box = b; break; }
+      if (!placed.some((p) => intersect(b, p)) && !nodeBoxes.some((p) => p.n !== n && intersect(b, p))) { box = b; break; }
     }
     if (!box) continue; // 放不下就不放，宁缺毋滥
     placed.push(box);
@@ -905,8 +945,7 @@ function drawBase() {
   if (!bctx || !W) return;
   const T = theme();
   bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  bctx.fillStyle = T.bg;
-  bctx.fillRect(0, 0, W, H);
+  bctx.clearRect(0, 0, W, H);
   if (!visible.length) return;
   bctx.save();
   bctx.translate(view.x, view.y);
@@ -926,6 +965,9 @@ function drawBase() {
 
   // 节点：屏幕半径钳制在 2.5–18px，放大时不会变成巨球
   for (const n of visible) {
+    const sx = n.x * view.s + view.x;
+    const sy = n.y * view.s + view.y;
+    if (sx < -24 || sx > W + 24 || sy < -24 || sy > H + 24) continue;
     const rr = nodeScreenR(n.r);
     bctx.beginPath();
     bctx.arc(n.x, n.y, rr / view.s, 0, Math.PI * 2);
@@ -943,6 +985,7 @@ function drawBase() {
   bctx.textBaseline = 'middle';
   bctx.textAlign = 'left';
   for (const L of labelPlan) {
+    if (L.n.id === (hover || selected.value)?.id) continue; // The overlay draws the focused title once.
     const x = Math.round(L.n.x * view.s + view.x + L.dx);
     const y = Math.round(L.n.y * view.s + view.y + L.dy);
     bctx.font = `${L.bold ? 600 : 400} ${L.fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
@@ -980,7 +1023,7 @@ function drawOver() {
   octx.beginPath();
   for (const a of adj[idx]) {
     const m = rawNodes[a.i];
-    if (!passFilter(m)) continue;
+    if (!visibleIds.has(m.id)) continue;
     octx.moveTo(focus.x, focus.y);
     octx.lineTo(m.x, m.y);
   }
@@ -991,7 +1034,7 @@ function drawOver() {
   octx.fillStyle = T.tint;
   for (const a of adj[idx]) {
     const m = rawNodes[a.i];
-    if (!passFilter(m)) continue;
+    if (!visibleIds.has(m.id)) continue;
     octx.beginPath();
     octx.arc(m.x, m.y, nodeRadius(m.r), 0, Math.PI * 2);
     octx.fill();
@@ -1026,19 +1069,18 @@ function drawOver() {
 
 function fit() {
   if (!visible.length) return;
+  cancelAnimationFrame(camRaf);
   let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
   for (const n of visible) {
     x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r);
     x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r);
   }
-  const pad = 90;
+  const pad = Math.min(90, W * 0.16, H * 0.16);
   const s = Math.min(1.5, Math.max(0.06, Math.min((W - pad * 2) / Math.max(1, x1 - x0), (H - pad * 2) / Math.max(1, y1 - y0))));
   view.s = s;
   view.x = W / 2 - ((x0 + x1) / 2) * s;
   view.y = H / 2 - ((y0 + y1) / 2) * s;
-  planLabels();
-  drawBase();
-  drawOver();
+  paintFrame.schedule(true);
 }
 
 function screenToWorld(mx: number, my: number) {
@@ -1073,9 +1115,7 @@ function centerOn(node: GNode) {
     view.s = from.s + (to.s - from.s) * e;
     view.x = from.x + (to.x - from.x) * e;
     view.y = from.y + (to.y - from.y) * e;
-    planLabels();
-    drawBase();
-    drawOver();
+    paintFrame.schedule(k === 1);
     if (k < 1) camRaf = requestAnimationFrame(step);
   };
   step();
@@ -1083,9 +1123,10 @@ function centerOn(node: GNode) {
 
 /* ────────────────────────── 交互 ────────────────────────── */
 
-let drag: { node: GNode | null; x: number; y: number; vx: number; vy: number; moved: boolean } | null = null;
+let drag: { node: GNode | null; pointerId: number; x: number; y: number; vx: number; vy: number; offsetX: number; offsetY: number; moved: boolean; resume: boolean } | null = null;
 let clickTimer = 0;
 let lastClickAt = 0;
+let lastClickId = '';
 
 function pointerPos(ev: PointerEvent | WheelEvent) {
   const rect = baseRef.value!.getBoundingClientRect();
@@ -1094,12 +1135,20 @@ function pointerPos(ev: PointerEvent | WheelEvent) {
 
 function onPointerDown(ev: PointerEvent) {
   const cv = baseRef.value;
-  if (!cv) return;
+  if (!cv || drag || ev.button !== 0) return;
+  cancelAnimationFrame(camRaf);
+  clearTimeout(clickTimer);
   cv.setPointerCapture(ev.pointerId);
   const { x, y } = pointerPos(ev);
   const node = hitTest(x, y);
-  drag = { node, x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, moved: false };
-  if (node) { node.fixed = true; alpha = Math.max(alpha, 0.15); settled = false; if (!simActive) run(); }
+  const w = screenToWorld(x, y);
+  drag = { node, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, offsetX: node ? node.x - w.x : 0, offsetY: node ? node.y - w.y : 0, moved: false, resume: simActive };
+  // Pause the simulation throughout the gesture: nodes follow the pointer without fighting physics.
+  simActive = false;
+  if (node) { node.fixed = true; node.vx = 0; node.vy = 0; }
+  hover = null;
+  tip.value = null;
+  paintFrame.schedule();
   cursor.value = 'grabbing';
 }
 
@@ -1107,14 +1156,15 @@ function onPointerMove(ev: PointerEvent) {
   if (!baseRef.value) return;
   const { x, y } = pointerPos(ev);
   if (drag) {
+    if (ev.pointerId !== drag.pointerId) return;
     const dx = ev.clientX - drag.x;
     const dy = ev.clientY - drag.y;
-    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; userAdjusted = true; }
     if (drag.node) {
       // 只改这一个节点的坐标 → 拖拽不重算布局，手感稳定
       const w = screenToWorld(x, y);
-      drag.node.x = w.x;
-      drag.node.y = w.y;
+      drag.node.x = w.x + drag.offsetX;
+      drag.node.y = w.y + drag.offsetY;
       drag.node.vx = 0;
       drag.node.vy = 0;
     } else {
@@ -1122,18 +1172,17 @@ function onPointerMove(ev: PointerEvent) {
       view.y = drag.vy + dy;
       userAdjusted = true;
     }
-    drawBase();
-    drawOver();
+    paintFrame.schedule();
     return;
   }
   const node = hitTest(x, y);
   if (node !== hover) {
     hover = node;
-    drawOver();
+    paintFrame.schedule();
     cursor.value = node ? 'pointer' : 'grab';
     if (node) {
       tip.value = {
-        x: Math.min(x + 14, W - 230), y: Math.min(y + 14, H - 90),
+        x: Math.max(8, Math.min(x + 14, W - 240)), y: Math.max(8, Math.min(y + 14, H - 110)),
         title: node.label, kind: typeName(node.group), color: colorOf(node),
         deg: node.deg, words: node.words, tags: node.tags, updatedAt: node.updatedAt,
       };
@@ -1143,27 +1192,39 @@ function onPointerMove(ev: PointerEvent) {
   }
 }
 
-function onPointerUp() {
+function onPointerUp(ev: PointerEvent) {
+  if (!drag || ev.pointerId !== drag.pointerId) return;
   cursor.value = 'grab';
-  const wasDrag = drag?.moved;
-  const node = drag?.node;
+  const wasDrag = drag.moved;
+  const node = drag.node;
+  const resume = drag.resume;
   drag = null;
-  if (node) { node.fixed = false; alpha = Math.max(alpha, 0.2); settled = false; if (!simActive) run(); }
+  if (baseRef.value?.hasPointerCapture(ev.pointerId)) baseRef.value.releasePointerCapture(ev.pointerId);
+  if (node) { node.fixed = false; posCache.set(node.id, { x: node.x, y: node.y }); }
+  // A manual node placement becomes the new stable layout, including a drag made while it was settling.
+  if (node && wasDrag) {
+    alpha = 0;
+    settled = true;
+    for (const n of visible) { n.vx = 0; n.vy = 0; posCache.set(n.id, { x: n.x, y: n.y }); }
+    setLayoutHint();
+  } else if (resume && !pinned.value && !settled) run();
+  paintFrame.schedule(true);
+  if (ev.type === 'pointercancel' || ev.type === 'lostpointercapture') return;
   if (wasDrag || !node) return;
 
   // 单击 = 选中（打开页面走右栏按钮）；300ms 内的第二次点击 = 以它为中心（只挪视图，不重排）
   const now = Date.now();
-  if (now - lastClickAt < 300) {
+  if (node.id === lastClickId && now - lastClickAt < 300) {
     clearTimeout(clickTimer);
     lastClickAt = 0;
     centerOn(node);
     return;
   }
   lastClickAt = now;
+  lastClickId = node.id;
   clearTimeout(clickTimer);
   clickTimer = window.setTimeout(() => {
-    selected.value = node;
-    drawOver();
+    selectNode(node);
   }, 200);
 }
 
@@ -1171,21 +1232,37 @@ function onPointerLeave() {
   if (drag) return;
   hover = null;
   tip.value = null;
-  drawOver();
+  paintFrame.schedule();
 }
 
-function onWheel(ev: WheelEvent) {
-  ev.preventDefault();
-  const { x, y } = pointerPos(ev);
-  const k = Math.exp(-ev.deltaY * 0.0012);
+function selectNode(node: GNode) {
+  const index = nodeIndex.get(node.id);
+  if (index == null) return;
+  selected.value = rawNodes[index];
+  hover = null;
+  tip.value = null;
+  detailOpen.value = true;
+  paintFrame.schedule();
+}
+
+function zoomAt(k: number, x: number, y: number) {
+  cancelAnimationFrame(camRaf);
   const ns = Math.min(4, Math.max(0.06, view.s * k));
   view.x = x - (x - view.x) * (ns / view.s);
   view.y = y - (y - view.y) * (ns / view.s);
   view.s = ns;
   userAdjusted = true;
-  planLabels();
-  drawBase();
-  drawOver();
+  paintFrame.schedule();
+  scheduleLabels();
+}
+function zoomBy(k: number) { zoomAt(k, W / 2, H / 2); }
+
+function onWheel(ev: WheelEvent) {
+  ev.preventDefault();
+  const { x, y } = pointerPos(ev);
+  if (drag) return;
+  const delta = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? H : 1);
+  zoomAt(Math.exp(-delta * 0.0012), x, y);
 }
 
 /* ────────────────────────── 模式与跳转 ────────────────────────── */
@@ -1196,11 +1273,13 @@ function switchMode(next: 'business' | 'all' | 'local') {
     notify.info('先选中一个节点，或从某个页面点「本页关联」进来');
     return;
   }
+  const wasLocal = mode.value === 'local';
   mode.value = next;
   if (next === 'local') {
     load();
     return;
   }
+  if (wasLocal) { load(); return; }
   posCache.clear();
   applyFilter();
 }
@@ -1225,9 +1304,7 @@ let optTimer = 0;
 watch(opt, () => {
   syncPhysics();
   saveOptions();
-  planLabels();
-  drawBase();
-  drawOver();
+  paintFrame.schedule(true);
   clearTimeout(optTimer);
   optTimer = window.setTimeout(() => {
     if (pinned.value || !visible.length) return;
@@ -1239,9 +1316,9 @@ watch(opt, () => {
 
 watch(() => app.dark, () => {
   refreshPalette();
-  drawBase();
-  drawOver();
+  paintFrame.schedule();
 });
+watch(selected, () => paintFrame.schedule());
 
 watch(() => route.params.id, (id) => {
   if (!id) return;
@@ -1267,9 +1344,10 @@ onMounted(async () => {
   cv.addEventListener('pointermove', onPointerMove);
   cv.addEventListener('pointerup', onPointerUp);
   cv.addEventListener('pointercancel', onPointerUp as unknown as EventListener);
+  cv.addEventListener('lostpointercapture', onPointerUp);
   cv.addEventListener('pointerleave', onPointerLeave);
   cv.addEventListener('wheel', onWheel, { passive: false });
-  ro = new ResizeObserver(() => { resize(); planLabels(); drawBase(); drawOver(); });
+  ro = new ResizeObserver(() => { resize(); paintFrame.schedule(true); });
   ro.observe(stageRef.value!);
   if (pageId.value) mode.value = 'local';
   await nextTick();
@@ -1278,8 +1356,11 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  cancelAnimationFrame(raf);
+  simActive = false;
   cancelAnimationFrame(camRaf);
+  paintFrame.cancel();
+  clearTimeout(fitTimer);
+  clearTimeout(labelTimer);
   clearTimeout(clickTimer);
   clearTimeout(filterTimer);
   clearTimeout(searchTimer);
@@ -1290,216 +1371,207 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 组件内的令牌全部来自全局（main.css 的 :root 与 html.dark），深色主题自动跟随 */
 .graph-view {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg);
-  color: var(--text);
+  height: 100%; position: relative; isolation: isolate; display: flex; flex-direction: column;
+  overflow: hidden; background: var(--bg); color: var(--text);
 }
-
-/* ---------- 顶栏 ---------- */
+button { font: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .gv-top {
-  flex: none;
-  height: 46px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--card-bg);
-  overflow-x: auto;      /* 窄屏用横向滚动，避免按钮折行被压成竖排 */
-  white-space: nowrap;
-  scrollbar-width: none;
+  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+  min-height: 68px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--card-bg);
 }
-.gv-top::-webkit-scrollbar { display: none; }
-.gv-top > * { flex: none; }
-.gv-brand { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--text-secondary); }
-.gv-brand b { color: var(--text); font-weight: 600; }
-.gv-brand em { font-style: normal; font-size: 12px; color: var(--text-faint); }
-.gv-seg { display: flex; background: var(--bg-tertiary); border-radius: 8px; padding: 2px; }
+.gv-brand { display: flex; align-items: center; gap: 9px; margin-right: 8px; color: var(--accent); }
+.gv-brand b { color: var(--text); font-size: 18px; font-weight: 650; letter-spacing: -.03em; }
+.gv-seg { display: flex; background: var(--bg-tertiary); border-radius: var(--radius-control); padding: 3px; }
 .gv-seg button {
-  appearance: none; border: 0; background: transparent; font: inherit; font-size: 12.5px;
-  color: var(--text-secondary); padding: 5px 11px; border-radius: 6px; cursor: pointer; transition: 0.15s;
+  appearance: none; border: 0; background: transparent; font-size: 13px;
+  color: var(--text-secondary); padding: 7px 12px; border-radius: 6px; white-space: nowrap;
+  transition: background .16s, color .16s, box-shadow .16s;
 }
-.gv-seg button.on { background: var(--card-bg); color: var(--text); font-weight: 500; box-shadow: var(--shadow-raised); }
+.gv-seg button.on { background: var(--card-bg); color: var(--accent); font-weight: 600; box-shadow: var(--shadow-raised); }
 .gv-search {
-  display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px;
-  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg); min-width: 200px;
-  color: var(--text-faint);
+  display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--bg-secondary);
+  flex: 1; min-width: 160px; max-width: 340px; color: var(--text-faint); transition: border-color .16s;
 }
-.gv-search input { border: 0; background: transparent; outline: none; font: inherit; font-size: 12.5px; color: var(--text); width: 100%; }
-.gv-chips { display: flex; gap: 6px; align-items: center; overflow-x: auto; flex: 1; min-width: 0; }
+.gv-search:focus-within { border-color: var(--accent); }
+.gv-search input { border: 0; background: transparent; outline: none; font: inherit; font-size: 13px; color: var(--text); width: 100%; min-width: 0; }
+.gv-chips { display: flex; gap: 6px; align-items: center; overflow-x: auto; order: 5; width: 100%; }
+.gv-chips:empty { display: none; }
 .gv-chip {
-  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; height: 26px; padding: 0 9px;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding: 4px 10px;
   border-radius: 99px; font-size: 12px; background: var(--accent-soft); color: var(--accent);
 }
-.gv-chip button { appearance: none; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 13px; line-height: 1; padding: 0; opacity: 0.7; }
-.gv-chip button:hover { opacity: 1; }
-.gv-actions { display: flex; gap: 6px; }
-.gv-icon {
-  appearance: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--border-strong); background: var(--bg); color: var(--text-secondary);
-  display: grid; place-items: center; transition: 0.15s;
+.gv-chip button { border: 0; background: transparent; color: inherit; padding: 0 2px; font-size: 16px; }
+.gv-actions { display: flex; gap: 6px; margin-left: auto; }
+.gv-icon, .gv-tool {
+  appearance: none; height: 36px; border-radius: var(--radius-control); border: 1px solid transparent;
+  background: var(--bg-secondary); color: var(--text-secondary); display: flex; align-items: center; justify-content: center;
+  transition: color .16s, background .16s, border-color .16s;
 }
-.gv-icon:hover { color: var(--text); border-color: var(--text-faint); }
-.gv-icon.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
-
-/* ---------- 三栏 ---------- */
-.gv-main { flex: 1; display: flex; min-height: 0; }
+.gv-icon { width: 36px; flex: none; font-size: 19px; }
+.gv-tool { gap: 6px; padding: 0 11px; font-size: 13px; white-space: nowrap; }
+.gv-icon:hover, .gv-tool:hover { color: var(--text); background: var(--bg-hover); border-color: var(--border); }
+.gv-icon.on, .gv-tool.on { color: var(--accent); background: var(--accent-soft); }
+.gv-main { flex: 1; display: flex; min-height: 0; position: relative; }
 .gv-facets {
-  width: 232px; flex: none; border-right: 1px solid var(--border); background: var(--card-bg);
-  overflow-y: auto; padding: 4px 0 18px;
+  width: 212px; flex: none; border-right: 1px solid var(--border); background: var(--card-bg);
+  overflow-y: auto; padding: 18px 12px;
 }
-.gv-facets.hidden { display: none; }
-.gv-fgroup { padding: 10px 12px 2px; }
+.gv-facets.hidden, .gv-detail.hidden { display: none; }
+.gv-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 20px; font-size: 14px; }
+.gv-panel-head b { font-weight: 600; }
+.gv-panel-head button { border: 0; background: transparent; color: var(--text-secondary); font-size: 12px; padding: 4px; }
+.gv-panel-head button:hover { color: var(--accent); }
+.gv-fgroup { padding: 0 0 18px; }
+.gv-fgroup + .gv-fgroup { padding-top: 2px; }
 .gv-fgroup h4 {
-  margin: 0 0 5px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--text-faint); font-weight: 600; display: flex; justify-content: space-between; align-items: center;
+  margin: 0 4px 8px; font-size: 12px; color: var(--text-secondary); font-weight: 600;
+  display: flex; justify-content: space-between; align-items: center;
 }
-.gv-fgroup h4 button { appearance: none; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; font-size: 11px; }
+.gv-fgroup h4 button { border: 0; background: transparent; color: var(--text-faint); font-size: 12px; padding: 2px; }
 .gv-fgroup h4 button:hover { color: var(--accent); }
 .gv-frow {
-  appearance: none; border: 0; background: transparent; font: inherit; width: 100%; text-align: left;
-  display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px; border-radius: 6px;
-  cursor: pointer; font-size: 12.5px; color: var(--text-secondary); transition: 0.12s;
+  appearance: none; border: 0; background: transparent; width: 100%; text-align: left;
+  display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 6px 8px; border-radius: 8px;
+  font-size: 13px; color: var(--text-secondary); transition: background .14s, color .14s;
 }
 .gv-frow:hover { background: var(--bg-hover); color: var(--text); }
-.gv-frow.on { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.gv-frow.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .gv-frow .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .gv-frow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gv-frow .ct { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.gv-frow.on .ct { color: var(--accent); }
-.gv-frow.switch { cursor: default; }
-.gv-frow.switch:hover { background: transparent; }
+.gv-frow .ct { min-width: 24px; text-align: center; font-size: 12px; color: var(--text-secondary); background: var(--bg-tertiary); border-radius: 5px; padding: 1px 4px; font-variant-numeric: tabular-nums; }
+.gv-frow.on .ct { color: var(--accent); background: var(--card-bg); }
+.gv-frow.switch { cursor: pointer; }
 .gv-sw { position: relative; width: 32px; height: 18px; flex: none; }
-.gv-sw input { position: absolute; opacity: 0; width: 0; height: 0; }
-.gv-sw i { position: absolute; inset: 0; background: var(--border-strong); border-radius: 99px; transition: 0.18s; cursor: pointer; }
-.gv-sw i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: 0.18s; }
+.gv-sw input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; }
+.gv-sw i { pointer-events: none; position: absolute; inset: 0; background: var(--border-strong); border-radius: 99px; transition: background .18s; }
+.gv-sw i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .18s; }
 .gv-sw input:checked + i { background: var(--accent); }
 .gv-sw input:checked + i::after { transform: translateX(14px); }
-.gv-range { padding: 2px 6px 0; }
-.gv-range .lbl { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-faint); }
-.gv-range input[type='range'] { width: 100%; accent-color: var(--accent); margin: 2px 0; }
-
-/* ---------- 画布 ---------- */
-.gv-stage { position: relative; flex: 1; min-width: 0; background: var(--bg); }
+.gv-sw input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 3px; }
+.gv-range { padding: 2px 8px 0; }
+.gv-range .lbl { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.gv-range input[type='range'] { width: 100%; accent-color: var(--accent); margin: 5px 0; }
+.gv-stage {
+  position: relative; flex: 1; min-width: 0; overflow: hidden; background-color: var(--bg);
+  background-image: radial-gradient(var(--border-strong) .7px, transparent .7px); background-size: 24px 24px;
+}
 .gv-canvas { position: absolute; inset: 0; display: block; touch-action: none; }
 .gv-canvas.over { pointer-events: none; }
 .gv-stats {
-  position: absolute; left: 12px; bottom: 12px; z-index: 5; font-size: 11.5px; color: var(--text-faint);
-  background: var(--glass-bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
-  backdrop-filter: var(--glass-blur);
+  position: absolute; left: 20px; top: 18px; z-index: 5; display: flex; align-items: center; gap: 10px;
+  font-size: 12px; color: var(--text-secondary); background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 99px; padding: 8px 12px; box-shadow: var(--shadow-raised); pointer-events: none;
 }
-.gv-stats b { color: var(--text-secondary); font-weight: 500; }
-.gv-hud { position: absolute; right: 12px; bottom: 12px; z-index: 5; display: flex; gap: 6px; }
-
-/* ---------- 布局参数浮层（节点大小 / 连线粗细 / 力） ---------- */
+.gv-stats b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.gv-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
+.gv-status-dot.busy { background: var(--accent); }
+.gv-layout-state { border-left: 1px solid var(--border-strong); padding-left: 10px; font-size: 12px; }
+.gv-help { position: absolute; bottom: 22px; left: 20px; color: var(--text-secondary); font-size: 12px; pointer-events: none; }
+.gv-hud {
+  position: absolute; right: 20px; bottom: 16px; z-index: 5; display: flex; align-items: center; gap: 3px;
+  padding: 5px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-card);
+}
+.gv-hud .gv-icon { background: transparent; }
+.gv-hud .gv-icon:hover { background: var(--bg-hover); }
+.gv-hud .gv-icon.on { background: var(--accent-soft); }
+.gv-zoom { font-size: 12px; width: 44px; text-align: center; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .gv-tweaks {
-  position: absolute; right: 12px; bottom: 52px; z-index: 8; width: 236px; padding: 10px 12px 12px;
-  background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
+  position: absolute; right: 20px; bottom: 76px; z-index: 8; width: 248px; padding: 16px 18px;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+  animation: graph-panel-in .16s ease-out;
 }
-.gv-tweaks h4 {
-  margin: 8px 0 2px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--text-faint); font-weight: 600;
-}
+.gv-tweaks h4 { margin: 14px 0 8px; font-size: 13px; color: var(--text); font-weight: 600; }
 .gv-tweaks h4:first-child { margin-top: 0; }
-.gv-trow {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  margin-top: 4px; font-size: 12px; color: var(--text-secondary);
-}
-.gv-trow output { color: var(--text); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-.gv-tweaks input[type='range'] { width: 100%; margin: 0; accent-color: var(--accent); }
-.gv-treset {
-  appearance: none; width: 100%; height: 28px; margin-top: 10px; cursor: pointer;
-  font: inherit; font-size: 12px; border: 1px solid var(--border-strong); border-radius: 8px;
-  background: var(--bg); color: var(--text-secondary); transition: 0.15s;
-}
+.gv-trow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
+.gv-trow output { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.gv-tweaks input[type='range'] { width: 100%; margin: 4px 0; accent-color: var(--accent); }
+.gv-treset { width: 100%; min-height: 34px; margin-top: 14px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); }
 .gv-treset:hover { background: var(--bg-hover); color: var(--text); }
-.gv-tip {
-  position: absolute; z-index: 6; pointer-events: none; max-width: 220px; padding: 8px 10px;
-  background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
-}
-.gv-tip .t { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.gv-tip { position: absolute; z-index: 6; pointer-events: none; max-width: min(240px, calc(100% - 16px)); padding: 12px 14px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+.gv-tip .t { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
 .gv-tip .t i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.gv-tip .m { margin-top: 4px; font-size: 11px; color: var(--text-faint); display: flex; gap: 8px; flex-wrap: wrap; }
-.gv-tip .g { margin-top: 4px; font-size: 11px; color: var(--text-secondary); }
-.gv-state {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-  color: var(--text-faint); z-index: 7; pointer-events: none; text-align: center; padding: 0 20px;
-}
-.gv-state.error { color: var(--danger); pointer-events: auto; }
-
-/* ---------- 右栏 ---------- */
-.gv-detail {
-  width: 292px; flex: none; border-left: 1px solid var(--border); background: var(--card-bg);
-  overflow-y: auto; padding: 14px 14px 20px;
-}
-.gv-kind { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
-.gv-detail h3 { margin: 8px 0 6px; font-size: 18px; font-weight: 600; letter-spacing: -0.012em; line-height: 1.3; }
-.gv-detail h5 { margin: 16px 0 6px; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); font-weight: 600; }
-.gv-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0 4px; }
-.gv-nums div { font-size: 11px; color: var(--text-faint); }
-.gv-nums b { display: block; font-size: 16px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
-.gv-tagbox { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-.gv-tag { font-size: 11.5px; padding: 3px 8px; border-radius: 99px; background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
+.gv-tip .m { margin-top: 6px; font-size: 12px; color: var(--text-secondary); display: flex; gap: 8px; flex-wrap: wrap; }
+.gv-tip .g { margin-top: 6px; font-size: 12px; color: var(--text-secondary); }
+.gv-state { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(340px, calc(100% - 40px)); display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--text-secondary); z-index: 7; text-align: center; }
+.gv-state strong { font-size: 17px; color: var(--text); }
+.gv-state span { font-size: 13px; line-height: 1.7; }
+.gv-state.error { color: var(--danger); }
+.gv-state .gv-btn { flex: none; padding: 0 16px; }
+.gv-detail { width: 272px; flex: none; border-left: 1px solid var(--border); background: var(--card-bg); overflow-y: auto; padding: 18px; }
+.gv-kind { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.gv-detail h3 { margin: 8px 0; font-size: 21px; font-weight: 650; letter-spacing: -.025em; line-height: 1.4; overflow-wrap: anywhere; }
+.gv-detail h5 { margin: 24px 0 10px; font-size: 13px; color: var(--text); font-weight: 600; }
+.gv-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px 8px; margin: 18px 0; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.gv-nums div { font-size: 12px; color: var(--text-secondary); }
+.gv-nums b { display: block; margin-bottom: 5px; font-size: 23px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.gv-nums span { display: flex; align-items: center; gap: 5px; }
+.gv-nums i { width: 5px; height: 5px; border-radius: 50%; }
+.gv-tagbox { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.gv-tag { border: 0; font-size: 12px; padding: 5px 9px; border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); transition: background .16s, color .16s; }
+.gv-tag b { margin-left: 4px; font-size: 11px; font-weight: 500; }
 .gv-tag:hover { background: var(--accent-soft); color: var(--accent); }
-.gv-btnrow { display: flex; gap: 8px; margin: 12px 0 2px; }
-.gv-btn {
-  appearance: none; font: inherit; font-size: 12.5px; cursor: pointer; flex: 1; height: 32px;
-  border-radius: 8px; border: 1px solid var(--border-strong); background: var(--bg); color: var(--text); transition: 0.15s;
-}
+.gv-btnrow { display: flex; gap: 8px; margin: 18px 0 2px; }
+.gv-btn { font-size: 13px; flex: 1; min-height: 36px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--card-bg); color: var(--text); transition: background .16s; }
+.gv-btnrow .gv-btn:first-child, .gv-state .gv-btn { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .gv-btn:hover { background: var(--bg-hover); }
-.gv-rel { display: flex; flex-direction: column; gap: 1px; }
-.gv-rel a {
-  display: flex; align-items: center; gap: 7px; padding: 5px 6px; border-radius: 6px;
-  font-size: 12.5px; color: var(--text-secondary); cursor: pointer;
-}
-.gv-rel a:hover { background: var(--bg-hover); color: var(--text); }
-.gv-rel a i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.gv-rel a em { font-style: normal; margin-left: auto; color: var(--text-faint); font-size: 11px; }
-.faint { color: var(--text-faint); }
-
-/* ---------- 窄屏（断点只用规范三档：640 / 768 / 1024，见 styles/main.css 顶部） ---------- */
+.gv-btnrow .gv-btn:first-child:hover, .gv-state .gv-btn:hover { background: var(--accent-hover); }
+.gv-rel { display: flex; flex-direction: column; gap: 3px; }
+.gv-rel button { border: 0; background: transparent; display: flex; align-items: center; gap: 8px; padding: 9px 5px; border-radius: 6px; text-align: left; font-size: 13px; color: var(--text-secondary); }
+.gv-rel button:hover { background: var(--bg-hover); color: var(--text); }
+.gv-rel button i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.gv-rel button span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.gv-rel button em { font-style: normal; margin-left: auto; color: var(--text-faint); font-size: 11px; max-width: 42%; overflow-wrap: anywhere; }
+.faint { color: var(--text-faint); font-size: 13px; }
+@keyframes graph-panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 1024px) {
-  .gv-facets { width: 200px; }
-  .gv-detail { width: 260px; }
+  .gv-top { padding: 12px 16px; gap: 8px; }
+  .gv-brand { margin-right: 0; }
+  .gv-brand b { font-size: 16px; }
+  .gv-facets { width: 190px; }
+  .gv-detail { width: 240px; padding: 16px; }
+  .gv-help { display: none; }
 }
 @media (max-width: 768px) {
-  .gv-search { min-width: 130px; }
-  .gv-chips { display: none; }
-  .gv-brand em { display: none; }   /* 窄屏省掉「业务视图」小字，给分段控件留位置 */
-  .gv-seg button { padding: 5px 9px; }
-  /* 筛选面板改成左侧浮层；底部让出底部导航 + 安全区，否则最后一组筛选被导航压住 */
+  .gv-top { padding: 12px; gap: 10px; }
+  .gv-brand { flex: 1 1 calc(100% - 180px); min-width: 110px; }
+  .gv-brand b { white-space: nowrap; }
+  .gv-seg { order: 2; }
+  .gv-search { order: 3; flex: 1; min-width: 100px; max-width: none; }
+  .gv-actions { gap: 4px; }
+  .gv-actions .gv-tool { padding: 0 8px; }
+  .gv-main { position: static; }
   .gv-facets {
-    position: absolute; top: 46px; bottom: calc(72px + var(--safe-bottom)); left: 0; z-index: 9;
-    height: auto; box-shadow: var(--shadow); width: 240px;
+    position: absolute; top: 110px; bottom: calc(72px + var(--safe-bottom)); left: 0; z-index: 9;
+    height: auto; box-shadow: var(--shadow); width: min(272px, 85%); padding: 18px;
   }
   .gv-facets.hidden { display: none; }
-  /* 详情 / 聚合面板改成底部抽屉，同样抬到底部导航之上 */
   .gv-detail {
-    position: absolute; left: 0; right: 0; bottom: calc(72px + var(--safe-bottom)); z-index: 10;
-    width: auto; max-height: 38%; border-left: 0; border-top: 1px solid var(--border);
-    border-radius: 14px 14px 0 0; box-shadow: var(--shadow);
+    position: absolute; left: 12px; right: 12px; bottom: calc(72px + var(--safe-bottom)); z-index: 10;
+    width: auto; max-height: 42%; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+    animation: graph-panel-in .16s ease-out;
   }
-  /* 参数浮层在手机上同样抬到底部导航之上，铺满可用宽度 */
+  .gv-detail .gv-panel-head { margin-bottom: 12px; }
+  .gv-stats { left: 12px; top: 14px; padding: 7px 10px; gap: 8px; }
+  .gv-hud { right: 12px; bottom: calc(84px + var(--safe-bottom)); }
   .gv-tweaks {
-    left: 12px; right: 12px; bottom: calc(72px + var(--safe-bottom)); width: auto;
-    max-height: 46%; overflow-y: auto; z-index: 11;
+    left: 12px; right: 12px; bottom: calc(144px + var(--safe-bottom)); width: auto;
+    max-height: 52%; overflow-y: auto; z-index: 11;
   }
 }
-
-/* 触屏上开关与小控件加大热区（手指点不准 32×18 的开关） */
 @media (hover: none) and (pointer: coarse) {
   .gv-sw { width: 46px; height: 26px; }
   .gv-sw i::after { width: 22px; height: 22px; }
   .gv-sw input:checked + i::after { transform: translateX(20px); }
-  .gv-frow { height: 34px; }
-  .gv-icon { width: 38px; height: 38px; }
-  .gv-seg button { padding: 8px 14px; }
+  .gv-frow { min-height: 40px; }
+  .gv-icon { width: 40px; height: 40px; }
+  .gv-tool { height: 40px; }
+  .gv-seg button { padding: 8px 12px; }
   .gv-tweaks input[type='range'] { height: 30px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 </style>
