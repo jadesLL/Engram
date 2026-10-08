@@ -22,7 +22,7 @@
 ```
 
 - **《Agent 作业指南》三端同源**：MCP `kb_guide` 工具、`GET /api/guide`、`engram guide` 输出同一份方法论（页面契约、八阶段作业流程、证据规则），Agent 接上就能按既有逻辑干活。
-- **内置 skill 按需下发**：服务端内置作业手法（`skill_list` 列清单、`skill_guide` 取全文），如纪要转 Markdown、入库纪律；skill 版本独立于指南版本，改 skill 不把已有页面标为规则落后。
+- **内置 skill 下发**：外部 Agent 连接 MCP 时自动收到调研范围、来源与成稿格式规范 `research-raw-material`，也可用 `skill_guide` 重读；其他作业手法按需由 `skill_list` 列清单、`skill_guide` 取全文。skill 版本独立于指南版本，改 skill 不把已有页面标为规则落后。
 - **CLI 优先、逐份串行**：能跑 shell 的 Agent 优先用 CLI（MCP 兜底用于图像直读等场景）；收到提炼指令先用 `files list --pending` 自动索引待提炼清单，逐份提炼、写完一份再下一份。
 - **规则版本化，旧库可升级**：提炼规则带版本号（`GUIDE_VERSION`），Agent 每次写页服务端把版本记入页面索引元数据（只进索引库，不写正文）；规则升级后用 `pages list --outdated`（CLI）或 `list_pages` 传 `outdated=true`（MCP）列出落后的概念/实体页（原始资料只读不改），按最新指南逐页重写覆盖即完成旧库升级。
 - **质量由确定性门禁兜底**：引文逐字校验（编造即拒绝）、新建概念/实体页两来源门禁（≥2 个不同原始资料路径各 1 条引文，或单路径 ≥2 条）、每次写入自动记入 `Wiki/log.md` 操作日志与证据账本（编辑器「来源证据」抽屉可逐条复核）。
@@ -125,7 +125,7 @@
 | `related_pages` | 读页面图谱关联（入链/出链邻居与实体关系，与编辑器「相关页面」同一数据） |
 | `page_evidence` | 读页面证据账本（来源、版本、事实与逐字引文） |
 | `list_raw_files` / `read_raw_file` | 原始资料清单（含提取状态与「已提炼」标记；`pending=true` 只列未提炼文件）与读取；图片/PDF 返回原图（image 内容）供视觉 Agent 自行识别 |
-| `create_raw_material` | 用户明确要求保存调研结果时新建 Markdown 来源文件：调研成果落 `原始资料/文档/`、随口记的零散内容落 `原始资料/灵感碎片/`；目标已存在即拒绝，不覆盖；聊天记录仍用 `save_chat` |
+| `create_raw_material` | 用户明确要求保存调研结果时，按连接时下发的 `research-raw-material` skill 新建 Markdown 来源文件：调研成果落 `原始资料/文档/`、随口记的零散内容落 `原始资料/灵感碎片/`；目标已存在即拒绝，不覆盖；聊天记录仍用 `save_chat` |
 | `read_page_asset` | 读页面/资料正文里引用的图片原图（传正文里的 `/media/<父项id>/<文件名>` 引用，图片以 image 内容返回） |
 | `list_inbox` / `read_inbox_item` | 收集箱清单与读取：用户拖进来的待整理原件（图片以 image 内容返回）。**收集箱不属于知识库**，这些内容不得作为事实依据或证据 |
 | `write_inbox_markdown` | 把原件的语义转换结果写成 Markdown，落到 `收集箱/转换结果/`（仍不进知识库；入库由用户在界面上确认） |

@@ -2,6 +2,7 @@ import type { SkillDoc } from './types.js';
 import { SKILL as docxMeetingToMd } from './docxMeetingToMd.js';
 import { SKILL as kbIngestDiscipline } from './kbIngestDiscipline.js';
 import { SKILL as inboxSemanticToMd } from './inboxSemanticToMd.js';
+import { SKILL as researchRawMaterial } from './researchRawMaterial.js';
 
 /**
  * 内置 skill 注册表（单一来源）。
@@ -9,7 +10,7 @@ import { SKILL as inboxSemanticToMd } from './inboxSemanticToMd.js';
  *   - web/src/lib/mcpTools.ts（Agent 接入界面的工具清单）
  *   - main/docs/AI-CONTENT-OPERATIONS.md、README.md
  */
-export const SKILLS: SkillDoc[] = [docxMeetingToMd, kbIngestDiscipline, inboxSemanticToMd];
+export const SKILLS: SkillDoc[] = [docxMeetingToMd, kbIngestDiscipline, inboxSemanticToMd, researchRawMaterial];
 
 /** 按名取 skill；不存在返回 undefined（调用方负责给出可用清单） */
 export function findSkill(name: string): SkillDoc | undefined {
