@@ -53,6 +53,16 @@ import {
 import { GRID_COLS, GRID_MAX_H, GRID_MAX_W, isSane } from './homeGrid.ts';
 import type { TaskCard } from './taskBoard.ts';
 
+test('quick question persists its single-row size without disturbing an existing layout', () => {
+  const original = defaultHomeBoard();
+  const added = addModule(original, 'ask', 'quick-question');
+  const loaded = normalizeHomeBoard(serializeHomeBoard(added));
+  assert.deepEqual(loaded.modules.slice(0, original.modules.length), original.modules);
+  assert.equal(loaded.modules.at(-1)?.kind, 'ask');
+  assert.equal(loaded.modules.at(-1)?.w, 3);
+  assert.equal(loaded.modules.at(-1)?.h, 1);
+});
+
 /** 造一篇页面：只填用得到的字段 */
 function page(overrides: Record<string, unknown> = {}) {
   return {

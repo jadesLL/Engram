@@ -1,8 +1,8 @@
 <template>
-  <section ref="root" class="shell" :class="{ managing, dragging, compact, short: size.h < 180, capture: kind === 'capture', micro: size.w < 100 || size.h < 90 }" :style="{ padding: `${padding}px` }"
+  <section ref="root" class="shell" :class="{ managing, dragging, compact, short: size.h < 180, capture: functional, micro: size.w < 100 || size.h < 90 }" :style="{ padding: `${padding}px` }"
     :tabindex="managing ? 0 : -1" :aria-label="title" @pointerdown="onPointerDown" @click.capture="suppressClick">
     <!-- 标题栏只有标准档（w≥2 且 h≥2）才画：磁贴 / 横条 / 竖条把空间全部留给内容 -->
-    <header v-if="tier === 'standard'" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
+    <header v-if="tier === 'standard' && !functional" class="shell-head"><h3><Icon :name="meta.icon" :size="15" />{{ title }}</h3><button type="button" class="shell-expand" :aria-label="`展开${title}`" @click="openDetail"><Icon name="arrow-up-right" :size="13" /></button></header>
     <HomeAdaptiveSummary v-if="compact" :summary="summary" :title="title" :short-title="tinyTitle" :tier="tier" :icon="meta.icon" @open="openDetail" @activate="$emit('activate', $event)" />
     <!-- 始终保留同一个模块实例；打开详情、改变尺寸不会丢失速记草稿。 -->
     <Teleport to="body" :disabled="!expanded">
@@ -10,7 +10,7 @@
         <button v-if="expanded" class="detail-backdrop" type="button" aria-label="关闭详情" @click="closeDetail" />
         <div class="shell-body" :class="{ 'detail-panel': expanded }">
           <header v-if="expanded" class="detail-head"><h2>{{ title }}</h2><button ref="closeButton" class="detail-close" type="button" aria-label="关闭详情" @click="closeDetail">×</button></header>
-          <div class="module-content"><slot :expanded="expanded" /></div>
+          <div class="module-content"><slot :expanded="expanded" :open="openDetail" :close="closeDetail" /></div>
         </div>
       </div>
     </Teleport>
@@ -21,7 +21,7 @@
       <p class="size-hint">{{ hoverSize || `${width} × ${height}` }} · 宽 × 高（格）<span class="size-unit">1 格 ≈ {{ Math.round(cellPx) }}px</span></p>
       <div class="size-matrix" :style="{ '--size-cols': GRID_COLS }" @mouseleave="hoverSize = ''"><template v-for="h in sizeMatrixRows" :key="h"><button v-for="w in GRID_COLS" :key="w" type="button" :class="{ selected: w <= width && h <= height }" :aria-label="`${w} × ${h}`" @mouseenter="hoverSize = `${w} × ${h}`" @focus="hoverSize = `${w} × ${h}`" @click="$emit('set-size', w, h)" /></template></div>
       <div class="size-fields"><label>宽度 <input type="number" min="1" :max="GRID_COLS" :value="width" @change="$emit('set-size', Number(($event.target as HTMLInputElement).value), height)" /></label><label>高度 <input type="number" min="1" :max="GRID_MAX_H" :value="height" @change="$emit('set-size', width, Number(($event.target as HTMLInputElement).value))" /></label><label v-if="limit !== undefined">{{ kind === 'heat' ? '周数' : '条数' }} <input type="number" :min="kind === 'heat' ? 4 : 1" :max="kind === 'tasks' ? 20 : 12" :value="limit" @change="$emit('set-opt', 'limit', Number(($event.target as HTMLInputElement).value))" /></label></div>
-      <fieldset v-if="kind === 'capture'" class="capture-styles"><legend>输入样式</legend><label><input type="radio" :name="`capture-style-${$.uid}`" :checked="captureStyle === 1" @change="$emit('set-opt', 'captureStyle', 1)" /> A · 紧凑单行</label><label><input type="radio" :name="`capture-style-${$.uid}`" :checked="captureStyle !== 1" @change="$emit('set-opt', 'captureStyle', 2)" /> B · 多行书写</label><p>一格高时自动紧凑；切换样式保留草稿。</p></fieldset>
+      <fieldset v-if="kind === 'capture'" class="capture-styles"><legend>输入样式</legend><label><input type="radio" :name="`capture-style-${$.uid}`" :checked="captureStyle === 1" @change="$emit('set-opt', 'captureStyle', 1)" /> A · 紧凑单行</label><label><input type="radio" :name="`capture-style-${$.uid}`" :checked="captureStyle !== 1" @change="$emit('set-opt', 'captureStyle', 2)" /> B · 多行书写</label><p>小格与竖卡自动显示快捷动作；一格高直接输入，切换保留草稿。</p></fieldset>
       <footer class="settings-actions"><button type="button" @click="$emit('rename')">修改标题</button><button type="button" class="danger" @click="settings?.close(); $emit('remove')">移除卡片</button><button type="button" class="done" @click="settings?.close()">完成</button></footer>
     </dialog></Teleport>
   </section>
@@ -49,29 +49,24 @@ const sizeMatrixRows = 6;
 const meta = computed(() => moduleMeta(props.kind));
 /** 内容档位由栅格格数决定（用户在尺寸菜单看到的 w × h），与像素无关 */
 const tier = computed(() => cardTier(props.width, props.height));
-const shortTitles: Record<ModuleKind, string> = { capture: '速记', shortcuts: '入口', recent: '更新', notes: '灵感', fresh: '新增', tasks: '待办', stats: '概览', weekly: '动态', tags: '标签', sections: '分区', roam: '漫游', system: '状态', sync: '同步', ring: '占比', heat: '热力', inbox: '收集', queue: '提炼', board: '看板', activity: '改动', digest: '摘要' };
+const shortTitles: Record<ModuleKind, string> = { ask: '问答', capture: '灵感', shortcuts: '入口', recent: '更新', notes: '灵感', fresh: '新增', tasks: '待办', stats: '概览', weekly: '动态', tags: '标签', sections: '分区', roam: '漫游', system: '状态', sync: '同步', ring: '占比', heat: '热力', inbox: '收集', queue: '提炼', board: '看板', activity: '改动', digest: '摘要' };
 const tinyTitle = computed(() => props.title === meta.value.title ? shortTitles[props.kind] : props.title);
-/**
- * 什么时候用「按尺寸分档的摘要」而不是模块真实内容（12 列栅格下一格约 75px）：
- *  - 1×1 磁贴一律用摘要：一格只放一件事，75px 塞不下输入框、图表和列表；
- *  - 速记窄于一格（w=1，约 75px 宽）时用摘要，横条档（h=1、w≥2）保留 A 紧凑单行输入；
- *  - 热力要至少 2×2 才画真实格子，否则格子会小到看不清；
- *  - 快捷入口只在横条档保留真实按钮排。
- */
+/** 动作卡自己按尺寸切换功能；其他卡沿用摘要与详情分档。 */
+const functional = computed(() => props.kind === 'ask' || props.kind === 'capture');
 const compact = computed(() => {
+  if (functional.value) return false;
   if (tier.value === 'tile') return true;
-  if (props.kind === 'capture') return props.width < 2;
   if (props.kind === 'heat') return !(props.width >= 2 && props.height >= 2);
   if (props.kind === 'shortcuts') return tier.value !== 'bar';
   return true;
 });
-const padding = computed(() => size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 20);
+const padding = computed(() => functional.value ? (props.width === 1 ? 7 : props.height === 1 ? 10 : 14) : size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 20);
 const expanded = ref(false), hoverSize = ref('');
 let previousFocus: HTMLElement | null = null;
 let stopDetailBack: (() => void) | null = null, stopSettingsBack: (() => void) | null = null;
 watch(expanded, (open) => { stopDetailBack?.(); stopDetailBack = open ? registerBackHandler(() => { closeDetail(); return true; }) : null; });
 function openSettings() { settings.value?.showModal(); stopSettingsBack?.(); stopSettingsBack = registerBackHandler(() => { settings.value?.close(); return true; }); }
-async function openDetail() { if (props.managing) return; previousFocus = document.activeElement as HTMLElement; expanded.value = true; await nextTick(); closeButton.value?.focus(); }
+async function openDetail() { if (props.managing) return; previousFocus = document.activeElement as HTMLElement; expanded.value = true; await nextTick(); (closeButton.value?.closest('.detail-panel')?.querySelector('textarea') || closeButton.value)?.focus(); }
 function closeDetail() { expanded.value = false; previousFocus?.focus(); }
 function onDetailKey(event: KeyboardEvent) {
   if (!expanded.value) return;
@@ -90,7 +85,7 @@ let down: { x: number; y: number } | null = null;
 let held = false;
 function clearHold() { if (hold) clearTimeout(hold); hold = null; down = null; if (held) setTimeout(() => { held = false; }, 0); }
 function onPointerDown(event: PointerEvent) {
-  if (event.button !== 0 || (event.target as HTMLElement).closest('input,textarea,a,select,.capture button,.card-settings,.resize-handle,.shell-expand')) return;
+  if (event.button !== 0 || (event.target as HTMLElement).closest('input,textarea,a,select,.home-action button,.card-settings,.resize-handle,.shell-expand')) return;
   if (props.managing) { emit('drag-request', event); return; }
   if (event.pointerType !== 'touch') return;
   down = { x: event.clientX, y: event.clientY };
@@ -382,7 +377,7 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   color:var(--accent);
 }
 .capture .module-content { display:flex;overflow:hidden; }
-.capture .module-content :deep(.capture) { width:100%; }
+.capture .module-content :deep(.home-action) { width:100%; }
 .capture-styles { border:0;padding:0;margin:0 0 22px;display:grid;gap:10px;font-size:13px; }
 .capture-styles legend { margin-bottom:10px;color:var(--text-secondary); }
 .capture-styles label { display:flex;align-items:center;gap:8px; }

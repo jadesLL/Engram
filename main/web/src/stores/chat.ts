@@ -398,18 +398,20 @@ export const useChatStore = defineStore('chat', {
      * 发一条消息。会话正在回复时也照发：服务端把它落库成「排队中」的轮次，
      * 当前这轮一收口自动接着回复（前端重取快照就能看到那条消息与排队标记）。
      */
-    async send(message: string, context?: ChatContext) {
+    async send(message: string, context?: ChatContext): Promise<boolean> {
       if (!this.initialized) await this.init();
       const text = message.trim();
-      if (!text || !this.activeSessionId) return;
+      if (!text || !this.activeSessionId) return false;
       const sessionId = this.activeSessionId;
       this.error = '';
       this.statusText = '';
+      let accepted = false;
       try {
         const { data } = await api.post(`/api/assistant/sessions/${sessionId}/runs`, {
           message: text,
           context: context || this.currentContext,
         });
+        accepted = true;
         if (data.queued) {
           // 排队：服务端已经把这条消息落库了，直接取快照让它立刻出现在转录里
           if (this.activeSessionId === sessionId) await this.reload(sessionId);
@@ -432,6 +434,7 @@ export const useChatStore = defineStore('chat', {
       } catch (error) {
         this.error = errorText(error);
       }
+      return accepted;
     },
     connect(runId: string, sessionId: string) {
       if (connections.has(runId)) return; // 同一轮只接一条流，切会话来回不重复叠加

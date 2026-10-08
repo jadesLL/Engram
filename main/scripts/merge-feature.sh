@@ -9,27 +9,32 @@ source "$SCRIPT_DIR/worktree-common.sh"
 usage() {
   cat <<'EOF'
 用法:
-  merge-feature.sh [--allow-downloads] [--deploy] <feature>
-  merge-feature.sh --finish [--allow-downloads] [--deploy] <feature>
+  merge-feature.sh [--allow-downloads] [--deploy] [--cleanup] <feature>
+  merge-feature.sh --finish [--allow-downloads] [--deploy] [--cleanup] <feature>
 
 默认流程：
   1. 串行合并 feat/<feature> 到 main
   2. 在 Docker 中运行 build、typecheck 和 test
-  3. 精确清理该功能的 Docker 资源、worktree 和分支
-  4. 复验所有功能资源均无残留
+  3. 保留功能预览、worktree 和分支供用户检查
+  4. 用户确认不再检查后，用 cleanup-feature.sh 清理并复验
 
+--cleanup  用户已确认不再检查时，检查通过后清理功能资源
 --deploy  在检查通过后重建并部署主环境；必须获得独立的部署批准
 --finish  合并已完成或冲突已解决后，继续检查、可选部署和清理
 --allow-downloads  仅在用户已经明确批准下载依赖后使用
 EOF
 }
 
+CLEANUP=0
 DEPLOY=0
 FINISH=0
 ALLOW_DOWNLOADS=0
 FEATURE=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --cleanup)
+      CLEANUP=1
+      ;;
     --deploy)
       DEPLOY=1
       ;;
@@ -247,8 +252,12 @@ else
   engram_log ">> 未传入 --deploy：不改动主环境部署"
 fi
 
-ENGRAM_LOCK_HELD=1 bash "$SCRIPT_DIR/cleanup-feature.sh" "$FEATURE"
-engram_log "DONE: $FEATURE 已合并、检查通过，功能资源已全部清理"
+if [ "$CLEANUP" -eq 1 ]; then
+  ENGRAM_LOCK_HELD=1 bash "$SCRIPT_DIR/cleanup-feature.sh" "$FEATURE"
+  engram_log "DONE: $FEATURE 已合并、检查通过，功能资源已全部清理"
+else
+  engram_log "DONE: $FEATURE 已合并、检查通过；worktree 与预览保留供用户检查"
+fi
 if [ "$DEPLOY" -eq 1 ]; then
   engram_log "DONE: main 已部署并清理未被引用的旧主镜像"
 fi

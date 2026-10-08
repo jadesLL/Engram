@@ -48,7 +48,7 @@ bash main/scripts/new-worktree.sh example-feature
 # 修改 worktrees/example-feature/main/ 中的代码
 bash main/scripts/verify-feature.sh example-feature
 bash main/scripts/preview-feature.sh example-feature 8081
-bash main/scripts/merge-feature.sh [--deploy] example-feature
+bash main/scripts/merge-feature.sh [--deploy] example-feature # 保留 worktree 与预览
 bash main/scripts/cleanup-feature.sh example-feature
 ```
 
@@ -112,7 +112,7 @@ bash main/scripts/merge-feature.sh --allow-downloads ...        # 仅限用户�
 bash main/scripts/merge-feature.sh --finish example-feature     # 冲突解决后收尾（需要部署再加 --deploy）
 ```
 
-脚本通过 Git 锁保证串行；合并后在 Docker verify 阶段重跑 build/typecheck/test（断网缓存不足时用上述本机临时离线环境），任一检查失败保留功能环境并以非零退出。合并冲突时不盲选一侧，理解双方改动并提交后用 `--finish` 收尾。
+合并脚本默认保留 worktree 与预览供用户检查；用户确认不再检查后运行 cleanup-feature.sh，或已提前确认时加 --cleanup。脚本通过 Git 锁保证串行；合并后在 Docker verify 阶段重跑 build/typecheck/test（断网缓存不足时用上述本机临时离线环境），任一检查失败保留功能环境并以非零退出。合并冲突时不盲选一侧，理解双方改动并提交后用 `--finish` 收尾。
 
 ## 清理
 
