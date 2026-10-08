@@ -274,6 +274,7 @@ let serverChild = null;
 let tray = null;
 let quitting = false;
 let trayHintShown = false;
+let currentIconAppearance = 'light';
 
 // 外部链接收口：window.open / target=_blank 的子窗口会继承 preload（window.wikiDesktop），
 // 等于把桌面端桥暴露给任意外部站点；页面内导航同理只允许应用自身来源。
@@ -340,17 +341,61 @@ function createWindow({ silent = false } = {}) {
 }
 
 // ---------- 托盘 ----------
+function iconAsset(ext, appearance = currentIconAppearance) {
+  const name = `icon-${appearance === 'dark' ? 'dark' : 'light'}.${ext}`;
+  const packed = path.join(__dirname, 'web', 'dist', 'brand', name);
+  const dev = path.join(__dirname, '..', 'web', 'public', 'brand', name);
+  return fs.existsSync(packed) ? packed : dev;
+}
+
 function windowIcon() {
-  if (PACKAGED) return undefined; // 打包版：exe 内嵌图标
-  const dev = path.join(__dirname, 'build', 'icon.ico'); // 源码运行（electron .）
-  return fs.existsSync(dev) ? dev : undefined;
+  const file = iconAsset('ico');
+  return fs.existsSync(file) ? file : undefined;
 }
 
 function trayIcon() {
-  const packed = path.join(__dirname, 'icon.png'); // 打包后：pack-asar.js 把 build/icon.png 复制进 asar
-  const dev = path.join(__dirname, 'build', 'icon.png'); // 源码运行（electron .）
-  return nativeImage.createFromPath(fs.existsSync(packed) ? packed : dev);
+  return nativeImage.createFromPath(iconAsset('png'));
 }
+
+/** Windows 快捷方式的图标必须是磁盘上的真实文件，不能直接指向 app.asar 内的条目。 */
+function shortcutIconPath() {
+  const source = iconAsset('ico');
+  if (!PACKAGED) return source;
+  const target = path.join(app.getPath('userData'), 'brand-icons', path.basename(source));
+  const bytes = fs.readFileSync(source);
+  if (!fs.existsSync(target) || !fs.readFileSync(target).equals(bytes)) {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, bytes);
+  }
+  return target;
+}
+
+function updateExistingShortcutIcons() {
+  if (process.platform !== 'win32') return;
+  const desktopDir = path.join(appRootDir, 'desktop');
+  const icon = shortcutIconPath();
+  for (const lnk of [shortcutLib.shortcutPath(app.getPath('desktop')), startMenuShortcutPath()]) {
+    if (!fs.existsSync(lnk) || !startMenuShortcutOwned(lnk, desktopDir)) continue;
+    const spec = shell.readShortcutLink(lnk);
+    if (!shell.writeShortcutLink(lnk, 'update', { ...spec, icon, iconIndex: 0 })) {
+      throw new Error(`更新快捷方式图标失败：${lnk}`);
+    }
+  }
+}
+
+ipcMain.handle('set-icon-appearance', (_event, appearance) => {
+  if (appearance !== 'light' && appearance !== 'dark') return { ok: false, error: '图标外观参数无效' };
+  currentIconAppearance = appearance;
+  try {
+    if (win && !win.isDestroyed() && typeof win.setIcon === 'function') win.setIcon(windowIcon());
+    if (tray) tray.setImage(trayIcon());
+    updateExistingShortcutIcons();
+    return { ok: true };
+  } catch (error) {
+    log('[icon] 切换图标失败：' + describeError(error));
+    return { ok: false, error: describeError(error) };
+  }
+});
 
 /** 托盘右键菜单：开机自启做成勾选项，后台驻留时不用回主界面也能开关 */
 function trayMenuTemplate() {
@@ -385,7 +430,7 @@ function refreshTrayMenu() {
 function ensureTray() {
   if (tray) return;
   const icon = trayIcon();
-  if (icon.isEmpty()) log('警告：托盘图标为空（asar 内缺少 icon.png），托盘将显示空白槽位');
+  if (icon.isEmpty()) log('警告：托盘图标为空（brand PNG 资源缺失），托盘将显示空白槽位');
   tray = new Tray(icon);
   tray.setToolTip('Engram');
   refreshTrayMenu();
@@ -2012,6 +2057,7 @@ async function rebuildDesktopShortcut() {
     distDir,
     useBranded,
   });
+  spec.icon = shortcutIconPath();
   const lnk = shortcutLib.shortcutPath(app.getPath('desktop'));
   let created = false;
   try {

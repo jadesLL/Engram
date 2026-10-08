@@ -19,7 +19,7 @@ function stagingPlan(desktopRoot) {
     // 内嵌后端与前端产物：由 prepare-desktop.js 生成，打包前必须先构建（worktree 里通常没有）
     { from: at('server'), to: 'server', produced: true },
     { from: at('web', 'dist'), to: path.join('web', 'dist'), produced: true },
-    // 托盘图标：main.js 的 trayIcon() 在 asar 内找 __dirname/icon.png
+    // 兼容历史包内的亮色图标；运行时明暗两版来自 web/dist/brand/。
     { from: at('build', 'icon.png'), to: 'icon.png' },
     // 启动页品牌图形：main.js 的 logoSvg() 在 data: URL 页面里内联它的源码。
     // 必须放在 asar 根（与 icon.png 同理）：electron-builder 不把 buildResources 目录

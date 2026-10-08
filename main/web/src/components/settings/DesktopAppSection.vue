@@ -58,7 +58,7 @@
           <div class="setting-copy">
             <strong>桌面快捷方式</strong>
             <span>
-              桌面上的 Engram 图标丢失或显示不对时在此重建。
+              桌面上的 Engram 图标丢失或显示不对时在此重建，图标外观沿用「界面与检索 → 外观」里的本机选择。
               <template v-if="sourceMode">源码模式的启动程序是 Electron 官方运行时（图标是 Electron 的原子），重建会在同目录生成一份带 Engram 图标的 Engram.exe 作为启动目标，资源管理器与任务栏图标随之统一。</template>
               <template v-else>重建指向当前安装目录 Engram.exe 的桌面快捷方式。</template>
             </span>

@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   revealInboxFile: (relPath) => ipcRenderer.invoke('inbox-reveal-path', relPath),
   // 同步窗口控制按钮（标题栏融合条 WCO）配色，主题切换时调用；不支持的平台主进程忽略
   setTitleBarOverlay: (opts) => ipcRenderer.invoke('set-title-bar-overlay', opts),
+  // 本机图标外观：窗口 / 任务栏 / 托盘 / 已有快捷方式同时切换。
+  setIconAppearance: (appearance) => ipcRenderer.invoke('set-icon-appearance', appearance),
   // ---------- 桌面端自更新 ----------
   // 检查 Gitea 最新 Release（cfg 传设置页已保存的更新源配置，旧版主进程会忽略该参数自行解析；
   // 返回 { ok, currentVersion, latestVersion, hasUpdate, exe, releaseUrl }）

@@ -14,9 +14,11 @@
  *   web/public/                       运行时静态资源（server 直接托管）
  *     brand/icon-{light,dark}.svg       应用内 logo / favicon（与 docs/brand 同字节）
  *     brand/mark-{light,dark}.svg
+ *     brand/icon-{light,dark}.png        桌面窗口 / 托盘运行时图标
+ *     brand/icon-{light,dark}.ico        Windows 快捷方式运行时图标
  *     favicon.ico                       亮色版 5 尺寸兜底（/favicon.ico 直连）
  *   desktop/build/
- *     icon.png                          512×512 亮色（托盘 / electron-builder / 安装包）
+ *     icon.png                          512×512 亮色（electron-builder / 安装包）
  *     icon.ico                          16/24/32/48/64/128/256 亮色（exe、桌面、开始菜单）
  *     mark-dark.svg                     启动页 / 错误页内联用（data: URL 页面不能走相对路径）
  *   installer/brand/
@@ -24,8 +26,8 @@
  *   mobile/android/app/src/main/res/    Android 启动图标 / 启动屏（亮色）
  *
  * 亮暗规则（见 docs/brand/README.md）：
- *   桌面 / 托盘 / 安装包 / Android 启动图标 —— **始终亮色版**；
- *   软件内（网页标签、标题栏、导航 rail、登录页、欢迎页）—— 跟随应用主题切换。
+ *   安装包 exe 内嵌图标 / Android 启动图标 —— 亮色版；
+ *   桌面运行时图标与软件内 Logo —— 默认跟随主题，亦可在本机手动选亮/暗。
  *
  * 用法（宿主机 Node，非 Docker）：
  *   node main/scripts/gen-brand-icons.cjs
@@ -638,9 +640,10 @@ ${[64, 48, 32, 16].map((size) => chip('light', size, `light ${size}`)).join('\n'
   <h2>落地方位与版本规则</h2>
   <table>
     <tr><th>位置</th><th>版本</th></tr>
-    <tr><td>Windows exe / 桌面快捷方式 / 开始菜单 / 托盘 / 安装包</td><td>始终亮色</td></tr>
+    <tr><td>Windows exe 内嵌图标 / 安装包</td><td>亮色</td></tr>
+    <tr><td>桌面快捷方式 / 开始菜单 / 窗口 / 托盘</td><td>本机图标设置（默认跟随主题）</td></tr>
     <tr><td>Android 启动图标（含自适应前景、圆形图标）</td><td>始终亮色</td></tr>
-    <tr><td>网页标签 favicon、应用内 logo（标题栏 / rail / 登录 / 欢迎）</td><td>跟随软件主题切换</td></tr>
+    <tr><td>网页标签 favicon、应用内 logo（标题栏 / rail / 登录 / 欢迎）</td><td>本机图标设置（默认跟随主题）</td></tr>
     <tr><td>Android 启动屏（白底，当前不随系统暗色）</td><td>亮色图形</td></tr>
   </table>
 </body>
@@ -721,6 +724,10 @@ function main() {
   writeFile(path.join(publicBrand, 'icon-dark.svg'), iconSvg('dark'));
   writeFile(path.join(publicBrand, 'mark-light.svg'), markSvg('light'));
   writeFile(path.join(publicBrand, 'mark-dark.svg'), markSvg('dark'));
+  for (const variant of ['light', 'dark']) {
+    writeFile(path.join(publicBrand, `icon-${variant}.png`), renderIcon(canvasLib, 512, variant).toBuffer('image/png'));
+    writeFile(path.join(publicBrand, `icon-${variant}.ico`), buildIco(canvasLib, [16, 24, 32, 48, 64, 128, 256], variant));
+  }
   writeFile(
     path.join(MAIN, 'web/public/favicon.ico'),
     buildIco(canvasLib, [16, 24, 32, 48, 64], 'light'),

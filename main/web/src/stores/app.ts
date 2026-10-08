@@ -18,6 +18,12 @@ import {
 } from '../lib/pageTrail';
 
 type Theme = 'light' | 'dark' | 'system';
+export type IconAppearance = 'auto' | 'light' | 'dark';
+
+function savedIconAppearance(): IconAppearance {
+  const value = localStorage.getItem('iconAppearance');
+  return value === 'light' || value === 'dark' ? value : 'auto';
+}
 
 /** 内置 Agent 聊天抽屉的形态：dock=右侧悬浮卡片，full=满窗铺满内容区 */
 export type ChatDrawerMode = 'dock' | 'full';
@@ -49,6 +55,8 @@ export const useAppStore = defineStore('app', {
       sidebarFull: false,
       theme,
       dark: resolveDarkTheme(theme),
+      /** 图标是本机偏好；同一账户在不同设备可选不同外观。 */
+      iconAppearance: savedIconAppearance(),
       /** 当前编辑模式（ir/sv），切换页面时保持不重置 */
       editorMode: (localStorage.getItem('editorMode') as 'ir' | 'sv') || 'ir',
       /** 沉浸阅读状态：默认开启，会话内切换页面保持（不写本地偏好） */
@@ -107,12 +115,7 @@ export const useAppStore = defineStore('app', {
       this.dark = resolveDarkTheme(this.theme);
       document.documentElement.classList.toggle('dark', this.dark);
       localStorage.setItem('theme', this.theme);
-      // 标签页图标跟随主题：亮色/暗色两份静态 SVG 由生成器产出，这里只切换引用
-      const favicon = document.getElementById('app-favicon') as HTMLLinkElement | null;
-      if (favicon) {
-        const href = `/brand/icon-${this.dark ? 'dark' : 'light'}.svg`;
-        if (favicon.getAttribute('href') !== href) favicon.setAttribute('href', href);
-      }
+      void Promise.resolve(this.applyIconAppearance()).catch(() => {});
       // 桌面端：窗口控制按钮（标题栏融合条 WCO）配色跟随主题，取值直接来自 CSS 变量
       const wd = (window as any).wikiDesktop;
       if (wd?.setTitleBarOverlay) {
@@ -124,6 +127,24 @@ export const useAppStore = defineStore('app', {
       }
       // Android 本地端：状态栏/导航栏图标明暗也跟着应用主题（系统深色而应用浅色时不能反色）
       reportThemeToNative(this.dark);
+    },
+    iconIsDark(): boolean {
+      return this.iconAppearance === 'dark' || (this.iconAppearance === 'auto' && this.dark);
+    },
+    applyIconAppearance() {
+      const dark = this.iconIsDark();
+      const favicon = document.getElementById('app-favicon') as HTMLLinkElement | null;
+      if (favicon) {
+        const href = `/brand/icon-${dark ? 'dark' : 'light'}.svg`;
+        if (favicon.getAttribute('href') !== href) favicon.setAttribute('href', href);
+      }
+      const wd = (window as any).wikiDesktop;
+      if (wd?.setIconAppearance) return wd.setIconAppearance(dark ? 'dark' : 'light');
+    },
+    setIconAppearance(value: IconAppearance) {
+      this.iconAppearance = value;
+      localStorage.setItem('iconAppearance', value);
+      return this.applyIconAppearance();
     },
     setTheme(t: Theme) {
       this.theme = t;
