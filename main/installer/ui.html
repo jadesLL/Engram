@@ -60,6 +60,8 @@
   .done-view p { font-size: 12.5px; opacity: .85; text-align: center; line-height: 1.6; }
   body.done .steps, body.done .progress-wrap, body.done .creds, body.done .foot { display: none; }
   body.done .done-view { display: flex; }
+  /* 内置环境包模式：不填仓库地址、不用凭据，点一下就开始解压安装 */
+  body.bundle #repo-step, body.bundle #creds { display: none !important; }
 </style>
 </head>
 <body>
@@ -70,13 +72,18 @@
     </div>
     <div>
       <h1>正在部署 Engram 源码版</h1>
-      <p>一次性安装：自动准备便携环境、克隆源码并构建桌面端。之后每次启动都会增量更新到最新，无需再走此向导。</p>
+      <p id="head-sub">一次性安装：自动准备便携环境、克隆源码并构建桌面端。之后每次启动都会增量更新到最新，无需再走此向导。</p>
     </div>
   </div>
 
   <div class="progress-wrap">
     <div class="progress-meta"><span id="meta-left">准备中…</span><span id="meta-right">0%</span></div>
     <div class="bar"><div id="bar"></div></div>
+  </div>
+
+  <div class="repo" id="bundle-step" style="display:none">
+    <div class="label">安装包已内置运行环境</div>
+    <p class="hint ok" id="bundle-msg">直接解压安装，不联网、不用凭据、不构建。</p>
   </div>
 
   <div class="repo" id="repo-step">
@@ -107,14 +114,14 @@
   <div class="done-view" id="done-view">
     <div class="big">✓</div>
     <h2>安装完成</h2>
-    <p>Engram 已启动并创建了桌面快捷方式。<br/>以后双击桌面「Engram」即可打开并自动增量更新到最新。</p>
+    <p id="done-tip">Engram 已启动并创建了桌面快捷方式。<br/>以后双击桌面「Engram」即可打开并自动增量更新到最新。</p>
     <button class="btn primary" id="done-close">关闭</button>
   </div>
 
   <script>
     const { ipcRenderer, clipboard } = require('electron');
     const $ = (id) => document.getElementById(id);
-    let total = 0, doneCount = 0, started = false, repoUrl = '';
+    let total = 0, doneCount = 0, started = false, repoUrl = '', bundleMode = false;
 
     function renderProgress() {
       const pct = total ? Math.round((doneCount / total) * 100) : 0;
@@ -240,6 +247,8 @@
     });
 
     $('start-btn').addEventListener('click', () => {
+      // 内置环境包模式：不联网、不用凭据，直接开装
+      if (bundleMode) { begin({}); return; }
       const user = $('user').value.trim();
       const pass = $('pass').value;
       if (!user || !pass) { appendLog('✖ 请填写账号与密码/访问令牌'); return; }
@@ -248,6 +257,30 @@
 
     (async () => {
       $('cancel-btn').style.display = 'none';
+      // 安装器自带预构建环境包时（resources\prebuilt\*.zip）直接走免构建安装：
+      // 不填仓库地址、不用凭据，点一下就把内置环境解压覆盖到本机安装目录
+      let info = { available: false };
+      try {
+        info = await ipcRenderer.invoke('bundle-info');
+      } catch {
+        /* 老安装器没有这个通道：按源码模式走 */
+      }
+      if (info && info.available) {
+        bundleMode = true;
+        document.body.classList.add('bundle');
+        $('bundle-step').style.display = '';
+        $('bundle-msg').textContent =
+          `已内置运行环境（${info.name}，约 ${info.sizeMB} MB）：直接解压安装，不联网、不用凭据、不构建。` +
+          '已有安装会被覆盖，数据目录与设置保持不变。';
+        $('head-sub').textContent = '安装包自带运行环境：一键解压部署，免联网、免构建。数据目录与现有安装共用。';
+        $('next-btn').style.display = 'none';
+        $('start-btn').style.display = '';
+        $('start-btn').textContent = '开始安装（内置环境）';
+        $('meta-left').textContent = '准备就绪';
+        $('done-tip').innerHTML =
+          'Engram 已启动并创建了桌面快捷方式。<br/>本机为预构建安装：以后更新请重新运行新版安装器。';
+        return;
+      }
       // 默认不填任何地址（用户要求）：仓库地址一律由用户自己填
       const hasRepo = await ipcRenderer.invoke('has-repo');
       setRepoMsg(hasRepo

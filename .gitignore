@@ -14,3 +14,5 @@ main/docker-compose.dev.yml
 /prod-shots/
 # 公开镜像的本地规则与配置（含真实域名/账号/密码，绝不入库）
 main/.public-mirror/
+# 预构建环境包（数百 MB 二进制产物，由 scripts/pack-prebuilt-bundle.ps1 生成，走发布产物不入库）
+main/installer/resources/prebuilt/*.zip
