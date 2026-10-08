@@ -517,20 +517,24 @@ function updateGesture() {
   frame = 0;
   if (!gesture?.active) return;
   const g = gesture, host = boardEl.value;
-  if (host) {
+  // 只有移动卡片需要边缘自动滚动。缩放时滚动会让高度变大，新增的页面高度
+  // 又允许继续滚动，指针不动也会一帧一帧把卡片拉长。
+  if (host && g.mode === 'move') {
     const box = host.getBoundingClientRect();
     const edge = 54;
     const delta = g.y < box.top + edge ? -Math.min(14, (box.top + edge - g.y) / 4) : g.y > box.bottom - edge ? Math.min(14, (g.y - box.bottom + edge) / 4) : 0;
     if (delta) host.scrollTop += delta;
   }
-  const dx = g.x - g.startX, dy = g.y - g.startY + (host?.scrollTop || 0) - g.scroll;
+  const dx = g.x - g.startX;
+  const dy = g.y - g.startY + (g.mode === 'move' ? (host?.scrollTop || 0) - g.scroll : 0);
   ghost.value = { x: dx, y: dy };
   const wanted = normalizePlace(g.mode === 'move'
     ? { ...g.origin, col: g.origin.col + Math.round(dx / g.cell), row: g.origin.row + Math.round(dy / g.cell) }
     : { ...g.origin, w: g.origin.w + Math.round(dx / g.cell), h: g.origin.h + Math.round(dy / g.cell) });
   targetPreview.value = wanted;
   previewBoard.value = moveModuleTo(g.snapshot, g.id, wanted);
-  frame = requestAnimationFrame(updateGesture);
+  // 缩放只在指针移动时重算；移动卡片则持续更新以支持边缘自动滚动。
+  if (g.mode === 'move') frame = requestAnimationFrame(updateGesture);
 }
 function onGestureMove(event: PointerEvent) {
   if (!gesture || event.pointerId !== gesture.pointer) return;
