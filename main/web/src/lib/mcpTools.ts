@@ -127,9 +127,9 @@ export const MCP_TOOLS: McpToolDoc[] = [
   {
     name: 'create_raw_material',
     group: '写',
-    summary: '把已完成的调研结果新建为原始资料 Markdown 来源文件；已有文件拒绝覆盖。',
+    summary: '按连接时下发的调研 skill，把已完成的结果新建为原始资料 Markdown；已有文件拒绝覆盖。',
     params: 'path 新文件路径（必填，调研成果用 原始资料/文档/xxx.md，随口记的零散内容用 原始资料/灵感碎片/xxx.md）；content 完整 Markdown 正文（必填，不含 YAML frontmatter）。',
-    notes: '仅在用户明确要求保存调研结果时调用；不允许改已有文件，原始资料/对话/ 专供聊天记录，旧版 原始资料/收集箱/ 已停用。正文应列出调研来源与引用。',
+    notes: '连接 MCP 时自动下发 research-raw-material skill，也可用 skill_guide 重新读取。仅在用户明确要求保存时调用；只允许文档/或灵感碎片/，不能改已有文件。正文应列出来源与引用。',
     cli: '（CLI 未提供，仅 MCP）',
   },
   {

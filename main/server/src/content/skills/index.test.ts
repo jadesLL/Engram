@@ -21,6 +21,18 @@ test('skill 注册表：名称唯一、元数据齐全、正文非空', () => {
 test('首批两份 skill 已登记', () => {
   assert.ok(SKILLS.some((s) => s.name === 'docx-meeting-to-md'));
   assert.ok(SKILLS.some((s) => s.name === 'kb-ingest-discipline'));
+  assert.ok(SKILLS.some((s) => s.name === 'research-raw-material'));
+});
+
+test('调研 skill 写清范围、来源、保存授权与固定格式', () => {
+  const research = findSkill('research-raw-material');
+  assert.ok(research);
+  for (const heading of ['调研范围', '结论', '依据', '待核实', '来源']) {
+    assert.match(research.body, new RegExp(`## ${heading}`));
+  }
+  assert.match(research.body, /用户明确要求保存/);
+  assert.match(research.body, /不得编造数据/);
+  assert.match(research.body, /来源编号/);
 });
 
 test('findSkill：大小写与空白容错，未知名称返回 undefined', () => {

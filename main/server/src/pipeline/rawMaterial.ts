@@ -7,7 +7,7 @@ import { noteAppWrite } from '../lib/appWrites.js';
 import { emit } from '../lib/events.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
 import { appendWikiLog } from './indexFile.js';
-import { DEFAULT_RAW_DIR, RAW_CHAT_DIR, RAW_ROOT } from '../lib/rawSections.js';
+import { DEFAULT_RAW_DIR, RAW_CHAT_DIR, RAW_IDEA_DIR, RAW_ROOT } from '../lib/rawSections.js';
 
 export class RawMaterialWriteError extends Error {
   constructor(message: string) {
@@ -49,6 +49,9 @@ export function createRawMaterial(input: { path: string; content: string }): { p
   }
   if (rel.startsWith('原始资料/收集箱/')) {
     throw new RawMaterialWriteError(`原始资料/收集箱/ 是已停用的旧版目录，请改用 ${DEFAULT_RAW_DIR}/`);
+  }
+  if (!rel.startsWith(`${DEFAULT_RAW_DIR}/`) && !rel.startsWith(`${RAW_IDEA_DIR}/`)) {
+    throw new RawMaterialWriteError(`只能新建 ${DEFAULT_RAW_DIR}/ 或 ${RAW_IDEA_DIR}/ 下的文件`);
   }
   if (path.posix.extname(rel).toLowerCase() !== '.md') {
     throw new RawMaterialWriteError('只支持新建 Markdown（.md）原始资料');

@@ -51,6 +51,7 @@ test('skill_list 只回元数据：含名称/用途/何时用/版本，不含正
   assert.equal(result.isError, false, result.text);
   assert.match(result.text, /docx-meeting-to-md/);
   assert.match(result.text, /kb-ingest-discipline/);
+  assert.match(result.text, /research-raw-material/);
   assert.match(result.text, /用途：/);
   assert.match(result.text, /何时用：/);
   assert.match(result.text, /v1/);
@@ -84,6 +85,25 @@ test('MCP instructions 指向 skill 工具并声明对话沉积触发条件', as
   assert.match(instructions, /skill_guide/);
   assert.match(instructions, /不要卡住整批作业/);
   assert.match(instructions, /save_chat/);
+  assert.match(instructions, /# 调研成果写入原始资料/);
+  assert.match(instructions, /## 调研范围/);
+  assert.match(instructions, /## 来源/);
+});
+
+test('调研 skill 可在连接后按名重新获取', async () => {
+  const result = await callTool('skill_guide', { name: 'research-raw-material' });
+  assert.equal(result.isError, false, result.text);
+  assert.match(result.text, /# 调研成果写入原始资料/);
+  assert.match(result.text, /只有用户明确要求保存/);
+});
+
+test('调研写入不接受自造的原始资料二级目录', async () => {
+  const result = await callTool('create_raw_material', {
+    path: '原始资料/新目录/调研.md',
+    content: '一份调研稿',
+  });
+  assert.equal(result.isError, true);
+  assert.match(result.text, /只能新建 原始资料\/文档\/ 或 原始资料\/灵感碎片\//);
 });
 
 test('指南正文：原始资料仅允许用户授权的新建调研入口，且对话沉淀须指示', async () => {
