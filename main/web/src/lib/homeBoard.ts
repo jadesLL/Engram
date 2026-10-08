@@ -1,6 +1,7 @@
 /**
  * 首页看板的纯逻辑：模块注册、坐标布局、旧数据迁移及真实数据统计。
- * 固定六列，位置由用户选择；拖动碰撞让位，只有手动整理才消除留白。
+ * 栅格列数由 homeGrid.GRID_COLS 决定（2026-10-08 起 12 列），位置由用户选择；
+ * 拖动碰撞让位，只有手动整理才消除留白。
  * 合法的空看板保持为空，读取时只修复坏值、重复 id 和重叠。
  */
 
@@ -30,16 +31,16 @@ export const HOME_BOARD_COLUMNS = [GRID_COLS] as const;
 export const DEFAULT_BOARD_COLUMNS: BoardColumns = GRID_COLS;
 
 /** 卡片默认格数（列 × 行）与可选范围都由 homeGrid 定义，这里只放各模块的默认观感 */
-export const MODULE_SPANS = [2, 3, 4, 6] as const;
+export const MODULE_SPANS = [2, 3, 4, 6, 8, 12] as const;
 export type ModuleSpan = (typeof MODULE_SPANS)[number];
 
 /**
- * 模块占的**格数**（6 列栅格上的列数）：2 格 = 1/3 页、3 格 = 半页、4 格 = 2/3、6 格 = 整行。
+ * 模块占的**格数**（12 列栅格上的列数）：4 格 = 1/3 页、6 格 = 半页、8 格 = 2/3、12 格 = 整行。
  * 高度另算（w × h 才是一张卡的大小），见 ModuleMeta.h。
  */
-const DEFAULT_WIDE = 6;
-const DEFAULT_HALF = 3;
-const DEFAULT_THIRD = 2;
+const DEFAULT_WIDE = 12;
+const DEFAULT_HALF = 6;
+const DEFAULT_THIRD = 4;
 
 /**
  * 「整行」在默认布局里的格数：登记表在 defaultHomeBoard() 之前用到它，
@@ -91,13 +92,19 @@ export interface HomeModule {
 
 export interface HomeBoard {
   version: number;
-  /** 整页栅格列数：v3 起固定 6 列（保留字段是为了读得懂旧数据） */
+  /** 整页栅格列数：v3 起固定（见 homeGrid.GRID_COLS，2026-10-08 起 12 列）；保留字段是为了读得懂旧数据 */
   columns: number;
   modules: HomeModule[];
 }
 
-/** v2：相对宽度；v3：坐标；v4：保留留白、首次补热力卡。应用版本号不变。 */
-export const HOME_BOARD_VERSION = 4;
+/**
+ * v2：相对宽度；v3：坐标；v4：保留留白、首次补热力卡；
+ * v5（2026-10-08）：栅格 6 列 → 12 列。v5 之前的坐标与格数都是 6 列口径，
+ * 读取时统一 ×2（col/w/h 一起），视觉大小不变、只是格数变细。
+ */
+export const HOME_BOARD_VERSION = 5;
+/** v5 之前每行/每列对应的格数：迁移时统一按这个倍数换算 */
+const LEGACY_GRID_SCALE = 2;
 /** 布局落盘用的设置键（服务端 /api/settings 的 PUBLIC_SETTINGS 白名单同名） */
 export const HOME_LAYOUT_SETTING = 'home_layout';
 /** 断网 / 旧服务端时的本地回退键 */
@@ -110,7 +117,7 @@ export interface ModuleMeta {
   title: string;
   hint: string;
   icon: string;
-  /** 新增时的默认宽度（6 列栅格上的格数） */
+  /** 新增时的默认宽度（12 列栅格上的格数） */
   w: ModuleSpan;
   /** 新增时的默认高度（行数） */
   h: number;
@@ -120,28 +127,29 @@ export interface ModuleMeta {
  * 模块类型登记表：顺序即「添加模块」面板里的顺序。
  * hint 是给用户看的一句话——说明这块会显示什么，而不是复述标题。
  * 默认 w/h 按「加到页面上就能直接用」给：宽卡整行、统计卡三分之一、列表卡半页 + 高一点。
+ * 12 列栅格下一格约 75px（板宽上限 1120px 时），所以这里的 h 是「1 格 = 一行 75px」的行数。
  */
 export const MODULE_META: ModuleMeta[] = [
-  { kind: 'capture', title: '快速记灵感', hint: 'A 紧凑单行 / B 多行书写，一格高也能直接输入', icon: 'lightbulb', w: DEFAULT_THIRD, h: 2 },
-  { kind: 'shortcuts', title: '快捷入口', hint: '新建页面、搜索、图谱、Agent 等常用动作', icon: 'play', w: DEFAULT_HALF, h: 1 },
-  { kind: 'recent', title: '最近更新', hint: '最近改动过的页面与灵感', icon: 'refresh', w: DEFAULT_HALF, h: 5 },
-  { kind: 'notes', title: '近期灵感', hint: '原始资料里最新记下的几条', icon: 'lightbulb', w: DEFAULT_HALF, h: 4 },
-  { kind: 'fresh', title: '本周新增', hint: '最近 7 天新写出来的页面', icon: 'plus', w: DEFAULT_HALF, h: 4 },
-  { kind: 'tasks', title: '近期待办', hint: '任务看板里逾期与最近要做的几件', icon: 'board', w: DEFAULT_HALF, h: 4 },
-  { kind: 'stats', title: '知识库概览', hint: '概念 / 实体 / 原始资料的数量与知识库规模', icon: 'report', w: DEFAULT_THIRD, h: 4 },
-  { kind: 'weekly', title: '本周动态', hint: '一周里新增与改动的字数分布', icon: 'activity', w: DEFAULT_THIRD, h: 3 },
-  { kind: 'tags', title: '常用标签', hint: '库里出现最多的标签，点一个去搜', icon: 'hash', w: DEFAULT_THIRD, h: 3 },
-  { kind: 'sections', title: '分区导航', hint: '按 Wiki 目录与原始资料分类进入', icon: 'folder', w: DEFAULT_THIRD, h: 3 },
-  { kind: 'roam', title: '随机漫游', hint: '随手翻到一篇，看看以前写过什么', icon: 'compass', w: DEFAULT_THIRD, h: 3 },
-  { kind: 'system', title: '运行状态', hint: '版本、运行形态、队列与同步一句话说完', icon: 'server', w: DEFAULT_HALF, h: 3 },
-  { kind: 'sync', title: '多端同步状态', hint: '同步中 / 已完成的通道与进度', icon: 'plug', w: DEFAULT_HALF, h: 3 },
-  { kind: 'ring', title: '库占比', hint: '概念 / 实体 / 资料 的占比环 + 总数', icon: 'graph', w: DEFAULT_THIRD, h: 4 },
-  { kind: 'heat', title: '知识热力', hint: '近 4–12 周页面最近改动的日期分布', icon: 'activity', w: DEFAULT_THIRD, h: 2 },
-  { kind: 'inbox', title: '收集箱', hint: '待整理的原始件与转换进度', icon: 'inbox', w: DEFAULT_THIRD, h: 3 },
-  { kind: 'queue', title: '等待提炼', hint: '尚未提炼的真实资料清单，包含文档、对话与灵感', icon: 'merge', w: DEFAULT_HALF, h: 3 },
-  { kind: 'board', title: '看板快照', hint: '任务看板三列各几条，点开进看板', icon: 'board', w: FULL_SPAN, h: 3 },
-  { kind: 'activity', title: '最近改动', hint: '最近动过的页面，按时间倒着排', icon: 'restore', w: DEFAULT_HALF, h: 4 },
-  { kind: 'digest', title: 'Agent 摘要', hint: '用一句话说清最近值得看什么', icon: 'ai', w: DEFAULT_HALF, h: 3 },
+  { kind: 'capture', title: '快速记灵感', hint: 'A 紧凑单行 / B 多行书写，一格高也能直接输入', icon: 'lightbulb', w: DEFAULT_THIRD, h: 4 },
+  { kind: 'shortcuts', title: '快捷入口', hint: '新建页面、搜索、图谱、Agent 等常用动作', icon: 'play', w: DEFAULT_HALF, h: 2 },
+  { kind: 'recent', title: '最近更新', hint: '最近改动过的页面与灵感', icon: 'refresh', w: DEFAULT_HALF, h: 10 },
+  { kind: 'notes', title: '近期灵感', hint: '原始资料里最新记下的几条', icon: 'lightbulb', w: DEFAULT_HALF, h: 8 },
+  { kind: 'fresh', title: '本周新增', hint: '最近 7 天新写出来的页面', icon: 'plus', w: DEFAULT_HALF, h: 8 },
+  { kind: 'tasks', title: '近期待办', hint: '任务看板里逾期与最近要做的几件', icon: 'board', w: DEFAULT_HALF, h: 8 },
+  { kind: 'stats', title: '知识库概览', hint: '概念 / 实体 / 原始资料的数量与知识库规模', icon: 'report', w: DEFAULT_THIRD, h: 8 },
+  { kind: 'weekly', title: '本周动态', hint: '一周里新增与改动的字数分布', icon: 'activity', w: DEFAULT_THIRD, h: 6 },
+  { kind: 'tags', title: '常用标签', hint: '库里出现最多的标签，点一个去搜', icon: 'hash', w: DEFAULT_THIRD, h: 6 },
+  { kind: 'sections', title: '分区导航', hint: '按 Wiki 目录与原始资料分类进入', icon: 'folder', w: DEFAULT_THIRD, h: 6 },
+  { kind: 'roam', title: '随机漫游', hint: '随手翻到一篇，看看以前写过什么', icon: 'compass', w: DEFAULT_THIRD, h: 6 },
+  { kind: 'system', title: '运行状态', hint: '版本、运行形态、队列与同步一句话说完', icon: 'server', w: DEFAULT_HALF, h: 6 },
+  { kind: 'sync', title: '多端同步状态', hint: '同步中 / 已完成的通道与进度', icon: 'plug', w: DEFAULT_HALF, h: 6 },
+  { kind: 'ring', title: '库占比', hint: '概念 / 实体 / 资料 的占比环 + 总数', icon: 'graph', w: DEFAULT_THIRD, h: 8 },
+  { kind: 'heat', title: '知识热力', hint: '近 4–12 周页面最近改动的日期分布', icon: 'activity', w: DEFAULT_THIRD, h: 4 },
+  { kind: 'inbox', title: '收集箱', hint: '待整理的原始件与转换进度', icon: 'inbox', w: DEFAULT_THIRD, h: 6 },
+  { kind: 'queue', title: '等待提炼', hint: '尚未提炼的真实资料清单，包含文档、对话与灵感', icon: 'merge', w: DEFAULT_HALF, h: 6 },
+  { kind: 'board', title: '看板快照', hint: '任务看板三列各几条，点开进看板', icon: 'board', w: FULL_SPAN, h: 6 },
+  { kind: 'activity', title: '最近改动', hint: '最近动过的页面，按时间倒着排', icon: 'restore', w: DEFAULT_HALF, h: 8 },
+  { kind: 'digest', title: 'Agent 摘要', hint: '用一句话说清最近值得看什么', icon: 'ai', w: DEFAULT_HALF, h: 6 },
 ];
 
 
@@ -157,49 +165,50 @@ export function isModuleKind(value: unknown): value is ModuleKind {
   return typeof value === 'string' && (MODULE_KINDS as readonly string[]).includes(value);
 }
 
-/** 是不是合法的整页列数（v3 起固定 6 列，旧值一律读成 6） */
+/** 是不是合法的整页列数（v3 起固定 GRID_COLS 列，旧值一律读成它） */
 export function isBoardColumns(value: unknown): value is BoardColumns {
   return Number(value) === GRID_COLS;
 }
 
-/** 任意输入 → 合法列数（v3 固定 6 列；旧数据的 2/3/4/5 也会归一到 6） */
+/** 任意输入 → 合法列数（旧数据的 2/3/4/5/6 也会归一到当前列数） */
 export function normalizeColumns(_value?: unknown): BoardColumns {
   return DEFAULT_BOARD_COLUMNS;
 }
 
 /**
- * 宽度档：6 列栅格上是 2 / 3 / 4 / 6 格（`1/3` · `1/2` · `2/3` · `整行`）。
+ * 宽度档：12 列栅格上是 2 / 3 / 4 / 6 / 8 / 12 格（`1/6` · `1/4` · `1/3` · `1/2` · `2/3` · `整行`）。
  * 标签给的是**页宽比例**，与卡片实际宽度一一对应；拖动缩放时这些只是快捷键。
  */
 export function spanOptionsFor(_columns: BoardColumns = DEFAULT_BOARD_COLUMNS): Array<{ value: ModuleSpan; label: string; hint: string }> {
   return MODULE_SPANS.map((span) => {
     const hint = `占页宽的 ${Math.round((span / GRID_COLS) * 100)}%（${GRID_COLS} 列里的 ${span} 格）`;
     if (span >= GRID_COLS) return { value: span, label: '整行', hint: '占满一整行（宽卡用这档）' };
-    // 能约成「几分之一」的写成分数（1/3、1/2），约不尽的写几分之几（4/6 而不是 2/3）
+    // 能约成「几分之一」的写成分数（1/3、1/2），约不尽的写几分之几（8/12 而不是 2/3）
     const divisor = GRID_COLS / span;
     const label = Number.isInteger(divisor) ? `1/${divisor}` : `${span}/${GRID_COLS}`;
     return { value: span, label, hint };
   });
 }
 
-/** 高度档：按行给 2–8 行（拖右下角可以任意调，这里是键盘/菜单的快捷档） */
-export const HEIGHT_STEPS = [2, 3, 4, 5, 6, 8] as const;
+/** 高度档：按行给 2–12 行（拖右下角可以任意调，这里是键盘/菜单的快捷档） */
+export const HEIGHT_STEPS = [2, 3, 4, 6, 8, 12] as const;
 
 /**
- * 默认工作台：概览、速记、待办分列；灵感和热力格居中，快捷入口与状态使用短卡。
+ * 默认工作台：概览、速记、待办分列；灵感和热力格居中，快捷入口用横条、同步用 1×1 小磁贴。
+ * 坐标与格数都是 12 列栅格下的值（一格约 75px，1×1 就是手机图标大小）。
  */
 export function defaultHomeBoard(): HomeBoard {
   const items: Array<{ id: string; kind: ModuleKind; place: GridPlace; opts?: Record<string, number> }> = [
-    { id: 'default-stats', kind: 'stats', place: { col: 0, row: 0, w: 2, h: 2 } },
-    { id: 'default-capture', kind: 'capture', place: { col: 2, row: 0, w: 2, h: 2 } },
-    { id: 'default-tasks', kind: 'tasks', place: { col: 4, row: 0, w: 2, h: 3 }, opts: { limit: 5 } },
-    { id: 'default-notes', kind: 'notes', place: { col: 0, row: 2, w: 2, h: 2 }, opts: { limit: 4 } },
-    { id: 'default-heat', kind: 'heat', place: { col: 2, row: 2, w: 2, h: 2 }, opts: { limit: 8 } },
-    { id: 'default-recent', kind: 'recent', place: { col: 4, row: 3, w: 2, h: 2 }, opts: { limit: 6 } },
-    { id: 'default-shortcuts', kind: 'shortcuts', place: { col: 0, row: 4, w: 3, h: 1 } },
-    { id: 'default-sync', kind: 'sync', place: { col: 3, row: 4, w: 1, h: 1 } },
-    { id: 'default-activity', kind: 'activity', place: { col: 0, row: 5, w: 3, h: 2 } },
-    { id: 'default-digest', kind: 'digest', place: { col: 3, row: 5, w: 3, h: 2 } },
+    { id: 'default-stats', kind: 'stats', place: { col: 0, row: 0, w: 4, h: 4 } },
+    { id: 'default-capture', kind: 'capture', place: { col: 4, row: 0, w: 4, h: 4 } },
+    { id: 'default-tasks', kind: 'tasks', place: { col: 8, row: 0, w: 4, h: 4 }, opts: { limit: 5 } },
+    { id: 'default-notes', kind: 'notes', place: { col: 0, row: 4, w: 4, h: 4 }, opts: { limit: 4 } },
+    { id: 'default-heat', kind: 'heat', place: { col: 4, row: 4, w: 4, h: 4 }, opts: { limit: 8 } },
+    { id: 'default-recent', kind: 'recent', place: { col: 8, row: 4, w: 4, h: 4 }, opts: { limit: 6 } },
+    { id: 'default-shortcuts', kind: 'shortcuts', place: { col: 0, row: 8, w: 11, h: 1 } },
+    { id: 'default-sync', kind: 'sync', place: { col: 11, row: 8, w: 1, h: 1 } },
+    { id: 'default-activity', kind: 'activity', place: { col: 0, row: 9, w: 6, h: 4 } },
+    { id: 'default-digest', kind: 'digest', place: { col: 6, row: 9, w: 6, h: 4 } },
   ];
   return {
     version: HOME_BOARD_VERSION,
@@ -278,15 +287,16 @@ function normalizeOpts(raw: unknown, kind: ModuleKind): Record<string, string | 
 /**
  * 旧数据的宽度迁移表。
  * v1 的 span 是字符串（full / half / third，对着当时写死的 3 列），v2 是相对格数（1–5）。
- * 现在栅格固定 6 列，所以按**页宽比例**换过来：full → 整行 6、half → 半页 3、third → 三分之一 2；
- * v2 的数字格数按「原列数 4」换算成 6 列（1→2、2→3、3→5、4→6、5→6）。
+ * 这里给的是**6 列口径**的格数：full → 整行 6、half → 半页 3、third → 三分之一 2，
+ * v2 的数字格数按「原列数 4」换算成 6 列（1→2、2→3、3→5、4→6、5→6）；
+ * 若是 v5 之前的整条布局，调用方还会统一再 ×2 换到 12 列。
  * 注意 v3 起宽度不再限定在档位里（用户拖把手可以拖出 5 格这种中间值），
  * 所以类型是 number，只有「新建模块」时才用 MODULE_SPANS 里的档位。
  */
 const LEGACY_SPAN: Record<string, number> = { full: 6, half: 3, third: 2 };
 const LEGACY_NUMBER_SPAN: Record<number, number> = { 1: 2, 2: 3, 3: 5, 4: 6, 5: 6 };
 
-function normalizeModule(raw: unknown, others: HomeModule[]): HomeModule | null {
+function normalizeModule(raw: unknown, others: HomeModule[], scale = 1): HomeModule | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const item = raw as Record<string, unknown>;
   if (!isModuleKind(item.kind)) return null;
@@ -295,16 +305,22 @@ function normalizeModule(raw: unknown, others: HomeModule[]): HomeModule | null 
   const rawTitle = typeof item.title === 'string' ? item.title.trim().replace(/\s+/g, ' ') : '';
   const meta = moduleMeta(kind);
 
-  // 宽高：v3 直接读 w/h；v2 只有相对格数 span（也可能更早是字符串 full/half/third）或啥都没有
+  // 宽高：v3 直接读 w/h；v2 只有相对格数 span（也可能更早是字符串 full/half/third）或啥都没有。
+  // 存过的值按旧栅格口径换算（scale），没存过的用当前默认值（已经是新口径，不再换算）。
   const asString = typeof item.span === 'string' ? LEGACY_SPAN[item.span] : undefined;
   const asNumber = typeof item.span === 'number' ? LEGACY_NUMBER_SPAN[Math.round(item.span)] : undefined;
-  const w = clampW(Number.isFinite(Number(item.w)) ? Number(item.w) : Number(asString ?? asNumber ?? meta.w));
-  const h = clampH(Number.isFinite(Number(item.h)) ? Number(item.h) : meta.h);
+  const storedW = Number.isFinite(Number(item.w)) ? Number(item.w) : asString ?? asNumber;
+  const storedH = Number.isFinite(Number(item.h)) ? Number(item.h) : undefined;
+  const zoom = (value: number | undefined, fallback: number) => Math.round((value ?? fallback) * (value === undefined ? 1 : scale));
+  const w = clampW(zoom(storedW, meta.w));
+  const h = clampH(zoom(storedH, meta.h));
 
   // 位置：保留坐标和留白；无坐标的旧数据放到第一个空位。
   let place: GridPlace;
   if (typeof item.col === 'number' || typeof item.row === 'number') {
-    place = normalizePlace({ col: Number(item.col), row: Number(item.row), w, h });
+    const col = Number.isFinite(Number(item.col)) ? Number(item.col) : 0;
+    const row = Number.isFinite(Number(item.row)) ? Number(item.row) : 0;
+    place = normalizePlace({ col: Math.round(col * scale), row: Math.round(row * scale), w, h });
   } else {
     const occupied = others.map((other) => ({ col: other.col, row: other.row, w: other.w, h: other.h }));
     place = findFreeSpot(occupied, w, h) || { col: 0, row: GRID_MAX_ROWS, w, h };
@@ -343,10 +359,13 @@ export function normalizeHomeBoard(raw: unknown): HomeBoard {
   if (!Array.isArray(source.modules)) return defaultHomeBoard();
 
   const columns = normalizeColumns(source.columns);
+  // v5 之前的布局存的是 6 列口径的坐标与格数：整条布局统一 ×2 换成 12 列，视觉大小保持不变。
+  const storedVersion = Number.isFinite(Number(source.version)) ? Number(source.version) : 0;
+  const scale = storedVersion < HOME_BOARD_VERSION ? LEGACY_GRID_SCALE : 1;
   const seen = new Set<string>();
   const modules: HomeModule[] = [];
   for (const item of source.modules) {
-    const module = normalizeModule(item, modules);
+    const module = normalizeModule(item, modules, scale);
     if (!module) continue;
     // 重复 id 会让拖拽定位错位：后一个改成新 id，宁可丢「它是谁」也不丢「它存在」
     if (seen.has(module.id)) module.id = uid();
@@ -360,7 +379,7 @@ export function normalizeHomeBoard(raw: unknown): HomeBoard {
   }
   // v3 首次升级时补一张热力卡，不改已有坐标；v4 删除后不会再次补回。
   if (source.version === 3 && modules.length && modules.length < MAX_MODULES && !modules.some((m) => m.kind === 'heat')) {
-    const spot = findFreeSpot(modules, 2, 2)!;
+    const spot = findFreeSpot(modules, 4, 4)!;
     modules.push({ id: uid('heat'), kind: 'heat', title: '', ...spot, opts: { limit: 8 } });
   }
   return {
@@ -392,7 +411,7 @@ export function serializeHomeBoard(board: HomeBoard): string {
 }
 
 /**
- * 换整页列数：v3 起栅格固定 6 列，这个函数保留成恒等（旧调用点不用改）。
+ * 换整页列数：v3 起栅格列数固定（见 homeGrid.GRID_COLS），这个函数保留成恒等（旧调用点不用改）。
  */
 export function setColumns(board: HomeBoard, _columns?: BoardColumns): HomeBoard {
   return board;

@@ -43,7 +43,10 @@ export interface HomeCardSummary {
 
 export type HomeCardTier = 'tile' | 'bar' | 'column' | 'standard';
 
-/** 栅格格数 → 内容档位（w/h 是 6 列栅格上的列数 / 行数，不是像素） */
+/**
+ * 栅格格数 → 内容档位（w/h 是 GRID_COLS 列栅格上的列数 / 行数，不是像素）。
+ * 12 列栅格下：1×1 ≈ 75px，2×1 ≈ 164px，1×2 ≈ 75×164。
+ */
 export function cardTier(w: number, h: number): HomeCardTier {
   if (w <= 1 && h <= 1) return 'tile';
   if (h <= 1) return 'bar';

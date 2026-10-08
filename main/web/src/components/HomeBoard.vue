@@ -64,7 +64,7 @@
     </div>
 
     <!--
-      栅格看板（2026-10-07「手机桌面」模式）：固定 6 列 × N 行的 CSS Grid，
+      栅格看板（2026-10-07「手机桌面」模式）：固定 12 列 × N 行的 CSS Grid（列数见 lib/homeGrid.ts 的 GRID_COLS），
       每张卡用自己的 col/row/w/h 直接落在格子上（位置数据在 lib/homeBoard.ts + lib/homeGrid.ts）。
       拖动 = 改起点、拖右下角 = 改宽高，两者都吸附到格；碰撞由 placeItem 让位，所以不会叠、不会飞出页面。
     -->
@@ -371,7 +371,8 @@ function summaryOf(module: HomeModule): HomeCardSummary {
     case 'recent': return pageSummary(props.recentItems,'还没有最近更新的页面');
     case 'activity': return pageSummary(changeLogItems.value,'近期没有页面改动');
     case 'fresh': return pageSummary(freshItems.value,'最近七天还没有新增页面');
-    case 'heat': return {value:0,label:'页面最近改动'};
+    // 热力卡的摘要只在 1×1 磁贴或窄卡上用：给「本周改动了多少篇」，别让磁贴显示 0
+    case 'heat': return {value:weeklyRows.value.reduce((n,r)=>n+r.updated,0),label:'本周改动'};
     case 'weekly': return {value:weeklyRows.value.reduce((n,r)=>n+r.created,0),label:'本周新增',rows:weeklyRows.value.map(r=>({text:r.label,detail:`${r.updated} 更新 · ${r.created} 新增`,amount:r.updated,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'trend',empty:'本周还没有更新记录'};
     case 'tags': return {value:tagList.value.length,label:'个常用标签',rows:tagList.value.map(r=>({text:r.tag,detail:r.count,path:`/search?q=${encodeURIComponent(r.tag)}`})),empty:'给页面加一个标签，这里就会显示'};
     case 'sections': return {value:sections.value.length,label:'个分区',rows:sections.value.map(r=>({text:r.label,detail:r.count,amount:r.count,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'bars'};
@@ -494,7 +495,7 @@ function preventTouchScroll(event: TouchEvent) { if (gesture) event.preventDefau
 function beginGesture(event: PointerEvent, id: string, mode: 'move' | 'resize') {
   if (gesture || event.button !== 0) return;
   if (!store.editing && event.pointerType !== 'touch') return;
-  // 窄窗口先切回可横向滚动的六列编辑画布，下一次拖动再使用稳定坐标。
+  // 窄窗口先切回可横向滚动的完整列数编辑画布，下一次拖动再使用稳定坐标。
   if (!store.editing && displayColumns.value < GRID_COLS) { store.setEditing(true); return; }
   const module = store.board.modules.find((m) => m.id === id);
   if (!module) return;
@@ -654,7 +655,7 @@ onUnmounted(() => {
  *
  * 历史坑：曾经按「列数 × 单元宽 + 间距 + 页边距」算页宽，于是列数一变页宽也变；
  * 又曾经让 1 格 = 可用宽度 ÷ 列数，于是窗口越宽卡片越胖（2 列时 1 格 430px）。
- * 现在两条都定死：页宽上限 1120px（窗口更宽就居中留白），栅格固定 6 列、正方形格子等分页宽 ——
+ * 现在两条都定死：页宽上限 1120px（窗口更宽就居中留白），栅格固定 12 列、正方形格子等分页宽 ——
  * 「一格多大」只由页宽决定，用户改的是「一张卡占几格」。
  */
 .board-inner {
@@ -803,7 +804,7 @@ onUnmounted(() => {
 }
 
 /*
- * 栅格看板（2026-10-07「手机桌面」模式）：固定 6 列 × N 行的 CSS Grid。
+ * 栅格看板（2026-10-07「手机桌面」模式）：固定 12 列 × N 行的 CSS Grid。
  * 每张卡的 grid-column / grid-row 由数据（col/row/w/h）直接写成内联样式，
  * 所以拖动 = 改数字、缩放 = 改数字，浏览器负责摆位——不会出现「卡片飞出页面」这种事
  * （2026-10-06 的瀑布流用绝对定位 + 脚本算像素，拖动时确实会跑到容器外）。
@@ -825,7 +826,7 @@ onUnmounted(() => {
     linear-gradient(to right, var(--border) 1px, transparent 1px),
     linear-gradient(to bottom, var(--border) 1px, transparent 1px);
   background-size:
-    calc((100% + 14px) / 6) 100%,
+    calc((100% + 14px) / var(--board-cols)) 100%,
     100% calc(var(--grid-row-h) + 14px);
   background-position: -1px -1px;
   border-radius: 12px;

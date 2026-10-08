@@ -50,7 +50,7 @@ import {
   weeklyStats,
   type HomeBoard,
 } from './homeBoard.ts';
-import { GRID_COLS, GRID_MAX_W, isSane } from './homeGrid.ts';
+import { GRID_COLS, GRID_MAX_H, GRID_MAX_W, isSane } from './homeGrid.ts';
 import type { TaskCard } from './taskBoard.ts';
 
 /** 造一篇页面：只填用得到的字段 */
@@ -83,12 +83,12 @@ function card(text: string, date = ''): TaskCard {
   };
 }
 
-test('默认布局：非空、模块类型合法、id 唯一、列数固定 6、占位干净', () => {
+test('默认布局：非空、模块类型合法、id 唯一、列数固定 12、占位干净', () => {
   const board = defaultHomeBoard();
   assert.equal(board.version, HOME_BOARD_VERSION);
   assert.equal(board.columns, DEFAULT_BOARD_COLUMNS);
   assert.deepEqual([...HOME_BOARD_COLUMNS], [GRID_COLS]);
-  assert.equal(GRID_COLS, 6);
+  assert.equal(GRID_COLS, 12);
   assert.ok(board.modules.length >= 4);
   const ids = board.modules.map((m) => m.id);
   assert.equal(new Set(ids).size, ids.length);
@@ -113,13 +113,13 @@ test('登记表的每个类型都有标题、说明、图标与合法默认宽�
     assert.ok(meta.hint.length > 0);
     assert.ok(meta.icon.length > 0);
     assert.ok((MODULE_SPANS as readonly number[]).includes(meta.w), `${kind} 默认宽度不在档位里`);
-    assert.ok(meta.h >= 1 && meta.h <= 12, `${kind} 默认高度越界`);
+    assert.ok(meta.h >= 1 && meta.h <= GRID_MAX_H, `${kind} 默认高度越界`);
   }
-  assert.ok(HEIGHT_STEPS.every((step) => step >= 2 && step <= 12));
+  assert.ok(HEIGHT_STEPS.every((step) => step >= 2 && step <= GRID_MAX_H));
 });
 
-test('列数：v3 固定 6 列，任何输入都归一成 6', () => {
-  assert.deepEqual([...HOME_BOARD_COLUMNS], [6]);
+test('列数：v3 起固定 12 列，任何输入都归一成 12', () => {
+  assert.deepEqual([...HOME_BOARD_COLUMNS], [12]);
   for (const input of [6, 4, 2, 'x', null, undefined, Number.NaN, {}]) {
     assert.equal(normalizeColumns(input), DEFAULT_BOARD_COLUMNS, `输入 ${String(input)}`);
   }
@@ -128,9 +128,9 @@ test('列数：v3 固定 6 列，任何输入都归一成 6', () => {
   assert.equal(setColumns(board, 4 as any), board);
 });
 
-test('宽度档：6 列栅格给 1/3 · 1/2 · 4/6 · 整行', () => {
+test('宽度档：12 列栅格给 1/6 · 1/4 · 1/3 · 1/2 · 8/12 · 整行', () => {
   const labels = Object.fromEntries(spanOptionsFor().map((option) => [option.value, option.label]));
-  assert.deepEqual(labels, { 2: '1/3', 3: '1/2', 4: '4/6', 6: '整行' });
+  assert.deepEqual(labels, { 2: '1/6', 3: '1/4', 4: '1/3', 6: '1/2', 8: '8/12', 12: '整行' });
   for (const option of spanOptionsFor()) {
     assert.ok(option.hint.length > 0);
     assert.ok(option.value <= GRID_COLS);
@@ -178,7 +178,7 @@ test('normalizeHomeBoard：过滤非法模块，保留合法模块并补默认�
   assert.ok(isSane(board.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
 });
 
-test('normalizeHomeBoard：v1 的字符串 span 按页宽比例迁成栅格宽度', () => {
+test('normalizeHomeBoard：v1 的字符串 span 按页宽比例迁成栅格宽度（再换成 12 列）', () => {
   const board = normalizeHomeBoard({
     version: 1,
     modules: [
@@ -189,13 +189,14 @@ test('normalizeHomeBoard：v1 的字符串 span 按页宽比例迁成栅格宽�
     ],
   });
   const widths = Object.fromEntries(board.modules.map((m) => [m.id, m.w]));
-  // full = 整行 6、half = 半页 3、third = 三分之一 2；没写宽度的取该类型默认
-  assert.deepEqual(widths, { a: 6, b: 3, c: 2, d: moduleMeta('recent').w });
+  // full = 整行 6、half = 半页 3、third = 三分之一 2（6 列口径）→ ×2 换成 12 列；
+  // 没写宽度的取该类型默认（已是 12 列口径，不再换算）
+  assert.deepEqual(widths, { a: 12, b: 6, c: 4, d: moduleMeta('recent').w });
   assert.equal(board.columns, DEFAULT_BOARD_COLUMNS);
   assert.ok(isSane(board.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
 });
 
-test('normalizeHomeBoard：v2 的数字格数按 4 列语义折算成 6 列', () => {
+test('normalizeHomeBoard：v2 的数字格数按 4 列语义折算成 6 列，再 ×2 换到 12 列', () => {
   const board = normalizeHomeBoard({
     version: 2,
     columns: 4,
@@ -207,7 +208,32 @@ test('normalizeHomeBoard：v2 的数字格数按 4 列语义折算成 6 列', ()
     ],
   });
   const widths = Object.fromEntries(board.modules.map((m) => [m.id, m.w]));
-  assert.deepEqual(widths, { a: 2, b: 3, c: 6, d: moduleMeta('recent').w });
+  assert.deepEqual(widths, { a: 4, b: 6, c: 12, d: moduleMeta('recent').w });
+});
+
+test('normalizeHomeBoard：v5 之前的 6 列布局整条 ×2，视觉大小不变且不重叠', () => {
+  const legacy = normalizeHomeBoard({
+    version: 4,
+    modules: [
+      { id: 'a', kind: 'recent', col: 0, row: 0, w: 2, h: 2 },
+      { id: 'b', kind: 'tasks', col: 2, row: 0, w: 2, h: 3 },
+      { id: 'c', kind: 'stats', col: 4, row: 0, w: 2, h: 2 },
+    ],
+  });
+  assert.deepEqual(
+    legacy.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h })),
+    [
+      { col: 0, row: 0, w: 4, h: 4 },
+      { col: 4, row: 0, w: 4, h: 6 },
+      { col: 8, row: 0, w: 4, h: 4 },
+    ]
+  );
+  assert.equal(legacy.version, HOME_BOARD_VERSION);
+  assert.ok(isSane(legacy.modules.map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h }))));
+  // 已是当前版本的数据不再二次放大
+  const current = normalizeHomeBoard({ version: HOME_BOARD_VERSION, modules: [{ id: 'a', kind: 'recent', col: 0, row: 0, w: 4, h: 4 }] });
+  assert.deepEqual(current.modules[0].w, 4);
+  assert.deepEqual(current.modules[0].h, 4);
 });
 
 test('normalizeHomeBoard：坐标越界 / 重叠都会被修正到干净布局', () => {
@@ -329,13 +355,13 @@ test('moveModuleTo：越界坐标被夹回栅格（卡片不会飞出页面）',
   }
 });
 
-test('moveModuleTo：宽高被夹在 1..6 / 1..12', () => {
+test('moveModuleTo：宽高被夹在 1..GRID_COLS / 1..GRID_MAX_H', () => {
   const board = defaultHomeBoard();
   const id = board.modules[0].id;
   const tooBig = moveModuleTo(board, id, { col: 0, row: 0, w: 99 as any, h: 99 });
   const wide = tooBig.modules.find((m) => m.id === id)!;
   assert.equal(wide.w, GRID_MAX_W);
-  assert.equal(wide.h, 12);
+  assert.equal(wide.h, GRID_MAX_H);
 });
 
 test('moveModuleBy / resizeModuleBy：方向键微调同样受栅格约束', () => {
@@ -694,16 +720,31 @@ test('heat 的条数档是周数：4–12，缺省 8', () => {
 });
 
 
-test('v4 留白布局读写与删除保持坐标，v3 只补一次热力卡', () => {
+test('v5 留白布局读写与删除保持坐标，v3 补一次热力卡并把 6 列口径 ×2', () => {
   const board = defaultHomeBoard();
   const moved = moveModuleTo(board, board.modules[0].id, { col: 0, row: 20, w: 1, h: 4 });
   assert.deepEqual(normalizeHomeBoard(serializeHomeBoard(moved)), moved);
   const removed = removeModule(moved, moved.modules[1].id);
   assert.deepEqual(removed.modules, moved.modules.filter((m) => m.id !== moved.modules[1].id));
-  const old = { ...removed, version: 3, modules: removed.modules.filter((m) => m.kind !== 'heat') };
+
+  // v3 的数据是 6 列口径：整条 ×2 换到 12 列，再补一张热力卡（只补一次）
+  const old = {
+    version: 3,
+    columns: 6,
+    modules: [
+      { id: 'a', kind: 'capture', col: 0, row: 0, w: 2, h: 2, title: '', opts: {} },
+      { id: 'b', kind: 'recent', col: 2, row: 0, w: 2, h: 2, title: '', opts: {} },
+    ],
+  };
   const migrated = normalizeHomeBoard(old);
+  assert.deepEqual(
+    migrated.modules.slice(0, old.modules.length).map((m) => ({ col: m.col, row: m.row, w: m.w, h: m.h })),
+    [
+      { col: 0, row: 0, w: 4, h: 4 },
+      { col: 4, row: 0, w: 4, h: 4 },
+    ]
+  );
   assert.equal(migrated.modules.filter((m) => m.kind === 'heat').length, 1);
-  assert.deepEqual(migrated.modules.slice(0, old.modules.length), old.modules);
   const noHeat = removeModule(migrated, migrated.modules.find((m) => m.kind === 'heat')!.id);
   assert.equal(normalizeHomeBoard(serializeHomeBoard(noHeat)).modules.some((m) => m.kind === 'heat'), false);
 });

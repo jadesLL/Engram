@@ -11,10 +11,14 @@
  * 纯计算，不 import vue，`node --test` 直接跑。
  */
 
-/** 页面横向格数：手机桌面那种「一行 N 个格子」的 N。固定值——它就是「1 格」的定义 */
-export const GRID_COLS = 6;
+/**
+ * 页面横向格数：手机桌面那种「一行 N 个格子」的 N。固定值——它就是「1 格」的定义。
+ * 2026-10-08 由 6 列改成 12 列：板宽上限 1120px（内容约 1056px）时一格约 75px（手机图标大小），
+ * 1×1 才真的只是「一个小格」；6 列时一格约 164px，1×1 画出来像 2×2。
+ */
+export const GRID_COLS = 12;
 /** 默认查找范围；密集布局按实际底边扩展，不能截断造成重叠 */
-export const GRID_MAX_ROWS = 48;
+export const GRID_MAX_ROWS = 96;
 /** 旧版行高（兼容旧引用）；正式看板按可用宽度渲染正方形格子 */
 export const GRID_ROW_HEIGHT = 76;
 /** 默认渲染出来的行数（空看板的高度下限：别只剩一条缝） */
@@ -24,7 +28,8 @@ export const GRID_ROWS_VISIBLE = 6;
 export const GRID_MIN_W = 1;
 export const GRID_MIN_H = 1;
 export const GRID_MAX_W = GRID_COLS;
-export const GRID_MAX_H = 12;
+/** 高上限跟着格数放宽：12 列下 24 行的物理高度 = 旧版 6 列下的 12 行 */
+export const GRID_MAX_H = 24;
 
 /** 卡片在栅格上占的位置（逻辑坐标，与像素无关） */
 export interface GridPlace {
@@ -34,10 +39,14 @@ export interface GridPlace {
   h: number;
 }
 
-/** 浏览窗口变窄时减少显示列数，让一格至少约 130px；逻辑布局仍保存六列。 */
+/**
+ * 浏览窗口变窄时减少显示列数：一格至少约 64px，所以板宽 958px 时仍能放下 12 列（一格约 67px），
+ * 编辑态与浏览态看到的格子大小基本一致。逻辑布局仍保存 GRID_COLS 列，这里只是**只读**的显示列数。
+ */
+const VIEWPORT_COLUMN_LADDER = [GRID_COLS, 8, 6, 4, 2, 1] as const;
 export function viewportColumns(width: number): number {
-  const capacity = Math.floor((Math.max(0, width) + 14) / 144);
-  return capacity >= 6 ? 6 : capacity >= 4 ? 4 : capacity >= 2 ? 2 : 1;
+  const capacity = Math.floor((Math.max(0, width) + 14) / 78);
+  return VIEWPORT_COLUMN_LADDER.find((columns) => columns <= capacity) ?? 1;
 }
 
 /** 窄窗口的只读排布，按原视觉顺序填空；不会修改保存的坐标、尺寸或顺序。 */
