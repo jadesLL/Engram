@@ -753,6 +753,7 @@ const view = { x: 0, y: 0, s: 1 };
 let bctx: CanvasRenderingContext2D | null = null;
 let octx: CanvasRenderingContext2D | null = null;
 let hover: GNode | null = null;
+const focusedNode = () => drag?.node || hover || selected.value;
 const paintFrame = createGraphFrame((labels) => {
   // Physics and paint share the same frame so hit testing sees exactly the positions on screen.
   if (simActive) {
@@ -787,21 +788,20 @@ function cssVar(el: HTMLElement | undefined, name: string, fallback: string) {
   return v || fallback;
 }
 let palette = {
-  bg: '#ffffff', edge: 'rgba(20,20,25,.10)', edgeHot: '#0f6cbd',
-  label: 'rgba(23,24,27,.66)', labelHot: '#17181B',
-  /** 选中/悬停：亮色实心（focus）与关联节点提亮（tint），不再用描边圈 */
-  focus: '#0f6cbd', tint: 'rgba(255,255,255,.42)',
+  bg: '#ffffff', edge: 'rgba(78,69,92,.32)', edgeHot: '#b83280',
+  label: '#454047', labelHot: '#17181B',
+  focus: '#b83280', quietEdge: 'rgba(78,69,92,.08)',
 };
 function refreshPalette() {
   const dark = app.dark;
   palette = {
     bg: cssVar(rootRef.value, '--bg', dark ? '#0e0f12' : '#ffffff'),
-    edge: dark ? 'rgba(255,255,255,.15)' : 'rgba(31,30,29,.14)',
-    edgeHot: cssVar(rootRef.value, '--accent', '#2b5ce6'),
-    label: dark ? 'rgba(241,242,244,.72)' : 'rgba(23,24,27,.66)',
+    edge: dark ? 'rgba(202,197,216,.36)' : 'rgba(78,69,92,.32)',
+    edgeHot: dark ? '#ff87c6' : '#b83280',
+    label: dark ? '#e0dce5' : '#454047',
     labelHot: dark ? '#FFFFFF' : '#17181B',
-    focus: cssVar(rootRef.value, '--accent', '#2b5ce6'),
-    tint: dark ? 'rgba(255,255,255,.24)' : 'rgba(255,255,255,.42)',
+    focus: dark ? '#ff87c6' : '#b83280',
+    quietEdge: dark ? 'rgba(202,197,216,.09)' : 'rgba(78,69,92,.08)',
   };
 }
 const theme = () => palette;
@@ -829,19 +829,24 @@ let labelPlan: { n: GNode; text: string; fs: number; bold: boolean; dx: number; 
 function planLabels() {
   if (!bctx) return;
   labelPlan = [];
-  const placed: { x: number; y: number; w: number; h: number }[] = [];
-  const nodeBoxes = visible.map((n) => {
+  const focus = focusedNode();
+  const focusIndex = focus ? nodeIndex.get(focus.id) : undefined;
+  const relatedIds = focus ? new Set([focus.id, ...(focusIndex == null ? [] : adj[focusIndex].map(a => rawNodes[a.i].id))]) : null;
+  const candidates = relatedIds ? visible.filter(n => relatedIds.has(n.id)) : visible;
+  const placed: GraphLabelBox[] = focus ? [focusLabelBox(focus, bctx)] : [];
+  const nodeBoxes = candidates.map((n) => {
     const r = nodeScreenR(n.r) + 2;
     return { n, x: n.x * view.s + view.x - r, y: n.y * view.s + view.y - r, w: r * 2, h: r * 2 };
   });
   const intersect = (a: typeof placed[0], b: typeof placed[0]) =>
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-  const order = visible.slice().sort((a, b) => b.deg - a.deg || b.words - a.words);
+  const order = candidates.slice().sort((a, b) => b.deg - a.deg || b.words - a.words);
   const budget = view.s > 1.6 ? 60 : view.s > 1.0 ? 34 : 22;
   for (const n of order) {
+    if (n === focus) continue;
     if (labelPlan.length >= budget) break;
     const text = n.label.length > 18 ? `${n.label.slice(0, 17)}…` : n.label;
-    const fs = n.deg > 12 ? 13 : 12;
+    const fs = n.deg > 12 ? 14 : 13;
     const bold = n.deg > 12;
     bctx.font = `${bold ? 600 : 400} ${fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
     const tw = bctx.measureText(text).width;
@@ -870,6 +875,9 @@ function planLabels() {
 function drawBase() {
   if (!bctx || !W) return;
   const T = theme();
+  const focus = focusedNode();
+  const focusIndex = focus ? nodeIndex.get(focus.id) : undefined;
+  const relatedIds = focus ? new Set([focus.id, ...(focusIndex == null ? [] : adj[focusIndex].map(a => rawNodes[a.i].id))]) : null;
   bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   bctx.clearRect(0, 0, W, H);
   if (!visible.length) return;
@@ -886,7 +894,7 @@ function drawBase() {
     bctx.lineTo(b.x, b.y);
   }
   bctx.lineWidth = linkScale() / view.s;
-  bctx.strokeStyle = T.edge;
+  bctx.strokeStyle = focus ? T.quietEdge : T.edge;
   bctx.stroke();
 
   // 节点：屏幕半径钳制在 2.5–18px，放大时不会变成巨球
@@ -897,6 +905,7 @@ function drawBase() {
     const rr = nodeScreenR(n.r);
     bctx.beginPath();
     bctx.arc(n.x, n.y, rr / view.s, 0, Math.PI * 2);
+    bctx.globalAlpha = relatedIds && !relatedIds.has(n.id) ? 0.35 : 1;
     bctx.fillStyle = colorOf(n);
     bctx.fill();
     if (rr > 7) {
@@ -911,26 +920,24 @@ function drawBase() {
   bctx.textBaseline = 'middle';
   bctx.textAlign = 'left';
   const occupied: GraphLabelBox[] = [];
-  const focus = hover || selected.value;
   if (focus) {
-    bctx.font = '600 12.5px "Segoe UI","Microsoft YaHei",system-ui,sans-serif';
-    const width = bctx.measureText(focus.label).width;
-    occupied.push({ x: focus.x * view.s + view.x - width / 2,
-      y: focus.y * view.s + view.y - nodeScreenR(focus.r) - 20, w: width, h: 16 });
+    occupied.push(focusLabelBox(focus, bctx));
   }
   for (const L of labelPlan) {
-    if (L.n.id === (hover || selected.value)?.id) continue; // The overlay draws the focused title once.
+    if (L.n.id === focus?.id) continue; // The overlay draws the focused title once.
     const x = Math.round(L.n.x * view.s + view.x + L.dx);
     const y = Math.round(L.n.y * view.s + view.y + L.dy);
     bctx.font = `${L.bold ? 600 : 400} ${L.fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
     // Nodes move while dragging. Recheck collisions without rebuilding or swapping label anchors.
     if (!acceptGraphLabel({ x, y: y - L.fs / 2 - 2, w: bctx.measureText(L.text).width, h: L.fs + 4 }, occupied)) continue;
-    bctx.lineWidth = 3.2;
+    bctx.globalAlpha = relatedIds && !relatedIds.has(L.n.id) ? 0.6 : 1;
+    bctx.lineWidth = 4;
     bctx.strokeStyle = T.bg;
     bctx.strokeText(L.text, x, y);
     bctx.fillStyle = L.bold ? T.labelHot : T.label;
     bctx.fillText(L.text, x, y);
   }
+  bctx.globalAlpha = 1;
 }
 
 /** 节点在屏幕上的实际绘制半径（含面板「节点大小」倍率与 2.5–18px 钳制）：画布、标签、高亮共用一套 */
@@ -944,12 +951,22 @@ function nodeRadius(r: number) {
 /** 连线粗细倍率（面板档位，默认 100%） */
 const linkScale = () => opt.linkScale / 100;
 
+function focusLabelBox(node: GNode, ctx: CanvasRenderingContext2D): GraphLabelBox {
+  ctx.font = '600 14px "Segoe UI","Microsoft YaHei",system-ui,sans-serif';
+  const w = Math.min(Math.max(1, W - 8), ctx.measureText(node.label).width + 16);
+  return {
+    x: Math.max(4, Math.min(W - w - 4, node.x * view.s + view.x - w / 2)),
+    y: Math.max(4, Math.min(H - 30, node.y * view.s + view.y - nodeScreenR(node.r) - 35)),
+    w, h: 26,
+  };
+}
+
 function drawOver() {
   if (!octx || !W) return;
   const T = theme();
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
   octx.clearRect(0, 0, W, H);
-  const focus = hover || selected.value;
+  const focus = focusedNode();
   if (!focus) return;
   const idx = nodeIndex.get(focus.id);
   if (idx == null) return;
@@ -963,42 +980,46 @@ function drawOver() {
     octx.moveTo(focus.x, focus.y);
     octx.lineTo(m.x, m.y);
   }
-  octx.lineWidth = (1.6 * linkScale()) / view.s;
+  octx.lineWidth = (2.2 * linkScale()) / view.s;
   octx.strokeStyle = T.edgeHot;
   octx.stroke();
-  // 关联节点：只叠一层亮色（不再是描边圈——圈在缩放后常常比节点本身还大，太抢眼）
-  octx.fillStyle = T.tint;
+  // 关联节点保留类型色，强调色描边使它们从背景关系中凸显。
   for (const a of adj[idx]) {
     const m = rawNodes[a.i];
     if (!visibleIds.has(m.id)) continue;
     octx.beginPath();
     octx.arc(m.x, m.y, nodeRadius(m.r), 0, Math.PI * 2);
+    octx.fillStyle = colorOf(m);
     octx.fill();
+    octx.lineWidth = 1.5 / view.s;
+    octx.strokeStyle = T.focus;
+    octx.stroke();
   }
-  // 焦点：亮色实心 + 柔和外发光，尺寸只比原节点大半像素，不做圈
-  const fr = nodeRadius(focus.r) + 1.5 / view.s;
-  octx.save();
-  octx.shadowColor = T.focus;
-  octx.shadowBlur = Math.min(10, 3 + fr * view.s * 0.8);
+  // 焦点的实心强调色与双层轮廓，在所有类型色和深浅底色上都能辨认。
+  const fr = nodeRadius(focus.r) + 2 / view.s;
   octx.beginPath();
   octx.arc(focus.x, focus.y, fr, 0, Math.PI * 2);
   octx.fillStyle = T.focus;
   octx.fill();
-  octx.restore();
+  octx.lineWidth = 4 / view.s;
+  octx.strokeStyle = T.bg;
+  octx.stroke();
+  octx.lineWidth = 1.5 / view.s;
+  octx.strokeStyle = T.focus;
+  octx.stroke();
   octx.restore();
 
   // 焦点标签强制显示
-  const px = focus.x * view.s + view.x;
-  const py = focus.y * view.s + view.y;
-  const rp = nodeScreenR(focus.r);
-  octx.font = '600 12.5px "Segoe UI","Microsoft YaHei",system-ui,sans-serif';
+  const box = focusLabelBox(focus, octx);
   octx.textAlign = 'center';
   octx.textBaseline = 'middle';
-  octx.lineWidth = 3.2;
-  octx.strokeStyle = T.bg;
-  octx.strokeText(focus.label, px, py - rp - 12);
-  octx.fillStyle = T.labelHot;
-  octx.fillText(focus.label, px, py - rp - 12);
+  octx.fillStyle = T.focus;
+  octx.beginPath();
+  octx.roundRect(box.x, box.y, box.w, box.h, 6);
+  octx.fill();
+  octx.fillStyle = app.dark ? '#23121c' : '#ffffff';
+  octx.fillText(focus.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 16));
+
 }
 
 /* ────────────────────────── 视图操作 ────────────────────────── */
@@ -1082,7 +1103,7 @@ function onPointerDown(ev: PointerEvent) {
   if (node) { node.fixed = true; node.vx = 0; node.vy = 0; }
   hover = null;
   tip.value = null;
-  paintFrame.schedule();
+  paintFrame.schedule(true);
   cursor.value = 'grabbing';
 }
 
@@ -1117,7 +1138,7 @@ function onPointerMove(ev: PointerEvent) {
   const node = hitTest(x, y);
   if (node !== hover) {
     hover = node;
-    paintFrame.schedule();
+    paintFrame.schedule(true);
     cursor.value = node ? 'pointer' : 'grab';
     if (node) {
       tip.value = {
@@ -1168,7 +1189,7 @@ function onPointerLeave() {
   if (drag) return;
   hover = null;
   tip.value = null;
-  paintFrame.schedule();
+  paintFrame.schedule(true);
 }
 
 function selectNode(node: GNode) {
@@ -1252,9 +1273,9 @@ watch(opt, () => {
 
 watch(() => app.dark, () => {
   refreshPalette();
-  paintFrame.schedule();
-});
-watch(selected, () => paintFrame.schedule());
+  paintFrame.schedule(true);
+}, { flush: 'post' });
+watch(selected, () => paintFrame.schedule(true));
 
 watch(() => route.params.id, (id) => {
   if (!id) return;
