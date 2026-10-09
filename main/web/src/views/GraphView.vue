@@ -238,6 +238,8 @@ import AppSpinner from '../components/ui/AppSpinner.vue';
 import Icon from '../components/Icon.vue';
 import { notify } from '../lib/notify';
 import { createGraphFrame } from '../lib/graphFrame';
+import { createGraphClock, stepGraphForces, type ForceLink } from '../lib/graphPhysics';
+import { acceptGraphLabel, type GraphLabelBox } from '../lib/graphLabels';
 
 /* ────────────────────────── 常量 ────────────────────────── */
 
@@ -277,12 +279,9 @@ const TAG_GROUPS: { name: string; tags: string[] }[] = [
 const BUSINESS_TYPES = ['customer', 'person', 'org', 'project'];
 const FILTER_KEY = 'engram.graph.filters';
 
-/** 力导向参数：有冷却计划 + 碰撞松弛，收敛即停（这是「不 Q 弹」的关键）；斥力/引力/距离走面板档位 */
-const P = {
-  damping: 0.62, maxV: 6, collide: 12, alphaDecay: 1 - Math.pow(0.001, 1 / 200),
-  settleAlpha: 0.008, settleSpeed: 0.15,
-};
-/** 外观与力学档位（旧图谱设置面板的那几档）；默认档正好还原调好的手感 */
+/** 拖动时保持温和的牵引，松手后冷却并自然收敛。 */
+const P = { alphaDecay: 0.025, dragAlpha: 0.25, settleAlpha: 0.004, settleSpeed: 0.035 };
+/** 外观与力学档位，沿用现有设置与用户保存的值。 */
 const OPT_KEY = 'engram.graph.options';
 const OPT_DEFAULTS = { nodeScale: 100, linkScale: 100, cF: 65, rF: 50, lF: 60, lD: 40 };
 
@@ -627,6 +626,8 @@ const posCache = new Map<string, { x: number; y: number }>();
 let alpha = 1;
 let settled = true;
 let simActive = false;
+let forceLinks: ForceLink[] = [];
+const physicsClock = createGraphClock(() => { if (simActive) tick(); });
 let seed = 20260929;
 const rnd = () => {
   seed = (seed * 1664525 + 1013904223) % 4294967296;
@@ -639,7 +640,7 @@ function setLayoutHint() {
 
 /**
  * 面板档位 → 力学参数：默认档（斥力 50 / 连线力 60 / 连线距离 40 / 中心力 65）
- * 正好等于重写时调好的那套参数（1500 / 0.18 / 104 / 0.026），滑块不会一上来就改变手感。
+ * 保留现有滑块含义；积分器内部处理阻尼、碰撞和度数归一化。
  */
 function derivePhysics() {
   return {
@@ -660,6 +661,8 @@ function applyFilter() {
   visibleIds = visSet;
   labelPlan = [];
   visibleLinks = rawEdges.filter((e) => visSet.has(rawNodes[e.a].id) && visSet.has(rawNodes[e.b].id));
+
+  forceLinks = visibleLinks.map((l) => ({ a: rawNodes[l.a], b: rawNodes[l.b] }));
 
   // 半径：字数 + 关联数，开方压缩（避免大小差异被拉成极端）
   const mw = Math.max(1, ...keep.map((n) => n.words));
@@ -697,94 +700,17 @@ function applyFilter() {
 }
 
 function tick() {
-  const nodes = visible;
-  if (!nodes.length) { settled = true; return; }
-  const cell = 90;
-  const buckets = new Map<string, GNode[]>();
-  for (const n of nodes) {
-    const k = `${Math.floor(n.x / cell)}:${Math.floor(n.y / cell)}`;
-    const arr = buckets.get(k);
-    if (arr) arr.push(n); else buckets.set(k, [n]);
-  }
-  const rep = PH.repulsion * alpha;
-  for (const n of nodes) {
-    const gx = Math.floor(n.x / cell);
-    const gy = Math.floor(n.y / cell);
-    for (let ox = -1; ox <= 1; ox++) {
-      for (let oy = -1; oy <= 1; oy++) {
-        const arr = buckets.get(`${gx + ox}:${gy + oy}`);
-        if (!arr) continue;
-        for (const m of arr) {
-          if (m === n) continue;
-          let dx = m.x - n.x;
-          let dy = m.y - n.y;
-          let d2 = dx * dx + dy * dy;
-          if (d2 === 0) { dx = (rnd() - 0.5) * 0.6; dy = (rnd() - 0.5) * 0.6; d2 = dx * dx + dy * dy; }
-          if (d2 > 8100) continue; // 90px 以外忽略
-          const d = Math.sqrt(d2);
-          const f = (rep * (n.r + m.r) * 0.02) / d2;
-          n.vx -= (dx / d) * f; n.vy -= (dy / d) * f;
-        }
-      }
-    }
-  }
-  for (const l of visibleLinks) {
-    const a = rawNodes[l.a];
-    const b = rawNodes[l.b];
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-    // 度数归一化：hub 页有几十条边，不做归一化会把整图拉成一坨
-    const bias = Math.min(1, 14 / (1 + Math.max(a.deg, b.deg)));
-    const f = (d - PH.linkDist) * PH.spring * alpha * bias;
-    a.vx += (dx / d) * f; a.vy += (dy / d) * f;
-    b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
-  }
-  let maxSpeed = 0;
-  for (const n of nodes) {
-    if (n.fixed) { n.vx = 0; n.vy = 0; continue; }
-    n.vx -= n.x * PH.gravity * alpha;
-    n.vy -= n.y * PH.gravity * alpha;
-    n.vx *= P.damping; n.vy *= P.damping;
-    const sp = Math.hypot(n.vx, n.vy);
-    if (sp > P.maxV) { n.vx = (n.vx / sp) * P.maxV; n.vy = (n.vy / sp) * P.maxV; }
-    if (sp > maxSpeed) maxSpeed = sp;
-    n.x += n.vx; n.y += n.vy;
-  }
-  collide(nodes);
-  alpha += (0 - alpha) * P.alphaDecay;
-  if (!settled && alpha <= P.settleAlpha && maxSpeed < P.settleSpeed) settled = true;
-  if (settled) for (const n of nodes) { n.vx = 0; n.vy = 0; }
-  for (const n of nodes) posCache.set(n.id, { x: n.x, y: n.y });
-}
-
-/** 两轮松弛：节点不重叠（不参与物理，纯几何推开） */
-function collide(nodes: GNode[]) {
-  const sorted = nodes.slice().sort((a, b) => a.x - b.x);
-  for (let it = 0; it < 2; it++) {
-    for (let i = 0; i < sorted.length; i++) {
-      const a = sorted[i];
-      for (let j = i + 1; j < sorted.length; j++) {
-        const b = sorted[j];
-        const min = a.r + b.r + P.collide;
-        if (b.x - a.x > min) break;
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 >= min * min) continue;
-        let d = Math.sqrt(d2);
-        if (d < 0.01) { dx = (rnd() - 0.5) * 0.6; dy = (rnd() - 0.5) * 0.6; d = Math.hypot(dx, dy) || 0.3; }
-        const push = ((min - d) / d) * 0.5;
-        const ox = dx * push;
-        const oy = dy * push;
-        if (!a.fixed) { a.x -= ox; a.y -= oy; }
-        if (!b.fixed) { b.x += ox; b.y += oy; }
-      }
-    }
-  }
+  if (!visible.length) { settled = true; return; }
+  const draggingNode = !!drag?.node && drag.moved;
+  const maxSpeed = stepGraphForces(visible, forceLinks, PH, alpha);
+  alpha += ((draggingNode ? P.dragAlpha : 0) - alpha) * P.alphaDecay;
+  settled = !draggingNode && alpha <= P.settleAlpha && maxSpeed < P.settleSpeed;
+  if (settled) for (const n of visible) { n.vx = 0; n.vy = 0; }
+  for (const n of visible) posCache.set(n.id, { x: n.x, y: n.y });
 }
 
 function run() {
+  if (!simActive) physicsClock.reset();
   simActive = !pinned.value && !settled;
   setLayoutHint();
   paintFrame.schedule(settled);
@@ -830,7 +756,7 @@ let hover: GNode | null = null;
 const paintFrame = createGraphFrame((labels) => {
   // Physics and paint share the same frame so hit testing sees exactly the positions on screen.
   if (simActive) {
-    tick();
+    physicsClock.advance(performance.now());
     if (settled) {
       simActive = false;
       labels = true;
@@ -984,11 +910,21 @@ function drawBase() {
   // 标签
   bctx.textBaseline = 'middle';
   bctx.textAlign = 'left';
+  const occupied: GraphLabelBox[] = [];
+  const focus = hover || selected.value;
+  if (focus) {
+    bctx.font = '600 12.5px "Segoe UI","Microsoft YaHei",system-ui,sans-serif';
+    const width = bctx.measureText(focus.label).width;
+    occupied.push({ x: focus.x * view.s + view.x - width / 2,
+      y: focus.y * view.s + view.y - nodeScreenR(focus.r) - 20, w: width, h: 16 });
+  }
   for (const L of labelPlan) {
     if (L.n.id === (hover || selected.value)?.id) continue; // The overlay draws the focused title once.
     const x = Math.round(L.n.x * view.s + view.x + L.dx);
     const y = Math.round(L.n.y * view.s + view.y + L.dy);
     bctx.font = `${L.bold ? 600 : 400} ${L.fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
+    // Nodes move while dragging. Recheck collisions without rebuilding or swapping label anchors.
+    if (!acceptGraphLabel({ x, y: y - L.fs / 2 - 2, w: bctx.measureText(L.text).width, h: L.fs + 4 }, occupied)) continue;
     bctx.lineWidth = 3.2;
     bctx.strokeStyle = T.bg;
     bctx.strokeText(L.text, x, y);
@@ -1123,7 +1059,7 @@ function centerOn(node: GNode) {
 
 /* ────────────────────────── 交互 ────────────────────────── */
 
-let drag: { node: GNode | null; pointerId: number; x: number; y: number; vx: number; vy: number; offsetX: number; offsetY: number; moved: boolean; resume: boolean } | null = null;
+let drag: { node: GNode | null; pointerId: number; x: number; y: number; vx: number; vy: number; offsetX: number; offsetY: number; moved: boolean } | null = null;
 let clickTimer = 0;
 let lastClickAt = 0;
 let lastClickId = '';
@@ -1142,9 +1078,7 @@ function onPointerDown(ev: PointerEvent) {
   const { x, y } = pointerPos(ev);
   const node = hitTest(x, y);
   const w = screenToWorld(x, y);
-  drag = { node, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, offsetX: node ? node.x - w.x : 0, offsetY: node ? node.y - w.y : 0, moved: false, resume: simActive };
-  // Pause the simulation throughout the gesture: nodes follow the pointer without fighting physics.
-  simActive = false;
+  drag = { node, pointerId: ev.pointerId, x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, offsetX: node ? node.x - w.x : 0, offsetY: node ? node.y - w.y : 0, moved: false };
   if (node) { node.fixed = true; node.vx = 0; node.vy = 0; }
   hover = null;
   tip.value = null;
@@ -1161,12 +1095,17 @@ function onPointerMove(ev: PointerEvent) {
     const dy = ev.clientY - drag.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; userAdjusted = true; }
     if (drag.node) {
-      // 只改这一个节点的坐标 → 拖拽不重算布局，手感稳定
+      // 被拖节点固定在指针处，其余节点继续受连线、斥力与惯性影响。
       const w = screenToWorld(x, y);
       drag.node.x = w.x + drag.offsetX;
       drag.node.y = w.y + drag.offsetY;
       drag.node.vx = 0;
       drag.node.vy = 0;
+      if (drag.moved && !pinned.value) {
+        alpha = Math.max(alpha, P.dragAlpha);
+        settled = false;
+        if (!simActive) run();
+      }
     } else {
       view.x = drag.vx + dx;
       view.y = drag.vy + dy;
@@ -1197,17 +1136,14 @@ function onPointerUp(ev: PointerEvent) {
   cursor.value = 'grab';
   const wasDrag = drag.moved;
   const node = drag.node;
-  const resume = drag.resume;
   drag = null;
   if (baseRef.value?.hasPointerCapture(ev.pointerId)) baseRef.value.releasePointerCapture(ev.pointerId);
   if (node) { node.fixed = false; posCache.set(node.id, { x: node.x, y: node.y }); }
-  // A manual node placement becomes the new stable layout, including a drag made while it was settling.
-  if (node && wasDrag) {
-    alpha = 0;
-    settled = true;
-    for (const n of visible) { n.vx = 0; n.vy = 0; posCache.set(n.id, { x: n.x, y: n.y }); }
-    setLayoutHint();
-  } else if (resume && !pinned.value && !settled) run();
+  // Keep neighbor momentum on release; cool the forces instead of freezing or restarting the layout.
+  if (node && wasDrag && !pinned.value) {
+    settled = false;
+    run();
+  }
   paintFrame.schedule(true);
   if (ev.type === 'pointercancel' || ev.type === 'lostpointercapture') return;
   if (wasDrag || !node) return;
