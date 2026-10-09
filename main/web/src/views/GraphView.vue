@@ -26,21 +26,25 @@
         </span>
       </div>
       <div class="gv-actions">
-        <button class="gv-tool" :class="{ on: facetsOpen }" aria-label="筛选面板" :aria-expanded="facetsOpen" v-tooltip="{ body: '筛选面板', meta: '按类型、标签、更新时间、规模筛选' }" @click="facetsOpen = !facetsOpen">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
-          筛选
+        <button class="gv-tool" :class="{ on: facetsOpen }" aria-label="图谱设置" :aria-expanded="facetsOpen" v-tooltip="{ body: '图谱设置', meta: '筛选、分组、显示与力' }" @click="toggleSettings">
+          <Icon name="settings" :size="15" />
+          设置
         </button>
         <button class="gv-icon" aria-label="重新布局" v-tooltip="{ body: '重排', meta: '换一个随机种子重新跑布局' }" @click="relayout">
           <Icon name="refresh" :size="15" />
         </button>
-        <button class="gv-tool" :class="{ on: detailOpen }" :aria-expanded="detailOpen" @click="detailOpen = !detailOpen">概览</button>
+        <button class="gv-tool" :class="{ on: detailOpen }" :aria-expanded="detailOpen" @click="toggleDetails">{{ selected ? '详情' : '概览' }}</button>
       </div>
     </div>
 
     <div class="gv-main">
-      <!-- 左：业务维度筛选 -->
-      <aside class="gv-facets" :class="{ hidden: !facetsOpen }">
-        <div class="gv-panel-head"><b>筛选页面</b><button @click="resetFilters">重置</button></div>
+      <!-- 设置浮于画布右上角，展开时保持节点坐标与画布尺寸。 -->
+      <Transition name="graph-panel">
+      <aside v-if="facetsOpen" class="gv-facets" aria-label="图谱设置面板">
+        <div class="gv-panel-head"><b>图谱设置</b><div><button @click="resetFilters">重置筛选</button><button class="gv-panel-close" aria-label="关闭图谱设置" @click="facetsOpen = false">×</button></div></div>
+        <details class="gv-section" open>
+        <summary>筛选</summary>
+        <div class="gv-section-body">
         <div class="gv-fgroup">
           <h4>类型 <button @click="clearFacet('types')">清空</button></h4>
           <button
@@ -56,6 +60,8 @@
           </button>
         </div>
 
+        <details class="gv-advanced">
+        <summary>标签与范围</summary>
         <div v-for="g in tagFacets" :key="g.name" class="gv-fgroup">
           <h4>{{ g.name }} <button @click="clearFacet('tags')">清空</button></h4>
           <button
@@ -88,6 +94,7 @@
           </div>
         </div>
 
+        </details>
         <div class="gv-fgroup">
           <h4>其他</h4>
           <label class="gv-frow switch">
@@ -99,7 +106,39 @@
             <span class="gv-sw"><input v-model="filters.showDead" type="checkbox" @change="applyFilter()" /><i /></span>
           </label>
         </div>
+        </div>
+        </details>
+        <details class="gv-section">
+          <summary>分组</summary>
+          <div class="gv-section-body">
+            <label class="gv-frow switch"><span class="nm">按类型着色</span><span class="gv-sw"><input v-model="colorGroups" aria-label="按类型着色" type="checkbox" /><i /></span></label>
+          </div>
+        </details>
+        <details ref="tweakRef" class="gv-section" :open="tweaksOpen" @toggle="onDisplayToggle">
+          <summary>显示</summary>
+          <div class="gv-section-body">
+            <div class="gv-trow"><span>节点大小</span><output>{{ opt.nodeScale }}%</output></div>
+            <input v-model.number="opt.nodeScale" aria-label="节点大小" type="range" min="40" max="180" />
+            <div class="gv-trow"><span>连线粗细</span><output>{{ opt.linkScale }}%</output></div>
+            <input v-model.number="opt.linkScale" aria-label="连线粗细" type="range" min="40" max="260" />
+          </div>
+        </details>
+        <details class="gv-section">
+          <summary>力</summary>
+          <div class="gv-section-body">
+            <div class="gv-trow"><span>中心力</span><output>{{ opt.cF }}</output></div>
+            <input v-model.number="opt.cF" aria-label="中心力" type="range" min="0" max="100" />
+            <div class="gv-trow"><span>斥力</span><output>{{ opt.rF }}</output></div>
+            <input v-model.number="opt.rF" aria-label="斥力" type="range" min="0" max="100" />
+            <div class="gv-trow"><span>连线力</span><output>{{ opt.lF }}</output></div>
+            <input v-model.number="opt.lF" aria-label="连线力" type="range" min="0" max="100" />
+            <div class="gv-trow"><span>连线距离</span><output>{{ opt.lD }}</output></div>
+            <input v-model.number="opt.lD" aria-label="连线距离" type="range" min="0" max="100" />
+          </div>
+        </details>
+        <button class="gv-treset" @click="resetTweaks()">恢复显示与力默认值</button>
       </aside>
+      </Transition>
 
       <!-- 中：画布（双层 canvas：底层静态图，上层只画 hover/选中） -->
       <div ref="stageRef" class="gv-stage">
@@ -127,10 +166,10 @@
         <div class="gv-hud">
           <button
             class="gv-icon gv-tweaks-toggle"
-            :class="{ on: tweaksOpen }"
-            aria-label="布局参数" :aria-expanded="tweaksOpen"
+            :class="{ on: facetsOpen && tweaksOpen }"
+            aria-label="布局参数" :aria-expanded="facetsOpen && tweaksOpen"
             v-tooltip="{ body: '布局参数', meta: '节点大小、连线粗细、斥力与引力' }"
-            @click="tweaksOpen = !tweaksOpen"
+            @click="openDisplaySettings"
           >
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M15 4.5v5M9 14.5v5" /></svg>
           </button>
@@ -143,25 +182,6 @@
           <button class="gv-icon" :class="{ on: pinned }" :aria-label="pinned ? '取消固定布局' : '固定布局'" :aria-pressed="pinned" v-tooltip="{ body: pinned ? '取消固定' : '固定布局', meta: '停住力导向计算' }" @click="togglePin()">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v8M8 7l4-4 4 4M6 21h12" /></svg>
           </button>
-        </div>
-
-        <!-- 布局参数（旧图谱设置面板的那几档：显示 + 力） -->
-        <div v-if="tweaksOpen" ref="tweakRef" class="gv-tweaks">
-          <h4>显示</h4>
-          <div class="gv-trow"><span>节点大小</span><output>{{ opt.nodeScale }}%</output></div>
-          <input v-model.number="opt.nodeScale" aria-label="节点大小" type="range" min="40" max="180" />
-          <div class="gv-trow"><span>连线粗细</span><output>{{ opt.linkScale }}%</output></div>
-          <input v-model.number="opt.linkScale" aria-label="连线粗细" type="range" min="40" max="260" />
-          <h4>力</h4>
-          <div class="gv-trow"><span>中心力</span><output>{{ opt.cF }}</output></div>
-          <input v-model.number="opt.cF" aria-label="中心力" type="range" min="0" max="100" />
-          <div class="gv-trow"><span>斥力</span><output>{{ opt.rF }}</output></div>
-          <input v-model.number="opt.rF" aria-label="斥力" type="range" min="0" max="100" />
-          <div class="gv-trow"><span>连线力</span><output>{{ opt.lF }}</output></div>
-          <input v-model.number="opt.lF" aria-label="连线力" type="range" min="0" max="100" />
-          <div class="gv-trow"><span>连线距离</span><output>{{ opt.lD }}</output></div>
-          <input v-model.number="opt.lD" aria-label="连线距离" type="range" min="0" max="100" />
-          <button class="gv-treset" @click="resetTweaks()">恢复默认</button>
         </div>
 
         <div v-if="loading" class="gv-state"><AppSpinner :size="16" /> 正在加载图谱…</div>
@@ -178,9 +198,10 @@
         </div>
       </div>
 
-      <!-- 右：聚合 / 选中详情 -->
-      <aside class="gv-detail" :class="{ hidden: !detailOpen }">
-        <div class="gv-panel-head"><b>{{ selected ? '页面详情' : '图谱概览' }}</b><button v-if="selected" aria-label="返回图谱概览" @click="selected = null">返回概览</button><button v-else aria-label="收起图谱概览" @click="detailOpen = false">收起</button></div>
+      <!-- 页面信息按需浮于右侧，默认让画布完整呈现。 -->
+      <Transition name="graph-panel">
+      <aside v-if="detailOpen" class="gv-detail" aria-label="图谱详情面板">
+        <div class="gv-panel-head"><b>{{ selected ? '页面详情' : '图谱概览' }}</b><div><button v-if="selected" aria-label="返回图谱概览" @click="selected = null">返回概览</button><button class="gv-panel-close" aria-label="关闭图谱详情" @click="detailOpen = false">×</button></div></div>
         <template v-if="selected">
           <div class="gv-kind">{{ typeName(selected.group) }}<span v-if="selected.updatedAt"> · 更新于 {{ selected.updatedAt }}</span></div>
           <h3>{{ selected.label }}</h3>
@@ -225,6 +246,7 @@
           </div>
         </template>
       </aside>
+      </Transition>
     </div>
   </div>
 </template>
@@ -300,9 +322,9 @@ const loading = ref(false);
 const loadError = ref('');
 const pageId = ref((route.params.id as string) || '');
 const mode = ref<'business' | 'all' | 'local'>('business');
-/** 手机上筛选面板默认收起：一进来就盖住图（原 GraphView 的移动端守护，重写后继续保持） */
-const facetsOpen = ref(window.innerWidth > 768);
-const detailOpen = ref(window.innerWidth > 768);
+/** 先呈现完整画布，设置和详情按需展开。 */
+const facetsOpen = ref(false);
+const detailOpen = ref(false);
 const zoomPercent = ref(100);
 const pinned = ref(false);
 
@@ -326,14 +348,16 @@ const degSlider = ref(0);
 
 /** 图谱外观与力学档位（localStorage 记忆，沿用旧设置面板的档位与文案） */
 const opt = reactive({ ...OPT_DEFAULTS });
+const colorGroups = ref(false);
 const tweaksOpen = ref(false);
-const tweakRef = ref<HTMLElement>();
+const tweakRef = ref<HTMLDetailsElement>();
 function saveOptions() {
-  try { localStorage.setItem(OPT_KEY, JSON.stringify({ ...opt })); } catch { /* 隐私模式忽略 */ }
+  try { localStorage.setItem(OPT_KEY, JSON.stringify({ ...opt, colorGroups: colorGroups.value })); } catch { /* 隐私模式忽略 */ }
 }
 function loadOptions() {
   try {
     const raw = JSON.parse(localStorage.getItem(OPT_KEY) || '{}') as Record<string, unknown>;
+    colorGroups.value = raw.colorGroups === true;
     for (const key of Object.keys(OPT_DEFAULTS) as (keyof typeof OPT_DEFAULTS)[]) {
       const v = Number(raw[key]);
       if (Number.isFinite(v)) opt[key] = v;
@@ -341,13 +365,23 @@ function loadOptions() {
   } catch { /* 忽略坏数据 */ }
 }
 function resetTweaks() { Object.assign(opt, OPT_DEFAULTS); }
-/** 点面板/按钮之外的地方收起参数面板（浮层不该一直挂着挡图） */
-function onDocPointerDown(ev: PointerEvent) {
-  if (!tweaksOpen.value) return;
-  const target = ev.target as HTMLElement | null;
-  if (tweakRef.value?.contains(ev.target as Node)) return;
-  if (target?.closest?.('.gv-tweaks-toggle')) return;
-  tweaksOpen.value = false;
+function toggleSettings() {
+  facetsOpen.value = !facetsOpen.value;
+  if (facetsOpen.value) detailOpen.value = false;
+}
+function toggleDetails() {
+  detailOpen.value = !detailOpen.value;
+  if (detailOpen.value) facetsOpen.value = false;
+}
+async function openDisplaySettings() {
+  facetsOpen.value = true;
+  detailOpen.value = false;
+  tweaksOpen.value = true;
+  await nextTick();
+  tweakRef.value?.scrollIntoView({ block: 'nearest' });
+}
+function onDisplayToggle(event: Event) {
+  tweaksOpen.value = (event.target as HTMLDetailsElement).open;
 }
 
 const selected = shallowRef<GNode | null>(null);
@@ -788,23 +822,25 @@ function cssVar(el: HTMLElement | undefined, name: string, fallback: string) {
   return v || fallback;
 }
 let palette = {
-  bg: '#ffffff', edge: 'rgba(78,69,92,.32)', edgeHot: '#b83280',
-  label: '#454047', labelHot: '#17181B',
-  focus: '#b83280', quietEdge: 'rgba(78,69,92,.08)',
+  bg: '#fafafa', edge: 'rgba(99,91,113,.18)', edgeHot: '#7657c8',
+  label: '#55515e', labelHot: '#33313a', node: '#777181', nodeHot: '#514b60',
+  focus: '#7657c8', quietEdge: 'rgba(99,91,113,.045)',
 };
 function refreshPalette() {
   const dark = app.dark;
   palette = {
-    bg: cssVar(rootRef.value, '--bg', dark ? '#0e0f12' : '#ffffff'),
-    edge: dark ? 'rgba(202,197,216,.36)' : 'rgba(78,69,92,.32)',
-    edgeHot: dark ? '#ff87c6' : '#b83280',
-    label: dark ? '#e0dce5' : '#454047',
-    labelHot: dark ? '#FFFFFF' : '#17181B',
-    focus: dark ? '#ff87c6' : '#b83280',
-    quietEdge: dark ? 'rgba(202,197,216,.09)' : 'rgba(78,69,92,.08)',
+    bg: cssVar(rootRef.value, '--bg', dark ? '#1e1e1e' : '#fafafa'),
+    edge: dark ? 'rgba(171,165,186,.18)' : 'rgba(99,91,113,.18)',
+    edgeHot: dark ? '#b59af6' : '#7657c8',
+    label: dark ? '#b8b3c2' : '#55515e',
+    labelHot: dark ? '#e6e2ed' : '#33313a',
+    node: dark ? '#aba5b7' : '#777181', nodeHot: dark ? '#ddd8e7' : '#514b60',
+    focus: dark ? '#b59af6' : '#7657c8',
+    quietEdge: dark ? 'rgba(171,165,186,.055)' : 'rgba(99,91,113,.045)',
   };
 }
 const theme = () => palette;
+const nodePaintColor = (n: GNode) => colorGroups.value ? colorOf(n) : palette.node;
 
 function resize() {
   const stage = stageRef.value;
@@ -846,7 +882,7 @@ function planLabels() {
     if (n === focus) continue;
     if (labelPlan.length >= budget) break;
     const text = n.label.length > 18 ? `${n.label.slice(0, 17)}…` : n.label;
-    const fs = n.deg > 12 ? 14 : 13;
+    const fs = window.innerWidth <= 768 ? (n.deg > 12 ? 15 : 14) : (n.deg > 12 ? 14 : 13);
     const bold = n.deg > 12;
     bctx.font = `${bold ? 600 : 400} ${fs}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
     const tw = bctx.measureText(text).width;
@@ -893,11 +929,11 @@ function drawBase() {
     bctx.moveTo(a.x, a.y);
     bctx.lineTo(b.x, b.y);
   }
-  bctx.lineWidth = linkScale() / view.s;
+  bctx.lineWidth = 0.7 * linkScale() / view.s;
   bctx.strokeStyle = focus ? T.quietEdge : T.edge;
   bctx.stroke();
 
-  // 节点：屏幕半径钳制在 2.5–18px，放大时不会变成巨球
+  // 紧凑圆点保留关联度的大小差异，物理碰撞半径不随外观改变。
   for (const n of visible) {
     const sx = n.x * view.s + view.x;
     const sy = n.y * view.s + view.y;
@@ -905,14 +941,9 @@ function drawBase() {
     const rr = nodeScreenR(n.r);
     bctx.beginPath();
     bctx.arc(n.x, n.y, rr / view.s, 0, Math.PI * 2);
-    bctx.globalAlpha = relatedIds && !relatedIds.has(n.id) ? 0.35 : 1;
-    bctx.fillStyle = colorOf(n);
+    bctx.globalAlpha = relatedIds && !relatedIds.has(n.id) ? 0.24 : 1;
+    bctx.fillStyle = nodePaintColor(n);
     bctx.fill();
-    if (rr > 7) {
-      bctx.lineWidth = 1.2 / view.s;
-      bctx.strokeStyle = app.dark ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.85)';
-      bctx.stroke();
-    }
   }
   bctx.restore();
 
@@ -940,9 +971,9 @@ function drawBase() {
   bctx.globalAlpha = 1;
 }
 
-/** 节点在屏幕上的实际绘制半径（含面板「节点大小」倍率与 2.5–18px 钳制）：画布、标签、高亮共用一套 */
+/** 画布、标签、高亮共用屏幕半径，缩小圆点不改变布局力学。 */
 function nodeScreenR(r: number) {
-  return Math.max(2.5, Math.min(18, r * (opt.nodeScale / 100) * view.s));
+  return Math.max(2.5, Math.min(10, 0.55 * r * (opt.nodeScale / 100) * view.s));
 }
 /** 同一半径的世界坐标版本——高亮必须紧贴节点本身 */
 function nodeRadius(r: number) {
@@ -952,12 +983,12 @@ function nodeRadius(r: number) {
 const linkScale = () => opt.linkScale / 100;
 
 function focusLabelBox(node: GNode, ctx: CanvasRenderingContext2D): GraphLabelBox {
-  ctx.font = '600 14px "Segoe UI","Microsoft YaHei",system-ui,sans-serif';
-  const w = Math.min(Math.max(1, W - 8), ctx.measureText(node.label).width + 16);
+  ctx.font = `600 ${window.innerWidth <= 768 ? 15 : 14}px "Segoe UI","Microsoft YaHei",system-ui,sans-serif`;
+  const w = Math.min(Math.max(1, W - 8), ctx.measureText(node.label).width + 8);
   return {
     x: Math.max(4, Math.min(W - w - 4, node.x * view.s + view.x - w / 2)),
-    y: Math.max(4, Math.min(H - 30, node.y * view.s + view.y - nodeScreenR(node.r) - 35)),
-    w, h: 26,
+    y: Math.max(4, Math.min(H - 24, node.y * view.s + view.y - nodeScreenR(node.r) - 24)),
+    w, h: 20,
   };
 }
 
@@ -980,50 +1011,40 @@ function drawOver() {
     octx.moveTo(focus.x, focus.y);
     octx.lineTo(m.x, m.y);
   }
-  octx.lineWidth = (2.2 * linkScale()) / view.s;
+  octx.lineWidth = (1.3 * linkScale()) / view.s;
   octx.strokeStyle = T.edgeHot;
   octx.stroke();
-  // 关联节点保留类型色，强调色描边使它们从背景关系中凸显。
+  // 关联节点提亮；紫色只用于焦点与直接相连的边。
   for (const a of adj[idx]) {
     const m = rawNodes[a.i];
     if (!visibleIds.has(m.id)) continue;
     octx.beginPath();
     octx.arc(m.x, m.y, nodeRadius(m.r), 0, Math.PI * 2);
-    octx.fillStyle = colorOf(m);
+    octx.fillStyle = colorGroups.value ? colorOf(m) : T.nodeHot;
     octx.fill();
-    octx.lineWidth = 1.5 / view.s;
-    octx.strokeStyle = T.focus;
-    octx.stroke();
   }
-  // 焦点的实心强调色与双层轮廓，在所有类型色和深浅底色上都能辨认。
-  const fr = nodeRadius(focus.r) + 2 / view.s;
+  const fr = nodeRadius(focus.r) + 1 / view.s;
   octx.beginPath();
   octx.arc(focus.x, focus.y, fr, 0, Math.PI * 2);
   octx.fillStyle = T.focus;
   octx.fill();
-  octx.lineWidth = 4 / view.s;
-  octx.strokeStyle = T.bg;
-  octx.stroke();
-  octx.lineWidth = 1.5 / view.s;
-  octx.strokeStyle = T.focus;
-  octx.stroke();
   octx.restore();
 
   // 焦点标签强制显示
   const box = focusLabelBox(focus, octx);
   octx.textAlign = 'center';
   octx.textBaseline = 'middle';
+  octx.lineWidth = 4;
+  octx.strokeStyle = T.bg;
+  octx.strokeText(focus.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 8));
   octx.fillStyle = T.focus;
-  octx.beginPath();
-  octx.roundRect(box.x, box.y, box.w, box.h, 6);
-  octx.fill();
-  octx.fillStyle = app.dark ? '#23121c' : '#ffffff';
-  octx.fillText(focus.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 16));
+  octx.fillText(focus.label, box.x + box.w / 2, box.y + box.h / 2, Math.max(1, box.w - 8));
 
 }
 
 /* ────────────────────────── 视图操作 ────────────────────────── */
 
+function usableWidth() { return W > 768 && (facetsOpen.value || detailOpen.value) ? Math.max(320, W - 320) : W; }
 function fit() {
   if (!visible.length) return;
   cancelAnimationFrame(camRaf);
@@ -1032,10 +1053,11 @@ function fit() {
     x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r);
     x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r);
   }
-  const pad = Math.min(90, W * 0.16, H * 0.16);
-  const s = Math.min(1.5, Math.max(0.06, Math.min((W - pad * 2) / Math.max(1, x1 - x0), (H - pad * 2) / Math.max(1, y1 - y0))));
+  const width = usableWidth();
+  const pad = Math.min(90, width * 0.16, H * 0.16);
+  const s = Math.min(1.5, Math.max(0.06, Math.min((width - pad * 2) / Math.max(1, x1 - x0), (H - pad * 2) / Math.max(1, y1 - y0))));
   view.s = s;
-  view.x = W / 2 - ((x0 + x1) / 2) * s;
+  view.x = width / 2 - ((x0 + x1) / 2) * s;
   view.y = H / 2 - ((y0 + y1) / 2) * s;
   paintFrame.schedule(true);
 }
@@ -1061,9 +1083,9 @@ function centerOn(node: GNode) {
   if (!W) return;
   const s = view.s < 0.85 ? 1 : view.s;
   const from = { x: view.x, y: view.y, s: view.s };
-  const to = { x: W / 2 - node.x * s, y: H / 2 - node.y * s, s };
+  const to = { x: usableWidth() / 2 - node.x * s, y: H / 2 - node.y * s, s };
   const t0 = performance.now();
-  const dur = 240;
+  const dur = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 1 : 240;
   cancelAnimationFrame(camRaf);
   userAdjusted = true; // 用户主动对焦：收敛后不再自动带动视图
   const step = () => {
@@ -1199,7 +1221,9 @@ function selectNode(node: GNode) {
   hover = null;
   tip.value = null;
   detailOpen.value = true;
-  paintFrame.schedule();
+  facetsOpen.value = false;
+  if (W > 768 && node.x * view.s + view.x > usableWidth() - 24) centerOn(node);
+  paintFrame.schedule(true);
 }
 
 function zoomAt(k: number, x: number, y: number) {
@@ -1276,6 +1300,7 @@ watch(() => app.dark, () => {
   paintFrame.schedule(true);
 }, { flush: 'post' });
 watch(selected, () => paintFrame.schedule(true));
+watch(colorGroups, () => { saveOptions(); paintFrame.schedule(true); });
 
 watch(() => route.params.id, (id) => {
   if (!id) return;
@@ -1295,7 +1320,6 @@ onMounted(async () => {
   syncPhysics();
   resize();
   refreshPalette();
-  document.addEventListener('pointerdown', onDocPointerDown);
   const cv = baseRef.value!;
   cv.addEventListener('pointerdown', onPointerDown);
   cv.addEventListener('pointermove', onPointerMove);
@@ -1322,35 +1346,45 @@ onUnmounted(() => {
   clearTimeout(filterTimer);
   clearTimeout(searchTimer);
   clearTimeout(optTimer);
-  document.removeEventListener('pointerdown', onDocPointerDown);
   ro?.disconnect();
 });
 </script>
 
 <style scoped>
 .graph-view {
+  --bg: #fafafa; --bg-secondary: #f3f2f5; --bg-tertiary: #eeedf1; --card-bg: #ffffff;
+  --text: #33313a; --text-secondary: #696572; --text-faint: #77717f;
+  --border: #e4e2e8; --border-strong: #cac6d1; --bg-hover: #eeedf2;
+  --accent: #7657c8; --accent-hover: #6344b5; --accent-soft: #eee8fb; --on-accent: #fff;
   height: 100%; position: relative; isolation: isolate; display: flex; flex-direction: column;
   overflow: hidden; background: var(--bg); color: var(--text);
+}
+.graph-view.dark {
+  --bg: #1e1e1e; --bg-secondary: #29272d; --bg-tertiary: #302d35; --card-bg: #252429;
+  --text: #e0dce7; --text-secondary: #b4aebf; --text-faint: #aaa3b4;
+  --border: #39353f; --border-strong: #534d5e; --bg-hover: #34303c;
+  --accent: #b59af6; --accent-hover: #c3adfa; --accent-soft: #383045; --on-accent: #241d32;
 }
 button { font: inherit; cursor: pointer; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .gv-top {
   flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
-  min-height: 68px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--card-bg);
+  min-height: 48px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--card-bg);
 }
 .gv-brand { display: flex; align-items: center; gap: 9px; margin-right: 8px; color: var(--accent); }
-.gv-brand b { color: var(--text); font-size: 18px; font-weight: 650; letter-spacing: -.03em; }
-.gv-seg { display: flex; background: var(--bg-tertiary); border-radius: var(--radius-control); padding: 3px; }
+.gv-brand b { color: var(--text); font-size: 14px; font-weight: 600; }
+.gv-seg { display: flex; gap: 2px; }
 .gv-seg button {
   appearance: none; border: 0; background: transparent; font-size: 13px;
-  color: var(--text-secondary); padding: 7px 12px; border-radius: 6px; white-space: nowrap;
-  transition: background .16s, color .16s, box-shadow .16s;
+  color: var(--text-secondary); padding: 6px 10px; border-radius: 4px; white-space: nowrap;
+  transition: background .16s, color .16s;
 }
-.gv-seg button.on { background: var(--card-bg); color: var(--accent); font-weight: 600; box-shadow: var(--shadow-raised); }
+.gv-seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.gv-seg button:hover { background: var(--bg-hover); }
 .gv-search {
-  display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 12px;
-  border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--bg-secondary);
-  flex: 1; min-width: 160px; max-width: 340px; color: var(--text-faint); transition: border-color .16s;
+  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 9px;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--bg-secondary);
+  flex: 1; min-width: 150px; max-width: 260px; color: var(--text-faint); transition: border-color .16s;
 }
 .gv-search:focus-within { border-color: var(--accent); }
 .gv-search input { border: 0; background: transparent; outline: none; font: inherit; font-size: 13px; color: var(--text); width: 100%; min-width: 0; }
@@ -1363,25 +1397,36 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-chip button { border: 0; background: transparent; color: inherit; padding: 0 2px; font-size: 16px; }
 .gv-actions { display: flex; gap: 6px; margin-left: auto; }
 .gv-icon, .gv-tool {
-  appearance: none; height: 36px; border-radius: var(--radius-control); border: 1px solid transparent;
-  background: var(--bg-secondary); color: var(--text-secondary); display: flex; align-items: center; justify-content: center;
+  appearance: none; height: 30px; border-radius: 4px; border: 1px solid transparent;
+  background: transparent; color: var(--text-secondary); display: flex; align-items: center; justify-content: center;
   transition: color .16s, background .16s, border-color .16s;
 }
-.gv-icon { width: 36px; flex: none; font-size: 19px; }
+.gv-icon { width: 30px; flex: none; font-size: 19px; }
 .gv-tool { gap: 6px; padding: 0 11px; font-size: 13px; white-space: nowrap; }
 .gv-icon:hover, .gv-tool:hover { color: var(--text); background: var(--bg-hover); border-color: var(--border); }
 .gv-icon.on, .gv-tool.on { color: var(--accent); background: var(--accent-soft); }
 .gv-main { flex: 1; display: flex; min-height: 0; position: relative; }
-.gv-facets {
-  width: 212px; flex: none; border-right: 1px solid var(--border); background: var(--card-bg);
-  overflow-y: auto; padding: 18px 12px;
+.gv-facets, .gv-detail {
+  position: absolute; top: 12px; right: 16px; z-index: 9; width: 280px;
+  max-height: calc(100% - 84px); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--card-bg); overflow-y: auto; padding: 12px;
+  box-shadow: 0 4px 18px rgba(0,0,0,.06); overscroll-behavior: contain;
 }
-.gv-facets.hidden, .gv-detail.hidden { display: none; }
-.gv-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 20px; font-size: 14px; }
+.gv-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; font-size: 13px; }
+.gv-panel-head > div { display: flex; align-items: center; gap: 5px; }
+.gv-panel-head .gv-panel-close { width: 26px; height: 26px; font-size: 21px; padding: 0; border-radius: 4px; }
+.gv-panel-close:hover { background: var(--bg-hover); }
+.gv-section { border-top: 1px solid var(--border); }
+.gv-section > summary { padding: 12px 2px; cursor: pointer; font-size: 13px; font-weight: 600; }
+.gv-section > summary::marker, .gv-advanced > summary::marker { color: var(--text-faint); }
+.gv-section-body { padding: 0 2px 10px; }
+.gv-section-body > input[type='range'] { width: 100%; margin: 8px 0; accent-color: var(--accent); }
+.gv-advanced > summary { cursor: pointer; padding: 8px 4px 12px; font-size: 12px; color: var(--text-secondary); }
+.gv-advanced .gv-fgroup:first-of-type { padding-top: 8px; }
 .gv-panel-head b { font-weight: 600; }
 .gv-panel-head button { border: 0; background: transparent; color: var(--text-secondary); font-size: 12px; padding: 4px; }
 .gv-panel-head button:hover { color: var(--accent); }
-.gv-fgroup { padding: 0 0 18px; }
+.gv-fgroup { padding: 0 0 10px; }
 .gv-fgroup + .gv-fgroup { padding-top: 2px; }
 .gv-fgroup h4 {
   margin: 0 4px 8px; font-size: 12px; color: var(--text-secondary); font-weight: 600;
@@ -1391,15 +1436,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-fgroup h4 button:hover { color: var(--accent); }
 .gv-frow {
   appearance: none; border: 0; background: transparent; width: 100%; text-align: left;
-  display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 6px 8px; border-radius: 8px;
+  display: flex; align-items: center; gap: 9px; min-height: 30px; padding: 5px 6px; border-radius: 4px;
   font-size: 13px; color: var(--text-secondary); transition: background .14s, color .14s;
 }
 .gv-frow:hover { background: var(--bg-hover); color: var(--text); }
 .gv-frow.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .gv-frow .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .gv-frow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gv-frow .ct { min-width: 24px; text-align: center; font-size: 12px; color: var(--text-secondary); background: var(--bg-tertiary); border-radius: 5px; padding: 1px 4px; font-variant-numeric: tabular-nums; }
-.gv-frow.on .ct { color: var(--accent); background: var(--card-bg); }
+.gv-frow .ct { min-width: 24px; text-align: right; font-size: 12px; color: var(--text-secondary); padding: 1px 4px; font-variant-numeric: tabular-nums; }
+.gv-frow.on .ct { color: var(--accent); }
 .gv-frow.switch { cursor: pointer; }
 .gv-sw { position: relative; width: 32px; height: 18px; flex: none; }
 .gv-sw input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; }
@@ -1413,14 +1458,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-range input[type='range'] { width: 100%; accent-color: var(--accent); margin: 5px 0; }
 .gv-stage {
   position: relative; flex: 1; min-width: 0; overflow: hidden; background-color: var(--bg);
-  background-image: radial-gradient(var(--border-strong) .7px, transparent .7px); background-size: 24px 24px;
+  animation: graph-canvas-in .18s ease-out;
 }
 .gv-canvas { position: absolute; inset: 0; display: block; touch-action: none; }
 .gv-canvas.over { pointer-events: none; }
 .gv-stats {
   position: absolute; left: 20px; top: 18px; z-index: 5; display: flex; align-items: center; gap: 10px;
-  font-size: 12px; color: var(--text-secondary); background: var(--card-bg); border: 1px solid var(--border);
-  border-radius: 99px; padding: 8px 12px; box-shadow: var(--shadow-raised); pointer-events: none;
+  font-size: 12px; color: var(--text-secondary); pointer-events: none;
 }
 .gv-stats b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .gv-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); }
@@ -1429,22 +1473,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-help { position: absolute; bottom: 22px; left: 20px; color: var(--text-secondary); font-size: 12px; pointer-events: none; }
 .gv-hud {
   position: absolute; right: 20px; bottom: 16px; z-index: 5; display: flex; align-items: center; gap: 3px;
-  padding: 5px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-card);
+  padding: 3px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px;
 }
 .gv-hud .gv-icon { background: transparent; }
 .gv-hud .gv-icon:hover { background: var(--bg-hover); }
 .gv-hud .gv-icon.on { background: var(--accent-soft); }
 .gv-zoom { font-size: 12px; width: 44px; text-align: center; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.gv-tweaks {
-  position: absolute; right: 20px; bottom: 76px; z-index: 8; width: 248px; padding: 16px 18px;
-  background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
-  animation: graph-panel-in .16s ease-out;
-}
-.gv-tweaks h4 { margin: 14px 0 8px; font-size: 13px; color: var(--text); font-weight: 600; }
-.gv-tweaks h4:first-child { margin-top: 0; }
 .gv-trow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
 .gv-trow output { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
-.gv-tweaks input[type='range'] { width: 100%; margin: 4px 0; accent-color: var(--accent); }
 .gv-treset { width: 100%; min-height: 34px; margin-top: 14px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); color: var(--text-secondary); }
 .gv-treset:hover { background: var(--bg-hover); color: var(--text); }
 .gv-tip { position: absolute; z-index: 6; pointer-events: none; max-width: min(240px, calc(100% - 16px)); padding: 12px 14px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
@@ -1457,13 +1493,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-state span { font-size: 13px; line-height: 1.7; }
 .gv-state.error { color: var(--danger); }
 .gv-state .gv-btn { flex: none; padding: 0 16px; }
-.gv-detail { width: 272px; flex: none; border-left: 1px solid var(--border); background: var(--card-bg); overflow-y: auto; padding: 18px; }
+.gv-detail { padding: 14px; }
 .gv-kind { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
-.gv-detail h3 { margin: 8px 0; font-size: 21px; font-weight: 650; letter-spacing: -.025em; line-height: 1.4; overflow-wrap: anywhere; }
-.gv-detail h5 { margin: 24px 0 10px; font-size: 13px; color: var(--text); font-weight: 600; }
-.gv-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px 8px; margin: 18px 0; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.gv-detail h3 { margin: 8px 0; font-size: 18px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.gv-detail h5 { margin: 18px 0 8px; font-size: 13px; color: var(--text); font-weight: 600; }
+.gv-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px 8px; margin: 14px 0; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .gv-nums div { font-size: 12px; color: var(--text-secondary); }
-.gv-nums b { display: block; margin-bottom: 5px; font-size: 23px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.gv-nums b { display: block; margin-bottom: 5px; font-size: 18px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
 .gv-nums span { display: flex; align-items: center; gap: 5px; }
 .gv-nums i { width: 5px; height: 5px; border-radius: 50%; }
 .gv-tagbox { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -1482,41 +1518,34 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .gv-rel button span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .gv-rel button em { font-style: normal; margin-left: auto; color: var(--text-faint); font-size: 11px; max-width: 42%; overflow-wrap: anywhere; }
 .faint { color: var(--text-faint); font-size: 13px; }
-@keyframes graph-panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+button:active { transform: scale(.97); }
+.graph-panel-enter-active, .graph-panel-leave-active { transition: opacity .16s ease, transform .16s ease; }
+.graph-panel-enter-from, .graph-panel-leave-to { opacity: 0; transform: translateX(6px); }
+@keyframes graph-canvas-in { from { opacity: 0; } to { opacity: 1; } }
 @media (max-width: 1024px) {
-  .gv-top { padding: 12px 16px; gap: 8px; }
+  .gv-top { padding: 8px 12px; gap: 8px; }
   .gv-brand { margin-right: 0; }
-  .gv-brand b { font-size: 16px; }
-  .gv-facets { width: 190px; }
-  .gv-detail { width: 240px; padding: 16px; }
   .gv-help { display: none; }
 }
 @media (max-width: 768px) {
-  .gv-top { padding: 12px; gap: 10px; }
+  .gv-top { padding: 10px 12px; gap: 8px; }
   .gv-brand { flex: 1 1 calc(100% - 180px); min-width: 110px; }
   .gv-brand b { white-space: nowrap; }
   .gv-seg { order: 2; }
   .gv-search { order: 3; flex: 1; min-width: 100px; max-width: none; }
   .gv-actions { gap: 4px; }
   .gv-actions .gv-tool { padding: 0 8px; }
-  .gv-main { position: static; }
   .gv-facets {
-    position: absolute; top: 110px; bottom: calc(72px + var(--safe-bottom)); left: 0; z-index: 9;
-    height: auto; box-shadow: var(--shadow); width: min(272px, 85%); padding: 18px;
+    top: 10px; right: 12px; width: min(280px, calc(100% - 24px));
+    max-height: calc(100% - 154px - var(--safe-bottom));
   }
-  .gv-facets.hidden { display: none; }
   .gv-detail {
-    position: absolute; left: 12px; right: 12px; bottom: calc(72px + var(--safe-bottom)); z-index: 10;
-    width: auto; max-height: 42%; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
-    animation: graph-panel-in .16s ease-out;
+    top: auto; left: 12px; right: 12px; bottom: calc(140px + var(--safe-bottom));
+    width: auto; max-height: 42%;
   }
   .gv-detail .gv-panel-head { margin-bottom: 12px; }
-  .gv-stats { left: 12px; top: 14px; padding: 7px 10px; gap: 8px; }
+  .gv-stats { left: 12px; top: 14px; gap: 8px; }
   .gv-hud { right: 12px; bottom: calc(84px + var(--safe-bottom)); }
-  .gv-tweaks {
-    left: 12px; right: 12px; bottom: calc(144px + var(--safe-bottom)); width: auto;
-    max-height: 52%; overflow-y: auto; z-index: 11;
-  }
 }
 @media (hover: none) and (pointer: coarse) {
   .gv-sw { width: 46px; height: 26px; }
@@ -1526,7 +1555,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   .gv-icon { width: 40px; height: 40px; }
   .gv-tool { height: 40px; }
   .gv-seg button { padding: 8px 12px; }
-  .gv-tweaks input[type='range'] { height: 30px; }
+  .gv-section-body > input[type='range'] { height: 30px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
