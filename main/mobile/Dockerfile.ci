@@ -28,19 +28,28 @@ ENV ANDROID_HOME=/opt/android-sdk \
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-# JDK 21（Capacitor 7.6 / AGP 8.7 要求）。与主镜像一样显式使用 HTTPS，
-# 用 Node 可信根引导 slim/trixie 中尚未安装的系统 CA；索引失败不使用残缺缓存。
-RUN sed -i \
-      -e 's|https\?://deb\.debian\.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
-      -e 's|https\?://security\.debian\.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
-      /etc/apt/sources.list.d/debian.sources \
+# JDK 21（Capacitor 7.6 / AGP 8.7 要求）。显式 HTTPS + Node 可信根，
+# 下载失败时有限切换到同一 Debian 仓库的 HTTPS 源，不降级 TLS 或软件包签名校验。
+RUN cp /etc/apt/sources.list.d/debian.sources /tmp/engram-debian.sources \
     && node -e "require('node:fs').writeFileSync('/tmp/engram-node-ca.pem', require('node:tls').rootCertificates.join('\n') + '\n')" \
-    && apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem \
-       -o Acquire::https::Timeout=30 -o Acquire::Retries=2 -o APT::Update::Error-Mode=any update \
-    && apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem \
-       -o Acquire::https::Timeout=30 -o Acquire::Retries=2 install -y --no-install-recommends \
-       ca-certificates openjdk-21-jdk-headless unzip curl \
-    && rm -f /tmp/engram-node-ca.pem && rm -rf /var/lib/apt/lists/*
+    && installed=0 \
+    && for mirror in https://mirrors.aliyun.com https://deb.debian.org https://mirrors.ustc.edu.cn; do \
+         sed -e "s|https\?://deb\.debian\.org|$mirror|g" \
+             -e "s|https\?://security\.debian\.org|$mirror|g" \
+             /tmp/engram-debian.sources > /etc/apt/sources.list.d/debian.sources; \
+         rm -rf /var/lib/apt/lists/*; \
+         echo "Android JDK HTTPS source: $mirror"; \
+         if apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem \
+              -o Acquire::https::Timeout=30 -o Acquire::Retries=1 -o APT::Update::Error-Mode=any update \
+            && apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem \
+              -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install -y --no-install-recommends \
+              ca-certificates openjdk-21-jdk-headless unzip curl; then \
+           installed=1; break; \
+         fi; \
+       done \
+    && test "$installed" = 1 \
+    && rm -f /tmp/engram-node-ca.pem /tmp/engram-debian.sources \
+    && rm -rf /var/lib/apt/lists/*
 
 # Android cmdline-tools + SDK 组件（API 35；runner 联网下载属既定流程）
 # build-tools;34.0.0 是 AGP 8.7 的默认版本：镜像若只装 35，gradle 会在 run 期现下载 34（2026-09-04 实测）
