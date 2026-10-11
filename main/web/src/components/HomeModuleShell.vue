@@ -60,7 +60,7 @@ const compact = computed(() => {
   if (props.kind === 'shortcuts') return tier.value !== 'bar';
   return true;
 });
-const padding = computed(() => functional.value ? (props.width === 1 ? 7 : props.height === 1 ? 10 : 14) : size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 20);
+const padding = computed(() => functional.value ? (props.width === 1 ? 7 : props.height === 1 ? 10 : 16) : size.value.w < 100 || size.value.h < 90 ? 6 : size.value.w < 200 || size.value.h < 200 ? 12 : 16);
 const expanded = ref(false), hoverSize = ref('');
 let previousFocus: HTMLElement | null = null;
 let stopDetailBack: (() => void) | null = null, stopSettingsBack: (() => void) | null = null;
@@ -106,7 +106,7 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   min-height:0;
   padding:22px;
   border:1px solid var(--border);
-  border-radius:22px;
+  border-radius:17px;
   background:var(--card-bg);
   box-shadow:0 3px 14px color-mix(in srgb,var(--text) 3%,transparent);
   display:flex;
@@ -140,7 +140,7 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   text-overflow:ellipsis;
   font-size:13px;
   font-weight:600;
-  color:var(--text-secondary);
+  color:var(--text);
 }
 .shell-head h3 :deep(svg) {
   color:var(--accent);
@@ -154,8 +154,8 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   align-items:center;
   justify-content:center;
   border-radius:8px;
-  background:var(--bg-secondary);
-  border:1px solid var(--border);
+  background:transparent;
+  border:0;
   color:var(--text-faint);
 }
 .shell:hover .shell-expand {

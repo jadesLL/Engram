@@ -6,9 +6,9 @@
     bar  横条 = 左边数值、右边「一条最重要的信息」；
     column 竖条 = 数值 + 只有标题的精简列表；
     standard 标准 = 数值行（+ 角标）+ 图表 + 列表。
-    列表行 flex:1 均分剩余高度，永远铺满不留白；空状态居中铺满整卡。
+    B 紧凑布局：列表使用自然行高，来源放到标题下方，底部保留完整内容入口。
   -->
-  <div ref="root" class="shell-summary adaptive-summary" :class="[`tier-${tier}`, { narrow: plan.narrow }]">
+  <div ref="root" class="shell-summary adaptive-summary" :class="[`tier-${tier}`, { narrow: plan.narrow, 'detailed-rows': detailedRows, 'compact-metric': compactMetric }]">
 
     <!-- 磁贴（1×1）：整卡即按钮，一格只放一件事；状态类只留「圆点 + 结论」，其余用 2 字短名 -->
     <button v-if="tier === 'tile'" type="button" class="tile" :aria-label="tileAria" @click="$emit('open')">
@@ -33,22 +33,25 @@
       <button v-else-if="summary.empty" type="button" class="bar-body empty" @click="$emit('open')"><span class="one"><span class="d">{{ summary.empty }}</span></span></button>
     </template>
 
-    <!-- 竖条 / 标准：数值行（+ 角标）+ 图表 + 拉伸铺满的列表 -->
+    <!-- 竖条 / 标准：按内容组织数值、图表、自然行高列表与底部操作 -->
     <template v-else>
-      <button type="button" class="summary-metric" :aria-label="`打开${title}完整内容`" :title="`${summary.value} · ${summary.label}`" @click="$emit('open')">
+      <button v-if="showMetric" type="button" class="summary-metric" :aria-label="`打开${title}完整内容`" :title="`${summary.value} · ${summary.label}`" @click="$emit('open')">
         <span v-if="summary.status" class="summary-stat"><i class="sdot" :class="summary.status.tone" />{{ summary.status.text }}</span>
         <strong v-else-if="summary.action" class="summary-act">{{ summary.value }}</strong>
         <strong v-else class="summary-value" :style="{ fontSize: `${metricFontSize}px` }">{{ displayValue }}</strong>
-        <em v-if="summary.badge && !summary.status" class="badge" :class="summary.badge.tone">{{ summary.badge.text }}</em>
         <span class="summary-label">{{ plan.narrow ? shortTitle : summary.label }}</span>
+        <em v-if="summary.badge && !summary.status" class="badge" :class="summary.badge.tone">{{ summary.badge.text }}</em>
       </button>
       <div v-if="plan.chartHeight" class="summary-chart" :style="{ height: `${plan.chartHeight}px` }">
         <div v-if="summary.chart === 'ring'" class="summary-ring" :style="{ background: ringBackground, maxWidth: `${plan.chartHeight}px` }" role="img" :aria-label="chartDescription" />
         <div v-else class="summary-trend" role="img" :aria-label="chartDescription"><i v-for="(row,i) in amounts" :key="i" :style="{ height: `${maxAmount ? Math.max(2,row / maxAmount * 100) : 2}%` }" /></div>
       </div>
-      <div v-if="shown.length" class="summary-rows" :class="{ bars: summary.chart === 'bars' }">
-        <button v-for="(row,i) in shown" :key="i" type="button" class="summary-row" :title="[row.text,row.detail].filter(Boolean).join(' · ')" :aria-label="[row.text,row.detail].filter(v => v !== undefined).join(' · ')" @click="activate(row)">
-          <span class="row-text">{{ row.text }}</span><small v-if="!plan.narrow && row.detail !== undefined">{{ row.detail }}</small>
+      <div v-if="shown.length" class="summary-rows" :class="{ bars: summary.chart === 'bars' }" :style="{ '--summary-row-height': `${plan.rowHeight}px` }">
+        <button v-for="(row,i) in shown" :key="i" type="button" class="summary-row" :title="[row.text,row.meta,row.detail,row.badge?.text].filter(Boolean).join(' · ')" :aria-label="[row.text,row.meta,row.detail,row.badge?.text].filter(v => v !== undefined).join(' · ')" @click="activate(row)">
+          <span v-if="detailedRows && !plan.narrow && row.type" class="row-type" :class="{ idea: row.type === '灵感' }">{{ row.type.slice(0,1) }}</span>
+          <span class="row-copy"><span class="row-text">{{ row.text }}</span><small v-if="detailedRows && !plan.narrow && (row.meta || row.detail !== undefined)">{{ [row.detail, row.meta].filter(v => v !== undefined && v !== '').join(' · ') }}</small></span>
+          <span v-if="!plan.narrow && row.badge" class="row-badge" :class="row.badge.tone">{{ row.badge.text }}</span>
+          <small v-else-if="!detailedRows && !plan.narrow && row.detail !== undefined">{{ row.detail }}</small>
           <i v-if="summary.chart === 'bars'" class="row-track"><b :style="{ width: `${maxAmount ? Math.max(0,(row.amount || 0) / maxAmount * 100) : 0}%` }" /></i>
         </button>
       </div>
@@ -56,6 +59,7 @@
         <span class="e-icon"><Icon :name="icon" :size="20" /></span>
         <span class="e-text">{{ summary.empty }}</span>
       </button>
+      <button v-if="hasFooter" type="button" class="summary-foot" @click="$emit('open')"><span>{{ summary.footer || (shown.length < (summary.rows?.length || 0) ? `显示 ${shown.length} / ${summary.rows?.length} 条` : '') }}</span><span class="foot-action">全部 <Icon name="arrow-up-right" :size="12" /></span></button>
     </template>
   </div>
 </template>
@@ -68,7 +72,13 @@ const props = defineProps<{ summary: HomeCardSummary; title: string; shortTitle:
 const emit = defineEmits<{ (e: 'open'): void; (e: 'activate', row: HomeCardRow): void }>();
 const root = ref<HTMLElement | null>(null);
 const size = ref({ w: 250, h: 250 });
-const plan = computed(() => cardContentPlan(size.value.w,size.value.h,props.summary.rows?.length || 0,props.summary.chart));
+const detailedRows = computed(() => !!props.summary.presentation || (props.summary.rows || []).some(row => !!row.meta || !!row.badge));
+const showMetric = computed(() => props.summary.presentation !== 'list' || size.value.w < 120);
+const compactMetric = computed(() => props.summary.presentation === 'tasks' && size.value.w >= 120);
+const hasFooter = computed(() => props.tier === 'standard' && size.value.w >= 120 && size.value.h >= 160);
+const plan = computed(() => cardContentPlan(size.value.w,size.value.h,props.summary.rows?.length || 0,props.summary.chart, {
+  metric: !showMetric.value ? 'hidden' : compactMetric.value ? 'compact' : 'full', list: detailedRows.value, footer: hasFooter.value,
+}));
 const displayValue = computed(() => typeof props.summary.value === 'number' && plan.value.narrow ? formatCount(props.summary.value) : props.summary.value);
 /** 磁贴只有 2 字标签，说明全交给无障碍名称（屏幕阅读器与 tooltip 都读得到） */
 const tileAria = computed(() => {
@@ -77,7 +87,7 @@ const tileAria = computed(() => {
   return `${props.title}：${main}${badge}，打开完整内容`;
 });
 const metricFontSize = computed(() => {
-  const base = plan.value.narrow ? 22 : 30;
+  const base = plan.value.narrow ? 22 : compactMetric.value ? 17 : 32;
   const available = size.value.w - (plan.value.narrow ? 0 : 70);
   return Math.min(base, Math.max(13, available / (String(displayValue.value).length * .7)));
 });
@@ -154,14 +164,38 @@ onUnmounted(()=>observer?.disconnect());
 .summary-act {font-size:19px;font-weight:600;color:var(--accent);white-space:nowrap}
 .summary-label {font-size:11px;line-height:1.35;color:var(--text-faint);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* 列表：行 flex:1 均分剩余高度——行数少时行变高，永远铺满不留白 */
-.summary-rows {display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;margin-top:8px}
-.summary-row {position:relative;display:flex;align-items:center;gap:7px;flex:1;min-height:0;min-width:0;text-align:left;border-top:1px solid var(--border);font-size:12.5px;line-height:1.4;color:var(--text)}
+/* 列表按内容排布，只显示预算内的完整行；底部入口独立固定。 */
+.summary-rows {display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;margin-top:8px;overflow:hidden}
+.summary-row {position:relative;display:flex;align-items:center;gap:10px;flex:none;min-height:var(--summary-row-height,34px);height:var(--summary-row-height,34px);min-width:0;text-align:left;border-top:1px solid var(--border);font-size:12.5px;line-height:1.4;color:var(--text)}
 .summary-row:first-child {border-top:0}
 .summary-row:hover {color:var(--accent)}
-.row-text {min-width:0;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.row-copy {flex:1;min-width:0}.row-text {display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .summary-row small {font-size:10px;line-height:1.3;color:var(--text-faint);white-space:nowrap;min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis}
-.bars .summary-row {padding-bottom:12px}
+.bars .summary-row {padding:0;border-top:0;gap:14px}
+.bars .row-copy {flex:none;width:58px}
+.bars .summary-row small {min-width:25px;text-align:right;font-size:13px;color:var(--text);margin-left:auto}
+.bars .row-track {position:static;flex:1;min-width:12px;height:5px;order:1}
+.bars .summary-row small {order:2}
+.bars .summary-row:nth-child(2) .row-track b {opacity:.55}
+.bars .summary-row:nth-child(3) .row-track b {opacity:.3}
+.detailed-rows .summary-row {align-items:flex-start;padding:9px 0;font-size:13px;line-height:1.4}
+.detailed-rows .row-text {white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.detailed-rows .row-copy small {display:block;max-width:100%;margin-top:4px;font-size:11.5px;line-height:1.4}
+.row-type {width:27px;height:27px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:11px;margin-top:1px}
+.row-type.idea {width:7px;height:7px;border-radius:50%;background:var(--accent);font-size:0;margin-top:6px}
+.row-badge {flex:none;border-radius:5px;background:var(--bg-tertiary);color:var(--text-secondary);padding:2px 6px;font-size:11px;white-space:nowrap;margin-top:1px}
+.row-badge.danger {color:var(--danger);background:var(--danger-soft)}
+.compact-metric .summary-label {font-size:12px}
+.compact-metric .badge {margin-left:auto}
+.detailed-rows:not(.narrow) .summary-label {font-size:12px}
+.summary-foot {display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;flex:none;margin-top:auto;padding-top:10px;height:28px;color:var(--text-faint);font-size:11.5px;text-align:left}
+.summary-foot>span:first-child {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.foot-action {color:var(--accent);display:flex;gap:4px;align-items:center;flex:none}
+.narrow .summary-row {padding:0;font-size:12px;align-items:center}
+.narrow .row-text {white-space:nowrap;display:block}
+.narrow .bars .row-copy {flex:1;width:auto}
+.narrow .row-track {display:none}
+
 .row-track {position:absolute;bottom:4px;left:0;right:0;height:3px;border-radius:2px;background:var(--bg-tertiary);overflow:hidden}
 .row-track b {height:100%;display:block;background:var(--accent);opacity:.8;border-radius:2px}
 

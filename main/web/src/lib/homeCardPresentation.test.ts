@@ -30,3 +30,18 @@ test('图表与条目共享高度预算，不因空数据补出虚构条目', ()
     }
   }
 });
+
+
+test('紧凑卡片为来源、两行标题和底部入口预留空间，小卡不显示残缺行', () => {
+  for (const width of [75, 164, 300, 600]) for (const height of [50, 100, 180, 280, 600]) {
+    for (const metric of ['hidden', 'compact', 'full'] as const) {
+      const plan = cardContentPlan(width, height, 12, undefined, { metric, list: true, footer: true });
+      const metricHeight = width < 120 ? 44 : metric === 'hidden' ? 0 : metric === 'compact' ? 26 : 46;
+      const fixed = metricHeight + 8 + 28;
+      assert.ok(plan.rows * plan.rowHeight + fixed <= Math.max(height, fixed));
+    }
+  }
+  assert.equal(cardContentPlan(300, 50, 4, undefined, { list: true, metric: 'compact', footer: true }).rows, 0);
+  assert.equal(cardContentPlan(300, 226, 4, undefined, { list: true, metric: 'hidden', footer: true }).rows, 2);
+  assert.ok(cardContentPlan(300, 300, 12, undefined, { list: true, metric: 'hidden', footer: true }).rows > cardContentPlan(300, 300, 12, undefined, { list: true, metric: 'compact', footer: true }).rows);
+});

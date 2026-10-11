@@ -17,8 +17,10 @@
     <template v-else>
       <header v-if="layout === 'editor'" class="action-head">
         <span class="action-symbol"><Icon :name="icon" :size="17" /></span><strong :title="title">{{ title }}</strong>
+        <button v-if="!expanded" class="text-action" type="button" @click="isAsk ? $emit('continue') : $emit('new')">{{ isAsk ? '继续聊' : '新建' }}</button>
         <button v-if="!expanded" class="action-expand" type="button" :aria-label="`展开${title}`" @click="$emit('open')"><Icon name="arrow-up-right" :size="14" /></button>
       </header>
+      <div class="writing-frame" :class="{ 'writing-panel': layout === 'editor' }">
       <div class="action-writing">
         <textarea ref="input" v-model="draft" :rows="layout === 'bar' ? 1 : 3" :wrap="layout === 'bar' ? 'off' : 'soft'" :placeholder="isAsk ? '问点什么…' : '记个想法…'" :aria-label="isAsk ? '快速问答输入' : '快速灵感输入'" :disabled="busy" @keydown="onKey" />
         <button v-if="layout === 'bar' && width >= 3" class="bar-helper" type="button" :aria-label="isAsk ? '概括资料' : '展开续写'" :title="isAsk ? '概括资料' : '展开续写'" :disabled="busy" @click="primaryAction"><Icon :name="isAsk ? 'report' : 'restore'" :size="16" /></button>
@@ -26,10 +28,13 @@
         <button v-if="layout === 'bar' && error" class="bar-error" type="button" :title="error" aria-label="查看提交错误" @click="$emit('open')"><Icon name="alert" :size="14" /></button>
       </div>
       <footer v-if="layout === 'editor'" class="action-foot">
-        <span class="action-hint">{{ busy ? '正在提交…' : draft ? `${draft.length} 字` : isAsk ? '从一个问题开始' : '随手记录 · 稍后整理' }}</span>
-        <button v-if="expanded || width >= 3" class="text-action" type="button" :disabled="busy" @click="primaryAction">{{ isAsk ? '概括资料' : '继续写' }}</button>
+        <span class="action-hint">{{ busy ? '正在提交…' : draft ? `${draft.length} 字` : '' }}</span>
+        <button v-if="(expanded || width >= 3) && !(isAsk && !expanded && width >= 3 && height >= 3)" class="text-action" type="button" :disabled="busy" @click="primaryAction">{{ isAsk ? '概括资料' : '继续写' }}</button>
         <button class="action-submit" type="button" :disabled="!canSubmit || busy" @click="submit">{{ submitLabel }}</button>
       </footer>
+      </div>
+      <button v-if="layout === 'editor' && !expanded && width >= 3 && height >= 3 && !isAsk && recentPath" class="action-latest" type="button" :title="recentTitle" @click="$emit('go', recentPath)"><span>最近</span><strong>{{ recentTitle }}</strong><Icon name="arrow-up-right" :size="12" /></button>
+      <div v-if="layout === 'editor' && !expanded && width >= 3 && height >= 3 && isAsk" class="action-prompts"><button class="text-action" type="button" @click="primaryAction">概括资料</button><button class="text-action" type="button" @click="secondaryAction">查找资料</button></div>
       <p v-if="layout === 'editor' && error" class="action-error" role="alert">{{ error }}</p>
       <p v-if="layout === 'editor' && draft.trim().length > IDEA_MAX_CHARS" class="action-error" role="alert">内容最多 {{ IDEA_MAX_CHARS.toLocaleString() }} 字，请精简后提交。</p>
     </template>
@@ -41,6 +46,7 @@ import Icon from '../Icon.vue';
 import AppSpinner from '../ui/AppSpinner.vue';
 import { IDEA_MAX_CHARS, canSubmitIdea } from '../../lib/ideaComposer';
 import { isHomeActionSubmitKey } from '../../lib/homeAction.ts';
+import { documentTitleParts } from '../../lib/documentTitle.ts';
 
 const props = withDefaults(defineProps<{
   mode: 'ask' | 'capture'; title: string; width: number; height: number; expanded: boolean;
@@ -56,7 +62,7 @@ const layout = computed(() => props.expanded ? 'editor' : props.width === 1 ? pr
 const canSubmit = computed(() => canSubmitIdea(draft.value));
 const submitLabel = computed(() => busy.value ? '提交中' : isAsk.value ? '发送' : '记下');
 const recent = computed(() => props.ideas[0]);
-const recentTitle = computed(() => recent.value?.title || (recent.value ? '最近灵感' : '暂无灵感'));
+const recentTitle = computed(() => documentTitleParts(recent.value?.title || (recent.value ? '最近灵感' : '暂无灵感')).name);
 const recentPath = computed(() => recent.value?.id ? `/page/${encodeURIComponent(recent.value.id)}` : recent.value?.path ? `/page?file=${encodeURIComponent(recent.value.path)}` : '');
 watch(() => props.expanded, async (open) => { if (open) { await nextTick(); input.value?.focus(); } });
 function primaryAction() {
@@ -117,6 +123,21 @@ function onKey(event: KeyboardEvent) {
 .action-head { display:flex;gap:8px;align-items:center;flex:none;margin-bottom:8px;min-width:0; }
 .action-head strong { font-size:12px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600; }
 .editor .action-writing { align-items:stretch; }
+.writing-frame { display:flex;flex:1;min-width:0;min-height:0;flex-direction:column; }
+.bar .writing-frame { flex-direction:row;align-items:center; }
+.writing-panel { border:1px solid var(--border);border-radius:12px;background:var(--bg-secondary);transition:border-color 150ms,box-shadow 150ms;overflow:hidden; }
+.writing-panel:focus-within { border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft); }
+.editor .action-head { margin-bottom:12px;min-height:26px;gap:8px; }
+.editor .action-head .action-symbol { width:17px;height:17px;background:transparent;border-radius:0; }
+.editor .action-head strong { font-size:13px; }
+.editor .action-expand { width:22px;height:26px; }
+.editor .action-writing textarea { padding:10px 12px;border:0;box-shadow:none;line-height:1.65; }
+.editor .action-foot { border:0;margin:0;padding:0 10px 10px;gap:6px; }
+.action-latest { display:flex;align-items:center;gap:8px;flex:none;text-align:left;margin-top:12px;font-size:11.5px!important;color:var(--text-faint);background:transparent; }
+.action-latest strong { flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--text-secondary);font-weight:500; }
+.action-prompts { display:flex;gap:7px;flex:none;flex-wrap:wrap;margin-top:10px; }
+.action-prompts .text-action { border:1px solid var(--border);border-radius:7px;padding:4px 8px; }
+@container (max-width:200px) { .editor .action-head>.text-action,.editor .action-foot>.text-action { display:none; } .editor .action-foot { padding:0 7px 7px; } .editor .action-hint { font-size:10px; } }
 .editor textarea { font-size:14px; }
 .action-foot { display:flex;gap:8px;align-items:center;flex:none;min-width:0;padding-top:8px;margin-top:8px;border-top:1px solid var(--border); }
 .action-hint { flex:1;font-size:11px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }

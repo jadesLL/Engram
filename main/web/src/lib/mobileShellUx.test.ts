@@ -182,7 +182,7 @@ test('触屏上的键盘提示全部换掉：首页模块、对话输入框、�
   const capture = readSrc('components/HomeBoardModules/HomeActionComposer.vue');
   const captureTemplate = capture.split('</template>')[0].replace(/<!--[\s\S]*?-->/g, '');
   assert.doesNotMatch(captureTemplate, /Ctrl\+N|Ctrl\+Enter/, '速记可见文案不应在手机上显示键盘提示');
-  assert.match(capture, /随手记录 · 稍后整理/, '速记应给出适用于触屏的整理说明');
+  assert.match(capture, /记个想法…/, '速记输入应保留适用于触屏的占位提示');
 
   const shortcuts = readSrc('components/HomeBoardModules/HomeShortcuts.vue');
   assert.match(shortcuts, /touchPointer \? '搜页面与资料' : 'Ctrl\+K'/, '首页快捷入口仍在手机上显示 Ctrl+K');
