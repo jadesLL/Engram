@@ -12,6 +12,8 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 # .npmrc 必须在依赖层之后复制：它是给宿主机/客户机 pnpm install 的下载镜像（electron、
 # better-sqlite3 postinstall），镜像内 verify 的单测会断言它在位；放前面会让依赖层每次失效
 COPY .npmrc ./
+# 安装镜像配置回归测试读取 Dockerfile，放在依赖层之后，避免重新安装依赖。
+COPY Dockerfile ./
 COPY server server
 COPY web web
 # desktop/scripts：依赖同步（sync-deps.js）与桌面端脚本的单测，随 verify 目标一起跑
@@ -35,9 +37,11 @@ RUN printf '%s' "$ENGRAM_GIT_SHA" > /app/GIT_SHA
 
 # ---------- 生产依赖（编译 better-sqlite3 原生模块） ----------
 FROM node:22-slim AS deps
+# 显式使用 HTTPS；只替换域名会保留基础镜像的 HTTP 协议，下载 .deb 时曾返回 403。
+# 同时兼容基础镜像中 HTTP/HTTPS 两种源地址，保留 Debian 自带的签名与 TLS 校验。
 RUN sed -i \
-  -e 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
-  -e 's|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+  -e 's|https\?://deb\.debian\.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
+  -e 's|https\?://security\.debian\.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
   /etc/apt/sources.list.d/debian.sources \
   && corepack enable && corepack prepare pnpm@10.20.0 --activate \
   && pnpm config set registry https://registry.npmmirror.com \

@@ -32,4 +32,17 @@ assert.equal(
   'better_sqlite3_binary_host_mirror 必须指向 npmmirror 的 better-sqlite3 镜像',
 );
 
-console.log('install-mirrors: 通过（electron / better-sqlite3 镜像键均在位）');
+// Docker 构建的系统依赖源也必须显式指定 HTTPS；仅换域名会继承基础镜像的 HTTP。
+const dockerfile = fs.readFileSync(path.resolve(__dirname, '..', '..', '..', 'Dockerfile'), 'utf8');
+const depsStage = dockerfile.split('FROM node:22-slim AS deps')[1].split('FROM build AS test')[0];
+for (const host of ['deb.debian.org', 'security.debian.org']) {
+  const escapedHost = host.replaceAll('.', '\\.');
+  assert.ok(
+    depsStage.includes(`-e 's|https\\?://${escapedHost}|https://mirrors.tuna.tsinghua.edu.cn|g'`),
+    `Docker Debian 源 ${host} 必须把 HTTP/HTTPS 都规范为 HTTPS 镜像地址`,
+  );
+}
+assert.doesNotMatch(depsStage, /Verify-(?:Peer|Host)\s*[=:]?\s*["']?false|trusted\s*=\s*yes|--allow-unauthenticated/i,
+  '不得通过关闭 TLS 或软件包签名校验绕过源下载错误');
+
+console.log('install-mirrors: 通过（electron / better-sqlite3 镜像键与 Docker HTTPS 源均在位）');
