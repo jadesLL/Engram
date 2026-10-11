@@ -679,7 +679,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             localCount++
             val path = file.canonicalPath.removePrefix(brainPrefix).replace('\\', '/')
             if (path !in remotePaths && path !in stalePaths) {
-                val kind = if (file.extension.equals("md", true) || file.extension.equals("markdown", true)) "page" else "file"
+                val kind = if (!InboxFiles.contains(path) && (file.extension.equals("md", true) || file.extension.equals("markdown", true))) "page" else "file"
                 db.enqueue(kind, path)
             }
         }

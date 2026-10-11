@@ -4,12 +4,14 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.Manifest;
 import android.content.Intent;
+import android.content.ClipData;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
+import android.text.Html;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
@@ -24,6 +26,7 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+import androidx.core.content.IntentCompat;
 import androidx.core.splashscreen.SplashScreen;
 
 import com.getcapacitor.BridgeActivity;
@@ -37,6 +40,7 @@ import java.io.FileOutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 
 public class MainActivity extends BridgeActivity {
 
@@ -56,6 +60,8 @@ public class MainActivity extends BridgeActivity {
     private volatile String pendingJoinLink;
     /** 邀请链接投递重试次数：页面还在启动/登录页时每 300ms 重试一次，避免链接被吞掉 */
     private int joinLinkAttempts;
+    private boolean pendingShareInbox;
+    private int shareInboxAttempts;
     /** 系统栏（状态栏/导航栏/大屏任务栏）：透明 + 尺寸交给网页，见 SystemBars。 */
     private SystemBars systemBars;
     /** 系统解锁（指纹/人脸/锁屏密码）：登录页用，见 BiometricUnlock。 */
@@ -330,6 +336,8 @@ public class MainActivity extends BridgeActivity {
                     // 页面已就绪：如果手上还攥着一条邀请链接（冷启动时点的），现在投递最稳
                     joinLinkAttempts = 0;
                     deliverPendingJoinLink();
+                    shareInboxAttempts = 0;
+                    deliverPendingShareInbox();
                     // 页面已就绪：清掉「正在启动」占位页那一格历史，否则根页面按返回会退回空白页；
                     // 并把系统栏尺寸推给网页（WebView 里 env(safe-area-inset-*) 不可靠）。
                     webView.clearHistory();
@@ -495,7 +503,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * 系统分享入口：文字与文件先写进 Android 私有库的「原始资料/文档」，写入成功后走
+     * 系统分享入口：文字与文件先写进 Android 私有库的「收集箱」，写入成功后走
      * 普通同步 outbox。这里只接收用户主动分享给 Engram 的 URI，不申请全盘存储权限。
      */
     private void handleIncomingShare(Intent intent) {
@@ -506,27 +514,53 @@ public class MainActivity extends BridgeActivity {
         intent.setAction(null);
         new Thread(() -> {
             int imported = 0;
+            ArrayList<String> failures = new ArrayList<>();
             try {
                 EngramLocalServer server = EngramLocalServer.getInstance(getApplicationContext());
-                String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+                CharSequence sharedText = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+                String text = sharedText == null ? null : sharedText.toString();
+                if (text == null || text.trim().isEmpty()) {
+                    String html = intent.getStringExtra(Intent.EXTRA_HTML_TEXT);
+                    if (html != null) text = (Build.VERSION.SDK_INT >= 24
+                            ? Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY) : Html.fromHtml(html)).toString();
+                }
                 String subject = intent.getStringExtra(Intent.EXTRA_SUBJECT);
                 if (text != null && !text.trim().isEmpty()) {
-                    server.importSharedText(subject, text);
-                    imported++;
+                    try {
+                        server.importSharedText(subject, text);
+                        imported++;
+                    } catch (Exception error) { failures.add("文字：" + error.getMessage()); }
                 }
 
-                ArrayList<Uri> uris = new ArrayList<>();
+                LinkedHashSet<Uri> uris = new LinkedHashSet<>();
                 if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
-                    ArrayList<Uri> multiple = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+                    ArrayList<Uri> multiple = IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri.class);
                     if (multiple != null) uris.addAll(multiple);
                 } else {
-                    Uri single = (Uri) intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                    Uri single = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri.class);
                     if (single != null) uris.add(single);
                 }
+                // 有的分享方只放 ClipData；同一 URI 常同时出现在 EXTRA_STREAM，必须去重。
+                ClipData clip = intent.getClipData();
+                if (clip != null) for (int i = 0; i < clip.getItemCount(); i++) {
+                    Uri uri = clip.getItemAt(i).getUri();
+                    if (uri != null) uris.add(uri);
+                }
+                if ((text == null || text.trim().isEmpty()) && clip != null && clip.getItemCount() > 0) {
+                    CharSequence clipText = clip.getItemAt(0).getText();
+                    if (clipText != null && !clipText.toString().trim().isEmpty()) {
+                        try { server.importSharedText(subject, clipText.toString()); imported++; }
+                        catch (Exception error) { failures.add("文字：" + error.getMessage()); }
+                    }
+                }
                 for (Uri uri : uris) {
-                    String name = sharedDisplayName(uri);
-                    File staged = File.createTempFile("engram-share-", ".tmp", getCacheDir());
+                    File staged = null;
                     try {
+                        if (uri == null || !"content".equalsIgnoreCase(uri.getScheme())) {
+                            throw new IllegalArgumentException("分享文件必须通过 content URI 授权读取");
+                        }
+                        String name = sharedDisplayName(uri);
+                        staged = File.createTempFile("engram-share-", ".tmp", getCacheDir());
                         try (InputStream input = getContentResolver().openInputStream(uri);
                              OutputStream output = new FileOutputStream(staged)) {
                             if (input == null) throw new IllegalStateException("无法读取分享文件");
@@ -541,20 +575,40 @@ public class MainActivity extends BridgeActivity {
                         }
                         server.importSharedFile(name, staged);
                         imported++;
+                    } catch (Exception error) {
+                        failures.add(error.getMessage() == null ? "无法读取分享文件" : error.getMessage());
                     } finally {
-                        staged.delete();
+                        if (staged != null) staged.delete();
                     }
                 }
                 final int count = imported;
-                runOnUiThread(() -> Toast.makeText(
-                        this,
-                        count > 0 ? "已收入本地收集箱" + (count > 1 ? "（" + count + " 项）" : "") : "没有可导入的分享内容",
-                        Toast.LENGTH_LONG
-                ).show());
+                runOnUiThread(() -> {
+                    String message = count > 0 ? "已收入收集箱（" + count + " 项）" : "没有可导入的分享内容";
+                    if (!failures.isEmpty()) message += "；" + failures.size() + " 项失败：" + failures.get(0);
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                    if (count > 0) {
+                        pendingShareInbox = true;
+                        shareInboxAttempts = 0;
+                        deliverPendingShareInbox();
+                    }
+                });
             } catch (Exception error) {
                 runOnUiThread(() -> Toast.makeText(this, "接收分享失败：" + error.getMessage(), Toast.LENGTH_LONG).show());
             }
         }, "engram-share-import").start();
+    }
+
+    /** 页面/登录未就绪时保留投递；网页接收后负责等待登录并打开、刷新收集箱。 */
+    private void deliverPendingShareInbox() {
+        WebView webView = bridge != null ? bridge.getWebView() : null;
+        if (!pendingShareInbox || webView == null || isFinishing() || isDestroyed()) return;
+        if (shareInboxAttempts++ > 100) return;
+        webView.evaluateJavascript(
+                "(function(){try{return location.hostname==='127.0.0.1'&&typeof window.__engramShareInbox==='function'&&window.__engramShareInbox()===true}catch(e){return false}})()",
+                handled -> {
+                    if ("true".equals(handled)) { pendingShareInbox = false; shareInboxAttempts = 0; }
+                    else webView.postDelayed(this::deliverPendingShareInbox, 300);
+                });
     }
 
     /**

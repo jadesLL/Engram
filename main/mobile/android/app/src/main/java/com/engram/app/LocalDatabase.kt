@@ -138,6 +138,10 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun scan() = synchronized(lock) {
         val startedAt = System.currentTimeMillis()
         val db = writableDatabase
+        // 旧版同步可能把收集箱的 Markdown 当页面；升级时去掉知识索引，保留原文件。
+        db.execSQL("DELETE FROM search_tokens WHERE ref_type='page' AND ref_id IN (SELECT id FROM pages WHERE path LIKE '收集箱/%')")
+        db.execSQL("DELETE FROM search_tokens WHERE ref_type='file' AND ref_id IN (SELECT id FROM files WHERE path LIKE '收集箱/%')")
+        db.execSQL("DELETE FROM pages WHERE path LIKE '收集箱/%'")
         val indexed = HashSet<String>()
         db.rawQuery("SELECT path FROM pages WHERE deleted=0 UNION SELECT path FROM files WHERE deleted=0", null).use { c ->
             while (c.moveToNext()) indexed.add(c.getString(0))
@@ -159,7 +163,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
                     indexed.contains(rel) && state[rel] == stamp -> reused++
                     // 旧版已为 App 私有文件建立索引；升级时只登记文件状态，避免整库重复解析。
                     indexed.contains(rel) && !state.containsKey(rel) -> { recordScanState(rel, file); reused++ }
-                    file.extension.equals("md", true) || file.extension.equals("markdown", true) -> { indexPageInternal(rel, false); refreshed++ }
+                    !InboxFiles.contains(rel) && (file.extension.equals("md", true) || file.extension.equals("markdown", true)) -> { indexPageInternal(rel, false); refreshed++ }
                     else -> { indexFileInternal(rel, null, false); refreshed++ }
                 }
             }
@@ -241,6 +245,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     private fun indexPage(rel: String): JSONObject = indexPageInternal(rel, true)!!
 
     private fun indexPageInternal(rel: String, includeResult: Boolean): JSONObject? {
+        if (InboxFiles.contains(rel)) return indexFileInternal(rel, null, includeResult)
         val file = safe(rel)
         val parsed = parseMarkdown(file.readText())
         val id = field(parsed.fields, "id") ?: newId()
@@ -272,13 +277,15 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     private fun indexFileInternal(rel: String, extractedText: String?, includeResult: Boolean): JSONObject? {
         val file = safe(rel)
         val oldText = readableDatabase.rawQuery("SELECT text FROM files WHERE path=?", arrayOf(rel)).use { if (it.moveToFirst()) it.getString(0) else "" }
-        val text = extractedText ?: if (file.extension.lowercase() in setOf("txt", "csv", "json", "html", "xml")) runCatching { file.readText() }.getOrDefault("") else oldText
+        val text = if (InboxFiles.contains(rel)) "" else extractedText ?: if (file.extension.lowercase() in setOf("txt", "csv", "json", "html", "xml")) runCatching { file.readText() }.getOrDefault("") else oldText
         val id = readableDatabase.rawQuery("SELECT id FROM files WHERE path=?", arrayOf(rel)).use { if (it.moveToFirst()) it.getString(0) else newId() }
         writableDatabase.execSQL(
             """INSERT OR REPLACE INTO files(id,path,name,ext,size,text,updated_at,deleted) VALUES(?,?,?,?,?,?,?,0)""",
             arrayOf(id, rel, file.name, file.extension.lowercase(), file.length(), text, Instant.ofEpochMilli(file.lastModified()).toString()),
         )
-        reindex("file", id, "${file.name} $text")
+        if (InboxFiles.contains(rel)) {
+            writableDatabase.execSQL("DELETE FROM search_tokens WHERE ref_type='file' AND ref_id=?", arrayOf(id))
+        } else reindex("file", id, "${file.name} $text")
         recordScanState(rel, file)
         return if (includeResult) fileJson(id)!! else null
     }
@@ -585,7 +592,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         require(!target.exists()) { "已存在同名文件：${target.name}" }
         target.parentFile?.mkdirs()
         Os.rename(staged.absolutePath, target.absolutePath)
-        if (target.extension.equals("md", true) || target.extension.equals("markdown", true)) {
+        if (!InboxFiles.contains(rel) && (target.extension.equals("md", true) || target.extension.equals("markdown", true))) {
             indexPage(rel).also { enqueue("page", rel) }
         } else {
             indexFile(rel).also { enqueue("file", rel) }
@@ -609,26 +616,43 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         JSONObject().put("ok", true).put("path", rel).put("pageId", if (result.has("title")) result.getString("id") else JSONObject.NULL)
     }
 
-    /** Android 分享面板收到的文字先落本地事实源，再进入普通同步 outbox。 */
+    /** 分享文字/链接原样暂存在收集箱，尚未审阅入库，不建知识页面。 */
     fun importSharedText(requestedTitle: String?, text: String): String = synchronized(lock) {
         require(text.isNotBlank()) { "分享内容为空" }
-        val fallback = "手机分享-${Instant.now().toString().replace(Regex("[:.]"), "-")}"
-        // 80 个 UTF-16 字符即使全是中文也能留在常见 255-byte 文件名限制内。
-        val title = sanitizeName(requestedTitle.orEmpty()).take(80).ifBlank { fallback }
-        val rel = uniquePath(DEFAULT_RAW_DIR, "$title.md")
-        atomicWrite(safe(rel), "# $title\n\n${text.trim()}\n".toByteArray(StandardCharsets.UTF_8))
-        indexPage(rel)
-        enqueue("page", rel)
+        val rel = InboxFiles.uniquePath(brain, InboxFiles.textName(requestedTitle))
+        atomicWrite(safe(rel), text.toByteArray(StandardCharsets.UTF_8))
+        indexFile(rel)
+        enqueue("file", rel)
         rel
     }
 
     /** 分享来的图片/文档通过临时文件原子安装，保留原文件名并自动避让重名。 */
     fun installSharedFile(requestedName: String, staged: File): String = synchronized(lock) {
         require(staged.isFile) { "分享文件不存在" }
-        val name = sanitizeName(File(requestedName).name).ifBlank { "手机分享文件" }
-        val rel = uniquePath(DEFAULT_RAW_DIR, name)
+        val rel = InboxFiles.uniquePath(brain, requestedName)
         installImportedFile(rel, staged)
         rel
+    }
+
+    fun inboxFile(path: String): File = InboxFiles.resolve(brain, path)
+
+    fun inboxItems(): List<JSONObject> = synchronized(lock) {
+        InboxFiles.originals(brain).map { file ->
+            val rel = relative(file)
+            JSONObject().put("path", rel).put("name", file.name).put("rel", rel.removePrefix("收集箱/"))
+                .put("ext", file.extension.lowercase()).put("size", file.length()).put("mtime", file.lastModified())
+                .put("category", when (file.extension.lowercase()) {
+                    "txt", "md", "markdown", "json", "csv", "log" -> "text"
+                    "png", "jpg", "jpeg", "gif", "webp", "heic" -> "image"
+                    "pdf" -> "pdf"
+                    "doc", "docx", "odt", "rtf" -> "document"
+                    "html", "htm" -> "web"
+                    else -> "other"
+                })
+                .put("status", "pending").put("derivedPath", JSONObject.NULL).put("capability", "unsupported")
+                .put("hint", "已保存到手机收集箱；同步至中枢后可转换并入库")
+                .put("error", "").put("jobId", JSONObject.NULL).put("assistantSessionId", JSONObject.NULL)
+        }
     }
 
     private fun uniquePath(dir: String, requestedName: String): String {
@@ -707,7 +731,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         brain.walkTopDown().filter { it.isFile && !isInTrash(it) }.forEach { file ->
             val rel = relative(file)
             out.put(JSONObject()
-                .put("kind", if (file.extension.equals("md", true) || file.extension.equals("markdown", true)) "page" else "file")
+                .put("kind", if (!InboxFiles.contains(rel) && (file.extension.equals("md", true) || file.extension.equals("markdown", true))) "page" else "file")
                 .put("path", rel)
                 .put("hash", sha256(file))
                 .put("revision", pageRevision(rel))
@@ -731,7 +755,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
 
     fun tree(): JSONArray = synchronized(lock) { treeAt(brain, true) }
     private fun treeAt(dir: File, top: Boolean = false): JSONArray {
-        val out = JSONArray(); val hidden = setOf(".trash", "assets")
+        val out = JSONArray(); val hidden = setOf(".trash", "assets", InboxFiles.DIRECTORY)
         dir.listFiles()?.filter { !it.name.startsWith('.') && !(top && hidden.contains(it.name)) }?.sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name })?.forEach { file ->
             val rel = relative(file)
             if (file.isDirectory) out.put(JSONObject().put("kind", "dir").put("name", file.name).put("path", rel).put("children", treeAt(file)))

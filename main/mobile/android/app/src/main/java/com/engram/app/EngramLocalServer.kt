@@ -92,8 +92,8 @@ class EngramLocalServer private constructor(private val context: Context) {
     }
     fun onBackground() = sync.onBackground()
     fun requestSync(full: Boolean) = sync.request(full)
-    fun importSharedText(title: String?, text: String): String = db.importSharedText(title, text)
-    fun importSharedFile(name: String, staged: File): String = db.installSharedFile(name, staged)
+    fun importSharedText(title: String?, text: String): String = db.importSharedText(title, text).also { sync.request(false) }
+    fun importSharedFile(name: String, staged: File): String = db.installSharedFile(name, staged).also { sync.request(false) }
 
     /** 旧远程壳升级：只把旧地址预填为候选中枢，不启用同步、不覆盖本地库。 */
     fun migrateLegacyRemoteUrl() {
@@ -489,13 +489,50 @@ class EngramLocalServer private constructor(private val context: Context) {
         get("/api/tasks/board/config") { call.proxyAgent("GET", "/api/tasks/board/config") }
         put("/api/tasks/board/config") { call.proxyAgent("PUT", "/api/tasks/board/config", call.receiveText()) }
 
-        // 收集箱：语义转换要中枢的内置 Agent，本机不跑模型也不跑任务队列，整条交互面按同一模式窄代理。
-        // 收集箱原件走同步落在两端同一目录，所以中枢看到的文件与手机上是同一份。
-        get("/api/inbox/items") { call.proxyHub("GET", "/api/inbox/items") }
+        // 本机原件离线也可见；在线时合并中枢的转换状态。语义转换仍由中枢完成。
+        get("/api/inbox/items") {
+            if (!call.authorize()) return@get
+            val items = linkedMapOf<String, JSONObject>()
+            db.inboxItems().forEach { items[it.getString("path")] = it }
+            val deleted = db.outbox().filter { it.optString("kind") == "delete" }.map { it.optString("target") }.toSet()
+            if (agent.configured() && sync.connected) {
+                runCatching {
+                    val remote = agent.request("GET", "/api/inbox/items")
+                    if (remote.status == 200) {
+                        val rows = JSONObject(String(remote.body, Charsets.UTF_8)).optJSONArray("items") ?: JSONArray()
+                        for (i in 0 until rows.length()) {
+                            val item = rows.optJSONObject(i) ?: continue
+                            val path = item.optString("path")
+                            if (InboxFiles.contains(path) && path !in deleted) items[path] = item
+                        }
+                    }
+                }
+            }
+            val sorted = items.values.sortedByDescending { it.optLong("mtime") }
+            val counts = JSONObject().put("all", sorted.size)
+            for (status in listOf("pending", "converted", "converting", "failed")) counts.put(status, sorted.count { it.optString("status") == status })
+            call.json(JSONObject().put("items", JSONArray(sorted)).put("counts", counts))
+        }
         post("/api/inbox/upload") { call.proxyHubUpload() }
         post("/api/inbox/fetch-url") { call.proxyHub("POST", "/api/inbox/fetch-url", call.receiveText()) }
-        get("/api/inbox/download") { call.proxyHubDownload() }
-        delete("/api/inbox/items") { call.proxyHub("DELETE", "/api/inbox/items", call.receiveText()) }
+        get("/api/inbox/download") {
+            if (!call.authorize()) return@get
+            val file = db.inboxFile(call.request.queryParameters["path"].orEmpty())
+            if (file.isFile) {
+                call.response.header(HttpHeaders.ContentDisposition, "attachment; filename*=UTF-8''${encoded(file.name)}")
+                call.respondOutputStream(ContentType.Application.OctetStream) { file.inputStream().use { it.copyTo(this, 64 * 1024) } }
+            } else call.proxyHubDownload()
+        }
+        delete("/api/inbox/items") {
+            if (!call.authorize()) return@delete
+            val body = call.body()
+            val path = body.optString("path")
+            if (db.inboxFile(path).isFile) {
+                db.deleteFile(path)
+                sync.request(false)
+                call.json(JSONObject().put("ok", true))
+            } else call.proxyHub("DELETE", "/api/inbox/items", body.toString())
+        }
         get("/api/inbox/derived-path") {
             call.proxyHub("GET", "/api/inbox/derived-path?path=${encoded(call.request.queryParameters["path"].orEmpty())}")
         }
