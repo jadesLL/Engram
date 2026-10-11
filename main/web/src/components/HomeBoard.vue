@@ -473,8 +473,11 @@ const targetPreview = ref<GridPlace | null>(null);
 const previewBoard = ref<HomeBoard | null>(null);
 const ghost = ref({ x: 0, y: 0 });
 const gestureMode = ref<'move' | 'resize'>('move');
-const gridWidth = ref(1000);
-const displayColumns = computed(() => store.editing ? GRID_COLS : viewportColumns(gridWidth.value));
+const gridWidth = ref(1056);
+const mobileMedia = window.matchMedia('(max-width: 768px)');
+const mobileBoard = ref(mobileMedia.matches);
+// 桌面浏览/编辑共用固定画布；只在手机浏览态按可用空间重排。
+const displayColumns = computed(() => !mobileBoard.value || store.editing ? GRID_COLS : viewportColumns(gridWidth.value));
 const displayPlaces = computed(() => viewportPlaces((previewBoard.value || store.board).modules, displayColumns.value));
 const unit = computed(() => Math.max(1, (gridWidth.value - 14 * (displayColumns.value - 1)) / displayColumns.value));
 const gridRows = computed(() => Math.max(2, usedRows(displayPlaces.value)));
@@ -488,7 +491,7 @@ watch(gridEl, (el) => {
 let frame = 0;
 let gesture: {
   mode: 'move' | 'resize'; id: string; pointer: number;
-  startX: number; startY: number; x: number; y: number; scroll: number;
+  startX: number; startY: number; x: number; y: number; scroll: number; scrollX: number;
   origin: GridPlace; snapshot: HomeBoard; cell: number; active: boolean;
 } | null = null;
 function modulePlace(module: HomeModule): GridPlace { return { col: module.col, row: module.row, w: module.w, h: module.h }; }
@@ -505,7 +508,7 @@ function beginGesture(event: PointerEvent, id: string, mode: 'move' | 'resize') 
   store.setEditing(true);
   gestureMode.value = mode;
   gesture = { mode, id, pointer: event.pointerId, startX: event.clientX, startY: event.clientY,
-    x: event.clientX, y: event.clientY, scroll: boardEl.value?.scrollTop || 0,
+    x: event.clientX, y: event.clientY, scroll: boardEl.value?.scrollTop || 0, scrollX: boardEl.value?.scrollLeft || 0,
     origin: modulePlace(module), snapshot: JSON.parse(JSON.stringify(store.board)), cell: unit.value + 14, active: false };
   window.addEventListener('pointermove', onGestureMove, { passive: false });
   window.addEventListener('pointerup', onGestureEnd);
@@ -524,8 +527,10 @@ function updateGesture() {
     const edge = 54;
     const delta = g.y < box.top + edge ? -Math.min(14, (box.top + edge - g.y) / 4) : g.y > box.bottom - edge ? Math.min(14, (g.y - box.bottom + edge) / 4) : 0;
     if (delta) host.scrollTop += delta;
+    const deltaX = g.x < box.left + edge ? -Math.min(14, (box.left + edge - g.x) / 4) : g.x > box.right - edge ? Math.min(14, (g.x - box.right + edge) / 4) : 0;
+    if (deltaX) host.scrollLeft += deltaX;
   }
-  const dx = g.x - g.startX;
+  const dx = g.x - g.startX + (g.mode === 'move' ? (host?.scrollLeft || 0) - g.scrollX : 0);
   const dy = g.y - g.startY + (g.mode === 'move' ? (host?.scrollTop || 0) - g.scroll : 0);
   ghost.value = { x: dx, y: dy };
   const wanted = normalizePlace(g.mode === 'move'
@@ -608,7 +613,12 @@ function onBoardKey(event: KeyboardEvent) {
   event.preventDefault();
   onModuleKey(module, step[0], step[1], event.shiftKey);
 }
+function onBoardViewportChange(event: MediaQueryListEvent) {
+  onGestureEnd();
+  mobileBoard.value = event.matches;
+}
 onMounted(() => {
+  mobileMedia.addEventListener('change', onBoardViewportChange);
   window.addEventListener('keydown', onBoardKey);
   window.addEventListener('focus', refreshQueue);
   document.addEventListener('visibilitychange', refreshQueue);
@@ -616,6 +626,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  mobileMedia.removeEventListener('change', onBoardViewportChange);
   clearInterval(queueTimer);
   window.removeEventListener('focus', refreshQueue);
   document.removeEventListener('visibilitychange', refreshQueue);
@@ -638,11 +649,10 @@ onUnmounted(() => {
 .board {
   height: 100%;
   display: flex;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
 }
 .board.editing-board { overflow-x:auto; }
-.editing-board .board-inner { min-width:930px; }
 /*
  * 容器查询的宿主：整页可滚容器是 .board，居中则由 .board-inner 的 auto 外边距负责，
  * 所以中间再垫一层。它只做一件事——把「正文实际有多宽」暴露给下面的 @container 规则
@@ -658,12 +668,9 @@ onUnmounted(() => {
 /* 上下 auto 之外，.board-inner 原有的 margin: auto 也把左右留白一起管了 */
 .board-cq > .board-inner { margin-top: 0; margin-bottom: 0; }
 /*
- * 内容宽度：固定页宽上限，不随窗口或列数缩放。
- *
- * 历史坑：曾经按「列数 × 单元宽 + 间距 + 页边距」算页宽，于是列数一变页宽也变；
- * 又曾经让 1 格 = 可用宽度 ÷ 列数，于是窗口越宽卡片越胖（2 列时 1 格 430px）。
- * 现在两条都定死：页宽上限 1120px（窗口更宽就居中留白），栅格固定 12 列、正方形格子等分页宽 ——
- * 「一格多大」只由页宽决定，用户改的是「一张卡占几格」。
+ * 桌面卡片栅格固定 1056px（单格约 75px），浏览态与编辑态共用。
+ * 标题与工具栏仍跟随可见宽度，窄窗口也能直接进入/退出编辑；卡片区域横向滚动。
+ * 宽窗口 auto 外边距居中，窄窗口从画布左边开始，不裁掉首列。
  */
 .board-inner {
   margin: auto;
@@ -815,10 +822,13 @@ onUnmounted(() => {
  * 每张卡的 grid-column / grid-row 由数据（col/row/w/h）直接写成内联样式，
  * 所以拖动 = 改数字、缩放 = 改数字，浏览器负责摆位——不会出现「卡片飞出页面」这种事
  * （2026-10-06 的瀑布流用绝对定位 + 脚本算像素，拖动时确实会跑到容器外）。
- * ResizeObserver 按可用宽度计算正方形行高；手势使用相同的格子尺寸与 14px 间距。
+ * ResizeObserver 按实际画布宽度计算正方形行高；桌面画布不随窗口宽度变化。
+ * 手势使用相同的格子尺寸与 14px 间距。
  */
 .board-grid {
   display: grid;
+  width: 1056px;
+  min-width: 1056px;
   grid-template-columns: repeat(var(--board-cols), minmax(0, 1fr));
   grid-auto-rows: var(--grid-row-h);
   /* 只画用到的行数（--grid-rows 由脚本按内容算），避免底部留一大片空白 */
@@ -876,10 +886,14 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1024px) {
-  .board-inner { padding: 32px 24px 56px; max-width: 100%; }
   .board-hero { align-items: center; gap: 12px; }
 }
 @media (max-width: 768px) {
+  .board { overflow-x: hidden; }
+  .board.editing-board { overflow-x: auto; }
+  .board-inner { width: 100%; min-width: 0; max-width: 100%; }
+  .editing-board .board-inner { min-width: 930px; }
+  .board-grid { width: 100%; min-width: 0; }
   .board-greeting { font-size: 24px; }
   .board-inner { padding: 24px 14px 40px; }
   .add-panel { grid-template-columns: 1fr; }
