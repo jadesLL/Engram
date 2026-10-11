@@ -27,6 +27,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -48,13 +51,26 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(6, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(0, TimeUnit.SECONDS)
+        // 不能是 0（无限）：半开连接下大附件上传会一直卡在 write() 上，读超时管不到「写不进」，
+        // 而 running 恒为 true 会让之后所有同步请求只排队不执行（界面停在「同步中」直到切后台）。
+        // 超时按单次写操作计（不是整个请求体），60 秒足够慢网下的分片上传。
+        .writeTimeout(60, TimeUnit.SECONDS)
         .build()
     private val clientV6 = httpClient.newBuilder().dns(FamilyDns(6)).build()
     private val clientV4 = httpClient.newBuilder().dns(FamilyDns(4)).build()
     private val running = AtomicBoolean(false)
     private val requestWhileRunning = AtomicBoolean(false)
     private val fullRequestWhileRunning = AtomicBoolean(false)
+    /**
+     * 失败后的自动重试表：前台拿着手机时网络瞬断，原来要等用户下一次编辑/切前后台才会再同步，
+     * 「改了不同步」且界面只会停在「同步中断」。这里按指数退避重试（15s 起、10 分钟封顶）。
+     * 守护线程——只有正在重试时才存在，不会拖住进程退出。
+     */
+    private val retryScheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "engram-sync-retry").apply { isDaemon = true }
+    }
+    @Volatile private var retryFuture: ScheduledFuture<*>? = null
+    @Volatile private var retryAttempt = 0
     @Volatile private var foreground = false
     @Volatile private var cancelled = false
     @Volatile var connected = false; private set
@@ -84,6 +100,9 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     private val deviceLabelSetting = "sync_device_label"
     /** 上次核对「已提炼」标记的时刻（节流用；与内容同步的 lastSyncAt 分开记） */
     private val ledgerMarksAtSetting = "sync_ledger_marks_at"
+    /** 中枢的灵感提炼队列状态（`/api/sync/distilled` 的 pending/failed），供 `/api/jobs` 桩按 job 形状发出 */
+    private val ideaDistillPendingSetting = "sync_idea_distill_pending"
+    private val ideaDistillFailedSetting = "sync_idea_distill_failed"
     /** 前台同步很频繁，标记核对默认每 5 分钟一次（手动全量对账不受此限） */
     private val ledgerMarksIntervalMs = 5 * 60_000L
 
@@ -112,11 +131,14 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         foreground = false
         cancelled = true
         connected = false
+        cancelPendingRetry() // 后台不排重试：省电，回到前台由事件触发
         activeCalls.forEach { it.cancel() }
     }
 
     fun request(full: Boolean) {
         if (!foreground || db.setting("sync_role") != "member" || db.setting("sync_enabled") != "1") return
+        // 已经要开跑了：撤掉排队中的重试，免得这一轮刚成功又被上一次的退避再拉起来一轮
+        cancelPendingRetry()
         if (!running.compareAndSet(false, true)) {
             requestWhileRunning.set(true)
             if (full) fullRequestWhileRunning.set(true)
@@ -149,6 +171,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 }
                 connected = true
                 lastError = null
+                retryAttempt = 0
                 lastSyncAt = Instant.now().toString().also { db.setSetting("sync_last_at", it) }
                 syncProgress = "同步完成"
                 // 结尾这条要说清「这轮到底动了什么」：没改动也明说，别让用户对着空白记录猜
@@ -167,16 +190,57 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 running.set(false)
                 val rerun = requestWhileRunning.getAndSet(false)
                 val rerunFull = fullRequestWhileRunning.getAndSet(false)
-                // 失败后保留持久化 outbox，等待下次前台/本机修改/手动同步。
-                // 不能因队列仍非空就立即递归重试：离线时这会形成无限请求与日志风暴。
+                // 失败后保留持久化 outbox，等退避重试或下次前台事件。
+                // 不因队列仍非空就立即递归重试：离线时那会形成无限请求与日志风暴。
                 if (completed && foreground && !cancelled && (rerun || db.outboxCount() > 0)) {
                     request(rerunFull)
+                } else if (!completed && foreground && !cancelled) {
+                    // 失败后的自动退避重试（见 retryScheduler 注释）：只有前台、未取消才排期，
+                    // 后台/离线的重试没有意义——省电，也让「同步中断」保持诚实。
+                    // 具体原因已在 catch 里记进 lastError 与同步日志，这里不重复传。
+                    scheduleRetry()
                 }
             }
         }
     }
 
+    /** 失败后的指数退避重试：15s、30s、60s…最多 10 分钟一次，成功后由 request() 归零 */
+    private fun scheduleRetry() {
+        val attempt = retryAttempt.coerceAtMost(6)
+        retryAttempt = attempt + 1
+        val delayMs = (15_000L shl attempt).coerceAtMost(10 * 60_000L)
+        syncProgress = "同步中断，${delayMs / 1000} 秒后自动重试"
+        retryFuture?.cancel(false)
+        retryFuture = try {
+            retryScheduler.schedule({ request(false) }, delayMs, TimeUnit.MILLISECONDS)
+        } catch (_: RejectedExecutionException) {
+            null // 调度器已关闭（进程收尾）：不排期，等下次前台事件
+        }
+    }
+
+    private fun cancelPendingRetry() {
+        retryFuture?.cancel(false)
+        retryFuture = null
+    }
+
     fun isRunning() = running.get()
+
+    /**
+     * 换中枢 / 重新配对 / 恢复备份后必须把增量游标归零。
+     *
+     * 游标是本端对「某个中枢的事件序号」的记忆，序号只在同一个中枢内可比。绑到别处（或备份把本地库
+     * 换掉）后仍拿旧游标去问 `changes?since=`，新中枢只会回 0 条；而本端推送又因 base_revision 高于
+     * 新中枢当前值走「直接覆盖」分支——结果是旧中枢的内容显示着、新中枢的内容被顶掉，且没有任何
+     * 报错。归零后下一轮按轻量清单做一次全量对账，内容与账本都能重新对齐。
+     */
+    fun resetCursor(reason: String) {
+        val previous = db.setting("sync_cursor")?.toLongOrNull() ?: 0L
+        if (previous <= 0L) return
+        db.setSetting("sync_cursor", "0")
+        // 标记核对的节流时刻一起归零：换中枢后要立刻重新核对「已提炼」标记，不能等 5 分钟窗口
+        db.setSetting(ledgerMarksAtSetting, "0")
+        db.log("info", "sync-cursor-reset", "$reason：增量游标已归零（$previous → 0），下次同步按全量对账重新对齐")
+    }
 
     private fun checkActive() { if (cancelled || !foreground) throw Cancelled() }
 
@@ -228,6 +292,9 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             throw error
         }
         db.setSetting(ledgerMarksAtSetting, now.toString())
+        // 顺带收下中枢的灵感提炼队列状态（pending/failed 路径）：手机的 /api/jobs 是空桩，
+        // 侧栏「提炼中 / 提炼失败」徽标就靠这份清单（与标记清单同一个成员可访问端点，不多打一次请求）
+        saveIdeaDistillStatus(response)
         val raw = response.optJSONArray("paths") ?: return
         val hub = LinkedHashSet<String>()
         for (i in 0 until raw.length()) raw.optString(i).takeIf { it.isNotBlank() }?.let(hub::add)
@@ -295,6 +362,7 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                         .put("mtime", db.file(target).lastModified())
                     db.evidence(target)?.let { payload.put("evidence", it) }
                     val ack = postJson("/api/sync/push", payload)
+                    if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); continue }
                     val revision = ack.optInt("revision")
                     val authoritative = ack.optString("content", raw)
                     db.writeSyncedPage(target, authoritative, revision)
@@ -306,20 +374,43 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                     val file = db.file(target)
                     if (!file.exists()) { db.ackOutbox(item.getLong("id")); continue }
                     val ack = postFile(target, file)
+                    if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); continue }
                     recordPush("push-file", SyncOpText.KIND_FILE, target, null, file.length(), ack.optInt("revision"))
                 }
                 "delete" -> {
                     val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "delete").put("target", target))
+                    if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); continue }
                     recordPush("push-delete", SyncOpText.KIND_DELETE, target, null, 0L, ack.optInt("revision"))
                 }
                 "move" -> {
                     val oldPath = item.optString("old_path")
                     val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "move").put("target", target).put("old_path", oldPath))
+                    if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); continue }
                     recordPush("push-move", SyncOpText.KIND_MOVE, target, oldPath, 0L, ack.optInt("revision"))
                 }
             }
             db.ackOutbox(item.getLong("id"))
         }
+    }
+
+    /**
+     * 中枢按同步分类拒收：HTTP 200 但 seq/revision 都是 0（server 端 applyPush 的 syncAllowed 分支，
+     * 新版还会带 skipped:true）。这类回执**不能**当成成功把 revision 写回本地——写 0 会把 base_revision
+     * 抹掉，下次推送找不到共同祖先，退化成按 mtime 裁决并生成「xxx-时间戳.md」冲突副本。
+     */
+    private fun pushSkipped(ack: JSONObject): Boolean =
+        ack.optBoolean("skipped", false) || (ack.optLong("seq") <= 0L && ack.optInt("revision") <= 0)
+
+    /** 中枢不收这一项：本机内容保留、outbox 出队（留着会被 finally 判成「还有改动」而无限重跑），加一条 warn 可查 */
+    private fun recordPushSkipped(item: JSONObject, kind: String, target: String) {
+        db.ackOutbox(item.getLong("id"))
+        val subject = if (kind == "page") "页面「${SyncOpText.pageTitle(target)}」" else "「$target」"
+        db.log(
+            "warn",
+            "push-skipped",
+            "$subject 中枢未接收（该同步分类可能已在中枢关闭），本机改动已保留、未写入同步基线",
+            toJson(mapOf("kind" to kind, "path" to target)),
+        )
     }
 
     /** 返回本轮是否应用了远端 op。 */
@@ -404,6 +495,14 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         when (kind) {
             "preference" -> SyncPreferences(db).merge(target, op.optJSONObject("preference"))
             "page" -> {
+                // 本机还有没推出去的改动：先别覆盖（见 hasPendingOutbox 注释），
+                // 本轮 converge() 会先推送、由中枢合并，权威正文再随回执写回来
+                if (db.hasPendingOutbox(target)) {
+                    stagedFile?.delete()
+                    recordLocalEditWins("page", target)
+                    db.setSetting("sync_cursor", seq.toString())
+                    return
+                }
                 val content = if (compact) {
                     page?.content ?: getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
                 } else op.optString("content")
@@ -417,6 +516,12 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 recordApplied("pull-page", SyncOpText.summarizePage(target, before, content))
             }
             "file" -> {
+                if (db.hasPendingOutbox(target)) {
+                    stagedFile?.delete()
+                    recordLocalEditWins("file", target)
+                    db.setSetting("sync_cursor", seq.toString())
+                    return
+                }
                 val beforeBytes = db.file(target).let { if (it.exists()) it.length() else 0L }
                 val staged = stagedFile ?: stageFile(target)
                 val afterBytes = staged.length()
@@ -727,6 +832,40 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             "$subject 本机已改名/移动或删除、尚未推送，中枢里的旧路径不再拉回本机",
             toJson(mapOf("kind" to kind, "path" to path)),
         )
+    }
+
+    /** 本机有还没推出去的编辑：本轮不按中枢的 op 覆盖，等推送上去由中枢合并后再写回权威正文 */
+    private fun recordLocalEditWins(kind: String, path: String) {
+        val subject = if (kind == "page") "页面「${SyncOpText.pageTitle(path)}」" else "文件「$path」"
+        db.log(
+            "info",
+            "pull-local-edit-kept",
+            "$subject 本机有尚未推送的改动，本轮不覆盖本机内容（推送后由中枢合并）",
+            toJson(mapOf("kind" to kind, "path" to path)),
+        )
+    }
+
+    /**
+     * 记下中枢的灵感提炼队列状态（`/api/sync/distilled` 的 pending/failed 两个数组）。
+     *
+     * 手机端没有任务队列：本机 `/api/jobs` 是空桩，而侧栏「提炼中 / 提炼失败」徽标的数据源正是它。
+     * 结果就是「电脑上标了提炼中、手机上什么都没有」（与 1.3.8 修的「已提炼」标记缺口同源）。
+     * 这里把中枢的清单落到设置里，由 `/api/jobs` 桩按 web 端期望的 job 形状发出去。
+     */
+    private fun saveIdeaDistillStatus(response: JSONObject) {
+        fun paths(key: String): String {
+            val arr = response.optJSONArray(key) ?: return "[]"
+            val out = JSONArray()
+            for (i in 0 until arr.length()) {
+                val path = arr.optString(i)
+                if (path.isNotBlank() && SyncPreferences(db).allowed("file", path)) out.put(path)
+            }
+            return out.toString()
+        }
+        val pending = paths("pending")
+        val failed = paths("failed")
+        if (db.setting(ideaDistillPendingSetting) != pending) db.setSetting(ideaDistillPendingSetting, pending)
+        if (db.setting(ideaDistillFailedSetting) != failed) db.setSetting(ideaDistillFailedSetting, failed)
     }
 
     /**

@@ -723,7 +723,21 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             val title = File(newPath).nameWithoutExtension
             movePage(id, dir, title, true)
             writableDatabase.execSQL("UPDATE pages SET sync_revision=? WHERE path=?", arrayOf(revision, newPath))
+            return@synchronized
         }
+        // 非页面文件：中枢侧被改名/移动了。原来这里什么都不做，本机的旧路径就一直留着，
+        // 随后新路径再被拉下来 → 同一份文件新旧并存（旧的还会被用户误编辑后推回去）。
+        val from = safe(oldPath)
+        if (!from.isFile) return@synchronized
+        val to = safe(newPath)
+        to.parentFile?.mkdirs()
+        if (!from.renameTo(to)) {
+            // 跨卷/文件占用时 rename 会失败：退回复制 + 删旧，失败就抛出去让本轮记错（不静默半途而废）
+            from.copyTo(to, overwrite = true)
+            if (!from.delete()) error("旧路径无法删除：$oldPath")
+        }
+        writableDatabase.execSQL("DELETE FROM files WHERE path=?", arrayOf(oldPath))
+        indexFile(newPath)
     }
 
     fun snapshotEntries(): JSONArray = synchronized(lock) {
@@ -839,6 +853,18 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun ackOutbox(id: Long) = synchronized(lock) { writableDatabase.execSQL("DELETE FROM sync_outbox WHERE id=?", arrayOf(id)) }
     fun dropOutboxForTarget(target: String) = synchronized(lock) { writableDatabase.execSQL("DELETE FROM sync_outbox WHERE target=?", arrayOf(target)) }
     fun outboxCount(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM sync_outbox", null).use { it.moveToFirst(); it.getInt(0) }
+
+    /**
+     * 该路径上是否还有没推给中枢的本机改动。
+     *
+     * 增量拉取（applyOp）拿到的 op 是「中枢基于它当前的正文」算出来的：本机这里若压着一条还没
+     * 推出去的编辑，直接按 op 覆盖就把这次编辑静默抹掉了。有未推送改动时应当保留本机内容，让
+     * 本轮 converge() 的推送先上去，由中枢合并后再把权威正文写回来（与全量对账里的「本地新者」
+     * 分支同一思路）。
+     */
+    fun hasPendingOutbox(target: String): Boolean = synchronized(lock) {
+        readableDatabase.rawQuery("SELECT 1 FROM sync_outbox WHERE target=? LIMIT 1", arrayOf(target)).use { it.moveToFirst() }
+    }
 
     /**
      * 记一条同步事件（唯一写入口）。
@@ -1173,6 +1199,9 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         writableDatabase.execSQL("DELETE FROM evidence_snapshots")
         writableDatabase.execSQL("DELETE FROM file_extractions")
         writableDatabase.execSQL("DELETE FROM scan_state")
+        // 游标是「对某个中枢事件序号」的记忆，随本地库一起换掉：留着旧游标去问 changes?since=
+        // 新中枢只会回 0 条，而本端又把恢复出来的内容按旧 base 推回去，等于静默顶掉中枢的新数据
+        writableDatabase.execSQL("DELETE FROM settings WHERE key IN ('sync_cursor','sync_ledger_marks_at')")
         scan()
         metadata?.let(::importPortableMetadata)
         val entries = snapshotEntries()
@@ -1186,6 +1215,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         brain.listFiles()?.filter { it != trashRoot }?.forEach { it.deleteRecursively() }; trashRoot.deleteRecursively()
         seedDirectories()
         writableDatabase.execSQL("DELETE FROM pages"); writableDatabase.execSQL("DELETE FROM files"); writableDatabase.execSQL("DELETE FROM search_tokens"); writableDatabase.execSQL("DELETE FROM trash"); writableDatabase.execSQL("DELETE FROM sync_outbox"); writableDatabase.execSQL("DELETE FROM page_revisions"); writableDatabase.execSQL("DELETE FROM evidence_snapshots"); writableDatabase.execSQL("DELETE FROM file_extractions"); writableDatabase.execSQL("DELETE FROM scan_state")
+        // 清库后本地已无内容，游标一并归零，下一轮从全量对账重新开始（同 replaceBrain）
+        writableDatabase.execSQL("DELETE FROM settings WHERE key IN ('sync_cursor','sync_ledger_marks_at')")
     }
 
     private fun sanitizeName(value: String) = value.replace(Regex("[\\\\/:*?\"<>|]"), "-").trim()
