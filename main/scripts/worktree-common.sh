@@ -167,7 +167,10 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /engram-manifests/
 COPY server/package.json /engram-manifests/server/
 COPY web/package.json /engram-manifests/web/
 COPY desktop/package.json /engram-manifests/desktop/
-RUN for file in package.json pnpm-lock.yaml pnpm-workspace.yaml server/package.json web/package.json desktop/package.json; do cmp "$file" "/engram-manifests/$file" || exit 1; done
+# Release bumps change desktop.version without changing dependency requirements.
+# Compare every other desktop field and keep byte checks for all other manifests.
+RUN for file in package.json pnpm-lock.yaml pnpm-workspace.yaml server/package.json web/package.json; do cmp "$file" "/engram-manifests/$file" || exit 1; done \
+  && node -e "const fs = require('node:fs'); const assert = require('node:assert/strict'); const cached = JSON.parse(fs.readFileSync('desktop/package.json', 'utf8')); const source = JSON.parse(fs.readFileSync('/engram-manifests/desktop/package.json', 'utf8')); delete cached.version; delete source.version; assert.deepStrictEqual(source, cached, 'desktop manifest changed beyond its release version');"
 COPY . /app
 RUN rm -rf server/dist web/dist && pnpm build && pnpm typecheck && pnpm test
 EOF

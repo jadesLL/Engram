@@ -148,6 +148,12 @@ run_main_checks_in_docker() {
   then
     engram_explain_offline_build_failure
     if [ "$ENGRAM_BUILD_NETWORK" = "none" ] &&
+      engram_run_cached_offline_verification "$ENGRAM_MAIN_DIR"
+    then
+      docker image rm "$verify_image" >/dev/null 2>&1 || true
+      return
+    fi
+    if [ "$ENGRAM_BUILD_NETWORK" = "none" ] &&
       engram_run_local_offline_verification "$ENGRAM_MAIN_DIR"
     then
       docker image rm "$verify_image" >/dev/null 2>&1 || true
