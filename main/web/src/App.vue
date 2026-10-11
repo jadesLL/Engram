@@ -33,6 +33,7 @@ import BrandMark from './components/BrandMark.vue';
 import { loadRuntimeCapabilities } from './lib/capabilities';
 import { registerGlobalBackLayers } from './lib/globalBackLayers';
 import { installJoinLinkReceiver } from './lib/joinLink';
+import { installShareInboxReceiver } from './lib/shareInbox';
 
 const app = useAppStore();
 // 桌面端壳（有 wikiDesktop 桥）：启用标题栏融合条（logo + 应用名 + 系统窗口按钮）；
@@ -40,10 +41,12 @@ const app = useAppStore();
 const isDesktop = Boolean((window as any).wikiDesktop);
 /** 安卓返回键接管层（全局浮层）的注销函数 */
 let stopBackLayers: (() => void) | null = null;
+let stopShareInbox: (() => void) | null = null;
 onMounted(() => {
   loadRuntimeCapabilities().catch(() => {});
   // 安卓：点别人发来的邀请链接（engram://join?…）打开应用时，把链接交给设置页的同步表单
   installJoinLinkReceiver();
+  stopShareInbox = installShareInboxReceiver();
   if (isDesktop) document.documentElement.classList.add('desktop-frame');
   app.applyTheme();
   // 安卓侧滑返回：先关全局浮层（确认框/长按菜单/资产抽屉/同步日志/记灵感），
@@ -54,6 +57,7 @@ onMounted(() => {
   });
 });
 onUnmounted(() => {
+  stopShareInbox?.();
   stopBackLayers?.();
   stopBackLayers = null;
 });
