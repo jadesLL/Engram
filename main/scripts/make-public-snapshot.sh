@@ -29,6 +29,7 @@
 #   SNAPSHOT_EXPORT_INSTALLER   目录；把脱敏后的安装器源码导出到此处（供发布公开安装器）
 #   SNAPSHOT_BRANCH / SNAPSHOT_PUSH_TAGS / SNAPSHOT_SYNC_RELEASES
 #   SNAPSHOT_RELEASE_SYNC_FATAL  Release 正文同步失败是否让退出码非零（默认 1；CI 传 0 只告警）
+#   SNAPSHOT_PUSH_TIMEOUT_SECONDS / SNAPSHOT_PUSH_ATTEMPTS  每次推送超时/总尝试次数（120 秒/3 次）
 #   SNAPSHOT_SRC_REPO / SNAPSHOT_FILTER_REPO
 #   SNAPSHOT_HOST_FROM / SNAPSHOT_OWNER_FROM / SNAPSHOT_HOST_TO / SNAPSHOT_OWNER_TO
 set -euo pipefail
@@ -424,12 +425,12 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 # ---------- 推送（只推指定分支 + 标签）----------
-PUSH_URL="$(printf '%s' "$SNAPSHOT_REPO_URL" | sed "s#^https://#https://${SNAPSHOT_TOKEN}@#")"
 echo ">> 推送 $BRANCH ..."
-g push --force --quiet "$PUSH_URL" "refs/heads/$BRANCH:refs/heads/$BRANCH"
+# Token 仅经子进程环境注入 HTTPS Authorization，不放 URL/argv，不调用宿主凭据弹窗。
+node "$(nat "$SCRIPT_DIR/public-mirror-push.cjs")" "$(nat "$SNAP")" "refs/heads/$BRANCH:refs/heads/$BRANCH"
 if [ "$PUSH_TAGS" = "1" ]; then
   echo ">> 推送标签 ..."
-  g push --force --quiet "$PUSH_URL" 'refs/tags/*:refs/tags/*'
+  node "$(nat "$SCRIPT_DIR/public-mirror-push.cjs")" "$(nat "$SNAP")" 'refs/tags/*:refs/tags/*'
 fi
 # ---------- 发布同步：按 CHANGELOG 段落建公开仓库 Release ----------
 # 正文来源是快照内（已脱敏）的 CHANGELOG.md，与 Gitea 侧 release.yml 同一约定，
