@@ -166,7 +166,7 @@ docker compose -f docker-compose.pull.yml up -d
 | `REGISTRY_USERNAME` | runner 上 docker login 推镜像 | `example` |
 | `REGISTRY_TOKEN` | 同上 | **package 写权限** token（repository-only 权限的 token 过不了 Registry 认证） |
 | `RELEASE_TOKEN` | 创建 Release / 上传附件 | repository 写权限 token |
-| `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` | APK release 签名（见 [`ANDROID.md`](./ANDROID.md)）；未配置时 CI 回退未签名包 | 本机 keystore，不入库 |
+| `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` | APK release 签名（见 [`ANDROID.md`](./ANDROID.md)）；**未配置时发版直接失败**（2026-10-12 起：未签名 APK 装不上，不再回退未签名包当正式产物） | 本机 keystore，不入库 |
 | `PUBLIC_MIRROR_TOKEN` | 同步产物到公开仓库（GitHub）Release（也是 Public Mirror 推送用的那把） | GitHub fine-grained PAT，**Contents: Read and write** |
 
 对应 Variable（Public Mirror 已在用同一份）：`PUBLIC_MIRROR_REPO_URL` = `https://github.com/<账号>/Engram.git`。

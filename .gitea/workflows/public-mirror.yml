@@ -42,7 +42,7 @@ jobs:
     runs-on: windows
     steps:
       - name: 检出代码（需要完整历史）
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           # 显式检出分支：标签推送时 checkout 只带那个标签的引用，而快照脚本按分支推送

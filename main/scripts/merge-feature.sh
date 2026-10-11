@@ -237,8 +237,11 @@ deploy_main() {
   docker compose "${compose_args[@]}" up -d --no-build --remove-orphans
 
   local ready=0
+  # 健康检查打宿主端口：本脚本部署的 docker-compose.unc.yml 把宿主 18080 映射到容器 8080
+  # （docker-compose.unc.yml:11，local-deploy.yml 只覆盖镜像与数据卷，不改端口），
+  # 打容器端口 8080 会永远连不上、90 次重试后误报「主环境未通过健康检查」。
   for _ in $(seq 1 90); do
-    if curl -fsS -o /dev/null http://localhost:8080/health
+    if curl -fsS -o /dev/null http://localhost:18080/health
     then
       ready=1
       break

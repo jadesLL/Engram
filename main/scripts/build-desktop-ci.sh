@@ -37,6 +37,9 @@ echo ">> 复制构建产物到 desktop/（prepare-desktop.js）"
 node desktop/scripts/prepare-desktop.js
 
 echo ">> 安装 desktop/server 生产依赖（win32-x64 交叉安装原生模块预编译包）"
+# --no-frozen-lockfile 保留：desktop/server 是 prepare-desktop.js 现生成的目录，
+# 只有 package.json + pnpm-workspace.yaml，没有锁文件——--frozen-lockfile 会直接失败。
+# 可复现性靠 prepare-desktop.js 把 zod 钉成精确版本（3.25.76，不是 caret）保证。
 pnpm -C desktop/server install --prod \
   --node-linker=hoisted --ignore-workspace --no-frozen-lockfile \
   --config.os=win32 --config.cpu=x64 --config.arch=x64

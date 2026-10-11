@@ -51,6 +51,11 @@ RUN sed -i \
   && apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem install -y --no-install-recommends ca-certificates python3 make g++ \
   && rm -f /tmp/engram-node-ca.pem \
   && rm -rf /var/lib/apt/lists/*
+# node-gyp 兜底不能靠构建时临时下载：`npx --yes node-gyp` 每次都要联网取包（受限网络直接挂死，
+# 产物也不可复现）。镜像内固定预装 node-gyp@12.4.0 —— 版本取自 pnpm-lock.yaml 中被
+# @electron/rebuild@4.2.0 依赖的那一份（12.4.0），与仓库其它地方保持一致；下方的编译
+# 失败兜底因此不再需要网络。
+RUN npm install -g --no-fund --no-audit --registry https://registry.npmmirror.com node-gyp@12.4.0
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY server/package.json server/
@@ -64,13 +69,25 @@ RUN pnpm install --prod --frozen-lockfile
 ENV npm_config_better_sqlite3_binary_host_mirror=https://registry.npmmirror.com/-/binary/better-sqlite3 \
     npm_config_better_sqlite3_binary_host=https://registry.npmmirror.com/-/binary/better-sqlite3
 RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 \
-  && (npm run install || npx --yes node-gyp rebuild --release) \
+  && (npm run install || node-gyp rebuild --release) \
   && ls build/Release/better_sqlite3.node
 
 # ---------- 测试环境（开发依赖 + 原生绑定） ----------
 FROM build AS test
-COPY --from=deps /app/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/better-sqlite3/build \
-  /app/node_modules/.pnpm/better-sqlite3@12.11.1/node_modules/better-sqlite3/build
+# better-sqlite3 版本号不写死：pnpm 的目录名带版本（better-sqlite3@<版本>），写死会在依赖升版时
+# 让 COPY 源路径不存在、镜像构建直接失败（审计实查的坑）。这里用通配符源先把 deps 阶段编译好的
+# build 目录取到固定暂存路径，再用 shell glob 放回 build 阶段 pnpm 布局里的同名位置。
+COPY --from=deps /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3/build /tmp/engram-better-sqlite3-build
+RUN set -eu; \
+    set -- /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3; \
+    if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then \
+      echo "better-sqlite3 在 pnpm 布局中的目录匹配异常（匹配 $# 个），请检查 Dockerfile 的 glob" >&2; \
+      exit 1; \
+    fi; \
+    mkdir -p "$1/build"; \
+    cp -a /tmp/engram-better-sqlite3-build/. "$1/build/"; \
+    rm -rf /tmp/engram-better-sqlite3-build; \
+    ls "$1/build/Release/better_sqlite3.node"
 CMD ["pnpm", "--filter", "@engram/server", "test"]
 
 # ---------- 一次完成构建、类型检查和测试 ----------
@@ -92,7 +109,14 @@ COPY --from=build /app/VERSION /app/VERSION
 COPY --from=build /app/GIT_SHA /app/GIT_SHA
 COPY package.json pnpm-workspace.yaml ./
 COPY server/package.json ./server/
+# 运行用户保持 root（不做非 root 化）：/data 是宿主机绑定目录或既有命名卷（NAS / 客户机上的
+# 数据卷由 root 创建），改成 node 用户会因卷属主不匹配写不进知识库，历史安装全部受影响；
+# 卷属主迁移不在这一个镜像能覆盖的范围内（审计项 2c：有破坏既有安装的风险就不改）。
 VOLUME /data
 EXPOSE 8080
+# 与 compose（docker-compose.yml / unc / nas / pull 同款配置）一致的容器内健康检查：
+# node 直连容器内 8080 的 /health，200 才算健康。镜像自带判定，部署侧漏配 healthcheck 时也可用。
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
+  CMD node -e "require('http').get('http://localhost:8080/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 WORKDIR /app/server
 CMD ["node", "dist/index.js"]

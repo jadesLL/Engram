@@ -51,9 +51,20 @@ jobs:
     runs-on: windows
     steps:
       - name: 检出代码（dispatch 按输入标签检出）
-        uses: https://gitea.com/actions/checkout@v4
+        uses: https://gitea.com/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+
+      - name: 记录检出提交号（烤入镜像 /app/GIT_SHA）
+        id: srcsha
+        shell: bash
+        run: |
+          # 不能用 github.sha：dispatch 路径按 inputs.tag 检出标签源码，而 github.sha 仍是
+          # 触发分支（main）的提交，会把 :<版本> 镜像的 /app/GIT_SHA 烤成 main 的最新提交。
+          # 统一按检出结果取 HEAD（标签推送路径两者本来就是同一提交）。
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "检出提交: $SHA"
 
       - name: 提取版本号（main/desktop/package.json）
         id: ver
@@ -164,8 +175,9 @@ jobs:
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          # ENGRAM_GIT_SHA 烤进镜像 /app/GIT_SHA：镜像内没有 .git，应用内靠它显示提交号
-          docker build --build-arg ENGRAM_GIT_SHA="${{ github.sha }}" \
+          # ENGRAM_GIT_SHA 烤进镜像 /app/GIT_SHA：镜像内没有 .git，应用内靠它显示提交号。
+          # 用上面按检出结果取的 SHA（dispatch 按 inputs.tag 检出，github.sha 是触发分支）
+          docker build --build-arg ENGRAM_GIT_SHA="${{ steps.srcsha.outputs.sha }}" \
             --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" -t "$IMAGE:latest" main
           echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
           docker push "$IMAGE:$VER"
@@ -176,7 +188,8 @@ jobs:
         shell: bash
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          docker build --build-arg ENGRAM_GIT_SHA="${{ github.sha }}" \
+          # 同发版路径：提交号取检出结果（dispatch 时 github.sha 是触发分支，不是标签源码）
+          docker build --build-arg ENGRAM_GIT_SHA="${{ steps.srcsha.outputs.sha }}" \
             --label org.opencontainers.image.version="$VER" -t "$IMAGE:$VER" main
 
       - name: 构建 Windows 安装包（wine 容器内交叉打包，docker cp 拷出产物）
@@ -258,13 +271,17 @@ jobs:
               ls -la desktop-dist || true
               exit 1
             fi
-            # APK：优先取已签名产物，未配置签名时回退未签名包
-            APK=""
-            for f in "mobile-apk-dist/app-release.apk" "mobile-apk-dist/app-release-unsigned.apk"; do
-              if [ -f "$f" ]; then APK="$f"; break; fi
-            done
-            if [ -z "$APK" ]; then
-              echo "未找到 APK 产物"
+            # APK：只认已签名产物。未签名包（app-release-unsigned.apk）装不上
+            # （INSTALL_PARSE_FAILED_NO_CERTIFICATES），此前回退重命名成正式产物会让 CI 全绿、
+            # 「三件套」被当成完成（发版规则要求 APK 必须可安装）——改为硬失败并指出缺的 secrets。
+            APK="mobile-apk-dist/app-release.apk"
+            if [ ! -f "$APK" ]; then
+              if [ -f mobile-apk-dist/app-release-unsigned.apk ]; then
+                echo "只找到未签名包 mobile-apk-dist/app-release-unsigned.apk：未签名 APK 无法安装，不作为发版产物"
+                echo "请在仓库 Actions secrets 配置 ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS 后重跑（签名流程见 main/docs/ANDROID.md）"
+              else
+                echo "未找到 APK 产物"
+              fi
               ls -la mobile-apk-dist || true
               exit 1
             fi
@@ -280,7 +297,7 @@ jobs:
 
       - name: 上传产物到 Artifact（dispatch，保底下载入口）
         if: github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true)
-        uses: https://gitea.com/actions/upload-artifact@v4
+        uses: https://gitea.com/actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: engram-release-${{ steps.ver.outputs.version }}
           path: release-out/
@@ -288,7 +305,7 @@ jobs:
 
       - name: 创建 Release（发版，正文=CHANGELOG 段落）
         if: startsWith(github.ref, 'refs/tags/')
-        uses: https://gitea.com/actions/gitea-release-action@v1
+        uses: https://gitea.com/actions/gitea-release-action@5a83c90484ef4355121df5eb60558c8ce66e81ac # v1
         env:
           NODE_OPTIONS: --experimental-fetch
         with:
@@ -307,7 +324,7 @@ jobs:
       - name: 补挂产物到已发布 Release（dispatch，构造产物时）
         # 同上：只回填时 release-out 是空的，这一步没有产物可挂（否则会把空校验文件挂上 Release）
         if: github.event_name == 'workflow_dispatch' && (inputs.binaries == true || inputs.offline_image == true)
-        uses: https://gitea.com/actions/gitea-release-action@v1
+        uses: https://gitea.com/actions/gitea-release-action@5a83c90484ef4355121df5eb60558c8ce66e81ac # v1
         env:
           NODE_OPTIONS: --experimental-fetch
         with:

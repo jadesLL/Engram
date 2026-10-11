@@ -27,6 +27,7 @@ import argparse
 import http.client
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -49,6 +50,27 @@ def log(msg):
 
 def dry_run():
     return os.environ.get('SYNC_DRY_RUN') == '1'
+
+
+def safe_temp_name(name):
+    """远端附件名 → 本地临时文件名：只取基名并做字符白名单。
+
+    附件名来自远端 Release（Gitea），可能带 `..\\`、`/`、`:` 等路径字符；直接拼进
+    tempfile.gettempdir() 会越出临时目录（`engram-sync-1-..\\..\\x` 落到别处写文件）。
+    上传用的名字（upload_file 的 name=）仍保留原始附件名，这里只净化本地临时路径。
+    """
+    base = os.path.basename((name or '').replace('\\', '/'))
+    cleaned = re.sub(r'[^A-Za-z0-9._-]+', '_', base).strip('.')
+    return cleaned[:120] or 'asset'
+
+
+def temp_path_for(name):
+    """为远端附件名生成受控的临时文件路径（净化后仍强制留在系统临时目录内）。"""
+    tmp_dir = os.path.abspath(tempfile.gettempdir())
+    tmp = os.path.join(tmp_dir, f'engram-sync-{int(time.time())}-{safe_temp_name(name)}')
+    if os.path.dirname(os.path.abspath(tmp)) != tmp_dir:
+        raise SyncError(f'附件名净化后仍越出临时目录：{name}')
+    return tmp
 
 
 def http_call(method, url, token='', payload=None, timeout=120, accept='application/vnd.github+json'):
@@ -282,7 +304,7 @@ def mode_backfill(target, token, args):
                 log(f'  [dry-run] 将从 Gitea 下载并上传 {name}（{size:,} 字节）')
                 stats['uploaded'] += 1
                 continue
-            tmp = os.path.join(tempfile.gettempdir(), f'engram-sync-{int(time.time())}-{name}')
+            tmp = temp_path_for(name)
             try:
                 log(f'  下载 {name}（{size:,} 字节）…')
                 download(asset.get('browser_download_url') or asset['url'], os.environ.get('GITEA_TOKEN') or '', tmp)
@@ -296,7 +318,47 @@ def mode_backfill(target, token, args):
     return stats
 
 
+def run_self_test():  # pragma: no cover - 自检本身即测试代码
+    """离线自检：回填临时文件名的净化。不需要网络与令牌：
+       python scripts/sync-public-release-assets.py --self-test
+    """
+    checks = []
+
+    def check(name, ok, detail=''):
+        checks.append((name, bool(ok), detail))
+        print(f'  {"✓" if ok else "✗"} {name}{"" if ok else f"  ({detail})"}')
+
+    tmp_dir = os.path.abspath(tempfile.gettempdir())
+    hostile = [
+        ('..\\..\\evil.exe', 'evil.exe'),
+        ('../../evil.exe', 'evil.exe'),
+        ('..', 'asset'),
+        ('', 'asset'),
+        ('C:\\Windows\\Temp\\x.apk', 'x.apk'),
+        ('Engram 1.3.9.apk', 'Engram_1.3.9.apk'),
+    ]
+    for raw, expected in hostile:
+        got = safe_temp_name(raw)
+        check(f'净化 {raw!r} -> {expected!r}', got == expected, f'得到 {got!r}')
+
+    for raw in [p[0] for p in hostile]:
+        path = temp_path_for(raw)
+        check(f'{raw!r} 的临时路径仍在临时目录内',
+              os.path.dirname(path) == tmp_dir and path.startswith(tmp_dir + os.sep),
+              path)
+
+    # 路径穿越的硬护栏：净化后仍强制落在系统临时目录（不依赖 basename 的行为）
+    check('穿越名不产生额外目录层级', temp_path_for('a/../../b.bin').count(os.sep) == tmp_dir.count(os.sep) + 1,
+          temp_path_for('a/../../b.bin'))
+
+    failed = sum(1 for _, ok, _ in checks if not ok)
+    print(f'\n{len(checks) - failed}/{len(checks)} 通过')
+    return 1 if failed else 0
+
+
 def main():
+    if '--self-test' in sys.argv:
+        return run_self_test()
     ap = argparse.ArgumentParser(description='同步发版产物到公开仓库 Release')
     sub = ap.add_subparsers(dest='mode', required=True)
     up = sub.add_parser('upload', help='上传本地产物到公开仓库 Release')
