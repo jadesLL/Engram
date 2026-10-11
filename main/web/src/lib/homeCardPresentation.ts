@@ -5,17 +5,21 @@
  * 档位由**栅格格数**决定（用户在尺寸菜单里看到的 w × h），与像素无关：
  *  - tile     1×1      纯磁贴：图标 + 核心数值（状态类 = 圆点 + 结论）+ 一行短标签，无标题栏
  *  - bar      h=1,w≥2  横条：左边数值、右边「一条最重要的信息」
- *  - column   w=1,h≥2  竖条：数值 + 精简列表（只有标题，行拉伸铺满）
- *  - standard w≥2,h≥2  标准卡：标题栏（外壳负责）+ 数值行 + 列表 / 图表，行均分铺满
+ *  - column   w=1,h≥2  竖条：数值 + 精简列表（只有标题，自然行高）
+ *  - standard w≥2,h≥2  标准卡：标题栏（外壳负责）+ 数值行 + 列表 / 图表，自然行高与固定底部操作
  * 宽卡（w≥4）与 standard 同布局，行更宽而已。
  *
  * 像素级的行数 / 图表高度预算由 cardContentPlan 按实际渲染尺寸计算，
- * 行本身用 flex:1 拉伸铺满——行数少时行变高，不留底部空白。
+ * 列表按固定的内容预算排布，不为了铺满卡片拉伸行高。
  * 尺寸只决定展示密度，不修改业务数据或布局。
  */
 export interface HomeCardRow {
   text: string;
   detail?: string | number;
+  /** 列表的来源/时间与日期状态各占自己的位置，不挤在标题右侧。 */
+  meta?: string;
+  type?: string;
+  badge?: { text: string; tone?: 'danger' | 'plain' };
   amount?: number;
   path?: string;
   action?: 'chat' | 'capture';
@@ -39,6 +43,8 @@ export interface HomeCardSummary {
   badge?: { tone: 'danger' | 'ok'; text: string };
   /** 动作型卡片（漫游 / 速记 / 快捷入口）：value 是动作文案，主色小字显示，不放大 */
   action?: boolean;
+  presentation?: 'list' | 'tasks';
+  footer?: string;
 }
 
 export type HomeCardTier = 'tile' | 'bar' | 'column' | 'standard';
@@ -55,32 +61,39 @@ export function cardTier(w: number, h: number): HomeCardTier {
 }
 
 export interface CardContentPlan {
-  /** 列表显示几行（行高 = 剩余空间 ÷ 行数，行永远拉伸铺满） */
+  /** 列表显示几行，只显示完整条目 */
   rows: number;
   /** 图表（环 / 趋势）高度；bars 是行内条形不占这块预算 */
   chartHeight: number;
   gap: number;
   /** 窄卡（竖条档或像素宽度不足）：行只显示标题、数值换小一号 */
   narrow: boolean;
+  rowHeight: number;
+}
+
+export interface CardContentOptions {
+  metric?: 'hidden' | 'compact' | 'full';
+  list?: boolean;
+  footer?: boolean;
 }
 
 /**
  * 标准 / 竖条档的高度预算：数值行 + 图表 + N 行，全部塞进 height 里。
  * 行高取「放得下且不挤」的最小值（标准 34 / 条形行 38 / 窄卡 30），
- * 实际渲染时行用 flex:1 均分剩余高度，所以这里算的是**行数上限**，不是行高。
+ * 多行标题、辅助信息和底部操作一起计算，避免最后一行被截掉。
  */
-export function cardContentPlan(width: number, height: number, count: number, chart?: HomeCardSummary['chart']): CardContentPlan {
+export function cardContentPlan(width: number, height: number, count: number, chart?: HomeCardSummary['chart'], options: CardContentOptions = {}): CardContentPlan {
   const narrow = width < 120;
-  const metricHeight = narrow ? 44 : 46;
-  const gap = 10;
-  const remaining = Math.max(0, height - metricHeight - gap);
+  const metricHeight = narrow ? 44 : options.metric === 'hidden' ? 0 : options.metric === 'compact' ? 26 : 46;
+  const gap = 8;
+  const remaining = Math.max(0, height - metricHeight - (metricHeight || count > 0 ? gap : 0) - (options.footer ? 28 : 0));
   const chartHeight = !narrow && chart && chart !== 'bars' && remaining >= 70
     ? Math.min(180, Math.floor(remaining * 0.4))
     : 0;
-  const rowHeight = narrow ? 30 : chart === 'bars' ? 38 : 34;
+  const rowHeight = narrow ? 30 : options.list ? 66 : chart === 'bars' ? 38 : 34;
   const rows = Math.min(
     Math.max(0, count),
     Math.max(0, Math.floor((remaining - chartHeight - (chartHeight ? gap : 0)) / rowHeight))
   );
-  return { rows, chartHeight, gap, narrow };
+  return { rows, chartHeight, gap, narrow, rowHeight };
 }

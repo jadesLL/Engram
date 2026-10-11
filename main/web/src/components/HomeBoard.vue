@@ -215,7 +215,7 @@ import {
   type HomeBoard,
   type ModuleKind,
 } from '../lib/homeBoard.ts';
-import { homeDateLine, homeGreeting } from '../lib/homeBoardData.ts';
+import { homeDateLine, homeGreeting, pageBadge, sinceShort, dueLabel, taskMeta, isOverdueCard } from '../lib/homeBoardData.ts';
 import {
   GRID_COLS,
   GRID_CANVAS_WIDTH,
@@ -234,8 +234,9 @@ import type { HomeCardSummary, HomeCardRow } from '../lib/homeCardPresentation.t
 import { useAppStore } from '../stores/app';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { api } from '../api';
-import { syncStatusView, formatSyncTime } from '../lib/syncStatus.ts';
+import { syncStatusView } from '../lib/syncStatus.ts';
 import { APP_VERSION } from '../version.ts';
+import { documentTitleParts } from '../lib/documentTitle.ts';
 
 /** 各列表类模块的条数上限（与 lib/homeBoard.ts 的归一口径一致；heat 的「条数」是周数） */
 const LIMIT_MAX: Record<string, number> = { recent: 12, notes: 12, fresh: 12, tasks: 20, heat: 12 };
@@ -367,8 +368,8 @@ const app = useAppStore();
 const { capabilities } = useRuntimeCapabilities();
 function activateSummary(row: HomeCardRow) { if (row.action === 'chat') onChat(); else if (row.action === 'capture') quickNote(); else if (row.path) go(row.path); }
 function summaryOf(module: HomeModule): HomeCardSummary {
-  const rowsOf = (list: any[], max = 12): HomeCardRow[] => list.slice(0,max).map(p=>({ text:p.title || String(p.path || '').split('/').pop() || '未命名', detail:p.updated_at ? formatSyncTime(p.updated_at) : '', path:p.id ? `/page/${p.id}` : undefined }));
-  const pageSummary = (list: any[], empty: string): HomeCardSummary => ({ value:list.length,label:'篇页面',rows:rowsOf(list,limitOf(module.opts,12,20)),empty });
+  const rowsOf = (list: any[], max = 12): HomeCardRow[] => list.slice(0,max).map(p=>({ text:documentTitleParts(p.title || String(p.path || '').split('/').pop() || '未命名').name, detail:p.updated_at ? sinceShort(p.updated_at) : '', meta:pageBadge(p).meta,type:pageBadge(p).label, path:p.id ? `/page/${p.id}` : p.path ? `/page?file=${encodeURIComponent(p.path)}` : undefined }));
+  const pageSummary = (list: any[], empty: string): HomeCardSummary => ({ value:list.length,label:'篇页面',presentation:'list',rows:rowsOf(list,limitOf(module.opts,12,20)),empty });
   const facts: HomeCardRow[] = [
     {text:'概念',detail:counts.value.concepts,amount:counts.value.concepts,path:'/search?q=概念'},
     {text:'实体',detail:counts.value.entities,amount:counts.value.entities,path:'/search?q=实体'},
@@ -377,9 +378,9 @@ function summaryOf(module: HomeModule): HomeCardSummary {
   switch (module.kind) {
     case 'ask': return { value:'问答', label:'向 Agent 提问', action:true };
     case 'capture': return {value:'记灵感',label:'随手一句，稍后整理',action:true,rows:rowsOf(props.ideaItems),empty:'记一条灵感，稍后整理'};
-    case 'stats': return {value:stats.value.pages,label:'知识页面',rows:[...facts,{text:'字数',detail:words.value.toLocaleString()}],chart:'bars'};
+    case 'stats': return {value:stats.value.pages,label:'知识页面',rows:facts,chart:'bars',footer:`总计 ${words.value.toLocaleString()} 字`};
     case 'ring': { const ratios=ratioRows(props.pages,props.fileCount);return {value:ratios.total,label:'项知识与资料',rows:ratios.rows.map((r,i)=>({...facts[i],detail:`${r.value} · ${Math.round(r.ratio*100)}%`})),chart:'ring'}; }
-    case 'tasks': return {value:taskCards.value.length,label:'件待办',badge:overdueCount.value?{tone:'danger',text:`${overdueCount.value} 逾期`}:undefined,rows:taskCards.value.slice(0,limitOf(module.opts,5,20)).map(c=>({text:c.text,detail:c.date || c.when || '待定',path:'/tasks'})),empty:tasksLoading.value?'正在读取任务…':'近期没有待办，打开看板查看'};
+    case 'tasks': return {value:taskCards.value.length,label:'件待办',presentation:'tasks',badge:overdueCount.value?{tone:'danger',text:`${overdueCount.value} 逾期`}:undefined,rows:taskCards.value.slice(0,limitOf(module.opts,5,20)).map(c=>({text:c.text,meta:taskMeta(c),badge:{text:dueLabel(c),tone:isOverdueCard(c)?'danger':'plain'},path:'/tasks'})),empty:tasksLoading.value?'正在读取任务…':'近期没有待办，打开看板查看'};
     case 'notes': return pageSummary(props.ideaItems,'还没有灵感，记下一条想法');
     case 'recent': return pageSummary(props.recentItems,'还没有最近更新的页面');
     case 'activity': return pageSummary(changeLogItems.value,'近期没有页面改动');
@@ -391,10 +392,10 @@ function summaryOf(module: HomeModule): HomeCardSummary {
     case 'sections': return {value:sections.value.length,label:'个分区',rows:sections.value.map(r=>({text:r.label,detail:r.count,amount:r.count,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'bars'};
     case 'shortcuts': return {value:'快捷入口',label:'搜索 · 新建 · 图谱 · Agent',action:true,rows:[{text:'搜索',detail:'知识库',path:'/search'},{text:'新建',detail:'Wiki',path:'/page'},{text:'图谱',detail:'关系',path:'/graph'},{text:'Agent',detail:'对话',action:'chat'},{text:'看板',detail:'任务',path:'/tasks'},{text:'收集',detail:'资料',path:'/inbox'}]};
     case 'roam': return {value:'换一篇',label:`${roamCandidates.value.length} 篇可漫游`,action:true,rows:rowsOf(roamCandidates.value,8),empty:'知识库还没有可漫游的页面'};
-    case 'inbox': return {value:Number(inbox.counts.pending || 0),label:'份待整理资料',rows:(inbox.pendingItems || []).slice(0,12).map((item:any)=>({text:String(item.path || '').split('/').pop() || '未命名资料',detail:'待整理',path:'/inbox'})),empty:'收集箱是空的，拖文件进来开始整理'};
-    case 'queue': { const candidates=pendingDistillOf(rawFiles.value,rawFiles.value.length);return {value:queueError.value && !rawFiles.value.length ? '—' : queueLoading.value && !rawFiles.value.length ? '…' : candidates.length,label:queueError.value || '份资料等待提炼',rows:candidates.map(file=>({text:file.name,detail:pendingDistillLabel(file),path:rawMaterialRoute(file)})),empty:queueError.value || (queueLoading.value ? '正在读取待提炼资料…' : '没有等待提炼的资料')}; }
+    case 'inbox': return {value:Number(inbox.counts.pending || 0),label:'份待整理资料',presentation:'list',rows:(inbox.pendingItems || []).slice(0,12).map((item:any)=>({text:String(item.path || '').split('/').pop() || '未命名资料',detail:'待整理',path:'/inbox'})),empty:'收集箱是空的，拖文件进来开始整理'};
+    case 'queue': { const candidates=pendingDistillOf(rawFiles.value,rawFiles.value.length);return {value:queueError.value && !rawFiles.value.length ? '—' : queueLoading.value && !rawFiles.value.length ? '…' : candidates.length,label:queueError.value || '份资料等待提炼',rows:candidates.map(file=>({text:documentTitleParts(file.name).name,meta:String(file.path || '').split('/').slice(0,-1).join(' / '),detail:pendingDistillLabel(file),path:rawMaterialRoute(file)})),empty:queueError.value || (queueLoading.value ? '正在读取待提炼资料…' : '没有等待提炼的资料')}; }
     case 'board': return {value:tasks.board ? filterCards(tasks.board,EMPTY_FILTER).length : 0,label:'件任务',rows:(tasks.board?.groups || []).map(g=>({text:g.title,detail:g.cards.length,amount:g.cards.length,path:'/tasks'})),chart:'bars',empty:tasksLoading.value?'正在读取看板…':'暂无看板，打开任务页面生成'};
-    case 'digest': return {value:digestLines.value.length,label:props.agentName || 'Agent 摘要',rows:digestLines.value.map(text=>({text,action:'chat'}))};
+    case 'digest': return {value:digestLines.value.length,label:props.agentName || 'Agent 摘要',presentation:'list',rows:digestLines.value.map(text=>({text,action:'chat'}))};
     case 'system': { const jobs=app.jobs;const failed=Number(jobs?.failed || 0);const runtime=capabilities.value.runtime==='desktop'?'桌面端本地服务':capabilities.value.runtime==='android-local'?'手机本地服务':'服务器 / Docker';return {value:'运行中',label:runtime,status:{tone:failed?'warn':'ok',text:'运行中'},rows:[{text:'版本',detail:APP_VERSION,path:'/settings?section=update'},{text:'模式',detail:capabilities.value.runtime,path:'/settings'},{text:'Agent',detail:props.agentName || '未配置',action:'chat'},{text:'执行',detail:Number(jobs?.running || 0),path:'/settings'},{text:'排队',detail:Number(jobs?.pending || 0),path:'/settings'},{text:'失败',detail:failed,path:'/settings'}]}; }
     case 'sync': { const view=syncStatusView(sync.status,{androidLocal:capabilities.value.runtime==='android-local'});const tone=view?.tone==='warn'?'warn':view?.tone==='muted'||!view?'muted':'ok';return {value:view?.label || '待配置同步',label:view?.detail || '添加成员设备后开始同步',status:{tone,text:view?.label || '待配置同步'},rows:[{text:'状态',detail:view?.label || '未配置',path:'/settings?section=sync'},{text:'详情',detail:view?.detail || '添加成员设备后开始同步',path:'/settings?section=sync'},...(sync.status?.peers || []).map(p=>({text:p.name,detail:p.online?'在线':'离线',path:'/settings?section=sync'})),{text:'排队',detail:Number(sync.status?.pending || 0),path:'/settings?section=sync'}]}; }
   }
