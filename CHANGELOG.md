@@ -11,7 +11,7 @@
 
 ## 未发布
 
-- 修复 Android CI 的 Debian HTTP 软件源连接失败：显式 HTTPS、Node CA 引导、有限重试与 HTTPS 软件源切换、完整索引校验；Release dispatch 可指定同仓库不可变提交的 Android Dockerfile 环境修复，应用源码和版本仍来自发布标签，便于补齐已有版本 APK。
+- 修复 Android CI 的 JDK 软件源下载阻塞：从官方 Temurin 21 镜像多阶段复制 JDK，并检查构建工具；Release dispatch 可指定同仓库不可变提交的 Android Dockerfile 环境修复，应用源码和版本仍来自发布标签，便于补齐已有版本 APK。
 
 ## v1.3.9（2026-10-11）
 
