@@ -78,20 +78,20 @@
       <div ref="contentEl" class="settings-content">
         <!-- 账户与访问：账户凭据 + 连接通道。以下每个大类里的分组顺序都与 settingsDomains 的登记顺序一致，
              页面上第 N 块 = 导航里第 N 项（改分类时两边一起改）。 -->
-        <section v-show="activeDomain === 'account'" class="settings-domain is-multi" data-domain="account">
+        <section v-if="visitedDomains.has('account')" v-show="activeDomain === 'account'" class="settings-domain is-multi" data-domain="account">
           <DomainHead :domain="domainOf('account')" />
           <AccountPanel />
         </section>
 
         <!-- 界面与检索：外观 + 搜索同义词 -->
-        <section v-show="activeDomain === 'interface'" class="settings-domain is-multi" data-domain="interface">
+        <section v-if="visitedDomains.has('interface')" v-show="activeDomain === 'interface'" class="settings-domain is-multi" data-domain="interface">
           <DomainHead :domain="domainOf('interface')" />
           <AppearanceSection />
           <SearchPanel anchor="data-synonyms" />
         </section>
 
         <!-- 知识库数据：存储位置 / 备份与恢复 / 回收站 / 图片资产 / 危险操作 -->
-        <section v-show="activeDomain === 'data'" class="settings-domain is-multi" data-domain="data">
+        <section v-if="visitedDomains.has('data')" v-show="activeDomain === 'data'" class="settings-domain is-multi" data-domain="data">
           <DomainHead :domain="domainOf('data')" />
           <DataPanel />
           <!-- StoragePanel 的模板是两个 <section>（回收站 / 图片资产）：多根组件的 v-show 会被 Vue
@@ -104,17 +104,18 @@
 
         <!-- 多端同步：同步群组 + 双栈连接（成员端专属）+ DDNS 直连域名（中枢端专属；
              后两个分组按角色渲染并登记，见 SyncPanel 里的 useSettingsAnchorVisible） -->
-        <section v-show="activeDomain === 'sync'" class="settings-domain is-multi" data-domain="sync">
+        <section v-if="visitedDomains.has('sync')" v-show="activeDomain === 'sync'" class="settings-domain is-multi" data-domain="sync">
           <DomainHead :domain="domainOf('sync')" />
           <div id="panel-sync">
-            <SyncPanel />
+            <!-- active：切走本大类时停掉面板与 DdnsSection 的轮询，切回来时立刻重拉一次 -->
+            <SyncPanel :active="activeDomain === 'sync'" />
           </div>
         </section>
 
         <!-- 版本与更新：服务器更新 / 桌面端更新 / 更新源配置（三张卡片都在 UpdatePanel 内，
              安卓端更新只在手机 App 里出现（能力位 apkUpdate），active 传给面板：面板常驻挂载
              （v-show），切回本大类时靠激活态重拉状态） -->
-        <section v-show="activeDomain === 'update'" class="settings-domain is-multi" data-domain="update">
+        <section v-if="visitedDomains.has('update')" v-show="activeDomain === 'update'" class="settings-domain is-multi" data-domain="update">
           <DomainHead :domain="domainOf('update')" />
           <div v-if="capabilities.features.serverUpdate">
             <UpdatePanel :active="activeDomain === 'update'" />
@@ -123,7 +124,7 @@
         </section>
 
         <!-- 本机应用：桌面端应用 / 版本信息 / 卸载 Engram -->
-        <section v-show="activeDomain === 'app'" class="settings-domain is-multi" data-domain="app">
+        <section v-if="visitedDomains.has('app')" v-show="activeDomain === 'app'" class="settings-domain is-multi" data-domain="app">
           <DomainHead :domain="domainOf('app')" />
           <DesktopAppSection />
           <AppVersionSection />
@@ -133,7 +134,7 @@
         <!-- Agent 与自动化：内置 Agent / 自动整理（梦境思考）/ 任务看板提炼 / 外部接入 / 工具与手册。
              两块自动化都经具名插槽插在「内置 Agent」之后（梦境思考在前、看板提炼紧跟），顺序与导航一致。 -->
         <section
-          v-if="capabilities.features.agentAdmin"
+          v-if="capabilities.features.agentAdmin && visitedDomains.has('agent')"
           v-show="activeDomain === 'agent'"
           class="settings-domain is-multi"
           data-domain="agent"
@@ -141,8 +142,8 @@
           <DomainHead :domain="domainOf('agent')" />
           <AgentPanel>
             <template #after-builtin>
-              <DreamSection />
-              <BoardSection />
+              <DreamSection :active="activeDomain === 'agent'" />
+              <BoardSection :active="activeDomain === 'agent'" />
             </template>
           </AgentPanel>
         </section>
@@ -152,24 +153,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import Icon from '../components/Icon.vue';
 import DomainHead from '../components/settings/DomainHead.vue';
-import AccountPanel from '../components/settings/AccountPanel.vue';
-import AppearanceSection from '../components/settings/AppearanceSection.vue';
-import AppVersionSection from '../components/settings/AppVersionSection.vue';
-import UninstallSection from '../components/settings/UninstallSection.vue';
-import DesktopAppSection from '../components/settings/DesktopAppSection.vue';
-import AgentPanel from '../components/settings/AgentPanel.vue';
-import DreamSection from '../components/settings/DreamSection.vue';
-import BoardSection from '../components/settings/BoardSection.vue';
-import SyncPanel from '../components/settings/SyncPanel.vue';
-import UpdatePanel from '../components/settings/UpdatePanel.vue';
-import AndroidUpdatePanel from '../components/settings/AndroidUpdatePanel.vue';
-import StoragePanel from '../components/settings/StoragePanel.vue';
-import DataPanel from '../components/settings/DataPanel.vue';
-import DataDangerSection from '../components/settings/DataDangerSection.vue';
-import SearchPanel from '../components/settings/SearchPanel.vue';
+/* 各面板按大类懒加载：静态 import 会把 17 块面板（含同步轮询、更新面板、存储列表）
+   全部塞进设置页的同一份包里；异步组件让每块的代码按需下载，首访某个大类时才挂载。 */
+const AccountPanel = defineAsyncComponent(() => import('../components/settings/AccountPanel.vue'));
+const AppearanceSection = defineAsyncComponent(() => import('../components/settings/AppearanceSection.vue'));
+const AppVersionSection = defineAsyncComponent(() => import('../components/settings/AppVersionSection.vue'));
+const UninstallSection = defineAsyncComponent(() => import('../components/settings/UninstallSection.vue'));
+const DesktopAppSection = defineAsyncComponent(() => import('../components/settings/DesktopAppSection.vue'));
+const AgentPanel = defineAsyncComponent(() => import('../components/settings/AgentPanel.vue'));
+const DreamSection = defineAsyncComponent(() => import('../components/settings/DreamSection.vue'));
+const BoardSection = defineAsyncComponent(() => import('../components/settings/BoardSection.vue'));
+const SyncPanel = defineAsyncComponent(() => import('../components/settings/SyncPanel.vue'));
+const UpdatePanel = defineAsyncComponent(() => import('../components/settings/UpdatePanel.vue'));
+const AndroidUpdatePanel = defineAsyncComponent(() => import('../components/settings/AndroidUpdatePanel.vue'));
+const StoragePanel = defineAsyncComponent(() => import('../components/settings/StoragePanel.vue'));
+const DataPanel = defineAsyncComponent(() => import('../components/settings/DataPanel.vue'));
+const DataDangerSection = defineAsyncComponent(() => import('../components/settings/DataDangerSection.vue'));
+const SearchPanel = defineAsyncComponent(() => import('../components/settings/SearchPanel.vue'));
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { badgeToneOf, settingsBadges } from '../lib/settingsBadges';
 import { hiddenSettingsAnchors } from '../lib/settingsNavVisibility';
@@ -195,6 +198,12 @@ import { useRoute } from 'vue-router';
  */
 const activeDomain = ref<SettingsDomainId>('account');
 const activeAnchor = ref<string>('');
+/**
+ * 首访才挂载大类面板：面板常驻（v-show）在首屏会连带常驻各自的数据拉取与轮询；
+ * 访问过一次后继续用 v-show 保留状态（切走再回来不重拉，这是既有约定）。
+ */
+const visitedDomains = reactive(new Set<SettingsDomainId>(['account']));
+watch(activeDomain, (id) => visitedDomains.add(id));
 const viewEl = ref<HTMLElement | null>(null);
 /** 左侧目录列：自己是一个滚动容器（分组多，放不下） */
 const navEl = ref<HTMLElement | null>(null);

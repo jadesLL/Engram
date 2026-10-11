@@ -418,7 +418,7 @@
     title="DDNS 直连域名"
     hint="只有中枢可开启：把一条域名指向中枢公网 IP，成员绑定中枢时可直接填这个域名"
   >
-    <DdnsSection />
+    <DdnsSection :active="active" />
   </SettingsGroup>
 
   <!-- 扫码浮层（挂到 body）：只在本机「绑定中枢」时出现，扫到内容后由 onScanResult 解析并回填 -->
@@ -1208,6 +1208,24 @@ async function reconcileNow(): Promise<void> {
   }
 }
 
+/**
+ * 设置分区激活态：面板随大类切换只做 v-show（不卸载），但隐藏着还每 5 秒轮询
+ * `/api/sync/status`（并连带重拉中枢地址）是白烧请求——切走即停表，切回来立刻重拉一次
+ * 并重新开始轮询。active 缺省（未传）按可见处理，组件单独用时行为不变。
+ */
+const props = defineProps<{ active?: boolean }>();
+
+function startPoll(): void {
+  if (pollTimer !== null) return;
+  pollTimer = window.setInterval(loadStatus, 5000);
+}
+
+function stopPoll(): void {
+  if (pollTimer === null) return;
+  window.clearInterval(pollTimer);
+  pollTimer = null;
+}
+
 onMounted(async () => {
   await loadCapabilities();
   await loadStatus();
@@ -1218,14 +1236,24 @@ onMounted(async () => {
   // 安卓点邀请链接进来时，链接可能比这个面板先到（见 lib/joinLink）
   applyPendingJoinLink();
   await loadLanAccess();
-  pollTimer = window.setInterval(loadStatus, 5000);
+  if (props.active !== false) startPoll();
 });
 
 // 面板已经在设置页开着、用户又点了一条邀请链接（如从聊天软件切回来）：同样就地填表
 watch(pendingJoinLink, () => applyPendingJoinLink());
 
+// 大类切回本面板：立刻补一次最新状态，再恢复轮询（隐藏期间不发请求）
+watch(() => props.active, (now) => {
+  if (now === false) {
+    stopPoll();
+    return;
+  }
+  void loadStatus();
+  startPoll();
+});
+
 onUnmounted(() => {
-  if (pollTimer !== null) window.clearInterval(pollTimer);
+  stopPoll();
 });
 </script>
 

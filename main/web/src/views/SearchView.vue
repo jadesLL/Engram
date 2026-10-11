@@ -10,7 +10,7 @@
         autofocus
         @focus="boxFocused = true"
         @blur="boxFocused = false"
-        @keydown.enter="run"
+        @keydown.enter="onEnter"
       />
       <button class="search-go" :disabled="searching" @click="run">搜索</button>
     </div>
@@ -35,7 +35,7 @@
     <!-- 结果列表 -->
     <div v-if="filteredHits.length" class="hits">
       <div class="hits-head faint small">共 {{ filteredHits.length }} 条结果 · 用时 {{ elapsedMs }}ms</div>
-      <div v-for="(h, i) in filteredHits" :key="i" class="hit" @click="openHit(h)">
+      <div v-for="(h, i) in filteredHits" :key="hitKey(h, i)" class="hit" @click="openHit(h)">
         <div class="hit-title">
           <span class="hit-name">{{ h.title }}</span>
           <span v-if="h.refType === 'file'" class="hit-badge file">原始资料</span>
@@ -72,6 +72,8 @@ import AppSpinner from '../components/ui/AppSpinner.vue';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import Icon from '../components/Icon.vue';
 import { notify } from '../lib/notify';
+import { isComposingKey } from '../lib/ime';
+import { createRequestSeq } from '../lib/requestSeq';
 import { useTouchPointer } from '../lib/pointer';
 
 const route = useRoute();
@@ -104,22 +106,43 @@ function typeLabel(type: string): string {
   return TYPE_LABELS[type] || type;
 }
 
+/**
+ * 搜索请求序号：用户改了词再回车时，旧请求不能让位（原来 `searching` 直接吞掉这次搜索，
+ * 「回车没反应」）。新查询总是作废在途的旧查询，只认最新一次的结果。
+ */
+const runSeq = createRequestSeq();
+
+/** 输入框回车：输入法组字中的回车是确认候选词，不能当搜索提交 */
+function onEnter(event: KeyboardEvent) {
+  if (isComposingKey(event)) return;
+  void run();
+}
+
 async function run() {
-  if (!q.value.trim() || searching.value) return;
+  const query = q.value.trim();
+  if (!query) return;
+  const seq = runSeq.next();
   hits.value = [];
   searched.value = false;
   searching.value = true;
   const started = performance.now();
   try {
-    const { data } = await api.get('/api/search', { params: { q: q.value } });
+    const { data } = await api.get('/api/search', { params: { q: query } });
+    if (!runSeq.isCurrent(seq)) return; // 已有更新的查询：这次结果作废
     hits.value = data.hits;
     elapsedMs.value = Math.max(1, Math.round(performance.now() - started));
     searched.value = true;
   } catch (error: any) {
+    if (!runSeq.isCurrent(seq)) return;
     notify.error(error?.response?.data?.error || error?.message || '搜索失败，请稍后重试');
   } finally {
-    searching.value = false;
+    if (runSeq.isCurrent(seq)) searching.value = false;
   }
+}
+
+/** 结果行的稳定键：同一份结果集重复渲染时不按数组下标复用 DOM（下标会在结果变化时错位） */
+function hitKey(hit: any, index: number): string {
+  return `${hit.refType || 'page'}:${hit.refId || hit.path || hit.title || index}`;
 }
 
 function openHit(h: any) {

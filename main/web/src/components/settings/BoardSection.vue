@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
@@ -163,14 +163,39 @@ function openBoard(): void {
   void router.push('/tasks');
 }
 
+/**
+ * 设置分区激活态：Agent 大类隐藏时不再每 30 秒拉一次看板配置（切走即停表，
+ * 切回来立刻重拉一次并重新计时）。active 缺省（未传）按可见处理。
+ */
+const props = defineProps<{ active?: boolean }>();
+
+function startPoll(): void {
+  if (pollTimer) return;
+  pollTimer = setInterval(() => void loadConfig(), 30_000);
+}
+
+function stopPoll(): void {
+  if (!pollTimer) return;
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+
 onMounted(async () => {
   await loadConfig();
-  pollTimer = setInterval(() => void loadConfig(), 30_000);
+  if (props.active !== false) startPoll();
+});
+
+watch(() => props.active, (now) => {
+  if (now === false) {
+    stopPoll();
+    return;
+  }
+  void loadConfig();
+  startPoll();
 });
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = null;
+  stopPoll();
 });
 </script>
 

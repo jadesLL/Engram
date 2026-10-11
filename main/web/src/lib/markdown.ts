@@ -429,6 +429,30 @@ function renderBlocks(lines: string[]): string {
 const RENDER_CACHE_LIMIT = 64;
 const renderCache = new Map<string, string>();
 
+/**
+ * 逐条消息的渲染记忆：抽屉整条转录会在每个流式增量上重渲，而 renderMarkdown 的全局
+ * 缓存是 64 条 FIFO——长对话里老消息会被挤掉、每个增量又整条重解析一遍。
+ * 这里按「消息键」记住最后渲染的原文与结果：只有该条内容变了才重新解析，
+ * 老消息的 HTML 直接复用（每键只留一份，键数 = 消息条数，不会随增量无限增长）。
+ */
+export interface MarkdownMemo {
+  render(key: string, source: string): string;
+}
+
+export function createMarkdownMemo(render: (source: string) => string = renderMarkdown): MarkdownMemo {
+  const cache = new Map<string, { source: string; html: string }>();
+  return {
+    render(key: string, source: string): string {
+      if (!source) return '';
+      const hit = cache.get(key);
+      if (hit && hit.source === source) return hit.html;
+      const html = render(source);
+      cache.set(key, { source, html });
+      return html;
+    },
+  };
+}
+
 /** 渲染内置 Agent 对话里的 Markdown 片段（助手正文、用户消息、子代理产出共用）。 */
 export function renderMarkdown(source: string): string {
   if (!source) return '';

@@ -142,6 +142,7 @@
 import { onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
+import { isComposingKey } from '../../lib/ime';
 
 defineProps<{ harness: 'zcode' | 'codex' | 'dsh' }>();
 
@@ -162,8 +163,10 @@ async function load() {
   dstatus.value = (await api.get('/api/settings/dsh-status')).data;
 }
 
-/** 手动指定引擎路径：与现有 zcode_config 合并保存，避免覆盖其他字段 */
-async function saveManualPath() {
+/** 手动指定引擎路径：与现有 zcode_config 合并保存，避免覆盖其他字段。
+ *  @param event 键盘事件（Enter 触发时传入）：输入法组字中的回车是在确认候选词，不能当保存 */
+async function saveManualPath(event?: Event) {
+  if (isComposingKey(event)) return;
   if (!manualPath.value.trim()) return;
   savingPath.value = true;
   try {

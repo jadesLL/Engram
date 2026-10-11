@@ -318,15 +318,35 @@ export function stopTrack(id: string): void {
   trackers.delete(id);
 }
 
-/** 灵感页用：读一条灵感的提炼状态；面板打开时补一次拉取（跨页面回来能看到最新） */
+/**
+ * 已经探过一次的 id：失败也记下（失败与「没有提炼记录」在界面上都是 unknown，
+ * 区别只是下一次轮询/重新跟踪会再试）。不让它随依赖变化反复打接口——补拉只发生在
+ * 页面 id 变化时（见 EditorView 的 watch 调用 probeIdeaDistill）。
+ */
+const probed = new Set<string>();
+
+/**
+ * 灵感页订阅时的补拉（幂等：同一 id 一次会话只探一次）。
+ *
+ * 刻意不做成 `useIdeaDistill` 里的副作用：读态函数会被 computed 在每次依赖变化时执行，
+ * 服务端抖动（失败后状态仍是 unknown）就会变成每次重算一次请求。
+ */
+export function probeIdeaDistill(id: string): void {
+  const key = String(id || '');
+  if (!key || probed.has(key)) return;
+  probed.add(key);
+  void fetchDistill(key).then((state) => state && applyState(key, state));
+}
+
+/** 灵感页用：读一条灵感的提炼状态；补拉走 probeIdeaDistill（页面 id 变化时才调） */
 export function useIdeaDistill(id: string): { current: IdeaDistillState } {
   const current = stateOf(id);
-  if (current.staged === 'unknown') void fetchDistill(id).then((state) => state && applyState(id, state));
   return { current: readonly(current) as IdeaDistillState };
 }
 
-/** 仅供测试清理：重置全部跟踪与状态 */
+/** 仅供测试清理：重置全部跟踪、状态与已探标记 */
 export function resetIdeaDistill(): void {
   for (const id of [...trackers.keys()]) stopTrack(id);
   states.clear();
+  probed.clear();
 }

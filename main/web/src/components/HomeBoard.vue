@@ -162,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, effectScope, nextTick, onMounted, onUnmounted, ref, watch, type ComputedRef } from 'vue';
 import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import Icon from './Icon.vue';
@@ -367,7 +367,29 @@ const sync = useSyncStore();
 const app = useAppStore();
 const { capabilities } = useRuntimeCapabilities();
 function activateSummary(row: HomeCardRow) { if (row.action === 'chat') onChat(); else if (row.action === 'capture') quickNote(); else if (row.path) go(row.path); }
+
+/**
+ * 摘要记忆：模板对每块模块每帧都要读 summaryOf（拖动时一帧一次），每次重算都是上百个
+ * 字符串与对象的分配。这里按模块 id 记一份 computed——依赖没变就直接复用。
+ * 拖动中的 preview 副本不参与：摘要由 store 里的模块配置（kind/opts）与各数据源决定，
+ * 与卡片落点无关，所以查 store 里的同名模块即可（拖动中只有这一处 O(n) 查找）。
+ */
+/** 缓存里的 computed 由组件自己的 effectScope 收口：卸载时统一 stop，不留订阅 */
+const summaryScope = effectScope();
+const summaryCache = new Map<string, ComputedRef<HomeCardSummary>>();
 function summaryOf(module: HomeModule): HomeCardSummary {
+  let cached = summaryCache.get(module.id);
+  if (!cached) {
+    cached = summaryScope.run(() => computed(() => {
+      const live = store.board.modules.find((item) => item.id === module.id) ?? module;
+      return computeSummary(live);
+    }))!;
+    summaryCache.set(module.id, cached);
+  }
+  return cached.value;
+}
+
+function computeSummary(module: HomeModule): HomeCardSummary {
   const rowsOf = (list: any[], max = 12): HomeCardRow[] => list.slice(0,max).map(p=>({ text:documentTitleParts(p.title || String(p.path || '').split('/').pop() || '未命名').name, detail:p.updated_at ? sinceShort(p.updated_at) : '', meta:pageBadge(p).meta,type:pageBadge(p).label, path:p.id ? `/page/${p.id}` : p.path ? `/page?file=${encodeURIComponent(p.path)}` : undefined }));
   const pageSummary = (list: any[], empty: string): HomeCardSummary => ({ value:list.length,label:'篇页面',presentation:'list',rows:rowsOf(list,limitOf(module.opts,12,20)),empty });
   const facts: HomeCardRow[] = [
@@ -649,6 +671,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  summaryScope.stop();
   mobileMedia.removeEventListener('change', onBoardViewportChange);
   clearInterval(queueTimer);
   window.removeEventListener('focus', refreshQueue);

@@ -260,6 +260,7 @@ import AppSpinner from '../components/ui/AppSpinner.vue';
 import Icon from '../components/Icon.vue';
 import { notify } from '../lib/notify';
 import { createGraphFrame } from '../lib/graphFrame';
+import { createRequestSeq } from '../lib/requestSeq';
 import { createGraphClock, stepGraphForces, type ForceLink } from '../lib/graphPhysics';
 import { acceptGraphLabel, type GraphLabelBox } from '../lib/graphLabels';
 
@@ -406,7 +407,11 @@ const typeName = (g: string) => TYPE_NAME[g] || TYPE_NAME[g.replace(/^entity-/, 
 /** 「本页关联」的中心：优先路由里的页面，其次当前选中的节点 */
 function localId() { return pageId.value || selected.value?.id || ''; }
 
+/** 图谱加载序号：快速切换中心页时，先发的响应不能覆盖后发的结果 */
+const loadSeq = createRequestSeq();
+
 async function load() {
+  const seq = loadSeq.next();
   loading.value = true;
   loadError.value = '';
   const center = mode.value === 'local' ? localId() : '';
@@ -416,11 +421,13 @@ async function load() {
   try {
     ({ data } = await api.get('/api/graph', { params }));
   } catch (error: any) {
+    if (!loadSeq.isCurrent(seq)) return; // 已被更新的一次加载取代：错误也别报
     loadError.value = error?.response?.data?.error || error?.message || '图谱加载失败';
     notify.error(loadError.value);
     loading.value = false;
     return;
   }
+  if (!loadSeq.isCurrent(seq)) return; // 期间换过中心页：这次响应作废（loading 归新请求管）
   loading.value = false;
 
   const nodes: GNode[] = (data.nodes || []).map((n) => ({

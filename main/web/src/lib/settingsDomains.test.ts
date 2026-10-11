@@ -223,8 +223,8 @@ test('「自动整理（梦境思考）」与「任务看板提炼」插在「�
   // 页面侧：AgentPanel 里有个 #after-builtin 插槽，两块自动化分组从设置页插进去
   assert.match(agentSection, /<AgentPanel>/, 'AgentPanel 不再是带插槽的写法');
   assert.match(agentSection, /#after-builtin/, '设置页没有把自动化分组插进 #after-builtin');
-  assert.match(agentSection, /<\s*DreamSection\s*\/>/, '插槽里没有 DreamSection');
-  assert.match(agentSection, /<\s*BoardSection\s*\/>/, '插槽里没有 BoardSection（任务看板提炼）');
+  assert.match(agentSection, new RegExp('< *DreamSection[^>]*/>'), '插槽里没有 DreamSection');
+  assert.match(agentSection, new RegExp('< *BoardSection[^>]*/>'), '插槽里没有 BoardSection（任务看板提炼）');
   assert.ok(
     agentSection.indexOf('<DreamSection') < agentSection.indexOf('<BoardSection'),
     '「任务看板提炼」要排在「自动整理（梦境思考）」之后——顺序与导航登记不一致就会点错锚点',

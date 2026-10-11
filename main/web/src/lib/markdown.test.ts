@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderMarkdown } from './markdown.ts';
+import { createMarkdownMemo, renderMarkdown } from './markdown.ts';
 
 test('paragraphs keep single line breaks and escape raw html', () => {
   assert.equal(
@@ -125,4 +125,31 @@ test('repeated renders stay stable across the result cache', () => {
   // 缓存按 FIFO 截断：灌满后老键被淘汰，结果依旧一致
   for (let index = 0; index < 80; index++) renderMarkdown(`填充 ${index}`);
   assert.equal(renderMarkdown(source), first);
+});
+
+test('逐条消息的渲染记忆：内容没变不重解析，内容变了才重算', () => {
+  let calls = 0;
+  const memo = createMarkdownMemo((source) => {
+    calls += 1;
+    return renderMarkdown(source);
+  });
+  const first = memo.render('m1', '**一**');
+  assert.equal(memo.render('m1', '**一**'), first, '同一键同一内容复用结果');
+  assert.equal(calls, 1);
+
+  const second = memo.render('m1', '**一** 加一句');
+  assert.notEqual(second, first, '内容变了要重新渲染');
+  assert.equal(calls, 2);
+  assert.equal(memo.render('m1', '**一** 加一句'), second);
+  assert.equal(calls, 2);
+
+  // 每条消息各自记账，互不挤占（renderMarkdown 的全局 FIFO 缓存会被灌爆，这里不会）
+  memo.render('m2', '别的消息');
+  assert.equal(calls, 3);
+  for (let index = 0; index < 100; index++) memo.render('m3', `增量 ${index}`);
+  assert.equal(memo.render('m1', '**一** 加一句'), second);
+  assert.equal(calls, 103);
+
+  assert.equal(memo.render('m4', ''), '', '空内容不渲染也不记账');
+  assert.equal(calls, 103);
 });

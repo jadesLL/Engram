@@ -11,10 +11,12 @@ import {
   distillToastFor,
   emptyDistillState,
   normalizeDistillState,
+  probeIdeaDistill,
   resetIdeaDistill,
   stopTrack,
   summarizeDistillDetail,
   trackIdeaDistill,
+  useIdeaDistill,
   type IdeaDistillState,
 } from './ideaDistillFeed.ts';
 import { dismissToast, pushToast, toastState } from './notify.ts';
@@ -109,4 +111,29 @@ test('登出/重置：清空后 push 仍可正常发通知（通知层不依赖�
   assert.equal(toastState.items.some((item) => item.id === id), true);
   dismissToast(id);
   assert.equal(toastState.items.some((item) => item.id === id), false);
+});
+
+test('订阅补拉只探一次：失败也记下，不随依赖变化反复打接口', async () => {
+  resetIdeaDistill();
+  const { api } = await import('../api.ts');
+  const original = api.get;
+  const calls: string[] = [];
+  api.get = ((url: string) => {
+    calls.push(url);
+    return Promise.reject(new Error('offline'));
+  }) as unknown as typeof api.get;
+  try {
+    probeIdeaDistill('idea-1');
+    probeIdeaDistill('idea-1');
+    assert.equal(calls.length, 1, '同一 id 的重复补拉只发一次');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(useIdeaDistill('idea-1').current.staged, 'unknown', '补拉失败保持 unknown，不弹状态行');
+    probeIdeaDistill('idea-1');
+    assert.equal(calls.length, 1, '失败已经记下，不再重打');
+    probeIdeaDistill('idea-2');
+    assert.equal(calls.length, 2, '换一条灵感仍然要探');
+  } finally {
+    api.get = original;
+    resetIdeaDistill();
+  }
 });

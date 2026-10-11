@@ -939,12 +939,13 @@ function prepareLinks(root: HTMLElement) {
   }
 }
 
-/** 大页阅读渲染缓存：Vditor.preview + 后处理对 15 万字页是一次 ~2s 的同步主线程阻塞。
- * 按「标题+转换后正文」作键（内容或标题变即失效），LRU 限 3 份、只缓存 ≥2 万字的页
- * （小页渲染 <100ms，不值得占内存）。存 innerHTML 字符串而非 detached DOM：
- * 复访省 cloneNode，内存也更省；缓存的 HTML 与主题无关（配色走 CSS 变量）。 */
+/** 阅读渲染缓存：Vditor.preview + 后处理对 15 万字页是一次 ~2s 的同步主线程阻塞。
+ * 按「标题+转换后正文」作键（内容或标题变即失效），LRU 限 3 份。
+ * **小页也缓存**：主题（dark/light）在 watch 里会让整页重新渲染，不缓存的话每次切换
+ * 都要对当前页再跑一遍 Vditor.preview——小页渲染虽 <100ms，但切换主题时它是白跑的。
+ * 存 innerHTML 字符串而非 detached DOM：复访省 cloneNode，内存也更省；
+ * 缓存的 HTML 与主题无关（配色走 CSS 变量，与切换前行为一致）。 */
 const RENDER_CACHE_MAX = 3;
-const RENDER_CACHE_MIN_CHARS = 20_000;
 const renderCache = new Map<string, { html: string; outline: OutlineItem[]; metrics: { units: number; minutes: number } }>();
 
 async function renderMarkdown() {
@@ -980,11 +981,10 @@ async function renderMarkdown() {
     prepareLinks(next);
     // textContent 而非 innerText：纯遍历无布局开销，15 万字页面省数百毫秒，计数结果一致
     metrics.value = readingMetrics(`${props.title}\n${next.textContent}`);
-    if (source.length >= RENDER_CACHE_MIN_CHARS) {
-      renderCache.set(cacheKey, { html: next.innerHTML, outline: [...outline.value], metrics: metrics.value });
-      while (renderCache.size > RENDER_CACHE_MAX) {
-        renderCache.delete(renderCache.keys().next().value!);
-      }
+    // 小页也进缓存（主题切换会重跑整页渲染，见 renderCache 注释）
+    renderCache.set(cacheKey, { html: next.innerHTML, outline: [...outline.value], metrics: metrics.value });
+    while (renderCache.size > RENDER_CACHE_MAX) {
+      renderCache.delete(renderCache.keys().next().value!);
     }
     host.replaceChildren(...Array.from(next.childNodes));
     bindFoldSections(host);

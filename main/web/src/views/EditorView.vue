@@ -197,7 +197,7 @@
               v-model="tagDraft"
               class="tag-draft"
               placeholder="标签名"
-              @keydown.enter.prevent="commitTagDraft"
+              @keydown.enter.prevent="commitTagDraft($event)"
               @keydown="onTagDraftKey"
               @blur="commitTagDraft"
             />
@@ -395,7 +395,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, computed, defineAsyncComponent, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRoute, useRouter, onBeforeRouteUpdate, onBeforeRouteLeave } from 'vue-router';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
@@ -409,11 +409,8 @@ import {
   type ContextMenuItem,
   type SelectionContextMenuRequest,
 } from '../lib/contextMenu';
-import MarkdownEditor from '../components/MarkdownEditor.vue';
-import DocumentTitle from '../components/DocumentTitle.vue';
 import { documentTitleParts } from '../lib/documentTitle';
-import ReadingPreview from '../components/ReadingPreview.vue';
-import FilePreview from '../components/FilePreview.vue';
+import DocumentTitle from '../components/DocumentTitle.vue';
 import BackTrailMenu from '../components/BackTrailMenu.vue';
 import RelatedMenu from '../components/RelatedMenu.vue';
 import Icon from '../components/Icon.vue';
@@ -426,19 +423,25 @@ import { useRuntimeCapabilities } from '../lib/capabilities';
 import { createThrottledReload } from '../lib/refreshThrottle';
 import { notify } from '../lib/notify';
 import { retryIdeaDistill } from '../lib/ideaDistill';
-import { emptyDistillState, useIdeaDistill } from '../lib/ideaDistillFeed';
+import { emptyDistillState, probeIdeaDistill, useIdeaDistill } from '../lib/ideaDistillFeed';
 import { useTasksStore } from '../stores/tasks';
 import { useHomeBoardStore } from '../stores/homeBoard';
 import { ideaPagesOf, recentPagesOf } from '../lib/homeBoard.ts';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
-import { vditorPreviewOptions } from '../lib/vditorPreview';
-import Vditor from 'vditor';
+import { isComposingKey } from '../lib/ime';
 import {
   CONTENT_WIDTH_RATIO_STEPS,
   contentColumnWidth,
   formatContentWidthRatio,
   type ContentWidthRatio,
 } from '../lib/contentWidth';
+
+/* 三块重组件（Vditor 编辑器 / 阅读预览 / 富文件预览）都是按需渲染的：静态 import
+   会让首页/看板落地页也下载整套编辑器包，改成异步组件按需拉取。模板 ref 全部走
+   可选链、且只在事件回调里访问，组件未就绪时安全无操作。 */
+const MarkdownEditor = defineAsyncComponent(() => import('../components/MarkdownEditor.vue'));
+const ReadingPreview = defineAsyncComponent(() => import('../components/ReadingPreview.vue'));
+const FilePreview = defineAsyncComponent(() => import('../components/FilePreview.vue'));
 
 const route = useRoute();
 const router = useRouter();
@@ -532,6 +535,13 @@ async function retryIdeaDistillFromPage() {
  */
 
 const page = ref<any>(null);
+/* 提炼状态补拉：只在页面 id 变化时发生（computed 每次重算不再打接口；失败后状态仍是
+   unknown，之前每次依赖变化都会重发一次请求）。必须放在 `page` 声明之后：
+   watch 注册时会立即求值一次源函数，放前面会踩暂时性死区。 */
+watch(
+  () => (isIdeaPage.value && page.value?.id ? String(page.value.id) : ''),
+  (id) => { if (id) probeIdeaDistill(id); }
+);
 const content = ref('');
 const title = ref('');
 const pageType = ref('note');
@@ -647,10 +657,12 @@ const chromeCollapsed = ref(chromeMobile.matches);
    412px 屏上 70% 只剩 258px，编辑正文一屏放不下十来个字（与沉浸阅读同一口径，见 ReadingPreview） */
 const narrowEditor = ref(chromeMobile.matches);
 let chromeUserTouched = false;
-chromeMobile.addEventListener('change', (e) => {
+/** 断点变化：定义成具名函数，卸载时好摘掉（匿名监听器摘不掉就是内存泄漏） */
+function onChromeMobileChange(e: MediaQueryListEvent) {
   if (!chromeUserTouched) chromeCollapsed.value = e.matches;
   narrowEditor.value = e.matches;
-});
+}
+chromeMobile.addEventListener('change', onChromeMobileChange);
 function toggleChrome() {
   chromeUserTouched = true;
   chromeCollapsed.value = !chromeCollapsed.value;
@@ -659,8 +671,13 @@ const evidence = ref<any>(null);
 const evidenceOpen = ref(false);
 const pageLoading = ref(false);
 const pageError = ref('');
-const editorRef = ref<InstanceType<typeof MarkdownEditor>>();
-const filePreviewRef = ref<InstanceType<typeof FilePreview>>();
+/* 异步组件的模板 ref：类型直接取 SFC 默认导出（defineAsyncComponent 的返回类型
+   不保证保留组件实例类型），实例属性与同步挂载时一致；组件未就绪时 ref 为 null，
+   调用处一律走可选链。 */
+type MarkdownEditorInstance = InstanceType<typeof import('../components/MarkdownEditor.vue')['default']>;
+type FilePreviewInstance = InstanceType<typeof import('../components/FilePreview.vue')['default']>;
+const editorRef = ref<MarkdownEditorInstance>();
+const filePreviewRef = ref<FilePreviewInstance>();
 const viewEl = ref<HTMLElement>();
 
 /* ===== 正文列宽：按可用区百分比（默认 70%），阅读与编辑共用同一份偏好 ===== */
@@ -749,7 +766,9 @@ async function startTagEdit() {
   tagInputRef.value?.focus();
 }
 
-function commitTagDraft() {
+/** @param event 键盘事件（Enter 提交时传入）：输入法组字中的回车是在确认候选词，不能当提交 */
+function commitTagDraft(event?: Event) {
+  if (isComposingKey(event)) return;
   if (!tagEditing.value) return; // Enter 提交后输入框卸载会再触发一次 blur
   tagEditing.value = false;
   const parts = tagDraft.value.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
@@ -1398,6 +1417,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload);
   window.removeEventListener('keydown', onGlobalKey);
+  chromeMobile.removeEventListener('change', onChromeMobileChange);
   document.removeEventListener('pointerdown', onWidthPickerPointerDown);
   document.removeEventListener('click', onWidthPickerPointerDown);
   viewObserver?.disconnect();

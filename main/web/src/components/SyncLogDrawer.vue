@@ -138,21 +138,21 @@
           <ul v-else class="log-list">
             <!-- 一条记录一行：时间 · 结果 · 事件 · 成员 · 一句话摘要 …… 内容类型 · N 处改动。
                  改动的正文一律收起来，点开这一行才铺开（带上下文的行级 diff + 全部字段）。 -->
-            <li v-for="entry in state.entries" :key="entry.id" class="log-item" :class="entryOutcome(entry)">
+            <li v-for="entry in state.entries" :key="entry.id" class="log-item" :class="memoOf(entry).outcome">
               <button class="log-row" type="button" :aria-expanded="isSyncLogExpanded(entry.id)" @click="toggleSyncLogEntry(entry.id)">
                 <span class="ts" :title="formatLogTime(entry.ts)">{{ formatLogClock(entry.ts) }}</span>
-                <span class="badge" :class="entryOutcome(entry)">{{ entryOutcomeLabel(entry) }}</span>
+                <span class="badge" :class="memoOf(entry).outcome">{{ memoOf(entry).outcomeLabel }}</span>
                 <span class="sum">
                   <span class="ev">{{ eventLabel(entry.event) }}</span>
                   <span v-if="entry.peer" class="peer">{{ entry.peer }}</span>
                   <span class="detail">{{ entry.detail || '—' }}</span>
                 </span>
-                <span v-if="entryContents(entry).length" class="tags">
-                  <span v-for="type in entryContents(entry)" :key="type" class="tag" :data-type="type">
+                <span v-if="memoOf(entry).contents.length" class="tags">
+                  <span v-for="type in memoOf(entry).contents" :key="type" class="tag" :data-type="type">
                     <i class="dot" />{{ type }}
                   </span>
                 </span>
-                <span v-if="changeCount(entry)" class="count">{{ changeCount(entry) }} 处改动</span>
+                <span v-if="memoOf(entry).changeCount" class="count">{{ memoOf(entry).changeCount }} 处改动</span>
                 <Icon class="caret" :class="{ open: isSyncLogExpanded(entry.id) }" name="chevron-down" :size="13" />
               </button>
 
@@ -560,6 +560,35 @@ function changeCount(entry: SyncLogEntry): number {
   if (files.length) return files.length;
   const paths = entry.data?.paths;
   return Array.isArray(paths) ? paths.length : 0;
+}
+
+/**
+ * 每行折叠态都要用到的派生值（结果 / 结果文案 / 内容类型 / 改动数）：按条目对象记忆。
+ * 日志累积到 2000 条、同步中每 5 秒刷新一次，这些函数原来在每次渲染里对每行重复执行
+ * （entryContents 还会遍历 changes 正文），这里算一次就够；刷新拿到的是新对象，
+ * WeakMap 随之失效、不留旧引用。
+ */
+interface SyncLogEntryMemo {
+  outcome: ReturnType<typeof entryOutcome>;
+  outcomeLabel: string;
+  contents: SyncLogContent[];
+  changeCount: number;
+}
+
+const entryMemo = new WeakMap<SyncLogEntry, SyncLogEntryMemo>();
+
+function memoOf(entry: SyncLogEntry): SyncLogEntryMemo {
+  let cached = entryMemo.get(entry);
+  if (!cached) {
+    cached = {
+      outcome: entryOutcome(entry),
+      outcomeLabel: entryOutcomeLabel(entry),
+      contents: entryContents(entry),
+      changeCount: changeCount(entry),
+    };
+    entryMemo.set(entry, cached);
+  }
+  return cached;
 }
 
 const rawOpenIds = ref<number[]>([]);
