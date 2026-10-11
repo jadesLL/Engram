@@ -9,6 +9,10 @@
 - **每次发版固定三件套**：Android 端（APK）+ Windows 桌面版（exe）+ Docker 镜像，三件缺一视为发版未完成（推完 `v*` 标签后必须 dispatch `binaries` 补产 APK/exe）；其中**安卓端要补齐自上一个 Android 版本以来累积的全部改动**（安卓端不能源码自更新，可能一次跨过多个版本），不能只写本版增量。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## 未发布
+
+- 修复 Android CI 的 Debian HTTP 软件源连接失败：显式 HTTPS、Node CA 引导、有限重试与完整索引校验；Release dispatch 可指定同仓库不可变提交的 Android Dockerfile 环境修复，应用源码和版本仍来自发布标签，便于补齐已有版本 APK。
+
 ## v1.3.9（2026-10-11）
 
 **首页升级为可编辑的卡片看板，知识图谱改为简洁画布与悬浮设置，多端同步可按内容分类开关。安卓新增系统分享入口，把其他应用的文字、链接和文件收进本机收集箱；同时更新首页、图谱、任务与同步界面。Windows exe、Android APK 与 Docker 镜像均从本次发版提交重新构建。**

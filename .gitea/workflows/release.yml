@@ -27,6 +27,11 @@ on:
         description: '构建 docker tar.gz 离线镜像包并补挂 Release（按需）'
         type: boolean
         default: false
+      android_build_recipe_sha:
+        description: '安卓构建环境修复提交 SHA（可选，仅替换 Dockerfile.ci；应用源码仍来自 tag）'
+        required: false
+        type: string
+        default: ''
       github_backfill:
         description: '回填历史版本产物到公开仓库 Release：版本号列表（如 1.2.0,1.3.0）或 all（从 Gitea Release 拉已有附件）；留空不回填'
         required: false
@@ -191,6 +196,23 @@ jobs:
           cd ..
           echo ">> 构建产物："
           ls -la desktop-dist
+
+      - name: 应用固定提交的 Android 构建环境修复（可选，不改变标签源码）
+        if: github.event_name == 'workflow_dispatch' && inputs.binaries == true && inputs.android_build_recipe_sha != ''
+        shell: bash
+        env:
+          RECIPE_SHA: ${{ inputs.android_build_recipe_sha }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if ! [[ "$RECIPE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "android_build_recipe_sha 必须是完整的 40 位提交 SHA"
+            exit 1
+          fi
+          git fetch --no-tags --depth=1 origin "$RECIPE_SHA"
+          git show "$RECIPE_SHA:main/mobile/Dockerfile.ci" > /tmp/engram-android-Dockerfile.ci
+          cp /tmp/engram-android-Dockerfile.ci main/mobile/Dockerfile.ci
+          echo "Android 应用源码标签：$INPUT_TAG；构建环境配置提交：$RECIPE_SHA"
+        # checkout 保留同仓库 Git 凭据；修复仅从本仓库按不可变 SHA 取得。
 
       - name: 构建 Android APK（Linux 容器内打包，签名密钥经环境变量注入）
         if: github.event_name == 'workflow_dispatch' && inputs.binaries == true

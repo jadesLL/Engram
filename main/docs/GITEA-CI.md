@@ -42,6 +42,10 @@
 - bump 时三处同步：`main/desktop/package.json` 的 `version`、`main/web/src/version.ts`（软件内版本显示）、`main/docker-compose.yml` 镜像 tag。
 - 仓库根 `CHANGELOG.md` 必须有 `## v<版本>（YYYY-MM-DD）` 段落（距上次发布以来的全部新功能；**安卓端要补齐自上一个 Android 版本以来累积的全部改动**），release.yml 用 awk 提取该段落（段落标题行到下一个 `## ` 标题前），缺失直接失败；段落内容自动作为 Gitea Release 正文发布。
 
+### 已有标签的 Android 构建环境修复
+
+若标签应用源码无需改动，但 Android Dockerfile 的依赖源失效，可在 `release.yml` dispatch 的 `android_build_recipe_sha` 填入**本仓库完整的 40 位修复提交 SHA**。工作流只从该不可变提交取得 `main/mobile/Dockerfile.ci`；前端、Kotlin/Java、版本号和签名流程仍来自 `inputs.tag`。留空时完全使用标签自带配置。修复提交先完成验证并合入 main，再触发补产；在 `releases/<版本>/release.json` 记录应用标签提交与构建环境提交，不移动发布标签、不以 main 应用源码替代已发布版本。
+
 ## 源码版安装器发布（generic 包，独立于发版）
 
 源码版安装器 `Engram-source-setup.exe` 是**引导器**：它的行为全在内嵌的
