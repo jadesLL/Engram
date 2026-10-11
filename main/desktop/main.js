@@ -33,6 +33,8 @@ const runtimeMode = require('./scripts/lib/runtime-mode');
 // 自动检查更新的节奏（启动首查 + 自适应退避 + 回前台补查），与 web 端 main/web/src/lib/updateCadence.ts
 // 同一套策略：没发现更新就 2→5→10→30→60 分钟逐级拉长；发现了（或有更新待处理）保持最短间隔。
 const updateCadence = require('./scripts/lib/update-cadence');
+// 更新链的纯逻辑（文件名净化 / sha256 校验 / 安装结果判定），单测在 scripts/tests/update-chain.test.js
+const updateChain = require('./scripts/lib/update-chain');
 
 /** 是否安装包形态（打包产物 app.asar 存在）；源码模式（含品牌启动器）一律 false */
 const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
@@ -282,7 +284,9 @@ let currentIconAppearance = 'light';
 function isInternalNavUrl(target) {
   try {
     const u = new URL(target);
-    if (u.protocol === 'data:' || u.protocol === 'file:') return true;
+    // data:/file: 不算内部导航：主进程自己加载的启动页/错误页走 loadURL（不触发本判定，见
+    // loadWin），这里拦的是渲染层发起的跳转——放过去等于让任意 data: 页面带着 preload 桥运行。
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
     const cur = win ? new URL(win.webContents.getURL()) : null;
     return Boolean(cur && cur.origin && cur.origin !== 'null' && cur.origin === u.origin);
   } catch {
@@ -670,6 +674,8 @@ app.whenReady().then(() => {
   app.setAccessibilitySupportEnabled(true);
   Menu.setApplicationMenu(buildAppMenu());
   launchByConfig({ silent: SILENT_START });
+  // 上一次「退出安装」结算：版本没前进就把原因挂到 autoState.installError，界面启动后能直接看到
+  reportPendingUpdateResult();
   // 登录项与当前安装形态对齐（换过安装目录、旧版没写静默标记时改写命令），并把状态读进托盘菜单缓存；
   // 不 await：注册表读取失败也不能挡住启动
   if (!process.env.ENGRAM_USER_DATA) void reconcileLaunchAtLogin();
@@ -970,15 +976,20 @@ ipcMain.handle('open-file-bytes', (_e, name, bytes) => {
  * IPC 通道打爆。本地模式下主进程与服务端同一台机器、同一份数据目录，直接按路径打开即可。
  *
  * 安全：只允许 <数据目录>/brain/收集箱 内的文件，不接受任意绝对路径。
+ * 前缀比较不够——收集箱内容会随同步写入，里面放一个指向系统文件的符号链接就能越界，
+ * 而 openPath 是用系统默认程序打开（等于执行）。所以解出真实路径后再确认一次在界内。
  */
 function resolveInboxPath(relPath) {
   const rel = String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, '');
   if (!rel.startsWith('收集箱/')) throw new Error('只能打开收集箱内的文件');
-  const inboxRoot = path.join(getDataDir(), 'brain', '收集箱');
-  const abs = path.resolve(inboxRoot, rel.slice('收集箱/'.length));
-  if (abs !== inboxRoot && !abs.startsWith(inboxRoot + path.sep)) throw new Error('路径越界');
+  const root = fs.realpathSync(path.join(getDataDir(), 'brain', '收集箱'));
+  const abs = path.resolve(root, rel.slice('收集箱/'.length));
+  const within = (target) => target === root || target.startsWith(root + path.sep);
+  if (!within(abs)) throw new Error('路径越界');
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) throw new Error('文件不存在');
-  return abs;
+  const real = fs.realpathSync(abs);
+  if (!within(real)) throw new Error('路径越界');
+  return real;
 }
 
 // 用系统默认应用打开收集箱原文件（返回 { ok } 或 { ok:false, error }；空串错误=成功）
@@ -1134,6 +1145,23 @@ async function giteaLatestRelease(cfg) {
   return { tag, version, assets };
 }
 
+/**
+ * 取某个资产在本次 Release 里声明的 sha256：发布流水线会把产物目录整体
+ * `sha256sum ./* > sha256-<版本>.txt` 作为同名资产发出（见 .gitea/workflows/release.yml）。
+ * 取不到校验值就返回 null——调用方据此拒绝安装，绝不执行未校验的安装包。
+ */
+async function fetchSha256ForAsset(cfg, release, asset, signal) {
+  const shaAsset = updateChain.findSha256Asset(release.assets, release.version);
+  if (!shaAsset) return null;
+  const res = await fetch(shaAsset.url, {
+    headers: repoAuthHeaders(cfg),
+    redirect: 'follow',
+    signal: signal || AbortSignal.timeout(20000),
+  });
+  if (!res.ok) throw new Error(`校验文件下载失败 HTTP ${res.status}`);
+  return updateChain.parseSha256File(await res.text(), asset.name);
+}
+
 /** 检查更新（手动 IPC 与自动轮询共用）：passedCfg 未传时按优先级自动解析更新源 */
 async function checkForUpdate(passedCfg) {
   const cfg = await resolveUpdateCfg(passedCfg);
@@ -1162,7 +1190,9 @@ async function checkForUpdate(passedCfg) {
 ipcMain.handle('desktop-update-check', (_e, passedCfg) => checkForUpdate(passedCfg));
 
 // 下载安装包到 userData/downloads/；进度经 send 回调推送（手动=发起窗口，自动=广播所有窗口）
-async function downloadUpdateFile(cfg, url, send, signal) {
+// 文件名只取 URL 末段并净化（防路径穿越），落盘后必须与 Release 的 sha256 一致才留着——
+// expectedSha256 为空表示这次发布没提供校验文件，同样删除并拒绝安装（宁可更不了，不装没校验的包）。
+async function downloadUpdateFile(cfg, url, send, signal, expectedSha256) {
   const target = String(url);
   // 只允许从配置的远端仓库下载（防注入任意 URL）
   if (!cfg || !cfg.giteaUrl || !target.startsWith(cfg.giteaUrl + '/')) {
@@ -1170,8 +1200,7 @@ async function downloadUpdateFile(cfg, url, send, signal) {
   }
   const dir = path.join(app.getPath('userData'), 'downloads');
   fs.mkdirSync(dir, { recursive: true });
-  const name = decodeURIComponent(target.split('/').pop().split('?')[0]) || 'Engram Setup.exe';
-  const file = path.join(dir, name);
+  const file = updateChain.resolveInsideDir(dir, updateChain.installerFileName(target));
   let res;
   try {
     res = await fetch(target, { headers: repoAuthHeaders(cfg), redirect: 'follow', signal });
@@ -1194,19 +1223,42 @@ async function downloadUpdateFile(cfg, url, send, signal) {
     out.on('error', reject);
     out.end(() => resolve());
   });
-  log(`update installer downloaded: ${file} (${received} bytes)`);
-  return { path: file, size: received };
+  let actual = '';
+  try {
+    actual = await updateChain.sha256File(file);
+  } catch (e) {
+    fs.rmSync(file, { force: true });
+    throw new Error(`安装包校验读取失败：${describeError(e)}`);
+  }
+  if (!expectedSha256) {
+    fs.rmSync(file, { force: true });
+    throw new Error('更新源未提供 sha256 校验文件（sha256-<版本>.txt），为避免执行未经校验的安装包已中止更新');
+  }
+  if (actual !== expectedSha256) {
+    fs.rmSync(file, { force: true });
+    log(`update installer hash mismatch: expected ${expectedSha256} got ${actual}`);
+    throw new Error('安装包校验失败（sha256 与发布记录不一致），已删除下载文件并中止更新');
+  }
+  log(`update installer downloaded: ${file} (${received} bytes, sha256 ok)`);
+  return { path: file, size: received, sha256: actual };
 }
 
-ipcMain.handle('desktop-update-download', async (e, url, passedCfg) => {
-  // 优先渲染进程传入与最近检查所用的配置，确保与资产 URL 同源
-  const cfg = (passedCfg && typeof passedCfg === 'object' && passedCfg.giteaUrl && passedCfg.giteaRepo)
-    ? passedCfg
-    : (lastCheckCfg || (await resolveUpdateCfg(null)));
+ipcMain.handle('desktop-update-download', async (e, url) => {
+  // 下载源只认主进程持有的配置（.env），渲染进程传来的任何配置一律不采信：那条路径曾能
+  // 任意指定 giteaUrl，把「只从配置源下载」的校验变成空转。资产还必须真在本次 Release 里。
+  const cfg = await resolveUpdateCfg(null);
+  if (!cfg.giteaUrl || !cfg.giteaRepo) throw new Error('尚未配置更新源');
+  lastCheckCfg = cfg;
+  autoState.installError = ''; // 新一轮安装开始：清掉上一次的结算提示
+  const release = await giteaLatestRelease(cfg);
+  if (!release) throw new Error('更新源上没有可用的 Release');
+  const asset = release.assets.find((a) => a.url === String(url));
+  if (!asset) throw new Error('下载地址不是当前更新源最新 Release 的资产，请保存更新源设置后重试');
+  const expected = await fetchSha256ForAsset(cfg, release, asset);
   const sender = e.sender;
-  return downloadUpdateFile(cfg, url, (ch, data) => {
+  return downloadUpdateFile(cfg, asset.url, (ch, data) => {
     if (sender && !sender.isDestroyed()) sender.send(ch, data);
-  });
+  }, undefined, expected);
 });
 
 function validateInstallerFile(filePath) {
@@ -1250,6 +1302,9 @@ const autoState = {
   latestVersion: null,
   percent: null,
   error: '',
+  // 上一次「退出安装」的结果（重启后比对版本号得出）：装失败时留在这里给界面提示，
+  // 与 phase/error 分开是因为自动检查每 4 秒就会把 phase 推着走一遍，message 会被冲掉。
+  installError: '',
 };
 let autoBusy = false;
 let autoAbort = null;
@@ -1312,6 +1367,11 @@ function installerScopeFlag() {
   return '/currentuser';
 }
 
+/** PowerShell 单引号字符串字面量：内部单引号翻倍（进度窗标题拼进 -EncodedCommand 的脚本） */
+function psq(text) {
+  return `'${String(text ?? '').replace(/'/g, "''")}'`;
+}
+
 /** 生成安装进度窗（powershell WinForms 无边框置顶窗，经 -EncodedCommand 启动，无临时脚本文件）。
  *  窗口纯装饰：按安装包进程名轮询，安装器退出即自动关窗；被安全软件拦截也不影响安装——
  *  安装与重启由下方独立的 cmd 链执行，不依赖任何脚本解释器。 */
@@ -1355,6 +1415,44 @@ function spawnInstallUiForm(version, scopeFlag) {
   child.unref();
 }
 
+/** 退出安装前记下目标版本：下次启动比对实际版本号，才能知道这次安装到底成没成 */
+function markPendingUpdate(version) {
+  const v = sanitizeVersion(version);
+  if (!v) return;
+  try {
+    const cfg = readConfig();
+    cfg.pendingUpdate = { version: v, at: Date.now() };
+    writeConfig(cfg);
+    autoState.installError = ''; // 新一轮安装开始：清掉上一次的结算提示
+  } catch (e) {
+    log('record pending update failed (non-fatal): ' + describeError(e));
+  }
+}
+
+/** 启动时结算上一次退出安装的结果：版本没前进就如实报出来（UAC 被拒、被杀软拦下、半装都会这样） */
+function reportPendingUpdateResult() {
+  let pending = null;
+  try {
+    const cfg = readConfig();
+    pending = cfg.pendingUpdate || null;
+    if (pending) {
+      delete cfg.pendingUpdate;
+      writeConfig(cfg);
+    }
+  } catch (e) {
+    log('read pending update failed (non-fatal): ' + describeError(e));
+    return;
+  }
+  const outcome = updateChain.installOutcome({ pendingVersion: pending?.version, currentVersion: app.getVersion() });
+  if (outcome.status === 'none' || outcome.status === 'ok') return;
+  if (outcome.status === 'failed') {
+    autoState.installError = `上次更新到 v${outcome.pendingVersion} 未生效（当前仍是 v${outcome.currentVersion}）：可能安装被系统拦截、UAC 被取消或安装中断，可再试一次或手动下载安装包。`;
+  } else {
+    autoState.installError = `上次更新到 v${outcome.pendingVersion} 的结果无法确认，请检查当前版本。`;
+  }
+  log('pending update result: ' + autoState.installError);
+}
+
 /** 静默安装 + 自动重启：cmd 链等待 /S 安装完成后无条件拉起新版（不依赖 NSIS 静默模式是否
  *  自动启动，也不依赖任何脚本解释器）；PS 进度窗为尽力而为的装饰层。
  *  spawn 后主进程随即退出——先撤锁、撤端口、撤文件占用，NSIS 无需强杀旧进程即可覆盖安装。 */
@@ -1362,6 +1460,7 @@ function beginSilentInstall(file, version, source = 'auto update') {
   const target = installedAppExe();
   const scopeFlag = installerScopeFlag();
   const cmd = `start "" /wait "${file}" /S ${scopeFlag} & start "" "${target}"`;
+  markPendingUpdate(version);
   const child = spawn('cmd.exe', ['/d', '/s', '/c', `"${cmd}"`], {
     detached: true,
     stdio: 'ignore',
@@ -1447,11 +1546,13 @@ async function autoUpdateTick() {
     }
     foundUpdate = true;
     autoState.latestVersion = release.version;
+    autoState.installError = '';
     setAutoPhase('downloading');
+    const expected = await fetchSha256ForAsset(cfg, release, exe, autoAbort.signal);
     const { path: file } = await downloadUpdateFile(cfg, exe.url, (ch, data) => {
       if (ch === 'desktop-update-progress') autoState.percent = data.percent ?? null;
       broadcast(ch, data);
-    }, autoAbort.signal);
+    }, autoAbort.signal, expected);
     if (readConfig().autoUpdate === false) {
       setAutoPhase('idle'); // 下载期间开关被关掉：放弃本次安装
       return;
@@ -1849,10 +1950,34 @@ function failUpdateProgress(message) {
 // fork 一个 Node 侧构建子进程（tsc/vite/prepare-desktop），输出按行实时回显到进度小窗。
 // 全程同为 Node 生态：stdio 管道行为正常，与被 GUI 进程 spawn 的 powershell（静默秒退、
 // 管道场景把构建拖慢几十倍，均实测）不同。
-function forkStep(entry, args, cwd, onLine) {
+// 超时兜底：pnpm/tsc 卡住（锁文件、被杀软拦）时进度窗会永远停在当前步骤，且 sourceUpdating
+// 会让后续更新全被拒——超时后连孙进程一起杀（pnpm 会 fork 出 node/tar，只杀直接子进程留不住）。
+function forkStep(entry, args, cwd, onLine, timeoutMs = 10 * 60_000) {
   return new Promise((resolve, reject) => {
     const child = fork(entry, args, { cwd, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     const tail = [];
+    let settled = false;
+    const finish = (fn) => (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      if (child.pid) {
+        try {
+          execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => {});
+        } catch {
+          /* taskkill 不可用时退回 kill */
+        }
+      }
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* 已退出 */
+      }
+      finish(reject)(new Error(`${path.basename(entry)} 超过 ${Math.round(timeoutMs / 60000)} 分钟未结束，已中止`));
+    }, timeoutMs);
     const collect = (d) => {
       for (const line of d.toString().replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/)) {
         if (!line.trim()) continue;
@@ -1863,11 +1988,11 @@ function forkStep(entry, args, cwd, onLine) {
     };
     child.stdout.on('data', collect);
     child.stderr.on('data', collect);
-    child.on('error', reject);
-    child.on('exit', (code) => {
+    child.on('error', finish(reject));
+    child.on('exit', finish((code) => {
       if (code === 0) resolve();
       else reject(new Error(`${path.basename(entry)} 退出码 ${code}：${tail.slice(-4).join(' | ')}`));
-    });
+    }));
   });
 }
 
@@ -1927,7 +2052,7 @@ async function runSourceUpdate() {
     // 依赖同步交给 sync-deps.js：按依赖指纹判断，真变了才 pnpm install（联网），
     // appId 之类元信息改动不再误报，也不再需要用户去终端跑脚本
     setUpdateStep('同步依赖（依赖变化时 pnpm install）…');
-    await forkStep(syncDepsEntry(), ['workspace', '--app-root', appRootDir], appRootDir, appendUpdateLog);
+    await forkStep(syncDepsEntry(), ['workspace', '--app-root', appRootDir], appRootDir, appendUpdateLog, 20 * 60_000);
     setUpdateStep('构建 server（tsc）…');
     await forkStep(resolveToolEntry([
       path.join('server', 'node_modules', 'typescript', 'bin', 'tsc'),
@@ -1959,7 +2084,7 @@ async function runSourceUpdate() {
       [], appRootDir, appendUpdateLog);
     // 组装后 desktop/server/package.json 才是最新的，再同步运行时依赖与原生 binding
     setUpdateStep('同步桌面运行依赖（desktop/server）…');
-    await forkStep(syncDepsEntry(), ['server', '--app-root', appRootDir], appRootDir, appendUpdateLog);
+    await forkStep(syncDepsEntry(), ['server', '--app-root', appRootDir], appRootDir, appendUpdateLog, 20 * 60_000);
   } catch (e) {
     const msg = describeError(e);
     failUpdateProgress('更新失败：' + msg);

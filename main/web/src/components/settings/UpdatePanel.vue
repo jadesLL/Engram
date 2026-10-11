@@ -208,6 +208,7 @@
             <em>{{ autoState.enabled ? '已开启' : '已关闭' }}</em>
           </label>
         </div>
+        <p v-if="autoSupported && !sourceMode && autoState.installError" class="setting-message err">{{ autoState.installError }}</p>
         <p v-if="autoSupported && !sourceMode && autoStatus && (!autoState.enabled || autoState.phase !== 'idle')" class="setting-message" :class="autoState.phase === 'failed' ? 'err' : autoState.phase === 'installing' ? 'warn' : ''">
           {{ autoStatus }}
         </p>
@@ -497,7 +498,7 @@ let offProgress: (() => void) | null = null;
 
 // 自动更新（主进程状态机）：旧版壳无 desktopUpdateGetState API 时隐藏该节
 const autoSupported = ref(false);
-const autoState = ref<any>({ enabled: true, phase: 'idle', latestVersion: null, percent: null, error: '' });
+const autoState = ref<any>({ enabled: true, phase: 'idle', latestVersion: null, percent: null, error: '', installError: '' });
 let offAutoState: (() => void) | null = null;
 
 const savingConfig = ref(false);
@@ -911,7 +912,12 @@ async function downloadAndInstall() {
   // 下载进度由 onMounted 里的 desktop-update-progress 订阅统一喂给 downloadPercent。
   downloading.value = true;
   downloadError.value = '';
-  const r = await applyDesktopInstallerUpdate({ cfg: updateSourceCfg.value, check: desktopCheck.value });
+  const r = await applyDesktopInstallerUpdate({
+    cfg: updateSourceCfg.value,
+    check: desktopCheck.value,
+    // 下载完成进入静默安装阶段：按钮变「安装中…」并提示即将重启（此前这段 UI 从未被点亮）
+    onInstalling: () => { installing.value = true; },
+  });
   if (!r.ok) {
     downloading.value = false;
     installing.value = false;
