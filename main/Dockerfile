@@ -39,14 +39,17 @@ RUN printf '%s' "$ENGRAM_GIT_SHA" > /app/GIT_SHA
 FROM node:22-slim AS deps
 # 显式使用 HTTPS；只替换域名会保留基础镜像的 HTTP 协议，下载 .deb 时曾返回 403。
 # 同时兼容基础镜像中 HTTP/HTTPS 两种源地址，保留 Debian 自带的签名与 TLS 校验。
+# slim 缺少系统 CA：用 Node 内置的 Mozilla 根证书引导 APT，随后安装 Debian CA 包。
 RUN sed -i \
   -e 's|https\?://deb\.debian\.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
   -e 's|https\?://security\.debian\.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
   /etc/apt/sources.list.d/debian.sources \
   && corepack enable && corepack prepare pnpm@10.20.0 --activate \
   && pnpm config set registry https://registry.npmmirror.com \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ \
+  && node -e "require('node:fs').writeFileSync('/tmp/engram-node-ca.pem', require('node:tls').rootCertificates.join('\n') + '\n')" \
+  && apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem -o APT::Update::Error-Mode=any update \
+  && apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem install -y --no-install-recommends ca-certificates python3 make g++ \
+  && rm -f /tmp/engram-node-ca.pem \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./

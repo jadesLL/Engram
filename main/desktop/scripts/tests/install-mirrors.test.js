@@ -44,5 +44,17 @@ for (const host of ['deb.debian.org', 'security.debian.org']) {
 }
 assert.doesNotMatch(depsStage, /Verify-(?:Peer|Host)\s*[=:]?\s*["']?false|trusted\s*=\s*yes|--allow-unauthenticated/i,
   '不得通过关闭 TLS 或软件包签名校验绕过源下载错误');
+assert.match(depsStage, /require\('node:tls'\)\.rootCertificates/,
+  'node:slim 没有系统 CA，必须先用 Node 自带的可信根证书引导 APT');
+assert.equal((depsStage.match(/Acquire::https::CaInfo=\/tmp\/engram-node-ca\.pem/g) || []).length, 2,
+  'APT 更新索引与安装系统 CA 两步都需要有效的引导证书');
+assert.ok(depsStage.indexOf('rootCertificates') < depsStage.indexOf('apt-get'),
+  '引导证书必须在首次 APT 请求之前准备好');
+assert.match(depsStage, /APT::Update::Error-Mode=any update/,
+  '任何源索引下载失败都应立即让构建失败，不得仅警告后继续使用不完整索引');
+assert.match(depsStage, /install -y --no-install-recommends ca-certificates python3 make g\+\+/,
+  '必须安装 Debian 管理的系统 CA，而非永久依赖临时引导证书');
+assert.match(depsStage, /rm -f \/tmp\/engram-node-ca\.pem/,
+  '系统 CA 安装完成后必须删除临时引导证书');
 
 console.log('install-mirrors: 通过（electron / better-sqlite3 镜像键与 Docker HTTPS 源均在位）');
