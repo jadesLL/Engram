@@ -377,11 +377,11 @@
     <transition name="rise">
       <div v-if="selected.size" class="batch-bar">
         <span class="batch-count">已选 {{ selected.size }} 项</span>
-        <button class="batch-btn" type="button" :disabled="!selectedPageCount" @click="batchArchive">归档</button>
-        <button class="batch-btn" type="button" :disabled="(!selectedPageCount && !selectedFileCount) || exporting" @click="exportSelected">
+        <button class="batch-btn" type="button" :disabled="batchBusy || !selectedPageCount" @click="batchArchive">归档</button>
+        <button class="batch-btn" type="button" :disabled="batchBusy || (!selectedPageCount && !selectedFileCount) || exporting" @click="exportSelected">
           {{ exporting ? '导出中…' : '导出' }}
         </button>
-        <button class="batch-btn danger" type="button" @click="batchDelete">删除</button>
+        <button class="batch-btn danger" type="button" :disabled="batchBusy" @click="batchDelete">删除</button>
         <button class="batch-btn faint-btn" type="button" @click="clearSelection">取消</button>
       </div>
     </transition>
@@ -578,6 +578,8 @@ import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { SYNC_INDEX_REFRESH_MS, useSyncStore } from '../stores/sync';
 import { createThrottledReload } from '../lib/refreshThrottle';
+import { createInflightGuard } from '../lib/inflight';
+import { createRequestSeq } from '../lib/requestSeq';
 import { confirmDialog, promptDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { hideTooltip } from '../lib/tooltip';
@@ -924,14 +926,30 @@ function clearSelection() {
   selected.value = new Set();
 }
 
+/** 批量动作门闩：在途期间忽略重复触发（双击/回车连发不再提交两遍），busy 绑按钮 disabled。
+ *  原来的顺序是「先循环发请求、全部完成才清选择」——没有闸时第二次点击会再发一整轮。 */
+const batchGuard = createInflightGuard();
+const batchBusy = batchGuard.busy;
+
+/** 行内动作在途去重：同一项重复点击（右键菜单/行按钮同时触发）只放行一次 */
+const rowGuard = createInflightGuard();
+
 async function batchArchive() {
   const pageIds = [...selected.value].filter((k) => k.startsWith('p:')).map((k) => k.slice(2));
   if (!pageIds.length) return;
-  for (const id of pageIds) {
-    await api.post(`/api/pages/${id}/archive`);
-  }
-  clearSelection();
-  await load();
+  await batchGuard.run('batch', async () => {
+    try {
+      for (const id of pageIds) {
+        await api.post(`/api/pages/${id}/archive`);
+      }
+      clearSelection();
+    } catch (error: any) {
+      // 部分失败时保留选择（用户可以直接重试）；列表还是要刷新——成功的那些已经变了
+      notify.error(error?.response?.data?.error || '批量归档失败');
+    } finally {
+      await load();
+    }
+  });
 }
 
 async function batchDelete() {
@@ -943,12 +961,19 @@ async function batchDelete() {
     danger: true,
   });
   if (!ok) return;
-  for (const key of selected.value) {
-    if (key.startsWith('p:')) await api.delete(`/api/pages/${key.slice(2)}`);
-    else await api.delete('/api/files', { data: { path: key.slice(2) } });
-  }
-  clearSelection();
-  await load();
+  await batchGuard.run('batch', async () => {
+    try {
+      for (const key of selected.value) {
+        if (key.startsWith('p:')) await api.delete(`/api/pages/${key.slice(2)}`);
+        else await api.delete('/api/files', { data: { path: key.slice(2) } });
+      }
+      clearSelection();
+    } catch (error: any) {
+      notify.error(error?.response?.data?.error || '批量删除失败');
+    } finally {
+      await load();
+    }
+  });
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -1455,13 +1480,19 @@ watch(
   { deep: true }
 );
 
+/** 列表加载序号：SSE 触发的重载（sidebarVersion / 同步进行中的节流刷新）可能与手动 load
+ *  重叠，先发的慢响应不能把后发的新列表覆盖回旧数据。 */
+const loadSeq = createRequestSeq();
+
 async function load() {
+  const seq = loadSeq.next();
   const [{ data: pl }, { data: doc }, { data: cf }, { data: idea }] = await Promise.all([
     api.get('/api/pages/list'),
     api.get('/api/files/list?section=doc'),
     api.get('/api/files/list?section=chat'),
     api.get('/api/files/list?section=idea'),
   ]);
+  if (!loadSeq.isCurrent(seq)) return; // 期间有更新的一次加载：这次结果作废
   allPages.value = pl.pages;
   files.value = doc.files;
   chatFiles.value = cf.files;
@@ -1469,6 +1500,7 @@ async function load() {
   // 分类名以服务端为准（拿不到就沿用内置兜底值，不影响列表；分组说明不进侧栏，保持与实体子类一致的克制）
   try {
     const { data } = await api.get('/api/files/sections');
+    if (!loadSeq.isCurrent(seq)) return;
     const meta: Record<string, { label?: string }> = {};
     for (const section of data?.sections || []) {
       if (section?.key) meta[section.key] = { label: section.label };
@@ -1647,15 +1679,28 @@ async function onRowDrop(e: DragEvent, item: any) {
   }
 }
 
+/** 行内动作的统一收口：同一项在途时忽略重复触发，失败给出明确提示（原来失败是完全静默的） */
+async function runRowAction(key: string, action: () => Promise<void>, failMessage: string) {
+  try {
+    await rowGuard.run(key, action);
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || failMessage);
+  }
+}
+
 async function archivePage(p: any) {
-  await api.post(`/api/pages/${p.id}/archive`);
-  await load();
-  if (p.id === activeId.value) router.push('/page');
+  await runRowAction(`p:${p.id}`, async () => {
+    await api.post(`/api/pages/${p.id}/archive`);
+    await load();
+    if (p.id === activeId.value) router.push('/page');
+  }, '归档失败');
 }
 
 async function unarchivePage(p: any) {
-  await api.post(`/api/pages/${p.id}/unarchive`);
-  await load();
+  await runRowAction(`p:${p.id}`, async () => {
+    await api.post(`/api/pages/${p.id}/unarchive`);
+    await load();
+  }, '取消归档失败');
 }
 
 async function removePage(p: any) {
@@ -1666,9 +1711,11 @@ async function removePage(p: any) {
     danger: true,
   });
   if (!ok) return;
-  await api.delete(`/api/pages/${p.id}`);
-  await load();
-  if (p.id === activeId.value) router.push('/page');
+  await runRowAction(`p:${p.id}`, async () => {
+    await api.delete(`/api/pages/${p.id}`);
+    await load();
+    if (p.id === activeId.value) router.push('/page');
+  }, '删除失败');
 }
 
 async function removeFile(f: any) {
@@ -1679,8 +1726,10 @@ async function removeFile(f: any) {
     danger: true,
   });
   if (!ok) return;
-  await api.delete('/api/files', { data: { path: f.path } });
-  await load();
+  await runRowAction(`f:${f.path}`, async () => {
+    await api.delete('/api/files', { data: { path: f.path } });
+    await load();
+  }, '删除失败');
 }
 
 function openUpload() {

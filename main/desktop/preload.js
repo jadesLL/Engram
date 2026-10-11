@@ -41,8 +41,9 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // 检查 Gitea 最新 Release（cfg 传设置页已保存的更新源配置，旧版主进程会忽略该参数自行解析；
   // 返回 { ok, currentVersion, latestVersion, hasUpdate, exe, releaseUrl }）
   desktopUpdateCheck: (cfg) => ipcRenderer.invoke('desktop-update-check', cfg),
-  // 下载安装包（cfg 同上，用于下载鉴权与来源校验；进度经 desktop-update-progress 事件推送）
-  desktopUpdateDownload: (url, cfg) => ipcRenderer.invoke('desktop-update-download', url, cfg),
+  // 下载安装包（url 必须是最新 Release 的真实资产；下载源与完整性校验由主进程按已保存配置
+  // 自行解析，渲染进程不再传配置——旧版主进程仍接受第二个参数，忽略即可）
+  desktopUpdateDownload: (url) => ipcRenderer.invoke('desktop-update-download', url),
   // 运行安装包并退出应用（静默安装：/S 静默 + 独立进度窗 + 装完自动重启；version 仅用于进度窗文案）
   desktopUpdateRunInstaller: (filePath, version) => ipcRenderer.invoke('desktop-update-run-installer', filePath, version),
   // 下载进度订阅（返回取消函数）

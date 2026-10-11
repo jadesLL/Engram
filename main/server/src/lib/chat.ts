@@ -109,7 +109,8 @@ export async function saveChat(input: SaveChatInput): Promise<SaveChatResult> {
       const prev = readBody(existing) ?? '';
       const merged = `${prev.replace(/\n+$/, '')}\n\n---\n\n${content.trim()}\n`;
       const meta = writePage(existing, merged, { sources, tags, retrieved: now() });
-      try { appendWikiLog('对话沉积', `追加到「${meta.title}」（${meta.path}）`); } catch { /* 日志失败不阻塞 */ }
+      try { appendWikiLog('对话沉积', `追加到「${meta.title}」（${meta.path}）`); }
+      catch (error) { console.warn('[log] 操作日志写入失败（对话沉积·追加）', error); }
       return { id: meta.id, path: meta.path, title: meta.title, appended: true };
     }
     // 找不到则落到新建分支
@@ -125,6 +126,7 @@ export async function saveChat(input: SaveChatInput): Promise<SaveChatResult> {
   const title = input.identifier?.trim() ? input.identifier.trim() : `${date} Agent 对话`;
   // 原始资料正文不带一级标题：标题在 frontmatter 与文件名里（见 lib/rawBody.ts）
   const meta: PageMeta = writePage(rel, `${content.trim()}\n`, { title, sources, tags, retrieved: now() });
-  try { appendWikiLog('对话沉积', `「${title}」（${rel}）`); } catch { /* 日志失败不阻塞 */ }
+  try { appendWikiLog('对话沉积', `「${title}」（${rel}）`); }
+  catch (error) { console.warn('[log] 操作日志写入失败（对话沉积）', error); }
   return { id: meta.id, path: meta.path, title: meta.title, appended: false };
 }

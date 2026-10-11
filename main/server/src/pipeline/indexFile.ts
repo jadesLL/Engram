@@ -57,6 +57,21 @@ function wikiIndexPages(): Array<{ title: string; type: string; path: string }> 
     .all() as any[];
 }
 
+/**
+ * 只在内容确实变了时才落盘：索引/关系库是全量重写，内容没变时 writePage 的
+ * 文件写 + FTS 重建 + 事件与同步通知全是白做（一次批量操作会连打几十次日志）。
+ * 读侧复用 readPage（已 trim），生成的正文是确定性的，比较结果稳定幂等。
+ */
+function writeIfChanged(
+  relPath: string,
+  content: string,
+  extra: { title: string; type: string; summary?: string }
+): void {
+  const current = readPage(relPath);
+  if (current && current.content.trim() === content.trim()) return;
+  writePage(relPath, content, extra);
+}
+
 /** 重新生成 AIWorks/index/index.md（全量重写，幂等；按分类建组） */
 export function regenerateIndex() {
   const pages = wikiIndexPages();
@@ -96,11 +111,50 @@ export function regenerateIndex() {
       lines.push(`## 未分类（${uncategorized.length}）`, '', ...uncategorized.map((t) => `- [[${t}]]`), '');
     }
   }
-  writePage(INDEX_PAGE, lines.join('\n'), {
+  writeIfChanged(INDEX_PAGE, lines.join('\n'), {
     title: 'Engram 索引',
     type: 'doc',
     summary: total ? `共 ${total} 个条目（${counts}）` : '暂无条目',
   });
+}
+
+/**
+ * 索引 / 关系库重建的合并窗口（毫秒）：一次批量操作（多份文件入库、Agent 连写几页）
+ * 会在极短时间内连打几十次日志，每次都全量重扫 edges/pages 太亏。
+ * 这是「合并」不是「丢弃」：窗口内第一次调用排一次尾随重建，窗口过后必然执行——
+ * 最后一次调用之后的最终状态一定会被写入，不会丢更新；重建本身也只在内容变化时落盘
+ * （见 writeIfChanged），重复调用不再产生写盘与同步事件。
+ */
+const DERIVED_REBUILD_DELAY_MS = 250;
+let derivedRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+
+function rebuildDerivedFiles(): void {
+  try { regenerateIndex(); } catch (error) { console.warn('[index] 索引重建失败', error); }
+  try { regenerateRelationships(); } catch (error) { console.warn('[index] 关系结构重建失败', error); }
+}
+
+function scheduleDerivedRebuild(): void {
+  if (derivedRebuildTimer) return;
+  derivedRebuildTimer = setTimeout(() => {
+    derivedRebuildTimer = null;
+    rebuildDerivedFiles();
+  }, DERIVED_REBUILD_DELAY_MS);
+  derivedRebuildTimer.unref?.();
+  registerDerivedRebuildFlush();
+}
+
+/** 退出前把待重建的补上：窗口内进程收到 SIGTERM/SIGINT 时不能把最后一次写入丢掉 */
+function flushDerivedRebuild(): void {
+  if (!derivedRebuildTimer) return;
+  clearTimeout(derivedRebuildTimer);
+  derivedRebuildTimer = null;
+  rebuildDerivedFiles();
+}
+
+// 幂等注册：重复 import / 多次调用不叠加监听器（先 include 判断，测试里也只挂一次）
+function registerDerivedRebuildFlush(): void {
+  if (!process.listeners('SIGTERM').includes(flushDerivedRebuild)) process.once('SIGTERM', flushDerivedRebuild);
+  if (!process.listeners('SIGINT').includes(flushDerivedRebuild)) process.once('SIGINT', flushDerivedRebuild);
 }
 
 /** 写操作日志到 AIWorks/log/log.md（带年月日时分秒；时间倒序：新的在上） */
@@ -115,9 +169,8 @@ export function appendWikiLog(action: string, detail: string) {
   const body = rd ? String(rd.content).replace(/^#\s*操作日志\s*/, '').replace(/^[\s\r\n]+/, '') : '';
   const content = body ? `${HEADER}\n\n${line}\n${body}` : `${HEADER}\n\n${line}`;
   writePage(LOG_PAGE, content + '\n', { title: '操作日志', type: 'doc' });
-  // 每次写操作都伴随日志追加，顺带重建索引与关系结构（全量重写，量级毫秒）
-  try { regenerateIndex(); } catch { /* 索引重建失败不阻塞日志 */ }
-  try { regenerateRelationships(); } catch { /* 关系结构重建失败不阻塞日志 */ }
+  // 每次写操作都伴随日志追加，顺带重建索引与关系结构；短窗口内的连续调用合并成一次
+  scheduleDerivedRebuild();
 }
 
 /**
@@ -247,7 +300,7 @@ export function regenerateRelationships() {
     lines.push('');
   }
 
-  writePage(RELATIONSHIPS_PAGE, lines.join('\n'), {
+  writeIfChanged(RELATIONSHIPS_PAGE, lines.join('\n'), {
     title: '关系库',
     type: 'doc',
     summary: typed.length || linkTotal

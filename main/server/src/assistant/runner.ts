@@ -1,6 +1,6 @@
 import { startAgentTurn, type AgentTurn } from './dshRuntime.js';
 import { getAgentConfig } from './config.js';
-import { publishRun, clearRun } from './events.js';
+import { publishRun, clearRun, hasRunSubscribers } from './events.js';
 import { buildTask, type InterfaceContext } from './prompts.js';
 import { planReasoningReplay, type ReasoningPart } from './mapping.js';
 import { closeQuestionsForRun } from './questions.js';
@@ -90,6 +90,9 @@ function briefError(error: string | undefined): string {
 }
 
 function publishSnapshot(sessionId: string, runId: string): void {
+  // 事件流上每来一条都会推快照（十几处调用点）：没人订阅时连组装都不做——
+  // 组装要跑 5 条不带条件的查询并映射整份 DTO；重连端连上时会自己补一份 snapshot
+  if (!hasRunSubscribers(runId)) return;
   const snap = snapshot(sessionId);
   if (snap) publishRun(runId, 'snapshot', snap);
 }
@@ -214,7 +217,8 @@ function withTimeout<T>(task: Promise<T>, ms: number, fallback: T): Promise<T> {
 
 /** 会话与凭据的门槛：起一轮、排队一条都要先过这里 */
 function requireSession(sessionId: string) {
-  const session = snapshot(sessionId)?.session;
+  // 只要会话本身：不要走 snapshot()（那是「整份快照换一行」，白组装全量 DTO）
+  const session = getSession(sessionId);
   if (!session) {
     const error: any = new Error('会话不存在');
     error.status = 404;
@@ -563,7 +567,8 @@ function beginRun(input: {
     closeQuestionsForRun(run.id, cancelled ? 'cancelled' : 'expired');
     // 收口：本轮最后一段正文（可能压根没有——纯工具轮或起手就失败）
     const lastId = getRun(run.id)?.assistantMessageId;
-    const last = lastId ? snapshot(input.sessionId)?.messages.find((m) => m.id === lastId) : undefined;
+    // 只取这一条：不要为一行消息组装整份会话快照
+    const last = lastId ? getMessage(lastId) : undefined;
     if (!last?.content.trim()) {
       // 用户主动停止不算失败：思考段已经留在对话流里，这里只补一句说明
       const fallback = !ok
@@ -606,7 +611,13 @@ function beginRun(input: {
   }
 
   running.set(run.id, { turn, finish });
-  void turn.done.then((outcome) => void finish(outcome));
+  // finish 里有排空队列、多处落库与广播：静默失败会变成进程级 unhandledRejection（Node ≥15 直接杀进程），
+  // 这里整条链接住并留痕；收口本身已幂等，异常不影响后续轮次
+  void turn.done
+    .then((outcome) => finish(outcome))
+    .catch((error) => {
+      console.error('[assistant] 运行收口失败', error);
+    });
 
   return run;
 }

@@ -264,7 +264,11 @@ function Test-BundleArchive([string]$path) {
     $archive = [System.IO.Compression.ZipFile]::OpenRead($fi.FullName)
     try {
       foreach ($entry in $archive.Entries) {
-        if ($entry.FullName -eq 'main/package.json') { return $true }
+        # 分隔符两种都认：发布流水线用 bsdtar（tar.exe -a）打的是 'main/package.json'，
+        # 而 Windows PowerShell 的 Compress-Archive 会写成 'main\package.json'——同样结构完整的包
+        # 不能因为谁打的就被判成坏包。
+        $name = $entry.FullName.Replace('\', '/')
+        if ($name -eq 'main/package.json') { return $true }
       }
       return $false
     } finally { $archive.Dispose() }

@@ -649,6 +649,10 @@ export function migrate() {
   ensureColumn('jobs', 'assistant_session_id', 'TEXT');
   // 多端同步：本端已知的每页 hub 版本号（仅 hub 上必然等于当前版本；节点上是最后已知值）
   ensureColumn('pages', 'sync_revision', 'INTEGER NOT NULL DEFAULT 0');
+  // 死链回填（extractor.resolveDeadLinks）与 wikilink 解析（wirePageEdges）都按 lower(title) 匹配，
+  // 而 pages 上只有 path 唯一索引：每次页面索引都要全表扫，rebuildAll 逐页跑会放大成
+  // O(页 × 链 × 页)。表达式索引让这两处匹配走索引（IF NOT EXISTS，存量库启动即补齐）。
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_pages_title_lower ON pages(lower(title))`);
   // jobs 表 status 索引：job runner 每秒 tick 查 WHERE status='pending'/'running'，
   // 无索引时全表扫描；大量 failed/done 行积累后拖慢 DB、争用磁盘 I/O 致事件循环间歇阻塞。
   db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, id)`);

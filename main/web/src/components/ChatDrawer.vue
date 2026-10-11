@@ -38,7 +38,7 @@
            停止就挂在胶囊右边——输入框右下角固定留给「发送」，运行中照样能发消息 -->
       <span v-if="liveRun" class="head-live">
         <AppSpinner :size="11" />
-        <span class="head-live-text">回复中 {{ liveElapsed }}</span>
+        <span class="head-live-text">回复中 <LiveDuration :from="liveRun?.createdAt" /></span>
         <span v-if="queuedCount" class="head-live-queued">排队 {{ queuedCount }}</span>
       </span>
       <span v-else-if="conversionActive" class="head-live">
@@ -175,7 +175,7 @@
       </div>
     </section>
 
-    <div v-else ref="scrollEl" class="chat-body" @click="onBodyClick">
+    <div v-else ref="scrollEl" class="chat-body" @click="onBodyClick" @scroll.passive="onBodyScroll">
       <div v-if="chat.loading" class="empty-hint"><AppSpinner :size="14" /> 正在加载会话…</div>
 
       <AppEmptyState
@@ -208,7 +208,7 @@
               >复制</button>
             </div>
             <div v-if="item.role === 'user'" class="entry-user">
-              <div class="entry-plain md-body" v-html="renderMarkdown(item.message.content)" />
+              <div class="entry-plain md-body" v-html="renderEntry(`${item.key}:msg`, item.message.content)" />
               <!-- 排队中：这轮还没轮到它（前一轮收口后自动接着回复），标出来免得用户以为卡住了 -->
               <span v-if="isQueuedMessage(item.message)" class="queued-chip">
                 <AppSpinner :size="10" />
@@ -218,7 +218,7 @@
             <div
               v-else-if="item.message.content"
               class="entry-markdown md-body"
-              v-html="renderMarkdown(item.message.content)"
+              v-html="renderEntry(`${item.key}:msg`, item.message.content)"
             />
             <span v-if="streamingKey === item.key" class="cursor">▍</span>
           </div>
@@ -257,7 +257,11 @@
                 <AppSpinner v-if="isSubagentLive(item.subagent)" :size="10" />
                 {{ subagentState(item.subagent) }}
               </span>
-              <span class="subagent-time" v-tooltip="subagentDuration(item.subagent)">{{ subagentDurationText(item.subagent) }}</span>
+              <span class="subagent-time" v-tooltip="subagentDuration(item.subagent)">
+                <!-- 在跑的：秒表关在小组件里每秒自跳，别让整条转录跟着重渲；收工的按落库起止时间算 -->
+                <LiveDuration v-if="isSubagentLive(item.subagent)" :from="item.subagent.createdAt" />
+                <template v-else>{{ subagentDurationText(item.subagent) }}</template>
+              </span>
               <Icon :name="isSubagentOpen(item.subagent) ? 'chevron-up' : 'chevron-down'" :size="12" />
             </button>
             <div v-if="isSubagentOpen(item.subagent)" class="subagent-body">
@@ -285,7 +289,7 @@
               </section>
               <section v-if="item.subagent.result" class="subagent-block">
                 <h4>{{ isSubagentLive(item.subagent) ? '当前输出' : '产出' }}</h4>
-                <div class="subagent-result md-body" v-html="renderMarkdown(item.subagent.result)" />
+                <div class="subagent-result md-body" v-html="renderEntry(`${item.key}:sub`, item.subagent.result)" />
               </section>
               <p v-else-if="isSubagentLive(item.subagent)" class="subagent-pending">子代理正在干活，过程会实时更新…</p>
               <p v-else-if="item.subagent.status === 'failed' && item.subagent.stopReason" class="subagent-pending">
@@ -369,7 +373,7 @@
         <span v-if="liveUsageText" class="run-live-usage" v-tooltip="liveUsageTip">{{ liveUsageText }}</span>
         <span v-if="liveSubagentText" class="run-live-usage sub" v-tooltip="liveUsageTip">{{ liveSubagentText }}</span>
         <span v-if="queuedCount" class="run-live-queued">排队 {{ queuedCount }} 条</span>
-        <span class="run-live-time">{{ liveElapsed }}</span>
+        <span class="run-live-time"><LiveDuration :from="liveRun?.createdAt" /></span>
       </div>
       <div v-else-if="conversionActive" class="run-live" role="status" aria-live="polite">
         <AppSpinner :size="13" />
@@ -474,7 +478,7 @@
         :disabled="conversionActive"
         rows="3"
         :placeholder="composerPlaceholder"
-        @keydown.enter.exact.prevent="send()"
+        @keydown.enter.exact.prevent="onComposerEnter($event)"
       />
       <div class="composer-actions">
         <!-- 运行中发出去的消息不会丢：服务端排队，当前这轮一收口自动接着回复 -->
@@ -501,6 +505,7 @@ import { useRouter } from 'vue-router';
 import Icon from './Icon.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import AppSpinner from './ui/AppSpinner.vue';
+import LiveDuration from './ui/LiveDuration.vue';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useInboxStore } from '../stores/inbox';
@@ -548,7 +553,8 @@ import { chatSuggestions } from '../lib/chatSuggestions';
 import { formatDuration, formatSessionTime } from '../lib/chatTime';
 import { cacheHitText, mergeUsage, usageDetail } from '../lib/chatUsage';
 import { confirmDialog } from '../lib/confirm';
-import { renderMarkdown } from '../lib/markdown';
+import { createMarkdownMemo } from '../lib/markdown';
+import { isComposingKey } from '../lib/ime';
 import { notify } from '../lib/notify';
 import { openPageStream } from '../lib/events';
 import { sessionSourceBadge, type SessionSourceBadge } from '../lib/sessionSource';
@@ -579,6 +585,37 @@ const scrollEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
 /** 触屏（手机）：输入框提示不再写「Enter 发送，Shift+Enter 换行」——手机上那是噪声 */
 const touchPointer = useTouchPointer();
+
+/**
+ * 逐条消息的渲染记忆：每个流式增量都会重渲整条转录，而 lib/markdown 的全局缓存是
+ * 64 条 FIFO——长对话里老消息被挤掉后会被反复重解析。按时间线条目记忆最后一份结果，
+ * 只有该条内容变了才重新渲染。
+ */
+const markdownMemo = createMarkdownMemo();
+function renderEntry(key: string, source: string): string {
+  return markdownMemo.render(key, source);
+}
+
+/**
+ * 用户是不是贴在底部。滚动时记录，流式增量只在「贴底」时自动跟随：
+ * 用户上翻读历史时不再被每个增量拽回底部。滚回底部附近（<64px）自动恢复跟随。
+ */
+let stickToBottom = true;
+function onBodyScroll() {
+  const el = scrollEl.value;
+  if (!el) return;
+  stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+}
+
+/** 自己发消息、切会话、打开抽屉这些场景无论如何都要看到最新：force 跳过贴底判断 */
+async function scrollToBottom(force = false) {
+  await nextTick();
+  const el = scrollEl.value;
+  if (!el) return;
+  if (!force && !stickToBottom) return;
+  el.scrollTop = el.scrollHeight;
+  stickToBottom = true;
+}
 
 /* ===== Agent 提问弹窗（对话最下侧）：本地只存「还没提交的点选与草稿」 ===== */
 /** 每个提问已点的选项（多选时是集合；单选点一下立刻提交，这份状态只为高亮） */
@@ -934,11 +971,11 @@ function subagentState(subagent: ChatSubagent): string {
   return '已完成';
 }
 
-/** 子代理用时（毫秒）：跑着就按当前时刻算（每秒跳），收工按落库的起止时间算 */
+/** 子代理用时（毫秒）：跑着按「现在」估一次（每秒跳动由 LiveDuration 小组件负责），收工按落库起止时间算 */
 function subagentDurationMs(subagent: ChatSubagent): number {
   const started = Date.parse(subagent.createdAt);
   if (!Number.isFinite(started)) return 0;
-  const ended = isSubagentLive(subagent) ? clock.value : Date.parse(subagent.updatedAt);
+  const ended = isSubagentLive(subagent) ? Date.now() : Date.parse(subagent.updatedAt);
   const ms = (Number.isFinite(ended) ? ended : Date.now()) - started;
   return ms > 0 ? ms : 0;
 }
@@ -978,20 +1015,10 @@ function activityTime(at: string): string {
   return new Date(ms).toLocaleTimeString('zh-CN', { hour12: false });
 }
 
-/* ===== 常驻运行状态：只要这一轮还在跑就一直显示（含用时秒表） ===== */
-const clock = ref(Date.now());
-let clockTimer: number | undefined;
+/* ===== 常驻运行状态：只要这一轮还在跑就一直显示（用时秒表见 ui/LiveDuration） ===== */
 
 /** 当前会话正在跑的那一轮（跑着就显示状态条，不依赖任何一条事件） */
 const liveRun = computed<ChatRun | null>(() => chat.currentRun);
-
-const liveElapsed = computed(() => {
-  const run = liveRun.value;
-  if (!run) return '';
-  const started = Date.parse(run.createdAt);
-  if (!Number.isFinite(started)) return '';
-  return formatDuration(Math.max(0, clock.value - started));
-});
 
 /**
  * 状态条右侧那句「正在干什么」：子代理 → 工具 → 服务端状态文本，逐级退回。
@@ -1046,21 +1073,6 @@ function isThinkingLast(): boolean {
   return Boolean(last && last.kind === 'reasoning' && isThinking(last.message));
 }
 
-watch(
-  () => Boolean(liveRun.value),
-  (running) => {
-    if (window === undefined) return;
-    if (running && clockTimer === undefined) {
-      clock.value = Date.now();
-      clockTimer = window.setInterval(() => { clock.value = Date.now(); }, 1000);
-    } else if (!running && clockTimer !== undefined) {
-      window.clearInterval(clockTimer);
-      clockTimer = undefined;
-    }
-  },
-  { immediate: true }
-);
-
 /* ===== 会话列表：切换 / 新建 / 改名 / 删除 ===== */
 const renamingId = ref('');
 const renameDraft = ref('');
@@ -1076,7 +1088,7 @@ function openSession(id: string) {
   if (id !== chat.activeSessionId) draft.value = '';
   void chat.selectSession(id).then(() => {
     focusComposer();
-    void scrollToBottom();
+    void scrollToBottom(true); // 换会话无条件看最新
   });
 }
 
@@ -1120,7 +1132,7 @@ async function send(text?: string) {
   draft.value = '';
   // 运行中也照发：服务端会把这条排进队列，当前这轮收口后自动接着回复
   await chat.send(message);
-  await scrollToBottom();
+  await scrollToBottom(true); // 自己刚发的消息一定要看到
 }
 
 /* ===== 停止：按下即见效（服务端立刻落终态，不等 dsh 进程退出），排队中的消息退回输入框 ===== */
@@ -1237,11 +1249,6 @@ function toolState(status: string): string {
   return status;
 }
 
-async function scrollToBottom() {
-  await nextTick();
-  if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
-}
-
 /**
  * 把光标送进输入框。
  *
@@ -1254,6 +1261,12 @@ function focusComposer() {
   inputEl.value?.focus({ preventScroll: true });
 }
 
+/** 输入框回车发送：输入法组字中的回车是在确认候选词，不能发出去半截拼音 */
+function onComposerEnter(event: KeyboardEvent) {
+  if (isComposingKey(event)) return;
+  void send();
+}
+
 /** Esc 只把满窗收回右侧：不关抽屉、不取消正在跑的一轮（弹窗的 Esc 会 stopPropagation，不会误触发） */
 function onKey(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
@@ -1261,14 +1274,15 @@ function onKey(event: KeyboardEvent) {
 }
 
 watch(
-  // 子代理卡的内容随快照刷新：过程步数与产出也要参与「有没有新内容」的判断，否则停在原地不跟随
+  // 子代理卡的内容随快照刷新：过程步数与产出也要参与「有没有新内容」的判断，否则停在原地不跟随。
+  // 自动跟随只在用户贴底时发生（上翻读历史时不打扰，见 onBodyScroll）。
   () => `${chat.messages.map((m) => m.content.length).join(',')}|${chat.sessionToolCalls.length}|${chat.statusText}|${chat.sessionSubagents.map((s) => `${s.status}${s.activity.length}${s.result.length}`).join(',')}`,
   () => void scrollToBottom()
 );
 watch(() => app.chatDrawerOpen, (open) => {
   if (open) {
     void chat.init().then(() => {
-      void scrollToBottom();
+      void scrollToBottom(true);
       focusComposer();
     });
   }
@@ -1331,7 +1345,7 @@ onMounted(() => {
   // 首次打开时抽屉是随开关一起挂载的，上面那个 watch 不会触发，这里补一次初始化 + 聚焦
   if (app.chatDrawerOpen) {
     void chat.init().then(async () => {
-      await scrollToBottom();
+      await scrollToBottom(true);
       focusComposer();
     });
   }
@@ -1344,11 +1358,6 @@ onUnmounted(() => {
   closeSessionStream?.();
   closeSessionStream = undefined;
   sync.unsubscribe();
-  // 秒表随抽屉卸载一起停（抽屉是随开关挂载/卸载的，不停会一直空转）
-  if (clockTimer !== undefined) {
-    window.clearInterval(clockTimer);
-    clockTimer = undefined;
-  }
   // 事件流故意不断开：抽屉是随开关挂载/卸载的，后台会话跑完还要能标未读
   // （每轮收口时由 store 自行关闭对应连接，不会堆积）。
 });

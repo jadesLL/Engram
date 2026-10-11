@@ -148,8 +148,9 @@ export interface InstallerUpdateHandlers {
 
 /**
  * 安装包形态更新：检查 Release → 下载 exe → 静默安装并重启（主进程自带安装进度窗）。
- * 下载前必然先做一次检查：既确认确实有新版本，也让主进程记住本次用的更新源配置
- * （desktop-update-download 在没收到配置时优先复用「最近一次检查」的配置，保证与资产 URL 同源）。
+ * 下载前必然先做一次检查：既确认确实有新版本，也让主进程记住本次用的更新源配置。
+ * 下载与校验完全由主进程按已保存的更新源解析（校验资产是不是本次 Release 的、sha256 对不对），
+ * 渲染进程只递资产 URL——下载源不再接受渲染层传入的配置。
  */
 export async function applyDesktopInstallerUpdate(h: InstallerUpdateHandlers = {}): Promise<ApplyResult> {
   const wd = desktopApi();
@@ -170,7 +171,7 @@ export async function applyDesktopInstallerUpdate(h: InstallerUpdateHandlers = {
   log(`开始下载 v${check.latestVersion || '新版本'} 安装包…`);
   const off = wd.onUpdateProgress ? wd.onUpdateProgress((p: any) => h.onProgress?.(p?.percent ?? null)) : null;
   try {
-    const { path: filePath } = await wd.desktopUpdateDownload(exe.url, h.cfg);
+    const { path: filePath } = await wd.desktopUpdateDownload(exe.url);
     h.onProgress?.(null);
     log('下载完成，正在静默安装并重启…');
     h.onInstalling?.();

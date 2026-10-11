@@ -308,6 +308,8 @@ exit 0
 EOF
 cat > "$DEPLOY_BIN/curl" <<'EOF'
 #!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$ENGRAM_TEST_DOCKER_LOG"
 exit 0
 EOF
 chmod +x "$DEPLOY_BIN/docker" "$DEPLOY_BIN/curl"
@@ -323,6 +325,10 @@ grep -F "build --pull=false --network none --target verify" "$DOCKER_LOG" >/dev/
 grep -F "build --pull=false --network none --label" "$DOCKER_LOG" >/dev/null
 grep -F "compose --project-name main" "$DOCKER_LOG" >/dev/null
 grep -F "up -d --no-build --remove-orphans" "$DOCKER_LOG" >/dev/null
+# 部署健康检查必须打宿主端口（unc/local-deploy 把宿主 18080 映射到容器 8080），
+# 打容器端口会永远超时、把成功的部署误报成失败
+grep -F "http://localhost:18080/health" "$DOCKER_LOG" >/dev/null
+! grep -F "http://localhost:8080/health" "$DOCKER_LOG" >/dev/null
 grep -F "image rm engram:main-old-test" "$DOCKER_LOG" >/dev/null
 grep -F "image rm engram:pre-old-test" "$DOCKER_LOG" >/dev/null
 grep -F "image rm engram:a1b2c3d" "$DOCKER_LOG" >/dev/null

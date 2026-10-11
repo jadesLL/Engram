@@ -11,7 +11,7 @@ import { moveToTrash } from '../lib/trash.js';
 import { requireAuth } from './auth.js';
 import { officeToText } from '../pipeline/office.js';
 import { ensureFileRecord, upsertFileRecord } from '../pipeline/indexer.js';
-import { isDistilledPath } from '../pipeline/sourceLedger.js';
+import { distilledSourcePaths } from '../pipeline/sourceLedger.js';
 import { enqueue, enqueuePagePipeline } from '../jobs.js';
 import { normalizeDir, isUploadDir } from '../config.js';
 import { syncPageFile } from '../lib/vault.js';
@@ -152,6 +152,9 @@ export async function fileRoutes(app: FastifyInstance) {
     if (section && !rawSection) return reply.code(400).send({ error: `未知的资料分类：${section}` });
     const out: any[] = [];
     const assetCounts = assetCountsByParent();
+    // 「已提炼」一次查库打标：逐文件 isDistilledPath 是每行一次 EXISTS 子查询，
+    // 资料多时整页要跑几百次（与 pipeline/rawFiles.ts 同一口径，语义完全一致）
+    const distilled = distilledSourcePaths();
     const pushEntry = (name: string, rel: string, legacy = false) => {
       // 历史遗留的散图（迁移没搬走的）同样不进侧栏
       if (isAssetFile(name)) return;
@@ -187,7 +190,7 @@ export async function fileRoutes(app: FastifyInstance) {
         extractionOcrPages: extraction?.ocr_pages || 0,
         extractionSkippedPages: extraction?.skipped_pages || 0,
         extractionError: extraction?.error || null,
-        distilled: isDistilledPath(rel),
+        distilled: distilled.has(rel),
         readable,
         // 二级分类上线前留在 原始资料/ 根目录的历史文件：归入「文档」分组展示，磁盘不动
         legacy,

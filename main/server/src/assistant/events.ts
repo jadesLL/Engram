@@ -34,6 +34,11 @@ export function publishRun(runId: string, event: string, data: unknown): void {
   }
 }
 
+/** 该运行当前有没有订阅者：没有时连快照都不必组装（订阅集合是唯一判据，SSE 断开即移除） */
+export function hasRunSubscribers(runId: string): boolean {
+  return Boolean(subscribers.get(runId)?.size);
+}
+
 /** 运行进入终态后调用：清掉订阅集合，释放内存 */
 export function clearRun(runId: string): void {
   subscribers.delete(runId);

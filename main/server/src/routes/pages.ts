@@ -43,6 +43,21 @@ function reconcileMissingPagesThrottled() {
   reconcileMissingPages();
 }
 
+/**
+ * 页面关联缓存（编辑器底部「相关页面」）：键是页面 id，读多写少。
+ * 必须封顶并主动清理——原实现只在命中时查 TTL、从不删条目，
+ * 长跑进程会随访问过的页面数无限增长（每个页面一次查询就留一份）。
+ */
+const relatedCache = new Map<string, { at: number; data: unknown }>();
+const RELATED_CACHE_TTL_MS = 60_000;
+/** 条目上限：超出后按插入顺序逐出最旧的（近似 FIFO） */
+export const RELATED_CACHE_MAX = 32;
+
+/** 测试可观察：当前缓存条目数 */
+export function relatedCacheSize(): number {
+  return relatedCache.size;
+}
+
 export async function pageRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireAuth);
 
@@ -104,9 +119,11 @@ export async function pageRoutes(app: FastifyInstance) {
   /** wikilink 跳转：按标题解析 */
   app.get('/api/pages/by-title/:title', async (req, reply) => {
     const { title } = req.params as { title: string };
+    // Fastify 路由参数已经是解码后的原文；再解一次会让标题里的 `%` 抛 URIError（500），
+    // `%XX` 形状的标题还会被解成另一个字符、解析到错误的页面
     const page = db
       .prepare(`SELECT id FROM pages WHERE deleted = 0 AND lower(title) = lower(?)`)
-      .get(decodeURIComponent(title)) as any;
+      .get(title) as any;
     if (!page) return reply.code(404).send({ error: 'not found' });
     return { id: page.id };
   });
@@ -185,7 +202,8 @@ export async function pageRoutes(app: FastifyInstance) {
       }
     }
     enqueuePagePipeline(meta.id);
-    try { appendWikiLog('编辑页面', `[[${page.title}]]（${page.path}）`); } catch { /* 日志失败不阻塞 */ }
+    try { appendWikiLog('编辑页面', `[[${page.title}]]（${page.path}）`); }
+    catch (error) { console.warn('[log] 操作日志写入失败（编辑页面）', error); }
     const fresh = db.prepare(`SELECT * FROM pages WHERE id = ?`).get(meta.id) as any;
     return { meta: { ...fresh, tags: JSON.parse(fresh.tags) } };
   });
@@ -272,7 +290,8 @@ export async function pageRoutes(app: FastifyInstance) {
       const rd = readPage(newRel);
       if (rd) writePage(newRel, rd.content, { title: newTitle });
     }
-    try { appendWikiLog('移动', `[[${page.title}]] → ${newRel}`); } catch { /* 日志失败不阻塞 */ }
+    try { appendWikiLog('移动', `[[${page.title}]] → ${newRel}`); }
+    catch (error) { console.warn('[log] 操作日志写入失败（移动）', error); }
     return { ok: true, meta, section: pageIsRaw ? rawSectionOf(newRel) : null };
   });
 
@@ -286,14 +305,20 @@ export async function pageRoutes(app: FastifyInstance) {
   });
 
   /** 页面关联：图谱邻居（供编辑器底部展示；与 MCP related_pages 同一查询）；语义相似随向量索引移除 */
-  const relatedCache = new Map<string, { at: number; data: unknown }>();
-  const RELATED_CACHE_TTL_MS = 60_000;
   app.get('/api/pages/:id/related', async (req) => {
     const { id } = req.params as { id: string };
     const cached = relatedCache.get(id);
-    if (cached && Date.now() - cached.at < RELATED_CACHE_TTL_MS) return cached.data;
+    if (cached) {
+      if (Date.now() - cached.at < RELATED_CACHE_TTL_MS) return cached.data;
+      relatedCache.delete(id);
+    }
     const data = relatedPageData(id);
     relatedCache.set(id, { at: Date.now(), data });
+    while (relatedCache.size > RELATED_CACHE_MAX) {
+      const oldest = relatedCache.keys().next().value;
+      if (oldest === undefined) break;
+      relatedCache.delete(oldest);
+    }
     return data;
   });
 }

@@ -273,6 +273,7 @@ import { useChatStore } from '../stores/chat';
 import { useAppStore } from '../stores/app';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
+import { createInflightGuard } from '../lib/inflight';
 import Icon from '../components/Icon.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
@@ -436,8 +437,11 @@ function rowNote(item: InboxItem): string {
 }
 
 const convertibleItems = computed(() => inbox.items.filter((item) => CONVERTIBLE.has(item.capability)));
-// 只看有没有可转项：不做 loading 门闩，否则转换中的 2 秒轮询会让按钮一闪一闪地禁用
-const convertAllDisabled = computed(() => !convertibleItems.value.length);
+/** 批量转换在途门闩：一次只放一批进去（双击/回车连发不再提交两遍），busy 绑按钮 disabled。
+ *  与「列表里有没有转换中的项」无关：那件事不参与禁用，避免 2 秒轮询让按钮一闪一闪（见下条注释）。 */
+const convertAllGuard = createInflightGuard();
+// 只看有没有可转项 + 本批是否在途：不做 status 级 loading 门闩，否则转换中的 2 秒轮询会让按钮一闪一闪地禁用
+const convertAllDisabled = computed(() => convertAllGuard.busy.value || !convertibleItems.value.length);
 const convertAllTip = computed(() =>
   convertibleItems.value.length
     ? `把 ${convertibleItems.value.length} 个可转换的文件一起交给语义转换`
@@ -462,21 +466,23 @@ async function convertItem(item: InboxItem) {
 
 async function convertAll() {
   if (convertAllDisabled.value) return;
-  try {
-    const result = await inbox.convert('all');
-    if (result.queued.length) {
-      notify.success(`已开始转换 ${result.queued.length} 个文件`);
-      expectConversion();
-      await openConversionChat(result.queued[0].sessionId);
+  await convertAllGuard.run('convert-all', async () => {
+    try {
+      const result = await inbox.convert('all');
+      if (result.queued.length) {
+        notify.success(`已开始转换 ${result.queued.length} 个文件`);
+        expectConversion();
+        await openConversionChat(result.queued[0].sessionId);
+      }
+      // 服务端会跳过不能转的格式：第一条原因足够说明问题，逐条细节看行内提示
+      if (result.skipped.length) {
+        const first = result.skipped[0];
+        notify.error(`跳过 ${result.skipped.length} 个：${first.path}（${first.reason}）`);
+      }
+    } catch (error: any) {
+      notify.error(error?.response?.data?.error || '无法开始转换');
     }
-    // 服务端会跳过不能转的格式：第一条原因足够说明问题，逐条细节看行内提示
-    if (result.skipped.length) {
-      const first = result.skipped[0];
-      notify.error(`跳过 ${result.skipped.length} 个：${first.path}（${first.reason}）`);
-    }
-  } catch (error: any) {
-    notify.error(error?.response?.data?.error || '无法开始转换');
-  }
+  });
 }
 
 /** 批量转换时先打开第一条；其余转换各自进入 Agent 会话列表。 */
@@ -694,8 +700,13 @@ async function openNatively(item: InboxItem) {
     notify.error('桌面端桥不可用，请改用下载');
     return;
   }
-  const result = await bridge.openInboxFile(item.path);
-  if (result && result.ok === false) notify.error(`打不开：${result.error}`);
+  try {
+    const result = await bridge.openInboxFile(item.path);
+    if (result && result.ok === false) notify.error(`打不开：${result.error}`);
+  } catch (error: any) {
+    // 主进程桥调用可能直接 reject（路径越界/进程异常）：别让这声拒绝无声无息
+    notify.error(error?.message || '打不开：系统程序调用失败');
+  }
 }
 
 function pickFiles() {
@@ -716,9 +727,14 @@ async function onDrop(event: DragEvent) {
 
 /** 拖入即进入收集箱：不区分格式，也不做客户端类型过滤 */
 async function submit(files: FileList | File[]) {
-  const { saved, skipped } = await inbox.upload(files);
-  if (saved) notify.success(`已收进收集箱：${saved} 个文件`);
-  if (skipped.length) notify.error(`跳过 ${skipped.length} 个文件：${skipped[0]}`);
+  try {
+    const { saved, skipped } = await inbox.upload(files);
+    if (saved) notify.success(`已收进收集箱：${saved} 个文件`);
+    if (skipped.length) notify.error(`跳过 ${skipped.length} 个文件：${skipped[0]}`);
+  } catch (error: any) {
+    // 原来没有 catch：上传失败（体积超限/断网/权限）在界面上完全没有反馈
+    notify.error(error?.response?.data?.error || error?.message || '上传失败，请稍后重试');
+  }
 }
 
 async function submitUrl() {

@@ -1,7 +1,7 @@
 // Engram 源码版安装器 GUI：驱动 install-engram.ps1 部署引擎。
 // 进度采集：部署脚本逐行写进度日志文件（PS5.1 管道输出块缓冲，stdout 不可靠），此处轮询解析。
-const { app, BrowserWindow, ipcMain } = require('electron');
-const { spawn } = require('node:child_process');
+const { app, BrowserWindow, ipcMain, clipboard } = require('electron');
+const { spawn, execFile } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const { probeRepo } = require('./scripts/lib/repo-probe.js');
@@ -10,7 +10,16 @@ const { findBundleZip, bundleInfo: bundleInfoOf } = require('./scripts/lib/bundl
 let win = null;
 let child = null;
 let pollTimer = null;
+let installTimer = null;
 let processed = 0; // 已消费的日志字符数
+
+// 安装步骤（克隆 / 装依赖 / 构建）有界超时：慢机器可以慢，但不能无限挂着不动。
+// 超时按「取消」同款方式结束整棵进程树，并给界面一个明确的失败原因。
+// 可用 ENGRAM_INSTALL_TIMEOUT_MS 覆盖（测试/特殊网络用）；非法值退回默认 60 分钟。
+const INSTALL_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.ENGRAM_INSTALL_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60 * 1000;
+})();
 
 /** 安装目录：%LOCALAPPDATA%\engram\Engram（便携环境与克隆都在这儿） */
 function installRoot() {
@@ -62,6 +71,35 @@ function probe(rawUrl) {
 
 function send(ch, data) {
   if (win && !win.isDestroyed()) win.webContents.send(ch, data);
+}
+
+/**
+ * 结束引擎进程及其全部子进程。powershell.exe 只是外壳：pnpm / node / tar 都是它的孙进程，
+ * 只杀 powershell 时它们会继续改 %LOCALAPPDATA%\engram（取消形同虚设）。
+ * Windows 上走 taskkill /T /F 结束整棵树；非 Windows（开发态）退回普通 kill。
+ */
+function killProcessTree(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    // execFile（不经 shell）：参数里的 pid 是数字，不引入注入面
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => {
+      /* 进程可能已退出、或权限不足：这里不中断取消流程 */
+    });
+    return;
+  }
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 清掉轮询与安装超时定时器 */
+function clearInstallTimers() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
+  if (installTimer) clearTimeout(installTimer);
+  installTimer = null;
 }
 
 function handleLine(line) {
@@ -159,9 +197,15 @@ function startInstall({ user, pass, repoUrl } = {}) {
   const ps = spawn('powershell.exe', args, { env, windowsHide: true });
   child = ps;
   pollTimer = setInterval(() => pollLog(logFile), 400);
+  installTimer = setTimeout(() => {
+    if (!child) return;
+    send('fail', { msg: `部署超过 ${Math.round(INSTALL_TIMEOUT_MS / 60000)} 分钟仍未结束，已终止（可重试或查看日志）` });
+    killProcessTree(child.pid);
+  }, INSTALL_TIMEOUT_MS);
 
   // 引擎正常时一切都写日志文件；stderr 只在它自己都没起来时才用得上，转发进界面便于定位
   ps.on('error', (e) => {
+    clearInstallTimers();
     send('fail', { msg: '启动部署脚本失败：' + (e && e.message ? e.message : e) });
   });
   ps.stderr.on('data', (d) => {
@@ -171,8 +215,7 @@ function startInstall({ user, pass, repoUrl } = {}) {
   });
 
   ps.on('exit', (code) => {
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = null;
+    clearInstallTimers();
     pollLog(logFile); // 兜底消费缓冲期内的剩余行
     child = null;
     send('exit', { code });
@@ -180,13 +223,10 @@ function startInstall({ user, pass, repoUrl } = {}) {
 }
 
 function cancelInstall() {
-  if (pollTimer) clearInterval(pollTimer);
+  clearInstallTimers();
   if (child) {
-    try {
-      child.kill('SIGKILL');
-    } catch {
-      /* 忽略 */
-    }
+    // 杀整棵进程树：只杀 powershell.exe 会留下继续写安装目录的 pnpm/node/tar
+    killProcessTree(child.pid);
     child = null;
   }
   if (win && !win.isDestroyed()) win.close();
@@ -201,8 +241,11 @@ app.whenReady().then(() => {
     autoHideMenuBar: true,
     backgroundColor: '#1e3a8a',
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      // 渲染进程不开 Node：界面只经 preload.js 的 contextBridge 拿白名单 IPC
+      // （##STEPS: 的步骤名来自部署脚本，属于不可信输入，不能再让它碰到 ipcRenderer）
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
   win.loadFile('ui.html');
@@ -215,6 +258,10 @@ app.whenReady().then(() => {
 
   ipcMain.on('start-install', (_e, payload) => startInstall(payload));
   ipcMain.on('cancel-install', () => cancelInstall());
+  // 复制日志：剪贴板留在主进程（preload 只转发文本）
+  ipcMain.on('copy-log', (_e, text) => {
+    clipboard.writeText(typeof text === 'string' ? text : '');
+  });
   ipcMain.handle('has-repo', () => {
     try {
       return fs.existsSync(insideInstallRoot('.git'));

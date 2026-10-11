@@ -166,6 +166,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
+import { isComposingKey } from '../../lib/ime';
 import { MCP_TOOLS, groupedMcpTools } from '../../lib/mcpTools';
 import AgentHarnessSection from './AgentHarnessSection.vue';
 import AgentMcpSection from './AgentMcpSection.vue';
@@ -224,7 +225,9 @@ async function loadBuiltin() {
   }
 }
 
-async function saveBuiltin() {
+/** @param event 键盘事件（keyup Enter 触发时传入）：输入法组字中的回车是在确认候选词，不能当保存 */
+async function saveBuiltin(event?: Event) {
+  if (isComposingKey(event)) return;
   savingBuiltin.value = true;
   try {
     await api.put('/api/assistant/config', {

@@ -210,7 +210,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 import AppSelect from '../ui/AppSelect.vue';
@@ -617,15 +617,40 @@ async function testNow(): Promise<void> {
   }
 }
 
+/**
+ * 设置分区激活态：同步大类隐藏时不再每 30 秒探测一次域名状态（切走即停表，
+ * 切回来立刻探一次并重新计时）。active 缺省（未传）按可见处理。
+ */
+const props = defineProps<{ active?: boolean }>();
+
+function startPoll(): void {
+  if (pollTimer) return;
+  pollTimer = setInterval(() => void loadStatus(), 30_000);
+}
+
+function stopPoll(): void {
+  if (!pollTimer) return;
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
+
 onMounted(async () => {
   await loadConfig();
   void loadStatus();
-  pollTimer = setInterval(() => void loadStatus(), 30_000);
+  if (props.active !== false) startPoll();
+});
+
+watch(() => props.active, (now) => {
+  if (now === false) {
+    stopPoll();
+    return;
+  }
+  void loadStatus();
+  startPoll();
 });
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = null;
+  stopPoll();
 });
 </script>
 

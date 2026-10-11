@@ -9,6 +9,7 @@ import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import JSZip from 'jszip';
 import { db, getSetting, setSetting, now } from '../lib/db.js';
+import { atomicWrite } from '../lib/vault.js';
 import { DATA_DIR, BRAIN_DIR } from '../config.js';
 import { RESTORE_STAGING_NAME } from '../lib/stagedRestore.js';
 import {
@@ -307,7 +308,15 @@ export async function settingsRoutes(app: FastifyInstance) {
     const token = harnessToken('zcode');
     const configPath = zcodeCliConfigPath();
     let cliConfig: any = {};
-    try { cliConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { /* 新建 */ }
+    try {
+      cliConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch (error) {
+      // 没有配置文件是正常首次注册；存在却读不出来（坏 JSON / 权限）必须留痕，
+      // 否则接下来会把用户的整份配置当空对象覆盖掉
+      if (fs.existsSync(configPath)) {
+        app.log.warn(`[zcode] 读取 ${configPath} 失败，将按新配置写入：${String((error as any)?.message || error)}`);
+      }
+    }
     cliConfig.mcp = cliConfig.mcp || {};
     cliConfig.mcp.servers = cliConfig.mcp.servers || {};
     cliConfig.mcp.servers.engram = {
@@ -315,7 +324,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       headers: { Authorization: `Bearer ${token}` },
     };
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, JSON.stringify(cliConfig, null, 2));
+    // 原子写：ZCode CLI 可能同时在写这份配置，裸 writeFileSync 截断会让用户丢掉整个 MCP 配置
+    atomicWrite(configPath, JSON.stringify(cliConfig, null, 2));
     return { ok: true, mcpUrl: zcodeMcpUrl };
   });
 
@@ -325,9 +335,14 @@ export async function settingsRoutes(app: FastifyInstance) {
       const cliConfig = JSON.parse(fs.readFileSync(configPath, 'utf8') as string);
       if (cliConfig?.mcp?.servers?.engram) {
         delete cliConfig.mcp.servers.engram;
-        fs.writeFileSync(configPath, JSON.stringify(cliConfig, null, 2));
+        atomicWrite(configPath, JSON.stringify(cliConfig, null, 2));
       }
-    } catch { /* 无配置文件时无需移除 */ }
+    } catch (error) {
+      // 无配置文件时无需移除；存在却处理失败（坏 JSON / 权限）不能静默假装已注销
+      if (fs.existsSync(configPath)) {
+        app.log.warn(`[zcode] 处理 ${configPath} 失败：${String((error as any)?.message || error)}`);
+      }
+    }
     db.prepare(`DELETE FROM mcp_tokens WHERE name = 'zcode'`).run();
     return { ok: true };
   });

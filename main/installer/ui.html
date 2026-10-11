@@ -119,7 +119,8 @@
   </div>
 
   <script>
-    const { ipcRenderer, clipboard } = require('electron');
+    // 渲染进程不开 Node：能力全部来自 preload.js 的 contextBridge（见 installer/main.js）
+    const api = window.engramInstaller;
     const $ = (id) => document.getElementById(id);
     let total = 0, doneCount = 0, started = false, repoUrl = '', bundleMode = false;
 
@@ -130,47 +131,62 @@
       $('bar').style.width = pct + '%';
     }
 
-    ipcRenderer.on('steps', (_e, steps) => {
+    api.on('steps', (steps) => {
       total = steps.length;
       const box = $('steps');
-      box.innerHTML = '';
+      box.textContent = '';
       for (const s of steps) {
         const row = document.createElement('div');
         row.className = 'step'; row.id = 'step-' + s.id;
-        row.innerHTML = `<span class="ico">○</span><span>${s.label}</span><span class="note" id="note-${s.id}"></span>`;
+        // 步骤名来自部署脚本的 ##STEPS: 行：只用 textContent 渲染，不拼 HTML 字符串
+        const ico = document.createElement('span');
+        ico.className = 'ico';
+        ico.textContent = '○';
+        const label = document.createElement('span');
+        label.textContent = s.label;
+        const note = document.createElement('span');
+        note.className = 'note'; note.id = 'note-' + s.id;
+        row.append(ico, label, note);
         box.appendChild(row);
       }
       renderProgress();
     });
-    ipcRenderer.on('step', (_e, d) => {
+    api.on('step', (d) => {
       const row = $('step-' + d.id);
-      if (row) { row.classList.add('active'); row.querySelector('.ico').innerHTML = '<div class="spinner"></div>'; }
+      if (row) {
+        row.classList.add('active');
+        const ico = row.querySelector('.ico');
+        ico.textContent = '';
+        const spinner = document.createElement('div');
+        spinner.className = 'spinner';
+        ico.appendChild(spinner);
+      }
       renderProgress();
     });
-    ipcRenderer.on('done', (_e, d) => {
+    api.on('done', (d) => {
       doneCount++;
       const row = $('step-' + d.id);
       if (row) { row.classList.remove('active'); row.classList.add('done'); row.querySelector('.ico').textContent = '✓'; }
       renderProgress();
     });
-    ipcRenderer.on('fail', (_e, d) => {
+    api.on('fail', (d) => {
       const active = document.querySelector('.step.active .ico');
       if (active) active.textContent = '✕';
       appendLog('✖ ' + d.msg);
       $('meta-left').textContent = '安装失败';
     });
-    ipcRenderer.on('log', (_e, d) => appendLog(d.line));
-    ipcRenderer.on('exit', (_e, d) => {
+    api.on('log', (d) => appendLog(d.line));
+    api.on('exit', (d) => {
       if (d.code !== 0 && !document.body.classList.contains('done')) {
         $('meta-left').textContent = '安装失败（退出码 ' + d.code + '）';
       }
     });
-    ipcRenderer.on('alldone', () => {
+    api.on('alldone', () => {
       document.body.classList.add('done');
       $('close-btn').style.display = 'none';
     });
     // 引擎侧发现需要凭据（预检说公开、克隆时才要，或本机没 git 没法预检）：把凭据表单亮出来重试
-    ipcRenderer.on('need-creds', () => {
+    api.on('need-creds', () => {
       started = false;
       showCreds('这一步需要仓库凭据：填账号与密码/访问令牌后点「开始安装」重试。');
     });
@@ -200,15 +216,15 @@
       el.classList.toggle('show');
       $('details-btn').textContent = (el.classList.contains('show') ? '▾' : '▸') + ' 显示详情';
     });
-    // 一键复制日志：客户与我们都受够了截图/乱码，直接复制全文（Electron 剪贴板，不依赖网页 API）
+    // 一键复制日志：客户与我们都受够了截图/乱码，直接复制全文（走主进程剪贴板，不依赖网页 API）
     $('copy-btn').addEventListener('click', () => {
       const text = $('log').textContent || '';
-      clipboard.writeText(text);
+      if (text.trim()) api.copyLog(text);
       const btn = $('copy-btn');
       btn.textContent = text.trim() ? '已复制 ✓' : '暂无日志';
       setTimeout(() => { btn.textContent = '复制日志'; }, 1500);
     });
-    $('cancel-btn').addEventListener('click', () => ipcRenderer.send('cancel-install'));
+    $('cancel-btn').addEventListener('click', () => api.cancelInstall());
     $('close-btn').addEventListener('click', () => window.close());
     $('done-close').addEventListener('click', () => window.close());
 
@@ -221,7 +237,7 @@
       $('repo-step').style.display = 'none';
       $('cancel-btn').style.display = '';
       $('meta-left').textContent = '准备中…';
-      ipcRenderer.send('start-install', Object.assign({ repoUrl }, creds || {}));
+      api.startInstall(Object.assign({ repoUrl }, creds || {}));
     }
 
     $('next-btn').addEventListener('click', async () => {
@@ -231,7 +247,7 @@
       setRepoMsg('正在检查仓库地址…');
       let result;
       try {
-        result = await ipcRenderer.invoke('probe-repo', repoUrl);
+        result = await api.probeRepo(repoUrl);
       } catch (e) {
         result = { status: 'unreachable', message: '检查失败：' + (e && e.message ? e.message : e) };
       }
@@ -261,7 +277,7 @@
       // 不填仓库地址、不用凭据，点一下就把内置环境解压覆盖到本机安装目录
       let info = { available: false };
       try {
-        info = await ipcRenderer.invoke('bundle-info');
+        info = await api.bundleInfo();
       } catch {
         /* 老安装器没有这个通道：按源码模式走 */
       }
@@ -277,12 +293,15 @@
         $('start-btn').style.display = '';
         $('start-btn').textContent = '开始安装（内置环境）';
         $('meta-left').textContent = '准备就绪';
-        $('done-tip').innerHTML =
-          'Engram 已启动并创建了桌面快捷方式。<br/>本机为预构建安装：以后更新请重新运行新版安装器。';
+        // 文案与上面静态 HTML 的 done-tip 一致；用 DOM 构造换行，不拼 HTML 字符串
+        const tip = $('done-tip');
+        tip.textContent = 'Engram 已启动并创建了桌面快捷方式。';
+        tip.appendChild(document.createElement('br'));
+        tip.appendChild(document.createTextNode('本机为预构建安装：以后更新请重新运行新版安装器。'));
         return;
       }
       // 默认不填任何地址（用户要求）：仓库地址一律由用户自己填
-      const hasRepo = await ipcRenderer.invoke('has-repo');
+      const hasRepo = await api.hasRepo();
       setRepoMsg(hasRepo
         ? '检测到本机已有源码目录：填上仓库地址点「下一步」会按需增量更新。'
         : '填好地址点「下一步」，再填账号与密码/访问令牌即可开始安装。');

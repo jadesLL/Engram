@@ -115,7 +115,9 @@ class EngramLocalServer private constructor(private val context: Context) {
                 .put("nativeActions", JSONArray().put("share-text").put("share-file").put("file-picker"))
                 .put("syncRoles", JSONArray().put("none").put("member"))
                 .put("features", JSONObject()
-                    .put("agent", remoteAgent).put("agentAdmin", false).put("mcp", false).put("jobs", false)
+                    // jobs：手机端没有任务队列，但 /api/jobs 桩会发「灵感提炼」状态（见该路由注释），
+                    // 前端要靠这个能力位轮询它，否则侧栏的「提炼中 / 提炼失败」徽标永远不显示
+                    .put("agent", remoteAgent).put("agentAdmin", false).put("mcp", false).put("jobs", true)
                     .put("onlyOffice", false).put("serverUpdate", false).put("ddns", false)
                     // apkUpdate：手机端专属的「应用内在线更新」能力位（桌面/服务端形态为 false），
                     // 设置页「版本与更新 → 安卓端更新」与更新提示条都按它显隐
@@ -443,7 +445,33 @@ class EngramLocalServer private constructor(private val context: Context) {
             if (!call.authorize()) return@get
             call.json(db.graph(call.request.queryParameters["scope"], call.request.queryParameters["id"]))
         }
-        get("/api/jobs") { if (call.authorize()) call.json(JSONObject().put("active", JSONArray()).put("recent", JSONArray()).put("queue", JSONObject().put("running", false))) }
+        get("/api/jobs") {
+            if (!call.authorize()) return@get
+            // 手机端没有任务队列，但侧栏的「提炼中 / 提炼失败」徽标读的是这里。灵感提炼的
+            // 队列状态由同步轮从中枢带下来（sync_idea_distill_pending / _failed），按 web 端
+            // 期望的 job 形状发出去：kind=idea_distill + status + payload.path，id 只要各不相同
+            // 即可（web 端按 id 取某条路径上最新的一条任务）。
+            val active = JSONArray()
+            val recent = JSONArray()
+            var id = 1L
+            fun emit(paths: String, status: String, into: JSONArray) {
+                val parsed = runCatching { JSONArray(db.setting(paths) ?: "[]") }.getOrDefault(JSONArray())
+                for (i in 0 until parsed.length()) {
+                    val p = parsed.optString(i)
+                    if (p.isBlank()) continue
+                    into.put(JSONObject()
+                        .put("id", id++)
+                        .put("kind", "idea_distill")
+                        .put("status", status)
+                        .put("stage", if (status == "failed") "提炼失败" else "提炼中")
+                        .put("progress", 0)
+                        .put("payload", JSONObject().put("path", p)))
+                }
+            }
+            emit("sync_idea_distill_pending", "running", active)
+            emit("sync_idea_distill_failed", "failed", recent)
+            call.json(JSONObject().put("active", active).put("recent", recent).put("queue", JSONObject().put("running", active.length() > 0)))
+        }
 
         // Docker 内置 Agent：Android 只代理交互面，模型配置、dsh 进程和长任务仍留在中枢。
         get("/api/assistant/status") { call.proxyAgent("GET", "/api/assistant/status") }
@@ -546,6 +574,16 @@ class EngramLocalServer private constructor(private val context: Context) {
         // 本机没有模型，预览与落盘两步都窄代理到中枢
         post("/api/ideas/preview") { call.proxyHub("POST", "/api/ideas/preview", call.receiveText()) }
         post("/api/ideas") { call.proxyHub("POST", "/api/ideas", call.receiveText()) }
+        // 提炼状态与重试也要代理：手机记的灵感照样在中枢入队提炼，缺了这两条，手机上既不弹
+        // 「提炼完成」通知、灵感页永远显示未提炼、重试按钮只会报「暂时没法重新提交」
+        get("/api/ideas/{id}/distill") {
+            val id = encoded(call.parameters["id"].orEmpty())
+            call.proxyHub("GET", "/api/ideas/$id/distill")
+        }
+        post("/api/ideas/{id}/distill/retry") {
+            val id = encoded(call.parameters["id"].orEmpty())
+            call.proxyHub("POST", "/api/ideas/$id/distill/retry", call.receiveText())
+        }
 
         get("/api/trash") { if (call.authorize()) call.json(db.trash()) }
         post("/api/trash/restore") { if (call.authorize()) call.json(db.restoreTrash(call.body().ids())) }
@@ -687,6 +725,9 @@ class EngramLocalServer private constructor(private val context: Context) {
                 val url = body.optString("hub_url", db.setting("sync_hub_url").orEmpty()).trimEnd('/')
                 val token = body.optString("hub_token")
                 require(url.startsWith("http://") || url.startsWith("https://")) { "中枢地址无效" }
+                // 绑定前先记住旧中枢：地址变了或换了一枚令牌就是换了中枢，增量游标不能跨中枢沿用
+                val previousHub = db.setting("sync_hub_url").orEmpty()
+                val previousToken = secrets.get("sync_hub_token").orEmpty()
                 if (token.isNotBlank()) secrets.put("sync_hub_token", token)
                 require(!secrets.get("sync_hub_token").isNullOrBlank()) { "请填写绑定令牌" }
                 db.setSetting("sync_hub_url", url); db.setSetting("sync_enabled", if (body.optBoolean("enabled", true)) "1" else "0")
@@ -696,8 +737,12 @@ class EngramLocalServer private constructor(private val context: Context) {
                     for (i in 0 until incoming.length()) incoming.optString(i).trimEnd('/').takeIf { it.startsWith("http://") || it.startsWith("https://") }?.let(valid::put)
                     db.setSetting("sync_direct_urls", valid.toString())
                 }
+                if (previousHub.isBlank() || url != previousHub || (token.isNotBlank() && token != previousToken)) {
+                    sync.resetCursor("更换了同步中枢")
+                }
             } else {
                 db.setSetting("sync_enabled", "0"); secrets.put("sync_hub_token", null)
+                sync.resetCursor("已解除同步绑定")
             }
             db.setSetting("sync_role", role); call.ok(); if (role == "member") sync.request(false)
         }
@@ -737,6 +782,9 @@ class EngramLocalServer private constructor(private val context: Context) {
             db.setSetting("sync_direct_urls", "[]")
             db.setSetting("sync_device_label", name)
             db.setSetting("sync_role", "member"); db.setSetting("sync_enabled", "1")
+            // 全新的绑定：游标归零，下一轮走全量对账把内容与账本一次对齐（旧绑定残留的游标
+            // 对新中枢没有意义，继续用会静默取回 0 条）
+            sync.resetCursor("已通过邀请链接绑定中枢")
             call.json(JSONObject().put("ok", true).put("name", name).put("hubUrl", invite.hubUrl))
             sync.request(false)
         }

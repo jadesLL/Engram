@@ -59,16 +59,27 @@ test('② 拖宽手柄：先过阈值才算拖动，触屏热区放大到 44px',
   );
 });
 
-test('③ FilePreview 的 html 预览也把宽表包进横滚容器', () => {
+/**
+ * ③ 的原始护栏是「FilePreview 的 html 预览也要把宽表包进横滚容器」。2026-10-12 审计把那个分支
+ * 整段删了：服务端 /api/files/preview 只产 markdown / image / text / pdf / office / unsupported，
+ * `kind === 'html'` 分支永远走不到，而它用 v-html 渲染服务端字符串——一旦服务端将来补上 html
+ * 分支，就是同源 XSS 落点。护栏因此改向：**不许它回来**，同时确认真正在用的 markdown 分支
+ * 仍在包表格滚动容器（宽表不把预览区撑宽）。
+ */
+test('③ FilePreview 不再有 html 预览分支，在用的分支仍包表格横滚容器', () => {
   const preview = read('components/FilePreview.vue');
-  assert.match(preview, /ref="htmlEl"/, 'html 分支没有容器引用：拿不到 DOM 就没法包表');
-  assert.match(preview, /const htmlEl = ref<HTMLDivElement>\(\)/, 'htmlEl 没有声明');
+  assert.doesNotMatch(
+    preview,
+    /v-html/,
+    'FilePreview 又出现 v-html：服务端不产 html，该分支是死代码且是同源 XSS 落点（要恢复必须先做消毒）',
+  );
+  assert.doesNotMatch(preview, /kind === 'html'|kind === "html"/, 'FilePreview 又出现 html 预览分支');
   assert.match(
     preview,
-    /html\.value = data\.html;[\s\S]{0,220}?await nextTick\(\);[\s\S]{0,120}?wrapTables\(htmlEl\.value, 'fp-table-scroll'\)/,
-    'html 预览没有包表格滚动容器（宽表会把预览区撑宽，手机上只能整页横拖）',
+    /wrapTables\(mdEl\.value, 'fp-table-scroll'\)/,
+    'md 分支没有包表格滚动容器（宽表会把预览区撑宽，手机上只能整页横拖）',
   );
-  // 包出来的容器要有横滚样式（与 md 分支共用同一条规则）
+  // 包出来的容器要有横滚样式
   assert.match(
     preview,
     /\.fp-body\.docx :deep\(\.fp-table-scroll\) \{[\s\S]*?overflow-x: auto/,
