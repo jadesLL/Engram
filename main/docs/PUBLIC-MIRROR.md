@@ -35,6 +35,14 @@ GitHub 公开仓库（脱敏快照）
 脚本：`main/scripts/make-public-snapshot.sh`
 Workflow：`.gitea/workflows/public-mirror.yml`
 
+### 无交互推送与超时
+
+主分支及已有标签推送统一经 `main/scripts/public-mirror-push.cjs`：PAT 作为 Basic 认证的密码，由进程环境中的 Git 运行时配置注入目标 HTTPS 主机的请求头，不进入 URL、命令参数或 Git 配置文件。禁用凭据 helper、终端询问及认证弹窗；认证/权限失败直接报错，不等待人工输入。TLS 校验保持开启，不跟随重定向。
+
+每次推送默认最多 120 秒、总共 3 次尝试，仅网络中断/超时等暂时性错误会重试；超时会终止本次推送的进程树。可用 `SNAPSHOT_PUSH_TIMEOUT_SECONDS`（1–600）及 `SNAPSHOT_PUSH_ATTEMPTS`（1–5）调整。超过次数仍失败则整个同步失败，不把未推完的标签当作成功。脱敏反查及源仓库保护仍在任何推送之前执行。
+
+配置依据：[Git 运行时配置、HTTP 请求头与 credential 设置](https://git-scm.com/docs/git-config)。离线回归测试：`node --test main/scripts/public-mirror-push.test.cjs`，覆盖实际 Git URL 匹配、非交互认证、秘密打码、有限重试及超时进程树清理。
+
 ### 三道安全护栏
 
 脚本**绝不会**修改源仓库，靠三层保证：

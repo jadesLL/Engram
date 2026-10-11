@@ -69,6 +69,10 @@ jobs:
           nat() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi }
           python "$(nat "$PWD/main/scripts/public-release-sync.py")" --self-test
 
+      - name: 推送认证与超时护栏自检（离线）
+        shell: bash
+        run: node --test main/scripts/public-mirror-push.test.cjs
+
       - name: 生成脱敏快照并推送
         shell: bash
         env:
