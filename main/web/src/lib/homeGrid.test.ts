@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   GRID_COLS,
+  GRID_CANVAS_WIDTH,
+  canvasScale,
+  canvasDelta,
   GRID_MAX_H,
   GRID_MAX_ROWS,
   GRID_MAX_W,
@@ -23,6 +26,28 @@ import {
 } from './homeGrid.ts';
 
 const rect = (col: number, row: number, w = 2, h = 2): GridPlace => ({ col, row, w, h });
+
+test('桌面画布按可用宽度等比例缩小，不超过原始尺寸', () => {
+  assert.equal(GRID_CANVAS_WIDTH, 1056);
+  for (const width of [1, 320, 640, 860, 1056, 1600]) {
+    const scale = canvasScale(width);
+    assert.equal(GRID_CANVAS_WIDTH * scale, Math.min(width, GRID_CANVAS_WIDTH));
+    assert.ok(scale > 0 && scale <= 1);
+  }
+  assert.ok(canvasScale(0) > 0);
+  assert.equal(canvasScale(NaN), 1);
+});
+
+test('缩放后的拖动、调整尺寸和滚动位移换算回相同逻辑格数', () => {
+  const pitch = (GRID_CANVAS_WIDTH + 14) / GRID_COLS;
+  for (const width of [320, 640, 860, 1056, 1920]) {
+    const scale = canvasScale(width);
+    for (const cells of [-3, -1, 0, 1, 4]) {
+      assert.equal(Math.round(canvasDelta(cells * pitch * scale, scale) / pitch), cells);
+    }
+    assert.ok(Math.abs(canvasDelta((pitch * scale / 2) + (pitch * scale / 2), scale) - pitch) < 1e-8);
+  }
+});
 
 test('缩小窗口减少显示列数，保持可读格宽，恢复大窗口时回到原布局', () => {
   const original = [rect(8, 0, 4, 1), rect(0, 0, 4, 2), rect(4, 0, 4, 3), rect(0, 3, 12, 2)];

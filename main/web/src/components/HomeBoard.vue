@@ -32,7 +32,7 @@
     <!-- 编辑态工具条：加模块 / 排整齐 / 紧凑 / 恢复默认 -->
     <div v-if="store.editing" class="manage-bar">
       <span class="manage-hint">
-        拖动卡片 = 换位置；拖右下角 = 改大小；方向键微调、Shift+方向键改尺寸。窄窗口编辑时可横向滚动。
+        拖动卡片 = 换位置；拖右下角 = 改大小；方向键微调、Shift+方向键改尺寸。
       </span>
       <div class="manage-spacer" />
       <button class="manage-btn" type="button" :disabled="!store.history.length" @click="store.undo()">撤销</button>
@@ -70,10 +70,15 @@
     -->
     <div
       v-if="store.board.modules.length"
+      ref="gridFrameEl"
+      class="board-grid-frame"
+      :style="mobileBoard ? undefined : { height: `${canvasHeight}px` }"
+    >
+    <div
       ref="gridEl"
       class="board-grid"
       :class="{ editing: store.editing }"
-      :style="{ '--grid-rows': gridRows }"
+      :style="{ '--grid-rows': gridRows, transform: mobileBoard ? undefined : `scale(${boardScale})` }"
     >
       <div
         v-for="entry in boardModules"
@@ -149,6 +154,7 @@
         aria-hidden="true"
       />
     </div>
+    </div>
     <div v-else class="board-empty"><p class="board-empty-title">把首页变成你的工作台</p><p class="board-empty-sub">添加常用卡片，从一条灵感开始。</p><button class="manage-btn primary" type="button" @click="openAdd">添加卡片</button></div>
     </div>
   </div>
@@ -212,6 +218,9 @@ import {
 import { homeDateLine, homeGreeting } from '../lib/homeBoardData.ts';
 import {
   GRID_COLS,
+  GRID_CANVAS_WIDTH,
+  canvasScale,
+  canvasDelta,
   normalizePlace,
   placeItem,
   usedRows,
@@ -283,6 +292,7 @@ let queueTimer: ReturnType<typeof setInterval> | undefined;
 
 const boardEl = ref<HTMLElement>();
 const gridEl = ref<HTMLElement>();
+const gridFrameEl = ref<HTMLElement>();
 const dateLine = computed(() => homeDateLine());
 const greeting = computed(() => homeGreeting());
 const stats = computed(() => ({ pages: (props.pages || []).length, files: props.fileCount || 0 }));
@@ -473,7 +483,8 @@ const targetPreview = ref<GridPlace | null>(null);
 const previewBoard = ref<HomeBoard | null>(null);
 const ghost = ref({ x: 0, y: 0 });
 const gestureMode = ref<'move' | 'resize'>('move');
-const gridWidth = ref(1056);
+const gridWidth = ref(GRID_CANVAS_WIDTH);
+const availableWidth = ref(GRID_CANVAS_WIDTH);
 const mobileMedia = window.matchMedia('(max-width: 768px)');
 const mobileBoard = ref(mobileMedia.matches);
 // 桌面浏览/编辑共用固定画布；只在手机浏览态按可用空间重排。
@@ -481,6 +492,15 @@ const displayColumns = computed(() => !mobileBoard.value || store.editing ? GRID
 const displayPlaces = computed(() => viewportPlaces((previewBoard.value || store.board).modules, displayColumns.value));
 const unit = computed(() => Math.max(1, (gridWidth.value - 14 * (displayColumns.value - 1)) / displayColumns.value));
 const gridRows = computed(() => Math.max(2, usedRows(displayPlaces.value)));
+const boardScale = computed(() => mobileBoard.value ? 1 : canvasScale(availableWidth.value));
+const canvasHeight = computed(() => (gridRows.value * (unit.value + 14) - 14) * boardScale.value);
+let frameObserver: ResizeObserver | null = null;
+watch(gridFrameEl, (el) => {
+  frameObserver?.disconnect();
+  if (!el) return;
+  frameObserver = new ResizeObserver(([entry]) => { availableWidth.value = entry.contentRect.width; });
+  frameObserver.observe(el);
+});
 let gridObserver: ResizeObserver | null = null;
 watch(gridEl, (el) => {
   gridObserver?.disconnect();
@@ -492,7 +512,7 @@ let frame = 0;
 let gesture: {
   mode: 'move' | 'resize'; id: string; pointer: number;
   startX: number; startY: number; x: number; y: number; scroll: number; scrollX: number;
-  origin: GridPlace; snapshot: HomeBoard; cell: number; active: boolean;
+  origin: GridPlace; snapshot: HomeBoard; cell: number; scale: number; active: boolean;
 } | null = null;
 function modulePlace(module: HomeModule): GridPlace { return { col: module.col, row: module.row, w: module.w, h: module.h }; }
 function startDrag(event: PointerEvent, id: string) { beginGesture(event, id, 'move'); }
@@ -501,7 +521,7 @@ function preventTouchScroll(event: TouchEvent) { if (gesture) event.preventDefau
 function beginGesture(event: PointerEvent, id: string, mode: 'move' | 'resize') {
   if (gesture || event.button !== 0) return;
   if (!store.editing && event.pointerType !== 'touch') return;
-  // 窄窗口先切回可横向滚动的完整列数编辑画布，下一次拖动再使用稳定坐标。
+  // 手机先切回完整列数编辑画布，下一次拖动再使用稳定坐标。
   if (!store.editing && displayColumns.value < GRID_COLS) { store.setEditing(true); return; }
   const module = store.board.modules.find((m) => m.id === id);
   if (!module) return;
@@ -509,7 +529,7 @@ function beginGesture(event: PointerEvent, id: string, mode: 'move' | 'resize') 
   gestureMode.value = mode;
   gesture = { mode, id, pointer: event.pointerId, startX: event.clientX, startY: event.clientY,
     x: event.clientX, y: event.clientY, scroll: boardEl.value?.scrollTop || 0, scrollX: boardEl.value?.scrollLeft || 0,
-    origin: modulePlace(module), snapshot: JSON.parse(JSON.stringify(store.board)), cell: unit.value + 14, active: false };
+    origin: modulePlace(module), snapshot: JSON.parse(JSON.stringify(store.board)), cell: unit.value + 14, scale: boardScale.value, active: false };
   window.addEventListener('pointermove', onGestureMove, { passive: false });
   window.addEventListener('pointerup', onGestureEnd);
   window.addEventListener('pointercancel', onGestureEnd);
@@ -530,8 +550,8 @@ function updateGesture() {
     const deltaX = g.x < box.left + edge ? -Math.min(14, (box.left + edge - g.x) / 4) : g.x > box.right - edge ? Math.min(14, (g.x - box.right + edge) / 4) : 0;
     if (deltaX) host.scrollLeft += deltaX;
   }
-  const dx = g.x - g.startX + (g.mode === 'move' ? (host?.scrollLeft || 0) - g.scrollX : 0);
-  const dy = g.y - g.startY + (g.mode === 'move' ? (host?.scrollTop || 0) - g.scroll : 0);
+  const dx = canvasDelta(g.x - g.startX + (g.mode === 'move' ? (host?.scrollLeft || 0) - g.scrollX : 0), g.scale);
+  const dy = canvasDelta(g.y - g.startY + (g.mode === 'move' ? (host?.scrollTop || 0) - g.scroll : 0), g.scale);
   ghost.value = { x: dx, y: dy };
   const wanted = normalizePlace(g.mode === 'move'
     ? { ...g.origin, col: g.origin.col + Math.round(dx / g.cell), row: g.origin.row + Math.round(dy / g.cell) }
@@ -568,6 +588,8 @@ function onGestureEnd(event?: PointerEvent) {
   if (id) void nextTick(() => (boardEl.value?.querySelector(`[data-module-id="${id}"] .shell`) as HTMLElement)?.focus());
 }
 watch(() => store.editing, (editing) => { if (!editing) onGestureEnd(); });
+// 侧栏开合或窗口改宽时取消尚未提交的手势，避免中途更换坐标系。
+watch(boardScale, () => { if (gesture) onGestureEnd(); });
 
 /** 键盘微调：方向键挪位、Shift+方向键改尺寸（触屏与键盘用户的等价入口） */
 function onModuleKey(module: HomeModule, dx: number, dy: number, resize: boolean) {
@@ -630,7 +652,7 @@ onUnmounted(() => {
   clearInterval(queueTimer);
   window.removeEventListener('focus', refreshQueue);
   document.removeEventListener('visibilitychange', refreshQueue);
-  onGestureEnd(); gridObserver?.disconnect();
+  onGestureEnd(); gridObserver?.disconnect(); frameObserver?.disconnect();
   window.removeEventListener('keydown', onBoardKey);
   window.removeEventListener('pointermove', onGestureMove);
   window.removeEventListener('pointerup', onGestureEnd);
@@ -649,10 +671,11 @@ onUnmounted(() => {
 .board {
   height: 100%;
   display: flex;
-  overflow-x: auto;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
-.board.editing-board { overflow-x:auto; }
 /*
  * 容器查询的宿主：整页可滚容器是 .board，居中则由 .board-inner 的 auto 外边距负责，
  * 所以中间再垫一层。它只做一件事——把「正文实际有多宽」暴露给下面的 @container 规则
@@ -669,8 +692,8 @@ onUnmounted(() => {
 .board-cq > .board-inner { margin-top: 0; margin-bottom: 0; }
 /*
  * 桌面卡片栅格固定 1056px（单格约 75px），浏览态与编辑态共用。
- * 标题与工具栏仍跟随可见宽度，窄窗口也能直接进入/退出编辑；卡片区域横向滚动。
- * 宽窗口 auto 外边距居中，窄窗口从画布左边开始，不裁掉首列。
+ * 卡片区域整体缩放到可用宽度，标题与工具栏保持可读尺寸。
+ * 宽窗口 auto 外边距居中；浏览/编辑预留相同滚动条空间，比例保持一致。
  */
 .board-inner {
   margin: auto;
@@ -717,6 +740,7 @@ onUnmounted(() => {
 /* 编辑态工具条 */
 .manage-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
@@ -825,6 +849,11 @@ onUnmounted(() => {
  * ResizeObserver 按实际画布宽度计算正方形行高；桌面画布不随窗口宽度变化。
  * 手势使用相同的格子尺寸与 14px 间距。
  */
+.board-grid-frame {
+  position: relative;
+  width: 100%;
+  overflow: clip;
+}
 .board-grid {
   display: grid;
   width: 1056px;
@@ -835,7 +864,10 @@ onUnmounted(() => {
   grid-template-rows: repeat(var(--grid-rows, 4), var(--grid-row-h));
   gap: 14px;
   align-items: stretch;
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
 }
 /* 编辑态：把栅格线画出来（手机桌面那种「看得见的格子」） */
 .board-grid.editing {
@@ -893,7 +925,7 @@ onUnmounted(() => {
   .board.editing-board { overflow-x: auto; }
   .board-inner { width: 100%; min-width: 0; max-width: 100%; }
   .editing-board .board-inner { min-width: 930px; }
-  .board-grid { width: 100%; min-width: 0; }
+  .board-grid { position: relative; width: 100%; min-width: 0; }
   .board-greeting { font-size: 24px; }
   .board-inner { padding: 24px 14px 40px; }
   .add-panel { grid-template-columns: 1fr; }

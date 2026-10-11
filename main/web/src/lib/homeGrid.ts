@@ -17,6 +17,15 @@
  * 1×1 才真的只是「一个小格」；6 列时一格约 164px，1×1 画出来像 2×2。
  */
 export const GRID_COLS = 12;
+/** 桌面布局使用固定逻辑画布；仅改变显示比例，不重新排版卡片。 */
+export const GRID_CANVAS_WIDTH = 1056;
+export function canvasScale(availableWidth: number): number {
+  return Number.isFinite(availableWidth) ? Math.min(1, Math.max(1, availableWidth) / GRID_CANVAS_WIDTH) : 1;
+}
+/** 指针与滚动位移是屏幕像素，落格与拖动预览使用未缩放的画布坐标。 */
+export function canvasDelta(screenDelta: number, scale: number): number {
+  return screenDelta / scale;
+}
 /** 默认查找范围；密集布局按实际底边扩展，不能截断造成重叠 */
 export const GRID_MAX_ROWS = 96;
 /** 旧版行高（兼容旧引用）；正式看板按可用宽度渲染正方形格子 */
@@ -40,8 +49,8 @@ export interface GridPlace {
 }
 
 /**
- * 浏览窗口变窄时减少显示列数：一格至少约 64px，所以板宽 958px 时仍能放下 12 列（一格约 67px），
- * 编辑态与浏览态看到的格子大小基本一致。逻辑布局仍保存 GRID_COLS 列，这里只是**只读**的显示列数。
+ * 手机浏览窗口变窄时减少显示列数：一格至少约 64px；桌面端使用固定画布整体缩放。
+ * 逻辑布局仍保存 GRID_COLS 列，这里只是**只读**的显示列数。
  */
 const VIEWPORT_COLUMN_LADDER = [GRID_COLS, 8, 6, 4, 2, 1] as const;
 export function viewportColumns(width: number): number {

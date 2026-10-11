@@ -93,7 +93,8 @@ function onPointerDown(event: PointerEvent) {
 }
 function moveHold(event: PointerEvent) { if (hold && down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 8) clearHold(); }
 function suppressClick(event: MouseEvent) { if (held) { event.preventDefault(); event.stopPropagation(); held = false; } }
-onMounted(() => { observer = new ResizeObserver(([entry]) => { const box = root.value?.getBoundingClientRect(); size.value = { w: box?.width || entry.contentRect.width, h: box?.height || entry.contentRect.height }; }); if (root.value) observer.observe(root.value); window.addEventListener('pointermove', moveHold); window.addEventListener('pointerup', clearHold); window.addEventListener('pointercancel', clearHold); });
+// 读布局尺寸而非变换后的屏幕尺寸，整体缩放不应触发卡片内容和内边距重新分档。
+onMounted(() => { observer = new ResizeObserver(([entry]) => { const box = entry.borderBoxSize[0]; size.value = { w: box?.inlineSize ?? root.value?.offsetWidth ?? entry.contentRect.width, h: box?.blockSize ?? root.value?.offsetHeight ?? entry.contentRect.height }; }); if (root.value) observer.observe(root.value); window.addEventListener('pointermove', moveHold); window.addEventListener('pointerup', clearHold); window.addEventListener('pointercancel', clearHold); });
 onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconnect(); clearHold(); window.removeEventListener('pointermove', moveHold); window.removeEventListener('pointerup', clearHold); window.removeEventListener('pointercancel', clearHold); });
 </script>
 <style scoped>
