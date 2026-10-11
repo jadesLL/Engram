@@ -77,6 +77,18 @@ function cfHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
+/**
+ * Cloudflare API 单次请求超时：CF 侧挂住时不能无限等。
+ * DDNS 的 syncing 状态与证书 DNS-01 流程都会被一次挂死的请求堵住。
+ */
+const CF_REQUEST_TIMEOUT_MS = 15_000;
+
+function cfFetch(fetchImpl: FetchLike, url: string, init: RequestInit = {}): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CF_REQUEST_TIMEOUT_MS);
+  return fetchImpl(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+}
+
 /** 逐级剥标签查询域名所属 CF zone（如 a.b.xxx.com → xxx.com） */
 export async function findCloudflareZoneId(
   domain: string,
@@ -87,7 +99,8 @@ export async function findCloudflareZoneId(
   // 从完整域名开始逐级剥标签（证书域名可能就是 zone 根本身）
   for (let i = 0; i < labels.length - 1; i++) {
     const candidate = labels.slice(i).join('.');
-    const res = await fetchImpl(
+    const res = await cfFetch(
+      fetchImpl,
       `https://api.cloudflare.com/client/v4/zones?name=${encodeURIComponent(candidate)}`,
       { headers: cfHeaders(token) },
     );

@@ -107,3 +107,37 @@ test('id unchanged path stays a no-op and old references are untouched', () => {
   assert.equal(meta.id, page.id);
   assert.equal(db.prepare(`SELECT page_id FROM page_contributions WHERE id = 'pc-1'`).get().page_id, page.id);
 });
+
+/**
+ * 回归：页面行 upsert、DELETE pages_fts、INSERT pages_fts 原先分三条裸执行，
+ * 中途失败（如 FTS 写失败）会留下「行更新了、FTS 没更新（或没有）」的半套状态。
+ * 三条必须在同一事务里：任一步失败整体回滚。
+ */
+test('syncPageFile：FTS 写入失败时页面行 upsert 一并回滚（同事务）', () => {
+  const page = createPage('Wiki/概念', '事务回滚测试页');
+  const before = db.prepare(`SELECT word_count, updated_at FROM pages WHERE id = ?`).get(page.id);
+
+  // 改磁盘正文（保留 frontmatter 的 id/标题），让 syncPageFile 需要更新行与 FTS
+  const parsed = matter(fs.readFileSync(safeJoin(page.path), 'utf8'));
+  fs.writeFileSync(
+    safeJoin(page.path),
+    matter.stringify(
+      '# 事务回滚测试页\n\n改过的正文：这一段用来确认页面行确实需要更新（词数与原来明显不同）。\n',
+      parsed.data
+    ),
+    'utf8'
+  );
+
+  // 让 FTS 写入那一步必失败：临时移走 pages_fts；事务中途出错必须整体回滚
+  db.exec(`DROP TABLE pages_fts`);
+  try {
+    assert.throws(() => syncPageFile(page.path), /pages_fts/);
+  } finally {
+    db.exec(
+      `CREATE VIRTUAL TABLE pages_fts USING fts5(title, content, tags, page_id UNINDEXED, tokenize = 'unicode61')`
+    );
+  }
+
+  const after = db.prepare(`SELECT word_count, updated_at FROM pages WHERE id = ?`).get(page.id);
+  assert.deepEqual(after, before, 'FTS 写失败时同一事务里的页面行 upsert 必须回滚');
+});

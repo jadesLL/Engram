@@ -164,7 +164,11 @@ function wordCount(text: string): number {
   return cjk + words;
 }
 
-function atomicWrite(abs: string, content: string | Buffer): void {
+/**
+ * 原子写文件（同目录临时文件 + rename）：中途崩溃/并发写不会把目标文件截断成半截。
+ * brain 内的页面写入与「一键接入」注入外部客户端配置（如 ZCode 的 cli/config.json）共用。
+ */
+export function atomicWrite(abs: string, content: string | Buffer): void {
   const temp = `${abs}.${newId()}.tmp`;
   try {
     fs.writeFileSync(temp, content);
@@ -303,22 +307,27 @@ export function syncPageFile(relPath: string): PageMeta | null {
     })();
   }
 
-  db.prepare(
-    `INSERT INTO pages(id, path, title, type, tags, summary, created_at, updated_at, deleted, word_count)
-     VALUES(@id, @path, @title, @type, @tags, @summary, @created_at, @updated_at, 0, @word_count)
-     ON CONFLICT(path) DO UPDATE SET
-       title=excluded.title, type=excluded.type, tags=excluded.tags, summary=excluded.summary,
-       updated_at=excluded.updated_at, deleted=0, word_count=excluded.word_count,
-       id=excluded.id`
-  ).run({ ...meta, tags: JSON.stringify(tags) });
+  // 页面行与 FTS 是一次写入的两个组成部分，必须同生共死：分开裸执行时中途失败
+  // （FTS 写失败、进程中断）会留下「行在索引里、表里没有」或相反的半套状态。
+  // 与上面的 id 迁移路径一致，统一包事务，任一步失败整体回滚。
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO pages(id, path, title, type, tags, summary, created_at, updated_at, deleted, word_count)
+       VALUES(@id, @path, @title, @type, @tags, @summary, @created_at, @updated_at, 0, @word_count)
+       ON CONFLICT(path) DO UPDATE SET
+         title=excluded.title, type=excluded.type, tags=excluded.tags, summary=excluded.summary,
+         updated_at=excluded.updated_at, deleted=0, word_count=excluded.word_count,
+         id=excluded.id`
+    ).run({ ...meta, tags: JSON.stringify(tags) });
 
-  db.prepare(`DELETE FROM pages_fts WHERE page_id = ?`).run(meta.id);
-  db.prepare(`INSERT INTO pages_fts(title, content, tags, page_id) VALUES(?, ?, ?, ?)`).run(
-    ftsSegment(meta.title),
-    ftsSegment(parsed.content),
-    ftsSegment(tags.join(' ')),
-    meta.id
-  );
+    db.prepare(`DELETE FROM pages_fts WHERE page_id = ?`).run(meta.id);
+    db.prepare(`INSERT INTO pages_fts(title, content, tags, page_id) VALUES(?, ?, ?, ?)`).run(
+      ftsSegment(meta.title),
+      ftsSegment(parsed.content),
+      ftsSegment(tags.join(' ')),
+      meta.id
+    );
+  })();
   // 外链图片本地化：syncPageFile 是「磁盘上的正文变了」的唯一收口——编辑器保存、REST、
   // Agent write_page、导入 .md、多端同步拉回、启动扫描、Agent 直接写文件系统全经过它。
   // 只挂在 writePage 上会漏掉导入与同步（首版就是这么漏的）。异步不阻塞，抓不到就保留外链。

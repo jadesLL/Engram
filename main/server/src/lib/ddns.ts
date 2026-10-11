@@ -364,6 +364,19 @@ function cfHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
+/**
+ * Cloudflare API 单次请求超时：CF 侧挂住时不能让请求无限等——
+ * ddnsTick 的 syncing 会一直不清（之后每个 tick 都被挡掉，DDNS 永远停摆），
+ * 设置页的校验/列举/检测请求也永远不返回。所有 Cloudflare fetch 统一走这里。
+ */
+const CF_REQUEST_TIMEOUT_MS = 15_000;
+
+function cfFetch(fetchImpl: FetchLike, url: string, init: RequestInit = {}): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CF_REQUEST_TIMEOUT_MS);
+  return fetchImpl(url, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+}
+
 // ---------- Cloudflare 账号探测（「一键配置」：粘一个 Token 就能选域名） ----------
 
 export interface CloudflareZone {
@@ -388,7 +401,7 @@ export async function verifyCloudflareToken(
   fetchImpl?: FetchLike,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    const res = await resolveFetch(fetchImpl)('https://api.cloudflare.com/client/v4/user/tokens/verify', {
+    const res = await cfFetch(resolveFetch(fetchImpl), 'https://api.cloudflare.com/client/v4/user/tokens/verify', {
       headers: cfHeaders(token),
     });
     if (!res.ok) return { ok: false, error: `Cloudflare Token 校验失败: HTTP ${res.status}` };
@@ -430,7 +443,7 @@ export async function listCloudflareZones(
   fetchImpl?: FetchLike,
 ): Promise<CloudflareZoneListResult> {
   try {
-    const res = await resolveFetch(fetchImpl)('https://api.cloudflare.com/client/v4/zones?per_page=50', {
+    const res = await cfFetch(resolveFetch(fetchImpl), 'https://api.cloudflare.com/client/v4/zones?per_page=50', {
       headers: cfHeaders(token),
     });
     if (!res.ok) {
@@ -483,7 +496,7 @@ export async function fetchCloudflareZone(
   fetchImpl?: FetchLike,
 ): Promise<DdnsZoneInfo | null> {
   try {
-    const res = await resolveFetch(fetchImpl)(`https://api.cloudflare.com/client/v4/zones/${zoneId}`, {
+    const res = await cfFetch(resolveFetch(fetchImpl), `https://api.cloudflare.com/client/v4/zones/${zoneId}`, {
       headers: cfHeaders(token),
     });
     if (!res.ok) return null;
@@ -593,7 +606,8 @@ async function findDdnsRecord(
   record: string,
   type: DdnsRecordType,
 ): Promise<CfDnsRecord | null> {
-  const listRes = await fetchImpl(
+  const listRes = await cfFetch(
+    fetchImpl,
     `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records?type=${type}&name=${encodeURIComponent(record)}`,
     { headers: cfHeaders(token) },
   );
@@ -728,12 +742,12 @@ export async function syncDdnsRecord(cfg: DdnsConfig, opts: DdnsSyncOptions = {}
         }
         const body = JSON.stringify({ type: t, name: cfg.record, content: picked, ttl: 60, proxied: false });
         const writeRes = existing
-          ? await fetchImpl(`https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records/${existing.id}`, {
+          ? await cfFetch(fetchImpl, `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records/${existing.id}`, {
               method: 'PUT',
               headers: cfHeaders(cfg.token),
               body,
             })
-          : await fetchImpl(`https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records`, {
+          : await cfFetch(fetchImpl, `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records`, {
               method: 'POST',
               headers: cfHeaders(cfg.token),
               body,
@@ -911,6 +925,10 @@ async function ddnsTick(): Promise<void> {
       } else {
         console.error(`[ddns] 同步失败: ${r.error}`);
       }
+    } catch (error) {
+      // syncDdnsRecord 自己收口业务错误，能到这里的多是意外（状态写入/日志失败）：
+      // 必须接住——冒成进程级 unhandledRejection 会直接杀掉服务（Node ≥15）
+      console.error('[ddns] 同步异常', error);
     } finally {
       lastRunAt = Date.now();
       syncing = null;

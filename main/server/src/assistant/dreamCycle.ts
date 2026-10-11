@@ -349,6 +349,28 @@ export interface DreamStatus {
   };
 }
 
+/**
+ * audit / board 的短 TTL 缓存：dreamAudit 要全量扫 edges、全量扫 pages 并递归扫盘，
+ * 设置页每 30 秒轮询一次 dreamStatus，大库上这是纯烧 CPU。只缓存这两个推导字段——
+ * config / state / running / last 每次现读，起停与结果必须立即可见。
+ */
+const DERIVED_CACHE_TTL_MS = 60_000;
+let derivedCache: { at: number; sessionId: string; audit: DreamAudit; board: DreamBoard } | null = null;
+
+function auditAndBoard(sessionId: string): { audit: DreamAudit; board: DreamBoard } {
+  const now = Date.now();
+  if (
+    derivedCache
+    && derivedCache.sessionId === sessionId
+    && now >= derivedCache.at
+    && now - derivedCache.at < DERIVED_CACHE_TTL_MS
+  ) {
+    return derivedCache;
+  }
+  derivedCache = { at: now, sessionId, audit: dreamAudit(), board: dreamBoard(sessionId) };
+  return derivedCache;
+}
+
 /** 设置页状态面板用的一份全量状态（只读，可在轮询里调用） */
 export function dreamStatus(now: Date = new Date()): DreamStatus {
   const config = readDreamConfig();
@@ -356,6 +378,7 @@ export function dreamStatus(now: Date = new Date()): DreamStatus {
   const due = nextDueAt(config, state, now);
   const lastRun = state.lastRunId ? repo.getRun(state.lastRunId) : null;
   const sessionId = dreamSession()?.id || '';
+  const derived = auditAndBoard(sessionId);
   return {
     config,
     scheduleLabel: describeSchedule(config),
@@ -365,9 +388,9 @@ export function dreamStatus(now: Date = new Date()): DreamStatus {
     runId: state.currentRunId || lastRun?.id || '',
     sessionId,
     agentReady: Boolean(getAgentConfig().apiKey),
-    audit: dreamAudit(),
+    audit: derived.audit,
     before: { pendingFiles: state.beforePendingFiles, issues: state.beforeIssues },
-    board: dreamBoard(sessionId),
+    board: derived.board,
     last: {
       at: state.lastRunAt,
       trigger: state.lastTrigger,

@@ -1,5 +1,6 @@
 import { notifyCategoriesChanged } from '../sync/hub.js';
 import { syncAllowed, saveSyncCategories } from '../sync/categories.js';
+import { IDEA_DISTILL_KIND } from '../jobQueue.js';
 import { preferenceSnapshot, preferenceValue } from '../sync/preferences.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -659,7 +660,31 @@ export async function syncRoutes(app: FastifyInstance) {
    */
   app.get('/api/sync/distilled', { preHandler: requireSyncAccess }, async () => ({
     paths: [...distilledSourcePaths()].filter(path => syncAllowed('file', path)).sort(),
+    // 灵感提炼的进行中/失败清单。标记与内容都没有对应的同步 op，而成员端的「提炼中/失败」徽标
+    // 读的是本机 /api/jobs——手机端没有任务队列（/api/jobs 是空桩），拿这份清单才能把徽标补上；
+    // 桌面/Docker 端有真实任务队列，用不到这两个字段。
+    pending: ideaDistillPathsByStatus(['pending', 'running', 'paused']),
+    failed: ideaDistillPathsByStatus(['failed']),
   }));
+}
+
+/** 灵感提炼任务的来源路径（按状态过滤；payload 解析失败的记录跳过，不让一条坏行拖垮整个端点） */
+function ideaDistillPathsByStatus(statuses: string[]): string[] {
+  const placeholders = statuses.map(() => '?').join(',');
+  const rows = db
+    .prepare(`SELECT payload FROM jobs WHERE kind = ? AND status IN (${placeholders}) ORDER BY id`)
+    .all(IDEA_DISTILL_KIND, ...statuses) as { payload: string }[];
+  const out = new Set<string>();
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(String(row.payload || '{}'));
+      const path = String(payload?.path || '');
+      if (path && syncAllowed('file', path)) out.add(path);
+    } catch {
+      /* payload 不是 JSON（历史脏行）：跳过 */
+    }
+  }
+  return [...out].sort();
 }
 
 /** brain 目录全量清单（页面取 raw 文本 hash，文件取字节 hash；

@@ -107,8 +107,17 @@ export function getJobQueueState(): { running: boolean } {
   return { running: (getSetting(JOB_QUEUE_ENABLED_SETTING) ?? '1') !== '0' };
 }
 
+/** jobs 表列集合：只在首次用到时查一次 PRAGMA——updateJob 每次进度回调都调它，
+ * 而 updateJob 是热路径（长任务每秒多次），表结构运行期不会变，反复查纯属浪费 */
+let jobColumnNames: Set<string> | null = null;
+
 function jobColumns(): Set<string> {
-  return new Set((db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map((column) => column.name));
+  if (!jobColumnNames) {
+    jobColumnNames = new Set(
+      (db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map((column) => column.name)
+    );
+  }
+  return jobColumnNames;
 }
 
 function updateJob(id: number, values: Partial<JobProgress>, runToken?: string) {

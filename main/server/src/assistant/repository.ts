@@ -606,7 +606,19 @@ export function discardQueuedRuns(sessionId: string): string[] {
   return rows.map((row) => String(row.content || ''));
 }
 
-export function listRuns(sessionId: string): RunDto[] {
+/**
+ * 该会话的轮次（时间升序返回）。
+ * limit 只取最近 N 轮：先按时间倒序截取再翻回升序，与调用方原来「全量 + slice(-N)」等价——
+ * 看板这类只用最近几轮的调用方不必把整段历史捞出来再切。
+ */
+export function listRuns(sessionId: string, options: { limit?: number } = {}): RunDto[] {
+  const limit = Number.isFinite(options.limit) ? Math.max(1, Math.floor(Number(options.limit))) : 0;
+  if (limit > 0) {
+    const recent = db
+      .prepare(`SELECT * FROM assistant_runs WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(sessionId, limit) as any[];
+    return recent.reverse().map(toRun);
+  }
   const rows = db
     .prepare(`SELECT * FROM assistant_runs WHERE session_id = ? ORDER BY created_at, rowid`)
     .all(sessionId) as any[];

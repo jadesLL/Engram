@@ -359,6 +359,14 @@ export interface PushApplyResult {
   /** conflict 时是否由推送方内容胜出（false=中枢版本更新，推送方改动被另存） */
   theirWins?: boolean;
   /**
+   * 中枢按同步分类开关拒收本次推送（此时 seq/revision 都是 0）。
+   *
+   * 这是「明确没接收」，不是「接收了一个空操作」：只按 revision 判断的老客户端会把 0 写进本地
+   * base_revision，抹掉共同祖先，下次推送就退化成按 mtime 裁决并生成冲突副本。新客户端据此把
+   * 该条按「未接收」处理（保留本机内容、不写同步基线）。
+   */
+  skipped?: true;
+  /**
    * 本次推送的「哪个文件 + 什么增量」摘要（新增/修改/删除/改名 + 行数 + 体积）。
    * 随 ack 一起回给成员端：两端记录用同一句人话，成员端不用自己再算一遍。
    */
@@ -384,7 +392,7 @@ function sizeBefore(target: string): number {
 }
 
 export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
-  if (!syncAllowed(push.kind, push.target, push.old_path)) return { ok: true, seq: 0, revision: 0 };
+  if (!syncAllowed(push.kind, push.target, push.old_path)) return { ok: true, seq: 0, revision: 0, skipped: true };
   if (push.kind === 'page') {
     const target = String(push.target || '');
     const raw = String(push.content ?? '');

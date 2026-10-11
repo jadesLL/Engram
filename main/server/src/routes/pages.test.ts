@@ -14,6 +14,8 @@ let app: ReturnType<typeof Fastify>;
 let db: any;
 let token = '';
 let resetReconcileThrottle: () => void = () => {};
+let relatedCacheSize: () => number = () => 0;
+let RELATED_CACHE_MAX = 0;
 
 before(async () => {
   const dbModule = await import('../lib/db.js');
@@ -23,6 +25,8 @@ before(async () => {
 
   const routes = await import('./pages.js');
   resetReconcileThrottle = routes.resetReconcileThrottle;
+  relatedCacheSize = routes.relatedCacheSize;
+  RELATED_CACHE_MAX = routes.RELATED_CACHE_MAX;
   app = Fastify();
   await app.register(jwt, { secret: 'pages-route-test-secret' });
   await app.register(routes.pageRoutes);
@@ -193,4 +197,61 @@ test('编辑器改标题：磁盘文件名跟着改（侧栏「目录」不再�
   const onDisk = fs.readFileSync(path.join(temp, 'brain', after.path), 'utf8');
   assert.match(onDisk, /标题: 2026\.08\.16_京津区人员架构/);
   assert.match(onDisk, /^# 2026\.08\.16京津区人员架构$/m, '编辑器改标题不动正文 H1');
+});
+
+/**
+ * 回归：by-title 路由此前对 Fastify 已解码的路由参数再做一次 decodeURIComponent——
+ * 含 `%` 的标题直接抛 URIError 变 500，`%XX` 形状的标题会被解成别的字符、跳错页面。
+ */
+test('by-title 支持含 % 的标题，不再二次解码', async () => {
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/pages',
+    headers: { authorization: `Bearer ${token}` },
+    payload: { title: '折扣100%达标', type: 'concept' },
+  });
+  assert.equal(created.statusCode, 200);
+  const id = created.json().meta.id;
+
+  const hit = await app.inject({
+    method: 'GET',
+    url: `/api/pages/by-title/${encodeURIComponent('折扣100%达标')}`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(hit.statusCode, 200, '含 % 的标题不得 500（二次解码抛 URIError）');
+  assert.equal(hit.json().id, id);
+
+  // `%25` 字面量不得被当成转义序列解码成 `%`
+  const encodedTitle = '进度50%25完成';
+  const encoded = await app.inject({
+    method: 'POST',
+    url: '/api/pages',
+    headers: { authorization: `Bearer ${token}` },
+    payload: { title: encodedTitle, type: 'concept' },
+  });
+  const encodedId = encoded.json().meta.id;
+  const hit2 = await app.inject({
+    method: 'GET',
+    url: `/api/pages/by-title/${encodeURIComponent(encodedTitle)}`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(hit2.statusCode, 200);
+  assert.equal(hit2.json().id, encodedId, '%XX 形状的标题不得被二次解码成别的标题');
+});
+
+/** 回归：related 缓存原先只在命中时查 TTL、从不删条目，长跑进程会随访问过的页面无限增长。 */
+test('related 缓存有上限：访问大量页面后不会无限增长', async () => {
+  for (let i = 0; i < RELATED_CACHE_MAX + 8; i += 1) {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/pages/related-miss-${i}/related`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.statusCode, 200);
+  }
+  assert.ok(relatedCacheSize() > 0, '新访问的页面应进入缓存');
+  assert.ok(
+    relatedCacheSize() <= RELATED_CACHE_MAX,
+    `缓存条目 ${relatedCacheSize()} 超过上限 ${RELATED_CACHE_MAX}`
+  );
 });

@@ -204,7 +204,8 @@ export function dreamBoard(sessionId: string, options: { limit?: number } = {}):
 
   const state = readDreamState();
   const history = new Map(readDreamHistory().map((item) => [item.runId, item]));
-  const picked = repo.listRuns(session.id).slice(-limit).reverse();
+  // 只取最近 limit 轮：不再把整段轮次历史读进来再 slice
+  const picked = repo.listRuns(session.id, { limit }).reverse();
   const briefs = repo.listToolCallBriefs(picked.map((run) => run.id));
   const byRun = new Map<string, repo.ToolCallBriefDto[]>();
   for (const brief of briefs) {

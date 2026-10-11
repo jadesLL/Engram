@@ -166,3 +166,23 @@ test('关系库收录词表关系、双链关联与待建页面', async () => {
   assert.match(body, /^- \[\[关系测试未建页\]\] ← \[\[关系测试甲\]\]$/m, '待建页面反向索引到来源页');
 });
 
+/**
+ * 回归：appendWikiLog 的索引/关系库重建改为「短窗口合并」而不是节流丢弃——
+ * 突发多次调用之后，最后一次带来的页面仍必须出现在索引页里（不丢更新）。
+ */
+test('appendWikiLog 突发调用合并后仍写入最终索引', async () => {
+  writePage('Wiki/概念/合并重建测试页.md', '# 合并重建测试页\n', {
+    title: '合并重建测试页',
+    type: 'concept',
+  });
+  appendWikiLog('新建页面', '[[合并重建测试页]]（Wiki/概念/合并重建测试页.md）');
+  appendWikiLog('编辑页面', '[[合并重建测试页]]（Wiki/概念/合并重建测试页.md）');
+  // 合并窗口 250ms：等它确定执行后再断言最终状态
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.match(
+    readPage('AIWorks/index/index.md').content,
+    /\[\[合并重建测试页\]\]/,
+    '合并重建不得丢掉最后一次调用'
+  );
+});
+

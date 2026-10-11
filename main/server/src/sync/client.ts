@@ -938,6 +938,12 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
       const evidence = collectEvidenceForPage(item.target);
       if (evidence) payload.evidence = evidence;
       const res = await postJson('/api/sync/push', payload);
+      // 中枢按同步分类拒收（skipped，seq/revision 都是 0）：不能把 0 写进本地基线——base_revision
+      // 被抹掉后下次推送找不到共同祖先，只能按 mtime 裁决并生成冲突副本。本机内容照旧保留。
+      if (res.skipped) {
+        logEvent('warn', 'push-skipped', `页面「${item.target}」中枢未接收（该同步分类可能已在中枢关闭），本机改动保留、未写入同步基线`, { path: item.target });
+        return { bytes: Buffer.byteLength(raw, 'utf8'), merged: false, op: undefined };
+      }
       const ackedRevision = Number(res.revision || 0);
       // ack 内容与本端不同 → hub 做过合并/规范化，以 hub 为准写回
       const merged = res.content !== undefined && res.content !== raw;
