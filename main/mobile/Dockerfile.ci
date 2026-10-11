@@ -12,13 +12,15 @@
 #   docker cp engram-android-build:/work/mobile/android/app/build/outputs/apk/release/. <输出目录>
 #   docker rm engram-android-build
 # 基础镜像走加速域名镜像源（runner 网络无法直连 Docker Hub，2026-08 起 xuanyuan.run）
-# trixie 变体：apt 自带 OpenJDK 21（Capacitor 7.6 要求 Java 21 源级别，bookworm 只有 17）
+# JDK 从官方 Temurin 镜像复制，避免 Debian 软件源下载阻塞；保留 Node 22 构建环境。
+FROM v8a3htyccucd1ri7q2.xuanyuan.run/library/eclipse-temurin:21-jdk-jammy AS android-jdk
 FROM v8a3htyccucd1ri7q2.xuanyuan.run/library/node:22-trixie
 
 ENV ANDROID_HOME=/opt/android-sdk \
     JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 \
     GRADLE_USER_HOME=/opt/gradle-home \
     npm_config_registry=https://registry.npmmirror.com
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # 容器 locale 必须是 UTF-8：默认是 C（ASCII），JDK 的 sun.jnu.encoding 随之变成 ANSI_X3.4-1968，
 # 而 Kotlin 增量编译会把「中文测试方法名」写进 class 文件路径（如 DualStackTest$OkHttp 真的按协议族建连…
@@ -28,28 +30,10 @@ ENV ANDROID_HOME=/opt/android-sdk \
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-# JDK 21（Capacitor 7.6 / AGP 8.7 要求）。显式 HTTPS + Node 可信根，
-# 下载失败时有限切换到同一 Debian 仓库的 HTTPS 源，不降级 TLS 或软件包签名校验。
-RUN cp /etc/apt/sources.list.d/debian.sources /tmp/engram-debian.sources \
-    && node -e "require('node:fs').writeFileSync('/tmp/engram-node-ca.pem', require('node:tls').rootCertificates.join('\n') + '\n')" \
-    && installed=0 \
-    && for mirror in https://mirrors.aliyun.com https://deb.debian.org https://mirrors.ustc.edu.cn; do \
-         sed -e "s|https\?://deb\.debian\.org|$mirror|g" \
-             -e "s|https\?://security\.debian\.org|$mirror|g" \
-             /tmp/engram-debian.sources > /etc/apt/sources.list.d/debian.sources; \
-         rm -rf /var/lib/apt/lists/*; \
-         echo "Android JDK HTTPS source: $mirror"; \
-         if apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem \
-              -o Acquire::https::Timeout=30 -o Acquire::Retries=1 -o APT::Update::Error-Mode=any update \
-            && apt-get -o Acquire::https::CaInfo=/tmp/engram-node-ca.pem \
-              -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install -y --no-install-recommends \
-              ca-certificates openjdk-21-jdk-headless unzip curl; then \
-           installed=1; break; \
-         fi; \
-       done \
-    && test "$installed" = 1 \
-    && rm -f /tmp/engram-node-ca.pem /tmp/engram-debian.sources \
-    && rm -rf /var/lib/apt/lists/*
+# 官方 JDK 21（Capacitor 7.6 / AGP 8.7 要求），多阶段复制不携带独立操作系统层。
+# Node 基础镜像已有 curl/unzip/CA；构建时验证所需工具，缺失即失败。
+COPY --from=android-jdk /opt/java/openjdk /usr/lib/jvm/java-21-openjdk-amd64
+RUN java -version && command -v curl && command -v unzip
 
 # Android cmdline-tools + SDK 组件（API 35；runner 联网下载属既定流程）
 # build-tools;34.0.0 是 AGP 8.7 的默认版本：镜像若只装 35，gradle 会在 run 期现下载 34（2026-09-04 实测）
