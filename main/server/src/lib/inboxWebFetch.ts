@@ -12,6 +12,8 @@ const MAX_REDIRECTS = 3;
 const FETCH_TIMEOUT_MS = 45_000;
 const TITLE_SCAN_BYTES = 256 * 1024;
 const MAX_URL_LENGTH = 4096;
+/** 空壳页判定的可见文字上限：带前端挂载点、正文又短于这个数，即视为正文在浏览器里渲染 */
+const SHELL_TEXT_LIMIT = 64;
 
 type ResolvedAddress = { address: string; family: number };
 type HostResolver = (hostname: string) => Promise<ResolvedAddress[]>;
@@ -123,15 +125,41 @@ function decodeTitle(raw: string): string {
   }).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
-function titleFromHtml(probe: Buffer, contentType: string, url: URL): string {
-  const charset = /charset\s*=\s*["']?([^;"'\s]+)/i.exec(contentType)?.[1] || 'utf-8';
-  let source: string;
+/** 按响应声明的字符集解码抓到的开头部分（标题提取与空壳判定共用） */
+function decodeProbe(probe: Buffer, contentType: string): string {
+  const charset = contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] || 'utf-8';
   try {
-    source = new TextDecoder(charset).decode(probe);
+    return new TextDecoder(charset).decode(probe);
   } catch {
-    source = probe.toString('utf8');
+    return probe.toString('utf8');
   }
-  const title = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(source)?.[1];
+}
+
+/** 去掉脚本/样式/注释与标签后剩下的可见文字长度 */
+function visibleTextLength(source: string): number {
+  return source
+    .replace(/<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, '').length;
+}
+
+/**
+ * SPA 空壳页识别：静态 HTML 里只有一个前端应用挂载点、几乎没有可见文字（正文要等浏览器执行
+ * JavaScript 才出现，如小黑盒帖子分享页）。这类页面服务端抓不到正文，存下来只会转出一篇
+ * 「没有内容」的文档，不如在抓取时就明说。前 256KB 里还没出现 <body> 说明页面头部极大，
+ * 无法判定，按放行处理。
+ */
+function isScriptRenderedShell(probe: Buffer, contentType: string): boolean {
+  const body = decodeProbe(probe, contentType).match(/<body\b[^>]*>([\s\S]*)$/i)?.[1];
+  if (!body) return false;
+  if (visibleTextLength(body) >= SHELL_TEXT_LIMIT) return false;
+  return /\bid\s*=\s*["']?(?:app|root|__next|__nuxt|___gatsby|svelte)\b/i.test(body);
+}
+
+function titleFromHtml(probe: Buffer, contentType: string, url: URL): string {
+  const source = decodeProbe(probe, contentType);
+  const title = source.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i)?.[1];
   if (title) {
     const decoded = decodeTitle(title);
     if (decoded) return decoded;
@@ -220,12 +248,16 @@ export async function fetchInboxWebPage(
         fs.writeFileSync(tempPath, Buffer.alloc(0), { flag: 'wx' });
         await pipeline(Readable.fromWeb(response.body as any), scanTitle, fs.createWriteStream(tempPath));
         if (!bytes) throw new InboxWebFetchError('网页内容为空');
+        const head = Buffer.concat(probe);
+        if (isScriptRenderedShell(head, contentType)) {
+          throw new InboxWebFetchError('这个网页的正文由 JavaScript 动态渲染，服务端抓到的只是没有正文的空壳页：请在浏览器里打开后另存为文件（或把正文复制成文件）再拖入收集箱');
+        }
         // 注释放在文末，保留原网页开头的 BOM / DOCTYPE 与原始编码。
         const sourceUrl = current.toString();
         const safeSource = sourceUrl.replace(/--/g, '- -').replace(/>/g, '%3E');
         fs.appendFileSync(tempPath, '\n<!-- Engram source URL: ' + safeSource + ' -->\n');
         return {
-          title: titleFromHtml(Buffer.concat(probe), contentType, current),
+          title: titleFromHtml(head, contentType, current),
           sourceUrl,
           bytes,
         };
