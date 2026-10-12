@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { api } from '../api';
+import { localRenderer, renderedPageForm } from '../lib/inboxRender';
 
 /**
  * 收集箱：拖进来的文件先落在这里，属于「待整理 / 待转换」的暂存资产。
@@ -138,11 +139,36 @@ export const useInboxStore = defineStore('inbox', () => {
     return { saved, skipped };
   }
 
-  /** 直接按网址抓取网页 HTML，保存成收集箱原件。 */
+  /**
+   * 直接按网址抓取网页 HTML，保存成收集箱原件。
+   *
+   * 服务端不执行脚本：正文由 JavaScript 渲染的页面（分享页/单页应用）会被以
+   * code=needs-render 拒绝——这时改用本端自带的浏览器（桌面端 Electron 隐藏窗口 /
+   * 手机端 WebView）渲染后保存；两端都没有桥（纯浏览器/Docker 网页端）就保留原报错。
+   */
   async function fetchUrl(url: string): Promise<InboxItem> {
-    const { data } = await api.post('/api/inbox/fetch-url', { url });
-    await load();
-    return data.saved as InboxItem;
+    try {
+      const { data } = await api.post('/api/inbox/fetch-url', { url });
+      await load();
+      return data.saved as InboxItem;
+    } catch (error: any) {
+      const serverMessage = error?.response?.data?.error as string | undefined;
+      const renderer = error?.response?.data?.code === 'needs-render' ? localRenderer() : null;
+      if (!renderer) throw error;
+      let page: Awaited<ReturnType<typeof renderer.render>>;
+      try {
+        page = await renderer.render(url);
+      } catch (renderError: any) {
+        throw new Error(
+          `${serverMessage || '服务端抓不到这个网页的正文'}；用${renderer.label}内置浏览器渲染也没有成功：${renderError?.message || '未知原因'}`,
+        );
+      }
+      const { data } = await api.post('/api/inbox/upload', renderedPageForm(page, url));
+      await load();
+      const saved = (data?.saved || [])[0];
+      if (!saved) throw new Error('渲染结果没能存进收集箱，请稍后重试');
+      return saved as InboxItem;
+    }
   }
 
   /**

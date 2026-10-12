@@ -13,7 +13,13 @@ import { enqueue } from '../jobQueue.js';
 import { db } from '../lib/db.js';
 import { createInboxConversation } from '../pipeline/inboxConversation.js';
 import { listInboxItems, inboxCategoryOf, derivedPathFor, type InboxItem } from '../lib/inboxItems.js';
-import { fetchInboxWebPage, InboxWebFetchError } from '../lib/inboxWebFetch.js';
+import {
+  fetchInboxWebPage,
+  InboxWebFetchError,
+  isScriptRenderedFile,
+  RENDERED_TEXT_LIMIT,
+  sourceUrlComment,
+} from '../lib/inboxWebFetch.js';
 import {
   adoptInboxItem,
   capabilityHint,
@@ -83,6 +89,8 @@ export async function inboxRoutes(app: FastifyInstance) {
     const saved: InboxItem[] = [];
     const skipped: { name: string; reason: string }[] = [];
     let subDir = INBOX_DIR;
+    // 客户端（桌面端/手机端）用内置浏览器渲染后保存网页时带上来源地址：与直接抓取一样在文末记一条注释
+    let sourceUrl = '';
 
     for await (const part of req.parts({
       // Fastify 的全局 multipart 默认仍有限制；这里显式覆盖为 Infinity。
@@ -92,6 +100,8 @@ export async function inboxRoutes(app: FastifyInstance) {
         if (part.fieldname === 'dir') {
           const raw = String(part.value || '').trim();
           if (raw) subDir = path.posix.join(INBOX_DIR, sanitizeName(raw));
+        } else if (part.fieldname === 'sourceUrl') {
+          sourceUrl = String(part.value || '').trim().slice(0, 4096);
         }
         continue;
       }
@@ -115,6 +125,9 @@ export async function inboxRoutes(app: FastifyInstance) {
         skipped.push({ name, reason: '上传数据不完整' });
         continue;
       }
+      // 只对 HTML 追加注释：其它格式（含二进制）拼接文本会损坏原件。
+      // 注意不能在这里追加：multipart 的字段可能排在文件之后（浏览器 FormData 就是 files→sourceUrl），
+      // 统一等全部 part 收完再补（见循环之后）。
       noteAppWrite(abs);
       notifySyncChange('file', rel);
       emit('file-changed', { path: rel });
@@ -136,6 +149,33 @@ export async function inboxRoutes(app: FastifyInstance) {
         jobId: null,
         assistantSessionId: null,
       } satisfies InboxItem);
+    }
+
+    // 客户端渲染后保存的网页：文末补来源注释（与 /api/inbox/fetch-url 同一格式），
+    // 并复核「渲染后是否真的有正文」——过期分享链接/需要登录的页面渲染出来仍是一圈菜单壳，
+    // 存下来只会转出一篇没有内容的文档，这里如实拒绝并把这个文件撤掉。
+    // 放在循环之后：sourceUrl 字段可能排在文件 part 之后（浏览器 FormData 就是 files→sourceUrl）。
+    let renderedEmpty: string | null = null;
+    if (sourceUrl) {
+      for (const item of saved) {
+        if (!/\.html?$/i.test(item.name)) continue;
+        const absPath = safeJoin(item.path);
+        if (isScriptRenderedFile(absPath, RENDERED_TEXT_LIMIT)) {
+          fs.rmSync(absPath, { force: true });
+          notifySyncChange('delete', item.path);
+          emit('file-changed', { path: item.path });
+          renderedEmpty = item.name;
+          continue;
+        }
+        fs.appendFileSync(absPath, sourceUrlComment(sourceUrl));
+        item.size = fs.statSync(absPath).size;
+      }
+    }
+    if (renderedEmpty) {
+      return reply.code(400).send({
+        error: `「${renderedEmpty}」渲染后仍然没有正文（链接可能已失效、需要登录，或对方站点这次没有返回内容）：可稍后重试，或改用浏览器打开后另存为文件再拖入收集箱`,
+        code: 'render-empty',
+      });
     }
 
     if (!saved.length && skipped.length) {
@@ -165,8 +205,12 @@ export async function inboxRoutes(app: FastifyInstance) {
       return { saved, sourceUrl: fetched.sourceUrl };
     } catch (error: any) {
       fs.rmSync(tempAbs, { force: true });
+      // code 给客户端机器判断：needs-render = 可以用客户端内置浏览器渲染后重试
       return reply.code(error instanceof InboxWebFetchError ? 400 : 500)
-        .send({ error: error?.message || '保存网页失败' });
+        .send({
+          error: error?.message || '保存网页失败',
+          ...(error instanceof InboxWebFetchError ? { code: error.code } : {}),
+        });
     }
   });
 

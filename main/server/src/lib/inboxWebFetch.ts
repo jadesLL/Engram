@@ -12,17 +12,27 @@ const MAX_REDIRECTS = 3;
 const FETCH_TIMEOUT_MS = 45_000;
 const TITLE_SCAN_BYTES = 256 * 1024;
 const MAX_URL_LENGTH = 4096;
-/** 空壳页判定的可见文字上限：带前端挂载点、正文又短于这个数，即视为正文在浏览器里渲染 */
-const SHELL_TEXT_LIMIT = 64;
+/** 空壳判定最多看这么多字节：大段内联脚本会把 <body>/挂载点推到 256KB 之后（实测 378KB 的分享页壳） */
+const SHELL_SCAN_BYTES = 4 * 1024 * 1024;
 
 type ResolvedAddress = { address: string; family: number };
 type HostResolver = (hostname: string) => Promise<ResolvedAddress[]>;
 
 export class InboxWebFetchError extends Error {
-  constructor(message: string) {
+  /** 机器可读的失败类别：客户端据此判断能否用自己的浏览器渲染后重试（needs-render） */
+  readonly code: string;
+
+  constructor(message: string, code = 'fetch-failed') {
     super(message);
     this.name = 'InboxWebFetchError';
+    this.code = code;
   }
+}
+
+/** 抓下来的网页原文末尾记录来源地址；客户端渲染后保存（/api/inbox/upload 的 sourceUrl）用同一格式 */
+export function sourceUrlComment(url: string): string {
+  const safe = url.replace(/--/g, '- -').replace(/>/g, '%3E');
+  return '\n<!-- Engram source URL: ' + safe + ' -->\n';
 }
 
 export interface InboxWebFetchResult {
@@ -125,6 +135,19 @@ function decodeTitle(raw: string): string {
   }).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
+/** 从已落盘的抓取结果里读开头一部分：空壳判定要看 <body> 与挂载点，不能被前 256KB 截断 */
+function readHead(tempPath: string, maxBytes: number): Buffer {
+  const fd = fs.openSync(tempPath, 'r');
+  try {
+    const size = Math.min(fs.fstatSync(fd).size, maxBytes);
+    const buffer = Buffer.alloc(size);
+    const read = fs.readSync(fd, buffer, 0, size, 0);
+    return buffer.subarray(0, read);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** 按响应声明的字符集解码抓到的开头部分（标题提取与空壳判定共用） */
 function decodeProbe(probe: Buffer, contentType: string): string {
   const charset = contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] || 'utf-8';
@@ -144,17 +167,33 @@ function visibleTextLength(source: string): number {
     .replace(/\s+/g, '').length;
 }
 
+/** 判定一个已落盘的 HTML 文件是不是「有挂载点但没有正文」（抓取路径与客户端渲染上传共用） */
+export function isScriptRenderedFile(absPath: string, textLimit = SHELL_TEXT_LIMIT): boolean {
+  return isScriptRenderedSource(readHead(absPath, SHELL_SCAN_BYTES).toString('utf8'), textLimit);
+}
+
 /**
- * SPA 空壳页识别：静态 HTML 里只有一个前端应用挂载点、几乎没有可见文字（正文要等浏览器执行
+ * SPA 空壳页识别：静态 HTML 里带前端应用挂载点、可见文字又少得不像正文（正文要等浏览器执行
  * JavaScript 才出现，如小黑盒帖子分享页）。这类页面服务端抓不到正文，存下来只会转出一篇
- * 「没有内容」的文档，不如在抓取时就明说。前 256KB 里还没出现 <body> 说明页面头部极大，
- * 无法判定，按放行处理。
+ * 「没有内容」的文档，不如在抓取时就明说、交给客户端内置浏览器渲染。
+ *
+ * 两个阈值分开标定（实测）：
+ *  - 静态 HTML（§SHELL_TEXT_LIMIT）：空壳 0～238 字符（后一种连导航/页脚都 SSR 出来了），
+ *    真实内容页 ≥ 1740（少数派、B 站、帕鲁 WIKI、CSDN）；
+ *  - 客户端渲染后的页面（§RENDERED_TEXT_LIMIT）：页面上还有一圈菜单文字，正文短于此仍视为
+ *    「渲染后依然没有正文」（过期分享链接、需要登录）。
+ * 判定还要求能看到 <body>：看不到（页面头部极大、扫描窗口外）就按放行处理，宁可漏判不放错判。
  */
-function isScriptRenderedShell(probe: Buffer, contentType: string): boolean {
-  const body = decodeProbe(probe, contentType).match(/<body\b[^>]*>([\s\S]*)$/i)?.[1];
+export const SHELL_TEXT_LIMIT = 800;
+export const RENDERED_TEXT_LIMIT = 500;
+const MOUNT_PATTERN = /\bid\s*=\s*["']?(?:app|root|__next|__nuxt|___gatsby|svelte)\b/i;
+
+/** HTML 源码 → 是不是「有挂载点但没有正文」的空壳（静态抓取与客户端渲染上传共用） */
+export function isScriptRenderedSource(source: string, textLimit = SHELL_TEXT_LIMIT): boolean {
+  const body = source.match(/<body\b[^>]*>([\s\S]*)$/i)?.[1];
   if (!body) return false;
-  if (visibleTextLength(body) >= SHELL_TEXT_LIMIT) return false;
-  return /\bid\s*=\s*["']?(?:app|root|__next|__nuxt|___gatsby|svelte)\b/i.test(body);
+  if (visibleTextLength(body) >= textLimit) return false;
+  return MOUNT_PATTERN.test(body);
 }
 
 function titleFromHtml(probe: Buffer, contentType: string, url: URL): string {
@@ -249,13 +288,12 @@ export async function fetchInboxWebPage(
         await pipeline(Readable.fromWeb(response.body as any), scanTitle, fs.createWriteStream(tempPath));
         if (!bytes) throw new InboxWebFetchError('网页内容为空');
         const head = Buffer.concat(probe);
-        if (isScriptRenderedShell(head, contentType)) {
-          throw new InboxWebFetchError('这个网页的正文由 JavaScript 动态渲染，服务端抓到的只是没有正文的空壳页：请在浏览器里打开后另存为文件（或把正文复制成文件）再拖入收集箱');
+        if (isScriptRenderedSource(decodeProbe(readHead(tempPath, SHELL_SCAN_BYTES), contentType))) {
+          throw new InboxWebFetchError('服务端抓到的这份 HTML 里几乎没有正文内容（这类页面的正文由 JavaScript 动态渲染）：桌面端/手机端会自动用内置浏览器渲染后保存，网页端可先在浏览器里另存为文件再拖入收集箱', 'needs-render');
         }
         // 注释放在文末，保留原网页开头的 BOM / DOCTYPE 与原始编码。
         const sourceUrl = current.toString();
-        const safeSource = sourceUrl.replace(/--/g, '- -').replace(/>/g, '%3E');
-        fs.appendFileSync(tempPath, '\n<!-- Engram source URL: ' + safeSource + ' -->\n');
+        fs.appendFileSync(tempPath, sourceUrlComment(sourceUrl));
         return {
           title: titleFromHtml(head, contentType, current),
           sourceUrl,

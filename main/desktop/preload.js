@@ -33,6 +33,9 @@ contextBridge.exposeInMainWorld('wikiDesktop', {
   // （只传路径不传字节，GB 级录屏也能秒开；主进程限制在数据目录的 收集箱/ 内）
   openInboxFile: (relPath) => ipcRenderer.invoke('inbox-open-path', relPath),
   revealInboxFile: (relPath) => ipcRenderer.invoke('inbox-reveal-path', relPath),
+  // 收集箱「渲染后抓取」：服务端抓到空壳（正文由 JS 渲染）时，用隐藏窗口把页面渲染出来。
+  // 返回 { html, title, url }；失败时 reject（超时/加载失败），网页端按原错误提示。
+  renderInboxUrl: (url) => ipcRenderer.invoke('inbox-render-url', url),
   // 同步窗口控制按钮（标题栏融合条 WCO）配色，主题切换时调用；不支持的平台主进程忽略
   setTitleBarOverlay: (opts) => ipcRenderer.invoke('set-title-bar-overlay', opts),
   // 本机图标外观：窗口 / 任务栏 / 托盘 / 已有快捷方式同时切换。
