@@ -265,3 +265,96 @@ test('同步成员令牌也能用收集箱（手机端唯一凭据）', async ()
   const anonymous = await app.inject({ method: 'GET', url: '/api/inbox/items' });
   assert.equal(anonymous.statusCode, 401, '未鉴权仍然拒绝');
 });
+
+/** 与浏览器 FormData 同序的 multipart：文件 part 在前、字段在后（sourceUrl 就是这样发的） */
+function formFileThenField(
+  file: { filename: string; content: Buffer; type?: string },
+  fields: Record<string, string>
+): { payload: Buffer; headers: Record<string, string> } {
+  const boundary = `----engraminboxlate${Math.random().toString(16).slice(2)}`;
+  const chunks: Buffer[] = [];
+  chunks.push(Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${file.filename}"\r\n`
+    + `Content-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`
+  ));
+  chunks.push(file.content);
+  chunks.push(Buffer.from('\r\n'));
+  for (const [key, value] of Object.entries(fields)) {
+    chunks.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}\r\n`
+    ));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return {
+    payload: Buffer.concat(chunks),
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+  };
+}
+
+/**
+ * 客户端（桌面端/手机端）渲染后保存网页：文件 part 在前、sourceUrl 字段在后。
+ * 回归：曾经在文件落盘时就读 sourceUrl（此时还没解析到），注释整段丢失。
+ */
+test('渲染后保存：sourceUrl 排在文件之后也要追加来源注释，且不碰二进制原件', async () => {
+  const rendered = '这篇帖子已经由本机浏览器渲染出正文，'.repeat(40); // 远超「渲染后仍没有正文」的下限
+  const html = Buffer.from(
+    `<!doctype html><html><body><div id="app"><h1>标题</h1><p>${rendered}</p></div></body></html>`,
+    'utf8'
+  );
+  const req = formFileThenField(
+    { filename: '渲染页.html', content: html, type: 'text/html' },
+    { sourceUrl: 'https://example.com/post' }
+  );
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/inbox/upload',
+    headers: { ...auth(), ...req.headers },
+    payload: req.payload,
+  });
+  assert.equal(res.statusCode, 200);
+  const saved = res.json().saved as any[];
+  assert.equal(saved.length, 1);
+  const written = fs.readFileSync(path.join(BRAIN_DIR, INBOX_DIR_REL, '渲染页.html'), 'utf8');
+  assert.ok(written.startsWith('<!doctype html>'), '原文要完整保留');
+  assert.match(written, /<!-- Engram source URL: https:\/\/example\.com\/post -->/, '来源注释要补上');
+  assert.equal(saved[0].size, Buffer.byteLength(written), '回执里的体积要含追加的注释');
+
+  const pdf = Buffer.from('%PDF-1.4 fake', 'latin1');
+  const binReq = formFileThenField(
+    { filename: '带来源的扫描件.pdf', content: pdf, type: 'application/pdf' },
+    { sourceUrl: 'https://example.com/post' }
+  );
+  const binRes = await app.inject({
+    method: 'POST',
+    url: '/api/inbox/upload',
+    headers: { ...auth(), ...binReq.headers },
+    payload: binReq.payload,
+  });
+  assert.equal(binRes.statusCode, 200);
+  assert.deepEqual(
+    fs.readFileSync(path.join(BRAIN_DIR, INBOX_DIR_REL, '带来源的扫描件.pdf')),
+    pdf,
+    '非 HTML 原件一个字节都不能改'
+  );
+});
+
+test('渲染后依然没有正文（过期分享页）：如实拒绝，且不留这份空壳', async () => {
+  const nav = '首页 社区 加速器 语音 工坊 加入我们 登录 '.repeat(6);
+  const html = Buffer.from(
+    `<!doctype html><html><body><div id="app" data-v-app=""><nav>${nav}</nav></div></body></html>`,
+    'utf8'
+  );
+  const req = formFileThenField(
+    { filename: '过期分享页.html', content: html, type: 'text/html' },
+    { sourceUrl: 'https://example.com/expired' }
+  );
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/inbox/upload',
+    headers: { ...auth(), ...req.headers },
+    payload: req.payload,
+  });
+  assert.equal(res.statusCode, 400);
+  assert.match(res.json().error, /渲染后仍然没有正文/);
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, INBOX_DIR_REL, '过期分享页.html')), false, '空壳不能留在收集箱');
+});

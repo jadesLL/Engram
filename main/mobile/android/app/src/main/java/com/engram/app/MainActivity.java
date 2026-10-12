@@ -66,6 +66,8 @@ public class MainActivity extends BridgeActivity {
     private SystemBars systemBars;
     /** 系统解锁（指纹/人脸/锁屏密码）：登录页用，见 BiometricUnlock。 */
     private BiometricUnlock biometricUnlock;
+    /** 收集箱渲染后抓取：服务端抓到 JS 空壳页时用离屏 WebView 渲染，见 InboxRender。 */
+    private InboxRender inboxRender;
     /** 应用内在线更新的宿主（安装器/权限页/通知都离不开 Activity），见 AppUpdater。 */
     private UpdateHost updateHost;
 
@@ -81,6 +83,9 @@ public class MainActivity extends BridgeActivity {
             // 与系统栏同一个时机装桥：页面加载后登录页就要能问「有没有指纹解锁」
             biometricUnlock = new BiometricUnlock(this, shellWebView);
             biometricUnlock.install();
+            // 收集箱渲染后抓取同样要在加载页面前装好桥（服务端 needs-render 时网页会来调用）
+            inboxRender = new InboxRender(this, shellWebView);
+            inboxRender.install();
         }
         showStartupOverlay();
         startupSurfaceReady = true;

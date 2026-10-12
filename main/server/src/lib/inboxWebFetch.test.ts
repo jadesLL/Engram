@@ -61,14 +61,26 @@ test('JS 空壳页（应用挂载点 + 没有正文）在抓取时就明确拒�
   await assert.rejects(() => fetchInboxWebPage('https://example.com/post', target, {
     resolveHost: publicDns,
     fetchImpl: fakeFetch(new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })),
-  }), /JavaScript/);
+  }), /JavaScript|正文/);
   assert.equal(fs.existsSync(target), false);
 });
 
-test('空壳判定的对照：带应用挂载点但正文已渲染的页面照常保存', async () => {
+test('「导航/页脚也 SSR 出来」的壳页同样拒绝（实测 238 字符会骗过纯文字量判据）', async () => {
+  const target = path.join(temp, 'chrome-shell.tmp');
+  const nav = '首页 社区 加速器 语音 工坊 开放平台 加入我们 登录 返回 '.repeat(6); // ≈ 200+ 字符的壳
+  const html = '<!doctype html><html><head><title>某站</title></head>'
+    + `<body><div id="app" data-v-app=""><nav class="nav">${nav}</nav></div></body></html>`;
+  await assert.rejects(() => fetchInboxWebPage('https://example.com/post', target, {
+    resolveHost: publicDns,
+    fetchImpl: fakeFetch(new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })),
+  }), /正文/);
+  assert.equal(fs.existsSync(target), false);
+});
+
+test('空壳判定的对照：带应用挂载点但正文已经够长（服务端渲染）的页面照常保存', async () => {
   const target = path.join(temp, 'ssr.tmp');
-  const paragraph = '这篇帖子由服务端渲染，正文已经出现在静态 HTML 里，字数足够超过空壳页的判定下限，'
-    + '应当和普通网页一样保存下来，而不是被误判成需要 JavaScript 才能显示内容的空壳页面。';
+  const sentences = '这篇帖子由服务端渲染，正文已经出现在静态 HTML 里，应当和普通网页一样保存下来。';
+  const paragraph = sentences.repeat(30); // 远超 800 字符的下限
   const html = `<!doctype html><html><body><div id="app"><h1>标题</h1><p>${paragraph}</p></div></body></html>`;
   const result = await fetchInboxWebPage('https://example.com/post', target, {
     resolveHost: publicDns,

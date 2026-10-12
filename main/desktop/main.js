@@ -10,6 +10,7 @@ const dataDirLib = require('./lib/data-dir');
 // 局域网访问开关与监听地址（设置 → 多端同步 → 同步群组 里把本机当中枢时用）
 const localAccess = require('./lib/local-access');
 const { resolveBrainPath } = require('./lib/brain-path');
+const inboxRender = require('./lib/inbox-render');
 const { joinLinkFromArgs, protocolRegistration } = require('./lib/join-link');
 let pendingJoinLink = joinLinkFromArgs(process.argv);
 function receiveJoinLink(raw) {
@@ -1013,6 +1014,36 @@ ipcMain.handle('inbox-reveal-path', (_e, relPath) => {
     return { ok: false, error: error.message };
   }
 });
+
+/**
+ * 收集箱「渲染后抓取」用的隐藏窗口：渲染的是别人的页面，所以
+ *  - 用**独立持久化分区**（persist:）：会话留在自己的档案里，不共享主窗口的登录态；
+ *    持久化是必须的——有些站点首次访问只给壳（要等会话建立后第二次访问才给正文，
+ *    见 lib/inbox-render.js 的重载一轮）；
+ *  - 不许弹新窗口、不许申请任何系统权限（摄像头/定位/通知全部拒绝）。
+ */
+function createInboxRenderWindow() {
+  const created = new BrowserWindow({
+    show: false,
+    width: 1200,
+    height: 900,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      partition: 'persist:engram-inbox-render',
+    },
+  });
+  created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  created.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  return created;
+}
+
+// 收集箱「渲染后抓取」：服务端抓到 JS 空壳页（needs-render）时，用隐藏窗口把这页真正渲染出来，
+// 渲染后的 HTML 交回网页端存进收集箱（与浏览器「另存为」等价，仍是原件）；失败时 reject，网页端退回原提示。
+ipcMain.handle('inbox-render-url', async (_e, url) =>
+  inboxRender.renderInboxUrl({ createWindow: createInboxRenderWindow, url }),
+);
 
 ipcMain.handle('take-join-link', () => {
   const link = pendingJoinLink;
