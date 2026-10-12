@@ -53,3 +53,27 @@ test('非 HTML 响应不保存为网页', async () => {
   }), /没有返回 HTML/);
   assert.equal(fs.existsSync(target), false);
 });
+
+test('JS 空壳页（应用挂载点 + 没有正文）在抓取时就明确拒绝，不落盘', async () => {
+  const target = path.join(temp, 'shell.tmp');
+  const html = '<!doctype html><html><head><title>某站</title></head>'
+    + '<body><div id="app"></div><script src="/assets/app.js"></script></body></html>';
+  await assert.rejects(() => fetchInboxWebPage('https://example.com/post', target, {
+    resolveHost: publicDns,
+    fetchImpl: fakeFetch(new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })),
+  }), /JavaScript/);
+  assert.equal(fs.existsSync(target), false);
+});
+
+test('空壳判定的对照：带应用挂载点但正文已渲染的页面照常保存', async () => {
+  const target = path.join(temp, 'ssr.tmp');
+  const paragraph = '这篇帖子由服务端渲染，正文已经出现在静态 HTML 里，字数足够超过空壳页的判定下限，'
+    + '应当和普通网页一样保存下来，而不是被误判成需要 JavaScript 才能显示内容的空壳页面。';
+  const html = `<!doctype html><html><body><div id="app"><h1>标题</h1><p>${paragraph}</p></div></body></html>`;
+  const result = await fetchInboxWebPage('https://example.com/post', target, {
+    resolveHost: publicDns,
+    fetchImpl: fakeFetch(new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })),
+  });
+  assert.equal(result.bytes, Buffer.byteLength(html));
+  assert.ok(fs.existsSync(target));
+});
