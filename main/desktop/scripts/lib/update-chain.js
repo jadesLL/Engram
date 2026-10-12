@@ -28,9 +28,18 @@ function installerFileName(url) {
   return decoded;
 }
 
-/** 目标路径必须落在允许目录内（与 validateInstallerFile 同口径，这里是落盘前的前置校验）。 */
+/**
+ * 目标路径必须落在允许目录内（与 validateInstallerFile 同口径，这里是落盘前的前置校验）。
+ *
+ * 显式拒绝分隔符与 `..` 段，不靠平台路径语义：更新链只在 Windows 跑（反斜杠是分隔符），
+ * 而 CI 的 verify 跑在 Linux 容器里（反斜杠只是普通字符）——靠 path.resolve 判越界会在
+ * 两个平台上得出不同结论，护栏与测试都必须与平台无关。
+ */
 function resolveInsideDir(dir, name) {
-  const file = path.resolve(path.join(dir, name));
+  const raw = String(name || '');
+  if (!raw || raw.includes('/') || raw.includes('\\') || raw.includes('\0')) throw new Error('更新包落盘路径越界');
+  if (raw.split(/[\\/]+/).some((part) => part === '..' || part === '.')) throw new Error('更新包落盘路径越界');
+  const file = path.resolve(path.join(dir, raw));
   const root = path.resolve(dir);
   if (!file.startsWith(root + path.sep)) throw new Error('更新包落盘路径越界');
   return file;
