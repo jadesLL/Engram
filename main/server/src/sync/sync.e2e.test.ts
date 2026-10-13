@@ -412,7 +412,21 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     await waitFor('冲突裁决完成', async () => {
       const c = await pageContent(hub, pageK);
       return c?.includes('方案 B') === true;
-    }, 90_000);
+    }, 90_000, async () => {
+      const diagnostics = [];
+      for (const inst of [hub, nodeB, nodeC]) {
+        const state = await (await api(inst, 'GET', '/api/sync/status')).json() as any;
+        diagnostics.push({
+          name: inst.name,
+          content: await pageContent(inst, pageK),
+          status: { cursor: state.cursor, pending: state.pending, connected: state.connected, lastError: state.lastError },
+          log: await (await api(inst, 'GET', '/api/sync/log')).json(),
+          pageMtimes: withDb(inst.dataDir, (conn) => conn.prepare('SELECT path FROM pages WHERE id = ?').all(pageK))
+            .map((row: { path: string }) => ({ path: row.path, mtime: fs.statSync(path.join(inst.dataDir, 'brain', row.path)).mtimeMs })),
+        });
+      }
+      return JSON.stringify(diagnostics);
+    });
     const hubContent = await pageContent(hub, pageK);
     assert.ok(!hubContent?.includes('方案 A'), '正本不应保留较旧的 hub 版本内容');
     // 被取代的 hub 旧版本以「原名-时间戳」重命名保留在同一目录
