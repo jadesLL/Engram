@@ -48,8 +48,8 @@ bash main/scripts/new-worktree.sh example-feature
 # 修改 worktrees/example-feature/main/ 中的代码
 bash main/scripts/verify-feature.sh example-feature
 bash main/scripts/preview-feature.sh example-feature 8081
-bash main/scripts/merge-feature.sh [--deploy] example-feature # 保留 worktree 与预览
-bash main/scripts/cleanup-feature.sh example-feature
+bash main/scripts/merge-feature.sh --cleanup [--deploy] example-feature # 检查通过即清理
+bash main/scripts/cleanup-feature.sh example-feature # 补清理已合并旧任务
 ```
 
 Windows PowerShell 必须显式调用 Git Bash（避免命中 WSL 的 `bash.exe`）：`& "C:\Program Files\Git\bin\bash.exe" main/scripts/<script>.sh ...`。
@@ -97,7 +97,7 @@ worktree 中完成修改后：
 3. 截取能证明结果的界面或终端画面（截图直接发给用户）。
 4. `git status` 确认后只提交当前任务相关文件。
 5. 向用户报告 worktree 路径、分支、提交、测试和自检结果、截图及可检查入口。
-6. 自动合并进 main（不再询问是否合并）；用弹窗问用户是否推送 gitea / 是否发版 / 是否部署，保留 worktree 和预览环境等待答复。
+6. 用 `merge-feature.sh --cleanup <feature>` 自动合并进 main；合并后检查通过即自动删除功能分支、worktree 和该任务的全部 Docker 资源，复验零残留（不再询问是否合并/是否清理，也不等待推送批准）。完成后用弹窗问用户是否推送 gitea / 是否发版 / 是否部署。
 
 用户要求修改时在同一 worktree 迭代并重新走测试、自检、截图、报告。**合并是自动动作**（验收通过即合，见根 [`AGENTS.md`](../AGENTS.md) 规则 4/10）；**推送与部署各自仍需明确批准**：只有"可以推送""推到 gitea"等明确表达才算推送批准，只有"可以部署"才算部署批准。只批准推送时不得部署；未批准推送时不推（允许本地暂时领先远端，下次任务前再确认补推）。
 
@@ -106,17 +106,17 @@ worktree 中完成修改后：
 合并前确认：当前提交已通过 verify 与验收（**合并本身不需要用户批准**，推送/部署才需要）；`main/` 工作区干净；没有其他 Agent 正在合并；功能分支已包含最新 `main` 变更或已评估冲突。从仓库根执行：
 
 ```bash
-bash main/scripts/merge-feature.sh example-feature              # 仅合并
-bash main/scripts/merge-feature.sh --deploy example-feature     # 合并并部署
-bash main/scripts/merge-feature.sh --allow-downloads ...        # 仅限用户批准本次下载时
-bash main/scripts/merge-feature.sh --finish example-feature     # 冲突解决后收尾（需要部署再加 --deploy）
+bash main/scripts/merge-feature.sh --cleanup example-feature              # 合并、检查、自动清理
+bash main/scripts/merge-feature.sh --cleanup --deploy example-feature     # 部署需单独批准
+bash main/scripts/merge-feature.sh --cleanup --allow-downloads ...        # 仅限用户批准本次下载时
+bash main/scripts/merge-feature.sh --cleanup --finish example-feature     # 冲突解决后收尾（需要部署再加 --deploy）
 ```
 
-合并脚本默认保留 worktree 与预览供用户检查；用户确认不再检查后运行 cleanup-feature.sh，或已提前确认时加 --cleanup。脚本通过 Git 锁保证串行；合并后在 Docker verify 阶段重跑 build/typecheck/test（断网缓存不足时用上述本机临时离线环境），任一检查失败保留功能环境并以非零退出。合并冲突时不盲选一侧，理解双方改动并提交后用 `--finish` 收尾。
+Agent 必须传入 `--cleanup`，使合并后检查通过即自动清理；脚本不传该参数仍会保留资源，因此不得遗漏。仅在用户明确要求保留预览供检查时暂缓清理，之后用 cleanup-feature.sh 收尾。脚本通过 Git 锁保证串行；合并后在 Docker verify 阶段重跑 build/typecheck/test（断网缓存不足时用上述本机临时离线环境），任一检查失败保留功能环境并以非零退出。合并冲突时不盲选一侧，理解双方改动并提交后用 `--cleanup --finish` 收尾。
 
 ## 清理
 
-用户答复后（同意推送、确认验收，或明确表示不再检查），清理是流程的必需收尾，不需再次申请删除功能预览环境；只有合并、主分支检查（和用户要求时的部署）都成功后才开始，前置失败时保留环境用于修复或回退。
+清理是流程的自动必需收尾：合并、主分支检查（和用户要求时的部署）都成功后立即执行，不等待推送/发版的答复，不再申请删除功能资源。前置失败、worktree 有未提交改动或分支尚未合并时保留环境并报告；用户明确要求继续保留预览供检查时才暂缓。
 
 自动清理必须删除该功能拥有的全部资源：`worktrees/<feature>/` 及 Git worktree 注册、已合并的 `feat/<feature>` 分支、`engram-<feature>` 容器及所有带功能标签的容器、`engram:<feature>`/`-verify` 镜像及带标签镜像、`engram-data-<feature>` 及带标签数据卷、`engram-<feature>` Compose 网络、为该 worktree 加入的 Git `safe.directory` 记录。检查或单独收尾旧任务用 `cleanup-feature.sh --inspect <feature>` / `cleanup-feature.sh <feature>`。
 
