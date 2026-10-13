@@ -1,21 +1,21 @@
 <template>
-  <!-- 快捷入口：行内芯片卡，空间不足自动折行（与旧欢迎页同一套观感） -->
+  <!-- 快捷入口：轻量图标与文字，横条按可用宽度均分。 -->
   <div class="welcome-cards">
     <button class="welcome-card" type="button" @click="go('/page')">
       <span class="wc-icon"><Icon name="file-plus" :size="17" /></span>
       <span class="wc-text"><strong>新建页面</strong><em>存到 Wiki</em></span>
     </button>
-    <button class="welcome-card" type="button" @click="go('/search')">
+    <button class="welcome-card" type="button" aria-label="搜索知识库" title="搜索知识库" @click="go('/search')">
       <span class="wc-icon"><Icon name="search" :size="17" /></span>
-      <span class="wc-text"><strong>搜索知识库</strong><em>{{ touchPointer ? '搜页面与资料' : 'Ctrl+K' }}</em></span>
+      <span class="wc-text"><strong><span class="full-label">搜索知识库</span><span class="short-label">搜索</span></strong><em>{{ touchPointer ? '搜页面与资料' : 'Ctrl+K' }}</em></span>
     </button>
     <button class="welcome-card" type="button" @click="go('/graph')">
       <span class="wc-icon"><Icon name="graph" :size="17" /></span>
       <span class="wc-text"><strong>知识图谱</strong><em>总览关系结构</em></span>
     </button>
-    <button class="welcome-card" type="button" @click="$emit('chat')">
+    <button class="welcome-card" type="button" aria-label="问问 Agent" title="问问 Agent" @click="$emit('chat')">
       <span class="wc-icon"><Icon name="ai" :size="17" /></span>
-      <span class="wc-text"><strong>问问 Agent</strong><em>{{ agentHint }}</em></span>
+      <span class="wc-text"><strong><span class="full-label">问问 Agent</span><span class="short-label">问 Agent</span></strong><em>{{ agentHint }}</em></span>
     </button>
     <button class="welcome-card" type="button" @click="go('/tasks')">
       <span class="wc-icon"><Icon name="board" :size="17" /></span>
@@ -59,21 +59,21 @@ function go(path: string) {
   align-items: center;
   gap: 11px;
   padding: 10px 13px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 11px);
-  background: var(--bg-secondary);
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
   text-align: left;
   transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 .welcome-card:hover {
-  border-color: transparent;
-  background: var(--card-bg);
-  box-shadow: var(--shadow-card);
+  background: var(--bg-secondary);
 }
 .welcome-card:active { transform: translateY(1px); }
 .welcome-card:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 1px var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--accent-soft);
 }
 .wc-icon {
   width: 32px;
@@ -83,19 +83,25 @@ function go(path: string) {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  background: var(--bg-tertiary, var(--bg));
-  color: var(--text-secondary);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transition: background 150ms ease, color 150ms ease;
 }
 .welcome-card:hover .wc-icon { background: var(--accent-soft); color: var(--accent); }
 .wc-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.wc-text strong { font-size: 13px; font-weight: 600; color: var(--text); }
+.wc-text strong { font-size: 12px; font-weight: 500; line-height: 1.4; color: var(--text); }
 .wc-text em { font-style: normal; font-size: 11px; color: var(--text-faint); }
+.short-label { display: none; }
+@container (max-width: 520px) {
+  .full-label { display: none; }
+  .short-label { display: inline; }
+}
 
 /* 横条档（h=1, w≥2）：按钮排铺成一整行，图标在上去掉副文案，高度填满 */
 @container (max-height: 140px) {
   .welcome-cards {
     flex-wrap: nowrap;
-    gap: 8px;
+    gap: 2px;
     height: 100%;
     align-items: stretch;
   }
@@ -104,12 +110,12 @@ function go(path: string) {
     min-width: 0;
     flex-direction: column;
     justify-content: center;
-    gap: 4px;
-    padding: 4px;
+    gap: 6px;
+    padding: 6px 2px;
     text-align: center;
   }
-  .wc-icon { width: 22px; height: 22px; border-radius: 6px; }
-  .wc-text { align-items: center; gap: 0; }
+  .wc-icon { width: 26px; height: 26px; border-radius: 8px; }
+  .wc-text { align-items: center; gap: 0; max-width: 100%; }
   .wc-text strong {
     font-size: 11px;
     max-width: 100%;
@@ -118,5 +124,9 @@ function go(path: string) {
     white-space: nowrap;
   }
   .wc-text em { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .welcome-card, .wc-icon { transition: none; }
+  .welcome-card:active { transform: none; }
 }
 </style>

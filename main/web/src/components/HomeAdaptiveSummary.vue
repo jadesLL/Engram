@@ -18,6 +18,19 @@
       <span v-if="!summary.status" class="tile-label">{{ shortTitle }}</span>
     </button>
 
+    <!-- 同步状态：结论只出现一次，进度 / 最近同步时间紧随其后。 -->
+    <template v-else-if="summary.presentation === 'sync'">
+      <button type="button" class="sync-summary" :class="summary.status?.tone" :aria-label="`${title}：${summary.status?.text}，${summary.label}，打开完整内容`" @click="$emit('open')">
+        <span v-if="tier === 'bar'" class="sync-caption"><Icon :name="icon" :size="12" />{{ shortTitle }}</span>
+        <span class="sync-state"><i class="sdot" :class="summary.status?.tone" />{{ summary.status?.text }}</span>
+        <span class="sync-description">{{ summary.label }}</span>
+        <Icon v-if="tier === 'bar'" class="sync-arrow" name="arrow-up-right" :size="14" />
+      </button>
+      <div v-if="tier !== 'bar' && shown.length" class="summary-rows sync-rows" :style="{ '--summary-row-height': `${plan.rowHeight}px` }">
+        <button v-for="(row,i) in shown" :key="i" type="button" class="summary-row" @click="activate(row)"><span class="row-copy"><span class="row-text">{{ row.text }}</span></span><small>{{ row.detail }}</small></button>
+      </div>
+    </template>
+
     <!-- 横条（h=1）：左数值 + 分隔线 + 右边一条最重要的信息 -->
     <template v-else-if="tier === 'bar'">
       <button type="button" class="bar-main" :aria-label="`打开${title}完整内容`" @click="$emit('open')">
@@ -72,7 +85,7 @@ const props = defineProps<{ summary: HomeCardSummary; title: string; shortTitle:
 const emit = defineEmits<{ (e: 'open'): void; (e: 'activate', row: HomeCardRow): void }>();
 const root = ref<HTMLElement | null>(null);
 const size = ref({ w: 250, h: 250 });
-const detailedRows = computed(() => !!props.summary.presentation || (props.summary.rows || []).some(row => !!row.meta || !!row.badge));
+const detailedRows = computed(() => props.summary.presentation === 'list' || props.summary.presentation === 'tasks' || (props.summary.rows || []).some(row => !!row.meta || !!row.badge));
 const showMetric = computed(() => props.summary.presentation !== 'list' || size.value.w < 120);
 const compactMetric = computed(() => props.summary.presentation === 'tasks' && size.value.w >= 120);
 const hasFooter = computed(() => props.tier === 'standard' && size.value.w >= 120 && size.value.h >= 160);
@@ -113,8 +126,23 @@ onUnmounted(()=>observer?.disconnect());
 /* ===== 状态圆点（「数字大、状态小」：状态只用圆点 + 正文色小字）===== */
 .sdot {flex:none;width:7px;height:7px;border-radius:50%;background:var(--text-faint)}
 .sdot.ok {background:var(--ok,#2e9e5b)}
+.sdot.busy {background:var(--accent)}
 .sdot.warn {background:var(--warning,#d97706)}
 .sdot.muted {background:var(--text-faint)}
+
+.sync-summary {position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;min-width:0;flex:none;padding:2px 22px 2px 0;text-align:left;color:var(--text);border-radius:7px}
+.tier-bar .sync-summary {flex:1}
+.sync-caption {display:flex;align-items:center;gap:5px;font-size:10.5px;line-height:1.3;color:var(--text-faint)}
+.sync-caption :deep(svg) {color:var(--accent)}
+.sync-state {display:flex;align-items:center;gap:7px;max-width:100%;font-size:15px;font-weight:550;line-height:1.4;overflow-wrap:anywhere}
+.sync-description {font-size:11px;line-height:1.5;color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.sync-arrow {position:absolute;right:0;top:50%;transform:translateY(-50%);color:var(--text-faint);transition:color 150ms ease}
+.sync-summary:hover .sync-arrow {color:var(--accent)}
+.sync-rows {margin-top:12px}
+.narrow .sync-summary {padding-right:0}
+.narrow .sync-state {font-size:12px;gap:5px}
+.narrow .sync-arrow {display:none}
+.narrow .sync-description {font-size:10px}
 
 /* ===== 角标（数值后的小胶囊）===== */
 .badge {font-style:normal;flex:none;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px;line-height:1.5}

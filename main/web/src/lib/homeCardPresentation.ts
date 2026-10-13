@@ -25,8 +25,8 @@ export interface HomeCardRow {
   action?: 'chat' | 'capture';
 }
 
-/** 状态结论的色调：ok = 正常（绿点），warn = 需要注意（橙点），muted = 未配置 / 无数据（灰点） */
-export type HomeCardStatusTone = 'ok' | 'warn' | 'muted';
+/** 状态结论的色调：ok = 正常（绿点），busy = 进行中（蓝点），warn = 需要注意（橙点），muted = 未配置 / 无数据（灰点） */
+export type HomeCardStatusTone = 'ok' | 'busy' | 'warn' | 'muted';
 
 export interface HomeCardSummary {
   value: string | number;
@@ -43,7 +43,7 @@ export interface HomeCardSummary {
   badge?: { tone: 'danger' | 'ok'; text: string };
   /** 动作型卡片（漫游 / 速记 / 快捷入口）：value 是动作文案，主色小字显示，不放大 */
   action?: boolean;
-  presentation?: 'list' | 'tasks';
+  presentation?: 'list' | 'tasks' | 'sync';
   footer?: string;
 }
 
