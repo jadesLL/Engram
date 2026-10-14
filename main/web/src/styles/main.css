@@ -65,11 +65,12 @@
   --control-bg-pressed: #edeae7;
   --control-border: rgba(0, 0, 0, 0.06);
   --control-border-strong: rgba(0, 0, 0, 0.17);
-  /* 浮层阴影：flyout 常规 / dialog 加深 / raised 小卡片（编辑器工具栏） / card 内容卡（方案 A：软投影取代硬边框感） */
+  /* 浮层阴影：flyout 常规 / dialog 加深 / raised 小卡片（编辑器工具栏） / card 内容卡（浮层分层：软投影分层，hover 抬升加深） */
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.19), 0 2px 12px rgba(0, 0, 0, 0.1);
   --shadow-raised: 0 1px 2px rgba(31, 30, 29, 0.05), 0 2px 8px -2px rgba(31, 30, 29, 0.06);
-  --shadow-card: 0 1px 2px rgba(29, 27, 23, 0.05), 0 10px 28px -12px rgba(29, 27, 23, 0.12);
+  --shadow-card: 0 1px 2px rgba(29, 27, 23, 0.05), 0 12px 32px -14px rgba(29, 27, 23, 0.16);
+  --shadow-card-hover: 0 2px 4px rgba(29, 27, 23, 0.06), 0 20px 44px -14px rgba(29, 27, 23, 0.22);
   --radius: 14px;
   --radius-control: 9px;
   /* 类型徽章四色（方案 A：灵感=琥珀 / 概念=蓝 / 实体=紫 / 资料=青），首页「最近更新」与看板标签共用 */
@@ -181,8 +182,9 @@ html.dark {
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.5), 0 2px 12px rgba(0, 0, 0, 0.32);
   --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px -2px rgba(0, 0, 0, 0.36);
-  /* 2026-10 方案 A 精修：暗色卡片投影与徽章配色 */
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -12px rgba(0, 0, 0, 0.5);
+  /* 2026-10 方案 A 精修：暗色卡片投影与徽章配色；浮层分层 hover 加深档 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 32px -14px rgba(0, 0, 0, 0.55);
+  --shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.36), 0 20px 44px -14px rgba(0, 0, 0, 0.62);
   --badge-idea: #e5b545;
   --badge-idea-soft: rgba(229, 181, 69, 0.15);
   --badge-concept: #7c9cf5;

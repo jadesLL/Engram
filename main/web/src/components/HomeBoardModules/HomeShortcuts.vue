@@ -62,12 +62,12 @@ function go(path: string) {
   min-width: 0;
   border: 1px solid transparent;
   border-radius: 9px;
-  background: transparent;
+  background: var(--bg-secondary);
   text-align: left;
   transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 .welcome-card:hover {
-  background: var(--bg-secondary);
+  background: var(--accent-soft);
 }
 .welcome-card:active { transform: translateY(1px); }
 .welcome-card:focus-visible {
@@ -83,11 +83,12 @@ function go(path: string) {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  background: var(--accent-soft);
+  /* 白色图标小砖：浮在底色块上，hover 不变化 */
+  background: var(--card-bg);
+  box-shadow: var(--shadow-raised);
   color: var(--accent);
   transition: background 150ms ease, color 150ms ease;
 }
-.welcome-card:hover .wc-icon { background: var(--accent-soft); color: var(--accent); }
 .wc-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .wc-text strong { font-size: 12px; font-weight: 500; line-height: 1.4; color: var(--text); }
 .wc-text em { font-style: normal; font-size: 11px; color: var(--text-faint); }
@@ -113,8 +114,11 @@ function go(path: string) {
     gap: 6px;
     padding: 6px 2px;
     text-align: center;
+    /* 横条档保持透明轻量，不用底色块 */
+    background: transparent;
   }
-  .wc-icon { width: 26px; height: 26px; border-radius: 8px; }
+  .welcome-card:hover { background: var(--bg-secondary); }
+  .wc-icon { width: 26px; height: 26px; border-radius: 8px; background: var(--accent-soft); box-shadow: none; }
   .wc-text { align-items: center; gap: 0; max-width: 100%; }
   .wc-text strong {
     font-size: 11px;

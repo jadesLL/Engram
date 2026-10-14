@@ -105,18 +105,20 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
   min-width:0;
   min-height:0;
   padding:22px;
-  border:1px solid var(--border);
+  /* 浮层分层：去描边（保留 1px 透明边避免盒模型位移），层级全靠柔和投影 */
+  border:1px solid transparent;
   border-radius:17px;
   background:var(--card-bg);
-  box-shadow:0 3px 14px color-mix(in srgb,var(--text) 3%,transparent);
+  box-shadow:var(--shadow-card);
   display:flex;
   flex-direction:column;
   overflow:hidden;
   container-type:size;
-  transition:box-shadow .2s,border-color .2s;
+  transition:box-shadow .2s,border-color .2s,transform .2s;
 }
-.shell:hover {
-  box-shadow:0 8px 24px color-mix(in srgb,var(--text) 7%,transparent);
+.shell:not(.managing):not(.dragging):hover {
+  box-shadow:var(--shadow-card-hover);
+  transform:translateY(-1px);
 }
 .shell:focus-visible {
   outline:2px solid var(--accent);
@@ -145,6 +147,11 @@ onUnmounted(() => { stopDetailBack?.(); stopSettingsBack?.(); observer?.disconne
 .shell-head h3 :deep(svg) {
   color:var(--accent);
   flex:none;
+  /* accent-soft 圆角方块锚点：21px 视觉块，取代裸图标 */
+  padding:3px;
+  box-sizing:content-box;
+  background:var(--accent-soft);
+  border-radius:6px;
 }
 .shell-expand {
   width:26px;
