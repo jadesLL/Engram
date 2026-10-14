@@ -21,6 +21,7 @@
 | 知识整理 | Agent 提炼概念与实体，写入时校验原文引文，保留来源证据与操作记录 |
 | 检索与阅读 | 全文搜索、双向链接、知识图谱、沉浸阅读与附件预览 |
 | Agent 助手 | 基于资料问答、调研、生成任务看板，也可按计划自动整理与纠错 |
+| 客户调研 | 输入客户名称，按统一 ACS 流程与模板生成带来源的报告；内置 Agent 与 Codex、ZCode、DeepSeek Harness、Kimi、WorkBuddy 共用 |
 | 自定义首页 | 拖动、调整卡片大小，组合概览、快速问答与灵感入口；紧凑卡片按尺寸重排内容 |
 | 多端与备份 | Windows / Android / Docker 多端同步，离线编辑、整库备份与恢复 |
 
@@ -66,6 +67,7 @@ Android 的 Agent 与收集箱转换等能力由已绑定的中枢执行，详�
 | 功能细节、操作方式、数据目录 | [使用指南](./main/docs/USER-GUIDE.md) |
 | 安装、构建、Docker / NAS 部署 | [构建与部署](./main/docs/BUILDING.md) · [Windows 桌面端](./main/desktop/README.md) · [Android](./main/docs/ANDROID.md) |
 | Agent 接入与写入规范 | [Agent 操作指南](./main/docs/AI-CONTENT-OPERATIONS.md) |
+| 客户调研、报告模板与各客户端入口 | [客户调研指南](./main/docs/CUSTOMER-RESEARCH.md) |
 | 多端直连、DDNS 与网络配置 | [网络与直连](./main/docs/IPV6.md) |
 | 参与开发与发布 | [开发约定](./main/AGENTS.md) · [Worktree 流程](./main/WORKTREES.md) · [CI 与发布](./main/docs/GITEA-CI.md) |
 | 版本变化 | [更新日志](./CHANGELOG.md) |

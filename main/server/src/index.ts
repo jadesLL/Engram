@@ -26,6 +26,7 @@ import { agentRoutes } from './routes/agent.js';
 import { entityNameRoutes } from './routes/entityNames.js';
 import { assistantRoutes } from './routes/assistant.js';
 import { taskRoutes } from './routes/tasks.js';
+import { customerResearchRoutes } from './routes/customerResearch.js';
 import { eventRoutes } from './routes/events.js';
 import { trashRoutes } from './routes/trash.js';
 import { officeRoutes } from './routes/office.js';
@@ -104,6 +105,7 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(entityNameRoutes);
   await app.register(assistantRoutes);
   await app.register(taskRoutes);
+  await app.register(customerResearchRoutes);
   await app.register(eventRoutes);
   await app.register(trashRoutes);
   await app.register(syncRoutes);

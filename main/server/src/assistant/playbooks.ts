@@ -11,6 +11,7 @@
 
 /** 界面上的常驻推荐项原文（与 web/src/lib/chatSuggestions.ts 保持一致） */
 export const WEEKLY_TASKS_QUESTION = '下周的工作任务有哪些';
+import { CUSTOMER_RESEARCH_BRIDGE } from '../content/customerResearch.js';
 
 /** 一句话问「下周」的信号词 */
 const NEXT_WEEK = /(下周|下一周|下星期|下个星期|下礼拜|下个礼拜)/;
@@ -139,6 +140,8 @@ function taskBoardPlaybook(now: Date): string {
 
 /** 常驻问题注册表：顺序即匹配顺序（一条消息只套第一份命中的手册） */
 export const PLAYBOOKS: Playbook[] = [
+  { id: 'customer-research', match: message => message.length < 180 && /(调研|调查|洞察|分析).*(客户|公司|企业)|(客户|公司|企业).*(调研|调查|洞察)/.test(message) && !/(不要|不用|无需).{0,4}(调研|调查)/.test(message),
+    build: () => `${CUSTOMER_RESEARCH_BRIDGE}\n若任务正文已给 taskId 和流程快照，直接使用该任务，不再 begin。` },
   { id: 'weekly-tasks', match: isWeeklyTasksQuestion, build: weeklyTasksPlaybook },
 ];
 

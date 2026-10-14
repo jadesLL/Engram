@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { installCustomerResearchSkill, removeCustomerResearchSkill, customerResearchSkillInstalled, assertCustomerResearchSkillWritable } from './customerResearchSkill.js';
 
 /**
  * DeepSeek Harness（dsh）接入。
@@ -108,6 +109,7 @@ export interface DshStatus {
   loggedIn: boolean;
   registered: boolean;
   home: string;
+  researchSkill: boolean;
 }
 
 export function getDshStatus(): DshStatus {
@@ -117,6 +119,7 @@ export function getDshStatus(): DshStatus {
     loggedIn: dshLoggedIn(home),
     registered: dshRegistered(),
     home,
+    researchSkill: customerResearchSkillInstalled(path.join(home, 'skills')),
   };
 }
 
@@ -125,6 +128,7 @@ export function getDshStatus(): DshStatus {
  * 返回写入的 patch 文件路径。
  */
 export function registerDshMcp(url: string, token: string, patchPath: string = dshPatchPath()): string {
+  assertCustomerResearchSkillWritable(path.join(path.dirname(patchPath), 'skills'));
   const lines = fs.existsSync(patchPath) ? readPatchLines(patchPath) : PATCH_HEADER.split(/\r?\n/);
   const range = findEntryRange(lines);
   let rest: string[];
@@ -136,11 +140,13 @@ export function registerDshMcp(url: string, token: string, patchPath: string = d
   }
   // 去掉结尾空行后空一行接新块
   writePatchLines(patchPath, [...rest, '', ...engramPatchBlock(url, token).split('\n')]);
+  installCustomerResearchSkill(path.join(path.dirname(patchPath), 'skills'));
   return patchPath;
 }
 
 /** 移除注册；文件不存在或没有可定位块时静默不变 */
 export function unregisterDshMcp(patchPath: string = dshPatchPath()): void {
+  removeCustomerResearchSkill(path.join(path.dirname(patchPath), 'skills'));
   if (!fs.existsSync(patchPath)) return;
   const lines = readPatchLines(patchPath);
   const range = findEntryRange(lines);

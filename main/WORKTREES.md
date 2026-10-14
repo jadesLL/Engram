@@ -60,6 +60,8 @@ Windows PowerShell 必须显式调用 Git Bash（避免命中 WSL 的 `bash.exe`
 - `verify-feature.sh`：用 worktree 代码构建 Docker verify 镜像并在镜像内 build/typecheck/test；不在宿主机 worktree 创建 `node_modules`，不启动服务。
 - `preview-feature.sh`：先重新验证当前 worktree，再构建功能运行镜像，按需创建容器、数据卷、网络和端口，并从主数据卷播种隔离测试数据；同一功能可重复运行更新预览。
 
+需要完全隔离的夹具验收或本机没有主数据卷时，可用 `preview-feature.sh --empty-data <feature> <port>` 创建空白测试卷。该选项只影响新卷，不清空既有预览数据；默认仍从主数据卷播种。
+
 仅在脚本不可用且用户明确同意人工处理时才手动执行（`git worktree add "worktrees/$feature" -b "feat/$feature" main`），手动创建 Docker 资源仍须遵守下文命名和标签规则。
 
 ## 依赖缓存与下载许可

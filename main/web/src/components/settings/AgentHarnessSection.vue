@@ -1,5 +1,9 @@
 <template>
   <div class="harness-section">
+    <div class="integration-note">
+      客户调研入口 skill：{{ (harness === 'zcode' ? status : harness === 'codex' ? cstatus : dstatus).researchSkill ? '已写入' : '尚未写入，重新注册即可安装' }}。
+      流程和报告模板每次从 Engram 获取；注册后请在客户端检查技能已启用。
+    </div>
     <template v-if="harness === 'zcode'">
       <div v-if="!status.installed" class="empty-panel">
         未检测到 ZCode 桌面端（检测过 {{ status.path }}）。请在本机安装 ZCode 桌面端并登录——需与 Engram

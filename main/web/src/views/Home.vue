@@ -432,6 +432,7 @@ const navItems = computed(() => [
   },
   // 任务看板：点一下就去那一页，进页自动让内置 Agent 从知识库提炼（不在页面上弹 Agent 抽屉）
   { key: 'tasks', icon: 'board', title: '任务看板', active: isActive('/tasks'), dot: false, action: () => go('/tasks') },
+  { key: 'customer-research', icon: 'report', title: '客户调研', active: isActive('/customer-research'), dot: false, action: () => go('/customer-research') },
 ]);
 
 const bottomItems = computed(() => [
@@ -452,7 +453,7 @@ const moreOpen = ref(false);
 
 /** 底部标签栏「更多」是否属于当前所在分区（图谱/收集箱/看板/设置/内置 Agent） */
 const moreSectionActive = computed(() =>
-  isActive('/graph') || isActive('/inbox') || isActive('/tasks') || isActive('/settings') || app.chatDrawerOpen
+  isActive('/graph') || isActive('/inbox') || isActive('/tasks') || isActive('/customer-research') || isActive('/settings') || app.chatDrawerOpen
 );
 
 function runMore(action: () => void) {
@@ -489,6 +490,7 @@ const moreItems = computed(() => [
     running: false,
     action: () => runMore(() => go('/tasks')),
   },
+  { label: '客户调研', icon: 'report', dot: false, running: false, action: () => runMore(() => go('/customer-research')) },
   {
     label: '设置',
     icon: 'settings',

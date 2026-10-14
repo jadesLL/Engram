@@ -587,6 +587,25 @@ export function migrate() {
     updated_at TEXT NOT NULL
   );
 
+  -- 客户调研任务只在执行端记账；成品原始资料使用既有页面同步。
+  CREATE TABLE IF NOT EXISTS customer_research_tasks(
+    id TEXT PRIMARY KEY,
+    customer TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    client TEXT NOT NULL,
+    rules TEXT NOT NULL,
+    save_requested INTEGER NOT NULL DEFAULT 0,
+    session_id TEXT NOT NULL DEFAULT '',
+    run_id TEXT NOT NULL DEFAULT '',
+    report TEXT NOT NULL DEFAULT '',
+    path TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    report_date TEXT NOT NULL DEFAULT '',
+    time_zone TEXT NOT NULL DEFAULT 'UTC'
+  );
+  CREATE INDEX IF NOT EXISTS idx_customer_research_created ON customer_research_tasks(created_at);
+
   -- 会话墓碑：本端删过的会话记一行，避免对端还留着的旧副本在全量对账时把已删会话「复活」回来
   CREATE TABLE IF NOT EXISTS assistant_session_tombstones(
     session_id TEXT PRIMARY KEY,

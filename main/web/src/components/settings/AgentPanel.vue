@@ -175,7 +175,7 @@ import SecretField from '../SecretField.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 
-type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'workbuddy' | 'qoder' | 'kimiwork' | 'other';
+type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'workbuddy' | 'qoder' | 'kimi' | 'kimiwork' | 'other';
 
 const target = ref<AgentTarget>('zcode');
 /** 接入目标选项：显式标注联合类型，AppSelect 的泛型才能推断出 AgentTarget */
@@ -186,6 +186,7 @@ const targetOptions: Array<{ value: AgentTarget; label: string }> = [
   { value: 'workbuddy', label: 'WorkBuddy（一键接入）' },
   { value: 'qoder', label: 'Qoder（一键接入）' },
   { value: 'kimiwork', label: 'Kimi Work（一键登记插件）' },
+  { value: 'kimi', label: 'Kimi Code CLI（一键接入）' },
   { value: 'other', label: '其他 Agent（MCP 接入）' },
 ];
 /** 《Agent 作业指南》较长，默认收起在「查看工具」分组底部 */

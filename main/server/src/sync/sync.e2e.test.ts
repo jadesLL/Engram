@@ -429,6 +429,10 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     });
     const hubContent = await pageContent(hub, pageK);
     assert.ok(!hubContent?.includes('方案 A'), '正本不应保留较旧的 hub 版本内容');
+    await waitFor('冲突胜者在 B/C 收敛且不被历史补拉回退', async () => {
+      const contents = await Promise.all([pageContent(nodeB, pageK), pageContent(nodeC, pageK)]);
+      return contents.every(content => content?.includes('方案 B') && !content.includes('方案 A'));
+    });
     // 被取代的 hub 旧版本以「原名-时间戳」重命名保留在同一目录
     const listRes = await api(hub, 'GET', '/api/pages/list');
     const allPages = (await listRes.json()) as { pages: { id: string; path: string; title: string }[] };

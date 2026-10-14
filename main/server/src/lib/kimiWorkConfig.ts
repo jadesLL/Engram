@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { CUSTOMER_RESEARCH_BRIDGE } from '../content/customerResearch.js';
 
 function kimiPaths() {
   const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
@@ -21,11 +22,14 @@ function kimiPaths() {
 
 export function getKimiWorkStatus() {
   const paths = kimiPaths();
+  let researchSkill = false;
+  try { researchSkill = JSON.parse(fs.readFileSync(path.join(paths.source, 'kimi.plugin.json'), 'utf8')).skillInstructions === CUSTOMER_RESEARCH_BRIDGE; } catch { /* not installed */ }
   return {
     installed: process.platform === 'win32' && fs.existsSync(paths.cli) && fs.existsSync(paths.node),
     registered: fs.existsSync(paths.registry),
     pluginPath: paths.source,
     installUrl: 'kimi-work://plugin?id=engram-knowledge-base',
+    researchSkill,
   };
 }
 
@@ -52,7 +56,7 @@ export function registerKimiWorkPlugin(url: string, token: string): string {
     keywords: ['engram', 'knowledge-base'],
     author: 'Engram',
     license: 'MIT',
-    skillInstructions: '',
+    skillInstructions: CUSTOMER_RESEARCH_BRIDGE,
     interface: {
       displayName: 'Engram 知识库',
       shortDescription: '检索、阅读和整理 Engram 知识库',

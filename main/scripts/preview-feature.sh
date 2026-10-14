@@ -9,21 +9,26 @@ source "$SCRIPT_DIR/worktree-common.sh"
 usage() {
   cat <<'EOF'
 用法:
-  preview-feature.sh [--allow-downloads] <feature> <host-port>
+  preview-feature.sh [--allow-downloads] [--empty-data] <feature> <host-port>
 
 验证镜像准备完成后，按需构建并启动功能预览、隔离端口和数据卷。
 
 默认禁用构建网络，只使用本机已有基础镜像、Docker 层和构建缓存。
 --allow-downloads  仅在用户已经明确批准下载依赖后使用
+--empty-data       创建空白隔离数据卷，不从主数据卷复制（用于夹具验收）
 EOF
 }
 
 ALLOW_DOWNLOADS=0
+EMPTY_DATA=0
 POSITIONAL=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --allow-downloads)
       ALLOW_DOWNLOADS=1
+      ;;
+    --empty-data)
+      EMPTY_DATA=1
       ;;
     -h|--help)
       usage
@@ -167,14 +172,18 @@ else
     --label "com.engram.feature=$FEATURE" \
     "$ENGRAM_VOLUME" >/dev/null
 
-  engram_log ">> 从主数据卷播种隔离数据"
-  docker volume inspect "$MAIN_VOLUME" >/dev/null
-  MSYS_NO_PATHCONV=1 docker run --rm \
-    --label com.engram.scope=feature-helper \
-    --label "com.engram.feature=$FEATURE" \
-    -v "$MAIN_VOLUME:/src:ro" \
-    -v "$ENGRAM_VOLUME:/dst" \
-    node:22-slim sh -c 'cp -a /src/. /dst/'
+  if [ "$EMPTY_DATA" -eq 1 ]; then
+    engram_log ">> 使用空白隔离数据（未复制主数据）"
+  else
+    engram_log ">> 从主数据卷播种隔离数据"
+    docker volume inspect "$MAIN_VOLUME" >/dev/null
+    MSYS_NO_PATHCONV=1 docker run --rm \
+      --label com.engram.scope=feature-helper \
+      --label "com.engram.feature=$FEATURE" \
+      -v "$MAIN_VOLUME:/src:ro" \
+      -v "$ENGRAM_VOLUME:/dst" \
+      node:22-slim sh -c 'cp -a /src/. /dst/'
+  fi
 fi
 
 engram_log ">> 启动功能预览"

@@ -32,6 +32,8 @@ import {
   type ExternalMcpTarget,
 } from '../lib/externalMcpConfig.js';
 import { getKimiWorkStatus, registerKimiWorkPlugin } from '../lib/kimiWorkConfig.js';
+import { installCustomerResearchSkill, removeCustomerResearchSkill, customerResearchSkillInstalled, assertCustomerResearchSkillWritable } from '../lib/customerResearchSkill.js';
+import { CUSTOMER_RESEARCH_SKILL_FILE } from '../content/customerResearch.js';
 import { requireAuth } from './auth.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
@@ -300,11 +302,12 @@ export async function settingsRoutes(app: FastifyInstance) {
       const cliConfig = JSON.parse(fs.readFileSync(zcodeCliConfigPath(), 'utf8') as string);
       registered = Boolean(cliConfig?.mcp?.servers?.engram);
     } catch { /* 无配置文件视为未注册 */ }
-    return { installed, loggedIn, registered, path: resolveZcodeEnginePath(config) };
+    return { installed, loggedIn, registered, path: resolveZcodeEnginePath(config), researchSkill: customerResearchSkillInstalled(path.join(os.homedir(), '.zcode', 'skills')) };
   });
 
   /** 把 Engram MCP（回环地址 + Bearer token）注册进 ZCode 的 cli/config.json */
   app.post('/api/settings/zcode-register', async () => {
+    assertCustomerResearchSkillWritable(path.join(os.homedir(), '.zcode', 'skills'));
     const token = harnessToken('zcode');
     const configPath = zcodeCliConfigPath();
     let cliConfig: any = {};
@@ -326,10 +329,12 @@ export async function settingsRoutes(app: FastifyInstance) {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     // 原子写：ZCode CLI 可能同时在写这份配置，裸 writeFileSync 截断会让用户丢掉整个 MCP 配置
     atomicWrite(configPath, JSON.stringify(cliConfig, null, 2));
+    installCustomerResearchSkill(path.join(os.homedir(), '.zcode', 'skills'));
     return { ok: true, mcpUrl: zcodeMcpUrl };
   });
 
   app.post('/api/settings/zcode-unregister', async () => {
+    removeCustomerResearchSkill(path.join(os.homedir(), '.zcode', 'skills'));
     const configPath = zcodeCliConfigPath();
     try {
       const cliConfig = JSON.parse(fs.readFileSync(configPath, 'utf8') as string);
@@ -345,6 +350,10 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
     db.prepare(`DELETE FROM mcp_tokens WHERE name = 'zcode'`).run();
     return { ok: true };
+  });
+
+  app.get('/api/settings/customer-research-skill', async (_req, reply) => {
+    return reply.header('Content-Type', 'text/markdown; charset=utf-8').send(CUSTOMER_RESEARCH_SKILL_FILE);
   });
 
   // ---------- DeepSeek Harness（dsh）接入（写 $DSH_HOME/cordis.patch.yml）----------
@@ -369,19 +378,19 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.post('/api/settings/codex-register', async () => {
     const token = harnessToken('codex');
-    const configPath = registerCodexMcp(zcodeMcpUrl, token);
+    const configPath = registerCodexMcp(zcodeMcpUrl, token, undefined, path.join(os.homedir(), '.agents', 'skills'));
     return { ok: true, mcpUrl: zcodeMcpUrl, configPath };
   });
 
   app.post('/api/settings/codex-unregister', async () => {
-    unregisterCodexMcp();
+    unregisterCodexMcp(undefined, path.join(os.homedir(), '.agents', 'skills'));
     db.prepare(`DELETE FROM mcp_tokens WHERE name = 'codex'`).run();
     return { ok: true };
   });
 
   // ---------- WorkBuddy / Qoder 用户级 MCP 配置 ----------
 
-  for (const target of ['workbuddy', 'qoder'] as ExternalMcpTarget[]) {
+  for (const target of ['workbuddy', 'qoder', 'kimi'] as ExternalMcpTarget[]) {
     app.get(`/api/settings/${target}-status`, async () => externalMcpStatus(target));
 
     app.post(`/api/settings/${target}-register`, async (_req, reply) => {

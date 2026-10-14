@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { installCustomerResearchSkill, removeCustomerResearchSkill, customerResearchSkillInstalled, assertCustomerResearchSkillWritable } from './customerResearchSkill.js';
 
 /**
  * Codex CLI 接入。
@@ -106,6 +107,7 @@ export interface CodexStatus {
   registered: boolean;
   home: string;
   configPath: string;
+  researchSkill: boolean;
 }
 
 /** installed：Codex CLI 在 PATH，或本机已有 $CODEX_HOME（至少运行过一次） */
@@ -117,6 +119,7 @@ export function getCodexStatus(): CodexStatus {
     registered: codexRegistered(configPath),
     home,
     configPath,
+    researchSkill: customerResearchSkillInstalled(path.join(os.homedir(), '.agents', 'skills')),
   };
 }
 
@@ -124,7 +127,8 @@ export function getCodexStatus(): CodexStatus {
  * 注册（或整块替换）Engram MCP 条目；其余表、注释与顺序逐字保留。
  * 返回写入的配置文件路径。
  */
-export function registerCodexMcp(url: string, token: string, configPath: string = codexConfigPath()): string {
+export function registerCodexMcp(url: string, token: string, configPath: string = codexConfigPath(), skillRoot = path.join(path.dirname(configPath), 'skills')): string {
+  assertCustomerResearchSkillWritable(skillRoot);
   const exists = fs.existsSync(configPath);
   const raw = exists ? fs.readFileSync(configPath, 'utf8') : '';
   const eol = raw.includes('\r\n') ? '\r\n' : '\n';
@@ -140,11 +144,14 @@ export function registerCodexMcp(url: string, token: string, configPath: string 
     ? [...rest, '', ...engramBlock(url, token).split('\n')]
     : engramBlock(url, token).split('\n');
   writeConfigLines(configPath, body, eol);
+  // For custom config paths (tests / remote exports), keep all writes in that config root.
+  installCustomerResearchSkill(skillRoot);
   return configPath;
 }
 
 /** 移除注册；文件不存在或没有 engram 块时静默不变（其他内容保留） */
-export function unregisterCodexMcp(configPath: string = codexConfigPath()): void {
+export function unregisterCodexMcp(configPath: string = codexConfigPath(), skillRoot = path.join(path.dirname(configPath), 'skills')): void {
+  removeCustomerResearchSkill(skillRoot);
   if (!fs.existsSync(configPath)) return;
   const raw = fs.readFileSync(configPath, 'utf8');
   const eol = raw.includes('\r\n') ? '\r\n' : '\n';
