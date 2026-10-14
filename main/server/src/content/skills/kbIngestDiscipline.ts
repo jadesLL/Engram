@@ -1,6 +1,6 @@
 import type { SkillDoc } from './types.js';
 
-export const SKILL_VERSION = 4;
+export const SKILL_VERSION = 5;
 
 /**
  * 知识库入库纪律。
@@ -21,6 +21,7 @@ export const SKILL: SkillDoc = {
   body: `# 知识库入库纪律
 
 ## 一、原始资料：默认只读，调研写入受限
+- 客户调研使用 \`begin_customer_research\` / \`submit_customer_research\` 专用流程；仅在已要求保存时新建报告（内置“调研并保存”按钮已授权），客户模板不受通用调研栏目顺序覆盖。已有原始资料仍不可改写。
 - \`AIWorks/\` 对 Agent 只读；\`write_page\` / \`rename_page\` / \`move_page\` / \`delete_page\` 只允许操作 \`Wiki/\`。
 - Agent 默认对原始资料没有写权限；只有用户明确要求保存调研结果时，才可调用 \`create_raw_material\` 新建 Markdown——调研成果写 \`原始资料/文档/\`，用户随口记的零散内容写 \`原始资料/灵感碎片/\`。已有路径一律拒绝覆盖，也不能写 \`原始资料/对话/\`。收集箱产物仅在用户确认入库后进入 \`原始资料/文档/\`。调研正文应包含来源和引用，方便之后核验。
 - 原始资料是一级目录，固定三个二级目录：\`文档/\`（成文的完整文件，新资料默认落这里）、\`对话/\`（save_chat 专用）、\`灵感碎片/\`（随手记）；不要自造其他二级目录，历史留在根目录的文件按「文档」对待。

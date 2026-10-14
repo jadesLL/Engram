@@ -6,6 +6,10 @@
 > 指南正文 MCP `kb_guide` / `GET /api/guide` / `engram guide`（单一来源：`server/src/content/agentGuide.ts`）；
 > 作业手法与纪律 MCP `skill_list` / `skill_guide`（单一来源：`server/src/content/skills/`，按需下发）。
 
+## 客户调研
+
+内置与外部 Agent 的客户调研共用 `customer-research` skill 与服务端流程模板。先 `begin_customer_research` 固定任务版本，再按返回契约生成 `sections` 与 `sources`，最后 `submit_customer_research` 校验并按用户意图保存。客户报告使用专用模板，通用调研稿的栏目顺序不覆盖它。桌面/Docker 输入客户名即可由内置 Agent 执行；外部客户端一键接入可安装入口 skill（Kimi Work 通过插件指令），远程客户端手动导入入口。详见[客户调研指南](./CUSTOMER-RESEARCH.md)。
+
 ## 架构边界
 
 Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office / md）、FTS5 关键词检索、来源版本与证据账本、写入门禁由 Engram 确定性完成；总结、提炼、消歧、综合、问答、图片识别全部由 Agent 负责——外部 Agent（ZCode / Codex / Claude Code / DeepSeek Harness 等）经 MCP 或 CLI 接入，或使用 Engram 随包内置的 Agent（设置页填自己的模型 Key 后，左栏 ✨ 聊天抽屉即用；它同样只经 MCP 工具读写知识库）。
@@ -18,7 +22,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
 - **Agent 接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 与自动化直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；WorkBuddy、Qoder 与 Kimi Work 有对应的 MCP/插件配置片段与接入步骤；远程部署也可使用 MCP 配置片段或 `engram login`。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
-- **原始资料受限新建**：`create_raw_material` 是唯一允许 Agent 新建原始资料的 MCP 工具，只能新建 `原始资料/文档/` 或 `原始资料/灵感碎片/` 下的 Markdown 文件；路径已存在（含回收站占位）即拒绝，`原始资料/对话/` 专供 `save_chat`。调研成果写 `文档/`，用户随口记的零散内容写 `灵感碎片/`。仅在用户明确要求保存调研结果时调用。Agent 不得更新、改名、删除既有原始资料，也不得走 HTTP/CLI 旁路。`AIWorks/` 只读；`write_page` / `rename_page` / `move_page` / `delete_page` 仍只允许 `Wiki/`。
+- **原始资料受限新建**：普通调研通过 `create_raw_material`，客户报告通过专用 `submit_customer_research` 新建原始资料，只能新建 `原始资料/文档/` 或 `原始资料/灵感碎片/` 下的 Markdown 文件；路径已存在（含回收站占位）即拒绝，`原始资料/对话/` 专供 `save_chat`。调研成果写 `文档/`，用户随口记的零散内容写 `灵感碎片/`。仅在用户明确要求保存调研结果时调用。Agent 不得更新、改名、删除既有原始资料，也不得走 HTTP/CLI 旁路。`AIWorks/` 只读；`write_page` / `rename_page` / `move_page` / `delete_page` 仍只允许 `Wiki/`。
   - 作业时需要的资料不在库里且用户没有要求保存调研结果时：按现有材料推进，把缺口写进页面的「待核实」，**不要停下来等用户**。证据门禁报「来源必须在 `原始资料/` 下」时同理——跳过这条事实（或改用库内来源支撑）并记进「待核实」，不要自己找旁路把文件塞进去。
 - **对话沉积须用户指示**：`save_chat`（CLI `chat save`）只在用户明确说「沉淀」后才可执行；Agent 不得自行判断「这段对话有价值」就沉淀。已沉淀的对话属于原始资料，**可以**被后续提炼作业引用——卡的是「谁决定沉淀」，不是「沉淀后能不能用」。
 - **原始资料二级分类（固定三个）**：一级目录是 `原始资料/`，其下固定 **`文档/`**（成文的完整文件：会议纪要、调研报告、复盘、年报、教程、攻略…，新资料默认落这里）、**`对话/`**（`save_chat` 专用）、**`灵感碎片/`**（随手记：零散条目、想法、待办）。Agent 不要自造其他二级目录；二级分类上线前留在 `原始资料/` 根目录的历史文件按「文档」对待（侧栏「文档」分组会把根目录文件一并列出，磁盘不动）。证据门禁、提炼清单、检索都按 `原始资料/` 前缀判定，二级目录不影响。用户在编辑页的「分类」下拉里换分类会移动文件，服务端同步把按路径存的账本（`source_versions` / `ingest_runs` / `page_revisions`）改挂新路径——所以**你按 `list_raw_files` 看到的路径始终是当前路径**，「已提炼」标记与证据来源不会因为用户换分类而失效。

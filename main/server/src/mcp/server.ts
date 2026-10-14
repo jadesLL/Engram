@@ -31,6 +31,8 @@ import { listInboxItems } from '../lib/inboxItems.js';
 import { capabilityHint, extractInboxText, writeInboxMarkdown } from '../pipeline/inboxConvert.js';
 import { createRawMaterial, RawMaterialWriteError } from '../pipeline/rawMaterial.js';
 import { listRawMaterialFiles } from '../pipeline/rawFiles.js';
+import { CUSTOMER_RESEARCH_BRIDGE, CUSTOMER_RESEARCH_TRIGGER } from '../content/customerResearch.js';
+import { beginCustomerResearch, submitCustomerResearch, researchReportSchema, CustomerResearchError } from '../research/customerResearch.js';
 
 /**
  * 面向外部 Agent 的 MCP 接口（streamable HTTP + Bearer）。
@@ -45,6 +47,8 @@ import { listRawMaterialFiles } from '../pipeline/rawFiles.js';
  */
 
 const MCP_INSTRUCTIONS = `这是 Engram 个人知识大脑——不内置 AI，读、写、提炼全部由你（外部 Agent）完成。
+客户调研默认入口：${CUSTOMER_RESEARCH_TRIGGER}
+${CUSTOMER_RESEARCH_BRIDGE}
 能跑 shell 的 Agent 优先用 CLI（engram status/import/files/search/pages/names/chat/guide，--json 可得机器可读输出）；MCP 用于无法跑 shell、或需把图片作为图像内容直读（read_raw_file raw=true）时。
 提炼作业收到指令后自动索引待提炼清单（CLI engram files list --pending，或 list_raw_files 传 pending=true），然后逐份串行处理：读一份、write_page 提交成功，再处理下一份，不要批量读完统一写页。
 任何写操作前先读 AIWorks/log/log.md（read_page）了解最近状态；你的写操作由服务端自动记入操作日志，无需手工记录。
@@ -120,6 +124,21 @@ function readRawFile(rel: string, raw: boolean)
 /** 构建 MCP Server 实例（导出供单测用内存传输直连，生产经 /mcp 端点接入） */
 export function makeServer(): McpServer {
   const server = new McpServer({ name: 'engram', version: '1.0.0' }, { instructions: MCP_INSTRUCTIONS });
+
+  server.tool('begin_customer_research',
+    '调研客户、分析目标公司、客户背景调查、生成客户洞察报告时优先调用：建立任务并取得 Engram 最新 ACS 流程、固定报告模板和版本。所有客户端共用；只查单个事实无需完整调研。',
+    { customer: z.string().min(1).max(100), scope: z.enum(['knowledge-web', 'knowledge-only']).optional(), save: z.boolean().optional().describe('只有用户要求保存才 true；只调研默认为 false'), client: z.string().max(80).optional().describe('执行客户端名称，如 Codex/ZCode/DeepSeek Harness/Kimi/WorkBuddy'), timeZone: z.string().optional().describe('用户当地时区，如 Asia/Hong_Kong；用于报告日期和排期锚点') },
+    async args => {
+      try { return { content: [{ type: 'text', text: JSON.stringify(beginCustomerResearch(args), null, 2) }] }; }
+      catch (e) { if (e instanceof CustomerResearchError) return { content: [{ type: 'text', text: e.message }], isError: true }; throw e; }
+    });
+  server.tool('submit_customer_research',
+    '提交已完成的客户调研报告：校验任务版本、固定章节和来源引用，返回报告；save=true 时新建原始资料，不覆盖历史报告。先 begin_customer_research，不用 create_raw_material 绕过报告校验。',
+    { taskId: z.string(), ...researchReportSchema.shape, save: z.boolean().optional() },
+    async args => {
+      try { return { content: [{ type: 'text', text: JSON.stringify(submitCustomerResearch(args), null, 2) }] }; }
+      catch (e) { if (e instanceof CustomerResearchError || e instanceof RawMaterialWriteError) return { content: [{ type: 'text', text: e.message }], isError: true }; throw e; }
+    });
 
   server.tool(
     'search',

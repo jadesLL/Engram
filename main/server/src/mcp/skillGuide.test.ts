@@ -97,6 +97,29 @@ test('调研 skill 可在连接后按名重新获取', async () => {
   assert.match(result.text, /只有用户明确要求保存/);
 });
 
+test('所有外部客户端通过同一 MCP 客户调研入口固定任务版本并校验模板', async () => {
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+  const { makeServer } = await import('./server.js');
+  const { CUSTOMER_RESEARCH_SECTIONS } = await import('../content/customerResearch.js');
+  const versions:number[]=[];
+  for(const name of ['Codex','ZCode','DeepSeek Harness','Kimi Code','Kimi Work','WorkBuddy']) {
+    const [a,b]=InMemoryTransport.createLinkedPair();const external=new Client({name,version:'1.0.0'});
+    await makeServer().connect(b);await external.connect(a);
+    try {
+      assert.match(external.getInstructions() || '',/begin_customer_research/);
+      const started:any=await external.callTool({name:'begin_customer_research',arguments:{customer:'接口验收客户',client:name,scope:'knowledge-only'}});
+      const task=JSON.parse(started.content[0].text);versions.push(task.version);
+      const rejected:any=await external.callTool({name:'submit_customer_research',arguments:{taskId:task.taskId,sections:{summary:'资料不足'},sources:[]}});
+      assert.equal(rejected.isError,true);
+      const sections=Object.fromEntries(CUSTOMER_RESEARCH_SECTIONS.map(s=>[s.id,'资料不足，暂不能形成事实结论。']));
+      const done:any=await external.callTool({name:'submit_customer_research',arguments:{taskId:task.taskId,sections,sources:[],save:false}});
+      assert.notEqual(done.isError,true);assert.equal(JSON.parse(done.content[0].text).saved,false);
+    } finally {await external.close();}
+  }
+  assert.equal(new Set(versions).size,1);
+});
+
 test('调研写入不接受自造的原始资料二级目录', async () => {
   const result = await callTool('create_raw_material', {
     path: '原始资料/新目录/调研.md',

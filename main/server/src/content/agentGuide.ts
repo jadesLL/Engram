@@ -54,6 +54,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 - page_evidence —— 读页面的证据账本（来源、版本、事实引文）
 - list_raw_files —— 原始资料清单（含提取状态与已提炼标记；pending=true 只返回未提炼文件）
 - read_raw_file —— 读原始资料：有文本层返回提取文本；图片/PDF 返回 base64（供视觉模型自行阅读）
+- begin_customer_research / submit_customer_research —— 客户调研专用入口：固定服务端流程与模板版本，校验章节和来源后按用户意图保存新原始资料。内置“调研并保存”按钮已明确授权；外部对话须用户要求保存。详见 skill_guide("customer-research")，客户专用模板优先于通用调研稿栏目。
 - create_raw_material —— 将已完成的调研结果新建为原始资料 Markdown 来源文件；调研格式与边界见连接时下发的 \`research-raw-material\` skill（也可用 \`skill_guide("research-raw-material")\` 重读）。仅在用户明确要求保存调研结果时调用，路径必须是新路径，已有文件拒绝覆盖。**调研成果写 原始资料/文档/、用户随口记的零散内容写 原始资料/灵感碎片/**；正文应保留调研来源与引用，但**不要以一级标题开头**（标题由文件名与 frontmatter 承载，开头的一级标题会被服务端去掉）；原始资料/对话/ 专供 save_chat。收集箱产物由用户在界面确认入库后进入 原始资料/文档/。
 - read_page_asset —— 读页面/资料正文里引用的图片原图（传正文里的 \`/media/<父项id>/<文件名>\` 引用，图片以 image 内容返回）
 - list_inbox —— 收集箱（收集箱/）清单：用户拖进来的待整理原件与各自的转换状态
@@ -77,7 +78,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 ## 三、操作纪律
 
 1. 动手前先 read_page 读 AIWorks/log/log.md 了解最近状态；写操作完成后服务端会自动追加日志（Agent 写入/Agent 更新页面/对话沉积等），你无需重复记录，只在你执行了合并、批量重整等复合动作时才用 write_page 手工补一条动作说明。
-2. **原始资料默认只读，唯一的 Agent 创建入口是 create_raw_material**：只有用户明确要求保存调研结果时，才可用它新建 Markdown 文件——调研成果写「原始资料/文档/」，用户随口记的零散内容写「原始资料/灵感碎片/」；它拒绝覆盖已有路径，也不能写「原始资料/对话/」（save_chat 专用）。收集箱入库必须由用户在界面确认。write_page / rename_page / move_page / delete_page 仍只允许操作 Wiki/ 页面。不得走 HTTP/CLI 旁路写原始资料。用户没要求保存且资料不在库里时，按现有材料推进、把缺口写进页面的「待核实」，不要停下来等用户。
+2. **原始资料默认只读，Agent 创建入口为 create_raw_material 与客户调研专用 submit_customer_research**：只有用户明确要求保存调研结果时，才可用它新建 Markdown 文件——调研成果写「原始资料/文档/」，用户随口记的零散内容写「原始资料/灵感碎片/」；它拒绝覆盖已有路径，也不能写「原始资料/对话/」（save_chat 专用）。收集箱入库必须由用户在界面确认。write_page / rename_page / move_page / delete_page 仍只允许操作 Wiki/ 页面。不得走 HTTP/CLI 旁路写原始资料。用户没要求保存且资料不在库里时，按现有材料推进、把缺口写进页面的「待核实」，不要停下来等用户。
 3. 证据门禁报「来源必须在 原始资料/ 下」时，说明引文来源不在库内：跳过这条事实（或改用库内来源支撑），把缺口记进「待核实」，不要自己找旁路把文件塞进去。
 4. **对话沉积（save_chat）须用户指示**：用户明确说"沉淀"才沉淀，不要自行判断"这段对话有价值"就写。已沉淀的对话属于原始资料，**可以**被后续作业提炼引用。
 5. 误建的页面用 delete_page（CLI：pages delete）删除，只入回收站、可恢复；AIWorks 不可删，也不存在永久删除/清空回收站的入口。删除是纠错手段而非整理手段：已有页面优先增量改写，不要反复删建；确需改名/换目录时用 rename_page / move_page（CLI：pages rename|move），不要「新建+删除」——那会换掉页面 ID 并让引用双链悬空。

@@ -13,6 +13,7 @@ import { dreamStatus, settleDreamRun, startDreamRun } from '../assistant/dreamCy
 import * as repo from '../assistant/repository.js';
 import type { InterfaceContext } from '../assistant/prompts.js';
 import { requireAssistantAccess } from '../assistant/access.js';
+import { customerResearchRetryTask, bindCustomerResearchRetry, CustomerResearchError } from '../research/customerResearch.js';
 import { recordSessionDelete } from '../sync/index.js';
 
 const TERMINAL = ['completed', 'failed', 'cancelled', 'interrupted'];
@@ -269,15 +270,17 @@ export async function assistantRoutes(app: FastifyInstance) {
     if (!message) return reply.code(400).send({ error: '原消息已不存在' });
     let context: InterfaceContext | undefined;
     try {
-      context = JSON.parse((run as any).context || '{}');
+      context = repo.runContext(run.id) as InterfaceContext;
     } catch {
       context = undefined;
     }
     try {
+      const researchTaskId = customerResearchRetryTask(run.id, context?.researchTaskId);
       const { run: next, queued } = submitMessage({ sessionId: run.sessionId, message: message.content, context });
+      if (researchTaskId) bindCustomerResearchRetry(researchTaskId, run.id, next.id);
       return reply.code(202).send({ run: next, queued });
     } catch (error) {
-      if (error instanceof RunConflictError) return reply.code(409).send({ error: error.message });
+      if (error instanceof CustomerResearchError || error instanceof RunConflictError) return reply.code(409).send({ error: error.message });
       throw error;
     }
   });

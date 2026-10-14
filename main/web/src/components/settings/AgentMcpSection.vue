@@ -23,6 +23,13 @@
       请求头使用 <code>Authorization: Bearer &lt;token&gt;</code>；同一 Token 也可用于 <code>engram</code> CLI
       与 REST API（Bearer 方式）。
     </div>
+    <div class="integration-note research-integration">
+      <strong>客户调研使用 Engram 统一流程</strong>
+      <p v-if="target === 'kimiwork'">重新登记插件并在 Kimi Work 安装后，插件指令会引导客户调研。</p>
+      <p v-else-if="target === 'workbuddy' || target === 'kimi'">本机一键接入同时安装客户调研入口 skill。当前：{{ localStatus.researchSkill ? '入口 skill 已写入' : '入口 skill 尚未写入' }}。</p>
+      <p>远程设备先接 MCP，再把入口 SKILL.md 导入客户端；完整流程与报告模板每次从 Engram 获取。</p>
+      <button class="btn small" type="button" @click="copyResearchSkill">复制客户调研入口 SKILL.md</button>
+    </div>
 
     <div v-if="target !== 'other'" class="auto-register">
       <div class="auto-register-status">
@@ -60,6 +67,10 @@
         <li>QoderWork：打开「扩展」→「连接器」→「+ 添加」→「粘贴 JSON 配置」。</li>
         <li>Qoder IDE：打开「设置」→「MCP」→「My Servers」→「+ Add」，填入下方地址和 Authorization 请求头。</li>
         <li>导入或保存后，确认 Engram MCP 连接成功。</li>
+      </ol>
+      <ol v-else-if="target === 'kimi'">
+        <li>一键接入写入 Kimi Code 的用户级 mcp.json，并安装客户调研入口 skill。</li>
+        <li>重新创建 Kimi Code 会话；用 /mcp 检查连接，调研客户时从 Engram 读取流程。</li>
       </ol>
       <ol v-else>
         <li>本机可点「一键登记插件」，Engram 会调用 Kimi Work 自带命令创建个人插件。</li>
@@ -115,7 +126,7 @@ import SecretField from '../SecretField.vue';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
 import { notify } from '../../lib/notify';
 
-const props = defineProps<{ target: 'workbuddy' | 'qoder' | 'kimiwork' | 'other' }>();
+const props = defineProps<{ target: 'workbuddy' | 'qoder' | 'kimi' | 'kimiwork' | 'other' }>();
 const mcpTokens = ref<any[]>([]);
 const mcpUrl = computed(() => `${location.origin}/mcp`);
 const snippetFormat = ref('codex');
@@ -148,12 +159,14 @@ const targetTitle = computed(() => ({
   workbuddy: 'WorkBuddy 接入',
   qoder: 'Qoder 接入',
   kimiwork: 'Kimi Work 接入',
+  kimi: 'Kimi Code CLI 接入',
   other: 'MCP 接入',
 }[props.target]));
 const targetIntro = computed(() => ({
   workbuddy: '通过 WorkBuddy 自定义连接器接入 Engram 知识库。',
   qoder: '通过 QoderWork 连接器或 Qoder IDE MCP 设置接入 Engram 知识库。',
   kimiwork: '通过 Kimi Work 个人插件接入 Engram 知识库。',
+  kimi: '配置 MCP 连接与客户调研入口 skill；每次从 Engram 获取流程和模板。',
   other: '其他外部 Agent（Claude Code、Cursor 等）通过 MCP 或 CLI 驱动本知识库。',
 }[props.target]));
 
@@ -242,6 +255,10 @@ async function copy(text: string) {
     notify.error('复制失败');
   }
 }
+async function copyResearchSkill() {
+  const { data } = await api.get<string>('/api/settings/customer-research-skill');
+  await copy(data);
+}
 
 async function loadLocalStatus() {
   if (props.target === 'other') return;
@@ -257,7 +274,7 @@ async function registerLocal() {
   try {
     await api.post(`/api/settings/${props.target}-register`);
     await loadLocalStatus();
-    notify.success(props.target === 'kimiwork' ? '已登记 Kimi Work 个人插件，请在插件中心安装' : `已注册 Engram MCP 到 ${props.target === 'qoder' ? 'Qoder' : 'WorkBuddy'}`);
+    notify.success(props.target === 'kimiwork' ? '已登记 Kimi Work 个人插件，请在插件中心安装' : `已注册 Engram MCP 到 ${props.target === 'qoder' ? 'Qoder' : props.target === 'kimi' ? 'Kimi Code CLI' : 'WorkBuddy'}`);
   } catch (error: any) {
     // 部分变体写入失败时后端会带上具体文件和原因，照原样显示，避免只看到「注册失败」无从排查
     await loadLocalStatus();

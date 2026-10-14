@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { installCustomerResearchSkill, removeCustomerResearchSkill, customerResearchSkillInstalled, assertCustomerResearchSkillWritable } from './customerResearchSkill.js';
 
-export type ExternalMcpTarget = 'workbuddy' | 'qoder';
+export type ExternalMcpTarget = 'workbuddy' | 'qoder' | 'kimi';
 
 /**
  * 外部客户端用户级 MCP 配置的读写。
@@ -24,12 +25,14 @@ export type ExternalMcpTarget = 'workbuddy' | 'qoder';
 const CONFIG_FILE: Record<ExternalMcpTarget, string> = {
   workbuddy: 'mcp.json',
   qoder: 'settings.json',
+  kimi: 'mcp.json',
 };
 
 /** 未检测到客户端时，界面回显用的默认配置目录 */
 const DEFAULT_DIR: Record<ExternalMcpTarget, string> = {
   workbuddy: '.workbuddy',
   qoder: '.qoder',
+  kimi: '.kimi-code',
 };
 
 function firstEnv(names: string[]): string | null {
@@ -82,7 +85,9 @@ function qoderDirs(home: string): string[] {
 
 /** 需要维护的全部配置文件；返回空数组表示本机没检测到该客户端 */
 export function externalMcpConfigPaths(target: ExternalMcpTarget, home = os.homedir()): string[] {
-  const dirs = target === 'workbuddy' ? workbuddyDirs(home) : qoderDirs(home);
+  const kimiDir = firstEnv(['KIMI_CODE_HOME']) || path.join(home, '.kimi-code');
+  const dirs = target === 'workbuddy' ? workbuddyDirs(home) : target === 'qoder' ? qoderDirs(home)
+    : isDir(kimiDir) && hasClientData(kimiDir, CONFIG_FILE.kimi) ? [kimiDir] : [];
   return dirs.map((dir) => path.join(dir, CONFIG_FILE[target]));
 }
 
@@ -137,6 +142,8 @@ export function externalMcpStatus(target: ExternalMcpTarget, home = os.homedir()
     registered: configPaths.some(registeredIn),
     configPath: configPaths[0] ?? externalMcpConfigPath(target, home),
     configPaths,
+    researchSkill: target === 'workbuddy' ? customerResearchSkillInstalled(path.join(home, '.codebuddy', 'skills'))
+      : target === 'kimi' ? customerResearchSkillInstalled(path.join(path.dirname(configPaths[0] || externalMcpConfigPath(target,home)), 'skills')) : false,
   };
 }
 
@@ -174,6 +181,8 @@ function cleanupLegacyWorkbuddy(home: string, activePaths: string[]): void {
 export function registerExternalMcp(target: ExternalMcpTarget, url: string, token: string, home = os.homedir()): string[] {
   const configPaths = externalMcpConfigPaths(target, home);
   if (!configPaths.length) throw new Error('未检测到目标客户端');
+  if (target === 'workbuddy') assertCustomerResearchSkillWritable(path.join(home, '.codebuddy', 'skills'));
+  if (target === 'kimi') assertCustomerResearchSkillWritable(path.join(path.dirname(configPaths[0]), 'skills'));
   const failures: string[] = [];
   for (const configPath of configPaths) {
     try {
@@ -181,7 +190,7 @@ export function registerExternalMcp(target: ExternalMcpTarget, url: string, toke
       config.mcpServers = {
         ...servers(config),
         engram: {
-          type: target === 'workbuddy' ? 'streamableHttp' : 'http',
+          ...(target === 'kimi' ? {} : { type: target === 'workbuddy' ? 'streamableHttp' : 'http' }),
           url,
           headers: { Authorization: `Bearer ${token}` },
         },
@@ -194,12 +203,16 @@ export function registerExternalMcp(target: ExternalMcpTarget, url: string, toke
   if (target === 'workbuddy') cleanupLegacyWorkbuddy(home, configPaths);
   if (failures.length === configPaths.length) throw new Error(`写入失败：${failures.join('；')}`);
   if (failures.length) throw new Error(`部分写入失败（其余变体已注册）：${failures.join('；')}`);
+  if (target === 'workbuddy') installCustomerResearchSkill(path.join(home, '.codebuddy', 'skills'));
+  if (target === 'kimi') installCustomerResearchSkill(path.join(path.dirname(configPaths[0]), 'skills'));
   return configPaths;
 }
 
 /** 移除全部变体目录里的 engram 条目；单个文件读坏或写不动时继续处理其余变体 */
 export function unregisterExternalMcp(target: ExternalMcpTarget, home = os.homedir()): string[] {
+  if (target === 'workbuddy') removeCustomerResearchSkill(path.join(home, '.codebuddy', 'skills'));
   const configPaths = externalMcpConfigPaths(target, home);
+  if (target === 'kimi' && configPaths.length) removeCustomerResearchSkill(path.join(path.dirname(configPaths[0]), 'skills'));
   for (const configPath of configPaths) {
     if (!fs.existsSync(configPath)) continue;
     try {

@@ -795,8 +795,11 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
   let appliedSummary: SyncOpSummary | null = null;
   try {
     if (op.kind === 'page') {
-      if (pendingTargets.has(target)) {
-        // 本端同页有推送在途：暂存，等 ack 后按版本决定
+      const revision = Number(op.revision || 0);
+      if (revision > 0 && revision <= getPageSyncRevision(target)) {
+        // 对账/推送确认可能已拿到更高版本，随后补拉的历史 op 只推进游标，不能回退正文。
+      } else if (pendingTargets.has(target) || queue.some((item) => item.kind === 'page' && item.target === target)) {
+        // 本端同页已排队或推送在途：暂存，等 ack 后按版本决定，保留待发送的离线改动。
         const prev = stashed.get(target);
         if (!prev || seq > prev.seq) {
           stashed.set(target, { seq, kind: 'page', target, old_path: '', revision: Number(op.revision || 0), content: op.content, evidence: op.evidence });
@@ -901,6 +904,8 @@ async function pullFileIfChanged(relPath: string, remoteHash: string): Promise<n
 /** 推送在途结束后的收尾：应用暂存的同页广播（仅当其版本比 ack 结果新） */
 function drainStash(target: string, ackedRevision: number): void {
   if (!syncAllowed('page', target)) { stashed.delete(target); return; }
+  // 在途推送期间又有同页本地写入：留给下一次确认裁决，不能覆盖尚未发送的新正文。
+  if (queue.some((item) => item.kind === 'page' && item.target === target)) return;
   const op = stashed.get(target);
   stashed.delete(target);
   if (!op) return;
