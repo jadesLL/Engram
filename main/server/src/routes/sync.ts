@@ -185,6 +185,15 @@ function peerView(peer: SyncPeer) {
   };
 }
 
+/** 补拉与订阅交接使用同一份载荷与分类门禁。 */
+function enrichReplayOp(op: SyncOp, compact = false) {
+  if (!syncAllowed(op.kind, op.target, op.old_path)) return { seq: op.seq, kind: 'disabled', target: '' };
+  if (op.kind === 'preference') return { ...op, preference: preferenceValue(op.target) };
+  if (compact || op.kind !== 'page') return op;
+  const content = getPageRevision(op.target, op.revision) ?? readPageRaw(op.target) ?? '';
+  return { ...op, content, evidence: collectEvidenceForPage(op.target) };
+}
+
 export async function syncRoutes(app: FastifyInstance) {
   // ---------- 管理面（owner）：逐路由声明 requireAuth ----------
   // 注意不用 addHook：同一插件内多个 addHook 会叠加作用于全部路由
@@ -413,9 +422,11 @@ export async function syncRoutes(app: FastifyInstance) {
     };
   });
 
-  /** 成员 SSE 下行：实时广播；断开由 req close 触发反注册 */
+  /** 成员 SSE 下行：接续游标后的变更，再实时广播；断开时反注册 */
   app.get('/api/sync/events', { preHandler: requireSyncAccess }, async (req, reply) => {
-    const query = req.query as { node_id?: string; name?: string };
+    const query = req.query as { node_id?: string; name?: string; since?: string };
+    const since = query.since === undefined ? undefined : Number(query.since);
+    if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) return reply.code(400).send({ error: 'since 必须是非负整数' });
     const peer = req.syncPeer;
     const device = String(query.name || '');
     const connectedAt = Date.now();
@@ -434,6 +445,18 @@ export async function syncRoutes(app: FastifyInstance) {
     const peerId = peer?.id || String(query.node_id || 'owner-client');
     const stream = sse(reply);
     const unsubscribe = addNodeSubscriber({ peerId, send: stream.send });
+    // 注册与重放之间没有 await：补拉结束到建立订阅之间的提交必定由这段重放覆盖，
+    // 后续提交则由订阅接住，不能漏掉重连期间生成的冲突副本。
+    if (since !== undefined) {
+      let cursor = since;
+      for (;;) {
+        const ops = getOpsSince(cursor, 500);
+        for (const op of ops) stream.send('sync', enrichReplayOp(op));
+        if (ops.length < 500) break;
+        cursor = ops[ops.length - 1].seq;
+      }
+      if (needsResync(since)) stream.send('sync-scope-changed', {});
+    }
     // 15s：低于常见反代上游读超时（Lucky 默认 30s），留一倍余量避免心跳与超时同刻竞争
     const keepalive = setInterval(() => {
       try {
@@ -557,14 +580,7 @@ export async function syncRoutes(app: FastifyInstance) {
     const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(500, Math.trunc(requestedLimit))) : 500;
     const compact = query.compact === '1' || query.compact === 'true';
     const ops = getOpsSince(since, limit) as SyncOp[];
-    const enriched = ops.map((op) => {
-      if (!syncAllowed(op.kind, op.target, op.old_path)) return { seq: op.seq, kind: 'disabled', target: '' };
-      if (op.kind === 'preference') return { ...op, preference: preferenceValue(op.target) };
-      if (compact) return op;
-      if (op.kind !== 'page') return op;
-      const content = getPageRevision(op.target, op.revision) ?? readPageRaw(op.target) ?? '';
-      return { ...op, content, evidence: collectEvidenceForPage(op.target) };
-    });
+    const enriched = ops.map(op => enrichReplayOp(op, compact));
     if (req.syncPeer) touchPeer(req.syncPeer.id);
     return {
       ops: enriched,

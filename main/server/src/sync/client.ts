@@ -1226,7 +1226,7 @@ async function consumeStream(): Promise<void> {
   // 成员列表与同步日志里，用户要看到的是「书房电脑」而不是这台机器的主机名
   const deviceName = deviceLabel();
   const url = `/api/sync/events?node_id=${encodeURIComponent(currentNodeId())}`
-    + `&name=${encodeURIComponent(deviceName)}`;
+    + `&name=${encodeURIComponent(deviceName)}&since=${getCursor()}`;
   const res = await hubRequest(url, { headers: authHeaders(), signal: streamAbort.signal });
   if (!res.ok || !res.body) throw new Error(`事件流连接失败: ${res.status}`);
   connected = true;
