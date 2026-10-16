@@ -49,7 +49,6 @@
               :aria-pressed="item.name === current?.name"
               @click="selectedName = item.name"
             >
-              <span class="ava" aria-hidden="true">{{ item.name.slice(0, 1) }}</span>
               <span class="cust-text">
                 <span class="cust-name">{{ item.name }}</span>
                 <span class="cust-meta">{{ item.tasks.length }} 次 · {{ shortDate(item.latest.createdAt) }}</span>
@@ -149,10 +148,8 @@
           <dl class="facts">
             <dt>状态</dt>
             <dd>{{ statusLabel(currentTask) }}</dd>
-            <dt>{{ currentTask.markdown ? '完成时间' : '发起时间' }}</dt>
+            <dt>完成时间</dt>
             <dd>{{ formatTime(currentTask.createdAt) }}</dd>
-            <dt>资料范围</dt>
-            <dd>{{ scopeText || '—' }}</dd>
             <dt>流程版本</dt>
             <dd>v{{ currentTask.version }}</dd>
             <dt>章节</dt>
@@ -535,12 +532,17 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 
 /* 顶层用 flex 而不是一个三行网格：窄到放不下三栏时，速览整行落到下方，
    它必须是「按内容撑开、不被压缩」的那一条，网格的 auto 行会被压到比内容还矮 */
-.cols { flex:1; min-height:0; display:flex; gap:16px; }
-.cols-main { flex:1; min-width:0; min-height:0; display:grid; grid-template-columns:232px minmax(0,1fr); gap:16px; }
+.cols { flex:1; min-height:0; display:flex; gap:clamp(10px, 1.55cqw, 16px); }
+/* 三栏的全部尺寸都按容器宽度连续换算（cqw = .research-view 内容宽的 1%），不按像素断点跳档：
+   列宽、间距、内边距、客户头像都随可用宽度伸缩，字号只在很窄的一条带里动（正文不该跟着视口放大）。
+   应用侧栏默认 280px，1440 窗口下内容区只剩约 1040，固定断点一档一跳会突然把三栏折叠成单列 */
+.cols-main { flex:1; min-width:0; min-height:0; display:grid;
+  grid-template-columns:clamp(140px, 16cqw, 232px) minmax(0,1fr); gap:clamp(10px, 1.55cqw, 16px); }
 
 /* 左：客户列表 */
 .cust-col { display:flex; flex-direction:column; min-height:0; }
-.col-label { display:flex; align-items:baseline; justify-content:space-between; font-size:12px; color:var(--text-secondary); padding:0 8px 8px; }
+.col-label { display:flex; align-items:baseline; justify-content:space-between; font-size:12px; color:var(--text-secondary);
+  padding:0 clamp(6px, .7cqw, 10px) 8px; }
 .col-label b { font-size:12.5px; color:var(--text); font-weight:600; }
 .cust-search { display:flex; align-items:center; gap:7px; height:32px; padding:0 10px; margin:0 0 6px;
   border:1px solid var(--control-border-strong); border-radius:var(--radius-control); background:var(--control-bg); color:var(--text-secondary); flex:none; }
@@ -549,10 +551,11 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 /* 输入框自己去掉了焦点环，把环提到外框上，键盘操作仍有可见焦点 */
 .cust-search:focus-within { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft),0 0 0 1px var(--accent); }
 .cust-list { flex:1; min-height:0; overflow-y:auto; }
-.cust { display:grid; grid-template-columns:26px minmax(0,1fr) 8px; align-items:center; gap:9px; width:100%; padding:8px; border-radius:10px; text-align:left; }
+/* 客户行：只有名字 + 次数/日期 + 状态点。首字母方块对辨认客户没有帮助，去掉后宽度全给名字 */
+.cust { display:grid; grid-template-columns:minmax(0,1fr) 7px; align-items:center;
+  gap:clamp(6px, .85cqw, 9px); width:100%; padding:clamp(5px, .6cqw, 8px) clamp(6px, .7cqw, 10px); border-radius:10px; text-align:left; }
 .cust.on { background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent-soft); }
-.cust .ava { width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:650; background:var(--bg-tertiary); color:var(--text-secondary); }
-.cust.on .ava { background:var(--accent); color:var(--on-accent); }
+.cust.on .cust-name { color:var(--accent); }
 .cust-text { min-width:0; }
 .cust-name { display:block; font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .cust-meta { display:block; font-size:11.5px; color:var(--text-secondary); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -566,12 +569,12 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 /* 中：客户档案 */
 .archive { display:flex; flex-direction:column; min-height:0; background:var(--card-bg); border:1px solid var(--border);
   border-radius:var(--radius); box-shadow:var(--shadow-card); overflow:hidden; animation:arrive .22s ease-out; }
-.arc-head { flex:none; padding:18px 24px 13px; }
-.arc-top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.arc-head { flex:none; padding:clamp(13px, 1.75cqw, 18px) clamp(15px, 2.3cqw, 24px) clamp(10px, 1.25cqw, 13px); }
+.arc-top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
 .arc-title { min-width:0; }
-.arc-top h2 { font-size:22px; font-weight:650; line-height:1.3; margin:0; overflow-wrap:anywhere; }
+.arc-top h2 { font-size:clamp(19px, 2.1cqw, 22px); font-weight:650; line-height:1.3; margin:0; overflow-wrap:anywhere; }
 .arc-sub { font-size:12.5px; color:var(--text-secondary); margin:5px 0 0; }
-.arc-actions { display:flex; gap:6px; align-items:center; flex:none; }
+.arc-actions { display:flex; gap:6px; align-items:center; flex:none; flex-wrap:wrap; }
 .chips { display:flex; align-items:center; gap:6px; margin-top:11px; flex-wrap:wrap; }
 .chip { display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px; border-radius:6px;
   font-size:11.5px; background:var(--bg-tertiary); color:var(--text-secondary); }
@@ -584,17 +587,17 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .brief p { font-size:13.5px; line-height:1.72; max-width:620px; margin:0; }
 .arc-path { margin:12px 0 0; font-size:12px; color:var(--text-secondary); overflow-wrap:anywhere; }
 
-.tabs { flex:none; display:flex; flex-wrap:wrap; gap:2px; padding:0 24px; border-bottom:1px solid var(--border); }
+.tabs { flex:none; display:flex; flex-wrap:wrap; gap:2px; padding:0 clamp(15px, 2.3cqw, 24px); border-bottom:1px solid var(--border); }
 .tab { position:relative; padding:9px 10px 11px; font-size:12.5px; color:var(--text-secondary); white-space:nowrap; }
 .tab.on { color:var(--text); font-weight:600; }
 .tab.on::after { content:''; position:absolute; left:8px; right:8px; bottom:-1px; height:2px; border-radius:2px; background:var(--accent); }
 .tab-n { font-size:10.5px; color:var(--text-secondary); margin-right:4px; font-variant-numeric:tabular-nums; }
 .tab.on .tab-n { color:var(--accent); }
 /* 章节下拉：只在窄容器里顶替标签条（见文末容器查询） */
-.tabs-select { display:none; padding:10px 24px; border-bottom:1px solid var(--border); }
+.tabs-select { display:none; padding:clamp(8px, .95cqw, 10px) clamp(15px, 2.3cqw, 24px); border-bottom:1px solid var(--border); }
 .tabs-select :deep(.app-select) { width:100%; }
 
-.body { flex:1; min-height:0; overflow-y:auto; padding:16px 24px 22px; }
+.body { flex:1; min-height:0; overflow-y:auto; padding:clamp(13px, 1.55cqw, 16px) clamp(15px, 2.3cqw, 24px) clamp(18px, 2.1cqw, 22px); }
 .body-title { font-size:16px; font-weight:650; margin:0 0 10px; }
 .report-markdown { font-size:13.5px; line-height:1.78; overflow-wrap:anywhere; }
 .report-markdown :deep(.md-heading) { font-size:14px; margin:18px 0 8px; }
@@ -614,12 +617,13 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .empty-actions { display:flex; gap:8px; margin-top:4px; }
 
 /* 右：客户速览 */
-.aside-col { flex:0 0 300px; min-height:0; overflow-y:auto; background:var(--card-bg); border:1px solid var(--border);
-  border-radius:var(--radius); box-shadow:var(--shadow-card); padding:18px 18px 8px; }
+.aside-col { flex:0 0 clamp(178px, 21cqw, 300px); min-height:0; overflow-y:auto; background:var(--card-bg); border:1px solid var(--border);
+  border-radius:var(--radius); box-shadow:var(--shadow-card);
+  padding:clamp(12px, 1.75cqw, 18px) clamp(11px, 1.75cqw, 18px) 6px; }
 .blk { padding-bottom:13px; margin-bottom:13px; border-bottom:1px solid var(--border); }
 .blk.last { border-bottom:0; }
 .blk h4 { font-size:11.5px; font-weight:600; color:var(--text-secondary); margin:0 0 9px; }
-.facts { display:grid; grid-template-columns:74px minmax(0,1fr); gap:7px 10px; font-size:12.5px; margin:0; }
+.facts { display:grid; grid-template-columns:clamp(54px, 7cqw, 74px) minmax(0,1fr); gap:7px 10px; font-size:12.5px; margin:0; }
 .facts dt { color:var(--text-secondary); }
 .facts dd { color:var(--text); font-weight:550; margin:0; overflow-wrap:anywhere; }
 .aside-p { font-size:12.5px; line-height:1.7; color:var(--text); margin:0; }
@@ -644,22 +648,15 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 
 @keyframes arrive { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
 
-/* 容器放不下宽三栏时（典型：应用侧栏展开、窗口 1440 左右）：三栏都保留，收窄两侧，
-   把宽度让给报告正文；章节导航从标签条换成下拉，省掉三四行折行的标题 */
+/* 全页唯一一处离散切换：容器放不下时，9 个中文标题的标签条会折成三四行，改成下拉。
+   其余尺寸（列宽、间距、内边距、头像、档案标题字号）都由上面的 cqw + clamp 连续换算，不跳档 */
 @container (max-width:1180px) {
-  .cols-main { grid-template-columns:176px minmax(0,1fr); }
-  .cols > .aside-col { flex:0 0 240px; }
-  .cols-main .arc-head { padding:16px 20px 12px; }
-  .cols-main .arc-top { flex-wrap:wrap; }
-  .cols-main .arc-actions { flex-wrap:wrap; }
-  .cols-main .arc-top h2 { font-size:20px; }
-  .cols-main .body { padding:16px 20px 22px; }
   .cols-main .tabs { display:none; }
   .tabs-select { display:block; }
-  .facts { grid-template-columns:62px minmax(0,1fr); }
 }
-/* 更窄（手机 / 竖屏）：单列堆叠，整页滚动，客户列表变成一条会换行的胶囊 */
-@container (max-width:860px) {
+/* 真正放不下三栏才堆叠（约 740 以下，手机/竖屏）：单列、整页滚动，客户列表变成一条会换行的胶囊。
+   1440 窗口 + 应用侧栏默认 280 的内容宽约 1040，远在这条线之上，不会掉进来 */
+@container (max-width:740px) {
   .cols { flex:none; min-height:auto; }
   .cols-main { display:block; }
   .cols .cust-list { display:flex; flex-wrap:wrap; gap:6px; overflow:visible; }
