@@ -57,6 +57,8 @@
       ref="mdEl"
       class="fp-body docx"
       @contextmenu="handleTextContextMenu"
+      @click="handleMarkdownClick"
+      @keydown="handleMarkdownKeydown"
     ></div>
     <PdfViewer
       v-else-if="kind === 'pdf' && activeTab === 'source'"
@@ -173,6 +175,12 @@ import Vditor from 'vditor';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
+import {
+  decorateCitationsIn,
+  handleCitationEvent,
+  parseSourceTitles,
+} from '../lib/citationBadge';
+import { bindDelegatedTooltips } from '../directives/tooltip';
 import { wrapTables } from '../lib/markdownTableWrap';
 import {
   selectionInside,
@@ -234,6 +242,10 @@ const officeMode = ref<OfficeMode>('');
 const officeStatus = ref('连接中');
 const officeError = ref('');
 const mdEl = ref<HTMLDivElement>();
+/** 引用角标的提示文案要按当前文件的来源章取标题 */
+const citationTitles = ref<Map<number, string>>(new Map());
+/** 委托式角标提示的卸载函数（角标由 Vditor 注入，挂不上 Vue 指令） */
+let citationTooltipUnbind: (() => void) | undefined;
 const officeEl = ref<HTMLDivElement>();
 const pdfViewer = ref<InstanceType<typeof PdfViewer>>();
 const versionsOpen = ref(false);
@@ -318,6 +330,21 @@ function handleTextContextMenu(event: MouseEvent) {
     y: event.clientY,
     selection: selectionInside(event.currentTarget as HTMLElement),
   });
+}
+
+/**
+ * 报告类 Markdown 的引用跳转（双向）：点正文角标落到来源章那一条，点来源行回到正文最近的引用处。
+ * 普通 Markdown 里没有角标，这个函数不会命中。
+ */
+function handleMarkdownClick(event: MouseEvent) {
+  handleCitationEvent(mdEl.value, event);
+}
+
+/** 角标是 role=button + tabindex=0，键盘上回车/空格要与点击等价 */
+function handleMarkdownKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  if (!handleCitationEvent(mdEl.value, event)) return;
+  event.preventDefault();
 }
 
 function destroyOffice() {
@@ -681,6 +708,11 @@ async function loadFile() {
       );
       // Vditor 直出原生 table：宽表会连整个预览区一起撑宽（触屏上正文被推出视野，只能整页横拖）
       if (mdEl.value) wrapTables(mdEl.value, 'fp-table-scroll');
+      // 报告类 Markdown 里的 `[1]` 也补成可点角标：与 Wiki 阅读页、客户洞察页行为一致
+      if (mdEl.value) {
+        citationTitles.value = parseSourceTitles(data.text);
+        decorateCitationsIn(mdEl.value, citationTitles.value);
+      }
     } else ext.value = data.ext;
   } catch (error) {
     console.error('文件预览失败', error);
@@ -693,6 +725,17 @@ async function loadFile() {
 onMounted(async () => {
   await loadCapabilities();
   await loadFile();
+  // 角标是 Vditor 注入的 DOM，挂不上 Vue 指令：在预览容器上做委托式提示
+  if (mdEl.value) {
+    citationTooltipUnbind = bindDelegatedTooltips(mdEl.value, 'sup.cite[data-cite]', (el) => {
+      const num = el.dataset.cite || '';
+      return {
+        title: `来源 [${num}]`,
+        body: citationTitles.value.get(Number(num)) || '报告里没有这一条来源',
+        meta: '点击跳到「来源与结论对照」',
+      };
+    });
+  }
   extractionTimer = setInterval(async () => {
     if (!supportsExtraction.value) return;
     const status = extraction.value?.status;
@@ -707,6 +750,7 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
   destroyOffice();
+  citationTooltipUnbind?.();
   if (extractionTimer) clearInterval(extractionTimer);
 });
 watch(() => props.path, loadFile);
@@ -770,6 +814,26 @@ defineExpose({ downloadFile, openExternal });
 .fp-body.docx :deep(h1) { font-size: 1.8em; }
 .fp-body.docx :deep(table) { border-collapse: collapse; }
 .fp-body.docx :deep(td), .fp-body.docx :deep(th) { border: 1px solid var(--border-strong); padding: 4px 10px; }
+/* 报告类 Markdown 的引用角标：可点回「来源与结论对照」，指针与键盘焦点都留可见反馈 */
+.fp-body.docx :deep(sup.cite) {
+  color: var(--accent);
+  font-size: 0.75em;
+  font-weight: 600;
+  padding: 0 1px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.fp-body.docx :deep(sup.cite:hover) { background: var(--accent-soft); }
+.fp-body.docx :deep(sup.cite:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 落到来源章那一条时的短暂高亮；动画结束自己回落 */
+.fp-body.docx :deep(li.cite-hot), .fp-body.docx :deep(p.cite-hot) {
+  animation: cite-flash 1.7s ease-out;
+  border-radius: 6px;
+}
+@keyframes cite-flash {
+  from { background: var(--accent-soft); box-shadow: 0 0 0 4px var(--accent-soft); }
+  to { background: transparent; box-shadow: 0 0 0 4px transparent; }
+}
 /* Markdown 预览的宽表：滚动关进表格自己的容器（lib/markdownTableWrap 包出来），
    外层 .fp-body 不再被撑宽；横滑到边缘时不把动作传给 WebView 的返回手势 */
 .fp-body.docx :deep(.fp-table-scroll) {

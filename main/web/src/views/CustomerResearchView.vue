@@ -249,7 +249,7 @@ import AppModal from '../components/ui/AppModal.vue';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import LiveDuration from '../components/ui/LiveDuration.vue';
 import { renderMarkdown } from '../lib/markdown';
-import { decorateCitations, parseSourceTitles } from '../lib/citationBadge';
+import { decorateCitations, handleCitationEvent, parseSourceTitles } from '../lib/citationBadge';
 import { notify } from '../lib/notify';
 import { useChatStore } from '../stores/chat';
 import { useAppStore } from '../stores/app';
@@ -411,48 +411,49 @@ watch(sections, (list) => {
 const sourceTitles = computed(() => parseSourceTitles(bodyOf('sources', '来源')));
 const activeHtml = computed(() => decorateCitations(renderMarkdown(activeSection.value?.body ?? ''), sourceTitles.value));
 
-/* ---------- 角标：悬停看是哪一条来源，点击跳到来源章那一条 ---------- */
-function citeEl(node: EventTarget | null): HTMLElement | null {
-  return node instanceof Element ? node.closest<HTMLElement>('sup.cite') : null;
-}
+/* ---------- 角标双向跳转：正文角标 → 来源章那一条；来源行 → 正文里最近的引用处 ---------- */
 /**
- * 正文整块换章节时会被复用，所以高亮由「切章之后」统一按待定位编号重新放置，不依赖具体节点身份。
+ * 报告正文按章懒渲染，当前 DOM 里只有一章：
+ *   - 角标要去的来源章可能还没渲染 → sources() 让调用方先切过去
+ *   - 来源行要回到的正文那一处可能不在本章 → locate() 找到含该编号的章节切过去
+ * 切章之后当前帧还看不到新 DOM，所以定位统一推到下一帧（见 placeCiteHighlight）。
  */
-function placeCiteHighlight(num: string): boolean {
+function citationHints() {
+  return {
+    sources: () => {
+      const section = sections.value.find((item) => item.id === 'sources')
+        ?? sections.value.find((item) => item.title.includes('来源'));
+      if (!section) return false;
+      if (section.id === activeSectionId.value) return true;
+      activeSectionId.value = section.id;
+      return true;
+    },
+    locate: (num: string) => {
+      const section = sections.value.find((item) => new RegExp(`\\[${num}\\](?!\\()`).test(item.body));
+      if (!section || section.id === activeSectionId.value) return;
+      activeSectionId.value = section.id;
+      if (citeHighlightTarget) clearTimeout(citeHighlightTarget);
+      citeHighlightTarget = setTimeout(() => placeCiteHighlight(num), 0);
+    },
+  };
+}
+function placeCiteHighlight(num: string) {
   const wrap = bodyRef.value;
-  if (!wrap) return true;
-  // 来源章每条来源本身就是 `[n]`，按编号精确找，绝不按序号推算：各章角标数量不同，序号对不上条目
-  const all = [...wrap.querySelectorAll<HTMLElement>('sup.cite')];
-  const target = all.find((el) => el.dataset.cite === num) ?? all.find((el) => el.dataset.cite !== num) ?? all[0];
-  if (!target) return true;
-  target.classList.remove('cite-hot');
-  // 强制重排后再加类：连点同一编号时也重新播一次动画
-  void target.offsetWidth;
-  target.classList.add('cite-hot');
-  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  target.focus({ preventScroll: true });
+  const hit = wrap?.querySelector<HTMLElement>(`sup.cite[data-cite="${num}"]`) ?? wrap?.querySelector<HTMLElement>('sup.cite');
+  if (!hit) return;
+  hit.classList.remove('cite-hot');
+  void hit.offsetWidth; // 强制重排后再加类：连点同一编号时也重新播一次动画
+  hit.classList.add('cite-hot');
+  hit.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  hit.focus({ preventScroll: true });
   if (citeHighlight) clearTimeout(citeHighlight);
   citeHighlight = setTimeout(() => {
     const wrapNow = bodyRef.value;
     if (wrapNow) wrapNow.querySelectorAll('.cite-hot').forEach((el) => el.classList.remove('cite-hot'));
   }, 1800);
-  return true;
 }
 function onCiteActivate(event: Event) {
-  const el = citeEl(event.target);
-  if (!el) return;
-  if (event.type === 'keydown') {
-    const key = (event as KeyboardEvent).key;
-    if (key !== 'Enter' && key !== ' ') return;
-    event.preventDefault();
-  }
-  const num = el.dataset.cite || '';
-  const target = sections.value.find((section) => section.id === 'sources') ?? sections.value.find((section) => section.title.includes('来源'));
-  if (!target) return;
-  activeSectionId.value = target.id;
-  if (citeHighlightTarget) clearTimeout(citeHighlightTarget);
-  // 章节正文换了、DOM 还没画出来，定位推到下一帧
-  citeHighlightTarget = setTimeout(() => placeCiteHighlight(num), 0);
+  handleCitationEvent(bodyRef.value, event, citationHints());
 }
 /** 角标是 v-html 注入的，挂不上 Vue 指令：委托到容器上，换章后自动对新角标生效 */
 watch(bodyRef, (el) => {
@@ -679,11 +680,14 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .report-markdown :deep(.cite) { color:var(--accent); font-size:10px; font-weight:600; padding:0 1px; border-radius:3px; cursor:pointer; }
 .report-markdown :deep(.cite:hover) { background:var(--accent-soft); }
 .report-markdown :deep(.cite:focus-visible) { outline:2px solid var(--accent); outline-offset:1px; }
-/* 落到来源章那条来源时的短暂高亮；动画结束回落原样，不靠 JS 记状态 */
+/* 落到来源章那条来源时的短暂高亮（条目本身就是 `[n] 标题…` 那一行）；动画结束回落原样 */
+.report-markdown :deep(li.cite-hot),.report-markdown :deep(p.cite-hot) {
+  animation:cite-flash 1.7s ease-out; border-radius:6px;
+}
 .report-markdown :deep(.cite-hot) { animation:cite-flash 1.7s ease-out; }
 @keyframes cite-flash {
-  from { background:var(--accent-soft); box-shadow:0 0 0 3px var(--accent-soft); }
-  to { background:transparent; box-shadow:0 0 0 3px transparent; }
+  from { background:var(--accent-soft); box-shadow:0 0 0 4px var(--accent-soft); }
+  to { background:transparent; box-shadow:0 0 0 4px transparent; }
 }
 
 .result-empty { flex:1; display:grid; justify-items:center; align-content:center; text-align:center; gap:10px; padding:40px 16px; color:var(--text-secondary); }

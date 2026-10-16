@@ -239,6 +239,7 @@
             class="reading-content vditor-reset"
             :aria-busy="rendering"
             @click="handleContentClick"
+            @keydown="handleContentKeydown"
           />
         </article>
 
@@ -351,6 +352,12 @@ import { BP_COMPACT, BP_MOBILE, BP_WIDE } from '../lib/layoutBreakpoints';
 import { registerBackHandler } from '../lib/androidBack';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
 import {
+  decorateCitationsIn,
+  handleCitationEvent,
+  parseSourceTitles,
+} from '../lib/citationBadge';
+import { bindDelegatedTooltips } from '../directives/tooltip';
+import {
   selectionInside,
   type SelectionContextMenuRequest,
 } from '../lib/contextMenu';
@@ -403,6 +410,10 @@ const readerEl = ref<HTMLElement>();
 const toolbarEl = ref<HTMLElement>();
 const mainEl = ref<HTMLElement>();
 const contentEl = ref<HTMLDivElement>();
+/** 角标提示要按当前页的来源章取标题：换页/改正文时跟着重算 */
+const citationTitles = computed(() => parseSourceTitles(props.markdown));
+/** 委托式角标提示的卸载函数（角标由 Vditor 注入，挂不上 Vue 指令） */
+let citationTooltipUnbind: (() => void) | undefined;
 const outlineNavEl = ref<HTMLElement>();
 /** ≤1024px 目录浮层容器（Teleport 到 body）：焦点管理用，见 focusSheet */
 const outlineSheetRef = ref<HTMLElement>();
@@ -987,6 +998,8 @@ async function renderMarkdown() {
       renderCache.delete(renderCache.keys().next().value!);
     }
     host.replaceChildren(...Array.from(next.childNodes));
+    // 引用角标：Vditor 把 `[1]` 原样输出成文本，这里补成可点的上标（悬停看是哪条来源）
+    decorateCitationsIn(host, parseSourceTitles(source));
     bindFoldSections(host);
     await nextTick();
     readerEl.value?.scrollTo({ top: 0 });
@@ -1004,12 +1017,21 @@ async function renderMarkdown() {
 }
 
 function handleContentClick(event: MouseEvent) {
+  // 引用角标与来源行：整页是同一份报告，两者互跳
+  if (handleCitationEvent(contentEl.value, event)) return;
   const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
   if (!link) return;
   const target = wikiTargetFromHref(link.getAttribute('href') || '');
   if (!target) return;
   event.preventDefault();
   emit('open-wikilink', target);
+}
+
+/** 角标是 role=button + tabindex=0，键盘上回车/空格要与点击等价 */
+function handleContentKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  if (!handleCitationEvent(contentEl.value, event)) return;
+  event.preventDefault();
 }
 
 function handleContextMenu(event: MouseEvent) {
@@ -1165,6 +1187,17 @@ watch(
 onMounted(() => {
   void renderMarkdown();
   readerEl.value?.focus();
+  // 角标是 Vditor 注入的 DOM，挂不上 Vue 指令：在正文容器上做委托式提示
+  if (contentEl.value) {
+    citationTooltipUnbind = bindDelegatedTooltips(contentEl.value, 'sup.cite[data-cite]', (el) => {
+      const num = el.dataset.cite || '';
+      return {
+        title: `来源 [${num}]`,
+        body: citationTitles.value.get(Number(num)) || '报告里没有这一条来源',
+        meta: '点击跳到「来源与结论对照」',
+      };
+    });
+  }
   readerEl.value?.addEventListener('scroll', updateCurrentHeading, { passive: true });
   layoutObserver = new ResizeObserver(handleLayoutChange);
   if (readerEl.value) layoutObserver.observe(readerEl.value);
@@ -1189,6 +1222,7 @@ onBeforeUnmount(() => {
   renderVersion++;
   cancelAnimationFrame(scrollFrame);
   cancelAnimationFrame(tailFrame);
+  citationTooltipUnbind?.();
   layoutObserver?.disconnect();
   readerEl.value?.removeEventListener('scroll', updateCurrentHeading);
   wideMedia.removeEventListener('change', onWideChange);
@@ -1729,6 +1763,24 @@ onBeforeUnmount(() => {
   text-decoration: none;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
+}
+/* 报告引用角标：可点回「来源与结论对照」，所以指针与键盘焦点都留可见反馈 */
+.reading-content :deep(sup.cite) {
+  color: var(--accent);
+  font-size: 0.72em;
+  font-weight: 600;
+  padding: 0 1px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.reading-content :deep(sup.cite:hover) { background: var(--accent-soft); }
+.reading-content :deep(sup.cite:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 落到来源章那一条时的短暂高亮；动画结束自己回落，不靠 JS 记状态 */
+.reading-content :deep(li.cite-hot),
+.reading-content :deep(p.cite-hot) { animation: cite-flash 1.7s ease-out; border-radius: 6px; }
+@keyframes cite-flash {
+  from { background: var(--accent-soft); box-shadow: 0 0 0 4px var(--accent-soft); }
+  to { background: transparent; box-shadow: 0 0 0 4px transparent; }
 }
 .reading-content :deep(blockquote) {
   margin: 1.3em 0;
