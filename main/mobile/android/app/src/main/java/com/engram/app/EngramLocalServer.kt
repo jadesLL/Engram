@@ -508,6 +508,12 @@ class EngramLocalServer private constructor(private val context: Context) {
         post("/api/assistant/questions/{id}/answer") {
             call.proxyAgent("POST", "/api/assistant/questions/${encoded(call.parameters["id"].orEmpty())}/answer", call.receiveText())
         }
+        // 客户调研与 Agent 会话共用中枢；手机只转发任务操作，不持有模型凭据。
+        get("/api/customer-research") { call.proxyAgent("GET", "/api/customer-research") }
+        post("/api/customer-research") { call.proxyAgent("POST", "/api/customer-research", call.receiveText()) }
+        put("/api/customer-research/rules") { call.proxyAgent("PUT", "/api/customer-research/rules", call.receiveText()) }
+        post("/api/customer-research/stop") { call.proxyAgent("POST", "/api/customer-research/stop", call.receiveText()) }
+
         // 任务看板：状态、重新生成与「自动提炼间隔」都落中枢（本机不跑 dsh），与上面几条一样窄代理。
         // 间隔也代理的原因：手机上看到的看板本来就来自中枢，到没到期由中枢按它自己的设置算，
         // 这个开关不代理就会出现「设置页能看不能改」。

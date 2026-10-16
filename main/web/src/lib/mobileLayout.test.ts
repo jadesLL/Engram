@@ -262,3 +262,13 @@ test('安卓端接线：连接通道 / 优先局域网 / 挂载散图 / 日志�
   const ideas = read('server/src/routes/ideas.ts');
   assert.match(ideas, /requireAssistantAccess/, '记灵感退回仅 owner 鉴权：手机上的「记一条灵感」会必失败');
 });
+
+test('Android 客户调研四条操作均转发到中枢，沿用成员鉴权', () => {
+  const server = read('mobile/android/app/src/main/java/com/engram/app/EngramLocalServer.kt');
+  for (const [verb,route] of [['get','/api/customer-research'],['post','/api/customer-research'],
+    ['put','/api/customer-research/rules'],['post','/api/customer-research/stop']]) {
+    const body = verb === 'get' ? '' : ', call.receiveText()';
+    assert.ok(server.includes(`${verb}("${route}") { call.proxyAgent("${verb.toUpperCase()}", "${route}"${body}) }`),`${verb} ${route} 缺少 Android 转发`);
+  }
+  assert.match(read('server/src/routes/customerResearch.ts'),/addHook\('preHandler', requireAssistantAccess\)/);
+});
