@@ -68,12 +68,14 @@ test('简称输入使用核实全名命名和展示；重名递增并保留历�
   // A soft-deleted report still reserves its path even after the file is removed.
   db.prepare('UPDATE pages SET deleted=1 WHERE path=?').run(first.path);
   fs.unlinkSync(safeJoin(first.path));
-  const secondTask = research.beginCustomerResearch({customer:'另一简称',scope:'knowledge-only',save:true});
+  // 同一个时区必须显式传给后面两个任务：断言用的是第一个任务的 reportDate（Asia/Hong_Kong），
+  // 不传就落到进程时区——CI 容器是 UTC，香港时间 00:00–08:00 这段两边日期不同，重名递增会失效。
+  const secondTask = research.beginCustomerResearch({customer:'另一简称',scope:'knowledge-only',save:true,timeZone:'Asia/Hong_Kong'});
   const second = research.submitCustomerResearch({taskId:secondTask.taskId,...valid});
   assert.equal(second.path,`${base}_2.md`);
   // An unindexed on-disk file also reserves a suffix.
   fs.writeFileSync(safeJoin(`${base}_3.md`),original);
-  const thirdTask = research.beginCustomerResearch({customer:'命名验收',scope:'knowledge-only',save:true});
+  const thirdTask = research.beginCustomerResearch({customer:'命名验收',scope:'knowledge-only',save:true,timeZone:'Asia/Hong_Kong'});
   const third = research.submitCustomerResearch({taskId:thirdTask.taskId,...valid});
   assert.equal(third.path,`${base}_4.md`);
   assert.equal(fs.readFileSync(safeJoin(`${base}_3.md`),'utf8'),original);
