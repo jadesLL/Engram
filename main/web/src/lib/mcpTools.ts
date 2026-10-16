@@ -21,7 +21,7 @@ export interface McpToolDoc {
 
 export const MCP_TOOLS: McpToolDoc[] = [
   { name: 'begin_customer_research', group: '写', summary: '客户调研统一入口：建立任务、读取最新 ACS 流程与固定报告模板。', params: 'customer 客户名称；scope knowledge-web / knowledge-only；save 是否已要求保存；client 客户端名；timeZone 用户时区。', notes: '内置与 Codex、ZCode、DeepSeek Harness、Kimi、WorkBuddy 等客户端共用；任务固定规则版本。', cli: 'MCP 专用' },
-  { name: 'submit_customer_research', group: '写', summary: '按任务模板检查客户报告；按用户意图保存为新原始资料。', params: 'taskId；sections 固定章节对象；sources 来源数组；save 保存授权。', notes: '拒绝缺章、无效引用、重复来源及覆盖历史报告；检查结构不等于证明事实真实。', cli: 'MCP 专用' },
+  { name: 'submit_customer_research', group: '写', summary: '按任务模板检查客户报告；按用户意图保存为新原始资料。', params: 'taskId；companyFullName 已核实的公司全名；sections 固定章节对象；sources 来源数组；save 保存授权。', notes: '按 YYYY.MM.DD_公司全名调研报告 命名，重名追加 _2、_3；拒绝缺章、无效引用、重复来源及覆盖历史报告；检查结构不等于证明事实真实。', cli: 'MCP 专用' },
   {
     name: 'search',
     group: '读',

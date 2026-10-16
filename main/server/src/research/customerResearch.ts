@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { z } from 'zod';
 import { db, getSetting, setSetting } from '../lib/db.js';
-import { readPage, safeJoin } from '../lib/vault.js';
+import { readPage, safeJoin, pagePathTaken } from '../lib/vault.js';
 import { createRawMaterial } from '../pipeline/rawMaterial.js';
 import { CUSTOMER_RESEARCH_SECTIONS, CUSTOMER_RESEARCH_WORKFLOW } from '../content/customerResearch.js';
 
@@ -15,6 +15,7 @@ export const researchSourceSchema = z.object({
   publishedAt: z.string().trim().min(1).max(80).regex(/^[^\u0000-\u001f]+$/), accessedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 }).strict();
 export const researchReportSchema = z.object({
+  companyFullName: z.string().trim().min(1).max(100).regex(/^[^\u0000-\u001f]+$/).optional().describe('依据来源核实的公司全名；无法确认时省略，沿用输入名称并在报告标注全称待确认'),
   sections: z.record(text), sources: z.array(researchSourceSchema).max(100),
 }).strict();
 type Report = z.infer<typeof researchReportSchema>;
@@ -49,7 +50,7 @@ export function beginCustomerResearch(input: { customer: string; scope?: string;
   return {
     taskId: id, customer: d.customer, scope: d.scope, saveRequested: d.save, createdAt: at,
     version: rules.version, workflow: rules.workflow, reportDate, timeZone: d.timeZone,
-    reportContract: { sections: rules.sections, sources: '{id:整数,title,url或path,publishedAt,accessedAt:YYYY-MM-DD}', citations: '[来源编号]', missing: '每个章节都保留；无依据的写资料不足。', submission: 'submit_customer_research(taskId, sections, sources, save)' },
+    reportContract: { companyFullName: '提交依据来源核实的公司全名；无法确认时省略，沿用输入名称并在报告标注全称待确认，不编造全名。', naming: 'YYYY.MM.DD_公司全名调研报告.md；重名依次追加 _2、_3，日期使用 reportDate。', sections: rules.sections, sources: '{id:整数,title,url或path,publishedAt,accessedAt:YYYY-MM-DD}', citations: '[来源编号]', missing: '每个章节都保留；无依据的写资料不足。', submission: 'submit_customer_research(taskId, companyFullName, sections, sources, save)' },
   };
 }
 
@@ -63,17 +64,17 @@ export function renderCustomerResearch(task: Pick<Row, 'customer' | 'rules' | 'c
   const rules: Rules = JSON.parse(task.rules);
   const sections = rules.sections.map(s => `## ${s.title}\n\n${report.sections[s.id]}`).join('\n\n');
   const sources = report.sources.map(s => `- [${s.id}] ${s.title}；发布日期：${s.publishedAt}；${s.url || s.path}；访问日期：${s.accessedAt}`).join('\n');
-  return `客户：${task.customer}\n\n生成日期：${task.report_date} · 流程版本：v${rules.version} · 资料范围：${task.scope === 'knowledge-only' ? '仅知识库' : '知识库与公开信息（实际联网能力见调研范围）'}\n\n${sections}\n\n## 来源与结论对照\n\n${sources || '无可核实来源；报告仅列资料缺口，不构成事实结论。'}\n`;
+  return `客户：${report.companyFullName || task.customer}\n\n生成日期：${task.report_date} · 流程版本：v${rules.version} · 资料范围：${task.scope === 'knowledge-only' ? '仅知识库' : '知识库与公开信息（实际联网能力见调研范围）'}\n\n${sections}\n\n## 来源与结论对照\n\n${sources || '无可核实来源；报告仅列资料缺口，不构成事实结论。'}\n`;
 }
 
-export function submitCustomerResearch(input: { taskId: string; sections: unknown; sources: unknown; save?: boolean }) {
+export function submitCustomerResearch(input: { taskId: string; companyFullName?: string; sections: unknown; sources: unknown; save?: boolean }) {
   if (typeof input.taskId !== 'string' || (input.save !== undefined && typeof input.save !== 'boolean')) throw new CustomerResearchError('taskId / save 类型错误');
   const task = row(input.taskId);
   if (task.run_id) {
     const run = db.prepare('SELECT status FROM assistant_runs WHERE id=?').get(task.run_id) as {status:string} | undefined;
     if (run && ['cancelled','failed','interrupted'].includes(run.status) && !task.path) throw new CustomerResearchError('本次内置调研已停止或失败，请重新发起任务');
   }
-  const parsed = researchReportSchema.safeParse({ sections: input.sections, sources: input.sources });
+  const parsed = researchReportSchema.safeParse({ companyFullName: input.companyFullName, sections: input.sections, sources: input.sources });
   if (!parsed.success) throw new CustomerResearchError(`报告格式错误：${parsed.error.issues.map(i => `${i.path.join('.')} ${i.message}`).join('；')}`);
   const report = parsed.data;
   const rules: Rules = JSON.parse(task.rules);
@@ -114,8 +115,11 @@ export function submitCustomerResearch(input: { taskId: string; sections: unknow
   const save = task.run_id ? Boolean(task.save_requested) : input.save ?? Boolean(task.save_requested);
   let savedPath = '';
   if (save) {
-    const safeCustomer = task.customer.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').slice(0, 80) || '客户';
-    const path = `原始资料/文档/${task.report_date.replace(/-/g, '.')}_${safeCustomer}_客户调研_${task.id.slice(0, 8)}.md`;
+    const safeCustomer = (report.companyFullName || task.customer).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '') || '客户';
+    const base = `原始资料/文档/${task.report_date.replace(/-/g, '.')}_${safeCustomer}调研报告`;
+    let path = `${base}.md`, suffix = 2;
+    // Include soft-deleted pages and unindexed files so historical reports remain intact.
+    while (pagePathTaken(path)) path = `${base}_${suffix++}.md`;
     savedPath = createRawMaterial({ path, content: markdown }).path;
   }
   db.prepare('UPDATE customer_research_tasks SET report=?,path=?,updated_at=? WHERE id=?').run(markdown, savedPath, new Date().toISOString(), task.id);

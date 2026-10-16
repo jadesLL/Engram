@@ -46,11 +46,41 @@ test('预览可显式保存、重复保存幂等、成品不可覆盖，新任�
   const valid = report();
   assert.equal(research.submitCustomerResearch({taskId:task.taskId,...valid}).saved,false);
   const saved = research.submitCustomerResearch({taskId:task.taskId,...valid,save:true});
-  assert.equal(saved.saved,true); assert.match(saved.path,/客户_A/);
+  assert.equal(saved.saved,true); assert.equal(saved.path,`原始资料/文档/${task.reportDate.replace(/-/g,'.')}_客户_A调研报告.md`);
   assert.equal(research.submitCustomerResearch({taskId:task.taskId,...valid,save:true}).path,saved.path);
   assert.throws(()=>research.submitCustomerResearch({taskId:task.taskId,...valid,sections:{...valid.sections,profile:'改变报告 [1]'},save:true}),/不可覆盖/);
   const next=research.beginCustomerResearch({customer:'客户/A',scope:'knowledge-only',save:true});
-  assert.notEqual(research.submitCustomerResearch({taskId:next.taskId,...valid}).path,saved.path);
+  assert.equal(research.submitCustomerResearch({taskId:next.taskId,...valid}).path,saved.path.replace(/\.md$/,'_2.md'));
+});
+
+test('简称输入使用核实全名命名和展示；重名递增并保留历史文件及回收站记录', async () => {
+  const companyFullName = '命名验收科技有限公司';
+  const task = research.beginCustomerResearch({customer:'命名验收',scope:'knowledge-only',save:true,timeZone:'Asia/Hong_Kong'});
+  assert.match(task.reportContract.companyFullName,/核实/);
+  const valid = {...report(),companyFullName};
+  const first = research.submitCustomerResearch({taskId:task.taskId,...valid});
+  const base = `原始资料/文档/${task.reportDate.replace(/-/g,'.')}_${companyFullName}调研报告`;
+  assert.equal(first.path,`${base}.md`);
+  assert.match(first.markdown,new RegExp(`客户：${companyFullName}`));
+  const { readPage, safeJoin } = await import('../lib/vault.js');
+  assert.equal(readPage(first.path)?.meta.title,base.split('/').at(-1));
+  const original = fs.readFileSync(safeJoin(first.path),'utf8');
+  // A soft-deleted report still reserves its path even after the file is removed.
+  db.prepare('UPDATE pages SET deleted=1 WHERE path=?').run(first.path);
+  fs.unlinkSync(safeJoin(first.path));
+  const secondTask = research.beginCustomerResearch({customer:'另一简称',scope:'knowledge-only',save:true});
+  const second = research.submitCustomerResearch({taskId:secondTask.taskId,...valid});
+  assert.equal(second.path,`${base}_2.md`);
+  // An unindexed on-disk file also reserves a suffix.
+  fs.writeFileSync(safeJoin(`${base}_3.md`),original);
+  const thirdTask = research.beginCustomerResearch({customer:'命名验收',scope:'knowledge-only',save:true});
+  const third = research.submitCustomerResearch({taskId:thirdTask.taskId,...valid});
+  assert.equal(third.path,`${base}_4.md`);
+  assert.equal(fs.readFileSync(safeJoin(`${base}_3.md`),'utf8'),original);
+  assert.equal(research.submitCustomerResearch({taskId:thirdTask.taskId,...valid}).path,third.path);
+  assert.throws(()=>research.submitCustomerResearch({taskId:thirdTask.taskId,...valid,companyFullName:'另一个名称'}),/不可覆盖/);
+  const invalidTask = research.beginCustomerResearch({customer:'格式校验'});
+  assert.throws(()=>research.submitCustomerResearch({taskId:invalidTask.taskId,...report(),companyFullName:'\n'}),/报告格式错误/);
 });
 test('内置启动固定任务并授权保存，运行中的重复请求复用；失败回滚空任务和会话', async () => {
   const { buildTask } = await import('../assistant/prompts.js');

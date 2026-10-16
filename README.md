@@ -21,7 +21,7 @@
 | 知识整理 | Agent 提炼概念与实体，写入时校验原文引文，保留来源证据与操作记录 |
 | 检索与阅读 | 全文搜索、双向链接、知识图谱、沉浸阅读与附件预览 |
 | Agent 助手 | 基于资料问答、调研、生成任务看板，也可按计划自动整理与纠错 |
-| 客户调研 | 输入客户名称，按统一 ACS 流程与模板生成带来源的报告；内置 Agent 与 Codex、ZCode、DeepSeek Harness、Kimi、WorkBuddy 共用 |
+| 客户调研 | 输入客户名称，按统一 ACS 流程与模板生成带来源的报告，保存为 `YYYY.MM.DD_公司全名调研报告`，重名自动追加尾缀；内置 Agent 与 Codex、ZCode、DeepSeek Harness、Kimi、WorkBuddy 共用 |
 | 自定义首页 | 拖动、调整卡片大小，组合概览、快速问答与灵感入口；紧凑卡片按尺寸重排内容 |
 | 多端与备份 | Windows / Android / Docker 多端同步，离线编辑、整库备份与恢复 |
 
