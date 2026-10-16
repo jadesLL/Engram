@@ -119,7 +119,14 @@
               </div>
               <div class="body">
                 <h3 class="body-title">{{ activeSection?.title }}</h3>
-                <div class="report-markdown" v-html="activeHtml" />
+                <!-- 正文是 v-html 注入的：角标的悬停提示与点击都改走委托绑定（见 bodyRef） -->
+                <div
+                  ref="bodyRef"
+                  class="report-markdown"
+                  @click="onCiteActivate"
+                  @keydown="onCiteActivate"
+                  v-html="activeHtml"
+                />
               </div>
             </template>
 
@@ -233,7 +240,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onScopeDispose, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '../api';
 import Icon from '../components/Icon.vue';
@@ -242,10 +249,12 @@ import AppModal from '../components/ui/AppModal.vue';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
 import LiveDuration from '../components/ui/LiveDuration.vue';
 import { renderMarkdown } from '../lib/markdown';
+import { decorateCitations, parseSourceTitles } from '../lib/citationBadge';
 import { notify } from '../lib/notify';
 import { useChatStore } from '../stores/chat';
 import { useAppStore } from '../stores/app';
 import { isComposingKey } from '../lib/ime';
+import { bindDelegatedTooltips } from '../directives/tooltip';
 
 type Task = { id: string; customer: string; client: string; version: number; status: string; error: string; createdAt: string; markdown: string; path: string; sessionId: string; runId: string };
 type Rules = { version: number; workflow: string; sections: Array<{ id: string; title: string }> };
@@ -262,6 +271,10 @@ const workflowDraft = ref(''), titlesDraft = ref<string[]>([]);
 const startOpen = ref(false), rulesOpen = ref(false), customerInput = ref<HTMLInputElement>();
 const query = ref(''), filter = ref<'all' | 'running'>('all');
 const selectedName = ref(''), activeSectionId = ref('');
+/** 正文容器：角标是 v-html 里的动态 DOM，提示与点击都在它上面做委托绑定 */
+const bodyRef = ref<HTMLElement | null>(null);
+/** 待定位的来源编号与高亮计时器：点角标 → 切到来源章 → 滚到那一条并闪一下 */
+let citeHighlight: ReturnType<typeof setTimeout> | undefined, citeHighlightTarget: ReturnType<typeof setTimeout> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined, disposed = false, loading = false;
 
 const isRunning = (task: Task) => ['running', 'queued'].includes(task.status);
@@ -393,14 +406,67 @@ watch(sections, (list) => {
   if (list.length && !list.some((item) => item.id === activeSectionId.value)) activeSectionId.value = list[0].id;
 }, { immediate: true });
 
-/* ---------- 正文里的 [1] 引用改成上标（代码块内不动） ---------- */
-function decorateCitations(html: string): string {
-  return html
-    .split(/(<pre[\s\S]*?<\/pre>|<code[\s\S]*?<\/code>)/g)
-    .map((part, index) => (index % 2 ? part : part.replace(/\[(\d{1,3})\](?!\()/g, '<sup class="cite">[$1]</sup>')))
-    .join('');
+/* ---------- 正文里的 [1] 引用改成可回溯的上标（代码块内不动） ---------- */
+// 解析与套角标都是纯字符串逻辑，放在 lib/citationBadge（那边有单测）
+const sourceTitles = computed(() => parseSourceTitles(bodyOf('sources', '来源')));
+const activeHtml = computed(() => decorateCitations(renderMarkdown(activeSection.value?.body ?? ''), sourceTitles.value));
+
+/* ---------- 角标：悬停看是哪一条来源，点击跳到来源章那一条 ---------- */
+function citeEl(node: EventTarget | null): HTMLElement | null {
+  return node instanceof Element ? node.closest<HTMLElement>('sup.cite') : null;
 }
-const activeHtml = computed(() => decorateCitations(renderMarkdown(activeSection.value?.body ?? '')));
+/**
+ * 正文整块换章节时会被复用，所以高亮由「切章之后」统一按待定位编号重新放置，不依赖具体节点身份。
+ */
+function placeCiteHighlight(num: string): boolean {
+  const wrap = bodyRef.value;
+  if (!wrap) return true;
+  // 来源章每条来源本身就是 `[n]`，按编号精确找，绝不按序号推算：各章角标数量不同，序号对不上条目
+  const all = [...wrap.querySelectorAll<HTMLElement>('sup.cite')];
+  const target = all.find((el) => el.dataset.cite === num) ?? all.find((el) => el.dataset.cite !== num) ?? all[0];
+  if (!target) return true;
+  target.classList.remove('cite-hot');
+  // 强制重排后再加类：连点同一编号时也重新播一次动画
+  void target.offsetWidth;
+  target.classList.add('cite-hot');
+  target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  target.focus({ preventScroll: true });
+  if (citeHighlight) clearTimeout(citeHighlight);
+  citeHighlight = setTimeout(() => {
+    const wrapNow = bodyRef.value;
+    if (wrapNow) wrapNow.querySelectorAll('.cite-hot').forEach((el) => el.classList.remove('cite-hot'));
+  }, 1800);
+  return true;
+}
+function onCiteActivate(event: Event) {
+  const el = citeEl(event.target);
+  if (!el) return;
+  if (event.type === 'keydown') {
+    const key = (event as KeyboardEvent).key;
+    if (key !== 'Enter' && key !== ' ') return;
+    event.preventDefault();
+  }
+  const num = el.dataset.cite || '';
+  const target = sections.value.find((section) => section.id === 'sources') ?? sections.value.find((section) => section.title.includes('来源'));
+  if (!target) return;
+  activeSectionId.value = target.id;
+  if (citeHighlightTarget) clearTimeout(citeHighlightTarget);
+  // 章节正文换了、DOM 还没画出来，定位推到下一帧
+  citeHighlightTarget = setTimeout(() => placeCiteHighlight(num), 0);
+}
+/** 角标是 v-html 注入的，挂不上 Vue 指令：委托到容器上，换章后自动对新角标生效 */
+watch(bodyRef, (el) => {
+  if (!el) return;
+  const unbind = bindDelegatedTooltips(el, 'sup.cite', (node) => {
+    const num = node.dataset.cite || '';
+    return {
+      title: `来源 [${num}]`,
+      body: sourceTitles.value.get(Number(num)) || '报告里没有这一条来源',
+      meta: '点击跳到「来源与结论对照」',
+    };
+  });
+  onScopeDispose(() => unbind());
+}, { flush: 'post' });
 
 /* ---------- 右栏速览：全部从报告里派生 ---------- */
 function plain(text: string): string {
@@ -609,7 +675,16 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .report-markdown :deep(.md-table th),.report-markdown :deep(.md-table td) { border:1px solid var(--border); padding:6px 9px; text-align:left; }
 .report-markdown :deep(.md-table th) { background:var(--bg-tertiary); font-weight:600; }
 .report-markdown :deep(.md-quote) { margin:0 0 12px; padding:6px 12px; border-left:3px solid var(--border); color:var(--text-secondary); }
-.report-markdown :deep(.cite) { color:var(--accent); font-size:10px; font-weight:600; padding:0 1px; }
+/* 引用角标：可点（回到「来源与结论对照」那一条），所以给指针与键盘焦点都留可见反馈 */
+.report-markdown :deep(.cite) { color:var(--accent); font-size:10px; font-weight:600; padding:0 1px; border-radius:3px; cursor:pointer; }
+.report-markdown :deep(.cite:hover) { background:var(--accent-soft); }
+.report-markdown :deep(.cite:focus-visible) { outline:2px solid var(--accent); outline-offset:1px; }
+/* 落到来源章那条来源时的短暂高亮；动画结束回落原样，不靠 JS 记状态 */
+.report-markdown :deep(.cite-hot) { animation:cite-flash 1.7s ease-out; }
+@keyframes cite-flash {
+  from { background:var(--accent-soft); box-shadow:0 0 0 3px var(--accent-soft); }
+  to { background:transparent; box-shadow:0 0 0 3px transparent; }
+}
 
 .result-empty { flex:1; display:grid; justify-items:center; align-content:center; text-align:center; gap:10px; padding:40px 16px; color:var(--text-secondary); }
 .result-empty h3 { font-size:15px; font-weight:600; color:var(--text); margin:0; }
