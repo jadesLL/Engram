@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import { requireAuth } from './auth.js';
+import { requireAssistantAccess } from '../assistant/access.js';
 import { AgentNotConfiguredError, cancelRun } from '../assistant/runner.js';
 import { getRun } from '../assistant/repository.js';
 import { customerResearchRules, customerResearchTasks, startBuiltinCustomerResearch, updateCustomerResearchRules, CustomerResearchError } from '../research/customerResearch.js';
 
 export async function customerResearchRoutes(app: FastifyInstance) {
-  app.addHook('preHandler', requireAuth);
+  // Android forwards these task operations with its existing sync member token.
+  app.addHook('preHandler', requireAssistantAccess);
   app.get('/api/customer-research', async () => ({ tasks: customerResearchTasks(), rules: customerResearchRules() }));
   app.put('/api/customer-research/rules', async (req, reply) => {
     try { return updateCustomerResearchRules(req.body); }
