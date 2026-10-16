@@ -52,7 +52,7 @@
               <span class="ava" aria-hidden="true">{{ item.name.slice(0, 1) }}</span>
               <span class="cust-text">
                 <span class="cust-name">{{ item.name }}</span>
-                <span class="cust-meta">{{ item.tasks.length }} 次调研 · {{ shortTime(item.latest.createdAt) }}</span>
+                <span class="cust-meta">{{ item.tasks.length }} 次 · {{ shortDate(item.latest.createdAt) }}</span>
               </span>
               <span class="sdot" :class="dotClass(item.latest)" aria-hidden="true" />
             </button>
@@ -109,11 +109,15 @@
                   :class="{ on: section.id === activeSection?.id }"
                   :aria-pressed="section.id === activeSection?.id"
                   :title="section.title"
-                  @click="activeSectionId = section.id"
+                  @click="activeSectionValue = section.id"
                 >
                   <span class="tab-n">{{ String(index + 1).padStart(2, '0') }}</span>{{ section.title }}
                 </button>
               </nav>
+              <!-- 窄容器里 9 个中文标题会折成三四行标签条，改成下拉 -->
+              <div class="tabs-select">
+                <AppSelect v-model="activeSectionValue" :options="sectionOptions" aria-label="报告章节" />
+              </div>
               <div class="body">
                 <h3 class="body-title">{{ activeSection?.title }}</h3>
                 <div class="report-markdown" v-html="activeHtml" />
@@ -272,7 +276,7 @@ const formatTime = (at: string) => {
   const date = new Date(at);
   return Number.isNaN(date.getTime()) ? '' : `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
-const shortTime = (at: string) => formatTime(at).slice(5);
+const shortDate = (at: string) => formatTime(at).slice(5, 10); // MM-DD：列表扫一眼最近哪天就够了
 const fileName = (path: string) => path.split('/').pop() || path;
 function statusChipClass(task: Task) {
   if (task.status === 'saved') return 'ok';
@@ -377,6 +381,15 @@ const sections = computed<ReportSection[]>(() => {
 const activeSection = computed<ReportSection | null>(
   () => sections.value.find((item) => item.id === activeSectionId.value) ?? sections.value[0] ?? null,
 );
+/** 标签条与下拉共用一个值：activeSectionId 允许为空（自动落到第一章），选中态统一看 activeSection */
+const activeSectionValue = computed({
+  get: () => activeSection.value?.id ?? '',
+  set: (value: string) => { activeSectionId.value = value; },
+});
+const sectionOptions = computed(() => sections.value.map((section, index) => ({
+  value: section.id,
+  label: `${String(index + 1).padStart(2, '0')} ${section.title}`,
+})));
 // 换客户/换报告时回到第一章，不要停在上一份报告的章节上
 watch([() => current.value?.name, () => currentTask.value.id], () => { activeSectionId.value = ''; });
 watch(sections, (list) => {
@@ -577,6 +590,9 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .tab.on::after { content:''; position:absolute; left:8px; right:8px; bottom:-1px; height:2px; border-radius:2px; background:var(--accent); }
 .tab-n { font-size:10.5px; color:var(--text-secondary); margin-right:4px; font-variant-numeric:tabular-nums; }
 .tab.on .tab-n { color:var(--accent); }
+/* 章节下拉：只在窄容器里顶替标签条（见文末容器查询） */
+.tabs-select { display:none; padding:10px 24px; border-bottom:1px solid var(--border); }
+.tabs-select :deep(.app-select) { width:100%; }
 
 .body { flex:1; min-height:0; overflow-y:auto; padding:16px 24px 22px; }
 .body-title { font-size:16px; font-weight:650; margin:0 0 10px; }
@@ -628,15 +644,19 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 
 @keyframes arrive { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
 
-/* 容器宽度不够放三栏时（典型：应用侧栏展开、窗口 1440 左右）：客户列表 + 档案两栏在上，
-   速览整行落到下方排成一条横带并按内容撑开，报告正文不再被挤成窄条 */
+/* 容器放不下宽三栏时（典型：应用侧栏展开、窗口 1440 左右）：三栏都保留，收窄两侧，
+   把宽度让给报告正文；章节导航从标签条换成下拉，省掉三四行折行的标题 */
 @container (max-width:1180px) {
-  .cols { flex-direction:column; }
-  .cols-main { flex:1 1 auto; grid-template-columns:196px minmax(0,1fr); }
-  .cols > .aside-col { flex:0 0 auto; display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
-    gap:0 16px; align-items:start; overflow:visible; padding:14px 16px 4px; }
-  .cols > .aside-col .blk { border-bottom:0; padding-bottom:0; margin-bottom:0; }
-  .cols > .aside-col .blk + .blk { border-left:1px solid var(--border); padding-left:16px; }
+  .cols-main { grid-template-columns:176px minmax(0,1fr); }
+  .cols > .aside-col { flex:0 0 240px; }
+  .cols-main .arc-head { padding:16px 20px 12px; }
+  .cols-main .arc-top { flex-wrap:wrap; }
+  .cols-main .arc-actions { flex-wrap:wrap; }
+  .cols-main .arc-top h2 { font-size:20px; }
+  .cols-main .body { padding:16px 20px 22px; }
+  .cols-main .tabs { display:none; }
+  .tabs-select { display:block; }
+  .facts { grid-template-columns:62px minmax(0,1fr); }
 }
 /* 更窄（手机 / 竖屏）：单列堆叠，整页滚动，客户列表变成一条会换行的胶囊 */
 @container (max-width:860px) {
@@ -648,10 +668,8 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
   .col-label { padding-bottom:6px; }
   .cols-main .archive { margin-top:14px; overflow:visible; }
   .cols-main .arc-head { padding:16px; }
-  .cols-main .arc-top { flex-wrap:wrap; }
-  .cols-main .arc-actions { flex-wrap:wrap; }
   .cols-main .arc-top h2 { font-size:19px; }
-  .cols-main .tabs { padding:0 16px; }
+  .tabs-select { padding:10px 16px; }
   .cols-main .body { overflow:visible; padding:14px 16px 18px; }
   .cols > .aside-col { display:block; margin-top:14px; overflow:visible; padding:16px 16px 4px; }
   .cols > .aside-col .blk { border-bottom:1px solid var(--border); padding-bottom:13px; margin-bottom:13px; }
