@@ -18,12 +18,13 @@
       <span v-if="!summary.status" class="tile-label">{{ shortTitle }}</span>
     </button>
 
-    <!-- 同步状态：结论只出现一次，进度 / 最近同步时间紧随其后。 -->
+    <!-- 同步状态：结论只出现一次，进度 / 最近同步时间紧随其后。
+         横条档（h=1，内容高度只有约 63px）不再重复卡片名——「标题+结论+时间」三行必溢出被裁，
+         结论本身已含「同步」；说明行固定单行省略，让行高预算与实际一致，避免下方列表行被截半。 -->
     <template v-else-if="summary.presentation === 'sync'">
       <button type="button" class="sync-summary" :class="summary.status?.tone" :aria-label="`${title}：${summary.status?.text}，${summary.label}，打开完整内容`" @click="$emit('open')">
-        <span v-if="tier === 'bar'" class="sync-caption"><Icon :name="icon" :size="12" />{{ shortTitle }}</span>
         <span class="sync-state"><i class="sdot" :class="summary.status?.tone" />{{ summary.status?.text }}</span>
-        <span class="sync-description">{{ summary.label }}</span>
+        <span class="sync-description" :title="summary.label">{{ summary.label }}</span>
         <Icon v-if="tier === 'bar'" class="sync-arrow" name="arrow-up-right" :size="14" />
       </button>
       <div v-if="tier !== 'bar' && shown.length" class="summary-rows sync-rows" :style="{ '--summary-row-height': `${plan.rowHeight}px` }">
@@ -130,16 +131,16 @@ onUnmounted(()=>observer?.disconnect());
 .sdot.warn {background:var(--warning,#d97706)}
 .sdot.muted {background:var(--text-faint)}
 
-.sync-summary {position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;min-width:0;flex:none;padding:2px 22px 2px 0;text-align:left;color:var(--text);border-radius:7px}
-.tier-bar .sync-summary {flex:1}
-.sync-caption {display:flex;align-items:center;gap:5px;font-size:10.5px;line-height:1.3;color:var(--text-faint)}
-.sync-caption :deep(svg) {color:var(--accent)}
+/* 右侧内边距只留给横条档的展开箭头；其余档位没有箭头，多留 22px 只会挤掉说明文字 */
+.sync-summary {position:relative;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;min-width:0;flex:none;padding:1px 0;text-align:left;color:var(--text);border-radius:7px}
+.tier-bar .sync-summary {flex:1;padding-right:22px}
 .sync-state {display:flex;align-items:center;gap:7px;max-width:100%;font-size:15px;font-weight:550;line-height:1.4;overflow-wrap:anywhere}
-.sync-description {font-size:11px;line-height:1.5;color:var(--text-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+/* 单行省略：两行说明（约 63px）会突破 cardContentPlan 数值区 46px 的预算，把下方列表行截半 */
+.sync-description {max-width:100%;font-size:11px;line-height:1.5;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sync-arrow {position:absolute;right:0;top:50%;transform:translateY(-50%);color:var(--text-faint);transition:color 150ms ease}
 .sync-summary:hover .sync-arrow {color:var(--accent)}
-.sync-rows {margin-top:12px}
-.narrow .sync-summary {padding-right:0}
+/* 与 cardContentPlan 的 gap（8px）严格对齐：超出几像素，最后一行就会被 overflow 裁掉一截 */
+.sync-rows {margin-top:8px}
 .narrow .sync-state {font-size:12px;gap:5px}
 .narrow .sync-arrow {display:none}
 .narrow .sync-description {font-size:10px}
