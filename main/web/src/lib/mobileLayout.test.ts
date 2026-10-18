@@ -272,3 +272,38 @@ test('Android 客户调研四条操作均转发到中枢，沿用成员鉴权', 
   }
   assert.match(read('server/src/routes/customerResearch.ts'),/addHook\('preHandler', requireAssistantAccess\)/);
 });
+
+test('客户洞察工作台在手机宽度下真的换成单列（2026-10-18 手机端补齐）', () => {
+  // 用户报障：桌面端新做的客户洞察工作台，在手机上三栏仍并排，正文被挤成一条窄缝。
+  // 根因：.cols 是 flex 行，@container 740 里只把子项改成 display:block（对 flex item 是空操作），
+  // 右栏仍按 flex:0 0 clamp(178px,21cqw,300px) 占宽，360px 手机的主列只剩约 90px。
+  // 版式没法单测跑，沿用本文件既有写法：读源码把关键声明锁死。
+  const view = readSrc('views/CustomerResearchView.vue');
+  const cut = view.indexOf('@container (max-width:740px)');
+  assert.ok(cut >= 0, '找不到 740 容器查询：手机档整块没了');
+  const narrow = view.slice(cut);
+  assert.match(narrow, /\.cols \{[^}]*flex-direction:column/, '三栏没改成单列：手机上正文仍被右栏挤成一条窄缝');
+  assert.match(narrow, /\.cols > \.aside-col \{[^}]*flex:none/, '右栏仍是 flex 固定宽度：改成单列后还会横向占位');
+  assert.match(narrow, /\.page-head \{[^}]*flex-wrap:wrap/, '页头没换行：手机上「发起调研」会被挤出视口');
+  assert.match(narrow, /\.ph-actions \{[^}]*flex:1 1 100%/, '页头动作没独占一行：手机宽度下按钮仍挤在标题旁');
+});
+
+test('安卓返回键先关下拉菜单（手机上它常是唯一的分区导航）', () => {
+  // AppSelect 的弹层 Teleport 到 body，不在 globalBackLayers 的浮层清单里；而客户洞察在窄屏
+  // 用下拉顶替章节标签条——不接管返回键的话，展开下拉时一按返回就把整页退掉。
+  const select = readSrc('components/ui/AppSelect.vue');
+  assert.match(select, /registerBackHandler\(/, '下拉菜单没接返回键：手机上按返回会直接退页');
+  assert.match(select, /backUnregister\?\.\(\)/, '返回处理没随菜单关闭注销：关掉的菜单仍会吞返回键');
+});
+
+test('引用角标在触屏上留出可点热区', () => {
+  // 角标字号只有 10px 左右：纯文字热区在手机上几乎点不中，三处渲染入口都要用 padding 撑开
+  const rules = [
+    ['views/CustomerResearchView.vue', /\.report-markdown :deep\(\.cite\)[^}]*padding:\s*[3-9]px/],
+    ['components/ReadingPreview.vue', /\.reading-content :deep\(sup\.cite\)[^}]*padding:\s*[3-9]px/],
+    ['components/FilePreview.vue', /\.fp-body\.docx :deep\(sup\.cite\)[^}]*padding:\s*[3-9]px/],
+  ] as const;
+  for (const [file, rule] of rules) {
+    assert.match(readSrc(file), rule, `${file} 的引用角标热区没撑开：手机上点不中`);
+  }
+});

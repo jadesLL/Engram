@@ -1764,12 +1764,14 @@ onBeforeUnmount(() => {
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
-/* 报告引用角标：可点回「来源与结论对照」，所以指针与键盘焦点都留可见反馈 */
+/* 报告引用角标：可点回「来源与结论对照」，所以指针与键盘焦点都留可见反馈。
+   0.72em 在手机上只有约 10px 热区，padding 撑开、负 margin 抵消布局外扩 */
 .reading-content :deep(sup.cite) {
   color: var(--accent);
   font-size: 0.72em;
   font-weight: 600;
-  padding: 0 1px;
+  padding: 3px 4px;
+  margin: -3px -3px;
   border-radius: 3px;
   cursor: pointer;
 }

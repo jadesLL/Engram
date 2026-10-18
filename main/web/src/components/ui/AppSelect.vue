@@ -77,6 +77,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch, type CSSProperties } from 'vue';
 import Icon from '../Icon.vue';
+import { registerBackHandler } from '../../lib/androidBack';
 
 type SelectOption = { value: T; label: string; disabled?: boolean };
 
@@ -124,6 +125,8 @@ const placed = ref(false);
 const openUp = ref(false);
 const activeIndex = ref(-1);
 const menuStyle = ref<CSSProperties>({});
+/** 安卓返回键：菜单展开时先关菜单（否则手机上一按返回就把整页退掉） */
+let backUnregister: (() => void) | null = null;
 
 const currentOption = computed(() => props.options.find((option) => option.value === props.modelValue));
 const currentLabel = computed(() => currentOption.value?.label || props.placeholder);
@@ -326,12 +329,21 @@ function bindGlobalListeners(): void {
   document.addEventListener('pointerdown', onDocumentPointerDown, true);
   window.addEventListener('scroll', onViewportChange, true);
   window.addEventListener('resize', onViewportChange);
+  // 下拉在手机上常是唯一的分区导航（如客户洞察的章节切换）：展开时返回键必须只关菜单。
+  // 后注册先处理，处理完 closeMenu 会通过 unbindGlobalListeners 注销这一层。
+  backUnregister = registerBackHandler(() => {
+    if (!open.value) return false;
+    closeMenu(true);
+    return true;
+  });
 }
 
 function unbindGlobalListeners(): void {
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
   window.removeEventListener('scroll', onViewportChange, true);
   window.removeEventListener('resize', onViewportChange);
+  backUnregister?.();
+  backUnregister = null;
 }
 
 /* 值被外部改写（如父组件重置表单）时，展开中的高亮同步过去 */

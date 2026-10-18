@@ -676,8 +676,9 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .report-markdown :deep(.md-table th),.report-markdown :deep(.md-table td) { border:1px solid var(--border); padding:6px 9px; text-align:left; }
 .report-markdown :deep(.md-table th) { background:var(--bg-tertiary); font-weight:600; }
 .report-markdown :deep(.md-quote) { margin:0 0 12px; padding:6px 12px; border-left:3px solid var(--border); color:var(--text-secondary); }
-/* 引用角标：可点（回到「来源与结论对照」那一条），所以给指针与键盘焦点都留可见反馈 */
-.report-markdown :deep(.cite) { color:var(--accent); font-size:10px; font-weight:600; padding:0 1px; border-radius:3px; cursor:pointer; }
+/* 引用角标：可点（回到「来源与结论对照」那一条），所以给指针与键盘焦点都留可见反馈。
+   10px 字号在触屏上只有约 10px 的热区，靠 padding 撑开、负 margin 抵消布局外扩 */
+.report-markdown :deep(.cite) { color:var(--accent); font-size:10px; font-weight:600; padding:3px 4px; margin:-3px -3px; border-radius:3px; cursor:pointer; }
 .report-markdown :deep(.cite:hover) { background:var(--accent-soft); }
 .report-markdown :deep(.cite:focus-visible) { outline:2px solid var(--accent); outline-offset:1px; }
 /* 落到来源章那条来源时的短暂高亮（条目本身就是 `[n] 标题…` 那一行）；动画结束回落原样 */
@@ -736,8 +737,15 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 /* 真正放不下三栏才堆叠（约 740 以下，手机/竖屏）：单列、整页滚动，客户列表变成一条会换行的胶囊。
    1440 窗口 + 应用侧栏默认 280 的内容宽约 1040，远在这条线之上，不会掉进来 */
 @container (max-width:740px) {
-  .cols { flex:none; min-height:auto; }
+  /* 手机上必须真的换成单列：.cols 是 flex 行，只把子项改成 block 不改变排列方向，
+     右栏仍按 flex:0 0 clamp(178px,21cqw,300px) 占住 178px——360px 手机上正文只剩约 90px */
+  .cols { flex:none; min-height:auto; flex-direction:column; }
   .cols-main { display:block; }
+  /* 页头换行：标题/说明一行，筛选与动作另起一行；否则「发起调研」被挤出视口，只能横拖才点得到。
+     与收集箱、任务页的窄屏页头同一修法 */
+  .page-head { flex-wrap:wrap; align-items:flex-start; row-gap:10px; }
+  .ph-actions { flex:1 1 100%; flex-wrap:wrap; }
+  .ph-actions .btn { flex:1 1 auto; min-height:36px; }
   .cols .cust-list { display:flex; flex-wrap:wrap; gap:6px; overflow:visible; }
   .cust { width:auto; flex:1 1 auto; min-width:152px; }
   .cust-search { margin-bottom:8px; }
@@ -747,7 +755,7 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
   .cols-main .arc-top h2 { font-size:19px; }
   .tabs-select { padding:10px 16px; }
   .cols-main .body { overflow:visible; padding:14px 16px 18px; }
-  .cols > .aside-col { display:block; margin-top:14px; overflow:visible; padding:16px 16px 4px; }
+  .cols > .aside-col { display:block; flex:none; width:auto; margin-top:14px; overflow:visible; padding:16px 16px 4px; }
   .cols > .aside-col .blk { border-bottom:1px solid var(--border); padding-bottom:13px; margin-bottom:13px; }
   .cols > .aside-col .blk + .blk { border-left:0; padding-left:0; }
   .cols > .aside-col .blk.last { border-bottom:0; }
