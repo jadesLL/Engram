@@ -267,3 +267,111 @@ test('只允许收集箱内的路径：越界一律拒绝', async () => {
   assert.throws(() => writeInboxMarkdown('Wiki/概念/越界.md', '# x'), /只能写收集箱原件的转换产物/);
   assert.throws(() => adoptInboxItem('原始资料/别人的.md'), /只能入库收集箱内的文件/);
 });
+
+/* ===== 2026-10-18 Excel 转换稳定失败回归：推理吃满预算 / 宽表切分 ===== */
+
+/** 假模型：第一次整段转换返回「输出被上限截断」，拆分重试的小段正常返回 */
+function truncatingModel(reply = '## 分段正文\n\n数据完整') {
+  const calls: any[] = [];
+  const fetchImpl = (async (_url: string, init: any) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    if (String(body.messages?.[0]?.content || '').includes('资料归档员')) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ choices: [{ message: { content: '拆分重试后的文档' } }] }),
+      };
+    }
+    const user = String(body.messages?.at(-1)?.content || '');
+    if (!user.includes('已拆成')) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          choices: [{ message: { content: '', reasoning_content: '很长的推理' }, finish_reason: 'length' }],
+          usage: { prompt_tokens: 100, completion_tokens: 8193, completion_tokens_details: { reasoning_tokens: 8193 } },
+        }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ choices: [{ message: { content: reply }, finish_reason: 'stop' }] }),
+    };
+  }) as unknown as typeof fetch;
+  return { fetchImpl, calls };
+}
+
+test('输出被上限截断（推理吃满预算）：自动对半拆开重试，预算提到 32k', async () => {
+  const rel = plant('宽表.txt', '数据行。'.repeat(200));
+  const model = truncatingModel('## 分段正文\n\n数据完整');
+  const progress: { stage: string; detail?: string }[] = [];
+  const result = await convertInboxItem(rel, {
+    fetchImpl: model.fetchImpl,
+    config,
+    onProgress: (stage, detail) => progress.push({ stage, detail }),
+  });
+
+  assert.equal(result.chunks, 1);
+  const mainCalls = model.calls.filter((call) => !String(call.messages?.[0]?.content || '').includes('资料归档员'));
+  assert.equal(mainCalls.length, 3, '一次整段 + 拆成两小段');
+  assert.equal(mainCalls[0].max_tokens, 32_768, '推理型模型的预算必须给足（旧值 8192 会被 reasoning 吃光）');
+  assert.equal(mainCalls[1].max_tokens, 32_768);
+  assert.ok(
+    progress.some((item) => /第 1\/1 段输出被截断，拆成 2 小段重试/.test(item.detail || '')),
+    '进度里要说明发生了什么，而不是停在“语义转换”'
+  );
+  const written = fs.readFileSync(path.join(BRAIN_DIR, result.derivedPath), 'utf8');
+  assert.equal(written.match(/## 分段正文/g)?.length, 2, '拆分的两段都要合并进产物');
+});
+
+test('拆分到底仍被截断：给出可操作错误，不落空产物', async () => {
+  const rel = plant('超宽表.txt', '数据行。'.repeat(200));
+  const calls: any[] = [];
+  const fetchImpl = (async (_url: string, init: any) => {
+    calls.push(JSON.parse(init.body));
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        choices: [{ message: { content: '' }, finish_reason: 'length' }],
+        usage: { completion_tokens: 8193, completion_tokens_details: { reasoning_tokens: 8193 } },
+      }),
+    };
+  }) as unknown as typeof fetch;
+  await assert.rejects(
+    () => convertInboxItem(rel, { fetchImpl, config }),
+    (error: any) => /多次被截断/.test(error.message) && /让 Agent 处理/.test(error.message)
+  );
+  assert.equal(calls.filter((call) => !String(call.messages?.[0]?.content || '').includes('资料归档员')).length, 3,
+    '整段 → 拆两半 → 其中一半再拆时已到最大层数，立即失败（不再继续无意义调用）');
+  assert.deepEqual(fs.readdirSync(path.join(BRAIN_DIR, '收集箱', '转换结果')), [], '失败不能留下空产物');
+});
+
+test('宽表按工作表边界分块：每块都带章节标题与表头，数据行不被切断', () => {
+  const rows = Array.from({ length: 200 }, (_, index) => `| 客户${index} | ${index} | ${index * 2} | 备注${index} |`);
+  const text = `## 订单表\n\n| 客户 | 数量 | 金额 | 备注 |\n| --- | --- | --- | --- |\n${rows.join('\n')}`;
+  const { chunks } = chunkText(text, 1000, 50);
+  assert.ok(chunks.length > 3, '超长表格必须拆成多块');
+  for (const chunk of chunks) {
+    assert.match(chunk, /^## 订单表/, '每块从章节标题开始（续块是「订单表（续）」）');
+    assert.match(chunk, /^\| 客户 \| 数量 \| 金额 \| 备注 \|$/m, '续块必须重复表头');
+    assert.match(chunk, /^\| --- \| --- \| --- \| --- \|$/m);
+    for (const line of chunk.split('\n')) {
+      if (!line.startsWith('| 客户')) continue;
+      assert.match(line, /\|$/, '表格行不能被从中间切断');
+    }
+  }
+  const joined = chunks.join('\n');
+  for (let index = 0; index < 200; index += 1) {
+    assert.equal(joined.split(`| 客户${index} |`).length - 1, 1, `数据行 ${index} 应恰好出现一次`);
+  }
+});
+
+test('分块上限超出时仍明确标记 truncated（不静默丢内容）', () => {
+  const text = Array.from({ length: 30 }, (_, index) => `## 表${index}\n\n| a | b |\n| --- | --- |\n| ${index} | x |`).join('\n\n');
+  const { chunks, truncated } = chunkText(text, 120, 3);
+  assert.equal(chunks.length, 3);
+  assert.equal(truncated, true);
+});

@@ -172,6 +172,12 @@
               <Icon name="eye" :size="13" />查看
             </button>
           </span>
+          <!-- 服务端转不了的图片/音视频等：主操作直接交给 Agent，不必再进 ⋯ 菜单找 -->
+          <span v-else-if="primaryKind(item) === 'agent'" class="tip-wrap" v-tooltip="AGENT_ACTION_TIP">
+            <button class="primary-act" type="button" :disabled="agentTasking(item)" @click="agentTaskItem(item)">
+              <Icon name="messages" :size="13" />{{ AGENT_PRIMARY_LABEL }}
+            </button>
+          </span>
 
           <span class="menu-wrap">
             <button
@@ -210,6 +216,13 @@
                 role="menuitem"
                 @click="runMenu(item, 'convert')"
               ><Icon name="ai" :size="13" />重新转换</button>
+              <!-- Agent 入口对所有条目都显示：agent-only 是唯一能读的通道，unsupported 也让用户点一下拿到服务端的明确拒绝原因 -->
+              <button
+                type="button"
+                role="menuitem"
+                :disabled="agentTasking(item)"
+                @click="runMenu(item, 'agent')"
+              ><Icon name="messages" :size="13" />{{ AGENT_MENU_LABEL }}</button>
               <a v-if="!isDesktop" class="menu-item" role="menuitem" :href="downloadUrl(item)" @click="closeMenu">
                 <Icon name="download" :size="13" />下载原文件
               </a>
@@ -274,6 +287,15 @@ import { useAppStore } from '../stores/app';
 import { confirmDialog } from '../lib/confirm';
 import { notify } from '../lib/notify';
 import { createInflightGuard } from '../lib/inflight';
+import {
+  AGENT_ACTION_TIP,
+  AGENT_MENU_LABEL,
+  AGENT_PRIMARY_LABEL,
+  canConvertItem as canConvert,
+  inboxPrimaryKind,
+  isServerConvertible,
+  type InboxPrimaryKind,
+} from '../lib/inboxAgent';
 import Icon from '../components/Icon.vue';
 import AppSpinner from '../components/ui/AppSpinner.vue';
 import AppEmptyState from '../components/ui/AppEmptyState.vue';
@@ -361,7 +383,7 @@ function onDocScroll() {
   if (menuFor.value) closeMenu();
 }
 
-type MenuAction = 'convert' | 'review' | 'process' | 'openNative' | 'remove';
+type MenuAction = 'convert' | 'review' | 'process' | 'openNative' | 'agent' | 'remove';
 
 /** 菜单项统一入口：先收菜单再执行，避免弹层残留遮住后续确认框 */
 async function runMenu(item: InboxItem, action: MenuAction) {
@@ -371,26 +393,20 @@ async function runMenu(item: InboxItem, action: MenuAction) {
   else if (action === 'process') {
     if (item.assistantSessionId) await openConversionChat(item.assistantSessionId);
   } else if (action === 'openNative') await openNatively(item);
+  else if (action === 'agent') await agentTaskItem(item);
   else if (action === 'remove') await removeItem(item);
 }
 
 /**
- * 行内唯一主操作按状态切换：
- * 待整理=转换，转换中=查看过程，失败=重试，已转换未入库=入库，已入库=查看产物，不可转=无。
+ * 行内唯一主操作按状态切换（判定与文案在 lib/inboxAgent）：
+ * 待整理=转换（agent-only 改为「让 Agent 处理」），转换中=查看过程，失败=重试，
+ * 已转换未入库=入库，已入库=查看产物，不可转=无。
  */
-type PrimaryKind = 'convert' | 'process' | 'retry' | 'adopt' | 'review' | 'none';
-
-function primaryKind(item: InboxItem): PrimaryKind {
-  if (item.status === 'converting') return 'process';
-  if (item.status === 'failed') return 'retry';
-  if (item.status === 'converted') return inbox.adopted.has(item.path) ? 'review' : 'adopt';
-  return canConvert(item) ? 'convert' : 'none';
+function primaryKind(item: InboxItem): InboxPrimaryKind {
+  return inboxPrimaryKind(item, inbox.adopted.has(item.path));
 }
 
-/* ===== 转换：能不能转由服务端的 capability 说了算，界面不自己猜格式 ===== */
-
-/** 服务端能按内容语义转换的三类；agent-only / unsupported 只能等 Agent 通道 */
-const CONVERTIBLE = new Set(['office', 'pdf', 'text']);
+/* ===== 转换：能不能转由服务端的 capability 说了算，能力集合与按钮判定在 lib/inboxAgent ===== */
 
 const STATUS_STYLE: Record<InboxItem['status'], { label: string; icon: string; chip: string }> = {
   pending: { label: '待整理', icon: 'file', chip: 'pending' },
@@ -413,14 +429,9 @@ function statusTip(item: InboxItem): string {
   return '';
 }
 
-/** 转换中不给点（重复提交没有意义），失败可以点（重跑一次），其余按格式能力判断 */
-function canConvert(item: InboxItem): boolean {
-  return CONVERTIBLE.has(item.capability) && item.status !== 'converting';
-}
-
 function convertTip(item: InboxItem): string {
   if (item.status === 'converting') return '正在转换，完成后会自动刷新';
-  if (!CONVERTIBLE.has(item.capability)) return item.hint || '这个格式暂时不能转换';
+  if (!isServerConvertible(item.capability)) return item.hint || '这个格式暂时不能转换';
   if (item.derivedPath) return '重新转换成功后会替换这份原件的旧产物；已入库的副本不会自动改动';
   if (item.status === 'failed') return '重新转换';
   return '按内容语义重写成人类可读的 Markdown，不是格式搬运';
@@ -431,12 +442,12 @@ function convertTip(item: InboxItem): string {
  * 失败原因由模板单独一行渲染（要用危险色），这里不重复。
  */
 function rowNote(item: InboxItem): string {
-  if (!CONVERTIBLE.has(item.capability)) return item.hint;
+  if (!isServerConvertible(item.capability)) return item.hint;
   if (item.derivedPath) return `产物：${item.derivedPath}`;
   return '';
 }
 
-const convertibleItems = computed(() => inbox.items.filter((item) => CONVERTIBLE.has(item.capability)));
+const convertibleItems = computed(() => inbox.items.filter((item) => isServerConvertible(item.capability)));
 /** 批量转换在途门闩：一次只放一批进去（双击/回车连发不再提交两遍），busy 绑按钮 disabled。
  *  与「列表里有没有转换中的项」无关：那件事不参与禁用，避免 2 秒轮询让按钮一闪一闪（见下条注释）。 */
 const convertAllGuard = createInflightGuard();
@@ -494,6 +505,53 @@ async function openConversionChat(sessionId: string) {
   } catch {
     notify.error('转换已受理，但暂时无法打开 Agent 对话');
   }
+}
+
+/* ===== 让 Agent 处理：服务端建会话并自动起一轮，界面拿到 sessionId 后打开抽屉看过程 ===== */
+
+/** 行内「让 Agent 处理」的在途行；同一行请求期间禁用按钮，跨行互不影响 */
+const agentPending = ref<Set<string>>(new Set());
+/** 同一 tick 的连点靠门闩挡住（disabled 要等下一次渲染才生效，见 lib/inflight） */
+const agentGuard = createInflightGuard();
+
+function agentTasking(item: InboxItem): boolean {
+  return agentPending.value.has(item.path);
+}
+
+/**
+ * 让内置 Agent 读这份原件、总结并按语义转换。
+ *
+ * 服务端负责新建「收集箱处理：<文件名>」会话并自动起一轮（Agent 自己调 list_inbox /
+ * read_inbox_item / 服务端转换工具 / 写产物），前端只负责发请求、选中会话、打开抽屉；
+ * 事件流随 selectSession 拉到的会话快照自动接上。
+ *
+ * 成功后不刷新列表：Agent 写产物会经 SSE file-changed 触发刷新（Home.vue 已订阅），
+ * 而这一轮可能跑几分钟，提前 load 只会拿到旧状态。
+ */
+async function agentTaskItem(item: InboxItem) {
+  if (agentGuard.isBusy(item.path) || agentTasking(item)) return;
+  await agentGuard.run(item.path, async () => {
+    agentPending.value = new Set(agentPending.value).add(item.path);
+    try {
+      const { sessionId } = await inbox.agentTask(item.path);
+      try {
+        // 抽屉可能已经开着（本次不会重新 init），先刷一次列表，新会话才出现在侧栏
+        await chat.loadSessions();
+        await chat.selectSession(sessionId);
+        app.toggleChat(true);
+      } catch {
+        notify.error('Agent 已开始处理，但暂时无法打开对话');
+        return;
+      }
+      notify.success('已让 Agent 开始处理…');
+    } catch (error: any) {
+      notify.error(error?.response?.data?.error || '无法让 Agent 处理');
+    } finally {
+      const next = new Set(agentPending.value);
+      next.delete(item.path);
+      agentPending.value = next;
+    }
+  });
 }
 
 /**
@@ -1220,6 +1278,9 @@ html.dark .ftype.video { background: rgba(196, 174, 232, 0.14); color: #c4aee8; 
 .menu button:hover,
 .menu .menu-item:hover { background: var(--bg-hover); color: var(--text); }
 .menu button.danger { color: var(--danger); }
+/* 在途的 Agent 入口：按钮禁用但保留原来的次要色，不弹悬停底色 */
+.menu button[disabled] { opacity: 0.45; cursor: not-allowed; }
+.menu button[disabled]:hover { background: transparent; color: var(--text-secondary); }
 .menu .sep { height: 1px; margin: 4px 8px; background: var(--border); }
 
 .review-sub {

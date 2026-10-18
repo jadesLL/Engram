@@ -26,6 +26,7 @@ import {
   convertCapability,
   readDerivedMarkdown,
 } from '../pipeline/inboxConvert.js';
+import { createInboxAgentTask } from '../pipeline/inboxAgentTask.js';
 import {
   INBOX_DIR,
   INBOX_DERIVED_DIR,
@@ -305,8 +306,26 @@ export async function inboxRoutes(app: FastifyInstance) {
     return { queued, skipped };
   });
 
-  /** 读取转换产物（产物是 Engram 生成的草稿，不是「收集箱原件」，因此在应用内可读可审） */
-  app.get('/api/inbox/derived', async (req, reply) => {
+  /**
+   * 让内置 Agent 直接处理一份收集箱原件：建普通 Agent 会话并立刻起一轮。
+   *
+   * 与 /convert 互补：/convert 是服务端确定性转换队列（不占对话、适合批量）；
+   * 这里走内置 Agent 的对话能力，适合「先总结再决定怎么转」以及图片/音视频等
+   * 只有 Agent 通道能读的格式。返回 sessionId 后前端打开对话抽屉即可接上事件流。
+   */
+  app.post('/api/inbox/agent-task', async (req, reply) => {
+    const { path: rel } = (req.body || {}) as { path?: unknown };
+    if (typeof rel !== 'string' || !rel.trim()) {
+      return reply.code(400).send({ error: '缺少文件路径' });
+    }
+    try {
+      return reply.code(202).send(createInboxAgentTask(rel));
+    } catch (error: any) {
+      return reply.code(Number(error?.status) || 400).send({ error: error?.message || '无法让 Agent 处理' });
+    }
+  });
+
+  /** 读取转换产物（产物是 Engram 生成的草稿，不是「收集箱原件」，因此在应用内可读可审） */  app.get('/api/inbox/derived', async (req, reply) => {
     const { path: rel } = req.query as { path?: string };
     if (!rel || !isInboxPath(rel) || isInboxDerivedPath(rel)) {
       return reply.code(400).send({ error: '路径无效' });

@@ -111,6 +111,14 @@ export const MCP_TOOLS: McpToolDoc[] = [
     cli: '（CLI 未提供）',
   },
   {
+    name: 'convert_inbox_item',
+    group: '写',
+    summary: '服务端稳定分块转换收集箱原件为 Markdown，大表格/长文档优先；产物仍留在收集箱（不属于知识库），入库由用户界面确认。',
+    params: 'path 收集箱内的相对路径（必填，如 收集箱/合同.pdf）。',
+    notes: '可能耗时数分钟；图片/音视频等 agent-only 格式会被拒绝，需改用 read_inbox_item + write_inbox_markdown；转换失败时给出可读原因。作业规范见 skill_guide("inbox-semantic-to-md")。',
+    cli: '（CLI 未提供）',
+  },
+  {
     name: 'list_raw_files',
     group: '读',
     summary: '列出 原始资料/ 全部文件，含提取状态与「已提炼」标记，是提炼作业的索引入口。',

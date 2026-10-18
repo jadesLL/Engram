@@ -28,7 +28,9 @@ import { assetMime, isAssetFile, isParentId, parseMediaUrl, safeAssetJoin } from
 import { isInboxPath, isInboxDerivedPath } from '../lib/brainPaths.js';
 import { DEFAULT_RAW_DIR, RAW_CHAT_DIR } from '../lib/rawSections.js';
 import { listInboxItems } from '../lib/inboxItems.js';
-import { capabilityHint, extractInboxText, writeInboxMarkdown } from '../pipeline/inboxConvert.js';
+import {
+  capabilityHint, convertCapability, convertInboxItem, extractInboxText, writeInboxMarkdown,
+} from '../pipeline/inboxConvert.js';
 import { createRawMaterial, RawMaterialWriteError } from '../pipeline/rawMaterial.js';
 import { listRawMaterialFiles } from '../pipeline/rawFiles.js';
 import { CUSTOMER_RESEARCH_BRIDGE, CUSTOMER_RESEARCH_TRIGGER } from '../content/customerResearch.js';
@@ -41,6 +43,7 @@ import { beginCustomerResearch, submitCustomerResearch, researchReportSchema, Cu
  * + 写工具（write_page 带证据门禁与自动日志 / rename_page / move_page / delete_page 软删除入回收站 /
  * save_chat 对话沉积 / entity_name_check 登记公司全名核验 / entity_name_answer 回填用户答复 /
  * entity_name_propose 回填全名 / ask_user 内置 Agent 在对话里问用户并等点选 /
+ * convert_inbox_item 服务端一键转换收集箱原件（稳定分块，写产物到收集箱） /
  * write_inbox_markdown 写收集箱原件的转换产物 / create_raw_material 只新建调研原始资料）。
  * 页面编辑操作只允许 Wiki/；create_raw_material 是唯一新建原始资料的例外，拒绝覆盖已有文件。
  * 作业方法论见 kb_guide；按需作业手法见 skill_list / skill_guide。
@@ -61,7 +64,7 @@ AIWorks 对 Agent 是只读区；页面写入与改名/移动/删除只允许 Wi
 误建的页面用 delete_page 删除：只做软删除入回收站（可恢复），只能删 Wiki/ 下的页面，不提供清空回收站能力。
 页面改名/移动用 rename_page / move_page（保持页面 ID 与图谱边，重命名会重定向引用双链）；写页与页面操作都只允许 Wiki/。
 实体页固定结构：## 当前理解 / ## 相关页面 / ## 时间线；改写不搬运、无依据不编造；[[双链]] 只指已有或本次新建页。
-收集箱（收集箱/）是用户拖进来的待整理文件，**不属于知识库**：list_inbox / read_inbox_item 能读到它，write_inbox_markdown 能把语义转换结果写回 收集箱/转换结果/，但这里的内容不得作为回答的事实依据、不得进 evidence、不要拿它去写页面；入库由用户在界面上确认（服务端会把产物复制进 原始资料/文档/，那之后才是可引用来源）。转换作业规范用 skill_guide("inbox-semantic-to-md")。
+收集箱（收集箱/）是用户拖进来的待整理文件，**不属于知识库**：list_inbox / read_inbox_item 能读到它；用户要求转换时优先用 convert_inbox_item（服务端稳定分块转换，适合大表格/长文档，可能耗时数分钟；图片/音视频等 Agent-only 格式会被明确拒绝，那类文件你自己读原件按语义写），Agent 自己按语义重写仍用 write_inbox_markdown。两条通道的产物都落在 收集箱/转换结果/，但这里的内容不得作为回答的事实依据、不得进 evidence、不要拿它去写页面；入库由用户在界面上确认（服务端会把产物复制进 原始资料/文档/，那之后才是可引用来源）。转换作业规范用 skill_guide("inbox-semantic-to-md")。
 原始资料是一级目录，固定三个二级目录：文档（成文的完整文件，新资料默认落这里）、对话（save_chat 专用）、灵感碎片（随手记）；不要自造其他二级目录，历史留在根目录的文件按「文档」对待。原始资料的正文不写一级标题——标题由文件名（YYYY.MM.DD_标题.md）与 frontmatter 标题承载，正文开头再写一行 \`# 标题\` 是重复，服务端也会去掉。
 完整作业流程（Map→Normalize→Retrieve→Plan→Critic→Compose→Verify→Commit）与页面模板用 kb_guide 获取；具体作业手法与纪律先用 skill_list 看清单，再用 skill_guide(name) 取全文。
 
@@ -474,6 +477,60 @@ export function makeServer(): McpServer {
             + '请在汇报里说明这份产物还没进知识库，需要用户在界面上确认入库。',
         }],
       };
+    }
+  );
+
+  server.tool(
+    'convert_inbox_item',
+    '用服务端管道把收集箱（收集箱/）里的一份原件一键转换成 Markdown：稳定分块转换（大表格/宽表/长文档会自动分段请求模型），'
+      + '比 Agent 逐段自写更稳。用户说「转换收集箱里的 X」「把这份 Excel 转了并总结」时优先用它；'
+      + '转换由服务端发模型请求，大文件会分多块、可能耗时数分钟。'
+      + '产物写到 收集箱/转换结果/，**仍在收集箱、仍不属于知识库**：不建页面、不进检索、不能作为证据，'
+      + '需要用户在收集箱界面确认「入库」后才成为可引用来源（入库是用户动作，你不要代劳）。'
+      + '图片/音视频等 Agent-only 格式会被明确拒绝——那类文件用 read_inbox_item 拿原文件自行处理，再用 write_inbox_markdown 写回。',
+    {
+      path: z.string().describe('收集箱内的相对路径，如 收集箱/合同.pdf'),
+    },
+    async ({ path: p }) => {
+      const rel = String(p || '').replace(/\\/g, '/').replace(/^\/+/, '');
+      if (!isInboxPath(rel) || isInboxDerivedPath(rel)) {
+        return {
+          content: [{ type: 'text', text: `只能转换 收集箱/ 下的原件（不能是转换产物，也不能是知识库里的文件）：${rel}` }],
+          isError: true,
+        };
+      }
+      const abs = safeJoin(rel);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+        return { content: [{ type: 'text', text: `原件不存在：${rel}` }], isError: true };
+      }
+      const capability = convertCapability(rel);
+      const hint = capabilityHint(rel, capability);
+      if (hint) {
+        return { content: [{ type: 'text', text: `${rel}：${hint}` }], isError: true };
+      }
+      try {
+        const result = await convertInboxItem(rel);
+        const scope = [
+          result.chunks > 1 ? `分 ${result.chunks} 段转换` : '',
+          result.truncated ? '原件过长：本次只覆盖前面部分（产物「待确认」里会注明）' : '',
+        ].filter(Boolean).join('；');
+        return {
+          content: [{
+            type: 'text',
+            text: `已转换 ${rel} → ${result.derivedPath}\n`
+              + `- 产物：${result.derivedPath}（${result.chars} 字${scope ? `；${scope}` : ''}）\n`
+              + `- 模型：${result.model}\n`
+              + '产物仍在收集箱（收集箱/转换结果/），**仍不属于知识库**：不建页面、不进检索、不能当证据；'
+              + '需要用户在收集箱界面确认「入库」后才会复制进 原始资料/文档/ 并成为可引用来源。'
+              + '要总结时可直接 read_inbox_item 传产物路径读它；不要自行入库或拿它写页面。',
+          }],
+        };
+      } catch (error: any) {
+        return {
+          content: [{ type: 'text', text: `转换失败：${error?.message || String(error)}` }],
+          isError: true,
+        };
+      }
     }
   );
 

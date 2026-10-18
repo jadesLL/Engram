@@ -41,6 +41,13 @@ export interface InboxConversion {
   skipped: { path: string; reason: string }[];
 }
 
+/** POST /api/inbox/agent-task 的回执：新建的会话与自动起的一轮 Agent */
+export interface InboxAgentTask {
+  sessionId: string;
+  runId: string;
+  queued: boolean;
+}
+
 /** GET /api/inbox/derived 的产物：转换出的 Markdown 全文 */
 export interface InboxDerived {
   path: string;
@@ -193,6 +200,26 @@ export const useInboxStore = defineStore('inbox', () => {
     return data as InboxDerived;
   }
 
+  /**
+   * 让内置 Agent 处理一份原件：服务端新建「收集箱处理：<文件名>」会话并自动起一轮，
+   * Agent 自己读原件、总结并按语义转换。这里只拿受理回执，界面据此打开对话看过程。
+   *
+   * 成功后不刷新列表：转换可能跑几分钟，提前 load 拿到的还是旧状态；
+   * 产物落盘会经 SSE file-changed 触发全局刷新（Home.vue 已订阅）。
+   * 失败不包装错误：409（未配置模型凭据）/ 400（路径无效）/ 404（文件不存在）的
+   * 响应体 `{ error }` 已是给人看的中文，由调用方直接展示。
+   */
+  async function agentTask(path: string): Promise<InboxAgentTask> {
+    const { data } = await api.post('/api/inbox/agent-task', { path });
+    const sessionId = typeof data?.sessionId === 'string' ? data.sessionId : '';
+    if (!sessionId) throw new Error('服务端没有返回 Agent 会话');
+    return {
+      sessionId,
+      runId: typeof data?.runId === 'string' ? data.runId : '',
+      queued: Boolean(data?.queued),
+    };
+  }
+
   /** 入库：把产物收进知识库，成为可检索、可引用的页面（原件仍留在收集箱） */
   async function adopt(path: string): Promise<InboxAdoption> {
     const { data } = await api.post('/api/inbox/adopt', { path });
@@ -223,6 +250,7 @@ export const useInboxStore = defineStore('inbox', () => {
     fetchUrl,
     remove,
     convert,
+    agentTask,
     loadDerived,
     adopt,
   };
