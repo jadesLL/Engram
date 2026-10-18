@@ -358,3 +358,48 @@ test('渲染后依然没有正文（过期分享页）：如实拒绝，且不�
   assert.match(res.json().error, /渲染后仍然没有正文/);
   assert.equal(fs.existsSync(path.join(BRAIN_DIR, INBOX_DIR_REL, '过期分享页.html')), false, '空壳不能留在收集箱');
 });
+
+/* ===== 让内置 Agent 直接处理收集箱文件（2026-10-18「不必点转换」入口） ===== */
+
+test('让 Agent 处理：缺路径/越界路径被拒，文件不存在返回 404', async () => {
+  const missingBody = await app.inject({ method: 'POST', url: '/api/inbox/agent-task', headers: auth(), payload: {} });
+  assert.equal(missingBody.statusCode, 400);
+
+  const outside = await app.inject({
+    method: 'POST', url: '/api/inbox/agent-task', headers: auth(),
+    payload: { path: '原始资料/别人的资料.pdf' },
+  });
+  assert.equal(outside.statusCode, 400);
+  assert.match(outside.json().error, /收集箱/);
+
+  const missing = await app.inject({
+    method: 'POST', url: '/api/inbox/agent-task', headers: auth(),
+    payload: { path: `${INBOX_DIR_REL}/根本没有.pdf` },
+  });
+  assert.equal(missing.statusCode, 404);
+  assert.match(missing.json().error, /不存在/);
+});
+
+test('让 Agent 处理：暂不支持转换的格式直接给可读原因，不建空会话', async () => {
+  await upload([{ filename: '根目录备份.zip', content: Buffer.from('zip') }]);
+  const before = db.prepare(`SELECT count(*) AS n FROM assistant_sessions`).get().n;
+  const res = await app.inject({
+    method: 'POST', url: '/api/inbox/agent-task', headers: auth(),
+    payload: { path: `${INBOX_DIR_REL}/根目录备份.zip` },
+  });
+  assert.equal(res.statusCode, 400);
+  assert.match(res.json().error, /还转不了/);
+  assert.equal(db.prepare(`SELECT count(*) AS n FROM assistant_sessions`).get().n, before);
+});
+
+test('让 Agent 处理：未配置模型凭据时明确报错，不留下跑不起来的会话', async () => {
+  await upload([{ filename: '待总结.txt', content: Buffer.from('客户下周来厂参观，重点看排产系统。') }]);
+  const before = db.prepare(`SELECT count(*) AS n FROM assistant_sessions`).get().n;
+  const res = await app.inject({
+    method: 'POST', url: '/api/inbox/agent-task', headers: auth(),
+    payload: { path: `${INBOX_DIR_REL}/待总结.txt` },
+  });
+  assert.equal(res.statusCode, 409);
+  assert.match(res.json().error, /未配置模型凭据|还没配模型凭据/);
+  assert.equal(db.prepare(`SELECT count(*) AS n FROM assistant_sessions`).get().n, before, '失败不应建会话');
+});

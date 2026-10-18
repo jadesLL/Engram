@@ -11,7 +11,8 @@ import { capabilityHint, convertCapability, type ConvertCapability } from '../pi
  *
  * 界面（/api/inbox/items）与 MCP（list_inbox）读的是同一份，避免两边对
  * 「什么算已转换」「什么时候算转换中」给出不同答案。
- * 状态以磁盘为准：转换产物在 → converted；jobs 表里有在跑/失败的任务 → converting/failed。
+ * 状态以磁盘为准：转换产物在 → converted（即便上一次任务失败、或产物是 Agent 通道补写的）；
+ * 只有正在跑的任务才显示 converting；没有产物时失败任务才显示 failed。
  */
 
 /** 类型分组：只用于图标与筛选，不影响接受哪些格式（任意格式都收） */
@@ -129,8 +130,16 @@ export function listInboxItems(): InboxListing {
       const derivedPath = derived.get(rel)?.[0] || null;
       const job = jobs.get(rel);
       const capability = convertCapability(rel);
-      const status: InboxItem['status'] = job && (job.status === 'converting' || job.status === 'failed')
-        ? job.status : derivedPath ? 'converted' : 'pending';
+      // 磁盘上的转换产物是「已转换」的唯一事实来源：Agent 通道直接写产物时没有 job 行，
+      // 而上一次失败任务也不该盖住后来补写的产物（2026-10-18：Agent 重转成功后列表仍显示失败）。
+      // 只有任务确实在跑时才让 converting 覆盖产物状态。
+      const status: InboxItem['status'] = job?.status === 'converting'
+        ? 'converting'
+        : derivedPath
+          ? 'converted'
+          : job?.status === 'failed'
+            ? 'failed'
+            : 'pending';
       return {
         path: rel,
         name,
@@ -143,7 +152,8 @@ export function listInboxItems(): InboxListing {
         derivedPath,
         capability,
         hint: capabilityHint(rel, capability),
-        error: job?.error || '',
+        // 产物已补上时不再把旧任务的失败原因当现状展示（查看过程仍可按 jobId 打开那次会话）
+        error: status === 'failed' ? job?.error || '' : '',
         jobId: job?.jobId ?? null,
         assistantSessionId: job?.assistantSessionId ?? null,
       } satisfies InboxItem;

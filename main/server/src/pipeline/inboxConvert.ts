@@ -5,7 +5,11 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { safeJoin, syncPageFile, pagePathTaken, movePage, notifySyncChange } from '../lib/vault.js';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
-import { completeText, type ChatMessage } from '../lib/modelClient.js';
+import {
+  completeText,
+  ModelOutputTruncatedError,
+  type ChatMessage,
+} from '../lib/modelClient.js';
 import type { AgentConfig } from '../assistant/config.js';
 import { findSkill } from '../content/skills/index.js';
 import { officeToText } from './office.js';
@@ -35,12 +39,21 @@ import { stripLeadingHeading, splitFrontmatter } from '../lib/rawBody.js';
 /** 转换口径版本：写进 frontmatter，便于以后区分产物是哪一版规范生成的 */
 export const INBOX_CONVERT_VERSION = 'semantic-v2';
 
-/** 单次送模型的正文上限；超过就分块 */
+/** 单次送模型的正文上限；超过就按结构化边界分块（见 chunkText） */
 const CHUNK_CHARS = 24_000;
 /** 最多分几块（再多就明说只转前几块，不静默截断） */
-const MAX_CHUNKS = 8;
-/** 每块最多产出多少 token */
-const MAX_TOKENS = 8192;
+const MAX_CHUNKS = 12;
+/**
+ * 每块最多产出多少 token。
+ *
+ * 不能按「正文只有十几个 token」来估：内置 Agent 默认路由是推理型模型（deepseek-flash），
+ * 它先把预算花在 reasoning 上。2026-10-18 实测：24k 字符的宽表 → reasoning 8193 tokens、
+ * 正文 0，finish_reason=length，旧值 8192 因此稳定报「模型没有返回内容」。
+ * 给到 32k 后同一段 reasoning 约 1.8 万、正文正常产出（约 83 秒）。
+ */
+const MAX_TOKENS = 32_768;
+/** 单块输出仍被截断时，把它对半拆开重试的层数（2 层后最小约 6k 字符） */
+const MAX_SPLIT_DEPTH = 2;
 
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
 const PDF_EXTS = new Set(['pdf']);
@@ -129,23 +142,115 @@ export async function extractInboxText(relPath: string): Promise<string> {
   throw new InboxConvertError(capabilityHint(relPath, capability));
 }
 
-/** 按段落边界切成不超过 CHUNK_CHARS 的若干块 */
+/**
+ * 把正文切成不超过 `size` 的若干块。
+ *
+ * 优先按结构边界切：Office 提取文本（office.ts）每张表/每页都是 `## 标题` 一节，
+ * 直接按字符数硬切会把表格从中间断开——模型看到的是一段没有表头的数字矩阵，
+ * 既容易输出超限也容易把列对错。这里：
+ *   1. 先按 `## ` 章节切分，章节尽量整节进块；
+ *   2. 单节超长时按**行**切（表格行永远不会被切断），并把表头复制到续块开头；
+ *   3. 没有结构的纯文本才退回按行/硬切。
+ * 只在超出 `max` 块时才标记 truncated（明说只覆盖前若干段，不静默丢内容）。
+ */
 export function chunkText(text: string, size = CHUNK_CHARS, max = MAX_CHUNKS): { chunks: string[]; truncated: boolean } {
   if (text.length <= size) return { chunks: [text], truncated: false };
+  const units = markdownSections(text).flatMap((section) => splitLongSection(section, size));
   const chunks: string[] = [];
-  let rest = text;
-  while (rest.length > size && chunks.length < max) {
-    const window = rest.slice(0, size);
-    const cut = Math.max(window.lastIndexOf('\n\n'), window.lastIndexOf('\n'));
-    const end = cut > size * 0.5 ? cut : size;
-    chunks.push(rest.slice(0, end).trim());
-    rest = rest.slice(end).trim();
+  let current = '';
+  for (const unit of units) {
+    if (!unit.trim()) continue;
+    if (current && current.length + 2 + unit.length > size) {
+      chunks.push(current.trim());
+      current = unit;
+    } else {
+      current = current ? `${current}\n\n${unit}` : unit;
+    }
   }
-  if (rest) {
-    if (chunks.length < max) chunks.push(rest);
-    else return { chunks, truncated: true };
-  }
+  if (current.trim()) chunks.push(current.trim());
+  if (chunks.length > max) return { chunks: chunks.slice(0, max), truncated: true };
   return { chunks, truncated: false };
+}
+
+/** 按 Markdown 二级标题切节；没有二级标题时整篇算一节（返回原始顺序） */
+function markdownSections(text: string): string[] {
+  const starts = [...text.matchAll(/^## .+$/gm)].map((match) => match.index ?? 0);
+  if (!starts.length) return [text];
+  const parts: string[] = [];
+  const preface = text.slice(0, starts[0]).trim();
+  if (preface) parts.push(preface);
+  for (let index = 0; index < starts.length; index += 1) {
+    const end = index + 1 < starts.length ? starts[index + 1] : text.length;
+    const section = text.slice(starts[index], end).trim();
+    if (section) parts.push(section);
+  }
+  return parts;
+}
+
+/** 找表格头：首个 `|` 行 + 紧邻的 `|---|` 分隔行（跳过前面的标题/空行） */
+function findTableHeader(lines: string[]): { index: number } | null {
+  for (let index = 0; index < Math.min(lines.length - 1, 6); index += 1) {
+    if (!lines[index].trimStart().startsWith('|')) continue;
+    const next = lines[index + 1]?.trim() ?? '';
+    if (next.startsWith('|') && /-/.test(next)) return { index };
+    return null;
+  }
+  return null;
+}
+
+/**
+ * 单节超长时切成多段：按行累计，表格段每段重复「章节标题 + 表头」，
+ * 这样每段都是可独立理解的完整表格，而不是半张表。
+ */
+function splitLongSection(section: string, size: number): string[] {
+  if (section.length <= size) return [section];
+  const lines = section.split('\n');
+  const heading = lines[0]?.trimStart().startsWith('## ') ? lines[0].trim() : '';
+  const header = findTableHeader(lines);
+  // 首段自然包含标题与表头；续段用「（续）」标题 + 原表头补上下文
+  const prefixEnd = header ? header.index + 2 : heading ? 1 : 0;
+  const continuationPrefix = header
+    ? `${heading ? `${heading}（续）\n` : ''}${lines[header.index]}\n${lines[header.index + 1]}\n`
+    : heading
+      ? `${heading}（续）\n`
+      : '';
+  const pieces: string[] = [];
+  let current = lines.slice(0, prefixEnd).join('\n');
+  let currentLength = current.length;
+  const flush = () => {
+    const text = current.trim();
+    if (text) pieces.push(text);
+    current = continuationPrefix;
+    currentLength = current.length;
+  };
+  for (const line of lines.slice(prefixEnd)) {
+    const cost = line.length + 1;
+    if (currentLength + cost > size && current.trim()) flush();
+    if (line.length > size) {
+      // 没有段落结构的超长单行（例如压缩成一行的纯文本）：硬切，避免永远超限
+      for (let start = 0; start < line.length; start += size) {
+        const part = line.slice(start, start + size);
+        if (currentLength + part.length > size && current.trim()) flush();
+        current += part;
+        currentLength += part.length;
+      }
+      continue;
+    }
+    current = current ? `${current}\n${line}` : line;
+    currentLength += cost;
+  }
+  const tail = current.trim();
+  if (tail) pieces.push(tail);
+  return pieces.length ? pieces : [section];
+}
+
+/** 模型输出被截断时，把这段正文对半拆成两段（优先落在章节/行边界） */
+function splitForRetry(text: string): string[] {
+  if (text.length < 200) return [];
+  const { chunks } = chunkText(text, Math.max(120, Math.ceil(text.length / 2)), 2);
+  if (chunks.length >= 2) return chunks;
+  const half = Math.floor(text.length / 2);
+  return [text.slice(0, half).trim(), text.slice(half).trim()].filter(Boolean);
 }
 
 function skillBody(): string {
@@ -163,7 +268,10 @@ function buildMessages(input: {
   total: number;
   truncated: boolean;
   chunk: string;
+  /** 本段因输出超限被对半拆分后的第几小段（保持 Markdown 连续） */
+  part?: { index: number; total: number };
 }): ChatMessage[] {
+  const hasTable = /\n\|/.test(input.chunk) || input.chunk.trimStart().startsWith('|');
   const head = [
     `# 任务`,
     `把收集箱里的原件《${input.name}》转换成一份人类可读的 Markdown 文档。`,
@@ -171,6 +279,12 @@ function buildMessages(input: {
     input.total > 1
       ? `- 这是第 ${input.index}/${input.total} 段正文：只输出本段对应的 Markdown 正文，不要重复开头的概要与一级标题之外的内容。`
       : '- 一次给出完整文档。',
+    input.part
+      ? `- 本段较长，已拆成 ${input.part.total} 小段输出（当前第 ${input.part.index} 小段）：保持 Markdown 连续，不要重复「本文概要」。`
+      : '',
+    hasTable
+      ? '- 这一段是表格内容：每张表都必须带表头再输出数据行，不要输出没有表头的裸数字矩阵；数字、单位、日期逐字保留。'
+      : '',
     input.truncated
       ? '- 原件过长，本次只覆盖前面的内容：请在文末「待确认」里写明「原件过长，本文只覆盖前若干段」。'
       : '',
@@ -185,6 +299,43 @@ function buildMessages(input: {
     { role: 'system', content: skillBody() },
     { role: 'user', content: head.join('\n') },
   ];
+}
+
+/**
+ * 转换一段正文；输出被输出上限截断时把这段对半拆开重试（最多 MAX_SPLIT_DEPTH 层）。
+ * 拆分是为了让「输出体量」匹配 token 预算，而不是把一次失败原样抛给用户。
+ */
+async function convertChunk(
+  base: { name: string; ext: string; size: number; index: number; total: number; truncated: boolean },
+  chunk: string,
+  options: InboxConvertOptions,
+  depth = 0,
+  part?: { index: number; total: number }
+): Promise<{ text: string; model: string }> {
+  options.signal?.throwIfAborted();
+  try {
+    const result = await completeText(
+      buildMessages({ ...base, chunk, ...(part ? { part } : {}) }),
+      { maxTokens: MAX_TOKENS, signal: options.signal, fetchImpl: options.fetchImpl, config: options.config }
+    );
+    return { text: result.text.trim(), model: result.model };
+  } catch (error) {
+    if (!(error instanceof ModelOutputTruncatedError) || depth >= MAX_SPLIT_DEPTH) throw error;
+    const halves = splitForRetry(chunk);
+    if (halves.length < 2) throw error;
+    options.onProgress?.('语义转换', `第 ${base.index}/${base.total} 段输出被截断，拆成 ${halves.length} 小段重试`);
+    const texts: string[] = [];
+    let model = '';
+    for (let index = 0; index < halves.length; index += 1) {
+      const result = await convertChunk(base, halves[index], options, depth + 1, {
+        index: index + 1,
+        total: halves.length,
+      });
+      texts.push(result.text);
+      model = result.model || model;
+    }
+    return { text: texts.join('\n\n'), model };
+  }
 }
 
 function coreTitle(markdown: string, suggested?: string, fallback?: string): string {
@@ -269,24 +420,35 @@ export async function convertInboxItem(
 
   const outputs: string[] = [];
   let model = '';
-  for (let index = 0; index < chunks.length; index += 1) {
+  try {
+    for (let index = 0; index < chunks.length; index += 1) {
+      options.signal?.throwIfAborted();
+      if (chunks.length > 1) options.onProgress?.('语义转换', `第 ${index + 1}/${chunks.length} 段`);
+      else options.onProgress?.('语义转换');
+      const result = await convertChunk(
+        {
+          name,
+          ext,
+          size: stat.size,
+          index: index + 1,
+          total: chunks.length,
+          truncated,
+        },
+        chunks[index],
+        options
+      );
+      model = result.model || model;
+      outputs.push(result.text);
+    }
+  } catch (error) {
     options.signal?.throwIfAborted();
-    if (chunks.length > 1) options.onProgress?.('语义转换', `第 ${index + 1}/${chunks.length} 段`);
-    else options.onProgress?.('语义转换');
-    const result = await completeText(
-      buildMessages({
-        name,
-        ext,
-        size: stat.size,
-        index: index + 1,
-        total: chunks.length,
-        truncated,
-        chunk: chunks[index],
-      }),
-      { maxTokens: MAX_TOKENS, signal: options.signal, fetchImpl: options.fetchImpl, config: options.config }
-    );
-    model = result.model;
-    outputs.push(result.text.trim());
+    if (error instanceof ModelOutputTruncatedError) {
+      // 拆分重试后仍被截断：说清原因与可走的路，而不是把「模型没有返回内容」原样甩给用户
+      throw new InboxConvertError(
+        `模型输出多次被截断，转换未完成：${error.message}。这份文件的内容过于密集，可改用「让 Agent 处理」入口，或先把原件拆分（例如按工作表/章节另存）再转换`
+      );
+    }
+    throw error;
   }
 
   const body = outputs.join('\n\n');
