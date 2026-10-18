@@ -814,12 +814,14 @@ defineExpose({ downloadFile, openExternal });
 .fp-body.docx :deep(h1) { font-size: 1.8em; }
 .fp-body.docx :deep(table) { border-collapse: collapse; }
 .fp-body.docx :deep(td), .fp-body.docx :deep(th) { border: 1px solid var(--border-strong); padding: 4px 10px; }
-/* 报告类 Markdown 的引用角标：可点回「来源与结论对照」，指针与键盘焦点都留可见反馈 */
+/* 报告类 Markdown 的引用角标：可点回「来源与结论对照」，指针与键盘焦点都留可见反馈。
+   0.75em 在手机上只有约 10px 热区，padding 撑开、负 margin 抵消布局外扩 */
 .fp-body.docx :deep(sup.cite) {
   color: var(--accent);
   font-size: 0.75em;
   font-weight: 600;
-  padding: 0 1px;
+  padding: 3px 4px;
+  margin: -3px -3px;
   border-radius: 3px;
   cursor: pointer;
 }
