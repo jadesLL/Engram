@@ -115,10 +115,15 @@ export const useInboxStore = defineStore('inbox', () => {
    * 上传：逐个文件走一次请求，单个文件单独报进度与错误——
    * 批量里某一份超限或失败，不应该让整批的进度都变得不可读。
    */
-  async function upload(files: File[] | FileList, dir = ''): Promise<{ saved: number; skipped: string[] }> {
+  async function upload(
+    files: File[] | FileList,
+    dir = ''
+  ): Promise<{ saved: number; skipped: string[]; items: InboxItem[] }> {
     const list = Array.from(files);
     let saved = 0;
     const skipped: string[] = [];
+    // 失败/跳过的不进 items：调用方（例如在对话里附件）只拿到真正落进收集箱的文件。
+    const items: InboxItem[] = [];
     for (const file of list) {
       const progress: InboxUpload = { id: ++nextUploadId, name: file.name, loaded: 0, total: file.size };
       uploading.value = [...uploading.value, progress];
@@ -134,6 +139,7 @@ export const useInboxStore = defineStore('inbox', () => {
           },
         });
         saved += (data.saved || []).length;
+        for (const item of data.saved || []) items.push(item as InboxItem);
         for (const item of data.skipped || []) skipped.push(`${item.name}：${item.reason}`);
       } catch (err: any) {
         skipped.push(`${file.name}：${err?.response?.data?.error || err?.message || '上传失败'}`);
@@ -143,7 +149,7 @@ export const useInboxStore = defineStore('inbox', () => {
       }
     }
     await load();
-    return { saved, skipped };
+    return { saved, skipped, items };
   }
 
   /**

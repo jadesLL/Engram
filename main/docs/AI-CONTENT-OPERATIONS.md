@@ -66,8 +66,8 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 ## 收集箱（未纳入知识库的暂存区）
 
 - **定位**：`收集箱/` 是用户拖进来的待整理文件（任意格式），**不是知识库**——不建 `pages`/`files` 行、不写 FTS、不参与检索、不出现在目录树与原始资料清单里，通用文件接口（预览/取内容/导出）对它一律拒绝（「不支持内置浏览」）。
-- **Agent 能做什么**：`list_inbox` 看清单，`read_inbox_item` 读内容（图片以 image 内容返回），`write_inbox_markdown` 把语义转换结果写回 `收集箱/转换结果/<原名>.md`；用户要求转换时优先 `convert_inbox_item`（服务端稳定分块转换：长文档按章节、宽表格按工作表/表格行切分，模型输出被上限截断时自动拆小重试；大文件可能耗时数分钟。图片/音视频等 Agent-only 格式会被明确拒绝，由 Agent 自己读原件后写）。作业规范用 `skill_guide("inbox-semantic-to-md")`。
-- **也可由用户交给 Agent 处理**：收集箱行 ⋯ 菜单「让 Agent 总结并转换」调用 `POST /api/inbox/agent-task`，服务端新建「收集箱处理：<文件名>」会话并立刻起一轮（Agent 自己读原件、总结、按需调 `convert_inbox_item` 或自写产物），过程留在对话里可继续追问；入口内核在 `server/src/pipeline/inboxAgentTask.ts`。
+- **Agent 能做什么**：`list_inbox` 看清单，`read_inbox_item` 读内容（图片以 image 内容返回），`write_inbox_markdown` 把语义转换结果写回 `收集箱/转换结果/<原名>.md`；用户要求转换时优先 `convert_inbox_item`（服务端稳定分块转换：长文档按章节、宽表格按工作表/表格行切分，模型输出被上限截断时自动拆小重试；大文件可能耗时数分钟。图片/音视频等 Agent-only 格式会被明确拒绝，由 Agent 自己读原件后写）。`add_inbox_file` 按用户明确要求往收集箱**新建一份待整理原件**（文本类，如「把这段内容先放进收集箱」）：只写 `收集箱/`、不写 `转换结果/`、不覆盖已有文件、不建页面、不进检索。作业规范用 `skill_guide("inbox-semantic-to-md")`。
+- **也可由用户交给 Agent 处理**：收集箱行 ⋯ 菜单「让 Agent 总结并转换」调用 `POST /api/inbox/agent-task`，服务端新建「收集箱处理：<文件名>」会话并立刻起一轮（Agent 自己读原件、总结、按需调 `convert_inbox_item` 或自写产物），过程留在对话里可继续追问；入口内核在 `server/src/pipeline/inboxAgentTask.ts`。**内置 Agent 的对话里也可以直接附带收集箱文件**：界面把文件清单放进本轮 `inboxFiles` 上下文（用户消息 metadata 同时留一份），任务文本会说明「这是本次任务输入，用收集箱工具读、产物留收集箱、不得当证据」，等价于用户明确要求处理这些文件。
 - **Agent 不能做什么**：不得把收集箱内容写进页面、不得作为 `evidence`、不得在回答里当作事实依据。转换产物同样留在收集箱，**不是**知识库内容。
 - **产物状态以磁盘为准**：转换产物在 `收集箱/转换结果/` 即为「已转换」——Agent 通道直接写产物（没有转换任务行）或上次任务失败后补写产物，列表都不会再显示「转换失败」；只有任务正在跑时显示「转换中」。
 - **入库是用户的动作**：用户在收集箱界面点「入库」后，服务端按原件名称把产物复制进 `原始资料/文档/` 并登记为页面（同名加序号）——从这一刻起它才是可检索、可引用、可作证据的来源。旧版 `原始资料/收集箱/` 里的产物启动时迁入 `原始资料/文档/`。
@@ -86,7 +86,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - Agent 接入界面的工具清单：`web/src/lib/mcpTools.ts`（新增/改名工具时三处同步：`server/src/mcp/server.ts` 注册、`web/src/lib/mcpTools.ts` 界面清单、本文）
 - Agent 写入门禁与账本：`server/src/pipeline/agentWrite.ts`
 - Agent 调研原始资料只新建入口：`server/src/pipeline/rawMaterial.ts`
-- 收集箱边界判定与语义转换：`server/src/lib/brainPaths.ts`（唯一判定来源）、`server/src/pipeline/inboxConvert.ts`（转换与入库）、`server/src/pipeline/inboxAgentTask.ts`（「让 Agent 处理」建会话起轮）、`server/src/routes/inbox.ts`（界面接口）、`server/src/mcp/server.ts`（`convert_inbox_item` 等 MCP 工具）
+- 收集箱边界判定与语义转换：`server/src/lib/brainPaths.ts`（唯一判定来源）、`server/src/pipeline/inboxConvert.ts`（转换与入库）、`server/src/pipeline/inboxAdd.ts`（`add_inbox_file`：新建待整理原件，不覆盖、不建页面）、`server/src/pipeline/inboxAgentTask.ts`（「让 Agent 处理」建会话起轮）、`server/src/routes/inbox.ts`（界面接口）、`server/src/mcp/server.ts`（`convert_inbox_item` 等 MCP 工具）；内置 Agent 对话附件的上下文规整与渲染在 `server/src/assistant/prompts.ts`（`normalizeInboxFiles`），消息 metadata 由 `server/src/assistant/runner.ts` 落库
 - Agent 单页删除内核（只入回收站 + Wiki/ 守卫）：`server/src/pipeline/agentDelete.ts`
 - 公司全名核验通道内核（资料库自查 + 两轮问答状态机 + 服务端改名）：`server/src/lib/entityNameChecks.ts`（表 `entity_name_checks`；CLI/脚本用 REST `server/src/routes/entityNames.ts`；问答在对话里——内置 Agent 经 MCP `ask_user` 弹底部选项，答复经 `entity_name_answer` 回填）
 - 内置 Agent 的提问通道（MCP `ask_user` 挂起等点选 → 对话底部弹窗 → 答复唤醒工具调用）：`server/src/assistant/questions.ts`（表 `assistant_questions`；REST `POST /api/assistant/questions/:id/answer`；界面 `web/src/components/ChatDrawer.vue` 底部弹窗）

@@ -32,6 +32,12 @@ export const TOOL_LABELS: Record<string, string> = {
   entity_name_propose: '回填工商全名',
   list_entity_names: '读名称核验清单',
   entity_name_audit: '盘点公司页名称',
+  // 收集箱：读/转/写都不进知识库，工具卡文案要能一眼区分
+  list_inbox: '列出收集箱',
+  read_inbox_item: '读取收集箱原件',
+  write_inbox_markdown: '写收集箱转换产物',
+  convert_inbox_item: '一键转换收集箱原件',
+  add_inbox_file: '新建收集箱文件',
   // 提问：问题弹在对话最下侧，图标/状态条据此说明「它在等你点选」
   ask_user: '向你提问（对话底部弹窗）',
   // 委派类工具：正常会被子代理卡接管（不再单独成行），这里兜住没起成子会话的那次调用
