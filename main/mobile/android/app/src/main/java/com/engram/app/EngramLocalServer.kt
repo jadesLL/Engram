@@ -575,6 +575,8 @@ class EngramLocalServer private constructor(private val context: Context) {
         }
         post("/api/inbox/adopt") { call.proxyHub("POST", "/api/inbox/adopt", call.receiveText()) }
         post("/api/inbox/convert") { call.proxyHub("POST", "/api/inbox/convert", call.receiveText()) }
+        // 收集箱行「让 Agent 总结并转换」：中枢建「收集箱处理」会话并立刻起一轮，由内置 Agent 读原件（窄代理，手机不跑 dsh）
+        post("/api/inbox/agent-task") { call.proxyHub("POST", "/api/inbox/agent-task", call.receiveText()) }
 
         // 记一条灵感：标题由中枢的模型拟、落盘前再按知识库既有写法勘误并把正文整理精炼一遍，
         // 本机没有模型，预览与落盘两步都窄代理到中枢
