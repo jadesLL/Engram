@@ -17,9 +17,10 @@ const PAGE_REVISION_KEEP = 10;
  *  - page/file/delete/move：brain 目录下的文件（target 即 brain 相对路径）
  *  - session：内置 Agent 会话（target = 会话 id，载荷是完成态快照）
  *  - board：任务看板（target 恒为 default，全端唯一一份）
- * 会话与看板在 DATA_DIR/wiki.db 里，safeJoin 到不了，所以单独两类而不是复用 file。
+ *  - research：客户调研任务（target = 任务 id，载荷是完成态快照）
+ * 会话、看板与调研任务在 DATA_DIR/wiki.db 里，safeJoin 到不了，所以单独几类而不是复用 file。
  */
-export type SyncKind = 'page' | 'file' | 'delete' | 'move' | 'session' | 'board' | 'preference';
+export type SyncKind = 'page' | 'file' | 'delete' | 'move' | 'session' | 'board' | 'preference' | 'research';
 
 export interface SyncOp {
   seq: number;

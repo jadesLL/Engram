@@ -14,6 +14,7 @@ import {
   summarizeFileChange,
   summarizeMove,
   summarizePageChange,
+  summarizeResearchChange,
   summarizeSessionChange,
   type SyncOpSummary,
 } from './opText.js';
@@ -25,6 +26,7 @@ import {
   isSystemSession,
   readSyncedBoard,
 } from './sessions.js';
+import { collectResearchSnapshot } from './research.js';
 import { BOARD_SESSION_SETTING, BOARD_SYNC_ID } from '../assistant/boardCore.js';
 import { getSession, runningRunForSession } from '../assistant/repository.js';
 import {
@@ -148,6 +150,30 @@ export function recordLocalChange(kind: SyncKind, target: string, extra: LocalCh
   } catch (error) {
     // 同步层故障不阻塞业务写入
     console.error('[sync] 记录本地变更失败:', error);
+  }
+}
+
+/**
+ * 客户调研收口后调用（report 已生成、任务行已落库）：有报告（完成态）才跨端；
+ * 进行中/失败留在本机（见 sync/research.ts 的 collectResearchSnapshot 口径）。
+ *
+ * 结构与 recordLocalChange 完全一致：成员入队推送、中枢直接发号广播，
+ * 不在这里额外判断角色——与页面/文件写入的既有口径保持一致；未配置同步的设备
+ * 多写一条本机 oplog 属既有行为，无害。
+ */
+export function recordResearchChange(taskId: string): void {
+  try {
+    if (!taskId || !syncAllowed('research', taskId)) return;
+    const snapshot = collectResearchSnapshot(taskId);
+    if (!snapshot) return;
+    if (hubConfigured()) {
+      if (syncConfigEnabled()) enqueueLocalChange('research', taskId);
+      return;
+    }
+    commitLocalChange('research', taskId);
+    queueLocalBroadcast(summarizeResearchChange(taskId, snapshot.customer));
+  } catch (error) {
+    console.error('[sync] 记录客户调研变更失败:', error);
   }
 }
 

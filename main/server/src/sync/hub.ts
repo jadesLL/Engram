@@ -19,6 +19,7 @@ import {
   summarizeFileChange,
   summarizeMove,
   summarizePageChange,
+  summarizeResearchChange,
   summarizeSessionChange,
   type SyncOpSummary,
 } from './opText.js';
@@ -37,6 +38,12 @@ import {
   type SessionSnapshot,
 } from './sessions.js';
 import { BOARD_SYNC_ID } from '../assistant/boardCore.js';
+import {
+  collectResearchSnapshot,
+  mergeResearchSnapshot,
+  researchContentHash,
+  type ResearchSnapshot,
+} from './research.js';
 import {
   appendOplog,
   getPageRevision,
@@ -318,6 +325,12 @@ function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOpt
     // 看板内容本身很小（一份 markdown），直接随广播下发，成员不再多一趟请求
     const board = collectBoardPayload();
     if (board) payload.board = board;
+  } else if (kind === 'research') {
+    // 调研任务同样在 wiki.db 里：广播只带快照指纹与客户名，报告正文由成员按需拉取
+    // （报告可能很长，与 session 同一个口径，不塞进广播）
+    const snapshot = collectResearchSnapshot(target);
+    payload.hash = snapshot ? researchContentHash(target) : '';
+    payload.customer = snapshot?.customer || '';
   }
   // 中枢自身写入广播给全部成员；成员推送来的变更排除来源成员（其结果经 push ack 返回）
   broadcast(payload, actorId === HUB_ACTOR || opts.includeSource ? undefined : actorId);
@@ -342,6 +355,8 @@ export interface PushPayload {
   deleted?: boolean;
   /** kind=board：全端唯一一份的任务看板 */
   board?: BoardPayload;
+  /** kind=research：完成态客户调研任务快照（报告正文在这里，不在广播载荷里） */
+  research?: ResearchSnapshot;
   preference?: PreferenceValue;
 }
 
@@ -563,6 +578,29 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
       seq: Number(result.seq),
       revision: Number(result.revision),
       op: summarizeSessionChange(sessionId, snapshot.session.title, merged.messages),
+    };
+  }
+
+  if (push.kind === 'research') {
+    // 客户调研：完成态任务行按 id 合并，updatedAt 新者胜；快照不完整（缺 report）会被 merge 忽略。
+    // 合并没有产生新内容就**不发号、不广播**，否则两端会把同一份快照反复推来推去（与会话同一口径）。
+    const id = String(push.target || '');
+    if (!id) throw new Error('客户调研推送缺少 target');
+    const snapshot = push.research;
+    if (!snapshot?.id) throw new Error('客户调研推送缺少快照');
+    // target 与快照 id 必须一致：错位时会把 A 的报告按 B 的 id 落库并广播给所有端
+    if (String(snapshot.id) !== id) throw new Error('客户调研推送的 target 与快照 id 不一致');
+    const before = researchContentHash(id);
+    const merged = mergeResearchSnapshot(snapshot);
+    if ((!merged.created && !merged.updated) || researchContentHash(id) === before) {
+      return { ok: true, seq: 0, revision: 0, op: summarizeResearchChange(id, snapshot.customer) };
+    }
+    const result = commit('research', id, actorId, {});
+    return {
+      ok: true,
+      seq: Number(result.seq),
+      revision: Number(result.revision),
+      op: summarizeResearchChange(id, snapshot.customer),
     };
   }
 

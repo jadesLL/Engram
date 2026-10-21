@@ -17,7 +17,7 @@ import path from 'node:path';
  * 纯函数、无 IO，方便单测钉住措辞、采样与计数口径。
  */
 
-export type SyncItemKind = 'page' | 'file' | 'delete' | 'move' | 'session' | 'board' | 'preference';
+export type SyncItemKind = 'page' | 'file' | 'delete' | 'move' | 'session' | 'board' | 'preference' | 'research';
 /** add=本端新增；update=覆盖已有；delete=删除；move=改名/移动；same=内容一致 */
 export type SyncItemVerb = 'add' | 'update' | 'delete' | 'move' | 'same';
 
@@ -418,13 +418,29 @@ export function summarizeBoardChange(): SyncOpSummary {
   return { kind: 'board', verb: 'update', path: 'default', title: '任务看板' };
 }
 
+/**
+ * 客户调研同步条目：path 是调研任务 id（不是 brain 路径），title 是客户名。
+ * 报告正文不进摘要（日志记的是「哪条记录动了」，不是全文）。
+ */
+export function summarizeResearchChange(taskId: string, customer: string): SyncOpSummary {
+  return { kind: 'research', verb: 'update', path: taskId, title: customer || '' };
+}
+
+/** 偏好条目的主体名：用户认的是「主页卡片 / 客户调研流程模板 / 设置」，不是内部 key */
+function preferenceLabel(path: string): string {
+  if (path === 'home_layout') return '主页卡片';
+  if (path === 'customer_research_rules') return '客户调研流程模板';
+  return '设置';
+}
+
 /** 条目的「主体」写法：页面用标题、文件用路径（用户认标题，不认 hash 路径） */
 function subjectOf(item: SyncOpSummary): string {
   if (item.kind === 'file') return `文件「${item.path}」`;
   if (item.kind === 'delete' && !item.title) return `文件「${item.path}」`;
   if (item.kind === 'session') return `会话「${item.title || item.path}」`;
-  if (item.kind === 'preference') return item.path === 'home_layout' ? '主页卡片' : '设置';
+  if (item.kind === 'preference') return preferenceLabel(item.path);
   if (item.kind === 'board') return '任务看板';
+  if (item.kind === 'research') return `客户调研「${item.title || item.path}」`;
   return `页面「${item.title || pageTitle(item.path)}」`;
 }
 
@@ -436,8 +452,9 @@ export function describeOpSummary(item: SyncOpSummary): string {
     const count = Number(item.added || 0);
     return `同步会话「${item.title || item.path}」${count > 0 ? `（${count} 条消息）` : ''}`;
   }
-  if (item.kind === 'preference') return `同步${item.path === 'home_layout' ? '主页卡片' : '设置'}「${item.path}」`;
+  if (item.kind === 'preference') return `同步${preferenceLabel(item.path)}「${item.path}」`;
   if (item.kind === 'board') return '同步任务看板（全端取最新一版）';
+  if (item.kind === 'research') return `同步客户调研「${item.title || item.path}」`;
 
   const name = subjectOf(item);
   switch (item.verb) {

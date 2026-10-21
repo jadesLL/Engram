@@ -9,7 +9,8 @@ class SyncPreferences(private val db: LocalDatabase) {
         ?: UUID.randomUUID().toString().also { db.setSetting("sync_node_id", it) }
     companion object {
         val defaults = linkedMapOf("knowledge" to true, "materials" to true, "assets" to true,
-            "aiWorkspace" to true, "sessions" to true, "board" to true, "homeCards" to false, "settings" to false)
+            "aiWorkspace" to true, "sessions" to true, "board" to true, "customerResearch" to true,
+            "homeCards" to false, "settings" to false)
         val keys = listOf("home_layout", "search_synonyms", "name_fixes", "show_ai_workspace", "theme", "editor_mode")
     }
     fun categories(): JSONObject {
@@ -30,6 +31,8 @@ class SyncPreferences(private val db: LocalDatabase) {
         "preference" -> if (target == "home_layout") "homeCards" else if (target in keys) "settings" else null
         "session" -> "sessions"
         "board" -> "board"
+        // 客户调研记录：手机端不存本地副本（读写都经窄代理走中枢），分类映射只为开关口径一致
+        "research" -> "customerResearch"
         "page", "file", "move", "delete" -> when (target.replace('\\', '/').substringBefore('/')) {
             "原始资料" -> "materials"
             "AIWorks" -> "aiWorkspace"

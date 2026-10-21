@@ -50,6 +50,13 @@ import {
 } from './sessions.js';
 import { HUB_DEVICE_LABEL, learnDeviceLabelFromHub } from './deviceLabel.js';
 import {
+  collectResearchSnapshot,
+  mergeResearchSnapshot,
+  researchContentHash,
+  researchManifest,
+  type ResearchSnapshot,
+} from './research.js';
+import {
   currentNodeId,
   getCursor,
   getPageSyncRevision,
@@ -142,6 +149,8 @@ const pendingFilePulls = new Map<string, string>();
 /** 会话快照待补拉（远端 hash + 来源端），成功后移除（会话正文比文件大，失败必须留待重试；
  *  来源端一并留着——补拉同样要能标出「来自哪台设备」，不能因为是重试就把来源丢了） */
 const pendingSessionPulls = new Map<string, { hash: string; nodeId: string; nodeLabel: string }>();
+/** 客户调研快照待补拉（远端 hash），成功后移除（与会话同理：报告正文可能不小，失败必须留待重试） */
+const pendingResearchPulls = new Map<string, { hash: string }>();
 let pullRetryTimer: ReturnType<typeof setInterval> | null = null;
 let healTimer: ReturnType<typeof setInterval> | null = null;
 let reconcileRunning = false;
@@ -202,6 +211,8 @@ function describeReplayOp(op: any): { text: string; summary: SyncOpSummary | nul
   if (kind === 'delete') return { text: `中枢删除「${target}」`, summary: null };
   if (kind === 'move') return { text: `中枢改名「${String(op.old_path || '')}」→「${target}」`, summary: null };
   if (kind === 'file') return { text: `中枢更新文件「${target}」`, summary: null };
+  // 客户调研记录的快照正文由客户端按需拉 /api/sync/research，补拉 op 里只带 hash
+  if (kind === 'research') return { text: `中枢更新客户调研记录「${target}」`, summary: null };
   return { text: `${kind} ${target}`, summary: null };
 }
 
@@ -251,6 +262,7 @@ function kindSummary(counts: Partial<Record<SyncKind, number>>): string {
     session: '会话',
     board: '任务看板',
     preference: '界面偏好',
+    research: '客户调研',
   };
   const parts = (Object.keys(labels) as SyncKind[])
     .filter((kind) => Number(counts[kind] || 0) > 0)
@@ -865,6 +877,17 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
           );
         }
       }
+    } else if (op.kind === 'research') {
+      // 报告正文不进广播（可能很大）：按 hash 判断要不要拉；失败进待补拉队列周期重试（水位照常推进）
+      const remoteHash = String(op.hash || '');
+      void pullResearchIfChanged(target, remoteHash).catch((error: any) => {
+        pendingResearchPulls.set(target, { hash: remoteHash });
+        logEvent('warn', 'research-pull-deferred', `客户调研记录「${target}」没能从中枢取回：${error?.message || error}；已加入待补拉队列，每分钟自动重试`, {
+          research: target,
+          error: error?.message || String(error),
+          pending: pendingResearchPulls.size,
+        });
+      });
     } else if (op.kind === 'preference') {
       mergePreference(target, op.preference);
     } else if (op.kind === 'board') {
@@ -1028,6 +1051,19 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
       lastSyncAt = new Date().toISOString();
       return { bytes: 0, merged: false, op: res.op as SyncOpSummary | undefined };
     }
+    if (item.kind === 'research') {
+      // 只推完成态（有报告）的记录：进行中/失败的任务留在本机执行端（见 sync/research.ts）
+      const snapshot = collectResearchSnapshot(item.target);
+      if (!snapshot) return { bytes: 0, merged: false };
+      const res = await postJson('/api/sync/push', {
+        node_id: currentNodeId(),
+        kind: 'research',
+        target: item.target,
+        research: snapshot,
+      });
+      lastSyncAt = new Date().toISOString();
+      return { bytes: 0, merged: false, op: res.op as SyncOpSummary | undefined };
+    }
     if (item.kind === 'preference') {
       const preference = preferenceValue(item.target);
       if (preference) {
@@ -1157,7 +1193,8 @@ async function pushLoop(): Promise<void> {
 /** 本端变更入队（sync/index.ts 调用）：同类内容操作按 target 去重（后写为准），move/delete 不合并保序 */
 export function enqueueLocalChange(kind: SyncKind, target: string, oldPath?: string, deleted = false): void {
   if (!syncAllowed(kind, target, oldPath)) return;
-  if (kind === 'page' || kind === 'file' || kind === 'session' || kind === 'board' || kind === 'preference') {
+  if (kind === 'page' || kind === 'file' || kind === 'session' || kind === 'board'
+    || kind === 'preference' || kind === 'research') {
     if (!queue.some((item) => item.kind === kind && item.target === target)) {
       queue.push({ kind, target, oldPath, deleted });
     }
@@ -1433,6 +1470,39 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
         emit('board-changed', { from: String(hubBoard.nodeId || '') });
       }
     }
+    // 客户调研：与页面/文件同一轮对账
+    //  - 中枢清单里的完成态记录：快照 hash 不一致才拉完整快照合并（清单只带 hash，不搬报告正文）
+    //  - 本端有、中枢清单没有的记录：补推（首次接入、中枢重装时的追赶）
+    const hubResearch: Array<{ id: string; customer?: string; updatedAt?: string; hash?: string }> =
+      syncAllowed('research', '') && Array.isArray(snap?.research) ? snap.research : [];
+    const hubResearchIds = new Set(hubResearch.map((item) => String(item.id)));
+    let researchPulled = 0;
+    for (const entry of hubResearch) {
+      const id = String(entry.id || '');
+      if (!id) continue;
+      try {
+        if (researchContentHash(id) === String(entry.hash || '')) continue;
+        const detail = await getJson(`/api/sync/research?id=${encodeURIComponent(id)}`);
+        const snapshot = detail?.snapshot as ResearchSnapshot | undefined;
+        if (!snapshot) continue;
+        mergeResearchSnapshot(snapshot);
+        pendingResearchPulls.delete(id);
+        researchPulled++;
+      } catch (error: any) {
+        itemFailed++;
+        logEvent('warn', 'reconcile-item-failed', `客户调研记录「${entry.customer || id}」对账没对上：${error?.message || error}（已跳过，下一轮对账会再试一次）`, {
+          kind: 'research',
+          path: id,
+          error: String(error?.message || error),
+        });
+      }
+    }
+    for (const entry of syncAllowed('research', '') ? researchManifest() : []) {
+      if (hubResearchIds.has(entry.id)) continue;
+      queued++;
+      pushSample(queuedSamples, entry.customer || entry.id);
+      enqueueLocalChange('research', entry.id);
+    }
 
     // 本端 → hub：只补推 hub「从没见过」的页面/文件。hub 报过的已删/已改名旧路径不推，
     // 否则等于把中枢已删页面复活并广播给所有端（成员停用期间中枢删页 → 重新接入即复活）。
@@ -1475,7 +1545,7 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
     logEvent(
       'info',
       'reconcile-done',
-      `全量对账完成（${REASON_LABELS[reason]}，${formatDuration(ms)}）：中枢共 ${entries.length} 项 · 从中枢拉取 ${pulled} 项${pulledBytes ? `（${formatBytes(pulledBytes)}）` : ''}${sampleText(pulledSamples)} · 本机补推 ${queued} 项${sampleText(queuedSamples)} · 失败 ${itemFailed} 项 · 待补拉文件 ${pendingFilePulls.size} · 补齐提炼账本 ${repaired}/${ledgerRepairs.length}${sessionsPulled ? ` · 补拉会话 ${sessionsPulled} 条` : ''}${labelsRepaired ? ` · 对齐会话来源名 ${labelsRepaired} 条` : ''}`,
+      `全量对账完成（${REASON_LABELS[reason]}，${formatDuration(ms)}）：中枢共 ${entries.length} 项 · 从中枢拉取 ${pulled} 项${pulledBytes ? `（${formatBytes(pulledBytes)}）` : ''}${sampleText(pulledSamples)} · 本机补推 ${queued} 项${sampleText(queuedSamples)} · 失败 ${itemFailed} 项 · 待补拉文件 ${pendingFilePulls.size} · 补齐提炼账本 ${repaired}/${ledgerRepairs.length}${sessionsPulled ? ` · 补拉会话 ${sessionsPulled} 条` : ''}${researchPulled ? ` · 补拉客户调研 ${researchPulled} 条` : ''}${labelsRepaired ? ` · 对齐会话来源名 ${labelsRepaired} 条` : ''}`,
       {
         reason,
         ms,
@@ -1488,6 +1558,7 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
         ledgerRepaired: repaired,
         ledgerTotal: ledgerRepairs.length,
         sessionsPulled,
+        researchPulled,
         sessionLabelsRepaired: labelsRepaired,
         localEntries: localEntries.length,
         pulledSamples,
@@ -1569,9 +1640,34 @@ async function pullSessionIfChanged(
   return true;
 }
 
-/** 重试此前拉取失败的文件与会话（成功移出集合；失败留待下一轮） */
+/**
+ * 拉一条客户调研记录的完整快照并合并；远端 hash 与本端一致时直接跳过（省一趟请求）。
+ * 与文件/会话拉取同构：失败由调用方记入 pendingResearchPulls，由 retryPendingFilePulls 周期重试。
+ */
+async function pullResearchIfChanged(taskId: string, remoteHash: string): Promise<boolean> {
+  if (!taskId || !syncAllowed('research', taskId)) return false;
+  if (remoteHash && remoteHash === researchContentHash(taskId)) return false;
+  let snapshot: ResearchSnapshot | undefined;
+  try {
+    const res = await getJson(`/api/sync/research?id=${encodeURIComponent(taskId)}`);
+    snapshot = res?.snapshot as ResearchSnapshot | undefined;
+  } catch (error: any) {
+    // 中枢已经没有这条记录（清单是拉取前取的）：没有可拉的内容，不算失败、不进待补拉
+    if (String(error?.message || '').includes('404')) {
+      pendingResearchPulls.delete(taskId);
+      return false;
+    }
+    throw error;
+  }
+  if (!snapshot || !syncAllowed('research', taskId)) return false;
+  const merged = mergeResearchSnapshot(snapshot);
+  pendingResearchPulls.delete(taskId);
+  return merged.created || merged.updated;
+}
+
+/** 重试此前拉取失败的文件、会话与客户调研（成功移出集合；失败留待下一轮） */
 async function retryPendingFilePulls(): Promise<void> {
-  if (pendingFilePulls.size === 0 && pendingSessionPulls.size === 0) return;
+  if (pendingFilePulls.size === 0 && pendingSessionPulls.size === 0 && pendingResearchPulls.size === 0) return;
   for (const [relPath, hash] of Array.from(pendingFilePulls)) {
     try {
       const bytes = await pullFileIfChanged(relPath, hash);
@@ -1604,6 +1700,24 @@ async function retryPendingFilePulls(): Promise<void> {
         session: sessionId,
         error: error?.message || String(error),
         pending: pendingSessionPulls.size,
+      });
+    }
+  }
+  // 客户调研记录同一节拍补拉：报告正文可能不小，一次失败不该让它永远缺在对端
+  for (const [taskId, pending] of Array.from(pendingResearchPulls)) {
+    if (!syncAllowed('research', taskId)) { pendingResearchPulls.delete(taskId); continue; }
+    try {
+      await pullResearchIfChanged(taskId, pending.hash);
+      pendingResearchPulls.delete(taskId);
+      logEvent('info', 'research-pull-retry-ok', `补拉客户调研记录成功「${taskId}」`, {
+        research: taskId,
+        pending: pendingResearchPulls.size,
+      });
+    } catch (error: any) {
+      logEvent('warn', 'research-pull-retry-failed', `补拉客户调研记录仍失败「${taskId}」：${error?.message || error}`, {
+        research: taskId,
+        error: error?.message || String(error),
+        pending: pendingResearchPulls.size,
       });
     }
   }

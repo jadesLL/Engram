@@ -539,9 +539,9 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 db.moveSyncedPath(oldPath, target, op.optInt("revision"))
                 recordApplied("pull-move", SyncOpText.summarizeMove(oldPath, target))
             }
-            // 会话 / 看板：手机端不存本地副本，读写都经窄代理走已绑定的中枢（见 AgentBridge），
-            // 所以这里是「已知但不镜像」——跳过内容，水位照常推进，别让水位卡在这两类 op 上。
-            "session", "board" -> Unit
+            // 会话 / 看板 / 客户调研：手机端不存本地副本，读写都经窄代理走已绑定的中枢（见 AgentBridge），
+            // 所以这里是「已知但不镜像」——跳过内容，水位照常推进，别让水位卡在这几类 op 上。
+            "session", "board", "research" -> Unit
             else -> {
                 // 协议比本端新：既不能瞎套页面逻辑，也不能吞得无声无息。
                 // 水位仍然推进（否则后续 op 永远卡在它后面），但同步详情里留下一条 warn 可查。
