@@ -243,6 +243,7 @@ test('安卓端接线：连接通道 / 优先局域网 / 挂载散图 / 日志�
   assert.match(server, /put\("deviceLabel",\s*sync\.deviceLabel\(\)\)/, '状态接口没下发本机设备名：设置页「本机名称」与对话来源标不出名字');
   assert.match(server, /body\.has\("prefer_lan"\)/, '同步配置不认 prefer_lan：设置页那个开关会变成点了没用');
   assert.match(server, /post\("\/api\/assets\/attach"\)/, '缺 /api/assets/attach：设置页「挂载到…」会报挂载失败');
+  assert.match(server, /post\("\/api\/inbox\/agent-task"\)/, '缺 /api/inbox/agent-task：手机收集箱「让 Agent 总结并转换」会 404');
   assert.match(server, /scope = params\["scope"\]/, '同步日志不认 scope/event 筛选：手机上「视角」「事件」点了不生效');
   const engine = read('mobile/android/app/src/main/java/com/engram/app/SyncEngine.kt');
   assert.match(engine, /api\/sync\/announce/, '同步引擎没探测中枢的连接通告：局域网优先无从落地');
