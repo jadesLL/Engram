@@ -1,7 +1,7 @@
 import { startAgentTurn, type AgentTurn } from './dshRuntime.js';
 import { getAgentConfig } from './config.js';
 import { publishRun, clearRun, hasRunSubscribers } from './events.js';
-import { buildTask, type InterfaceContext } from './prompts.js';
+import { buildTask, normalizeInboxFiles, type InterfaceContext } from './prompts.js';
 import { planReasoningReplay, type ReasoningPart } from './mapping.js';
 import { closeQuestionsForRun } from './questions.js';
 import { generateSessionTitle, heuristicTitle } from './title.js';
@@ -252,13 +252,26 @@ function enqueue(input: { sessionId: string; message: string; context?: Interfac
   run: RunDto;
   queued: boolean;
 } {
-  const { run } = queueRun({
+  const { run, message } = queueRun({
     sessionId: input.sessionId,
     message: input.message,
     context: input.context ?? {},
   });
+  // 附件随用户消息落 metadata：转录里能标出用户当时附了哪些收集箱文件
+  // （对话重建、多端同步、排队转正之后都还在）。queued 标记保留，故用合并写。
+  const metadata = inboxFilesMetadata(input.context);
+  if (metadata) updateMessageMetadata(message.id, metadata);
   touchSession(input.sessionId);
   return { run, queued: true };
+}
+
+/**
+ * 收集箱附件落用户消息 metadata（只存规整后的原件路径）。
+ * 放这里而不是前端传：上下文本来就要送服务端，前端不必再多传一份可能不一致的字段。
+ */
+function inboxFilesMetadata(context?: InterfaceContext): Record<string, unknown> | undefined {
+  const inboxFiles = normalizeInboxFiles(context);
+  return inboxFiles.length ? { inboxFiles } : undefined;
 }
 
 /** 起一轮：写用户消息 → 建 run → 起 dsh → 事件流式落库 */
@@ -281,6 +294,7 @@ export function startRun(input: {
     sessionId: input.sessionId,
     role: 'user',
     content: input.message.trim(),
+    metadata: inboxFilesMetadata(input.context),
   });
   const run = createRun({ sessionId: input.sessionId, userMessageId: userMessage.id, context: input.context ?? {} });
   touchSession(input.sessionId);

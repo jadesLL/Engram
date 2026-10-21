@@ -119,6 +119,14 @@ export const MCP_TOOLS: McpToolDoc[] = [
     cli: '（CLI 未提供）',
   },
   {
+    name: 'add_inbox_file',
+    group: '写',
+    summary: '往收集箱新建一份待整理原件（文本类，如把一段内容先放着等用户整理）；只写收集箱，不建页面、不进检索。',
+    params: 'path 收集箱内的目标路径（必填，如 收集箱/网页摘要.md，无扩展名按 .md）；content 文本正文（必填）。',
+    notes: '只允许 md/markdown/txt/csv/json/html/htm；不覆盖已有文件、不写 收集箱/转换结果/。要写某个原件的转换产物请用 write_inbox_markdown；正式入库仍由用户在收集箱界面确认。',
+    cli: '（CLI 未提供）',
+  },
+  {
     name: 'list_raw_files',
     group: '读',
     summary: '列出 原始资料/ 全部文件，含提取状态与「已提炼」标记，是提炼作业的索引入口。',

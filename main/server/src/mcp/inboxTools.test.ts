@@ -50,14 +50,24 @@ async function callTool(name: string, args: Record<string, unknown> = {}): Promi
   };
 }
 
-test('四个收集箱工具都已注册，MCP instructions 指向一键转换', async () => {
+test('五个收集箱工具都已注册，MCP instructions 指向一键转换与新建原件', async () => {
   const { tools } = await client.listTools();
   const names = tools.map((tool: any) => tool.name);
-  for (const name of ['list_inbox', 'read_inbox_item', 'write_inbox_markdown', 'convert_inbox_item']) {
+  for (const name of ['list_inbox', 'read_inbox_item', 'add_inbox_file', 'write_inbox_markdown', 'convert_inbox_item']) {
     assert.ok(names.includes(name), `${name} 应已注册`);
   }
   const instructions = client.getInstructions?.() || '';
   assert.match(instructions, /convert_inbox_item/);
+  assert.match(instructions, /add_inbox_file/);
+
+  // 工具描述要把「新建原件」与「写转换产物」两条通道说清，避免 Agent 用错工具
+  const addTool = tools.find((tool: any) => tool.name === 'add_inbox_file');
+  assert.ok(addTool, 'add_inbox_file 工具描述应存在');
+  assert.match(addTool.description, /write_inbox_markdown/);
+  assert.match(addTool.description, /不属于知识库/);
+  assert.match(addTool.description, /不覆盖已有文件/);
+  assert.ok(addTool.inputSchema?.properties?.path, 'path 参数应已声明');
+  assert.ok(addTool.inputSchema?.properties?.content, 'content 参数应已声明');
 });
 
 test('list_inbox：列原件与转换状态，并明确声明不属于知识库', async () => {
@@ -86,6 +96,67 @@ test('read_inbox_item：文本原件直接返回正文；越界路径被拒', as
   const denied = await callTool('read_inbox_item', { path: '原始资料/别人的.txt' });
   assert.equal(denied.isError, true);
   assert.match(denied.text, /只能读取 收集箱\//);
+});
+
+test('add_inbox_file：新建收集箱原件，不建页面、不进检索', async () => {
+  const content = '# 网页摘要\n\n- 交付周期 30 天\n';
+  const added = await callTool('add_inbox_file', { path: '收集箱/网页摘要.md', content });
+  assert.equal(added.isError, false, added.text);
+  assert.match(added.text, /已加入收集箱：收集箱\/网页摘要\.md（\d+ 字）/);
+  assert.match(added.text, /不属于知识库/);
+  assert.match(added.text, /入库/);
+  assert.match(added.text, /write_inbox_markdown/);
+  assert.equal(fs.readFileSync(path.join(BRAIN_DIR, '收集箱', '网页摘要.md'), 'utf8'), content);
+
+  // 收集箱不是知识库：不建页面、不进检索
+  assert.equal(db.prepare(`SELECT id FROM pages WHERE path LIKE '收集箱/%'`).get(), undefined);
+  const { hybridSearch } = await import('../retrieval/hybrid.js');
+  const hits = await hybridSearch('交付周期', 10);
+  assert.equal(hits.some((hit: any) => String(hit.path).startsWith('收集箱/')), false);
+
+  const listed = await callTool('list_inbox');
+  assert.match(listed.text, /收集箱\/网页摘要\.md/);
+});
+
+test('add_inbox_file：无扩展名补 .md，允许收集箱子目录', async () => {
+  const plain = await callTool('add_inbox_file', { path: '收集箱/网页摘要二', content: '无扩展名的正文' });
+  assert.equal(plain.isError, false, plain.text);
+  assert.match(plain.text, /收集箱\/网页摘要二\.md/);
+  assert.equal(fs.readFileSync(path.join(BRAIN_DIR, '收集箱', '网页摘要二.md'), 'utf8'), '无扩展名的正文');
+
+  const nested = await callTool('add_inbox_file', { path: '收集箱/子目录/说明.txt', content: '子目录正文' });
+  assert.equal(nested.isError, false, nested.text);
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '收集箱', '子目录', '说明.txt')), true);
+});
+
+test('add_inbox_file：越界、产物路径、已存在、空内容、不支持的格式都拒绝', async () => {
+  fs.mkdirSync(path.join(BRAIN_DIR, '原始资料'), { recursive: true });
+  fs.writeFileSync(path.join(BRAIN_DIR, '原始资料', '别人的.txt'), '不该被收集箱工具读到');
+
+  const outside = await callTool('add_inbox_file', { path: '原始资料/别人的.md', content: '正文' });
+  assert.equal(outside.isError, true);
+  assert.match(outside.text, /只能写入 收集箱\//);
+
+  const derived = await callTool('add_inbox_file', { path: '收集箱/转换结果/旧产物.md', content: '正文' });
+  assert.equal(derived.isError, true);
+  assert.match(derived.text, /write_inbox_markdown/);
+
+  const existing = await callTool('add_inbox_file', { path: '收集箱/合同.txt', content: '新内容' });
+  assert.equal(existing.isError, true);
+  assert.match(existing.text, /拒绝覆盖/);
+  assert.match(fs.readFileSync(path.join(BRAIN_DIR, '收集箱', '合同.txt'), 'utf8'), /合同金额 12 万/);
+
+  const empty = await callTool('add_inbox_file', { path: '收集箱/空.md', content: '   ' });
+  assert.equal(empty.isError, true);
+  assert.match(empty.text, /content 不能为空/);
+
+  const unsupported = await callTool('add_inbox_file', { path: '收集箱/表格.xlsx', content: '正文' });
+  assert.equal(unsupported.isError, true);
+  assert.match(unsupported.text, /不支持的文件类型/);
+
+  const traversal = await callTool('add_inbox_file', { path: '收集箱/../越界.md', content: '正文' });
+  assert.equal(traversal.isError, true);
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, '越界.md')), false);
 });
 
 test('write_inbox_markdown：产物落到 收集箱/转换结果/，且不建页面、不进检索', async () => {
@@ -148,6 +219,7 @@ test('收集箱内容不能当证据：write_page 带收集箱来源会被门禁
 test('kb_guide 与 skill 清单都带上收集箱纪律与转换 skill', async () => {
   const guide = await callTool('kb_guide');
   assert.match(guide.text, /收集箱/);
+  assert.match(guide.text, /add_inbox_file/);
 
   const skills = await callTool('skill_list');
   assert.match(skills.text, /inbox-semantic-to-md/);

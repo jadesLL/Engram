@@ -22,11 +22,27 @@ import { notify } from '../lib/notify';
  * 各开一条并全程保留，所以切走再回来能看到进行中的回复，后台会话跑完会标未读。
  */
 
+/**
+ * 随一条消息附带的收集箱文件（刚上传或从收集箱挑选）。
+ * 路径必须是收集箱原件；服务端会再过滤一次（非收集箱路径、转换产物都会被拒），
+ * 这里只负责界面展示与上下文序列化。
+ */
+export interface ChatInboxFile {
+  /** vault 相对路径，如 收集箱/合同.pdf */
+  path: string;
+  /** 展示名；默认取文件名 */
+  name?: string;
+  /** 来源只用于界面 chip 文案：刚上传 / 从收集箱挑选 */
+  source?: 'upload' | 'inbox';
+}
+
 export interface ChatContext {
   route?: string;
   currentPage?: { id?: string; title?: string; path?: string };
   currentFile?: { path?: string; name?: string };
   selection?: string;
+  /** 随消息附带的收集箱文件（服务端规整后落进用户消息 metadata） */
+  inboxFiles?: ChatInboxFile[];
 }
 
 export type TitleSource = 'default' | 'auto' | 'user';
@@ -403,13 +419,17 @@ export const useChatStore = defineStore('chat', {
       const text = message.trim();
       if (!text || !this.activeSessionId) return false;
       const sessionId = this.activeSessionId;
+      const wireContext = context || this.currentContext;
+      // 服务端会把同一份附件落进用户消息 metadata；乐观插入的本地消息先照着画，
+      // 等快照回来再以服务端规整后的版本为准（不重复显示）。
+      const inboxFiles = Array.isArray(wireContext.inboxFiles) ? wireContext.inboxFiles : [];
       this.error = '';
       this.statusText = '';
       let accepted = false;
       try {
         const { data } = await api.post(`/api/assistant/sessions/${sessionId}/runs`, {
           message: text,
-          context: context || this.currentContext,
+          context: wireContext,
         });
         accepted = true;
         if (data.queued) {
@@ -423,7 +443,7 @@ export const useChatStore = defineStore('chat', {
             runId: data.run.id,
             role: 'user',
             content: text,
-            metadata: {},
+            metadata: inboxFiles.length ? { inboxFiles } : {},
             createdAt: new Date().toISOString(),
           });
           this.connect(data.run.id, sessionId);

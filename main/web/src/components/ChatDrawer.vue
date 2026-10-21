@@ -1,10 +1,22 @@
 <template>
   <aside
     class="chat-drawer"
-    :class="{ dock: !overlay && !isFull, overlay: overlay && !isFull, full: isFull }"
+    :class="{ dock: !overlay && !isFull, overlay: overlay && !isFull, full: isFull, dropping: dropActive }"
     :style="drawerStyle"
     :aria-label="agentName"
+    @dragenter="onDrawerDragEnter"
+    @dragover="onDrawerDragOver"
+    @dragleave="onDrawerDragLeave"
+    @drop="onDrawerDrop"
   >
+    <!-- 拖文件进抽屉：整只抽屉都是放置目标，松手即上传收集箱并附到这条消息 -->
+    <div v-if="dropActive" class="drop-overlay" aria-hidden="true">
+      <div class="drop-card">
+        <Icon name="upload" :size="22" />
+        <b>松开，放进收集箱</b>
+        <span>并附到这条消息，交给{{ agentName }}处理</span>
+      </div>
+    </div>
     <!-- 左缘拖拽手柄：右侧悬浮形态下调整宽度（拖过窗口 70% 自动转满窗，双击还原默认，聚焦后方向键微调） -->
     <div
       v-if="isDock"
@@ -208,6 +220,18 @@
               >复制</button>
             </div>
             <div v-if="item.role === 'user'" class="entry-user">
+              <!-- 这条消息附带的收集箱文件：路径清单随消息落 metadata，刷新/多端同步后照样画得出来 -->
+              <div v-if="messageInboxFiles(item.message).length" class="entry-attachments">
+                <span
+                  v-for="file in messageInboxFiles(item.message)"
+                  :key="file.path"
+                  class="entry-attachment"
+                  v-tooltip="file.path"
+                >
+                  <Icon :name="file.source === 'inbox' ? 'inbox' : 'file'" :size="11" />
+                  {{ file.name || file.path }}
+                </span>
+              </div>
               <div class="entry-plain md-body" v-html="renderEntry(`${item.key}:msg`, item.message.content)" />
               <!-- 排队中：这轮还没轮到它（前一轮收口后自动接着回复），标出来免得用户以为卡住了 -->
               <span v-if="isQueuedMessage(item.message)" class="queued-chip">
@@ -472,6 +496,33 @@
       </section>
 
       <div class="composer-card">
+      <!-- 附件：刚上传落进收集箱的文件与从收集箱挑选的文件走同一条上下文通道 -->
+      <div v-if="attachments.length || inbox.uploading.length" class="composer-attachments">
+        <span
+          v-for="file in attachments"
+          :key="file.path"
+          class="attach-chip"
+          :class="file.source || 'upload'"
+          v-tooltip="file.path"
+        >
+          <Icon :name="file.source === 'inbox' ? 'inbox' : 'file'" :size="11" />
+          <span class="attach-name">{{ file.name || file.path }}</span>
+          <span class="attach-source">{{ chatInboxSourceLabel(file) }}</span>
+          <button
+            class="attach-remove"
+            type="button"
+            :aria-label="`移除 ${file.name || file.path}`"
+            @click="removeAttachment(file.path)"
+          >
+            <Icon name="x" :size="11" />
+          </button>
+        </span>
+        <span v-for="upload in inbox.uploading" :key="`upload-${upload.id}`" class="attach-chip uploading">
+          <AppSpinner :size="10" />
+          <span class="attach-name">{{ upload.name }}</span>
+          <span class="attach-source">{{ uploadProgress(upload) }}</span>
+        </span>
+      </div>
       <textarea
         ref="inputEl"
         v-model="draft"
@@ -479,8 +530,40 @@
         rows="3"
         :placeholder="composerPlaceholder"
         @keydown.enter.exact.prevent="onComposerEnter($event)"
+        @paste="onComposerPaste"
       />
       <div class="composer-actions">
+        <div class="composer-tools">
+          <button
+            class="btn icon"
+            type="button"
+            v-tooltip="'添加文件：存进收集箱并附到这条消息'"
+            aria-label="添加文件"
+            :disabled="conversionActive"
+            @click="openFilePicker"
+          >
+            <Icon name="attach" :size="14" />
+          </button>
+          <button
+            class="btn icon"
+            type="button"
+            v-tooltip="'从收集箱选择已有文件'"
+            aria-label="从收集箱选择文件"
+            :disabled="conversionActive"
+            @click="inboxPickerOpen = true"
+          >
+            <Icon name="inbox" :size="14" />
+          </button>
+          <input
+            ref="fileInput"
+            class="composer-file-input"
+            type="file"
+            multiple
+            tabindex="-1"
+            aria-hidden="true"
+            @change="onFileInputChange"
+          />
+        </div>
         <!-- 运行中发出去的消息不会丢：服务端排队，当前这轮一收口自动接着回复 -->
         <span v-if="chat.currentRun" class="composer-hint">
           运行中发送会排队，这轮跑完自动接着回复
@@ -488,7 +571,7 @@
         <button
           class="btn primary small"
           type="button"
-          :disabled="!draft.trim() || conversionActive"
+          :disabled="!canSend"
           @click="send()"
         >
           <Icon name="send" :size="13" /> {{ chat.currentRun ? '排队发送' : '发送' }}
@@ -496,6 +579,13 @@
       </div>
       </div>
     </footer>
+
+    <!-- 从收集箱挑选：弹层挂在抽屉组件里，Teleport 到 body，手机返回键/Esc 由 AppModal 收口 -->
+    <InboxFilePicker
+      :open="inboxPickerOpen"
+      @close="inboxPickerOpen = false"
+      @pick="onInboxFilesPicked"
+    />
   </aside>
 </template>
 
@@ -506,12 +596,14 @@ import Icon from './Icon.vue';
 import AppEmptyState from './ui/AppEmptyState.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 import LiveDuration from './ui/LiveDuration.vue';
+import InboxFilePicker from './InboxFilePicker.vue';
 import { api } from '../api';
 import { useAppStore } from '../stores/app';
-import { useInboxStore } from '../stores/inbox';
+import { useInboxStore, type InboxUpload } from '../stores/inbox';
 import {
   useChatStore,
   type ChatContext,
+  type ChatInboxFile,
   type ChatMessage,
   type ChatRun,
   type ChatSession,
@@ -520,6 +612,15 @@ import {
   type ChatUsage,
 } from '../stores/chat';
 import type { SelectionExcerpt } from '../lib/askAgent';
+import {
+  chatInboxFileFromPath,
+  chatInboxFilesFromMetadata,
+  chatInboxSourceLabel,
+  composeChatInboxMessage,
+  mergeChatInboxFiles,
+  preparePastedFiles,
+  removeChatInboxFile,
+} from '../lib/chatInboxFiles';
 import {
   buildAnswer,
   canAnswer,
@@ -585,6 +686,23 @@ const scrollEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
 /** 触屏（手机）：输入框提示不再写「Enter 发送，Shift+Enter 换行」——手机上那是噪声 */
 const touchPointer = useTouchPointer();
+
+/* ===== 收集箱附件：上传/拖入/粘贴/从收集箱挑选，统一成附件 chip ===== */
+/**
+ * 已就绪、随下一条消息发出的收集箱文件。
+ * 刚上传的（source=upload）与从收集箱挑选的（source=inbox）共用同一条上下文通道：
+ * 发送时作为 ChatContext.inboxFiles，服务端规整后落进用户消息 metadata 并写进任务文本。
+ */
+const attachments = ref<ChatInboxFile[]>([]);
+/** 「从收集箱挑选」弹层 */
+const inboxPickerOpen = ref(false);
+/** 隐藏的 file input：点回形针时唤起系统文件选择（移动端即相册/文件选择器） */
+const fileInput = ref<HTMLInputElement | null>(null);
+
+/** 有文字或附件就能发：只挂附件时由 composeChatInboxMessage 自动补一句任务话术 */
+const canSend = computed(
+  () => Boolean((draft.value.trim() || attachments.value.length) && !conversionActive.value)
+);
 
 /**
  * 逐条消息的渲染记忆：每个流式增量都会重渲整条转录，而 lib/markdown 的全局缓存是
@@ -1081,11 +1199,15 @@ const renameEl = ref<HTMLInputElement | null>(null);
 async function newSession() {
   await chat.createSession();
   draft.value = '';
+  attachments.value = [];
   focusComposer();
 }
 
 function openSession(id: string) {
-  if (id !== chat.activeSessionId) draft.value = '';
+  if (id !== chat.activeSessionId) {
+    draft.value = '';
+    attachments.value = [];
+  }
   void chat.selectSession(id).then(() => {
     focusComposer();
     void scrollToBottom(true); // 换会话无条件看最新
@@ -1125,13 +1247,128 @@ async function removeSession(session: ChatSession) {
   await chat.deleteSession(session.id);
 }
 
+/* ===== 收集箱附件：上传、拖入、粘贴、从收集箱挑选、随消息发送 ===== */
+
+/** 上传文件到收集箱（复用收集箱接口），成功的再把落盘路径变成附件 chip */
+async function addFiles(files: File[]) {
+  if (!files.length) return;
+  const result = await inbox.upload(files);
+  const added = result.items
+    .map((item) => chatInboxFileFromPath(item.path, 'upload', item.name))
+    .filter((file): file is ChatInboxFile => Boolean(file));
+  if (added.length) {
+    attachments.value = mergeChatInboxFiles(attachments.value, added);
+    focusComposer();
+  }
+  // 只报第一条原因：逐条细节在收集箱页面的上传列表里能看到，对话里不铺一屏错误
+  if (result.skipped.length) {
+    notify.error(`有 ${result.skipped.length} 个文件没能加入收集箱：${result.skipped[0]}`);
+  }
+}
+
+/** 回形针：唤起文件选择（手机端走系统文件/相册选择器） */
+function openFilePicker() {
+  if (conversionActive.value) return;
+  fileInput.value?.click();
+}
+
+function onFileInputChange(event: Event) {
+  const input = event.currentTarget as HTMLInputElement;
+  const files = Array.from(input.files || []);
+  // 清掉 value：同一个文件再选一次也要能触发 change
+  input.value = '';
+  void addFiles(files);
+}
+
+/** 从收集箱挑选弹层确认：挑选项与上传项都是普通附件，只差 chip 上的来源标签 */
+function onInboxFilesPicked(files: ChatInboxFile[]) {
+  attachments.value = mergeChatInboxFiles(attachments.value, files);
+  focusComposer();
+}
+
+function removeAttachment(path: string) {
+  attachments.value = removeChatInboxFile(attachments.value, path);
+}
+
+/** 粘贴：剪贴板里带文件/截图就走上传；纯文本照旧粘进输入框 */
+function onComposerPaste(event: ClipboardEvent) {
+  const files = Array.from(event.clipboardData?.files || []);
+  if (!files.length) return;
+  event.preventDefault(); // 有文件就不要把文件名当文本再粘一遍
+  void addFiles(preparePastedFiles(files));
+}
+
+/** 上传 chip 的进度文案：传完但服务端还在保存时给「正在保存…」 */
+function uploadProgress(upload: InboxUpload): string {
+  if (upload.total > 0 && upload.loaded >= upload.total) return '正在保存…';
+  if (!upload.total) return '上传中';
+  return `上传中 ${Math.min(100, Math.round((upload.loaded / upload.total) * 100))}%`;
+}
+
+/** 某条用户消息当时附带的收集箱文件（服务端规整后落在 metadata 里） */
+function messageInboxFiles(message: ChatMessage): ChatInboxFile[] {
+  return chatInboxFilesFromMetadata(message.metadata);
+}
+
+/* ===== 拖文件进抽屉：整只抽屉都是放置目标 ===== */
+
+const dropActive = ref(false);
+
+function hasDraggedFiles(event: DragEvent): boolean {
+  const types = event.dataTransfer?.types;
+  return Boolean(types && Array.from(types).includes('Files'));
+}
+
+/** relatedTarget 还在抽屉里 = 只是从子元素之间移动，不是进入/离开抽屉 */
+function dragInsideDrawer(event: DragEvent): boolean {
+  const related = event.relatedTarget as Node | null;
+  return Boolean(related && (event.currentTarget as HTMLElement).contains(related));
+}
+
+function onDrawerDragEnter(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  if (dragInsideDrawer(event)) return;
+  dropActive.value = true;
+}
+
+function onDrawerDragOver(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault(); // 不拦 dragover 浏览器不会触发 drop
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+}
+
+function onDrawerDragLeave(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  if (dragInsideDrawer(event)) return;
+  dropActive.value = false;
+}
+
+function onDrawerDrop(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  dropActive.value = false;
+  void addFiles(Array.from(event.dataTransfer?.files || []));
+}
+
 async function send(text?: string) {
   if (conversionActive.value) return;
-  const message = (text ?? draft.value).trim();
+  const files = attachments.value;
+  const message = composeChatInboxMessage(text ?? draft.value, files);
   if (!message) return;
+  // 上传还没收尾就发，Agent 会读到不存在的路径：先拦住，传完再发
+  if (inbox.uploading.length) {
+    notify.info('文件还在上传，传完再发送');
+    return;
+  }
+  const context: ChatContext | undefined = files.length
+    ? { ...chat.currentContext, inboxFiles: files }
+    : undefined;
+  // 清空放在受理之后：发送失败（网络/凭据问题）时草稿与附件还在，不用重新拖一遍
+  const accepted = await chat.send(message, context);
+  if (!accepted) return;
   draft.value = '';
-  // 运行中也照发：服务端会把这条排进队列，当前这轮收口后自动接着回复
-  await chat.send(message);
+  attachments.value = [];
   await scrollToBottom(true); // 自己刚发的消息一定要看到
 }
 
@@ -1236,6 +1473,12 @@ const TOOL_ICONS: Record<string, string> = {
   list_entity_names: 'clipboard',
   entity_name_audit: 'clipboard',
   ask_user: 'ai',
+  // 收集箱相关工具：让工具卡一眼看出它是在读/转/写收集箱，而不是知识库
+  list_inbox: 'inbox',
+  read_inbox_item: 'file',
+  write_inbox_markdown: 'file-plus',
+  convert_inbox_item: 'ai',
+  add_inbox_file: 'file-plus',
 };
 
 function toolIcon(name: string): string {
@@ -1374,6 +1617,46 @@ onUnmounted(() => {
   border-left: 1px solid var(--border);
   background: var(--bg);
   z-index: var(--z-drawer);
+}
+
+/*
+ * 拖文件悬停：整只抽屉盖一层提示（pointer-events:none，不挡 drop 事件）。
+ * 用 accent 色边框 + 半透明底，既说明「可以松手」，又不遮住正在读的对话。
+ */
+.drop-overlay {
+  position: absolute;
+  inset: 6px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed color-mix(in srgb, var(--accent, #4d8aff) 55%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-soft) 82%, transparent);
+  pointer-events: none;
+}
+
+.drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 16px 22px;
+  border-radius: 10px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.drop-card b {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.drop-card span {
+  color: var(--text-faint);
+  font-size: 11.5px;
 }
 
 /*
@@ -1936,6 +2219,33 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
+}
+
+/* 用户消息附带的收集箱文件：只读 chip，悬停看完整路径（附件不是知识库内容，不参与引用） */
+.entry-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 88%;
+}
+
+.entry-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent, #4d8aff) 20%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft) 70%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .queued-chip {
@@ -3040,6 +3350,86 @@ onUnmounted(() => {
 .chat-composer textarea:focus {
   background: none;
   box-shadow: none;
+}
+
+/* ===== 附件 chip：贴在 textarea 上方，输入卡内滚动，不把输入框顶出视野 ===== */
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 116px;
+  overflow-y: auto;
+  padding: 9px 11px 0;
+}
+
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.attach-chip.inbox {
+  border-color: color-mix(in srgb, var(--accent, #4d8aff) 28%, transparent);
+  background: var(--accent-soft);
+}
+
+.attach-name {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-source {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+
+.attach-chip.uploading {
+  padding-right: 8px;
+  color: var(--text-faint);
+}
+
+.attach-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.attach-remove:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.14));
+  color: var(--text);
+}
+
+/* 左下角工具按钮：回形针（上传）与收集箱（从已有里挑） */
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: auto;
+}
+
+.composer-file-input {
+  display: none;
 }
 
 .composer-actions {
