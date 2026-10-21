@@ -24,7 +24,7 @@
         <dt>最近同步</dt>
         <dd>{{ syncLine }}</dd>
 
-        <!-- link 缺失（Android 本地端）时不摆「自动择优 / 探测记录」：这两块的前提是服务端在探路 -->
+        <!-- link 缺失（本机直连模式）时不摆「自动择优 / 连接说明」：这两块的前提是服务端在探路 -->
         <template v-if="channelLink">
           <dt>自动择优</dt>
           <dd class="po-order-row">
@@ -39,25 +39,56 @@
               <span>优先局域网</span>
             </label>
           </dd>
-
-          <dt>探测记录</dt>
-          <dd>
-            <ul v-if="candidates.length" class="po-probes">
-              <li v-for="(item, index) in candidates" :key="`${item.kind}-${item.url}-${index}`">
-                <span class="po-probe-label">{{ item.label }}</span>
-                <span class="po-probe-url">{{ item.url }}</span>
-                <span v-if="item.ok" class="po-probe-ok">✓ {{ probeLatency(item.latencyMs) }}</span>
-                <span v-else class="po-probe-bad">✗ {{ item.error || '不可达' }}</span>
-              </li>
-            </ul>
-            <span v-else class="po-faint">还没有探测记录：下一轮连接会先试局域网</span>
-          </dd>
         </template>
         <template v-else>
           <dt>本机状态</dt>
           <dd class="po-faint">这台设备没有连接通道明细（本机直连模式），同步按最近一轮是否跑完判定</dd>
         </template>
       </dl>
+
+      <!-- 连接说明：原来那串「探测记录」（候选地址 + ✓/✗）用户看不懂，这里翻译成
+           「现在是怎么连上的」+「其余通道为什么没在用」；原始记录收进下面的技术细节。 -->
+      <section v-if="story" class="po-story">
+        <p class="po-story-title">{{ story.currentTitle }}</p>
+        <p class="po-current" :class="`tone-${story.current.tone}`">
+          <Icon :name="story.current.tone === 'ok' ? 'check' : 'alert'" :size="13" />
+          <strong>{{ story.current.label }}</strong>
+          <span>{{ story.current.text }}</span>
+        </p>
+
+        <p class="po-story-title po-story-title-others">{{ story.othersTitle }}</p>
+        <ul class="po-others">
+          <li
+            v-for="item in story.others"
+            :key="item.key"
+            class="po-other"
+            :class="`tone-${item.tone}`"
+          >
+            <div class="po-other-head">
+              <span class="po-other-dot" aria-hidden="true" />
+              <span class="po-other-name">{{ item.label }}</span>
+              <span class="po-other-state">{{ item.stateLabel }}</span>
+            </div>
+            <p class="po-other-reason">{{ item.reason }}</p>
+            <p v-if="item.hint" class="po-other-hint">{{ item.hint }}</p>
+          </li>
+        </ul>
+
+        <p v-if="story.tip" class="po-tip">{{ story.tip }}</p>
+
+        <details v-if="story.probes.length" class="po-tech">
+          <summary>技术细节（排查用）</summary>
+          <p class="po-tech-time">最近探测：{{ probedLine }}</p>
+          <ul class="po-probes">
+            <li v-for="(item, index) in story.probes" :key="`${item.kind}-${item.url}-${index}`">
+              <span class="po-probe-label">{{ item.label }}</span>
+              <span class="po-probe-url">{{ item.url }}</span>
+              <span v-if="item.ok" class="po-probe-ok">✓ {{ probeLatency(item.latencyMs) }}</span>
+              <span v-else class="po-probe-bad">✗ {{ item.error || '不可达' }}</span>
+            </li>
+          </ul>
+        </details>
+      </section>
 
       <div class="po-acts">
         <button class="btn primary" type="button" :disabled="syncing" @click="emit('sync')">
@@ -80,8 +111,10 @@
  * 连接通道详情浮层（点侧栏胶囊左侧那块打开）。
  *
  * 这里放的都是「设置页才有、但排查时最想看」的东西：现在走哪条路、延迟多少、保持了多久、
- * 候选地址各探成什么样、优先局域网的开关；点右侧 ⟳ 的「立即同步」老习惯不变，所以浮层里的
- * 主按钮走的是**同一个同步流程**（由父组件 SyncButton 通过 sync 事件执行，不写第二份）。
+ * **现在是怎么连上的、其余通道为什么没在用**、优先局域网的开关。说明文字由 lib/syncChannelStory
+ * 从 link + dualStack 翻译成人话（原「探测记录」那串候选地址收进折叠的「技术细节」里）；
+ * 点右侧 ⟳ 的「立即同步」老习惯不变，所以浮层里的主按钮走的是**同一个同步流程**
+ * （由父组件 SyncButton 通过 sync 事件执行，不写第二份）。
  *
  * 形态照 AppContextMenu：Teleport 到 body + fixed 定位（侧栏是独立滚动容器，留在原地会被裁掉），
  * 按触发元素 rect 就近展开、越界夹紧；Esc / 点外部 / 换路由都关闭，关闭后由父组件把焦点还给胶囊。
@@ -97,6 +130,7 @@ import {
   formatChannelSince,
   type SyncChannelView,
 } from '../lib/syncChannel';
+import { syncChannelStory } from '../lib/syncChannelStory';
 import { useSyncStore } from '../stores/sync';
 import Icon from './Icon.vue';
 
@@ -136,11 +170,24 @@ let ticker: number | null = null;
 const channelLink = computed(() => sync.link);
 const offline = computed(() => props.view.key === 'offline');
 const host = computed(() => props.view.host || channelLink.value?.host || '');
-const candidates = computed(() => channelLink.value?.candidates || []);
 const pending = computed(() => Number(sync.status?.pending || 0));
 const pendingPulls = computed(() => Number(sync.status?.pendingPulls || 0));
 const preferLan = ref(true);
 const savingLan = ref(false);
+
+/**
+ * 连接说明：现在是怎么连上的、其余通道为什么没在用（纯逻辑在 lib/syncChannelStory，单测覆盖）。
+ * 没有 link 时返回 null，浮层退回「本机直连模式」的降级文案。
+ */
+const story = computed(() => syncChannelStory({
+  key: props.view.key,
+  link: channelLink.value,
+  dualStack: sync.status?.dualStack || null,
+  hubUrl: sync.status?.hubUrl,
+}));
+
+/** 技术细节里的探测时间（浮层开着时随钟更新，与「最近同步」同一口径） */
+const probedLine = computed(() => formatSyncTime(channelLink.value?.probedAt, clock.value) || '未知');
 
 /** 副行：可用的通道说延迟与保持了多久；断开说原因（无信息量的网络错误不外露） */
 const subLine = computed(() => {
@@ -308,9 +355,15 @@ function openSettings(): void {
 .sync-popover {
   position: fixed;
   z-index: var(--z-menu);
-  width: 372px;
+  /* 396px：连接说明是整句中文，比原来的探测记录列表需要更宽的行长（窄屏由下面的 max-width 兜底） */
+  width: 396px;
   /* 窄屏左右各留 10px（见 place() 的 margin 口径） */
   max-width: calc(100vw - 20px);
+  /* 说明文字比原来的探测记录长：小屏（手机抽屉 / 矮窗口）限制高度、内部滚动，
+     不让浮层长出视口导致底部按钮点不到 */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 14px 15px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -425,6 +478,125 @@ function openSettings(): void {
 .po-probe-bad { flex: none; margin-left: auto; color: var(--danger); }
 .po-faint { color: var(--text-faint); font-size: 12.5px; }
 
+/* ---------- 连接说明（替代原来的「探测记录」） ----------
+   第一段回答「现在是怎么连上的」，第二段逐条回答「其余通道为什么没在用」。
+   语气用状态色（--success/--warn/--danger 的 soft 令牌），不与顶部通道四色抢表意。 */
+.po-story {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.po-story-title {
+  margin: 0 0 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.po-story-title-others { margin-top: 11px; }
+
+.po-current {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--channel-soft);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.po-current :deep(svg) { flex: none; margin-top: 2px; color: var(--channel); }
+.po-current strong { flex: none; color: var(--channel); font-weight: 600; }
+.po-current span { min-width: 0; color: var(--text-secondary); }
+
+/* IPv4 降级 / 断开：色块跟着状态走（通道色仍由顶部的点与标题交代） */
+.po-current.tone-warn { background: var(--warn-soft); }
+.po-current.tone-warn :deep(svg),
+.po-current.tone-warn strong { color: var(--warn); }
+.po-current.tone-bad { background: var(--danger-soft); }
+.po-current.tone-bad :deep(svg),
+.po-current.tone-bad strong { color: var(--danger); }
+
+.po-others {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.po-other { padding: 7px 0; }
+.po-other + .po-other { border-top: 1px dashed var(--border); }
+
+.po-other-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.po-other-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.po-other-name {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.po-other-state { margin-left: auto; color: var(--text-faint); font-size: 11.5px; }
+
+.po-other-reason {
+  margin: 3px 0 0 12px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.po-other-hint {
+  margin: 3px 0 0 12px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* 有结论（降级 / 失败）的通道：点与状态短语用对应状态色，原因文字抬一档保证可读 */
+.po-other.tone-warn .po-other-dot { background: var(--warn); }
+.po-other.tone-warn .po-other-state { color: var(--warn); }
+.po-other.tone-bad .po-other-dot { background: var(--danger); }
+.po-other.tone-bad .po-other-state { color: var(--danger); }
+.po-other.tone-warn .po-other-reason,
+.po-other.tone-bad .po-other-reason { color: var(--text-secondary); }
+
+.po-tip {
+  margin: 9px 0 0;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+/* 原始探测记录收在折叠区：默认不打扰，排查时再展开 */
+.po-tech { margin-top: 9px; }
+
+.po-tech summary {
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  user-select: none;
+}
+
+.po-tech summary:hover { color: var(--text-secondary); }
+.po-tech-time { margin: 5px 0 0; color: var(--text-faint); font-size: 11.5px; }
+.po-tech .po-probes { margin-top: 5px; }
+
 .po-acts {
   display: flex;
   gap: 8px;
@@ -442,7 +614,7 @@ function openSettings(): void {
 }
 
 @media (max-width: 640px) {
-  /* 紧凑档：三个按钮挤在 372px 里会换行，换行后各自撑满一行更好点 */
+  /* 紧凑档：三个按钮挤在 396px 里会换行，换行后各自撑满一行更好点 */
   .po-acts .btn { flex: 1 1 auto; justify-content: center; }
 }
 </style>

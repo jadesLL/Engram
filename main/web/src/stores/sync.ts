@@ -5,6 +5,7 @@ import { computed, ref } from 'vue';
 import { api } from '../api';
 import type { SyncStatusInput } from '../lib/syncStatus';
 import type { SyncLinkStatus } from '../lib/syncChannel';
+import type { SyncDualStackStatus } from '../lib/syncChannelStory';
 
 /**
  * 同步状态共享源。
@@ -50,9 +51,14 @@ export interface SyncStatusPayload extends SyncStatusInput {
   peers?: Array<{ id: string; name: string; online?: boolean; last_seen_at?: string | null }>;
   /**
    * 连接通道明细：成员端才有（局域网 / IPv6 / IPv4 / 已断开 + 候选探测结果）；
-   * 中枢端、未配置时为 null，Android 本地端的服务端暂时不返回这个字段——三处都要能降级。
+   * 中枢端、未配置时为 null，旧版 Android 本地端可能不返回——三处都要能降级。
    */
   link?: SyncLinkStatus | null;
+  /**
+   * 双栈连接：当前配置 + 每个中枢域名的实时协议族。连接详情浮层用它解释
+   * 「为什么现在走 IPv4 / IPv6 为什么没连上」；旧服务端可能不返回，按「不知道」降级。
+   */
+  dualStack?: SyncDualStackStatus | null;
 }
 
 /** 一轮同步是否在跑（含"刚拉完还在落盘"的补拉期） */
