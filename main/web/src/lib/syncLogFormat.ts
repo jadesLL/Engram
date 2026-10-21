@@ -391,6 +391,9 @@ const KIND_LABELS: Record<string, string> = {
   move: '改名条目',
   session: '会话',
   board: '任务看板',
+  // 客户调研任务（DB 行）与流程模板（偏好项）：日志详情里不出现英文 kind
+  research: '客户调研',
+  preference: '偏好设置',
 };
 
 export function formatDataValue(key: string, value: unknown): string {

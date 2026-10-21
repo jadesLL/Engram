@@ -15,12 +15,25 @@ test('分类同步：缺省、关闭隔离、偏好冲突与凭据隔离', async
   try {
     assert.equal(c.syncCategories().homeCards, false);
     assert.equal(c.syncCategories().settings, false);
+    assert.equal(c.syncCategories().customerResearch, true, '客户洞察默认参与同步');
     assert.equal(c.syncAllowed('page', 'Wiki/说明.md'), true);
+    assert.equal(c.categoryFor('research', '任意 id'), 'customerResearch');
+    assert.equal(c.categoryFor('preference', 'customer_research_rules'), 'customerResearch');
+    assert.equal(c.categoryFor('preference', 'theme'), 'settings');
+    assert.equal(c.syncAllowed('research', '任意 id'), true);
+    assert.equal(c.syncAllowed('preference', 'customer_research_rules'), true);
     db.setSetting('sync_categories', 'broken-json');
     assert.equal(c.syncAllowed('file', '原始资料/文档/a.pdf'), true);
     c.saveSyncCategories({ materials: false, homeCards: true });
     assert.equal(c.syncAllowed('delete', '原始资料/文档/a.pdf'), false);
     assert.equal(c.syncAllowed('move', 'Wiki/a.md', '原始资料/文档/a.md'), false);
+    // 客户洞察是独立分类：关掉后调研记录与流程模板都不再同步，未知 key 仍然拒绝
+    c.saveSyncCategories({ customerResearch: false });
+    assert.equal(c.syncAllowed('research', '任意 id'), false);
+    assert.equal(c.syncAllowed('preference', 'customer_research_rules'), false);
+    assert.throws(() => c.saveSyncCategories({ customerResearchx: true }));
+    c.saveSyncCategories({ customerResearch: true });
+    assert.equal(c.syncAllowed('research', '任意 id'), true);
     assert.equal(c.syncAllowed('preference', 'home_layout'), true);
     assert.equal(c.syncAllowed('preference', 'theme'), false);
     assert.throws(() => c.saveSyncCategories({ knowledge: 'false' }));

@@ -9,11 +9,13 @@ import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { PassThrough } from 'node:stream';
 import { createRequire } from 'node:module';
+import { CUSTOMER_RESEARCH_SECTIONS } from '../content/customerResearch.js';
 
 /**
  * 多端同步端到端集成测试：同机起 1 个 hub + 2 个节点（真实 HTTP/SSE 实例），
  * 覆盖 双向实时传播、三方非重叠合并、同位置冲突最新者胜裁决、文件同步、删除传播、
- * 停用-重连对账补推、提炼账本（「已提炼」标记）跨端补齐与 oplog 缺口判定。
+ * 停用-重连对账补推、提炼账本（「已提炼」标记）跨端补齐与 oplog 缺口判定、
+ * 客户洞察（客户调研）记录与流程模板跨端同步。
  * 实例以 worker_threads 运行完整 server（每线程独立模块注册表与 DATA_DIR，
  * 与多进程部署等价）；均为测试期间的一次性临时实例，密码每次运行随机生成。
  * 节点按顺序启动：worker 内的 env 写入在其 import 完成后不再影响其他线程
@@ -190,6 +192,30 @@ async function countSyncEvents(inst: Instance, event: string): Promise<number> {
   return st.log.filter((l) => l.event === event).length;
 }
 
+/** 客户洞察页的数据源：调研记录列表（markdown 即报告正文）+ 流程模板 */
+interface ResearchState {
+  tasks: { id: string; customer: string; markdown: string; path: string }[];
+  rules: { version: number; workflow: string; sections: { id: string; title: string }[] };
+}
+
+async function researchState(inst: Instance): Promise<ResearchState> {
+  const res = await api(inst, 'GET', '/api/customer-research');
+  return (await res.json()) as ResearchState;
+}
+
+async function researchTasks(inst: Instance): Promise<ResearchState['tasks']> {
+  return (await researchState(inst)).tasks;
+}
+
+/** 合法的客户调研流程快照 JSON（章节用服务端默认模板，避免与 content/customerResearch.ts 漂移） */
+function researchRulesJson(version: number, workflow: string): string {
+  return JSON.stringify({
+    version,
+    workflow,
+    sections: CUSTOMER_RESEARCH_SECTIONS.map((section) => ({ id: section.id, title: section.title })),
+  });
+}
+
 interface LoggedEntry {
   event: string;
   detail?: string;
@@ -265,7 +291,7 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     instances.push(nodeC);
     for (const inst of instances) {
       const status = await (await api(inst, 'GET', '/api/sync/status')).json() as any;
-      assert.deepEqual(status.categories, { knowledge: true, materials: true, assets: true, aiWorkspace: true, sessions: true, board: true, homeCards: false, settings: false });
+      assert.deepEqual(status.categories, { knowledge: true, materials: true, assets: true, aiWorkspace: true, sessions: true, board: true, customerResearch: true, homeCards: false, settings: false });
     }
     // 中枢切换为 hub 角色 + 为两台成员设备各签发绑定令牌
     assert.ok((await api(hub, 'POST', '/api/sync/config', { role: 'hub' })).ok);
@@ -753,11 +779,88 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
         && body.updatedAt === hubBoardAt
         && body.sourceNodeLabel === '中枢';
     }, 60_000);
-    // 独立开关：默认不传布局/设置；开启后双向同步；关掉会跳过实时变更和全量对账。
-    const settingsOf = async (inst: Instance) => (await (await api(inst, 'GET', '/api/settings')).json() as any).settings;
+    // ---------- 场景 10：客户洞察（客户调研）记录与流程模板跨端同步 ----------
+    // 客户洞察是 wiki.db 里的任务行：**只同步完成态**（report 非空）。真实路径下由
+    // submit_customer_research 收口触发推送；这里跑不了外部 Agent，于是在成员库里直接造一条
+    // 完成态记录，再用成员端的对账入口补推——走的正是「首次接入/对账补推」这条链路。
     const flags = async (inst: Instance, categories: Record<string, boolean>) => {
       assert.ok((await api(inst, 'POST', '/api/sync/config', { categories })).ok);
     };
+    const researchNeedle = `客户洞察同步验证-${crypto.randomUUID().slice(0, 8)}`;
+    const researchTaskId = 'e2e-research';
+    withDb(nodeB.dataDir, (conn) => {
+      const stamp = new Date().toISOString();
+      conn.prepare(
+        `INSERT INTO customer_research_tasks(id, customer, scope, client, rules, save_requested, session_id, run_id,
+                                             report, path, created_at, updated_at, report_date, time_zone)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        researchTaskId,
+        `客户洞察${researchNeedle}`,
+        'knowledge-web',
+        'Codex',
+        researchRulesJson(3, 'e2e 工作流'),
+        1,
+        '',
+        '',
+        `# 客户洞察\n\n## 调研范围与执行摘要\n\n${researchNeedle}\n`,
+        '',
+        stamp,
+        stamp,
+        '2026-10-21',
+        'Asia/Hong_Kong',
+      );
+    });
+    await api(nodeB, 'POST', '/api/sync/reconcile');
+    await waitFor('中枢收到成员端的客户调研记录', async () =>
+      (await researchTasks(hub)).some((task) => task.id === researchTaskId && task.markdown.includes(researchNeedle)),
+    60_000, async () => `hub tasks=${JSON.stringify(await researchTasks(hub))}`);
+    // 中枢 → 另一成员：广播只带 hash，C 按需拉快照（与会话同一条链路）
+    await waitFor('另一成员收到客户调研记录', async () =>
+      (await researchTasks(nodeC)).some((task) => task.id === researchTaskId && task.markdown.includes(researchNeedle)),
+    60_000, async () => `C tasks=${JSON.stringify(await researchTasks(nodeC))}`);
+
+    // 反向：中枢保存流程模板（走 preference 管道）→ 两台成员都收到并递增版本
+    const rulesNeedle = `模板同步验证-${crypto.randomUUID().slice(0, 8)}`;
+    const rulesBeforeB = (await researchState(nodeB)).rules;
+    const rulesBeforeC = (await researchState(nodeC)).rules;
+    assert.ok((await api(hub, 'PUT', '/api/customer-research/rules', {
+      workflow: `${rulesNeedle} 工作流`,
+      titles: CUSTOMER_RESEARCH_SECTIONS.map((section) => section.title),
+    })).ok);
+    for (const [label, inst, before] of [['B', nodeB, rulesBeforeB], ['C', nodeC, rulesBeforeC]] as const) {
+      await waitFor(`${label} 收到中枢的客户调研流程模板`, async () => {
+        const rules = (await researchState(inst)).rules;
+        return rules.workflow.includes(rulesNeedle) && rules.version > before.version;
+      }, 60_000);
+    }
+
+    // 分类开关：关闭客户洞察后，调研记录与流程模板都不再接收（独立分类，不影响其他内容）
+    await flags(nodeC, { customerResearch: false });
+    const offNeedle = `关闭客户洞察后的新模板-${crypto.randomUUID().slice(0, 8)}`;
+    assert.ok((await api(hub, 'PUT', '/api/customer-research/rules', {
+      workflow: `${offNeedle} 工作流`,
+      titles: CUSTOMER_RESEARCH_SECTIONS.map((section) => section.title),
+    })).ok);
+    // 同一份中枢模板，B 照常收到（证明只是 C 关了这个开关）
+    await waitFor('B 仍收到新模板', async () => (await researchState(nodeB)).rules.workflow.includes(offNeedle), 60_000);
+    await api(nodeC, 'POST', '/api/sync/reconcile');
+    await waitFor('C 关闭客户洞察分类后对账结束', async () =>
+      !(await (await api(nodeC, 'GET', '/api/sync/status')).json() as any).reconciling, 60_000);
+    assert.equal(
+      (await researchState(nodeC)).rules.workflow.includes(offNeedle),
+      false,
+      '关闭客户洞察分类后，中枢的流程模板不应再覆盖本机',
+    );
+    assert.ok(
+      (await researchState(nodeC)).rules.workflow.includes(rulesNeedle),
+      '关闭前收到的模板保留在本机（关闭分类只停止同步，不删除本机内容）',
+    );
+    // 恢复开关，避免影响后续场景
+    await flags(nodeC, { customerResearch: true });
+
+    // 独立开关：默认不传布局/设置；开启后双向同步；关掉会跳过实时变更和全量对账。
+    const settingsOf = async (inst: Instance) => (await (await api(inst, 'GET', '/api/settings')).json() as any).settings;
     const originalB = await settingsOf(nodeB);
     await api(hub, 'PUT', '/api/settings', { home_layout: '{"version":4,"modules":[]}', search_synonyms: '甲=乙', theme: 'dark' });
     await api(nodeB, 'POST', '/api/sync/reconcile');

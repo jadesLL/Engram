@@ -37,6 +37,7 @@ import {
   type SyncPeer,
 } from '../sync/store.js';
 import { collectEvidenceForPage, collectEvidenceForPath } from '../sync/rows.js';
+import { collectResearchSnapshot, researchContentHash, researchManifest } from '../sync/research.js';
 import {
   collectSessionSnapshot,
   listSessionTombstones,
@@ -189,6 +190,8 @@ function peerView(peer: SyncPeer) {
 function enrichReplayOp(op: SyncOp, compact = false) {
   if (!syncAllowed(op.kind, op.target, op.old_path)) return { seq: op.seq, kind: 'disabled', target: '' };
   if (op.kind === 'preference') return { ...op, preference: preferenceValue(op.target) };
+  // 客户调研记录：正文由客户端按 op.hash 按需拉 /api/sync/research，补拉 op 里不塞报告正文
+  if (op.kind === 'research') return op;
   if (compact || op.kind !== 'page') return op;
   const content = getPageRevision(op.target, op.revision) ?? readPageRaw(op.target) ?? '';
   return { ...op, content, evidence: collectEvidenceForPage(op.target) };
@@ -621,6 +624,8 @@ export async function syncRoutes(app: FastifyInstance) {
       sessions: syncAllowed('session', '') ? sessionManifest() : [],
       tombstones: syncAllowed('session', '') ? listSessionTombstones() : [],
       board: syncAllowed('board', '') ? readSyncedBoard() : null,
+      // 客户调研是 wiki.db 里的记录，与会话一样只带快照 hash/manifest，不搬报告正文
+      research: syncAllowed('research', '') ? researchManifest() : [],
       // 成员端据此把「本机叫什么」对齐成中枢配置里的成员名（deviceLabel.ts）；
       // owner 通道（浏览器/MCP）没有成员身份，返回 null，调用方按「不知道」处理
       device: peer ? { id: peer.id, name: peer.name } : null,
@@ -641,6 +646,16 @@ export async function syncRoutes(app: FastifyInstance) {
     const snapshot = collectSessionSnapshot(id);
     if (!snapshot) return reply.code(404).send({ error: '会话不存在' });
     return { snapshot, hash: snapshotHash(snapshot) };
+  });
+
+  /** 客户调研记录快照（对账/按需拉取用）：只有完成态（有报告）的记录存在 */
+  app.get('/api/sync/research', { preHandler: requireSyncAccess }, async (req, reply) => {
+    const query = req.query as { id?: string };
+    const id = String(query.id || '');
+    if (!id) return reply.code(400).send({ error: '缺少 id' });
+    const snapshot = collectResearchSnapshot(id);
+    if (!snapshot) return reply.code(404).send({ error: '客户调研记录不存在' });
+    return { snapshot, hash: researchContentHash(id) };
   });
 
   /** 页面内容拉取（对账用） */

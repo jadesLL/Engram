@@ -5,6 +5,10 @@ import { db, getSetting, setSetting } from '../lib/db.js';
 import { readPage, safeJoin, pagePathTaken } from '../lib/vault.js';
 import { createRawMaterial } from '../pipeline/rawMaterial.js';
 import { CUSTOMER_RESEARCH_SECTIONS, CUSTOMER_RESEARCH_WORKFLOW } from '../content/customerResearch.js';
+// 同步挂点：流程模板走 preference 管道，报告收口走 research 类型（sync 层不 import 本模块，不成环）
+import { stampPreference } from '../sync/preferences.js';
+import { currentNodeId } from '../sync/store.js';
+import { recordLocalChange, recordResearchChange } from '../sync/index.js';
 
 export class CustomerResearchError extends Error { status = 400; }
 const RULES_KEY = 'customer_research_rules';
@@ -34,6 +38,10 @@ export function updateCustomerResearchRules(input: unknown): Rules {
   const next = { version: customerResearchRules().version + 1, workflow: parsed.data.workflow,
     sections: CUSTOMER_RESEARCH_SECTIONS.map((s, i) => ({ id: s.id, title: parsed.data.titles[i] })) };
   setSetting(RULES_KEY, JSON.stringify(next));
+  // 流程模板复用的是设置里的 preference 同步管道（最新写入者胜）：先盖上本机写入时刻，
+  // 再记一条偏好变更。写法与 routes/settings.ts 保存偏好一致。
+  stampPreference(RULES_KEY, currentNodeId());
+  recordLocalChange('preference', RULES_KEY);
   return next;
 }
 
@@ -123,6 +131,9 @@ export function submitCustomerResearch(input: { taskId: string; companyFullName?
     savedPath = createRawMaterial({ path, content: markdown }).path;
   }
   db.prepare('UPDATE customer_research_tasks SET report=?,path=?,updated_at=? WHERE id=?').run(markdown, savedPath, new Date().toISOString(), task.id);
+  // 报告收口后通知同步：只有完成态（report 非空）才会跨端，进行中/失败留在本机执行端。
+  // 保存与不保存两个分支都调：未保存草稿在客户洞察页同样能看、能翻，对端应看到同一份。
+  recordResearchChange(task.id);
   return { taskId: task.id, saved: Boolean(savedPath), path: savedPath, markdown };
 }
 
