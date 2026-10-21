@@ -20,34 +20,8 @@
       <!-- 副行：这条路好不好走（延迟 / 保持了多久 / 本机在群组里的名字）；断开时换成一行原因 -->
       <p class="po-sub" :class="{ bad: offline }">{{ subLine }}</p>
 
-      <dl class="po-kv">
-        <dt>最近同步</dt>
-        <dd>{{ syncLine }}</dd>
-
-        <!-- link 缺失（本机直连模式）时不摆「自动择优 / 连接说明」：这两块的前提是服务端在探路 -->
-        <template v-if="channelLink">
-          <dt>自动择优</dt>
-          <dd class="po-order-row">
-            <span class="po-order">局域网 → IPv6 → IPv4</span>
-            <label class="po-switch">
-              <input
-                v-model="preferLan"
-                type="checkbox"
-                :disabled="savingLan"
-                @change="savePreferLan"
-              />
-              <span>优先局域网</span>
-            </label>
-          </dd>
-        </template>
-        <template v-else>
-          <dt>本机状态</dt>
-          <dd class="po-faint">这台设备没有连接通道明细（本机直连模式），同步按最近一轮是否跑完判定</dd>
-        </template>
-      </dl>
-
-      <!-- 连接说明：原来那串「探测记录」（候选地址 + ✓/✗）用户看不懂，这里翻译成
-           「现在是怎么连上的」+「其余通道为什么没在用」；原始记录收进下面的技术细节。 -->
+      <!-- 默认只留「现在是怎么连上的」：其余通道、同步状态与设置、原始探测记录全部收成
+           一行折叠，需要排查时再展开——用户要的是一眼看到现在靠什么连着，不是一屏说明。 -->
       <section v-if="story" class="po-story">
         <p class="po-story-title">{{ story.currentTitle }}</p>
         <p class="po-current" :class="`tone-${story.current.tone}`">
@@ -56,29 +30,61 @@
           <span>{{ story.current.text }}</span>
         </p>
 
-        <p class="po-story-title po-story-title-others">{{ story.othersTitle }}</p>
-        <ul class="po-others">
-          <li
-            v-for="item in story.others"
-            :key="item.key"
-            class="po-other"
-            :class="`tone-${item.tone}`"
-          >
-            <div class="po-other-head">
-              <span class="po-other-dot" aria-hidden="true" />
-              <span class="po-other-name">{{ item.label }}</span>
-              <span class="po-other-state">{{ item.stateLabel }}</span>
-            </div>
-            <p class="po-other-reason">{{ item.reason }}</p>
-            <p v-if="item.hint" class="po-other-hint">{{ item.hint }}</p>
-          </li>
-        </ul>
+        <details class="po-fold">
+          <summary>
+            <span class="po-fold-title">{{ story.othersTitle }}</span>
+            <span class="po-fold-glance">{{ othersGlance }}</span>
+          </summary>
+          <ul class="po-others">
+            <li
+              v-for="item in story.others"
+              :key="item.key"
+              class="po-other"
+              :class="`tone-${item.tone}`"
+            >
+              <div class="po-other-head">
+                <span class="po-other-dot" aria-hidden="true" />
+                <span class="po-other-name">{{ item.label }}</span>
+                <span class="po-other-state">{{ item.stateLabel }}</span>
+              </div>
+              <p class="po-other-reason">{{ item.reason }}</p>
+              <p v-if="item.hint" class="po-other-hint">{{ item.hint }}</p>
+            </li>
+          </ul>
+          <p v-if="story.tip" class="po-tip">{{ story.tip }}</p>
+        </details>
 
-        <p v-if="story.tip" class="po-tip">{{ story.tip }}</p>
+        <details class="po-fold">
+          <summary>
+            <span class="po-fold-title">同步状态与设置</span>
+            <span class="po-fold-glance">{{ syncLine }}</span>
+          </summary>
+          <dl class="po-kv">
+            <dt>最近同步</dt>
+            <dd>{{ syncLine }}</dd>
+            <template v-if="channelLink">
+              <dt>自动择优</dt>
+              <dd class="po-order-row">
+                <span class="po-order">局域网 → IPv6 → IPv4</span>
+                <label class="po-switch">
+                  <input
+                    v-model="preferLan"
+                    type="checkbox"
+                    :disabled="savingLan"
+                    @change="savePreferLan"
+                  />
+                  <span>优先局域网</span>
+                </label>
+              </dd>
+            </template>
+          </dl>
+        </details>
 
-        <details v-if="story.probes.length" class="po-tech">
-          <summary>技术细节（排查用）</summary>
-          <p class="po-tech-time">最近探测：{{ probedLine }}</p>
+        <details v-if="story.probes.length" class="po-fold">
+          <summary>
+            <span class="po-fold-title">技术细节（排查用）</span>
+            <span class="po-fold-glance">探测于 {{ probedLine }}</span>
+          </summary>
           <ul class="po-probes">
             <li v-for="(item, index) in story.probes" :key="`${item.kind}-${item.url}-${index}`">
               <span class="po-probe-label">{{ item.label }}</span>
@@ -89,6 +95,15 @@
           </ul>
         </details>
       </section>
+
+      <!-- link 缺失（本机直连模式）：没有通道说明可给，状态收进一行折叠 -->
+      <details v-else class="po-fold">
+        <summary>
+          <span class="po-fold-title">同步状态</span>
+          <span class="po-fold-glance">{{ syncLine }}</span>
+        </summary>
+        <p class="po-faint">这台设备没有连接通道明细（本机直连模式），同步按最近一轮是否跑完判定</p>
+      </details>
 
       <div class="po-acts">
         <button class="btn primary" type="button" :disabled="syncing" @click="emit('sync')">
@@ -110,9 +125,10 @@
 /**
  * 连接通道详情浮层（点侧栏胶囊左侧那块打开）。
  *
- * 这里放的都是「设置页才有、但排查时最想看」的东西：现在走哪条路、延迟多少、保持了多久、
- * **现在是怎么连上的、其余通道为什么没在用**、优先局域网的开关。说明文字由 lib/syncChannelStory
- * 从 link + dualStack 翻译成人话（原「探测记录」那串候选地址收进折叠的「技术细节」里）；
+ * 默认只回答一个问题：**现在是怎么连上的**（通道 + 地址 + 延迟 + 一句话原因）。
+ * 其余内容（其余通道为什么没在用、同步状态与设置、原始探测记录）都收成一行折叠，
+ * 需要排查时再展开——保持浮层短、打开就能看完当前连接。
+ * 说明文字由 lib/syncChannelStory 从 link + dualStack 翻译成人话；
  * 点右侧 ⟳ 的「立即同步」老习惯不变，所以浮层里的主按钮走的是**同一个同步流程**
  * （由父组件 SyncButton 通过 sync 事件执行，不写第二份）。
  *
@@ -188,6 +204,16 @@ const story = computed(() => syncChannelStory({
 
 /** 技术细节里的探测时间（浮层开着时随钟更新，与「最近同步」同一口径） */
 const probedLine = computed(() => formatSyncTime(channelLink.value?.probedAt, clock.value) || '未知');
+
+/** 折叠行右侧的一眼摘要：不展开也能看到其余通道各是什么状态。
+ *  状态相同的压成「局域网 / IPv6 / IPv4 连不上」，避免三行一样的后缀把摘要挤成省略号。 */
+const othersGlance = computed(() => {
+  const others = story.value?.others || [];
+  if (!others.length) return '';
+  const states = new Set(others.map((item) => item.stateLabel));
+  if (states.size === 1) return `${others.map((item) => item.label).join(' / ')} ${others[0].stateLabel}`;
+  return others.map((item) => `${item.label} ${item.stateLabel}`).join(' · ');
+});
 
 /** 副行：可用的通道说延迟与保持了多久；断开说原因（无信息量的网络错误不外露） */
 const subLine = computed(() => {
@@ -479,8 +505,7 @@ function openSettings(): void {
 .po-faint { color: var(--text-faint); font-size: 12.5px; }
 
 /* ---------- 连接说明（替代原来的「探测记录」） ----------
-   第一段回答「现在是怎么连上的」，第二段逐条回答「其余通道为什么没在用」。
-   语气用状态色（--success/--warn/--danger 的 soft 令牌），不与顶部通道四色抢表意。 */
+   默认只留「现在是怎么连上的」；其余内容全部收进下面的一行折叠，保持浮层短。 */
 .po-story {
   margin-top: 12px;
   padding-top: 10px;
@@ -493,8 +518,6 @@ function openSettings(): void {
   font-size: 12px;
   letter-spacing: 0.02em;
 }
-
-.po-story-title-others { margin-top: 11px; }
 
 .po-current {
   display: flex;
@@ -519,6 +542,66 @@ function openSettings(): void {
 .po-current.tone-bad { background: var(--danger-soft); }
 .po-current.tone-bad :deep(svg),
 .po-current.tone-bad strong { color: var(--danger); }
+
+/* ---------- 折叠行：其余通道 / 同步状态与设置 / 技术细节 ----------
+   一行装下标题 + 右侧摘要（不展开也能看到状态），展开后才铺详细内容 */
+.po-fold {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.po-fold summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.po-fold summary::-webkit-details-marker { display: none; }
+
+/* 自绘三角：原生 marker 在 flex 摘要里对不齐 */
+.po-fold summary::before {
+  content: '▸';
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.po-fold[open] summary::before { content: '▾'; }
+
+.po-fold-title {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.po-fold summary:hover .po-fold-title { color: var(--text-secondary); }
+
+/* 摘要靠右、放不下省略：一眼看到「谁没在用、什么状态」 */
+.po-fold-glance {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.po-fold .po-others { margin-top: 8px; }
+.po-fold .po-tip { margin-top: 8px; }
+.po-fold .po-probes { margin-top: 8px; }
+.po-fold .po-faint { margin-top: 8px; }
+
+/* 折叠里的键值行不再重复分隔线（折叠行本身已经有一道） */
+.po-fold .po-kv {
+  margin: 8px 0 0;
+  padding: 0;
+  border-top: 0;
+}
 
 .po-others {
   margin: 0;
@@ -582,20 +665,6 @@ function openSettings(): void {
   font-size: 11.5px;
   line-height: 1.55;
 }
-
-/* 原始探测记录收在折叠区：默认不打扰，排查时再展开 */
-.po-tech { margin-top: 9px; }
-
-.po-tech summary {
-  cursor: pointer;
-  color: var(--text-faint);
-  font-size: 11.5px;
-  user-select: none;
-}
-
-.po-tech summary:hover { color: var(--text-secondary); }
-.po-tech-time { margin: 5px 0 0; color: var(--text-faint); font-size: 11.5px; }
-.po-tech .po-probes { margin-top: 5px; }
 
 .po-acts {
   display: flex;
