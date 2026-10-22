@@ -220,7 +220,7 @@ test('没配 Agent：refreshBoard 原样把配置错误抛出来，且不留下�
   const { session } = seedRun({ status: 'completed', answer: '上一版清单' });
   const beforeCount = boardSessions().length;
 
-  assert.throws(() => board.refreshBoard(), /还没配模型凭据/);
+  assert.throws(() => board.refreshBoard(), /还没配模型/);
   assert.equal(boardSessions().length, beforeCount, '起轮失败后刚建的空会话被回滚删除');
   assert.equal(board.boardSession()?.id, session.id, '指针回到上一版所在的会话');
   assert.equal(board.boardState().answer, '上一版清单', '上一版看板没丢');

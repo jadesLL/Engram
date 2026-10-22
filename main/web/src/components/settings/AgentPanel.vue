@@ -10,17 +10,16 @@
     <SettingsGroup
       anchor="agent-builtin"
       level="primary"
-      :badge="status.hasKey ? '已配置' : '待配置'"
-      :badge-tone="status.hasKey ? 'ok' : 'warn'"
+      :badge="status.bundled ? '' : '缺依赖'"
+      :badge-tone="status.bundled ? 'ok' : 'warn'"
       title="内置 Agent（聊天抽屉）"
-      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 MCP 工具读写（插件与沙箱姿态见下方「内置 Agent 运行时」）"
+      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 MCP 工具读写。模型与插件在下方「内置 Agent 控制台」里配置"
     >
-      <!-- 运行时摘要（dsh 版本 + profile，来自 GET /api/assistant/status 的 agentVersion / profile）：
-           右侧一键跳到下面的「内置 Agent 运行时」分组，看完整插件清单与设置项 -->
+      <!-- 运行时摘要（dsh 版本 + profile，来自 /api/assistant/status）：右侧一键跳到下方的控制台分组 -->
       <div class="state-strip builtin-summary">
         <span class="state-dot" aria-hidden="true" />
         <strong class="builtin-summary-text">{{ runtimeSummary }}</strong>
-        <a class="builtin-summary-link" href="#agent-runtime" @click.prevent="jumpToRuntime">查看插件与设置</a>
+        <a class="builtin-summary-link" href="#agent-console" @click.prevent="jumpToConsole">配置模型与插件</a>
       </div>
 
       <div class="builtin-rows">
@@ -31,73 +30,27 @@
           </strong>
         </div>
         <div class="builtin-row">
-          <span>模型地址</span>
-          <strong class="path-value">{{ status.custom ? `${status.baseUrl}（${status.api}）` : 'DeepSeek 官方（api.deepseek.com）' }}</strong>
+          <span>运行 profile</span>
+          <strong class="path-value">web（与下方控制台共用同一份配置）</strong>
         </div>
         <div class="builtin-row">
-          <span>模型凭据</span>
-          <strong :class="status.hasKey ? 'ok' : 'warn'">
-            {{ status.hasKey ? '已配置' : '未配置（未配置前无法对话）' }}
-          </strong>
+          <span>模型与插件</span>
+          <strong class="path-value">在下方「内置 Agent 控制台」里配置（DSH 原生设置页）</strong>
         </div>
         <div class="builtin-row">
           <span>工作目录</span>
           <strong class="path-value">{{ status.workspace }}</strong>
         </div>
-      </div>
-
-      <div class="builtin-form">
-        <label>
-          <span>API 地址</span>
-          <input
-            v-model="baseUrl"
-            placeholder="留空走 DeepSeek 官方；中转/自建网关填完整地址，如 https://api.example.com/v1"
-            @keyup.enter="saveBuiltin"
-          />
-        </label>
-        <label>
-          <span>接口协议</span>
-          <AppSelect
-            v-model="apiProtocol"
-            :disabled="!baseUrl.trim()"
-            aria-label="接口协议"
-            :options="protocolOptions"
-          />
-        </label>
-        <label>
-          <span>模型</span>
-          <input
-            v-model="model"
-            placeholder="官方地址留空用默认（deepseek-flash）；填了自定义地址则必填"
-            @keyup.enter="saveBuiltin"
-          />
-        </label>
-        <label>
-          <span>API Key</span>
-          <SecretField
-            id="agent-api-key"
-            v-model="apiKey"
-            :stored="storedKey"
-            copyable
-            :placeholder="baseUrl.trim() ? '该网关的 API Key' : 'DeepSeek 平台 API Key'"
-          />
-        </label>
-        <div class="builtin-actions">
-          <button class="btn primary small" type="button" :disabled="savingBuiltin" @click="saveBuiltin">
-            {{ savingBuiltin ? '保存中…' : '保存' }}
-          </button>
-          <span class="faint small">
-            Key 只存本机数据库，运行 Agent 时经环境变量注入，不写进配置文件的明文里；自定义地址与模型会写成
-            内置 dsh 的 engram.cordis.yml patch 条目（含地址与模型清单，不含 Key）。
-          </span>
+        <div v-if="status.legacyKey" class="builtin-row">
+          <span>旧版 Key</span>
+          <strong class="warn">检测到旧版模型 Key：已继续作为官方 Provider 凭据；建议到控制台里重新配置</strong>
         </div>
       </div>
     </SettingsGroup>
 
-    <!-- 内置 Agent 运行时（dsh 0.2.1 起）：插件清单 / 设置项 / 原始 dump，只读。
-         它是「内置 Agent」这个运行时的展开细节，所以紧跟在上面那张卡之后、自动化插槽之前——
-         导航顺序 = 页面顺序（settingsDomains 里登记的 agent-runtime 也排在这里）。 -->
-    <AgentRuntimePanel />
+    <!-- 内置 Agent 控制台：DSH 原生插件页 / 设置页（模型、内置插件、Agent 预设）。
+         它是「内置 Agent」的配置入口，紧跟在卡片之后、自动化插槽之前——导航顺序 = 页面顺序。 -->
+    <AgentConsolePanel />
 
     <!-- 「自动整理（梦境思考）」由设置页经具名插槽插在这里：它必须紧跟在「内置 Agent」后面，
          排在「外部接入」之前——导航顺序 = 页面顺序，插槽是唯一能保住这个顺序又不拆组件的办法
@@ -179,16 +132,14 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
-import { isComposingKey } from '../../lib/ime';
 import { MCP_TOOLS, groupedMcpTools } from '../../lib/mcpTools';
-import { agentRuntimeSummary } from '../../lib/agentRuntime';
+import { agentRuntimeSummary } from '../../lib/agentConsole';
 import { expandGroup } from '../../lib/settingsCollapse';
 import AgentHarnessSection from './AgentHarnessSection.vue';
 import AgentMcpSection from './AgentMcpSection.vue';
 import AppSelect from '../ui/AppSelect.vue';
-import SecretField from '../SecretField.vue';
 import SettingsGroup from './SettingsGroup.vue';
-import AgentRuntimePanel from './AgentRuntimePanel.vue';
+import AgentConsolePanel from './AgentConsolePanel.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 
 type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'workbuddy' | 'qoder' | 'kimi' | 'kimiwork' | 'other';
@@ -209,84 +160,40 @@ const targetOptions: Array<{ value: AgentTarget; label: string }> = [
 const guideOpen = ref(false);
 const guide = ref('');
 
-/* ===== 内置 Agent（聊天抽屉）配置 ===== */
+/* ===== 内置 Agent（聊天抽屉）与配置入口 ===== */
 const status = ref<any>({
   bundled: false,
-  hasKey: false,
-  model: '',
   workspace: '',
   home: '',
-  baseUrl: '',
-  api: '',
-  custom: false,
-  /** dsh 0.2.1 起 /api/assistant/status 额外回这两个字段（顶部摘要用），老服务端没有就按「未知」显示 */
+  legacyKey: false,
   agentVersion: '',
   profile: '',
+  console: { running: false },
 });
-// 设置页二级导航上的状态徽标：没配 Key 时标「待配置」，用户在导航里就能看到
-useSettingsBadge('agent-builtin', computed(() => (status.value.hasKey ? '' : '待配置')));
 
-/** 卡片顶部的运行时摘要：dsh 版本 + profile，取不到显示「未知」 */
+// 设置页二级导航徽标：随包运行时缺失时提示「缺依赖」，其余不打扰
+useSettingsBadge('agent-builtin', computed(() => (status.value.bundled ? '' : '缺依赖')));
+
+/** 卡片顶部摘要：dsh 版本 + profile，取不到显示「未知」 */
 const runtimeSummary = computed(() => agentRuntimeSummary(status.value));
 
 /**
- * 「查看插件与设置」：跳到同页的「内置 Agent 运行时」分组（anchor: agent-runtime）。
- * 跳法与设置页二级导航一致（SettingsView.scrollToAnchor）：先展开可能被收起的目标分组，
- * 再 scrollIntoView——否则收起状态只会滚到一条色带。
+ * 「配置模型与插件」：跳到同页「内置 Agent 控制台」分组（anchor: agent-console）。
+ * 跳法与二级导航一致（SettingsView.scrollToAnchor）：先展开分组再滚动。
  */
-function jumpToRuntime(): void {
-  expandGroup('agent-runtime');
+function jumpToConsole(): void {
+  expandGroup('agent-console');
   void nextTick(() => {
-    document.getElementById('agent-runtime')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    document.getElementById('agent-console')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   });
 }
-const model = ref('');
-const baseUrl = ref('');
-/** 自定义地址的线协议（不要叫 api：会与 api 客户端 import 撞名） */
-const apiProtocol = ref('openai-completions');
-const protocolOptions: Array<{ value: string; label: string }> = [
-  { value: 'openai-completions', label: 'openai-completions（OpenAI 兼容，多数中转站）' },
-  { value: 'openai-responses', label: 'openai-responses（OpenAI Responses）' },
-  { value: 'anthropic-messages', label: 'anthropic-messages（Anthropic Messages）' },
-];
-const apiKey = ref('');
-const storedKey = ref('');
-const savingBuiltin = ref(false);
 
 async function loadBuiltin() {
   try {
-    const [s, c] = await Promise.all([
-      api.get('/api/assistant/status'),
-      api.get('/api/assistant/config'),
-    ]);
-    status.value = s.data;
-    model.value = c.data.model || '';
-    baseUrl.value = c.data.baseUrl || '';
-    apiProtocol.value = c.data.api || 'openai-completions';
-    storedKey.value = c.data.apiKey || '';
+    const { data } = await api.get('/api/assistant/status');
+    status.value = data;
   } catch {
     /* 未登录或服务未就绪时静默 */
-  }
-}
-
-/** @param event 键盘事件（keyup Enter 触发时传入）：输入法组字中的回车是在确认候选词，不能当保存 */
-async function saveBuiltin(event?: Event) {
-  if (isComposingKey(event)) return;
-  savingBuiltin.value = true;
-  try {
-    await api.put('/api/assistant/config', {
-      model: model.value,
-      baseUrl: baseUrl.value,
-      api: apiProtocol.value,
-      apiKey: apiKey.value,
-    });
-    apiKey.value = '';
-    await loadBuiltin();
-    notify.success('内置 Agent 配置已保存');
-  } catch (error: any) {
-    notify.error(error?.response?.data?.error || '保存失败');
-  } finally {
-    savingBuiltin.value = false;
   }
 }
 

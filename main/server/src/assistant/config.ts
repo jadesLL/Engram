@@ -123,6 +123,32 @@ export function bundledSdkClientVersion(): string | null {
   return packageVersion('@deepseek-ai/dsh-sdk-client');
 }
 
+/**
+ * 是否已有可用的模型凭据（控制台方案下的「配好了没」判断）。
+ *
+ * 三个来源任一命中即算已配置：
+ *  1. 旧版 Engram 存的 Key（继续作为官方 Provider 凭据注入）；
+ *  2. 进程环境变量 DEEPSEEK_API_KEY（部署时注入）；
+ *  3. dsh 自己的凭据文件 `$DSH_HOME/.credentials.yaml`——控制台「设置 → 模型」保存的 Key
+ *     就写在这里（dsh-credentials-local），文件里出现任意 key: value 即视为配过。
+ *
+ * 只用来避免「先建一个必然失败的空会话」；具体调用失败仍由 dsh 报错。
+ */
+export function agentModelConfigured(): boolean {
+  if ((getAgentConfig().apiKey || '').trim()) return true;
+  if ((process.env.DEEPSEEK_API_KEY || '').trim()) return true;
+  const files = [path.join(bundledDshHome(), '.credentials.yaml'), path.join(bundledDshHome(), '.env')];
+  for (const file of files) {
+    try {
+      const text = fs.readFileSync(file, 'utf8');
+      if (/^\s*[A-Za-z_][A-Za-z0-9_]*\s*[:=]\s*\S+/m.test(text)) return true;
+    } catch {
+      /* 没有这个文件 */
+    }
+  }
+  return false;
+}
+
 /** 随包依赖里的 dsh 入口；未安装返回 null */
 export function bundledDshBin(): string | null {
   if (cachedBundledBin !== undefined) return cachedBundledBin;

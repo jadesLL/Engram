@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { DeepSeekHarness, type HarnessNotification } from '@deepseek-ai/dsh-sdk-client';
 import { agentWorkspaceDir, bundledDshHome, bundledDshVersion, getAgentConfig, type AgentConfig } from './config.js';
-import { customRoute } from './agentSettings.js';
-import { writeAgentPatch } from './agentPatch.js';
+import { CONSOLE_PROFILE, agentSettingsStateFingerprint } from './agentSettings.js';
+import { writeAgentPatch, writeChatPatch } from './agentPatch.js';
 import { INITIALIZE_TIMEOUT_MS, startWithRetry } from './handshake.js';
 import { mapNotification, type AgentEvent } from './mapping.js';
 import { ensureAgentToken } from './repository.js';
@@ -11,27 +11,20 @@ import { ensureAgentToken } from './repository.js';
 /**
  * 内置 Agent 的 dsh 运行时封装（官方 SDK 驱动）。
  *
- * 走 `@deepseek-ai/dsh-sdk-client`：它在自己的包里起 `dsh --profile sdk` 子进程，
- * 以 stdio JSON-RPC 驱动会话——宿主侧不出现任何子进程启动代码，也不必知道 dsh 的安装
- * 布局（SDK 解析同版本的 @deepseek-ai/dsh 依赖，我们在 server 依赖里锁了精确版本）。
+ * 关键变化（控制台方案）：聊天运行时不再跑独立的 sdk profile，而是和「内置 Agent 控制台」
+ * 共用 dsh 的 `web` profile——
+ *  - 控制台 = 原生 DSH 网页界面（插件页 / 设置 → 模型），Engram 反向代理后嵌进设置页；
+ *  - 聊天 = 同一 profile + 一层 sdk 覆盖层（stdio JSON-RPC），见 agentPatch.chatPatchText()。
+ * 这样用户在控制台里配的模型、开关的插件，聊天运行时直接吃同一份配置（profile patch /
+ * bundle 列表 / 凭据文件），不需要 Engram 再维护一套模型表单。
  *
  * 事件面：`onNotification` 按会话日志顺序推 `session.event`（turn/step/assistant.message/
- * tool.call/tool.result）；粒度是"按步提交"，没有逐字增量——助手正文在一个 step 提交后
- * 整段到达。映射逻辑在 mapping.ts（纯函数，可单测）。
+ * tool.call/tool.result）；粒度是"按步提交"，没有逐字增量。映射逻辑在 mapping.ts。
  *
- * 姿态：独立空壳工作目录（**不是**知识库目录）+ 知识库只经 MCP 工具。文件/命令工具的沙箱
- * 策略以 dsh 的 sdk profile 实际配置为准（设置页「内置 Agent 运行时」按 dump 如实展示，
- * 别再把它写成"只读沙箱"）；凭据经环境变量注入（对该次运行优先于凭据文件）。
+ * 姿态：独立空壳工作目录（**不是**知识库目录）+ 知识库只经 MCP 工具；文件/命令工具的沙箱
+ * 策略由 dsh 的 web profile 配置决定，控制台里能看到也能改。
  *
- * 模型路由：默认走 dsh 自带的 `deepseek-official`（官方地址 + DEEPSEEK_API_KEY）；设置页
- * 填了自定义 API 地址就改用 `llm-pi-ai` 手工声明的 provider 路由（见 agentSettings.ts）。
- * 0.2.x 起 dsh 的 settings.yaml 只做一次性遗留导入，路由改为写进 patch 层
- * `<DSH_HOME>/engram.cordis.yml`（见 agentPatch.ts），随 --patch 最高层生效；
- * Key 仍只经环境变量注入，不落盘。
- *
- * 握手：SDK 默认只给 `initialize` 10s，升级/自动重启后的第一次 spawn 是冷启动，会超时
- * （界面报 `initialize timed out after 10000ms waiting for dsh profile "sdk"`，重启即好）。
- * 这里显式放宽预算并对握手失败重试一次，策略与原因见 handshake.ts。
+ * 握手：SDK 默认只给 `initialize` 10s，冷启动会超时；这里显式放宽预算并重试一次（见 handshake.ts）。
  */
 
 export type { AgentEvent } from './mapping.js';
@@ -54,33 +47,31 @@ export interface AgentTurn {
 
 interface RuntimeEntry {
   harness: DeepSeekHarness;
-  /** 该运行时进程内的 dsh 会话 id（不跨进程复用：sdk profile 不接受既有 id 的二次创建） */
+  /** 该运行时进程内的 dsh 会话 id（不跨进程复用：sdk 应用不接受既有 id 的二次创建） */
   dshSessionId: string;
-  /** 建这个运行时用的配置指纹：设置改了要重开，否则池里的旧进程还按旧地址/旧 Key 跑 */
+  /** 建这个运行时用的配置指纹：控制台改过配置就要重开，否则池里的旧进程还按旧设置跑 */
   configKey: string;
   idleTimer?: NodeJS.Timeout;
 }
 
-/** 模型路由指纹：地址、协议、模型、凭据、dsh 入口任一变化都要重开运行时 */
-function routeKey(config: AgentConfig): string {
-  const route = customRoute(config);
+/**
+ * 配置指纹：dsh 入口、dsh 版本、控制台配置状态（profile patch / bundle 列表 / 凭据）。
+ * 控制台里改了模型或插件 → 指纹变化 → 下一轮 acquireRuntime 关闭旧进程重开。
+ */
+function runtimeConfigKey(config: AgentConfig, home: string): string {
   return JSON.stringify([
     config.dshPath || '',
-    route?.provider || 'deepseek-official',
-    route?.baseUrl || '',
-    route?.api || '',
-    config.model || '',
-    config.apiKey || '',
+    bundledDshVersion() || '',
+    agentSettingsStateFingerprint(home),
   ]);
 }
 
 /**
  * 运行时池：一个 Engram 会话一个 dsh 运行时进程。
  *
- * 为什么不跨进程复用会话 id：sdk profile 的 `session/prompt` 走 getOrCreate，
- * 而对已持久化的会话 id 会直接抛 `session "…" already exists`（没有 adopt 分支）。
- * 所以运行时关掉（取消/空闲/重启）后，下一轮换一个新会话 id，并靠 Engram 侧的有界
- * 历史做上下文衔接（见 prompts.buildTask）。
+ * 为什么不跨进程复用会话 id：sdk 应用的 `session/prompt` 对已持久化的会话 id 会直接抛
+ * `session "…" already exists`（没有 adopt 分支）。所以运行时关掉后下一轮换新会话 id，
+ * 并靠 Engram 侧的有界历史做上下文衔接（见 prompts.buildTask）。
  */
 const runtimes = new Map<string, RuntimeEntry>();
 
@@ -106,43 +97,39 @@ process.once('SIGINT', closeAllRuntimes);
 /** 取（或新建）本会话的运行时：新建时连 dsh 会话 id 一起铸 */
 function acquireRuntime(key: string): RuntimeEntry {
   const config = getAgentConfig();
-  const configKey = routeKey(config);
+  const home = bundledDshHome();
+  const configKey = runtimeConfigKey(config, home);
   const existing = runtimes.get(key);
   if (existing) {
     if (existing.configKey === configKey) {
       if (existing.idleTimer) clearTimeout(existing.idleTimer);
       return existing;
     }
-    // 模型地址/凭据/模型变了：池里的旧进程还按旧路由跑，直接回收重开（下一轮换新 dsh 会话，
-    // 上下文靠 Engram 侧的有界历史衔接）
+    // 控制台改过模型/插件、或 dsh 入口变了：池里的旧进程还按旧配置跑，直接回收重开
     closeRuntime(key);
   }
-  const route = customRoute(config);
-  // patch 层：知识库 MCP 条目 + 自定义模型路由（0.2.x 起路由必须走 patch；settings.yaml 只做一次性导入）
-  const patchPath = writeAgentPatch(bundledDshHome(), { token: ensureAgentToken(), route });
+  // 覆盖层：MCP 条目（控制台与聊天都用得上）+ 聊天专用 sdk 应用
+  const mcpPatch = writeAgentPatch(home, { token: ensureAgentToken() });
+  const chatPatch = writeChatPatch(home);
   const workspace = agentWorkspaceDir();
   fs.mkdirSync(workspace, { recursive: true });
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1', // 桌面端：SDK 用 process.execPath 起子进程，必须是纯 Node 模式
-    DSH_HOME: bundledDshHome(),
-    // 自定义路由按它自己的 apiKeyEnv 注入；官方路由走 DEEPSEEK_API_KEY
-    ...(config.apiKey
-      ? (route ? { [route.keyEnv]: config.apiKey } : { DEEPSEEK_API_KEY: config.apiKey })
-      : {}),
+    DSH_HOME: home,
+    // 旧版 Engram 里存的 Key 继续作为官方 Provider 的凭据（新配置请到控制台「设置 → 模型」）
+    ...(config.apiKey ? { DEEPSEEK_API_KEY: config.apiKey } : {}),
   };
 
   const harness = new DeepSeekHarness({
-    profile: 'sdk',
-    patches: [patchPath],
-    dshHome: bundledDshHome(),
+    profile: CONSOLE_PROFILE,
+    patches: [chatPatch, mcpPatch],
+    dshHome: home,
     processCwd: workspace, // dsh 进程自己的工作目录：独立空目录
     cwd: workspace,        // 会话记录的工作目录：同上，知识库只经 MCP 工具访问
     env,
     initializeTimeoutMs: INITIALIZE_TIMEOUT_MS, // SDK 默认 10s 扛不住升级后的冷启动
-    ...(route ? { provider: route.provider } : {}),
-    ...(config.model ? { model: config.model } : {}),
     ...(config.dshPath ? { dshBin: config.dshPath } : {}),
   });
 
@@ -206,27 +193,19 @@ export function startAgentTurn(options: AgentTurnOptions): AgentTurn {
 export function agentRuntimeStatus(): {
   workspace: string;
   home: string;
-  hasKey: boolean;
-  model: string;
-  baseUrl: string;
-  api: string;
-  custom: boolean;
+  /** 旧版 Engram 里还存着模型 Key（仅作迁移提示；新配置在控制台） */
+  legacyKey: boolean;
   /** 随包 dsh 运行时版本（读不到为 null） */
   agentVersion: string | null;
-  /** 内置 Agent 使用的 dsh profile */
-  profile: 'sdk';
+  /** 内置 Agent 使用的 dsh profile（与控制台共用） */
+  profile: typeof CONSOLE_PROFILE;
 } {
   const config = getAgentConfig();
-  const route = customRoute(config);
   return {
     workspace: agentWorkspaceDir(),
     home: bundledDshHome(),
-    hasKey: Boolean(config.apiKey),
-    model: config.model || '',
-    baseUrl: config.baseUrl || '',
-    api: route?.api || '',
-    custom: Boolean(route),
+    legacyKey: Boolean(config.apiKey),
     agentVersion: bundledDshVersion(),
-    profile: 'sdk' as const,
+    profile: CONSOLE_PROFILE,
   };
 }

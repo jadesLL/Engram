@@ -1,89 +1,77 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AgentConfig } from './config.js';
+import { createHash } from 'node:crypto';
 
 /**
- * 内置 Agent 的模型路由配置。
+ * 内置 Agent 的配置边界。
  *
- * 0.1.5 及更早：dsh 的模型路由来自 `$DSH_HOME/settings.yaml`（llm-pi-ai 声明自定义 provider
- * 路由，agent-default-model 指默认路由）。
+ * 0.2.x 起，模型的「设置 → 模型」与「插件」页都由 DeepSeek Harness 自己的控制台管理
+ * （web profile 的原生页面，Engram 通过反向代理嵌进设置页）。Engram 不再写 settings.yaml，
+ * 也不再替用户写模型路由 patch——那两套已经删除。
  *
- * 0.2.x 起（本仓库锁 0.2.1-rc.2）：settings.yaml 降级为**一次性遗留导入**——dsh 启动后把它
- * 按顶层段名导入对应 loader entry，随后改名为 settings.yaml.imported，之后再写不再生效。
- * 新的落盘通道是 **Cordis patch**（层序 bundle → profile patch → home patch → --patch）。
- *
- * 所以这里只负责「配置 → 路由判定」与「遗留文件清理」；真正写盘的是 agentPatch.ts：
- * 把路由写成 `engram.cordis.yml` 里的 llm-pi-ai / agent-default-model 两条 patch，
- * 随 SDK 的 `--patch` 显式叠加（层级最高，压过 dsh 导入的旧 settings）。
+ * 本模块只保留三件事：
+ *  1. 升级清理：0.1.5 时代写入的 settings.yaml，以及它被 0.2.x 一次性导入后
+ *     留在 profile patch 里的旧路由条目（否则会反超用户在控制台里的选择）；
+ *  2. 控制台 profile 的路径口径（Engram 只读指纹，不直接编辑这些文件）；
+ *  3. 一个状态指纹：控制台改过配置（profile patch / bundle 列表 / 凭据文件）后，
+ *     正在跑的聊天运行时必须重开才能用上新配置。
  */
-
-/** 自定义地址用的 provider 路由 id（固定一条，每次保存整条重写） */
-export const CUSTOM_PROVIDER_ID = 'engram-custom';
-/** 自定义地址的凭据引用名：dsh 按 apiKeyEnv 解析，跑 Agent 时经该环境变量注入 Key */
-export const CUSTOM_KEY_ENV = 'ENGRAM_AGENT_API_KEY';
-/** dsh llm-pi-ai 支持的线协议；默认 openai-completions（多数中转站/网关） */
-export const AGENT_APIS = ['openai-completions', 'openai-responses', 'anthropic-messages'] as const;
-export type AgentApi = (typeof AGENT_APIS)[number];
-export const DEFAULT_AGENT_API: AgentApi = 'openai-completions';
 
 /** 0.1.5 及更早版本写入 settings.yaml 的文件头（升级时据此识别本方遗留文件） */
 export const LEGACY_SETTINGS_HEADER =
   '# Engram 内置 Agent 的模型地址配置（由 设置 → Agent 接入 → 内置 Agent 维护）。';
 /** 遗留 settings.yaml 里由本方维护的顶层段（= dsh loader entry id） */
 export const LEGACY_ROUTE_ENTRY_IDS = ['llm-pi-ai', 'agent-default-model'] as const;
-
-export interface CustomRoute {
-  /** llm-pi-ai 的 provider 路由 id */
-  provider: string;
-  /** 自定义 API 地址（baseURL） */
-  baseUrl: string;
-  /** 线协议 */
-  api: AgentApi;
-  /** 模型 id */
-  model: string;
-  /** 凭据环境变量名 */
-  keyEnv: string;
-}
-
-/** 归一化线协议：不认识的取值退回默认（设置页只给三个选项，这里防手改 API） */
-export function agentApi(value: string | undefined): AgentApi {
-  const api = (value || '').trim();
-  return (AGENT_APIS as readonly string[]).includes(api) ? (api as AgentApi) : DEFAULT_AGENT_API;
-}
-
-/**
- * 解析自定义地址路由：地址与模型都填了才算启用。
- * 返回 null 表示走 dsh 自带的 `deepseek-official`（官方地址 + DEEPSEEK_API_KEY）。
- */
-export function customRoute(config: AgentConfig): CustomRoute | null {
-  const baseUrl = (config.baseUrl || '').trim();
-  const model = (config.model || '').trim();
-  if (!baseUrl || !model) return null;
-  return {
-    provider: CUSTOM_PROVIDER_ID,
-    baseUrl,
-    api: agentApi(config.api),
-    model,
-    keyEnv: CUSTOM_KEY_ENV,
-  };
-}
-
-/** YAML 双引号标量：转义反斜杠/双引号，顺带把换行折成空格，挡掉注入 */
-export function quote(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ')}"`;
-}
+/** 控制台与聊天运行时共用的 dsh profile（原生插件页 / 设置页管理的就是它） */
+export const CONSOLE_PROFILE = 'web';
 
 /** 遗留 settings.yaml 的路径（0.1.5 时代写入；0.2.x 只做一次性导入） */
 export function agentSettingsPath(home: string): string {
   return path.join(home, 'settings.yaml');
 }
 
+/** 某个 profile 的目录 */
+export function profileDir(home: string, profile = CONSOLE_PROFILE): string {
+  return path.join(home, 'profiles', profile);
+}
+
+/** dsh 0.2.x 的 profile patch（控制台的设置页写这里；遗留导入也落在这里） */
+export function profilePatchPath(home: string, profile = CONSOLE_PROFILE): string {
+  return path.join(profileDir(home, profile), 'cordis.patch.yml');
+}
+
+/**
+ * 控制台会改动的文件：profile patch、bundle 列表（装/卸插件）、凭据文件。
+ * 聊天运行时的配置指纹把这些文件的内容算进去，变了就重开运行时。
+ */
+export function profileStatePaths(home: string): string[] {
+  return [
+    profilePatchPath(home),
+    path.join(profileDir(home), 'package.json'),
+    path.join(home, '.credentials.yaml'),
+  ];
+}
+
+/** 控制台配置状态指纹（文件内容 + mtime/size；读不到按空） */
+export function agentSettingsStateFingerprint(home: string): string {
+  const hash = createHash('sha1');
+  for (const file of profileStatePaths(home)) {
+    hash.update(file);
+    try {
+      // 只算内容：控制台保存时可能重写同样内容，mtime 变化不该触发聊天运行时重开
+      hash.update(fs.readFileSync(file));
+    } catch {
+      hash.update('missing');
+    }
+  }
+  return hash.digest('hex');
+}
+
 /**
  * 删掉本方遗留的 settings.yaml（文件头匹配才动，用户手写文件保留）。
  *
- * 为什么必须清：0.2.1 会把它导入 profile patch；若用户之后关掉自定义地址，
- * 我们的 patch 不再覆盖 llm-pi-ai/agent-default-model，导入的旧路由就会反超默认值。
- * 调用方（agentPatch.writeAgentPatch）同时会把导入到 profile patch 的同名顶层条目清掉。
+ * 为什么必须清：0.2.1 会把它导入 profile patch；若用户在控制台里改了模型，
+ * 旧值可能以 profile patch 的形式继续存在，需要我们的清理配合。
  *
  * @returns true 表示确实删掉了一个本方遗留文件
  */
@@ -100,11 +88,6 @@ export function cleanupLegacySettings(home: string): boolean {
   }
 }
 
-/** dsh 0.2.x 的 profile patch（settings 写入通道；遗留导入也落在这里） */
-export function profilePatchPath(home: string, profile = 'sdk'): string {
-  return path.join(home, 'profiles', profile, 'cordis.patch.yml');
-}
-
 const TOP_LEVEL_ID = /^-\s+id:\s*(\S+)\s*$/;
 
 /** 列出 patch / dump 文本里所有**顶层**条目 id（缩进的 insert 子项不算） */
@@ -117,10 +100,7 @@ export function topLevelEntryIds(text: string): string[] {
   return ids;
 }
 
-/**
- * 从 profile patch 文本里删掉指定 id 的顶层条目。
- * 注释与其它条目逐字保留（文件头注释属于 dsh 的 profile 默认内容，不能顺手删掉）。
- */
+/** 从 profile patch 文本里删掉指定 id 的顶层条目；注释与其它条目逐字保留 */
 export function dropTopLevelEntries(text: string, ids: readonly string[]): string {
   const wanted = new Set(ids);
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
@@ -147,7 +127,7 @@ export function dropTopLevelEntries(text: string, ids: readonly string[]): strin
 
 /**
  * 清理 0.2.x 遗留导入：删本方 settings.yaml，并把 dsh 导入到 profile patch 的
- * 同名条目去掉（只在本方遗留文件确实存在时动手，避免误改用户内容）。
+ * 同名条目去掉（只在本方遗留文件确实存在时动手，避免误改用户/控制台的内容）。
  */
 export function cleanupLegacyRoute(home: string): { removedSettings: boolean; cleanedProfilePatch: boolean } {
   const removedSettings = cleanupLegacySettings(home);
@@ -163,4 +143,53 @@ export function cleanupLegacyRoute(home: string): { removedSettings: boolean; cl
   } catch {
     return { removedSettings, cleanedProfilePatch: false };
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * 服务端「工具类」模型调用仍然复用同一份旧配置（标题自动命名、收集箱转换等）
+ *
+ * 注意：聊天 Agent 的模型不再走这里（由 DSH 控制台管理）。这些字段保留是为了
+ * 升级后旧用户的工具类请求继续可用；新用户没填过时，这些功能会给出「未配置」提示。
+ * ------------------------------------------------------------------ */
+
+/** 自定义地址用的 provider 路由 id */
+export const CUSTOM_PROVIDER_ID = 'engram-custom';
+/** 自定义地址的凭据引用名 */
+export const CUSTOM_KEY_ENV = 'ENGRAM_AGENT_API_KEY';
+/** 工具类调用支持的线协议；默认 openai-completions */
+export const AGENT_APIS = ['openai-completions', 'openai-responses', 'anthropic-messages'] as const;
+export type AgentApi = (typeof AGENT_APIS)[number];
+export const DEFAULT_AGENT_API: AgentApi = 'openai-completions';
+
+export interface CustomRoute {
+  provider: string;
+  baseUrl: string;
+  api: AgentApi;
+  model: string;
+  keyEnv: string;
+}
+
+/** 归一化线协议：不认识的取值退回默认 */
+export function agentApi(value: string | undefined): AgentApi {
+  const api = (value || '').trim();
+  return (AGENT_APIS as readonly string[]).includes(api) ? (api as AgentApi) : DEFAULT_AGENT_API;
+}
+
+/** 解析自定义地址路由：地址与模型都填了才算启用；返回 null 表示走官方地址 */
+export function customRoute(config: { baseUrl?: string; model?: string; api?: string }): CustomRoute | null {
+  const baseUrl = (config.baseUrl || '').trim();
+  const model = (config.model || '').trim();
+  if (!baseUrl || !model) return null;
+  return {
+    provider: CUSTOM_PROVIDER_ID,
+    baseUrl,
+    api: agentApi(config.api),
+    model,
+    keyEnv: CUSTOM_KEY_ENV,
+  };
+}
+
+/** YAML 双引号标量转义（工具类配置写盘时也用它） */
+export function quote(value: string): string {
+  return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]+/g, ' ') + '"';
 }

@@ -36,6 +36,7 @@ import { runtimeRoutes } from './routes/runtime.js';
 import { applyEnvSyncRole, initSync } from './sync/index.js';
 import { migrateConflictBackupDir } from './sync/hub.js';
 import { registerOfficeProxy } from './office/proxy.js';
+import { registerAgentConsoleProxy } from './assistant/agentConsoleProxy.js';
 import { mcpRoutes } from './mcp/server.js';
 import { assetRoutes } from './routes/assets.js';
 import { mediaRoutes } from './routes/media.js';
@@ -83,6 +84,8 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   } as any);
 
   await registerOfficeProxy(app);
+  // 内置 Agent 控制台的同源反向代理（/agent-console/*，含 WebSocket）；须早于静态托管注册
+  await registerAgentConsoleProxy(app);
   await app.register(authRoutes);
   await app.register(runtimeRoutes);
   await app.register(healthRoutes);
