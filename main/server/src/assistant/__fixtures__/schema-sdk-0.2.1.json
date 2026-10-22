@@ -1,0 +1,4383 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "Cordis configuration for profile sdk",
+ "$defs": {
+  "unknownConfig": {
+   "$comment": "No projected Config schema is available; this is unknown configuration, not a prohibition on fields."
+  },
+  "loaderExpression": {
+   "type": "object",
+   "properties": {
+    "__jsExpr": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "__jsExpr"
+   ],
+   "description": "Inert representation of a YAML !!js scalar from the Cordis entry-list parser. Its result is evaluated and validated only at runtime. Extra marker-object fields are ignored by interpolation."
+  },
+  "config9": {
+   "default": {},
+   "anyOf": [
+    {
+     "type": "object",
+     "properties": {
+      "provider": {
+       "x-cordis": {
+        "volatile": true
+       },
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "model": {
+       "x-cordis": {
+        "volatile": true
+       },
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "reasoningEffort": {
+       "x-cordis": {
+        "volatile": true
+       },
+       "anyOf": [
+        {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      }
+     },
+     "required": [
+      "provider",
+      "model"
+     ]
+    },
+    {
+     "$ref": "#/$defs/loaderExpression"
+    }
+   ]
+  },
+  "config14": {
+   "default": {},
+   "anyOf": [
+    {
+     "type": [
+      "object",
+      "null"
+     ],
+     "properties": {
+      "providers": {
+       "default": {},
+       "x-cordis": {
+        "volatile": true
+       },
+       "anyOf": [
+        {
+         "type": [
+          "object",
+          "null"
+         ],
+         "additionalProperties": {
+          "default": {},
+          "anyOf": [
+           {
+            "type": [
+             "object",
+             "null"
+            ],
+            "properties": {
+             "apiKeyEnv": {
+              "x-cordis": {
+               "role": "credential-ref"
+              },
+              "anyOf": [
+               {
+                "type": [
+                 "string",
+                 "null"
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "displayName": {
+              "anyOf": [
+               {
+                "type": [
+                 "string",
+                 "null"
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "api": {
+              "x-cordis": {
+               "branchSelection": "first-success"
+              },
+              "anyOf": [
+               {
+                "anyOf": [
+                 {
+                  "anyOf": [
+                   {
+                    "const": "openai-completions",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "openai-responses",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "anthropic-messages",
+                    "not": {
+                     "type": "null"
+                    }
+                   }
+                  ]
+                 },
+                 {
+                  "type": "null"
+                 }
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "baseURL": {
+              "anyOf": [
+               {
+                "type": [
+                 "string",
+                 "null"
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "models": {
+              "default": [],
+              "anyOf": [
+               {
+                "type": [
+                 "array",
+                 "null"
+                ],
+                "items": {
+                 "default": {},
+                 "anyOf": [
+                  {
+                   "type": "object",
+                   "properties": {
+                    "id": {
+                     "anyOf": [
+                      {
+                       "type": "string"
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "name": {
+                     "anyOf": [
+                      {
+                       "type": [
+                        "string",
+                        "null"
+                       ]
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "contextWindow": {
+                     "anyOf": [
+                      {
+                       "type": [
+                        "integer",
+                        "null"
+                       ],
+                       "minimum": 1
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "maxTokens": {
+                     "anyOf": [
+                      {
+                       "type": [
+                        "integer",
+                        "null"
+                       ],
+                       "minimum": 1
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "input": {
+                     "default": [],
+                     "anyOf": [
+                      {
+                       "type": [
+                        "array",
+                        "null"
+                       ],
+                       "items": {
+                        "x-cordis": {
+                         "branchSelection": "first-success"
+                        },
+                        "anyOf": [
+                         {
+                          "anyOf": [
+                           {
+                            "anyOf": [
+                             {
+                              "const": "text",
+                              "not": {
+                               "type": "null"
+                              }
+                             },
+                             {
+                              "const": "image",
+                              "not": {
+                               "type": "null"
+                              }
+                             }
+                            ]
+                           },
+                           {
+                            "type": "null"
+                           }
+                          ]
+                         },
+                         {
+                          "$ref": "#/$defs/loaderExpression"
+                         }
+                        ]
+                       }
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "reasoningEfforts": {
+                     "x-cordis": {
+                      "branchSelection": "first-success"
+                     },
+                     "anyOf": [
+                      {
+                       "anyOf": [
+                        {
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "const": false
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "type": [
+                            "object",
+                            "null"
+                           ],
+                           "additionalProperties": {
+                            "x-cordis": {
+                             "branchSelection": "first-success"
+                            },
+                            "anyOf": [
+                             {
+                              "anyOf": [
+                               {
+                                "anyOf": [
+                                 {
+                                  "type": [
+                                   "string",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": "null"
+                                 }
+                                ]
+                               },
+                               {
+                                "type": "null"
+                               }
+                              ]
+                             },
+                             {
+                              "$ref": "#/$defs/loaderExpression"
+                             }
+                            ]
+                           },
+                           "propertyNames": {
+                            "anyOf": [
+                             {
+                              "anyOf": [
+                               {
+                                "const": "off",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "minimal",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "low",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "medium",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "high",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "xhigh",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "max",
+                                "not": {
+                                 "type": "null"
+                                }
+                               }
+                              ]
+                             },
+                             {
+                              "type": "null"
+                             }
+                            ],
+                            "x-cordis": {
+                             "branchSelection": "first-success"
+                            }
+                           },
+                           "default": {}
+                          }
+                         ]
+                        },
+                        {
+                         "type": "null"
+                        }
+                       ]
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "compat": {
+                     "default": {},
+                     "anyOf": [
+                      {
+                       "type": [
+                        "object",
+                        "null"
+                       ],
+                       "properties": {
+                        "supportsStore": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsDeveloperRole": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsReasoningEffort": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsUsageInStreaming": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsFinishReason": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "maxTokensField": {
+                         "x-cordis": {
+                          "branchSelection": "first-success"
+                         },
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "anyOf": [
+                              {
+                               "const": "max_completion_tokens",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "max_tokens",
+                               "not": {
+                                "type": "null"
+                               }
+                              }
+                             ]
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "requiresToolResultName": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "requiresAssistantAfterToolResult": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "requiresThinkingAsText": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "requiresReasoningContentOnAssistantMessages": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "thinkingFormat": {
+                         "x-cordis": {
+                          "branchSelection": "first-success"
+                         },
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "anyOf": [
+                              {
+                               "const": "openai",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "deepseek",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "openrouter",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "together",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "baseten",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "zai",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "qwen",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "chat-template",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "qwen-chat-template",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "string-thinking",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "ant-ling",
+                               "not": {
+                                "type": "null"
+                               }
+                              }
+                             ]
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "chatTemplateKwargs": {
+                         "default": {},
+                         "anyOf": [
+                          {
+                           "type": [
+                            "object",
+                            "null"
+                           ],
+                           "additionalProperties": {
+                            "x-cordis": {
+                             "branchSelection": "first-success"
+                            },
+                            "anyOf": [
+                             {
+                              "anyOf": [
+                               {
+                                "anyOf": [
+                                 {
+                                  "type": [
+                                   "string",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": [
+                                   "number",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": [
+                                   "boolean",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": "null"
+                                 },
+                                 {
+                                  "type": "object",
+                                  "properties": {
+                                   "$var": {
+                                    "x-cordis": {
+                                     "branchSelection": "first-success"
+                                    },
+                                    "anyOf": [
+                                     {
+                                      "anyOf": [
+                                       {
+                                        "const": "thinking.enabled",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       },
+                                       {
+                                        "const": "thinking.effort",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       },
+                                       {
+                                        "const": "thinking.budget",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       }
+                                      ],
+                                      "not": {
+                                       "type": "null"
+                                      }
+                                     },
+                                     {
+                                      "$ref": "#/$defs/loaderExpression"
+                                     }
+                                    ]
+                                   },
+                                   "omitWhenOff": {
+                                    "anyOf": [
+                                     {
+                                      "type": [
+                                       "boolean",
+                                       "null"
+                                      ]
+                                     },
+                                     {
+                                      "$ref": "#/$defs/loaderExpression"
+                                     }
+                                    ]
+                                   }
+                                  },
+                                  "required": [
+                                   "$var"
+                                  ],
+                                  "default": {}
+                                 }
+                                ]
+                               },
+                               {
+                                "type": "null"
+                               }
+                              ]
+                             },
+                             {
+                              "$ref": "#/$defs/loaderExpression"
+                             }
+                            ]
+                           },
+                           "propertyNames": {
+                            "type": [
+                             "string",
+                             "null"
+                            ]
+                           }
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "chatTemplateArgs": {
+                         "default": {},
+                         "anyOf": [
+                          {
+                           "type": [
+                            "object",
+                            "null"
+                           ],
+                           "additionalProperties": {
+                            "x-cordis": {
+                             "branchSelection": "first-success"
+                            },
+                            "anyOf": [
+                             {
+                              "anyOf": [
+                               {
+                                "anyOf": [
+                                 {
+                                  "type": [
+                                   "string",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": [
+                                   "number",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": [
+                                   "boolean",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": "null"
+                                 },
+                                 {
+                                  "type": "object",
+                                  "properties": {
+                                   "$var": {
+                                    "x-cordis": {
+                                     "branchSelection": "first-success"
+                                    },
+                                    "anyOf": [
+                                     {
+                                      "anyOf": [
+                                       {
+                                        "const": "thinking.enabled",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       },
+                                       {
+                                        "const": "thinking.effort",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       },
+                                       {
+                                        "const": "thinking.budget",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       }
+                                      ],
+                                      "not": {
+                                       "type": "null"
+                                      }
+                                     },
+                                     {
+                                      "$ref": "#/$defs/loaderExpression"
+                                     }
+                                    ]
+                                   },
+                                   "omitWhenOff": {
+                                    "anyOf": [
+                                     {
+                                      "type": [
+                                       "boolean",
+                                       "null"
+                                      ]
+                                     },
+                                     {
+                                      "$ref": "#/$defs/loaderExpression"
+                                     }
+                                    ]
+                                   }
+                                  },
+                                  "required": [
+                                   "$var"
+                                  ],
+                                  "default": {}
+                                 }
+                                ]
+                               },
+                               {
+                                "type": "null"
+                               }
+                              ]
+                             },
+                             {
+                              "$ref": "#/$defs/loaderExpression"
+                             }
+                            ]
+                           },
+                           "propertyNames": {
+                            "type": [
+                             "string",
+                             "null"
+                            ]
+                           }
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsThinkingTokenBudget": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "thinkingTokenBudgetField": {
+                         "x-cordis": {
+                          "branchSelection": "first-success"
+                         },
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "anyOf": [
+                              {
+                               "const": "thinking_token_budget",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "thinking_budget",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "thinking_budget_tokens",
+                               "not": {
+                                "type": "null"
+                               }
+                              }
+                             ]
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "vllmPriority": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "integer",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsMaxOutputTokens": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsStrictMode": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "cacheControlFormat": {
+                         "x-cordis": {
+                          "branchSelection": "first-success"
+                         },
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "anyOf": [
+                              {
+                               "const": "anthropic",
+                               "not": {
+                                "type": "null"
+                               }
+                              }
+                             ]
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsLongCacheRetention": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsEagerToolInputStreaming": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsCacheControlOnTools": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsTemperature": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "forceAdaptiveThinking": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "allowEmptySignature": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsStrictTools": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        }
+                       }
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    }
+                   },
+                   "required": [
+                    "id"
+                   ]
+                  },
+                  {
+                   "$ref": "#/$defs/loaderExpression"
+                  }
+                 ]
+                }
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "modelOverrides": {
+              "default": {},
+              "anyOf": [
+               {
+                "type": [
+                 "object",
+                 "null"
+                ],
+                "additionalProperties": {
+                 "default": {},
+                 "anyOf": [
+                  {
+                   "type": [
+                    "object",
+                    "null"
+                   ],
+                   "properties": {
+                    "name": {
+                     "anyOf": [
+                      {
+                       "type": [
+                        "string",
+                        "null"
+                       ]
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "contextWindow": {
+                     "anyOf": [
+                      {
+                       "type": [
+                        "integer",
+                        "null"
+                       ],
+                       "minimum": 1
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "maxTokens": {
+                     "anyOf": [
+                      {
+                       "type": [
+                        "integer",
+                        "null"
+                       ],
+                       "minimum": 1
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "input": {
+                     "default": [],
+                     "anyOf": [
+                      {
+                       "type": [
+                        "array",
+                        "null"
+                       ],
+                       "items": {
+                        "x-cordis": {
+                         "branchSelection": "first-success"
+                        },
+                        "anyOf": [
+                         {
+                          "anyOf": [
+                           {
+                            "anyOf": [
+                             {
+                              "const": "text",
+                              "not": {
+                               "type": "null"
+                              }
+                             },
+                             {
+                              "const": "image",
+                              "not": {
+                               "type": "null"
+                              }
+                             }
+                            ]
+                           },
+                           {
+                            "type": "null"
+                           }
+                          ]
+                         },
+                         {
+                          "$ref": "#/$defs/loaderExpression"
+                         }
+                        ]
+                       }
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "reasoningEfforts": {
+                     "x-cordis": {
+                      "branchSelection": "first-success"
+                     },
+                     "anyOf": [
+                      {
+                       "anyOf": [
+                        {
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "const": false
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "type": [
+                            "object",
+                            "null"
+                           ],
+                           "additionalProperties": {
+                            "x-cordis": {
+                             "branchSelection": "first-success"
+                            },
+                            "anyOf": [
+                             {
+                              "anyOf": [
+                               {
+                                "anyOf": [
+                                 {
+                                  "type": [
+                                   "string",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": "null"
+                                 }
+                                ]
+                               },
+                               {
+                                "type": "null"
+                               }
+                              ]
+                             },
+                             {
+                              "$ref": "#/$defs/loaderExpression"
+                             }
+                            ]
+                           },
+                           "propertyNames": {
+                            "anyOf": [
+                             {
+                              "anyOf": [
+                               {
+                                "const": "off",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "minimal",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "low",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "medium",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "high",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "xhigh",
+                                "not": {
+                                 "type": "null"
+                                }
+                               },
+                               {
+                                "const": "max",
+                                "not": {
+                                 "type": "null"
+                                }
+                               }
+                              ]
+                             },
+                             {
+                              "type": "null"
+                             }
+                            ],
+                            "x-cordis": {
+                             "branchSelection": "first-success"
+                            }
+                           },
+                           "default": {}
+                          }
+                         ]
+                        },
+                        {
+                         "type": "null"
+                        }
+                       ]
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "compat": {
+                     "default": {},
+                     "anyOf": [
+                      {
+                       "type": [
+                        "object",
+                        "null"
+                       ],
+                       "properties": {
+                        "supportsStore": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsDeveloperRole": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsReasoningEffort": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsUsageInStreaming": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsFinishReason": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "maxTokensField": {
+                         "x-cordis": {
+                          "branchSelection": "first-success"
+                         },
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "anyOf": [
+                              {
+                               "const": "max_completion_tokens",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "max_tokens",
+                               "not": {
+                                "type": "null"
+                               }
+                              }
+                             ]
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "requiresToolResultName": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "requiresAssistantAfterToolResult": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "requiresThinkingAsText": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "requiresReasoningContentOnAssistantMessages": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "thinkingFormat": {
+                         "x-cordis": {
+                          "branchSelection": "first-success"
+                         },
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "anyOf": [
+                              {
+                               "const": "openai",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "deepseek",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "openrouter",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "together",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "baseten",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "zai",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "qwen",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "chat-template",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "qwen-chat-template",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "string-thinking",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "ant-ling",
+                               "not": {
+                                "type": "null"
+                               }
+                              }
+                             ]
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "chatTemplateKwargs": {
+                         "default": {},
+                         "anyOf": [
+                          {
+                           "type": [
+                            "object",
+                            "null"
+                           ],
+                           "additionalProperties": {
+                            "x-cordis": {
+                             "branchSelection": "first-success"
+                            },
+                            "anyOf": [
+                             {
+                              "anyOf": [
+                               {
+                                "anyOf": [
+                                 {
+                                  "type": [
+                                   "string",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": [
+                                   "number",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": [
+                                   "boolean",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": "null"
+                                 },
+                                 {
+                                  "type": "object",
+                                  "properties": {
+                                   "$var": {
+                                    "x-cordis": {
+                                     "branchSelection": "first-success"
+                                    },
+                                    "anyOf": [
+                                     {
+                                      "anyOf": [
+                                       {
+                                        "const": "thinking.enabled",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       },
+                                       {
+                                        "const": "thinking.effort",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       },
+                                       {
+                                        "const": "thinking.budget",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       }
+                                      ],
+                                      "not": {
+                                       "type": "null"
+                                      }
+                                     },
+                                     {
+                                      "$ref": "#/$defs/loaderExpression"
+                                     }
+                                    ]
+                                   },
+                                   "omitWhenOff": {
+                                    "anyOf": [
+                                     {
+                                      "type": [
+                                       "boolean",
+                                       "null"
+                                      ]
+                                     },
+                                     {
+                                      "$ref": "#/$defs/loaderExpression"
+                                     }
+                                    ]
+                                   }
+                                  },
+                                  "required": [
+                                   "$var"
+                                  ],
+                                  "default": {}
+                                 }
+                                ]
+                               },
+                               {
+                                "type": "null"
+                               }
+                              ]
+                             },
+                             {
+                              "$ref": "#/$defs/loaderExpression"
+                             }
+                            ]
+                           },
+                           "propertyNames": {
+                            "type": [
+                             "string",
+                             "null"
+                            ]
+                           }
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "chatTemplateArgs": {
+                         "default": {},
+                         "anyOf": [
+                          {
+                           "type": [
+                            "object",
+                            "null"
+                           ],
+                           "additionalProperties": {
+                            "x-cordis": {
+                             "branchSelection": "first-success"
+                            },
+                            "anyOf": [
+                             {
+                              "anyOf": [
+                               {
+                                "anyOf": [
+                                 {
+                                  "type": [
+                                   "string",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": [
+                                   "number",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": [
+                                   "boolean",
+                                   "null"
+                                  ]
+                                 },
+                                 {
+                                  "type": "null"
+                                 },
+                                 {
+                                  "type": "object",
+                                  "properties": {
+                                   "$var": {
+                                    "x-cordis": {
+                                     "branchSelection": "first-success"
+                                    },
+                                    "anyOf": [
+                                     {
+                                      "anyOf": [
+                                       {
+                                        "const": "thinking.enabled",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       },
+                                       {
+                                        "const": "thinking.effort",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       },
+                                       {
+                                        "const": "thinking.budget",
+                                        "not": {
+                                         "type": "null"
+                                        }
+                                       }
+                                      ],
+                                      "not": {
+                                       "type": "null"
+                                      }
+                                     },
+                                     {
+                                      "$ref": "#/$defs/loaderExpression"
+                                     }
+                                    ]
+                                   },
+                                   "omitWhenOff": {
+                                    "anyOf": [
+                                     {
+                                      "type": [
+                                       "boolean",
+                                       "null"
+                                      ]
+                                     },
+                                     {
+                                      "$ref": "#/$defs/loaderExpression"
+                                     }
+                                    ]
+                                   }
+                                  },
+                                  "required": [
+                                   "$var"
+                                  ],
+                                  "default": {}
+                                 }
+                                ]
+                               },
+                               {
+                                "type": "null"
+                               }
+                              ]
+                             },
+                             {
+                              "$ref": "#/$defs/loaderExpression"
+                             }
+                            ]
+                           },
+                           "propertyNames": {
+                            "type": [
+                             "string",
+                             "null"
+                            ]
+                           }
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsThinkingTokenBudget": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "thinkingTokenBudgetField": {
+                         "x-cordis": {
+                          "branchSelection": "first-success"
+                         },
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "anyOf": [
+                              {
+                               "const": "thinking_token_budget",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "thinking_budget",
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "const": "thinking_budget_tokens",
+                               "not": {
+                                "type": "null"
+                               }
+                              }
+                             ]
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "vllmPriority": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "integer",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsMaxOutputTokens": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsStrictMode": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "cacheControlFormat": {
+                         "x-cordis": {
+                          "branchSelection": "first-success"
+                         },
+                         "anyOf": [
+                          {
+                           "anyOf": [
+                            {
+                             "anyOf": [
+                              {
+                               "const": "anthropic",
+                               "not": {
+                                "type": "null"
+                               }
+                              }
+                             ]
+                            },
+                            {
+                             "type": "null"
+                            }
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsLongCacheRetention": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsEagerToolInputStreaming": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsCacheControlOnTools": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsTemperature": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "forceAdaptiveThinking": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "allowEmptySignature": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        },
+                        "supportsStrictTools": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        }
+                       }
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    }
+                   }
+                  },
+                  {
+                   "$ref": "#/$defs/loaderExpression"
+                  }
+                 ]
+                },
+                "propertyNames": {
+                 "type": [
+                  "string",
+                  "null"
+                 ]
+                }
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "compat": {
+              "default": {},
+              "anyOf": [
+               {
+                "type": [
+                 "object",
+                 "null"
+                ],
+                "properties": {
+                 "supportsStore": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsDeveloperRole": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsReasoningEffort": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsUsageInStreaming": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsFinishReason": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "maxTokensField": {
+                  "x-cordis": {
+                   "branchSelection": "first-success"
+                  },
+                  "anyOf": [
+                   {
+                    "anyOf": [
+                     {
+                      "anyOf": [
+                       {
+                        "const": "max_completion_tokens",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "max_tokens",
+                        "not": {
+                         "type": "null"
+                        }
+                       }
+                      ]
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "requiresToolResultName": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "requiresAssistantAfterToolResult": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "requiresThinkingAsText": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "requiresReasoningContentOnAssistantMessages": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "thinkingFormat": {
+                  "x-cordis": {
+                   "branchSelection": "first-success"
+                  },
+                  "anyOf": [
+                   {
+                    "anyOf": [
+                     {
+                      "anyOf": [
+                       {
+                        "const": "openai",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "deepseek",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "openrouter",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "together",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "baseten",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "zai",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "qwen",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "chat-template",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "qwen-chat-template",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "string-thinking",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "ant-ling",
+                        "not": {
+                         "type": "null"
+                        }
+                       }
+                      ]
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "chatTemplateKwargs": {
+                  "default": {},
+                  "anyOf": [
+                   {
+                    "type": [
+                     "object",
+                     "null"
+                    ],
+                    "additionalProperties": {
+                     "x-cordis": {
+                      "branchSelection": "first-success"
+                     },
+                     "anyOf": [
+                      {
+                       "anyOf": [
+                        {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "string",
+                            "null"
+                           ]
+                          },
+                          {
+                           "type": [
+                            "number",
+                            "null"
+                           ]
+                          },
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "type": "null"
+                          },
+                          {
+                           "type": "object",
+                           "properties": {
+                            "$var": {
+                             "x-cordis": {
+                              "branchSelection": "first-success"
+                             },
+                             "anyOf": [
+                              {
+                               "anyOf": [
+                                {
+                                 "const": "thinking.enabled",
+                                 "not": {
+                                  "type": "null"
+                                 }
+                                },
+                                {
+                                 "const": "thinking.effort",
+                                 "not": {
+                                  "type": "null"
+                                 }
+                                },
+                                {
+                                 "const": "thinking.budget",
+                                 "not": {
+                                  "type": "null"
+                                 }
+                                }
+                               ],
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "$ref": "#/$defs/loaderExpression"
+                              }
+                             ]
+                            },
+                            "omitWhenOff": {
+                             "anyOf": [
+                              {
+                               "type": [
+                                "boolean",
+                                "null"
+                               ]
+                              },
+                              {
+                               "$ref": "#/$defs/loaderExpression"
+                              }
+                             ]
+                            }
+                           },
+                           "required": [
+                            "$var"
+                           ],
+                           "default": {}
+                          }
+                         ]
+                        },
+                        {
+                         "type": "null"
+                        }
+                       ]
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "propertyNames": {
+                     "type": [
+                      "string",
+                      "null"
+                     ]
+                    }
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "chatTemplateArgs": {
+                  "default": {},
+                  "anyOf": [
+                   {
+                    "type": [
+                     "object",
+                     "null"
+                    ],
+                    "additionalProperties": {
+                     "x-cordis": {
+                      "branchSelection": "first-success"
+                     },
+                     "anyOf": [
+                      {
+                       "anyOf": [
+                        {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "string",
+                            "null"
+                           ]
+                          },
+                          {
+                           "type": [
+                            "number",
+                            "null"
+                           ]
+                          },
+                          {
+                           "type": [
+                            "boolean",
+                            "null"
+                           ]
+                          },
+                          {
+                           "type": "null"
+                          },
+                          {
+                           "type": "object",
+                           "properties": {
+                            "$var": {
+                             "x-cordis": {
+                              "branchSelection": "first-success"
+                             },
+                             "anyOf": [
+                              {
+                               "anyOf": [
+                                {
+                                 "const": "thinking.enabled",
+                                 "not": {
+                                  "type": "null"
+                                 }
+                                },
+                                {
+                                 "const": "thinking.effort",
+                                 "not": {
+                                  "type": "null"
+                                 }
+                                },
+                                {
+                                 "const": "thinking.budget",
+                                 "not": {
+                                  "type": "null"
+                                 }
+                                }
+                               ],
+                               "not": {
+                                "type": "null"
+                               }
+                              },
+                              {
+                               "$ref": "#/$defs/loaderExpression"
+                              }
+                             ]
+                            },
+                            "omitWhenOff": {
+                             "anyOf": [
+                              {
+                               "type": [
+                                "boolean",
+                                "null"
+                               ]
+                              },
+                              {
+                               "$ref": "#/$defs/loaderExpression"
+                              }
+                             ]
+                            }
+                           },
+                           "required": [
+                            "$var"
+                           ],
+                           "default": {}
+                          }
+                         ]
+                        },
+                        {
+                         "type": "null"
+                        }
+                       ]
+                      },
+                      {
+                       "$ref": "#/$defs/loaderExpression"
+                      }
+                     ]
+                    },
+                    "propertyNames": {
+                     "type": [
+                      "string",
+                      "null"
+                     ]
+                    }
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsThinkingTokenBudget": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "thinkingTokenBudgetField": {
+                  "x-cordis": {
+                   "branchSelection": "first-success"
+                  },
+                  "anyOf": [
+                   {
+                    "anyOf": [
+                     {
+                      "anyOf": [
+                       {
+                        "const": "thinking_token_budget",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "thinking_budget",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "const": "thinking_budget_tokens",
+                        "not": {
+                         "type": "null"
+                        }
+                       }
+                      ]
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "vllmPriority": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "integer",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsMaxOutputTokens": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsStrictMode": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "cacheControlFormat": {
+                  "x-cordis": {
+                   "branchSelection": "first-success"
+                  },
+                  "anyOf": [
+                   {
+                    "anyOf": [
+                     {
+                      "anyOf": [
+                       {
+                        "const": "anthropic",
+                        "not": {
+                         "type": "null"
+                        }
+                       }
+                      ]
+                     },
+                     {
+                      "type": "null"
+                     }
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsLongCacheRetention": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsEagerToolInputStreaming": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsCacheControlOnTools": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsTemperature": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "forceAdaptiveThinking": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "allowEmptySignature": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "supportsStrictTools": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "boolean",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 }
+                }
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "defaultContextWindow": {
+              "default": 262144,
+              "anyOf": [
+               {
+                "type": [
+                 "integer",
+                 "null"
+                ],
+                "minimum": 1
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "defaultMaxTokens": {
+              "default": 32768,
+              "anyOf": [
+               {
+                "type": [
+                 "integer",
+                 "null"
+                ],
+                "minimum": 1
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "defaultInput": {
+              "default": [
+               "text"
+              ],
+              "anyOf": [
+               {
+                "type": [
+                 "array",
+                 "null"
+                ],
+                "items": {
+                 "x-cordis": {
+                  "branchSelection": "first-success"
+                 },
+                 "anyOf": [
+                  {
+                   "anyOf": [
+                    {
+                     "anyOf": [
+                      {
+                       "const": "text",
+                       "not": {
+                        "type": "null"
+                       }
+                      },
+                      {
+                       "const": "image",
+                       "not": {
+                        "type": "null"
+                       }
+                      }
+                     ]
+                    },
+                    {
+                     "type": "null"
+                    }
+                   ]
+                  },
+                  {
+                   "$ref": "#/$defs/loaderExpression"
+                  }
+                 ]
+                }
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "headers": {
+              "default": {},
+              "anyOf": [
+               {
+                "type": [
+                 "object",
+                 "null"
+                ],
+                "additionalProperties": {
+                 "anyOf": [
+                  {
+                   "type": [
+                    "string",
+                    "null"
+                   ]
+                  },
+                  {
+                   "$ref": "#/$defs/loaderExpression"
+                  }
+                 ]
+                },
+                "propertyNames": {
+                 "type": [
+                  "string",
+                  "null"
+                 ]
+                }
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "reasoning": {
+              "x-cordis": {
+               "branchSelection": "first-success"
+              },
+              "anyOf": [
+               {
+                "anyOf": [
+                 {
+                  "anyOf": [
+                   {
+                    "const": "off",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "minimal",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "low",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "medium",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "high",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "xhigh",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "max",
+                    "not": {
+                     "type": "null"
+                    }
+                   }
+                  ]
+                 },
+                 {
+                  "type": "null"
+                 }
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "thinkingBudgets": {
+              "default": {},
+              "anyOf": [
+               {
+                "type": [
+                 "object",
+                 "null"
+                ],
+                "properties": {
+                 "minimal": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "number",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "low": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "number",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "medium": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "number",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 },
+                 "high": {
+                  "anyOf": [
+                   {
+                    "type": [
+                     "number",
+                     "null"
+                    ]
+                   },
+                   {
+                    "$ref": "#/$defs/loaderExpression"
+                   }
+                  ]
+                 }
+                }
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "cacheRetention": {
+              "x-cordis": {
+               "branchSelection": "first-success"
+              },
+              "anyOf": [
+               {
+                "anyOf": [
+                 {
+                  "anyOf": [
+                   {
+                    "const": "none",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "short",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "long",
+                    "not": {
+                     "type": "null"
+                    }
+                   }
+                  ]
+                 },
+                 {
+                  "type": "null"
+                 }
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "transport": {
+              "x-cordis": {
+               "branchSelection": "first-success"
+              },
+              "anyOf": [
+               {
+                "anyOf": [
+                 {
+                  "anyOf": [
+                   {
+                    "const": "sse",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "websocket",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "websocket-cached",
+                    "not": {
+                     "type": "null"
+                    }
+                   },
+                   {
+                    "const": "auto",
+                    "not": {
+                     "type": "null"
+                    }
+                   }
+                  ]
+                 },
+                 {
+                  "type": "null"
+                 }
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "timeoutMs": {
+              "anyOf": [
+               {
+                "type": [
+                 "integer",
+                 "null"
+                ],
+                "minimum": 0
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "websocketConnectTimeoutMs": {
+              "anyOf": [
+               {
+                "type": [
+                 "integer",
+                 "null"
+                ],
+                "minimum": 0
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "streamIdleTimeoutMs": {
+              "default": 300000,
+              "anyOf": [
+               {
+                "type": [
+                 "number",
+                 "null"
+                ],
+                "minimum": 5e-324,
+                "maximum": 2147483647
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "maxRequestImageBytes": {
+              "default": 20971520,
+              "anyOf": [
+               {
+                "type": [
+                 "integer",
+                 "null"
+                ],
+                "minimum": 1
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "requestImagePixelBudget": {
+              "default": 4194304,
+              "anyOf": [
+               {
+                "type": [
+                 "integer",
+                 "null"
+                ],
+                "minimum": 1
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "requestImageMaxBytes": {
+              "default": 1048576,
+              "anyOf": [
+               {
+                "type": [
+                 "integer",
+                 "null"
+                ],
+                "minimum": 1
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "retryPolicy": {
+              "x-cordis": {
+               "branchSelection": "first-success"
+              },
+              "anyOf": [
+               {
+                "anyOf": [
+                 {
+                  "anyOf": [
+                   {
+                    "type": "object",
+                    "properties": {
+                     "mode": {
+                      "anyOf": [
+                       {
+                        "const": "normal",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "$ref": "#/$defs/loaderExpression"
+                       }
+                      ]
+                     },
+                     "maxRetries": {
+                      "default": 5,
+                      "anyOf": [
+                       {
+                        "type": [
+                         "integer",
+                         "null"
+                        ],
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                       },
+                       {
+                        "$ref": "#/$defs/loaderExpression"
+                       }
+                      ]
+                     },
+                     "retryableCodes": {
+                      "default": [
+                       "EMPTY_RESPONSE",
+                       "RATE_LIMIT",
+                       "SERVER",
+                       "TIMEOUT",
+                       "TRANSPORT"
+                      ],
+                      "anyOf": [
+                       {
+                        "type": [
+                         "array",
+                         "null"
+                        ],
+                        "items": {
+                         "anyOf": [
+                          {
+                           "type": [
+                            "string",
+                            "null"
+                           ]
+                          },
+                          {
+                           "$ref": "#/$defs/loaderExpression"
+                          }
+                         ]
+                        }
+                       },
+                       {
+                        "$ref": "#/$defs/loaderExpression"
+                       }
+                      ]
+                     },
+                     "backoff": {
+                      "default": {},
+                      "anyOf": [
+                       {
+                        "type": [
+                         "object",
+                         "null"
+                        ],
+                        "properties": {
+                         "initialDelayMs": {
+                          "default": 500,
+                          "anyOf": [
+                           {
+                            "type": [
+                             "number",
+                             "null"
+                            ],
+                            "maximum": 2147483647
+                           },
+                           {
+                            "$ref": "#/$defs/loaderExpression"
+                           }
+                          ]
+                         },
+                         "maxDelayMs": {
+                          "default": 10000,
+                          "anyOf": [
+                           {
+                            "type": [
+                             "number",
+                             "null"
+                            ],
+                            "maximum": 2147483647
+                           },
+                           {
+                            "$ref": "#/$defs/loaderExpression"
+                           }
+                          ]
+                         },
+                         "jitterRatio": {
+                          "default": 0.1,
+                          "anyOf": [
+                           {
+                            "type": [
+                             "number",
+                             "null"
+                            ],
+                            "minimum": 0,
+                            "maximum": 1
+                           },
+                           {
+                            "$ref": "#/$defs/loaderExpression"
+                           }
+                          ]
+                         }
+                        }
+                       },
+                       {
+                        "$ref": "#/$defs/loaderExpression"
+                       }
+                      ]
+                     }
+                    },
+                    "required": [
+                     "mode"
+                    ],
+                    "default": {}
+                   },
+                   {
+                    "type": "object",
+                    "properties": {
+                     "mode": {
+                      "anyOf": [
+                       {
+                        "const": "always",
+                        "not": {
+                         "type": "null"
+                        }
+                       },
+                       {
+                        "$ref": "#/$defs/loaderExpression"
+                       }
+                      ]
+                     },
+                     "backoff": {
+                      "default": {},
+                      "anyOf": [
+                       {
+                        "type": [
+                         "object",
+                         "null"
+                        ],
+                        "properties": {
+                         "initialDelayMs": {
+                          "default": 500,
+                          "anyOf": [
+                           {
+                            "type": [
+                             "number",
+                             "null"
+                            ],
+                            "maximum": 2147483647
+                           },
+                           {
+                            "$ref": "#/$defs/loaderExpression"
+                           }
+                          ]
+                         },
+                         "maxDelayMs": {
+                          "default": 10000,
+                          "anyOf": [
+                           {
+                            "type": [
+                             "number",
+                             "null"
+                            ],
+                            "maximum": 2147483647
+                           },
+                           {
+                            "$ref": "#/$defs/loaderExpression"
+                           }
+                          ]
+                         },
+                         "jitterRatio": {
+                          "default": 0.1,
+                          "anyOf": [
+                           {
+                            "type": [
+                             "number",
+                             "null"
+                            ],
+                            "minimum": 0,
+                            "maximum": 1
+                           },
+                           {
+                            "$ref": "#/$defs/loaderExpression"
+                           }
+                          ]
+                         }
+                        }
+                       },
+                       {
+                        "$ref": "#/$defs/loaderExpression"
+                       }
+                      ]
+                     }
+                    },
+                    "required": [
+                     "mode"
+                    ],
+                    "default": {}
+                   }
+                  ]
+                 },
+                 {
+                  "type": "null"
+                 }
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             }
+            }
+           },
+           {
+            "$ref": "#/$defs/loaderExpression"
+           }
+          ]
+         },
+         "propertyNames": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "$ref": "#/$defs/loaderExpression"
+    }
+   ]
+  },
+  "config27": {
+   "default": {},
+   "anyOf": [
+    {
+     "type": [
+      "object",
+      "null"
+     ],
+     "properties": {
+      "policy": {
+       "default": "ask",
+       "x-cordis": {
+        "branchSelection": "first-success"
+       },
+       "anyOf": [
+        {
+         "anyOf": [
+          {
+           "anyOf": [
+            {
+             "const": "ask",
+             "not": {
+              "type": "null"
+             }
+            },
+            {
+             "const": "never",
+             "not": {
+              "type": "null"
+             }
+            }
+           ]
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "$ref": "#/$defs/loaderExpression"
+    }
+   ]
+  },
+  "config28": {
+   "default": {},
+   "anyOf": [
+    {
+     "type": [
+      "object",
+      "null"
+     ],
+     "properties": {
+      "presets": {
+       "default": {
+        "workspace-write": {
+         "sandbox": "workspace-write",
+         "approval": "ask",
+         "name": "workspace-write",
+         "description": "Write inside the workspace and permitted temporary directories; wider retries require approval."
+        },
+        "danger-full-access": {
+         "sandbox": "danger-full-access",
+         "approval": "never",
+         "name": "danger-full-access",
+         "description": "Full file access without approval prompts."
+        }
+       },
+       "anyOf": [
+        {
+         "type": [
+          "object",
+          "null"
+         ],
+         "additionalProperties": {
+          "default": {},
+          "anyOf": [
+           {
+            "type": "object",
+            "properties": {
+             "sandbox": {
+              "x-cordis": {
+               "branchSelection": "first-success"
+              },
+              "anyOf": [
+               {
+                "anyOf": [
+                 {
+                  "const": "read-only",
+                  "not": {
+                   "type": "null"
+                  }
+                 },
+                 {
+                  "const": "workspace-write",
+                  "not": {
+                   "type": "null"
+                  }
+                 },
+                 {
+                  "const": "danger-full-access",
+                  "not": {
+                   "type": "null"
+                  }
+                 }
+                ],
+                "not": {
+                 "type": "null"
+                }
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "approval": {
+              "x-cordis": {
+               "branchSelection": "first-success"
+              },
+              "anyOf": [
+               {
+                "anyOf": [
+                 {
+                  "const": "ask",
+                  "not": {
+                   "type": "null"
+                  }
+                 },
+                 {
+                  "const": "never",
+                  "not": {
+                   "type": "null"
+                  }
+                 }
+                ],
+                "not": {
+                 "type": "null"
+                }
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "name": {
+              "anyOf": [
+               {
+                "type": [
+                 "string",
+                 "null"
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "description": {
+              "anyOf": [
+               {
+                "type": [
+                 "string",
+                 "null"
+                ]
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             }
+            },
+            "required": [
+             "sandbox",
+             "approval"
+            ]
+           },
+           {
+            "$ref": "#/$defs/loaderExpression"
+           }
+          ]
+         },
+         "propertyNames": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "defaultPreset": {
+       "x-cordis": {
+        "volatile": true
+       },
+       "anyOf": [
+        {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "$ref": "#/$defs/loaderExpression"
+    }
+   ]
+  },
+  "config30": {
+   "default": {},
+   "anyOf": [
+    {
+     "type": [
+      "object",
+      "null"
+     ],
+     "properties": {
+      "enableRunInBackground": {
+       "default": true,
+       "anyOf": [
+        {
+         "type": [
+          "boolean",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "promoteOnTimeout": {
+       "default": true,
+       "anyOf": [
+        {
+         "type": [
+          "boolean",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "$ref": "#/$defs/loaderExpression"
+    }
+   ]
+  },
+  "config33": {
+   "default": {},
+   "anyOf": [
+    {
+     "type": [
+      "object",
+      "null"
+     ],
+     "properties": {
+      "read": {
+       "default": true,
+       "anyOf": [
+        {
+         "type": [
+          "boolean",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "readImage": {
+       "default": true,
+       "anyOf": [
+        {
+         "type": [
+          "boolean",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "write": {
+       "default": true,
+       "anyOf": [
+        {
+         "type": [
+          "boolean",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "edit": {
+       "default": true,
+       "anyOf": [
+        {
+         "type": [
+          "boolean",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "readLimit": {
+       "default": 2000,
+       "anyOf": [
+        {
+         "type": [
+          "number",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "readMaxLineLength": {
+       "default": 2000,
+       "anyOf": [
+        {
+         "type": [
+          "number",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "readMaxBytes": {
+       "default": 51200,
+       "anyOf": [
+        {
+         "type": [
+          "number",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      },
+      "readStreamMinSize": {
+       "default": 10485760,
+       "anyOf": [
+        {
+         "type": [
+          "number",
+          "null"
+         ]
+        },
+        {
+         "$ref": "#/$defs/loaderExpression"
+        }
+       ]
+      }
+     }
+    },
+    {
+     "$ref": "#/$defs/loaderExpression"
+    }
+   ]
+  },
+  "config70": {
+   "x-cordis": {
+    "branchSelection": "first-success"
+   },
+   "anyOf": [
+    {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "object",
+         "properties": {
+          "transport": {
+           "anyOf": [
+            {
+             "anyOf": [
+              {
+               "const": "stdio"
+              },
+              {
+               "type": "null"
+              }
+             ]
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "serverName": {
+           "anyOf": [
+            {
+             "type": "string",
+             "pattern": "^[A-Za-z0-9_-]{1,32}$"
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "command": {
+           "anyOf": [
+            {
+             "type": "string"
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "args": {
+           "default": [],
+           "anyOf": [
+            {
+             "type": [
+              "array",
+              "null"
+             ],
+             "items": {
+              "anyOf": [
+               {
+                "type": "string"
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             }
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "env": {
+           "default": {},
+           "anyOf": [
+            {
+             "type": [
+              "object",
+              "null"
+             ],
+             "additionalProperties": {
+              "anyOf": [
+               {
+                "type": "string"
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "propertyNames": {
+              "type": [
+               "string",
+               "null"
+              ]
+             }
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "cwd": {
+           "default": "",
+           "anyOf": [
+            {
+             "type": [
+              "string",
+              "null"
+             ]
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "toolCallTimeoutMs": {
+           "default": 60000,
+           "anyOf": [
+            {
+             "type": [
+              "number",
+              "null"
+             ]
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "failOnStartupError": {
+           "default": false,
+           "anyOf": [
+            {
+             "type": [
+              "boolean",
+              "null"
+             ]
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "maxInstructionBytes": {
+           "default": 32768,
+           "anyOf": [
+            {
+             "type": [
+              "integer",
+              "null"
+             ],
+             "minimum": 1
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "reconnect": {
+           "default": {},
+           "anyOf": [
+            {
+             "type": [
+              "object",
+              "null"
+             ],
+             "properties": {
+              "enabled": {
+               "default": true,
+               "anyOf": [
+                {
+                 "type": [
+                  "boolean",
+                  "null"
+                 ]
+                },
+                {
+                 "$ref": "#/$defs/loaderExpression"
+                }
+               ]
+              },
+              "initialDelayMs": {
+               "default": 500,
+               "anyOf": [
+                {
+                 "type": [
+                  "number",
+                  "null"
+                 ],
+                 "minimum": 1,
+                 "maximum": 2147483647
+                },
+                {
+                 "$ref": "#/$defs/loaderExpression"
+                }
+               ]
+              },
+              "maxDelayMs": {
+               "default": 30000,
+               "anyOf": [
+                {
+                 "type": [
+                  "number",
+                  "null"
+                 ],
+                 "minimum": 1,
+                 "maximum": 2147483647
+                },
+                {
+                 "$ref": "#/$defs/loaderExpression"
+                }
+               ]
+              },
+              "maxAttempts": {
+               "default": 10,
+               "anyOf": [
+                {
+                 "type": [
+                  "integer",
+                  "null"
+                 ],
+                 "minimum": 1,
+                 "maximum": 9007199254740991
+                },
+                {
+                 "$ref": "#/$defs/loaderExpression"
+                }
+               ]
+              }
+             }
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          }
+         },
+         "required": [
+          "serverName",
+          "command"
+         ],
+         "default": {}
+        },
+        {
+         "type": "object",
+         "properties": {
+          "transport": {
+           "anyOf": [
+            {
+             "anyOf": [
+              {
+               "const": "streamable-http"
+              },
+              {
+               "type": "null"
+              }
+             ]
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "serverName": {
+           "anyOf": [
+            {
+             "type": "string",
+             "pattern": "^[A-Za-z0-9_-]{1,32}$"
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "url": {
+           "anyOf": [
+            {
+             "type": "string"
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "headers": {
+           "default": {},
+           "anyOf": [
+            {
+             "type": [
+              "object",
+              "null"
+             ],
+             "additionalProperties": {
+              "anyOf": [
+               {
+                "type": "string"
+               },
+               {
+                "$ref": "#/$defs/loaderExpression"
+               }
+              ]
+             },
+             "propertyNames": {
+              "type": [
+               "string",
+               "null"
+              ]
+             }
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "toolCallTimeoutMs": {
+           "default": 60000,
+           "anyOf": [
+            {
+             "type": [
+              "number",
+              "null"
+             ]
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "failOnStartupError": {
+           "default": false,
+           "anyOf": [
+            {
+             "type": [
+              "boolean",
+              "null"
+             ]
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "maxInstructionBytes": {
+           "default": 32768,
+           "anyOf": [
+            {
+             "type": [
+              "integer",
+              "null"
+             ],
+             "minimum": 1
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          },
+          "reconnect": {
+           "default": {},
+           "anyOf": [
+            {
+             "type": [
+              "object",
+              "null"
+             ],
+             "properties": {
+              "enabled": {
+               "default": true,
+               "anyOf": [
+                {
+                 "type": [
+                  "boolean",
+                  "null"
+                 ]
+                },
+                {
+                 "$ref": "#/$defs/loaderExpression"
+                }
+               ]
+              },
+              "initialDelayMs": {
+               "default": 500,
+               "anyOf": [
+                {
+                 "type": [
+                  "number",
+                  "null"
+                 ],
+                 "minimum": 1,
+                 "maximum": 2147483647
+                },
+                {
+                 "$ref": "#/$defs/loaderExpression"
+                }
+               ]
+              },
+              "maxDelayMs": {
+               "default": 30000,
+               "anyOf": [
+                {
+                 "type": [
+                  "number",
+                  "null"
+                 ],
+                 "minimum": 1,
+                 "maximum": 2147483647
+                },
+                {
+                 "$ref": "#/$defs/loaderExpression"
+                }
+               ]
+              },
+              "maxAttempts": {
+               "default": 10,
+               "anyOf": [
+                {
+                 "type": [
+                  "integer",
+                  "null"
+                 ],
+                 "minimum": 1,
+                 "maximum": 9007199254740991
+                },
+                {
+                 "$ref": "#/$defs/loaderExpression"
+                }
+               ]
+              }
+             }
+            },
+            {
+             "$ref": "#/$defs/loaderExpression"
+            }
+           ]
+          }
+         },
+         "required": [
+          "serverName",
+          "url"
+         ],
+         "default": {}
+        }
+       ]
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    {
+     "$ref": "#/$defs/loaderExpression"
+    }
+   ]
+  }
+ },
+ "x-cordis": {
+  "profile": "sdk",
+  "complete": true,
+  "entries": [
+   {
+    "path": "/17",
+    "id": "agent-default-model",
+    "name": "@deepseek-ai/dsh-agent-default-model",
+    "status": "schema",
+    "configRef": "#/$defs/config9"
+   },
+   {
+    "path": "/21",
+    "id": "settings",
+    "name": "@deepseek-ai/dsh-settings",
+    "status": "absent",
+    "configRef": "#/$defs/unknownConfig"
+   },
+   {
+    "path": "/25",
+    "id": "llm-pi-ai",
+    "name": "@deepseek-ai/dsh-llm-pi-ai",
+    "status": "schema",
+    "configRef": "#/$defs/config14"
+   },
+   {
+    "path": "/43",
+    "id": "approval",
+    "name": "@deepseek-ai/dsh-user-approval",
+    "status": "schema",
+    "configRef": "#/$defs/config27"
+   },
+   {
+    "path": "/44",
+    "id": "permission",
+    "name": "@deepseek-ai/dsh-permission-presets",
+    "status": "schema",
+    "configRef": "#/$defs/config28"
+   },
+   {
+    "path": "/46",
+    "id": "tool-bash",
+    "name": "@deepseek-ai/dsh-tool-bash",
+    "status": "schema",
+    "configRef": "#/$defs/config30"
+   },
+   {
+    "path": "/50",
+    "id": "tool-fs",
+    "name": "@deepseek-ai/dsh-tool-fs",
+    "status": "schema",
+    "configRef": "#/$defs/config33"
+   },
+   {
+    "path": "/100",
+    "id": "mcp-engram",
+    "name": "@deepseek-ai/dsh-mcp-client",
+    "status": "schema",
+    "configRef": "#/$defs/config70"
+   }
+  ]
+ }
+}
