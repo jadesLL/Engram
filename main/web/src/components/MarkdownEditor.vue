@@ -2,6 +2,16 @@
   <div ref="wrapEl" class="editor-wrap">
     <div ref="vditorEl" class="vditor-host" />
 
+    <!-- 表格增删行列：光标落进表格时浮在表格上方（ir 是真实 DOM 表，sv 是源码块） -->
+    <EditorTableBar
+      v-if="tableBar"
+      ref="tableBarRef"
+      :top="tableBar.top"
+      :left="tableBar.left"
+      :row="tableBar.row"
+      @action="applyTableAction"
+    />
+
     <!-- 双链插入弹窗（跟随光标，↑↓ 选择） -->
     <div
       v-if="linkPopup"
@@ -41,11 +51,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted, watch } from 'vue';
+import { ref, nextTick, onMounted, onUnmounted, watch, type ComponentPublicInstance } from 'vue';
 import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import { api } from '../api';
+import EditorTableBar from './EditorTableBar.vue';
 import { VDITOR_CDN } from '../lib/vditorPreview';
+import {
+  cellStartOffset,
+  columnIndexAt,
+  findTableBlocks,
+  insertColumn,
+  insertRow,
+  removeColumn,
+  removeRow,
+  replaceTableBlock,
+  serializeTable,
+  splitTableRow,
+  tableColumnCount,
+  tablePrefix,
+  tableRowCount,
+  type MarkdownTable,
+  type TableEditAction,
+} from '../lib/markdownTable';
 import { createEditorModelSync } from '../lib/editorModelSync';
 import {
   copyText,
@@ -216,6 +244,7 @@ function observeEditMode() {
     const cur = vditor.getCurrentMode();
     if (cur !== last && (cur === 'ir' || cur === 'sv')) {
       last = cur;
+      hideTableBar();
       emit('mode-change', cur);
     }
   });
@@ -421,6 +450,7 @@ function init() {
       adoptVditorTooltips();
       observeWikiLinks();
       bindKeys();
+      bindTableBarEvents();
       releaseModelSyncSoon();
       scheduleHideManagedPlaceholders();
     },
@@ -479,6 +509,24 @@ function observeWikiLinks() {
   wikiTagObserver.observe(root, { childList: true, subtree: true });
 }
 
+/* 表格浮条跟随：光标位置（selectionchange）、正文滚动、窗口尺寸都会改它的落点。
+ * selectionchange 触发很密，统一收敛到一个 rAF 里算。 */
+function bindTableBarEvents() {
+  document.addEventListener('selectionchange', scheduleTableBarSync);
+  window.addEventListener('resize', scheduleTableBarSync);
+  vditorEl.value?.addEventListener('scroll', scheduleTableBarSync, true);
+}
+
+function unbindTableBarEvents() {
+  document.removeEventListener('selectionchange', scheduleTableBarSync);
+  window.removeEventListener('resize', scheduleTableBarSync);
+  vditorEl.value?.removeEventListener('scroll', scheduleTableBarSync, true);
+  if (tableBarRaf) {
+    cancelAnimationFrame(tableBarRaf);
+    tableBarRaf = 0;
+  }
+}
+
 function bindKeys() {
   const el = vditorEl.value!;
   el.addEventListener('input', (e: Event) => {
@@ -523,6 +571,401 @@ function bindKeys() {
   el.addEventListener('contextmenu', handleEditorContextMenu, true);
   // 监听 edit-mode 切换（Vditor 内部 setEditMode 改 currentMode 但无事件，轮询 DOM class）
   observeEditMode();
+}
+
+/* ---------- 表格增删行列 ----------
+ * Vditor 自带的表格面板只挂在被隐藏的 wysiwyg 模式上（引擎里 table popover 只往
+ * vditor.wysiwyg.popover 塞按钮），Engram 只开「即时渲染 + 源码」两态，所以行列增删自己接：
+ *  - ir：光标在真实 <table> 里，直接改 DOM，再派发一次 input 让 Vditor 归一化并写回
+ *    Markdown——不整篇重渲染，撤销栈也记下这一步；
+ *  - sv：光标在 [data-type="table"] 的源码块里，改 Markdown 文本后 setValue 回写。
+ * 面板只在光标落进表格时浮在表格上方（与 Vditor 自己表格面板的落点一致）。 */
+
+interface IrTableTarget {
+  mode: 'ir';
+  element: HTMLTableElement;
+  row: number;
+  column: number;
+  rows: number;
+  columns: number;
+}
+
+interface SourceTableTarget {
+  mode: 'sv';
+  element: HTMLElement;
+  /** 在全文里的第几张表（0 起），回写时用来定位源码块 */
+  blockIndex: number;
+  row: number;
+  column: number;
+  rows: number;
+  columns: number;
+}
+
+type TableTarget = IrTableTarget | SourceTableTarget;
+
+const tableBar = ref<{ top: number; left: number; row: number } | null>(null);
+const tableBarRef = ref<ComponentPublicInstance | null>(null);
+let tableTarget: TableTarget | null = null;
+let tableBarAnchor: { top: number; bottom: number; left: number; caretTop: number; caretBottom: number } | null = null;
+let tableBarRaf = 0;
+
+function selectionRangeInEditor(): Range | null {
+  const host = vditorEl.value;
+  const selection = window.getSelection();
+  if (!host || !selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!host.contains(range.commonAncestorContainer)) return null;
+  return range;
+}
+
+function selectionElement(range: Range): HTMLElement | null {
+  const node = range.startContainer;
+  if (node.nodeType === Node.ELEMENT_NODE) return node as HTMLElement;
+  return node.parentElement;
+}
+
+/** ir：光标所在单元格 → 第几行、第几列 */
+function irTableTarget(range: Range): IrTableTarget | null {
+  const ir = vditor?.vditor.ir;
+  const element = selectionElement(range);
+  if (!ir || !element || !ir.element.contains(element)) return null;
+  const table = element.closest('table');
+  if (!(table instanceof HTMLTableElement) || !ir.element.contains(table)) return null;
+  const cell = element.closest('td, th');
+  const rowElement = cell?.closest('tr');
+  if (!cell || !rowElement) return null;
+  const rows = Array.from(table.rows);
+  const rowIndex = rows.indexOf(rowElement as HTMLTableRowElement);
+  return {
+    mode: 'ir',
+    element: table,
+    row: Math.max(0, rowIndex),
+    column: Math.max(0, (cell as HTMLTableCellElement).cellIndex),
+    rows: rows.length,
+    columns: rows[0]?.cells.length ?? 0,
+  };
+}
+
+/** sv：光标所在源码块 → 第几张表、第几行、第几列（块文本就是 Markdown 源码） */
+function sourceTableTarget(range: Range): SourceTableTarget | null {
+  const sv = vditor?.vditor.sv;
+  const element = selectionElement(range);
+  if (!sv || !element || !sv.element.contains(element)) return null;
+  const block = element.closest('[data-type="table"]');
+  if (!(block instanceof HTMLElement) || !sv.element.contains(block)) return null;
+  const spans = Array.from(sv.element.querySelectorAll<HTMLElement>('[data-type="table"]'));
+  const blockIndex = spans.indexOf(block);
+  if (blockIndex < 0) return null;
+  const lines = (block.textContent || '').replace(/\n+$/, '').split('\n');
+  if (lines.length < 2) return null;
+  const prefix = tablePrefix(lines[0]) ?? '';
+  const columns = splitTableRow(lines[0], prefix).length;
+  const rows = lines.length - 1;
+  if (!columns || rows < 1) return null;
+  const before = document.createRange();
+  before.setStart(block, 0);
+  before.setEnd(range.startContainer, range.startOffset);
+  const beforeLines = before.toString().split('\n');
+  const lineIndex = Math.max(0, beforeLines.length - 1);
+  const fullLine = lines[Math.min(lineIndex, lines.length - 1)] ?? '';
+  return {
+    mode: 'sv',
+    element: block,
+    blockIndex,
+    row: Math.min(Math.max(0, lineIndex - 1), rows - 1),
+    column: Math.min(columnIndexAt(fullLine, (beforeLines[lineIndex] || '').length, prefix), columns - 1),
+    rows,
+    columns,
+  };
+}
+
+function hideTableBar() {
+  tableTarget = null;
+  tableBarAnchor = null;
+  if (tableBar.value) tableBar.value = null;
+}
+
+function placeTableBar() {
+  const wrap = wrapEl.value;
+  const panel = tableBarRef.value?.$el as HTMLElement | undefined;
+  if (!wrap || !panel || !tableBar.value || !tableBarAnchor) return;
+  const wrapRect = wrap.getBoundingClientRect();
+  const width = panel.offsetWidth || 210;
+  const height = panel.offsetHeight || 31;
+  // 表格上半部分滚出视野时贴着光标所在行走，免得浮条跑到屏幕外
+  const useCaret = tableBarAnchor.top < wrapRect.top + 8;
+  const anchorTop = useCaret ? tableBarAnchor.caretTop : tableBarAnchor.top;
+  const anchorBottom = useCaret ? tableBarAnchor.caretBottom : tableBarAnchor.bottom;
+  let top = anchorTop - wrapRect.top - height - 6;
+  if (top < 2) top = anchorBottom - wrapRect.top + 6;
+  top = Math.max(2, Math.min(top, wrapRect.height - height - 2));
+  const left = Math.max(4, Math.min(tableBarAnchor.left - wrapRect.left, wrapRect.width - width - 4));
+  const next = { top: Math.round(top), left: Math.round(left), row: tableBar.value.row };
+  if (tableBar.value.top === next.top && tableBar.value.left === next.left) return;
+  tableBar.value = next;
+}
+
+function syncTableBar() {
+  if (!vditor || !ready) {
+    hideTableBar();
+    return;
+  }
+  const range = selectionRangeInEditor();
+  if (!range) {
+    hideTableBar();
+    return;
+  }
+  const target = vditor.getCurrentMode() === 'sv' ? sourceTableTarget(range) : irTableTarget(range);
+  if (!target || !target.columns || !target.rows) {
+    hideTableBar();
+    return;
+  }
+  tableTarget = target;
+  const rect = target.element.getBoundingClientRect();
+  const caretRect = range.getBoundingClientRect();
+  tableBarAnchor = {
+    top: rect.top,
+    bottom: rect.bottom,
+    left: rect.left,
+    caretTop: caretRect.height ? caretRect.top : rect.top,
+    caretBottom: caretRect.height ? caretRect.bottom : rect.bottom,
+  };
+  if (!tableBar.value) {
+    tableBar.value = {
+      top: Math.max(2, rect.top - (wrapEl.value?.getBoundingClientRect().top ?? 0) - 36),
+      left: Math.max(4, rect.left - (wrapEl.value?.getBoundingClientRect().left ?? 0)),
+      row: target.row,
+    };
+  } else if (tableBar.value.row !== target.row) {
+    tableBar.value = { ...tableBar.value, row: target.row };
+  }
+  nextTick(placeTableBar);
+}
+
+function scheduleTableBarSync() {
+  if (tableBarRaf) return;
+  tableBarRaf = requestAnimationFrame(() => {
+    tableBarRaf = 0;
+    syncTableBar();
+  });
+}
+
+function placeIrCaret(table: HTMLTableElement, row: number, column: number) {
+  const rows = Array.from(table.rows);
+  const rowElement = rows[Math.max(0, Math.min(row, rows.length - 1))];
+  const cells = rowElement ? Array.from(rowElement.cells) : [];
+  const cell = cells[Math.max(0, Math.min(column, cells.length - 1))];
+  if (!cell) return;
+  vditor?.focus();
+  const range = document.createRange();
+  range.selectNodeContents(cell);
+  range.collapse(true);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+/** ir 改完 DOM 后派发一次 input：走 Vditor 自己的归一化 + 撤销栈 + 模型回写，不另起一套 */
+function emitAfterIrMutation() {
+  const ir = vditor?.vditor.ir;
+  if (!ir) return;
+  userInputPending = true;
+  ir.element.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** 删掉整张表（最后一列被删）：光标退到上一块末尾或下一块开头，再让 Vditor 归一化 */
+function removeIrTable(table: HTMLTableElement) {
+  const previous = table.previousElementSibling as HTMLElement | null;
+  const next = table.nextElementSibling as HTMLElement | null;
+  const host = previous ?? next;
+  if (host) {
+    vditor?.focus();
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    range.collapse(!previous);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    table.remove();
+    return;
+  }
+  const paragraph = document.createElement('p');
+  paragraph.setAttribute('data-block', '0');
+  paragraph.textContent = '\u200b';
+  table.replaceWith(paragraph);
+  vditor?.focus();
+  const range = document.createRange();
+  const textNode = paragraph.firstChild;
+  if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+    range.setStart(textNode, (textNode as Text).data.length);
+  } else {
+    range.selectNodeContents(paragraph);
+    range.collapse(false);
+  }
+  range.collapse(true);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function applyIrTableAction(action: TableEditAction, target: IrTableTarget) {
+  const table = target.element;
+  const ir = vditor?.vditor.ir;
+  if (!ir || !table.isConnected) return;
+  const rows = Array.from(table.rows);
+  const columns = rows[0]?.cells.length ?? 0;
+  if (!rows.length || !columns) return;
+  const row = Math.min(target.row, rows.length - 1);
+  const column = Math.min(target.column, columns - 1);
+  let caretRow = row;
+  let caretColumn = column;
+
+  if (action === 'row-above' || action === 'row-below') {
+    const body = table.tBodies[0] ?? table.createTBody();
+    const newRow = document.createElement('tr');
+    for (let index = 0; index < columns; index++) newRow.appendChild(document.createElement('td'));
+    const visualRow = row <= 0 ? 1 : action === 'row-above' ? row : row + 1;
+    body.insertBefore(newRow, body.rows[visualRow - 1] ?? null);
+    caretRow = visualRow;
+  } else if (action === 'row-remove') {
+    if (row <= 0) return;
+    rows[row].remove();
+    caretRow = row - 1;
+  } else if (action === 'col-left' || action === 'col-right') {
+    const insertAt = action === 'col-left' ? column : column + 1;
+    const referenceAlign = rows[0].cells[column]?.getAttribute('align');
+    for (const rowElement of rows) {
+      const cell = document.createElement(rowElement === rows[0] ? 'th' : 'td');
+      // 新列沿用参照列的对齐方式，出来就是同一档排版
+      if (referenceAlign) cell.setAttribute('align', referenceAlign);
+      rowElement.insertBefore(cell, rowElement.cells[insertAt] ?? null);
+    }
+    caretColumn = insertAt;
+  } else {
+    if (columns <= 1) {
+      removeIrTable(table);
+      emitAfterIrMutation();
+      return;
+    }
+    for (const rowElement of rows) rowElement.cells[column]?.remove();
+    caretColumn = Math.max(0, column - 1);
+  }
+  placeIrCaret(table, caretRow, caretColumn);
+  emitAfterIrMutation();
+}
+
+/** 源码模式：把新表格块写回全文，光标按目标单元格的字符偏移落回 */
+function lineStartOffset(markdown: string, lineIndex: number): number {
+  const lines = markdown.split('\n');
+  let offset = 0;
+  for (let index = 0; index < Math.min(lineIndex, lines.length); index++) offset += lines[index].length + 1;
+  return offset;
+}
+
+function sourceCaretOffset(markdown: string, startLine: number, table: MarkdownTable, row: number, column: number): number {
+  const lines = serializeTable(table);
+  const lineIndex = row <= 0 ? 0 : Math.min(row + 1, lines.length - 1);
+  return lineStartOffset(markdown, startLine + lineIndex) + table.prefix.length + cellStartOffset(table, row, column);
+}
+
+function restoreSourceCaret(offset: number) {
+  const sv = vditor?.vditor.sv;
+  if (!sv) return;
+  vditor?.focus();
+  const walker = document.createTreeWalker(sv.element, NodeFilter.SHOW_TEXT);
+  let remaining = Math.max(0, offset);
+  let node = walker.nextNode() as Text | null;
+  while (node) {
+    if (remaining <= node.data.length) {
+      const range = document.createRange();
+      range.setStart(node, remaining);
+      range.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      return;
+    }
+    remaining -= node.data.length;
+    node = walker.nextNode() as Text | null;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(sv.element);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function emitEditorValue() {
+  if (!vditor) return;
+  const raw = vditor.getValue();
+  lastProgrammaticValue = raw;
+  const nextValue = restoreIngestComments(markdownLinksToWiki(raw));
+  if (comparableMarkdown(nextValue) === comparableMarkdown(props.modelValue)) return;
+  emit('update:modelValue', nextValue);
+}
+
+function applySourceTableAction(action: TableEditAction, target: SourceTableTarget) {
+  if (!vditor) return;
+  const markdown = vditor.getValue();
+  const block = findTableBlocks(markdown)[target.blockIndex];
+  if (!block) return;
+  const table = block.table;
+  const row = Math.min(target.row, tableRowCount(table) - 1);
+  const column = Math.min(target.column, tableColumnCount(table) - 1);
+  let next: MarkdownTable | null = table;
+  let caretRow = row;
+  let caretColumn = column;
+
+  switch (action) {
+    case 'row-above':
+      next = insertRow(table, row, 'before');
+      caretRow = row <= 0 ? 1 : row;
+      break;
+    case 'row-below':
+      next = insertRow(table, row, 'after');
+      caretRow = row <= 0 ? 1 : row + 1;
+      break;
+    case 'row-remove':
+      next = removeRow(table, row);
+      caretRow = Math.max(0, row - 1);
+      break;
+    case 'col-left':
+      next = insertColumn(table, column, 'before');
+      break;
+    case 'col-right':
+      next = insertColumn(table, column, 'after');
+      caretColumn = column + 1;
+      break;
+    case 'col-remove':
+      next = removeColumn(table, column);
+      caretColumn = Math.max(0, column - 1);
+      break;
+  }
+  if (next === table) return;
+
+  const nextMarkdown = replaceTableBlock(markdown, block, next);
+  const caretOffset = next
+    ? sourceCaretOffset(nextMarkdown, block.startLine, next, caretRow, caretColumn)
+    : lineStartOffset(nextMarkdown, block.startLine);
+  syncingModelValue = true;
+  vditor.setValue(nextMarkdown, false);
+  lastProgrammaticValue = vditor.getValue();
+  releaseModelSyncSoon();
+  restoreSourceCaret(caretOffset);
+  emitEditorValue();
+}
+
+function applyTableAction(action: TableEditAction) {
+  const target = tableTarget;
+  if (!vditor || !target) return;
+  beginUserEditing();
+  if (target.mode === 'ir') {
+    applyIrTableAction(action, target);
+  } else {
+    applySourceTableAction(action, target);
+  }
+  scheduleTableBarSync();
 }
 
 function captureEditorSelection() {
@@ -757,6 +1200,7 @@ function applyModelValue(v: string, pageChanged = false) {
     lastProgrammaticValue = vditor.getValue();
     releaseModelSyncSoon();
     scheduleHideManagedPlaceholders();
+    hideTableBar();
   } else {
     lastProgrammaticValue = editorValue;
   }
@@ -806,6 +1250,7 @@ onUnmounted(() => {
   if (modelSyncReleaseTimer) clearTimeout(modelSyncReleaseTimer);
   if (placeholderHideTimer) clearTimeout(placeholderHideTimer);
   if (wikiTagRaf) cancelAnimationFrame(wikiTagRaf);
+  unbindTableBarEvents();
   wikiTagObserver?.disconnect();
   modeObserver?.disconnect();
   unbindVditorTooltips?.();
