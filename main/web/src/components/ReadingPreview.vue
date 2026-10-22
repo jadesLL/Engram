@@ -346,6 +346,7 @@ import {
   type ContentWidthRatio,
 } from '../lib/contentWidth';
 import { wikiLinksToMarkdown, wikiTargetFromHref } from '../lib/wikiLinks';
+import { stripTrailingEmptyTableRows } from '../lib/markdownTableCleanup';
 import { documentTitleParts } from '../lib/documentTitle';
 import { headingFoldRanges } from '../lib/readingFold';
 import { BP_COMPACT, BP_MOBILE, BP_WIDE } from '../lib/layoutBreakpoints';
@@ -963,7 +964,11 @@ async function renderMarkdown() {
   const host = contentEl.value;
   if (!host) return;
   const version = ++renderVersion;
-  const source = wikiLinksToMarkdown(props.markdown);
+  /* 表格尾部的全空数据行（表格工具保存时常见的 `|   |   |` 残留）会被 Vditor 渲染成
+     一行带内边距的空 <tr>，读者看到表格下面多一条空白条带。渲染前只清掉 GFM 表格尾部的
+     全空行，代码围栏与其余正文不动；缓存键和 Vditor.preview 用同一个清理后的值，避免命中
+     旧缓存时又把空行渲染回来。 */
+  const source = stripTrailingEmptyTableRows(wikiLinksToMarkdown(props.markdown));
   const cacheKey = `${props.title}\u0000${source}`;
   const cached = renderCache.get(cacheKey);
   if (cached) {
@@ -1839,14 +1844,19 @@ onBeforeUnmount(() => {
   font-size: 0.86em;
   line-height: 1.7;
 }
+/* 表格描边只留「顶一条、底一条」：容器只画顶边，底边交给末行单元格的下边框
+   （th/td 本来就有 1px 下边框，见下）。原先容器再画一条 border-bottom，加上 Vditor
+   给 table 的 margin-bottom，就是用户报的「末行线下面隔一截又一条线」的底部双线。 */
 .reading-content :deep(.reading-table-scroll) {
   margin: 1.25em 0;
   overflow-x: auto;
   border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
 }
 .reading-content :deep(table) {
   width: 100%;
+  /* Vditor 的 .vditor-reset table 自带 margin-bottom（16px）：会把末行线与容器底边
+     隔出一条空白带，也让「末行 td 作底边」落不到表格底部，这里归零 */
+  margin: 0;
   /* 桌面档的正文列 780px，620px 是「一行七八列还能读」的下限；低于它的列宽由
      fitWideBlocks() 按比例缩放整表（见脚本注释），不再让表格溢出后被裁掉 */
   min-width: min(620px, 100%);
@@ -1864,6 +1874,11 @@ onBeforeUnmount(() => {
 .reading-content :deep(th) {
   background: var(--bg-secondary);
   font-weight: 650;
+}
+/* 表格底边由末行单元格的下边框收口（th/td 已有 1px border-bottom，这里显式点名末行，
+   避免以后表格 reset 顺手抹掉它时整条底边消失） */
+.reading-content :deep(.reading-table-scroll tr:last-child > td) {
+  border-bottom: 1px solid var(--border);
 }
 .reading-content :deep(img) {
   display: block;
