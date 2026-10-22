@@ -6,7 +6,14 @@ import { subscribeRun } from '../assistant/events.js';
 import { AgentNotConfiguredError, cancelRun, isRunning, RunConflictError, submitMessage } from '../assistant/runner.js';
 import { agentRuntimeStatus } from '../assistant/dshRuntime.js';
 import { AgentQuestionError, answerAgentQuestion } from '../assistant/questions.js';
-import { bundledDshBin, getAgentConfig, setAgentConfig } from '../assistant/config.js';
+import {
+  bundledDshBin,
+  bundledDshVersion,
+  bundledSdkClientVersion,
+  getAgentConfig,
+  setAgentConfig,
+} from '../assistant/config.js';
+import { getAgentInventory, rawInventoryDump } from '../assistant/agentInventory.js';
 import { AGENT_APIS, agentApi } from '../assistant/agentSettings.js';
 import { clampDreamIntervalDays, parseClock, writeDreamConfig } from '../assistant/dreamConfig.js';
 import { dreamStatus, settleDreamRun, startDreamRun } from '../assistant/dreamCycle.js';
@@ -44,7 +51,34 @@ export async function assistantRoutes(app: FastifyInstance) {
       ...agentRuntimeStatus(),
       bundled: Boolean(bundledDshBin()),
       dshPath: config.dshPath || '',
+      /** 随包依赖版本（设置页「内置 Agent 运行时」指纹条用；不触发 dump） */
+      dshVersion: bundledDshVersion(),
+      sdkClientVersion: bundledSdkClientVersion(),
     };
+  });
+
+  // ---------- 插件清单与设置（只读；数据来自 dsh 自己的 dump） ----------
+
+  /**
+   * 内置 Agent 的插件/设置快照：懒生成 + 落盘缓存（dsh 版本 / patch 内容变化即失效）。
+   * owner 鉴权：会暴露 DSH_HOME、patch 路径等本机信息。
+   */
+  app.get('/api/assistant/inventory', { preHandler: requireAuth }, async (req) => {
+    const refresh = (req.query as Record<string, string | undefined>)?.refresh;
+    return getAgentInventory({ refresh: refresh === '1' || refresh === 'true' });
+  });
+
+  /** 原始 dump（已脱敏）：排障与「高级」页复制/下载 */
+  app.get('/api/assistant/inventory/raw', { preHandler: requireAuth }, async (req, reply) => {
+    const kind = (req.query as Record<string, string | undefined>)?.kind === 'schema' ? 'schema' : 'config';
+    const result = await rawInventoryDump(kind);
+    if (result.error && !result.text) return reply.code(502).send({ error: result.error });
+    return reply.type('text/plain; charset=utf-8').send(result.text);
+  });
+
+  /** 强制重新生成快照（设置页「刷新」按钮） */
+  app.post('/api/assistant/inventory/refresh', { preHandler: requireAuth }, async () => {
+    return getAgentInventory({ refresh: true });
   });
 
   app.get('/api/assistant/config', { preHandler: requireAuth }, async () => {

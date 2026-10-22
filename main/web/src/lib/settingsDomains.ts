@@ -13,6 +13,11 @@
  *  - 「Agent 接入」改名「Agent 与自动化」，「梦境思考」改名「自动整理（梦境思考）」并紧跟
  *    「内置 Agent」，「查看工具」改名「工具与手册」明确其只读参考身份。
  *
+ * 2026-10-22：内置 Agent 随包的 dsh 升到 0.2.1 后，在「内置 Agent」后面新增「内置 Agent 运行时」
+ * （anchor: agent-runtime）——展示 dsh 自己 dump 出来的插件清单 / 设置项 / 原始 dump（只读，
+ * 设计见 docs/AGENT-RUNTIME-INVENTORY.md 第 7 节）。它是「内置 Agent」这个运行时的展开细节，
+ * 因此紧跟其后、排在「自动整理（梦境思考）」之前（两块自动化仍由 #after-builtin 插槽插入）。
+ *
  * **导航顺序 = 页面渲染顺序**（SettingsView.vue 里各大类的分组必须按本文件登记顺序渲染）。
  * 2026-09-27 用户报的「导航里第 2 项、页面上第 4 块」（梦境思考插在两个 Agent 分组中间）
  * 就是这条被破坏的结果：点击锚点跳到最后一块、滚动高亮顺序也乱。settingsDomains.test.ts
@@ -154,6 +159,10 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     icon: 'ai',
     groups: [
       { id: 'agent-builtin', label: '内置 Agent', icon: 'ai', need: 'agent' },
+      // 内置 Agent 运行时（dsh 0.2.1 起）：插件清单 / 设置项 / 原始 dump，只读。
+      // 与「内置 Agent」回答同一个问题的两半（怎么配 → 它到底加载了什么），所以紧跟其后；
+      // 页面侧由 AgentPanel 在 #after-builtin 插槽之前渲染，导航顺序 = 页面顺序。
+      { id: 'agent-runtime', label: '内置 Agent 运行时', icon: 'ai', need: 'agent' },
       { id: 'agent-dream', label: '自动整理（梦境思考）', icon: 'moon', need: 'agent' },
       // 任务看板提炼：看板不在后台定时跑，间隔（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天）
       // 只决定「打开看板页时要不要自动重新提炼一次」。与梦境思考同属「按计划的自动化」，排在它后面。
