@@ -1870,6 +1870,7 @@ button.save-state.dirty:hover { color: var(--accent); }
   border-radius: 4px;
   background: var(--bg-tertiary);
 }
+/* 代码块卡片：横向滚动只有这一层 */
 .editor-area :deep(.vditor-ir pre),
 .editor-area :deep(.vditor-wysiwyg pre),
 .editor-area :deep(.vditor-sv pre) {
@@ -1898,6 +1899,57 @@ button.save-state.dirty:hover { color: var(--accent); }
   background: transparent;
   font-size: 0.86em;
   line-height: 1.6;
+}
+/* 代码块里的代码：hljs 主题会给 code 自带 padding 与 overflow-x，长行于是被内层一条细
+   滚动条裁在卡片右缘（外层卡片反而不滚，看上去像文字被切掉了）。把内层放平：宽度跟随内容
+   且不换行，横向滚动统一交给上面的卡片（单层滚动条、整卡一起滚）。
+   注意只认代码块自己的那两个 pre：正文是 <pre class="vditor-reset">，行内代码也在这个 pre 里，
+   选择器收宽了会把行内代码一起变成整行块（正文被拆成一行一个短语） */
+.editor-area :deep(.vditor-ir .vditor-ir__preview code),
+.editor-area :deep(.vditor-ir .vditor-ir__marker--pre code) {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  overflow: visible;
+  white-space: pre;
+}
+/* 代码块「正在编辑」：Vditor 展开代码块时会把可编辑源码和高亮预览两份同时显示出来，
+   同一段代码在正文里凭空多出一整块（编辑时页面还会跳一下）。编辑态只保留源码那份 */
+.editor-area :deep(.vditor-ir__node--expand > .vditor-ir__preview) {
+  display: none !important;
+}
+/* 编辑态的源码块顶替预览卡片，成为同一张卡片：背景/描边/圆角与预览态一致 */
+.editor-area :deep(.vditor-ir__node--expand[data-type="code-block"]) {
+  margin: 0.9em 0;
+  padding: 12px 16px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+/* 语言标记收成卡片头部的一行小字：不再夹在正文里被选中，也不占一份行高 */
+.editor-area :deep(.vditor-ir__node--expand[data-type="code-block"] > .vditor-ir__marker--info) {
+  display: block;
+  margin: 0 0 6px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-faint);
+  user-select: none;
+}
+/* 源码块本身撑满卡片内容区，滚动交给卡片 */
+.editor-area :deep(.vditor-ir__node--expand[data-type="code-block"] > pre.vditor-ir__marker--pre) {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+/* 围栏（三个反引号）是 Vditor 的伪元素标记：卡片自己表达边界，编辑时把围栏和语言标记一起
+   挪出选区（否则跨块拖选/复制会混进围栏和语言标签） */
+.editor-area :deep(.vditor-ir__node--expand[data-type="code-block"]:before),
+.editor-area :deep(.vditor-ir__node--expand[data-type="code-block"]:after) {
+  content: none;
+  user-select: none;
 }
 .editor-area :deep(.vditor-ir table),
 .editor-area :deep(.vditor-wysiwyg table),

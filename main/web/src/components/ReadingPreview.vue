@@ -1821,10 +1821,23 @@ onBeforeUnmount(() => {
   font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
   font-size: 0.86em;
 }
-.reading-content :deep(pre code) {
+/* 代码块里的代码：vditor 的 .vditor-reset code:not(.hljs) 是三个类，优先级高于
+   .reading-content pre code（两个类），不压回去就把代码块内容画成行内代码那样的小胶囊
+   （灰底 + 内边距），外面再套一层卡片就是「白卡片里套灰块」。这里补上 .vditor-reset
+   一起提优先级，并把横向滚动交给卡片本身：内层 code 不再自带滚动条，也不再折行 */
+.reading-content :deep(pre code),
+.reading-content.vditor-reset :deep(pre code) {
+  display: block;
+  width: max-content;
+  min-width: 100%;
   padding: 0;
+  overflow: visible;
+  white-space: pre;
+  border-radius: 0;
   background: transparent;
   color: inherit;
+  font-size: 0.86em;
+  line-height: 1.7;
 }
 .reading-content :deep(.reading-table-scroll) {
   margin: 1.25em 0;
