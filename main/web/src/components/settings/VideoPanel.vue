@@ -78,12 +78,12 @@
         </label>
 
         <label class="video-field">
-          <span>B站清晰度</span>
-          <AppSelect v-model="form.quality" aria-label="B站清晰度" :options="qualityOptions" />
+          <span>视频清晰度</span>
+          <AppSelect v-model="form.quality" aria-label="视频清晰度" :options="qualityOptions" />
         </label>
 
         <div class="video-field">
-          <span>抖音抓取</span>
+          <span>抖音兜底</span>
           <div class="video-browser">
             <label class="switch-control">
               <input v-model="form.douyinBrowser" type="checkbox" :disabled="!browserAvailable" />
@@ -116,8 +116,9 @@
       <p class="faint small video-note">
         视频会发送给你填写的 Base URL 所在的模型服务（OpenAI 兼容 chat/completions，视频以 video_url 内容块传递），
         不会发到别处；只支持这类兼容接口，厂商私有的文件上传协议不支持。模型给出的时间戳 / 章节是估计值，纪要需人工复核。
-        B站清晰度越高下载越慢、体积越大；「抖音：用本机浏览器抓取」是实验能力，只在装有 Edge / Chrome 的本机可用
-        （Docker / 手机端不可用）。Key 只存本机数据库、页面不回显；音视频原件与产物都留在收集箱，确认「入库」后才进知识库。
+        视频清晰度越高下载越慢、体积越大（抖音按这个目标档位选清晰度）；抖音链接默认走服务端接口抓取（匿名身份 + secsdk 签名，不需要浏览器，
+        NAS / Docker / 手机端都可用），只有接口失败时才用上面的「本机浏览器兜底」（实验，仅装有 Edge / Chrome 的本机可用）。
+        Key 只存本机数据库、页面不回显；音视频原件与产物都留在收集箱，确认「入库」后才进知识库。
       </p>
     </SettingsGroup>
   </section>
@@ -157,7 +158,7 @@ interface VideoStatus {
   douyinBrowser?: boolean;
   /** 服务端算好的缺失项（Base URL / API Key / 模型名） */
   missing?: string[];
-  /** 这台机器上有没有 Edge / Chrome（抖音抓取用） */
+  /** 这台机器上有没有 Edge / Chrome（抖音接口失败时的浏览器兜底用） */
   browserAvailable?: boolean;
   platform?: string;
 }
@@ -229,7 +230,7 @@ const stateDetail = computed(() => {
   const status = serverStatus.value;
   if (!status) return '可以继续填写并保存；状态接口恢复后这里会显示实际生效的配置。';
   if (status.configured) {
-    return `${status.model || form.model} @ ${status.baseUrl || form.baseUrl} · B站清晰度 ${qualityLabel(status.quality)} · 抖音本机浏览器${status.douyinBrowser ? '已开' : '未开'}`;
+    return `${status.model || form.model} @ ${status.baseUrl || form.baseUrl} · 视频清晰度 ${qualityLabel(status.quality)} · 抖音浏览器兜底${status.douyinBrowser ? '已开' : '未开'}`;
   }
   return '保存后这里会显示实际生效的配置（服务端不会回显 API Key）。';
 });
@@ -260,7 +261,7 @@ const douyinSwitchLabel = computed(() => {
 
 const browserNote = computed(() => {
   if (browserAvailable.value) {
-    return '用本机浏览器打开抖音分享页取播放地址（实验，仅桌面 / 本机可用）';
+    return '抖音链接默认走服务端接口抓取（不需要浏览器）；接口失败时才用本机浏览器打开视频页兜底（实验）';
   }
   const os = platform.value === 'win32'
     ? 'Windows'
@@ -269,7 +270,7 @@ const browserNote = computed(() => {
       : platform.value === 'linux'
         ? 'Linux'
         : '本机';
-  return `${os} 上没有检测到 Edge / Chrome：抖音链接抓取不可用，请先下载视频再拖入收集箱`;
+  return `${os} 上没有检测到 Edge / Chrome：抖音链接仍走服务端接口抓取（不需要浏览器），只是无法浏览器兜底`;
 });
 
 function qualityLabel(value?: number): string {
@@ -298,7 +299,7 @@ function buildPayload(): Record<string, unknown> {
     model: form.model.trim(),
     maxTokens: clampTokens(form.maxTokens),
     quality: Number(form.quality),
-    // 本机没有浏览器时不允许把抖音抓取存成开启
+    // 本机没有浏览器时不允许把「接口失败时用浏览器兜底」存成开启
     douyinBrowser: browserAvailable.value ? form.douyinBrowser : false,
     // 留空 = 保留原 Key（服务端不回显 Key）；显式清空只走「清除 Key」按钮
     ...(key ? { apiKey: key } : {}),

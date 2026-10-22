@@ -20,8 +20,8 @@ import { isVideoLinkPlaceholder, suggestCoreTitle, writeInboxMarkdown } from './
  * 收集箱「视频链接 → 提炼」的管线（jobs.ts 的视频分支入口）。
  *
  * 归一化两种来源：
- *  1) 视频链接占位稿（frontmatter 类型: video-link）：B站走 API + 合并 mp4 下载，
- *     抖音走本机浏览器抓取（实验，config.douyinBrowser 开关）；
+ *  1) 视频链接占位稿（frontmatter 类型: video-link）：B站走 API + 合并 mp4 下载；
+ *     抖音优先走服务端接口（无需浏览器），失败时按 config.douyinBrowser 降级本机浏览器；
  *  2) 用户直接拖进来的音视频原件：直接用 safeJoin 读原件，不复制、不改动。
  *
  * 媒体以 data URL（video_url 内容块）内联发给配置的 OpenAI 兼容视频模型，
@@ -231,11 +231,6 @@ export async function convertVideoInboxItem(
       const markdown = fs.readFileSync(safeJoin(relPath), 'utf8');
       const parsed = parseVideoLinkMarkdown(markdown);
       if (!parsed) throw new Error('这条视频链接占位稿已损坏：请在收集箱删除后重新粘贴视频链接');
-      if (parsed.platform === 'douyin' && !config.douyinBrowser) {
-        throw new Error(
-          '抖音视频需要开启本机浏览器抓取，或改用上传本地视频（设置 → Agent 与自动化 → 视频理解模型 → 打开「抖音：用本机浏览器抓取（实验）」）'
-        );
-      }
       options.onProgress?.('解析链接', '解析' + platformLabel(parsed.platform) + '视频信息');
       const info = await resolveVideoLink(parsed.link, { fetchImpl: options.fetchImpl, signal: options.signal });
       const title = info.title || parsed.title || name;
@@ -268,6 +263,10 @@ export async function convertVideoInboxItem(
           destPath: tempPath,
           signal: options.signal,
           timeoutMs: 60_000,
+          quality: config.quality,
+          maxBytes: inlineLimit,
+          allowBrowserFallback: config.douyinBrowser,
+          fetchImpl: options.fetchImpl,
           onProgress: (_stage, detail) => options.onProgress?.('获取视频', detail || '抓取抖音视频'),
         });
         if (info.title && info.title !== '抖音视频' && prepared.title.indexOf(info.title) < 0) {
