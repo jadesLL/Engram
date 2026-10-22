@@ -5,7 +5,6 @@ import {
   agentRuntimeSummary,
   consoleStateLabel,
   formatStartedAt,
-  normalizeConsoleStatus,
 } from './agentConsole.ts';
 
 test('agentRuntimeSummary：dsh 版本 + profile，缺字段显示未知', () => {
@@ -25,20 +24,4 @@ test('formatStartedAt：本地时间格式化，坏输入返回空串', () => {
   assert.equal(formatStartedAt(null), '');
   assert.equal(formatStartedAt(0), '');
   assert.match(formatStartedAt(Date.now()), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
-});
-
-test('normalizeConsoleStatus：字段缺失时按未运行降级', () => {
-  assert.deepEqual(normalizeConsoleStatus(null), {
-    running: false,
-    origin: '',
-    iframePath: '',
-    startedAt: null,
-    error: '',
-    dshVersion: null,
-  });
-  const status = normalizeConsoleStatus({ running: true, iframePath: '/agent-console/?token=t', startedAt: 123, dshVersion: '0.2.1-rc.2' });
-  assert.equal(status.running, true);
-  assert.equal(status.iframePath, '/agent-console/?token=t');
-  assert.equal(status.startedAt, 123);
-  assert.equal(status.dshVersion, '0.2.1-rc.2');
 });

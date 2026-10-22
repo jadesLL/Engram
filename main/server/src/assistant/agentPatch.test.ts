@@ -1,10 +1,22 @@
-import { test } from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import {
+// 多个 test 文件并行运行时，默认 DATA_DIR 会共用同一个 wiki.db，偶发 SQLITE_BUSY：
+// 导入 db 链（agentPatch → zcodeConfig → lib/db）之前先把 DATA_DIR 指到本测试自己的临时目录。
+const DATA_TEMP = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-agent-patch-data-'));
+process.env.DATA_DIR = DATA_TEMP;
+after(async () => {
+  try {
+    const { db } = await import('../lib/db.js');
+    db.close();
+  } catch { /* 未打开或已关闭 */ }
+  fs.rmSync(DATA_TEMP, { recursive: true, force: true });
+});
+
+const {
   AGENT_PATCH_FILE,
   CHAT_PATCH_FILE,
   agentPatchEntryIds,
@@ -14,12 +26,12 @@ import {
   chatPatchText,
   writeAgentPatch,
   writeChatPatch,
-} from './agentPatch.js';
-import {
+} = await import('./agentPatch.js');
+const {
   LEGACY_SETTINGS_HEADER,
   agentSettingsPath,
   profilePatchPath,
-} from './agentSettings.js';
+} = await import('./agentSettings.js');
 
 function tempHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'engram-agent-patch-'));

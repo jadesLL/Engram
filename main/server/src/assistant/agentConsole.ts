@@ -73,6 +73,16 @@ export function consoleInternalPort(): number | null {
   return state?.port ?? null;
 }
 
+/**
+ * 控制台内部上游目标（BFF 直连 DSH 的 HTTP RPC 用）：端口 + 启动 token。
+ *
+ * token 是 dsh web 进程级令牌，用来兑换 dsh-auth cookie；它只在服务端内部使用，
+ * 不返回给浏览器（前端只调 /api/agent-console/*）。
+ */
+export function consoleUpstream(): { port: number; token: string; origin: string } | null {
+  return state ? { port: state.port, token: state.token, origin: state.origin } : null;
+}
+
 /** 只读状态（不触发启动） */
 export function consoleStatus(): ConsoleStatus {
   touch();

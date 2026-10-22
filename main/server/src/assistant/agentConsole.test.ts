@@ -1,7 +1,22 @@
-import { test } from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-import { AGENT_CONSOLE_PREFIX, normalizeOrigin, parseConsoleUrl, upstreamPath } from './agentConsole.js';
+// 多个 test 文件并行运行时，默认 DATA_DIR 会共用同一个 wiki.db，偶发 SQLITE_BUSY：
+// 导入 db 链（agentConsole → config → lib/db）之前先把 DATA_DIR 指到本测试自己的临时目录。
+const DATA_TEMP = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-agent-console-test-'));
+process.env.DATA_DIR = DATA_TEMP;
+after(async () => {
+  try {
+    const { db } = await import('../lib/db.js');
+    db.close();
+  } catch { /* 未打开或已关闭 */ }
+  fs.rmSync(DATA_TEMP, { recursive: true, force: true });
+});
+
+const { AGENT_CONSOLE_PREFIX, normalizeOrigin, parseConsoleUrl, upstreamPath } = await import('./agentConsole.js');
 
 test('parseConsoleUrl：从 dsh 的启动行里取地址与 token', () => {
   const line = 'dsh web: http://127.0.0.1:3099/?token=abcDEF_123-xyz\n';
