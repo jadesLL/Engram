@@ -13,7 +13,7 @@
       :badge="status.bundled ? '' : '缺依赖'"
       :badge-tone="status.bundled ? 'ok' : 'warn'"
       title="内置 Agent（聊天抽屉）"
-      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 MCP 工具读写。模型与插件在下方「内置 Agent 控制台」里配置"
+      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 MCP 工具读写。模型与插件在下方「内置 Agent 控制台」里配置（Engram 原生界面）"
     >
       <!-- 运行时摘要（dsh 版本 + profile，来自 /api/assistant/status）：右侧一键跳到下方的控制台分组 -->
       <div class="state-strip builtin-summary">
@@ -35,7 +35,7 @@
         </div>
         <div class="builtin-row">
           <span>模型与插件</span>
-          <strong class="path-value">在下方「内置 Agent 控制台」里配置（DSH 原生设置页）</strong>
+          <strong class="path-value">在下方「内置 Agent 控制台」里配置（Engram 原生 Agent 控制台）</strong>
         </div>
         <div class="builtin-row">
           <span>工作目录</span>
@@ -48,7 +48,7 @@
       </div>
     </SettingsGroup>
 
-    <!-- 内置 Agent 控制台：DSH 原生插件页 / 设置页（模型、内置插件、Agent 预设）。
+    <!-- 内置 Agent 控制台：Engram 原生整页（模型 / 插件 / Agent 预设 / 高级），入口卡只保留状态条与打开按钮。
          它是「内置 Agent」的配置入口，紧跟在卡片之后、自动化插槽之前——导航顺序 = 页面顺序。 -->
     <AgentConsolePanel />
 

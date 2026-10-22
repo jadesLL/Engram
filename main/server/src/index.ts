@@ -25,6 +25,7 @@ import { guideRoutes } from './routes/guide.js';
 import { agentRoutes } from './routes/agent.js';
 import { entityNameRoutes } from './routes/entityNames.js';
 import { assistantRoutes } from './routes/assistant.js';
+import { agentConsoleRoutes } from './routes/agentConsole.js';
 import { taskRoutes } from './routes/tasks.js';
 import { customerResearchRoutes } from './routes/customerResearch.js';
 import { eventRoutes } from './routes/events.js';
@@ -108,6 +109,8 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(agentRoutes);
   await app.register(entityNameRoutes);
   await app.register(assistantRoutes);
+  // 内置 Agent 控制台的原生 BFF（/api/agent-console/*，owner-only；数据仍来自 dsh 进程）
+  await app.register(agentConsoleRoutes);
   await app.register(taskRoutes);
   await app.register(customerResearchRoutes);
   await app.register(eventRoutes);

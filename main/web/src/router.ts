@@ -18,6 +18,9 @@ export const router = createRouter({
         { path: 'tasks', component: () => import('./views/TasksView.vue') },
         { path: 'customer-research', component: () => import('./views/CustomerResearchView.vue') },
         { path: 'settings', component: () => import('./views/SettingsView.vue') },
+        /* 内置 Agent 控制台整页（Engram 原生界面）：Home 的 isActive('/settings') 是前缀匹配，
+           settings-open 布局（宽屏隐藏 .content 滚动、由页面自己滚）自动生效。 */
+        { path: 'settings/agent-console', component: () => import('./views/AgentConsoleView.vue') },
       ],
     },
   ],
