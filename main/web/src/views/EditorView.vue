@@ -823,6 +823,7 @@ watch(
     if (staged === prev || staged !== 'done') return;
     if (!page.value) return;
     if (dirty) return; // 正在编辑就不覆盖（与 SSE 重载同一口径）
+    if (editorRef.value?.isComposing()) return; // 输入法组字中同理：不打断未上屏的拼音
     loadPage(page.value.id);
   }
 );
@@ -1371,6 +1372,9 @@ watch(
     const matchMoved = ev.type === 'page-moved' && (ev.oldPath === myPath || ev.newPath === myPath);
     if (!matchChanged && !matchMoved) return;
     if (dirty) return; // 用户正在编辑，不覆盖未保存内容
+    // 输入法组字中：整页重载会 vditor.setValue 重建编辑器 DOM，把还没上屏的拼音打断
+    // （跳字/鼠标位置乱跑）。先保住用户当前输入，下一次事件或切页时再同步。
+    if (editorRef.value?.isComposing()) return;
     if (Date.now() - justSavedAt < 1500) return; // 自己刚保存的回声，忽略
     loadPage(page.value.id);
   }

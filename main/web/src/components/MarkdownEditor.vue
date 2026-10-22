@@ -75,6 +75,7 @@ import {
   type TableEditAction,
 } from '../lib/markdownTable';
 import { createEditorModelSync } from '../lib/editorModelSync';
+import { decideModelSync, stableEditorMarkdown } from '../lib/editorComposition';
 import {
   copyText,
   type SelectionContextMenuRequest,
@@ -118,9 +119,11 @@ const activeLinkIndex = ref(0);
 
 let vditor: Vditor | null = null;
 let ready = false;
-let composing = false; // IME 组字状态（wysiwyg 下 input 走防抖，组字期间不 emit 防丢字）
+let composing = false; // IME 组字状态（组字期间 Vditor 活值含未提交拼音：不 emit、不重建、不保存）
 let syncingModelValue = true;
 let lastProgrammaticValue = '';
+/** 最近一次稳定（非组字）的编辑器原始 Markdown（编辑器内部形态，未做 wiki 转换） */
+let committedMarkdown = '';
 let userInputPending = false;
 let modelSyncReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 let placeholderHideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -233,6 +236,42 @@ function beginUserEditing() {
   if (modelSyncReleaseTimer) clearTimeout(modelSyncReleaseTimer);
   modelSyncReleaseTimer = null;
   syncingModelValue = false;
+}
+
+/** 编辑器里「稳定可当正文」的原始 Markdown：组字期间取最近一次稳定快照，不把未提交拼音算进去。 */
+function stableEditorValue(): string {
+  return stableEditorMarkdown(composing, vditor?.getValue() || '', committedMarkdown);
+}
+
+/** 同步比较键：双链的百分号转义差异、AI 管理注释占位都不算正文差异，避免父级回显被误判成
+ *  「外部改动」而 setValue 重排整个编辑器（那会打断组字、把光标甩走）。
+ *  没有双链的文档走轻量比较（绝大多数输入路径），不额外做一遍全文双链转换。 */
+function syncKey(md: string): string {
+  if (!md.includes('#wiki/') && !md.includes('[[')) return comparableMarkdown(md);
+  return comparableMarkdown(markdownLinksToWiki(md));
+}
+
+/** 把一次稳定的编辑器原始值同步给父级（v-model）；与模型等价时不 emit，避免无意义脏标记。 */
+function emitStableEditorValue(raw: string) {
+  committedMarkdown = raw;
+  if (!ready || syncingModelValue) return;
+  lastProgrammaticValue = raw;
+  const nextValue = restoreIngestComments(markdownLinksToWiki(raw));
+  if (comparableMarkdown(nextValue) === comparableMarkdown(props.modelValue)) return;
+  emit('update:modelValue', nextValue);
+}
+
+/** 组字结束（compositionend / keyup 兜底）：一次性同步稳定值，再补判断组字期间被推迟的外部更新。
+ *  组字期间任何回显/外部值都不许 setValue（会重建 DOM 打断输入法）；这里等 emit 引发的 watcher
+ *  落定后再对一次——自家回显等价则是 no-op，只有父级最终值仍是真正的外部改动才会写入。 */
+function finishComposition() {
+  if (!composing) return;
+  composing = false;
+  emitStableEditorValue(vditor?.getValue() || '');
+  nextTick(() => {
+    if (!ready || composing || !vditor) return;
+    applyModelValue(props.modelValue, false);
+  });
 }
 
 /** 监听 Vditor edit-mode 切换（DOM class 变化），emit mode-change 让父组件持久化 */
@@ -434,18 +473,19 @@ function init() {
       base64ToLink: ((src: string) => persistDataUrl(src)) as unknown as (responseText: string) => string,
     },
     input: (v) => {
-      // IME 组字期间不 emit，避免 wysiwyg 防抖重渲染打断输入
+      // 组字期间 Vditor 的活值含未提交拼音：等 compositionend 一次性同步，中途不 emit
       if (!ready || composing || syncingModelValue || !userInputPending) return;
       userInputPending = false;
-      if (v === lastProgrammaticValue) return;
-      lastProgrammaticValue = v;
-      const nextValue = restoreIngestComments(markdownLinksToWiki(v));
-      if (comparableMarkdown(nextValue) === comparableMarkdown(props.modelValue)) return;
-      emit('update:modelValue', nextValue);
+      if (v === lastProgrammaticValue) {
+        committedMarkdown = v;
+        return;
+      }
+      emitStableEditorValue(v);
     },
     after: () => {
       ready = true;
       lastProgrammaticValue = vditor?.getValue() || initialValue;
+      committedMarkdown = lastProgrammaticValue;
       // Vditor 初始化是异步的：这期间切过页，不能继续显示构造时抓到的旧正文。
       modelSync.setEnvironment(true, !editorHidden());
       overrideToolbarIcons();
@@ -586,22 +626,14 @@ function bindKeys() {
       }
     }
   });
-  // keyup 时解除组字锁，并补发一次 input（把组字期间积攒的内容同步出去）
+  // keyup 兜底（部分 IME 的 compositionend 不冒泡/不触发）：组字结束补一次稳定值同步
   el.addEventListener('keyup', (e: KeyboardEvent) => {
-    if (composing && !e.isComposing) {
-      composing = false;
-      const v = vditor?.getValue() || '';
-      emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
-    }
+    if (composing && !e.isComposing) finishComposition();
     if (e.key === '[' && justTypedDoubleBracket()) openLinkPopup(true);
   });
   // compositionstart/end 兜底（部分 IME 不触发 isComposing）
   el.addEventListener('compositionstart', () => { composing = true; });
-  el.addEventListener('compositionend', () => {
-    composing = false;
-    const v = vditor?.getValue() || '';
-    emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
-  });
+  el.addEventListener('compositionend', () => { finishComposition(); });
   el.addEventListener('contextmenu', handleEditorContextMenu, true);
   // 代码块预览里的拖选要在 mouseup 的 click 之前保住（见 keepCodeBlockSelection）
   el.addEventListener('click', keepCodeBlockSelection, true);
@@ -933,12 +965,11 @@ function restoreSourceCaret(offset: number) {
 }
 
 function emitEditorValue() {
-  if (!vditor) return;
-  const raw = vditor.getValue();
-  lastProgrammaticValue = raw;
-  const nextValue = restoreIngestComments(markdownLinksToWiki(raw));
-  if (comparableMarkdown(nextValue) === comparableMarkdown(props.modelValue)) return;
-  emit('update:modelValue', nextValue);
+  if (!vditor || !ready) return;
+  // 程序化 setValue 期间禁了 emit；这里先恢复用户编辑态，再走 main 的稳定值通道
+  // （IME 保护、双链比较键、AI 管理注释都在那个函数里，不另起一套）
+  beginUserEditing();
+  emitStableEditorValue(vditor.getValue());
 }
 
 function applySourceTableAction(action: TableEditAction, target: SourceTableTarget) {
@@ -1160,7 +1191,8 @@ function insertText(text: string) {
 function getValue(): string {
   // 阅读时/初始化时尚未同步的编辑器不是当前正文的来源，保存用父级最新值。
   if (!modelSync.isCurrent()) return props.modelValue;
-  return restoreIngestComments(markdownLinksToWiki(vditor?.getValue() || ''));
+  // 组字中返回最近一次稳定快照：Vditor 的活值里含未提交拼音，不能写进正文/文件。
+  return restoreIngestComments(markdownLinksToWiki(stableEditorValue()));
 }
 function getCurrentMode(): 'sv' | 'wysiwyg' | 'ir' {
   return vditor?.getCurrentMode() || 'ir';
@@ -1220,26 +1252,71 @@ function editorHidden(): boolean {
   return !wrapEl.value || wrapEl.value.offsetParent === null;
 }
 
+/** 整块写入编辑器（换页或真正的外部更新才走这里）：写完把稳定快照对齐 Vditor 序列化后的值。 */
+function applyEditorMarkdown(editorValue: string, pageChanged: boolean) {
+  if (!vditor) return;
+  syncingModelValue = true;
+  vditor.setValue(editorValue, pageChanged);
+  lastProgrammaticValue = vditor.getValue();
+  committedMarkdown = lastProgrammaticValue;
+  releaseModelSyncSoon();
+  scheduleHideManagedPlaceholders();
+  // 整块重渲染后表格 DOM 已经换掉，旧的浮条目标失效：先收起，等 selectionchange 按新 DOM 重算
+  hideTableBar();
+}
+
+/**
+ * 父级正文写回编辑器。关键边界：组字期间绝不 setValue——整块重建 DOM 会打断输入法
+ * （拼音被提交成拉丁字母、光标跳位、正文被重新解析）。组字中收到的回显直接丢弃，
+ * 真正的外部改动推迟到 compositionend 后由 finishComposition 复核生效。
+ */
 function applyModelValue(v: string, pageChanged = false) {
   if (!ready || !vditor) return;
   const editorValue = stripIngestComments(wikiLinksToMarkdown(v));
   if (pageChanged) {
     userInputPending = false;
     composing = false;
+    // 换页前先让输入法收掉组字（blur 触发 compositionend；此刻 composing 已清，不会把旧页文字
+    // 当成新页提交），再整块换内容，避免在 IME 活跃状态下直接替换 contenteditable 的 DOM。
+    vditorEl.value
+      ?.querySelector<HTMLElement>('.vditor-ir [contenteditable="true"], .vditor-sv [contenteditable="true"], .vditor-wysiwyg [contenteditable="true"]')
+      ?.blur();
     savedSelectionRange = null;
     savedSelectionText = '';
     linkPopup.value = false;
+    applyEditorMarkdown(editorValue, true);
+    return;
   }
-  if (pageChanged || editorValue !== vditor.getValue()) {
-    syncingModelValue = true;
-    vditor.setValue(editorValue, pageChanged);
-    lastProgrammaticValue = vditor.getValue();
-    releaseModelSyncSoon();
-    scheduleHideManagedPlaceholders();
-    hideTableBar();
-  } else {
-    lastProgrammaticValue = editorValue;
+  const live = vditor.getValue();
+  // 快速路径 1：父级值与编辑器活值逐字节相同（最常见的 emit 回显），不做全文规范化比较。
+  if (editorValue === live) {
+    if (!composing) {
+      lastProgrammaticValue = editorValue;
+      committedMarkdown = live;
+    }
+    return;
   }
+  // 快速路径 2：父级值等于最近一次稳定快照——这是自己提交时的滞后回显（自动保存回包、SSE 回声
+  // 都可能晚一拍），绝不能用它覆盖编辑器里更新的内容（组字中的活值可能已经领先）。
+  if (editorValue === committedMarkdown) {
+    if (!composing) lastProgrammaticValue = editorValue;
+    return;
+  }
+  const incomingKey = syncKey(editorValue);
+  const action = decideModelSync(
+    composing,
+    incomingKey === syncKey(live),
+    incomingKey === syncKey(committedMarkdown),
+  );
+  if (action === 'skip') {
+    if (!composing) {
+      lastProgrammaticValue = editorValue;
+      committedMarkdown = live;
+    }
+    return;
+  }
+  if (action === 'defer') return;
+  applyEditorMarkdown(editorValue, false);
 }
 
 watch(
@@ -1298,6 +1375,8 @@ defineExpose({
   getSelectionText,
   insertText,
   getValue,
+  /** 输入法组字中：父级保存/重载/切阅读态都要避开这个窗口（见 EditorView 的守卫） */
+  isComposing: () => composing,
   getCurrentMode,
   focus,
   syncIfPending,
