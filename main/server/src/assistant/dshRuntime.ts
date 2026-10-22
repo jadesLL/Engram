@@ -1,11 +1,9 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DeepSeekHarness, type HarnessNotification } from '@deepseek-ai/dsh-sdk-client';
-import { engramPatchBlock } from '../lib/dshConfig.js';
-import { zcodeMcpUrl } from '../lib/zcodeConfig.js';
-import { agentWorkspaceDir, bundledDshHome, getAgentConfig, type AgentConfig } from './config.js';
-import { customRoute, syncAgentSettings } from './agentSettings.js';
+import { agentWorkspaceDir, bundledDshHome, bundledDshVersion, getAgentConfig, type AgentConfig } from './config.js';
+import { customRoute } from './agentSettings.js';
+import { writeAgentPatch } from './agentPatch.js';
 import { INITIALIZE_TIMEOUT_MS, startWithRetry } from './handshake.js';
 import { mapNotification, type AgentEvent } from './mapping.js';
 import { ensureAgentToken } from './repository.js';
@@ -21,12 +19,15 @@ import { ensureAgentToken } from './repository.js';
  * tool.call/tool.result）；粒度是"按步提交"，没有逐字增量——助手正文在一个 step 提交后
  * 整段到达。映射逻辑在 mapping.ts（纯函数，可单测）。
  *
- * 姿态：只读沙箱 + 知识库只经 MCP 工具。工作目录是数据目录下的空壳 workspace，
- * 不是知识库目录；凭据经环境变量注入（对该次运行优先于凭据文件）。
+ * 姿态：独立空壳工作目录（**不是**知识库目录）+ 知识库只经 MCP 工具。文件/命令工具的沙箱
+ * 策略以 dsh 的 sdk profile 实际配置为准（设置页「内置 Agent 运行时」按 dump 如实展示，
+ * 别再把它写成"只读沙箱"）；凭据经环境变量注入（对该次运行优先于凭据文件）。
  *
  * 模型路由：默认走 dsh 自带的 `deepseek-official`（官方地址 + DEEPSEEK_API_KEY）；设置页
- * 填了自定义 API 地址就改用 `llm-pi-ai` 手工声明的 provider 路由（见 agentSettings.ts），
- * 地址与模型清单写进内置 DSH_HOME 的 settings.yaml，Key 仍只经环境变量注入。
+ * 填了自定义 API 地址就改用 `llm-pi-ai` 手工声明的 provider 路由（见 agentSettings.ts）。
+ * 0.2.x 起 dsh 的 settings.yaml 只做一次性遗留导入，路由改为写进 patch 层
+ * `<DSH_HOME>/engram.cordis.yml`（见 agentPatch.ts），随 --patch 最高层生效；
+ * Key 仍只经环境变量注入，不落盘。
  *
  * 握手：SDK 默认只给 `initialize` 10s，升级/自动重启后的第一次 spawn 是冷启动，会超时
  * （界面报 `initialize timed out after 10000ms waiting for dsh profile "sdk"`，重启即好）。
@@ -102,43 +103,6 @@ export function closeAllRuntimes(): void {
 process.once('SIGTERM', closeAllRuntimes);
 process.once('SIGINT', closeAllRuntimes);
 
-/** 内置 DSH_HOME 的专属 patch 文件 */
-function patchFilePath(): string {
-  return path.join(bundledDshHome(), 'engram.cordis.yml');
-}
-
-/**
- * 写内置 Agent 的 patch 文件（每次运行前刷新，token 轮换即生效）。
- *
- * 注意不能用 `$DSH_HOME/cordis.patch.yml`：那一层是 home patch，dsh 启动时会自动叠加，
- * 而 SDK 又把 patches 作为 `--patch` 显式叠加 → 同一条目被应用两次，启动即报
- * `duplicate loader entry id: mcp-engram`。专属文件只走显式叠加，且不与用户手写配置混住。
- */
-export function ensureAgentPatch(token: string): string {
-  fs.mkdirSync(bundledDshHome(), { recursive: true });
-  dropLegacyHomePatch();
-  const file = patchFilePath();
-  const header = '# Engram 内置 Agent 的 MCP 条目（自动生成，重新写入会整块替换；不要手工编辑）\n';
-  fs.writeFileSync(file, `${header}${engramPatchBlock(zcodeMcpUrl, token)}\n`, 'utf8');
-  return file;
-}
-
-/**
- * 清理早期版本遗留：曾把 Engram 条目写进 home 层 `$DSH_HOME/cordis.patch.yml`。
- * 该文件若还在，home 层会自动叠加一次，与显式 `--patch` 合成重复 id，dsh 直接启动失败。
- * 只删含本方标记的文件，托管目录里的其它内容不动。
- */
-function dropLegacyHomePatch(): void {
-  const legacy = path.join(bundledDshHome(), 'cordis.patch.yml');
-  try {
-    if (!fs.existsSync(legacy)) return;
-    const text = fs.readFileSync(legacy, 'utf8');
-    if (text.includes('mcp-engram')) fs.rmSync(legacy, { force: true });
-  } catch {
-    /* 删不掉时下次启动再试 */
-  }
-}
-
 /** 取（或新建）本会话的运行时：新建时连 dsh 会话 id 一起铸 */
 function acquireRuntime(key: string): RuntimeEntry {
   const config = getAgentConfig();
@@ -153,12 +117,11 @@ function acquireRuntime(key: string): RuntimeEntry {
     // 上下文靠 Engram 侧的有界历史衔接）
     closeRuntime(key);
   }
-  const patchPath = ensureAgentPatch(ensureAgentToken());
+  const route = customRoute(config);
+  // patch 层：知识库 MCP 条目 + 自定义模型路由（0.2.x 起路由必须走 patch；settings.yaml 只做一次性导入）
+  const patchPath = writeAgentPatch(bundledDshHome(), { token: ensureAgentToken(), route });
   const workspace = agentWorkspaceDir();
   fs.mkdirSync(workspace, { recursive: true });
-  // 自定义地址 → 把 provider 路由写进内置 DSH_HOME 的 settings.yaml；没配则清掉本方两段
-  syncAgentSettings(bundledDshHome(), config);
-  const route = customRoute(config);
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -248,6 +211,10 @@ export function agentRuntimeStatus(): {
   baseUrl: string;
   api: string;
   custom: boolean;
+  /** 随包 dsh 运行时版本（读不到为 null） */
+  agentVersion: string | null;
+  /** 内置 Agent 使用的 dsh profile */
+  profile: 'sdk';
 } {
   const config = getAgentConfig();
   const route = customRoute(config);
@@ -255,9 +222,11 @@ export function agentRuntimeStatus(): {
     workspace: agentWorkspaceDir(),
     home: bundledDshHome(),
     hasKey: Boolean(config.apiKey),
-    model: config.model || (route ? '' : 'deepseek-v4-flash'),
+    model: config.model || '',
     baseUrl: config.baseUrl || '',
     api: route?.api || '',
     custom: Boolean(route),
+    agentVersion: bundledDshVersion(),
+    profile: 'sdk' as const,
   };
 }

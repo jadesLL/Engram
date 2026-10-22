@@ -13,8 +13,16 @@
       :badge="status.hasKey ? '已配置' : '待配置'"
       :badge-tone="status.hasKey ? 'ok' : 'warn'"
       title="内置 Agent（聊天抽屉）"
-      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉，Agent 只读沙箱 + 仅经 MCP 工具读写知识库"
+      hint="Engram 随包的 DeepSeek Harness：点左栏 ✨ 打开聊天抽屉；工作目录是独立空壳，知识库只经 MCP 工具读写（插件与沙箱姿态见下方「内置 Agent 运行时」）"
     >
+      <!-- 运行时摘要（dsh 版本 + profile，来自 GET /api/assistant/status 的 agentVersion / profile）：
+           右侧一键跳到下面的「内置 Agent 运行时」分组，看完整插件清单与设置项 -->
+      <div class="state-strip builtin-summary">
+        <span class="state-dot" aria-hidden="true" />
+        <strong class="builtin-summary-text">{{ runtimeSummary }}</strong>
+        <a class="builtin-summary-link" href="#agent-runtime" @click.prevent="jumpToRuntime">查看插件与设置</a>
+      </div>
+
       <div class="builtin-rows">
         <div class="builtin-row">
           <span>dsh 运行时</span>
@@ -60,7 +68,7 @@
           <span>模型</span>
           <input
             v-model="model"
-            placeholder="官方地址留空用默认（deepseek-v4-flash）；填了自定义地址则必填"
+            placeholder="官方地址留空用默认（deepseek-flash）；填了自定义地址则必填"
             @keyup.enter="saveBuiltin"
           />
         </label>
@@ -79,12 +87,17 @@
             {{ savingBuiltin ? '保存中…' : '保存' }}
           </button>
           <span class="faint small">
-            Key 只存本机数据库，运行 Agent 时经环境变量注入，不写进配置文件的明文里；自定义地址会写进内置
-            dsh 的 settings.yaml（含地址与模型清单，不含 Key）。
+            Key 只存本机数据库，运行 Agent 时经环境变量注入，不写进配置文件的明文里；自定义地址与模型会写成
+            内置 dsh 的 engram.cordis.yml patch 条目（含地址与模型清单，不含 Key）。
           </span>
         </div>
       </div>
     </SettingsGroup>
+
+    <!-- 内置 Agent 运行时（dsh 0.2.1 起）：插件清单 / 设置项 / 原始 dump，只读。
+         它是「内置 Agent」这个运行时的展开细节，所以紧跟在上面那张卡之后、自动化插槽之前——
+         导航顺序 = 页面顺序（settingsDomains 里登记的 agent-runtime 也排在这里）。 -->
+    <AgentRuntimePanel />
 
     <!-- 「自动整理（梦境思考）」由设置页经具名插槽插在这里：它必须紧跟在「内置 Agent」后面，
          排在「外部接入」之前——导航顺序 = 页面顺序，插槽是唯一能保住这个顺序又不拆组件的办法
@@ -163,16 +176,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 import { isComposingKey } from '../../lib/ime';
 import { MCP_TOOLS, groupedMcpTools } from '../../lib/mcpTools';
+import { agentRuntimeSummary } from '../../lib/agentRuntime';
+import { expandGroup } from '../../lib/settingsCollapse';
 import AgentHarnessSection from './AgentHarnessSection.vue';
 import AgentMcpSection from './AgentMcpSection.vue';
 import AppSelect from '../ui/AppSelect.vue';
 import SecretField from '../SecretField.vue';
 import SettingsGroup from './SettingsGroup.vue';
+import AgentRuntimePanel from './AgentRuntimePanel.vue';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 
 type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'workbuddy' | 'qoder' | 'kimi' | 'kimiwork' | 'other';
@@ -194,9 +210,36 @@ const guideOpen = ref(false);
 const guide = ref('');
 
 /* ===== 内置 Agent（聊天抽屉）配置 ===== */
-const status = ref<any>({ bundled: false, hasKey: false, model: '', workspace: '', home: '', baseUrl: '', api: '', custom: false });
+const status = ref<any>({
+  bundled: false,
+  hasKey: false,
+  model: '',
+  workspace: '',
+  home: '',
+  baseUrl: '',
+  api: '',
+  custom: false,
+  /** dsh 0.2.1 起 /api/assistant/status 额外回这两个字段（顶部摘要用），老服务端没有就按「未知」显示 */
+  agentVersion: '',
+  profile: '',
+});
 // 设置页二级导航上的状态徽标：没配 Key 时标「待配置」，用户在导航里就能看到
 useSettingsBadge('agent-builtin', computed(() => (status.value.hasKey ? '' : '待配置')));
+
+/** 卡片顶部的运行时摘要：dsh 版本 + profile，取不到显示「未知」 */
+const runtimeSummary = computed(() => agentRuntimeSummary(status.value));
+
+/**
+ * 「查看插件与设置」：跳到同页的「内置 Agent 运行时」分组（anchor: agent-runtime）。
+ * 跳法与设置页二级导航一致（SettingsView.scrollToAnchor）：先展开可能被收起的目标分组，
+ * 再 scrollIntoView——否则收起状态只会滚到一条色带。
+ */
+function jumpToRuntime(): void {
+  expandGroup('agent-runtime');
+  void nextTick(() => {
+    document.getElementById('agent-runtime')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
+}
 const model = ref('');
 const baseUrl = ref('');
 /** 自定义地址的线协议（不要叫 api：会与 api 客户端 import 撞名） */
@@ -281,6 +324,34 @@ async function copy(text: string) {
 </script>
 
 <style scoped>
+/* 运行时摘要：走全局 .state-strip（浅底 + 细描边 + 状态点），这里是它的一行变体 */
+.builtin-summary {
+  align-items: center;
+  margin: 0 0 12px;
+}
+.builtin-summary-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.builtin-summary-link {
+  flex: none;
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.builtin-summary-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.builtin-summary-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .builtin-rows {
   margin: 12px 0 0;
   border: 1px solid var(--border);
