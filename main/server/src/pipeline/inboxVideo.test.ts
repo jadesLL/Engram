@@ -170,7 +170,7 @@ test('未启用视频理解：直接抛设置提示，不读媒体也不联网',
   );
 });
 
-test('抖音占位稿未开启浏览器抓取：提前给出开启提示，不联网', async () => {
+test('抖音占位稿：接口抓取失败时给出可操作提示，不发起模型请求', async () => {
   const placeholder = plant(
     '收集箱/抖音测试.md',
     buildVideoLinkMarkdown({
@@ -186,8 +186,8 @@ test('抖音占位稿未开启浏览器抓取：提前给出开启提示，不�
         fetchImpl: noNetwork,
       }),
     (error: any) => {
-      assert.match(error.message, /抖音视频需要开启本机浏览器抓取/);
-      assert.match(error.message, /上传本地视频/);
+      assert.match(error.message, /抖音接口抓取失败/);
+      assert.match(error.message, /抖音接口可能已变更/);
       return true;
     }
   );

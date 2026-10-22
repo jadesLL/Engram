@@ -23,9 +23,9 @@ export interface VideoConfig {
   apiKey: string;
   model: string;
   maxTokens: number;
-  /** B站下载清晰度：64=720P / 32=480P / 16=360P */
+  /** 视频清晰度（B站下载档位 / 抖音选清晰度的目标档位）：64=720P / 32=480P / 16=360P */
   quality: VideoQuality;
-  /** 抖音：用本机浏览器（Edge/Chrome）打开页面取播放地址（实验，仅本机可用） */
+  /** 抖音：接口抓取失败时，是否允许用本机浏览器兜底（实验；接口路径本身不需要浏览器） */
   douyinBrowser: boolean;
 }
 

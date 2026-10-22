@@ -3,15 +3,16 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { DouyinApiError, prepareDouyinApiMedia } from './douyin.js';
 
 /**
  * 视频链接解析 / 媒体获取（收集箱「视频链接 → 提炼」的第一段）。
  *
  * - B站：链接 → BV/av → x/web-interface/view 取元数据；x/player/playurl 取合并
  *   mp4（durl，自带音轨）→ 带 referer 与浏览器 UA 流式下载；体积超限自动降档 64→32→16。
- * - 抖音：官方页面是 JS 壳、接口有签名风控，直接抓取不可行；这里用本机 Edge/Chrome
- *   起一个无头实例，走 CDP（DevTools 协议）打开视频页，拿到 video.currentSrc 或网络里的
- *   http(s) mp4 地址，再用页面 cookie/referer 下载。Docker/NAS 没有浏览器时明确报错。
+ * - 抖音：优先走服务端接口（douyin.ts，匿名 ttwid/uifid + secsdk 签名，不需要浏览器）；
+ *   接口失败且本机装有 Edge/Chrome 时，才降级为无头浏览器 + CDP 兜底（实验）。NAS 没有
+ *   浏览器也能提炼抖音链接。
  *
  * 所有失败都抛中文可操作原因（jobs 会把 message 原样展示给用户）。
  * 本模块只依赖 node 内置模块；DATA_DIR 在真正启动浏览器时才动态读取 config，
@@ -811,6 +812,117 @@ function assertCompleteVideoFile(filePath: string, bytes: number): void {
   }
 }
 
+export interface CaptureDouyinOptions {
+  destPath: string;
+  signal?: AbortSignal;
+  onProgress?: (stage: string, detail?: string) => void;
+  timeoutMs?: number;
+  /** 目标清晰度（沿用视频模型面板的 64/32/16 口径） */
+  quality?: 64 | 32 | 16;
+  /** 选清晰度与下载的体积上限（字节） */
+  maxBytes?: number;
+  /** 接口失败时是否允许用本机浏览器兜底（设置里的「抖音抓取」开关） */
+  allowBrowserFallback?: boolean;
+  /** 测试注入 */
+  fetchImpl?: typeof fetch;
+}
+
+function shortReason(error: any): string {
+  const message = error?.message ? String(error.message) : String(error || '未知原因');
+  return message.length > 160 ? message.slice(0, 157) + '…' : message;
+}
+
+/**
+ * 抖音视频下载入口：先走接口（无需浏览器），失败再按配置降级到本机浏览器。
+ * 这是收集箱「抖音链接 → 提炼」的实际取视频路径。
+ */
+export async function captureDouyinMedia(awemeId: string, options: CaptureDouyinOptions): Promise<PreparedVideo> {
+  const id = String(awemeId || '').trim();
+  if (!/^\d{6,}$/.test(id)) throw new Error('抖音视频 id 不合法：请重新粘贴抖音视频链接后再试');
+
+  let apiError: any = null;
+  try {
+    return await captureDouyinMediaByApi(id, options);
+  } catch (error: any) {
+    if (options.signal?.aborted) throw error;
+    apiError = error;
+  }
+
+  // 「体积超限 / 作品不可见」不是换浏览器能解决的：原样把可操作原因给用户
+  if (apiError instanceof DouyinApiError && (apiError.kind === 'too-large' || apiError.kind === 'not-found')) {
+    throw apiError;
+  }
+
+  const browser = findLocalBrowser();
+  const reason = shortReason(apiError);
+  if (options.allowBrowserFallback && browser) {
+    options.onProgress?.('获取视频', '接口抓取失败（' + reason + '），改用本机浏览器兜底');
+    try {
+      return await captureDouyinMediaByBrowser(id, options);
+    } catch (fallbackError: any) {
+      if (options.signal?.aborted) throw fallbackError;
+      throw new Error('抖音接口抓取失败（' + reason + '）；本机浏览器兜底也失败：' + shortReason(fallbackError));
+    }
+  }
+
+  const hints: string[] = [];
+  if (browser && !options.allowBrowserFallback) {
+    hints.push('可在 设置 → 视频理解模型 打开「接口失败时用本机浏览器兜底」');
+  }
+  if (!browser) hints.push('这台机器没有可兜底的本机浏览器，请改用上传本地视频');
+  hints.push('抖音接口可能已变更，请更新 Engram 后重试');
+  throw new Error('抖音接口抓取失败（' + reason + '）。' + hints.join('；'));
+}
+
+/** 接口路径：详情接口 → 选清晰度 → 下载（不需要任何浏览器） */
+async function captureDouyinMediaByApi(id: string, options: CaptureDouyinOptions): Promise<PreparedVideo> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : DEFAULT_MAX_MEDIA_BYTES;
+  const media = await prepareDouyinApiMedia(id, {
+    fetchImpl,
+    signal: options.signal,
+    quality: options.quality,
+    maxBytes,
+    onProgress: options.onProgress,
+  });
+  options.signal?.throwIfAborted();
+  options.onProgress?.(
+    '获取视频',
+    '下载抖音视频（' + (media.qualityLabel || '默认清晰度') + (media.bytes > 0 ? ' · 约 ' + formatBytes(media.bytes) : '') + '）'
+  );
+  try {
+    const download = await downloadMedia(fetchImpl, media.url, options.destPath, {
+      headers: { referer: 'https://www.douyin.com/' },
+      signal: options.signal,
+      maxBytes,
+      onProgress: (received, total) => {
+        options.onProgress?.('获取视频', '已下载 ' + formatBytes(received) + (total ? ' / ' + formatBytes(total) : ''));
+      },
+    });
+    options.signal?.throwIfAborted();
+    assertCompleteVideoFile(options.destPath, download.bytes);
+    options.onProgress?.('获取视频', '完整视频已下载（' + formatBytes(download.bytes) + '）');
+    return {
+      path: options.destPath,
+      bytes: download.bytes,
+      mime: 'video/mp4',
+      title: media.title,
+      author: media.author,
+      durationSec: media.durationSec,
+      platform: 'douyin',
+      link: 'https://www.douyin.com/video/' + id,
+      note: media.note,
+    };
+  } catch (error) {
+    try {
+      fs.rmSync(options.destPath, { force: true });
+    } catch {
+      /* ignore */
+    }
+    throw error;
+  }
+}
+
 /**
  * 用本机 Edge/Chrome + CDP 打开抖音视频页，抓播放地址并下载。
  *
@@ -819,7 +931,7 @@ function assertCompleteVideoFile(filePath: string, bytes: number): void {
  * 带页面 cookie 与 referer 下载 → 校验文件含 avc1/hvc1/hev1/av01/mp4a。
  * 出现人机验证/滑块立即报可读错误；超时默认 60s；abort 时杀进程并清理 profile。
  */
-export async function captureDouyinMedia(
+async function captureDouyinMediaByBrowser(
   awemeId: string,
   options: {
     destPath: string;
@@ -833,8 +945,8 @@ export async function captureDouyinMedia(
   const browser = findLocalBrowser();
   if (!browser) {
     throw new Error(
-      '这台机器上找不到 Edge/Chrome 浏览器：抖音抓取需要在本机/桌面端运行（Docker、NAS 等服务器部署不支持）。' +
-        '请改用上传本地视频，或换用 B站链接'
+      '这台机器上找不到 Edge/Chrome 浏览器，无法用浏览器兜底（正常路径不需要浏览器；' +
+        '接口抓取失败时请改用上传本地视频，或换用 B站链接）'
     );
   }
   const timeoutMs = Math.max(15_000, Math.min(180_000, Number(options.timeoutMs) || 60_000));
