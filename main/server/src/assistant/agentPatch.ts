@@ -2,77 +2,88 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { engramPatchBlock } from '../lib/dshConfig.js';
 import { zcodeMcpUrl } from '../lib/zcodeConfig.js';
-import { cleanupLegacyRoute, quote, type CustomRoute } from './agentSettings.js';
+import { cleanupLegacyRoute, profileDir, CONSOLE_PROFILE } from './agentSettings.js';
 
 /**
- * 内置 Agent 的 dsh patch 层（`<数据目录>/dsh/engram.cordis.yml`）。
+ * 内置 Agent 的 dsh 覆盖层（两个文件，都由 Engram 生成、通过 SDK 的 --patch 显式叠加）：
  *
- * 通过 SDK 的 `patches` 参数显式叠加（dsh 的层序：bundle → profile patch → home patch →
- * --patch），因此这一层永远压过 dsh 自己导入的 settings.yaml.imported 与 profile patch。
+ *  1. engram.cordis.yml      —— 知识库 MCP 条目（mcp-engram）；
+ *  2. engram-chat.cordis.yml —— 聊天运行时专用：把 sdk 应用（stdio JSON-RPC）叠到
+ *     web profile 上，并关掉 Web UI 相关条目。
  *
- * 内容两块：
- *  1. Engram 知识库 MCP 条目（`mcp-engram`，insert）；
- *  2. 模型路由（`llm-pi-ai` / `agent-default-model`，id 定向覆盖 config）。
+ * 为什么聊天跑 web profile：模型与插件由 DSH 原生控制台（web profile 的设置/插件页）管理，
+ * 聊天运行时必须和它共用同一个 profile，控制台里的改动才会对聊天生效。聊天进程只需要再加
+ * 一个 stdio JSON-RPC 应用即可（dsh 的 sdk-app 本来就是一组插件，可以叠到任意 profile 上）。
  *
- * 为什么不写 `$DSH_HOME/cordis.patch.yml`：那一层是 home patch，dsh 启动时自动叠加，
- * 而 SDK 又把本文件作为 `--patch` 显式叠加 → 同一条目被应用两次，启动即报
- * `duplicate loader entry id`。专属文件只走显式叠加，也不与用户手写配置混住。
+ * 不能用 `$DSH_HOME/cordis.patch.yml`（home patch）：dsh 启动时自动叠加，SDK 又把它当
+ * --patch 再叠一次，重复条目会让启动失败；专属文件只走显式叠加。
  */
 
 export const AGENT_PATCH_FILE = 'engram.cordis.yml';
+export const CHAT_PATCH_FILE = 'engram-chat.cordis.yml';
 
 const HEADER = [
-  '# Engram 内置 Agent 的 dsh patch 层（自动生成，重新写入会整块替换；不要手工编辑）。',
-  '# 由 设置 → Agent 与自动化 → 内置 Agent 维护：知识库 MCP 条目 + 自定义模型路由。',
-  '# 层级：--patch 覆盖在 bundle / profile patch 之上（0.2.x 的 settings.yaml 只做一次性导入）。',
+  '# Engram 内置 Agent 的 dsh 覆盖层（自动生成，重新写入会整块替换；不要手工编辑）。',
+  '# 由 Engram 的「内置 Agent 控制台」与聊天运行时共用：知识库 MCP 条目 + 聊天专用 stdio 应用。',
+];
+
+const CHAT_HEADER = [
+  '# Engram 聊天运行时的 dsh 覆盖层（自动生成，重新写入会整块替换；不要手工编辑）。',
+  '# 作用：在 web profile 上叠一层 sdk 应用（stdio JSON-RPC），并关掉 Web UI 相关条目。',
+  '# 模型与插件由 DSH 控制台管理（同一 profile），这里不改它们。',
 ];
 
 export function agentPatchPath(home: string): string {
   return path.join(home, AGENT_PATCH_FILE);
 }
 
+export function chatPatchPath(home: string): string {
+  return path.join(home, CHAT_PATCH_FILE);
+}
+
 /**
- * 模型路由 patch 条目。
+ * 聊天运行时覆盖层：插入 sdk-app（stdio JSON-RPC），关掉 Web UI 相关条目。
  *
- * patch 的 config 是**整体替换**：llm-pi-ai 段只保留 Engram 自己声明的 provider，
- * 与 0.1.5 写 settings.yaml 时的语义一致（当时也是整段替换）。
- * 不写 `name`：id 定向 patch 只按 id 命中，0.2.1 实测保留原 name。
+ * - sdk-jsonrpc-server 拥有 stdout（新行分隔 JSON-RPC）；Web 服务会往 stdout 打 URL 行，
+ *   两条流混在一起虽然协议能容忍坏行，但没必要，所以聊天进程里关掉 webserver / web-runtime；
+ * - hmr 与 session-title-llm 跟 sdk profile 一样关掉：Engram 自己管自动命名与热更新。
  */
-export function modelRouteBlocks(route: CustomRoute): string[] {
+export function chatPatchText(): string {
   return [
-    '# Engram 模型路由（设置页维护）：0.2.x 起 dsh 的 settings.yaml 只做一次性导入，路由必须走 patch。',
-    '- id: llm-pi-ai',
-    '  config:',
-    '    providers:',
-    `      ${route.provider}:`,
-    '        displayName: Engram 自定义地址',
-    `        apiKeyEnv: ${route.keyEnv}`,
-    `        api: ${route.api}`,
-    `        baseURL: ${quote(route.baseUrl)}`,
-    '        models:',
-    `          - id: ${quote(route.model)}`,
-    '- id: agent-default-model',
-    '  config:',
-    `    provider: ${route.provider}`,
-    `    model: ${quote(route.model)}`,
-  ];
+    ...CHAT_HEADER,
+    '',
+    '- insert:',
+    '    - id: sdk-app-startup',
+    "      name: '@deepseek-ai/dsh-sdk-app'",
+    '      config:',
+    `        profile: ${CONSOLE_PROFILE}`,
+    '    - id: sdk-jsonrpc-server',
+    "      name: '@deepseek-ai/dsh-sdk-jsonrpc-server'",
+    '      inject: [sdkAppStartup, loader]',
+    '      config:',
+    '        maxTokensAsSuccess: true',
+    '- id: webserver',
+    '  disabled: true',
+    '- id: web-runtime',
+    '  disabled: true',
+    '- id: hmr',
+    '  disabled: true',
+    '- id: session-title-llm',
+    '  disabled: true',
+  ].join('\n') + '\n';
 }
 
 export interface AgentPatchInput {
-  /** 知识库 MCP 的 Bearer token（运行时注入；只写哈希后的访问令牌，不写 Key） */
+  /** 知识库 MCP 的 Bearer token（运行时注入） */
   token: string;
-  /** 自定义模型路由；null/undefined 时不写路由条目（走 dsh 自带 deepseek-official） */
-  route?: CustomRoute | null;
   /** 知识库 MCP 地址；默认取当前服务地址 */
   mcpUrl?: string;
 }
 
-/** 生成 patch 文件全文（末尾恰好一个换行） */
+/** 生成 MCP 覆盖层全文（末尾恰好一个换行） */
 export function agentPatchText(input: AgentPatchInput): string {
   const url = input.mcpUrl || zcodeMcpUrl;
-  const blocks = [HEADER.join('\n'), '', engramPatchBlock(url, input.token)];
-  if (input.route) blocks.push('', modelRouteBlocks(input.route).join('\n'));
-  return `${blocks.join('\n').replace(/\n+$/, '')}\n`;
+  return `${[...HEADER, '', engramPatchBlock(url, input.token)].join('\n').replace(/\n+$/, '')}\n`;
 }
 
 /**
@@ -91,16 +102,7 @@ function dropLegacyHomePatch(home: string): void {
   }
 }
 
-/**
- * 写内置 Agent 的 patch 文件（每次运行前刷新，token 轮换即生效）。
- *
- * 顺带做两件迁移清理：
- *  - 早期 home 层 legacy patch（会与本文件重复）；
- *  - 0.1.5 遗留的 settings.yaml + 它被 0.2.x 导入到 profile patch 的同名条目
- *    （否则关掉自定义地址后旧路由会反超默认值）。
- *
- * @returns 写入的 patch 文件路径
- */
+/** 写控制台/聊天共用的 MCP 覆盖层，并顺带做升级清理 */
 export function writeAgentPatch(home: string, input: AgentPatchInput): string {
   fs.mkdirSync(home, { recursive: true });
   dropLegacyHomePatch(home);
@@ -110,10 +112,17 @@ export function writeAgentPatch(home: string, input: AgentPatchInput): string {
   return file;
 }
 
-// loader 条目 id 最多缩进 4 格（顶层 0 / insert 块内 4）；更深的 id 属于 config 里的数据列表（如 models）
+/** 写聊天运行时覆盖层（stdlib JSON-RPC + 关 Web UI）；目录不存在时创建 profile 目录 */
+export function writeChatPatch(home: string): string {
+  fs.mkdirSync(profileDir(home), { recursive: true });
+  const file = chatPatchPath(home);
+  fs.writeFileSync(file, chatPatchText(), 'utf8');
+  return file;
+}
+
 const ANY_ENTRY_ID = /^ {0,4}-\s+id:\s*(\S+)\s*$/;
 
-/** patch 文本里出现的所有 loader entry id（含 insert 块内的嵌套条目，展示用） */
+/** patch 文本里出现的所有 loader entry id（含 insert 块内的嵌套条目，展示/测试用） */
 export function agentPatchEntryIds(text: string): string[] {
   const ids: string[] = [];
   for (const line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {

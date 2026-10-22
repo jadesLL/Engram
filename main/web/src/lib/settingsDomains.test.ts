@@ -68,7 +68,7 @@ test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', 
       sync: ['panel-sync', 'sync-content', 'sync-lan', 'sync-dualstack', 'sync-ddns'],
       update: ['panel-update-server', 'panel-update-desktop', 'panel-update-source', 'panel-update-android'],
       app: ['panel-app', 'app-version', 'app-uninstall'],
-      agent: ['agent-builtin', 'agent-runtime', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
+      agent: ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
     },
   );
   // 混装桶拆开后的归位：外观不在账户里、搜索同义词不在数据里、版本与卸载不在更新里
@@ -245,13 +245,13 @@ test('「视频理解模型」「自动整理（梦境思考）」与「任务�
     builtinAt < slotAt && slotAt < targetAt,
     '自动化分组的插槽不在「内置 Agent」与「外部接入」之间——导航顺序会与页面顺序错位',
   );
-  // 数据侧：顺序也必须是 builtin → runtime → video → dream → board → target → tools
-  // （agent-runtime 是 dsh 0.2.1 起新增的「内置 Agent 运行时」，紧跟 builtin、在插槽之前；
-  //   panel-video 是 video-inbox 新增的「视频理解模型」，同样是模型配置、紧跟 runtime；
-  //   见 docs/AGENT-RUNTIME-INVENTORY.md 第 7 节与 CONTRACT-video-inbox.md §4.3）
+  // 数据侧：顺序也必须是 builtin → console → video → dream → board → target → tools
+  // （agent-console 是 dsh 0.2.1 起新增的「内置 Agent 控制台」（原「运行时」清单已由它取代），
+  //   紧跟 builtin、在插槽之前；panel-video 是 video-inbox 新增的「视频理解模型」，同样是模型配置、紧跟其后；
+  //   见 docs/AGENT-CONSOLE.md 与 CONTRACT-video-inbox.md §4.3）
   assert.deepEqual(
     SETTINGS_DOMAINS.find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
-    ['agent-builtin', 'agent-runtime', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
+    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
   );
 });
 

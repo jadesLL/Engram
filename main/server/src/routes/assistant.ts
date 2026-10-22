@@ -6,15 +6,14 @@ import { subscribeRun } from '../assistant/events.js';
 import { AgentNotConfiguredError, cancelRun, isRunning, RunConflictError, submitMessage } from '../assistant/runner.js';
 import { agentRuntimeStatus } from '../assistant/dshRuntime.js';
 import { AgentQuestionError, answerAgentQuestion } from '../assistant/questions.js';
+import { bundledDshBin, bundledDshVersion, bundledSdkClientVersion, getAgentConfig } from '../assistant/config.js';
 import {
-  bundledDshBin,
-  bundledDshVersion,
-  bundledSdkClientVersion,
-  getAgentConfig,
-  setAgentConfig,
-} from '../assistant/config.js';
-import { getAgentInventory, rawInventoryDump } from '../assistant/agentInventory.js';
-import { AGENT_APIS, agentApi } from '../assistant/agentSettings.js';
+  consoleStatus,
+  ensureConsole,
+  normalizeOrigin,
+  restartConsole,
+  stopConsole,
+} from '../assistant/agentConsole.js';
 import { clampDreamIntervalDays, parseClock, writeDreamConfig } from '../assistant/dreamConfig.js';
 import { dreamStatus, settleDreamRun, startDreamRun } from '../assistant/dreamCycle.js';
 import * as repo from '../assistant/repository.js';
@@ -29,7 +28,7 @@ const TERMINAL = ['completed', 'failed', 'cancelled', 'interrupted'];
 const DREAM_REASON_TEXT: Record<string, string> = {
   disabled: '梦境思考没有启用',
   running: '已经有一轮在跑了：等它结束，或者先停止',
-  unconfigured: '内置 Agent 还没配模型凭据：到 设置 → Agent 接入 → 内置 Agent 填 Key',
+  unconfigured: '内置 Agent 还没配模型：到 设置 → Agent 与自动化 →「内置 Agent 控制台」里的设置 → 模型 填 API 密钥',
   idle: '当前没有待整理的资料，也没有待核查问题',
   'not-due': '还没到计划时间',
   maintenance: '正在进行数据维护（清库 / 恢复），等它结束再跑',
@@ -43,93 +42,61 @@ export async function assistantRoutes(app: FastifyInstance) {
   // Android 成员使用同步 token 代理会话；配置路由再叠 owner 鉴权，避免成员读取模型密钥。
   app.addHook('preHandler', requireAssistantAccess);
 
-  // ---------- 配置与状态 ----------
+  // ---------- 状态 ----------
 
   app.get('/api/assistant/status', async () => {
     const config = getAgentConfig();
+    const consoleInfo = consoleStatus();
     return {
       ...agentRuntimeStatus(),
       bundled: Boolean(bundledDshBin()),
       dshPath: config.dshPath || '',
-      /** 随包依赖版本（设置页「内置 Agent 运行时」指纹条用；不触发 dump） */
       dshVersion: bundledDshVersion(),
       sdkClientVersion: bundledSdkClientVersion(),
+      // 成员端也能看到状态，但控制台的 iframe 地址（带 token）只在 owner 接口里给
+      console: {
+        running: consoleInfo.running,
+        startedAt: consoleInfo.startedAt,
+        error: consoleInfo.error,
+        dshVersion: consoleInfo.dshVersion,
+      },
     };
   });
 
-  // ---------- 插件清单与设置（只读；数据来自 dsh 自己的 dump） ----------
+  // ---------- 内置 Agent 控制台（DSH 原生插件页 / 设置页） ----------
+
+  /** 从请求头还原浏览器访问 Engram 的 origin（反代/HTTPS 场景走 x-forwarded-*） */
+  function requestOrigin(req: any): string | null {
+    const protoHeader = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const proto = protoHeader || String(req.protocol || 'http');
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    return normalizeOrigin(proto, host);
+  }
 
   /**
-   * 内置 Agent 的插件/设置快照：懒生成 + 落盘缓存（dsh 版本 / patch 内容变化即失效）。
-   * owner 鉴权：会暴露 DSH_HOME、patch 路径等本机信息。
+   * 控制台状态；`?start=1`（默认）会确保控制台已启动。
+   * 返回的 iframePath 是同源路径（/agent-console/?token=…），前端直接塞进 iframe。
    */
-  app.get('/api/assistant/inventory', { preHandler: requireAuth }, async (req) => {
-    const refresh = (req.query as Record<string, string | undefined>)?.refresh;
-    return getAgentInventory({ refresh: refresh === '1' || refresh === 'true' });
+  app.get('/api/assistant/console', { preHandler: requireAuth }, async (req, reply) => {
+    const origin = requestOrigin(req);
+    if (!origin) return reply.code(400).send({ error: '无法识别访问地址（Host 头缺失或非法）' });
+    const query = (req.query || {}) as Record<string, string | undefined>;
+    const skipStart = query.start === '0' || query.start === 'false';
+    const status = skipStart ? consoleStatus() : await ensureConsole(origin);
+    return { ...status, origin };
   });
 
-  /** 原始 dump（已脱敏）：排障与「高级」页复制/下载 */
-  app.get('/api/assistant/inventory/raw', { preHandler: requireAuth }, async (req, reply) => {
-    const kind = (req.query as Record<string, string | undefined>)?.kind === 'schema' ? 'schema' : 'config';
-    const result = await rawInventoryDump(kind);
-    if (result.error && !result.text) return reply.code(502).send({ error: result.error });
-    return reply.type('text/plain; charset=utf-8').send(result.text);
+  /** 重启控制台（改了端口/访问地址，或界面连不上时用） */
+  app.post('/api/assistant/console/restart', { preHandler: requireAuth }, async (req, reply) => {
+    const origin = requestOrigin(req);
+    if (!origin) return reply.code(400).send({ error: '无法识别访问地址（Host 头缺失或非法）' });
+    return restartConsole(origin);
   });
 
-  /** 强制重新生成快照（设置页「刷新」按钮） */
-  app.post('/api/assistant/inventory/refresh', { preHandler: requireAuth }, async () => {
-    return getAgentInventory({ refresh: true });
-  });
-
-  app.get('/api/assistant/config', { preHandler: requireAuth }, async () => {
-    const config = getAgentConfig();
-    return {
-      model: config.model || '',
-      /** 自定义 API 地址与线协议：留空表示走 dsh 自带的 deepseek-official */
-      baseUrl: config.baseUrl || '',
-      api: agentApi(config.api),
-      dshPath: config.dshPath || '',
-      /** 返回明文由前端 SecretField 负责掩码展示（与同步令牌同一约定） */
-      apiKey: config.apiKey || '',
-    };
-  });
-
-  app.put('/api/assistant/config', { preHandler: requireAuth }, async (req, reply) => {
-    const body = (req.body || {}) as {
-      model?: string;
-      apiKey?: string | null;
-      dshPath?: string;
-      baseUrl?: string;
-      api?: string;
-    };
-    if (body.model !== undefined && typeof body.model !== 'string') {
-      return reply.code(400).send({ error: 'model 必须是字符串' });
-    }
-    if (body.baseUrl !== undefined && typeof body.baseUrl !== 'string') {
-      return reply.code(400).send({ error: 'baseUrl 必须是字符串' });
-    }
-    // 自定义地址：必须是一个不带空格的 http(s) 地址，且自定义路由没有内置模型清单 → 模型必填
-    const baseUrl = (body.baseUrl || '').trim();
-    if (baseUrl && !/^https?:\/\/\S+$/i.test(baseUrl)) {
-      return reply.code(400).send({ error: 'API 地址要以 http:// 或 https:// 开头，且不能含空格' });
-    }
-    if (baseUrl && !((body.model ?? getAgentConfig().model) || '').trim()) {
-      return reply.code(400).send({ error: '填了自定义 API 地址就要一起填模型名（自定义地址没有内置模型清单）' });
-    }
-    if (body.api !== undefined && body.api !== '' && !(AGENT_APIS as readonly string[]).includes(body.api)) {
-      return reply.code(400).send({ error: `接口协议只能是 ${AGENT_APIS.join(' / ')}` });
-    }
-    const patch: Record<string, string | undefined> = {};
-    if (body.model !== undefined) patch.model = body.model.trim();
-    if (body.dshPath !== undefined) patch.dshPath = body.dshPath.trim();
-    // 地址由设置页整值回传：空串 = 清掉自定义地址，回到官方路由
-    if (body.baseUrl !== undefined) patch.baseUrl = baseUrl || undefined;
-    if (body.api !== undefined) patch.api = body.api.trim() || undefined;
-    // 空串表示维持原值（SecretField 的约定）；传 null 表示清除已存的 Key
-    if (body.apiKey === null) patch.apiKey = undefined;
-    else if (body.apiKey !== undefined && body.apiKey !== '') patch.apiKey = body.apiKey.trim();
-    setAgentConfig(patch);
-    return { ok: true };
+  /** 停止控制台（省内存；下次打开设置页会重新拉起） */
+  app.post('/api/assistant/console/stop', { preHandler: requireAuth }, async () => {
+    stopConsole();
+    return consoleStatus();
   });
 
   // ---------- 梦境思考（按计划自动整理 + 纠错） ----------

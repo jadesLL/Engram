@@ -13,14 +13,14 @@
  *  - 「Agent 接入」改名「Agent 与自动化」，「梦境思考」改名「自动整理（梦境思考）」并紧跟
  *    「内置 Agent」，「查看工具」改名「工具与手册」明确其只读参考身份。
  *
- * 2026-10-22：内置 Agent 随包的 dsh 升到 0.2.1 后，在「内置 Agent」后面新增「内置 Agent 运行时」
- * （anchor: agent-runtime）——展示 dsh 自己 dump 出来的插件清单 / 设置项 / 原始 dump（只读，
- * 设计见 docs/AGENT-RUNTIME-INVENTORY.md 第 7 节）。它是「内置 Agent」这个运行时的展开细节，
- * 因此紧跟其后、排在「自动整理（梦境思考）」之前（两块自动化仍由 #after-builtin 插槽插入）。
+ * 2026-10-22：内置 Agent 随包的 dsh 升到 0.2.1 后，在「内置 Agent」后面新增「内置 Agent 控制台」
+ * （anchor: agent-console）——内嵌 DeepSeek Harness 原生插件页 / 设置页（模型、内置插件、Agent 预设，
+ * 见 docs/AGENT-CONSOLE.md）。它是「内置 Agent」的配置入口（模型与插件都在这里配），
+ * 因此紧跟其后；「视频理解模型」紧随其后，再往后才是两块自动化（由 #after-builtin 插槽插入）。
  *
  * 2026-10-22（video-inbox）：新增「视频理解模型」（anchor: panel-video）——收集箱里 B站/抖音
  * 视频链接与本地音视频的提炼模型配置。与「内置 Agent」回答同一类问题（用哪个模型），
- * 因此紧跟在「内置 Agent 运行时」之后、自动化分组之前；页面侧由设置页插进 #after-builtin
+ * 因此紧跟在「内置 Agent 控制台」之后、自动化分组之前；页面侧由设置页插进 #after-builtin
  * 插槽最前渲染（导航顺序 = 页面顺序，settingsDomains.test.ts 锁住）。
  *
  * **导航顺序 = 页面渲染顺序**（SettingsView.vue 里各大类的分组必须按本文件登记顺序渲染）。
@@ -164,12 +164,12 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     icon: 'ai',
     groups: [
       { id: 'agent-builtin', label: '内置 Agent', icon: 'ai', need: 'agent' },
-      // 内置 Agent 运行时（dsh 0.2.1 起）：插件清单 / 设置项 / 原始 dump，只读。
-      // 与「内置 Agent」回答同一个问题的两半（怎么配 → 它到底加载了什么），所以紧跟其后；
+      // 内置 Agent 控制台（dsh 0.2.1 起）：DSH 原生插件页 / 设置页（模型、内置插件、Agent 预设）。
+      // 它是「内置 Agent」的配置入口（模型与插件都在这里配），所以紧跟其后；
       // 页面侧由 AgentPanel 在 #after-builtin 插槽之前渲染，导航顺序 = 页面顺序。
-      { id: 'agent-runtime', label: '内置 Agent 运行时', icon: 'ai', need: 'agent' },
+      { id: 'agent-console', label: '内置 Agent 控制台', icon: 'ai', need: 'agent' },
       // 视频理解模型（2026-10 收集箱「视频链接 → 提炼」）：另一个模型配置项，与「内置 Agent」
-      // 回答同一类问题（用哪个模型），所以紧跟在内置 Agent（含运行时）之后、自动化分组之前。
+      // 回答同一类问题（用哪个模型），所以紧跟在内置 Agent 控制台之后、自动化分组之前。
       // 页面侧由设置页塞进 AgentPanel 的 #after-builtin 插槽最前（见 settingsDomains.test.ts 的顺序守卫）。
       { id: 'panel-video', label: '视频理解模型', icon: 'ai', need: 'agent' },
       { id: 'agent-dream', label: '自动整理（梦境思考）', icon: 'moon', need: 'agent' },

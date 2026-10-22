@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { safeJoin } from '../lib/vault.js';
 import { isInboxPath, isInboxDerivedPath } from '../lib/brainPaths.js';
-import { getAgentConfig } from '../assistant/config.js';
 import { createSession } from '../assistant/repository.js';
 import { submitMessage } from '../assistant/runner.js';
 import { capabilityHint, convertCapability } from './inboxConvert.js';
+import { agentModelConfigured } from '../assistant/config.js';
 
 /**
  * 「让内置 Agent 直接处理收集箱文件」的服务端入口。
@@ -18,20 +18,20 @@ import { capabilityHint, convertCapability } from './inboxConvert.js';
  * 适合「先总结、再决定怎么转」以及图片/音视频等 agent-only 格式。
  */
 
+/** 内置 Agent 没配模型时提前失败（避免先建一个永远跑不起来的空会话） */
+function assertAgentConfigured(): void {
+  if (agentModelConfigured()) return;
+  throw new InboxAgentTaskError(
+    '内置 Agent 还没配模型：到 设置 → Agent 与自动化 →「内置 Agent 控制台」里的 设置 → 模型 填 API 密钥',
+    409
+  );
+}
+
 export class InboxAgentTaskError extends Error {
   constructor(message: string, readonly status = 400) {
     super(message);
     this.name = 'InboxAgentTaskError';
   }
-}
-
-/** 内置 Agent 没配模型凭据时提前失败（避免先建一个永远跑不起来的空会话） */
-function assertAgentConfigured(): void {
-  if (getAgentConfig().apiKey) return;
-  throw new InboxAgentTaskError(
-    '内置 Agent 还没配模型凭据：到 设置 → Agent 接入 → 内置 Agent 填模型凭据',
-    409
-  );
 }
 
 export function formatSize(size: number): string {
@@ -111,8 +111,8 @@ export function createInboxAgentTask(relPath: string): InboxAgentTaskResult {
   if (kind === 'unsupported') {
     throw new InboxAgentTaskError(capabilityHint(relPath, kind));
   }
-  assertAgentConfigured();
 
+  assertAgentConfigured();
   const name = path.posix.basename(relPath);
   const session = createSession(`收集箱处理：${name}`);
   const { run, queued } = submitMessage({

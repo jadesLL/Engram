@@ -1,5 +1,5 @@
 import { startAgentTurn, type AgentTurn } from './dshRuntime.js';
-import { getAgentConfig } from './config.js';
+import { agentModelConfigured } from './config.js';
 import { publishRun, clearRun, hasRunSubscribers } from './events.js';
 import { buildTask, normalizeInboxFiles, type InterfaceContext } from './prompts.js';
 import { planReasoningReplay, type ReasoningPart } from './mapping.js';
@@ -60,11 +60,11 @@ export class RunConflictError extends Error {
   status = 409;
 }
 
-/** 没配 key 就不起运行：dsh 会在模型调用处失败，而那条错误对用户不可读 */
+/** 没配模型就不起运行：避免先建一个必然失败的空会话（凭据来源见 config.agentModelConfigured） */
 function assertAgentConfigured(): void {
-  if (getAgentConfig().apiKey) return;
+  if (agentModelConfigured()) return;
   throw new AgentNotConfiguredError(
-    '内置 Agent 还没配模型凭据：到 设置 → Agent 接入 → 内置 Agent 填模型凭据（官方地址填 DeepSeek 平台 API Key；中转或自建网关先填 API 地址与模型，再填该网关的 Key）'
+    '内置 Agent 还没配模型：到 设置 → Agent 与自动化 →「内置 Agent 控制台」里的 设置 → 模型 填 API 密钥（或设置环境变量 DEEPSEEK_API_KEY）'
   );
 }
 

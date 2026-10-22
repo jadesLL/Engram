@@ -400,6 +400,6 @@ test('让 Agent 处理：未配置模型凭据时明确报错，不留下跑不�
     payload: { path: `${INBOX_DIR_REL}/待总结.txt` },
   });
   assert.equal(res.statusCode, 409);
-  assert.match(res.json().error, /未配置模型凭据|还没配模型凭据/);
+  assert.match(res.json().error, /还没配模型/);
   assert.equal(db.prepare(`SELECT count(*) AS n FROM assistant_sessions`).get().n, before, '失败不应建会话');
 });
