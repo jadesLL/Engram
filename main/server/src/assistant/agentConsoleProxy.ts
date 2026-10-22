@@ -52,6 +52,19 @@ export async function registerAgentConsoleProxy(app: FastifyInstance): Promise<v
       return reply.code(503).send({ error: '内置 Agent 控制台未启动' });
     }
     const raw = req.raw;
+    // 关键：Fastify 已经把 JSON 请求体解析掉了，raw 流里没有字节；直接 pipe 会让上游等 body 挂住
+    // （控制台的 settings/describe、modelCatalog 等正是 POST + JSON）。解析过就用序列化后的体转发。
+    const parsedBody = (req as any).body as unknown;
+    const payload = parsedBody === undefined || parsedBody === null
+      ? null
+      : typeof parsedBody === 'string'
+        ? parsedBody
+        : JSON.stringify(parsedBody);
+    const headers = forwardHeaders(raw.headers as Record<string, unknown>);
+    if (payload !== null) {
+      headers['content-length'] = Buffer.byteLength(payload);
+      if (!headers['content-type']) headers['content-type'] = 'application/json';
+    }
     reply.hijack();
     const upstream = http.request(
       {
@@ -59,7 +72,7 @@ export async function registerAgentConsoleProxy(app: FastifyInstance): Promise<v
         port: target.port,
         path: upstreamPath(raw.url),
         method: raw.method,
-        headers: forwardHeaders(raw.headers as Record<string, unknown>),
+        headers,
       },
       (upstreamResponse) => {
         reply.raw.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers as any);
@@ -74,7 +87,8 @@ export async function registerAgentConsoleProxy(app: FastifyInstance): Promise<v
         /* 响应已开始 */
       }
     });
-    raw.pipe(upstream);
+    if (payload !== null) upstream.end(payload);
+    else raw.pipe(upstream);
   });
 
   // WebSocket：DSH 的实时连接（remote.mux）必须一起代理，否则界面会一直「重新连接中」
