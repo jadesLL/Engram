@@ -36,6 +36,12 @@ pnpm --filter @engram/web build
 echo ">> 复制构建产物到 desktop/（prepare-desktop.js）"
 node desktop/scripts/prepare-desktop.js
 
+echo ">> 准备随包 Node 运行时（desktop/node/node.exe，内置 Agent 的 dsh 必须用真实 Node 跑）"
+# 桌面端 server 跑在 Electron 纯 Node 模式里，而 dsh 的 node-addon-require-builtin 只认
+# Electron 43/44/45 的 V8 指纹（Electron 36 直接 Unsupported/no-context）——所以安装包自带
+# 一份真实 Node（见 server/src/assistant/agentNode.ts）。容器是 Linux，交叉下载 win32-x64 node.exe。
+node desktop/scripts/prepare-node-runtime.js --download
+
 echo ">> 安装 desktop/server 生产依赖（win32-x64 交叉安装原生模块预编译包）"
 # --no-frozen-lockfile 保留：desktop/server 是 prepare-desktop.js 现生成的目录，
 # 只有 package.json + pnpm-workspace.yaml，没有锁文件——--frozen-lockfile 会直接失败。
@@ -105,6 +111,20 @@ npx electron-builder --win nsis --config.npmRebuild=false
 # 上面推导错了、或者 EB 换了 Electron 版本，这里立刻失败，绝不产出「装上去打不开」的 exe。
 echo ">> 校验安装包内原生模块 ABI"
 node scripts/verify-packaged-abi.js --app-dir dist/win-unpacked
+
+# 内置 Agent 的两块拼图：随包真实 Node + 解包后的 dsh（asarUnpack "server/**"）。
+# 任何一块缺失，安装版里控制台都会「进程提前退出」——宁可打包失败，也不产出坏包。
+echo ">> 校验内置 Agent 运行时（随包 Node + app.asar.unpacked 里的 dsh）"
+node scripts/prepare-node-runtime.js --verify-only
+test -f dist/win-unpacked/resources/node/node.exe || {
+  echo "错误：安装包缺少 resources/node/node.exe（内置 Agent 控制台会起不来）"
+  exit 1
+}
+test -f "dist/win-unpacked/resources/app.asar.unpacked/server/node_modules/@deepseek-ai/dsh/lib/bin.js" || {
+  echo "错误：app.asar.unpacked 里没有 dsh（asarUnpack server/** 未生效）"
+  exit 1
+}
+echo "   ✓ node.exe + dsh 解包路径就绪"
 
 echo ">> 产物清单"
 ls -la dist/*.exe

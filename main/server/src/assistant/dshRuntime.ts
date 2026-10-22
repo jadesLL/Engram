@@ -1,7 +1,15 @@
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { DeepSeekHarness, type HarnessNotification } from '@deepseek-ai/dsh-sdk-client';
-import { agentWorkspaceDir, bundledDshHome, bundledDshVersion, getAgentConfig, type AgentConfig } from './config.js';
+import {
+  agentWorkspaceDir,
+  bundledDshExecutable,
+  bundledDshHome,
+  bundledDshVersion,
+  getAgentConfig,
+  type AgentConfig,
+} from './config.js';
+import { ensureAgentNodeRuntime } from './agentNode.js';
 import { CONSOLE_PROFILE, agentSettingsStateFingerprint } from './agentSettings.js';
 import { writeAgentPatch, writeChatPatch } from './agentPatch.js';
 import { INITIALIZE_TIMEOUT_MS, startWithRetry } from './handshake.js';
@@ -55,16 +63,21 @@ interface RuntimeEntry {
 }
 
 /**
- * 配置指纹：dsh 入口、dsh 版本、控制台配置状态（profile patch / bundle 列表 / 凭据）。
+ * 配置指纹：dsh 入口、真实 Node 运行时、dsh 版本、控制台配置状态（profile patch / bundle 列表 / 凭据）。
  * 控制台里改了模型或插件 → 指纹变化 → 下一轮 acquireRuntime 关闭旧进程重开。
  */
-function runtimeConfigKey(config: AgentConfig, home: string): string {
+function runtimeConfigKey(config: AgentConfig, home: string, nodePath: string, dshBin: string): string {
   return JSON.stringify([
     config.dshPath || '',
+    dshBin,
+    nodePath,
     bundledDshVersion() || '',
     agentSettingsStateFingerprint(home),
   ]);
 }
+
+/** 起不了内置 Agent 运行时（例如桌面端找不到真实 Node）：给聊天界面一句人话，而不是 HTTP 500 */
+export class AgentRuntimeUnavailableError extends Error {}
 
 /**
  * 运行时池：一个 Engram 会话一个 dsh 运行时进程。
@@ -96,9 +109,14 @@ process.once('SIGINT', closeAllRuntimes);
 
 /** 取（或新建）本会话的运行时：新建时连 dsh 会话 id 一起铸 */
 function acquireRuntime(key: string): RuntimeEntry {
+  // 桌面端：dsh 必须用真实 Node 拉起来（Electron 36 的运行时不被 dsh 原生模块支持，见 agentNode.ts）
+  const node = ensureAgentNodeRuntime();
+  if (!node.ok) throw new AgentRuntimeUnavailableError(node.error);
   const config = getAgentConfig();
   const home = bundledDshHome();
-  const configKey = runtimeConfigKey(config, home);
+  const dshBin = config.dshPath || bundledDshExecutable();
+  if (!dshBin) throw new AgentRuntimeUnavailableError('未找到随包 dsh 运行时（@deepseek-ai/dsh 依赖缺失）');
+  const configKey = runtimeConfigKey(config, home, node.path, dshBin);
   const existing = runtimes.get(key);
   if (existing) {
     if (existing.configKey === configKey) {
@@ -116,11 +134,13 @@ function acquireRuntime(key: string): RuntimeEntry {
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    ELECTRON_RUN_AS_NODE: '1', // 桌面端：SDK 用 process.execPath 起子进程，必须是纯 Node 模式
     DSH_HOME: home,
     // 旧版 Engram 里存的 Key 继续作为官方 Provider 的凭据（新配置请到控制台「设置 → 模型」）
     ...(config.apiKey ? { DEEPSEEK_API_KEY: config.apiKey } : {}),
   };
+  // SDK 用 process.execPath 起子进程；桌面端它已被 ensureAgentNodeRuntime() 指向真实 Node，
+  // 不需要（也不该留）ELECTRON_RUN_AS_NODE，让子进程误以为自己是 Electron。
+  delete env.ELECTRON_RUN_AS_NODE;
 
   const harness = new DeepSeekHarness({
     profile: CONSOLE_PROFILE,
@@ -130,7 +150,8 @@ function acquireRuntime(key: string): RuntimeEntry {
     cwd: workspace,        // 会话记录的工作目录：同上，知识库只经 MCP 工具访问
     env,
     initializeTimeoutMs: INITIALIZE_TIMEOUT_MS, // SDK 默认 10s 扛不住升级后的冷启动
-    ...(config.dshPath ? { dshBin: config.dshPath } : {}),
+    // 显式给 dsh 入口：安装包里是 app.asar.unpacked 的真实路径（真实 Node 读不了 asar）
+    dshBin,
   });
 
   const entry: RuntimeEntry = { harness, dshSessionId: `session-${randomUUID()}`, configKey };
@@ -150,7 +171,15 @@ function armIdleTimer(key: string, entry: RuntimeEntry): void {
  * 运行时保活，下一轮同会话直接续聊（进程活着时才有原生会话连续性）。
  */
 export function startAgentTurn(options: AgentTurnOptions): AgentTurn {
-  const entry = acquireRuntime(options.key);
+  let entry: RuntimeEntry;
+  try {
+    entry = acquireRuntime(options.key);
+  } catch (error) {
+    // 起不了运行时是「环境问题」（例如桌面端缺真实 Node），不该冒到 HTTP 层变 500：
+    // 直接把原因交给聊天界面显示一句人话（与运行中失败同一路径）。
+    const message = (error as Error)?.message || '内置 Agent 运行时不可用';
+    return { done: Promise.resolve({ ok: false, error: message }), cancel: () => {} };
+  }
   let cancelled = false;
 
   const done = (async (): Promise<{ ok: boolean; error?: string }> => {

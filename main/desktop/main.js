@@ -532,6 +532,15 @@ async function startLocalModeInner(notice) {
   const port = getLocalPort();
   // 提交身份一并交给内嵌 server（/api/update/state 返回），与渲染层经 IPC 拿到的是同一份
   const identity = await gitIdentity();
+  // 内置 Agent（dsh）必须用真实 Node 拉起：server 跑在 Electron 的纯 Node 模式里，而 dsh 的
+  // 原生模块不认 Electron 36 的 V8 指纹（详见 server/src/assistant/agentNode.ts）。
+  // 安装包用 resources/node/node.exe；源码模式用系统 / 便携 Node（找不到就留空，server 会给明确提示）。
+  const agentNode = runtimeMode.resolveNodeRuntime({ resourcesPath: process.resourcesPath });
+  if (agentNode) {
+    log(`[local] 内置 Agent 使用 Node 运行时：${agentNode.path}（${agentNode.source}）`);
+  } else {
+    log('[local] 未找到可用的 Node.js（内置 Agent 控制台/聊天将不可用）');
+  }
   const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
@@ -544,6 +553,8 @@ async function startLocalModeInner(notice) {
     ENGRAM_WEB_DIST: webDistPath(),
     ENGRAM_APP_VERSION: app.getVersion(),
     ENGRAM_GIT_SHA: identity.commit,
+    // 仅「真实 Node」路径有意义：server 会把它探测校验（>=20）后覆盖 process.execPath 再拉起 dsh
+    ...(agentNode ? { ENGRAM_NODE_BIN: agentNode.path } : {}),
   };
   // 命门：必须 fork（默认 execPath=electron.exe）+ ELECTRON_RUN_AS_NODE，子进程才以 Electron 纯
   // Node 模式运行、能读 app.asar 内的 node_modules；改 spawn('node') 会让 server 读不了 asar。

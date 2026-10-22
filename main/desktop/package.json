@@ -36,7 +36,14 @@
       "server/node_modules/@napi-rs/canvas*/**",
       "server/node_modules/**/*.node",
       "server/node_modules/**/*.dll",
-      "server/node_modules/**/*.exe"
+      "server/node_modules/**/*.exe",
+      "server/**"
+    ],
+    "extraResources": [
+      {
+        "from": "node/node.exe",
+        "to": "node/node.exe"
+      }
     ],
     "win": {
       "target": [

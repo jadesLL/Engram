@@ -37,5 +37,7 @@ desktop/src-tauri/gen
 desktop/server/
 desktop/staging/
 desktop/dist/
+# 随包 Node 运行时（打包脚本按固定版本下载/从本机复制，产物 ~83MB，不入 Git）
+desktop/node/
 .mimosa/
 main/.mimosa/

@@ -61,6 +61,7 @@ import { startJobRunner } from './jobs.js';
 import { CertManager, type LoadedCert } from './lib/tls.js';
 import { startDdnsScheduler } from './lib/ddns.js';
 import { startDreamScheduler } from './assistant/dreamCycle.js';
+import { ensureAgentNodeRuntime } from './assistant/agentNode.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -132,6 +133,15 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
 
 async function main() {
   ensureDirs();
+  // 桌面端：把进程的 Node 运行时指向「真实 Node.js」——内置 Agent 的 dsh 原生模块不认 Electron 36
+  // 的 V8 指纹（见 assistant/agentNode.ts）。Docker / 源码直跑时进程本身就是 Node，这里是 no-op。
+  // 失败不阻断 Engram 启动：打开内置 Agent 时控制台状态里会给出明确原因。
+  const agentNode = ensureAgentNodeRuntime();
+  console.log(
+    agentNode.ok
+      ? `[agent] dsh 运行时 Node：${agentNode.path}（${agentNode.source}，v${agentNode.version}）`
+      : `[agent] 未找到可用的 Node.js 运行时：${agentNode.error}`,
+  );
   migrate();
   ensureDefaultPassword();
   // CLI 零配置：本机地址+专用 token 登记到 ~/.engram/config.json（手动 login 过则不覆盖）
