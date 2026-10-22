@@ -98,6 +98,8 @@ let modelSyncReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 let placeholderHideTimer: ReturnType<typeof setTimeout> | null = null;
 let modeObserver: MutationObserver | null = null;
 let savedSelectionRange: Range | null = null;
+/** 最近一次 pointerdown 的视口坐标：用来区分「拖选结束的那次 click」和普通单击 */
+let pointerDownAt: { x: number; y: number } | null = null;
 let savedSelectionText = '';
 
 /** AI 管理注释：证据标记与贡献区段边界都不应出现在编辑界面。 */
@@ -479,6 +481,37 @@ function observeWikiLinks() {
   wikiTagObserver.observe(root, { childList: true, subtree: true });
 }
 
+/** 拖选结束的那次 click 是不是「拖着选的」：单击（没位移）不算，照旧让 Vditor 收拢选区、进入编辑。 */
+function draggedSelection(event: MouseEvent): boolean {
+  if (!pointerDownAt) return false;
+  return Math.hypot(event.clientX - pointerDownAt.x, event.clientY - pointerDownAt.y) >= 4;
+}
+
+/** 代码块预览里拖选文字后，Vditor 的 click 处理会把光标重置到源码块开头、选区当场清空——
+ *  于是「在代码块里选字」永远选不中（鼠标一松，选区没了，块还被展开成源码态）。捕获阶段
+ *  拦下这次 click：选区非空、是拖出来的、且和某个代码块相交时不交给 Vditor，选中的文字
+ *  保留、块也不展开，接着就能复制/剪切；单击则保持原行为（收拢选区或进入编辑）。 */
+function keepCodeBlockSelection(event: MouseEvent) {
+  const root = vditorEl.value;
+  const selection = window.getSelection();
+  if (!root || !selection || selection.isCollapsed || !selection.toString().trim()) return;
+  if (!draggedSelection(event)) return;
+  if (!selection.anchorNode || !root.contains(selection.anchorNode)) return;
+  if (selection.rangeCount === 0) return;
+  const range = selection.getRangeAt(0);
+  let touchesCodeBlock = false;
+  for (const block of root.querySelectorAll('.vditor-ir__node[data-type="code-block"]')) {
+    try {
+      if (range.intersectsNode(block)) { touchesCodeBlock = true; break; }
+    } catch {
+      /* 选区跨越了不同文档（极少数 iframe 场景）：当作不相交 */
+    }
+  }
+  if (!touchesCodeBlock) return;
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 function bindKeys() {
   const el = vditorEl.value!;
   el.addEventListener('input', (e: Event) => {
@@ -486,6 +519,7 @@ function bindKeys() {
   }, true);
   el.addEventListener('pointerdown', (e: PointerEvent) => {
     beginUserEditing();
+    pointerDownAt = { x: e.clientX, y: e.clientY };
     if ((e.target as HTMLElement).closest('.vditor-toolbar button')) {
       userInputPending = true;
     }
@@ -521,6 +555,8 @@ function bindKeys() {
     emit('update:modelValue', restoreIngestComments(markdownLinksToWiki(v)));
   });
   el.addEventListener('contextmenu', handleEditorContextMenu, true);
+  // 代码块预览里的拖选要在 mouseup 的 click 之前保住（见 keepCodeBlockSelection）
+  el.addEventListener('click', keepCodeBlockSelection, true);
   // 监听 edit-mode 切换（Vditor 内部 setEditMode 改 currentMode 但无事件，轮询 DOM class）
   observeEditMode();
 }
