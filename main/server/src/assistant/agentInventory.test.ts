@@ -9,6 +9,7 @@ import {
   maskSecrets,
   packageRoot,
   parseDumpConfig,
+  resolvePluginVersion,
   settingsFromSchema,
   shortPluginName,
   type InventoryRuntime,
@@ -174,4 +175,14 @@ test('packageRoot / shortPluginName：作用域与子路径归一', () => {
   assert.equal(shortPluginName('@deepseek-ai/dsh-tool-fs'), 'tool-fs');
   assert.equal(shortPluginName('@deepseek-ai/cordis-plugin-timer'), 'cordis-plugin-timer');
   assert.equal(shortPluginName('@deepseek-ai/dsh-plugin-manager/tools'), 'plugin-manager');
+});
+
+test('resolvePluginVersion：按 dsh 的包上下文解析（pnpm 嵌套布局也能命中）', () => {
+  const dsh = resolvePluginVersion('@deepseek-ai/dsh');
+  if (!dsh) return; // 本地没装依赖时跳过；Docker verify 里一定有
+  assert.match(dsh, /^\d+\.\d+\.\d+/);
+  const mcp = resolvePluginVersion('@deepseek-ai/dsh-mcp-client');
+  assert.equal(typeof mcp === 'string' && /^\d+\.\d+\.\d+/.test(mcp), true);
+  // 同一个包重复解析走缓存，结果稳定
+  assert.equal(resolvePluginVersion('@deepseek-ai/dsh'), dsh);
 });

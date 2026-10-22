@@ -516,15 +516,68 @@ export function shortPluginName(name: string): string {
 
 const requireFromHere = createRequire(import.meta.url);
 
-/** 默认版本解析：读随包 node_modules 的 package.json（读不到返回 null） */
-export function resolvePluginVersion(name: string): string | null {
-  try {
-    const file = requireFromHere.resolve(packageRoot(name) + '/package.json');
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return typeof parsed.version === 'string' ? parsed.version : null;
-  } catch {
-    return null;
+/**
+ * 版本解析的「包上下文」。
+ *
+ * pnpm 布局里插件包不是 server 的直接依赖（挂在 @deepseek-ai/dsh → dsh-base 下面），
+ * 从 server 自己的 require 上下文解析名字会全部落空。这里按 dsh / dsh-base / dsh-sdk-app
+ * 三个包的 package.json 各建一个 require 上下文，覆盖：pnpm 嵌套（Docker）、hoisted（桌面端）。
+ */
+let contextCache: NodeJS.Require[] | null = null;
+
+function resolverContexts(): NodeJS.Require[] {
+  if (contextCache) return contextCache;
+  const list: NodeJS.Require[] = [requireFromHere];
+  for (const pkg of ['@deepseek-ai/dsh', '@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app']) {
+    try {
+      list.push(createRequire(requireFromHere.resolve(pkg + '/package.json')));
+    } catch {
+      /* 该包不在当前依赖树里就跳过 */
+    }
   }
+  contextCache = list;
+  return list;
+}
+
+/** 在一个 require 上下文里找包的 package.json（先看导出映射，再从入口向上找同名 manifest） */
+function locateManifest(context: NodeJS.Require, pkg: string): string | null {
+  try {
+    return context.resolve(pkg + '/package.json');
+  } catch {
+    /* 没有 ./package.json 导出：走入口向上找 */
+  }
+  try {
+    let dir = path.dirname(context.resolve(pkg));
+    for (let depth = 0; depth < 10; depth += 1) {
+      const candidate = path.join(dir, 'package.json');
+      if (fs.existsSync(candidate)) {
+        const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+        if (parsed.name === pkg) return candidate;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    /* 解析不到就是 null */
+  }
+  return null;
+}
+
+/** 默认版本解析：按包上下文读 package.json（读不到返回 null） */
+export function resolvePluginVersion(name: string): string | null {
+  const root = packageRoot(name);
+  for (const context of resolverContexts()) {
+    const file = locateManifest(context, root);
+    if (!file) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (typeof parsed.version === 'string') return parsed.version;
+    } catch {
+      /* 继续换下一个上下文 */
+    }
+  }
+  return null;
 }
 
 /* ============================== 组装 ============================== */
