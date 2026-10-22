@@ -47,21 +47,23 @@
 
 安装包版本号与发布版本对齐（`desktop/package.json`），产物写入 `releases/<version>/`。因 Windows Defender 实时扫描锁定 `electron.exe` 导致 `EPERM rename`，不走 `pnpm build:desktop`，分两步手动打包：
 
-**前置**（每次改了 server/web 源码都必做，否则 asar 里是旧代码）：`cd main/server && node ../node_modules/typescript/bin/tsc -p tsconfig.build.json` → `cd main/web && node ../node_modules/vite/bin/vite.js build` → `node desktop/scripts/prepare-desktop.js` 复制产物（构建走 `tsconfig.build.json`：不产出 `*.test.js`，测试文件不进安装包）。
+**前置**（每次改了 server/web 源码都必做，否则 asar 里是旧代码）：`cd main/server && node ../node_modules/typescript/bin/tsc -p tsconfig.build.json` → `cd main/web && node ../node_modules/vite/bin/vite.js build` → `node desktop/scripts/prepare-desktop.js` 复制产物（构建走 `tsconfig.build.json`：不产出 `*.test.js`，测试文件不进安装包）→ `node desktop/scripts/prepare-node-runtime.js` 生成随包 Node（`desktop/node/node.exe`；本地默认复制本机 Node，CI 用 `--download` 按固定版本下载，原因见下方「内置 Agent 运行时」坑条）。
 
 1. **组装 win-unpacked**：
    * `pnpm -C desktop/server install --prod --node-linker=hoisted --ignore-workspace --no-frozen-lockfile`（ignored builds 的 exit 1 用 `|| true` 容忍）。
    * better-sqlite3 native 的 ABI 必须匹配打包进去的 Electron：用 `node desktop/scripts/sync-deps.js server` 取对应 ABI 的 prebuild（它直接问 Electron 运行时要 `process.versions.modules`）；**不要**直接从 `main/node_modules/better-sqlite3/build/Release/` 拷——那是系统 Node 的 ABI，装进 exe 会 `ERR_DLOPEN_FAILED`（v1.3.0 事故同类）。
    * 完整解压 electron 运行时：`powershell -Command "Expand-Archive electron-v36.9.5-win32-x64.zip dist/win-unpacked"`——必须得到含 `electron.exe` 的完整目录，否则 pack-asar 仍会跑但产出的 exe 无法启动。
-   * `node desktop/scripts/pack-asar.js` 生成 `resources/app.asar` + `app.asar.unpacked/`，三个原生模块（better-sqlite3/sqlite-vec/@napi-rs/canvas）解包（`desktop/package.json` 已设 `asar: true` + `asarUnpack`）。
+   * `node desktop/scripts/pack-asar.js` 生成 `resources/app.asar` + `app.asar.unpacked/`：`server/**` 整棵解包（内置 Agent 的 dsh 由真实 Node 拉起，真实 Node 读不了 asar；`desktop/package.json` 已设 `asar: true` + `asarUnpack: server/**`），并把 `desktop/node/node.exe` 复制到 `resources/node/node.exe`（随包 Node 运行时）。
 2. **打 NSIS 安装包**：先 `node desktop/scripts/verify-packaged-abi.js --app-dir dist/win-unpacked` 确认原生模块 ABI 与 Electron 一致，再 `cd desktop && pnpm exec electron-builder --prepackaged dist/win-unpacked --win nsis`，产出 `Engram Setup <version>.exe`，复制到 `releases/<version>/` 并记录提交 ID、构建时间、sha256。
 
 **关键坑**：
 
 * `node-linker=hoisted` 必须带：否则原生模块是 symlink，asar 解包重建因非管理员无 symlink 权限失败。
 * **原生模块 ABI 必须与打包进去的 Electron 一致**（2026-09-28 v1.3.0 事故根因）：CI 打包脚本把 better-sqlite3 预编译写死成 `electron-v133`，而 Electron 已于 9-16 升到 36（ABI 135），发布出去的 1.3.0 exe 内嵌 server 一启动就 `NODE_MODULE_VERSION 133 vs 135` 退出，**所有装了 1.3.0 的机器都停在「本地服务启动失败」**。现在 ABI 一律由**实际打包的 Electron 版本**推导（`desktop/scripts/lib/electron-abi.js`，表兜底 + node-abi 权威），打包后静态校验 `.node` 里的 `node_register_module_v<ABI>` 符号（`desktop/scripts/verify-packaged-abi.js`）；CI（`scripts/build-desktop-ci.sh`）与手动 `pack-asar.js` 都已接上这一步，校验失败即打包失败。
+* **内置 Agent（dsh）必须用「真实 Node」跑，不能用 Electron 的纯 Node 模式**（2026-10-22 控制台「进程提前退出 code 1」根因）：dsh 的 `node-addon-require-builtin` 只认 Electron 43/44/44.7/45 的 V8 指纹，Electron 36 直接 `Unsupported/no-context`。所以安装包必须带 `resources/node/node.exe`（`prepare-node-runtime.js` + `extraResources`），且 `asarUnpack` 必须含 `server/**`（真实 Node 读不了 asar，dsh 入口要在 `app.asar.unpacked/server/node_modules/@deepseek-ai/dsh/lib/bin.js`）；server 侧 `assistant/agentNode.ts` 会校验 Node >=20 并覆盖 `process.execPath`（聊天 SDK 把命令硬编码成 `process.execPath`）。CI（`build-desktop-ci.sh`）打包后会断言 `resources/node/node.exe` 与解包后的 dsh 都在。
 * `zod` 必须 3.25.76（旧版无 `zod/v3` exports 致 MCP SDK ESM 崩，`prepare-desktop.js` 已固定）。
 * `Engram.exe` 测试后不退出会锁 `@napi-rs/canvas` 的 `skia.node`，再跑 pack-asar 报 EBUSY：`taskkill /F /IM "Engram.exe"` 强杀 + 删 `app.asar`/`app.asar.unpacked` 后重跑。
 * sqlite-vec 在 asar 下 `loadExtension` 需真实路径：`server/src/lib/db.ts` 已把路径转成 `app.asar.unpacked`；**改了 db.ts 必须重 build server**，否则本地模式必崩。
 * 本地模式默认端口 18180（Docker 版 18080，可共存）；被占需改 `LOCAL_PORT` 或加端口回退。
 * 端到端验证必做：`ELECTRON_RUN_AS_NODE=1 <exe> app.asar/server/dist/index.js` 实际 fork server，等 `/health` 返回 200，并 `curl /assets/SettingsView-*.js` 确认前端版本号为当前版本，才算通过。
+* 内置 Agent 控制台也要按真实路径验一次：打开 设置 → Agent 与自动化 →「内置 Agent 控制台」，状态栏应显示运行中且 iframe 加载出 DSH 界面；server 日志有 `[agent] dsh 运行时 Node：…\resources\node\node.exe` 一行。若报「未找到可运行内置 Agent 的 Node.js 20+」，说明 `resources/node/node.exe` 没进包或 PATH 解析到了 Electron。

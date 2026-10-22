@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { DATA_DIR } from '../config.js';
 import { getSetting, setSetting } from '../lib/db.js';
+import { nativePathForPlainNode } from './agentNode.js';
 
 /**
  * 内置 Agent（聊天抽屉）配置与路径。
@@ -159,4 +160,14 @@ export function bundledDshBin(): string | null {
     cachedBundledBin = null;
   }
   return cachedBundledBin;
+}
+
+/**
+ * 随包 dsh 入口的「真实文件路径」：桌面安装包里 dsh 在 app.asar 内，真实 Node 读不了 asar
+ * （Electron 的 fs 补丁只对 Electron 进程生效），而桌面端必须用真实 Node 跑 dsh（见 agentNode.ts）。
+ * desktop 打包把 server/** 整棵解包到 app.asar.unpacked，这里把 asar 虚拟路径映射成真实路径。
+ */
+export function bundledDshExecutable(): string | null {
+  const bin = bundledDshBin();
+  return bin ? nativePathForPlainNode(bin) : null;
 }

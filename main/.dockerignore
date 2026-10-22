@@ -4,6 +4,8 @@ node_modules
 data
 data-test
 desktop/src-tauri
+# 随包 Node 运行时（prepare-node-runtime.js 生成，打包用；Docker verify 不需要 83MB exe）
+desktop/node
 *.log
 .git
 # 安卓本地构建产物与签名配置（不进 docker 上下文）

@@ -84,6 +84,99 @@ test('便携目录探测抛错不影响退回系统 git', () => {
   );
 });
 
+/* ---------- 内置 Agent 的真实 Node 解析 ---------- */
+
+/** 用注入的 exists 模拟文件存在（路径都过 path.resolve，与实现同一套归一化） */
+function existsOnlyPaths(list) {
+  const set = new Set(list.map((p) => path.resolve(p)));
+  return (p) => set.has(path.resolve(p));
+}
+
+// 这些用例统一显式传 platform: 'win32'（桌面安装包 / 源码模式的目标平台），
+// 所以文件名固定 node.exe，不随运行测试的宿主机变化（Docker verify 在 Linux 里跑）。
+const NODE_NAME = 'node.exe';
+
+test('安装包形态优先用随包 resources/node（内置 Agent 不依赖用户机器装 Node）', () => {
+  const resources = path.resolve('/app/resources');
+  const bundled = path.join(resources, 'node', NODE_NAME);
+  const localAppData = path.resolve('/home/u/AppData/Local');
+  const portable = path.join(localAppData, 'engram', 'node', 'node.exe');
+  const picked = runtimeMode.resolveNodeRuntime({
+    resourcesPath: resources,
+    env: {
+      LOCALAPPDATA: localAppData,
+      PATH: [path.resolve('/usr/bin')].join(path.delimiter),
+    },
+    exists: existsOnlyPaths([bundled, portable, path.join(path.resolve('/usr/bin'), NODE_NAME)]),
+    execPath: path.resolve('/app/Engram.exe'),
+    platform: 'win32',
+  });
+  assert.equal(picked.source, 'bundled');
+  assert.equal(picked.path, bundled);
+});
+
+test('源码模式没有随包 Node 时用便携 Node（install-engram.ps1 装在 %LOCALAPPDATA%\\engram\\node）', () => {
+  const localAppData = path.resolve('/home/u/AppData/Local');
+  const portable = path.join(localAppData, 'engram', 'node', 'node.exe');
+  const picked = runtimeMode.resolveNodeRuntime({
+    resourcesPath: path.resolve('/app/resources'),
+    env: {
+      LOCALAPPDATA: localAppData,
+      PATH: [path.resolve('/usr/bin')].join(path.delimiter),
+    },
+    exists: existsOnlyPaths([portable]),
+    execPath: path.resolve('/app/Engram.exe'),
+    platform: 'win32',
+  });
+  assert.equal(picked.source, 'portable');
+  assert.equal(picked.path, portable);
+});
+
+test('ENGRAM_NODE_BIN 显式覆盖优先于随包/便携/PATH', () => {
+  const override = path.resolve('/custom/node/node.exe');
+  const resources = path.resolve('/app/resources');
+  const picked = runtimeMode.resolveNodeRuntime({
+    resourcesPath: resources,
+    env: { ENGRAM_NODE_BIN: override, PATH: '' },
+    exists: existsOnlyPaths([override, path.join(resources, 'node', NODE_NAME)]),
+    execPath: path.resolve('/app/Engram.exe'),
+    platform: 'win32',
+  });
+  assert.equal(picked.source, 'env');
+  assert.equal(picked.path, override);
+});
+
+test('都没有时退回 PATH 里的 node；再没有就返回 null（交给 server 给明确提示）', () => {
+  const binDir = path.resolve('/usr/local/bin');
+  const fromPath = runtimeMode.resolveNodeRuntime({
+    env: { PATH: [binDir].join(path.delimiter) },
+    exists: existsOnlyPaths([path.join(binDir, NODE_NAME)]),
+    execPath: path.resolve('/app/Engram.exe'),
+    platform: 'win32',
+  });
+  assert.equal(fromPath.source, 'path');
+  assert.equal(fromPath.path, path.join(binDir, NODE_NAME));
+
+  const none = runtimeMode.resolveNodeRuntime({
+    env: { PATH: '' },
+    exists: () => false,
+    execPath: path.resolve('/app/Engram.exe'),
+    platform: 'win32',
+  });
+  assert.equal(none, null);
+});
+
+test('进程自身即便出现在候选里也不能当 Node（避免把 Electron 当 dsh 运行时）', () => {
+  const exe = path.resolve('/app/Engram.exe');
+  const picked = runtimeMode.resolveNodeRuntime({
+    env: { ENGRAM_NODE_BIN: exe, PATH: '' },
+    exists: () => true,
+    execPath: exe,
+    platform: 'win32',
+  });
+  assert.equal(picked, null);
+});
+
 (async () => {
   let failed = 0;
   for (const c of cases) {

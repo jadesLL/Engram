@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { agentWorkspaceDir, bundledDshBin, bundledDshHome, bundledDshVersion, getAgentConfig } from './config.js';
+import { agentWorkspaceDir, bundledDshExecutable, bundledDshHome, bundledDshVersion, getAgentConfig } from './config.js';
 import { CONSOLE_PROFILE } from './agentSettings.js';
+import { ensureAgentNodeRuntime } from './agentNode.js';
 
 /**
  * 内置 Agent 控制台：DeepSeek Harness 原生的网页界面（插件页 + 设置 → 模型 / 内置插件）。
@@ -18,6 +19,10 @@ import { CONSOLE_PROFILE } from './agentSettings.js';
  * 为什么不直接让浏览器连 127.0.0.1:端口：Docker / NAS / HTTPS 场景下浏览器拿不到容器内端口，
  * 而且 DSH 的浏览器信任围栏按 origin 校验。统一走同源反向代理后，用户看到的地址就是 Engram
  * 自己的地址，桌面端与 Docker 行为一致。
+ *
+ * 运行时：dsh 必须用「真实 Node」拉起来——桌面端 server 跑在 Electron 36 的纯 Node 模式里，
+ * dsh 的 node-addon-require-builtin 不支持这个 Electron 指纹（详见 agentNode.ts 顶部注释），
+ * 直接 spawn(process.execPath) 会让控制台进程 code 1 提前退出。
  */
 
 /** 反向代理前缀（前端 iframe 也用这个路径） */
@@ -155,7 +160,13 @@ function startConsole(origin: string): Promise<ConsoleStatus> {
   if (starting) return starting;
 
   starting = (async () => {
-    const bin = getAgentConfig().dshPath || bundledDshBin();
+    // dsh 必须用真实 Node 拉起（桌面端 Electron 36 的运行时不被 dsh 原生模块支持，见 agentNode.ts）
+    const node = ensureAgentNodeRuntime();
+    if (!node.ok) {
+      lastError = node.error;
+      throw new Error(lastError);
+    }
+    const bin = getAgentConfig().dshPath || bundledDshExecutable();
     if (!bin) {
       lastError = '未找到随包 dsh 运行时（@deepseek-ai/dsh 依赖缺失）';
       throw new Error(lastError);
@@ -166,12 +177,13 @@ function startConsole(origin: string): Promise<ConsoleStatus> {
     const originHost = new URL(origin).host;
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
       DSH_HOME: home,
       ...(getAgentConfig().apiKey ? { DEEPSEEK_API_KEY: getAgentConfig().apiKey as string } : {}),
     };
+    // 真实 Node 不需要 ELECTRON_RUN_AS_NODE（留着只会让下游误判运行形态）
+    delete env.ELECTRON_RUN_AS_NODE;
     const proc = spawn(
-      process.execPath,
+      node.path,
       [
         bin,
         '--profile',

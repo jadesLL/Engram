@@ -5,6 +5,7 @@
 //   1. dist/win-unpacked/ 已由 Expand-Archive 解压 electron zip 生成（含 resources/，无 rename 不触发 Defender）
 //   2. desktop/server/node_modules 已装（prepare-desktop 生成 + pnpm install --prod --node-linker=hoisted）
 //   3. better-sqlite3 已由 @electron/rebuild 重编到 Electron ABI（desktop 的 rebuild 脚本，或 EB 内置）
+//   4. desktop/node/node.exe 已就绪（node scripts/prepare-node-runtime.js；内置 Agent 的 dsh 要用它跑）
 // 依赖 node-linker=hoisted：让 better-sqlite3/sqlite-vec/@napi-rs/canvas 为真实目录而非 pnpm symlink，
 //   否则 @electron/asar 对 unpack 的 symlink 在 app.asar.unpacked 重建会因非管理员无 symlink 权限失败。
 const fs = require('node:fs');
@@ -78,13 +79,26 @@ if (fs.existsSync(exeSrc) && !fs.existsSync(exeDst)) {
   console.log('[pack-asar] ' + path.basename(exeSrc) + ' → ' + productName + '.exe（快捷方式目标）');
 }
 
-// 3. asar 打包，对齐 package.json 的 asarUnpack（三个原生模块解包到 app.asar.unpacked）
+// 3. asar 打包：server/** 整棵解包（对齐 package.json 的 asarUnpack "server/**"）。
+//    内置 Agent 的 dsh 由真实 Node 拉起，真实 Node 读不了 asar，所以 dsh 及其依赖必须落在
+//    app.asar.unpacked/server/…（desktop/package.json 的 extraResources 再带上 node.exe）。
+//    原生模块（better-sqlite3/sqlite-vec/@napi-rs/canvas）本来就在 server/** 里，一并解包。
 // 用 unpackDir（基于 relativePath 的 isUnpackedDir 能正确匹配）而非 unpack（其内部 minimatch 用绝对 filename 有 bug）；
 // 单个 brace pattern（minimatch 不接受数组）。
 (async () => {
   if (!fs.existsSync(resourcesDir)) fs.mkdirSync(resourcesDir, { recursive: true });
+  // 随包 Node 运行时：与 electron-builder 的 extraResources 产物路径保持一致（resources/node/node.exe）。
+  // 缺了它内置 Agent 在安装版里起不来，所以这里硬失败，不产出「能装但控制台报错」的包。
+  const bundledNodeSrc = path.join(desktopRoot, 'node', 'node.exe');
+  if (!fs.existsSync(bundledNodeSrc)) {
+    throw new Error('缺少 desktop/node/node.exe（先运行 node scripts/prepare-node-runtime.js）');
+  }
+  const bundledNodeDst = path.join(resourcesDir, 'node', 'node.exe');
+  fs.mkdirSync(path.dirname(bundledNodeDst), { recursive: true });
+  fs.copyFileSync(bundledNodeSrc, bundledNodeDst);
+  console.log('[pack-asar] 随包 Node 运行时：' + bundledNodeDst);
   await asar.createPackageWithOptions(staging, asarOut, {
-    unpackDir: 'server/node_modules/**/{better-sqlite3,sqlite-vec*,@napi-rs/canvas*}',
+    unpackDir: 'server/**',
   });
   const stat = fs.statSync(asarOut);
   console.log('[pack-asar] app.asar 生成完成：' + asarOut);

@@ -34,6 +34,9 @@ function isPackagedRuntime(resourcesPath, exists = fs.existsSync) {
 /** 便携 MinGit 相对 %LOCALAPPDATA% 的路径（install-engram.ps1 的默认安装根） */
 const PORTABLE_GIT_REL = ['engram', 'MinGit', 'cmd', 'git.exe'];
 
+/** 便携 Node 相对 %LOCALAPPDATA% 的路径（install-engram.ps1 的默认安装根，与 server/assistant/agentNode.ts 同一约定） */
+const PORTABLE_NODE_REL = ['engram', 'node', 'node.exe'];
+
 /**
  * 解析 git 可执行文件路径。
  *
@@ -59,4 +62,75 @@ function resolveGitCommand(env = process.env, exists = fs.existsSync) {
   return 'git';
 }
 
-module.exports = { PACKAGED_ASAR, PORTABLE_GIT_REL, isPackagedRuntime, resolveGitCommand };
+/** 当前平台的 Node 可执行文件名 */
+function nodeBinaryName(platform = process.platform) {
+  return platform === 'win32' ? 'node.exe' : 'node';
+}
+
+/**
+ * 解析内置 Agent（dsh）要用的「真实 Node.js」。
+ *
+ * 为什么主进程要管这个：桌面端内嵌 server 跑在 Electron 的纯 Node 模式里
+ * （ELECTRON_RUN_AS_NODE=1，process.execPath 是 Engram.exe），而 dsh 的原生模块不认
+ * Electron 36 的 V8 指纹（详见 server/src/assistant/agentNode.ts 顶部注释）。必须把真实
+ * Node 的路径传给 server（环境变量 ENGRAM_NODE_BIN），控制台与聊天才能拉起 dsh。
+ *
+ * 解析顺序（与 server 侧一致，但主进程先做一轮，避免 server 只认一个 PATH 环境）：
+ *  1. ENGRAM_NODE_BIN：显式覆盖（测试 / 特殊部署）；
+ *  2. 安装包随包 Node：<resources>/node/node.exe（desktop/package.json extraResources）；
+ *  3. 源码模式便携 Node：%LOCALAPPDATA%\engram\node\node.exe（install-engram.ps1 装的）；
+ *  4. PATH 里的 node（源码模式机器通常有）。
+ * 返回 null 表示没有可用 Node：内置 Agent 会给出明确提示（而不是 Electron 指纹崩溃）。
+ *
+ * @param {{
+ *   resourcesPath?: string,
+ *   env?: Record<string, string | undefined>,
+ *   exists?: (p: string) => boolean,
+ *   platform?: NodeJS.Platform,
+ *   execPath?: string,
+ * }} [options]
+ * @returns {{ path: string, source: 'env'|'bundled'|'portable'|'path' } | null}
+ */
+function resolveNodeRuntime(options = {}) {
+  const env = options.env || process.env;
+  const exists = options.exists || fs.existsSync;
+  const platform = options.platform || process.platform;
+  const execPath = options.execPath || process.execPath;
+  const binary = nodeBinaryName(platform);
+  const seen = new Set();
+  const candidates = [];
+  const push = (file, source) => {
+    if (!file) return;
+    const normalized = path.resolve(file);
+    if (seen.has(normalized)) return;
+    if (execPath && path.resolve(execPath) === normalized) return; // 进程自身（Electron）不能当 Node
+    try {
+      if (!exists(normalized)) return;
+    } catch {
+      return;
+    }
+    seen.add(normalized);
+    candidates.push({ path: normalized, source });
+  };
+
+  push(env.ENGRAM_NODE_BIN, 'env');
+  if (options.resourcesPath) push(path.join(options.resourcesPath, 'node', binary), 'bundled');
+  const localAppData = env.LOCALAPPDATA || env.LocalAppData || '';
+  if (localAppData) push(path.join(localAppData, ...PORTABLE_NODE_REL), 'portable');
+  const pathValue = env.PATH || env.Path || '';
+  for (const raw of pathValue.split(path.delimiter)) {
+    const dir = String(raw).trim().replace(/^"|"$/g, '');
+    if (!dir) continue;
+    push(path.join(dir, binary), 'path');
+  }
+  return candidates[0] || null;
+}
+
+module.exports = {
+  PACKAGED_ASAR,
+  PORTABLE_GIT_REL,
+  PORTABLE_NODE_REL,
+  isPackagedRuntime,
+  resolveGitCommand,
+  resolveNodeRuntime,
+};
