@@ -17,9 +17,20 @@ import { customRoute } from '../assistant/agentSettings.js';
 const OFFICIAL_BASE_URL = 'https://api.deepseek.com';
 const OFFICIAL_MODEL = 'deepseek-v4-flash';
 
+/**
+ * 多模态内容块（OpenAI 兼容 chat/completions 的 content 数组）。
+ *
+ * 目前只收 text 与 video_url：视频输入是**厂商扩展**（OpenAI 官方没有视频块），
+ * 所以包含这些块的请求只允许发往自定义 OpenAI 兼容网关；官方路由与
+ * anthropic / responses 协议会明确报「不支持视频」，不静默丢掉视频再回一句摘要。
+ */
+export type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'video_url'; video_url: { url: string } };
+
 export interface ChatMessage {
   role: 'system' | 'user';
-  content: string;
+  content: string | ChatContentPart[];
 }
 
 export interface ModelRequest {
@@ -57,6 +68,37 @@ export class ModelEmptyResponseError extends Error {
     super(message);
     this.name = 'ModelEmptyResponseError';
   }
+}
+
+/** 当前线协议/路由不支持这类内容（例如给文本协议发视频块）：给用户可操作的提示 */
+export class ModelCapabilityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ModelCapabilityError';
+  }
+}
+
+/** 把 user 消息归一化成内容块数组；全是字符串时返回 null（走原路径，请求体逐字节不变） */
+function userContentParts(messages: ChatMessage[]): ChatContentPart[] | null {
+  const userMessages = messages.filter((message) => message.role === 'user');
+  if (!userMessages.some((message) => typeof message.content !== 'string')) return null;
+  const parts: ChatContentPart[] = [];
+  for (const message of userMessages) {
+    if (typeof message.content === 'string') {
+      if (message.content) parts.push({ type: 'text', text: message.content });
+      continue;
+    }
+    for (const part of message.content) {
+      if (part && part.type === 'text' && typeof part.text === 'string') {
+        parts.push({ type: 'text', text: part.text });
+      } else if (part && part.type === 'video_url' && part.video_url && typeof part.video_url.url === 'string') {
+        parts.push({ type: 'video_url', video_url: { url: part.video_url.url } });
+      } else {
+        throw new ModelCapabilityError('内容块格式不支持：目前只支持文本与 video_url 两种');
+      }
+    }
+  }
+  return parts;
 }
 
 /** 拼 URL：baseUrl 末尾斜杠不重复 */
@@ -148,8 +190,27 @@ export function modelRequest(
   const maxTokens = options.maxTokens ?? 8192;
   const temperature = options.temperature ?? 0.3;
   const route = customRoute(config);
-  const system = messages.filter((message) => message.role === 'system').map((m) => m.content).join('\n\n');
-  const user = messages.filter((message) => message.role === 'user').map((m) => m.content).join('\n\n');
+  const system = messages
+    .filter((message) => message.role === 'system')
+    .map((message) => {
+      if (typeof message.content !== 'string') throw new ModelCapabilityError('system 消息只能是纯文本');
+      return message.content;
+    })
+    .join('\n\n');
+  const mediaParts = userContentParts(messages);
+  const user = mediaParts
+    ? ''
+    : messages.filter((message) => message.role === 'user').map((message) => message.content as string).join('\n\n');
+  // 视频/音频内容块是厂商扩展：官方路由与另外两种线协议都没有承载位置，明确失败而不是丢掉媒体
+  if (mediaParts) {
+    if (!route) {
+      throw new ModelCapabilityError('视频输入需要自定义的 OpenAI 兼容网关：官方 DeepSeek 路由不支持视频/音频输入');
+    }
+    if (route.api !== 'openai-completions') {
+      throw new ModelCapabilityError('当前接口协议不支持视频输入：请把视频模型配置成 OpenAI 兼容接口（video_url 扩展）');
+    }
+  }
+  const userContent: unknown = mediaParts && mediaParts.length ? mediaParts : user;
 
   if (!route) {
     return {
@@ -220,7 +281,7 @@ export function modelRequest(
       model: route.model,
       messages: [
         ...(system ? [{ role: 'system', content: system }] : []),
-        { role: 'user', content: user },
+        { role: 'user', content: userContent },
       ],
       max_tokens: maxTokens,
       temperature,

@@ -71,15 +71,23 @@ function plant(name: string, content: string | Buffer): string {
   return rel;
 }
 
-test('能力判定：Office/PDF/文本可转，图片与音视频走 Agent 通道，压缩包不支持', () => {
+test('能力判定：Office/PDF/文本可转，音视频与视频链接走视频理解，图片走 Agent 通道，压缩包不支持', () => {
   assert.equal(convertCapability('收集箱/a.docx'), 'office');
   assert.equal(convertCapability('收集箱/a.xlsx'), 'office');
   assert.equal(convertCapability('收集箱/a.pdf'), 'pdf');
   assert.equal(convertCapability('收集箱/a.md'), 'text');
   assert.equal(convertCapability('收集箱/a.png'), 'agent-only');
-  assert.equal(convertCapability('收集箱/a.mp4'), 'agent-only');
+  assert.equal(convertCapability('收集箱/a.mp4'), 'video');
+  assert.equal(convertCapability('收集箱/a.mp3'), 'video');
   assert.equal(convertCapability('收集箱/a.zip'), 'unsupported');
   assert.equal(convertCapability('收集箱/a.weirdext'), 'unsupported');
+
+  // 视频链接占位稿：扩展名是 .md，但带了 video-link frontmatter，能力必须判成 video 而不是 text
+  const placeholder = plant(
+    'B站视频.md',
+    ['---', '类型: video-link', '平台: bilibili', '链接: https://www.bilibili.com/video/BV1GJ411x7h7', '标题: 测试视频', '---', '', '视频链接：https://www.bilibili.com/video/BV1GJ411x7h7'].join('\n')
+  );
+  assert.equal(convertCapability(placeholder), 'video');
 });
 
 test('分块：短文一块，长文按段落边界切开且不丢内容', () => {
@@ -136,6 +144,9 @@ test('图片/音视频/压缩包：服务端直接给出可读的拒绝原因', 
   const zip = plant('归档.zip', Buffer.from('zip'));
   await assert.rejects(() => convertInboxItem(png, { fetchImpl: fakeModel().fetchImpl, config }), /Agent/);
   await assert.rejects(() => convertInboxItem(zip, { fetchImpl: fakeModel().fetchImpl, config }), /还转不了/);
+  // 音视频不再是 Agent-only：走视频理解，因此这里报的是「去配置视频模型 / 点提炼视频」
+  const mp4 = plant('会议录像.mp4', Buffer.from('not really mp4'));
+  await assert.rejects(() => convertInboxItem(mp4, { fetchImpl: fakeModel().fetchImpl, config }), /视频理解模型|提炼视频/);
 });
 
 test('命名请求失败时沿用正文语义标题，不丢掉已完成的转换', async () => {

@@ -7,6 +7,8 @@ import {
   AGENT_PRIMARY_LABEL,
   canConvertItem,
   inboxPrimaryKind,
+  inboxPrimaryLabel,
+  inboxRetryLabel,
   isServerConvertible,
   type InboxPrimaryKind,
 } from './inboxAgent.ts';
@@ -19,7 +21,8 @@ function item(status: InboxItem['status'], capability: InboxItem['capability']):
 }
 
 test('待整理：可转格式给「转换」，agent-only 给「让 Agent 处理」，unsupported 主操作留空', () => {
-  for (const capability of ['office', 'pdf', 'text'] as const) {
+  // video（B站/抖音链接占位稿与本地音视频）也走服务端转换，主操作同样是「转换」
+  for (const capability of ['office', 'pdf', 'text', 'video'] as const) {
     assert.equal(inboxPrimaryKind(item('pending', capability), false), 'convert');
   }
   assert.equal(inboxPrimaryKind(item('pending', 'agent-only'), false), 'agent');
@@ -45,19 +48,32 @@ test('Agent 入口文案与提示固定，避免入口被改得读不懂', () =>
   assert.match(AGENT_ACTION_TIP, /收集箱/);
 });
 
-test('isServerConvertible 与服务端三种可转能力对齐', () => {
+test('isServerConvertible 与服务端四种可转能力对齐（video 走视频理解管线）', () => {
   assert.deepEqual(
-    (['office', 'pdf', 'text'] as const).filter(isServerConvertible),
-    ['office', 'pdf', 'text'],
+    (['office', 'pdf', 'text', 'video'] as const).filter(isServerConvertible),
+    ['office', 'pdf', 'text', 'video'],
   );
   assert.equal(isServerConvertible('agent-only'), false);
   assert.equal(isServerConvertible('unsupported'), false);
   assert.equal(isServerConvertible(''), false);
 });
 
+test('主操作文案：视频条目是「提炼视频 / 重新提炼」，其他格式维持「转为 Markdown / 重新转换」', () => {
+  // 视频走视频理解模型，说「提炼视频」比「转为 Markdown」更准确
+  assert.equal(inboxPrimaryLabel('video'), '提炼视频');
+  assert.equal(inboxRetryLabel('video'), '重新提炼');
+  // 其余能力（含不可转的）文案保持原样
+  for (const capability of ['office', 'pdf', 'text', 'agent-only', 'unsupported', '']) {
+    assert.equal(inboxPrimaryLabel(capability), '转为 Markdown');
+    assert.equal(inboxRetryLabel(capability), '重新转换');
+  }
+});
+
 test('canConvertItem：只有服务端可转且不在转换中才可点，失败可重试', () => {
   assert.equal(canConvertItem(item('pending', 'text')), true);
   assert.equal(canConvertItem(item('failed', 'pdf')), true);
+  assert.equal(canConvertItem(item('pending', 'video')), true);
+  assert.equal(canConvertItem(item('failed', 'video')), true);
   assert.equal(canConvertItem(item('converting', 'office')), false);
   assert.equal(canConvertItem(item('pending', 'agent-only')), false);
   assert.equal(canConvertItem(item('pending', 'unsupported')), false);
@@ -65,7 +81,7 @@ test('canConvertItem：只有服务端可转且不在转换中才可点，失败
 
 test('主操作判定覆盖所有状态 × 能力组合（不出现漏配的空档）', () => {
   const statuses: InboxItem['status'][] = ['pending', 'converting', 'converted', 'failed'];
-  const capabilities: InboxItem['capability'][] = ['office', 'pdf', 'text', 'agent-only', 'unsupported'];
+  const capabilities: InboxItem['capability'][] = ['office', 'pdf', 'text', 'video', 'agent-only', 'unsupported'];
   const allowed: readonly InboxPrimaryKind[] = ['convert', 'process', 'retry', 'adopt', 'review', 'agent', 'none'];
   const seen = new Set<InboxPrimaryKind>();
   for (const status of statuses) {

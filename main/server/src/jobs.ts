@@ -3,7 +3,8 @@ import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { appendWikiLog } from './pipeline/indexFile.js';
 import { enqueuePagePipeline, saveIdeaDistillResult } from './jobQueue.js';
 import { extractFile } from './pipeline/fileExtraction.js';
-import { convertInboxItem } from './pipeline/inboxConvert.js';
+import { convertCapability, convertInboxItem } from './pipeline/inboxConvert.js';
+import { convertVideoInboxItem } from './pipeline/inboxVideo.js';
 import { finishInboxConversation, recordInboxConversionStep } from './pipeline/inboxConversation.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
 import { distillIdeaNote, ideaDistillProgress } from './lib/ideaDistill.js';
@@ -73,6 +74,26 @@ const handlers: Record<string, JobHandler> = {
    * payload 用 `path`（vault 相对路径），这样同一份文件天然串行、不同文件可并行。
    */
   inbox_convert: async ({ path: relPath }, update, context) => {
+    // 视频（链接占位稿 / 音视频原件）走视频理解管线，其余仍走文档语义转换：
+    // 两者产物位置与「入库」流程完全一致，只是内容来源不同。
+    if (convertCapability(relPath) === 'video') {
+      const result = await convertVideoInboxItem(relPath, {
+        signal: context.signal,
+        onProgress: (stage, detail) => {
+          const progress =
+            stage === '解析链接' ? 8
+              : stage === '获取视频' ? 32
+                : stage === '准备请求' ? 55
+                  : stage === '视频理解' ? 68
+                    : stage === '提炼文件名' ? 88
+                      : 95;
+          update({ stage, progress, detail });
+          recordInboxConversionStep(context.jobId, stage, detail);
+        },
+      });
+      update({ stage: '写入结果', progress: 95, detail: result.derivedPath });
+      return;
+    }
     const result = await convertInboxItem(relPath, {
       signal: context.signal,
       onProgress: (stage, detail) => {

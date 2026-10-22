@@ -31,6 +31,8 @@ import { listInboxItems } from '../lib/inboxItems.js';
 import {
   capabilityHint, convertCapability, convertInboxItem, extractInboxText, writeInboxMarkdown,
 } from '../pipeline/inboxConvert.js';
+import { convertVideoInboxItem } from '../pipeline/inboxVideo.js';
+import { videoConfigHint, videoConfigReady } from '../lib/videoConfig.js';
 import { addInboxFile, InboxAddError } from '../pipeline/inboxAdd.js';
 import { createRawMaterial, RawMaterialWriteError } from '../pipeline/rawMaterial.js';
 import { listRawMaterialFiles } from '../pipeline/rawFiles.js';
@@ -520,7 +522,8 @@ export function makeServer(): McpServer {
       + '转换由服务端发模型请求，大文件会分多块、可能耗时数分钟。'
       + '产物写到 收集箱/转换结果/，**仍在收集箱、仍不属于知识库**：不建页面、不进检索、不能作为证据，'
       + '需要用户在收集箱界面确认「入库」后才成为可引用来源（入库是用户动作，你不要代劳）。'
-      + '图片/音视频等 Agent-only 格式会被明确拒绝——那类文件用 read_inbox_item 拿原文件自行处理，再用 write_inbox_markdown 写回。',
+      + '图片等 Agent-only 格式会被明确拒绝——那类文件用 read_inbox_item 拿原文件自行处理，再用 write_inbox_markdown 写回；'
+      + '音视频与视频链接（B站/抖音）走视频理解模型：需要用户在 设置 → Agent 与自动化 → 视频理解模型 配置后才能用，未配置时这里会返回可读原因。',
     {
       path: z.string().describe('收集箱内的相对路径，如 收集箱/合同.pdf'),
     },
@@ -537,6 +540,24 @@ export function makeServer(): McpServer {
         return { content: [{ type: 'text', text: `原件不存在：${rel}` }], isError: true };
       }
       const capability = convertCapability(rel);
+      // 音视频 / 视频链接：走视频理解模型（需要设置里配置好）
+      if (capability === 'video') {
+        if (!videoConfigReady()) {
+          return { content: [{ type: 'text', text: `${rel}：${videoConfigHint()}` }], isError: true };
+        }
+        try {
+          const result = await convertVideoInboxItem(rel);
+          return {
+            content: [{
+              type: 'text',
+              text: `已提炼 ${result.derivedPath}（${result.chars} 字，视频模型 ${result.model}）。产物留在收集箱，未入库；`
+                + '请在汇报里说明这份产物还没进知识库，需要用户在界面上确认入库。',
+            }],
+          };
+        } catch (error: any) {
+          return { content: [{ type: 'text', text: `${rel}：视频提炼失败：${error?.message || error}` }], isError: true };
+        }
+      }
       const hint = capabilityHint(rel, capability);
       if (hint) {
         return { content: [{ type: 'text', text: `${rel}：${hint}` }], isError: true };

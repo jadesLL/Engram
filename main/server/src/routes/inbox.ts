@@ -27,6 +27,9 @@ import {
   readDerivedMarkdown,
 } from '../pipeline/inboxConvert.js';
 import { createInboxAgentTask } from '../pipeline/inboxAgentTask.js';
+import { buildVideoLinkMarkdown, detectVideoLink, findLocalBrowser, resolveVideoLink } from '../lib/videoLink.js';
+import { videoConfigStatus } from '../lib/videoConfig.js';
+import { probeVideoModel } from '../lib/videoModelClient.js';
 import {
   INBOX_DIR,
   INBOX_DERIVED_DIR,
@@ -70,6 +73,30 @@ export async function inboxRoutes(app: FastifyInstance) {
   // 它把收集箱整套窄代理到中枢，挂在 requireAuth 上会让手机端全部 401。这里与 /api/assistant/**
   // 同一道门（成员 token 或 owner / MCP token）；中枢的配置面仍然只有 owner 能进。
   app.addHook('preHandler', requireAssistantAccess);
+
+  /**
+   * 视频理解模型状态 / 连通性测试。
+   *
+   * 放在收集箱路由（requireAssistantAccess）而不是 /api/settings（owner）：
+   * 安卓本地服务只会把收集箱与本类接口按成员令牌代理到中枢，手机端点「测试连通性」
+   * 也要能用；这两个接口都不返回任何密钥。
+   */
+  app.get('/api/inbox/video-status', async () => {
+    return {
+      ...videoConfigStatus(),
+      browserAvailable: Boolean(findLocalBrowser()),
+      platform: process.platform,
+    };
+  });
+
+  app.post('/api/inbox/video-test', async (req) => {
+    const body = (req.body || {}) as { baseUrl?: unknown; model?: unknown; apiKey?: unknown };
+    return probeVideoModel({
+      baseUrl: typeof body.baseUrl === 'string' ? body.baseUrl : '',
+      model: typeof body.model === 'string' ? body.model : '',
+      apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
+    });
+  });
 
   /** 收集箱列表：目录实时扫描（同步落地、外部拷入都会立刻反映），不额外维护状态表 */
   app.get('/api/inbox/items', async () => {
@@ -192,6 +219,33 @@ export async function inboxRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: '请输入网页地址' });
     }
     fs.mkdirSync(safeJoin(INBOX_DIR), { recursive: true });
+
+    // 视频链接：不抓网页（抖音页面是 JS 壳、B站页面只有简介），存一份「链接占位稿」，
+    // 等用户点「提炼视频」时再由 pipeline/inboxVideo.ts 按平台取内容。
+    const detected = detectVideoLink(url);
+    if (detected) {
+      let title = '';
+      let platform = detected.platform;
+      let link = detected.normalized;
+      try {
+        const resolved = await resolveVideoLink(detected.normalized);
+        title = resolved.title || '';
+        platform = resolved.platform;
+        link = resolved.link || link;
+      } catch (error: any) {
+        // 元数据取不到不阻塞保存：先存链接，提炼时再报具体原因
+        title = platform === 'bilibili' ? 'B 站视频' : '抖音视频';
+      }
+      const fallback = platform === 'bilibili' ? 'B 站视频' : '抖音视频';
+      const rel = uniqueInboxPath(INBOX_DIR, sanitizeName(title || fallback) + '.md');
+      const abs = safeJoin(rel);
+      fs.writeFileSync(abs, buildVideoLinkMarkdown({ platform, link, title: title || fallback }), 'utf8');
+      noteAppWrite(abs);
+      notifySyncChange('file', rel);
+      emit('file-changed', { path: rel });
+      const saved = listInboxItems().items.find((item) => item.path === rel) || null;
+      return { saved, sourceUrl: link, videoLink: { platform, title: title || fallback, link } };
+    }
     const tempAbs = safeJoin(`${INBOX_DIR}/.fetch-${crypto.randomUUID()}.tmp`);
     try {
       const fetched = await fetchInboxWebPage(url, tempAbs);

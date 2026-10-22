@@ -18,6 +18,11 @@
  * 设计见 docs/AGENT-RUNTIME-INVENTORY.md 第 7 节）。它是「内置 Agent」这个运行时的展开细节，
  * 因此紧跟其后、排在「自动整理（梦境思考）」之前（两块自动化仍由 #after-builtin 插槽插入）。
  *
+ * 2026-10-22（video-inbox）：新增「视频理解模型」（anchor: panel-video）——收集箱里 B站/抖音
+ * 视频链接与本地音视频的提炼模型配置。与「内置 Agent」回答同一类问题（用哪个模型），
+ * 因此紧跟在「内置 Agent 运行时」之后、自动化分组之前；页面侧由设置页插进 #after-builtin
+ * 插槽最前渲染（导航顺序 = 页面顺序，settingsDomains.test.ts 锁住）。
+ *
  * **导航顺序 = 页面渲染顺序**（SettingsView.vue 里各大类的分组必须按本文件登记顺序渲染）。
  * 2026-09-27 用户报的「导航里第 2 项、页面上第 4 块」（梦境思考插在两个 Agent 分组中间）
  * 就是这条被破坏的结果：点击锚点跳到最后一块、滚动高亮顺序也乱。settingsDomains.test.ts
@@ -163,6 +168,10 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
       // 与「内置 Agent」回答同一个问题的两半（怎么配 → 它到底加载了什么），所以紧跟其后；
       // 页面侧由 AgentPanel 在 #after-builtin 插槽之前渲染，导航顺序 = 页面顺序。
       { id: 'agent-runtime', label: '内置 Agent 运行时', icon: 'ai', need: 'agent' },
+      // 视频理解模型（2026-10 收集箱「视频链接 → 提炼」）：另一个模型配置项，与「内置 Agent」
+      // 回答同一类问题（用哪个模型），所以紧跟在内置 Agent（含运行时）之后、自动化分组之前。
+      // 页面侧由设置页塞进 AgentPanel 的 #after-builtin 插槽最前（见 settingsDomains.test.ts 的顺序守卫）。
+      { id: 'panel-video', label: '视频理解模型', icon: 'ai', need: 'agent' },
       { id: 'agent-dream', label: '自动整理（梦境思考）', icon: 'moon', need: 'agent' },
       // 任务看板提炼：看板不在后台定时跑，间隔（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天）
       // 只决定「打开看板页时要不要自动重新提炼一次」。与梦境思考同属「按计划的自动化」，排在它后面。
