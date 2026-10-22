@@ -19,6 +19,7 @@ let completeText: typeof import('./modelClient.js').completeText;
 let ModelUnavailableError: typeof import('./modelClient.js').ModelUnavailableError;
 let ModelOutputTruncatedError: typeof import('./modelClient.js').ModelOutputTruncatedError;
 let ModelEmptyResponseError: typeof import('./modelClient.js').ModelEmptyResponseError;
+let ModelCapabilityError: typeof import('./modelClient.js').ModelCapabilityError;
 let db: any;
 
 before(async () => {
@@ -26,6 +27,7 @@ before(async () => {
   (await import('./db.js')).migrate();
   ({
     modelRequest, completeText, ModelUnavailableError, ModelOutputTruncatedError, ModelEmptyResponseError,
+    ModelCapabilityError,
   } = await import('./modelClient.js'));
 });
 
@@ -195,4 +197,53 @@ test('普通 400 不因 token 关键词之外的原因重试', async () => {
     /模型请求失败（400）/,
   );
   assert.equal(calls.length, 1);
+});
+
+/** 视频内容块：只允许自定义 OpenAI 兼容网关，其余路由/协议必须明确失败而不是丢媒体 */
+test('多模态：OpenAI 兼容网关的内容块原样进入请求体', () => {
+  const request = modelRequest(
+    { apiKey: 'k', baseUrl: 'https://gw.example/v1', model: 'omni', api: 'openai-completions' } as any,
+    [{ role: 'user', content: [
+      { type: 'text', text: '看这个视频' },
+      { type: 'video_url', video_url: { url: 'data:video/mp4;base64,AAAA' } },
+    ] }] as any,
+  );
+  const parts = (request.body as any).messages[0].content;
+  assert.equal(Array.isArray(parts), true);
+  assert.deepEqual(parts[0], { type: 'text', text: '看这个视频' });
+  assert.equal(parts[1].type, 'video_url');
+  assert.equal(parts[1].video_url.url, 'data:video/mp4;base64,AAAA');
+});
+
+test('多模态：官方路由（未配置自定义网关）明确拒绝视频输入', () => {
+  assert.throws(
+    () => modelRequest({ apiKey: 'k' } as any, [{ role: 'user', content: [{ type: 'video_url', video_url: { url: 'data:video/mp4;base64,AA' } }] }] as any),
+    (error: any) => error instanceof ModelCapabilityError && /视频输入需要自定义/.test(error.message),
+  );
+});
+
+test('多模态：anthropic / responses 协议明确拒绝视频输入', () => {
+  for (const api of ['anthropic-messages', 'openai-responses'] as const) {
+    assert.throws(
+      () => modelRequest({ apiKey: 'k', baseUrl: 'https://gw.example', model: 'm', api } as any, [
+        { role: 'user', content: [{ type: 'video_url', video_url: { url: 'data:video/mp4;base64,AA' } }] },
+      ] as any),
+      (error: any) => error instanceof ModelCapabilityError && /不支持视频输入/.test(error.message),
+      api,
+    );
+  }
+});
+
+test('多模态：字符串消息的请求体与改造前完全一致', () => {
+  const request = modelRequest(
+    { apiKey: 'k', baseUrl: 'https://gw.example/v1', model: 'm', api: 'openai-completions' } as any,
+    [
+      { role: 'system', content: 'S' },
+      { role: 'user', content: 'U' },
+    ],
+  );
+  assert.deepEqual((request.body as any).messages, [
+    { role: 'system', content: 'S' },
+    { role: 'user', content: 'U' },
+  ]);
 });

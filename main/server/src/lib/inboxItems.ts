@@ -4,6 +4,8 @@ import { db } from './db.js';
 import { safeJoin } from './vault.js';
 import { INBOX_DIR, isInboxDerivedPath } from './brainPaths.js';
 import { derivedPathsBySource, derivedPathForSource } from './inboxDerived.js';
+import { isVideoLinkPlaceholder } from '../pipeline/inboxConvert.js';
+import { parseVideoLinkMarkdown } from './videoLink.js';
 import { capabilityHint, convertCapability, type ConvertCapability } from '../pipeline/inboxConvert.js';
 
 /**
@@ -53,6 +55,8 @@ export interface InboxItem {
   jobId: number | null;
   /** 最近一次转换对应的 Agent 对话 */
   assistantSessionId: string | null;
+  /** 视频条目（能力为 video 时）：平台 / 标题 / 原链接 */
+  video?: { platform: string; title: string; link: string };
 }
 
 export interface InboxListing {
@@ -140,6 +144,17 @@ export function listInboxItems(): InboxListing {
           : job?.status === 'failed'
             ? 'failed'
             : 'pending';
+      // 视频条目：链接占位稿带平台与链接；音视频原件按「本地视频」处理
+      let video: InboxItem['video'];
+      if (capability === 'video') {
+        if (isVideoLinkPlaceholder(rel)) {
+          try {
+            const parsed = parseVideoLinkMarkdown(fs.readFileSync(abs, 'utf8'));
+            if (parsed) video = { platform: parsed.platform, title: parsed.title || name, link: parsed.link };
+          } catch { /* 解析失败按普通条目展示 */ }
+        }
+        if (!video) video = { platform: 'upload', title: name, link: '' };
+      }
       return {
         path: rel,
         name,
@@ -156,6 +171,7 @@ export function listInboxItems(): InboxListing {
         error: status === 'failed' ? job?.error || '' : '',
         jobId: job?.jobId ?? null,
         assistantSessionId: job?.assistantSessionId ?? null,
+        ...(video ? { video } : {}),
       } satisfies InboxItem;
     })
     .sort((a, b) => b.mtime - a.mtime);

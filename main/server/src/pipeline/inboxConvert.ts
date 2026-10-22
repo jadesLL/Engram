@@ -11,6 +11,7 @@ import {
   type ChatMessage,
 } from '../lib/modelClient.js';
 import type { AgentConfig } from '../assistant/config.js';
+import { videoConfigHint, videoConfigReady } from '../lib/videoConfig.js';
 import { findSkill } from '../content/skills/index.js';
 import { officeToText } from './office.js';
 import { enqueuePagePipeline } from '../jobQueue.js';
@@ -60,30 +61,67 @@ const PDF_EXTS = new Set(['pdf']);
 const TEXT_EXTS = new Set([
   'txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'yaml', 'yml', 'xml', 'html', 'htm', 'ini', 'conf',
 ]);
-/** 服务端转不了、但 Agent 通道可以（视觉/转写） */
+/** 服务端转不了、但 Agent 通道可以（图片识别） */
 const AGENT_ONLY_EXTS = new Set([
   'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'heic', 'avif', 'svg',
-  'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'amr', 'mp4', 'mov', 'mkv', 'avi', 'webm',
+]);
+/** 音视频原件：配置了视频理解模型后由服务端直接提炼（见 pipeline/inboxVideo.ts） */
+const VIDEO_AUDIO_EXTS = new Set([
+  'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'amr',
+  'mp4', 'mov', 'mkv', 'avi', 'webm', 'flv', 'wmv', 'm4v', '3gp',
 ]);
 
 export class InboxConvertError extends Error {}
 
-export type ConvertCapability = 'office' | 'pdf' | 'text' | 'agent-only' | 'unsupported';
+export type ConvertCapability = 'office' | 'pdf' | 'text' | 'video' | 'agent-only' | 'unsupported';
+
+/** 视频链接占位稿的 frontmatter 标记（保存链接时由 routes/inbox.ts 写入） */
+const VIDEO_LINK_MARKER = /^类型:\s*video-link\s*$/m;
+
+/**
+ * 这份文件是不是「视频链接占位稿」。
+ *
+ * 保存视频链接时不抓网页正文，而是存一份带 frontmatter 的 Markdown：
+ * 提炼时再由 pipeline/inboxVideo.ts 按平台去拿内容。
+ */
+export function isVideoLinkPlaceholder(relPath: string): boolean {
+  const ext = (relPath.split('.').pop() || '').toLowerCase();
+  if (ext !== 'md' && ext !== 'markdown') return false;
+  try {
+    const abs = safeJoin(relPath);
+    if (!fs.existsSync(abs)) return false;
+    const fd = fs.openSync(abs, 'r');
+    try {
+      const head = Buffer.alloc(4096);
+      const read = fs.readSync(fd, head, 0, head.length, 0);
+      return VIDEO_LINK_MARKER.test(head.subarray(0, read).toString('utf8'));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
 
 /** 这份格式服务端能不能直接转（决定界面上按钮是否可点、给什么提示） */
 export function convertCapability(relPath: string): ConvertCapability {
   const ext = (relPath.split('.').pop() || '').toLowerCase();
   if (OFFICE_EXTS.has(ext)) return 'office';
   if (PDF_EXTS.has(ext)) return 'pdf';
-  if (TEXT_EXTS.has(ext)) return 'text';
+  if (TEXT_EXTS.has(ext)) return isVideoLinkPlaceholder(relPath) ? 'video' : 'text';
+  if (VIDEO_AUDIO_EXTS.has(ext)) return 'video';
   if (AGENT_ONLY_EXTS.has(ext)) return 'agent-only';
   return 'unsupported';
 }
 
 /** 不可转/需 Agent 时的可读说明（界面与任务错误都用这一份文案） */
 export function capabilityHint(relPath: string, capability = convertCapability(relPath)): string {
+  if (capability === 'video') {
+    // 配置齐全时不打扰：只有没配好才提示去哪配（任务错误里另有同源文案）
+    return videoConfigReady() ? '' : videoConfigHint();
+  }
   if (capability === 'agent-only') {
-    return '这份文件需要 Agent 通道（图片识别 / 音视频转写）：让内置 Agent 或外部 Agent 处理它';
+    return '这份文件需要 Agent 通道（图片识别）：让内置 Agent 或外部 Agent 处理它';
   }
   if (capability === 'unsupported') {
     return '这一版还转不了这种格式：压缩包与未知二进制请先解包成具体文件再拖进来';
@@ -361,7 +399,7 @@ function localDate(date = new Date()): string {
   return `${date.getFullYear()}.${pad(date.getMonth() + 1)}.${pad(date.getDate())}`;
 }
 
-interface InboxConvertOptions {
+export interface InboxConvertOptions {
   signal?: AbortSignal;
   onProgress?: (stage: string, detail?: string) => void;
   /** 仅供测试注入：模型请求与配置 */
@@ -370,7 +408,7 @@ interface InboxConvertOptions {
 }
 
 /** 单独请模型从成稿提炼文件名，避免直接沿用上传时的名称或第一段标题。 */
-async function suggestCoreTitle(
+export async function suggestCoreTitle(
   name: string,
   markdown: string,
   options: InboxConvertOptions

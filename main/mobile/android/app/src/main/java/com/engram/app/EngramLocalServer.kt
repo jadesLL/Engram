@@ -575,6 +575,9 @@ class EngramLocalServer private constructor(private val context: Context) {
         }
         post("/api/inbox/adopt") { call.proxyHub("POST", "/api/inbox/adopt", call.receiveText()) }
         post("/api/inbox/convert") { call.proxyHub("POST", "/api/inbox/convert", call.receiveText()) }
+        // 视频理解模型：本机没有模型也没有浏览器，状态探测与连通性测试都窄代理到中枢
+        get("/api/inbox/video-status") { call.proxyHub("GET", "/api/inbox/video-status") }
+        post("/api/inbox/video-test") { call.proxyHub("POST", "/api/inbox/video-test", call.receiveText()) }
         // 收集箱行「让 Agent 总结并转换」：中枢建「收集箱处理」会话并立刻起一轮，由内置 Agent 读原件（窄代理，手机不跑 dsh）
         post("/api/inbox/agent-task") { call.proxyHub("POST", "/api/inbox/agent-task", call.receiveText()) }
 

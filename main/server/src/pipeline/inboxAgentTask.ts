@@ -62,10 +62,20 @@ export function inboxAgentTaskMessage(relPath: string): string {
     return [
       `收集箱里有一份待整理文件：${meta}。`,
       `这个格式服务端转换通道处理不了（${capabilityHint(relPath, kind)}），请走 Agent 通道：`,
-      '1. 先用 list_inbox / read_inbox_item 读原件（图片用 raw=true 直接看，音视频按你能读到的信息处理）；',
+      '1. 先用 list_inbox / read_inbox_item 读原件（图片用 raw=true 直接看）；',
       '2. 先用 3–5 条要点告诉我里面是什么、关键信息有哪些（不确定的地方标出来，不要猜）；',
       '3. 需要落成 Markdown 时，按 skill_guide("inbox-semantic-to-md") 的规范用 write_inbox_markdown 写产物；',
       '4. 产物留在收集箱，不要入库、不要写 Wiki 页面——入库由我在收集箱界面上确认。',
+    ].join('\n');
+  }
+
+  if (kind === 'video') {
+    return [
+      `收集箱里有一份音视频内容：${meta}。`,
+      '这是音视频（或视频链接）：请优先调用服务端工具 convert_inbox_item，走「视频理解」提炼（服务端按平台取内容、调用用户在设置里配好的视频理解模型，产物写进 收集箱/转换结果/）。',
+      '如果工具返回「视频理解模型未配置」之类的可读原因，就原样转告我、让我去 设置 → Agent 与自动化 → 视频理解模型 配置；不要自己编造视频里的内容。',
+      '转换完成后用 read_inbox_item 读出产物，给我 3–5 条要点并说明产物路径。',
+      '产物留在收集箱，不要入库、不要写 Wiki 页面——入库由我在收集箱界面上确认。',
     ].join('\n');
   }
 

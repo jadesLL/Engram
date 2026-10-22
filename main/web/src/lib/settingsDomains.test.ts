@@ -68,7 +68,7 @@ test('2026-09-28 方案 A 的 7 个单职责大类（顺序即导航顺序）', 
       sync: ['panel-sync', 'sync-content', 'sync-lan', 'sync-dualstack', 'sync-ddns'],
       update: ['panel-update-server', 'panel-update-desktop', 'panel-update-source', 'panel-update-android'],
       app: ['panel-app', 'app-version', 'app-uninstall'],
-      agent: ['agent-builtin', 'agent-runtime', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
+      agent: ['agent-builtin', 'agent-runtime', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
     },
   );
   // 混装桶拆开后的归位：外观不在账户里、搜索同义词不在数据里、版本与卸载不在更新里
@@ -217,14 +217,20 @@ test('导航顺序 = 页面渲染顺序（每个大类的分组顺序两边一�
   }
 });
 
-test('「自动整理（梦境思考）」与「任务看板提炼」插在「内置 Agent」与「外部接入」之间（插槽位置守卫）', () => {
+test('「视频理解模型」「自动整理（梦境思考）」与「任务看板提炼」插在「内置 Agent」与「外部接入」之间（插槽位置守卫）', () => {
   const view = fs.readFileSync(path.join(viewsDir, 'SettingsView.vue'), 'utf8');
   const agentSection = domainSection(view, 'agent');
-  // 页面侧：AgentPanel 里有个 #after-builtin 插槽，两块自动化分组从设置页插进去
+  // 页面侧：AgentPanel 里有个 #after-builtin 插槽，视频模型与两块自动化分组从设置页插进去
   assert.match(agentSection, /<AgentPanel>/, 'AgentPanel 不再是带插槽的写法');
   assert.match(agentSection, /#after-builtin/, '设置页没有把自动化分组插进 #after-builtin');
+  assert.match(agentSection, new RegExp('< *VideoPanel[^>]*/>'), '插槽里没有 VideoPanel（视频理解模型）');
   assert.match(agentSection, new RegExp('< *DreamSection[^>]*/>'), '插槽里没有 DreamSection');
   assert.match(agentSection, new RegExp('< *BoardSection[^>]*/>'), '插槽里没有 BoardSection（任务看板提炼）');
+  // 视频理解模型是模型配置（与内置 Agent 同类），紧跟内置 Agent 运行时；自动化分组排在它后面
+  assert.ok(
+    agentSection.indexOf('<VideoPanel') < agentSection.indexOf('<DreamSection'),
+    '「视频理解模型」要排在「自动整理（梦境思考）」之前——顺序与导航登记不一致就会点错锚点',
+  );
   assert.ok(
     agentSection.indexOf('<DreamSection') < agentSection.indexOf('<BoardSection'),
     '「任务看板提炼」要排在「自动整理（梦境思考）」之后——顺序与导航登记不一致就会点错锚点',
@@ -239,12 +245,13 @@ test('「自动整理（梦境思考）」与「任务看板提炼」插在「�
     builtinAt < slotAt && slotAt < targetAt,
     '自动化分组的插槽不在「内置 Agent」与「外部接入」之间——导航顺序会与页面顺序错位',
   );
-  // 数据侧：顺序也必须是 builtin → runtime → dream → board → target → tools
-  // （agent-runtime 是 dsh 0.2.1 起新增的「内置 Agent 运行时」，紧跟 builtin、在插槽之前，
-  //   见 docs/AGENT-RUNTIME-INVENTORY.md 第 7 节）
+  // 数据侧：顺序也必须是 builtin → runtime → video → dream → board → target → tools
+  // （agent-runtime 是 dsh 0.2.1 起新增的「内置 Agent 运行时」，紧跟 builtin、在插槽之前；
+  //   panel-video 是 video-inbox 新增的「视频理解模型」，同样是模型配置、紧跟 runtime；
+  //   见 docs/AGENT-RUNTIME-INVENTORY.md 第 7 节与 CONTRACT-video-inbox.md §4.3）
   assert.deepEqual(
     SETTINGS_DOMAINS.find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
-    ['agent-builtin', 'agent-runtime', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
+    ['agent-builtin', 'agent-runtime', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
   );
 });
 

@@ -17,8 +17,12 @@ export const AGENT_PRIMARY_LABEL = '让 Agent 处理';
 export const AGENT_ACTION_TIP =
   '打开 Agent 对话，让它读这份原件、总结并按语义转换；产物仍留在收集箱，确认后再入库';
 
-/** 服务端能按内容语义转换的三种能力（与 server 的 convertCapability 对齐） */
-export const SERVER_CONVERTIBLE_CAPABILITIES: readonly string[] = ['office', 'pdf', 'text'];
+/**
+ * 服务端能按内容语义转换的能力（与 server 的 convertCapability 对齐）。
+ * video 是 2026-10 新增：B站/抖音链接占位稿与本地音视频由视频理解管线提炼成 Markdown 纪要，
+ * 入口仍是同一个 POST /api/inbox/convert，所以能力上归入「可转」。
+ */
+export const SERVER_CONVERTIBLE_CAPABILITIES: readonly string[] = ['office', 'pdf', 'text', 'video'];
 
 /** 这份格式服务端能不能直接转；界面不自己猜扩展名 */
 export function isServerConvertible(capability: string): boolean {
@@ -58,4 +62,17 @@ export function inboxPrimaryKind(item: InboxPrimarySubject, adopted: boolean): I
 /** 「转换 / 重新转换」按钮是否可点：服务端能转且不在转换中（失败可重试，重复提交没有意义） */
 export function canConvertItem(item: InboxPrimarySubject): boolean {
   return isServerConvertible(item.capability) && item.status !== 'converting';
+}
+
+/**
+ * 行内主操作文案：视频条目说「提炼视频」（走的是视频理解模型，不是格式转换），
+ * 其他服务端可转格式保持原来的「转为 Markdown」。
+ */
+export function inboxPrimaryLabel(capability: string): string {
+  return capability === 'video' ? '提炼视频' : '转为 Markdown';
+}
+
+/** 失败重试时的主操作文案：视频是「重新提炼」，其他格式是「重新转换」 */
+export function inboxRetryLabel(capability: string): string {
+  return capability === 'video' ? '重新提炼' : '重新转换';
 }

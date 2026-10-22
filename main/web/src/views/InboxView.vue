@@ -36,7 +36,7 @@
         <span class="ic"><Icon name="upload" :size="19" /></span>
         <div>
           <b>拖文件到这里，或点击选择</b>
-          <small>不限格式 · 不限单文件大小 · 同名不覆盖</small>
+          <small>不限格式 · 不限单文件大小 · 同名不覆盖<br />音视频文件也可直接拖入，配置视频模型后点「提炼视频」</small>
         </div>
         <input ref="fileInput" class="file-input" type="file" multiple @change="onPicked" />
       </div>
@@ -47,10 +47,10 @@
           v-model="pageUrl"
           type="url"
           required
-          placeholder="粘贴网页链接，保存 HTML 原文"
+          placeholder="粘贴网页链接，或 B站 / 抖音视频链接"
           :disabled="fetchingUrl"
         />
-        <span class="tip-wrap" v-tooltip="'保存网站返回的 HTML 原文；登录、验证码和依赖脚本的内容可能无法完整保存'">
+        <span class="tip-wrap" v-tooltip="'网页保存 HTML 原文；B站 / 抖音视频链接保存为占位稿，保存后在这条上点「提炼视频」；登录、验证码和依赖脚本的内容可能无法完整保存'">
           <button class="btn sm url-save" type="submit" :disabled="fetchingUrl || !pageUrl.trim()">
             <AppSpinner v-if="fetchingUrl" :size="14" />
             <template v-else>保存</template>
@@ -72,6 +72,15 @@
 
     <div v-if="inbox.error" class="error-line">
       <Icon name="report" :size="14" />{{ inbox.error }}
+    </div>
+
+    <!-- 视频模型没配好时给一条不阻塞的提示：链接照样能存，点「提炼视频」前先去设置里配模型 -->
+    <div v-if="showVideoSetupHint" class="video-hint">
+      <Icon name="ai" :size="13" />
+      <span>
+        <b>{{ videoSetupTitle }}</b>：视频链接仍可保存，点「提炼视频」前请先到
+        <a href="#" @click.prevent="openVideoSettings">设置 → 视频理解模型</a> 填好 Base URL、API Key 与模型名<template v-if="videoStatus && !videoStatus.enabled">，并打开「启用视频理解」</template>。
+      </span>
     </div>
 
     <div class="toolbar">
@@ -113,7 +122,21 @@
       <div v-for="item in visibleItems" :key="item.path" class="row">
         <div class="ftype" :class="item.category">{{ typeLabel(item) }}</div>
         <div class="fmain">
-          <div class="fname truncate" v-tooltip="item.rel">{{ item.name }}</div>
+          <!-- 视频条目：平台徽标 + 可点击标题（B站 / 抖音链接新窗口打开；本地音视频没有外链就只显示标题） -->
+          <div v-if="isVideoRow(item)" class="fname vid-name" v-tooltip="item.rel">
+            <span class="plat-badge" :class="`plat-${item.video?.platform || 'upload'}`">
+              {{ platformLabel(item.video?.platform || '') }}
+            </span>
+            <a
+              v-if="videoLink(item)"
+              class="vid-link truncate"
+              :href="videoLink(item)"
+              target="_blank"
+              rel="noopener noreferrer"
+            >{{ videoTitle(item) }}</a>
+            <span v-else class="truncate">{{ videoTitle(item) }}</span>
+          </div>
+          <div v-else class="fname truncate" v-tooltip="item.rel">{{ item.name }}</div>
           <div class="fmeta">
             <span>{{ formatSize(item.size) }}</span>
             <span>·</span>
@@ -140,10 +163,10 @@
         <div class="actions">
           <span v-if="primaryKind(item) === 'convert'" class="tip-wrap" v-tooltip="convertTip(item)">
             <button class="primary-act" type="button" :disabled="!canConvert(item)" @click="convertItem(item)">
-              <Icon name="ai" :size="13" />转为 Markdown
+              <Icon name="ai" :size="13" />{{ inboxPrimaryLabel(item.capability) }}
             </button>
           </span>
-          <span v-else-if="primaryKind(item) === 'process'" class="tip-wrap" v-tooltip="'正在按内容语义转换，完成后自动刷新'">
+          <span v-else-if="primaryKind(item) === 'process'" class="tip-wrap" v-tooltip="item.capability === 'video' ? '正在提炼视频，完成后自动刷新' : '正在按内容语义转换，完成后自动刷新'">
             <button
               class="primary-act"
               type="button"
@@ -155,7 +178,7 @@
           </span>
           <span v-else-if="primaryKind(item) === 'retry'" class="tip-wrap" v-tooltip="convertTip(item)">
             <button class="primary-act" type="button" :disabled="!canConvert(item)" @click="convertItem(item)">
-              <Icon name="refresh" :size="13" />重新转换
+              <Icon name="refresh" :size="13" />{{ inboxRetryLabel(item.capability) }}
             </button>
           </span>
           <span
@@ -215,7 +238,7 @@
                 type="button"
                 role="menuitem"
                 @click="runMenu(item, 'convert')"
-              ><Icon name="ai" :size="13" />重新转换</button>
+              ><Icon name="ai" :size="13" />{{ inboxRetryLabel(item.capability) }}</button>
               <!-- Agent 入口对所有条目都显示：agent-only 是唯一能读的通道，unsupported 也让用户点一下拿到服务端的明确拒绝原因 -->
               <button
                 type="button"
@@ -281,6 +304,8 @@ import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import { vditorPreviewOptions } from '../lib/vditorPreview';
 import { wrapTables } from '../lib/markdownTableWrap';
+import { useRouter } from 'vue-router';
+import { api } from '../api';
 import { useInboxStore, type InboxItem, type InboxUpload } from '../stores/inbox';
 import { useChatStore } from '../stores/chat';
 import { useAppStore } from '../stores/app';
@@ -293,6 +318,8 @@ import {
   AGENT_PRIMARY_LABEL,
   canConvertItem as canConvert,
   inboxPrimaryKind,
+  inboxPrimaryLabel,
+  inboxRetryLabel,
   isServerConvertible,
   type InboxPrimaryKind,
 } from '../lib/inboxAgent';
@@ -307,6 +334,7 @@ const isDesktop = Boolean((window as any).wikiDesktop);
 const inbox = useInboxStore();
 const chat = useChatStore();
 const app = useAppStore();
+const router = useRouter();
 const fileInput = ref<HTMLInputElement>();
 const pageUrl = ref('');
 const fetchingUrl = ref(false);
@@ -332,6 +360,44 @@ const noticeDismissed = ref(localStorage.getItem(NOTICE_KEY) === '1');
 function dismissNotice() {
   noticeDismissed.value = true;
   localStorage.setItem(NOTICE_KEY, '1');
+}
+
+/* ===== 视频模型状态：只在收集箱顶部给一条不阻塞的提示 ===== */
+
+interface VideoStatusSummary {
+  configured: boolean;
+  enabled: boolean;
+  hasKey?: boolean;
+  browserAvailable?: boolean;
+}
+
+const videoStatus = ref<VideoStatusSummary | null>(null);
+
+/** 有视频条目、且服务端明确说没配好时才提示：没有视频条目不去打扰普通用户 */
+const hasVideoItems = computed(() => inbox.items.some((item) => item.capability === 'video'));
+const showVideoSetupHint = computed(() => (
+  Boolean(videoStatus.value) && videoStatus.value!.configured === false && hasVideoItems.value
+));
+const videoSetupTitle = computed(() => (
+  videoStatus.value?.enabled ? '视频理解模型还没配齐' : '视频理解模型未启用'
+));
+
+/**
+ * 读视频模型状态（GET /api/inbox/video-status）。读不到就静默：
+ * 它只是顶部提示，不能挡住收集箱的保存 / 转换；服务端在真正提炼时会返回中文原因。
+ */
+async function loadVideoStatus(): Promise<void> {
+  try {
+    const { data } = await api.get('/api/inbox/video-status');
+    videoStatus.value = data as VideoStatusSummary;
+  } catch {
+    videoStatus.value = null;
+  }
+}
+
+/** 跳「设置 → Agent 与自动化 → 视频理解模型」 */
+function openVideoSettings(): void {
+  void router.push({ path: '/settings', query: { section: 'agent', anchor: 'panel-video' } });
 }
 
 /* ===== ⋯ 溢出菜单：同一时刻只开一行，点别处/滚动/Esc 收起 ===== */
@@ -425,13 +491,21 @@ function statusChip(item: InboxItem): string {
 
 function statusTip(item: InboxItem): string {
   if (item.status === 'failed') return item.error || '转换失败，可以重试';
-  if (item.status === 'converting') return '正在按内容语义转换，完成后自动刷新';
+  if (item.status === 'converting') {
+    return item.capability === 'video' ? '正在提炼视频，完成后自动刷新' : '正在按内容语义转换，完成后自动刷新';
+  }
   return '';
 }
 
 function convertTip(item: InboxItem): string {
   if (item.status === 'converting') return '正在转换，完成后会自动刷新';
   if (!isServerConvertible(item.capability)) return item.hint || '这个格式暂时不能转换';
+  // 视频不是格式转换，而是发给视频理解模型生成纪要：文案要说清楚，别让人以为只是换封装
+  if (item.capability === 'video') {
+    if (item.derivedPath) return '重新提炼成功后会替换这条视频纪要的旧产物；已入库的副本不会自动改动';
+    if (item.status === 'failed') return '重新提炼：再调用一次视频理解模型生成 Markdown 纪要';
+    return '调用视频理解模型，把这条视频提炼成 Markdown 纪要；产物仍在收集箱，确认后入库';
+  }
   if (item.derivedPath) return '重新转换成功后会替换这份原件的旧产物；已入库的副本不会自动改动';
   if (item.status === 'failed') return '重新转换';
   return '按内容语义重写成人类可读的 Markdown，不是格式搬运';
@@ -443,6 +517,12 @@ function convertTip(item: InboxItem): string {
  */
 function rowNote(item: InboxItem): string {
   if (!isServerConvertible(item.capability)) return item.hint;
+  // 视频条目是可转的（走视频理解管线），但服务端会在未配置模型时给可操作 hint：
+  // 只在确实没配好时露出来，已配置后不再重复「请先配置模型」这句。
+  if (item.capability === 'video') {
+    if (item.derivedPath) return `产物：${item.derivedPath}`;
+    return videoStatus.value?.configured === false ? item.hint : '';
+  }
   if (item.derivedPath) return `产物：${item.derivedPath}`;
   return '';
 }
@@ -456,7 +536,7 @@ const convertAllDisabled = computed(() => convertAllGuard.busy.value || !convert
 const convertAllTip = computed(() =>
   convertibleItems.value.length
     ? `把 ${convertibleItems.value.length} 个可转换的文件一起交给语义转换`
-    : '收集箱里没有可转换的文件：图片和音视频要走 Agent 通道，压缩包等格式暂不支持'
+    : '收集箱里没有可转换的文件：图片要走 Agent 通道，压缩包等格式暂不支持'
 );
 
 async function convertItem(item: InboxItem) {
@@ -464,7 +544,7 @@ async function convertItem(item: InboxItem) {
   try {
     const result = await inbox.convert([item.path]);
     if (result.queued.length) {
-      notify.success('已开始转换');
+      notify.success(item.capability === 'video' ? '已开始提炼视频' : '已开始转换');
       expectConversion();
       await openConversionChat(result.queued[0].sessionId);
     } else if (result.skipped.length) {
@@ -717,6 +797,31 @@ function typeLabel(item: InboxItem): string {
   return TYPE_LABELS[item.category] || 'FILE';
 }
 
+/* ===== 视频条目：平台徽标 / 标题 / 原始链接（只对 capability==='video' 生效） ===== */
+
+const PLATFORM_LABELS: Record<string, string> = { bilibili: 'B站', douyin: '抖音', upload: '本地视频' };
+
+/** 平台徽标文案：未知平台不硬猜，退回「视频」 */
+function platformLabel(platform: string): string {
+  return PLATFORM_LABELS[platform] || '视频';
+}
+
+/** 服务端带了 video 元数据才渲染平台徽标与可点击标题 */
+function isVideoRow(item: InboxItem): boolean {
+  return item.capability === 'video' && Boolean(item.video);
+}
+
+function videoTitle(item: InboxItem): string {
+  const title = item.video?.title?.trim();
+  if (!title) return item.name.replace(/\.[^.]+$/, '');
+  // 本地音视频的服务端 title 就是文件名（带扩展名）：列表里当标题显示，去掉扩展名
+  return item.video?.platform === 'upload' ? title.replace(/\.[^.]+$/, '') : title;
+}
+
+function videoLink(item: InboxItem): string {
+  return item.video?.link || '';
+}
+
 function formatSize(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -802,7 +907,11 @@ async function submitUrl() {
   try {
     const saved = await inbox.fetchUrl(url);
     pageUrl.value = '';
-    notify.success(`已保存网页：${saved.name}`);
+    if (saved.capability === 'video') {
+      notify.success(`已保存视频链接：${saved.name}，点「提炼视频」开始提炼`);
+    } else {
+      notify.success(`已保存网页：${saved.name}`);
+    }
   } catch (error: any) {
     notify.error(error?.response?.data?.error || error?.message || '抓取网页失败');
   } finally {
@@ -832,6 +941,8 @@ onMounted(async () => {
   document.addEventListener('keydown', onDocKeydown);
   window.addEventListener('scroll', onDocScroll, true);
   await inbox.load();
+  // 视频模型状态只用于顶部提示，独立请求、失败静默（不阻塞收集箱本身）
+  void loadVideoStatus();
   // store 可能已经被别处（侧栏角标）加载过，watch 不会为初始值补一次，这里对一次表
   syncPolling();
 });
@@ -1011,6 +1122,28 @@ onBeforeUnmount(() => {
 
 .notice .hide-btn:hover { background: var(--bg-hover); color: var(--text-secondary); }
 
+/* 视频模型未配置提示：和提示条一样按阅读宽度收敛；不阻塞任何操作，只是给一条去设置的路 */
+.video-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 1180px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+
+.video-hint svg { color: var(--inbox-accent); flex-shrink: 0; }
+.video-hint b { color: var(--text-secondary); font-weight: 600; }
+.video-hint a {
+  color: var(--inbox-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.video-hint a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.video-hint a:focus-visible { outline: 2px solid var(--inbox-accent); outline-offset: 2px; border-radius: 3px; }
+
 .error-line,
 .loading-line {
   display: flex;
@@ -1115,6 +1248,51 @@ html.dark .ftype.video { background: rgba(196, 174, 232, 0.14); color: #c4aee8; 
 
 .fmain { flex: 1; min-width: 0; }
 .fname { font-size: 14px; font-weight: 550; }
+
+/* 视频条目：平台徽标（浅底 + 平台色）+ 可点击标题，标题仍是 14px 的文件名样式 */
+.vid-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plat-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.plat-badge.plat-bilibili { background: rgba(251, 114, 153, 0.15); color: #cf4770; }
+.plat-badge.plat-douyin { background: rgba(20, 200, 195, 0.16); color: #0d8f8b; }
+.plat-badge.plat-upload { background: var(--inbox-accent-soft); color: var(--inbox-accent); }
+
+html.dark .plat-badge.plat-bilibili { background: rgba(251, 114, 153, 0.2); color: #f08cae; }
+html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: #7fe9e5; }
+
+.vid-link {
+  min-width: 0;
+  color: var(--text);
+  font-size: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.vid-link:hover {
+  color: var(--inbox-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.vid-link:focus-visible { outline: 2px solid var(--inbox-accent); outline-offset: 2px; border-radius: 3px; }
 
 .fmeta {
   display: flex;
@@ -1361,6 +1539,9 @@ html.dark .ftype.video { background: rgba(196, 174, 232, 0.14); color: #c4aee8; 
     min-height: 32px;
     padding: 4px 10px;
   }
+
+  /* 视频模型提示在手机上按行折行，图标与首行对齐 */
+  .video-hint { align-items: flex-start; }
 
   /* 状态筛选（全部 / 待整理 / 已转换）是纯手指操作：27px 的胶囊太矮，撑到 38px，
      「按收纳时间倒序」这类说明在手机上让位（排序不是这一屏的重点） */

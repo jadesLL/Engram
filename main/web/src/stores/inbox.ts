@@ -23,8 +23,11 @@ export interface InboxItem {
   status: 'pending' | 'converting' | 'converted' | 'failed';
   /** 转换产物的 vault 路径；为 null 表示还没有产物 */
   derivedPath: string | null;
-  /** 服务端对这个格式的转换能力：office/pdf/text 能转，agent-only/unsupported 不能 */
-  capability: 'office' | 'pdf' | 'text' | 'agent-only' | 'unsupported';
+  /**
+   * 服务端对这个格式的转换能力：office/pdf/text/video 能转（video 走视频理解管线），
+   * agent-only/unsupported 不能。
+   */
+  capability: 'office' | 'pdf' | 'text' | 'video' | 'agent-only' | 'unsupported';
   /** 不能转换时的原因（可直接显示给用户）；能转时是空串 */
   hint: string;
   /** 最近一次转换失败的原因 */
@@ -33,6 +36,11 @@ export interface InboxItem {
   jobId: number | null;
   /** 最近一次转换的 Agent 对话 */
   assistantSessionId: string | null;
+  /**
+   * 视频条目（仅 capability === 'video' 时出现）：平台、标题与原始链接。
+   * 链接占位稿记的是 B站/抖音的原始地址；本地音视频 upload 的 link 可能为空（打不开外链）。
+   */
+  video?: { platform: string; title: string; link: string };
 }
 
 /** POST /api/inbox/convert 的回执：哪些进了队列、哪些被跳过及原因 */

@@ -38,6 +38,7 @@ import { requireAuth } from './auth.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
 import { withJobsStopped } from '../jobs.js';
+import { setVideoConfig } from '../lib/videoConfig.js';
 import {
   DDNS_SETTINGS_KEY,
   clampInterval,
@@ -67,6 +68,9 @@ const PUBLIC_SETTINGS = [
   'home_layout',
   'theme',
   'editor_mode',
+  // 收集箱「视频链接 → 提炼」用的视频理解模型配置（JSON：enabled/baseUrl/apiKey/model/…）。
+  // 与 agent_config 分开：它是文本路由，视频输入是厂商扩展，不该互相覆盖。
+  'video_config',
 ];
 
 export async function settingsRoutes(app: FastifyInstance) {
@@ -89,7 +93,21 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.get('/api/settings', async () => {
     const out: Record<string, string> = {};
-    for (const k of PUBLIC_SETTINGS) out[k] = getSetting(k) || '';
+    for (const k of PUBLIC_SETTINGS) {
+      const raw = getSetting(k) || '';
+      // 视频配置里的 apiKey 不回显（面板用 /api/settings/video-status 的 hasKey 判断）
+      if (k === 'video_config' && raw) {
+        try {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          delete parsed.apiKey;
+          out[k] = JSON.stringify(parsed);
+        } catch {
+          out[k] = raw;
+        }
+      } else {
+        out[k] = raw;
+      }
+    }
     return { settings: out };
   });
 
@@ -108,6 +126,24 @@ export async function settingsRoutes(app: FastifyInstance) {
     for (const k of PUBLIC_SETTINGS) {
       const v = body[k];
       if (v === undefined) continue;
+      if (k === 'video_config') {
+        // 视频配置走归一化保存：空 apiKey 表示「保留原 Key」（面板不回显 Key，也不能被空值冲掉）
+        let incoming: Record<string, unknown> = {};
+        try {
+          incoming = (typeof v === 'string' ? JSON.parse(v) : v) as Record<string, unknown>;
+        } catch {
+          incoming = {};
+        }
+        if (!incoming || typeof incoming !== 'object') incoming = {};
+        if (typeof incoming.apiKey === 'string' && !incoming.apiKey.trim()) delete incoming.apiKey;
+        const before = getSetting(k) || '';
+        const next = setVideoConfig(incoming as Parameters<typeof setVideoConfig>[0]);
+        if (JSON.stringify(next) !== before) {
+          stampPreference(k, currentNodeId());
+          recordLocalChange('preference', k);
+        }
+        continue;
+      }
       const text = typeof v === 'string' ? v : JSON.stringify(v);
       if (getSetting(k) === text) continue;
       setSetting(k, text);

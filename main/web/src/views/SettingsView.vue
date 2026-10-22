@@ -131,8 +131,9 @@
           <UninstallSection />
         </section>
 
-        <!-- Agent 与自动化：内置 Agent / 自动整理（梦境思考）/ 任务看板提炼 / 外部接入 / 工具与手册。
-             两块自动化都经具名插槽插在「内置 Agent」之后（梦境思考在前、看板提炼紧跟），顺序与导航一致。 -->
+        <!-- Agent 与自动化：内置 Agent（含运行时）/ 视频理解模型 / 自动整理（梦境思考）/ 任务看板提炼 /
+             外部接入 / 工具与手册。视频理解模型与两块自动化都经具名插槽插在「内置 Agent」之后：
+             视频模型最前（与内置 Agent 同属模型配置），梦境思考在前、看板提炼紧跟，顺序与导航一致。 -->
         <section
           v-if="capabilities.features.agentAdmin && visitedDomains.has('agent')"
           v-show="activeDomain === 'agent'"
@@ -142,6 +143,7 @@
           <DomainHead :domain="domainOf('agent')" />
           <AgentPanel>
             <template #after-builtin>
+              <VideoPanel />
               <DreamSection :active="activeDomain === 'agent'" />
               <BoardSection :active="activeDomain === 'agent'" />
             </template>
@@ -164,6 +166,7 @@ const AppVersionSection = defineAsyncComponent(() => import('../components/setti
 const UninstallSection = defineAsyncComponent(() => import('../components/settings/UninstallSection.vue'));
 const DesktopAppSection = defineAsyncComponent(() => import('../components/settings/DesktopAppSection.vue'));
 const AgentPanel = defineAsyncComponent(() => import('../components/settings/AgentPanel.vue'));
+const VideoPanel = defineAsyncComponent(() => import('../components/settings/VideoPanel.vue'));
 const DreamSection = defineAsyncComponent(() => import('../components/settings/DreamSection.vue'));
 const BoardSection = defineAsyncComponent(() => import('../components/settings/BoardSection.vue'));
 const SyncPanel = defineAsyncComponent(() => import('../components/settings/SyncPanel.vue'));
