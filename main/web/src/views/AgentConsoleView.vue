@@ -189,6 +189,9 @@ const mainEl = ref<HTMLElement | null>(null);
 let pageHost: HTMLElement | null = null;
 let previousHostOverflow = '';
 let hostScrollBound = false;
+/** 与 CSS 的窄屏断点一致：≤768px 时整页滚动，不能锁 .content（否则手机/窄窗口无法滚动） */
+const DESKTOP_SCROLL_LOCK_QUERY = '(min-width: 769px)';
+let desktopMedia: MediaQueryList | null = null;
 
 function onHostScroll(): void {
   if (pageHost && pageHost.scrollTop !== 0) pageHost.scrollTop = 0;
@@ -215,6 +218,15 @@ function unlockPageScroll(): void {
   if (pageHost) pageHost.style.overflow = previousHostOverflow;
   pageHost = null;
   previousHostOverflow = '';
+}
+
+/** 只在宽屏（双栏、右列自己滚）时接管/锁定外层滚动；窄屏保持整页滚动不受影响 */
+function applyPageScrollLock(): void {
+  if (desktopMedia && !desktopMedia.matches) {
+    unlockPageScroll();
+    return;
+  }
+  lockPageScroll();
 }
 
 const active = ref<SectionKey>('models');
@@ -359,7 +371,11 @@ async function stop(): Promise<void> {
 }
 
 onMounted(async () => {
-  lockPageScroll();
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    desktopMedia = window.matchMedia(DESKTOP_SCROLL_LOCK_QUERY);
+    desktopMedia.addEventListener('change', applyPageScrollLock);
+  }
+  applyPageScrollLock();
   await loadCapabilities();
   if (capabilities.value.features.agentAdmin === false) {
     capabilityBlocked.value = true;
@@ -370,7 +386,7 @@ onMounted(async () => {
 
 // keep-alive 场景（页面被缓存后再次进入）也要重新接管外层滚动
 onActivated(() => {
-  lockPageScroll();
+  applyPageScrollLock();
 });
 
 onDeactivated(() => {
@@ -378,6 +394,8 @@ onDeactivated(() => {
 });
 
 onBeforeUnmount(() => {
+  desktopMedia?.removeEventListener('change', applyPageScrollLock);
+  desktopMedia = null;
   unlockPageScroll();
 });
 </script>
