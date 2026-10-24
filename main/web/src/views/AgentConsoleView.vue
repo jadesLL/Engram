@@ -1,5 +1,5 @@
 <template>
-  <div class="console-view">
+  <div ref="viewEl" class="console-view">
     <header class="console-head">
       <div class="head-main">
         <button class="btn icon back" type="button" aria-label="返回设置" title="返回设置" @click="backToSettings">
@@ -51,7 +51,7 @@
         </button>
       </nav>
 
-      <div class="console-main">
+      <div ref="mainEl" class="console-main">
         <div class="console-content">
           <!-- 启动失败 / 未就绪横幅 -->
           <div v-if="statusProblem" class="state-strip tone-warn console-banner">
@@ -113,7 +113,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import Icon from '../components/Icon.vue';
 import AdvancedPanel from '../components/agentConsole/AdvancedPanel.vue';
@@ -176,6 +176,47 @@ const TABS: ConsoleTab[] = [
 const router = useRouter();
 const { capabilities, load: loadCapabilities } = useRuntimeCapabilities();
 
+/**
+ * 页面滚动接管（2026-10-24 报「顶栏和左侧分组被滚走、只剩右列内容」的修复）。
+ *
+ * 本页沿用设置页的双栏布局：Home 的 .content 交出滚动权，只有右侧 .console-main 滚。
+ * 但 .content 是整站共用的滚动容器，路由切换/窗口缩放后可能残留 scrollTop（overflow:hidden
+ * 的容器仍可由 scrollIntoView 等程序性滚动），一有残留整页（含顶栏 + 左分组）就会被顶出视口。
+ * 进入本页时把外层滚动归零、临时锁成 hidden，并在残留滚动时立即拉回，保证顶栏/分组常驻。
+ */
+const viewEl = ref<HTMLElement | null>(null);
+const mainEl = ref<HTMLElement | null>(null);
+let pageHost: HTMLElement | null = null;
+let previousHostOverflow = '';
+let hostScrollBound = false;
+
+function onHostScroll(): void {
+  if (pageHost && pageHost.scrollTop !== 0) pageHost.scrollTop = 0;
+}
+
+function lockPageScroll(): void {
+  const host = (viewEl.value?.closest('.content') as HTMLElement | null) ?? null;
+  if (host) {
+    pageHost = host;
+    previousHostOverflow = host.style.overflow;
+    host.style.overflow = 'hidden';
+    host.scrollTop = 0;
+    if (!hostScrollBound) {
+      host.addEventListener('scroll', onHostScroll, { passive: true });
+      hostScrollBound = true;
+    }
+  }
+  if (typeof window !== 'undefined') window.scrollTo(0, 0);
+}
+
+function unlockPageScroll(): void {
+  if (pageHost && hostScrollBound) pageHost.removeEventListener('scroll', onHostScroll);
+  hostScrollBound = false;
+  if (pageHost) pageHost.style.overflow = previousHostOverflow;
+  pageHost = null;
+  previousHostOverflow = '';
+}
+
 const active = ref<SectionKey>('models');
 const capabilityBlocked = ref(false);
 const status = ref<ConsoleStatusPayload | null>(null);
@@ -223,6 +264,8 @@ function backToSettings(): void {
 
 function selectTab(key: SectionKey): void {
   active.value = key;
+  // 四个面板共用一根滚动条：切分区回到顶部，避免带着上一个分区的滚动位置进入新面板
+  if (mainEl.value) mainEl.value.scrollTop = 0;
   if (!payloads[key]) void loadSection(key);
 }
 
@@ -316,12 +359,26 @@ async function stop(): Promise<void> {
 }
 
 onMounted(async () => {
+  lockPageScroll();
   await loadCapabilities();
   if (capabilities.value.features.agentAdmin === false) {
     capabilityBlocked.value = true;
     return;
   }
   await loadStatus();
+});
+
+// keep-alive 场景（页面被缓存后再次进入）也要重新接管外层滚动
+onActivated(() => {
+  lockPageScroll();
+});
+
+onDeactivated(() => {
+  unlockPageScroll();
+});
+
+onBeforeUnmount(() => {
+  unlockPageScroll();
 });
 </script>
 
@@ -338,6 +395,10 @@ onMounted(async () => {
 
 /* ── 顶栏 ─────────────────────────────────────────────── */
 .console-head {
+  /* 兜底：万一外层滚动容器仍有残留偏移，顶栏也不会被一起滚出视口 */
+  position: sticky;
+  top: 0;
+  z-index: 3;
   flex: 0 0 auto;
   display: flex;
   align-items: flex-start;
@@ -346,6 +407,7 @@ onMounted(async () => {
   flex-wrap: wrap;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border);
+  background: var(--bg);
 }
 .head-main {
   display: flex;
@@ -548,6 +610,7 @@ onMounted(async () => {
     padding: 16px 14px 88px;
   }
   .console-head {
+    position: static;
     padding-bottom: 12px;
   }
   .head-text h2 {
