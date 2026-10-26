@@ -40,6 +40,19 @@ export function isQueuedMessage(message: ChatMessage): boolean {
   return (message.metadata as any)?.queued === true;
 }
 
+/**
+ * 收集箱转换的「过程」消息：带转换阶段、且这一步还没收口（没有 inboxConversionFinal）。
+ *
+ * 这类消息是后台转换队列的实时进度：服务端只维护一条、按阶段/间隔原位更新（旧版本是一步一条）。
+ * 不用把它逐条画成助手正文——视频分块下载会在对话里刷出几十行「已下载 xx MB」；转录区底部
+ * 的「收集箱正在转换」状态条已经持续显示最新一条，这里过滤掉即可。收口后同一条消息带 final
+ * 标记，变成完成 / 失败 / 取消的正文，照常进入对话流。
+ */
+export function isConversionStepMessage(message: ChatMessage): boolean {
+  const meta = (message.metadata || {}) as Record<string, unknown>;
+  return message.role === 'assistant' && Boolean(meta.inboxConversionStage) && meta.inboxConversionFinal !== true;
+}
+
 /** 思考段时长（毫秒）：服务端在段收口时补写；缺失返回 0 */
 export function reasoningDurationMs(message: ChatMessage): number {
   const value = Number((message.metadata as any)?.ms);
@@ -78,6 +91,9 @@ export function buildChatTimeline(
   };
 
   for (const message of messages) {
+    // 收集箱转换的进行中过程消息不进正文流：底部「收集箱正在转换」状态条已经持续显示最新进度，
+    // 逐条画出来会把对话刷满「已下载 xx MB」（收口后的完成/失败消息带 final 标记，照常显示）
+    if (isConversionStepMessage(message)) continue;
     add(message.runId, {
       key: message.id,
       at: message.createdAt,
