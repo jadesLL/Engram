@@ -203,6 +203,7 @@ import {
 } from '../lib/updateCadence';
 import { api } from '../api';
 import { openPageStream } from '../lib/events';
+import { createFreshnessProbe } from '../lib/freshness';
 import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
 import { createIdeaNote } from '../lib/quickNote';
@@ -573,6 +574,10 @@ async function autoCheckUpdate(): Promise<boolean> {
 }
 
 let closeStream: (() => void) | null = null;
+/** 推送兜底探针：SSE 晚到/丢失时按内容版本号自愈（见 lib/freshness） */
+let freshness: ReturnType<typeof createFreshnessProbe> | null = null;
+/** 兜底探针间隔：3 秒足够让「保存完成 → 侧栏出现」的体感保持在一瞬，探针本身只有几十字节 */
+const FRESHNESS_INTERVAL_MS = 3000;
 let updateTimer: ReturnType<typeof setTimeout> | null = null;
 let updateBackoffIndex = 0;
 let updatePokedAt = 0;
@@ -605,10 +610,19 @@ function pokeUpdateCheck() {
 }
 
 function onUpdateVisibility() {
-  if (document.visibilityState === 'visible') pokeUpdateCheck();
+  if (document.visibilityState !== 'visible') return;
+  pokeUpdateCheck();
+  // 后台期间推送可能被节流/掉线：回前台立即对一次账，不等下一个探针周期
+  void freshness?.check();
 }
 function onUpdateOnline() {
   pokeUpdateCheck();
+  void freshness?.check();
+}
+/** 窗口重新获得焦点（切回应用）：与回前台同口径，补一次推送对账 */
+function onWindowFocus() {
+  pokeUpdateCheck();
+  void freshness?.check();
 }
 onMounted(() => {
   window.addEventListener('keydown', onKey);
@@ -655,6 +669,8 @@ onMounted(() => {
     if (caps.runtime !== 'android-local') {
       // 服务端 SSE 实时推送：页面增删改/移动刷新正文与侧栏；Agent 提问弹在对话里，这里只提醒一句
       closeStream = openPageStream((ev) => {
+        // 事件自带内容版本号：记下来，兜底探针就不会为这条事件再刷一遍
+        freshness?.noteRevision(ev.rev);
         if (ev.type === 'settings-changed') {
           if (!homeBoard.editing) void homeBoard.load();
           void app.loadUiPreferences();
@@ -671,12 +687,29 @@ onMounted(() => {
           inbox.load();
         }
         app.applyPageEvent(ev);
+      }, () => {
+        // 断线重连：断线期间的事件服务端不补发，立刻对一次账把漏掉的内容补上
+        void freshness?.check();
       });
+      // 推送兜底探针：SSE 在反向代理缓冲、电脑休眠唤醒等场景下可能晚到或丢失，
+      // 而 EventSource 只在真断开时重连——「连接还在、事件没来」时界面会一直停在旧状态。
+      // 这里每 3 秒读一次内容版本号，变了才重读目录（保存后最多一个周期内出现）。
+      // Android 本地端没有这个端点（本机服务只做窄代理），仍由同步内容版本号那条路兜底。
+      freshness = createFreshnessProbe({
+        fetchRevision: async () => Number((await api.get('/api/events/state')).data?.revision ?? 0),
+        onChanged: () => {
+          inbox.load();
+          app.bumpSidebar();
+        },
+        intervalMs: FRESHNESS_INTERVAL_MS,
+        isVisible: () => document.visibilityState === 'visible',
+      });
+      freshness.start();
     }
   });
   scheduleUpdateCheck(UPDATE_CHECK_STARTUP_MS);
   document.addEventListener('visibilitychange', onUpdateVisibility);
-  window.addEventListener('focus', pokeUpdateCheck);
+  window.addEventListener('focus', onWindowFocus);
   window.addEventListener('online', onUpdateOnline);
   // 内置 Agent 正在跑的轮次要接上事件流：页面刷新后、或抽屉从没打开过，
   // 图标栏那颗「运行中」指示也得亮着（跑完还会亮小红点）。
@@ -702,13 +735,15 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', flushHomeBoardOnHide);
   window.removeEventListener('pagehide', flushHomeBoardWrite);
   void flushHomeBoardWrite(); // 卸载时也补一次（视图被整体换掉时不一定收到 pagehide）
-  window.removeEventListener('focus', pokeUpdateCheck);
+  window.removeEventListener('focus', onWindowFocus);
   window.removeEventListener('online', onUpdateOnline);
   if (updateTimer) clearTimeout(updateTimer);
   jobPollStopped = true;
   if (jobTimer) clearTimeout(jobTimer);
   closeStream?.();
   closeStream = null;
+  freshness?.stop();
+  freshness = null;
 });
 </script>
 

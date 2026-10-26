@@ -41,6 +41,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import AppModal from './AppModal.vue';
 import AppSpinner from './AppSpinner.vue';
 import { api } from '../../api';
+import { useAppStore } from '../../stores/app';
 import { useTouchPointer } from '../../lib/pointer';
 import {
   IDEA_MAX_CHARS,
@@ -59,6 +60,8 @@ import {
  */
 async function postSave(content: string): Promise<SubmittedIdea> {
   const { data } = await api.post('/api/ideas', { content });
+  // 灵感落「原始资料/灵感碎片」：侧栏立即重读，不等 SSE（推送晚到/丢失时也不会漏）
+  useAppStore().bumpSidebar();
   const jobId = Number(data?.jobId);
   return {
     id: String(data?.id ?? ''),
