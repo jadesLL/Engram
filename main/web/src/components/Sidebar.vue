@@ -1484,14 +1484,29 @@ watch(
  *  重叠，先发的慢响应不能把后发的新列表覆盖回旧数据。 */
 const loadSeq = createRequestSeq();
 
-async function load() {
+/** 列表加载失败（服务端刚唤醒/正忙）时的补读定时器：不能让侧栏静默停在旧数据上 */
+let loadRetryTimer: ReturnType<typeof setTimeout> | undefined;
+let sidebarDisposed = false;
+
+async function load(retry = 0) {
   const seq = loadSeq.next();
-  const [{ data: pl }, { data: doc }, { data: cf }, { data: idea }] = await Promise.all([
-    api.get('/api/pages/list'),
-    api.get('/api/files/list?section=doc'),
-    api.get('/api/files/list?section=chat'),
-    api.get('/api/files/list?section=idea'),
-  ]);
+  let loaded: any[];
+  try {
+    loaded = await Promise.all([
+      api.get('/api/pages/list'),
+      api.get('/api/files/list?section=doc'),
+      api.get('/api/files/list?section=chat'),
+      api.get('/api/files/list?section=idea'),
+    ]);
+  } catch {
+    // 偶发失败（服务端刚休眠唤醒、正忙、代理抖动）不静默留在旧列表：最多补两次
+    if (!sidebarDisposed && retry < 2) {
+      if (loadRetryTimer) clearTimeout(loadRetryTimer);
+      loadRetryTimer = setTimeout(() => { void load(retry + 1); }, 1500);
+    }
+    return;
+  }
+  const [{ data: pl }, { data: doc }, { data: cf }, { data: idea }] = loaded;
   if (!loadSeq.isCurrent(seq)) return; // 期间有更新的一次加载：这次结果作废
   allPages.value = pl.pages;
   files.value = doc.files;
@@ -1768,8 +1783,10 @@ onMounted(() => {
 });
 onUnmounted(() => {
   chatStopped = true;
+  sidebarDisposed = true;
   if (chatTimer) clearTimeout(chatTimer);
   if (reloadTimer) clearTimeout(reloadTimer);
+  if (loadRetryTimer) clearTimeout(loadRetryTimer);
   document.removeEventListener('pointerdown', onSortMenuPointerDown, true);
   window.removeEventListener('resize', closeSortMenuOnViewportChange);
   window.removeEventListener('blur', closeSortMenuOnViewportChange);

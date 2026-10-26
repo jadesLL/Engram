@@ -17,6 +17,8 @@ export interface PageEvent {
   runId?: string;
   count?: number;
   text?: string;
+  /** 内容版本号（服务端随内容事件附带）：兜底轮询据此判断「这条事件已经处理过」，不重复刷新 */
+  rev?: number;
 }
 
 let es: EventSource | null = null;
@@ -33,11 +35,14 @@ export function closePageStream() {
 
 /**
  * 打开事件流；onEvent 收到具名事件（event 名即 type）。
+ * onReconnect 在「断开后重新连上」时调用：断线期间的事件已经丢了，调用方应做一次兜底对账
+ * （见 lib/freshness）。首次连接不触发。
  * 返回关闭函数。重复调用会先关旧连接再开新连接。
  */
-export function openPageStream(onEvent: (ev: PageEvent) => void): () => void {
+export function openPageStream(onEvent: (ev: PageEvent) => void, onReconnect?: () => void): () => void {
   closePageStream();
   es = new EventSource('/api/events');
+  let openedBefore = false;
   const handle = (type: string) => (e: MessageEvent) => {
     try {
       onEvent({ type, ...JSON.parse(e.data) });
@@ -69,6 +74,11 @@ export function openPageStream(onEvent: (ev: PageEvent) => void): () => void {
       disconnectToastShown = false;
       notify.success('实时同步已恢复');
     }
+    // 断线期间的事件不会补发：重连后让调用方立刻对一次账（首次连接不需要，组件自己会读）
+    if (openedBefore) {
+      try { onReconnect?.(); } catch { /* 回调失败不影响事件流 */ }
+    }
+    openedBefore = true;
   };
   return closePageStream;
 }

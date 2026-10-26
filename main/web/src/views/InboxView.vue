@@ -693,6 +693,8 @@ async function runAdopt(item: InboxItem) {
   adopting.value = true;
   try {
     const result = await inbox.adopt(item.path);
+    // 入库会把产物写进「原始资料/文档」：侧栏目录立即重读，不等 SSE 那一拍
+    app.bumpSidebar();
     notify.success(`已入库到 ${result.pagePath}`);
   } catch (error: any) {
     notify.error(error?.response?.data?.error || '入库失败');
