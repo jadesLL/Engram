@@ -54,8 +54,29 @@ test('同步被停用时显示「已停用」', () => {
   assert.match(view!.hint, /设置/);
 });
 
-test('断开时显示「已断开」并给重试提示', () => {
-  const view = syncChannelView({ role: 'member', enabled: true, connected: false });
+test('启动阶段（本轮还没同步成功、也没有错误）显示中性「连接中…」而不是已断开', () => {
+  // 本版把 initSync 移出了 listen 前路径：应用刚打开时同步客户端还在后台启动，
+  // 这几秒不能拿红色故障态吓用户（否则每次启动都像断网）。
+  const view = syncChannelView({
+    role: 'member',
+    enabled: true,
+    connected: false,
+    link: linkOf({ channel: 'offline', url: '', host: '', latencyMs: null, probedAt: null, candidates: [] }),
+  });
+  assert.equal(view?.key, 'connected');
+  assert.equal(view?.label, '连接中…');
+  assert.equal(view?.title, '正在连接中枢…');
+  assert.equal(view?.busy, true);
+  assert.match(view!.detail, /正在建立连接/);
+});
+
+test('已经同步过、随后断开时显示「已断开」并给重试提示', () => {
+  const view = syncChannelView({
+    role: 'member',
+    enabled: true,
+    connected: false,
+    lastSyncAt: new Date(NOW - 5 * 60_000).toISOString(),
+  });
   assert.equal(view?.key, 'offline');
   assert.equal(view?.label, '已断开');
   assert.equal(view?.title, '连接中断 · 所有通道不可达');

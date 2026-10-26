@@ -48,7 +48,7 @@ export interface SyncLinkStatus {
 }
 
 /** 胶囊颜色只认这个 key（`.link-<key>`）；hub/muted/connected 是四色之外的中性档 */
-export type SyncChannelKey = SyncChannelKind | 'hub' | 'muted' | 'connected';
+export type SyncChannelKey = SyncChannelKind | 'hub' | 'muted' | 'connected' | 'connecting';
 
 /** 状态输入：在首页状态模型的字段上补 link 与 hubUrl（后者用于没有 link 时推断通道） */
 export interface SyncChannelInput extends SyncStatusInput {
@@ -89,6 +89,7 @@ const CHANNEL_LABEL: Record<SyncChannelKey, string> = {
   ipv4: 'IPv4',
   offline: '已断开',
   connected: '已连接',
+  connecting: '连接中…',
   hub: '中枢',
   muted: '已停用',
 };
@@ -99,6 +100,7 @@ const CHANNEL_FULL_LABEL: Record<SyncChannelKey, string> = {
   ipv4: 'IPv4 直连',
   offline: '连接中断',
   connected: '已连接中枢',
+  connecting: '正在连接中枢…',
   hub: '中枢运行中',
   muted: '同步已停用',
 };
@@ -255,6 +257,25 @@ export function syncChannelView(
     };
   }
 
+  /** 中性档：还没连上、也还没失败过——服务端刚启动、同步客户端在后台初始化，
+   *  或链路正在重建。本版把 initSync 移出了 listen 前路径，所以每次打开应用都会先经过
+   *  这几秒；这里不能拿红色「已断开」去报一个正在正常连接的启动过程。 */
+  const connectingView = (): SyncChannelView => ({
+    key: 'connected',
+    label: CHANNEL_LABEL.connecting,
+    fullLabel: CHANNEL_FULL_LABEL.connecting,
+    title: CHANNEL_FULL_LABEL.connecting,
+    detail: (status.syncing || status.reconciling)
+      ? '首次同步，正在拉取知识库'
+      : '正在建立连接，稍候自动重试',
+    hint: HINT_READY,
+    busy: true,
+    pending,
+    host: '',
+    latencyMs: null,
+    since: null,
+  });
+
   /** 四色里的红档：所有候选地址都不可达（或还没连上） */
   const offlineView = (): SyncChannelView => ({
     key: 'offline',
@@ -271,7 +292,12 @@ export function syncChannelView(
     since: null,
   });
 
-  if (!status.connected) return offlineView();
+  // 真正的「已断开」一定伴随一次失败记录（lastError）；启动阶段 / 本轮还没同步成功过
+  // （lastSyncAt 为空）且没有错误时，显示中性「连接中…」，避免双击图标后先看到红色故障态。
+  if (!status.connected) {
+    const starting = !status.lastError && (status.syncing || status.reconciling || !status.lastSyncAt);
+    return starting ? connectingView() : offlineView();
+  }
 
   const link = status.link || null;
   // link 是权威来源。但「link 说全都不可达、数据面却刚刚通信成功」是可能出现的：中枢刚重启时
