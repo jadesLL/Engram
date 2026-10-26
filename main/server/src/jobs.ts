@@ -2,12 +2,8 @@ import { db, getSetting, newId, now, setSetting } from './lib/db.js';
 import { indexPage, indexFileText, rebuildAll } from './pipeline/indexer.js';
 import { appendWikiLog } from './pipeline/indexFile.js';
 import { enqueuePagePipeline, saveIdeaDistillResult } from './jobQueue.js';
-import { extractFile } from './pipeline/fileExtraction.js';
-import { convertCapability, convertInboxItem } from './pipeline/inboxConvert.js';
-import { convertVideoInboxItem } from './pipeline/inboxVideo.js';
-import { finishInboxConversation, recordInboxConversionStep } from './pipeline/inboxConversation.js';
 import { resolveJobTarget } from './lib/jobTarget.js';
-import { distillIdeaNote, ideaDistillProgress } from './lib/ideaDistill.js';
+import { missingFtsPageIds } from './pipeline/sourceLedger.js';
 
 export { enqueue, enqueuePagePipeline } from './jobQueue.js';
 
@@ -23,8 +19,49 @@ type JobHandler = (
   context: { jobId: number; signal: AbortSignal },
 ) => Promise<void>;
 
+/*
+ * 惰性模块：本模块会被大量 routes 静态 import（只为 enqueue/进度查询），启动时不能
+ * 把 handler 依赖的整条重链打进模块图——pipeline/fileExtraction 静态加载 pdfjs，
+ * pipeline/inboxConvert 经 pipeline/office 加载 xlsx/mammoth，pipeline/inboxVideo
+ * 加载模型客户端。统一改成「任务首次真正执行时才 import」，Promise 缓存复用。
+ */
+let fileExtractionModule: Promise<typeof import('./pipeline/fileExtraction.js')> | null = null;
+let inboxConvertModule: Promise<typeof import('./pipeline/inboxConvert.js')> | null = null;
+let inboxVideoModule: Promise<typeof import('./pipeline/inboxVideo.js')> | null = null;
+let inboxConversationModule: Promise<typeof import('./pipeline/inboxConversation.js')> | null = null;
+let ideaDistillModule: Promise<typeof import('./lib/ideaDistill.js')> | null = null;
+
+function loadFileExtraction() {
+  return (fileExtractionModule ??= import('./pipeline/fileExtraction.js'));
+}
+function loadInboxConvert() {
+  return (inboxConvertModule ??= import('./pipeline/inboxConvert.js'));
+}
+function loadInboxVideo() {
+  return (inboxVideoModule ??= import('./pipeline/inboxVideo.js'));
+}
+function loadInboxConversation() {
+  return (inboxConversationModule ??= import('./pipeline/inboxConversation.js'));
+}
+function loadIdeaDistill() {
+  return (ideaDistillModule ??= import('./lib/ideaDistill.js'));
+}
+
+/**
+ * 收口收集箱转换对话。启动恢复 / 取消 / 超时兜底这些同步路径不能 await 动态 import，
+ * 而收口只是补一条对话消息、不影响任务状态：这里异步补完，失败只记日志（与原来的
+ * try/catch 行为一致，只是从同步改到微任务后执行）。
+ */
+function finishInboxConversationSoon(jobId: number): void {
+  void loadInboxConversation()
+    .then(({ finishInboxConversation }) => finishInboxConversation(jobId))
+    .catch((error) => console.warn('[inbox] 对话记录收口失败', error));
+}
+
 const handlers: Record<string, JobHandler> = {
   extract_file: async ({ path, mode, pages }, update, context) => {
+    // 文档提取链路（pdfjs）只在任务真正开跑时加载
+    const { extractFile } = await loadFileExtraction();
     await extractFile(path, (progress) => update(progress), {
       mode,
       pages,
@@ -45,6 +82,8 @@ const handlers: Record<string, JobHandler> = {
    * 侧栏据此显示「提炼失败」，而原文一个字都没动。
    */
   idea_distill: async ({ id, path: relPath, hash }, update, context) => {
+    // 提炼链路（模型客户端）只在任务真正开跑时加载
+    const { distillIdeaNote, ideaDistillProgress } = await loadIdeaDistill();
     const result = await distillIdeaNote(
       { id, path: relPath, hash },
       {
@@ -74,9 +113,15 @@ const handlers: Record<string, JobHandler> = {
    * payload 用 `path`（vault 相对路径），这样同一份文件天然串行、不同文件可并行。
    */
   inbox_convert: async ({ path: relPath }, update, context) => {
+    // 转换链路（pdfjs / xlsx / mammoth / 模型客户端）只在任务真正开跑时加载
+    const [
+      { convertCapability, convertInboxItem },
+      { recordInboxConversionStep },
+    ] = await Promise.all([loadInboxConvert(), loadInboxConversation()]);
     // 视频（链接占位稿 / 音视频原件）走视频理解管线，其余仍走文档语义转换：
     // 两者产物位置与「入库」流程完全一致，只是内容来源不同。
     if (convertCapability(relPath) === 'video') {
+      const { convertVideoInboxItem } = await loadInboxVideo();
       const result = await convertVideoInboxItem(relPath, {
         signal: context.signal,
         onProgress: (stage, detail) => {
@@ -173,22 +218,34 @@ export function recoverStaleJobs() {
        run_token='', cancel_requested=0, updated_at = ?
      WHERE status = 'running'`
   ).run(now());
+  // 收口上次进程没写完的收集箱转换对话。
+  // 原写法在外层用「NOT EXISTS (assistant_messages WHERE metadata LIKE ...)」做相关子查询：
+  // 每条候选 job 都要把整张 assistant_messages 扫一遍（metadata 无索引，LIKE 只能全表），
+  // 真实库上启动时实测 ~1s。改成先只按 jobs 上的索引取候选（idx_jobs_kind_status），
+  // 再用 session_id 逐条查——assistant_messages(session_id, created_at) 有索引，
+  // 每个会话消息数很少，语义完全不变（finishInboxConversation 内部还会再校验一次 final 标记，
+  // 因此这里只是预筛，重复调用也安全）。
   const unfinishedConversations = db.prepare(
-    `SELECT j.id FROM jobs j WHERE j.kind = 'inbox_convert' AND j.status IN ('failed', 'cancelled')
-       AND j.assistant_session_id IS NOT NULL
-       AND NOT EXISTS (
-         SELECT 1 FROM assistant_messages m WHERE m.session_id = j.assistant_session_id
-           AND m.metadata LIKE '%"inboxConversionFinal":true%'
-       ) LIMIT 500`
-  ).all() as { id: number }[];
-  for (const row of unfinishedConversations) finishInboxConversation(row.id);
-  // FTS 兜底：从未进过 pages_fts 的页面（历史向量时代数据）补一次索引任务
-  const rows = db.prepare(
-    `SELECT p.id FROM pages p
-     WHERE p.deleted = 0
-       AND NOT EXISTS (SELECT 1 FROM pages_fts f WHERE f.page_id = p.id)
-     LIMIT 500`
-  ).all() as { id: string }[];
+    `SELECT id, assistant_session_id FROM jobs
+      WHERE kind = 'inbox_convert' AND status IN ('failed', 'cancelled')
+        AND assistant_session_id IS NOT NULL
+      LIMIT 500`
+  ).all() as { id: number; assistant_session_id: string }[];
+  if (unfinishedConversations.length) {
+    const hasFinalMessage = db.prepare(
+      `SELECT 1 FROM assistant_messages WHERE session_id = ?
+         AND metadata LIKE '%"inboxConversionFinal":true%' LIMIT 1`
+    );
+    for (const row of unfinishedConversations) {
+      if (!hasFinalMessage.get(row.assistant_session_id)) finishInboxConversationSoon(row.id);
+    }
+  }
+  // FTS 兜底：从未进过 pages_fts 的页面（历史向量时代数据）补一次索引任务。
+  // 原写法逐页 NOT EXISTS 会为每一页全扫一遍 FTS 虚拟表（O(页面数²)）；改为一次性取
+  // pages_fts.page_id 集合后在内存比对（与 queueMissingDerivedPages 共用集合式实现）。
+  const rows = missingFtsPageIds()
+    .slice(0, 500)
+    .map((id) => ({ id }));
   for (const row of rows) enqueuePagePipeline(row.id);
   if (rows.length) {
     console.log(`[jobs] 启动 FTS 兜底：重新入队 ${rows.length} 个缺索引页面`);
@@ -231,7 +288,10 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
   try {
     const handler = handlers[job.kind];
     updateJob(job.id, { stage: '执行中', progress: 5 }, runToken);
-    if (job.kind === 'inbox_convert') recordInboxConversionStep(job.id, '执行中');
+    if (job.kind === 'inbox_convert') {
+      const { recordInboxConversionStep } = await loadInboxConversation();
+      recordInboxConversionStep(job.id, '执行中');
+    }
     if (!handler) throw new Error(`未知任务类型：${job.kind}`);
     await handler(
       JSON.parse(job.payload),
@@ -276,7 +336,10 @@ async function executeJob(job: any, execution: ActiveExecution): Promise<void> {
     }
   } finally {
     if (job.kind === 'inbox_convert') {
-      try { finishInboxConversation(job.id); } catch (error) { console.warn('[inbox] 对话记录收口失败', error); }
+      try {
+        const { finishInboxConversation } = await loadInboxConversation();
+        finishInboxConversation(job.id);
+      } catch (error) { console.warn('[inbox] 对话记录收口失败', error); }
     }
     activeExecutions.delete(job.id);
     notifyIdleWaiters();
@@ -326,7 +389,7 @@ export function cancelJob(jobId: number): { status: string } {
        cancel_requested=0,run_token='',updated_at=?
        WHERE id=? AND status IN ('pending','paused')`
     ).run(now(), jobId);
-    if (job.kind === 'inbox_convert') finishInboxConversation(jobId);
+    if (job.kind === 'inbox_convert') finishInboxConversationSoon(jobId);
     return { status: 'cancelled' };
   }
   if (job.status !== 'running') return { status: job.status };
@@ -336,7 +399,7 @@ export function cancelJob(jobId: number): { status: string } {
       `UPDATE jobs SET status='cancelled',stage='已取消',error=NULL,
        cancel_requested=0,run_token='',updated_at=? WHERE id=? AND status='running'`
     ).run(now(), jobId);
-    if (job.kind === 'inbox_convert') finishInboxConversation(jobId);
+    if (job.kind === 'inbox_convert') finishInboxConversationSoon(jobId);
     return { status: 'cancelled' };
   }
   db.prepare(
@@ -476,7 +539,7 @@ function abortStaleJobs(): void {
        run_token='',cancel_requested=0,updated_at=?
        WHERE id=? AND status='running'`
     ).run(now(), job.id);
-    if (job.kind === 'inbox_convert') finishInboxConversation(job.id);
+    if (job.kind === 'inbox_convert') finishInboxConversationSoon(job.id);
   }
 }
 

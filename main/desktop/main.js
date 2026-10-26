@@ -12,6 +12,12 @@ const localAccess = require('./lib/local-access');
 const { resolveBrainPath } = require('./lib/brain-path');
 const inboxRender = require('./lib/inbox-render');
 const { joinLinkFromArgs, protocolRegistration } = require('./lib/join-link');
+// 启动分段计时与 app.log 轮转（纯本地小工具，单测见 desktop/scripts/tests/startup-log.test.js）：
+// 前者给「首次打开很慢」留可对照的分段数据，后者避免 737MB 级 app.log 拖慢启动（见 lib/app-log.js 头注释）。
+const startupTiming = require('./lib/startup-timing');
+const appLog = require('./lib/app-log');
+// t0 = 进程真实启动时刻（Electron 引导时间计入），不是本文件第一行开始执行的时刻
+const startup = startupTiming.createStartupTimer();
 let pendingJoinLink = joinLinkFromArgs(process.argv);
 function receiveJoinLink(raw) {
   const link = joinLinkFromArgs([raw]);
@@ -157,6 +163,54 @@ function log(msg) {
     /* 日志不可写时忽略 */
   }
 }
+
+// ---------- 启动分段计时 / app.log 轮转 ----------
+/** 记录并输出一个启动节点（`[startup] <label> +Nms`）；同名节点只写一次（second-instance/activate 会重走启动流程） */
+function startupMark(label) {
+  if (startup.has(label)) return;
+  log(startupTiming.formatMark(startup.mark(label)));
+}
+
+let startupSummaryDone = false;
+let startupSummaryTimer = null;
+
+/** 输出一次总耗时摘要（主界面加载完成时；启动失败/超时的兜底也走这里）；重复调用无副作用 */
+function startupSummary(note) {
+  if (startupSummaryDone) return;
+  startupSummaryDone = true;
+  if (startupSummaryTimer) {
+    clearTimeout(startupSummaryTimer);
+    startupSummaryTimer = null;
+  }
+  log(startupTiming.formatSummary(startup.marks(), { totalMs: startup.elapsedMs(), note }));
+}
+
+/**
+ * 启动日志轮转：超过 20MB 就把 app.log 改名成 app.log.1（覆盖上一次的 .1），新会话写全新文件。
+ * 巨型文件上的同步 append 每次都要走文件系统 + Defender 扫描；启动阶段只是改名（元数据操作），
+ * 失败静默、绝不因为日志问题拖慢或阻断启动。
+ */
+function rotateAppLogOnStartup() {
+  try {
+    // 首次安装时 userData 目录可能还不存在（Electron 会在 ready 前后创建）：先建好，
+    // 否则本次启动第一行 [startup] 日志会静默丢掉，而首次启动正是最需要这段数据的场景。
+    fs.mkdirSync(path.dirname(logFile()), { recursive: true });
+  } catch {
+    /* 建不了就照旧静默：日志不是启动必需项 */
+  }
+  const result = appLog.rotateIfNeeded(logFile());
+  if (result.rotated) {
+    log(
+      `[main] app.log 已轮转为 app.log.1（原 ${appLog.formatBytes(result.size)}，阈值 ${appLog.formatBytes(appLog.DEFAULT_MAX_BYTES)}）`,
+    );
+  }
+}
+rotateAppLogOnStartup();
+startupMark('main-loaded');
+
+// 兜底：60s 还没进主界面（启动失败/极慢）也输出一条部分摘要，日志里至少能看到卡在哪一段
+startupSummaryTimer = setTimeout(() => startupSummary('兜底输出：60s 内未进入主界面'), 60_000);
+if (startupSummaryTimer.unref) startupSummaryTimer.unref();
 
 function dataUrl(html) {
   // 过渡/错误页无交互元素：整页可拖拽，标题栏隐藏后窗口仍可移动
@@ -323,6 +377,20 @@ function createWindow({ silent = false } = {}) {
       nodeIntegration: false,
     },
   });
+  // 启动计时：窗口首次可绘制 + 页面加载完成。did-finish-load 会对启动页（data:）和主界面（http:）
+  // 各触发一次：启动页给 splash 标记；主界面（HTML + JS/CSS 资源全部就绪）即 `ui-loaded`，
+  // 也是「用户终于看到界面」的终点，此时输出总耗时摘要。错误页同为 data:，不会误报 ui-loaded。
+  win.once('ready-to-show', () => startupMark('window-painted'));
+  win.webContents.on('did-finish-load', () => {
+    if (!win || win.isDestroyed()) return;
+    if (!/^https?:/i.test(win.webContents.getURL())) {
+      // data: 页：正常是启动页；启动失败时错误页也是 data:，此时摘要已输出，不再误记成 splash
+      if (!startupSummaryDone) startupMark('splash');
+      return;
+    }
+    startupMark('ui-loaded');
+    startupSummary();
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     openExternally(url);
     return { action: 'deny' };
@@ -486,6 +554,7 @@ async function startLocalMode(notice) {
   } catch (e) {
     // 调用方都不 await，异常若逃逸即 unhandledRejection → 主进程静默退出
     log('[local] 启动本地服务异常：' + describeError(e));
+    startupSummary('启动过程异常，未进入主界面');
     loadWin(dataUrl(errorPage('本地服务启动失败', failureLines(['启动过程出错：', describeError(e)]))));
   }
 }
@@ -514,6 +583,7 @@ async function startLocalModeInner(notice) {
   const entry = serverEntryPath();
   if (!fs.existsSync(entry)) {
     applyPageChrome(SPLASH_BG);
+    startupSummary('未找到内置服务，未进入主界面');
     loadWin(dataUrl(errorPage('本地后端缺失', ['未找到内置服务：', entry])));
     return;
   }
@@ -532,6 +602,7 @@ async function startLocalModeInner(notice) {
   const port = getLocalPort();
   // 提交身份一并交给内嵌 server（/api/update/state 返回），与渲染层经 IPC 拿到的是同一份
   const identity = await gitIdentity();
+  startupMark('git-identity');
   // 内置 Agent（dsh）必须用真实 Node 拉起：server 跑在 Electron 的纯 Node 模式里，而 dsh 的
   // 原生模块不认 Electron 36 的 V8 指纹（详见 server/src/assistant/agentNode.ts）。
   // 安装包用 resources/node/node.exe；源码模式用系统 / 便携 Node（找不到就留空，server 会给明确提示）。
@@ -559,6 +630,7 @@ async function startLocalModeInner(notice) {
   // 命门：必须 fork（默认 execPath=electron.exe）+ ELECTRON_RUN_AS_NODE，子进程才以 Electron 纯
   // Node 模式运行、能读 app.asar 内的 node_modules；改 spawn('node') 会让 server 读不了 asar。
   serverChild = fork(entry, [], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  startupMark('server-fork');
   serverTail = []; // 新的一轮启动：清掉上一次的尾部输出，错误页只显示本次线索
   serverChild.stdout.on('data', (d) => {
     pushServerTail(d);
@@ -582,15 +654,18 @@ async function startLocalModeInner(notice) {
     .then((ok) => {
       clearTimeout(slowHint);
       if (ok) {
+        startupMark('health');
         setSplashStatus('启动完成，正在进入界面…');
         loadWin(base);
       } else {
+        startupSummary('本地服务启动失败，未进入主界面');
         loadWin(dataUrl(errorPage('本地服务启动失败', failureLines(['启动超时或内嵌服务异常，详见日志：', logFile()]))));
       }
     })
     .catch((e) => {
       clearTimeout(slowHint);
       log('[local] 探活异常：' + describeError(e));
+      startupSummary('探活异常，未进入主界面');
       loadWin(dataUrl(errorPage('本地服务启动失败', failureLines(['探活过程出错：', describeError(e)]))));
     });
 }
@@ -650,6 +725,7 @@ function stopLocalChild() {
 function launchByConfig({ silent = false } = {}) {
   pruneLegacyConnectionConfig();
   createWindow({ silent });
+  startupMark('window');
   startLocalMode();
   if (silent) {
     // 开机自启：主窗不显示，只把托盘图标挂上；点托盘图标（或再双击桌面快捷方式）才出主界面
@@ -678,6 +754,7 @@ function buildAppMenu() {
 }
 
 app.whenReady().then(() => {
+  startupMark('whenReady');
   // 隔离验收实例不能接管用户已安装应用的协议关联。
   if (!process.env.ENGRAM_USER_DATA) {
     app.setAsDefaultProtocolClient(...protocolRegistration(process.execPath, app.getAppPath(), !PACKAGED));
@@ -1719,7 +1796,7 @@ function runGit(args, timeoutMs = 120_000) {
 // 判断不出更新是否落地。这里读 git 短提交号 + 提交日期 + 工作区是否脏，供设置页显示
 // （对齐 DSH 侧栏「本地构建」徽标与 hermes-agent `hermes_cli/build_info.py`）。
 // 进程内缓存：代码身份在进程运行期间不会变，更新后需重启才生效——这正是判断一次更新
-// 是否真的落地的依据，也避免设置页每次打开都多跑三条 git。
+// 是否真的落地的依据，也避免设置页每次打开都多跑两条 git（并行 spawn，见下方实现）。
 let gitIdentityCache = null;
 
 async function gitIdentity() {
@@ -1730,10 +1807,16 @@ async function gitIdentity() {
     return gitIdentityCache;
   }
   try {
-    const commit = await runGit(['rev-parse', '--short=7', 'HEAD'], 15_000);
-    const commitDate = await runGit(['log', '-1', '--format=%cs'], 15_000);
-    const dirty = Boolean((await runGit(['status', '--porcelain'], 15_000)).trim());
-    gitIdentityCache = { commit, commitDate, dirty };
+    // 冷盘上每启动一条 git 进程就要几百 ms，旧实现三条串行（rev-parse/log/status）会直接推迟
+    // 下面 fork server 的时刻——它发生在启动页只显示「环境准备中」的时候，用户能感知到。
+    // 这里合并成两条并并行跑：`git log` 一次给出短提交号（-c core.abbrev=7 等价于原 --short=7）
+    // 与提交日期，`git status` 单独给脏标记；返回结构与失败降级语义与旧实现一致。
+    const [logOut, statusOut] = await Promise.all([
+      runGit(['-c', 'core.abbrev=7', 'log', '-1', '--format=%h%n%cs'], 15_000),
+      runGit(['status', '--porcelain'], 15_000),
+    ]);
+    const [commit = '', commitDate = ''] = logOut.split(/\r?\n/);
+    gitIdentityCache = { commit: commit.trim(), commitDate: commitDate.trim(), dirty: Boolean(statusOut.trim()) };
   } catch (e) {
     // git 不可用（未装 git / 非检出目录）不阻断应用：退回纯版本号显示。
     // 但必须留痕——2026-09-22 用户报「版本号只显示 1.2.7」时 app.log 里什么都没有，

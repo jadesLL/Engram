@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
-import JSZip from 'jszip';
+// JSZip 只在整库备份/恢复时用：类型走 import type，实例与 loadAsync 在 handler 里动态 import
+import type JSZip from 'jszip';
 import { db, getSetting, setSetting, now } from '../lib/db.js';
 import { atomicWrite } from '../lib/vault.js';
 import { DATA_DIR, BRAIN_DIR } from '../config.js';
@@ -474,6 +475,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       return reply.code(500).send({ error: `数据库快照失败：${e?.message}` });
     }
     try {
+      // jszip 只在真正导出备份时加载（约 127ms），启动时不付这份成本
+      const { default: JSZip } = await import('jszip');
       const zip = new JSZip();
       zip.file('wiki.db', fs.readFileSync(snapshot));
       const walk = (dir: string) => {
@@ -521,6 +524,8 @@ export async function settingsRoutes(app: FastifyInstance) {
     }
     let zip: JSZip;
     try {
+      // 备份恢复才需要 jszip；密码校验通过后才加载
+      const { default: JSZip } = await import('jszip');
       zip = await JSZip.loadAsync(zipBuffer);
     } catch {
       return reply.code(400).send({ error: '备份文件无法解析（需要 zip 格式）' });

@@ -101,14 +101,35 @@ export function contributionsForProjection(pageId: string): StoredContribution[]
   ).all(pageId) as StoredContribution[];
 }
 
+/**
+ * 已进过 pages_fts 的页面 id 集合（一次性取全表，而不是逐页 NOT EXISTS）。
+ *
+ * pages_fts 是 FTS5 虚拟表，没有 page_id 的普通索引：相关子查询
+ * `NOT EXISTS (SELECT 1 FROM pages_fts f WHERE f.page_id = p.id)` 会为每一页把整张
+ * FTS 表扫一遍，页数越大越接近 O(n²)。启动时 jobs.ts 的 FTS 兜底与
+ * queueMissingDerivedPages 都只需要「哪些页面缺索引」，一次顺序扫描足够，
+ * 内存里做集合差集即可。
+ */
+export function ftsIndexedPageIds(): Set<string> {
+  const rows = db.prepare(`SELECT page_id FROM pages_fts`).all() as { page_id: string }[];
+  return new Set(rows.map((row) => String(row.page_id)));
+}
+
+/** 缺 FTS 索引的存活页面 id 列表（集合式实现，见 ftsIndexedPageIds）。 */
+export function missingFtsPageIds(): string[] {
+  const indexed = ftsIndexedPageIds();
+  const rows = db.prepare(`SELECT id FROM pages WHERE deleted = 0`).all() as { id: string }[];
+  return rows.map((row) => row.id).filter((id) => !indexed.has(id));
+}
+
 /** 启动 FTS 兜底：概念/实体页缺 pages_fts 行时补一次索引任务 */
 export function queueMissingDerivedPages(): void {
+  const indexed = ftsIndexedPageIds();
   const pages = db.prepare(
-    `SELECT id FROM pages p WHERE p.deleted=0
-     AND (p.path LIKE 'Wiki/概念/%' OR p.path LIKE 'Wiki/实体/%')
-     AND NOT EXISTS (
-       SELECT 1 FROM pages_fts f WHERE f.page_id = p.id
-     )`
+    `SELECT id FROM pages WHERE deleted = 0
+     AND (path LIKE 'Wiki/概念/%' OR path LIKE 'Wiki/实体/%')`
   ).all() as { id: string }[];
-  for (const page of pages) enqueuePagePipeline(page.id);
+  for (const page of pages) {
+    if (!indexed.has(page.id)) enqueuePagePipeline(page.id);
+  }
 }

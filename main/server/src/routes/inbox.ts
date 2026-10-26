@@ -11,8 +11,8 @@ import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
 import { enqueue } from '../jobQueue.js';
 import { db } from '../lib/db.js';
-import { createInboxConversation } from '../pipeline/inboxConversation.js';
-import { listInboxItems, inboxCategoryOf, derivedPathFor, type InboxItem } from '../lib/inboxItems.js';
+// 收集箱清单/分类与转换链路都静态依赖 pdfjs/xlsx/mammoth：只保留类型，值在 handler 里按需加载
+import type { InboxItem } from '../lib/inboxItems.js';
 import {
   fetchInboxWebPage,
   InboxWebFetchError,
@@ -20,16 +20,8 @@ import {
   RENDERED_TEXT_LIMIT,
   sourceUrlComment,
 } from '../lib/inboxWebFetch.js';
-import {
-  adoptInboxItem,
-  capabilityHint,
-  convertCapability,
-  readDerivedMarkdown,
-} from '../pipeline/inboxConvert.js';
-import { createInboxAgentTask } from '../pipeline/inboxAgentTask.js';
 import { buildVideoLinkMarkdown, detectVideoLink, findLocalBrowser, resolveVideoLink } from '../lib/videoLink.js';
 import { videoConfigStatus } from '../lib/videoConfig.js';
-import { probeVideoModel } from '../lib/videoModelClient.js';
 import {
   INBOX_DIR,
   INBOX_DERIVED_DIR,
@@ -91,6 +83,8 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   app.post('/api/inbox/video-test', async (req) => {
     const body = (req.body || {}) as { baseUrl?: unknown; model?: unknown; apiKey?: unknown };
+    // 视频理解模型客户端按需加载：不测连通性 / 不跑视频转换就永远不加载
+    const { probeVideoModel } = await import('../lib/videoModelClient.js');
     return probeVideoModel({
       baseUrl: typeof body.baseUrl === 'string' ? body.baseUrl : '',
       model: typeof body.model === 'string' ? body.model : '',
@@ -100,6 +94,7 @@ export async function inboxRoutes(app: FastifyInstance) {
 
   /** 收集箱列表：目录实时扫描（同步落地、外部拷入都会立刻反映），不额外维护状态表 */
   app.get('/api/inbox/items', async () => {
+    const { listInboxItems } = await import('../lib/inboxItems.js');
     const { items, counts } = listInboxItems();
     return {
       dir: INBOX_DIR,
@@ -119,6 +114,9 @@ export async function inboxRoutes(app: FastifyInstance) {
     let subDir = INBOX_DIR;
     // 客户端（桌面端/手机端）用内置浏览器渲染后保存网页时带上来源地址：与直接抓取一样在文末记一条注释
     let sourceUrl = '';
+    // 分类/转换能力（inboxItems → inboxConvert → pdfjs/xlsx/mammoth）按需加载，每个请求内缓存
+    let inbox: typeof import('../lib/inboxItems.js') | null = null;
+    let inboxConvert: typeof import('../pipeline/inboxConvert.js') | null = null;
 
     for await (const part of req.parts({
       // Fastify 的全局 multipart 默认仍有限制；这里显式覆盖为 Infinity。
@@ -160,7 +158,9 @@ export async function inboxRoutes(app: FastifyInstance) {
       notifySyncChange('file', rel);
       emit('file-changed', { path: rel });
       const stat = fs.statSync(abs);
-      const capability = convertCapability(rel);
+      inbox ??= await import('../lib/inboxItems.js');
+      inboxConvert ??= await import('../pipeline/inboxConvert.js');
+      const capability = inboxConvert.convertCapability(rel);
       saved.push({
         path: rel,
         name,
@@ -168,11 +168,11 @@ export async function inboxRoutes(app: FastifyInstance) {
         ext: (name.split('.').pop() || '').toLowerCase(),
         size: stat.size,
         mtime: stat.mtimeMs,
-        category: inboxCategoryOf(name),
+        category: inbox.inboxCategoryOf(name),
         status: 'pending',
         derivedPath: null,
         capability,
-        hint: capabilityHint(rel, capability),
+        hint: inboxConvert.capabilityHint(rel, capability),
         error: '',
         jobId: null,
         assistantSessionId: null,
@@ -209,6 +209,7 @@ export async function inboxRoutes(app: FastifyInstance) {
     if (!saved.length && skipped.length) {
       return reply.code(413).send({ error: skipped[0].reason, skipped });
     }
+    const { listInboxItems } = await import('../lib/inboxItems.js');
     return { saved, skipped, total: listInboxItems().counts.all };
   });
 
@@ -218,6 +219,8 @@ export async function inboxRoutes(app: FastifyInstance) {
     if (typeof url !== 'string' || !url.trim()) {
       return reply.code(400).send({ error: '请输入网页地址' });
     }
+    // 列表口径与转换链路共用 inboxItems；只在保存成功后回读条目时用，按需加载
+    const { listInboxItems } = await import('../lib/inboxItems.js');
     fs.mkdirSync(safeJoin(INBOX_DIR), { recursive: true });
 
     // 视频链接：不抓网页（抖音页面是 JS 壳、B站页面只有简介），存一份「链接占位稿」，
@@ -313,6 +316,7 @@ export async function inboxRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: '路径无效' });
     }
     if (!fs.existsSync(safeJoin(rel))) return reply.code(404).send({ error: '文件不存在' });
+    const { derivedPathFor } = await import('../lib/inboxItems.js');
     const derived = derivedPathFor(rel);
     if (!derived) return reply.code(404).send({ error: '这份文件还没有转换产物' });
     return { path: derived };
@@ -324,6 +328,16 @@ export async function inboxRoutes(app: FastifyInstance) {
    */
   app.post('/api/inbox/convert', async (req, reply) => {
     const body = (req.body || {}) as { paths?: string[]; all?: boolean };
+    // 收集箱转换链路（pdfjs / xlsx / mammoth）只在真要转换时加载
+    const [
+      { listInboxItems },
+      { convertCapability, capabilityHint },
+      { createInboxConversation },
+    ] = await Promise.all([
+      import('../lib/inboxItems.js'),
+      import('../pipeline/inboxConvert.js'),
+      import('../pipeline/inboxConversation.js'),
+    ]);
     const requested = body.all
       ? listInboxItems().items.map((item) => item.path)
       : Array.isArray(body.paths)
@@ -373,6 +387,7 @@ export async function inboxRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: '缺少文件路径' });
     }
     try {
+      const { createInboxAgentTask } = await import('../pipeline/inboxAgentTask.js');
       return reply.code(202).send(createInboxAgentTask(rel));
     } catch (error: any) {
       return reply.code(Number(error?.status) || 400).send({ error: error?.message || '无法让 Agent 处理' });
@@ -385,6 +400,7 @@ export async function inboxRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: '路径无效' });
     }
     try {
+      const { readDerivedMarkdown } = await import('../pipeline/inboxConvert.js');
       const { derivedPath, markdown } = readDerivedMarkdown(rel);
       return { path: rel, derivedPath, markdown, chars: markdown.length };
     } catch (error: any) {
@@ -402,6 +418,7 @@ export async function inboxRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: '路径无效' });
     }
     try {
+      const { adoptInboxItem } = await import('../pipeline/inboxConvert.js');
       const result = adoptInboxItem(rel);
       return { ...result, source: rel };
     } catch (error: any) {

@@ -2,28 +2,21 @@ import { FastifyInstance, FastifyReply } from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
 import matter from 'gray-matter';
-import JSZip from 'jszip';
+// JSZip 只在「下载/导出打包」时用：类型走 import type，实例在 handler 里动态 import
+// （benign：tsc 只保留类型，不会在启动 imports 阶段加载 jszip）
+import type JSZip from 'jszip';
 import { db } from '../lib/db.js';
 import { safeJoin, notifySyncChange } from '../lib/vault.js';
 import { emit } from '../lib/events.js';
 import { noteAppWrite } from '../lib/appWrites.js';
 import { moveToTrash } from '../lib/trash.js';
 import { requireAuth } from './auth.js';
-import { officeToText } from '../pipeline/office.js';
 import { ensureFileRecord, upsertFileRecord } from '../pipeline/indexer.js';
 import { distilledSourcePaths } from '../pipeline/sourceLedger.js';
 import { enqueue, enqueuePagePipeline } from '../jobs.js';
 import { normalizeDir, isUploadDir } from '../config.js';
 import { syncPageFile } from '../lib/vault.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
-import {
-  acceptPartialExtraction,
-  EXTRACTABLE_EXTENSIONS,
-  extractionDetails,
-  IMAGE_EXTENSIONS,
-  scheduleFileExtraction,
-  supportsFileExtraction,
-} from '../pipeline/fileExtraction.js';
 import { assetCountsByParent, isAssetFile, parseAssetRefs, assetRelPath, safeAssetJoin, MEDIA_PREFIX } from '../lib/pageAssets.js';
 import { isInboxPath } from '../lib/brainPaths.js';
 import {
@@ -48,6 +41,26 @@ const CONTENT_TYPES: Record<string, string> = {
   webp: 'image/webp',
   svg: 'image/svg+xml',
 };
+
+/*
+ * 重依赖按需加载：pipeline/fileExtraction 静态 import 了 pdfjs-dist，pipeline/office
+ * （经 docx.ts）静态 import 了 xlsx / mammoth，jszip 也是纯导出用的包——这些都不该在
+ * 服务端启动时加载。统一在真正用到的 handler 里 await import()：ESM 模块缓存保证
+ * 首次请求之后零额外开销；加载失败会抛出明确错误，由 Fastify 回 5xx（不会静默 404）。
+ */
+function loadFileExtraction() {
+  return import('../pipeline/fileExtraction.js');
+}
+
+/** 原始资料里哪些扩展名走文字提取（只在需要判断时才加载 pdfjs） */
+async function isExtractableExtension(ext: string): Promise<boolean> {
+  return (await loadFileExtraction()).EXTRACTABLE_EXTENSIONS.has(ext);
+}
+
+/** 图片扩展名（同上，按需加载） */
+async function isImageExtension(ext: string): Promise<boolean> {
+  return (await loadFileExtraction()).IMAGE_EXTENSIONS.has(ext);
+}
 
 function contentRange(value: string | undefined, size: number): { start: number; end: number } | null {
   const match = value?.match(/^bytes=(\d*)-(\d*)$/);
@@ -331,6 +344,8 @@ export async function fileRoutes(app: FastifyInstance) {
       let pageId: string | undefined;
       if (OFFICE_EXTS.has(ext)) {
         try {
+          // xlsx / mammoth 只有真的上传 Office 文件时才加载
+          const { officeToText } = await import('../pipeline/office.js');
           const text = await officeToText(ext, buffer);
           const fileId = upsertFileRecord(rel, text ?? '', buffer.length);
           enqueue('index_file', { fileId });
@@ -357,7 +372,9 @@ export async function fileRoutes(app: FastifyInstance) {
         }
         notifySyncChange('page', rel);
         if (pageId) emit('page-changed', { path: rel, id: pageId });
-      } else if (isRawPath(dir) && EXTRACTABLE_EXTENSIONS.has(ext)) {
+      } else if (isRawPath(dir) && await isExtractableExtension(ext)) {
+        // pdfjs 只在真的要给 PDF/图片排提取任务时才加载
+        const { scheduleFileExtraction } = await loadFileExtraction();
         const fileId = ensureFileRecord(rel, buffer.length);
         const scheduled = scheduleFileExtraction(rel, { mode: 'auto' });
         notifySyncChange('file', rel);
@@ -401,6 +418,7 @@ export async function fileRoutes(app: FastifyInstance) {
       return { kind: 'office', ext, url: `/api/files/raw?path=${encodeURIComponent(p)}` };
     }
     if (ext === 'pdf') {
+      const { extractionDetails } = await loadFileExtraction();
       return {
         kind: 'pdf',
         ext,
@@ -412,7 +430,8 @@ export async function fileRoutes(app: FastifyInstance) {
       const parsed = matter(fs.readFileSync(abs, 'utf8'));
       return { kind: 'markdown', text: parsed.content.trim() };
     }
-    if (IMAGE_EXTENSIONS.has(ext)) {
+    if (await isImageExtension(ext)) {
+      const { extractionDetails } = await loadFileExtraction();
       return {
         kind: 'image',
         url: `/api/files/content?path=${encodeURIComponent(p)}`,
@@ -465,6 +484,7 @@ export async function fileRoutes(app: FastifyInstance) {
   app.get('/api/files/extraction', async (req, reply) => {
     const { path: p } = req.query as { path?: string };
     if (!p) return reply.code(400).send({ error: '缺少 path' });
+    const { extractionDetails } = await loadFileExtraction();
     const details = extractionDetails(p);
     if (!details) return reply.code(404).send({ error: '尚无文字提取记录' });
     return { extraction: details };
@@ -483,12 +503,13 @@ export async function fileRoutes(app: FastifyInstance) {
     if (!p || !p.startsWith('原始资料/')) {
       return reply.code(400).send({ error: '只能提取原始资料中的文件' });
     }
-    if (!supportsFileExtraction(p)) {
+    const extraction = await loadFileExtraction();
+    if (!extraction.supportsFileExtraction(p)) {
       return reply.code(400).send({ error: '该格式不支持文字提取' });
     }
     try {
       if (mode === 'accept_partial') {
-        return { ok: true, extraction: acceptPartialExtraction(p) };
+        return { ok: true, extraction: extraction.acceptPartialExtraction(p) };
       }
       if (!['auto', 'continue', 'pages'].includes(mode)) {
         return reply.code(400).send({ error: '提取模式无效' });
@@ -496,7 +517,7 @@ export async function fileRoutes(app: FastifyInstance) {
       if (mode === 'pages' && (!Array.isArray(pages) || !pages.length)) {
         return reply.code(400).send({ error: '请选择需要重试的页面' });
       }
-      const scheduled = scheduleFileExtraction(p, {
+      const scheduled = extraction.scheduleFileExtraction(p, {
         mode,
         pages: pages.map(Number).filter(Number.isInteger).slice(0, 100),
       });
@@ -539,10 +560,15 @@ export async function fileRoutes(app: FastifyInstance) {
     }
     const name = path.basename(abs);
     const rel = p.replace(/^[/\\]+/, '').replace(/\\/g, '/');
-    // 非 md 不读进内存（大文件仍走流式）；md 没有本地图片时同样退回单文件下载
-    const zip = new JSZip();
-    const assetsAdded = /\.md$/i.test(rel) ? addFileToZip(zip, rel, name) : 0;
-    if (!assetsAdded) {
+    // 非 md 不读进内存（大文件仍走流式）；md 没有本地图片时同样退回单文件下载。
+    // jszip 只在「打包带图 md」这条路径上按需加载，普通下载不付这份成本。
+    let zip: JSZip | null = null;
+    if (/\.md$/i.test(rel)) {
+      const { default: JSZip } = await import('jszip');
+      zip = new JSZip();
+    }
+    const assetsAdded = zip ? addFileToZip(zip, rel, name) : 0;
+    if (!zip || !assetsAdded) {
       reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
       reply.header('Content-Type', 'application/octet-stream');
       return reply.send(fs.createReadStream(abs));
@@ -561,6 +587,7 @@ export async function fileRoutes(app: FastifyInstance) {
     if (!Array.isArray(paths) || !paths.length) {
       return reply.code(400).send({ error: '未选择要导出的文件' });
     }
+    const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
     let added = 0;
     let assetsAdded = 0;

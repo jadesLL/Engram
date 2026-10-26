@@ -8,7 +8,6 @@ import {
   restoreTrashItem,
 } from '../lib/trash.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
-import { scheduleFileExtraction, supportsFileExtraction } from '../pipeline/fileExtraction.js';
 import { requireAuth } from './auth.js';
 
 function requestedIds(body: unknown): string[] {
@@ -45,6 +44,8 @@ export async function trashRoutes(app: FastifyInstance) {
         restored.push(item);
         if (item.pageId) enqueuePagePipeline(item.pageId);
         if (item.fileId) {
+          // pdfjs 链路（pipeline/fileExtraction）只在恢复后确需重新提取的文件上按需加载
+          const { scheduleFileExtraction, supportsFileExtraction } = await import('../pipeline/fileExtraction.js');
           if (supportsFileExtraction(item.path)) {
             scheduleFileExtraction(item.path, { mode: 'auto' });
           } else {

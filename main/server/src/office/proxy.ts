@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import httpProxy from '@fastify/http-proxy';
 import {
   OFFICE_EDITOR_ENABLED,
   OFFICE_INTERNAL_URL,
@@ -23,6 +22,9 @@ export async function registerOfficeProxy(app: FastifyInstance) {
     return;
   }
 
+  // @fastify/http-proxy（实测单包 ~350ms，连同 @fastify/reply-from/ws）只有启用在线编辑
+  // 才用得上：放到 enabled 分支内动态 import，关闭 Office 的部署不再为它付启动成本。
+  const { default: httpProxy } = await import('@fastify/http-proxy');
   await app.register(httpProxy, {
     upstream: OFFICE_INTERNAL_URL,
     prefix,
