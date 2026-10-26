@@ -22,6 +22,16 @@ export interface PageMeta {
   word_count: number;
 }
 
+/** scanVaultPages() 的统计（启动日志与测试用；调用方可以忽略返回值）。 */
+export interface ScanVaultPagesResult {
+  /** brain 内遍历到的 .md 文件数 */
+  pages: number;
+  /** 指纹命中、未读文件、未重写 pages 行与 FTS 的页面数 */
+  skipped: number;
+  /** 重新解析并写回行与 FTS 的页面数 */
+  changed: number;
+}
+
 /** 防路径穿越：把相对路径解析到 brain 内，越界抛错 */
 export function safeJoin(rel: string): string {
   const clean = rel.replace(/^[/\\]+/, '');
@@ -263,12 +273,28 @@ export function syncPageFile(relPath: string): PageMeta | null {
     data['更新日期'] = now();
     atomicWrite(abs, matter.stringify(parsed.content, data));
   }
-  const fileMtime = fs.statSync(abs).mtime.toISOString();
+  // frontmatter 携带的 id 可能已被其他路径占用（文件复制带 id / 并发同步竞态）。
+  // 优先按路径 upsert；仅当 id 撞上别的路径的行（含回收站软删行）时换新 id 重写
+  // frontmatter，不再整页 500。必须在取指纹之前：重写是原子写，会刷新 mtime。
+  let pageId = String(data.id);
+  const clash = db.prepare(`SELECT path FROM pages WHERE id = ? AND path != ?`).get(pageId, relPath) as { path: string } | undefined;
+  if (clash) {
+    pageId = newId();
+    data.id = pageId;
+    data['更新日期'] = now();
+    atomicWrite(abs, matter.stringify(parsed.content, data));
+  }
+
+  // 文件指纹取点必须在所有可能改写文件的步骤之后（frontmatter 归一化、id 冲突重写都会
+  // 原子写：临时文件 + rename，mtime 会刷新）。取早了，下次启动会再判定一次「有变化」。
+  // mtimeMs 是毫秒浮点；SQLite REAL 是 IEEE-754 双精度，写入读出原样往返，可直接等值比较。
+  const stat = fs.statSync(abs);
+  const fileMtime = stat.mtime.toISOString();
 
   const normalized = normalizeFrontmatter(data);
   const tags = (normalized.tags || []).map(String);
   const meta: PageMeta = {
-    id: String(data.id),
+    id: pageId,
     path: relPath,
     title,
     type: String(normalized.type || 'note'),
@@ -279,18 +305,6 @@ export function syncPageFile(relPath: string): PageMeta | null {
     deleted: 0,
     word_count: wordCount(parsed.content),
   };
-
-  // frontmatter 携带的 id 可能已被其他路径占用（文件复制带 id / 并发同步竞态）。
-  // 优先按路径 upsert；仅当 id 撞上别的路径的行（含回收站软删行）时换新 id 重写
-  // frontmatter，不再整页 500。
-  const clash = db.prepare(`SELECT path FROM pages WHERE id = ? AND path != ?`).get(meta.id, relPath) as { path: string } | undefined;
-  if (clash) {
-    const effId = newId();
-    data.id = effId;
-    data['更新日期'] = now();
-    atomicWrite(abs, matter.stringify(parsed.content, data));
-    meta.id = effId;
-  }
 
   // 同路径已有行但 id 不同（active-copy 顶替 trash 软删行、或手动改过 frontmatter id）：
   // 行 id 跟随 frontmatter（唯一行唯一路径不变量）。迁移中子表引用先指向新 id、
@@ -312,13 +326,13 @@ export function syncPageFile(relPath: string): PageMeta | null {
   // 与上面的 id 迁移路径一致，统一包事务，任一步失败整体回滚。
   db.transaction(() => {
     db.prepare(
-      `INSERT INTO pages(id, path, title, type, tags, summary, created_at, updated_at, deleted, word_count)
-       VALUES(@id, @path, @title, @type, @tags, @summary, @created_at, @updated_at, 0, @word_count)
+      `INSERT INTO pages(id, path, title, type, tags, summary, created_at, updated_at, deleted, word_count, file_mtime_ms, file_size)
+       VALUES(@id, @path, @title, @type, @tags, @summary, @created_at, @updated_at, 0, @word_count, @file_mtime_ms, @file_size)
        ON CONFLICT(path) DO UPDATE SET
          title=excluded.title, type=excluded.type, tags=excluded.tags, summary=excluded.summary,
          updated_at=excluded.updated_at, deleted=0, word_count=excluded.word_count,
-         id=excluded.id`
-    ).run({ ...meta, tags: JSON.stringify(tags) });
+         id=excluded.id, file_mtime_ms=excluded.file_mtime_ms, file_size=excluded.file_size`
+    ).run({ ...meta, tags: JSON.stringify(tags), file_mtime_ms: stat.mtimeMs, file_size: stat.size });
 
     db.prepare(`DELETE FROM pages_fts WHERE page_id = ?`).run(meta.id);
     db.prepare(`INSERT INTO pages_fts(title, content, tags, page_id) VALUES(?, ?, ?, ?)`).run(
@@ -335,6 +349,44 @@ export function syncPageFile(relPath: string): PageMeta | null {
     .then((m) => m.scheduleRemoteImageLocalization(meta.id, parsed.content))
     .catch(() => { /* 模块不可用时忽略 */ });
   return meta;
+}
+
+/**
+ * 启动扫描的单页入口：先 stat 比对持久化指纹，命中且 FTS 行还在就直接跳过
+ * 「读文件 + frontmatter 解析 + pages/FTS 两条事务写入」（几百页从秒级降到几十毫秒）。
+ *
+ * 跳过条件（任一不满足都退回 syncPageFile 全量收口）：
+ *  - pages 行存在且 deleted = 0（软删行要复活，不能按指纹跳过）；
+ *  - file_mtime_ms + file_size 与当前 stat 完全一致（App 自身写入也走 syncPageFile 写回指纹）；
+ *  - 该 page_id 在 pages_fts 中有行（FTS 分词版本迁移会清空索引，只看指纹会留下空索引）。
+ *
+ * ftsIds 由调用方一次性查出传入，避免逐页一次 FTS B-tree 探测。
+ */
+function scanPageFile(relPath: string, ftsIds: ReadonlySet<string>): 'skipped' | 'changed' {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(safeJoin(relPath));
+  } catch {
+    // 遍历后、stat 前被删掉：不计入跳过，交给 reconcileMissingPages 统一判删
+    return 'changed';
+  }
+  const row = db
+    .prepare(`SELECT id, deleted, file_mtime_ms, file_size FROM pages WHERE path = ?`)
+    .get(relPath) as
+    | { id: string; deleted: number; file_mtime_ms: number | null; file_size: number | null }
+    | undefined;
+  if (
+    row &&
+    Number(row.deleted) === 0 &&
+    row.file_mtime_ms !== null &&
+    Number(row.file_mtime_ms) === stat.mtimeMs &&
+    Number(row.file_size) === stat.size &&
+    ftsIds.has(String(row.id))
+  ) {
+    return 'skipped';
+  }
+  syncPageFile(relPath);
+  return 'changed';
 }
 
 export function readPage(relPath: string): { meta: PageMeta; content: string } | null {
@@ -487,8 +539,20 @@ export function markPageDeleted(relPath: string): void {
   db.prepare(`UPDATE pages SET deleted = 1 WHERE path = ? AND deleted = 0`).run(relPath);
 }
 
-/** 全量扫描 brain 目录：同步 pages/files 表（用于启动时与索引重建） */
-export async function scanVault() {
+/**
+ * 启动扫描第一阶段（listen 前调用，必须幂等可重复执行）：
+ * 页面 walk → 逐个 stat 比对持久化指纹，未变更的页面跳过重解析与 FTS 重写；
+ * 变更/新增/软删/索引缺失的页面走 syncPageFile 全量收口；最后对账缺失文件标删。
+ *
+ * 内部全同步 IO（readdir/stat/DB），返回 Promise 只为与启动编排的 await 写法一致。
+ */
+export async function scanVaultPages(): Promise<ScanVaultPagesResult> {
+  // pages_fts 的 page_id 一次性取出：跳过判定必须包含「索引行存在」——FTS 分词版本迁移
+  // 会清空 pages_fts，只按指纹跳过会让检索永久缺页。
+  const ftsIds = new Set(
+    (db.prepare(`SELECT page_id FROM pages_fts`).all() as { page_id: string }[]).map((row) => String(row.page_id))
+  );
+  const result: ScanVaultPagesResult = { pages: 0, skipped: 0, changed: 0 };
   function walk(dir: string) {
     let entries: fs.Dirent[];
     try {
@@ -505,13 +569,26 @@ export async function scanVault() {
       if (e.isDirectory()) {
         walk(abs);
       } else if (e.name.toLowerCase().endsWith('.md')) {
-        syncPageFile(rel);
+        result.pages += 1;
+        if (scanPageFile(rel, ftsIds) === 'skipped') result.skipped += 1;
+        else result.changed += 1;
       }
     }
   }
   walk(BRAIN_DIR);
   reconcileMissingPages();
+  return result;
+}
 
+/**
+ * 启动扫描第二阶段（listen 后后台调用）：原始资料提取入队、图片资产 legacy 迁移/无归属收容。
+ * 这些工作不影响首屏（侧栏、编辑、检索此时已可用），放到 listen 之后再跑。
+ *
+ * 前置：必须在 scanVaultPages() 之后——资产迁移要按 pages 行的 id 建 assets/<pageId>/ 目录。
+ * 与 startVaultWatch 并发安全：内部只做幂等的登记/迁移，自身改文件留下的监听事件由 watch
+ * 的去抖与回声抑制兜底；重复触发最多多扫一次，不会写坏数据。
+ */
+export async function scanVaultDeferred(): Promise<void> {
   // 原始资料补齐提取：递归扫描直接拷入目录/历史遗留的 PDF/图片，自动入队文本提取。
   // （office/txt/md 建议经 UI/CLI 导入以建立文本索引；md 由上方 syncPageFile 处理）
   try {
@@ -570,3 +647,12 @@ export async function scanVault() {
     console.warn(`[assets] 图片资产迁移失败，下次启动重试：${error?.message || error}`);
   }
 }
+
+/** 全量扫描 brain 目录：同步 pages/files 表（用于启动时与索引重建）。
+ *  保持旧语义 = 页面阶段 + 非首屏阶段串行。启动路径由 index.ts 分别调用
+ *  scanVaultPages()（listen 前）与 scanVaultDeferred()（listen 后），把非首屏工作移出阻塞路径。 */
+export async function scanVault(): Promise<void> {
+  await scanVaultPages();
+  await scanVaultDeferred();
+}
+

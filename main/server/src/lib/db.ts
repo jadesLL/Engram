@@ -668,6 +668,11 @@ export function migrate() {
   ensureColumn('jobs', 'assistant_session_id', 'TEXT');
   // 多端同步：本端已知的每页 hub 版本号（仅 hub 上必然等于当前版本；节点上是最后已知值）
   ensureColumn('pages', 'sync_revision', 'INTEGER NOT NULL DEFAULT 0');
+  // 启动扫描增量指纹（见 lib/vault.ts scanVaultPages）：上次扫到该页面时的文件 mtimeMs + size。
+  // NULL = 尚未建立基线（老库升级后的首次扫描 / 新插入行），下次扫描全量处理并写回再跳过。
+  // 与页面行同表而不是单独建表：行删除/重建、id 迁移、路径移动都不需要额外对账指纹。
+  ensureColumn('pages', 'file_mtime_ms', 'REAL');
+  ensureColumn('pages', 'file_size', 'INTEGER');
   // 死链回填（extractor.resolveDeadLinks）与 wikilink 解析（wirePageEdges）都按 lower(title) 匹配，
   // 而 pages 上只有 path 唯一索引：每次页面索引都要全表扫，rebuildAll 逐页跑会放大成
   // O(页 × 链 × 页)。表达式索引让这两处匹配走索引（IF NOT EXISTS，存量库启动即补齐）。
@@ -787,8 +792,9 @@ export function migrate() {
 
   // ---------- FTS 分词版本迁移 ----------
   // 分词规则变化后存量索引与新查询口径不一致（bigram token 在旧单字索引中不存在，
-  // 查询会全部落空），必须全量重写：pages_fts 清空后由启动 scanVault 逐页重插
-  // （syncPageFile 每次启动无条件重写 FTS）；files_fts 无此路径，这里直接重插。
+  // 查询会全部落空），必须全量重写：pages_fts 清空后由启动 scanVaultPages 逐页重插
+  // （增量扫描的跳过判定要求 page_id 在 pages_fts 中存在，索引清空后会自动全量重算，
+  //  不依赖 file_mtime_ms 指纹）；files_fts 无此路径，这里直接重插。
   const FTS_SEGMENT_VERSION = 'bigram-v1';
   if (getSetting('fts_segment_version') !== FTS_SEGMENT_VERSION) {
     db.exec(`DELETE FROM pages_fts`);

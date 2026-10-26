@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import JSZip from 'jszip';
 import {
   OFFICE_EDITOR_ENABLED,
   OFFICE_HISTORY_LIMIT,
@@ -18,7 +17,6 @@ import { safeJoin, notifySyncChange } from '../lib/vault.js';
 import { enqueue } from '../jobs.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { upsertFileRecord } from '../pipeline/indexer.js';
-import { officeToText } from '../pipeline/office.js';
 import { rewriteOfficeDownloadUrl, signJwt, verifyJwt } from './security.js';
 
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
@@ -179,6 +177,8 @@ async function validateOfficeArchive(ext: string, buffer: Buffer) {
   if (buffer.length < 4 || buffer.subarray(0, 2).toString('ascii') !== 'PK') {
     throw new Error('保存结果不是有效的 OOXML 文件');
   }
+  // jszip 只在校验 ONLYOFFICE 回传的 OOXML 包时才加载（保存/恢复回调）
+  const { default: JSZip } = await import('jszip');
   const zip = await JSZip.loadAsync(buffer);
   const required = ext === 'docx'
     ? 'word/document.xml'
@@ -262,6 +262,8 @@ function createVersion(relPath: string, reason: string, sessionKey?: string): Of
 async function refreshOfficeFile(relPath: string, buffer: Buffer, finalSave: boolean) {
   const ext = path.posix.extname(relPath).slice(1).toLowerCase();
   try {
+    // xlsx / mammoth（pipeline/office → docx）只在 Office 保存后刷新索引时才加载
+    const { officeToText } = await import('../pipeline/office.js');
     const text = await officeToText(ext, buffer);
     const fileId = upsertFileRecord(relPath, text || '', buffer.length);
     const revision = sha256(buffer).slice(0, 16);

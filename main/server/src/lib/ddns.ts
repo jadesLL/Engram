@@ -4,7 +4,9 @@ import os from 'node:os';
 
 import { getSetting } from './db.js';
 import { DDNS_TOKEN, DDNS_RECORD, DDNS_TYPE, DDNS_INTERVAL_MIN } from '../config.js';
-import { findCloudflareZoneId, type FetchLike } from './tls.js';
+// 只引类型：findCloudflareZoneId 来自 tls.ts（静态链会拉入 acme-client ~840ms），
+// 该函数只在真正配置了 DDNS 的同步流程里用到，改为函数内动态加载。
+import type { FetchLike } from './tls.js';
 
 /**
  * DDNS 直连域名维护（纯 Node 实现，全程无控制台窗口）。
@@ -703,6 +705,7 @@ export async function syncDdnsRecord(cfg: DdnsConfig, opts: DdnsSyncOptions = {}
     const candidates = new Map<DdnsRecordType, string[]>();
     for (const t of want) candidates.set(t, await detect(t));
 
+    const { findCloudflareZoneId } = await import('./tls.js');
     const zoneId = await findCloudflareZoneId(cfg.record, cfg.token, fetchImpl);
     result.zone = await fetchCloudflareZone(cfg.token, zoneId, fetchImpl);
     const zoneStatus = result.zone?.status || null;

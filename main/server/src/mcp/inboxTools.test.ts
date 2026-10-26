@@ -24,7 +24,7 @@ before(async () => {
   db = dbModule.db;
   dbModule.migrate();
 
-  const { makeServer } = await import('./server.js');
+  const { makeServer } = await import('./tools.js');
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

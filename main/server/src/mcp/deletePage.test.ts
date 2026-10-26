@@ -18,7 +18,7 @@ before(async () => {
   dbModule.migrate();
   ({ writePage } = await import('../lib/vault.js'));
   ({ restoreTrashItem } = await import('../lib/trash.js'));
-  const { makeServer } = await import('./server.js');
+  const { makeServer } = await import('./tools.js');
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
 

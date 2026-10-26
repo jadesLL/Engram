@@ -14,7 +14,7 @@ before(async () => {
   const dbModule = await import('../lib/db.js');
   db = dbModule.db;
   dbModule.migrate();
-  const { makeServer } = await import('./server.js');
+  const { makeServer } = await import('./tools.js');
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
 
@@ -100,7 +100,7 @@ test('调研 skill 可在连接后按名重新获取', async () => {
 test('所有外部客户端通过同一 MCP 客户调研入口固定任务版本并校验模板', async () => {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
-  const { makeServer } = await import('./server.js');
+  const { makeServer } = await import('./tools.js');
   const { CUSTOMER_RESEARCH_SECTIONS } = await import('../content/customerResearch.js');
   const versions:number[]=[];
   for(const name of ['Codex','ZCode','DeepSeek Harness','Kimi Code','Kimi Work','WorkBuddy']) {

@@ -10,10 +10,22 @@ type StaticAsset = {
   etag: string;
 };
 
+/** 已发现但还没读进内存的前端文件：只记绝对路径与响应头所需信息 */
+type PendingAsset = {
+  absPath: string;
+  cacheControl: string;
+  contentType: string;
+};
+
 export type StaticAssetCache = {
+  /** 已读取并缓存的资源：启动时只有 /index.html（SPA fallback 与首屏依赖），其余首次请求再读 */
   assets: Map<string, StaticAsset>;
+  /** 发现的前端文件总数 */
   files: number;
+  /** 当前已缓存在内存里的字节数（随按需加载增长） */
   totalBytes: number;
+  /** 未加载资源的清单（urlPath → 文件信息） */
+  pending: Map<string, PendingAsset>;
 };
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -58,32 +70,52 @@ async function walkFiles(directory: string): Promise<string[]> {
   return files.flat();
 }
 
+function readAsset(entry: PendingAsset): Promise<StaticAsset> {
+  return fs.promises.readFile(entry.absPath).then((body) => ({
+    body,
+    cacheControl: entry.cacheControl,
+    contentType: entry.contentType,
+    etag: `"${crypto.createHash('sha256').update(body).digest('hex')}"`,
+  }));
+}
+
+/**
+ * 扫描前端构建产物：启动时只**遍历**文件清单（只为 content-type/cache-control），
+ * 仅把 /index.html 读进内存（/ 与 SPA fallback 依赖它），其余资源等首次请求再读盘并缓存。
+ *
+ * 背景：web/dist 有 639 个文件 / 27MB，旧实现启动时全部 readFile + sha256，
+ * 温盘实测约 60ms、冷盘（首次打开）更久，且这部分完全挡在 listen 之前。
+ * 首屏只需要 index.html 与少量 assets，按需加载把启动时延换成首次访问的一次读盘，
+ * 响应头（Cache-Control / ETag / 304 / HEAD）与 SPA fallback 语义保持不变。
+ */
 export async function loadStaticAssetCache(root: string): Promise<StaticAssetCache> {
   const assets = new Map<string, StaticAsset>();
+  const pending = new Map<string, PendingAsset>();
   let files: string[];
   try {
     files = await walkFiles(root);
   } catch (error: any) {
-    if (error?.code === 'ENOENT') return { assets, files: 0, totalBytes: 0 };
+    if (error?.code === 'ENOENT') return { assets, files: 0, totalBytes: 0, pending };
     throw error;
   }
-  const loaded = await Promise.all(files.map(async (filePath) => ({
-    filePath,
-    body: await fs.promises.readFile(filePath),
-  })));
-  let totalBytes = 0;
-  for (const { filePath, body } of loaded) {
+  for (const filePath of files) {
     const relativePath = path.relative(root, filePath).split(path.sep).join('/');
     const urlPath = `/${relativePath}`;
-    totalBytes += body.length;
-    assets.set(urlPath, {
-      body,
+    pending.set(urlPath, {
+      absPath: filePath,
       cacheControl: cacheControl(urlPath),
       contentType: contentType(filePath),
-      etag: `"${crypto.createHash('sha256').update(body).digest('hex')}"`,
     });
   }
-  return { assets, files: files.length, totalBytes };
+  // 首个页面的壳必须常驻：/ 与所有未知前端路径的 SPA fallback 都靠它
+  const indexEntry = pending.get('/index.html');
+  if (indexEntry) {
+    pending.delete('/index.html');
+    assets.set('/index.html', await readAsset(indexEntry));
+  }
+  let totalBytes = 0;
+  for (const asset of assets.values()) totalBytes += asset.body.length;
+  return { assets, files: files.length, totalBytes, pending };
 }
 
 function requestPath(url: string): string | undefined {
@@ -121,17 +153,47 @@ export async function registerStaticAssetCache(
   root: string,
 ): Promise<StaticAssetCache> {
   const cache = await loadStaticAssetCache(root);
-  const indexAsset = cache.assets.get('/index.html');
+  // 同一资源的并发首次请求只读一次盘
+  const inflight = new Map<string, Promise<StaticAsset | undefined>>();
 
-  app.setNotFoundHandler((request, reply) => {
+  const loadAsset = (urlPath: string): Promise<StaticAsset | undefined> => {
+    const cached = cache.assets.get(urlPath);
+    if (cached) return Promise.resolve(cached);
+    const entry = cache.pending.get(urlPath);
+    if (!entry) return Promise.resolve(undefined);
+    const existing = inflight.get(urlPath);
+    if (existing) return existing;
+    const task = readAsset(entry)
+      .then((asset) => {
+        cache.assets.set(urlPath, asset);
+        cache.pending.delete(urlPath);
+        cache.totalBytes += asset.body.length;
+        return asset;
+      })
+      .catch((error: any) => {
+        // 构建产物在运行期被替换/删除：当作未命中，交给 SPA fallback 或 404；
+        // 不能让单个资源读盘失败冒成 500（旧实现是启动整包读入，不存在这条路径）
+        if (error?.code !== 'ENOENT') {
+          app.log.warn({ err: error, path: entry.absPath }, '前端静态资源读取失败');
+        }
+        cache.pending.delete(urlPath);
+        return undefined;
+      })
+      .finally(() => { inflight.delete(urlPath); });
+    inflight.set(urlPath, task);
+    return task;
+  };
+
+  app.setNotFoundHandler(async (request, reply) => {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return reply.code(404).send({ error: '资源不存在' });
     }
     const urlPath = requestPath(request.url);
     if (!urlPath) return reply.code(400).send({ error: '路径无效' });
 
-    const asset = cache.assets.get(urlPath === '/' ? '/index.html' : urlPath);
+    const asset = await loadAsset(urlPath === '/' ? '/index.html' : urlPath);
     if (asset) return sendAsset(request, reply, asset);
+    const indexAsset = cache.assets.get('/index.html');
     if (!urlPath.startsWith('/api') && !urlPath.startsWith('/mcp') && indexAsset) {
       return sendAsset(request, reply, indexAsset);
     }
