@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 // 测试由 node 内置类型擦除直接跑（web 包无额外测试框架），相对导入要带真实扩展名
 import {
   buildChatTimeline,
+  isConversionStepMessage,
   isQueuedMessage,
   isReasoningLive,
   reasoningDurationMs,
@@ -320,4 +321,41 @@ test('排队中的消息排在当前这轮之后，并带得出「排队中」�
     items.map((item) => (item.kind === 'message' ? isQueuedMessage(item.message) : false)),
     [false, false, true, false]
   );
+});
+
+test('收集箱转换过程消息：进行中的不进对话流，收口后的完成消息照常显示', () => {
+  const user: ChatMessage = {
+    ...message('u1', 'user', '2026-01-01T00:00:00.000Z'),
+    content: '转换收集箱文件：收集箱/视频.md',
+  };
+  const running: ChatMessage = {
+    ...message('p1', 'assistant', '2026-01-01T00:00:01.000Z'),
+    content: '**获取视频**：已下载 15.4 KB / 15.3 MB',
+    metadata: { inboxConversionJobId: 7, inboxConversionStage: '获取视频', inboxConversionProgress: true },
+  };
+  // 旧版本一步一条的过程消息只有阶段、没有进度标记：同样算过程消息（历史刷屏也就不再显示）
+  const legacy: ChatMessage = {
+    ...message('p2', 'assistant', '2026-01-01T00:00:02.000Z'),
+    content: '**获取视频**：已下载 1.2 MB / 15.3 MB',
+    metadata: { inboxConversionJobId: 7, inboxConversionStage: '获取视频' },
+  };
+  const done: ChatMessage = {
+    ...message('p3', 'assistant', '2026-01-01T00:00:03.000Z'),
+    content: '转换完成。Markdown 产物：收集箱/转换结果/视频.md。可在收集箱中查看并入库。',
+    metadata: {
+      inboxConversionJobId: 7,
+      inboxConversionStage: '已完成',
+      inboxConversionProgress: true,
+      inboxConversionFinal: true,
+    },
+  };
+  assert.equal(isConversionStepMessage(running), true);
+  assert.equal(isConversionStepMessage(legacy), true);
+  assert.equal(isConversionStepMessage(done), false);
+  assert.equal(isConversionStepMessage(message('a1', 'assistant', '2026-01-01T00:00:04.000Z')), false);
+  assert.equal(isConversionStepMessage(user), false);
+
+  // 过程消息被过滤，收口后的完成消息按普通正文出现
+  const items = buildChatTimeline([user, running, legacy, done], [], []);
+  assert.deepEqual(items.map((item) => item.key), ['u1', 'p3']);
 });
