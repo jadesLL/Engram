@@ -404,6 +404,22 @@
         <b class="run-live-title">收集箱正在转换</b>
         <span class="run-live-detail">{{ conversionDetail }}</span>
       </div>
+      <!--
+        一键回到底部：只在上翻读历史时浮在正文可视区底部（离底超过 96px 才出现，滚回 64px 内收起），
+        和自动跟随的贴底阈值分成两档，避免在边界上下抖动；判据见 lib/chatScroll。
+        sticky 贴在滚动区底部：正文滚到哪都看得见，又不会跟着内容一起滚走。
+      -->
+      <button
+        v-if="showJumpToBottom"
+        class="jump-bottom"
+        type="button"
+        v-tooltip="'回到底部，看最新回复'"
+        aria-label="回到底部"
+        @click="jumpToBottom()"
+      >
+        <Icon name="arrow-down" :size="14" />
+        <span>回到底部</span>
+      </button>
     </div>
 
     <footer class="chat-composer">
@@ -651,6 +667,7 @@ import {
   toolCallSummary,
 } from '../lib/chatTimeline';
 import { chatSuggestions } from '../lib/chatSuggestions';
+import { isStuckToBottom, shouldShowJumpToBottom } from '../lib/chatScroll';
 import { formatDuration, formatSessionTime } from '../lib/chatTime';
 import { cacheHitText, mergeUsage, usageDetail } from '../lib/chatUsage';
 import { confirmDialog } from '../lib/confirm';
@@ -715,14 +732,54 @@ function renderEntry(key: string, source: string): string {
 }
 
 /**
- * 用户是不是贴在底部。滚动时记录，流式增量只在「贴底」时自动跟随：
- * 用户上翻读历史时不再被每个增量拽回底部。滚回底部附近（<64px）自动恢复跟随。
+ * 用户是不是贴在底部，以及要不要显示「回到底部」按钮。
+ *
+ * 滚动时记录，流式增量只在「贴底」时自动跟随：用户上翻读历史时不再被每个增量拽回底部；
+ * 滚回底部附近（<64px）自动恢复跟随。离底超过 96px 才点亮按钮——两档阈值之间留出滞回带，
+ * 不会因为滚动条一两个像素的抖动让按钮反复闪现（判据都在 lib/chatScroll，有单测守住）。
  */
 let stickToBottom = true;
-function onBodyScroll() {
+const showJumpToBottom = ref(false);
+/** 平滑回到底部的动画还在走：途中不让滚动事件把按钮又点亮（否则会闪一下） */
+let jumpingToBottom = false;
+let jumpTimer: number | undefined;
+
+/** 从 DOM 摘出三个数交给 lib/chatScroll 判定；滚动、内容变长、切换会话后都要同步一次 */
+function syncScrollState() {
   const el = scrollEl.value;
-  if (!el) return;
-  stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+  if (!el) {
+    showJumpToBottom.value = false;
+    return;
+  }
+  const metrics = {
+    scrollTop: el.scrollTop,
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+  };
+  stickToBottom = isStuckToBottom(metrics);
+  // 动画途中位置还在变，落点之前不重亮按钮；结束后再由 endJump 统一同步
+  showJumpToBottom.value = jumpingToBottom ? false : shouldShowJumpToBottom(metrics);
+}
+
+function onBodyScroll() {
+  syncScrollState();
+}
+
+/** 作废还没跑完的平滑滚动（强制跳到底、卸载时用），不负责同步状态 */
+function cancelJump() {
+  if (!jumpingToBottom) return;
+  jumpingToBottom = false;
+  if (jumpTimer !== undefined) {
+    window.clearTimeout(jumpTimer);
+    jumpTimer = undefined;
+  }
+}
+
+/** 平滑滚动结束（scrollend 或兜底超时）：恢复按钮的正常判定 */
+function endJump() {
+  if (!jumpingToBottom) return;
+  cancelJump();
+  syncScrollState();
 }
 
 /** 自己发消息、切会话、打开抽屉这些场景无论如何都要看到最新：force 跳过贴底判断 */
@@ -730,9 +787,37 @@ async function scrollToBottom(force = false) {
   await nextTick();
   const el = scrollEl.value;
   if (!el) return;
-  if (!force && !stickToBottom) return;
+  if (!force && !stickToBottom) {
+    // 没跟随时内容可能又长高了：顺手刷新按钮（上翻期间有新回复才浮得出来）
+    syncScrollState();
+    return;
+  }
   el.scrollTop = el.scrollHeight;
   stickToBottom = true;
+  showJumpToBottom.value = false;
+  // 强制跳到底后，之前没跑完的平滑动画（及其兜底定时器）一并作废
+  cancelJump();
+}
+
+/**
+ * 一键回到底部：平滑滚到最新一条并恢复自动跟随。
+ * 尊重系统「减少动态效果」：那种设置下直接跳到底，不播动画（长对话里滚几百屏的动画反而晕）。
+ * 结束信号优先用 scrollend（滚动事件没有可靠的收尾），再用定时器兜底。
+ */
+function jumpToBottom() {
+  const el = scrollEl.value;
+  if (!el) return;
+  stickToBottom = true;
+  showJumpToBottom.value = false;
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+    el.scrollTop = el.scrollHeight;
+    return;
+  }
+  jumpingToBottom = true;
+  el.addEventListener('scrollend', endJump, { once: true });
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  if (jumpTimer !== undefined) window.clearTimeout(jumpTimer);
+  jumpTimer = window.setTimeout(endJump, 1200);
 }
 
 /* ===== Agent 提问弹窗（对话最下侧）：本地只存「还没提交的点选与草稿」 ===== */
@@ -1522,6 +1607,15 @@ watch(
   () => `${chat.messages.map((m) => m.content.length).join(',')}|${chat.sessionToolCalls.length}|${chat.statusText}|${chat.sessionSubagents.map((s) => `${s.status}${s.activity.length}${s.result.length}`).join(',')}`,
   () => void scrollToBottom()
 );
+/* 会话列表用 v-if/v-else 顶替正文：面板一关正文会重新挂载（scrollTop 归零），
+   这里补一次「回到最新」，顺带把按钮状态同步回来，免得停在旧值上 */
+watch(() => chat.sessionPanelOpen, (open) => {
+  if (open) {
+    showJumpToBottom.value = false;
+    return;
+  }
+  void scrollToBottom(true);
+});
 watch(() => app.chatDrawerOpen, (open) => {
   if (open) {
     void chat.init().then(() => {
@@ -1596,6 +1690,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (conversionPollTimer !== undefined) window.clearInterval(conversionPollTimer);
+  if (jumpTimer !== undefined) window.clearTimeout(jumpTimer);
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('resize', onDrawerViewportResize);
   closeSessionStream?.();
@@ -2083,6 +2178,60 @@ onUnmounted(() => {
   min-height: 0;
   overflow-y: auto;
   padding: 12px;
+}
+
+/*
+ * 一键回到底部：sticky 贴在正文可视区底部居中——滚到哪一段都看得见，又不会跟着内容滚走。
+ * 只在上翻到离底 96px 以外时渲染（判定见 lib/chatScroll），滚回 64px 内自动收起。
+ * 底色半透明 + 毛玻璃：盖在最后一条消息上也不闷，长按滚动时能看清底下还有字。
+ */
+.jump-bottom {
+  position: sticky;
+  bottom: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  margin: 10px auto 0;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-bg) 88%, transparent);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: var(--shadow-raised);
+  backdrop-filter: saturate(150%) blur(10px);
+  -webkit-backdrop-filter: saturate(150%) blur(10px);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.jump-bottom:hover {
+  color: var(--text);
+  border-color: var(--accent, #4d8aff);
+  background: var(--card-bg);
+}
+
+.jump-bottom:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--sidebar-focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jump-bottom {
+    transition: none;
+  }
+}
+
+/* 不支持毛玻璃时退回不透明底色，文字照样看得清 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .jump-bottom {
+    background: var(--card-bg);
+  }
 }
 
 .empty-hint {
@@ -3708,6 +3857,14 @@ onUnmounted(() => {
     content: '';
     position: absolute;
     inset: -9px -6px;
+  }
+
+  /* 「回到底部」胶囊：视觉保持 28px，热区补到 44px（上下各借 8px，左右借 6px，
+     都落在正文内、不会压到输入区）；只靠悬停才露出的按钮在触屏上本来就不该缩小热区 */
+  .jump-bottom::after {
+    content: '';
+    position: absolute;
+    inset: -8px -6px;
   }
 
   /* 拖宽手柄：8px 命中区在手指上太窄，触屏放大到 44px。细线位置保持不变——

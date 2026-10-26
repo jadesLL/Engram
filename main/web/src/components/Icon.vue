@@ -194,6 +194,8 @@ const ICONS: Record<string, string[]> = {
   'chevron-left': ['m15 18-6-6 6-6'],
   'chevron-right': ['m9 18 6-6-6-6'],
   'chevron-down': ['m6 9 6 6 6-6'],
+  // 回到底部：直下箭头（比 chevron 多一根竖杆，缩在胶囊里也一眼是「往下走」）
+  'arrow-down': ['M12 5v14', 'm19 12-7 7-7-7'],
   'chevron-up': ['m18 15-6-6-6 6'],
   'zoom-in': ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16', 'm21 21-4.3-4.3', 'M11 8v6', 'M8 11h6'],
   'zoom-out': ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16', 'm21 21-4.3-4.3', 'M8 11h6'],
