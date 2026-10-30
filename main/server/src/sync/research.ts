@@ -9,6 +9,8 @@ import { db, now } from '../lib/db.js';
  *    所以单独一类而不是复用 file；
  *  - 只同步**完成态**：`report` 非空（已生成报告，含未保存草稿）才跨端；进行中/失败/排队中的
  *    任务留在本机执行端——半截内容跨端没有意义，也会让对端出现一条点开没内容的记录；
+ *  - 主体核验结论（`verdict`）是任务行上的 JSON 字符串，同步层不解释内容、原样跨端；旧版本快照
+ *    没有该字段时按 '' 处理，坏 JSON 在合并前归一为 ''（与 rules 的拦截同一个思路）；
  *  - 不做字符级合并：任务行创建后基本不可变（报告一旦生成只读），按同一 id 以 updatedAt
  *    新者胜整体覆盖即可；
  *  - 不做墓碑：客户洞察目前没有删除入口，不发明删除协议（页面/会话的墓碑是因为有删除动作）；
@@ -40,6 +42,11 @@ export interface ResearchSnapshot {
   report: string;
   /** 已保存的原始资料路径（空 = 未保存草稿） */
   path: string;
+  /**
+   * 主体核验结果（JSON 字符串：mode/status/method/webSources/kbSources/reason/attempts）。
+   * 同步层不解析、原样跨端；'' = 没有核验结论（v2 之前创建的任务，或对端旧版本快照缺该字段）。
+   */
+  verdict: string;
   createdAt: string;
   updatedAt: string;
   reportDate: string;
@@ -58,6 +65,7 @@ interface ResearchRow {
   run_id: string;
   report: string;
   path: string;
+  verdict: string;
   created_at: string;
   updated_at: string;
   report_date: string;
@@ -83,6 +91,21 @@ function rulesParsable(raw: string): boolean {
   }
 }
 
+/**
+ * 主体核验结论（verdict）只搬 JSON 对象：远端数据不可信，非空但不是 JSON 对象的字符串
+ * （旧客户端/手写/半截写入）在合并前归一为 ''，避免脏串进库后再污染对端界面。
+ * 与 rulesParsable 同一个口径：读取方（customerResearchTasks）还要自己容错一次，这里先拦一道。
+ */
+function verdictParsable(raw: string): boolean {
+  if (!raw) return true;
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
+
 /** DB 行 → 快照：所有字符串字段统一归一，避免 NULL/数字混入使两端算出不同的 hash */
 function snapshotOf(row: ResearchRow): ResearchSnapshot {
   return {
@@ -94,6 +117,7 @@ function snapshotOf(row: ResearchRow): ResearchSnapshot {
     saveRequested: Number(row.save_requested || 0),
     report: str(row.report),
     path: str(row.path),
+    verdict: str(row.verdict),
     createdAt: str(row.created_at),
     updatedAt: str(row.updated_at),
     reportDate: str(row.report_date),
@@ -129,6 +153,7 @@ function projectionOf(snapshot: ResearchSnapshot): string {
     Number(snapshot.saveRequested || 0),
     snapshot.report,
     snapshot.path,
+    snapshot.verdict,
     snapshot.createdAt,
     snapshot.updatedAt,
     snapshot.reportDate,
@@ -163,7 +188,7 @@ export interface ResearchMergeResult {
  * 合并一份远端调研快照：按同一 id、以 updatedAt 新者胜整体覆盖。
  *
  * 任务行创建后基本不可变（报告生成后只读），所以不做字符级合并。
- * updatedAt 相等时只补本端空着的 report/path/rules（同一时刻两边各自写出的内容，
+ * updatedAt 相等时只补本端空着的 report/path/rules/verdict（同一时刻两边各自写出的内容，
  * 补空不会覆盖已有内容）；真的补上了才报告 updated，让 hub 知道需要广播。
  * 幂等：同一份快照应用两次，第二次 created/updated 都是 false。
  */
@@ -174,6 +199,7 @@ export function mergeResearchSnapshot(snapshot: ResearchSnapshot): ResearchMerge
   if (!id || !report) return { created: false, updated: false };
   const customer = str(snapshot.customer).trim();
   const rules = str(snapshot.rules);
+  const verdictRaw = str(snapshot.verdict);
   // 坏行不进库：客户名是界面上识别这条记录的唯一依据，rules 坏了会拖垮整个客户洞察列表接口
   if (!customer || !rulesParsable(rules)) return { created: false, updated: false };
   const incoming: ResearchSnapshot = {
@@ -187,6 +213,9 @@ export function mergeResearchSnapshot(snapshot: ResearchSnapshot): ResearchMerge
     saveRequested: Number(snapshot.saveRequested || 0),
     report,
     path: str(snapshot.path),
+    // 旧版本快照可能在 JSON 里根本没有 verdict：按 '' 落库，与其它字符串字段一样先归一；
+    // 有值但解析不出 JSON 对象的一律丢弃，不让坏串跨端
+    verdict: verdictParsable(verdictRaw) ? verdictRaw : '',
     createdAt: str(snapshot.createdAt),
     updatedAt: str(snapshot.updatedAt),
     reportDate: str(snapshot.reportDate),
@@ -199,8 +228,8 @@ export function mergeResearchSnapshot(snapshot: ResearchSnapshot): ResearchMerge
     // 本端没有：整条插入。sessionId/runId 留空——执行轮次只属于产生这条任务的设备
     db.prepare(
       `INSERT INTO customer_research_tasks(id, customer, scope, client, rules, save_requested, session_id, run_id,
-                                           report, path, created_at, updated_at, report_date, time_zone)
-       VALUES(?,?,?,?,?,?,'','',?,?,?,?,?,?)`
+                                           report, path, verdict, created_at, updated_at, report_date, time_zone)
+       VALUES(?,?,?,?,?,?,'','',?,?,?,?,?,?,?)`
     ).run(
       incoming.id,
       incoming.customer,
@@ -210,6 +239,7 @@ export function mergeResearchSnapshot(snapshot: ResearchSnapshot): ResearchMerge
       incoming.saveRequested,
       incoming.report,
       incoming.path,
+      incoming.verdict,
       incoming.createdAt || now(),
       incoming.updatedAt || now(),
       incoming.reportDate,
@@ -225,7 +255,7 @@ export function mergeResearchSnapshot(snapshot: ResearchSnapshot): ResearchMerge
     // sessionId/runId 保持本端原值（本端空就是空，不搬对端的执行轮次）
     db.prepare(
       `UPDATE customer_research_tasks SET customer=?, scope=?, client=?, rules=?, save_requested=?,
-         report=?, path=?, created_at=?, updated_at=?, report_date=?, time_zone=?
+         report=?, path=?, verdict=?, created_at=?, updated_at=?, report_date=?, time_zone=?
        WHERE id=?`
     ).run(
       incoming.customer,
@@ -235,6 +265,7 @@ export function mergeResearchSnapshot(snapshot: ResearchSnapshot): ResearchMerge
       incoming.saveRequested,
       incoming.report,
       incoming.path,
+      incoming.verdict,
       incoming.createdAt || localSnapshot.createdAt,
       incomingAt,
       incoming.reportDate,
@@ -246,17 +277,20 @@ export function mergeResearchSnapshot(snapshot: ResearchSnapshot): ResearchMerge
   // 本端更新或一样新：不搬远端内容（任务行不可变，本地已有更完整的版本时不该被顶回去）
   if (incomingAt < localSnapshot.updatedAt) return { created: false, updated: false };
 
-  // 同一时刻：只补本端空着的字段，不覆盖已有内容
+  // 同一时刻：只补本端空着的字段，不覆盖已有内容（verdict 同口径：本地没有核验结论才补）
   const reportValue = localSnapshot.report || incoming.report;
   const pathValue = localSnapshot.path || incoming.path;
   const rulesValue = localSnapshot.rules || incoming.rules;
-  if (reportValue === localSnapshot.report && pathValue === localSnapshot.path && rulesValue === localSnapshot.rules) {
+  const verdictValue = localSnapshot.verdict || incoming.verdict;
+  if (reportValue === localSnapshot.report && pathValue === localSnapshot.path
+    && rulesValue === localSnapshot.rules && verdictValue === localSnapshot.verdict) {
     return { created: false, updated: false };
   }
-  db.prepare(`UPDATE customer_research_tasks SET report=?, path=?, rules=? WHERE id=?`).run(
+  db.prepare(`UPDATE customer_research_tasks SET report=?, path=?, rules=?, verdict=? WHERE id=?`).run(
     reportValue,
     pathValue,
     rulesValue,
+    verdictValue,
     id,
   );
   return { created: false, updated: true };

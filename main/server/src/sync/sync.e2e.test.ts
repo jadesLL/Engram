@@ -15,7 +15,7 @@ import { CUSTOMER_RESEARCH_SECTIONS } from '../content/customerResearch.js';
  * 多端同步端到端集成测试：同机起 1 个 hub + 2 个节点（真实 HTTP/SSE 实例），
  * 覆盖 双向实时传播、三方非重叠合并、同位置冲突最新者胜裁决、文件同步、删除传播、
  * 停用-重连对账补推、提炼账本（「已提炼」标记）跨端补齐与 oplog 缺口判定、
- * 客户洞察（客户调研）记录与流程模板跨端同步。
+ * 客户洞察（客户调研）记录（含主体核验结论 verdict）与流程模板跨端同步。
  * 实例以 worker_threads 运行完整 server（每线程独立模块注册表与 DATA_DIR，
  * 与多进程部署等价）；均为测试期间的一次性临时实例，密码每次运行随机生成。
  * 节点按顺序启动：worker 内的 env 写入在其 import 完成后不再影响其他线程
@@ -819,6 +819,67 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
     await waitFor('另一成员收到客户调研记录', async () =>
       (await researchTasks(nodeC)).some((task) => task.id === researchTaskId && task.markdown.includes(researchNeedle)),
     60_000, async () => `C tasks=${JSON.stringify(await researchTasks(nodeC))}`);
+
+    // v2：主体核验结论（verdict，JSON 字符串）随任务行一起跨端。成员造一条带核验结论的完成态记录，
+    // 对账补推到中枢；中枢落库后按同一份快照广播给另一成员（hash 投影含 verdict，对不上就会拉这一条）。
+    // 断言止于数据库列：verdict 的解析与页面契约属于 research/customerResearch.ts，这里只看同步落库。
+    const verdictTaskId = 'e2e-research-verdict';
+    const verdictNeedle = `主体核验同步验证-${crypto.randomUUID().slice(0, 8)}`;
+    const verdictJson = JSON.stringify({
+      mode: 'full',
+      status: 'verified',
+      method: 'registry',
+      fullName: '客户洞察主体核验有限公司',
+      webSources: 2,
+      kbSources: 1,
+      reason: '',
+      attempts: ['企查查命中工商全称', '官网核对一致'],
+    });
+    withDb(nodeB.dataDir, (conn) => {
+      const stamp = new Date().toISOString();
+      conn.prepare(
+        `INSERT INTO customer_research_tasks(id, customer, scope, client, rules, save_requested, session_id, run_id,
+                                             report, path, verdict, created_at, updated_at, report_date, time_zone)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        verdictTaskId,
+        `客户洞察${verdictNeedle}`,
+        'knowledge-web',
+        'Codex',
+        researchRulesJson(3, 'e2e 工作流'),
+        1,
+        '',
+        '',
+        `# 客户洞察\n\n## 调研范围与执行摘要\n\n${verdictNeedle}\n`,
+        '',
+        verdictJson,
+        stamp,
+        stamp,
+        '2026-10-21',
+        'Asia/Hong_Kong',
+      );
+    });
+    const verdictOf = (inst: Instance) =>
+      withDb(inst.dataDir, (conn) =>
+        (conn.prepare('SELECT verdict FROM customer_research_tasks WHERE id = ?').get(verdictTaskId) as
+          | { verdict?: string }
+          | undefined)?.verdict
+      );
+    await api(nodeB, 'POST', '/api/sync/reconcile');
+    await waitFor('中枢收到带主体核验结论的客户调研记录', async () => verdictOf(hub) === verdictJson, 60_000,
+      async () => `hub verdict=${JSON.stringify(verdictOf(hub))}`);
+    await waitFor('另一成员收到带主体核验结论的客户调研记录', async () => verdictOf(nodeC) === verdictJson, 60_000,
+      async () => `C verdict=${JSON.stringify(verdictOf(nodeC))}`);
+    // 旧版本任务没有核验结论：列默认空串，跨端后仍是空串（不能被写成字符串 "undefined"）
+    assert.equal(
+      withDb(hub.dataDir, (conn) =>
+        (conn.prepare('SELECT verdict FROM customer_research_tasks WHERE id = ?').get(researchTaskId) as
+          | { verdict?: string }
+          | undefined)?.verdict
+      ),
+      '',
+      '没有主体核验结论的旧任务跨端后 verdict 为空串',
+    );
 
     // 反向：中枢保存流程模板（走 preference 管道）→ 两台成员都收到并递增版本
     const rulesNeedle = `模板同步验证-${crypto.randomUUID().slice(0, 8)}`;

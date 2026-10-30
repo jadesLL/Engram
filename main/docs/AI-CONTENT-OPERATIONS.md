@@ -8,7 +8,7 @@
 
 ## 客户调研
 
-内置与外部 Agent 的客户调研共用 `customer-research` skill 与服务端流程模板。先 `begin_customer_research` 固定任务版本，再按返回契约生成 `sections` 与 `sources`，最后 `submit_customer_research` 校验并按用户意图保存。客户报告使用专用模板，通用调研稿的栏目顺序不覆盖它。桌面/Docker 输入客户名即可由内置 Agent 执行；外部客户端一键接入可安装入口 skill（Kimi Work 通过插件指令），远程客户端手动导入入口。详见[客户调研指南](./CUSTOMER-RESEARCH.md)。
+内置与外部 Agent 的客户调研共用 `customer-research` skill 与服务端 v2 契约。先 `begin_customer_research` 固定任务版本并取回 `identityContract` / `reportContract` / `modeRules`，**第一步核验客户主体**（公开工商/官方渠道优先，其次知识库原始资料），再按证据量选报告模式（完整 8 章 / 资料不足简报 3 章 / 主体核验 2 章），最后 `submit_customer_research(taskId, identity, sections, sources, save)` 校验。`identity` 必填（status=verified/kb-docs/not-found + method + attempts + evidence，verified 还要 fullName），v1 的 `companyFullName` 已被拒绝；公开渠道与知识库都确认不了主体时判 `not-found`，只交核验结论并质疑客户是否存在、名称是否写错，不写客户分析、不落文件；「仅知识库资料」不能声称 `verified`，kb-docs 证据必须是 `原始资料/` 下的原始文档。报告每章有长度上限、来源按工商/官方/媒体/库内分类并逐条登记，禁止方法说明、能力声明与行业泛论。客户报告使用专用模板，通用调研稿的栏目顺序不覆盖它；保存命名、重名规则与旧 ACS 模板升级说明见[客户调研指南](./CUSTOMER-RESEARCH.md)。桌面/Docker 输入客户名即可由内置 Agent 执行；外部客户端一键接入可安装入口 skill（Kimi Work 通过插件指令），远程客户端手动导入入口。
 
 ## 架构边界
 
