@@ -506,6 +506,7 @@ function ensureTray() {
   if (icon.isEmpty()) log('警告：托盘图标为空（brand PNG 资源缺失），托盘将显示空白槽位');
   tray = new Tray(icon);
   tray.setToolTip('Engram');
+  log('[tray] 托盘图标已就绪（随应用启动常驻，主窗前台时也在）');
   refreshTrayMenu();
   tray.on('click', () => showMainWindow());
   tray.on('double-click', () => showMainWindow());
@@ -727,9 +728,13 @@ function launchByConfig({ silent = false } = {}) {
   createWindow({ silent });
   startupMark('window');
   startLocalMode();
+  // 托盘图标随应用启动常驻：主窗在**前台开着**的时候系统托盘里也要有 Engram，
+  // 不用等关窗/最小化到托盘之后才出现（之前只有静默自启与 hideToTray 才建托盘，
+  // 正常启动全程托盘是空的，托盘入口（打开 / 开机自启 / 退出）也跟着没有，
+  // 用户只能靠关窗「变出」图标）。ensureTray 幂等，重复调用无副作用。
+  ensureTray();
   if (silent) {
-    // 开机自启：主窗不显示，只把托盘图标挂上；点托盘图标（或再双击桌面快捷方式）才出主界面
-    ensureTray();
+    // 开机自启：主窗不显示，点托盘图标（或再双击桌面快捷方式）才出主界面
     log('[main] 开机自启：已静默启动，主窗隐藏，驻留系统托盘');
   }
 }
