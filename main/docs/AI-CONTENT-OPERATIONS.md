@@ -8,7 +8,15 @@
 
 ## 客户调研
 
-内置与外部 Agent 的客户调研共用 `customer-research` skill 与服务端 v2 契约。先 `begin_customer_research` 固定任务版本并取回 `identityContract` / `reportContract` / `modeRules`，**第一步核验客户主体**（公开工商/官方渠道优先，其次知识库原始资料），再按证据量选报告模式（完整 8 章 / 资料不足简报 3 章 / 主体核验 2 章），最后 `submit_customer_research(taskId, identity, sections, sources, save)` 校验。`identity` 必填（status=verified/kb-docs/not-found + method + attempts + evidence，verified 还要 fullName），v1 的 `companyFullName` 已被拒绝；公开渠道与知识库都确认不了主体时判 `not-found`，只交核验结论并质疑客户是否存在、名称是否写错，不写客户分析、不落文件；「仅知识库资料」不能声称 `verified`，kb-docs 证据必须是 `原始资料/` 下的原始文档。报告每章有长度上限、来源按工商/官方/媒体/库内分类并逐条登记，禁止方法说明、能力声明与行业泛论。客户报告使用专用模板，通用调研稿的栏目顺序不覆盖它；保存命名、重名规则与旧 ACS 模板升级说明见[客户调研指南](./CUSTOMER-RESEARCH.md)。桌面/Docker 输入客户名即可由内置 Agent 执行；外部客户端一键接入可安装入口 skill（Kimi Work 通过插件指令），远程客户端手动导入入口。
+内置与外部 Agent 的客户调研共用 `customer-research` skill 与服务端 v3 契约。先 `begin_customer_research` 固定任务版本并取回 `identityContract` / `reportContract` / `modeRules` / `existingReports` / `saveMode`，**第一步核验客户主体**（公开工商/官方渠道优先，其次知识库原始资料），再按证据量选报告模式（完整 8 章 / 资料不足简报 3 章 / 主体核验 2 章），最后 `submit_customer_research(taskId, identity, sections, sources, save, saveMode, overwritePath)` 校验。`identity` 必填（status=verified/kb-docs/not-found + method + attempts + evidence，verified 还要 fullName），v1 的 `companyFullName` 已被拒绝；公开渠道与知识库都确认不了主体时判 `not-found`，只交核验结论并质疑客户是否存在、名称是否写错，不写客户分析、不落文件；「仅知识库资料」不能声称 `verified`，kb-docs 证据必须是 `原始资料/` 下的原始文档。报告每章有长度上限、来源按工商/官方/媒体/库内分类并逐条登记，禁止方法说明、能力声明与行业泛论。
+
+**入库与记录纪律（v3）**：
+
+- 内置「调研并保存」的**完整报告自动入库**；**资料不足简报只在客户洞察页反馈、不自动入库**（不要声称已保存），用户可在页面手动入库；**主体核验永不入库**。外部 Agent 只有用户明确要求保存时才传 `save=true`（显式保存时简报也可入库），其余只出预览。
+- **重复客户**：`begin` 返回知识库里该客户已有的报告 `existingReports`（按报告文件名中的客户名匹配，全名/简称互相包含；删调研记录不影响命中）。用户要求保存且 `existingReports` 非空时，必须**先问用户「生成新版本还是覆盖旧报告」**，再传 `saveMode=new` 或 `saveMode=overwrite + overwritePath`（取 `existingReports[].path`）；不先问会被服务端拒收。覆盖是整篇替换同一份文件（路径与日期不变、不新增文件），只在用户明确选择时执行；覆盖目标在入库前被删除或移入回收站时自动退回新版本。
+- **记录清除**：客户洞察页支持一键/按客户/按记录清除调研记录，只把记录置为软删除墓碑（随同步跨端删除），`原始资料/文档/` 里已入库的报告文件不动；进行中（running/queued）的记录拒绝清除，先停止再清；已清除记录不能再提交或入库。
+
+客户报告使用专用模板，通用调研稿的栏目顺序不覆盖它；保存命名、重名规则与旧 ACS 模板升级说明见[客户调研指南](./CUSTOMER-RESEARCH.md)。桌面/Docker 输入客户名即可由内置 Agent 执行；外部客户端一键接入可安装入口 skill（Kimi Work 通过插件指令），远程客户端手动导入入口。
 
 ## 架构边界
 
@@ -22,7 +30,7 @@ Engram **内核不内置 AI**：存储、文档解析（PDF 文字层 / Office /
 - **MCP 兜底**：CLI 不可用、或需要把图片作为图像内容直读（`read_raw_file` 带 `raw=true`，图片以 image 内容返回）时用 MCP。
 - **Agent 接入**：本机使用 Codex CLI / ZCode 桌面端 / DeepSeek Harness 时，可在 Engram 设置 → Agent 与自动化直接「接入目标 → 一键注册」（Codex 写 `~/.codex/config.toml` 的 `[mcp_servers.engram]`，只维护该表）；WorkBuddy、Qoder 与 Kimi Work 有对应的 MCP/插件配置片段与接入步骤；远程部署也可使用 MCP 配置片段或 `engram login`。
 - **待提炼清单**：`engram files list --pending`（CLI）或 `list_raw_files` 传 `pending=true`（MCP）列出尚未提炼的原始资料（文件带已提炼标记）。
-- **原始资料受限新建**：普通调研通过 `create_raw_material`，客户报告通过专用 `submit_customer_research` 新建原始资料，只能新建 `原始资料/文档/` 或 `原始资料/灵感碎片/` 下的 Markdown 文件；路径已存在（含回收站占位）即拒绝，`原始资料/对话/` 专供 `save_chat`。调研成果写 `文档/`，用户随口记的零散内容写 `灵感碎片/`。仅在用户明确要求保存调研结果时调用。Agent 不得更新、改名、删除既有原始资料，也不得走 HTTP/CLI 旁路。`AIWorks/` 只读；`write_page` / `rename_page` / `move_page` / `delete_page` 仍只允许 `Wiki/`。
+- **原始资料受限新建**：普通调研通过 `create_raw_material`，客户报告通过专用 `submit_customer_research` 新建原始资料，只能新建 `原始资料/文档/` 或 `原始资料/灵感碎片/` 下的 Markdown 文件；路径已存在（含回收站占位）即拒绝，`原始资料/对话/` 专供 `save_chat`。调研成果写 `文档/`，用户随口记的零散内容写 `灵感碎片/`。仅在用户明确要求保存调研结果时调用。Agent 不得更新、改名、删除既有原始资料，也不得走 HTTP/CLI 旁路（**唯一例外**：客户调研在用户明确选择「覆盖旧报告」时，由服务端把同一份报告文件整篇替换——路径与文件名不变、不新增文件；Agent 不能自己调 `create_raw_material` 或其它接口模拟覆盖）。`AIWorks/` 只读；`write_page` / `rename_page` / `move_page` / `delete_page` 仍只允许 `Wiki/`。
   - 作业时需要的资料不在库里且用户没有要求保存调研结果时：按现有材料推进，把缺口写进页面的「待核实」，**不要停下来等用户**。证据门禁报「来源必须在 `原始资料/` 下」时同理——跳过这条事实（或改用库内来源支撑）并记进「待核实」，不要自己找旁路把文件塞进去。
 - **对话沉积须用户指示**：`save_chat`（CLI `chat save`）只在用户明确说「沉淀」后才可执行；Agent 不得自行判断「这段对话有价值」就沉淀。已沉淀的对话属于原始资料，**可以**被后续提炼作业引用——卡的是「谁决定沉淀」，不是「沉淀后能不能用」。
 - **原始资料二级分类（固定三个）**：一级目录是 `原始资料/`，其下固定 **`文档/`**（成文的完整文件：会议纪要、调研报告、复盘、年报、教程、攻略…，新资料默认落这里）、**`对话/`**（`save_chat` 专用）、**`灵感碎片/`**（随手记：零散条目、想法、待办）。Agent 不要自造其他二级目录；二级分类上线前留在 `原始资料/` 根目录的历史文件按「文档」对待（侧栏「文档」分组会把根目录文件一并列出，磁盘不动）。证据门禁、提炼清单、检索都按 `原始资料/` 前缀判定，二级目录不影响。用户在编辑页的「分类」下拉里换分类会移动文件，服务端同步把按路径存的账本（`source_versions` / `ingest_runs` / `page_revisions`）改挂新路径——所以**你按 `list_raw_files` 看到的路径始终是当前路径**，「已提炼」标记与证据来源不会因为用户换分类而失效。

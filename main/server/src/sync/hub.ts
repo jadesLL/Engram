@@ -327,7 +327,8 @@ function commit(kind: SyncKind, target: string, actorId: string, opts: CommitOpt
     if (board) payload.board = board;
   } else if (kind === 'research') {
     // 调研任务同样在 wiki.db 里：广播只带快照指纹与客户名，报告正文由成员按需拉取
-    // （报告可能很长，与 session 同一个口径，不塞进广播）
+    // （报告可能很长，与 session 同一个口径，不塞进广播）。墓碑同样有指纹：hash 变了
+    // 成员就会拉 /api/sync/research，快照里 deleted=1 就是「删掉本端这条」的指令。
     const snapshot = collectResearchSnapshot(target);
     payload.hash = snapshot ? researchContentHash(target) : '';
     payload.customer = snapshot?.customer || '';
@@ -355,7 +356,7 @@ export interface PushPayload {
   deleted?: boolean;
   /** kind=board：全端唯一一份的任务看板 */
   board?: BoardPayload;
-  /** kind=research：完成态客户调研任务快照（报告正文在这里，不在广播载荷里） */
+  /** kind=research：完成态客户调研任务快照（报告正文在这里，不在广播载荷里）；deleted=1 时是墓碑快照 */
   research?: ResearchSnapshot;
   preference?: PreferenceValue;
 }
@@ -582,8 +583,9 @@ export function applyPush(push: PushPayload, actorId: string): PushApplyResult {
   }
 
   if (push.kind === 'research') {
-    // 客户调研：完成态任务行按 id 合并，updatedAt 新者胜；快照不完整（缺 report）会被 merge 忽略。
-    // 合并没有产生新内容就**不发号、不广播**，否则两端会把同一份快照反复推来推去（与会话同一口径）。
+    // 客户调研：完成态与墓碑（deleted=1、report 空）任务行按 id 合并，updatedAt 新者胜；
+    // 未删除却缺 report 的半截快照仍被 merge 忽略。合并没有产生新内容就**不发号、不广播**，
+    // 否则两端会把同一份快照反复推来推去（与会话同一口径）。
     const id = String(push.target || '');
     if (!id) throw new Error('客户调研推送缺少 target');
     const snapshot = push.research;

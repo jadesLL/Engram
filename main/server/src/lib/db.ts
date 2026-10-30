@@ -604,7 +604,12 @@ export function migrate() {
     report_date TEXT NOT NULL DEFAULT '',
     time_zone TEXT NOT NULL DEFAULT 'UTC',
     -- 机器可读结论（JSON：mode/status/method/webSources/kbSources/reason/attempts）；'' = 旧任务或未收口
-    verdict TEXT NOT NULL DEFAULT ''
+    verdict TEXT NOT NULL DEFAULT '',
+    -- 记录清除：软删除（墓碑随 research 同步跨端，知识库里的报告文件不动）
+    deleted INTEGER NOT NULL DEFAULT 0,
+    -- 入库方式：'new' 新版本 / 'overwrite' 覆盖旧报告；overwrite_path 是覆盖目标文件
+    save_mode TEXT NOT NULL DEFAULT '',
+    overwrite_path TEXT NOT NULL DEFAULT ''
   );
   CREATE INDEX IF NOT EXISTS idx_customer_research_created ON customer_research_tasks(created_at);
 
@@ -648,6 +653,10 @@ export function migrate() {
   ensureColumn('semantic_events', 'duration_ms', `INTEGER NOT NULL DEFAULT 0`);
   // 客户调研 v2：主体核验结论与报告模式（前端显示「主体未核实/查无此主体」警示）
   ensureColumn('customer_research_tasks', 'verdict', `TEXT NOT NULL DEFAULT ''`);
+  // 客户调研 v3：记录清除（软删除墓碑）与入库方式（新版本/覆盖旧报告）
+  ensureColumn('customer_research_tasks', 'deleted', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn('customer_research_tasks', 'save_mode', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('customer_research_tasks', 'overwrite_path', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('llm_usage', 'scope', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('llm_usage', 'ref_id', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('llm_usage', 'stage', `TEXT NOT NULL DEFAULT ''`);

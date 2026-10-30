@@ -54,7 +54,7 @@ MCP（endpoint: /mcp，Bearer Token 鉴权）——CLI 不可用、或需要把�
 - page_evidence —— 读页面的证据账本（来源、版本、事实引文）
 - list_raw_files —— 原始资料清单（含提取状态与已提炼标记；pending=true 只返回未提炼文件）
 - read_raw_file —— 读原始资料：有文本层返回提取文本；图片/PDF 返回 base64（供视觉模型自行阅读）
-- begin_customer_research / submit_customer_research —— 客户调研专用入口：固定服务端流程、主体核验契约与报告模式。提交时先校验 identity（verified / kb-docs / not-found），再按证据量只允许完整报告、资料不足简报或主体核验短报告；公开工商与知识库都确认不了客户主体时，必须质疑客户是否存在，不许拿知识库里的名称提法编造分析。校验章节、每章长度与来源后按用户意图保存新原始资料。内置“调研并保存”按钮已明确授权；外部对话须用户要求保存。详见 skill_guide("customer-research")。
+- begin_customer_research / submit_customer_research —— 客户调研专用入口：固定服务端流程、主体核验契约与报告模式，并返回知识库里该客户已有的报告（existingReports）。提交时先校验 identity（verified / kb-docs / not-found），再按证据量只允许完整报告、资料不足简报或主体核验短报告；公开工商与知识库都确认不了客户主体时，必须质疑客户是否存在，不许拿知识库里的名称提法编造分析。入库纪律：完整报告自动入库；资料不足简报只在客户洞察页反馈、不自动导入；主体核验不保存。existingReports 非空且用户要求保存时，必须先问用户「生成新版本还是覆盖旧报告」，再带 saveMode=new 或 saveMode=overwrite + overwritePath 提交。详见 skill_guide("customer-research")。
 - create_raw_material —— 将已完成的调研结果新建为原始资料 Markdown 来源文件；调研格式与边界见连接时下发的 \`research-raw-material\` skill（也可用 \`skill_guide("research-raw-material")\` 重读）。仅在用户明确要求保存调研结果时调用，路径必须是新路径，已有文件拒绝覆盖。**调研成果写 原始资料/文档/、用户随口记的零散内容写 原始资料/灵感碎片/**；正文应保留调研来源与引用，但**不要以一级标题开头**（标题由文件名与 frontmatter 承载，开头的一级标题会被服务端去掉）；原始资料/对话/ 专供 save_chat。收集箱产物由用户在界面确认入库后进入 原始资料/文档/。
 - read_page_asset —— 读页面/资料正文里引用的图片原图（传正文里的 \`/media/<父项id>/<文件名>\` 引用，图片以 image 内容返回）
 - list_inbox —— 收集箱（收集箱/）清单：用户拖进来的待整理原件与各自的转换状态

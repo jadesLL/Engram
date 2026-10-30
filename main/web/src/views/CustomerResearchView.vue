@@ -13,6 +13,9 @@
           <button type="button" :class="{ on: filter === 'all' }" :aria-pressed="filter === 'all'" @click="filter = 'all'">全部</button>
           <button type="button" :class="{ on: filter === 'running' }" :aria-pressed="filter === 'running'" :disabled="!runningCount" @click="filter = 'running'">进行中</button>
         </div>
+        <button class="btn ghost danger" type="button" :disabled="!tasks.length || clearingAll" @click="clearAllRecords">
+          {{ clearingAll ? '正在清除…' : '一键清除' }}
+        </button>
         <button class="btn ghost" type="button" @click="openRules()">流程与模板</button>
         <button class="btn primary" type="button" @click="openStart()"><Icon name="plus" :size="15" />发起调研</button>
       </div>
@@ -24,7 +27,7 @@
       <AppEmptyState
         icon="report"
         title="还没有调研记录"
-        hint="输入客户名称发起第一次调研。报告完成后会自动存为原始资料，并按客户汇总在这里。"
+        hint="输入客户名称发起第一次调研。完整报告自动入库；资料不足简报只在页面反馈，可手动入库。"
       >
         <button class="btn primary" type="button" @click="openStart()"><Icon name="plus" :size="15" />发起调研</button>
       </AppEmptyState>
@@ -73,6 +76,12 @@
                 <div class="arc-actions">
                   <button v-if="currentTask.sessionId" class="btn small ghost" type="button" @click="openProcess">查看执行过程</button>
                   <button v-if="currentTask.path" class="btn small ghost" type="button" @click="openReport">打开原始资料</button>
+                  <button v-else-if="canSaveCurrent" class="btn small" type="button" :disabled="savingReport" @click="saveCurrentReport">
+                    <Icon name="book-open" :size="14" />{{ savingReport ? '正在入库…' : '存入知识库' }}
+                  </button>
+                  <button class="btn small ghost danger" type="button" :disabled="clearingCustomer" @click="clearCustomerRecords">
+                    {{ clearingCustomer ? '正在清除…' : '清除记录' }}
+                  </button>
                   <button v-if="isRunning(currentTask)" class="btn small danger" type="button" @click="stop">停止调研</button>
                   <button v-else class="btn small primary" type="button" @click="openStart(current.name)">发起新一轮</button>
                 </div>
@@ -82,6 +91,7 @@
                 <span class="chip" :class="statusChipClass(currentTask)">
                   <span class="chip-dot" aria-hidden="true" />{{ statusLabel(currentTask) }}
                 </span>
+                <span v-if="verdict?.mode === 'brief' && !currentTask.path" class="chip warn">未入库</span>
                 <span v-if="verdict" class="chip" :class="verdictChipClass">
                   <span class="chip-dot" aria-hidden="true" />{{ verdictStatusLabel }}
                 </span>
@@ -195,6 +205,31 @@
             <dd>{{ sourceCount ? `${sourceCount} 条` : '—' }}</dd>
           </dl>
         </div>
+        <!-- 历次调研都留在页面：能翻旧报告、看哪份入了库，也能单条删掉（只删记录，不动知识库文档） -->
+        <div class="blk">
+          <h4>调研记录<span class="rec-total">{{ current.tasks.length }} 条</span></h4>
+          <ul class="rec-list">
+            <li v-for="task in recentRecords" :key="task.id" class="rec">
+              <div class="rec-head">
+                <span class="rec-time">{{ formatTime(task.createdAt) }}</span>
+                <button
+                  class="rec-del"
+                  type="button"
+                  :disabled="deletingTaskId === task.id"
+                  :aria-label="`删除 ${formatTime(task.createdAt)} 的调研记录`"
+                  @click="deleteRecord(task)"
+                >
+                  {{ deletingTaskId === task.id ? '删除中…' : '删除' }}
+                </button>
+              </div>
+              <div class="rec-meta">
+                <span class="rec-state">{{ statusLabel(task) }}</span>
+                <span class="rec-store" :class="{ off: !task.path }">{{ task.path ? '已入库' : '未入库' }}</span>
+              </div>
+            </li>
+          </ul>
+          <p v-if="current.tasks.length > recentRecords.length" class="rec-more">仅显示最近 {{ recentRecords.length }} 条</p>
+        </div>
         <div v-if="verdict" class="blk">
           <h4>主体核验</h4>
           <dl class="facts">
@@ -234,7 +269,7 @@
     </div>
 
     <!-- 发起调研 -->
-    <AppModal :open="startOpen" title="发起调研" @close="closeStart">
+    <AppModal :open="startOpen && !existingOpen" title="发起调研" @close="closeStart">
       <template #subtitle>
         <p class="modal-sub">先核验主体；公开信息与知识库都查不到主体时只出核验结论，不编造客户分析。</p>
       </template>
@@ -259,6 +294,38 @@
         <button class="btn" type="button" @click="closeStart">取消</button>
         <button class="btn primary" type="button" :disabled="starting || !customer.trim()" @click="start">
           <Icon name="search" :size="14" />{{ starting ? '正在启动…' : '调研并保存' }}
+        </button>
+      </template>
+    </AppModal>
+
+    <!-- 已有报告：新建版本还是覆盖，必须由用户选（服务端在没拿到 saveMode 时会拒收） -->
+    <AppModal :open="existingOpen" title="知识库里已有该客户的报告" width="min(620px, 94vw)" @close="cancelExisting">
+      <template #subtitle>
+        <p class="modal-sub">这次调研会生成一份新报告。可以保留旧报告、另存为新版本，也可以用新内容覆盖其中一份（覆盖后旧文档不再保留）。</p>
+      </template>
+      <ul class="existing-list">
+        <li v-for="report in existingReports" :key="report.path">
+          <label class="existing-item" :class="{ on: pickedExistingPath === report.path }">
+            <input v-model="pickedExistingPath" type="radio" name="existing-report" :value="report.path" :disabled="starting" />
+            <span class="existing-body">
+              <span class="existing-title">{{ report.title || fileName(report.path) }}</span>
+              <span class="existing-meta">
+                <span class="existing-kind">{{ report.kind === 'brief' ? '资料不足简报' : '完整报告' }}</span>
+                <span v-if="report.reportDate">报告日期 {{ report.reportDate }}</span>
+                <span v-if="report.updatedAt">更新于 {{ formatTime(report.updatedAt) }}</span>
+              </span>
+            </span>
+          </label>
+        </li>
+      </ul>
+      <p v-if="!pickedExistingPath" class="research-error inline" role="alert">请选择要覆盖的报告，或选择生成新版本。</p>
+      <template #footer>
+        <button class="btn" type="button" :disabled="starting" @click="cancelExisting">取消</button>
+        <button class="btn danger" type="button" :disabled="starting || !pickedExistingPath" @click="startOverwrite">
+          {{ starting ? '正在启动…' : '覆盖选中的报告' }}
+        </button>
+        <button class="btn primary" type="button" :disabled="starting" @click="startNewVersion">
+          <Icon name="file-plus" :size="14" />生成新版本（保留旧报告）
         </button>
       </template>
     </AppModal>
@@ -300,6 +367,7 @@ import LiveDuration from '../components/ui/LiveDuration.vue';
 import { renderMarkdown } from '../lib/markdown';
 import { decorateCitations, handleCitationEvent, parseSourceTitles } from '../lib/citationBadge';
 import { notify } from '../lib/notify';
+import { confirmDialog } from '../lib/confirm';
 import { useChatStore } from '../stores/chat';
 import { useAppStore } from '../stores/app';
 import { isComposingKey } from '../lib/ime';
@@ -315,6 +383,10 @@ type Verdict = {
 };
 type Task = { id: string; customer: string; client: string; version: number; status: string; error: string; createdAt: string; markdown: string; path: string; sessionId: string; runId: string; verdict?: Verdict | null };
 type Rules = { version: number; workflow: string; sections: Array<{ id: string; title: string }> };
+/** 发起调研时对已有报告的处理方式：另存新版本，或覆盖指定那一份 */
+type SaveMode = 'new' | 'overwrite';
+/** 知识库里已有的该客户调研报告（/api/customer-research/existing 返回的单项） */
+type ExistingReport = { path: string; title: string; customerName: string; reportDate: string; kind: 'full' | 'brief'; updatedAt: string };
 /** 客户分组：同名客户的历次调研归到一起，最新那份当档案 */
 type CustomerGroup = { name: string; tasks: Task[]; latest: Task };
 /** 报告里的一个章节：标题 + 本章正文（不含标题行） */
@@ -332,6 +404,11 @@ const scopeOptions = [{ value: 'knowledge-web', label: '知识库 + 联网调研
 const tasks = ref<Task[]>([]), rules = ref<Rules | null>(null), savingRules = ref(false);
 const workflowDraft = ref(''), titlesDraft = ref<string[]>([]);
 const startOpen = ref(false), rulesOpen = ref(false), customerInput = ref<HTMLInputElement>();
+/** 已有报告选择弹窗：reports 是知识库里的候选，pendingStart 记住用户填的名称/范围，选完再真正发起 */
+const existingOpen = ref(false), existingReports = ref<ExistingReport[]>([]), pickedExistingPath = ref('');
+const pendingStart = ref<{ customer: string; scope: string } | null>(null);
+/** 清除/入库的进行态：防连点，同时给按钮换成「正在…」文案 */
+const clearingAll = ref(false), clearingCustomer = ref(false), deletingTaskId = ref(''), savingReport = ref(false);
 const query = ref(''), filter = ref<'all' | 'running'>('all');
 const selectedName = ref(''), activeSectionId = ref('');
 /** 正文容器：角标是 v-html 里的动态 DOM，提示与点击都在它上面做委托绑定 */
@@ -342,7 +419,9 @@ let timer: ReturnType<typeof setInterval> | undefined, disposed = false, loading
 
 const isRunning = (task: Task) => ['running', 'queued'].includes(task.status);
 function statusLabel(task: Task) {
-  return ({ saved: '报告已保存', draft: '报告待保存', running: '调研中', queued: '等待执行', pending: '等待 Agent 提交', unverified: '主体未核实', failed: '调研失败', cancelled: '已停止', interrupted: '已中断', completed: '执行结束，报告未提交' } as Record<string, string>)[task.status] || task.status;
+  // draft 是「报告已产出、但没入库」：按模式说清是完整报告还是简报，比笼统的「待保存」好懂
+  if (task.status === 'draft') return task.verdict?.mode === 'brief' ? '简报未入库' : '报告未入库';
+  return ({ saved: '报告已保存', running: '调研中', queued: '等待执行', pending: '等待 Agent 提交', unverified: '主体未核实', failed: '调研失败', cancelled: '已停止', interrupted: '已中断', completed: '执行结束，报告未提交' } as Record<string, string>)[task.status] || task.status;
 }
 const pad = (value: number) => String(value).padStart(2, '0');
 const formatTime = (at: string) => {
@@ -399,6 +478,8 @@ const current = computed<CustomerGroup | null>(() => {
   return picked ?? list.find((item) => item.latest.markdown) ?? list[0] ?? null;
 });
 const currentTask = computed<Task>(() => current.value?.latest ?? ({} as Task));
+/** 右栏「调研记录」：当前客户最近 8 次调研，够看清最近几次有没有入库 */
+const recentRecords = computed<Task[]>(() => current.value?.tasks.slice(0, 8) ?? []);
 /** 主体核验结论：旧任务没有这个字段，一律按 null 处理（报告解析会按实际标题推断模式） */
 const verdict = computed<Verdict | null>(() => currentTask.value.verdict ?? null);
 const verdictStatusLabel = computed(() => (verdict.value ? VERDICT_STATUS_LABEL[verdict.value.status] : ''));
@@ -452,6 +533,16 @@ const reportMode = computed<ReportMode>(() => {
   return 'full';
 });
 const reportModeLabel = computed(() => (parsedSections.value.length ? MODE_LABEL[reportMode.value] : '—'));
+/**
+ * 报告在页面上但还没入库：简报、或某次没自动保存的完整报告。
+ * 主体核验只给结论、不写文件，没有入库入口。
+ */
+const canSaveCurrent = computed(() => {
+  const task = currentTask.value;
+  const mode = verdict.value?.mode;
+  // 没有 verdict 的旧报告服务端不允许补入库（分不清该存成报告还是简报），这里也不给入口
+  return Boolean(task.id && task.markdown && !task.path && !isRunning(task) && mode && mode !== 'identity-check');
+});
 /** 简报 / 主体核验的章节固定（标题由服务端生成），按关键词挂回稳定 id，其余章节保留原样 */
 const FIXED_SECTION_IDS: Record<Exclude<ReportMode, 'full'>, Array<{ id: string; pattern: RegExp }>> = {
   brief: [
@@ -675,23 +766,161 @@ function openStart(name?: string) {
   startOpen.value = true;
   void nextTick(() => customerInput.value?.focus());
 }
-function closeStart() { startOpen.value = false; error.value = ''; }
-async function start(event?: Event) {
-  if (isComposingKey(event) || starting.value) return;
+function closeStart() { startOpen.value = false; error.value = ''; closeExistingFlow(); }
+/** 收起「已有报告」选择：回到发起弹窗（表单内容还留着，改完可以再点一次） */
+function closeExistingFlow() {
+  existingOpen.value = false;
+  existingReports.value = [];
+  pickedExistingPath.value = '';
+  pendingStart.value = null;
+}
+function cancelExisting() {
+  if (starting.value) return;
+  closeExistingFlow();
+  void nextTick(() => customerInput.value?.focus());
+}
+/** 已有报告按最近更新倒序：弹窗默认选中最新一份，覆盖目标也默认落在它身上 */
+function sortExistingReports(reports: ExistingReport[]): ExistingReport[] {
+  const stamp = (report: ExistingReport) => Date.parse(report.updatedAt || report.reportDate || '') || 0;
+  return [...reports].sort((a, b) => stamp(b) - stamp(a));
+}
+async function fetchExistingReports(name: string): Promise<ExistingReport[]> {
+  const { data } = await api.post<{ reports?: ExistingReport[] }>('/api/customer-research/existing', { customer: name });
+  return Array.isArray(data?.reports) ? data.reports : [];
+}
+/** 真正发起调研：saveMode/overwritePath 只在用户对已有报告做过选择后才带 */
+async function launchResearch(name: string, scopeValue: string, saveMode?: SaveMode, overwritePath?: string) {
   starting.value = true; error.value = '';
-  const name = customer.value.trim();
   try {
-    await api.post('/api/customer-research', { customer: name, scope: scope.value, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    const body: Record<string, unknown> = { customer: name, scope: scopeValue, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+    if (saveMode) {
+      body.saveMode = saveMode;
+      if (saveMode === 'overwrite') body.overwritePath = overwritePath;
+    }
+    await api.post('/api/customer-research', body);
     selectedName.value = name;
     startOpen.value = false;
+    closeExistingFlow();
     customer.value = '';
     await load();
-  } catch (e: any) { error.value = e?.response?.data?.error || '启动调研失败'; }
+  } catch (e: any) {
+    // 失败退回发起弹窗，错误显示在它的表单下方
+    existingOpen.value = false;
+    error.value = e?.response?.data?.error || '启动调研失败';
+  } finally { starting.value = false; }
+}
+async function start(event?: Event) {
+  if (isComposingKey(event) || starting.value) return;
+  const name = customer.value.trim();
+  if (!name) return;
+  starting.value = true; error.value = '';
+  try {
+    // 先问服务端知识库里有没有该客户的报告：有就一定要由用户选新版本还是覆盖
+    const reports = sortExistingReports(await fetchExistingReports(name));
+    if (!reports.length) {
+      starting.value = false;
+      await launchResearch(name, scope.value);
+      return;
+    }
+    pendingStart.value = { customer: name, scope: scope.value };
+    existingReports.value = reports;
+    pickedExistingPath.value = reports[0].path;
+    existingOpen.value = true;
+  } catch (e: any) { error.value = e?.response?.data?.error || '检查已有报告失败'; }
   finally { starting.value = false; }
+}
+async function startNewVersion() {
+  const pending = pendingStart.value;
+  if (!pending || starting.value) return;
+  await launchResearch(pending.customer, pending.scope, 'new');
+}
+async function startOverwrite() {
+  const pending = pendingStart.value;
+  const target = pickedExistingPath.value;
+  if (!pending || !target || starting.value) return;
+  await launchResearch(pending.customer, pending.scope, 'overwrite', target);
 }
 async function stop() {
   try { await api.post('/api/customer-research/stop', { taskId: currentTask.value.id }); await load(); }
   catch (e: any) { error.value = e?.response?.data?.error || '停止失败'; }
+}
+
+/* ---------- 清除调研记录 / 手动入库：只动页面记录，不碰知识库文档 ---------- */
+async function deleteRecords(payload: { all?: boolean; customer?: string; taskIds?: string[] }): Promise<number> {
+  const { data } = await api.post<{ deleted?: number }>('/api/customer-research/delete', payload);
+  return Number(data?.deleted) || 0;
+}
+/** 页头「一键清除」：一次清掉全部记录（有调研进行中时服务端会拒，错误照实提示） */
+async function clearAllRecords() {
+  if (clearingAll.value || !tasks.value.length) return;
+  const total = tasks.value.length;
+  const ok = await confirmDialog({
+    title: '清除全部调研记录',
+    message: `将删除全部 ${total} 条调研记录；知识库里的报告文档不受影响。`,
+    confirmText: '删除全部',
+    danger: true,
+  });
+  if (!ok) return;
+  clearingAll.value = true; error.value = '';
+  try {
+    const deleted = await deleteRecords({ all: true });
+    selectedName.value = '';
+    await load();
+    notify.success(`已清除 ${deleted} 条调研记录`);
+  } catch (e: any) { error.value = e?.response?.data?.error || '清除调研记录失败'; }
+  finally { clearingAll.value = false; }
+}
+/** 档案头「清除记录」：只清当前客户的记录，选中态落到原位置的下一个客户 */
+async function clearCustomerRecords() {
+  const group = current.value;
+  if (!group || clearingCustomer.value) return;
+  const ok = await confirmDialog({
+    title: `清除「${group.name}」的调研记录`,
+    message: `将删除该客户的 ${group.tasks.length} 条调研记录；知识库文档不受影响。`,
+    confirmText: '清除记录',
+    danger: true,
+  });
+  if (!ok) return;
+  const index = customers.value.findIndex((item) => item.name === group.name);
+  clearingCustomer.value = true; error.value = '';
+  try {
+    const deleted = await deleteRecords({ customer: group.name });
+    await load();
+    const rest = customers.value;
+    selectedName.value = rest.length ? rest[Math.min(Math.max(index, 0), rest.length - 1)].name : '';
+    notify.success(`已清除 ${deleted} 条调研记录`);
+  } catch (e: any) { error.value = e?.response?.data?.error || '清除调研记录失败'; }
+  finally { clearingCustomer.value = false; }
+}
+/** 右栏「调研记录」的单条小删除链接 */
+async function deleteRecord(task: Task) {
+  if (deletingTaskId.value) return;
+  const ok = await confirmDialog({
+    title: '删除这条调研记录',
+    message: '只删除这条调研记录，知识库里的报告文档不受影响。',
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
+  deletingTaskId.value = task.id; error.value = '';
+  try {
+    await deleteRecords({ taskIds: [task.id] });
+    await load();
+    notify.success('已删除 1 条调研记录');
+  } catch (e: any) { error.value = e?.response?.data?.error || '删除调研记录失败'; }
+  finally { deletingTaskId.value = ''; }
+}
+/** 未入库报告的手动入库（简报/完整报告都可以；主体核验没有这个入口） */
+async function saveCurrentReport() {
+  const task = currentTask.value;
+  if (!task?.id || savingReport.value) return;
+  savingReport.value = true; error.value = '';
+  try {
+    const { data } = await api.post<{ saved?: boolean; path?: string }>('/api/customer-research/save', { taskId: task.id });
+    await load();
+    notify.success(data?.path ? `已存入知识库：${fileName(data.path)}` : '已存入知识库');
+  } catch (e: any) { error.value = e?.response?.data?.error || '存入知识库失败'; }
+  finally { savingReport.value = false; }
 }
 function openRules() { error.value = ''; rulesOpen.value = true; }
 async function saveRules() {
@@ -722,16 +951,21 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
    应用侧栏展开时（默认就是展开的）内容区会比视口窄三百多像素。 */
 .research-view { height:100%; overflow-y:auto; padding:18px 24px 22px; display:flex; flex-direction:column; gap:14px;
   container-type:inline-size; }
-.page-head { display:flex; align-items:center; justify-content:space-between; gap:20px; flex:none; padding:0 2px; }
+.page-head { display:flex; align-items:center; justify-content:space-between; gap:20px; flex:none; padding:0 2px;
+  flex-wrap:wrap; row-gap:10px; }
 .page-head h1 { font-size:20px; font-weight:650; letter-spacing:-.01em; margin:0; }
 .ph-sub { font-size:12.5px; color:var(--text-secondary); margin:3px 0 0; }
 .ph-sub b { font-weight:600; color:var(--text); }
-.ph-actions { display:flex; align-items:center; gap:8px; flex:none; }
+/* 页头按钮多了一个「一键清除」：窄窗口下允许换行，别把「发起调研」挤出可视区（740 以下另有整行规则） */
+.ph-actions { display:flex; align-items:center; gap:8px; flex:none; flex-wrap:wrap; justify-content:flex-end; }
 .seg { display:flex; padding:2px; border:1px solid var(--control-border-strong); border-radius:var(--radius-control); background:var(--card-bg); }
 .seg button { padding:4px 12px; font-size:12.5px; color:var(--text-secondary); border-radius:7px; }
 .seg button.on { background:var(--bg-tertiary); color:var(--text); font-weight:600; }
 .seg button:disabled { opacity:.45; cursor:not-allowed; }
 .btn.small { padding:4px 10px; font-size:12.5px; }
+/* ghost + danger：清除类按钮常态灰、悬停/聚焦才转红，页头不会一直挂一片红 */
+.btn.ghost.danger:hover:not(:disabled) { color:var(--danger); background:var(--danger-soft); }
+.btn.ghost.danger:focus-visible { color:var(--danger); }
 .research-error { color:var(--danger); background:var(--danger-soft); padding:10px 12px; border-radius:8px; font-size:12.5px; overflow-wrap:anywhere; }
 .research-error.inline { margin:10px 0 0; }
 .research-blank { flex:1; display:grid; place-items:center; }
@@ -871,6 +1105,23 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .opp + .opp { border-top:1px solid var(--border); }
 .opp-p { width:7px; height:7px; border-radius:2px; margin-top:6px; background:var(--accent); }
 .due { display:inline-block; margin-top:8px; font-size:11px; color:var(--warn); background:var(--warn-soft); border-radius:5px; padding:2px 7px; font-weight:600; }
+/* 右栏「调研记录」：一条一行，时间 + 状态 + 入库状态 + 删除；右栏窄，别用表格 */
+.rec-total { margin-left:6px; font-weight:500; color:var(--text-faint); }
+.rec-list { list-style:none; margin:0; padding:0; }
+.rec { padding:7px 0; border-bottom:1px dashed var(--border); }
+.rec:last-child { border-bottom:0; padding-bottom:0; }
+.rec-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.rec-time { font-size:12px; color:var(--text); font-variant-numeric:tabular-nums; }
+.rec-del { flex:none; padding:4px 6px; margin:-4px -6px -4px 0; border:0; border-radius:5px; background:none;
+  color:var(--text-faint); font-size:11.5px; cursor:pointer; }
+.rec-del:hover:not(:disabled) { color:var(--danger); background:var(--danger-soft); }
+.rec-del:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.rec-del:disabled { opacity:.5; cursor:not-allowed; }
+.rec-meta { display:flex; align-items:center; gap:8px; margin-top:2px; font-size:11.5px; color:var(--text-secondary); }
+.rec-state { min-width:0; overflow-wrap:anywhere; }
+.rec-store { margin-left:auto; flex:none; font-weight:600; color:var(--success); }
+.rec-store.off { color:var(--warning); }
+.rec-more { margin:7px 0 0; font-size:11px; color:var(--text-faint); }
 
 /* 弹窗内容 */
 .modal-sub { font-size:12.5px; color:var(--text-secondary); line-height:1.65; margin:0; }
@@ -883,6 +1134,17 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .template-headings { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
 .template-headings label { display:grid; grid-template-columns:26px minmax(0,1fr); align-items:center; gap:8px; font-size:11.5px; color:var(--text-secondary); }
 .template-headings input { width:100%; padding:9px; }
+/* 覆盖 / 生成新版本：一份报告一行，整行可点选（覆盖是破坏性动作，选中的目标要看清楚） */
+.existing-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+.existing-item { display:grid; grid-template-columns:auto minmax(0,1fr); gap:10px; align-items:flex-start;
+  padding:10px 12px; border:1px solid var(--border); border-radius:10px; cursor:pointer; }
+.existing-item:hover { border-color:var(--control-border-strong); background:var(--bg-secondary); }
+.existing-item.on { border-color:var(--accent); background:var(--accent-soft); }
+.existing-item input { margin:3px 0 0; accent-color:var(--accent); }
+.existing-body { min-width:0; display:grid; gap:3px; }
+.existing-title { font-size:13px; font-weight:600; color:var(--text); overflow-wrap:anywhere; }
+.existing-meta { display:flex; flex-wrap:wrap; gap:2px 10px; font-size:11.5px; color:var(--text-secondary); }
+.existing-kind { font-weight:600; }
 
 @keyframes arrive { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
 

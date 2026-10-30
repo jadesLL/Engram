@@ -290,3 +290,115 @@ test('MCP instructions 交代名称核验通道、对话提问与联网检索分
   assert.match(instructions, /ask_user/);
   assert.match(instructions, /企查查/);
 });
+
+/** 一份符合 v3 契约的完整报告：verified + 8 章 + 3 条外部来源（用于覆盖旧报告场景） */
+function fullVerified() {
+  return {
+    identity: {
+      status: 'verified',
+      method: 'registry',
+      fullName: '接口覆盖有限公司',
+      attempts: ['企查查按输入名称检索', '国家企业信用信息公示系统按全名复核'],
+      evidence: [1],
+    },
+    sections: {
+      summary: '接口覆盖有限公司正在评估新机型，采购预算已进入审批流程 [1][2]。',
+      identity: '工商登记与官网信息一致：公司名称、注册地与主营范围均可对应 [1][2]。',
+      facts: '官网披露公司主营智能设备制造 [2]；企查查显示公司的成立时间与注册资本 [1]。',
+      needs: '官网招聘信息显示产线扩张，存在设备更新需求 [3]。',
+      relationships: '公开信息未披露决策链成员，推断由设备部门发起、管理层审批。',
+      risks: '公开资料未披露采购预算与时间表，需求规模存在不确定性。',
+      actions: '下一步向客户确认设备清单与预算审批进度。',
+      gaps: '决策人姓名、采购时间表与合同主体名称待核实。',
+    },
+    sources: [
+      { id: 1, title: '企查查：接口覆盖有限公司', url: 'https://www.qcc.com/firm/fixture-overwrite', kind: 'registry', publishedAt: '未标注', accessedAt: '2026-10-15' },
+      { id: 2, title: '接口覆盖有限公司官网', url: 'https://example.com/overwrite/about', kind: 'official', publishedAt: '2026-10-14', accessedAt: '2026-10-15' },
+      { id: 3, title: '行业媒体报道', url: 'https://example.com/overwrite/news', kind: 'media', publishedAt: '2026-09-30', accessedAt: '2026-10-15' },
+    ],
+  };
+}
+
+test('MCP 重复客户：begin 返回 existingReports/saveMode，保存未选处理方式被拒', async () => {
+  const { writePage } = await import('../lib/vault.js');
+  const oldPath = '原始资料/文档/2026.10.06_接口重复客户调研报告.md';
+  writePage(oldPath, '旧的接口重复客户报告正文', { type: 'doc' });
+
+  const plain = await callTool('begin_customer_research', { customer: '接口重复客户', client: 'Codex', timeZone: 'Asia/Hong_Kong' });
+  assert.equal(plain.isError, false, plain.text);
+  const plainTask = JSON.parse(plain.text);
+  assert.equal(Array.isArray(plainTask.existingReports), true);
+  assert.equal(plainTask.existingReports.length, 1);
+  assert.equal(plainTask.existingReports[0].path, oldPath);
+  assert.equal(plainTask.existingReports[0].kind, 'full');
+  assert.equal(plainTask.saveMode, '');
+
+  // save=true 但没选「新版本/覆盖」：拒收并提示先问用户
+  const blocked = await callTool('begin_customer_research', { customer: '接口重复客户', save: true, client: 'Codex' });
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.text, /已有该客户的调研报告/);
+  assert.match(blocked.text, /生成新版本/);
+
+  const newVersion = await callTool('begin_customer_research', { customer: '接口重复客户', save: true, saveMode: 'new', client: 'Codex' });
+  assert.equal(newVersion.isError, false, newVersion.text);
+  const newTask = JSON.parse(newVersion.text);
+  assert.equal(newTask.saveMode, 'new');
+  assert.equal(newTask.existingReports.length, 1);
+
+  const badOverwrite = await callTool('begin_customer_research', {
+    customer: '接口重复客户', save: true, saveMode: 'overwrite', overwritePath: '原始资料/文档/不存在.md', client: 'Codex',
+  });
+  assert.equal(badOverwrite.isError, true);
+  assert.match(badOverwrite.text, /overwritePath/);
+});
+
+test('MCP 提交覆盖旧报告：saveMode/overwritePath 整篇替换且路径不变、重复提交幂等', async () => {
+  const { writePage, safeJoin } = await import('../lib/vault.js');
+  const target = '原始资料/文档/2026.10.07_接口覆盖客户调研报告.md';
+  writePage(target, '旧的接口覆盖客户报告正文（覆盖时整篇替换）', { type: 'doc' });
+
+  const started = await callTool('begin_customer_research', {
+    customer: '接口覆盖客户', client: 'Codex', timeZone: 'Asia/Hong_Kong',
+    save: true, saveMode: 'overwrite', overwritePath: target,
+  });
+  assert.equal(started.isError, false, started.text);
+  const task = JSON.parse(started.text);
+  assert.equal(task.saveMode, 'overwrite');
+
+  const payload = { taskId: task.taskId, ...fullVerified(), save: true, saveMode: 'overwrite', overwritePath: target };
+  const done = await callTool('submit_customer_research', payload);
+  assert.equal(done.isError, false, done.text);
+  const result = JSON.parse(done.text);
+  assert.equal(result.saved, true);
+  assert.equal(result.overwritten, true);
+  assert.equal(result.path, target);
+  assert.equal(result.saveMode, 'overwrite');
+  const content = fs.readFileSync(safeJoin(target), 'utf8');
+  assert.match(content, /接口覆盖有限公司正在评估新机型/);
+  assert.doesNotMatch(content, /旧的接口覆盖客户报告正文/);
+
+  // 同一份内容重复提交：幂等，仍是同一路径
+  const again = await callTool('submit_customer_research', payload);
+  assert.equal(again.isError, false, again.text);
+  const repeated = JSON.parse(again.text);
+  assert.equal(repeated.path, target);
+  assert.equal(repeated.overwritten, true);
+});
+
+test('MCP 已有报告时提交 save=true 不带 saveMode 被拒，带 new 可另存新版本', async () => {
+  const started = await callTool('begin_customer_research', { customer: '接口重复客户', client: 'Codex', scope: 'knowledge-only' });
+  assert.equal(started.isError, false, started.text);
+  const task = JSON.parse(started.text);
+
+  const blocked = await callTool('submit_customer_research', { taskId: task.taskId, ...interfaceBrief(), save: true });
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.text, /已有该客户的调研报告|saveMode/);
+
+  const saved = await callTool('submit_customer_research', { taskId: task.taskId, ...interfaceBrief(), save: true, saveMode: 'new' });
+  assert.equal(saved.isError, false, saved.text);
+  const result = JSON.parse(saved.text);
+  assert.equal(result.saved, true);
+  assert.equal(result.saveMode, 'new');
+  assert.match(result.path, /调研简报\.md$/);
+  assert.notEqual(result.path, '原始资料/文档/2026.10.06_接口重复客户调研报告.md');
+});
