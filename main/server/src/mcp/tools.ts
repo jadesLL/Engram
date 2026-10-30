@@ -131,14 +131,14 @@ export function makeServer(): McpServer {
   const server = new McpServer({ name: 'engram', version: '1.0.0' }, { instructions: MCP_INSTRUCTIONS });
 
   server.tool('begin_customer_research',
-    '调研客户、分析目标公司、客户背景调查、生成客户洞察报告时优先调用：建立任务并取得 Engram 最新 ACS 流程、固定报告模板和版本。所有客户端共用；只查单个事实无需完整调研。',
+    '调研客户、分析目标公司、客户背景调查、生成客户洞察报告时优先调用：建立任务并取得 Engram 最新流程、主体核验契约、报告模式与模板版本。所有客户端共用；只查单个事实无需完整调研。第一步永远是核验客户主体：公开工商与知识库都查不到时，必须质疑客户是否存在，只提交主体核验短报告，禁止用知识库里的名称提法编造客户分析。',
     { customer: z.string().min(1).max(100), scope: z.enum(['knowledge-web', 'knowledge-only']).optional(), save: z.boolean().optional().describe('只有用户要求保存才 true；只调研默认为 false'), client: z.string().max(80).optional().describe('执行客户端名称，如 Codex/ZCode/DeepSeek Harness/Kimi/WorkBuddy'), timeZone: z.string().optional().describe('用户当地时区，如 Asia/Hong_Kong；用于报告日期和排期锚点') },
     async args => {
       try { return { content: [{ type: 'text', text: JSON.stringify(beginCustomerResearch(args), null, 2) }] }; }
       catch (e) { if (e instanceof CustomerResearchError) return { content: [{ type: 'text', text: e.message }], isError: true }; throw e; }
     });
   server.tool('submit_customer_research',
-    '提交已完成的客户调研报告：校验任务版本、固定章节和来源引用，返回报告；save=true 时新建原始资料，不覆盖历史报告。先 begin_customer_research，不用 create_raw_material 绕过报告校验。',
+    '提交客户调研报告：先校验 identity（主体核验：verified/kb-docs/not-found）再按证据量选模式（完整 8 章 / 资料不足简报 3 章 / 主体核验 2 章），校验章节、每章长度、引用与废话；save=true 时新建原始资料，不覆盖历史报告。先 begin_customer_research，不用 create_raw_material 绕过校验。',
     { taskId: z.string(), ...researchReportSchema.shape, save: z.boolean().optional() },
     async args => {
       try { return { content: [{ type: 'text', text: JSON.stringify(submitCustomerResearch(args), null, 2) }] }; }

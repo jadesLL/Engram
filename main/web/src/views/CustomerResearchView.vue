@@ -82,7 +82,11 @@
                 <span class="chip" :class="statusChipClass(currentTask)">
                   <span class="chip-dot" aria-hidden="true" />{{ statusLabel(currentTask) }}
                 </span>
-                <span v-if="fullName && fullName !== current.name" class="chip">简称 {{ current.name }}</span>
+                <span v-if="verdict" class="chip" :class="verdictChipClass">
+                  <span class="chip-dot" aria-hidden="true" />{{ verdictStatusLabel }}
+                </span>
+                <span v-if="currentTask.markdown" class="chip">{{ reportModeLabel }}</span>
+                <span v-if="reportFullName && reportFullName !== current.name" class="chip">简称 {{ current.name }}</span>
                 <span class="chip">流程 v{{ currentTask.version }}</span>
                 <span v-if="scopeText" class="chip">{{ scopeText }}</span>
                 <span v-if="sections.length" class="chip">{{ sections.length }} 章</span>
@@ -91,11 +95,35 @@
 
               <p v-if="currentTask.error" class="research-error inline">{{ currentTask.error }}</p>
 
-              <div v-if="summaryText" class="brief">
-                <h3>执行摘要</h3>
+              <!-- 摘要只在当前章不是「结论」时展示：结论章本身就在下方正文里，避免同一段话出现两次 -->
+              <div v-if="summaryText && activeSection?.id !== 'summary'" class="brief">
+                <h3>{{ reportMode === 'identity-check' ? '核验结论' : '执行摘要' }}</h3>
                 <p>{{ summaryText }}</p>
               </div>
               <p v-else-if="currentTask.path" class="arc-path">已保存：{{ fileName(currentTask.path) }}</p>
+            </div>
+
+            <!-- 主体核验没通过：把「查无此主体」、原因与检索过程直接亮在报告前面，避免把核验结论当成正常客户分析 -->
+            <div v-if="verdict && verdict.status === 'not-found'" class="arc-alert danger" role="alert">
+              <Icon name="alert" :size="18" />
+              <div class="arc-alert-body">
+                <p class="arc-alert-title">未能核实客户主体</p>
+                <p v-if="verdict.reason" class="arc-alert-text">{{ verdict.reason }}</p>
+                <p class="arc-alert-text">请确认客户名称是否存在或提供工商全名。</p>
+                <ol v-if="verdict.attempts.length" class="arc-alert-list">
+                  <li v-for="(attempt, index) in verdict.attempts" :key="index">{{ attempt }}</li>
+                </ol>
+                <p v-else class="arc-alert-text faint">没有记录到检索渠道。</p>
+                <button class="btn small" type="button" @click="openStart(current?.name)">按当前客户名重新发起调研</button>
+              </div>
+            </div>
+            <!-- 只有库内资料：报告可以看，但对外引用前要自己补工商核实 -->
+            <div v-else-if="verdict && verdict.status === 'kb-docs'" class="arc-alert warn">
+              <Icon name="alert" :size="18" />
+              <div class="arc-alert-body">
+                <p class="arc-alert-title">本次只有知识库资料，未做工商核实</p>
+                <p class="arc-alert-text">主体名称与公开工商信息尚未核验，报告只依据库内原始资料，对外引用前请自行确认。</p>
+              </div>
             </div>
 
             <template v-if="currentTask.markdown">
@@ -155,6 +183,8 @@
           <dl class="facts">
             <dt>状态</dt>
             <dd>{{ statusLabel(currentTask) }}</dd>
+            <dt>报告模式</dt>
+            <dd>{{ reportModeLabel }}</dd>
             <dt>完成时间</dt>
             <dd>{{ formatTime(currentTask.createdAt) }}</dd>
             <dt>流程版本</dt>
@@ -165,8 +195,27 @@
             <dd>{{ sourceCount ? `${sourceCount} 条` : '—' }}</dd>
           </dl>
         </div>
+        <div v-if="verdict" class="blk">
+          <h4>主体核验</h4>
+          <dl class="facts">
+            <dt>核验状态</dt>
+            <dd>{{ verdictStatusLabel }}</dd>
+            <dt>核验方式</dt>
+            <dd>{{ verdictMethodLabel }}</dd>
+            <dt>外部来源</dt>
+            <dd>{{ verdict.webSources }} 条</dd>
+            <dt>库内来源</dt>
+            <dd>{{ verdict.kbSources }} 条</dd>
+            <dt>尝试次数</dt>
+            <dd>{{ verdict.attempts.length }} 次</dd>
+            <dt v-if="verdict.fullName">工商全名</dt>
+            <dd v-if="verdict.fullName">{{ verdict.fullName }}</dd>
+          </dl>
+          <!-- 完整版/主体核验的原因已在 chip 与警示条里说过，只有简报需要解释为什么降级 -->
+          <p v-if="verdict.reason && verdict.mode === 'brief'" class="aside-p aside-reason">{{ verdict.reason }}</p>
+        </div>
         <div v-if="profileText" class="blk">
-          <h4>客户概况</h4>
+          <h4>{{ reportMode === 'brief' ? '已知事实' : '客户概况' }}</h4>
           <p class="aside-p clamp">{{ profileText }}</p>
         </div>
         <div v-if="opportunities.length" class="blk">
@@ -176,10 +225,10 @@
           </div>
         </div>
         <div v-if="currentTask.markdown" class="blk last">
-          <h4>下一步</h4>
+          <h4>{{ reportMode === 'identity-check' ? '需要你确认' : '下一步' }}</h4>
           <p v-if="nextAction" class="aside-p strong">{{ nextAction }}</p>
-          <p v-else class="aside-p">这份报告还没有给出行动计划。</p>
-          <span v-if="gapCount" class="due">{{ gapCount }} 处待验证</span>
+          <p v-else class="aside-p">{{ reportMode === 'identity-check' ? '没有列出需要你确认的事项。' : reportMode === 'brief' ? '资料不足简报不排行动计划，先补「待核实」事项。' : '这份报告还没有给出行动计划。' }}</p>
+          <span v-if="gapCount" class="due">{{ gapCount }} 处{{ reportMode === 'identity-check' ? '待你确认' : '待验证' }}</span>
         </div>
       </aside>
     </div>
@@ -187,7 +236,7 @@
     <!-- 发起调研 -->
     <AppModal :open="startOpen" title="发起调研" @close="closeStart">
       <template #subtitle>
-        <p class="modal-sub">内置 Agent 按当前流程先查知识库；选「知识库 + 联网」时再补充公开信息。完成后自动存为原始资料。</p>
+        <p class="modal-sub">先核验主体；公开信息与知识库都查不到主体时只出核验结论，不编造客户分析。</p>
       </template>
       <form class="modal-form" @submit.prevent="start">
         <label class="field">
@@ -256,12 +305,26 @@ import { useAppStore } from '../stores/app';
 import { isComposingKey } from '../lib/ime';
 import { bindDelegatedTooltips } from '../directives/tooltip';
 
-type Task = { id: string; customer: string; client: string; version: number; status: string; error: string; createdAt: string; markdown: string; path: string; sessionId: string; runId: string };
+type VerdictMode = 'full' | 'brief' | 'identity-check';
+type VerdictStatus = 'verified' | 'kb-docs' | 'not-found';
+type VerdictMethod = 'registry' | 'official-site' | 'kb-documents' | 'none';
+/** 主体核验结论（v2 起随任务返回）：mode 决定报告章节结构，status/method 决定档案头的核验 chip */
+type Verdict = {
+  mode: VerdictMode; status: VerdictStatus; method: VerdictMethod; fullName?: string;
+  webSources: number; kbSources: number; reason: string; attempts: string[];
+};
+type Task = { id: string; customer: string; client: string; version: number; status: string; error: string; createdAt: string; markdown: string; path: string; sessionId: string; runId: string; verdict?: Verdict | null };
 type Rules = { version: number; workflow: string; sections: Array<{ id: string; title: string }> };
 /** 客户分组：同名客户的历次调研归到一起，最新那份当档案 */
 type CustomerGroup = { name: string; tasks: Task[]; latest: Task };
 /** 报告里的一个章节：标题 + 本章正文（不含标题行） */
 type ReportSection = { id: string; title: string; body: string };
+/** 报告模式：完整 8 章 / 资料不足简报 3 章 / 主体核验 3 章（后两种章节固定，标题由服务端生成） */
+type ReportMode = VerdictMode;
+const MODE_LABEL: Record<ReportMode, string> = { full: '完整报告', brief: '资料不足简报', 'identity-check': '主体核验' };
+const VERDICT_STATUS_LABEL: Record<VerdictStatus, string> = { verified: '主体已核实', 'kb-docs': '未经工商核实', 'not-found': '查无此主体' };
+const VERDICT_METHOD_LABEL: Record<VerdictMethod, string> = { registry: '工商登记', 'official-site': '官网/官方渠道', 'kb-documents': '知识库原始资料', none: '未核验' };
+const VERDICT_CHIP_CLASS: Record<VerdictStatus, string> = { verified: 'ok', 'kb-docs': 'warn', 'not-found': 'danger' };
 
 const router = useRouter(), chat = useChatStore(), app = useAppStore();
 const customer = ref(''), scope = ref('knowledge-web'), starting = ref(false), error = ref('');
@@ -279,7 +342,7 @@ let timer: ReturnType<typeof setInterval> | undefined, disposed = false, loading
 
 const isRunning = (task: Task) => ['running', 'queued'].includes(task.status);
 function statusLabel(task: Task) {
-  return ({ saved: '报告已保存', draft: '报告待保存', running: '调研中', queued: '等待执行', pending: '等待 Agent 提交', failed: '调研失败', cancelled: '已停止', interrupted: '已中断', completed: '执行结束，报告未提交' } as Record<string, string>)[task.status] || task.status;
+  return ({ saved: '报告已保存', draft: '报告待保存', running: '调研中', queued: '等待执行', pending: '等待 Agent 提交', unverified: '主体未核实', failed: '调研失败', cancelled: '已停止', interrupted: '已中断', completed: '执行结束，报告未提交' } as Record<string, string>)[task.status] || task.status;
 }
 const pad = (value: number) => String(value).padStart(2, '0');
 const formatTime = (at: string) => {
@@ -291,13 +354,14 @@ const fileName = (path: string) => path.split('/').pop() || path;
 function statusChipClass(task: Task) {
   if (task.status === 'saved') return 'ok';
   if (isRunning(task) || task.status === 'pending') return 'run';
-  if (task.status === 'failed' || task.status === 'interrupted') return 'danger';
+  // 主体核验没过的报告沿用「有结果但不可信」的红点/红 chip；顶部筛选仍然只看 running
+  if (task.status === 'failed' || task.status === 'interrupted' || task.status === 'unverified') return 'danger';
   return '';
 }
 function dotClass(task: Task) {
   if (task.status === 'saved') return 'ok';
   if (isRunning(task)) return 'run';
-  if (task.status === 'failed' || task.status === 'interrupted') return 'danger';
+  if (task.status === 'failed' || task.status === 'interrupted' || task.status === 'unverified') return 'danger';
   return 'idle';
 }
 
@@ -335,6 +399,11 @@ const current = computed<CustomerGroup | null>(() => {
   return picked ?? list.find((item) => item.latest.markdown) ?? list[0] ?? null;
 });
 const currentTask = computed<Task>(() => current.value?.latest ?? ({} as Task));
+/** 主体核验结论：旧任务没有这个字段，一律按 null 处理（报告解析会按实际标题推断模式） */
+const verdict = computed<Verdict | null>(() => currentTask.value.verdict ?? null);
+const verdictStatusLabel = computed(() => (verdict.value ? VERDICT_STATUS_LABEL[verdict.value.status] : ''));
+const verdictMethodLabel = computed(() => (verdict.value ? VERDICT_METHOD_LABEL[verdict.value.method] : ''));
+const verdictChipClass = computed(() => (verdict.value ? VERDICT_CHIP_CLASS[verdict.value.status] : ''));
 
 /* ---------- 报告解析：序言 + 章节 ---------- */
 const reportSource = computed(() => (currentTask.value.markdown || '').replace(/\r\n?/g, '\n'));
@@ -344,7 +413,9 @@ const preamble = computed(() => {
   return cut < 0 ? source : source.slice(0, cut);
 });
 const fullName = computed(() => /^\s*客户[：:]\s*(.+?)\s*$/m.exec(preamble.value)?.[1] ?? '');
-const displayName = computed(() => fullName.value || current.value?.name || '');
+/** 报告全名优先用页头「客户：」；页头没有时用主体核验拿到的工商全名兜底 */
+const reportFullName = computed(() => fullName.value || verdict.value?.fullName || '');
+const displayName = computed(() => reportFullName.value || current.value?.name || '');
 const scopeText = computed(() => {
   const raw = /资料范围[：:]\s*([^\n·]+)/.exec(preamble.value)?.[1]?.trim() ?? '';
   if (!raw) return '';
@@ -366,27 +437,79 @@ function splitMarkdownSections(markdown: string): Array<{ title: string; body: s
   }
   return out;
 }
+/** 报告的 ## 标题是唯一依据：序言与正文原样保留，章节顺序也照报告来 */
+const parsedSections = computed(() => splitMarkdownSections(reportSource.value));
 /**
- * 章节以 rules.sections 为准（流程与标题都可以改）；报告里多出来的章节也照原样保留，
- * 不因为规则版本不同就把内容吞掉。标题相同的按标题对齐，否则按位置对齐。
+ * 报告模式：服务端 verdict.mode 为准；没有 verdict 的旧任务按实际标题推断
+ * （v1 完整报告没有简报/核验版的固定标题，落回 full 走 rules 对齐）。
  */
-const sections = computed<ReportSection[]>(() => {
-  const parsed = splitMarkdownSections(reportSource.value);
-  if (!parsed.length) return [];
-  const ruleList = rules.value?.sections ?? [];
+const reportMode = computed<ReportMode>(() => {
+  const mode = verdict.value?.mode;
+  if (mode === 'full' || mode === 'brief' || mode === 'identity-check') return mode;
+  const titles = parsedSections.value.map((item) => item.title);
+  if (titles.some((title) => /核验结论|核验过程|需要你确认/.test(title))) return 'identity-check';
+  if (titles.some((title) => /已知事实/.test(title))) return 'brief';
+  return 'full';
+});
+const reportModeLabel = computed(() => (parsedSections.value.length ? MODE_LABEL[reportMode.value] : '—'));
+/** 简报 / 主体核验的章节固定（标题由服务端生成），按关键词挂回稳定 id，其余章节保留原样 */
+const FIXED_SECTION_IDS: Record<Exclude<ReportMode, 'full'>, Array<{ id: string; pattern: RegExp }>> = {
+  brief: [
+    { id: 'summary', pattern: /结论/ },
+    { id: 'facts', pattern: /事实/ },
+    { id: 'gaps', pattern: /待核实/ },
+  ],
+  'identity-check': [
+    { id: 'summary', pattern: /结论/ },
+    { id: 'verification', pattern: /过程/ },
+    { id: 'gaps', pattern: /确认/ },
+  ],
+};
+function fixedSections(parsed: Array<{ title: string; body: string }>, mode: Exclude<ReportMode, 'full'>): ReportSection[] {
+  const list = parsed.map((item) => ({ id: '', title: item.title, body: item.body }));
   const used = new Set<number>();
-  const list: ReportSection[] = [];
-  ruleList.forEach((rule, index) => {
-    let at = parsed.findIndex((item, i) => !used.has(i) && item.title === rule.title);
-    if (at < 0 && index < parsed.length && !used.has(index)) at = index;
+  for (const rule of FIXED_SECTION_IDS[mode]) {
+    const at = list.findIndex((item, index) => !used.has(index) && rule.pattern.test(item.title));
+    if (at < 0) continue;
+    used.add(at);
+    list[at].id = rule.id;
+  }
+  return list.map((item, index) => (item.id ? item : { ...item, id: `extra-${index}` }));
+}
+/**
+ * 完整版：标题与正文都以报告为准，rules.sections 只用来对齐 id（右栏与引用跳转靠 id 找章）
+ * 和顺序兜底——标题被用户改过时，章节数与规则一致就按位置补 id。报告里多出来的章节
+ * （例如服务端追加的来源章）照原样保留，不因为规则版本不同把内容吞掉。
+ */
+function fullSections(parsed: Array<{ title: string; body: string }>): ReportSection[] {
+  const ruleList = rules.value?.sections ?? [];
+  const list = parsed.map((item) => ({ id: '', title: item.title, body: item.body }));
+  if (!ruleList.length) return list.map((item, index) => ({ ...item, id: `section-${index}` }));
+  const used = new Set<number>();
+  const taken = new Set<string>();
+  ruleList.forEach((rule) => {
+    const at = list.findIndex((item, index) => !used.has(index) && item.title === rule.title);
     if (at < 0) return;
     used.add(at);
-    list.push({ id: rule.id, title: rule.title, body: parsed[at].body });
+    taken.add(rule.id);
+    list[at].id = rule.id;
   });
-  parsed.forEach((item, index) => {
-    if (!used.has(index)) list.push({ id: `extra-${index}`, title: item.title, body: item.body });
-  });
-  return list;
+  if (list.length === ruleList.length) {
+    list.forEach((item, index) => {
+      if (item.id) return;
+      const rule = ruleList[index];
+      if (!rule || taken.has(rule.id)) return;
+      item.id = rule.id;
+      taken.add(rule.id);
+    });
+  }
+  return list.map((item, index) => (item.id ? item : { ...item, id: `extra-${index}` }));
+}
+const sections = computed<ReportSection[]>(() => {
+  const parsed = parsedSections.value;
+  if (!parsed.length) return [];
+  const mode = reportMode.value;
+  return mode === 'full' ? fullSections(parsed) : fixedSections(parsed, mode);
 });
 const activeSection = computed<ReportSection | null>(
   () => sections.value.find((item) => item.id === activeSectionId.value) ?? sections.value[0] ?? null,
@@ -479,10 +602,18 @@ function plain(text: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
-/** 按章节 id 找正文；找不到再按标题关键词找（流程改过标题时的兜底） */
-function bodyOf(id: string, keyword: string): string {
-  const hit = sections.value.find((item) => item.id === id) ?? sections.value.find((item) => item.title.includes(keyword));
-  return hit?.body ?? '';
+/**
+ * 按章节 id 找正文；找不到再按标题关键词依次兜底：流程改过标题、v1 旧报告、
+ * 简报/主体核验的固定短章节都靠它落到正确的章节上。
+ */
+function bodyOf(id: string, ...keywords: string[]): string {
+  const byId = sections.value.find((item) => item.id === id);
+  if (byId) return byId.body;
+  for (const keyword of keywords) {
+    const hit = sections.value.find((item) => item.title.includes(keyword));
+    if (hit) return hit.body;
+  }
+  return '';
 }
 function firstParagraph(body: string): string {
   let fallback = '';
@@ -507,12 +638,20 @@ function listItemsOf(body: string): string[] {
     .map((value) => plain(value.replace(/^\[[ xX]\]\s*/, '')))
     .filter(Boolean);
 }
-const summaryText = computed(() => firstParagraph(bodyOf('summary', '摘要')) || firstParagraph(sections.value[0]?.body ?? ''));
-const profileText = computed(() => firstParagraph(bodyOf('profile', '客户概况')));
-const opportunities = computed(() => listItemsOf(bodyOf('opportunities', '机会')).slice(0, 3));
-const gapCount = computed(() => listItemsOf(bodyOf('gaps', '缺口')).length);
-const sourceCount = computed(() => listItemsOf(bodyOf('sources', '来源')).length);
-const nextAction = computed(() => listItemsOf(bodyOf('actions', '行动计划'))[0] ?? '');
+/** 简报/核验版整章常常只有列表：首段为空时退到前两条，别让右栏整块空着 */
+function firstText(body: string): string {
+  return firstParagraph(body) || listItemsOf(body).slice(0, 2).join('；');
+}
+const summaryText = computed(() => firstText(bodyOf('summary', '摘要', '结论')) || firstParagraph(sections.value[0]?.body ?? ''));
+const profileText = computed(() => firstText(bodyOf('profile', '客户概况', '主体', '事实')));
+const opportunities = computed(() => listItemsOf(bodyOf('opportunities', '机会', '需求')).slice(0, 3));
+const gapCount = computed(() => reportMode.value === 'identity-check'
+  ? (bodyOf('gaps', '确认').trim() ? 1 : 0)
+  : listItemsOf(bodyOf('gaps', '缺口', '待核实')).length);
+/** 来源条数：报告里有来源章就数条目；简报/核验版没有来源章时用主体核验的来源统计兜底 */
+const sourceCount = computed(() => listItemsOf(bodyOf('sources', '来源')).length || (verdict.value ? verdict.value.webSources + verdict.value.kbSources : 0));
+const nextAction = computed(() => listItemsOf(bodyOf('actions', '行动', '行动计划'))[0]
+  ?? (reportMode.value === 'identity-check' ? firstText(bodyOf('gaps', '确认')) : ''));
 
 /* ---------- 数据 ---------- */
 async function load() {
@@ -648,11 +787,29 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .chip.ok { background:var(--success-soft); color:var(--success); font-weight:600; }
 .chip.run { background:var(--accent-soft); color:var(--accent); font-weight:600; }
 .chip.danger { background:var(--danger-soft); color:var(--danger); font-weight:600; }
+.chip.warn { background:var(--warn-soft); color:var(--warning); font-weight:600; }
 .chip-dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
 .brief { margin-top:12px; padding:11px 14px; background:var(--bg-secondary); border-radius:11px; }
 .brief h3 { font-size:11.5px; font-weight:600; color:var(--text-secondary); margin:0 0 6px; }
 .brief p { font-size:13.5px; line-height:1.72; max-width:620px; margin:0; }
 .arc-path { margin:12px 0 0; font-size:12px; color:var(--text-secondary); overflow-wrap:anywhere; }
+/* 主体核验警示条：身份没核实就把结论和检索过程顶在报告前面，颜色和档案头 chip 一致 */
+.arc-alert { flex:none; display:flex; gap:10px; margin:0 clamp(15px, 2.3cqw, 24px) clamp(10px, 1.25cqw, 13px);
+  padding:11px 13px; border-radius:11px; font-size:12.5px; line-height:1.65; }
+.arc-alert.danger { background:var(--danger-soft); }
+.arc-alert.warn { background:var(--warn-soft); }
+.arc-alert.danger :deep(svg) { color:var(--danger); }
+.arc-alert.warn :deep(svg) { color:var(--warning); }
+.arc-alert :deep(svg) { flex:none; margin-top:2px; }
+.arc-alert-body { flex:1; min-width:0; }
+.arc-alert-title { margin:0; font-size:13px; font-weight:650; color:var(--text); }
+.arc-alert.danger .arc-alert-title { color:var(--danger); }
+.arc-alert.warn .arc-alert-title { color:var(--warning); }
+.arc-alert-text { margin:5px 0 0; color:var(--text-secondary); overflow-wrap:anywhere; }
+.arc-alert-text.faint { color:var(--text-faint); }
+.arc-alert-list { margin:6px 0 0; padding-left:18px; color:var(--text-secondary); overflow-wrap:anywhere; }
+.arc-alert-list li { margin:2px 0; }
+.arc-alert .btn { margin-top:9px; }
 
 .tabs { flex:none; display:flex; flex-wrap:wrap; gap:2px; padding:0 clamp(15px, 2.3cqw, 24px); border-bottom:1px solid var(--border); }
 .tab { position:relative; padding:9px 10px 11px; font-size:12.5px; color:var(--text-secondary); white-space:nowrap; }
@@ -709,6 +866,7 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
 .aside-p { font-size:12.5px; line-height:1.7; color:var(--text); margin:0; }
 .aside-p.strong { font-weight:600; }
 .aside-p.clamp { display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }
+.aside-reason { margin-top:8px; color:var(--text-secondary); font-size:12px; overflow-wrap:anywhere; }
 .opp { display:grid; grid-template-columns:7px minmax(0,1fr); gap:9px; padding:6px 0; font-size:12.5px; line-height:1.65; }
 .opp + .opp { border-top:1px solid var(--border); }
 .opp-p { width:7px; height:7px; border-radius:2px; margin-top:6px; background:var(--accent); }
@@ -752,6 +910,7 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); });
   .col-label { padding-bottom:6px; }
   .cols-main .archive { margin-top:14px; overflow:visible; }
   .cols-main .arc-head { padding:16px; }
+  .cols-main .arc-alert { margin:0 16px 13px; }
   .cols-main .arc-top h2 { font-size:19px; }
   .tabs-select { padding:10px 16px; }
   .cols-main .body { overflow:visible; padding:14px 16px 18px; }

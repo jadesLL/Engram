@@ -14,6 +14,8 @@ before(async () => {
   const dbModule = await import('../lib/db.js');
   db = dbModule.db;
   dbModule.migrate();
+  const { writePage } = await import('../lib/vault.js');
+  writePage('原始资料/文档/接口验收客户纪要.md', '接口验收记录：客户已确认采购两套设备，预算已批准。', { type: 'doc' });
   const { makeServer } = await import('./tools.js');
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
@@ -36,6 +38,15 @@ async function callTool(name: string, args: Record<string, unknown> = {}): Promi
     text: (result.content || []).map((c: any) => c.text ?? '').join('\n'),
     isError: result.isError === true,
   };
+}
+
+/** SDK 层参数校验在不同版本下可能返回 isError 或直接抛错，这里统一成同一种结果 */
+async function callToolSettled(name: string, args: Record<string, unknown> = {}): Promise<{ text: string; isError: boolean }> {
+  try {
+    return await callTool(name, args);
+  } catch (error: any) {
+    return { text: String(error?.message || error), isError: true };
+  }
 }
 
 test('工具表包含 skill_list / skill_guide，且都是读工具', async () => {
@@ -97,27 +108,131 @@ test('调研 skill 可在连接后按名重新获取', async () => {
   assert.match(result.text, /只有用户明确要求保存/);
 });
 
-test('所有外部客户端通过同一 MCP 客户调研入口固定任务版本并校验模板', async () => {
+/** 一份符合 v2 契约的资料不足简报：kb-docs + 三章 + 原始资料证据 */
+function interfaceBrief() {
+  return {
+    identity: {
+      status: 'kb-docs',
+      method: 'kb-documents',
+      attempts: ['检索知识库原始资料', '检索公开工商登记未找到'],
+      evidence: [1],
+    },
+    sections: {
+      summary: '接口验收纪要显示客户已确认采购两套设备 [1]。',
+      facts: '纪要显示客户预算已批准，交付日期在下季度 [1]。',
+      gaps: '合同编号与决策人待核实。',
+    },
+    sources: [{
+      id: 1,
+      title: '接口验收纪要',
+      path: '原始资料/文档/接口验收客户纪要.md',
+      kind: 'kb-doc',
+      publishedAt: '2026-10-15',
+      accessedAt: '2026-10-15',
+    }],
+  };
+}
+
+test('begin_customer_research 下发主体核验契约、三种模式与固定章节', async () => {
+  const started = await callTool('begin_customer_research', {
+    customer: '接口契约客户', client: 'Codex', timeZone: 'Asia/Hong_Kong',
+  });
+  assert.equal(started.isError, false, started.text);
+  const task = JSON.parse(started.text);
+  assert.ok(task.taskId);
+  assert.match(task.workflow, /先核验客户主体/);
+  assert.match(task.identityContract.required, /identity/);
+  assert.deepEqual(Object.keys(task.identityContract.statuses).sort(), ['kb-docs', 'not-found', 'verified']);
+  assert.match(task.identityContract.statuses.verified, /fullName/);
+  assert.match(task.identityContract.statuses['kb-docs'], /原始文档/);
+  assert.match(task.identityContract.statuses['not-found'], /attempts/);
+  assert.deepEqual(task.modeRules.map((mode: any) => mode.id), ['full', 'brief', 'identity-check']);
+  assert.match(task.modeRules[2].when, /not-found/);
+  assert.equal(task.reportContract.modeSections.full.length, 8);
+  assert.equal(task.reportContract.modeSections.brief.join(','), 'summary,facts,gaps');
+  assert.equal(task.reportContract.modeSections['identity-check'].join(','), 'summary,gaps');
+  assert.equal(Object.keys(task.reportContract.limits).sort().join(','), 'brief,full,identity-check');
+  const instructions = client.getInstructions?.() || '';
+  assert.match(instructions, /先核验客户主体/);
+});
+
+test('所有外部客户端按同一 MCP 契约提交简报：版本一致、save 语义可用', async () => {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
   const { makeServer } = await import('./tools.js');
-  const { CUSTOMER_RESEARCH_SECTIONS } = await import('../content/customerResearch.js');
-  const versions:number[]=[];
-  for(const name of ['Codex','ZCode','DeepSeek Harness','Kimi Code','Kimi Work','WorkBuddy']) {
-    const [a,b]=InMemoryTransport.createLinkedPair();const external=new Client({name,version:'1.0.0'});
-    await makeServer().connect(b);await external.connect(a);
+  const versions: number[] = [];
+  let savedPath = '';
+  for (const name of ['Codex', 'ZCode', 'DeepSeek Harness', 'Kimi Code', 'Kimi Work', 'WorkBuddy']) {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const external = new Client({ name, version: '1.0.0' });
+    await makeServer().connect(serverTransport);
+    await external.connect(clientTransport);
     try {
-      assert.match(external.getInstructions() || '',/begin_customer_research/);
-      const started:any=await external.callTool({name:'begin_customer_research',arguments:{customer:'接口验收客户',client:name,scope:'knowledge-only'}});
-      const task=JSON.parse(started.content[0].text);versions.push(task.version);
-      const rejected:any=await external.callTool({name:'submit_customer_research',arguments:{taskId:task.taskId,sections:{summary:'资料不足'},sources:[]}});
-      assert.equal(rejected.isError,true);
-      const sections=Object.fromEntries(CUSTOMER_RESEARCH_SECTIONS.map(s=>[s.id,'资料不足，暂不能形成事实结论。']));
-      const done:any=await external.callTool({name:'submit_customer_research',arguments:{taskId:task.taskId,sections,sources:[],save:false}});
-      assert.notEqual(done.isError,true);assert.equal(JSON.parse(done.content[0].text).saved,false);
-    } finally {await external.close();}
+      assert.match(external.getInstructions() || '', /begin_customer_research/);
+      const started: any = await external.callTool({
+        name: 'begin_customer_research',
+        arguments: { customer: '接口验收客户', client: name, scope: 'knowledge-only', timeZone: 'Asia/Hong_Kong' },
+      });
+      assert.notEqual(started.isError, true, started.content?.[0]?.text);
+      const task = JSON.parse(started.content[0].text);
+      versions.push(task.version);
+      // 缺 identity 的旧式提交被拒
+      const rejected: any = await external.callTool({
+        name: 'submit_customer_research',
+        arguments: { taskId: task.taskId, sections: { summary: '资料不足' }, sources: [] },
+      });
+      assert.equal(rejected.isError, true);
+      const shouldSave = name === 'Codex';
+      const done: any = await external.callTool({
+        name: 'submit_customer_research',
+        arguments: { taskId: task.taskId, ...interfaceBrief(), save: shouldSave },
+      });
+      assert.notEqual(done.isError, true, done.content?.[0]?.text);
+      const result = JSON.parse(done.content[0].text);
+      assert.equal(result.mode, 'brief');
+      assert.equal(result.saved, shouldSave);
+      assert.equal(result.verdict.status, 'kb-docs');
+      assert.equal(result.verdict.webSources, 0);
+      if (shouldSave) savedPath = result.path;
+    } finally {
+      await external.close();
+    }
   }
-  assert.equal(new Set(versions).size,1);
+  assert.equal(new Set(versions).size, 1);
+  assert.match(savedPath, /调研简报\.md$/);
+});
+
+test('提交缺 identity、章节集合不符或核验证据不足时返回可读的校验错误', async () => {
+  const started = await callTool('begin_customer_research', { customer: '接口校验客户', scope: 'knowledge-only' });
+  assert.equal(started.isError, false, started.text);
+  const task = JSON.parse(started.text);
+
+  const missingIdentity = await callToolSettled('submit_customer_research', {
+    taskId: task.taskId,
+    companyFullName: '旧版全名',
+    sections: interfaceBrief().sections,
+    sources: interfaceBrief().sources,
+  });
+  assert.equal(missingIdentity.isError, true);
+  assert.match(missingIdentity.text, /identity|Invalid arguments|报告格式/);
+
+  const wrongSections = await callTool('submit_customer_research', {
+    taskId: task.taskId,
+    identity: interfaceBrief().identity,
+    sections: { summary: '只有一章' },
+    sources: interfaceBrief().sources,
+  });
+  assert.equal(wrongSections.isError, true);
+  assert.match(wrongSections.text, /章节集合|章节/);
+
+  const weakEvidence = await callTool('submit_customer_research', {
+    taskId: task.taskId,
+    identity: { status: 'not-found', method: 'none', attempts: ['只查了一次'], evidence: [] },
+    sections: { summary: '未能核实该客户主体存在。', gaps: '请提供工商全名或名片。' },
+    sources: [],
+  });
+  assert.equal(weakEvidence.isError, true);
+  assert.match(weakEvidence.text, /2 次|attempts/);
 });
 
 test('调研写入不接受自造的原始资料二级目录', async () => {

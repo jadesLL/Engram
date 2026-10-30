@@ -602,7 +602,9 @@ export function migrate() {
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     report_date TEXT NOT NULL DEFAULT '',
-    time_zone TEXT NOT NULL DEFAULT 'UTC'
+    time_zone TEXT NOT NULL DEFAULT 'UTC',
+    -- 机器可读结论（JSON：mode/status/method/webSources/kbSources/reason/attempts）；'' = 旧任务或未收口
+    verdict TEXT NOT NULL DEFAULT ''
   );
   CREATE INDEX IF NOT EXISTS idx_customer_research_created ON customer_research_tasks(created_at);
 
@@ -644,6 +646,8 @@ export function migrate() {
   ensureColumn('semantic_events', 'status', `TEXT NOT NULL DEFAULT 'succeeded'`);
   ensureColumn('semantic_events', 'error', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('semantic_events', 'duration_ms', `INTEGER NOT NULL DEFAULT 0`);
+  // 客户调研 v2：主体核验结论与报告模式（前端显示「主体未核实/查无此主体」警示）
+  ensureColumn('customer_research_tasks', 'verdict', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('llm_usage', 'scope', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('llm_usage', 'ref_id', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('llm_usage', 'stage', `TEXT NOT NULL DEFAULT ''`);

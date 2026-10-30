@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CUSTOMER_RESEARCH_SKILL_FILE } from '../content/customerResearch.js';
 
-const MARKER = '<!-- engram-managed-customer-research:v1 -->';
+/**
+ * Engram 管理标记前缀：v1/v2 都认。版本号写在标记里、内容会随契约升级（v2 起正文带主体核验流程），
+ * 用前缀判断才能把旧版本装过的入口 skill 当成自己的——否则升级后既覆盖不了也注销不掉。
+ */
+const MARKER = '<!-- engram-managed-customer-research:';
 export function customerResearchSkillPath(root: string): string {
   return path.join(root, 'engram-customer-research', 'SKILL.md');
 }

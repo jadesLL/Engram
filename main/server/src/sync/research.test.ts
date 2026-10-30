@@ -1,16 +1,18 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { CUSTOMER_RESEARCH_SECTIONS } from '../content/customerResearch.js';
 import type { ResearchSnapshot } from './research.js';
 
 /**
  * 客户调研（客户洞察）的跨端同步。
  *
- * 覆盖：只同步完成态、快照字段与 hash 稳定、对账清单同投影、按 updatedAt 新者胜合并
- * （相等只补空、坏数据不落库）、中枢 recordResearchChange 发号写 oplog、流程模板走 preference
- * 管道、关闭客户洞察分类后不再参与同步。
+ * 覆盖：只同步完成态、快照字段与 hash 稳定（含主体核验结论 verdict）、对账清单同投影、
+ * 按 updatedAt 新者胜合并（相等只补空、坏数据不落库）、中枢 recordResearchChange 发号写 oplog、
+ * 流程模板走 preference 管道、关闭客户洞察分类后不再参与同步。
  */
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-research-sync-'));
@@ -41,25 +43,52 @@ after(() => {
   fs.rmSync(temp, { recursive: true, force: true });
 });
 
-/** 一份通过服务端校验的完整报告正文（无来源、无引用；只验证同步，不验证调研内容） */
-function reportBody(): { sections: Record<string, string>; sources: [] } {
-  const rules = research.customerResearchRules();
-  return {
-    sections: Object.fromEntries(rules.sections.map((section) => [section.id, '资料不足，待补充。'])),
-    sources: [],
-  };
+/** 合法的流程快照 JSON（章节用服务端默认模板，避免与 content/customerResearch.ts 漂移） */
+function rulesJson(): string {
+  return JSON.stringify({
+    version: 2,
+    workflow: '测试流程',
+    sections: CUSTOMER_RESEARCH_SECTIONS.map((section) => ({ id: section.id, title: section.title })),
+  });
 }
 
-/** 造一条完成态调研任务（report 非空）；save=true 时会同时生成本地原始资料 */
+/**
+ * 直接造一条任务行。同步层要测的是「报告已生成、任务行已落库」之后的那一段，
+ * 不走 submit_customer_research：v2 的 submit 要求 identity、还校验三种报告模式，
+ * 那属于 research/customerResearch.test.ts；这里从任务行开始造，正好覆盖旧版本行（verdict 默认空串）。
+ */
+function insertTask(over: {
+  customer: string;
+  report?: string;
+  path?: string;
+  verdict?: string;
+  updatedAt?: string;
+}): string {
+  const id = randomUUID();
+  const at = over.updatedAt ?? '2026-01-01T00:00:00.000Z';
+  db.prepare(
+    `INSERT INTO customer_research_tasks(id, customer, scope, client, rules, save_requested, session_id, run_id,
+                                         report, path, verdict, created_at, updated_at, report_date, time_zone)
+     VALUES(?,?,'knowledge-only','Codex',?,0,'','',?,?,?,?,?,'2026-01-01','Asia/Hong_Kong')`
+  ).run(
+    id,
+    over.customer,
+    rulesJson(),
+    over.report ?? '# 客户洞察\n\n资料不足，待补充。',
+    over.path ?? '',
+    over.verdict ?? '',
+    at,
+    at,
+  );
+  return id;
+}
+
+/** 造一条完成态调研任务（report 非空）；save=true 时带上已保存报告的路径 */
 function makeCompleted(customer: string, save = false): string {
-  const task = research.beginCustomerResearch({
+  return insertTask({
     customer,
-    scope: 'knowledge-only',
-    client: 'Codex',
-    timeZone: 'Asia/Hong_Kong',
+    path: save ? `原始资料/文档/2026.10.30_${customer}调研报告.md` : '',
   });
-  research.submitCustomerResearch({ taskId: task.taskId, ...reportBody(), save });
-  return task.taskId;
 }
 
 /** 手工构造一份远端快照（绕过本地 DB，模拟对端推来的那份） */
@@ -73,6 +102,7 @@ function snap(id: string, over: Partial<ResearchSnapshot> = {}): ResearchSnapsho
     saveRequested: over.saveRequested ?? 0,
     report: over.report ?? `报告-${id}`,
     path: over.path ?? '',
+    verdict: over.verdict ?? '',
     createdAt: over.createdAt ?? '2026-01-01T00:00:00.000Z',
     updatedAt: over.updatedAt ?? '2026-01-01T00:00:00.000Z',
     reportDate: over.reportDate ?? '2026-01-01',
@@ -98,6 +128,7 @@ test('完成态快照：字段齐全、hash 稳定，对账清单带同一条与
   assert.ok(snapshot!.rules.includes('"version"'), '流程快照是创建任务时的 JSON');
   assert.match(snapshot!.report, /资料不足/);
   assert.match(snapshot!.path, /^原始资料\/文档\//, '保存后的报告路径随快照带出');
+  assert.equal(snapshot!.verdict, '', '没有主体核验结论的任务（旧版本/未核验）：verdict 为空串');
   assert.ok(snapshot!.createdAt && snapshot!.updatedAt && snapshot!.reportDate);
   assert.equal(snapshot!.timeZone, 'Asia/Hong_Kong');
 
@@ -114,11 +145,11 @@ test('完成态快照：字段齐全、hash 稳定，对账清单带同一条与
 });
 
 test('只同步完成态：report 空的任务没有快照、不进清单；不存在的任务返回空', () => {
-  const pending = research.beginCustomerResearch({ customer: '进行中客户' });
-  assert.equal(syncResearch.collectResearchSnapshot(pending.taskId), null);
-  assert.equal(syncResearch.researchContentHash(pending.taskId), '');
-  assert.ok(syncResearch.researchUpdatedAt(pending.taskId), '未完成任务仍有更新时间（本机执行状态）');
-  assert.ok(!syncResearch.researchManifest().some((item) => item.id === pending.taskId));
+  const pendingId = insertTask({ customer: '进行中客户', report: '' });
+  assert.equal(syncResearch.collectResearchSnapshot(pendingId), null);
+  assert.equal(syncResearch.researchContentHash(pendingId), '');
+  assert.ok(syncResearch.researchUpdatedAt(pendingId), '未完成任务仍有更新时间（本机执行状态）');
+  assert.ok(!syncResearch.researchManifest().some((item) => item.id === pendingId));
 
   assert.equal(syncResearch.collectResearchSnapshot('missing-task'), null);
   assert.equal(syncResearch.researchContentHash('missing-task'), '');
@@ -200,6 +231,96 @@ test('合并快照：新 id 插入、更旧不动、更新覆盖、同一时刻�
   };
   assert.equal(owned.session_id, '');
   assert.equal(owned.run_id, '');
+});
+
+test('主体核验结论（verdict）：随快照往返、参与 hash 投影、旧版本快照缺字段按空串落库', () => {
+  const verified = JSON.stringify({
+    mode: 'full',
+    status: 'verified',
+    method: 'registry',
+    fullName: '客户洞察主体核验有限公司',
+    webSources: 2,
+    kbSources: 1,
+    reason: '',
+    attempts: ['企查查命中工商全称'],
+  });
+
+  // 新 id 插入：verdict 原样落库，快照与对账清单的 hash 用同一投影
+  assert.deepEqual(syncResearch.mergeResearchSnapshot(snap('verdict-a', { verdict: verified })), {
+    created: true,
+    updated: false,
+  });
+  const collected = syncResearch.collectResearchSnapshot('verdict-a')!;
+  assert.equal(collected.verdict, verified, 'verdict 要随快照原样带出（JSON 字符串，同步层不解析）');
+  assert.equal(
+    syncResearch.researchSnapshotHash(collected),
+    syncResearch.researchSnapshotHash(snap('verdict-a', { verdict: verified })),
+    '同一份内容两端必须算出同一个 hash'
+  );
+  const entry = syncResearch.researchManifest().find((item) => item.id === 'verdict-a');
+  assert.ok(entry, '带核验结论的完成态记录同样进对账清单');
+  assert.equal(entry!.hash, syncResearch.researchSnapshotHash(collected), '清单 hash 与快照 hash 同一投影');
+
+  // 不同 verdict 是不同的内容：hash 必须不同，对账才会把这一条拉过去
+  assert.notEqual(
+    syncResearch.researchSnapshotHash(snap('verdict-a', { verdict: '' })),
+    syncResearch.researchSnapshotHash(snap('verdict-a', { verdict: verified })),
+    'verdict 变化必须改变快照 hash（否则对端不会拉这一条）'
+  );
+
+  // 更新时间更晚的远端快照：整行覆盖时一起换 verdict（核验结论可能被重新调研改写）
+  const rechecked = JSON.stringify({
+    mode: 'brief', status: 'kb-docs', method: 'kb-documents', webSources: 0, kbSources: 3, reason: '未联网核验', attempts: [],
+  });
+  assert.deepEqual(
+    syncResearch.mergeResearchSnapshot(
+      snap('verdict-a', { verdict: rechecked, updatedAt: '2026-01-02T00:00:00.000Z' })
+    ),
+    { created: false, updated: true },
+    '更新的快照整行覆盖时一起换 verdict'
+  );
+  assert.equal(syncResearch.collectResearchSnapshot('verdict-a')!.verdict, rechecked);
+
+  // 同一时刻：本端没有核验结论才由远端补上；本端已有结论时不被同一时刻的快照顶掉
+  const fillAt = '2026-01-05T00:00:00.000Z';
+  const fillId = insertTask({ customer: '补空客户', report: '已有报告', updatedAt: fillAt });
+  const fill = snap(fillId, { customer: '补空客户', report: '已有报告', updatedAt: fillAt });
+  assert.deepEqual(
+    syncResearch.mergeResearchSnapshot({ ...fill, verdict: verified }),
+    { created: false, updated: true },
+    '同一时刻本端没有结论时补上'
+  );
+  assert.equal(syncResearch.collectResearchSnapshot(fillId)!.verdict, verified);
+  assert.deepEqual(
+    syncResearch.mergeResearchSnapshot({ ...fill, verdict: rechecked }),
+    { created: false, updated: false },
+    '本端已有的结论不被同一时刻的远端顶掉'
+  );
+  assert.equal(syncResearch.collectResearchSnapshot(fillId)!.verdict, verified, '补空不覆盖已有结论');
+
+  // 旧版本快照在 JSON 里没有 verdict 字段：按空串落库，不能写成字符串 "undefined"
+  const legacy = { ...snap('verdict-legacy'), verdict: undefined } as unknown as ResearchSnapshot;
+  assert.deepEqual(syncResearch.mergeResearchSnapshot(legacy), { created: true, updated: false });
+  assert.equal(syncResearch.collectResearchSnapshot('verdict-legacy')!.verdict, '');
+  // 旧版本快照时间更晚推过来时按 '' 覆盖——与「整行最新者胜」口径一致，不沿用本端旧结论
+  assert.deepEqual(
+    syncResearch.mergeResearchSnapshot({ ...legacy, updatedAt: '2026-01-03T00:00:00.000Z' }),
+    { created: false, updated: true }
+  );
+  assert.equal(syncResearch.collectResearchSnapshot('verdict-legacy')!.verdict, '');
+
+  // 非空但不是 JSON 对象（坏串 / 数组 / null）：合并前归一为 ''，不让脏数据跨端
+  for (const [id, bad] of [
+    ['verdict-bad-text', '不是 JSON'],
+    ['verdict-bad-array', '[]'],
+    ['verdict-bad-null', 'null'],
+  ] as const) {
+    assert.deepEqual(syncResearch.mergeResearchSnapshot(snap(id, { verdict: bad })), {
+      created: true,
+      updated: false,
+    });
+    assert.equal(syncResearch.collectResearchSnapshot(id)!.verdict, '', `坏 verdict 落库要归一为空串：${bad}`);
+  }
 });
 
 test('中枢挂点：recordResearchChange 发号写 oplog；关闭客户洞察分类后不再记录', async () => {
