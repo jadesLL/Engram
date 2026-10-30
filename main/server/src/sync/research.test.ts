@@ -10,9 +10,10 @@ import type { ResearchSnapshot } from './research.js';
 /**
  * 客户调研（客户洞察）的跨端同步。
  *
- * 覆盖：只同步完成态、快照字段与 hash 稳定（含主体核验结论 verdict）、对账清单同投影、
- * 按 updatedAt 新者胜合并（相等只补空、坏数据不落库）、中枢 recordResearchChange 发号写 oplog、
- * 流程模板走 preference 管道、关闭客户洞察分类后不再参与同步。
+ * 覆盖：只同步完成态与墓碑、快照字段与 hash 稳定（含主体核验结论 verdict 与删除标记 deleted）、
+ * 对账清单同投影（含墓碑）、按 updatedAt 新者胜合并（相等只补空、墓碑不被同刻/更旧快照复活、
+ * 坏数据不落库）、中枢 recordResearchChange 发号写 oplog、流程模板走 preference 管道、
+ * 关闭客户洞察分类后不再参与同步。
  */
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-research-sync-'));
@@ -63,13 +64,14 @@ function insertTask(over: {
   path?: string;
   verdict?: string;
   updatedAt?: string;
+  deleted?: number;
 }): string {
   const id = randomUUID();
   const at = over.updatedAt ?? '2026-01-01T00:00:00.000Z';
   db.prepare(
     `INSERT INTO customer_research_tasks(id, customer, scope, client, rules, save_requested, session_id, run_id,
-                                         report, path, verdict, created_at, updated_at, report_date, time_zone)
-     VALUES(?,?,'knowledge-only','Codex',?,0,'','',?,?,?,?,?,'2026-01-01','Asia/Hong_Kong')`
+                                         report, path, verdict, deleted, created_at, updated_at, report_date, time_zone)
+     VALUES(?,?,'knowledge-only','Codex',?,0,'','',?,?,?,?,?,?,'2026-01-01','Asia/Hong_Kong')`
   ).run(
     id,
     over.customer,
@@ -77,6 +79,7 @@ function insertTask(over: {
     over.report ?? '# 客户洞察\n\n资料不足，待补充。',
     over.path ?? '',
     over.verdict ?? '',
+    over.deleted ?? 0,
     at,
     at,
   );
@@ -103,6 +106,7 @@ function snap(id: string, over: Partial<ResearchSnapshot> = {}): ResearchSnapsho
     report: over.report ?? `报告-${id}`,
     path: over.path ?? '',
     verdict: over.verdict ?? '',
+    deleted: over.deleted ?? 0,
     createdAt: over.createdAt ?? '2026-01-01T00:00:00.000Z',
     updatedAt: over.updatedAt ?? '2026-01-01T00:00:00.000Z',
     reportDate: over.reportDate ?? '2026-01-01',
@@ -144,7 +148,7 @@ test('完成态快照：字段齐全、hash 稳定，对账清单带同一条与
   assert.equal(entry!.updatedAt, snapshot!.updatedAt);
 });
 
-test('只同步完成态：report 空的任务没有快照、不进清单；不存在的任务返回空', () => {
+test('只同步完成态与墓碑：report 空且未删除的任务没有快照、不进清单；不存在的任务返回空', () => {
   const pendingId = insertTask({ customer: '进行中客户', report: '' });
   assert.equal(syncResearch.collectResearchSnapshot(pendingId), null);
   assert.equal(syncResearch.researchContentHash(pendingId), '');
@@ -154,6 +158,119 @@ test('只同步完成态：report 空的任务没有快照、不进清单；不�
   assert.equal(syncResearch.collectResearchSnapshot('missing-task'), null);
   assert.equal(syncResearch.researchContentHash('missing-task'), '');
   assert.equal(syncResearch.researchUpdatedAt('missing-task'), '');
+});
+
+test('墓碑快照：删除后的记录仍出快照与对账清单，hash 含 deleted、往返幂等', () => {
+  // 删除端会清空 report/path/verdict 并把 deleted 置 1；这里故意在报告字段里留旧值，
+  // 验证快照层自己会把墓碑归一成「空报告」——同一份墓碑在任何端必须算出同一个 hash。
+  const id = insertTask({
+    customer: '已清除客户',
+    report: '删除前的旧报告',
+    path: '原始资料/文档/旧报告.md',
+    deleted: 1,
+    updatedAt: '2026-02-01T00:00:00.000Z',
+  });
+  const snapshot = syncResearch.collectResearchSnapshot(id);
+  assert.ok(snapshot, '墓碑也要出快照（否则删除无法跨端）');
+  assert.equal(snapshot!.deleted, 1);
+  assert.equal(snapshot!.report, '', '墓碑不搬报告正文');
+  assert.equal(snapshot!.path, '');
+  assert.equal(snapshot!.verdict, '');
+  assert.equal(snapshot!.customer, '已清除客户', '墓碑仍带客户名（合并与清单展示要用）');
+
+  const hash = syncResearch.researchContentHash(id);
+  assert.ok(hash, '墓碑必须有内容 hash，对账才知道要拉');
+  assert.equal(syncResearch.researchContentHash(id), hash, '同一份墓碑反复算 hash 必须稳定');
+  assert.equal(syncResearch.researchSnapshotHash(snapshot!), hash);
+  assert.equal(syncResearch.researchUpdatedAt(id), snapshot!.updatedAt);
+
+  // deleted 参与 hash 投影：同一行内容，删与不删必须是「不同内容」，否则对账不会拉墓碑
+  assert.notEqual(
+    syncResearch.researchSnapshotHash({ ...snapshot!, deleted: 0 }),
+    hash,
+    'deleted 必须参与 hash 投影'
+  );
+
+  const entry = syncResearch.researchManifest().find((item) => item.id === id);
+  assert.ok(entry, '墓碑要进对账清单，否则中枢删了本端永远拉不到');
+  assert.equal(entry!.hash, hash, '清单 hash 与快照 hash 同一投影');
+  assert.equal(entry!.customer, '已清除客户');
+  assert.equal(entry!.updatedAt, snapshot!.updatedAt);
+
+  // 未删除也没有报告的任务（进行中/失败）仍然不参与同步
+  const pendingId = insertTask({ customer: '未完成客户', report: '' });
+  assert.equal(syncResearch.collectResearchSnapshot(pendingId), null);
+  assert.equal(syncResearch.researchContentHash(pendingId), '');
+});
+
+test('墓碑合并：对端删除落成本端墓碑；同刻/更旧的非删除快照不复活，严格更新的才恢复', () => {
+  const rowOf = (id: string) => db.prepare(
+    'SELECT deleted, report, path, verdict, updated_at FROM customer_research_tasks WHERE id = ?'
+  ).get(id) as { deleted: number; report: string; path: string; verdict: string; updated_at: string };
+  const verified = JSON.stringify({
+    mode: 'full', status: 'verified', method: 'registry', webSources: 0, kbSources: 0, reason: '', attempts: [],
+  });
+
+  // 新 id：对端墓碑快照即便带着旧报告字段，也只按空落库（删除语义优先）
+  const tomb = snap('tomb-apply', { deleted: 1, report: '', path: '原始资料/文档/旧报告.md', verdict: verified });
+  assert.deepEqual(syncResearch.mergeResearchSnapshot(tomb), { created: true, updated: false });
+  const applied = rowOf('tomb-apply');
+  assert.equal(applied.deleted, 1);
+  assert.equal(applied.report, '');
+  assert.equal(applied.path, '');
+  assert.equal(applied.verdict, '', '墓碑不搬主体核验结论');
+  assert.deepEqual(syncResearch.mergeResearchSnapshot(tomb), { created: false, updated: false }, '同一份墓碑应用两次是幂等的');
+
+  // 本端已有记录：更新的墓碑整行覆盖并把正文/路径/结论清空
+  const liveId = insertTask({ customer: '被清除客户', report: '要被清除的报告', path: '原始资料/文档/旧.md', updatedAt: '2026-01-01T00:00:00.000Z' });
+  assert.deepEqual(
+    syncResearch.mergeResearchSnapshot(snap(liveId, { customer: '被清除客户', deleted: 1, report: '', updatedAt: '2026-01-02T00:00:00.000Z' })),
+    { created: false, updated: true },
+    '更新的墓碑把本端记录打成墓碑'
+  );
+  const cleared = rowOf(liveId);
+  assert.equal(cleared.deleted, 1);
+  assert.equal(cleared.report, '');
+  assert.equal(cleared.path, '');
+  assert.ok(syncResearch.researchManifest().some((item) => item.id === liveId), '被打成墓碑的记录仍在对账清单里');
+
+  // 同刻墓碑：本端也删（与会话墓碑「deleted_at >= updatedAt 即视为已删」同一口径）
+  const sameAt = '2026-05-01T00:00:00.000Z';
+  const sameId = insertTask({ customer: '同刻客户', report: '同刻报告', updatedAt: sameAt });
+  assert.deepEqual(
+    syncResearch.mergeResearchSnapshot(snap(sameId, { customer: '同刻客户', report: '', deleted: 1, updatedAt: sameAt })),
+    { created: false, updated: true },
+    '同一时刻对端删了，本端也删（删除优先，两端次序无关）'
+  );
+  assert.equal(rowOf(sameId).deleted, 1);
+  assert.equal(rowOf(sameId).report, '');
+
+  // 本端已是墓碑：更旧 / 同刻的非删除快照都不复活，也不补正文
+  const at = '2026-03-01T00:00:00.000Z';
+  const tombId = insertTask({ customer: '墓碑客户', report: '', deleted: 1, updatedAt: at });
+  assert.deepEqual(
+    syncResearch.mergeResearchSnapshot(snap(tombId, { customer: '墓碑客户', report: '更旧报告', updatedAt: '2026-02-28T00:00:00.000Z' })),
+    { created: false, updated: false },
+    '更旧的非删除快照不能复活墓碑'
+  );
+  assert.equal(rowOf(tombId).deleted, 1);
+  assert.deepEqual(
+    syncResearch.mergeResearchSnapshot(snap(tombId, { customer: '墓碑客户', report: '同刻报告', updatedAt: at })),
+    { created: false, updated: false },
+    '同刻的非删除快照不能复活墓碑'
+  );
+  assert.equal(rowOf(tombId).deleted, 1);
+  assert.equal(rowOf(tombId).report, '', '同刻「只补空」分支也不能给墓碑补正文');
+  assert.equal(syncResearch.researchContentHash(tombId), syncResearch.researchSnapshotHash(syncResearch.collectResearchSnapshot(tombId)!), '不复活时 hash 稳定');
+
+  // 严格更新的非删除快照：新版本胜，墓碑恢复（唯一允许的恢复路径）
+  assert.deepEqual(
+    syncResearch.mergeResearchSnapshot(snap(tombId, { customer: '墓碑客户', report: '新版本报告', updatedAt: '2026-04-01T00:00:00.000Z' })),
+    { created: false, updated: true },
+    '更新时间严格更新的未删除快照可以把墓碑恢复'
+  );
+  assert.equal(rowOf(tombId).deleted, 0);
+  assert.equal(rowOf(tombId).report, '新版本报告');
 });
 
 test('合并快照：新 id 插入、更旧不动、更新覆盖、同一时刻只补空、坏数据拒绝', () => {
@@ -216,6 +333,15 @@ test('合并快照：新 id 插入、更旧不动、更新覆盖、同一时刻�
   assert.deepEqual(syncResearch.mergeResearchSnapshot({ ...base, id: 'merge-no-customer', customer: '  ' }), { created: false, updated: false });
   assert.equal(syncResearch.collectResearchSnapshot('merge-bad-rules'), null);
   assert.equal(syncResearch.collectResearchSnapshot('merge-no-customer'), null);
+  // deleted 只认 0/1：其它值按坏数据拒绝（不认识的删除语义不能落库）
+  for (const bad of [2, -1, 'yes' as unknown as number]) {
+    assert.deepEqual(
+      syncResearch.mergeResearchSnapshot({ ...base, id: 'merge-bad-deleted', deleted: bad }),
+      { created: false, updated: false },
+      `bad deleted 必须拒绝：${String(bad)}`
+    );
+  }
+  assert.equal(syncResearch.collectResearchSnapshot('merge-bad-deleted'), null);
   // 坏 rules 不落库，客户洞察列表接口（直接 JSON.parse(rules)）照常可用
   assert.ok(Array.isArray(research.customerResearchTasks()));
 
@@ -343,6 +469,21 @@ test('中枢挂点：recordResearchChange 发号写 oplog；关闭客户洞察�
     // 再调一次允许再次发号（本机写入不靠 hash 去重），但不该抛错、日志只增不减
     sync.recordResearchChange(id);
     assert.ok(countResearchOps() >= opsBefore + 1);
+
+    // 墓碑（记录被清除）走同一个挂点：删除这条变更也必须发号写 oplog，不能因为缺 report 被过滤
+    const tombId = insertTask({ customer: '中枢挂点已清除客户', report: '', deleted: 1 });
+    sync.recordResearchChange(tombId);
+    assert.equal(countResearchOps(), opsBefore + 3, '墓碑变更同样要发号写 oplog');
+    const tombOp = db.prepare(`SELECT kind, target FROM sync_oplog ORDER BY seq DESC LIMIT 1`).get() as {
+      kind: string;
+      target: string;
+    };
+    assert.equal(tombOp.kind, 'research');
+    assert.equal(tombOp.target, tombId);
+    // 进行中/失败（report 空、未删除）仍然不记录：半截任务不跨端
+    const pendingOps = countResearchOps();
+    sync.recordResearchChange(insertTask({ customer: '中枢挂点进行中客户', report: '' }));
+    assert.equal(countResearchOps(), pendingOps);
 
     // 关闭客户洞察分类：不发号、不写 oplog
     categories.saveSyncCategories({ customerResearch: false });

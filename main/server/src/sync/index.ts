@@ -154,8 +154,9 @@ export function recordLocalChange(kind: SyncKind, target: string, extra: LocalCh
 }
 
 /**
- * 客户调研收口后调用（report 已生成、任务行已落库）：有报告（完成态）才跨端；
- * 进行中/失败留在本机（见 sync/research.ts 的 collectResearchSnapshot 口径）。
+ * 客户调研收口后调用（report 已生成、任务行已落库），记录被清除后也走这里：
+ * 有报告（完成态）或墓碑（deleted=1）才跨端；进行中/失败留在本机
+ * （见 sync/research.ts 的 collectResearchSnapshot 口径）。
  *
  * 结构与 recordLocalChange 完全一致：成员入队推送、中枢直接发号广播，
  * 不在这里额外判断角色——与页面/文件写入的既有口径保持一致；未配置同步的设备

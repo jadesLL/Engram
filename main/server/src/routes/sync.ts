@@ -191,6 +191,7 @@ function enrichReplayOp(op: SyncOp, compact = false) {
   if (!syncAllowed(op.kind, op.target, op.old_path)) return { seq: op.seq, kind: 'disabled', target: '' };
   if (op.kind === 'preference') return { ...op, preference: preferenceValue(op.target) };
   // 客户调研记录：正文由客户端按 op.hash 按需拉 /api/sync/research，补拉 op 里不塞报告正文
+  // （删除也走同一条链路：快照里带 deleted=1 的墓碑，成员拉取后删掉本端记录）
   if (op.kind === 'research') return op;
   if (compact || op.kind !== 'page') return op;
   const content = getPageRevision(op.target, op.revision) ?? readPageRaw(op.target) ?? '';
@@ -648,7 +649,7 @@ export async function syncRoutes(app: FastifyInstance) {
     return { snapshot, hash: snapshotHash(snapshot) };
   });
 
-  /** 客户调研记录快照（对账/按需拉取用）：只有完成态（有报告）的记录存在 */
+  /** 客户调研记录快照（对账/按需拉取用）：完成态（有报告）与墓碑（deleted=1）的记录都存在 */
   app.get('/api/sync/research', { preHandler: requireSyncAccess }, async (req, reply) => {
     const query = req.query as { id?: string };
     const id = String(query.id || '');

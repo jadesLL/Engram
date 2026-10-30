@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import { db, getSetting, setSetting } from '../lib/db.js';
 import { readPage, safeJoin, pagePathTaken } from '../lib/vault.js';
-import { createRawMaterial } from '../pipeline/rawMaterial.js';
+import { createRawMaterial, overwriteRawMaterial } from '../pipeline/rawMaterial.js';
 import {
   CUSTOMER_RESEARCH_FIXED_SECTIONS,
   CUSTOMER_RESEARCH_LIMITS,
@@ -25,7 +25,7 @@ const RULES_KEY = 'customer_research_rules';
  * 读到的模板没有这个标记（v1 的八章 ACS 版）时按当前默认模板重建——旧章节契约与新提交
  * 校验不兼容，保留旧模板只会让每次提交都失败；用户自定义的流程正文也会一起重置。
  */
-const RULES_CONTRACT = 2;
+const RULES_CONTRACT = 3;
 const text = z.string().trim().min(1).max(40000);
 const clean = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\u0000-\u001f]+$/);
 
@@ -65,7 +65,7 @@ type Rules = { contract: number; version: number; workflow: string; sections: Ar
 type Row = {
   id: string; customer: string; scope: string; client: string; rules: string; save_requested: number;
   session_id: string; run_id: string; report: string; path: string; created_at: string; updated_at: string;
-  report_date: string; time_zone: string; verdict: string;
+  report_date: string; time_zone: string; verdict: string; deleted: number; save_mode: string; overwrite_path: string;
 };
 
 /** 落库的机器可读结论：前端据此显示主体状态/报告模式，不必解析 Markdown */
@@ -280,15 +280,20 @@ function assertNoLegacyFields(input: Record<string, unknown>): void {
   if ('companyFullName' in input) throw new CustomerResearchError('companyFullName 已由 identity 取代：请在 identity 里给出 status/method/attempts/evidence（verified 时还要 fullName）');
 }
 
-export function beginCustomerResearch(input: { customer: string; scope?: string; save?: boolean; client?: string; timeZone?: string }) {
+export function beginCustomerResearch(input: {
+  customer: string; scope?: string; save?: boolean; client?: string; timeZone?: string;
+  saveMode?: string; overwritePath?: string;
+}) {
   const parsed = z.object({
     customer: z.string().trim().min(1).max(100).regex(/^[^\u0000-\u001f]+$/),
     scope: z.enum(['knowledge-web', 'knowledge-only']).default('knowledge-web'),
     save: z.boolean().default(false),
     client: z.string().trim().max(80).default('external'),
     timeZone: z.string().max(100).default(Intl.DateTimeFormat().resolvedOptions().timeZone),
+    saveMode: z.enum(['new', 'overwrite']).optional(),
+    overwritePath: z.string().trim().max(1000).regex(/^[^\u0000-\u001f]+$/).optional(),
   }).strict().safeParse(input);
-  if (!parsed.success) throw new CustomerResearchError('请输入客户名称（最多 100 字），资料范围为 knowledge-web / knowledge-only');
+  if (!parsed.success) throw new CustomerResearchError('请输入客户名称（最多 100 字），资料范围为 knowledge-web / knowledge-only；存报告时 saveMode 只能是 new / overwrite');
   const rules = customerResearchRules();
   const id = randomUUID();
   const at = new Date().toISOString();
@@ -297,8 +302,27 @@ export function beginCustomerResearch(input: { customer: string; scope?: string;
   try {
     reportDate = new Intl.DateTimeFormat('en-CA', { timeZone: d.timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(at));
   } catch { throw new CustomerResearchError('timeZone 必须是有效时区，如 Asia/Hong_Kong'); }
-  db.prepare('INSERT INTO customer_research_tasks(id,customer,scope,client,rules,save_requested,created_at,updated_at,report_date,time_zone,verdict) VALUES(?,?,?,?,?,?,?,?,?,?,\'\')')
-    .run(id, d.customer, d.scope, d.client, JSON.stringify(rules), d.save ? 1 : 0, at, at, reportDate, d.timeZone);
+  // 知识库对比：只要该客户在知识库里有报告（与调研记录是否被清除无关），保存前必须先确认新版本还是覆盖
+  const existingReports = findCustomerResearchReports(d.customer);
+  let saveMode: ResearchSaveMode | '' = d.saveMode === 'overwrite' ? 'overwrite' : d.saveMode === 'new' ? 'new' : '';
+  let overwritePath = '';
+  if (!d.save && saveMode) throw new CustomerResearchError('saveMode 只在 save=true（用户要求保存）时使用');
+  if (d.save && !saveMode) {
+    if (existingReports.length) {
+      const list = existingReports.slice(0, 3).map((report) => report.title).join('、');
+      throw new CustomerResearchError('知识库已有该客户的调研报告（' + list + '）：请先与用户确认「生成新版本」还是「覆盖旧报告」，再带 saveMode=new 或 saveMode=overwrite + overwritePath 重新发起');
+    }
+    saveMode = 'new';
+  }
+  if (saveMode === 'overwrite') {
+    if (!d.overwritePath) throw new CustomerResearchError('覆盖旧报告需要 overwritePath（取 existingReports 里的一条 path）');
+    if (!existingReports.some((report) => report.path === d.overwritePath)) {
+      throw new CustomerResearchError('overwritePath 不在该客户已有报告列表里：' + (existingReports.map((report) => report.path).join('、') || '（没有已有报告）'));
+    }
+    overwritePath = d.overwritePath;
+  }
+  db.prepare('INSERT INTO customer_research_tasks(id,customer,scope,client,rules,save_requested,created_at,updated_at,report_date,time_zone,verdict,deleted,save_mode,overwrite_path) VALUES(?,?,?,?,?,?,?,?,?,?,\'\',0,?,?)')
+    .run(id, d.customer, d.scope, d.client, JSON.stringify(rules), d.save ? 1 : 0, at, at, reportDate, d.timeZone, saveMode, overwritePath);
 
   const identityContract = {
     required: 'submit_customer_research 必须带 identity（主体核验结果），缺了会拒收。',
@@ -329,12 +353,14 @@ export function beginCustomerResearch(input: { customer: string; scope?: string;
     taskId: id, customer: d.customer, scope: d.scope, saveRequested: d.save, createdAt: at,
     version: rules.version, workflow: rules.workflow, reportDate, timeZone: d.timeZone,
     identityContract, reportContract, modeRules: CUSTOMER_RESEARCH_MODES,
+    existingReports, saveMode: saveMode || '',
   };
 }
 
 function row(id: string): Row {
   const found = db.prepare('SELECT * FROM customer_research_tasks WHERE id = ?').get(id) as Row | undefined;
   if (!found) throw new CustomerResearchError('调研任务不存在，请先调用 begin_customer_research');
+  if (found.deleted) throw new CustomerResearchError('这条调研记录已被清除，请重新发起调研');
   return found;
 }
 
@@ -356,6 +382,79 @@ function parseVerdict(raw: string | null | undefined): ResearchVerdict | null {
   };
   if (typeof parsed.fullName === 'string' && parsed.fullName.trim()) verdict.fullName = parsed.fullName;
   return verdict;
+}
+
+function normalizeCustomerName(name: string): string {
+  return String(name || '').replace(/\s+/g, '').replace(/[()（）]/g, '').toLowerCase();
+}
+
+/** 从报告文件名解析出客户名/日期/类型，兼容 v1 的「YYYY.MM.DD_客户_客户调研_xxx.md」命名 */
+export function parseCustomerReportName(basename: string): { customerName: string; reportDate: string; kind: 'full' | 'brief' } | null {
+  let rest = String(basename || '').replace(/\.md$/i, '').trim();
+  if (!rest) return null;
+  let reportDate = '';
+  const dated = /^(\d{4})[.\-](\d{2})[.\-](\d{2})_(.+)$/.exec(rest);
+  if (dated) { reportDate = dated[1] + '-' + dated[2] + '-' + dated[3]; rest = dated[4]; }
+  const kind: 'full' | 'brief' = rest.indexOf('调研简报') >= 0 ? 'brief' : 'full';
+  let customerName = '';
+  for (const marker of ['调研报告', '调研简报', '客户调研']) {
+    const at = rest.indexOf(marker);
+    if (at > 0) { customerName = rest.slice(0, at); break; }
+  }
+  if (!customerName) return null;
+  customerName = customerName.replace(/^[_\-\s]+|[_\-\s]+$/g, '');
+  if (!customerName) return null;
+  return { customerName, reportDate, kind };
+}
+
+export interface ExistingCustomerReport {
+  path: string;
+  title: string;
+  customerName: string;
+  reportDate: string;
+  kind: 'full' | 'brief';
+  updatedAt: string;
+}
+
+/** 知识库里该客户已有的调研报告（最近更新在前）：按报告文件名匹配，删调研记录不会影响命中 */
+export function findCustomerResearchReports(customer: string): ExistingCustomerReport[] {
+  const input = normalizeCustomerName(customer);
+  if (input.length < 2) return [];
+  const rows = db.prepare("SELECT path, title, updated_at FROM pages WHERE deleted = 0 AND path LIKE '原始资料/文档/%'").all() as Array<{ path: string; title: string; updated_at: string }>;
+  const found: ExistingCustomerReport[] = [];
+  for (const row of rows) {
+    const basename = row.path.split('/').pop() || '';
+    const parsed = parseCustomerReportName(basename);
+    if (!parsed) continue;
+    const existing = normalizeCustomerName(parsed.customerName);
+    if (existing.length < 2) continue;
+    if (!(existing.indexOf(input) >= 0 || input.indexOf(existing) >= 0)) continue;
+    found.push({
+      path: row.path,
+      title: row.title || basename.replace(/\.md$/i, ''),
+      customerName: parsed.customerName,
+      reportDate: parsed.reportDate,
+      kind: parsed.kind,
+      updatedAt: String(row.updated_at || ''),
+    });
+  }
+  return found.sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)));
+}
+
+export type ResearchSaveMode = 'new' | 'overwrite';
+
+function safeReportCustomerName(displayName: string): string {
+  return displayName.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '') || '客户';
+}
+
+/** 新版本报告文件名：日期按本次调研日 + 客户名 + 报告/简报，重名追加 _2、_3 */
+function newReportPath(reportDate: string, displayName: string, mode: CustomerResearchMode): string {
+  const suffix = mode === 'brief' ? '调研简报' : '调研报告';
+  const base = '原始资料/文档/' + reportDate.replace(/-/g, '.') + '_' + safeReportCustomerName(displayName) + suffix;
+  let reportPath = base + '.md';
+  let index = 2;
+  while (pagePathTaken(reportPath)) reportPath = base + '_' + index++ + '.md';
+  return reportPath;
 }
 
 function scopeLabel(scope: string): string {
@@ -479,8 +578,12 @@ export function submitCustomerResearch(input: {
   sections: unknown;
   sources: unknown;
   save?: boolean;
+  saveMode?: string;
+  overwritePath?: string;
 }) {
   if (typeof input.taskId !== 'string' || (input.save !== undefined && typeof input.save !== 'boolean')) throw new CustomerResearchError('taskId / save 类型错误');
+  if (input.saveMode !== undefined && input.saveMode !== 'new' && input.saveMode !== 'overwrite') throw new CustomerResearchError('saveMode 只能是 new 或 overwrite');
+  if (input.overwritePath !== undefined && typeof input.overwritePath !== 'string') throw new CustomerResearchError('overwritePath 类型错误');
   assertNoLegacyFields(input as unknown as Record<string, unknown>);
   const task = row(input.taskId);
   if (task.run_id) {
@@ -499,7 +602,8 @@ export function submitCustomerResearch(input: {
   if (task.path) {
     const savedMarkdown = renderCustomerResearch(task, report, mode);
     if (task.report !== savedMarkdown) throw new CustomerResearchError('已保存报告不可覆盖；需要新一轮调研请重新 begin');
-    return { taskId: task.id, saved: true, path: task.path, markdown: savedMarkdown, mode, verdict: buildVerdict(mode, report) };
+    const overwritten = Boolean(task.overwrite_path && task.overwrite_path === task.path);
+    return { taskId: task.id, saved: true, path: task.path, markdown: savedMarkdown, mode, verdict: buildVerdict(mode, report), overwritten, saveMode: overwritten ? 'overwrite' : 'new' };
   }
   if (mode === 'full' && report.identity.status !== 'verified') {
     throw new CustomerResearchError('完整报告只允许 identity.status=verified（公开工商/官方渠道核实过主体）；kb-docs 请交资料不足简报，not-found 请交主体核验短报告');
@@ -522,29 +626,54 @@ export function submitCustomerResearch(input: {
   const markdown = renderCustomerResearch(task, report, mode);
   const verdict = buildVerdict(mode, report);
 
-  const save = task.run_id ? Boolean(task.save_requested) : input.save ?? Boolean(task.save_requested);
+  // 入库策略：完整报告自动入库；资料不足简报只在客户洞察页反馈（不自动导入），用户可在页面手动入库；
+  // 主体核验永远不入库。外部 Agent 显式 save=true 视为用户明确要求，brief 也允许保存。
+  const explicitSave = input.save === true;
+  const requestedByTask = Boolean(task.save_requested);
+  const shouldSave = mode !== 'identity-check' && (explicitSave || (requestedByTask && mode === 'full'));
   let savedPath = '';
-  if (save && mode !== 'identity-check') {
-    const displayName = report.identity.fullName || task.customer;
-    const safeCustomer = displayName.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '') || '客户';
-    const suffix = mode === 'brief' ? '调研简报' : '调研报告';
-    const base = '原始资料/文档/' + task.report_date.replace(/-/g, '.') + '_' + safeCustomer + suffix;
-    let path = base + '.md';
-    let index = 2;
-    // Include soft-deleted pages and unindexed files so historical reports remain intact.
-    while (pagePathTaken(path)) path = base + '_' + index++ + '.md';
-    savedPath = createRawMaterial({ path, content: markdown }).path;
+  let savedMode: ResearchSaveMode | '' = task.save_mode === 'overwrite' ? 'overwrite' : task.save_mode === 'new' ? 'new' : '';
+  let overwritePath = task.overwrite_path || '';
+  let overwritten = false;
+  if (shouldSave) {
+    const requestedMode = input.saveMode === 'overwrite' || input.saveMode === 'new' ? input.saveMode : '';
+    savedMode = requestedMode || savedMode;
+    if (!savedMode) {
+      const existing = findCustomerResearchReports(task.customer);
+      if (existing.length) {
+        throw new CustomerResearchError('知识库已有该客户的调研报告（' + existing.slice(0, 3).map((item) => item.title).join('、') + '）：请先与用户确认生成新版本还是覆盖旧报告，再带 saveMode=new 或 saveMode=overwrite + overwritePath 重新提交');
+      }
+      savedMode = 'new';
+    }
+    if (savedMode === 'overwrite') {
+      const target = input.overwritePath || overwritePath;
+      const targetRow = target ? db.prepare('SELECT path FROM pages WHERE path=? AND deleted=0').get(target) as { path: string } | undefined : undefined;
+      if (!target || !targetRow) {
+        // 覆盖目标已被删除/改名：退回新版本，避免用户的调研成果丢失
+        savedMode = 'new';
+        overwritePath = '';
+      } else {
+        overwritePath = target;
+        overwriteRawMaterial({ path: target, content: markdown });
+        savedPath = target;
+        overwritten = true;
+      }
+    }
+    if (!overwritten) {
+      savedPath = newReportPath(task.report_date, report.identity.fullName || task.customer, mode);
+      createRawMaterial({ path: savedPath, content: markdown });
+    }
   }
-  db.prepare('UPDATE customer_research_tasks SET report=?,path=?,verdict=?,updated_at=? WHERE id=?')
-    .run(markdown, savedPath, JSON.stringify(verdict), new Date().toISOString(), task.id);
+  db.prepare('UPDATE customer_research_tasks SET report=?,path=?,verdict=?,save_mode=?,overwrite_path=?,updated_at=? WHERE id=?')
+    .run(markdown, savedPath, JSON.stringify(verdict), savedMode || 'new', overwritePath, new Date().toISOString(), task.id);
   // 报告收口后通知同步：只有完成态（report 非空）才会跨端，进行中/失败留在本机执行端。
   // 保存与不保存两个分支都调：未保存草稿在客户洞察页同样能看、能翻，对端应看到同一份。
   recordResearchChange(task.id);
-  return { taskId: task.id, saved: Boolean(savedPath), path: savedPath, markdown, mode, verdict };
+  return { taskId: task.id, saved: Boolean(savedPath), path: savedPath, markdown, mode, verdict, overwritten, saveMode: savedMode || 'new' };
 }
 
 export function customerResearchTasks() {
-  const rows = db.prepare('SELECT * FROM customer_research_tasks ORDER BY created_at DESC LIMIT 30').all() as Row[];
+  const rows = db.prepare('SELECT * FROM customer_research_tasks WHERE deleted = 0 ORDER BY created_at DESC LIMIT 30').all() as Row[];
   return rows.map((task) => {
     const run = task.run_id
       ? db.prepare('SELECT status,error FROM assistant_runs WHERE id=?').get(task.run_id) as { status: string; error?: string } | undefined
@@ -566,8 +695,8 @@ export function customerResearchTasks() {
 /** A generic chat retry must continue tracking the same unsaved research task. */
 export function customerResearchRetryTask(runId: string, taskId?: string): string | undefined {
   const task = (taskId
-    ? db.prepare('SELECT id,path,run_id FROM customer_research_tasks WHERE id=?').get(taskId)
-    : db.prepare('SELECT id,path,run_id FROM customer_research_tasks WHERE run_id=?').get(runId)) as { id: string; path: string; run_id: string } | undefined;
+    ? db.prepare('SELECT id,path,run_id FROM customer_research_tasks WHERE id=? AND deleted=0').get(taskId)
+    : db.prepare('SELECT id,path,run_id FROM customer_research_tasks WHERE run_id=? AND deleted=0').get(runId)) as { id: string; path: string; run_id: string } | undefined;
   if (!task) return undefined;
   if (task.run_id !== runId) throw new CustomerResearchError('本任务已有新的执行轮次，请刷新执行过程');
   if (task.path) throw new CustomerResearchError('报告已保存且不可覆盖；请返回客户调研页面发起新一轮调研');
@@ -580,7 +709,71 @@ export function bindCustomerResearchRetry(taskId: string, previousRunId: string,
   if (changed.changes !== 1) throw new CustomerResearchError('本任务已有新的执行轮次，请刷新执行过程');
 }
 
-export async function startBuiltinCustomerResearch(input: { customer: string; scope?: string; timeZone?: string }, deps?: { submit: typeof import('../assistant/runner.js').submitMessage }) {
+/**
+ * 清除调研记录：只删记录（置 deleted=1 墓碑随同步跨端），知识库里已保存的报告文件不动。
+ * 支持全部清除、按客户清除、按记录清除；有进行中的调研先拒绝，避免用户以为停掉了。
+ */
+export function deleteCustomerResearchTasks(input: { taskIds?: string[]; customer?: string; all?: boolean }): { deleted: number } {
+  const parsed = z.object({
+    taskIds: z.array(z.string().trim().min(1)).max(200).optional(),
+    customer: z.string().trim().min(1).max(100).optional(),
+    all: z.boolean().optional(),
+  }).strict().safeParse(input);
+  if (!parsed.success) throw new CustomerResearchError('清除参数无效：taskIds / customer / all 至少给一个');
+  const d = parsed.data;
+  if (!d.all && !d.customer && !(d.taskIds && d.taskIds.length)) throw new CustomerResearchError('请选择要清除的调研记录');
+  let rows: Row[];
+  if (d.all) rows = db.prepare('SELECT * FROM customer_research_tasks WHERE deleted = 0').all() as Row[];
+  else if (d.customer) rows = db.prepare('SELECT * FROM customer_research_tasks WHERE deleted = 0 AND customer = ?').all(d.customer) as Row[];
+  else rows = db.prepare('SELECT * FROM customer_research_tasks WHERE deleted = 0 AND id IN (' + d.taskIds!.map(() => '?').join(',') + ')').all(...d.taskIds!) as Row[];
+  if (!rows.length) return { deleted: 0 };
+  const running = rows.filter((task) => {
+    if (!task.run_id) return false;
+    const run = db.prepare('SELECT status FROM assistant_runs WHERE id=?').get(task.run_id) as { status: string } | undefined;
+    return Boolean(run && ['running', 'queued'].indexOf(run.status) >= 0);
+  });
+  if (running.length) throw new CustomerResearchError('有调研正在进行中（' + running.map((task) => task.customer).join('、') + '），请先停止后再清除');
+  const at = new Date().toISOString();
+  const clear = db.prepare("UPDATE customer_research_tasks SET deleted=1, report='', path='', verdict='', save_mode='', overwrite_path='', updated_at=? WHERE id=?");
+  for (const task of rows) {
+    clear.run(at, task.id);
+    recordResearchChange(task.id);
+  }
+  return { deleted: rows.length };
+}
+
+/**
+ * 把页面上「未入库」的报告手动存入知识库（资料不足简报默认不自动导入，由用户点按钮触发）。
+ * 已入库返回原路径；主体未核实的记录拒绝入库。
+ */
+export function saveCustomerResearchTask(taskId: string): { saved: boolean; path: string; overwritten: boolean } {
+  if (typeof taskId !== 'string' || !taskId.trim()) throw new CustomerResearchError('taskId 不能为空');
+  const task = row(taskId);
+  if (!task.report) throw new CustomerResearchError('这份调研还没有生成报告，无法入库');
+  const verdict = parseVerdict(task.verdict);
+  if (task.path) return { saved: true, path: task.path, overwritten: Boolean(task.overwrite_path && task.overwrite_path === task.path) };
+  if (!verdict || verdict.mode === 'identity-check') throw new CustomerResearchError('主体未核实的调研不能入库：请确认客户主体后重新调研');
+  const mode: CustomerResearchMode = verdict.mode === 'brief' ? 'brief' : 'full';
+  let saveMode: ResearchSaveMode = task.save_mode === 'overwrite' ? 'overwrite' : 'new';
+  let overwritePath = task.overwrite_path || '';
+  let savedPath = '';
+  let overwritten = false;
+  if (saveMode === 'overwrite') {
+    const target = overwritePath ? db.prepare('SELECT path FROM pages WHERE path=? AND deleted=0').get(overwritePath) as { path: string } | undefined : undefined;
+    if (!target) { saveMode = 'new'; overwritePath = ''; }
+    else { overwriteRawMaterial({ path: overwritePath, content: task.report }); savedPath = overwritePath; overwritten = true; }
+  }
+  if (!overwritten) {
+    savedPath = newReportPath(task.report_date, verdict.fullName || task.customer, mode);
+    createRawMaterial({ path: savedPath, content: task.report });
+  }
+  db.prepare('UPDATE customer_research_tasks SET path=?, save_mode=?, overwrite_path=?, updated_at=? WHERE id=?')
+    .run(savedPath, saveMode, overwritePath, new Date().toISOString(), task.id);
+  recordResearchChange(task.id);
+  return { saved: true, path: savedPath, overwritten };
+}
+
+export async function startBuiltinCustomerResearch(input: { customer: string; scope?: string; timeZone?: string; saveMode?: string; overwritePath?: string }, deps?: { submit: typeof import('../assistant/runner.js').submitMessage }) {
   const { submitMessage } = await import('../assistant/runner.js');
   const repo = await import('../assistant/repository.js');
   const customer = typeof input?.customer === 'string' ? input.customer.trim() : '';
@@ -592,7 +785,7 @@ export async function startBuiltinCustomerResearch(input: { customer: string; sc
   try {
     const { run } = (deps?.submit || submitMessage)({
       sessionId: session.id,
-      message: '请调研客户“' + task.customer + '”：先核验客户主体（工商/官方渠道优先，查不到就用知识库原始资料；两者都没有就判定 not-found，只提交主体核验结论并说明客户可能不存在或名称有误），再按已保存的流程生成对应模式的报告并保存。不要写方法说明和行业泛论。',
+      message: '请调研客户“' + task.customer + '”：先核验客户主体（工商/官方渠道优先，查不到就用知识库原始资料；两者都没有就判定 not-found，只提交主体核验结论并说明客户可能不存在或名称有误），再按已保存的流程生成对应模式的报告并提交。完整报告会自动存入知识库；资料不足简报只留在客户洞察页、不要声称已保存；主体核验不保存。不要写方法说明和行业泛论。',
       context: { playbook: 'customer-research', researchTaskId: task.taskId, researchTask: task },
     });
     db.prepare('UPDATE customer_research_tasks SET session_id=?,run_id=? WHERE id=?').run(session.id, run.id, task.taskId);

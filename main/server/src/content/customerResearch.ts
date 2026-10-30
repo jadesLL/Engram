@@ -1,7 +1,7 @@
 /** Shared customer workflow: local skills are only launchers, never copies of this contract. */
 
 /**
- * 客户调研 v2 契约（服务端唯一来源）。
+ * 客户调研 v3 契约（服务端唯一来源）。
  *
  * v1 的教训：8 个 ACS 章节在「没有资料」时逼模型把每个栏目写满，产出大量
  * 「资料不足 + 行业泛论 + 方法说明」；公司名称在工商信息里查不到时也照样写完整分析。
@@ -9,6 +9,8 @@
  *  1. 先核验主体（identity），查不到就只出「主体核验」短报告并质疑客户是否存在；
  *  2. 再按证据量选模式（完整 / 简报 / 主体核验），证据不够不许写完整版；
  *  3. 每章有硬长度上限，禁止方法说明、能力声明和空话，只写能指回来源的结论。
+ * v3 增加记录管理与入库纪律：完整报告自动入库、资料不足简报只在页面反馈；
+ * 知识库已有该客户报告时必须先问用户「生成新版本 / 覆盖旧报告」再提交。
  *
  * 章节 id 是提交契约的一部分，不要改；标题可由用户在「流程与模板」里改。
  */
@@ -62,7 +64,7 @@ export const CUSTOMER_RESEARCH_MODES: Array<{
   {
     id: 'brief',
     title: '资料不足简报',
-    when: 'knowledge-only、identity.status=kb-docs，或已核实主体但公开资料不够写完整版：结论 / 已知事实 / 待核实三章，只写读到的具体事实并引用来源。',
+    when: 'knowledge-only、identity.status=kb-docs，或已核实主体但公开资料不够写完整版：结论 / 已知事实 / 待核实三章，只写读到的具体事实并引用来源；简报只在客户洞察页反馈，不自动入库。',
   },
   {
     id: 'identity-check',
@@ -82,8 +84,9 @@ export const CUSTOMER_RESEARCH_WORKFLOW = `1. 先核验客户主体，不要先�
    - 主体核验（summary/gaps 两章）：not-found。核验结论写「未能核实该客户主体存在」及可能原因；需要你确认写用户下一步该提供什么（工商全名、名片、官网、合同名等）。
 3. 检索纪律：先 Engram（search / read_page / page_evidence / read_raw_file），再外部（登记、官网、公告、招投标、招聘 JD、专利、新闻）。外部结论只能来自实际读过的页面，逐条登记来源；查不到就写查不到。不要用「行业趋势/市场空间/国产替代」这类通用叙述填充，不要复述检索过程。
 4. 写作纪律（报告要一眼看完）：结论先行；只写与该客户直接相关、能指回来源的事实；推断标「推断」；不确定写「待核实」；禁止方法论、能力声明、检索过程、免责声明等元叙述（范围与来源统计由服务端页头生成）；禁止「综上所述/随着…发展/具有重要意义」这类空话；每章不超过 reportContract.limits 的长度上限，超了会被拒收。
-5. 提交 submit_customer_research(taskId, identity, sections, sources, save)。sections 键随模式：完整版 8 章全部；简报 summary/facts/gaps；主体核验 summary/gaps。来源每条写 id、title、url 或 path、kind（registry/official/media/kb-doc/kb-page）、publishedAt（未知写「未标注」）、accessedAt（YYYY-MM-DD）。按返回的校验问题修正，不要绕过。
-6. 保存：内置「调研并保存」按钮已授权；外部对话只有用户明确要求保存才 save=true。完整报告存 原始资料/文档/YYYY.MM.DD_公司全名调研报告.md；简报存 …_客户名调研简报.md；主体核验只留调研记录、不保存文件。不要用 create_raw_material 绕过校验，也不要自动改写客户实体页。`;
+5. 提交 submit_customer_research(taskId, identity, sections, sources, save, saveMode?, overwritePath?)。sections 键随模式：完整版 8 章全部；简报 summary/facts/gaps；主体核验 summary/gaps。来源每条写 id、title、url 或 path、kind（registry/official/media/kb-doc/kb-page）、publishedAt（未知写「未标注」）、accessedAt（YYYY-MM-DD）。按返回的校验问题修正，不要绕过。
+6. 保存与入库：内置「调研并保存」已授权，完整报告会自动存入知识库；资料不足简报只在客户洞察页反馈、不自动导入，不要声称已保存（用户可在页面手动入库）；主体核验不保存文件。外部对话只有用户明确要求保存才 save=true。
+7. 重复客户：begin 会返回 existingReports（知识库里该客户已有的报告，删调研记录不会影响命中）。用户要求保存且 existingReports 非空时，必须先问用户「生成新版本还是覆盖旧报告」：生成新版本传 saveMode=new（重名自动追加 _2/_3）；覆盖传 saveMode=overwrite + overwritePath=已有报告 path（同一文件整篇替换、文件名日期保持原样）。不先问用户就提交会被服务端拒收。完整报告存 原始资料/文档/YYYY.MM.DD_公司全名调研报告.md；简报存 …_客户名调研简报.md。不要用 create_raw_material 绕过校验，也不要自动改写客户实体页。`;
 
 export const CUSTOMER_RESEARCH_TRIGGER =
   '用户要求调研客户、分析目标公司、客户背景调查或生成客户洞察报告时，优先调用 begin_customer_research 获取 Engram 的最新流程与模板，再按任务提交报告。第一步永远是核验客户主体：公开工商与知识库都查不到时，必须质疑客户是否存在，只出主体核验结论，不写客户分析。仅查一个客户事实、翻译/改写已有报告不触发完整调研；用户明确指定其他流程时遵循用户要求。';
@@ -94,7 +97,8 @@ ${CUSTOMER_RESEARCH_TRIGGER}
 
 调用 Engram MCP 的 begin_customer_research（工具可能带 mcp__engram__ 前缀），传 customer 和 scope；只在用户要求保存时传 save=true。读取返回的 workflow、identityContract、reportContract、modeRules、taskId 和 version，按它们执行；完整流程保存在 Engram，不在本 skill 中复制或凭上次记忆复用。
 
-提交前必须自己先核验客户主体：公开工商/官方渠道查不到、知识库里也没有实质原始资料时，identity.status 填 not-found，报告降为「主体核验」短报告，明确说未能核实该客户是否存在，不要用知识库里的名称提法编造客户分析。完成后调用 submit_customer_research，带 taskId、identity（status/method/attempts/evidence/fullName 等）、sections、sources；校验失败按错误修正。来源不足如实降级为简报，不声称已联网或获得最新信息。显式用户要求优先，不自动保存或覆盖知识页面。
+提交前必须自己先核验客户主体：公开工商/官方渠道查不到、知识库里也没有实质原始资料时，identity.status 填 not-found，报告降为「主体核验」短报告，明确说未能核实该客户是否存在，不要用知识库里的名称提法编造客户分析。完成后调用 submit_customer_research，带 taskId、identity（status/method/attempts/evidence/fullName 等）、sections、sources；校验失败按错误修正。来源不足如实降级为简报，不声称已联网或获得最新信息。
+入库纪律：完整报告会自动存入知识库；资料不足简报只留在客户洞察页、不自动导入（不要声称已保存）；主体核验不保存。begin 返回的 existingReports 非空且用户要求保存时，必须先问用户「生成新版本还是覆盖旧报告」，再传 saveMode=new 或 saveMode=overwrite + overwritePath 重新发起或提交；不先问会被服务端拒收。显式用户要求优先。
 `;
 
 export const CUSTOMER_RESEARCH_SKILL_FILE = `---
@@ -102,5 +106,5 @@ name: engram-customer-research
 description: 调研客户、分析目标公司、客户背景调查和客户洞察报告时使用；先核验主体，再从已连接的 Engram 获取统一流程与模板。不用于单个事实查询或报告改写。
 ---
 
-<!-- engram-managed-customer-research:v2 -->
+<!-- engram-managed-customer-research:v3 -->
 ${CUSTOMER_RESEARCH_BRIDGE}`;

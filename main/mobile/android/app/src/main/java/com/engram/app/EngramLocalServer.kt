@@ -513,6 +513,10 @@ class EngramLocalServer private constructor(private val context: Context) {
         post("/api/customer-research") { call.proxyAgent("POST", "/api/customer-research", call.receiveText()) }
         put("/api/customer-research/rules") { call.proxyAgent("PUT", "/api/customer-research/rules", call.receiveText()) }
         post("/api/customer-research/stop") { call.proxyAgent("POST", "/api/customer-research/stop", call.receiveText()) }
+        // 记录清除、覆盖/新版本选择与手动入库同样落中枢：手机只转发，知识库文件的增删仍由中枢执行。
+        post("/api/customer-research/existing") { call.proxyAgent("POST", "/api/customer-research/existing", call.receiveText()) }
+        post("/api/customer-research/delete") { call.proxyAgent("POST", "/api/customer-research/delete", call.receiveText()) }
+        post("/api/customer-research/save") { call.proxyAgent("POST", "/api/customer-research/save", call.receiveText()) }
 
         // 任务看板：状态、重新生成与「自动提炼间隔」都落中枢（本机不跑 dsh），与上面几条一样窄代理。
         // 间隔也代理的原因：手机上看到的看板本来就来自中枢，到没到期由中枢按它自己的设置算，

@@ -15,7 +15,7 @@ import { CUSTOMER_RESEARCH_SECTIONS } from '../content/customerResearch.js';
  * 多端同步端到端集成测试：同机起 1 个 hub + 2 个节点（真实 HTTP/SSE 实例），
  * 覆盖 双向实时传播、三方非重叠合并、同位置冲突最新者胜裁决、文件同步、删除传播、
  * 停用-重连对账补推、提炼账本（「已提炼」标记）跨端补齐与 oplog 缺口判定、
- * 客户洞察（客户调研）记录（含主体核验结论 verdict）与流程模板跨端同步。
+ * 客户洞察（客户调研）记录（含主体核验结论 verdict、记录清除墓碑）与流程模板跨端同步。
  * 实例以 worker_threads 运行完整 server（每线程独立模块注册表与 DATA_DIR，
  * 与多进程部署等价）；均为测试期间的一次性临时实例，密码每次运行随机生成。
  * 节点按顺序启动：worker 内的 env 写入在其 import 完成后不再影响其他线程
@@ -880,6 +880,84 @@ test('三端同步端到端：实时传播、三方合并、冲突最新者胜�
       '',
       '没有主体核验结论的旧任务跨端后 verdict 为空串',
     );
+
+    // v3：记录删除（墓碑）。删除只把任务行打成墓碑（deleted=1、报告字段清空），知识库里已保存的
+    // 报告文档不受影响；墓碑必须跨端传播，且旧的非删除快照不能把它复活（只删记录、不复活记录）。
+    const researchRowOf = (inst: Instance, id: string) =>
+      withDb(inst.dataDir, (conn) =>
+        conn.prepare('SELECT deleted, report, path, verdict, updated_at FROM customer_research_tasks WHERE id = ?')
+          .get(id) as
+          | { deleted?: number; report?: string; path?: string; verdict?: string; updated_at?: string }
+          | undefined
+      );
+    const verdictUpdatedAt = String(researchRowOf(nodeB, verdictTaskId)?.updated_at || '');
+    assert.ok(verdictUpdatedAt, '删除前先记下这条记录的更新时间（用于构造旧快照）');
+    // 真实用户路径：成员 B 在客户洞察页点「清除记录」（只删记录；知识库里的报告文档不动）
+    const deleteRes = await api(nodeB, 'POST', '/api/customer-research/delete', { taskIds: [verdictTaskId] });
+    assert.ok(deleteRes.ok, '成员端清除调研记录');
+    assert.equal(((await deleteRes.json()) as { deleted?: number }).deleted, 1);
+    assert.equal(researchRowOf(nodeB, verdictTaskId)?.deleted, 1, '删除端立即变成墓碑');
+    assert.equal(researchRowOf(nodeB, verdictTaskId)?.report, '', '删除端清空报告正文');
+    await waitFor('中枢收到客户调研墓碑', async () => {
+      const row = researchRowOf(hub, verdictTaskId);
+      return Boolean(row && row.deleted === 1 && row.report === '' && row.verdict === '');
+    }, 60_000, async () => `hub row=${JSON.stringify(researchRowOf(hub, verdictTaskId))}`);
+    await waitFor('另一成员也收到客户调研墓碑', async () => {
+      const row = researchRowOf(nodeC, verdictTaskId);
+      return Boolean(row && row.deleted === 1 && row.report === '');
+    }, 60_000, async () => `C row=${JSON.stringify(researchRowOf(nodeC, verdictTaskId))}`);
+    // 同步层接口对墓碑也要给快照：成员按 op.hash 拉取时就靠它把本端记录删掉
+    const tombstoneDetail = (await (await api(hub, 'GET', `/api/sync/research?id=${encodeURIComponent(verdictTaskId)}`)).json()) as {
+      snapshot?: { deleted?: number; report?: string };
+    };
+    assert.equal(tombstoneDetail.snapshot?.deleted, 1, '中枢的 /api/sync/research 对墓碑返回快照');
+    assert.equal(tombstoneDetail.snapshot?.report, '');
+
+    // 离线期间删除：成员 C 本端已打成墓碑但推送没发出去（模拟断网），靠对账补推把删除传出去；
+    // 少了这一步，中枢与 B 会一直显示这条已删记录（「删除不跨端」比「复活」更常见）。
+    const researchDeletedAt = new Date(Date.now() + 120_000).toISOString();
+    withDb(nodeC.dataDir, (conn) => {
+      conn.prepare("UPDATE customer_research_tasks SET deleted=1, report='', path='', verdict='', updated_at=? WHERE id=?")
+        .run(researchDeletedAt, researchTaskId);
+    });
+    await api(nodeC, 'POST', '/api/sync/reconcile');
+    await waitFor('中枢收到离线期间删除的墓碑', async () => researchRowOf(hub, researchTaskId)?.deleted === 1, 60_000,
+      async () => `hub row=${JSON.stringify(researchRowOf(hub, researchTaskId))}`);
+    await waitFor('成员 B 也收到离线期间删除的墓碑', async () => researchRowOf(nodeB, researchTaskId)?.deleted === 1, 60_000,
+      async () => `B row=${JSON.stringify(researchRowOf(nodeB, researchTaskId))}`);
+
+    // 旧的非删除快照（更新时间比墓碑旧）再推给中枢：不能复活墓碑（只删记录、不复活）
+    const stalePush = await api(hub, 'POST', '/api/sync/push', {
+      node_id: 'node-b-stale',
+      kind: 'research',
+      target: verdictTaskId,
+      research: {
+        id: verdictTaskId,
+        customer: `客户洞察${verdictNeedle}`,
+        scope: 'knowledge-web',
+        client: 'Codex',
+        rules: researchRulesJson(3, 'e2e 工作流'),
+        saveRequested: 1,
+        report: `# 客户洞察\n\n## 调研范围与执行摘要\n\n${verdictNeedle}\n`,
+        path: '',
+        verdict: verdictJson,
+        deleted: 0,
+        createdAt: verdictUpdatedAt,
+        updatedAt: verdictUpdatedAt,
+        reportDate: '2026-10-21',
+        timeZone: 'Asia/Hong_Kong',
+      },
+    });
+    assert.ok(stalePush.ok, '旧快照推送不应报错（按无变化处理）');
+    assert.equal(((await stalePush.json()) as { seq?: number }).seq, 0, '旧快照不产生新 op（没有复活）');
+    await waitFor('旧快照没有复活墓碑', async () => researchRowOf(hub, verdictTaskId)?.deleted === 1, 60_000,
+      async () => `hub row=${JSON.stringify(researchRowOf(hub, verdictTaskId))}`);
+    // 客户洞察页列表只显示未删除记录：删除后各端都看不到这两条记录
+    for (const inst of [hub, nodeB, nodeC]) {
+      const tasks = await researchTasks(inst);
+      assert.ok(!tasks.some((task) => task.id === verdictTaskId), `${inst.name} 客户洞察列表不再显示已删记录（真实删除）`);
+      assert.ok(!tasks.some((task) => task.id === researchTaskId), `${inst.name} 客户洞察列表不再显示已删记录（离线删除）`);
+    }
 
     // 反向：中枢保存流程模板（走 preference 管道）→ 两台成员都收到并递增版本
     const rulesNeedle = `模板同步验证-${crypto.randomUUID().slice(0, 8)}`;

@@ -122,8 +122,21 @@ function submit(taskId: string, fixture: { identity?: unknown; sections?: unknow
     : research.submitCustomerResearch({ taskId, identity: fixture.identity, sections: fixture.sections, sources: fixture.sources, save });
 }
 
-function begin(customer: string, options: { scope?: 'knowledge-web' | 'knowledge-only'; save?: boolean } = {}) {
+function begin(customer: string, options: {
+  scope?: 'knowledge-web' | 'knowledge-only';
+  save?: boolean;
+  saveMode?: 'new' | 'overwrite';
+  overwritePath?: string;
+} = {}) {
   return research.beginCustomerResearch({ customer, timeZone: 'Asia/Hong_Kong', ...options });
+}
+
+/** 内置 Agent 的提交替身：只落消息与运行轮次，不真的起 dsh；run 状态默认 running/queued，供清除用例模拟「进行中」 */
+function builtinStub(): typeof import('../assistant/runner.js').submitMessage {
+  return (input) => {
+    const message = repo.insertMessage({ sessionId: input.sessionId, role: 'user', content: input.message });
+    return { run: repo.createRun({ sessionId: input.sessionId, userMessageId: message.id, context: input.context }), queued: false };
+  };
 }
 
 test('begin 下发主体核验契约、三种模式与固定章节/长度上限', () => {
@@ -135,6 +148,9 @@ test('begin 下发主体核验契约、三种模式与固定章节/长度上限'
   assert.match(task.reportDate, /^\d{4}-\d{2}-\d{2}$/);
   assert.match(task.workflow, /核验客户主体/);
   assert.equal(task.version, research.customerResearchRules().version);
+  // v3：发起任务时同时返回知识库已有报告与保存方式（没有已有报告时为空）
+  assert.deepEqual(task.existingReports, []);
+  assert.equal(task.saveMode, '');
 
   assert.match(task.identityContract.required, /identity/);
   assert.deepEqual(Object.keys(task.identityContract.statuses).sort(), ['kb-docs', 'not-found', 'verified']);
@@ -152,7 +168,7 @@ test('begin 下发主体核验契约、三种模式与固定章节/长度上限'
   assert.deepEqual(task.reportContract.sections.map((section) => section.id), CUSTOMER_RESEARCH_SECTIONS.map((section) => section.id));
 });
 
-test('v1 旧模板按契约版本迁移；模板编辑后新任务用新版本，旧任务保留快照', () => {
+test('v1/v2 旧模板按契约版本迁移；模板编辑后新任务用新版本，旧任务保留快照', () => {
   const legacyTitles = ['调研范围与执行摘要', '客户概况', '五看洞察', '联合创新', '决策链与关系', '机会风险', '90 天行动计划', '资料缺口'];
   storage.setSetting('customer_research_rules', JSON.stringify({
     version: 3,
@@ -204,6 +220,19 @@ test('v1 旧模板按契约版本迁移；模板编辑后新任务用新版本�
       titles: defaultTitles.map((title, index) => (index === 0 ? '带#标题' : title)),
     }), /章节标题/);
     assert.throws(() => research.updateCustomerResearchRules({ workflow: ' ', titles: defaultTitles }), /流程不能为空/);
+
+    // v2 旧模板带 contract=2：RULES_CONTRACT=3 时不兼容，按当前默认模板重建并 +1
+    storage.setSetting('customer_research_rules', JSON.stringify({
+      contract: 2,
+      version: 7,
+      workflow: '旧版 v2 流程正文',
+      sections: [{ id: 'summary', title: '结论' }],
+    }));
+    const fromV2 = research.customerResearchRules();
+    assert.equal(fromV2.contract, 3);
+    assert.equal(fromV2.version, 8);
+    assert.equal(fromV2.workflow, CUSTOMER_RESEARCH_WORKFLOW);
+    assert.deepEqual(fromV2.sections.map((section) => section.title), CUSTOMER_RESEARCH_SECTIONS.map((section) => section.title));
   } finally {
     // 恢复默认模板，后续用例按默认章节标题渲染完整版
     research.updateCustomerResearchRules({
@@ -275,12 +304,19 @@ test('简报模式：三章渲染、事实引用门槛、已核实主体可退�
     sections: { facts: '客户正在比较两种机型，预算待定。' },
   })), /已知事实|至少 1 处/);
 
+  // v3 入库策略：内置「调研并保存」只自动保存完整报告；资料不足简报只在页面反馈（saved=false、无路径）
   const saveTask = begin('简报保存客户', { scope: 'knowledge-only', save: true });
-  const saved = submit(saveTask.taskId, briefKbDocs());
-  assert.equal(saved.saved, true);
-  assert.equal(saved.path, `原始资料/文档/${saveTask.reportDate.replace(/-/g, '.')}_简报保存客户调研简报.md`);
-  assert.ok(fs.existsSync(vault.safeJoin(saved.path)));
-  assert.match(saved.markdown, /客户：简报保存客户/);
+  const notSaved = submit(saveTask.taskId, briefKbDocs());
+  assert.equal(notSaved.saved, false);
+  assert.equal(notSaved.path, '');
+  assert.match(notSaved.markdown, /客户：简报保存客户/);
+  assert.equal(research.customerResearchTasks().find((row) => row.id === saveTask.taskId)?.status, 'draft');
+  // 用户在页面上手动入库
+  const manuallySaved = research.saveCustomerResearchTask(saveTask.taskId);
+  assert.equal(manuallySaved.saved, true);
+  assert.equal(manuallySaved.overwritten, false);
+  assert.equal(manuallySaved.path, `原始资料/文档/${saveTask.reportDate.replace(/-/g, '.')}_简报保存客户调研简报.md`);
+  assert.ok(fs.existsSync(vault.safeJoin(manuallySaved.path)));
 
   const verifiedBrief = {
     identity: { ...fullVerified().identity },
@@ -465,7 +501,7 @@ test('PDF 原始文件与 Wiki 页面可作来源；已保存报告重提幂等�
       { id: 2, title: '验收客户页面', path: WIKI, kind: 'kb-page', publishedAt: '未标注', accessedAt: '2026-10-15' },
     ],
   };
-  const saved = submit(task.taskId, report);
+  const saved = submit(task.taskId, report, true);
   assert.equal(saved.saved, true);
   assert.equal(saved.verdict.kbSources, 2);
   assert.equal(vault.readPage(saved.path)?.meta.title, saved.path.split('/').at(-1)?.replace(/\.md$/, ''));
@@ -538,9 +574,13 @@ test('内置启动固定任务并授权保存，运行中复用；失败回滚�
   assert.equal(reused.taskId, started.taskId);
   assert.ok('reused' in reused && reused.reused);
   assert.equal(calls, 1);
+  // v3：内置任务保存的是「完整报告自动入库」，资料不足简报不自动入库
   const saved = submit(started.taskId, briefKbDocs(), false);
-  assert.equal(saved.saved, true);
-  assert.match(saved.path, /调研简报\.md$/);
+  assert.equal(saved.saved, false);
+  assert.equal(saved.path, '');
+  const manuallySaved = research.saveCustomerResearchTask(started.taskId);
+  assert.equal(manuallySaved.saved, true);
+  assert.match(manuallySaved.path, /调研简报\.md$/);
 
   const before = research.customerResearchTasks().length;
   await assert.rejects(
@@ -567,7 +607,8 @@ test('通用失败重试关联新轮次并保留任务快照，旧轮次不能�
   research.bindCustomerResearchRetry(task.taskId, task.runId, next.id);
   assert.throws(() => research.customerResearchRetryTask(task.runId, task.taskId), /新的执行轮次/);
   assert.equal(research.customerResearchTasks().find((row) => row.id === task.taskId)?.runId, next.id);
-  assert.equal(submit(task.taskId, briefKbDocs()).saved, true);
+  assert.equal(submit(task.taskId, briefKbDocs()).saved, false);
+  assert.equal(research.saveCustomerResearchTask(task.taskId).saved, true);
   assert.throws(() => research.customerResearchRetryTask(next.id, task.taskId), /已保存/);
 });
 
@@ -590,11 +631,334 @@ test('报告日期按任务时区计算并用于保存命名', () => {
     timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date(task.createdAt));
   assert.equal(task.reportDate, expected);
-  const saved = submit(task.taskId, briefKbDocs());
+  const saved = submit(task.taskId, briefKbDocs(), true);
   assert.equal(saved.path, `原始资料/文档/${task.reportDate.replace(/-/g, '.')}_时区客户调研简报.md`);
 
   const utc = research.beginCustomerResearch({ customer: '时区客户二', scope: 'knowledge-only', timeZone: 'UTC' });
   assert.equal(utc.reportDate, new Intl.DateTimeFormat('en-CA', {
     timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date(utc.createdAt)));
+});
+
+test('报告文件名解析与已有报告识别：全名/简称互相包含、删记录不影响命中、非报告与回收站不命中', () => {
+  // 纯函数：兼容 v1 的「YYYY.MM.DD_客户_客户调研_xxx」与 v2/v3 的「YYYY.MM.DD_客户调研报告/调研简报」
+  assert.deepEqual(research.parseCustomerReportName('2026.09.30_报告识别科技_客户调研_完整版.md'), {
+    customerName: '报告识别科技', reportDate: '2026-09-30', kind: 'full',
+  });
+  assert.deepEqual(research.parseCustomerReportName('2026-10-20_报告识别科技有限公司调研简报.md'), {
+    customerName: '报告识别科技有限公司', reportDate: '2026-10-20', kind: 'brief',
+  });
+  assert.deepEqual(research.parseCustomerReportName('报告识别科技有限公司调研报告.md'), {
+    customerName: '报告识别科技有限公司', reportDate: '', kind: 'full',
+  });
+  // 不是调研报告的文件、只有「客户调研」没有客户名的文件都解析为空
+  assert.equal(research.parseCustomerReportName('报告识别科技有限公司纪要.md'), null);
+  assert.equal(research.parseCustomerReportName('客户调研.md'), null);
+  assert.equal(research.parseCustomerReportName(''), null);
+
+  const fullPath = '原始资料/文档/2026.10.20_报告识别科技有限公司调研报告.md';
+  const briefPath = '原始资料/文档/2026.10.21_报告识别科技调研简报.md';
+  const parensPath = '原始资料/文档/2026.10.22_报告识别科技（华东）有限公司调研报告.md';
+  const v1Path = '原始资料/文档/2026.09.30_报告识别科技_客户调研_完整版.md';
+  const notePath = '原始资料/文档/报告识别科技有限公司纪要.md';
+  vault.writePage(fullPath, '完整报告正文', { type: 'doc' });
+  vault.writePage(briefPath, '简报正文', { type: 'doc' });
+  vault.writePage(parensPath, '括号全名报告正文', { type: 'doc' });
+  vault.writePage(v1Path, 'v1 命名报告正文', { type: 'doc' });
+  vault.writePage(notePath, '普通纪要，不是调研报告', { type: 'doc' });
+
+  // 简称/全名互相包含都能命中；比较时忽略空格、括号与大小写
+  const byShort = research.findCustomerResearchReports('报告识别科技');
+  assert.equal(byShort.length, 4, byShort.map((item) => item.path).join('、'));
+  const paths = byShort.map((item) => item.path);
+  for (const path of [fullPath, briefPath, parensPath, v1Path]) assert.ok(paths.includes(path), path);
+  assert.equal(research.findCustomerResearchReports('报告识别科技有限公司').length, 3);
+  // 括号与全角/半角在比较时归一：查询写法与文件名里的写法不同也能命中同一份报告
+  const byParens = research.findCustomerResearchReports('报告识别科技(华东)有限公司');
+  assert.ok(byParens.some((item) => item.path === parensPath));
+  assert.equal(byParens.find((item) => item.path === parensPath)!.customerName, '报告识别科技（华东）有限公司');
+  assert.equal(research.findCustomerResearchReports(' 报告识别 科技 ').length, 4);
+  assert.equal(research.findCustomerResearchReports('不存在客户').length, 0);
+  assert.equal(research.findCustomerResearchReports('报').length, 0);
+
+  const brief = byShort.find((item) => item.path === briefPath)!;
+  assert.equal(brief.kind, 'brief');
+  assert.equal(brief.reportDate, '2026-10-21');
+  assert.equal(brief.customerName, '报告识别科技');
+  assert.equal(brief.title, '2026.10.21_报告识别科技调研简报');
+  assert.equal(byShort.find((item) => item.path === fullPath)!.kind, 'full');
+  assert.equal(byShort.find((item) => item.path === v1Path)!.reportDate, '2026-09-30');
+  assert.equal(paths.includes(notePath), false);
+
+  // 回收站里的报告不算「已有报告」（与新建文件时回收站占位口径不同）
+  db.prepare('UPDATE pages SET deleted = 1 WHERE path = ?').run(parensPath);
+  assert.equal(research.findCustomerResearchReports('报告识别科技(华东)有限公司').some((item) => item.path === parensPath), false);
+  db.prepare('UPDATE pages SET deleted = 0 WHERE path = ?').run(parensPath);
+
+  // 清除调研记录只删记录，不影响知识库报告的命中
+  const record = begin('报告识别科技有限公司');
+  assert.equal(research.deleteCustomerResearchTasks({ taskIds: [record.taskId] }).deleted, 1);
+  assert.equal(research.findCustomerResearchReports('报告识别科技').length, 4);
+});
+
+test('begin 保存模式门禁：已有报告必须选新版本/覆盖，覆盖需列表内 overwritePath', () => {
+  const existingPath = '原始资料/文档/2026.10.13_重复客户甲调研简报.md';
+  vault.writePage(existingPath, '重复客户甲的旧简报正文', { type: 'doc' });
+  assert.equal(research.findCustomerResearchReports('重复客户甲').length, 1);
+
+  // save=true + 已有报告 + 没给 saveMode：先让用户选，服务端拒收
+  try {
+    begin('重复客户甲', { save: true });
+    assert.fail('没有 saveMode 时应拒收');
+  } catch (error: any) {
+    assert.match(error.message, /已有该客户的调研报告/);
+    assert.match(error.message, /生成新版本/);
+    assert.match(error.message, /覆盖旧报告/);
+  }
+
+  // 只调研不保存：不拦，但要如实返回已有报告
+  const plain = begin('重复客户甲');
+  assert.equal(plain.saveMode, '');
+  assert.equal(plain.existingReports.length, 1);
+  assert.equal(plain.existingReports[0].path, existingPath);
+  assert.equal(plain.existingReports[0].kind, 'brief');
+
+  // 生成新版本 / 覆盖旧报告
+  const newVersion = begin('重复客户甲', { save: true, saveMode: 'new' });
+  assert.equal(newVersion.saveMode, 'new');
+  assert.equal(newVersion.existingReports.length, 1);
+  assert.throws(() => begin('重复客户甲', { save: true, saveMode: 'overwrite' }), /overwritePath/);
+  assert.throws(() => begin('重复客户甲', { save: true, saveMode: 'overwrite', overwritePath: '原始资料/文档/不存在.md' }), /不在该客户已有报告列表/);
+  const overwrite = begin('重复客户甲', { save: true, saveMode: 'overwrite', overwritePath: existingPath });
+  assert.equal(overwrite.saveMode, 'overwrite');
+
+  // save=false 时不能带 saveMode；未知模式在参数校验阶段拒绝
+  assert.throws(() => begin('重复客户甲', { saveMode: 'new' }), /saveMode 只在 save=true/);
+  assert.throws(() => begin('重复客户甲', { save: true, saveMode: 'replace' as any }), /saveMode/);
+
+  // 没有已有报告时默认就是新版本
+  const fresh = begin('无已有报告客户乙', { save: true });
+  assert.deepEqual(fresh.existingReports, []);
+  assert.equal(fresh.saveMode, 'new');
+
+  // submit 侧同样有门禁：save=true 但任务没带保存方式时要先问用户
+  const gatePath = '原始资料/文档/2026.10.14_提交门禁客户调研简报.md';
+  vault.writePage(gatePath, '提交门禁客户的旧简报正文', { type: 'doc' });
+  const gateTask = begin('提交门禁客户', { scope: 'knowledge-only' });
+  assert.throws(() => submit(gateTask.taskId, briefKbDocs(), true), /已有该客户的调研报告/);
+  const gateTask2 = begin('提交门禁客户', { scope: 'knowledge-only' });
+  const gateSaved = research.submitCustomerResearch({
+    taskId: gateTask2.taskId, ...briefKbDocs(), save: true, saveMode: 'new',
+  });
+  assert.equal(gateSaved.saved, true);
+  assert.match(gateSaved.path, /提交门禁客户调研简报\.md$/);
+  assert.notEqual(gateSaved.path, gatePath);
+});
+
+test('自动入库策略：内置完整报告自动入库、简报只反馈、外部显式 save 可入库、主体核验永不入库', async () => {
+  const submitStub = builtinStub();
+  // 内置「调研并保存」+ 完整报告 → 自动入库
+  const builtinFull = await research.startBuiltinCustomerResearch(
+    { customer: '内置自动入库客户', scope: 'knowledge-web', timeZone: 'Asia/Hong_Kong' },
+    { submit: submitStub },
+  );
+  const fullSaved = submit(builtinFull.taskId, fullVerified());
+  assert.equal(fullSaved.mode, 'full');
+  assert.equal(fullSaved.saved, true);
+  assert.match(fullSaved.path, /调研报告(_\d+)?\.md$/);
+  assert.ok(fs.existsSync(vault.safeJoin(fullSaved.path)));
+  assert.equal(research.customerResearchTasks().find((row) => row.id === builtinFull.taskId)?.status, 'saved');
+
+  // 内置简报 → 不自动入库，只留在客户洞察页
+  const builtinBrief = await research.startBuiltinCustomerResearch(
+    { customer: '内置简报客户', scope: 'knowledge-only', timeZone: 'Asia/Hong_Kong' },
+    { submit: submitStub },
+  );
+  const briefDraft = submit(builtinBrief.taskId, briefKbDocs());
+  assert.equal(briefDraft.mode, 'brief');
+  assert.equal(briefDraft.saved, false);
+  assert.equal(briefDraft.path, '');
+  const briefRow = research.customerResearchTasks().find((row) => row.id === builtinBrief.taskId);
+  assert.equal(briefRow?.status, 'draft');
+  assert.match(briefRow?.markdown || '', /报告模式：资料不足简报/);
+
+  // 外部客户端显式 save=true 的简报可以入库（用户明确要求保存）
+  const external = begin('外部入库简报客户', { scope: 'knowledge-only' });
+  const externalSaved = submit(external.taskId, briefKbDocs(), true);
+  assert.equal(externalSaved.saved, true);
+  assert.match(externalSaved.path, /调研简报\.md$/);
+
+  // 外部只预览的完整报告不入库
+  const preview = begin('外部完整预览客户');
+  const previewed = submit(preview.taskId, fullVerified());
+  assert.equal(previewed.mode, 'full');
+  assert.equal(previewed.saved, false);
+  assert.equal(previewed.path, '');
+
+  // 主体核验永不入库：即便任务要求保存、提交也显式 save=true
+  const identity = begin('主体核验永不入库客户', { save: true });
+  const check = submit(identity.taskId, identityCheck(), true);
+  assert.equal(check.mode, 'identity-check');
+  assert.equal(check.saved, false);
+  assert.equal(check.path, '');
+  assert.throws(() => research.saveCustomerResearchTask(identity.taskId), /主体未核实/);
+});
+
+test('覆盖旧报告：同一文件整篇替换、不新增文件、任务指向旧路径、重复提交幂等', () => {
+  const target = '原始资料/文档/2026.10.10_覆盖完整客户调研报告.md';
+  vault.writePage(target, '旧报告正文（覆盖时整篇替换）', { type: 'doc' });
+  const pageCount = () => (db.prepare("SELECT COUNT(*) AS count FROM pages WHERE path LIKE '原始资料/文档/%'").get() as any).count as number;
+  const before = pageCount();
+
+  const task = begin('覆盖完整客户', { save: true, saveMode: 'overwrite', overwritePath: target });
+  assert.equal(task.saveMode, 'overwrite');
+  assert.equal(task.existingReports.length, 1);
+
+  const result = submit(task.taskId, fullVerified());
+  assert.equal(result.saved, true);
+  assert.equal(result.overwritten, true);
+  assert.equal(result.saveMode, 'overwrite');
+  assert.equal(result.path, target);
+  const content = fs.readFileSync(vault.safeJoin(target), 'utf8');
+  assert.match(content, /验收科技有限公司正在评估新机型/);
+  assert.doesNotMatch(content, /旧报告正文/);
+  assert.match(content, /更新日期/);
+  assert.equal(pageCount(), before, '覆盖不新增文件');
+  const row = research.customerResearchTasks().find((item) => item.id === task.taskId);
+  assert.equal(row?.path, target);
+  assert.equal(row?.status, 'saved');
+
+  // 重复提交同一份内容：幂等，仍是同一路径
+  const repeated = submit(task.taskId, fullVerified());
+  assert.equal(repeated.path, target);
+  assert.equal(repeated.overwritten, true);
+  assert.equal(repeated.markdown, result.markdown);
+  // 已保存报告不能再整篇换内容
+  assert.throws(() => submit(task.taskId, patch(fullVerified(), {
+    sections: { summary: '另一版结论，预算已经确认 [1][2]。' },
+  })), /不可覆盖/);
+
+  // 资料不足简报是手动入库：入库时才执行覆盖
+  const briefTarget = '原始资料/文档/2026.10.11_覆盖简报客户调研简报.md';
+  vault.writePage(briefTarget, '旧简报正文（手动入库时覆盖）', { type: 'doc' });
+  const briefTask = begin('覆盖简报客户', { scope: 'knowledge-only', save: true, saveMode: 'overwrite', overwritePath: briefTarget });
+  const briefDraft = submit(briefTask.taskId, briefKbDocs());
+  assert.equal(briefDraft.saved, false);
+  assert.equal(briefDraft.path, '');
+  const briefSaved = research.saveCustomerResearchTask(briefTask.taskId);
+  assert.equal(briefSaved.saved, true);
+  assert.equal(briefSaved.overwritten, true);
+  assert.equal(briefSaved.path, briefTarget);
+  const briefContent = fs.readFileSync(vault.safeJoin(briefTarget), 'utf8');
+  assert.match(briefContent, /客户：覆盖简报客户/);
+  assert.doesNotMatch(briefContent, /旧简报正文/);
+});
+
+test('覆盖目标被删/软删时退回新版本，避免调研成果丢失', () => {
+  const target = '原始资料/文档/2026.10.12_覆盖丢失客户调研简报.md';
+  vault.writePage(target, '即将被删除的旧简报正文', { type: 'doc' });
+  const task = begin('覆盖丢失客户', { scope: 'knowledge-only', save: true, saveMode: 'overwrite', overwritePath: target });
+  assert.equal(task.saveMode, 'overwrite');
+  // 发起后、入库前，目标被用户删进回收站（页面软删 + 文件移除）
+  db.prepare('UPDATE pages SET deleted = 1 WHERE path = ?').run(target);
+  fs.unlinkSync(vault.safeJoin(target));
+
+  const result = submit(task.taskId, briefKbDocs(), true);
+  assert.equal(result.saved, true);
+  assert.equal(result.overwritten, false);
+  assert.equal(result.saveMode, 'new');
+  assert.notEqual(result.path, target);
+  assert.ok(fs.existsSync(vault.safeJoin(result.path)), result.path);
+  assert.match(result.path, /覆盖丢失客户调研简报\.md$/);
+  const row = research.customerResearchTasks().find((item) => item.id === task.taskId);
+  assert.equal(row?.path, result.path);
+});
+
+test('手动入库：未入库简报生成调研简报.md、已入库返回原路径、主体核验与空记录拒绝', () => {
+  // 未入库简报 → 生成 调研简报.md
+  const draftTask = begin('手动入库客户', { scope: 'knowledge-only' });
+  assert.equal(submit(draftTask.taskId, briefKbDocs()).saved, false);
+  const first = research.saveCustomerResearchTask(draftTask.taskId);
+  assert.equal(first.saved, true);
+  assert.equal(first.overwritten, false);
+  assert.equal(first.path, '原始资料/文档/' + draftTask.reportDate.replace(/-/g, '.') + '_手动入库客户调研简报.md');
+  assert.ok(fs.existsSync(vault.safeJoin(first.path)));
+  assert.equal(research.customerResearchTasks().find((row) => row.id === draftTask.taskId)?.status, 'saved');
+
+  // 已入库再点一次：返回原路径，不重复建文件
+  const again = research.saveCustomerResearchTask(draftTask.taskId);
+  assert.equal(again.saved, true);
+  assert.equal(again.path, first.path);
+  assert.equal(again.overwritten, false);
+
+  // 未入库的完整报告也能手动入库
+  const fullTask = begin('手动入库完整客户');
+  assert.equal(submit(fullTask.taskId, fullVerified()).saved, false);
+  const fullSaved = research.saveCustomerResearchTask(fullTask.taskId);
+  assert.equal(fullSaved.saved, true);
+  assert.match(fullSaved.path, /_验收科技有限公司调研报告(_\d+)?\.md$/);
+  assert.ok(fs.existsSync(vault.safeJoin(fullSaved.path)));
+
+  // 主体核验不写文件，手动入库拒绝；还没生成报告的记录也拒绝
+  const identity = begin('手动入库主体核验客户');
+  submit(identity.taskId, identityCheck());
+  assert.throws(() => research.saveCustomerResearchTask(identity.taskId), /主体未核实/);
+  const empty = begin('手动入库空记录客户');
+  assert.throws(() => research.saveCustomerResearchTask(empty.taskId), /还没有生成报告/);
+  assert.throws(() => research.saveCustomerResearchTask(' '), /taskId 不能为空/);
+});
+
+test('清除调研记录：taskIds/customer/all、软删墓碑、知识库文档不动、进行中拒绝、清除后拒绝提交与入库', async () => {
+  // 按记录清除：只删记录，知识库报告文件与页面都不动
+  const savedTask = begin('清除客户A', { scope: 'knowledge-only' });
+  assert.equal(submit(savedTask.taskId, briefKbDocs(), true).saved, true);
+  const savedPath = research.customerResearchTasks().find((row) => row.id === savedTask.taskId)!.path;
+  assert.ok(fs.existsSync(vault.safeJoin(savedPath)));
+  assert.equal(research.deleteCustomerResearchTasks({ taskIds: ['missing-task'] }).deleted, 0);
+  assert.throws(() => research.deleteCustomerResearchTasks({}), /请选择/);
+  assert.throws(() => research.deleteCustomerResearchTasks({ customer: ' ' } as any), /清除参数无效/);
+  const removed = research.deleteCustomerResearchTasks({ taskIds: [savedTask.taskId] });
+  assert.equal(removed.deleted, 1);
+  assert.equal(research.customerResearchTasks().some((row) => row.id === savedTask.taskId), false);
+  const tombstone = db.prepare('SELECT deleted, report, path, verdict FROM customer_research_tasks WHERE id = ?').get(savedTask.taskId) as any;
+  assert.equal(tombstone.deleted, 1);
+  assert.equal(tombstone.report, '');
+  assert.equal(tombstone.path, '');
+  assert.equal(tombstone.verdict, '');
+  assert.ok(fs.existsSync(vault.safeJoin(savedPath)));
+  assert.equal((db.prepare('SELECT deleted FROM pages WHERE path = ?').get(savedPath) as any).deleted, 0);
+  assert.throws(() => submit(savedTask.taskId, briefKbDocs()), /已被清除/);
+  assert.throws(() => research.saveCustomerResearchTask(savedTask.taskId), /已被清除/);
+
+  // 按客户清除：同一客户的多条记录一起清，别的客户不受影响
+  const b1 = begin('清除客户B');
+  const b2 = begin('清除客户B');
+  const c1 = begin('清除客户C');
+  assert.equal(research.deleteCustomerResearchTasks({ customer: '清除客户B' }).deleted, 2);
+  const remaining = research.customerResearchTasks();
+  assert.equal(remaining.some((row) => row.id === b1.taskId), false);
+  assert.equal(remaining.some((row) => row.id === b2.taskId), false);
+  assert.equal(remaining.some((row) => row.id === c1.taskId), true);
+
+  // 进行中（run status running/queued）拒绝清除，先停止再清
+  const live = await research.startBuiltinCustomerResearch(
+    { customer: '清除进行中客户', scope: 'knowledge-only', timeZone: 'Asia/Hong_Kong' },
+    { submit: builtinStub() },
+  );
+  assert.throws(() => research.deleteCustomerResearchTasks({ customer: '清除进行中客户' }), /正在进行中/);
+  repo.updateRun(live.runId, { status: 'queued' });
+  assert.throws(() => research.deleteCustomerResearchTasks({ customer: '清除进行中客户' }), /正在进行中/);
+  repo.updateRun(live.runId, { status: 'cancelled' });
+  assert.equal(research.deleteCustomerResearchTasks({ customer: '清除进行中客户' }).deleted, 1);
+
+  // 全部清除：先把遗留的 running/queued 轮次收口，否则会被「进行中」拦下
+  db.prepare("UPDATE assistant_runs SET status = 'completed' WHERE status IN ('running', 'queued')").run();
+  const total = (db.prepare('SELECT COUNT(*) AS count FROM customer_research_tasks WHERE deleted = 0').get() as any).count as number;
+  assert.ok(total > 0);
+  assert.equal(research.deleteCustomerResearchTasks({ all: true }).deleted, total);
+  assert.equal(research.customerResearchTasks().length, 0);
+  assert.equal((db.prepare('SELECT COUNT(*) AS count FROM customer_research_tasks WHERE deleted = 0').get() as any).count, 0);
+  assert.equal(research.deleteCustomerResearchTasks({ all: true }).deleted, 0);
+  // 一键清除也只删记录：之前入库的报告文件仍在
+  assert.ok(fs.existsSync(vault.safeJoin(savedPath)));
 });

@@ -54,6 +54,7 @@ import {
   mergeResearchSnapshot,
   researchContentHash,
   researchManifest,
+  researchUpdatedAt,
   type ResearchSnapshot,
 } from './research.js';
 import {
@@ -1052,7 +1053,8 @@ async function pushOne(item: QueueItem): Promise<PushOutcome> {
       return { bytes: 0, merged: false, op: res.op as SyncOpSummary | undefined };
     }
     if (item.kind === 'research') {
-      // 只推完成态（有报告）的记录：进行中/失败的任务留在本机执行端（见 sync/research.ts）
+      // 只推完成态（有报告）与墓碑（deleted=1，记录被清除）：进行中/失败的任务留在本机执行端
+      // （见 sync/research.ts；墓碑的 report 本来就为空，但必须推出去，否则删除不跨端）
       const snapshot = collectResearchSnapshot(item.target);
       if (!snapshot) return { bytes: 0, merged: false };
       const res = await postJson('/api/sync/push', {
@@ -1471,7 +1473,9 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
       }
     }
     // 客户调研：与页面/文件同一轮对账
-    //  - 中枢清单里的完成态记录：快照 hash 不一致才拉完整快照合并（清单只带 hash，不搬报告正文）
+    //  - 中枢清单里的完成态记录与墓碑：快照 hash 不一致才拉完整快照合并（清单只带 hash，不搬报告正文）
+    //  - 拉回来仍对不上、且本端更新（典型：离线期间删除产生的墓碑）：补推本端这一份，
+    //    否则「中枢删了本端没有」或「本端删了中枢没有」会一直停在两端不一致
     //  - 本端有、中枢清单没有的记录：补推（首次接入、中枢重装时的追赶）
     const hubResearch: Array<{ id: string; customer?: string; updatedAt?: string; hash?: string }> =
       syncAllowed('research', '') && Array.isArray(snap?.research) ? snap.research : [];
@@ -1481,13 +1485,24 @@ export async function reconcile(reason: ReconcileReason = 'manual'): Promise<voi
       const id = String(entry.id || '');
       if (!id) continue;
       try {
-        if (researchContentHash(id) === String(entry.hash || '')) continue;
+        const hubHash = String(entry.hash || '');
+        if (researchContentHash(id) === hubHash) continue;
+        const localAt = researchUpdatedAt(id);
+        const hubAt = String(entry.updatedAt || '');
         const detail = await getJson(`/api/sync/research?id=${encodeURIComponent(id)}`);
         const snapshot = detail?.snapshot as ResearchSnapshot | undefined;
-        if (!snapshot) continue;
-        mergeResearchSnapshot(snapshot);
+        const merged = snapshot ? mergeResearchSnapshot(snapshot) : { created: false, updated: false };
+        if (merged.created || merged.updated) researchPulled++;
         pendingResearchPulls.delete(id);
-        researchPulled++;
+        // 拉下来合并后仍不一致：本端那一份更新（或本端是墓碑——删除必须传出去），补推
+        const localSnapshot = collectResearchSnapshot(id);
+        const stillDiffers = researchContentHash(id) !== hubHash;
+        const localNewer = Boolean(localAt) && (!hubAt || localAt > hubAt);
+        if (stillDiffers && localSnapshot && (localNewer || localSnapshot.deleted === 1)) {
+          queued++;
+          pushSample(queuedSamples, entry.customer || localSnapshot.customer || id);
+          enqueueLocalChange('research', id);
+        }
       } catch (error: any) {
         itemFailed++;
         logEvent('warn', 'reconcile-item-failed', `客户调研记录「${entry.customer || id}」对账没对上：${error?.message || error}（已跳过，下一轮对账会再试一次）`, {
