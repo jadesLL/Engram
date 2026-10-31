@@ -79,11 +79,31 @@ test('list_inbox：列原件与转换状态，并明确声明不属于知识库'
   assert.match(result.text, /不属于知识库|不在知识库/);
 });
 
-test('list_inbox：status 过滤生效', async () => {
+test('list_inbox：status 过滤生效（含已入库）', async () => {
   const pending = await callTool('list_inbox', { status: 'pending' });
   assert.match(pending.text, /合同\.txt/);
   const converted = await callTool('list_inbox', { status: 'converted' });
   assert.equal(converted.text.includes('合同.txt'), false);
+});
+
+test('list_inbox：已入库条目标出知识库副本，converted 过滤不再包含它', async () => {
+  // 用独立文件，避免影响后面「同一原件只留最新产物」那条的目录计数
+  fs.writeFileSync(path.join(BRAIN_DIR, '收集箱', '入库样本.txt'), '样本正文');
+  const { writeInboxMarkdown, adoptInboxItem } = await import('../pipeline/inboxConvert.js');
+  writeInboxMarkdown('收集箱/入库样本.txt', '# 样本\n\n条款');
+  try {
+    const adopted = adoptInboxItem('收集箱/入库样本.txt');
+    const adoptedList = await callTool('list_inbox', { status: 'adopted' });
+    assert.match(adoptedList.text, /入库样本\.txt/);
+    assert.match(adoptedList.text, /已入库 → /);
+    assert.match(adoptedList.text, new RegExp(adopted.pagePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.equal((await callTool('list_inbox', { status: 'converted' })).text.includes('入库样本.txt'), false);
+    assert.match((await callTool('list_inbox')).text, /已入库 1/);
+  } finally {
+    // 入库确实写了知识库副本：清掉它的产物与原件，免得污染后面按目录计数的用例
+    fs.rmSync(path.join(BRAIN_DIR, '收集箱', '转换结果'), { recursive: true, force: true });
+    fs.rmSync(path.join(BRAIN_DIR, '收集箱', '入库样本.txt'), { force: true });
+  }
 });
 
 test('read_inbox_item：文本原件直接返回正文；越界路径被拒', async () => {

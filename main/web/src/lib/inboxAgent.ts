@@ -45,16 +45,17 @@ export type InboxPrimarySubject = Pick<InboxItem, 'status' | 'capability'>;
 /**
  * 行内唯一主操作按状态切换：
  * 待整理=转换（agent-only 交给 Agent），转换中=查看过程，失败=重试，
- * 已转换未入库=入库，已入库=查看产物，其余不可转=无（Agent 入口仍在 ⋯ 菜单里）。
+ * 已转换=入库，已入库=查看产物，其余不可转=无（Agent 入口仍在 ⋯ 菜单里）。
  *
  * Agent 入口本身对所有条目可用：图片 / 音视频等 agent-only 没有服务端转换按钮，
  * 压缩包等 unsupported 也保留入口（点击后由服务端明确拒绝并说明原因），
  * 因此它们不进主操作判定，只影响 ⋯ 菜单里入口的可见性。
  */
-export function inboxPrimaryKind(item: InboxPrimarySubject, adopted: boolean): InboxPrimaryKind {
+export function inboxPrimaryKind(item: InboxPrimarySubject): InboxPrimaryKind {
   if (item.status === 'converting') return 'process';
   if (item.status === 'failed') return 'retry';
-  if (item.status === 'converted') return adopted ? 'review' : 'adopt';
+  if (item.status === 'adopted') return 'review';
+  if (item.status === 'converted') return 'adopt';
   if (isServerConvertible(item.capability)) return 'convert';
   return item.capability === 'agent-only' ? 'agent' : 'none';
 }

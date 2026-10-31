@@ -1,11 +1,11 @@
 <template>
-  <!-- 收集箱：待整理原件数 + 几个文件名（点进去整理） -->
+  <!-- 收集箱：未入库（待整理 + 已转换）的原件数 + 几个文件名（点进去整理） -->
   <div class="hb-card inbox-card">
     <div class="inbox-head">
       <span class="inbox-count num" :class="{ zero: !pending }">{{ pending }}</span>
       <span class="inbox-text">
-        <span class="inbox-title">{{ pending ? `${pending} 份原件等着整理` : '收集箱是空的' }}</span>
-        <span class="hb-row-meta">{{ pending ? '转换后入库才算进知识库' : '拖文件进来，或从网页抓一份' }}</span>
+        <span class="inbox-title">{{ pending ? `${pending} 份资料还没入库` : '收集箱是空的' }}</span>
+        <span class="hb-row-meta">{{ pending ? (converted ? `${converted} 份已转换待入库` : '转换后入库才算进知识库') : '拖文件进来，或从网页抓一份' }}</span>
       </span>
     </div>
     <ul v-if="sample.length" class="inbox-list">
@@ -31,9 +31,11 @@ import { useInboxStore } from '../../stores/inbox';
 defineEmits<{ (e: 'go', path: string): void }>();
 
 const inbox = useInboxStore();
-const pending = computed(() => Number(inbox.counts.pending || 0));
+/** 未入库的条目数（待整理 + 已转换）；已入库的不再占收集箱界面与角标 */
+const pending = computed(() => Number(inbox.activeCount || 0));
+const converted = computed(() => Number(inbox.counts.converted || 0));
 const sample = computed(() =>
-  (inbox.pendingItems || []).slice(0, 3).map((item: any) => ({
+  (inbox.activeItems || []).slice(0, 3).map((item: any) => ({
     path: item.path,
     name: String(item.path || '').split('/').pop() || String(item.path || ''),
   }))

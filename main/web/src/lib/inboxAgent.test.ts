@@ -23,23 +23,23 @@ function item(status: InboxItem['status'], capability: InboxItem['capability']):
 test('待整理：可转格式给「转换」，agent-only 给「让 Agent 处理」，unsupported 主操作留空', () => {
   // video（B站/抖音链接占位稿与本地音视频）也走服务端转换，主操作同样是「转换」
   for (const capability of ['office', 'pdf', 'text', 'video'] as const) {
-    assert.equal(inboxPrimaryKind(item('pending', capability), false), 'convert');
+    assert.equal(inboxPrimaryKind(item('pending', capability)), 'convert');
   }
-  assert.equal(inboxPrimaryKind(item('pending', 'agent-only'), false), 'agent');
-  assert.equal(inboxPrimaryKind(item('pending', 'unsupported'), false), 'none');
+  assert.equal(inboxPrimaryKind(item('pending', 'agent-only')), 'agent');
+  assert.equal(inboxPrimaryKind(item('pending', 'unsupported')), 'none');
 });
 
 test('失败条目主操作保持「重新转换」，Agent 入口只在菜单里（不进主操作）', () => {
-  assert.equal(inboxPrimaryKind(item('failed', 'office'), false), 'retry');
-  assert.equal(inboxPrimaryKind(item('failed', 'text'), false), 'retry');
+  assert.equal(inboxPrimaryKind(item('failed', 'office')), 'retry');
+  assert.equal(inboxPrimaryKind(item('failed', 'text')), 'retry');
 });
 
-test('转换中看过程；已转换按是否入库切换「入库 / 查看产物」', () => {
-  assert.equal(inboxPrimaryKind(item('converting', 'office'), false), 'process');
-  assert.equal(inboxPrimaryKind(item('converted', 'office'), false), 'adopt');
-  assert.equal(inboxPrimaryKind(item('converted', 'office'), true), 'review');
+test('转换中看过程；已转换给「入库」，已入库给「查看产物」', () => {
+  assert.equal(inboxPrimaryKind(item('converting', 'office')), 'process');
+  assert.equal(inboxPrimaryKind(item('converted', 'office')), 'adopt');
+  assert.equal(inboxPrimaryKind(item('adopted', 'office')), 'review');
   // Agent 把图片 / 音视频转出产物后，和普通转换产物一样可以入库
-  assert.equal(inboxPrimaryKind(item('converted', 'agent-only'), false), 'adopt');
+  assert.equal(inboxPrimaryKind(item('converted', 'agent-only')), 'adopt');
 });
 
 test('Agent 入口文案与提示固定，避免入口被改得读不懂', () => {
@@ -80,17 +80,15 @@ test('canConvertItem：只有服务端可转且不在转换中才可点，失败
 });
 
 test('主操作判定覆盖所有状态 × 能力组合（不出现漏配的空档）', () => {
-  const statuses: InboxItem['status'][] = ['pending', 'converting', 'converted', 'failed'];
+  const statuses: InboxItem['status'][] = ['pending', 'converting', 'converted', 'adopted', 'failed'];
   const capabilities: InboxItem['capability'][] = ['office', 'pdf', 'text', 'video', 'agent-only', 'unsupported'];
   const allowed: readonly InboxPrimaryKind[] = ['convert', 'process', 'retry', 'adopt', 'review', 'agent', 'none'];
   const seen = new Set<InboxPrimaryKind>();
   for (const status of statuses) {
     for (const capability of capabilities) {
-      for (const adopted of [false, true]) {
-        const kind = inboxPrimaryKind(item(status, capability), adopted);
-        assert.ok(allowed.includes(kind), `${status}/${capability}/${adopted} 得到未知主操作 ${kind}`);
-        seen.add(kind);
-      }
+      const kind = inboxPrimaryKind(item(status, capability));
+      assert.ok(allowed.includes(kind), `${status}/${capability} 得到未知主操作 ${kind}`);
+      seen.add(kind);
     }
   }
   // 七种主操作都可达：none 用于待整理的 unsupported，agent 用于待整理的 agent-only

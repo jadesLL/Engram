@@ -171,6 +171,7 @@ export async function inboxRoutes(app: FastifyInstance) {
         category: inbox.inboxCategoryOf(name),
         status: 'pending',
         derivedPath: null,
+        adoptedPath: null,
         capability,
         hint: inboxConvert.capabilityHint(rel, capability),
         error: '',

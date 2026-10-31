@@ -320,7 +320,7 @@ const digestLines = computed(() =>
     pages: props.pages,
     files: props.fileCount,
     taskCount: taskCards.value.length,
-    inboxPending: Number(inbox.counts.pending || 0),
+    inboxPending: Number(inbox.activeCount || 0),
   })
 );
 
@@ -414,7 +414,7 @@ function computeSummary(module: HomeModule): HomeCardSummary {
     case 'sections': return {value:sections.value.length,label:'个分区',rows:sections.value.map(r=>({text:r.label,detail:r.count,amount:r.count,path:`/search?q=${encodeURIComponent(r.label)}`})),chart:'bars'};
     case 'shortcuts': return {value:'快捷入口',label:'搜索 · 新建 · 图谱 · Agent',action:true,rows:[{text:'搜索',detail:'知识库',path:'/search'},{text:'新建',detail:'Wiki',path:'/page'},{text:'图谱',detail:'关系',path:'/graph'},{text:'Agent',detail:'对话',action:'chat'},{text:'看板',detail:'任务',path:'/tasks'},{text:'收集',detail:'资料',path:'/inbox'}]};
     case 'roam': return {value:'换一篇',label:`${roamCandidates.value.length} 篇可漫游`,action:true,rows:rowsOf(roamCandidates.value,8),empty:'知识库还没有可漫游的页面'};
-    case 'inbox': return {value:Number(inbox.counts.pending || 0),label:'份待整理资料',presentation:'list',rows:(inbox.pendingItems || []).slice(0,12).map((item:any)=>({text:String(item.path || '').split('/').pop() || '未命名资料',detail:'待整理',path:'/inbox'})),empty:'收集箱是空的，拖文件进来开始整理'};
+    case 'inbox': return {value:Number(inbox.activeCount || 0),label:'份资料还没入库',presentation:'list',rows:(inbox.activeItems || []).slice(0,12).map((item:any)=>({text:String(item.path || '').split('/').pop() || '未命名资料',detail:item.status==='converted'?'已转换':'待整理',path:'/inbox'})),empty:'收集箱是空的，拖文件进来开始整理'};
     case 'queue': { const candidates=pendingDistillOf(rawFiles.value,rawFiles.value.length);return {value:queueError.value && !rawFiles.value.length ? '—' : queueLoading.value && !rawFiles.value.length ? '…' : candidates.length,label:queueError.value || '份资料等待提炼',rows:candidates.map(file=>({text:documentTitleParts(file.name).name,meta:String(file.path || '').split('/').slice(0,-1).join(' / '),detail:pendingDistillLabel(file),path:rawMaterialRoute(file)})),empty:queueError.value || (queueLoading.value ? '正在读取待提炼资料…' : '没有等待提炼的资料')}; }
     case 'board': return {value:tasks.board ? filterCards(tasks.board,EMPTY_FILTER).length : 0,label:'件任务',rows:(tasks.board?.groups || []).map(g=>({text:g.title,detail:g.cards.length,amount:g.cards.length,path:'/tasks'})),chart:'bars',empty:tasksLoading.value?'正在读取看板…':'暂无看板，打开任务页面生成'};
     case 'digest': return {value:digestLines.value.length,label:props.agentName || 'Agent 摘要',presentation:'list',rows:digestLines.value.map(text=>({text,action:'chat'}))};

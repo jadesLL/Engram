@@ -699,7 +699,7 @@ test('homeDigest：有改动时给一句统计，没改动时给安静版；待�
   const busy = homeDigest({ pages, files: 0, taskCount: 3, inboxPending: 2, now });
   assert.match(busy[0], /近 7 天新增 1 篇、改动 2 篇/);
   assert.match(busy.join(' '), /还有 3 件待办/);
-  assert.match(busy.join(' '), /收集箱里 2 份原件/);
+  assert.match(busy.join(' '), /收集箱里 2 份资料还没入库/);
 
   const quiet = homeDigest({ pages: [], files: 0, taskCount: 0, inboxPending: 0, now });
   assert.equal(quiet.length, 2);

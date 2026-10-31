@@ -144,8 +144,8 @@
             <template v-if="item.rel !== item.name">
               <span>·</span><span class="truncate">{{ item.rel }}</span>
             </template>
-            <!-- 入库只发生在本会话，刷新页面后这个标记会消失（服务端不存这个状态） -->
-            <span v-if="inbox.adopted.has(item.path)" class="adopted-tag">
+            <!-- 已入库 = 产物副本已在 原始资料/ 下（服务端按磁盘判定），刷新、换端都还在 -->
+            <span v-if="item.status === 'adopted'" class="adopted-tag" v-tooltip="item.adoptedPath || ''">
               <Icon name="check" :size="11" />已入库
             </span>
           </div>
@@ -269,9 +269,9 @@
 
     <AppEmptyState
       v-else
-      icon="inbox"
-      title="收集箱是空的"
-      hint="把还没整理的资料拖进来：合同扫描件、手机拍的笔记、录音、导出表格都行。它们会先待在这里，转换并入库之后才进入知识库。"
+      :icon="filter === 'adopted' ? 'check' : 'inbox'"
+      :title="emptyTitle"
+      :hint="emptyHint"
     />
 
     <!-- 产物审阅：先看转换结果，确认没问题再入库（入库是不可见的写操作，值得先过一眼） -->
@@ -339,17 +339,34 @@ const fileInput = ref<HTMLInputElement>();
 const pageUrl = ref('');
 const fetchingUrl = ref(false);
 const dragOver = ref(false);
-const filter = ref<'all' | 'pending' | 'converted'>('all');
+const filter = ref<'active' | 'pending' | 'converted' | 'adopted'>('active');
 
+/**
+ * 三个状态：待整理 / 已转换 / 已入库。默认视图只列前两个——
+ * 已入库的内容已经进了知识库，不再占收集箱界面，点「已入库」单独翻。
+ */
 const filterOptions = computed(() => [
-  { value: 'all' as const, label: '全部', count: inbox.counts.all },
+  { value: 'active' as const, label: '待整理 · 已转换', count: Math.max(0, inbox.counts.all - inbox.counts.adopted) },
   { value: 'pending' as const, label: '待整理', count: inbox.counts.pending },
   { value: 'converted' as const, label: '已转换', count: inbox.counts.converted },
+  { value: 'adopted' as const, label: '已入库', count: inbox.counts.adopted },
 ]);
 
 const visibleItems = computed(() => {
-  if (filter.value === 'all') return inbox.items;
+  if (filter.value === 'active') return inbox.items.filter((item) => item.status !== 'adopted');
   return inbox.items.filter((item) => item.status === filter.value);
+});
+
+/** 空态按当前筛选说话：已入库是「知识库那边」，其余是「收集箱这边」 */
+const emptyTitle = computed(() => {
+  if (inbox.items.length && filter.value === 'adopted') return '还没有已入库的条目';
+  if (inbox.items.length) return '这个筛选下没有内容';
+  return '收集箱是空的';
+});
+const emptyHint = computed(() => {
+  if (inbox.items.length && filter.value === 'adopted') return '转换出来并确认入库的产物会留在这里，方便回头查它进了知识库的哪一篇。';
+  if (inbox.items.length) return '换一个筛选，或者把文件拖进上面的收纳区。';
+  return '把还没整理的资料拖进来：合同扫描件、手机拍的笔记、录音、导出表格都行。它们会先待在这里，转换并入库之后才进入知识库。';
 });
 
 /* ===== 提示条：收起状态记本机，不收服务端管 ===== */
@@ -469,7 +486,7 @@ async function runMenu(item: InboxItem, action: MenuAction) {
  * 已转换未入库=入库，已入库=查看产物，不可转=无。
  */
 function primaryKind(item: InboxItem): InboxPrimaryKind {
-  return inboxPrimaryKind(item, inbox.adopted.has(item.path));
+  return inboxPrimaryKind(item);
 }
 
 /* ===== 转换：能不能转由服务端的 capability 说了算，能力集合与按钮判定在 lib/inboxAgent ===== */
@@ -478,6 +495,7 @@ const STATUS_STYLE: Record<InboxItem['status'], { label: string; icon: string; c
   pending: { label: '待整理', icon: 'file', chip: 'pending' },
   converting: { label: '转换中', icon: 'activity', chip: 'converting' },
   converted: { label: '已转换', icon: 'check', chip: 'done' },
+  adopted: { label: '已入库', icon: 'check', chip: 'adopted' },
   failed: { label: '转换失败', icon: 'report', chip: 'failed' },
 };
 
@@ -676,7 +694,7 @@ function expectConversion() {
 
 watch(converting, syncPolling);
 
-/* ===== 入库：服务端没有「已入库」状态，标记只存在本会话的 store 里 ===== */
+/* ===== 入库：产物复制进 原始资料/文档/，之后状态就是「已入库」（服务端按副本判定） ===== */
 
 const adopting = ref(false);
 
@@ -726,12 +744,12 @@ const reviewTitle = computed(() => reviewItem.value?.derivedPath?.split('/').pop
 const adoptDisabled = computed(() => {
   const item = reviewItem.value;
   if (!item || !reviewMarkdown.value || adopting.value) return true;
-  return inbox.adopted.has(item.path);
+  // 已入库的产物再看一遍也只能看：入库是复制动作，重复点只会多出一份副本
+  return item.status === 'adopted';
 });
 const adoptLabel = computed(() => {
   if (adopting.value) return '入库中…';
-  const item = reviewItem.value;
-  return item && inbox.adopted.has(item.path) ? '已入库' : '入库';
+  return reviewItem.value?.status === 'adopted' ? '已入库' : '入库';
 });
 
 /** 以当前主题渲染 Markdown：与 FilePreview 的 markdown 分支走同一条 Vditor.preview 路径 */
@@ -1338,6 +1356,7 @@ html.dark .plat-badge.plat-douyin { background: rgba(37, 244, 238, 0.2); color: 
 .status i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .status.pending { color: var(--warn); } .status.pending i { background: var(--warn); }
 .status.done { color: var(--success); } .status.done i { background: var(--success); }
+.status.adopted { color: var(--text-faint); } .status.adopted i { background: var(--text-faint); }
 .status.failed { color: var(--danger); } .status.failed i { background: var(--danger); }
 .status.converting { color: var(--inbox-accent); }
 .status.converting i { background: var(--inbox-accent); animation: status-pulse 1.2s ease-in-out infinite; }
