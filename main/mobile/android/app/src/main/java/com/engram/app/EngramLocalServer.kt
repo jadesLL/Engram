@@ -558,7 +558,7 @@ class EngramLocalServer private constructor(private val context: Context) {
             }
             val sorted = items.values.sortedByDescending { it.optLong("mtime") }
             val counts = JSONObject().put("all", sorted.size)
-            for (status in listOf("pending", "converted", "converting", "failed")) counts.put(status, sorted.count { it.optString("status") == status })
+            for (status in listOf("pending", "converted", "adopted", "converting", "failed")) counts.put(status, sorted.count { it.optString("status") == status })
             call.json(JSONObject().put("items", JSONArray(sorted)).put("counts", counts))
         }
         post("/api/inbox/upload") { call.proxyHubUpload() }

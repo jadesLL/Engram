@@ -424,11 +424,12 @@ const navItems = computed(() => [
   {
     key: 'inbox',
     icon: 'inbox',
-    title: inbox.counts.pending
-      ? `收集箱（${inbox.counts.pending} 个待整理）`
+    // 角标只算还没入库的（待整理 + 已转换）：已入库的内容已经进了知识库，不该再催
+    title: inbox.activeCount
+      ? `收集箱（${inbox.activeCount} 份还没入库）`
       : '收集箱',
     active: isActive('/inbox'),
-    dot: inbox.counts.pending > 0,
+    dot: inbox.activeCount > 0,
     action: () => go('/inbox'),
   },
   // 任务看板：点一下就去那一页，进页自动让内置 Agent 从知识库提炼（不在页面上弹 Agent 抽屉）
@@ -480,7 +481,7 @@ const moreItems = computed(() => [
   {
     label: '收集箱',
     icon: 'inbox',
-    dot: inbox.counts.pending > 0,
+    dot: inbox.activeCount > 0,
     running: false,
     action: () => runMore(() => go('/inbox')),
   },

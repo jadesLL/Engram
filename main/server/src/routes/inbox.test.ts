@@ -137,6 +137,31 @@ test('列表按状态分组：有转换产物即视为已转换，产物本身�
   assert.equal(body.counts.converted >= 1, true);
 });
 
+test('入库后状态变 adopted：带回知识库副本，计数进已入库', async () => {
+  const derivedDir = path.join(BRAIN_DIR, INBOX_DIR_REL, '转换结果');
+  fs.mkdirSync(derivedDir, { recursive: true });
+  fs.writeFileSync(path.join(BRAIN_DIR, INBOX_DIR_REL, '入库样本.txt'), '原件正文');
+  fs.writeFileSync(
+    path.join(derivedDir, '2026.09.24_入库样本.md'),
+    '---\n标题: 入库样本\n来源: 收集箱/入库样本.txt\n---\n\n正文\n'
+  );
+
+  const adopted = await app.inject({
+    method: 'POST', url: '/api/inbox/adopt', headers: auth(), payload: { path: `${INBOX_DIR_REL}/入库样本.txt` },
+  });
+  assert.equal(adopted.statusCode, 200, adopted.body);
+  const pagePath = adopted.json().pagePath as string;
+
+  const res = await app.inject({ method: 'GET', url: '/api/inbox/items', headers: auth() });
+  const body = res.json();
+  const item = body.items.find((entry: any) => entry.name === '入库样本.txt');
+  assert.equal(item.status, 'adopted');
+  assert.equal(item.adoptedPath, pagePath);
+  assert.equal(body.counts.adopted, 1);
+  // 原件与产物仍留在收集箱（入库是复制）
+  assert.equal(fs.existsSync(path.join(BRAIN_DIR, INBOX_DIR_REL, '入库样本.txt')), true);
+});
+
 test('收集箱里的 .md（原件与产物）不会被建成知识库页面', async () => {
   fs.writeFileSync(path.join(BRAIN_DIR, INBOX_DIR_REL, '随手记.md'), '# 随手记\n不该出现在知识库\n');
   const { scanVault, listTree } = await import('../lib/vault.js');

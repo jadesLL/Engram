@@ -3,7 +3,7 @@ import path from 'node:path';
 import { db } from './db.js';
 import { safeJoin } from './vault.js';
 import { INBOX_DIR, isInboxDerivedPath } from './brainPaths.js';
-import { derivedPathsBySource, derivedPathForSource } from './inboxDerived.js';
+import { inboxProductsBySource, derivedPathForSource } from './inboxDerived.js';
 import { isVideoLinkPlaceholder } from '../pipeline/inboxConvert.js';
 import { parseVideoLinkMarkdown } from './videoLink.js';
 import { capabilityHint, convertCapability, type ConvertCapability } from '../pipeline/inboxConvert.js';
@@ -15,6 +15,9 @@ import { capabilityHint, convertCapability, type ConvertCapability } from '../pi
  * 「什么算已转换」「什么时候算转换中」给出不同答案。
  * 状态以磁盘为准：转换产物在 → converted（即便上一次任务失败、或产物是 Agent 通道补写的）；
  * 只有正在跑的任务才显示 converting；没有产物时失败任务才显示 failed。
+ *
+ * 三个用户可见状态：待整理（pending）/ 已转换（converted）/ 已入库（adopted）。
+ * 已入库 = 产物已经复制进 原始资料/文档/（判定见 lib/inboxDerived），界面默认不展示。
  */
 
 /** 类型分组：只用于图标与筛选，不影响接受哪些格式（任意格式都收） */
@@ -42,9 +45,11 @@ export interface InboxItem {
   size: number;
   mtime: number;
   category: string;
-  status: 'pending' | 'converting' | 'converted' | 'failed';
+  status: 'pending' | 'converting' | 'converted' | 'adopted' | 'failed';
   /** 已生成的语义转换产物（Markdown）路径 */
   derivedPath: string | null;
+  /** 产物入库后在知识库里的副本路径（原始资料/文档/…）；未入库为 null */
+  adoptedPath: string | null;
   /** 转换能力：服务端可转 / 需要 Agent 通道 / 暂不支持 */
   capability: ConvertCapability;
   /** 不可转时给用户看的原因（可直接显示） */
@@ -60,7 +65,7 @@ export interface InboxItem {
 }
 
 export interface InboxListing {
-  counts: { all: number; pending: number; converted: number; converting: number; failed: number };
+  counts: { all: number; pending: number; converted: number; adopted: number; converting: number; failed: number };
   items: InboxItem[];
 }
 
@@ -99,7 +104,7 @@ export function jobStatesByPath(): Map<string, { status: 'converting' | 'failed'
 
 /** 扫描收集箱：原件递归收集；转换产物只用于标记状态，本身不作为条目 */
 export function listInboxItems(): InboxListing {
-  const derived = derivedPathsBySource();
+  const products = inboxProductsBySource();
   const jobs = jobStatesByPath();
   const files: string[] = [];
 
@@ -122,7 +127,7 @@ export function listInboxItems(): InboxListing {
     }
   }
   if (!fs.existsSync(safeJoin(INBOX_DIR))) {
-    return { counts: { all: 0, pending: 0, converted: 0, converting: 0, failed: 0 }, items: [] };
+    return { counts: { all: 0, pending: 0, converted: 0, adopted: 0, converting: 0, failed: 0 }, items: [] };
   }
   walk(INBOX_DIR);
 
@@ -131,19 +136,21 @@ export function listInboxItems(): InboxListing {
       const abs = safeJoin(rel);
       const stat = fs.statSync(abs);
       const name = path.posix.basename(rel);
-      const derivedPath = derived.get(rel)?.[0] || null;
+      const product = products.get(rel)?.[0] || null;
+      const derivedPath = product?.path || null;
+      const adoptedPath = product?.adoptedPath || null;
       const job = jobs.get(rel);
       const capability = convertCapability(rel);
       // 磁盘上的转换产物是「已转换」的唯一事实来源：Agent 通道直接写产物时没有 job 行，
       // 而上一次失败任务也不该盖住后来补写的产物（2026-10-18：Agent 重转成功后列表仍显示失败）。
-      // 只有任务确实在跑时才让 converting 覆盖产物状态。
+      // 只有任务确实在跑时才让 converting 覆盖产物状态；产物已在知识库里则进一步是「已入库」。
       const status: InboxItem['status'] = job?.status === 'converting'
         ? 'converting'
-        : derivedPath
-          ? 'converted'
-          : job?.status === 'failed'
-            ? 'failed'
-            : 'pending';
+        : !derivedPath
+          ? job?.status === 'failed' ? 'failed' : 'pending'
+          : adoptedPath
+            ? 'adopted'
+            : 'converted';
       // 视频条目：链接占位稿带平台与链接；音视频原件按「本地视频」处理
       let video: InboxItem['video'];
       if (capability === 'video') {
@@ -165,6 +172,7 @@ export function listInboxItems(): InboxListing {
         category: inboxCategoryOf(name),
         status,
         derivedPath,
+        adoptedPath,
         capability,
         hint: capabilityHint(rel, capability),
         // 产物已补上时不再把旧任务的失败原因当现状展示（查看过程仍可按 jobId 打开那次会话）
@@ -181,6 +189,7 @@ export function listInboxItems(): InboxListing {
       all: items.length,
       pending: items.filter((item) => item.status === 'pending').length,
       converted: items.filter((item) => item.status === 'converted').length,
+      adopted: items.filter((item) => item.status === 'adopted').length,
       converting: items.filter((item) => item.status === 'converting').length,
       failed: items.filter((item) => item.status === 'failed').length,
     },

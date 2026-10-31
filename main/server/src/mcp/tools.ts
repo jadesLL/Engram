@@ -355,7 +355,7 @@ export function makeServer(): McpServer {
       + '收集箱是**待纳入资产**的暂存区：这里的内容不属于知识库，不得作为回答的事实依据、不得被证据引用；'
       + '只有用户把转换产物「入库」到 原始资料/文档/ 之后才成为可引用的来源。',
     {
-      status: z.enum(['all', 'pending', 'converted']).optional().describe('默认 all'),
+      status: z.enum(['all', 'pending', 'converted', 'adopted']).optional().describe('默认 all'),
       limit: z.number().optional().describe('最多返回多少条，默认 200'),
     },
     async ({ status, limit }) => {
@@ -364,19 +364,22 @@ export function makeServer(): McpServer {
       const items = wanted === 'all' ? result.items : result.items.filter((item) => item.status === wanted);
       const capped = items.slice(0, Math.min(Math.max(limit ?? 200, 1), 500));
       const lines = capped.map((item) => {
-        const state = item.status === 'converted'
-          ? `已转换 → ${item.derivedPath}`
-          : item.status === 'converting'
-            ? '转换中'
-            : item.status === 'failed'
-              ? `转换失败：${item.error}`
-              : '待整理';
+        const state = item.status === 'adopted'
+          ? `已入库 → ${item.adoptedPath}`
+          : item.status === 'converted'
+            ? `已转换 → ${item.derivedPath}`
+            : item.status === 'converting'
+              ? '转换中'
+              : item.status === 'failed'
+                ? `转换失败：${item.error}`
+                : '待整理';
         return `${item.path} · ${item.ext || '未知'} · ${Math.round(item.size / 1024)}KB · ${state}`
           + (item.capability === 'agent-only' ? ' · 需 Agent 视觉/转写' : item.capability === 'unsupported' ? ' · 暂不支持转换' : '');
       });
       const header = [
-        `收集箱共 ${result.counts.all} 项（待整理 ${result.counts.pending} · 已转换 ${result.counts.converted}）。`,
-        '注意：收集箱内容不在知识库中——不要把它当作事实来源引用，也不要用它去写页面证据。',
+        `收集箱共 ${result.counts.all} 项（待整理 ${result.counts.pending} · 已转换 ${result.counts.converted} · 已入库 ${result.counts.adopted}）。`,
+        '注意：收集箱内容不在知识库中——不要把它当作事实来源引用，也不要用它去写页面证据。'
+          + '标记「已入库」的条目，其产物副本已在 原始资料/ 下成为可引用来源。',
       ].join('\n');
       return { content: [{ type: 'text', text: `${header}\n\n${lines.join('\n') || '（收集箱为空）'}` }] };
     }

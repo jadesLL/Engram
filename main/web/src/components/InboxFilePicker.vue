@@ -121,9 +121,10 @@ function confirmPick() {
   emit('close');
 }
 
-/** 与服务端收集箱列表同一档状态口径（转换产物是否存在以磁盘为准） */
+/** 与服务端收集箱列表同一档状态口径（产物是否存在、是否已入库都以磁盘为准） */
 function statusLabel(item: InboxItem): string {
   if (item.status === 'converting') return '转换中';
+  if (item.status === 'adopted') return '已入库';
   if (item.status === 'converted') return '已转换';
   if (item.status === 'failed') return '转换失败';
   return '待整理';
@@ -267,5 +268,6 @@ function formatSize(size: number): string {
 .picker-status.pending { color: var(--faint); }
 .picker-status.converting { color: var(--accent, #4d8aff); }
 .picker-status.converted { color: var(--success, #2e9e6b); }
+.picker-status.adopted { color: var(--faint); }
 .picker-status.failed { color: var(--danger, #c0392b); }
 </style>

@@ -20,9 +20,11 @@ export interface InboxItem {
   size: number;
   mtime: number;
   category: string;
-  status: 'pending' | 'converting' | 'converted' | 'failed';
+  status: 'pending' | 'converting' | 'converted' | 'adopted' | 'failed';
   /** 转换产物的 vault 路径；为 null 表示还没有产物 */
   derivedPath: string | null;
+  /** 产物入库后在知识库里的副本路径（原始资料/文档/…）；未入库为 null */
+  adoptedPath: string | null;
   /**
    * 服务端对这个格式的转换能力：office/pdf/text/video 能转（video 走视频理解管线），
    * agent-only/unsupported 不能。
@@ -76,6 +78,7 @@ export interface InboxCounts {
   all: number;
   pending: number;
   converted: number;
+  adopted: number;
   converting: number;
   failed: number;
 }
@@ -90,18 +93,17 @@ export interface InboxUpload {
 export const useInboxStore = defineStore('inbox', () => {
   let nextUploadId = 0;
   const items = ref<InboxItem[]>([]);
-  const counts = ref<InboxCounts>({ all: 0, pending: 0, converted: 0, converting: 0, failed: 0 });
+  const counts = ref<InboxCounts>({ all: 0, pending: 0, converted: 0, adopted: 0, converting: 0, failed: 0 });
   const loading = ref(false);
   const loaded = ref(false);
   const error = ref('');
   const uploading = ref<InboxUpload[]>([]);
-  /**
-   * 本会话内已入库的路径。服务端没有「已入库」这个状态——入库后原件仍在收集箱里，
-   * 重新扫描也看不出区别，所以只在本地记住，用来拦住同一行的重复入库。
-   */
-  const adopted = ref<Set<string>>(new Set());
 
   const pendingItems = computed(() => items.value.filter((item) => item.status === 'pending'));
+  /** 还没入库的条目（待整理 + 已转换）：首页与图标栏只关心这些，已入库的不再占位 */
+  const activeItems = computed(() => items.value.filter((item) => item.status !== 'adopted'));
+  /** 收集箱界面默认口径：待整理 + 已转换（转换中的也算在里面，它还没入库） */
+  const activeCount = computed(() => activeItems.value.length);
 
   /** 拉取列表；失败时保留上次结果并把错误交给界面展示 */
   async function load(): Promise<void> {
@@ -237,7 +239,6 @@ export const useInboxStore = defineStore('inbox', () => {
   /** 入库：把产物收进知识库，成为可检索、可引用的页面（原件仍留在收集箱） */
   async function adopt(path: string): Promise<InboxAdoption> {
     const { data } = await api.post('/api/inbox/adopt', { path });
-    adopted.value.add(path);
     await load();
     return data as InboxAdoption;
   }
@@ -245,8 +246,6 @@ export const useInboxStore = defineStore('inbox', () => {
   /** 移除一份文件（进回收站，可恢复） */
   async function remove(path: string): Promise<void> {
     await api.delete('/api/inbox/items', { data: { path } });
-    // 同名文件之后可能被重新拖进来，那一份是新的，不该继承「已入库」的标记
-    adopted.value.delete(path);
     await load();
   }
 
@@ -257,8 +256,9 @@ export const useInboxStore = defineStore('inbox', () => {
     loaded,
     error,
     uploading,
-    adopted,
     pendingItems,
+    activeItems,
+    activeCount,
     load,
     upload,
     fetchUrl,

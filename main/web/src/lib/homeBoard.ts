@@ -855,7 +855,7 @@ export function homeDigest(input: {
   }
 
   if (input.taskCount) lines.push(`看板上还有 ${input.taskCount} 件待办，逾期与最近要做的排在前面。`);
-  if (input.inboxPending) lines.push(`收集箱里 ${input.inboxPending} 份原件还没整理。`);
+  if (input.inboxPending) lines.push(`收集箱里 ${input.inboxPending} 份资料还没入库。`);
   if (!input.taskCount && !input.inboxPending) lines.push(`待办与收集箱都清空了。`);
   return lines;
 }
