@@ -39,25 +39,20 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 连中枢走 OkHttp + 双栈策略（见 DualStack.kt）：域名同时有 A/AAAA 时先 IPv6，连不上改 IPv4，
  * IPv4 用稳后定期回探一次 IPv6——协议族只在建连时选定，传输途中不换。
  */
-class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore) {
+class SyncEngine(
+    private val db: LocalDatabase,
+    private val secrets: SecretStore,
+    /** 本机网络状态：判断有没有 IPv6 出口 + 网络切换时通知重探（纯逻辑，JVM 单测可注入假实现） */
+    private val network: Ipv6Outlet? = null,
+) {
     private val executor = Executors.newSingleThreadExecutor()
     private val fetchExecutor = Executors.newFixedThreadPool(MAX_PARALLEL_FETCHES)
     private val activeCalls = ConcurrentHashMap.newKeySet<Call>()
     /**
-     * 三个客户端共用一套超时，只有 DNS 解析不同：
-     *  - clientV6/clientV4 各自只解析出选定协议族的地址 → 两套独立连接池，切族不打断在途传输；
-     *  - httpClient 用于「策略关闭 / 解析不出地址」的场景，保持历史行为（系统默认排序）。
+     * 客户端按「设置里的连接超时」懒构建（见 clientsFor）：三个客户端共用一套超时，只有 DNS 解析不同，
+     * v6/v4 各自只解析出选定协议族的地址，切族不打断在途传输；plain 用于策略关闭 / 解析不出地址的场景，
+     * 保持历史行为（系统默认排序）。
      */
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        // 不能是 0（无限）：半开连接下大附件上传会一直卡在 write() 上，读超时管不到「写不进」，
-        // 而 running 恒为 true 会让之后所有同步请求只排队不执行（界面停在「同步中」直到切后台）。
-        // 超时按单次写操作计（不是整个请求体），60 秒足够慢网下的分片上传。
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
-    private val clientV6 = httpClient.newBuilder().dns(FamilyDns(6)).build()
-    private val clientV4 = httpClient.newBuilder().dns(FamilyDns(4)).build()
     private val running = AtomicBoolean(false)
     private val requestWhileRunning = AtomicBoolean(false)
     private val fullRequestWhileRunning = AtomicBoolean(false)
@@ -115,6 +110,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     @Volatile private var linkProbedAt: String? = null
     private var lastProbeRoundAt = 0L
     private var forceProbe = false
+    /** 网络切换重置的节流：系统回调常连发（available + capabilities + linkProperties） */
+    private var lastNetworkResetAt = 0L
     /** 上一轮探测绑定的中枢地址：改绑定后不能拿旧中枢的内网地址去连新中枢 */
     private var probeBoundHub: String? = null
     private var announcedLanCache: List<String>? = null
@@ -1067,6 +1064,29 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         request(false)
     }
 
+    /**
+     * 网络已切换（Wi-Fi ↔ 蜂窝、开 / 关 VPN、路由器重新下发 IPv6 前缀）。
+     *
+     * 双栈记账按域名记在进程里，换网络后不能沿用：在没有 IPv6 的网络里学到的「这个域名走 IPv4」
+     * 如果留着，换到有 IPv6 的网络仍会先按 IPv4 走、界面继续显示「IPv6 连不上」，直到 IPv4 成功
+     * 10 次后的回探——用户看到的就是「安卓端连不上 IPv6」。这里清掉学到的状态与旧网络通告的
+     * 局域网地址，并立刻重新探测；下一次请求重新按 IPv6 优先试。
+     */
+    fun onNetworkChanged() {
+        if (db.setting("sync_role") != "member" || db.setting("sync_enabled") != "1") return
+        val now = System.currentTimeMillis()
+        if (now - lastNetworkResetAt < networkResetMinIntervalMs) return
+        lastNetworkResetAt = now
+        DualStack.reset()
+        announcedLanCache = emptyList()
+        forceProbe = true
+        db.log("info", "link-network-changed", "网络已切换：清掉学到的双栈状态，重新按 IPv6 优先探测连接通道")
+        request(false)
+    }
+
+    /** 本机当前网络是否真有 IPv6 出口（拿不到网络信息时按「有」处理，退回历史行为） */
+    private fun deviceHasIpv6(): Boolean = network?.hasIpv6() ?: true
+
     /** 本机在同步群组里的显示名：中枢配置里的成员名（对账时学回），没学到时退回手机型号 */
     fun deviceLabel(): String {
         val learned = db.setting(deviceLabelSetting)?.trim().orEmpty()
@@ -1124,7 +1144,9 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 JSONObject()
                     .put("kind", item.kind).put("label", item.label).put("url", item.url).put("ok", item.ok)
                     .put("latencyMs", item.latencyMs ?: JSONObject.NULL)
-                    .put("error", item.error ?: JSONObject.NULL),
+                    .put("error", item.error ?: JSONObject.NULL)
+                    // 中枢主地址实际连上的协议族：连接详情据此说「IPv6 / IPv4」，不再猜域名解析
+                    .put("family", item.family ?: JSONObject.NULL),
             )
         }
         return JSONObject()
@@ -1209,8 +1231,8 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
             for (target in SyncLink.planProbes(hubBase, announcedLanUrls(), prefer)) {
                 checkActive()
                 if (results.any { it.url == target.url }) continue
-                val probe = probeAnnounce(target.url, probeTimeoutMs(target.kind))
-                results += SyncLink.Candidate(target.kind, target.label, target.url, probe.ok, probe.latencyMs, probe.error)
+                val probe = probeAnnounce(target)
+                results += SyncLink.Candidate(target.kind, target.label, target.url, probe.ok, probe.latencyMs, probe.error, probe.family)
                 if (target.kind == SyncLink.KIND_HUB && probe.ok && probe.lan.isNotEmpty()) learned = probe.lan
                 // 局域网已经通了就不必再探剩下的：这一轮的目的就是找到最快那条路
                 if (target.kind == SyncLink.KIND_LAN && probe.ok && prefer) break
@@ -1251,7 +1273,12 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         }
 
         val nextBase = winner.url
-        val nextChannel = if (winner.kind == SyncLink.KIND_LAN) SyncLink.CHANNEL_LAN else detectHubChannel(nextBase)
+        // 主地址的通道取「这次探测实际连上的协议族」：探测走的就是双栈路径，比事后猜 DNS 可信
+        val nextChannel = if (winner.kind == SyncLink.KIND_LAN) {
+            SyncLink.CHANNEL_LAN
+        } else {
+            SyncLink.channelOfFamily(winner.family) ?: detectHubChannel(nextBase)
+        }
         val previousBase = activeBase
         val changed = nextBase != previousBase || nextChannel != linkChannel
         activeBase = nextBase
@@ -1271,45 +1298,116 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         }
     }
 
-    private data class AnnounceProbe(val ok: Boolean, val latencyMs: Long?, val error: String?, val lan: List<String>)
+    private data class AnnounceProbe(
+        val ok: Boolean,
+        val latencyMs: Long?,
+        val error: String?,
+        val lan: List<String>,
+        /** 这次探测实际连上的协议族（6 / 4）；局域网候选与探测失败时为 null */
+        val family: Int? = null,
+    )
 
     /**
      * 一次候选探测：打中枢的连接通告端点（带令牌）。既证明这个地址可达，又顺手取回中枢的内网地址清单。
-     * 逐候选设超时（不写进双栈记账）——探测超时被记成真实请求的失败会把界面的协议族判定带偏。
+     *
+     * 中枢主地址走与真实同步请求同一条双栈路径（按协议族分池的 OkHttp 客户端 + DualStack.plan/record）：
+     *  - 探测本身也记账——回到 IPv6 可用网络时，探测成功就会立刻切回 IPv6 优先，不必等 10 次
+     *    IPv4 成功后的回探（否则界面会长时间停在上一个网络学到的「IPv6 连不上」）；
+     *  - 每个协议族各有独立预算。旧实现一个 6 秒总超时，IPv6 黑洞时会把预算耗光、来不及试 IPv4，
+     *    出现「探测说断开 / 连不上、同步其实正常」，也会把通道判定带偏。
+     * 局域网候选是 IP 字面量、双栈策略本来就不介入：保持 1.5 秒硬超时且不记账。
      */
-    private fun probeAnnounce(base: String, timeoutMs: Long): AnnounceProbe {
+    private fun probeAnnounce(target: SyncLink.ProbeTarget): AnnounceProbe =
+        if (target.kind == SyncLink.KIND_LAN) probePlain(target.url, linkProbeLanTimeoutMs) else probeHub(target.url)
+
+    private fun announceRequest(url: okhttp3.HttpUrl): Request = Request.Builder().url(url)
+        .header("Authorization", "Bearer ${token()}")
+        .header("Accept", "application/json")
+        .build()
+
+    /** 局域网候选：IP 字面量，不参与双栈记账，短超时即可 */
+    private fun probePlain(base: String, timeoutMs: Long): AnnounceProbe {
         val url = "$base/api/sync/announce".toHttpUrlOrNull()
             ?: return AnnounceProbe(false, null, "地址无效", emptyList())
-        val call = httpClient.newCall(
-            Request.Builder().url(url)
-                .header("Authorization", "Bearer ${token()}")
-                .header("Accept", "application/json")
-                .build(),
-        )
+        val call = clientsFor(dualStackConfig().connectTimeoutMs).plain.newCall(announceRequest(url))
         call.timeout().timeout(timeoutMs, TimeUnit.MILLISECONDS)
         activeCalls.add(call)
         val startedAt = System.currentTimeMillis()
         return try {
-            call.execute().use { response ->
-                if (!response.isSuccessful) return AnnounceProbe(false, null, "中枢返回 ${response.code}", emptyList())
-                val data = runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrNull()
-                    ?: return AnnounceProbe(false, null, "中枢应答异常", emptyList())
-                if (!data.optBoolean("ok")) return AnnounceProbe(false, null, "中枢应答异常", emptyList())
-                val lan = mutableListOf<String>()
-                data.optJSONArray("lan")?.let { arr -> for (i in 0 until arr.length()) lan += arr.optString(i) }
-                AnnounceProbe(
-                    true,
-                    System.currentTimeMillis() - startedAt,
-                    null,
-                    SyncLink.normalizeAnnouncedLan(lan, db.setting("sync_hub_url")),
-                )
-            }
+            call.execute().use { response -> parseAnnounce(response, base, System.currentTimeMillis() - startedAt, null) }
         } catch (error: Exception) {
             if (cancelled || !foreground) throw Cancelled()
             AnnounceProbe(false, null, describeLinkError(error, timeoutMs), emptyList())
         } finally {
             activeCalls.remove(call)
         }
+    }
+
+    /** 中枢主地址：走与同步请求同一套双栈策略，成功时把实际连上的协议族一起带回来 */
+    private fun probeHub(base: String): AnnounceProbe {
+        val url = "$base/api/sync/announce".toHttpUrlOrNull()
+            ?: return AnnounceProbe(false, null, "地址无效", emptyList())
+        val config = dualStackConfig()
+        val deviceIpv6 = deviceHasIpv6()
+        val availability = if (config.enabled) addressAvailability(url.host) else null
+        if (availability == null) {
+            // 解析失败 / 策略关闭：与历史行为一致，普通客户端 + 一个宽松超时
+            return probePlain(base, probeTimeoutMs(SyncLink.KIND_HUB))
+        }
+        val state = DualStack.state(url.host)
+        DualStack.alignSingleStack(state, availability.first, availability.second, deviceIpv6)
+        val plan = DualStack.plan(state, availability.first, availability.second, bodyless = true, deviceIpv6)
+        if (plan.isEmpty()) return AnnounceProbe(false, null, DualStack.NO_DEVICE_IPV6_REASON, emptyList())
+        val clients = clientsFor(config.connectTimeoutMs)
+        var failure: Exception? = null
+        var lastError: String? = null
+        for ((index, planned) in plan.withIndex()) {
+            checkActive()
+            val client = if (planned.family == 6) clients.v6 else clients.v4
+            // 每个协议族各自一份预算（连接 + TLS + 响应头）：IPv6 黑洞时不会把整个探测的预算耗光
+            val budget = maxOf(config.connectTimeoutMs + PROBE_ATTEMPT_MARGIN_MS, linkProbeLanTimeoutMs)
+            val startedAt = System.currentTimeMillis()
+            try {
+                val opened = openResponse("GET", url, null, null, client, budget)
+                val status: Int
+                val text: String
+                try {
+                    status = opened.response.code
+                    text = runCatching { opened.response.body?.string().orEmpty() }.getOrDefault("")
+                } finally {
+                    activeCalls.remove(opened.call)
+                    opened.response.close()
+                }
+                // 拿到响应头 = 这一族可达：旧中枢没有 announce 端点（404）也证明域名连得上，
+                // 不能算成 IPv6 的失败（否则探测会把双栈记账带偏）
+                logDualStackEvent(DualStack.record(config, state, planned.family, true, System.currentTimeMillis() - startedAt))
+                if (status !in 200..299) {
+                    return AnnounceProbe(false, null, "中枢返回 $status", emptyList(), planned.family)
+                }
+                return parseAnnounceText(text, base, System.currentTimeMillis() - startedAt, planned.family)
+            } catch (error: Exception) {
+                if (cancelled || !foreground) throw Cancelled()
+                logDualStackEvent(DualStack.record(config, state, planned.family, false, System.currentTimeMillis() - startedAt))
+                failure = error
+                lastError = describeLinkError(error, budget)
+                if (!isConnectFailure(error) || index == plan.lastIndex) break
+            }
+        }
+        return AnnounceProbe(false, null, lastError ?: failure?.message?.take(60) ?: "连不上", emptyList())
+    }
+
+    private fun parseAnnounce(response: Response, base: String, latencyMs: Long, family: Int?): AnnounceProbe {
+        if (!response.isSuccessful) return AnnounceProbe(false, null, "中枢返回 ${response.code}", emptyList(), family)
+        return parseAnnounceText(response.body?.string().orEmpty(), base, latencyMs, family)
+    }
+
+    private fun parseAnnounceText(text: String, base: String, latencyMs: Long, family: Int?): AnnounceProbe {
+        val data = runCatching { JSONObject(text) }.getOrNull()
+            ?: return AnnounceProbe(false, null, "中枢应答异常", emptyList(), family)
+        if (!data.optBoolean("ok")) return AnnounceProbe(false, null, "中枢应答异常", emptyList(), family)
+        val lan = mutableListOf<String>()
+        data.optJSONArray("lan")?.let { arr -> for (i in 0 until arr.length()) lan += arr.optString(i) }
+        return AnnounceProbe(true, latencyMs, null, SyncLink.normalizeAnnouncedLan(lan, db.setting("sync_hub_url")), family)
     }
 
     private fun probeTimeoutMs(kind: String): Long =
@@ -1367,10 +1465,97 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
     private fun dualStackConfig(): DualStackConfig = DualStackConfig.fromSettings { key -> db.setting(key) }
 
     /**
+     * 按当前配置的连接超时取一套客户端（每次配置变化重建一次）：
+     *  - plain：策略关闭 / 解析不出地址时用（系统排序，历史行为）；
+     *  - v6 / v4：各自 Dns 只喂选定协议族，切族换池、不打断在途传输。
+     * 连接超时来自设置项（sync_dualstack_connect_timeout_ms）——此前这里写死 6 秒，设置页调阈值
+     * 对真实连接完全不起作用，探测超时还按配置算，两边对不上。
+     */
+    private data class ClientSet(
+        val connectTimeoutMs: Int,
+        val plain: OkHttpClient,
+        val v6: OkHttpClient,
+        val v4: OkHttpClient,
+    )
+
+    @Volatile private var clientSet: ClientSet? = null
+
+    private fun clientsFor(connectTimeoutMs: Int): ClientSet {
+        val cached = clientSet
+        if (cached != null && cached.connectTimeoutMs == connectTimeoutMs) return cached
+        val base = OkHttpClient.Builder()
+            .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            // 不能是 0（无限）：半开连接下大附件上传会一直卡在 write() 上，读超时管不到「写不进」，
+            // 而 running 恒为 true 会让之后所有同步请求只排队不执行（界面停在「同步中」直到切后台）。
+            // 超时按单次写操作计（不是整个请求体），60 秒足够慢网下的分片上传。
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .build()
+        return ClientSet(
+            connectTimeoutMs,
+            base,
+            base.newBuilder().dns(FamilyDns(6)).build(),
+            base.newBuilder().dns(FamilyDns(4)).build(),
+        ).also { clientSet = it }
+    }
+
+    private data class OpenResponse(val call: Call, val response: Response)
+
+    /**
+     * 建连并拿到**响应头**；读 body、判断状态码都交给调用方。
+     *
+     * 「这个协议族连没连上」的唯一判据是响应头有没有拿到：拿到 4xx/5xx 也说明这一族网络是通的，
+     * 不能算成 IPv6 的失败（这台中枢 404 是常态：改名/删除遗留的 op、旧中枢没有 /distilled、
+     * 超过大小上限的批次等）。调用方负责 close，并在此期间把 call 留在 activeCalls 里以便取消。
+     */
+    private fun openResponse(
+        method: String,
+        url: okhttp3.HttpUrl,
+        contentType: String?,
+        body: RequestBody?,
+        client: OkHttpClient,
+        timeoutMs: Long? = null,
+    ): OpenResponse {
+        val builder = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer ${token()}")
+            .header("Accept", "application/json, application/octet-stream")
+        contentType?.let { builder.header("Content-Type", it) }
+        builder.method(method, body)
+        val call = client.newCall(builder.build())
+        timeoutMs?.let { call.timeout().timeout(it, TimeUnit.MILLISECONDS) }
+        activeCalls.add(call)
+        val response = try {
+            call.execute()
+        } catch (error: Exception) {
+            activeCalls.remove(call)
+            throw error
+        }
+        return OpenResponse(call, response)
+    }
+
+    /** 拿到响应头之后的收尾：4xx/5xx 与读 body 出错原样抛出（不换族、不记协议族的账） */
+    private fun <T> consume(opened: OpenResponse, block: (Response) -> T): T = try {
+        val response = opened.response
+        if (!response.isSuccessful) {
+            val error = response.body?.string()?.take(200).orEmpty()
+            throw IllegalStateException("中枢返回 ${response.code}：$error")
+        }
+        block(response)
+    } finally {
+        activeCalls.remove(opened.call)
+        opened.response.close()
+    }
+
+    /**
      * 发一次请求并按双栈策略轮换协议族（IPv6 优先 → 失败用 IPv4；IPv4 用稳后定期回探）。
      *
-     * 关键约束：一次请求（含大文件上传／下载）只在**建连那一刻**选定协议族，成功后全程同一条
-     * 连接；只有「连都没连上」（isConnectFailure）才换族重试，传输途中出错一律不换。
+     * 关键约束：
+     *  - 一次请求（含大文件上传／下载）只在**建连那一刻**选定协议族，成功后全程同一条连接；
+     *  - 只有「响应头都没拿到」（isConnectFailure）才换族重试，传输途中出错一律不换；
+     *  - 也只有「响应头都没拿到」才记进协议族的失败账本：拿到响应头之后的 4xx/5xx、读 body
+     *    出错说明这一族网络是通的，不能判成「IPv6 连不上」——中枢 404 是常态（改名/删除遗留的
+     *    op、旧中枢没有 /distilled），此前一次 404 就可能凑满阈值，把可用的 IPv6 判死并切到 IPv4。
      */
     private fun <T> withConnection(
         method: String,
@@ -1388,11 +1573,13 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 continue
             }
             val config = dualStackConfig()
+            val clients = clientsFor(config.connectTimeoutMs)
+            val deviceIpv6 = deviceHasIpv6()
             // 解析不出地址或策略关闭时不介入：交给系统默认连接器，行为与历史版本一致
             val availability = if (config.enabled) addressAvailability(url.host) else null
             if (availability == null) {
                 try {
-                    val result = attempt(method, url, contentType, body, httpClient, block)
+                    val result = consume(openResponse(method, url, contentType, body, clients.plain), block)
                     connected = true
                     return result
                 } catch (error: Exception) {
@@ -1402,61 +1589,43 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
                 }
             }
             val state = DualStack.state(url.host)
-            // 单栈域名先把状态校准到实际那一族（界面显示的「当前用哪一族」必须是真的）
-            DualStack.alignSingleStack(state, availability.first, availability.second)
-            val plan = DualStack.plan(state, availability.first, availability.second, body == null)
+            // 域名解析 + 本机网络先校准状态（界面显示的「当前用哪一族」必须是真的）
+            DualStack.alignSingleStack(state, availability.first, availability.second, deviceIpv6)
+            val plan = DualStack.plan(state, availability.first, availability.second, body == null, deviceIpv6)
+            if (plan.isEmpty()) {
+                // 本机没有 IPv6 出口、中枢地址又只有 AAAA：没有可尝试的协议族，给出能照着排查的话
+                failure = IllegalStateException(
+                    "${DualStack.NO_DEVICE_IPV6_REASON}，而中枢地址只解析出 IPv6（${url.host}）：" +
+                        "请连上支持 IPv6 的网络，或把中枢地址改成同时有 IPv4 记录的域名 / 直接填 IPv4 地址",
+                )
+                continue
+            }
             for ((index, planned) in plan.withIndex()) {
                 checkActive()
+                val client = if (planned.family == 6) clients.v6 else clients.v4
                 val startedAt = System.currentTimeMillis()
-                val client = if (planned.family == 6) clientV6 else clientV4
-                try {
-                    val result = attempt(method, url, contentType, body, client, block)
-                    logDualStackEvent(
-                        DualStack.record(config, state, planned.family, true, System.currentTimeMillis() - startedAt)
-                    )
-                    connected = true
-                    return result
+                val opened = try {
+                    openResponse(method, url, contentType, body, client)
                 } catch (error: Exception) {
                     if (cancelled || !foreground) throw Cancelled()
+                    // 只有「响应头都没拿到」才算这一族连不上：记一次失败并决定是否换族
                     logDualStackEvent(
                         DualStack.record(config, state, planned.family, false, System.currentTimeMillis() - startedAt)
                     )
                     failure = error
                     if (!isConnectFailure(error) || index == plan.lastIndex) break
+                    continue
                 }
+                // 拿到响应头 = 这一族网络可达：之后的 4xx/5xx、读 body 出错都不算 IPv6 的账
+                logDualStackEvent(
+                    DualStack.record(config, state, planned.family, true, System.currentTimeMillis() - startedAt)
+                )
+                val result = consume(opened, block)
+                connected = true
+                return result
             }
         }
         throw failure ?: IllegalStateException("无法连接同步中枢")
-    }
-
-    /** 单次尝试：一发请求一条连接；错误信息（含中枢返回的非 2xx 正文）与历史版本保持一致 */
-    private fun <T> attempt(
-        method: String,
-        url: okhttp3.HttpUrl,
-        contentType: String?,
-        body: RequestBody?,
-        client: OkHttpClient,
-        block: (Response) -> T,
-    ): T {
-        val builder = Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer ${token()}")
-            .header("Accept", "application/json, application/octet-stream")
-        contentType?.let { builder.header("Content-Type", it) }
-        builder.method(method, body)
-        val call = client.newCall(builder.build())
-        activeCalls.add(call)
-        try {
-            call.execute().use { response ->
-                if (!response.isSuccessful) {
-                    val error = response.body?.string()?.take(200).orEmpty()
-                    throw IllegalStateException("中枢返回 ${response.code}：$error")
-                }
-                return block(response)
-            }
-        } finally {
-            activeCalls.remove(call)
-        }
     }
 
     /** 域名解析出的协议族清单；解析失败返回 null（让请求自己报 DNS 错，不当作双栈问题记账） */
@@ -1531,5 +1700,9 @@ class SyncEngine(private val db: LocalDatabase, private val secrets: SecretStore
         private const val CHANGE_BATCH = 20
         private const val MAX_PARALLEL_FETCHES = 4
         private const val SNAPSHOT_FETCH_BATCH = MAX_PARALLEL_FETCHES
+        /** 探测单协议族尝试的预算 = 配置的连接超时 + 这段余量（TLS 握手 + 读响应头） */
+        private const val PROBE_ATTEMPT_MARGIN_MS = 2_000L
+        /** 网络切换重置的最小间隔（系统回调常连发） */
+        private const val networkResetMinIntervalMs = 3_000L
     }
 }

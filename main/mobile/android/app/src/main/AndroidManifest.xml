@@ -67,6 +67,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 双栈连接：判断本机当前网络有没有 IPv6 出口（LinkProperties），并在网络切换后立即重探。
+         普通权限、安装即授予，不弹对话框；没有它就无法区分「本机没有 IPv6 出口」与「中枢 IPv6 连不上」。 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 多端同步「扫码绑定」：应用内摄像头预览扫码走 WebView 的 getUserMedia，
          Capacitor 的 WebChromeClient 会在网页请求摄像头时向系统申请这条运行时权限
          （见 mobile/node_modules/@capacitor/android 的 BridgeWebChromeClient.onPermissionRequest）。

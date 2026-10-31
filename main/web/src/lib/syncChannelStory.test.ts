@@ -211,6 +211,30 @@ test('IPv6 回探失败 / 单栈域名：分别说清「回探失败」与「没
   assert.doesNotMatch(singleStack.tip, /回探/);
 });
 
+test('本机网络没有 IPv6 出口：不栽赃中枢域名，给「换网络 / 关只转发 IPv4 的 VPN」的下一步', () => {
+  const story = storyOf({
+    key: 'ipv4',
+    link: linkOf({ channel: 'ipv4', url: 'https://hub.example.com', host: 'hub.example.com' }),
+    dualStack: dualStack({
+      hosts: [{
+        host: 'hub.example.com', family: 4, familyLabel: 'IPv4',
+        consecutiveFailures: 0, failureMs: 0, ipv4Successes: 2,
+        probePending: false, switchedAt: null, reason: '本机当前网络没有 IPv6 出口',
+      }],
+    }),
+  });
+  assert.ok(story);
+  assert.match(story.current.text, /本机当前网络没有 IPv6 出口/);
+  assert.match(story.current.text, /VPN/);
+  // 不是中枢域名的 IPv6 失败：不要说连续失败次数，也不要让用户去查路由器入站
+  assert.doesNotMatch(story.current.text, /连续失败/);
+  const v6 = story.others.find((item) => item.key === 'ipv6');
+  assert.equal(v6?.stateLabel, '没有出口');
+  assert.match(v6?.reason || '', /Wi-Fi 没下发 IPv6/);
+  assert.match(v6?.hint || '', /本机网络的问题/);
+  assert.match(story.tip, /本机当前网络没有 IPv6 出口/);
+});
+
 test('双栈策略关闭时，不拿「连续失败」解释 IPv4（没有记账就别说次数）', () => {
   const story = storyOf({
     key: 'ipv4',

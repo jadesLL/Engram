@@ -50,8 +50,13 @@ import java.util.zip.ZipOutputStream
 class EngramLocalServer private constructor(private val context: Context) {
     private val db = LocalDatabase(context)
     private val secrets = SecretStore(context)
-    private val sync = SyncEngine(db, secrets)
+    /** 本机网络状态：有没有 IPv6 出口 + 切换网络时通知同步引擎重探（见 DeviceNetwork.kt） */
+    private val deviceNetwork = DeviceNetwork(context)
+    private val sync = SyncEngine(db, secrets, deviceNetwork)
     private val agent = AgentBridge(db, secrets)
+    init {
+        deviceNetwork.setListener { sync.onNetworkChanged() }
+    }
     /** 安卓端 OTA（APK 在线升级）：检查/下载在本地服务内跑，安装交给宿主的 Activity（见 AppUpdater） */
     private val appUpdate = AppUpdater(context, db, secrets)
     private val sessionToken: String = secrets.get("local_session_token") ?: randomToken().also {
@@ -62,6 +67,9 @@ class EngramLocalServer private constructor(private val context: Context) {
     @Synchronized
     fun start() {
         if (engine != null) return
+        // 网络在应用运行期间随时会换（Wi-Fi ↔ 蜂窝、VPN 开关）：监听默认网络变化，
+        // 换网后清掉上一个网络学到的双栈状态并立即重探，不用等下一次手动同步
+        deviceNetwork.register()
         engine = embeddedServer(CIO, configure = {
             connectors.add(EngineConnectorBuilder().apply {
                 host = "127.0.0.1"
@@ -86,6 +94,8 @@ class EngramLocalServer private constructor(private val context: Context) {
     }
 
     fun onForeground() {
+        // 回前台补一次网络核对：飞行模式、开合 VPN 等场景可能错过系统回调
+        deviceNetwork.refresh()
         sync.onForeground()
         // 启动/回前台自动检查更新（自动更新开着时发现新版直接后台下载），与网页侧的退避调度互补
         runCatching { appUpdate.onForeground() }

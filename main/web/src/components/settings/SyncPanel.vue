@@ -1006,6 +1006,12 @@ const dualStackStateText = computed(() => {
       const pending = host.consecutiveFailures > 0 ? `（IPv6 已连续失败 ${host.consecutiveFailures} 次，达 ${ds.failureThreshold} 次改用 IPv4）` : '';
       return `${host.host}：正在用 IPv6${pending}`;
     }
+    // 本机网络根本没有 IPv6 出口（安卓端会这么写）：回探要等换到有 IPv6 的网络，别让用户以为
+    // 「再成功 N 次就会回探」——那种网络里回探也只会再撞一次 IPv6 超时。
+    if (host.reason === '本机当前网络没有 IPv6 出口') {
+      return `${host.host}：正在用 IPv4（本机当前网络没有 IPv6 出口：Wi-Fi 未下发 IPv6，或 VPN / 代理只转发 IPv4；`
+        + '连上支持 IPv6 的网络后，下一个请求就按 IPv6 优先）';
+    }
     const remaining = Math.max(0, ds.probeAfterSuccesses - host.ipv4Successes);
     return `${host.host}：正在用 IPv4（${host.reason || 'IPv6 连不上'}；IPv4 已成功 ${host.ipv4Successes} 次，`
       + `${host.probePending ? '下一次请求回探 IPv6' : `再成功 ${remaining} 次回探一次 IPv6`}）`;

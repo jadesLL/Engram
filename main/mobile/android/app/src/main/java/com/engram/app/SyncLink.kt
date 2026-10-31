@@ -32,6 +32,8 @@ object SyncLink {
         val ok: Boolean,
         val latencyMs: Long?,
         val error: String? = null,
+        /** 中枢主地址实际连上的协议族（6 / 4）；局域网候选与探测失败时为 null */
+        val family: Int? = null,
     )
 
     /** 去掉尾部斜杠（与中枢地址口径一致） */
@@ -150,6 +152,13 @@ object SyncLink {
             out += url
         }
         return out
+    }
+
+    /** 协议族 → 通道名：探测实际连上的那一族才是可信来源，不能只看域名解析出什么 */
+    fun channelOfFamily(family: Int?): String? = when (family) {
+        6 -> CHANNEL_IPV6
+        4 -> CHANNEL_IPV4
+        else -> null
     }
 
     fun channelLabel(channel: String): String = when (channel) {

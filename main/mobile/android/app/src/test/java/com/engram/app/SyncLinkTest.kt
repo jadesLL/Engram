@@ -90,6 +90,13 @@ class SyncLinkTest {
         assertTrue(!SyncLink.isPrivateHost("2400:3200::1"))
     }
 
+    @Test fun mapsObservedFamilyToChannel() {
+        // 探测实际连上的协议族才是通道判定的可信来源（比事后猜 DNS 准）
+        assertEquals("ipv6", SyncLink.channelOfFamily(6))
+        assertEquals("ipv4", SyncLink.channelOfFamily(4))
+        assertNull(SyncLink.channelOfFamily(null))
+    }
+
     @Test fun labelsChannelsInHumanWords() {
         assertEquals("局域网直连", SyncLink.channelLabel("lan"))
         assertEquals("IPv6 直连", SyncLink.channelLabel("ipv6"))
