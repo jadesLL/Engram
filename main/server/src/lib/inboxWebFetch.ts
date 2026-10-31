@@ -6,6 +6,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { isPrivateAddress } from '../cli/net.js';
+import { decodeHtmlBytes, htmlTitle } from './htmlArticle.js';
 
 /** 只抓网页 HTML 原件；不执行脚本，也不额外请求图片、样式等子资源。 */
 const MAX_REDIRECTS = 3;
@@ -121,20 +122,6 @@ function pinnedAgent(host: string, addresses: ResolvedAddress[]): Agent {
   });
 }
 
-function decodeTitle(raw: string): string {
-  const named: Record<string, string> = {
-    amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
-  };
-  return raw.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (match, entity: string) => {
-    if (entity[0] === '#') {
-      const hex = entity[1]?.toLowerCase() === 'x';
-      const number = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
-      try { return String.fromCodePoint(number); } catch { return match; }
-    }
-    return named[entity.toLowerCase()] ?? match;
-  }).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
-}
-
 /** 从已落盘的抓取结果里读开头一部分：空壳判定要看 <body> 与挂载点，不能被前 256KB 截断 */
 function readHead(tempPath: string, maxBytes: number): Buffer {
   const fd = fs.openSync(tempPath, 'r');
@@ -148,14 +135,17 @@ function readHead(tempPath: string, maxBytes: number): Buffer {
   }
 }
 
-/** 按响应声明的字符集解码抓到的开头部分（标题提取与空壳判定共用） */
+/** 按响应声明的字符集解码抓到的开头部分（标题提取与空壳判定共用）；没声明就看页面 <meta charset> */
 function decodeProbe(probe: Buffer, contentType: string): string {
-  const charset = contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] || 'utf-8';
-  try {
-    return new TextDecoder(charset).decode(probe);
-  } catch {
-    return probe.toString('utf8');
+  const charset = contentType.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1];
+  if (charset) {
+    try {
+      return new TextDecoder(charset).decode(probe);
+    } catch {
+      /* 未知字符集标签（或 Node 不支持的写法）时退回页面自报 */
+    }
   }
+  return decodeHtmlBytes(probe);
 }
 
 /** 去掉脚本/样式/注释与标签后剩下的可见文字长度 */
@@ -169,7 +159,7 @@ function visibleTextLength(source: string): number {
 
 /** 判定一个已落盘的 HTML 文件是不是「有挂载点但没有正文」（抓取路径与客户端渲染上传共用） */
 export function isScriptRenderedFile(absPath: string, textLimit = SHELL_TEXT_LIMIT): boolean {
-  return isScriptRenderedSource(readHead(absPath, SHELL_SCAN_BYTES).toString('utf8'), textLimit);
+  return isScriptRenderedSource(decodeHtmlBytes(readHead(absPath, SHELL_SCAN_BYTES)), textLimit);
 }
 
 /**
@@ -198,11 +188,9 @@ export function isScriptRenderedSource(source: string, textLimit = SHELL_TEXT_LI
 
 function titleFromHtml(probe: Buffer, contentType: string, url: URL): string {
   const source = decodeProbe(probe, contentType);
-  const title = source.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i)?.[1];
-  if (title) {
-    const decoded = decodeTitle(title);
-    if (decoded) return decoded;
-  }
+  // 公众号页面 <title> 是空的，真标题在 og:title / h1#activity-name 里；统一交给 htmlTitle 兜底
+  const title = htmlTitle(source);
+  if (title) return title;
   const last = path.posix.basename(url.pathname);
   try {
     return decodeURIComponent(last).replace(/\.(html?|php|aspx?)$/i, '').trim().slice(0, 120) || url.hostname;

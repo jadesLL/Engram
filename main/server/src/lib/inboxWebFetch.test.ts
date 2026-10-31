@@ -89,3 +89,36 @@ test('空壳判定的对照：带应用挂载点但正文已经够长（服务�
   assert.equal(result.bytes, Buffer.byteLength(html));
   assert.ok(fs.existsSync(target));
 });
+
+test('公众号页面 <title> 为空：用 og:title 命名，不再退化成 URL 随机串', async () => {
+  const target = path.join(temp, 'wechat.tmp');
+  const paragraph = '这是一篇公众号文章的正文，服务端渲染的静态 HTML 里已经包含完整内容。'.repeat(40);
+  const html = '<!doctype html><html><head><title></title>'
+    + '<meta property="og:title" content="IRT 对从站的要求"></head>'
+    + '<body><h1 id="activity-name">IRT 对从站的要求</h1>'
+    + '<div id="js_content"><p>' + paragraph + '</p></div></body></html>';
+  const result = await fetchInboxWebPage('https://mp.weixin.qq.com/s/randomId', target, {
+    resolveHost: publicDns,
+    fetchImpl: fakeFetch(new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })),
+  });
+  assert.equal(result.title, 'IRT 对从站的要求');
+});
+
+test('响应没声明字符集时按页面 meta 解码标题（GBK 老站不显示乱码）', async () => {
+  const target = path.join(temp, 'gbk.tmp');
+  const gbkTitle = Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0xb1, 0xea, 0xcc, 0xe2]); // 「中文标题」
+  const gbkBody = Buffer.concat(Array.from({ length: 90 }, () => Buffer.from([0xd5, 0xfd, 0xce, 0xc4, 0xc4, 0xda, 0xc8, 0xdd]))); // 「正文内容」×90
+  const body = Buffer.concat([
+    Buffer.from('<html><head><meta charset="gbk"><title>', 'latin1'),
+    gbkTitle,
+    Buffer.from('</title></head><body><p>', 'latin1'),
+    gbkBody,
+    Buffer.from('</p></body></html>', 'latin1'),
+  ]);
+  const result = await fetchInboxWebPage('https://example.com/gbk', target, {
+    resolveHost: publicDns,
+    fetchImpl: fakeFetch(new Response(body, { headers: { 'content-type': 'text/html' } })),
+  });
+  assert.equal(result.title, '中文标题');
+  assert.equal(fs.existsSync(target), true);
+});
