@@ -275,5 +275,66 @@ class DualStackTest {
         // 读超时／传输途中断流不换族：用户明确要求不在传输过程中切
         assertTrue(!isConnectFailure(java.net.SocketTimeoutException("Read timed out")))
         assertTrue(!isConnectFailure(java.io.IOException("unexpected end of stream")))
+        // 响应头已经拿到（HTTP 4xx/5xx）说明这一族网络是通的：不能算成 IPv6 连不上
+        // （中枢 404 是常态：改名/删除遗留的 op、旧中枢没有 /distilled；一次这样的 404 之前会把
+        //  双栈记账带偏，连续 3 次就显示「IPv6 连不上」并切到 IPv4）
+        assertTrue(!isConnectFailure(IllegalStateException("中枢返回 404：not found")))
+        assertTrue(!isConnectFailure(IllegalStateException("中枢返回 503：busy")))
+    }
+
+    @Test
+    fun `本机没有 IPv6 出口：直接走 IPv4，不再白等 IPv6 超时`() {
+        val state = HostFamilyState()
+        // 域名双栈 + 本机没 IPv6：状态落到 IPv4 并写明原因，计划里只有 IPv4
+        assertTrue(DualStack.alignSingleStack(state, hasIpv6 = true, hasIpv4 = true, deviceIpv6 = false))
+        assertEquals(4, state.family)
+        assertEquals(DualStack.NO_DEVICE_IPV6_REASON, state.reason)
+        assertEquals(listOf(4), DualStack.plan(state, hasIpv6 = true, hasIpv4 = true, bodyless = true, deviceIpv6 = false).map { it.family })
+        // 已校准过的不再每个请求都改状态（否则计数会被反复清零）
+        assertTrue(!DualStack.alignSingleStack(state, hasIpv6 = true, hasIpv4 = true, deviceIpv6 = false))
+    }
+
+    @Test
+    fun `换到有 IPv6 的网络：立刻回到 IPv6 优先，不必等 10 次成功后的回探`() {
+        val state = HostFamilyState()
+        DualStack.alignSingleStack(state, hasIpv6 = true, hasIpv4 = true, deviceIpv6 = false)
+        assertEquals(4, state.family)
+        // 换网后第一次请求就校准回 IPv6 优先（界面不会继续显示上一个网络的「IPv6 连不上」）
+        assertTrue(DualStack.alignSingleStack(state, hasIpv6 = true, hasIpv4 = true, deviceIpv6 = true))
+        assertEquals(6, state.family)
+        assertNull(state.reason)
+        assertEquals(listOf(6, 4), DualStack.plan(state, hasIpv6 = true, hasIpv4 = true, bodyless = true, deviceIpv6 = true).map { it.family })
+    }
+
+    @Test
+    fun `域名只有 AAAA 且本机没有 IPv6：不给无效尝试，保留可解释的原因`() {
+        val state = HostFamilyState()
+        DualStack.alignSingleStack(state, hasIpv6 = true, hasIpv4 = false, deviceIpv6 = false)
+        assertEquals(DualStack.NO_DEVICE_IPV6_REASON, state.reason)
+        assertTrue(DualStack.plan(state, hasIpv6 = true, hasIpv4 = false, bodyless = true, deviceIpv6 = false).isEmpty())
+        // 网络恢复后回到「域名只有 IPv6 记录」，并真的去试 IPv6
+        DualStack.alignSingleStack(state, hasIpv6 = true, hasIpv4 = false, deviceIpv6 = true)
+        assertEquals("域名只有 IPv6 记录", state.reason)
+        assertEquals(listOf(6), DualStack.plan(state, hasIpv6 = true, hasIpv4 = false, bodyless = true, deviceIpv6 = true).map { it.family })
+    }
+
+    @Test
+    fun `没有 IPv6 出口时的 IPv4 成功不会改动「本机没有 IPv6」的说明`() {
+        val state = HostFamilyState()
+        val cfg = config()
+        DualStack.alignSingleStack(state, hasIpv6 = true, hasIpv4 = true, deviceIpv6 = false)
+        DualStack.record(cfg, state, 4, ok = true, elapsedMs = 20)
+        assertEquals(4, state.family)
+        assertEquals(DualStack.NO_DEVICE_IPV6_REASON, state.reason)
+        assertEquals(0, state.consecutiveFailures)
+    }
+
+    @Test
+    fun `域名只有 A 记录时不受「本机没有 IPv6」影响`() {
+        val state = HostFamilyState()
+        DualStack.alignSingleStack(state, hasIpv6 = false, hasIpv4 = true, deviceIpv6 = false)
+        assertEquals(4, state.family)
+        assertEquals("域名只有 IPv4 记录", state.reason)
+        assertEquals(listOf(4), DualStack.plan(state, hasIpv6 = false, hasIpv4 = true, bodyless = true, deviceIpv6 = false).map { it.family })
     }
 }

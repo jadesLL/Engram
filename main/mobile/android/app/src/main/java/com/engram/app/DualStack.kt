@@ -114,6 +114,9 @@ object DualStack {
 
     fun state(host: String): HostFamilyState = hosts.computeIfAbsent(host) { HostFamilyState() }
 
+    // 状态由同步线程与 4 个并发取数线程共同读写：加对象锁串行化，避免「晚到的 v6 失败」
+    // 被误当成回探失败、把 ipv4Successes 清零而推迟回探。
+    @Synchronized
     fun status(): List<HostFamilyStatus> = hosts.entries
         .sortedBy { it.key }
         .map { (host, state) ->
@@ -131,58 +134,86 @@ object DualStack {
         }
 
     /**
-     * 单栈域名（只有 A 或只有 AAAA）没得选：把状态校准到实际使用的那一族。
-     * 不校准的话界面会一直显示「IPv6 优先」，而请求其实全在走 IPv4（例如中枢域名只有 A 记录、
-     * 或所在网络解析不出 AAAA），用户会以为双栈没生效。
+     * 把状态校准到「域名解析」+「本机网络」共同决定的那一族：
+     *  - 本机当前网络没有 IPv6 出口（Wi-Fi 没下发 / VPN·代理只转发 IPv4 / 老蜂窝网络）：落到 IPv4，
+     *    说明写「本机当前网络没有 IPv6 出口」——不能记成「IPv6 连不上」，否则用户会去查中枢和
+     *    路由器 IPv6 入站，其实问题在本机有没有出口；
+     *  - 单栈域名（只有 A 或只有 AAAA）没得选，直接用存在的那一族；
+     *  - 之前记过的「单栈 / 本机没 IPv6」不再成立（DDNS 补上另一族 / 换到支持 IPv6 的网络）：
+     *    清掉说明并重新按 IPv6 优先试一遍。换网络后的首次请求就走这条路，不必等 10 次成功后的回探。
      */
-    fun alignSingleStack(state: HostFamilyState, hasIpv6: Boolean, hasIpv4: Boolean): Boolean {
+    @Synchronized
+    fun alignSingleStack(
+        state: HostFamilyState,
+        hasIpv6: Boolean,
+        hasIpv4: Boolean,
+        deviceIpv6: Boolean = true,
+    ): Boolean {
         if (hasIpv6 && hasIpv4) {
-            // 之前记的「只有单栈」已不成立（DDNS 补上了另一族记录）：清掉说明并重新按 IPv6 优先试一遍
-            if (state.reason == SINGLE_STACK_REASON[4] || state.reason == SINGLE_STACK_REASON[6]) {
-                state.family = 6
-                state.reason = null
-                state.consecutiveFailures = 0
-                state.failureMs = 0
-                state.ipv4Successes = 0
-                state.probePending = false
+            if (!deviceIpv6) {
+                if (state.family == 4 && state.reason == NO_DEVICE_IPV6_REASON) return false
+                state.family = 4
+                clearFailureState(state)
+                state.switchedAt = null
+                state.reason = NO_DEVICE_IPV6_REASON
                 return true
             }
-            return false
+            val stale = state.reason == SINGLE_STACK_REASON[4] ||
+                state.reason == SINGLE_STACK_REASON[6] ||
+                state.reason == NO_DEVICE_IPV6_REASON
+            if (!stale) return false
+            state.family = 6
+            clearFailureState(state)
+            state.reason = null
+            return true
         }
-        val family = if (hasIpv4) 4 else 6
-        val reason = SINGLE_STACK_REASON[family]!!
+        val family = if (hasIpv4 || !deviceIpv6) 4 else 6
+        val reason = if (!hasIpv4 && !deviceIpv6) NO_DEVICE_IPV6_REASON else SINGLE_STACK_REASON[family]!!
         if (state.family == family && state.reason == reason) return false
         state.family = family
+        clearFailureState(state)
+        state.reason = reason
+        return true
+    }
+
+    private fun clearFailureState(state: HostFamilyState) {
         state.consecutiveFailures = 0
         state.failureMs = 0
         state.ipv4Successes = 0
         state.probePending = false
-        state.reason = reason
-        return true
     }
+
+    /** 本机当前网络没有 IPv6 出口（不是中枢域名的问题）：中继到界面时用户能照着排查 Wi-Fi / VPN */
+    const val NO_DEVICE_IPV6_REASON = "本机当前网络没有 IPv6 出口"
 
     private val SINGLE_STACK_REASON = mapOf(4 to "域名只有 IPv4 记录", 6 to "域名只有 IPv6 记录")
 
     /**
      * 本次请求的协议族顺序：
+     *  - 本机没有 IPv6 出口：能走 IPv4 就直接走 IPv4（不再白等 IPv6 连接超时）；域名只有 AAAA 时
+     *    返回空列表——试也连不上，由调用方给出「本机当前网络没有 IPv6 出口，而中枢只解析出 IPv6」；
      *  - 单栈域名没得选，直接用存在的那一族；
      *  - IPv6 优先阶段：先 IPv6，同一请求内连不上立刻用 IPv4 兜底；
      *  - IPv4 阶段：只用 IPv4；攒够成功次数且本次不带 body 时先回探一次 IPv6。
      */
+    @Synchronized
     fun plan(
         state: HostFamilyState,
         hasIpv6: Boolean,
         hasIpv4: Boolean,
         bodyless: Boolean,
+        deviceIpv6: Boolean = true,
     ): List<PlannedAttempt> = when {
-        !hasIpv4 -> listOf(PlannedAttempt(6, probe = false))
+        !hasIpv4 -> if (deviceIpv6) listOf(PlannedAttempt(6, probe = false)) else emptyList()
         !hasIpv6 -> listOf(PlannedAttempt(4, probe = false))
+        !deviceIpv6 -> listOf(PlannedAttempt(4, probe = false))
         state.family == 6 -> listOf(PlannedAttempt(6, probe = false), PlannedAttempt(4, probe = false))
         state.probePending && bodyless -> listOf(PlannedAttempt(6, probe = true), PlannedAttempt(4, probe = false))
         else -> listOf(PlannedAttempt(4, probe = false))
     }
 
     /** 记一次尝试结果；返回需要写进同步日志的事件（null = 不必记） */
+    @Synchronized
     fun record(
         config: DualStackConfig,
         state: HostFamilyState,

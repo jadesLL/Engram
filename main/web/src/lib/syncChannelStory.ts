@@ -107,6 +107,15 @@ const ONLY_V6 = '域名只有 IPv6 记录';
 /** 回探失败后继续用 IPv4 的说明（服务端 dualStack.ts 的原话） */
 const PROBE_FAILED = '回探失败，继续用 IPv4';
 
+/**
+ * 安卓端「本机网络没有 IPv6 出口」的说明（与 DualStack.kt 的 NO_DEVICE_IPV6_REASON 逐字一致）：
+ * Wi-Fi 没下发 IPv6、VPN / 代理只转发 IPv4 时本机根本没有 IPv6，不是中枢域名的 IPv6 连不上，
+ * 也不该让用户去查路由器入站放行。
+ */
+const NO_DEVICE_IPV6 = '本机当前网络没有 IPv6 出口';
+/** 本机没有 IPv6 出口时的下一步（换网络 / 关掉只转发 IPv4 的 VPN） */
+const NO_DEVICE_IPV6_HINT = '这是本机网络的问题，不是中枢：连上支持 IPv6 的网络（如蜂窝数据）或关掉只转发 IPv4 的 VPN / 代理后，会自动改回 IPv6 优先。';
+
 /** 展示用主机（带端口，IPv6 保留方括号）；拿不到就用原文的 authority */
 function hostOfUrl(url: string | null | undefined): string {
   const raw = String(url || '').trim();
@@ -223,6 +232,13 @@ function currentOf(input: SyncChannelStoryInput, dualHost: SyncDualStackHost | n
   }
 
   if (key === 'ipv4') {
+    if (reason === NO_DEVICE_IPV6) {
+      return {
+        label: CHANNEL_FULL_LABEL.ipv4,
+        tone: 'warn',
+        text: '本机当前网络没有 IPv6 出口（Wi-Fi 没下发 IPv6，或 VPN / 代理只转发 IPv4），IPv4 是当前唯一可用的通道；连上支持 IPv6 的网络后会自动改回 IPv6 优先。',
+      };
+    }
     if (reason === ONLY_V4) {
       // 单栈域名的 IPv4 是唯一可用的通道，不是降级，也不用提示用户处理
       return {
@@ -362,6 +378,16 @@ function ipv6Step(input: SyncChannelStoryInput, hubCandidate: SyncLinkCandidate 
   }
 
   // 当前是 IPv4：解释 IPv6 为什么没用上
+  if (reason === NO_DEVICE_IPV6) {
+    return {
+      key: 'ipv6',
+      label: CHANNEL_LABEL.ipv6,
+      stateLabel: '没有出口',
+      tone: 'idle',
+      reason: '本机当前网络没有 IPv6 出口（Wi-Fi 没下发 IPv6，或 VPN / 代理只转发 IPv4），本轮没有可试的 IPv6 地址。',
+      hint: NO_DEVICE_IPV6_HINT,
+    };
+  }
   if (reason === ONLY_V4) {
     return {
       key: 'ipv6',
@@ -564,6 +590,9 @@ function connectionTip(input: SyncChannelStoryInput, offline: boolean): string {
     return '检查中枢是否已启动、地址与绑定令牌是否正确；在外网访问时确认路由器已放行 TCP 18080（IPv6 入站常被防火墙默认拦截）。';
   }
   const dualHost = dualStackHost(input);
+  if (dualHost?.reason === NO_DEVICE_IPV6) {
+    return '本机当前网络没有 IPv6 出口：这是手机网络（Wi-Fi 未下发 IPv6 / VPN 只转发 IPv4）的问题，不是中枢；连上支持 IPv6 的网络后会自动改回 IPv6 优先。';
+  }
   if (input.key === 'ipv4') {
     if (dualHost?.reason === ONLY_V4) {
       return '中枢域名没有 AAAA 记录：IPv6 不可用，IPv4 是当前唯一可用的公网通道；DDNS 补上 AAAA 后会自动恢复 IPv6 优先。';
