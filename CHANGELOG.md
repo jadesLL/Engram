@@ -9,6 +9,41 @@
 - **每次发版固定三件套**：Android 端（APK）+ Windows 桌面版（exe）+ Docker 镜像，三件缺一视为发版未完成（推完 `v*` 标签后必须 dispatch `binaries` 补产 APK/exe）；其中**安卓端要补齐自上一个 Android 版本以来累积的全部改动**（安卓端不能源码自更新，可能一次跨过多个版本），不能只写本版增量。
 - v1.0.0–v1.1.6 的历史记录由各版本 `releases/<版本>/release.json` 归档与 Git 历史回填。
 
+## v1.5.1（2026-11-01）
+
+**安卓端补齐「Agent 与自动化」整套配置——绑定中枢后，手机就能打开内置 Agent 控制台（模型 / 插件 / Agent 预设 / 高级）、配置视频理解模型、自动整理（梦境思考）与任务看板提炼，全部经同步成员令牌窄代理写中枢，模型 Key 只写不读；同时带上 v1.5.0 之后的收集箱「已入库」三态、微信公众号正文抽取与安卓 IPv6 连接假象修复。Windows exe、Android APK 与 Docker 镜像均由本次标签重新构建。**
+
+**安卓端：Agent 与自动化配置（本版新增）**
+
+- 设置 → Agent 与自动化 在手机绑定中枢后出现六个分组：内置 Agent（运行时摘要）、内置 Agent 控制台、视频理解模型、自动整理（梦境思考）、任务看板提炼、工具与手册。「外部接入 / MCP Token」仍不出现：令牌等同 owner 权限，不能下发到手机，也不由成员令牌生成。
+- 服务端 `/api/agent-console/*` 18 条 BFF 的鉴权从 owner-only 改为 `requireAssistantAccess`（owner 登录态 / MCP token / 同步成员令牌均可）；手机本机服务（Kotlin）新增 25 条窄代理：18 条控制台路由、`GET/PUT /api/settings/video-config`、4 条 `/api/assistant/dream*`、`GET /api/guide`。手机不运行 dsh，改的是中枢上真正在跑的那一份配置；控制台空闲回收、dsh 拉起都在中枢，手机只做配置界面。
+- 视频理解模型配置从通用 `/api/settings` 拆出独立窄接口 `GET/PUT /api/settings/video-config`（只认 video_config，读接口脱敏）：手机可以完整配置中枢的视频网关 / 模型 / 清晰度并测试连通性；`apiKey` 留空 = 保留中枢已有 Key、`apiKey:null` = 显式清除，手机上留空保存不会冲掉中枢的 Key。收集箱「视频模型未配置」提示里「去设置配置」的链接不再落空。
+- 自动整理（梦境思考）的读/改与立即运行 / 停止对成员令牌开放；工具与手册经 `GET /api/guide` 窄代理读中枢的只读指南。
+- 能力协商新增 `features.agentConsole` / `features.videoConfig`：桌面 / Docker 恒 true；Android 绑定中枢后 true、未绑定为 false（整个 Agent 域隐藏，直接访问控制台路径显示「请先绑定中枢」）。桌面端导航、锚点与渲染顺序不变。
+- 手机端「内置 Agent 控制台」入口不再显示无意义的「在新标签打开」；控制台窄屏滚动与分组样式沿用 v1.5.0。
+- 安全口径：成员令牌可以修改中枢的模型 / 插件 / 预设 / 视频网关（因此能改模型指向），但读不到任何 Key 明文（`credentials/describe` 只回 configured）；这是「用手机远程配置自己中枢」的显式取舍，代码注释与 `docs/ANDROID.md`、`docs/AGENT-CONSOLE.md` 已写明。
+
+**收集箱：已入库三态与网页正文抽取**
+
+- 收集箱新增服务端判定的「已入库」状态：入库时产物复制进 `原始资料/文档/<产物同名>.md`、frontmatter 的「来源」逐字节保留，按「同名候选 + 来源一致」判定 adopted 并返回 adoptedPath；不新增状态表，多端同步落地后刷新即一致，副本被删则退回 converted。筛选改为「待整理 · 已转换（默认）/ 待整理 / 已转换 / 已入库」，默认视图不再列已入库条目，行内主操作换成「查看」；图标栏角标、首页收集箱卡片、Agent 摘要与对话推荐项改说「还没入库」的数量；MCP `list_inbox` 支持 `status=adopted`；Android 本地服务 counts 同步补 adopted。
+- 网页原件转换前先抽正文：新增零依赖 `lib/htmlArticle.ts`，按 BOM / `<meta charset>` 解码 UTF-8 / GBK / GB18030，剔除脚本、样式、注释与导航噪声，优先取公众号 `div#js_content`、`article/main` 与常见正文容器，取不到才退回整页；微信公众号文章不再把 3.4MB 内联脚本当正文、不再输出乱码。网页标题兜底 og:title > 微信 activity-name > `<title>` > 首个 H1；网页里没有可读正文时明确报错，不再把脚本当内容。
+
+**安卓端：IPv6 连接假象修复**
+
+- 修掉三类「连不上 IPv6」的假象：① 中枢 404/5xx、读 body 超时/超限不再被当成协议族建连失败（只有「响应头都没拿到」才记账/换族），几个遗留 op 的 404 不再凑满阈值把可用 IPv6 判成「连不上」；② 中枢主地址探测改走与真实请求同一套双栈路径，每个协议族独立超时预算，探测命中哪一族就以它作为通道并回写记账；③ 新增 `DeviceNetwork` 网络感知（`ACCESS_NETWORK_STATE`）：默认网络一变化就清掉学到的双栈状态与旧局域网地址并立即重探，本机没有 IPv6 出口时直接走 IPv4、状态写「本机当前网络没有 IPv6 出口」。连接超时改由设置里的 `sync_dualstack_connect_timeout_ms` 驱动；连接详情 / 设置状态条补人话解释与下一步。
+
+**安卓端：自 v1.5.0 以来的累计更新**
+
+- 本版包含 v1.5.0 之后进入 main 的全部改动：上述「Agent 与自动化」远程配置（含 25 条新窄代理与两枚能力位）、收集箱「已入库」三态、微信公众号 / 网页原件正文抽取、安卓 IPv6 连接假象修复。更早的累计改动见下方 v1.5.0 段落（内置 Agent 原生控制台、收集箱视频、客户调研 v2、冷启动提速等）。
+- APK 基于本次标签重新构建并签名，`versionName 1.5.0 → 1.5.1` / `versionCode 1005001`（由 `desktop/package.json` 推导），不复用 v1.5.0 安装包；从 v1.5.0 覆盖安装即可，数据不受影响。
+- 手机端新增的 25 条窄代理与「外部接入仍按管理面能力位隐藏」已由 `mobileLayout.test.ts` 接线护栏锁住；安卓 JVM 单测（DualStack / DeviceNetwork / SyncLink 等）随 CI 构建运行。
+
+**Windows exe、Docker 与发布交付**
+
+- Windows exe 重新构建并嵌入本版完整前端与服务端，含随包真实 Node 运行时与解包后的 dsh；打包后校验原生模块 ABI、内嵌服务健康、前端版本号与内置 Agent 控制台。
+- Docker 发布 `1.5.1` 与 `latest`，与 exe/APK 使用同一标签源码；日常 `main` 滚动通道保持独立。
+- exe、已签名 APK 与 SHA-256 校验文件挂到 Gitea Release，并同步到公开仓库同名 Release；归档至 `releases/1.5.1/`，记录提交、构建时间与校验值。
+
 ## v1.5.0（2026-10-31）
 
 **内置 Agent 有了 Engram 原生的控制台（模型 / 插件 / Agent 预设 / 高级都在里面配，不再嵌 DeepSeek Harness 网页），随包 dsh 升级到 0.2.1-rc.2 且桌面端改用随包真实 Node 运行；收集箱支持 B站 / 抖音视频与音视频文件交给视频理解模型生成带时间戳的纪要（抖音服务端直取，NAS / Docker 无需浏览器）；客户调研重做为「先核验主体、按证据量分模式、报告去废话」并补上记录清除与入库纪律；冷启动大幅提速、侧栏刷新有内容版本号兜底、桌面托盘常驻；编辑器补齐表格增删行列并修好输入法组字与代码块显示选择。Windows exe、Android APK 与 Docker 镜像均由本次标签重新构建。**
