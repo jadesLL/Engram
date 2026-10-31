@@ -25,6 +25,7 @@ import {
 import { derivedPathsBySource, derivedPathForSource } from '../lib/inboxDerived.js';
 import { RAW_DOC_DIR } from '../lib/rawSections.js';
 import { stripLeadingHeading, splitFrontmatter } from '../lib/rawBody.js';
+import { decodeHtmlBytes, extractHtmlArticle, htmlArticleToPrompt } from '../lib/htmlArticle.js';
 
 /**
  * 收集箱 → Markdown 的语义转换（服务端通道）。
@@ -58,6 +59,8 @@ const MAX_SPLIT_DEPTH = 2;
 
 const OFFICE_EXTS = new Set(['docx', 'xlsx', 'pptx']);
 const PDF_EXTS = new Set(['pdf']);
+/** 网页原件：转换前先抽正文（整份 HTML 里脚本/样式占 95%+，直接分块只会喂给模型一堆代码） */
+const HTML_EXTS = new Set(['html', 'htm']);
 const TEXT_EXTS = new Set([
   'txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'yaml', 'yml', 'xml', 'html', 'htm', 'ini', 'conf',
 ]);
@@ -175,6 +178,18 @@ export async function extractInboxText(relPath: string): Promise<string> {
     return joined;
   }
   if (capability === 'text') {
+    if (HTML_EXTS.has(ext)) {
+      // 网页原件不是「正文」：按页面声明的字符集解码（GBK 老站不再乱码），先抽出正文再交给模型。
+      // 微信公众号文章是最典型的一类：整份 HTML 3.5MB 里 3.4MB 是内联脚本，正文在第 530KB 之后，
+      // 直接按字符分块模型只看得到 <head> 和打包代码（2026-10-31 用户反馈「提炼出来都是乱码」）。
+      const article = extractHtmlArticle(decodeHtmlBytes(buffer));
+      if (!article.text.trim()) {
+        throw new InboxConvertError(
+          '这份网页里没有可读正文（可能只有脚本/样式，或正文由 JavaScript 动态渲染）：可在浏览器里打开后另存为文件再转换'
+        );
+      }
+      return htmlArticleToPrompt(article);
+    }
     return buffer.toString('utf8').replace(/\r\n/g, '\n');
   }
   throw new InboxConvertError(capabilityHint(relPath, capability));

@@ -139,6 +139,44 @@ test('文本原件：转换写入 收集箱/转换结果/，带来源 frontmatte
   assert.equal(hits.some((hit: any) => String(hit.path).startsWith('收集箱/')), false);
 });
 
+test('网页原件（公众号文章）：先按字符集抽正文再送模型，脚本与样式不进入提示词', async () => {
+  // 头部塞 180KB 脚本、<title> 为空、正文在 div#js_content —— 与真实公众号页面同一结构
+  const scriptNoise = 'var mod=function(){return "<div>假标签</div>";};'.repeat(4000);
+  const html = [
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title></title>',
+    '<meta property="og:title" content="公众号测试文章：IRT 与确定性">',
+    '<meta property="og:url" content="https://mp.weixin.qq.com/s/abc123">',
+    '<script>' + scriptNoise + '</script></head><body>',
+    '<h1 id="activity-name"><span class="js_title_inner">公众号测试文章：IRT 与确定性</span></h1>',
+    '<a id="js_name">测试公众号</a>',
+    '<div class="rich_media_content" id="js_content" style="visibility: hidden; opacity: 0; ">',
+    '<p>一句话结论：IRT 不是更快的 RT，而是硬件级确定性。</p>',
+    '<h2>01 关键差异</h2><p>RT 的抖动是毫秒级，IRT 是微秒级。</p>',
+    '<p>预览时标签不可点</p></div></body></html>',
+  ].join('');
+  const rel = plant('公众号文章.html', html);
+
+  const text = await extractInboxText(rel);
+  assert.match(text, /一句话结论：IRT 不是更快的 RT/);
+  assert.match(text, /原文标题：公众号测试文章/);
+  assert.match(text, /发布方：测试公众号/);
+  assert.doesNotMatch(text, /假标签|function\(\)|webpack|<script|font-size/i);
+  assert.ok(text.length < 4000, '抽正文后应是一篇文章的长度，而不是整份 HTML 的切片');
+
+  const { fetchImpl, calls } = fakeModel('# 公众号文章要点\n\n这是模型按语义重写的正文。');
+  const result = await convertInboxItem(rel, { fetchImpl, config });
+  assert.equal(result.chunks, 1, '抽正文后不应再按整份 HTML 切成多段');
+  const userMessage = calls[0].body.messages.at(-1).content;
+  assert.match(userMessage, /一句话结论/);
+  assert.doesNotMatch(userMessage, /假标签|function\(\)/);
+});
+
+test('网页原件没有可读正文：明确报错，不把脚本当内容喂给模型', async () => {
+  const rel = plant('空壳.html', '<html><head><script>var a=1;</script></head><body><script>var b=2;</script></body></html>');
+  await assert.rejects(() => extractInboxText(rel), /没有可读正文/);
+  await assert.rejects(() => convertInboxItem(rel, { fetchImpl: fakeModel().fetchImpl, config }), /没有可读正文/);
+});
+
 test('图片/音视频/压缩包：服务端直接给出可读的拒绝原因', async () => {
   const png = plant('现场照片.png', Buffer.from('not really png'));
   const zip = plant('归档.zip', Buffer.from('zip'));
