@@ -22,6 +22,9 @@ test('runtime capabilities preserve the complete server feature set', async () =
   assert.equal(payload.agentMode, 'local');
   assert.deepEqual(payload.nativeActions, []);
   assert.equal(payload.features.serverUpdate, true);
+  // v1.5.1：手机绑定中枢后要靠这两枚能力位放行「控制台 / 视频模型」配置入口
+  assert.equal(payload.features.agentConsole, true);
+  assert.equal(payload.features.videoConfig, true);
 });
 
 test('onlyOffice and runtime flags follow the same predicates the app uses', async () => {

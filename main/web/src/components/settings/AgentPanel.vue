@@ -49,15 +49,21 @@
     </SettingsGroup>
 
     <!-- 内置 Agent 控制台：Engram 原生整页（模型 / 插件 / Agent 预设 / 高级），入口卡只保留状态条与打开按钮。
-         它是「内置 Agent」的配置入口，紧跟在卡片之后、自动化插槽之前——导航顺序 = 页面顺序。 -->
-    <AgentConsolePanel />
+         它是「内置 Agent」的配置入口，紧跟在卡片之后、自动化插槽之前——导航顺序 = 页面顺序。
+         能力位 agentConsole 为假时不渲染（手机未绑定中枢时整个 Agent 大类本来就不出现，这里只是兜底）。 -->
+    <AgentConsolePanel v-if="capabilities.features.agentConsole" />
 
     <!-- 「自动整理（梦境思考）」由设置页经具名插槽插在这里：它必须紧跟在「内置 Agent」后面，
          排在「外部接入」之前——导航顺序 = 页面顺序，插槽是唯一能保住这个顺序又不拆组件的办法
          （2026-09-27 的「导航第 2 项、页面第 4 块」就是这里顺序错位造成的）。 -->
     <slot name="after-builtin" />
 
+    <!-- 外部接入（ZCode / Codex / MCP Token）只在 Agent 管理面可用的端渲染：
+         手机（android-local）只有同步成员令牌，MCP Token 不能下发到手机，管理面能力位 features.agentAdmin
+         恒 false。注意不能用 features.agent——那是「聊天交互面」，手机绑定中枢后为 true（手机能聊天），
+         拿它门控会让手机渲染出导航里没有、接口也 404 的「外部接入」组。 -->
     <SettingsGroup
+      v-if="capabilities.features.agentAdmin"
       anchor="agent-target"
       title="外部接入"
       hint="选择要接入的 Agent 后，查看一键注册或对应的 MCP 接入指引"
@@ -140,9 +146,16 @@ import AgentMcpSection from './AgentMcpSection.vue';
 import AppSelect from '../ui/AppSelect.vue';
 import SettingsGroup from './SettingsGroup.vue';
 import AgentConsolePanel from './AgentConsolePanel.vue';
+import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 
 type AgentTarget = 'zcode' | 'codex' | 'dsh' | 'workbuddy' | 'qoder' | 'kimi' | 'kimiwork' | 'other';
+
+/**
+ * 能力位：「外部接入」看 features.agentAdmin（管理面，手机恒 false；features.agent 是聊天交互面，
+ * 手机绑定中枢后为 true，不能用它门控）；控制台入口看 features.agentConsole（手机绑定中枢后 true）。
+ */
+const { capabilities } = useRuntimeCapabilities();
 
 const target = ref<AgentTarget>('zcode');
 /** 接入目标选项：显式标注联合类型，AppSelect 的泛型才能推断出 AgentTarget */

@@ -20,7 +20,7 @@ DSH 仍是唯一配置真源：控制台里改的模型/插件，聊天抽屉下
 
 ```text
 浏览器（Vue3 原生页面 /settings/agent-console）
-  │  Engram 登录态（JWT cookie，owner-only）
+  │  Engram 登录态 / MCP token（桌面、网页）或同步成员令牌（手机经窄代理）
   ▼
 Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
   │  ① 服务端用浏览器 Host/Origin 向 dsh 兑换 dsh-auth cookie（内存持有，token 不出服务端）
@@ -31,11 +31,13 @@ Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
 ```
 
 - 传输层：`main/server/src/assistant/agentConsoleRpc.ts`（token→cookie 兑换、Host/Origin 围栏、401 重兑换一次、错误归一化、revision 冲突映射 409）；
-- 业务层：`main/server/src/routes/agentConsole.ts`（owner-only；归一化 DSH 的 settings / credentials / llm / pluginManager / agentPresets 返回）；
+- 业务层：`main/server/src/routes/agentConsole.ts`（owner / MCP token / 同步成员令牌；归一化 DSH 的 settings / credentials / llm / pluginManager / agentPresets 返回）；
 - 前端：`main/web/src/views/AgentConsoleView.vue` + `components/agentConsole/*` + `lib/agentConsoleApi.ts`；设置页入口卡在 `components/settings/AgentConsolePanel.vue`（不再有 iframe）；
 - 原来同源反向代理 `/agent-console/*`（含 WebSocket）与 iframe 路径仍保留在服务端，供诊断/兜底和兼容，但默认界面不再使用。
 
-## 接口（owner-only；都要 Engram 登录 cookie）
+## 接口（owner / MCP token / 同步成员令牌）
+
+> v1.5.1 起：Android 绑定中枢后，手机本机服务用同步成员令牌窄代理 18 条 `/api/agent-console/*`（以及视频配置 / 梦境 / 指南），手机只做配置界面，dsh 进程与 Key 都在中枢。`/agent-console/*` 同源反代仍是 owner-only（新界面不再使用）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -57,6 +59,13 @@ Fastify：/api/agent-console/* BFF（routes/agentConsole.ts）
 | GET | `/api/agent-console/settings/:ns` | 兜底：按 namespace 读原始设置视图（schema+value+revision） |
 
 所有写接口都带 `expectedRevision`（读视图里返回），DSH 报修改冲突时 BFF 映射为 409，页面刷新后重试。
+
+## 手机端（Android）：经中枢窄代理远程配置（v1.5.1）
+
+- **能力位**：`GET /api/runtime/capabilities` 的 `features.agentConsole` / `features.videoConfig` 在桌面与 Docker 恒为 true；Android 本机服务在「已绑定中枢」时为 true，未绑定为 false（设置页「Agent 与自动化」整域隐藏，直接访问 `/settings/agent-console` 显示「请先在 多端同步 绑定中枢」）。`agentAdmin` 在手机上仍为 false：外部接入 / MCP Token 不出现。
+- **路由**：`EngramLocalServer.kt` 新增 18 条 `/api/agent-console/*` 窄代理 + `GET/PUT /api/settings/video-config` + 4 条 `/api/assistant/dream*` + `GET /api/guide`；均先过本机登录态，再以同步成员令牌转发中枢（`proxyAgent` / `proxyHub`）。
+- **鉴权**：BFF 的 preHandler 从 `requireAuth` 改为 `requireAssistantAccess`（owner / MCP token / 同步成员令牌）；`/agent-console/*` 反代与旧 iframe 路径仍 owner-only。
+- **安全**：手机能改中枢的模型 / 插件 / 预设 / 视频网关，但读不到任何 Key 明文（`credentials/describe` 只回 configured）；详见 `docs/ANDROID.md` 的「Agent 与自动化配置」。
 
 ## DSH 侧用到的 Remote endpoint
 

@@ -23,6 +23,13 @@
  * 因此紧跟在「内置 Agent 控制台」之后、自动化分组之前；页面侧由设置页插进 #after-builtin
  * 插槽最前渲染（导航顺序 = 页面顺序，settingsDomains.test.ts 锁住）。
  *
+ * 2026-11-01（v1.5.1 安卓补齐）：手机（android-local）绑定中枢后也能用这一大类——内置 Agent 摘要 /
+ * 控制台 / 视频理解模型 / 自动整理 / 看板提炼 / 工具与手册都经成员令牌窄代理读写中枢，
+ * 只有「外部接入」（MCP Token）仍只在桌面端 / 中枢：令牌不能下发到手机。于是分组从
+ * need 'agent'（= 能管 Agent 管理面）细分为 'agentConsole'（内置 Agent 与自动化，手机绑定中枢后可用）
+ * 与 'videoConfig'（视频模型，手机绑定中枢后可用）；'agent-target' 仍挂 'agent'。
+ * 桌面端两个能力位恒 true，导航与页面顺序完全不变。
+ *
  * **导航顺序 = 页面渲染顺序**（SettingsView.vue 里各大类的分组必须按本文件登记顺序渲染）。
  * 2026-09-27 用户报的「导航里第 2 项、页面上第 4 块」（梦境思考插在两个 Agent 分组中间）
  * 就是这条被破坏的结果：点击锚点跳到最后一块、滚动高亮顺序也乱。settingsDomains.test.ts
@@ -42,11 +49,20 @@ export type SettingsDomainId =
   | 'agent';
 
 /** 分组依赖的能力开关（缺省表示始终可见）。
+ *  `agent` = Agent 管理面（外部接入 / MCP Token），手机只有成员令牌、恒 false；
+ *  `agentConsole` = 内置 Agent 与自动化配置，手机绑定中枢后 true（窄代理写中枢）；
+ *  `videoConfig` = 视频理解模型配置，手机绑定中枢后 true（窄代理写中枢）。
  *  `desktop` = 桌面端运行时（服务端回报 runtime==='desktop'，含用浏览器打开桌面本地服务的情形）：
  *  比只看 window.wikiDesktop 准——本地服务被浏览器打开时后者为假，但本机确实有安装目录 / 开机自启 / 快捷方式可管。
  *  运行期才能判断的显隐（DDNS 只在担任中枢时、卸载只在源码安装形态）不进这里，
  *  由渲染该分组的组件经 lib/settingsNavVisibility.ts 登记。 */
-export type SettingsDomainNeed = 'agent' | 'serverUpdate' | 'apkUpdate' | 'desktop';
+export type SettingsDomainNeed =
+  | 'agent'
+  | 'agentConsole'
+  | 'videoConfig'
+  | 'serverUpdate'
+  | 'apkUpdate'
+  | 'desktop';
 
 export interface SettingsGroupNav {
   /** 锚点 id：与 SettingsGroup 的 anchor / 包裹元素的 id 一致 */
@@ -70,7 +86,20 @@ export interface SettingsDomain {
 }
 
 export interface SettingsFeatures {
+  /**
+   * Agent 管理面（外部接入 / MCP Token）：服务端 / 桌面端 true，手机（只有同步成员令牌）false。
+   * ⚠ SettingsView 传的是 capabilities.features.agentAdmin——不是 capabilities.features.agent
+   * （后者是「聊天交互面」，手机绑定中枢后为 true，不能拿来判断能不能管 Agent）。
+   */
   agent: boolean;
+  /**
+   * 内置 Agent 与自动化（摘要 / 控制台 / 梦境思考 / 看板提炼 / 工具与手册）：
+   * 服务端 / 桌面端 true；手机绑定中枢后 true（窄代理写中枢的 dsh 配置）。
+   * 缺省按没有处理——旧调用方不传时这些分组不会凭空出现。
+   */
+  agentConsole?: boolean;
+  /** 视频理解模型配置：服务端 / 桌面端 true；手机绑定中枢后 true。缺省按没有处理 */
+  videoConfig?: boolean;
   serverUpdate: boolean;
   /** 手机端（Android App）的应用内在线更新；缺省按没有处理，桌面/服务端形态不会出现该分组 */
   apkUpdate?: boolean;
@@ -163,21 +192,26 @@ export const SETTINGS_DOMAINS: SettingsDomain[] = [
     desc: '内置 Agent、定时自动整理与看板提炼节奏，以及把知识库接入外部 Agent。',
     icon: 'ai',
     groups: [
-      { id: 'agent-builtin', label: '内置 Agent', icon: 'ai', need: 'agent' },
+      // 内置 Agent 与自动化分组挂 agentConsole：桌面 / 服务端恒 true；手机绑定同步中枢后 true
+      // （经成员令牌窄代理读状态、写中枢的 dsh 配置），未绑定时整个 Agent 大类都不出现。
+      { id: 'agent-builtin', label: '内置 Agent', icon: 'ai', need: 'agentConsole' },
       // 内置 Agent 控制台（dsh 0.2.1 起）：DSH 原生插件页 / 设置页（模型、内置插件、Agent 预设）。
       // 它是「内置 Agent」的配置入口（模型与插件都在这里配），所以紧跟其后；
       // 页面侧由 AgentPanel 在 #after-builtin 插槽之前渲染，导航顺序 = 页面顺序。
-      { id: 'agent-console', label: '内置 Agent 控制台', icon: 'ai', need: 'agent' },
+      { id: 'agent-console', label: '内置 Agent 控制台', icon: 'ai', need: 'agentConsole' },
       // 视频理解模型（2026-10 收集箱「视频链接 → 提炼」）：另一个模型配置项，与「内置 Agent」
       // 回答同一类问题（用哪个模型），所以紧跟在内置 Agent 控制台之后、自动化分组之前。
       // 页面侧由设置页塞进 AgentPanel 的 #after-builtin 插槽最前（见 settingsDomains.test.ts 的顺序守卫）。
-      { id: 'panel-video', label: '视频理解模型', icon: 'ai', need: 'agent' },
-      { id: 'agent-dream', label: '自动整理（梦境思考）', icon: 'moon', need: 'agent' },
+      // 挂 videoConfig：手机端经 /api/settings/video-config 窄代理读写中枢配置。
+      { id: 'panel-video', label: '视频理解模型', icon: 'ai', need: 'videoConfig' },
+      { id: 'agent-dream', label: '自动整理（梦境思考）', icon: 'moon', need: 'agentConsole' },
       // 任务看板提炼：看板不在后台定时跑，间隔（关闭自动 / 每天 / 每 2 天 / 每 3 天 / 每 7 天）
       // 只决定「打开看板页时要不要自动重新提炼一次」。与梦境思考同属「按计划的自动化」，排在它后面。
-      { id: 'agent-board', label: '任务看板提炼', icon: 'board', need: 'agent' },
+      { id: 'agent-board', label: '任务看板提炼', icon: 'board', need: 'agentConsole' },
+      // 外部接入（ZCode / Codex / MCP Token）仍只在能管 Agent 管理面的端出现：手机只有同步成员
+      // 令牌，MCP Token 不能下发到手机，所以这一组挂 agent（android-local 为 false）且不渲染。
       { id: 'agent-target', label: '外部接入', icon: 'plug', need: 'agent' },
-      { id: 'agent-tools', label: '工具与手册', icon: 'wrench', need: 'agent' },
+      { id: 'agent-tools', label: '工具与手册', icon: 'wrench', need: 'agentConsole' },
     ],
   },
 ];
@@ -225,6 +259,9 @@ export function visibleSettingsDomains(
       groups: domain.groups.filter((group) => {
         if (hidden.has(group.id)) return false;
         if (group.need === 'agent') return features.agent;
+        // v1.5.1：手机绑定中枢后内置 Agent / 视频模型也能用（窄代理写中枢），旧调用方不传按 false
+        if (group.need === 'agentConsole') return Boolean(features.agentConsole);
+        if (group.need === 'videoConfig') return Boolean(features.videoConfig);
         if (group.need === 'serverUpdate') return features.serverUpdate;
         if (group.need === 'apkUpdate') return Boolean(features.apkUpdate);
         if (group.need === 'desktop') return Boolean(features.desktop);

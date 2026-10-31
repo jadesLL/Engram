@@ -128,6 +128,11 @@ class EngramLocalServer private constructor(private val context: Context) {
                     // jobs：手机端没有任务队列，但 /api/jobs 桩会发「灵感提炼」状态（见该路由注释），
                     // 前端要靠这个能力位轮询它，否则侧栏的「提炼中 / 提炼失败」徽标永远不显示
                     .put("agent", remoteAgent).put("agentAdmin", false).put("mcp", false).put("jobs", true)
+                    // v1.5.1：绑定了中枢的手机端也要能用「设置 → Agent 与自动化」（内置 Agent 摘要/控制台、
+                    // 视频理解模型、自动整理、任务看板、工具与手册）。手机不跑 dsh、不存模型 Key：配置经
+                    // 成员令牌窄代理读写中枢，Key 存在中枢且不回显，所以两枚能力位与「已绑定中枢」联动。
+                    // agentAdmin（外部接入 / MCP Token）仍只在桌面/中枢：令牌不下发到手机。
+                    .put("agentConsole", remoteAgent).put("videoConfig", remoteAgent)
                     .put("onlyOffice", false).put("serverUpdate", false).put("ddns", false)
                     // apkUpdate：手机端专属的「应用内在线更新」能力位（桌面/服务端形态为 false），
                     // 设置页「版本与更新 → 安卓端更新」与更新提示条都按它显隐
@@ -518,6 +523,53 @@ class EngramLocalServer private constructor(private val context: Context) {
         post("/api/assistant/questions/{id}/answer") {
             call.proxyAgent("POST", "/api/assistant/questions/${encoded(call.parameters["id"].orEmpty())}/answer", call.receiveText())
         }
+
+        // v1.5.1「安卓端补齐 Agent 与自动化配置」：手机不跑 dsh、也不持有模型 Key，
+        // 设置 → Agent 与自动化里的配置全部窄代理到已绑定的中枢（成员令牌鉴权），
+        // 由中枢的 dsh 进程执行，API Key 只存中枢且接口只回显脱敏后的值。
+        // 下面 18 条与 server/src/routes/agentConsole.ts（内置 Agent 控制台 BFF）一一对应：
+        // 方法、路径、路径参数同名，路径参数一律 encoded(...) 后再拼进上游地址。
+        get("/api/agent-console/status") { call.proxyAgent("GET", "/api/agent-console/status") }
+        post("/api/agent-console/restart") { call.proxyAgent("POST", "/api/agent-console/restart", "{}") }
+        post("/api/agent-console/stop") { call.proxyAgent("POST", "/api/agent-console/stop", "{}") }
+        get("/api/agent-console/models") { call.proxyAgent("GET", "/api/agent-console/models") }
+        put("/api/agent-console/models/default") { call.proxyAgent("PUT", "/api/agent-console/models/default", call.receiveText()) }
+        put("/api/agent-console/models/official") { call.proxyAgent("PUT", "/api/agent-console/models/official", call.receiveText()) }
+        put("/api/agent-console/models/providers/{id}") {
+            call.proxyAgent("PUT", "/api/agent-console/models/providers/${encoded(call.parameters["id"].orEmpty())}", call.receiveText())
+        }
+        delete("/api/agent-console/models/providers/{id}") {
+            call.proxyAgent("DELETE", "/api/agent-console/models/providers/${encoded(call.parameters["id"].orEmpty())}")
+        }
+        post("/api/agent-console/models/discover") { call.proxyAgent("POST", "/api/agent-console/models/discover", call.receiveText()) }
+        get("/api/agent-console/plugins") { call.proxyAgent("GET", "/api/agent-console/plugins") }
+        patch("/api/agent-console/plugins/config/{cardKey}") {
+            call.proxyAgent("PATCH", "/api/agent-console/plugins/config/${encoded(call.parameters["cardKey"].orEmpty())}", call.receiveText())
+        }
+        patch("/api/agent-console/plugins/toggle") { call.proxyAgent("PATCH", "/api/agent-console/plugins/toggle", call.receiveText()) }
+        get("/api/agent-console/presets") { call.proxyAgent("GET", "/api/agent-console/presets") }
+        put("/api/agent-console/presets/default") { call.proxyAgent("PUT", "/api/agent-console/presets/default", call.receiveText()) }
+        get("/api/agent-console/presets/{id}") {
+            call.proxyAgent("GET", "/api/agent-console/presets/${encoded(call.parameters["id"].orEmpty())}")
+        }
+        get("/api/agent-console/advanced") { call.proxyAgent("GET", "/api/agent-console/advanced") }
+        put("/api/agent-console/advanced/session-log") { call.proxyAgent("PUT", "/api/agent-console/advanced/session-log", call.receiveText()) }
+        get("/api/agent-console/settings/{ns}") {
+            call.proxyAgent("GET", "/api/agent-console/settings/${encoded(call.parameters["ns"].orEmpty())}")
+        }
+        // 视频理解模型配置（v1.5.1 从通用 /api/settings 拆出的窄接口，见 server routes/videoConfig.ts）：
+        // GET → { settings: { video_config } }（apiKey 已脱敏）；PUT 写回中枢，apiKey 空串 = 保留原 Key、
+        // null = 显式清除，其余字段浅合并，避免手机留空保存把中枢的 Key 冲掉。
+        get("/api/settings/video-config") { call.proxyHub("GET", "/api/settings/video-config") }
+        put("/api/settings/video-config") { call.proxyHub("PUT", "/api/settings/video-config", call.receiveText()) }
+        // 自动整理（梦境思考）：状态 / 计划 / 立即运行 / 停止都由中枢的 dsh 执行，手机只转发操作。
+        get("/api/assistant/dream") { call.proxyAgent("GET", "/api/assistant/dream") }
+        put("/api/assistant/dream") { call.proxyAgent("PUT", "/api/assistant/dream", call.receiveText()) }
+        post("/api/assistant/dream/run") { call.proxyAgent("POST", "/api/assistant/dream/run", "{}") }
+        post("/api/assistant/dream/stop") { call.proxyAgent("POST", "/api/assistant/dream/stop", "{}") }
+        // 工具与手册：直接读中枢的 /api/guide（与 MCP kb_guide / CLI engram guide 同源）
+        get("/api/guide") { call.proxyAgent("GET", "/api/guide") }
+
         // 客户调研与 Agent 会话共用中枢；手机只转发任务操作，不持有模型凭据。
         get("/api/customer-research") { call.proxyAgent("GET", "/api/customer-research") }
         post("/api/customer-research") { call.proxyAgent("POST", "/api/customer-research", call.receiveText()) }

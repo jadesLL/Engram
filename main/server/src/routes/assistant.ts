@@ -103,12 +103,14 @@ export async function assistantRoutes(app: FastifyInstance) {
 
   /**
    * 状态：配置、下次运行时刻、上次运行结果与当前待办快照。
-   * 走 owner 鉴权（与配置同档）：它会顺带扫一遍原始资料清单，成员端不需要这个面板。
+   * v1.5.1 起手机（绑定中枢后）也能在 设置 → Agent 与自动化 里看/改这套配置：
+   * 继承插件级 requireAssistantAccess（owner / MCP token / 同步成员令牌），
+   * 手机改的是中枢上真正跑梦境思考的那一份配置。
    */
-  app.get('/api/assistant/dream', { preHandler: requireAuth }, async () => dreamStatus());
+  app.get('/api/assistant/dream', async () => dreamStatus());
 
   /** 保存配置：每天 / 每隔 N 天 + 本地时间点；计划变化时排期锚点重置为此刻 */
-  app.put('/api/assistant/dream', { preHandler: requireAuth }, async (req, reply) => {
+  app.put('/api/assistant/dream', async (req, reply) => {
     const body = (req.body || {}) as {
       enabled?: unknown;
       frequency?: unknown;
@@ -138,7 +140,7 @@ export async function assistantRoutes(app: FastifyInstance) {
   });
 
   /** 立即执行一次：不看计划（用户点了就是想现在跑），但同一时间只允许一轮 */
-  app.post('/api/assistant/dream/run', { preHandler: requireAuth }, async (_req, reply) => {
+  app.post('/api/assistant/dream/run', async (_req, reply) => {
     const result = startDreamRun({ trigger: 'manual' });
     if (!result.started) {
       return reply
@@ -153,7 +155,7 @@ export async function assistantRoutes(app: FastifyInstance) {
   });
 
   /** 停止正在跑的那一轮（与聊天里停止一轮同一内核；进程外残留直接落终态） */
-  app.post('/api/assistant/dream/stop', { preHandler: requireAuth }, async () => {
+  app.post('/api/assistant/dream/stop', async () => {
     const status = dreamStatus();
     if (!status.running || !status.runId) return { ok: true, stopped: false, ...status };
     const stopped = await cancelRun(status.runId);
