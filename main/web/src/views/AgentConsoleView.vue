@@ -27,11 +27,13 @@
       </div>
     </header>
 
-    <!-- 能力位门控：手机端（Android 本地服务）没有 dsh 运行时，也没有 /api/agent-console/* -->
+    <!-- 能力位门控（v1.5.1）：desktop / server 的 agentConsole 恒 true；手机（android-local）
+         绑定中枢后也为 true（/api/agent-console/* 经本地服务窄代理到中枢）。为假只可能是手机还没绑定中枢，
+         此时不再说「当前设备不支持」，而是提示先绑定中枢。 -->
     <div v-if="capabilityBlocked" class="console-capability">
       <Icon name="alert" :size="22" />
-      <h3>当前设备不支持内置 Agent 控制台</h3>
-      <p>模型、插件与 Agent 预设只在运行 dsh 的桌面端 / Docker 服务端可用；手机端不运行内置 Agent 运行时。</p>
+      <h3>{{ blockedTitle }}</h3>
+      <p>{{ blockedBody }}</p>
       <button class="btn small" type="button" @click="backToSettings">返回设置</button>
     </div>
 
@@ -231,6 +233,17 @@ function applyPageScrollLock(): void {
 
 const active = ref<SectionKey>('models');
 const capabilityBlocked = ref(false);
+/** 手机（Android App 内的本地服务）：不跑 dsh，但绑定中枢后控制台可经窄代理远程配置 */
+const isAndroidLocal = computed(() => capabilities.value.runtime === 'android-local');
+/** 门控降级文案：手机未绑定中枢 → 提示先绑定；其它运行端才说「不支持」 */
+const blockedTitle = computed(() => (
+  isAndroidLocal.value ? '请先绑定中枢' : '当前设备不支持内置 Agent 控制台'
+));
+const blockedBody = computed(() => (
+  isAndroidLocal.value
+    ? '内置 Agent 运行在中枢设备上，手机不运行 dsh；绑定同步中枢后，就能在这里远程配置中枢的模型、插件与 Agent 预设（API Key 保存在中枢，不回显）。'
+    : '模型、插件与 Agent 预设只在运行 dsh 的桌面端 / Docker 服务端可用。'
+));
 const status = ref<ConsoleStatusPayload | null>(null);
 const statusError = ref('');
 const statusBusy = ref(false);
@@ -377,7 +390,9 @@ onMounted(async () => {
   }
   applyPageScrollLock();
   await loadCapabilities();
-  if (capabilities.value.features.agentAdmin === false) {
+  // v1.5.1：门控从「管理面（agentAdmin）」改成「控制台（agentConsole）」——手机绑定中枢后
+  // agentConsole=true 而 agentAdmin 仍为 false，此时手机应当能用控制台远程配置中枢。
+  if (capabilities.value.features.agentConsole === false) {
     capabilityBlocked.value = true;
     return;
   }

@@ -12,11 +12,15 @@ process.env.DATA_DIR = temp;
 let app: ReturnType<typeof Fastify>;
 let db: any;
 let token = '';
+/** 手机（Android 本地服务）只持同步成员令牌；v1.5.1 起它也能进控制台配置面 */
+const memberToken = 'lsync_agent_console_fixture';
 
 before(async () => {
   const dbModule = await import('../lib/db.js');
   db = dbModule.db;
   dbModule.migrate();
+  const { createPeer } = await import('../sync/store.js');
+  createPeer('Android 控制台验收', memberToken);
   const { agentConsoleRoutes } = await import('./agentConsole.js');
   app = Fastify();
   await app.register(jwt, { secret: 'agent-console-route-test-secret' });
@@ -68,4 +72,22 @@ test('Host 头非法时 status 返回可读错误而不是抛 500', { skip: proc
   assert.equal(res.statusCode, 200);
   assert.equal(res.json().running, false);
   assert.match(res.json().error, /无法识别访问地址/);
+});
+
+test('同步成员令牌可进入控制台配置面（手机远程配置，v1.5.1）', async () => {
+  // 用幂等的 /stop 验证门禁顺序：过了鉴权才会返回 200，不会真的拉起 dsh。
+  const member = await app.inject({
+    method: 'POST',
+    url: '/api/agent-console/stop',
+    headers: { authorization: `Bearer ${memberToken}` },
+  });
+  assert.equal(member.statusCode, 200, '手机成员令牌被控制台配置面拒绝：手机端「内置 Agent 控制台」会全 401');
+  assert.equal(member.json().running, false);
+
+  const denied = await app.inject({
+    method: 'POST',
+    url: '/api/agent-console/stop',
+    headers: { authorization: 'Bearer nope' },
+  });
+  assert.equal(denied.statusCode, 401);
 });

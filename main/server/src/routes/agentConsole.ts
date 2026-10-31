@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { requireAuth } from './auth.js';
+import { requireAssistantAccess } from '../assistant/access.js';
 import {
   consoleInternalPort,
   consoleStatus,
@@ -19,7 +19,10 @@ import { bundledDshHome, bundledDshVersion } from '../assistant/config.js';
  * （settings / credentials / llm / pluginManager / agentPresets），
  * 前端只看到归一化后的 Engram 口径，不再有 iframe，也不需要浏览器拿 dsh token。
  *
- * 鉴权：owner-only（requireAuth）。成员端（手机）不暴露配置面。
+ * 鉴权：requireAssistantAccess —— owner 登录态 / MCP token / **同步成员令牌**（手机）都能进。
+ * v1.5.1 起手机端经本地服务窄代理到这里远程配置中枢的内置 Agent（模型/插件/预设/高级）：
+ * 手机不跑 dsh，也没有自己的 dsh 配置，改的始终是中枢这一份；凭据只写不读（credentials/describe
+ * 只回 configured，不回明文 Key）。反代 /agent-console/* 仍是 owner-only，BFF 只做配置读写。
  */
 
 /** 生产单例：目标来自真正在跑的 dsh web 子进程 */
@@ -740,8 +743,9 @@ async function saveSessionLog(origin: string, body: any): Promise<any> {
  * ------------------------------------------------------------------ */
 
 export async function agentConsoleRoutes(app: FastifyInstance) {
-  // 控制台配置面只给 owner：手机成员端没有 dsh 运行时，也不该读模型密钥
-  app.addHook('preHandler', requireAuth);
+  // 控制台配置面：owner / MCP token / 同步成员令牌（手机远程配置）都放行；
+  // 只读写中枢本机 dsh 的配置，不回显任何模型 Key 明文。
+  app.addHook('preHandler', requireAssistantAccess);
 
   app.get('/api/agent-console/status', async (req) => {
     const origin = requestOrigin(req);

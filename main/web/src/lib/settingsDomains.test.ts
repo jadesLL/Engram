@@ -12,8 +12,8 @@ import {
   type SettingsFeatures,
 } from './settingsDomains.ts';
 
-/** 全功能可用的能力集（桌面端：Agent + 更新 + 桌面端运行时） */
-const FULL = { agent: true, serverUpdate: true, desktop: true };
+/** 全功能可用的能力集（桌面端：Agent 管理面 + 内置 Agent / 视频模型 + 更新 + 桌面端运行时） */
+const FULL = { agent: true, agentConsole: true, videoConfig: true, serverUpdate: true, desktop: true };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webSrc = path.resolve(here, '..');
@@ -98,6 +98,74 @@ test('能力开关关掉时，对应的大类与分组一起消失', () => {
   assert.equal(
     notDesktop.find((domain) => domain.id === 'app')?.groups.some((group) => group.id === 'panel-app'),
     false,
+  );
+});
+
+test('v1.5.1 手机能力位：绑定中枢后只剩 6 个 Agent 分组，不出现「外部接入」', () => {
+  // 手机（android-local）：agentAdmin=false（只有同步成员令牌，MCP Token 不能下发到手机），
+  // 但绑定中枢后 agentConsole / videoConfig=true（经本地服务窄代理远程配置中枢）。
+  const mobile = visibleSettingsDomains({
+    agent: false,
+    agentConsole: true,
+    videoConfig: true,
+    serverUpdate: true,
+    apkUpdate: true,
+  });
+  assert.deepEqual(
+    mobile.find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
+    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-tools'],
+    '手机端「外部接入」不该出现（MCP Token 不能下发到手机），其余 Agent 分组都应可用',
+  );
+  // 未绑定中枢：两个新能力位都是 false → Agent 整类不登记（导航里不留点不动的空大类）
+  const unbound = visibleSettingsDomains({ agent: false, serverUpdate: true, apkUpdate: true });
+  assert.equal(unbound.some((domain) => domain.id === 'agent'), false, '手机未绑定中枢时不该出现 Agent 大类');
+  // 只放开视频模型（例如未来单独开关）：视频分组在，管理面分组仍隐藏
+  const videoOnly = visibleSettingsDomains({ agent: false, serverUpdate: true, videoConfig: true });
+  assert.deepEqual(videoOnly.find((domain) => domain.id === 'agent')?.groups.map((group) => group.id), ['panel-video']);
+  // 桌面端两个能力位恒 true：7 个分组与顺序原样不变（能力位引入不能悄悄改桌面导航）
+  assert.deepEqual(
+    visibleSettingsDomains(FULL).find((domain) => domain.id === 'agent')?.groups.map((group) => group.id),
+    ['agent-builtin', 'agent-console', 'panel-video', 'agent-dream', 'agent-board', 'agent-target', 'agent-tools'],
+  );
+});
+
+test('Agent 大类门控接线：手机绑定中枢后可渲染，「外部接入」只按管理面能力位', () => {
+  const view = fs.readFileSync(path.join(viewsDir, 'SettingsView.vue'), 'utf8');
+  // 大类渲染条件 = 管理面 || 内置 Agent 控制台 || 视频模型（桌面端三者恒 true，行为不变）
+  assert.match(
+    view,
+    /v-if="agentDomainVisible && visitedDomains\.has\('agent'\)"/,
+    'Agent 大类改成了只按 agentAdmin 渲染：手机绑定中枢后也进不去',
+  );
+  const guarded = view.match(/const agentDomainVisible = computed\(\(\) => \(([\s\S]*?)\)\);/)?.[1] ?? '';
+  for (const bit of ['agentAdmin', 'agentConsole', 'videoConfig']) {
+    assert.match(guarded, new RegExp(`features\\.${bit}`), `Agent 大类的渲染条件没有算上 ${bit}`);
+  }
+  // 导航过滤同样要传两个新能力位，否则「页面渲染了、导航里没有」就是永不出现的死分组
+  assert.match(view, /agentConsole:\s*capabilities\.value\.features\.agentConsole/);
+  assert.match(view, /videoConfig:\s*capabilities\.value\.features\.videoConfig/);
+
+  const panel = fs.readFileSync(path.join(settingsDir, 'AgentPanel.vue'), 'utf8');
+  // 「外部接入」只在能管外部 Agent 的端渲染：按管理面 features.agentAdmin 门控（手机恒 false）。
+  // 不能用 features.agent——那是聊天交互面，手机绑定中枢后为 true（能聊天），拿它门控会让手机
+  // 渲染出导航里没有、接口也 404 的「外部接入」组。
+  const targetTag = panel.match(/<SettingsGroup[^>]*anchor="agent-target"[^>]*>/)?.[0] ?? '';
+  assert.match(
+    targetTag,
+    /v-if="capabilities\.features\.agentAdmin"/,
+    '「外部接入」没有按 features.agentAdmin（管理面）门控：手机上会渲染出一个不该有的分组',
+  );
+  assert.doesNotMatch(
+    targetTag,
+    /features\.agent"/,
+    '「外部接入」用聊天交互面 features.agent 门控了：手机绑定中枢后它为 true，会渲染出导航没有、接口 404 的分组',
+  );
+  // 控制台入口卡按 agentConsole 门控（手机未绑定中枢时不渲染）
+  const consoleTag = panel.match(/<AgentConsolePanel[^>]*>/)?.[0] ?? '';
+  assert.match(
+    consoleTag,
+    /v-if="capabilities\.features\.agentConsole"/,
+    '控制台入口没有按 agentConsole 门控：无控制台的端会渲染出空壳入口',
   );
 });
 

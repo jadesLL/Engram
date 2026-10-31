@@ -10,8 +10,18 @@ export interface RuntimeCapabilities {
   nativeActions: string[];
   syncRoles: Array<'none' | 'hub' | 'member'>;
   features: {
+    /** Agent 聊天交互面（聊天抽屉 / 会话）：服务端 / 桌面端 true；手机绑定中枢后也为 true（会话经中枢代理） */
     agent: boolean;
+    /** 能管 Agent 的「管理面」（外部接入 / MCP Token 等 owner 级配置）：服务端 / 桌面端 true，手机端（android-local）false */
     agentAdmin: boolean;
+    /**
+     * 内置 Agent 控制台（模型 / 插件 / Agent 预设 / 高级）：
+     * 服务端 / 桌面端恒 true；手机（android-local）绑定同步中枢后为 true——手机不跑 dsh，
+     * 配置经成员令牌窄代理写中枢。未绑定中枢时 false（设置页整个 Agent 大类不出现）。
+     */
+    agentConsole: boolean;
+    /** 视频理解模型配置（GET/PUT /api/settings/video-config）：服务端 / 桌面端 true；手机绑定中枢后 true（同样写中枢） */
+    videoConfig: boolean;
     mcp: boolean;
     jobs: boolean;
     onlyOffice: boolean;
@@ -33,6 +43,8 @@ const fullCapabilities: RuntimeCapabilities = {
   features: {
     agent: true,
     agentAdmin: true,
+    agentConsole: true,
+    videoConfig: true,
     mcp: true,
     jobs: true,
     onlyOffice: true,

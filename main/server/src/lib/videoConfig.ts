@@ -84,6 +84,52 @@ export function setVideoConfig(patch: Partial<VideoConfig>): VideoConfig {
   return next;
 }
 
+/**
+ * 读给前端的脱敏 JSON：与 GET /api/settings 的 video_config 同口径——删掉 apiKey 再序列化。
+ * 原始文本不是合法 JSON 时原样返回（与旧 /api/settings 行为一致，不让坏配置把设置页打挂）。
+ */
+export function videoConfigForClient(): string {
+  const raw = getSetting(VIDEO_CONFIG_KEY) || '';
+  if (!raw) return '';
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    delete parsed.apiKey;
+    return JSON.stringify(parsed);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * 解析写入口径（GET/PUT /api/settings 与 /api/settings/video-config 共用）：
+ *  - 对象或 JSON 字符串都接受；
+ *  - 空字符串 apiKey = 「保留原 Key」（面板不回显，留空提交不能被当成清除）；
+ *  - apiKey: null 表示显式清除（normalize 会归一成空串）；
+ *  - 其余字段原样交给 setVideoConfig 浅合并。
+ */
+export function parseVideoConfigInput(input: unknown): Partial<VideoConfig> {
+  let incoming: Record<string, unknown> = {};
+  if (typeof input === 'string') {
+    try {
+      incoming = JSON.parse(input) as Record<string, unknown>;
+    } catch {
+      incoming = {};
+    }
+  } else if (input && typeof input === 'object') {
+    incoming = { ...(input as Record<string, unknown>) };
+  }
+  if (!incoming || typeof incoming !== 'object') incoming = {};
+  if (typeof incoming.apiKey === 'string' && !incoming.apiKey.trim()) delete incoming.apiKey;
+  return incoming as Partial<VideoConfig>;
+}
+
+/** 保存入口（含「Key 留空保留」语义），返回是否真的变了 + 合并后的完整配置 */
+export function applyVideoConfigInput(input: unknown): { changed: boolean; next: VideoConfig } {
+  const before = getSetting(VIDEO_CONFIG_KEY) || '';
+  const next = setVideoConfig(parseVideoConfigInput(input));
+  return { changed: JSON.stringify(next) !== before, next };
+}
+
 /** 缺哪一项就点哪一项：面板与错误文案共用这一个判定 */
 export function videoConfigMissing(config: VideoConfig = getVideoConfig()): string[] {
   const missing: string[] = [];

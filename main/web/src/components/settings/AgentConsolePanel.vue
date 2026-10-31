@@ -20,8 +20,9 @@
         </button>
         <button class="btn small" type="button" :disabled="busy" @click="restart">重启</button>
         <button class="btn small" type="button" :disabled="busy || !status?.running" @click="stop">停止</button>
+        <!-- 新标签只对浏览器 / Docker 端有意义：Electron 壳与手机 App 里都没有真正的浏览器标签页 -->
         <a
-          v-if="!isDesktop"
+          v-if="!isDesktop && !isAndroidLocal"
           class="btn small new-tab"
           href="/settings/agent-console"
           target="_blank"
@@ -54,6 +55,7 @@ import {
   type ConsoleStatusPayload,
 } from '../../lib/agentConsoleApi';
 import { consoleStateLabel, formatStartedAt, normalizeConsoleState } from '../../lib/agentConsoleUi';
+import { useRuntimeCapabilities } from '../../lib/capabilities';
 
 /**
  * 设置页里的「内置 Agent 控制台」入口卡（2026-10 原生化）：
@@ -61,11 +63,15 @@ import { consoleStateLabel, formatStartedAt, normalizeConsoleState } from '../..
  * 配置表单在 views/AgentConsoleView.vue 的四个面板里，这里只保留入口与生命周期操作。
  *
  * 桌面端（window.wikiDesktop）不显示「在新标签打开」：Electron 壳里新标签没有意义；
+ * 手机（android-local）同理不显示（v1.5.1）：App 内没有标签页概念，点开只会是一个无意义的 WebView；
  * 浏览器 / Docker 端保留一个 <a target="_blank"> 方便把控制台钉到另一个标签页。
  */
 
 const router = useRouter();
+const { capabilities } = useRuntimeCapabilities();
 const isDesktop = Boolean((window as any).wikiDesktop);
+/** 手机 App 内的本地服务：绑定中枢后控制台可用（窄代理），但「新标签打开」没有意义 */
+const isAndroidLocal = computed(() => capabilities.value.runtime === 'android-local');
 
 const status = ref<ConsoleStatusPayload | null>(null);
 const loadError = ref('');

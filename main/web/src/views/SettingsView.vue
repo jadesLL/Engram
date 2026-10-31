@@ -133,9 +133,12 @@
 
         <!-- Agent 与自动化：内置 Agent（含运行时）/ 视频理解模型 / 自动整理（梦境思考）/ 任务看板提炼 /
              外部接入 / 工具与手册。视频理解模型与两块自动化都经具名插槽插在「内置 Agent」之后：
-             视频模型最前（与内置 Agent 同属模型配置），梦境思考在前、看板提炼紧跟，顺序与导航一致。 -->
+             视频模型最前（与内置 Agent 同属模型配置），梦境思考在前、看板提炼紧跟，顺序与导航一致。
+             手机（android-local）不跑 dsh，但绑定中枢后内置 Agent / 视频模型 / 自动化都可经窄代理远程配置：
+             只要这三个能力位有一个为真就渲染本大类；「外部接入」仍由 AgentPanel 自己按 features.agentAdmin
+             （管理面；手机恒 false）隐藏——不能用 features.agent，那是聊天交互面，手机绑定中枢后为 true。 -->
         <section
-          v-if="capabilities.features.agentAdmin && visitedDomains.has('agent')"
+          v-if="agentDomainVisible && visitedDomains.has('agent')"
           v-show="activeDomain === 'agent'"
           class="settings-domain is-multi"
           data-domain="agent"
@@ -216,17 +219,31 @@ const { capabilities, load } = useRuntimeCapabilities();
 const route = useRoute();
 
 /**
- * 大类里的分组要跟着运行时能力走：Agent 功能关掉时整个大类都不出现；
+ * 大类里的分组要跟着运行时能力走：Agent 管理面关掉、手机又没绑定中枢时整个大类都不出现；
  * 运行期才知道的显隐（DDNS 只在担任中枢、卸载只在源码安装形态、连接通道没通告时）
  * 由各面板经 settingsNavVisibility 登记到 hiddenSettingsAnchors，这里一并过滤，
  * 保证「导航里有的都能渲染出来」。
  */
 const domains = computed(() => visibleSettingsDomains({
+  // agent = 外部接入 / MCP Token 这类管理面（手机恒 false）；agentConsole / videoConfig 是
+  // v1.5.1 给手机放开的远程配置位（绑定中枢后为 true），桌面端三者恒 true、导航不变。
   agent: capabilities.value.features.agentAdmin,
+  agentConsole: capabilities.value.features.agentConsole,
+  videoConfig: capabilities.value.features.videoConfig,
   serverUpdate: capabilities.value.features.serverUpdate,
   apkUpdate: capabilities.value.features.apkUpdate,
   desktop: capabilities.value.runtime === 'desktop',
 }, hiddenSettingsAnchors));
+
+/**
+ * Agent 与自动化大类是否渲染：管理面（桌面 / Docker）或手机绑定中枢后的远程配置面任一可用。
+ * 三者为假时大类不出现（导航过滤后也不会有任何 Agent 锚点，避免出现打不开的死锚点）。
+ */
+const agentDomainVisible = computed(() => (
+  capabilities.value.features.agentAdmin
+  || capabilities.value.features.agentConsole
+  || capabilities.value.features.videoConfig
+));
 
 const currentDomain = computed(() => domains.value.find((domain) => domain.id === activeDomain.value));
 

@@ -18,6 +18,7 @@ import { inboxRoutes } from './routes/inbox.js';
 import { searchRoutes } from './routes/search.js';
 import { graphRoutes } from './routes/graph.js';
 import { settingsRoutes } from './routes/settings.js';
+import { videoConfigRoutes } from './routes/videoConfig.js';
 import { updateRoutes } from './routes/update.js';
 import { jobRoutes } from './routes/jobs.js';
 import { rawRoutes } from './routes/raw.js';
@@ -156,6 +157,8 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(searchRoutes);
   await app.register(graphRoutes);
   await app.register(settingsRoutes);
+  // 视频理解模型配置的独立读写口（v1.5.1：手机成员令牌可经窄代理读写，只认 video_config）
+  await app.register(videoConfigRoutes);
   await app.register(updateRoutes);
   await app.register(jobRoutes);
   await app.register(rawRoutes);
@@ -163,7 +166,7 @@ async function createApp(https?: { key: string; cert: string }): Promise<Fastify
   await app.register(agentRoutes);
   await app.register(entityNameRoutes);
   await app.register(assistantRoutes);
-  // 内置 Agent 控制台的原生 BFF（/api/agent-console/*，owner-only；数据仍来自 dsh 进程）
+  // 内置 Agent 控制台的原生 BFF（/api/agent-console/*；v1.5.1 起手机成员令牌也可经窄代理远程配置）
   await app.register(agentConsoleRoutes);
   await app.register(taskRoutes);
   await app.register(customerResearchRoutes);

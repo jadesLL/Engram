@@ -39,7 +39,7 @@ import { requireAuth } from './auth.js';
 import { rebuildAll } from '../pipeline/indexer.js';
 import { wipeAiLogsAndRelations, wipeKnowledgeData } from '../lib/dataCleanup.js';
 import { withJobsStopped } from '../jobs.js';
-import { setVideoConfig } from '../lib/videoConfig.js';
+import { applyVideoConfigInput, videoConfigForClient } from '../lib/videoConfig.js';
 import {
   DDNS_SETTINGS_KEY,
   clampInterval,
@@ -96,15 +96,11 @@ export async function settingsRoutes(app: FastifyInstance) {
     const out: Record<string, string> = {};
     for (const k of PUBLIC_SETTINGS) {
       const raw = getSetting(k) || '';
-      // 视频配置里的 apiKey 不回显（面板用 /api/settings/video-status 的 hasKey 判断）
-      if (k === 'video_config' && raw) {
-        try {
-          const parsed = JSON.parse(raw) as Record<string, unknown>;
-          delete parsed.apiKey;
-          out[k] = JSON.stringify(parsed);
-        } catch {
-          out[k] = raw;
-        }
+      // 视频配置里的 apiKey 不回显（面板用 /api/inbox/video-status 的 hasKey 判断）；
+      // v1.5.1 起视频配置另有独立读写口 /api/settings/video-config（手机成员令牌可用），
+      // 这里保留旧口径兼容旧客户端。
+      if (k === 'video_config') {
+        out[k] = videoConfigForClient();
       } else {
         out[k] = raw;
       }
@@ -128,18 +124,10 @@ export async function settingsRoutes(app: FastifyInstance) {
       const v = body[k];
       if (v === undefined) continue;
       if (k === 'video_config') {
-        // 视频配置走归一化保存：空 apiKey 表示「保留原 Key」（面板不回显 Key，也不能被空值冲掉）
-        let incoming: Record<string, unknown> = {};
-        try {
-          incoming = (typeof v === 'string' ? JSON.parse(v) : v) as Record<string, unknown>;
-        } catch {
-          incoming = {};
-        }
-        if (!incoming || typeof incoming !== 'object') incoming = {};
-        if (typeof incoming.apiKey === 'string' && !incoming.apiKey.trim()) delete incoming.apiKey;
-        const before = getSetting(k) || '';
-        const next = setVideoConfig(incoming as Parameters<typeof setVideoConfig>[0]);
-        if (JSON.stringify(next) !== before) {
+        // 视频配置走归一化保存：空 apiKey 表示「保留原 Key」（面板不回显 Key，也不能被空值冲掉）。
+        // 与 /api/settings/video-config 共用同一套解析/保存语义（见 lib/videoConfig.ts）。
+        const { changed } = applyVideoConfigInput(v);
+        if (changed) {
           stampPreference(k, currentNodeId());
           recordLocalChange('preference', k);
         }

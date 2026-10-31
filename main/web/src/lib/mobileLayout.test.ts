@@ -310,3 +310,75 @@ test('引用角标在触屏上留出可点热区', () => {
     assert.match(readSrc(file), rule, `${file} 的引用角标热区没撑开：手机上点不中`);
   }
 });
+
+test('安卓端 Agent 与自动化：能力位、窄代理与服务端成员鉴权（v1.5.1）', () => {
+  // 手机不跑 dsh：设置页「Agent 与自动化」的配置全靠本地服务窄代理到已绑定的中枢。
+  // 能力位为 false 时整类不出现，为 true 时页面才渲染对应分组（见 settingsDomains.test.ts）。
+  const localServer = read('mobile/android/app/src/main/java/com/engram/app/EngramLocalServer.kt');
+  assert.match(localServer, /\.put\("agentConsole",\s*remoteAgent\)/, '能力位缺 agentConsole：手机绑定中枢后设置页仍不出现 Agent 配置');
+  assert.match(localServer, /\.put\("videoConfig",\s*remoteAgent\)/, '能力位缺 videoConfig：手机上的「视频理解模型」不会出现');
+  // 窄代理：漏一条就是「点进去报 404」，按 CONTRACT §3 的关键路径逐条锁
+  for (const [label, route] of [
+    ['内置 Agent 控制台', '/api/agent-console/'],
+    ['视频模型配置', '/api/settings/video-config'],
+    ['自动整理（梦境思考）', '/api/assistant/dream'],
+    ['工具与手册', '/api/guide'],
+  ] as const) {
+    const proxy = new RegExp('proxy(?:Agent|Hub)\\("[A-Z]+",\\s*"' + route);
+    assert.match(localServer, proxy, '安卓本地服务缺 ' + label + ' 的窄代理（' + route + '）');
+  }
+  // 控制台 18 条路由全部经 proxyAgent 转发（手机不跑 dsh，只能远程配置中枢）
+  const consoleProxies = localServer.match(/proxyAgent\("[A-Z]+",\s*"\/api\/agent-console\//g) || [];
+  assert.ok(consoleProxies.length >= 18, 'Agent 控制台窄代理不足 18 条：手机端部分配置项会 404');
+  // video-config 走中枢代理（proxyHub），dream / guide 走 Agent 代理（proxyAgent）
+  assert.match(localServer, /get\("\/api\/settings\/video-config"\)[\s\S]{0,120}?proxyHub\("GET"/, '视频模型配置没走中枢代理：手机上读到的是空配置');
+  assert.match(localServer, /put\("\/api\/settings\/video-config"\)[\s\S]{0,160}?proxyHub\("PUT"/, '视频模型配置保存没走中枢代理：手机上保存会写空');
+  assert.match(localServer, /get\("\/api\/guide"\)[\s\S]{0,80}?proxyAgent\("GET",\s*"\/api\/guide"\)/, '「工具与手册」的指南没走中枢代理：手机上点开就是 404');
+
+  // 服务端能力位：server / desktop 恒 true（手机端由 Kotlin 本地服务回报 remoteAgent）
+  const runtime = read('server/src/routes/runtime.ts');
+  assert.match(runtime, /agentConsole:\s*true/, 'server 能力位缺 agentConsole：桌面端控制台入口会消失');
+  assert.match(runtime, /videoConfig:\s*true/, 'server 能力位缺 videoConfig：桌面端视频模型分组会消失');
+
+  // 鉴权：控制台与梦境从 owner-only 改成成员令牌可用，否则手机（只有成员令牌）全部 401
+  const agentConsole = read('server/src/routes/agentConsole.ts');
+  assert.match(agentConsole, /addHook\('preHandler',\s*requireAssistantAccess\)/, 'Agent 控制台路由退回 owner-only：手机配置会全部 401');
+  assert.doesNotMatch(agentConsole, /import\s*\{[^}]*\brequireAuth\b/, 'Agent 控制台仍 import requireAuth：鉴权没有真正换成成员可用');
+  const assistant = read('server/src/routes/assistant.ts');
+  assert.match(assistant, /addHook\('preHandler',\s*requireAssistantAccess\)/, 'assistant 插件没挂 requireAssistantAccess：手机请求会被插件级鉴权挡掉');
+  const dreamStart = assistant.indexOf('梦境思考（按计划自动整理');
+  const dreamEnd = assistant.indexOf('// ---------- 会话');
+  assert.ok(dreamStart >= 0 && dreamEnd > dreamStart, '找不到梦境思考路由段');
+  const dreamSection = assistant.slice(dreamStart, dreamEnd);
+  assert.match(dreamSection, /\/api\/assistant\/dream/, '梦境思考路由段找不到了');
+  assert.doesNotMatch(dreamSection, /requireAuth/, '梦境思考路由仍挂 requireAuth：手机看/改自动整理配置会 401');
+  // 独立的视频配置窄接口：只认 video_config、成员令牌可用
+  const videoConfigRoute = read('server/src/routes/videoConfig.ts');
+  assert.match(videoConfigRoute, /\/api\/settings\/video-config/, '缺 /api/settings/video-config 路由：视频模型面板会 404');
+  assert.match(videoConfigRoute, /requireAssistantAccess/, 'video-config 路由没有对成员令牌开放：手机保存必 401');
+
+  // Web 侧手机适配：能力位门控、新接口、文案
+  const consoleView = readSrc('views/AgentConsoleView.vue');
+  assert.match(consoleView, /features\.agentConsole === false/, '控制台门控没改成 agentConsole：手机绑定中枢后仍显示「不支持」');
+  assert.match(consoleView, /请先绑定中枢/, '手机未绑定中枢时没有「请先绑定中枢」文案');
+  const consolePanel = readSrc('components/settings/AgentConsolePanel.vue');
+  assert.match(consolePanel, /v-if="!isDesktop && !isAndroidLocal"/, '手机端仍显示「在新标签打开」：App 里点了没有意义');
+  const videoPanel = readSrc('components/settings/VideoPanel.vue');
+  assert.match(videoPanel, /\/api\/settings\/video-config/, '视频模型面板没走窄接口 /api/settings/video-config');
+  assert.doesNotMatch(videoPanel, /api\.put\('\/api\/settings'/, '视频模型保存仍写通用 /api/settings：成员令牌会 401');
+  assert.match(videoPanel, /配置保存在已绑定的中枢/, '手机端没有说明配置存在已绑定的中枢');
+
+  // 「外部接入」必须按管理面 agentAdmin 门控：手机绑定中枢后 features.agent（聊天交互面）=true，
+  // 若用它门控，手机就会渲染出导航里没有、接口也 404 的外部接入组。
+  const agentPanel = readSrc('components/settings/AgentPanel.vue');
+  assert.match(
+    agentPanel,
+    /<SettingsGroup\s+v-if="capabilities\.features\.agentAdmin"\s+anchor="agent-target"/,
+    '「外部接入」没有按 features.agentAdmin 门控：手机绑定中枢后 agent=true，会渲染出无接口的分组',
+  );
+  assert.doesNotMatch(
+    agentPanel,
+    /v-if="capabilities\.features\.agent"/,
+    '「外部接入」还在用 features.agent（聊天交互面）门控：手机绑定中枢后它恒为 true，等于没门控',
+  );
+});

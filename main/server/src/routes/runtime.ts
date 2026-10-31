@@ -18,6 +18,11 @@ export async function runtimeRoutes(app: FastifyInstance) {
       features: {
         agent: true,
         agentAdmin: true,
+        // v1.5.1：手机（Android 本地服务）绑定中枢后，经成员令牌把「内置 Agent 控制台」与
+        // 「视频理解模型」的配置窄代理到中枢，所以这两个能力位对手机也放开；agentAdmin
+        // 仍保持 false（手机不跑 dsh，也不直接持有模型 Key）。
+        agentConsole: true,
+        videoConfig: true,
         mcp: true,
         jobs: true,
         onlyOffice: officeConfigured(),

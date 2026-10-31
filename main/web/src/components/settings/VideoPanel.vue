@@ -28,6 +28,10 @@
       </div>
       <p v-else-if="loading" class="faint small video-loading">正在读取视频模型配置…</p>
       <p v-else class="faint small video-loading">读取失败：可以继续填写并保存，或刷新设置页重试。</p>
+      <!-- 手机（android-local）不跑 dsh、也不存这份配置：读写经成员令牌窄代理到已绑定的中枢 -->
+      <p v-if="isAndroidLocal" class="faint small video-hub-note">
+        配置保存在已绑定的中枢；API Key 存中枢、页面不回显。
+      </p>
 
       <div class="video-form">
         <div class="video-switch-row">
@@ -118,7 +122,8 @@
         不会发到别处；只支持这类兼容接口，厂商私有的文件上传协议不支持。模型给出的时间戳 / 章节是估计值，纪要需人工复核。
         视频清晰度越高下载越慢、体积越大（抖音按这个目标档位选清晰度）；抖音链接默认走服务端接口抓取（匿名身份 + secsdk 签名，不需要浏览器，
         NAS / Docker / 手机端都可用），只有接口失败时才用上面的「本机浏览器兜底」（实验，仅装有 Edge / Chrome 的本机可用）。
-        Key 只存本机数据库、页面不回显；音视频原件与产物都留在收集箱，确认「入库」后才进知识库。
+        <template v-if="isAndroidLocal">Key 存在已绑定的中枢、页面不回显；</template>
+        <template v-else>Key 只存本机数据库、页面不回显；</template>音视频原件与产物都留在收集箱，确认「入库」后才进知识库。
       </p>
     </SettingsGroup>
   </section>
@@ -129,6 +134,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../../api';
 import { notify } from '../../lib/notify';
 import { confirmDialog } from '../../lib/confirm';
+import { useRuntimeCapabilities } from '../../lib/capabilities';
 import { useSettingsBadge } from '../../lib/settingsBadges';
 import SettingsGroup from './SettingsGroup.vue';
 import SecretField from '../SecretField.vue';
@@ -137,9 +143,12 @@ import AppSelect from '../ui/AppSelect.vue';
 /**
  * 「视频理解模型」设置面板（收集箱「视频链接 → 提炼」用）。
  *
- * 配置读写走通用的 GET/PUT /api/settings（键 video_config，GET 已脱敏不回显 apiKey）；
- * 状态与连通性测试走收集箱路由 GET /api/inbox/video-status、POST /api/inbox/video-test
- * （安卓本地服务会按成员令牌把收集箱接口代理到中枢，所以手机端也能用）。
+ * 配置读写走窄接口 GET/PUT /api/settings/video-config（响应形状与 /api/settings 的 video_config
+ * 一致：{ settings: { video_config: "<脱敏 JSON 字符串>" } }，GET 不含 apiKey）；
+ * v1.5.1 起该路由用 requireAssistantAccess，手机（只有同步成员令牌）经本地服务窄代理读写中枢的配置，
+ * 所以手机绑定中枢后也能在这里配置（「配置保存在已绑定的中枢」文案见模板）。
+ * 状态与连通性测试仍走收集箱路由 GET /api/inbox/video-status、POST /api/inbox/video-test
+ * （安卓本地服务同样按成员令牌把收集箱接口代理到中枢）。
  *
  * Key 的处理沿用 SecretField 约定：输入框留空 = 保留原 Key（服务端不回显）；
  * 显式清除发 apiKey: null（服务端 normalize 会归一成空串）——注意空串在服务端表示「保留原 Key」。
@@ -176,6 +185,10 @@ const qualityOptions: Array<{ value: QualityValue; label: string }> = [
   { value: '32', label: '480P（32）' },
   { value: '16', label: '360P（16）' },
 ];
+
+/** 手机 App 内的本地服务：配置读写经窄代理落到已绑定的中枢（文案据此区分「本机 / 中枢」） */
+const { capabilities } = useRuntimeCapabilities();
+const isAndroidLocal = computed(() => capabilities.value.runtime === 'android-local');
 
 const loaded = ref(false);
 const loading = ref(true);
@@ -310,10 +323,11 @@ async function load(): Promise<void> {
   loading.value = true;
   try {
     const [{ data: settings }, statusResponse] = await Promise.all([
-      api.get('/api/settings'),
+      api.get('/api/settings/video-config'),
       api.get('/api/inbox/video-status').catch(() => null),
     ]);
-    // GET /api/settings 里的 video_config 已脱敏（无 apiKey），这里只取非密文字段兜底
+    // GET /api/settings/video-config 返回与 /api/settings 同形状的 settings.video_config，
+    // 已脱敏（无 apiKey）；这里只取非密文字段兜底
     let saved: Record<string, unknown> = {};
     try {
       saved = JSON.parse(String(settings?.settings?.video_config || '{}')) as Record<string, unknown>;
@@ -346,7 +360,7 @@ async function save(): Promise<void> {
   saving.value = true;
   saveMessage.value = '';
   try {
-    await api.put('/api/settings', { video_config: buildPayload() });
+    await api.put('/api/settings/video-config', { video_config: buildPayload() });
     apiKey.value = '';
     await load();
     const missing = fallbackMissing.value;
@@ -400,7 +414,7 @@ async function clearKey(): Promise<void> {
   if (!ok) return;
   clearing.value = true;
   try {
-    await api.put('/api/settings', { video_config: { apiKey: null } });
+    await api.put('/api/settings/video-config', { video_config: { apiKey: null } });
     saveMessage.value = '已清除 API Key（视频条目暂时无法提炼）';
     saveTone.value = 'ok';
     testResult.value = null;
@@ -422,6 +436,12 @@ onMounted(load);
 <style scoped>
 .video-loading {
   margin: 0 0 14px;
+}
+
+/* 手机端：配置不在本机，说明它存在已绑定的中枢（真实来源） */
+.video-hub-note {
+  margin: 0 0 12px;
+  line-height: 1.6;
 }
 
 .video-state {
