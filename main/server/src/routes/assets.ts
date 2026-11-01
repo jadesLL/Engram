@@ -4,6 +4,7 @@ import { db } from '../lib/db.js';
 import {
   attachUnassignedAsset,
   assetDisplayName,
+  assetRelPath,
   collectAssetOrphans,
   deletePageAsset,
   isParentId,
@@ -15,7 +16,7 @@ import {
 import { fetchRemoteImage, ImageFetchError } from '../lib/imageFetch.js';
 import { listRemoteImageUrls, localizeRemoteImages } from '../lib/remoteImages.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
-import { readPage, writePage } from '../lib/vault.js';
+import { notifySyncChange, readPage, writePage } from '../lib/vault.js';
 
 /**
  * 页面图片资产接口。
@@ -134,7 +135,11 @@ export async function assetRoutes(app: FastifyInstance) {
     const errors: string[] = [];
     for (const file of incoming) {
       try {
-        saved.push(publicAsset(savePageAsset(parent.id, file.filename, file.buffer)));
+        const asset = savePageAsset(parent.id, file.filename, file.buffer);
+        saved.push(publicAsset(asset));
+        // 图片是 brain 里的独立文件（assets/<父项id>/<内容哈希>-原名），必须单独进同步链路：
+        // 只靠父项正文的 page op 传过去的话，对端拿到 ![](/media/…) 却是破图（2026-11 实测）。
+        notifySyncChange('file', assetRelPath(asset.parentId, asset.name));
       } catch (error: any) {
         errors.push(`${file.filename}：${error?.message || '保存失败'}`);
       }
@@ -181,6 +186,7 @@ export async function assetRoutes(app: FastifyInstance) {
     try {
       const image = await fetchRemoteImage(source);
       const asset = savePageAsset(target.id, image.name, image.buffer, { sourceUrl: source });
+      notifySyncChange('file', assetRelPath(asset.parentId, asset.name));
       try { appendWikiLog('本地化外链图片', `${source} → [[${target.title}]]`); } catch { /* 忽略 */ }
       return { ok: true, asset: publicAsset(asset), sourceUrl: source };
     } catch (error: any) {
@@ -192,11 +198,15 @@ export async function assetRoutes(app: FastifyInstance) {
   /** 删除一张图片资产 */
   app.delete('/api/assets', async (req, reply) => {
     const { parentId, name } = (req.body || {}) as { parentId?: string; name?: string };
+    const targetParent = String(parentId || '');
+    const targetName = String(name || '');
     try {
-      deletePageAsset(String(parentId || ''), String(name || ''));
+      deletePageAsset(targetParent, targetName);
     } catch (error: any) {
       return reply.code(400).send({ error: error?.message || '删除失败' });
     }
+    // 删图同样要跨端：否则对端列表还留着这张（手机下次全量对账又把它拉回来）
+    notifySyncChange('delete', assetRelPath(targetParent, targetName));
     try { appendWikiLog('删除图片', `${parentId}/${name}`); } catch { /* 忽略 */ }
     return { ok: true };
   });
@@ -222,6 +232,9 @@ export async function assetRoutes(app: FastifyInstance) {
     }
     try {
       const asset = attachUnassignedAsset(String(name || ''), target.id);
+      // 挂载 = 「未归属池删掉一张 + 父项目录新增一张」：两个路径各发一条变更
+      notifySyncChange('delete', assetRelPath(UNASSIGNED_PARENT, String(name || '')));
+      notifySyncChange('file', assetRelPath(asset.parentId, asset.name));
       // 挂载后把引用补进正文，否则它立刻又变成「未被引用」的孤儿
       let appended = false;
       try {

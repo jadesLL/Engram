@@ -519,7 +519,10 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             readableDatabase.rawQuery("SELECT kind,original_path,stored_path FROM trash WHERE id=?", arrayOf(id)).use { c ->
                 require(c.moveToFirst()) { "项目不存在" }; val kind = c.getString(0); val rel = c.getString(1); val source = File(trashRoot, c.getString(2)); val destination = safe(rel)
                 require(!destination.exists()) { "原路径已被占用" }; destination.parentFile?.mkdirs(); Os.rename(source.absolutePath, destination.absolutePath)
-                writableDatabase.execSQL("DELETE FROM trash WHERE id=?", arrayOf(id)); if (kind == "page") indexPage(rel) else indexFile(rel); restored.put(id)
+                writableDatabase.execSQL("DELETE FROM trash WHERE id=?", arrayOf(id)); if (kind == "page") indexPage(rel) else indexFile(rel)
+                // 恢复也要跨端：否则中枢那边仍是「已删除」，下次全量对账会把它当本机独有内容推回去，或按旧删除抹掉
+                enqueue(if (kind == "page") "page" else "file", rel)
+                restored.put(id)
             }
         } catch (e: Exception) { errors.put(JSONObject().put("id", id).put("error", e.message ?: "恢复失败")) } }
         JSONObject().put("restored", restored).put("errors", errors)
@@ -1098,9 +1101,12 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     /** 删除单个图片资产：只允许 assets/<pageId>/<文件名> 一层，挡掉子路径与穿越 */
     fun deletePageAsset(pageId: String, name: String) {
         val dir = File(brain, "assets/$pageId").canonicalFile
-        val target = File(dir, File(name).name).canonicalFile
+        val fileName = File(name).name
+        val target = File(dir, fileName).canonicalFile
         require(target.parentFile == dir) { "路径无效" }
         target.delete()
+        // 删图也要进待推队列：否则对端还留着这张，手机下次全量对账又把它拉回来（删除像没生效）
+        enqueue("delete", "assets/$pageId/$fileName")
     }
 
     /** 未归属图片池（assets/_unassigned/）：设置 → 存储空间可查看，形状对齐 server /api/assets/orphans/list */
@@ -1122,6 +1128,9 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     /**
      * 保存页面图片资产：内容寻址命名（<sha1 前 8>-<slug>.<ext>）落进 assets/<pageId>/，
      * 与 server lib/pageAssets.ts 的磁盘布局一一对应（`/media/<pageId>/<name>` 直出）。
+     *
+     * 图片是独立文件，**必须单独进同步待推队列**：只靠引用它的页面正文（page op）传过去，
+     * 另一端拿到 `![](/media/…)` 却是破图（2026-11 用户实测「附件没上去」）。
      */
     fun savePageAsset(pageId: String, originalName: String, bytes: ByteArray): JSONObject = synchronized(lock) {
         val ext = originalName.substringAfterLast('.', "").lowercase()
@@ -1131,8 +1140,10 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         val name = "$hash-$slug.$ext"
         val dir = File(brain, "assets/$pageId").also { it.mkdirs() }
         File(dir, name).outputStream().use { it.write(bytes) }
+        val rel = "assets/$pageId/$name"
+        enqueue("file", rel)
         JSONObject().put("parentId", pageId).put("name", name).put("url", mediaUrl(pageId, name))
-            .put("path", "assets/$pageId/$name").put("ext", ext).put("mime", assetMime(ext))
+            .put("path", rel).put("ext", ext).put("mime", assetMime(ext))
             .put("size", bytes.size).put("updatedAt", now()).put("referenced", false)
     }
 
@@ -1158,6 +1169,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         require(source.isFile) { "图片不存在" }
         val asset = savePageAsset(parentId, fileName, source.readBytes())
         source.delete()
+        // savePageAsset 已把新路径入队；这里补「未归属池里那张删掉了」，否则对端池子里会留一张幽灵图
+        enqueue("delete", "assets/$UNASSIGNED_PARENT/$fileName")
         // 池子空了就连目录一起收掉，别在设置页留一个永远为 0 的「未归属图片」
         val pool = File(brain, "assets/$UNASSIGNED_PARENT")
         if (pool.listFiles()?.isEmpty() == true) pool.delete()

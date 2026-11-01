@@ -842,6 +842,8 @@ const PULL_THRESHOLD = 64;
 const PULL_MAX = 96;
 /** 只有这三个顶层页支持下拉刷新；/page/:id（阅读）自己管滚动，不抢它的手势 */
 const PULL_ROUTES = ['/page', '/inbox', '/tasks'];
+/** 下拉刷新等一轮同步对账收尾的上限：慢网下不拦着用户回弹，状态轮询会继续把结果翻面 */
+const PULL_SYNC_WAIT_MS = 20_000;
 const contentEl = ref<HTMLElement>();
 const touchPointer = useTouchPointer();
 const pullOffset = ref(0);
@@ -972,13 +974,42 @@ async function finishPullRefresh() {
   }
 }
 
-/** 顶层页刷新：先对一次同步账（共享 sync store），再按当前页重读数据；能力位顺手重取（有缓存就不发请求） */
+/**
+ * 真正发起一轮同步对账并等它收尾。
+ *
+ * 手机端没有常驻后台同步，「下拉」是用户唯一的显式「强制同步」手势：只调 sync.refresh()
+ * 读状态等于空操作（2026-11 用户实测：下拉后待推队列纹丝不动）。安卓本机服务与 Node
+ * 服务端都实现了 POST /api/sync/reconcile（成员端触发一轮对账），这里触发后按状态轮询
+ * 直到收尾或超时；超时也不阻塞回弹，后续轮询会继续更新状态。
+ */
+async function runSyncReconcile(): Promise<void> {
+  try {
+    await api.post('/api/sync/reconcile');
+  } catch {
+    return; // 未绑定 / 离线 / 当前角色不支持：仍按下面的本地读取兜底，界面别报错
+  }
+  const deadline = Date.now() + PULL_SYNC_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await sync.refresh().catch(() => undefined);
+    const status = sync.status;
+    if (!status) return;
+    const busy =
+      Boolean(status.running || status.syncing || status.reconciling) ||
+      Number(status.pendingPulls || 0) > 0;
+    if (!busy) return;
+  }
+}
+
+/** 顶层页刷新：先真正触发同步对账，再按当前页重读数据；能力位顺手重取（有缓存就不发请求） */
 async function refreshTopLevel() {
+  const reconciling = runSyncReconcile().catch(() => undefined);
   await Promise.all([
-    sync.refresh().catch(() => undefined),
     inbox.load().catch(() => undefined),
     loadRuntimeCapabilities().catch(() => undefined),
   ]);
+  await reconciling;
+  await sync.refresh().catch(() => undefined);
   if (route.path === '/page') {
     app.bumpSidebar();
     void homeBoard.load();

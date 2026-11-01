@@ -82,7 +82,7 @@ export async function localizeRemoteImages(pageId: string): Promise<LocalizeResu
     if (!row) return emptyResult(pageId);
 
     // 动态 import：本模块由 vault 在正文变动后触发，静态 import vault 会形成循环
-    const { readPage, writePage } = await import('./vault.js');
+    const { notifySyncChange, readPage, writePage } = await import('./vault.js');
     const current = readPage(row.path);
     if (!current || !hasRemoteImages(current.content)) return emptyResult(pageId);
     const body = current.content;
@@ -95,7 +95,10 @@ export async function localizeRemoteImages(pageId: string): Promise<LocalizeResu
       let replacement: string | null = null;
       try {
         const image = await fetchRemoteImage(url);
-        replacement = savePageAsset(pageId, image.name, image.buffer, { sourceUrl: url }).url;
+        const asset = savePageAsset(pageId, image.name, image.buffer, { sourceUrl: url });
+        replacement = asset.url;
+        // 本地化出来的图片是独立文件，正文改写之外还要单独发一条 file 变更（否则对端破图）
+        notifySyncChange('file', asset.relPath);
       } catch (error: any) {
         replacement = null;
         failed.push({
