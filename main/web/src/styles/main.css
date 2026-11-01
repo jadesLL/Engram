@@ -596,6 +596,130 @@ html .vditor-reset table tbody tr:nth-child(2n) {
 }
 
 /*
+ * 折叠屏桌面姿态（2026-11 安卓改版）：半开横折 → 上下两段，上半屏正文、下半屏操作台。
+ * 只用 CSS Viewport Segments 媒体特性启用；普通手机 / 桌面 / 网页端规则不命中，
+ * 布局与改动前完全一致。折痕处留 12px 安全缝（上半屏底部 6px + 下半屏顶部 6px），
+ * 缝里不摆放任何可点控件。真机待核：Pixel Fold / 三星 Fold 的 WebView 是否上报该特性。
+ */
+.tabletop-console { display: none; }
+
+@media (horizontal-viewport-segments: 2) {
+  .layout.tabletop { flex-direction: column; }
+
+  /*
+   * 上半屏：高度 = 铰链 y 坐标 - 6px（拿不到段信息时按 50% 兜底）。
+   * 选择器前置 #app 提高优先级：.content 的基础 flex / padding 写在 Home.vue 的 scoped 样式里，
+   * 那些规则带 [data-v] 属性，普通类选择器压不过它们（分屏会退化成 50/50，而不是铰链位置）。
+   */
+  #app .layout.tabletop .content {
+    flex: none;
+    height: calc(env(viewport-segment-top 1 0, 50%) - 6px);
+    padding-bottom: 6px;
+  }
+
+  #app .layout.tabletop .tabletop-console {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 6px 12px calc(8px + var(--safe-bottom)) calc(72px + var(--safe-left));
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    /* 折痕侧只用一条发丝线提示分区，不额外占高度 */
+    box-shadow: inset 0 1px 0 var(--border);
+  }
+
+  /* 目录浮层在桌面姿态下只盖上半屏（阅读区）：操作台始终露着，随时能关目录或继续操作 */
+  #app .layout.tabletop:not(.sidebar-full) .sidebar {
+    bottom: calc(100% - env(viewport-segment-top 1 0, 50%) + 6px);
+  }
+
+  /*
+   * 编辑态：把 Vditor 格式工具条挪到下半屏顶部（上半屏只留正文；折成笔记本姿态时
+   * 工具条在手掌所在的半屏，不压正文）。不支持的设备不命中；非编辑态没有工具条元素。
+   * 同样用 #app 压过 MarkdownEditor 组件里带 [data-v] 的 :deep(.vditor-toolbar) 定位。
+   */
+  #app .layout.tabletop-editor .tabletop-console { padding-top: 62px; }
+
+  #app .layout.tabletop-editor .vditor-toolbar {
+    position: fixed;
+    top: calc(env(viewport-segment-top 1 0, 50%) + 6px);
+    left: calc(72px + var(--safe-left));
+    right: calc(12px + var(--safe-right));
+    width: auto;
+    max-width: none;
+    margin: 0;
+    z-index: calc(var(--z-chrome) + 2);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  #app .layout.tabletop-editor .vditor-toolbar::-webkit-scrollbar { display: none; }
+}
+
+/* ---- 桌面姿态操作台：标题行 + 44dp 动作按钮（元素只在 Viewport Segments 命中时渲染） ---- */
+.tabletop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.tabletop-state {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.tabletop-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.tabletop-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+
+.tabletop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tabletop-action {
+  min-width: 76px;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tabletop-action:active { background: var(--press-bg); color: var(--text); }
+
+/*
  * 手机横屏 / 矮视口壳层（2026-11 设备矩阵）：宽 ≥600 时底栏已换成左侧 rail（medium / expanded
  * 由 .layout.size-* 类标记，见 Home.vue），正文底部不必再为底栏留 64px，只让开系统导航栏。
  * compact（<600）仍按底栏实际高度让位，不动。
@@ -628,5 +752,79 @@ html.kb-open .content {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==========================================================================
+ * 触控热区（2026-11 安卓改版补完）：视觉尺寸不变，手指命中区补到 48dp
+ * --------------------------------------------------------------------------
+ * 手机上的图标按钮、行尾开关、通知动作停在 20–32px，手指按不准。这里统一给它们铺一层
+ * 透明 ::after 当命中区：不改视觉、不新增元素、不参与布局（绝对定位，不撑开任何盒子）。
+ *  - 只在 (hover: none) and (pointer: coarse) 下生效：鼠标设备（桌面窗口）行为完全不变；
+ *    判断用触屏能力而不是宽度——折叠屏内屏 / 平板 / 手机横屏都超过 768px（见文件头约定）。
+ *  - 相邻控件不重叠：横向并排的一组（分段选择、编辑器工具栏、通知动作、行内小按钮）
+ *    只向上/下扩、左右边界不动；独立控件（行尾开关、分组箭头、图标按钮）四向补到 48。
+ *  - 已经在自己文件里做过热区的控件不重复定义（.row-kebab / .check 44px、侧栏标题按钮 44px、
+ *    编辑器工具栏 44px）：密集行里 48 会盖住上下相邻行，44 是那里的上限。
+ *  - 命中区只放大「点得到」的范围，不改变禁用态、焦点环与层级（伪元素不参与 :focus 判定）。
+ * ========================================================================== */
+@media (hover: none) and (pointer: coarse) {
+  /* ① 独立小图标按钮（28–32px）：设置面板、抽屉头、预览头、通知关闭键 */
+  .btn.icon,
+  .icon-btn,
+  .mi-iconbtn,
+  .group-caret {
+    position: relative;
+  }
+  .btn.icon::after,
+  .icon-btn::after,
+  .mi-iconbtn::after,
+  .group-caret::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    /* 只补不缩：视觉尺寸已经 ≥48 的控件（如 44px 的收集箱顶栏按钮）按自己的大小来 */
+    width: max(100%, 48px);
+    height: max(100%, 48px);
+    transform: translate(-50%, -50%);
+  }
+
+  /* ② 设置行尾开关：轨道只有 40×20（.switch-control），整行右侧的留白都算它的命中区。
+        横向已经够宽，只补高度——否则会伸进左侧说明文字里抢点击 */
+  .switch-control {
+    position: relative;
+  }
+  .switch-control::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: max(100%, 48px);
+    transform: translateY(-50%);
+  }
+
+  /* ③ 横向并排的按钮（分段选择 / 编辑器工具栏 / 通知动作 / 行内小按钮）：
+        左右绝不外扩（扩了就会抢相邻控件的点击），只把高度补到 48 */
+  .segmented button,
+  .vditor-toolbar button,
+  .toast-action,
+  .btn.small,
+  .batch-btn {
+    position: relative;
+  }
+  .segmented button::after,
+  .vditor-toolbar button::after,
+  .toast-action::after,
+  .btn.small::after,
+  .batch-btn::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: max(100%, 48px);
+    transform: translateY(-50%);
   }
 }

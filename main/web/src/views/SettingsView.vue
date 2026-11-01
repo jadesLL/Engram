@@ -116,6 +116,34 @@
         <section v-if="visitedDomains.has('interface')" v-show="activeDomain === 'interface'" class="settings-domain is-multi" data-domain="interface">
           <DomainHead :domain="domainOf('interface')" />
           <AppearanceSection />
+          <!-- 触觉反馈（2026-11 安卓改版）：外观子页里的手机专属项——桌面没有振动硬件，
+               多一个点了没反应的开关只会让人以为坏了，所以只在手机档渲染。
+               开关值由 lib/haptics 自己持久化（localStorage 'hapticsEnabled'），
+               这里只负责读写与文案；haptic() 被手势/异步回调直接调用，不经过 store。 -->
+          <SettingsGroup
+            v-if="mobileLayout"
+            class="settings-native"
+            title="触觉反馈"
+            hint="轻振仅用于入库、删除、切换等动作"
+            flush
+          >
+            <div class="setting-row">
+              <div class="setting-copy">
+                <strong>轻振确认</strong>
+                <span>入库、移入回收站、切换底栏这类动作会轻振一下作为确认；关闭后所有振动静默，业务动作与提示都不受影响。</span>
+              </div>
+              <label class="switch-control">
+                <input
+                  type="checkbox"
+                  :checked="hapticsOn"
+                  :aria-label="'触觉反馈，' + (hapticsOn ? '已开启' : '已关闭')"
+                  @change="toggleHaptics"
+                />
+                <span aria-hidden="true"></span>
+                <em>{{ hapticsOn ? '已开启' : '已关闭' }}</em>
+              </label>
+            </div>
+          </SettingsGroup>
           <SearchPanel anchor="data-synonyms" />
         </section>
 
@@ -190,6 +218,7 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import Icon from '../components/Icon.vue';
 import DomainHead from '../components/settings/DomainHead.vue';
+import SettingsGroup from '../components/settings/SettingsGroup.vue';
 /* 各面板按大类懒加载：静态 import 会把 17 块面板（含同步轮询、更新面板、存储列表）
    全部塞进设置页的同一份包里；异步组件让每块的代码按需下载，首访某个大类时才挂载。 */
 const AccountPanel = defineAsyncComponent(() => import('../components/settings/AccountPanel.vue'));
@@ -220,6 +249,8 @@ import {
 } from '../lib/settingsDomains';
 import { expandGroup } from '../lib/settingsCollapse';
 import { registerBackHandler } from '../lib/androidBack';
+import { haptic, isHapticsEnabled, setHapticsEnabled } from '../lib/haptics';
+import { notify } from '../lib/notify';
 import { useAppStore } from '../stores/app';
 import { useAppUpdateStore } from '../stores/appUpdate';
 import { useSyncStore } from '../stores/sync';
@@ -264,6 +295,22 @@ const mobileLayout = ref(mobileMedia.matches);
 const mobileSection = ref<SettingsDomainId | null>(null);
 const mobileListVisible = computed(() => mobileLayout.value && mobileSection.value === null);
 const mobileSubpageVisible = computed(() => mobileLayout.value && mobileSection.value !== null);
+
+/* ---------- 外观子页：触觉反馈开关（2026-11 安卓改版） ----------
+ * 「轻振仅用于入库、删除、切换等动作」：只给有状态变化的主操作振动，滚动/输入不振动，
+ * 所以这里不做「测试振动」按钮，打开开关时当场振一下就是样本。
+ * 默认开；关闭后 lib/haptics 的 haptic() 全部静默（业务动作本身照常执行）。
+ */
+const hapticsOn = ref(isHapticsEnabled());
+
+function toggleHaptics(event: Event) {
+  const on = (event.target as HTMLInputElement).checked;
+  hapticsOn.value = on;
+  setHapticsEnabled(on);
+  // 打开时立刻给一次轻振：让用户马上知道「轻振」是哪种反馈；关闭时当然不再振
+  if (on) haptic('tap');
+  notify.success(on ? '触觉反馈：已开启' : '触觉反馈：已关闭');
+}
 
 /**
  * 手机端分组列表的固定顺序与手机端叫法。

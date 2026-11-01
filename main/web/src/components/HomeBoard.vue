@@ -3,7 +3,7 @@
   <div
     ref="boardEl"
     class="board"
-    :class="{ 'editing-board': store.editing }"
+    :class="{ 'editing-board': store.editing, 'mobile-edit': mobileEditing }"
     :style="{ '--board-cols': displayColumns, '--grid-row-h': `${unit}px` }"
   >
     <div class="board-cq">
@@ -32,14 +32,16 @@
     <!-- 编辑态工具条：加模块 / 排整齐 / 紧凑 / 恢复默认 -->
     <div v-if="store.editing" class="manage-bar">
       <span class="manage-hint">
-        拖动卡片 = 换位置；拖右下角 = 改大小；方向键微调、Shift+方向键改尺寸。
+        <template v-if="mobileEditing">用每张卡右上角的 ↑ ↓ 调顺序、眼睛图标隐藏卡片；改动会自动保存，可用「撤销」回退。</template>
+        <template v-else>拖动卡片 = 换位置；拖右下角 = 改大小；方向键微调、Shift+方向键改尺寸。</template>
       </span>
       <div class="manage-spacer" />
       <button class="manage-btn" type="button" :disabled="!store.history.length" @click="store.undo()">撤销</button>
-      <button class="manage-btn" type="button" title="把卡片往上收，消掉中间的空洞" @click="store.compact()">
+      <!-- 紧凑 / 排整齐动的是桌面栅格坐标，手机编辑态没有意义：不给误触 -->
+      <button v-if="!mobileEditing" class="manage-btn" type="button" title="把卡片往上收，消掉中间的空洞" @click="store.compact()">
         <Icon name="merge" :size="14" /><span>紧凑</span>
       </button>
-      <button class="manage-btn" type="button" title="按当前顺序从左到右、从上到下重排一遍" @click="store.autoArrange()">
+      <button v-if="!mobileEditing" class="manage-btn" type="button" title="按当前顺序从左到右、从上到下重排一遍" @click="store.autoArrange()">
         <Icon name="refresh" :size="14" /><span>排整齐</span>
       </button>
       <button class="manage-btn primary" type="button" :disabled="store.board.modules.length >= MAX_MODULES" @click="toggleAdd">
@@ -72,13 +74,13 @@
       v-if="store.board.modules.length"
       ref="gridFrameEl"
       class="board-grid-frame"
-      :style="mobileBoard ? undefined : { height: `${canvasHeight}px` }"
+      :style="mobileCanvas ? undefined : { height: `${canvasHeight}px` }"
     >
     <div
       ref="gridEl"
       class="board-grid"
       :class="{ editing: store.editing }"
-      :style="{ '--grid-rows': gridRows, transform: mobileBoard ? undefined : `scale(${boardScale})` }"
+      :style="{ '--grid-rows': gridRows, transform: mobileCanvas ? undefined : `scale(${boardScale})` }"
     >
       <div
         v-for="entry in boardModules"
@@ -93,14 +95,43 @@
         :data-module-id="entry.module.id"
         tabindex="-1"
       >
+        <!-- 手机编辑：每张卡三个 44dp 按钮（上移 / 下移 / 隐藏），不做拖拽 -->
+        <div v-if="mobileEditing" class="widget-tools" @pointerdown.stop @click.stop>
+          <button
+            type="button"
+            class="widget-tool"
+            :disabled="(mobileIndexById.get(entry.module.id) ?? 0) === 0"
+            :aria-label="`上移「${entry.title}」`"
+            @click.stop="moveMobileModule(entry.module, -1)"
+          >
+            <Icon name="chevron-up" :size="18" />
+          </button>
+          <button
+            type="button"
+            class="widget-tool"
+            :disabled="(mobileIndexById.get(entry.module.id) ?? 0) === mobileOrdered.length - 1"
+            :aria-label="`下移「${entry.title}」`"
+            @click.stop="moveMobileModule(entry.module, 1)"
+          >
+            <Icon name="chevron-down" :size="18" />
+          </button>
+          <button
+            type="button"
+            class="widget-tool danger"
+            :aria-label="`隐藏「${entry.title}」`"
+            @click.stop="hideMobileModule(entry.module)"
+          >
+            <Icon name="eye-off" :size="18" />
+          </button>
+        </div>
         <HomeModuleShell
           :kind="entry.module.kind"
           :title="entry.title"
-          :width="entry.place.w"
+          :width="mobileEditing ? 12 : entry.place.w"
           :height="entry.place.h"
           :capture-style="Number(entry.module.opts.captureStyle) || 2"
           :limit="entry.hasLimit ? entry.limit : undefined"
-          :managing="store.editing"
+          :managing="store.editing && !mobileEditing"
           :dragging="dragId === entry.module.id"
           :target="dragId === entry.module.id"
           :summary="summaryOf(entry.module)"
@@ -228,6 +259,7 @@ import {
   viewportPlaces,
   type GridPlace,
 } from '../lib/homeGrid.ts';
+import { WINDOW_SIZE_EXPANDED } from '../lib/windowSizeClass.ts';
 import { boardView, filterCards, EMPTY_FILTER } from '../lib/taskBoard.ts';
 import { pendingDistillOf, pendingDistillLabel, rawMaterialRoute, ratioRows } from '../lib/homeBoard.ts';
 import type { HomeCardSummary, HomeCardRow } from '../lib/homeCardPresentation.ts';
@@ -437,6 +469,11 @@ function onAdd(kind: ModuleKind) {
     notify.info(`首页最多 ${MAX_MODULES} 块模块`);
     return;
   }
+  // 手机编辑：新卡片补到手机顺序末尾（之前改过顺序的保持不动）
+  if (mobileEditing.value) {
+    const added = store.board.modules.at(-1);
+    if (added) persistMobileOrder([...mobileOrderList().filter((module) => module.id !== added.id), added]);
+  }
   // 新模块落在末尾：下一帧把它滚进视野，否则「点了没反应」
   void nextTick(() => {
     const last = store.board.modules.at(-1);
@@ -455,7 +492,10 @@ async function onRemove(module: HomeModule) {
     confirmText: '删除',
     danger: true,
   });
-  if (ok) store.remove(module.id);
+  if (!ok) return;
+  store.remove(module.id);
+  // 手机编辑：删掉一张后把顺序重新编号，避免 mobileOrder 出现空洞
+  if (mobileEditing.value) persistMobileOrder(mobileOrderList());
 }
 
 async function onRename(module: HomeModule) {
@@ -510,12 +550,103 @@ const gridWidth = ref(GRID_CANVAS_WIDTH);
 const availableWidth = ref(GRID_CANVAS_WIDTH);
 const mobileMedia = window.matchMedia('(max-width: 768px)');
 const mobileBoard = ref(mobileMedia.matches);
-// 桌面浏览/编辑共用固定画布；只在手机浏览态按可用空间重排。
-const displayColumns = computed(() => !mobileBoard.value || store.editing ? GRID_COLS : viewportColumns(gridWidth.value));
-const displayPlaces = computed(() => viewportPlaces((previewBoard.value || store.board).modules, displayColumns.value));
-const unit = computed(() => Math.max(1, (gridWidth.value - 14 * (displayColumns.value - 1)) / displayColumns.value));
+/*
+ * 手机编辑（2026-11 安卓改版）：≤839（compact + medium）不再强塞 1056px 画布横拖，
+ * 改成「单列 + 每张卡上移/下移/隐藏」；桌面（≥840）仍是原来的拖拽/缩放编辑，零改动。
+ * 顺序写在每个模块的 opts.mobileOrder 里：跟着 home_layout 同一份 JSON 落盘（服务端 + localStorage），
+ * 桌面布局读的是 col/row，两套互不干扰；没改过顺序的设备按原视觉顺序（行优先）回退，观感不变。
+ */
+const viewportWidth = ref(window.innerWidth);
+const mobileEditWidth = computed(() => viewportWidth.value < WINDOW_SIZE_EXPANDED);
+const mobileEditing = computed(() => store.editing && mobileEditWidth.value);
+/** 手机浏览/编辑走「按内容宽度重排」的窄画布；桌面浏览/编辑仍是固定 12 列画布 */
+const mobileCanvas = computed(() => mobileBoard.value || mobileEditing.value);
+/** 手机编辑的单列行高：与桌面一格同量级，卡片高度仍按原来的 h（行数） */
+const MOBILE_EDIT_ROW_H = 76;
+
+/** 手机浏览顺序：opts.mobileOrder 优先，否则按原视觉顺序（行优先） */
+function mobileOrderList(): HomeModule[] {
+  const modules = store.board.modules;
+  const visualRank = new Map<string, number>();
+  modules
+    .map((module, index) => ({ module, index }))
+    .sort((a, b) => a.module.row - b.module.row || a.module.col - b.module.col || a.index - b.index)
+    .forEach((entry, at) => visualRank.set(entry.module.id, at));
+  // 已经有一张卡改过手机顺序后，桌面端后加的卡（没有 mobileOrder）统一排在自定义顺序之后，
+  // 免得它的「视觉名次」和 0..N-1 的自定义序号撞在一起、插到某张卡前面。
+  const hasCustom = modules.some((module) => Number.isFinite(Number(module.opts.mobileOrder)));
+  const orderOf = (module: HomeModule) => {
+    const custom = Number(module.opts.mobileOrder);
+    if (Number.isFinite(custom)) return custom;
+    const rank = visualRank.get(module.id) ?? 0;
+    return hasCustom ? 1000 + rank : rank;
+  };
+  return [...modules].sort(
+    (a, b) => orderOf(a) - orderOf(b) || (visualRank.get(a.id) ?? 0) - (visualRank.get(b.id) ?? 0)
+  );
+}
+const mobileOrdered = computed(() => mobileOrderList());
+const mobileIndexById = computed(() => new Map(mobileOrdered.value.map((module, index) => [module.id, index])));
+
+/** 手机顺序统一写进 opts.mobileOrder：一次 commit = 一次落盘，桌面 col/row 原样不动 */
+function persistMobileOrder(ordered: HomeModule[]) {
+  const position = new Map(ordered.map((module, index) => [module.id, index]));
+  const modules = store.board.modules.map((module) => ({
+    ...module,
+    opts: { ...module.opts, mobileOrder: position.get(module.id) ?? 0 },
+  }));
+  store.commit({ ...store.board, modules });
+}
+
+/** 上移 / 下移一格：只在相邻两张之间换序（不引入拖拽） */
+function moveMobileModule(module: HomeModule, step: -1 | 1) {
+  const ordered = [...mobileOrderList()];
+  const at = ordered.findIndex((item) => item.id === module.id);
+  const target = at + step;
+  if (at < 0 || target < 0 || target >= ordered.length) return;
+  [ordered[at], ordered[target]] = [ordered[target], ordered[at]];
+  persistMobileOrder(ordered);
+}
+
+/** 隐藏：从首页移除这张卡（与桌面「移除」同一个 store.commit 通道，保留「撤销」历史） */
+function hideMobileModule(module: HomeModule) {
+  const remaining = mobileOrderList().filter((item) => item.id !== module.id);
+  const position = new Map(remaining.map((item, index) => [item.id, index]));
+  const modules = store.board.modules
+    .filter((item) => item.id !== module.id)
+    .map((item) => ({ ...item, opts: { ...item.opts, mobileOrder: position.get(item.id) ?? 0 } }));
+  store.commit({ ...store.board, modules });
+}
+
+// 桌面浏览/编辑共用固定画布；手机浏览按可用空间重排，手机编辑固定单列。
+const displayColumns = computed(() => {
+  if (mobileEditing.value) return 1;
+  return !mobileBoard.value || store.editing ? GRID_COLS : viewportColumns(gridWidth.value);
+});
+const displayPlaces = computed(() => {
+  const modules = (previewBoard.value || store.board).modules;
+  if (mobileCanvas.value) {
+    // 手机：row 传「手机顺序序号」，viewportPlaces 会按它排序并顺次填空
+    const indexById = new Map(mobileOrdered.value.map((module, index) => [module.id, index]));
+    const places = modules.map((module, index) => ({
+      col: 0,
+      row: indexById.get(module.id) ?? index,
+      w: module.w,
+      h: module.h,
+    }));
+    return viewportPlaces(places, displayColumns.value);
+  }
+  return viewportPlaces(
+    modules.map((module) => ({ col: module.col, row: module.row, w: module.w, h: module.h })),
+    displayColumns.value
+  );
+});
+const unit = computed(() => {
+  if (mobileEditing.value) return MOBILE_EDIT_ROW_H;
+  return Math.max(1, (gridWidth.value - 14 * (displayColumns.value - 1)) / displayColumns.value);
+});
 const gridRows = computed(() => Math.max(2, usedRows(displayPlaces.value)));
-const boardScale = computed(() => mobileBoard.value ? 1 : canvasScale(availableWidth.value));
+const boardScale = computed(() => (mobileCanvas.value ? 1 : canvasScale(availableWidth.value)));
 const canvasHeight = computed(() => (gridRows.value * (unit.value + 14) - 14) * boardScale.value);
 let frameObserver: ResizeObserver | null = null;
 watch(gridFrameEl, (el) => {
@@ -544,6 +675,8 @@ function preventTouchScroll(event: TouchEvent) { if (gesture) event.preventDefau
 function beginGesture(event: PointerEvent, id: string, mode: 'move' | 'resize') {
   if (gesture || event.button !== 0) return;
   if (!store.editing && event.pointerType !== 'touch') return;
+  // 手机编辑没有拖拽：长按/拖动的等价入口是卡片右上角的 ↑ ↓（顺序写 mobileOrder）
+  if (mobileEditing.value) return;
   // 手机先切回完整列数编辑画布，下一次拖动再使用稳定坐标。
   if (!store.editing && displayColumns.value < GRID_COLS) { store.setEditing(true); return; }
   const module = store.board.modules.find((m) => m.id === id);
@@ -616,7 +749,7 @@ watch(boardScale, () => { if (gesture) onGestureEnd(); });
 
 /** 键盘微调：方向键挪位、Shift+方向键改尺寸（触屏与键盘用户的等价入口） */
 function onModuleKey(module: HomeModule, dx: number, dy: number, resize: boolean) {
-  if (!store.editing) return;
+  if (!store.editing || mobileEditing.value) return;
   const index = store.board.modules.findIndex((item) => item.id === module.id);
   if (index < 0) return;
   const next = resize ? resizeModuleBy(store.board, index, dx, dy) : moveModuleBy(store.board, index, dx, dy);
@@ -662,8 +795,13 @@ function onBoardViewportChange(event: MediaQueryListEvent) {
   onGestureEnd();
   mobileBoard.value = event.matches;
 }
+/** 视口宽度：判「手机编辑」用（≤839 单列排序，≥840 仍是桌面拖拽编辑） */
+function onViewportResize() {
+  viewportWidth.value = window.innerWidth;
+}
 onMounted(() => {
   mobileMedia.addEventListener('change', onBoardViewportChange);
+  window.addEventListener('resize', onViewportResize);
   window.addEventListener('keydown', onBoardKey);
   window.addEventListener('focus', refreshQueue);
   document.addEventListener('visibilitychange', refreshQueue);
@@ -673,6 +811,7 @@ onMounted(() => {
 onUnmounted(() => {
   summaryScope.stop();
   mobileMedia.removeEventListener('change', onBoardViewportChange);
+  window.removeEventListener('resize', onViewportResize);
   clearInterval(queueTimer);
   window.removeEventListener('focus', refreshQueue);
   document.removeEventListener('visibilitychange', refreshQueue);
@@ -956,6 +1095,57 @@ onUnmounted(() => {
   .manage-bar { flex-wrap: wrap; }
   .manage-hint { width: 100%; }
 }
+
+/* ===== 手机编辑（2026-11 安卓改版）：单列 + 每张卡「上移 / 下移 / 隐藏」，不引入拖拽 =====
+ * 只在 .mobile-edit（≤839 且编辑态）命中；桌面编辑的栅格拖拽 / 缩放规则一个字没动。 */
+.board.mobile-edit { overflow-x: hidden; }
+
+.board.mobile-edit .board-inner {
+  /* 手机编辑不再强塞 930px 画布：覆盖 ≤768 兜底块里的 min-width */
+  min-width: 0;
+  max-width: 100%;
+}
+
+.board.mobile-edit .board-grid {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+/* 单列不画栅格线：列表语义下格子线只会让人以为还能拖 */
+.board.mobile-edit .board-grid.editing { background-image: none; }
+
+.board.mobile-edit .widget { position: relative; }
+
+/* 每张卡的三个编辑按钮：44dp 触控热区，贴在卡片右上角（不占卡片内容布局） */
+.widget-tools {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 4;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-raised);
+}
+
+.widget-tool {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: var(--text-secondary);
+}
+
+.widget-tool:active { background: var(--press-bg); }
+.widget-tool.danger { color: var(--danger); }
+.widget-tool:disabled { opacity: 0.35; }
 @media (prefers-reduced-motion: reduce) {
   .layout-btn,
   .manage-btn,

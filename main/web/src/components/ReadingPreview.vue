@@ -209,6 +209,19 @@
         <Icon name="more" :size="17" />
         <span class="more-label">更多</span>
       </button>
+
+      <!-- 手机档顶部阅读进度细线：从顶部 0 读到 100%，2px，跟随吸顶工具栏一起停住 -->
+      <div
+        v-if="narrowReader"
+        class="reading-progress"
+        role="progressbar"
+        aria-label="阅读进度"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-valuenow="readProgress"
+      >
+        <i :style="{ width: readProgress + '%' }" />
+      </div>
     </header>
 
     <div class="reading-grid">
@@ -324,6 +337,19 @@
         </template>
       </RelatedMenu>
     </div>
+
+    <!-- 手机档右下「编辑」主按钮：贴安全区、位于底部导航上方，点击退回编辑（与顶栏「返回编辑」同一动作）。
+         桌面档不渲染：宽屏用顶部「返回编辑」即可，多一个悬浮按钮只会压正文。 -->
+    <button
+      v-if="narrowReader"
+      class="reading-edit-fab"
+      type="button"
+      aria-label="编辑这一页"
+      @click="closeReading"
+    >
+      <Icon name="pencil" :size="18" />
+      <span>编辑</span>
+    </button>
   </section>
 </template>
 
@@ -435,6 +461,8 @@ const displayWrapEl = ref<HTMLElement>();
 const displayMenuOpen = ref(false);
 const outline = ref<OutlineItem[]>([]);
 const currentHeading = ref('');
+/* 手机档顶部阅读进度：0–100（滚动到文末 = 100）。桌面不渲染这条线，但值照常算，几乎零成本 */
+const readProgress = ref(0);
 const rendering = ref(false);
 const mobileOutlineOpen = ref(false);
 const moreOpen = ref(false);
@@ -1112,9 +1140,20 @@ function visibleHeadings(): HTMLElement[] {
     .filter((heading) => heading.offsetParent !== null);
 }
 
+/** 阅读进度 0–100：.reading-preview 自己就是滚动容器（scrollHeight 与 clientHeight 都取它） */
+function updateReadProgress() {
+  const reader = readerEl.value;
+  if (!reader) return;
+  const max = reader.scrollHeight - reader.clientHeight;
+  // 内容不足一屏（或刚好一屏）时没有可滚区间：按 0 显示，不假装读完了
+  const next = max > 8 ? Math.min(100, Math.max(0, Math.round((reader.scrollTop / max) * 100))) : 0;
+  if (next !== readProgress.value) readProgress.value = next;
+}
+
 function updateCurrentHeading() {
   cancelAnimationFrame(scrollFrame);
   scrollFrame = requestAnimationFrame(() => {
+    updateReadProgress();
     // 被收起的小节不在视口里参与「当前标题」判定（display:none 的 rect 会退化成 0）
     const headings = visibleHeadings();
     let current = headings[0]?.id || '';
@@ -1173,6 +1212,7 @@ function scheduleTailSpace() {
 function handleLayoutChange() {
   measureLayout();
   scheduleTailSpace();
+  updateReadProgress();
 }
 
 /* 跨断点换形态：目录从常驻列变浮层（或反过来）时收起面板状态，
@@ -1291,6 +1331,25 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 94%, transparent);
   backdrop-filter: blur(12px);
+}
+/* 手机档顶部阅读进度细线：贴在吸顶工具栏的下沿（sticky 元素是绝对定位的包含块，
+   滚动时跟着工具栏一起停住），2px、强调色；桌面档不渲染这条线，样式不参与桌面布局 */
+.reading-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  overflow: hidden;
+  background: var(--border);
+  pointer-events: none;
+}
+.reading-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 80ms linear;
 }
 /* 只作用于步进按钮本身：用直接子选择器，避免样式漏进字号下拉里的 option 按钮 */
 .reading-tool,
@@ -2224,11 +2283,47 @@ onBeforeUnmount(() => {
   }
   /* 与编辑态 .statusbar 同一个留白来源：正文区已经为底部导航（Home.vue .bottom-nav）让出
      64px + 系统手势条，胶囊只再加 --statusbar-gap（手机档 8px）。
-     安全区只在正文区算一次——这里再加一次会让胶囊比底部导航高出整整一条系统栏 */
+     安全区只在正文区算一次——这里再加一次会让胶囊比底部导航高出整整一条系统栏。
+     右侧给「编辑」FAB 让出 106px：胶囊和 FAB 同处一行，不能让按钮压住字数/关联 */
   .reading-statusbar {
     bottom: var(--statusbar-gap);
     margin: 0 10px var(--statusbar-gap);
-    max-width: calc(100% - 20px);
+    max-width: calc(100% - 116px);
+  }
+  .reading-stat {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .reading-rel { flex: none; }
+  /* 手机档右下「编辑」主按钮：贴右缘与安全区，落在底部导航（56px）上方，不压正文。
+     正文底部留白同步加到 104px，滚到文末时最后一行不会被 FAB 盖住 */
+  .reading-edit-fab {
+    position: fixed;
+    right: calc(16px + var(--safe-right));
+    bottom: calc(68px + var(--safe-bottom));
+    z-index: var(--z-popup);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 52px;
+    padding: 0 18px 0 15px;
+    border: 0;
+    border-radius: 16px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    box-shadow: var(--shadow-card);
+    transition: transform 0.12s ease, background 0.12s ease;
+  }
+  .reading-edit-fab:active {
+    transform: scale(0.97);
+    background: var(--accent-pressed);
+  }
+  .reading-grid {
+    padding-bottom: 104px;
   }
 }
 @media (max-width: 640px) {
@@ -2270,7 +2365,8 @@ onBeforeUnmount(() => {
     justify-content: center;
   }
   .display-tool-label { display: inline; }
-  .reading-grid { padding: 20px 16px 46px; }
+  /* 底部留白同时给「编辑」FAB 让位（与 ≤768 档同一口径，后面这条会覆盖上面的值） */
+  .reading-grid { padding: 20px 16px 104px; }
 }
 
 /* 触屏（无 hover、指针粗）：本组件原有热区只有 22–34px，手机上点不准。

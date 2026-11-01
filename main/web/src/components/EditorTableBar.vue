@@ -43,6 +43,18 @@
         </svg>
       </button>
     </span>
+    <span class="tb-sep tb-sep--more" aria-hidden="true"></span>
+    <!-- 更多：行/列两组放不下的整表操作（删除表格等）收进底部面板；内联按钮保持不动 -->
+    <button
+      type="button"
+      class="tb-more"
+      aria-label="更多表格操作"
+      aria-haspopup="dialog"
+      v-tooltip="'更多表格操作'"
+      @click="emit('more')"
+    >
+      更多
+    </button>
   </div>
 </template>
 
@@ -58,7 +70,11 @@ const props = defineProps<{
   row: number;
 }>();
 
-const emit = defineEmits<{ (e: 'action', action: TableEditAction): void }>();
+const emit = defineEmits<{
+  (e: 'action', action: TableEditAction): void;
+  /** 「更多」：整表级操作（删除表格等）由父级弹底部面板 */
+  (e: 'more'): void;
+}>();
 
 interface ActionItem {
   action: TableEditAction;
@@ -142,6 +158,8 @@ const columnActions: ActionItem[] = [
   margin: 0 3px;
   background: var(--border);
 }
+/* 「更多」的分隔线跟着按钮一起只在手机档出现 */
+.tb-sep--more { display: none; }
 .tb-btn {
   width: 24px;
   height: 24px;
@@ -160,6 +178,26 @@ const columnActions: ActionItem[] = [
 .tb-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .tb-btn:disabled:hover { background: transparent; color: var(--text-secondary); }
 .tb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 「更多」是个短文字按钮：不抢行/列图标的视觉权重，但热区同样到 44（触屏档） */
+.tb-more {
+  /* 桌面不渲染：整表操作是手机档入口，桌面端行为保持原样 */
+  display: none;
+  flex: none;
+  min-width: 38px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tb-more:hover { background: var(--bg-hover); color: var(--text); }
+.tb-more:active { color: var(--accent); }
+.tb-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @keyframes table-bar-in {
   from { opacity: 0; transform: translateY(2px); }
   to { opacity: 1; transform: translateY(0); }
@@ -168,11 +206,18 @@ const columnActions: ActionItem[] = [
 @media (hover: none) and (pointer: coarse) {
   .tb-btn { width: 44px; height: 44px; border-radius: 8px; }
   .tb-btn svg { width: 17px; height: 17px; }
+  .tb-more { min-width: 44px; height: 44px; border-radius: 8px; font-size: 13px; }
   .tb-sep { height: 24px; }
   .tb-label { font-size: 11.5px; }
 }
 /* 手机档：行 / 列两组在窄屏上一行放不下时横向滚动，不换行（换行会把浮条撑高、压住表格） */
 @media (max-width: 768px) {
+  .tb-more {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tb-sep--more { display: block; }
   .table-bar {
     flex-wrap: nowrap;
     max-width: calc(100% - 8px);
@@ -186,7 +231,8 @@ const columnActions: ActionItem[] = [
   .tb-group,
   .tb-btn,
   .tb-label,
-  .tb-sep { flex: none; }
+  .tb-sep,
+  .tb-more { flex: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .table-bar { animation: none; }

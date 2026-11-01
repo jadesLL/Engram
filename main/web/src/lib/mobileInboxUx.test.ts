@@ -128,3 +128,108 @@ test('⑤ 触觉反馈：删除/入库成功各叫一次，手势提交有确认
   );
   assert.match(source, /if \(saved\) \{\s*haptic\('success'\);/, '批量入库成功没有 success 振动');
 });
+
+test('⑥ 长按多选：500ms 进选择态、全选只勾可见条目、批量动作串行复用既有接口', () => {
+  // 长按阈值与「移动就取消」：按住不动 500ms 才进选择态，滑动先取消计时
+  assert.match(source, /const LONG_PRESS_MS = 500;/, '长按阈值不是 500ms');
+  assert.match(source, /const LONG_PRESS_MOVE_PX = 10;/, '没有「移动超阈值就取消长按」的常量');
+  assert.match(
+    source,
+    /longPressTimer = setTimeout\(\(\) => \{[\s\S]{0,500}?enterSelectMode\(item\);[\s\S]{0,40}?\}, LONG_PRESS_MS\);/,
+    '长按没有在 500ms 后进入选择态',
+  );
+  assert.match(
+    source,
+    /if \(Math\.abs\(dx\) > LONG_PRESS_MOVE_PX \|\| Math\.abs\(dy\) > LONG_PRESS_MOVE_PX\) cancelLongPress\(\);/,
+    '手指移动后没有取消长按：滑一半会掉进选择态',
+  );
+  assert.match(
+    source,
+    /function enterSelectMode\(item: InboxItem\): void \{[\s\S]{0,500}?haptic\('tap'\);/,
+    '进入选择态没有触觉提示',
+  );
+
+  // 选择态与手势互斥：进入后不再接管滑动手势，卡片堆也让位给多选列表
+  assert.match(
+    source,
+    /function onCardPointerDown\(event: PointerEvent\): void \{\s*\/\/ 选择态与手势互斥[\s\S]{0,140}?if \(selectMode\.value\) return;/,
+    '选择态下没有停用卡片手势：多选时误滑会把条目滑走',
+  );
+  assert.match(source, /v-if="view === 'stack' && !selectMode"/, '选择态没有把卡片堆藏起来');
+
+  // 顶栏：取消 / 已选 N 条 / 全选；全选只作用于当前可见列表
+  for (const text of ['取消', '已选 {{ selectedPaths.length }} 条', '全选']) {
+    assert.ok(source.includes(text), '选择态顶栏缺「' + text + '」');
+  }
+  assert.match(
+    source,
+    /const selectableItems = computed<InboxItem\[\]>\(\(\) => sortedActive\.value\);/,
+    '选择态列表不是当前可见条目：全选会勾到看不见的条目',
+  );
+  assert.match(
+    source,
+    /selectedPaths\.value = allSelected\.value \? \[\] : selectablePaths\.value\.slice\(\);/,
+    '全选没有按可见列表勾选',
+  );
+
+  // 批量入库：已转换的串行 adopt；待整理的走既有批量 convert；进度写进选择态副标题
+  assert.match(
+    source,
+    /await inbox\.adopt\(item\.path\);[\s\S]{0,160}?batchProgress\.value = \{ done: batchProgress\.value\.done \+ 1/,
+    '批量入库没有串行调用单条入库并记录进度',
+  );
+  assert.match(
+    source,
+    /inbox\.convert\(convertible\.map\(\(item\) => item\.path\)\)/,
+    '待整理的选中项没有交给现有的批量转换接口',
+  );
+  assert.match(source, /batchBusy\.value === 'adopt'/, '没有批量入库进行中状态');
+
+  // 批量回收站：逐条 remove + 一次找回回收站 id 供 Snackbar 撤销
+  assert.match(
+    source,
+    /for \(const item of items\) \{\s*try \{\s*await inbox\.remove\(item\.path\);/,
+    '批量回收站没有逐条调用现有删除接口',
+  );
+  assert.match(source, /async function trashIdsFor\(paths: string\[\]\)/, '批量删除后没有找回回收站 id：无法撤销');
+  assert.match(source, /api\.post\('\/api\/trash\/restore', \{ ids \}\)/, '批量撤销没有走回收站恢复接口');
+
+  // 打标签：服务端没有收集箱条目标签接口 → 按钮置灰并写明原因（任务允许的降级）
+  assert.match(
+    source,
+    /class="mi-bar-sub" type="button" disabled title="暂不可用：收集箱条目不是知识库页面/,
+    '打标签没有标为不可用并说明',
+  );
+  assert.ok(
+    source.includes('打标签暂不可用：收集箱条目不是知识库页面；入库后到页面里打标签。'),
+    '选择态里没有可见的「打标签不可用」原因',
+  );
+
+  // 长按松手那次 click 可能落到刚渲染的列表行上：要有短守卫，别一松手就把刚选中的行点掉
+  assert.match(
+    source,
+    /if \(Date\.now\(\) < selectGuardUntil\) return;/,
+    '长按松手后的 click 没有兜底：刚进选择态会立刻把选中的行点掉',
+  );
+
+  // 退出：取消按钮 / Esc / 安卓返回键；批量请求进行中不中途退出
+  assert.match(source, /@click="exitSelectMode">取消/, '顶栏「取消」没有退出选择态');
+  assert.match(source, /if \(selectMode\.value && !batchBusy\.value\) exitSelectMode\(\);/, 'Esc 没有退出选择态');
+  assert.match(
+    source,
+    /if \(selectMode\.value\) \{[\s\S]{0,200}?if \(!batchBusy\.value\) exitSelectMode\(\);/,
+    '安卓返回键没有退出选择态',
+  );
+
+  // 触控：行高 ≥44、勾选框 ::after 补到 44、选中行背景 accent-soft、不做长动画
+  const row = ruleBody('.mi-select-row');
+  const rowHeight = Number((row.match(/min-height:\s*(\d+)px/) || [])[1] || 0);
+  assert.ok(rowHeight >= 44, '选择态行高不到 44px：手机上手指标不准');
+  assert.match(ruleBody('.mi-select-row.is-on'), /background:\s*var\(--accent-soft\)/, '选中行背景没用 accent-soft');
+  assert.doesNotMatch(row, /transition:/, '选中态不要长动画：行背景不该有过渡');
+  assert.match(ruleBody('.mi-checkbox'), /width:\s*24px/, '勾选框视觉尺寸变了');
+  const checkboxAfter = ruleBody('.mi-checkbox::after');
+  assert.match(checkboxAfter, /content:\s*''/, '勾选框没有扩热区伪元素');
+  assert.match(checkboxAfter, /left:\s*-10px/, '勾选框没有把命中区补到 44px');
+  assert.match(ruleBody('.mi-bar-select'), /grid-template-columns/, '批量动作条没有独立列宽');
+});

@@ -1,6 +1,20 @@
 <template>
   <div class="mob-inbox" ref="rootEl" :style="shellStyle">
-    <header class="mi-head">
+    <!-- 选择态顶栏：取消 / 已选 N 条 / 全选（长按卡片 500ms 进入） -->
+    <header v-if="selectMode" class="mi-head mi-head-select">
+      <button class="mi-select-cancel" type="button" :disabled="Boolean(batchBusy)" @click="exitSelectMode">取消</button>
+      <div class="mi-head-main">
+        <h1 class="mi-title">已选 {{ selectedPaths.length }} 条</h1>
+        <p class="mi-sub">{{ selectSubline }}</p>
+      </div>
+      <button
+        class="mi-select-all"
+        type="button"
+        :disabled="!selectableItems.length || Boolean(batchBusy)"
+        @click="toggleSelectAll"
+      >{{ allSelected ? '取消全选' : '全选' }}</button>
+    </header>
+    <header v-else class="mi-head">
       <div class="mi-head-main">
         <h1 class="mi-title">{{ view === 'groups' ? '按来源分组' : '收集箱' }}</h1>
         <p class="mi-sub">{{ view === 'groups' ? groupsSubline : subline }}</p>
@@ -44,8 +58,9 @@
       <button type="button" aria-label="收起提示" @click="actionHint = null">×</button>
     </div>
 
-    <!-- 卡片台：最新一条在最上面，右滑主操作 / 左滑移入回收站 / 点按看详情；纵向滚动交还浏览器 -->
-    <template v-if="view === 'stack'">
+    <!-- 卡片台：最新一条在最上面，右滑主操作 / 左滑移入回收站 / 点按看详情；纵向滚动交还浏览器
+         长按 500ms 进选择态：卡片堆只露三张，多选改成整列可见条目（见下面的选择态模板） -->
+    <template v-if="view === 'stack' && !selectMode">
       <button v-if="sortedActive.length" class="mi-groups-entry" type="button" @click="view = 'groups'">
         <span class="mi-groups-ic"><Icon name="list-tree" :size="16" /></span>
         <span class="mi-groups-text">
@@ -96,6 +111,7 @@
               @pointermove="onCardPointerMove"
               @pointerup="onCardPointerUp"
               @pointercancel="onCardPointerCancel"
+              @contextmenu.prevent
               @click="onCardClick"
               @keydown.enter.prevent="onCardEnter"
               @keydown.space.prevent="onCardEnter"
@@ -128,7 +144,7 @@
           </div>
           <div class="mi-gesture">
             <Icon name="move-diagonal" :size="14" />
-            <span>右滑{{ mainLabel(front) }} · 左滑移入回收站 · 点按看详情</span>
+            <span>右滑{{ mainLabel(front) }} · 左滑移入回收站 · 长按多选 · 点按看详情</span>
           </div>
         </div>
 
@@ -158,6 +174,72 @@
           </button>
         </div>
       </template>
+    </template>
+
+    <!-- 选择态：长按卡片进入。勾选框在每行左侧（≥44dp 热区），底栏换成批量动作 -->
+    <template v-else-if="selectMode">
+      <div v-if="!selectableItems.length" class="mi-empty">
+        <div class="mi-zero"><Icon name="check" :size="34" /></div>
+        <h2>没有可选的条目</h2>
+        <p>收集箱里没有待整理的条目了。</p>
+        <button class="btn primary mi-empty-btn" type="button" @click="exitSelectMode">退出多选</button>
+      </div>
+
+      <div v-else class="mi-select-list" role="group" aria-label="选择要批量处理的条目">
+        <button
+          v-for="item in selectableItems"
+          :key="item.path"
+          class="mi-select-row"
+          :class="{ 'is-on': isSelected(item.path) }"
+          type="button"
+          role="checkbox"
+          :aria-checked="isSelected(item.path)"
+          :disabled="Boolean(batchBusy)"
+          @click="toggleSelect(item.path)"
+        >
+          <span class="mi-checkbox" :class="{ 'is-on': isSelected(item.path) }" aria-hidden="true">
+            <Icon v-if="isSelected(item.path)" name="check" :size="14" />
+          </span>
+          <span class="mi-select-thumb" :class="coverClass(item)">
+            <Icon :name="coverIcon(item)" :size="18" />
+          </span>
+          <span class="mi-select-main">
+            <b>{{ cardTitle(item) }}</b>
+            <small>{{ statusLabel(item) }} · {{ sourceLabel(item) }} · {{ fromNow(item.mtime) }}</small>
+          </span>
+        </button>
+      </div>
+
+      <p class="mi-select-note">
+        <Icon name="lightbulb" :size="12" />
+        打标签暂不可用：收集箱条目不是知识库页面；入库后到页面里打标签。
+      </p>
+
+      <div class="mi-bar mi-bar-select">
+        <button
+          class="mi-bar-main"
+          type="button"
+          :disabled="!selectedPaths.length || Boolean(batchBusy)"
+          @click="batchAdopt"
+        >
+          <AppSpinner v-if="batchBusy === 'adopt'" :size="15" />
+          <Icon v-else name="check" :size="17" />
+          {{ batchBusy === 'adopt' ? '入库中 ' + batchProgress.done + '/' + batchProgress.total : '入库 ' + selectedPaths.length + ' 条' }}
+        </button>
+        <button class="mi-bar-sub" type="button" disabled title="暂不可用：收集箱条目不是知识库页面，入库后在知识库打标签">
+          打标签
+        </button>
+        <button
+          class="mi-bar-danger"
+          type="button"
+          :disabled="!selectedPaths.length || Boolean(batchBusy)"
+          @click="batchTrash"
+        >
+          <AppSpinner v-if="batchBusy === 'trash'" :size="15" />
+          <Icon v-else name="trash" :size="16" />
+          {{ batchBusy === 'trash' ? '移入中 ' + batchProgress.done + '/' + batchProgress.total : '回收站' }}
+        </button>
+      </div>
     </template>
 
     <!-- 分组视图：按来源 / 类型归组，不做假 AI 建议 -->
@@ -427,6 +509,8 @@ import AppSpinner from './ui/AppSpinner.vue';
  *  3. 动作失败/离线时把服务端的 error/hint 留在页面上（不只弹一条会消失的 toast）。
  *  4. 纵向滚动交还浏览器：只有横向位移明显大于纵向（|dx| > |dy|×1.3）的拖动才接管卡片；
  *     底部动作条贴在组件底边（=底栏上方），卡片区自己滚，按钮不跟着卡片走。
+ *  5. 长按多选是独立模式：进入后卡片手势全部停用（避免误滑），列出的可见条目才可勾选；
+ *     全选只作用于这份列表，批量动作串行调用既有单条接口，失败逐条记录。
  */
 
 const inbox = useInboxStore();
@@ -539,6 +623,60 @@ const sortedActive = computed(() =>
 /** 卡片堆只铺三张：最上面一张完整，后面两张露边 */
 const stackItems = computed(() => sortedActive.value.slice(0, 3));
 const front = computed<InboxItem | null>(() => sortedActive.value[0] || null);
+
+/* ===== 长按多选（选择态） =====
+ * 卡片堆只露三张，多选改成整列可见条目：长按卡片 500ms 进选择态，每行左侧一个勾选框，
+ * 顶栏换成「取消 / 已选 N 条 / 全选」，底栏换成批量动作。全选只作用于这份可见列表
+ * （已入库的条目本来就不在收集箱界面里）。 */
+const LONG_PRESS_MS = 500;
+/** 长按期间允许的手指位移：超过就当成滑动，取消长按 */
+const LONG_PRESS_MOVE_PX = 10;
+
+const selectMode = ref(false);
+/** 已选条目的 path：按 path 记而不是对象引用，刷新/重排后选中不丢 */
+const selectedPaths = ref<string[]>([]);
+/** 长按触发后开启的短守卫：卡片在按住时被换成列表，松手那次 click 可能落到列表行上 */
+let selectGuardUntil = 0;
+let selectGuardCleanup: (() => void) | null = null;
+const batchBusy = ref<'' | 'adopt' | 'trash'>('');
+const batchProgress = ref({ done: 0, total: 0 });
+
+/** 选择态列出的条目 = 当前视图可见的待整理/已转换条目（全选只作用于这份列表） */
+const selectableItems = computed<InboxItem[]>(() => sortedActive.value);
+const selectablePaths = computed(() => selectableItems.value.map((item) => item.path));
+const allSelected = computed(
+  () =>
+    selectablePaths.value.length > 0 &&
+    selectablePaths.value.every((path) => selectedPaths.value.includes(path)),
+);
+const selectSubline = computed(() => {
+  if (batchBusy.value) {
+    const action = batchBusy.value === 'adopt' ? '入库' : '移入回收站';
+    return '正在' + action + ' ' + batchProgress.value.done + '/' + batchProgress.value.total;
+  }
+  return '共 ' + selectableItems.value.length + ' 条可多选 · 点按勾选';
+});
+
+function isSelected(path: string): boolean {
+  return selectedPaths.value.includes(path);
+}
+
+function toggleSelect(path: string): void {
+  if (batchBusy.value) return;
+  // 长按松手那次 click 可能落到刚渲染出来的列表行上：刚进选择态的几百毫秒内忽略
+  if (Date.now() < selectGuardUntil) return;
+  const next = selectedPaths.value.slice();
+  const index = next.indexOf(path);
+  if (index >= 0) next.splice(index, 1);
+  else next.push(path);
+  selectedPaths.value = next;
+}
+
+function toggleSelectAll(): void {
+  if (batchBusy.value) return;
+  // 全选只对当前可见列表生效：不把已入库或当前视图之外的条目算进来
+  selectedPaths.value = allSelected.value ? [] : selectablePaths.value.slice();
+}
 
 const converting = computed(() => inbox.items.some((item) => item.status === 'converting'));
 
@@ -920,6 +1058,16 @@ function expectConversion() {
 
 watch(converting, syncPolling);
 
+/* 刷新/轮询更新条目后：被别处处理掉的选中项要跟着消失；列表空了直接退出多选 */
+watch(sortedActive, (list) => {
+  if (!selectMode.value) return;
+  const alive = new Set(list.map((item) => item.path));
+  const next = selectedPaths.value.filter((path) => alive.has(path));
+  if (next.length !== selectedPaths.value.length) selectedPaths.value = next;
+  // 批量操作进行中列表可能被 adopt/remove 清空：等批量收尾自己退出，别把进度状态提前洗掉
+  if (!list.length && !batchBusy.value) exitSelectMode();
+});
+
 async function refresh(): Promise<void> {
   await inbox.load();
   syncPolling();
@@ -1084,6 +1232,159 @@ function removeBySwipe(item: InboxItem): void {
   void trashItem(item);
 }
 
+/* ===== 批量操作（选择态底栏） =====
+ * 服务端只提供了批量转换（/api/inbox/convert 收 paths 数组）与单条入库/删除，
+ * 所以批量入库 =「已转换的逐条 adopt + 待整理的整批 convert」，批量回收站逐条 remove；
+ * 每一步都记失败原因，结束时统一 toast + 页内提示，不让一条失败默默吞掉整批。 */
+
+/** 当前选中的条目（按 path 从可见列表里取，避免刷新后对象引用失效） */
+function selectedItems(): InboxItem[] {
+  const selected = new Set(selectedPaths.value);
+  return selectableItems.value.filter((item) => selected.has(item.path));
+}
+
+/** 一次把本次删除的 path 对应到回收站条目 id（批量撤销用；DELETE 回执不带 id） */
+async function trashIdsFor(paths: string[]): Promise<string[]> {
+  if (!paths.length) return [];
+  try {
+    const { data } = await api.get('/api/trash');
+    const list: any[] = Array.isArray(data?.items) ? data.items : [];
+    const wanted = new Set(paths);
+    return list
+      .filter((entry) => wanted.has(entry?.originalPath) && typeof entry?.id === 'string')
+      .map((entry) => String(entry.id));
+  } catch {
+    return [];
+  }
+}
+
+async function undoTrashMany(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  try {
+    await api.post('/api/trash/restore', { ids });
+    await inbox.load();
+    haptic('success');
+    notify.success('已恢复 ' + ids.length + ' 条');
+  } catch (error: any) {
+    notify.error('撤销失败：' + errText(error) + '（可到 设置 → 存储空间 → 回收站 恢复）');
+  }
+}
+
+/** 批量入库：已转换的串行入库，待整理的整批交给中枢转换，其余留待逐条处理 */
+async function batchAdopt(): Promise<void> {
+  if (batchBusy.value) return;
+  const items = selectedItems();
+  if (!items.length) return;
+  const adoptable = items.filter((item) => item.status === 'converted');
+  const convertible = items.filter(
+    (item) =>
+      item.status !== 'converted' &&
+      item.status !== 'converting' &&
+      item.status !== 'adopted' &&
+      isServerConvertible(item.capability),
+  );
+  const skipped = items.length - adoptable.length - convertible.length;
+  if (!adoptable.length && !convertible.length) {
+    setHint('info', '选中的 ' + items.length + ' 条都不能直接入库：需要逐条打开详情（让 Agent 处理 / 下载 / 等转换完成）');
+    return;
+  }
+  batchBusy.value = 'adopt';
+  actionHint.value = null;
+  batchProgress.value = { done: 0, total: adoptable.length + convertible.length };
+  const failures: string[] = [];
+  let adopted = 0;
+  let queued = 0;
+  for (const item of adoptable) {
+    try {
+      await inbox.adopt(item.path);
+      adopted += 1;
+    } catch (error: any) {
+      failures.push(cardTitle(item) + '：' + errText(error));
+    }
+    batchProgress.value = { done: batchProgress.value.done + 1, total: batchProgress.value.total };
+  }
+  if (convertible.length) {
+    try {
+      const result = await inbox.convert(convertible.map((item) => item.path));
+      queued = result.queued.length;
+      if (result.skipped.length) {
+        failures.push('转换跳过 ' + result.skipped.length + ' 条：' + result.skipped[0].reason);
+      }
+      if (result.queued.length) expectConversion();
+    } catch (error: any) {
+      failures.push('提交转换失败：' + errText(error));
+    }
+    batchProgress.value = { done: batchProgress.value.done + convertible.length, total: batchProgress.value.total };
+  }
+  batchBusy.value = '';
+  if (adopted) {
+    app.bumpSidebar();
+    haptic('success');
+  }
+  const parts: string[] = [];
+  if (adopted) parts.push('已入库 ' + adopted + ' 条');
+  if (queued) parts.push('已交给中枢转换 ' + queued + ' 条');
+  if (skipped) parts.push(skipped + ' 条留待逐条处理');
+  if (failures.length) parts.push(failures.length + ' 条失败');
+  if (parts.length) {
+    if (failures.length) notify.error(failures.length + ' 条失败：' + parts.join(' · '));
+    else notify.success(parts.join(' · '));
+  }
+  if (failures.length) {
+    setHint('error', '批量入库有失败：' + failures.slice(0, 3).join('；') + (failures.length > 3 ? '…' : ''));
+  }
+  exitSelectMode();
+}
+
+/** 批量回收站：逐条移入（服务端没有批量删除接口），删除后一次找回 id 供 Snackbar 撤销 */
+async function batchTrash(): Promise<void> {
+  if (batchBusy.value) return;
+  const items = selectedItems();
+  if (!items.length) return;
+  const ok = await confirmDialog({
+    title: '批量移入回收站',
+    message: '选中的 ' + items.length + ' 条将移入回收站，可随时恢复。',
+    confirmText: '移入回收站',
+    danger: true,
+  });
+  if (!ok) return;
+  batchBusy.value = 'trash';
+  actionHint.value = null;
+  batchProgress.value = { done: 0, total: items.length };
+  const removed: string[] = [];
+  const failures: string[] = [];
+  for (const item of items) {
+    try {
+      await inbox.remove(item.path);
+      removed.push(item.path);
+    } catch (error: any) {
+      failures.push(cardTitle(item) + '：' + errText(error));
+    }
+    batchProgress.value = { done: batchProgress.value.done + 1, total: batchProgress.value.total };
+  }
+  batchBusy.value = '';
+  if (removed.length) {
+    haptic('warning');
+    const ids = await trashIdsFor(removed);
+    if (ids.length) {
+      pushToast({
+        kind: 'success',
+        text: '已移入回收站 ' + removed.length + ' 条',
+        duration: 4000,
+        clickable: true,
+        actions: [{ label: '撤销', primary: true, onClick: () => { void undoTrashMany(ids); } }],
+      });
+    } else {
+      notify.success('已移入回收站 ' + removed.length + ' 条');
+    }
+  }
+  if (failures.length) {
+    setHint('error', '批量移入回收站有失败：' + failures.slice(0, 3).join('；') + (failures.length > 3 ? '…' : ''));
+    notify.error(failures.length + ' 条移入回收站失败');
+  }
+  exitSelectMode();
+}
+
 function downloadUrl(item: InboxItem): string {
   return '/api/inbox/download?path=' + encodeURIComponent(item.path);
 }
@@ -1214,10 +1515,16 @@ const stamp = computed<{ tone: StampTone; icon: string; text: string } | null>((
 
 let pointerStart: { x: number; y: number; id: number } | null = null;
 let suppressClick = false;
+/** 长按计时的 handler / 是否已经触发过长按 / 按下的是哪一条 */
+let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+let longPressFired = false;
+let longPressPath = '';
 /** 安卓返回键：弹层开着时先关弹层，别让一次返回直接退到后台 */
 let stopBackHandler: (() => void) | null = null;
 
 function onCardPointerDown(event: PointerEvent): void {
+  // 选择态与手势互斥：多选列表里不做滑动，避免误触把条目滑走
+  if (selectMode.value) return;
   if (event.pointerType === 'mouse' && event.button !== 0) return;
   const target = event.target as HTMLElement | null;
   if (target?.closest('button, a')) return;
@@ -1233,6 +1540,7 @@ function onCardPointerDown(event: PointerEvent): void {
   } catch {
     /* 个别 WebView 不支持指针捕获：不捕获也能用，只是拖出卡片后事件可能中断 */
   }
+  startLongPress();
 }
 
 function onCardPointerMove(event: PointerEvent): void {
@@ -1241,6 +1549,8 @@ function onCardPointerMove(event: PointerEvent): void {
   if (dragAxis.value === 'scroll') return;
   const dx = event.clientX - pointerStart.x;
   const dy = event.clientY - pointerStart.y;
+  // 手指一移动就说明不是「按住不动」：长按取消，避免滑一半掉进选择态
+  if (Math.abs(dx) > LONG_PRESS_MOVE_PX || Math.abs(dy) > LONG_PRESS_MOVE_PX) cancelLongPress();
   if (!dragAxis.value) {
     if (Math.abs(dx) < DRAG_START_PX && Math.abs(dy) < DRAG_START_PX) return;
     // 纵向（含上滑）一律放行：卡片不跟手，手指按在卡片上也能上下滚页面
@@ -1269,13 +1579,85 @@ function resetDrag(): void {
   dragX.value = 0;
 }
 
+function cancelLongPress(): void {
+  if (!longPressTimer) return;
+  clearTimeout(longPressTimer);
+  longPressTimer = null;
+}
+
+/** 按下即起计时；移动超过 LONG_PRESS_MOVE_PX、抬手或 pointercancel 都会清掉 */
+function startLongPress(): void {
+  cancelLongPress();
+  longPressFired = false;
+  longPressPath = front.value?.path || '';
+  longPressTimer = setTimeout(() => {
+    longPressTimer = null;
+    const path = longPressPath;
+    if (!path || !pointerStart || dragging.value || busyPath.value) return;
+    const item = inbox.items.find((entry) => entry.path === path) || front.value;
+    if (!item) return;
+    longPressFired = true;
+    suppressClick = true;
+    enterSelectMode(item);
+  }, LONG_PRESS_MS);
+}
+
+/** 长按松手后的 spurious click 守卫：pointerup/cancel 后再多等 400ms */
+function armSelectClickGuard(): void {
+  selectGuardUntil = Date.now() + 400;
+  selectGuardCleanup?.();
+  const release = () => {
+    selectGuardUntil = Date.now() + 400;
+    selectGuardCleanup?.();
+  };
+  const remove = () => {
+    document.removeEventListener('pointerup', release, true);
+    document.removeEventListener('pointercancel', release, true);
+    if (selectGuardCleanup === remove) selectGuardCleanup = null;
+  };
+  document.addEventListener('pointerup', release, true);
+  document.addEventListener('pointercancel', release, true);
+  selectGuardCleanup = remove;
+}
+
+/** 进入选择态：轻振一下 + 默认选中长按的那条；卡片堆换成整列可见条目 */
+function enterSelectMode(item: InboxItem): void {
+  cancelLongPress();
+  armSelectClickGuard();
+  resetDrag();
+  pointerStart = null;
+  suppressClick = true;
+  batchProgress.value = { done: 0, total: 0 };
+  selectedPaths.value = [item.path];
+  selectMode.value = true;
+  actionHint.value = null;
+  haptic('tap');
+}
+
+/** 退出选择态：清空选中与批量进度，卡片台原样回来 */
+function exitSelectMode(): void {
+  if (!selectMode.value) return;
+  selectMode.value = false;
+  selectedPaths.value = [];
+  batchBusy.value = '';
+  batchProgress.value = { done: 0, total: 0 };
+}
+
 function onCardPointerUp(event: PointerEvent): void {
   if (!pointerStart || event.pointerId !== pointerStart.id) return;
   releaseCardPointer(event);
+  cancelLongPress();
   const item = front.value;
   const wasDragging = dragging.value;
   const dx = dragX.value;
   pointerStart = null;
+  // 已经进过选择态：这次抬手只是长按结束，不触发滑动/点按
+  if (longPressFired) {
+    longPressFired = false;
+    resetDrag();
+    suppressClick = true;
+    return;
+  }
   if (!wasDragging || !item) {
     resetDrag();
     return;
@@ -1309,6 +1691,8 @@ function onCardPointerUp(event: PointerEvent): void {
 }
 
 function onCardPointerCancel(): void {
+  cancelLongPress();
+  longPressFired = false;
   pointerStart = null;
   resetDrag();
   suppressClick = false;
@@ -1319,6 +1703,7 @@ function onCardClick(): void {
     suppressClick = false;
     return;
   }
+  if (selectMode.value) return;
   openDetail(front.value);
 }
 
@@ -1526,7 +1911,12 @@ function onDocKeydown(event: KeyboardEvent): void {
     dismissCapture('inbox');
     return;
   }
-  if (detailPath.value) closeDetail();
+  if (detailPath.value) {
+    closeDetail();
+    return;
+  }
+  // 选择态是页面级模式：Esc 先退出多选，不顺手把人踢回首页
+  if (selectMode.value && !batchBusy.value) exitSelectMode();
 }
 
 watch(
@@ -1554,6 +1944,11 @@ onMounted(async () => {
       closeDetail();
       return true;
     }
+    if (selectMode.value) {
+      // 批量请求还在飞时不退出：否则界面切回卡片台，操作结果没地方展示
+      if (!batchBusy.value) exitSelectMode();
+      return true;
+    }
     return false;
   });
   await inbox.load();
@@ -1564,6 +1959,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   disposed = true;
+  cancelLongPress();
+  selectGuardCleanup?.();
+  selectGuardCleanup = null;
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = undefined;
   stopBackHandler?.();
@@ -1582,6 +1980,9 @@ onBeforeUnmount(() => {
  * 尺寸自查：宽度 360px（360×640 机）下卡片、底部三个 48px 按钮、分组卡不换行错位；
  * 高度按 360×640 的约 504px 可用区压缩——封面 96、卡片错位 32、留白收紧，保证
  * 「三个动作按钮 + 手势提示」首屏完整可见。卡片区自己滚，动作条钉在底栏上方。
+ *
+ * 多选：长按卡片 500ms 进选择态（卡片堆换成整列条目），选中行背景用 --accent-soft；
+ * 勾选框视觉 24px、::after 补到 44px 命中区；批量动作条沿用 48px 按钮高度。
  */
 .mob-inbox {
   position: relative;
@@ -2249,6 +2650,168 @@ onBeforeUnmount(() => {
   flex: none;
 }
 
+/* ===== 长按多选：选择态列表 + 批量动作条 =====
+ * 勾选框视觉 24px（行高 64px，整行可点），::after 再把命中区补到 44px；
+ * 选中即变，不给背景加过渡（动效克制）。 */
+.mi-head-select {
+  align-items: center;
+  gap: 10px;
+}
+
+.mi-head-select .mi-title {
+  font-size: 19px;
+}
+
+.mi-select-cancel,
+.mi-select-all {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 12px;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mi-select-cancel:active,
+.mi-select-all:active {
+  background: var(--accent-soft);
+}
+
+.mi-select-cancel:disabled,
+.mi-select-all:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mi-select-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 2px 6px;
+}
+
+.mi-select-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  color: var(--text);
+  text-align: left;
+}
+
+.mi-select-row + .mi-select-row {
+  margin-top: 6px;
+}
+
+/* 选中态行背景用 accent-soft（设计稿 batch-row.is-on） */
+.mi-select-row.is-on {
+  background: var(--accent-soft);
+}
+
+.mi-select-row:active {
+  background: var(--bg-hover);
+}
+
+.mi-select-row:disabled {
+  opacity: 0.6;
+}
+
+.mi-checkbox {
+  position: relative;
+  align-self: flex-start;
+  width: 24px;
+  height: 24px;
+  margin-top: 6px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--border-strong);
+  border-radius: 50%;
+  color: transparent;
+}
+
+.mi-checkbox.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* 24px 的勾选框：伪元素把命中区补到 44px（视觉尺寸不变） */
+.mi-checkbox::after {
+  content: '';
+  position: absolute;
+  top: -10px;
+  bottom: -10px;
+  left: -10px;
+  right: -10px;
+}
+
+.mi-select-thumb {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--cov-bg, var(--bg-tertiary));
+  color: var(--cov-fg, var(--text));
+}
+
+.mi-select-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mi-select-main b {
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.mi-select-main small {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.mi-select-note {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 2px 2px 0;
+  padding: 4px 6px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.mi-select-note svg {
+  flex: none;
+  margin-top: 1px;
+}
+
 /* ===== 底部操作（手势的无障碍替代）：固定在底栏上方，不随卡片滚动 ===== */
 .mi-bar {
   display: grid;
@@ -2337,6 +2900,11 @@ onBeforeUnmount(() => {
 .mi-bar-danger:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* 选择态底栏：入库（主）/ 打标签 / 回收站 三键等宽分配 */
+.mi-bar-select {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
 }
 
 /* 分组视图底部只放「逐条看 / 刷新」两个动作 */

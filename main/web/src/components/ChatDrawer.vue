@@ -1,7 +1,7 @@
 <template>
   <aside
     class="chat-drawer"
-    :class="{ dock: !overlay && !isFull, overlay: overlay && !isFull, full: isFull, dropping: dropActive }"
+    :class="{ dock: !overlay && !isFull, overlay: overlay && !isFull, full: isFull, dropping: dropActive, embedded: !!embedded }"
     :style="drawerStyle"
     :aria-label="agentName"
     @dragenter="onDrawerDragEnter"
@@ -41,7 +41,9 @@
       @keydown.end.prevent="setDrawerWidth(dockMaxWidth)"
     />
 
-    <header class="chat-head">
+    <!-- 嵌入形态（全屏 Agent 页）由宿主画顶栏：本组件不再画第二条标题栏，
+         会话列表 / 新对话 / 停止 都挪到宿主页的顶栏（宿主通过 defineExpose 调这里的实现） -->
+    <header v-if="!embedded" class="chat-head">
       <div class="chat-brand">
         <span class="brand-badge"><Icon name="ai" :size="14" /></span> {{ agentName }}
         <span v-if="isHubAgent" class="agent-origin">Docker</span>
@@ -680,7 +682,12 @@ import { useSyncStore } from '../stores/sync';
 import { useRuntimeCapabilities } from '../lib/capabilities';
 import { useTouchPointer } from '../lib/pointer';
 
-const props = defineProps<{ overlay?: boolean }>();
+/**
+ * overlay：宿主把它当叠层抽屉用（≤1024 覆盖正文）。
+ * embedded：它不再是抽屉，而是某个全屏页（views/AgentView.vue 的 /agent）的正文区——
+ *   几何交给 embed 样式块、头部交给宿主页画，dock 的拖宽与正文让位逻辑一律不参与。
+ */
+const props = defineProps<{ overlay?: boolean; embedded?: boolean }>();
 
 const router = useRouter();
 const app = useAppStore();
@@ -864,7 +871,7 @@ function pickAskOption(question: ChatQuestion, label: string) {
 /** 满窗形态：铺满内容区（形态本身不重建组件，会话/草稿/滚动都保留） */
 const isFull = computed(() => app.chatDrawerMode === 'full');
 /** 悬浮形态：桌面端的默认档——右侧一张玻璃卡片与正文并排，正文让出它的宽度 */
-const isDock = computed(() => !props.overlay && !isFull.value);
+const isDock = computed(() => !props.embedded && !props.overlay && !isFull.value);
 
 /* ===== 左缘拖拽调宽：只在「右侧悬浮」形态下有意义（浮层/满窗/手机端都铺满可用宽度） ===== */
 const viewportWidth = ref(window.innerWidth);
@@ -1598,6 +1605,8 @@ function onComposerEnter(event: KeyboardEvent) {
 /** Esc 只把满窗收回右侧：不关抽屉、不取消正在跑的一轮（弹窗的 Esc 会 stopPropagation，不会误触发） */
 function onKey(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return;
+  // 嵌入形态（全屏 Agent 页）没有「收回右侧」这回事：别在这里改桌面端的抽屉形态偏好
+  if (props.embedded) return;
   if (app.chatDrawerMode === 'full') app.setChatDrawerMode('dock');
 }
 
@@ -1626,7 +1635,7 @@ watch(() => app.chatDrawerOpen, (open) => {
 });
 /* 选中文字提问：抽屉已经开着时 open 不变，靠计数自增把光标送进输入框 */
 watch(() => app.chatComposerFocus, () => {
-  if (!app.chatDrawerOpen) return;
+  if (!app.chatDrawerOpen && !props.embedded) return;
   void chat.init().then(() => focusComposer());
 });
 
@@ -1665,6 +1674,15 @@ function badgeTooltip(session: { id: string }): string {
   return badge(session)?.tooltip || '';
 }
 
+/*
+ * 只暴露两个动作给宿主（views/AgentView.vue 的顶栏）：
+ *   - newSession：新建会话要连输入框草稿与已选附件一起清、再聚焦输入框；
+ *   - stopRun：停止要处理「排队中的消息退回输入框」。
+ * 两者都在本组件里有上下文（draft / attachments / stopping），搬到宿主页就得复制一遍逻辑；
+ * 发送、流式、轮次管理不暴露也不改写。
+ */
+defineExpose({ newSession, stopRun });
+
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   // 窗口变窄时收窄到上限内（只收敛显示，用户偏好留着，回到大窗口即恢复）
@@ -1679,11 +1697,15 @@ onMounted(() => {
   }
   // 会话列表要标「来自 <设备名>」：需要本机节点 id（同步状态），抽屉自己订阅一份
   sync.subscribe();
-  // 首次打开时抽屉是随开关一起挂载的，上面那个 watch 不会触发，这里补一次初始化 + 聚焦
-  if (app.chatDrawerOpen) {
+  // 首次打开时抽屉是随开关一起挂载的，上面那个 watch 不会触发，这里补一次初始化 + 聚焦。
+  // 嵌入形态（全屏 Agent 页）同理：宿主页不置 chatDrawerOpen（置了会让 Home 再挂一只真抽屉），
+  // 所以这里按 props 判定，否则全屏页会是空白转录。
+  if (app.chatDrawerOpen || props.embedded) {
     void chat.init().then(async () => {
       await scrollToBottom(true);
-      focusComposer();
+      // 嵌入形态（全屏 Agent 页）进场不主动聚焦：换个标签就把软键盘顶起来，在手机上很打扰；
+      // 点输入框 / 发完消息仍会聚焦（focusComposer 的其它调用点不受影响）。
+      if (!props.embedded) focusComposer();
     });
   }
 });
@@ -1890,6 +1912,35 @@ onUnmounted(() => {
 .chat-drawer.full .session-panel {
   padding-left: max(12px, calc((100% - 1080px) / 2));
   padding-right: max(12px, calc((100% - 1080px) / 2));
+}
+
+/*
+ * 嵌入形态（全屏 Agent 页 /agent）：宿主把它当页面正文用，不再是抽屉。
+ * 落位、外框、投影全部让给宿主（.agent-page），这里只保证「一列铺满 + 内部自己滚」。
+ * 写在 .dock / .overlay / .full 之后：同权重时后写的赢，那三个形态类即使被带上也不再生效。
+ */
+.chat-drawer.embedded {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--bg);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 嵌入态没有满窗那套「内容列居中限宽」（手机上那是白留白）：正文与输入区回到基础内边距 */
+.chat-drawer.embedded .chat-body,
+.chat-drawer.embedded .context-strip,
+.chat-drawer.embedded .chat-composer,
+.chat-drawer.embedded .session-panel {
+  padding-left: 12px;
+  padding-right: 12px;
 }
 
 .chat-head {

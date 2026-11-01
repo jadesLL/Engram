@@ -164,6 +164,16 @@
             页面选项与 AI 工具
             <Icon :name="chromeCollapsed ? 'chevron-down' : 'chevron-up'" :size="13" />
           </button>
+          <!-- 手机档「格式」入口：字号 / 正文宽度 / 目录。桌面 .head-summary 整行隐藏，入口不出现 -->
+          <button
+            type="button"
+            class="chrome-toggle chrome-format"
+            aria-haspopup="dialog"
+            @click="openFormatSheet"
+          >
+            <Icon name="markdown" :size="13" />
+            格式
+          </button>
         </div>
         <div class="page-chrome">
           <div class="head-meta" :class="{ 'document-meta': isRawPage }">
@@ -362,6 +372,101 @@
           </template>
         </RelatedMenu>
       </div>
+
+      <!-- 手机档「格式」面板：字号 A−/A+、正文宽度三档、目录开关（开着时列出小标题可跳转）。
+           入口只在手机摘要行出现，桌面端不会渲染这个面板。 -->
+      <Teleport to="body">
+        <template v-if="formatOpen && narrowEditor">
+          <div class="fmt-mask" @click="closeFormatSheet()" />
+          <section
+            ref="formatSheetRef"
+            class="fmt-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="格式"
+            tabindex="-1"
+            @keydown="onFormatSheetKeydown"
+          >
+            <span class="fmt-grab" aria-hidden="true" />
+            <header class="fmt-head">
+              <h2>格式</h2>
+              <button type="button" class="fmt-x" aria-label="关闭格式面板" @click="closeFormatSheet()">
+                <Icon name="x" :size="16" />
+              </button>
+            </header>
+            <div class="fmt-body">
+              <div class="fmt-row">
+                <div class="fmt-copy">
+                  <strong>字号</strong>
+                  <span>正文与标题一起缩放；阅读视图共用这份字号</span>
+                </div>
+                <div class="fmt-stepper" role="group" aria-label="正文字号">
+                  <button
+                    type="button"
+                    class="fmt-step"
+                    :disabled="preferences.fontSize <= READING_FONT_SIZE_MIN"
+                    aria-label="减小字号"
+                    @click="stepEditorFont(-1)"
+                  >A−</button>
+                  <span class="fmt-size">{{ preferences.fontSize }} px</span>
+                  <button
+                    type="button"
+                    class="fmt-step"
+                    :disabled="preferences.fontSize >= READING_FONT_SIZE_MAX"
+                    aria-label="增大字号"
+                    @click="stepEditorFont(1)"
+                  >A+</button>
+                </div>
+              </div>
+
+              <div class="fmt-row">
+                <div class="fmt-copy">
+                  <strong>正文宽度</strong>
+                  <span>手机上一行放得下的字数，只影响编辑区正文</span>
+                </div>
+                <div class="fmt-seg" role="radiogroup" aria-label="正文宽度">
+                  <button
+                    v-for="option in MOBILE_TEXT_WIDTHS"
+                    :key="option.key"
+                    type="button"
+                    role="radio"
+                    :aria-checked="mobileTextWidth === option.key"
+                    :class="{ active: mobileTextWidth === option.key }"
+                    @click="pickMobileTextWidth(option.key)"
+                  >{{ option.label }}</button>
+                </div>
+              </div>
+
+              <div class="fmt-row">
+                <div class="fmt-copy">
+                  <strong>目录</strong>
+                  <span>打开后在这里列出本页小标题，点一条滚到对应位置</span>
+                </div>
+                <label class="switch-control">
+                  <input type="checkbox" :checked="preferences.outline" @change="toggleEditorOutline" />
+                  <span aria-hidden="true"></span>
+                  <em>{{ preferences.outline ? '已开启' : '已关闭' }}</em>
+                </label>
+              </div>
+
+              <div v-if="preferences.outline" class="fmt-outline">
+                <p v-if="!editorOutline.length" class="fmt-empty">本页还没有小标题；加几个「##」标题后这里会出现目录。</p>
+                <button
+                  v-for="(item, index) in editorOutline"
+                  :key="'outline-' + index"
+                  type="button"
+                  class="fmt-outline-row"
+                  :data-level="item.level"
+                  @click="jumpToEditorHeading(item.text)"
+                >
+                  <span class="fmt-outline-lv">H{{ item.level }}</span>
+                  <span class="fmt-outline-text">{{ item.text }}</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </template>
+      </Teleport>
     </template>
 
     <!-- 页面加载 / 错误状态 -->
@@ -435,6 +540,13 @@ import {
   formatContentWidthRatio,
   type ContentWidthRatio,
 } from '../lib/contentWidth';
+import {
+  clampReadingFontSize,
+  DEFAULT_READING_PREFERENCES,
+  READING_FONT_SIZE_MAX,
+  READING_FONT_SIZE_MIN,
+} from '../lib/readingPreview';
+import { registerBackHandler } from '../lib/androidBack';
 
 /* 三块重组件（Vditor 编辑器 / 阅读预览 / 富文件预览）都是按需渲染的：静态 import
    会让首页/看板落地页也下载整套编辑器包，改成异步组件按需拉取。模板 ref 全部走
@@ -661,11 +773,107 @@ let chromeUserTouched = false;
 function onChromeMobileChange(e: MediaQueryListEvent) {
   if (!chromeUserTouched) chromeCollapsed.value = e.matches;
   narrowEditor.value = e.matches;
+  // 格式面板只属于手机档：放大到桌面档（折叠屏展开 / 旋屏）直接收起
+  if (!e.matches) formatOpen.value = false;
 }
 chromeMobile.addEventListener('change', onChromeMobileChange);
 function toggleChrome() {
   chromeUserTouched = true;
   chromeCollapsed.value = !chromeCollapsed.value;
+}
+
+/* ===== 手机档「格式」面板：字号 / 正文宽度 / 目录 =====
+ * 桌面端没有这个入口（.head-summary 整行隐藏），面板只由手机摘要行的「格式」按钮打开。
+ *  - 字号：接既有偏好 app.readingPreferences.fontSize（阅读视图共用），A−/A+ 每次 ±1px；
+ *  - 正文宽度：手机档没有「可用区百分比」的语义（正文本来就铺满），改用三档左右留白
+ *    （满宽 / 标准 / 窄），存 localStorage 并即时写进 --editor-mobile-pad；
+ *  - 目录：接既有偏好 readingPreferences.outline，打开时在面板里列出小标题，点一条滚过去。 */
+const formatOpen = ref(false);
+const formatSheetRef = ref<HTMLElement>();
+let unregisterFormatBack: (() => void) | null = null;
+type MobileTextWidth = 'wide' | 'standard' | 'narrow';
+const MOBILE_TEXT_WIDTHS: Array<{ key: MobileTextWidth; label: string; pad: number }> = [
+  { key: 'wide', label: '满宽', pad: 20 },
+  { key: 'standard', label: '标准', pad: 52 },
+  { key: 'narrow', label: '窄', pad: 84 },
+];
+const MOBILE_TEXT_WIDTH_STORAGE_KEY = 'engram.editorTextWidth';
+function readMobileTextWidth(): MobileTextWidth {
+  const saved = localStorage.getItem(MOBILE_TEXT_WIDTH_STORAGE_KEY);
+  return saved === 'standard' || saved === 'narrow' ? saved : 'wide';
+}
+const mobileTextWidth = ref<MobileTextWidth>(readMobileTextWidth());
+const mobileTextPad = computed(() =>
+  MOBILE_TEXT_WIDTHS.find((option) => option.key === mobileTextWidth.value)?.pad ?? 20
+);
+const preferences = computed(() => app.readingPreferences);
+/* 本页小标题（格式面板的目录）：跳过围栏代码块里的「#」，只认 1–4 级 */
+const editorOutline = computed(() => {
+  const items: Array<{ level: number; text: string }> = [];
+  let fenced = false;
+  for (const line of content.value.split('\n')) {
+    if (/^\s*(?:\u0060\u0060\u0060|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    const match = /^(#{1,4})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (match) items.push({ level: match[1].length, text: match[2].trim() });
+    if (items.length >= 40) break;
+  }
+  return items;
+});
+function openFormatSheet() {
+  if (!narrowEditor.value) return;
+  formatOpen.value = true;
+  void nextTick(() => formatSheetRef.value?.focus({ preventScroll: true }));
+}
+function closeFormatSheet() {
+  formatOpen.value = false;
+}
+function stepEditorFont(direction: number) {
+  const next = clampReadingFontSize(app.readingPreferences.fontSize + direction);
+  if (next !== app.readingPreferences.fontSize) app.updateReadingPreferences({ fontSize: next });
+}
+function pickMobileTextWidth(key: MobileTextWidth) {
+  mobileTextWidth.value = key;
+  localStorage.setItem(MOBILE_TEXT_WIDTH_STORAGE_KEY, key);
+}
+function toggleEditorOutline(event: Event) {
+  app.updateReadingPreferences({ outline: (event.target as HTMLInputElement).checked });
+}
+function jumpToEditorHeading(text: string) {
+  if (editorRef.value?.scrollToHeading?.(text)) {
+    closeFormatSheet();
+    return;
+  }
+  // 源码模式（sv）下小标题不是 DOM 标题元素，按目录定位不了：明确说一句，避免像“点了没反应”
+  notify.info('源码模式下暂不支持按目录跳转，切回「即时渲染」再试');
+}
+/** 面板内的 Tab 循环 + Esc 关闭（Teleport 到 body 后不在页面 DOM 里） */
+function onFormatSheetKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.stopPropagation();
+    closeFormatSheet();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const root = formatSheetRef.value;
+  if (!root) return;
+  const focusables = Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled]), input'));
+  if (!focusables.length) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (event.shiftKey) {
+    if (!active || active === first || active === root) {
+      event.preventDefault();
+      last.focus();
+    }
+  } else if (active === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 const evidence = ref<any>(null);
 const evidenceOpen = ref(false);
@@ -687,11 +895,22 @@ const widthLabel = computed(() => formatContentWidthRatio(app.readingPreferences
 /** 正文可用区宽度：编辑视图根元素的宽度（已扣掉左侧图标栏与文件树） */
 const availableWidth = ref(0);
 const contentColumnStyle = computed(() => {
-  if (availableWidth.value <= 0) return {};
-  /* 窄屏档恒取 100%：手机上一行放不下几个字，再乘 70% 就是「正文显示不全」 */
-  const ratio = narrowEditor.value ? 1 : app.readingPreferences.widthRatio;
-  const column = contentColumnWidth(ratio, availableWidth.value);
-  return { '--doc-col': `${column}px` };
+  const style: Record<string, string> = {};
+  if (availableWidth.value > 0) {
+    /* 窄屏档恒取 100%：手机上一行放不下几个字，再乘 70% 就是「正文显示不全」 */
+    const ratio = narrowEditor.value ? 1 : app.readingPreferences.widthRatio;
+    const column = contentColumnWidth(ratio, availableWidth.value);
+    style['--doc-col'] = `${column}px`;
+  }
+  /* 手机档「格式」面板：正文左右留白三档 + 字号（默认字号仍走 rem，跟随系统字体大小；
+     用户手动调过字号才写死 px，与阅读视图共用同一份偏好） */
+  if (narrowEditor.value) {
+    style['--editor-mobile-pad'] = `${mobileTextPad.value}px`;
+    if (app.readingPreferences.fontSize !== DEFAULT_READING_PREFERENCES.fontSize) {
+      style['--editor-font-size'] = `${app.readingPreferences.fontSize}px`;
+    }
+  }
+  return style;
 });
 function toggleWidthMenu() {
   widthMenuOpen.value = !widthMenuOpen.value;
@@ -716,7 +935,11 @@ function toggleFullscreen() {
 /** 阅读模式、换页、文件预览都不该留在全屏里 */
 watch(
   () => [app.readingMode, route.params.id, route.params.file],
-  () => { fullscreen.value = false; }
+  () => {
+    fullscreen.value = false;
+    // 手机格式面板只属于编辑态：进阅读 / 换页立即收起
+    formatOpen.value = false;
+  }
 );
 
 const filePath = computed(() => (route.query.file as string) || '');
@@ -1409,6 +1632,12 @@ function measureAvailableWidth() {
 onMounted(() => {
   if (route.params.id) loadPage(route.params.id as string);
   else loadWelcomeOnce();
+  /* 安卓返回键：手机格式面板开着时先关面板（只认领本组件这一层） */
+  unregisterFormatBack = registerBackHandler(() => {
+    if (!formatOpen.value) return false;
+    closeFormatSheet();
+    return true;
+  });
   loadRawSectionOptions();
   window.addEventListener('beforeunload', beforeUnload);
   window.addEventListener('keydown', onGlobalKey);
@@ -1424,6 +1653,8 @@ onUnmounted(() => {
   chromeMobile.removeEventListener('change', onChromeMobileChange);
   document.removeEventListener('pointerdown', onWidthPickerPointerDown);
   document.removeEventListener('click', onWidthPickerPointerDown);
+  unregisterFormatBack?.();
+  unregisterFormatBack = null;
   viewObserver?.disconnect();
   viewObserver = null;
   if (saveTimer) clearTimeout(saveTimer);
@@ -2152,8 +2383,11 @@ button.save-state.dirty:hover { color: var(--accent); }
   .editor-view { --doc-col: 100%; --doc-pad: 0px; }
   .page-head { padding: 20px 20px 0; }
   .editor-area :deep(.vditor-reset) {
-    padding-left: 20px !important;
-    padding-right: 20px !important;
+    /* 「格式」面板的正文宽度三档：默认 20px，标准 52px，窄 84px（见 EditorView 脚本） */
+    padding-left: var(--editor-mobile-pad, 20px) !important;
+    padding-right: var(--editor-mobile-pad, 20px) !important;
+    /* 「格式」面板调过字号后才写死 px；默认仍用 rem 跟随系统字体大小 */
+    font-size: var(--editor-font-size, 1.14rem);
   }
   .title-input { font-size: 26px; }
   .meta-date { display: none; }
@@ -2173,6 +2407,198 @@ button.save-state.dirty:hover { color: var(--accent); }
     margin-top: 8px;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--border);
+  }
+  /* 「格式」入口：与「页面选项与 AI 工具」同一颗胶囊，左右分居摘要行两端。
+     视觉仍是 28px 小胶囊，热区用 ::after 向四周补到 ~44px（与阅读顶栏同一手法） */
+  .chrome-format { position: relative; flex: none; min-height: 28px; }
+  .chrome-format::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border-radius: 8px;
+  }
+
+  /* —— 手机档「格式」面板（Teleport 到 body 的底部面板） —— */
+  .fmt-mask {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    background: color-mix(in srgb, var(--text) 42%, transparent);
+  }
+  .fmt-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: calc(var(--z-overlay) + 1);
+    display: flex;
+    flex-direction: column;
+    max-height: 78dvh;
+    padding: 8px 16px calc(14px + var(--safe-bottom));
+    border-radius: 22px 22px 0 0;
+    background: var(--card-bg);
+    box-shadow: var(--shadow-dialog);
+  }
+  .fmt-sheet:focus { outline: none; }
+  .fmt-grab {
+    width: 38px;
+    height: 4px;
+    flex: none;
+    margin: 2px auto 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 18%, transparent);
+  }
+  .fmt-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .fmt-head h2 {
+    flex: 1;
+    margin: 0;
+    font-size: 17px;
+    font-weight: 650;
+    color: var(--text);
+  }
+  .fmt-x {
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: -8px -8px -8px 0;
+    border: 0;
+    border-radius: 12px;
+    background: none;
+    color: var(--text-secondary);
+  }
+  .fmt-x:active { background: var(--bg-hover); color: var(--text); }
+  .fmt-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 2px 2px 4px;
+  }
+  .fmt-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 64px;
+    padding: 10px 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .fmt-copy { flex: 1; min-width: 0; }
+  .fmt-copy strong { display: block; font-size: 14px; font-weight: 600; }
+  .fmt-copy span {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+  .fmt-stepper {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--bg-secondary);
+  }
+  .fmt-step {
+    min-width: 44px;
+    height: 36px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--card-bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: var(--shadow-raised);
+  }
+  .fmt-step:disabled { opacity: 0.4; box-shadow: none; background: transparent; }
+  .fmt-step:active:not(:disabled) { background: var(--bg-hover); }
+  .fmt-size {
+    min-width: 54px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+  .fmt-seg {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--bg-secondary);
+  }
+  .fmt-seg button {
+    min-width: 44px;
+    height: 36px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12.5px;
+  }
+  .fmt-seg button.active {
+    background: var(--card-bg);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: var(--shadow-raised);
+  }
+  .fmt-outline {
+    padding: 8px 0 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .fmt-empty {
+    margin: 4px 4px 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+  .fmt-outline-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 8px 4px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+  }
+  .fmt-outline-row:active { background: var(--bg-hover); }
+  .fmt-outline-row[data-level="2"] { padding-left: 16px; }
+  .fmt-outline-row[data-level="3"] { padding-left: 32px; }
+  .fmt-outline-row[data-level="4"] { padding-left: 48px; }
+  .fmt-outline-lv {
+    flex: none;
+    width: 20px;
+    font-size: 10.5px;
+    color: var(--text-faint);
+    text-align: center;
+  }
+  .fmt-outline-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .page-chrome { padding-top: 8px; }
   .page-head.chrome-collapsed .page-chrome { display: none; }

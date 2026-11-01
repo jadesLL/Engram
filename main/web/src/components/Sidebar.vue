@@ -1,5 +1,5 @@
 <template>
-  <div class="sidebar-inner" :class="{ 'is-full': app.sidebarFull }">
+  <div class="sidebar-inner" :class="{ 'is-full': app.sidebarFull, 'is-inline': props.inline }">
     <header class="sidebar-header">
       <div class="sidebar-titlebar">
         <h2>知识库</h2>
@@ -610,6 +610,12 @@ const sync = useSyncStore();
 const emit = defineEmits(['close', 'new-page']);
 
 /**
+ * inline：侧栏与正文并排的常驻形态（2026-11 折叠屏 medium 双栏）。
+ * 与抽屉的区别只有一处——点条目后不收起自己：右栏一直开着才是双栏的用法。
+ */
+const props = withDefaults(defineProps<{ inline?: boolean }>(), { inline: false });
+
+/**
  * 抽屉档（<840px，即 compact + medium）：侧栏是浮层，盖在正文上。手机竖屏里它几乎占满整屏，
  * 打开一个页面后不收起抽屉 = 用户看不到刚点开的正文（用户报障 2026-09-29）。
  * 2026-11 设备矩阵后与 Home.vue 的 sidebarOverlay 同一个断点（<BP_EXPANDED）：
@@ -622,9 +628,12 @@ function onDrawerQueryChange(event: MediaQueryListEvent) {
   drawerMode.value = event.matches;
 }
 
-/** 抽屉档下打开内容后收起自己；常驻栏（≥840px）保持展开不动 */
+/**
+ * 浮层抽屉下打开内容后收起自己；常驻栏（≥840px）保持展开不动。
+ * medium 双栏（inline）也是「浮层档但常驻」：点条目不能让右栏消失，所以这里排除 inline。
+ */
 function closeDrawerIfOverlay() {
-  if (drawerMode.value) emit('close');
+  if (drawerMode.value && !props.inline) emit('close');
 }
 
 const allPages = ref<any[]>([]);
