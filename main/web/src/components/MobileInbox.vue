@@ -1,5 +1,5 @@
 <template>
-  <div class="mob-inbox">
+  <div class="mob-inbox" ref="rootEl" :style="shellStyle">
     <header class="mi-head">
       <div class="mi-head-main">
         <h1 class="mi-title">{{ view === 'groups' ? '按来源分组' : '收集箱' }}</h1>
@@ -44,7 +44,7 @@
       <button type="button" aria-label="收起提示" @click="actionHint = null">×</button>
     </div>
 
-    <!-- 卡片台：最新一条在最上面，右滑主操作 / 左滑移入回收站 / 上滑看详情 -->
+    <!-- 卡片台：最新一条在最上面，右滑主操作 / 左滑移入回收站 / 点按看详情；纵向滚动交还浏览器 -->
     <template v-if="view === 'stack'">
       <button v-if="sortedActive.length" class="mi-groups-entry" type="button" @click="view = 'groups'">
         <span class="mi-groups-ic"><Icon name="list-tree" :size="16" /></span>
@@ -128,7 +128,7 @@
           </div>
           <div class="mi-gesture">
             <Icon name="move-diagonal" :size="14" />
-            <span>右滑{{ mainLabel(front) }} · 左滑移入回收站 · 上滑看详情</span>
+            <span>右滑{{ mainLabel(front) }} · 左滑移入回收站 · 点按看详情</span>
           </div>
         </div>
 
@@ -223,7 +223,7 @@
     </template>
 
     <Teleport to="body">
-      <!-- 详情 sheet（上滑手势与「详情」按钮都落到这里） -->
+      <!-- 详情 sheet（点按卡片与「详情」按钮都落到这里） -->
       <template v-if="detailItem">
         <div class="mi-dim" @click="closeDetail" />
         <section
@@ -402,13 +402,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { api } from '../api';
 import { useAppStore } from '../stores/app';
 import { useChatStore } from '../stores/chat';
 import { useInboxStore, type InboxItem } from '../stores/inbox';
 import { registerBackHandler } from '../lib/androidBack';
 import { confirmDialog } from '../lib/confirm';
+import { haptic } from '../lib/haptics';
 import { isServerConvertible } from '../lib/inboxAgent';
-import { notify } from '../lib/notify';
+import { notify, pushToast } from '../lib/notify';
 import Icon from './Icon.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 
@@ -416,13 +418,15 @@ import AppSpinner from './ui/AppSpinner.vue';
  * 手机端收集箱卡片台（对外零 props）。
  *
  * 桌面版收集箱是「行式台账」，窄屏这边换成一张一张的卡片：最新一条在最上面，
- * 右滑做主操作（转换 / 入库 / 让 Agent 处理 / 下载预览），左滑移入回收站，上滑看详情；
- * 底部三个按钮是同一组动作的无障碍替代，不依赖手势也能用。
+ * 右滑做主操作（转换 / 入库 / 让 Agent 处理 / 下载预览），左滑移入回收站（4 秒内可撤销），
+ * 点按看详情；底部三个按钮是同一组动作的无障碍替代，不依赖手势也能用。
  *
- * 三条边界写在实现里：
+ * 四条边界写在实现里：
  *  1. 卡片分组只按「来源 / 类型」归组，不做假的 AI 建议；转换与入库一律交给服务端中枢执行。
  *  2. /inbox?capture=<时间戳> 是原生分享落袋后推过来的「保存之后」回执，文案不能写成保存前确认。
  *  3. 动作失败/离线时把服务端的 error/hint 留在页面上（不只弹一条会消失的 toast）。
+ *  4. 纵向滚动交还浏览器：只有横向位移明显大于纵向（|dx| > |dy|×1.3）的拖动才接管卡片；
+ *     底部动作条贴在组件底边（=底栏上方），卡片区自己滚，按钮不跟着卡片走。
  */
 
 const inbox = useInboxStore();
@@ -434,10 +438,39 @@ const router = useRouter();
 /** 桌面端（有 Electron 桥）：原文件用系统默认应用打开；Docker / 浏览器端直接下载 */
 const isDesktop = Boolean((window as any).wikiDesktop);
 
+/*
+ * 底部动作条要压在底栏上方：组件高度吃满 Home .content 的内容盒，动作条就落在组件底边。
+ * .content 的下内边距本来就等于「底栏高度 + 外边距 + 呼吸位」，两层是同一份口径；万一
+ * 改版换了底栏高度而 .content 没跟着改，这里再按底栏实际位置补一段让位，避免动作条压在栏上。
+ */
+const rootEl = ref<HTMLElement | null>(null);
+const shellExtra = ref(0);
+const shellStyle = computed(() =>
+  shellExtra.value ? '--mi-shell-extra: ' + shellExtra.value + 'px' : undefined
+);
+
+function syncShellInset(): void {
+  const host = rootEl.value?.parentElement;
+  const nav = document.querySelector('.bottom-nav') as HTMLElement | null;
+  if (!host || !nav) {
+    shellExtra.value = 0;
+    return;
+  }
+  const rect = nav.getBoundingClientRect();
+  if (!rect.height) {
+    shellExtra.value = 0;
+    return;
+  }
+  const reserved = parseFloat(getComputedStyle(host).paddingBottom) || 0;
+  const need = Math.round(window.innerHeight - rect.top + 8 - reserved);
+  const next = need > 0 ? need : 0;
+  if (next !== shellExtra.value) shellExtra.value = next;
+}
+
 type ViewKind = 'stack' | 'groups';
 type MainKind = 'convert' | 'retry' | 'adopt' | 'process' | 'agent' | 'download' | 'none';
 type StatusTone = 'pending' | 'converting' | 'converted' | 'failed' | 'adopted';
-type StampTone = 'in' | 'drop' | 'later';
+type StampTone = 'in' | 'drop';
 
 interface ActionHint {
   tone: 'error' | 'info';
@@ -948,6 +981,7 @@ async function adoptItem(item: InboxItem | null): Promise<void> {
   try {
     const result = await inbox.adopt(item.path);
     app.bumpSidebar();
+    haptic('success');
     notify.success('已入库到 ' + result.pagePath);
   } catch (error: any) {
     const message = errText(error);
@@ -975,6 +1009,64 @@ async function startAgent(item: InboxItem | null): Promise<void> {
   }
 }
 
+/** 服务端 DELETE 回执不带回收站 id：删完按原路径到回收站里找这次删除的条目，撤销要用 */
+async function trashIdFor(path: string): Promise<string> {
+  try {
+    const { data } = await api.get('/api/trash');
+    const list: any[] = Array.isArray(data?.items) ? data.items : [];
+    const matches = list
+      .filter((entry) => entry?.originalPath === path && typeof entry?.id === 'string')
+      .sort((a, b) => String(b.deletedAt || '').localeCompare(String(a.deletedAt || '')));
+    return matches.length ? String(matches[0].id) : '';
+  } catch {
+    return '';
+  }
+}
+
+async function undoTrash(trashId: string): Promise<void> {
+  try {
+    await api.post('/api/trash/restore', { ids: [trashId] });
+    await inbox.load();
+    haptic('success');
+    notify.success('已恢复到收集箱');
+  } catch (error: any) {
+    notify.error('撤销失败：' + errText(error) + '（可到 设置 → 存储空间 → 回收站 恢复）');
+  }
+}
+
+/**
+ * 移入回收站 + 可撤销提示。左滑是加速动作，误滑的兜底交给同一屏的 Snackbar（4 秒内可撤销）；
+ * 按钮 / 详情路径仍保留确认框，两条路最终都走这里。
+ */
+async function trashItem(item: InboxItem): Promise<void> {
+  if (busyPath.value === item.path) return;
+  busyPath.value = item.path;
+  actionHint.value = null;
+  try {
+    await inbox.remove(item.path);
+    haptic('warning');
+    const trashId = await trashIdFor(item.path);
+    if (!trashId) {
+      notify.success('已移入回收站');
+      return;
+    }
+    pushToast({
+      kind: 'success',
+      text: '已移入回收站',
+      duration: 4000,
+      // 整条 toast 可点 = 点「撤销」按钮之外的任意位置也撤销（手机上小按钮热区不够大的兜底）
+      clickable: true,
+      actions: [{ label: '撤销', primary: true, onClick: () => { void undoTrash(trashId); } }],
+    });
+  } catch (error: any) {
+    const message = errText(error);
+    setHint('error', '移入回收站失败：' + message);
+    notify.error(message);
+  } finally {
+    busyPath.value = '';
+  }
+}
+
 async function removeItem(item: InboxItem | null): Promise<void> {
   if (!item || busyPath.value === item.path) return;
   const ok = await confirmDialog({
@@ -984,18 +1076,12 @@ async function removeItem(item: InboxItem | null): Promise<void> {
     danger: true,
   });
   if (!ok) return;
-  busyPath.value = item.path;
-  actionHint.value = null;
-  try {
-    await inbox.remove(item.path);
-    notify.success('已移入回收站');
-  } catch (error: any) {
-    const message = errText(error);
-    setHint('error', '移出失败：' + message);
-    notify.error(message);
-  } finally {
-    busyPath.value = '';
-  }
+  await trashItem(item);
+}
+
+/** 左滑：不做二次确认，直接进回收站，用 Snackbar 的撤销兜底 */
+function removeBySwipe(item: InboxItem): void {
+  void trashItem(item);
 }
 
 function downloadUrl(item: InboxItem): string {
@@ -1095,33 +1181,34 @@ async function adoptGroup(group: SourceGroup): Promise<void> {
   }
   groupBusy.value = '';
   app.bumpSidebar();
-  if (saved) notify.success('已入库 ' + saved + ' 条');
+  if (saved) {
+    haptic('success');
+    notify.success('已入库 ' + saved + ' 条');
+  }
   if (failed) {
     setHint('error', failed + ' 条入库失败，可逐条重试');
     notify.error(failed + ' 条入库失败');
   }
 }
 
-/* ===== 手势：右滑主操作 / 左滑移除 / 上滑详情 ===== */
+/* ===== 手势：右滑主操作 / 左滑移入回收站；纵向滚动交还浏览器 ===== */
 
 const SWIPE_X = 64;
-const SWIPE_Y = 56;
+/** 轴锁：横向位移要明显大于纵向（1.3 倍）才接管，否则判成纵向滚动交给浏览器 */
+const AXIS_LOCK_RATIO = 1.3;
+const DRAG_START_PX = 8;
+
+/** x = 已接管横向拖动；scroll = 判成纵向滚动，后续 move 一律放行 */
+type DragAxis = '' | 'x' | 'scroll';
 
 const dragging = ref(false);
-const dragAxis = ref<'' | 'x' | 'y'>('');
+const dragAxis = ref<DragAxis>('');
 const dragX = ref(0);
-const dragY = ref(0);
-const flyOut = ref<'' | 'main' | 'detail'>('');
+const flyOut = ref<'' | 'main'>('');
 const stamp = computed<{ tone: StampTone; icon: string; text: string } | null>(() => {
-  if (!dragging.value || !front.value) return null;
-  if (dragAxis.value === 'x') {
-    if (dragX.value > 24) return { tone: 'in', icon: 'check', text: mainLabel(front.value) };
-    if (dragX.value < -24) return { tone: 'drop', icon: 'trash', text: '移入回收站' };
-    return null;
-  }
-  if (dragAxis.value === 'y' && dragY.value < -24) {
-    return { tone: 'later', icon: 'eye', text: '看详情' };
-  }
+  if (!dragging.value || dragAxis.value !== 'x' || !front.value) return null;
+  if (dragX.value > 24) return { tone: 'in', icon: 'check', text: mainLabel(front.value) };
+  if (dragX.value < -24) return { tone: 'drop', icon: 'trash', text: '移入回收站' };
   return null;
 });
 
@@ -1139,7 +1226,6 @@ function onCardPointerDown(event: PointerEvent): void {
   dragging.value = false;
   dragAxis.value = '';
   dragX.value = 0;
-  dragY.value = 0;
   flyOut.value = '';
   suppressClick = false;
   try {
@@ -1151,21 +1237,22 @@ function onCardPointerDown(event: PointerEvent): void {
 
 function onCardPointerMove(event: PointerEvent): void {
   if (!pointerStart || event.pointerId !== pointerStart.id) return;
+  // 已经判成纵向滚动：不再干预，让浏览器/卡片区自己滚
+  if (dragAxis.value === 'scroll') return;
   const dx = event.clientX - pointerStart.x;
   const dy = event.clientY - pointerStart.y;
   if (!dragAxis.value) {
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    dragAxis.value = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+    if (Math.abs(dx) < DRAG_START_PX && Math.abs(dy) < DRAG_START_PX) return;
+    // 纵向（含上滑）一律放行：卡片不跟手，手指按在卡片上也能上下滚页面
+    if (Math.abs(dx) <= Math.abs(dy) * AXIS_LOCK_RATIO) {
+      dragAxis.value = 'scroll';
+      suppressClick = true;
+      return;
+    }
+    dragAxis.value = 'x';
     dragging.value = true;
   }
-  if (dragAxis.value === 'x') {
-    dragX.value = dx;
-    dragY.value = dy * 0.12;
-  } else {
-    // 只跟手上滑；下滑交还给页面（卡片外仍可滚动）
-    dragX.value = 0;
-    dragY.value = Math.min(0, dy);
-  }
+  dragX.value = dx;
 }
 
 function releaseCardPointer(event: PointerEvent): void {
@@ -1180,7 +1267,6 @@ function resetDrag(): void {
   dragging.value = false;
   dragAxis.value = '';
   dragX.value = 0;
-  dragY.value = 0;
 }
 
 function onCardPointerUp(event: PointerEvent): void {
@@ -1188,9 +1274,7 @@ function onCardPointerUp(event: PointerEvent): void {
   releaseCardPointer(event);
   const item = front.value;
   const wasDragging = dragging.value;
-  const axis = dragAxis.value;
   const dx = dragX.value;
-  const dy = dragY.value;
   pointerStart = null;
   if (!wasDragging || !item) {
     resetDrag();
@@ -1198,7 +1282,7 @@ function onCardPointerUp(event: PointerEvent): void {
   }
   suppressClick = true;
   resetDrag();
-  if (axis === 'x' && dx >= SWIPE_X) {
+  if (dx >= SWIPE_X) {
     const kind = mainKind(item);
     if (kind === 'adopt') {
       void adoptItem(item);
@@ -1219,16 +1303,8 @@ function onCardPointerUp(event: PointerEvent): void {
     }, 280);
     return;
   }
-  if (axis === 'x' && dx <= -SWIPE_X) {
-    void removeItem(item);
-    return;
-  }
-  if (axis === 'y' && dy <= -SWIPE_Y) {
-    flyOut.value = 'detail';
-    window.setTimeout(() => {
-      flyOut.value = '';
-      openDetail(item);
-    }, 200);
+  if (dx <= -SWIPE_X) {
+    removeBySwipe(item);
   }
 }
 
@@ -1259,21 +1335,13 @@ function cardStyle(index: number) {
   if (index !== 0) return undefined;
   if (dragging.value) {
     return {
-      transform:
-        'translate(' + dragX.value + 'px, ' + dragY.value + 'px) rotate(' + dragX.value * 0.035 + 'deg)',
+      transform: 'translate(' + dragX.value + 'px, 0) rotate(' + dragX.value * 0.035 + 'deg)',
       transition: 'none',
     };
   }
   if (flyOut.value === 'main') {
     return {
       transform: 'translate(130%, -10px) rotate(10deg)',
-      opacity: '0',
-      transition: 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease',
-    };
-  }
-  if (flyOut.value === 'detail') {
-    return {
-      transform: 'translate(0, -130%) rotate(-2deg)',
       opacity: '0',
       transition: 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease',
     };
@@ -1471,6 +1539,8 @@ watch(
 
 onMounted(async () => {
   document.addEventListener('keydown', onDocKeydown);
+  window.addEventListener('resize', syncShellInset);
+  window.visualViewport?.addEventListener('resize', syncShellInset);
   stopBackHandler = registerBackHandler(() => {
     if (intakeOpen.value) {
       closeIntake();
@@ -1488,6 +1558,7 @@ onMounted(async () => {
   });
   await inbox.load();
   syncPolling();
+  syncShellInset();
   if (captureQueryOn()) await openCaptureReceipt(false);
 });
 
@@ -1497,6 +1568,8 @@ onBeforeUnmount(() => {
   pollTimer = undefined;
   stopBackHandler?.();
   stopBackHandler = null;
+  window.removeEventListener('resize', syncShellInset);
+  window.visualViewport?.removeEventListener('resize', syncShellInset);
   document.removeEventListener('keydown', onDocKeydown);
 });
 </script>
@@ -1504,17 +1577,25 @@ onBeforeUnmount(() => {
 <style scoped>
 /*
  * 手机端收集箱卡片台。视觉沿用 Engram 设计令牌：暖纸底、纯白卡片、Engram Blue，
- * 不引外部图片；封面全部用 CSS 渐变 + 线性图标。宽度按 390px 手机自查过：
- * 卡片、底部三个按钮、分组卡在 360px 可用宽度内不换行错位、不横向溢出。
+ * 不引外部图片；封面全部用 CSS 渐变 + 线性图标。
+ *
+ * 尺寸自查：宽度 360px（360×640 机）下卡片、底部三个 48px 按钮、分组卡不换行错位；
+ * 高度按 360×640 的约 504px 可用区压缩——封面 96、卡片错位 32、留白收紧，保证
+ * 「三个动作按钮 + 手势提示」首屏完整可见。卡片区自己滚，动作条钉在底栏上方。
  */
 .mob-inbox {
   position: relative;
   display: flex;
   flex-direction: column;
-  /* Home 的 .content 已让开 64px 底部导航；这里补足到 80px 的呼吸位 */
-  min-height: calc(100vh - var(--safe-top) - var(--safe-bottom) - 64px);
-  min-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 64px);
-  padding: 10px 14px calc(80px + var(--safe-bottom));
+  /*
+   * 高度吃满 Home .content 的内容盒（.content 已经让开底栏）：底部动作条因此天然落在
+   * 底栏上方，只有卡片区（.mi-stage）自己滚，动作条不跟着卡片走。--mi-shell-extra 是
+   * 底栏实际高度比 .content 下内边距更高时由脚本补的让位（脚本见 syncShellInset）。
+   */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px 14px calc(4px + var(--mi-shell-extra, 0px));
   color: var(--text);
   background-color: var(--bg);
   background-image:
@@ -1530,13 +1611,12 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: 8px;
   flex: none;
-  padding: 2px 2px 0;
+  padding: 0 2px;
 }
 
 .mi-head-main {
   flex: 1;
   min-width: 0;
-  padding-top: 1px;
 }
 
 .mi-title {
@@ -1548,7 +1628,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-sub {
-  margin: 4px 0 0;
+  margin: 3px 0 0;
   font-size: 12.5px;
   line-height: 1.4;
   color: var(--text-secondary);
@@ -1560,18 +1640,17 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   flex: none;
-  padding-top: 5px;
 }
 
 .mi-iconbtn {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--card-bg);
   box-shadow: var(--shadow-raised);
   color: var(--text-secondary);
@@ -1616,6 +1695,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-banner button {
+  position: relative;
   flex: none;
   min-height: 24px;
   padding: 0 6px;
@@ -1623,6 +1703,16 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
   font-weight: 600;
   color: inherit;
+}
+
+/* 视觉尺寸不动，::after 把命中区补到 44px（触屏最小热区） */
+.mi-banner button::after {
+  content: '';
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: -10px;
+  bottom: -10px;
 }
 
 .mi-banner.error {
@@ -1641,18 +1731,29 @@ onBeforeUnmount(() => {
 
 /* ===== 分组入口 ===== */
 .mi-groups-entry {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
   flex: none;
   width: 100%;
-  margin-top: 12px;
-  padding: 8px 11px 8px 9px;
+  margin-top: 8px;
+  padding: 5px 10px 5px 8px;
   border: 1px solid var(--accent-border, rgba(43, 92, 230, 0.3));
   border-radius: 12px;
   background: var(--accent-soft);
   text-align: left;
   transition: background 0.14s ease;
+}
+
+/* 一行 38px 高：用伪元素把热区补到 44px */
+.mi-groups-entry::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  bottom: -4px;
 }
 
 .mi-groups-entry:active {
@@ -1696,22 +1797,26 @@ onBeforeUnmount(() => {
 
 /* ===== 卡片堆 ===== */
 .mi-stage {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  justify-content: center;
   min-height: 0;
-  padding: 14px 2px 0;
+  /* 卡片区自己滚：纵向手势（touch-action: pan-y）滚这里，底部动作条不跟着走 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 2px;
 }
 
 .mi-stack {
   position: relative;
   display: block;
   width: 100%;
-  /* 后面两张卡向下错开露边，这里给它们留出高度 */
-  margin-bottom: 52px;
-  /* 卡片上的横向/上滑手势自己处理：这里禁掉浏览器滚动接管 */
-  touch-action: none;
+  /* 空间富余时（412×915）卡片整体竖向居中；溢出时 auto 外边距归零、顶部对齐 */
+  margin-top: auto;
+  /* 后面两张卡向下错开露边，这里给它们留出高度（与 back-2 的 30px 错位对齐） */
+  margin-bottom: 32px;
+  /* 纵向滚动交还浏览器（pan-y）；横向拖动由卡片自己接管 */
+  touch-action: pan-y;
 }
 
 .mi-card {
@@ -1727,7 +1832,7 @@ onBeforeUnmount(() => {
 .mi-card.front {
   z-index: 3;
   cursor: pointer;
-  touch-action: none;
+  touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
   animation: mi-deal 0.36s cubic-bezier(0.22, 1, 0.36, 1);
@@ -1740,7 +1845,7 @@ onBeforeUnmount(() => {
   right: 0;
   height: 100%;
   z-index: 2;
-  transform: translateY(24px) scale(0.96);
+  transform: translateY(16px) scale(0.96);
   transform-origin: top center;
   box-shadow: var(--shadow-raised);
   pointer-events: none;
@@ -1753,7 +1858,7 @@ onBeforeUnmount(() => {
   right: 0;
   height: 100%;
   z-index: 1;
-  transform: translateY(46px) scale(0.925);
+  transform: translateY(30px) scale(0.925);
   transform-origin: top center;
   box-shadow: var(--shadow-raised);
   pointer-events: none;
@@ -1779,7 +1884,7 @@ onBeforeUnmount(() => {
 /* 封面：类型渐变色 + 大号扩展名 / 平台名 + 线性图标，全部本地绘制 */
 .mi-cover {
   position: relative;
-  height: 116px;
+  height: 96px;
   flex: none;
   background: var(--cov-bg, var(--bg-tertiary));
   color: var(--cov-fg, var(--text));
@@ -1937,7 +2042,7 @@ onBeforeUnmount(() => {
 .mi-card-body {
   display: flex;
   flex-direction: column;
-  padding: 11px 14px 13px;
+  padding: 8px 14px 10px;
 }
 
 .mi-card-top {
@@ -2035,9 +2140,9 @@ onBeforeUnmount(() => {
 }
 
 .mi-card-title {
-  margin: 8px 0 0;
+  margin: 5px 0 0;
   font-size: 16.5px;
-  line-height: 1.42;
+  line-height: 1.35;
   font-weight: 650;
   letter-spacing: -0.01em;
   display: -webkit-box;
@@ -2051,9 +2156,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  margin: 8px 0 0;
-  font-size: 12px;
-  line-height: 1.5;
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
   color: var(--text-secondary);
 }
 
@@ -2085,7 +2190,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  margin-top: 9px;
+  margin-top: 5px;
   font-size: 11.5px;
   color: var(--text-secondary);
 }
@@ -2097,7 +2202,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* 拖拽时的印章：右滑 / 左滑 / 上滑各一种语气 */
+/* 拖拽时的印章：右滑主操作 / 左滑回收站两种语气 */
 .mi-stamp {
   position: absolute;
   left: 16px;
@@ -2126,19 +2231,16 @@ onBeforeUnmount(() => {
   color: var(--danger);
 }
 
-.mi-stamp.is-later {
-  color: var(--accent);
-}
-
 .mi-gesture {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   flex: none;
-  padding: 2px 4px 0;
-  font-size: 12px;
-  line-height: 1.4;
+  margin-bottom: auto;
+  padding: 0 4px;
+  font-size: 12.5px;
+  line-height: 1.3;
   color: var(--text-secondary);
   text-align: center;
 }
@@ -2147,14 +2249,16 @@ onBeforeUnmount(() => {
   flex: none;
 }
 
-/* ===== 底部操作（手势的无障碍替代） ===== */
+/* ===== 底部操作（手势的无障碍替代）：固定在底栏上方，不随卡片滚动 ===== */
 .mi-bar {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) auto;
   gap: 8px;
   flex: none;
-  margin-top: 10px;
-  padding: 0 2px;
+  margin-top: 4px;
+  padding: 4px 2px 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
 }
 
 .mi-bar-main {
@@ -2238,24 +2342,29 @@ onBeforeUnmount(() => {
 /* 分组视图底部只放「逐条看 / 刷新」两个动作 */
 .mi-bar-groups {
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
-  margin-top: auto;
-  padding-top: 14px;
+  margin-top: 4px;
+  padding-top: 4px;
 }
 
 /* ===== 分组视图 ===== */
 .mi-groups-note {
   flex: none;
-  margin: 12px 2px 0;
+  margin: 8px 2px 0;
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-secondary);
 }
 
 .mi-groups {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 10px;
+  margin-top: 8px;
+  padding: 0 2px 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .mi-group {
@@ -2378,6 +2487,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-mini {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2390,6 +2500,16 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* 30px 的视觉高度，热区靠 ::after 补到 44px */
+.mi-mini::after {
+  content: '';
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  top: -7px;
+  bottom: -7px;
 }
 
 .mi-mini.primary {
@@ -2826,6 +2946,7 @@ onBeforeUnmount(() => {
 }
 
 .mi-receipt-undo {
+  position: relative;
   display: block;
   width: 100%;
   margin-top: 10px;
@@ -2835,6 +2956,15 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--text-secondary);
   text-align: center;
+}
+
+.mi-receipt-undo::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  bottom: -6px;
 }
 
 .mi-receipt-undo:active {
@@ -2933,7 +3063,7 @@ html.dark .mi-mini.success {
 .mi-intake-url input {
   flex: 1;
   min-width: 0;
-  height: 42px;
+  height: 44px;
   padding: 0 12px;
   border: 1px solid var(--border-strong);
   border-radius: 11px;
@@ -2947,7 +3077,7 @@ html.dark .mi-mini.success {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.mi-intake-url .btn { height: 42px; border-radius: 11px; }
+.mi-intake-url .btn { height: 44px; border-radius: 11px; }
 
 .mi-intake-note {
   display: flex;

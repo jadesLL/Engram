@@ -141,43 +141,105 @@
 
     <AppContextMenu />
 
-    <!-- 移动端底部导航（聊天抽屉打开时让位，避免盖住输入区） -->
-    <nav class="bottom-nav" :class="{ 'chat-open': app.chatDrawerOpen }">
+    <!-- 移动端底部导航（2026-11 安卓改版：五项）：
+         首页 / 知识库 / 收集箱 / Agent / 我的。聊天抽屉打开时整条让位，避免盖住输入区。 -->
+    <nav class="bottom-nav" :class="{ 'chat-open': app.chatDrawerOpen }" aria-label="主导航">
       <!-- 当前所在的分区要看得出来（手机 App 的底部标签栏惯例）：选中项图标与文字用强调色 -->
       <button
         v-for="item in bottomItems"
-        :key="item.label"
+        :key="item.key"
         type="button"
         :class="{ active: item.active }"
         :aria-current="item.active ? 'page' : undefined"
+        :aria-label="item.title || item.label"
         @click="item.action"
       >
-        <Icon :name="item.icon" :size="20" /><span>{{ item.label }}</span>
+        <span class="bn-icon">
+          <Icon :name="item.icon" :size="20" />
+          <span v-if="item.running" class="bn-running" aria-hidden="true" />
+          <span v-else-if="item.dot" class="bn-dot" aria-hidden="true" />
+        </span>
+        <span>{{ item.label }}</span>
       </button>
     </nav>
 
-    <!-- 移动端「更多」面板：收纳 rail 上手机无处进入的入口 -->
+    <!-- 移动端「我的」面板（2026-11 安卓改版）：替代原来的「更多」九宫格。
+         账户行只读展示；快捷动作是「新建页面 / 记一条灵感」；其余入口逐行列出，行高 ≥52px。 -->
     <Teleport to="body">
       <transition name="fade">
         <div v-if="moreOpen" class="more-mask" @click="moreOpen = false" />
       </transition>
       <transition name="more-sheet">
-        <div v-if="moreOpen" class="more-sheet" role="dialog" aria-label="更多功能">
+        <div v-if="moreOpen" class="more-sheet" role="dialog" aria-modal="true" aria-label="我的">
           <div class="more-sheet-bar" />
-          <div class="more-grid">
+          <div class="more-sheet-head">
+            <h2 class="more-sheet-title">我的</h2>
+            <button class="more-sheet-close" type="button" aria-label="关闭我的面板" @click="moreOpen = false">
+              <Icon name="x" :size="20" />
+            </button>
+          </div>
+
+          <div class="more-account">
+            <span class="more-avatar" aria-hidden="true">{{ accountInitial }}</span>
+            <span class="more-account-main">
+              <span class="more-account-name">{{ accountName }}</span>
+              <span class="more-account-sub">{{ accountSyncLine }}</span>
+            </span>
+          </div>
+
+          <div class="more-quick">
+            <button type="button" @click="runQuick(quickNew)">
+              <span class="more-quick-icon"><Icon name="plus" :size="18" /></span>
+              <span>新建页面</span>
+            </button>
+            <button type="button" @click="runQuick(quickNote)">
+              <span class="more-quick-icon"><Icon name="lightbulb" :size="18" /></span>
+              <span>记一条灵感</span>
+            </button>
+          </div>
+
+          <div class="more-list">
             <button
               v-for="item in moreItems"
-              :key="item.label"
+              :key="item.key"
               type="button"
+              class="more-row"
               @click="item.action"
             >
-              <span class="more-icon">
-                <Icon :name="item.icon" :size="20" />
-                <span v-if="item.running" class="more-running" aria-hidden="true" />
-                <span v-if="item.dot" class="more-dot" />
+              <span class="more-row-icon">
+                <Icon :name="item.icon" :size="19" />
+                <span v-if="item.dot" class="more-dot" aria-hidden="true" />
               </span>
-              <span class="more-label">{{ item.label }}</span>
+              <span class="more-row-main">
+                <span class="more-row-title">{{ item.label }}</span>
+                <span v-if="item.sub" class="more-row-sub">{{ item.sub }}</span>
+              </span>
+              <Icon name="chevron-right" :size="18" class="more-row-chevron" />
             </button>
+
+            <!-- 外观：三选直接生效（跟随系统 / 浅色 / 深色），复用 app.setTheme 的既有主题逻辑 -->
+            <div class="more-appearance">
+              <div class="more-row more-row-static">
+                <span class="more-row-icon"><Icon name="sun" :size="19" /></span>
+                <span class="more-row-main">
+                  <span class="more-row-title">外观</span>
+                  <span class="more-row-sub">{{ themeLabel }}</span>
+                </span>
+              </div>
+              <div class="more-theme" role="radiogroup" aria-label="外观">
+                <button
+                  v-for="opt in themeOptions"
+                  :key="opt.value"
+                  type="button"
+                  role="radio"
+                  :aria-checked="app.theme === opt.value"
+                  :class="{ active: app.theme === opt.value }"
+                  @click="app.setTheme(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </transition>
@@ -195,6 +257,7 @@ import { useUpdateStore } from '../stores/update';
 import { useAppUpdateStore } from '../stores/appUpdate';
 import { useHomeBoardStore, flushHomeBoardWrite } from '../stores/homeBoard';
 import { useTasksStore } from '../stores/tasks';
+import { useSyncStore } from '../stores/sync';
 import {
   UPDATE_CHECK_POKE_DEBOUNCE_MS,
   UPDATE_CHECK_STARTUP_MS,
@@ -208,6 +271,8 @@ import { notify } from '../lib/notify';
 import { promptDialog } from '../lib/confirm';
 import { createIdeaNote } from '../lib/quickNote';
 import { loadRuntimeCapabilities, useRuntimeCapabilities } from '../lib/capabilities';
+import { haptic } from '../lib/haptics';
+import { syncStatusView } from '../lib/syncStatus';
 import { registerBackHandler } from '../lib/androidBack';
 import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
@@ -230,6 +295,7 @@ const chat = useChatStore();
 const inbox = useInboxStore();
 const homeBoard = useHomeBoardStore();
 const homeTasks = useTasksStore();
+const sync = useSyncStore();
 
 /** 退到后台 / 关页面前把去抖中的布局写补上（同步 store 的 flush，见 stores/homeBoard.ts） */
 function flushHomeBoardOnHide() {
@@ -437,70 +503,166 @@ const navItems = computed(() => [
   { key: 'customer-research', icon: 'report', title: '客户调研', active: isActive('/customer-research'), dot: false, action: () => go('/customer-research') },
 ]);
 
-const bottomItems = computed(() => [
-  { label: '页面', icon: 'pages', active: isActive('/page'), action: () => { app.sidebarOpen = true; go('/page'); } },
-  { label: '搜索', icon: 'search', active: isActive('/search'), action: () => go('/search') },
-  { label: '新建', icon: 'plus', active: false, action: () => quickNote() },
-  // 「更多」收纳的是图谱/收集箱/看板/设置与内置 Agent：停在其中任意一处都算「更多」这一格
+/* ===== 手机底部导航（≤768px）：五个顶层入口 =====
+ * 桌面端看不到这一条（.bottom-nav 只在 ≤768px 显示），标签项在这里统一定义。
+ * 首页与知识库都落在 /page：目录抽屉收起时算首页，抽屉拉开时算知识库——两个标签
+ * 各有一件事，不再像旧的「页面」那样一格两件事。
+ */
+const moreOpen = ref(false);
+
+/** 知识库抽屉在手机上是浮层：切到别的标签时顺手收起，免得盖住刚切过去的页面 */
+function closeLibraryDrawer() {
+  if (app.sidebarOpen) app.sidebarOpen = false;
+}
+
+interface BottomNavItem {
+  key: string;
+  label: string;
+  /** 无障碍名称：带角标数量时比标签更具体（可省，省则用 label） */
+  title?: string;
+  icon: string;
+  active: boolean;
+  dot: boolean;
+  running: boolean;
+  action: () => void;
+}
+
+const bottomItems = computed<BottomNavItem[]>(() => [
   {
-    label: '更多',
+    key: 'home',
+    label: '首页',
+    title: '首页',
+    icon: 'compass',
+    active: isActive('/page') && !app.sidebarOpen,
+    dot: false,
+    running: false,
+    action: () => {
+      haptic('tap');
+      closeLibraryDrawer();
+      go('/page');
+    },
+  },
+  {
+    key: 'library',
+    label: '知识库',
+    title: '知识库',
+    icon: 'pages',
+    // 选中态靠抽屉判断：两个标签都去 /page，「抽屉开着」就是正在看知识库
+    active: app.sidebarOpen,
+    dot: false,
+    running: false,
+    action: () => {
+      haptic('tap');
+      app.sidebarOpen = true;
+      go('/page');
+    },
+  },
+  {
+    key: 'inbox',
+    label: '收集箱',
+    icon: 'inbox',
+    // 角标只算还没入库的（待整理 + 已转换）：已入库的内容已经进了知识库，不该再催
+    title: inbox.activeCount ? `收集箱（${inbox.activeCount} 份还没入库）` : '收集箱',
+    active: isActive('/inbox'),
+    dot: inbox.activeCount > 0,
+    running: false,
+    action: () => {
+      haptic('tap');
+      closeLibraryDrawer();
+      go('/inbox');
+    },
+  },
+  {
+    key: 'agent',
+    label: 'Agent',
+    title: 'Agent',
+    icon: 'ai',
+    active: app.chatDrawerOpen,
+    dot: app.chatUnread,
+    running: chat.hasRunning,
+    action: () => {
+      haptic('tap');
+      closeLibraryDrawer();
+      app.toggleChat(true);
+    },
+  },
+  {
+    key: 'me',
+    label: '我的',
+    title: '我的',
     icon: 'more',
-    active: moreSectionActive.value,
-    action: () => { moreOpen.value = true; },
+    active: moreOpen.value,
+    dot: false,
+    running: false,
+    action: () => {
+      haptic('tap');
+      moreOpen.value = true;
+    },
   },
 ]);
 
-/* 「更多」面板：rail 在 ≤768px 隐藏后，这些入口仅在此处可达 */
-const moreOpen = ref(false);
-
-/** 底部标签栏「更多」是否属于当前所在分区（图谱/收集箱/看板/设置/内置 Agent） */
-const moreSectionActive = computed(() =>
-  isActive('/graph') || isActive('/inbox') || isActive('/tasks') || isActive('/customer-research') || isActive('/settings') || app.chatDrawerOpen
-);
-
+/** 面板列表行：点完先收面板再做事（导航要能马上看到） */
 function runMore(action: () => void) {
   moreOpen.value = false;
   action();
 }
 
-const moreItems = computed(() => [
+/** 快捷动作（新建页面 / 记一条灵感）：收面板 + 轻振确认，属于「产生内容」的主操作 */
+function runQuick(action: () => void) {
+  haptic('tap');
+  moreOpen.value = false;
+  action();
+}
+
+interface MoreSheetItem {
+  key: string;
+  label: string;
+  /** 行内第二行说明（可省） */
+  sub?: string;
+  icon: string;
+  dot: boolean;
+  action: () => void;
+}
+
+/* 「我的」面板列表：rail 在 ≤768px 隐藏后，这些入口仅在此处可达。
+   收集箱与 Agent 已升为底栏顶层，不再重复占用这里的行。 */
+const moreItems = computed<MoreSheetItem[]>(() => [
+  { key: 'search', label: '搜索', sub: 'Wiki 页面与原始资料', icon: 'search', dot: false, action: () => runMore(() => go('/search')) },
+  { key: 'graph', label: '知识图谱', icon: 'graph', dot: false, action: () => runMore(() => go('/graph')) },
+  { key: 'tasks', label: '任务看板', icon: 'board', dot: false, action: () => runMore(() => go('/tasks')) },
+  { key: 'customer-research', label: '客户调研', icon: 'report', dot: false, action: () => runMore(() => go('/customer-research')) },
+  { key: 'sync', label: '多端同步', icon: 'cloud-check', dot: false, action: () => runMore(() => go('/settings')) },
   {
-    label: agentName.value,
-    icon: 'ai',
-    dot: app.chatUnread,
-    running: chat.hasRunning,
-    action: () => runMore(() => app.toggleChat(true)),
-  },
-  {
-    label: '知识图谱',
-    icon: 'graph',
-    dot: false,
-    running: false,
-    action: () => runMore(() => go('/graph')),
-  },
-  {
-    label: '收集箱',
-    icon: 'inbox',
-    dot: inbox.activeCount > 0,
-    running: false,
-    action: () => runMore(() => go('/inbox')),
-  },
-  {
-    label: '任务看板',
-    icon: 'board',
-    dot: false,
-    running: false,
-    action: () => runMore(() => go('/tasks')),
-  },
-  { label: '客户调研', icon: 'report', dot: false, running: false, action: () => runMore(() => go('/customer-research')) },
-  {
+    key: 'settings',
     label: '设置',
-    icon: 'settings',
     dot: updateStore.hasNewVersion || sourceHasUpdate.value || appUpdateStore.hasUpdate,
-    running: false,
+    icon: 'settings',
     action: () => runMore(() => go('/settings')),
   },
 ]);
+
+/* 账户行（只读）：名字取同步群组里这台设备的名字，第二行是同步状态；
+   没配置多端同步时只说「本机知识库」，不假装有云端账户体系。 */
+const accountName = computed(() => (sync.status?.deviceLabel || '').trim() || 'Engram 本机');
+const accountInitial = computed(() => Array.from(accountName.value)[0] || 'E');
+const accountSyncLine = computed(() => {
+  const state = syncStatusView(sync.status, {
+    androidLocal: capabilities.value.runtime === 'android-local',
+  });
+  if (!state) return '本机知识库 · 未配置多端同步';
+  return state.detail ? `${state.label} · ${state.detail}` : state.label;
+});
+
+/* 外观三选：直接走 app.setTheme（localStorage + 服务端设置 + 原生状态栏配色都在那里），
+   不在这块面板里另造一套主题逻辑。 */
+const themeOptions = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+] as const;
+const themeLabel = computed(
+  () => themeOptions.find((opt) => opt.value === app.theme)?.label || '跟随系统',
+);
 
 async function quickNew() {
   // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog
@@ -628,7 +790,7 @@ function onWindowFocus() {
 onMounted(() => {
   window.addEventListener('keydown', onKey);
   window.addEventListener('resize', onWindowResize);
-  // Android 返回键/侧滑返回：先收掉应用级浮层（更多面板 → 对话抽屉 → 文件树），
+  // Android 返回键/侧滑返回：先收掉应用级浮层（我的面板 → 对话抽屉 → 文件树），
   // 都关着才交回原生（历史后退或退到后台）。桌面端没有原生调用，注册了也不会触发。
   stopBackHandler = registerBackHandler(() => {
     if (moreOpen.value) {
@@ -1231,10 +1393,44 @@ onUnmounted(() => {
 
   .bottom-nav button span { font-size: 10px; }
 
+  /* 底栏图标外层：只负责给「运行中 / 未读」小点定位（图标本身仍是 20px 细线） */
+  .bn-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .bn-dot {
+    position: absolute;
+    top: -3px;
+    right: -6px;
+    width: 7px;
+    height: 7px;
+    border: 1.5px solid var(--sidebar-glass-solid);
+    border-radius: 50%;
+    background: var(--sidebar-accent);
+    pointer-events: none;
+  }
+
+  /* Agent 还有轮次在跑：与 rail 上同一套脉冲点，抽屉关着也能从底栏看出来 */
+  .bn-running {
+    position: absolute;
+    top: -3px;
+    right: -6px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--sidebar-accent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--sidebar-accent) 55%, transparent);
+    animation: rail-pulse 1.6s ease-out infinite;
+    pointer-events: none;
+  }
+
   /* 聊天抽屉在窄屏是整屏浮层：底部导航让位，否则盖住输入框与发送按钮 */
   .bottom-nav.chat-open { display: none; }
 
-  /* 「更多」底部面板 */
+  /* 「我的」底部面板（2026-11 安卓改版）：列表式，取代原来的「更多」九宫格 */
   .more-mask {
     position: fixed;
     inset: 0;
@@ -1267,66 +1463,233 @@ onUnmounted(() => {
   .more-sheet-bar {
     width: 36px;
     height: 4px;
-    margin: 0 auto 12px;
+    margin: 0 auto 8px;
     border-radius: 2px;
     background: var(--sidebar-hairline);
   }
 
-  .more-grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 4px;
-  }
-
-  .more-grid button {
-    min-height: 64px;
+  /* 标题行 + 右上关闭：面板要有名字也要有显式出口（九宫格时代两样都没有） */
+  .more-sheet-head {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 6px;
-    border-radius: 10px;
-    color: var(--text-secondary);
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 0 2px 4px;
   }
 
-  .more-grid button:active { background: var(--sidebar-hover); }
+  .more-sheet-title {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 650;
+    color: var(--text);
+  }
 
-  .more-icon {
-    position: relative;
-    width: 42px;
-    height: 42px;
+  .more-sheet-close {
+    width: 44px;
+    height: 44px;
+    /* 热区 44px，视觉靠负外边距贴回右上角，标题行不会被撑高 */
+    margin: -6px -8px -6px 0;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 12px;
-    background: var(--sidebar-selection);
+    color: var(--text-secondary);
+  }
+
+  .more-sheet-close:active { background: var(--sidebar-hover); }
+
+  /* 账户行：只读展示（头像 + 本机名 / 同步状态），不做交互 */
+  .more-account {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 2px 4px 12px;
+  }
+
+  .more-avatar {
+    width: 46px;
+    height: 46px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .more-account-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .more-account-name {
+    font-size: 16px;
+    font-weight: 650;
     color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .more-account-sub {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 快捷动作：两颗并排的方块按钮，≥52px 高（拇指好点） */
+  .more-quick {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 0 4px 12px;
+  }
+
+  .more-quick button {
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 10px;
+    border: 1px solid var(--sidebar-glass-border);
+    border-radius: 12px;
+    background: var(--card-bg);
+    box-shadow: var(--shadow-raised);
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .more-quick button:active { background: var(--sidebar-hover); }
+
+  .more-quick-icon {
+    display: flex;
+    color: var(--sidebar-accent);
+  }
+
+  /* 列表：一张卡片里逐行排开；行高 ≥52px、行图标 44px 热区、行尾 chevron */
+  .more-list {
+    overflow: hidden;
+    border: 1px solid var(--sidebar-glass-border);
+    border-radius: 14px;
+    background: var(--card-bg);
+  }
+
+  .more-row {
+    position: relative;
+    width: 100%;
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 4px 4px;
+    /* 行在列表卡片里是通铺的一条：圆角交给外层 .more-list 的 overflow 裁 */
+    border-radius: 0;
+    text-align: left;
+    color: var(--text);
+  }
+
+  .more-row + .more-row::before,
+  .more-appearance .more-row::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 56px;
+    right: 0;
+    height: 1px;
+    background: var(--sidebar-hairline);
+  }
+
+  .more-row:active { background: var(--press-bg); }
+
+  .more-row-icon {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+  }
+
+  .more-row-main {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .more-row-title {
+    font-size: 15px;
+    font-weight: 550;
+    line-height: 1.35;
+    color: var(--text);
+  }
+
+  .more-row-sub {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .more-row-chevron {
+    flex: none;
+    color: var(--text-faint);
   }
 
   .more-dot {
     position: absolute;
-    top: 4px;
-    right: 4px;
+    top: 8px;
+    right: 8px;
     width: 7px;
     height: 7px;
-    border: 1.5px solid var(--sidebar-glass-solid);
+    border: 1.5px solid var(--card-bg);
     border-radius: 50%;
     background: var(--sidebar-accent);
   }
 
-  /* 「更多」面板里的运行中脉冲点（与 rail 上同一套动效） */
-  .more-running {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--sidebar-accent);
-    animation: rail-pulse 1.6s ease-out infinite;
+  /* 外观：三颗分段在 320px 窄屏上会跟标题挤成一排，改成标题行下面整宽排；按钮 44px 高 */
+  .more-appearance { display: block; }
+
+  .more-row-static { cursor: default; }
+  .more-row-static:active { background: transparent; }
+
+  .more-theme {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    padding: 2px 10px 12px 56px;
   }
 
-  .more-label { font-size: 11px; }
+  .more-theme button {
+    height: 44px;
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+
+  .more-theme button.active {
+    background: var(--sidebar-selection-strong);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--sidebar-focus-ring);
+  }
+
+  .more-theme button:active { background: var(--sidebar-active); }
 
   /*
    * 触屏手机：底部导航整格 48px 已经够高，但 10px 标签在小屏上读不清；
@@ -1343,7 +1706,6 @@ onUnmounted(() => {
  */
 @media (max-height: 480px) {
   .more-sheet { max-height: calc(100dvh - 24px - var(--safe-top) - var(--safe-bottom)); }
-  .more-grid button { min-height: 52px; }
 }
 
 .more-sheet-enter-active,
