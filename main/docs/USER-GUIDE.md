@@ -387,6 +387,9 @@ Fastify + better-sqlite3（FTS5）· Vue 3 + Vditor + vis-network · Electron（
 | [`main/WORKTREES.md`](../WORKTREES.md) | Worktree 工作流与资源隔离规则 |
 | [`main/docs/BUILDING.md`](../docs/BUILDING.md) | 构建与部署指南（安装包生成、发版、部署） |
 | [`main/docs/GITEA-CI.md`](../docs/GITEA-CI.md) | Gitea CI/CD、发版流程、镜像分发 |
+| [`main/docs/PLATFORM-PARALLEL-DEV.md`](../docs/PLATFORM-PARALLEL-DEV.md) | 三端并行开发规范（设计理念、平台契约、同步节奏与门禁） |
+| [`main/docs/MOBILE-SYNC-LEDGER.md`](../docs/MOBILE-SYNC-LEDGER.md) | 手机端同步滞后清单（发版前清零） |
+| [`main/docs/ANDROID.md`](../docs/ANDROID.md) | Android 本地优先端（架构、同步、OTA、验收） |
 | [`main/docs/IPV6.md`](../docs/IPV6.md) | IPv6 直连优先 + 隧道兜底（部署、DDNS、路由器放行） |
 | [`main/docs/AI-CONTENT-OPERATIONS.md`](../docs/AI-CONTENT-OPERATIONS.md) | 外部 Agent 操作知识内容的纪律总纲 |
 | [`main/desktop/README.md`](../desktop/README.md) | Windows 桌面端（本地内嵌、打包） |

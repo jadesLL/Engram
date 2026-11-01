@@ -28,6 +28,7 @@
 - **功能合并 main 时同步整合进根 `README.md`**；**发版时必须写 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落**（距上次发布以来的全部新功能），release.yml 校验缺失即失败，段落会自动发布为 Release 正文。
 - **镜像烤入提交号**（2026-09-09 起，对齐 hermes-agent 的 build-file 路线）：release.yml 构建镜像时传 `--build-arg ENGRAM_GIT_SHA=<提交>`，写入镜像内 `/app/GIT_SHA`；镜像里没有 `.git`，应用内 设置 → 本机应用 → 版本信息（高级，默认收起）→「应用版本」靠它显示 `版本号 · 提交号`。本地 `docker compose up -d --build` 想显示提交号，先 `export ENGRAM_GIT_SHA=$(git rev-parse HEAD)`（不传则只显示版本号）。
 - **发版必须过 verify 门禁**（2026-09-04 起）：release.yml 在构建任何产物前先跑完整 verify（build+typecheck+test），main 测试不红才能带标签发版——堵住 2026-08-27~08-30 main 连红期间 v1.1.22~v1.1.28 照常发版的缺口。
+- **发版必须过三端一致性门禁**（2026-11-02 起）：`bash main/scripts/platform-parity-check.sh --strict` 通过（版本号三处一致、能力位/原生桥/内嵌 Web 构建链、手机滞后清单目标版本清零），规范见 [`PLATFORM-PARALLEL-DEV.md`](./PLATFORM-PARALLEL-DEV.md)；verify 内部已包含 `web/src/lib/platformParity.test.ts` 契约检查。
 
 | 环节 | 命令/动作 | 自动发生什么 |
 |---|---|---|

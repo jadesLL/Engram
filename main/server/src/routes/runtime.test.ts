@@ -22,6 +22,8 @@ test('runtime capabilities preserve the complete server feature set', async () =
   assert.equal(payload.agentMode, 'local');
   assert.deepEqual(payload.nativeActions, []);
   assert.equal(payload.features.serverUpdate, true);
+  // 手机专属能力位：服务端 / 桌面端必须显式给出 false（键集要与 web / Kotlin 对齐，见 platformParity.test.ts）
+  assert.equal(payload.features.apkUpdate, false);
   // v1.5.1：手机绑定中枢后要靠这两枚能力位放行「控制台 / 视频模型」配置入口
   assert.equal(payload.features.agentConsole, true);
   assert.equal(payload.features.videoConfig, true);

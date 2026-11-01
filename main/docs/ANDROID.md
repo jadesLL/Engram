@@ -155,3 +155,9 @@ release 签名仍读取 `mobile/android/key.properties`（不入库）或 CI 的
 - 推 `v*` 标签后立刻 dispatch release.yml 勾选 `binaries`，APK 与 exe 构建完成后自动补挂本次 Release。
 - APK 必须基于本次发版提交构建、版本号与 `desktop/package.json` 一致（不得复用旧包）。
 - 发版说明里的安卓部分要**补齐自上一个 Android 版本以来累积的全部改动**（安卓端不能源码自更新、可能一次跨过多个版本），并确保手机端代码已对齐这段区间内桌面/Docker 端已有的功能。
+
+## 三端并行与手机对齐
+
+手机端是「一套产品内核 + 三个运行壳」中的适配端：`main/web` 与桌面/Docker 共用同一份构建，操作逻辑按触屏重做。跨端开发规范、平台契约、A–F 分类与同步节奏见 [`PLATFORM-PARALLEL-DEV.md`](./PLATFORM-PARALLEL-DEV.md)；未完成的手机适配登记在 [`MOBILE-SYNC-LEDGER.md`](./MOBILE-SYNC-LEDGER.md)，**发版前必须清零**。
+
+每次手机行为变化（能力位、壳层、原生桥、同步数据面）合并前，至少完成规范 §4.6 的 DoD：分类声明、Web 护栏测试、API 23/35 与 compact/medium/expanded 三档、返回键/安全区、同步双向冒烟（改到数据面时）、本文件对应段落更新。
