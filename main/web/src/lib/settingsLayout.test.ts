@@ -207,3 +207,88 @@ test('宽屏设置页让内容区交出滚动权，不再多出第三根没用�
     '窄屏设置页被钉住了高度：那边靠整页滚动，守卫不能越界',
   );
 });
+
+/**
+ * 2026-11 安卓改版：设置页从「两行胶囊 + 一整页长列表」改成「分组列表 + 子页 push」。
+ *
+ * 手机端（≤768px）首页是账户卡 + 六行分组（行高 ≥56、行尾给状态、右侧 chevron），
+ * 点一行进该大类子页；子页有返回箭头（安卓返回键同样回到列表），内容复用桌面的大类 section。
+ * 桌面端（≥769px）必须保持「左目录 + 右内容」双栏与原有的面板挂载/滚动行为——
+ * 所以外壳用 v-show 而不是 v-if：手机列表页只是把它收起来，DOM 与面板状态都还在。
+ * 版式与交互没法单测，沿用本文件的做法：读源码锁关键结构，防止被改回胶囊 / 单页长列表。
+ */
+test('手机端：分组列表 + 子页 push（行高 ≥56、返回键回列表），桌面双栏结构不变', () => {
+  const view = fs.readFileSync(viewPath, 'utf8');
+
+  // ① 分组列表只在窄屏渲染；行是可直接点进子页的按钮，行尾带状态
+  assert.match(
+    view,
+    /v-if="mobileListVisible"[\s\S]{0,160}?class="settings-mobile-list"/,
+    '手机端分组列表没有按 mobileListVisible 渲染：桌面端也会看到列表',
+  );
+  assert.match(
+    view,
+    /class="settings-mobile-row"[\s\S]{0,220}?data-mobile-domain="row\.id"/,
+    '分组行缺少 data-mobile-domain：返回时找不到该把焦点交回哪一行',
+  );
+  assert.match(
+    view,
+    /class="settings-mobile-row-status"/,
+    '分组行行尾没有状态文字：跟「跟随系统 / 下载 64%」同款的行状态丢了',
+  );
+  assert.match(
+    view,
+    /class="settings-mobile-account"[\s\S]{0,200}?openMobileSection\('account'\)/,
+    '账户卡没有接到「账户与访问」子页：手机上没有入口改登录凭据 / 连接通道',
+  );
+
+  // ② mobileSection=null 是分组列表，有值是该大类子页
+  assert.match(view, /const mobileSection = ref<SettingsDomainId \| null>\(null\)/, '缺少 mobileSection 状态');
+  assert.match(
+    view,
+    /const mobileListVisible = computed\(\(\) => mobileLayout\.value && mobileSection\.value === null\)/,
+    '分组列表与子页的显隐没有按 mobileSection 区分',
+  );
+  assert.match(view, /function openMobileSection\(id: SettingsDomainId\)/, '缺少进入子页的方法');
+  assert.match(
+    view,
+    /function closeMobileSection\(\) \{[\s\S]{0,400}?mobileSection\.value = null/,
+    '子页返回没有退回分组列表',
+  );
+
+  // ③ 两条返回通路都要通：返回箭头 + 安卓返回键
+  assert.match(
+    view,
+    /class="settings-mobile-back"[\s\S]{0,160}?@click="closeMobileSection\(\)"/,
+    '子页返回箭头没有接 closeMobileSection',
+  );
+  assert.match(
+    view,
+    /registerBackHandler\(\(\) => \{[\s\S]{0,220}?closeMobileSection\(\)/,
+    '安卓返回键没有接管子页：按返回会直接退出设置而不是回分组列表',
+  );
+
+  // ④ 子页复用桌面的大类 section（v-show），没有第二套内容模板
+  assert.match(
+    view,
+    /v-show="activeDomain === 'account'"/,
+    '账户大类 section 不再用 v-show 复用：子页会另起一套内容',
+  );
+
+  // ⑤ 桌面双栏外壳必须保留（v-show 收起，不是 v-if 卸载）：桌面结构 / 面板状态不能变
+  assert.match(
+    view,
+    /class="settings-shell" v-show="!mobileListVisible"/,
+    '桌面双栏外壳被改成 v-if 或没受 mobileListVisible 控制：桌面 DOM 结构与面板状态会变',
+  );
+  assert.match(view, /ref="contentEl" class="settings-content"/, '桌面内容列被拆了：双栏外壳不再完整');
+
+  // ⑥ 行高与触控：≥56px 的行、44px 返回热区、子页底部给底栏留白
+  assert.match(ruleBody(css, '.settings-mobile-row'), /min-height:\s*56px/, '手机端分组行没有 ≥56px');
+  assert.match(ruleBody(css, '.settings-mobile-back'), /width:\s*44px/, '子页返回热区没有 44px');
+  assert.match(
+    ruleBody(css, '.settings-view.is-mobile-subpage'),
+    /padding-bottom:\s*96px/,
+    '子页底部没有为底部导航 / 安全区留白',
+  );
+});

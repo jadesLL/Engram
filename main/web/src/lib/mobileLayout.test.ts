@@ -132,8 +132,8 @@ test('编辑态与沉浸阅读的底部胶囊共用同一个留白来源', () =>
   assert.doesNotMatch(readingStatusbar, /safe-bottom/, '阅读态胶囊把安全区算了两次：会比底部导航高出一条系统栏');
 });
 
-test('断点只用规范三档（手机/紧凑/宽屏），不再出现越档值', () => {
-  const allowed = new Set([640, 768, 769, 1024]);
+test('断点只用规范档位（桌面三档 + 安卓 WindowSizeClass 的 600/840），不再出现越档值', () => {
+  const allowed = new Set([600, 640, 768, 769, 840, 1024]);
   const offenders: string[] = [];
   for (const file of listStyleSources()) {
     const text = fs.readFileSync(file, 'utf8');
@@ -142,7 +142,45 @@ test('断点只用规范三档（手机/紧凑/宽屏），不再出现越档值
       if (!allowed.has(value)) offenders.push(`${path.relative(srcRoot, file)}: ${value}px`);
     }
   }
-  assert.deepEqual(offenders, [], `规范（styles/main.css 顶部）只允许 640/768/1024：\n${offenders.join('\n')}`);
+  assert.deepEqual(offenders, [], `规范（styles/main.css 顶部）只允许 640/768/1024（桌面）+ 600/840（Android WindowSizeClass）：\n${offenders.join('\n')}`);
+});
+
+test('Android WindowSizeClass 的 600 / 840 与壳层同源，不再各写一套', () => {
+  // 2026-11 安卓改版：compact <600 / medium 600–839 / expanded ≥840。
+  // 这两档不写宽度媒体查询（上面的白名单只认桌面三档 + 这两个值），壳层由
+  // Home.vue 的 .layout.size-* 类切换；这里锁住「常量 → 判档 → 类名 → CSS」是一条链。
+  const wsc = readSrc('lib/windowSizeClass.ts');
+  const medium = Number(wsc.match(/WINDOW_SIZE_MEDIUM\s*=\s*(\d+)/)?.[1] ?? 0);
+  const expanded = Number(wsc.match(/WINDOW_SIZE_EXPANDED\s*=\s*(\d+)/)?.[1] ?? 0);
+  assert.deepEqual([medium, expanded], [600, 840], 'windowSizeClass 不再等于 Android 官方的 600 / 840 档');
+
+  // Sidebar 的抽屉阈值也有一份常量（别在组件里写 840 字面量）
+  const breakpoints = readSrc('lib/layoutBreakpoints.ts');
+  assert.match(breakpoints, /BP_MEDIUM = 600/, 'layoutBreakpoints 缺 BP_MEDIUM = 600');
+  assert.match(breakpoints, /BP_EXPANDED = 840/, 'layoutBreakpoints 缺 BP_EXPANDED = 840');
+
+  // 壳层判档必须来自 windowSizeClassFor，不能又回到 768/1024 宽度布尔
+  const home = readSrc('views/Home.vue');
+  assert.match(home, /windowSizeClassFor\(viewportWidth\.value\)/, 'Home.vue 没有用 windowSizeClassFor 判档：600/840 会漂移');
+  assert.match(home, /'size-compact': sizeClass === 'compact'/, 'layout 上没有绑定 size-compact 类');
+  assert.match(home, /'size-medium': sizeClass === 'medium'/, 'layout 上没有绑定 size-medium 类');
+  assert.match(home, /'size-expanded': sizeClass === 'expanded'/, 'layout 上没有绑定 size-expanded 类');
+  assert.doesNotMatch(home, /viewportWidth\.value <= 768/, 'Home.vue 又回到 768 宽度布尔：会和 600/840 档各说各话');
+
+  // 侧栏抽屉分界同样是 <840（常驻栏从 840 起）
+  assert.match(
+    readSrc('components/Sidebar.vue'),
+    /matchMedia\(`\(max-width: \$\{BP_EXPANDED[^}]*\}px\)`\)/,
+    'Sidebar 的抽屉档没有改用 BP_EXPANDED（840）：840–1024 会「壳层常驻栏、Sidebar 抽屉」两套判定',
+  );
+
+  // 万一以后在壳层里补了 600/840 的宽度媒体查询，值必须与常量一致（当前实现走 .size-* 类，不新增）
+  const shellWidthQueries = [...`${home}\n${readSrc('styles/main.css')}`.matchAll(/\((?:max|min)-width:\s*(\d+)px\)/g)]
+    .map((m) => Number(m[1]));
+  for (const value of shellWidthQueries) {
+    if (value === 600) assert.equal(medium, 600, `壳层写了 600px，但 windowSizeClass 的 medium 是 ${medium}px`);
+    if (value === 840) assert.equal(expanded, 840, `壳层写了 840px，但 windowSizeClass 的 expanded 是 ${expanded}px`);
+  }
 });
 
 test('触屏「常显」规则不能写进宽度媒体查询（769px 以上触屏设备会够不到）', () => {

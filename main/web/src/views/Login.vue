@@ -180,8 +180,9 @@ async function submit() {
 .login-wrap {
   height: 100%;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  /* 手机端键盘弹起后视口收缩：整页可滚，卡片用 margin:auto 居中（内容超高时从顶部开始、能滚到底） */
+  overflow-y: auto;
+  padding: calc(16px + var(--safe-top)) 16px calc(16px + var(--safe-bottom));
   /* 顶部浅蓝光晕过渡到中性底，品牌感但不喧宾夺主 */
   background:
     radial-gradient(1100px 560px at 50% -12%, rgba(15, 108, 189, 0.10) 0%, rgba(15, 108, 189, 0) 62%),
@@ -194,6 +195,7 @@ html.dark .login-wrap {
 }
 .login-card {
   width: min(360px, calc(100vw - 32px));
+  margin: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;

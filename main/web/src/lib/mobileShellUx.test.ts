@@ -69,10 +69,16 @@ test('目录抽屉的同步入口：抽屉档用整行通道条，桌面档才�
     /<SyncButton variant="strip" \/>/,
     '抽屉档没有整行通道条：通道名与状态在手机上不可见',
   );
+  // 2026-11 设备矩阵：侧栏抽屉分界从 1024 收到 840（与 Home.vue 的 sidebarOverlay 同档）
   assert.match(
     sidebar,
-    /matchMedia\(`\(max-width: \$\{BP_WIDE\}px\)`\)/,
-    '抽屉档断点没有用 lib/layoutBreakpoints 的 BP_WIDE：会和 Home.vue 的浮层判定各写一套',
+    /import \{ BP_EXPANDED \} from '\.\.\/lib\/layoutBreakpoints'/,
+    '抽屉档断点没有用 lib/layoutBreakpoints 的 BP_EXPANDED（840）：会和 Home.vue 的浮层判定各写一套',
+  );
+  assert.match(
+    sidebar,
+    /matchMedia\(`\(max-width: \$\{BP_EXPANDED[^}]*\}px\)`\)/,
+    '抽屉档没有按 BP_EXPANDED 判 840：840–1024 壳层是常驻栏、Sidebar 却当抽屉',
   );
 
   const sync = readSrc('components/SyncButton.vue');
@@ -306,16 +312,149 @@ test('「我的」面板：列表式底部面板取代九宫格，行高与关�
   assert.match(panel, /name="chevron-right"/, '列表行尾没有 chevron');
 });
 
-test('触觉反馈只接在底栏切换与快捷动作上', () => {
+test('触觉反馈只接在有状态变化的主操作上', () => {
   const home = readSrc('views/Home.vue');
   assert.match(home, /import \{ haptic \} from '\.\.\/lib\/haptics'/, '外壳没有引入触觉反馈');
   const nav = home.slice(home.indexOf('const bottomItems = computed'));
   const navTaps = nav.slice(0, nav.indexOf('function runMore')).match(/haptic\('tap'\)/g) || [];
   assert.equal(navTaps.length, 5, '底部五个标签没有逐项轻振（当前 ' + navTaps.length + ' 处）');
   assert.match(home, /function runQuick\([\s\S]{0,60}?\) \{\s*haptic\('tap'\);/, '快捷动作没有轻振');
-  // 滚动、输入、长按这类高频动作不振动：除底栏与快捷动作外外壳里不再有 haptic(
+  // 2026-11 新增：FAB 打开面板、下拉过阈值各轻振一次（都是有状态变化的主操作）
+  assert.match(home, /function openNewSheet\(\) \{\s*haptic\('tap'\);/, '新建 FAB 没有轻振');
+  assert.match(
+    home,
+    /pullOffset\.value >= PULL_THRESHOLD\) \{\s*pullThresholdHaptic = true;\s*haptic\('tap'\);/,
+    '下拉过阈值没有轻振：松手会刷新，用户需要一次触觉确认',
+  );
+  // 滚动、输入、长按这类高频动作不振动：除上述主操作外外壳里不再有 haptic(
   const outside = home
     .replace(/const bottomItems = computed[\s\S]*?\n\]\);/, '')
-    .replace(/function runQuick[\s\S]*?\n\}/, '');
+    .replace(/function runQuick[\s\S]*?\n\}/, '')
+    .replace(/function openNewSheet[\s\S]*?\n\}/, '')
+    .replace(/if \(!pullThresholdHaptic[\s\S]*?\n    \}/, '');
   assert.doesNotMatch(outside, /haptic\(/, '触觉反馈接得太散：滚动/输入等高频动作不该振动');
+});
+
+// ---------------------------------------------------------------- 安卓改版阶段二（2026-11）：设备矩阵 / 下拉刷新 / 新建 FAB
+
+test('设备矩阵：compact / medium / expanded 三档按 600 / 840 切壳层', () => {
+  const home = readSrc('views/Home.vue');
+  // 三档来自 windowSizeClass，不再自己写 768 / 1024 两个布尔
+  assert.match(
+    home,
+    /import \{ windowSizeClassFor \} from '\.\.\/lib\/windowSizeClass'/,
+    'Home.vue 没接 windowSizeClass：设备矩阵会和常量各写一套',
+  );
+  assert.match(
+    home,
+    /const sizeClass = computed\(\(\) => windowSizeClassFor\(viewportWidth\.value\)\)/,
+    '壳层三档没有从 windowSizeClassFor 判档',
+  );
+  assert.match(
+    home,
+    /const sidebarOverlay = computed\(\(\) => sizeClass\.value !== 'expanded'\)/,
+    '侧栏浮层判定没有改成「<840 才浮层」：840–1024 还会盖遮罩',
+  );
+  assert.doesNotMatch(
+    home,
+    /viewportWidth\.value <= 768|viewportWidth\.value > 768/,
+    'Home.vue 还留着 768 宽度布尔：折叠屏展开会跳一套界面语言',
+  );
+  // 类挂到 layout 上，CSS 才能按档覆盖
+  assert.match(home, /'size-compact': sizeClass === 'compact'/, 'layout 缺少 size-compact 类');
+  assert.match(home, /'size-medium': sizeClass === 'medium'/, 'layout 缺少 size-medium 类');
+  assert.match(home, /'size-expanded': sizeClass === 'expanded'/, 'layout 缺少 size-expanded 类');
+  // 旧的 769–1024 浮层媒体查询块必须消失（840–1024 回到桌面常驻栏）
+  assert.doesNotMatch(
+    home,
+    /@media \(min-width: 769px\) and \(max-width: 1024px\)/,
+    '旧的 769–1024 浮层档还在：840–1024 仍会被当抽屉',
+  );
+  // medium：rail 显示、底栏隐藏、正文让开 72px、侧栏浮层 + 遮罩、FAB 贴右下 24
+  const at = home.indexOf('设备矩阵（2026-11 安卓改版）：windowSizeClass 的 600 / 840 两档');
+  assert.ok(at >= 0, '找不到设备矩阵的 CSS 段');
+  const medium = home.slice(at, home.indexOf('矮视口（手机横屏、分屏', at));
+  assert.match(medium, /\.layout\.size-medium \.rail \{ display: flex; \}/, 'medium 没有显示 rail');
+  assert.match(medium, /\.layout\.size-medium \.bottom-nav \{ display: none; \}/, 'medium 没有隐藏底栏');
+  assert.match(medium, /padding-left: calc\(72px \+ var\(--safe-left\)\)/, 'medium 正文没有让开 rail 72px');
+  assert.match(
+    medium,
+    /\.layout\.size-medium:not\(\.sidebar-full\) \.sidebar \{[\s\S]{0,260}?position: fixed/,
+    'medium 侧栏不是浮层抽屉',
+  );
+  assert.match(medium, /\.layout\.size-medium \.mask \{/, 'medium 抽屉没有遮罩');
+  assert.match(
+    medium,
+    /\.layout\.size-medium \.new-fab \{ bottom: calc\(24px \+ var\(--safe-bottom\)\)/,
+    'medium 的 FAB 没有贴右下 24px',
+  );
+  // compact 的 ≤768 兜底块仍在（mobileLayout.test 也锁这条）
+  assert.match(home, /@media \(max-width: 768px\) \{[\s\S]{0,2400}?\.bottom-nav \{/, 'compact 的 ≤768 兜底块被删了');
+  // 横屏 / 矮视口：medium、expanded 正文底部不再为底栏留 64px
+  assert.match(
+    readSrc('styles/main.css'),
+    /@media \(max-height: 480px\) \{\s*\.layout\.size-medium \.content/,
+    '矮视口没有收紧正文底部让位',
+  );
+});
+
+test('下拉刷新：≤839 触屏 + 顶层页，阈值 64px，松手走 sync/inbox/capabilities', () => {
+  const home = readSrc('views/Home.vue');
+  assert.match(home, /const PULL_THRESHOLD = 64;/, '下拉刷新阈值不是 64px');
+  assert.match(home, /const PULL_ROUTES = \['\/page', '\/inbox', '\/tasks'\]/, '下拉刷新没有限定顶层页');
+  assert.match(
+    home,
+    /sizeClass\.value !== 'expanded' && touchPointer\.value && PULL_ROUTES\.includes\(route\.path\)/,
+    '下拉刷新没有按「≤839 + 触屏 + 顶层页」门控：桌面和阅读页也会被拉动',
+  );
+  // 只接管往下拉；上滑 / 横滑交还给页面（收集箱卡片横滑）
+  assert.match(
+    home,
+    /if \(dy <= 0 \|\| Math\.abs\(dx\) > Math\.abs\(dy\) \* 1\.2\)/,
+    '下拉刷新没有区分纵向/横向手势：会抢走卡片横滑',
+  );
+  assert.match(
+    home,
+    /el\.addEventListener\('touchmove', onMove, \{ passive: false \}\)/,
+    '下拉刷新没拿到 touchmove（passive:false）：阻止不了整页跟着弹',
+  );
+  // 刷新动作：共享 sync store 对账 + 收集箱 + 能力位兜底
+  assert.match(home, /sync\.refresh\(\)/, '下拉刷新没有用 sync store 的对账动作');
+  assert.match(home, /inbox\.load\(\)/, '下拉刷新没有重读收集箱（兜底）');
+  assert.match(home, /loadRuntimeCapabilities\(\)/, '下拉刷新没有重取能力位（兜底）');
+  assert.match(home, /notify\.success\('已刷新'\)/, '刷新完成没有 toast');
+  // 指示器：圆形进度 + 刷新中…
+  assert.match(home, /class="pull-refresh"/, '没有下拉刷新指示器');
+  assert.match(home, /class="pull-arc"/, '指示器没有圆形进度环');
+  assert.match(home, /'刷新中…'/, '指示器没有「刷新中…」文案');
+  assert.match(home, /'松开刷新'/, '指示器没有「松开刷新」提示');
+});
+
+test('新建 FAB：≤839 首页、抽屉收起时出现，面板四件事可点', () => {
+  const home = readSrc('views/Home.vue');
+  assert.match(home, /const newFabVisible = computed\(\(\) =>/, '没有新建 FAB 的显示判定');
+  assert.match(home, /sizeClass\.value !== 'expanded'/, 'FAB 没有按 ≤839 门控');
+  assert.match(home, /route\.path === '\/page'/, 'FAB 没有限定在知识库首页');
+  assert.match(home, /!app\.sidebarOpen/, 'FAB 没有在目录抽屉展开时让位');
+  // 有底栏抬到栏上方 88，medium 无底栏贴右下 24
+  assert.match(
+    home,
+    /\.new-fab \{[\s\S]{0,420}?bottom: calc\(88px \+ var\(--safe-bottom\)\)/,
+    '有底栏时 FAB 没有抬到栏上方 88px',
+  );
+  assert.match(
+    home,
+    /\.layout\.size-medium \.new-fab \{ bottom: calc\(24px \+ var\(--safe-bottom\)\)/,
+    '无底栏时 FAB 没有贴右下 24px',
+  );
+  // 面板四件事（扫码绑定接设置页多端同步）
+  for (const label of ['新建页面', '记一条灵感', '收进收集箱', '扫码绑定中枢']) {
+    assert.match(home, new RegExp("label: '" + label + "'"), '新建面板缺「' + label + '」');
+  }
+  assert.match(home, /go\('\/settings\?section=sync'\)/, '扫码绑定没有跳到多端同步');
+  assert.match(home, /action: \(\) => quickNew\(\)/, '新建页面没有接 quickNew');
+  assert.match(home, /action: \(\) => quickNote\(\)/, '记一条灵感没有接 quickNote');
+  // 面板：可点遮罩 / 关闭 / 返回键最先关
+  assert.match(home, /class="new-mask" @click="newSheetOpen = false"/, '新建面板没有可点遮罩');
+  assert.match(home, /if \(newSheetOpen\.value\) \{\s*newSheetOpen\.value = false;/, '返回键没有先关新建面板');
 });

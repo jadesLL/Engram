@@ -15,6 +15,8 @@ import android.text.Html;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.webkit.CookieManager;
@@ -70,6 +72,12 @@ public class MainActivity extends BridgeActivity {
     private InboxRender inboxRender;
     /** 应用内在线更新的宿主（安装器/权限页/通知都离不开 Activity），见 AppUpdater。 */
     private UpdateHost updateHost;
+    /**
+     * Android 13+（API 33）的预测性返回回调：系统返回手势经 OnBackInvokedDispatcher 派发，
+     * 由它转发到 {@link #handleSystemBack()}。API 33 以下恒为 null——返回走 OnBackPressedCallback。
+     * 两者互斥（见 {@link #installBackHandling()}），同一次返回只会被处理一次。
+     */
+    private OnBackInvokedCallback backInvokedCallback;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -103,33 +111,7 @@ public class MainActivity extends BridgeActivity {
         }
 
         forceSelectServer = ACTION_SELECT_SERVER.equals(getIntent().getAction());
-        // 注册晚于 App 插件的回调（后加入者优先生效）：物理返回键与屏幕侧滑手势都走这里。
-        // 顺序：先让网页处理「它自己叠出来的那一层」（抽屉/弹层/阅读态/子视图），
-        // 网页不要才交给 WebView 历史，历史也到头才退到后台（不销毁 Activity，保留登录态）。
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
-            @Override
-            public void handleOnBackPressed() {
-                WebView webView = bridge != null ? bridge.getWebView() : null;
-                if (webView == null) {
-                    moveTaskToBack(true);
-                    return;
-                }
-                webView.evaluateJavascript(
-                        "(function(){try{return window.__engramHandleBack?window.__engramHandleBack()===true:false}catch(e){return false}})()",
-                        handled -> {
-                            switch (BackPolicy.decide("true".equals(handled), webView.canGoBack())) {
-                                case WEB:
-                                    break;
-                                case HISTORY:
-                                    webView.goBack();
-                                    break;
-                                default:
-                                    moveTaskToBack(true);
-                                    break;
-                            }
-                        });
-            }
-        });
+        installBackHandling();
 
         setupDownloads();
         handleIncomingShare(getIntent());
@@ -167,6 +149,61 @@ public class MainActivity extends BridgeActivity {
         }, "engram-local-start").start();
     }
 
+    /**
+     * 系统返回（物理返回键 / 屏幕侧滑手势 / 预测性返回手势）的接线。
+     *
+     * Android 13（API 33）起系统改用 OnBackInvokedDispatcher 派发返回；Manifest 里
+     * android:enableOnBackInvokedCallback="true" 之后，旧式 OnBackPressedCallback 不再收到事件
+     * （系统不再调用 Activity.onBackPressed）。所以按 SDK 分支注册：33+ 用 OnBackInvokedCallback
+     * （手势有系统预测动画），33 以下保留 OnBackPressedCallback（行为与改造前一致）。
+     * 两条路径互斥，同一时刻只有一个返回入口，不会双触发。
+     */
+    private void installBackHandling() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // 用 OVERLAY 保证本回调优先于 androidx 桥接回调与后续 addCallback，避免同级后注册者抢走返回：
+            // androidx 的桥接回调（以及之后任何 addCallback 触发的重新注册）都在 PRIORITY_DEFAULT，
+            // 同级下「后注册者」会先被调用；OVERLAY 恒定优先，返回判定因此始终只有本回调这一个入口。
+            backInvokedCallback = this::handleSystemBack;
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_OVERLAY, backInvokedCallback);
+            return;
+        }
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                handleSystemBack();
+            }
+        });
+    }
+
+    /**
+     * 返回判定的唯一实现（两条注册路径共用）：网页 → WebView 历史 → 退到后台。
+     * 顺序不可调换：先让网页处理它自己叠出来的那一层（抽屉/弹层/阅读态/子视图，协议见
+     * web/src/lib/androidBack.ts），网页不要才交给 WebView 历史，历史也到头才退到后台
+     * （不销毁 Activity，保留登录态）。
+     */
+    private void handleSystemBack() {
+        WebView webView = bridge != null ? bridge.getWebView() : null;
+        if (webView == null) {
+            moveTaskToBack(true);
+            return;
+        }
+        webView.evaluateJavascript(
+                "(function(){try{return window.__engramHandleBack?window.__engramHandleBack()===true:false}catch(e){return false}})()",
+                handled -> {
+                    switch (BackPolicy.decide("true".equals(handled), webView.canGoBack())) {
+                        case WEB:
+                            break;
+                        case HISTORY:
+                            webView.goBack();
+                            break;
+                        default:
+                            moveTaskToBack(true);
+                            break;
+                    }
+                });
+    }
+
     @Override
     public void onStart() {
         super.onStart();
@@ -194,6 +231,13 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        // 摘掉预测性返回回调：窗口虽随 Activity 销毁，但显式注销才守住「同一时刻只有一个返回入口」这条不变式。
+        // SDK 判断必须排在前面（短路求值）：API 33 以下的设备上不能读写这个 33 才有的类型的字段，
+        // 否则类链接期解析 OnBackInvokedCallback 会 NoClassDefFoundError。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backInvokedCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
+            backInvokedCallback = null;
+        }
         // 摘掉宿主：更新引擎静态持有 Activity 会造成泄漏；应用不在前台时安装/权限页会明确报错
         if (AppUpdater.getHost() == updateHost) AppUpdater.setHost(null);
         updateHost = null;

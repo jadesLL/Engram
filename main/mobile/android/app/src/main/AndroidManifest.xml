@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 安卓 13+ 的预测性返回（predictive back）：打开后系统返回手势改由 OnBackInvokedDispatcher 派发
+         （见 MainActivity.installBackHandling），手势有系统的跟手/预览动画；不打开时系统继续走旧式
+         onBackPressed，手势没有任何预览。API 33 以下系统忽略该属性，返回仍由 OnBackPressedCallback 处理。 -->
     <application
         android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

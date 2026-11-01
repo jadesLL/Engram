@@ -205,10 +205,6 @@
   color: var(--warning);
 }
 
-.settings-mobile-nav {
-  display: none;
-}
-
 .settings-content {
   min-width: 0;
   min-height: 0;
@@ -743,51 +739,6 @@
   .settings-page-head h2 {
     font-size: 22px;
   }
-  /* 移动端：大类胶囊 + 当前大类的锚点胶囊两行横向滚动（替代原来的下拉框） */
-  .settings-mobile-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .settings-mobile-nav .chip-row {
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
-    padding: 2px 2px 4px;
-    scrollbar-width: none;
-  }
-  .settings-mobile-nav .chip-row::-webkit-scrollbar {
-    display: none;
-  }
-  .settings-mobile-nav .chip {
-    flex: 0 0 auto;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    /* 触屏上的分类胶囊是主要导航：32px 偏矮，撑到 40px（手指按得准） */
-    min-height: 40px;
-    padding: 6px 14px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--card-bg);
-    color: var(--text-secondary);
-    font-size: 13px;
-    white-space: nowrap;
-  }
-  .settings-mobile-nav .chip.active {
-    border-color: transparent;
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-weight: 600;
-  }
-  .settings-mobile-nav .chip-row.anchors .chip {
-    min-height: 28px;
-    padding: 4px 10px;
-    font-size: 12px;
-  }
-  .settings-mobile-nav .chip.danger {
-    color: var(--danger);
-  }
   .settings-shell {
     display: block;
   }
@@ -871,5 +822,184 @@
   .switch-control > span,
   .switch-control > span::after {
     transition: none;
+  }
+}
+
+/*
+ * 手机端（≤768px）：设置页 =「分组列表 + 子页 push」（2026-11 安卓改版）。
+ *
+ * 桌面端（≥769px）不进入这一段：左侧目录 + 右侧内容、两个独立滚动容器、吸顶分组标题全部原样。
+ * 手机上把左侧七个大类收成：
+ *   账户卡（只读：成员名 + 同步状态）→ 多端同步 / 外观 / Agent 与自动化 / 知识库数据 /
+ *   版本与更新 / 关于 六行；每行 ≥56px、行尾给状态（跟随系统、下载 64%、v1.5.3……）、右侧 chevron。
+ * 点一行 = 进该大类子页：返回箭头 + 分组名 + 复用桌面的大类内容（只显示这一类），
+ * 返回箭头与安卓返回键都会回到分组列表。
+ */
+@media (max-width: 768px) {
+  /* —— 分组列表首页 —— */
+  /* 手机列表首页只留「设置」标题：桌面版那句「七个单一职责的分类……」在窄屏是纯噪声 */
+  .settings-view.is-mobile-list .settings-page-head p {
+    display: none;
+  }
+  .settings-mobile-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .settings-mobile-account {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+    text-align: left;
+  }
+  .settings-mobile-account:active {
+    background: var(--bg-hover);
+  }
+  .settings-mobile-avatar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .settings-mobile-account-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .settings-mobile-account-name {
+    font-size: 15px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .settings-mobile-account-sub {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .settings-mobile-group {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+  }
+  .settings-mobile-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 56px;
+    padding: 10px 14px;
+    text-align: left;
+  }
+  .settings-mobile-row + .settings-mobile-row {
+    border-top: 1px solid var(--border);
+  }
+  .settings-mobile-row:active {
+    background: var(--bg-hover);
+  }
+  .settings-mobile-row-icon {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+  }
+  .settings-mobile-row-label {
+    flex: 1;
+    min-width: 0;
+    font-size: 15px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .settings-mobile-row-status {
+    flex: none;
+    max-width: 46%;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .settings-mobile-chevron {
+    flex: none;
+    color: var(--text-faint);
+  }
+  .settings-mobile-footnote {
+    margin: 2px 4px 0;
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  .settings-mobile-account:focus-visible,
+  .settings-mobile-row:focus-visible,
+  .settings-mobile-back:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* —— 子页：返回栏 + 复用的大类内容 —— */
+  .settings-mobile-subhead {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-height: 52px;
+    /* 出血到内容区左右两边与顶部：子页没有页头，返回栏就是这一屏的 app bar。
+       不做吸顶：手机上系统返回键/侧滑已接管这一层，吸顶还要额外让开状态栏与底栏，
+       对一屏就能看完的设置子页收益不大。 */
+    margin: -20px -14px 0;
+    padding: 4px 8px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .settings-mobile-back {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    color: var(--text-secondary);
+  }
+  .settings-mobile-back:active {
+    background: var(--bg-hover);
+  }
+  .settings-mobile-subtitle {
+    margin: 0;
+    font-size: 18px;
+    line-height: 1.3;
+    font-weight: 600;
+  }
+  /* 子页已经有返回栏标题，不再重复大类页头（否则「外观」下面又写一遍「界面与检索」） */
+  .settings-view.is-mobile-subpage .domain-head {
+    display: none;
+  }
+  /* 子页底部让开底部导航与安全区（.content 的滚动留给 Home，这里只补一档内边距） */
+  .settings-view.is-mobile-subpage {
+    padding-bottom: 96px;
   }
 }

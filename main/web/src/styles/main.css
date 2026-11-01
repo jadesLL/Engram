@@ -6,6 +6,12 @@
  * 对应的 JS 常量在 src/lib/layoutBreakpoints.ts；两边数值不一致会出「CSS 换了形态、
  * JS 还在按另一档判断」的错配（沉浸阅读目录踩过），由 src/lib/mobileLayout.test.ts 锁住。
  *
+ * 另有一套 Android WindowSizeClass 档（2026-11 安卓改版，见 lib/windowSizeClass.ts）：
+ *   600px  medium 起点（折叠屏展开 / 手机横屏 / 小平板）
+ *   840px  expanded 起点（平板横屏 / 桌面）
+ * 这两档**不写宽度 @media**：壳层由 Home.vue 的 .layout.size-compact/medium/expanded
+ * 类切换（JS 用 windowSizeClassFor 判档），宽度媒体查询仍然只允许上面三档。
+ *
  * 触屏能力用 @media (hover: none) and (pointer: coarse)，不要用宽度代替触屏判断：
  * 折叠屏内屏/平板/手机横屏都超过 768px，用宽度判断会让这些设备的 hover-only 入口永远点不到。
  *
@@ -586,6 +592,18 @@ html .vditor-reset table tbody tr:nth-child(2n) {
   .editor-area .vditor-reset {
     border-color: transparent !important;
     background: var(--bg) !important;
+  }
+}
+
+/*
+ * 手机横屏 / 矮视口壳层（2026-11 设备矩阵）：宽 ≥600 时底栏已换成左侧 rail（medium / expanded
+ * 由 .layout.size-* 类标记，见 Home.vue），正文底部不必再为底栏留 64px，只让开系统导航栏。
+ * compact（<600）仍按底栏实际高度让位，不动。
+ */
+@media (max-height: 480px) {
+  .layout.size-medium .content,
+  .layout.size-expanded .content {
+    padding-bottom: var(--safe-bottom);
   }
 }
 

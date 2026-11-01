@@ -279,13 +279,16 @@
             </h2>
             <nav ref="outlineNavEl">
               <a
-                v-for="heading in outline"
+                v-for="heading in outlineItems"
                 :key="heading.id"
                 :href="`#${heading.id}`"
                 :class="{ current: currentHeading === heading.id }"
                 :data-level="heading.level"
                 @click.prevent="scrollToHeading(heading.id)"
-              >{{ heading.text }}</a>
+              >
+                <span v-if="outlineLevelLabels" class="outline-level" aria-hidden="true">H{{ heading.level }}</span>
+                {{ heading.text }}
+              </a>
             </nav>
           </aside>
         </div>
@@ -489,6 +492,18 @@ const outlineVisible = computed(() =>
   outline.value.length > 0 &&
   (outlineIsPanel.value ? mobileOutlineOpen.value : preferences.value.outline)
 );
+/* 手机档（≤768px）目录面板：按设计稿「本篇导航」只到三级标题。正文里的同名 H1 已在
+ * prepareHeadings 移除（文档标题单独渲染在页头），面板用文档标题补一条 H1；
+ * 桌面常驻目录列与 769–1024px 的浮层维持原来的 h2–h4 全量，行为不变 */
+const MOBILE_OUTLINE_MAX_LEVEL = 3;
+const outlineItems = computed<OutlineItem[]>(() => {
+  if (!narrowReader.value) return outline.value;
+  const items = outline.value.filter((item) => item.level <= MOBILE_OUTLINE_MAX_LEVEL);
+  const title = (documentTitle.value.name || '').trim();
+  return title ? [{ id: '', level: 1, text: title }, ...items] : items;
+});
+/* H1/H2/H3 级别标记只在手机面板里画（桌面常驻列保持原排版，不加标记） */
+const outlineLevelLabels = computed(() => narrowReader.value && outlineIsPanel.value);
 const readingStyle = computed(() => ({
   /* 正文列宽 = 可用区 × 百分比（可用区没量到前回落到 100%，不闪成 0）；
      窄屏档恒取 100%：手机上一行能放几个字本来就紧张，再乘 70% 就是「正文显示不全」 */
@@ -1052,8 +1067,9 @@ function handleContextMenu(event: MouseEvent) {
    反过来（先 scrollTo 再收面板）时面板还在参与布局，收起动作会在平滑滚动动画中抽走高度，
    落点偏移约等于目录那块的高度——手机上就是「跳到的地方不是点的那个标题」。 */
 async function scrollToHeading(id: string) {
-  const heading = contentEl.value?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
-  if (!heading) return;
+  const heading = id ? contentEl.value?.querySelector<HTMLElement>(`#${CSS.escape(id)}`) : null;
+  // id 为空 = 手机面板顶部那条 H1（文档标题）：滚回正文开头
+  if (!heading && id) return;
   if (outlineIsPanel.value && mobileOutlineOpen.value) {
     // 走 closeOutlinePanel：顺手把焦点还给顶栏「目录」按钮（面板一收，焦点原本会掉到 body）
     closeOutlinePanel();
@@ -1061,6 +1077,10 @@ async function scrollToHeading(id: string) {
   }
   const reader = readerEl.value;
   if (!reader) return;
+  if (!heading) {
+    reader.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
   // 目录里点到被收起的小节时，先把包含它的折叠节逐层展开再定位
   if (expandAncestors(heading)) scheduleTailSpace();
   /* 停靠位置 = sticky 顶栏实测高度（--reading-toolbar-height 由 measureLayout 量、ResizeObserver
@@ -2033,7 +2053,8 @@ onBeforeUnmount(() => {
   padding: 0 6px calc(var(--statusbar-gap) + var(--safe-bottom));
   border: 0;
   border-top: 1px solid var(--border);
-  border-radius: 14px 14px 0 0;
+  /* 与编辑器「插入」面板同一套底部面板语言：22px 顶圆角 */
+  border-radius: 22px 22px 0 0;
   background: var(--card-bg);
   box-shadow: 0 -14px 40px -18px rgba(0, 0, 0, 0.45);
 }
@@ -2083,6 +2104,16 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .outline-x:hover { background: var(--bg-hover); color: var(--text); }
+/* 手机档目录面板：H1–H3 级别标记；第三级用缩进表达层级（桌面常驻列不渲染标记，排版不变） */
+.outline-level {
+  flex: none;
+  width: 18px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.outline-sheet .reading-outline a[data-level="3"] { padding-left: 30px; }
 
 /* ---------- ≤640px：低频设置整组进贴底面板 ----------
    Teleport 到 body 是必须的：顶栏自己有 backdrop-filter，会成为 fixed 后代的包含块 */
