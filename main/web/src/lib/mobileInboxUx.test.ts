@@ -155,7 +155,7 @@ test('⑥ 长按多选：500ms 进选择态、全选只勾可见条目、批量�
     /function onCardPointerDown\(event: PointerEvent\): void \{\s*\/\/ 选择态与手势互斥[\s\S]{0,140}?if \(selectMode\.value\) return;/,
     '选择态下没有停用卡片手势：多选时误滑会把条目滑走',
   );
-  assert.match(source, /v-if="view === 'stack' && !selectMode"/, '选择态没有把卡片堆藏起来');
+  assert.match(source, /v-if="view === 'stack' && !selectMode && stackView"/, '选择态没有把卡片堆藏起来');
 
   // 顶栏：取消 / 已选 N 条 / 全选；全选只作用于当前可见列表
   for (const text of ['取消', '已选 {{ selectedPaths.length }} 条', '全选']) {
@@ -163,8 +163,8 @@ test('⑥ 长按多选：500ms 进选择态、全选只勾可见条目、批量�
   }
   assert.match(
     source,
-    /const selectableItems = computed<InboxItem\[\]>\(\(\) => sortedActive\.value\);/,
-    '选择态列表不是当前可见条目：全选会勾到看不见的条目',
+    /const selectableItems = computed<InboxItem\[\]>\(\(\) => filteredItems\.value\);/,
+    '选择态列表不是当前分类可见条目：全选会勾到看不见的条目',
   );
   assert.match(
     source,
@@ -232,4 +232,68 @@ test('⑥ 长按多选：500ms 进选择态、全选只勾可见条目、批量�
   assert.match(checkboxAfter, /content:\s*''/, '勾选框没有扩热区伪元素');
   assert.match(checkboxAfter, /left:\s*-10px/, '勾选框没有把命中区补到 44px');
   assert.match(ruleBody('.mi-bar-select'), /grid-template-columns/, '批量动作条没有独立列宽');
+});
+
+test('⑦ 状态分类：四档筛选 + 已入库不再从手机界面消失 + 全部条目可见', () => {
+  // 用户报障：手机收集箱「没有分类」「已经提炼/转换的看不到」「存入库里边就消失了」。
+  // 四档分类与桌面工作台同口径；已入库单独一档，条目不会被整片藏掉。
+  assert.match(
+    source,
+    /type InboxFilter = 'active' \| 'pending' \| 'converted' \| 'adopted';/,
+    '没有四档状态分类',
+  );
+  for (const label of ['未入库', '待整理', '已转换', '已入库']) {
+    assert.ok(source.includes("label: '" + label + "'"), '分类筛选项缺「' + label + '」');
+  }
+  assert.match(source, /const filter = ref<InboxFilter>\('active'\);/, '默认分类不是「待整理 · 已转换」');
+  assert.match(
+    source,
+    /v-for="option in filterOptions"[\s\S]{0,400}?@click="setFilter\(option\.value\)"/,
+    '分类胶囊没有接到 setFilter',
+  );
+  assert.match(
+    source,
+    /const list = filter\.value === 'active'\s*\? inbox\.items\.filter\(\(item\) => item\.status !== 'adopted'\)\s*: inbox\.items\.filter\(\(item\) => item\.status === filter\.value\);/,
+    '分类口径不对：active 不含已入库，其余按状态精确过滤',
+  );
+
+  // 卡片堆只铺三张：其余条目必须有整列列表，否则转换完的条目被三张卡挡住看不到
+  assert.match(source, /const queueItems = computed\(\(\) => filteredItems\.value\.slice\(3\)\);/, '没有「其余条目」列表');
+  assert.match(source, /<section v-if="queueItems\.length" class="mi-queue"/, '其余条目没有渲染成列表');
+  assert.match(
+    source,
+    /const stackView = computed\(\(\) => filter\.value === 'active' \|\| filter\.value === 'pending'\);/,
+    '没有区分「卡片台分类」与「整列列表分类」',
+  );
+  assert.match(source, /v-if="view === 'stack' && !selectMode && stackView"/, '卡片台没有按分类收窄');
+  assert.match(
+    source,
+    /v-else-if="view === 'stack' && !selectMode"[\s\S]{0,2000}?class="mi-list"/,
+    '已转换/已入库没有整列列表视图：条目还是只能看前几张卡',
+  );
+
+  // 已入库条目在详情里能看产物（旧版主操作是置灰的「暂无操作」，等于没有入口）
+  assert.match(
+    source,
+    /if \(item\.status === 'adopted'\) return item\.derivedPath \? 'review' : 'none';/,
+    '已入库条目的主操作不是「查看产物」：产物入口断了',
+  );
+  assert.match(source, /if \(kind === 'review'\) return '查看产物';/, '没有「查看产物」主操作文案');
+  assert.match(source, /async function openReview\(item: InboxItem \| null\)/, '没有打开产物预览的实现');
+  assert.match(source, /await inbox\.loadDerived\(item\.path\)/, '产物预览没有读取 /api/inbox/derived');
+  assert.match(source, /v-html="reviewHtml"/, '产物预览没有渲染正文');
+  assert.match(source, /function stripFrontmatter\(markdown: string\): string/, '产物预览没有去掉 frontmatter：正文顶部会铺一段来源/日期/id 噪音');
+  assert.match(source, /renderMarkdown\(stripFrontmatter\(derived\.markdown \|\| ''\)\)/, '产物预览没有走 stripFrontmatter');
+  assert.match(source, /已入库到 ' \+ item\.adoptedPath/, '列表行没有写出入库落点');
+  assert.match(source, /可在「已入库」分类回看/, '入库后提示没有指向「已入库」分类');
+
+  // 触控与可读性：分类胶囊 ≥40、可横向滚动、列表行 ≥44、有读屏选中态
+  const chip = ruleBody('.mi-filter');
+  const chipHeight = Number((chip.match(/min-height:\s*(\d+)px/) || [])[1] || 0);
+  assert.ok(chipHeight >= 40, '分类胶囊不到 40px：手机上手指标不准');
+  assert.match(ruleBody('.mi-filters'), /flex-wrap:\s*wrap/, '分类胶囊没有换行：小屏上「已入库」会被推出屏幕外（用户报障「没有分类」）');
+  const row = ruleBody('.mi-row');
+  const rowHeight = Number((row.match(/min-height:\s*(\d+)px/) || [])[1] || 0);
+  assert.ok(rowHeight >= 44, '列表行高不到 44px：手机上手指标不准');
+  assert.match(source, /:aria-checked="filter === option\.value"/, '分类胶囊没有读屏选中态');
 });
