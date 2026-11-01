@@ -10,7 +10,39 @@
       :left="tableBar.left"
       :row="tableBar.row"
       @action="applyTableAction"
+      @more="openTableMore"
     />
+
+    <!-- 手机档选中文字浮动格式条：fixed 视口坐标 + translate(-50%,-100%) 贴在选区上方，
+         不放得下就翻到选区下方；点空白 / 滚动 / 选区消失都会收起（见 bindSelectionTools）。
+         按钮一律 mousedown.prevent：保住选区再执行命令，点按钮不会把选中弄丢。 -->
+    <div
+      v-if="selectionBar"
+      ref="selectionBarEl"
+      class="sel-bar"
+      :class="{ 'is-below': selectionBar.below }"
+      :style="{ top: selectionBar.top + 'px', left: selectionBar.left + 'px' }"
+      role="toolbar"
+      aria-label="选中文字格式"
+      @mousedown.prevent
+    >
+      <button type="button" class="sel-btn sel-bold" aria-label="加粗" @click="runSelectionAction('bold')">B</button>
+      <button type="button" class="sel-btn sel-italic" aria-label="斜体" @click="runSelectionAction('italic')">I</button>
+      <button type="button" class="sel-btn" aria-label="高亮" @click="runSelectionAction('highlight')">
+        <Icon name="lightbulb" :size="19" />
+      </button>
+      <span class="sel-div" aria-hidden="true" />
+      <button type="button" class="sel-btn" aria-label="插入链接" @click="runSelectionAction('link')">
+        <Icon name="link" :size="19" />
+      </button>
+      <button type="button" class="sel-btn" aria-label="复制选中文字" @click="runSelectionAction('copy')">
+        <Icon name="copy" :size="18" />
+      </button>
+      <span class="sel-div" aria-hidden="true" />
+      <button type="button" class="sel-btn" aria-label="更多格式" @click="runSelectionAction('more')">
+        <Icon name="more" :size="20" />
+      </button>
+    </div>
 
     <!-- 双链插入弹窗（跟随光标，↑↓ 选择） -->
     <div
@@ -93,6 +125,54 @@
         </section>
       </template>
     </Teleport>
+
+    <!-- 通用「更多操作」底部面板：表格整表操作（上方/下方插行、左右插列、删行删列、删整表）
+         与选中文字的更多格式（删除线 / 行内代码 / 引用 / 复制 / 全选）。
+         只从手机档入口打开，样式复用上面的 insert-sheet 一套（遮罩 + 抓柄 + 22px 圆角 + 44px 行）。 -->
+    <Teleport to="body">
+      <template v-if="actionsSheet">
+        <div class="insert-mask" @click="closeActionsSheet()" />
+        <section
+          ref="actionsSheetRef"
+          class="insert-sheet"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="actionsSheetTitle"
+          tabindex="-1"
+          @keydown="onActionsSheetKeydown"
+        >
+          <span class="insert-grab" aria-hidden="true" />
+          <header class="insert-head">
+            <h2>{{ actionsSheetTitle }}</h2>
+            <button type="button" class="insert-x" aria-label="关闭面板" @click="closeActionsSheet()">
+              <Icon name="x" :size="16" />
+            </button>
+          </header>
+          <p class="insert-sub">{{ actionsSheetSub }}</p>
+          <div class="insert-body">
+            <section v-for="group in actionsSheetGroups" :key="group.label" class="insert-group">
+              <h3 class="insert-group-title">{{ group.label }}</h3>
+              <button
+                v-for="item in group.items"
+                :key="item.key"
+                type="button"
+                class="insert-row"
+                :disabled="item.disabled"
+                @click="runActionsSheetAction(item.key)"
+              >
+                <span class="insert-row-icon"><Icon :name="item.icon" :size="18" /></span>
+                <span class="insert-row-text">
+                  <b>{{ item.label }}</b>
+                  <small>{{ item.hint }}</small>
+                </span>
+                <Icon name="chevron-right" :size="15" class="insert-row-chevron" />
+              </button>
+            </section>
+          </div>
+        </section>
+      </template>
+    </Teleport>
+
     <!-- 两个隐藏的原生文件选择器：图片走页面资产上传，文件走原始资料上传 -->
     <input ref="insertImageInput" class="insert-file-input" type="file" accept="image/*" @change="onInsertImagePicked" />
     <input ref="insertFileInput" class="insert-file-input" type="file" @change="onInsertFilePicked" />
@@ -100,7 +180,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted, watch, type ComponentPublicInstance } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted, watch, type ComponentPublicInstance } from 'vue';
 import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import { api } from '../api';
@@ -178,8 +258,26 @@ const insertImageInput = ref<HTMLInputElement>();
 const insertFileInput = ref<HTMLInputElement>();
 /** 正在上传的动作 key（'image' / 'file'）：上传期间禁掉面板里的其它动作 */
 const insertBusy = ref('');
-/** 安卓返回键：插入面板开着时先关面板 */
+/** 安卓返回键：插入面板 / 更多面板开着时先关面板 */
 let unregisterInsertBack: (() => void) | null = null;
+
+/* ---------- 手机档：选中文字浮动格式条 ----------
+ * 选区非空且落在编辑器内时，在选区上方（放不下则下方）浮出 加粗 / 斜体 / 高亮 / 链接 / 复制 / 更多。
+ * 位置用视口坐标（fixed + translate），点空白、滚动、选区消失都会收起；按钮 mousedown.prevent 保住选区。 */
+const selectionBar = ref<{ top: number; left: number; below: boolean } | null>(null);
+const selectionBarEl = ref<HTMLElement>();
+/** 浮条弹出时记下的选区/文本：点按钮时先把选区放回去再执行命令 */
+let selectionBarText = '';
+let selectionBarFrame = 0;
+let selectionToolsBound = false;
+
+/* ---------- 手机档：通用「更多操作」面板（表格整表操作 / 选中文字更多格式） ---------- */
+type TableSheetAction = TableEditAction | 'table-remove';
+type SelectionSheetAction = 'strike' | 'inline-code' | 'quote' | 'copy' | 'select-all';
+const actionsSheet = ref<'table' | 'selection' | null>(null);
+const actionsSheetRef = ref<HTMLElement>();
+/** 打开面板那一刻的表格目标：面板抢走焦点后 selectionchange 会清掉 tableTarget */
+const tableSheetTarget = ref<TableTarget | null>(null);
 
 let vditor: Vditor | null = null;
 let ready = false;
@@ -570,6 +668,7 @@ function init() {
       observeWikiLinks();
       bindKeys();
       bindTableBarEvents();
+      bindSelectionTools();
       releaseModelSyncSoon();
       scheduleHideManagedPlaceholders();
     },
@@ -953,7 +1052,7 @@ function placeTableBar() {
 }
 
 function syncTableBar() {
-  if (!vditor || !ready) {
+  if (!vditor || !ready || insertOpen.value || actionsSheet.value) {
     hideTableBar();
     return;
   }
@@ -1202,16 +1301,196 @@ function applySourceTableAction(action: TableEditAction, target: SourceTableTarg
   emitEditorValue();
 }
 
-function applyTableAction(action: TableEditAction) {
-  const target = tableTarget;
-  if (!vditor || !target) return;
-  beginUserEditing();
+/** 把一次表格编辑落到当前模式（ir 改 DOM / sv 改 Markdown 块） */
+function applyTableActionTo(action: TableEditAction, target: TableTarget) {
   if (target.mode === 'ir') {
     applyIrTableAction(action, target);
   } else {
     applySourceTableAction(action, target);
   }
+}
+
+function applyTableAction(action: TableEditAction) {
+  const target = tableTarget;
+  if (!vditor || !target) return;
+  beginUserEditing();
+  applyTableActionTo(action, target);
   scheduleTableBarSync();
+}
+
+/** 删除整张表：ir 走 removeIrTable（光标退到相邻块），sv 直接把表格块从 Markdown 里抹掉 */
+function removeTableAction(target: TableTarget) {
+  if (!vditor) return;
+  if (target.mode === 'ir') {
+    if (!target.element.isConnected) return;
+    removeIrTable(target.element);
+    emitAfterIrMutation();
+    return;
+  }
+  const markdown = vditor.getValue();
+  const block = findTableBlocks(markdown)[target.blockIndex];
+  if (!block) return;
+  const nextMarkdown = replaceTableBlock(markdown, block, null);
+  syncingModelValue = true;
+  vditor.setValue(nextMarkdown, false);
+  lastProgrammaticValue = vditor.getValue();
+  releaseModelSyncSoon();
+  restoreSourceCaret(lineStartOffset(nextMarkdown, block.startLine));
+  emitEditorValue();
+}
+
+/* ---------- 手机档「表格更多」面板 ----------
+ * 浮条只放得下「行 / 列」六个高频按钮；「更多」把整表级操作收进底部面板：
+ * 上方 / 下方插入行、左侧 / 右侧插入列、删除行 / 删除列、删除整张表。
+ * 打开面板会抢走焦点、selectionchange 随之清空 tableTarget，所以先把目标存进 tableSheetTarget。 */
+const tableSheetGroups = computed(() => {
+  const target = tableSheetTarget.value;
+  const row = target?.row ?? 0;
+  const columns = target?.columns ?? 0;
+  const items: Array<{ key: TableSheetAction; label: string; hint: string; icon: string; disabled?: boolean }> = [
+    { key: 'row-above', label: '在上方插入行', hint: '在当前单元格上方新增一行', icon: 'chevron-up' },
+    { key: 'row-below', label: '在下方插入行', hint: '在当前单元格下方新增一行', icon: 'chevron-down' },
+    { key: 'row-remove', label: '删除当前行', hint: row <= 0 ? '表头行不能删除' : '删除光标所在这一行', icon: 'trash', disabled: row <= 0 },
+    { key: 'col-left', label: '在左侧插入列', hint: '在当前单元格左侧新增一列', icon: 'chevron-left' },
+    { key: 'col-right', label: '在右侧插入列', hint: '在当前单元格右侧新增一列', icon: 'chevron-right' },
+    { key: 'col-remove', label: '删除当前列', hint: columns <= 1 ? '只剩一列时会直接删掉整张表' : '删除光标所在这一列', icon: 'trash' },
+    { key: 'table-remove', label: '删除整张表格', hint: '删错了可用工具栏「撤销」找回', icon: 'trash' },
+  ];
+  return [
+    { label: '行', items: items.filter((item) => item.key.startsWith('row')) },
+    { label: '列', items: items.filter((item) => item.key.startsWith('col')) },
+    { label: '整表', items: items.filter((item) => item.key === 'table-remove') },
+  ];
+});
+
+/** 选中文字「更多」：浮条放不下的低频格式与操作 */
+const selectionSheetEntries: Array<{
+  key: SelectionSheetAction;
+  label: string;
+  hint: string;
+  icon: string;
+  disabled?: boolean;
+}> = [
+  { key: 'strike', label: '删除线', hint: '给选中文字加删除线', icon: 'minus' },
+  { key: 'inline-code', label: '行内代码', hint: '把选中文字变成行内代码', icon: 'markdown' },
+  { key: 'quote', label: '引用', hint: '把选中段落变成引用块', icon: 'book-open' },
+  { key: 'copy', label: '复制文字', hint: '复制到系统剪贴板', icon: 'copy' },
+  { key: 'select-all', label: '全选正文', hint: '选中整篇文档', icon: 'select-all' },
+];
+
+const actionsSheetTitle = computed(() => (actionsSheet.value === 'table' ? '表格' : '选中文字'));
+const actionsSheetSub = computed(() => (
+  actionsSheet.value === 'table'
+    ? '对当前单元格所在的表格生效；内联的「行 / 列」按钮照旧可用'
+    : '对刚才选中的文字生效；面板打开期间选区会保留'
+));
+const actionsSheetGroups = computed(() => (
+  actionsSheet.value === 'table'
+    ? tableSheetGroups.value
+    : [{ label: '格式与操作', items: selectionSheetEntries }]
+));
+
+/** 打开表格「更多」面板（只有手机档浮条上有这个入口） */
+function openTableMore() {
+  if (!mobileViewport.matches || !tableTarget) return;
+  tableSheetTarget.value = tableTarget;
+  hideTableBar();
+  actionsSheet.value = 'table';
+  void nextTick(() => actionsSheetRef.value?.focus({ preventScroll: true }));
+}
+
+/** 打开选中文字「更多」面板 */
+function openSelectionSheet() {
+  if (!selectionBarText.trim()) return;
+  actionsSheet.value = 'selection';
+  hideSelectionBar();
+  void nextTick(() => actionsSheetRef.value?.focus({ preventScroll: true }));
+}
+
+/** 关面板；restore=true 时把焦点还回编辑器，表格面板关掉后按当前选区重算浮条 */
+function closeActionsSheet(restore = true) {
+  if (!actionsSheet.value) return;
+  const wasTable = actionsSheet.value === 'table';
+  actionsSheet.value = null;
+  tableSheetTarget.value = null;
+  if (!restore) return;
+  vditor?.focus();
+  if (wasTable) scheduleTableBarSync();
+}
+
+/** 面板内的 Tab 循环 + Esc 关闭（Teleport 到 body 后不在编辑器 DOM 里） */
+function onActionsSheetKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.stopPropagation();
+    closeActionsSheet();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const root = actionsSheetRef.value;
+  if (!root) return;
+  const focusables = Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled])'));
+  if (!focusables.length) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (event.shiftKey) {
+    if (!active || active === first || active === root) {
+      event.preventDefault();
+      last.focus();
+    }
+  } else if (active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+/** 执行「更多」面板里的动作：先关面板（不抢焦点），再按动作类型走表格或选区 */
+async function runActionsSheetAction(key: TableSheetAction | SelectionSheetAction): Promise<void> {
+  if (actionsSheet.value === 'table') {
+    const target = tableSheetTarget.value;
+    closeActionsSheet(false);
+    await nextTick();
+    if (!vditor || !target) return;
+    beginUserEditing();
+    if (key === 'table-remove') removeTableAction(target);
+    else applyTableActionTo(key as TableEditAction, target);
+    scheduleTableBarSync();
+    return;
+  }
+  closeActionsSheet(false);
+  await nextTick();
+  if (key === 'copy') {
+    void copyText(selectionBarText).then((ok) => {
+      if (ok) notify.success('已复制');
+    });
+    return;
+  }
+  if (key === 'select-all') {
+    selectAll();
+    return;
+  }
+  restoreEditorSelection();
+  if (key === 'strike') applySelectionWrap('~~');
+  else if (key === 'inline-code') applySelectionWrap('\u0060');
+  else if (key === 'quote') applySelectionQuote();
+  vditor?.focus();
+}
+
+/** 把编辑器滚到与 text 同名的小标题：编辑「格式」面板的目录项用（桌面端不调用） */
+function scrollToHeadingByText(text: string): boolean {
+  const root = vditorEl.value?.querySelector<HTMLElement>('.vditor-ir, .vditor-wysiwyg, .vditor-sv');
+  if (!root) return false;
+  const normalize = (value: string | null | undefined) => (value || '').replace(/\s+/g, '').trim();
+  const wanted = normalize(text);
+  if (!wanted) return false;
+  const heading = Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))
+    .find((item) => normalize(item.textContent) === wanted);
+  if (!heading) return false;
+  heading.scrollIntoView({ block: 'center' });
+  return true;
 }
 
 function captureEditorSelection() {
@@ -1358,6 +1637,171 @@ function insertLink(title: string) {
   linkPopup.value = false;
 }
 
+/* ---------- 手机档：选中文字浮动格式条（定位 / 显隐 / 命令） ---------- */
+const SELECTION_BAR_WIDTH = 300;
+const SELECTION_BAR_HEIGHT = 52;
+
+function hideSelectionBar() {
+  if (selectionBarFrame) {
+    cancelAnimationFrame(selectionBarFrame);
+    selectionBarFrame = 0;
+  }
+  if (selectionBar.value) selectionBar.value = null;
+}
+
+/** 选区变化很密：收敛到一个 rAF 里算位置；不满足条件就收起 */
+function updateSelectionBar() {
+  selectionBarFrame = 0;
+  if (!ready || !mobileViewport.matches || composing) {
+    hideSelectionBar();
+    return;
+  }
+  if (insertOpen.value || actionsSheet.value || linkPopup.value) {
+    hideSelectionBar();
+    return;
+  }
+  const range = selectionRangeInEditor();
+  if (!range || range.collapsed) {
+    hideSelectionBar();
+    return;
+  }
+  const text = (window.getSelection()?.toString() || '').trim();
+  if (!text) {
+    hideSelectionBar();
+    return;
+  }
+  const anchorNode = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer as Element
+    : range.startContainer.parentElement;
+  if (anchorNode?.closest('.vditor-toolbar, .link-popup, .table-bar, .insert-sheet')) {
+    hideSelectionBar();
+    return;
+  }
+  // 多行选区用第一行的矩形：浮条贴着选区上沿，不会被后面的行顶走
+  const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 || rect.height > 0);
+  const box = rects[0] || range.getBoundingClientRect();
+  if (!box || (!box.width && !box.height)) {
+    hideSelectionBar();
+    return;
+  }
+  const half = Math.min(SELECTION_BAR_WIDTH, window.innerWidth - 16) / 2;
+  const center = box.left + box.width / 2;
+  const left = Math.max(8 + half, Math.min(center, window.innerWidth - 8 - half));
+  // 上方放不下（贴到内容区顶部 / 键盘上方）就翻到选区下方，仍然不盖住选中的字
+  const below = box.top - 10 - SELECTION_BAR_HEIGHT < 8;
+  selectionBarText = text;
+  captureEditorSelection();
+  selectionBar.value = { left, top: below ? box.bottom + 10 : box.top - 10, below };
+}
+
+function scheduleSelectionBarSync() {
+  if (selectionBarFrame) return;
+  selectionBarFrame = requestAnimationFrame(updateSelectionBar);
+}
+
+/** 用新文本替换当前选区（高亮 / 删除线 / 行内代码 / 引用都走这里）：
+ *  先恢复浮条弹出时记下的选区，execCommand 走浏览器原生替换 + input 事件，
+ *  Vditor 自己的 input 通道会把它收进正文与撤销栈。 */
+function replaceSelectionWith(next: string) {
+  restoreEditorSelection();
+  userInputPending = true;
+  let applied = false;
+  try {
+    applied = document.execCommand('insertText', false, next);
+  } catch {
+    applied = false;
+  }
+  if (!applied) vditor?.insertValue(next);
+  vditor?.focus();
+}
+
+function applySelectionWrap(prefix: string, suffix = prefix) {
+  const text = selectionBarText;
+  if (!text) return;
+  replaceSelectionWith(prefix + text + suffix);
+}
+
+function applySelectionQuote() {
+  const text = selectionBarText;
+  if (!text) return;
+  const quoted = text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => (line.trim() ? '> ' + line : '>'))
+    .join('\n');
+  replaceSelectionWith(quoted);
+}
+
+/** 浮条上的六个按钮：加粗 / 斜体 / 高亮 / 链接 / 复制 / 更多 */
+function runSelectionAction(action: 'bold' | 'italic' | 'highlight' | 'link' | 'copy' | 'more') {
+  const text = selectionBarText.trim();
+  if (!text) {
+    hideSelectionBar();
+    return;
+  }
+  if (action === 'copy') {
+    void copyText(text).then((ok) => {
+      if (ok) notify.success('已复制');
+    });
+    hideSelectionBar();
+    return;
+  }
+  if (action === 'more') {
+    openSelectionSheet();
+    return;
+  }
+  if (action === 'bold' || action === 'italic' || action === 'link') {
+    // 复用 Vditor 工具栏按钮：加粗 / 斜体 / 链接面板都按当前选区执行，不另造一套命令
+    restoreEditorSelection();
+    triggerVditorToolbar(action);
+    hideSelectionBar();
+    return;
+  }
+  if (action === 'highlight') applySelectionWrap('==');
+  hideSelectionBar();
+}
+
+/** 点在浮条与编辑器之外（工具栏、底栏、页面留白）即收起；点在编辑器里交给 selectionchange 判断 */
+function onSelectionPointerDown(event: PointerEvent) {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  if (target.closest('.sel-bar')) return;
+  if (vditorEl.value?.contains(target)) return;
+  hideSelectionBar();
+}
+
+function onSelectionViewportChange(event: MediaQueryListEvent) {
+  if (!event.matches) hideSelectionBar();
+}
+
+function bindSelectionTools() {
+  if (selectionToolsBound) return;
+  selectionToolsBound = true;
+  document.addEventListener('selectionchange', scheduleSelectionBarSync);
+  window.addEventListener('scroll', hideSelectionBar, true);
+  window.addEventListener('resize', hideSelectionBar);
+  vditorEl.value?.addEventListener('scroll', hideSelectionBar, true);
+  document.addEventListener('pointerdown', onSelectionPointerDown, true);
+  document.addEventListener('compositionstart', hideSelectionBar, true);
+  mobileViewport.addEventListener('change', onSelectionViewportChange);
+}
+
+function unbindSelectionTools() {
+  if (!selectionToolsBound) return;
+  selectionToolsBound = false;
+  document.removeEventListener('selectionchange', scheduleSelectionBarSync);
+  window.removeEventListener('scroll', hideSelectionBar, true);
+  window.removeEventListener('resize', hideSelectionBar);
+  vditorEl.value?.removeEventListener('scroll', hideSelectionBar, true);
+  document.removeEventListener('pointerdown', onSelectionPointerDown, true);
+  document.removeEventListener('compositionstart', hideSelectionBar, true);
+  mobileViewport.removeEventListener('change', onSelectionViewportChange);
+  if (selectionBarFrame) {
+    cancelAnimationFrame(selectionBarFrame);
+    selectionBarFrame = 0;
+  }
+}
+
 /* ---------- 手机档「插入」面板 ----------
  * 九项动作各自落到 Vditor 已有的入口上：块级内容用 insertValue 插 Markdown 片段；
  * 外部链接复用工具栏自带的 link 面板（链接地址校验/编辑都在那里）；双链复用 [[ 候选弹窗；
@@ -1412,6 +1856,7 @@ function openInsertPanel(): void {
   if (insertBusy.value) return;
   // 打开面板会移走焦点：先把光标位置记下来，动作执行前再放回去
   captureEditorSelection();
+  hideSelectionBar();
   insertOpen.value = true;
   void nextTick(() => insertSheetRef.value?.focus({ preventScroll: true }));
 }
@@ -1779,6 +2224,7 @@ onUnmounted(() => {
   if (placeholderHideTimer) clearTimeout(placeholderHideTimer);
   if (wikiTagRaf) cancelAnimationFrame(wikiTagRaf);
   unbindTableBarEvents();
+  unbindSelectionTools();
   wikiTagObserver?.disconnect();
   modeObserver?.disconnect();
   unbindVditorTooltips?.();
@@ -1801,6 +2247,8 @@ defineExpose({
   syncIfPending,
   undo: () => executeHistoryCommand('undo'),
   redo: () => executeHistoryCommand('redo'),
+  /** 编辑「格式」面板的目录项：把正文滚到同名标题（ir / wysiwyg 是标题元素，sv 模式下找不到就返回 false） */
+  scrollToHeading: (text: string): boolean => scrollToHeadingByText(text),
   cutSelection,
   copySelection,
   pasteClipboard,
@@ -1810,18 +2258,25 @@ onMounted(() => {
   init();
   // 安卓返回键：插入面板开着时先关面板（只认领本组件的这一层）
   unregisterInsertBack = registerBackHandler(() => {
+    if (actionsSheet.value) {
+      closeActionsSheet();
+      return true;
+    }
     if (insertOpen.value) {
       closeInsertPanel();
       return true;
     }
     return false;
   });
-  // 从手机档放大到桌面档（折叠屏展开 / 旋屏）：插入面板只属于手机档，直接收起
+  // 从手机档放大到桌面档（折叠屏展开 / 旋屏）：这些手机档浮层直接收起
   mobileViewport.addEventListener('change', onMobileViewportChange);
 });
 
 function onMobileViewportChange(event: MediaQueryListEvent): void {
-  if (!event.matches) closeInsertPanel();
+  if (event.matches) return;
+  closeInsertPanel();
+  closeActionsSheet(false);
+  hideSelectionBar();
 }
 </script>
 
@@ -1837,6 +2292,67 @@ function onMobileViewportChange(event: MediaQueryListEvent): void {
 .vditor-host :deep(a[href^="#ingest-preserved-"]),
 .vditor-host :deep(p:has(a[href^="#ingest-preserved-"])) {
   display: none !important;
+}
+
+/* ---------- 手机档：选中文字浮动格式条 ----------
+ * 深色小条（用 --text 当底、--bg 当字，只花现有令牌），fixed 视口坐标 + translate(-50%,-100%)
+ * 贴在选区上方；放不下时加 .is-below 翻到下方。只在手机档渲染（脚本按断点控制）。 */
+.sel-bar {
+  position: fixed;
+  z-index: var(--z-popup);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: var(--shadow-dialog);
+  transform: translate(-50%, -100%);
+  animation: sel-bar-in 0.12s ease-out both;
+}
+.sel-bar.is-below {
+  transform: translate(-50%, 0);
+}
+@keyframes sel-bar-in {
+  from { opacity: 0; transform: translate(-50%, -100%) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+}
+.sel-bar.is-below { animation-name: sel-bar-in-below; }
+@keyframes sel-bar-in-below {
+  from { opacity: 0; transform: translate(-50%, 0) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+.sel-btn {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 650;
+}
+.sel-btn:active,
+.sel-btn.is-on {
+  background: color-mix(in srgb, var(--bg) 18%, transparent);
+}
+.sel-btn:focus-visible { outline: 2px solid var(--bg); outline-offset: -2px; }
+.sel-bold { font-weight: 800; }
+.sel-italic { font-style: italic; font-family: Georgia, 'Times New Roman', serif; font-weight: 600; }
+.sel-div {
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: color-mix(in srgb, var(--bg) 26%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sel-bar,
+  .sel-bar.is-below { animation: none; }
 }
 
 /* ---------- 工具栏换肤：悬浮卡片 + 分组气泡按钮（UI 2.0 mockup 4.3） ---------- */

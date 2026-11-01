@@ -13,6 +13,10 @@
       'size-compact': sizeClass === 'compact',
       'size-medium': sizeClass === 'medium',
       'size-expanded': sizeClass === 'expanded',
+      /* 折叠屏（2026-11）：medium 目录打开时两栏并排；桌面姿态（半开横折）上下分区 */
+      'two-pane': mediumTwoPane,
+      'tabletop': tabletop,
+      'tabletop-editor': tabletopEditorOpen,
     }"
     :style="{ '--sidebar-width': sidebarWidth + 'px', '--chat-w': app.chatDockWidth + 'px' }"
   >
@@ -60,10 +64,10 @@
       <button
         class="rail-btn"
         type="button"
-        :class="{ active: app.chatDrawerOpen, 'is-running': chat.hasRunning }"
+        :class="{ active: app.chatDrawerOpen || isActive('/agent'), 'is-running': chat.hasRunning }"
         v-tooltip.right="chat.hasRunning ? `${agentName} 正在回复（${chat.runningCount} 个会话）` : agentName"
         :aria-label="chat.hasRunning ? `${agentName}（正在回复）` : agentName"
-        @click="app.toggleChat()"
+        @click="openAgent()"
       >
         <Icon name="ai" :size="19" />
         <span v-if="chat.hasRunning" class="rail-running" aria-hidden="true" />
@@ -101,7 +105,7 @@
         :style="{ width: sidebarWidth + 'px' }"
         aria-label="知识库侧边栏"
       >
-        <Sidebar ref="sidebarRef" @close="app.sidebarOpen = false" @new-page="quickNew" />
+        <Sidebar ref="sidebarRef" :inline="mediumTwoPane" @close="app.sidebarOpen = false" @new-page="quickNew" />
       </aside>
     </transition>
     <!-- 拖动分隔条：桌面端 232–420px，且不超过窗口宽度的 40%（满窗时目录已铺满，分隔条让位） -->
@@ -152,6 +156,28 @@
       </div>
       <router-view />
     </main>
+
+    <!-- 折叠屏桌面姿态（半开横折）：上半屏正文、下半屏操作台。
+         只由 Viewport Segments 媒体特性启用；不支持该特性的设备不渲染这一块，布局与原来完全一致。 -->
+    <section v-if="tabletop" class="tabletop-console" aria-label="操作台">
+      <header class="tabletop-head">
+        <span class="tabletop-state" aria-hidden="true" />
+        <strong class="tabletop-title">{{ tabletopTitle }}</strong>
+        <span class="tabletop-hint">下半屏是操作台，上半屏保持正文可见</span>
+      </header>
+      <div class="tabletop-actions">
+        <button
+          v-for="action in tabletopActions"
+          :key="action.key"
+          type="button"
+          class="tabletop-action"
+          @click="action.action"
+        >
+          <Icon :name="action.icon" :size="20" />
+          <span>{{ action.label }}</span>
+        </button>
+      </div>
+    </section>
 
     <UpdateNotice @change="onUpdateNoticeChange" />
 
@@ -486,6 +512,39 @@ const viewportWidth = ref(window.innerWidth);
 const sizeClass = computed(() => windowSizeClassFor(viewportWidth.value));
 /** 侧栏浮层：<840（compact + medium 都是抽屉）；≥840 走常驻侧栏，正文按侧栏宽度让位 */
 const sidebarOverlay = computed(() => sizeClass.value !== 'expanded');
+
+/* ===== 折叠屏（2026-11）：Viewport Segments + medium 双栏 =====
+ * 三件事都只在设备真的报告了对应能力时启用，普通手机 / 桌面 / 网页端完全不受影响：
+ *  - medium 目录打开 → 两栏并排（不再全屏遮罩）；
+ *  - 竖折（左右两段）→ 两栏分界对齐铰链，两侧各留 6px、合计 12px 安全缝；
+ *  - 半开横折（上下两段）→ 桌面姿态：上半屏正文、下半屏操作台。
+ */
+const segmentQuery = window.matchMedia('(horizontal-viewport-segments: 2)');
+const tabletopPosture = ref(segmentQuery.matches);
+function onSegmentChange(event: MediaQueryListEvent) {
+  tabletopPosture.value = event.matches;
+}
+/** 桌面姿态（半开横折）：只在 medium/expanded 启用；compact 仍走底栏，避免出现两套底部操作 */
+const tabletop = computed(() => tabletopPosture.value && sizeClass.value !== 'compact');
+/** 桌面姿态下正在编辑文章：格式工具条由 CSS 挪到下半屏（见 styles/main.css），操作台给它让位 */
+const tabletopEditorOpen = computed(() =>
+  tabletop.value && route.path.startsWith('/page/') && !app.readingMode
+);
+/**
+ * medium 双栏（2026-11 安卓改版）：目录抽屉打开时不再全屏遮罩，改成「常驻窄栏 + 内容并排」；
+ * 关闭时回到单栏（rail 保持）。满窗目录（sidebar-full）仍独占正文。
+ */
+const mediumTwoPane = computed(() =>
+  sizeClass.value === 'medium' && app.sidebarOpen && !app.sidebarFull && !tabletop.value
+);
+
+/** 尺寸等级 / 桌面姿态变了：收掉浮层面板与未完成的下拉手势，避免跨形态留下无入口的浮层 */
+watch(tabletop, (on) => {
+  if (!on) return;
+  moreOpen.value = false;
+  newSheetOpen.value = false;
+  abortPull();
+});
 /** 悬浮档展开中：正文要按卡片宽度让出右侧空间（满窗与紧凑档浮层都不让位——它们本来就盖在正文上） */
 const chatDockOpen = computed(() =>
   app.chatDrawerOpen && app.chatDrawerMode === 'dock' && !sidebarOverlay.value
@@ -576,6 +635,18 @@ const isActive = (p: string) => route.path.startsWith(p);
 function go(path: string) {
   app.minimizeChatForNavigation();
   void router.push(path);
+}
+
+/**
+ * 打开 Agent（2026-11 安卓改版阶段三）：手机与 medium 档（<840）进入 /agent 独立页，
+ * expanded（平板/桌面）沿用右侧对话抽屉——桌面没有整页 Agent 的形态，行为保持不变。
+ */
+function openAgent() {
+  if (sizeClass.value === 'expanded') {
+    app.toggleChat(true);
+    return;
+  }
+  go('/agent');
 }
 
 const navItems = computed(() => [
@@ -672,13 +743,13 @@ const bottomItems = computed<BottomNavItem[]>(() => [
     label: 'Agent',
     title: 'Agent',
     icon: 'ai',
-    active: app.chatDrawerOpen,
+    active: isActive('/agent'),
     dot: app.chatUnread,
     running: chat.hasRunning,
     action: () => {
       haptic('tap');
       closeLibraryDrawer();
-      app.toggleChat(true);
+      go('/agent');
     },
   },
   {
@@ -784,7 +855,11 @@ let pullIntent: 'none' | 'pull' | 'scroll' = 'none';
 let pullThresholdHaptic = false;
 
 const pullAvailable = computed(() =>
-  sizeClass.value !== 'expanded' && touchPointer.value && PULL_ROUTES.includes(route.path)
+  sizeClass.value !== 'expanded'
+    && touchPointer.value
+    /* 编辑首页时不接管下拉：拖动排序/滚动卡片的手势不能被刷新抢走 */
+    && !homeBoard.editing
+    && PULL_ROUTES.includes(route.path)
 );
 const pullProgress = computed(() => Math.min(1, pullOffset.value / PULL_THRESHOLD));
 /** 进度环取连接通道色（与同步状态同一套令牌），没配置同步时退回强调色 */
@@ -924,6 +999,8 @@ const newFabVisible = computed(() =>
     && !app.chatDrawerOpen
     && !moreOpen.value
     && !newSheetOpen.value
+    /* 桌面姿态下半屏已经是操作台，重复的 FAB 只会挡住正文 */
+    && !tabletop.value
     && route.path === '/page'
 );
 
@@ -952,6 +1029,48 @@ const newActions = computed<NewSheetAction[]>(() => [
   { key: 'inbox', label: '收进收集箱', sub: '先放进去，回头再整理', icon: 'inbox', action: () => go('/inbox') },
   { key: 'scan', label: '扫码绑定中枢', sub: '对准中枢上的二维码完成绑定', icon: 'qr', action: () => go('/settings?section=sync') },
 ]);
+
+/* ===== 桌面姿态操作台（2026-11）：下半屏只复用壳层已有动作，不创建第二套编辑器状态 ===== */
+interface TabletopAction {
+  key: string;
+  label: string;
+  icon: string;
+  action: () => void;
+}
+
+/** 操作台标题：说明「现在下半屏在操作什么」 */
+const tabletopTitle = computed(() => {
+  if (route.path === '/page') return '首页看板';
+  if (route.path.startsWith('/page/')) return app.readingMode ? '阅读中' : '编辑中';
+  if (route.path.startsWith('/inbox')) return '收集箱';
+  if (route.path.startsWith('/tasks')) return '任务看板';
+  if (route.path.startsWith('/search')) return '搜索';
+  if (route.path.startsWith('/graph')) return '知识图谱';
+  if (route.path.startsWith('/settings')) return '设置';
+  if (route.path.startsWith('/customer-research')) return '客户调研';
+  return '操作台';
+});
+
+const tabletopActions = computed<TabletopAction[]>(() => {
+  const actions: TabletopAction[] = [
+    { key: 'new-page', label: '新建页面', icon: 'plus', action: () => quickNew() },
+    { key: 'note', label: '记灵感', icon: 'lightbulb', action: () => quickNote() },
+    { key: 'catalog', label: '目录', icon: 'list-tree', action: () => { app.sidebarOpen = !app.sidebarOpen; } },
+    { key: 'search', label: '搜索', icon: 'search', action: () => go('/search') },
+    { key: 'inbox', label: '收集箱', icon: 'inbox', action: () => go('/inbox') },
+  ];
+  // 阅读 / 编辑页：下半屏给「阅读 ↔ 编辑」开关（与全站同一份 readingMode 状态）
+  if (route.path.startsWith('/page/')) {
+    actions.push({
+      key: 'reading',
+      label: app.readingMode ? '去编辑' : '回阅读',
+      icon: 'pencil',
+      action: () => app.setReadingMode(!app.readingMode),
+    });
+  }
+  actions.push({ key: 'agent', label: 'Agent', icon: 'ai', action: () => app.toggleChat(true) });
+  return actions;
+});
 
 /** 换了页面就把手势复位（滚动位置是新的，不能带着上一页的跟手位移） */
 watch(() => route.path, () => abortPull());
@@ -1084,6 +1203,8 @@ onMounted(() => {
   window.addEventListener('resize', onWindowResize);
   // Android 返回键/侧滑返回：先收掉应用级浮层（我的面板 → 对话抽屉 → 文件树），
   // 都关着才交回原生（历史后退或退到后台）。桌面端没有原生调用，注册了也不会触发。
+  // 折叠屏形态（半开横折 / 桌面姿态）：Viewport Segments 变化时重判上下分屏
+  segmentQuery.addEventListener('change', onSegmentChange);
   stopBackHandler = registerBackHandler(() => {
     if (newSheetOpen.value) {
       newSheetOpen.value = false;
@@ -1194,6 +1315,7 @@ onUnmounted(() => {
   detachSidebarSwipe = null;
   detachPullRefresh?.();
   detachPullRefresh = null;
+  segmentQuery.removeEventListener('change', onSegmentChange);
   document.removeEventListener('visibilitychange', onUpdateVisibility);
   document.removeEventListener('visibilitychange', flushHomeBoardOnHide);
   window.removeEventListener('pagehide', flushHomeBoardWrite);
@@ -2206,6 +2328,48 @@ html.kb-open .new-fab { display: none; }
 
 /* FAB：medium 没有底栏，贴右下 24px（compact 的 88px 见上面的 .new-fab 基础样式） */
 .layout.size-medium .new-fab { bottom: calc(24px + var(--safe-bottom)); }
+
+/* ===== medium 双栏（2026-11 折叠屏展开）：目录打开时并排常驻，不再全屏遮罩 =====
+ * 分界方式：默认按 40% / 60% 回退（普通浏览器 / 拿不到折痕数据时）；
+ * 支持 Viewport Segments 的竖折设备（左右两段）把分界对齐铰链，两侧各 6px、合计 12px 安全缝。
+ * 关闭目录即回单栏；rail 保持不变，右栏一直可点可滚（下面的 .mask 规则保证不盖遮罩）。
+ */
+.layout.size-medium.two-pane:not(.sidebar-full) .sidebar {
+  position: fixed;
+  top: calc(8px + var(--win-titlebar-h, 0px) + var(--safe-top));
+  bottom: calc(8px + var(--safe-bottom));
+  left: calc(60px + var(--safe-left));
+  width: calc(40% - 66px - var(--safe-left)) !important;
+  max-width: 400px;
+  border-right: 1px solid var(--sidebar-glass-border);
+  box-shadow: var(--sidebar-mobile-shadow);
+  z-index: var(--z-sidebar);
+}
+
+.layout.size-medium.two-pane .content,
+.layout.size-medium.two-pane.sidebar-open .content {
+  padding-left: calc(40% + 6px + var(--safe-left));
+  padding-bottom: var(--safe-bottom);
+}
+
+/* 两栏并排时右栏必须可点：遮罩撤掉（元素仍在 DOM 里，只是不显示） */
+.layout.size-medium.two-pane .mask { display: none; }
+
+/*
+ * 折痕对齐：竖折（vertical-viewport-segments: 2）时用 viewport-segment-left 1 0 作为铰链位置。
+ * env() 带 40% 兜底：真机/浏览器给不出折痕数据时仍落在 40% 那条线上。
+ * 真机待核：Pixel Fold / 三星 Fold 的 WebView 是否上报该媒体特性与段信息。
+ */
+@media (vertical-viewport-segments: 2) {
+  .layout.size-medium.two-pane:not(.sidebar-full) .sidebar {
+    width: calc(env(viewport-segment-left 1 0, 40%) - 66px - var(--safe-left)) !important;
+  }
+
+  .layout.size-medium.two-pane .content,
+  .layout.size-medium.two-pane.sidebar-open .content {
+    padding-left: calc(env(viewport-segment-left 1 0, 40%) + 6px + var(--safe-left));
+  }
+}
 
 /* 触屏（折叠屏内屏 / 平板 / 横屏手机）：rail 图标用不可见热区补到 44px，视觉尺寸不变 */
 @media (hover: none) and (pointer: coarse) {

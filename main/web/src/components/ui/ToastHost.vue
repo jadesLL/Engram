@@ -174,4 +174,63 @@ function onCardClick(item: ToastItem) {
   right: 0;
   width: 100%;
 }
+
+/*
+ * 手机档（≤768px）：通知改贴底（Snackbar 位置）——
+ *  ① 底部导航实高 48px + 距底 8px（Home.vue 的 .bottom-nav），再留 8px 间隙 = 64px，另加安全区；
+ *  ② 出现自下往上滑入、退出向下淡出，和「底部弹出的确认」一致（桌面仍是右上角右侧滑入）；
+ *  ③ 桌面端一条都不改：这些规则全在宽度媒体查询里，>768px 仍是右上角 + 融合标题栏偏移。
+ */
+@media (max-width: 768px) {
+  .toast-stack {
+    top: auto;
+    right: 12px;
+    bottom: calc(64px + var(--safe-bottom));
+    left: 12px;
+    width: auto;
+  }
+  .app-toast {
+    padding: 11px 12px;
+    border-radius: 12px;
+    /* 贴底后阴影改向上：底缘贴着导航栏，原来的向下投影会被压成一道深边 */
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05), 0 14px 30px -18px rgba(0, 0, 0, 0.24);
+  }
+  .toast-enter-from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  .toast-leave-to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  /* 退出中的条目是绝对定位：宽度要跟着贴底后的左右边距走，否则会撑回满宽 */
+  .toast-leave-active {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+  :global(html.dark) .app-toast {
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.4), 0 14px 30px -18px rgba(0, 0, 0, 0.55);
+  }
+  /*
+   * 首页 / 知识库右下有「新建」FAB（Home.vue 的 .new-fab：距底 88px + 高 56px）时，
+   * 通知抬到 FAB 上方，别整条压住主操作（Material 的 Snackbar 也在 FAB 之上）。
+   * :has() 只在 FAB 真的渲染出来时命中，收集箱 / Agent / 设置这些没有 FAB 的页面仍是 64px。
+   * medium 档（600–840，窄屏折叠屏）没有底栏、FAB 贴底 24px，只抬到 24+56+8 = 88px。
+   */
+  :global(body:has(.new-fab)) .toast-stack {
+    bottom: calc(152px + var(--safe-bottom));
+  }
+  :global(body:has(.layout.size-medium .new-fab)) .toast-stack {
+    bottom: calc(88px + var(--safe-bottom));
+  }
+}
+
+/* 软键盘弹起（原生 ime inset 写入 html.kb-open，见 lib/systemInsets.ts）：底部导航已收起，
+   通知跟着抬到键盘上方，别被输入法盖住。
+   top: auto 必须写：固定定位同时给了 top 和 bottom 会把通知栈拉满整屏（宽屏安卓设备更明显） */
+:global(html.kb-open) .toast-stack {
+  top: auto;
+  bottom: calc(12px + var(--safe-bottom));
+}
 </style>

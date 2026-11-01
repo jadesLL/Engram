@@ -93,10 +93,16 @@ test('目录抽屉的同步入口：抽屉档用整行通道条，桌面档才�
 
 test('点目录里的条目后自动收回抽屉（只在浮层档），桌面侧栏保持展开', () => {
   const sidebar = readSrc('components/Sidebar.vue');
+  // 2026-11 medium 双栏：inline（并排常驻）时点条目不能把右栏的目录收走
   assert.match(
     sidebar,
-    /function closeDrawerIfOverlay\(\) \{\s*if \(drawerMode\.value\) emit\('close'\);\s*\}/,
-    '没有「浮层档才收起」的收口函数',
+    /function closeDrawerIfOverlay\(\) \{\s*if \(drawerMode\.value && !props\.inline\) emit\('close'\);\s*\}/,
+    '没有「浮层且非并排才收起」的收口函数',
+  );
+  assert.match(
+    sidebar,
+    /withDefaults\(defineProps<\{ inline\?: boolean \}>/,
+    'Sidebar 没有 inline（并排常驻）属性',
   );
   for (const handler of ['openPage', 'openFile']) {
     const body = sidebar.match(new RegExp(`function ${handler}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`));
@@ -404,8 +410,8 @@ test('下拉刷新：≤839 触屏 + 顶层页，阈值 64px，松手走 sync/in
   assert.match(home, /const PULL_ROUTES = \['\/page', '\/inbox', '\/tasks'\]/, '下拉刷新没有限定顶层页');
   assert.match(
     home,
-    /sizeClass\.value !== 'expanded' && touchPointer\.value && PULL_ROUTES\.includes\(route\.path\)/,
-    '下拉刷新没有按「≤839 + 触屏 + 顶层页」门控：桌面和阅读页也会被拉动',
+    /sizeClass\.value !== 'expanded'[\s\S]{0,200}?&& !homeBoard\.editing[\s\S]{0,120}?&& PULL_ROUTES\.includes\(route\.path\)/,
+    '下拉刷新没有按「≤839 + 触屏 + 非编辑首页 + 顶层页」门控：桌面、阅读页、编辑首页都会被拉动',
   );
   // 只接管往下拉；上滑 / 横滑交还给页面（收集箱卡片横滑）
   assert.match(
@@ -457,4 +463,113 @@ test('新建 FAB：≤839 首页、抽屉收起时出现，面板四件事可点
   // 面板：可点遮罩 / 关闭 / 返回键最先关
   assert.match(home, /class="new-mask" @click="newSheetOpen = false"/, '新建面板没有可点遮罩');
   assert.match(home, /if \(newSheetOpen\.value\) \{\s*newSheetOpen\.value = false;/, '返回键没有先关新建面板');
+});
+
+// ---------------------------------------------------------------- 折叠屏与手机编辑（2026-11 阶段三）
+
+test('medium 双栏：目录打开时并排常驻（无遮罩），按折痕对齐并以 40%/60% 回退', () => {
+  const home = readSrc('views/Home.vue');
+  assert.match(
+    home,
+    /const mediumTwoPane = computed\(\(\) =>\s*sizeClass\.value === 'medium' && app\.sidebarOpen && !app\.sidebarFull && !tabletop\.value/,
+    'medium 双栏判定缺失：目录打开时仍会全屏遮罩',
+  );
+  assert.match(home, /'two-pane': mediumTwoPane/, 'layout 上没有挂 two-pane 类');
+  assert.match(home, /<Sidebar ref="sidebarRef" :inline="mediumTwoPane"/, 'Sidebar 没有收到 inline（并排常驻）标记');
+  // 两栏几何：默认按 40% / 60% 回退
+  const at = home.indexOf('medium 双栏（2026-11 折叠屏展开）');
+  assert.ok(at >= 0, '找不到 medium 双栏样式段');
+  const css = home.slice(at, home.indexOf('折痕对齐', at));
+  assert.match(
+    css,
+    /\.layout\.size-medium\.two-pane:not\(\.sidebar-full\) \.sidebar \{[\s\S]{0,320}?width: calc\(40% - 66px - var\(--safe-left\)\) !important/,
+    '两栏没有按 40% 回退：拿不到折痕数据时右栏宽度会乱',
+  );
+  assert.match(
+    css,
+    /\.layout\.size-medium\.two-pane \.content,[\s\S]{0,140}?padding-left: calc\(40% \+ 6px \+ var\(--safe-left\)\)/,
+    '两栏右侧内容没有让开左栏 + 12px 安全缝',
+  );
+  assert.match(css, /\.layout\.size-medium\.two-pane \.mask \{ display: none; \}/, '两栏并排还盖着遮罩：右栏点不到');
+  // 折痕：Viewport Segments 可用时对齐铰链，env() 带 40% 兜底
+  const hinge = home.slice(home.indexOf('折痕对齐'));
+  assert.match(hinge, /@media \(vertical-viewport-segments: 2\)/, '没有按竖折的 Viewport Segments 对齐折痕');
+  assert.match(
+    hinge,
+    /width: calc\(env\(viewport-segment-left 1 0, 40%\) - 66px - var\(--safe-left\)\) !important/,
+    '折痕对齐没有用 env(viewport-segment-left, 40% 兜底)',
+  );
+  assert.match(
+    hinge,
+    /padding-left: calc\(env\(viewport-segment-left 1 0, 40%\) \+ 6px \+ var\(--safe-left\)\)/,
+    '折痕另一侧没有让开 6px 安全缝',
+  );
+});
+
+test('折叠屏桌面姿态：上半屏正文 + 下半屏操作台，不支持的设备完全不命中', () => {
+  const home = readSrc('views/Home.vue');
+  const css = readSrc('styles/main.css');
+  assert.match(
+    home,
+    /window\.matchMedia\('\(horizontal-viewport-segments: 2\)'\)/,
+    'Home.vue 没有检测桌面姿态（horizontal-viewport-segments）',
+  );
+  assert.match(
+    home,
+    /const tabletop = computed\(\(\) => tabletopPosture\.value && sizeClass\.value !== 'compact'\)/,
+    '桌面姿态没有按「半开横折 + 非 compact」判定',
+  );
+  assert.match(home, /'tabletop': tabletop/, 'layout 上没有挂 tabletop 类');
+  assert.match(home, /class="tabletop-console"/, '没有桌面姿态操作台');
+  assert.match(home, /class="tabletop-action"/, '操作台没有动作按钮');
+  assert.match(home, /class="tabletop-title"/, '操作台没有上下文标题');
+  assert.match(home, /!tabletop\.value/, '桌面姿态下没有收掉重复的 FAB / 浮层');
+  // 不支持的设备：控制台默认隐藏，布局规则只写在媒体特性里
+  assert.match(css, /\.tabletop-console \{ display: none; \}/, '操作台默认没有隐藏：不支持的设备也会露出来');
+  assert.match(css, /@media \(horizontal-viewport-segments: 2\) \{/, 'main.css 没有桌面姿态媒体特性块');
+  const block = css.slice(css.indexOf('@media (horizontal-viewport-segments: 2)'));
+  assert.match(
+    block,
+    /\.layout\.tabletop \.content \{[\s\S]{0,220}?height: calc\(env\(viewport-segment-top 1 0, 50%\) - 6px\)/,
+    '上半屏没有按铰链高度分屏（带 50% 兜底）',
+  );
+  assert.match(block, /\.layout\.tabletop \.tabletop-console \{/, '下半屏操作台样式缺失');
+  assert.match(block, /\.layout\.tabletop-editor \.vditor-toolbar \{/, '编辑态没有把格式工具条挪到下半屏');
+  assert.match(
+    block,
+    /padding: 6px 12px calc\(8px \+ var\(--safe-bottom\)\) calc\(72px \+ var\(--safe-left\)\)/,
+    '操作台没有让开 rail 与系统手势条',
+  );
+  // 阅读 / 编辑开关复用全站 readingMode 状态
+  assert.match(home, /app\.setReadingMode\(!app\.readingMode\)/, '操作台没有阅读/编辑开关');
+});
+
+test('首页看板手机编辑：单列 + 上移/下移/隐藏（44dp），顺序随 home_layout 落盘', () => {
+  const board = readSrc('components/HomeBoard.vue');
+  assert.match(board, /import \{ WINDOW_SIZE_EXPANDED \} from '\.\.\/lib\/windowSizeClass\.ts'/, 'HomeBoard 没有接尺寸档常量');
+  assert.match(
+    board,
+    /const mobileEditWidth = computed\(\(\) => viewportWidth\.value < WINDOW_SIZE_EXPANDED\)/,
+    '手机编辑没有按 <840 门控',
+  );
+  assert.match(board, /const mobileEditing = computed\(\(\) => store\.editing && mobileEditWidth\.value\)/, '手机编辑判定缺失');
+  assert.match(board, /if \(mobileEditing\.value\) return 1;/, '手机编辑没有固定单列');
+  // 三按钮：上移 / 下移 / 隐藏
+  for (const aria of ['上移', '下移', '隐藏']) {
+    assert.match(board, new RegExp(':aria-label="`' + aria + '「'), '手机编辑缺「' + aria + '」按钮');
+  }
+  assert.match(board, /moveMobileModule\(entry\.module, -1\)/, '上移按钮没有接 moveMobileModule(-1)');
+  assert.match(board, /moveMobileModule\(entry\.module, 1\)/, '下移按钮没有接 moveMobileModule(1)');
+  assert.match(board, /hideMobileModule\(entry\.module\)/, '隐藏按钮没有接 hideMobileModule');
+  const toolCss = board.match(/\.widget-tool \{([^}]*)\}/)?.[1] ?? '';
+  assert.match(toolCss, /width: 44px/, '编辑按钮热区不到 44px');
+  assert.match(toolCss, /height: 44px/, '编辑按钮热区不到 44px');
+  // 顺序持久化：写 opts.mobileOrder，走现有 store.commit（服务端 + localStorage 一份 JSON）
+  assert.match(board, /mobileOrder: position\.get\(module\.id\) \?\? 0/, '顺序没有写进模块 opts');
+  assert.match(board, /store\.commit\(\{ \.\.\.store\.board, modules \}\)/, '顺序没有走 store.commit 落盘');
+  // 手机编辑不引入拖拽；桌面拖拽/缩放路径原样保留
+  assert.match(board, /if \(mobileEditing\.value\) return;/, '手机编辑没有挡住拖拽手势');
+  assert.match(board, /if \(previewBoard\.value\) store\.commit\(previewBoard\.value\);/, '桌面拖拽松手提交被改坏了');
+  assert.match(board, /\.board\.mobile-edit \.board-grid \{/, '手机编辑没有覆盖窄画布');
+  assert.match(board, /:managing="store\.editing && !mobileEditing"/, '手机编辑时卡片仍带桌面编辑手柄');
 });
