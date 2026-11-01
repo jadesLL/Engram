@@ -490,6 +490,7 @@ function init() {
       modelSync.setEnvironment(true, !editorHidden());
       overrideToolbarIcons();
       adoptVditorTooltips();
+      bindToolbarHintOverlay();
       observeWikiLinks();
       bindKeys();
       bindTableBarEvents();
@@ -519,6 +520,108 @@ function adoptVditorTooltips() {
     (el) => el.getAttribute('aria-label') || '',
     (el) => (el.closest('.vditor-toolbar') ? { placement: 'bottom' } : {}),
   );
+}
+
+/* ---------- 手机端工具栏横滚：Vditor 工具栏里的下拉菜单不能被滚动的工具条裁掉 ----------
+ * 手机档工具栏改成单行横滚（见文件末尾 max-width 样式）。Vditor 的 .vditor-hint 菜单
+ *（标题 H1–H6、编辑模式）是工具栏项里的绝对定位子节点：父级一旦成为横向滚动容器，菜单就会
+ * 被 overflow 裁掉——「标题」「编辑模式」两个入口点开看不到选项。
+ * 这里只在菜单真正可见时，把它临时改成 position: fixed、贴到所属按钮下方；菜单收起就还原。
+ * 结构变化、检测不到菜单时什么都不做，保持 Vditor 原行为。 */
+const floatingHints = new Set<HTMLElement>();
+let floatingHintRaf = 0;
+let floatingHintCleanup: (() => void) | null = null;
+
+/** 菜单当前是否真的显示着：display / visibility / 实际盒都有才算 */
+function hintIsOpen(hint: HTMLElement): boolean {
+  const style = window.getComputedStyle(hint);
+  return style.display !== 'none' && style.visibility !== 'hidden' && hint.getClientRects().length > 0;
+}
+
+/** 菜单挂在哪个按钮上：优先工具栏项里的按钮，退回到前一个兄弟按钮 */
+function hintAnchor(hint: HTMLElement): HTMLElement | null {
+  const item = hint.closest('.vditor-toolbar__item');
+  const inItem = item?.querySelector<HTMLElement>('button');
+  if (inItem) return inItem;
+  const prev = hint.previousElementSibling;
+  return prev instanceof HTMLElement && prev.tagName === 'BUTTON' ? prev : null;
+}
+
+function resetFloatingHint(hint: HTMLElement) {
+  floatingHints.delete(hint);
+  hint.classList.remove('eg-hint-floating');
+  for (const prop of ['position', 'top', 'left', 'z-index', 'margin']) hint.style.removeProperty(prop);
+}
+
+function placeFloatingHints() {
+  floatingHintRaf = 0;
+  const host = vditorEl.value;
+  if (!host) return;
+  // 手机档工具栏固定是横向滚动容器（即使按钮刚好放得下，overflow 仍会裁剪绝对定位菜单），
+  // 因此只按断点判断是否接管，不要求「此刻真的能滚」。
+  const active = window.matchMedia('(max-width: 768px)').matches;
+  for (const hint of Array.from(host.querySelectorAll<HTMLElement>('.vditor-toolbar .vditor-hint'))) {
+    if (!active || !hintIsOpen(hint)) {
+      if (floatingHints.has(hint)) resetFloatingHint(hint);
+      continue;
+    }
+    const anchor = hintAnchor(hint);
+    if (!anchor) continue;
+    // 只在首次接管时补固定定位；后续只更新坐标，重复写同样的值会自触发下面的 observer
+    if (!floatingHints.has(hint)) {
+      floatingHints.add(hint);
+      hint.classList.add('eg-hint-floating');
+      hint.style.setProperty('position', 'fixed');
+      hint.style.setProperty('margin', '0');
+      hint.style.setProperty('z-index', 'var(--z-popup)');
+    }
+    // 菜单宽度由内容决定：先切成 fixed 再量，才能把菜单夹在视口内
+    const anchorRect = anchor.getBoundingClientRect();
+    const width = hint.offsetWidth;
+    const height = hint.offsetHeight;
+    const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - width - 8));
+    let top = anchorRect.bottom + 6;
+    if (top + height > window.innerHeight - 8) top = Math.max(8, anchorRect.top - height - 6);
+    const nextLeft = `${Math.round(left)}px`;
+    const nextTop = `${Math.round(top)}px`;
+    if (hint.style.left !== nextLeft) hint.style.setProperty('left', nextLeft);
+    if (hint.style.top !== nextTop) hint.style.setProperty('top', nextTop);
+  }
+}
+
+function scheduleFloatingHints() {
+  if (floatingHintRaf) return;
+  floatingHintRaf = requestAnimationFrame(placeFloatingHints);
+}
+
+/** 菜单显隐由 Vditor 自己的 hover / click / 延迟弹出处理：
+ *  用 MutationObserver 盯工具栏里的 class/style 变化（Vditor 靠类名或内联 display 控制显隐），
+ *  另外在工具栏滚动、页面滚动与窗口尺寸变化时重算位置（菜单开着时按钮会跟着滚走）。 */
+function bindToolbarHintOverlay() {
+  if (floatingHintCleanup || !vditorEl.value) return;
+  const toolbar = vditorEl.value.querySelector<HTMLElement>('.vditor-toolbar');
+  const observer = new MutationObserver(scheduleFloatingHints);
+  observer.observe(toolbar ?? vditorEl.value, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+  });
+  window.addEventListener('scroll', scheduleFloatingHints, true);
+  window.addEventListener('resize', scheduleFloatingHints);
+  vditorEl.value.addEventListener('scroll', scheduleFloatingHints, true);
+  floatingHintCleanup = () => {
+    observer.disconnect();
+    window.removeEventListener('scroll', scheduleFloatingHints, true);
+    window.removeEventListener('resize', scheduleFloatingHints);
+    vditorEl.value?.removeEventListener('scroll', scheduleFloatingHints, true);
+    if (floatingHintRaf) {
+      cancelAnimationFrame(floatingHintRaf);
+      floatingHintRaf = 0;
+    }
+    for (const hint of Array.from(floatingHints)) resetFloatingHint(hint);
+    floatingHintCleanup = null;
+  };
 }
 
 /** IR 模式下 Vditor 把链接渲染成 span[data-type="a"]（DOM 上无 href 属性），
@@ -1368,6 +1471,7 @@ onUnmounted(() => {
   modeObserver?.disconnect();
   unbindVditorTooltips?.();
   unbindVditorTooltips = null;
+  floatingHintCleanup?.();
   vditor?.destroy();
 });
 
@@ -1493,15 +1597,37 @@ onMounted(init);
 }
 /* 全屏编辑由 EditorView 持有状态（页头/状态栏一起让位），这里不再依赖 Vditor 的
    .vditor--fullscreen：它只把 .vditor 变成 fixed 覆盖层，扁平布局下会与页头叠字 */
-/* 手机端压缩工具栏按钮内边距，保证精简后的按钮单行放下 */
+/* 手机端工具栏：精简后的 10 个按钮按 44×44 算要 466px（390–412 视口放不下），
+   原来让 flex 折成两行、正文被挤掉两行高度。现在固定单行 + 横向滚动（滚动条隐藏），
+   高度恒定一行；按钮本体撑到 44×44（相邻按钮只隔 2px，热区外扩会互相压住，只能撑本体）。 */
 @media (max-width: 768px) {
   :deep(.vditor-toolbar) {
     margin: 0 20px 14px;
     max-width: calc(100% - 40px);
     padding: 4px !important;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
-  :deep(.vditor-toolbar button) { width: 28px; }
-  :deep(.vditor-toolbar .vditor-toolbar__divider) { margin: 0 3px; }
+  :deep(.vditor-toolbar::-webkit-scrollbar) { display: none; }
+  :deep(.vditor-toolbar .vditor-toolbar__item),
+  :deep(.vditor-toolbar button) { flex: none; }
+  :deep(.vditor-toolbar button) {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+  :deep(.vditor-toolbar .vditor-toolbar__divider) { margin: 0 3px; flex: none; }
+  /* 横滚容器会裁掉绝对定位的下拉菜单：菜单打开时脚本（bindToolbarHintOverlay）把它改成
+     fixed；这条类再兜一层，防止 Vditor 重写内联样式后菜单又被裁回去。 */
+  :deep(.vditor-toolbar .vditor-hint.eg-hint-floating) {
+    position: fixed !important;
+    z-index: var(--z-popup) !important;
+    margin: 0 !important;
+  }
 }
 
 :deep(.vditor-ir), :deep(.vditor-wysiwyg), :deep(.vditor-sv) {

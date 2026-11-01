@@ -164,10 +164,29 @@ const columnActions: ActionItem[] = [
   from { opacity: 0; transform: translateY(2px); }
   to { opacity: 1; transform: translateY(0); }
 }
-/* 触屏：按钮撑到 34px，手指点得准（面板仍在表格上方一行内可见） */
+/* 触屏：按钮撑到 44×44（手指点得准）。不靠外扩热区：相邻按钮只隔 1px，外扩会互相压住 */
 @media (hover: none) and (pointer: coarse) {
-  .tb-btn { width: 34px; height: 34px; }
-  .tb-sep { height: 20px; }
+  .tb-btn { width: 44px; height: 44px; border-radius: 8px; }
+  .tb-btn svg { width: 17px; height: 17px; }
+  .tb-sep { height: 24px; }
+  .tb-label { font-size: 11.5px; }
+}
+/* 手机档：行 / 列两组在窄屏上一行放不下时横向滚动，不换行（换行会把浮条撑高、压住表格） */
+@media (max-width: 768px) {
+  .table-bar {
+    flex-wrap: nowrap;
+    max-width: calc(100% - 8px);
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .table-bar::-webkit-scrollbar { display: none; }
+  .tb-group,
+  .tb-btn,
+  .tb-label,
+  .tb-sep { flex: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .table-bar { animation: none; }

@@ -236,7 +236,7 @@ test('手机 App 的操作习惯：抽屉横滑关闭 + 底部标签栏有选中
   assert.match(home, /addEventListener\('touchmove', onMove, \{ passive: false \}\)/, '横滑手势没有拿到 touchmove：无法阻止整页跟着滚');
   assert.match(home, /Math\.abs\(moveX\) > Math\.abs\(moveY\) \* 1\.4/, '没有区分横滑与纵向滚动：抽屉里会滑不动列表');
   assert.match(home, /dx < -72/, '横滑关闭没有阈值：轻轻一碰就收起');
-  assert.match(home, /moreSectionActive/, '底部标签栏没有「更多」分区的选中态');
+  assert.match(home, /const bottomItems = computed<BottomNavItem\[\]>/, '底部标签栏没有标签项定义');
   assert.match(home, /\.bottom-nav button\.active \{/, '底部标签栏没有选中态样式');
 
   const editor = readSrc('views/EditorView.vue');
@@ -246,4 +246,76 @@ test('手机 App 的操作习惯：抽屉横滑关闭 + 底部标签栏有选中
     '手机编辑顶栏还塞着面包屑目录段：标题被挤成省略号',
   );
   assert.match(editor, /\.save-state \{ white-space: nowrap; flex: none; \}/, '保存态在手机上还会折成两行');
+});
+
+// ---------------------------------------------------------------- 手机壳层改版（2026-11）：五项底栏 + 我的列表面板
+
+test('底部标签栏五项：首页 / 知识库 / 收集箱 / Agent / 我的', () => {
+  const home = readSrc('views/Home.vue');
+  const at = home.indexOf('const bottomItems = computed');
+  assert.ok(at >= 0, '找不到底部标签栏的 bottomItems');
+  const nav = home.slice(at);
+  for (const label of ['首页', '知识库', '收集箱', 'Agent', '我的']) {
+    assert.match(nav, new RegExp("label: '" + label + "'"), '底部标签栏缺「' + label + '」：手机端五个顶层入口不齐');
+  }
+  // 首页 / 知识库都落在 /page，靠目录抽屉的开合区分选中态
+  assert.match(nav, /active: isActive\('\/page'\) && !app\.sidebarOpen/, '首页选中态没有排除目录抽屉展开');
+  assert.match(nav, /active: app\.sidebarOpen/, '知识库选中态没有跟目录抽屉联动：会和首页分不清');
+  assert.match(nav, /app\.sidebarOpen = true;/, '「知识库」没有打开目录抽屉');
+  assert.match(nav, /go\('\/inbox'\)/, '「收集箱」没有跳收集箱');
+  assert.match(nav, /app\.toggleChat\(true\)/, '「Agent」没有直接打开对话抽屉');
+  assert.match(nav, /moreOpen\.value = true/, '「我的」没有打开我的面板');
+  assert.match(home, /active: app\.chatDrawerOpen/, 'Agent 选中态没有跟对话抽屉联动');
+});
+
+test('「我的」面板：列表式底部面板取代九宫格，行高与关闭路径齐全', () => {
+  const home = readSrc('views/Home.vue');
+  const at = home.indexOf('<div v-if="moreOpen" class="more-sheet"');
+  assert.ok(at >= 0, '找不到我的面板');
+  const end = home.indexOf('</Teleport>', at);
+  const panel = home.slice(at, end > at ? end : undefined);
+  assert.doesNotMatch(home, /\.more-grid/, '「我的」面板又回到五列九宫格：入口应是一张可读的列表');
+  assert.match(panel, /class="more-sheet-title">我的</, '面板没有「我的」标题');
+  assert.match(panel, /class="more-sheet-close"[\s\S]{0,200}@click="moreOpen = false"/, '面板右上角关闭按钮没接到 moreOpen');
+  assert.match(panel, /class="more-account"[\s\S]{0,400}class="more-avatar"/, '面板没有账户行（头像）');
+  assert.match(panel, /class="more-account-name">\{\{ accountName \}\}/, '账户行没有名字');
+  assert.match(panel, /class="more-account-sub">\{\{ accountSyncLine \}\}/, '账户行没有同步状态');
+  assert.match(panel, /runQuick\(quickNew\)/, '快捷动作没有「新建页面」');
+  assert.match(panel, /runQuick\(quickNote\)/, '快捷动作没有「记一条灵感」');
+  // 列表入口在脚本的 moreItems 里声明、由模板逐行渲染
+  const moreAt = home.indexOf('const moreItems = computed');
+  assert.ok(moreAt >= 0, '找不到我的面板入口表 moreItems');
+  const more = home.slice(moreAt);
+  for (const label of ['搜索', '知识图谱', '任务看板', '客户调研', '多端同步', '设置']) {
+    assert.match(more, new RegExp("label: '" + label + "'"), '我的面板缺「' + label + '」入口');
+  }
+  assert.match(panel, /class="more-row-title">外观</, '我的面板缺「外观」行');
+  // 外观三选直接走既有主题逻辑，顺序与文案按改版要求
+  for (const label of ['跟随系统', '浅色', '深色']) {
+    assert.match(home, new RegExp("label: '" + label + "'"), '外观缺「' + label + '」选项');
+  }
+  assert.match(panel, /app\.setTheme\(opt\.value\)/, '外观三选没有调用 app.setTheme');
+  // 关闭路径：遮罩 / 关闭按钮 / 返回键（复用 moreOpen 的返回注册）
+  assert.match(home, /class="more-mask" @click="moreOpen = false"/, '点遮罩关不掉我的面板');
+  assert.match(home, /if \(moreOpen\.value\) \{\s*moreOpen\.value = false;/, '返回键没有先关我的面板');
+  // 行高与触控热区
+  const rowCss = home.match(/\.more-row \{([^}]*)\}/)?.[1] ?? '';
+  assert.match(rowCss, /min-height: 52px/, '我的面板列表行不到 52px：手机上手指标不准');
+  const iconCss = home.match(/\.more-row-icon \{([^}]*)\}/)?.[1] ?? '';
+  assert.match(iconCss, /width: 44px/, '行图标热区没到 44px');
+  assert.match(panel, /name="chevron-right"/, '列表行尾没有 chevron');
+});
+
+test('触觉反馈只接在底栏切换与快捷动作上', () => {
+  const home = readSrc('views/Home.vue');
+  assert.match(home, /import \{ haptic \} from '\.\.\/lib\/haptics'/, '外壳没有引入触觉反馈');
+  const nav = home.slice(home.indexOf('const bottomItems = computed'));
+  const navTaps = nav.slice(0, nav.indexOf('function runMore')).match(/haptic\('tap'\)/g) || [];
+  assert.equal(navTaps.length, 5, '底部五个标签没有逐项轻振（当前 ' + navTaps.length + ' 处）');
+  assert.match(home, /function runQuick\([\s\S]{0,60}?\) \{\s*haptic\('tap'\);/, '快捷动作没有轻振');
+  // 滚动、输入、长按这类高频动作不振动：除底栏与快捷动作外外壳里不再有 haptic(
+  const outside = home
+    .replace(/const bottomItems = computed[\s\S]*?\n\]\);/, '')
+    .replace(/function runQuick[\s\S]*?\n\}/, '');
+  assert.doesNotMatch(outside, /haptic\(/, '触觉反馈接得太散：滚动/输入等高频动作不该振动');
 });
