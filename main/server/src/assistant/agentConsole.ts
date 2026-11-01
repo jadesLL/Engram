@@ -103,9 +103,16 @@ export function upstreamPath(url: string | undefined): string {
   return path === '' ? '/' : path;
 }
 
-/** 解析 dsh 启动时打印的 URL 行（含 token）；纯函数，便于单测 */
+/**
+ * 解析 dsh 启动时打印的 URL 行（含 token）；纯函数，便于单测。
+ *
+ * 地址的协议跟着 Engram 的访问 origin 走：HTTPS 部署（反代 / NAS 域名）会把
+ * `--public-url https://…/agent-console/` 传给 dsh，dsh 打印出来就是 https 行。
+ * 这里必须同时接受 http 与 https，否则 https 部署会一直等不到地址、45 秒后报
+ * 「控制台启动超时」。
+ */
 export function parseConsoleUrl(text: string): { url: string; token: string } | null {
-  const match = /dsh web:\s*(http:\/\/\S+)/.exec(text);
+  const match = /dsh web:\s*(https?:\/\/\S+)/.exec(text);
   if (!match) return null;
   try {
     const url = new URL(match[1]);
