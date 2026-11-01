@@ -27,6 +27,10 @@ export async function runtimeRoutes(app: FastifyInstance) {
         jobs: true,
         onlyOffice: officeConfigured(),
         serverUpdate: true,
+        // 手机端专属能力位（APK 内 OTA）：桌面 / 服务端恒 false。
+        // 显式给出占位，保证三端能力位键集一致（web/src/lib/platformParity.test.ts 会校验），
+        // 前端也不再依赖「缺省合并」兜底。
+        apkUpdate: false,
         ddns: true,
         backup: true,
         fileExtraction: true,

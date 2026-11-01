@@ -6,6 +6,7 @@
 
 * `main/`：主分支应用源码和集成入口；`worktrees/`：独立任务 worktree（不入主目录版本控制）；`releases/`：发布产物（不入 Git）。
 * 处理 `main/` 或 `worktrees/` 下任何任务前，必须从仓库根目录完整读取 [`main/AGENTS.md`](./main/AGENTS.md) 和 [`main/WORKTREES.md`](./main/WORKTREES.md)。
+* 跨端功能（server / web / desktop / mobile 任一改动）、Android 适配或发版相关任务，还必须先读 [`main/docs/PLATFORM-PARALLEL-DEV.md`](./main/docs/PLATFORM-PARALLEL-DEV.md)（三端并行规范：设计理念、平台契约、A–F 分类、同步节奏与门禁）。
 * Git 命令从仓库根目录执行。不要运行仍引用旧 `Wiki知识库` 路径的 worktree 脚本，不要在 `releases/` 中开发。
 
 ## Git 远端与 CI
@@ -17,7 +18,7 @@
 发版流程（细则见 main/docs/GITEA-CI.md）。发版是显式动作：仅当用户要求发版时执行，日常迭代不发版；一旦发版就必须按项目规则 9 交付三件套（Android 端 + Windows 桌面版 + Docker 镜像）：
 
 1. 功能合并 main 后推送：`git push gitea main` → ci.yml 跑 verify 并推送滚动镜像 `:main`（测试部署可切「更新通道 → main」跟主分支）。
-2. 发版：同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 把距上次发布的**全部新功能**写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落（缺失则 release.yml 直接失败）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像并发布 Gitea Release（正文=CHANGELOG 段落）。
+2. 发版：先跑 `bash main/scripts/platform-parity-check.sh --strict` 并确认手机滞后清单目标版本已清零（规范见 `main/docs/PLATFORM-PARALLEL-DEV.md`）；然后同步 bump 三处版本号（`main/desktop/package.json`、`main/web/src/version.ts`、`main/docker-compose.yml` 镜像 tag）→ 把距上次发布的**全部新功能**写入仓库根 `CHANGELOG.md` 的 `## v<版本>（YYYY-MM-DD）` 段落（缺失则 release.yml 直接失败）→ 提交推送 → `git tag v<版本> && git push gitea v<版本>` → release.yml 自动构建推送镜像并发布 Gitea Release（正文=CHANGELOG 段落）。
 3. **补齐三件套的另外两件（每次发版必做，不是按需）**：Actions → Release → Run workflow，输入本次标签 + 勾选 `binaries`（Windows exe + Android APK，构建后自动补挂到对应 Release，并同步到公开仓库 GitHub 同名 Release）；Windows exe 也可按下方「Windows 桌面端打包」本地打包。APK 必须基于本次发版提交构建、版本号与发版一致（禁止复用旧包），并发版说明要按项目规则 9 补齐安卓端自上次更新以来的全部内容。产物归档到 `releases/<版本>/`（含 release.json）。离线 tar.gz（`offline_image`）属额外产物，仍按需 dispatch。
 4. 镜像地址固定三层路径 `gitea.example.com/example/engram/engram:<版本>`（两层 `owner/image` 形式 NAS 拉取异常，勿改回）。
 5. 部署 compose 不得写 `pull_policy: never`。
@@ -28,10 +29,20 @@
 
 完成功能后必须自行验证并截取能证明结果的界面或终端画面。**截图必须直接发给用户**：归档保存的同时在汇报消息里附上图片（`Read` 图片文件随汇报输出），并注明保存路径，不能只给路径让用户翻目录。汇报改动、检查结果、截图、分支和提交信息，并把改动提交到功能分支后，**自动合并进 main**：不再为「是否合并」征求批准，但合并仍走既有串行流程（worktree 任务走 `main/scripts/merge-feature.sh`），冲突且双方意图不明时停下问用户。合并后检查通过即按规则 10 自动清理功能分支、worktree 与 Docker 功能资源，复验零残留；随后用弹窗问用户「仅本地保留 / 推送 gitea / 推送并发版」（推荐推送）——**推送与发版都必须拿到明确批准**，未批准不推送、不 bump 版本号、不打 tag、不部署。获批推送后立即 `git push gitea main` 并确认 CI；版本号 bump 的提交完成后必须立即推送并确认 CI 成功——版本号是镜像 tag 和 Release 标签的来源，留在本地会与远端脱节。用户选择暂不推送时本地会领先远端，下次任务开始前再确认一次是否补推。
 
+## 三端并行开发（Windows 主开发 · Docker 同源 · Android 定期对齐）
+
+Engram 是「一套产品内核 + 三个运行壳」：`main/server` + `main/web` 是唯一事实源；Windows 桌面端与 Docker 共用同一份源码与 UI，**Docker 不做代码移植**；Android 复用同一份 Web 构建，但操作逻辑按触屏重做、需定期对齐。完整规范、平台契约、同步节奏与检查清单见 [`main/docs/PLATFORM-PARALLEL-DEV.md`](./main/docs/PLATFORM-PARALLEL-DEV.md)，跨端任务必须遵守。
+
+- **先分类再动手**：按规范 §4.1 把功能标为 A–F（纯服务端+窄代理 / Web 通用 / 移动布局手势返回 / 原生桥 / 手机不做 / 同步数据面）；A/C/D/F 必须有手机侧动作。
+- **适配尽量同分支**：Android 适配与共享代码尽量在同一个 `feat/<feature>` 完成；确实滞后的登记 [`main/docs/MOBILE-SYNC-LEDGER.md`](./main/docs/MOBILE-SYNC-LEDGER.md) 并写目标版本，最迟下次发版前清零。
+- **提交声明**：提交信息末行写 `平台影响: A`（跨类用 `平台影响: B,F`；无平台影响写 `none`）。未声明按 C 处理。
+- **每周巡检 + 发版门禁**：每周跑一次 `bash main/scripts/platform-parity-check.sh --since <上次 ref>`；发版前用 `--strict` 并完成规范 §5.5 全量对齐门禁。
+- **验收分工**：Windows 主验收（桌面形态）、Docker 同源验证、Android 真机/模拟器验收；三端清单见规范 §4.4–4.6。
+
 ## 项目规则
 
 1. 优先使用中文。
-2. 功能和代码优化要兼顾 desktop 和 docker 两个版本。版本号节奏参照 hermes-agent：日常开发只合 main，不 bump 版本号、不发产物——自用机器走源码模式（桌面快捷方式或 `main/scripts/update-from-source.ps1`，新机器用 `main/scripts/install-engram.ps1`（或其打包的安装器 exe）一键装环境+克隆+构建+快捷方式；应用内「检查更新」即增量拉源码重建）。三处版本号仅在用户明确要求发版时 bump。
+2. 功能和代码优化要兼顾 Windows 桌面端、Docker 与 Android 三端（Windows/Docker 同一份源码，Android 复用同一份 Web 构建 + 壳层适配；平台影响分类与同步节奏见 `main/docs/PLATFORM-PARALLEL-DEV.md`）。版本号节奏参照 hermes-agent：日常开发只合 main，不 bump 版本号、不发产物——自用机器走源码模式（桌面快捷方式或 `main/scripts/update-from-source.ps1`，新机器用 `main/scripts/install-engram.ps1`（或其打包的安装器 exe）一键装环境+克隆+构建+快捷方式；应用内「检查更新」即增量拉源码重建）。三处版本号仅在用户明确要求发版时 bump。
 3. 安装包（exe/APK）每次发版必备，归档到 `releases/` 相同版本号文件夹，记录提交 ID、构建时间、sha256；离线包（tar.gz）等额外产物按需构建后同样归档；Docker 镜像走 Registry 不重复归档。
 4. **验收通过即自动合并进 main，不再问「是否合并」；推送与发版必须先问用户**：合并是本地动作（仍串行执行，冲突且意图不明时停下问用户），合并后检查通过即自动清理功能分支、worktree 与 Docker 功能资源；随后用弹窗问「仅本地保留 / 推送 gitea / 推送并发版」（推荐推送，推送后源码模式客户端即可更新）；未获批准不推送、不 bump 版本号、不打 tag、不部署。发版是显式动作，仅当用户明确提出时才执行（见下方发版流程）。
 5. 只要更新了版本号，提交后必须立即推送 gitea（触发 CI 更新镜像 tag 与 latest），并确认 Actions 运行成功。
@@ -40,6 +51,9 @@
 8. **凡需用户拍板的事一律弹窗点选**（是否推送、是否发版、方案选择、操作确认等），必须用当前 Agent 自带的结构化提问组件让用户点选，不得纯文本提问，更不得替用户默认决定；组件确实不可用时才退回在对话正文提问并停下等答复。各 Agent 对应关系：ZCode 桌面端 / Claude Code → `AskUserQuestion`；DeepSeek Harness（dsh，含本仓库的 DSH 会话）→ `ask_user_question`（弹窗点选）；Engram 内置 Agent（聊天抽屉里的 dsh）→ MCP `ask_user`（对话最下侧选项弹窗；外部 Agent 不要用，它等的是 Engram 界面）；Codex CLI 等没有结构化提问组件的客户端 → 在对话正文列出编号选项并停下等答复。
 9. **发版只在用户明确提出时进行；一旦发版就固定发三件套**：① Android 端（APK）② Windows 版桌面端（exe）③ Docker 镜像（`:<版本>` + `:latest`）——三件缺一即视为本次发版未完成（离线 tar.gz 等额外产物仍按需）。**安卓端要补齐「距上次更新之间的全部更新内容」**：APK 必须基于本次发版提交构建、版本号与发版一致，不得复用旧包；发版说明（`CHANGELOG.md` 对应段落与 Release 正文）里安卓部分必须写全自上一个安卓版本以来**累积**的所有改动——安卓端只能靠安装包更新（不能源码模式自更新），可能一次跨过多个版本，因此不能只写本版增量。安卓端要同步补上这段区间内桌面/Docker 端已有的功能（最新代码对齐），不能让手机端停在旧版本。
 10. **自动合并与自动清理**：已验收、已提交的功能分支合并进 main，并且合并后检查通过后，必须立即自动删除已合并的功能分支、对应 worktree，以及该任务的全部 Docker 容器、镜像、数据卷、网络和 Git `safe.directory` 记录；不得等待用户确认推送，不再询问是否清理。worktree 任务执行 `main/scripts/merge-feature.sh --cleanup <feature>`；补清理旧任务执行 `main/scripts/cleanup-feature.sh <feature>`。清理后必须复验，任一资源残留都要报告「清理失败/尚未完成」，不能只删分支就结束。合并仍串行执行，工作区须干净；未合并、未提交、检查失败或冲突意图不明时保留资源并报告原因。仅当用户明确要求继续保留某个预览环境供检查时才暂缓该任务清理。主运行环境、主数据、ONLYOFFICE 数据卷、共享基础镜像和构建缓存、其他任务资源不属于清理范围，禁止使用全局 prune。推送 gitea、bump 三处版本号、打 `v*` tag、发版与补齐 APK/exe、部署（`--deploy` / 刷新主环境）仍必须先弹窗取得明确批准。
+11. **三端并行与单一事实源**：Windows 桌面端与 Docker 共用同一份 `main/server` + `main/web` 源码，Docker 不得另起实现；Android 复用同一份 Web 构建并在壳层适配。设计语言（令牌、图标、信息架构）只有一个来源；平台差异只能落在能力位 / 窗口尺寸档 / 页面断点 / 原生桥 / 同步协议五类显式契约上，禁止 UA、平台字符串或宽度猜测造成的隐式分叉。完整规范见 [`main/docs/PLATFORM-PARALLEL-DEV.md`](./main/docs/PLATFORM-PARALLEL-DEV.md)。
+12. **平台影响声明与手机对齐**：任何合并进 main 的功能（纯文档/CI 除外）必须在提交信息末行声明 `平台影响:`；标为 A/C/D/F 的必须在同一分支或紧邻 follow-up 完成手机适配，未完成的登记 [`main/docs/MOBILE-SYNC-LEDGER.md`](./main/docs/MOBILE-SYNC-LEDGER.md)，最迟下次发版前清零。每周做一次手机端巡检，每次发版做全量对齐（含安卓累积更新说明）。
+13. **三端一致性与产物门禁**：verify 必须通过（含 `web/src/lib/platformParity.test.ts` 的版本号/能力位/原生桥/构建链/设置域/滞后清单检查）；发版前必须跑 `bash main/scripts/platform-parity-check.sh --strict`；打 exe/APK 前必须用本次源码重新构建 web 产物（禁止复用旧 `dist`）；三件套与安卓累积更新说明缺一不发（见规则 9）。
 
 ## Windows 桌面端打包
 

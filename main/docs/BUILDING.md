@@ -105,6 +105,8 @@ workflow 会在构建前自动校验以下内容，**任何一条不满足直接
 
 日常推送 main 分支只触发 `ci.yml` 做 verify（build + typecheck + test），**不构建镜像**——Registry 里的版本 tag 永远只对应发版产物。
 
+**三端一致性门禁（2026-11-02 起，发版前必做）**：先跑 `bash main/scripts/platform-parity-check.sh --strict`，确认版本号三处一致、能力位/原生桥/内嵌 Web 构建链契约成立，且 `main/docs/MOBILE-SYNC-LEDGER.md` 中目标版本 ≤ 本次版本的手机待办已清零。契约与同步节奏见 [`PLATFORM-PARALLEL-DEV.md`](./PLATFORM-PARALLEL-DEV.md)。
+
 ### 3.2 操作步骤
 
 ```bash

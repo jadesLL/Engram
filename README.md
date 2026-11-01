@@ -70,5 +70,5 @@ Android 的 Agent 与收集箱转换等能力由已绑定的中枢执行；绑�
 | Agent 接入与写入规范 | [Agent 操作指南](./main/docs/AI-CONTENT-OPERATIONS.md) |
 | 客户调研、报告模板与各客户端入口 | [客户调研指南](./main/docs/CUSTOMER-RESEARCH.md) |
 | 多端直连、DDNS 与网络配置 | [网络与直连](./main/docs/IPV6.md) |
-| 参与开发与发布 | [开发约定](./main/AGENTS.md) · [Worktree 流程](./main/WORKTREES.md) · [CI 与发布](./main/docs/GITEA-CI.md) |
+| 参与开发与发布 | [开发约定](./main/AGENTS.md) · [Worktree 流程](./main/WORKTREES.md) · [三端并行开发](./main/docs/PLATFORM-PARALLEL-DEV.md) · [手机滞后清单](./main/docs/MOBILE-SYNC-LEDGER.md) · [CI 与发布](./main/docs/GITEA-CI.md) |
 | 版本变化 | [更新日志](./CHANGELOG.md) |

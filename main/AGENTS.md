@@ -7,6 +7,7 @@
 1. 完整读取 `WORKTREES.md`。
 2. 从仓库/worktree 根执行 `git status --short --branch` 和 `git worktree list --porcelain`，确认当前目录、分支和已有 worktree。
 3. 已在 Codex 管理的 worktree 中时沿用当前环境，不得嵌套创建。
+4. 跨端功能（server / web / desktop / mobile 任一改动）、Android 适配或发版相关任务，先读 [`docs/PLATFORM-PARALLEL-DEV.md`](./docs/PLATFORM-PARALLEL-DEV.md)。
 
 ## 工作位置
 
@@ -17,9 +18,11 @@
 - 只有确实无法在 Linux Docker 完成的宿主机原生任务（如 Windows 桌面端打包），经说明原因并取得用户同意后才可建立持久本地依赖环境；自动清理的临时离线验证目录不算持久环境。
 - 功能预览按需用 `preview-feature.sh` 创建；不要仅为开始编码提前创建容器、端口、镜像或数据卷。
 - 当前任务创建的所有 Docker 资源必须带 `com.engram.feature=<feature>` 标签；不覆盖、回退或删除其他 Agent 的分支、worktree、容器、数据卷和未提交改动。
+- 跨端功能按 [`docs/PLATFORM-PARALLEL-DEV.md`](./docs/PLATFORM-PARALLEL-DEV.md) §4.1 分类（A–F）实施：Windows 主验收、Docker 同源验证、Android 按类适配；A/C/D/F 未在同一分支完成的，合并前必须登记 [`docs/MOBILE-SYNC-LEDGER.md`](./docs/MOBILE-SYNC-LEDGER.md)。
 
 ## 验收与合并
 
+- 提交信息末行写平台影响声明（`平台影响: A` / `B,F` / `none`，见 [`docs/PLATFORM-PARALLEL-DEV.md`](./docs/PLATFORM-PARALLEL-DEV.md) §4.3）；verify 已包含 `web/src/lib/platformParity.test.ts` 契约检查；手机有影响的按滞后清单处理；发版前跑 `bash scripts/platform-parity-check.sh --strict`。
 - 完成后先按真实使用路径自行验收并截取界面/终端画面（截图必须直接发给用户，不能只给路径）；通过后再提交，向用户报告 worktree、分支、提交信息和检查结果，随后按下一行走自动合并与弹窗提问（提问通道见根 [`AGENTS.md`](../AGENTS.md) 规则 8）。
 - **验收通过即自动合并进 main，合并后检查通过即自动清理**（不再请示「是否合并/是否清理」，见根 [`AGENTS.md`](../AGENTS.md) 规则 4/10；合并前确认工作区干净、无其他 Agent 在合并，冲突且双方意图不明时停下问用户）。执行 `main/scripts/merge-feature.sh --cleanup <feature>`，立即删除已合并功能分支、worktree、该任务全部 Docker 容器/镜像/数据卷/网络及 Git `safe.directory` 记录，并复验零残留；不得等用户答复是否推送才清理。清理失败不得报告"已完成"。未合并、未提交或检查失败时保留资源并报告；用户明确要求保留预览时才暂缓。保留主环境、主数据、ONLYOFFICE 数据卷、共享基础镜像与构建缓存及其他任务资源。**推送 gitea、发版和部署仍须明确批准**。
 - 合并必须串行；冲突且无法确认双方意图时，停止并询问用户。

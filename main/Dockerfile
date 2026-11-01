@@ -35,6 +35,13 @@ RUN pnpm --filter @engram/web build && pnpm --filter @engram/server build \
 ARG ENGRAM_GIT_SHA=""
 RUN printf '%s' "$ENGRAM_GIT_SHA" > /app/GIT_SHA
 
+# /app 下补三份仓库级文件，供三端契约单测（web/src/lib/platformParity.test.ts）读取：
+# docs/PLATFORM-PARALLEL-DEV.md（能力位/运行形态文档覆盖检查）、
+# docs/MOBILE-SYNC-LEDGER.md（发版前手机滞后清单检查）、docker-compose.yml（版本号三处一致）。
+# 放在源码构建之后：文档改动不会让 web/server 构建缓存失效。
+COPY docs/PLATFORM-PARALLEL-DEV.md docs/MOBILE-SYNC-LEDGER.md ./docs/
+COPY docker-compose.yml ./
+
 # ---------- 生产依赖（编译 better-sqlite3 原生模块） ----------
 FROM node:22-slim AS deps
 # 显式使用 HTTPS；只替换域名会保留基础镜像的 HTTP 协议，下载 .deb 时曾返回 403。
