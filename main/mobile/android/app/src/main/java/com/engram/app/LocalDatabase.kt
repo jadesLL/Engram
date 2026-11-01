@@ -616,14 +616,30 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         JSONObject().put("ok", true).put("path", rel).put("pageId", if (result.has("title")) result.getString("id") else JSONObject.NULL)
     }
 
-    /** 分享文字/链接原样暂存在收集箱，尚未审阅入库，不建知识页面。 */
+    /**
+     * 分享文字/链接暂存在收集箱，尚未审阅入库，不建知识页面。
+     *
+     * 从 B 站 / 抖音分享进来的链接不能只存 txt：中枢的「提炼视频」只认带
+     * `类型: video-link` frontmatter 的占位稿，存成 txt 会永远走不了视频管线。
+     * 这里先识别视频链接并写成占位稿；普通文章/文字仍按原样保存，不改变既有行为。
+     */
     fun importSharedText(requestedTitle: String?, text: String): String = synchronized(lock) {
         require(text.isNotBlank()) { "分享内容为空" }
-        val rel = InboxFiles.uniquePath(brain, InboxFiles.textName(requestedTitle))
-        atomicWrite(safe(rel), text.toByteArray(StandardCharsets.UTF_8))
-        indexFile(rel)
-        enqueue("file", rel)
-        rel
+        val video = ShareLinks.detectVideo(ShareLinks.firstUrl(text))
+        if (video != null) {
+            val title = ShareLinks.title(requestedTitle, video.platform)
+            val rel = InboxFiles.uniquePath(brain, InboxFiles.cleanName("$title.md"))
+            atomicWrite(safe(rel), ShareLinks.videoMarkdown(video.link, video.platform, title).toByteArray(StandardCharsets.UTF_8))
+            indexFile(rel)
+            enqueue("file", rel)
+            rel
+        } else {
+            val rel = InboxFiles.uniquePath(brain, InboxFiles.textName(requestedTitle))
+            atomicWrite(safe(rel), text.toByteArray(StandardCharsets.UTF_8))
+            indexFile(rel)
+            enqueue("file", rel)
+            rel
+        }
     }
 
     /** 分享来的图片/文档通过临时文件原子安装，保留原文件名并自动避让重名。 */
@@ -636,10 +652,22 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
 
     fun inboxFile(path: String): File = InboxFiles.resolve(brain, path)
 
+    private fun readHead(file: File, limit: Int = 4096): String = runCatching {
+        file.inputStream().use { input ->
+            val buffer = ByteArray(limit)
+            val read = input.read(buffer)
+            if (read <= 0) "" else String(buffer, 0, read, StandardCharsets.UTF_8)
+        }
+    }.getOrDefault("")
+
     fun inboxItems(): List<JSONObject> = synchronized(lock) {
         InboxFiles.originals(brain).map { file ->
             val rel = relative(file)
-            JSONObject().put("path", rel).put("name", file.name).put("rel", rel.removePrefix("收集箱/"))
+            val video = if (file.extension.equals("md", true) || file.extension.equals("markdown", true)) {
+                ShareLinks.parseVideoPlaceholder(readHead(file))
+            } else null
+            val item = JSONObject()
+                .put("path", rel).put("name", file.name).put("rel", rel.removePrefix("收集箱/"))
                 .put("ext", file.extension.lowercase()).put("size", file.length()).put("mtime", file.lastModified())
                 .put("category", when (file.extension.lowercase()) {
                     "txt", "md", "markdown", "json", "csv", "log" -> "text"
@@ -649,9 +677,17 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
                     "html", "htm" -> "web"
                     else -> "other"
                 })
-                .put("status", "pending").put("derivedPath", JSONObject.NULL).put("capability", "unsupported")
-                .put("hint", "已保存到手机收集箱；同步至中枢后可转换并入库")
+                .put("status", "pending").put("derivedPath", JSONObject.NULL)
                 .put("error", "").put("jobId", JSONObject.NULL).put("assistantSessionId", JSONObject.NULL)
+            if (video != null) {
+                item.put("capability", "video")
+                item.put("hint", "已保存到手机收集箱；同步至中枢后可提炼视频")
+                item.put("video", JSONObject().put("platform", video.platform).put("title", video.title).put("link", video.link))
+            } else {
+                item.put("capability", "unsupported")
+                item.put("hint", "已保存到手机收集箱；同步至中枢后可转换并入库")
+            }
+            item
         }
     }
 

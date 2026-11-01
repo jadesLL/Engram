@@ -1,0 +1,2978 @@
+<template>
+  <div class="mob-inbox">
+    <header class="mi-head">
+      <div class="mi-head-main">
+        <h1 class="mi-title">{{ view === 'groups' ? '按来源分组' : '收集箱' }}</h1>
+        <p class="mi-sub">{{ view === 'groups' ? groupsSubline : subline }}</p>
+      </div>
+      <div class="mi-head-actions">
+        <button class="mi-iconbtn" type="button" aria-label="收进收集箱" @click="intakeOpen = true">
+          <Icon name="plus" :size="19" />
+        </button>
+        <button
+          class="mi-iconbtn"
+          type="button"
+          :disabled="inbox.loading"
+          aria-label="刷新收集箱"
+          @click="refresh"
+        >
+          <Icon name="refresh" :size="18" />
+        </button>
+        <button
+          v-if="view === 'stack'"
+          class="mi-iconbtn"
+          type="button"
+          aria-label="按来源分组"
+          @click="view = 'groups'"
+        >
+          <Icon name="list-tree" :size="18" />
+        </button>
+        <button v-else class="mi-iconbtn" type="button" aria-label="回到卡片台" @click="view = 'stack'">
+          <Icon name="chevron-left" :size="19" />
+        </button>
+      </div>
+    </header>
+
+    <div v-if="inbox.error" class="mi-banner error" role="alert">
+      <Icon name="report" :size="14" />
+      <span>{{ inbox.error }}</span>
+      <button type="button" @click="refresh">重试</button>
+    </div>
+    <div v-else-if="actionHint" class="mi-banner" :class="actionHint.tone">
+      <Icon :name="actionHint.tone === 'error' ? 'report' : 'activity'" :size="14" />
+      <span>{{ actionHint.text }}</span>
+      <button type="button" aria-label="收起提示" @click="actionHint = null">×</button>
+    </div>
+
+    <!-- 卡片台：最新一条在最上面，右滑主操作 / 左滑移入回收站 / 上滑看详情 -->
+    <template v-if="view === 'stack'">
+      <button v-if="sortedActive.length" class="mi-groups-entry" type="button" @click="view = 'groups'">
+        <span class="mi-groups-ic"><Icon name="list-tree" :size="16" /></span>
+        <span class="mi-groups-text">
+          <b>按来源分组</b> · {{ sortedActive.length }} 条来自 {{ sourceCount }} 个来源
+        </span>
+        <span class="mi-groups-go">看看<Icon name="chevron-right" :size="14" /></span>
+      </button>
+
+      <div v-if="!inbox.loaded && inbox.loading" class="mi-loading">
+        <AppSpinner :size="15" /> 正在读取收集箱…
+      </div>
+
+      <div v-else-if="!inbox.loaded" class="mi-empty">
+        <div class="mi-zero"><Icon name="report" :size="30" /></div>
+        <h2>收集箱读取失败</h2>
+        <p>{{ inbox.error || '连接不上中枢，确认服务在线后再试。' }}</p>
+        <button class="btn primary mi-empty-btn" type="button" :disabled="inbox.loading" @click="refresh">
+          <Icon name="refresh" :size="15" />重试
+        </button>
+      </div>
+
+      <div v-else-if="!sortedActive.length" class="mi-empty">
+        <div class="mi-zero"><Icon name="check" :size="34" /></div>
+        <h2>收集箱清空了</h2>
+        <p>{{ emptyHint }}</p>
+        <div class="mi-stats">
+          <div class="mi-stat"><b>{{ inbox.counts.pending }}</b><span>待整理</span></div>
+          <div class="mi-stat"><b>{{ inbox.counts.converted }}</b><span>已转换</span></div>
+          <div class="mi-stat"><b>{{ inbox.counts.adopted }}</b><span>已入库</span></div>
+        </div>
+        <button class="btn primary mi-empty-btn" type="button" @click="goHome">回到首页</button>
+      </div>
+
+      <template v-else>
+        <div class="mi-stage">
+          <div class="mi-stack" :class="{ 'is-dragging': dragging }">
+            <article
+              v-for="(item, index) in stackItems"
+              :key="item.path"
+              class="mi-card"
+              :class="cardClasses(item, index)"
+              :style="cardStyle(index)"
+              :role="index === 0 ? 'button' : undefined"
+              :tabindex="index === 0 ? 0 : undefined"
+              :aria-label="index === 0 ? '整理 ' + cardTitle(item) : undefined"
+              :aria-hidden="index === 0 ? undefined : 'true'"
+              @pointerdown="onCardPointerDown"
+              @pointermove="onCardPointerMove"
+              @pointerup="onCardPointerUp"
+              @pointercancel="onCardPointerCancel"
+              @click="onCardClick"
+              @keydown.enter.prevent="onCardEnter"
+              @keydown.space.prevent="onCardEnter"
+            >
+              <div class="mi-cover" :class="coverClass(item)">
+                <span class="mi-cover-kicker">{{ coverKicker(item) }}</span>
+                <span class="mi-cover-big">{{ coverBig(item) }}</span>
+                <span class="mi-cover-icon"><Icon :name="coverIcon(item)" :size="46" /></span>
+                <span v-if="item.status === 'converting'" class="mi-cover-progress"><i /></span>
+              </div>
+              <div class="mi-card-body">
+                <div class="mi-card-top">
+                  <span class="mi-status" :class="statusChip(item)"><i />{{ statusLabel(item) }}</span>
+                  <span v-if="isFresh(item)" class="mi-fresh">刚刚存入</span>
+                  <span class="mi-time">{{ fromNow(item.mtime) }}</span>
+                </div>
+                <h2 class="mi-card-title">{{ cardTitle(item) }}</h2>
+                <p class="mi-card-note" :class="{ error: item.status === 'failed' }">
+                  <Icon :name="noteIcon(item)" :size="13" />
+                  <span>{{ cardNote(item) }}</span>
+                </p>
+                <div class="mi-card-meta">
+                  <span class="mi-meta-item">{{ metaLine(item) }}</span>
+                </div>
+              </div>
+              <span v-if="index === 0 && stamp" class="mi-stamp" :class="'is-' + stamp.tone">
+                <Icon :name="stamp.icon" :size="14" />{{ stamp.text }}
+              </span>
+            </article>
+          </div>
+          <div class="mi-gesture">
+            <Icon name="move-diagonal" :size="14" />
+            <span>右滑{{ mainLabel(front) }} · 左滑移入回收站 · 上滑看详情</span>
+          </div>
+        </div>
+
+        <!-- 手势的无障碍替代：三个动作都做成可点按钮 -->
+        <div class="mi-bar">
+          <button
+            class="mi-bar-main"
+            type="button"
+            :disabled="mainDisabled(front)"
+            @click="runMain(front)"
+          >
+            <AppSpinner v-if="front && busyPath === front.path" :size="15" />
+            <Icon v-else :name="mainIcon(front)" :size="17" />
+            {{ mainLabel(front) }}
+          </button>
+          <button class="mi-bar-sub" type="button" :disabled="!front" @click="openDetail(front)">
+            <Icon name="eye" :size="16" />详情
+          </button>
+          <button
+            class="mi-bar-danger"
+            type="button"
+            :disabled="!front"
+            aria-label="移入回收站"
+            @click="removeItem(front)"
+          >
+            <Icon name="trash" :size="16" />回收站
+          </button>
+        </div>
+      </template>
+    </template>
+
+    <!-- 分组视图：按来源 / 类型归组，不做假 AI 建议 -->
+    <template v-else>
+      <p class="mi-groups-note">按来源和类型归在一起。转换与入库都由中枢执行，手机端只负责发任务、刷状态。</p>
+
+      <div v-if="!sortedActive.length" class="mi-empty">
+        <div class="mi-zero"><Icon name="check" :size="34" /></div>
+        <h2>收集箱清空了</h2>
+        <p>{{ emptyHint }}</p>
+        <button class="btn primary mi-empty-btn" type="button" @click="goHome">回到首页</button>
+      </div>
+
+      <div v-else class="mi-groups">
+        <article v-for="group in groups" :key="group.key" class="mi-group">
+          <div class="mi-group-head">
+            <span class="mi-group-ic"><Icon :name="group.icon" :size="16" /></span>
+            <div class="mi-group-name">
+              <h2>{{ group.label }}</h2>
+              <p>{{ groupCaption(group) }}</p>
+            </div>
+            <span class="mi-group-count">{{ group.items.length }}</span>
+          </div>
+          <ul class="mi-group-items">
+            <li v-for="sample in group.items.slice(0, 2)" :key="sample.path">{{ cardTitle(sample) }}</li>
+            <li v-if="group.items.length > 2" class="mi-more">还有 {{ group.items.length - 2 }} 条</li>
+          </ul>
+          <div class="mi-group-foot">
+            <span class="mi-group-note">{{ groupNote(group) }}</span>
+            <div v-if="group.convertible.length || group.converted.length" class="mi-group-btns">
+              <button
+                v-if="group.convertible.length"
+                class="mi-mini primary"
+                type="button"
+                :disabled="groupBusy === group.key"
+                @click="convertGroup(group)"
+              >
+                {{ groupBusy === group.key ? '提交中…' : '全部转换' }}
+              </button>
+              <button
+                v-if="group.converted.length"
+                class="mi-mini success"
+                type="button"
+                :disabled="groupBusy === group.key"
+                @click="adoptGroup(group)"
+              >
+                全部入库
+              </button>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="mi-bar mi-bar-groups">
+        <button class="mi-bar-main" type="button" @click="view = 'stack'">
+          <Icon name="chevron-left" :size="16" />逐条看
+        </button>
+        <button class="mi-bar-sub" type="button" :disabled="inbox.loading" @click="refresh">
+          <AppSpinner v-if="inbox.loading" :size="14" />
+          <Icon v-else name="refresh" :size="16" />刷新
+        </button>
+      </div>
+    </template>
+
+    <Teleport to="body">
+      <!-- 详情 sheet（上滑手势与「详情」按钮都落到这里） -->
+      <template v-if="detailItem">
+        <div class="mi-dim" @click="closeDetail" />
+        <section
+          class="mi-sheet mi-detail"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="cardTitle(detailItem) + ' 的详情'"
+        >
+          <div class="mi-sheet-grab" />
+          <div class="mi-detail-head">
+            <div class="mi-detail-head-main">
+              <h2>{{ cardTitle(detailItem) }}</h2>
+              <p>{{ sourceLabel(detailItem) }} · {{ typeLabel(detailItem) }} · {{ formatSize(detailItem.size) }}</p>
+            </div>
+            <button class="mi-iconbtn" type="button" aria-label="关闭详情" @click="closeDetail">
+              <Icon name="x" :size="18" />
+            </button>
+          </div>
+          <div class="mi-detail-rows">
+            <div class="mi-detail-row">
+              <span>状态</span>
+              <b><span class="mi-status" :class="statusChip(detailItem)"><i />{{ statusLabel(detailItem) }}</span></b>
+            </div>
+            <div class="mi-detail-row">
+              <span>收纳时间</span><b>{{ absoluteTime(detailItem.mtime) }}</b>
+            </div>
+            <div class="mi-detail-row">
+              <span>原文件</span><b class="mi-wrap">{{ detailItem.path }}</b>
+            </div>
+            <div v-if="detailItem.derivedPath" class="mi-detail-row">
+              <span>转换产物</span><b class="mi-wrap">{{ detailItem.derivedPath }}</b>
+            </div>
+            <div v-if="detailItem.adoptedPath" class="mi-detail-row">
+              <span>已入库到</span><b class="mi-wrap">{{ detailItem.adoptedPath }}</b>
+            </div>
+            <div v-if="hasVideo(detailItem)" class="mi-detail-row">
+              <span>视频平台</span><b>{{ videoPlatformOf(detailItem) }}</b>
+            </div>
+            <div v-if="videoLinkOf(detailItem)" class="mi-detail-row">
+              <span>原始链接</span>
+              <b class="mi-wrap">
+                <a :href="videoLinkOf(detailItem)" target="_blank" rel="noopener noreferrer">{{ videoLinkOf(detailItem) }}</a>
+              </b>
+            </div>
+            <div v-if="detailItem.hint" class="mi-detail-row">
+              <span>说明</span><b class="mi-wrap">{{ detailItem.hint }}</b>
+            </div>
+            <div v-if="detailItem.error" class="mi-detail-row error">
+              <span>失败原因</span><b class="mi-wrap">{{ detailItem.error }}</b>
+            </div>
+          </div>
+          <div class="mi-detail-actions">
+            <button
+              class="btn primary mi-detail-primary"
+              type="button"
+              :disabled="mainDisabled(detailItem)"
+              @click="detailRun(detailItem)"
+            >
+              <Icon :name="mainIcon(detailItem)" :size="16" />{{ mainLabel(detailItem) }}
+            </button>
+            <div class="mi-detail-grid">
+              <button
+                v-if="detailItem.assistantSessionId"
+                class="btn"
+                type="button"
+                @click="detailProcess(detailItem)"
+              >
+                <Icon name="messages" :size="15" />查看过程
+              </button>
+              <button class="btn" type="button" :disabled="busyPath === detailItem.path" @click="detailAgent(detailItem)">
+                <Icon name="ai" :size="15" />让 Agent 处理
+              </button>
+              <button class="btn" type="button" @click="detailOriginal(detailItem)">
+                <Icon :name="isDesktop ? 'external' : 'download'" :size="15" />{{ isDesktop ? '系统应用打开' : '下载原文件' }}
+              </button>
+              <button class="btn danger" type="button" @click="detailRemove(detailItem)">
+                <Icon name="trash" :size="15" />移入回收站
+              </button>
+            </div>
+          </div>
+        </section>
+      </template>
+
+      <!-- 分享落袋回执：这是「保存之后」的回执，不是保存前确认 -->
+      <template v-if="captureOpen">
+        <div class="mi-dim" @click="dismissCapture('inbox')" />
+        <section class="mi-sheet mi-receipt" role="dialog" aria-modal="true" aria-labelledby="mi-receipt-title">
+          <div class="mi-sheet-grab" />
+          <div class="mi-receipt-head">
+            <span class="mi-check"><Icon name="check" :size="22" /></span>
+            <div class="mi-receipt-title">
+              <h2 id="mi-receipt-title">已先存入收集箱</h2>
+              <p>{{ receiptSubline }}</p>
+            </div>
+            <button class="mi-iconbtn" type="button" aria-label="关闭回执" @click="dismissCapture('inbox')">
+              <Icon name="x" :size="18" />
+            </button>
+          </div>
+
+          <article v-if="captureItem" class="mi-receipt-card">
+            <div class="mi-receipt-cover" :class="coverClass(captureItem)">{{ coverBig(captureItem) }}</div>
+            <div class="mi-receipt-card-main">
+              <b>{{ cardTitle(captureItem) }}</b>
+              <span>{{ sourceLabel(captureItem) === typeLabel(captureItem) ? typeLabel(captureItem) : sourceLabel(captureItem) + ' · ' + typeLabel(captureItem) }} · {{ formatSize(captureItem.size) }}</span>
+            </div>
+            <span v-if="isFresh(captureItem)" class="mi-fresh">刚刚 +1</span>
+          </article>
+          <div v-else class="mi-receipt-waiting">
+            <AppSpinner :size="14" /> 正在确认收集箱里的新条目…
+          </div>
+
+          <div class="mi-receipt-queue">
+            <Icon name="inbox" :size="14" />
+            <span>收集箱现有 <b>{{ sortedActive.length }}</b> 条</span>
+          </div>
+          <p class="mi-receipt-note">摘要与标签待绑定中枢后补全；转换和入库都由中枢执行，这里只负责先落袋。</p>
+          <div class="mi-receipt-actions">
+            <button class="btn primary" type="button" @click="dismissCapture('inbox')">去清仓</button>
+            <button class="btn ghost" type="button" @click="dismissCapture('home')">回到首页</button>
+          </div>
+          <button
+            v-if="captureItem"
+            class="mi-receipt-undo"
+            type="button"
+            :disabled="captureBusy"
+            @click="undoCapture"
+          >
+            {{ captureBusy ? '正在撤销…' : '撤销这次保存' }}
+          </button>
+        </section>
+      </template>
+
+      <!-- 手动补录：分享之外的入口（相册 / 文件 / 粘贴链接），不打断卡片台 -->
+      <template v-if="intakeOpen">
+        <div class="mi-dim" @click="closeIntake" />
+        <section class="mi-sheet mi-intake" role="dialog" aria-modal="true" aria-labelledby="mi-intake-title">
+          <div class="mi-sheet-grab" />
+          <div class="mi-intake-head">
+            <h2 id="mi-intake-title">收进收集箱</h2>
+            <button class="mi-iconbtn" type="button" aria-label="关闭" @click="closeIntake">
+              <Icon name="x" :size="18" />
+            </button>
+          </div>
+          <button class="mi-intake-file" type="button" :disabled="intakeBusy" @click="pickIntakeFiles">
+            <span class="mi-intake-ic"><Icon name="file-plus" :size="19" /></span>
+            <span class="mi-intake-file-text">
+              <b>选择文件</b>
+              <small>照片、PDF、Office、音视频都可以；单个上限 200 MB</small>
+            </span>
+            <Icon name="chevron-right" :size="16" />
+          </button>
+          <form class="mi-intake-url" @submit.prevent="submitIntakeUrl">
+            <input
+              v-model="intakeUrl"
+              type="url"
+              inputmode="url"
+              autocomplete="off"
+              placeholder="粘贴网页 / B站 / 抖音链接"
+              :disabled="intakeBusy"
+            />
+            <button class="btn primary" type="submit" :disabled="intakeBusy || !intakeUrl.trim()">
+              {{ intakeBusy ? '保存中…' : '保存' }}
+            </button>
+          </form>
+          <p class="mi-intake-note">
+            <Icon name="info" :size="12" />
+            网页保存 HTML 原件；B站 / 抖音链接保存为视频链接占位稿，提炼时再取视频。转换与入库仍由中枢执行。
+          </p>
+        </section>
+      </template>
+    </Teleport>
+    <input ref="intakeFileInput" class="mi-file-input" type="file" multiple @change="onIntakePicked" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { useAppStore } from '../stores/app';
+import { useChatStore } from '../stores/chat';
+import { useInboxStore, type InboxItem } from '../stores/inbox';
+import { registerBackHandler } from '../lib/androidBack';
+import { confirmDialog } from '../lib/confirm';
+import { isServerConvertible } from '../lib/inboxAgent';
+import { notify } from '../lib/notify';
+import Icon from './Icon.vue';
+import AppSpinner from './ui/AppSpinner.vue';
+
+/**
+ * 手机端收集箱卡片台（对外零 props）。
+ *
+ * 桌面版收集箱是「行式台账」，窄屏这边换成一张一张的卡片：最新一条在最上面，
+ * 右滑做主操作（转换 / 入库 / 让 Agent 处理 / 下载预览），左滑移入回收站，上滑看详情；
+ * 底部三个按钮是同一组动作的无障碍替代，不依赖手势也能用。
+ *
+ * 三条边界写在实现里：
+ *  1. 卡片分组只按「来源 / 类型」归组，不做假的 AI 建议；转换与入库一律交给服务端中枢执行。
+ *  2. /inbox?capture=<时间戳> 是原生分享落袋后推过来的「保存之后」回执，文案不能写成保存前确认。
+ *  3. 动作失败/离线时把服务端的 error/hint 留在页面上（不只弹一条会消失的 toast）。
+ */
+
+const inbox = useInboxStore();
+const chat = useChatStore();
+const app = useAppStore();
+const route = useRoute();
+const router = useRouter();
+
+/** 桌面端（有 Electron 桥）：原文件用系统默认应用打开；Docker / 浏览器端直接下载 */
+const isDesktop = Boolean((window as any).wikiDesktop);
+
+type ViewKind = 'stack' | 'groups';
+type MainKind = 'convert' | 'retry' | 'adopt' | 'process' | 'agent' | 'download' | 'none';
+type StatusTone = 'pending' | 'converting' | 'converted' | 'failed' | 'adopted';
+type StampTone = 'in' | 'drop' | 'later';
+
+interface ActionHint {
+  tone: 'error' | 'info';
+  text: string;
+}
+
+interface SourceGroup {
+  key: string;
+  label: string;
+  icon: string;
+  items: InboxItem[];
+  /** 还能交给中枢转换 / 重新转换的（待整理 + 失败） */
+  convertible: InboxItem[];
+  /** 已有产物、可以入库的 */
+  converted: InboxItem[];
+}
+
+const view = ref<ViewKind>('stack');
+
+/* ===== 分类与来源 ===== */
+
+const CATEGORY_LABELS: Record<string, string> = {
+  document: 'Word 文档',
+  spreadsheet: 'Excel 表格',
+  presentation: 'PPT 演示',
+  pdf: 'PDF 文档',
+  image: '图片',
+  text: '文本',
+  web: '网页',
+  audio: '音频',
+  video: '视频',
+  archive: '压缩包',
+  other: '其他文件',
+};
+
+const PLATFORM_LABELS: Record<string, string> = {
+  bilibili: 'B站',
+  douyin: '抖音',
+  upload: '本地视频',
+};
+
+/** 平台名：未知平台不硬猜，退回「视频」 */
+function platformLabel(platform: string): string {
+  return PLATFORM_LABELS[platform] || '视频';
+}
+
+function categoryLabel(item: InboxItem | null): string {
+  if (!item) return '文件';
+  return CATEGORY_LABELS[item.category] || '文件';
+}
+
+/** 卡片上的「来源」：视频看平台，其余按类型 */
+function sourceLabel(item: InboxItem | null): string {
+  if (!item) return '';
+  if (item.capability === 'video') return platformLabel(item.video?.platform || '');
+  return categoryLabel(item);
+}
+
+/* ===== 列表口径 ===== */
+
+/** 待整理 + 转换中 + 已转换 + 失败（已入库的不再占收集箱界面） */
+const sortedActive = computed(() =>
+  [...inbox.activeItems].sort((a, b) => b.mtime - a.mtime)
+);
+
+/** 卡片堆只铺三张：最上面一张完整，后面两张露边 */
+const stackItems = computed(() => sortedActive.value.slice(0, 3));
+const front = computed<InboxItem | null>(() => sortedActive.value[0] || null);
+
+const converting = computed(() => inbox.items.some((item) => item.status === 'converting'));
+
+const freshCount = computed(() => sortedActive.value.filter(isFresh).length);
+
+const subline = computed(() => {
+  if (!inbox.loaded) return inbox.loading ? '正在读取收集箱…' : '读取失败，可点刷新重试';
+  const parts = ['待整理 ' + inbox.counts.pending];
+  if (inbox.counts.converted) parts.push('已转换 ' + inbox.counts.converted);
+  if (inbox.counts.converting) parts.push(inbox.counts.converting + ' 个转换中');
+  if (freshCount.value) parts.push('刚刚存入 ' + freshCount.value + ' 条');
+  return parts.join(' · ');
+});
+
+const groupsSubline = computed(() => {
+  if (!inbox.loaded) return inbox.loading ? '正在读取收集箱…' : '读取失败，可点刷新重试';
+  const parts = [sortedActive.value.length + ' 条 · ' + sourceCount.value + ' 个来源分组'];
+  if (inbox.counts.converting) parts.push(inbox.counts.converting + ' 个转换中');
+  return parts.join(' · ');
+});
+
+const emptyHint = computed(() => {
+  if (inbox.counts.adopted) {
+    return '没有待整理的条目；已入库的 ' + inbox.counts.adopted + ' 条已经进知识库，可在那里检索和引用。';
+  }
+  return '通过分享或拖入保存的内容会先落到这里；转换、入库都由中枢执行。';
+});
+
+/* ===== 按来源 / 类型分组（不做 AI 建议） ===== */
+
+function groupKey(item: InboxItem): string {
+  if (item.capability === 'video') {
+    const platform = item.video?.platform || 'upload';
+    return 'video:' + platform;
+  }
+  if (item.category === 'web') return 'web';
+  return 'cat:' + item.category;
+}
+
+function groupLabel(item: InboxItem): string {
+  if (item.capability === 'video') return platformLabel(item.video?.platform || '');
+  return categoryLabel(item);
+}
+
+function groupIcon(item: InboxItem): string {
+  if (item.capability === 'video' || item.category === 'audio') return 'play';
+  const icons: Record<string, string> = {
+    document: 'word',
+    spreadsheet: 'excel',
+    presentation: 'ppt',
+    pdf: 'pdf',
+    image: 'image',
+    text: 'markdown',
+    web: 'globe',
+    archive: 'archive',
+    other: 'file',
+  };
+  return icons[item.category] || 'file';
+}
+
+const groups = computed<SourceGroup[]>(() => {
+  const map = new Map<string, SourceGroup>();
+  for (const item of sortedActive.value) {
+    const key = groupKey(item);
+    let group = map.get(key);
+    if (!group) {
+      group = {
+        key,
+        label: groupLabel(item),
+        icon: groupIcon(item),
+        items: [],
+        convertible: [],
+        converted: [],
+      };
+      map.set(key, group);
+    }
+    group.items.push(item);
+    if (item.status === 'converted') group.converted.push(item);
+    else if (isServerConvertible(item.capability) && item.status !== 'converting') group.convertible.push(item);
+  }
+  return [...map.values()].sort(
+    (a, b) => b.items.length - a.items.length || a.label.localeCompare(b.label, 'zh-CN')
+  );
+});
+
+const sourceCount = computed(() => groups.value.length);
+
+function groupCaption(group: SourceGroup): string {
+  const parts: string[] = [];
+  const waiting = group.items.filter((item) => item.status === 'pending' || item.status === 'failed').length;
+  if (waiting) parts.push('待整理 ' + waiting);
+  if (group.converted.length) parts.push('已转换 ' + group.converted.length);
+  if (group.items.some((item) => item.status === 'converting')) parts.push('转换中');
+  return parts.join(' · ') || '已处理';
+}
+
+function groupNote(group: SourceGroup): string {
+  if (group.convertible.length) return '可转换 ' + group.convertible.length + ' 条 · 由中枢执行';
+  if (group.converted.length) return '已转换 ' + group.converted.length + ' 条 · 入库后进知识库';
+  if (group.items.some((item) => item.status === 'converting')) return '中枢正在处理，完成后自动刷新';
+  return '这个格式需逐条交给 Agent 或下载原文件';
+}
+
+/* ===== 状态与主操作 ===== */
+
+const STATUS_STYLE: Record<InboxItem['status'], { label: string; tone: StatusTone }> = {
+  pending: { label: '待整理', tone: 'pending' },
+  converting: { label: '转换中', tone: 'converting' },
+  converted: { label: '已转换', tone: 'converted' },
+  adopted: { label: '已入库', tone: 'adopted' },
+  failed: { label: '转换失败', tone: 'failed' },
+};
+
+function statusLabel(item: InboxItem | null): string {
+  if (!item) return '';
+  return STATUS_STYLE[item.status]?.label || item.status;
+}
+
+function statusChip(item: InboxItem | null): StatusTone {
+  if (!item) return 'pending';
+  return STATUS_STYLE[item.status]?.tone || 'pending';
+}
+
+/** 主操作按状态切换：转换中=查看过程 / 失败=重试 / 已转换=入库 / 待整理=可转就转、Agent-only 交 Agent、其余下载 */
+function mainKind(item: InboxItem | null): MainKind {
+  if (!item) return 'none';
+  if (item.status === 'converting') return 'process';
+  if (item.status === 'failed') {
+    if (isServerConvertible(item.capability)) return 'retry';
+    return item.capability === 'agent-only' ? 'agent' : 'download';
+  }
+  if (item.status === 'converted') return 'adopt';
+  if (item.status === 'adopted') return 'none';
+  if (isServerConvertible(item.capability)) return 'convert';
+  if (item.capability === 'agent-only') return 'agent';
+  return 'download';
+}
+
+function mainLabel(item: InboxItem | null): string {
+  if (!item) return '';
+  const kind = mainKind(item);
+  if (kind === 'convert') return item.capability === 'video' ? '提炼视频' : '转换';
+  if (kind === 'retry') return item.capability === 'video' ? '重新提炼' : '重新转换';
+  if (kind === 'adopt') return '入库';
+  if (kind === 'process') return item.assistantSessionId ? '查看过程' : '转换中…';
+  if (kind === 'agent') return '让 Agent 处理';
+  if (kind === 'download') return isDesktop ? '打开原文件' : '下载原文件';
+  return '暂无操作';
+}
+
+function mainIcon(item: InboxItem | null): string {
+  if (!item) return 'file';
+  const kind = mainKind(item);
+  if (kind === 'convert' || kind === 'retry' || kind === 'agent') return 'ai';
+  if (kind === 'adopt') return 'check';
+  if (kind === 'process') return 'messages';
+  if (kind === 'download') return isDesktop ? 'external' : 'download';
+  return 'file';
+}
+
+function mainDisabled(item: InboxItem | null): boolean {
+  if (!item) return true;
+  if (busyPath.value === item.path) return true;
+  const kind = mainKind(item);
+  if (kind === 'none') return true;
+  if (kind === 'process' && !item.assistantSessionId) return true;
+  return false;
+}
+
+/* ===== 时间 / 大小 / 文本 ===== */
+
+const FRESH_WINDOW_MS = 10 * 60 * 1000;
+
+/** 最近 10 分钟内收纳的条目：卡片打「刚刚存入」徽标 */
+function isFresh(item: InboxItem | null): boolean {
+  if (!item) return false;
+  const diff = Date.now() - item.mtime;
+  return diff > -60 * 1000 && diff < FRESH_WINDOW_MS;
+}
+
+function fromNow(mtime: number): string {
+  const diff = Date.now() - mtime;
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3600_000) return Math.floor(diff / 60_000) + ' 分钟前';
+  if (diff < 86400_000) return Math.floor(diff / 3600_000) + ' 小时前';
+  if (diff < 7 * 86400_000) return Math.floor(diff / 86400_000) + ' 天前';
+  return new Date(mtime).toLocaleDateString('zh-CN');
+}
+
+function absoluteTime(mtime: number): string {
+  return new Date(mtime).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatSize(size: number): string {
+  if (size < 1024) return size + ' B';
+  if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+  if (size < 1024 * 1024 * 1024) return (size / 1024 / 1024).toFixed(1) + ' MB';
+  return (size / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+function fileName(path: string): string {
+  const parts = path.split('/');
+  return parts[parts.length - 1] || path;
+}
+
+/** 卡片标题：视频用识别出的标题，文件去掉扩展名（扩展名在封面大字上） */
+function cardTitle(item: InboxItem | null): string {
+  if (!item) return '';
+  const videoTitle = item.video?.title?.trim();
+  if (item.capability === 'video' && videoTitle) {
+    return item.video?.platform === 'upload' ? videoTitle.replace(/\.[^.]+$/, '') || videoTitle : videoTitle;
+  }
+  return item.name.replace(/\.[^.]+$/, '') || item.name;
+}
+
+function typeLabel(item: InboxItem | null): string {
+  if (!item) return '';
+  if (item.capability === 'video') return platformLabel(item.video?.platform || '');
+  const ext = (item.ext || '').toUpperCase();
+  return ext || categoryLabel(item);
+}
+
+/** 卡片元信息：类型 / 大小 */
+function metaLine(item: InboxItem | null): string {
+  if (!item) return '';
+  const parts = [typeLabel(item), formatSize(item.size)];
+  return parts.join(' · ');
+}
+
+/** 封面颜色按类型 / 平台走 CSS 渐变（不引外部图片） */
+function coverClass(item: InboxItem | null): string {
+  if (!item) return 'cov-other';
+  if (item.capability === 'video') {
+    const platform = item.video?.platform || 'upload';
+    if (platform === 'bilibili') return 'cov-bili';
+    if (platform === 'douyin') return 'cov-douyin';
+    return 'cov-video';
+  }
+  const byCategory: Record<string, string> = {
+    document: 'cov-doc',
+    spreadsheet: 'cov-sheet',
+    presentation: 'cov-slide',
+    pdf: 'cov-pdf',
+    image: 'cov-image',
+    text: 'cov-article',
+    web: 'cov-web',
+    audio: 'cov-audio',
+    archive: 'cov-archive',
+    other: 'cov-other',
+  };
+  return byCategory[item.category] || 'cov-other';
+}
+
+/** 封面左上小字：来源 / 平台 */
+function coverKicker(item: InboxItem | null): string {
+  if (!item) return '';
+  if (item.capability === 'video') return '视频 · ' + platformLabel(item.video?.platform || '');
+  return categoryLabel(item);
+}
+
+/** 封面大字：文件扩展名或平台名（一眼能认出这是什么） */
+function coverBig(item: InboxItem | null): string {
+  if (!item) return '';
+  if (item.capability === 'video') {
+    const platform = item.video?.platform;
+    if (platform === 'bilibili') return 'B站';
+    if (platform === 'douyin') return '抖音';
+    return '视频';
+  }
+  const ext = (item.ext || '').toUpperCase();
+  if (!ext) return 'FILE';
+  return ext.length <= 4 ? ext : 'FILE';
+}
+
+function coverIcon(item: InboxItem | null): string {
+  if (!item) return 'file';
+  if (item.capability === 'video') return 'play';
+  const byCategory: Record<string, string> = {
+    document: 'word',
+    spreadsheet: 'excel',
+    presentation: 'ppt',
+    pdf: 'pdf',
+    image: 'image',
+    text: 'markdown',
+    web: 'globe',
+    audio: 'play',
+    archive: 'archive',
+    other: 'file',
+  };
+  return byCategory[item.category] || 'file';
+}
+
+function noteIcon(item: InboxItem | null): string {
+  if (!item) return 'file';
+  if (item.status === 'failed') return 'report';
+  if (item.status === 'converting') return 'activity';
+  if (item.status === 'converted' || item.status === 'adopted') return 'check';
+  if (item.capability === 'agent-only') return 'messages';
+  if (item.capability === 'unsupported') return 'alert';
+  return 'file';
+}
+
+/** 卡面说明：状态、能力与下一步都说清楚，失败原因不藏 */
+function cardNote(item: InboxItem | null): string {
+  if (!item) return '';
+  if (item.status === 'failed') return item.error || '转换失败，可以重试';
+  if (item.status === 'converting') {
+    return item.capability === 'video' ? '中枢正在提炼视频，完成后自动刷新' : '中枢正在转换，完成后自动刷新';
+  }
+  if (item.status === 'converted') {
+    return item.derivedPath ? '产物：' + fileName(item.derivedPath) : '已生成 Markdown 产物，可入库';
+  }
+  if (item.status === 'adopted') {
+    return item.adoptedPath ? '已入库：' + item.adoptedPath : '已入库';
+  }
+  if (isServerConvertible(item.capability)) {
+    if (item.hint) return item.hint;
+    return item.capability === 'video'
+      ? '由中枢提炼成带时间戳的 Markdown 纪要'
+      : '由中枢按语义转成 Markdown，产物仍留在收集箱';
+  }
+  if (item.capability === 'agent-only') return item.hint || '服务端不能直接转换，交给 Agent 读原件';
+  return item.hint || '这个格式暂不支持转换，可下载原文件';
+}
+
+/* ===== 提示条与错误 ===== */
+
+const actionHint = ref<ActionHint | null>(null);
+const busyPath = ref('');
+const groupBusy = ref('');
+
+function setHint(tone: ActionHint['tone'], text: string) {
+  actionHint.value = { tone, text };
+}
+
+function errText(error: any): string {
+  return error?.response?.data?.error || error?.message || '请求失败，请稍后重试';
+}
+
+/* ===== 转换 / 入库 / Agent / 下载 / 移除 ===== */
+
+/** 转换排队后先把轮询挂上：服务端可能还没把任务挂到列表上，只等 converting 会漏掉头几百毫秒 */
+const POLL_MS = 2000;
+const CONVERT_GRACE_MS = 10000;
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+let graceUntil = 0;
+let disposed = false;
+
+function pollingNeeded(): boolean {
+  return converting.value || Date.now() < graceUntil;
+}
+
+function syncPolling() {
+  if (disposed) return;
+  if (pollingNeeded() && !pollTimer) {
+    pollTimer = setInterval(pollTick, POLL_MS);
+  } else if (!pollingNeeded() && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = undefined;
+  }
+}
+
+function pollTick() {
+  if (inbox.loading) return;
+  void inbox.load().then(syncPolling);
+}
+
+function expectConversion() {
+  graceUntil = Date.now() + CONVERT_GRACE_MS;
+  syncPolling();
+}
+
+watch(converting, syncPolling);
+
+async function refresh(): Promise<void> {
+  await inbox.load();
+  syncPolling();
+}
+
+/** 打开一条 Agent 会话：与 InboxView 的 openConversionChat 同一套做法 */
+async function openSession(sessionId: string): Promise<void> {
+  try {
+    await chat.loadSessions();
+    await chat.selectSession(sessionId);
+    app.toggleChat(true);
+  } catch {
+    notify.error('操作已受理，但暂时无法打开 Agent 对话');
+  }
+}
+
+async function convertItem(item: InboxItem | null): Promise<void> {
+  if (!item || item.status === 'converting' || !isServerConvertible(item.capability)) return;
+  if (busyPath.value === item.path) return;
+  busyPath.value = item.path;
+  actionHint.value = null;
+  try {
+    const result = await inbox.convert([item.path]);
+    if (result.queued.length) {
+      notify.success(item.capability === 'video' ? '已交给中枢提炼视频' : '已交给中枢转换');
+      setHint(
+        'info',
+        item.capability === 'video'
+          ? '已交给中枢提炼，完成后自动刷新'
+          : '已交给中枢转换，完成后自动刷新'
+      );
+      expectConversion();
+    } else if (result.skipped.length) {
+      const reason = result.skipped[0].reason;
+      setHint('error', '无法转换：' + reason);
+      notify.error('无法转换：' + reason);
+    }
+  } catch (error: any) {
+    const message = errText(error);
+    setHint('error', '转换失败：' + message);
+    notify.error(message);
+  } finally {
+    busyPath.value = '';
+  }
+}
+
+async function adoptItem(item: InboxItem | null): Promise<void> {
+  if (!item || busyPath.value === item.path) return;
+  if (item.status !== 'converted') return;
+  const ok = await confirmDialog({
+    title: '入库',
+    message:
+      '「' + cardTitle(item) + '」转换出的 Markdown 会进入知识库：入库后成为可检索、可引用的内容。原件仍留在收集箱。',
+    confirmText: '入库',
+  });
+  if (!ok) return;
+  busyPath.value = item.path;
+  actionHint.value = null;
+  try {
+    const result = await inbox.adopt(item.path);
+    app.bumpSidebar();
+    notify.success('已入库到 ' + result.pagePath);
+  } catch (error: any) {
+    const message = errText(error);
+    setHint('error', '入库失败：' + message);
+    notify.error(message);
+  } finally {
+    busyPath.value = '';
+  }
+}
+
+async function startAgent(item: InboxItem | null): Promise<void> {
+  if (!item || busyPath.value === item.path) return;
+  busyPath.value = item.path;
+  actionHint.value = null;
+  try {
+    const { sessionId } = await inbox.agentTask(item.path);
+    notify.success('已让 Agent 开始处理…');
+    await openSession(sessionId);
+  } catch (error: any) {
+    const message = errText(error);
+    setHint('error', '无法让 Agent 处理：' + message);
+    notify.error(message);
+  } finally {
+    busyPath.value = '';
+  }
+}
+
+async function removeItem(item: InboxItem | null): Promise<void> {
+  if (!item || busyPath.value === item.path) return;
+  const ok = await confirmDialog({
+    title: '移入回收站',
+    message: '「' + cardTitle(item) + '」将被移入回收站，可随时恢复。',
+    confirmText: '移入回收站',
+    danger: true,
+  });
+  if (!ok) return;
+  busyPath.value = item.path;
+  actionHint.value = null;
+  try {
+    await inbox.remove(item.path);
+    notify.success('已移入回收站');
+  } catch (error: any) {
+    const message = errText(error);
+    setHint('error', '移出失败：' + message);
+    notify.error(message);
+  } finally {
+    busyPath.value = '';
+  }
+}
+
+function downloadUrl(item: InboxItem): string {
+  return '/api/inbox/download?path=' + encodeURIComponent(item.path);
+}
+
+async function openOriginal(item: InboxItem | null): Promise<void> {
+  if (!item) return;
+  const bridge = (window as any).wikiDesktop;
+  if (bridge?.openInboxFile) {
+    try {
+      const result = await bridge.openInboxFile(item.path);
+      if (result && result.ok === false) notify.error('打不开：' + (result.error || '系统程序调用失败'));
+    } catch (error: any) {
+      notify.error(error?.message || '打不开：系统程序调用失败');
+    }
+    return;
+  }
+  const anchor = document.createElement('a');
+  anchor.href = downloadUrl(item);
+  anchor.download = item.name;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  notify.success('已开始下载原文件');
+}
+
+async function runMain(item: InboxItem | null): Promise<void> {
+  if (!item) return;
+  const kind = mainKind(item);
+  if (kind === 'convert' || kind === 'retry') {
+    await convertItem(item);
+  } else if (kind === 'adopt') {
+    await adoptItem(item);
+  } else if (kind === 'process') {
+    if (item.assistantSessionId) await openSession(item.assistantSessionId);
+  } else if (kind === 'agent') {
+    await startAgent(item);
+  } else if (kind === 'download') {
+    await openOriginal(item);
+  }
+}
+
+/* ===== 分组批量操作 ===== */
+
+async function convertGroup(group: SourceGroup): Promise<void> {
+  if (groupBusy.value) return;
+  const paths = group.convertible.map((item) => item.path);
+  if (!paths.length) return;
+  groupBusy.value = group.key;
+  actionHint.value = null;
+  try {
+    const result = await inbox.convert(paths);
+    if (result.queued.length) {
+      notify.success('已交给中枢处理 ' + result.queued.length + ' 条');
+      setHint('info', result.queued.length + ' 条已交给中枢处理，完成后自动刷新。');
+      expectConversion();
+    }
+    if (result.skipped.length) {
+      const first = result.skipped[0];
+      const message = '跳过 ' + result.skipped.length + ' 条：' + first.path + '（' + first.reason + '）';
+      setHint('error', message);
+      notify.error(message);
+    }
+  } catch (error: any) {
+    const message = errText(error);
+    setHint('error', '批量转换失败：' + message);
+    notify.error(message);
+  } finally {
+    groupBusy.value = '';
+  }
+}
+
+async function adoptGroup(group: SourceGroup): Promise<void> {
+  if (groupBusy.value) return;
+  const targets = group.converted.slice();
+  if (!targets.length) return;
+  const ok = await confirmDialog({
+    title: '全部入库',
+    message:
+      '「' + group.label + '」里的 ' + targets.length + ' 条已转换产物会进入知识库，成为可检索、可引用的内容；原件仍留在收集箱。',
+    confirmText: '全部入库',
+  });
+  if (!ok) return;
+  groupBusy.value = group.key;
+  actionHint.value = null;
+  let saved = 0;
+  let failed = 0;
+  for (const item of targets) {
+    try {
+      await inbox.adopt(item.path);
+      saved += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  groupBusy.value = '';
+  app.bumpSidebar();
+  if (saved) notify.success('已入库 ' + saved + ' 条');
+  if (failed) {
+    setHint('error', failed + ' 条入库失败，可逐条重试');
+    notify.error(failed + ' 条入库失败');
+  }
+}
+
+/* ===== 手势：右滑主操作 / 左滑移除 / 上滑详情 ===== */
+
+const SWIPE_X = 64;
+const SWIPE_Y = 56;
+
+const dragging = ref(false);
+const dragAxis = ref<'' | 'x' | 'y'>('');
+const dragX = ref(0);
+const dragY = ref(0);
+const flyOut = ref<'' | 'main' | 'detail'>('');
+const stamp = computed<{ tone: StampTone; icon: string; text: string } | null>(() => {
+  if (!dragging.value || !front.value) return null;
+  if (dragAxis.value === 'x') {
+    if (dragX.value > 24) return { tone: 'in', icon: 'check', text: mainLabel(front.value) };
+    if (dragX.value < -24) return { tone: 'drop', icon: 'trash', text: '移入回收站' };
+    return null;
+  }
+  if (dragAxis.value === 'y' && dragY.value < -24) {
+    return { tone: 'later', icon: 'eye', text: '看详情' };
+  }
+  return null;
+});
+
+let pointerStart: { x: number; y: number; id: number } | null = null;
+let suppressClick = false;
+/** 安卓返回键：弹层开着时先关弹层，别让一次返回直接退到后台 */
+let stopBackHandler: (() => void) | null = null;
+
+function onCardPointerDown(event: PointerEvent): void {
+  if (event.pointerType === 'mouse' && event.button !== 0) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('button, a')) return;
+  if (busyPath.value) return;
+  pointerStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
+  dragging.value = false;
+  dragAxis.value = '';
+  dragX.value = 0;
+  dragY.value = 0;
+  flyOut.value = '';
+  suppressClick = false;
+  try {
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  } catch {
+    /* 个别 WebView 不支持指针捕获：不捕获也能用，只是拖出卡片后事件可能中断 */
+  }
+}
+
+function onCardPointerMove(event: PointerEvent): void {
+  if (!pointerStart || event.pointerId !== pointerStart.id) return;
+  const dx = event.clientX - pointerStart.x;
+  const dy = event.clientY - pointerStart.y;
+  if (!dragAxis.value) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    dragAxis.value = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+    dragging.value = true;
+  }
+  if (dragAxis.value === 'x') {
+    dragX.value = dx;
+    dragY.value = dy * 0.12;
+  } else {
+    // 只跟手上滑；下滑交还给页面（卡片外仍可滚动）
+    dragX.value = 0;
+    dragY.value = Math.min(0, dy);
+  }
+}
+
+function releaseCardPointer(event: PointerEvent): void {
+  try {
+    (event.currentTarget as HTMLElement | null)?.releasePointerCapture?.(event.pointerId);
+  } catch {
+    /* 捕获早已释放时忽略 */
+  }
+}
+
+function resetDrag(): void {
+  dragging.value = false;
+  dragAxis.value = '';
+  dragX.value = 0;
+  dragY.value = 0;
+}
+
+function onCardPointerUp(event: PointerEvent): void {
+  if (!pointerStart || event.pointerId !== pointerStart.id) return;
+  releaseCardPointer(event);
+  const item = front.value;
+  const wasDragging = dragging.value;
+  const axis = dragAxis.value;
+  const dx = dragX.value;
+  const dy = dragY.value;
+  pointerStart = null;
+  if (!wasDragging || !item) {
+    resetDrag();
+    return;
+  }
+  suppressClick = true;
+  resetDrag();
+  if (axis === 'x' && dx >= SWIPE_X) {
+    const kind = mainKind(item);
+    if (kind === 'adopt') {
+      void adoptItem(item);
+      return;
+    }
+    if (kind === 'none') {
+      setHint('error', '这条没有可直接执行的主操作，点开详情处理');
+      return;
+    }
+    if (kind === 'process' && !item.assistantSessionId) {
+      setHint('info', '中枢正在处理，完成后会自动刷新');
+      return;
+    }
+    flyOut.value = 'main';
+    window.setTimeout(() => {
+      flyOut.value = '';
+      void runMain(item);
+    }, 280);
+    return;
+  }
+  if (axis === 'x' && dx <= -SWIPE_X) {
+    void removeItem(item);
+    return;
+  }
+  if (axis === 'y' && dy <= -SWIPE_Y) {
+    flyOut.value = 'detail';
+    window.setTimeout(() => {
+      flyOut.value = '';
+      openDetail(item);
+    }, 200);
+  }
+}
+
+function onCardPointerCancel(): void {
+  pointerStart = null;
+  resetDrag();
+  suppressClick = false;
+}
+
+function onCardClick(): void {
+  if (suppressClick) {
+    suppressClick = false;
+    return;
+  }
+  openDetail(front.value);
+}
+
+function onCardEnter(): void {
+  openDetail(front.value);
+}
+
+function cardClasses(item: InboxItem, index: number): Record<string, boolean> {
+  if (index === 0) return { front: true, 'is-converting': item.status === 'converting' };
+  return index === 1 ? { 'back-1': true } : { 'back-2': true };
+}
+
+function cardStyle(index: number) {
+  if (index !== 0) return undefined;
+  if (dragging.value) {
+    return {
+      transform:
+        'translate(' + dragX.value + 'px, ' + dragY.value + 'px) rotate(' + dragX.value * 0.035 + 'deg)',
+      transition: 'none',
+    };
+  }
+  if (flyOut.value === 'main') {
+    return {
+      transform: 'translate(130%, -10px) rotate(10deg)',
+      opacity: '0',
+      transition: 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease',
+    };
+  }
+  if (flyOut.value === 'detail') {
+    return {
+      transform: 'translate(0, -130%) rotate(-2deg)',
+      opacity: '0',
+      transition: 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease',
+    };
+  }
+  return undefined;
+}
+
+/* ===== 详情 sheet ===== */
+
+const detailPath = ref('');
+const detailItem = computed<InboxItem | null>(() => {
+  if (!detailPath.value) return null;
+  return inbox.items.find((item) => item.path === detailPath.value) || null;
+});
+
+function openDetail(item: InboxItem | null): void {
+  if (!item) return;
+  detailPath.value = item.path;
+}
+
+function closeDetail(): void {
+  detailPath.value = '';
+}
+
+function detailAction(action: () => void | Promise<void>): void {
+  closeDetail();
+  void action();
+}
+
+function detailRun(item: InboxItem | null): void {
+  detailAction(() => runMain(item));
+}
+
+function detailProcess(item: InboxItem | null): void {
+  const sessionId = item?.assistantSessionId;
+  if (!sessionId) return;
+  detailAction(() => openSession(sessionId));
+}
+
+function detailAgent(item: InboxItem | null): void {
+  detailAction(() => startAgent(item));
+}
+
+function detailOriginal(item: InboxItem | null): void {
+  detailAction(() => openOriginal(item));
+}
+
+function detailRemove(item: InboxItem | null): void {
+  detailAction(() => removeItem(item));
+}
+
+/** 详情里的视频字段单独取：模板里不做「可选属性套可选属性」的收窄 */
+function hasVideo(item: InboxItem | null): boolean {
+  return Boolean(item?.video);
+}
+
+function videoPlatformOf(item: InboxItem | null): string {
+  return item?.video ? platformLabel(item.video.platform) : '';
+}
+
+function videoLinkOf(item: InboxItem | null): string {
+  return item?.video?.link || '';
+}
+
+/* ===== 分享落袋回执（/inbox?capture=<时间戳>，由原生分享桥推入） ===== */
+
+const captureOpen = ref(false);
+const captureItem = ref<InboxItem | null>(null);
+const captureBusy = ref(false);
+
+/* ===== 手动补录（分享之外的入口） ===== */
+const intakeOpen = ref(false);
+const intakeBusy = ref(false);
+const intakeUrl = ref('');
+const intakeFileInput = ref<HTMLInputElement | null>(null);
+
+function closeIntake(): void {
+  intakeOpen.value = false;
+}
+
+function pickIntakeFiles(): void {
+  intakeFileInput.value?.click();
+}
+
+async function onIntakePicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const files = input.files;
+  if (!files || !files.length) return;
+  intakeBusy.value = true;
+  actionHint.value = null;
+  try {
+    const result = await inbox.upload(files);
+    if (result.saved) notify.success('已收入收集箱 ' + result.saved + ' 项');
+    if (result.skipped.length) setHint('error', '部分文件没存进去：' + result.skipped[0]);
+    else intakeOpen.value = false;
+  } catch (error: any) {
+    setHint('error', '保存失败：' + errText(error));
+  } finally {
+    intakeBusy.value = false;
+    input.value = '';
+  }
+}
+
+async function submitIntakeUrl(): Promise<void> {
+  const url = intakeUrl.value.trim();
+  if (!url) return;
+  intakeBusy.value = true;
+  actionHint.value = null;
+  try {
+    await inbox.fetchUrl(url);
+    intakeUrl.value = '';
+    intakeOpen.value = false;
+    notify.success('已收入收集箱');
+  } catch (error: any) {
+    setHint('error', '保存失败：' + errText(error));
+  } finally {
+    intakeBusy.value = false;
+  }
+}
+
+const receiptSubline = computed(() => {
+  const item = captureItem.value;
+  if (!item) return '分享已收到，正在同步收集箱…';
+  const source = sourceLabel(item);
+  const type = typeLabel(item);
+  const kind = source === type ? source : source + ' · ' + type;
+  return (isFresh(item) ? '刚刚' : fromNow(item.mtime)) + ' · ' + kind;
+});
+
+function captureQueryOn(): boolean {
+  // 分享桥用时间戳而不是固定 1：已经停在 /inbox 时再次分享也能触发一次回执
+  return route.query.capture !== undefined;
+}
+
+async function openCaptureReceipt(forceLoad: boolean): Promise<void> {
+  captureOpen.value = true;
+  if (forceLoad || !inbox.loaded) await inbox.load();
+  const list = [...inbox.activeItems].sort((a, b) => b.mtime - a.mtime);
+  captureItem.value = list[0] || null;
+}
+
+function clearCaptureQuery(): void {
+  if (route.query.capture === undefined) return;
+  const query = { ...route.query };
+  delete query.capture;
+  void router.replace({ path: route.path, query });
+}
+
+function dismissCapture(where: 'inbox' | 'home'): void {
+  captureOpen.value = false;
+  clearCaptureQuery();
+  if (where === 'home') void router.push('/');
+}
+
+async function undoCapture(): Promise<void> {
+  const item = captureItem.value;
+  if (!item || captureBusy.value) return;
+  captureBusy.value = true;
+  try {
+    await inbox.remove(item.path);
+    notify.success('已撤销这次保存');
+    captureOpen.value = false;
+    clearCaptureQuery();
+  } catch (error: any) {
+    const message = errText(error);
+    setHint('error', '撤销失败：' + message);
+    notify.error('撤销失败，请稍后重试');
+  } finally {
+    captureBusy.value = false;
+  }
+}
+
+function goHome(): void {
+  void router.push('/');
+}
+
+/* ===== 生命周期 ===== */
+
+function onDocKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return;
+  if (captureOpen.value) {
+    dismissCapture('inbox');
+    return;
+  }
+  if (detailPath.value) closeDetail();
+}
+
+watch(
+  () => route.query.capture,
+  (value) => {
+    if (value !== undefined) void openCaptureReceipt(true);
+    else captureOpen.value = false;
+  }
+);
+
+onMounted(async () => {
+  document.addEventListener('keydown', onDocKeydown);
+  stopBackHandler = registerBackHandler(() => {
+    if (intakeOpen.value) {
+      closeIntake();
+      return true;
+    }
+    if (captureOpen.value) {
+      dismissCapture('inbox');
+      return true;
+    }
+    if (detailPath.value) {
+      closeDetail();
+      return true;
+    }
+    return false;
+  });
+  await inbox.load();
+  syncPolling();
+  if (captureQueryOn()) await openCaptureReceipt(false);
+});
+
+onBeforeUnmount(() => {
+  disposed = true;
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = undefined;
+  stopBackHandler?.();
+  stopBackHandler = null;
+  document.removeEventListener('keydown', onDocKeydown);
+});
+</script>
+
+<style scoped>
+/*
+ * 手机端收集箱卡片台。视觉沿用 Engram 设计令牌：暖纸底、纯白卡片、Engram Blue，
+ * 不引外部图片；封面全部用 CSS 渐变 + 线性图标。宽度按 390px 手机自查过：
+ * 卡片、底部三个按钮、分组卡在 360px 可用宽度内不换行错位、不横向溢出。
+ */
+.mob-inbox {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* Home 的 .content 已让开 64px 底部导航；这里补足到 80px 的呼吸位 */
+  min-height: calc(100vh - var(--safe-top) - var(--safe-bottom) - 64px);
+  min-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 64px);
+  padding: 10px 14px calc(80px + var(--safe-bottom));
+  color: var(--text);
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(520px 260px at 92% -8%, var(--accent-soft), transparent 70%),
+    radial-gradient(420px 240px at -8% 6%, var(--warn-soft), transparent 72%);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ===== 头部 ===== */
+.mi-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: none;
+  padding: 2px 2px 0;
+}
+
+.mi-head-main {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.mi-title {
+  margin: 0;
+  font-size: 23px;
+  line-height: 1.18;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.mi-sub {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mi-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding-top: 5px;
+}
+
+.mi-iconbtn {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary);
+  transition: background 0.14s ease, color 0.14s ease, transform 0.14s ease;
+}
+
+.mi-iconbtn:active {
+  transform: scale(0.94);
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+
+.mi-iconbtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== 提示条 ===== */
+.mi-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  flex: none;
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.mi-banner svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.mi-banner span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mi-banner button {
+  flex: none;
+  min-height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.mi-banner.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.mi-banner.info {
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+}
+
+.mi-banner.info svg {
+  color: var(--accent);
+}
+
+/* ===== 分组入口 ===== */
+.mi-groups-entry {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 11px 8px 9px;
+  border: 1px solid var(--accent-border, rgba(43, 92, 230, 0.3));
+  border-radius: 12px;
+  background: var(--accent-soft);
+  text-align: left;
+  transition: background 0.14s ease;
+}
+
+.mi-groups-entry:active {
+  background: var(--bg-tertiary);
+}
+
+.mi-groups-ic {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.mi-groups-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.mi-groups-text b {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.mi-groups-go {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* ===== 卡片堆 ===== */
+.mi-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+  padding: 14px 2px 0;
+}
+
+.mi-stack {
+  position: relative;
+  display: block;
+  width: 100%;
+  /* 后面两张卡向下错开露边，这里给它们留出高度 */
+  margin-bottom: 52px;
+  /* 卡片上的横向/上滑手势自己处理：这里禁掉浏览器滚动接管 */
+  touch-action: none;
+}
+
+.mi-card {
+  position: relative;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.mi-card.front {
+  z-index: 3;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: mi-deal 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mi-card.back-1 {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  z-index: 2;
+  transform: translateY(24px) scale(0.96);
+  transform-origin: top center;
+  box-shadow: var(--shadow-raised);
+  pointer-events: none;
+}
+
+.mi-card.back-2 {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  z-index: 1;
+  transform: translateY(46px) scale(0.925);
+  transform-origin: top center;
+  box-shadow: var(--shadow-raised);
+  pointer-events: none;
+}
+
+@keyframes mi-deal {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 背面卡只当"厚度"用：正文隐藏，露出的始终是同一条白色圆角边 */
+.mi-card.back-1 .mi-card-body,
+.mi-card.back-2 .mi-card-body {
+  visibility: hidden;
+}
+
+/* 封面：类型渐变色 + 大号扩展名 / 平台名 + 线性图标，全部本地绘制 */
+.mi-cover {
+  position: relative;
+  height: 116px;
+  flex: none;
+  background: var(--cov-bg, var(--bg-tertiary));
+  color: var(--cov-fg, var(--text));
+}
+
+.mi-cover::after,
+.mi-receipt-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0 1px, transparent 1px 12px),
+    radial-gradient(120% 90% at 82% 8%, rgba(255, 255, 255, 0.3), transparent 62%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.mi-cover-kicker {
+  position: absolute;
+  left: 13px;
+  top: 11px;
+  z-index: 2;
+  max-width: calc(100% - 96px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--cov-kicker, var(--cov-fg, var(--text)));
+}
+
+.mi-cover-big {
+  position: absolute;
+  left: 12px;
+  bottom: 9px;
+  z-index: 2;
+  max-width: calc(100% - 96px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.mi-cover-icon {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+  z-index: 2;
+  opacity: var(--cov-icon-opacity, 0.5);
+}
+
+.mi-cover-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.mi-cover-progress i {
+  display: block;
+  width: 42%;
+  height: 100%;
+  background: var(--accent);
+  animation: mi-progress 1.4s ease-in-out infinite;
+}
+
+@keyframes mi-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+/* 封面配色：每类只给两个自定义属性，卡片与回执小封面共用 */
+.cov-article {
+  --cov-bg: linear-gradient(150deg, #f3e8d5, #dcc9ad 55%, #c6ad8a);
+  --cov-fg: #4b3a24;
+}
+
+.cov-doc {
+  --cov-bg: linear-gradient(145deg, #e2ebfb, #aec9ef 55%, #6e9bd8);
+  --cov-fg: #1e3d66;
+}
+
+.cov-sheet {
+  --cov-bg: linear-gradient(145deg, #e0f0e6, #a9d6bb 55%, #5aa97e);
+  --cov-fg: #14472c;
+}
+
+.cov-slide {
+  --cov-bg: linear-gradient(145deg, #fbe9dc, #f2c3a0 55%, #d98a5c);
+  --cov-fg: #5a2d12;
+}
+
+.cov-pdf {
+  --cov-bg: linear-gradient(145deg, #fbe3df, #eeb0a9 55%, #d06a60);
+  --cov-fg: #5a1913;
+}
+
+.cov-image {
+  --cov-bg: linear-gradient(145deg, #ddf1ee, #a9d6d0 55%, #5aa9a4);
+  --cov-fg: #14463f;
+}
+
+.cov-web {
+  --cov-bg: linear-gradient(145deg, #e2e8ff, #b9c8f7 55%, #7d99e8);
+  --cov-fg: #1e3a78;
+}
+
+.cov-audio {
+  --cov-bg: linear-gradient(145deg, #e9e2f7, #c4b3e6 55%, #8f74c4);
+  --cov-fg: #3a2260;
+}
+
+.cov-bili {
+  --cov-bg: linear-gradient(145deg, #ffd9e3, #f6a2ba 52%, #d94a72);
+  --cov-fg: #5c1631;
+}
+
+.cov-douyin {
+  --cov-bg: linear-gradient(160deg, #2a2c3a, #161823 58%, #3a2530);
+  --cov-fg: #ffffff;
+  --cov-kicker: rgba(255, 255, 255, 0.78);
+  --cov-icon-opacity: 0.34;
+}
+
+.cov-video {
+  --cov-bg: linear-gradient(160deg, #2e2740, #1b1726 58%, #3a2f52);
+  --cov-fg: #f2ecff;
+  --cov-kicker: rgba(242, 236, 255, 0.78);
+  --cov-icon-opacity: 0.36;
+}
+
+.cov-archive {
+  --cov-bg: linear-gradient(145deg, #eceae6, #d6d2ca 55%, #b3ada2);
+  --cov-fg: #3d3a34;
+}
+
+.cov-other {
+  --cov-bg: linear-gradient(145deg, #f0eeeb, #e0dcd6 55%, #c9c3ba);
+  --cov-fg: #3d3a34;
+}
+
+/* 卡面 */
+.mi-card-body {
+  display: flex;
+  flex-direction: column;
+  padding: 11px 14px 13px;
+}
+
+.mi-card-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.mi-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.mi-status i {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.mi-status.pending {
+  background: var(--warn-soft);
+  /* --warn 在 warn-soft 上约 4.35:1，小字换深一档的 --warning */
+  color: var(--warning);
+}
+
+.mi-status.converting {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mi-status.converting i {
+  animation: mi-pulse 1.2s ease-in-out infinite;
+}
+
+.mi-status.converted {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.mi-status.adopted {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.mi-status.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+@keyframes mi-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.75);
+  }
+}
+
+.mi-fresh {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.mi-time {
+  margin-left: auto;
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.mi-card-title {
+  margin: 8px 0 0;
+  font-size: 16.5px;
+  line-height: 1.42;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.mi-card-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.mi-card-note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.mi-card-note span {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.mi-card-note.error {
+  color: var(--danger);
+}
+
+.mi-card-note.error svg {
+  color: var(--danger);
+}
+
+.mi-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 9px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.mi-meta-item {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 拖拽时的印章：右滑 / 左滑 / 上滑各一种语气 */
+.mi-stamp {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border: 2px solid currentColor;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  transform: rotate(-10deg);
+  box-shadow: 0 6px 18px rgba(29, 27, 23, 0.16);
+}
+
+.mi-stamp.is-in {
+  color: var(--success);
+}
+
+.mi-stamp.is-drop {
+  color: var(--danger);
+}
+
+.mi-stamp.is-later {
+  color: var(--accent);
+}
+
+.mi-gesture {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: none;
+  padding: 2px 4px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.mi-gesture svg {
+  flex: none;
+}
+
+/* ===== 底部操作（手势的无障碍替代） ===== */
+.mi-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  flex: none;
+  margin-top: 10px;
+  padding: 0 2px;
+}
+
+.mi-bar-main {
+  min-width: 0;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  overflow: hidden;
+  border-radius: 13px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  box-shadow: 0 10px 22px -14px rgba(43, 92, 230, 0.7);
+  transition: background 0.14s ease, transform 0.12s ease;
+}
+
+.mi-bar-main:active {
+  transform: scale(0.985);
+  background: var(--accent-hover);
+}
+
+.mi-bar-main:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.mi-bar-sub {
+  min-width: 0;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 13px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mi-bar-sub:active {
+  background: var(--bg-secondary);
+}
+
+.mi-bar-sub:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mi-bar-danger {
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 10px;
+  border-radius: 13px;
+  color: var(--danger);
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mi-bar-danger:active {
+  background: var(--danger-soft);
+}
+
+.mi-bar-danger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 分组视图底部只放「逐条看 / 刷新」两个动作 */
+.mi-bar-groups {
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  margin-top: auto;
+  padding-top: 14px;
+}
+
+/* ===== 分组视图 ===== */
+.mi-groups-note {
+  flex: none;
+  margin: 12px 2px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.mi-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.mi-group {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.mi-group-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.mi-group-ic {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mi-group-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.mi-group-name h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.mi-group-name p {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.mi-group-count {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mi-group-items {
+  list-style: none;
+  display: grid;
+  gap: 3px;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.mi-group-items li {
+  position: relative;
+  padding-left: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.mi-group-items li::before {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: 8px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.mi-group-items li.mi-more {
+  padding-left: 0;
+  color: var(--text-faint);
+}
+
+.mi-group-items li.mi-more::before {
+  display: none;
+}
+
+.mi-group-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mi-group-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mi-group-btns {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+
+.mi-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mi-mini.primary {
+  border-color: var(--accent-border, rgba(43, 92, 230, 0.3));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mi-mini.success {
+  border-color: transparent;
+  background: var(--success);
+  color: #ffffff;
+}
+
+.mi-mini:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== 空态 / 加载 ===== */
+.mi-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.mi-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 18px 8px;
+  text-align: center;
+}
+
+.mi-zero {
+  width: 96px;
+  height: 96px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.mi-empty h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.mi-empty p {
+  max-width: 310px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.mi-stats {
+  display: flex;
+  width: 100%;
+  max-width: 330px;
+  margin-top: 14px;
+  padding: 13px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-raised);
+}
+
+.mi-stat {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+
+.mi-stat + .mi-stat {
+  border-left: 1px solid var(--border);
+}
+
+.mi-stat b {
+  display: block;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.mi-stat span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.mi-empty-btn {
+  min-width: 180px;
+  height: 46px;
+  margin-top: 16px;
+  border-radius: 13px;
+  font-size: 15px;
+  justify-content: center;
+}
+
+/* ===== 底部 sheet（详情 / 分享回执） ===== */
+.mi-dim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: rgba(20, 18, 15, 0.42);
+  animation: mi-fade 0.2s ease both;
+}
+
+.mi-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: calc(var(--z-overlay) + 1);
+  max-height: 86dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 16px calc(18px + var(--safe-bottom));
+  border-radius: 24px 24px 0 0;
+  background: var(--card-bg);
+  box-shadow: 0 -18px 60px -20px rgba(20, 18, 15, 0.35);
+  animation: mi-sheet-up 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.mi-sheet-grab {
+  width: 38px;
+  height: 4px;
+  margin: 4px auto 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+@keyframes mi-sheet-up {
+  from {
+    transform: translateY(105%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes mi-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 详情 */
+.mi-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mi-detail-head-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.mi-detail-head-main h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.mi-detail-head-main p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.mi-detail-rows {
+  display: grid;
+  gap: 1px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.mi-detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 11px;
+  background: var(--bg-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.mi-detail-row > span {
+  flex: none;
+  width: 68px;
+  color: var(--text-secondary);
+}
+
+.mi-detail-row b {
+  flex: 1;
+  min-width: 0;
+  font-weight: 550;
+  color: var(--text);
+}
+
+.mi-detail-row b.mi-wrap {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.mi-detail-row b a {
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.mi-detail-row.error,
+.mi-detail-row.error b {
+  color: var(--danger);
+}
+
+.mi-detail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.mi-detail-primary {
+  width: 100%;
+  height: 46px;
+  border-radius: 12px;
+  justify-content: center;
+  font-size: 14.5px;
+}
+
+.mi-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.mi-detail-grid .btn {
+  min-height: 44px;
+  height: auto;
+  padding: 8px 10px;
+  border-radius: 11px;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: normal;
+  text-align: center;
+}
+
+.mi-detail-grid .btn.danger {
+  color: var(--danger);
+}
+
+/* 分享落袋回执 */
+.mi-receipt-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.mi-check {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.mi-receipt-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.mi-receipt-title h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.mi-receipt-title p {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mi-receipt-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+
+.mi-receipt-cover {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--cov-bg, var(--bg-tertiary));
+  color: var(--cov-fg, var(--text));
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.mi-receipt-cover::after {
+  border-radius: 10px;
+}
+
+.mi-receipt-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mi-receipt-card-main b {
+  font-size: 13.5px;
+  font-weight: 650;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.mi-receipt-card-main span {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mi-receipt-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 14px 12px;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.mi-receipt-queue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 11px;
+  border-radius: 11px;
+  background: var(--accent-soft);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.mi-receipt-queue svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.mi-receipt-queue b {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.mi-receipt-note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.mi-receipt-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mi-receipt-actions .btn {
+  width: 100%;
+  height: 46px;
+  border-radius: 12px;
+  justify-content: center;
+  font-size: 14.5px;
+}
+
+.mi-receipt-undo {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 0;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.mi-receipt-undo:active {
+  background: var(--bg-hover);
+}
+
+.mi-receipt-undo:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 深色主题：强调色在 accent-soft 底上只有 4.49:1，小字统一提亮一档到可读阈值以上 */
+html.dark .mi-fresh,
+html.dark .mi-mini.primary,
+html.dark .mi-status.converting,
+html.dark .mi-groups-go,
+html.dark .mi-groups-text b,
+html.dark .mi-group-count,
+html.dark .mi-receipt-queue b {
+  color: #9cc4ff;
+}
+
+html.dark .mi-groups-entry {
+  background: var(--accent-soft);
+}
+
+html.dark .mi-mini.success {
+  color: #0d1f0b;
+}
+
+/* 极窄屏：底部三个按钮的文案不再挤在一行 */
+/* ===== 手动补录 sheet ===== */
+.mi-file-input { display: none; }
+
+.mi-intake {
+  padding-bottom: calc(22px + var(--safe-bottom));
+}
+
+.mi-intake-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.mi-intake-head h2 {
+  flex: 1;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.mi-intake-file {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  text-align: left;
+}
+
+.mi-intake-file:active { transform: scale(0.995); }
+
+.mi-intake-ic {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mi-intake-file-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mi-intake-file-text b { font-size: 14px; font-weight: 650; }
+.mi-intake-file-text small { font-size: 11.5px; line-height: 1.45; color: var(--text-secondary); }
+
+.mi-intake-url {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mi-intake-url input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--bg-secondary);
+  font-size: 13.5px;
+}
+
+.mi-intake-url input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.mi-intake-url .btn { height: 42px; border-radius: 11px; }
+
+.mi-intake-note {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-top: 10px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.mi-intake-note .ic { flex: none; margin-top: 2px; }
+
+@media (max-width: 640px) {
+  .mi-bar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+
+  .mi-bar-main {
+    font-size: 14px;
+  }
+
+  .mi-bar-sub,
+  .mi-bar-danger {
+    font-size: 12.5px;
+  }
+}
+</style>

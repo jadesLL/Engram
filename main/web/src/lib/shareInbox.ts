@@ -13,7 +13,8 @@ export function installShareInboxReceiver(): () => void {
   const inbox = useInboxStore();
   const delivery = createShareInboxDelivery({
     ready: () => auth.authed && router.currentRoute.value.path !== '/login',
-    open: async () => { await router.push('/inbox'); },
+    // capture 用时间戳而不是固定 1：已经在 /inbox 时再次分享也能触发落袋回执。
+    open: async () => { await router.push({ path: '/inbox', query: { capture: String(Date.now()) } }); },
     refresh: () => inbox.load(),
   });
   window.__engramShareInbox = delivery.receive;
