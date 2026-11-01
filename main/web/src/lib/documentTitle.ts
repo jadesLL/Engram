@@ -47,3 +47,15 @@ export function editedDocumentTitle(original: string, name: string, date: string
   const prefix = date === parts.date ? parts.prefix : date ? `${date.replace(/-/g, '.')}_` : '';
   return `${prefix}${nextName}${parts.extension}`;
 }
+/**
+ * 原始资料行的展示名：先拆日期前缀（YYYY.MM.DD_ / YYYY-MM-DD_ 等），再把扩展名从标题里去掉——
+ * 文件类型由行首图标表达，标题里再带 `.txt` / `.pdf` 会像在读原文件名（用户报障）。
+ * 只对认识的扩展名生效，标题里本来就带点的（如「型号 V5.3」）不会被误伤。
+ */
+const DISPLAY_FILE_EXT = /\.(?:md|markdown|txt|pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|svg|bmp|heic|zip|rar|7z|mp3|m4a|wav|mp4|mov)$/i;
+
+export function documentFileTitle(value: string): DocumentTitleParts {
+  const parts = documentTitleParts(value);
+  const display = parts.name.replace(DISPLAY_FILE_EXT, '').trim();
+  return { ...parts, name: display || parts.name };
+}

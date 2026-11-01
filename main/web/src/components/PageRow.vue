@@ -4,17 +4,23 @@
     :class="{ active, selected }"
     role="button"
     tabindex="0"
-    draggable="true"
+    :draggable="!touch"
     @click="onClick"
     @keydown.enter.self="onClick"
     @keydown.space.self.prevent="onClick"
     @dragstart="onDragStart"
     @dragend="$emit('drag-end')"
     @contextmenu.prevent="onContextMenu"
+    @pointerdown="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="endPress"
+    @pointercancel="endPress"
+    @pointerleave="endPress"
   >
     <span
       class="check"
       :class="{ visible: selectionMode || selected }"
+      @pointerdown.stop
       @click.stop="$emit('toggle-select', page)"
     >
       <Icon v-if="selected" name="check" :size="11" />
@@ -52,6 +58,7 @@
         class="row-kebab"
         type="button"
         aria-label="更多操作"
+        @pointerdown.stop
         @click.stop="onKebab"
       >
         <Icon name="more" :size="15" />
@@ -64,6 +71,9 @@
 import { computed } from 'vue';
 import Icon from './Icon.vue';
 import { relativeTimeText } from '../lib/pageTime';
+import { isTouchPointer, useTouchPointer } from '../lib/pointer';
+import { createLongPress } from '../lib/longPress';
+import { haptic } from '../lib/haptics';
 
 const props = defineProps<{
   page: any;
@@ -71,18 +81,52 @@ const props = defineProps<{
   selected?: boolean;
   selectionMode?: boolean;
 }>();
-const emit = defineEmits(['open', 'archive', 'unarchive', 'remove', 'toggle-select', 'drag-start', 'drag-end', 'context-menu']);
+const emit = defineEmits([
+  'open', 'archive', 'unarchive', 'remove', 'toggle-select',
+  'drag-start', 'drag-end', 'context-menu', 'long-press',
+]);
+
+/**
+ * 触屏（无 hover + 粗指针）：拖拽、右键都不可用，改用「长按 500ms 进多选 + 行尾 ⋯ 菜单」。
+ * 桌面端完全不受影响（指针是 mouse 时 drag/右键照旧）。
+ */
+const touch = useTouchPointer();
 
 /** 下载走 /api/files/download：页面正文引用的图片一并打包成 zip（页面 + assets/）。
  *  文件名交给 Content-Disposition，加 download 属性会把 zip 存成 .md。 */
 const downloadUrl = computed(() => `/api/files/download?path=${encodeURIComponent(props.page.path)}`);
 
+const longPress = createLongPress({
+  onLongPress: () => {
+    haptic('tap');
+    emit('long-press', props.page);
+  },
+});
+
+function onPointerDown(e: PointerEvent) {
+  longPress.start(e);
+}
+
+function onPointerMove(e: PointerEvent) {
+  longPress.move(e);
+}
+
+function endPress() {
+  longPress.end();
+}
+
 function onClick() {
+  // 长按松手后的那一次 click 要吞掉：否则刚进选择态又被自己取消
+  if (longPress.consumeClick()) return;
   if (props.selectionMode) emit('toggle-select', props.page);
   else emit('open', props.page);
 }
 
 function onDragStart(e: DragEvent) {
+  if (touch.value) {
+    e.preventDefault();
+    return;
+  }
   if (!e.dataTransfer) return;
   e.dataTransfer.setData('text/plain', props.page.id);
   e.dataTransfer.effectAllowed = 'move';
@@ -90,6 +134,9 @@ function onDragStart(e: DragEvent) {
 }
 
 function onContextMenu(e: MouseEvent) {
+  e.preventDefault();
+  // 触屏：长按是多选，菜单走行尾 ⋯（WebView 的长按也会派发 contextmenu，不能在这里再开一层）
+  if (isTouchPointer()) return;
   emit('context-menu', { x: e.clientX, y: e.clientY, page: props.page });
 }
 
@@ -116,6 +163,13 @@ const timeText = computed(() => relativeTimeText(props.page.updated_at));
   font-size: 12.5px;
   outline: none;
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+  /* 触屏上纵向滑动列表不要被行内手势接管；长按判定自己处理横向漂移。
+     同时关掉 WebView 原生文本选择：否则长按行标题会与 App 的长按多选同时触发，
+     松手后残留两个系统选择手柄（真机验收观察项）。 */
+  touch-action: pan-y;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .page-row:hover { background: var(--sidebar-hover); }
 .page-row:focus-visible { box-shadow: inset 0 0 0 2px var(--sidebar-accent); }
@@ -136,6 +190,7 @@ const timeText = computed(() => relativeTimeText(props.page.updated_at));
   background: var(--sidebar-accent);
 }
 .page-row.selected { background: var(--sidebar-selection-strong); }
+.page-row.long-pressing { background: var(--press-bg); }
 .check {
   width: 14px;
   height: 14px;
@@ -261,27 +316,17 @@ const timeText = computed(() => relativeTimeText(props.page.updated_at));
   /* 行尾只剩一颗 ⋯：trailing 占位从 64px 收到 30px */
   .row-trailing { width: 30px; }
 
-  /* 勾选框：桌面靠 hover 才露出来，触屏没有 hover，不常显就永远看不见——
-     而它是进入多选（Sidebar 的 selectionMode 由「已选中集合非空」推导）的唯一入口，
-     所以触屏必须常显。14px 的方块手指按不准，热区靠透明伪元素铺到行首 44px；
-     纵向吃满整行（行高已抬到 40px），再往外扩就会盖住上下相邻行，
-     在密集列表里点勾选会变成勾隔壁那条。 */
-  .check {
-    position: relative;
-    opacity: 1;
-    /* 常显的勾选框用最浅一档描边：一列 10 个空方块很容易抢走标题的注意力 */
+  /*
+   * 多选勾选框只在「已经进入多选」时出现（长按任意行进入，或行尾 ⋯ → 多选）。
+   * 旧版在触屏上常显方框：整列 40 行都是空框，既像文件管理器又白吃 44px 行首宽度，
+   * 标题被挤到两行还不够。桌面端仍保持 hover 才露出。
+   */
+  .check { display: none; }
+  .check.visible {
+    display: flex;
     border-color: var(--border);
+    opacity: 1;
   }
-  .check::after {
-    content: '';
-    position: absolute;
-    top: -8px;
-    bottom: -8px;
-    left: -6px;
-    right: -24px;
-  }
-  /* 标题让开热区：44px 已经盖到标题原来的起点，不让开就成了「点标题变成勾选」 */
-  .page-title { margin-left: 24px; }
 
   /* 目录栏文字显示不全（用户报障）：单行省略号把 20 个字的页面名截成
      「华北区域经销商年度对账与返…」，一排页面看着一模一样，根本选不出要开哪一篇。

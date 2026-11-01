@@ -34,7 +34,7 @@
         v-tooltip.right="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
         :aria-label="app.sidebarOpen ? '收起侧栏' : '展开侧栏'"
         :aria-pressed="app.sidebarOpen"
-        @click="app.sidebarOpen = !app.sidebarOpen"
+        @click="toggleSidebar"
       >
         <Icon name="pages" :size="19" />
       </button>
@@ -105,7 +105,7 @@
         :style="{ width: sidebarWidth + 'px' }"
         aria-label="知识库侧边栏"
       >
-        <Sidebar ref="sidebarRef" :inline="mediumTwoPane" @close="app.sidebarOpen = false" @new-page="quickNew" />
+        <Sidebar ref="sidebarRef" :inline="mediumTwoPane" :compact="sizeClass === 'compact'" @close="closeSidebar()" @new-page="quickNew" />
       </aside>
     </transition>
     <!-- 拖动分隔条：桌面端 232–420px，且不超过窗口宽度的 40%（满窗时目录已铺满，分隔条让位） -->
@@ -128,7 +128,7 @@
       @keydown.end.prevent="setSidebarWidth(sidebarMaxWidth)"
     />
     <transition name="fade">
-      <div v-if="app.sidebarOpen && sidebarOverlay && !app.sidebarFull" class="mask" @click="app.sidebarOpen = false" />
+      <div v-if="app.sidebarOpen && sidebarOverlay && !app.sidebarFull" class="mask" @click="closeSidebar()" />
     </transition>
 
     <!-- 主内容区：下拉刷新指示器挂在滚动容器里，只有 ≤839 触屏的顶层页会出现 -->
@@ -372,7 +372,7 @@ import { promptDialog } from '../lib/confirm';
 import { createIdeaNote } from '../lib/quickNote';
 import { loadRuntimeCapabilities, useRuntimeCapabilities } from '../lib/capabilities';
 import { haptic } from '../lib/haptics';
-import { useTouchPointer } from '../lib/pointer';
+import { isTouchPointer, useTouchPointer } from '../lib/pointer';
 import { syncStatusView } from '../lib/syncStatus';
 import { syncChannelView } from '../lib/syncChannel';
 import { windowSizeClassFor } from '../lib/windowSizeClass';
@@ -465,7 +465,7 @@ function installSidebarSwipe(el: HTMLElement) {
     el.style.transition = 'transform 180ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
     el.style.transform = '';
     el.style.opacity = '';
-    if (shouldClose) app.sidebarOpen = false;
+    if (shouldClose) closeSidebar();
     window.setTimeout(() => {
       el.style.transition = '';
     }, 220);
@@ -534,8 +534,18 @@ const tabletopEditorOpen = computed(() =>
  * medium 双栏（2026-11 安卓改版）：目录抽屉打开时不再全屏遮罩，改成「常驻窄栏 + 内容并排」；
  * 关闭时回到单栏（rail 保持）。满窗目录（sidebar-full）仍独占正文。
  */
+/**
+ * medium 双栏的宽度门槛：600–719 只比手机宽一点，再切一条 280px 常驻栏后正文只剩 240px，
+ * 两边都不好用；这段仍然走抽屉（抽屉展开后能盖住大部分屏幕），≥720 才并排。
+ * 720 是「双栏最小可用宽度」而不是新的窗口尺寸档，不改 windowSizeClass 的 600/840。
+ */
+const MEDIUM_TWO_PANE_MIN = 720;
 const mediumTwoPane = computed(() =>
-  sizeClass.value === 'medium' && app.sidebarOpen && !app.sidebarFull && !tabletop.value
+  sizeClass.value === 'medium'
+  && viewportWidth.value >= MEDIUM_TWO_PANE_MIN
+  && app.sidebarOpen
+  && !app.sidebarFull
+  && !tabletop.value
 );
 
 /** 尺寸等级 / 桌面姿态变了：收掉浮层面板与未完成的下拉手势，避免跨形态留下无入口的浮层 */
@@ -558,11 +568,23 @@ function clampSidebarWidth(width: number) {
 }
 
 const storedSidebarWidth = Number(localStorage.getItem('sidebarWidth'));
+/*
+ * 启动时不要按视口宽度 clamp：手机/折叠屏合上时窗口只有 390px，0.4 倍宽会把 280 压成 232，
+ * 这个值会一路带到大屏和折叠屏展开后的常驻栏，侧栏就变成「比桌面版窄一截、类目名被挤没」。
+ * 视口只约束可拖范围：抽屉档由 CSS 自己决定宽度，展开到常驻栏时 onWindowResize 再 clamp。
+ */
 const sidebarWidth = ref(
-  clampSidebarWidth(Number.isFinite(storedSidebarWidth) && storedSidebarWidth > 0
-    ? storedSidebarWidth
-    : DEFAULT_SIDEBAR)
+  Number.isFinite(storedSidebarWidth) && storedSidebarWidth > 0
+    ? Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, storedSidebarWidth))
+    : DEFAULT_SIDEBAR
 );
+/*
+ * 触屏端没有拖宽手柄（手指按不准 8px 竖条，见样式里的 .resizer 隐藏），保留的宽度偏好只可能是
+ * 旧版本在手机窄窗里被夹出来的 232。升级后第一次启动直接按桌面默认 280 起，避免「升级了还是窄」。
+ */
+if (isTouchPointer() && sidebarWidth.value < DEFAULT_SIDEBAR) {
+  sidebarWidth.value = DEFAULT_SIDEBAR;
+}
 /** 是否正在拖侧栏宽度：拖动中不做几何过渡，见 startResize */
 const sidebarResizing = ref(false);
 
@@ -627,6 +649,22 @@ function onWindowResize() {
 const isActive = (p: string) => route.path.startsWith(p);
 
 /**
+ * 收起侧栏（唯一的关闭入口）：`sidebarOpen` 与 `sidebarFull` 必须一起清。
+ * 旧写法在返回键 / 底栏「首页」/ 左滑 / 遮罩里只清 `sidebarOpen`，满窗状态还留着，
+ * 而 `.layout.sidebar-full .content { pointer-events: none }` 会让正文整块点不动。
+ */
+function closeSidebar() {
+  if (app.sidebarFull) app.setSidebarFull(false);
+  app.sidebarOpen = false;
+}
+
+/** rail 的侧栏开关：开着就关（连同满窗），关着就开 */
+function toggleSidebar() {
+  if (app.sidebarOpen) closeSidebar();
+  else app.sidebarOpen = true;
+}
+
+/**
  * 导航到别的内容：先把内置 Agent 最小化（满窗时它正盖着正文），再跳转。
  * 路由 afterEach 兜的是「任何导航」（侧栏页面、搜索结果、双链、返回轨迹都不经过这里），
  * 这里显式再来一次，是为了「已经在这一页时再点一次图标」也能把 Agent 收下去——
@@ -678,7 +716,7 @@ const moreOpen = ref(false);
 
 /** 知识库抽屉在手机上是浮层：切到别的标签时顺手收起，免得盖住刚切过去的页面 */
 function closeLibraryDrawer() {
-  if (app.sidebarOpen) app.sidebarOpen = false;
+  if (app.sidebarOpen) closeSidebar();
 }
 
 interface BottomNavItem {
@@ -1249,8 +1287,12 @@ onMounted(() => {
       app.toggleChat(false);
       return true;
     }
+    if (app.sidebarFull) {
+      closeSidebar();
+      return true;
+    }
     if (app.sidebarOpen) {
-      app.sidebarOpen = false;
+      closeSidebar();
       return true;
     }
     return false;
@@ -1967,6 +2009,20 @@ html.kb-open .new-fab { display: none; }
     padding-left: 0;
   }
 
+  /* 手机满窗目录：compact 档没有 rail，不能像桌面那样从 64px 起步（左侧会空出一条），
+     同时底栏在满窗下必须让位——否则会盖住目录最下面几行，且「收回」只剩一个入口。 */
+  .layout.size-compact.sidebar-full .sidebar {
+    top: calc(8px + var(--safe-top));
+    bottom: calc(8px + var(--safe-bottom));
+    left: calc(8px + var(--safe-left));
+    width: calc(100% - 16px - var(--safe-left) - var(--safe-right)) !important;
+    border-radius: 12px;
+  }
+
+  .layout.size-compact.sidebar-full .bottom-nav {
+    display: none;
+  }
+
   .bottom-nav {
     position: fixed;
     right: calc(8px + var(--safe-right));
@@ -2361,16 +2417,21 @@ html.kb-open .new-fab { display: none; }
 .layout.size-medium .new-fab { bottom: calc(24px + var(--safe-bottom)); }
 
 /* ===== medium 双栏（2026-11 折叠屏展开）：目录打开时并排常驻，不再全屏遮罩 =====
- * 分界方式：默认按 40% / 60% 回退（普通浏览器 / 拿不到折痕数据时）；
- * 支持 Viewport Segments 的竖折设备（左右两段）把分界对齐铰链，两侧各 6px、合计 12px 安全缝。
- * 关闭目录即回单栏；rail 保持不变，右栏一直可点可滚（下面的 .mask 规则保证不盖遮罩）。
+ * 宽度不再按 40% 减图标栏算（600px 时只剩 174px、700px 时 214px，类目名会被 44px 触控按钮
+ * 挤到 0 宽）：改成「可用的常驻栏宽度」clamp(280px, 38vw, 340px)，右栏拿到剩余宽度。
+ * 支持 Viewport Segments 的竖折设备（左右两段）把分界对齐铰链，两侧各留 6px 安全缝；
+ * 拿不到折痕数据时用 38vw 回退。关闭目录即回单栏；rail 保持不变，右栏一直可点可滚。
  */
+.layout.size-medium.two-pane {
+  --kb-pane: clamp(280px, 38vw, 340px);
+}
+
 .layout.size-medium.two-pane:not(.sidebar-full) .sidebar {
   position: fixed;
   top: calc(8px + var(--win-titlebar-h, 0px) + var(--safe-top));
   bottom: calc(8px + var(--safe-bottom));
   left: calc(60px + var(--safe-left));
-  width: calc(40% - 66px - var(--safe-left)) !important;
+  width: var(--kb-pane) !important;
   max-width: 400px;
   border-right: 1px solid var(--sidebar-glass-border);
   box-shadow: var(--sidebar-mobile-shadow);
@@ -2379,7 +2440,7 @@ html.kb-open .new-fab { display: none; }
 
 .layout.size-medium.two-pane .content,
 .layout.size-medium.two-pane.sidebar-open .content {
-  padding-left: calc(40% + 6px + var(--safe-left));
+  padding-left: calc(var(--kb-pane) + 66px + var(--safe-left));
   padding-bottom: var(--safe-bottom);
 }
 
@@ -2387,23 +2448,21 @@ html.kb-open .new-fab { display: none; }
 .layout.size-medium.two-pane .mask { display: none; }
 
 /*
- * 折痕对齐：竖折（vertical-viewport-segments: 2）时用 viewport-segment-left 1 0 作为铰链位置。
- * env() 带 40% 兜底：真机/浏览器给不出折痕数据时仍落在 40% 那条线上。
+ * 折痕对齐：竖折（vertical-viewport-segments: 2）时用 viewport-segment-left 1 0 作为铰链位置，
+ * 分界落在「铰链 - rail - 12px 安全缝」上；夹在 280–340px 之间，铰链太靠左时右栏仍可用。
  * 真机待核：Pixel Fold / 三星 Fold 的 WebView 是否上报该媒体特性与段信息。
  */
 @media (vertical-viewport-segments: 2) {
-  .layout.size-medium.two-pane:not(.sidebar-full) .sidebar {
-    width: calc(env(viewport-segment-left 1 0, 40%) - 66px - var(--safe-left)) !important;
-  }
-
-  .layout.size-medium.two-pane .content,
-  .layout.size-medium.two-pane.sidebar-open .content {
-    padding-left: calc(env(viewport-segment-left 1 0, 40%) + 6px + var(--safe-left));
+  .layout.size-medium.two-pane {
+    --kb-pane: clamp(280px, calc(env(viewport-segment-left 1 0, 38vw) - 66px), 340px);
   }
 }
 
 /* 触屏（折叠屏内屏 / 平板 / 横屏手机）：rail 图标用不可见热区补到 44px，视觉尺寸不变 */
 @media (hover: none) and (pointer: coarse) {
+  /* 拖宽手柄在触屏上是死控件：手指按不中 8px 竖条，还容易被误当成滚动边界 */
+  .resizer { display: none; }
+
   .layout.size-medium .rail-btn,
   .layout.size-expanded .rail-btn {
     width: 36px;

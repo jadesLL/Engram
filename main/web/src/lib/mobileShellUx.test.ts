@@ -101,8 +101,8 @@ test('点目录里的条目后自动收回抽屉（只在浮层档），桌面�
   );
   assert.match(
     sidebar,
-    /withDefaults\(defineProps<\{ inline\?: boolean \}>/,
-    'Sidebar 没有 inline（并排常驻）属性',
+    /withDefaults\(defineProps<\{ inline\?: boolean; compact\?: boolean \}>/,
+    'Sidebar 没有 inline（并排常驻）/ compact（手机档）属性',
   );
   for (const handler of ['openPage', 'openFile']) {
     const body = sidebar.match(new RegExp(`function ${handler}\\([^)]*\\) \\{([\\s\\S]*?)\\n\\}`));
@@ -472,42 +472,41 @@ test('新建 FAB：≤839 首页、抽屉收起时出现，面板四件事可点
 
 // ---------------------------------------------------------------- 折叠屏与手机编辑（2026-11 阶段三）
 
-test('medium 双栏：目录打开时并排常驻（无遮罩），按折痕对齐并以 40%/60% 回退', () => {
+test('medium 双栏：目录打开时并排常驻（无遮罩），≥720 才启用并按可用宽度 clamp', () => {
   const home = readSrc('views/Home.vue');
+  // 680/700 这类「比手机宽一点」的窗口如果直接切双栏，280px 常驻栏会把正文挤到 300 出头；
+  // 门槛放在 720，以下仍走抽屉。这是布局门槛，不是新的窗口尺寸档（600/840 不变）。
+  assert.match(home, /const MEDIUM_TWO_PANE_MIN = 720;/, '缺少 medium 双栏的最小可用宽度门槛');
   assert.match(
     home,
-    /const mediumTwoPane = computed\(\(\) =>\s*sizeClass\.value === 'medium' && app\.sidebarOpen && !app\.sidebarFull && !tabletop\.value/,
-    'medium 双栏判定缺失：目录打开时仍会全屏遮罩',
+    /const mediumTwoPane = computed\(\(\) =>[\s\S]{0,260}?viewportWidth\.value >= MEDIUM_TWO_PANE_MIN/,
+    'medium 双栏判定缺失门槛：680px 也会切双栏，两边都不好用',
   );
   assert.match(home, /'two-pane': mediumTwoPane/, 'layout 上没有挂 two-pane 类');
   assert.match(home, /<Sidebar ref="sidebarRef" :inline="mediumTwoPane"/, 'Sidebar 没有收到 inline（并排常驻）标记');
-  // 两栏几何：默认按 40% / 60% 回退
+  // 两栏几何：常驻栏用 clamp(280px, 38vw, 340px)，右栏按同一变量让位
   const at = home.indexOf('medium 双栏（2026-11 折叠屏展开）');
   assert.ok(at >= 0, '找不到 medium 双栏样式段');
   const css = home.slice(at, home.indexOf('折痕对齐', at));
+  assert.match(css, /--kb-pane: clamp\(280px, 38vw, 340px\)/, '常驻栏没有按可用宽度 clamp：600–839 会窄到放不下类目名');
   assert.match(
     css,
-    /\.layout\.size-medium\.two-pane:not\(\.sidebar-full\) \.sidebar \{[\s\S]{0,320}?width: calc\(40% - 66px - var\(--safe-left\)\) !important/,
-    '两栏没有按 40% 回退：拿不到折痕数据时右栏宽度会乱',
+    /\.layout\.size-medium\.two-pane:not\(\.sidebar-full\) \.sidebar \{[\s\S]{0,320}?width: var\(--kb-pane\) !important/,
+    '两栏没有用 --kb-pane：拿不到折痕数据时宽度会乱',
   );
   assert.match(
     css,
-    /\.layout\.size-medium\.two-pane \.content,[\s\S]{0,140}?padding-left: calc\(40% \+ 6px \+ var\(--safe-left\)\)/,
-    '两栏右侧内容没有让开左栏 + 12px 安全缝',
+    /\.layout\.size-medium\.two-pane \.content,[\s\S]{0,140}?padding-left: calc\(var\(--kb-pane\) \+ 66px \+ var\(--safe-left\)\)/,
+    '两栏右侧内容没有让开左栏 + rail 安全缝',
   );
   assert.match(css, /\.layout\.size-medium\.two-pane \.mask \{ display: none; \}/, '两栏并排还盖着遮罩：右栏点不到');
-  // 折痕：Viewport Segments 可用时对齐铰链，env() 带 40% 兜底
+  // 折痕：Viewport Segments 可用时对齐铰链，并夹在 280–340 之间
   const hinge = home.slice(home.indexOf('折痕对齐'));
   assert.match(hinge, /@media \(vertical-viewport-segments: 2\)/, '没有按竖折的 Viewport Segments 对齐折痕');
   assert.match(
     hinge,
-    /width: calc\(env\(viewport-segment-left 1 0, 40%\) - 66px - var\(--safe-left\)\) !important/,
-    '折痕对齐没有用 env(viewport-segment-left, 40% 兜底)',
-  );
-  assert.match(
-    hinge,
-    /padding-left: calc\(env\(viewport-segment-left 1 0, 40%\) \+ 6px \+ var\(--safe-left\)\)/,
-    '折痕另一侧没有让开 6px 安全缝',
+    /--kb-pane: clamp\(280px, calc\(env\(viewport-segment-left 1 0, 38vw\) - 66px\), 340px\)/,
+    '折痕对齐没有用 env(viewport-segment-left) 并夹在可用宽度之间',
   );
 });
 
