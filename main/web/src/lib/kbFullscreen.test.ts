@@ -34,7 +34,9 @@ function ruleBody(source: string, selector: string): string {
 }
 
 test('标题栏有满窗入口：maximize 图标 + 满窗提示 + aria-pressed', () => {
-  const button = sidebar.match(/<button\s+class="sidebar-full"[\s\S]*?<\/button>/);
+  // 手机档（compact）不出现满窗入口（底栏会压住目录、入口也没有第二条退出路径），桌面/平板仍在
+  assert.match(sidebar, /<button\s+v-if="!props\.compact"\s+class="sidebar-full"/, '满窗入口没有按 compact 档隐藏：手机抽屉上会多出一条没法退回的满屏目录');
+  const button = sidebar.match(/<button[^>]*class="sidebar-full"[\s\S]*?<\/button>/);
   assert.ok(button, 'Sidebar.vue 里没有 .sidebar-full 入口按钮');
   const markup = button ? button[0] : '';
   assert.match(markup, /name="maximize"/, '入口按钮不是 maximize 图标');
@@ -74,10 +76,16 @@ test('几何：满窗铺满正文区、保留图标栏，并盖过紧凑档的 4
   assert.match(ruleBody(home, '.layout.sidebar-full .content'), /pointer-events:\s*none/, '正文没让位（满窗下会被误点）');
   // 满窗时窄栏那套留在 DOM 里不出声，回来时滚动位置还是原样
   assert.match(ruleBody(sidebar, '.sidebar-inner.is-full'), /display:\s*none/, '满窗时窄栏那套没有隐藏');
+  // 手机档（compact）没有 rail：满窗不能像桌面那样从 64px 起步，底栏也要让位
+  assert.match(home, /\.layout\.size-compact\.sidebar-full \.sidebar \{[\s\S]{0,260}?left: calc\(8px \+ var\(--safe-left\)\)/, '手机满窗没有去掉桌面 rail 的 64px 左边距');
+  assert.match(home, /\.layout\.size-compact\.sidebar-full \.bottom-nav \{\s*display:\s*none;\s*\}/, '手机满窗时底栏还盖在目录底部');
 });
 
-test('收回：Esc、按钮、以及「满窗里导航就自动收回」三条路都在', () => {
+test('收回：Esc、按钮、返回键与「满窗里导航就自动收回」四条路都在', () => {
   assert.match(home, /e\.key === 'Escape' && app\.sidebarFull/, 'Home.vue 的全局 Esc 没有处理满窗');
+  // 返回键 / 底栏首页 / 左滑 / 遮罩都走 closeSidebar()：只清 sidebarOpen 会让正文停在 pointer-events:none
+  assert.match(home, /function closeSidebar\(\) \{[\s\S]{0,180}?app\.setSidebarFull\(false\);[\s\S]{0,120}?app\.sidebarOpen = false;/, '没有统一关闭侧栏的 closeSidebar（满窗状态会残留）');
+  assert.match(home, /if \(app\.sidebarFull\) \{\s*closeSidebar\(\);\s*return true;/, '返回键没有先退出满窗');
   assert.match(sidebar, /function exitFull\(\)[\s\S]*?app\.setSidebarFull\(false\)/, '满窗面板没有收回函数');
   // 导航即收回挂在路由上：侧栏点击、搜索结果、双链、返回轨迹一个都不漏
   assert.match(router, /router\.afterEach\([\s\S]*?exitSidebarFullForNavigation\(\)/, 'router.afterEach 没有收回满窗目录');
@@ -118,6 +126,13 @@ test('满窗列能真的滚起来：行高钉在容器里，列不被内容顶�
   assert.match(ruleBody(sidebar, '.kb-col-body'), /overflow-y:\s*auto/, '.kb-col-body 不是滚动容器了');
   // 手机档整块滚（分栏退成竖列），那条路也别被行高规则带歪
   assert.match(sidebar, /@media \(max-width: 768px\)[\s\S]*?\.kb-col-body\s*\{\s*overflow:\s*visible/, '手机档没把列体交还给整块滚动');
+});
+
+test('满窗原始资料列标题与窄栏同口径：拆掉日期前缀与 .md，不再显示原文件名', () => {
+  const kbPanel = sidebar.slice(sidebar.indexOf('class="kb-panel"'));
+  assert.match(kbPanel, /v-tooltip\.auto="fullItemTitle\(col, item\)"/, '满窗行标题没有走 fullItemTitle');
+  assert.match(kbPanel, /\{\{ fullItemTitle\(col, item\) \}\}/, '满窗行仍直接渲染 item.name（日期和 .md 会留在标题上）');
+  assert.match(sidebar, /function fullItemTitle\(col: any, item: any\) \{[\s\S]{0,320}?documentFileTitle\(item\.name\)\.name/, 'fullItemTitle 没有复用 documentFileTitle：与窄栏 FileRow 口径会分叉');
 });
 
 test('原始资料在满窗列里也带状态标（已提炼等），口径与窄栏同一份纯函数', () => {

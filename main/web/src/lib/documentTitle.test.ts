@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { documentTitleParts, editedDocumentTitle } from './documentTitle.ts';
+import { documentFileTitle, documentTitleParts, editedDocumentTitle } from './documentTitle.ts';
 
 test('资料标题分开年月日与名称，兼容有/无分隔符及 Markdown 后缀', () => {
   for (const title of ['2026.08.16_京津区人员架构.md', '2026-8-16 京津区人员架构.markdown', '2026.08.16京津区人员架构', '2026年8月16日_京津区人员架构']) {
@@ -27,4 +27,20 @@ test('只打开/原样提交不会改名，改名称保留日期格式与原有�
   assert.equal(editedDocumentTitle(raw, '京津区 人员架构', '2026-09-01'), '2026.09.01_京津区_人员架构.md');
   assert.equal(editedDocumentTitle(raw, '京津区 人员架构', ''), '京津区_人员架构.md');
   assert.equal(editedDocumentTitle('普通标题', '新标题', ''), '新标题');
+});
+
+test('非 md 原始资料也拆日期前缀：分享进来的 .txt 不再把日期留在标题上', () => {
+  const parts = documentTitleParts('2026.11.02_产品笔记.txt');
+  assert.equal(parts.name, '产品笔记.txt');
+  assert.equal(parts.date, '2026-11-02');
+  assert.equal(documentTitleParts('产品笔记.txt').date, '');
+});
+
+test('原始资料展示名：非 md 的扩展名也不进标题，认识的点号扩展名才去掉', () => {
+  const txt = documentFileTitle('2026.11.02_产品笔记.txt');
+  assert.equal(txt.name, '产品笔记');
+  assert.equal(txt.date, '2026-11-02');
+  assert.equal(documentFileTitle('合同.pdf').name, '合同');
+  assert.equal(documentFileTitle('型号 V5.3').name, '型号 V5.3');
+  assert.equal(documentFileTitle('2026.08.16_TXP_文字替换.md').name, 'TXP 文字替换');
 });

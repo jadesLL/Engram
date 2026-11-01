@@ -1,5 +1,8 @@
 <template>
-  <div class="sidebar-inner" :class="{ 'is-full': app.sidebarFull, 'is-inline': props.inline }">
+  <div
+    class="sidebar-inner"
+    :class="{ 'is-full': app.sidebarFull, 'is-inline': props.inline, 'is-phone': props.compact, 'can-close': drawerMode }"
+  >
     <header class="sidebar-header">
       <div class="sidebar-titlebar">
         <h2>知识库</h2>
@@ -22,6 +25,7 @@
           </button>
           <!-- 满窗：窄栏 232–420px 里长标题一律省略号，点一下把目录铺满正文区（Esc 或「收回侧栏」回来） -->
           <button
+            v-if="!props.compact"
             class="sidebar-full"
             type="button"
             v-tooltip="'满窗：目录铺满窗口，标题不再被截断'"
@@ -105,6 +109,17 @@
               >
                 <Icon name="download" :size="13" />
               </button>
+              <!-- 触屏档：导出/新建/上传这些 hover 图标换成一个 ⋯ 动作面板（见 openGroupMenu），
+                   否则 44px 的触控热区会把 320px 目录里的类目名挤到 0 宽 -->
+              <button
+                class="sec-more"
+                type="button"
+                :aria-label="`${g.label}更多操作`"
+                aria-haspopup="menu"
+                @click="openGroupMenu($event, g)"
+              >
+                <Icon name="more" :size="15" />
+              </button>
               <span class="sec-count">{{ groupPageCount(g) }}</span>
             </div>
           </div>
@@ -158,6 +173,7 @@
                         @context-menu="onPageContextMenu"
                         @drag-start="onDragStart"
                         @drag-end="onDragEnd"
+                        @long-press="longPressPage(p)"
                       />
                     </div>
                   </div>
@@ -187,6 +203,7 @@
                   @context-menu="onPageContextMenu"
                   @drag-start="onDragStart"
                   @drag-end="onDragEnd"
+                  @long-press="longPressPage(p)"
                 />
                 <p v-if="!filteredPages(g.pages).length" class="none">
                   {{ filter ? '没有匹配页面' : '暂无页面' }}
@@ -264,6 +281,17 @@
             >
               <Icon name="upload" :size="13" />
             </button>
+            <!-- 触屏档：顶栏的导出/新建/上传三个 hover 图标收进一个 ⋯ 动作面板（openRawSectionMenu），
+                 否则三个 44px 触控键 + 排序键会把「原始资料」类目名挤到 0 宽（折叠屏 214px 实测） -->
+            <button
+              class="sec-more"
+              type="button"
+              aria-label="原始资料更多操作"
+              aria-haspopup="menu"
+              @click="openRawSectionMenu($event)"
+            >
+              <Icon name="more" :size="15" />
+            </button>
             <span class="sec-count">{{ visibleRawTotal }}</span>
           </div>
         </div>
@@ -308,6 +336,7 @@
                     @toggle-select="toggleSelect({ id: 'f:' + $event.path })"
                     @remove="removeFile"
                     @context-menu="onFileContextMenu"
+                    @long-press="longPressFile(f)"
                   />
                   <p v-if="!g.files.length" class="none">
                     {{ filter ? '没有匹配' : g.empty }}
@@ -550,8 +579,8 @@
                 @click="col.key === 'raw' ? openFile(item) : openPage(item)"
                 @contextmenu.prevent="col.key === 'raw' ? onFileContextMenu({ x: $event.clientX, y: $event.clientY, file: item }) : onPageContextMenu({ x: $event.clientX, y: $event.clientY, page: item })"
               >
-                <span class="kb-row-title" v-tooltip.auto="col.key === 'raw' ? item.name : item.title">
-                  {{ col.key === 'raw' ? item.name : item.title }}
+                <span class="kb-row-title" v-tooltip.auto="fullItemTitle(col, item)">
+                  {{ fullItemTitle(col, item) }}
                 </span>
                 <!-- 原始资料行的状态标：与窄栏 FileRow 同一套口径（已提炼 / 提炼中 / 提取失败…） -->
                 <span
@@ -587,6 +616,8 @@ import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
 import { openAssetDrawer } from '../lib/assetDrawer';
 import { ideaDistillRowStatus } from '../lib/ideaDistill';
 import { BP_EXPANDED } from '../lib/layoutBreakpoints';
+import { registerBackHandler } from '../lib/androidBack';
+import { documentFileTitle } from '../lib/documentTitle';
 import { relativeTimeText, latestUpdatedAt } from '../lib/pageTime';
 import {
   SIDEBAR_FULL_COLUMNS,
@@ -613,7 +644,11 @@ const emit = defineEmits(['close', 'new-page']);
  * inline：侧栏与正文并排的常驻形态（2026-11 折叠屏 medium 双栏）。
  * 与抽屉的区别只有一处——点条目后不收起自己：右栏一直开着才是双栏的用法。
  */
-const props = withDefaults(defineProps<{ inline?: boolean }>(), { inline: false });
+const props = withDefaults(defineProps<{ inline?: boolean; compact?: boolean }>(), {
+  inline: false,
+  /** compact 档（<600，手机竖屏 / 折叠屏合上）：满窗入口在手机上会让目录被底栏压住，先不出现 */
+  compact: false,
+});
 
 /**
  * 抽屉档（<840px，即 compact + medium）：侧栏是浮层，盖在正文上。手机竖屏里它几乎占满整屏，
@@ -1070,6 +1105,13 @@ function onPageContextMenu({ x, y, page }: { x: number; y: number; page: any }) 
   const items: ContextMenuItem[] = [
     ...explorerItems(page.path),
     {
+      /* 触屏没有常显勾选框后，长按是主入口；⋯ 菜单保留一条「多选」作为可发现的备用入口 */
+      id: 'select',
+      label: '多选',
+      icon: 'check',
+      action: () => { selected.value = new Set(['p:' + page.id]); },
+    },
+    {
       id: 'download',
       label: '下载',
       icon: 'download',
@@ -1102,6 +1144,12 @@ function onFileContextMenu({ x, y, file }: { x: number; y: number; file: any }) 
   const count = Number(file.assetCount || 0);
   const items: ContextMenuItem[] = [
     ...explorerItems(file.path),
+    {
+      id: 'select',
+      label: '多选',
+      icon: 'check',
+      action: () => { selected.value = new Set(['f:' + file.path]); },
+    },
     {
       id: 'download',
       label: '下载',
@@ -1761,6 +1809,111 @@ function openUpload() {
   uploadInput.value?.click();
 }
 
+/* ===== 触屏交互（2026-11 安卓端目录整改） =====
+ * 手机上没有 hover 与右键：分区操作收进一个 ⋯ 动作面板；多选由长按进入（不再常显勾选框）。
+ * 这些处理只改变「怎么触发」，动作本身仍复用桌面同一套函数（导出 / 新建 / 上传 / 排序）。 */
+
+/** 长按页面行：进入多选并选中这一行（行组件在触屏上把 contextmenu 让给了长按） */
+function longPressPage(page: any) {
+  if (!selectionMode.value) {
+    selected.value = new Set(['p:' + page.id]);
+    return;
+  }
+  toggleSelect(page);
+}
+
+/** 长按资料行：同上，键是 f:<path> */
+function longPressFile(file: any) {
+  const key = 'f:' + file.path;
+  const next = new Set(selected.value);
+  if (selectionMode.value && next.has(key)) next.delete(key);
+  else next.add(key);
+  selected.value = next;
+}
+
+/**
+ * 满窗目录的原始资料列：磁盘名是 `YYYY.MM.DD_标题.md`，展示时与窄栏 FileRow 同口径拆出标题；
+ * 非 md 的原始资料同样带日期前缀（分享进来的 .txt/.pdf），也走同一个纯函数，不再显示原文件名。
+ */
+function fullItemTitle(col: any, item: any) {
+  if (col.key !== 'raw') return item.title;
+  return documentFileTitle(item.name).name;
+}
+
+/** 排序项（触屏动作面板）：当前项用「✓ 」标出来，点一下立即生效 */
+function sortMenuItemsFor(target: string, label: string): ContextMenuItem[] {
+  const current = target === 'files' ? sortFiles.value : groupSort.value[target] || 'name-asc';
+  return SORT_OPTIONS.map((option) => ({
+    id: `sort:${target}:${option.value}`,
+    label: `按${option.label}`,
+    // 面板是 grid（图标 | 文字 | 附加）：不给 icon 时文字会落进第一列被裁成「按..」
+    icon: option.value === current ? 'check' : 'sort',
+    action: () => {
+      if (target === 'files') sortFiles.value = option.value;
+      else groupSort.value[target] = option.value;
+    },
+  }));
+}
+
+function menuAnchor(event: MouseEvent): { x: number; y: number } {
+  const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect();
+  return { x: rect ? rect.right : event.clientX, y: rect ? rect.bottom : event.clientY };
+}
+
+/** 概念/实体/归档分区：触屏 ⋯ → 排序 + 导出全部 */
+function openGroupMenu(event: MouseEvent, g: any) {
+  const anchor = menuAnchor(event);
+  openContextMenu({
+    ...anchor,
+    items: [
+      ...sortMenuItemsFor(g.key, g.label),
+      {
+        id: 'export',
+        label: `导出全部${g.label}`,
+        icon: 'download',
+        separatorBefore: true,
+        disabled: !groupPageCount(g) || exporting.value,
+        action: () => exportAllPages(g),
+      },
+    ],
+  });
+}
+
+/** 原始资料分区：触屏 ⋯ → 排序 + 新建 Markdown / 上传 / 导出全部 */
+function openRawSectionMenu(event: MouseEvent) {
+  const anchor = menuAnchor(event);
+  openContextMenu({
+    ...anchor,
+    items: [
+      ...sortMenuItemsFor('files', '原始资料'),
+      {
+        id: 'new-md',
+        label: '新建 Markdown 文件',
+        icon: 'file-plus',
+        separatorBefore: true,
+        action: () => createFile(),
+      },
+      {
+        id: 'upload',
+        label: desktopMdOnly ? '导入 Markdown 文档' : '上传文件',
+        icon: 'upload',
+        action: () => openUpload(),
+      },
+      {
+        id: 'export',
+        label: '导出全部资料',
+        icon: 'download',
+        separatorBefore: true,
+        disabled: !visibleRawTotal.value || exporting.value,
+        action: () => exportAllFiles(),
+      },
+    ],
+  });
+}
+
+/** 排序弹层也接返回键：手机返回键先收弹层，而不是把整个抽屉关掉 */
+let stopSortBack: (() => void) | null = null;
+
 defineExpose({ load, openUpload });
 /** SSE 事件成串到达时（带外批量改写、整目录导入）攒一拍再刷：否则一秒内会打出几十次列表请求。
  *  单个事件（保存/改名/删除）延迟 200ms 无感。 */
@@ -1792,6 +1945,12 @@ onMounted(() => {
   drawerQuery = window.matchMedia(`(max-width: ${BP_EXPANDED - 0.02}px)`);
   drawerMode.value = drawerQuery.matches;
   drawerQuery.addEventListener('change', onDrawerQueryChange);
+  // 排序弹层是自绘 Teleport 层，返回键栈里要占一格：开着先收它，否则按返回会连侧栏一起关掉
+  stopSortBack = registerBackHandler(() => {
+    if (!sortMenu.value.open) return false;
+    closeSortMenu(true);
+    return true;
+  });
 });
 onUnmounted(() => {
   chatStopped = true;
@@ -1805,6 +1964,8 @@ onUnmounted(() => {
   window.removeEventListener('scroll', closeSortMenuOnViewportChange, true);
   drawerQuery?.removeEventListener('change', onDrawerQueryChange);
   drawerQuery = null;
+  stopSortBack?.();
+  stopSortBack = null;
 });
 </script>
 <style scoped>
@@ -1834,10 +1995,12 @@ onUnmounted(() => {
 
 .sidebar-titlebar h2 {
   margin: 0;
+  flex: 0 0 auto;
   font-size: 15px;
   line-height: 22px;
   font-weight: 600;
   letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .sidebar-title-actions {
@@ -1866,6 +2029,12 @@ onUnmounted(() => {
 
 .sidebar-close {
   display: none;
+}
+
+/* 抽屉档都要有明确的关闭键：折叠屏 medium（768–839）也是抽屉，
+   旧规则只在 ≤768 才显示关闭键，这段宽度的抽屉只能点遮罩或按返回关。 */
+.sidebar-inner.can-close .sidebar-close {
+  display: flex;
 }
 
 .sidebar-fold:hover,
@@ -2224,6 +2393,26 @@ onUnmounted(() => {
   background: var(--sidebar-active);
 }
 
+/* 触屏档的分区「更多」：替代 hover 才出现的导出/新建/上传三个图标，
+   一个 44px 动作面板入口，避免 4 个 44px 按钮把类目名挤到 0 宽（折叠屏 214px 实测）。
+   鼠标设备仍走原来的 hover 图标，这一颗不出现。 */
+.sec-more {
+  display: none;
+  width: 23px;
+  height: 23px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.sec-more:active {
+  color: var(--text);
+  background: var(--sidebar-active);
+}
+
 /*
  * 展开/收起的高度过渡。v-show 只能整块 display:none，展开是硬跳变（用户报障「下拉框拉下来
  * 很突兀」）；这里用 grid 的 0fr↔1fr 让高度真的动起来，收起动画结束后再靠 visibility 把内容
@@ -2499,6 +2688,56 @@ onUnmounted(() => {
 
 /* 触屏（无 hover）：分区操作按钮、排序、日志行下载常显，769-1024px 触屏（折叠屏内屏）同样适用 */
 @media (hover: none) and (pointer: coarse) {
+  /*
+   * 分区动作收口：手机上不再并排 4 个 44px 图标（原始资料 = 排序 + 导出 + 新建 + 上传 + 计数，
+   * 合计 ~220px，320px 抽屉里已经吃掉整行，折叠屏 280px 常驻栏直接把「原始资料」压成 0 宽）。
+   * 导出/新建/上传进 ⋯ 动作面板（AppContextMenu 在触屏是贴底面板），排序保留一颗 44px。
+   */
+  .add-btn {
+    display: none;
+  }
+
+  .sec-more {
+    display: flex;
+    width: 44px;
+    height: 44px;
+  }
+
+  .sec-more:active {
+    background: var(--sidebar-active);
+  }
+
+  /* 搜索框 30px 在手机上太扁，点不准也看不清 */
+  .search-field {
+    height: 44px;
+  }
+
+  .search-field input {
+    font-size: 14px;
+  }
+
+  /* 满窗头部在手机上不显示「Esc 收回」与「分栏扫描」说明：触屏没有 Esc，说明也挤位置；
+     满窗头部有 minimize 按钮可收回。 */
+  .kb-head > .kb-hint {
+    display: none;
+  }
+
+  /* 满窗行：手指点得准（≥48dp） */
+  .kb-row {
+    min-height: 48px;
+    align-items: center;
+    padding-block: 8px;
+  }
+
+  .kb-sub-head,
+  .kb-col-head {
+    min-height: 48px;
+  }
+
+  .kb-row-time {
+    padding-top: 0;
+  }
+
   .add-btn {
     opacity: 0.82;
   }
@@ -2889,6 +3128,9 @@ onUnmounted(() => {
   color: var(--text);
   font-size: 13px;
   text-align: left;
+  /* 与窄栏行一致：长按是 App 的多选/菜单手势，不能被 WebView 原生文本选择抢走 */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .kb-row:hover {

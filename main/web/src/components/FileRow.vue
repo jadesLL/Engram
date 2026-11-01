@@ -9,10 +9,16 @@
     @keydown.enter.self="onClick"
     @keydown.space.self.prevent="onClick"
     @contextmenu.prevent="onRowContextMenu"
+    @pointerdown="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="endPress"
+    @pointercancel="endPress"
+    @pointerleave="endPress"
   >
     <span
       class="check"
       :class="{ visible: selectionMode || selected, on: selected }"
+      @pointerdown.stop
       @click.stop="$emit('toggle-select', file)"
     >
       <Icon v-if="selected" name="check" :size="11" />
@@ -89,6 +95,7 @@
         class="row-kebab"
         type="button"
         aria-label="更多操作"
+        @pointerdown.stop
         @click.stop="onKebab"
       >
         <Icon name="more" :size="15" />
@@ -102,7 +109,10 @@ import { computed } from 'vue';
 import Icon from './Icon.vue';
 import AppSpinner from './ui/AppSpinner.vue';
 import { humanError } from '../lib/ingestError';
-import { documentTitleParts } from '../lib/documentTitle';
+import { documentFileTitle } from '../lib/documentTitle';
+import { isTouchPointer } from '../lib/pointer';
+import { createLongPress } from '../lib/longPress';
+import { haptic } from '../lib/haptics';
 
 const props = defineProps<{
   file: any;
@@ -119,16 +129,43 @@ const props = defineProps<{
    */
   distill?: { label: string; kind: 'running' | 'failed' } | null;
 }>();
-const emit = defineEmits(['open', 'toggle-select', 'remove', 'context-menu']);
-const documentName = computed(() => ['md', 'markdown'].includes(String(props.file.ext).toLowerCase())
-  ? documentTitleParts(props.file.name)
-  : { name: props.file.name, date: '', dateLabel: '' });
+const emit = defineEmits([
+  'open', 'toggle-select', 'remove', 'context-menu', 'long-press',
+]);
+/**
+ * 原始资料的展示名：所有类型统一拆日期前缀（md 同时拆 .md）。
+ * 手机端分享进来的 .txt/.pdf 文件名同样带 `YYYY.MM.DD_`，旧逻辑只处理 md，
+ * 于是 .txt 行把日期、扩展名整串当标题显示——用户报障「时间还显示在标题上，像在读原文件」。
+ * documentFileTitle 对没有日期前缀的名字原样返回，并去掉认识的扩展名（类型由行首图标表达）。
+ */
+const documentName = computed(() => documentFileTitle(props.file.name));
+
+/** 触屏：长按进多选、⋯ 开菜单；桌面右键/悬停不变（与 PageRow 同一套手势） */
+const longPress = createLongPress({
+  onLongPress: () => {
+    haptic('tap');
+    emit('long-press', props.file);
+  },
+});
 
 /** 下载走 /api/files/download：正文带图片的 md 由服务端打包成 zip（md + assets/）。
  *  文件名交给 Content-Disposition，加 download 属性会把 zip 存成 .md。 */
 const downloadUrl = computed(() => `/api/files/download?path=${encodeURIComponent(props.file.path)}`);
 
+function onPointerDown(e: PointerEvent) {
+  longPress.start(e);
+}
+
+function onPointerMove(e: PointerEvent) {
+  longPress.move(e);
+}
+
+function endPress() {
+  longPress.end();
+}
+
 function onClick() {
+  if (longPress.consumeClick()) return;
   if (props.selectionMode) emit('toggle-select', props.file);
   else emit('open', props.file);
 }
@@ -142,6 +179,8 @@ function emitContextMenu(x: number, y: number) {
 }
 
 function onRowContextMenu(e: MouseEvent) {
+  e.preventDefault();
+  if (isTouchPointer()) return;
   emitContextMenu(e.clientX, e.clientY);
 }
 
@@ -179,6 +218,11 @@ function fileIconClass(ext: string): string {
   font-size: 12.5px;
   outline: none;
   transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+  touch-action: pan-y;
+  -webkit-touch-callout: none;
+  /* 长按是 App 的多选手势，关掉 WebView 原生文本选择（否则松手残留系统选择手柄） */
+  user-select: none;
+  -webkit-user-select: none;
 }
 .page-row:hover { background: var(--sidebar-hover); }
 .page-row:focus-visible { box-shadow: inset 0 0 0 2px var(--sidebar-accent); }
@@ -401,24 +445,16 @@ function fileIconClass(ext: string): string {
   /* 下载/删除两个 22px 图标按钮：触屏够不到，已由 ⋯ 菜单原样提供（见 onFileContextMenu） */
   .row-actions { display: none; }
 
-  /* 勾选框：桌面靠 hover 露出，触屏没有 hover，不常显就永远看不见——
-     而它是进入多选（Sidebar 的 selectionMode 由「已选中集合非空」推导）的唯一入口。
-     14px 方块按不准，热区用透明伪元素铺到行首 44px；纵向吃满整行（行高已抬到 40px），
-     行与行紧贴，再往外扩就会盖住上下相邻行，点勾选变成勾隔壁那条。 */
-  .check {
-    position: relative;
+  /*
+   * 多选勾选框只在「已经进入多选」时出现（长按行进入 / 行尾 ⋯ → 多选）。
+   * 旧版触屏常显一排空方框：行首白吃 44px，文件名被挤到折行还读不全。
+   */
+  .check { display: none; }
+  .check.visible {
+    display: flex;
+    border-color: var(--border);
     opacity: 1;
   }
-  .check::after {
-    content: '';
-    position: absolute;
-    top: -8px;
-    bottom: -8px;
-    left: -6px;
-    right: -24px;
-  }
-  /* 文件图标与标题一起让开勾选热区（只推图标即可，标题跟在图标后面） */
-  .file-icon { margin-left: 24px; }
 
   /* 状态标签左移，给右侧 ⋯ 让位 */
   .row-status { right: 30px; max-width: 64px; }
