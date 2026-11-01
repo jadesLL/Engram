@@ -424,8 +424,13 @@ test('下拉刷新：≤839 触屏 + 顶层页，阈值 64px，松手走 sync/in
     /el\.addEventListener\('touchmove', onMove, \{ passive: false \}\)/,
     '下拉刷新没拿到 touchmove（passive:false）：阻止不了整页跟着弹',
   );
-  // 刷新动作：共享 sync store 对账 + 收集箱 + 能力位兜底
-  assert.match(home, /sync\.refresh\(\)/, '下拉刷新没有用 sync store 的对账动作');
+  // 刷新动作：真正触发一轮同步对账（下拉=同步；只读状态是空操作）+ 状态轮询 + 收集箱 + 能力位兜底
+  assert.match(
+    home,
+    /api\.post\('\/api\/sync\/reconcile'\)/,
+    '下拉刷新没有真正触发同步对账（只读 /api/sync/status 是空操作）',
+  );
+  assert.match(home, /sync\.refresh\(\)/, '下拉刷新没有在触发后轮询同步状态');
   assert.match(home, /inbox\.load\(\)/, '下拉刷新没有重读收集箱（兜底）');
   assert.match(home, /loadRuntimeCapabilities\(\)/, '下拉刷新没有重取能力位（兜底）');
   assert.match(home, /notify\.success\('已刷新'\)/, '刷新完成没有 toast');

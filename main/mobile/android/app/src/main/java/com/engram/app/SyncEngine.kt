@@ -85,6 +85,21 @@ class SyncEngine(
     @Volatile var syncProgress: String = ""; private set
     /** 本轮同步真正落地/送出的改动条数（推 + 拉），只用于结尾那条汇总 */
     private var roundChanges = 0
+    /**
+     * 上次成功全量对账的时刻（周期自愈节流用）。
+     *
+     * 桌面 / Docker 成员端有 15 分钟一次的周期自愈对账（server/src/sync/client.ts 的
+     * HEAL_INTERVAL_MS），手机端原来只有前台事件触发的一轮同步、没有自愈——改名 / 移动 /
+     * 删除这类「没有内容 op」的缺口就永远补不上（用户现象：电脑上改过名的原始资料，
+     * 手机上一直停在旧路径；日志里反复出现「中枢已无此内容」）。
+     */
+    private val healAtSetting = "sync_heal_at"
+    /** 本轮已因「中枢已无此内容」记过日志的路径：改名后旧 op 会连片回放，同一路径只记一条 */
+    private val missingLogged = mutableSetOf<String>()
+    /** 本轮因「中枢已无此内容」跳过的条数：结尾汇总一条，别逐条刷屏 */
+    private var missingSkipped = 0
+    /** 本轮有推送项失败（逐项容错后的标记）：结束时走退避重试，不因它空转重开整轮 */
+    @Volatile private var pushDeferred = false
 
     /**
      * ── 连接通道择优：局域网 → IPv6 → IPv4（都不通即「已断开」）────────────────────
@@ -240,17 +255,30 @@ class SyncEngine(
         executor.execute {
             var completed = false
             roundChanges = 0
+            missingLogged.clear()
+            missingSkipped = 0
+            pushDeferred = false
             try {
                 db.log("info", "start", if (full) "手动全量对账" else "事件触发同步")
                 syncProgress = "正在连接中枢"
                 // 先择优一条路（局域网优先），再开始同步：否则首轮会先绕一次公网才发现内网可直连
                 maybeProbeLink()
-                if ((db.setting("sync_cursor")?.toLongOrNull() ?: 0L) <= 0L) {
+                val cursor = db.setting("sync_cursor")?.toLongOrNull() ?: 0L
+                if (cursor <= 0L) {
                     // 首次绑定直接按轻量清单逐项对账，避免从游标 0 一次解析数百条内嵌正文的历史 op。
                     // 对账完成后推进到快照水位，再由 converge 补拉其后发生的少量变化。
                     reconcile(preferHub = true, advanceCursor = true)
+                    markReconciled()
                 } else if (full) {
                     reconcile()
+                    markReconciled()
+                } else if (SyncHealPolicy.due(System.currentTimeMillis(), lastHealAt(), cursor)) {
+                    // 周期自愈：与桌面 / Docker 成员端 15 分钟一轮同一口径，只是挂在「前台有同步」
+                    // 这个时机上，不额外起后台定时器。补的正是增量 op 表达不了的那部分：
+                    // 改名 / 移动 / 删除后本机残留的旧路径、以及旧 op 回放时 404 被跳过的内容。
+                    syncProgress = "正在核对中枢目录"
+                    reconcile()
+                    markReconciled()
                 }
                 syncPreferences()
                 converge()
@@ -261,6 +289,10 @@ class SyncEngine(
                 } catch (e: Exception) {
                     // 标记没对齐不该把整轮同步判失败：内容已经落地，下一轮再试
                     db.log("warn", "ledger-marks-failed", "已提炼标记没能对齐：${e.message ?: e.javaClass.simpleName}（下一轮再试）")
+                }
+                if (missingSkipped > 1) {
+                    // 逐条已经按路径去重并写明原因，这里再收一条总数，让用户知道「不是卡住」而是旧路径被跳过
+                    db.log("info", "pull-missing-summary", "本轮跳过 $missingSkipped 项中枢已不存在的内容（多为改名 / 删除后的旧路径），已安排下一次全量对账补齐")
                 }
                 connected = true
                 lastError = null
@@ -286,7 +318,13 @@ class SyncEngine(
                 // 失败后保留持久化 outbox，等退避重试或下次前台事件。
                 // 不因队列仍非空就立即递归重试：离线时那会形成无限请求与日志风暴。
                 val active = workAllowed() && !cancelled
-                if (completed && active && (rerun || db.outboxCount() > 0)) {
+                val remaining = db.outboxCount() > 0
+                if (completed && active && pushDeferred && remaining) {
+                    // 逐项容错后仍有项没推上去：其余项已经推完，这一项按退避重试，
+                    // 别立刻重开整轮空转（也避免把「有改动」队列烧成日志风暴）。
+                    lastError = "有改动暂未推送成功（详见同步详情）"
+                    if (foreground) scheduleRetry("有改动暂未推送成功") else failBackgroundGrace()
+                } else if (completed && active && (rerun || remaining)) {
                     request(rerunFull)
                 } else if (!completed && active) {
                     // 失败后的自动退避重试（见 retryScheduler 注释）：只有前台、未取消才排期，
@@ -294,7 +332,7 @@ class SyncEngine(
                     // 具体原因已在 catch 里记进 lastError 与同步日志，这里不重复传。
                     if (foreground) scheduleRetry() else failBackgroundGrace()
                 } else if (completed && !foreground && !cancelled && inBackgroundGrace() &&
-                    !rerun && db.outboxCount() == 0
+                    !rerun && !remaining
                 ) {
                     // 宽限内这一轮已收敛且没有待推工作：提前结束宽限，别空等满 5 分钟
                     finishBackgroundGrace()
@@ -304,11 +342,12 @@ class SyncEngine(
     }
 
     /** 失败后的指数退避重试：15s、30s、60s…最多 10 分钟一次，成功后由 request() 归零 */
-    private fun scheduleRetry() {
+    private fun scheduleRetry(prefix: String? = null) {
         val attempt = retryAttempt.coerceAtMost(6)
         retryAttempt = attempt + 1
         val delayMs = (15_000L shl attempt).coerceAtMost(10 * 60_000L)
-        syncProgress = "同步中断，${delayMs / 1000} 秒后自动重试"
+        val reason = prefix ?: "同步中断"
+        syncProgress = "$reason，${delayMs / 1000} 秒后自动重试"
         retryFuture?.cancel(false)
         retryFuture = try {
             retryScheduler.schedule({ request(false) }, delayMs, TimeUnit.MILLISECONDS)
@@ -338,8 +377,16 @@ class SyncEngine(
         db.setSetting("sync_cursor", "0")
         // 标记核对的节流时刻一起归零：换中枢后要立刻重新核对「已提炼」标记，不能等 5 分钟窗口
         db.setSetting(ledgerMarksAtSetting, "0")
+        // 自愈对账也归零：新中枢的目录必须马上核一遍，不能等 15 分钟周期
+        db.setSetting(healAtSetting, "0")
         db.log("info", "sync-cursor-reset", "$reason：增量游标已归零（$previous → 0），下次同步按全量对账重新对齐")
     }
+
+    /** 上次成功全量对账的时刻（0 = 从未跑过 → 下一次前台同步立即自愈一轮） */
+    private fun lastHealAt(): Long = db.setting(healAtSetting)?.toLongOrNull() ?: 0L
+
+    /** 记下「刚刚成功做过全量对账」：周期自愈从这里重新计时 */
+    private fun markReconciled() = db.setSetting(healAtSetting, System.currentTimeMillis().toString())
 
     private fun checkActive() { if (cancelled || !workAllowed()) throw Cancelled() }
 
@@ -350,6 +397,9 @@ class SyncEngine(
             pushOutbox()
             val changed = pullChanges()
             if (db.outboxCount() == 0 && !changed) return
+            // 有推送项失败：已经拉过一轮，剩下的交给本轮结束时的退避重试，
+            // 别在同一轮里反复重撞同一个坏项（会刷日志也拖慢整轮）
+            if (pushDeferred) return
         }
     }
 
@@ -439,66 +489,98 @@ class SyncEngine(
     private fun pushOutbox() {
         for (item in db.outbox()) {
             checkActive()
-            val kind = item.getString("kind")
-            val target = item.getString("target")
-            if (!SyncPreferences(db).allowed(kind, target, item.optString("old_path"))) {
-                db.ackOutbox(item.getLong("id")); continue
+            try {
+                pushItem(item)
+            } catch (e: Cancelled) {
+                throw e
+            } catch (error: Exception) {
+                // 逐项容错：一条推不上去的改动不能把后面所有本机改动堵在队首（否则整轮永远卡在
+                // 同一项，用户看到的就是「部分内容一直没上去」且同步中断）。本项留在 outbox 等
+                // 退避重试，其余项继续推。
+                pushDeferred = true
+                val path = item.optString("target")
+                db.log(
+                    "warn",
+                    "push-failed",
+                    "「$path」没能推送：${error.message ?: error.javaClass.simpleName}（其余改动继续，稍后自动重试）",
+                    toJson(mapOf("kind" to item.optString("kind"), "path" to path)),
+                )
             }
-            when (kind) {
-                "preference" -> {
-                    val prefs = SyncPreferences(db)
-                    prefs.value(target)?.let { value ->
-                        val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", kind).put("target", target).put("preference", value))
-                        prefs.merge(target, ack.optJSONObject("preference"))
-                    }
+        }
+    }
+
+    /** 推送 outbox 里的单项；异常交给 [pushOutbox] 逐项兜住（不拖累后面的项） */
+    private fun pushItem(item: JSONObject) {
+        val kind = item.getString("kind")
+        val target = item.getString("target")
+        if (!SyncPreferences(db).allowed(kind, target, item.optString("old_path"))) {
+            db.ackOutbox(item.getLong("id")); return
+        }
+        when (kind) {
+            "preference" -> {
+                val prefs = SyncPreferences(db)
+                prefs.value(target)?.let { value ->
+                    val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", kind).put("target", target).put("preference", value))
+                    prefs.merge(target, ack.optJSONObject("preference"))
                 }
-                "page" -> {
-                    val raw = db.rawPage(target)
-                    if (raw == null) { db.ackOutbox(item.getLong("id")); continue }
-                    val payload = JSONObject()
-                        .put("node_id", nodeId()).put("kind", "page").put("target", target)
-                        .put("base_revision", db.pageRevision(target)).put("content", raw)
-                        .put("mtime", db.file(target).lastModified())
-                    db.evidence(target)?.let { payload.put("evidence", it) }
-                    val ack = postJson("/api/sync/push", payload)
-                    if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); continue }
-                    val revision = ack.optInt("revision")
-                    val authoritative = ack.optString("content", raw)
-                    db.writeSyncedPage(target, authoritative, revision)
-                    recordPush("push-page", SyncOpText.KIND_PAGE, target, null, authoritative.toByteArray(Charsets.UTF_8).size.toLong(), revision)
-                    // 本端内容与中枢回执不同 = 中枢做过合并：本端已被写回，日志里必须有一句解释
-                    if (authoritative != raw) recordPushMerged(target, ack, raw, authoritative, revision)
-                }
-                "file" -> {
-                    val file = db.file(target)
-                    if (!file.exists()) { db.ackOutbox(item.getLong("id")); continue }
-                    val ack = postFile(target, file)
-                    if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); continue }
-                    recordPush("push-file", SyncOpText.KIND_FILE, target, null, file.length(), ack.optInt("revision"))
-                }
-                "delete" -> {
-                    val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "delete").put("target", target))
-                    if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); continue }
+            }
+            "page" -> {
+                val raw = db.rawPage(target)
+                if (raw == null) { db.ackOutbox(item.getLong("id")); return }
+                val payload = JSONObject()
+                    .put("node_id", nodeId()).put("kind", "page").put("target", target)
+                    .put("base_revision", db.pageRevision(target)).put("content", raw)
+                    .put("mtime", db.file(target).lastModified())
+                db.evidence(target)?.let { payload.put("evidence", it) }
+                val ack = postJson("/api/sync/push", payload)
+                if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); return }
+                val revision = ack.optInt("revision")
+                val authoritative = ack.optString("content", raw)
+                db.writeSyncedPage(target, authoritative, revision)
+                recordPush("push-page", SyncOpText.KIND_PAGE, target, null, authoritative.toByteArray(Charsets.UTF_8).size.toLong(), revision)
+                // 本端内容与中枢回执不同 = 中枢做过合并：本端已被写回，日志里必须有一句解释
+                if (authoritative != raw) recordPushMerged(target, ack, raw, authoritative, revision)
+            }
+            "file" -> {
+                val file = db.file(target)
+                if (!file.exists()) { db.ackOutbox(item.getLong("id")); return }
+                val ack = postFile(target, file)
+                if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); return }
+                recordPush("push-file", SyncOpText.KIND_FILE, target, null, file.length(), ack.optInt("revision"))
+            }
+            "delete" -> {
+                val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "delete").put("target", target))
+                if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); return }
+                if (ack.optLong("seq") <= 0L) {
+                    // 中枢本来就没有这个路径（成员删的是本机独有的副本）：删除目的已经达到，
+                    // 记 info 而不是失败——旧逻辑会把它记成「失败 · 该同步分类可能已关闭」。
+                    db.log("info", "push-delete-noop", "「$target」中枢本就没有，删除已视为完成", toJson(mapOf("kind" to kind, "path" to target)))
+                } else {
                     recordPush("push-delete", SyncOpText.KIND_DELETE, target, null, 0L, ack.optInt("revision"))
                 }
-                "move" -> {
-                    val oldPath = item.optString("old_path")
-                    val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "move").put("target", target).put("old_path", oldPath))
-                    if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); continue }
-                    recordPush("push-move", SyncOpText.KIND_MOVE, target, oldPath, 0L, ack.optInt("revision"))
-                }
             }
-            db.ackOutbox(item.getLong("id"))
+            "move" -> {
+                val oldPath = item.optString("old_path")
+                val ack = postJson("/api/sync/push", JSONObject().put("node_id", nodeId()).put("kind", "move").put("target", target).put("old_path", oldPath))
+                if (pushSkipped(ack)) { recordPushSkipped(item, kind, target); return }
+                recordPush("push-move", SyncOpText.KIND_MOVE, target, oldPath, 0L, ack.optInt("revision"))
+            }
         }
+        db.ackOutbox(item.getLong("id"))
     }
 
     /**
      * 中枢按同步分类拒收：HTTP 200 但 seq/revision 都是 0（server 端 applyPush 的 syncAllowed 分支，
      * 新版还会带 skipped:true）。这类回执**不能**当成成功把 revision 写回本地——写 0 会把 base_revision
      * 抹掉，下次推送找不到共同祖先，退化成按 mtime 裁决并生成「xxx-时间戳.md」冲突副本。
+     *
+     * 例外：「中枢本来就没有这个路径」的 delete 回执（hub applyPush 的 delete 分支）同样是 seq 0，
+     * 但带 merge 字段、没有 skipped——那是「没东西可删，删除目的已达」，不能算失败，否则界面会
+     * 把一次正常删除记成「失败 · 该同步分类可能已关闭」（实测误导用户）。
      */
     private fun pushSkipped(ack: JSONObject): Boolean =
-        ack.optBoolean("skipped", false) || (ack.optLong("seq") <= 0L && ack.optInt("revision") <= 0)
+        ack.optBoolean("skipped", false) ||
+            (ack.optLong("seq") <= 0L && ack.optInt("revision") <= 0 && !ack.has("merge"))
 
     /** 中枢不收这一项：本机内容保留、outbox 出队（留着会被 finally 判成「还有改动」而无限重跑），加一条 warn 可查 */
     private fun recordPushSkipped(item: JSONObject, kind: String, target: String) {
@@ -538,6 +620,9 @@ class SyncEngine(
                     val target = op.optString("target")
                     when {
                         !SyncPreferences(db).allowed(kind, target, op.optString("old_path")) -> ChangeWork(op = op)
+                        // 中枢在 compact 回放里标了 missing：这份路径已经不存在（改名 / 删除后的旧 op），
+                        // 不必再打一次注定 404 的请求（补积压时可能有几百条）
+                        kind == "page" && compact && op.optBoolean("missing") -> ChangeWork(op = op, missing = true)
                         kind == "page" && compact -> ChangeWork(
                             op = op,
                             page = fetchExecutor.submit<PagePayload?> {
@@ -556,17 +641,38 @@ class SyncEngine(
                 try {
                     for (item in work) {
                         checkActive()
-                        val page = item.page?.let(::await)
-                        val file = item.file?.let(::await)
-                        // 取不回来（中枢 404）说明这份已经被改名/删除：跳过它、推进水位，
-                        // 否则这条永远取不回的 op 会让每一轮同步都在这里失败（实测卡死过）
-                        if ((item.page != null && page == null) || (item.file != null && file == null)) {
-                            skipMissingOp(item.op)
+                        try {
+                            if (item.missing) {
+                                skipMissingOp(item.op)
+                                any = true
+                                continue
+                            }
+                            val page = item.page?.let(::await)
+                            val file = item.file?.let(::await)
+                            // 取不回来（中枢 404）说明这份已经被改名/删除：跳过它、推进水位，
+                            // 否则这条永远取不回的 op 会让每一轮同步都在这里失败（实测卡死过）
+                            if ((item.page != null && page == null) || (item.file != null && file == null)) {
+                                skipMissingOp(item.op)
+                                any = true
+                                continue
+                            }
+                            applyOp(item.op, compact, page, file)
                             any = true
-                            continue
+                        } catch (e: Cancelled) {
+                            throw e
+                        } catch (error: Exception) {
+                            // 单条变更应用失败（路径被占用、写盘异常等）不能卡住整轮：记一条、
+                            // 推进水位，内容交给下一次全量对账再核（与桌面 client 的 itemFailed 同口径）。
+                            db.log(
+                                "warn",
+                                "pull-op-failed",
+                                "应用中枢变更「${item.op.optString("target")}」失败：${error.message ?: error.javaClass.simpleName}（已跳过，下次全量对账再核对）",
+                                toJson(mapOf("kind" to item.op.optString("kind"), "path" to item.op.optString("target"))),
+                            )
+                            db.setSetting("sync_cursor", item.op.optLong("seq").toString())
+                            db.setSetting(healAtSetting, "0")
+                            any = true
                         }
-                        applyOp(item.op, compact, page, file)
-                        any = true
                     }
                 } finally {
                     work.forEach { item ->
@@ -577,7 +683,10 @@ class SyncEngine(
             }
             if (ops.length() < CHANGE_BATCH) break
         }
-        if (gap) reconcile()
+        if (gap) {
+            reconcile()
+            markReconciled()
+        }
         return any
     }
 
@@ -635,8 +744,16 @@ class SyncEngine(
             }
             "move" -> {
                 val oldPath = op.optString("old_path")
+                val sourceExisted = runCatching { db.file(oldPath).exists() }.getOrDefault(false)
                 db.moveSyncedPath(oldPath, target, op.optInt("revision"))
-                recordApplied("pull-move", SyncOpText.summarizeMove(oldPath, target))
+                if (!sourceExisted && !db.file(target).exists()) {
+                    // 本机漏掉了改名前的旧内容（旧 op 回放时 404 被跳过）：这条 move 在本地是空操作，
+                    // 必须按新路径直接把内容补下来，否则改名后的页面/文件在手机上永远不落地
+                    // （实测：原始资料在中枢改名后，手机一直缺这份，只在手动全量对账后才出现）。
+                    pullMovedTarget(op, target)
+                } else {
+                    recordApplied("pull-move", SyncOpText.summarizeMove(oldPath, target))
+                }
             }
             // 会话 / 看板 / 客户调研：手机端不存本地副本，读写都经窄代理走已绑定的中枢（见 AgentBridge），
             // 所以这里是「已知但不镜像」——跳过内容，水位照常推进，别让水位卡在这几类 op 上。
@@ -688,7 +805,23 @@ class SyncEngine(
             val batch = pending.toList()
             pending.clear()
             try {
-                batch.forEach { work -> checkActive(); work.apply() }
+                batch.forEach { work ->
+                    checkActive()
+                    try {
+                        work.apply()
+                    } catch (e: Cancelled) {
+                        throw e
+                    } catch (error: Exception) {
+                        // 对账逐项容错：单项落地失败不中止整轮（否则 advanceCursor 永远执行不到，
+                        // 每轮都从同一处重来，进度永远不前进）。内容交给下一次对账再试。
+                        db.setSetting(healAtSetting, "0")
+                        db.log(
+                            "warn",
+                            "reconcile-item-failed",
+                            "对账时有一项没落地：${error.message ?: error.javaClass.simpleName}（已跳过，下次对账会再试）",
+                        )
+                    }
+                }
             } finally {
                 batch.forEach { work -> work.discard() }
             }
@@ -1064,7 +1197,13 @@ class SyncEngine(
 
     private data class SnapshotWork(val apply: () -> Unit, val discard: () -> Unit)
     private data class PagePayload(val content: String, val evidence: JSONObject?)
-    private data class ChangeWork(val op: JSONObject, val page: Future<PagePayload?>? = null, val file: Future<File?>? = null)
+    private data class ChangeWork(
+        val op: JSONObject,
+        val page: Future<PagePayload?>? = null,
+        val file: Future<File?>? = null,
+        /** 中枢已判定该路径不存在（compact 回放的 missing 标记）：直接跳过，不再发请求 */
+        val missing: Boolean = false,
+    )
 
     private fun schedulePull() {
         pendingPulls++
@@ -1116,8 +1255,56 @@ class SyncEngine(
         if (seq > 0) db.setSetting("sync_cursor", seq.toString())
     }
 
+    /**
+     * 改名 / 移动 op 落到本机时源路径不存在（旧内容没拉过）：按新路径把内容补下来。
+     *
+     * 只补一份；拉不到（中枢连新路径也没有）就记一条「中枢已无此内容」并安排下一次全量对账。
+     * 分类开关关着时直接跳过（与其它 op 口径一致）。
+     */
+    private fun pullMovedTarget(op: JSONObject, target: String) {
+        val isPage = target.endsWith(".md", true) || target.endsWith(".markdown", true)
+        val kind = if (isPage) "page" else "file"
+        if (!SyncPreferences(db).allowed(kind, target)) return
+        checkActive()
+        try {
+            if (isPage) {
+                val content = tolerateMissing {
+                    getJson("/api/sync/page-content?path=${encode(target)}").optString("content")
+                }
+                if (content == null) { recordMissingAtHub(kind, target); return }
+                val before = db.rawPage(target)
+                db.writeSyncedPage(target, content, op.optInt("revision"))
+                recordApplied("pull-page", SyncOpText.summarizePage(target, before, content))
+            } else {
+                val staged = tolerateMissing { stageFile(target) }
+                if (staged == null) { recordMissingAtHub(kind, target); return }
+                val beforeBytes = db.file(target).let { if (it.exists()) it.length() else 0L }
+                val afterBytes = staged.length()
+                try { db.installSyncedFile(target, staged) } finally { staged.delete() }
+                recordApplied("pull-file", SyncOpText.summarizeFile(target, beforeBytes, afterBytes))
+            }
+        } catch (e: Cancelled) {
+            throw e
+        } catch (error: Exception) {
+            // 补拉失败不该把整轮判失败：记一条并安排下一次全量对账重试
+            db.setSetting(healAtSetting, "0")
+            db.log(
+                "warn",
+                "pull-move-heal-failed",
+                "补拉改名后的内容失败：${error.message ?: error.javaClass.simpleName}（下一次全量对账重试）",
+                toJson(mapOf("path" to target)),
+            )
+        }
+    }
+
     /** 中枢已经没有这份内容（多半是被改名或删除）：记一条，说清为什么这一项没落地 */
     private fun recordMissingAtHub(kind: String, path: String) {
+        missingSkipped += 1
+        // 改名后旧路径的 op 会在 oplog 里连片出现（实测一份原始资料改名后有 330 条旧 op 回放）：
+        // 同一路径每轮只记一条，避免同步详情被同一句话刷屏。
+        if (!missingLogged.add("$kind:$path")) return
+        // 旧路径被跳过 = 本机很可能缺「改名后的新路径」：安排下一次前台同步先跑一轮全量对账补齐
+        db.setSetting(healAtSetting, "0")
         if (!SyncOpText.isNoteworthyPush(path)) return
         val subject = if (kind == "page") "页面「${SyncOpText.pageTitle(path)}」" else "文件「$path」"
         db.log(
@@ -1799,7 +1986,12 @@ class SyncEngine(
         private const val MAX_FILE_BYTES = 200L * 1024 * 1024
         private const val MAX_JSON_BYTES = 8L * 1024 * 1024
         private const val MAX_SNAPSHOT_BYTES = 256L * 1024 * 1024
-        private const val CHANGE_BATCH = 20
+        /**
+         * 增量补拉每批条数。中枢侧 limit 上限 500，手机端一次多拿一些能把「离线一段时间后
+         * 追赶积压」的往返次数从几千次降到几百次（实测补 10 天积压 20 条一批要 30 分钟级）；
+         * 页面正文是 compact 模式按需再拉，批次放大不增加单次内存峰值。
+         */
+        private const val CHANGE_BATCH = 100
         private const val MAX_PARALLEL_FETCHES = 4
         private const val SNAPSHOT_FETCH_BATCH = MAX_PARALLEL_FETCHES
         /** 探测单协议族尝试的预算 = 配置的连接超时 + 这段余量（TLS 握手 + 读响应头） */

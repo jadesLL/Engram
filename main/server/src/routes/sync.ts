@@ -193,6 +193,18 @@ function enrichReplayOp(op: SyncOp, compact = false) {
   // 客户调研记录：正文由客户端按 op.hash 按需拉 /api/sync/research，补拉 op 里不塞报告正文
   // （删除也走同一条链路：快照里带 deleted=1 的墓碑，成员拉取后删掉本端记录）
   if (op.kind === 'research') return op;
+  if (compact && op.kind === 'page') {
+    // compact 模式不内嵌正文；但可以先把「这份路径已经不存在（改名 / 删除后的旧 op）」标出来：
+    // 手机端补积压时这类旧 op 会连片出现（实测一次改名留下 330 条），逐条去交换 404 纯属浪费。
+    // 老客户端不认识 missing 字段，会照旧自己拉一次并 404 跳过，行为不变。
+    let gone = false;
+    try {
+      gone = !fs.existsSync(safeJoin(op.target));
+    } catch {
+      gone = true; // 路径非法也等价于拉不到
+    }
+    return gone ? { ...op, missing: true } : op;
+  }
   if (compact || op.kind !== 'page') return op;
   const content = getPageRevision(op.target, op.revision) ?? readPageRaw(op.target) ?? '';
   return { ...op, content, evidence: collectEvidenceForPage(op.target) };
