@@ -47,6 +47,55 @@
         <span><kbd>esc</kbd> 关闭</span>
       </div>
     </div>
+
+    <!-- 手机档工具栏尾部「插入」打开的分组底部面板：遮罩 + 抓柄 + 22px 顶圆角 + 44px 行高。
+         动作全部落到 Vditor 自己的插入/面板上（insertValue / 链接面板 / 双链弹窗），不另造编辑器状态。 -->
+    <Teleport to="body">
+      <template v-if="insertOpen">
+        <div class="insert-mask" @click="closeInsertPanel()" />
+        <section
+          ref="insertSheetRef"
+          class="insert-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="插入"
+          tabindex="-1"
+          @keydown="onInsertSheetKeydown"
+        >
+          <span class="insert-grab" aria-hidden="true" />
+          <header class="insert-head">
+            <h2>插入</h2>
+            <button type="button" class="insert-x" aria-label="关闭插入面板" @click="closeInsertPanel()">
+              <Icon name="x" :size="16" />
+            </button>
+          </header>
+          <p class="insert-sub">选中的内容会插入到光标位置</p>
+          <div class="insert-body">
+            <section v-for="group in INSERT_GROUPS" :key="group.label" class="insert-group">
+              <h3 class="insert-group-title">{{ group.label }}</h3>
+              <button
+                v-for="item in group.items"
+                :key="item.key"
+                type="button"
+                class="insert-row"
+                :disabled="Boolean(insertBusy)"
+                @click="runInsertAction(item.key)"
+              >
+                <span class="insert-row-icon"><Icon :name="item.icon" :size="18" /></span>
+                <span class="insert-row-text">
+                  <b>{{ item.label }}</b>
+                  <small>{{ insertBusy === item.key ? '处理中…' : item.hint }}</small>
+                </span>
+                <Icon name="chevron-right" :size="15" class="insert-row-chevron" />
+              </button>
+            </section>
+          </div>
+        </section>
+      </template>
+    </Teleport>
+    <!-- 两个隐藏的原生文件选择器：图片走页面资产上传，文件走原始资料上传 -->
+    <input ref="insertImageInput" class="insert-file-input" type="file" accept="image/*" @change="onInsertImagePicked" />
+    <input ref="insertFileInput" class="insert-file-input" type="file" @change="onInsertFilePicked" />
   </div>
 </template>
 
@@ -55,7 +104,11 @@ import { ref, nextTick, onMounted, onUnmounted, watch, type ComponentPublicInsta
 import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import { api } from '../api';
+import { registerBackHandler } from '../lib/androidBack';
+import { BP_MOBILE } from '../lib/layoutBreakpoints';
+import { notify } from '../lib/notify';
 import EditorTableBar from './EditorTableBar.vue';
+import Icon from './Icon.vue';
 import { VDITOR_CDN } from '../lib/vditorPreview';
 import {
   cellStartOffset,
@@ -116,6 +169,17 @@ const linkQuery = ref('');
 const suggestions = ref<any[]>([]);
 const linkPos = ref({ top: 52, left: 24 });
 const activeLinkIndex = ref(0);
+
+/* 手机档「插入」底部面板：面板本身是 Teleport 到 body 的弹层，状态留在编辑器里 */
+const mobileViewport = window.matchMedia('(max-width: ' + BP_MOBILE + 'px)');
+const insertOpen = ref(false);
+const insertSheetRef = ref<HTMLElement>();
+const insertImageInput = ref<HTMLInputElement>();
+const insertFileInput = ref<HTMLInputElement>();
+/** 正在上传的动作 key（'image' / 'file'）：上传期间禁掉面板里的其它动作 */
+const insertBusy = ref('');
+/** 安卓返回键：插入面板开着时先关面板 */
+let unregisterInsertBack: (() => void) | null = null;
 
 let vditor: Vditor | null = null;
 let ready = false;
@@ -389,11 +453,23 @@ const fullscreenToolbarItem = {
   icon: toolbarIconSvg(TOOLBAR_ICONS.fullscreen),
   click: () => emit('toggle-fullscreen'),
 };
+/**
+ * 手机档「插入」入口：Vditor 自定义工具栏项（与 readingToolbarItem / fullscreenToolbarItem 同一注册方式）。
+ * 只挂在 mobileToolbar 上——桌面工具栏没有这一项，桌面上也就不会出现这个按钮和面板。
+ */
+const insertToolbarItem = {
+  name: 'engram-insert',
+  tip: '插入（图片 / 文件 / 表格…）',
+  icon: toolbarIconSvg(['M12 5v14', 'M5 12h14']),
+  click: () => openInsertPanel(),
+};
+
 // 手机端精简到一行（390px 视口最多放 10 个按钮），完整工具栏桌面不变
 const mobileToolbar = [
   'headings', 'bold', 'italic', 'list', 'ordered-list',
   wikilinkToolbarItem,
   'link', 'undo', 'edit-mode', readingToolbarItem,
+  insertToolbarItem,
 ];
 // UI 2.0 mockup 4.3：按「格式 / 段落 / 插入 / 历史」四段分组；
 // 双链、源码切换、全屏、大纲、沉浸阅读是 Engram 专有入口，收在末尾同一段里
@@ -440,7 +516,7 @@ function init() {
       isOpen: false,
       click: openEditorLink,
     },
-    toolbar: window.matchMedia('(max-width: 768px)').matches ? mobileToolbar : desktopToolbar,
+    toolbar: mobileViewport.matches ? mobileToolbar : desktopToolbar,
     toolbarConfig: { pin: true },
     upload: {
       // 图片是当前页面的私有资产：上传时必须带父项页面 id（走 setHeaders，每次上传前重新取，
@@ -1150,7 +1226,8 @@ function captureEditorSelection() {
 
 function restoreEditorSelection() {
   const range = savedSelectionRange;
-  if (!range) {
+  // 面板/文件选择器期间编辑器可能被重建：range 已脱离文档时只把焦点还回去
+  if (!range || !range.startContainer.isConnected) {
     vditor?.focus();
     return;
   }
@@ -1279,6 +1356,241 @@ function insertLink(title: string) {
   vditor?.insertValue(markdownWikiLink(title));
   vditor?.focus();
   linkPopup.value = false;
+}
+
+/* ---------- 手机档「插入」面板 ----------
+ * 九项动作各自落到 Vditor 已有的入口上：块级内容用 insertValue 插 Markdown 片段；
+ * 外部链接复用工具栏自带的 link 面板（链接地址校验/编辑都在那里）；双链复用 [[ 候选弹窗；
+ * 图片/文件走服务端已有的上传接口，成功后把 Markdown 片段插回光标处。
+ * 打开面板会把焦点移走，所以先 captureEditorSelection()，每个动作前再 restoreEditorSelection()。 */
+
+/** 插入动作 key（面板里一项一个） */
+type InsertKey = 'image' | 'file' | 'table' | 'code' | 'quote' | 'todo' | 'hr' | 'wikilink' | 'link';
+
+interface InsertEntry {
+  key: InsertKey;
+  label: string;
+  hint: string;
+  icon: string;
+}
+
+/** 面板分组：素材（上传）/ 块（直接插入）/ 关联（弹窗或链接面板） */
+const INSERT_GROUPS: Array<{ label: string; items: InsertEntry[] }> = [
+  {
+    label: '素材',
+    items: [
+      { key: 'image', label: '图片', hint: '选图后存成这一页的图片资产', icon: 'image' },
+      { key: 'file', label: '文件', hint: '上传到「原始资料/文档」再插入链接', icon: 'attach' },
+    ],
+  },
+  {
+    label: '块',
+    items: [
+      { key: 'table', label: '表格', hint: '插入 2×2 表格', icon: 'board' },
+      { key: 'code', label: '代码块', hint: '插入围栏代码块', icon: 'markdown' },
+      { key: 'quote', label: '引用', hint: '插入引用块', icon: 'book-open' },
+      { key: 'todo', label: '待办', hint: '插入待办项', icon: 'check' },
+      { key: 'hr', label: '分割线', hint: '插入一条分割线', icon: 'minus' },
+    ],
+  },
+  {
+    label: '关联',
+    items: [
+      { key: 'wikilink', label: '双链', hint: '搜索页面标题，插入 [[双链]]', icon: 'hash' },
+      { key: 'link', label: '链接', hint: '插入外部链接', icon: 'link' },
+    ],
+  },
+];
+
+const INSERT_TABLE = '\n| 列 1 | 列 2 |\n| --- | --- |\n|  |  |\n';
+const INSERT_CODE = '\n```\n\n```\n';
+const INSERT_QUOTE = '\n> 引用\n';
+const INSERT_TODO = '\n- [ ] 待办\n';
+const INSERT_HR = '\n\n---\n\n';
+
+function openInsertPanel(): void {
+  if (insertBusy.value) return;
+  // 打开面板会移走焦点：先把光标位置记下来，动作执行前再放回去
+  captureEditorSelection();
+  insertOpen.value = true;
+  void nextTick(() => insertSheetRef.value?.focus({ preventScroll: true }));
+}
+
+/** 面板/文件选择器结束后把焦点与光标还给编辑器 */
+function restoreInsertFocus(): void {
+  void nextTick(() => {
+    restoreEditorSelection();
+    vditor?.focus();
+  });
+}
+
+/** 关面板；restore=true 时把焦点与光标还给编辑器（点动作后由动作自己接管） */
+function closeInsertPanel(restore = true): void {
+  if (!insertOpen.value) return;
+  insertOpen.value = false;
+  if (!restore) return;
+  restoreInsertFocus();
+}
+
+/** 在光标处插入 Markdown 片段：先恢复打开面板前的选区，避免插入到面板按钮上 */
+function insertSnippet(snippet: string): void {
+  restoreEditorSelection();
+  userInputPending = true;
+  vditor?.insertValue(snippet);
+  vditor?.focus();
+}
+
+/** 点 Vditor 自带工具栏项（链接面板）：手机工具栏里有这个按钮，直接复用它的交互 */
+function triggerVditorToolbar(type: string): boolean {
+  const button = vditorEl.value?.querySelector<HTMLButtonElement>(
+    '.vditor-toolbar button[data-type="' + type + '"]',
+  );
+  if (!button) return false;
+  button.click();
+  return true;
+}
+
+/** 面板内的 Tab 循环 + Esc 关闭：Teleport 到 body 后不在编辑器 DOM 里，键盘事件要自己接 */
+function onInsertSheetKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.stopPropagation();
+    closeInsertPanel();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const root = insertSheetRef.value;
+  if (!root) return;
+  const focusables = Array.from(root.querySelectorAll<HTMLElement>('button:not([disabled])'));
+  if (!focusables.length) {
+    event.preventDefault();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (event.shiftKey) {
+    if (!active || active === first || active === root) {
+      event.preventDefault();
+      last.focus();
+    }
+  } else if (active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+/** 图片名带内容哈希前缀，图注用去掉前缀的原名（与 Vditor 上传格式化同一口径） */
+function insertAssetLabel(name: string): string {
+  return String(name || '').replace(/^[0-9a-f]{8}-/, '') || '图片';
+}
+
+async function runInsertAction(key: InsertKey): Promise<void> {
+  if (insertBusy.value) return;
+  if (key === 'image') {
+    closeInsertPanel(false);
+    insertImageInput.value?.click();
+    return;
+  }
+  if (key === 'file') {
+    closeInsertPanel(false);
+    insertFileInput.value?.click();
+    return;
+  }
+  closeInsertPanel(false);
+  await nextTick();
+  if (key === 'wikilink') {
+    restoreEditorSelection();
+    openLinkPopup();
+    return;
+  }
+  if (key === 'link') {
+    restoreEditorSelection();
+    if (triggerVditorToolbar('link')) return;
+    insertSnippet('[链接](https://)');
+    return;
+  }
+  if (key === 'table') insertSnippet(INSERT_TABLE);
+  else if (key === 'code') insertSnippet(INSERT_CODE);
+  else if (key === 'quote') insertSnippet(INSERT_QUOTE);
+  else if (key === 'todo') insertSnippet(INSERT_TODO);
+  else insertSnippet(INSERT_HR);
+}
+
+function pickedFiles(event: Event): File[] {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files || []);
+  input.value = '';
+  // 取消选择（个别浏览器 change 事件带空列表）：把焦点与光标还给编辑器，别让键盘/光标停在 body
+  if (!files.length) restoreInsertFocus();
+  return files;
+}
+
+/** 图片：走编辑器同一套 /api/assets/upload（父项 = 当前页面），上传成功再插 ![]() */
+async function onInsertImagePicked(event: Event): Promise<void> {
+  const files = pickedFiles(event);
+  if (!files.length) return;
+  const pageId = props.pageId;
+  if (!pageId) {
+    notify.error('页面还没保存好，稍后再插入图片');
+    return;
+  }
+  insertBusy.value = 'image';
+  try {
+    const fd = new FormData();
+    fd.append('parent', pageId);
+    for (const file of files) fd.append('files', file);
+    const { data } = await api.post('/api/assets/upload', fd);
+    const saved: Array<{ name?: string; url?: string }> = Array.isArray(data?.saved) ? data.saved : [];
+    const usable = saved.filter((asset) => typeof asset?.url === 'string' && asset.url);
+    if (!usable.length) throw new Error(data?.error || '图片上传失败');
+    insertSnippet(usable.map((asset) => '![' + insertAssetLabel(asset.name || '') + '](' + asset.url + ')').join('\n'));
+    notify.success('已插入 ' + usable.length + ' 张图片');
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || '图片上传失败');
+  } finally {
+    insertBusy.value = '';
+  }
+}
+
+/** 文件：复用侧栏的 /api/files/upload（落「原始资料/文档」）；md 产物插双链，其余插下载链接 */
+async function onInsertFilePicked(event: Event): Promise<void> {
+  const files = pickedFiles(event);
+  if (!files.length) return;
+  insertBusy.value = 'file';
+  try {
+    const fd = new FormData();
+    fd.append('dir', '原始资料/文档');
+    for (const file of files) fd.append('files', file);
+    const { data } = await api.post('/api/files/upload', fd);
+    const saved: Array<{ path?: string; name?: string; pageId?: string }> = Array.isArray(data?.saved) ? data.saved : [];
+    if (!saved.length) throw new Error(data?.error || '文件上传失败');
+    const snippets = await Promise.all(saved.map(async (entry) => {
+      const name = String(entry.name || '');
+      if (entry.pageId) {
+        // md 导入后会变成页面：双链要按页面标题写（frontmatter 标题可能不同于文件名）
+        let title = name.replace(/\.[^.]+$/, '');
+        try {
+          const { data: page } = await api.get('/api/pages/' + encodeURIComponent(entry.pageId));
+          const pageTitle = page?.meta?.title;
+          if (typeof pageTitle === 'string' && pageTitle.trim()) title = pageTitle.trim();
+        } catch {
+          /* 拿不到标题就退回文件名 */
+        }
+        return markdownWikiLink(title);
+      }
+      return '[' + (name || '文件') + '](/api/files/download?path=' + encodeURIComponent(String(entry.path || '')) + ')';
+    }));
+    insertSnippet(snippets.join('\n'));
+    if (Array.isArray(data?.duplicates) && data.duplicates.length) {
+      notify.info('以下文件已存在，未重复上传：' + data.duplicates.join('、'));
+    } else {
+      notify.success('已插入 ' + saved.length + ' 个文件链接');
+    }
+  } catch (error: any) {
+    notify.error(error?.response?.data?.error || error?.message || '文件上传失败');
+  } finally {
+    insertBusy.value = '';
+  }
 }
 
 // ---------- 对外接口 ----------
@@ -1472,6 +1784,9 @@ onUnmounted(() => {
   unbindVditorTooltips?.();
   unbindVditorTooltips = null;
   floatingHintCleanup?.();
+  unregisterInsertBack?.();
+  unregisterInsertBack = null;
+  mobileViewport.removeEventListener('change', onMobileViewportChange);
   vditor?.destroy();
 });
 
@@ -1491,7 +1806,23 @@ defineExpose({
   pasteClipboard,
   selectAll,
 });
-onMounted(init);
+onMounted(() => {
+  init();
+  // 安卓返回键：插入面板开着时先关面板（只认领本组件的这一层）
+  unregisterInsertBack = registerBackHandler(() => {
+    if (insertOpen.value) {
+      closeInsertPanel();
+      return true;
+    }
+    return false;
+  });
+  // 从手机档放大到桌面档（折叠屏展开 / 旋屏）：插入面板只属于手机档，直接收起
+  mobileViewport.addEventListener('change', onMobileViewportChange);
+});
+
+function onMobileViewportChange(event: MediaQueryListEvent): void {
+  if (!event.matches) closeInsertPanel();
+}
 </script>
 
 <style scoped>
@@ -1701,6 +2032,146 @@ onMounted(init);
   font-size: 10.5px;
 }
 
+/* ---------- 手机档「插入」底部面板 ----------
+   入口只挂在 mobileToolbar 尾部（engram-insert），桌面工具栏没有这一项；
+   面板 Teleport 到 body：遮罩 + 抓柄 + 22px 顶圆角 + 44px 行高，与阅读目录面板同一套语言。 */
+.insert-file-input { display: none; }
+:deep(.vditor-toolbar button[data-type="engram-insert"]) { color: var(--accent); }
+:deep(.vditor-toolbar button[data-type="engram-insert"]:hover) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* 从手机档放大到桌面档时 Vditor 工具栏不重建：用媒体查询兜底藏掉这个只属于手机档的入口 */
+@media (min-width: 769px) {
+  :deep(.vditor-toolbar button[data-type="engram-insert"]) { display: none !important; }
+}
+@media (max-width: 768px) {
+  .insert-mask {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    background: rgba(20, 18, 15, 0.42);
+    animation: insert-fade 0.2s ease both;
+  }
+  .insert-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: calc(var(--z-overlay) + 1);
+    display: flex;
+    flex-direction: column;
+    max-height: 78dvh;
+    padding: 8px 16px calc(14px + var(--safe-bottom));
+    border-radius: 22px 22px 0 0;
+    background: var(--card-bg);
+    box-shadow: 0 -18px 60px -20px rgba(20, 18, 15, 0.35);
+    animation: insert-sheet-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .insert-sheet:focus { outline: none; }
+  .insert-grab {
+    width: 38px;
+    height: 4px;
+    flex: none;
+    margin: 2px auto 10px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 18%, transparent);
+  }
+  .insert-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .insert-head h2 {
+    flex: 1;
+    margin: 0;
+    font-size: 17px;
+    font-weight: 650;
+    color: var(--text);
+  }
+  .insert-x {
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: -8px -8px -8px 0;
+    border: 0;
+    border-radius: 12px;
+    background: none;
+    color: var(--text-secondary);
+  }
+  .insert-x:active { background: var(--bg-hover); color: var(--text); }
+  .insert-sub {
+    flex: none;
+    margin: 2px 0 6px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+  .insert-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 2px 4px;
+  }
+  .insert-group + .insert-group { margin-top: 8px; }
+  .insert-group-title {
+    margin: 6px 4px 4px;
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+  }
+  .insert-row {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    width: 100%;
+    min-height: 44px;
+    padding: 7px 10px;
+    border-radius: 12px;
+    color: var(--text);
+    text-align: left;
+  }
+  .insert-row + .insert-row { margin-top: 2px; }
+  .insert-row:active { background: var(--bg-hover); }
+  .insert-row:disabled { opacity: 0.5; }
+  .insert-row-icon {
+    width: 32px;
+    height: 32px;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    color: var(--text);
+  }
+  .insert-row-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .insert-row-text b { font-size: 14px; font-weight: 600; }
+  .insert-row-text small {
+    font-size: 11.5px;
+    line-height: 1.35;
+    color: var(--text-secondary);
+  }
+  .insert-row-chevron { flex: none; color: var(--text-faint); }
+  @keyframes insert-sheet-up {
+    from { transform: translateY(105%); }
+    to { transform: translateY(0); }
+  }
+  @keyframes insert-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+}
 /* 触屏（无 hover + 粗指针）：工具栏按钮 28px、双链候选行 ~32px，手指都按不准。
    刻意不写成 `max-width: 768px`——那是宽度不是触屏：折叠屏内屏、平板、手机横屏都在 769px 以上，
    按宽度写它们就还是 28px。反过来，鼠标设备不匹配这个查询，桌面工具栏一点不变。

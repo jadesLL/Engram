@@ -11,3 +11,16 @@ export const BP_COMPACT = 640;
 export const BP_MOBILE = 768;
 /** 1024：紧凑档上限（平板竖屏/折叠屏内屏用浮层侧栏）；> 1024 才是桌面双栏 */
 export const BP_WIDE = 1024;
+
+/*
+ * 以下是 Android WindowSizeClass 的一套口径（2026-11 安卓改版，见 lib/windowSizeClass.ts），
+ * 与上面的桌面断点并存而不是替换：桌面 / Docker 网页仍按 640 / 768 / 1024 的三档媒体查询，
+ * 安卓壳层按下面的 600 / 840 判档（用 .layout.size-* 类切骨架，不新增宽度媒体查询）。
+ */
+/** 600：medium 起点（折叠屏展开 / 手机横屏 / 小平板）——壳层换成 rail，收起底部导航 */
+export const BP_MEDIUM = 600;
+/**
+ * 840：expanded 起点（平板横屏 / 桌面网页）——rail + 常驻侧栏；
+ * 也是侧栏「浮层抽屉 ↔ 常驻栏」的分界（Sidebar.vue 的 drawerMode 用它，不再用 1024）。
+ */
+export const BP_EXPANDED = 840;

@@ -216,3 +216,33 @@ test('安全区一律走全局变量：不再写裸 env(safe-area-inset-*)', () 
     '底部胶囊把安全区算了两次（容器已让位）：会比底部导航高出一条系统栏',
   );
 });
+
+test('手机档目录面板只到三级标题：H1 用文档标题补齐，H4 不进面板（桌面常驻列不变）', () => {
+  assert.match(
+    source,
+    /const MOBILE_OUTLINE_MAX_LEVEL = 3;/,
+    '手机档目录面板没有「只到三级标题」的档位常量',
+  );
+  assert.match(
+    source,
+    /if \(!narrowReader\.value\) return outline\.value;/,
+    '桌面档没有走原来的目录数据：桌面常驻列被一起改了',
+  );
+  assert.match(
+    source,
+    /outline\.value\.filter\(\(item\) => item\.level <= MOBILE_OUTLINE_MAX_LEVEL\)/,
+    '手机档没有按 h1–h3 过滤目录：H4 又进面板了',
+  );
+  assert.match(
+    source,
+    /return title \? \[\{ id: '', level: 1, text: title \}, \.\.\.items\] : items;/,
+    '手机档面板没有用文档标题补 H1 条目',
+  );
+  assert.match(source, /v-for="heading in outlineItems"/, '面板模板没有用过滤后的目录数据');
+  assert.match(source, /class="outline-level"/, '面板没有 H1/H2/H3 级别标记');
+  // 点 H1（id 为空）滚回正文开头；顺序仍是先收面板、再滚动
+  const body = functionBody(source, 'async function scrollToHeading');
+  const closeAt = body.search(/closeOutlinePanel\(\)|mobileOutlineOpen\.value = false/);
+  const topAt = body.indexOf('top: 0');
+  assert.ok(topAt > closeAt, 'H1 条目没有在收面板之后滚回正文开头');
+});

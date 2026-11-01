@@ -9,6 +9,10 @@
       'chat-dragging': app.chatDragging,
       'update-notice-visible': updateNoticeVisible && !desktopShell,
       'settings-open': isActive('/settings'),
+      /* 设备矩阵（2026-11）：windowSizeClass 三档由 JS 判定，类名承载布局切换 */
+      'size-compact': sizeClass === 'compact',
+      'size-medium': sizeClass === 'medium',
+      'size-expanded': sizeClass === 'expanded',
     }"
     :style="{ '--sidebar-width': sidebarWidth + 'px', '--chat-w': app.chatDockWidth + 'px' }"
   >
@@ -123,14 +127,35 @@
       <div v-if="app.sidebarOpen && sidebarOverlay && !app.sidebarFull" class="mask" @click="app.sidebarOpen = false" />
     </transition>
 
-    <!-- 主内容区 -->
-    <main class="content">
+    <!-- 主内容区：下拉刷新指示器挂在滚动容器里，只有 ≤839 触屏的顶层页会出现 -->
+    <main ref="contentEl" class="content">
+      <div
+        v-if="pullAvailable"
+        class="pull-refresh"
+        :class="[pullIndicatorClass, { pulling: pullOffset > 0, refreshing }]"
+        :style="{ transform: 'translate(-50%, ' + (pullOffset - 46) + 'px)' }"
+        aria-hidden="true"
+      >
+        <span class="pull-ring">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none">
+            <circle class="pull-track" cx="12" cy="12" r="9" />
+            <circle
+              class="pull-arc"
+              cx="12"
+              cy="12"
+              r="9"
+              :style="{ strokeDashoffset: 56.55 * (1 - pullProgress) + 'px' }"
+            />
+          </svg>
+        </span>
+        <span class="pull-label">{{ refreshing ? '刷新中…' : pullProgress >= 1 ? '松开刷新' : '下拉刷新' }}</span>
+      </div>
       <router-view />
     </main>
 
     <UpdateNotice @change="onUpdateNoticeChange" />
 
-    <!-- 内置 Agent 聊天抽屉：桌面端是右侧悬浮卡片（正文让出它的宽度，不遮内容），≤1024px 覆盖正文；
+    <!-- 内置 Agent 聊天抽屉：桌面端是右侧悬浮卡片（正文让出它的宽度，不遮内容），<840px 覆盖正文；
          开合动画 drawer-slide 与左侧栏同一套节奏，具体样式在 ChatDrawer 里 -->
     <transition name="drawer-slide">
       <ChatDrawer v-if="app.chatDrawerOpen" :overlay="sidebarOverlay" />
@@ -162,6 +187,55 @@
         <span>{{ item.label }}</span>
       </button>
     </nav>
+
+    <!-- 手机新建 FAB（≤839、首页、知识库抽屉收起时）：底栏在时抬到栏上方 88px，medium 贴右下 24px -->
+    <transition name="fab-pop">
+      <button v-if="newFabVisible" class="new-fab" type="button" aria-label="新建" @click="openNewSheet">
+        <Icon name="plus" :size="20" />
+        <span>新建</span>
+      </button>
+    </transition>
+
+    <!-- 「新建」选择面板（2026-11 安卓改版）：一个入口一件事——新建页面 / 记灵感 / 收进收集箱 / 扫码绑定 -->
+    <Teleport to="body">
+      <transition name="fade">
+        <div v-if="newSheetOpen" class="new-mask" @click="newSheetOpen = false" />
+      </transition>
+      <transition name="more-sheet">
+        <div
+          v-if="newSheetOpen"
+          class="new-sheet"
+          :class="{ 'no-nav': sizeClass !== 'compact' }"
+          role="dialog"
+          aria-modal="true"
+          aria-label="新建"
+        >
+          <div class="new-sheet-bar" />
+          <div class="new-sheet-head">
+            <h2 class="new-sheet-title">新建</h2>
+            <button class="new-sheet-close" type="button" aria-label="关闭新建面板" @click="newSheetOpen = false">
+              <Icon name="x" :size="20" />
+            </button>
+          </div>
+          <div class="new-sheet-actions">
+            <button
+              v-for="action in newActions"
+              :key="action.key"
+              type="button"
+              class="new-action"
+              @click="runNewAction(action.action)"
+            >
+              <span class="new-action-icon"><Icon :name="action.icon" :size="20" /></span>
+              <span class="new-action-main">
+                <span class="new-action-title">{{ action.label }}</span>
+                <span v-if="action.sub" class="new-action-sub">{{ action.sub }}</span>
+              </span>
+              <Icon name="chevron-right" :size="18" class="new-action-chevron" />
+            </button>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
 
     <!-- 移动端「我的」面板（2026-11 安卓改版）：替代原来的「更多」九宫格。
          账户行只读展示；快捷动作是「新建页面 / 记一条灵感」；其余入口逐行列出，行高 ≥52px。 -->
@@ -272,7 +346,10 @@ import { promptDialog } from '../lib/confirm';
 import { createIdeaNote } from '../lib/quickNote';
 import { loadRuntimeCapabilities, useRuntimeCapabilities } from '../lib/capabilities';
 import { haptic } from '../lib/haptics';
+import { useTouchPointer } from '../lib/pointer';
 import { syncStatusView } from '../lib/syncStatus';
+import { syncChannelView } from '../lib/syncChannel';
+import { windowSizeClassFor } from '../lib/windowSizeClass';
 import { registerBackHandler } from '../lib/androidBack';
 import Sidebar from '../components/Sidebar.vue';
 import ChatDrawer from '../components/ChatDrawer.vue';
@@ -398,10 +475,17 @@ const MIN_SIDEBAR = 232;
 const MAX_SIDEBAR = 420;
 const DEFAULT_SIDEBAR = 280;
 const viewportWidth = ref(window.innerWidth);
-const isMobile = computed(() => viewportWidth.value <= 768);
-/* 769-1024px 紧凑档（折叠屏内屏等）：侧栏浮层化，需要遮罩 */
-const isCompact = computed(() => viewportWidth.value > 768 && viewportWidth.value <= 1024);
-const sidebarOverlay = computed(() => isMobile.value || isCompact.value);
+/*
+ * 设备矩阵（2026-11 安卓改版）：按 lib/windowSizeClass 的 600 / 840 三档给壳层换骨架，
+ * 不再用「768 / 1024 两个宽度布尔」各写一套（用户报障：折叠屏展开瞬间界面会跳一套语言）。
+ *   compact  <600   手机竖屏 / 折叠屏合上：五项底栏 + 抽屉侧栏（CSS 见 ≤768 兜底块）
+ *   medium   600–839 折叠屏展开 / 手机横屏 / 小平板：rail + 无底栏；侧栏仍是浮层抽屉
+ *   expanded ≥840   平板横屏 / 桌面网页：rail + 常驻侧栏（桌面三栏，行为不变）
+ * CSS 侧用 .layout.size-* 类承接（见样式里的「设备矩阵」段）；窗口变化由 onWindowResize 同步。
+ */
+const sizeClass = computed(() => windowSizeClassFor(viewportWidth.value));
+/** 侧栏浮层：<840（compact + medium 都是抽屉）；≥840 走常驻侧栏，正文按侧栏宽度让位 */
+const sidebarOverlay = computed(() => sizeClass.value !== 'expanded');
 /** 悬浮档展开中：正文要按卡片宽度让出右侧空间（满窗与紧凑档浮层都不让位——它们本来就盖在正文上） */
 const chatDockOpen = computed(() =>
   app.chatDrawerOpen && app.chatDrawerMode === 'dock' && !sidebarOverlay.value
@@ -462,10 +546,20 @@ function nudgeSidebar(delta: number) {
 
 function onWindowResize() {
   const prevOverlay = sidebarOverlay.value;
+  const prevSize = sizeClass.value;
   viewportWidth.value = window.innerWidth;
   // 跨入浮层档位时收起侧栏，避免展开的桌面侧栏瞬间盖住内容
   if (!prevOverlay && sidebarOverlay.value) app.sidebarOpen = false;
-  if (!isMobile.value) {
+  /*
+   * 尺寸等级变了：浮层面板与下拉手势的可用性跟着变（FAB 只在 ≤839、底栏只在 <600 出现），
+   * 开着就收掉，免得跨档后留下一个没有入口的浮层。
+   */
+  if (prevSize !== sizeClass.value) {
+    moreOpen.value = false;
+    newSheetOpen.value = false;
+    abortPull();
+  }
+  if (sizeClass.value !== 'compact') {
     const clamped = clampSidebarWidth(sidebarWidth.value);
     if (clamped !== sidebarWidth.value) setSidebarWidth(clamped);
   }
@@ -503,8 +597,9 @@ const navItems = computed(() => [
   { key: 'customer-research', icon: 'report', title: '客户调研', active: isActive('/customer-research'), dot: false, action: () => go('/customer-research') },
 ]);
 
-/* ===== 手机底部导航（≤768px）：五个顶层入口 =====
- * 桌面端看不到这一条（.bottom-nav 只在 ≤768px 显示），标签项在这里统一定义。
+/* ===== 手机底部导航（compact，<600）：五个顶层入口 =====
+ * 桌面端看不到这一条；600–839（medium）起由 .layout.size-medium 隐藏、换成左侧 rail，
+ * 标签项仍在这里统一定义（数据与桌面 rail 共用一份）。
  * 首页与知识库都落在 /page：目录抽屉收起时算首页，抽屉拉开时算知识库——两个标签
  * 各有一件事，不再像旧的「页面」那样一格两件事。
  */
@@ -624,7 +719,7 @@ interface MoreSheetItem {
   action: () => void;
 }
 
-/* 「我的」面板列表：rail 在 ≤768px 隐藏后，这些入口仅在此处可达。
+/* 「我的」面板列表：rail 在 compact（<600）隐藏后，这些入口仅在此处可达。
    收集箱与 Agent 已升为底栏顶层，不再重复占用这里的行。 */
 const moreItems = computed<MoreSheetItem[]>(() => [
   { key: 'search', label: '搜索', sub: 'Wiki 页面与原始资料', icon: 'search', dot: false, action: () => runMore(() => go('/search')) },
@@ -663,6 +758,203 @@ const themeOptions = [
 const themeLabel = computed(
   () => themeOptions.find((opt) => opt.value === app.theme)?.label || '跟随系统',
 );
+
+/* ===== 下拉刷新（2026-11 设备矩阵）：只给 ≤839 触屏的顶层页，内容在顶部时下拉触发一次同步刷新 =====
+ * 手势纪律（与抽屉横滑同一套判定）：
+ *  - 只接管「在顶部继续往下拉」；上滑、横滑立刻交还给页面（收集箱卡片横滑、列表滚动都不受干扰）；
+ *  - 触点按下去先找真正的纵向滚动容器（首页看板 / 收集箱卡片台各有自己的滚动层），
+ *    容器不在顶部就不开始跟手，避免在文章里下拉也把整页拉动；
+ *  - 阈值 64px、跟手阻尼 0.55、最多 96px；过阈值松手才刷新，否则回弹。
+ * 桌面（≥840）与鼠标操作完全不启用。
+ */
+const PULL_THRESHOLD = 64;
+const PULL_MAX = 96;
+/** 只有这三个顶层页支持下拉刷新；/page/:id（阅读）自己管滚动，不抢它的手势 */
+const PULL_ROUTES = ['/page', '/inbox', '/tasks'];
+const contentEl = ref<HTMLElement>();
+const touchPointer = useTouchPointer();
+const pullOffset = ref(0);
+const refreshing = ref(false);
+let detachPullRefresh: (() => void) | null = null;
+let pullTracking = false;
+let pullScroller: HTMLElement | null = null;
+let pullStartY = 0;
+let pullStartX = 0;
+let pullIntent: 'none' | 'pull' | 'scroll' = 'none';
+let pullThresholdHaptic = false;
+
+const pullAvailable = computed(() =>
+  sizeClass.value !== 'expanded' && touchPointer.value && PULL_ROUTES.includes(route.path)
+);
+const pullProgress = computed(() => Math.min(1, pullOffset.value / PULL_THRESHOLD));
+/** 进度环取连接通道色（与同步状态同一套令牌），没配置同步时退回强调色 */
+const pullIndicatorClass = computed(() => {
+  const view = syncChannelView(sync.status);
+  return view ? `link-${view.key}` : '';
+});
+
+/** 从触点往上找真正的纵向滚动容器；找不到就退回外壳 .content */
+function findPullScroller(target: EventTarget | null): HTMLElement | null {
+  let el = target instanceof Element ? (target as HTMLElement) : null;
+  while (el && el !== document.body) {
+    const overflowY = getComputedStyle(el).overflowY;
+    if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 2) return el;
+    if (el === contentEl.value) break;
+    el = el.parentElement;
+  }
+  return contentEl.value ?? null;
+}
+
+function resetPull() {
+  pullTracking = false;
+  pullIntent = 'none';
+  pullOffset.value = 0;
+}
+
+/** 放弃本次下拉（子组件接管了触摸 / 滚动容器已经离开顶部） */
+function abortPull() {
+  if (!pullTracking && pullOffset.value === 0) return;
+  resetPull();
+}
+
+/** 跟手位移：阻尼后的像素值（松手回弹由 CSS 过渡完成） */
+function installPullRefresh(el: HTMLElement): () => void {
+  const onStart = (event: TouchEvent) => {
+    if (!pullAvailable.value || refreshing.value || event.touches.length !== 1) return;
+    const scroller = findPullScroller(event.target);
+    if (!scroller || scroller.scrollTop > 0) return;
+    pullScroller = scroller;
+    pullStartY = event.touches[0].clientY;
+    pullStartX = event.touches[0].clientX;
+    pullTracking = true;
+    pullIntent = 'none';
+    pullThresholdHaptic = false;
+  };
+
+  const onMove = (event: TouchEvent) => {
+    if (!pullTracking || event.touches.length !== 1) return;
+    // 子组件（卡片横滑、面板……）已经接管这次触摸：让给它
+    if (event.defaultPrevented || (pullScroller?.scrollTop ?? 0) > 0) {
+      abortPull();
+      return;
+    }
+    const dy = event.touches[0].clientY - pullStartY;
+    const dx = event.touches[0].clientX - pullStartX;
+    if (pullIntent === 'none') {
+      if (Math.abs(dy) < 8 && Math.abs(dx) < 8) return;
+      // 只接管「从顶部往下拉」：上滑 / 横滑立刻交还给页面
+      if (dy <= 0 || Math.abs(dx) > Math.abs(dy) * 1.2) {
+        pullTracking = false;
+        pullIntent = 'scroll';
+        pullOffset.value = 0;
+        return;
+      }
+      pullIntent = 'pull';
+    }
+    if (event.cancelable) event.preventDefault();
+    pullOffset.value = Math.min(PULL_MAX, dy * 0.55);
+    // 过阈值只轻振一次：告诉用户「现在松手会刷新」
+    if (!pullThresholdHaptic && pullOffset.value >= PULL_THRESHOLD) {
+      pullThresholdHaptic = true;
+      haptic('tap');
+    }
+  };
+
+  const onEnd = () => {
+    if (!pullTracking) return;
+    const distance = pullOffset.value;
+    pullTracking = false;
+    pullIntent = 'none';
+    if (distance >= PULL_THRESHOLD) void finishPullRefresh();
+    else pullOffset.value = 0;
+  };
+
+  el.addEventListener('touchstart', onStart, { passive: true });
+  el.addEventListener('touchmove', onMove, { passive: false });
+  el.addEventListener('touchend', onEnd);
+  el.addEventListener('touchcancel', onEnd);
+  return () => {
+    el.removeEventListener('touchstart', onStart);
+    el.removeEventListener('touchmove', onMove);
+    el.removeEventListener('touchend', onEnd);
+    el.removeEventListener('touchcancel', onEnd);
+  };
+}
+
+/** 松手后的刷新：保持「刷新中…」一小会儿再回弹，完成落一条 toast */
+async function finishPullRefresh() {
+  refreshing.value = true;
+  pullOffset.value = 56;
+  const startedAt = Date.now();
+  try {
+    await refreshTopLevel();
+  } finally {
+    const remain = 420 - (Date.now() - startedAt);
+    if (remain > 0) await new Promise((resolve) => setTimeout(resolve, remain));
+    refreshing.value = false;
+    pullOffset.value = 0;
+    notify.success('已刷新');
+  }
+}
+
+/** 顶层页刷新：先对一次同步账（共享 sync store），再按当前页重读数据；能力位顺手重取（有缓存就不发请求） */
+async function refreshTopLevel() {
+  await Promise.all([
+    sync.refresh().catch(() => undefined),
+    inbox.load().catch(() => undefined),
+    loadRuntimeCapabilities().catch(() => undefined),
+  ]);
+  if (route.path === '/page') {
+    app.bumpSidebar();
+    void homeBoard.load();
+  } else if (route.path === '/tasks') {
+    void homeTasks.load();
+  }
+}
+
+/* ===== 新建 FAB + 选择面板（2026-11 安卓改版）=====
+ * 手机 / 折叠屏（≤839）在知识库首页、目录抽屉收起时出现：底栏在时抬到栏上方，
+ * medium 没有底栏就贴右下 24px。一个入口一件事：新建页面 / 记一条灵感 / 收进收集箱 / 扫码绑定。
+ */
+const newSheetOpen = ref(false);
+const newFabVisible = computed(() =>
+  sizeClass.value !== 'expanded'
+    // 面板/抽屉打开时让位：浮层是半透明的，蓝色 FAB 留在后面会透出一块色斑
+    && !app.sidebarOpen
+    && !app.chatDrawerOpen
+    && !moreOpen.value
+    && !newSheetOpen.value
+    && route.path === '/page'
+);
+
+function openNewSheet() {
+  haptic('tap');
+  newSheetOpen.value = true;
+}
+
+/** 选完先收面板再做事：建页/跳转要能马上看到，面板不能压在目标页上 */
+function runNewAction(action: () => void) {
+  newSheetOpen.value = false;
+  action();
+}
+
+interface NewSheetAction {
+  key: string;
+  label: string;
+  sub?: string;
+  icon: string;
+  action: () => void;
+}
+
+const newActions = computed<NewSheetAction[]>(() => [
+  { key: 'page', label: '新建页面', sub: '打开一张空白 Wiki 页面直接写', icon: 'plus', action: () => quickNew() },
+  { key: 'idea', label: '记一条灵感', sub: '写进 原始资料/灵感碎片', icon: 'lightbulb', action: () => quickNote() },
+  { key: 'inbox', label: '收进收集箱', sub: '先放进去，回头再整理', icon: 'inbox', action: () => go('/inbox') },
+  { key: 'scan', label: '扫码绑定中枢', sub: '对准中枢上的二维码完成绑定', icon: 'qr', action: () => go('/settings?section=sync') },
+]);
+
+/** 换了页面就把手势复位（滚动位置是新的，不能带着上一页的跟手位移） */
+watch(() => route.path, () => abortPull());
 
 async function quickNew() {
   // Electron 桌面壳不支持原生 prompt()，用应用内 promptDialog
@@ -793,6 +1085,10 @@ onMounted(() => {
   // Android 返回键/侧滑返回：先收掉应用级浮层（我的面板 → 对话抽屉 → 文件树），
   // 都关着才交回原生（历史后退或退到后台）。桌面端没有原生调用，注册了也不会触发。
   stopBackHandler = registerBackHandler(() => {
+    if (newSheetOpen.value) {
+      newSheetOpen.value = false;
+      return true;
+    }
     if (moreOpen.value) {
       moreOpen.value = false;
       return true;
@@ -809,6 +1105,8 @@ onMounted(() => {
   });
   // 抽屉横滑手势：aside 一直挂在 DOM 里（v-show 切换），挂载时装一次即可
   if (sidebarEl.value) detachSidebarSwipe = installSidebarSwipe(sidebarEl.value);
+  // 下拉刷新手势：.content 是外壳滚动容器（router-view 切换不清空它），挂载时装一次即可
+  if (contentEl.value) detachPullRefresh = installPullRefresh(contentEl.value);
   app.loadUiPreferences(); // 侧栏「AI 工作区」默认隐藏，是否显示由服务端设置决定
   // 首页看板布局：先按本地那份画出来（进页面就有内容），服务端答复到了再校正（多端一致）
   void homeBoard.load();
@@ -894,6 +1192,8 @@ onUnmounted(() => {
   stopBackHandler = null;
   detachSidebarSwipe?.();
   detachSidebarSwipe = null;
+  detachPullRefresh?.();
+  detachPullRefresh = null;
   document.removeEventListener('visibilitychange', onUpdateVisibility);
   document.removeEventListener('visibilitychange', flushHomeBoardOnHide);
   window.removeEventListener('pagehide', flushHomeBoardWrite);
@@ -1156,6 +1456,8 @@ onUnmounted(() => {
   /* 横屏时系统导航栏会跑到右侧（inset-right>0）：正文右侧也要让开，否则末列被导航键压住 */
   padding-right: var(--safe-right);
   background: var(--bg);
+  /* 下拉刷新自己接管「顶部继续往下拉」：别让浏览器再叠一层 overscroll 光晕/滚动链 */
+  overscroll-behavior-y: contain;
   transition: padding-left 180ms ease, padding-right 180ms ease, padding-top 180ms ease;
 }
 
@@ -1184,7 +1486,7 @@ onUnmounted(() => {
  * 知识库目录满窗（2026-10-03）：与内置 Agent 满窗（.chat-drawer.full）同一套落位，
  * 方向相反——贴边铺满正文区、保留左侧图标栏、不再留玻璃边距与圆角。
  * 几何写成具体长度（left / width / top / bottom 都可插值），点一下才是「拉过去」而不是跳过去。
- * width / max-width 带 !important：紧凑档（≤1024px）把侧栏当浮层写死了 min() 与 400px 上限，
+ * width / max-width 带 !important：浮层档（<840px）把侧栏当浮层写死了 min() 与 400px 上限，
  * 「满窗」必须盖过它，否则只铺到 400px（原型里就踩过这一条）。
  */
 .sidebar {
@@ -1264,56 +1566,215 @@ onUnmounted(() => {
 .more-mask { display: none; }
 .more-sheet { display: none; }
 
-/* 769-1024px 紧凑档（折叠屏内屏/平板竖屏）：rail 保留，侧栏改浮层，AI 抽屉收窄并排 */
-@media (min-width: 769px) and (max-width: 1024px) {
-  .sidebar {
-    position: fixed;
-    /* fixed 相对视口定位：桌面端须避开顶部拖拽融合条（非桌面端变量回退 0px） */
-    top: calc(8px + var(--win-titlebar-h, 0px) + var(--safe-top));
-    bottom: calc(8px + var(--safe-bottom));
-    left: calc(60px + var(--safe-left));
-    width: min(var(--sidebar-width), calc(100vw - 80px)) !important;
-    max-width: 400px;
-    box-shadow: var(--sidebar-mobile-shadow);
-  }
+/*
+ * 壳层新增件（2026-11 设备矩阵）：宽度切换由 .layout.size-* 类承接（见下方「设备矩阵」段），
+ * 这里只写与尺寸档无关的下拉刷新 / 新建 FAB / 新建面板样式。
+ */
 
-  .resizer { display: none; }
-
-  .mask {
-    position: fixed;
-    inset: 0;
-    display: block;
-    background: rgba(15, 15, 15, 0.26);
-    backdrop-filter: blur(3px);
-    -webkit-backdrop-filter: blur(3px);
-    z-index: var(--z-mask);
-  }
-
-  .content,
-  .layout.sidebar-open .content {
-    padding-left: calc(64px + var(--safe-left));
-  }
-
-  /* 触屏紧凑档（折叠屏内屏/平板竖屏）：rail 图标按钮用不可见热区补到 44px，
-     视觉尺寸不变——36px 的方块在手指上仍然偏小 */
-  @media (hover: none) and (pointer: coarse) {
-    .rail-btn { width: 36px; height: 36px; }
-    .rail { padding: 6px 4px; }
-    .rail-btn::after,
-    .rail-logo::after {
-      content: '';
-      position: absolute;
-      inset: -4px;
-      border-radius: 10px;
-    }
-  }
+/* ---- 下拉刷新指示器：贴在滚动容器顶部，跟手位移由模板内联 transform 给 ---- */
+.pull-refresh {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
 }
+
+.pull-refresh.pulling,
+.pull-refresh.refreshing { opacity: 1; }
+
+/* 松手回弹才做过渡；跟手中（.pulling）必须一像素不差地贴着手指 */
+.pull-refresh:not(.pulling) { transition: transform 200ms ease, opacity 160ms ease; }
+
+.pull-ring { display: flex; flex: none; }
+.pull-ring svg { display: block; transform: rotate(-90deg); }
+.pull-track { stroke: var(--border-strong); stroke-width: 2.4; }
+.pull-arc {
+  stroke: var(--channel, var(--accent));
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-dasharray: 56.55px;
+  transition: stroke-dashoffset 80ms linear;
+}
+.pull-refresh.refreshing .pull-ring svg { animation: pull-spin 900ms linear infinite; }
+
+@keyframes pull-spin {
+  to { transform: rotate(270deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pull-refresh.refreshing .pull-ring svg { animation: none; }
+}
+
+/* ---- 新建 FAB（≤839）：底栏在时抬到栏上方 88px，medium 无底栏时贴右下 24px ---- */
+.new-fab {
+  position: fixed;
+  right: calc(16px + var(--safe-right));
+  bottom: calc(88px + var(--safe-bottom));
+  z-index: calc(var(--z-chrome) + 1);
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px 0 18px;
+  border-radius: 18px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 15px;
+  font-weight: 600;
+  box-shadow: var(--shadow-dialog);
+}
+
+.new-fab:active { background: var(--accent-pressed); }
+
+/* 软键盘弹起时底栏与常驻胶囊都收起了，FAB 也别挡输入区 */
+html.kb-open .new-fab { display: none; }
+
+.fab-pop-enter-active,
+.fab-pop-leave-active { transition: opacity 160ms ease, transform 160ms ease; }
+
+.fab-pop-enter-from,
+.fab-pop-leave-to { opacity: 0; transform: translateY(10px) scale(0.96); }
+
+/* ---- 「新建」选择面板（Teleport 到 body，宽度档无关）---- */
+.new-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 15, 15, 0.26);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: var(--z-chrome);
+}
+
+.new-sheet {
+  position: fixed;
+  right: calc(8px + var(--safe-right));
+  bottom: calc(64px + var(--safe-bottom));
+  left: calc(8px + var(--safe-left));
+  padding: 10px 14px 14px;
+  border: 1px solid var(--sidebar-glass-border);
+  border-radius: 16px;
+  background: var(--sidebar-material);
+  box-shadow: var(--sidebar-mobile-shadow);
+  backdrop-filter: saturate(150%) blur(24px);
+  -webkit-backdrop-filter: saturate(150%) blur(24px);
+  max-height: calc(100dvh - 72px - var(--safe-top) - var(--safe-bottom));
+  overflow-y: auto;
+  z-index: calc(var(--z-chrome) + 1);
+}
+
+/* medium 起没有底栏：面板直接贴底，只让开系统手势条 */
+.new-sheet.no-nav { bottom: calc(8px + var(--safe-bottom)); }
+
+.new-sheet-bar {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 8px;
+  border-radius: 2px;
+  background: var(--sidebar-hairline);
+}
+
+.new-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 2px 4px;
+}
+
+.new-sheet-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.new-sheet-close {
+  width: 44px;
+  height: 44px;
+  margin: -6px -8px -6px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  color: var(--text-secondary);
+}
+
+.new-sheet-close:active { background: var(--sidebar-hover); }
+
+.new-sheet-actions { display: flex; flex-direction: column; }
+
+.new-action {
+  position: relative;
+  width: 100%;
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 6px 8px 4px;
+  text-align: left;
+  color: var(--text);
+}
+
+.new-action + .new-action::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 60px;
+  right: 6px;
+  height: 1px;
+  background: var(--sidebar-hairline);
+}
+
+.new-action:active { background: var(--press-bg); }
+
+.new-action-icon {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--sidebar-selection);
+  color: var(--sidebar-accent);
+}
+
+.new-action-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.new-action-title { font-size: 15px; font-weight: 600; }
+.new-action-sub { font-size: 12.5px; color: var(--text-secondary); }
+.new-action-chevron { flex: none; color: var(--text-faint); }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .rail { background: var(--sidebar-rail-solid); }
   .sidebar { background: var(--sidebar-material-solid); }
 }
 
+/*
+ * compact 兜底块（≤768 媒体查询）：<600 的手机直接吃满这一块；
+ * 600–768 已经进入 medium，由文件末尾「设备矩阵」段的 .size-medium 规则压掉
+ * （rail 重新显示、底栏隐藏、正文让开 72px）。
+ */
 @media (max-width: 768px) {
   .rail { display: none; }
 
@@ -1697,6 +2158,74 @@ onUnmounted(() => {
    */
   @media (hover: none) and (pointer: coarse) {
     .bottom-nav button span { font-size: 11px; }
+  }
+}
+
+/*
+ * 设备矩阵（2026-11 安卓改版）：windowSizeClass 的 600 / 840 两档由 .layout.size-* 类承载。
+ * 这里不新增宽度 @media——全库断点白名单只管桌面三档（640/768/1024），600/840 是
+ * Android WindowSizeClass 的另一套口径，写在 lib/windowSizeClass.ts 并由 JS 判档。
+ *   compact  <600   ：五项底栏 + 抽屉侧栏（上面的 ≤768 兜底块已经给全）
+ *   medium   600–839：rail + 无底栏；侧栏仍是浮层抽屉；正文让开 rail 72px
+ *   expanded ≥840   ：rail + 常驻侧栏（回到本文件的基础桌面样式，桌面行为不变）
+ */
+.layout.size-medium .rail { display: flex; }
+
+/* 600–839 不再有底栏：正文底部只让开系统栏 */
+.layout.size-medium .bottom-nav { display: none; }
+
+.layout.size-medium .content,
+.layout.size-medium.sidebar-open .content {
+  padding-left: calc(72px + var(--safe-left));
+  padding-bottom: var(--safe-bottom);
+}
+
+/* 侧栏在 medium 仍是浮层抽屉：贴 rail 右侧、限宽、带遮罩；满窗（sidebar-full）仍走基础样式 */
+.layout.size-medium:not(.sidebar-full) .sidebar {
+  position: fixed;
+  top: calc(8px + var(--win-titlebar-h, 0px) + var(--safe-top));
+  bottom: calc(8px + var(--safe-bottom));
+  left: calc(60px + var(--safe-left));
+  width: min(var(--sidebar-width), calc(100vw - 80px)) !important;
+  max-width: 400px;
+  box-shadow: var(--sidebar-mobile-shadow);
+  z-index: var(--z-sidebar);
+}
+
+.layout.size-medium .mask {
+  position: fixed;
+  inset: 0;
+  display: block;
+  background: rgba(15, 15, 15, 0.26);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: var(--z-mask);
+}
+
+.layout.size-medium .resizer { display: none; }
+
+/* FAB：medium 没有底栏，贴右下 24px（compact 的 88px 见上面的 .new-fab 基础样式） */
+.layout.size-medium .new-fab { bottom: calc(24px + var(--safe-bottom)); }
+
+/* 触屏（折叠屏内屏 / 平板 / 横屏手机）：rail 图标用不可见热区补到 44px，视觉尺寸不变 */
+@media (hover: none) and (pointer: coarse) {
+  .layout.size-medium .rail-btn,
+  .layout.size-expanded .rail-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .layout.size-medium .rail,
+  .layout.size-expanded .rail { padding: 6px 4px; }
+
+  .layout.size-medium .rail-btn::after,
+  .layout.size-medium .rail-logo::after,
+  .layout.size-expanded .rail-btn::after,
+  .layout.size-expanded .rail-logo::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 10px;
   }
 }
 

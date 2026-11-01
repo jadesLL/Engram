@@ -1,41 +1,70 @@
 <template>
-  <div ref="viewEl" class="settings-view">
-    <header class="settings-page-head">
+  <div
+    ref="viewEl"
+    class="settings-view"
+    :class="{ 'is-mobile-list': mobileListVisible, 'is-mobile-subpage': mobileSubpageVisible }"
+  >
+    <!-- 页头：桌面端常驻；手机端只在分组列表首页显示（子页有自己的返回栏） -->
+    <header v-if="!mobileLayout || !mobileSection" class="settings-page-head">
       <div>
         <h2>设置</h2>
         <p>七个单一职责的分类：账户与访问、界面与检索、知识库数据、多端同步、版本与更新、本机应用、Agent 与自动化。</p>
       </div>
     </header>
 
-    <!-- 移动端：大类胶囊 + 当前大类的分组锚点胶囊，两行横向滚动 -->
-    <div class="settings-mobile-nav">
-      <div class="chip-row" role="navigation" aria-label="设置大类">
+    <!-- 手机端（≤768px）分组列表首页：账户卡 + 六行分组（行高 ≥56px、行尾给状态、右侧 chevron）。
+         桌面端不渲染这块（左侧目录 + 右侧内容完全不变）；点一行进入该分组子页。 -->
+    <div v-if="mobileListVisible" class="settings-mobile-list" role="navigation" aria-label="设置分组">
+      <button
+        class="settings-mobile-account"
+        type="button"
+        data-mobile-domain="account"
+        @click="openMobileSection('account')"
+      >
+        <span class="settings-mobile-avatar" aria-hidden="true">{{ accountInitial }}</span>
+        <span class="settings-mobile-account-main">
+          <span class="settings-mobile-account-name">{{ accountName }}</span>
+          <span class="settings-mobile-account-sub">{{ accountSyncLine }}</span>
+        </span>
+        <Icon name="chevron-right" :size="18" class="settings-mobile-chevron" />
+      </button>
+
+      <div class="settings-mobile-group">
         <button
-          v-for="domain in domains"
-          :key="domain.id"
+          v-for="row in mobileRows"
+          :key="row.id"
           type="button"
-          class="chip"
-          :class="{ active: activeDomain === domain.id }"
-          @click="selectDomain(domain.id)"
+          class="settings-mobile-row"
+          :data-mobile-domain="row.id"
+          @click="openMobileSection(row.id)"
         >
-          {{ domain.label }}
+          <span class="settings-mobile-row-icon"><Icon :name="row.icon" :size="19" /></span>
+          <span class="settings-mobile-row-label">{{ row.label }}</span>
+          <span v-if="row.status" class="settings-mobile-row-status">{{ row.status }}</span>
+          <Icon name="chevron-right" :size="18" class="settings-mobile-chevron" />
         </button>
       </div>
-      <div v-if="currentDomain" class="chip-row anchors" aria-label="分组定位">
-        <button
-          v-for="group in currentDomain.groups"
-          :key="group.id"
-          type="button"
-          class="chip"
-          :class="{ active: activeAnchor === group.id, danger: group.danger }"
-          @click="scrollToAnchor(group.id)"
-        >
-          {{ group.label }}
-        </button>
-      </div>
+
+      <p class="settings-mobile-footnote">
+        手机上改的是中枢那份配置；模型 / 视频 Key 只写不读，外部接入与 MCP Token 只在桌面端与中枢生成。
+      </p>
     </div>
 
-    <div class="settings-shell">
+    <!-- 手机端子页返回栏：返回箭头 + 当前分组名（桌面端不渲染） -->
+    <div v-if="mobileSubpageVisible" class="settings-mobile-subhead">
+      <button
+        class="settings-mobile-back"
+        type="button"
+        aria-label="返回设置分组列表"
+        @click="closeMobileSection()"
+      >
+        <Icon name="chevron-left" :size="22" />
+      </button>
+      <h2 class="settings-mobile-subtitle">{{ mobileSectionLabel }}</h2>
+    </div>
+
+    <!-- 桌面端双栏外壳；手机端在分组列表首页用 v-show 收起（DOM 保留，桌面结构与面板状态不变） -->
+    <div class="settings-shell" v-show="!mobileListVisible">
       <nav ref="navEl" class="settings-nav" aria-label="设置分类">
         <!-- 二级锚点全部平铺常显：大类切页，锚点只做滚动定位（2026-09-24 改版，不再展开/收起） -->
         <div v-for="domain in domains" :key="domain.id" class="settings-nav-domain">
@@ -190,6 +219,12 @@ import {
   type SettingsDomainId,
 } from '../lib/settingsDomains';
 import { expandGroup } from '../lib/settingsCollapse';
+import { registerBackHandler } from '../lib/androidBack';
+import { useAppStore } from '../stores/app';
+import { useAppUpdateStore } from '../stores/appUpdate';
+import { useSyncStore } from '../stores/sync';
+import { syncStatusView } from '../lib/syncStatus';
+import { APP_VERSION } from '../version';
 import { useRoute } from 'vue-router';
 
 /**
@@ -217,6 +252,113 @@ const navEl = ref<HTMLElement | null>(null);
 const contentEl = ref<HTMLElement | null>(null);
 const { capabilities, load } = useRuntimeCapabilities();
 const route = useRoute();
+
+/* ---------- 手机端（≤768px）：分组列表 + 子页 push ----------
+ * 桌面端（≥769px）仍是「左侧目录 + 右侧内容」双栏，下面这些状态只在窄屏参与渲染：
+ *  - mobileSection = null 是分组列表首页；设成某个大类 id 就进该大类的子页；
+ *  - 子页不另写内容模板，直接复用桌面的大类 section（activeDomain + v-show），
+ *    只把目录列藏掉、加一条返回栏，所以面板挂载 / 轮询行为与桌面完全一致。
+ */
+const mobileMedia = window.matchMedia('(max-width: 768px)');
+const mobileLayout = ref(mobileMedia.matches);
+const mobileSection = ref<SettingsDomainId | null>(null);
+const mobileListVisible = computed(() => mobileLayout.value && mobileSection.value === null);
+const mobileSubpageVisible = computed(() => mobileLayout.value && mobileSection.value !== null);
+
+/**
+ * 手机端分组列表的固定顺序与手机端叫法。
+ * 桌面分类名保持不变；只有两处在手机上换成短名：界面与检索 →「外观」、本机应用 →「关于」
+ * （与设计提案 proto-settings 的分组列表一致）。
+ */
+const MOBILE_GROUPS: ReadonlyArray<{ id: SettingsDomainId; label: string; icon: string }> = [
+  { id: 'sync', label: '多端同步', icon: 'cloud-check' },
+  { id: 'interface', label: '外观', icon: 'sun' },
+  { id: 'agent', label: 'Agent 与自动化', icon: 'ai' },
+  { id: 'data', label: '知识库数据', icon: 'archive' },
+  { id: 'update', label: '版本与更新', icon: 'download' },
+  { id: 'app', label: '关于', icon: 'activity' },
+];
+
+const app = useAppStore();
+const sync = useSyncStore();
+const appUpdateStore = useAppUpdateStore();
+
+/** 外观行状态：与桌面「外观」分组的主题选项同一份 store 值 */
+const themeLabel = computed(() => {
+  const labels: Record<string, string> = { system: '跟随系统', light: '浅色', dark: '深色' };
+  return labels[app.theme] || '跟随系统';
+});
+
+/** 同步状态：与首页同步胶囊同一套 lib/syncStatus 文案（android-local 的判定口径也一致） */
+const syncStatus = computed(() => syncStatusView(sync.status, {
+  androidLocal: capabilities.value.runtime === 'android-local',
+}));
+
+/* 账户卡：与「我的」面板同一份只读展示（中枢给本机的成员名 + 同步状态），不另造账户体系 */
+const accountName = computed(() => (sync.status?.deviceLabel || '').trim() || 'Engram 本机');
+const accountInitial = computed(() => Array.from(accountName.value)[0] || 'E');
+const accountSyncLine = computed(() => {
+  const state = syncStatus.value;
+  if (!state) return '本机知识库 · 未配置多端同步';
+  return state.detail ? `${state.label} · ${state.detail}` : state.label;
+});
+
+/** 多端同步行状态：待推优先，其余沿用状态条的一行短句 */
+function syncRowStatus(): string {
+  const state = syncStatus.value;
+  if (!state) return '未配置';
+  const pending = Number(sync.status?.pending || 0);
+  if (pending > 0) return `待推 ${pending}`;
+  if (state.phase === 'done') return state.detail || '已同步';
+  return state.label;
+}
+
+/** 版本与更新行状态：下载百分比 / 待安装 / 有新版 / 当前版本（与安卓端更新面板同一份 store） */
+function updateRowStatus(): string {
+  const info = appUpdateStore.info;
+  if (info.phase === 'downloading') return info.percent !== null ? `下载 ${info.percent}%` : '下载中';
+  if (info.phase === 'checking') return '检查中';
+  if (info.ready) return '待安装';
+  if (info.hasUpdate) return `有新版 v${info.latestVersion}`;
+  if (info.phase === 'error') return '更新失败';
+  // 检查过且没新版就说「已是最新」；没检查过时先给当前版本号（避免和「关于」行重复一句废话）
+  if (info.checkedAt) return '已是最新';
+  return `v${APP_VERSION}`;
+}
+
+/** Agent 行状态：手机上这些配置都写在中枢（未绑定中枢时整个大类不出现） */
+function agentRowStatus(): string {
+  return capabilities.value.features.agentConsole ? '中枢配置' : '';
+}
+
+function mobileStatusOf(id: SettingsDomainId): string {
+  if (id === 'sync') return syncRowStatus();
+  if (id === 'interface') return themeLabel.value;
+  if (id === 'agent') return agentRowStatus();
+  if (id === 'update') return updateRowStatus();
+  if (id === 'app') return `v${APP_VERSION}`;
+  return '';
+}
+
+/** 手机端才订阅同步轮询：状态要显示在分组行尾；桌面端照旧由首页 / 侧栏自己的订阅负责 */
+let syncSubscribed = false;
+function setSyncSubscription(active: boolean) {
+  if (active === syncSubscribed) return;
+  syncSubscribed = active;
+  if (active) sync.subscribe();
+  else sync.unsubscribe();
+}
+
+let unregisterBack: (() => void) | null = null;
+/** setup 后立刻被切走：await load() 落定后不要再补注册轮询 / 监听（否则卸载后还在跑） */
+let disposed = false;
+
+/** 跨 768px 断点：手机端回到分组列表，桌面端回到原来的双栏（大类不变） */
+function onMobileChange(event: MediaQueryListEvent) {
+  mobileLayout.value = event.matches;
+  mobileSection.value = null;
+  setSyncSubscription(event.matches);
+}
 
 /**
  * 大类里的分组要跟着运行时能力走：Agent 管理面关掉、手机又没绑定中枢时整个大类都不出现；
@@ -250,6 +392,49 @@ const currentDomain = computed(() => domains.value.find((domain) => domain.id ==
 /** 大类页头文案：取自 settingsDomains（改分类只改一处），能力过滤后可能不存在 */
 function domainOf(id: SettingsDomainId): SettingsDomain | undefined {
   return domains.value.find((domain) => domain.id === id);
+}
+
+/** 手机端分组行：顺序固定，能力位把大类整体隐藏时这一行也一起消失（不留点不动的死行） */
+const mobileRows = computed(() => MOBILE_GROUPS
+  .filter((row) => domains.value.some((domain) => domain.id === row.id))
+  .map((row) => ({ ...row, status: mobileStatusOf(row.id) })));
+
+/** 子页标题：列表行叫什么，子页就叫什么；账户卡进的是「账户与访问」 */
+const mobileSectionLabel = computed(() => {
+  const id = mobileSection.value;
+  if (!id) return '';
+  return MOBILE_GROUPS.find((row) => row.id === id)?.label
+    ?? domainOf(id)?.label
+    ?? '设置';
+});
+
+/** 进入子页：切到该大类（复用桌面 section + 面板挂载逻辑），并把滚动位置拉回子页顶部 */
+function openMobileSection(id: SettingsDomainId) {
+  if (!mobileLayout.value) return;
+  const domain = domainOf(id);
+  mobileSection.value = id;
+  activeDomain.value = id;
+  activeAnchor.value = domain?.groups[0]?.id || '';
+  void nextTick(() => {
+    const target = pageScroller();
+    if (target === window) window.scrollTo({ top: 0 });
+    else (target as HTMLElement).scrollTo({ top: 0 });
+  });
+}
+
+/** 子页返回分组列表；滚动回列表顶部，并把焦点交回刚点的那一行（键盘 / 读屏用户不丢位置） */
+function closeMobileSection() {
+  const last = mobileSection.value;
+  if (!last) return;
+  mobileSection.value = null;
+  void nextTick(() => {
+    const target = pageScroller();
+    if (target === window) window.scrollTo({ top: 0 });
+    else (target as HTMLElement).scrollTo({ top: 0 });
+    viewEl.value
+      ?.querySelector<HTMLElement>(`[data-mobile-domain="${last}"]`)
+      ?.focus();
+  });
 }
 
 /**
@@ -314,7 +499,10 @@ function onSettingsTarget(event: Event) {
   const anchor = (event as CustomEvent<{ anchor?: string }>).detail?.anchor;
   if (!anchor) return;
   const domain = domainOfAnchor(anchor, domains.value);
-  if (domain) selectDomain(domain, anchor);
+  if (!domain) return;
+  selectDomain(domain, anchor);
+  // 手机端：别处要求跳到某个分组时直接进该大类子页，不让用户先回分组列表再点一次
+  if (mobileLayout.value) mobileSection.value = domain;
 }
 
 function scrollToAnchor(anchor: string) {
@@ -378,6 +566,10 @@ watch(domains, (items) => {
     activeDomain.value = items[0]?.id ?? 'account';
     activeAnchor.value = items[0]?.groups[0]?.id ?? '';
   }
+  // 手机端子页对应的大类被能力位隐藏（如解绑中枢后 Agent 整类消失）：退回分组列表
+  if (mobileSection.value && !items.some((domain) => domain.id === mobileSection.value)) {
+    mobileSection.value = null;
+  }
 });
 
 /** 当前分组变了就把目录里那一项带回视野（内容列滚动驱动的高亮不会跑出目录） */
@@ -395,6 +587,7 @@ let pageEl: HTMLElement | Window = window;
 onMounted(async () => {
   window.addEventListener('engram:settings-target', onSettingsTarget);
   await load();
+  if (disposed) return;
   const target = resolveSettingsTarget(
     String(route.query.section || ''),
     String(route.query.anchor || ''),
@@ -402,6 +595,23 @@ onMounted(async () => {
   );
   activeDomain.value = target.domain;
   activeAnchor.value = target.anchor;
+
+  /* 手机端分组列表：带 section / anchor 的深链（首页同步胶囊、更新提醒、我的面板「多端同步」）
+     直接落到对应大类子页；普通进入（没有 section）停在分组列表首页。 */
+  if (mobileLayout.value && (route.query.section || route.query.anchor)) {
+    mobileSection.value = target.domain;
+  }
+
+  mobileMedia.addEventListener('change', onMobileChange);
+  setSyncSubscription(mobileLayout.value);
+  // 手机分组行的「下载 64%」这类状态直接读 store：进来时补拉一次安卓端更新状态
+  if (mobileLayout.value && capabilities.value.features.apkUpdate) void appUpdateStore.refresh();
+  /* 安卓返回键 / 侧滑返回：手机端子页是设置内部的一层，先于路由回退消费掉（回到分组列表） */
+  unregisterBack = registerBackHandler(() => {
+    if (!mobileLayout.value || !mobileSection.value) return false;
+    closeMobileSection();
+    return true;
+  });
 
   paneEl = contentEl.value;
   pageEl = pageScroller();
@@ -412,7 +622,12 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   window.removeEventListener('engram:settings-target', onSettingsTarget);
+  unregisterBack?.();
+  unregisterBack = null;
+  mobileMedia.removeEventListener('change', onMobileChange);
+  setSyncSubscription(false);
   if (raf) cancelAnimationFrame(raf);
   paneEl?.removeEventListener('scroll', onScroll);
   pageEl.removeEventListener('scroll', onScroll);

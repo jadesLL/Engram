@@ -586,7 +586,7 @@ import { hideTooltip } from '../lib/tooltip';
 import { openContextMenu, type ContextMenuItem } from '../lib/contextMenu';
 import { openAssetDrawer } from '../lib/assetDrawer';
 import { ideaDistillRowStatus } from '../lib/ideaDistill';
-import { BP_WIDE } from '../lib/layoutBreakpoints';
+import { BP_EXPANDED } from '../lib/layoutBreakpoints';
 import { relativeTimeText, latestUpdatedAt } from '../lib/pageTime';
 import {
   SIDEBAR_FULL_COLUMNS,
@@ -610,10 +610,11 @@ const sync = useSyncStore();
 const emit = defineEmits(['close', 'new-page']);
 
 /**
- * 抽屉档（≤1024px）：侧栏是浮层，盖在正文上。手机竖屏里它几乎占满整屏，
+ * 抽屉档（<840px，即 compact + medium）：侧栏是浮层，盖在正文上。手机竖屏里它几乎占满整屏，
  * 打开一个页面后不收起抽屉 = 用户看不到刚点开的正文（用户报障 2026-09-29）。
- * 与 Home.vue 的 sidebarOverlay 同一个断点（isMobile || isCompact），数值取自
- * lib/layoutBreakpoints.ts，不在组件里再写一遍字面量。
+ * 2026-11 设备矩阵后与 Home.vue 的 sidebarOverlay 同一个断点（<BP_EXPANDED）：
+ * ≥840（平板横屏 / 桌面）走常驻侧栏，不再当抽屉；数值取自 lib/layoutBreakpoints.ts，
+ * 不在组件里再写一遍字面量。
  */
 const drawerMode = ref(false);
 let drawerQuery: MediaQueryList | null = null;
@@ -621,7 +622,7 @@ function onDrawerQueryChange(event: MediaQueryListEvent) {
   drawerMode.value = event.matches;
 }
 
-/** 抽屉档下打开内容后收起自己；桌面栏（>1024px）保持展开不动 */
+/** 抽屉档下打开内容后收起自己；常驻栏（≥840px）保持展开不动 */
 function closeDrawerIfOverlay() {
   if (drawerMode.value) emit('close');
 }
@@ -1776,8 +1777,10 @@ onMounted(() => {
   window.addEventListener('resize', closeSortMenuOnViewportChange);
   window.addEventListener('blur', closeSortMenuOnViewportChange);
   window.addEventListener('scroll', closeSortMenuOnViewportChange, true);
-  // 断点变化时抽屉/桌面栏互换形态：通道条与「点开就收起」的行为都要跟着切
-  drawerQuery = window.matchMedia(`(max-width: ${BP_WIDE}px)`);
+  // 断点变化时抽屉/桌面栏互换形态：通道条与「点开就收起」的行为都要跟着切。
+  // <840 才是抽屉（839.98 而不是 840：与 windowSizeClassFor 的 expanded 起点严格对齐，
+  // 整 840 时壳层已经是常驻栏，抽屉模式不能再多接住这一格）
+  drawerQuery = window.matchMedia(`(max-width: ${BP_EXPANDED - 0.02}px)`);
   drawerMode.value = drawerQuery.matches;
   drawerQuery.addEventListener('change', onDrawerQueryChange);
 });
