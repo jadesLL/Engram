@@ -642,7 +642,6 @@ function go(path: string) {
  * expanded（平板/桌面）沿用右侧对话抽屉——桌面没有整页 Agent 的形态，行为保持不变。
  */
 function openAgent() {
-  haptic('tap');
   if (sizeClass.value === 'expanded') {
     app.toggleChat(true);
     return;
