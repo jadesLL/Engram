@@ -47,6 +47,23 @@
       </div>
     </header>
 
+    <!-- 状态分类：未入库（= 待整理 + 已转换，与桌面「待整理 · 已转换」同一口径）/ 待整理 / 已转换 / 已入库。
+         四档在手机上换行铺满，不靠横向滑动藏起分类；已入库的条目不再从手机界面消失——点这一档就能回看它进了知识库的哪一篇。 -->
+    <nav v-if="!selectMode" class="mi-filters" role="radiogroup" aria-label="按状态筛选">
+      <button
+        v-for="option in filterOptions"
+        :key="option.value"
+        class="mi-filter"
+        type="button"
+        role="radio"
+        :aria-checked="filter === option.value"
+        :class="{ on: filter === option.value }"
+        @click="setFilter(option.value)"
+      >
+        {{ option.label }}<span class="mi-filter-n">{{ option.count }}</span>
+      </button>
+    </nav>
+
     <div v-if="inbox.error" class="mi-banner error" role="alert">
       <Icon name="report" :size="14" />
       <span>{{ inbox.error }}</span>
@@ -60,11 +77,11 @@
 
     <!-- 卡片台：最新一条在最上面，右滑主操作 / 左滑移入回收站 / 点按看详情；纵向滚动交还浏览器
          长按 500ms 进选择态：卡片堆只露三张，多选改成整列可见条目（见下面的选择态模板） -->
-    <template v-if="view === 'stack' && !selectMode">
-      <button v-if="sortedActive.length" class="mi-groups-entry" type="button" @click="view = 'groups'">
+    <template v-if="view === 'stack' && !selectMode && stackView">
+      <button v-if="filteredItems.length" class="mi-groups-entry" type="button" @click="view = 'groups'">
         <span class="mi-groups-ic"><Icon name="list-tree" :size="16" /></span>
         <span class="mi-groups-text">
-          <b>按来源分组</b> · {{ sortedActive.length }} 条来自 {{ sourceCount }} 个来源
+          <b>按来源分组</b> · {{ filteredItems.length }} 条来自 {{ sourceCount }} 个来源
         </span>
         <span class="mi-groups-go">看看<Icon name="chevron-right" :size="14" /></span>
       </button>
@@ -82,16 +99,22 @@
         </button>
       </div>
 
-      <div v-else-if="!sortedActive.length" class="mi-empty">
-        <div class="mi-zero"><Icon name="check" :size="34" /></div>
-        <h2>收集箱清空了</h2>
+      <div v-else-if="!filteredItems.length" class="mi-empty">
+        <div class="mi-zero"><Icon :name="emptyIcon" :size="34" /></div>
+        <h2>{{ emptyTitle }}</h2>
         <p>{{ emptyHint }}</p>
         <div class="mi-stats">
           <div class="mi-stat"><b>{{ inbox.counts.pending }}</b><span>待整理</span></div>
           <div class="mi-stat"><b>{{ inbox.counts.converted }}</b><span>已转换</span></div>
           <div class="mi-stat"><b>{{ inbox.counts.adopted }}</b><span>已入库</span></div>
         </div>
-        <button class="btn primary mi-empty-btn" type="button" @click="goHome">回到首页</button>
+        <button
+          v-if="inbox.counts.adopted"
+          class="btn primary mi-empty-btn"
+          type="button"
+          @click="setFilter('adopted')"
+        >查看已入库 {{ inbox.counts.adopted }} 条</button>
+        <button v-else class="btn primary mi-empty-btn" type="button" @click="goHome">回到首页</button>
       </div>
 
       <template v-else>
@@ -146,6 +169,30 @@
             <Icon name="move-diagonal" :size="14" />
             <span>右滑{{ mainLabel(front) }} · 左滑移入回收站 · 长按多选 · 点按看详情</span>
           </div>
+
+          <!-- 其余条目：卡片堆只铺三张，剩下的整列列出来——转换完的条目不能再被三张卡挡住看不到 -->
+          <section v-if="queueItems.length" class="mi-queue" aria-label="其余条目">
+            <div class="mi-queue-head">
+              <h2>其余 {{ queueItems.length }} 条</h2>
+              <span>点开可看详情与操作</span>
+            </div>
+            <button
+              v-for="item in queueItems"
+              :key="item.path"
+              class="mi-row"
+              type="button"
+              :aria-label="'查看 ' + cardTitle(item) + ' 的详情'"
+              @click="openDetail(item)"
+            >
+              <span class="mi-row-thumb" :class="coverClass(item)"><Icon :name="coverIcon(item)" :size="18" /></span>
+              <span class="mi-row-main">
+                <b>{{ cardTitle(item) }}</b>
+                <small>{{ statusLabel(item) }} · {{ sourceLabel(item) }} · {{ fromNow(item.mtime) }}</small>
+                <small v-if="rowDest(item)" class="mi-row-dest" :title="rowDest(item)">{{ rowDest(item) }}</small>
+              </span>
+              <Icon class="mi-row-go" name="chevron-right" :size="16" />
+            </button>
+          </section>
         </div>
 
         <!-- 手势的无障碍替代：三个动作都做成可点按钮 -->
@@ -174,6 +221,57 @@
           </button>
         </div>
       </template>
+    </template>
+
+    <!-- 已转换 / 已入库：整列列出全部条目（不再压成三张卡）。入库是复制动作，条目不会真的消失，
+         以前手机界面把已入库条目整个藏起来，用户以为「存进知识库就没了」——现在固定留一档能回看。 -->
+    <template v-else-if="view === 'stack' && !selectMode">
+      <div v-if="!inbox.loaded && inbox.loading" class="mi-loading">
+        <AppSpinner :size="15" /> 正在读取收集箱…
+      </div>
+
+      <div v-else-if="!inbox.loaded" class="mi-empty">
+        <div class="mi-zero"><Icon name="report" :size="30" /></div>
+        <h2>收集箱读取失败</h2>
+        <p>{{ inbox.error || '连接不上中枢，确认服务在线后再试。' }}</p>
+        <button class="btn primary mi-empty-btn" type="button" :disabled="inbox.loading" @click="refresh">
+          <Icon name="refresh" :size="15" />重试
+        </button>
+      </div>
+
+      <div v-else-if="!filteredItems.length" class="mi-empty">
+        <div class="mi-zero"><Icon :name="emptyIcon" :size="34" /></div>
+        <h2>{{ emptyTitle }}</h2>
+        <p>{{ emptyHint }}</p>
+        <button
+          v-if="filter === 'adopted'"
+          class="btn primary mi-empty-btn"
+          type="button"
+          @click="setFilter('converted')"
+        >去看已转换的</button>
+        <button v-else class="btn primary mi-empty-btn" type="button" @click="setFilter('pending')">
+          去看待整理的
+        </button>
+      </div>
+
+      <div v-else class="mi-list" aria-label="收集箱条目列表">
+            <button
+              v-for="item in filteredItems"
+              :key="item.path"
+              class="mi-row"
+              type="button"
+              :aria-label="'查看 ' + cardTitle(item) + ' 的详情'"
+              @click="openDetail(item)"
+            >
+              <span class="mi-row-thumb" :class="coverClass(item)"><Icon :name="coverIcon(item)" :size="18" /></span>
+              <span class="mi-row-main">
+                <b>{{ cardTitle(item) }}</b>
+                <small>{{ statusLabel(item) }} · {{ sourceLabel(item) }} · {{ fromNow(item.mtime) }}</small>
+                <small v-if="rowDest(item)" class="mi-row-dest" :title="rowDest(item)">{{ rowDest(item) }}</small>
+              </span>
+              <Icon class="mi-row-go" name="chevron-right" :size="16" />
+            </button>
+      </div>
     </template>
 
     <!-- 选择态：长按卡片进入。勾选框在每行左侧（≥44dp 热区），底栏换成批量动作 -->
@@ -246,9 +344,9 @@
     <template v-else>
       <p class="mi-groups-note">按来源和类型归在一起。转换与入库都由中枢执行，手机端只负责发任务、刷状态。</p>
 
-      <div v-if="!sortedActive.length" class="mi-empty">
-        <div class="mi-zero"><Icon name="check" :size="34" /></div>
-        <h2>收集箱清空了</h2>
+      <div v-if="!filteredItems.length" class="mi-empty">
+        <div class="mi-zero"><Icon :name="emptyIcon" :size="34" /></div>
+        <h2>{{ emptyTitle }}</h2>
         <p>{{ emptyHint }}</p>
         <button class="btn primary mi-empty-btn" type="button" @click="goHome">回到首页</button>
       </div>
@@ -375,6 +473,14 @@
               >
                 <Icon name="messages" :size="15" />查看过程
               </button>
+              <button
+                v-if="hasProduct(detailItem) && mainKind(detailItem) !== 'review'"
+                class="btn"
+                type="button"
+                @click="detailReview(detailItem)"
+              >
+                <Icon name="eye" :size="15" />查看产物
+              </button>
               <button class="btn" type="button" :disabled="busyPath === detailItem.path" @click="detailAgent(detailItem)">
                 <Icon name="ai" :size="15" />让 Agent 处理
               </button>
@@ -385,6 +491,44 @@
                 <Icon name="trash" :size="15" />移入回收站
               </button>
             </div>
+          </div>
+        </section>
+      </template>
+
+      <!-- 产物预览：入库前先看一眼；已入库的条目也能回看它最终写进知识库的内容 -->
+      <template v-if="reviewItem">
+        <div class="mi-dim" @click="closeReview" />
+        <section class="mi-sheet mi-review" role="dialog" aria-modal="true" :aria-label="reviewTitle">
+          <div class="mi-sheet-grab" />
+          <div class="mi-detail-head">
+            <div class="mi-detail-head-main">
+              <h2>{{ reviewTitle }}</h2>
+              <p>{{ reviewItem.derivedPath || '转换产物' }}</p>
+            </div>
+            <button class="mi-iconbtn" type="button" aria-label="关闭产物预览" @click="closeReview">
+              <Icon name="x" :size="18" />
+            </button>
+          </div>
+          <div class="mi-review-body">
+            <div v-if="reviewLoading" class="mi-review-state">
+              <AppSpinner :size="14" /> 正在读取产物…
+            </div>
+            <div v-else-if="reviewError" class="mi-review-state error">
+              <Icon name="report" :size="14" />{{ reviewError }}
+            </div>
+            <div v-else class="mi-review-md" v-html="reviewHtml" />
+          </div>
+          <div class="mi-review-actions">
+            <button class="btn" type="button" @click="closeReview">关闭</button>
+            <button
+              v-if="reviewCanAdopt"
+              class="btn primary"
+              type="button"
+              :disabled="busyPath === reviewItem.path"
+              @click="adoptFromReview"
+            >
+              <Icon name="check" :size="15" />入库
+            </button>
           </div>
         </section>
       </template>
@@ -419,7 +563,7 @@
 
           <div class="mi-receipt-queue">
             <Icon name="inbox" :size="14" />
-            <span>收集箱现有 <b>{{ sortedActive.length }}</b> 条</span>
+            <span>收集箱现有 <b>{{ inbox.activeItems.length }}</b> 条</span>
           </div>
           <p class="mi-receipt-note">摘要与标签待绑定中枢后补全；转换和入库都由中枢执行，这里只负责先落袋。</p>
           <div class="mi-receipt-actions">
@@ -492,6 +636,7 @@ import { registerBackHandler } from '../lib/androidBack';
 import { confirmDialog } from '../lib/confirm';
 import { haptic } from '../lib/haptics';
 import { isServerConvertible } from '../lib/inboxAgent';
+import { renderMarkdown } from '../lib/markdown';
 import { notify, pushToast } from '../lib/notify';
 import Icon from './Icon.vue';
 import AppSpinner from './ui/AppSpinner.vue';
@@ -552,7 +697,7 @@ function syncShellInset(): void {
 }
 
 type ViewKind = 'stack' | 'groups';
-type MainKind = 'convert' | 'retry' | 'adopt' | 'process' | 'agent' | 'download' | 'none';
+type MainKind = 'convert' | 'retry' | 'adopt' | 'review' | 'process' | 'agent' | 'download' | 'none';
 type StatusTone = 'pending' | 'converting' | 'converted' | 'failed' | 'adopted';
 type StampTone = 'in' | 'drop';
 
@@ -570,9 +715,29 @@ interface SourceGroup {
   convertible: InboxItem[];
   /** 已有产物、可以入库的 */
   converted: InboxItem[];
+  /** 已经入库的（在「已入库」分类里回看） */
+  adopted: InboxItem[];
 }
 
 const view = ref<ViewKind>('stack');
+
+/**
+ * 状态分类（与桌面工作台同一口径）：未入库（默认，= 待整理 + 已转换）/ 待整理 / 已转换 / 已入库。
+ *
+ * 手机界面此前只有卡片台、没有分类：已入库条目被整片藏起来，用户以为「存进知识库就消失了」；
+ * 卡片堆又只铺三张，排在后面的已转换条目也够不着。分类 + 整列列表把两头一起补上。
+ */
+type InboxFilter = 'active' | 'pending' | 'converted' | 'adopted';
+const filter = ref<InboxFilter>('active');
+const filterOptions = computed(() => [
+  { value: 'active' as const, label: '未入库', count: Math.max(0, inbox.counts.all - inbox.counts.adopted) },
+  { value: 'pending' as const, label: '待整理', count: inbox.counts.pending },
+  { value: 'converted' as const, label: '已转换', count: inbox.counts.converted },
+  { value: 'adopted' as const, label: '已入库', count: inbox.counts.adopted },
+]);
+
+/** 卡片台只给还没收尾的分类；已转换 / 已入库改用整列列表，全部条目可见 */
+const stackView = computed(() => filter.value === 'active' || filter.value === 'pending');
 
 /* ===== 分类与来源 ===== */
 
@@ -615,14 +780,27 @@ function sourceLabel(item: InboxItem | null): string {
 
 /* ===== 列表口径 ===== */
 
-/** 待整理 + 转换中 + 已转换 + 失败（已入库的不再占收集箱界面） */
-const sortedActive = computed(() =>
-  [...inbox.activeItems].sort((a, b) => b.mtime - a.mtime)
-);
+/** 当前分类下的条目，按收纳时间倒序（active = 待整理 + 转换中 + 已转换 + 失败，不含已入库） */
+const filteredItems = computed<InboxItem[]>(() => {
+  const list = filter.value === 'active'
+    ? inbox.items.filter((item) => item.status !== 'adopted')
+    : inbox.items.filter((item) => item.status === filter.value);
+  return [...list].sort((a, b) => b.mtime - a.mtime);
+});
 
-/** 卡片堆只铺三张：最上面一张完整，后面两张露边 */
-const stackItems = computed(() => sortedActive.value.slice(0, 3));
-const front = computed<InboxItem | null>(() => sortedActive.value[0] || null);
+/** 卡片堆只铺三张：最上面一张完整，后面两张露边；其余条目整列列在下面（不能藏在三张卡后面） */
+const stackItems = computed(() => filteredItems.value.slice(0, 3));
+const queueItems = computed(() => filteredItems.value.slice(3));
+const front = computed<InboxItem | null>(() => filteredItems.value[0] || null);
+
+/** 切换分类：选择态不能跨分类延续，提示条也清掉 */
+function setFilter(next: InboxFilter): void {
+  if (filter.value === next) return;
+  if (selectMode.value) exitSelectMode();
+  filter.value = next;
+  actionHint.value = null;
+  haptic('tap');
+}
 
 /* ===== 长按多选（选择态） =====
  * 卡片堆只露三张，多选改成整列可见条目：长按卡片 500ms 进选择态，每行左侧一个勾选框，
@@ -641,8 +819,8 @@ let selectGuardCleanup: (() => void) | null = null;
 const batchBusy = ref<'' | 'adopt' | 'trash'>('');
 const batchProgress = ref({ done: 0, total: 0 });
 
-/** 选择态列出的条目 = 当前视图可见的待整理/已转换条目（全选只作用于这份列表） */
-const selectableItems = computed<InboxItem[]>(() => sortedActive.value);
+/** 选择态列出的条目 = 当前分类可见的条目（全选只作用于这份列表） */
+const selectableItems = computed<InboxItem[]>(() => filteredItems.value);
 const selectablePaths = computed(() => selectableItems.value.map((item) => item.path));
 const allSelected = computed(
   () =>
@@ -680,10 +858,16 @@ function toggleSelectAll(): void {
 
 const converting = computed(() => inbox.items.some((item) => item.status === 'converting'));
 
-const freshCount = computed(() => sortedActive.value.filter(isFresh).length);
+const freshCount = computed(() => filteredItems.value.filter(isFresh).length);
 
 const subline = computed(() => {
   if (!inbox.loaded) return inbox.loading ? '正在读取收集箱…' : '读取失败，可点刷新重试';
+  if (filter.value === 'adopted') {
+    return '已入库 ' + inbox.counts.adopted + ' 条 · 产物已在知识库，原件仍留在收集箱';
+  }
+  if (filter.value === 'converted') {
+    return '已转换 ' + inbox.counts.converted + ' 条 · 点条目看产物、确认入库';
+  }
   const parts = ['待整理 ' + inbox.counts.pending];
   if (inbox.counts.converted) parts.push('已转换 ' + inbox.counts.converted);
   if (inbox.counts.converting) parts.push(inbox.counts.converting + ' 个转换中');
@@ -693,14 +877,30 @@ const subline = computed(() => {
 
 const groupsSubline = computed(() => {
   if (!inbox.loaded) return inbox.loading ? '正在读取收集箱…' : '读取失败，可点刷新重试';
-  const parts = [sortedActive.value.length + ' 条 · ' + sourceCount.value + ' 个来源分组'];
+  const parts = [filteredItems.value.length + ' 条 · ' + sourceCount.value + ' 个来源分组'];
   if (inbox.counts.converting) parts.push(inbox.counts.converting + ' 个转换中');
   return parts.join(' · ');
 });
 
+/** 空态跟着当前分类说话：已入库是「知识库那边」，其余是「收集箱这边」 */
+const emptyIcon = computed(() => (filter.value === 'adopted' ? 'check' : 'file'));
+
+const emptyTitle = computed(() => {
+  if (filter.value === 'adopted') return '还没有已入库的条目';
+  if (filter.value === 'converted') return '还没有已转换的条目';
+  if (filter.value === 'pending') return '没有待整理的条目';
+  return '收集箱清空了';
+});
+
 const emptyHint = computed(() => {
+  if (filter.value === 'adopted') {
+    return '转换产物确认入库后会出现在这里，方便回头查它进了知识库的哪一篇。';
+  }
+  if (filter.value === 'converted') {
+    return '点「待整理」里的条目转换或提炼视频；产物出来后在这里确认入库。';
+  }
   if (inbox.counts.adopted) {
-    return '没有待整理的条目；已入库的 ' + inbox.counts.adopted + ' 条已经进知识库，可在那里检索和引用。';
+    return '没有待整理的条目；已入库的 ' + inbox.counts.adopted + ' 条在「已入库」分类里，知识库那边也能检索。';
   }
   return '通过分享或拖入保存的内容会先落到这里；转换、入库都由中枢执行。';
 });
@@ -739,7 +939,7 @@ function groupIcon(item: InboxItem): string {
 
 const groups = computed<SourceGroup[]>(() => {
   const map = new Map<string, SourceGroup>();
-  for (const item of sortedActive.value) {
+  for (const item of filteredItems.value) {
     const key = groupKey(item);
     let group = map.get(key);
     if (!group) {
@@ -750,11 +950,13 @@ const groups = computed<SourceGroup[]>(() => {
         items: [],
         convertible: [],
         converted: [],
+        adopted: [],
       };
       map.set(key, group);
     }
     group.items.push(item);
-    if (item.status === 'converted') group.converted.push(item);
+    if (item.status === 'adopted') group.adopted.push(item);
+    else if (item.status === 'converted') group.converted.push(item);
     else if (isServerConvertible(item.capability) && item.status !== 'converting') group.convertible.push(item);
   }
   return [...map.values()].sort(
@@ -769,6 +971,7 @@ function groupCaption(group: SourceGroup): string {
   const waiting = group.items.filter((item) => item.status === 'pending' || item.status === 'failed').length;
   if (waiting) parts.push('待整理 ' + waiting);
   if (group.converted.length) parts.push('已转换 ' + group.converted.length);
+  if (group.adopted.length) parts.push('已入库 ' + group.adopted.length);
   if (group.items.some((item) => item.status === 'converting')) parts.push('转换中');
   return parts.join(' · ') || '已处理';
 }
@@ -776,6 +979,7 @@ function groupCaption(group: SourceGroup): string {
 function groupNote(group: SourceGroup): string {
   if (group.convertible.length) return '可转换 ' + group.convertible.length + ' 条 · 由中枢执行';
   if (group.converted.length) return '已转换 ' + group.converted.length + ' 条 · 入库后进知识库';
+  if (group.adopted.length) return '已入库 ' + group.adopted.length + ' 条 · 产物已在知识库';
   if (group.items.some((item) => item.status === 'converting')) return '中枢正在处理，完成后自动刷新';
   return '这个格式需逐条交给 Agent 或下载原文件';
 }
@@ -800,7 +1004,7 @@ function statusChip(item: InboxItem | null): StatusTone {
   return STATUS_STYLE[item.status]?.tone || 'pending';
 }
 
-/** 主操作按状态切换：转换中=查看过程 / 失败=重试 / 已转换=入库 / 待整理=可转就转、Agent-only 交 Agent、其余下载 */
+/** 主操作按状态切换：转换中=查看过程 / 失败=重试 / 已转换=入库 / 已入库=查看产物 / 待整理=可转就转、Agent-only 交 Agent、其余下载 */
 function mainKind(item: InboxItem | null): MainKind {
   if (!item) return 'none';
   if (item.status === 'converting') return 'process';
@@ -809,7 +1013,7 @@ function mainKind(item: InboxItem | null): MainKind {
     return item.capability === 'agent-only' ? 'agent' : 'download';
   }
   if (item.status === 'converted') return 'adopt';
-  if (item.status === 'adopted') return 'none';
+  if (item.status === 'adopted') return item.derivedPath ? 'review' : 'none';
   if (isServerConvertible(item.capability)) return 'convert';
   if (item.capability === 'agent-only') return 'agent';
   return 'download';
@@ -821,6 +1025,7 @@ function mainLabel(item: InboxItem | null): string {
   if (kind === 'convert') return item.capability === 'video' ? '提炼视频' : '转换';
   if (kind === 'retry') return item.capability === 'video' ? '重新提炼' : '重新转换';
   if (kind === 'adopt') return '入库';
+  if (kind === 'review') return '查看产物';
   if (kind === 'process') return item.assistantSessionId ? '查看过程' : '转换中…';
   if (kind === 'agent') return '让 Agent 处理';
   if (kind === 'download') return isDesktop ? '打开原文件' : '下载原文件';
@@ -832,6 +1037,7 @@ function mainIcon(item: InboxItem | null): string {
   const kind = mainKind(item);
   if (kind === 'convert' || kind === 'retry' || kind === 'agent') return 'ai';
   if (kind === 'adopt') return 'check';
+  if (kind === 'review') return 'eye';
   if (kind === 'process') return 'messages';
   if (kind === 'download') return isDesktop ? 'external' : 'download';
   return 'file';
@@ -1059,7 +1265,7 @@ function expectConversion() {
 watch(converting, syncPolling);
 
 /* 刷新/轮询更新条目后：被别处处理掉的选中项要跟着消失；列表空了直接退出多选 */
-watch(sortedActive, (list) => {
+watch(selectableItems, (list) => {
   if (!selectMode.value) return;
   const alive = new Set(list.map((item) => item.path));
   const next = selectedPaths.value.filter((path) => alive.has(path));
@@ -1130,7 +1336,8 @@ async function adoptItem(item: InboxItem | null): Promise<void> {
     const result = await inbox.adopt(item.path);
     app.bumpSidebar();
     haptic('success');
-    notify.success('已入库到 ' + result.pagePath);
+    // 入库后条目会离开「待整理 · 已转换」：必须说清它去了「已入库」分类，用户才不会以为内容丢了
+    notify.success('已入库到 ' + result.pagePath + '（可在「已入库」分类回看）');
   } catch (error: any) {
     const message = errText(error);
     setHint('error', '入库失败：' + message);
@@ -1418,6 +1625,8 @@ async function runMain(item: InboxItem | null): Promise<void> {
     await convertItem(item);
   } else if (kind === 'adopt') {
     await adoptItem(item);
+  } else if (kind === 'review') {
+    await openReview(item);
   } else if (kind === 'process') {
     if (item.assistantSessionId) await openSession(item.assistantSessionId);
   } else if (kind === 'agent') {
@@ -1791,6 +2000,81 @@ function videoLinkOf(item: InboxItem | null): string {
   return item?.video?.link || '';
 }
 
+/* ===== 转换产物预览 =====
+ * 已转换 / 已入库的条目都要能看见「提炼出来的是什么」：手机此前只有一行路径文字，没有入口。
+ * 正文走 /api/inbox/derived（Android 本地服务窄代理到中枢），渲染用零依赖的 renderMarkdown。 */
+const reviewItem = ref<InboxItem | null>(null);
+const reviewLoading = ref(false);
+const reviewError = ref('');
+const reviewHtml = ref('');
+/** 快速连点两份产物时只认最后一次请求的结果 */
+let reviewSeq = 0;
+
+const reviewTitle = computed(() => reviewItem.value?.derivedPath?.split('/').pop() || '转换产物');
+const reviewCanAdopt = computed(
+  () => Boolean(reviewItem.value && reviewItem.value.status === 'converted' && !busyPath.value)
+);
+
+/** 有没有可看的产物（已转换 / 已入库都要能在详情里打开） */
+function hasProduct(item: InboxItem | null): boolean {
+  return Boolean(item?.derivedPath);
+}
+
+/** 列表行第二行：入库写清落到知识库哪一篇，已转换写清产物文件名（不再只有一句「已处理」） */
+function rowDest(item: InboxItem): string {
+  if (item.status === 'adopted') return item.adoptedPath ? '已入库到 ' + item.adoptedPath : '已入库，可在知识库检索';
+  if (item.status === 'converted') return item.derivedPath ? '产物：' + fileName(item.derivedPath) : '已生成 Markdown 产物，可入库';
+  return '';
+}
+
+/** 产物正文去掉 YAML frontmatter：来源 / 日期 / id 这些元信息详情里已经写了，正文里再铺一遍只是噪音 */
+function stripFrontmatter(markdown: string): string {
+  const text = String(markdown || '');
+  if (!text.startsWith('---\n')) return text;
+  const end = text.indexOf('\n---', 4);
+  if (end < 0) return text;
+  const rest = text.slice(end + 4);
+  return rest.startsWith('\n') ? rest.slice(1) : rest;
+}
+
+async function openReview(item: InboxItem | null): Promise<void> {
+  if (!item || !item.derivedPath || busyPath.value === item.path) return;
+  const seq = ++reviewSeq;
+  reviewItem.value = item;
+  reviewHtml.value = '';
+  reviewError.value = '';
+  reviewLoading.value = true;
+  try {
+    const derived = await inbox.loadDerived(item.path);
+    if (seq !== reviewSeq) return;
+    reviewHtml.value = renderMarkdown(stripFrontmatter(derived.markdown || ''));
+    reviewLoading.value = false;
+  } catch (error: any) {
+    if (seq !== reviewSeq) return;
+    reviewLoading.value = false;
+    reviewError.value = errText(error);
+  }
+}
+
+function closeReview(): void {
+  reviewSeq += 1;
+  reviewItem.value = null;
+  reviewHtml.value = '';
+  reviewError.value = '';
+  reviewLoading.value = false;
+}
+
+function detailReview(item: InboxItem | null): void {
+  detailAction(() => openReview(item));
+}
+
+function adoptFromReview(): void {
+  const item = reviewItem.value;
+  if (!item) return;
+  closeReview();
+  void adoptItem(item);
+}
+
 /* ===== 分享落袋回执（/inbox?capture=<时间戳>，由原生分享桥推入） ===== */
 
 const captureOpen = ref(false);
@@ -1911,6 +2195,10 @@ function onDocKeydown(event: KeyboardEvent): void {
     dismissCapture('inbox');
     return;
   }
+  if (reviewItem.value) {
+    closeReview();
+    return;
+  }
   if (detailPath.value) {
     closeDetail();
     return;
@@ -1938,6 +2226,10 @@ onMounted(async () => {
     }
     if (captureOpen.value) {
       dismissCapture('inbox');
+      return true;
+    }
+    if (reviewItem.value) {
+      closeReview();
       return true;
     }
     if (detailPath.value) {
@@ -3358,6 +3650,293 @@ onBeforeUnmount(() => {
 
 .mi-detail-grid .btn.danger {
   color: var(--danger);
+}
+
+/* ===== 状态分类（待整理 · 已转换 / 待整理 / 已转换 / 已入库） =====
+ * 横向滚动的一排胶囊，计数与筛选写在一起（与桌面工作台同一口径）；
+ * 「已入库」不再是从手机界面里看不到的隐藏分类。 */
+/* 四档分类必须「一眼全在」：小屏自动换行，不靠横向滑动藏起「已入库」 */
+.mi-filters {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+  padding: 2px;
+}
+
+.mi-filter {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.mi-filter.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mi-filter-n {
+  min-width: 21px;
+  height: 21px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 21px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.mi-filter.on .mi-filter-n {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* ===== 整列条目列表（其余条目 / 已转换 / 已入库） ===== */
+.mi-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 2px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+
+.mi-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.mi-queue-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.mi-queue-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.mi-queue-head span {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.mi-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  text-align: left;
+  transition: background 0.14s ease, transform 0.12s ease;
+}
+
+.mi-row:active {
+  transform: scale(0.99);
+  background: var(--bg-secondary);
+}
+
+.mi-row-thumb {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--cov-bg, var(--bg-tertiary));
+  color: var(--cov-fg, var(--text));
+}
+
+.mi-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mi-row-main b {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.mi-row-main small {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mi-row-main small.mi-row-dest {
+  color: var(--accent);
+}
+
+.mi-row-go {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+/* ===== 转换产物预览 ===== */
+.mi-review {
+  display: flex;
+  flex-direction: column;
+  max-height: 88dvh;
+  overflow: hidden;
+}
+
+.mi-review-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mi-review-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 28px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.mi-review-state.error {
+  color: var(--danger);
+}
+
+.mi-review-md {
+  padding: 14px 13px 18px;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.mi-review-md :deep(> :first-child) {
+  margin-top: 0;
+}
+
+.mi-review-md :deep(h2),
+.mi-review-md :deep(h3),
+.mi-review-md :deep(h4) {
+  margin: 18px 0 8px;
+  line-height: 1.35;
+}
+
+.mi-review-md :deep(p) {
+  margin: 0 0 10px;
+}
+
+.mi-review-md :deep(ul),
+.mi-review-md :deep(ol) {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.mi-review-md :deep(li) {
+  margin: 3px 0;
+}
+
+.mi-review-md :deep(blockquote) {
+  margin: 0 0 10px;
+  padding: 4px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.mi-review-md :deep(table) {
+  width: 100%;
+  margin: 0 0 12px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.mi-review-md :deep(th),
+.mi-review-md :deep(td) {
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  text-align: left;
+}
+
+.mi-review-md :deep(pre) {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  overflow-x: auto;
+}
+
+.mi-review-md :deep(code) {
+  font-size: 12.5px;
+}
+
+.mi-review-md :deep(img) {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.mi-review-md :deep(a) {
+  color: var(--accent);
+}
+
+.mi-review-actions {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mi-review-actions .btn {
+  flex: 1;
+  min-height: 46px;
+  border-radius: 12px;
+  justify-content: center;
+  font-size: 14px;
 }
 
 /* 分享落袋回执 */
