@@ -208,6 +208,9 @@ export const SYNC_EVENT_META: Record<string, SyncEventMeta> = {
   'sync-done': { label: '一轮同步完成', category: '连接' },
   'sync-paused': { label: '同步已暂停', category: '连接' },
   'sync-failed': { label: '同步失败', category: '连接' },
+  // 安卓端退到后台后的 5 分钟宽限：把在途/待推的同步跑完再停（见 Android SyncEngine）
+  'bg-sync-grace': { label: '退到后台，继续完成同步', category: '连接' },
+  'bg-sync-grace-done': { label: '后台同步已完成', category: '连接' },
   // 推送
   'push-ok': { label: '推送完成', category: '推送' },
   'push-page': { label: '推送页面', category: '推送' },

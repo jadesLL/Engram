@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Android 成员端一次性同步器。无 SSE、无后台调度：前台事件触发一轮收敛，完成后线程空闲。
+ * 退到后台时若还有在途/排队的工作，会走一个最多 5 分钟的宽限（[BackgroundSyncPolicy]），
+ * 把这一轮跑完再停，不在后台常驻、不排失败重试。
  * 本地写入先落 SQLite outbox，网络失败或进程退出均可在下次前台继续。
  * 连中枢走 OkHttp + 双栈策略（见 DualStack.kt）：域名同时有 A/AAAA 时先 IPv6，连不上改 IPv4，
  * IPv4 用稳后定期回探一次 IPv6——协议族只在建连时选定，传输途中不换。
@@ -66,6 +68,14 @@ class SyncEngine(
     }
     @Volatile private var retryFuture: ScheduledFuture<*>? = null
     @Volatile private var retryAttempt = 0
+    /**
+     * 退到后台后继续完成同步的宽限截止时刻（0 = 没有宽限）：从 onBackground 起算，最多
+     * [BackgroundSyncPolicy.GRACE_MS]（5 分钟）。宽限只用来把已经在跑 / 已排队的工作跑完，
+     * 不接受前台 UI 的新触发；到期立即取消在途请求，回到「待回前台继续」。
+     */
+    @Volatile private var backgroundGraceDeadline = 0L
+    /** 宽限到期收尾任务：挂在 retryScheduler 上，与失败退避互不影响 */
+    @Volatile private var backgroundGraceFuture: ScheduledFuture<*>? = null
     @Volatile private var foreground = false
     @Volatile private var cancelled = false
     @Volatile var connected = false; private set
@@ -122,18 +132,104 @@ class SyncEngine(
     /** 中枢还没有「已提炼标记」端点（旧中枢）时只记一条 */
     private val marksEndpointMissing = AtomicBoolean(false)
 
-    fun onForeground() { foreground = true; cancelled = false; request(false) }
+    fun onForeground() {
+        // 回前台优先于后台宽限：清掉宽限计时器；在途请求不用打断，本轮结束后按前台规则继续。
+        clearBackgroundGrace()
+        foreground = true
+        cancelled = false
+        request(false)
+    }
 
+    /**
+     * 进入后台：以前是立刻取消在途请求；现在若还有没跑完的同步（正在跑 / 待推队列 / 已排队的
+     * 下一轮），给它一个最多 5 分钟的宽限把成果落完再停，避免「刚改完切到别的 App 就断」。
+     * 宽限内不新增失败重试；窗口到期（或这一轮收敛完 / 失败）立即收尾，待推队列留在 SQLite。
+     */
     fun onBackground() {
         foreground = false
-        cancelled = true
         connected = false
+        val syncReady = db.setting("sync_role") == "member" && db.setting("sync_enabled") == "1"
+        val hasWork = BackgroundSyncPolicy.shouldStartGrace(
+            foreground = false,
+            memberEnabled = syncReady,
+            running = running.get(),
+            pendingOutbox = db.outboxCount(),
+            rerunQueued = requestWhileRunning.get(),
+        )
+        if (hasWork) startBackgroundGrace() else cancelActiveWork()
+    }
+
+    /** 没有可继续的工作（或同步未启用）：与旧行为一致，立刻停 */
+    private fun cancelActiveWork() {
+        cancelled = true
+        clearBackgroundGrace()
         cancelPendingRetry() // 后台不排重试：省电，回到前台由事件触发
         activeCalls.forEach { it.cancel() }
     }
 
+    private fun startBackgroundGrace() {
+        cancelled = false
+        backgroundGraceDeadline = BackgroundSyncPolicy.deadlineFrom(System.currentTimeMillis())
+        db.log("info", "bg-sync-grace", "应用已进入后台：继续完成本轮同步（最多 5 分钟）")
+        scheduleBackgroundGraceEnd(backgroundGraceDeadline)
+        // 刚写完就切走（请求已排队但还没开跑）：后台把它推完；已经在跑就等这一轮自己收敛
+        if (!running.get()) request(false)
+    }
+
+    private fun scheduleBackgroundGraceEnd(deadline: Long) {
+        backgroundGraceFuture?.cancel(false)
+        val delay = (deadline - System.currentTimeMillis()).coerceAtLeast(0L)
+        backgroundGraceFuture = try {
+            retryScheduler.schedule({ expireBackgroundGrace() }, delay, TimeUnit.MILLISECONDS)
+        } catch (_: RejectedExecutionException) {
+            null // 调度器已关闭（进程收尾）：等下次前台事件
+        }
+    }
+
+    /** 宽限到期：取消在途请求与排队重试，状态回到「已暂停，待下次继续」 */
+    private fun expireBackgroundGrace() {
+        if (foreground) return
+        clearBackgroundGrace()
+        cancelled = true
+        connected = false
+        cancelPendingRetry()
+        activeCalls.forEach { it.cancel() }
+        syncProgress = "已暂停，待下次继续"
+        db.log("info", "sync-paused", "后台同步宽限结束（最多 5 分钟）：已暂停，回前台继续")
+    }
+
+    /** 宽限内这一轮已收敛且没有待推工作：提前收尾，不空等到期 */
+    private fun finishBackgroundGrace() {
+        if (foreground) return
+        clearBackgroundGrace()
+        db.log("info", "bg-sync-grace-done", "后台同步已完成：宽限提前结束")
+    }
+
+    /** 后台宽限内失败：不排退避重试（省电），保留 lastError / 同步中断状态供回前台查看 */
+    private fun failBackgroundGrace() {
+        if (foreground) return
+        clearBackgroundGrace()
+        cancelled = true
+        connected = false
+        cancelPendingRetry()
+        activeCalls.forEach { it.cancel() }
+    }
+
+    private fun clearBackgroundGrace() {
+        backgroundGraceDeadline = 0L
+        backgroundGraceFuture?.cancel(false)
+        backgroundGraceFuture = null
+    }
+
+    /** 是否处在退到后台后的宽限窗口内 */
+    private fun inBackgroundGrace(): Boolean =
+        BackgroundSyncPolicy.inGrace(System.currentTimeMillis(), backgroundGraceDeadline)
+
+    /** 允许同步工作继续：前台，或退到后台后的有限宽限窗口内 */
+    private fun workAllowed(): Boolean = foreground || inBackgroundGrace()
+
     fun request(full: Boolean) {
-        if (!foreground || db.setting("sync_role") != "member" || db.setting("sync_enabled") != "1") return
+        if (!workAllowed() || db.setting("sync_role") != "member" || db.setting("sync_enabled") != "1") return
         // 已经要开跑了：撤掉排队中的重试，免得这一轮刚成功又被上一次的退避再拉起来一轮
         cancelPendingRetry()
         if (!running.compareAndSet(false, true)) {
@@ -189,13 +285,19 @@ class SyncEngine(
                 val rerunFull = fullRequestWhileRunning.getAndSet(false)
                 // 失败后保留持久化 outbox，等退避重试或下次前台事件。
                 // 不因队列仍非空就立即递归重试：离线时那会形成无限请求与日志风暴。
-                if (completed && foreground && !cancelled && (rerun || db.outboxCount() > 0)) {
+                val active = workAllowed() && !cancelled
+                if (completed && active && (rerun || db.outboxCount() > 0)) {
                     request(rerunFull)
-                } else if (!completed && foreground && !cancelled) {
+                } else if (!completed && active) {
                     // 失败后的自动退避重试（见 retryScheduler 注释）：只有前台、未取消才排期，
                     // 后台/离线的重试没有意义——省电，也让「同步中断」保持诚实。
                     // 具体原因已在 catch 里记进 lastError 与同步日志，这里不重复传。
-                    scheduleRetry()
+                    if (foreground) scheduleRetry() else failBackgroundGrace()
+                } else if (completed && !foreground && !cancelled && inBackgroundGrace() &&
+                    !rerun && db.outboxCount() == 0
+                ) {
+                    // 宽限内这一轮已收敛且没有待推工作：提前结束宽限，别空等满 5 分钟
+                    finishBackgroundGrace()
                 }
             }
         }
@@ -239,7 +341,7 @@ class SyncEngine(
         db.log("info", "sync-cursor-reset", "$reason：增量游标已归零（$previous → 0），下次同步按全量对账重新对齐")
     }
 
-    private fun checkActive() { if (cancelled || !foreground) throw Cancelled() }
+    private fun checkActive() { if (cancelled || !workAllowed()) throw Cancelled() }
 
     private fun converge() {
         repeat(4) {
@@ -1336,7 +1438,7 @@ class SyncEngine(
         return try {
             call.execute().use { response -> parseAnnounce(response, base, System.currentTimeMillis() - startedAt, null) }
         } catch (error: Exception) {
-            if (cancelled || !foreground) throw Cancelled()
+            checkActive()
             AnnounceProbe(false, null, describeLinkError(error, timeoutMs), emptyList())
         } finally {
             activeCalls.remove(call)
@@ -1386,7 +1488,7 @@ class SyncEngine(
                 }
                 return parseAnnounceText(text, base, System.currentTimeMillis() - startedAt, planned.family)
             } catch (error: Exception) {
-                if (cancelled || !foreground) throw Cancelled()
+                checkActive()
                 logDualStackEvent(DualStack.record(config, state, planned.family, false, System.currentTimeMillis() - startedAt))
                 failure = error
                 lastError = describeLinkError(error, budget)
@@ -1583,7 +1685,7 @@ class SyncEngine(
                     connected = true
                     return result
                 } catch (error: Exception) {
-                    if (cancelled || !foreground) throw Cancelled()
+                    checkActive()
                     failure = error
                     continue
                 }
@@ -1607,7 +1709,7 @@ class SyncEngine(
                 val opened = try {
                     openResponse(method, url, contentType, body, client)
                 } catch (error: Exception) {
-                    if (cancelled || !foreground) throw Cancelled()
+                    checkActive()
                     // 只有「响应头都没拿到」才算这一族连不上：记一次失败并决定是否换族
                     logDualStackEvent(
                         DualStack.record(config, state, planned.family, false, System.currentTimeMillis() - startedAt)
