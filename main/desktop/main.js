@@ -42,6 +42,8 @@ const runtimeMode = require('./scripts/lib/runtime-mode');
 const updateCadence = require('./scripts/lib/update-cadence');
 // 更新链的纯逻辑（文件名净化 / sha256 校验 / 安装结果判定），单测在 scripts/tests/update-chain.test.js
 const updateChain = require('./scripts/lib/update-chain');
+// 卸载标记与交接状态（主进程与 uninstall-launcher.js 共用，单测见 desktop/scripts/tests/uninstall-guard.test.js）
+const uninstallGuard = require('./scripts/lib/uninstall-guard');
 
 /** 是否安装包形态（打包产物 app.asar 存在）；源码模式（含品牌启动器）一律 false */
 const PACKAGED = runtimeMode.isPackagedRuntime(process.resourcesPath);
@@ -760,6 +762,26 @@ function buildAppMenu() {
 
 app.whenReady().then(() => {
   startupMark('whenReady');
+  // 卸载进行中守卫：设置页点「卸载」后应用会退出、卸载脚本在后台删安装目录。这期间用户若再点图标，
+  // 新实例会从正在被删的目录里起来并锁住文件，脚本就删不动——表现就是「点了卸载、退出了，但再点图标又打开了」。
+  // 过期的标记（脚本早已死掉）清掉后放行，避免一次失败的卸载把应用永久锁死。
+  if (uninstallInProgress()) {
+    log('[uninstall] 正在卸载 Engram，本次启动直接退出：' + sourceInstallRoot());
+    if (!SILENT_START) {
+      try {
+        dialog.showMessageBoxSync({
+          type: 'info',
+          title: 'Engram 正在卸载',
+          message: '正在删除安装文件，请稍候…',
+          detail: '卸载完成后图标会失效。如果长时间没有变化，可重启电脑后再试一次。',
+        });
+      } catch {
+        /* 弹窗失败不影响退出 */
+      }
+    }
+    app.quit();
+    return;
+  }
   // 隔离验收实例不能接管用户已安装应用的协议关联。
   if (!process.env.ENGRAM_USER_DATA) {
     app.setAsDefaultProtocolClient(...protocolRegistration(process.execPath, app.getAppPath(), !PACKAGED));
@@ -2338,6 +2360,47 @@ function sourceInstallRoot() {
   return process.execPath.toLowerCase().startsWith(prefix) ? root : '';
 }
 
+// 交接等待上限：launcher 起来、校验脚本、拉起 PowerShell 正常在 1 秒内完成；8 秒还没见到
+// 「running」说明它自己也起不来（被杀软拦、fork 失败等），此时不能再退出应用，要把原因回给界面。
+const UNINSTALL_START_TIMEOUT_MS = 8000;
+
+function uninstallLogFile() {
+  return path.join(app.getPath('temp'), 'engram-uninstall.log');
+}
+
+/** 卸载是否正在进行：安装根里有「新鲜」的 .uninstalling 标记（启动守卫用，见 whenReady） */
+function uninstallInProgress() {
+  const root = sourceInstallRoot();
+  if (!root) return false;
+  const flag = uninstallGuard.readFlag(root);
+  if (!flag) return false;
+  if (!uninstallGuard.flagIsFresh(flag)) {
+    uninstallGuard.removeFlag(root);
+    log('[uninstall] 清理过期的卸载标记（上次卸载没有正常结束）：' + root);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 等 launcher 把「卸载脚本已拉起」写进状态文件。
+ * 只有确认脚本真的跑起来了才让主进程退出；否则清标记、返回错误给设置页——
+ * 旧实现不看结果一律 app.exit(0)，脚本起不来时就是「退出了但什么都没卸」（2026-11-06 用户报）。
+ */
+async function waitUninstallStarted(statusFile) {
+  const deadline = Date.now() + UNINSTALL_START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const s = uninstallGuard.readStatus(statusFile);
+    if (s && s.phase === 'running') return { ok: true };
+    if (s && s.phase === 'error') return { ok: false, error: '卸载进程启动失败：' + (s.error || '未知原因') };
+    if (s && s.phase === 'done' && s.code !== 0) {
+      return { ok: false, error: '卸载脚本立即退出（code=' + s.code + '），详见日志：' + uninstallLogFile() };
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return { ok: false, error: '卸载进程 ' + Math.round(UNINSTALL_START_TIMEOUT_MS / 1000) + ' 秒内没有启动，详见日志：' + uninstallLogFile() };
+}
+
 ipcMain.handle('desktop-source-uninstall-state', () => ({ available: Boolean(sourceInstallRoot()) }));
 
 ipcMain.handle('desktop-source-uninstall', async (_e, deleteData) => {
@@ -2345,20 +2408,33 @@ ipcMain.handle('desktop-source-uninstall', async (_e, deleteData) => {
   if (!root) return { ok: false, error: '未识别出源码版安装目录；安装包形态请在系统「添加或删除程序」中卸载' };
   const script = path.join(root, 'Engram', 'main', 'scripts', 'uninstall-engram.ps1');
   if (!fs.existsSync(script)) return { ok: false, error: '未找到卸载脚本：' + script };
-  // 先优雅停掉内嵌 server（数据库落盘），再拉起独立卸载进程并退出本应用。
+  // 先写卸载标记：期间用户再点图标会被启动守卫挡下，避免新实例锁住正在被删的安装目录。
+  uninstallGuard.writeFlag(root, { deleteData: Boolean(deleteData) });
+  const statusFile = uninstallGuard.statusPath(app.getPath('temp'));
+  uninstallGuard.writeStatus(statusFile, { phase: 'launching' });
+  // 先优雅停掉内嵌 server（数据库落盘），再拉起独立卸载进程。
   // 不能直接 spawn powershell：GUI 进程 spawn 的 powershell 会空句柄静默秒退（实测），
   // 必须经 fork 出的 Node 中转（uninstall-launcher.js），fork 的子进程在 app.exit 后存活。
   await stopLocalChild();
-  await new Promise((resolve) => {
-    const child = fork(
-      path.join(__dirname, 'scripts', 'uninstall-launcher.js'),
-      ['--root', root, ...(deleteData ? ['--delete-data'] : [])],
-      { detached: true, stdio: 'ignore' },
-    );
-    child.once('spawn', resolve);
-    child.once('error', resolve);
-    setTimeout(resolve, 3000);
-  });
+  const child = fork(
+    path.join(__dirname, 'scripts', 'uninstall-launcher.js'),
+    ['--root', root, ...(deleteData ? ['--delete-data'] : []), '--status', statusFile],
+    { detached: true, stdio: 'ignore' },
+  );
+  // 没有 error 监听时 spawn 失败会变成 uncaughtException 带走主进程；失败原因由状态文件给出
+  child.on('error', () => {});
+  const started = await waitUninstallStarted(statusFile);
+  if (!started.ok) {
+    uninstallGuard.removeFlag(root);
+    try {
+      child.kill();
+    } catch {
+      /* 已退出 */
+    }
+    log('[uninstall] 卸载未能启动：' + started.error);
+    return { ok: false, error: started.error };
+  }
+  log('[uninstall] 卸载脚本已拉起，应用退出；进度日志：' + uninstallLogFile());
   app.exit(0);
   return { ok: true };
 });
