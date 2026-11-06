@@ -709,6 +709,11 @@ async function pullFile(relPath: string): Promise<number> {
     throw error;
   }
   noteAppWrite(abs);
+  // 同步落地的文件也要通知前端：页面有 page-changed，文件类变更（收集箱、原始资料附件、
+  // 图片资产）没有别的通道；缺这一拍就是「文件已经在磁盘上、界面一直不出现」，用户看到的
+  // 就是「文件没同步」。与本地上传/删除路径（routes/files.ts、routes/inbox.ts、assets 等）
+  // 保持一致，都推 file-changed 让列表与角标即时刷新。
+  emit('file-changed', { path: relPath });
   // 单个文件拉取只在「值得看一眼」时单独成条（≥ 512 KB 的大附件）：
   // 首次接入可能有成百上千个小文件，逐条记会把日志刷满、把真正有用的记录挤出去；
   // 数量与总字节数由所在批次（reconcile-done / replay）汇总。
@@ -759,6 +764,9 @@ function applyRemoteMove(oldPath: string, target: string, revision: number): voi
       to: target,
     });
   }
+  // 页面改名由 movePage 推 page-moved；非页面文件（收集箱、原始资料附件、图片资产）没有
+  // 对应事件，补一条让文件列表当场换路径。
+  if (classifyBrainEntry(target) === 'file') emit('file-changed', { path: target, oldPath });
   setPageSyncRevision(target, revision);
 }
 
@@ -847,6 +855,10 @@ function applyRemoteOp(op: any, source: 'live' | 'replay' = 'live'): void {
         // 否则行停在 deleted = 0，侧栏留下点开报「文件不存在」的幽灵页
         markPageDeleted(target);
       }
+      // 页面删除由 moveToTrash 推 page-deleted；文件类（收集箱 .md 也算文件、原始资料附件、
+      // 图片资产）没有页面行，也就没有事件——补齐，否则别端删掉的文件本机磁盘上已经消失、
+      // 界面却一直挂着（同样会被当成「文件不同步」）。
+      if (classifyBrainEntry(target) === 'file') emit('file-changed', { path: target });
       applied = true;
       appliedSummary = summarizeDelete(target, bytes, /\.(md|markdown)$/i.test(target));
     } else if (op.kind === 'move') {
