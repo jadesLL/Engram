@@ -6,8 +6,10 @@ import { db, now } from '../lib/db.js';
  * 作为整体物化复制到对端，而不是逐行回放——版本切换的副作用
  * （旧版本转 superseded、其他页面贡献退位）已经体现在快照行的最终状态里。
  *
- * 应用端做「按来源路径的精确状态替换」：快照里没有的本路径版本删除
- * （级联清理 runs/facts/contributions），快照里的全部 upsert。
+ * 应用端按「只前进不后退」合并：快照里的行 upsert；版本状态与贡献状态以更晚的
+ * 激活/更新时间者胜；只有快照确实带来了该路径「更新的 active 版本」时才清理本端
+ * 不在快照里的旧版本。成员快照可能是陈旧/不完整的（离线、旧备份、本端重新提炼未提交），
+ * 无条件精确替换会把中枢较新的账本顶回旧版甚至删光——用户可见「已提炼」被翻回「未提炼」。
  *
  * 两个收集锚点：
  *  - collectEvidenceForPage：随页面 op 实时携带（页面写入/合并广播用）
@@ -92,8 +94,52 @@ export function collectEvidenceForPath(sourcePath: string): EvidenceSnapshot | n
   return collectEvidenceByVersions(versions);
 }
 
+/** 快照行的「新旧」判据：优先激活时刻，其次创建时刻；解析失败按最旧（0） */
+function rankOfEvidenceRow(row: Record<string, any>): number {
+  const value = Date.parse(String(row?.activated_at || row?.created_at || ''));
+  return Number.isFinite(value) ? value : 0;
+}
+
 /**
- * 应用一份证据快照：按来源路径做精确状态替换。
+ * 版本状态只前进不后退：陈旧/不完整快照不能把本地 active 顶回旧版，
+ * 也不能把已 superseded/processing 的旧版本重新激活。
+ * 「版本切换」只允许由快照里更新的 active 版本驱动（snapshotActiveRank）。
+ *
+ * @param pathHasLocalActive 本路径在应用快照前**本地是否已有 active 版本**：
+ *   - 本地没有任何 active（新成员首次收到提炼账本、或本端只留下 superseded 旧行）时，
+ *     允许快照里的 active 版本直接落地——否则时钟偏慢/只有旧行的成员永远拿不到标记；
+ *   - 本地已有 active 时，只允许 rank 更高（激活时间更晚）的 active 替换。
+ */
+function guardedVersionState(
+  local: Record<string, any>,
+  incoming: Record<string, any>,
+  snapshotActiveRank: number,
+  pathHasLocalActive: boolean,
+): [string, string | null, string | null] {
+  const localStatus = String(local.status || '');
+  const incomingStatus = String(incoming.status || '');
+  const localActive = localStatus === 'active';
+  const incomingActive = incomingStatus === 'active';
+  const localRank = rankOfEvidenceRow(local);
+  const incomingRank = rankOfEvidenceRow(incoming);
+  if (localActive && incomingActive && incomingRank < localRank) {
+    // 双方都是 active：以更晚激活者为准，陈旧快照里的旧 active 不能把本端较新的 active 顶掉
+    return [localStatus, local.activated_at ?? null, local.error ?? null];
+  }
+  if (localActive && !incomingActive && snapshotActiveRank <= localRank) {
+    // 快照想取消本端 active，但带不来更新的 active：保留本端现状（陈旧快照/部分快照）
+    return [localStatus, local.activated_at ?? null, local.error ?? null];
+  }
+  if (!localActive && incomingActive && pathHasLocalActive && incomingRank <= localRank) {
+    // 本地该路径已有 active 版本、且快照这条 active 不比本端记录新：不采纳（陈旧快照）。
+    // 本地该路径没有任何 active 时（pathHasLocalActive=false）放行，让首次提炼的标记能落地。
+    return [localStatus, local.activated_at ?? null, local.error ?? null];
+  }
+  return [incomingStatus, incoming.activated_at ?? null, incoming.error ?? null];
+}
+
+/**
+ * 应用一份证据快照：按「只前进不后退」合并（见文件头注释）。
  * 返回应用的贡献条数（0 表示无可应用内容）。
  */
 export function applyEvidenceSnapshot(snapshot: EvidenceSnapshot): number {
@@ -107,8 +153,11 @@ export function applyEvidenceSnapshot(snapshot: EvidenceSnapshot): number {
   return db.transaction((): number => {
     // 贡献的 page_id/pages 行与版本行可能先插子表后补父表，FK 检查统一推迟到 COMMIT
     db.pragma('defer_foreign_keys = ON');
+    const findVersionById = db.prepare(
+      `SELECT id, path, content_hash, status, created_at, activated_at, error FROM source_versions WHERE id = ?`
+    );
     const findVersionByHash = db.prepare(
-      `SELECT id FROM source_versions WHERE path = ? AND content_hash = ?`
+      `SELECT id, path, content_hash, status, created_at, activated_at, error FROM source_versions WHERE path = ? AND content_hash = ?`
     );
     const idMap = new Map<string, string>(); // 快照版本 id → 本地版本 id
     const upsertVersion = db.prepare(
@@ -117,14 +166,32 @@ export function applyEvidenceSnapshot(snapshot: EvidenceSnapshot): number {
        ON CONFLICT(id) DO UPDATE SET
          status=excluded.status, activated_at=excluded.activated_at, error=excluded.error`
     );
+    const updateVersionState = db.prepare(
+      `UPDATE source_versions SET status=?, activated_at=?, error=? WHERE id=?`
+    );
+    // 应用前本地哪些来源路径已经存在 active 版本（用于 guardedVersionState 的放行判断）
+    const localActivePaths = new Set(
+      (db.prepare(`SELECT DISTINCT path FROM source_versions WHERE status = 'active'`).all() as { path: string }[])
+        .map((row) => String(row.path)),
+    );
+    // 快照里每个来源路径上「最新 active 版本」的激活时刻：版本切换与旧行清理只允许由它驱动
+    const snapshotActiveRank = new Map<string, number>();
     for (const v of versions) {
-      const local = findVersionByHash.get(v.path, v.content_hash) as { id: string } | undefined;
-      if (local && local.id !== v.id) {
+      if (String(v.status) !== 'active') continue;
+      const path = String(v.path);
+      snapshotActiveRank.set(path, Math.max(snapshotActiveRank.get(path) || 0, rankOfEvidenceRow(v)));
+    }
+    for (const v of versions) {
+      const path = String(v.path);
+      const local = ((findVersionById.get(v.id) as Record<string, any> | undefined)
+        || (findVersionByHash.get(path, v.content_hash) as Record<string, any> | undefined));
+      if (local) {
         // 两端独立为同一 (path, content_hash) 建过版本：归并到本地既有 id
-        idMap.set(v.id, local.id);
-        db.prepare(
-          `UPDATE source_versions SET status=?, activated_at=?, error=? WHERE id=?`
-        ).run(v.status, v.activated_at ?? null, v.error ?? null, local.id);
+        const [status, activatedAt, error] = guardedVersionState(
+          local, v, snapshotActiveRank.get(path) || 0, localActivePaths.has(path),
+        );
+        idMap.set(String(v.id), String(local.id));
+        updateVersionState.run(status, activatedAt, error, local.id);
       } else {
         upsertVersion.run({
           id: v.id,
@@ -136,16 +203,41 @@ export function applyEvidenceSnapshot(snapshot: EvidenceSnapshot): number {
           activated_at: v.activated_at ?? null,
           error: v.error ?? null,
         });
-        idMap.set(v.id, v.id);
+        idMap.set(String(v.id), String(v.id));
       }
     }
-    // 快照中没有的本路径版本 → 删除（级联清理 runs/facts/contributions）
-    const keepIds = [...new Set(versions.map((v) => idMap.get(v.id) || v.id))];
-    const pathPlaceholders = paths.map(() => '?').join(',');
-    const keepPlaceholders = keepIds.map(() => '?').join(',');
-    db.prepare(
-      `DELETE FROM source_versions WHERE path IN (${pathPlaceholders}) AND id NOT IN (${keepPlaceholders})`
-    ).run(...paths, ...keepIds);
+    // 快照中没有的本路径版本：只有「快照确实带来更新的 active 版本」时才清理，
+    // 且被 active 贡献引用的版本不动（否则会连带删掉证据抽屉里的现行引用）。
+    const keepIdByPath = new Map<string, Set<string>>();
+    for (const v of versions) {
+      const path = String(v.path);
+      const keep = keepIdByPath.get(path) || new Set<string>();
+      keep.add(String(idMap.get(String(v.id)) || v.id));
+      keepIdByPath.set(path, keep);
+    }
+    const activeContributionVersions = new Set(
+      (db.prepare(`SELECT DISTINCT source_version_id AS id FROM page_contributions WHERE active = 1`).all() as { id: string }[])
+        .map((row) => String(row.id))
+        .filter(Boolean),
+    );
+    const deleteVersion = db.prepare(`DELETE FROM source_versions WHERE id = ?`);
+    for (const path of paths) {
+      const keep = keepIdByPath.get(path) || new Set<string>();
+      const snapshotRank = snapshotActiveRank.get(path) || 0;
+      // 快照没有该路径的 active 版本（陈旧/部分快照）：一行都不删
+      if (snapshotRank <= 0) continue;
+      const locals = db.prepare(
+        `SELECT id, status, created_at, activated_at FROM source_versions WHERE path = ?`
+      ).all(path) as Record<string, any>[];
+      for (const row of locals) {
+        const id = String(row.id);
+        if (keep.has(id)) continue;
+        // 本端 active 比快照的 active 还新：快照是旧的，不能删
+        if (String(row.status) === 'active' && snapshotRank <= rankOfEvidenceRow(row)) continue;
+        if (activeContributionVersions.has(id)) continue;
+        deleteVersion.run(id);
+      }
+    }
     // 归并后被替换掉的旧 id 上可能还挂着本页贡献（先于版本删除迁走）
     for (const [fromId, toId] of idMap) {
       if (fromId === toId) continue;
@@ -163,7 +255,8 @@ export function applyEvidenceSnapshot(snapshot: EvidenceSnapshot): number {
        VALUES(@id, @path, @content_hash, @source_version_id, @status, @commit_status, @derived_status, @started_at, @finished_at, @stats, @error)
        ON CONFLICT(id) DO UPDATE SET
          status=excluded.status, commit_status=excluded.commit_status, derived_status=excluded.derived_status,
-         finished_at=excluded.finished_at, stats=excluded.stats, error=excluded.error`
+         finished_at=excluded.finished_at, stats=excluded.stats, error=excluded.error
+       WHERE COALESCE(excluded.finished_at, '') >= COALESCE(ingest_runs.finished_at, '')`
     );
     for (const r of runs) {
       upsertRun.run({
@@ -196,7 +289,8 @@ export function applyEvidenceSnapshot(snapshot: EvidenceSnapshot): number {
          run_id=excluded.run_id, contribution_key=excluded.contribution_key, fact_ids=excluded.fact_ids,
          content=excluded.content, summary=excluded.summary, domain=excluded.domain,
          confidence=excluded.confidence, managed=excluded.managed, active=excluded.active,
-         updated_at=excluded.updated_at`
+         updated_at=excluded.updated_at
+       WHERE COALESCE(excluded.updated_at, '') >= COALESCE(page_contributions.updated_at, '')`
     );
     // 贡献按 (本地图面 id, 版本 id) 落位：page_id 按页路径重映射，缺失页面跳过（页面随后由页面同步补齐）
     const pageIdByPath = new Map<string, string>();

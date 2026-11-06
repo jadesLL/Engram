@@ -589,25 +589,48 @@ class EngramLocalServer private constructor(private val context: Context) {
         get("/api/tasks/board/config") { call.proxyAgent("GET", "/api/tasks/board/config") }
         put("/api/tasks/board/config") { call.proxyAgent("PUT", "/api/tasks/board/config", call.receiveText()) }
 
-        // 本机原件离线也可见；在线时合并中枢的转换状态。语义转换仍由中枢完成。
+        // 本机原件离线也可见；中枢在线时用「中枢成功响应 > 上次缓存 > 本地磁盘推导」合并状态。
+        //
+        // 关键（2026-11 用户报障「已整理（已入库/已转换）在其他端变回待整理」）：
+        // 不能再用 `sync.connected` 一票否决——它进后台/任一轮失败都会 false，那会让已整理
+        // 在冷启动、离线、同步瞬断时倒回待整理。失败时静默降级到缓存/本地推导，绝不下调状态。
         get("/api/inbox/items") {
             if (!call.authorize()) return@get
-            val items = linkedMapOf<String, JSONObject>()
-            db.inboxItems().forEach { items[it.getString("path")] = it }
             val deleted = db.outbox().filter { it.optString("kind") == "delete" }.map { it.optString("target") }.toSet()
-            if (agent.configured() && sync.connected) {
-                runCatching {
-                    val remote = agent.request("GET", "/api/inbox/items")
-                    if (remote.status == 200) {
-                        val rows = JSONObject(String(remote.body, Charsets.UTF_8)).optJSONArray("items") ?: JSONArray()
-                        for (i in 0 until rows.length()) {
-                            val item = rows.optJSONObject(i) ?: continue
-                            val path = item.optString("path")
-                            if (InboxFiles.contains(path) && path !in deleted) items[path] = item
+            var hubRows: JSONArray? = null
+            var hubStatuses: List<InboxItemStatus>? = null
+            if (agent.configured()) {
+                runCatching { agent.request("GET", "/api/inbox/items") }
+                    .onSuccess { remote ->
+                        if (remote.status == 200) {
+                            runCatching { JSONObject(String(remote.body, Charsets.UTF_8)).optJSONArray("items") }
+                                .getOrNull()?.let { rows ->
+                                    hubRows = rows
+                                    val parsed = parseHubInboxStatuses(rows, System.currentTimeMillis())
+                                    hubStatuses = parsed
+                                    // 只有中枢成功响应才覆盖缓存：失败时保留上次已知状态（离线不回退）
+                                    db.saveInboxStatusCache(parsed)
+                                }
                         }
                     }
+                    .onFailure { logInboxStatusFallback(it) }
+            }
+            val items = linkedMapOf<String, JSONObject>()
+            db.inboxItems().forEach { items[it.getString("path")] = it }
+            // 本机推导状态直接取自已构建的条目（避免再扫一遍 收集箱/转换结果 + 原始资料/文档）
+            val localStatuses = items.values.map { statusOfLocalItem(it) }
+            val merged = InboxStatusMerge.merge(localStatuses, db.inboxStatusCache(), hubStatuses)
+            // 中枢行的展示字段（能力位/提示/转换任务/时间）优先用中枢那份；状态统一由 merged 决定
+            hubRows?.let { rows ->
+                for (i in 0 until rows.length()) {
+                    val row = rows.optJSONObject(i) ?: continue
+                    val path = row.optString("path")
+                    if (!InboxFiles.contains(path) || path in deleted) continue
+                    val existing = items[path]
+                    if (existing != null) copyHubDisplayFields(existing, row) else items[path] = row
                 }
             }
+            for ((path, item) in items) merged[path]?.let { applyInboxStatus(item, it) }
             val sorted = items.values.sortedByDescending { it.optLong("mtime") }
             val counts = JSONObject().put("all", sorted.size)
             for (status in listOf("pending", "converted", "adopted", "converting", "failed")) counts.put(status, sorted.count { it.optString("status") == status })
@@ -975,6 +998,9 @@ class EngramLocalServer private constructor(private val context: Context) {
         if (!agent.configured()) return error(HUB_REQUIRED, HttpStatusCode.Conflict)
         val remote = agent.request(method, path, requestBody)
         if (remote.status == 401) return error(HUB_TOKEN_REJECTED, HttpStatusCode.BadGateway)
+        // 窄代理写成功（转换/入库/记灵感/客户调研保存等）后立刻排一轮同步：中枢产出的
+        // 新文件与状态没有 SSE 推送，只能靠同步轮回流本机；不触发就要等下一次前台事件。
+        if (method != "GET" && remote.status in 200..299) sync.request(false)
         val type = runCatching { ContentType.parse(remote.contentType) }.getOrDefault(ContentType.Application.Json)
         response.header(HttpHeaders.CacheControl, "no-store")
         response.header(HttpHeaders.ContentLength, remote.body.size.toString())
@@ -1018,6 +1044,8 @@ class EngramLocalServer private constructor(private val context: Context) {
             val status = remote.responseCode
             val source = if (status in 200..299) remote.inputStream else remote.errorStream
             val bytes = source?.use { it.readBytesLimited(MAX_HUB_JSON_BYTES) } ?: ByteArray(0)
+            // 上传成功（中枢已落盘）同样立刻排一轮同步：收集箱文件与转换状态都要靠同步轮拉回本机
+            if (status in 200..299) sync.request(false)
             response.header(HttpHeaders.CacheControl, "no-store")
             response.header(HttpHeaders.ContentLength, bytes.size.toString())
             respondOutputStream(ContentType.Application.Json, HttpStatusCode.fromValue(status)) { write(bytes) }
@@ -1091,6 +1119,79 @@ class EngramLocalServer private constructor(private val context: Context) {
         } finally {
             connection.disconnect()
         }
+    }
+
+    /**
+     * 中枢 /api/inbox/items 的行 → 合并用状态。
+     *
+     * updatedAt 统一记为「本次响应时刻」：合并优先级要求「中枢成功响应（最新）> 缓存 > 本地推导」，
+     * 每次成功响应都整体刷新时间戳，旧缓存自然被压下去。
+     */
+    private fun parseHubInboxStatuses(rows: JSONArray, observedAt: Long): List<InboxItemStatus> {
+        val out = ArrayList<InboxItemStatus>(rows.length())
+        for (i in 0 until rows.length()) {
+            val row = rows.optJSONObject(i) ?: continue
+            val path = row.optString("path")
+            if (!InboxFiles.contains(path)) continue
+            out += InboxItemStatus(
+                path = path,
+                status = row.optString("status").ifBlank { InboxItemStatus.PENDING },
+                derivedPath = row.optString("derivedPath").takeIf { it.isNotBlank() && !row.isNull("derivedPath") },
+                adoptedPath = row.optString("adoptedPath").takeIf { it.isNotBlank() && !row.isNull("adoptedPath") },
+                error = row.optString("error"),
+                updatedAt = observedAt,
+            )
+        }
+        return out
+    }
+
+    /**
+     * 中枢条目的展示字段拷贝到本机条目（能力位 / 提示 / 转换任务 / 时间）。
+     *
+     * 只拷展示字段，不拷 status / derivedPath / adoptedPath——状态统一由 InboxStatusMerge 决定，
+     * 避免中枢一旦把 pending 写进来就直接覆盖本机「产物已存在」的事实。
+     */
+    private fun copyHubDisplayFields(local: JSONObject, hub: JSONObject) {
+        for (key in listOf("capability", "hint", "error", "jobId", "assistantSessionId", "video",
+                "mtime", "name", "rel", "ext", "size", "category")) {
+            if (!hub.has(key) || hub.isNull(key)) continue
+            local.put(key, hub.get(key))
+        }
+    }
+
+    /** 本机 inboxItems() 条目 → 合并用状态（updatedAt=0：磁盘推导没有观测时刻，让缓存/中枢优先） */
+    private fun statusOfLocalItem(item: JSONObject): InboxItemStatus {
+        val derived = item.optString("derivedPath").takeIf { it.isNotBlank() && !item.isNull("derivedPath") }
+        val adopted = item.optString("adoptedPath").takeIf { it.isNotBlank() && !item.isNull("adoptedPath") }
+        return InboxItemStatus(
+            path = item.optString("path"),
+            status = item.optString("status").ifBlank { InboxItemStatus.PENDING },
+            derivedPath = derived,
+            adoptedPath = adopted,
+            error = item.optString("error"),
+            updatedAt = 0L,
+            artifactOnDisk = derived != null || adopted != null,
+        )
+    }
+
+    private fun applyInboxStatus(item: JSONObject, status: InboxItemStatus) {
+        item.put("status", status.status)
+        item.put("derivedPath", status.derivedPath ?: JSONObject.NULL)
+        item.put("adoptedPath", status.adoptedPath ?: JSONObject.NULL)
+        item.put("error", status.error)
+    }
+
+    /** 中枢收集箱状态读取失败：静默降级（用缓存/本地推导），10 分钟最多记一条，避免离线刷屏 */
+    private fun logInboxStatusFallback(error: Throwable) {
+        val now = System.currentTimeMillis()
+        val last = db.setting("sync_inbox_status_warn_at")?.toLongOrNull() ?: 0L
+        if (now - last < INBOX_STATUS_WARN_INTERVAL_MS) return
+        db.setSetting("sync_inbox_status_warn_at", now.toString())
+        db.log(
+            "warn",
+            "inbox-status-fallback",
+            "收集箱状态读取中枢失败：" + (error.message ?: error.javaClass.simpleName) + "（显示上次已知状态）",
+        )
     }
 
     private suspend fun ApplicationCall.sendFile(inline: Boolean) {
@@ -1198,6 +1299,8 @@ class EngramLocalServer private constructor(private val context: Context) {
         private const val MAX_ASSET_BYTES = 12L * 1024 * 1024
         /** /api/sync/status 里带的同步日志尾巴条数：状态条与「立即同步」只认最新事件时间 */
         private const val STATUS_LOG_TAIL = 30
+        /** 收集箱状态读取失败的告警节流：离线时每 10 分钟最多一条，别刷屏 */
+        private const val INBOX_STATUS_WARN_INTERVAL_MS = 10 * 60_000L
         private const val HUB_REQUIRED = "请先在多端同步中绑定 Docker 中枢：收集箱与记灵感都用中枢的模型和任务队列"
         private const val HUB_TOKEN_REJECTED = "Docker 中枢拒绝了成员令牌。请检查绑定令牌，并将中枢更新到支持手机端的版本。"
         /** 图片资产目录名白名单：页面 id（UUID）或未归属池，同时挡掉 `..`、绝对路径等穿越写法（与 server lib/pageAssets.ts 同规则） */

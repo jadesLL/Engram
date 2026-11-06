@@ -223,3 +223,133 @@ test('needsResync：缺口落在游标之后即算落后，不受「本轮是否
   assert.equal(needsResync(first - 1), true, '缺口后面仍有新 op 时必须判定为落后');
   assert.equal(needsResync(first), false, '缺口在游标处已应用过 → 不算落后');
 });
+
+// ============================================================================
+// S5：证据合并守卫细化（只前进不后退，但不能挡住首次提炼）
+// ============================================================================
+
+/** 读某来源路径的全部版本行（断言用） */
+function versionsOf(source: string): any[] {
+  return db.prepare('SELECT id, status, activated_at, content_hash FROM source_versions WHERE path = ?').all(source) as any[];
+}
+
+/** 直接插一条本地旧版本行（模拟历史存量/本端旧口径数据） */
+function insertLocalVersion(id: string, source: string, hash: string, status: string, stamp: string): void {
+  db.prepare(
+    `INSERT INTO source_versions(id, path, content_hash, previous_id, status, created_at, activated_at, error)
+     VALUES(?,?,?,?,?,?,?,?)`
+  ).run(id, source, hash, null, status, stamp, stamp, null);
+}
+
+test('S5①：陈旧快照里的旧 active 不能顶掉本端较新的 active（只前进不后退）', () => {
+  const source = '原始资料/守卫较新.md';
+  writePage(source, '# 原始资料/守卫较新.md\n\n甲公司在2026年签署三年期供货协议。', { title: '守卫较新' });
+  agentWritePage({
+    path: 'Wiki/实体/守卫甲公司.md',
+    title: '守卫甲公司',
+    type: 'org',
+    content: '# 守卫甲公司\n\n## 当前理解\n\n供货协议。\n',
+    evidence: [
+      { path: source, quote: '甲公司在2026年签署三年期供货协议' },
+      { path: source, quote: '三年期供货协议' },
+    ],
+  });
+  const activeBefore = versionsOf(source).find((row) => row.status === 'active');
+  assert.ok(activeBefore, '本端应先生成 active 版本');
+
+  const stale = foreignSnapshot(source, 'Wiki/实体/守卫甲公司.md', 'sv-stale-active');
+  stale.versions[0].activated_at = '2020-01-01T00:00:00.000Z';
+  stale.versions[0].created_at = '2020-01-01T00:00:00.000Z';
+  stale.contributions = [];
+  applyEvidenceSnapshot(stale);
+
+  const activeAfter = versionsOf(source).find((row) => row.status === 'active' && row.id === activeBefore.id);
+  assert.ok(activeAfter, '本端较新的 active 版本必须仍存在');
+  assert.equal(activeAfter.activated_at, activeBefore.activated_at, '本端 active 的激活时间不能被旧快照回退');
+  assert.equal(isDistilledPath(source), true, '陈旧快照不能让「已提炼」变回未提炼');
+});
+
+test('S5②：只带 superseded 旧行的部分快照不得翻转本端「已提炼」', () => {
+  const source = '原始资料/守卫部分.md';
+  writePage(source, '# 原始资料/守卫部分.md\n\n乙公司在2026年中标城市轨道项目。', { title: '守卫部分' });
+  agentWritePage({
+    path: 'Wiki/实体/守卫乙公司.md',
+    title: '守卫乙公司',
+    type: 'org',
+    content: '# 守卫乙公司\n\n## 当前理解\n\n中标轨道项目。\n',
+    evidence: [
+      { path: source, quote: '乙公司在2026年中标城市轨道项目' },
+      { path: source, quote: '中标城市轨道项目' },
+    ],
+  });
+  assert.equal(isDistilledPath(source), true);
+
+  const partial = {
+    versions: [{
+      id: 'sv-partial-superseded',
+      path: source,
+      content_hash: 'partial-old-hash',
+      previous_id: null,
+      status: 'superseded',
+      created_at: '2020-01-01T00:00:00.000Z',
+      activated_at: null,
+      error: null,
+    }],
+    runs: [],
+    facts: [],
+    contributions: [],
+  };
+  applyEvidenceSnapshot(partial);
+
+  assert.equal(isDistilledPath(source), true, '快照里没有 active 版本时不得取消标记');
+  assert.ok(versionsOf(source).some((row) => row.status === 'active'), '本端 active 版本必须保留');
+});
+
+test('S5③：本地该路径没有任何 active 时，应接受对方（时钟偏慢/只有旧行）的 active 标记', () => {
+  const source = '原始资料/守卫无激活.md';
+  writePage(source, '# 原始资料/守卫无激活.md\n\n丙公司在2026年交付首批设备。', { title: '守卫无激活' });
+  // 本端只有一条 rank 比快照 active 更「新」的 superseded 旧行（模拟时钟偏慢/旧口径端）
+  insertLocalVersion('sv-local-superseded', source, 'hash-local-superseded', 'superseded', '2027-01-01T00:00:00.000Z');
+  assert.equal(isDistilledPath(source), false, '本地没有任何 active → 未提炼');
+
+  const incoming = foreignSnapshot(source, 'Wiki/实体/守卫丙公司.md', 'sv-incoming-active');
+  incoming.versions[0].activated_at = '2026-01-01T00:00:00.000Z';
+  incoming.versions[0].created_at = '2026-01-01T00:00:00.000Z';
+  incoming.contributions = [];
+  applyEvidenceSnapshot(incoming);
+
+  assert.ok(
+    versionsOf(source).some((row) => row.id === 'sv-incoming-active' && row.status === 'active'),
+    '本地该路径没有 active 时必须接受快照的 active（否则首次提炼标记永远落不了地）',
+  );
+  assert.equal(isDistilledPath(source), true);
+});
+
+test('S5④：快照带来更新的 active 版本时，本端不在快照里的旧版本可被清理', () => {
+  const source = '原始资料/守卫清理.md';
+  writePage(source, '# 原始资料/守卫清理.md\n\n丁公司2026年完成股权融资。', { title: '守卫清理' });
+  insertLocalVersion('sv-old-local', source, 'hash-old-local', 'superseded', '2020-01-01T00:00:00.000Z');
+  agentWritePage({
+    path: 'Wiki/实体/守卫丁公司.md',
+    title: '守卫丁公司',
+    type: 'org',
+    content: '# 守卫丁公司\n\n## 当前理解\n\n完成股权融资。\n',
+    evidence: [
+      { path: source, quote: '丁公司2026年完成股权融资' },
+      { path: source, quote: '完成股权融资' },
+    ],
+  });
+  assert.equal(isDistilledPath(source), true);
+
+  const newer = foreignSnapshot(source, 'Wiki/实体/守卫丁公司.md', 'sv-new-active');
+  newer.versions[0].activated_at = '2099-01-01T00:00:00.000Z';
+  newer.versions[0].created_at = '2099-01-01T00:00:00.000Z';
+  newer.contributions = [];
+  applyEvidenceSnapshot(newer);
+
+  const ids = versionsOf(source).map((row) => row.id);
+  assert.equal(ids.includes('sv-old-local'), false, '带更新 active 的快照应清理本端非 active、无现行贡献的旧版本');
+  assert.ok(ids.includes('sv-new-active'), '快照的更新 active 版本应落地');
+  assert.equal(isDistilledPath(source), true);
+});
+

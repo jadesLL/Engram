@@ -390,6 +390,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
                 safe(targetPath).parentFile?.mkdirs()
                 Os.rename(safe(oldPath).absolutePath, safe(targetPath).absolutePath)
                 writableDatabase.execSQL("UPDATE pages SET path=? WHERE id=?", arrayOf(targetPath, id))
+                remapSourcePaths(oldPath, targetPath)
                 rel = targetPath
                 meta = indexPage(rel)
                 if (!fromSync) enqueue("move", rel, oldPath)
@@ -426,6 +427,9 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             require(!safe(next).exists()) { "目标已存在" }
             safe(next).parentFile?.mkdirs(); Os.rename(safe(old).absolutePath, safe(next).absolutePath)
             writableDatabase.execSQL("UPDATE pages SET path=? WHERE id=?", arrayOf(next, id))
+            // 原始资料改名/换分类：账本按路径存（已提炼标记、证据快照），必须随文件搬家，
+            // 否则本机在新路径显示「未提炼」、其他端同步 move 后同样丢标记。
+            remapSourcePaths(old, next)
         }
         if (newTitle != null) {
             val parsed = parseMarkdown(safe(next).readText())
@@ -663,10 +667,19 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         }
     }.getOrDefault("")
 
+    /**
+     * 收集箱条目列表。
+     *
+     * 状态不再写死 pending（2026-11 用户报障「已整理在其他端变回待整理」）：
+     * 本机按磁盘事实推导 已入库 / 已转换，中枢在线时再由 [EngramLocalServer] 用
+     * InboxStatusMerge 合并中枢状态（cache → hub），任何情况下产物存在都不回退成待整理。
+     */
     fun inboxItems(): List<JSONObject> = synchronized(lock) {
+        val statuses = inboxStatusesInternal()
         InboxFiles.originals(brain).map { file ->
             val rel = relative(file)
-            val video = if (file.extension.equals("md", true) || file.extension.equals("markdown", true)) {
+            val status = statuses[rel]
+            val video = if (isMarkdownName(file)) {
                 ShareLinks.parseVideoPlaceholder(readHead(file))
             } else null
             val item = JSONObject()
@@ -680,8 +693,10 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
                     "html", "htm" -> "web"
                     else -> "other"
                 })
-                .put("status", "pending").put("derivedPath", JSONObject.NULL)
-                .put("error", "").put("jobId", JSONObject.NULL).put("assistantSessionId", JSONObject.NULL)
+                .put("status", status?.status ?: InboxItemStatus.PENDING)
+                .put("derivedPath", status?.derivedPath ?: JSONObject.NULL)
+                .put("adoptedPath", status?.adoptedPath ?: JSONObject.NULL)
+                .put("error", status?.error ?: "").put("jobId", JSONObject.NULL).put("assistantSessionId", JSONObject.NULL)
             if (video != null) {
                 item.put("capability", "video")
                 item.put("hint", "已保存到手机收集箱；同步至中枢后可提炼视频")
@@ -692,6 +707,142 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
             }
             item
         }
+    }
+
+    /**
+     * 收集箱条目的本机状态推导（纯磁盘事实，对齐 server/src/lib/inboxDerived.ts 与
+     * server/src/lib/inboxItems.ts 的口径）：
+     *  - 转换产物：`收集箱/转换结果/` 下 frontmatter「来源」== 原件路径的 md；同一原件多份产物
+     *    取 mtime 最新（mtime 相同按文件名取大，保证多端稳定）；
+     *  - 已入库：`原始资料/文档/` 下与产物同名（「 (N)」后缀归一）且 frontmatter「来源」== 原件的副本，
+     *    同名多份按文件名排序取第一份（与 server 的稳定口径一致）；产物不在但入库副本还在时也认已入库；
+     *  - 状态：有入库副本 → adopted；只有产物 → converted；都没有 → pending。
+     *    converting / failed 只有中枢任务队列知道，由中枢状态合并（InboxStatusMerge）补上。
+     *
+     * 开销：只 readdir `收集箱/转换结果` 与 `原始资料/文档` 两层，frontmatter 只对撞名候选/产物读，
+     * 不扫整棵 原始资料（与 server 同策略）。
+     */
+    fun inboxStatuses(): List<InboxItemStatus> = synchronized(lock) { inboxStatusesInternal().values.toList() }
+
+    private fun inboxStatusesInternal(): Map<String, InboxItemStatus> {
+        val derivedBySource = HashMap<String, File>()
+        File(brain, "收集箱/转换结果").listFiles()?.forEach { candidate ->
+            if (!candidate.isFile || candidate.name.startsWith('.') || !isMarkdownName(candidate)) return@forEach
+            val source = frontmatterSource(candidate) ?: return@forEach
+            val current = derivedBySource[source]
+            if (current == null || candidate.lastModified() > current.lastModified() ||
+                (candidate.lastModified() == current.lastModified() && candidate.name > current.name)) {
+                derivedBySource[source] = candidate
+            }
+        }
+        val adoptedByStem = HashMap<String, MutableList<File>>()
+        File(brain, "原始资料/文档").listFiles()?.forEach { candidate ->
+            if (!candidate.isFile || candidate.name.startsWith('.') || !isMarkdownName(candidate)) return@forEach
+            adoptedByStem.getOrPut(inboxStemKey(candidate.nameWithoutExtension)) { mutableListOf() } += candidate
+        }
+        // 产物缺失但入库副本还在（用户本地删过产物 / 产物没同步下来）时的兜底索引：
+        // 只在这种情况下才读整个 文档 目录的 frontmatter，正常路径零额外 IO。
+        var adoptedBySourceLazy: Map<String, File>? = null
+        fun adoptedBySource(source: String): File? {
+            var index = adoptedBySourceLazy
+            if (index == null) {
+                val built = HashMap<String, File>()
+                for (files in adoptedByStem.values) {
+                    for (candidate in files.sortedBy { it.name }) {
+                        val candidateSource = frontmatterSource(candidate) ?: continue
+                        built.putIfAbsent(candidateSource, candidate)
+                    }
+                }
+                index = built
+                adoptedBySourceLazy = built
+            }
+            return index[source]
+        }
+        val out = LinkedHashMap<String, InboxItemStatus>()
+        InboxFiles.originals(brain).forEach { original ->
+            val rel = relative(original)
+            val product = derivedBySource[rel]
+            val derivedPath = product?.let { "收集箱/转换结果/" + it.name }
+            val adoptedCopy = when {
+                product != null -> adoptedCopyFor(adoptedByStem, inboxStemKey(product.nameWithoutExtension), rel)
+                else -> adoptedBySource(rel)
+            }
+            val adoptedPath = adoptedCopy?.let { relative(it) }
+            val status = when {
+                adoptedPath != null -> InboxItemStatus.ADOPTED
+                derivedPath != null -> InboxItemStatus.CONVERTED
+                else -> InboxItemStatus.PENDING
+            }
+            out[rel] = InboxItemStatus(
+                path = rel,
+                status = status,
+                derivedPath = derivedPath,
+                adoptedPath = adoptedPath,
+                updatedAt = 0L,          // 本地推导没有"观测时刻"，让缓存/中枢状态优先
+                artifactOnDisk = derivedPath != null || adoptedPath != null,
+            )
+        }
+        return out
+    }
+
+    private fun adoptedCopyFor(copies: Map<String, MutableList<File>>, stem: String, source: String): File? =
+        copies[stem]?.sortedBy { it.name }?.firstOrNull { frontmatterSource(it) == source }
+
+    private fun isMarkdownName(file: File): Boolean =
+        file.extension.equals("md", true) || file.extension.equals("markdown", true)
+
+    /** md frontmatter 的「来源」字段（与 server inboxDerived.readSource 同口径；读 4KB 头部足够） */
+    private fun frontmatterSource(file: File): String? {
+        val head = readHead(file)
+        if (!head.startsWith("---")) return null
+        return field(parseMarkdown(head).fields, "来源", "source")?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /** 文件名 stem 归一：「周报」与「周报 (2)」都算「周报」（对齐 server 的 /\( \d+ \)$/ 剥除） */
+    private fun inboxStemKey(stem: String): String {
+        val open = stem.lastIndexOf(" (")
+        if (open <= 0 || !stem.endsWith(")")) return stem
+        val inner = stem.substring(open + 2, stem.length - 1)
+        if (inner.isEmpty() || !inner.all { it.isDigit() }) return stem
+        return stem.substring(0, open)
+    }
+
+    /**
+     * 中枢收集箱状态的持久化缓存（设置键 sync_inbox_status = {path:{status,derivedPath,adoptedPath,error,updatedAt}}）。
+     *
+     * 为什么落盘：中枢请求失败/离线/冷启动首轮同步完成前，列表必须显示「上次已知状态」，
+     * 不能把已入库/已转换倒回待整理（用户报障主因之一）。只在拿到中枢成功响应后整体覆盖。
+     */
+    fun inboxStatusCache(): List<InboxItemStatus> = synchronized(lock) {
+        val raw = setting(INBOX_STATUS_CACHE_KEY) ?: return@synchronized emptyList()
+        runCatching {
+            val obj = JSONObject(raw)
+            obj.keys().asSequence().mapNotNull { path ->
+                val row = obj.optJSONObject(path) ?: return@mapNotNull null
+                InboxItemStatus(
+                    path = path,
+                    status = row.optString("status").ifBlank { InboxItemStatus.PENDING },
+                    derivedPath = row.optString("derivedPath").takeIf { it.isNotBlank() && !row.isNull("derivedPath") },
+                    adoptedPath = row.optString("adoptedPath").takeIf { it.isNotBlank() && !row.isNull("adoptedPath") },
+                    error = row.optString("error"),
+                    updatedAt = row.optLong("updatedAt"),
+                )
+            }.toList()
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveInboxStatusCache(items: List<InboxItemStatus>, observedAt: Long = System.currentTimeMillis()) = synchronized(lock) {
+        if (items.isEmpty()) return@synchronized
+        val obj = JSONObject()
+        for (item in items) {
+            obj.put(item.path, JSONObject()
+                .put("status", item.status)
+                .put("derivedPath", item.derivedPath ?: JSONObject.NULL)
+                .put("adoptedPath", item.adoptedPath ?: JSONObject.NULL)
+                .put("error", item.error)
+                .put("updatedAt", if (item.updatedAt > 0L) item.updatedAt else observedAt))
+        }
+        setSetting(INBOX_STATUS_CACHE_KEY, obj.toString())
     }
 
     private fun uniquePath(dir: String, requestedName: String): String {
@@ -751,8 +902,19 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     fun file(path: String): File = safe(path)
 
     fun deleteSyncedPath(path: String) = synchronized(lock) {
-        pageIdByPath(path)?.let { runCatching { deletePage(it, true) }; return@synchronized }
+        pageIdByPath(path)?.let { runCatching { deletePage(it, true) }; purgePathLedger(path); return@synchronized }
         if (safe(path).exists()) runCatching { deleteFile(path, true) }
+        // 中枢已删除的路径，本机账本键（已提炼标记 / 祖先快照）必须一起清掉，
+        // 否则会留下「文件不在了、标记还在」的幽灵状态，改名后还可能与新路径的账本混淆。
+        purgePathLedger(path)
+    }
+
+    /** 同步删除落地后清掉按路径存的账本键（证据快照 / 提取结果 / 页面祖先），只动本机索引不动磁盘。 */
+    private fun purgePathLedger(path: String) {
+        if (path.isBlank()) return
+        for (table in listOf("evidence_snapshots", "file_extractions", "page_revisions")) {
+            runCatching { writableDatabase.execSQL("DELETE FROM $table WHERE path=?", arrayOf(path)) }
+        }
     }
 
     fun moveSyncedPath(oldPath: String, newPath: String, revision: Int) = synchronized(lock) {
@@ -777,6 +939,7 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         }
         writableDatabase.execSQL("DELETE FROM files WHERE path=?", arrayOf(oldPath))
         indexFile(newPath)
+        remapSourcePaths(oldPath, newPath)
     }
 
     fun snapshotEntries(): JSONArray = synchronized(lock) {
@@ -1054,6 +1217,21 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
         )
     }
 
+    /**
+     * 改名 / 移动时把按路径存的账本键一起搬到新路径（服务端 remapRawSourcePaths 的 Android 版）。
+     * 只搬路径键，不动正文与页面 ID；目标路径已有账本（两端各自提炼过）时不覆盖，丢掉旧路径的重复行。
+     *
+     * page_revisions 同样以 path 为键（同步祖先正文），必须一起搬：否则改名后祖先快照断裂，
+     * 「本机是否真的改过」的对账比对会退化成没有祖先可参考（对账逻辑见 SyncEngine.reconcile）。
+     */
+    fun remapSourcePaths(oldPath: String, newPath: String) = synchronized(lock) {
+        if (oldPath == newPath || oldPath.isBlank() || newPath.isBlank()) return@synchronized
+        for (table in listOf("evidence_snapshots", "file_extractions", "page_revisions")) {
+            runCatching { writableDatabase.execSQL("UPDATE OR IGNORE $table SET path=? WHERE path=?", arrayOf(newPath, oldPath)) }
+            runCatching { writableDatabase.execSQL("DELETE FROM $table WHERE path=?", arrayOf(oldPath)) }
+        }
+    }
+
     fun pageEvidence(id: String): JSONObject = synchronized(lock) {
         val page = pageJson(id) ?: error("页面不存在")
         evidence(page.getString("path")) ?: JSONObject()
@@ -1271,6 +1449,8 @@ class LocalDatabase(context: Context) : SQLiteOpenHelper(
     private fun sanitizeName(value: String) = value.replace(Regex("[\\\\/:*?\"<>|]"), "-").trim()
 
     companion object {
+        /** 收集箱中枢状态缓存（设置键）：离线/首轮同步完成前显示上次已知状态，不把已入库倒回待整理 */
+        private const val INBOX_STATUS_CACHE_KEY = "sync_inbox_status"
         /** 同步记录保留条数（与 desktop 端 SYNC_LOG_MAX_ENTRIES 默认值同口径） */
         const val MAX_SYNC_LOG_ROWS = 2000
         /** 原始资料一级目录与固定三个二级目录（与 server/src/lib/rawSections.ts 同口径，改一处要同步另一处） */

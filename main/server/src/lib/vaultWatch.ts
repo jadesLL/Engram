@@ -10,6 +10,8 @@ import { emit } from './events.js';
 import { redirectWikiLinks } from './renamePage.js';
 import { appendWikiLog } from '../pipeline/indexFile.js';
 import { ensureFileRecord } from '../pipeline/indexer.js';
+import { remapRawSourcePaths } from '../pipeline/rawSourceRemap.js';
+import { isRawPath } from './rawSections.js';
 import { isAppWrite } from './appWrites.js';
 
 /**
@@ -95,6 +97,9 @@ function adoptExternalRename(rel: string, id: string): boolean {
 
   // 先把行挪到新路径（deleted=0 兼顾「旧路径事件先到、已被标删除」的批次顺序），再按需改标题
   db.prepare(`UPDATE pages SET path = ?, deleted = 0 WHERE id = ?`).run(rel, id);
+  // 带外改名同样要搬账本：证据账本按来源路径存，只挪 pages.path 会让「已提炼」标记
+  // 与证据来源停在旧路径（文件已不在），新路径显示未提炼。
+  if (isRawPath(row.path)) remapRawSourcePaths(row.path, rel);
   if (adoptTitle) {
     const body = readPage(rel);
     if (body) {

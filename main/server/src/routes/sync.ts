@@ -707,7 +707,17 @@ export async function syncRoutes(app: FastifyInstance) {
    * /api/sync/evidence，不必为几个标记把整份清单（每条路径 + hash）拉下来。
    */
   app.get('/api/sync/distilled', { preHandler: requireSyncAccess }, async () => ({
-    paths: [...distilledSourcePaths()].filter(path => syncAllowed('file', path)).sort(),
+    // 只回「本机确实还有这份资料」的路径：账本按路径存，文件删除/改名后账本行可能残留，
+    // 把孤儿路径灌回成员端会让手机给不存在的文件打标（真实中枢 156 条里 31 条是孤儿）。
+    // 这里不做 syncAllowed 过滤：同步分类开关是各端自己的偏好，中枢按自己的开关过滤会
+    // 导致「本端开着该分类、中枢关着」时成员端标记被误清；成员拉取后按自己的偏好采纳。
+    paths: [...distilledSourcePaths()].filter((path) => {
+      try {
+        return fs.existsSync(safeJoin(path));
+      } catch {
+        return false;
+      }
+    }).sort(),
     // 灵感提炼的进行中/失败清单。标记与内容都没有对应的同步 op，而成员端的「提炼中/失败」徽标
     // 读的是本机 /api/jobs——手机端没有任务队列（/api/jobs 是空桩），拿这份清单才能把徽标补上；
     // 桌面/Docker 端有真实任务队列，用不到这两个字段。
@@ -744,6 +754,8 @@ function buildSnapshotEntries(): {
   hash: string;
   revision: number;
   distilled: boolean;
+  /** 文件修改时间（ms）：成员端对账做「较新者胜」裁决用；旧客户端忽略该字段即可兼容 */
+  mtime: number;
 }[] {
   const entries: {
     kind: 'page' | 'file';
@@ -751,6 +763,7 @@ function buildSnapshotEntries(): {
     hash: string;
     revision: number;
     distilled: boolean;
+    mtime: number;
   }[] = [];
   const distilledPaths = distilledSourcePaths();
   function walk(rel: string): void {
@@ -768,6 +781,8 @@ function buildSnapshotEntries(): {
       if (e.isDirectory()) {
         walk(childRel);
       } else if (classifyBrainEntry(childRel) === 'page') {
+        let mtime = 0;
+        try { mtime = fs.statSync(childAbs).mtimeMs; } catch { /* 读取竞态：按最旧 */ }
         const raw = fs.readFileSync(childAbs, 'utf8');
         const revision = Number(
           (db.prepare(`SELECT sync_revision FROM pages WHERE path = ?`).get(childRel) as
@@ -780,14 +795,18 @@ function buildSnapshotEntries(): {
           hash: sha256(Buffer.from(raw, 'utf8')),
           revision,
           distilled: distilledPaths.has(childRel),
+          mtime,
         });
       } else {
+        let mtime = 0;
+        try { mtime = fs.statSync(childAbs).mtimeMs; } catch { /* 读取竞态：按最旧 */ }
         entries.push({
           kind: 'file',
           path: childRel,
           hash: sha256(fs.readFileSync(childAbs)),
           revision: 0,
           distilled: distilledPaths.has(childRel),
+          mtime,
         });
       }
     }
